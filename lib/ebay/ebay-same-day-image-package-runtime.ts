@@ -258,9 +258,9 @@ export async function generateAndPersistSameDayImagePackage(input: {
   const imageUrls = Array.isArray(record(handoffPackage.images).urls)
     ? record(handoffPackage.images).urls as unknown[]
     : []
-  const sourceUrl = imageUrls.map((value) => text(value, 2_000))
-    .find(Boolean)
-  if (!sourceUrl) throw new Error("SAME_DAY_IMAGE_AUTHORIZED_SOURCE_MISSING")
+  const sourceUrls = [...new Set(imageUrls.map((value) => text(value, 2_000))
+    .filter(Boolean))].slice(0, 3)
+  if (!sourceUrls.length) throw new Error("SAME_DAY_IMAGE_AUTHORIZED_SOURCE_MISSING")
 
   const configuration = getListingImageFactoryConfiguration()
   if (configuration.deterministicComposition !== "READY") {
@@ -331,13 +331,21 @@ export async function generateAndPersistSameDayImagePackage(input: {
 
   let providerDispatched = false
   let providerRequestId: string | null = null
-  let source: Awaited<ReturnType<typeof fetchAuthorizedImageSource>> | null = null
+  let sources: Array<Awaited<ReturnType<typeof fetchAuthorizedImageSource>>> = []
   let generated: Awaited<ReturnType<typeof generateTransientSameDayImagePackage>> | null = null
   const uploaded: Array<{ bucket: string; path: string }> = []
   const persistedAssetIds: string[] = []
   try {
-    source = await fetchAuthorizedImageSource(sourceUrl)
-    const sourceMetadata = await sharp(source.buffer).metadata()
+    sources = await Promise.all(sourceUrls.map((sourceUrl) =>
+      fetchAuthorizedImageSource(sourceUrl)))
+    const sourceDetails = await Promise.all(sources.map(async (source, index) => ({
+      source,
+      index,
+      sourceSha256: sha256(source.buffer),
+      metadata: await sharp(source.buffer).metadata(),
+    })))
+    const uniqueSourceDetails = [...new Map(sourceDetails.map((entry) =>
+      [entry.sourceSha256, entry])).values()]
     generated = await generateTransientSameDayImagePackage({
       handoffPackage,
       authoritativeFactsPackage: facts.factsPackage,
@@ -352,7 +360,7 @@ export async function generateAndPersistSameDayImagePackage(input: {
         rightsEvidenceConfirmed: true,
       },
       aiContext: aiEnabled ? { enabled: true, model } : { enabled: false },
-      source: source.buffer,
+      source: uniqueSourceDetails.map((entry) => entry.source.buffer),
       requestBackgroundPlate: aiEnabled ? async (safePlan) => {
         providerDispatched = true
         const plate = await requestSafeOpenAiBackgroundPlate({
@@ -373,16 +381,19 @@ export async function generateAndPersistSameDayImagePackage(input: {
     }
     const pendingAssets: JsonRecord[] = []
     for (const composition of generated.transientAssets) {
+      const selectedSource = uniqueSourceDetails.find((entry) =>
+        entry.sourceSha256 === composition.sourceSha256)
+      if (!selectedSource) throw new Error("SAME_DAY_IMAGE_COMPOSITION_SOURCE_MISMATCH")
       const assetId = randomUUID()
       const base = `${actorId}/${candidatePath(text(input.candidate.candidate_key, 300))}/${assetId}`
-      const sourceExtension = source.contentType === "image/png"
-        ? "png" : source.contentType === "image/webp" ? "webp" : "jpg"
+      const sourceExtension = selectedSource.source.contentType === "image/png"
+        ? "png" : selectedSource.source.contentType === "image/webp" ? "webp" : "jpg"
       const sourcePath = `${base}-source.${sourceExtension}`
       const outputPath = `${base}-optimized.jpg`
       const sourceUpload = await input.supabase.storage
         .from(EBAY_IMAGE_SOURCE_BUCKET)
-        .upload(sourcePath, source.buffer, {
-          contentType: source.contentType,
+        .upload(sourcePath, selectedSource.source.buffer, {
+          contentType: selectedSource.source.contentType,
           upsert: false,
         })
       if (sourceUpload.error) throw new Error("SAME_DAY_IMAGE_SOURCE_STORAGE_FAILED")
@@ -399,13 +410,13 @@ export async function generateAndPersistSameDayImagePackage(input: {
         id: assetId,
         asset_role: roleBySlot[composition.slot],
         source_kind: "authorized_url",
-        source_url: source.sourceUrl,
+        source_url: selectedSource.source.sourceUrl,
         source_storage_path: sourcePath,
         output_storage_path: outputPath,
         source_sha256: composition.sourceSha256,
         output_sha256: composition.outputSha256,
-        source_width: sourceMetadata.width,
-        source_height: sourceMetadata.height,
+        source_width: selectedSource.metadata.width,
+        source_height: selectedSource.metadata.height,
         output_width: composition.width,
         output_height: composition.height,
         output_bytes: composition.bytes,
@@ -492,7 +503,7 @@ export async function generateAndPersistSameDayImagePackage(input: {
     throw error
   } finally {
     if (generated) disposeTransientSameDayImageAssets(generated.transientAssets)
-    source?.buffer.fill(0)
+    for (const source of sources) source.buffer.fill(0)
   }
 }
 

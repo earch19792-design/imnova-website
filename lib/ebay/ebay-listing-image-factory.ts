@@ -67,6 +67,8 @@ export type EbayListingImageComposition = {
   transformation: {
     version: string
     slot: EbayListingImageSlot
+    layoutId: string
+    authorizedSourceIndex: number
     generativeAiUsed: boolean
     originalPackagePixelsPreserved: true
     competitorImageUsed: false
@@ -135,6 +137,42 @@ function escapeXml(value: string) {
   })[character] ?? character)
 }
 
+const LISTING_FONT_FILE = `${process.cwd()}/public/fonts/DejaVuSans.ttf`
+
+async function renderVerifiedText(input: {
+  value: string
+  width: number
+  height: number
+  size: number
+  bold?: boolean
+}) {
+  const value = input.value.normalize("NFKC").trim()
+  if (!value) throw new Error("EBAY_IMAGE_TEXT_REQUIRED")
+  const fontDescription = `DejaVu Sans ${input.bold ? "Bold" : "Book"} ${input.size}`
+  const output = await sharp({
+    text: {
+      text: `<span font_desc="${fontDescription}" foreground="#172033">${escapeXml(value)}</span>`,
+      font: "DejaVu Sans",
+      fontfile: LISTING_FONT_FILE,
+      width: input.width,
+      height: input.height,
+      align: "centre",
+      rgba: true,
+      dpi: 72,
+      spacing: 8,
+    },
+  }).png().toBuffer()
+  const rendered = await sharp(output).ensureAlpha().raw()
+    .toBuffer({ resolveWithObject: true })
+  let visiblePixels = 0
+  for (let index = 3; index < rendered.data.length; index += rendered.info.channels) {
+    if (rendered.data[index] > 24) visiblePixels += 1
+  }
+  const minimum = Math.max(32, Math.min(400, value.replace(/\s+/g, "").length * 4))
+  if (visiblePixels < minimum) throw new Error("EBAY_IMAGE_TEXT_NOT_RENDERED")
+  return output
+}
+
 function titleCase(value: string | null) {
   if (!value) return null
   return value.replace(/\b\p{L}/gu, (letter) => letter.toLocaleUpperCase("en-US"))
@@ -180,38 +218,94 @@ function labelForSlot(slot: Exclude<EbayListingImageSlot, "MAIN_WHITE_BACKGROUND
   } satisfies Record<typeof slot, string>)[slot]
 }
 
-function infoCardSvg(
-  slot: Exclude<EbayListingImageSlot, "MAIN_WHITE_BACKGROUND">,
+type InformationSlot = Exclude<EbayListingImageSlot, "MAIN_WHITE_BACKGROUND">
+
+const INFORMATION_LAYOUTS = {
+  PACK_AND_COUNT: {
+    id: "PACK_COUNT_SPLIT_V2", packageSize: 980, packageLeft: 50, packageTop: 310,
+    textLeft: 990, textTop: 340, textWidth: 520, textHeight: 760,
+  },
+  KEY_FEATURES: {
+    id: "FEATURES_ASYMMETRIC_V2", packageSize: 1120, packageLeft: 500, packageTop: 230,
+    textLeft: 70, textTop: 270, textWidth: 520, textHeight: 820,
+  },
+  SIZE_AND_CONTENT: {
+    id: "SIZE_CONTENT_DIAGONAL_V2", packageSize: 900, packageLeft: 650, packageTop: 590,
+    textLeft: 100, textTop: 120, textWidth: 760, textHeight: 650,
+  },
+  USE_CONTEXT: {
+    id: "NEUTRAL_STUDIO_CONTEXT_V2", packageSize: 820, packageLeft: 390, packageTop: 260,
+    textLeft: 250, textTop: 1190, textWidth: 1100, textHeight: 300,
+  },
+  PACKAGE_CONTENTS: {
+    id: "PACKAGE_CONTENTS_OVERVIEW_V2", packageSize: 1030, packageLeft: 285, packageTop: 80,
+    textLeft: 210, textTop: 1130, textWidth: 1180, textHeight: 360,
+  },
+} satisfies Record<InformationSlot, {
+  id: string
+  packageSize: number
+  packageLeft: number
+  packageTop: number
+  textLeft: number
+  textTop: number
+  textWidth: number
+  textHeight: number
+}>
+
+function informationCanvasSvg(
+  slot: InformationSlot,
   facts: EbayListingImageFactoryInput["facts"],
 ) {
-  const lines = verifiedLines(slot, facts).flatMap((value) => wrap(value))
-  const lineElements = lines.map((line, index) =>
-    `<text x="800" y="${1180 + index * 78}" text-anchor="middle" ` +
-    `font-family="Arial,Helvetica,sans-serif" font-size="48" font-weight="600" ` +
-    `fill="#172033">${escapeXml(line)}</text>`,
-  ).join("")
-  return Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1600">` +
-    `<rect width="1600" height="1600" rx="0" fill="#f7f9fc"/>` +
-    `<rect x="130" y="1010" width="1340" height="470" rx="44" fill="#ffffff" ` +
-    `stroke="#d8e0ed" stroke-width="4"/>` +
-    `<text x="800" y="1100" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" ` +
-    `font-size="34" font-weight="700" letter-spacing="3" fill="#4c5b73">` +
-    `${escapeXml(labelForSlot(slot))}</text>${lineElements}</svg>`,
-  )
+  const indicatorCount = facts.packCount && facts.packCount <= 12
+    ? facts.packCount
+    : 0
+  const columns = Math.min(indicatorCount, 6)
+  const spacing = columns > 1 ? 900 / (columns - 1) : 0
+  const startX = columns > 1 ? 350 : 800
+  const packIndicators = Array.from({ length: indicatorCount }, (_, index) => {
+    const column = index % 6
+    const row = Math.floor(index / 6)
+    return `<circle cx="${startX + column * spacing}" cy="${1260 + row * 160}" r="48" fill="#d9c6aa"/>`
+  }).join("")
+  const artwork = ({
+    PACK_AND_COUNT:
+      '<rect width="1600" height="1600" fill="#f5efe4"/><circle cx="480" cy="800" r="610" fill="#fff"/><rect x="950" y="250" width="590" height="1100" rx="70" fill="#e7d6bd"/>',
+    KEY_FEATURES:
+      '<rect width="1600" height="1600" fill="#eaf2f4"/><circle cx="1230" cy="760" r="720" fill="#fff"/><rect x="55" y="210" width="575" height="980" rx="56" fill="#d7e6e8"/>',
+    SIZE_AND_CONTENT:
+      '<rect width="1600" height="1600" fill="#f1f4ee"/><path d="M0 0h1180L0 1180z" fill="#dbe7d7"/><circle cx="1110" cy="1080" r="500" fill="#fff"/>',
+    USE_CONTEXT:
+      '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#edf2f2"/><stop offset="1" stop-color="#d7dfdc"/></linearGradient></defs><rect width="1600" height="1600" fill="url(#g)"/><ellipse cx="800" cy="1115" rx="500" ry="95" fill="#9aa7a3" opacity=".28"/><rect x="245" y="1040" width="1110" height="170" rx="70" fill="#f9faf8"/>',
+    PACKAGE_CONTENTS:
+      '<rect width="1600" height="1600" fill="#f7f3ee"/><rect x="120" y="60" width="1360" height="1080" rx="72" fill="#fff"/>' + packIndicators,
+  } satisfies Record<InformationSlot, string>)[slot]
+  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1600">${artwork}</svg>`)
 }
 
 async function composeInformationImage(
   normalizedMain: Buffer,
-  slot: Exclude<EbayListingImageSlot, "MAIN_WHITE_BACKGROUND">,
+  slot: InformationSlot,
   facts: EbayListingImageFactoryInput["facts"],
 ) {
+  const layout = INFORMATION_LAYOUTS[slot]
   const packageLayer = await sharp(normalizedMain)
-    .resize(880, 880, { fit: "contain", background: "#ffffff" })
+    .resize(layout.packageSize, layout.packageSize, { fit: "contain", background: "#ffffff" })
     .jpeg({ quality: 94, chromaSubsampling: "4:4:4" })
     .toBuffer()
-  return sharp(infoCardSvg(slot, facts))
-    .composite([{ input: packageLayer, left: 360, top: 70 }])
+  const lines = verifiedLines(slot, facts).flatMap((value) => wrap(value))
+  const header = await renderVerifiedText({
+    value: labelForSlot(slot), width: layout.textWidth, height: 100, size: 30, bold: true,
+  })
+  const body = await renderVerifiedText({
+    value: lines.join("\n"), width: layout.textWidth,
+    height: Math.max(140, layout.textHeight - 130), size: 42, bold: true,
+  })
+  return sharp(informationCanvasSvg(slot, facts))
+    .composite([
+      { input: packageLayer, left: layout.packageLeft, top: layout.packageTop },
+      { input: header, left: layout.textLeft, top: layout.textTop },
+      { input: body, left: layout.textLeft, top: layout.textTop + 120 },
+    ])
     .jpeg({ quality: 92, chromaSubsampling: "4:4:4", mozjpeg: true })
     .toBuffer()
 }
@@ -466,20 +560,6 @@ export async function requestSafeOpenAiBackgroundPlate(input: {
   }
 }
 
-function contextOverlaySvg(facts: EbayListingImageFactoryInput["facts"]) {
-  const product = wrap(titleCase(facts.normalizedProductName) ?? facts.normalizedProductName)
-  const lines = product.map((line, index) =>
-    `<text x="800" y="${1370 + index * 58}" text-anchor="middle" ` +
-    `font-family="Arial,Helvetica,sans-serif" font-size="42" font-weight="600" ` +
-    `fill="#172033">${escapeXml(line)}</text>`,
-  ).join("")
-  return Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1600">` +
-    `<rect x="170" y="1260" width="1260" height="280" rx="40" fill="#ffffff" ` +
-    `fill-opacity="0.96" stroke="#d8e0ed" stroke-width="4"/>${lines}</svg>`,
-  )
-}
-
 async function composeContextImage(
   normalizedMain: Buffer,
   facts: EbayListingImageFactoryInput["facts"],
@@ -494,14 +574,43 @@ async function composeContextImage(
     '<rect x="0" y="0" width="1000" height="1000" rx="52" fill="#ffffff" ' +
     'fill-opacity="0.96" stroke="#d8e0ed" stroke-width="4"/></svg>',
   )
+  const productText = await renderVerifiedText({
+    value: wrap(titleCase(facts.normalizedProductName) ?? facts.normalizedProductName).join("\n"),
+    width: 1160, height: 220, size: 38, bold: true,
+  })
   return sharp(background.output)
     .composite([
       { input: productPanel, left: 300, top: 130 },
       { input: packageLayer, left: 370, top: 200 },
-      { input: contextOverlaySvg(facts), left: 0, top: 0 },
+      { input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="280"><rect width="1260" height="280" rx="40" fill="#fff" fill-opacity=".96" stroke="#d8e0ed" stroke-width="4"/></svg>'), left: 170, top: 1260 },
+      { input: productText, left: 220, top: 1290 },
     ])
     .jpeg({ quality: 92, chromaSubsampling: "4:4:4", mozjpeg: true })
     .toBuffer()
+}
+
+async function perceptualDistance(left: Buffer, right: Buffer) {
+  const [leftPixels, rightPixels] = await Promise.all([
+    sharp(left).resize(32, 32, { fit: "fill" }).greyscale().raw().toBuffer(),
+    sharp(right).resize(32, 32, { fit: "fill" }).greyscale().raw().toBuffer(),
+  ])
+  let difference = 0
+  for (let index = 0; index < leftPixels.length; index += 1) {
+    difference += Math.abs(leftPixels[index] - rightPixels[index])
+  }
+  return difference / leftPixels.length
+}
+
+function sourceIndexForSlot(slot: EbayListingImageSlot, sourceCount: number) {
+  const preferred = ({
+    MAIN_WHITE_BACKGROUND: 0,
+    PACK_AND_COUNT: 0,
+    KEY_FEATURES: 1,
+    SIZE_AND_CONTENT: 2,
+    USE_CONTEXT: 1,
+    PACKAGE_CONTENTS: 2,
+  } satisfies Record<EbayListingImageSlot, number>)[slot]
+  return Math.min(preferred, sourceCount - 1)
 }
 
 export function validateListingImageFactoryInput(value: unknown) {
@@ -517,14 +626,21 @@ export function validateListingImageFactoryInput(value: unknown) {
 }
 
 export async function composeAuthorizedEbayListingImageSet(
-  source: Buffer,
+  source: Buffer | Buffer[],
   value: unknown,
   backgroundPlate: EbayOpenAiBackgroundPlate | null = null,
 ): Promise<EbayListingImageComposition[]> {
   const input = validateListingImageFactoryInput(value)
-  const main = await optimizeAuthorizedEbayMainImage(source)
+  const sources = (Array.isArray(source) ? source : [source]).slice(0, 3)
+  if (!sources.length || sources.some((entry) => !Buffer.isBuffer(entry) || !entry.length)) {
+    throw new Error("EBAY_IMAGE_AUTHORIZED_SOURCES_INVALID")
+  }
+  const mains = await Promise.all(sources.map((entry) =>
+    optimizeAuthorizedEbayMainImage(entry)))
   const outputs: EbayListingImageComposition[] = []
   for (const slot of EBAY_LISTING_IMAGE_SLOTS) {
+    const authorizedSourceIndex = sourceIndexForSlot(slot, mains.length)
+    const main = mains[authorizedSourceIndex]
     const output = slot === "MAIN_WHITE_BACKGROUND"
       ? main.output
       : slot === "USE_CONTEXT" && backgroundPlate
@@ -536,6 +652,16 @@ export async function composeAuthorizedEbayListingImageSet(
       metadata.width !== EBAY_IMAGE_OUTPUT_SIZE ||
       metadata.height !== EBAY_IMAGE_OUTPUT_SIZE
     ) throw new Error("EBAY_IMAGE_SET_OUTPUT_INVALID")
+    for (const previous of outputs) {
+      if (await perceptualDistance(output, previous.output) < 3) {
+        throw new Error("EBAY_IMAGE_SET_PERCEPTUALLY_DUPLICATED")
+      }
+    }
+    const layoutId = slot === "MAIN_WHITE_BACKGROUND"
+      ? "MAIN_WHITE_BACKGROUND_V2"
+      : slot === "USE_CONTEXT" && backgroundPlate
+        ? "OPENAI_NEUTRAL_CONTEXT_V2"
+        : INFORMATION_LAYOUTS[slot].id
     outputs.push({
       slot,
       output,
@@ -547,6 +673,8 @@ export async function composeAuthorizedEbayListingImageSet(
       transformation: {
         version: EBAY_LISTING_IMAGE_SET_VERSION,
         slot,
+        layoutId,
+        authorizedSourceIndex,
         generativeAiUsed: slot === "USE_CONTEXT" && Boolean(backgroundPlate),
         originalPackagePixelsPreserved: true,
         competitorImageUsed: false,

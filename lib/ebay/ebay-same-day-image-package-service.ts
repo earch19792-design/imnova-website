@@ -24,6 +24,7 @@ const rightsBasisSchema = z.enum(["supplier_authorized", "owned", "licensed"])
 const persistenceAssetSchema = z.object({
   position: z.number().int().min(1).max(6),
   slot: imageSlotSchema,
+  layoutId: z.string().trim().min(1).max(80).optional(),
   sourceSha256: rawSha256Schema,
   outputSha256: rawSha256Schema,
   width: z.literal(1600),
@@ -196,7 +197,7 @@ export function buildSameDayImagePackagePlan(input: {
 
 function validateTransientAssets(input: {
   assets: EbayListingImageComposition[]
-  expectedSourceSha256: string
+  expectedSourceSha256s: ReadonlySet<string>
   openAiCalls: 0 | 1
   backgroundPlateRequestHash: string | null
 }) {
@@ -209,16 +210,21 @@ function validateTransientAssets(input: {
     throw new Error("SAME_DAY_IMAGE_SET_SLOTS_INVALID")
   }
   const outputs = new Set<string>()
+  const layoutIds = new Set<string>()
   let generativeAssets = 0
   const ordered = EBAY_LISTING_IMAGE_SLOTS.map((slot) => {
     const asset = bySlot.get(slot)!
     if (!Buffer.isBuffer(asset.output) || !asset.output.length ||
       asset.outputSha256 !== sha256(asset.output) ||
-      asset.sourceSha256 !== input.expectedSourceSha256 ||
+      !input.expectedSourceSha256s.has(asset.sourceSha256) ||
       asset.bytes !== asset.output.length ||
       asset.width !== 1600 || asset.height !== 1600 ||
       asset.transformation.version !== EBAY_LISTING_IMAGE_SET_VERSION ||
       asset.transformation.slot !== slot ||
+      !/^[A-Z0-9_]{3,80}$/.test(asset.transformation.layoutId) ||
+      !Number.isInteger(asset.transformation.authorizedSourceIndex) ||
+      asset.transformation.authorizedSourceIndex < 0 ||
+      asset.transformation.authorizedSourceIndex > 2 ||
       asset.transformation.originalPackagePixelsPreserved !== true ||
       asset.transformation.competitorImageUsed !== false ||
       asset.transformation.verifiedFactsOnly !== true ||
@@ -233,6 +239,10 @@ function validateTransientAssets(input: {
       throw new Error("SAME_DAY_IMAGE_SET_OUTPUT_DUPLICATED")
     }
     outputs.add(asset.outputSha256)
+    if (layoutIds.has(asset.transformation.layoutId)) {
+      throw new Error("SAME_DAY_IMAGE_SET_LAYOUT_DUPLICATED")
+    }
+    layoutIds.add(asset.transformation.layoutId)
     if (asset.transformation.generativeAiUsed) {
       generativeAssets += 1
       if (slot !== "USE_CONTEXT" ||
@@ -253,7 +263,8 @@ function validateTransientAssets(input: {
 export function buildSameDayImagePackagePersistenceManifest(input: {
   plan: SameDayImagePackagePlan
   assets: EbayListingImageComposition[]
-  sourceSha256: string
+  sourceSha256?: string
+  sourceSha256s?: string[]
   openAiCalls: 0 | 1
   generatedAt: string
 }): SameDayImagePackagePersistenceManifest {
@@ -275,9 +286,18 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
     input.plan.backgroundPlatePlan.sendsProductUrl !== false ||
     input.plan.backgroundPlatePlan.sendsCompetitorData !== false
   )) throw new Error("SAME_DAY_IMAGE_PACKAGE_PLAN_INVALID")
+  const authorizedSourceHashes = [...new Set(
+    input.sourceSha256s?.length
+      ? input.sourceSha256s
+      : input.sourceSha256 ? [input.sourceSha256] : [],
+  )]
+  if (!authorizedSourceHashes.length || authorizedSourceHashes.length > 3 ||
+    authorizedSourceHashes.some((value) => !/^[0-9a-f]{64}$/.test(value))) {
+    throw new Error("SAME_DAY_IMAGE_AUTHORIZED_SOURCE_HASHES_INVALID")
+  }
   const ordered = validateTransientAssets({
     assets: input.assets,
-    expectedSourceSha256: input.sourceSha256,
+    expectedSourceSha256s: new Set(authorizedSourceHashes),
     openAiCalls: input.openAiCalls,
     backgroundPlateRequestHash: requestHash,
   })
@@ -300,6 +320,7 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
     assets: ordered.map((asset, index) => ({
       position: index + 1,
       slot: asset.slot,
+      layoutId: asset.transformation.layoutId,
       sourceSha256: asset.sourceSha256,
       outputSha256: asset.outputSha256,
       width: asset.width,
@@ -334,7 +355,7 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       candidateId: input.plan.binding.candidateId,
       factRunId: input.plan.binding.factRunId,
       factPackageHash: input.plan.binding.factPackageHash,
-      sourceSha256: input.sourceSha256,
+      sourceSha256s: ordered.map((asset) => asset.sourceSha256),
       backgroundPlateRequestHash: requestHash,
     }),
     generatedAt,
@@ -360,7 +381,12 @@ export function parseSameDayImagePackagePersistenceManifest(
   const outputHashes = parsed.data.assets.map((asset) => asset.outputSha256)
   const sourceHashes = parsed.data.assets.map((asset) => asset.sourceSha256)
   if (new Set(outputHashes).size !== EBAY_LISTING_IMAGE_SLOTS.length ||
-    new Set(sourceHashes).size !== 1) return null
+    new Set(sourceHashes).size > 3) return null
+  const layoutIds = parsed.data.assets
+    .map((asset) => asset.layoutId)
+    .filter((value): value is string => Boolean(value))
+  if (layoutIds.length > 0 && (layoutIds.length !== EBAY_LISTING_IMAGE_SLOTS.length ||
+    new Set(layoutIds).size !== EBAY_LISTING_IMAGE_SLOTS.length)) return null
   const generativeAssets = parsed.data.assets.filter((asset) =>
     asset.generativeAiUsed)
   if (parsed.data.ai.openAiCalls === 0) {
@@ -382,14 +408,19 @@ export async function generateTransientSameDayImagePackage(input: {
     rightsEvidenceConfirmed?: unknown
   }
   aiContext: { enabled: false } | { enabled: true; model: string }
-  source: Buffer
+  source: Buffer | Buffer[]
   generatedAt?: string
   requestBackgroundPlate?: (
     plan: EbayOpenAiBackgroundPlatePlan,
   ) => Promise<EbayOpenAiBackgroundPlate>
 }): Promise<SameDayTransientImagePackage> {
   const plan = buildSameDayImagePackagePlan(input)
-  const sourceSha256 = sha256(input.source)
+  const sources = (Array.isArray(input.source) ? input.source : [input.source]).slice(0, 3)
+  if (!sources.length || sources.some((source) =>
+    !Buffer.isBuffer(source) || !source.length)) {
+    throw new Error("SAME_DAY_IMAGE_AUTHORIZED_SOURCES_INVALID")
+  }
+  const sourceSha256s = sources.map(sha256)
   let backgroundPlate: EbayOpenAiBackgroundPlate | null = null
   let assets: EbayListingImageComposition[] = []
   const openAiCalls: 0 | 1 = plan.backgroundPlatePlan ? 1 : 0
@@ -416,14 +447,14 @@ export async function generateTransientSameDayImagePackage(input: {
       }
     }
     assets = await composeAuthorizedEbayListingImageSet(
-      input.source,
+      sources,
       plan.factoryInput,
       backgroundPlate,
     )
     const persistenceManifest = buildSameDayImagePackagePersistenceManifest({
       plan,
       assets,
-      sourceSha256,
+      sourceSha256s,
       openAiCalls,
       generatedAt: input.generatedAt ?? new Date().toISOString(),
     })
