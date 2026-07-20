@@ -796,7 +796,9 @@ $$;
 alter table public.ebay_same_day_pilot_image_revisions enable row level security;
 alter table public.ebay_same_day_pilot_image_revisions force row level security;
 revoke all on table public.ebay_same_day_pilot_image_revisions
-  from public, anon, authenticated, service_role;
+  from anon, authenticated;
+revoke all on table public.ebay_same_day_pilot_image_revisions
+  from public, service_role;
 grant select on table public.ebay_same_day_pilot_image_revisions to service_role;
 
 revoke all on function public.enforce_same_day_pilot_image_revision_scope()

@@ -90,7 +90,9 @@ create unique index if not exists ebay_authorized_publication_listing_uidx
 alter table public.ebay_authorized_listing_publications enable row level security;
 alter table public.ebay_authorized_listing_publications force row level security;
 revoke all on table public.ebay_authorized_listing_publications
-  from public, anon, authenticated;
+  from anon, authenticated;
+revoke all on table public.ebay_authorized_listing_publications
+  from public, service_role;
 grant select, insert, update on table public.ebay_authorized_listing_publications
   to service_role;
 
