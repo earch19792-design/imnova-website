@@ -440,6 +440,12 @@ export function buildEbayDraftOnlyPayload(
   }
   const aspects = normalizeAspects(packageData.aspects)
   const categoryId = text(packageData.categoryId)
+  const packageMeasurementsReady = numberOrNull(dimensions.height)! > 0
+    && numberOrNull(dimensions.length)! > 0
+    && numberOrNull(dimensions.width)! > 0
+    && ['INCH', 'CENTIMETER'].includes(text(dimensions.unit).toUpperCase())
+    && numberOrNull(weight.value)! > 0
+    && ['POUND', 'KILOGRAM', 'OUNCE', 'GRAM'].includes(text(weight.unit).toUpperCase())
 
   const inventoryItemPayload = {
     availability: { shipToLocationAvailability: { quantity } },
@@ -450,7 +456,7 @@ export function buildEbayDraftOnlyPayload(
       aspects,
       imageUrls,
     },
-    packageWeightAndSize: {
+    ...(packageMeasurementsReady ? { packageWeightAndSize: {
       dimensions: {
         height: numberOrNull(dimensions.height),
         length: numberOrNull(dimensions.length),
@@ -461,7 +467,7 @@ export function buildEbayDraftOnlyPayload(
         value: numberOrNull(weight.value),
         unit: text(weight.unit).toUpperCase(),
       },
-    },
+    } } : {}),
   }
   const offerPayload = {
     sku,
@@ -582,7 +588,14 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     ...(weightEvidenceReady && dimensionsEvidenceReady ? ["NEED_PACKAGE_WEIGHT_AND_DIMENSIONS"] : []),
     ...(taxonomyEvidenceReady ? ["NEED_EBAY_TAXONOMY_CATEGORY", "NEED_REQUIRED_EBAY_ITEM_ASPECTS"] : []),
   ])
-  const remainingHardGates = hardGates.filter((gate) => !resolvablePackageGates.has(gate))
+  const optionalFlatPolicyMeasurementGates = new Set([
+    "NEED_PACKAGE_WEIGHT",
+    "NEED_PACKAGE_DIMENSIONS",
+    "NEED_PACKAGE_WEIGHT_AND_DIMENSIONS",
+  ])
+  const remainingHardGates = hardGates.filter((gate) =>
+    !resolvablePackageGates.has(gate) && !optionalFlatPolicyMeasurementGates.has(gate)
+  )
   const blockers: string[] = []
 
   if (!/^[0-9a-f]{64}$/.test(accountFingerprint)) blockers.push("EBAY_ACCOUNT_FINGERPRINT_REQUIRED")
@@ -608,7 +621,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (taxonomy.validated !== true || text(taxonomy.categoryId) !== categoryId || !recent(taxonomy.validatedAt, taxonomyMaxAge, now)) blockers.push("CATEGORY_ASPECTS_NOT_VALIDATED")
   blockers.push(...aspectConstraintBlockers)
   for (const name of requiredAspects) if (!aspects[name]?.length) blockers.push(`REQUIRED_ASPECT_MISSING:${name}`)
-  if (!images.length || images.length !== strings(packageData.imageUrls, 24).length) blockers.push("HTTPS_IMAGES_REQUIRED")
+  if (images.length !== 6 || images.length !== strings(packageData.imageUrls, 24).length) blockers.push("EXACTLY_SIX_HTTPS_IMAGES_REQUIRED")
   if (authorization.approved !== true || !recent(authorization.approvedAt, sourceMaxAge, now)) blockers.push("IMAGE_AUTHORIZATION_REQUIRED")
   if (authorization.approved === true && !images.length) blockers.push("IMAGE_AUTHORIZATION_WITHOUT_SOURCE_IMAGE")
   if (!['supplier_authorized', 'owned', 'licensed'].includes(rightsBasis)) blockers.push("IMAGE_RIGHTS_BASIS_INVALID")
@@ -632,10 +645,6 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (!['NEW', 'NEW_OTHER', 'NEW_WITH_DEFECTS', 'USED_EXCELLENT', 'USED_GOOD', 'USED_ACCEPTABLE'].includes(condition)) blockers.push("CONDITION_INVALID")
   if (price === null || price <= 0) blockers.push("PRICE_REQUIRED")
   if (!economics.ready || !economics.passesProfitGate) blockers.push("MINIMUM_NET_MARGIN_NOT_MET")
-  if (!(numberOrNull(dimensions.height)! > 0 && numberOrNull(dimensions.length)! > 0 && numberOrNull(dimensions.width)! > 0)) blockers.push("PACKAGE_DIMENSIONS_REQUIRED")
-  if (!['INCH', 'CENTIMETER'].includes(text(dimensions.unit).toUpperCase())) blockers.push("PACKAGE_DIMENSION_UNIT_INVALID")
-  if (!(numberOrNull(weight.value)! > 0)) blockers.push("PACKAGE_WEIGHT_REQUIRED")
-  if (!validWeightUnit) blockers.push("PACKAGE_WEIGHT_UNIT_REQUIRED")
   for (const [key, value] of Object.entries({
     FULFILLMENT_POLICY_REQUIRED: policies.fulfillmentPolicyId,
     PAYMENT_POLICY_REQUIRED: policies.paymentPolicyId,
@@ -677,6 +686,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
       "HUMAN_APPROVAL_EXPIRES_AND_IS_ONE_TIME",
       "EBAY_SKU_PREFLIGHT_RUNS_AT_EXECUTION",
       "EBAY_PREFLIGHT_SNAPSHOT_EXPIRES_IN_5_MINUTES",
+      ...(packageMeasurementsReady ? [] : ["OPTIONAL_PACKAGE_MEASUREMENTS_OMITTED"]),
     ],
     economics: {
       targetPrice: price,

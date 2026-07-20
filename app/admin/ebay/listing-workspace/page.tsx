@@ -144,7 +144,21 @@ type EbayTaxonomyAspect = {
 type DraftState = {
   readiness?: { ready: boolean; blockers: string[]; payloadHash?: string; requiredSku?: string }
   approval?: { id: string; status: string; expires_at: string } | null
-  execution?: { phase: string; offer_id?: string | null; last_error_code?: string | null; completed_at?: string | null } | null
+  execution?: { id?: string; phase: string; offer_id?: string | null; last_error_code?: string | null; completed_at?: string | null } | null
+  publication?: {
+    id: string
+    phase: string
+    offer_id: string
+    sku: string
+    preview_hash: string
+    preview: Record<string, unknown>
+    listing_id?: string | null
+    active_listing_id?: string | null
+    published_at?: string | null
+    verified_active_at?: string | null
+    monitor_registered_at?: string | null
+    last_error_code?: string | null
+  } | null
   runtime?: {
     enabled: boolean
     configured: boolean
@@ -160,6 +174,14 @@ type DraftState = {
     exactPhrase: string
     target: "SANDBOX" | "PRODUCTION"
     productionAccountConfirmationRequired?: boolean
+  }
+  publicationRequirements?: {
+    exactConfirmPublish: string
+    finalPreviewRequired: boolean
+    productionAccountConfirmationRequired: boolean
+    publishOfferCallsAllowed: number
+    promotionsAllowed: false
+    volumePricingAllowed: false
   }
   preflight?: EbayMobilePreflight
   taxonomy?: {
@@ -490,6 +512,9 @@ export default function EbayListingWorkspacePage() {
   const [confirmUnpublishedOnly, setConfirmUnpublishedOnly] = useState(false)
   const [confirmNoPublish, setConfirmNoPublish] = useState(false)
   const [confirmProductionAccount, setConfirmProductionAccount] = useState(false)
+  const [publishConfirmation, setPublishConfirmation] = useState("")
+  const [confirmFinalPublication, setConfirmFinalPublication] = useState(false)
+  const [confirmPublishProductionAccount, setConfirmPublishProductionAccount] = useState(false)
   const [skuCopied, setSkuCopied] = useState(false)
 
   const imageRequest = useCallback(async (
@@ -736,6 +761,15 @@ export default function EbayListingWorkspacePage() {
       ? "CREAR DRAFT NO PUBLICADO EN PRODUCCIÓN"
       : draftTarget === "SANDBOX" ? "CREAR DRAFT NO PUBLICADO" : "")
   const executionCompleted = draftState.execution?.phase === "completed"
+  const publicationPhase = draftState.publication?.phase ?? ""
+  const finalPublishPhrase = draftState.publicationRequirements?.exactConfirmPublish
+    ?? "PUBLICAR LISTING EN EBAY"
+  const publicationPreview = object(draftState.publication?.preview)
+  const publicationInventory = object(publicationPreview.inventoryItemPayload)
+  const publicationProduct = object(publicationInventory.product)
+  const publicationOffer = object(publicationPreview.offerPayload)
+  const publicationPrice = object(object(publicationOffer.pricingSummary).price)
+  const publicationPolicies = object(publicationOffer.listingPolicies)
   const approvalActive = draftState.approval?.status === "approved"
     && Date.parse(draftState.approval.expires_at) > Date.now()
   const effectiveDraftQuantity = productionTarget ? 1 : draftConfiguration.quantity
@@ -1208,6 +1242,63 @@ export default function EbayListingWorkspacePage() {
     } finally { setDraftBusy(false) }
   }
 
+  async function prepareFinalPublication() {
+    if (!draftState.execution?.id) return
+    setDraftBusy(true); setError(""); setMessage("Preparando el preview final exacto sin publicar…")
+    try {
+      const payload = await draftRequest({
+        action: "prepare_publish",
+        executionId: draftState.execution.id,
+      })
+      setDraftState((current) => ({
+        ...current,
+        publication: payload.publication,
+        publicationRequirements: payload.publicationRequirements,
+      }))
+      setMessage("Preview final persistido. Revisa precio, cantidad, imágenes, policies y ubicación antes de autorizar.")
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(requestError, "No se pudo preparar el preview final.")); setMessage("")
+    } finally { setDraftBusy(false) }
+  }
+
+  async function publishFinalListing() {
+    if (!draftState.publication?.id) return
+    setDraftBusy(true); setError(""); setMessage("Publicando una sola vez y verificando ACTIVE…")
+    try {
+      const payload = await draftRequest({
+        action: "publish",
+        publicationId: draftState.publication.id,
+        idempotencyKey: `publish:${draftState.publication.id}`,
+        confirmPublish: publishConfirmation,
+        confirmFinalPreview: confirmFinalPublication,
+        confirmProductionAccount: confirmPublishProductionAccount,
+      })
+      setDraftState((current) => ({ ...current, publication: payload.publication }))
+      setMessage(payload.monitoring?.registered
+        ? `Listing ${payload.listing?.listingId} ACTIVE y registrado en monitoreo.`
+        : `Listing ${payload.listing?.listingId} publicado; eBay aún no confirma ACTIVE. Usa reconciliar, nunca vuelvas a publicar.`)
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(requestError, "No se pudo completar la publicación autorizada.")); setMessage("")
+    } finally { setDraftBusy(false) }
+  }
+
+  async function reconcileFinalListing() {
+    if (!draftState.publication?.id) return
+    setDraftBusy(true); setError(""); setMessage("Reconciliando por lectura; no se volverá a llamar publishOffer…")
+    try {
+      const payload = await draftRequest({
+        action: "reconcile_publish",
+        publicationId: draftState.publication.id,
+      })
+      setDraftState((current) => ({ ...current, publication: payload.publication }))
+      setMessage(payload.monitoring?.registered
+        ? `Listing ${payload.listing?.listingId} ACTIVE y registrado en monitoreo.`
+        : `Listing ${payload.listing?.listingId} sigue pendiente de verificación ACTIVE.`)
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(requestError, "No se pudo reconciliar el listing publicado.")); setMessage("")
+    } finally { setDraftBusy(false) }
+  }
+
   async function revokeDraftApproval() {
     if (!draftState.approval?.id) return
     setDraftBusy(true); setError(""); setMessage("Cancelando aprobación…")
@@ -1439,9 +1530,15 @@ export default function EbayListingWorkspacePage() {
             {draftState.readiness?.ready && !approvalActive && !executionCompleted && <div className="space-y-3 rounded-2xl border border-emerald-200/25 p-3"><label className="block"><span className="text-sm font-black">Escribe exactamente: {expectedApprovalPhrase}</span><input value={approvalPhrase} onChange={(event) => setApprovalPhrase(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmUnpublishedOnly} onChange={(event) => setConfirmUnpublishedOnly(event.target.checked)} />Entiendo que sólo autoriza un Offer no publicado.</label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmNoPublish} onChange={(event) => setConfirmNoPublish(event.target.checked)} />Confirmo que publicar permanece prohibido.</label>{productionTarget && <label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmProductionAccount} onChange={(event) => setConfirmProductionAccount(event.target.checked)} />Confirmo que {draftTarget} es mi cuenta real: autorizo crear Inventory Item + Offer API UNPUBLISHED, sin publicarlo.</label>}<button type="button" disabled={draftBusy || approvalPhrase !== expectedApprovalPhrase || !confirmUnpublishedOnly || !confirmNoPublish || !imagesAuthorized || (productionTarget && !confirmProductionAccount)} onClick={() => void approveDraft()} className="min-h-13 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">Aprobar {draftTarget} por 15 minutos</button></div>}
             {approvalActive && !executionCompleted && draftState.approval && <div className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.06] p-3"><strong>Aprobación {draftTarget} activa hasta {new Date(draftState.approval.expires_at).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}</strong><p className="mt-2 text-sm text-white/65">El siguiente botón es el único que puede escribir y sólo crea Inventory Item + Offer API UNPUBLISHED en {draftTarget}.</p><button type="button" disabled={draftBusy || !draftState.runtime?.enabled || !draftState.runtime?.configured} onClick={() => void executeDraft()} className="mt-3 min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Crear Offer no publicado en {draftTarget}</button><button type="button" disabled={draftBusy} onClick={() => void revokeDraftApproval()} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 px-4 font-black disabled:opacity-40">Cancelar aprobación</button></div>}
             {executionCompleted && <div className="rounded-2xl border border-emerald-200/30 bg-emerald-200/[0.07] p-3 text-emerald-50"><strong>UNPUBLISHED verificado al crear {draftState.execution?.completed_at ? new Date(draftState.execution.completed_at).toLocaleString("es") : "en la ejecución registrada"}</strong><p className="mt-1 text-xs">Este estado describe la verificación realizada en ese momento; vuelve a consultar eBay antes de asumir que sigue igual.</p><p className="mt-1 break-all text-xs">Offer ID: {draftState.execution?.offer_id ?? "guardado"}</p></div>}
+            {executionCompleted && !draftState.publication && <div className="rounded-2xl border border-cyan-200/30 bg-cyan-200/[0.06] p-3"><strong>Preparar publicación automática</strong><p className="mt-2 text-sm text-white/65">El sistema revalidará cuenta, stock, seis imágenes, policies y ubicación. Después mostrará el preview final; este paso todavía no publica.</p><button type="button" disabled={draftBusy || !draftState.execution?.id} onClick={() => void prepareFinalPublication()} className="mt-3 min-h-14 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">Preparar preview final no publicado</button></div>}
+            {publicationPhase === "preview_ready" && <div className="space-y-3 rounded-2xl border border-amber-200/35 bg-amber-200/[0.07] p-3"><div><p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Preview final persistido</p><h3 className="mt-1 font-black">{String(publicationProduct.title ?? "Título pendiente")}</h3><p className="mt-2 text-xs text-white/65">SKU: {String(publicationOffer.sku ?? draftState.publication?.sku ?? "")} · Category ID: {String(publicationOffer.categoryId ?? "")} · Cantidad: {String(publicationOffer.availableQuantity ?? "")}</p><p className="mt-1 text-sm font-black">Precio exacto: {String(publicationPrice.currency ?? "USD")} {String(publicationPrice.value ?? "")}</p><p className="mt-1 text-xs text-white/65">Imágenes aprobadas: {Array.isArray(publicationProduct.imageUrls) ? publicationProduct.imageUrls.length : 0} · Location: {String(publicationOffer.merchantLocationKey ?? "")}</p><p className="mt-1 break-all text-[10px] text-white/50">Policies: {String(publicationPolicies.fulfillmentPolicyId ?? "")} · {String(publicationPolicies.paymentPolicyId ?? "")} · {String(publicationPolicies.returnPolicyId ?? "")}</p><p className="mt-2 rounded-xl border border-white/10 p-2 text-xs text-white/60">Sin promociones, Best Offer ni volume pricing. Se publicará exactamente este Offer una sola vez.</p></div><label className="block"><span className="text-sm font-black">Escribe exactamente: {finalPublishPhrase}</span><input value={publishConfirmation} onChange={(event) => setPublishConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmFinalPublication} onChange={(event) => setConfirmFinalPublication(event.target.checked)} />Revisé este preview final, incluidas las seis imágenes y el precio.</label><label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmPublishProductionAccount} onChange={(event) => setConfirmPublishProductionAccount(event.target.checked)} />Confirmo publicar en mi cuenta eBay PRODUCTION y registrar el listing ACTIVE en monitoreo.</label><button type="button" disabled={draftBusy || publishConfirmation !== finalPublishPhrase || !confirmFinalPublication || !confirmPublishProductionAccount} onClick={() => void publishFinalListing()} className="min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Publicar una sola vez en eBay</button></div>}
+            {["publish_in_flight", "outcome_unknown", "published_pending_verification"].includes(publicationPhase) && <div className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.07] p-3"><strong>{publicationPhase === "published_pending_verification" ? "Publicado; falta confirmar ACTIVE" : "Resultado de publicación en reconciliación"}</strong><p className="mt-2 text-sm text-white/65">Esta acción sólo consulta eBay y registra monitoreo. Nunca vuelve a llamar publishOffer.</p>{draftState.publication?.listing_id && <a href={`https://www.ebay.com/itm/${draftState.publication.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-sm font-black text-cyan-100 underline">Ver listing {draftState.publication.listing_id}</a>}<button type="button" disabled={draftBusy} onClick={() => void reconcileFinalListing()} className="mt-3 min-h-13 w-full rounded-2xl border border-amber-200/40 px-4 font-black disabled:opacity-40">Verificar ACTIVE y registrar monitoreo</button></div>}
+            {publicationPhase === "monitor_registered" && <div className="rounded-2xl border border-emerald-200/35 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y ciclo cerrado</strong><p className="mt-2 text-sm">Item ID {draftState.publication?.listing_id} · monitoreo comercial y disponibilidad Luna registrados.</p><a href={`https://www.ebay.com/itm/${draftState.publication?.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-black underline">Abrir listing en eBay</a></div>}
+            {publicationPhase === "terminal_failure" && <div className="rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-3 text-rose-50"><strong>Publicación detenida sin reintento automático</strong><p className="mt-2 text-sm">{draftState.publication?.last_error_code ?? "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE"}</p></div>}
+            <a href="https://www.ebay.com/sh/lst/active" target="_blank" rel="noreferrer" className="inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-white/15 text-xs font-black text-white/60">Abrir Seller Hub (respaldo manual)</a>
           </section>
 
-          <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4"><div className="flex justify-between gap-3"><h2 className="font-black">Preparación del paquete</h2><strong>{listingPackage.readiness}%</strong></div>{blockers.length ? <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-50">{blockers.map((blocker) => <li key={blocker}>{humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)}</li>)}</ul> : <p className="mt-2 text-sm text-emerald-100">Sin bloqueos. Puedes enviarlo a revisión humana.</p>}<p className="mt-3 text-xs leading-5 text-white/50">Guardar y validar sólo modifican datos internos. Únicamente “Crear Offer no publicado”, después de tu aprobación, puede crear Inventory Item + Offer API UNPUBLISHED en eBay {draftTarget}. Publicar permanece prohibido.</p></section>
+          <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4"><div className="flex justify-between gap-3"><h2 className="font-black">Preparación del paquete</h2><strong>{listingPackage.readiness}%</strong></div>{blockers.length ? <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-50">{blockers.map((blocker) => <li key={blocker}>{humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)}</li>)}</ul> : <p className="mt-2 text-sm text-emerald-100">Sin bloqueos. Puedes enviarlo a revisión humana.</p>}<p className="mt-3 text-xs leading-5 text-white/50">Guardar y validar sólo modifican datos internos. Crear el Offer permanece separado de la autorización final: publishOffer exige el preview persistido, la frase exacta y una única confirmación humana.</p></section>
         </>}
       </section>
 

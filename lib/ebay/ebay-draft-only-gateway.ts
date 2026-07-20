@@ -18,6 +18,8 @@ const TRANSIENT_STATUSES = new Set([429, 500, 502, 503, 504])
 
 export type EbayDraftOnlyTarget = "SANDBOX" | "PRODUCTION"
 
+export const EBAY_FINAL_PUBLISH_CONFIRMATION = "PUBLICAR LISTING EN EBAY"
+
 type GatewayConfig = {
   enabled: boolean
   masterEnabled: boolean
@@ -1202,6 +1204,237 @@ export async function discoverEbayUnpublishedOfferBySku(
 export function sanitizeEbayOfferId(value: unknown) {
   const offerId = typeof value === "string" ? value.trim() : ""
   return /^[A-Za-z0-9_-]{1,80}$/.test(offerId) ? offerId : null
+}
+
+function sanitizeEbayListingId(value: unknown) {
+  const listingId = typeof value === "string" ? value.trim() : ""
+  return /^\d{9,20}$/.test(listingId) ? listingId : null
+}
+
+function publishedListingId(body: JsonRecord) {
+  return sanitizeEbayListingId(body.listingId)
+    ?? sanitizeEbayListingId(record(body.listing).listingId)
+}
+
+async function verifyPublishedOfferWithToken(
+  config: GatewayConfig,
+  token: string,
+  offerId: string,
+  expectedSku: string,
+  fetchImpl: typeof fetch,
+) {
+  const normalizedOfferId = sanitizeEbayOfferId(offerId)
+  const normalizedSku = typeof expectedSku === "string" ? expectedSku.trim() : ""
+  if (!normalizedOfferId || !/^IMNOVA-[A-Z0-9]{16,32}$/.test(normalizedSku)) {
+    return {
+      safe: false,
+      active: false,
+      httpStatus: 0,
+      status: "",
+      offerId: normalizedOfferId,
+      listingId: null,
+      sku: normalizedSku,
+      marketplaceId: "EBAY_US",
+      blocker: "EBAY_PUBLISHED_OFFER_IDENTITY_INVALID",
+    }
+  }
+  const result = await preflightRead(
+    config,
+    token,
+    new URL(
+      `/sell/inventory/v1/offer/${encodeURIComponent(normalizedOfferId)}`,
+      config.apiOrigin,
+    ),
+    fetchImpl,
+  )
+  const status = typeof result.body.status === "string"
+    ? result.body.status.trim().toUpperCase()
+    : ""
+  const sku = typeof result.body.sku === "string" ? result.body.sku.trim() : ""
+  const marketplaceId = typeof result.body.marketplaceId === "string"
+    ? result.body.marketplaceId.trim().toUpperCase()
+    : ""
+  const listingId = publishedListingId(result.body)
+  const safe = result.ok
+    && status === "PUBLISHED"
+    && sku === normalizedSku
+    && marketplaceId === "EBAY_US"
+    && Boolean(listingId)
+  return {
+    safe,
+    // Inventory API PUBLISHED is reconciled here. Trading GetItem performs the
+    // independent ACTIVE/ownership verification before monitor registration.
+    active: safe,
+    httpStatus: result.status,
+    status,
+    offerId: normalizedOfferId,
+    listingId,
+    sku,
+    marketplaceId,
+    blocker: safe
+      ? ""
+      : status === "UNPUBLISHED"
+        ? "EBAY_OFFER_STILL_UNPUBLISHED"
+        : "EBAY_PUBLISHED_OFFER_VERIFICATION_PENDING",
+  }
+}
+
+export async function verifyEbayPublishedOffer(
+  offerId: string,
+  expectedSku: string,
+  fetchImpl: typeof fetch = fetch,
+) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  const token = await accessToken(config, fetchImpl, false)
+  return verifyPublishedOfferWithToken(config, token, offerId, expectedSku, fetchImpl)
+}
+
+export async function publishEbayOfferOnce(input: {
+  offerId: string
+  expectedSku: string
+  previewHash: string
+  publicationControlId: string
+  confirmPublish: string
+}, fetchImpl: typeof fetch = fetch) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  const offerId = sanitizeEbayOfferId(input.offerId)
+  const expectedSku = typeof input.expectedSku === "string" ? input.expectedSku.trim() : ""
+  if (
+    config.target !== "PRODUCTION"
+    || input.confirmPublish !== EBAY_FINAL_PUBLISH_CONFIRMATION
+    || !offerId
+    || !/^IMNOVA-[A-Z0-9]{16,32}$/.test(expectedSku)
+    || !/^[0-9a-f]{64}$/.test(input.previewHash)
+    || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(input.publicationControlId)
+  ) throw new Error("EBAY_FINAL_PUBLISH_AUTHORIZATION_INVALID")
+
+  const token = await accessToken(config, fetchImpl)
+  const unpublished = await verifyOfferWithToken(
+    config,
+    token,
+    offerId,
+    expectedSku,
+    "EBAY_US",
+    fetchImpl,
+  )
+  if (!unpublished.safe) {
+    const alreadyPublished = await verifyPublishedOfferWithToken(
+      config,
+      token,
+      offerId,
+      expectedSku,
+      fetchImpl,
+    )
+    if (alreadyPublished.safe) {
+      return {
+        ok: true,
+        status: alreadyPublished.httpStatus,
+        listingId: alreadyPublished.listingId,
+        outcomeKnown: true,
+        reconciled: true,
+        publishRequestSent: false,
+        blocker: "",
+      }
+    }
+    return {
+      ok: false,
+      status: unpublished.httpStatus,
+      listingId: null,
+      outcomeKnown: true,
+      reconciled: false,
+      publishRequestSent: false,
+      blocker: unpublished.blocker || "EBAY_OFFER_NOT_PUBLISHABLE",
+    }
+  }
+
+  const url = new URL(
+    `/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/publish`,
+    config.apiOrigin,
+  )
+  let responseStatus = 0
+  let responseBody: JsonRecord = {}
+  let requestCompleted = false
+  try {
+    const response = await fetchImpl(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Language": "en-US",
+        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    responseStatus = response.status
+    responseBody = record(await response.json().catch(() => ({})))
+    requestCompleted = true
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        listingId: null,
+        outcomeKnown: response.status < 500,
+        reconciled: false,
+        publishRequestSent: true,
+        blocker: response.status < 500
+          ? "EBAY_PUBLISH_WRITE_REJECTED"
+          : "EBAY_PUBLISH_OUTCOME_UNKNOWN",
+        body: safeBody(responseBody),
+      }
+    }
+  } catch {
+    // A timeout is never retried with POST. Reconciliation below uses GET only.
+  }
+
+  const returnedListingId = publishedListingId(responseBody)
+  if (requestCompleted && returnedListingId) {
+    return {
+      ok: true,
+      status: responseStatus,
+      listingId: returnedListingId,
+      outcomeKnown: true,
+      reconciled: false,
+      publishRequestSent: true,
+      blocker: "",
+    }
+  }
+
+  let verification = await verifyPublishedOfferWithToken(
+    config,
+    token,
+    offerId,
+    expectedSku,
+    fetchImpl,
+  )
+  for (let attempt = 1; attempt < 3 && !verification.safe; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 250 * attempt))
+    verification = await verifyPublishedOfferWithToken(
+      config,
+      token,
+      offerId,
+      expectedSku,
+      fetchImpl,
+    )
+  }
+  return verification.safe
+    ? {
+      ok: true,
+      status: responseStatus || verification.httpStatus,
+      listingId: verification.listingId,
+      outcomeKnown: true,
+      reconciled: true,
+      publishRequestSent: true,
+      blocker: "",
+    }
+    : {
+      ok: false,
+      status: responseStatus || verification.httpStatus,
+      listingId: null,
+      outcomeKnown: false,
+      reconciled: false,
+      publishRequestSent: true,
+      blocker: "EBAY_PUBLISH_OUTCOME_UNKNOWN",
+    }
 }
 
 export function ebayDraftOnlyRuntimeStatus() {
