@@ -215,12 +215,39 @@ type ImageAsset = {
   rights_basis: string
   authorization_reference: string
   transformation_version: string
+  transformation?: {
+    slot?: string
+    layoutId?: string
+    sameDayImageControlId?: string
+    baseSameDayImageControlId?: string
+  }
   qa_result: {
     automaticStatus?: string
     sourceEdgeLightNeutralRatio?: number
     humanApprovalRequired?: boolean
     manualChecksRequired?: string[]
   }
+}
+
+type ImageRevisionPayload = {
+  revision: {
+    id: string
+    status: string
+    base_control_id: string
+    revision_number: number
+    image_set_hash?: string | null
+  }
+  assets: Array<{
+    id: string
+    status: string
+    role: string
+    slot: string
+    layoutId: string
+    outputSha256: string
+    reusedFromHistory: boolean
+    previewUrl: string | null
+    previewExpiresInSeconds: number | null
+  }>
 }
 
 const emptyForm: FormState = {
@@ -421,6 +448,12 @@ function httpsImageUrl(value: unknown) {
   }
 }
 
+function validUuid(value: unknown) {
+  const normalized = String(value ?? "").trim()
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(normalized) ? normalized : ""
+}
+
 function humanImageError(error: unknown) {
   const code = error instanceof Error ? error.message : ""
   const messages: Record<string, string> = {
@@ -501,6 +534,9 @@ export default function EbayListingWorkspacePage() {
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imageAssets, setImageAssets] = useState<ImageAsset[]>([])
   const [imageBusy, setImageBusy] = useState(false)
+  const [imageRevision, setImageRevision] = useState<ImageRevisionPayload | null>(null)
+  const [imageRevisionBusy, setImageRevisionBusy] = useState(false)
+  const [imageRevisionConfirmed, setImageRevisionConfirmed] = useState(false)
   const [imageRightsBasis, setImageRightsBasis] = useState("supplier_authorized")
   const [imageAuthorizationReference, setImageAuthorizationReference] = useState("")
   const [rightsEvidenceConfirmed, setRightsEvidenceConfirmed] = useState(false)
@@ -521,12 +557,15 @@ export default function EbayListingWorkspacePage() {
     body?: Record<string, unknown> | FormData,
     packageId?: string,
     candidateKey?: string,
+    revisionId?: string,
   ) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
     if (sessionError || !data.session) throw new Error("La sesión Admin expiró.")
     const endpoint = body
       ? "/api/admin/ebay/images"
-      : `/api/admin/ebay/images?packageId=${encodeURIComponent(packageId ?? "")}&candidateKey=${encodeURIComponent(candidateKey ?? "")}`
+      : revisionId
+        ? `/api/admin/ebay/images?revisionId=${encodeURIComponent(revisionId)}`
+        : `/api/admin/ebay/images?packageId=${encodeURIComponent(packageId ?? "")}&candidateKey=${encodeURIComponent(candidateKey ?? "")}`
     const multipart = body instanceof FormData
     const response = await fetch(endpoint, {
       method: body ? "POST" : "GET",
@@ -551,6 +590,21 @@ export default function EbayListingWorkspacePage() {
       setImageAssets((payload.assets ?? []) as ImageAsset[])
     } catch (requestError) {
       setError(getMobileReviewRequestError(requestError, "No se pudo cargar el historial de imágenes."))
+    }
+  }, [imageRequest])
+
+  const loadImageRevision = useCallback(async (revisionId: string) => {
+    try {
+      const payload = await imageRequest(undefined, undefined, undefined, revisionId)
+      setImageRevision({
+        revision: payload.revision,
+        assets: Array.isArray(payload.assets) ? payload.assets : [],
+      })
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(
+        requestError,
+        "No se pudo recuperar la revisión corregida de imágenes.",
+      ))
     }
   }, [imageRequest])
 
@@ -682,11 +736,16 @@ export default function EbayListingWorkspacePage() {
         setWorkspaceGateBlockers([])
         setListingPackage(nextPackage)
         setForm(fromPackage(object(nextPackage.package_data)))
+        setImageRevision(null)
         setDraftConfiguration({
           ...draftConfigurationFromPackage(object(nextPackage.package_data), selected),
           sku: reservedDraftSku(nextPackage.id),
         })
         void loadImageAssets(nextPackage.id, nextPackage.candidate_key)
+        const preferredImageRevisionId = validUuid(
+          object(nextPackage.package_data).preferredImageRevisionId,
+        )
+        if (preferredImageRevisionId) void loadImageRevision(preferredImageRevisionId)
         let draftWarning = ""
         try {
           const draft = await draftRequest(undefined, nextPackage.id)
@@ -708,11 +767,33 @@ export default function EbayListingWorkspacePage() {
         setMessage("")
       }
     })()
-  }, [request, draftRequest, loadImageAssets])
+  }, [request, draftRequest, loadImageAssets, loadImageRevision])
 
   const approvedImageAssets = useMemo(() => imageAssets
     .filter((asset) => asset.status === "approved")
     .sort((left, right) => left.position - right.position), [imageAssets])
+  const approvedBaseImageControlId = useMemo(() => {
+    const controls = new Map<string, Set<string>>()
+    for (const asset of approvedImageAssets) {
+      const controlId = validUuid(asset.transformation?.sameDayImageControlId)
+      const slot = String(asset.transformation?.slot ?? "").trim()
+      if (!controlId || !slot) continue
+      const slots = controls.get(controlId) ?? new Set<string>()
+      slots.add(slot)
+      controls.set(controlId, slots)
+    }
+    const exactSlots = [
+      "MAIN_WHITE_BACKGROUND",
+      "PACK_AND_COUNT",
+      "KEY_FEATURES",
+      "SIZE_AND_CONTENT",
+      "USE_CONTEXT",
+      "PACKAGE_CONTENTS",
+    ]
+    return [...controls].find(([, slots]) =>
+      exactSlots.every((slot) => slots.has(slot)) && slots.size === 6
+    )?.[0] ?? ""
+  }, [approvedImageAssets])
   const requiredTaxonomyAspects = useMemo(() => new Set(
     draftState.taxonomy?.requiredAspects.map((aspect) => aspect.name) ?? [],
   ), [draftState.taxonomy])
@@ -882,6 +963,92 @@ export default function EbayListingWorkspacePage() {
     }
     if (!rightsEvidenceConfirmed) {
       throw new Error("EBAY_IMAGE_RIGHTS_EVIDENCE_CONFIRMATION_REQUIRED")
+    }
+  }
+
+  async function generateImageRevision() {
+    if (!approvedBaseImageControlId || imageRevisionBusy) return
+    setImageRevisionBusy(true)
+    setImageRevisionConfirmed(false)
+    setError("")
+    setMessage("Generando seis composiciones corregidas sin tocar eBay…")
+    try {
+      const payload = await imageRequest({
+        action: "generate",
+        baseControlId: approvedBaseImageControlId,
+        reason: "IMAGE_COMPOSITOR_DEFECT",
+        ...(imageRevision?.revision.status === "REJECTED"
+          ? { requestKey: crypto.randomUUID() }
+          : {}),
+      })
+      setImageRevision({
+        revision: payload.revision,
+        assets: Array.isArray(payload.assets) ? payload.assets : [],
+      })
+      setMessage(payload.revision?.status === "APPROVED"
+        ? "La revisión corregida ya estaba aprobada y sigue lista para el próximo preview. No se escribió en eBay."
+        : "Se prepararon seis imágenes nuevas. Compara las seis antes de aprobar o rechazar el conjunto completo.")
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(
+        requestError,
+        "No se pudo generar la revisión corregida.",
+      ))
+      setMessage("")
+    } finally {
+      setImageRevisionBusy(false)
+    }
+  }
+
+  async function decideImageRevision(decision: "APPROVE" | "REJECT") {
+    const revisionId = validUuid(imageRevision?.revision.id)
+    if (!revisionId || !imageRevisionConfirmed || imageRevisionBusy) return
+    setImageRevisionBusy(true)
+    setError("")
+    setMessage(decision === "APPROVE"
+      ? "Aprobando atómicamente las seis imágenes internas…"
+      : "Rechazando atómicamente la revisión interna…")
+    try {
+      const payload = await imageRequest({
+        action: "review",
+        revisionId,
+        decision,
+        confirmed: true,
+      })
+      const reviewed = object(payload.reviewed)
+      const approvedUrls = Array.isArray(reviewed.imageUrls)
+        ? reviewed.imageUrls
+          .map(httpsImageUrl)
+          .filter((url): url is string => Boolean(url))
+        : []
+      if (decision === "APPROVE" && approvedUrls.length === 6) {
+        setForm((current) => ({ ...current, imageUrls: approvedUrls }))
+        setListingPackage((current) => current ? {
+          ...current,
+          package_data: {
+            ...current.package_data,
+            preferredImageRevisionId: revisionId,
+            imageUrls: approvedUrls,
+          },
+        } : current)
+      }
+      await Promise.all([
+        loadImageRevision(revisionId),
+        listingPackage && opportunity
+          ? loadImageAssets(listingPackage.id, opportunity.candidate_key)
+          : Promise.resolve(),
+      ])
+      setImageRevisionConfirmed(false)
+      setMessage(decision === "APPROVE"
+        ? "Revisión APPROVED: las seis imágenes quedaron preferidas en el paquete interno. No se cambió Inventory Item, Offer ni listing eBay."
+        : "Revisión rechazada y conservada como historial. El set anterior continúa intacto.")
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(
+        requestError,
+        "No se pudo guardar la decisión sobre las seis imágenes.",
+      ))
+      setMessage("")
+    } finally {
+      setImageRevisionBusy(false)
     }
   }
 
@@ -1417,6 +1584,26 @@ export default function EbayListingWorkspacePage() {
             <h2 className="mt-1 text-xl font-black">Fondo blanco y 1600×1600</h2>
             <p className="mt-2 text-sm leading-6 text-white/60">El optimizador es determinista: limpia únicamente fondos claros, centra el producto y no inventa piezas. Cada resultado queda pendiente hasta compararlo y aprobarlo.</p>
             <div className="mt-3 rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.05] p-3 text-xs leading-5 text-emerald-50"><strong>Protección:</strong> no se usan imágenes de competidores, no se genera el producto desde cero y la imagen original queda identificada por hash.</div>
+
+            <div className="mt-4 rounded-2xl border border-cyan-200/30 bg-[#071820] p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-100/60">Corrección append-only</p><h3 className="mt-1 font-black">Revisión estratégica de seis imágenes</h3><p className="mt-1 text-xs leading-5 text-white/55">Motivo predeterminado: <strong>IMAGE_COMPOSITOR_DEFECT</strong>. El set aprobado anterior nunca se borra ni se desactiva.</p></div>
+                <span className={`rounded-full border px-2 py-1 text-[10px] font-black ${approvedBaseImageControlId ? "border-emerald-200/30 text-emerald-100" : "border-amber-200/30 text-amber-100"}`}>{approvedBaseImageControlId ? "CONTROL BASE APPROVED" : "SIN CONTROL BASE EXACT-SIX"}</span>
+              </div>
+              <button type="button" disabled={!approvedBaseImageControlId || imageRevisionBusy} onClick={() => void generateImageRevision()} className="mt-3 min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">{imageRevisionBusy ? "Procesando las seis…" : imageRevision ? "Actualizar vistas de la revisión" : "Generar revisión corregida"}</button>
+              {!approvedBaseImageControlId && <p className="mt-2 text-xs leading-5 text-amber-50">Esta acción aparece únicamente cuando el candidato conserva seis slots aprobados ligados al mismo control. El servidor vuelve a comprobar que el control esté APPROVED.</p>}
+
+              {imageRevision && <div className="mt-4 space-y-3">
+                <div className="flex items-center justify-between gap-3"><strong className="text-sm">Revisión {imageRevision.revision.revision_number} · {imageRevision.revision.status}</strong><span className="text-xs text-white/50">{imageRevision.assets.length}/6</span></div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {imageRevision.assets.map((asset, index) => <figure key={asset.id} className="min-w-0 rounded-xl border border-white/10 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white">{asset.previewUrl ? <img src={asset.previewUrl} alt={`Revisión corregida ${index + 1}: ${asset.slot}`} className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center bg-black p-2 text-center text-xs text-white/50">Vista no disponible</div>}</div><figcaption className="mt-2 min-w-0"><strong className="block truncate text-[10px]">{index + 1}. {asset.slot}</strong><span className="mt-1 block truncate text-[9px] text-cyan-100/55">{asset.layoutId}</span>{asset.reusedFromHistory && <span className="mt-1 block text-[9px] text-emerald-100/70">Activo histórico reutilizado</span>}</figcaption></figure>)}
+                </div>
+                {imageRevision.assets.length !== 6 && <p className="rounded-xl border border-rose-200/25 p-2 text-xs text-rose-50">El conjunto no contiene exactamente seis vistas; aprobación bloqueada.</p>}
+                {imageRevision.revision.status === "PENDING_REVIEW" && <div className="space-y-2 rounded-xl border border-amber-200/25 bg-amber-200/[0.05] p-3"><label className="flex items-start gap-2 text-xs leading-5"><input type="checkbox" checked={imageRevisionConfirmed} onChange={(event) => setImageRevisionConfirmed(event.target.checked)} className="mt-1 size-4" /><span>Comparé las seis imágenes, sus productos, cantidades, textos, slots y layouts. Confirmo decidir el conjunto completo de forma atómica.</span></label><div className="grid grid-cols-2 gap-2"><button type="button" disabled={imageRevisionBusy || !imageRevisionConfirmed || imageRevision.assets.length !== 6} onClick={() => void decideImageRevision("REJECT")} className="min-h-11 rounded-xl border border-rose-200/35 text-xs font-black text-rose-50 disabled:opacity-40">Rechazar las 6</button><button type="button" disabled={imageRevisionBusy || !imageRevisionConfirmed || imageRevision.assets.length !== 6} onClick={() => void decideImageRevision("APPROVE")} className="min-h-11 rounded-xl bg-emerald-200 px-2 text-xs font-black text-black disabled:opacity-40">Aprobar las 6</button></div></div>}
+                {imageRevision.revision.status === "APPROVED" && <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50"><strong>APPROVED y listo para el próximo preview.</strong> Esta decisión sólo cambió la preferencia interna del paquete. No actualizó ni publicó nada en eBay.</div>}
+                {imageRevision.revision.status === "REJECTED" && <div className="rounded-xl border border-rose-200/25 p-3 text-xs leading-5 text-rose-50">Revisión rechazada y preservada. Usa “Generar revisión corregida” para abrir una nueva revisión append-only.</div>}
+              </div>}
+            </div>
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <label className="grid gap-1 text-sm font-bold"><span>Derechos de la imagen</span><select value={imageRightsBasis} onChange={(event) => { setImageRightsBasis(event.target.value); setRightsEvidenceConfirmed(false); setDraftConfiguration((current) => ({ ...current, imageRightsBasis: event.target.value, imageSource: event.target.value === "owned" ? "owned" : event.target.value === "licensed" ? "licensed_asset" : "luna" })) }} className="min-h-12 rounded-2xl border border-white/20 bg-black/30 px-3"><option value="supplier_authorized">Autorizada por Luna/proveedor</option><option value="owned">Fotografía propia</option><option value="licensed">Licencia documentada</option></select></label>
