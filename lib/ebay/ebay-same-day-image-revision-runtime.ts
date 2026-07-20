@@ -172,12 +172,14 @@ async function loadBaseContext(input: {
         "SAME_DAY_IMAGE_REVISION_VERIFIED_ACTIVE_EVIDENCE_REQUIRED",
       )
     }
+    const connectorListingId = uuid(manualLink.connector_listing_id)
+    const ebayItemId = text(manualLink.ebay_item_id, 20)
     const { data: activeListing, error: activeListingError } = await input.supabase
       .from("ebay_active_listings")
       .select("id")
-      .eq("id", manualLink.connector_listing_id)
+      .eq("id", connectorListingId)
       .eq("account_key", input.accountKey)
-      .eq("ebay_item_id", manualLink.ebay_item_id)
+      .eq("ebay_item_id", ebayItemId)
       .eq("listing_status", "active")
       .maybeSingle()
     if (activeListingError || !activeListing) {
