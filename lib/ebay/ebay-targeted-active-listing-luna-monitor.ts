@@ -4,7 +4,10 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 
 import type { DirectedLunaProduct } from "./ebay-luna-directed-product-import"
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
-import { fetchDirectedLunaProduct } from "./ebay-luna-directed-product-import.ts"
+import {
+  fetchDirectedLunaProduct,
+  parseDirectedLunaProductUrl,
+} from "./ebay-luna-directed-product-import.ts"
 
 export const TARGETED_ACTIVE_LISTING_LUNA_MONITOR_VERSION =
   "EBAY_TARGETED_ACTIVE_LISTING_LUNA_MONITOR_V1" as const
@@ -194,10 +197,21 @@ function publicLunaFetch(fetchImpl: typeof fetch, timeoutMs: number): typeof fet
     const parsed = new URL(requestUrl)
     const headers = new Headers(init.headers)
     const method = (init.method ?? "GET").toUpperCase()
+    let exactPublicJsonUrl = false
+    if (parsed.pathname.endsWith(".js")) {
+      try {
+        const productUrl = new URL(parsed.toString())
+        productUrl.pathname = parsed.pathname.slice(0, -3)
+        const expected = parseDirectedLunaProductUrl(productUrl.toString()).jsonUrl
+        exactPublicJsonUrl = parsed.toString() === expected
+      } catch {
+        exactPublicJsonUrl = false
+      }
+    }
     if (
       parsed.protocol !== "https:" ||
       !LUNA_HOSTS.has(parsed.hostname) ||
-      !/^\/products\/[a-z0-9][a-z0-9-]{0,180}\.js$/i.test(parsed.pathname) ||
+      !exactPublicJsonUrl ||
       method !== "GET" ||
       init.body !== undefined && init.body !== null
     ) {
