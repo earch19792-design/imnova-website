@@ -552,6 +552,11 @@ export default function EbayListingWorkspacePage() {
   const [confirmFinalPublication, setConfirmFinalPublication] = useState(false)
   const [confirmPublishProductionAccount, setConfirmPublishProductionAccount] = useState(false)
   const [skuCopied, setSkuCopied] = useState(false)
+  const [activeRevisionItemId, setActiveRevisionItemId] = useState("")
+  const [activeRevisionConfirmation, setActiveRevisionConfirmation] = useState("")
+  const [activeRevisionApplication, setActiveRevisionApplication] = useState<Record<string, unknown> | null>(null)
+  const [activeRevisionBusy, setActiveRevisionBusy] = useState(false)
+  const activeRevisionIdempotency = useRef<{ scope: string; key: string } | null>(null)
 
   const imageRequest = useCallback(async (
     body?: Record<string, unknown> | FormData,
@@ -843,6 +848,15 @@ export default function EbayListingWorkspacePage() {
       : draftTarget === "SANDBOX" ? "CREAR DRAFT NO PUBLICADO" : "")
   const executionCompleted = draftState.execution?.phase === "completed"
   const publicationPhase = draftState.publication?.phase ?? ""
+  const verifiedActiveItemId = draftState.publication?.verified_active_at
+    && /^\d{9,20}$/.test(String(draftState.publication.listing_id ?? ""))
+    ? String(draftState.publication.listing_id)
+    : ""
+  const activeRevisionExactPhrase = "APLICAR 6 IMAGENES AL LISTING ACTIVO"
+  const activeRevisionPhase = String(activeRevisionApplication?.phase ?? "")
+  const activeRevisionOutcomeUnknown = /OUTCOME_UNKNOWN|IN_FLIGHT|PENDING_RECONCILIATION/i
+    .test(activeRevisionPhase)
+  const activeRevisionApplied = /APPLIED|COMPLETED|VERIFIED/i.test(activeRevisionPhase)
   const finalPublishPhrase = draftState.publicationRequirements?.exactConfirmPublish
     ?? "PUBLICAR LISTING EN EBAY"
   const publicationPreview = object(draftState.publication?.preview)
@@ -863,6 +877,17 @@ export default function EbayListingWorkspacePage() {
     draftConfiguration.paymentPolicyId,
     draftConfiguration.returnPolicyId,
   ].every((value) => value.trim().length > 0)
+
+  useEffect(() => {
+    if (verifiedActiveItemId && !activeRevisionItemId) {
+      setActiveRevisionItemId(verifiedActiveItemId)
+    }
+  }, [activeRevisionItemId, verifiedActiveItemId])
+
+  useEffect(() => {
+    setActiveRevisionApplication(null)
+    setActiveRevisionConfirmation("")
+  }, [imageRevision?.revision.id])
 
   async function save(markReady = false) {
     if (!opportunity || !listingPackage) return
@@ -1049,6 +1074,74 @@ export default function EbayListingWorkspacePage() {
       setMessage("")
     } finally {
       setImageRevisionBusy(false)
+    }
+  }
+
+  function getActiveRevisionIdempotencyKey(revisionId: string, ebayItemId: string) {
+    const scope = `${revisionId}:${ebayItemId}`
+    if (activeRevisionIdempotency.current?.scope === scope) {
+      return activeRevisionIdempotency.current.key
+    }
+    const storageKey = `ebay-active-image-revision:${scope}`
+    let idempotencyKey = ""
+    try {
+      idempotencyKey = validUuid(window.sessionStorage.getItem(storageKey))
+      if (!idempotencyKey) {
+        idempotencyKey = crypto.randomUUID()
+        window.sessionStorage.setItem(storageKey, idempotencyKey)
+      }
+    } catch {
+      idempotencyKey = crypto.randomUUID()
+    }
+    activeRevisionIdempotency.current = { scope, key: idempotencyKey }
+    return idempotencyKey
+  }
+
+  async function applyApprovedRevisionToActiveListing() {
+    const revisionId = validUuid(imageRevision?.revision.id)
+    const baseControlId = validUuid(imageRevision?.revision.base_control_id)
+    const ebayItemId = activeRevisionItemId.trim()
+    if (imageRevision?.revision.status !== "APPROVED" || !revisionId
+      || !baseControlId || !verifiedActiveItemId
+      || ebayItemId !== verifiedActiveItemId
+      || activeRevisionConfirmation !== activeRevisionExactPhrase
+      || activeRevisionBusy) return
+    const idempotencyKey = getActiveRevisionIdempotencyKey(revisionId, ebayItemId)
+    setActiveRevisionBusy(true)
+    setError("")
+    setMessage(activeRevisionOutcomeUnknown
+      ? "Reconciliando la misma operación idempotente; no se enviará una segunda mutación…"
+      : "Aplicando únicamente las seis imágenes aprobadas al listing ACTIVE verificado…")
+    try {
+      const payload = await imageRequest({
+        action: "apply_active_revision",
+        revisionId,
+        baseControlId,
+        ebayItemId,
+        idempotencyKey,
+        confirmation: activeRevisionExactPhrase,
+      })
+      const application = object(
+        payload.application ?? payload.activeRevision ?? payload.result ?? payload,
+      )
+      const phase = String(application.phase ?? payload.phase ?? "COMPLETED")
+      setActiveRevisionApplication({ ...application, phase })
+      setMessage(/OUTCOME_UNKNOWN|IN_FLIGHT|PENDING_RECONCILIATION/i.test(phase)
+        ? "El resultado todavía es incierto. Conservamos la misma clave; usa Reconciliar para consultar sin repetir la escritura."
+        : /APPLIED|COMPLETED|VERIFIED/i.test(phase)
+          ? "Las seis imágenes aprobadas quedaron aplicadas y verificadas en el mismo listing ACTIVE. No se modificaron SKU, precio ni cantidad."
+          : `Operación registrada en fase ${phase}.`)
+    } catch (requestError) {
+      setActiveRevisionApplication({
+        phase: "OUTCOME_UNKNOWN",
+        error: getMobileReviewRequestError(
+          requestError,
+          "No fue posible confirmar el resultado de la actualización.",
+        ),
+      })
+      setMessage("Resultado desconocido: no cambies el Item ID ni la frase. Reconciliar reutilizará exactamente la misma clave idempotente.")
+    } finally {
+      setActiveRevisionBusy(false)
     }
   }
 
@@ -1600,7 +1693,7 @@ export default function EbayListingWorkspacePage() {
                 </div>
                 {imageRevision.assets.length !== 6 && <p className="rounded-xl border border-rose-200/25 p-2 text-xs text-rose-50">El conjunto no contiene exactamente seis vistas; aprobación bloqueada.</p>}
                 {imageRevision.revision.status === "PENDING_REVIEW" && <div className="space-y-2 rounded-xl border border-amber-200/25 bg-amber-200/[0.05] p-3"><label className="flex items-start gap-2 text-xs leading-5"><input type="checkbox" checked={imageRevisionConfirmed} onChange={(event) => setImageRevisionConfirmed(event.target.checked)} className="mt-1 size-4" /><span>Comparé las seis imágenes, sus productos, cantidades, textos, slots y layouts. Confirmo decidir el conjunto completo de forma atómica.</span></label><div className="grid grid-cols-2 gap-2"><button type="button" disabled={imageRevisionBusy || !imageRevisionConfirmed || imageRevision.assets.length !== 6} onClick={() => void decideImageRevision("REJECT")} className="min-h-11 rounded-xl border border-rose-200/35 text-xs font-black text-rose-50 disabled:opacity-40">Rechazar las 6</button><button type="button" disabled={imageRevisionBusy || !imageRevisionConfirmed || imageRevision.assets.length !== 6} onClick={() => void decideImageRevision("APPROVE")} className="min-h-11 rounded-xl bg-emerald-200 px-2 text-xs font-black text-black disabled:opacity-40">Aprobar las 6</button></div></div>}
-                {imageRevision.revision.status === "APPROVED" && <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50"><strong>APPROVED y listo para el próximo preview.</strong> Esta decisión sólo cambió la preferencia interna del paquete. No actualizó ni publicó nada en eBay.</div>}
+                {imageRevision.revision.status === "APPROVED" && <div className="space-y-3"><div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50"><strong>APPROVED y listo para el próximo preview.</strong> Esta decisión sólo cambió la preferencia interna del paquete. No actualizó ni publicó nada en eBay.</div><div className="rounded-xl border border-rose-200/25 bg-rose-200/[0.04] p-3"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-rose-100/65">Acción eBay separada</p><h4 className="mt-1 text-sm font-black">Aplicar al listing ACTIVE verificado</h4><p className="mt-1 text-xs leading-5 text-white/55">Esta acción actualiza exclusivamente las seis imágenes. Nunca envía URLs desde el navegador ni modifica SKU, precio, cantidad, policies o promociones.</p><label className="mt-3 block"><span className="text-xs font-black">Item ID eBay verificado ACTIVE</span><input inputMode="numeric" value={activeRevisionItemId} onChange={(event) => setActiveRevisionItemId(event.target.value.replace(/\D/g, "").slice(0, 20))} placeholder="Item ID" className="mt-1 min-h-11 w-full rounded-xl border border-white/20 bg-black/30 px-3 font-mono text-sm" /></label>{verifiedActiveItemId ? activeRevisionItemId === verifiedActiveItemId ? <p className="mt-2 text-xs text-emerald-100">Coincide con el Item ID ACTIVE verificado por el sistema.</p> : <p className="mt-2 text-xs text-rose-100">El Item ID debe coincidir exactamente con {verifiedActiveItemId}; otro listing permanece bloqueado.</p> : <p className="mt-2 rounded-xl border border-amber-200/25 p-2 text-xs leading-5 text-amber-50">Todavía no existe una verificación ACTIVE asociada a este paquete. Publica y reconcilia el listing antes de aplicar la revisión.</p>}<label className="mt-3 block"><span className="text-xs font-black">Escribe exactamente: {activeRevisionExactPhrase}</span><input value={activeRevisionConfirmation} onChange={(event) => setActiveRevisionConfirmation(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-white/20 bg-black/30 px-3 text-sm" /></label><button type="button" disabled={activeRevisionBusy || !verifiedActiveItemId || activeRevisionItemId !== verifiedActiveItemId || activeRevisionConfirmation !== activeRevisionExactPhrase || activeRevisionApplied} onClick={() => void applyApprovedRevisionToActiveListing()} className="mt-3 min-h-12 w-full rounded-xl bg-rose-200 px-3 text-sm font-black text-black disabled:opacity-40">{activeRevisionBusy ? "Procesando una sola operación…" : activeRevisionOutcomeUnknown ? "Reconciliar sin repetir escritura" : activeRevisionApplied ? "6 imágenes aplicadas y verificadas" : "Aplicar 6 imágenes al listing ACTIVE"}</button>{activeRevisionApplication && <div className={`mt-3 rounded-xl border p-2 text-xs leading-5 ${activeRevisionOutcomeUnknown ? "border-amber-200/30 text-amber-50" : activeRevisionApplied ? "border-emerald-200/30 text-emerald-50" : "border-white/15 text-white/65"}`}><strong>Fase: {activeRevisionPhase || "PENDIENTE"}</strong>{typeof activeRevisionApplication.error === "string" && <span className="mt-1 block">{activeRevisionApplication.error}</span>}{activeRevisionOutcomeUnknown && <span className="mt-1 block">La reconciliación reutiliza Item ID, revision, control y clave originales.</span>}</div>}</div></div>}
                 {imageRevision.revision.status === "REJECTED" && <div className="rounded-xl border border-rose-200/25 p-3 text-xs leading-5 text-rose-50">Revisión rechazada y preservada. Usa “Generar revisión corregida” para abrir una nueva revisión append-only.</div>}
               </div>}
             </div>
