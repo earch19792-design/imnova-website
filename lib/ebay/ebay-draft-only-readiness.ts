@@ -581,6 +581,9 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     && numberOrNull(dimensions.length)! > 0
     && numberOrNull(dimensions.width)! > 0
   const weightEvidenceReady = numberOrNull(weight.value)! > 0 && validWeightUnit
+  const packageMeasurementsReady = dimensionsEvidenceReady
+    && weightEvidenceReady
+    && ['INCH', 'CENTIMETER'].includes(text(dimensions.unit).toUpperCase())
   const resolvablePackageGates = new Set([
     ...(imageEvidenceReady ? ["NEED_AUTHORIZED_PRODUCT_IMAGES"] : []),
     ...(weightEvidenceReady ? ["NEED_PACKAGE_WEIGHT"] : []),

@@ -1682,7 +1682,8 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
   if (claimError || !claimed) {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_CLAIM_FAILED"), 409)
   }
-  if (claimed.phase !== "publish_in_flight") {
+  const claimedPublication = record(claimed)
+  if (text(claimedPublication.phase) !== "publish_in_flight") {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_RECONCILIATION_REQUIRED"), 409)
   }
   const publishResult = await publishEbayOfferOnce({
