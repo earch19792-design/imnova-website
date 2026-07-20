@@ -79,6 +79,7 @@ export type EbayListingImageComposition = {
     originalPackagePixelsPreserved: true
     competitorImageUsed: false
     verifiedFactsOnly: true
+    mainEncodingProfile?: "JPEG_Q93_444_MOZJPEG_V3"
     backgroundPlateVersion?: string
     backgroundPlateRequestHash?: string
     backgroundPlateOutputSha256?: string
@@ -224,6 +225,12 @@ function labelForSlot(slot: Exclude<EbayListingImageSlot, "MAIN_WHITE_BACKGROUND
     USE_CONTEXT: "PRODUCT VIEW",
     PACKAGE_CONTENTS: "PACKAGE CONTENTS",
   } satisfies Record<typeof slot, string>)[slot]
+}
+
+async function canonicalizeMainForV3(normalizedMain: Buffer) {
+  return sharp(normalizedMain)
+    .jpeg({ quality: 93, chromaSubsampling: "4:4:4", mozjpeg: true })
+    .toBuffer()
 }
 
 type InformationSlot = Exclude<EbayListingImageSlot, "MAIN_WHITE_BACKGROUND">
@@ -695,7 +702,7 @@ export async function composeAuthorizedEbayListingImageSet(
     const framedAuthorizedSource =
       main.transformation.backgroundMethod === "AUTHORIZED_SOURCE_FRAMED_CONTAIN"
     const output = slot === "MAIN_WHITE_BACKGROUND"
-      ? main.output
+      ? await canonicalizeMainForV3(main.output)
       : slot === "USE_CONTEXT" && backgroundPlate
         ? await composeContextImage(main.output, input.facts, backgroundPlate)
         : await composeInformationImage(main.output, slot, input.facts)
@@ -720,7 +727,7 @@ export async function composeAuthorizedEbayListingImageSet(
       }
     }
     const layoutId = slot === "MAIN_WHITE_BACKGROUND"
-      ? "MAIN_WHITE_BACKGROUND_V2"
+      ? "MAIN_WHITE_BACKGROUND_CANONICAL_V3"
       : slot === "USE_CONTEXT" && backgroundPlate
         ? "OPENAI_NEUTRAL_CONTEXT_V2"
         : INFORMATION_LAYOUTS[slot].id
@@ -746,6 +753,9 @@ export async function composeAuthorizedEbayListingImageSet(
         originalPackagePixelsPreserved: true,
         competitorImageUsed: false,
         verifiedFactsOnly: true,
+        ...(slot === "MAIN_WHITE_BACKGROUND" ? {
+          mainEncodingProfile: "JPEG_Q93_444_MOZJPEG_V3" as const,
+        } : {}),
         ...(slot === "USE_CONTEXT" && backgroundPlate ? {
           backgroundPlateVersion: backgroundPlate.plan.version,
           backgroundPlateRequestHash: backgroundPlate.plan.requestHash,
