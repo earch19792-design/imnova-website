@@ -73,7 +73,7 @@ alter table public.ebay_active_listing_title_revision_executions enable row leve
 alter table public.ebay_active_listing_title_revision_executions force row level security;
 revoke all on table public.ebay_active_listing_title_revision_executions from anon, authenticated;
 revoke all on table public.ebay_active_listing_title_revision_executions from public, service_role;
-grant select on table public.ebay_active_listing_title_revision_executions to service_role;
+grant select, insert, update on table public.ebay_active_listing_title_revision_executions to service_role;
 
 create or replace function public.enforce_ebay_active_title_revision_append_only()
 returns trigger

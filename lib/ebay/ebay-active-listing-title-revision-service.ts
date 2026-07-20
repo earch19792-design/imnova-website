@@ -271,13 +271,13 @@ export async function prepareVerifiedActiveListingTitle(input: {
   const packageRead = await input.supabase.from("ebay_listing_packages")
     .select("id,opportunity_id,candidate_key,status,created_by,account_key")
     .eq("id", listingPackageId).eq("account_key", input.accountKey)
-    .eq("created_by", actorId).eq("status", "approved").maybeSingle()
+    .eq("created_by", actorId).maybeSingle()
   if (packageRead.error || !packageRead.data) {
-    throw new Error("EBAY_ACTIVE_TITLE_REVISION_APPROVED_PACKAGE_REQUIRED")
+    throw new Error("EBAY_ACTIVE_TITLE_REVISION_BOUND_PACKAGE_REQUIRED")
   }
   const listingPackage = record(packageRead.data)
   const candidateRead = await input.supabase.from("ebay_same_day_pilot_candidates")
-    .select("id,run_id,opportunity_id,candidate_key,product_title,product_facts_summary,manual_handoff_package,run:ebay_same_day_pilot_runs!inner(marketplace_account_key,created_by)")
+    .select("id,run_id,opportunity_id,candidate_key,state,machine_state,product_title,product_facts_summary,manual_handoff_package,run:ebay_same_day_pilot_runs!inner(marketplace_account_key,created_by)")
     .eq("opportunity_id", listingPackage.opportunity_id)
     .eq("candidate_key", listingPackage.candidate_key)
     .eq("run.marketplace_account_key", input.accountKey)
@@ -286,6 +286,17 @@ export async function prepareVerifiedActiveListingTitle(input: {
     throw new Error("EBAY_ACTIVE_TITLE_REVISION_CANDIDATE_REQUIRED")
   }
   const candidate = record(candidateRead.data)
+  const handoff = record(candidate.manual_handoff_package)
+  const handoffPackage = record(handoff.package)
+  const packageStatus = text(listingPackage.status, 40)
+  const verifiedActiveDraft = packageStatus === "draft"
+    && text(candidate.state, 40) === "VERIFIED_ACTIVE"
+    && text(candidate.machine_state, 40) === "VERIFIED_ACTIVE"
+    && text(handoffPackage.candidateId, 40) === text(candidate.id, 40)
+    && /^[0-9a-f]{64}$/.test(text(handoff.packageHash, 64))
+  if (packageStatus !== "approved" && !verifiedActiveDraft) {
+    throw new Error("EBAY_ACTIVE_TITLE_REVISION_BOUND_PACKAGE_REQUIRED")
+  }
   const linkRead = await input.supabase.from("ebay_manual_listing_links")
     .select("id,opportunity_id,candidate_key,created_by,verification_status,verification_method,connector_listing_status,connector_listing_id,connector_ebay_sku")
     .eq("account_key", input.accountKey).eq("ebay_item_id", ebayItemId)
