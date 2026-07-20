@@ -9,6 +9,10 @@ import { NextResponse } from "next/server"
 import { getCommercialMonitorScheduleConfiguration } from "@/lib/ebay/ebay-commercial-monitor-service"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { commercialPreviewCronAuthorized } from "@/lib/ebay/ebay-commercial-preview-pilot"
+import {
+  getSellerWhatsAppGatewayConfiguration,
+  preflightSellerWhatsAppGateway,
+} from "@/lib/ebay/ebay-seller-whatsapp-gateway"
 import { dispatchCommercialAlertOutbox } from "@/lib/marketplace/commercial-alert-dispatcher"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
@@ -38,6 +42,22 @@ export async function GET(req: Request) {
       status: "disabled",
       schedule,
       safety: { previewOnly: true, productionUnchanged: true },
+    })
+  }
+  if (new URL(req.url).searchParams.get("mode") === "whatsapp-preflight") {
+    const preflight = await preflightSellerWhatsAppGateway({ force: true })
+    return NextResponse.json({
+      success: preflight.success,
+      mode: "whatsapp-preflight",
+      configuration: getSellerWhatsAppGatewayConfiguration(),
+      preflight,
+      safety: {
+        alertClaimed: false,
+        realMessageSent: false,
+        providerWriteUsed: false,
+        secretsReturned: false,
+        productionUnchanged: true,
+      },
     })
   }
   const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
