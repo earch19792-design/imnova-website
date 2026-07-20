@@ -480,12 +480,14 @@ export async function generateAndPersistSameDayImagePackage(input: {
     }
     await cleanupUploaded(input.supabase, uploaded)
     const knownRejectedRequest = /^EBAY_IMAGE_OPENAI_HTTP_(429|5[0-9]{2})$/.test(code)
+    const rejectedBeforeNetwork = code === "EBAY_IMAGE_OPENAI_KEY_MISSING"
+      || code === "EBAY_IMAGE_OPENAI_PLAN_NOT_ALLOWED"
     await input.supabase.rpc("fail_ebay_same_day_pilot_image_package_run", {
       p_control_id: controlId,
       p_actor: actorId,
       p_lease_token: leaseToken,
       p_error_code: code,
-      p_openai_call_made: providerDispatched && !knownRejectedRequest,
+      p_openai_call_made: providerDispatched && !knownRejectedRequest && !rejectedBeforeNetwork,
     })
     throw error
   } finally {
