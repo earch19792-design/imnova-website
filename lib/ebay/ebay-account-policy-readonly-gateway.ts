@@ -102,7 +102,7 @@ function cacheKey(config: GatewayConfig) {
     config.clientId,
     config.clientSecret,
     config.refreshToken,
-    READONLY_SCOPES.join(" "),
+    EBAY_READONLY_SCOPES.join(" "),
   ].join("\u0000")).digest("hex")
 }
 
@@ -194,7 +194,7 @@ async function authenticatedToken(
         body: new URLSearchParams({
           grant_type: "refresh_token",
           refresh_token: config.refreshToken,
-          scope: READONLY_SCOPES.join(" "),
+          scope: EBAY_READONLY_SCOPES.join(" "),
         }),
         cache: "no-store",
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -449,7 +449,7 @@ export function ebayAccountPolicyReadonlyRuntimeStatus() {
     configured: config.configured,
     oauthConfigured: config.oauthConfigured,
     identityBound: config.identityBound,
-    scopes: [...READONLY_SCOPES],
+    scopes: [...EBAY_READONLY_SCOPES],
     ebayResourceMethods: ["GET", "POST:GetUser(read-only)"],
     oauthTokenExchangeMethod: "POST",
     ebayWriteMethods: [],
