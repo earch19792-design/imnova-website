@@ -71,8 +71,9 @@ create table if not exists public.ebay_active_listing_title_revision_executions 
 
 alter table public.ebay_active_listing_title_revision_executions enable row level security;
 alter table public.ebay_active_listing_title_revision_executions force row level security;
-revoke all on table public.ebay_active_listing_title_revision_executions from public, anon, authenticated;
-grant select, insert, update on table public.ebay_active_listing_title_revision_executions to service_role;
+revoke all on table public.ebay_active_listing_title_revision_executions from anon, authenticated;
+revoke all on table public.ebay_active_listing_title_revision_executions from public, service_role;
+grant select on table public.ebay_active_listing_title_revision_executions to service_role;
 
 create or replace function public.enforce_ebay_active_title_revision_append_only()
 returns trigger
@@ -117,4 +118,3 @@ before update or delete on public.ebay_active_listing_title_revision_executions
 for each row execute function public.enforce_ebay_active_title_revision_append_only();
 
 revoke all on function public.enforce_ebay_active_title_revision_append_only() from public, anon, authenticated;
-
