@@ -1270,14 +1270,14 @@ export default function EbayListingWorkspacePage() {
               <strong>Publicación manual segura:</strong>
               <ol className="mt-2 list-decimal space-y-1 pl-5">
                 <li>Copia el SKU reservado y pégalo sin cambios en <strong>Custom label (SKU)</strong>.</li>
-                <li>En Seller Hub elige <strong>Create listing &gt; Single listing</strong> y publica desde tu cuenta oficial.</li>
+                <li>El botón abre el CTA real de <strong>Single listing</strong>; completa el formulario y publica manualmente desde tu cuenta oficial.</li>
                 <li>Regresa y registra el Item ID para que el OS verifique cuenta, producto y variante.</li>
               </ol>
               <span className="mt-2 block break-all rounded-xl bg-black/25 p-2 font-mono font-black text-white">{draftConfiguration.sku}</span>
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               <button type="button" onClick={() => void copyReservedSku()} disabled={!draftConfiguration.sku} className="min-h-12 rounded-2xl bg-white px-4 text-sm font-black text-black disabled:opacity-40">{skuCopied ? "✓ SKU copiado" : "1. Copiar SKU reservado"}</button>
-              <a href="https://www.ebay.com/sh/lst/" className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-cyan-200/30 px-4 text-center text-sm font-black text-cyan-50">2. Abrir Listings en Seller Hub</a>
+              <a href="https://www.ebay.com/sl/prelist/home?sr=shListingsCTA" className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-cyan-200/30 px-4 text-center text-sm font-black text-cyan-50">2. Abrir Create listing en Seller Hub</a>
             </div>
             <a href={`/admin/ebay/listings/register?opportunityId=${encodeURIComponent(opportunity.id)}&candidateKey=${encodeURIComponent(opportunity.candidate_key)}&supplierSku=${encodeURIComponent(opportunity.supplier_sku ?? "")}&supplierVariantId=${encodeURIComponent(opportunity.supplier_variant_id ?? "")}&expectedSku=${encodeURIComponent(draftConfiguration.sku)}`} className="mt-2 inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-emerald-200/30 px-4 text-center text-sm font-black text-emerald-50">3. Ya está publicado · registrar Item ID</a>
             {safeDefaultsMetadata.source === "EBAY_OBSERVED_OWN_LISTING_TEMPLATE" && Array.isArray(safeDefaultsMetadata.appliedFields) && safeDefaultsMetadata.appliedFields.length > 0 && <div className="mt-3 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.05] p-3 text-xs leading-5 text-cyan-50"><strong>Autocompletado desde la lectura oficial de tu listing:</strong> {safeDefaultsMetadata.appliedFields.join(", ")}. No se reutilizaron título, descripción, imágenes ni valores de aspectos; todo se revalida contra eBay.</div>}
