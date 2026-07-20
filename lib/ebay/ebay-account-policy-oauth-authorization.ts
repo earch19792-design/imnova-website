@@ -33,6 +33,7 @@ type OAuthCredentials = {
 }
 
 const RUNAME_VARIABLES = [
+  "EBAY_REDIRECT_URI",
   "EBAY_RUNAME",
   "EBAY_RU_NAME",
   "EBAY_RuName",

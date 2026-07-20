@@ -38,7 +38,8 @@ create index if not exists ebay_account_policy_oauth_handoffs_expiry_idx
 
 alter table public.ebay_account_policy_oauth_handoffs enable row level security;
 alter table public.ebay_account_policy_oauth_handoffs force row level security;
-revoke all on table public.ebay_account_policy_oauth_handoffs from public, anon, authenticated;
+revoke all on table public.ebay_account_policy_oauth_handoffs from public;
+revoke all on table public.ebay_account_policy_oauth_handoffs from anon, authenticated;
 grant select, insert, update, delete
   on table public.ebay_account_policy_oauth_handoffs to service_role;
 
