@@ -2097,10 +2097,9 @@ export async function runEbayCommercialMonitor(
       }
     }
     const verifiedIdentities = new Set<string>()
-    if (
-      !pilotListing || !pilotListing.ebay_sku ||
-      pilotListing.supplier_sku !== PILOT_SUPPLIER_SKU
-    ) {
+    const activeListingIdentityLinksComplete = listings.length > 0 &&
+      listings.every((listing) => Boolean(listing.ebay_sku && listing.supplier_sku))
+    if (!activeListingIdentityLinksComplete) {
       errors.push({
         reader: "listing_identity",
         code: "COMMERCIAL_LISTING_ITEM_ID_OR_CUSTOM_LABEL_MISMATCH",
@@ -2168,11 +2167,12 @@ export async function runEbayCommercialMonitor(
           metrics: {
             checked: expectedIdentityRows.size,
             verified: verifiedIdentities.size,
-            itemIdAndCustomLabelExact: Boolean(
-              pilotListing?.ebay_sku &&
-              verifiedIdentities.has(`${PILOT_LISTING_ID}:${pilotListing.ebay_sku}`)
+            itemIdAndCustomLabelExact: listings.length > 0 && listings.every((listing) =>
+              Boolean(listing.ebay_sku) &&
+              verifiedIdentities.has(`${listing.ebay_item_id}:${listing.ebay_sku}`)
             ),
-            supplierSkuLinked: pilotListing?.supplier_sku === PILOT_SUPPLIER_SKU,
+            supplierSkuLinked: listings.length > 0 &&
+              listings.every((listing) => Boolean(listing.supplier_sku)),
           },
         }
       } catch (error) {
@@ -2318,14 +2318,13 @@ export async function runEbayCommercialMonitor(
         sellerHubMessageRawXmlPersisted: false,
         healthFlags: divergence.openListingIds.size ? [ANALYTICS_SOURCE_DIVERGENCE] : [],
         analyticsRulesSuspendedListingIds: [...divergence.openListingIds],
-        listingIdentityVerified: Boolean(
-          pilotListing?.ebay_sku &&
-          pilotListing.supplier_sku === PILOT_SUPPLIER_SKU &&
-          verifiedIdentities.has(`${PILOT_LISTING_ID}:${pilotListing.ebay_sku}`)
+        listingIdentityVerified: listings.length > 0 && listings.every((listing) =>
+          Boolean(listing.ebay_sku && listing.supplier_sku) &&
+          verifiedIdentities.has(`${listing.ebay_item_id}:${listing.ebay_sku}`)
         ),
         lunaExactSupplyLinked,
         lunaSupplyFresh,
-        lunaSupplyObservedAt: pilotSupply?.captured_at ?? null,
+        lunaSupplyObservedAt,
         commercialDataPersistencePerformed: false,
         persistenceWrites: 0,
         eventsCreated: 0,
@@ -2461,15 +2460,16 @@ export async function runEbayCommercialMonitor(
 
     const metrics = {
       activeListings: listings.length,
-      pilot: {
-        listingId: PILOT_LISTING_ID,
-        supplierSku: PILOT_SUPPLIER_SKU,
-        ebayCustomLabel: pilotListing?.ebay_sku ?? null,
-        activeListingVerified: listings.some((row) =>
-          row.ebay_item_id === PILOT_LISTING_ID &&
-          row.supplier_sku === PILOT_SUPPLIER_SKU &&
+      listingIdentity: {
+        activeListingsEvaluated: listings.length,
+        supplierSkusLinked: listings.filter((row) => Boolean(row.supplier_sku)).length,
+        activeListingsVerified: listings.filter((row) =>
           Boolean(row.ebay_sku) &&
-          verifiedIdentities.has(`${PILOT_LISTING_ID}:${row.ebay_sku}`)
+          verifiedIdentities.has(`${row.ebay_item_id}:${row.ebay_sku}`)
+        ).length,
+        allActiveListingsVerified: listings.length > 0 && listings.every((row) =>
+          Boolean(row.ebay_sku && row.supplier_sku) &&
+          verifiedIdentities.has(`${row.ebay_item_id}:${row.ebay_sku}`)
         ),
       },
       officialOrdersRead: ordersResponseAvailable ? orders.length : null,
@@ -2746,7 +2746,6 @@ export async function getEbayCommercialMonitorDashboard(
     supabase.from("marketplace_listing_identity_verifications")
       .select("listing_id,expected_sku,observed_listing_id,observed_sku,observed_listing_status,item_id_matches,sku_matches,active_listing_confirmed,source,error_code,observed_at")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
-      .eq("listing_id", PILOT_LISTING_ID)
       .order("observed_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("commercial_monitor_scheduler_authorizations")
       .select("authorized_at,expires_at,revoked_at,last_used_at,use_count")
@@ -2910,7 +2909,7 @@ export async function getEbayCommercialMonitorDashboard(
     listingIdentity: identity ? {
       listingId: identity.listing_id,
       expectedSku: identity.expected_sku,
-      supplierSku: PILOT_SUPPLIER_SKU,
+      supplierSku: null,
       observedListingId: identity.observed_listing_id,
       observedSku: identity.observed_sku,
       observedListingStatus: identity.observed_listing_status,
@@ -2922,8 +2921,8 @@ export async function getEbayCommercialMonitorDashboard(
       observedAt: identity.observed_at,
       salesProcessingBlocked: identity.active_listing_confirmed !== true,
     } : {
-      listingId: PILOT_LISTING_ID,
-      supplierSku: PILOT_SUPPLIER_SKU,
+      listingId: null,
+      supplierSku: null,
       activeListingConfirmed: false,
       salesProcessingBlocked: true,
       error: "COMMERCIAL_LISTING_IDENTITY_NOT_VERIFIED",
