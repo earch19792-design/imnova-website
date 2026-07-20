@@ -1,9 +1,12 @@
 export const EBAY_VERIFIED_TITLE_STRATEGY_VERSION =
-  "EBAY_VERIFIED_TITLE_STRATEGY_V1_2026_07_20"
+  "EBAY_VERIFIED_TITLE_STRATEGY_V2_2026_07_20"
 
 const MAX_TITLE_LENGTH = 80
 const GENERIC_BRANDS = new Set([
   "", "unbranded", "generic", "n/a", "na", "not applicable", "does not apply",
+])
+const GENERIC_AUDIENCES = new Set([
+  "", "adult", "female", "unisex adult", "unisex adults", "woman", "women",
 ])
 
 function clean(value: unknown) {
@@ -85,7 +88,9 @@ export function buildVerifiedEbayTitle(input: {
   }
   addUnique(parts, core)
   addUnique(parts, productType)
-  addUnique(parts, audience)
+  if (!GENERIC_AUDIENCES.has(audience.toLocaleLowerCase("en-US"))) {
+    addUnique(parts, audience)
+  }
   addUnique(parts, relationship)
   addUnique(parts, color)
 

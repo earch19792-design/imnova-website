@@ -236,6 +236,19 @@ async function executionByIdempotency(
   return data ? record(data) : null
 }
 
+async function executionByTarget(
+  supabase: SupabaseClient,
+  activeListingId: string,
+  targetTitleHash: string,
+) {
+  const { data, error } = await supabase
+    .from("ebay_active_listing_title_revision_executions")
+    .select("*").eq("active_listing_id", activeListingId)
+    .eq("target_title_hash", targetTitleHash).maybeSingle()
+  if (error) throw new Error("EBAY_ACTIVE_TITLE_REVISION_LEDGER_READ_FAILED")
+  return data ? record(data) : null
+}
+
 function publicResult(row: JsonRecord, messageCode: string) {
   return {
     executionId: uuid(row.id),
@@ -335,6 +348,18 @@ export async function prepareVerifiedActiveListingTitle(input: {
       throw new Error("EBAY_ACTIVE_TITLE_REVISION_IDEMPOTENCY_MISMATCH")
     }
     return publicResult(existing, "EBAY_ACTIVE_TITLE_REVISION_PREVIEW_READY")
+  }
+  const existingTarget = await executionByTarget(
+    input.supabase,
+    text(active.id, 40),
+    targetTitleHash,
+  )
+  if (existingTarget) {
+    if (text(existingTarget.request_hash, 64) !== requestHash
+      || text(existingTarget.actor_user_id, 40) !== actorId) {
+      throw new Error("EBAY_ACTIVE_TITLE_REVISION_TARGET_CONFLICT")
+    }
+    return publicResult(existingTarget, "EBAY_ACTIVE_TITLE_REVISION_PREVIEW_READY")
   }
   const { data, error } = await input.supabase
     .from("ebay_active_listing_title_revision_executions")
