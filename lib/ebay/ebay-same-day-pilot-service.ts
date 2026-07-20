@@ -2843,8 +2843,29 @@ async function prepareFactsOnlyManualHandoff(input: {
     returnPolicyId: text(defaults?.defaults.returnPolicyId) || null,
     verifiedSourceAt: text(defaults?.verifiedSourceAt) || null,
   }
+  let accountProfileRequiresLiveValidation = false
   if (![verifiedPolicies.fulfillmentPolicyId, verifiedPolicies.paymentPolicyId,
     verifiedPolicies.returnPolicyId].every((value) => text(value))) {
+    const { data: accountProfile } = await input.supabase
+      .from("ebay_account_policy_profiles")
+      .select("fulfillment_policy_id,payment_policy_id,return_policy_id,verified_at,expires_at")
+      .eq("account_key", input.accountKey)
+      .eq("marketplace_id", MARKETPLACE)
+      .gt("expires_at", handoffGeneratedAt)
+      .maybeSingle()
+    if (accountProfile) {
+      verifiedPolicies = {
+        fulfillmentPolicyId: text(accountProfile.fulfillment_policy_id) || null,
+        paymentPolicyId: text(accountProfile.payment_policy_id) || null,
+        returnPolicyId: text(accountProfile.return_policy_id) || null,
+        verifiedSourceAt: text(accountProfile.verified_at) || null,
+      }
+      accountProfileRequiresLiveValidation = true
+    }
+  }
+  if (accountProfileRequiresLiveValidation ||
+    ![verifiedPolicies.fulfillmentPolicyId, verifiedPolicies.paymentPolicyId,
+      verifiedPolicies.returnPolicyId].every((value) => text(value))) {
     const ownListingPolicies = await verifiedBusinessPoliciesFromOwnActiveListing({
       supabase: input.supabase,
       accountKey: input.accountKey,
@@ -2867,10 +2888,17 @@ async function prepareFactsOnlyManualHandoff(input: {
       if (preflight.mode === "GET_ONLY" && preflight.identity.status === "BOUND" &&
         preflight.privilege.usable && Object.values(livePolicies).every((value) => text(value))) {
         verifiedPolicies = { ...livePolicies, verifiedSourceAt: handoffGeneratedAt }
+      } else if (accountProfileRequiresLiveValidation) {
+        verifiedPolicies = { fulfillmentPolicyId: null, paymentPolicyId: null,
+          returnPolicyId: null, verifiedSourceAt: null }
       }
     } catch {
       // The handoff builder keeps the verified-policy blocker. Never guess a
       // seller policy when the official read-only account lookup is unavailable.
+      if (accountProfileRequiresLiveValidation) {
+        verifiedPolicies = { fulfillmentPolicyId: null, paymentPolicyId: null,
+          returnPolicyId: null, verifiedSourceAt: null }
+      }
     }
   }
   const images = [text(luna?.featured_image_url, 2_000),

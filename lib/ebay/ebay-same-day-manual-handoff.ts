@@ -7,7 +7,7 @@ import { normalizeEbayCompliantFulfillmentBasis } from "./ebay-fulfillment-polic
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { parseAuthoritativeFactsInputPackage } from "./ebay-product-facts-readiness.ts"
 
-export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V6_2026_07_20"
+export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V7_2026_07_20"
 
 type JsonRecord = Record<string, unknown>
 type SafeFact = { scope: string; key: string; value: unknown; unit: string | null; status: string }

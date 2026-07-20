@@ -932,6 +932,7 @@ export default function EbayListingWorkspacePage() {
         },
       })
       const preflight = payload.preflight as EbayMobilePreflight
+      const accountPolicyProfileSaved = payload.accountPolicyProfileSaved === true
       setDraftState((current) => ({ ...current, ...payload, preflight }))
       setDraftConfiguration((current) => ({
         ...current,
@@ -942,7 +943,9 @@ export default function EbayListingWorkspacePage() {
         ebayPreflightSnapshot: preflight.snapshot,
       }))
       setMessage(preflight.snapshotStatus === "READY"
-        ? "Preflight eBay listo por 5 minutos. No se realizó ninguna escritura."
+        ? accountPolicyProfileSaved
+          ? "Preflight eBay listo. Policies guardadas para reutilización automática; no se realizó ninguna escritura eBay."
+          : "Preflight eBay listo por 5 minutos. No se realizó ninguna escritura."
         : preflight.identity.status === "IDENTITY_UNBOUND"
           ? "OAuth respondió. Copia el fingerprint mostrado y configúralo como EXPECTED_ACCOUNT_FINGERPRINT de esta rama antes de aprobar."
           : `Preflight read-only pendiente: ${preflight.snapshotStatus.replaceAll("_", " ")}.`)
