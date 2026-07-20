@@ -28,6 +28,7 @@ import {
 } from "./ebay-product-facts-enrichment"
 import { buildEbayMarketPricingRecommendation } from "./ebay-market-pricing-strategy"
 import { selectApplicableSafeListingDefaults } from "./ebay-manual-listing-service"
+import { readManualListingFromTradingApi } from "./ebay-manual-listing-trading-readonly"
 import { ebayConditionContractFromVerifiedFact } from "./ebay-manual-listing-domain"
 import { isAllowedLunaProductUrl } from "../marketplace/fulfillment-v1a-domain"
 import {
@@ -2722,6 +2723,55 @@ function jobEffectAlreadyApplied(jobType: string, machineState: string) {
   return SAME_DAY_MACHINE_ORDER.indexOf(machineState) >= SAME_DAY_MACHINE_ORDER.indexOf(minimum)
 }
 
+async function verifiedBusinessPoliciesFromOwnActiveListing(input: {
+  supabase: SupabaseClient
+  accountKey: string
+}) {
+  const [activeListings, verifiedLinks] = await Promise.all([
+    input.supabase.from("ebay_active_listings")
+      .select("ebay_item_id,listing_status,last_ebay_sync_at")
+      .eq("account_key", input.accountKey)
+      .order("last_ebay_sync_at", { ascending: false })
+      .limit(5),
+    input.supabase.from("ebay_manual_listing_links")
+      .select("ebay_item_id,verification_status,last_verification_at")
+      .eq("account_key", input.accountKey)
+      .eq("marketplace_id", MARKETPLACE)
+      .eq("verification_status", "verified")
+      .order("last_verification_at", { ascending: false })
+      .limit(5),
+  ])
+  if (activeListings.error && verifiedLinks.error) return null
+  const itemIds: string[] = []
+  const seen = new Set<string>()
+  for (const row of [
+    ...(activeListings.data ?? []).filter((entry) => text(entry.listing_status).toUpperCase() === "ACTIVE"),
+    ...(verifiedLinks.data ?? []),
+  ]) {
+    const itemId = text(row.ebay_item_id)
+    if (!/^\d{9,20}$/.test(itemId) || seen.has(itemId)) continue
+    seen.add(itemId)
+    itemIds.push(itemId)
+  }
+  for (const itemId of itemIds.slice(0, 3)) {
+    try {
+      const listing = await readManualListingFromTradingApi(itemId)
+      const policies = {
+        fulfillmentPolicyId: text(listing.safeDefaults.fulfillmentPolicyId) || null,
+        paymentPolicyId: text(listing.safeDefaults.paymentPolicyId) || null,
+        returnPolicyId: text(listing.safeDefaults.returnPolicyId) || null,
+      }
+      if (listing.ownership === "verified" &&
+        Object.values(policies).every((value) => text(value))) {
+        return { ...policies, verifiedSourceAt: listing.observedAt }
+      }
+    } catch {
+      // Continue only across the bounded set of listings owned by this account.
+    }
+  }
+  return null
+}
+
 async function prepareFactsOnlyManualHandoff(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -2792,6 +2842,14 @@ async function prepareFactsOnlyManualHandoff(input: {
     paymentPolicyId: text(defaults?.defaults.paymentPolicyId) || null,
     returnPolicyId: text(defaults?.defaults.returnPolicyId) || null,
     verifiedSourceAt: text(defaults?.verifiedSourceAt) || null,
+  }
+  if (![verifiedPolicies.fulfillmentPolicyId, verifiedPolicies.paymentPolicyId,
+    verifiedPolicies.returnPolicyId].every((value) => text(value))) {
+    const ownListingPolicies = await verifiedBusinessPoliciesFromOwnActiveListing({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+    })
+    if (ownListingPolicies) verifiedPolicies = ownListingPolicies
   }
   if (![verifiedPolicies.fulfillmentPolicyId, verifiedPolicies.paymentPolicyId,
     verifiedPolicies.returnPolicyId].every((value) => text(value))) {
