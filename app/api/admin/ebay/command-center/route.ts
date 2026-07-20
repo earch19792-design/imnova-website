@@ -8,6 +8,11 @@ import { getEbayFirstLunaQueueDashboard } from "@/lib/ebay/ebay-first-luna-scan-
 import { selectApplicableSafeListingDefaults } from "@/lib/ebay/ebay-manual-listing-service"
 import { ebayDraftOnlyEconomicsConfig } from "@/lib/ebay/ebay-draft-only-readiness"
 import { calculateEbayUnitEconomics } from "@/lib/ebay/ebay-unit-economics"
+import {
+  ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION,
+  applyVerifiedTitleToActiveListing,
+  prepareVerifiedActiveListingTitle,
+} from "@/lib/ebay/ebay-active-listing-title-revision-service"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
@@ -342,6 +347,52 @@ export async function POST(req: Request) {
         { success: false, error: "COMMAND_CENTER_CANDIDATE_MISMATCH" },
         { status: 409 },
       )
+    }
+
+    if (action === "active_title_preview" || action === "active_title_apply") {
+      const listingPackageId = typeof body.listingPackageId === "string"
+        && /^[0-9a-f-]{36}$/i.test(body.listingPackageId)
+        ? body.listingPackageId : ""
+      const ebayItemId = typeof body.ebayItemId === "string"
+        && /^\d{9,20}$/.test(body.ebayItemId) ? body.ebayItemId : ""
+      const idempotencyKey = typeof body.idempotencyKey === "string"
+        && /^[A-Za-z0-9._:-]{8,120}$/.test(body.idempotencyKey)
+        ? body.idempotencyKey : ""
+      if (!listingPackageId || !ebayItemId || !idempotencyKey) {
+        return NextResponse.json({ success: false,
+          error: "EBAY_ACTIVE_TITLE_REVISION_PREPARE_INVALID" }, { status: 400 })
+      }
+      const common = { supabase, accountKey, actorId: reviewer,
+        listingPackageId, ebayItemId, idempotencyKey }
+      try {
+        if (action === "active_title_preview") {
+          const revision = await prepareVerifiedActiveListingTitle(common)
+          return NextResponse.json({ success: true, revision,
+            confirmationPhrase: ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION,
+            safety: { ebayWrites: 0, titleDerivedServerSide: true,
+              canPublish: false } })
+        }
+        if (body.confirmation !== ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION) {
+          return NextResponse.json({ success: false,
+            error: "EBAY_ACTIVE_TITLE_REVISION_CONFIRMATION_INVALID" },
+          { status: 400 })
+        }
+        const revision = await applyVerifiedTitleToActiveListing({ ...common,
+          confirmation: ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION })
+        const success = revision.phase === "applied_verified"
+        return NextResponse.json({ success, revision, safety: {
+          permittedMutation: "TITLE_ONLY", maxEbayWrites: 1,
+          ebayWriteAttempts: revision.ebayWriteAttemptCount,
+          imagesChanged: false, priceChanged: false, quantityChanged: false,
+          policiesChanged: false, blindRetryAllowed: false,
+        } }, { status: success ? 200 : 409 })
+      } catch (titleError) {
+        const code = errorCode(titleError)
+        const status = /INVALID|REQUIRED|CONFIRMATION/.test(code) ? 400
+          : /MISMATCH|CONFLICT|UNKNOWN|IN_PROGRESS|TERMINAL|WRITE_LIMIT/.test(code)
+            ? 409 : 502
+        return NextResponse.json({ success: false, error: code }, { status })
+      }
     }
 
     if (action === "save_review") {

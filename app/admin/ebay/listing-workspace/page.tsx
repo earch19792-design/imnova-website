@@ -559,6 +559,10 @@ export default function EbayListingWorkspacePage() {
   const [activeRevisionApplication, setActiveRevisionApplication] = useState<Record<string, unknown> | null>(null)
   const [activeRevisionBusy, setActiveRevisionBusy] = useState(false)
   const activeRevisionIdempotency = useRef<{ scope: string; key: string } | null>(null)
+  const [activeTitleRevision, setActiveTitleRevision] = useState<Record<string, unknown> | null>(null)
+  const [activeTitleConfirmation, setActiveTitleConfirmation] = useState("")
+  const [activeTitleBusy, setActiveTitleBusy] = useState(false)
+  const activeTitleIdempotency = useRef<{ scope: string; key: string } | null>(null)
 
   const imageRequest = useCallback(async (
     body?: Record<string, unknown> | FormData,
@@ -588,6 +592,25 @@ export default function EbayListingWorkspacePage() {
       "No se pudo procesar la imagen",
     )
     if (!payload.success) throw new Error(getMobileReviewPayloadError(payload, "No se pudo procesar la imagen."))
+    return payload
+  }, [])
+
+  const titleRevisionRequest = useCallback(async (body: Record<string, unknown>) => {
+    const { data, error: sessionError } = await supabase.auth.getSession()
+    if (sessionError || !data.session) throw new Error("La sesión Admin expiró.")
+    const response = await fetch("/api/admin/ebay/command-center", {
+      method: "POST",
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${data.session.access_token}`,
+        "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    const payload = await readMobileReviewJson<Record<string, any>>(
+      response, "No se pudo revisar el título activo",
+    )
+    if (!payload.success && !payload.revision) {
+      throw new Error(getMobileReviewPayloadError(payload, "No se pudo revisar el título activo."))
+    }
     return payload
   }, [])
 
@@ -871,6 +894,8 @@ export default function EbayListingWorkspacePage() {
   const executionCompleted = draftState.execution?.phase === "completed"
   const publicationPhase = draftState.publication?.phase ?? ""
   const maintenanceMode = workspaceMode === "ACTIVE_MAINTENANCE"
+  const activeTitleExactPhrase = "APLICAR TITULO VERIFICADO AL LISTING ACTIVO"
+  const activeTitlePhase = String(activeTitleRevision?.phase ?? "")
   const verifiedActiveItemId = draftState.publication?.verified_active_at
     && /^\d{9,20}$/.test(String(draftState.publication.listing_id ?? ""))
     ? String(draftState.publication.listing_id)
@@ -1166,6 +1191,70 @@ export default function EbayListingWorkspacePage() {
     } finally {
       setActiveRevisionBusy(false)
     }
+  }
+
+  function getActiveTitleIdempotencyKey(packageId: string, ebayItemId: string) {
+    const scope = `${packageId}:${ebayItemId}`
+    if (activeTitleIdempotency.current?.scope === scope) {
+      return activeTitleIdempotency.current.key
+    }
+    const storageKey = `ebay-active-title-revision:${scope}`
+    let key = ""
+    try {
+      key = validUuid(window.sessionStorage.getItem(storageKey))
+      if (!key) {
+        key = crypto.randomUUID()
+        window.sessionStorage.setItem(storageKey, key)
+      }
+    } catch {
+      key = crypto.randomUUID()
+    }
+    activeTitleIdempotency.current = { scope, key }
+    return key
+  }
+
+  async function previewActiveTitleRevision() {
+    const ebayItemId = String(maintenance?.ebayItemId ?? activeRevisionItemId)
+    if (!maintenanceMode || !listingPackage || !/^\d{9,20}$/.test(ebayItemId)
+      || activeTitleBusy) return
+    setActiveTitleBusy(true); setError("")
+    setMessage("Calculando el título únicamente desde los hechos verificados…")
+    try {
+      const payload = await titleRevisionRequest({ action: "active_title_preview",
+        opportunityId: opportunity?.id, candidateKey: opportunity?.candidate_key,
+        listingPackageId: listingPackage.id, ebayItemId,
+        idempotencyKey: getActiveTitleIdempotencyKey(listingPackage.id, ebayItemId) })
+      setActiveTitleRevision(object(payload.revision))
+      setMessage("Título fijado en el ledger. Revísalo y escribe la frase exacta para aplicar sólo Title.")
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(requestError,
+        "No se pudo preparar la revisión del título.")); setMessage("")
+    } finally { setActiveTitleBusy(false) }
+  }
+
+  async function applyActiveTitleRevision() {
+    const ebayItemId = String(maintenance?.ebayItemId ?? activeRevisionItemId)
+    if (!maintenanceMode || !listingPackage || !/^\d{9,20}$/.test(ebayItemId)
+      || activeTitleConfirmation !== activeTitleExactPhrase || activeTitleBusy) return
+    setActiveTitleBusy(true); setError("")
+    setMessage(/outcome_unknown|write_in_flight/i.test(activeTitlePhase)
+      ? "Reconciliando por GetItem sin repetir la escritura…"
+      : "Aplicando únicamente el título verificado al Item ACTIVE…")
+    try {
+      const payload = await titleRevisionRequest({ action: "active_title_apply",
+        opportunityId: opportunity?.id, candidateKey: opportunity?.candidate_key,
+        listingPackageId: listingPackage.id, ebayItemId,
+        idempotencyKey: getActiveTitleIdempotencyKey(listingPackage.id, ebayItemId),
+        confirmation: activeTitleExactPhrase })
+      const revision = object(payload.revision)
+      setActiveTitleRevision(revision)
+      setMessage(revision.phase === "applied_verified"
+        ? "Título aplicado y verificado por GetItem. Imágenes, precio, cantidad y policies permanecen intactos."
+        : "Resultado pendiente de reconciliación. El sistema conservará la misma clave y no repetirá la escritura.")
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(requestError,
+        "No se pudo confirmar el resultado del cambio de título.")); setMessage("")
+    } finally { setActiveTitleBusy(false) }
   }
 
   async function optimizeImageUrl(sourceUrl = imageUrl) {
@@ -1608,7 +1697,7 @@ export default function EbayListingWorkspacePage() {
 
         {error && <p role="alert" className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm font-bold text-rose-50">{error}</p>}
         {message && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm text-cyan-50">{message}</p>}
-        {maintenanceMode && <section className="rounded-3xl border border-emerald-200/30 bg-emerald-200/[0.07] p-4"><p className="text-xs font-black uppercase tracking-widest text-emerald-100/70">Mantenimiento ACTIVE</p><h2 className="mt-1 text-xl font-black">Item {String(maintenance?.ebayItemId ?? "")}</h2><p className="mt-2 text-sm leading-6 text-white/65">Cuenta, SKU y estado ACTIVE ya fueron verificados. Aquí sólo se revisan título e imágenes; no se repiten policies ni guardas de creación.</p></section>}
+        {maintenanceMode && <section className="rounded-3xl border border-emerald-200/30 bg-emerald-200/[0.07] p-4"><p className="text-xs font-black uppercase tracking-widest text-emerald-100/70">Mantenimiento ACTIVE</p><h2 className="mt-1 text-xl font-black">Item {String(maintenance?.ebayItemId ?? "")}</h2><p className="mt-2 text-sm leading-6 text-white/65">Cuenta, SKU y estado ACTIVE ya fueron verificados. Aquí sólo se revisan título e imágenes; no se repiten policies ni guardas de creación.</p><div className="mt-4 rounded-2xl border border-white/15 bg-black/20 p-3"><p className="text-xs text-white/50">Título actual observado</p><p className="mt-1 text-sm font-bold">{String(maintenance?.title ?? "Pendiente de lectura")}</p><button type="button" disabled={!listingPackage || activeTitleBusy} onClick={() => void previewActiveTitleRevision()} className="mt-3 min-h-11 w-full rounded-xl border border-emerald-200/30 px-3 text-sm font-black disabled:opacity-40">{activeTitleBusy ? "Procesando…" : activeTitleRevision ? "Revalidar título propuesto" : "Preparar título verificado"}</button>{activeTitleRevision && <div className="mt-3 space-y-3"><div className="rounded-xl bg-emerald-200/10 p-3"><p className="text-xs text-emerald-100/60">Título calculado por el servidor</p><p className="mt-1 font-black">{String(activeTitleRevision.targetTitle ?? "")}</p></div><label className="block"><span className="text-xs font-black">Escribe exactamente: <code>{activeTitleExactPhrase}</code></span><input value={activeTitleConfirmation} onChange={(event) => setActiveTitleConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><button type="button" disabled={activeTitleBusy || activeTitleConfirmation !== activeTitleExactPhrase || activeTitlePhase === "applied_verified"} onClick={() => void applyActiveTitleRevision()} className="min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">{activeTitlePhase === "applied_verified" ? "Título aplicado y verificado" : /outcome_unknown|write_in_flight/i.test(activeTitlePhase) ? "Reconciliar sin repetir write" : "Aplicar sólo Title"}</button><p className="text-xs leading-5 text-white/50">Máximo una llamada ReviseFixedPriceItem. El XML contiene únicamente ItemID + Title; no modifica imágenes, precio, cantidad ni policies.</p></div>}</div></section>}
 
         <section aria-labelledby="ebay-account-configuration-heading" className={`${maintenanceMode ? "hidden" : ""} space-y-4 rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.05] p-4`}>
           <div>
