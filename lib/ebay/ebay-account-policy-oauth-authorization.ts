@@ -73,6 +73,56 @@ function credentials(
   }
 }
 
+function credentialCandidates(environment: NodeJS.ProcessEnv) {
+  const clientId = environment.EBAY_CLIENT_ID?.trim() ?? ""
+  const clientSecret = environment.EBAY_CLIENT_SECRET?.trim() ?? ""
+  const seen = new Set<string>()
+  return RUNAME_VARIABLES.flatMap((runameSource) => {
+    const runame = environment[runameSource]?.trim() ?? ""
+    if (!runame || seen.has(runame)) return []
+    seen.add(runame)
+    return [{ clientId, clientSecret, runame, runameSource }]
+  })
+}
+
+async function resolveAuthorizationCredentials(
+  environment: NodeJS.ProcessEnv,
+  fetchImpl: FetchLike,
+) {
+  const candidates = credentialCandidates(environment)
+  for (const candidate of candidates) {
+    const parameters = [
+      ["client_id", candidate.clientId],
+      ["response_type", "code"],
+      ["redirect_uri", candidate.runame],
+      ["scope", EBAY_READONLY_SCOPES[0]],
+    ]
+    const diagnosticUrl = `${AUTHORIZATION_ENDPOINT}?${parameters.map(
+      ([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`,
+    ).join("&")}`
+    try {
+      const response = await fetchImpl(diagnosticUrl, {
+        redirect: "follow",
+        cache: "no-store",
+        headers: { Accept: "text/html,application/json" },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+      const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
+      const body = contentType.includes("json")
+        ? record(await response.json().catch(() => ({})))
+        : { html: (await response.text()).slice(0, 20_000) }
+      const invalidRequest = text(body.error_id).toLowerCase() === "invalid_request"
+        || text(body.error).toLowerCase() === "invalid_request"
+        || text(body.html).includes("invalid_request")
+        || new URL(response.url).pathname === "/oauth2/errorOauth"
+      if (!invalidRequest) return candidate
+    } catch {
+      // Try the next configured RuName without exposing its value.
+    }
+  }
+  throw new Error("EBAY_ACCOUNT_POLICY_AUTHORIZATION_RUNAME_REJECTED")
+}
+
 export function getEbayAccountPolicyReadonlyAuthorizationConfiguration(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
@@ -141,8 +191,10 @@ export async function startEbayAccountPolicyReadonlyAuthorization(
   supabase: SupabaseClient,
   input: { actorUserId: string; accountKey: string },
   environment: NodeJS.ProcessEnv = process.env,
+  fetchImpl: FetchLike = fetch,
 ) {
-  const oauth = assertConfiguration(environment)
+  assertConfiguration(environment)
+  const oauth = await resolveAuthorizationCredentials(environment, fetchImpl)
   const accountScope = getEbaySellerAccountScopeConfiguration()
   if (!accountScope.accountKey || accountScope.accountKey !== input.accountKey) {
     throw new Error("EBAY_ACCOUNT_POLICY_AUTHORIZATION_ACCOUNT_SCOPE_INVALID")
@@ -263,7 +315,8 @@ export async function completeEbayAccountPolicyAuthorization(
   fetchImpl: FetchLike = fetch,
   environment: NodeJS.ProcessEnv = process.env,
 ) {
-  const oauth = assertConfiguration(environment)
+  assertConfiguration(environment)
+  const oauth = await resolveAuthorizationCredentials(environment, fetchImpl)
   if (
     !isValidEbayCommercialOAuthState(input.state)
     || !isValidEbayCommercialAuthorizationCode(input.code)
