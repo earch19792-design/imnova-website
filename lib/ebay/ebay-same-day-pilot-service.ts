@@ -3684,7 +3684,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       }
       if (handoffState === "PREPARING_IMAGE_PACKAGE") {
         const { error: stateUpdateError } = await input.supabase.from("ebay_same_day_pilot_candidates").update({
-          state: "PREPARING_IMAGE_PACKAGE", updated_at: new Date().toISOString(),
+          state: "READY_FOR_CONTENT", updated_at: new Date().toISOString(),
         }).eq("id", candidate.id).eq("run_id", state.run.id)
         if (stateUpdateError) throw new Error("SAME_DAY_PILOT_IMAGE_PREPARATION_STATE_FAILED")
         await enqueuePilotJob({

@@ -468,6 +468,7 @@ export async function POST(req: Request) {
   try {
     if (action === "preview") return previewDraft(body, auth.actor)
     if (action === "preflight") return preflightDraft(body, auth.actor)
+    if (action === "account_preflight") return preflightAccount(body, auth.actor)
     if (action === "approve") return approveDraft(body, auth.actor)
     if (action === "execute") return executeDraft(body, auth.actor)
     if (action === "revoke") return revokeApproval(body, auth.actor)
@@ -495,6 +496,24 @@ async function preflightDraft(body: JsonRecord, actor: string) {
   if (error || !listingPackage) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_NOT_FOUND"), 404)
   }
+  return preflightAccountConfiguration(body, actor, supabase, sellerAccountKey)
+}
+
+async function preflightAccount(body: JsonRecord, actor: string) {
+  const supabase = getSupabaseAdminClient()
+  const sellerAccountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!sellerAccountKey) {
+    return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_ACCOUNT_SCOPE_REQUIRED"), 503)
+  }
+  return preflightAccountConfiguration(body, actor, supabase, sellerAccountKey)
+}
+
+async function preflightAccountConfiguration(
+  body: JsonRecord,
+  actor: string,
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  sellerAccountKey: string,
+) {
   const requested = record(body.selection)
   const preflight = await preflightEbayDraftOnlyMobile({
     fulfillmentPolicyId: text(requested.fulfillmentPolicyId),

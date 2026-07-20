@@ -468,6 +468,7 @@ function taxonomyOptionAvailable(
 export default function EbayListingWorkspacePage() {
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null)
   const [listingPackage, setListingPackage] = useState<ListingPackage | null>(null)
+  const [workspaceGateBlockers, setWorkspaceGateBlockers] = useState<string[]>([])
   const [form, setForm] = useState<FormState>(emptyForm)
   const [message, setMessage] = useState("Cargando datos reales del producto…")
   const [error, setError] = useState("")
@@ -616,9 +617,30 @@ export default function EbayListingWorkspacePage() {
       try {
         const state = await request(undefined, opportunityId)
         const selected = state.selectedOpportunity as Opportunity
-        const prepared = await request({ action: "prepare_package", opportunityId, candidateKey })
-        const nextPackage = prepared.listingPackage as ListingPackage
         setOpportunity(selected)
+        setDraftConfiguration(initialDraftConfiguration(selected))
+        let prepared: Record<string, any>
+        try {
+          prepared = await request({ action: "prepare_package", opportunityId, candidateKey })
+        } catch (prepareError) {
+          const gateBlockers = (prepareError as Error & { blockers?: string[] }).blockers ?? []
+          const gatePending = gateBlockers.length > 0
+            || (prepareError instanceof Error
+              && prepareError.message.includes("COMMAND_CENTER_WORKSPACE_GATES_PENDING"))
+          if (!gatePending) throw prepareError
+          setWorkspaceGateBlockers(gateBlockers)
+          setListingPackage(null)
+          setDraftState({})
+          setError(gateBlockers.length
+            ? ""
+            : getMobileReviewRequestError(prepareError, "No se pudo preparar el paquete."))
+          setMessage(gateBlockers.length
+            ? "La oportunidad conserva guardas pendientes. Puedes configurar y guardar las policies de la cuenta, pero el paquete seguirá bloqueado hasta resolverlas en Command Center."
+            : "")
+          return
+        }
+        const nextPackage = prepared.listingPackage as ListingPackage
+        setWorkspaceGateBlockers([])
         setListingPackage(nextPackage)
         setForm(fromPackage(object(nextPackage.package_data)))
         setDraftConfiguration({
@@ -703,6 +725,12 @@ export default function EbayListingWorkspacePage() {
   const approvalActive = draftState.approval?.status === "approved"
     && Date.parse(draftState.approval.expires_at) > Date.now()
   const effectiveDraftQuantity = productionTarget ? 1 : draftConfiguration.quantity
+  const accountPreflight = draftState.preflight
+  const accountPoliciesSelected = [
+    draftConfiguration.fulfillmentPolicyId,
+    draftConfiguration.paymentPolicyId,
+    draftConfiguration.returnPolicyId,
+  ].every((value) => value.trim().length > 0)
 
   async function save(markReady = false) {
     if (!opportunity || !listingPackage) return
@@ -954,6 +982,49 @@ export default function EbayListingWorkspacePage() {
     } finally { setDraftBusy(false) }
   }
 
+  async function runAccountPreflight() {
+    setDraftBusy(true); setError(""); setMessage("Consultando la configuración de cuenta eBay en modo sólo lectura…")
+    try {
+      const payload = await draftRequest({
+        action: "account_preflight",
+        selection: {
+          fulfillmentPolicyId: draftConfiguration.fulfillmentPolicyId,
+          paymentPolicyId: draftConfiguration.paymentPolicyId,
+          returnPolicyId: draftConfiguration.returnPolicyId,
+          merchantLocationKey: draftConfiguration.merchantLocationKey,
+        },
+      })
+      const preflight = payload.preflight as EbayMobilePreflight
+      const profileSaved = payload.accountPolicyProfileSaved === true
+      const policiesComplete = [
+        preflight.selection.fulfillmentPolicyId,
+        preflight.selection.paymentPolicyId,
+        preflight.selection.returnPolicyId,
+      ].every((value) => value.trim().length > 0)
+      setDraftState((current) => ({ ...current, ...payload, preflight }))
+      setDraftConfiguration((current) => ({
+        ...current,
+        fulfillmentPolicyId: preflight.selection.fulfillmentPolicyId,
+        paymentPolicyId: preflight.selection.paymentPolicyId,
+        returnPolicyId: preflight.selection.returnPolicyId,
+        merchantLocationKey: preflight.selection.merchantLocationKey,
+        ebayPreflightSnapshot: "",
+      }))
+      setMessage(profileSaved
+        ? "Policies de cuenta revalidadas y guardadas. No se creó ni publicó nada en eBay."
+        : preflight.identity.status !== "BOUND"
+          ? "eBay respondió, pero la identidad de la cuenta debe quedar vinculada antes de guardar policies."
+          : !preflight.privilege.usable
+            ? "eBay respondió, pero la cuenta todavía no tiene privilegios utilizables para guardar esta configuración."
+            : policiesComplete
+              ? "Policies revalidadas. El perfil no fue guardado; revisa la configuración de cuenta antes de continuar."
+              : "Opciones cargadas desde eBay. Selecciona fulfillment, payment y returns; luego vuelve a revalidar para guardarlas.")
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(requestError, "No se pudo consultar la configuración de cuenta eBay."))
+      setMessage("")
+    } finally { setDraftBusy(false) }
+  }
+
   function updatePreflightSelection(
     field: "fulfillmentPolicyId" | "paymentPolicyId" | "returnPolicyId" | "merchantLocationKey",
     value: string,
@@ -1075,6 +1146,33 @@ export default function EbayListingWorkspacePage() {
 
         {error && <p role="alert" className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm font-bold text-rose-50">{error}</p>}
         {message && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm text-cyan-50">{message}</p>}
+
+        <section aria-labelledby="ebay-account-configuration-heading" className="space-y-4 rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.05] p-4">
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Configuración independiente del producto</p>
+            <h2 id="ebay-account-configuration-heading" className="mt-1 text-xl font-black">Policies de la cuenta eBay</h2>
+            <p className="mt-2 text-sm leading-6 text-white/65">Carga las opciones oficiales de la cuenta y revalida tu selección. Este paso no prepara el paquete ni habilita ninguna escritura o publicación eBay.</p>
+          </div>
+          {workspaceGateBlockers.length > 0 && <div role="status" className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-amber-50">
+            <strong className="text-sm">El paquete sigue bloqueado por estas guardas:</strong>
+            <ul className="mt-2 space-y-2 text-xs">
+              {workspaceGateBlockers.map((blocker) => <li key={blocker} className="rounded-xl bg-black/20 p-2"><code className="block break-all font-black text-amber-100">{blocker}</code><span className="mt-1 block text-amber-50/75">{humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)}</span></li>)}
+            </ul>
+            <a href="/admin/ebay/mobile-review" className="mt-3 inline-flex min-h-11 items-center rounded-xl border border-amber-100/30 px-3 text-sm font-black">Resolver en Command Center</a>
+          </div>}
+          {accountPreflight && <dl className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Identidad</dt><dd className="mt-1 font-black">{accountPreflight.identity.status.replaceAll("_", " ")}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Privilegios</dt><dd className="mt-1 font-black">{accountPreflight.privilege.usable ? "UTILIZABLES" : "PENDIENTES"}</dd></div>
+          </dl>}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label><span className="text-sm font-black">Fulfillment policy</span><select value={draftConfiguration.fulfillmentPolicyId} onChange={(event) => updatePreflightSelection("fulfillmentPolicyId", event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3"><option value="">Seleccionar fulfillment</option>{draftConfiguration.fulfillmentPolicyId && !accountPreflight?.options.fulfillmentPolicies.some((option) => option.id === draftConfiguration.fulfillmentPolicyId) && <option value={draftConfiguration.fulfillmentPolicyId}>{draftConfiguration.fulfillmentPolicyId} · revalidar</option>}{accountPreflight?.options.fulfillmentPolicies.map((option) => <option key={option.id} value={option.id} disabled={!option.usable}>{option.name} · {option.id}{option.usable ? "" : " · no apta"}</option>)}</select></label>
+            <label><span className="text-sm font-black">Payment policy</span><select value={draftConfiguration.paymentPolicyId} onChange={(event) => updatePreflightSelection("paymentPolicyId", event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3"><option value="">Seleccionar payment</option>{draftConfiguration.paymentPolicyId && !accountPreflight?.options.paymentPolicies.some((option) => option.id === draftConfiguration.paymentPolicyId) && <option value={draftConfiguration.paymentPolicyId}>{draftConfiguration.paymentPolicyId} · revalidar</option>}{accountPreflight?.options.paymentPolicies.map((option) => <option key={option.id} value={option.id} disabled={!option.usable}>{option.name} · {option.id}{option.usable ? " · pago inmediato" : " · no apta"}</option>)}</select></label>
+            <label><span className="text-sm font-black">Return policy</span><select value={draftConfiguration.returnPolicyId} onChange={(event) => updatePreflightSelection("returnPolicyId", event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3"><option value="">Seleccionar returns</option>{draftConfiguration.returnPolicyId && !accountPreflight?.options.returnPolicies.some((option) => option.id === draftConfiguration.returnPolicyId) && <option value={draftConfiguration.returnPolicyId}>{draftConfiguration.returnPolicyId} · revalidar</option>}{accountPreflight?.options.returnPolicies.map((option) => <option key={option.id} value={option.id} disabled={!option.usable}>{option.name} · {option.id}{option.usable ? "" : " · no apta"}</option>)}</select></label>
+            <label><span className="text-sm font-black">Merchant location</span><select value={draftConfiguration.merchantLocationKey} onChange={(event) => updatePreflightSelection("merchantLocationKey", event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3"><option value="">Seleccionar location</option>{draftConfiguration.merchantLocationKey && !accountPreflight?.options.merchantLocations.some((option) => option.id === draftConfiguration.merchantLocationKey) && <option value={draftConfiguration.merchantLocationKey}>{draftConfiguration.merchantLocationKey} · revalidar</option>}{accountPreflight?.options.merchantLocations.map((option) => <option key={option.id} value={option.id} disabled={!option.usable}>{option.name} · {option.id}{option.usable ? "" : " · disabled"}</option>)}</select></label>
+          </div>
+          <button type="button" disabled={draftBusy} onClick={() => void runAccountPreflight()} className="min-h-13 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-50">{draftBusy ? "Consultando eBay…" : !accountPreflight ? "Cargar configuración desde eBay" : accountPoliciesSelected ? "Revalidar y guardar policies" : "Revalidar selección"}</button>
+          <p className="text-xs leading-5 text-white/50">Sólo consulta Account API y guarda la selección verificada en IMNOVA. No crea Inventory Item, Offer ni listing; publicar permanece prohibido.</p>
+        </section>
 
         {opportunity && listingPackage && <>
           <section className="rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4">
