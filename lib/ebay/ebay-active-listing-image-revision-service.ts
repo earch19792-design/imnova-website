@@ -189,7 +189,7 @@ async function readOfficialListingSnapshot(input: {
   const identity = getEbayProductionIdentityBindingConfiguration()
   if (
     !identity.bound || !identity.consistent ||
-    !identity.expectedUserId || !identity.expectedAccountFingerprint
+    !identity.expectedAccountFingerprint
   ) throw new Error("EBAY_ACTIVE_IMAGE_REVISION_ACCOUNT_NOT_BOUND")
   const [userResult, itemResult] = await Promise.all([
     tradingCall({
@@ -234,7 +234,9 @@ async function readOfficialListingSnapshot(input: {
   const expectedFingerprint = identity.expectedAccountFingerprint.toLowerCase()
   if (
     !authenticatedUserId || !sellerUserId ||
-    authenticatedUserId.toLowerCase() !== identity.expectedUserId.toLowerCase() ||
+    (identity.expectedUserId
+      ? authenticatedUserId.toLowerCase() !== identity.expectedUserId.toLowerCase()
+      : false) ||
     sellerUserId.toLowerCase() !== authenticatedUserId.toLowerCase() ||
     fingerprint !== expectedFingerprint ||
     !input.accountKey.endsWith(`:${expectedFingerprint}`) ||
