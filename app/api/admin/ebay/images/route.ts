@@ -33,6 +33,10 @@ import {
   reviewSameDayImageRevision,
 } from "@/lib/ebay/ebay-same-day-image-revision-runtime"
 import {
+  ACTIVE_LISTING_IMAGE_REVISION_CONFIRMATION,
+  applyApprovedImageRevisionToActiveListing,
+} from "@/lib/ebay/ebay-active-listing-image-revision-service"
+import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
 } from "@/lib/supabase-admin"
@@ -70,7 +74,7 @@ function safeError(error: unknown) {
 function imageRevisionErrorStatus(code: string) {
   if (/NOT_FOUND/.test(code)) return 404
   if (/INVALID|REQUIRED|MISSING/.test(code)) return 400
-  if (/CONFLICT|BUSY|NOT_APPROVED|NOT_REVIEWABLE|BLOCKED|LEASE/.test(code)) {
+  if (/CONFLICT|BUSY|NOT_APPROVED|NOT_REVIEWABLE|BLOCKED|LEASE|OUTCOME_UNKNOWN|TERMINAL|MISMATCH|WRITE_IN_PROGRESS/.test(code)) {
     return 409
   }
   return 502
@@ -455,6 +459,57 @@ export async function POST(req: Request) {
           reviewed,
           safety: { ebayWrites: 0, productionChanged: false },
         })
+      } catch (error) {
+        const code = safeError(error)
+        return NextResponse.json(
+          { success: false, error: code },
+          { status: imageRevisionErrorStatus(code) },
+        )
+      }
+    }
+
+    if (action === "apply_active_revision") {
+      try {
+        const revisionId = uuid(body.revisionId)
+        const baseControlId = uuid(body.baseControlId)
+        const ebayItemId = text(body.ebayItemId, 20)
+        const idempotencyKey = text(body.idempotencyKey, 120)
+        const confirmation = text(body.confirmation, 80)
+        if (
+          !revisionId || !baseControlId || !/^\d{9,20}$/.test(ebayItemId) ||
+          !/^[A-Za-z0-9._:-]{8,120}$/.test(idempotencyKey) ||
+          confirmation !== ACTIVE_LISTING_IMAGE_REVISION_CONFIRMATION
+        ) {
+          return NextResponse.json(
+            { success: false, error: "EBAY_ACTIVE_IMAGE_REVISION_CONFIRMATION_INVALID" },
+            { status: 400 },
+          )
+        }
+        const application = await applyApprovedImageRevisionToActiveListing({
+          supabase,
+          accountKey,
+          actorId: actor,
+          revisionId,
+          baseControlId,
+          ebayItemId,
+          idempotencyKey,
+          confirmation,
+        })
+        const success = application.phase === "applied_verified"
+        return NextResponse.json({
+          success,
+          application,
+          safety: {
+            permittedMutation: "PICTURE_DETAILS_ONLY",
+            exactSixApprovedImages: application.imageCount === 6,
+            maxEbayListingWrites: 1,
+            ebayListingWriteAttempts: application.ebayWriteAttemptCount,
+            priceChanged: false,
+            quantityChanged: false,
+            promotionsChanged: false,
+            blindRetryAllowed: false,
+          },
+        }, { status: success ? 200 : 409 })
       } catch (error) {
         const code = safeError(error)
         return NextResponse.json(
