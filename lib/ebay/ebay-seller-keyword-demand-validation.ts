@@ -449,9 +449,10 @@ export function buildEbaySellerKeywordSearchQuery(
     .filter(Boolean)
     .join(" ")
   const completeTokens = unique(tokens(source))
-  const identityTokens = completeTokens.filter((token) =>
+  const identityTokens = completeTokens.filter((token, index) =>
     !GENERIC_LOW_SIGNAL_TERMS.has(token) &&
-    !/^(?:\d+|\d+(?:ct|pc|pcs|pk|pack))$/.test(token) &&
+    !/^\d+(?:ct|pc|pcs|pk|pack)$/.test(token) &&
+    !(/^\d+$/.test(token) && ["ct", "pc", "pack"].includes(completeTokens[index + 1] ?? "")) &&
     !["ct", "pc", "pack"].includes(token)
   )
   const selectedTokens = identityTokens.length >= 3 ? identityTokens : completeTokens
