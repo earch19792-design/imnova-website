@@ -133,9 +133,12 @@ function getItemRequestXml(itemId: string) {
       "Item.ItemID",
       "Item.Seller.UserID",
       "Item.SellingStatus.ListingStatus",
-      "Item.SKU",
-      "Item.ListingType",
-      "Item.PictureDetails",
+        "Item.SKU",
+        "Item.ListingType",
+        "Item.PictureDetails",
+        "Item.PictureDetails.PictureSource",
+        "Item.PictureDetails.PictureURL",
+        "Item.PictureDetails.ExternalPictureURL",
     ].map((selector) => `<OutputSelector>${selector}</OutputSelector>`).join("") +
     "</GetItemRequest>"
 }
@@ -638,13 +641,17 @@ export async function applyApprovedImageRevisionToActiveListing(input: {
     throw new Error("EBAY_ACTIVE_IMAGE_REVISION_PHASE_CONFLICT")
   }
   const pictureSource = officialBefore.pictureSource?.toLowerCase()
-  if (pictureSource !== "vendor" && pictureSource !== "eps") {
+  const defaultEpsSource = !pictureSource &&
+    officialBefore.pictureUrls.length > 0 &&
+    officialBefore.pictureUrls.every(ebayPictureUrl)
+  if (pictureSource !== "vendor" && pictureSource !== "eps" && !defaultEpsSource) {
     throw new Error("EBAY_ACTIVE_IMAGE_REVISION_PICTURE_SOURCE_UNSUPPORTED")
   }
-  const writeImageUrls = pictureSource === "eps"
+  const useEps = pictureSource === "eps" || defaultEpsSource
+  const writeImageUrls = useEps
     ? await uploadApprovedImagesToEps({ imageUrls, accessToken, fetchImpl })
     : imageUrls
-  const writePictureSource = pictureSource === "eps" ? "EPS" : "Vendor"
+  const writePictureSource = useEps ? "EPS" : "Vendor"
 
   const claimToken = randomUUID()
   execution = await rpcRow(
