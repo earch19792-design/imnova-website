@@ -9,14 +9,10 @@ import {
   finishSellerAutomationRun,
   reconcileActiveListingProtectionRisks,
 } from "@/lib/ebay/ebay-seller-command-center-automation"
+import { commercialPreviewCronAuthorized } from "@/lib/ebay/ebay-commercial-preview-pilot"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { runTargetedActiveListingLunaMonitor } from "@/lib/ebay/ebay-targeted-active-listing-luna-monitor"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
-
-function authorized(req: Request) {
-  const secret = process.env.CRON_SECRET?.trim() ?? ""
-  return Boolean(secret && req.headers.get("authorization") === `Bearer ${secret}`)
-}
 
 function safeCode(error: unknown) {
   const code = error instanceof Error ? error.message : ""
@@ -59,7 +55,7 @@ function configuration() {
 }
 
 export async function GET(req: Request) {
-  if (!authorized(req)) {
+  if (!commercialPreviewCronAuthorized(req)) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" }, { status: 401 })
   }
   const config = configuration()
