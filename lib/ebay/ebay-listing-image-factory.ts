@@ -24,6 +24,9 @@ const OPENAI_IMAGE_GENERATION_ENDPOINT =
   "https://api.openai.com/v1/images/generations"
 const OPENAI_BACKGROUND_PLATE_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 const OPENAI_IMAGE_MODELS = new Set(["gpt-image-2"])
+const OPENAI_IMAGE_QUALITIES = new Set(["low", "high"])
+
+export type EbayOpenAiImageQuality = "low" | "high"
 
 export const EBAY_LISTING_IMAGE_SLOTS = [
   "MAIN_WHITE_BACKGROUND",
@@ -89,6 +92,7 @@ export type EbayListingImageComposition = {
     backgroundPlateRequestHash?: string
     backgroundPlateOutputSha256?: string
     backgroundPlateProviderRequestId?: string | null
+    backgroundPlateQuality?: EbayOpenAiImageQuality
     visualStrategyVersion?: typeof EBAY_VISUAL_STRATEGY_VERSION
     selectedSceneBoardPanel?: number
     candidateSceneBoardPanels?: number[]
@@ -127,7 +131,7 @@ export type EbayOpenAiBackgroundPlatePlan = {
   requestHash: string
   model: string
   imageCount: 1
-  quality: "low"
+  quality: EbayOpenAiImageQuality
   size: "1536x1024"
   sendsProductBytes: false
   sendsProductUrl: false
@@ -648,10 +652,14 @@ function safeBackgroundPlatePrompt(
 export function buildSafeOpenAiBackgroundPlatePlan(
   value: unknown,
   model: string,
+  quality: EbayOpenAiImageQuality = "low",
 ) {
   const input = validateListingImageFactoryInput(value)
   if (!OPENAI_IMAGE_MODELS.has(model)) {
     throw new Error("EBAY_IMAGE_OPENAI_MODEL_NOT_ALLOWED")
+  }
+  if (!OPENAI_IMAGE_QUALITIES.has(quality)) {
+    throw new Error("EBAY_IMAGE_OPENAI_QUALITY_NOT_ALLOWED")
   }
   const context = safeContextForFacts(input.facts)
   const prompt = safeBackgroundPlatePrompt(
@@ -668,7 +676,7 @@ export function buildSafeOpenAiBackgroundPlatePlan(
     model,
     promptHash,
     imageCount: 1,
-    quality: "low",
+    quality,
     size: "1536x1024",
   }))
   return {
@@ -680,7 +688,7 @@ export function buildSafeOpenAiBackgroundPlatePlan(
     requestHash,
     model,
     imageCount: 1,
-    quality: "low",
+    quality,
     size: "1536x1024",
     sendsProductBytes: false,
     sendsProductUrl: false,
@@ -777,7 +785,7 @@ export async function requestSafeOpenAiBackgroundPlate(input: {
     || input.plan.visualStrategyVersion !== EBAY_VISUAL_STRATEGY_VERSION
     || input.plan.promptHash !== sha256Text(input.plan.prompt)
     || input.plan.imageCount !== 1
-    || input.plan.quality !== "low"
+    || !OPENAI_IMAGE_QUALITIES.has(input.plan.quality)
     || input.plan.size !== "1536x1024"
     || input.plan.sendsProductBytes !== false
     || input.plan.sendsProductUrl !== false
@@ -809,7 +817,7 @@ export async function requestSafeOpenAiBackgroundPlate(input: {
           prompt: input.plan.prompt,
           n: 1,
           size: "1536x1024",
-          quality: "low",
+          quality: input.plan.quality,
           output_format: "jpeg",
           output_compression: 85,
           background: "opaque",
@@ -1200,6 +1208,7 @@ export async function composeAuthorizedEbayListingImageSet(
           backgroundPlateRequestHash: backgroundPlate.plan.requestHash,
           backgroundPlateOutputSha256: backgroundPlate.outputSha256,
           backgroundPlateProviderRequestId: backgroundPlate.providerRequestId,
+          backgroundPlateQuality: backgroundPlate.plan.quality,
           visualStrategyVersion: EBAY_VISUAL_STRATEGY_VERSION,
           selectedSceneBoardPanel: panelSelection?.selectedPanel,
           candidateSceneBoardPanels: panelSelection?.candidatePanels,
@@ -1290,7 +1299,8 @@ export function getListingImageFactoryConfiguration(environment = process.env) {
       : "MISSING" as const,
     dailyCallLimit,
     maxContextPlatesPerSet: 1,
-    imageQuality: "low" as const,
+    researchImageQuality: "low" as const,
+    publishImageQuality: "high" as const,
     contextPlateFeatureEnabled: enabled,
     preview,
     staging,

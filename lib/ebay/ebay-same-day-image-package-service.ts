@@ -9,14 +9,14 @@ import { productFactsHash } from "./ebay-product-facts-readiness.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { buildCurrentSameDayImageFactoryInput, type CurrentSameDayImageFactBinding } from "./ebay-same-day-image-factory-input.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
-import { buildSafeOpenAiBackgroundPlatePlan, composeAuthorizedEbayListingImageSet, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, EBAY_VISUAL_STRATEGY_VERSION, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan } from "./ebay-listing-image-factory.ts"
+import { buildSafeOpenAiBackgroundPlatePlan, composeAuthorizedEbayListingImageSet, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, EBAY_VISUAL_STRATEGY_VERSION, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan, type EbayOpenAiImageQuality } from "./ebay-listing-image-factory.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { ebayImageMarketBriefSchema, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
 
 export const SAME_DAY_IMAGE_PACKAGE_SERVICE_VERSION =
-  "SAME_DAY_IMAGE_PACKAGE_SERVICE_V1_2026_07_18"
+  "SAME_DAY_IMAGE_PACKAGE_SERVICE_V2_2026_07_21"
 export const SAME_DAY_IMAGE_PACKAGE_MANIFEST_VERSION =
-  "SAME_DAY_IMAGE_PACKAGE_METADATA_V1_2026_07_18"
+  "SAME_DAY_IMAGE_PACKAGE_METADATA_V2_2026_07_21"
 
 const rawSha256Schema = z.string().regex(/^[0-9a-f]{64}$/)
 const prefixedSha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/)
@@ -47,6 +47,7 @@ const persistenceAssetSchema = z.object({
   foregroundEdgeCoverage: z.number().min(0.004).max(1).optional(),
   deterministicBackgroundSelection: z.boolean(),
   visualStrategyVersion: z.literal(EBAY_VISUAL_STRATEGY_VERSION).optional(),
+  backgroundPlateQuality: z.enum(["low", "high"]).optional(),
   selectedSceneBoardPanel: z.number().int().min(1).max(6).optional(),
   candidateSceneBoardPanels: z.array(z.number().int().min(1).max(6))
     .min(1).max(2).optional(),
@@ -81,6 +82,7 @@ const manifestWithoutHashSchema = z.object({
   ai: z.object({
     openAiCalls: z.union([z.literal(0), z.literal(1)]),
     backgroundPlateRequestHash: rawSha256Schema.nullable(),
+    requestedQuality: z.enum(["low", "high"]).nullable(),
     productBytesSent: z.literal(0),
     productUrlsSent: z.literal(0),
     competitorDataSent: z.literal(0),
@@ -168,7 +170,7 @@ function assertReturnedBackgroundPlate(
     value.plan.promptHash !== expected.promptHash ||
     value.plan.model !== expected.model ||
     value.plan.imageCount !== 1 ||
-    value.plan.quality !== "low" ||
+    value.plan.quality !== expected.quality ||
     value.plan.size !== "1536x1024" ||
     value.plan.sendsProductBytes !== false ||
     value.plan.sendsProductUrl !== false ||
@@ -189,7 +191,11 @@ export function buildSameDayImagePackagePlan(input: {
     authorizationReference?: unknown
     rightsEvidenceConfirmed?: unknown
   }
-  aiContext: { enabled: false } | { enabled: true; model: string }
+  aiContext: { enabled: false } | {
+    enabled: true
+    model: string
+    quality?: EbayOpenAiImageQuality
+  }
   marketVisualBrief?: EbayImageMarketBrief | null
   allowVerifiedActiveHistoricalHandoff?: boolean
 }): SameDayImagePackagePlan {
@@ -210,7 +216,11 @@ export function buildSameDayImagePackagePlan(input: {
     marketVisualBrief,
   })
   const backgroundPlatePlan = input.aiContext.enabled
-    ? buildSafeOpenAiBackgroundPlatePlan(enrichedFactoryInput, input.aiContext.model)
+    ? buildSafeOpenAiBackgroundPlatePlan(
+      enrichedFactoryInput,
+      input.aiContext.model,
+      input.aiContext.quality,
+    )
     : null
   return {
     version: SAME_DAY_IMAGE_PACKAGE_SERVICE_VERSION,
@@ -243,6 +253,7 @@ function validateTransientAssets(input: {
   expectedSourceSha256s: ReadonlySet<string>
   openAiCalls: 0 | 1
   backgroundPlateRequestHash: string | null
+  requestedQuality: EbayOpenAiImageQuality | null
 }) {
   if (input.assets.length !== EBAY_LISTING_IMAGE_SLOTS.length) {
     throw new Error("SAME_DAY_IMAGE_SET_INCOMPLETE")
@@ -302,6 +313,7 @@ function validateTransientAssets(input: {
       if (slot === "MAIN_WHITE_BACKGROUND" ||
         asset.transformation.backgroundPlateRequestHash !==
           input.backgroundPlateRequestHash ||
+        asset.transformation.backgroundPlateQuality !== input.requestedQuality ||
         asset.transformation.visualStrategyVersion !== EBAY_VISUAL_STRATEGY_VERSION ||
         !Number.isInteger(asset.transformation.selectedSceneBoardPanel) ||
         !asset.transformation.candidateSceneBoardPanels?.includes(
@@ -312,7 +324,8 @@ function validateTransientAssets(input: {
         asset.qa.deterministicBackgroundSelection !== true) {
         throw new Error("SAME_DAY_IMAGE_GENERATIVE_SLOT_INVALID")
       }
-    } else if (asset.qa.deterministicBackgroundSelection !== false) {
+    } else if (asset.transformation.backgroundPlateQuality !== undefined ||
+      asset.qa.deterministicBackgroundSelection !== false) {
       throw new Error("SAME_DAY_IMAGE_GENERATIVE_SLOT_INVALID")
     }
     return asset
@@ -371,6 +384,7 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
     expectedSourceSha256s: new Set(authorizedSourceHashes),
     openAiCalls: input.openAiCalls,
     backgroundPlateRequestHash: requestHash,
+    requestedQuality: input.plan.backgroundPlatePlan?.quality ?? null,
   })
   if ((input.openAiCalls === 1) !== Boolean(input.plan.backgroundPlatePlan)) {
     throw new Error("SAME_DAY_IMAGE_OPENAI_PLAN_CALL_MISMATCH")
@@ -415,6 +429,7 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       deterministicBackgroundSelection:
         asset.qa.deterministicBackgroundSelection,
       visualStrategyVersion: asset.transformation.visualStrategyVersion,
+      backgroundPlateQuality: asset.transformation.backgroundPlateQuality,
       selectedSceneBoardPanel:
         asset.transformation.selectedSceneBoardPanel,
       candidateSceneBoardPanels:
@@ -427,6 +442,7 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
     ai: {
       openAiCalls: input.openAiCalls,
       backgroundPlateRequestHash: requestHash,
+      requestedQuality: input.plan.backgroundPlatePlan?.quality ?? null,
       productBytesSent: 0,
       productUrlsSent: 0,
       competitorDataSent: 0,
@@ -484,10 +500,14 @@ export function parseSameDayImagePackagePersistenceManifest(
     asset.generativeAiUsed)
   if (parsed.data.ai.openAiCalls === 0) {
     if (parsed.data.ai.backgroundPlateRequestHash !== null ||
+      parsed.data.ai.requestedQuality !== null ||
       generativeAssets.length !== 0) return null
   } else if (parsed.data.ai.backgroundPlateRequestHash === null ||
+    parsed.data.ai.requestedQuality === null ||
     generativeAssets.length !== 5 ||
-    generativeAssets.some((asset) => asset.slot === "MAIN_WHITE_BACKGROUND")) return null
+    generativeAssets.some((asset) =>
+      asset.slot === "MAIN_WHITE_BACKGROUND" ||
+      asset.backgroundPlateQuality !== parsed.data.ai.requestedQuality)) return null
   return parsed.data
 }
 
@@ -500,7 +520,11 @@ export async function generateTransientSameDayImagePackage(input: {
     authorizationReference?: unknown
     rightsEvidenceConfirmed?: unknown
   }
-  aiContext: { enabled: false } | { enabled: true; model: string }
+  aiContext: { enabled: false } | {
+    enabled: true
+    model: string
+    quality?: EbayOpenAiImageQuality
+  }
   marketVisualBrief?: EbayImageMarketBrief | null
   source: Buffer | Buffer[]
   generatedAt?: string

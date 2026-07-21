@@ -27,6 +27,7 @@ import { loadEbayImageMarketBrief } from "./ebay-image-market-brief"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
 const MAX_OUTPUT_BYTES = 12 * 1024 * 1024
+const PUBLISH_OPENAI_IMAGE_QUALITY = "high" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -230,6 +231,12 @@ async function reusableCompletedSet(input: {
   if (EBAY_LISTING_IMAGE_SLOTS.some((slot) => !slots.has(slot))) {
     throw new Error("SAME_DAY_IMAGE_COMPLETED_SET_SLOTS_INVALID")
   }
+  const generated = data.map((asset) => record(asset.transformation))
+    .filter((transformation) => transformation.generativeAiUsed === true)
+  if (generated.length && generated.some((transformation) =>
+    transformation.backgroundPlateQuality !== PUBLISH_OPENAI_IMAGE_QUALITY)) {
+    throw new Error("SAME_DAY_IMAGE_PUBLISH_QUALITY_REGENERATION_REQUIRED")
+  }
   return {
     listingPackageId: input.listingPackageId,
     controlId: text(input.control.id),
@@ -332,7 +339,11 @@ export async function generateAndPersistSameDayImagePackage(input: {
       authorizationReference: rightsReference,
       rightsEvidenceConfirmed: true,
     },
-    aiContext: aiEnabled ? { enabled: true, model } : { enabled: false },
+    aiContext: aiEnabled ? {
+      enabled: true,
+      model,
+      quality: PUBLISH_OPENAI_IMAGE_QUALITY,
+    } : { enabled: false },
     marketVisualBrief,
   })
   const generationMode = aiEnabled
@@ -413,7 +424,11 @@ export async function generateAndPersistSameDayImagePackage(input: {
         authorizationReference: rightsReference,
         rightsEvidenceConfirmed: true,
       },
-      aiContext: aiEnabled ? { enabled: true, model } : { enabled: false },
+      aiContext: aiEnabled ? {
+        enabled: true,
+        model,
+        quality: PUBLISH_OPENAI_IMAGE_QUALITY,
+      } : { enabled: false },
       marketVisualBrief,
       source: uniqueSourceDetails.map((entry) => entry.source.buffer),
       requestBackgroundPlate: aiEnabled ? async (safePlan) => {
@@ -649,6 +664,8 @@ export async function reviewSameDayImagePackage(input: {
     const aiBoardSet = generated.length === 5 && transformations.every((transformation) =>
       transformation.compositorContractVersion ===
         EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION) &&
+      generated.every((transformation) =>
+        transformation.backgroundPlateQuality === PUBLISH_OPENAI_IMAGE_QUALITY) &&
       transformations.find((transformation) =>
         transformation.slot === "MAIN_WHITE_BACKGROUND")?.generativeAiUsed !== true
     const deterministicMultiSourceSet = generated.length === 0 &&

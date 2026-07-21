@@ -591,7 +591,11 @@ export async function POST(req: Request) {
       const sourceMetadata = await sharp(sourceBuffer).metadata()
       const aiRuntime = aiContextRequested ? openAiImageRuntime() : null
       const aiPlan = aiRuntime
-        ? buildSafeOpenAiBackgroundPlatePlan(approved.factoryInput, aiRuntime.model)
+        ? buildSafeOpenAiBackgroundPlatePlan(
+          approved.factoryInput,
+          aiRuntime.model,
+          "high",
+        )
         : null
       const generationIdForPlan = uuid(approved.generation.id)
       if (!generationIdForPlan) throw new Error("EBAY_IMAGE_GENERATION_ID_INVALID")
