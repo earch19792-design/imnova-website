@@ -24,6 +24,10 @@ export const EBAY_OPENAI_IMAGE_PREVIEW_BRANCH =
 
 const OPENAI_IMAGE_GENERATION_ENDPOINT =
   "https://api.openai.com/v1/images/generations"
+// High-quality image generation can legitimately exceed two minutes. Keep
+// enough headroom below the 300-second worker limit for local composition,
+// persistence and lease cleanup after the provider responds.
+const OPENAI_IMAGE_REQUEST_TIMEOUT_MS = 230_000
 const OPENAI_BACKGROUND_PLATE_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 const OPENAI_IMAGE_MODELS = new Set(["gpt-image-2"])
 const OPENAI_IMAGE_QUALITIES = new Set(["low", "high"])
@@ -951,7 +955,7 @@ export async function requestSafeOpenAiBackgroundPlate(input: {
   const controller = new AbortController()
   const timeout = setTimeout(
     () => controller.abort("EBAY_IMAGE_OPENAI_TIMEOUT"),
-    130_000,
+    OPENAI_IMAGE_REQUEST_TIMEOUT_MS,
   )
   try {
     const response = await (input.fetchImpl ?? fetch)(
