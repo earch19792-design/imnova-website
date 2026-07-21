@@ -99,6 +99,21 @@ async function promotionBlocked(input: {
   accountKey: string
   listingId: string
 }) {
+  const { data: activeListing, error: activeListingError } = await input.supabase
+    .from("ebay_active_listings")
+    .select("controlled_risk_policy")
+    .eq("account_key", input.accountKey)
+    .eq("ebay_item_id", input.listingId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (activeListingError) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_POLICY_READ_FAILED")
+  }
+  const activePolicy = record(activeListing?.controlled_risk_policy)
+  if (text(activePolicy.promotion) === "DO_NOT_PROMOTE" ||
+    numeric(activePolicy.minimumNetMarginPercent) === 10) return true
+
   const { data: publication, error } = await input.supabase
     .from("ebay_authorized_listing_publications")
     .select("listing_package_id")
