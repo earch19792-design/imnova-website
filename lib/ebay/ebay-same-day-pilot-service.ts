@@ -104,6 +104,8 @@ const STALE_DECISION_FACTS_RECOVERY_VERSION = "STALE_DECISION_FACTS_RECOVERY_V1_
 const PRE_FACTS_DECISION_REFRESH_VERSION = "PRE_FACTS_DECISION_REFRESH_V1_2026_07_21"
 const OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_VERSION =
   "OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_V3_2026_07_21"
+const PREMATURE_TAXONOMY_REJECTION_RECOVERY_VERSION =
+  "PREMATURE_TAXONOMY_REJECTION_RECOVERY_V1_2026_07_21"
 const SAME_DAY_LUNA_DECISION_REFRESH_VERSION = "SAME_DAY_LUNA_DECISION_REFRESH_V1_2026_07_19"
 const SAME_DAY_REPLENISHMENT_VERSION = "SAME_RUN_REPLENISHMENT_V1_2026_07_20"
 const SAME_DAY_MAX_TOTAL_CANDIDATE_ATTEMPTS =
@@ -167,6 +169,34 @@ function conservativeShippingReserveReady(candidateValue: unknown) {
   const config = record(record(candidate.economics_summary).config)
   const reserve = number(config.estimatedOutboundShipping)
   return reserve !== null && reserve > 0
+}
+
+function reusableOperatorProductApproval(candidateValue: unknown, now: Date) {
+  const candidate = record(candidateValue)
+  const economics = record(candidate.economics_summary)
+  const approvedPrice = number(economics.operatorApprovedSalePrice)
+  const supplierCost = number(economics.confirmedLunaPrice)
+  const recommendedPrice = number(record(economics.pricingRecommendation)
+    .recommendedSalePrice)
+  const approvedAt = Date.parse(text(economics.operatorApprovedAt))
+  const fulfillmentBasis = normalizeEbayCompliantFulfillmentBasis(
+    economics.fulfillmentBasis,
+  )
+  const approvalFresh = Number.isFinite(approvedAt) &&
+    now.getTime() - approvedAt >= -5 * 60_000 &&
+    now.getTime() - approvedAt <= 24 * 60 * 60_000
+  const priceStillMatches = approvedPrice !== null && recommendedPrice !== null &&
+    Math.abs(approvedPrice - recommendedPrice) <= Math.max(.01, recommendedPrice * .02)
+  if (economics.operatorPriceApproved !== true || !approvalFresh ||
+    approvedPrice === null || supplierCost === null || !priceStillMatches ||
+    !fulfillmentBasis || economics.imageRightsConfirmed !== true ||
+    economics.openAiImageSpendApproved !== true) return false
+  const controlledRisk = record(economics.controlledRiskOverride).authorized === true
+  const evaluation = calculateEbayUnitEconomics({ salePrice: approvedPrice, supplierCost },
+    controlledRisk
+      ? controlledRiskEconomicsConfig(ebayDraftOnlyEconomicsConfig())
+      : ebayDraftOnlyEconomicsConfig())
+  return evaluation.ready && evaluation.passesProfitGate
 }
 
 async function persistConfirmedOfferPackQueueBinding(input: {
@@ -440,7 +470,8 @@ function recoverableSingleFactException(summaryValue: unknown) {
   const gates = record(summary.gates)
   const missing = (Array.isArray(summary.resolvedRequirements)
     ? summary.resolvedRequirements.map(record) : [])
-    .filter((requirement) => text(requirement.status) === "MISSING_BLOCKING")
+    .filter((requirement) => ["MISSING_BLOCKING", "CONFLICTED_BLOCKING"]
+      .includes(text(requirement.status)))
   if (!missing.length || gates.IDENTITY_READY !== true ||
     gates.PRODUCT_FACTS_READY !== true || gates.OFFER_PACK_READY !== true ||
     gates.REGULATORY_READY !== true) return null
@@ -1353,6 +1384,109 @@ async function repairLegacyPrematureProductResearchRejections(
 }
 
 /**
+ * A superseded Taxonomy rule used to turn unresolved fields and incomplete
+ * eBay suggestion samples into terminal rejections. Re-run only Product Facts
+ * and Taxonomy, preserving Luna, Product Research and every valid commercial
+ * authorization. Operator and out-of-stock rejections are never reopened.
+ */
+async function repairPrematureTaxonomyRejections(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const recoverableBlockers = new Set([
+    "MISSING_BLOCKING",
+    "EBAY_TAXONOMY_NOT_READY",
+    "EBAY_REQUIRED_ASPECTS_NOT_READY_TODAY",
+  ])
+  const candidate = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .find((entry) => {
+      const blockers = strings(entry.blockers)
+      const evidence = record(entry.evidence_summary)
+      const systemTaxonomyFailure = blockers.some((blocker) =>
+        recoverableBlockers.has(blocker) ||
+        blocker.startsWith("ASPECT_VALUE_NOT_ALLOWED_"))
+      return entry.machine_state === "REJECTED" &&
+        entry.state === "REJECTED_TODAY" && systemTaxonomyFailure &&
+        !blockers.includes("LUNA_OUT_OF_STOCK") &&
+        !blockers.includes("PRODUCT_REJECTED_BY_OPERATOR") &&
+        text(entry.queue_item_id) && text(entry.supplier_variant_id) &&
+        text(evidence.prematureTaxonomyRejectionRecoveryVersion) !==
+          PREMATURE_TAXONOMY_REJECTION_RECOVERY_VERSION
+    })
+  if (!candidate) return 0
+  await cancelSupersededProductFactsDeadLetters({
+    supabase,
+    runId: state.run.id,
+    candidateId: text(candidate.id),
+    now,
+  })
+  const previousBlockers = strings(candidate.blockers)
+  const priorApprovalPreserved = record(candidate.economics_summary)
+    .operatorPriceApproved === true
+  const recoveryEvidence = {
+    ...record(candidate.evidence_summary),
+    prematureTaxonomyRejectionRecoveryVersion:
+      PREMATURE_TAXONOMY_REJECTION_RECOVERY_VERSION,
+    prematureTaxonomyRejectionRecoveredAt: now.toISOString(),
+    prematureTaxonomyPreviousBlockers: previousBlockers,
+    priorApprovalPreserved,
+    productResearchRepeated: false,
+    fullCatalogRescan: false,
+  }
+  await transition({
+    supabase,
+    runId: state.run.id,
+    candidateId: text(candidate.id),
+    previousState: "REJECTED",
+    nextState: "ENRICHING_PRODUCT_FACTS",
+    reasonCode: "PREMATURE_TAXONOMY_REJECTION_REOPENED",
+    triggeredBy: "RETRY",
+    checkpoint: {
+      recoveryVersion: PREMATURE_TAXONOMY_REJECTION_RECOVERY_VERSION,
+      previousBlockers,
+      priorApprovalPreserved,
+      productResearchRepeated: false,
+      ebayWrites: 0,
+    },
+    nextAutomaticAction: "Revalidar categoría, Product Facts y aspectos oficiales.",
+    nextHumanAction: "Ninguna; si queda un dato obligatorio se solicitará un solo campo.",
+    job: {
+      jobType: "ENRICH_PRODUCT_FACTS",
+      idempotencyKey: `${state.run.id}:${candidate.id}:ENRICH_PRODUCT_FACTS:${PREMATURE_TAXONOMY_REJECTION_RECOVERY_VERSION}`,
+      checkpoint: {
+        queueItemId: candidate.queue_item_id,
+        prematureTaxonomyRejectionRecovery: true,
+        priorApprovalPreserved,
+        ebayWrites: 0,
+      },
+      availableAt: now.toISOString(),
+      maxAttempts: 10,
+      apiFamily: "BROWSE",
+      apiOperation: "EXACT_VERIFICATION",
+      ownerLane: "P1_EXACT_VERIFICATION",
+    },
+  })
+  const { error } = await supabase.from("ebay_same_day_pilot_candidates")
+    .update({
+      state: "READY_FOR_CONTENT",
+      blockers: [],
+      evidence_summary: recoveryEvidence,
+      product_facts_summary: {},
+      next_automated_action: "Revalidar categoría y ficha sin repetir Product Research.",
+      next_human_action: "Ninguna; Seller OS conservará cualquier aprobación vigente.",
+      updated_at: now.toISOString(),
+    })
+    .eq("id", candidate.id)
+    .eq("run_id", state.run.id)
+    .eq("machine_state", "ENRICHING_PRODUCT_FACTS")
+  if (error) throw new Error("SAME_DAY_PILOT_PREMATURE_TAXONOMY_RECOVERY_FAILED")
+  await refreshRunProjection(supabase, state.run.id)
+  return 1
+}
+
+/**
  * Replays only a candidate rejected by a superseded Product Facts rule or a
  * transient append-only persistence failure. It never reopens a commercial
  * rejection, repeats Discovery, or widens the five-candidate queue. One
@@ -1587,6 +1721,7 @@ async function repairRejectedSingleFactException(
       ].map((field) => field.toLocaleLowerCase()).filter(Boolean))
       const recoverableBlocker = strings(candidate.blockers).some((blocker) => [
         "MISSING_BLOCKING", "EBAY_TAXONOMY_NOT_READY", "EBAY_REQUIRED_ASPECTS_NOT_READY_TODAY",
+        "CONFLICTED_BLOCKING",
         "REGULATORY_NOT_READY", "REGULATORY_READY_FALSE",
       ].includes(blocker))
       return Boolean(exception) && candidate.machine_state === "REJECTED" &&
@@ -2675,6 +2810,11 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
       existing = await currentState(input.supabase, input.accountKey,
         text(existing.run.operation_date) || date)
     }
+    if (existing && await repairPrematureTaxonomyRejections(input.supabase, existing, now)) {
+      repaired = true
+      existing = await currentState(input.supabase, input.accountKey,
+        text(existing.run.operation_date) || date)
+    }
     if (existing && await repairRejectedSingleFactException(input.supabase, existing, now)) {
       repaired = true
       existing = await currentState(input.supabase, input.accountKey,
@@ -3212,7 +3352,9 @@ export async function decideSameDayFactException(input: {
     (regulatoryLabelException ||
       (operatorConfirmableOfficialLabelFact(fieldRequired)?.factKey === factKey &&
         resolvedRequirements.some((requirement) =>
-          text(requirement.status) === "MISSING_BLOCKING" &&
+          ["MISSING_BLOCKING", "CONFLICTED_BLOCKING"].includes(
+            text(requirement.status),
+          ) &&
           text(requirement.aspectName).toLocaleLowerCase() === fieldRequired.toLocaleLowerCase())))
   const offerPackException = schema.type === "CONFIRM_OFFICIAL_OFFER_PACK" &&
     schema.factScope === "OFFER_PACK" && factKey === "offerPackCount"
@@ -4370,21 +4512,28 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       state,
       input.accountKey,
     )
-  const productFactAuthorityLineageRecovered =
+  const prematureTaxonomyRejectionsRecovered = legacyPrematureRejectionsRepaired ? 0 :
+    await repairPrematureTaxonomyRejections(input.supabase, state, now)
+  const productFactAuthorityLineageRecovered = prematureTaxonomyRejectionsRecovered ? 0 :
     await repairRejectedProductFactAuthorityLineage(input.supabase, state, now)
-  const singleFactExceptionsRecovered = productFactAuthorityLineageRecovered ? 0 :
+  const singleFactExceptionsRecovered = prematureTaxonomyRejectionsRecovered ||
+    productFactAuthorityLineageRecovered ? 0 :
     await repairRejectedSingleFactException(input.supabase, state, now)
   // Repair at most one durable lane per worker cycle. Each repair can create a
   // job or human task, so later repair decisions must observe the refreshed
   // state on the following cycle instead of opening parallel operator work.
-  const staleDecisionFactsRecovered = productFactAuthorityLineageRecovered || singleFactExceptionsRecovered ? 0 :
+  const staleDecisionFactsRecovered = prematureTaxonomyRejectionsRecovered ||
+    productFactAuthorityLineageRecovered || singleFactExceptionsRecovered ? 0 :
     await repairStaleDecisionProductFactsRejection(input.supabase, state, now)
-  const legacyProductFactsRejectionsRepaired = productFactAuthorityLineageRecovered ||
+  const legacyProductFactsRejectionsRepaired = prematureTaxonomyRejectionsRecovered ||
+    productFactAuthorityLineageRecovered ||
     singleFactExceptionsRecovered || staleDecisionFactsRecovered ? 0 :
     await repairLegacyProductFactsRejections(input.supabase, state, now)
-  const deadLettersRecovered = productFactAuthorityLineageRecovered || singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
+  const deadLettersRecovered = prematureTaxonomyRejectionsRecovered ||
+    productFactAuthorityLineageRecovered || singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
     legacyProductFactsRejectionsRepaired ? 0 : await recoverDeadLetterCandidates(input.supabase, state)
-  if (legacyPrematureRejectionsRepaired || productFactAuthorityLineageRecovered ||
+  if (legacyPrematureRejectionsRepaired || prematureTaxonomyRejectionsRecovered ||
+    productFactAuthorityLineageRecovered ||
     singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
     legacyProductFactsRejectionsRepaired || deadLettersRecovered) {
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
@@ -5061,6 +5210,36 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
                 ? "OPENAI_INPUT_NOT_READY"
                 : exceptionStatus || "OPENAI_INPUT_NOT_READY"] })
           productFactsState = "REJECTED"
+        } else if (reusableOperatorProductApproval(candidate, now)) {
+          await transition({
+            supabase: input.supabase,
+            runId: state.run.id,
+            candidateId: candidate.id,
+            previousState: "BUILDING_OPENAI_INPUT",
+            nextState: "GENERATING_LISTING_CONTENT",
+            reasonCode: "VALID_OPERATOR_APPROVAL_PRESERVED_AFTER_TAXONOMY_RECOVERY",
+            triggeredBy: "RETRY",
+            checkpoint: {
+              factRunId: summary.factRunId,
+              operatorPriceApproved: true,
+              approvalRepeated: false,
+              recoveryVersion: PREMATURE_TAXONOMY_REJECTION_RECOVERY_VERSION,
+              ebayWrites: 0,
+            },
+            nextAutomaticAction: "Construir el paquete con la aprobación vigente.",
+            nextHumanAction: "Ninguna hasta revisar las imágenes.",
+            job: {
+              jobType: "BUILD_MANUAL_SELLER_HUB_HANDOFF",
+              idempotencyKey: `${state.run.id}:${candidate.id}:BUILD_MANUAL_SELLER_HUB_HANDOFF:${summary.factRunId}`,
+              checkpoint: {
+                factRunId: summary.factRunId,
+                priorApprovalPreserved: true,
+                openAiCalls: 0,
+                ebayWrites: 0,
+              },
+            },
+          })
+          productFactsState = "GENERATING_LISTING_CONTENT"
         } else {
           await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id, previousState: "BUILDING_OPENAI_INPUT",
             nextState: "WAITING_PRODUCT_APPROVAL", reasonCode: "PRODUCT_APPROVAL_REQUIRED", triggeredBy: "SYSTEM",

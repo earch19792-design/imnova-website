@@ -9,7 +9,7 @@ import { parseAuthoritativeFactsInputPackage } from "./ebay-product-facts-readin
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { buildVerifiedEbayTitle } from "./ebay-verified-title-strategy.ts"
 
-export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V8_2026_07_20"
+export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V9_2026_07_21"
 
 type JsonRecord = Record<string, unknown>
 type SafeFact = { scope: string; key: string; value: unknown; unit: string | null; status: string }
@@ -20,6 +20,8 @@ type SafeRequirement = {
   status: string
   selectedValue: string | null
   allowedValues: string[]
+  selectionOnly: boolean
+  allowedValuesComplete: boolean
 }
 
 function record(value: unknown): JsonRecord {
@@ -110,6 +112,8 @@ export function buildVerifiedManualSellerHubHandoff(input: {
       allowedValues: Array.isArray(requirement.allowedValues)
         ? requirement.allowedValues.map((value) => text(value)).filter(Boolean)
         : [],
+      selectionOnly: requirement.selectionOnly === true,
+      allowedValuesComplete: requirement.allowedValuesComplete === true,
     }))
     : []
   const taxonomy = record(input.factsSummary.taxonomy)
@@ -157,7 +161,8 @@ export function buildVerifiedManualSellerHubHandoff(input: {
     if (requirement.required && requirement.selectedValue && !selectedValueAuthorized) {
       blockers.push(`REQUIRED_ASPECT_AUTHORITY_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`)
     }
-    if (requirement.selectedValue && requirement.allowedValues.length &&
+    if (requirement.selectedValue && requirement.selectionOnly &&
+      requirement.allowedValuesComplete && requirement.allowedValues.length &&
       !requirement.allowedValues.some((value) => aspectValueKey(value) === aspectValueKey(requirement.selectedValue))) {
       blockers.push(`ASPECT_VALUE_NOT_ALLOWED_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`)
     }

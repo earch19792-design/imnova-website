@@ -25,6 +25,7 @@ import {
   resolveProductFacts,
   resolveNativePresentationFacts,
   safeSourceReference,
+  strongExactComparableCategoryConsensus,
   targetedFactException,
   type FactObservation,
   type FactScope,
@@ -41,7 +42,7 @@ import {
 } from "./ebay-official-manufacturer-facts"
 import { aggregateEbayMarketPricingByPack } from "./ebay-market-pricing-strategy"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V17_2026_07_21"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V18_2026_07_21"
 export const PRODUCT_FACTS_AUTOMATIC_SEARCH_BUDGET_MS = 4 * 60 * 1_000
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
@@ -860,10 +861,16 @@ export async function runProductFactsEnrichment(input: {
         }
       }
       const tradingCategoryId = numericCategoryId(trading?.categoryId)
+      const tradingCategoryConsensus = strongExactComparableCategoryConsensus(
+        tradingComparables.map((comparable) => ({ categoryId: comparable.categoryId })),
+      )
       // Category is resolved before aspect evaluation. Exact Catalog identity
-      // wins, followed by the title-verified Trading comparable. Existing
+      // normally wins, but a strong majority of title-validated exact Trading
+      // comparables corrects an isolated incompatible Catalog category. Existing
       // evidence remains a last category seed for official Taxonomy.
-      const taxonomyCategoryId = semanticCategoryId || catalogCategoryId || tradingCategoryId || knownCategoryId
+      const taxonomyCategoryId = semanticCategoryId ||
+        tradingCategoryConsensus?.categoryId || catalogCategoryId ||
+        tradingCategoryId || knownCategoryId
       const taxonomy = await budgetedAutomaticReadOr(automaticSearchDeadline,
         () => getEbayTaxonomyListingIntelligence(base.title, taxonomyCategoryId || undefined),
         () => ({ status: "REQUEST_FAILED" as const, categoryTreeId: null,
@@ -906,13 +913,16 @@ export async function runProductFactsEnrichment(input: {
           sourceType: "EBAY_TAXONOMY_OFFICIAL_READONLY", authority: "EBAY_TAXONOMY", observedAt: text(taxonomyRecord.observedAt) || null,
           status: text(taxonomyRecord.status) || "REQUEST_FAILED", payload: { categoryId: text(taxonomyRecord.categoryId) || null,
             categorySeedPresent: Boolean(taxonomyCategoryId),
-            categorySeedSource: semanticCategoryId ? "TITLE_SEMANTIC_CATEGORY_GUARD" : catalogCategoryId
+            categorySeedSource: semanticCategoryId ? "TITLE_SEMANTIC_CATEGORY_GUARD"
+              : tradingCategoryConsensus ? "EBAY_TRADING_EXACT_CATEGORY_CONSENSUS"
+              : catalogCategoryId
               ? "EBAY_CATALOG_EXACT" : tradingCategoryId
               ? tradingSelectionSource === "BROWSE_SELL_SIMILAR"
                 ? "EBAY_TRADING_SELL_SIMILAR_TITLE_VALIDATED"
                 : "EBAY_TRADING_EXACT_COMPARABLE"
               : knownCategoryId ? "EXISTING_EXACT_COMPARABLE" : "TITLE_SUGGESTION",
             categoryResolution: text(taxonomyRecord.categoryResolution) || "UNRESOLVED",
+            exactComparableCategoryConsensus: tradingCategoryConsensus,
             failureCode: text(taxonomyRecord.failureCode) || null,
             requiredAspectCount: array(taxonomyRecord.requiredAspects).length } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,

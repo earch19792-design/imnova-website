@@ -7,7 +7,7 @@ import { createHash } from "node:crypto"
  * estimated fulfilment value from accidentally becoming listing copy.
  */
 export const PRODUCT_FACTS_SCHEMA_VERSION = "PRODUCT_FACTS_V1_2026_07_17"
-export const PRODUCT_FACTS_RESOLVER_VERSION = "PRODUCT_FACTS_RESOLVER_V3_2026_07_20"
+export const PRODUCT_FACTS_RESOLVER_VERSION = "PRODUCT_FACTS_RESOLVER_V4_2026_07_21"
 export const SHIPPING_ESTIMATION_MODEL_VERSION = "SHIPPING_ESTIMATE_V1_2026_07_17"
 export const OPENAI_FACTS_INPUT_VERSION = "OPENAI_FACTS_INPUT_V2_2026_07_19"
 export const AUTHORITATIVE_FACT_SOURCE_POLICY = "TECHNICAL_AUTHORITY_ONLY_V2_2026_07_19"
@@ -143,6 +143,30 @@ function numeric(value: unknown) {
 function positiveInteger(value: unknown) {
   const parsed = numeric(value)
   return parsed !== null && Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+export function strongExactComparableCategoryConsensus(
+  rows: Array<{ categoryId?: unknown }>,
+) {
+  const categoryIds = rows.map((row) => string(row.categoryId, 20))
+    .filter((categoryId) => /^\d{1,20}$/.test(categoryId))
+  if (categoryIds.length < 2) return null
+  const counts = new Map<string, number>()
+  for (const categoryId of categoryIds) {
+    counts.set(categoryId, (counts.get(categoryId) ?? 0) + 1)
+  }
+  const [leader] = [...counts.entries()].sort((left, right) =>
+    right[1] - left[1] || left[0].localeCompare(right[0]))
+  if (!leader || leader[1] < 2 || leader[1] / categoryIds.length < 2 / 3) {
+    return null
+  }
+  return {
+    categoryId: leader[0],
+    matchingComparables: leader[1],
+    comparableCount: categoryIds.length,
+    confidence: leader[1] === categoryIds.length ? "UNANIMOUS" as const
+      : "STRONG_MAJORITY" as const,
+  }
 }
 
 /**
@@ -299,11 +323,25 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
     // "Unbranded" is an absence marker, not a competing brand assertion. A
     // positive value from the reviewed manufacturer source wins; two
     // different positive brands still remain a critical conflict.
-    const resolutionCandidates = manufacturerSpecificBrand
+    const preliminaryCandidates = manufacturerSpecificBrand
       ? trusted.filter((entry) => ![
           "unbranded", "generic", "does not apply", "not applicable", "n a",
         ].includes(key(entry.normalizedValue)))
       : trusted
+    const exactLabelCandidates = preliminaryCandidates.filter((entry) =>
+      entry.sourceType === "OFFICIAL_LABEL" && entry.normalizedValue !== null &&
+      entry.normalizedValue !== "" &&
+      entry.adapterVersion.startsWith("SAME_DAY_SINGLE_FACT_EXCEPTION_"))
+    const exactLabelValues = new Set(exactLabelCandidates.map((entry) =>
+      valueKey(entry.normalizedValue, entry.normalizedUnit)))
+    // A single value visibly confirmed from the exact product label resolves
+    // older supplier/catalog disagreement. Conflicting label confirmations
+    // remain fail-closed.
+    const resolutionCandidates = exactLabelValues.size === 1
+      ? preliminaryCandidates.filter((entry) => exactLabelValues.has(
+          valueKey(entry.normalizedValue, entry.normalizedUnit),
+        ))
+      : preliminaryCandidates
     const comparable = resolutionCandidates.filter((entry) =>
       entry.normalizedValue !== null && entry.normalizedValue !== "")
     const valueGroups = new Map<string, FactObservation[]>()
@@ -526,8 +564,21 @@ export function calculateReadiness(input: {
     const fact = factByKey(input.facts, scope, factKey)
     return hasPermittedSource(fact)
   })
-  const conflict = input.facts.some((fact) => fact.verificationStatus === "CONFLICTED") ||
-    input.requirements.some((requirement) => requirement.status === "CONFLICTED_BLOCKING")
+  const coreProductConflict = input.facts.some((fact) =>
+    fact.factScope === "PRODUCT_UNIT" &&
+    ["exactproductname", "condition"].includes(key(fact.factKey)) &&
+    fact.verificationStatus === "CONFLICTED")
+  const offerPackConflict = input.facts.some((fact) =>
+    fact.factScope === "OFFER_PACK" &&
+    ["offerpackcount", "unitsperpack", "totalunitcount"].includes(key(fact.factKey)) &&
+    fact.verificationStatus === "CONFLICTED")
+  const requiredAspectConflict = input.requirements.some((requirement) =>
+    requirement.status === "CONFLICTED_BLOCKING")
+  // Optional descriptive conflicts are omitted from generated content and may
+  // be corrected later. They must not turn an otherwise exact product into a
+  // terminal identity failure. Core identity, offer-pack and required eBay
+  // aspects remain fail-closed.
+  const conflict = coreProductConflict || offerPackConflict || requiredAspectConflict
   const requirementsReady = !input.requirements.some((requirement) =>
     ["MISSING_BLOCKING", "CONFLICTED_BLOCKING"].includes(requirement.status))
   const regulatory = regulatoryReadiness(input.facts, input.regulated)
@@ -548,10 +599,10 @@ export function calculateReadiness(input: {
   const offerPack = has("OFFER_PACK", ["offerPackCount", "unitsPerPack", "totalUnitCount"]) &&
     Boolean(offerPackCount && unitsPerPack && totalUnitCount && offerPackCount * unitsPerPack === totalUnitCount)
   const gates: Record<ReadinessGate, boolean> = {
-    IDENTITY_READY: input.identityExact && !conflict,
-    PRODUCT_FACTS_READY: productFacts && !conflict,
-    OFFER_PACK_READY: offerPack && !conflict,
-    EBAY_ASPECTS_READY: input.taxonomySourceReady === true && requirementsReady && !conflict,
+    IDENTITY_READY: input.identityExact && !coreProductConflict && !offerPackConflict,
+    PRODUCT_FACTS_READY: productFacts && !coreProductConflict,
+    OFFER_PACK_READY: offerPack && !offerPackConflict,
+    EBAY_ASPECTS_READY: input.taxonomySourceReady === true && requirementsReady,
     REGULATORY_READY: !regulatory.blocking,
     SHIPPING_ESTIMATE_READY: estimate,
     SHIPPING_CONFIRMED: actualShipping,
@@ -642,11 +693,13 @@ export function parseAuthoritativeFactsInputPackage(value: unknown): Authoritati
 
 export function targetedFactException(input: { readiness: ReturnType<typeof calculateReadiness>; requirements: FactRequirement[] }) {
   const gates = input.readiness.gates
-  const missingAspect = input.requirements.find((requirement) => requirement.status === "MISSING_BLOCKING")
+  const missingAspect = input.requirements.find((requirement) =>
+    ["MISSING_BLOCKING", "CONFLICTED_BLOCKING"].includes(requirement.status))
   if (missingAspect) return { fieldRequired: missingAspect.aspectName,
     whyItMatters: "eBay requiere este item specific para la categoría seleccionada.",
     sourcesAlreadyChecked: ["eBay Taxonomy oficial", "Luna exact variant", "eBay Catalog oficial"],
-    exactEvidenceNeeded: `Etiqueta oficial o fuente autorizada que confirme ${missingAspect.aspectName}.`, blockingStatus: "MISSING_BLOCKING" }
+    exactEvidenceNeeded: `Etiqueta oficial o fuente autorizada que confirme ${missingAspect.aspectName}.`,
+    blockingStatus: missingAspect.status }
   if (!gates.IDENTITY_READY) return { fieldRequired: "identidad exacta del producto",
     whyItMatters: "La ficha no puede unir variantes o presentaciones diferentes.",
     sourcesAlreadyChecked: ["Luna exact variant", "eBay Catalog oficial"],
