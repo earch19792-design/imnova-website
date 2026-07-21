@@ -150,7 +150,9 @@ export async function fetchDirectedLunaProduct(
         ) {
           return null
         }
+        const grams = Number(variant.grams)
         const weight = Number(variant.weight)
+        const hasGrams = Number.isFinite(grams) && grams > 0
         const compareAtCents = Number(variant.compare_at_price)
         return {
           id,
@@ -162,8 +164,10 @@ export async function fetchDirectedLunaProduct(
             ? compareAtCents / 100
             : null,
           available: variant.available,
-          weight: Number.isFinite(weight) && weight > 0 ? weight : null,
-          weightUnit: text(variant.weight_unit),
+          weight: hasGrams
+            ? grams
+            : Number.isFinite(weight) && weight > 0 ? weight : null,
+          weightUnit: hasGrams ? "g" : text(variant.weight_unit),
         }
       }).filter((variant): variant is DirectedLunaVariant => Boolean(variant))
     : []
