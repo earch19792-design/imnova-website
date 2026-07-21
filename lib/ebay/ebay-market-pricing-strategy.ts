@@ -1,5 +1,5 @@
 export const EBAY_MARKET_PRICING_STRATEGY_VERSION =
-  "EBAY_MARKET_PRICING_STRATEGY_V2_2026_07_19"
+  "EBAY_MARKET_PRICING_STRATEGY_V3_2026_07_21"
 
 type JsonRecord = Record<string, unknown>
 
@@ -141,7 +141,40 @@ function safeComparable(entry: JsonRecord, nativePackCount: number,
   }
 }
 
-function distribution(entries: SafeComparable[]) {
+function competitiveActiveEntries(entries: SafeComparable[]) {
+  if (entries.length < 5) return { entries, excludedOutlierCount: 0 }
+  const sorted = [...entries].sort((left, right) => left.landedPrice - right.landedPrice)
+  const middle = median(sorted.map((entry) => entry.landedPrice))
+  if (middle === null) {
+    return { entries, excludedOutlierCount: 0 }
+  }
+  const medianAbsoluteDeviation = median(sorted.map((entry) =>
+    Math.abs(entry.landedPrice - middle)))
+  if (medianAbsoluteDeviation === null) return { entries, excludedOutlierCount: 0 }
+  const lowerFence = medianAbsoluteDeviation > 0
+    ? middle - medianAbsoluteDeviation * 3.5
+    : middle * 0.5
+  const upperFence = medianAbsoluteDeviation > 0
+    ? middle + medianAbsoluteDeviation * 3.5
+    : middle * 1.5
+  const competitive = sorted.filter((entry) =>
+    entry.landedPrice >= lowerFence && entry.landedPrice <= upperFence)
+  const sellers = new Set(competitive.map((entry) => entry.seller).filter(Boolean))
+  if (competitive.length < 3 || sellers.size < 2) {
+    return { entries, excludedOutlierCount: 0 }
+  }
+  return {
+    entries: competitive,
+    excludedOutlierCount: entries.length - competitive.length,
+  }
+}
+
+function distribution(sourceEntries: SafeComparable[], activeMarket = false) {
+  const sourcePrices = sourceEntries.map((entry) => entry.landedPrice)
+  const filtered = activeMarket
+    ? competitiveActiveEntries(sourceEntries)
+    : { entries: sourceEntries, excludedOutlierCount: 0 }
+  const entries = filtered.entries
   if (!entries.length) return null
   const prices = entries.map((entry) => entry.landedPrice)
   const sellers = new Set(entries.map((entry) => entry.seller).filter(Boolean))
@@ -156,11 +189,15 @@ function distribution(entries: SafeComparable[]) {
       : "LOW" as const
   return {
     sampleSize,
+    sourceSampleSize: sourceEntries.length,
     sellerCount,
     soldQuantity,
     minimumLandedPrice: money(Math.min(...prices)),
     medianLandedPrice: median(prices),
     maximumLandedPrice: money(Math.max(...prices)),
+    observedMinimumLandedPrice: money(Math.min(...sourcePrices)),
+    observedMaximumLandedPrice: money(Math.max(...sourcePrices)),
+    excludedOutlierCount: filtered.excludedOutlierCount,
     confidence,
     structuredPackCount: sampleSize - titleDerivedCount,
     titleDerivedPackCount: titleDerivedCount,
@@ -198,7 +235,7 @@ export function aggregateEbayMarketPricingByPack(input: {
   const cohorts = packCounts.map((packCount) => {
     const cohort = comparables.filter((entry) => entry.packCount === packCount)
     const sold = distribution(cohort.filter((entry) => entry.historicalSold))
-    const active = distribution(cohort.filter((entry) => !entry.historicalSold))
+    const active = distribution(cohort.filter((entry) => !entry.historicalSold), true)
     const reference = sold && sold.sampleSize >= 2 && sold.sellerCount >= 2
       ? sold
       : active
@@ -295,6 +332,10 @@ function referenceFromDistribution(value: unknown, source: string) {
     medianPrice: medianLandedPrice,
     minimumPrice: minimumLandedPrice,
     maximumPrice: maximumLandedPrice,
+    sourceSampleSize: positiveInteger(entry.sourceSampleSize) ?? sampleSize,
+    excludedOutlierCount: positiveInteger(entry.excludedOutlierCount) ?? 0,
+    observedMinimumPrice: positiveNumber(entry.observedMinimumLandedPrice) ?? minimumLandedPrice,
+    observedMaximumPrice: positiveNumber(entry.observedMaximumLandedPrice) ?? maximumLandedPrice,
     confidence: text(entry.confidence) || "MEDIUM",
     priceBasis: "LANDED_PRICE" as const,
   }

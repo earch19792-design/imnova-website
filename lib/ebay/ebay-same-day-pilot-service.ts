@@ -100,7 +100,7 @@ const LEGACY_PRODUCT_FACTS_RECOVERY_VERSION = "LEGACY_PRODUCT_FACTS_RECOVERY_V2_
 const STALE_DECISION_FACTS_RECOVERY_VERSION = "STALE_DECISION_FACTS_RECOVERY_V1_2026_07_19"
 const PRE_FACTS_DECISION_REFRESH_VERSION = "PRE_FACTS_DECISION_REFRESH_V1_2026_07_21"
 const OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_VERSION =
-  "OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_V1_2026_07_21"
+  "OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_V2_2026_07_21"
 const SAME_DAY_LUNA_DECISION_REFRESH_VERSION = "SAME_DAY_LUNA_DECISION_REFRESH_V1_2026_07_19"
 const SAME_DAY_REPLENISHMENT_VERSION = "SAME_RUN_REPLENISHMENT_V1_2026_07_20"
 const SAME_DAY_MAX_TOTAL_CANDIDATE_ATTEMPTS =
@@ -1785,15 +1785,24 @@ async function repairOfficialBrandMarketPricingGap(
       const evidence = record(candidate.evidence_summary)
       const facts = record(candidate.product_facts_summary)
       const marketPricing = record(facts.marketPricing)
+      const currentPresentation = record(marketPricing.currentPresentation)
+      const activeMarket = record(currentPresentation.active)
       const resolvedFacts = Array.isArray(facts.resolvedFacts) ? facts.resolvedFacts : []
       const resolvedBrand = resolvedFacts.map(record).find((fact) =>
         text(fact.key).toLocaleLowerCase("en-US") === "brand")
       const brand = text(resolvedBrand?.value).toLocaleLowerCase("en-US")
       const official = reviewedOfficialManufacturerIdentity(text(candidate.product_title))
+      const activeMedian = Number(activeMarket.medianLandedPrice)
+      const activeMaximum = Number(activeMarket.maximumLandedPrice)
+      const outlierPricingRecoveryRequired = marketPricing.status === "AVAILABLE" &&
+        Number(activeMarket.sampleSize) >= 5 && Number.isFinite(activeMedian) &&
+        Number.isFinite(activeMaximum) && activeMedian > 0 &&
+        activeMaximum > activeMedian * 1.75
       return candidate.machine_state === "WAITING_PRODUCT_APPROVAL" &&
         Boolean(text(candidate.queue_item_id)) && Boolean(official) &&
-        ["unbranded", "generic", "does not apply", "not applicable", "n/a"].includes(brand) &&
-        marketPricing.status === "INSUFFICIENT_EQUIVALENT_MARKET_DATA" &&
+        ((["unbranded", "generic", "does not apply", "not applicable", "n/a"].includes(brand) &&
+          marketPricing.status === "INSUFFICIENT_EQUIVALENT_MARKET_DATA") ||
+          outlierPricingRecoveryRequired) &&
         text(evidence.officialBrandMarketPricingRecoveryVersion) !==
           OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_VERSION
     })

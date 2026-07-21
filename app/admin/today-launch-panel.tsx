@@ -972,6 +972,7 @@ function MarketPriceReference({ candidate }: { candidate?: Row }) {
     const marketMedian = Number(market.medianPrice)
     const marketMinimum = Number(market.minimumPrice)
     const marketMaximum = Number(market.maximumPrice)
+    const excludedOutlierCount = Number(market.excludedOutlierCount ?? 0)
     const source = String(market.source ?? "")
     const sourceLabel = source.includes("PRODUCT_RESEARCH")
       ? "Product Research / Terapeak"
@@ -1008,6 +1009,7 @@ function MarketPriceReference({ candidate }: { candidate?: Row }) {
       </div>
       <p className="mt-2 font-black">{String(competitivenessLabels[String(recommendation.competitiveness)] ?? recommendation.competitiveness ?? "N/D")}</p>
       <p className="mt-1 text-cyan-100/70">Fuente: {sourceLabel} · muestra {Number(market.sampleSize ?? 0)} · vendedores {Number(market.sellerCount ?? 0)} · confianza {String(market.confidence ?? "limitada").toLowerCase()}. Se usa el agregado; nunca el precio de un vendedor individual.</p>
+      {excludedOutlierCount > 0 && <p className="mt-1 text-cyan-100/65">Seller OS excluyó {excludedOutlierCount} oferta(s) activa(s) atípica(s) del rango competitivo. La evidencia permanece auditada, pero no puede distorsionar el precio recomendado.</p>}
       {controlledRiskActiveMarket && <p className="mt-2 rounded-lg border border-amber-200/30 bg-amber-200/[0.07] p-2 font-bold text-amber-50">El piso normal no compite. La única ventana viable usa margen neto mínimo 10%, publicidad 0%, cantidad 1, monitoreo y aprobación humana para cada cambio. No hay margen para aplicar promoción.</p>}
       {!marketReferenceUsed && controlledExploratoryFloorUsed && <p className="mt-2 rounded-lg border border-violet-200/30 bg-violet-200/[0.07] p-2 font-bold text-violet-50">No apareció una referencia equivalente suficiente. Esto no bloquea el producto: ${ownCostFloor.toFixed(2)} será el precio inicial calculado por costos, sujeto a aprobación humana, cantidad 1 y monitoreo comercial.</p>}
       {!marketReferenceUsed && !controlledExploratoryFloorUsed && <p className="mt-2 rounded-lg border border-red-300/30 bg-red-300/[0.07] p-2 font-bold text-red-100">El piso de ${ownCostFloor.toFixed(2)} es sólo una referencia económica provisional. Faltan identidad, evidencia o costos suficientes para habilitar una prueba controlada.</p>}
