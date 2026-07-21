@@ -34,6 +34,7 @@ test("normalizes a light authorized product photo to a reviewed 1600px white can
   assert.equal(result.transformation.generativeAiUsed, false)
   assert.equal(result.qa.humanApprovalRequired, true)
   assert.equal(result.qa.automaticStatus, "PASSED")
+  assert.ok(result.qa.sourceCenterChromaticRatio > 0.08)
   assert.match(result.sourceSha256, /^[0-9a-f]{64}$/)
   assert.match(result.outputSha256, /^[0-9a-f]{64}$/)
   assert.notEqual(result.sourceSha256, result.outputSha256)

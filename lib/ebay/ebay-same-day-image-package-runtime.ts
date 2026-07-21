@@ -313,6 +313,12 @@ export async function generateAndPersistSameDayImagePackage(input: {
     captureBatchId: input.candidate.product_research_capture_batch_id,
     familyFingerprint: input.candidate.family_fingerprint,
   })
+  // In the durable same-day flow, an AI-generated scene must be grounded in
+  // both the verified product dossier and usable aggregate visual evidence.
+  // Never silently fall back to generic seller-pattern defaults.
+  if (aiEnabled && !marketVisualBrief) {
+    throw new Error("SAME_DAY_IMAGE_MARKET_BRIEF_REQUIRED")
+  }
   const plan = buildSameDayImagePackagePlan({
     handoffPackage,
     authoritativeFactsPackage: facts.factsPackage,

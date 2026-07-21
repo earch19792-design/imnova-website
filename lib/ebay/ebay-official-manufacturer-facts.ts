@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 
 export const OFFICIAL_MANUFACTURER_FACTS_ADAPTER_VERSION =
-  "OFFICIAL_MANUFACTURER_FACTS_V2_2026_07_21"
+  "OFFICIAL_MANUFACTURER_FACTS_V3_2026_07_21"
 
 const MAX_OFFICIAL_PAGE_BYTES = 750_000
 const REQUEST_TIMEOUT_MS = 8_000
@@ -36,6 +36,7 @@ type OfficialSourceDefinition = {
   identityTerms: string[]
   candidatePattern?: RegExp
   pagePattern?: RegExp
+  includePageTitleFact?: boolean
   extractors?: Array<{ key: string; value: string; pattern: RegExp; unit?: string | null }>
   reviewedFallback?: {
     reviewedAt: string
@@ -82,6 +83,47 @@ const OFFICIAL_SOURCES: readonly OfficialSourceDefinition[] = [
         { key: "brand", value: "Tesla", unit: null },
         { key: "exactProductName", value: "Gen 2 NEMA Adapters - 14-30", unit: null },
         { key: "type", value: "NEMA Adapter", unit: null },
+      ],
+    },
+  },
+  {
+    id: "RESTON_LLOYD_CALYPSO_WHITE_COLANDER_1_5_QT",
+    brand: "Reston Lloyd",
+    origin: "https://reston-lloyd.myshopify.com",
+    path: "/products/powder-coated-colanders-white",
+    // This is an official product-family page. The candidate and page guards
+    // bind the exact white 1.5-quart variant before any fact is accepted.
+    identityTerms: ["colander", "white"],
+    candidatePattern:
+      /^(?=.*\bcalypso basics\b)(?=.*\breston lloyd\b)(?=.*\b1[.]5\s*(?:qt|quart)\b).*$/i,
+    pagePattern: /\b1[.]5\s*Qt[.]?[\s\S]{0,160}#08300\b/i,
+    // The family-page heading is not the exact variant name, so keep the
+    // supplier's separately verified exact name and contribute only facts
+    // proved by the matching official variant row.
+    includePageTitleFact: false,
+    extractors: [
+      { key: "mpn", value: "08300",
+        pattern: /\b1[.]5\s*Qt[.]?[\s\S]{0,160}#08300\b/i },
+      { key: "color", value: "White",
+        pattern: /Powder Coated Colanders[^<]{0,100}White/i },
+      { key: "netContent", value: "1.5",
+        pattern: /\b1[.]5\s*Qt[.]?[\s\S]{0,160}#08300\b/i, unit: "quart" },
+      { key: "material", value: "Powder coated enamel on steel",
+        pattern: /Powder Coated Enamel on Steel Colander/i },
+      { key: "type", value: "Colander", pattern: /\bColander\b/i },
+    ],
+    // The official family page and exact #08300 variant were reviewed. This
+    // narrow fallback preserves automatic Brand/MPN recovery if Shopify's edge
+    // temporarily denies a server read; it cannot add price or mutable stock.
+    reviewedFallback: {
+      reviewedAt: "2026-07-21T13:35:00.000Z",
+      facts: [
+        { key: "brand", value: "Reston Lloyd", unit: null },
+        { key: "mpn", value: "08300", unit: null },
+        { key: "color", value: "White", unit: null },
+        { key: "netContent", value: "1.5", unit: "quart" },
+        { key: "material", value: "Powder coated enamel on steel", unit: null },
+        { key: "type", value: "Colander", unit: null },
       ],
     },
   },
@@ -248,7 +290,9 @@ export async function fetchOfficialManufacturerFacts(input: {
     const officialBrand = structuredBrand(structured)
     const facts: OfficialFact[] = [
       { key: "brand", value: officialBrand || source.brand, unit: null },
-      { key: "exactProductName", value: officialTitle, unit: null },
+      ...(source.includePageTitleFact === false ? [] : [
+        { key: "exactProductName", value: officialTitle, unit: null },
+      ]),
       ...(source.extractors ?? []).filter((extractor) => extractor.pattern.test(html))
         .map((extractor) => ({ key: extractor.key, value: extractor.value, unit: extractor.unit ?? null })),
     ]

@@ -4,7 +4,7 @@ import { isIP } from "node:net"
 import sharp from "sharp"
 
 export const EBAY_IMAGE_TRANSFORMATION_VERSION =
-  "EBAY_MAIN_IMAGE_SAFE_WHITE_V1"
+  "EBAY_MAIN_IMAGE_SAFE_WHITE_V2"
 export const EBAY_IMAGE_OUTPUT_SIZE = 1600
 export const EBAY_IMAGE_MAX_SOURCE_BYTES = 15 * 1024 * 1024
 
@@ -43,6 +43,8 @@ export type EbayOptimizedImage = {
   qa: {
     automaticStatus: "PASSED" | "PARTIAL"
     sourceEdgeLightNeutralRatio: number
+    sourceCenterLightNeutralRatio: number
+    sourceCenterChromaticRatio: number
     outputWidth: number
     outputHeight: number
     outputUnderTwelveMegabytes: boolean
@@ -218,6 +220,56 @@ function lightNeutralRatio(
   return sampled ? lightNeutral / sampled : 0
 }
 
+function centerLightNeutralRatio(
+  pixels: Buffer,
+  width: number,
+  height: number,
+  channels: number,
+) {
+  const insetX = Math.max(2, Math.floor(width * 0.12))
+  const insetY = Math.max(2, Math.floor(height * 0.12))
+  let sampled = 0
+  let lightNeutral = 0
+  for (let y = insetY; y < height - insetY; y += 1) {
+    for (let x = insetX; x < width - insetX; x += 1) {
+      const offset = (y * width + x) * channels
+      const red = pixels[offset]
+      const green = pixels[offset + 1]
+      const blue = pixels[offset + 2]
+      const max = Math.max(red, green, blue)
+      const min = Math.min(red, green, blue)
+      sampled += 1
+      if (min >= 225 && max - min <= 24) lightNeutral += 1
+    }
+  }
+  return sampled ? lightNeutral / sampled : 0
+}
+
+function centerChromaticRatio(
+  pixels: Buffer,
+  width: number,
+  height: number,
+  channels: number,
+) {
+  const insetX = Math.max(2, Math.floor(width * 0.12))
+  const insetY = Math.max(2, Math.floor(height * 0.12))
+  let sampled = 0
+  let chromatic = 0
+  for (let y = insetY; y < height - insetY; y += 1) {
+    for (let x = insetX; x < width - insetX; x += 1) {
+      const offset = (y * width + x) * channels
+      const red = pixels[offset]
+      const green = pixels[offset + 1]
+      const blue = pixels[offset + 2]
+      sampled += 1
+      if (Math.max(red, green, blue) - Math.min(red, green, blue) > 32) {
+        chromatic += 1
+      }
+    }
+  }
+  return sampled ? chromatic / sampled : 0
+}
+
 function whitenNearNeutralPixels(pixels: Buffer, channels: number) {
   const output = Buffer.from(pixels)
   for (let offset = 0; offset < output.length; offset += channels) {
@@ -266,7 +318,25 @@ export async function optimizeAuthorizedEbayMainImage(
     decoded.info.height,
     decoded.info.channels,
   )
-  const preserveAuthorizedFrame = edgeRatio < 0.72
+  const centerRatio = centerLightNeutralRatio(
+    decoded.data,
+    decoded.info.width,
+    decoded.info.height,
+    decoded.info.channels,
+  )
+  const centerColorRatio = centerChromaticRatio(
+    decoded.data,
+    decoded.info.width,
+    decoded.info.height,
+    decoded.info.channels,
+  )
+  // A mostly light-neutral center can be a white or reflective product, not
+  // removable background. Whitening those pixels erased the exact product in
+  // legitimate supplier photos such as white enamelware on white. Preserve
+  // the full authorized frame whenever segmentation is ambiguous.
+  const preserveAuthorizedFrame = edgeRatio < 0.72 || (
+    centerRatio >= 0.60 && centerColorRatio <= 0.08
+  )
   let output: Buffer
   try {
     if (preserveAuthorizedFrame) {
@@ -356,6 +426,8 @@ export async function optimizeAuthorizedEbayMainImage(
     qa: {
       automaticStatus: preserveAuthorizedFrame ? "PARTIAL" : "PASSED",
       sourceEdgeLightNeutralRatio: Number(edgeRatio.toFixed(4)),
+      sourceCenterLightNeutralRatio: Number(centerRatio.toFixed(4)),
+      sourceCenterChromaticRatio: Number(centerColorRatio.toFixed(4)),
       outputWidth: outputMetadata.width,
       outputHeight: outputMetadata.height,
       outputUnderTwelveMegabytes: true,
