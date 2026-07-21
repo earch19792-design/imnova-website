@@ -42,7 +42,7 @@ import {
 } from "./ebay-official-manufacturer-facts"
 import { aggregateEbayMarketPricingByPack } from "./ebay-market-pricing-strategy"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V20_2026_07_21"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V21_2026_07_21"
 export const PRODUCT_FACTS_AUTOMATIC_SEARCH_BUDGET_MS = 4 * 60 * 1_000
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
@@ -914,10 +914,15 @@ export async function runProductFactsEnrichment(input: {
         categoryConsensus?.categoryId || catalogCategoryId ||
         tradingCategoryId || knownCategoryId
       const taxonomy = await budgetedAutomaticReadOr(automaticSearchDeadline,
-        () => getEbayTaxonomyListingIntelligence(base.title, taxonomyCategoryId || undefined),
-        () => ({ status: "REQUEST_FAILED" as const, categoryTreeId: null,
+        () => getEbayTaxonomyListingIntelligence(
+          base.title,
+          taxonomyCategoryId || undefined,
+          { allowTitleSuggestionFallback: !categoryConsensus },
+        ),
+          () => ({ status: "REQUEST_FAILED" as const, categoryTreeId: null,
           categoryTreeVersion: null, categoryId: taxonomyCategoryId || null,
-          categoryName: null, observedAt: null, aspects: [], requiredAspects: [],
+          categoryName: null, taxonomyMarketplaceId: "EBAY_US" as const,
+          observedAt: null, aspects: [], requiredAspects: [],
           recommendedAspects: [], categoryResolution: "UNRESOLVED" as const,
           failureCode: PRODUCT_FACTS_SEARCH_BUDGET_EXCEEDED,
           source: "EBAY_TAXONOMY_OFFICIAL_READONLY" as const }))
@@ -966,6 +971,7 @@ export async function runProductFactsEnrichment(input: {
                 : "EBAY_TRADING_EXACT_COMPARABLE"
               : knownCategoryId ? "EXISTING_EXACT_COMPARABLE" : "TITLE_SUGGESTION",
             categoryResolution: text(taxonomyRecord.categoryResolution) || "UNRESOLVED",
+            taxonomyMarketplaceId: text(taxonomyRecord.taxonomyMarketplaceId) || "EBAY_US",
             exactComparableCategoryConsensus: categoryConsensus,
             cachedExactComparableCategoryCount: cachedCategoryRows.length,
             failureCode: text(taxonomyRecord.failureCode) || null,
