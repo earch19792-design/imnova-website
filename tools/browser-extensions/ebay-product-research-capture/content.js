@@ -9,6 +9,7 @@
   const CAPTURE_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_VISIBLE_CAPTURE_V1"
   const RECEIVER_READY_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_RECEIVER_READY_V1"
   const CAPTURE_RESULT_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1"
+  const ANALYZE_THUMBNAIL_MESSAGE = "IMNOVA_ANALYZE_VISIBLE_EBAY_THUMBNAIL_V1"
   const VISUAL_PATTERN_SCHEMA_VERSION = "PRODUCT_RESEARCH_VISUAL_PATTERN_V1_2026_07_17"
   const VISUAL_PATTERN_ALGORITHM_VERSION = "PR_VISIBLE_THUMBNAIL_LOCAL_V1"
   const OFFICIAL_RESEARCH_PATH = /^\/sh\/research\/?$/
@@ -827,6 +828,57 @@
     }
   }
 
+  function safeVisualStats(value) {
+    if (!value || typeof value !== "object") return null
+    const keys = ["neutralEdgeRatio", "coloredEdgeRatio", "foregroundRatio",
+      "transitionRatio", "foregroundCenterX", "foregroundCenterY"]
+    const stats = {}
+    for (const key of keys) {
+      const parsed = Number(value[key])
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) return null
+      stats[key] = parsed
+    }
+    return stats
+  }
+
+  function visualPatternFromStats(base, facts, value) {
+    const stats = safeVisualStats(value)
+    if (!stats) return base
+    const backgroundType = stats.neutralEdgeRatio >= .72 ? "WHITE_OR_NEUTRAL"
+      : stats.coloredEdgeRatio >= .72 && stats.transitionRatio > .28 ? "LIFESTYLE_LIKELY"
+        : stats.coloredEdgeRatio >= .48 ? "COLORED" : "MIXED"
+    const backgroundConfidence = stats.neutralEdgeRatio >= .82 || stats.coloredEdgeRatio >= .78 ? "MEDIUM" : "LOW"
+    const frameCoverage = stats.foregroundRatio < .24 ? "LOW" : stats.foregroundRatio < .58 ? "MEDIUM" : "HIGH"
+    const visualComplexity = stats.transitionRatio < .12 ? "LOW" : stats.transitionRatio < .3 ? "MEDIUM" : "HIGH"
+    const composition = stats.foregroundRatio > .76 ? "FULL_FRAME"
+      : stats.foregroundCenterX < .39 ? "LEFT_WEIGHTED"
+        : stats.foregroundCenterX > .61 ? "RIGHT_WEIGHTED" : "CENTERED"
+    const presentationType = backgroundType === "LIFESTYLE_LIKELY" ? "LIFESTYLE_LIKELY"
+      : backgroundType === "WHITE_OR_NEUTRAL" && frameCoverage !== "LOW" ? "PRODUCT_ONLY" : "UNKNOWN"
+    const confidence = backgroundConfidence === "MEDIUM" && visualComplexity !== "HIGH" ? "MEDIUM" : "LOW"
+    // The title may corroborate a pack-oriented presentation, but never supplies a
+    // visual unit count. Keep visual and title-derived evidence separate.
+    const combinedPresentation = facts.detectedOfferPackCount && facts.detectedOfferPackCount > 1 &&
+      presentationType !== "UNKNOWN" ? "MULTIPACK_LIKELY" : presentationType
+    const combinedConfidence = combinedPresentation === "MULTIPACK_LIKELY" && confidence === "MEDIUM"
+      ? "MEDIUM" : confidence
+    const combinedBasis = combinedPresentation === "MULTIPACK_LIKELY"
+      ? ["VISUAL", "TITLE_DERIVED"] : ["VISUAL"]
+    return {
+      ...base,
+      backgroundType, backgroundConfidence, frameCoverage, visualComplexity,
+      textOverlayLikelihood: "UNKNOWN", badgeOrCalloutLikelihood: "UNKNOWN",
+      presentationType, productCountVisible: null, packClarity: "UNKNOWN",
+      dominantComposition: composition, visualPatternConfidence: confidence,
+      analysisStatus: "ANALYZED",
+      evidence: {
+        visual: { presentationType, confidence },
+        titleDerived: { detectedPackCount: facts.detectedOfferPackCount, detectedUnitCount: facts.detectedUnitCount },
+        combinedConclusion: { presentationType: combinedPresentation, confidence: combinedConfidence, basis: combinedBasis },
+      },
+    }
+  }
+
   function analyzedVisualPattern(image, facts) {
     if (!image || !Number(image.naturalWidth) || !Number(image.naturalHeight)) {
       return unavailableVisualPattern(image, facts)
@@ -845,38 +897,9 @@
       context.drawImage(image, 0, 0, width, height)
       pixelData = context.getImageData(0, 0, width, height)
       const stats = rgbStats(pixelData.data, width, height)
-      const backgroundType = stats.neutralEdgeRatio >= .72 ? "WHITE_OR_NEUTRAL"
-        : stats.coloredEdgeRatio >= .72 && stats.transitionRatio > .28 ? "LIFESTYLE_LIKELY"
-          : stats.coloredEdgeRatio >= .48 ? "COLORED" : "MIXED"
-      const backgroundConfidence = stats.neutralEdgeRatio >= .82 || stats.coloredEdgeRatio >= .78 ? "MEDIUM" : "LOW"
-      const frameCoverage = stats.foregroundRatio < .24 ? "LOW" : stats.foregroundRatio < .58 ? "MEDIUM" : "HIGH"
-      const visualComplexity = stats.transitionRatio < .12 ? "LOW" : stats.transitionRatio < .3 ? "MEDIUM" : "HIGH"
-      const composition = stats.foregroundRatio > .76 ? "FULL_FRAME"
-        : stats.foregroundCenterX < .39 ? "LEFT_WEIGHTED"
-          : stats.foregroundCenterX > .61 ? "RIGHT_WEIGHTED" : "CENTERED"
-      const presentationType = backgroundType === "LIFESTYLE_LIKELY" ? "LIFESTYLE_LIKELY"
-        : backgroundType === "WHITE_OR_NEUTRAL" && frameCoverage !== "LOW" ? "PRODUCT_ONLY" : "UNKNOWN"
-      const confidence = backgroundConfidence === "MEDIUM" && visualComplexity !== "HIGH" ? "MEDIUM" : "LOW"
-      // The title may corroborate a pack-oriented presentation, but never supplies a
-      // visual unit count. Keep visual and title-derived evidence separate.
-      const combinedPresentation = facts.detectedOfferPackCount && facts.detectedOfferPackCount > 1 &&
-        presentationType !== "UNKNOWN" ? "MULTIPACK_LIKELY" : presentationType
-      const combinedConfidence = combinedPresentation === "MULTIPACK_LIKELY" && confidence === "MEDIUM"
-        ? "MEDIUM" : confidence
-      const combinedBasis = combinedPresentation === "MULTIPACK_LIKELY"
-        ? ["VISUAL", "TITLE_DERIVED"] : ["VISUAL"]
-      return {
-        ...unavailableVisualPattern(image, facts, "ANALYZED"),
-        backgroundType, backgroundConfidence, frameCoverage, visualComplexity,
-        textOverlayLikelihood: "UNKNOWN", badgeOrCalloutLikelihood: "UNKNOWN",
-        presentationType, productCountVisible: null, packClarity: "UNKNOWN",
-        dominantComposition: composition, visualPatternConfidence: confidence,
-        evidence: {
-          visual: { presentationType, confidence },
-          titleDerived: { detectedPackCount: facts.detectedOfferPackCount, detectedUnitCount: facts.detectedUnitCount },
-          combinedConclusion: { presentationType: combinedPresentation, confidence: combinedConfidence, basis: combinedBasis },
-        },
-      }
+      return visualPatternFromStats(
+        unavailableVisualPattern(image, facts), facts, stats,
+      )
     } catch {
       return unavailableVisualPattern(image, facts)
     } finally {
@@ -890,10 +913,44 @@
   function visibleVisualPatternForRow(row, itemLink, title) {
     const facts = offerFacts(title)
     try {
-      return analyzedVisualPattern(thumbnailForListing(row, itemLink), facts)
+      const image = thumbnailForListing(row, itemLink)
+      const pattern = analyzedVisualPattern(image, facts)
+      const imageUrl = typeof image?.currentSrc === "string" ? image.currentSrc : ""
+      if (pattern.analysisStatus !== "ANALYZED" && /^https:\/\/i\.ebayimg\.com\//i.test(imageUrl)) {
+        captureContext?.visualFallbacks?.push({ pattern, facts, imageUrl })
+      }
+      return pattern
     } catch {
       return unavailableVisualPattern(null, facts, "REJECTED")
     }
+  }
+
+  async function enrichVisualFallbacks(fallbacks) {
+    let analyzed = 0
+    for (let offset = 0; offset < fallbacks.length; offset += 5) {
+      const group = fallbacks.slice(offset, offset + 5)
+      const results = await Promise.all(group.map(async (fallback) => {
+        try {
+          const response = await chrome.runtime.sendMessage({
+            type: ANALYZE_THUMBNAIL_MESSAGE,
+            imageUrl: fallback.imageUrl,
+          })
+          const enriched = response?.success
+            ? visualPatternFromStats(fallback.pattern, fallback.facts, response.stats)
+            : fallback.pattern
+          delete fallback.imageUrl
+          if (enriched.analysisStatus !== "ANALYZED") return false
+          Object.assign(fallback.pattern, enriched)
+          return true
+        } catch {
+          delete fallback.imageUrl
+          return false
+        }
+      }))
+      analyzed += results.filter(Boolean).length
+    }
+    fallbacks.length = 0
+    return analyzed
   }
 
   function tableParts(container) {
@@ -1682,12 +1739,18 @@
     }
     // Let the button/status paint before reading the eBay grid. Cached DOM
     // geometry prevents repeated forced layouts during the capture.
-    window.requestAnimationFrame(() => window.setTimeout(() => {
+    window.requestAnimationFrame(() => window.setTimeout(() => void (async () => {
       const startedAt = performance.now()
       captureContext = { roots: new WeakMap(), queries: new WeakMap(),
-        rects: new WeakMap(), visibility: new WeakMap() }
+        rects: new WeakMap(), visibility: new WeakMap(), visualFallbacks: [] }
       try {
-        pending = buildCapture()
+        const prepared = buildCapture()
+        const fallbackCount = captureContext.visualFallbacks.length
+        if (fallbackCount) {
+          setStatus(`Analizando localmente ${fallbackCount} miniaturas visibles de eBay…`)
+          await enrichVisualFallbacks(captureContext.visualFallbacks)
+        }
+        pending = prepared
         const elapsed = Math.max(1, Math.round(performance.now() - startedAt))
         setStatus(`Captura preparada: ${pending.visibleResultCount} filas en ${elapsed} ms. Esperando Seller OS…`)
         resetReceiverTimeout()
@@ -1709,7 +1772,7 @@
       } finally {
         captureContext = null
       }
-    }, 0))
+    })(), 0))
   }
 
   window.addEventListener("message", (event) => {
@@ -1749,7 +1812,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.7"
+  title.textContent = "Seller OS · Product Research · v1.2.8"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"

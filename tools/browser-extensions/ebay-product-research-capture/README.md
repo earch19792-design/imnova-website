@@ -9,9 +9,9 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Ejecuta una búsqueda y usa **Capturar y continuar**.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.7.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.8.
 
-## Consulta guiada, sesión de lote y patrones locales (v1.2.7)
+## Consulta guiada, sesión de lote y patrones locales (v1.2.8)
 
 Seller OS puede abrir Product Research con una consulta preparada en el fragmento
 local de la URL. La extensión aplica la consulta automáticamente y el usuario sólo
@@ -19,9 +19,9 @@ pulsa “Capturar y continuar” cuando la tabla nueva está lista. “Aplicar y
 mantiene como fallback si eBay impide el submit automático. El fragmento no se envía
 al servidor de eBay ni cambia los permisos de la extensión.
 
-La misma captura analiza únicamente miniaturas que ya estén visibles en el viewport de Product Research. Chrome intenta leer un recorte temporal de la representación renderizada en memoria para derivar rasgos agregados (fondo, cobertura, complejidad y composición). El recorte y su buffer se eliminan inmediatamente.
+La misma captura analiza únicamente miniaturas que ya estén visibles en el viewport de Product Research. Chrome intenta leer primero la representación ya renderizada. Si la seguridad de origen impide esa lectura, el service worker solicita temporalmente sólo esa miniatura visible desde `i.ebayimg.com`, con credenciales omitidas, un límite estricto de 3 MB y sin redirecciones. Deriva en memoria rasgos agregados de fondo, cobertura, complejidad y composición; después borra los buffers y cierra el bitmap.
 
-La extensión no descarga imágenes, no abre versiones completas, no guarda ni lee URLs de imagen, no genera screenshots/base64/blobs y no transmite píxeles. Si Chrome bloquea la lectura por seguridad de origen, marca el análisis como no disponible y continúa la captura comercial normal.
+La extensión no abre versiones completas, no guarda URLs ni imágenes, no genera screenshots/base64 persistentes y no transmite píxeles a Seller OS u OpenAI. Sólo devuelve al content script seis proporciones numéricas no reconstructivas. Si el host, tipo, tamaño, dimensiones o análisis no son seguros, marca la observación visual como no disponible y continúa la captura comercial normal.
 
 La captura rápida usa un único snapshot de la cuadrícula visible, reutiliza geometría
 y procesa primero las filas ancladas a Item IDs, incluso cuando eBay representa el
@@ -33,7 +33,7 @@ nunca inicia sesión automáticamente. Si eBay recarga la página, conserva en e
 local la consulta y una huella SHA-256 no reconstructiva de la tabla anterior; no guarda
 Item IDs ni filas en storage y sólo reactiva la captura cuando prueba que los resultados cambiaron.
 
-La versión 1.2.7 valida de forma estricta las columnas de unidades vendidas y fecha de
+La versión 1.2.8 valida de forma estricta las columnas de unidades vendidas y fecha de
 última venta. Un precio nunca puede convertirse en cantidad y una fecha numérica ambigua
 no puede convertirse en evidencia histórica; Seller OS rechaza además cualquier venta fuera
 de la ventana visible autorizada.

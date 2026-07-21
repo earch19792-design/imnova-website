@@ -4,9 +4,9 @@ import { basename, resolve } from "node:path"
 const source = resolve("tools/browser-extensions/ebay-product-research-capture")
 const outputPaths = [
   "public/seller-os-tools/ebay-product-research-capture-extension.zip",
-  "public/seller-os-tools/ebay-product-research-capture-extension-v1.2.7.zip",
+  "public/seller-os-tools/ebay-product-research-capture-extension-v1.2.8.zip",
 ]
-const files = ["manifest.json", "content.js", "README.md"]
+const files = ["manifest.json", "background.js", "content.js", "README.md"]
 
 const crcTable = Array.from({ length: 256 }, (_, index) => {
   let value = index
