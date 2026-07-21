@@ -29,7 +29,10 @@ import {
   PRODUCT_FACTS_ENGINE_VERSION,
   runProductFactsEnrichment,
 } from "./ebay-product-facts-enrichment"
-import { buildEbayMarketPricingRecommendation } from "./ebay-market-pricing-strategy"
+import {
+  buildEbayMarketPricingRecommendation,
+  EBAY_MARKET_PRICING_STRATEGY_VERSION,
+} from "./ebay-market-pricing-strategy"
 import { selectApplicableSafeListingDefaults } from "./ebay-manual-listing-service"
 import { readManualListingFromTradingApi } from "./ebay-manual-listing-trading-readonly"
 import { ebayConditionContractFromVerifiedFact } from "./ebay-manual-listing-domain"
@@ -1799,11 +1802,13 @@ async function repairOfficialBrandMarketPricingGap(
         Number.isFinite(activeMedian) &&
         Number.isFinite(activeMaximum) && activeMedian > 0 &&
         activeMaximum > activeMedian * 1.75
+      const pricingStrategyUpgradeRequired = marketPricing.status === "AVAILABLE" &&
+        text(marketPricing.version) !== EBAY_MARKET_PRICING_STRATEGY_VERSION
       return candidate.machine_state === "WAITING_PRODUCT_APPROVAL" &&
         Boolean(text(candidate.queue_item_id)) && Boolean(official) &&
         ((["unbranded", "generic", "does not apply", "not applicable", "n/a"].includes(brand) &&
           marketPricing.status === "INSUFFICIENT_EQUIVALENT_MARKET_DATA") ||
-          outlierPricingRecoveryRequired) &&
+          outlierPricingRecoveryRequired || pricingStrategyUpgradeRequired) &&
         text(evidence.officialBrandMarketPricingRecoveryVersion) !==
           OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_VERSION
     })
