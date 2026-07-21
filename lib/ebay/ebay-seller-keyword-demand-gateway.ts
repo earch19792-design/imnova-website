@@ -391,8 +391,10 @@ function mapComparable(
     imageUrl: text(image.imageUrl),
     price: numberOrNull(price.value),
     currency: text(price.currency) || "USD",
-    categoryId: text(category.categoryId),
-    categoryName: text(category.categoryName),
+    // Browse item detail exposes the actual listing leaf directly. The
+    // categories collection is a breadcrumb and may end in a parent node.
+    categoryId: text(item.categoryId) || text(category.categoryId),
+    categoryName: text(item.categoryName) || text(category.categoryName),
     sellerUsername: text(seller.username ?? seller.userId),
     sellerFeedbackScore: numberOrNull(seller.feedbackScore),
     sellerFeedbackPercentage: numberOrNull(seller.feedbackPercentage),
@@ -588,7 +590,8 @@ async function enrichActiveListing(value: unknown, token: string) {
 async function mappedActiveComparable(value: unknown, token: string) {
   const summary = record(value)
   const itemId = text(summary.itemId)
-  const key = itemId ? `item:${itemId}` : ""
+  // V2 invalidates rows that selected a parent from the category breadcrumb.
+  const key = itemId ? `item-v2:${itemId}` : ""
   const cached = key
     ? await readPersistentReadonlyCache<EbaySellerComparableInput>("BROWSE_ITEM_DETAIL", key)
     : null
@@ -612,7 +615,9 @@ function inferCategoryId(
   if (/^\d+$/.test(text(candidate.categoryId))) return text(candidate.categoryId)
   const dominantCategoryId = text(searchPayload.dominantCategoryId)
   if (dominantCategoryId) return dominantCategoryId
-  return text(firstCategory(record(activeItems[0]).categories).categoryId)
+  const firstActiveItem = record(activeItems[0])
+  return text(firstActiveItem.categoryId) ||
+    text(firstCategory(firstActiveItem.categories).categoryId)
 }
 
 async function searchSoldHistory(
