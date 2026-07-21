@@ -1,5 +1,6 @@
 export const EBAY_MARKET_PRICING_STRATEGY_VERSION =
-  "EBAY_MARKET_PRICING_STRATEGY_V3_2026_07_21"
+  "EBAY_MARKET_PRICING_STRATEGY_V4_2026_07_21"
+const ACTIVE_MARKET_COMPETITIVE_TOLERANCE_RATE = 0.02
 
 type JsonRecord = Record<string, unknown>
 
@@ -401,12 +402,15 @@ export function buildEbayMarketPricingRecommendation(input: {
   const controlledExploratoryFloorUsed = Boolean(
     input.controlledExploratoryTest && floor !== null && !marketReference,
   )
+  const competitiveCeilingPrice = marketReference
+    ? money(marketReference.maximumPrice * (1 + ACTIVE_MARKET_COMPETITIVE_TOLERANCE_RATE))
+    : null
   const ownCostFloorAboveMarket = Boolean(
-    floor !== null && marketReference && floor > marketReference.maximumPrice,
+    floor !== null && competitiveCeilingPrice !== null && floor > competitiveCeilingPrice,
   )
   const controlledRiskActiveMarketFallbackUsed = Boolean(
-    ownCostFloorAboveMarket && controlledRiskPrice !== null && marketReference &&
-    controlledRiskPrice <= marketReference.maximumPrice,
+    ownCostFloorAboveMarket && controlledRiskPrice !== null &&
+    competitiveCeilingPrice !== null && controlledRiskPrice <= competitiveCeilingPrice,
   )
   const recommendedSalePrice = floor === null
     ? null
@@ -487,6 +491,10 @@ export function buildEbayMarketPricingRecommendation(input: {
     controlledExploratoryFloorUsed,
     controlledRiskActiveMarketFallbackUsed,
     controlledRiskMinimumPrice: controlledRiskPrice,
+    competitiveCeilingPrice,
+    competitiveTolerancePercent: marketReference
+      ? ACTIVE_MARKET_COMPETITIVE_TOLERANCE_RATE * 100
+      : null,
     promotionAllowed: controlledRiskActiveMarketFallbackUsed ? false : null,
     promotedListingsReserveRate: controlledRiskActiveMarketFallbackUsed ? 0 : null,
     minimumNetMarginPercent: controlledRiskActiveMarketFallbackUsed ? 10 : null,
