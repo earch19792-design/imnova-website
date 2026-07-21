@@ -332,7 +332,19 @@ async function getEbayJson(url: URL, accessToken: string) {
         cache: "no-store",
         signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
       })
-      if (response.ok) return record(await response.json())
+      if (response.ok) {
+        // Taxonomy legitimately returns an empty success response for some
+        // leaf categories that define no item aspects. Treat that as an empty
+        // official aspect set instead of falling back to an unrelated title
+        // suggestion after JSON parsing fails.
+        const body = await response.text()
+        if (!body.trim()) return {}
+        try {
+          return record(JSON.parse(body))
+        } catch {
+          throw new Error("EBAY_READONLY_JSON_INVALID")
+        }
+      }
       if (response.status === 401) {
         for (const [scope, cached] of tokenCache) {
           if (cached.token === accessToken) tokenCache.delete(scope)
@@ -1076,7 +1088,10 @@ export async function getEbayTaxonomyListingIntelligence(
   const cached = taxonomyCache.get(cacheKey)
   if (cached && cached.expiresAt > Date.now()) return cached.value
   const persistentCached = await readPersistentReadonlyCache<EbayTaxonomyListingIntelligence>("TAXONOMY", cacheKey)
-  if (persistentCached) {
+  // A past fallback must never poison the cache entry of an exact category.
+  // Re-read Taxonomy when category:<id> contains a different suggested id.
+  if (persistentCached && (!normalizedKnownCategory ||
+    persistentCached.categoryId === normalizedKnownCategory)) {
     taxonomyCache.set(cacheKey, { value: persistentCached, expiresAt: Date.now() + TAXONOMY_CACHE_TTL_MS })
     return persistentCached
   }

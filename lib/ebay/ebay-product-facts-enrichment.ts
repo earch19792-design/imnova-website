@@ -42,7 +42,7 @@ import {
 } from "./ebay-official-manufacturer-facts"
 import { aggregateEbayMarketPricingByPack } from "./ebay-market-pricing-strategy"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V19_2026_07_21"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V20_2026_07_21"
 export const PRODUCT_FACTS_AUTOMATIC_SEARCH_BUDGET_MS = 4 * 60 * 1_000
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
