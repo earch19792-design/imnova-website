@@ -52,6 +52,8 @@ import {
   commercialAnalyticsDivergenceState,
   normalizeSellerHubListingEvidence,
   type CommercialAnalyticsMetrics,
+  type CommercialAnalyticsSourceContext,
+  type SellerHubListingEvidence,
 } from "./ebay-commercial-analytics-divergence-domain"
 import { closedEbayAnalyticsWindow } from "./ebay-commercial-analytics-domain"
 import {
@@ -432,6 +434,65 @@ function officialAnalyticsMetrics(value: {
   }
 }
 
+function sellerHubAnalyticsContext(
+  evidence: Pick<SellerHubListingEvidence,
+    "entityScope" | "impressionsMetric" | "viewsMetric" |
+    "transactionsMetric" | "ctrMetric" | "ctrUnit" | "windowStart" |
+    "windowEnd" | "timeZone">,
+): CommercialAnalyticsSourceContext {
+  return {
+    entityScope: evidence.entityScope,
+    impressionsMetric: evidence.impressionsMetric,
+    viewsMetric: evidence.viewsMetric,
+    transactionsMetric: evidence.transactionsMetric,
+    ctrMetric: evidence.ctrMetric,
+    ctrUnit: evidence.ctrUnit,
+    windowStart: evidence.windowStart,
+    windowEnd: evidence.windowEnd,
+    timeZone: evidence.timeZone,
+  }
+}
+
+function persistedSellerHubAnalyticsContext(value: Record<string, unknown>) {
+  return {
+    entityScope: value.entity_scope === "LISTING" || value.entity_scope === "ACCOUNT"
+      ? value.entity_scope
+      : "UNKNOWN",
+    impressionsMetric: typeof value.impressions_metric === "string"
+      ? value.impressions_metric
+      : null,
+    viewsMetric: typeof value.views_metric === "string" ? value.views_metric : null,
+    transactionsMetric: typeof value.transactions_metric === "string"
+      ? value.transactions_metric
+      : null,
+    ctrMetric: typeof value.ctr_metric === "string" ? value.ctr_metric : null,
+    ctrUnit: value.ctr_unit === "PERCENT" || value.ctr_unit === "RATIO"
+      ? value.ctr_unit
+      : "UNKNOWN",
+    windowStart: typeof value.window_start === "string" ? value.window_start : null,
+    windowEnd: typeof value.window_end === "string" ? value.window_end : null,
+    timeZone: typeof value.time_zone === "string" ? value.time_zone : null,
+  } satisfies CommercialAnalyticsSourceContext
+}
+
+function officialAnalyticsContext(input: {
+  windowStart?: string | null
+  windowEnd?: string | null
+  timeZone?: string | null
+}): CommercialAnalyticsSourceContext {
+  return {
+    entityScope: "LISTING",
+    impressionsMetric: "TOTAL_IMPRESSION_TOTAL",
+    viewsMetric: "LISTING_VIEWS_TOTAL",
+    transactionsMetric: "TRANSACTION",
+    ctrMetric: "CLICK_THROUGH_RATE",
+    ctrUnit: "PERCENT",
+    windowStart: input.windowStart ?? null,
+    windowEnd: input.windowEnd ?? null,
+    timeZone: input.timeZone ?? null,
+  }
+}
+
 async function persistListingIdentityVerification(
   supabase: SupabaseClient,
   accountKey: string,
@@ -515,9 +576,15 @@ export async function recordSellerHubListingEvidence(
       listing_id: evidence.listingId,
       sku: evidence.sku,
       source: evidence.source,
+      entity_scope: evidence.entityScope,
       impressions_metric: evidence.impressionsMetric,
       views_metric: evidence.viewsMetric,
       transactions_metric: evidence.transactionsMetric,
+      ctr_metric: evidence.ctrMetric,
+      ctr_unit: evidence.ctrUnit,
+      window_start: evidence.windowStart,
+      window_end: evidence.windowEnd,
+      time_zone: evidence.timeZone,
       observed_on: evidence.observedOn,
       impressions: evidence.impressions,
       views: evidence.views,
@@ -546,6 +613,12 @@ export async function recordSellerHubListingEvidence(
     manual: evidence,
     official,
     officialComparable: snapshot?.completeness_status === "complete",
+    manualContext: sellerHubAnalyticsContext(evidence),
+    officialContext: officialAnalyticsContext({
+      windowStart: snapshot?.window_start,
+      windowEnd: snapshot?.window_end,
+      timeZone: "UTC",
+    }),
   })
   const now = new Date().toISOString()
   const nextCheckAt = new Date(Date.parse(now) + 24 * 60 * 60 * 1_000).toISOString()
@@ -568,6 +641,7 @@ export async function recordSellerHubListingEvidence(
     official_metrics: official,
     official_window_start: snapshot?.window_start ?? null,
     official_window_end: snapshot?.window_end ?? null,
+    comparison_details: state.comparison,
     last_checked_at: now,
     next_check_at: nextCheckAt,
     resolved_at: state.status === "resolved" ? now : null,
@@ -648,7 +722,7 @@ async function reconcileOpenAnalyticsDivergences(
     const evidenceIds = dueRows.map((row) => row.manual_evidence_id)
     const { data: evidenceRows, error: evidenceError } = await supabase
       .from("listing_commercial_manual_evidence")
-      .select("id,listing_id,sku,impressions,views,transactions,ctr")
+      .select("id,listing_id,sku,entity_scope,impressions_metric,views_metric,transactions_metric,ctr_metric,ctr_unit,window_start,window_end,time_zone,impressions,views,transactions,ctr")
       .in("id", evidenceIds)
     if (evidenceError) throw new Error("COMMERCIAL_MANUAL_EVIDENCE_READ_FAILED")
     const evidenceById = new Map((evidenceRows ?? []).map((row) => [row.id, row]))
@@ -677,6 +751,12 @@ async function reconcileOpenAnalyticsDivergences(
         official: api,
         officialComparable: official.completenessStatus === "complete" &&
           official.matchedListingIds.includes(divergence.listing_id),
+        manualContext: persistedSellerHubAnalyticsContext(evidence),
+        officialContext: officialAnalyticsContext({
+          windowStart: official.windowStart,
+          windowEnd: official.windowEnd,
+          timeZone: official.queryTimeZone,
+        }),
       })
       const checkedAt = now.toISOString()
       const nextCheckAt = new Date(now.getTime() + 24 * 60 * 60 * 1_000).toISOString()
@@ -689,6 +769,7 @@ async function reconcileOpenAnalyticsDivergences(
         official_window_start: official.windowStart,
         official_window_end: official.windowEnd,
         official_last_updated_date: official.reportCoverage.lastUpdatedDay,
+        comparison_details: state.comparison,
         last_checked_at: checkedAt,
         next_check_at: nextCheckAt,
         resolved_at: state.status === "resolved" ? checkedAt : null,
@@ -2736,11 +2817,11 @@ export async function getEbayCommercialMonitorDashboard(
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
       .order("created_at", { ascending: false }).limit(100),
     supabase.from("listing_analytics_source_divergences")
-      .select("id,listing_id,sku,manual_evidence_id,classification,health_flag,status,official_source,official_metrics,official_window_start,official_window_end,official_last_updated_date,opened_at,last_checked_at,next_check_at,resolved_at,resolution_code,updated_at")
+      .select("id,listing_id,sku,manual_evidence_id,classification,health_flag,status,official_source,official_metrics,official_window_start,official_window_end,official_last_updated_date,comparison_details,opened_at,last_checked_at,next_check_at,resolved_at,resolution_code,updated_at")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
       .order("updated_at", { ascending: false }).limit(20),
     supabase.from("listing_commercial_manual_evidence")
-      .select("id,listing_id,sku,source,impressions_metric,views_metric,transactions_metric,observed_on,impressions,views,transactions,ctr,created_at")
+      .select("id,listing_id,sku,source,entity_scope,impressions_metric,views_metric,transactions_metric,ctr_metric,ctr_unit,window_start,window_end,time_zone,observed_on,impressions,views,transactions,ctr,created_at")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
       .order("observed_on", { ascending: false }).limit(20),
     supabase.from("marketplace_listing_identity_verifications")
@@ -2876,9 +2957,15 @@ export async function getEbayCommercialMonitorDashboard(
       sku: divergence.sku,
       manualSource: manualEvidence ? {
         source: manualEvidence.source,
+        entityScope: manualEvidence.entity_scope,
         impressionsMetric: manualEvidence.impressions_metric,
         viewsMetric: manualEvidence.views_metric,
         transactionsMetric: manualEvidence.transactions_metric,
+        ctrMetric: manualEvidence.ctr_metric,
+        ctrUnit: manualEvidence.ctr_unit,
+        windowStart: manualEvidence.window_start,
+        windowEnd: manualEvidence.window_end,
+        timeZone: manualEvidence.time_zone,
         observedOn: manualEvidence.observed_on,
         metrics: {
           impressions: numeric(manualEvidence.impressions),
@@ -2893,6 +2980,9 @@ export async function getEbayCommercialMonitorDashboard(
         viewsMetric: "LISTING_VIEWS_TOTAL",
         transactionsMetric: "TRANSACTION",
         ctrMetric: "CLICK_THROUGH_RATE",
+        ctrUnit: "PERCENT",
+        entityScope: "LISTING",
+        timeZone: "UTC",
         observedAt: divergence.last_checked_at,
         windowStart: divergence.official_window_start,
         windowEnd: divergence.official_window_end,
@@ -2904,6 +2994,7 @@ export async function getEbayCommercialMonitorDashboard(
       nextCheckAt: divergence.next_check_at,
       resolvedAt: divergence.resolved_at,
       resolutionCode: divergence.resolution_code,
+      comparison: divergence.comparison_details,
       manualEvidenceUsedAsApiMetric: false,
     } : null,
     listingIdentity: identity ? {

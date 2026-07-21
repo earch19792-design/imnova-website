@@ -9,6 +9,7 @@ import { getListingImageFactoryConfiguration } from "@/lib/ebay/ebay-listing-ima
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { evaluateEbayProductApprovalFulfillmentBasis } from "@/lib/ebay/ebay-fulfillment-policy-compliance"
 import { getProductResearchQueryPlanStatus } from "@/lib/ebay/ebay-product-research-query-plan"
+import { isValidSameDayLunaConfirmation } from "@/lib/ebay/ebay-same-day-pilot-domain"
 import {
   authorizeSameDayControlledRiskOverride,
   confirmSameDayLuna,
@@ -224,12 +225,15 @@ export async function POST(req: Request) {
         ? null : Number(availability.quantity)
       const nativePackCount = body.nativePackCount === null || body.nativePackCount === undefined || body.nativePackCount === ""
         ? null : Number(body.nativePackCount)
-      const price = Number(body.price)
-      if (typeof body.taskId !== "string" || !Number.isFinite(price) || price <= 0 || typeof availability.available !== "boolean" ||
-        (quantity !== null && (!Number.isInteger(quantity) || quantity < 0)) ||
-        (nativePackCount !== null && (!Number.isInteger(nativePackCount) || nativePackCount <= 0 || nativePackCount > 100)) ||
-        (availability.available === true && quantity === 0) ||
-        (availability.available === false && Number(quantity ?? 0) > 0)) {
+      const price = body.price === null || body.price === undefined || body.price === ""
+        ? null : Number(body.price)
+      if (typeof body.taskId !== "string" || typeof availability.available !== "boolean" ||
+        !isValidSameDayLunaConfirmation({
+          price,
+          available: availability.available,
+          quantity,
+          nativePackCount,
+        })) {
         return NextResponse.json({ success: false, error: "SAME_DAY_PILOT_LUNA_CONFIRMATION_INVALID" }, { status: 400 })
       }
       await confirmSameDayLuna({ supabase: access.supabase, accountKey: access.accountKey, actorId: access.auth.userId,

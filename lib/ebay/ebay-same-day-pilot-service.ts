@@ -12,6 +12,7 @@ import {
   SAME_DAY_RECONCILIATION_COVERAGE_ROW_LIMIT,
   SAME_DAY_RECONCILIATION_DECISION_REFERENCE_LIMIT,
   SAME_DAY_TRADING_DETAIL_READ_LIMIT_PER_BATCH,
+  isValidSameDayLunaConfirmation,
   listingQuantityFromLuna,
   selectSameDayQueue,
   type SameDayCandidateInput,
@@ -824,6 +825,36 @@ async function completeAndAdvanceHumanGate(input: {
   if (!['ADVANCED', 'IDEMPOTENT'].includes(text(data))) throw new Error("SAME_DAY_PILOT_HUMAN_GATE_RESULT_INVALID")
 }
 
+async function activateCandidateProductResearchPlan(
+  supabase: SupabaseClient,
+  runId: string,
+  candidate: JsonRecord,
+) {
+  const planId = text(record(candidate.product_research_query_plan).productResearchPlanId)
+  if (!planId) return
+  const { data: run, error: readError } = await supabase
+    .from("ebay_same_day_pilot_runs")
+    .select("source_inventory")
+    .eq("id", runId)
+    .single()
+  if (readError) throw new Error("SAME_DAY_PILOT_PRODUCT_RESEARCH_PLAN_ACTIVATION_READ_FAILED")
+  const sourceInventory = record(run.source_inventory)
+  if (text(sourceInventory.productResearchPlanId) === planId) return
+  const { error: updateError } = await supabase
+    .from("ebay_same_day_pilot_runs")
+    .update({
+      source_inventory: {
+        ...sourceInventory,
+        productResearchPlanId: planId,
+        productResearchPlanActivatedForCandidateId: text(candidate.id),
+        productResearchPlanActivatedAt: new Date().toISOString(),
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", runId)
+  if (updateError) throw new Error("SAME_DAY_PILOT_PRODUCT_RESEARCH_PLAN_ACTIVATION_FAILED")
+}
+
 async function bootstrapCandidate(supabase: SupabaseClient, runId: string, candidate: JsonRecord) {
   const id = text(candidate.id)
   let machineState = text(candidate.machine_state) || "RUN_CREATED"
@@ -870,6 +901,7 @@ async function bootstrapCandidate(supabase: SupabaseClient, runId: string, candi
     machineState = "WAITING_LUNA_CONFIRMATION"
   }
   if (machineState === "WAITING_PRODUCT_RESEARCH_CAPTURE") {
+    await activateCandidateProductResearchPlan(supabase, runId, candidate)
     await createHumanTask({ supabase, runId, candidateId: id, expectedState: "WAITING_PRODUCT_RESEARCH_CAPTURE", gateType: "PRODUCT_RESEARCH_CAPTURE_REQUIRED",
       title: "Captura Product Research para esta familia", why: "Falta evidencia vendida exacta y fresca para decidir sin confundir resultados amplios con demanda.",
       seconds: 60, impact: "La captura enriquecerá la familia y Seller OS continuará automáticamente.",
@@ -1804,8 +1836,12 @@ async function replenishSettledSameDayRun(input: {
   accountKey: string
   state: NonNullable<Awaited<ReturnType<typeof currentState>>>
   now: Date
+  mode?: "SETTLED_RUN" | "OUT_OF_STOCK_REPLACEMENT"
+  rejectedCandidateId?: string
 }) {
   const { state, now } = input
+  const immediateOutOfStockReplacement =
+    input.mode === "OUT_OF_STOCK_REPLACEMENT"
   const sourceInventory = record(state.run.source_inventory)
   const target = Math.max(0, Math.min(SAME_DAY_QUEUE_LIMIT,
     Number(state.run.target_new_listings ?? 2)))
@@ -1817,11 +1853,22 @@ async function replenishSettledSameDayRun(input: {
   const openTask = state.tasks.some((task) => task.status === "OPEN")
   const pendingJob = state.jobs.some((job) =>
     ["PENDING", "WAITING_RETRY", "LEASED"].includes(text(job.status)))
-  if (text(state.run.status) !== "BLOCKED" || !settled || openTask || pendingJob ||
-    verifiedCount >= target) {
+  const rejectedCandidate = immediateOutOfStockReplacement
+    ? state.candidates.find((candidate) =>
+        text(candidate.id) === text(input.rejectedCandidateId) &&
+        text(candidate.machine_state) === "REJECTED" &&
+        strings(candidate.blockers).includes("LUNA_OUT_OF_STOCK"))
+    : null
+  const settledRunEligible = text(state.run.status) === "BLOCKED" && settled &&
+    !openTask && !pendingJob && verifiedCount < target
+  const immediateReplacementEligible = Boolean(
+    immediateOutOfStockReplacement && rejectedCandidate && !openTask,
+  )
+  if (!settledRunEligible && !immediateReplacementEligible) {
     return { status: "NOT_ELIGIBLE", replenished: 0, exhausted: false }
   }
-  if (text(sourceInventory.replenishmentExhaustionVersion) ===
+  if (!immediateOutOfStockReplacement &&
+    text(sourceInventory.replenishmentExhaustionVersion) ===
     SAME_DAY_REPLENISHMENT_VERSION) {
     return { status: "ALREADY_EXHAUSTED", replenished: 0, exhausted: true }
   }
@@ -1830,9 +1877,17 @@ async function replenishSettledSameDayRun(input: {
     Number(candidate.ordinal) || 0))
   const remainingAttemptCapacity = SAME_DAY_MAX_TOTAL_CANDIDATE_ATTEMPTS - maxOrdinal
   const remainingTarget = target - verifiedCount
-  const requested = Math.min(SAME_DAY_QUEUE_LIMIT, remainingTarget,
-    remainingAttemptCapacity)
+  const requested = immediateOutOfStockReplacement
+    ? Math.min(1, remainingAttemptCapacity)
+    : Math.min(SAME_DAY_QUEUE_LIMIT, remainingTarget, remainingAttemptCapacity)
   const persistExhaustion = async (reasonCode: string) => {
+    if (immediateOutOfStockReplacement) {
+      return {
+        status: `IMMEDIATE_REPLACEMENT_${reasonCode}`,
+        replenished: 0,
+        exhausted: false,
+      }
+    }
     const exhaustedSource = {
       ...sourceInventory,
       nextCandidateSetExhausted: true,
@@ -1898,12 +1953,27 @@ async function replenishSettledSameDayRun(input: {
     ...sourceInventory,
     ...preview.counts,
     productResearchPlanPrepared: Boolean(productResearchPlanId),
-    productResearchPlanId,
+    productResearchPlanId: immediateOutOfStockReplacement
+      ? sourceInventory.productResearchPlanId ?? null
+      : productResearchPlanId,
+    replacementProductResearchPlanIds: immediateOutOfStockReplacement &&
+      productResearchPlanId
+      ? [...new Set([
+          ...strings(sourceInventory.replacementProductResearchPlanIds),
+          productResearchPlanId,
+        ])]
+      : strings(sourceInventory.replacementProductResearchPlanIds),
     nextCandidateSetExhausted: false,
     replenishmentExhaustionVersion: null,
     replenishmentExhaustionReason: null,
     sameRunReplenishmentVersion: SAME_DAY_REPLENISHMENT_VERSION,
     replenishmentBatch,
+    replenishmentMode: immediateOutOfStockReplacement
+      ? "OUT_OF_STOCK_REPLACEMENT"
+      : "SETTLED_RUN",
+    replacedCandidateId: immediateOutOfStockReplacement
+      ? text(input.rejectedCandidateId)
+      : null,
     attemptedCandidatesExcluded: state.candidates.length,
     fullCatalogRescan: false,
   }
@@ -1955,7 +2025,9 @@ async function replenishSettledSameDayRun(input: {
     economics_summary: { ready: entry.economicsReady,
       estimatedProfit: entry.estimatedProfit, roiPercent: entry.roiPercent,
       netMarginPercent: entry.netMarginPercent },
-    product_research_query_plan: entry.queryPlan,
+    product_research_query_plan: productResearchPlanId
+      ? { ...entry.queryPlan, productResearchPlanId }
+      : entry.queryPlan,
     calls_estimated: entry.callsEstimated,
     local_preparation_status: "BLOCKED_PENDING_VERIFIED_GATES",
     local_preparation_package: buildSameDayLocalPreparationPackage(entry,
@@ -1967,31 +2039,59 @@ async function replenishSettledSameDayRun(input: {
     .from("ebay_same_day_pilot_candidates").insert(rows).select("*")
   if (insertError) throw new Error("SAME_DAY_PILOT_REPLENISHMENT_INSERT_FAILED")
   const lastOrdinal = maxOrdinal + selected.length
+  const runPatch = immediateOutOfStockReplacement
+    ? {
+        queue_count: lastOrdinal,
+        updated_at: now.toISOString(),
+      }
+    : {
+        queue_count: lastOrdinal,
+        status: "ACTIVE",
+        stage: "QUEUE_PREPARED",
+        next_automated_action: "Procesar automáticamente los candidatos de reposición.",
+        next_human_action: "Ninguna hasta que el flujo solicite una validación indispensable.",
+        updated_at: now.toISOString(),
+      }
   const { error: finalizeError } = await input.supabase
     .from("ebay_same_day_pilot_runs")
-    .update({ queue_count: lastOrdinal, status: "ACTIVE", stage: "QUEUE_PREPARED",
-      next_automated_action: "Procesar automáticamente los candidatos de reposición.",
-      next_human_action: "Ninguna hasta que el flujo solicite una validación indispensable.",
-      updated_at: now.toISOString() })
+    .update(runPatch)
     .eq("id", state.run.id)
   if (finalizeError) throw new Error("SAME_DAY_PILOT_REPLENISHMENT_FINALIZE_FAILED")
   const selectionHash = hash(selected.map((candidate) => candidate.candidateKey))
   const { error: eventError } = await input.supabase
     .from("ebay_same_day_pilot_events")
     .upsert({ run_id: state.run.id,
-      event_type: "SAME_RUN_CANDIDATES_REPLENISHED",
+      event_type: immediateOutOfStockReplacement
+        ? "SAME_RUN_OUT_OF_STOCK_CANDIDATE_REPLACED"
+        : "SAME_RUN_CANDIDATES_REPLENISHED",
       event_payload: { version: SAME_DAY_REPLENISHMENT_VERSION,
         replenishmentBatch, addedCandidates: selected.length,
         firstOrdinal: maxOrdinal + 1, lastOrdinal, targetNewListings: target,
-        verifiedNewListings: verifiedCount, selectionHash },
-      idempotency_key: `${state.run.id}:${SAME_DAY_REPLENISHMENT_VERSION}:${maxOrdinal + 1}:${selectionHash}`,
+        verifiedNewListings: verifiedCount, selectionHash,
+        replacementReason: immediateOutOfStockReplacement
+          ? "LUNA_OUT_OF_STOCK"
+          : "SETTLED_RUN_BELOW_TARGET",
+        replacedCandidateId: immediateOutOfStockReplacement
+          ? text(input.rejectedCandidateId)
+          : null },
+      idempotency_key: immediateOutOfStockReplacement
+        ? `${state.run.id}:${SAME_DAY_REPLENISHMENT_VERSION}:OUT_OF_STOCK:${text(input.rejectedCandidateId)}`
+        : `${state.run.id}:${SAME_DAY_REPLENISHMENT_VERSION}:${maxOrdinal + 1}:${selectionHash}`,
       ebay_read_calls: 0, openai_calls: 0, ebay_writes: 0,
       production_changed: false },
     { onConflict: "idempotency_key", ignoreDuplicates: true })
   if (eventError) throw new Error("SAME_DAY_PILOT_REPLENISHMENT_EVENT_FAILED")
   const first = inserted?.[0]
-  if (first) await bootstrapCandidate(input.supabase, state.run.id, record(first))
-  return { status: "REPLENISHED", replenished: selected.length, exhausted: false }
+  if (first && !immediateOutOfStockReplacement) {
+    await bootstrapCandidate(input.supabase, state.run.id, record(first))
+  }
+  return {
+    status: immediateOutOfStockReplacement
+      ? "OUT_OF_STOCK_REPLACED"
+      : "REPLENISHED",
+    replenished: selected.length,
+    exhausted: false,
+  }
 }
 
 export async function startSameDayPilot(input: { supabase: SupabaseClient; accountKey: string; actorId: string; now?: Date }) {
@@ -2179,7 +2279,10 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
       },
     },
     economics_summary: { ready: entry.economicsReady, estimatedProfit: entry.estimatedProfit, roiPercent: entry.roiPercent, netMarginPercent: entry.netMarginPercent },
-    product_research_query_plan: entry.queryPlan, calls_estimated: entry.callsEstimated,
+    product_research_query_plan: productResearchPlanId
+      ? { ...entry.queryPlan, productResearchPlanId }
+      : entry.queryPlan,
+    calls_estimated: entry.callsEstimated,
     local_preparation_status: "BLOCKED_PENDING_VERIFIED_GATES",
     local_preparation_package: buildSameDayLocalPreparationPackage(entry, now.toISOString()),
     next_automated_action: entry.nextAutomatedAction, next_human_action: entry.nextHumanAction,
@@ -2241,12 +2344,15 @@ export async function getSameDayPilot(input: { supabase: SupabaseClient; account
   return currentState(input.supabase, input.accountKey, operationDate(now), now)
 }
 
-export async function confirmSameDayLuna(input: { supabase: SupabaseClient; accountKey: string; actorId: string; taskId: string; price: number; available: boolean; quantity: number | null; identityAndPackConfirmed?: boolean; nativePackCount?: number | null }) {
+export async function confirmSameDayLuna(input: { supabase: SupabaseClient; accountKey: string; actorId: string; taskId: string; price: number | null; available: boolean; quantity: number | null; identityAndPackConfirmed?: boolean; nativePackCount?: number | null }) {
   const state = await getSameDayPilot(input)
   if (!state) throw new Error("SAME_DAY_PILOT_RUN_MISSING")
   const task = state.tasks.find((entry) => entry.id === input.taskId && entry.status === "OPEN")
   if (!task || task.gate_type !== "LUNA_CONFIRMATION_REQUIRED") throw new Error("SAME_DAY_PILOT_LUNA_TASK_INVALID")
-  if (!(input.price > 0)) throw new Error("SAME_DAY_PILOT_LUNA_PRICE_INVALID")
+  if (!isValidSameDayLunaConfirmation(input)) {
+    throw new Error("SAME_DAY_PILOT_LUNA_CONFIRMATION_INVALID")
+  }
+  const confirmedPrice = input.price
   const candidate = state.candidates.find((entry) => entry.id === task.candidate_id)
   if (!candidate) throw new Error("SAME_DAY_PILOT_LUNA_CANDIDATE_MISSING")
   const evidence = record(candidate.evidence_summary)
@@ -2292,7 +2398,7 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
     status: input.available
       ? input.quantity == null ? "AVAILABLE_QUANTITY_NOT_SHOWN" : "AVAILABLE_EXACT_QUANTITY"
       : "OUT_OF_STOCK",
-    confirmedUnitCost: input.price,
+    confirmedUnitCost: confirmedPrice,
     confirmedQuantity: input.quantity,
     quantityVisible: input.quantity != null,
     recheckAfterSale: quantity.recheckAfterSale,
@@ -2304,7 +2410,7 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
     ebayConfirmedSupplierStock: false,
   }
   const economicsSummary = { ...record(candidate.economics_summary),
-    confirmedLunaPrice: input.price, available: input.available, quantity: input.quantity,
+    confirmedLunaPrice: confirmedPrice, available: input.available, quantity: input.quantity,
     quantityUnknown: input.quantity == null, lunaConfirmation }
   const commercialEvidenceMode = text(evidence.commercialEvidenceMode)
   const controlledExploratoryTest = commercialEvidenceMode === "CONTROLLED_EXPLORATORY_TEST"
@@ -2335,9 +2441,36 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
       reasonCode: "LUNA_OUT_OF_STOCK", triggeredBy: "USER",
       checkpoint: { available: false, operatorConfirmedAt: now },
       candidatePatch: { ...basePatch, state: "REJECTED_TODAY", blockers: ["LUNA_OUT_OF_STOCK"] },
-      nextAutomaticAction: "Promover el siguiente candidato.", nextHumanAction: "Ninguna." })
-    await promoteNextCandidate(input.supabase, state.run.id, Number(candidate.ordinal))
+      nextAutomaticAction: "Agregar un reemplazo elegible y promover el siguiente candidato.",
+      nextHumanAction: "Ninguna." })
+    try {
+      const rejectedState = await currentState(
+        input.supabase,
+        input.accountKey,
+        text(state.run.operation_date),
+      )
+      if (rejectedState) {
+        await replenishSettledSameDayRun({
+          supabase: input.supabase,
+          accountKey: input.accountKey,
+          state: rejectedState,
+          now: new Date(now),
+          mode: "OUT_OF_STOCK_REPLACEMENT",
+          rejectedCandidateId: text(candidate.id),
+        })
+      }
+    } finally {
+      // A replacement lookup must never hold the current five-candidate flow.
+      await promoteNextCandidate(
+        input.supabase,
+        state.run.id,
+        Number(candidate.ordinal),
+      )
+    }
   } else {
+    if (confirmedPrice === null) {
+      throw new Error("SAME_DAY_PILOT_LUNA_PRICE_INVALID")
+    }
     const historicalMarketCheckStatus = text(evidence.historicalMarketCheckStatus)
     const marketDecisionReady = commercialEvidenceMode === "MARKET_VALIDATED" ||
       (controlledExploratoryTest && historicalMarketCheckStatus === "COMPLETED_NO_EXACT_SOLD")
@@ -2346,12 +2479,17 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
         gateType: "LUNA_CONFIRMATION_REQUIRED", runId: state.run.id, candidateId: task.candidate_id,
         previousState: "WAITING_LUNA_CONFIRMATION", nextState: "WAITING_PRODUCT_RESEARCH_CAPTURE",
         reasonCode: "LUNA_CONFIRMED_MARKET_EVIDENCE_PENDING", triggeredBy: "USER",
-        checkpoint: { price: input.price, available: true, quantityKnown: input.quantity != null,
+        checkpoint: { price: confirmedPrice, available: true, quantityKnown: input.quantity != null,
           identityAndPackConfirmed: identityConfirmationRequired,
           nativePackCount: confirmedNativePackCount },
         candidatePatch: { ...basePatch, state: "NEEDS_PRODUCT_RESEARCH_CAPTURE" },
         nextAutomaticAction: "Importar y reconciliar la captura autorizada.",
         nextHumanAction: "Autorizar una captura Product Research para la consulta preparada." })
+      await activateCandidateProductResearchPlan(
+        input.supabase,
+        state.run.id,
+        record(candidate),
+      )
       await createHumanTask({ supabase: input.supabase, runId: state.run.id, candidateId: task.candidate_id,
         expectedState: "WAITING_PRODUCT_RESEARCH_CAPTURE",
         gateType: "PRODUCT_RESEARCH_CAPTURE_REQUIRED", title: "Captura Product Research para esta familia",
@@ -2371,7 +2509,7 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
       const reusablePriorLunaConfirmation = Number(task.gate_generation) > 1 &&
         priorLunaConfirmation.confirmedByActorRecorded === true &&
         text(priorLunaConfirmation.status).startsWith("AVAILABLE_") &&
-        number(priorLunaConfirmation.confirmedUnitCost) === input.price &&
+        number(priorLunaConfirmation.confirmedUnitCost) === confirmedPrice &&
         priorQuantityMatches && Number.isFinite(priorConfirmedAt) &&
         priorConfirmedAt <= nowTimestamp && nowTimestamp - priorConfirmedAt <= 24 * 60 * 60 * 1_000
       if (!reusablePriorLunaConfirmation) {
@@ -2381,7 +2519,7 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
           actorId: input.actorId,
           itemId: text(candidate.queue_item_id),
           idempotencyKey: `${state.run.id}:${task.id}:${SAME_DAY_LUNA_DECISION_REFRESH_VERSION}`,
-          priceObserved: input.price,
+          priceObserved: confirmedPrice,
           availability: input.quantity === null ? "AVAILABLE_QUANTITY_NOT_SHOWN" : "EXACT_QUANTITY_VISIBLE",
           exactQuantity: input.quantity,
         })
@@ -2392,7 +2530,7 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
         reasonCode: controlledExploratoryTest
           ? "LUNA_CONFIRMED_CONTROLLED_TEST_AUTO_RESUME"
           : "LUNA_CONFIRMED_AUTO_RESUME", triggeredBy: "USER",
-        checkpoint: { price: input.price, available: true, quantityKnown: input.quantity != null,
+        checkpoint: { price: confirmedPrice, available: true, quantityKnown: input.quantity != null,
           identityAndPackConfirmed: identityConfirmationRequired,
           nativePackCount: confirmedNativePackCount,
           reusedPriorLunaConfirmation: reusablePriorLunaConfirmation },
@@ -2400,7 +2538,7 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
         nextAutomaticAction: "Recalcular economía localmente.", nextHumanAction: "Ninguna.",
         job: { jobType: "CALCULATE_ECONOMICS",
           idempotencyKey: `${state.run.id}:${task.candidate_id}:CALCULATE_ECONOMICS:${task.id}:${SAME_DAY_LUNA_DECISION_REFRESH_VERSION}`,
-          checkpoint: { confirmedLunaPrice: input.price, quantityKnown: input.quantity != null } } })
+          checkpoint: { confirmedLunaPrice: confirmedPrice, quantityKnown: input.quantity != null } } })
     }
   }
   await refreshRunProjection(input.supabase, state.run.id)

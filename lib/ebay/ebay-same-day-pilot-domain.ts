@@ -460,6 +460,26 @@ export function listingQuantityFromLuna(quantity: number | null, available: bool
   return { quantity: quantity && quantity > 0 ? quantity : 1, recheckAfterSale: quantity == null }
 }
 
+export function isValidSameDayLunaConfirmation(input: {
+  price: number | null
+  available: boolean
+  quantity: number | null
+  nativePackCount?: number | null
+}) {
+  if (typeof input.available !== "boolean") return false
+  if (input.price !== null &&
+    (!Number.isFinite(input.price) || input.price <= 0)) return false
+  if (input.available && input.price === null) return false
+  if (input.quantity !== null &&
+    (!Number.isInteger(input.quantity) || input.quantity < 0)) return false
+  if ((input.available && input.quantity === 0) ||
+    (!input.available && Number(input.quantity ?? 0) > 0)) return false
+  if (input.nativePackCount !== null && input.nativePackCount !== undefined &&
+    (!Number.isInteger(input.nativePackCount) || input.nativePackCount <= 0 ||
+      input.nativePackCount > 100)) return false
+  return true
+}
+
 export function buildSameDayLocalPreparationPackage(candidate: SameDayCandidateDecision, observedAt: string) {
   const supplierQuantity = candidate.supplierQuantity ?? null
   const snapshotConflict =

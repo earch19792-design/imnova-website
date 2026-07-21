@@ -100,9 +100,15 @@ type Dashboard = {
     sku?: string
     manualSource?: {
       source?: string
+      entityScope?: string
       impressionsMetric?: string
       viewsMetric?: string
       transactionsMetric?: string
+      ctrMetric?: string
+      ctrUnit?: string
+      windowStart?: string | null
+      windowEnd?: string | null
+      timeZone?: string | null
       observedOn?: string
       metrics?: { impressions?: number | null; views?: number | null; transactions?: number | null; ctr?: number | null }
     } | null
@@ -112,6 +118,9 @@ type Dashboard = {
       viewsMetric?: string
       transactionsMetric?: string
       ctrMetric?: string
+      ctrUnit?: string
+      entityScope?: string
+      timeZone?: string | null
       observedAt?: string | null
       windowStart?: string | null
       windowEnd?: string | null
@@ -120,6 +129,10 @@ type Dashboard = {
     }
     lastCheckedAt?: string | null
     nextCheckAt?: string | null
+    comparison?: {
+      comparable?: boolean
+      reasonCodes?: string[]
+    }
     manualEvidenceUsedAsApiMetric?: boolean
   } | null
   listingIdentity?: {
@@ -631,6 +644,10 @@ export function CommercialMonitorPanel() {
   const analytics = metrics?.analytics
   const health = dashboard?.health
   const divergence = dashboard?.analyticsSourceDivergence
+  const analyticsDivergenceOpen = divergence?.status === "open" &&
+    divergence.healthFlag === "ANALYTICS_SOURCE_DIVERGENCE"
+  const manualEvidenceNotComparable =
+    divergence?.classification === "MANUAL_EVIDENCE_NOT_COMPARABLE"
   const listingIdentity = dashboard?.listingIdentity
   const readers: Record<string, CommercialMonitorReaderView> = run?.readers ?? {}
   const displayedDryRun = dryRunResult ?? dashboard?.lastDryRun ??
@@ -893,11 +910,19 @@ export function CommercialMonitorPanel() {
         <div className="min-w-0">
         <p className="mt-2 text-xs text-white/60">{divergence?.classification ?? "Las fuentes no tienen una discrepancia registrada."}</p>
         {divergence && <>
-          <p className="mt-2 text-[11px] font-black uppercase text-amber-100">Health flag: ANALYTICS_SOURCE_DIVERGENCE</p>
+          <p className={`mt-2 text-[11px] font-black uppercase ${analyticsDivergenceOpen ? "text-amber-100" : "text-emerald-100"}`}>{analyticsDivergenceOpen
+            ? "Health flag: ANALYTICS_SOURCE_DIVERGENCE"
+            : "Health flag: SIN DIVERGENCIA ABIERTA"}</p>
+          {manualEvidenceNotComparable && <p className="mt-2 rounded-xl border border-emerald-200/25 bg-emerald-200/[0.07] p-3 text-xs leading-5 text-emerald-50">
+            La observación manual es orgánica y no declara una ventana. El reporte oficial es total, por listing y con ventana UTC; se conservan ambos datos, pero no se comparan como si midieran lo mismo.
+          </p>}
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
             <article className="rounded-xl bg-black/25 p-3">
               <h4 className="font-black text-amber-50">Seller Hub · evidencia manual separada</h4>
               <p className="mt-1 text-xs text-white/50">Fuente: {divergence.manualSource?.source ?? "—"} · Observada: {divergence.manualSource?.observedOn ?? "—"}</p>
+              <p className="mt-1 text-[11px] text-white/45">Ventana: {divergence.manualSource?.windowStart && divergence.manualSource?.windowEnd
+                ? `${divergence.manualSource.windowStart} → ${divergence.manualSource.windowEnd}`
+                : "no declarada"} · zona horaria: {divergence.manualSource?.timeZone ?? "no declarada"}</p>
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                 <div><span className="text-white/45">Organic impressions</span><strong className="block">{value(divergence.manualSource?.metrics?.impressions)}</strong></div>
                 <div><span className="text-white/45">Organic listing views</span><strong className="block">{value(divergence.manualSource?.metrics?.views)}</strong></div>
@@ -917,9 +942,9 @@ export function CommercialMonitorPanel() {
               </div>
             </article>
           </div>
-          <p className="mt-3 text-xs font-bold text-amber-50">
-            Reglas de impresiones, CTR y conversión: SUSPENDIDAS · Próxima reconciliación: {formatDate(divergence.nextCheckAt)}
-          </p>
+          <p className={`mt-3 text-xs font-bold ${analyticsDivergenceOpen ? "text-amber-50" : "text-emerald-100"}`}>{analyticsDivergenceOpen
+            ? `Reglas de impresiones, CTR y conversión: SUSPENDIDAS · Próxima reconciliación: ${formatDate(divergence.nextCheckAt)}`
+            : "Reglas de impresiones, CTR y conversión: ACTIVAS con la fuente oficial completa."}</p>
           <p className="mt-1 text-xs text-emerald-100">Orders, Watchers, stock, fulfillment y WhatsApp continúan independientes.</p>
           <p className="mt-1 text-[11px] text-white/45">Evidencia manual usada como métrica API: {divergence.manualEvidenceUsedAsApiMetric === false ? "NO" : "—"}</p>
         </>}

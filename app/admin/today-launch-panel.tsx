@@ -443,6 +443,9 @@ function Metric({ label, value }: { label: string; value: string }) { return <di
 
 function ProductResearchQueueTask({ guidance, researchTasks, candidates, fallbackQuery, openTaskCount }: { guidance?: Row | null; researchTasks: Row[]; candidates: Row[]; fallbackQuery?: unknown; openTaskCount: number }) {
   const [copyStatus, setCopyStatus] = useState<"IDLE" | "COPIED" | "FAILED">("IDLE")
+  const activeFlowCandidates = candidates.filter((candidate) =>
+    !["REJECTED", "BLOCKED"].includes(String(candidate.machine_state ?? "")))
+  const discardedCandidateCount = candidates.length - activeFlowCandidates.length
   const guidedQuery = typeof guidance?.nextQuery?.searchQuery === "string"
     ? guidance.nextQuery.searchQuery.trim().slice(0, 100) : ""
   const durableTaskQuery = typeof fallbackQuery === "string"
@@ -490,13 +493,14 @@ function ProductResearchQueueTask({ guidance, researchTasks, candidates, fallbac
     </div>
     <div className="mt-3 grid gap-3">
       <section aria-label="Productos del lote actual" className="rounded-xl border border-white/10 bg-black/20 p-3">
-        <p className="text-[10px] font-black uppercase tracking-widest text-white/50">Productos del lote actual · {candidates.length}/5</p>
-        <ol className="mt-2 grid gap-1.5 text-xs leading-5 text-white/65">{candidates.map((candidate) => {
+        <p className="text-[10px] font-black uppercase tracking-widest text-white/50">Productos activos del lote · {activeFlowCandidates.length}/5</p>
+        <ol className="mt-2 grid gap-1.5 text-xs leading-5 text-white/65">{activeFlowCandidates.map((candidate) => {
           const current = matchedTask?.candidate_id === candidate.id
           return <li key={candidate.id} className={`rounded-lg border px-2.5 py-2 ${current ? "border-amber-200/35 bg-amber-200/[0.08] text-amber-50" : "border-white/[0.06]"}`}>
             <span className="font-black">{candidate.ordinal}. {candidate.product_title}</span>{current ? " · AHORA" : ""}
           </li>
         })}</ol>
+        {discardedCandidateCount > 0 && <p className="mt-2 text-[11px] font-bold text-emerald-100/75">{discardedCandidateCount} agotado(s) descartado(s); sus reemplazos continúan en este mismo flujo.</p>}
       </section>
       <section aria-label="Familia o producto de referencia" className="rounded-xl border border-violet-200/25 bg-violet-200/[0.07] p-3">
         <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/65">Familia / producto de referencia</p>
@@ -559,12 +563,14 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
   const anchorImage = candidateHeroImage(candidate)
   const parsedQuantity = quantity === "" ? null : Number(quantity)
   const parsedNativePackCount = nativePackCount === "" ? null : Number(nativePackCount)
+  const outOfStockSelected = availability === "out"
+  const parsedPrice = price.trim() === "" ? null : Number(price)
   const lunaQuantityConflict = parsedQuantity !== null && (
     !Number.isInteger(parsedQuantity) || parsedQuantity < 0 ||
     (availability === "available" && parsedQuantity === 0) ||
     (availability === "out" && parsedQuantity > 0)
   )
-  const priceMissing = !(Number(price) > 0)
+  const priceMissing = !outOfStockSelected && !(Number(price) > 0)
   const availabilityMissing = availability === "unknown"
   const salePriceMissing = !marketRecommendationReady || !(Number(salePrice) > 0)
   const fieldId = String(task.id ?? "task")
@@ -620,12 +626,19 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
         <p className="text-xs leading-5 text-white/60">Confirma costo, disponibilidad y cantidad únicamente si Luna la muestra.</p>
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <label className="text-xs font-bold">Costo actual en Luna <span className="text-red-200">*</span>
-          <input value={price} onChange={(event) => setPrice(event.target.value)} inputMode="decimal" aria-required="true" aria-invalid={priceMissing} aria-describedby={`${fieldId}-price-help`} className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${priceMissing ? "border-red-400" : "border-white/15"}`} />
-          <span id={`${fieldId}-price-help`} className={`mt-1 block font-normal ${priceMissing ? "text-red-200" : "text-white/55"}`}>{priceMissing ? "Obligatorio: confirma el costo actual mostrado por Luna." : "Costo recibido; se recalculará la economía."}</span>
+        <label className="text-xs font-bold">Costo actual en Luna {!outOfStockSelected && <span className="text-red-200">*</span>}
+          <input value={price} onChange={(event) => setPrice(event.target.value)} inputMode="decimal" disabled={outOfStockSelected} aria-required={!outOfStockSelected} aria-invalid={priceMissing} aria-describedby={`${fieldId}-price-help`} className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 disabled:opacity-45 ${priceMissing ? "border-red-400" : "border-white/15"}`} />
+          <span id={`${fieldId}-price-help`} className={`mt-1 block font-normal ${priceMissing ? "text-red-200" : "text-white/55"}`}>{outOfStockSelected ? "No se exige costo: el candidato se descartará por stock y será reemplazado." : priceMissing ? "Obligatorio: confirma el costo actual mostrado por Luna." : "Costo recibido; se recalculará la economía."}</span>
         </label>
         <label className="text-xs font-bold">Disponibilidad <span className="text-red-200">*</span>
-          <select value={availability} onChange={(event) => setAvailability(event.target.value)} aria-required="true" aria-invalid={availabilityMissing} aria-describedby={`${fieldId}-availability-help`} className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${availabilityMissing ? "border-red-400" : "border-white/15"}`}><option value="unknown">Seleccionar</option><option value="available">Disponible</option><option value="out">Agotado</option></select>
+          <select value={availability} onChange={(event) => {
+            const nextAvailability = event.target.value
+            setAvailability(nextAvailability)
+            if (nextAvailability === "out") {
+              setPrice("")
+              setQuantity("0")
+            }
+          }} aria-required="true" aria-invalid={availabilityMissing} aria-describedby={`${fieldId}-availability-help`} className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${availabilityMissing ? "border-red-400" : "border-white/15"}`}><option value="unknown">Seleccionar</option><option value="available">Disponible</option><option value="out">Agotado</option></select>
           <span id={`${fieldId}-availability-help`} className={`mt-1 block font-normal ${availabilityMissing ? "text-red-200" : "text-white/55"}`}>{availabilityMissing ? "Obligatorio: confirma si Luna muestra el producto disponible." : "Disponibilidad confirmada."}</span>
         </label>
         <label className="text-xs font-bold">Cantidad visible (opcional)
@@ -656,7 +669,7 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
           ? "Obligatorio: confirma visualmente que el producto y su presentación son exactos antes de continuar."
           : "Identidad visual confirmada. Seller OS conservará esta confirmación con la presentación indicada."}</p>
       </fieldset>}
-      <button type="button" disabled={working || priceMissing || availabilityMissing || lunaQuantityConflict || identityConfirmationMissing || nativePackCountMissing} onClick={() => void onConfirm({ action: "confirm_luna", taskId: task.id, price: Number(price), availability: { available: availability === "available", quantity: parsedQuantity }, ...(identityAndPackConfirmationApplies ? { identityAndPackConfirmed, nativePackCount: parsedNativePackCount } : {}) })} className="mt-4 min-h-12 w-full rounded-xl bg-amber-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 disabled:opacity-40 sm:w-auto">CONFIRMAR Y CONTINUAR</button>
+      <button type="button" disabled={working || priceMissing || availabilityMissing || lunaQuantityConflict || identityConfirmationMissing || nativePackCountMissing} onClick={() => void onConfirm({ action: "confirm_luna", taskId: task.id, price: parsedPrice, availability: { available: availability === "available", quantity: parsedQuantity }, ...(identityAndPackConfirmationApplies ? { identityAndPackConfirmed, nativePackCount: parsedNativePackCount } : {}) })} className="mt-4 min-h-12 w-full rounded-xl bg-amber-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 disabled:opacity-40 sm:w-auto">{outOfStockSelected ? "DESCARTAR Y ANALIZAR REEMPLAZO" : "CONFIRMAR Y CONTINUAR"}</button>
     </div>}
 
     {task.gate_type === "CRITICAL_EXCEPTION_REQUIRED" && <div className="mt-4 rounded-xl border border-amber-200/25 bg-amber-200/[0.05] p-3">
