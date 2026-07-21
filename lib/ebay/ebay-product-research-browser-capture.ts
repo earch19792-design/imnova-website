@@ -531,7 +531,15 @@ export function parseProductResearchBrowserCapture(input: {
     return counts
   }, {})
   const valid = normalized.filter((row): row is NormalizedCaptureRow => !("error" in row))
-  if (!valid.length) {
+  // A structurally valid official table can legitimately contain no usable
+  // historical-sale date. Preserve that negative result without converting a
+  // displayed price or another numeric label into sold evidence. Other
+  // all-row parser failures still reject the capture because they can signal
+  // a broken extractor rather than an empty historical market.
+  const zeroValidSoldRowsAccepted = valid.length === 0 &&
+    Object.keys(errorCounts).length === 1 &&
+    errorCounts.LAST_SOLD_DATE_INVALID === input.capture.rows.length
+  if (!valid.length && !zeroValidSoldRowsAccepted) {
     const reasons = Object.entries(errorCounts).sort((left, right) => right[1] - left[1])
       .map(([code]) => code).slice(0, 3)
     throw new Error(`PRODUCT_RESEARCH_CAPTURE_NO_VALID_SOLD_ROWS:${reasons.join(":") || "UNKNOWN"}`)
@@ -587,6 +595,7 @@ export function parseProductResearchBrowserCapture(input: {
     duplicateWithinCaptureCount: rows.length - uniqueRows.length,
     rejectedCount: input.capture.rows.length - valid.length,
     errorCounts,
+    zeroValidSoldRowsAccepted,
     rows: uniqueRows,
     matchCounts: {
       exactLuna: matchCount("EXACT_LUNA_MATCH"),
@@ -882,6 +891,7 @@ export async function importProductResearchBrowserCapture(input: {
       ambiguous: duplicateBatch.ambiguous_count, noLunaMatch: duplicateBatch.no_luna_match_count },
     candidatesEnriched: duplicateBatch.candidates_enriched_count,
     capturedAt: duplicateBatch.captured_at, reanalysisRequired: false,
+    zeroValidSoldRowsAccepted: Number(duplicateBatch.valid_count) === 0,
     visual,
     rawHtmlStored: false, temporaryTitlesStored: false, competitorImagesDownloaded: 0,
     piiStored: false, openAiCalls: 0, ebayWrites: 0 }
@@ -962,6 +972,7 @@ export async function importProductResearchBrowserCapture(input: {
     validCount: parsed.validCount, importedCount: fresh.length, duplicateCount,
     rejectedCount: parsed.rejectedCount, matchCounts: parsed.matchCounts,
     candidatesEnriched, capturedAt: parsed.capturedAt, reanalysisRequired: fresh.length > 0,
+    zeroValidSoldRowsAccepted: parsed.zeroValidSoldRowsAccepted,
     visual,
     rawHtmlStored: false, temporaryTitlesStored: false, competitorImagesDownloaded: 0,
     piiStored: false, openAiCalls: 0, ebayWrites: 0 }

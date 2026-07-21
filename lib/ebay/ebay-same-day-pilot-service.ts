@@ -3731,15 +3731,27 @@ export async function decideSameDayImages(input: {
 export async function resumeSameDayPilotAfterProductResearchCapture(input: { supabase: SupabaseClient; accountKey: string; searchQuery: string; batchId: string; capturedAt?: string | null; exactLunaMatches?: number }) {
   const state = await getSameDayPilot(input)
   if (!state) return { resumed: 0, familyEnriched: 0 }
-  const { count: captureObservationCount, error: captureObservationError } = await input.supabase
-    .from("marketplace_product_research_capture_observations")
-    .select("id", { count: "exact", head: true })
-    .eq("capture_batch_id", input.batchId)
-    .eq("marketplace_account_key", input.accountKey)
-    .eq("marketplace", MARKETPLACE)
-    .eq("evidence_reviewed", true)
-    .eq("quality_status", "VALID")
-  if (captureObservationError) throw new Error("SAME_DAY_PILOT_CAPTURE_MATCH_READ_FAILED")
+  const [{ count: captureObservationCount, error: captureObservationError },
+    { data: captureBatch, error: captureBatchError }] = await Promise.all([
+    input.supabase
+      .from("marketplace_product_research_capture_observations")
+      .select("id", { count: "exact", head: true })
+      .eq("capture_batch_id", input.batchId)
+      .eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("evidence_reviewed", true)
+      .eq("quality_status", "VALID"),
+    input.supabase
+      .from("marketplace_product_research_capture_batches")
+      .select("id,source_row_count,valid_count,imported_count,duplicate_count,rejected_count,error_counts")
+      .eq("id", input.batchId)
+      .eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .maybeSingle(),
+  ])
+  if (captureObservationError || captureBatchError || !captureBatch) {
+    throw new Error("SAME_DAY_PILOT_CAPTURE_MATCH_READ_FAILED")
+  }
   const authorizedObservationCount = Number(captureObservationCount ?? 0)
   const capturedQueryHash = productResearchPlannedQueryHash(input.searchQuery)
   const familyCandidates = state.candidates.filter((candidate) =>
@@ -3771,16 +3783,104 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
       captureCandidateReferencesPendingReconciliation: authorizedObservationCount,
       groupedCaptureObservedAt: input.capturedAt ?? new Date().toISOString() }
     if (authorizedObservationCount <= 0) {
+      const now = new Date()
+      const selectionIdentity = record(record(candidate.evidence_summary).selectionIdentity)
+      const economicsSummary = record(candidate.economics_summary)
+      const lunaConfirmation = record(economicsSummary.lunaConfirmation)
+      const lunaAlreadyConfirmed = text(lunaConfirmation.status).startsWith("AVAILABLE_") &&
+        Number(economicsSummary.confirmedLunaPrice) > 0
+      const zeroValidSoldRows = Number(captureBatch.valid_count) === 0 &&
+        Number(captureBatch.source_row_count) > 0 &&
+        Number(captureBatch.rejected_count) === Number(captureBatch.source_row_count)
+      const commercialEvidenceHash = versionedHash({
+        batchId: input.batchId,
+        supplierVariantId: candidate.supplier_variant_id,
+        capturedQueryHash,
+        validSoldRows: Number(captureBatch.valid_count),
+        importedSoldRows: Number(captureBatch.imported_count),
+        rejectedRows: Number(captureBatch.rejected_count),
+        mode: "CONTROLLED_EXPLORATORY_TEST",
+        version: "SAME_DAY_ZERO_VALID_SOLD_EVIDENCE_V1",
+      })
+      const controlledEvidenceSummary = { ...evidenceSummary,
+        evidenceTiers: {
+          exactIdentityMatches: 0,
+          confirmedSoldExact: 0,
+          confirmedSoldRelatedPack: 0,
+          confirmedSoldRelatedSize: 0,
+          broadSearchOnlyPromoted: false,
+        },
+        historicalMarketCheckStatus: "COMPLETED_NO_EXACT_SOLD",
+        historicalMarketCheckedAt: now.toISOString(),
+        commercialEvidenceMode: "CONTROLLED_EXPLORATORY_TEST",
+        commercialEvidenceVersion: "SAME_DAY_COMMERCIAL_EVIDENCE_V1",
+        commercialEvidenceHash,
+        controlledIdentityEvidenceHash: text(selectionIdentity.evidenceHash) || null,
+        commercialEvidenceBlockers: [],
+        controlledTestPlan: {
+          listingQuantity: 1,
+          commercialMonitorRequired: true,
+          activeMarketVerificationRequired: true,
+          oneVariableAtATime: true,
+          automaticPricingAllowed: false,
+          manualPublicationRequired: true,
+        },
+        productResearchCaptureQuality: {
+          status: zeroValidSoldRows
+            ? "COMPLETED_ZERO_VALID_SOLD_ROWS"
+            : "COMPLETED_NO_BATCH_SCOPED_VALID_ROWS",
+          sourceRowCount: Number(captureBatch.source_row_count),
+          validSoldRowCount: Number(captureBatch.valid_count),
+          rejectedRowCount: Number(captureBatch.rejected_count),
+          errorCounts: record(captureBatch.error_counts),
+          rejectedRowsUsedForCommercialDecisions: false,
+        },
+        reconciliationCoverage: {
+          reviewedObservations: 0,
+          eventsProcessed: 0,
+          decisionReferences: 0,
+          targetSupplierVariantScoped: true,
+          version: PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION,
+        },
+      }
+      const remainingBlockers = strings(candidate.blockers).filter((blocker) => ![
+        "AUTHORIZED_CAPTURE_OBSERVATIONS_MISSING",
+        "PRODUCT_RESEARCH_EVIDENCE_QUARANTINED",
+        "LAST_SOLD_DATE_OUTSIDE_CAPTURE_WINDOW",
+      ].includes(blocker))
       await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
         gateType: "PRODUCT_RESEARCH_CAPTURE_REQUIRED", runId: state.run.id, candidateId: candidate.id,
-        previousState: "WAITING_PRODUCT_RESEARCH_CAPTURE", nextState: "REJECTED",
-        reasonCode: "AUTHORIZED_CAPTURE_OBSERVATIONS_MISSING", triggeredBy: "SYSTEM",
+        previousState: "WAITING_PRODUCT_RESEARCH_CAPTURE",
+        nextState: lunaAlreadyConfirmed ? "CALCULATING_ECONOMICS" : "RECONCILING_IDENTITY",
+        reasonCode: zeroValidSoldRows
+          ? "PRODUCT_RESEARCH_COMPLETED_ZERO_VALID_SOLD_AUTO_RESUME"
+          : "PRODUCT_RESEARCH_COMPLETED_NO_BATCH_SCOPED_VALID_ROWS_AUTO_RESUME",
+        triggeredBy: "SYSTEM",
         checkpoint: { captureBatchId: input.batchId, authorizedObservationCount: 0,
-          soldEvidenceImported: true },
-        candidatePatch: { productResearchCaptureBatchId: input.batchId, evidenceSummary,
-          state: "REJECTED_TODAY", blockers: ["AUTHORIZED_CAPTURE_OBSERVATIONS_MISSING"] },
-        nextAutomaticAction: "Promover el siguiente candidato.", nextHumanAction: "Ninguna." })
-      await promoteNextCandidate(input.supabase, state.run.id, Number(candidate.ordinal))
+          sourceRowCount: Number(captureBatch.source_row_count),
+          validSoldRowCount: Number(captureBatch.valid_count),
+          rejectedRowCount: Number(captureBatch.rejected_count),
+          soldEvidenceImported: true,
+          rejectedRowsUsedForCommercialDecisions: false },
+        candidatePatch: { productResearchCaptureBatchId: input.batchId,
+          evidenceSummary: controlledEvidenceSummary, blockers: remainingBlockers },
+        nextAutomaticAction: lunaAlreadyConfirmed
+          ? "Calcular economía y verificar el mercado activo."
+          : "Solicitar la confirmación Luna y después verificar el mercado activo.",
+        nextHumanAction: lunaAlreadyConfirmed
+          ? "Ninguna."
+          : "Confirmar precio, disponibilidad e identidad visibles en Luna.",
+        job: lunaAlreadyConfirmed ? { jobType: "CALCULATE_ECONOMICS",
+          idempotencyKey: `${state.run.id}:${candidate.id}:CALCULATE_ECONOMICS:${input.batchId}:ZERO_VALID_SOLD`,
+          checkpoint: {
+            confirmedLunaPrice: economicsSummary.confirmedLunaPrice,
+            quantityKnown: economicsSummary.quantityUnknown !== true,
+            activeMarketVerificationRequired: true,
+          } } : undefined })
+      if (!lunaAlreadyConfirmed) {
+        await createLunaGate(input.supabase, state.run.id, record(candidate),
+          "RECONCILING_IDENTITY")
+      }
     } else {
       familyEnriched += 1
       await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
