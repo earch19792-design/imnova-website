@@ -14,6 +14,7 @@ import {
   hashEbayPublicationOAuthState,
   isValidEbayPublicationAuthorizationCode,
   isValidEbayPublicationOAuthState,
+  publicationIdentityConfirmed,
   publicationScopesConfirmed,
   validateEbayPublicationOAuthPublicKey,
 } from "./ebay-publication-oauth-domain"
@@ -308,7 +309,7 @@ async function verifyOfficialIdentity(
   })
   const payload = record(await response.json().catch(() => ({})))
   const userId = text(payload.userId)
-  if (!response.ok || !userId || text(payload.status).toUpperCase() !== "CONFIRMED") {
+  if (!response.ok || !publicationIdentityConfirmed(payload) || !userId) {
     throw new Error("EBAY_PUBLICATION_OAUTH_IDENTITY_UNAVAILABLE")
   }
   if (

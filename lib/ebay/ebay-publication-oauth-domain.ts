@@ -82,6 +82,25 @@ export function publicationScopesConfirmed(scope: unknown) {
   return EBAY_PUBLICATION_OAUTH_SCOPES.every((value) => returned.has(value))
 }
 
+export function publicationIdentityConfirmed(payload: unknown) {
+  const identity = payload && typeof payload === "object" &&
+      !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : {}
+  const userId = typeof identity.userId === "string"
+    ? identity.userId.trim()
+    : ""
+  const status = typeof identity.status === "string"
+    ? identity.status.trim().toUpperCase()
+    : ""
+
+  // eBay returns userId with commerce.identity.readonly. The status field is
+  // intentionally omitted unless the separate identity.status scope is
+  // requested, so absence is not an account failure. If eBay does return a
+  // status, however, fail closed unless the account is confirmed.
+  return Boolean(userId) && (!status || status === "CONFIRMED")
+}
+
 export function encryptEbayPublicationCredentialBundle(input: {
   clientId: string
   clientSecret: string
