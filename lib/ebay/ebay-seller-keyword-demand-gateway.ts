@@ -20,6 +20,10 @@ import {
   type EbayApplicationBrowseQuota,
 } from "./ebay-application-rate-limit"
 import { validateGtinChecksum } from "./ebay-winner-evidence-v2"
+import {
+  ebaySellerReferenceHash,
+  ebaySourceListingReferenceHash,
+} from "./ebay-competitor-watch-fingerprints"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const BROWSE_SEARCH_ENDPOINT =
@@ -690,6 +694,164 @@ export async function runEbaySellerKeywordDemandValidation(
   } finally {
     browseToken = ""
     insightsToken = ""
+  }
+}
+
+export type SafeEbayActiveCompetitorObservation = {
+  itemReferenceHash: string
+  sellerReferenceHash: string
+  identityMatchQuality: "EXACT_IDENTIFIER" | "EXACT" | "STRONG"
+  evidenceClass: "ACTIVE_ONLY" | "ESTIMATED_ACTIVITY"
+  price: number
+  shippingCost: number
+  landedPrice: number
+  returnsAccepted: boolean | null
+  imageCount: number | null
+  packQuantity: number | null
+  sellerFeedbackBand: "NEW" | "ESTABLISHED" | "MATURE" | "UNKNOWN"
+  estimatedSoldQuantity: number
+}
+
+export type SafeEbayActiveCompetitorScan = {
+  status: "AVAILABLE" | "NO_MATCH"
+  observedAt: string
+  source: "EBAY_BROWSE_ACTIVE_COMPETITOR_READONLY"
+  searchQueryHash: string
+  candidateFoundCount: number
+  returnedCandidateCount: number
+  eligibleOfferCount: number
+  activeSellerCount: number
+  observations: SafeEbayActiveCompetitorObservation[]
+  crossSellerCandidateConfirmedTerms: string[]
+  rawTitlesReturned: false
+  rawSellerUsernamesReturned: false
+  itemIdsReturned: false
+  ebayWrites: 0
+}
+
+function sellerFeedbackBand(value: unknown): SafeEbayActiveCompetitorObservation["sellerFeedbackBand"] {
+  const score = numberOrNull(value)
+  if (score === null) return "UNKNOWN"
+  if (score < 100) return "NEW"
+  if (score < 1_000) return "ESTABLISHED"
+  return "MATURE"
+}
+
+/**
+ * Reads active eBay offers and returns fingerprints plus aggregate commercial
+ * metadata only. Raw titles, Item IDs, URLs, images and seller usernames are
+ * intentionally discarded before the result leaves this gateway.
+ */
+export async function observeEbayActiveCompetitors(input: {
+  candidate: EbaySellerKeywordCandidate
+  marketplaceAccountKey: string
+  fingerprintSecret: string
+  ownSellerUsername?: string | null
+}): Promise<SafeEbayActiveCompetitorScan> {
+  const observedAt = new Date().toISOString()
+  const query = buildEbaySellerKeywordSearchQuery(input.candidate)
+  if (query.length < 3) throw new Error("EBAY_SEARCH_QUERY_TOO_SHORT")
+  if (!input.marketplaceAccountKey || !input.fingerprintSecret) {
+    throw new Error("EBAY_COMPETITOR_FINGERPRINT_CONFIGURATION_REQUIRED")
+  }
+  let token = ""
+  try {
+    await enforceBrowseQuota(3 + detailSampleLimit())
+    token = await getApplicationToken(BROWSE_SCOPE)
+    let activeSearch = await searchActiveListings(input.candidate, query, token)
+    if (activeSearch.items.length === 0 && normalizedGtin(input.candidate.gtin)) {
+      activeSearch = await searchActiveListings(
+        { ...input.candidate, gtin: null },
+        query,
+        token,
+      )
+    }
+    if (activeSearch.items.length === 0 && /^\d+$/.test(text(input.candidate.categoryId))) {
+      activeSearch = await searchActiveListings(
+        { ...input.candidate, gtin: null, epid: null, categoryId: null },
+        query,
+        token,
+      )
+    }
+    const detailCount = Math.min(detailSampleLimit(), activeSearch.items.length)
+    const enriched = await mapWithConcurrency(
+      activeSearch.items.slice(0, detailCount),
+      DETAIL_CONCURRENCY,
+      (item) => mappedActiveComparable(item, token),
+    )
+    const comparables = activeSearch.items.map((item, index) => {
+      const mapped = enriched[index] ?? mapComparable(item, "EBAY_BROWSE_ACTIVE_LISTING")
+      return mapped.estimatedSoldQuantity && mapped.estimatedSoldQuantity > 0
+        ? { ...mapped, source: "EBAY_BROWSE_ESTIMATED_SALES" as const }
+        : mapped
+    })
+    const report = buildEbaySellerKeywordDemandValidation({
+      candidate: input.candidate,
+      comparables,
+      candidateFoundCount: numberOrNull(activeSearch.payload.total) ?? activeSearch.items.length,
+      returnedCandidateCount: activeSearch.items.length,
+      enrichedSampleCount: enriched.length,
+      insightsAvailability: "NOT_CONFIGURED",
+    })
+    const ownSeller = text(input.ownSellerUsername).toLocaleLowerCase("en-US")
+    const observations = report.comparableEvidence.flatMap((entry) => {
+      if (!entry.eligibleComparable) return []
+      if (!(["EXACT_IDENTIFIER", "EXACT", "STRONG"] as string[])
+        .includes(entry.identityMatchQuality)) return []
+      if (ownSeller && entry.sellerUsername.toLocaleLowerCase("en-US") === ownSeller) return []
+      const itemReferenceHash = ebaySourceListingReferenceHash(entry.comparableId)
+      const sellerReferenceHash = ebaySellerReferenceHash({
+        sellerUsername: entry.sellerUsername,
+        marketplaceAccountKey: input.marketplaceAccountKey,
+        fingerprintSecret: input.fingerprintSecret,
+      })
+      if (!itemReferenceHash || !sellerReferenceHash || entry.price < 0) return []
+      const estimatedSoldQuantity = Math.max(0, Math.trunc(entry.estimatedSoldQuantity))
+      const identityMatchQuality = entry.identityMatchQuality as
+        SafeEbayActiveCompetitorObservation["identityMatchQuality"]
+      return [{
+        itemReferenceHash,
+        sellerReferenceHash,
+        identityMatchQuality,
+        evidenceClass: estimatedSoldQuantity > 0
+          ? "ESTIMATED_ACTIVITY" as const
+          : "ACTIVE_ONLY" as const,
+        price: Number(entry.price.toFixed(2)),
+        shippingCost: Number(entry.shippingCost.toFixed(2)),
+        landedPrice: Number((entry.price + entry.shippingCost).toFixed(2)),
+        returnsAccepted: typeof entry.returnsAccepted === "boolean"
+          ? entry.returnsAccepted : null,
+        imageCount: entry.visualEvidence?.imageCount ?? null,
+        packQuantity: entry.lotSize,
+        sellerFeedbackBand: sellerFeedbackBand(entry.sellerFeedbackScore),
+        estimatedSoldQuantity,
+      }]
+    })
+    const sellerHashes = new Set(observations.map((entry) => entry.sellerReferenceHash))
+    const crossSellerCandidateConfirmedTerms = report.activeListingKeywords
+      .filter((entry) => entry.crossSellerSignal && entry.candidateConfirmed &&
+        entry.keywordRole !== "GENERIC_LOW_SIGNAL")
+      .map((entry) => entry.term)
+      .filter((term) => term.length >= 3 && term.length <= 80)
+      .slice(0, 8)
+    return {
+      status: observations.length ? "AVAILABLE" : "NO_MATCH",
+      observedAt,
+      source: "EBAY_BROWSE_ACTIVE_COMPETITOR_READONLY",
+      searchQueryHash: `sha256:${createHash("sha256").update(query).digest("hex")}`,
+      candidateFoundCount: numberOrNull(activeSearch.payload.total) ?? activeSearch.items.length,
+      returnedCandidateCount: activeSearch.items.length,
+      eligibleOfferCount: observations.length,
+      activeSellerCount: sellerHashes.size,
+      observations,
+      crossSellerCandidateConfirmedTerms,
+      rawTitlesReturned: false,
+      rawSellerUsernamesReturned: false,
+      itemIdsReturned: false,
+      ebayWrites: 0,
+    }
+  } finally {
+    token = ""
   }
 }
 

@@ -26,6 +26,9 @@ type MonitorMetrics = Record<string, unknown> & {
   sellerHubMessageRawXmlPersisted?: boolean
   analyticsListingsRead?: number
   watcherListingsRead?: number
+  competitorListingsRead?: number
+  competitorActiveSellers?: number
+  competitorResearchRefreshRecommendations?: number
   newSales?: number
   fulfillmentTasksCreated?: number
   snapshotsCreated?: number
@@ -68,6 +71,18 @@ type MonitorMetrics = Record<string, unknown> & {
     buyerPiiStored?: false
     rawXmlStored?: false
   }
+  competitors?: {
+    listingsScanned?: number
+    activeOffers?: number
+    activeSellers?: number
+    newSellers?: number
+    potentialSellers?: number
+    researchRefreshRecommendations?: number
+    activeOfferTreatedAsConfirmedSale?: false
+    automaticProductResearchImport?: false
+    automaticEbayMutation?: false
+    ebayWrites?: 0
+  } | null
 }
 
 type MonitorRun = Omit<CommercialMonitorRunView, "metrics"> & {
@@ -191,6 +206,31 @@ type Dashboard = {
       automaticCutoff?: boolean
     }
   }
+  competitorWatch?: {
+    status?: "ACTIVE" | "WAITING_BASELINE"
+    profiles?: Array<{
+      listing_id?: string
+      sku?: string | null
+      last_scanned_at?: string | null
+      baseline_completed_at?: string | null
+      latest_active_offer_count?: number
+      latest_active_seller_count?: number
+      latest_estimated_activity_seller_count?: number
+      latest_confirmed_sold_seller_count?: number
+      latest_median_landed_price?: number | null
+      latest_evidence_class?: string
+      latest_suggestion_codes?: string[]
+      latest_suggested_terms?: string[]
+      research_refresh_recommended?: boolean
+      research_refresh_reason_codes?: string[]
+      last_research_refresh_recommended_at?: string | null
+    }>
+    automaticActiveSellerDiscovery?: boolean
+    productResearchRefreshIsSelective?: boolean
+    automaticProductResearchImport?: false
+    humanReviewRequired?: boolean
+    ebayWrites?: 0
+  }
   optimizationTasks?: Array<{
     id?: string
     eventType?: string
@@ -313,6 +353,17 @@ function list(value: string[] | undefined) {
 function authLabel(status: string | undefined) {
   if (status === "CLIENT_CREDENTIAL_MISMATCH") return "CLIENT_MISMATCH"
   return status ?? "PENDIENTE"
+}
+
+function competitorSuggestionLabel(code: string) {
+  const labels: Record<string, string> = {
+    REVIEW_FREE_SHIPPING_COMMON_PATTERN: "Revisar envío gratis observado entre varios vendedores",
+    REVIEW_RETURNS_ACCEPTED_COMMON_PATTERN: "Revisar política de devoluciones común",
+    REVIEW_MULTI_IMAGE_COMMON_PATTERN: "Revisar si conviene ampliar el set de imágenes",
+    REVIEW_MARKET_PRICE_POSITION: "Revisar posición del precio total frente al mercado",
+    REVIEW_CROSS_SELLER_TERMS: "Revisar términos repetidos y confirmados por el producto Luna",
+  }
+  return labels[code] ?? code.replaceAll("_", " ").toLocaleLowerCase("es")
 }
 
 function AnalyticsWindowAudit({ label, audit }: { label: string; audit?: AnalyticsAudit }) {
@@ -665,6 +716,9 @@ export function CommercialMonitorPanel() {
   const optimizationTasks = dashboard?.optimizationTasks ?? []
   const primaryOptimizationTask = optimizationTasks[0]
   const additionalOptimizationTasks = optimizationTasks.slice(1, 5)
+  const competitorProfiles = dashboard?.competitorWatch?.profiles ?? []
+  const researchRefreshProfiles = competitorProfiles.filter((profile) =>
+    profile.research_refresh_recommended)
 
   return (
     <section aria-labelledby="commercial-monitor-heading" className="min-w-0 overflow-hidden rounded-3xl border border-emerald-200/25 bg-gradient-to-br from-emerald-200/[0.10] via-cyan-200/[0.04] to-black p-4 sm:p-5">
@@ -672,7 +726,7 @@ export function CommercialMonitorPanel() {
         <div className="min-w-0">
           <p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Monitoreo comercial · separado de Radar</p>
           <h2 id="commercial-monitor-heading" className="mt-2 text-2xl font-black">Ventas y rendimiento</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/65">Lee órdenes, mensajes pendientes de Seller Hub, Analytics oficial y WatchCount. Los mensajes se notifican sin copiar conversaciones ni datos del comprador. No cambia listings, precios, inventario ni órdenes.</p>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/65">Lee órdenes, mensajes pendientes de Seller Hub, Analytics, WatchCount y competidores activos. Product Research sólo se solicita para confirmar ventas cuando aparece una señal relevante. No cambia listings, precios, inventario ni órdenes.</p>
         </div>
         <span className={`rounded-full border border-white/15 px-3 py-2 text-xs font-black uppercase ${statusTone(run?.status)}`}>
           {loading ? "cargando" : run?.status ?? dashboard?.status ?? "sin ejecutar"}
@@ -774,6 +828,7 @@ export function CommercialMonitorPanel() {
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Mensajes pendientes</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.sellerHubMessageHeadersRead)}</strong><span className="mt-1 block text-[10px] text-white/40">sólo encabezados seguros</span></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Listings Analytics</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.analyticsListingsRead)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Listings Watchers</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.watcherListingsRead)}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Listings competencia</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.competitorListingsRead)}</strong><span className="mt-1 block text-[10px] text-white/40">lectura activa, no ventas</span></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Persistencia comercial</span><strong className="mt-1 block text-lg">{dryRunMetrics?.commercialDataPersistencePerformed === false ? "NO" : "—"}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Alertas encoladas</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.alertsEnqueued)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Tareas de fulfillment creadas</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.fulfillmentTasksCreated)}</strong></div>
@@ -785,11 +840,11 @@ export function CommercialMonitorPanel() {
         </div>
 
         <div className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
-          {(["orders", "messages", "analytics", "watchers"] as const).map((name) => {
+          {(["orders", "messages", "analytics", "watchers", "competitors"] as const).map((name) => {
             const recordedError = displayedDryRun?.errors?.find((item) => item.reader === name)?.code
             const readerError = dryRunReaders[name]?.error ?? recordedError
             return <div key={`dry-${name}`} className="rounded-xl border border-white/10 p-2">
-              <span className="font-black uppercase text-white/45">{name === "orders" ? "Orders" : name === "messages" ? "Mensajes" : name === "analytics" ? "Analytics" : "Watchers"}</span>
+              <span className="font-black uppercase text-white/45">{name === "orders" ? "Orders" : name === "messages" ? "Mensajes" : name === "analytics" ? "Analytics" : name === "watchers" ? "Watchers" : "Competencia"}</span>
               <span className={`mt-1 block break-words font-bold ${readerError ? "text-rose-100" : "text-emerald-100"}`}>
                 {readerError ?? (displayedDryRun ? "Sin errores" : "Pendiente")}
               </span>
@@ -959,6 +1014,41 @@ export function CommercialMonitorPanel() {
         </div>
       </details>
 
+      <section aria-labelledby="competitor-watch-heading" className="mt-4 rounded-2xl border border-violet-200/25 bg-violet-200/[0.06] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/60">Monitoreo automático por listing</p>
+            <h3 id="competitor-watch-heading" className="mt-1 text-lg font-black text-violet-50">Competidores y Product Research</h3>
+          </div>
+          <span className="rounded-full border border-violet-100/20 px-2 py-1 text-[10px] font-black uppercase text-violet-100">
+            {dashboard?.competitorWatch?.status === "ACTIVE" ? "activo" : "esperando línea base"}
+          </span>
+        </div>
+        <p className="mt-2 text-xs leading-5 text-white/60">Los vendedores activos se descubren desde eBay sin importar otra tabla. Una oferta activa no se cuenta como venta; la venta sólo pasa a confirmada cuando coincide con una captura oficial de Product Research.</p>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Listings cubiertos</span><strong className="mt-1 block text-lg">{competitorProfiles.length}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Vendedores activos</span><strong className="mt-1 block text-lg">{competitorProfiles.reduce((sum, profile) => sum + Number(profile.latest_active_seller_count ?? 0), 0)}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Con actividad estimada</span><strong className="mt-1 block text-lg">{competitorProfiles.reduce((sum, profile) => sum + Number(profile.latest_estimated_activity_seller_count ?? 0), 0)}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Venta confirmada</span><strong className="mt-1 block text-lg">{competitorProfiles.reduce((sum, profile) => sum + Number(profile.latest_confirmed_sold_seller_count ?? 0), 0)}</strong></div>
+        </div>
+        {researchRefreshProfiles.length > 0 && <div className="mt-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.08] p-3">
+          <p className="font-black text-amber-50">Product Research recomendado · {researchRefreshProfiles.length} listing(s)</p>
+          <p className="mt-1 text-xs leading-5 text-white/65">Actualizar una sola captura dirigida para confirmar si el nuevo competidor realmente vende. La recomendación tiene enfriamiento y no importa ni modifica nada automáticamente.</p>
+        </div>}
+        <div className="mt-3 space-y-2">
+          {competitorProfiles.slice(0, 5).map((profile) => <article key={profile.listing_id} className="rounded-xl border border-white/10 bg-black/20 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div><p className="font-black text-white">Listing {profile.listing_id}</p><p className="text-[11px] text-white/45">SKU {profile.sku ?? "pendiente"} · {formatDate(profile.last_scanned_at)}</p></div>
+              <span className="rounded-full border border-white/15 px-2 py-1 text-[10px] font-black uppercase text-white/65">{profile.latest_evidence_class?.replaceAll("_", " ") ?? "sin evidencia"}</span>
+            </div>
+            <p className="mt-2 text-xs text-white/65">{profile.latest_active_seller_count ?? 0} vendedor(es) activo(s) · precio total mediano {typeof profile.latest_median_landed_price === "number" ? `$${profile.latest_median_landed_price.toFixed(2)}` : "—"}</p>
+            {(profile.latest_suggestion_codes?.length ?? 0) > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-violet-50">{profile.latest_suggestion_codes?.map((code) => <li key={code}>{competitorSuggestionLabel(code)}</li>)}</ul>}
+          </article>)}
+          {competitorProfiles.length === 0 && <p className="rounded-xl border border-white/10 p-3 text-xs text-white/55">La primera ejecución segura establecerá la línea base sin generar una avalancha de alertas.</p>}
+        </div>
+        <p className="mt-3 text-[11px] font-bold text-emerald-100">Descubrimiento automático: SÍ · importación automática de Research: NO · cambios automáticos en eBay: NO.</p>
+      </section>
+
       <div className="mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Ventas nuevas</span><strong className="mt-1 block text-xl">{value(metrics?.newSales)}</strong></div>
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Impresiones</span><strong className="mt-1 block text-xl">{value(analytics?.impressions)}</strong></div>
@@ -972,9 +1062,9 @@ export function CommercialMonitorPanel() {
       </div>
 
       <dl className="mt-4 grid gap-2 text-xs sm:grid-cols-4">
-        {(["orders", "messages", "analytics", "watchers"] as const).map((name) => (
+        {(["orders", "messages", "analytics", "watchers", "competitors"] as const).map((name) => (
           <div key={name} className="rounded-2xl border border-white/10 p-3">
-            <dt className="font-black uppercase text-white/45">{name === "orders" ? "Órdenes" : name === "messages" ? "Mensajes" : name === "analytics" ? "Analytics" : "Watchers"}</dt>
+            <dt className="font-black uppercase text-white/45">{name === "orders" ? "Órdenes" : name === "messages" ? "Mensajes" : name === "analytics" ? "Analytics" : name === "watchers" ? "Watchers" : "Competencia"}</dt>
             <dd className={`mt-1 font-black uppercase ${statusTone(readers[name]?.status)}`}>{readers[name]?.status ?? "sin ejecutar"}</dd>
             <dd className="mt-1 break-words text-white/45">{readers[name]?.source ?? "Fuente pendiente"}</dd>
             {readers[name]?.error && <dd className="mt-1 break-words text-rose-100">{readers[name]?.error}</dd>}

@@ -90,7 +90,8 @@ export function isSatisfactoryCommercialDryRun(
   if (metrics.dryRun !== true) return false
 
   const requiredReaders = [
-    "orders", "messages", "analytics", "watchers", "listing_identity", "luna_supply",
+    "orders", "messages", "analytics", "watchers", "competitors",
+    "listing_identity", "luna_supply",
   ]
   if (requiredReaders.some((reader) => run.readers?.[reader]?.status !== "available")) {
     return false

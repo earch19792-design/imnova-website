@@ -73,6 +73,7 @@ import {
   recordPersistentEbayRateLimit,
   type EbayQuotaLane,
 } from "./ebay-persistent-quota-coordinator"
+import { monitorEbayListingCompetitors } from "./ebay-competitor-watch-service"
 
 const MARKETPLACE = "EBAY_US"
 const MONITOR_LEASE_SECONDS = 300
@@ -80,7 +81,7 @@ const READER_HISTORY_LIMIT = 500
 const DEFAULT_LUNA_SUPPLY_MAX_AGE_MINUTES = 24 * 60
 
 export const COMMERCIAL_MONITOR_LANES = [
-  "orders", "messages", "analytics", "watchers", "rules", "daily_summary", "whatsapp",
+  "orders", "messages", "analytics", "watchers", "competitors", "rules", "daily_summary", "whatsapp",
 ] as const
 
 export type CommercialMonitorLane = typeof COMMERCIAL_MONITOR_LANES[number]
@@ -116,6 +117,10 @@ type SupplyRow = {
   inventory_quantity: number | null
   product_url: string | null
   captured_at: string | null
+  barcode: string | null
+  vendor: string | null
+  product_type: string | null
+  metadata: Record<string, unknown> | null
 }
 
 type ReaderState = {
@@ -813,7 +818,7 @@ async function loadSupplyRows(supabase: SupabaseClient, listings: ListingRow[]) 
     for (let index = 0; index < values.length; index += 100) {
       const { data, error } = await supabase
         .from("market_radar_latest_variants")
-        .select("product_id,supplier_variant_id,sku,title,variant_title,price,available,inventory_quantity,product_url,captured_at")
+        .select("product_id,supplier_variant_id,sku,title,variant_title,price,available,inventory_quantity,product_url,captured_at,barcode,vendor,product_type,metadata")
         .in(column, values.slice(index, index + 100))
       if (error) throw new Error("COMMERCIAL_LUNA_SUPPLY_READ_FAILED")
       rows.push(...((data ?? []) as SupplyRow[]))
@@ -2305,6 +2310,86 @@ export async function runEbayCommercialMonitor(
       readers.analytics.metrics.divergenceRecheckError = divergence.error
     }
 
+    let competitorWork: Awaited<ReturnType<typeof monitorEbayListingCompetitors>> | null = null
+    if (lanes.includes("competitors")) {
+      const competitorListings = listings.flatMap((listing) => {
+        if (!listing.ebay_sku ||
+          !verifiedIdentities.has(`${listing.ebay_item_id}:${listing.ebay_sku}`)) return []
+        const supply = supplyForListing(listing, supplies)
+        if (!supply || !listing.supplier_variant_id) return []
+        return [{
+          listingId: listing.ebay_item_id,
+          sku: listing.ebay_sku,
+          title: listing.title,
+          price: numeric(listing.ebay_price),
+          currency: listing.currency,
+          supplierVariantId: listing.supplier_variant_id,
+          supplierSku: listing.supplier_sku,
+          rawPayload: listing.raw_payload,
+          supply: {
+            title: supply.title,
+            variantTitle: supply.variant_title,
+            sku: supply.sku,
+            barcode: supply.barcode,
+            vendor: supply.vendor,
+            productType: supply.product_type,
+            metadata: supply.metadata,
+          },
+        }]
+      })
+      try {
+        competitorWork = await quotaProtectedCommercialRead(supabase, {
+          dependencies: [
+            { apiFamily: "OAUTH", operation: "BROWSE_APPLICATION_TOKEN", endpoint: "/identity/v1/oauth2/token" },
+            { apiFamily: "BROWSE", operation: "SEARCH_ACTIVE_COMPETITORS", endpoint: "/buy/browse/v1/item_summary/search" },
+          ],
+          lane: "P0_COMMERCIAL_MONITOR",
+          checkpoint: { runId, reader: "competitors", listingCount: competitorListings.length },
+        }, () => monitorEbayListingCompetitors({
+          supabase,
+          accountKey,
+          monitorRunId: runId,
+          listings: competitorListings,
+          ownSellerUsername: accountScope.identity.expectedUserId || null,
+          observedAt,
+          persist: input.triggerSource !== "dry_run",
+        }))
+        readers.competitors = {
+          status: competitorWork.status === "AVAILABLE"
+            ? "available"
+            : competitorWork.status === "PARTIAL" ? "partial" : "unavailable",
+          source: competitorWork.source,
+          observedAt,
+          metrics: {
+            eligibleListings: competitorWork.eligibleListings,
+            scannedListings: competitorWork.scannedListings,
+            baselineListings: competitorWork.baselineListings,
+            activeOffers: competitorWork.activeOffers,
+            activeSellers: competitorWork.activeSellers,
+            newSellers: competitorWork.newSellers,
+            potentialSellers: competitorWork.potentialSellers,
+            researchRefreshRecommendations: competitorWork.researchRefreshRecommendations,
+            activeOfferTreatedAsConfirmedSale: false,
+            rawCompetitorContentStored: false,
+            ebayWrites: 0,
+          },
+        }
+        for (const competitorError of competitorWork.errors) {
+          errors.push({ reader: "competitors", code: competitorError.code, retryable: true })
+        }
+      } catch (error) {
+        const code = safeCode(error, "EBAY_COMPETITOR_WATCH_READ_FAILED")
+        readers.competitors = {
+          status: "unavailable",
+          source: "EBAY_BROWSE_ACTIVE_COMPETITOR_READONLY",
+          observedAt,
+          error: code,
+          metrics: quotaReaderMetrics(error),
+        }
+        errors.push({ reader: "competitors", code, retryable: true })
+      }
+    } else readers.competitors = { status: "skipped", source: "schedule", observedAt: null }
+
     if (input.triggerSource === "dry_run") {
       const lunaMaxAgeMinutes = integer(
         process.env.EBAY_COMMERCIAL_LUNA_SUPPLY_MAX_AGE_MINUTES,
@@ -2394,6 +2479,10 @@ export async function runEbayCommercialMonitor(
           : null,
         analyticsListingsRead: analytics ? analytics.observations.length : null,
         watcherListingsRead: watchers ? watchers.observations.length : null,
+        competitorListingsRead: competitorWork?.scannedListings ?? null,
+        competitorActiveSellers: competitorWork?.activeSellers ?? null,
+        competitorResearchRefreshRecommendations:
+          competitorWork?.researchRefreshRecommendations ?? null,
         sellerHubMessageHeadersRead: sellerMessages?.headers.length ?? null,
         sellerHubMessageContentReturned: false,
         sellerHubMessageRawXmlPersisted: false,
@@ -2557,11 +2646,29 @@ export async function runEbayCommercialMonitor(
       newSales: orderWork.newSales,
       fulfillmentTasksCreated: orderWork.tasksCreated,
       snapshotsCreated: snapshotWork.snapshots.length,
-      commercialEventsCreated: snapshotWork.eventsGenerated + orderWork.eventsCreated + messageWork.eventsCreated,
-      eventsCreated: snapshotWork.eventsGenerated + orderWork.eventsCreated + messageWork.eventsCreated,
+      commercialEventsCreated: snapshotWork.eventsGenerated + orderWork.eventsCreated +
+        messageWork.eventsCreated + (competitorWork?.eventsCreated ?? 0),
+      eventsCreated: snapshotWork.eventsGenerated + orderWork.eventsCreated +
+        messageWork.eventsCreated + (competitorWork?.eventsCreated ?? 0),
       alertsGenerated: orderWork.alertsGenerated + snapshotWork.alertsGenerated +
-        messageWork.alertsGenerated + (daily?.alertGenerated ? 1 : 0),
-      duplicatesAvoided: orderWork.duplicatesAvoided + messageWork.duplicatesAvoided,
+        messageWork.alertsGenerated + (competitorWork?.alertsGenerated ?? 0) +
+        (daily?.alertGenerated ? 1 : 0),
+      duplicatesAvoided: orderWork.duplicatesAvoided + messageWork.duplicatesAvoided +
+        (competitorWork?.duplicatesAvoided ?? 0),
+      competitors: competitorWork ? {
+        listingsScanned: competitorWork.scannedListings,
+        activeOffers: competitorWork.activeOffers,
+        activeSellers: competitorWork.activeSellers,
+        newSellers: competitorWork.newSellers,
+        potentialSellers: competitorWork.potentialSellers,
+        researchRefreshRecommendations: competitorWork.researchRefreshRecommendations,
+        eventsCreated: competitorWork.eventsCreated,
+        alertsEnqueued: competitorWork.alertsGenerated,
+        activeOfferTreatedAsConfirmedSale: false,
+        automaticProductResearchImport: false,
+        automaticEbayMutation: false,
+        ebayWrites: 0,
+      } : null,
       sellerHubMessages: {
         headersRead: sellerMessages?.headers.length ?? null,
         eventsCreated: messageWork.eventsCreated,
@@ -2649,6 +2756,7 @@ export function getCommercialMonitorScheduleConfiguration() {
     messageIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_MESSAGES_INTERVAL_MINUTES, 10, 5, 1_440),
     analyticsIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_ANALYTICS_INTERVAL_MINUTES, 360, 60, 1_440),
     watchersIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_WATCHERS_INTERVAL_MINUTES, 240, 15, 1_440),
+    competitorsIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_COMPETITORS_INTERVAL_MINUTES, 1_440, 60, 10_080),
     dailySummaryHourUtc: integer(process.env.EBAY_COMMERCIAL_DAILY_SUMMARY_HOUR_UTC, 14, 0, 23),
     dispatcherIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_DISPATCHER_INTERVAL_MINUTES, 5, 5, 60),
   }
@@ -2725,7 +2833,7 @@ export async function getDueCommercialMonitorLanes(
     const readers = run.readers && typeof run.readers === "object"
       ? run.readers as Record<string, { status?: string }>
       : {}
-    for (const name of ["orders", "messages", "analytics", "watchers"]) {
+    for (const name of ["orders", "messages", "analytics", "watchers", "competitors"]) {
       if (
         !lastAttemptByReader.has(name) &&
         readers[name]?.status && readers[name]?.status !== "skipped"
@@ -2757,6 +2865,7 @@ export async function getDueCommercialMonitorLanes(
   })
   if (analyticsDue) lanes.push("analytics", "rules")
   if (commercialScheduleLaneDue(lastByReader.get("watchers"), schedule.watchersIntervalMinutes, now)) lanes.push("watchers", "rules")
+  if (commercialScheduleLaneDue(lastByReader.get("competitors"), schedule.competitorsIntervalMinutes, now)) lanes.push("competitors")
   const { data: todaySummary } = await supabase
     .from("commercial_daily_summaries")
     .select("id")
@@ -2765,7 +2874,7 @@ export async function getDueCommercialMonitorLanes(
     .eq("summary_day", isoDay(now))
     .maybeSingle()
   if (!todaySummary && now.getUTCHours() >= schedule.dailySummaryHourUtc) {
-    lanes.push("orders", "messages", "analytics", "watchers", "rules", "daily_summary")
+    lanes.push("orders", "messages", "analytics", "watchers", "competitors", "rules", "daily_summary")
   }
   lanes.push("whatsapp")
   return [...new Set(lanes)]
@@ -2794,7 +2903,8 @@ export async function getEbayCommercialMonitorDashboard(
   const [
     latestRun, latestDryRun, latestPersistentRun, latestCompleted, taskRows,
     outboxRows, divergenceRows, manualEvidenceRows, identityRows,
-    schedulerAuthorizationRow, optimizationEventRows,
+    schedulerAuthorizationRow, optimizationEventRows, competitorProfileRows,
+    competitorScanRows,
   ] = await Promise.all([
     supabase.from("commercial_monitor_runs").select("*")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
@@ -2838,18 +2948,26 @@ export async function getEbayCommercialMonitorDashboard(
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
       .in("event_type", [...POST_PUBLICATION_OPTIMIZATION_EVENT_TYPES])
       .order("detected_at", { ascending: false }).limit(20),
+    supabase.from("ebay_listing_competitor_watch_profiles")
+      .select("listing_id,sku,last_scanned_at,baseline_completed_at,latest_active_offer_count,latest_active_seller_count,latest_estimated_activity_seller_count,latest_confirmed_sold_seller_count,latest_median_landed_price,latest_free_shipping_ratio,latest_returns_accepted_ratio,latest_multi_image_ratio,latest_evidence_class,latest_suggestion_codes,latest_suggested_terms,research_refresh_recommended,research_refresh_reason_codes,last_research_refresh_recommended_at")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .eq("status", "ACTIVE").order("last_scanned_at", { ascending: false }).limit(100),
+    supabase.from("ebay_listing_competitor_scans")
+      .select("listing_id,observed_at,baseline_established,new_offer_count,new_seller_count,potential_seller_count,research_refresh_recommended,evidence_class,suggestion_codes")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .order("observed_at", { ascending: false }).limit(100),
   ])
   const firstError = latestRun.error ?? latestDryRun.error ?? latestPersistentRun.error ??
     latestCompleted.error ?? taskRows.error ?? outboxRows.error ?? divergenceRows.error ??
     manualEvidenceRows.error ?? identityRows.error ?? schedulerAuthorizationRow.error ??
-    optimizationEventRows.error
+    optimizationEventRows.error ?? competitorProfileRows.error ?? competitorScanRows.error
   if (firstError) throw new Error("COMMERCIAL_MONITOR_DASHBOARD_READ_FAILED")
   const readerLast = new Map<string, string>()
   for (const run of latestCompleted.data ?? []) {
     const readers = run.readers && typeof run.readers === "object"
       ? run.readers as Record<string, { status?: string }>
       : {}
-    for (const name of ["orders", "messages", "analytics", "watchers"]) {
+    for (const name of ["orders", "messages", "analytics", "watchers", "competitors"]) {
       if (!readerLast.has(name) && ["available", "partial", "incomplete"].includes(readers[name]?.status ?? "")) {
         readerLast.set(name, run.started_at)
       }
@@ -2920,6 +3038,21 @@ export async function getEbayCommercialMonitorDashboard(
       useCount: 0,
     },
     pilot24h,
+    competitorWatch: {
+      status: (competitorProfileRows.data ?? []).length ? "ACTIVE" : "WAITING_BASELINE",
+      profiles: competitorProfileRows.data ?? [],
+      latestScans: competitorScanRows.data ?? [],
+      definitions: {
+        activeOffer: "Oferta actualmente visible; no demuestra una venta.",
+        estimatedActivity: "Señal estimada de eBay; no equivale a venta confirmada.",
+        confirmedSoldHistory: "Venta histórica confirmada por una captura oficial de Product Research.",
+      },
+      automaticActiveSellerDiscovery: true,
+      productResearchRefreshIsSelective: true,
+      automaticProductResearchImport: false,
+      humanReviewRequired: true,
+      ebayWrites: 0,
+    },
     optimizationTasks: (optimizationEventRows.data ?? []).map((row) => ({
       id: row.id,
       eventType: row.event_type,
@@ -2947,7 +3080,7 @@ export async function getEbayCommercialMonitorDashboard(
       flags: divergenceOpen ? [ANALYTICS_SOURCE_DIVERGENCE] : [],
       analyticsRulesSuspended: divergenceOpen,
       analyticsRulesSuspendedListingIds: openDivergences.map((row) => row.listing_id),
-      continuingLanes: ["orders", "messages", "watchers", "stock", "fulfillment", "whatsapp"],
+      continuingLanes: ["orders", "messages", "watchers", "competitors", "stock", "fulfillment", "whatsapp"],
     },
     analyticsSourceDivergence: divergence ? {
       classification: divergence.classification,
@@ -3025,6 +3158,7 @@ export async function getEbayCommercialMonitorDashboard(
           nextRunAt(readerLast.get("messages") ?? null, schedule.messageIntervalMinutes),
           nextRunAt(readerLast.get("analytics") ?? null, schedule.analyticsIntervalMinutes),
           nextRunAt(readerLast.get("watchers") ?? null, schedule.watchersIntervalMinutes),
+          nextRunAt(readerLast.get("competitors") ?? null, schedule.competitorsIntervalMinutes),
         ].sort()[0]
       : null,
     safety: {
