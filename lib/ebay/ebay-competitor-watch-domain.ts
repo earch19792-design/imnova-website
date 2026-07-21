@@ -290,7 +290,8 @@ export function buildActiveMarketPriceRecommendation(input: Pick<
     salePrice: activeMedian,
     supplierCost: totalSupplierCost,
   }, controlledRiskConfig)
-  const controlledRiskTenPercent = input.activeSellerCount >= 3 &&
+  const controlledRiskTenPercent = input.activeSellerCount >= 2 &&
+    activeMedian < standardMinimumSafeLandedPrice &&
     activeMedian >= controlledRiskFloor.minimumOperatorPrice &&
     activeMarketControlledEconomics.ready &&
     activeMarketControlledEconomics.passesProfitGate

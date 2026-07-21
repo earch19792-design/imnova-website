@@ -162,7 +162,7 @@ function proposalFromEvent(event: JsonRecord) {
     price.proposedPassesProfitGate === true &&
     (!controlledRiskTenPercent || (
       price.controlledRiskTenPercent === true &&
-      (numeric(price.activeSellerCount) ?? 0) >= 3 &&
+      (numeric(price.activeSellerCount) ?? 0) >= 2 &&
       price.promotionReserveIncluded === false
     ))
   ) return {
