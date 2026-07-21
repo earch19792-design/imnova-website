@@ -615,7 +615,9 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
   const fieldId = String(task.id ?? "task")
   const imageSet = normalizedImageReviewSet(reviewAssets)
   const imageSetReady = completeImageReviewSet(imageSet)
-  const openAiContextUsed = imageSet.some((asset) => asset.generativeAiUsed === true)
+  const generatedSecondaryCount = imageSet.filter((asset) =>
+    asset.generativeAiUsed === true).length
+  const legacyImageSet = imageSet.length === 6 && !imageSetReady
   const selectionIdentity = candidate?.evidence_summary?.selectionIdentity ?? {}
   const lunaTaskFields = Array.isArray(task.action_schema?.fields)
     ? task.action_schema.fields.map((value: unknown) => String(value)) : []
@@ -857,7 +859,7 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
           <input type="checkbox" checked={openAiImageSpendApproved}
             onChange={(event) => setOpenAiImageSpendApproved(event.target.checked)}
             className="mt-1 h-5 w-5 shrink-0 accent-emerald-200" />
-          <span><strong>Autorizo hasta 1 llamada OpenAI de calidad low.</strong> Se utilizará únicamente para un fondo contextual seguro; el producto autorizado se compondrá localmente y las seis imágenes requerirán mi revisión.</span>
+          <span><strong>Autorizo hasta 1 llamada OpenAI de calidad low.</strong> Creará un tablero seguro de escenas comerciales basado en el expediente y, cuando exista, en patrones agregados de vendedores. La foto exacta autorizada de Luna se compondrá localmente; las seis imágenes requerirán mi revisión.</span>
         </label>
       </fieldset>
       {(controlledRiskActiveMarket || nonCompetitiveControlledRisk) && <label className={`mt-3 flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${noPromotionConfirmed ? "border-emerald-200/25 text-emerald-50" : "border-red-300/30 text-red-100"}`}>
@@ -877,7 +879,7 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
       <div className="rounded-xl border border-violet-200/20 bg-violet-200/[0.05] p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm font-black text-violet-50">Set de publicación para revisión · {imageSet.length}/6</p>
-          <span className="rounded-full border border-violet-100/20 px-2.5 py-1 text-[10px] font-black text-violet-100">{openAiContextUsed ? "1 FONDO DE CONTEXTO OPENAI" : "COMPOSICIÓN LOCAL"}</span>
+          <span className="rounded-full border border-violet-100/20 px-2.5 py-1 text-[10px] font-black text-violet-100">{generatedSecondaryCount === 5 ? "5 ESCENAS · 1 LLAMADA OPENAI" : "COMPOSICIÓN LOCAL MULTIFUENTE"}</span>
         </div>
         <p className="mt-2 text-xs leading-5 text-white/60">Estas son las seis imágenes derivadas guardadas por Seller OS para este candidato. La imagen Luna superior sólo sirve como referencia de identidad y no sustituye este set.</p>
       </div>
@@ -892,6 +894,8 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
       </figure>)}</div>
       <p role="status" className={`mt-3 rounded-xl border p-3 text-sm ${imageSetReady ? "border-emerald-200/20 bg-emerald-200/[0.05] text-emerald-50" : "border-red-300/30 bg-red-400/10 text-red-100"}`}>{imageSetReady
         ? "Set completo: revisa producto, pack, variante, textos y elementos incluidos antes de aprobar una sola vez."
+        : legacyImageSet
+          ? "Este set pertenece al generador anterior y no puede aprobarse: repite una sola fuente sin la diversidad comercial exigida. Seller OS debe regenerarlo."
         : imageSet.length
           ? `El set todavía no está listo para aprobar: se recibieron ${imageSet.length} de 6 previews válidos o falta un slot obligatorio.`
           : "Seller OS todavía no entregó el set derivado de seis imágenes. Las URLs Luna no se usarán como sustituto."}</p>
@@ -925,10 +929,19 @@ function normalizedImageReviewSet(value: unknown): Row[] {
 }
 
 function completeImageReviewSet(assets: Row[]) {
-  return assets.length === IMAGE_REVIEW_SLOTS.length &&
+  if (!(assets.length === IMAGE_REVIEW_SLOTS.length &&
     new Set(assets.map((asset) => asset.id)).size === IMAGE_REVIEW_SLOTS.length &&
     IMAGE_REVIEW_SLOTS.every((slot) =>
-      assets.filter((asset) => asset.slot === slot).length === 1)
+      assets.filter((asset) => asset.slot === slot).length === 1) &&
+    assets.every((asset) => asset.compositorContractVersion ===
+      "EBAY_IMAGE_COMPOSITOR_DIVERSITY_V4_2026_07_21"))) return false
+  const main = assets.find((asset) => asset.slot === "MAIN_WHITE_BACKGROUND")
+  const generated = assets.filter((asset) => asset.generativeAiUsed === true)
+  const aiBoardSet = main?.generativeAiUsed !== true && generated.length === 5 &&
+    generated.every((asset) => asset.slot !== "MAIN_WHITE_BACKGROUND")
+  const deterministicMultiSourceSet = generated.length === 0 &&
+    assets.every((asset) => asset.presentationMode === "AUTHORIZED_MULTI_SOURCE")
+  return aiBoardSet || deterministicMultiSourceSet
 }
 
 function imageSlotLabel(value: unknown) {

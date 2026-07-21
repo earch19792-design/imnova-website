@@ -12,6 +12,7 @@ import {
 } from "./ebay-image-storage-cleanup"
 import {
   buildSafeOpenAiBackgroundPlatePlan,
+  EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
   EBAY_LISTING_IMAGE_SET_VERSION,
   EBAY_LISTING_IMAGE_SLOTS,
   getListingImageFactoryConfiguration,
@@ -22,6 +23,7 @@ import {
   disposeTransientSameDayImageAssets,
   generateTransientSameDayImagePackage,
 } from "./ebay-same-day-image-package-service"
+import { loadEbayImageMarketBrief } from "./ebay-image-market-brief"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
 const MAX_OUTPUT_BYTES = 12 * 1024 * 1024
@@ -302,6 +304,15 @@ export async function generateAndPersistSameDayImagePackage(input: {
   const aiEnabled = configuration.aiGeneration === "READY"
   const model = process.env.OPENAI_IMAGE_MODEL?.trim() ?? ""
   const apiKey = process.env.OPENAI_API_KEY?.trim() ?? ""
+  if (sourceUrls.length === 1 && !aiEnabled) {
+    throw new Error("SAME_DAY_IMAGE_SINGLE_SOURCE_AI_REQUIRED")
+  }
+  const marketVisualBrief = await loadEbayImageMarketBrief({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    captureBatchId: input.candidate.product_research_capture_batch_id,
+    familyFingerprint: input.candidate.family_fingerprint,
+  })
   const plan = buildSameDayImagePackagePlan({
     handoffPackage,
     authoritativeFactsPackage: facts.factsPackage,
@@ -316,6 +327,7 @@ export async function generateAndPersistSameDayImagePackage(input: {
       rightsEvidenceConfirmed: true,
     },
     aiContext: aiEnabled ? { enabled: true, model } : { enabled: false },
+    marketVisualBrief,
   })
   const generationMode = aiEnabled
     ? "OPENAI_CONTEXT_PLATE"
@@ -379,6 +391,9 @@ export async function generateAndPersistSameDayImagePackage(input: {
     })))
     const uniqueSourceDetails = [...new Map(sourceDetails.map((entry) =>
       [entry.sourceSha256, entry])).values()]
+    if (uniqueSourceDetails.length === 1 && !aiEnabled) {
+      throw new Error("SAME_DAY_IMAGE_SINGLE_SOURCE_AI_REQUIRED")
+    }
     generated = await generateTransientSameDayImagePackage({
       handoffPackage,
       authoritativeFactsPackage: facts.factsPackage,
@@ -393,6 +408,7 @@ export async function generateAndPersistSameDayImagePackage(input: {
         rightsEvidenceConfirmed: true,
       },
       aiContext: aiEnabled ? { enabled: true, model } : { enabled: false },
+      marketVisualBrief,
       source: uniqueSourceDetails.map((entry) => entry.source.buffer),
       requestBackgroundPlate: aiEnabled ? async (safePlan) => {
         providerDispatched = true
@@ -619,6 +635,24 @@ export async function reviewSameDayImagePackage(input: {
   const slots = new Set(assets.map((asset) => text(record(asset.transformation).slot)))
   if (EBAY_LISTING_IMAGE_SLOTS.some((slot) => !slots.has(slot))) {
     throw new Error("SAME_DAY_IMAGE_REVIEW_SET_SLOTS_INVALID")
+  }
+  if (input.decision === "APPROVE") {
+    const transformations = assets.map((asset) => record(asset.transformation))
+    const generated = transformations.filter((transformation) =>
+      transformation.generativeAiUsed === true)
+    const aiBoardSet = generated.length === 5 && transformations.every((transformation) =>
+      transformation.compositorContractVersion ===
+        EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION) &&
+      transformations.find((transformation) =>
+        transformation.slot === "MAIN_WHITE_BACKGROUND")?.generativeAiUsed !== true
+    const deterministicMultiSourceSet = generated.length === 0 &&
+      transformations.every((transformation) =>
+        transformation.compositorContractVersion ===
+          EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION &&
+        transformation.presentationMode === "AUTHORIZED_MULTI_SOURCE")
+    if (!aiBoardSet && !deterministicMultiSourceSet) {
+      throw new Error("SAME_DAY_IMAGE_LEGACY_SET_REGENERATION_REQUIRED")
+    }
   }
   let manifest: JsonRecord[] = []
   if (input.decision === "APPROVE") {

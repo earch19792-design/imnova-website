@@ -43,6 +43,9 @@ function canonical(value: unknown): unknown {
 function hash(value: unknown) {
   return createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex")
 }
+export function hashSameDayManualHandoffPackage(value: unknown) {
+  return hash(value)
+}
 function unique(values: string[]) {
   return [...new Set(values.map((value) => text(value)).filter(Boolean))]
 }

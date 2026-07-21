@@ -112,6 +112,11 @@ async function imageReviewAssetsForPilot(
         position: asset.position,
         slot: text(transformation.slot, 80),
         generativeAiUsed: transformation.generativeAiUsed === true,
+        compositorContractVersion: text(
+          transformation.compositorContractVersion,
+          120,
+        ),
+        presentationMode: text(transformation.presentationMode, 80),
         transformationVersion: asset.transformation_version,
         automaticQaStatus: text(qa.automaticStatus, 40),
         manualChecksRequired: Array.isArray(qa.manualChecksRequired)

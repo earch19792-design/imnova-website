@@ -10,6 +10,8 @@ import { productFactsHash } from "./ebay-product-facts-readiness.ts"
 import { buildCurrentSameDayImageFactoryInput, type CurrentSameDayImageFactBinding } from "./ebay-same-day-image-factory-input.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { buildSafeOpenAiBackgroundPlatePlan, composeAuthorizedEbayListingImageSet, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan } from "./ebay-listing-image-factory.ts"
+// @ts-expect-error Node's native TypeScript test runner needs the extension.
+import { ebayImageMarketBriefSchema, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
 
 export const SAME_DAY_IMAGE_PACKAGE_SERVICE_VERSION =
   "SAME_DAY_IMAGE_PACKAGE_SERVICE_V1_2026_07_18"
@@ -70,6 +72,8 @@ const manifestWithoutHashSchema = z.object({
     productBytesSent: z.literal(0),
     productUrlsSent: z.literal(0),
     competitorDataSent: z.literal(0),
+    verifiedProductFactsSent: z.union([z.literal(0), z.literal(1)]),
+    aggregateMarketBriefsSent: z.union([z.literal(0), z.literal(1)]),
   }).strict(),
   safety: z.object({
     sourcePolicy: z.literal("AUTHORIZED_PRODUCT_IMAGE_ONLY"),
@@ -106,6 +110,8 @@ export type SameDayImagePackagePlan = {
     productBytesAvailableToOpenAi: false
     productUrlsAvailableToOpenAi: false
     competitorDataAvailableToOpenAi: false
+    verifiedProductFactsAvailableToOpenAi: boolean
+    aggregateMarketBriefAvailableToOpenAi: boolean
     maximumOpenAiCalls: 1
     ebayWrites: 0
   }
@@ -150,10 +156,12 @@ function assertReturnedBackgroundPlate(
     value.plan.model !== expected.model ||
     value.plan.imageCount !== 1 ||
     value.plan.quality !== "low" ||
-    value.plan.size !== "1024x1024" ||
+    value.plan.size !== "1536x1024" ||
     value.plan.sendsProductBytes !== false ||
     value.plan.sendsProductUrl !== false ||
-    value.plan.sendsCompetitorData !== false) {
+    value.plan.sendsCompetitorData !== false ||
+    value.plan.sendsVerifiedProductFacts !== true ||
+    typeof value.plan.sendsAggregatedMarketPatterns !== "boolean") {
     throw new Error("SAME_DAY_IMAGE_BACKGROUND_PLATE_INVALID")
   }
   return value
@@ -169,6 +177,7 @@ export function buildSameDayImagePackagePlan(input: {
     rightsEvidenceConfirmed?: unknown
   }
   aiContext: { enabled: false } | { enabled: true; model: string }
+  marketVisualBrief?: EbayImageMarketBrief | null
   allowVerifiedActiveHistoricalHandoff?: boolean
 }): SameDayImagePackagePlan {
   const factoryInput = buildCurrentSameDayImageFactoryInput({
@@ -180,13 +189,20 @@ export function buildSameDayImagePackagePlan(input: {
   })
   const rights = validateImageRightsEvidence(input.rightsEvidence)
   const rightsBasis = rightsBasisSchema.parse(rights.rightsBasis)
+  const marketVisualBrief = input.marketVisualBrief
+    ? ebayImageMarketBriefSchema.parse(input.marketVisualBrief)
+    : null
+  const enrichedFactoryInput = validateListingImageFactoryInput({
+    ...factoryInput,
+    marketVisualBrief,
+  })
   const backgroundPlatePlan = input.aiContext.enabled
-    ? buildSafeOpenAiBackgroundPlatePlan(factoryInput, input.aiContext.model)
+    ? buildSafeOpenAiBackgroundPlatePlan(enrichedFactoryInput, input.aiContext.model)
     : null
   return {
     version: SAME_DAY_IMAGE_PACKAGE_SERVICE_VERSION,
     binding: { ...input.currentBinding },
-    factoryInput,
+    factoryInput: enrichedFactoryInput,
     rightsEvidence: {
       rightsBasis,
       authorizationReferenceHash: productFactsHash(
@@ -200,6 +216,9 @@ export function buildSameDayImagePackagePlan(input: {
       productBytesAvailableToOpenAi: false,
       productUrlsAvailableToOpenAi: false,
       competitorDataAvailableToOpenAi: false,
+      verifiedProductFactsAvailableToOpenAi: input.aiContext.enabled,
+      aggregateMarketBriefAvailableToOpenAi:
+        input.aiContext.enabled && Boolean(marketVisualBrief),
       maximumOpenAiCalls: 1,
       ebayWrites: 0,
     },
@@ -266,7 +285,7 @@ function validateTransientAssets(input: {
     layoutIds.add(asset.transformation.layoutId)
     if (asset.transformation.generativeAiUsed) {
       generativeAssets += 1
-      if (slot !== "USE_CONTEXT" ||
+      if (slot === "MAIN_WHITE_BACKGROUND" ||
         asset.transformation.backgroundPlateRequestHash !==
           input.backgroundPlateRequestHash) {
         throw new Error("SAME_DAY_IMAGE_GENERATIVE_SLOT_INVALID")
@@ -275,7 +294,7 @@ function validateTransientAssets(input: {
     return asset
   })
   if ((input.openAiCalls === 0 && generativeAssets !== 0) ||
-    (input.openAiCalls === 1 && generativeAssets !== 1)) {
+    (input.openAiCalls === 1 && generativeAssets !== 5)) {
     throw new Error("SAME_DAY_IMAGE_OPENAI_CALL_ASSET_MISMATCH")
   }
   return ordered
@@ -297,6 +316,10 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
     input.plan.safety.productBytesAvailableToOpenAi !== false ||
     input.plan.safety.productUrlsAvailableToOpenAi !== false ||
     input.plan.safety.competitorDataAvailableToOpenAi !== false ||
+    typeof input.plan.safety.verifiedProductFactsAvailableToOpenAi !== "boolean" ||
+    typeof input.plan.safety.aggregateMarketBriefAvailableToOpenAi !== "boolean" ||
+    input.plan.safety.verifiedProductFactsAvailableToOpenAi !==
+      Boolean(input.plan.backgroundPlatePlan) ||
     input.plan.safety.maximumOpenAiCalls !== 1 ||
     input.plan.safety.ebayWrites !== 0) {
     throw new Error("SAME_DAY_IMAGE_PACKAGE_PLAN_INVALID")
@@ -305,7 +328,10 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
   if (input.plan.backgroundPlatePlan && (
     input.plan.backgroundPlatePlan.sendsProductBytes !== false ||
     input.plan.backgroundPlatePlan.sendsProductUrl !== false ||
-    input.plan.backgroundPlatePlan.sendsCompetitorData !== false
+    input.plan.backgroundPlatePlan.sendsCompetitorData !== false ||
+    input.plan.backgroundPlatePlan.sendsVerifiedProductFacts !== true ||
+    input.plan.backgroundPlatePlan.sendsAggregatedMarketPatterns !==
+      input.plan.safety.aggregateMarketBriefAvailableToOpenAi
   )) throw new Error("SAME_DAY_IMAGE_PACKAGE_PLAN_INVALID")
   const authorizedSourceHashes = [...new Set(
     input.sourceSha256s?.length
@@ -370,6 +396,9 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       productBytesSent: 0,
       productUrlsSent: 0,
       competitorDataSent: 0,
+      verifiedProductFactsSent: input.openAiCalls,
+      aggregateMarketBriefsSent: input.openAiCalls === 1 &&
+          input.plan.safety.aggregateMarketBriefAvailableToOpenAi ? 1 : 0,
     },
     safety: {
       sourcePolicy: "AUTHORIZED_PRODUCT_IMAGE_ONLY",
@@ -423,8 +452,8 @@ export function parseSameDayImagePackagePersistenceManifest(
     if (parsed.data.ai.backgroundPlateRequestHash !== null ||
       generativeAssets.length !== 0) return null
   } else if (parsed.data.ai.backgroundPlateRequestHash === null ||
-    generativeAssets.length !== 1 ||
-    generativeAssets[0]?.slot !== "USE_CONTEXT") return null
+    generativeAssets.length !== 5 ||
+    generativeAssets.some((asset) => asset.slot === "MAIN_WHITE_BACKGROUND")) return null
   return parsed.data
 }
 
@@ -438,6 +467,7 @@ export async function generateTransientSameDayImagePackage(input: {
     rightsEvidenceConfirmed?: unknown
   }
   aiContext: { enabled: false } | { enabled: true; model: string }
+  marketVisualBrief?: EbayImageMarketBrief | null
   source: Buffer | Buffer[]
   generatedAt?: string
   allowVerifiedActiveHistoricalHandoff?: boolean
