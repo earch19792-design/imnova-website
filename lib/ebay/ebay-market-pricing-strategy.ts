@@ -78,20 +78,51 @@ type SafeComparable = {
   seller: string
   historicalSold: boolean
   soldQuantity: number
-  packResolution: "STRUCTURED" | "TITLE_DERIVED"
+  packResolution: "STRUCTURED" | "TITLE_DERIVED" | "SINGLE_PRESENTATION_INFERRED"
 }
 
-function safeComparable(entry: JsonRecord, nativePackCount: number): SafeComparable | null {
+function normalizedBrand(value: unknown) {
+  return text(value).toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, " ").trim()
+}
+
+function comparableBrand(entry: JsonRecord) {
+  const direct = normalizedBrand(entry.brand)
+  if (direct) return direct
+  const aspect = rows(entry.localizedAspects).find((candidate) =>
+    normalizedBrand(candidate.name) === "brand")
+  return normalizedBrand(aspect?.value)
+}
+
+function safeComparable(entry: JsonRecord, nativePackCount: number,
+  confirmedBrand: string): SafeComparable | null {
   const currency = text(entry.currency).toUpperCase() || "USD"
   const price = positiveNumber(entry.price)
   const shipping = finiteNumber(entry.shippingCost) ?? 0
-  const resolvedPack = structuredPackCount(entry)
-  if (currency !== "USD" || price === null || shipping < 0 || !resolvedPack) return null
-  if (resolvedPack.value % nativePackCount !== 0) return null
-
+  const competitorBrand = comparableBrand(entry)
+  if (confirmedBrand && competitorBrand !== confirmedBrand) return null
+  let resolvedPack: { value: number; source: SafeComparable["packResolution"] } | null =
+    structuredPackCount(entry)
+  if (!resolvedPack) {
+    for (const aspect of rows(entry.localizedAspects)) {
+      if (normalizedBrand(aspect.name) !== "unit quantity") continue
+      const value = positiveInteger(text(aspect.value).match(/\d{1,3}/)?.[0])
+      if (value === nativePackCount) {
+        resolvedPack = { value, source: "STRUCTURED" as const }
+        break
+      }
+    }
+  }
   const conflicts = Array.isArray(entry.identityConflicts)
     ? entry.identityConflicts.map(text).filter(Boolean)
     : []
+  if (!resolvedPack && nativePackCount === 1 && entry.eligibleComparable === true &&
+    text(entry.identityMatchQuality).toUpperCase() === "EXACT" &&
+    !conflicts.includes("OFFER_PACK_CONFLICT")) {
+    resolvedPack = { value: 1, source: "SINGLE_PRESENTATION_INFERRED" as const }
+  }
+  if (currency !== "USD" || price === null || shipping < 0 || !resolvedPack) return null
+  if (resolvedPack.value % nativePackCount !== 0) return null
+
   const onlyPackConflict = conflicts.every((conflict) => conflict === "OFFER_PACK_CONFLICT")
   const safeSamePack = entry.eligibleComparable === true && resolvedPack.value === nativePackCount
   const safeRelatedPack = entry.baseIdentifierExact === true && onlyPackConflict
@@ -139,6 +170,7 @@ function distribution(entries: SafeComparable[]) {
 export function aggregateEbayMarketPricingByPack(input: {
   comparableEvidence: unknown
   nativePackCount: number | null
+  confirmedBrand?: unknown
   observedAt?: string
 }) {
   const nativePackCount = positiveInteger(input.nativePackCount)
@@ -157,8 +189,9 @@ export function aggregateEbayMarketPricingByPack(input: {
     }
   }
 
+  const confirmedBrand = normalizedBrand(input.confirmedBrand)
   const comparables = rows(input.comparableEvidence)
-    .map((entry) => safeComparable(entry, nativePackCount))
+    .map((entry) => safeComparable(entry, nativePackCount, confirmedBrand))
     .filter((entry): entry is SafeComparable => entry !== null)
   const packCounts = [...new Set(comparables.map((entry) => entry.packCount))]
     .sort((left, right) => left - right)
@@ -297,8 +330,10 @@ function productResearchReference(value: unknown, now: Date) {
 
 export function buildEbayMarketPricingRecommendation(input: {
   minimumOperatorPrice: number | null
+  controlledRiskMinimumPrice?: number | null
   marketPricing: unknown
   exactSoldMarketReference?: unknown
+  confirmedRelatedPackStrategy?: unknown
   variationAspectNames?: unknown
   controlledExploratoryTest?: boolean
   now?: Date
@@ -319,13 +354,27 @@ export function buildEbayMarketPricingRecommendation(input: {
     input.now ?? new Date(),
   ) ?? soldReference ?? activeReference
   const provisionalFloorPrice = floor === null ? null : moneyUp(floor)
+  const controlledRiskMinimumPrice = positiveNumber(input.controlledRiskMinimumPrice)
+  const controlledRiskPrice = controlledRiskMinimumPrice === null
+    ? null : moneyUp(controlledRiskMinimumPrice)
   const controlledExploratoryFloorUsed = Boolean(
     input.controlledExploratoryTest && floor !== null && !marketReference,
+  )
+  const ownCostFloorAboveMarket = Boolean(
+    floor !== null && marketReference && floor > marketReference.maximumPrice,
+  )
+  const controlledRiskActiveMarketFallbackUsed = Boolean(
+    ownCostFloorAboveMarket && controlledRiskPrice !== null && marketReference &&
+    controlledRiskPrice <= marketReference.maximumPrice,
   )
   const recommendedSalePrice = floor === null
     ? null
     : marketReference
-      ? moneyUp(Math.max(floor, marketReference.medianPrice))
+      ? controlledRiskActiveMarketFallbackUsed
+        ? moneyUp(Math.max(controlledRiskPrice!, marketReference.medianPrice))
+        : ownCostFloorAboveMarket
+        ? null
+        : moneyUp(Math.max(floor, marketReference.medianPrice))
       : controlledExploratoryFloorUsed
         ? provisionalFloorPrice
         : null
@@ -335,14 +384,20 @@ export function buildEbayMarketPricingRecommendation(input: {
       ? controlledExploratoryFloorUsed
         ? "UNBENCHMARKED_CONTROLLED_TEST" as const
         : "MARKET_REFERENCE_INSUFFICIENT" as const
-      : floor <= marketReference.medianPrice
+      : controlledRiskActiveMarketFallbackUsed
+        ? "CONTROLLED_RISK_COMPETITIVE" as const
+        : floor <= marketReference.medianPrice
         ? "COMPETITIVE" as const
         : floor <= marketReference.maximumPrice
           ? "MARGINAL" as const
           : "NOT_COMPETITIVE" as const
   const strategicPresentation = record(marketPricing.strategicPresentation)
+  const confirmedRelatedPackStrategy = record(input.confirmedRelatedPackStrategy)
   const recommendedPackCount = positiveInteger(marketPricing.nativePackCount)
-  const relatedPackCount = positiveInteger(strategicPresentation.recommendedPackCountForEvaluation)
+  const relatedPackCount = positiveInteger(
+    confirmedRelatedPackStrategy.suggestedPackCountForEvaluation ??
+    strategicPresentation.recommendedPackCountForEvaluation,
+  )
   const portfolio = record(marketPricing.presentationPortfolio)
   const evidenceBackedPresentations = rows(portfolio.candidates).map((entry) => ({
     packCount: positiveInteger(entry.packCount),
@@ -377,7 +432,11 @@ export function buildEbayMarketPricingRecommendation(input: {
         ? controlledExploratoryFloorUsed
           ? "CONTROLLED_TEST_PRICE_READY_FOR_HUMAN_APPROVAL" as const
           : "MARKET_REFERENCE_REQUIRED" as const
-        : "RECOMMENDATION_READY_FOR_HUMAN_APPROVAL" as const,
+        : controlledRiskActiveMarketFallbackUsed
+          ? "CONTROLLED_RISK_ACTIVE_MARKET_PRICE_READY_FOR_HUMAN_APPROVAL" as const
+          : ownCostFloorAboveMarket
+          ? "OWN_COST_FLOOR_ABOVE_MARKET" as const
+          : "RECOMMENDATION_READY_FOR_HUMAN_APPROVAL" as const,
     currency: "USD",
     ownCostFloor: provisionalFloorPrice,
     provisionalFloorPrice,
@@ -385,15 +444,28 @@ export function buildEbayMarketPricingRecommendation(input: {
     competitiveness,
     marketReferenceUsed: Boolean(marketReference),
     controlledExploratoryFloorUsed,
+    controlledRiskActiveMarketFallbackUsed,
+    controlledRiskMinimumPrice: controlledRiskPrice,
+    promotionAllowed: controlledRiskActiveMarketFallbackUsed ? false : null,
+    promotedListingsReserveRate: controlledRiskActiveMarketFallbackUsed ? 0 : null,
+    minimumNetMarginPercent: controlledRiskActiveMarketFallbackUsed ? 10 : null,
     marketReference: marketReference ?? null,
     recommendedPackCount,
     relatedPackStrategy: relatedPackCount && relatedPackCount !== recommendedPackCount
       ? {
           recommendedPackCountForEvaluation: relatedPackCount,
-          offerMultiplier: positiveNumber(strategicPresentation.offerMultiplier),
-          evidenceTier: text(strategicPresentation.evidenceTier),
-          confidence: text(strategicPresentation.confidence),
+          offerMultiplier: positiveNumber(strategicPresentation.offerMultiplier) ??
+            (recommendedPackCount ? relatedPackCount / recommendedPackCount : null),
+          evidenceTier: text(confirmedRelatedPackStrategy.evidenceTier) ||
+            text(strategicPresentation.evidenceTier),
+          confidence: text(strategicPresentation.confidence) ||
+            text(rows(confirmedRelatedPackStrategy.candidates).find((candidate) =>
+              positiveInteger(candidate.packCount) === relatedPackCount)?.confidence) || "LOW",
+          confirmedSoldQuantity: positiveInteger(
+            confirmedRelatedPackStrategy.confirmedSoldQuantity,
+          ) ?? 0,
           requiresFulfillmentConfirmation: true,
+          requiresExactPackEconomics: true,
           automaticallyRanked: true,
         }
       : null,
@@ -409,11 +481,17 @@ export function buildEbayMarketPricingRecommendation(input: {
         "DISTINCT_BUNDLE_LISTINGS_POLICY_REVIEW_REQUIRED",
     },
     decisionLogic: marketReference
-      ? "OWN_COST_FLOOR_THEN_EQUIVALENT_PACK_MARKET_MEDIAN"
+      ? controlledRiskActiveMarketFallbackUsed
+        ? "TEN_PERCENT_FLOOR_WITHOUT_PROMOTION_INSIDE_EQUIVALENT_MARKET_RANGE"
+        : ownCostFloorAboveMarket
+        ? "OWN_COST_FLOOR_ABOVE_EQUIVALENT_PACK_MARKET_MAXIMUM"
+        : "OWN_COST_FLOOR_THEN_EQUIVALENT_PACK_MARKET_MEDIAN"
       : controlledExploratoryFloorUsed
         ? "OWN_COST_FLOOR_CONTROLLED_TEST_QUANTITY_ONE"
         : "OWN_COST_FLOOR_ONLY_MARKET_SAMPLE_INSUFFICIENT",
-    automaticRecommendationUsed: Boolean(marketReference) || controlledExploratoryFloorUsed,
+    automaticRecommendationUsed: (Boolean(marketReference) &&
+      (!ownCostFloorAboveMarket || controlledRiskActiveMarketFallbackUsed)) ||
+      controlledExploratoryFloorUsed,
     humanPriceApprovalRequired: true,
     manualPriceEntryRequired: false,
     fulfillmentConfirmationRequired: true,

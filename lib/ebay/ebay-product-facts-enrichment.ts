@@ -1022,6 +1022,10 @@ export async function runProductFactsEnrichment(input: {
         counts[requirement.status] = Number(counts[requirement.status] ?? 0) + 1
         return counts
       }, {})
+      const confirmedBrand = resolved.facts.find((fact) =>
+        fact.factScope === "PRODUCT_UNIT" && fact.factKey === "brand" &&
+        ["VERIFIED", "CORROBORATED", "DERIVED_VERIFIED"].includes(fact.verificationStatus))
+        ?.selectedValue
       candidateResults.push({ candidateId: text(candidate.id), status: "PREPARED",
         openAiInputReady: readiness.gates.OPENAI_INPUT_READY, gates: readiness.gates,
         exception: exception ? record(exception) : null, factCounts, requirementCounts,
@@ -1046,6 +1050,7 @@ export async function runProductFactsEnrichment(input: {
         marketPricing: aggregateEbayMarketPricingByPack({
           comparableEvidence: record(browseReport).comparableEvidence,
           nativePackCount: nativePresentationUnitCount,
+          confirmedBrand,
           observedAt: now.toISOString(),
         }) })
     } catch (error) {

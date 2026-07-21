@@ -430,6 +430,37 @@ async function loadActiveListings(supabase: SupabaseClient, accountKey: string) 
   return canonicalListings((data ?? []) as ListingRow[])
 }
 
+async function controlledRiskListingIds(
+  supabase: SupabaseClient,
+  accountKey: string,
+  listingIds: string[],
+) {
+  if (!listingIds.length) return new Set<string>()
+  const { data: publications, error: publicationError } = await supabase
+    .from("ebay_authorized_listing_publications")
+    .select("listing_id,listing_package_id")
+    .eq("marketplace_account_key", accountKey)
+    .in("listing_id", listingIds)
+  if (publicationError) throw new Error("COMMERCIAL_CONTROLLED_RISK_PUBLICATION_READ_FAILED")
+  const packageIds = [...new Set((publications ?? [])
+    .map((row) => String(row.listing_package_id ?? "").trim()).filter(Boolean))]
+  if (!packageIds.length) return new Set<string>()
+  const { data: packages, error: packageError } = await supabase
+    .from("ebay_listing_packages")
+    .select("id,package_data")
+    .eq("account_key", accountKey)
+    .in("id", packageIds)
+  if (packageError) throw new Error("COMMERCIAL_CONTROLLED_RISK_PACKAGE_READ_FAILED")
+  const blockedPackages = new Set((packages ?? []).filter((row) => {
+    const policy = jsonRecord(jsonRecord(row.package_data).controlledRiskPolicy)
+    return String(policy.promotion ?? "").trim() === "DO_NOT_PROMOTE" &&
+      numeric(policy.minimumNetMarginPercent) === 10
+  }).map((row) => String(row.id ?? "").trim()).filter(Boolean))
+  return new Set((publications ?? []).filter((row) =>
+    blockedPackages.has(String(row.listing_package_id ?? "").trim()))
+    .map((row) => String(row.listing_id ?? "").trim()).filter(Boolean))
+}
+
 function officialAnalyticsMetrics(value: {
   impressions?: number | null
   views?: number | null
@@ -1018,6 +1049,13 @@ function sellerOrderUrl(orderId: string) {
   return base ? `${base}?section=fulfillment&order=${encodeURIComponent(orderId)}` : null
 }
 
+function sellerImprovementUrl(eventId: string) {
+  const base = safeHttpsUrl(process.env.EBAY_SELLER_COMMAND_CENTER_URL)
+  return base
+    ? `${base}?section=commercial-monitor&improvement=${encodeURIComponent(eventId)}#listing-optimization-tasks-heading`
+    : null
+}
+
 function eventPayload(event: CommercialEvent) {
   const labels: Record<string, string> = {
     GOOD_TRAFFIC_LOW_CTR: "Tráfico eBay con CTR bajo",
@@ -1109,6 +1147,7 @@ function postPublicationCommercialEvent(
       whyItNeedsAttention: diagnostic.whyItNeedsAttention,
       reviewSequence: diagnostic.reviewSequence,
       experiment: diagnostic.experiment,
+      promotionRecommendation: diagnostic.promotionRecommendation,
       listingAgeHours: diagnostic.listingAgeHours,
       listingAgeEvidence: diagnostic.listingAgeEvidence,
       completeAnalyticsDays: diagnostic.completeAnalyticsDays,
@@ -1117,8 +1156,8 @@ function postPublicationCommercialEvent(
       rulesetVersion: diagnostic.rulesetVersion,
       evidence: diagnostic.evidence,
       safety: diagnostic.safety,
-      taskChannel: "IN_APP",
-      whatsappEnqueued: false,
+      taskChannel: "IN_APP_AND_WHATSAPP",
+      whatsappEnqueued: true,
       operatorApprovalRequired: true,
       changeApplied: false,
     },
@@ -1514,6 +1553,7 @@ async function persistSnapshotsAndRules(input: {
   watchers: Awaited<ReturnType<typeof getEbayListingWatchers>> | null
   units24h: Map<string, number>
   analyticsRulesSuspendedListingIds: Set<string>
+  promotionBlockedListingIds: Set<string>
   observedAt: string
 }) {
   const analyticsByListing = new Map(input.analytics?.observations.map((row) => [row.listingId, row]) ?? [])
@@ -1705,6 +1745,7 @@ async function persistSnapshotsAndRules(input: {
       stockAvailable: snapshot.stockAvailable,
       stockEvidenceFresh: supplyFresh,
       estimatedMarginPercent: snapshot.estimatedMarginPercent,
+      promotionAllowed: !input.promotionBlockedListingIds.has(listing.ebay_item_id),
     })
     if (postPublicationDiagnostic) {
       const cooldownKey = `${postPublicationDiagnostic.listingId}:${postPublicationDiagnostic.sku ?? ""}`
@@ -1736,7 +1777,26 @@ async function persistSnapshotsAndRules(input: {
           taskStatus: "AWAITING_HUMAN_APPROVAL",
           experiment: postPublicationDiagnostic.experiment,
           whyItNeedsAttention: postPublicationDiagnostic.whyItNeedsAttention,
-          whatsappEnqueued: false,
+          whatsappEnqueued: true,
+          changeApplied: false,
+        },
+      })) alertsGenerated += 1
+      const improvementUrl = sellerImprovementUrl(eventResult.id)
+      if (await enqueueAlert(input.supabase, {
+        accountKey: input.accountKey,
+        eventId: eventResult.id,
+        severity: event.severity,
+        deduplicationKey: event.deduplicationKey,
+        deliveryClass: "immediate",
+        channel: "whatsapp",
+        payload: {
+          ...eventPayload(event),
+          action: `${improvementUrl
+            ? `Revisar y autorizar en Seller OS: ${improvementUrl}. `
+            : "Revisar y autorizar desde Seller OS. "}${event.recommendedAction}`,
+          improvementUrl,
+          taskStatus: "AWAITING_HUMAN_APPROVAL",
+          promotionRecommendation: postPublicationDiagnostic.promotionRecommendation,
           changeApplied: false,
         },
       })) alertsGenerated += 1
@@ -2316,6 +2376,11 @@ export async function runEbayCommercialMonitor(
       readers.analytics.metrics.divergenceRecheckError = divergence.error
     }
 
+    const promotionBlockedListingIds = await controlledRiskListingIds(
+      supabase,
+      accountKey,
+      listings.map((listing) => listing.ebay_item_id),
+    )
     let competitorWork: Awaited<ReturnType<typeof monitorEbayListingCompetitors>> | null = null
     if (lanes.includes("competitors")) {
       const competitorListings = listings.flatMap((listing) => {
@@ -2332,6 +2397,7 @@ export async function runEbayCommercialMonitor(
           currency: listing.currency,
           supplierVariantId: listing.supplier_variant_id,
           supplierSku: listing.supplier_sku,
+          promotionAllowed: !promotionBlockedListingIds.has(listing.ebay_item_id),
           rawPayload: listing.raw_payload,
           supply: {
             title: supply.title,
@@ -2608,6 +2674,7 @@ export async function runEbayCommercialMonitor(
           watchers,
           units24h: confirmedUnits24h,
           analyticsRulesSuspendedListingIds: divergence.openListingIds,
+          promotionBlockedListingIds,
           observedAt,
         })
       : { snapshots: [], eventsGenerated: 0, alertsGenerated: 0 }

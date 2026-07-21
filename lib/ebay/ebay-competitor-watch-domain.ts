@@ -35,6 +35,7 @@ export type CompetitorWatchOwnListing = {
   returnsAccepted: boolean | null
   imageCount: number | null
   title: string
+  promotionAllowed?: boolean | null
 }
 
 export type CompetitorWatchObservation = Omit<
@@ -184,6 +185,29 @@ export function buildConfirmedSoldPriceRecommendation(input: Pick<
   const confidence = confirmedSoldSellerCount >= 3 && confirmedSoldQuantity >= 10
     ? "HIGH" : confirmedSoldSellerCount >= 2 || confirmedSoldQuantity >= 5
       ? "MEDIUM" : "LOW"
+  const reservedPromotionPercent = money(
+    Number(expected.config.promotedListingsReserveRate ?? 0) * 100,
+  )
+  const promotionRecommendation = {
+    status: input.ownListing.promotionAllowed === false
+      ? "BLOCKED_CONTROLLED_RISK_TEN_PERCENT_MARGIN" as const
+      : expected.passesProfitGate && reservedPromotionPercent > 0
+      ? "ELIGIBLE_FOR_HUMAN_REVIEW" as const
+      : "DO_NOT_PROMOTE_ECONOMICS_INSUFFICIENT" as const,
+    recommendedRatePercent: input.ownListing.promotionAllowed === false
+      ? 0 : expected.passesProfitGate
+      ? reservedPromotionPercent : 0,
+    maximumReservedRatePercent: reservedPromotionPercent,
+    estimatedMarginAfterRecommendedPromotionPercent:
+      expected.estimatedNetMarginPercent,
+    automaticPromotionAllowed: false,
+    humanApprovalRequired: true,
+    reason: input.ownListing.promotionAllowed === false
+      ? "No hay margen para aplicar promoción: listing bajo excepción de margen 10%."
+      : expected.passesProfitGate
+        ? "La reserva publicitaria configurada cabe en la economía estimada."
+        : "La economía estimada no soporta la reserva publicitaria.",
+  }
   return {
     action,
     confidence,
@@ -210,6 +234,7 @@ export function buildConfirmedSoldPriceRecommendation(input: Pick<
     proposedEstimatedMarginPercent: expected.estimatedNetMarginPercent,
     proposedEstimatedRoiPercent: expected.estimatedRoiPercent,
     proposedPassesProfitGate: expected.passesProfitGate,
+    promotionRecommendation,
     comparisonBasis: "PRODUCT_RESEARCH_CONFIRMED_SOLD_LANDED_PRICE" as const,
     soldEvidenceMaxAgeDays: CONFIRMED_SOLD_PRICE_MAX_AGE_DAYS,
     activeOfferPriceTreatedAsSoldPrice: false,
@@ -358,12 +383,14 @@ export function buildCompetitorWatchAnalysis(input: CompetitorWatchAnalysisInput
       : input.observations.length
         ? "ACTIVE_ONLY"
         : "NO_COMPARABLE_EVIDENCE"
-  const alertRequired = input.baselineExists && (
-    potentialSellerHashes.length > 0 ||
-    newlyConfirmedOfferHashes.length > 0 ||
-    newSuggestionCodes.length > 0 ||
-    priceRecommendation !== null
-  )
+  // A baseline suppresses false "new seller" alerts, but it must not swallow
+  // an actionable market pattern. Suggestions discovered on the first scan are
+  // already aggregated across sellers and should enter the operator outbox once.
+  const alertRequired = (
+    input.baselineExists && (
+      potentialSellerHashes.length > 0 || newlyConfirmedOfferHashes.length > 0
+    )
+  ) || newSuggestionCodes.length > 0 || priceRecommendation !== null
   const eventFingerprint = alertRequired
     ? createHash("sha256").update([
         ...potentialSellerHashes,

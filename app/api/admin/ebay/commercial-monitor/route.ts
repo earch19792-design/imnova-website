@@ -21,6 +21,10 @@ import {
 } from "@/lib/ebay/ebay-commercial-analytics-reconciliation"
 import { getEbayReadonlyRateLimitMetadata } from "@/lib/ebay/ebay-readonly-rate-limit"
 import {
+  applyEbayCommercialImprovement,
+  prepareEbayCommercialImprovement,
+} from "@/lib/ebay/ebay-commercial-improvement-action-service"
+import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
 } from "@/lib/supabase-admin"
@@ -208,6 +212,28 @@ export async function POST(req: Request) {
         evidence,
         dashboard: await getEbayCommercialMonitorDashboard(supabase),
       })
+    }
+    if (input.action === "prepare_improvement" || input.action === "apply_improvement") {
+      const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+      const eventId = uuid(input.eventId)
+      const idempotencyKey = typeof input.idempotencyKey === "string"
+        ? input.idempotencyKey.trim() : ""
+      if (!accountKey || !validation.userId || !eventId ||
+        !/^[A-Za-z0-9._:-]{8,120}$/.test(idempotencyKey)) {
+        return NextResponse.json({ success: false,
+          error: "COMMERCIAL_IMPROVEMENT_REQUEST_INVALID" }, { status: 400 })
+      }
+      const common = { supabase, accountKey, actorId: validation.userId,
+        eventId, idempotencyKey }
+      const improvement = input.action === "prepare_improvement"
+        ? await prepareEbayCommercialImprovement(common)
+        : await applyEbayCommercialImprovement({
+            ...common,
+            confirmation: typeof input.confirmation === "string"
+              ? input.confirmation : "",
+          })
+      return NextResponse.json({ success: true, action: input.action,
+        improvement })
     }
     if (input.action !== "run") {
       return NextResponse.json(

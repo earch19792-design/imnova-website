@@ -264,7 +264,7 @@ type Dashboard = {
     recommendedAction?: string
     status?: "AWAITING_HUMAN_APPROVAL"
     changeApplied?: false
-    whatsappEnqueued?: false
+    whatsappEnqueued?: true
     evidence?: {
       notificationTitle?: string
       whyItNeedsAttention?: string
@@ -289,6 +289,13 @@ type Dashboard = {
         automaticChangeAllowed?: false
         ebayWriteAllowed?: false
       }
+      promotionRecommendation?: {
+        status?: "READY_FOR_HUMAN_APPROVAL" | "NOT_RECOMMENDED" | "BLOCKED_CONTROLLED_RISK"
+        recommendedRatePercent?: number
+        durationDays?: number
+        reason?: string
+        applyFromSellerOs?: boolean
+      }
     }
   }>
 }
@@ -300,6 +307,14 @@ type Payload = {
   run?: MonitorRun
   comparison?: SellerHubComparison
   action?: string
+  improvement?: {
+    executionId?: string
+    listingId?: string
+    actionType?: "PRICE" | "PROMOTED_LISTINGS_GENERAL"
+    phase?: string
+    appliedVerified?: boolean
+    confirmationRequired?: string
+  }
 }
 
 type AnalyticsAudit = {
@@ -424,11 +439,14 @@ function AnalyticsWindowAudit({ label, audit }: { label: string; audit?: Analyti
   </article>
 }
 
-function OptimizationTaskCard({ task }: {
+function OptimizationTaskCard({ task, applying, onApply }: {
   task: NonNullable<Dashboard["optimizationTasks"]>[number]
+  applying: boolean
+  onApply: (eventId: string) => void
 }) {
   const evidence = task.evidence
   const experiment = evidence?.experiment
+  const promotion = evidence?.promotionRecommendation
   const listingAgeEvidence = evidence?.listingAgeEvidence
   const officialListingStart = listingAgeEvidence?.source ===
     "EBAY_OFFICIAL_START_TIME"
@@ -461,6 +479,14 @@ function OptimizationTaskCard({ task }: {
       <p className="mt-2 break-words text-[11px] text-white/45">{experiment.measurementPlan}</p>
       <p className="mt-2 text-[11px] font-bold text-amber-100">Requiere aprobación humana. No prueba causalidad y no se aplicó ningún cambio.</p>
     </details>}
+    {promotion && <div className={`mt-3 rounded-xl border p-3 ${promotion.status === "READY_FOR_HUMAN_APPROVAL" ? "border-emerald-200/30 bg-emerald-200/[0.07]" : "border-white/10 bg-black/20"}`}>
+      <p className="text-xs font-black uppercase tracking-widest text-white/60">Promoción</p>
+      <p className="mt-1 text-sm font-black text-white">{promotion.recommendedRatePercent ?? 0}%{promotion.durationDays ? ` · ${promotion.durationDays} días` : " · no recomendada"}</p>
+      <p className="mt-1 text-xs leading-5 text-white/60">{promotion.reason}</p>
+      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && <p className="mt-2 text-xs font-bold text-emerald-100">Disponible para autorización desde Seller OS; nunca se activa sólo por la alerta.</p>}
+      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && task.id && <button type="button" disabled={applying} onClick={() => onApply(task.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{applying ? "Verificando y aplicando…" : "REVISAR Y AUTORIZAR PROMOCIÓN 5%"}</button>}
+      {promotion.status === "BLOCKED_CONTROLLED_RISK" && <p className="mt-2 text-xs font-black text-amber-100">No hay margen para aplicar promoción.</p>}
+    </div>}
   </article>
 }
 
@@ -473,6 +499,59 @@ export function CommercialMonitorPanel() {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
+  const [improvementBusyId, setImprovementBusyId] = useState<string | null>(null)
+
+  async function applyImprovement(eventId: string) {
+    if (improvementBusyId) return
+    setImprovementBusyId(eventId)
+    setError("")
+    setMessage("Preparando evidencia y comprobaciones de seguridad…")
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError || !data.session) throw new Error("AUTH_REQUIRED")
+      const storageKey = `seller-os-commercial-improvement:${eventId}`
+      const existing = window.sessionStorage.getItem(storageKey)
+      const idempotencyKey = existing ?? `commercial-improvement-${crypto.randomUUID()}`
+      window.sessionStorage.setItem(storageKey, idempotencyKey)
+      const call = async (action: "prepare_improvement" | "apply_improvement", confirmation?: string) => {
+        const response = await fetch("/api/admin/ebay/commercial-monitor", {
+          method: "POST",
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${data.session.access_token}`,
+            "Content-Type": "application/json" },
+          body: JSON.stringify({ action, eventId, idempotencyKey, confirmation }),
+        })
+        const payload = await readMobileReviewJson<Payload>(response,
+          "No se pudo procesar la mejora comercial")
+        if (!payload.success || !payload.improvement) {
+          throw new Error(getMobileReviewPayloadError(payload,
+            "COMMERCIAL_IMPROVEMENT_REQUEST_FAILED"))
+        }
+        return payload.improvement
+      }
+      const preview = await call("prepare_improvement")
+      const label = preview.actionType === "PRICE"
+        ? "el nuevo precio verificado"
+        : "Promoted Listings General al 5% durante 7 días"
+      if (!window.confirm(`Seller OS aplicará ${label} al listing ${preview.listingId}. Se verificará identidad, stock, costo y economía antes de escribir en eBay. ¿Deseas autorizarlo?`)) {
+        setMessage("Mejora no autorizada; eBay no fue modificado.")
+        return
+      }
+      const applied = await call("apply_improvement", preview.confirmationRequired)
+      if (!applied.appliedVerified) {
+        throw new Error(applied.phase === "outcome_unknown"
+          ? "COMMERCIAL_IMPROVEMENT_OUTCOME_UNKNOWN"
+          : "COMMERCIAL_IMPROVEMENT_NOT_VERIFIED")
+      }
+      setMessage("Mejora aplicada desde Seller OS y confirmada por lectura posterior de eBay.")
+      await load()
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(requestError,
+        "No se pudo aplicar la mejora. Seller OS no la marcará como completada sin verificación de eBay."))
+    } finally {
+      setImprovementBusyId(null)
+    }
+  }
 
   const request = useCallback(async (
     mode?: "dry_run" | "persistent",
@@ -942,10 +1021,10 @@ export function CommercialMonitorPanel() {
         {optimizationTasks.length === 0
           ? <p className="mt-3 rounded-xl bg-black/20 p-3 text-sm text-white/55">Aún no hay una muestra oficial suficiente que justifique una propuesta de optimización.</p>
           : <div className="mt-3 grid gap-3">
-            {primaryOptimizationTask && <OptimizationTaskCard task={primaryOptimizationTask} />}
+            {primaryOptimizationTask && <OptimizationTaskCard task={primaryOptimizationTask} applying={improvementBusyId === primaryOptimizationTask.id} onApply={(eventId) => void applyImprovement(eventId)} />}
             {additionalOptimizationTasks.length > 0 && <details className="rounded-xl border border-white/10 p-3">
               <summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver {additionalOptimizationTasks.length} diagnóstico(s) posterior(es)</summary>
-              <div className="mt-3 grid gap-3">{additionalOptimizationTasks.map((task) => <OptimizationTaskCard key={task.id} task={task} />)}</div>
+              <div className="mt-3 grid gap-3">{additionalOptimizationTasks.map((task) => <OptimizationTaskCard key={task.id} task={task} applying={improvementBusyId === task.id} onApply={(eventId) => void applyImprovement(eventId)} />)}</div>
             </details>}
           </div>}
       </section>
@@ -1070,6 +1149,7 @@ export function CommercialMonitorPanel() {
                 <p className="mt-1 text-white/55">{recommendation.confirmedSoldSellerCount ?? 0} vendedor(es) exacto(s) · {recommendation.confirmedSoldQuantity ?? 0} venta(s) · piso propio {money(recommendation.minimumSafeLandedPrice)} · utilidad {money(recommendation.proposedEstimatedNetProfit ?? undefined)} · margen {typeof recommendation.proposedEstimatedMarginPercent === "number" ? `${recommendation.proposedEstimatedMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.proposedEstimatedRoiPercent === "number" ? `${recommendation.proposedEstimatedRoiPercent.toFixed(2)}%` : "—"}</p>
                 <p className="mt-2 font-bold text-emerald-50">{entry.recommendedAction}</p>
                 <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Esperando revisión humana · WhatsApp encolado · ningún cambio aplicado</p>
+                {entry.id && recommendation.action !== "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND" && <button type="button" disabled={Boolean(improvementBusyId)} onClick={() => void applyImprovement(entry.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{improvementBusyId === entry.id ? "Verificando y aplicando…" : "REVISAR Y AUTORIZAR PRECIO"}</button>}
               </article>
             })}
           </div>

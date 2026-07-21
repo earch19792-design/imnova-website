@@ -87,6 +87,7 @@ export type PostPublicationDiagnosticInput = {
   stockAvailable: number | null
   stockEvidenceFresh: boolean
   estimatedMarginPercent: number | null
+  promotionAllowed?: boolean
   policy?: PostPublicationOptimizationPolicy
 }
 
@@ -130,6 +131,16 @@ export type PostPublicationDiagnostic = {
   recommendedAction: string
   reviewSequence: string[]
   experiment: PostPublicationExperimentProposal
+  promotionRecommendation: {
+    status: "READY_FOR_HUMAN_APPROVAL" | "NOT_RECOMMENDED" | "BLOCKED_CONTROLLED_RISK"
+    recommendedRatePercent: 5 | 0
+    durationDays: 7 | 0
+    trigger: string
+    reason: string
+    applyFromSellerOs: boolean
+    automaticExecutionAllowed: false
+    humanApprovalRequired: true
+  }
   evidence: Record<string, unknown>
   safety: {
     ownListingEvidenceOnly: true
@@ -261,6 +272,21 @@ type Candidate = Omit<PostPublicationDiagnostic,
   "deduplicationKey" | "cooldownHours" | "nextEligibleAt" |
   "listingAgeHours" | "listingAgeEvidence" | "completeAnalyticsDays" | "safety">
 
+function noPromotionRecommendation(reason: string, controlledRisk = false) {
+  return {
+    status: controlledRisk
+      ? "BLOCKED_CONTROLLED_RISK" as const
+      : "NOT_RECOMMENDED" as const,
+    recommendedRatePercent: 0 as const,
+    durationDays: 0 as const,
+    trigger: "FUNNEL_DIAGNOSIS_REQUIRES_ANOTHER_ACTION",
+    reason,
+    applyFromSellerOs: false,
+    automaticExecutionAllowed: false as const,
+    humanApprovalRequired: true as const,
+  }
+}
+
 function optimizationCandidate(
   input: PostPublicationDiagnosticInput,
   policy: PostPublicationOptimizationPolicy,
@@ -269,6 +295,9 @@ function optimizationCandidate(
   const views = nonnegative(input.analytics.views)
   const transactions = nonnegative(input.analytics.transactions)
   const watchers = nonnegative(input.currentWatchers)
+  const margin = nonnegative(input.estimatedMarginPercent)
+  const promotionEligible = input.promotionAllowed !== false && margin !== null &&
+    margin >= policy.marginRiskBelowPercent
 
   if (
     watchers !== null && watchers >= policy.minimumWatchersForSaleReview &&
@@ -286,6 +315,10 @@ function optimizationCandidate(
       "Proponer una sola mejora verificable en la oferta de envío; no aplicarla automáticamente.",
       "Mantener el resto del listing sin cambios durante al menos 7 días y comparar métricas propias del mismo listing.",
       "No atribuir causalidad; no cambiar precio, imágenes o título durante este experimento.",
+    ),
+    promotionRecommendation: noPromotionRecommendation(
+      "Hay interés comprobado; primero revisar oferta, precio y envío. Promocionar no corrige una barrera de conversión.",
+      input.promotionAllowed === false,
     ),
     evidence: { impressions, views, transactions, currentWatchers: watchers },
   }
@@ -307,6 +340,10 @@ function optimizationCandidate(
       "Si se aprueba, mantener título, imágenes, pack y políticas sin cambios durante al menos 7 días.",
       "Nunca usar precios de competidores para repricing ni bajar del precio piso interno.",
     ),
+    promotionRecommendation: noPromotionRecommendation(
+      "Hay vistas sin ventas; primero corregir precio total, envío, devoluciones o claridad del pack.",
+      input.promotionAllowed === false,
+    ),
     evidence: { impressions, views, transactions, currentWatchers: watchers },
   }
 
@@ -327,6 +364,10 @@ function optimizationCandidate(
       "Si se aprueba, mantener título, precio y políticas sin cambios durante al menos 7 días.",
       "Usar sólo imágenes propias, Luna autorizadas o fabricante autorizado; no usar imágenes de competidores.",
     ),
+    promotionRecommendation: noPromotionRecommendation(
+      "El listing ya recibe impresiones; primero mejorar imagen principal y título, no comprar más impresiones.",
+      input.promotionAllowed === false,
+    ),
     evidence: { impressions, views, transactions, currentWatchers: watchers },
   }
 
@@ -336,14 +377,39 @@ function optimizationCandidate(
     severity: "high",
     notificationTitle: "Este listing necesita una revisión de visibilidad",
     whyItNeedsAttention: "La ventana oficial completa no registra impresiones, vistas ni transacciones. Primero debemos descartar un problema de indexación o configuración.",
-    recommendedAction: "Auditar indexación, categoría hoja y aspectos obligatorios antes de proponer un cambio de título.",
-    reviewSequence: ["Indexación", "Categoría hoja", "Aspectos obligatorios", "Título"],
+    recommendedAction: input.promotionAllowed === false
+      ? "Auditar indexación, categoría hoja y aspectos obligatorios. No hay margen para promoción: este listing está bloqueado en 0%."
+      : !promotionEligible
+        ? "Auditar indexación, categoría hoja y aspectos obligatorios. La economía no confirma capacidad para publicidad; mantener promoción en 0%."
+      : "Auditar indexación, categoría hoja y aspectos obligatorios; si están correctos, autorizar desde Seller OS una prueba de Promoted Listings General al 5% durante 7 días.",
+    reviewSequence: ["Indexación", "Categoría hoja", "Aspectos obligatorios", "Promoción 5% por 7 días"],
     experiment: experiment(
       "CATEGORY",
-      "Preparar una revisión de categoría; sólo proponer un cambio si Taxonomy confirma una categoría hoja más exacta.",
-      "Tras aprobación, cambiar únicamente la categoría y observar una nueva ventana completa.",
-      "No cambiar simultáneamente título, imagen, precio ni políticas.",
+      !promotionEligible
+        ? "Preparar una revisión de indexación y categoría; la promoción permanece bloqueada en 0%."
+        : "Si indexación, categoría y aspectos están correctos, proponer únicamente Promoted Listings General al 5% por 7 días desde Seller OS.",
+      "Mantener título, imagen, precio y políticas sin cambios; comparar impresiones, clics y ventas después de la reconciliación de eBay.",
+      !promotionEligible
+        ? "No hay margen para aplicar promoción."
+        : "Detener la prueba ante una venta, stock bajo, deterioro de margen o cambio de precio; nunca superar 5%.",
     ),
+    promotionRecommendation: !promotionEligible
+      ? noPromotionRecommendation(
+          input.promotionAllowed === false
+            ? "No hay margen para aplicar promoción: listing bajo excepción de margen 10%."
+            : "La economía estimada no conserva el margen normal después de reservar 5% para publicidad.",
+          input.promotionAllowed === false,
+        )
+      : {
+          status: "READY_FOR_HUMAN_APPROVAL" as const,
+          recommendedRatePercent: 5 as const,
+          durationDays: 7 as const,
+          trigger: "ZERO_VISIBILITY_AFTER_COMPLETE_ORGANIC_WINDOW",
+          reason: "La ventana oficial completa no muestra impresiones, vistas ni ventas; la economía conserva la reserva normal del 5%.",
+          applyFromSellerOs: true,
+          automaticExecutionAllowed: false as const,
+          humanApprovalRequired: true as const,
+        },
     evidence: { impressions, views, transactions, currentWatchers: watchers },
   }
 
@@ -386,6 +452,12 @@ function saleRiskCandidate(input: PostPublicationDiagnosticInput, policy: PostPu
         : "Proponer una única valoración humana del precio usando solamente costos y margen propios.",
       "Registrar la decisión y no mezclarla con cambios de título, imágenes, pack o políticas.",
       "Sin escrituras eBay automáticas; sin repricing competitivo; detener si stock o margen no quedan seguros.",
+    ),
+    promotionRecommendation: noPromotionRecommendation(
+      stockRisk
+        ? "Primero proteger fulfillment y cantidad disponible."
+        : "Primero recuperar el margen; no añadir gasto publicitario.",
+      input.promotionAllowed === false,
     ),
     evidence: {
       confirmedUnitsSold,
@@ -494,6 +566,7 @@ export function diagnosePostPublicationListing(
       cooldownHours,
       nextEligibleAt: window.nextEligibleAt,
       experiment: candidate.experiment,
+      promotionRecommendation: candidate.promotionRecommendation,
       existingPerformanceEvidenceContract:
         "EBAY_LISTING_PERFORMANCE_SNAPSHOTS_OFFICIAL_OWN_LISTING",
       interpretation: "Asociación descriptiva de métricas propias; no prueba causalidad.",

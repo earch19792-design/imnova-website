@@ -287,7 +287,8 @@ export async function POST(req: Request) {
       await decideSameDayProduct({ supabase: access.supabase, accountKey: access.accountKey,
         actorId: access.auth.userId, taskId: body.taskId, decision, salePrice, fulfillmentBasis,
         imageRightsConfirmed: body.imageRightsConfirmed === true,
-        openAiImageSpendApproved: body.openAiImageSpendApproved === true })
+        openAiImageSpendApproved: body.openAiImageSpendApproved === true,
+        noPromotionConfirmed: body.noPromotionConfirmed === true })
       const continuation = scheduleImmediateContinuation({ supabase: access.supabase,
         accountKey: access.accountKey, workerId: `product-decision:${access.auth.userId}` })
       const pilot = await getSameDayPilot({ supabase: access.supabase, accountKey: access.accountKey })

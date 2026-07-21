@@ -19,6 +19,7 @@ import {
 } from "./ebay-same-day-pilot-domain"
 import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics } from "./ebay-unit-economics"
 import {
+  controlledRiskEconomicsConfig,
   EBAY_CONTROLLED_RISK_OVERRIDE_VERSION,
   evaluateControlledRiskManualOverride,
 } from "./ebay-controlled-risk-manual-override"
@@ -3534,6 +3535,7 @@ export async function decideSameDayProduct(input: {
   fulfillmentBasis?: EbayCompliantFulfillmentBasis | null
   imageRightsConfirmed?: boolean
   openAiImageSpendApproved?: boolean
+  noPromotionConfirmed?: boolean
 }) {
   const state = await getSameDayPilot(input)
   if (!state) throw new Error("SAME_DAY_PILOT_RUN_MISSING")
@@ -3564,6 +3566,15 @@ export async function decideSameDayProduct(input: {
     controlledTestPlan.listingQuantity === 1 &&
     controlledTestPlan.commercialMonitorRequired === true &&
     Number(candidate.listing_quantity) === 1
+  const controlledRiskActiveMarketReady =
+    pricingRecommendation.controlledRiskActiveMarketFallbackUsed === true &&
+    pricingRecommendation.marketReferenceUsed === true &&
+    pricingRecommendation.promotionAllowed === false &&
+    number(pricingRecommendation.minimumNetMarginPercent) === 10 &&
+    Number(candidate.listing_quantity) === 1
+  if (controlledRiskActiveMarketReady && input.noPromotionConfirmed !== true) {
+    throw new Error("SAME_DAY_PILOT_CONTROLLED_RISK_NO_PROMOTION_CONFIRMATION_REQUIRED")
+  }
   if (!(number(pricingRecommendation.recommendedSalePrice) ?? 0) ||
     (pricingRecommendation.marketReferenceUsed !== true && !controlledTestPriceReady)) {
     throw new Error("SAME_DAY_PILOT_MARKET_PRICE_REFERENCE_REQUIRED")
@@ -3584,7 +3595,10 @@ export async function decideSameDayProduct(input: {
   if (factsSummary.currentRunBound !== true || record(factsSummary.gates).OPENAI_INPUT_READY !== true) {
     throw new Error("SAME_DAY_PILOT_PRODUCT_FACTS_APPROVAL_BLOCKED")
   }
-  const economics = calculateEbayUnitEconomics({ salePrice, supplierCost }, ebayDraftOnlyEconomicsConfig())
+  const economicsConfig = controlledRiskActiveMarketReady
+    ? controlledRiskEconomicsConfig(ebayDraftOnlyEconomicsConfig())
+    : ebayDraftOnlyEconomicsConfig()
+  const economics = calculateEbayUnitEconomics({ salePrice, supplierCost }, economicsConfig)
   if (!economics.ready || !economics.passesProfitGate) throw new Error("SAME_DAY_PILOT_OPERATOR_PRICE_ECONOMICS_BLOCKED")
   const operatorApprovedAt = new Date().toISOString()
   const economicsSummary = { ...record(candidate.economics_summary), ...economics,
@@ -3603,7 +3617,27 @@ export async function decideSameDayProduct(input: {
     openAiImageMaximumCallsApproved: 1,
     openAiImageQualityApproved: "low",
     controlledExploratoryTestApproved: controlledTestPriceReady,
-    commercialMonitorRequired: controlledTestPriceReady,
+    commercialMonitorRequired: controlledTestPriceReady || controlledRiskActiveMarketReady,
+    controlledRiskOverride: controlledRiskActiveMarketReady ? {
+      authorized: true,
+      version: EBAY_CONTROLLED_RISK_OVERRIDE_VERSION,
+      authorizedAt: operatorApprovedAt,
+      evidenceBasis: "FRESH_EQUIVALENT_PACK_ACTIVE_MULTI_SELLER_MARKET",
+      minimumNetMarginPercent: 10,
+      minimumRiskPrice: pricingRecommendation.controlledRiskMinimumPrice,
+      maximumCompetitivePrice: record(pricingRecommendation.marketReference).maximumPrice,
+      confirmedSoldExactQuantity: 0,
+      promotionAllowed: false,
+      promotedListingsReserveRate: 0,
+      voluntaryReturns: "NOT_ACCEPTED_WHERE_EBAY_ALLOWS",
+      ebayMoneyBackGuaranteeStillApplies: true,
+      commercialRiskAccepted: true,
+      automaticPricingUsed: false,
+      finalHumanAuthorizationRequired: true,
+      sellerOsPublicationAfterAuthorization: true,
+      unattendedPublicationAllowed: false,
+      ebayWrites: 0,
+    } : null,
     fulfillmentDocumentsStored: false, fulfillmentPiiStored: false }
   await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
     gateType: "PRODUCT_APPROVAL_REQUIRED", runId: state.run.id, candidateId: candidate.id,
@@ -3611,6 +3645,7 @@ export async function decideSameDayProduct(input: {
     reasonCode: "OPENAI_SKIPPED_MANUAL_FACTS_ONLY", triggeredBy: "USER",
     checkpoint: { operatorPriceApproved: true, automaticPricingUsed: false, fulfillmentBasis,
       imageRightsConfirmed: true, openAiImageSpendApproved: true,
+      noPromotionConfirmed: controlledRiskActiveMarketReady,
       openAiImageMaximumCallsApproved: 1 },
     candidatePatch: { economicsSummary },
     nextAutomaticAction: "Construir un paquete original desde facts verificados.", nextHumanAction: "Ninguna.",
@@ -4596,10 +4631,17 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           productFactsState = "REJECTED"
         } else {
           const currentEconomics = record(candidate.economics_summary)
+          const controlledRiskFloor = calculateEbayMinimumOperatorPrice({
+            supplierCost: number(currentEconomics.confirmedLunaPrice) ?? 0,
+          }, controlledRiskEconomicsConfig(ebayDraftOnlyEconomicsConfig()))
           const pricingRecommendation = buildEbayMarketPricingRecommendation({
             minimumOperatorPrice: number(currentEconomics.minimumOperatorPrice),
+            controlledRiskMinimumPrice: controlledRiskFloor.ready
+              ? controlledRiskFloor.minimumOperatorPrice : null,
             marketPricing: currentResult.marketPricing,
             exactSoldMarketReference: record(candidate.evidence_summary).exactSoldMarketReference,
+            confirmedRelatedPackStrategy:
+              record(candidate.evidence_summary).relatedPackStrategy,
             variationAspectNames: currentResult.taxonomy?.variationAspects,
             controlledExploratoryTest: text(record(candidate.evidence_summary).commercialEvidenceMode) ===
               "CONTROLLED_EXPLORATORY_TEST",
@@ -4609,7 +4651,11 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             pricingRecommendation,
             recommendedSalePrice: pricingRecommendation.recommendedSalePrice,
             status: pricingRecommendation.marketReferenceUsed
-              ? "PRICE_RECOMMENDED_PENDING_APPROVAL"
+              ? pricingRecommendation.controlledRiskActiveMarketFallbackUsed
+                ? "CONTROLLED_RISK_PRICE_PENDING_APPROVAL"
+                : pricingRecommendation.competitiveness === "NOT_COMPETITIVE"
+                  ? "COST_NOT_COMPETITIVE"
+                  : "PRICE_RECOMMENDED_PENDING_APPROVAL"
               : pricingRecommendation.controlledExploratoryFloorUsed
                 ? "CONTROLLED_TEST_PRICE_PENDING_APPROVAL"
                 : "MARKET_REFERENCE_PENDING",

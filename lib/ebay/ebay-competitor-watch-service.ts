@@ -27,6 +27,7 @@ export type CompetitorWatchListingInput = {
   currency: string
   supplierVariantId: string | null
   supplierSku: string | null
+  promotionAllowed: boolean
   rawPayload: JsonRecord | null
   supply: {
     title: string | null
@@ -86,6 +87,18 @@ function array(value: unknown) {
 
 function text(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
+}
+
+function sellerImprovementUrl(eventId: string) {
+  const configured = process.env.EBAY_SELLER_COMMAND_CENTER_URL?.trim() ?? ""
+  try {
+    const url = new URL(configured)
+    if (url.protocol !== "https:") return null
+    const base = url.toString().replace(/\/$/, "")
+    return `${base}?section=commercial-monitor&improvement=${encodeURIComponent(eventId)}#competitor-watch-heading`
+  } catch {
+    return null
+  }
 }
 
 function numeric(value: unknown) {
@@ -391,6 +404,12 @@ async function persistCompetitorAlert(input: {
   }
   const eventType = competitorEventKind(input.analysis)
   const priceRecommendation = input.analysis.priceRecommendation
+  const marketPricePositionDetected = input.analysis.suggestionCodes.includes(
+    "REVIEW_MARKET_PRICE_POSITION",
+  )
+  const listingShippingCost = ownShippingCost(input.listing.rawPayload) ?? 0
+  const ownLandedPrice = input.listing.price === null ? null
+    : Number((input.listing.price + listingShippingCost).toFixed(2))
   const deduplicationKey = stableCommercialKey(
     input.accountKey,
     eventType,
@@ -413,7 +432,19 @@ async function persistCompetitorAlert(input: {
       `Utilidad estimada $${Number(priceRecommendation.proposedEstimatedNetProfit ?? 0).toFixed(2)}, ` +
       `margen ${Number(priceRecommendation.proposedEstimatedMarginPercent ?? 0).toFixed(2)}% ` +
       `y ROI ${Number(priceRecommendation.proposedEstimatedRoiPercent ?? 0).toFixed(2)}%. ` +
+      (priceRecommendation.promotionRecommendation.recommendedRatePercent > 0
+        ? `Para impulsar, evaluar Promoted Listings al ${priceRecommendation.promotionRecommendation.recommendedRatePercent.toFixed(2)}% reservado; requiere autorización humana. `
+        : `Promoción recomendada 0%. ${priceRecommendation.promotionRecommendation.reason} `) +
       "Requiere revisión humana; no se modificó eBay."
+    : marketPricePositionDetected && ownLandedPrice !== null &&
+        input.analysis.medianLandedPrice !== null
+      ? `Revisar posición de precio: tu total es $${ownLandedPrice.toFixed(2)} y la ` +
+        `mediana activa equivalente observada es $${input.analysis.medianLandedPrice.toFixed(2)} ` +
+        `entre ${input.analysis.activeSellerCount} vendedor(es). ` +
+        (input.analysis.researchRefreshRecommended
+          ? "Actualizar Product Research para confirmar ventas antes de aprobar un precio. "
+          : "Usar esta señal como presión competitiva; confirmar ventas en Product Research antes de cambiar el precio. ") +
+        "No se modificó eBay."
     : input.analysis.researchRefreshRecommended
       ? "Actualizar una sola captura dirigida de Product Research para esta familia y confirmar ventas antes de modificar el listing."
       : "Revisar la sugerencia comercial en Seller OS; no cambiar precio, título, imágenes ni políticas sin aprobación humana."
@@ -426,6 +457,8 @@ async function persistCompetitorAlert(input: {
     suggestionCodes: input.analysis.suggestionCodes,
     researchRefreshRecommended: input.analysis.researchRefreshRecommended,
     priceRecommendation,
+    promotionRecommendation: priceRecommendation?.promotionRecommendation ?? null,
+    ownLandedPrice,
     confirmedSoldPriceRecommendationReady: priceRecommendation !== null,
     confirmedSoldPriceUsed: priceRecommendation !== null,
     currentActiveOfferPriceUsedAsSoldPrice: false,
@@ -438,6 +471,8 @@ async function persistCompetitorAlert(input: {
   const payload = {
     title: priceRecommendation
       ? "Recomendación de precio · competidor con venta confirmada"
+      : marketPricePositionDetected
+        ? "Acción de precio · competencia activa detectada"
       : input.analysis.researchRefreshRecommended
         ? "Competidor potencial · refrescar Product Research"
         : eventType === "COMPETITOR_SOLD_EVIDENCE_CONFIRMED"
@@ -450,6 +485,13 @@ async function persistCompetitorAlert(input: {
         `${priceRecommendation.confirmedSoldQuantity} venta(s) confirmada(s), ` +
         `referencia total $${priceRecommendation.confirmedSoldBenchmarkLandedPrice.toFixed(2)}. ` +
         `Confianza ${priceRecommendation.confidence}.`
+      : marketPricePositionDetected && ownLandedPrice !== null &&
+          input.analysis.medianLandedPrice !== null
+        ? `Listing ${input.listing.listingId} · SKU ${input.listing.sku ?? "pendiente"}. ` +
+          `Precio total propio $${ownLandedPrice.toFixed(2)} frente a mediana activa ` +
+          `$${input.analysis.medianLandedPrice.toFixed(2)}; ` +
+          `${input.analysis.activeSellerCount} vendedor(es) comparables. ` +
+          "Una oferta activa no se presenta como venta confirmada."
       : `Listing ${input.listing.listingId} · SKU ${input.listing.sku ?? "pendiente"}. ` +
         `${input.analysis.potentialSellerHashes.length} vendedor(es) potencial(es) nuevo(s); ` +
         `${input.analysis.newlyConfirmedOfferHashes.length} oferta(s) con venta confirmada. ` +
@@ -495,6 +537,7 @@ async function persistCompetitorAlert(input: {
   if ((eventError && eventError.code !== "23505") || !eventId) {
     throw new Error("COMPETITOR_WATCH_EVENT_WRITE_FAILED")
   }
+  const improvementUrl = sellerImprovementUrl(eventId)
   const { error: outboxError } = await input.supabase.from("alert_delivery_outbox").insert({
     marketplace_account_key: input.accountKey,
     marketplace: MARKETPLACE,
@@ -505,7 +548,13 @@ async function persistCompetitorAlert(input: {
       "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND" ? "high" : "medium",
     deduplication_key: `whatsapp:${deduplicationKey}`,
     status: "pending",
-    payload,
+    payload: {
+      ...payload,
+      action: `${improvementUrl
+        ? `Revisar y autorizar en Seller OS: ${improvementUrl}. `
+        : "Revisar y autorizar desde Seller OS. "}${payload.action}`,
+      improvementUrl,
+    },
     due_at: input.observedAt,
   })
   if (outboxError && outboxError.code !== "23505") {
@@ -618,6 +667,7 @@ async function scanOneListing(input: {
       returnsAccepted: ownReturnsAccepted(input.listing.rawPayload),
       imageCount: ownImageCount(input.listing.rawPayload),
       title: input.listing.title,
+      promotionAllowed: input.listing.promotionAllowed,
     },
     crossSellerCandidateConfirmedTerms: scan.crossSellerCandidateConfirmedTerms,
     previousSuggestionCodes: input.profile?.latest_suggestion_codes ?? [],
