@@ -2498,6 +2498,8 @@ export async function runEbayCommercialMonitor(
         competitorActiveSellers: competitorWork?.activeSellers ?? null,
         competitorResearchRefreshRecommendations:
           competitorWork?.researchRefreshRecommendations ?? null,
+        competitorConfirmedSoldPriceRecommendations:
+          competitorWork?.confirmedSoldPriceRecommendations ?? null,
         sellerHubMessageHeadersRead: sellerMessages?.headers.length ?? null,
         sellerHubMessageContentReturned: false,
         sellerHubMessageRawXmlPersisted: false,
@@ -2677,9 +2679,13 @@ export async function runEbayCommercialMonitor(
         newSellers: competitorWork.newSellers,
         potentialSellers: competitorWork.potentialSellers,
         researchRefreshRecommendations: competitorWork.researchRefreshRecommendations,
+        confirmedSoldPriceRecommendations:
+          competitorWork.confirmedSoldPriceRecommendations,
         eventsCreated: competitorWork.eventsCreated,
         alertsEnqueued: competitorWork.alertsGenerated,
         activeOfferTreatedAsConfirmedSale: false,
+        confirmedSoldPriceRequired: true,
+        ownCostFloorRequired: true,
         automaticProductResearchImport: false,
         automaticEbayMutation: false,
         ebayWrites: 0,
