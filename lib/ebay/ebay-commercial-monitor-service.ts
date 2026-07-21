@@ -3054,7 +3054,10 @@ export async function getEbayCommercialMonitorDashboard(
     supabase.from("commercial_alert_events")
       .select("id,event_type,severity,evidence,detected_at,listing_id,sku,recommended_action")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
-      .eq("event_type", "COMPETITOR_CONFIRMED_SOLD_PRICE_RECOMMENDATION")
+      .in("event_type", [
+        "COMPETITOR_CONFIRMED_SOLD_PRICE_RECOMMENDATION",
+        "COMPETITOR_ACTIVE_MARKET_PRICE_RECOMMENDATION",
+      ])
       .order("detected_at", { ascending: false }).limit(20),
     supabase.from("ebay_listing_competitor_watch_profiles")
       .select("listing_id,sku,last_scanned_at,baseline_completed_at,latest_active_offer_count,latest_active_seller_count,latest_estimated_activity_seller_count,latest_confirmed_sold_seller_count,latest_median_landed_price,latest_free_shipping_ratio,latest_returns_accepted_ratio,latest_multi_image_ratio,latest_evidence_class,latest_suggestion_codes,latest_suggested_terms,research_refresh_recommended,research_refresh_reason_codes,last_research_refresh_recommended_at")

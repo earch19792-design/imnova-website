@@ -61,7 +61,10 @@ export function renderCommercialWhatsAppMessage(row: OutboxRow): SellerWhatsAppT
     priorityLabel: text(priorityLabel(row.severity), WHATSAPP_TEMPLATE_TEXT_BUDGET.priority),
     title: text(row.payload.title, WHATSAPP_TEMPLATE_TEXT_BUDGET.title),
     summary: text(row.payload.summary, WHATSAPP_TEMPLATE_TEXT_BUDGET.summary),
-    action: text(row.payload.action, WHATSAPP_TEMPLATE_TEXT_BUDGET.action),
+    action: text(
+      row.payload.whatsappAction ?? row.payload.action,
+      WHATSAPP_TEMPLATE_TEXT_BUDGET.action,
+    ),
   }
 }
 

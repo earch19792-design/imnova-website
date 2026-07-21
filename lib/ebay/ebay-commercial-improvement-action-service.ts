@@ -143,6 +143,33 @@ function proposalFromEvent(event: JsonRecord) {
       evidenceClass: "CONFIRMED_SOLD_EXACT_PRESENTATION",
     },
   }
+  if (
+    text(event.event_type) === "COMPETITOR_ACTIVE_MARKET_PRICE_RECOMMENDATION" &&
+    text(price.comparisonBasis) ===
+      "EBAY_ACTIVE_MULTI_SELLER_MEDIAN_NOT_CONFIRMED_SOLD" &&
+    ["LOWER_TO_ACTIVE_MARKET_SAFE_PRICE", "RAISE_TO_SAFE_FLOOR"]
+      .includes(text(price.action)) &&
+    proposedPrice !== null && proposedPrice > 0 && currentPrice !== null &&
+    proposedLandedPrice !== null &&
+    Math.abs(proposedPrice - currentPrice) >= 0.01 &&
+    price.proposedPassesProfitGate === true
+  ) return {
+    actionType: "PRICE" as const,
+    targetValue: {
+      currentPrice: money(currentPrice),
+      proposedPrice: money(proposedPrice),
+      proposedLandedPrice: money(proposedLandedPrice),
+      expectedMarginPercent: numeric(price.proposedEstimatedMarginPercent),
+      expectedNetProfit: numeric(price.proposedEstimatedNetProfit),
+      confidence: text(price.confidence, 20),
+      evidenceClass: "ACTIVE_MARKET_MULTI_SELLER_NOT_CONFIRMED_SOLD",
+      activeMarketMedianLandedPrice:
+        numeric(price.activeMarketMedianLandedPrice),
+      activeSellerCount: numeric(price.activeSellerCount),
+      minimumSafeLandedPrice: numeric(price.minimumSafeLandedPrice),
+      activeMarketNotConfirmedSale: true,
+    },
+  }
   const promotion = record(evidence.promotionRecommendation)
   if (
     text(event.event_type) === "LISTING_ZERO_VISIBILITY_REVIEW" &&

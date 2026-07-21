@@ -387,6 +387,9 @@ function competitorEventKind(analysis: ReturnType<typeof buildCompetitorWatchAna
   if (analysis.priceRecommendation) {
     return "COMPETITOR_CONFIRMED_SOLD_PRICE_RECOMMENDATION"
   }
+  if (analysis.activeMarketPriceRecommendation) {
+    return "COMPETITOR_ACTIVE_MARKET_PRICE_RECOMMENDATION"
+  }
   if (analysis.potentialSellerHashes.length) return "COMPETITOR_NEW_POTENTIAL_SELLER"
   if (analysis.newlyConfirmedOfferHashes.length) return "COMPETITOR_SOLD_EVIDENCE_CONFIRMED"
   return "COMPETITOR_PATTERN_SUGGESTION"
@@ -404,6 +407,10 @@ async function persistCompetitorAlert(input: {
   }
   const eventType = competitorEventKind(input.analysis)
   const priceRecommendation = input.analysis.priceRecommendation
+  const activeMarketPriceRecommendation =
+    input.analysis.activeMarketPriceRecommendation
+  const anyPriceRecommendation = priceRecommendation ??
+    activeMarketPriceRecommendation
   const marketPricePositionDetected = input.analysis.suggestionCodes.includes(
     "REVIEW_MARKET_PRICE_POSITION",
   )
@@ -436,6 +443,25 @@ async function persistCompetitorAlert(input: {
         ? `Para impulsar, evaluar Promoted Listings al ${priceRecommendation.promotionRecommendation.recommendedRatePercent.toFixed(2)}% reservado; requiere autorización humana. `
         : `Promoción recomendada 0%. ${priceRecommendation.promotionRecommendation.reason} `) +
       "Requiere revisión humana; no se modificó eBay."
+    : activeMarketPriceRecommendation
+      ? activeMarketPriceRecommendation.action ===
+          "LOWER_TO_ACTIVE_MARKET_SAFE_PRICE"
+        ? `Evaluar bajar a $${activeMarketPriceRecommendation.proposedItemPrice.toFixed(2)}. ` +
+          `Mediana activa $${activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2)}; ` +
+          `piso seguro $${activeMarketPriceRecommendation.minimumSafeLandedPrice.toFixed(2)} ` +
+          `(${activeMarketPriceRecommendation.promotionReserveIncluded
+            ? "incluye reserva publicitaria 5%"
+            : "promoción bloqueada"}). La oferta activa no es una venta confirmada. ` +
+          "Requiere autorización humana; no se modificó eBay."
+        : activeMarketPriceRecommendation.action === "RAISE_TO_SAFE_FLOOR"
+          ? `Subir al piso seguro $${activeMarketPriceRecommendation.proposedItemPrice.toFixed(2)}; ` +
+            `el precio actual no pasa la economía. Mediana activa ` +
+            `$${activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2)}. ` +
+            "Requiere autorización humana; no se modificó eBay."
+          : `Mantener $${activeMarketPriceRecommendation.currentItemPrice.toFixed(2)}: ` +
+            `ya está en el piso seguro $${activeMarketPriceRecommendation.minimumSafeLandedPrice.toFixed(2)}. ` +
+            `La mediana activa $${activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2)} ` +
+            "queda debajo del piso; no igualar ni ejecutar una escritura innecesaria."
     : marketPricePositionDetected && ownLandedPrice !== null &&
         input.analysis.medianLandedPrice !== null
       ? `Revisar posición de precio: tu total es $${ownLandedPrice.toFixed(2)} y la ` +
@@ -456,10 +482,14 @@ async function persistCompetitorAlert(input: {
     medianLandedPrice: input.analysis.medianLandedPrice,
     suggestionCodes: input.analysis.suggestionCodes,
     researchRefreshRecommended: input.analysis.researchRefreshRecommended,
-    priceRecommendation,
+    priceRecommendation: anyPriceRecommendation,
+    confirmedSoldPriceRecommendation: priceRecommendation,
+    activeMarketPriceRecommendation,
     promotionRecommendation: priceRecommendation?.promotionRecommendation ?? null,
     ownLandedPrice,
     confirmedSoldPriceRecommendationReady: priceRecommendation !== null,
+    activeMarketPriceRecommendationReady:
+      activeMarketPriceRecommendation !== null,
     confirmedSoldPriceUsed: priceRecommendation !== null,
     currentActiveOfferPriceUsedAsSoldPrice: false,
     activeOfferIsNotConfirmedSale: true,
@@ -471,6 +501,8 @@ async function persistCompetitorAlert(input: {
   const payload = {
     title: priceRecommendation
       ? "Recomendación de precio · competidor con venta confirmada"
+      : activeMarketPriceRecommendation
+        ? "Precio seguro · competencia activa detectada"
       : marketPricePositionDetected
         ? "Acción de precio · competencia activa detectada"
       : input.analysis.researchRefreshRecommended
@@ -485,6 +517,12 @@ async function persistCompetitorAlert(input: {
         `${priceRecommendation.confirmedSoldQuantity} venta(s) confirmada(s), ` +
         `referencia total $${priceRecommendation.confirmedSoldBenchmarkLandedPrice.toFixed(2)}. ` +
         `Confianza ${priceRecommendation.confidence}.`
+      : activeMarketPriceRecommendation
+        ? `Listing ${input.listing.listingId} · SKU ${input.listing.sku ?? "pendiente"}. ` +
+          `Actual $${activeMarketPriceRecommendation.currentItemPrice.toFixed(2)}; ` +
+          `mercado activo $${activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2)}; ` +
+          `piso seguro $${activeMarketPriceRecommendation.minimumSafeLandedPrice.toFixed(2)}. ` +
+          "Oferta activa, no venta confirmada."
       : marketPricePositionDetected && ownLandedPrice !== null &&
           input.analysis.medianLandedPrice !== null
         ? `Listing ${input.listing.listingId} · SKU ${input.listing.sku ?? "pendiente"}. ` +
@@ -508,8 +546,11 @@ async function persistCompetitorAlert(input: {
       marketplace_account_key: input.accountKey,
       marketplace: MARKETPLACE,
       event_type: eventType,
-      severity: priceRecommendation && priceRecommendation.action !==
-        "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND" ? "high" : "medium",
+      severity: (priceRecommendation && priceRecommendation.action !==
+        "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND") ||
+        (activeMarketPriceRecommendation &&
+          activeMarketPriceRecommendation.action !==
+            "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR") ? "high" : "medium",
       evidence,
       threshold_config_version: EBAY_COMPETITOR_WATCH_VERSION,
       detected_at: input.observedAt,
@@ -538,14 +579,29 @@ async function persistCompetitorAlert(input: {
     throw new Error("COMPETITOR_WATCH_EVENT_WRITE_FAILED")
   }
   const improvementUrl = sellerImprovementUrl(eventId)
+  const whatsappAction = improvementUrl
+    ? `Abrir acción en Seller OS: ${improvementUrl}. ${anyPriceRecommendation
+        ? activeMarketPriceRecommendation?.action ===
+            "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"
+          ? "Mantener el precio: el mercado activo está debajo del piso seguro."
+          : "Autorizar o rechazar la propuesta de precio; eBay no cambia sin tu confirmación."
+        : marketPricePositionDetected
+          ? "Confirmar ventas en Product Research antes de cambiar el precio."
+          : input.analysis.researchRefreshRecommended
+            ? "Actualizar la captura dirigida de Product Research."
+            : "Revisar y decidir la mejora sugerida."}`
+    : "Abrir Seller OS y revisar la mejora sugerida; eBay no cambia sin tu confirmación."
   const { error: outboxError } = await input.supabase.from("alert_delivery_outbox").insert({
     marketplace_account_key: input.accountKey,
     marketplace: MARKETPLACE,
     commercial_event_id: eventId,
     channel: "whatsapp",
     delivery_class: "immediate",
-    severity: priceRecommendation && priceRecommendation.action !==
-      "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND" ? "high" : "medium",
+    severity: (priceRecommendation && priceRecommendation.action !==
+      "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND") ||
+      (activeMarketPriceRecommendation &&
+        activeMarketPriceRecommendation.action !==
+          "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR") ? "high" : "medium",
     deduplication_key: `whatsapp:${deduplicationKey}`,
     status: "pending",
     payload: {
@@ -553,6 +609,7 @@ async function persistCompetitorAlert(input: {
       action: `${improvementUrl
         ? `Revisar y autorizar en Seller OS: ${improvementUrl}. `
         : "Revisar y autorizar desde Seller OS. "}${payload.action}`,
+      whatsappAction,
       improvementUrl,
     },
     due_at: input.observedAt,

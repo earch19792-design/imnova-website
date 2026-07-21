@@ -243,6 +243,141 @@ export function buildConfirmedSoldPriceRecommendation(input: Pick<
   }
 }
 
+export function buildActiveMarketPriceRecommendation(input: Pick<
+  CompetitorWatchAnalysisInput,
+  "ownListing"
+> & {
+  medianLandedPrice: number | null
+  activeSellerCount: number
+}) {
+  const ownItemPrice = finite(input.ownListing.itemPrice)
+  const ownShippingCost = finite(input.ownListing.shippingCost) ?? 0
+  const ownPackQuantity = Number(input.ownListing.packQuantity)
+  const supplierUnitCost = finite(input.ownListing.supplierUnitCost)
+  const activeMedian = finite(input.medianLandedPrice)
+  if (ownItemPrice === null || ownItemPrice <= 0 || ownShippingCost < 0 ||
+    activeMedian === null || activeMedian <= 0 || input.activeSellerCount < 2 ||
+    !Number.isInteger(ownPackQuantity) || ownPackQuantity <= 0 ||
+    supplierUnitCost === null || supplierUnitCost < 0 ||
+    !input.ownListing.supplierCostFresh || input.ownListing.supplierAvailable !== true) {
+    return null
+  }
+  const totalSupplierCost = money(supplierUnitCost * ownPackQuantity)
+  const floorWithPromotionReserve = calculateEbayMinimumOperatorPrice({
+    supplierCost: totalSupplierCost,
+  })
+  const floorWithoutPromotion = calculateEbayMinimumOperatorPrice({
+    supplierCost: totalSupplierCost,
+  }, { promotedListingsReserveRate: 0 })
+  if (!floorWithPromotionReserve.ready || !floorWithoutPromotion.ready ||
+    floorWithPromotionReserve.minimumOperatorPrice === null ||
+    floorWithoutPromotion.minimumOperatorPrice === null) return null
+
+  const promotionReserveIncluded = input.ownListing.promotionAllowed !== false
+  const minimumSafeLandedPrice = promotionReserveIncluded
+    ? floorWithPromotionReserve.minimumOperatorPrice
+    : floorWithoutPromotion.minimumOperatorPrice
+  const currentLandedPrice = money(ownItemPrice + ownShippingCost)
+  let action: "LOWER_TO_ACTIVE_MARKET_SAFE_PRICE" |
+    "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR" | "RAISE_TO_SAFE_FLOOR"
+  let proposedLandedPrice: number
+  if (currentLandedPrice < minimumSafeLandedPrice) {
+    action = "RAISE_TO_SAFE_FLOOR"
+    proposedLandedPrice = minimumSafeLandedPrice
+  } else {
+    const safeCompetitivePrice = money(Math.max(
+      minimumSafeLandedPrice,
+      activeMedian,
+    ))
+    if (safeCompetitivePrice < currentLandedPrice - 0.01) {
+      action = "LOWER_TO_ACTIVE_MARKET_SAFE_PRICE"
+      proposedLandedPrice = safeCompetitivePrice
+    } else {
+      action = "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"
+      proposedLandedPrice = currentLandedPrice
+    }
+  }
+  proposedLandedPrice = money(proposedLandedPrice)
+  const proposedItemPrice = money(Math.max(
+    0.01,
+    proposedLandedPrice - ownShippingCost,
+  ))
+  const economicsOverrides = promotionReserveIncluded
+    ? {} : { promotedListingsReserveRate: 0 }
+  const current = calculateEbayUnitEconomics({
+    salePrice: currentLandedPrice,
+    supplierCost: totalSupplierCost,
+  }, economicsOverrides)
+  const proposed = calculateEbayUnitEconomics({
+    salePrice: proposedLandedPrice,
+    supplierCost: totalSupplierCost,
+  }, economicsOverrides)
+  const activeMarketEconomics = calculateEbayUnitEconomics({
+    salePrice: activeMedian,
+    supplierCost: totalSupplierCost,
+  }, economicsOverrides)
+  const activeMarketFailedGateCodes = !activeMarketEconomics.ready ? [
+    "ECONOMICS_NOT_READY",
+  ] : [
+    (activeMarketEconomics.estimatedNetProfit ?? Number.NEGATIVE_INFINITY) <
+      activeMarketEconomics.config.minimumNetProfit
+      ? "MINIMUM_NET_PROFIT" : null,
+    (activeMarketEconomics.estimatedNetMarginPercent ?? Number.NEGATIVE_INFINITY) <
+      activeMarketEconomics.config.minimumNetMarginPercent
+      ? "MINIMUM_NET_MARGIN" : null,
+    (activeMarketEconomics.estimatedRoiPercent ?? Number.NEGATIVE_INFINITY) <
+      activeMarketEconomics.config.minimumRoiPercent
+      ? "MINIMUM_ROI" : null,
+  ].filter((code): code is string => code !== null)
+  return {
+    action,
+    confidence: input.activeSellerCount >= 3 ? "MEDIUM" as const : "LOW" as const,
+    currentItemPrice: money(ownItemPrice),
+    currentLandedPrice,
+    proposedItemPrice,
+    proposedLandedPrice,
+    activeMarketMedianLandedPrice: money(activeMedian),
+    activeSellerCount: input.activeSellerCount,
+    ownPackQuantity,
+    supplierUnitCost: money(supplierUnitCost),
+    totalSupplierCost,
+    minimumSafeLandedPrice,
+    floorWithPromotionReserve: floorWithPromotionReserve.minimumOperatorPrice,
+    floorWithoutPromotion: floorWithoutPromotion.minimumOperatorPrice,
+    promotionReserveIncluded,
+    canReachActiveMarketSafely: activeMedian >= minimumSafeLandedPrice,
+    currentEstimatedNetProfit: current.estimatedNetProfit,
+    currentEstimatedMarginPercent: current.estimatedNetMarginPercent,
+    proposedEstimatedNetProfit: proposed.estimatedNetProfit,
+    proposedEstimatedMarginPercent: proposed.estimatedNetMarginPercent,
+    proposedEstimatedRoiPercent: proposed.estimatedRoiPercent,
+    proposedPassesProfitGate: proposed.passesProfitGate,
+    activeMarketEconomics: {
+      estimatedNetProfit: activeMarketEconomics.estimatedNetProfit,
+      estimatedNetMarginPercent:
+        activeMarketEconomics.estimatedNetMarginPercent,
+      estimatedRoiPercent: activeMarketEconomics.estimatedRoiPercent,
+      estimatedOutboundShipping:
+        activeMarketEconomics.estimatedOutboundShipping,
+      estimatedEbayFees: activeMarketEconomics.estimatedEbayFees,
+      returnsReserve: activeMarketEconomics.returnsReserve,
+      promotedListingsReserve:
+        activeMarketEconomics.promotedListingsReserve,
+      minimumNetProfit: activeMarketEconomics.config.minimumNetProfit,
+      minimumNetMarginPercent:
+        activeMarketEconomics.config.minimumNetMarginPercent,
+      minimumRoiPercent: activeMarketEconomics.config.minimumRoiPercent,
+      passesProfitGate: activeMarketEconomics.passesProfitGate,
+      failedGateCodes: activeMarketFailedGateCodes,
+      shippingSource: "CONSERVATIVE_OUTBOUND_RESERVE" as const,
+    },
+    comparisonBasis: "EBAY_ACTIVE_MULTI_SELLER_MEDIAN_NOT_CONFIRMED_SOLD" as const,
+    activeMarketNotConfirmedSale: true,
+    automaticPriceChangeAllowed: false,
+    humanApprovalRequired: true,
+  }
+}
+
 function normalizedText(value: unknown) {
   return String(value ?? "")
     .normalize("NFKD")
@@ -365,6 +500,13 @@ export function buildCompetitorWatchAnalysis(input: CompetitorWatchAnalysisInput
     .slice(0, 5)
   if (suggestedTerms.length) suggestionCodes.push("REVIEW_CROSS_SELLER_TERMS")
   const priceRecommendation = buildConfirmedSoldPriceRecommendation(input)
+  const activeMarketPriceRecommendation = priceRecommendation ||
+      !suggestionCodes.includes("REVIEW_MARKET_PRICE_POSITION") ? null
+    : buildActiveMarketPriceRecommendation({
+        ownListing: input.ownListing,
+        medianLandedPrice,
+        activeSellerCount: currentSellers.size,
+      })
   if (priceRecommendation) {
     suggestionCodes.push("REVIEW_CONFIRMED_SOLD_PRICE_RECOMMENDATION")
   }
@@ -404,6 +546,14 @@ export function buildCompetitorWatchAnalysis(input: CompetitorWatchAnalysisInput
               priceRecommendation.confirmedSoldQuantity,
             ].join(":")
           : "NO_PRICE_RECOMMENDATION",
+        activeMarketPriceRecommendation
+          ? [
+              activeMarketPriceRecommendation.action,
+              activeMarketPriceRecommendation.proposedItemPrice.toFixed(2),
+              activeMarketPriceRecommendation.minimumSafeLandedPrice.toFixed(2),
+              activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2),
+            ].join(":")
+          : "NO_ACTIVE_MARKET_PRICE_RECOMMENDATION",
         researchRefreshRecommended ? "RESEARCH_REFRESH" : "OBSERVE",
       ].join("|")).digest("hex")
     : null
@@ -433,6 +583,7 @@ export function buildCompetitorWatchAnalysis(input: CompetitorWatchAnalysisInput
     newSuggestionCodes,
     suggestedTerms,
     priceRecommendation,
+    activeMarketPriceRecommendation,
     researchRefreshRecommended,
     researchRefreshReasonCodes: researchRefreshRecommended
       ? [

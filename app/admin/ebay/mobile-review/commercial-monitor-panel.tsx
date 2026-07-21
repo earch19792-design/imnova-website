@@ -242,7 +242,31 @@ type Dashboard = {
         confirmedSoldBenchmarkLandedPrice?: number
         confirmedSoldSellerCount?: number
         confirmedSoldQuantity?: number
+        activeMarketMedianLandedPrice?: number
+        activeSellerCount?: number
         minimumSafeLandedPrice?: number
+        floorWithPromotionReserve?: number
+        floorWithoutPromotion?: number
+        promotionReserveIncluded?: boolean
+        canReachActiveMarketSafely?: boolean
+        comparisonBasis?: string
+        activeMarketNotConfirmedSale?: boolean
+        proposedPassesProfitGate?: boolean
+        activeMarketEconomics?: {
+          estimatedNetProfit?: number | null
+          estimatedNetMarginPercent?: number | null
+          estimatedRoiPercent?: number | null
+          estimatedOutboundShipping?: number | null
+          estimatedEbayFees?: number | null
+          returnsReserve?: number | null
+          promotedListingsReserve?: number | null
+          minimumNetProfit?: number
+          minimumNetMarginPercent?: number
+          minimumRoiPercent?: number
+          passesProfitGate?: boolean
+          failedGateCodes?: string[]
+          shippingSource?: string
+        }
         proposedEstimatedNetProfit?: number | null
         proposedEstimatedMarginPercent?: number | null
         proposedEstimatedRoiPercent?: number | null
@@ -1137,7 +1161,7 @@ export function CommercialMonitorPanel() {
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Venta confirmada</span><strong className="mt-1 block text-lg">{competitorProfiles.reduce((sum, profile) => sum + Number(profile.latest_confirmed_sold_seller_count ?? 0), 0)}</strong></div>
         </div>
         {competitorPriceRecommendations.length > 0 && <div className="mt-3 rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3">
-          <p className="font-black text-emerald-50">Recomendaciones de precio con ventas confirmadas</p>
+          <p className="font-black text-emerald-50">Recomendaciones de precio con piso económico</p>
           <div className="mt-2 grid gap-2">
             {competitorPriceRecommendations.slice(0, 3).map((entry) => {
               const recommendation = entry.priceRecommendation ?? {}
@@ -1145,11 +1169,18 @@ export function CommercialMonitorPanel() {
                 ? `$${amount.toFixed(2)}` : "—"
               return <article key={entry.id} className="rounded-xl bg-black/25 p-3 text-xs">
                 <p className="font-black text-white">Listing {entry.listingId} · SKU {entry.sku ?? "pendiente"}</p>
-                <p className="mt-1 text-white/70">Actual {money(recommendation.currentItemPrice)} → propuesta {money(recommendation.proposedItemPrice)} · referencia vendida {money(recommendation.confirmedSoldBenchmarkLandedPrice)}</p>
-                <p className="mt-1 text-white/55">{recommendation.confirmedSoldSellerCount ?? 0} vendedor(es) exacto(s) · {recommendation.confirmedSoldQuantity ?? 0} venta(s) · piso propio {money(recommendation.minimumSafeLandedPrice)} · utilidad {money(recommendation.proposedEstimatedNetProfit ?? undefined)} · margen {typeof recommendation.proposedEstimatedMarginPercent === "number" ? `${recommendation.proposedEstimatedMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.proposedEstimatedRoiPercent === "number" ? `${recommendation.proposedEstimatedRoiPercent.toFixed(2)}%` : "—"}</p>
+                <p className="mt-1 text-white/70">Actual {money(recommendation.currentItemPrice)} → propuesta {money(recommendation.proposedItemPrice)} · {recommendation.activeMarketNotConfirmedSale
+                  ? `mediana activa ${money(recommendation.activeMarketMedianLandedPrice)}`
+                  : `referencia vendida ${money(recommendation.confirmedSoldBenchmarkLandedPrice)}`}</p>
+                <p className="mt-1 text-white/55">{recommendation.activeMarketNotConfirmedSale
+                  ? `${recommendation.activeSellerCount ?? 0} vendedor(es) activos · no son ventas confirmadas`
+                  : `${recommendation.confirmedSoldSellerCount ?? 0} vendedor(es) exacto(s) · ${recommendation.confirmedSoldQuantity ?? 0} venta(s)`} · piso propio {money(recommendation.minimumSafeLandedPrice)} · utilidad {money(recommendation.proposedEstimatedNetProfit ?? undefined)} · margen {typeof recommendation.proposedEstimatedMarginPercent === "number" ? `${recommendation.proposedEstimatedMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.proposedEstimatedRoiPercent === "number" ? `${recommendation.proposedEstimatedRoiPercent.toFixed(2)}%` : "—"}</p>
+                {recommendation.activeMarketNotConfirmedSale && <p className="mt-1 text-white/55">Piso con reserva publicitaria 5%: {money(recommendation.floorWithPromotionReserve)} · sin promoción: {money(recommendation.floorWithoutPromotion)} · alcanza la mediana activa: {recommendation.canReachActiveMarketSafely ? "SÍ" : "NO"}</p>}
+                {recommendation.activeMarketNotConfirmedSale && recommendation.activeMarketEconomics && <p className="mt-1 text-white/55">A precio de mercado: utilidad {money(recommendation.activeMarketEconomics.estimatedNetProfit ?? undefined)} · margen {typeof recommendation.activeMarketEconomics.estimatedNetMarginPercent === "number" ? `${recommendation.activeMarketEconomics.estimatedNetMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.activeMarketEconomics.estimatedRoiPercent === "number" ? `${recommendation.activeMarketEconomics.estimatedRoiPercent.toFixed(2)}%` : "—"} · envío conservador {money(recommendation.activeMarketEconomics.estimatedOutboundShipping ?? undefined)}. Regla(s) que fallan: {(recommendation.activeMarketEconomics.failedGateCodes ?? []).join(", ") || "ninguna"}.</p>}
                 <p className="mt-2 font-bold text-emerald-50">{entry.recommendedAction}</p>
                 <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Esperando revisión humana · WhatsApp encolado · ningún cambio aplicado</p>
-                {entry.id && recommendation.action !== "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND" && <button type="button" disabled={Boolean(improvementBusyId)} onClick={() => void applyImprovement(entry.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{improvementBusyId === entry.id ? "Verificando y aplicando…" : "REVISAR Y AUTORIZAR PRECIO"}</button>}
+                {entry.id && !["KEEP_PRICE_IN_CONFIRMED_SOLD_BAND", "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"].includes(recommendation.action ?? "") && recommendation.proposedPassesProfitGate !== false && <button type="button" disabled={Boolean(improvementBusyId)} onClick={() => void applyImprovement(entry.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{improvementBusyId === entry.id ? "Verificando y aplicando…" : `ACEPTAR PRECIO SEGURO ${money(recommendation.proposedItemPrice)}`}</button>}
+                {recommendation.action === "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR" && <p className="mt-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.08] p-3 text-center font-black text-amber-50">MANTENER {money(recommendation.currentItemPrice)} · YA ESTÁ EN EL PISO</p>}
               </article>
             })}
           </div>
