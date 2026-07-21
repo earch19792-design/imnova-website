@@ -527,6 +527,13 @@ export function CommercialMonitorPanel() {
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
   const [improvementBusyId, setImprovementBusyId] = useState<string | null>(null)
+  const [requestedImprovementId, setRequestedImprovementId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("section") !== "commercial-monitor") return
+    setRequestedImprovementId(params.get("improvement"))
+  }, [])
 
   async function applyImprovement(eventId: string) {
     if (improvementBusyId) return
@@ -852,6 +859,24 @@ export function CommercialMonitorPanel() {
   const researchRefreshProfiles = competitorProfiles.filter((profile) =>
     profile.research_refresh_recommended)
 
+  useEffect(() => {
+    if (loading || !requestedImprovementId) return
+    const target = document.getElementById(
+      `commercial-improvement-${requestedImprovementId}`,
+    ) ?? document.getElementById("competitor-watch-heading")
+    if (!target) return
+    const timer = window.setTimeout(() => {
+      target.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+        block: "start",
+      })
+      target.focus({ preventScroll: true })
+    }, 50)
+    return () => window.clearTimeout(timer)
+  }, [loading, requestedImprovementId, competitorPriceRecommendations])
+
   return (
     <section aria-labelledby="commercial-monitor-heading" className="min-w-0 overflow-hidden rounded-3xl border border-emerald-200/25 bg-gradient-to-br from-emerald-200/[0.10] via-cyan-200/[0.04] to-black p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1170,7 +1195,12 @@ export function CommercialMonitorPanel() {
               const recommendation = entry.priceRecommendation ?? {}
               const money = (amount: number | undefined) => typeof amount === "number"
                 ? `$${amount.toFixed(2)}` : "—"
-              return <article key={entry.id} className="rounded-xl bg-black/25 p-3 text-xs">
+              return <article
+                key={entry.id}
+                id={entry.id ? `commercial-improvement-${entry.id}` : undefined}
+                tabIndex={entry.id === requestedImprovementId ? -1 : undefined}
+                className={`scroll-mt-32 rounded-xl bg-black/25 p-3 text-xs outline-none ${entry.id === requestedImprovementId ? "ring-2 ring-emerald-200" : ""}`}
+              >
                 <p className="font-black text-white">Listing {entry.listingId} · SKU {entry.sku ?? "pendiente"}</p>
                 <p className="mt-1 text-white/70">Actual {money(recommendation.currentItemPrice)} → propuesta {money(recommendation.proposedItemPrice)} · {recommendation.activeMarketNotConfirmedSale
                   ? `mediana activa ${money(recommendation.activeMarketMedianLandedPrice)}`

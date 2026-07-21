@@ -349,7 +349,7 @@ export default function EbayMobileReviewPage() {
   useEffect(() => {
     const section = new URLSearchParams(window.location.search).get("section")
     if (section === "in-progress") setView("pinned")
-    if (section === "alerts") setView("blocked")
+    if (section === "alerts" || section === "commercial-monitor") setView("blocked")
   }, [])
   const loadServerReviews = useCallback(async () => {
     setServerReviewsLoadState("LOADING")
