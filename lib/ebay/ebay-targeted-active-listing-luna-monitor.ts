@@ -6,7 +6,8 @@ import type { DirectedLunaProduct } from "./ebay-luna-directed-product-import"
 import {
   fetchDirectedLunaProduct,
   parseDirectedLunaProductUrl,
-} from "./ebay-luna-directed-product-import"
+// @ts-ignore -- Node's native TypeScript test runner requires the explicit extension.
+} from "./ebay-luna-directed-product-import.ts"
 
 export const TARGETED_ACTIVE_LISTING_LUNA_MONITOR_VERSION =
   "EBAY_TARGETED_ACTIVE_LISTING_LUNA_MONITOR_V1" as const
