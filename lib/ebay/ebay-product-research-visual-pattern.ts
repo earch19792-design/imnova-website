@@ -3,10 +3,10 @@ import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 export const PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION =
-  "PRODUCT_RESEARCH_VISUAL_PATTERN_V1_2026_07_17"
+  "PRODUCT_RESEARCH_VISUAL_PATTERN_V2_2026_07_21"
 export const PRODUCT_RESEARCH_VISUAL_PATTERN_ALGORITHM_VERSION =
-  "PR_VISIBLE_THUMBNAIL_LOCAL_V1"
-export const VISUAL_MARKET_BRIEF_VERSION = "VISUAL_MARKET_BRIEF_V1_2026_07_17"
+  "PR_VISIBLE_THUMBNAIL_LOCAL_V2"
+export const VISUAL_MARKET_BRIEF_VERSION = "VISUAL_MARKET_BRIEF_V2_2026_07_21"
 
 type JsonRecord = Record<string, unknown>
 
@@ -18,6 +18,11 @@ type Background = "WHITE_OR_NEUTRAL" | "COLORED" | "LIFESTYLE_LIKELY" | "MIXED" 
 type Presentation = "PRODUCT_ONLY" | "MULTIPACK_LIKELY" | "PRODUCT_WITH_PACKAGING" |
   "LIFESTYLE_LIKELY" | "MIXED" | "UNKNOWN"
 type Composition = "CENTERED" | "LEFT_WEIGHTED" | "RIGHT_WEIGHTED" | "FULL_FRAME" | "UNKNOWN"
+type CopySpace = "LEFT" | "RIGHT" | "TOP" | "BOTTOM" | "NONE" | "UNKNOWN"
+type Brightness = "DARK" | "MID" | "LIGHT" | "MIXED" | "UNKNOWN"
+type Palette = "COOL" | "NEUTRAL" | "WARM" | "MIXED" | "UNKNOWN"
+type SubjectGeometry = "COMPACT" | "WIDE" | "TALL" | "FULL" | "UNKNOWN"
+type VerticalZone = "TOP" | "CENTER" | "BOTTOM" | "FULL" | "UNKNOWN"
 
 export type ProductResearchVisualPattern = {
   imagePresent: boolean
@@ -33,6 +38,12 @@ export type ProductResearchVisualPattern = {
   productCountVisible: number | null
   packClarity: "CLEAR" | "PARTIAL" | "UNCLEAR" | "UNKNOWN"
   dominantComposition: Composition
+  brightnessBucket: Brightness
+  edgeContrast: Bucket
+  paletteTemperature: Palette
+  copySpaceAvailability: CopySpace
+  foregroundVerticalZone: VerticalZone
+  subjectGeometry: SubjectGeometry
   visualPatternConfidence: Confidence
   analysisStatus: VisualAnalysisStatus
   algorithmVersion: string
@@ -51,6 +62,7 @@ export type VisualComparableRow = {
   matchClassification: string
   detectedOfferPackCount: number | null
   confirmedSoldQuantity: number
+  lastSoldDate: string | null
   visualPattern: ProductResearchVisualPattern
 }
 
@@ -112,10 +124,15 @@ export function sanitizeProductResearchVisualPattern(value: unknown, now = new D
   const background = ["WHITE_OR_NEUTRAL", "COLORED", "LIFESTYLE_LIKELY", "MIXED", "UNKNOWN"] as const
   const presentation = ["PRODUCT_ONLY", "MULTIPACK_LIKELY", "PRODUCT_WITH_PACKAGING", "LIFESTYLE_LIKELY", "MIXED", "UNKNOWN"] as const
   const composition = ["CENTERED", "LEFT_WEIGHTED", "RIGHT_WEIGHTED", "FULL_FRAME", "UNKNOWN"] as const
+  const copySpace = ["LEFT", "RIGHT", "TOP", "BOTTOM", "NONE", "UNKNOWN"] as const
+  const brightness = ["DARK", "MID", "LIGHT", "MIXED", "UNKNOWN"] as const
+  const palette = ["COOL", "NEUTRAL", "WARM", "MIXED", "UNKNOWN"] as const
+  const subjectGeometry = ["COMPACT", "WIDE", "TALL", "FULL", "UNKNOWN"] as const
+  const verticalZone = ["TOP", "CENTER", "BOTTOM", "FULL", "UNKNOWN"] as const
   const status = ["ANALYZED", "PARTIAL", "UNAVAILABLE", "REJECTED"] as const
   const packClarity = ["CLEAR", "PARTIAL", "UNCLEAR", "UNKNOWN"] as const
   const algorithmVersion = text(source.algorithmVersion, 100)
-  if (!/^[A-Z0-9._-]{3,100}$/.test(algorithmVersion)) return null
+  if (algorithmVersion !== PRODUCT_RESEARCH_VISUAL_PATTERN_ALGORITHM_VERSION) return null
   const detectedPackCount = nullableInteger(titleDerived.detectedPackCount, 1, 999)
   const detectedUnitCount = nullableInteger(titleDerived.detectedUnitCount, 1, 99_999)
   const visualPresentation = enumValue(visual.presentationType, presentation, "UNKNOWN")
@@ -138,6 +155,12 @@ export function sanitizeProductResearchVisualPattern(value: unknown, now = new D
     productCountVisible: nullableInteger(source.productCountVisible, 1, 99),
     packClarity: enumValue(source.packClarity, packClarity, "UNKNOWN"),
     dominantComposition: enumValue(source.dominantComposition, composition, "UNKNOWN"),
+    brightnessBucket: enumValue(source.brightnessBucket, brightness, "UNKNOWN"),
+    edgeContrast: enumValue(source.edgeContrast, bucket, "UNKNOWN"),
+    paletteTemperature: enumValue(source.paletteTemperature, palette, "UNKNOWN"),
+    copySpaceAvailability: enumValue(source.copySpaceAvailability, copySpace, "UNKNOWN"),
+    foregroundVerticalZone: enumValue(source.foregroundVerticalZone, verticalZone, "UNKNOWN"),
+    subjectGeometry: enumValue(source.subjectGeometry, subjectGeometry, "UNKNOWN"),
     visualPatternConfidence: enumValue(source.visualPatternConfidence, confidence, "UNKNOWN"),
     analysisStatus: enumValue(source.analysisStatus, status, "REJECTED"),
     algorithmVersion,
@@ -161,6 +184,8 @@ export function rejectedProductResearchVisualPattern(input: {
     visualComplexity: "UNKNOWN", textOverlayLikelihood: "UNKNOWN", badgeOrCalloutLikelihood: "UNKNOWN",
     presentationType: "UNKNOWN", productCountVisible: null, packClarity: "UNKNOWN",
     dominantComposition: "UNKNOWN", visualPatternConfidence: "UNKNOWN", analysisStatus: "REJECTED",
+    brightnessBucket: "UNKNOWN", edgeContrast: "UNKNOWN", paletteTemperature: "UNKNOWN",
+    copySpaceAvailability: "UNKNOWN", foregroundVerticalZone: "UNKNOWN", subjectGeometry: "UNKNOWN",
     algorithmVersion: PRODUCT_RESEARCH_VISUAL_PATTERN_ALGORITHM_VERSION,
     analyzedAt: input.analyzedAt.toISOString(),
     evidence: {
@@ -189,6 +214,16 @@ function aggregateConfidence(rows: VisualComparableRow[], exactCount: number): C
   return rows.length ? "LOW" : "UNKNOWN"
 }
 
+function recencyWeight(lastSoldDate: string | null, capturedAt: string) {
+  const soldAt = Date.parse(lastSoldDate ?? "")
+  const captureAt = Date.parse(capturedAt)
+  if (!Number.isFinite(soldAt) || !Number.isFinite(captureAt)) return .7
+  const ageDays = Math.max(0, (captureAt - soldAt) / 86_400_000)
+  if (ageDays <= 30) return 1
+  if (ageDays <= 60) return .85
+  return .7
+}
+
 export function buildVisualMarketBriefs(rows: VisualComparableRow[], context: {
   queryContextHash: string
   captureRunId: string | null
@@ -200,19 +235,33 @@ export function buildVisualMarketBriefs(rows: VisualComparableRow[], context: {
   for (const row of usable) groups.set(row.productFamilyFingerprint,
     [...(groups.get(row.productFamilyFingerprint) ?? []), row])
   return [...groups.entries()].map(([productFamilyFingerprint, group]) => {
-    const sorted = [...group].sort((left, right) => right.confirmedSoldQuantity - left.confirmedSoldQuantity)
+    const exact = group.filter((row) => row.matchClassification === "EXACT_LUNA_MATCH")
+    const primaryCohort = exact.length >= 3 ? exact : group
+    const sorted = [...primaryCohort].sort((left, right) =>
+      right.confirmedSoldQuantity * recencyWeight(right.lastSoldDate, context.capturedAt) -
+      left.confirmedSoldQuantity * recencyWeight(left.lastSoldDate, context.capturedAt))
     const topCount = Math.max(1, Math.ceil(sorted.length / 4))
     const topQuartile = sorted.slice(0, topCount)
     const remainder = sorted.slice(topCount)
-    const exact = group.filter((row) => row.matchClassification === "EXACT_LUNA_MATCH")
     const relatedPack = group.filter((row) => row.matchClassification === "SAME_PRODUCT_DIFFERENT_PACK")
     const relatedSize = group.filter((row) => row.matchClassification === "SAME_PRODUCT_DIFFERENT_SIZE")
-    const dominantBackgroundType = mode(group.map((row) => row.visualPattern.backgroundType), "UNKNOWN" as Background)
+    const dominantBackgroundType = mode(primaryCohort.map((row) =>
+      row.visualPattern.backgroundType), "UNKNOWN" as Background)
     const recommendedFrameCoverage = mode(topQuartile.map((row) => row.visualPattern.frameCoverage), "UNKNOWN" as Bucket)
     const recommendedComplexity = mode(topQuartile.map((row) => row.visualPattern.visualComplexity), "UNKNOWN" as Bucket)
     const packVisibilityPattern = mode(topQuartile.map((row) => row.visualPattern.packClarity), "UNKNOWN" as "CLEAR" | "PARTIAL" | "UNCLEAR" | "UNKNOWN")
     const textOverlayPattern = mode(topQuartile.map((row) => row.visualPattern.textOverlayLikelihood), "UNKNOWN" as Presence)
     const compositionPattern = mode(topQuartile.map((row) => row.visualPattern.dominantComposition), "UNKNOWN" as Composition)
+    const recommendedCopySpace = mode(topQuartile.map((row) =>
+      row.visualPattern.copySpaceAvailability), "UNKNOWN" as CopySpace)
+    const contrastPattern = mode(topQuartile.map((row) =>
+      row.visualPattern.edgeContrast), "UNKNOWN" as Bucket)
+    const brightnessPattern = mode(topQuartile.map((row) =>
+      row.visualPattern.brightnessBucket), "UNKNOWN" as Brightness)
+    const palettePattern = mode(topQuartile.map((row) =>
+      row.visualPattern.paletteTemperature), "UNKNOWN" as Palette)
+    const subjectGeometryPattern = mode(topQuartile.map((row) =>
+      row.visualPattern.subjectGeometry), "UNKNOWN" as SubjectGeometry)
     const confidence = aggregateConfidence(group, exact.length)
     return {
       productFamilyFingerprint,
@@ -227,6 +276,13 @@ export function buildVisualMarketBriefs(rows: VisualComparableRow[], context: {
       packVisibilityPattern,
       textOverlayPattern,
       compositionPattern,
+      recommendedCopySpace,
+      contrastPattern,
+      brightnessPattern,
+      palettePattern,
+      subjectGeometryPattern,
+      primaryCohort: exact.length >= 3 ? "EXACT_PRODUCT" : "FAMILY_FALLBACK",
+      recencyWeightingApplied: true,
       supportingSignals: {
         sampleSize: group.length,
         topQuartileSize: topQuartile.length,
@@ -236,6 +292,13 @@ export function buildVisualMarketBriefs(rows: VisualComparableRow[], context: {
         lowComplexityPercent: percentage(group, (row) => row.visualPattern.visualComplexity === "LOW"),
         lowOrNoTextOverlayPercent: percentage(group, (row) => ["NONE", "LOW"].includes(row.visualPattern.textOverlayLikelihood)),
         clearMultipackPercent: percentage(group, (row) => row.visualPattern.presentationType === "MULTIPACK_LIKELY" && row.visualPattern.packClarity === "CLEAR"),
+        usableCopySpacePercent: percentage(group, (row) =>
+          !["NONE", "UNKNOWN"].includes(row.visualPattern.copySpaceAvailability)),
+        highContrastPercent: percentage(group, (row) => row.visualPattern.edgeContrast === "HIGH"),
+        lightBrightnessPercent: percentage(group, (row) => row.visualPattern.brightnessBucket === "LIGHT"),
+        neutralPalettePercent: percentage(group, (row) => row.visualPattern.paletteTemperature === "NEUTRAL"),
+        recentObservationPercent: percentage(group, (row) =>
+          recencyWeight(row.lastSoldDate, context.capturedAt) === 1),
         topQuartileWhiteOrNeutralPercent: percentage(topQuartile, (row) => row.visualPattern.backgroundType === "WHITE_OR_NEUTRAL"),
       },
       conflictingSignals: {
@@ -290,7 +353,10 @@ export async function persistProductResearchVisualPatterns(input: {
   const { data: existing, error: existingError } = observationIds.length
     ? await input.supabase.from("marketplace_product_research_visual_pattern_observations")
       .select("sold_observation_id").eq("marketplace_account_key", input.accountKey)
-      .eq("marketplace", "EBAY_US").in("sold_observation_id", observationIds)
+      .eq("marketplace", "EBAY_US")
+      .eq("visual_pattern_schema_version", PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION)
+      .eq("algorithm_version", PRODUCT_RESEARCH_VISUAL_PATTERN_ALGORITHM_VERSION)
+      .in("sold_observation_id", observationIds)
     : { data: [], error: null }
   if (existingError) throw new Error("PRODUCT_RESEARCH_VISUAL_EXISTING_LOOKUP_FAILED")
   const alreadyObserved = new Set((existing ?? []).map((entry) => entry.sold_observation_id))
@@ -361,10 +427,14 @@ export async function getProductResearchVisualPatternStatus(input: {
       .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US"),
     input.supabase.from("marketplace_product_research_visual_pattern_observations")
       .select("sold_observation_id,analysis_status,confidence,structured_features,created_at")
-      .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US"),
+      .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+      .eq("visual_pattern_schema_version", PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION)
+      .eq("algorithm_version", PRODUCT_RESEARCH_VISUAL_PATTERN_ALGORITHM_VERSION),
     input.supabase.from("marketplace_product_research_visual_market_briefs")
       .select("brief,confidence,sample_size,created_at").eq("marketplace_account_key", input.accountKey)
-      .eq("marketplace", "EBAY_US").order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      .eq("marketplace", "EBAY_US")
+      .eq("visual_market_brief_version", VISUAL_MARKET_BRIEF_VERSION)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ])
   if (observationError || visualError || briefError) throw new Error("PRODUCT_RESEARCH_VISUAL_STATUS_READ_FAILED")
   const entries = visuals ?? []

@@ -4,6 +4,9 @@ import { z } from "zod"
 const unknownAware = <T extends [string, ...string[]]>(values: T) =>
   z.enum(values)
 
+export const EBAY_IMAGE_MARKET_BRIEF_VERSION =
+  "VISUAL_MARKET_BRIEF_V2_2026_07_21"
+
 export const ebayImageMarketBriefSchema = z.object({
   confidence: z.enum(["HIGH", "MEDIUM", "LOW"]),
   sampleSize: z.number().int().min(1).max(500),
@@ -17,12 +20,32 @@ export const ebayImageMarketBriefSchema = z.object({
   compositionPattern: unknownAware([
     "CENTERED", "LEFT_WEIGHTED", "RIGHT_WEIGHTED", "FULL_FRAME", "UNKNOWN",
   ]),
+  recommendedCopySpace: unknownAware([
+    "LEFT", "RIGHT", "TOP", "BOTTOM", "NONE", "UNKNOWN",
+  ]).default("UNKNOWN"),
+  contrastPattern: unknownAware(["LOW", "MEDIUM", "HIGH", "UNKNOWN"])
+    .default("UNKNOWN"),
+  brightnessPattern: unknownAware(["DARK", "MID", "LIGHT", "MIXED", "UNKNOWN"])
+    .default("UNKNOWN"),
+  palettePattern: unknownAware(["COOL", "NEUTRAL", "WARM", "MIXED", "UNKNOWN"])
+    .default("UNKNOWN"),
+  subjectGeometryPattern: unknownAware([
+    "COMPACT", "WIDE", "TALL", "FULL", "UNKNOWN",
+  ]).default("UNKNOWN"),
+  primaryCohort: z.enum(["EXACT_PRODUCT", "FAMILY_FALLBACK"])
+    .default("FAMILY_FALLBACK"),
+  recencyWeightingApplied: z.boolean().default(false),
   supportingSignals: z.object({
     whiteOrNeutralPercent: z.number().min(0).max(100).nullable(),
     highCoveragePercent: z.number().min(0).max(100).nullable(),
     lowComplexityPercent: z.number().min(0).max(100).nullable(),
     lowOrNoTextOverlayPercent: z.number().min(0).max(100).nullable(),
     clearMultipackPercent: z.number().min(0).max(100).nullable(),
+    usableCopySpacePercent: z.number().min(0).max(100).nullable().default(null),
+    highContrastPercent: z.number().min(0).max(100).nullable().default(null),
+    lightBrightnessPercent: z.number().min(0).max(100).nullable().default(null),
+    neutralPalettePercent: z.number().min(0).max(100).nullable().default(null),
+    recentObservationPercent: z.number().min(0).max(100).nullable().default(null),
   }).strict(),
 }).strict()
 
@@ -74,6 +97,7 @@ export async function loadEbayImageMarketBrief(input: {
     .eq("marketplace", "EBAY_US")
     .eq("capture_batch_id", captureBatchId)
     .eq("product_family_fingerprint", familyFingerprint)
+    .eq("visual_market_brief_version", EBAY_IMAGE_MARKET_BRIEF_VERSION)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -91,12 +115,24 @@ export async function loadEbayImageMarketBrief(input: {
     packVisibilityPattern: brief.packVisibilityPattern,
     textOverlayPattern: brief.textOverlayPattern,
     compositionPattern: brief.compositionPattern,
+    recommendedCopySpace: brief.recommendedCopySpace,
+    contrastPattern: brief.contrastPattern,
+    brightnessPattern: brief.brightnessPattern,
+    palettePattern: brief.palettePattern,
+    subjectGeometryPattern: brief.subjectGeometryPattern,
+    primaryCohort: brief.primaryCohort,
+    recencyWeightingApplied: brief.recencyWeightingApplied,
     supportingSignals: {
       whiteOrNeutralPercent: percent(signals.whiteOrNeutralPercent),
       highCoveragePercent: percent(signals.highCoveragePercent),
       lowComplexityPercent: percent(signals.lowComplexityPercent),
       lowOrNoTextOverlayPercent: percent(signals.lowOrNoTextOverlayPercent),
       clearMultipackPercent: percent(signals.clearMultipackPercent),
+      usableCopySpacePercent: percent(signals.usableCopySpacePercent),
+      highContrastPercent: percent(signals.highContrastPercent),
+      lightBrightnessPercent: percent(signals.lightBrightnessPercent),
+      neutralPalettePercent: percent(signals.neutralPalettePercent),
+      recentObservationPercent: percent(signals.recentObservationPercent),
     },
   })
   if (!parsed.success) return null
@@ -107,6 +143,11 @@ export async function loadEbayImageMarketBrief(input: {
     parsed.data.packVisibilityPattern,
     parsed.data.textOverlayPattern,
     parsed.data.compositionPattern,
+    parsed.data.recommendedCopySpace,
+    parsed.data.contrastPattern,
+    parsed.data.brightnessPattern,
+    parsed.data.palettePattern,
+    parsed.data.subjectGeometryPattern,
   ]
   return patternValues.some((value) => value !== "UNKNOWN")
     ? parsed.data

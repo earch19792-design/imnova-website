@@ -45,6 +45,12 @@ export type EbayOptimizedImage = {
     sourceEdgeLightNeutralRatio: number
     sourceCenterLightNeutralRatio: number
     sourceCenterChromaticRatio: number
+    sourceVisualProfile: {
+      brightness: "DARK" | "MID" | "LIGHT"
+      contrast: "LOW" | "MEDIUM" | "HIGH"
+      palette: "COOL" | "NEUTRAL" | "WARM" | "MIXED"
+      productToneRisk: "LIGHT_NEUTRAL_AMBIGUITY" | "STANDARD"
+    }
     outputWidth: number
     outputHeight: number
     outputUnderTwelveMegabytes: boolean
@@ -270,6 +276,61 @@ function centerChromaticRatio(
   return sampled ? chromatic / sampled : 0
 }
 
+function sourceVisualProfile(
+  pixels: Buffer,
+  width: number,
+  height: number,
+  channels: number,
+) {
+  const step = Math.max(1, Math.floor(Math.min(width, height) / 96))
+  let samples = 0
+  let brightnessTotal = 0
+  let contrastTotal = 0
+  let comparisons = 0
+  let warm = 0
+  let cool = 0
+  let chromatic = 0
+  for (let y = 0; y < height; y += step) {
+    for (let x = 0; x < width; x += step) {
+      const offset = (y * width + x) * channels
+      const red = pixels[offset]
+      const green = pixels[offset + 1]
+      const blue = pixels[offset + 2]
+      const luminance = (red * .2126 + green * .7152 + blue * .0722) / 255
+      brightnessTotal += luminance
+      samples += 1
+      const spread = Math.max(red, green, blue) - Math.min(red, green, blue)
+      if (spread > 22) chromatic += 1
+      if (red - blue > 16) warm += 1
+      if (blue - red > 16) cool += 1
+      if (x >= step) {
+        const previous = offset - step * channels
+        const previousLuminance = (
+          pixels[previous] * .2126 + pixels[previous + 1] * .7152 +
+          pixels[previous + 2] * .0722
+        ) / 255
+        contrastTotal += Math.abs(luminance - previousLuminance)
+        comparisons += 1
+      }
+    }
+  }
+  const brightnessValue = brightnessTotal / Math.max(1, samples)
+  const contrastValue = contrastTotal / Math.max(1, comparisons)
+  const warmRatio = warm / Math.max(1, samples)
+  const coolRatio = cool / Math.max(1, samples)
+  const chromaticRatio = chromatic / Math.max(1, samples)
+  return {
+    brightness: brightnessValue < .4 ? "DARK" as const
+      : brightnessValue < .72 ? "MID" as const : "LIGHT" as const,
+    contrast: contrastValue < .06 ? "LOW" as const
+      : contrastValue < .16 ? "MEDIUM" as const : "HIGH" as const,
+    palette: chromaticRatio < .18 ? "NEUTRAL" as const
+      : warmRatio >= .38 && coolRatio < .18 ? "WARM" as const
+        : coolRatio >= .38 && warmRatio < .18 ? "COOL" as const
+          : "MIXED" as const,
+  }
+}
+
 function whitenNearNeutralPixels(pixels: Buffer, channels: number) {
   const output = Buffer.from(pixels)
   for (let offset = 0; offset < output.length; offset += channels) {
@@ -325,6 +386,12 @@ export async function optimizeAuthorizedEbayMainImage(
     decoded.info.channels,
   )
   const centerColorRatio = centerChromaticRatio(
+    decoded.data,
+    decoded.info.width,
+    decoded.info.height,
+    decoded.info.channels,
+  )
+  const visualProfile = sourceVisualProfile(
     decoded.data,
     decoded.info.width,
     decoded.info.height,
@@ -428,6 +495,12 @@ export async function optimizeAuthorizedEbayMainImage(
       sourceEdgeLightNeutralRatio: Number(edgeRatio.toFixed(4)),
       sourceCenterLightNeutralRatio: Number(centerRatio.toFixed(4)),
       sourceCenterChromaticRatio: Number(centerColorRatio.toFixed(4)),
+      sourceVisualProfile: {
+        ...visualProfile,
+        productToneRisk: centerRatio >= .60 && centerColorRatio <= .08
+          ? "LIGHT_NEUTRAL_AMBIGUITY"
+          : "STANDARD",
+      },
       outputWidth: outputMetadata.width,
       outputHeight: outputMetadata.height,
       outputUnderTwelveMegabytes: true,

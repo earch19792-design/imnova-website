@@ -9,7 +9,7 @@ import { productFactsHash } from "./ebay-product-facts-readiness.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { buildCurrentSameDayImageFactoryInput, type CurrentSameDayImageFactBinding } from "./ebay-same-day-image-factory-input.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
-import { buildSafeOpenAiBackgroundPlatePlan, composeAuthorizedEbayListingImageSet, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan } from "./ebay-listing-image-factory.ts"
+import { buildSafeOpenAiBackgroundPlatePlan, composeAuthorizedEbayListingImageSet, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, EBAY_VISUAL_STRATEGY_VERSION, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan } from "./ebay-listing-image-factory.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { ebayImageMarketBriefSchema, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
 
@@ -45,6 +45,18 @@ const persistenceAssetSchema = z.object({
   humanApprovalRequired: z.literal(true),
   structuralDiversityVerified: z.literal(true).optional(),
   foregroundEdgeCoverage: z.number().min(0.004).max(1).optional(),
+  deterministicBackgroundSelection: z.boolean(),
+  visualStrategyVersion: z.literal(EBAY_VISUAL_STRATEGY_VERSION).optional(),
+  selectedSceneBoardPanel: z.number().int().min(1).max(6).optional(),
+  candidateSceneBoardPanels: z.array(z.number().int().min(1).max(6))
+    .min(1).max(2).optional(),
+  backgroundCompatibilityScore: z.number().min(0).max(100).optional(),
+  sourceVisualProfile: z.object({
+    brightness: z.enum(["DARK", "MID", "LIGHT"]),
+    contrast: z.enum(["LOW", "MEDIUM", "HIGH"]),
+    palette: z.enum(["COOL", "NEUTRAL", "WARM", "MIXED"]),
+    productToneRisk: z.enum(["LIGHT_NEUTRAL_AMBIGUITY", "STANDARD"]),
+  }).strict().optional(),
   manualChecksRequired: z.array(z.string().regex(/^[A-Z0-9_]+$/)).min(1).max(20),
 }).strict()
 
@@ -149,6 +161,7 @@ function assertReturnedBackgroundPlate(
     value.output.length > 12 * 1024 * 1024 ||
     value.outputSha256 !== sha256(value.output) ||
     value.plan.version !== expected.version ||
+    value.plan.visualStrategyVersion !== expected.visualStrategyVersion ||
     value.plan.context !== expected.context ||
     value.plan.prompt !== expected.prompt ||
     value.plan.requestHash !== expected.requestHash ||
@@ -270,6 +283,7 @@ function validateTransientAssets(input: {
       asset.qa.textDerivedFromVerifiedFacts !== true ||
       asset.qa.humanApprovalRequired !== true ||
       asset.qa.structuralDiversityVerified !== true ||
+      typeof asset.qa.deterministicBackgroundSelection !== "boolean" ||
       !Number.isFinite(asset.qa.foregroundEdgeCoverage) ||
       asset.qa.foregroundEdgeCoverage < 0.004 ||
       asset.qa.foregroundEdgeCoverage > 1) {
@@ -287,9 +301,19 @@ function validateTransientAssets(input: {
       generativeAssets += 1
       if (slot === "MAIN_WHITE_BACKGROUND" ||
         asset.transformation.backgroundPlateRequestHash !==
-          input.backgroundPlateRequestHash) {
+          input.backgroundPlateRequestHash ||
+        asset.transformation.visualStrategyVersion !== EBAY_VISUAL_STRATEGY_VERSION ||
+        !Number.isInteger(asset.transformation.selectedSceneBoardPanel) ||
+        !asset.transformation.candidateSceneBoardPanels?.includes(
+          asset.transformation.selectedSceneBoardPanel!,
+        ) ||
+        !Number.isFinite(asset.transformation.backgroundCompatibilityScore) ||
+        !asset.transformation.sourceVisualProfile ||
+        asset.qa.deterministicBackgroundSelection !== true) {
         throw new Error("SAME_DAY_IMAGE_GENERATIVE_SLOT_INVALID")
       }
+    } else if (asset.qa.deterministicBackgroundSelection !== false) {
+      throw new Error("SAME_DAY_IMAGE_GENERATIVE_SLOT_INVALID")
     }
     return asset
   })
@@ -388,6 +412,16 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       humanApprovalRequired: asset.qa.humanApprovalRequired,
       structuralDiversityVerified: asset.qa.structuralDiversityVerified,
       foregroundEdgeCoverage: asset.qa.foregroundEdgeCoverage,
+      deterministicBackgroundSelection:
+        asset.qa.deterministicBackgroundSelection,
+      visualStrategyVersion: asset.transformation.visualStrategyVersion,
+      selectedSceneBoardPanel:
+        asset.transformation.selectedSceneBoardPanel,
+      candidateSceneBoardPanels:
+        asset.transformation.candidateSceneBoardPanels,
+      backgroundCompatibilityScore:
+        asset.transformation.backgroundCompatibilityScore,
+      sourceVisualProfile: asset.transformation.sourceVisualProfile,
       manualChecksRequired: asset.qa.manualChecksRequired,
     })),
     ai: {

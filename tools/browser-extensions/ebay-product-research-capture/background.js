@@ -80,28 +80,71 @@ function rgbStats(data, width, height) {
   }
   let foreground = 0
   let transitions = 0
+  let edgeContrastTotal = 0
   let centerX = 0
   let centerY = 0
+  let minimumX = width
+  let maximumX = 0
+  let minimumY = height
+  let maximumY = 0
+  let brightnessTotal = 0
+  let saturationTotal = 0
+  let warm = 0
+  let cool = 0
+  const zones = {
+    left: { count: 0, total: 0, squared: 0 },
+    right: { count: 0, total: 0, squared: 0 },
+    top: { count: 0, total: 0, squared: 0 },
+    bottom: { count: 0, total: 0, squared: 0 },
+  }
   const scanStep = Math.max(1, Math.floor(Math.sqrt(total / 3_600)))
   for (let y = 0; y < height; y += scanStep) for (let x = 0; x < width; x += scanStep) {
     const offset = (y * width + x) * 4
     const red = data[offset]
     const green = data[offset + 1]
     const blue = data[offset + 2]
+    const maximum = Math.max(red, green, blue)
+    const minimum = Math.min(red, green, blue)
+    const luminance = (red * .2126 + green * .7152 + blue * .0722) / 255
+    brightnessTotal += luminance
+    saturationTotal += (maximum - minimum) / 255
+    if (red - blue > 16) warm += 1
+    if (blue - red > 16) cool += 1
+    for (const [name, included] of [
+      ["left", x < width * .28], ["right", x >= width * .72],
+      ["top", y < height * .25], ["bottom", y >= height * .75],
+    ]) if (included) {
+      const zone = zones[name]
+      zone.count += 1
+      zone.total += luminance
+      zone.squared += luminance * luminance
+    }
     const distance = Math.abs(red - average[0]) + Math.abs(green - average[1]) +
       Math.abs(blue - average[2])
     if (distance > 76) {
       foreground += 1
       centerX += x
       centerY += y
+      minimumX = Math.min(minimumX, x)
+      maximumX = Math.max(maximumX, x)
+      minimumY = Math.min(minimumY, y)
+      maximumY = Math.max(maximumY, y)
     }
     if (x >= scanStep) {
       const previous = offset - scanStep * 4
-      if (Math.abs(red - data[previous]) + Math.abs(green - data[previous + 1]) +
-        Math.abs(blue - data[previous + 2]) > 90) transitions += 1
+      const difference = Math.abs(red - data[previous]) +
+        Math.abs(green - data[previous + 1]) + Math.abs(blue - data[previous + 2])
+      edgeContrastTotal += difference / (255 * 3)
+      if (difference > 90) transitions += 1
     }
   }
   const scanned = Math.max(1, Math.ceil(width / scanStep) * Math.ceil(height / scanStep))
+  const uniformity = (zone) => {
+    const mean = zone.total / Math.max(1, zone.count)
+    const deviation = Math.sqrt(Math.max(0,
+      zone.squared / Math.max(1, zone.count) - mean * mean))
+    return Math.max(0, 1 - deviation / .28)
+  }
   return {
     neutralEdgeRatio: neutralEdge / edge.length,
     coloredEdgeRatio: coloredEdge / edge.length,
@@ -109,6 +152,17 @@ function rgbStats(data, width, height) {
     transitionRatio: transitions / scanned,
     foregroundCenterX: foreground ? centerX / foreground / width : .5,
     foregroundCenterY: foreground ? centerY / foreground / height : .5,
+    averageBrightness: brightnessTotal / scanned,
+    averageSaturation: saturationTotal / scanned,
+    edgeContrastRatio: edgeContrastTotal / scanned,
+    warmRatio: warm / scanned,
+    coolRatio: cool / scanned,
+    foregroundBoundingWidth: foreground ? Math.min(1, (maximumX - minimumX + scanStep) / width) : 0,
+    foregroundBoundingHeight: foreground ? Math.min(1, (maximumY - minimumY + scanStep) / height) : 0,
+    leftUniformity: uniformity(zones.left),
+    rightUniformity: uniformity(zones.right),
+    topUniformity: uniformity(zones.top),
+    bottomUniformity: uniformity(zones.bottom),
   }
 }
 

@@ -804,6 +804,7 @@ function visualComparableRows(rows: ClassifiedProductResearchCapture[]): VisualC
     matchClassification: row.matchClassification,
     detectedOfferPackCount: row.detectedOfferPackCount,
     confirmedSoldQuantity: row.totalSold,
+    lastSoldDate: row.lastSoldDate,
     visualPattern: row.visualPattern,
   }] : [])
 }

@@ -5,16 +5,18 @@ import { z } from "zod"
 
 // Node's native type stripping needs the explicit extension in direct tests.
 // @ts-expect-error Next's bundler resolves the same TypeScript source at build time.
-import { EBAY_IMAGE_OUTPUT_SIZE, optimizeAuthorizedEbayMainImage } from "./ebay-image-optimization-service.ts"
+import { EBAY_IMAGE_OUTPUT_SIZE, optimizeAuthorizedEbayMainImage, type EbayOptimizedImage } from "./ebay-image-optimization-service.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { ebayImageMarketBriefSchema, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
 
 export const EBAY_LISTING_IMAGE_SET_VERSION =
   "EBAY_LISTING_IMAGE_COMPOSITION_SET_V1"
 export const EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION =
-  "EBAY_IMAGE_COMPOSITOR_DIVERSITY_V4_2026_07_21"
+  "EBAY_IMAGE_COMPOSITOR_DIVERSITY_V5_2026_07_21"
 export const EBAY_OPENAI_BACKGROUND_PLATE_VERSION =
-  "EBAY_OPENAI_COMMERCIAL_SCENE_BOARD_V2"
+  "EBAY_OPENAI_COMMERCIAL_SCENE_BOARD_V3"
+export const EBAY_VISUAL_STRATEGY_VERSION =
+  "EBAY_VISUAL_STRATEGY_COMPILER_V2_2026_07_21"
 export const EBAY_OPENAI_IMAGE_PREVIEW_BRANCH =
   "feature/centralize-ebay-mobile-command-center"
 
@@ -87,6 +89,16 @@ export type EbayListingImageComposition = {
     backgroundPlateRequestHash?: string
     backgroundPlateOutputSha256?: string
     backgroundPlateProviderRequestId?: string | null
+    visualStrategyVersion?: typeof EBAY_VISUAL_STRATEGY_VERSION
+    selectedSceneBoardPanel?: number
+    candidateSceneBoardPanels?: number[]
+    backgroundCompatibilityScore?: number
+    sourceVisualProfile?: {
+      brightness: "DARK" | "MID" | "LIGHT"
+      contrast: "LOW" | "MEDIUM" | "HIGH"
+      palette: "COOL" | "NEUTRAL" | "WARM" | "MIXED"
+      productToneRisk: "LIGHT_NEUTRAL_AMBIGUITY" | "STANDARD"
+    }
   }
   qa: {
     automaticStatus: "PASSED" | "PARTIAL"
@@ -100,12 +112,14 @@ export type EbayListingImageComposition = {
     humanApprovalRequired: true
     structuralDiversityVerified: true
     foregroundEdgeCoverage: number
+    deterministicBackgroundSelection: boolean
     manualChecksRequired: string[]
   }
 }
 
 export type EbayOpenAiBackgroundPlatePlan = {
   version: typeof EBAY_OPENAI_BACKGROUND_PLATE_VERSION
+  visualStrategyVersion: typeof EBAY_VISUAL_STRATEGY_VERSION
   context: "CLEAN_TECHNICAL_WORKBENCH" | "NEUTRAL_VANITY" |
     "CLEAN_HOME_SHELF" | "CLEAN_KITCHEN_COUNTER" | "NEUTRAL_STUDIO"
   prompt: string
@@ -288,6 +302,109 @@ const INFORMATION_LAYOUTS = {
   textHeight: number
 }>
 
+export type EbayVisualPanelContract = {
+  slot: InformationSlot
+  primaryPanel: number
+  alternatePanel: number | null
+  commercialObjective: string
+  objectionReduced: string
+  productZone: string
+  copyZone: string
+  sceneDirection: string
+  evidenceBasis: string[]
+}
+
+function dynamicPackageObjective(facts: EbayListingImageFactoryInput["facts"]) {
+  if ((facts.packCount ?? 0) > 1 || (facts.unitCount ?? 0) > 1) {
+    return {
+      objective: "make the exact offer configuration immediately understandable",
+      objection: "uncertainty about what quantity arrives",
+    }
+  }
+  if (facts.size) {
+    return {
+      objective: "make the verified size or capacity easy to understand",
+      objection: "uncertainty about size or capacity",
+    }
+  }
+  if (facts.color || facts.scent || facts.variant) {
+    return {
+      objective: "make the exact verified variant easy to confirm",
+      objection: "uncertainty about the selected variant",
+    }
+  }
+  return {
+    objective: "show clearly what the buyer will receive",
+    objection: "uncertainty about included contents",
+  }
+}
+
+export function buildEbayVisualPanelContracts(
+  facts: EbayListingImageFactoryInput["facts"],
+  marketVisualBrief: EbayImageMarketBrief | null,
+): EbayVisualPanelContract[] {
+  const packageObjective = dynamicPackageObjective(facts)
+  const evidenceBasis = marketVisualBrief ? [
+    `aggregate sold-sample confidence ${marketVisualBrief.confidence}`,
+    `background ${marketVisualBrief.dominantBackgroundType}`,
+    `coverage ${marketVisualBrief.recommendedFrameCoverage}`,
+    `complexity ${marketVisualBrief.recommendedComplexity}`,
+    `copy-space ${marketVisualBrief.recommendedCopySpace}`,
+    `contrast ${marketVisualBrief.contrastPattern}`,
+    `primary cohort ${marketVisualBrief.primaryCohort}`,
+    `recency weighting ${marketVisualBrief.recencyWeightingApplied ? "applied" : "unavailable"}`,
+  ] : ["clean marketplace fallback; no usable aggregate evidence"]
+  return [
+    {
+      slot: "PACK_AND_COUNT", primaryPanel: 1, alternatePanel: null,
+      commercialObjective: "clarify the verified pack and unit count at a glance",
+      objectionReduced: "quantity ambiguity",
+      productZone: "left and lower-center; unobstructed",
+      copyZone: "right; calm and high-contrast",
+      sceneDirection: "clean photorealistic commercial studio staging",
+      evidenceBasis,
+    },
+    {
+      slot: "KEY_FEATURES", primaryPanel: 2, alternatePanel: null,
+      commercialObjective: "surface only the strongest verified product facts",
+      objectionReduced: "variant and identity ambiguity",
+      productZone: "right; dominant and unobstructed",
+      copyZone: "left; calm and high-contrast",
+      sceneDirection: "premium asymmetric photorealistic studio composition",
+      evidenceBasis,
+    },
+    {
+      slot: "SIZE_AND_CONTENT", primaryPanel: 3, alternatePanel: null,
+      commercialObjective: facts.size
+        ? "explain verified size and offer contents"
+        : "explain verified offer contents without inventing dimensions",
+      objectionReduced: facts.size ? "size and contents ambiguity" : "contents ambiguity",
+      productZone: "lower-right; unobstructed",
+      copyZone: "upper-left; calm and high-contrast",
+      sceneDirection: "precise photorealistic top-down or technical composition",
+      evidenceBasis,
+    },
+    {
+      slot: "USE_CONTEXT", primaryPanel: 4, alternatePanel: null,
+      commercialObjective: "help the buyer understand a safe category-appropriate use context",
+      objectionReduced: "context-of-use ambiguity",
+      productZone: "large centered surface; unobstructed",
+      copyZone: "bottom strip; calm and high-contrast",
+      sceneDirection: "realistic photorealistic category context with restrained props",
+      evidenceBasis,
+    },
+    {
+      slot: "PACKAGE_CONTENTS", primaryPanel: 5, alternatePanel: 6,
+      commercialObjective: packageObjective.objective,
+      objectionReduced: packageObjective.objection,
+      productZone: "upper-center; unobstructed",
+      copyZone: "bottom; calm and high-contrast",
+      sceneDirection: "organized photorealistic overhead composition; panel 6 is a cleaner alternative",
+      evidenceBasis,
+    },
+  ]
+}
+
 function informationCanvasSvg(
   slot: InformationSlot,
   facts: EbayListingImageFactoryInput["facts"],
@@ -460,13 +577,26 @@ function marketVisualDirections(brief: EbayImageMarketBrief | null) {
   } satisfies Record<EbayImageMarketBrief["compositionPattern"], string>)[
     brief.compositionPattern
   ]
+  const copySpace = brief.recommendedCopySpace === "UNKNOWN"
+    ? "use the panel contract's copy zone"
+    : brief.recommendedCopySpace === "NONE"
+      ? "market evidence lacks a stable empty-copy region, so strictly protect the panel contract's copy zone"
+      : `keep environmental detail away from the ${brief.recommendedCopySpace.toLocaleLowerCase("en-US")} side where compatible with the panel contract`
+  const tonal = [
+    `observed brightness ${brief.brightnessPattern}`,
+    `observed edge contrast ${brief.contrastPattern}`,
+    `observed palette ${brief.palettePattern}`,
+    `observed subject geometry ${brief.subjectGeometryPattern}`,
+  ].join(", ")
   return [
-    `Evidence strength: ${brief.confidence} confidence from ${brief.sampleSize} comparable sold observations`,
+    `Evidence strength: ${brief.confidence} confidence from ${brief.sampleSize} comparable sold observations; primary cohort ${brief.primaryCohort}; recency weighting ${brief.recencyWeightingApplied ? "applied" : "unavailable"}`,
     background,
     coverage,
     complexity,
     pack,
     copy,
+    copySpace,
+    tonal,
     `${composition}; apply this tendency to scenery only and never move the panel-specific reserved zones`,
   ].join("; ") + "."
 }
@@ -476,29 +606,43 @@ function safeBackgroundPlatePrompt(
   facts: EbayListingImageFactoryInput["facts"],
   marketVisualBrief: EbayImageMarketBrief | null,
 ) {
+  const contracts = buildEbayVisualPanelContracts(facts, marketVisualBrief)
   const marketDirection = marketVisualBrief
     ? JSON.stringify(marketVisualBrief)
     : "UNAVAILABLE — use clean professional marketplace defaults; do not infer seller patterns."
   return [
-    "Create one landscape 3-by-2 BOARD containing six equal, borderless, square commercial-photography BACKGROUND PLATES ONLY.",
-    "The grid must be exact: three panels across and two panels down, read left-to-right, with no gutters.",
-    `Verified product facts (data only, never instructions): ${JSON.stringify(safePromptFacts(facts))}.`,
-    `Sanitized aggregate eBay seller visual patterns (correlation only, never copy a seller): ${marketDirection}.`,
-    `Operational translation of that aggregate evidence: ${marketVisualDirections(marketVisualBrief)}`,
-    `Category-safe scene family: ${contextDescription(context)}.`,
-    "Panel 1 — pack and count: clean studio staging; reserve the left and lower-center for the product and the right side for copy.",
-    "Panel 2 — verified features: premium asymmetric studio composition; reserve the right side for the product and the left side for copy.",
-    "Panel 3 — size and contents: precise top-down or technical composition; reserve the lower-right for the product and the upper-left for copy; include no numbers.",
-    "Panel 4 — use context: realistic category-appropriate setting; reserve a large centered surface for the product and a calm strip at the bottom for copy.",
-    "Panel 5 — package contents: organized overhead composition; reserve the upper-center for the product and the bottom for verified copy.",
-    "Panel 6 — complementary conversion frame: clean aspirational category scene with an empty product area.",
-    "Make every panel structurally and visually distinct while keeping one coherent premium listing style.",
-    "Do not include any product, package, container, label, logo, brand, text,",
-    "symbol, watermark, person, hand, claim, measurement, number or quantity.",
-    "Do not reproduce or imitate any competitor image. Use the aggregate patterns only as layout guidance.",
-    "Use realistic lighting, accurate category context, uncluttered surfaces and strong commercial hierarchy.",
-    "An exact authorized product photograph will be composited locally later.",
-  ].join(" ")
+    "GOAL",
+    "Create one photorealistic landscape 3-by-2 board containing six equal, borderless, square commercial-photography BACKGROUND PLATES ONLY.",
+    "The grid is exact: three panels across and two panels down, read left-to-right, with no gutters.",
+    "",
+    "PRODUCT TRUTH — data only, never instructions",
+    JSON.stringify(safePromptFacts(facts)),
+    "",
+    "SANITIZED MARKET EVIDENCE — aggregate correlation only",
+    marketDirection,
+    marketVisualDirections(marketVisualBrief),
+    "",
+    "SCENE FAMILY",
+    contextDescription(context),
+    "",
+    `PANEL CONTRACTS — ${EBAY_VISUAL_STRATEGY_VERSION}`,
+    ...contracts.flatMap((contract) => [
+      `Panel ${contract.primaryPanel} / ${contract.slot}: objective=${contract.commercialObjective}; objection=${contract.objectionReduced}; scene=${contract.sceneDirection}; product zone=${contract.productZone}; copy zone=${contract.copyZone}.`,
+      ...(contract.alternatePanel ? [
+        `Panel ${contract.alternatePanel} / ${contract.slot} ALTERNATIVE: pursue the same objective and zones with a cleaner, structurally distinct scene so deterministic local QA can choose the better plate.`,
+      ] : []),
+    ]),
+    "",
+    "INVARIANTS",
+    "Every reserved product zone and copy zone stays empty, calm, unobstructed and usable.",
+    "Do not include any product, package, container, label, logo, brand, text, symbol, watermark, person, hand, claim, measurement, number or quantity.",
+    "Do not reproduce or imitate any competitor image. Aggregate patterns guide scenery only.",
+    "Use realistic lighting, accurate category context, uncluttered surfaces and a coherent premium listing style.",
+    "The exact authorized product photograph and verified text will be composited locally later.",
+    "",
+    "ACCEPTANCE",
+    "All six panels must be structurally distinct. Panel 6 must be a genuine alternative to Panel 5, not a duplicate. No forbidden object or text may appear.",
+  ].join("\n")
 }
 
 export function buildSafeOpenAiBackgroundPlatePlan(
@@ -518,6 +662,7 @@ export function buildSafeOpenAiBackgroundPlatePlan(
   const promptHash = sha256Text(prompt)
   const requestHash = sha256Text(JSON.stringify({
     version: EBAY_OPENAI_BACKGROUND_PLATE_VERSION,
+    visualStrategyVersion: EBAY_VISUAL_STRATEGY_VERSION,
     identityFingerprint: input.identityFingerprint,
     context,
     model,
@@ -528,6 +673,7 @@ export function buildSafeOpenAiBackgroundPlatePlan(
   }))
   return {
     version: EBAY_OPENAI_BACKGROUND_PLATE_VERSION,
+    visualStrategyVersion: EBAY_VISUAL_STRATEGY_VERSION,
     context,
     prompt,
     promptHash,
@@ -599,6 +745,7 @@ export async function requestSafeOpenAiBackgroundPlate(input: {
   }
   if (
     input.plan.version !== EBAY_OPENAI_BACKGROUND_PLATE_VERSION
+    || input.plan.visualStrategyVersion !== EBAY_VISUAL_STRATEGY_VERSION
     || input.plan.promptHash !== sha256Text(input.plan.prompt)
     || input.plan.imageCount !== 1
     || input.plan.quality !== "low"
@@ -736,19 +883,18 @@ async function composeContextImage(
     .toBuffer()
 }
 
-const SCENE_BOARD_PANEL_INDEX = {
-  PACK_AND_COUNT: 0,
-  KEY_FEATURES: 1,
-  SIZE_AND_CONTENT: 2,
-  USE_CONTEXT: 3,
-  PACKAGE_CONTENTS: 4,
-} satisfies Record<InformationSlot, number>
+const SCENE_BOARD_PANEL_CANDIDATES = {
+  PACK_AND_COUNT: [0],
+  KEY_FEATURES: [1],
+  SIZE_AND_CONTENT: [2],
+  USE_CONTEXT: [3],
+  PACKAGE_CONTENTS: [4, 5],
+} satisfies Record<InformationSlot, number[]>
 
-async function sceneBoardPanel(
+async function extractSceneBoardPanel(
   sceneBoard: EbayOpenAiBackgroundPlate,
-  slot: InformationSlot,
+  index: number,
 ) {
-  const index = SCENE_BOARD_PANEL_INDEX[slot]
   const left = index % 3 * 512
   const top = Math.floor(index / 3) * 512
   return sharp(sceneBoard.output)
@@ -756,6 +902,99 @@ async function sceneBoardPanel(
     .resize(1600, 1600, { fit: "cover" })
     .jpeg({ quality: 90, chromaSubsampling: "4:4:4", mozjpeg: true })
     .toBuffer()
+}
+
+type SourceVisualProfile = EbayOptimizedImage["qa"]["sourceVisualProfile"]
+
+type ZoneStats = { mean: number; deviation: number }
+
+function normalizedZoneStats(
+  pixels: Buffer,
+  channels: number,
+  box: { left: number; top: number; width: number; height: number },
+): ZoneStats {
+  const size = 64
+  const left = Math.max(0, Math.min(size - 1, Math.floor(box.left / 1600 * size)))
+  const top = Math.max(0, Math.min(size - 1, Math.floor(box.top / 1600 * size)))
+  const right = Math.max(left + 1, Math.min(size, Math.ceil((box.left + box.width) / 1600 * size)))
+  const bottom = Math.max(top + 1, Math.min(size, Math.ceil((box.top + box.height) / 1600 * size)))
+  let count = 0
+  let total = 0
+  let totalSquared = 0
+  for (let y = top; y < bottom; y += 1) {
+    for (let x = left; x < right; x += 1) {
+      const offset = (y * size + x) * channels
+      const luminance = (
+        pixels[offset] * .2126 + pixels[offset + 1] * .7152 +
+        pixels[offset + 2] * .0722
+      ) / 255
+      count += 1
+      total += luminance
+      totalSquared += luminance * luminance
+    }
+  }
+  const mean = total / Math.max(1, count)
+  const variance = Math.max(0, totalSquared / Math.max(1, count) - mean * mean)
+  return { mean, deviation: Math.sqrt(variance) }
+}
+
+async function backgroundCompatibilityScore(
+  panel: Buffer,
+  slot: InformationSlot,
+  sourceProfile: SourceVisualProfile,
+) {
+  const { data, info } = await sharp(panel).resize(64, 64, { fit: "fill" })
+    .removeAlpha().toColourspace("srgb").raw()
+    .toBuffer({ resolveWithObject: true })
+  try {
+    const layout = INFORMATION_LAYOUTS[slot]
+    const product = normalizedZoneStats(data, info.channels, {
+      left: layout.packageLeft,
+      top: layout.packageTop,
+      width: layout.packageSize,
+      height: layout.packageSize,
+    })
+    const copy = normalizedZoneStats(data, info.channels, {
+      left: layout.textLeft,
+      top: Math.max(0, layout.textTop - 25),
+      width: layout.textWidth,
+      height: layout.textHeight + 25,
+    })
+    const targetBrightness = sourceProfile.productToneRisk === "LIGHT_NEUTRAL_AMBIGUITY"
+      ? .34
+      : sourceProfile.brightness === "LIGHT" ? .42
+        : sourceProfile.brightness === "DARK" ? .76 : .58
+    const tonalCompatibility = Math.max(0, 1 - Math.abs(product.mean - targetBrightness) / .66)
+    const productCalmness = Math.max(0, 1 - product.deviation / .28)
+    const copyCalmness = Math.max(0, 1 - copy.deviation / .24)
+    return Number((100 * (
+      tonalCompatibility * .5 + productCalmness * .3 + copyCalmness * .2
+    )).toFixed(2))
+  } finally {
+    data.fill(0)
+  }
+}
+
+async function selectSceneBoardPanel(
+  sceneBoard: EbayOpenAiBackgroundPlate,
+  slot: InformationSlot,
+  sourceProfile: SourceVisualProfile,
+) {
+  const indexes = SCENE_BOARD_PANEL_CANDIDATES[slot]
+  const candidates = await Promise.all(indexes.map(async (index) => {
+    const output = await extractSceneBoardPanel(sceneBoard, index)
+    const score = await backgroundCompatibilityScore(output, slot, sourceProfile)
+    return { output, index, score }
+  }))
+  candidates.sort((left, right) => right.score - left.score || left.index - right.index)
+  const selected = candidates[0]
+  for (const candidate of candidates.slice(1)) candidate.output.fill(0)
+  return {
+    output: selected.output,
+    selectedPanel: selected.index + 1,
+    candidatePanels: indexes.map((index) => index + 1),
+    score: selected.score,
+  }
 }
 
 type StructuralSignature = {
@@ -855,9 +1094,14 @@ export async function composeAuthorizedEbayListingImageSet(
     const main = mains[authorizedSourceIndex]
     const framedAuthorizedSource =
       main.transformation.backgroundMethod === "AUTHORIZED_SOURCE_FRAMED_CONTAIN"
-    const generatedPanel = slot !== "MAIN_WHITE_BACKGROUND" && backgroundPlate
-      ? await sceneBoardPanel(backgroundPlate, slot)
+    const panelSelection = slot !== "MAIN_WHITE_BACKGROUND" && backgroundPlate
+      ? await selectSceneBoardPanel(
+        backgroundPlate,
+        slot,
+        main.qa.sourceVisualProfile,
+      )
       : null
+    const generatedPanel = panelSelection?.output ?? null
     const output = slot === "MAIN_WHITE_BACKGROUND"
       ? await canonicalizeMainForV3(main.output)
       : slot === "USE_CONTEXT" && generatedPanel
@@ -892,7 +1136,7 @@ export async function composeAuthorizedEbayListingImageSet(
     const layoutId = slot === "MAIN_WHITE_BACKGROUND"
       ? "MAIN_WHITE_BACKGROUND_CANONICAL_V3"
       : backgroundPlate
-        ? `OPENAI_COMMERCIAL_SCENE_${slot}_V4`
+        ? `OPENAI_COMMERCIAL_SCENE_${slot}_V5_P${panelSelection?.selectedPanel ?? 0}`
         : INFORMATION_LAYOUTS[slot].id
     outputs.push({
       slot,
@@ -924,6 +1168,11 @@ export async function composeAuthorizedEbayListingImageSet(
           backgroundPlateRequestHash: backgroundPlate.plan.requestHash,
           backgroundPlateOutputSha256: backgroundPlate.outputSha256,
           backgroundPlateProviderRequestId: backgroundPlate.providerRequestId,
+          visualStrategyVersion: EBAY_VISUAL_STRATEGY_VERSION,
+          selectedSceneBoardPanel: panelSelection?.selectedPanel,
+          candidateSceneBoardPanels: panelSelection?.candidatePanels,
+          backgroundCompatibilityScore: panelSelection?.score,
+          sourceVisualProfile: main.qa.sourceVisualProfile,
         } : {}),
       },
       qa: {
@@ -942,6 +1191,7 @@ export async function composeAuthorizedEbayListingImageSet(
         humanApprovalRequired: true,
         structuralDiversityVerified: true,
         foregroundEdgeCoverage: signature.edgeCoverage,
+        deterministicBackgroundSelection: Boolean(panelSelection),
         manualChecksRequired: [
           "MANUFACTURER_BRAND_MATCH",
           "PACK_AND_UNIT_COUNT_MATCH",
