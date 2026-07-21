@@ -735,6 +735,35 @@ async function readOpenAiResponseWithLimit(response: Response) {
   return Buffer.concat(chunks, total).toString("utf8")
 }
 
+function safeOpenAiErrorToken(value: unknown) {
+  if (typeof value !== "string") return null
+  const normalized = value.trim().toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+  return normalized && normalized.length <= 80 ? normalized : null
+}
+
+function safeOpenAiHttpErrorCode(status: number, responseText: string) {
+  const base = `EBAY_IMAGE_OPENAI_HTTP_${status}`
+  let payload: unknown
+  try {
+    payload = JSON.parse(responseText)
+  } catch {
+    return base
+  }
+  const payloadRecord = payload && typeof payload === "object"
+    ? payload as Record<string, unknown>
+    : {}
+  const providerError = payloadRecord.error && typeof payloadRecord.error === "object"
+    ? payloadRecord.error as Record<string, unknown>
+    : {}
+  const discriminator = safeOpenAiErrorToken(providerError.code)
+    ?? safeOpenAiErrorToken(providerError.type)
+  const parameter = safeOpenAiErrorToken(providerError.param)
+  return [base, discriminator, parameter ? `PARAM_${parameter}` : null]
+    .filter(Boolean).join(":")
+}
+
 export async function requestSafeOpenAiBackgroundPlate(input: {
   plan: EbayOpenAiBackgroundPlatePlan
   apiKey: string
@@ -791,7 +820,10 @@ export async function requestSafeOpenAiBackgroundPlate(input: {
     )
     const responseText = await readOpenAiResponseWithLimit(response)
     if (!response.ok) {
-      throw new Error(`EBAY_IMAGE_OPENAI_HTTP_${response.status}`)
+      // OpenAI may return a user-correctable stable code with a 4xx. Keep only
+      // the normalized code/type/parameter for operations; never persist the
+      // provider message because it can echo prompt content.
+      throw new Error(safeOpenAiHttpErrorCode(response.status, responseText))
     }
     let payload: unknown
     try {
