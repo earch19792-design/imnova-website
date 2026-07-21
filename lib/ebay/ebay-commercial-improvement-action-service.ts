@@ -330,6 +330,32 @@ async function setControlledRiskPromotionBlock(input: {
   activeSellerCount: number | null
   status: "PENDING_PRICE_APPLY" | "ACTIVE"
 }) {
+  const controlledRiskPolicy = {
+    version: "ACTIVE_MARKET_CONTROLLED_RISK_10_PERCENT_V1",
+    status: input.status,
+    source: "EBAY_ACTIVE_MULTI_SELLER_MEDIAN_NOT_CONFIRMED_SOLD",
+    commercialEventId: input.eventId,
+    minimumNetMarginPercent: 10,
+    promotion: "DO_NOT_PROMOTE",
+    activeMarketNotConfirmedSale: true,
+    activeMarketMedianLandedPrice: input.activeMarketMedianLandedPrice,
+    activeSellerCount: input.activeSellerCount,
+    finalHumanAuthorizationRequired: true,
+    updatedAt: new Date().toISOString(),
+  }
+  const { data: activeListing, error: activeListingError } = await input.supabase
+    .from("ebay_active_listings")
+    .update({
+      controlled_risk_policy: controlledRiskPolicy,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("account_key", input.accountKey)
+    .eq("ebay_item_id", input.listingId)
+    .select("id")
+    .maybeSingle()
+  if (activeListingError || !activeListing?.id) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_CONTROLLED_RISK_BLOCK_FAILED")
+  }
   const { data: publication, error: publicationError } = await input.supabase
     .from("ebay_authorized_listing_publications")
     .select("listing_package_id")
@@ -338,9 +364,10 @@ async function setControlledRiskPromotionBlock(input: {
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle()
-  if (publicationError || !publication?.listing_package_id) {
-    throw new Error("COMMERCIAL_IMPROVEMENT_CONTROLLED_RISK_PACKAGE_REQUIRED")
-  }
+  if (publicationError) throw new Error(
+    "COMMERCIAL_IMPROVEMENT_CONTROLLED_RISK_BLOCK_FAILED",
+  )
+  if (!publication?.listing_package_id) return
   const { data: listingPackage, error: packageError } = await input.supabase
     .from("ebay_listing_packages")
     .select("package_data")
@@ -356,20 +383,7 @@ async function setControlledRiskPromotionBlock(input: {
     .update({
       package_data: {
         ...packageData,
-        controlledRiskPolicy: {
-          version: "ACTIVE_MARKET_CONTROLLED_RISK_10_PERCENT_V1",
-          status: input.status,
-          source: "EBAY_ACTIVE_MULTI_SELLER_MEDIAN_NOT_CONFIRMED_SOLD",
-          commercialEventId: input.eventId,
-          minimumNetMarginPercent: 10,
-          promotion: "DO_NOT_PROMOTE",
-          activeMarketNotConfirmedSale: true,
-          activeMarketMedianLandedPrice:
-            input.activeMarketMedianLandedPrice,
-          activeSellerCount: input.activeSellerCount,
-          finalHumanAuthorizationRequired: true,
-          updatedAt: new Date().toISOString(),
-        },
+        controlledRiskPolicy,
       },
       updated_at: new Date().toISOString(),
     })
