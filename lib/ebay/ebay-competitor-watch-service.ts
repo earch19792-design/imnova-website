@@ -47,6 +47,7 @@ type ProfileRow = {
   last_scanned_at: string | null
   last_research_refresh_recommended_at: string | null
   latest_suggestion_codes: string[] | null
+  latest_active_offer_count: number
 }
 
 type OfferRow = {
@@ -212,7 +213,9 @@ async function upsertProfile(input: {
   observedAt: string
   analysis: ReturnType<typeof buildCompetitorWatchAnalysis>
 }) {
-  const baselineCompletedAt = input.profile?.baseline_completed_at ?? input.observedAt
+  const baselineCompletedAt = input.analysis.baselineEstablished
+    ? input.observedAt
+    : input.profile?.baseline_completed_at ?? input.observedAt
   const researchRecommendedAt = input.analysis.researchRefreshRecommended
     ? input.observedAt
     : input.profile?.last_research_refresh_recommended_at ?? null
@@ -477,7 +480,7 @@ async function loadProfiles(
   if (!listingIds.length) return [] as ProfileRow[]
   const { data, error } = await supabase
     .from("ebay_listing_competitor_watch_profiles")
-    .select("id,listing_id,search_query_hash,baseline_completed_at,last_scanned_at,last_research_refresh_recommended_at,latest_suggestion_codes")
+    .select("id,listing_id,search_query_hash,baseline_completed_at,last_scanned_at,last_research_refresh_recommended_at,latest_suggestion_codes,latest_active_offer_count")
     .eq("marketplace_account_key", accountKey)
     .eq("marketplace", MARKETPLACE)
     .in("listing_id", listingIds)
@@ -517,6 +520,11 @@ async function scanOneListing(input: {
     if (error) throw new Error("COMPETITOR_WATCH_OFFER_READ_FAILED")
     previousRows = (data ?? []) as OfferRow[]
   }
+  const persistedActiveOfferCount = previousRows.filter((row) => row.active).length
+  const baselineHistoryComplete = profileScopeMatches && (
+    input.profile?.latest_active_offer_count === 0 ||
+    persistedActiveOfferCount >= (input.profile?.latest_active_offer_count ?? 0)
+  )
   const researchMatches = await readResearchMatches(
     input.supabase,
     input.accountKey,
@@ -538,7 +546,7 @@ async function scanOneListing(input: {
   const analysis = buildCompetitorWatchAnalysis({
     observations,
     previousOffers: previousRows.map(previousOffer),
-    baselineExists: profileScopeMatches,
+    baselineExists: baselineHistoryComplete,
     ownListing: {
       landedPrice: input.listing.price === null
         ? null

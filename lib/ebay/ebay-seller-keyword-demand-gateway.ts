@@ -24,6 +24,8 @@ import {
   ebaySellerReferenceHash,
   ebaySourceListingReferenceHash,
 } from "./ebay-competitor-watch-fingerprints"
+import { normalizeEbayActiveCompetitorObservations } from
+  "./ebay-competitor-watch-normalization"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const BROWSE_SEARCH_ENDPOINT =
@@ -794,7 +796,8 @@ export async function observeEbayActiveCompetitors(input: {
       insightsAvailability: "NOT_CONFIGURED",
     })
     const ownSeller = text(input.ownSellerUsername).toLocaleLowerCase("en-US")
-    const observations = report.comparableEvidence.flatMap((entry) => {
+    const observations = normalizeEbayActiveCompetitorObservations(
+      report.comparableEvidence.flatMap((entry) => {
       if (!entry.eligibleComparable) return []
       if (!(["EXACT_IDENTIFIER", "EXACT", "STRONG"] as string[])
         .includes(entry.identityMatchQuality)) return []
@@ -826,7 +829,8 @@ export async function observeEbayActiveCompetitors(input: {
         sellerFeedbackBand: sellerFeedbackBand(entry.sellerFeedbackScore),
         estimatedSoldQuantity,
       }]
-    })
+      }),
+    )
     const sellerHashes = new Set(observations.map((entry) => entry.sellerReferenceHash))
     const crossSellerCandidateConfirmedTerms = report.activeListingKeywords
       .filter((entry) => entry.crossSellerSignal && entry.candidateConfirmed &&

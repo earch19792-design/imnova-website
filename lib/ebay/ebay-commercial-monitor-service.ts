@@ -76,6 +76,7 @@ import {
 import { monitorEbayListingCompetitors } from "./ebay-competitor-watch-service"
 
 const MARKETPLACE = "EBAY_US"
+const COMPETITOR_PARTIAL_RETRY_MINUTES = 15
 const MONITOR_LEASE_SECONDS = 300
 const READER_HISTORY_LIMIT = 500
 const DEFAULT_LUNA_SUPPLY_MAX_AGE_MINUTES = 24 * 60
@@ -2829,6 +2830,7 @@ export async function getDueCommercialMonitorLanes(
   if (error) throw new Error("COMMERCIAL_MONITOR_SCHEDULE_READ_FAILED")
   const lastByReader = new Map<string, string>()
   const lastAttemptByReader = new Map<string, string>()
+  const lastStatusByReader = new Map<string, string>()
   for (const run of data ?? []) {
     const readers = run.readers && typeof run.readers === "object"
       ? run.readers as Record<string, { status?: string }>
@@ -2837,7 +2839,10 @@ export async function getDueCommercialMonitorLanes(
       if (
         !lastAttemptByReader.has(name) &&
         readers[name]?.status && readers[name]?.status !== "skipped"
-      ) lastAttemptByReader.set(name, run.started_at)
+      ) {
+        lastAttemptByReader.set(name, run.started_at)
+        lastStatusByReader.set(name, readers[name]?.status ?? "")
+      }
       if (!lastByReader.has(name) && ["available", "partial", "incomplete"].includes(readers[name]?.status ?? "")) {
         lastByReader.set(name, run.started_at)
       }
@@ -2865,7 +2870,18 @@ export async function getDueCommercialMonitorLanes(
   })
   if (analyticsDue) lanes.push("analytics", "rules")
   if (commercialScheduleLaneDue(lastByReader.get("watchers"), schedule.watchersIntervalMinutes, now)) lanes.push("watchers", "rules")
-  if (commercialScheduleLaneDue(lastByReader.get("competitors"), schedule.competitorsIntervalMinutes, now)) lanes.push("competitors")
+  const competitorRegularlyDue = commercialScheduleLaneDue(
+    lastByReader.get("competitors"),
+    schedule.competitorsIntervalMinutes,
+    now,
+  )
+  const competitorPartialRetryDue = lastStatusByReader.get("competitors") === "partial" &&
+    commercialScheduleLaneDue(
+      lastAttemptByReader.get("competitors"),
+      COMPETITOR_PARTIAL_RETRY_MINUTES,
+      now,
+    )
+  if (competitorRegularlyDue || competitorPartialRetryDue) lanes.push("competitors")
   const { data: todaySummary } = await supabase
     .from("commercial_daily_summaries")
     .select("id")
