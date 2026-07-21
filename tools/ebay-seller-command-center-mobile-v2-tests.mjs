@@ -17,6 +17,10 @@ const productResearchStepMigration = readFileSync(
   "supabase/migrations/20260717200000_allow_product_research_command_center_step.sql",
   "utf8",
 )
+const readyPublicationLunaRecheckMigration = readFileSync(
+  "supabase/migrations/20260722000000_reconfirm_ready_publication_luna.sql",
+  "utf8",
+)
 
 test("mobile command center centralizes the five Seller OS areas", () => {
   for (const label of ["Inicio", "Oportunidades eBay", "Listings", "Operación", "Salud y configuración"]) {
@@ -133,6 +137,23 @@ test("listing workspace is resumable and gates one unpublished environment-aware
   for (const forbidden of [/publishOffer\s*\(/, /createOffer\s*\(/, /createOrReplaceInventoryItem\s*\(/]) {
     assert.doesNotMatch(combined, forbidden)
   }
+})
+
+test("listing workspace recovers an expired Luna publication check without losing approved work", () => {
+  assert.match(workspace, /SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED/)
+  assert.match(workspace, /sourceRecheckRequired/)
+  assert.match(workspace, /reconfirm_publication_luna/)
+  assert.match(workspace, /Reconfirmar Luna para publicar/)
+  assert.match(workspace, /no regenera imágenes ni escribe en eBay/)
+  assert.match(workspace, /setWorkspaceRetry/)
+  assert.match(api, /reconfirm_ebay_ready_publication_luna_v1/)
+  assert.match(api, /sourceRecheckRequired: true/)
+  assert.match(api, /status: 409/)
+  assert.match(readyPublicationLunaRecheckMigration, /READY_FOR_MANUAL_PUBLICATION/)
+  assert.match(readyPublicationLunaRecheckMigration, /abs\(v_previous_price - p_supplier_price\) >= 0\.005/)
+  assert.match(readyPublicationLunaRecheckMigration, /ebay_writes, production_changed/)
+  assert.match(readyPublicationLunaRecheckMigration, /imagesRegenerated', false/)
+  assert.doesNotMatch(readyPublicationLunaRecheckMigration, /publishOffer|createOffer|createOrReplaceInventoryItem/)
 })
 
 test("seller handoff has actionable economics and a Seller OS publication CTA", () => {

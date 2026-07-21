@@ -39,6 +39,18 @@ type ListingPackage = {
   updated_at: string
 }
 
+type PublicationLunaRecheck = {
+  candidateId: string
+  listingPackageId: string
+  productTitle: string
+  supplierSku: string
+  supplierProductUrl: string | null
+  confirmedPrice: number | null
+  confirmedAt: string | null
+  quantityVisible: boolean
+  confirmedQuantity: number | null
+}
+
 type FormState = {
   title: string
   categoryId: string
@@ -449,6 +461,21 @@ function httpsImageUrl(value: unknown) {
   }
 }
 
+function safeLunaProductUrl(value: unknown) {
+  try {
+    const parsed = new URL(String(value ?? "").trim())
+    if (parsed.protocol !== "https:"
+      || !["lunaportex.com", "www.lunaportex.com"].includes(parsed.hostname)
+      || parsed.username || parsed.password
+      || !/^\/products\/[a-z0-9][a-z0-9-]*\/?$/i.test(parsed.pathname)) return null
+    parsed.search = ""
+    parsed.hash = ""
+    return parsed.toString()
+  } catch {
+    return null
+  }
+}
+
 function validUuid(value: unknown) {
   const normalized = String(value ?? "").trim()
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -542,6 +569,14 @@ export default function EbayListingWorkspacePage() {
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null)
   const [listingPackage, setListingPackage] = useState<ListingPackage | null>(null)
   const [workspaceGateBlockers, setWorkspaceGateBlockers] = useState<string[]>([])
+  const [publicationLunaRecheck, setPublicationLunaRecheck] = useState<PublicationLunaRecheck | null>(null)
+  const [publicationLunaPrice, setPublicationLunaPrice] = useState("")
+  const [publicationLunaQuantity, setPublicationLunaQuantity] = useState("")
+  const [publicationLunaAvailable, setPublicationLunaAvailable] = useState(false)
+  const [publicationLunaLinkOpened, setPublicationLunaLinkOpened] = useState(false)
+  const [publicationLunaReconfirmed, setPublicationLunaReconfirmed] = useState(false)
+  const [publicationLunaBusy, setPublicationLunaBusy] = useState(false)
+  const [workspaceRetry, setWorkspaceRetry] = useState(0)
   const [workspaceMode, setWorkspaceMode] = useState<"CREATION" | "ACTIVE_MAINTENANCE">("CREATION")
   const [maintenance, setMaintenance] = useState<Record<string, unknown> | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm)
@@ -581,6 +616,8 @@ export default function EbayListingWorkspacePage() {
   const [activeTitleBusy, setActiveTitleBusy] = useState(false)
   const activeTitleIdempotency = useRef<{ scope: string; key: string } | null>(null)
   const publicationIntentScrolled = useRef(false)
+  const publicationLunaRecheckRequired = useRef(false)
+  const accountPolicyProfileSaved = useRef(false)
 
   const imageRequest = useCallback(async (
     body?: Record<string, unknown> | FormData,
@@ -678,12 +715,14 @@ export default function EbayListingWorkspacePage() {
     } catch (requestFailure) {
       const requestError = new Error(
         getMobileReviewRequestError(requestFailure, "No se pudo abrir el workspace."),
-      ) as Error & { blockers?: string[] }
+      ) as Error & { blockers?: string[]; code?: string; payload?: Record<string, unknown> }
       try {
         const failurePayload = await failureResponse.json() as Record<string, unknown>
         requestError.blockers = Array.isArray(failurePayload.blockers)
           ? failurePayload.blockers.filter((item): item is string => typeof item === "string")
           : []
+        requestError.code = String(failurePayload.error ?? "")
+        requestError.payload = failurePayload
       } catch {
         requestError.blockers = []
       }
@@ -692,10 +731,12 @@ export default function EbayListingWorkspacePage() {
     if (!payload.success) {
       const requestError = new Error(
         getMobileReviewPayloadError(payload, "No se pudo abrir el workspace."),
-      ) as Error & { blockers?: string[] }
+      ) as Error & { blockers?: string[]; code?: string; payload?: Record<string, unknown> }
       requestError.blockers = Array.isArray(payload.blockers)
         ? payload.blockers.filter((item: unknown): item is string => typeof item === "string")
         : []
+      requestError.code = String(payload.error ?? "")
+      requestError.payload = payload
       throw requestError
     }
     return payload
@@ -761,14 +802,60 @@ export default function EbayListingWorkspacePage() {
         const state = await request(undefined, opportunityId)
         const selected = state.selectedOpportunity as Opportunity
         setOpportunity(selected)
-        setDraftConfiguration(initialDraftConfiguration(selected))
+        setDraftConfiguration((current) => {
+          const initial = initialDraftConfiguration(selected)
+          const preservePolicies = accountPolicyProfileSaved.current
+          return {
+            ...initial,
+            fulfillmentPolicyId: preservePolicies ? current.fulfillmentPolicyId : initial.fulfillmentPolicyId,
+            paymentPolicyId: preservePolicies ? current.paymentPolicyId : initial.paymentPolicyId,
+            returnPolicyId: preservePolicies ? current.returnPolicyId : initial.returnPolicyId,
+            merchantLocationKey: preservePolicies ? current.merchantLocationKey : initial.merchantLocationKey,
+          }
+        })
         let prepared: Record<string, any>
         try {
           prepared = await request(maintenanceRequested
             ? { action: "open_active_maintenance", opportunityId, candidateKey, ebayItemId: requestedItemId }
             : { action: "prepare_package", opportunityId, candidateKey })
         } catch (prepareError) {
-          const gateBlockers = (prepareError as Error & { blockers?: string[] }).blockers ?? []
+          const typedPrepareError = prepareError as Error & {
+            blockers?: string[]
+            code?: string
+            payload?: Record<string, unknown>
+          }
+          const sourceRecheckPayload = object(typedPrepareError.payload?.sourceRecheck)
+          const sourceRecheckRequired = typedPrepareError.payload?.sourceRecheckRequired === true
+            || typedPrepareError.code === "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED"
+            || (prepareError instanceof Error
+              && prepareError.message.includes("SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED"))
+          if (sourceRecheckRequired) {
+            const recheck: PublicationLunaRecheck = {
+              candidateId: String(sourceRecheckPayload.candidateId ?? ""),
+              listingPackageId: String(sourceRecheckPayload.listingPackageId ?? ""),
+              productTitle: String(sourceRecheckPayload.productTitle ?? selected.product_title),
+              supplierSku: String(sourceRecheckPayload.supplierSku ?? selected.supplier_sku ?? ""),
+              supplierProductUrl: safeLunaProductUrl(sourceRecheckPayload.supplierProductUrl),
+              confirmedPrice: numberOrNull(sourceRecheckPayload.confirmedPrice),
+              confirmedAt: String(sourceRecheckPayload.confirmedAt ?? "") || null,
+              quantityVisible: sourceRecheckPayload.quantityVisible === true,
+              confirmedQuantity: numberOrNull(sourceRecheckPayload.confirmedQuantity),
+            }
+            publicationLunaRecheckRequired.current = true
+            setPublicationLunaRecheck(recheck)
+            setPublicationLunaPrice("")
+            setPublicationLunaQuantity("")
+            setPublicationLunaAvailable(false)
+            setPublicationLunaLinkOpened(false)
+            setPublicationLunaReconfirmed(false)
+            setWorkspaceGateBlockers([])
+            setListingPackage(null)
+            setDraftState((current) => ({ preflight: current.preflight }))
+            setError("")
+            setMessage("Las policies y las imágenes están listas. Sólo falta reconfirmar el costo y la disponibilidad actuales en Luna para abrir la publicación.")
+            return
+          }
+          const gateBlockers = typedPrepareError.blockers ?? []
           const gatePending = gateBlockers.length > 0
             || (prepareError instanceof Error
               && prepareError.message.includes("COMMAND_CENTER_WORKSPACE_GATES_PENDING"))
@@ -790,12 +877,29 @@ export default function EbayListingWorkspacePage() {
         setWorkspaceMode(activeMaintenance ? "ACTIVE_MAINTENANCE" : "CREATION")
         setMaintenance(activeMaintenance ? nextMaintenance : null)
         setWorkspaceGateBlockers([])
+        publicationLunaRecheckRequired.current = false
+        setPublicationLunaRecheck(null)
+        setPublicationLunaReconfirmed(false)
         setListingPackage(nextPackage)
         setForm(fromPackage(object(nextPackage.package_data)))
         setImageRevision(null)
-        setDraftConfiguration({
-          ...draftConfigurationFromPackage(object(nextPackage.package_data), selected),
-          sku: reservedDraftSku(nextPackage.id),
+        setDraftConfiguration((current) => {
+          const next = {
+            ...draftConfigurationFromPackage(object(nextPackage.package_data), selected),
+            sku: reservedDraftSku(nextPackage.id),
+          }
+          const preservePolicies = accountPolicyProfileSaved.current
+          return {
+            ...next,
+            fulfillmentPolicyId: preservePolicies
+              ? current.fulfillmentPolicyId || next.fulfillmentPolicyId : next.fulfillmentPolicyId,
+            paymentPolicyId: preservePolicies
+              ? current.paymentPolicyId || next.paymentPolicyId : next.paymentPolicyId,
+            returnPolicyId: preservePolicies
+              ? current.returnPolicyId || next.returnPolicyId : next.returnPolicyId,
+            merchantLocationKey: preservePolicies
+              ? current.merchantLocationKey || next.merchantLocationKey : next.merchantLocationKey,
+          }
         })
         void loadImageAssets(nextPackage.id, nextPackage.candidate_key)
         const preferredImageRevisionId = validUuid(
@@ -814,7 +918,7 @@ export default function EbayListingWorkspacePage() {
         } else {
           try {
             const draft = await draftRequest(undefined, nextPackage.id)
-            setDraftState(draft)
+            setDraftState((current) => ({ ...current, ...draft }))
           } catch (draftError) {
             setDraftState({})
             draftWarning = ` ${getMobileReviewRequestError(draftError, "El conector draft todavía no pudo validarse.")}`
@@ -835,7 +939,7 @@ export default function EbayListingWorkspacePage() {
         setMessage("")
       }
     })()
-  }, [request, draftRequest, loadImageAssets, loadImageRevision])
+  }, [request, draftRequest, loadImageAssets, loadImageRevision, workspaceRetry])
 
   useEffect(() => {
     if (!listingPackage || workspaceMode !== "CREATION"
@@ -958,7 +1062,6 @@ export default function EbayListingWorkspacePage() {
   const effectiveDraftQuantity = productionTarget ? 1 : draftConfiguration.quantity
   const accountPreflightAutoStarted = useRef(false)
   const accountPreflightAutoSaveKey = useRef("")
-  const accountPolicyProfileSaved = useRef(false)
   const accountPreflight = draftState.preflight
   const accountPoliciesSelected = [
     draftConfiguration.fulfillmentPolicyId,
@@ -1471,6 +1574,54 @@ export default function EbayListingWorkspacePage() {
     } finally { setDraftBusy(false) }
   }
 
+  async function reconfirmPublicationLuna() {
+    if (!opportunity || !publicationLunaRecheck || publicationLunaBusy) return
+    if (publicationLunaReconfirmed) {
+      setError("")
+      setMessage("Reabriendo autorización y publicación con la reconfirmación ya guardada…")
+      setWorkspaceRetry((current) => current + 1)
+      return
+    }
+    const price = Number(publicationLunaPrice)
+    const quantity = publicationLunaQuantity.trim() === ""
+      ? null
+      : Number(publicationLunaQuantity)
+    if (!publicationLunaLinkOpened || !publicationLunaAvailable
+      || !Number.isFinite(price) || price <= 0
+      || (quantity !== null && (!Number.isInteger(quantity) || quantity < 1))) {
+      setError("Abre Luna y confirma disponibilidad, costo actual y, sólo si aparece, la cantidad visible.")
+      return
+    }
+    setPublicationLunaBusy(true)
+    setError("")
+    setMessage("Guardando la reconfirmación Luna y reabriendo el paquete aprobado…")
+    try {
+      await request({
+        action: "reconfirm_publication_luna",
+        opportunityId: opportunity.id,
+        candidateKey: opportunity.candidate_key,
+        listingPackageId: publicationLunaRecheck.listingPackageId,
+        candidateId: publicationLunaRecheck.candidateId,
+        price,
+        available: true,
+        quantity,
+      })
+      setPublicationLunaReconfirmed(true)
+      setMessage("Luna quedó reconfirmado. Reabriendo autorización y publicación…")
+      setWorkspaceRetry((current) => current + 1)
+    } catch (requestError) {
+      const code = requestError instanceof Error ? requestError.message : ""
+      setError(code.includes("LUNA_COST_CHANGED")
+        ? "El costo cambió. Seller OS detuvo la publicación para recalcular precio y margen; vuelve a Command Center."
+        : code.includes("LUNA_UNAVAILABLE")
+          ? "Luna ya no confirma disponibilidad. Este producto no se puede publicar ahora."
+          : getMobileReviewRequestError(requestError, "No se pudo guardar la reconfirmación Luna."))
+      setMessage("")
+    } finally {
+      setPublicationLunaBusy(false)
+    }
+  }
+
   async function runAccountPreflight() {
     setDraftBusy(true); setError(""); setMessage("Consultando la configuración de cuenta eBay en modo sólo lectura…")
     try {
@@ -1501,7 +1652,9 @@ export default function EbayListingWorkspacePage() {
         ebayPreflightSnapshot: "",
       }))
       setMessage(profileSaved
-        ? "Policies de cuenta revalidadas y guardadas. No se creó ni publicó nada en eBay."
+        ? publicationLunaRecheckRequired.current
+          ? "Policies guardadas. Para abrir la publicación sólo falta reconfirmar costo y disponibilidad en Luna."
+          : "Policies de cuenta revalidadas y guardadas. No se creó ni publicó nada en eBay."
         : preflight.identity.status !== "BOUND"
           ? "eBay respondió, pero la identidad de la cuenta debe quedar vinculada antes de guardar policies."
           : !preflight.privilege.usable
@@ -1762,6 +1915,18 @@ export default function EbayListingWorkspacePage() {
         {error && <p role="alert" className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm font-bold text-rose-50">{error}</p>}
         {message && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm text-cyan-50">{message}</p>}
         {maintenanceMode && <section className="rounded-3xl border border-emerald-200/30 bg-emerald-200/[0.07] p-4"><p className="text-xs font-black uppercase tracking-widest text-emerald-100/70">Mantenimiento ACTIVE</p><h2 className="mt-1 text-xl font-black">Item {String(maintenance?.ebayItemId ?? "")}</h2><p className="mt-2 text-sm leading-6 text-white/65">Cuenta, SKU y estado ACTIVE ya fueron verificados. Aquí sólo se revisan título e imágenes; no se repiten policies ni guardas de creación.</p><div className="mt-4 rounded-2xl border border-white/15 bg-black/20 p-3"><p className="text-xs text-white/50">Título actual observado</p><p className="mt-1 text-sm font-bold">{String(maintenance?.title ?? "Pendiente de lectura")}</p><button type="button" disabled={!listingPackage || activeTitleBusy} onClick={() => void previewActiveTitleRevision()} className="mt-3 min-h-11 w-full rounded-xl border border-emerald-200/30 px-3 text-sm font-black disabled:opacity-40">{activeTitleBusy ? "Procesando…" : activeTitleRevision ? "Revalidar título propuesto" : "Preparar título verificado"}</button>{activeTitleRevision && <div className="mt-3 space-y-3"><div className="rounded-xl bg-emerald-200/10 p-3"><p className="text-xs text-emerald-100/60">Título calculado por el servidor</p><p className="mt-1 font-black">{String(activeTitleRevision.targetTitle ?? "")}</p></div><label className="block"><span className="text-xs font-black">Escribe exactamente: <code>{activeTitleExactPhrase}</code></span><input value={activeTitleConfirmation} onChange={(event) => setActiveTitleConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><button type="button" onClick={() => setActiveTitleConfirmation(activeTitleExactPhrase)} className="min-h-11 w-full rounded-xl border border-emerald-200/30 px-3 text-sm font-black">Usar frase exacta</button><button type="button" disabled={activeTitleBusy || !activeTitleConfirmationReady || activeTitlePhase === "applied_verified"} onClick={() => void applyActiveTitleRevision()} className="min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">{activeTitlePhase === "applied_verified" ? "Título aplicado y verificado" : /outcome_unknown|write_in_flight/i.test(activeTitlePhase) ? "Reconciliar sin repetir write" : "Aplicar sólo Title"}</button><p className="text-xs leading-5 text-white/50">Máximo una llamada ReviseFixedPriceItem. El XML contiene únicamente ItemID + Title; no modifica imágenes, precio, cantidad ni policies.</p></div>}</div></section>}
+
+        {publicationLunaRecheck && <section aria-labelledby="publication-luna-recheck-heading" className="space-y-4 rounded-3xl border border-amber-200/35 bg-amber-200/[0.08] p-4">
+          <div><p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Última verificación requerida</p><h2 id="publication-luna-recheck-heading" className="mt-1 text-xl font-black">Reconfirmar Luna para publicar</h2><p className="mt-2 text-sm leading-6 text-amber-50/80">El producto y las seis imágenes siguen aprobados. Sólo venció la verificación de costo y stock; este paso no regenera imágenes ni escribe en eBay.</p></div>
+          <div className="rounded-2xl bg-black/25 p-3"><p className="font-black">{publicationLunaRecheck.productTitle}</p><p className="mt-1 text-xs text-white/55">SKU {publicationLunaRecheck.supplierSku || "N/D"} · último costo vencido {money(publicationLunaRecheck.confirmedPrice)}{publicationLunaRecheck.quantityVisible ? ` · última cantidad ${publicationLunaRecheck.confirmedQuantity ?? "N/D"}` : " · cantidad no visible"}</p></div>
+          {publicationLunaRecheck.supplierProductUrl
+            ? <a href={publicationLunaRecheck.supplierProductUrl} target="_blank" rel="noreferrer" onClick={() => setPublicationLunaLinkOpened(true)} className="flex min-h-12 w-full items-center justify-center rounded-xl bg-violet-200 px-4 text-center font-black text-black">{publicationLunaLinkOpened ? "✓ Producto Luna abierto" : "Abrir producto exacto en Luna"}</a>
+            : <p className="rounded-xl border border-rose-200/30 p-3 text-sm text-rose-100">El enlace exacto de Luna no está disponible. Vuelve a Command Center.</p>}
+          <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm font-black">Costo actual en Luna<input type="number" min="0.01" step="0.01" inputMode="decimal" value={publicationLunaPrice} onChange={(event) => setPublicationLunaPrice(event.target.value)} placeholder="Escríbelo después de abrir Luna" disabled={publicationLunaReconfirmed} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3 disabled:opacity-50" /></label><label className="text-sm font-black">Cantidad visible (opcional)<input type="number" min="1" step="1" inputMode="numeric" value={publicationLunaQuantity} onChange={(event) => setPublicationLunaQuantity(event.target.value)} placeholder="Déjalo vacío si Luna no la muestra" disabled={publicationLunaReconfirmed} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3 disabled:opacity-50" /></label></div>
+          <label className="flex min-h-12 items-start gap-3 rounded-xl border border-amber-100/25 p-3 text-sm leading-6"><input type="checkbox" checked={publicationLunaAvailable} disabled={publicationLunaReconfirmed} onChange={(event) => setPublicationLunaAvailable(event.target.checked)} className="mt-1 h-5 w-5 shrink-0 accent-emerald-200 disabled:opacity-50" /><span>Confirmo que abrí el producto exacto en Luna y ahora aparece disponible al costo indicado.</span></label>
+          <button type="button" disabled={publicationLunaBusy || (!publicationLunaReconfirmed && (!publicationLunaLinkOpened || !publicationLunaAvailable || !publicationLunaRecheck.supplierProductUrl || !(Number(publicationLunaPrice) > 0)))} onClick={() => void reconfirmPublicationLuna()} className="min-h-13 w-full rounded-2xl bg-amber-200 px-4 font-black text-black disabled:opacity-40">{publicationLunaBusy ? "Reabriendo producto…" : publicationLunaReconfirmed ? "Reintentar abrir autorización y publicación" : "Confirmar Luna y continuar a publicación"}</button>
+          <p className="text-xs leading-5 text-white/55">Si Luna lo muestra agotado, no confirmes: vuelve a Command Center para detener este candidato. Si cambió el costo, Seller OS bloqueará la publicación y exigirá recalcular.</p>
+        </section>}
 
         <section aria-labelledby="ebay-account-configuration-heading" className={`${maintenanceMode ? "hidden" : ""} space-y-4 rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.05] p-4`}>
           <div>
