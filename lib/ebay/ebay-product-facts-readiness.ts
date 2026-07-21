@@ -240,7 +240,7 @@ function valueKey(value: unknown, unit: string | null) {
 }
 
 const CRITICAL_CONFLICT_KEYS = new Set([
-  "gtin", "upc", "ean", "mpn", "model", "variant", "scent", "flavor", "color",
+  "brand", "gtin", "upc", "ean", "mpn", "model", "variant", "scent", "flavor", "color",
   "formulation", "unitcount", "netcontent", "offerpackcount", "unitsperpack", "totalunitcount",
   "hazardousmaterialstatus", "eparegistration",
 ])
@@ -291,7 +291,21 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
   for (const entries of grouped.values()) {
     const [first] = entries
     const trusted = entries.filter((entry) => TRUSTED.has(entry.verificationStatus))
-    const comparable = trusted.filter((entry) => entry.normalizedValue !== null && entry.normalizedValue !== "")
+    const manufacturerSpecificBrand = key(first.factKey) === "brand" && trusted.some((entry) =>
+      entry.sourceType === "MANUFACTURER_OFFICIAL_PUBLIC" &&
+      !["unbranded", "generic", "does not apply", "not applicable", "n a"].includes(
+        key(entry.normalizedValue),
+      ))
+    // "Unbranded" is an absence marker, not a competing brand assertion. A
+    // positive value from the reviewed manufacturer source wins; two
+    // different positive brands still remain a critical conflict.
+    const resolutionCandidates = manufacturerSpecificBrand
+      ? trusted.filter((entry) => ![
+          "unbranded", "generic", "does not apply", "not applicable", "n a",
+        ].includes(key(entry.normalizedValue)))
+      : trusted
+    const comparable = resolutionCandidates.filter((entry) =>
+      entry.normalizedValue !== null && entry.normalizedValue !== "")
     const valueGroups = new Map<string, FactObservation[]>()
     for (const entry of comparable) {
       const entryKey = valueKey(entry.normalizedValue, entry.normalizedUnit)
@@ -311,7 +325,7 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
         values: [...valueGroups.keys()] })
       continue
     }
-    const winner = [...trusted].sort((left, right) => {
+    const winner = [...resolutionCandidates].sort((left, right) => {
       const leftScore = RESOLUTION_WEIGHT[left.sourceAuthority] * 100 + left.confidence
       const rightScore = RESOLUTION_WEIGHT[right.sourceAuthority] * 100 + right.confidence
       return rightScore - leftScore

@@ -68,6 +68,7 @@ import {
   generateAndPersistSameDayImagePackage,
   reviewSameDayImagePackage,
 } from "./ebay-same-day-image-package-runtime"
+import { reviewedOfficialManufacturerIdentity } from "./ebay-official-manufacturer-facts"
 
 const MARKETPLACE = "EBAY_US"
 const SINGLE_FACT_EXCEPTION_VERSION = "SAME_DAY_SINGLE_FACT_EXCEPTION_V3_2026_07_21"
@@ -98,6 +99,8 @@ const PRODUCT_FACT_AUTHORITY_LINEAGE_RECOVERY_VERSION =
 const LEGACY_PRODUCT_FACTS_RECOVERY_VERSION = "LEGACY_PRODUCT_FACTS_RECOVERY_V2_2026_07_19"
 const STALE_DECISION_FACTS_RECOVERY_VERSION = "STALE_DECISION_FACTS_RECOVERY_V1_2026_07_19"
 const PRE_FACTS_DECISION_REFRESH_VERSION = "PRE_FACTS_DECISION_REFRESH_V1_2026_07_21"
+const OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_VERSION =
+  "OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_V1_2026_07_21"
 const SAME_DAY_LUNA_DECISION_REFRESH_VERSION = "SAME_DAY_LUNA_DECISION_REFRESH_V1_2026_07_19"
 const SAME_DAY_REPLENISHMENT_VERSION = "SAME_RUN_REPLENISHMENT_V1_2026_07_20"
 const SAME_DAY_MAX_TOTAL_CANDIDATE_ATTEMPTS =
@@ -1765,6 +1768,92 @@ async function repairStaleDecisionProductFactsRejection(
   return 1
 }
 
+/**
+ * Replays Product Facts when a reviewed manufacturer identity contradicts a
+ * legacy generic Brand marker and active Browse comparables were consequently
+ * filtered out. Historical ambiguous rows remain non-qualifying and no eBay
+ * write or Product Research recapture is performed.
+ */
+async function repairOfficialBrandMarketPricingGap(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const selected = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .find((candidate) => {
+      const evidence = record(candidate.evidence_summary)
+      const facts = record(candidate.product_facts_summary)
+      const marketPricing = record(facts.marketPricing)
+      const resolvedFacts = Array.isArray(facts.resolvedFacts) ? facts.resolvedFacts : []
+      const resolvedBrand = resolvedFacts.map(record).find((fact) =>
+        text(fact.key).toLocaleLowerCase("en-US") === "brand")
+      const brand = text(resolvedBrand?.value).toLocaleLowerCase("en-US")
+      const official = reviewedOfficialManufacturerIdentity(text(candidate.product_title))
+      return candidate.machine_state === "WAITING_PRODUCT_APPROVAL" &&
+        Boolean(text(candidate.queue_item_id)) && Boolean(official) &&
+        ["unbranded", "generic", "does not apply", "not applicable", "n/a"].includes(brand) &&
+        marketPricing.status === "INSUFFICIENT_EQUIVALENT_MARKET_DATA" &&
+        text(evidence.officialBrandMarketPricingRecoveryVersion) !==
+          OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_VERSION
+    })
+  if (!selected) return 0
+  const official = reviewedOfficialManufacturerIdentity(text(selected.product_title))!
+  const completedAt = now.toISOString()
+  const { error: taskError } = await supabase.from("ebay_same_day_pilot_human_tasks").update({
+    status: "SUPERSEDED", completed_at: completedAt, updated_at: completedAt,
+  }).eq("candidate_id", selected.id).eq("status", "OPEN")
+  if (taskError) throw new Error("SAME_DAY_OFFICIAL_BRAND_RECOVERY_TASK_FAILED")
+  await transition({
+    supabase,
+    runId: state.run.id,
+    candidateId: text(selected.id),
+    previousState: "WAITING_PRODUCT_APPROVAL",
+    nextState: "ENRICHING_PRODUCT_FACTS",
+    reasonCode: "OFFICIAL_BRAND_MARKET_PRICING_RECALCULATION",
+    triggeredBy: "RETRY",
+    checkpoint: {
+      version: OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_VERSION,
+      officialSourceId: official.sourceId,
+      sourceReference: official.sourceReference,
+      priorBrandGeneric: true,
+      productResearchRepeated: false,
+      ebayWrites: 0,
+    },
+    nextAutomaticAction: "Recalcular la identidad oficial y el rango de mercado activo.",
+    nextHumanAction: "Ninguna.",
+    job: {
+      jobType: "ENRICH_PRODUCT_FACTS",
+      idempotencyKey: `${state.run.id}:${selected.id}:ENRICH_PRODUCT_FACTS:${OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_VERSION}`,
+      checkpoint: { queueItemId: selected.queue_item_id,
+        officialBrandMarketPricingRecovery: true },
+      availableAt: completedAt,
+      maxAttempts: 10,
+      apiFamily: "BROWSE",
+      apiOperation: "EXACT_VERIFICATION",
+      ownerLane: "P1_EXACT_VERIFICATION",
+    },
+  })
+  const { error: candidateError } = await supabase.from("ebay_same_day_pilot_candidates").update({
+    state: "READY_FOR_CONTENT",
+    blockers: [],
+    evidence_summary: { ...record(selected.evidence_summary),
+      officialBrandMarketPricingRecoveryVersion:
+        OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_VERSION,
+      officialBrandMarketPricingRecoveredAt: completedAt,
+      productResearchRepeated: false,
+    },
+    product_facts_summary: {},
+    next_automated_action: "Recalcular identidad oficial y mercado activo.",
+    next_human_action: "Ninguna.",
+    updated_at: completedAt,
+  }).eq("id", selected.id).eq("run_id", state.run.id)
+    .eq("machine_state", "ENRICHING_PRODUCT_FACTS")
+  if (candidateError) throw new Error("SAME_DAY_OFFICIAL_BRAND_RECOVERY_FAILED")
+  await refreshRunProjection(supabase, state.run.id)
+  return 1
+}
+
 async function refreshCandidateDecisionBeforeProductFacts(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -2577,6 +2666,11 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
         text(existing.run.operation_date) || date)
     }
     if (existing && await repairStaleDecisionProductFactsRejection(input.supabase, existing, now)) {
+      repaired = true
+      existing = await currentState(input.supabase, input.accountKey,
+        text(existing.run.operation_date) || date)
+    }
+    if (existing && await repairOfficialBrandMarketPricingGap(input.supabase, existing, now)) {
       repaired = true
       existing = await currentState(input.supabase, input.accountKey,
         text(existing.run.operation_date) || date)
@@ -4240,6 +4334,12 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       state,
       now,
     )
+  const officialBrandMarketPricingRecovered =
+    await repairOfficialBrandMarketPricingGap(input.supabase, state, now)
+  if (officialBrandMarketPricingRecovered) {
+    state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
+    if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
+  }
   const repaired = await repairSameDayPilotBootstrap(
     input.supabase,
     state,
@@ -4296,6 +4396,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     await refreshRunProjection(input.supabase, state.run.id, true)
     return { processed: 0, status: "IDLE", repaired,
       supersededAuthorityLineageDeadLetters,
+      officialBrandMarketPricingRecovered,
       legacyPrematureRejectionsRepaired, singleFactExceptionsRecovered,
       staleDecisionFactsRecovered,
       legacyProductFactsRejectionsRepaired,

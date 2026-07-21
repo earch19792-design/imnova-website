@@ -22,6 +22,7 @@ export type OfficialManufacturerFactsResult = {
     allowlistedOfficialDomainConfigured: boolean
     externalPageFetched: boolean
     identityMatched: boolean
+    reviewedFallbackUsed?: boolean
     rawHtmlStored: boolean
     sourceUrlStored: boolean
   }
@@ -36,6 +37,10 @@ type OfficialSourceDefinition = {
   candidatePattern?: RegExp
   pagePattern?: RegExp
   extractors?: Array<{ key: string; value: string; pattern: RegExp; unit?: string | null }>
+  reviewedFallback?: {
+    reviewedAt: string
+    facts: OfficialFact[]
+  }
 }
 
 // This registry is intentionally closed. A new source must be reviewed as the
@@ -67,6 +72,18 @@ const OFFICIAL_SOURCES: readonly OfficialSourceDefinition[] = [
     extractors: [
       { key: "type", value: "NEMA Adapter", pattern: /\bNEMA\s*14[\s/-]*30\b/i },
     ],
+    // Tesla's Akamai edge currently denies server-to-server reads even though
+    // the same official family page remains publicly available. These narrow
+    // facts were reviewed against that exact official 14-30 variant; the
+    // fallback cannot add an MPN, price, dimensions or any mutable claim.
+    reviewedFallback: {
+      reviewedAt: "2026-07-21T09:45:00.000Z",
+      facts: [
+        { key: "brand", value: "Tesla", unit: null },
+        { key: "exactProductName", value: "Gen 2 NEMA Adapters - 14-30", unit: null },
+        { key: "type", value: "NEMA Adapter", unit: null },
+      ],
+    },
   },
 ]
 
@@ -96,6 +113,33 @@ function sourceForProduct(productTitle: string) {
   return OFFICIAL_SOURCES.find((source) =>
     source.identityTerms.every((term) => title.includes(normalized(term))) &&
     (!source.candidatePattern || source.candidatePattern.test(productTitle))) ?? null
+}
+
+function reviewedFallbackResult(source: OfficialSourceDefinition) {
+  if (!source.reviewedFallback) return null
+  return {
+    status: "AVAILABLE" as const,
+    observedAt: source.reviewedFallback.reviewedAt,
+    sourceReference: sourceReference(source),
+    facts: source.reviewedFallback.facts,
+    audit: {
+      allowlistedOfficialDomainConfigured: true,
+      externalPageFetched: false,
+      identityMatched: true,
+      reviewedFallbackUsed: true,
+      rawHtmlStored: false,
+      sourceUrlStored: false,
+    },
+  }
+}
+
+export function reviewedOfficialManufacturerIdentity(productTitleValue: string) {
+  const source = sourceForProduct(productTitleValue)
+  const fallback = source?.reviewedFallback
+  if (!source || !fallback) return null
+  const brand = fallback.facts.find((fact) => fact.key === "brand")?.value ?? null
+  return brand ? { sourceId: source.id, brand,
+    sourceReference: sourceReference(source), reviewedAt: fallback.reviewedAt } : null
 }
 
 function jsonLdProduct(html: string) {
@@ -184,7 +228,7 @@ export async function fetchOfficialManufacturerFacts(input: {
     })
     const contentType = response.headers.get("content-type")?.toLocaleLowerCase("en-US") ?? ""
     if (!response.ok || response.status >= 300 || !contentType.includes("text/html")) {
-      return { status: "REQUEST_FAILED" as const, observedAt,
+      return reviewedFallbackResult(source) ?? { status: "REQUEST_FAILED" as const, observedAt,
         sourceReference: sourceReference(source), facts: [] as OfficialFact[],
         audit: { allowlistedOfficialDomainConfigured: true, externalPageFetched: false,
           identityMatched: false, rawHtmlStored: false, sourceUrlStored: false } }
@@ -215,7 +259,7 @@ export async function fetchOfficialManufacturerFacts(input: {
       audit: { allowlistedOfficialDomainConfigured: true, externalPageFetched: true,
         identityMatched: true, rawHtmlStored: false, sourceUrlStored: false } }
   } catch {
-    return { status: "REQUEST_FAILED" as const, observedAt,
+    return reviewedFallbackResult(source) ?? { status: "REQUEST_FAILED" as const, observedAt,
       sourceReference: sourceReference(source), facts: [] as OfficialFact[],
       audit: { allowlistedOfficialDomainConfigured: true, externalPageFetched: false,
         identityMatched: false, rawHtmlStored: false, sourceUrlStored: false } }
