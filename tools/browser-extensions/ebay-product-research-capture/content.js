@@ -120,6 +120,17 @@
     const match = text(value).replace(/,/g, "").match(/\d+/)
     return match ? Number(match[0]) : null
   }
+  const soldInteger = (value) => {
+    const normalized = text(value)
+    if (!normalized || /[$€£%]/.test(normalized)) return null
+    const withoutLabel = normalized
+      .replace(/^(?:total\s+sold|quantity\s+sold|sold\s+quantity|total\s+vendido|cantidad\s+vendida|unidades\s+vendidas)\s*:?\s*/i, "")
+      .replace(/\s*(?:sold|vendid[oa]s?)$/i, "")
+      .trim()
+    if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)$/.test(withoutLabel)) return null
+    const parsed = Number(withoutLabel.replace(/,/g, ""))
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+  }
   const percentage = (value) => {
     const parsed = money(value)
     return parsed !== null && parsed >= 0 && parsed <= 100 ? parsed : null
@@ -255,7 +266,7 @@
 
   function dateText(value) {
     const normalized = text(value)
-    if (!normalized) return null
+    if (!normalized || /^\d+(?:[.,]\d+)?$/.test(normalized)) return null
     const lowered = normalized.toLowerCase()
       .replace(/^(?:last\s+sold(?:\s+date)?|sold\s+date|fecha\s+de\s+(?:la\s+)?[úu]ltima\s+venta)\s*:?\s*/i, "")
     const now = new Date()
@@ -281,7 +292,7 @@
   function requiredFieldValid(field, value) {
     if (field === "temporaryTitle") return text(value).length >= 4
     if (field === "averageSoldPrice") return money(value) !== null
-    if (field === "totalSold") return (integer(value) ?? 0) > 0
+    if (field === "totalSold") return soldInteger(value) !== null
     if (field === "lastSoldDate") return dateText(value) !== null
     return true
   }
@@ -307,6 +318,22 @@
     return source.slice(bestStart + bestAliasLength, bestStart + bestAliasLength + length)
   }
 
+  function textAfterRequiredAlias(source, aliases, length = 140) {
+    const lowered = source.toLowerCase()
+    let bestStart = -1
+    let bestAliasLength = 0
+    for (const alias of aliases) {
+      const index = lowered.indexOf(alias)
+      if (index === -1) continue
+      if (bestStart === -1 || index < bestStart) {
+        bestStart = index
+        bestAliasLength = alias.length
+      }
+    }
+    return bestStart === -1 ? null
+      : source.slice(bestStart + bestAliasLength, bestStart + bestAliasLength + length)
+  }
+
   function titleFromBlockContent(content) {
     const chunks = content
       .split(/\n|[•|·]/)
@@ -326,17 +353,17 @@
     ])
     const priceMatch = priceSource.match(/[$€£]\s*[\d,.]+|\bfree\b/i) ?? content.match(/[$€£]\s*[\d,.]+|\bfree\b/i)
     if (priceMatch) values.averageSoldPrice = priceMatch[0]
-    const totalSoldSource = textAfterAnyAlias(content, [
+    const totalSoldSource = textAfterRequiredAlias(content, [
       "total sold", "quantity sold", "sold quantity", "total vendido", "cantidad vendida",
-      "unidades vendidas", "sold",
+      "unidades vendidas",
     ])
-    const totalSoldMatch = totalSoldSource.match(/\b[\d,]+\b/) ?? content.match(/\b[\d,]+\b/)
-    if (totalSoldMatch) values.totalSold = totalSoldMatch[0]
-    const dateSource = textAfterAnyAlias(content, [
+    const totalSoldMatch = totalSoldSource?.match(/^\s*:?\s*([\d,]+)\b/)
+    if (totalSoldMatch && soldInteger(totalSoldMatch[1]) !== null) values.totalSold = totalSoldMatch[1]
+    const dateSource = textAfterRequiredAlias(content, [
       "last sold date", "last sold", "sold date", "ultima venta", "última venta",
       "fecha de ultima venta", "fecha de última venta",
     ])
-    const dateMatch = dateText(dateSource) ?? dateText(content)
+    const dateMatch = dateSource ? dateText(dateSource) : null
     if (dateMatch) values.lastSoldDate = dateMatch
     const listingFormatSource = content.toLowerCase()
     if (/\bauction\b|\bsubasta\b/.test(listingFormatSource)) values.listingFormat = "AUCTION"
@@ -908,7 +935,7 @@
         listingId,
         averageSoldPrice: money(values.averageSoldPrice),
         averageShipping: values.averageShipping ? money(values.averageShipping) : null,
-        totalSold: integer(values.totalSold),
+        totalSold: soldInteger(values.totalSold),
         itemSales: values.itemSales ? money(values.itemSales) : null,
         lastSoldDate: dateText(values.lastSoldDate) ?? values.lastSoldDate,
         listingFormat: values.listingFormat || "UNKNOWN",
@@ -961,7 +988,7 @@
           listingId,
           averageSoldPrice: money(values.averageSoldPrice),
           averageShipping: values.averageShipping ? money(values.averageShipping) : null,
-          totalSold: integer(values.totalSold),
+          totalSold: soldInteger(values.totalSold),
           itemSales: values.itemSales ? money(values.itemSales) : null,
           lastSoldDate: dateText(values.lastSoldDate) ?? values.lastSoldDate,
           listingFormat: values.listingFormat || "UNKNOWN",
@@ -1722,7 +1749,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.6"
+  title.textContent = "Seller OS · Product Research · v1.2.7"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"

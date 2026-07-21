@@ -368,8 +368,14 @@ export function rankRelatedPackStrategies(input: {
     candidates,
     suggestedPackCountForEvaluation: leader?.packCount ?? null,
     requiresCustomPreparation: leader ? leader.packCount !== input.nativePackCount : false,
+    publicationRecommendation: leader
+      ? "PREPARE_PACK_LISTING_AFTER_EXACT_ECONOMICS" as const
+      : "KEEP_NATIVE_PRESENTATION" as const,
+    exactEconomicsRequired: Boolean(leader),
+    stockConfirmationRequired: Boolean(leader),
+    humanApprovalRequired: Boolean(leader),
     conclusion: leader
-      ? "Este pack aparece con mayor fuerza descriptiva en la muestra relacionada; requiere validar costos y aprobación humana."
+      ? `Seller OS recomienda preparar una oferta de ${leader.packCount} unidades por la evidencia vendida observada; antes de publicarla debe confirmar stock, costo total, envío, margen y aprobación humana.`
       : "No existe una cohorte relacionada suficiente para sugerir otra presentación.",
     prohibitedConclusions: [
       "La presentación causó las ventas.",

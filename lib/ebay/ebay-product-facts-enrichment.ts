@@ -454,6 +454,7 @@ async function officialDescriptionForCandidate(supabase: SupabaseClient, candida
 async function officialCapturedItemId(supabase: SupabaseClient, accountKey: string, supplierVariantId: string) {
   const { data, error } = await supabase.from("marketplace_product_research_capture_observations")
     .select("source_listing_id").eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+    .eq("evidence_reviewed", true).eq("quality_status", "VALID")
     .eq("matched_supplier_variant_id", supplierVariantId).eq("match_classification", "EXACT_LUNA_MATCH")
     .not("source_listing_id", "is", null).order("last_sold_date", { ascending: false }).limit(1).maybeSingle()
   if (error) throw new Error("PRODUCT_FACT_TRADING_ITEM_LOOKUP_FAILED")
@@ -760,9 +761,10 @@ export async function runProductFactsEnrichment(input: {
         variant, item: candidate, officialDescription, now,
         confirmedNativePackCount: input.controlledExploratoryTarget?.confirmedNativePackCount ?? null })
       const intendedPackCount = base.offerPackConflict ? null : base.nativePackCount
-      const nativePresentationUnitCount = integer(base.entries.find((entry) =>
-        entry.factScope === "PRODUCT_UNIT" && entry.factKey === "unitCount")?.normalizedValue) ??
-        intendedPackCount
+      // Market comparables and Catalog pack identity operate on the offer pack,
+      // not on the number of physical units inside one native Luna item.
+      const nativePresentationUnitCount = intendedPackCount ?? integer(base.entries.find((entry) =>
+        entry.factScope === "PRODUCT_UNIT" && entry.factKey === "unitCount")?.normalizedValue)
       const authoritativeGtin = normalizeGtin(variant.barcode ?? fromMetadata(base.metadata, ["upc", "ean", "gtin", "barcode"]) ?? officialDescription.facts.gtin)
       const knownCategoryId = categoryIdFromCandidateEvidence(candidate)
       const semanticCategoryId = semanticCategoryIdFromTitle(base.title)

@@ -208,6 +208,8 @@ async function readResearchMatches(
     .select("source_listing_reference_hash,confirmed_sold_quantity,last_sold_date,average_sold_price,average_shipping,free_shipping_percent,detected_offer_pack_count")
     .eq("marketplace_account_key", accountKey)
     .eq("marketplace", MARKETPLACE)
+    .eq("evidence_reviewed", true)
+    .eq("quality_status", "VALID")
     .eq("match_classification", "EXACT_LUNA_MATCH")
     .eq("matched_supplier_variant_id", supplierVariantId)
     .in("source_listing_reference_hash", itemReferenceHashes)

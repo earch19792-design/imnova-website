@@ -464,8 +464,12 @@ export function buildEbayMarketPricingRecommendation(input: {
           confirmedSoldQuantity: positiveInteger(
             confirmedRelatedPackStrategy.confirmedSoldQuantity,
           ) ?? 0,
+          publicationRecommendation:
+            "PREPARE_PACK_LISTING_AFTER_EXACT_ECONOMICS" as const,
           requiresFulfillmentConfirmation: true,
           requiresExactPackEconomics: true,
+          requiresStockConfirmation: true,
+          humanApprovalRequired: true,
           automaticallyRanked: true,
         }
       : null,

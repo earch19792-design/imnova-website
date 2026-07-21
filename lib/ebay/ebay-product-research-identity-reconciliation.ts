@@ -730,7 +730,8 @@ export async function reconcileProductResearchObservations(input: {
   let query = input.supabase.from("marketplace_product_research_capture_observations")
     .select("id,capture_batch_id,source_listing_id,normalized_identity,detected_offer_pack_count,detected_unit_count,detected_size,detected_variant,keyword_signals,match_classification,matched_supplier_variant_id,confirmed_sold_quantity,last_sold_date")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
-    .eq("evidence_reviewed", true).order("created_at", { ascending: true }).limit(200)
+    .eq("evidence_reviewed", true).eq("quality_status", "VALID")
+    .order("created_at", { ascending: true }).limit(200)
   if (input.observationIds?.length) query = query.in("id", input.observationIds)
   const { data: rows, error: observationError } = await query
   if (observationError) throw new Error("PRODUCT_IDENTITY_RECONCILIATION_OBSERVATION_READ_FAILED")

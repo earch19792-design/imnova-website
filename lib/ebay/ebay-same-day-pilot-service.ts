@@ -3650,7 +3650,7 @@ export async function decideSameDayProduct(input: {
     candidatePatch: { economicsSummary },
     nextAutomaticAction: "Construir un paquete original desde facts verificados.", nextHumanAction: "Ninguna.",
     job: { jobType: "BUILD_MANUAL_SELLER_HUB_HANDOFF",
-      idempotencyKey: `${state.run.id}:${candidate.id}:BUILD_MANUAL_SELLER_HUB_HANDOFF`,
+      idempotencyKey: `${state.run.id}:${candidate.id}:BUILD_MANUAL_SELLER_HUB_HANDOFF:${factsSummary.factRunId}`,
       checkpoint: { factRunId: factsSummary.factRunId, openAiCalls: 0, ebayWrites: 0 } } })
   await refreshRunProjection(input.supabase, state.run.id)
   return getSameDayPilot(input)
@@ -3738,6 +3738,7 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
     .eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", MARKETPLACE)
     .eq("evidence_reviewed", true)
+    .eq("quality_status", "VALID")
   if (captureObservationError) throw new Error("SAME_DAY_PILOT_CAPTURE_MATCH_READ_FAILED")
   const authorizedObservationCount = Number(captureObservationCount ?? 0)
   const capturedQueryHash = productResearchPlannedQueryHash(input.searchQuery)
@@ -4275,6 +4276,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           .eq("capture_batch_id", batchId)
           .eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE)
           .eq("evidence_reviewed", true)
+          .eq("quality_status", "VALID")
           .order("confirmed_sold_quantity", { ascending: false })
           .limit(SAME_DAY_RECONCILIATION_DECISION_REFERENCE_LIMIT),
         input.supabase.from("marketplace_product_research_capture_observations")
@@ -4282,6 +4284,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           .eq("capture_batch_id", batchId)
           .eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE)
           .eq("evidence_reviewed", true)
+          .eq("quality_status", "VALID")
           .order("created_at", { ascending: true })
           .limit(SAME_DAY_RECONCILIATION_COVERAGE_ROW_LIMIT),
       ])

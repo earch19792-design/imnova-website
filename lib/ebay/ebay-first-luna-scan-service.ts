@@ -1081,6 +1081,7 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
       .eq("marketplace", "EBAY_US")
       .in("matched_supplier_variant_id", supplierVariantIds)
       .eq("evidence_reviewed", true)
+      .eq("quality_status", "VALID")
       .limit(5_000)
     if (researchError) {
       // Product Research enriches ranking but must never take down the operational queue.

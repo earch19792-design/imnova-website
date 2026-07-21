@@ -871,10 +871,10 @@ export function Loop2Top20OpportunityPool() {
               <p className="mt-1 text-white/60">Para cuentas sin export CSV/JSON: la extensión captura con un clic únicamente la tabla visible en la página oficial autenticada. No comparte cookies ni credenciales con Seller OS.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.6.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.6</a>
+              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.7.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.7</a>
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
-            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.6 reutiliza una sola sesión segura durante el lote, avanza automáticamente y resalta únicamente la acción que corresponde.</p>
+            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.7 reutiliza una sola sesión segura durante el lote, valida cantidades y fechas, avanza automáticamente y resalta únicamente la acción que corresponde.</p>
             <div className="rounded-xl border border-amber-100/20 bg-amber-100/[0.04] p-3">
               <p className="font-black">Cuota oficial Browse</p>
               <p className="mt-1 text-white/55">Estado {browserCaptureStatus?.browseQuota?.status ?? "SIN VERIFICAR"} · restantes {browserCaptureStatus?.browseQuota?.remaining ?? "N/D"} de {browserCaptureStatus?.browseQuota?.limit ?? "N/D"} · reset {browserCaptureStatus?.browseQuota?.resetAt ? new Date(browserCaptureStatus.browseQuota.resetAt).toLocaleString("es") : "N/D"}.</p>

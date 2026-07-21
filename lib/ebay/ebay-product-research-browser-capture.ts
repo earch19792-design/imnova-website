@@ -181,6 +181,21 @@ function positiveInteger(value: unknown) {
   return parsed !== null && Number.isInteger(parsed) && parsed > 0 ? parsed : null
 }
 
+function confirmedSoldQuantity(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value > 0 ? value : null
+  }
+  const normalized = normalizedText(value, 80)
+  if (!normalized || /[$€£%]/.test(normalized)) return null
+  const withoutLabel = normalized
+    .replace(/^(?:total\s+sold|quantity\s+sold|sold\s+quantity|total\s+vendido|cantidad\s+vendida|unidades\s+vendidas)\s*:?\s*/i, "")
+    .replace(/\s*(?:sold|vendid[oa]s?)$/i, "")
+    .trim()
+  if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)$/.test(withoutLabel)) return null
+  const parsed = Number(withoutLabel.replace(/,/g, ""))
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
 function nonNegativeInteger(value: unknown) {
   const parsed = finiteNonNegative(value)
   return parsed !== null && Number.isInteger(parsed) ? parsed : null
@@ -191,11 +206,39 @@ function percent(value: unknown) {
   return parsed !== null && parsed <= 100 ? parsed : null
 }
 
-function normalizedDate(value: unknown, capturedAt: Date) {
+function captureDateBounds(input: ProductResearchBrowserCapture["dateRange"], capturedAt: Date) {
+  const timestamp = (value: unknown) => {
+    if (typeof value !== "string" || !value.trim()) return null
+    const numeric = Number(value)
+    if (Number.isFinite(numeric) && numeric > 0) return numeric
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  const explicitStart = timestamp(input?.start)
+  const explicitEnd = timestamp(input?.end)
+  if (explicitStart !== null && explicitEnd !== null && explicitEnd > explicitStart) {
+    return { earliest: explicitStart - 86_400_000, latest: explicitEnd + 86_400_000 }
+  }
+  const label = normalizedText(input?.label, 120)?.normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "").toLowerCase() ?? ""
+  const days = Number(label.match(/\b(\d{1,3})\b(?=[^\d]*(?:day|days|dia|dias))/)?.[1])
+  const boundedDays = Number.isInteger(days) && days > 0 && days <= 366 ? days : 90
+  return {
+    earliest: capturedAt.getTime() - (boundedDays + 2) * 86_400_000,
+    latest: capturedAt.getTime() + 86_400_000,
+  }
+}
+
+function normalizedDate(
+  value: unknown,
+  capturedAt: Date,
+  bounds: ReturnType<typeof captureDateBounds>,
+) {
   const text = normalizedText(value, 80)
-  if (!text) return null
+  if (!text || /^\d+(?:[.,]\d+)?$/.test(text)) return null
   const parsed = new Date(text)
-  if (!Number.isFinite(parsed.getTime()) || parsed.getTime() > capturedAt.getTime() + 86_400_000) return null
+  if (!Number.isFinite(parsed.getTime()) || parsed.getTime() < bounds.earliest ||
+    parsed.getTime() > bounds.latest || parsed.getTime() > capturedAt.getTime() + 86_400_000) return null
   return parsed.toISOString()
 }
 
@@ -294,12 +337,14 @@ function validateContext(input: ProductResearchBrowserCapture) {
     visualPatternSchemaVersion !== PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION) {
     throw new Error("PRODUCT_RESEARCH_VISUAL_SCHEMA_VERSION_INVALID")
   }
-  return { query, capturedAt, rangeLabel, rangeStart, rangeEnd, visualPatternSchemaVersion }
+  return { query, capturedAt, rangeLabel, rangeStart, rangeEnd, visualPatternSchemaVersion,
+    dateBounds: captureDateBounds(input.dateRange, capturedAt) }
 }
 
 function normalizeCaptureRow(
   value: unknown,
   capturedAt: Date,
+  dateBounds: ReturnType<typeof captureDateBounds>,
   visualCaptureEnabled: boolean,
 ): NormalizedCaptureRow | { error: string } {
   const row = record(value)
@@ -308,8 +353,8 @@ function normalizeCaptureRow(
   const averageSoldPrice = finiteNonNegative(row.averageSoldPrice)
   const averageShipping = row.averageShipping === null || row.averageShipping === undefined
     ? null : finiteNonNegative(row.averageShipping)
-  const totalSold = positiveInteger(row.totalSold)
-  const lastSoldDate = normalizedDate(row.lastSoldDate, capturedAt)
+  const totalSold = confirmedSoldQuantity(row.totalSold)
+  const lastSoldDate = normalizedDate(row.lastSoldDate, capturedAt, dateBounds)
   if (!transientTitle) return { error: "TEMPORARY_TITLE_REQUIRED" }
   if (sourceListingId && !/^\d{9,20}$/.test(sourceListingId)) return { error: "LISTING_ID_INVALID" }
   if (averageSoldPrice === null) return { error: "AVERAGE_SOLD_PRICE_INVALID" }
@@ -478,6 +523,7 @@ export function parseProductResearchBrowserCapture(input: {
   const normalized = input.capture.rows.map((row) => normalizeCaptureRow(
     row,
     context.capturedAt,
+    context.dateBounds,
     context.visualPatternSchemaVersion === PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION,
   ))
   const errorCounts = normalized.reduce<Record<string, number>>((counts, row) => {
