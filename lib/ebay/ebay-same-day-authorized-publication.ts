@@ -166,6 +166,7 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
   listingPackage: JsonRecord
   opportunity: JsonRecord
   now?: Date
+  allowRecoverablePackageImages?: boolean
 }): Promise<SameDayAuthorizedPublicationContext | null> {
   const packageId = uuid(input.listingPackage.id)
   const opportunityId = uuid(input.opportunity.id)
@@ -200,6 +201,16 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
   const packageImageUrls = exactSixHttpsUrls(packageData.imageUrls)
   const approvedImageUrls = exactSixHttpsUrls(imageSummary.publicUrls)
   const handoffImageUrls = exactSixHttpsUrls(record(handoffPackage.images).urls)
+  const recoverableMissingPackageImages =
+    input.allowRecoverablePackageImages === true
+    && Array.isArray(packageData.imageUrls)
+    && packageData.imageUrls.length === 0
+    && Array.isArray(packageData.imageAssetManifest)
+    && packageData.imageAssetManifest.length === 0
+  const packageImagesReady = packageImageUrls.length === 6
+    && validatedManifest(packageData, packageImageUrls)
+    && packageImageUrls.every((url, index) =>
+      approvedImageUrls[index] === url && handoffImageUrls[index] === url)
   if (
     text(candidate.state, 80) !== "READY_FOR_MANUAL_PUBLICATION"
     || !READY_STATES.has(text(candidate.machine_state, 80))
@@ -216,9 +227,7 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
     || uuid(imageSummary.listingPackageId) !== packageId
     || !uuid(imageSummary.controlId)
     || !approvedImageUrls.length || !handoffImageUrls.length
-    || !packageImageUrls.length || !validatedManifest(packageData, packageImageUrls)
-    || packageImageUrls.some((url, index) =>
-      approvedImageUrls[index] !== url || handoffImageUrls[index] !== url)
+    || (!packageImagesReady && !recoverableMissingPackageImages)
   ) throw new Error("SAME_DAY_PUBLICATION_PACKAGE_NOT_READY")
 
   const policies = record(handoffPackage.businessPolicies)
@@ -336,6 +345,8 @@ export function buildSameDayAuthorizedWorkspacePackage(input: {
   const currentAuthorization = record(currentDraft.imageAuthorization)
   const currentPackageWeightAndSize = record(currentDraft.packageWeightAndSize)
   const handoffPackageWeightAndSize = shippingConfiguration(handoff.shipping)
+  const currentImageUrls = exactSixHttpsUrls(current.imageUrls)
+  const handoffImageUrls = exactSixHttpsUrls(record(handoff.images).urls)
   const currentDimensions = record(currentPackageWeightAndSize.dimensions)
   const currentWeight = record(currentPackageWeightAndSize.weight)
   const currentMeasurementsProvided = [
@@ -354,7 +365,7 @@ export function buildSameDayAuthorizedWorkspacePackage(input: {
     categoryName: text(current.categoryName, 200),
     aspects: normalizedAspects(handoff.itemSpecifics),
     description: text(handoff.description, 100_000),
-    imageUrls: exactSixHttpsUrls(current.imageUrls),
+    imageUrls: currentImageUrls.length ? currentImageUrls : handoffImageUrls,
     imageAssetManifest: current.imageAssetManifest,
     pricing: input.pricing,
     shipping: record(handoff.shipping),

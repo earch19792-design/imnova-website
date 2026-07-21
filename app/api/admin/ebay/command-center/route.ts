@@ -49,7 +49,9 @@ function databaseErrorCode(error: unknown, fallback: string) {
   ]
   for (const candidate of candidates) {
     if (typeof candidate !== "string") continue
-    const match = candidate.match(/EBAY_LISTING_PACKAGE_[A-Z0-9_]+/)
+    const match = candidate.match(
+      /(?:EBAY_LISTING_PACKAGE|SAME_DAY_WORKSPACE)_[A-Z0-9_]+/,
+    )
     if (match) return match[0]
   }
   return fallback
@@ -666,6 +668,7 @@ export async function POST(req: Request) {
             actorUserId: reviewer,
             listingPackage: existing,
             opportunity: sourceOpportunity,
+            allowRecoverablePackageImages: true,
           })
         } catch (contextError) {
           const code = errorCode(contextError)
@@ -746,9 +749,23 @@ export async function POST(req: Request) {
               : "SAFE_EVIDENCE_ONLY_USER_FIELDS_PRESERVED",
           },
         }, selectedSafeDefaults)
-        const { data: refreshedData, error: refreshError } = await supabase.rpc(
-          "ebay_save_listing_package_guarded",
-          {
+        const sourceObservedAt = sameDayContext?.sourceObservedAt
+          ?? latestEvidenceTimestamp(sourceOpportunity)
+        const packageRpc = sameDayContext
+          ? "restore_ebay_same_day_authorized_listing_package_v1"
+          : "ebay_save_listing_package_guarded"
+        const packageRpcArguments = sameDayContext
+          ? {
+            p_listing_package_id: existing.id,
+            p_account_key: accountKey,
+            p_actor: reviewer,
+            p_opportunity_id: opportunityId,
+            p_candidate_key: candidateKey,
+            p_package_patch: refreshedPackageData,
+            p_source_observed_at: sourceObservedAt,
+            p_expected_updated_at: existing.updated_at,
+          }
+          : {
             p_package_id: existing.id,
             p_account_key: accountKey,
             p_actor: reviewer,
@@ -758,10 +775,12 @@ export async function POST(req: Request) {
             p_package_patch: refreshedPackageData,
             p_status: "draft",
             p_readiness: 0,
-            p_source_observed_at: sameDayContext?.sourceObservedAt
-              ?? latestEvidenceTimestamp(sourceOpportunity),
+            p_source_observed_at: sourceObservedAt,
             p_expected_updated_at: existing.updated_at,
-          },
+          }
+        const { data: refreshedData, error: refreshError } = await supabase.rpc(
+          packageRpc,
+          packageRpcArguments,
         )
         const refreshed = guardedPackageRow(refreshedData)
         if (refreshError || !refreshed) {

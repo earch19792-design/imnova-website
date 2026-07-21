@@ -258,10 +258,14 @@ test("listing package writes are server-only and atomically derive the protected
   const guardedCalls = route.match(
     /\.rpc\(\s*"ebay_save_listing_package_guarded"/g,
   ) ?? []
-  assert.equal(guardedCalls.length, 2)
+  const sameDayRestoreCalls = route.match(
+    /restore_ebay_same_day_authorized_listing_package_v1/g,
+  ) ?? []
+  assert.equal(guardedCalls.length, 1)
+  assert.equal(sameDayRestoreCalls.length, 1)
   assert.equal(
     (route.match(/p_expected_updated_at:/g) ?? []).length,
-    2,
+    3,
   )
   assert.doesNotMatch(
     route,

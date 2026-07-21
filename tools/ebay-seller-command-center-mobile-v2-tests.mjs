@@ -21,6 +21,10 @@ const readyPublicationLunaRecheckMigration = readFileSync(
   "supabase/migrations/20260722000000_reconfirm_ready_publication_luna.sql",
   "utf8",
 )
+const restoreSameDayApprovedPackageMigration = readFileSync(
+  "supabase/migrations/20260722001000_restore_same_day_approved_package.sql",
+  "utf8",
+)
 
 test("mobile command center centralizes the five Seller OS areas", () => {
   for (const label of ["Inicio", "Oportunidades eBay", "Listings", "Operación", "Salud y configuración"]) {
@@ -154,6 +158,124 @@ test("listing workspace recovers an expired Luna publication check without losin
   assert.match(readyPublicationLunaRecheckMigration, /ebay_writes, production_changed/)
   assert.match(readyPublicationLunaRecheckMigration, /imagesRegenerated', false/)
   assert.doesNotMatch(readyPublicationLunaRecheckMigration, /publishOffer|createOffer|createOrReplaceInventoryItem/)
+})
+
+test("same-day approved package restore is exact-six, human-approved and fail-closed", () => {
+  const migration = restoreSameDayApprovedPackageMigration
+  assert.match(
+    migration,
+    /create or replace function public\.restore_ebay_same_day_authorized_listing_package_v1\s*\(/i,
+  )
+  assert.match(migration, /security definer/i)
+  assert.match(migration, /set search_path\s*=\s*public,\s*pg_temp/i)
+  assert.match(migration, /for update/i)
+
+  for (const scopeGuard of [
+    /package(?:_row)?\.account_key\s*=\s*p_account_key/i,
+    /package(?:_row)?\.created_by\s*=\s*p_actor/i,
+    /control\.listing_package_id\s*=\s*v_package\.id/i,
+    /control\.marketplace_account_key\s*=\s*p_account_key/i,
+    /control\.created_by\s*=\s*p_actor/i,
+    /asset\.id\s*=\s*any\s*\(v_control\.asset_ids\)/i,
+  ]) assert.match(migration, scopeGuard)
+
+  assert.match(migration, /cardinality\s*\(v_control\.asset_ids\)\s*(?:<>|=|is distinct from)\s*6/i)
+  assert.match(migration, /control\.status\s*(?:<>|=|is distinct from)\s*'APPROVED'/i)
+  assert.match(migration, /control\.human_decision\s*(?:<>|=|is distinct from)\s*'APPROVED'/i)
+  assert.match(migration, /control\.reviewed_by\s*(?:<>|=|is distinct from)\s*p_actor/i)
+  assert.match(migration, /asset\.status\s*(?:<>|=|is distinct from)\s*'approved'/i)
+  assert.match(migration, /asset\.approved_at\s+is\s+(?:not\s+)?null/i)
+  assert.match(migration, /asset\.approved_by\s*(?:<>|=|is distinct from)\s*p_actor/i)
+  assert.match(
+    migration,
+    /asset\.qa_result\s*->>\s*'automaticStatus'\s*(?:<>|=|is distinct from)\s*'PARTIAL'/i,
+  )
+  assert.match(
+    migration,
+    /asset\.qa_result\s*->>\s*'humanApprovalRequired'\s*(?:<>|=|is distinct from)\s*'true'/i,
+  )
+  assert.doesNotMatch(
+    migration,
+    /automaticStatus'\s+in\s*\(\s*'PASSED'\s*,\s*'PARTIAL'\s*\)/i,
+  )
+
+  for (const protectedSource of [
+    /manual_handoff_package/i,
+    /image_package_summary/i,
+    /publicUrls/,
+    /itemSpecifics/,
+    /ebay_same_day_pilot_image_package_runs/i,
+    /ebay_listing_image_assets/i,
+  ]) assert.match(migration, protectedSource)
+  assert.match(
+    migration,
+    /jsonb_array_length\s*\(\s*(?:coalesce\s*\()?v_image_urls[\s\S]{0,80}(?:<>|=|is distinct from)\s*6/i,
+  )
+  assert.match(migration, /'imageUrls'\s*,\s*v_image_urls/)
+  assert.match(migration, /'imageAssetManifest'\s*,\s*v_image_manifest/)
+  assert.match(migration, /'aspects'/i)
+  assert.match(migration, /v_handoff\s*->\s*'itemSpecifics'/i)
+  assert.match(migration, /'shipping'/i)
+  assert.match(migration, /'CONFIRMED'/)
+  assert.match(migration, /'ESTIMATE_ONLY_NOT_FOR_LISTING'/)
+  assert.match(migration, /operatorConfirmationRequired/)
+  assert.match(migration, /verificationStatus/)
+  for (const trustedShippingStatus of [
+    /VERIFIED/,
+    /CORROBORATED/,
+    /DERIVED_VERIFIED/,
+  ]) assert.match(migration, trustedShippingStatus)
+
+  assert.match(migration, /ebay_account_policy_profiles/i)
+  assert.match(migration, /profile_version/i)
+  assert.match(migration, /EBAY_ACCOUNT_POLICY_PROFILE_V1_2026_07_20/)
+  assert.match(migration, /verification_source/i)
+  assert.match(migration, /EBAY_ACCOUNT_API_GET/)
+  assert.match(migration, /expires_at\s*(?:<=|>)\s*(?:p_now|clock_timestamp\s*\(\))/i)
+  assert.match(migration, /profile\.verified_at\s*(?:<=|>)\s*clock_timestamp\s*\(\)/i)
+  assert.match(migration, /profile\.merchant_location_key\s+is\s+not\s+null/i)
+  for (const verifiedSelection of [
+    /fulfillment_policy_id/i,
+    /payment_policy_id/i,
+    /return_policy_id/i,
+    /merchant_location_key/i,
+  ]) assert.match(migration, verifiedSelection)
+
+  for (const priorWriteControl of [
+    /ebay_draft_only_approvals/i,
+    /ebay_draft_only_execution_ledger/i,
+    /ebay_authorized_listing_publications/i,
+  ]) assert.match(migration, priorWriteControl)
+  assert.match(migration, /control\.ebay_writes\s*(?:<>|=|is distinct from)\s*0/i)
+  assert.match(migration, /control\.production_changed/i)
+  assert.match(migration, /handoff\.ebay_writes\s*(?:<>|=|is distinct from)\s*0/i)
+  assert.match(migration, /handoff\.production_changed/i)
+  assert.doesNotMatch(migration, /p_package_patch\s*->\s*'imageUrls'/i)
+  assert.doesNotMatch(migration, /p_package_patch\s*->\s*'imageAssetManifest'/i)
+  assert.doesNotMatch(
+    migration,
+    /publishOffer|createOffer|createOrReplaceInventoryItem|createInventoryLocation/,
+  )
+})
+
+test("same-day prepare calls only the dedicated approved-package restore RPC", () => {
+  const prepareStart = api.indexOf('if (action === "prepare_package")')
+  const saveStart = api.indexOf('if (action === "save_package")')
+  assert.ok(prepareStart >= 0 && saveStart > prepareStart)
+  const prepareApi = api.slice(prepareStart, saveStart)
+  const afterPrepareApi = api.slice(saveStart)
+
+  assert.match(prepareApi, /restore_ebay_same_day_authorized_listing_package_v1/)
+  assert.match(prepareApi, /p_account_key:\s*accountKey/)
+  assert.match(prepareApi, /p_actor:\s*reviewer/)
+  assert.match(prepareApi, /p_listing_package_id:\s*existing\.id/)
+  assert.match(prepareApi, /p_expected_updated_at:\s*existing\.updated_at/)
+  assert.match(prepareApi, /sameDay/i)
+  assert.doesNotMatch(afterPrepareApi, /restore_ebay_same_day_authorized_listing_package_v1/)
+  assert.doesNotMatch(
+    prepareApi,
+    /publishOffer\s*\(|createOffer\s*\(|createOrReplaceInventoryItem\s*\(/,
+  )
 })
 
 test("seller handoff has actionable economics and a Seller OS publication CTA", () => {
