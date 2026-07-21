@@ -16,7 +16,7 @@ import {
 } from "./ebay-product-research-visual-pattern.ts"
 
 export const PRODUCT_RESEARCH_BROWSER_CAPTURE_VERSION =
-  "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE_V1_2026_07_17"
+  "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE_V2_2026_07_21"
 export const PRODUCT_RESEARCH_BROWSER_CAPTURE_SOURCE =
   "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE" as const
 export const PRODUCT_RESEARCH_CAPTURE_MAX_ROWS = 200
@@ -79,6 +79,11 @@ export type ProductResearchBrowserCapture = {
   visibleResultCount: number
   visibleColumns: string[]
   rows: unknown[]
+  resultState?: "SOLD_ROWS_VISIBLE" | "NO_SOLD_RESULTS"
+  emptyResultProof?: {
+    status?: "OFFICIAL_NO_SOLD_RESULTS_MESSAGE_VISIBLE"
+    queryMatched?: boolean
+  } | null
 }
 
 type NormalizedCaptureRow = {
@@ -315,8 +320,13 @@ function validateContext(input: ProductResearchBrowserCapture) {
   if (!captureId || !/^[0-9a-f-]{36}$/i.test(captureId)) {
     throw new Error("PRODUCT_RESEARCH_CAPTURE_ID_INVALID")
   }
-  if (!Array.isArray(input.rows) || !input.rows.length || input.rows.length > PRODUCT_RESEARCH_CAPTURE_MAX_ROWS ||
-    input.visibleResultCount !== input.rows.length) {
+  const officialNoSoldResults = input.resultState === "NO_SOLD_RESULTS" &&
+    input.emptyResultProof?.status === "OFFICIAL_NO_SOLD_RESULTS_MESSAGE_VISIBLE" &&
+    input.emptyResultProof?.queryMatched === true
+  if (!Array.isArray(input.rows) || input.rows.length > PRODUCT_RESEARCH_CAPTURE_MAX_ROWS ||
+    input.visibleResultCount !== input.rows.length ||
+    (officialNoSoldResults && (input.rows.length !== 0 || input.visibleResultCount !== 0)) ||
+    (!officialNoSoldResults && input.rows.length === 0)) {
     throw new Error("PRODUCT_RESEARCH_CAPTURE_VISIBLE_ROWS_INVALID")
   }
   const columns = (Array.isArray(input.visibleColumns) ? input.visibleColumns : [])
@@ -328,8 +338,9 @@ function validateContext(input: ProductResearchBrowserCapture) {
     return Object.hasOwn(row, "temporaryTitle") && Object.hasOwn(row, "averageSoldPrice") &&
       Object.hasOwn(row, "totalSold") && Object.hasOwn(row, "lastSoldDate")
   })
-  if (!columns.length || columns.some((column) => FORBIDDEN_KEYS.has(column)) ||
-    !visibleColumnsMatch && !structuredColumnsMatch) {
+  if (!officialNoSoldResults && (!columns.length ||
+    columns.some((column) => FORBIDDEN_KEYS.has(column)) ||
+    !visibleColumnsMatch && !structuredColumnsMatch)) {
     throw new Error("PRODUCT_RESEARCH_CAPTURE_REQUIRED_COLUMNS_MISSING")
   }
   const visualPatternSchemaVersion = normalizedText(input.visualPatternSchemaVersion, 120)
@@ -338,6 +349,7 @@ function validateContext(input: ProductResearchBrowserCapture) {
     throw new Error("PRODUCT_RESEARCH_VISUAL_SCHEMA_VERSION_INVALID")
   }
   return { query, capturedAt, rangeLabel, rangeStart, rangeEnd, visualPatternSchemaVersion,
+    officialNoSoldResults,
     dateBounds: captureDateBounds(input.dateRange, capturedAt) }
 }
 
@@ -529,16 +541,16 @@ export function parseProductResearchBrowserCapture(input: {
   const errorCounts = normalized.reduce<Record<string, number>>((counts, row) => {
     if ("error" in row) counts[row.error] = (counts[row.error] ?? 0) + 1
     return counts
-  }, {})
+  }, context.officialNoSoldResults ? { OFFICIAL_NO_SOLD_RESULTS: 1 } : {})
   const valid = normalized.filter((row): row is NormalizedCaptureRow => !("error" in row))
   // A structurally valid official table can legitimately contain no usable
   // historical-sale date. Preserve that negative result without converting a
   // displayed price or another numeric label into sold evidence. Other
   // all-row parser failures still reject the capture because they can signal
   // a broken extractor rather than an empty historical market.
-  const zeroValidSoldRowsAccepted = valid.length === 0 &&
-    Object.keys(errorCounts).length === 1 &&
-    errorCounts.LAST_SOLD_DATE_INVALID === input.capture.rows.length
+  const zeroValidSoldRowsAccepted = context.officialNoSoldResults ||
+    valid.length === 0 && Object.keys(errorCounts).length === 1 &&
+      errorCounts.LAST_SOLD_DATE_INVALID === input.capture.rows.length
   if (!valid.length && !zeroValidSoldRowsAccepted) {
     const reasons = Object.entries(errorCounts).sort((left, right) => right[1] - left[1])
       .map(([code]) => code).slice(0, 3)
@@ -583,7 +595,9 @@ export function parseProductResearchBrowserCapture(input: {
     visualPatternSchemaVersion: context.visualPatternSchemaVersion,
     captureId: input.capture.captureId,
     captureHash: sha256({ captureId: input.capture.captureId, captureWindowHash,
-      queryHash: sha256(context.query), rows: uniqueRows.map((row) => row.deduplicationKey) }),
+      queryHash: sha256(context.query),
+      resultState: context.officialNoSoldResults ? "NO_SOLD_RESULTS" : "SOLD_ROWS_VISIBLE",
+      rows: uniqueRows.map((row) => row.deduplicationKey) }),
     captureWindowHash,
     listingSite: input.capture.listingSite,
     searchQueryHash: sha256(context.query.toLocaleLowerCase("en-US")),
@@ -596,6 +610,7 @@ export function parseProductResearchBrowserCapture(input: {
     rejectedCount: input.capture.rows.length - valid.length,
     errorCounts,
     zeroValidSoldRowsAccepted,
+    officialNoSoldResults: context.officialNoSoldResults,
     rows: uniqueRows,
     matchCounts: {
       exactLuna: matchCount("EXACT_LUNA_MATCH"),
@@ -867,7 +882,7 @@ export async function importProductResearchBrowserCapture(input: {
   const parsed = parseProductResearchBrowserCapture({ capture: input.capture, targets })
   const { data: duplicateBatch, error: duplicateBatchError } = await input.supabase
     .from("marketplace_product_research_capture_batches")
-    .select("id,search_query_hash,source_row_count,valid_count,imported_count,duplicate_count,rejected_count,exact_luna_match_count,different_pack_count,different_size_count,different_variant_count,ambiguous_count,no_luna_match_count,candidates_enriched_count,captured_at")
+    .select("id,search_query_hash,source_row_count,valid_count,imported_count,duplicate_count,rejected_count,exact_luna_match_count,different_pack_count,different_size_count,different_variant_count,ambiguous_count,no_luna_match_count,candidates_enriched_count,error_counts,captured_at")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
     .eq("capture_hash", parsed.captureHash).maybeSingle()
   if (duplicateBatchError) throw new Error("PRODUCT_RESEARCH_CAPTURE_DEDUP_READ_FAILED")
@@ -893,6 +908,8 @@ export async function importProductResearchBrowserCapture(input: {
     candidatesEnriched: duplicateBatch.candidates_enriched_count,
     capturedAt: duplicateBatch.captured_at, reanalysisRequired: false,
     zeroValidSoldRowsAccepted: Number(duplicateBatch.valid_count) === 0,
+    officialNoSoldResults:
+      Number(record(duplicateBatch.error_counts).OFFICIAL_NO_SOLD_RESULTS) === 1,
     visual,
     rawHtmlStored: false, temporaryTitlesStored: false, competitorImagesDownloaded: 0,
     piiStored: false, openAiCalls: 0, ebayWrites: 0 }
@@ -974,6 +991,7 @@ export async function importProductResearchBrowserCapture(input: {
     rejectedCount: parsed.rejectedCount, matchCounts: parsed.matchCounts,
     candidatesEnriched, capturedAt: parsed.capturedAt, reanalysisRequired: fresh.length > 0,
     zeroValidSoldRowsAccepted: parsed.zeroValidSoldRowsAccepted,
+    officialNoSoldResults: parsed.officialNoSoldResults,
     visual,
     rawHtmlStored: false, temporaryTitlesStored: false, competitorImagesDownloaded: 0,
     piiStored: false, openAiCalls: 0, ebayWrites: 0 }

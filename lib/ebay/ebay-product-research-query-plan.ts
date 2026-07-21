@@ -71,6 +71,11 @@ function canonicalQuery(value: unknown) {
   return meaningful.join(" ")
 }
 
+function displayIdentity(value: unknown) {
+  return text(value, 100).normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, " ").trim().replace(/\s+/g, " ")
+}
+
 export function productResearchDisplayQuery(value: unknown) {
   const display = text(value, 100).replace(/\bdefault\s+title\b/gi, " ")
     .trim().replace(/\s+/g, " ")
@@ -91,6 +96,30 @@ export function productResearchDisplayQuery(value: unknown) {
   return unitsRemoved > 0 && numbersRemoved > 0 && end >= 3
     ? tokens.slice(0, end).join(" ")
     : display
+}
+
+export function productResearchMarketplaceFamilyQuery(value: unknown) {
+  if (typeof value !== "string") return ""
+  const title = value.normalize("NFKC").replace(/\bdefault\s+title\b/gi, " ")
+    .trim().replace(/\s+/g, " ")
+  const byManufacturer = title.match(/^(.{2,60}?)\s+by\s+(.+)$/i)
+  if (!byManufacturer) return ""
+
+  // Marketplace sellers commonly omit the manufacturer phrase and fabrication
+  // adjectives while retaining the line/family plus the product type. Build
+  // that bounded alias only when a measurement gives us a reliable boundary;
+  // exact size, pack and variant are still decided by row-level reconciliation.
+  const measurement = byManufacturer[2].match(
+    /\b\d+(?:[.,]\d+)?\s*(?:fl\s*)?(?:qt|quart|quarts|oz|ounce|ounces|ml|milliliter|milliliters|l|liter|liters|litre|litres|g|gram|grams|kg|kilogram|kilograms|lb|lbs|pound|pounds|ct|count|counts)\b/i,
+  )
+  if (measurement?.index === undefined) return ""
+  const family = displayIdentity(byManufacturer[1])
+  const beforeMeasurement = displayIdentity(
+    byManufacturer[2].slice(0, measurement.index),
+  ).split(" ").filter(Boolean)
+  const productType = beforeMeasurement.slice(-1).join(" ")
+  const query = productResearchDisplayQuery(`${family} ${productType}`)
+  return query.split(" ").filter(Boolean).length >= 3 ? query : ""
 }
 
 export function productResearchQueriesMatch(left: unknown, right: unknown) {
@@ -127,6 +156,8 @@ function explicitBrand(metadata: JsonRecord) {
 }
 
 function queryForCandidate(candidate: ProductResearchQueryCandidate) {
+  const marketplaceFamily = productResearchMarketplaceFamilyQuery(candidate.productName)
+  if (marketplaceFamily) return marketplaceFamily
   const brandTokens = normalizedTokens(candidate.brand)
   const nameTokens = normalizedTokens(candidate.productName)
     .filter((token) => !brandTokens.includes(token))

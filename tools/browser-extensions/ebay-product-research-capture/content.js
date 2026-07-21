@@ -1215,6 +1215,34 @@
     throw new Error("PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND")
   }
 
+  function comparableQuery(value) {
+    return text(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, " ").trim()
+  }
+
+  function officialNoSoldResultsProof(searchQuery) {
+    const expected = comparableQuery(searchQuery)
+    if (!expected) return null
+    const elements = deepQueryAll("main h1,main h2,main h3,main p,main div,main span,[role='main'] h1,[role='main'] h2,[role='main'] h3,[role='main'] p")
+      .filter(visible).slice(0, 500)
+    for (const element of elements) {
+      const message = text(element.innerText || element.textContent)
+      if (message.length < 20 || message.length > 300) continue
+      const match = message.match(
+        /^No (?:sold|sales) results found for\s+["“]?(.+?)["”]?\.?$/i,
+      ) ?? message.match(
+        /^No se encontraron resultados (?:vendidos|de ventas) para\s+["“]?(.+?)["”]?\.?$/i,
+      )
+      const displayedQuery = text(match?.[1]).replace(/["”]\.?$/, "")
+      if (comparableQuery(displayedQuery) !== expected) continue
+      return {
+        status: "OFFICIAL_NO_SOLD_RESULTS_MESSAGE_VISIBLE",
+        queryMatched: true,
+      }
+    }
+    return null
+  }
+
   function safeStructureDiagnostics() {
     const roots = deepRoots()
     const fields = new Set(deepQueryAll("th,div,span,p,a,button")
@@ -1437,7 +1465,10 @@
   function visibleResultsSignature() {
     const ids = deepQueryAll('a[href*="/itm/"]').filter(visible)
       .map((link) => listingIdFromLink(link)).filter(Boolean).slice(0, 12)
-    return ids.length ? [...new Set(ids)].join(",") : ""
+    if (ids.length) return [...new Set(ids)].join(",")
+    const context = queryContext()
+    return officialNoSoldResultsProof(context.searchQuery)
+      ? `OFFICIAL_NO_SOLD_RESULTS:${comparableQuery(context.searchQuery)}` : ""
   }
 
   function stopNextQueryWatch() {
@@ -1546,7 +1577,10 @@
       )
       stopNextQueryWatch()
       setNextQueryWorkflowStage("READY_TO_CAPTURE")
-      setStatus("Resultados nuevos listos. Revísalos y pulsa Capturar y continuar.", "success")
+      const noSoldResults = Boolean(officialNoSoldResultsProof(queryContext().searchQuery))
+      setStatus(noSoldResults
+        ? "eBay confirmó cero resultados vendidos. Pulsa Capturar para registrar esta última opción."
+        : "Resultados nuevos listos. Revísalos y pulsa Capturar y continuar.", "success")
       return true
     } finally {
       nextQueryCheckPending = false
@@ -1738,7 +1772,8 @@
       throw new Error("PRODUCT_RESEARCH_QUERY_CONTEXT_NOT_FOUND")
     }
     assertExpectedQuery(context)
-    const result = findVisibleResults()
+    const emptyResultProof = officialNoSoldResultsProof(context.searchQuery)
+    const result = emptyResultProof ? { headers: [], rows: [] } : findVisibleResults()
     return {
       source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
       visualPatternSchemaVersion: VISUAL_PATTERN_SCHEMA_VERSION,
@@ -1751,6 +1786,8 @@
       visibleResultCount: result.rows.length,
       visibleColumns: result.headers,
       rows: result.rows,
+      resultState: emptyResultProof ? "NO_SOLD_RESULTS" : "SOLD_ROWS_VISIBLE",
+      emptyResultProof,
     }
   }
 
@@ -1863,7 +1900,9 @@
         }
         pending = prepared
         const elapsed = Math.max(1, Math.round(performance.now() - startedAt))
-        setStatus(`Captura preparada: ${pending.visibleResultCount} filas en ${elapsed} ms. Esperando Seller OS…`)
+        setStatus(pending.resultState === "NO_SOLD_RESULTS"
+          ? `Cero resultados vendidos confirmado en ${elapsed} ms. Esperando Seller OS…`
+          : `Captura preparada: ${pending.visibleResultCount} filas en ${elapsed} ms. Esperando Seller OS…`)
         resetReceiverTimeout()
         receiverReadyTimeout = window.setTimeout(() => {
           if (!pending) return
@@ -1898,8 +1937,11 @@
     if (event.data.type === CAPTURE_RESULT_MESSAGE && event.data.captureId === pending?.captureId) {
       const navigationOnly = event.data.success && event.data.navigationOnly === true &&
         event.data.captureQueryCorrected === true
+      const noSoldResults = pending?.resultState === "NO_SOLD_RESULTS"
       setStatus(navigationOnly
         ? "La tabla no correspondía y no fue guardada. Preparando la consulta correcta…"
+        : event.data.success && noSoldResults
+          ? "Cero ventas recientes quedó registrado después de revisar la familia preparada."
         : event.data.success
           ? `Captura procesada: ${event.data.validCount || 0} válidas; ${event.data.importedCount || 0} nuevas; ${event.data.duplicateCount || 0} duplicadas; ${event.data.rejectedCount || 0} rechazadas.`
           : `Captura rechazada: ${event.data.error || "ERROR"}`,
@@ -1923,7 +1965,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.10"
+  title.textContent = "Seller OS · Product Research · v1.2.11"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"

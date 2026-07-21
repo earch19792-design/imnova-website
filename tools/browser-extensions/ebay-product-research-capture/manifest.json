@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Seller OS — eBay Product Research Capture",
-  "version": "1.2.10",
-  "description": "Captura la tabla visible y analiza localmente rasgos no reconstructivos de miniaturas visibles de Product Research.",
+  "version": "1.2.11",
+  "description": "Captura ventas visibles o una confirmación oficial de cero resultados en Product Research.",
   "permissions": [],
   "host_permissions": [
     "https://www.ebay.com/sh/research*",

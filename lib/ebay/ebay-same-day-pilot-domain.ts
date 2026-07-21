@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { validateGtinChecksum } from "./ebay-winner-evidence-v2.ts"
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
-import { productResearchDisplayQuery } from "./ebay-product-research-query-plan.ts"
+import { productResearchDisplayQuery, productResearchMarketplaceFamilyQuery } from "./ebay-product-research-query-plan.ts"
 
 export const SAME_DAY_PILOT_VERSION = "PILOT_3_LISTINGS_SAME_DAY_V1"
 export const SAME_DAY_QUEUE_LIMIT = 5
@@ -249,13 +249,16 @@ export function buildSameDayProductResearchQuery(input: SameDayCandidateInput) {
   }
   const variant = normalized(input.variantTitle)
   const meaningfulVariant = /^(?:default(?: title)?|title)$/i.test(variant) ? "" : variant
+  const familyAlias = productResearchMarketplaceFamilyQuery(input.productTitle)
   const identity = productIdentityText(
     [input.productTitle, meaningfulVariant].filter(Boolean).join(" "),
   )
   return {
     strategy: "FAMILY_IDENTITY_RECONCILIATION",
-    query: productResearchDisplayQuery(identity.slice(0, 100)),
-    reason: "No existe GTIN o MPN confiable; se consulta la familia y después se separan tamaño, pack y variante fila por fila.",
+    query: familyAlias || productResearchDisplayQuery(identity.slice(0, 100)),
+    reason: familyAlias
+      ? "El título contiene una familia seguida de fabricante; se usa la forma corta que emplean otros vendedores y después se separan tamaño, pack y variante fila por fila."
+      : "No existe GTIN o MPN confiable; se consulta la familia y después se separan tamaño, pack y variante fila por fila.",
   }
 }
 

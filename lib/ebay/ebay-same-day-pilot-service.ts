@@ -2517,7 +2517,7 @@ async function createSameDayProductResearchPlan(input: {
     candidates: input.selected.map((candidate) => ({ variant: candidate.supplierVariantId, query: candidate.queryPlan.query })) })
   const { data, error } = await input.supabase.rpc("create_product_research_query_plan_v2", {
     p_plan_id: randomUUID(), p_marketplace_account_key: input.accountKey,
-    p_run_id: input.queueRunId, p_plan_version: `${SAME_DAY_PILOT_VERSION}_QUERY_PLAN_V1`,
+    p_run_id: input.queueRunId, p_plan_version: `${SAME_DAY_PILOT_VERSION}_QUERY_PLAN_V2`,
     p_input_hash: inputHash, p_candidate_count: input.selected.length, p_queries: queries,
     p_supersede_existing: input.supersedeExisting !== false,
   })
@@ -4053,9 +4053,14 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
       const lunaConfirmation = record(economicsSummary.lunaConfirmation)
       const lunaAlreadyConfirmed = text(lunaConfirmation.status).startsWith("AVAILABLE_") &&
         Number(economicsSummary.confirmedLunaPrice) > 0
-      const zeroValidSoldRows = Number(captureBatch.valid_count) === 0 &&
+      const officialNoSoldResults = Number(captureBatch.valid_count) === 0 &&
+        Number(captureBatch.source_row_count) === 0 &&
+        Number(record(captureBatch.error_counts).OFFICIAL_NO_SOLD_RESULTS) === 1
+      const zeroValidSoldRows = Number(captureBatch.valid_count) === 0 && (
+        officialNoSoldResults ||
         Number(captureBatch.source_row_count) > 0 &&
-        Number(captureBatch.rejected_count) === Number(captureBatch.source_row_count)
+          Number(captureBatch.rejected_count) === Number(captureBatch.source_row_count)
+      )
       const commercialEvidenceHash = versionedHash({
         batchId: input.batchId,
         supplierVariantId: candidate.supplier_variant_id,
@@ -4090,7 +4095,9 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
           manualPublicationRequired: true,
         },
         productResearchCaptureQuality: {
-          status: zeroValidSoldRows
+          status: officialNoSoldResults
+            ? "COMPLETED_OFFICIAL_NO_SOLD_RESULTS"
+            : zeroValidSoldRows
             ? "COMPLETED_ZERO_VALID_SOLD_ROWS"
             : "COMPLETED_NO_BATCH_SCOPED_VALID_ROWS",
           sourceRowCount: Number(captureBatch.source_row_count),
@@ -4116,7 +4123,9 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
         gateType: "PRODUCT_RESEARCH_CAPTURE_REQUIRED", runId: state.run.id, candidateId: candidate.id,
         previousState: "WAITING_PRODUCT_RESEARCH_CAPTURE",
         nextState: lunaAlreadyConfirmed ? "CALCULATING_ECONOMICS" : "RECONCILING_IDENTITY",
-        reasonCode: zeroValidSoldRows
+        reasonCode: officialNoSoldResults
+          ? "PRODUCT_RESEARCH_COMPLETED_NO_SOLD_RESULTS_AUTO_RESUME"
+          : zeroValidSoldRows
           ? "PRODUCT_RESEARCH_COMPLETED_ZERO_VALID_SOLD_AUTO_RESUME"
           : "PRODUCT_RESEARCH_COMPLETED_NO_BATCH_SCOPED_VALID_ROWS_AUTO_RESUME",
         triggeredBy: "SYSTEM",

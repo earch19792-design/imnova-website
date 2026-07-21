@@ -14,6 +14,7 @@ type SafeResult = {
   captureAlreadyProcessed?: boolean
   captureQueryCorrected?: boolean
   navigationOnly?: boolean
+  officialNoSoldResults?: boolean
   rowCount?: number
   validCount?: number
   importedCount?: number
@@ -208,6 +209,7 @@ export default function ProductResearchCaptureReceiverPage() {
       {result?.captureQueryCorrected && <p className="mt-5 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.07] p-4 text-sm leading-6 text-cyan-50">La tabla de esta pestaña no correspondía a la consulta pendiente y no fue guardada. Seller OS está enviando la consulta correcta a la extensión; espera los resultados nuevos antes de capturar.</p>}
       {result?.captureAlreadyProcessed && <p className="mt-5 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.07] p-4 text-sm leading-6 text-emerald-50">Esta tabla ya estaba guardada. No se importó ni duplicó nuevamente. Seller OS está enviando la próxima consulta validada a la extensión.</p>}
       {result && !result.captureAlreadyProcessed && !result.captureQueryCorrected && <dl className="mt-5 grid grid-cols-2 gap-3 text-sm">
+        {result.officialNoSoldResults && <div className="col-span-2 rounded-xl border border-amber-200/25 bg-amber-200/[0.07] p-3"><dt className="text-amber-100">Resultado oficial</dt><dd className="font-black text-amber-50">Cero ventas recientes para la familia preparada</dd></div>}
         <div><dt className="text-white/50">Filas / válidas</dt><dd className="font-black">{result.rowCount ?? 0} / {result.validCount ?? 0}</dd></div>
         <div><dt className="text-white/50">Importadas</dt><dd className="font-black">{result.importedCount ?? 0}</dd></div>
         <div><dt className="text-white/50">Duplicadas / rechazadas</dt><dd>{result.duplicateCount ?? 0} / {result.rejectedCount ?? 0}</dd></div>
