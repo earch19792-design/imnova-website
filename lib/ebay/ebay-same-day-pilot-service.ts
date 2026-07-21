@@ -221,6 +221,75 @@ async function persistConfirmedOfferPackQueueBinding(input: {
   if (updateError) throw new Error("SAME_DAY_PILOT_OFFER_PACK_QUEUE_ITEM_UPDATE_FAILED")
   return true
 }
+
+async function cancelSupersededProductFactsDeadLetters(input: {
+  supabase: SupabaseClient
+  runId: string
+  candidateId: string
+  now: Date
+}) {
+  const { data, error } = await input.supabase
+    .from("ebay_same_day_pilot_jobs")
+    .select("id,checkpoint,last_error_code")
+    .eq("run_id", input.runId)
+    .eq("candidate_id", input.candidateId)
+    .eq("job_type", "ENRICH_PRODUCT_FACTS")
+    .eq("status", "DEAD_LETTER")
+  if (error) throw new Error("SAME_DAY_PILOT_SUPERSEDED_FACTS_DEAD_LETTER_READ_FAILED")
+  let cancelled = 0
+  for (const failed of data ?? []) {
+    const { error: updateError } = await input.supabase
+      .from("ebay_same_day_pilot_jobs")
+      .update({
+        status: "CANCELLED",
+        last_error_code: "SUPERSEDED_BY_PRODUCT_FACT_AUTHORITY_LINEAGE_RECOVERY",
+        checkpoint: {
+          ...record(failed.checkpoint),
+          _supersededRecovery: {
+            version: PRODUCT_FACT_AUTHORITY_LINEAGE_RECOVERY_VERSION,
+            previousErrorCode: text(failed.last_error_code) || null,
+            recoveredAt: input.now.toISOString(),
+            historyDeleted: false,
+          },
+        },
+        updated_at: input.now.toISOString(),
+      })
+      .eq("id", failed.id)
+      .eq("status", "DEAD_LETTER")
+    if (updateError) {
+      throw new Error("SAME_DAY_PILOT_SUPERSEDED_FACTS_DEAD_LETTER_CANCEL_FAILED")
+    }
+    cancelled += 1
+  }
+  return cancelled
+}
+
+async function reconcileEnqueuedAuthorityLineageRecoveryDeadLetters(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const { data, error } = await supabase
+    .from("ebay_same_day_pilot_jobs")
+    .select("candidate_id,checkpoint,status")
+    .eq("run_id", state.run.id)
+    .eq("job_type", "ENRICH_PRODUCT_FACTS")
+    .in("status", ["PENDING", "WAITING_RETRY", "LEASED"])
+  if (error) throw new Error("SAME_DAY_PILOT_ENQUEUED_FACTS_RECOVERY_READ_FAILED")
+  const candidateIds = [...new Set((data ?? [])
+    .filter((job) => record(job.checkpoint).authorityLineageRecovery === true)
+    .map((job) => text(job.candidate_id))
+    .filter(Boolean))]
+  let cancelled = 0
+  for (const candidateId of candidateIds) {
+    const candidate = state.candidates.find((entry) => text(entry.id) === candidateId)
+    if (text(candidate?.machine_state) !== "ENRICHING_PRODUCT_FACTS") continue
+    cancelled += await cancelSupersededProductFactsDeadLetters({
+      supabase, runId: state.run.id, candidateId, now,
+    })
+  }
+  return cancelled
+}
 function safeHttpsUrl(value: unknown) {
   const submitted = text(value, 2_000)
   try {
@@ -1421,6 +1490,15 @@ async function repairRejectedProductFactAuthorityLineage(
   })
   if (strings(selected.blockers).includes("TOP10_CANONICAL_FACT_RECOVERY_NOT_READY") &&
     !packBindingReady) return 0
+  // The claim RPC intentionally blocks a run while any dead letter exists.
+  // Preserve the failed row as CANCELLED audit history before enqueueing the
+  // versioned replacement, otherwise the replacement can never be leased.
+  await cancelSupersededProductFactsDeadLetters({
+    supabase,
+    runId: state.run.id,
+    candidateId: text(selected.id),
+    now,
+  })
   const evidenceSummary = {
     ...record(selected.evidence_summary),
     productFactAuthorityLineageRecoveryVersion:
@@ -4005,6 +4083,15 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     last_worker_heartbeat_at: now.toISOString(), updated_at: now.toISOString(),
   }).eq("id", state.run.id)
   if (heartbeatError) throw new Error("SAME_DAY_PILOT_WORKER_HEARTBEAT_FAILED")
+  // Reconcile deployments where the versioned replacement was already
+  // enqueued before its obsolete dead letter could be marked superseded.
+  // This is recovery-only: no candidate, marketplace, or eBay data is written.
+  const supersededAuthorityLineageDeadLetters =
+    await reconcileEnqueuedAuthorityLineageRecoveryDeadLetters(
+      input.supabase,
+      state,
+      now,
+    )
   const repaired = await repairSameDayPilotBootstrap(
     input.supabase,
     state,
@@ -4060,6 +4147,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     }
     await refreshRunProjection(input.supabase, state.run.id, true)
     return { processed: 0, status: "IDLE", repaired,
+      supersededAuthorityLineageDeadLetters,
       legacyPrematureRejectionsRepaired, singleFactExceptionsRecovered,
       staleDecisionFactsRecovered,
       legacyProductFactsRejectionsRepaired,
