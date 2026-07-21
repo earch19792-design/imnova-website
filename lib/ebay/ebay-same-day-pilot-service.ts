@@ -1660,6 +1660,9 @@ async function repairRejectedSingleFactException(
       fieldLabel: exception.label, selectionOnly: exception.selectionOnly,
       allowedValuesComplete: exception.allowedValuesComplete,
       allowedValues: exception.allowedValues,
+      currentValue: "currentValue" in exception ? exception.currentValue : null,
+      explicitTitlePackCount: "explicitTitlePackCount" in exception
+        ? exception.explicitTitlePackCount : null,
       regulatoryFact: "regulatoryFact" in exception && exception.regulatoryFact === true,
       requiresVisibleOfficialLabel: true },
     continuationJobType: "ENRICH_PRODUCT_FACTS",

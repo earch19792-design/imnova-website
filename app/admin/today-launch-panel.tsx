@@ -179,6 +179,7 @@ export function TodayLaunchPanel() {
           ? <p className="mt-2 rounded-2xl border border-white/10 p-4 text-sm text-white/55">Seller OS no necesita una acción humana en este momento.</p>
           : <div className="mt-3"><HumanTask task={primaryTask} candidate={primaryCandidate}
             reviewAssets={primaryReviewAssets} working={working}
+            submissionError={error}
             onConfirm={(body) => request(body)} /></div>}
         {productResearchTasks.length > 0 && primaryTask && <aside aria-label="Próxima decisión en espera" className="mt-3 rounded-2xl border border-violet-200/20 bg-violet-200/[0.04] p-3">
           <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/60">Próxima decisión protegida</p>
@@ -560,11 +561,12 @@ function ProductResearchQueueTask({ guidance, researchTasks, candidates, fallbac
   </article>
 }
 
-function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
+function HumanTask({ task, candidate, reviewAssets, working, submissionError, onConfirm }: {
   task: Row
   candidate?: Row
   reviewAssets: Row[]
   working: boolean
+  submissionError?: string
   onConfirm: (body: Row) => Promise<void>
 }) {
   const pricingRecommendation = candidate?.economics_summary?.pricingRecommendation ?? {}
@@ -626,6 +628,25 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
   const measurementFact = ["itemLength", "itemWidth"].includes(factKey)
   const offerPackFact = factKey === "offerPackCount"
   const categoryFact = factKey === "categoryId"
+  const factEvidence = task.evidence_summary ?? {}
+  const offerPackHint = [
+    task.action_schema?.explicitTitlePackCount,
+    factEvidence.explicitTitlePackCount,
+    task.action_schema?.currentValue,
+    factEvidence.currentValue,
+  ].map((value) => Number(value)).find((value) =>
+    Number.isInteger(value) && value > 0 && value <= 100) ?? null
+  const parsedFactPackCount = factExceptionValue.trim() === ""
+    ? null : Number(factExceptionValue)
+  const offerPackValueInvalid = offerPackFact && parsedFactPackCount !== null && (
+    !Number.isInteger(parsedFactPackCount) || parsedFactPackCount <= 0 ||
+    parsedFactPackCount > 100
+  )
+  const offerPackValueConflict = offerPackFact && offerPackHint !== null &&
+    parsedFactPackCount !== null && parsedFactPackCount !== offerPackHint
+  const factValueInvalid = !brandAbsentConfirmed && (
+    !factExceptionValue.trim() || offerPackValueInvalid || offerPackValueConflict
+  )
 
   useEffect(() => {
     setSalePrice(recommendedSalePriceText)
@@ -633,10 +654,12 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
     const knownPackCount = Number(selectionIdentity.nativePackCount)
     setNativePackCount(Number.isInteger(knownPackCount) && knownPackCount > 0
       ? String(knownPackCount) : "")
-    setFactExceptionValue("")
+    setFactExceptionValue(offerPackFact && offerPackHint !== null
+      ? String(offerPackHint) : "")
     setVisibleOfficialLabelConfirmed(false)
     setBrandAbsentConfirmed(false)
-  }, [task.id, recommendedSalePriceText, selectionIdentity.nativePackCount])
+  }, [task.id, recommendedSalePriceText, selectionIdentity.nativePackCount,
+    offerPackFact, offerPackHint])
 
   return <article className="min-w-0 overflow-hidden rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-4">
     <div className="flex flex-wrap justify-between gap-3">
@@ -721,14 +744,21 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
           inputMode={offerPackFact || categoryFact ? "numeric" : undefined}
           list={factAllowedValues.length ? factValueListId : undefined}
           placeholder={categoryFact ? "Ejemplo: 179006" : offerPackFact ? "Ejemplo: 2" : measurementFact ? "Ejemplo: 7.5 in" : factAllowedValues.length ? "Elige o escribe el valor visible" : "Escribe el valor exacto visible"}
-          maxLength={250} aria-required="true" aria-invalid={!brandAbsentConfirmed && !factExceptionValue.trim()}
-          className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${brandAbsentConfirmed || factExceptionValue.trim() ? "border-white/15" : "border-red-400"}`} />
+          maxLength={250} aria-required="true" aria-invalid={factValueInvalid}
+          aria-describedby={`${fieldId}-fact-help`}
+          className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${factValueInvalid ? "border-red-400" : "border-white/15"}`} />
         {factAllowedValues.length > 0 && <datalist id={factValueListId}>{factAllowedValues.map((value) =>
           <option key={value} value={value} />)}</datalist>}
-        <span className={`mt-1 block font-normal ${brandAbsentConfirmed || factExceptionValue.trim() ? "text-white/55" : "text-red-200"}`}>{brandAbsentConfirmed
+        <span id={`${fieldId}-fact-help`} className={`mt-1 block font-normal ${factValueInvalid ? "text-red-200" : "text-white/55"}`}>{brandAbsentConfirmed
           ? "Se enviará el valor estándar Unbranded porque confirmaste que no existe marca visible."
+          : offerPackValueInvalid
+          ? "Usa un número entero entre 1 y 100."
+          : offerPackValueConflict
+          ? `El título exacto muestra “${offerPackHint} Pack”. Confirma ${offerPackHint}; ${factExceptionValue.trim()} corresponde a otra presentación.`
           : factExceptionValue.trim()
-          ? "Valor recibido; Seller OS lo guardará con procedencia y volverá a validar Taxonomy."
+          ? offerPackFact && offerPackHint !== null
+            ? `Seller OS detectó ${offerPackHint} unidades en el título exacto y las precargó. Confírmalas sólo si también son visibles en la fuente oficial.`
+            : "Valor recibido; Seller OS lo guardará con procedencia y volverá a validar Taxonomy."
           : categoryFact ? "Copia únicamente el ID numérico de la categoría exacta mostrado por el selector oficial de eBay."
           : offerPackFact ? "Escribe cuántas unidades físicas contiene la presentación visible; una compra no significa necesariamente una unidad."
           : measurementFact ? "Escribe el número y la unidad que aparecen en el producto o empaque; no uses dimensiones estimadas de envío."
@@ -757,7 +787,7 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
       <div className="mt-3 flex flex-wrap gap-2">
         <button type="button"
           disabled={working || (!brandAbsentConfirmed &&
-            (!factExceptionValue.trim() || !visibleOfficialLabelConfirmed))}
+            (factValueInvalid || !visibleOfficialLabelConfirmed))}
           onClick={() => void onConfirm({ action: "fact_exception_decision",
             taskId: task.id, decision: "CONFIRM",
             value: brandAbsentConfirmed ? "Unbranded" : factExceptionValue.trim(),
@@ -768,6 +798,7 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
             taskId: task.id, decision: "REJECT" })}
           className="min-h-12 w-full rounded-xl border border-red-300/35 px-4 font-black text-red-100 disabled:opacity-40 sm:w-auto">NO PUEDO VERIFICARLO · PROBAR SIGUIENTE</button>
       </div>
+      {submissionError && <p role="alert" className="mt-3 rounded-xl border border-red-300/35 bg-red-400/10 p-3 text-sm font-bold text-red-100">{submissionError}</p>}
       <p className="mt-2 text-xs text-white/50">OpenAI no completa este campo. No se guarda imagen, URL, HTML ni dato del competidor.</p>
     </div>}
 

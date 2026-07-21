@@ -132,7 +132,7 @@ function safeError(error: unknown) {
 }
 function safeErrorStatus(error: unknown) {
   const code = safeError(error)
-  return /(?:INVALID|REQUIRED|BLOCKED|TASK_|CANDIDATE_)/.test(code) ? 409 : 502
+  return /(?:INVALID|REQUIRED|BLOCKED|CONFLICT|TASK_|CANDIDATE_)/.test(code) ? 409 : 502
 }
 async function authorization(req: Request) {
   const auth = await validateAdminApiRequest(req)
