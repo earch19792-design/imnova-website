@@ -2,6 +2,8 @@ import { createHash } from "node:crypto"
 
 import type { SafeEbayActiveCompetitorObservation } from "./ebay-seller-keyword-demand-gateway"
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { controlledRiskEconomicsConfig } from "./ebay-controlled-risk-manual-override.ts"
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
 import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics } from "./ebay-unit-economics.ts"
 
 export const EBAY_COMPETITOR_WATCH_VERSION =
@@ -269,16 +271,36 @@ export function buildActiveMarketPriceRecommendation(input: Pick<
   const floorWithoutPromotion = calculateEbayMinimumOperatorPrice({
     supplierCost: totalSupplierCost,
   }, { promotedListingsReserveRate: 0 })
+  const controlledRiskConfig = controlledRiskEconomicsConfig()
+  const controlledRiskFloor = calculateEbayMinimumOperatorPrice({
+    supplierCost: totalSupplierCost,
+  }, controlledRiskConfig)
   if (!floorWithPromotionReserve.ready || !floorWithoutPromotion.ready ||
+    !controlledRiskFloor.ready ||
     floorWithPromotionReserve.minimumOperatorPrice === null ||
-    floorWithoutPromotion.minimumOperatorPrice === null) return null
+    floorWithoutPromotion.minimumOperatorPrice === null ||
+    controlledRiskFloor.minimumOperatorPrice === null) return null
 
-  const promotionReserveIncluded = input.ownListing.promotionAllowed !== false
-  const minimumSafeLandedPrice = promotionReserveIncluded
+  const standardPromotionReserveIncluded = input.ownListing.promotionAllowed !== false
+  const standardMinimumSafeLandedPrice = standardPromotionReserveIncluded
     ? floorWithPromotionReserve.minimumOperatorPrice
     : floorWithoutPromotion.minimumOperatorPrice
   const currentLandedPrice = money(ownItemPrice + ownShippingCost)
+  const activeMarketControlledEconomics = calculateEbayUnitEconomics({
+    salePrice: activeMedian,
+    supplierCost: totalSupplierCost,
+  }, controlledRiskConfig)
+  const controlledRiskTenPercent = input.activeSellerCount >= 3 &&
+    activeMedian >= controlledRiskFloor.minimumOperatorPrice &&
+    activeMarketControlledEconomics.ready &&
+    activeMarketControlledEconomics.passesProfitGate
+  const minimumSafeLandedPrice = controlledRiskTenPercent
+    ? controlledRiskFloor.minimumOperatorPrice
+    : standardMinimumSafeLandedPrice
+  const promotionReserveIncluded = controlledRiskTenPercent
+    ? false : standardPromotionReserveIncluded
   let action: "LOWER_TO_ACTIVE_MARKET_SAFE_PRICE" |
+    "LOWER_TO_ACTIVE_MARKET_CONTROLLED_RISK_PRICE" |
     "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR" | "RAISE_TO_SAFE_FLOOR"
   let proposedLandedPrice: number
   if (currentLandedPrice < minimumSafeLandedPrice) {
@@ -290,7 +312,9 @@ export function buildActiveMarketPriceRecommendation(input: Pick<
       activeMedian,
     ))
     if (safeCompetitivePrice < currentLandedPrice - 0.01) {
-      action = "LOWER_TO_ACTIVE_MARKET_SAFE_PRICE"
+      action = controlledRiskTenPercent
+        ? "LOWER_TO_ACTIVE_MARKET_CONTROLLED_RISK_PRICE"
+        : "LOWER_TO_ACTIVE_MARKET_SAFE_PRICE"
       proposedLandedPrice = safeCompetitivePrice
     } else {
       action = "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"
@@ -302,8 +326,9 @@ export function buildActiveMarketPriceRecommendation(input: Pick<
     0.01,
     proposedLandedPrice - ownShippingCost,
   ))
-  const economicsOverrides = promotionReserveIncluded
-    ? {} : { promotedListingsReserveRate: 0 }
+  const economicsOverrides = controlledRiskTenPercent
+    ? controlledRiskConfig
+    : promotionReserveIncluded ? {} : { promotedListingsReserveRate: 0 }
   const current = calculateEbayUnitEconomics({
     salePrice: currentLandedPrice,
     supplierCost: totalSupplierCost,
@@ -342,8 +367,12 @@ export function buildActiveMarketPriceRecommendation(input: Pick<
     supplierUnitCost: money(supplierUnitCost),
     totalSupplierCost,
     minimumSafeLandedPrice,
+    standardMinimumSafeLandedPrice,
     floorWithPromotionReserve: floorWithPromotionReserve.minimumOperatorPrice,
     floorWithoutPromotion: floorWithoutPromotion.minimumOperatorPrice,
+    controlledRiskMinimumLandedPrice:
+      controlledRiskFloor.minimumOperatorPrice,
+    controlledRiskTenPercent,
     promotionReserveIncluded,
     canReachActiveMarketSafely: activeMedian >= minimumSafeLandedPrice,
     currentEstimatedNetProfit: current.estimatedNetProfit,

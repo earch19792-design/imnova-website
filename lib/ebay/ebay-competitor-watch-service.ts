@@ -444,12 +444,16 @@ async function persistCompetitorAlert(input: {
         : `Promoción recomendada 0%. ${priceRecommendation.promotionRecommendation.reason} `) +
       "Requiere revisión humana; no se modificó eBay."
     : activeMarketPriceRecommendation
-      ? activeMarketPriceRecommendation.action ===
-          "LOWER_TO_ACTIVE_MARKET_SAFE_PRICE"
+      ? [
+          "LOWER_TO_ACTIVE_MARKET_SAFE_PRICE",
+          "LOWER_TO_ACTIVE_MARKET_CONTROLLED_RISK_PRICE",
+        ].includes(activeMarketPriceRecommendation.action)
         ? `Evaluar bajar a $${activeMarketPriceRecommendation.proposedItemPrice.toFixed(2)}. ` +
           `Mediana activa $${activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2)}; ` +
           `piso seguro $${activeMarketPriceRecommendation.minimumSafeLandedPrice.toFixed(2)} ` +
-          `(${activeMarketPriceRecommendation.promotionReserveIncluded
+          `(${activeMarketPriceRecommendation.controlledRiskTenPercent
+            ? "margen controlado mínimo 10%; promoción bloqueada"
+            : activeMarketPriceRecommendation.promotionReserveIncluded
             ? "incluye reserva publicitaria 5%"
             : "promoción bloqueada"}). La oferta activa no es una venta confirmada. ` +
           "Requiere autorización humana; no se modificó eBay."
@@ -522,6 +526,8 @@ async function persistCompetitorAlert(input: {
           `Actual $${activeMarketPriceRecommendation.currentItemPrice.toFixed(2)}; ` +
           `mercado activo $${activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2)}; ` +
           `piso seguro $${activeMarketPriceRecommendation.minimumSafeLandedPrice.toFixed(2)}. ` +
+          `${activeMarketPriceRecommendation.controlledRiskTenPercent
+            ? "Modo 10% sin promoción. " : ""}` +
           "Oferta activa, no venta confirmada."
       : marketPricePositionDetected && ownLandedPrice !== null &&
           input.analysis.medianLandedPrice !== null
@@ -584,6 +590,8 @@ async function persistCompetitorAlert(input: {
         ? activeMarketPriceRecommendation?.action ===
             "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"
           ? "Mantener el precio: el mercado activo está debajo del piso seguro."
+          : activeMarketPriceRecommendation?.controlledRiskTenPercent
+            ? "Autorizar o rechazar el precio competitivo; quedará bloqueado para promociones."
           : "Autorizar o rechazar la propuesta de precio; eBay no cambia sin tu confirmación."
         : marketPricePositionDetected
           ? "Confirmar ventas en Product Research antes de cambiar el precio."

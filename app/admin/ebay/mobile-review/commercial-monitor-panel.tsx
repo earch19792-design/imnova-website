@@ -245,8 +245,11 @@ type Dashboard = {
         activeMarketMedianLandedPrice?: number
         activeSellerCount?: number
         minimumSafeLandedPrice?: number
+        standardMinimumSafeLandedPrice?: number
         floorWithPromotionReserve?: number
         floorWithoutPromotion?: number
+        controlledRiskMinimumLandedPrice?: number
+        controlledRiskTenPercent?: boolean
         promotionReserveIncluded?: boolean
         canReachActiveMarketSafely?: boolean
         comparisonBasis?: string
@@ -1175,7 +1178,8 @@ export function CommercialMonitorPanel() {
                 <p className="mt-1 text-white/55">{recommendation.activeMarketNotConfirmedSale
                   ? `${recommendation.activeSellerCount ?? 0} vendedor(es) activos · no son ventas confirmadas`
                   : `${recommendation.confirmedSoldSellerCount ?? 0} vendedor(es) exacto(s) · ${recommendation.confirmedSoldQuantity ?? 0} venta(s)`} · piso propio {money(recommendation.minimumSafeLandedPrice)} · utilidad {money(recommendation.proposedEstimatedNetProfit ?? undefined)} · margen {typeof recommendation.proposedEstimatedMarginPercent === "number" ? `${recommendation.proposedEstimatedMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.proposedEstimatedRoiPercent === "number" ? `${recommendation.proposedEstimatedRoiPercent.toFixed(2)}%` : "—"}</p>
-                {recommendation.activeMarketNotConfirmedSale && <p className="mt-1 text-white/55">Piso con reserva publicitaria 5%: {money(recommendation.floorWithPromotionReserve)} · sin promoción: {money(recommendation.floorWithoutPromotion)} · alcanza la mediana activa: {recommendation.canReachActiveMarketSafely ? "SÍ" : "NO"}</p>}
+                {recommendation.activeMarketNotConfirmedSale && <p className="mt-1 text-white/55">Piso normal con reserva publicitaria 5%: {money(recommendation.floorWithPromotionReserve)} · sin promoción: {money(recommendation.floorWithoutPromotion)} · piso controlado 10%: {money(recommendation.controlledRiskMinimumLandedPrice)} · alcanza la mediana activa: {recommendation.canReachActiveMarketSafely ? "SÍ" : "NO"}</p>}
+                {recommendation.controlledRiskTenPercent && <p className="mt-2 rounded-lg border border-amber-200/25 bg-amber-200/[0.08] p-2 font-black text-amber-50">PRECIO COMPETITIVO CON MARGEN CONTROLADO 10% · PROMOCIÓN BLOQUEADA</p>}
                 {recommendation.activeMarketNotConfirmedSale && recommendation.activeMarketEconomics && <p className="mt-1 text-white/55">A precio de mercado: utilidad {money(recommendation.activeMarketEconomics.estimatedNetProfit ?? undefined)} · margen {typeof recommendation.activeMarketEconomics.estimatedNetMarginPercent === "number" ? `${recommendation.activeMarketEconomics.estimatedNetMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.activeMarketEconomics.estimatedRoiPercent === "number" ? `${recommendation.activeMarketEconomics.estimatedRoiPercent.toFixed(2)}%` : "—"} · envío conservador {money(recommendation.activeMarketEconomics.estimatedOutboundShipping ?? undefined)}. Regla(s) que fallan: {(recommendation.activeMarketEconomics.failedGateCodes ?? []).join(", ") || "ninguna"}.</p>}
                 <p className="mt-2 font-bold text-emerald-50">{entry.recommendedAction}</p>
                 <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Esperando revisión humana · WhatsApp encolado · ningún cambio aplicado</p>

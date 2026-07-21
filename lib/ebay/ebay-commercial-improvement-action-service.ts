@@ -9,6 +9,7 @@ import {
   tradingXmlTagValue,
 } from "./ebay-manual-listing-trading-readonly"
 import { calculateEbayUnitEconomics } from "./ebay-unit-economics"
+import { controlledRiskEconomicsConfig } from "./ebay-controlled-risk-manual-override"
 import {
   COMMERCIAL_IMPROVEMENT_CONFIRMATION,
   reviseActiveListingPriceRequestXml,
@@ -126,6 +127,9 @@ function proposalFromEvent(event: JsonRecord) {
   const proposedPrice = numeric(price.proposedItemPrice)
   const currentPrice = numeric(price.currentItemPrice)
   const proposedLandedPrice = numeric(price.proposedLandedPrice)
+  const activeMarketAction = text(price.action)
+  const controlledRiskTenPercent = activeMarketAction ===
+    "LOWER_TO_ACTIVE_MARKET_CONTROLLED_RISK_PRICE"
   if (
     text(event.event_type) === "COMPETITOR_CONFIRMED_SOLD_PRICE_RECOMMENDATION" &&
     proposedPrice !== null && proposedPrice > 0 && currentPrice !== null &&
@@ -147,12 +151,20 @@ function proposalFromEvent(event: JsonRecord) {
     text(event.event_type) === "COMPETITOR_ACTIVE_MARKET_PRICE_RECOMMENDATION" &&
     text(price.comparisonBasis) ===
       "EBAY_ACTIVE_MULTI_SELLER_MEDIAN_NOT_CONFIRMED_SOLD" &&
-    ["LOWER_TO_ACTIVE_MARKET_SAFE_PRICE", "RAISE_TO_SAFE_FLOOR"]
-      .includes(text(price.action)) &&
+    [
+      "LOWER_TO_ACTIVE_MARKET_SAFE_PRICE",
+      "LOWER_TO_ACTIVE_MARKET_CONTROLLED_RISK_PRICE",
+      "RAISE_TO_SAFE_FLOOR",
+    ].includes(activeMarketAction) &&
     proposedPrice !== null && proposedPrice > 0 && currentPrice !== null &&
     proposedLandedPrice !== null &&
     Math.abs(proposedPrice - currentPrice) >= 0.01 &&
-    price.proposedPassesProfitGate === true
+    price.proposedPassesProfitGate === true &&
+    (!controlledRiskTenPercent || (
+      price.controlledRiskTenPercent === true &&
+      (numeric(price.activeSellerCount) ?? 0) >= 3 &&
+      price.promotionReserveIncluded === false
+    ))
   ) return {
     actionType: "PRICE" as const,
     targetValue: {
@@ -168,6 +180,8 @@ function proposalFromEvent(event: JsonRecord) {
       activeSellerCount: numeric(price.activeSellerCount),
       minimumSafeLandedPrice: numeric(price.minimumSafeLandedPrice),
       activeMarketNotConfirmedSale: true,
+      controlledRiskTenPercent,
+      promotionAllowed: controlledRiskTenPercent ? false : null,
     },
   }
   const promotion = record(evidence.promotionRecommendation)
@@ -272,6 +286,7 @@ async function freshEconomics(input: {
   supabase: SupabaseClient
   listing: JsonRecord
   salePrice: number
+  controlledRiskTenPercent?: boolean
   observedAt?: Date
 }) {
   const variantId = text(input.listing.supplier_variant_id, 80)
@@ -299,11 +314,70 @@ async function freshEconomics(input: {
   const economics = calculateEbayUnitEconomics({
     salePrice: input.salePrice,
     supplierCost: unitCost * packCount,
-  })
+  }, input.controlledRiskTenPercent ? controlledRiskEconomicsConfig() : {})
   if (!economics.ready || !economics.passesProfitGate) {
     throw new Error("COMMERCIAL_IMPROVEMENT_ECONOMICS_GATE_FAILED")
   }
   return { economics, lunaObservedAt: data.captured_at, packCount }
+}
+
+async function setControlledRiskPromotionBlock(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  listingId: string
+  eventId: string
+  activeMarketMedianLandedPrice: number | null
+  activeSellerCount: number | null
+  status: "PENDING_PRICE_APPLY" | "ACTIVE"
+}) {
+  const { data: publication, error: publicationError } = await input.supabase
+    .from("ebay_authorized_listing_publications")
+    .select("listing_package_id")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("listing_id", input.listingId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (publicationError || !publication?.listing_package_id) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_CONTROLLED_RISK_PACKAGE_REQUIRED")
+  }
+  const { data: listingPackage, error: packageError } = await input.supabase
+    .from("ebay_listing_packages")
+    .select("package_data")
+    .eq("id", publication.listing_package_id)
+    .eq("account_key", input.accountKey)
+    .maybeSingle()
+  if (packageError || !listingPackage) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_CONTROLLED_RISK_PACKAGE_REQUIRED")
+  }
+  const packageData = record(listingPackage.package_data)
+  const { error: updateError } = await input.supabase
+    .from("ebay_listing_packages")
+    .update({
+      package_data: {
+        ...packageData,
+        controlledRiskPolicy: {
+          version: "ACTIVE_MARKET_CONTROLLED_RISK_10_PERCENT_V1",
+          status: input.status,
+          source: "EBAY_ACTIVE_MULTI_SELLER_MEDIAN_NOT_CONFIRMED_SOLD",
+          commercialEventId: input.eventId,
+          minimumNetMarginPercent: 10,
+          promotion: "DO_NOT_PROMOTE",
+          activeMarketNotConfirmedSale: true,
+          activeMarketMedianLandedPrice:
+            input.activeMarketMedianLandedPrice,
+          activeSellerCount: input.activeSellerCount,
+          finalHumanAuthorizationRequired: true,
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", publication.listing_package_id)
+    .eq("account_key", input.accountKey)
+  if (updateError) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_CONTROLLED_RISK_BLOCK_FAILED")
+  }
 }
 
 async function revisePrice(input: {
@@ -503,12 +577,25 @@ export async function applyEbayCommercialImprovement(input: {
     supabase: input.supabase,
     listing: record(listing),
     salePrice,
+    controlledRiskTenPercent: target.controlledRiskTenPercent === true,
   })
   if (preview.actionType === "PROMOTED_LISTINGS_GENERAL" && await promotionBlocked({
     supabase: input.supabase,
     accountKey: input.accountKey,
     listingId: String(event.listing_id),
   })) throw new Error("COMMERCIAL_IMPROVEMENT_PROMOTION_BLOCKED_TEN_PERCENT_MARGIN")
+  if (preview.actionType === "PRICE" && target.controlledRiskTenPercent === true) {
+    await setControlledRiskPromotionBlock({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      listingId: String(event.listing_id),
+      eventId: String(event.id),
+      activeMarketMedianLandedPrice:
+        numeric(target.activeMarketMedianLandedPrice),
+      activeSellerCount: numeric(target.activeSellerCount),
+      status: "PENDING_PRICE_APPLY",
+    })
+  }
 
   const { data: claimed, error: claimError } = await input.supabase
     .from("ebay_commercial_improvement_executions")
@@ -565,6 +652,18 @@ export async function applyEbayCommercialImprovement(input: {
       const after = await readManualListingFromTradingApi(String(event.listing_id), fetchImpl)
       if (after.price === null || Math.abs(after.price - proposedPrice) > 0.01) {
         throw new Error("COMMERCIAL_IMPROVEMENT_PRICE_READBACK_MISMATCH")
+      }
+      if (target.controlledRiskTenPercent === true) {
+        await setControlledRiskPromotionBlock({
+          supabase: input.supabase,
+          accountKey: input.accountKey,
+          listingId: String(event.listing_id),
+          eventId: String(event.id),
+          activeMarketMedianLandedPrice:
+            numeric(target.activeMarketMedianLandedPrice),
+          activeSellerCount: numeric(target.activeSellerCount),
+          status: "ACTIVE",
+        })
       }
       const { data: completed, error: completeError } = await input.supabase
         .from("ebay_commercial_improvement_executions")
