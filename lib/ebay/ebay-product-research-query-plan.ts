@@ -110,6 +110,18 @@ export function productResearchPlannedQueryHash(value: unknown) {
   return queryHash(text(value, 100))
 }
 
+export function summarizeProductResearchQueryTaskStatuses(statuses: unknown[]) {
+  const normalized = statuses.map((status) => text(status, 24).toUpperCase())
+  const capturedCount = normalized.filter((status) =>
+    status === "CAPTURED" || status === "PROCESSED").length
+  const skippedCount = normalized.filter((status) => status === "SKIPPED").length
+  return {
+    capturedCount,
+    skippedCount,
+    settledCount: capturedCount + skippedCount,
+  }
+}
+
 function explicitBrand(metadata: JsonRecord) {
   return text(metadata.manufacturerBrand ?? metadata.brand, 80) || null
 }
@@ -266,8 +278,9 @@ export async function getProductResearchQueryPlanStatus(input: {
     .eq("marketplace", "EBAY_US").order("ordinal", { ascending: true })
   if (taskError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_STATUS_READ_FAILED")
   const pending = (tasks ?? []).find((task) => task.status === "PENDING") ?? null
-  const capturedCount = (tasks ?? []).filter((task) =>
-    ["CAPTURED", "PROCESSED"].includes(task.status)).length
+  const taskCounts = summarizeProductResearchQueryTaskStatuses(
+    (tasks ?? []).map((task) => task.status),
+  )
   return {
     id: plan.id,
     runId: plan.run_id,
@@ -275,8 +288,10 @@ export async function getProductResearchQueryPlanStatus(input: {
     status: plan.status,
     queryCount: plan.query_count,
     candidateCount: plan.candidate_count,
-    capturedCount,
-    pendingCount: Math.max(0, plan.query_count - capturedCount),
+    capturedCount: taskCounts.capturedCount,
+    skippedCount: taskCounts.skippedCount,
+    settledCount: taskCounts.settledCount,
+    pendingCount: Math.max(0, plan.query_count - taskCounts.settledCount),
     nextQuery: pending ? {
       ordinal: pending.ordinal,
       searchQuery: productResearchDisplayQuery(pending.search_query),
@@ -290,6 +305,86 @@ export async function getProductResearchQueryPlanStatus(input: {
     openAiCalls: 0,
     ebayWrites: 0,
   }
+}
+
+async function completeProductResearchQueryPlanWhenSettled(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  planId: string
+  now: string
+}) {
+  const status = await getProductResearchQueryPlanStatus({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    planId: input.planId,
+  })
+  if (!status || status.pendingCount !== 0 || status.status !== "ACTIVE") return status
+  const { data, error } = await input.supabase
+    .from("marketplace_product_research_query_plans")
+    .update({ status: "COMPLETED", completed_at: input.now, updated_at: input.now })
+    .eq("id", input.planId)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US")
+    .eq("status", "ACTIVE")
+    .select("id")
+  if (error || (data ?? []).length !== 1) {
+    throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_COMPLETE_FAILED")
+  }
+  return { ...status, status: "COMPLETED", completedAt: input.now }
+}
+
+export async function skipProductResearchQuery(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  planId: string
+  searchQuery: unknown
+  reasonCode: string
+  now?: Date
+}) {
+  const reasonCode = text(input.reasonCode, 80).toUpperCase()
+  if (!/^[A-Z0-9_]+$/.test(reasonCode)) {
+    throw new Error("PRODUCT_RESEARCH_QUERY_SKIP_REASON_INVALID")
+  }
+  const { data: tasks, error: readError } = await input.supabase
+    .from("marketplace_product_research_query_tasks")
+    .select("id,search_query,status")
+    .eq("plan_id", input.planId)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US")
+    .in("status", ["PENDING", "SKIPPED", "CAPTURED", "PROCESSED"])
+    .order("ordinal", { ascending: true })
+  if (readError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_STATUS_READ_FAILED")
+  const task = (tasks ?? []).find((entry) =>
+    productResearchQueriesMatch(input.searchQuery, entry.search_query))
+  if (!task) throw new Error("PRODUCT_RESEARCH_QUERY_SKIP_TASK_MISSING")
+  if (task.status !== "PENDING") {
+    return completeProductResearchQueryPlanWhenSettled({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      planId: input.planId,
+      now: (input.now ?? new Date()).toISOString(),
+    })
+  }
+  const now = (input.now ?? new Date()).toISOString()
+  const { data: updated, error: updateError } = await input.supabase
+    .from("marketplace_product_research_query_tasks")
+    .update({ status: "SKIPPED", processed_at: now,
+      last_error_code: reasonCode, updated_at: now })
+    .eq("id", task.id)
+    .eq("plan_id", input.planId)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US")
+    .eq("status", "PENDING")
+    .select("id")
+  if (updateError || (updated ?? []).length !== 1) {
+    throw new Error("PRODUCT_RESEARCH_QUERY_TASK_SKIP_FAILED")
+  }
+  return completeProductResearchQueryPlanWhenSettled({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    planId: input.planId,
+    now,
+  })
 }
 
 export async function assertProductResearchCaptureMatchesNextQuery(input: {
@@ -418,12 +513,14 @@ export async function markProductResearchQueryCaptured(input: {
     if (!plan) return null
     planId = plan.id
   }
+  if (!planId) return null
+  const settledPlanId = planId
   const patch = { status: "PROCESSED", capture_batch_id: input.captureBatchId,
     captured_at: now, processed_at: now, last_error_code: null, updated_at: now }
   if (input.taskId) {
     const { data: updated, error: updateError } = await input.supabase
       .from("marketplace_product_research_query_tasks").update(patch)
-      .eq("id", input.taskId).eq("plan_id", planId)
+      .eq("id", input.taskId).eq("plan_id", settledPlanId)
       .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
       .eq("query_hash", input.searchQueryHash).eq("status", "PENDING").select("id")
     if (updateError || (updated ?? []).length !== 1) {
@@ -432,21 +529,13 @@ export async function markProductResearchQueryCaptured(input: {
   } else {
     const { error: updateError } = await input.supabase
       .from("marketplace_product_research_query_tasks").update(patch)
-      .eq("plan_id", planId).eq("marketplace_account_key", input.accountKey)
+      .eq("plan_id", settledPlanId).eq("marketplace_account_key", input.accountKey)
       .eq("marketplace", "EBAY_US").eq("query_hash", input.searchQueryHash)
       .eq("status", "PENDING")
     if (updateError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_UPDATE_FAILED")
   }
-  const status = await getProductResearchQueryPlanStatus({
-    supabase: input.supabase, accountKey: input.accountKey, planId,
+  return completeProductResearchQueryPlanWhenSettled({
+    supabase: input.supabase, accountKey: input.accountKey,
+    planId: settledPlanId, now,
   })
-  if (status && status.pendingCount === 0) {
-    const { error: completeError } = await input.supabase
-      .from("marketplace_product_research_query_plans")
-      .update({ status: "COMPLETED", completed_at: now, updated_at: now })
-      .eq("id", planId).eq("status", "ACTIVE")
-    if (completeError) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_COMPLETE_FAILED")
-    return { ...status, status: "COMPLETED", completedAt: now }
-  }
-  return status
 }

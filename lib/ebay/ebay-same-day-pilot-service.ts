@@ -52,6 +52,7 @@ import {
 import {
   productResearchPlannedQueryHash,
   productResearchQueriesMatch,
+  skipProductResearchQuery,
 } from "./ebay-product-research-query-plan"
 import { enqueueListingAiTop20Continuation } from "./ebay-listing-ai-top20-queue"
 import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
@@ -1801,6 +1802,7 @@ async function createSameDayProductResearchPlan(input: {
   selected: ReturnType<typeof selectSameDayQueue>
   operationDate: string
   cycle: number
+  supersedeExisting?: boolean
 }) {
   if (!input.queueRunId || !input.selected.length) return null
   const groups = new Map<string, typeof input.selected>()
@@ -1822,10 +1824,11 @@ async function createSameDayProductResearchPlan(input: {
   const inputHash = versionedHash({ version: SAME_DAY_PILOT_VERSION, operationDate: input.operationDate,
     cycle: input.cycle,
     candidates: input.selected.map((candidate) => ({ variant: candidate.supplierVariantId, query: candidate.queryPlan.query })) })
-  const { data, error } = await input.supabase.rpc("create_product_research_query_plan_v1", {
+  const { data, error } = await input.supabase.rpc("create_product_research_query_plan_v2", {
     p_plan_id: randomUUID(), p_marketplace_account_key: input.accountKey,
     p_run_id: input.queueRunId, p_plan_version: `${SAME_DAY_PILOT_VERSION}_QUERY_PLAN_V1`,
     p_input_hash: inputHash, p_candidate_count: input.selected.length, p_queries: queries,
+    p_supersede_existing: input.supersedeExisting !== false,
   })
   if (error || !data) throw new Error("SAME_DAY_PILOT_PRODUCT_RESEARCH_PLAN_CREATE_FAILED")
   return String(data)
@@ -1948,6 +1951,10 @@ async function replenishSettledSameDayRun(input: {
     selected,
     operationDate: text(state.run.operation_date),
     cycle: replenishmentBatch,
+    // The original five-candidate plan remains scoped to candidates already
+    // in flight. A one-for-one OOS replacement owns a separate plan and must
+    // not invalidate the next valid candidate (for example 80144).
+    supersedeExisting: !immediateOutOfStockReplacement,
   })
   const nextSourceInventory = {
     ...sourceInventory,
@@ -2443,7 +2450,20 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
       candidatePatch: { ...basePatch, state: "REJECTED_TODAY", blockers: ["LUNA_OUT_OF_STOCK"] },
       nextAutomaticAction: "Agregar un reemplazo elegible y promover el siguiente candidato.",
       nextHumanAction: "Ninguna." })
+    const productResearchPlanId = text(
+      record(candidate.product_research_query_plan).productResearchPlanId,
+    ) || text(record(state.run.source_inventory).productResearchPlanId)
     try {
+      if (productResearchPlanId) {
+        await skipProductResearchQuery({
+          supabase: input.supabase,
+          accountKey: input.accountKey,
+          planId: productResearchPlanId,
+          searchQuery: record(candidate.product_research_query_plan).query,
+          reasonCode: "LUNA_OUT_OF_STOCK",
+          now: new Date(now),
+        })
+      }
       const rejectedState = await currentState(
         input.supabase,
         input.accountKey,
