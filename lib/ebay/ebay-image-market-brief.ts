@@ -73,37 +73,8 @@ function normalizedFamilyFingerprint(value: unknown) {
   return null
 }
 
-/**
- * Reads only the allow-listed aggregate visual signals. Seller identities,
- * titles, URLs, thumbnails and image bytes never cross this boundary.
- */
-export async function loadEbayImageMarketBrief(input: {
-  supabase: SupabaseClient
-  accountKey: string
-  captureBatchId: unknown
-  familyFingerprint: unknown
-}): Promise<EbayImageMarketBrief | null> {
-  const captureBatchId = typeof input.captureBatchId === "string"
-    && /^[0-9a-f-]{36}$/i.test(input.captureBatchId.trim())
-    ? input.captureBatchId.trim()
-    : null
-  const familyFingerprint = normalizedFamilyFingerprint(input.familyFingerprint)
-  if (!captureBatchId || !familyFingerprint) return null
-
-  const { data, error } = await input.supabase
-    .from("marketplace_product_research_visual_market_briefs")
-    .select("brief,confidence,sample_size")
-    .eq("marketplace_account_key", input.accountKey)
-    .eq("marketplace", "EBAY_US")
-    .eq("capture_batch_id", captureBatchId)
-    .eq("product_family_fingerprint", familyFingerprint)
-    .eq("visual_market_brief_version", EBAY_IMAGE_MARKET_BRIEF_VERSION)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  if (error) throw new Error("SAME_DAY_IMAGE_MARKET_BRIEF_READ_FAILED")
-  if (!data) return null
-
+function parsedStoredBrief(value: unknown): EbayImageMarketBrief | null {
+  const data = record(value)
   const brief = record(data.brief)
   const signals = record(brief.supportingSignals)
   const parsed = ebayImageMarketBriefSchema.safeParse({
@@ -149,7 +120,68 @@ export async function loadEbayImageMarketBrief(input: {
     parsed.data.palettePattern,
     parsed.data.subjectGeometryPattern,
   ]
-  return patternValues.some((value) => value !== "UNKNOWN")
+  return patternValues.some((entry) => entry !== "UNKNOWN")
     ? parsed.data
     : null
+}
+
+/**
+ * Exact candidate-family evidence wins. If seller wording produced different
+ * normalized fingerprints, use only a self-consistent FAMILY_FALLBACK cohort
+ * from the same capture batch. The database query orders fallback cohorts by
+ * sample size and recency before this selector runs.
+ */
+export function selectCaptureBoundEbayImageMarketBrief(
+  values: unknown,
+  expectedFamilyFingerprint: unknown,
+) {
+  const expected = normalizedFamilyFingerprint(expectedFamilyFingerprint)
+  if (!expected || !Array.isArray(values)) return null
+  const rows = values.map(record)
+  const exact = rows.find((row) =>
+    normalizedFamilyFingerprint(row.product_family_fingerprint) === expected)
+  const parsedExact = exact ? parsedStoredBrief(exact) : null
+  if (parsedExact) return parsedExact
+
+  for (const row of rows) {
+    const fingerprint = normalizedFamilyFingerprint(row.product_family_fingerprint)
+    const brief = record(row.brief)
+    if (!fingerprint
+      || brief.primaryCohort !== "FAMILY_FALLBACK"
+      || normalizedFamilyFingerprint(brief.productBaseFingerprint) !== fingerprint) continue
+    const parsed = parsedStoredBrief(row)
+    if (parsed) return parsed
+  }
+  return null
+}
+
+/**
+ * Reads only the allow-listed aggregate visual signals. Seller identities,
+ * titles, URLs, thumbnails and image bytes never cross this boundary.
+ */
+export async function loadEbayImageMarketBrief(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  captureBatchId: unknown
+  familyFingerprint: unknown
+}): Promise<EbayImageMarketBrief | null> {
+  const captureBatchId = typeof input.captureBatchId === "string"
+    && /^[0-9a-f-]{36}$/i.test(input.captureBatchId.trim())
+    ? input.captureBatchId.trim()
+    : null
+  const familyFingerprint = normalizedFamilyFingerprint(input.familyFingerprint)
+  if (!captureBatchId || !familyFingerprint) return null
+
+  const { data, error } = await input.supabase
+    .from("marketplace_product_research_visual_market_briefs")
+    .select("brief,confidence,sample_size,product_family_fingerprint,created_at")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US")
+    .eq("capture_batch_id", captureBatchId)
+    .eq("visual_market_brief_version", EBAY_IMAGE_MARKET_BRIEF_VERSION)
+    .order("sample_size", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(20)
+  if (error) throw new Error("SAME_DAY_IMAGE_MARKET_BRIEF_READ_FAILED")
+  return selectCaptureBoundEbayImageMarketBrief(data, familyFingerprint)
 }
