@@ -1721,7 +1721,7 @@ async function repairRejectedSingleFactException(
       ].map((field) => field.toLocaleLowerCase()).filter(Boolean))
       const recoverableBlocker = strings(candidate.blockers).some((blocker) => [
         "MISSING_BLOCKING", "EBAY_TAXONOMY_NOT_READY", "EBAY_REQUIRED_ASPECTS_NOT_READY_TODAY",
-        "CONFLICTED_BLOCKING",
+        "CONFLICTED_BLOCKING", "OFFER_PACK_FACTS_REQUIRED",
         "REGULATORY_NOT_READY", "REGULATORY_READY_FALSE",
       ].includes(blocker))
       return Boolean(exception) && candidate.machine_state === "REJECTED" &&
