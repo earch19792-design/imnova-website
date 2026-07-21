@@ -318,6 +318,12 @@ export function buildExactTargetedLunaObservation(input: {
     ? null
     : Number(variant.sourceCompareAtPrice.toFixed(2))
   const inventoryQuantity = variant.available ? null : 0
+  const retainedWeightUnit = variant.weightUnit === null &&
+    previous.weight_unit !== null &&
+    sameNumeric(previous.weight, variant.weight)
+    ? previous.weight_unit
+    : null
+  const weightUnit = variant.weightUnit ?? retainedWeightUnit
   const collections = Array.isArray(previous.collections)
     ? previous.collections.filter((value): value is string => typeof value === "string")
     : []
@@ -335,7 +341,7 @@ export function buildExactTargetedLunaObservation(input: {
     collections,
     discount_percent: discountPercent(price, compareAtPrice),
     weight: variant.weight,
-    weight_unit: variant.weightUnit,
+    weight_unit: weightUnit,
     raw: {
       product: {
         id: product.productId,
@@ -354,7 +360,7 @@ export function buildExactTargetedLunaObservation(input: {
         compare_at_price: compareAtPrice,
         available: variant.available,
         weight: variant.weight,
-        weight_unit: variant.weightUnit,
+        weight_unit: weightUnit,
       },
       inventory_context: {
         inventory_quantity: inventoryQuantity,
@@ -372,6 +378,8 @@ export function buildExactTargetedLunaObservation(input: {
         exact_identity_verified: true,
         previous_snapshot_id: previous.id,
         listing_count: target.listingCount,
+        weight_unit_retained_from_previous_exact_snapshot:
+          retainedWeightUnit !== null,
       },
     },
     captured_at: observedAt,
