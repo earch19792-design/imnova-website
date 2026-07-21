@@ -39,6 +39,7 @@ import {
 } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import { enqueueSellerWhatsAppAlert } from "@/lib/ebay/ebay-seller-whatsapp-alerts"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import { loadSameDayAuthorizedPublicationContext } from "@/lib/ebay/ebay-same-day-authorized-publication"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
 function record(value: unknown): JsonRecord {
@@ -81,6 +82,14 @@ function errorCode(error: unknown) {
   return /^[A-Z0-9_]+(?:_[0-9]{3})?$/.test(value)
     ? value
     : "EBAY_DRAFT_ONLY_REQUEST_FAILED"
+}
+
+function databaseExceptionCode(error: unknown, fallback: string) {
+  const value = record(error)
+  const combined = [value.message, value.details, value.hint, value.code]
+    .map((entry) => text(entry))
+    .join(" ")
+  return combined.match(/EBAY_[A-Z0-9_]{3,180}/)?.[0] ?? fallback
 }
 
 function configurationFromApprovedPayload(payload: JsonRecord) {
@@ -205,21 +214,62 @@ async function loadFinalPublicationContext(
   if (opportunityError || !opportunity) throw new Error("EBAY_FINAL_PUBLICATION_OPPORTUNITY_NOT_FOUND")
   const runtime = ebayDraftOnlyRuntimeStatus()
   const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  const sameDayContext = accountKey
+    ? await loadSameDayAuthorizedPublicationContext({
+      supabase,
+      accountKey,
+      actorUserId: actor,
+      listingPackage: listingPackage as JsonRecord,
+      opportunity: opportunity as JsonRecord,
+    })
+    : null
+  if (!sameDayContext) {
+    throw new Error("EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_REQUIRED")
+  }
+  const effectiveOpportunity = sameDayContext.opportunity
   if (
-    runtime.target !== "PRODUCTION"
+    !runtime.enabled
+    || !runtime.configured
+    || runtime.target !== "PRODUCTION"
     || runtime.accountFingerprint !== execution.account_fingerprint
     || execution.target !== "PRODUCTION"
     || !accountKey
     || listingPackage.account_key !== accountKey
     || listingPackage.status !== "approved"
-    || opportunity.supplier_available !== true
-    || Number(opportunity.supplier_inventory_quantity) < 1
+    || effectiveOpportunity.supplier_available !== true
+    || Number(effectiveOpportunity.supplier_inventory_quantity) < 1
   ) throw new Error("EBAY_FINAL_PUBLICATION_SCOPE_OR_STOCK_INVALID")
+  const approvedSourceEvidence = record(record(approval.approved_payload).sourceEvidence)
+  const approvedCost = Number(approvedSourceEvidence.supplierPrice)
+  const currentCost = Number(effectiveOpportunity.supplier_price)
+  if (!Number.isFinite(approvedCost) || !Number.isFinite(currentCost)
+    || Math.abs(approvedCost - currentCost) >= 0.005) {
+    throw new Error("EBAY_FINAL_PUBLICATION_LUNA_COST_CHANGED")
+  }
+  if (sameDayContext) {
+    const approvedPayload = record(approval.approved_payload)
+    const approvedCompliance = record(approvedPayload.compliance)
+    const approvedSameDayAuthorization = record(
+      approvedCompliance.sameDayPilotAuthorization,
+    )
+    if (
+      approvedSameDayAuthorization.validated !== true
+      || text(approvedSameDayAuthorization.version)
+        !== text(sameDayContext.authorization.version)
+      || text(approvedSameDayAuthorization.runId)
+        !== text(sameDayContext.authorization.runId)
+      || text(approvedSameDayAuthorization.candidateId)
+        !== text(sameDayContext.authorization.candidateId)
+      || text(approvedSameDayAuthorization.handoffPackageHash)
+        !== text(sameDayContext.authorization.handoffPackageHash)
+    ) throw new Error("EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_CHANGED")
+  }
   return {
     execution: execution as JsonRecord,
     approval: approval as JsonRecord,
     listingPackage: listingPackage as JsonRecord,
-    opportunity: opportunity as JsonRecord,
+    opportunity: effectiveOpportunity,
+    sameDayPilotAuthorization: sameDayContext.authorization,
     runtime,
     accountKey,
   }
@@ -281,12 +331,20 @@ async function loadPackageContext(
     .eq("id", listingPackage.opportunity_id)
     .maybeSingle()
   if (opportunityError || !opportunity) throw new Error("EBAY_DRAFT_ONLY_OPPORTUNITY_NOT_FOUND")
+  const sameDayContext = await loadSameDayAuthorizedPublicationContext({
+    supabase,
+    accountKey: sellerAccountKey,
+    actorUserId,
+    listingPackage: listingPackage as JsonRecord,
+    opportunity: opportunity as JsonRecord,
+  })
+  const effectiveOpportunity = sameDayContext?.opportunity ?? (opportunity as JsonRecord)
   const collisionSku = expectedEbayDraftOnlySku(listingPackage as JsonRecord)
   const candidateKey = text(listingPackage.candidate_key)
-  const supplierSku = text(opportunity.supplier_sku)
-  const supplierVariantId = text(opportunity.supplier_variant_id)
-  const marketRadarProductId = uuid(opportunity.market_radar_product_id)
-  const gtin = text(opportunity.gtin)
+  const supplierSku = text(effectiveOpportunity.supplier_sku)
+  const supplierVariantId = text(effectiveOpportunity.supplier_variant_id)
+  const marketRadarProductId = uuid(effectiveOpportunity.market_radar_product_id)
+  const gtin = text(effectiveOpportunity.gtin)
   const emptyCollision = () => Promise.resolve({ data: [] as Array<{ id: string }>, error: null })
   const ebaySkuQuery = collisionSku
     ? supabase.from("ebay_active_listings").select("id").eq("ebay_sku", collisionSku).neq("listing_status", "ended").limit(1)
@@ -374,7 +432,9 @@ async function loadPackageContext(
   ].filter(Boolean)
   return {
     listingPackage: listingPackage as JsonRecord,
-    opportunity: opportunity as JsonRecord,
+    opportunity: effectiveOpportunity,
+    sameDayPilotAuthorization: sameDayContext?.authorization ?? null,
+    economicsConfig: sameDayContext?.economicsConfig,
     activeSkuCollision: Boolean(ebaySkuResult.data?.length),
     ledgerSkuCollision: Boolean(ledgerResult.data?.length),
     identityCollisionReasons,
@@ -1160,6 +1220,8 @@ async function executeDraft(body: JsonRecord, actor: string) {
     draftConfiguration,
     target,
     fingerprint,
+    context.economicsConfig,
+    context.sameDayPilotAuthorization,
   )
   const currentHash = hashEbayDraftOnlyPayload(currentPayload)
   if (!readiness.ready || currentHash !== approval.payload_hash) {
@@ -1493,6 +1555,9 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   if (!executionId) return jsonError(new Error("EBAY_FINAL_PUBLICATION_EXECUTION_REQUIRED"), 400)
   const supabase = getSupabaseAdminClient()
   const context = await loadFinalPublicationContext(supabase, executionId, actor)
+  if (!context.sameDayPilotAuthorization) {
+    return jsonError(new Error("EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_REQUIRED"), 409)
+  }
   const built = buildFinalPublicationPreview(context.approval, context.execution)
   await revalidateFinalPublicationDependencies(record(context.approval.approved_payload))
   const offerVerification = await verifyEbayUnpublishedOffer(
@@ -1502,6 +1567,20 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   )
   if (!offerVerification.safe) {
     return jsonError(new Error(offerVerification.blocker), 409)
+  }
+  const { error: sourceSyncError } = await supabase.rpc(
+    "sync_same_day_source_before_authorized_publication",
+    {
+      p_draft_execution_id: executionId,
+      p_actor_user_id: actor,
+      p_marketplace_account_key: context.accountKey,
+    },
+  )
+  if (sourceSyncError) {
+    throw new Error(databaseExceptionCode(
+      sourceSyncError,
+      "EBAY_FINAL_PUBLICATION_LUNA_SOURCE_SYNC_FAILED",
+    ))
   }
   const { data: publication, error } = await supabase
     .rpc("prepare_ebay_authorized_listing_publication", {

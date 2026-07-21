@@ -222,13 +222,13 @@ export function buildVerifiedManualSellerHubHandoff(input: {
       estimatedValuesExcluded: true,
       conservativeEconomicReserveUsd: conservativeShippingReserveReady
         ? conservativeShippingReserve : null,
-      operatorAction: "Confirma peso y dimensiones en Seller Hub o utiliza una política de envío verificada que no los requiera." }
+      operatorAction: "Confirma peso y dimensiones en Seller OS o utiliza una política de envío verificada que no los requiera." }
   const feePolicy = record(input.economics.feePolicy)
   const controlledRiskOverride = record(input.economics.controlledRiskOverride)
   const controlledRisk = controlledRiskOverride.authorized === true
   const exactEbayFeeProfile = feePolicy.exactFeeClaimed === true
   const warnings = [
-    ...(!confirmedShipping ? ["SHIPPING_CONFIRMATION_REQUIRED_IN_SELLER_HUB"] : []),
+    ...(!confirmedShipping ? ["SHIPPING_CONFIRMATION_REQUIRED_IN_SELLER_OS"] : []),
     ...(!exactEbayFeeProfile ? ["EBAY_FEE_PROFILE_ESTIMATE_NOT_EXACT"] : []),
     ...(controlledRisk ? [
       "CONTROLLED_RISK_MANUAL_EXCEPTION",
@@ -287,24 +287,27 @@ export function buildVerifiedManualSellerHubHandoff(input: {
       voluntaryReturns: "SELECT_NO_RETURNS_WHERE_EBAY_ALLOWS",
       ebayMoneyBackGuaranteeStillApplies: true,
       automaticPricingUsed: false,
-      manualPublicationOnly: true,
+      manualPublicationOnly: false,
+      finalHumanAuthorizationRequired: true,
+      sellerOsPublicationAfterAuthorization: true,
+      unattendedPublicationAllowed: false,
     } : null,
     operatorChecklist: [
       "Confirmar que el producto y pack físicos coinciden con este paquete.",
       fulfillmentBasis === "OWNED_INVENTORY"
         ? "Confirmar que el inventario ya es propio antes de publicar."
         : "Confirmar que permanece vigente el acuerdo de fulfillment con el proveedor mayorista autorizado.",
-      ...(!confirmedShipping ? ["Confirmar peso/dimensiones o seleccionar una política de envío verificada compatible en Seller Hub."] : []),
-      ...(!exactEbayFeeProfile ? ["Revisar en Seller Hub la tarifa estimada según categoría y plan de tienda antes de publicar; la reserva económica es conservadora."] : []),
+      ...(!confirmedShipping ? ["Confirmar peso/dimensiones o seleccionar una política de envío verificada compatible en Seller OS."] : []),
+      ...(!exactEbayFeeProfile ? ["Revisar en Seller OS la tarifa estimada según categoría y plan de tienda antes de autorizar; la reserva económica es conservadora."] : []),
       ...(controlledRisk ? [
         "No activar Promoted Listings ni publicidad para esta prueba de margen reducido.",
         "Seleccionar una política sin devoluciones voluntarias sólo donde eBay y la categoría lo permitan; la Garantía al cliente de eBay continúa aplicando.",
         "Confirmar que el precio sigue dentro de la ventana autorizada antes de publicar.",
       ] : []),
       "Usar únicamente las imágenes Luna incluidas y aprobadas.",
-      "Copiar título, categoría, specifics, precio, cantidad, Custom Label, envío y políticas en Seller Hub.",
-      "Revisar el preview final de Seller Hub antes de publicar.",
-      "Regresar con el Item ID para verificación read-only.",
+      "Revisar título, categoría, specifics, precio, cantidad, Custom Label, envío y políticas en Seller OS.",
+      "Autorizar primero el Offer UNPUBLISHED y después el preview final exacto.",
+      "Seller OS publicará una sola vez, verificará ACTIVE, guardará el Item ID y activará el monitoreo.",
     ],
     generatedAt: input.generatedAt,
     safety: { factsOnly: true, openAiCalls: 0, ebayWrites: 0, competitorContentUsed: false,

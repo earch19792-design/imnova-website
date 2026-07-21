@@ -343,7 +343,10 @@ export async function POST(req: Request) {
         safety: {
           minimumNetMarginPercent: 10,
           promotionAllowed: false,
-          manualPublicationOnly: true,
+          manualPublicationOnly: false,
+          finalHumanAuthorizationRequired: true,
+          sellerOsPublicationAfterAuthorization: true,
+          unattendedPublicationAllowed: false,
           automaticPricingUsed: false,
           ebayWrites: 0,
           productionChanged: false,

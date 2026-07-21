@@ -9,6 +9,10 @@ import { selectApplicableSafeListingDefaults } from "@/lib/ebay/ebay-manual-list
 import { ebayDraftOnlyEconomicsConfig } from "@/lib/ebay/ebay-draft-only-readiness"
 import { calculateEbayUnitEconomics } from "@/lib/ebay/ebay-unit-economics"
 import {
+  buildSameDayAuthorizedWorkspacePackage,
+  loadSameDayAuthorizedPublicationContext,
+} from "@/lib/ebay/ebay-same-day-authorized-publication"
+import {
   ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION,
   applyVerifiedTitleToActiveListing,
   prepareVerifiedActiveListingTitle,
@@ -69,10 +73,14 @@ function positive(value: unknown) {
   return Number.isFinite(Number(value)) && Number(value) > 0
 }
 
-function canonicalPackagePricing(supplierCost: unknown, targetPrice: unknown) {
+function canonicalPackagePricing(
+  supplierCost: unknown,
+  targetPrice: unknown,
+  economicsOverrides: Parameters<typeof ebayDraftOnlyEconomicsConfig>[0] = {},
+) {
   const economics = calculateEbayUnitEconomics(
     { salePrice: targetPrice, supplierCost },
-    ebayDraftOnlyEconomicsConfig(),
+    ebayDraftOnlyEconomicsConfig(economicsOverrides),
   )
   return {
     currency: "USD",
@@ -501,41 +509,78 @@ export async function POST(req: Request) {
     }
 
     if (action === "prepare_package") {
+      const { data: existing, error: readError } = await supabase
+        .from("ebay_listing_packages")
+        .select("*")
+        .eq("account_key", accountKey)
+        .eq("opportunity_id", opportunityId)
+        .eq("candidate_key", candidateKey)
+        .maybeSingle()
+      if (readError) throw new Error("COMMAND_CENTER_PACKAGE_READ_FAILED")
+      if (existing && existing.created_by !== reviewer) {
+        throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
+      }
+      const sameDayContext = existing
+        ? await loadSameDayAuthorizedPublicationContext({
+          supabase,
+          accountKey,
+          actorUserId: reviewer,
+          listingPackage: existing,
+          opportunity: sourceOpportunity,
+        })
+        : null
       const eligibility = evaluateEbayListingWorkspaceEligibility(sourceOpportunity)
-      if (!eligibility.allowed) {
+      if (!eligibility.allowed && !sameDayContext) {
         return NextResponse.json({
           success: false,
           error: "COMMAND_CENTER_WORKSPACE_GATES_PENDING",
           blockers: eligibility.blockers,
         }, { status: 409 })
       }
-      const seed = buildInitialPackage(sourceOpportunity)
+      const effectiveOpportunity = sameDayContext?.opportunity ?? sourceOpportunity
+      const initialSeed = buildInitialPackage(effectiveOpportunity)
+      const existingPricing = object(object(existing?.package_data).pricing)
+      const authorizedTargetPrice = sameDayContext
+        ? sameDayContext.authorization.controlledRisk
+          ? sameDayContext.handoffPackage.price
+          : existingPricing.targetPrice ?? sameDayContext.handoffPackage.price
+        : object(initialSeed.pricing).targetPrice
+      const sameDayPricing = canonicalPackagePricing(
+        effectiveOpportunity.supplier_price,
+        authorizedTargetPrice,
+        sameDayContext?.economicsConfig,
+      )
+      const seed = sameDayContext && existing
+        ? buildSameDayAuthorizedWorkspacePackage({
+          context: sameDayContext,
+          currentPackageData: object(existing.package_data),
+          pricing: sameDayPricing,
+        })
+        : initialSeed
       const selectedSafeDefaults = await applicableSafeDefaults(supabase, seed)
-      const { data: existing, error: readError } = await supabase
-        .from("ebay_listing_packages")
-        .select("*")
-        .eq("opportunity_id", opportunityId)
-        .maybeSingle()
-      if (readError) throw new Error("COMMAND_CENTER_PACKAGE_READ_FAILED")
       if (existing) {
-        if (existing.created_by !== reviewer) throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
         if (existing.account_key !== accountKey) {
           throw new Error("COMMAND_CENTER_PACKAGE_ACCOUNT_SCOPE_REQUIRED")
         }
-        const currentPackageData = object(existing.package_data)
+        const currentPackageData = sameDayContext ? object(seed) : object(existing.package_data)
         const currentPricing = object(currentPackageData.pricing)
         const seedPricing = object(seed.pricing)
         const refreshedPricing = canonicalPackagePricing(
-          seedPricing.supplierCost,
+          effectiveOpportunity.supplier_price ?? seedPricing.supplierCost,
           currentPricing.targetPrice ?? seedPricing.targetPrice,
+          sameDayContext?.economicsConfig,
         )
         const refreshedPackageData = applySafeSellerDefaults({
           ...currentPackageData,
           pricing: refreshedPricing,
-          evidenceSnapshot: seed.evidenceSnapshot,
+          evidenceSnapshot: sameDayContext
+            ? currentPackageData.evidenceSnapshot
+            : seed.evidenceSnapshot,
           sourceRefresh: {
             refreshedAt: new Date().toISOString(),
-            strategy: "SAFE_EVIDENCE_ONLY_USER_FIELDS_PRESERVED",
+            strategy: sameDayContext
+              ? "SAME_DAY_APPROVED_PACKAGE_AND_FRESH_LUNA_SOURCE"
+              : "SAFE_EVIDENCE_ONLY_USER_FIELDS_PRESERVED",
           },
         }, selectedSafeDefaults)
         const { data: refreshedData, error: refreshError } = await supabase.rpc(
@@ -550,7 +595,8 @@ export async function POST(req: Request) {
             p_package_patch: refreshedPackageData,
             p_status: "draft",
             p_readiness: 0,
-            p_source_observed_at: latestEvidenceTimestamp(sourceOpportunity),
+            p_source_observed_at: sameDayContext?.sourceObservedAt
+              ?? latestEvidenceTimestamp(sourceOpportunity),
             p_expected_updated_at: existing.updated_at,
           },
         )
@@ -575,6 +621,7 @@ export async function POST(req: Request) {
           created: false,
           evidenceRefreshed: true,
           preservedUserFields: true,
+          sameDayAuthorizedPublication: Boolean(sameDayContext),
           safeDefaultsApplied:
             strings(object(persistedRefreshedPackageData.safeDefaults).appliedFields).length > 0,
           safety: { ebayWriteUsed: false, canPublish: false },
@@ -596,6 +643,7 @@ export async function POST(req: Request) {
         success: true,
         listingPackage: data,
         created: true,
+        sameDayAuthorizedPublication: false,
         safeDefaultsApplied:
           strings(object(packageSeed.safeDefaults).appliedFields).length > 0,
         safety: { ebayWriteUsed: false, canPublish: false },
@@ -618,12 +666,36 @@ export async function POST(req: Request) {
         .maybeSingle()
       if (currentPackageError || !currentPackage) throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
       const currentPackageData = object(currentPackage.package_data)
+      const sameDayContext = await loadSameDayAuthorizedPublicationContext({
+        supabase,
+        accountKey,
+        actorUserId: reviewer,
+        listingPackage: {
+          ...currentPackage,
+          opportunity_id: opportunityId,
+          candidate_key: candidateKey,
+        },
+        opportunity: sourceOpportunity,
+      })
       const form = object(body.packageData)
-      const sourceSeed = buildInitialPackage(sourceOpportunity)
+      const effectiveOpportunity = sameDayContext?.opportunity ?? sourceOpportunity
+      const sourceSeed = buildInitialPackage(effectiveOpportunity)
       const requestedPricing = object(form.pricing)
+      const controlledRiskPrice = sameDayContext?.authorization.controlledRisk === true
+        ? Number(sameDayContext.handoffPackage.price)
+        : null
+      if (controlledRiskPrice !== null
+        && Number(requestedPricing.targetPrice) !== controlledRiskPrice) {
+        return NextResponse.json({
+          success: false,
+          error: "COMMAND_CENTER_CONTROLLED_RISK_PRICE_CHANGED",
+          blockers: ["CONTROLLED_RISK_APPROVED_PRICE_REQUIRED"],
+        }, { status: 409 })
+      }
       const canonicalPricing = canonicalPackagePricing(
-        object(sourceSeed.pricing).supplierCost,
+        effectiveOpportunity.supplier_price ?? object(sourceSeed.pricing).supplierCost,
         requestedPricing.targetPrice,
+        sameDayContext?.economicsConfig,
       )
       const packageForValidation = {
         ...form,
@@ -633,8 +705,9 @@ export async function POST(req: Request) {
       const status = body.markReady === true ? "ready_for_review" : "draft"
       const resolvedHardGates = resolvedPackageHardGates(packageForValidation)
       const sourceGates = [
-        ...strings(sourceOpportunity.hard_gates).filter((gate) => !resolvedHardGates.has(gate)),
-        ...strings(sourceOpportunity.evidence_guards),
+        ...(sameDayContext ? [] : strings(sourceOpportunity.hard_gates)
+          .filter((gate) => !resolvedHardGates.has(gate))),
+        ...(sameDayContext ? [] : strings(sourceOpportunity.evidence_guards)),
         ...(canonicalPricing.passesProfitGate ? [] : ["MINIMUM_NET_MARGIN_NOT_MET"]),
       ]
       const completeFields = [title, form.categoryId, String(form.description ?? ""), strings(form.imageUrls, 24)[0], canonicalPricing.targetPrice]
@@ -663,12 +736,16 @@ export async function POST(req: Request) {
           aspects: object(form.aspects),
           description: String(form.description ?? "").slice(0, 100_000),
           imageUrls: strings(form.imageUrls, 24),
+          imageAssetManifest: currentPackageData.imageAssetManifest,
           pricing: canonicalPricing,
           shipping: object(form.shipping),
           draftConfiguration: object(form.draftConfiguration),
           evidenceSnapshot: currentPackageData.evidenceSnapshot ?? sourceSeed.evidenceSnapshot,
           sourceRefresh: currentPackageData.sourceRefresh ?? null,
           safeDefaults: currentPackageData.safeDefaults ?? null,
+          sameDayPilot: currentPackageData.sameDayPilot ?? null,
+          controlledRiskPolicy: currentPackageData.controlledRiskPolicy ?? null,
+          preferredImageRevisionId: currentPackageData.preferredImageRevisionId ?? null,
         },
         readiness,
       }
@@ -684,7 +761,7 @@ export async function POST(req: Request) {
           p_package_patch: values.package_data,
           p_status: values.status,
           p_readiness: values.readiness,
-          p_source_observed_at: null,
+          p_source_observed_at: sameDayContext?.sourceObservedAt ?? null,
           p_expected_updated_at: currentPackage.updated_at,
         },
       )

@@ -23,6 +23,7 @@ export type DraftOnlyReadinessInput = {
   listingPackage: JsonRecord
   opportunity: JsonRecord
   draftConfiguration: JsonRecord
+  sameDayPilotAuthorization?: JsonRecord | null
   activeSkuCollision?: boolean
   ledgerSkuCollision?: boolean
   identityCollisionReasons?: string[]
@@ -403,6 +404,7 @@ export function buildEbayDraftOnlyPayload(
   target: EbayDraftOnlyTarget = "SANDBOX",
   accountFingerprint = "",
   economicsConfig: Partial<EbayUnitEconomicsConfig> = {},
+  sameDayPilotAuthorization: JsonRecord | null = null,
 ) {
   const packageData = record(listingPackage.package_data)
   const pricing = record(packageData.pricing)
@@ -503,6 +505,9 @@ export function buildEbayDraftOnlyPayload(
       aspectValidation: record(draftConfiguration.aspectValidation),
       skuCollisionCheck: record(draftConfiguration.skuCollisionCheck),
       ebayPreflightSnapshot: text(draftConfiguration.ebayPreflightSnapshot).slice(0, 4_096),
+      ...(sameDayPilotAuthorization?.validated === true
+        ? { sameDayPilotAuthorization }
+        : {}),
     },
     sku,
     inventoryItemPayload,
@@ -538,6 +543,15 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const requiredAspects = strings(taxonomy.requiredAspects)
   const hardGates = strings(opportunity.hard_gates)
   const evidenceGuards = strings(opportunity.evidence_guards)
+  const sameDayPilotAuthorization = record(input.sameDayPilotAuthorization)
+  const sameDayPilotAuthorized = sameDayPilotAuthorization.validated === true
+    && text(sameDayPilotAuthorization.version)
+      === "SELLER_OS_AUTHORIZED_PUBLICATION_V1_2026_07_20"
+    && Boolean(text(sameDayPilotAuthorization.runId))
+    && Boolean(text(sameDayPilotAuthorization.candidateId))
+    && text(sameDayPilotAuthorization.listingPackageId) === text(listingPackage.id)
+    && sameDayPilotAuthorization.finalHumanAuthorizationRequired === true
+    && sameDayPilotAuthorization.unattendedPublicationAllowed === false
   const supplierPrice = numberOrNull(opportunity.supplier_price)
   const supplierStock = numberOrNull(opportunity.supplier_inventory_quantity)
   const price = numberOrNull(pricing.targetPrice)
@@ -614,12 +628,14 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
 
   if (!text(listingPackage.id) || text(listingPackage.candidate_key) !== text(opportunity.candidate_key)) blockers.push("PACKAGE_OPPORTUNITY_MISMATCH")
   if (!['draft', 'ready_for_review', 'approved'].includes(text(listingPackage.status))) blockers.push("PACKAGE_NOT_READY_FOR_APPROVAL")
-  if (['hold', 'rejected', 'listed', 'archived'].includes(text(opportunity.queue_status))) blockers.push("OPPORTUNITY_STATUS_BLOCKED")
-  if (!exactIdentityConfirmed) blockers.push("EXACT_IDENTITY_REQUIRED")
-  if (potentialScore < 70) blockers.push("POTENTIAL_SCORE_BELOW_70")
-  if (confidenceScore < 70) blockers.push("CONFIDENCE_SCORE_BELOW_70")
-  blockers.push(...remainingHardGates.map((gate) => `HARD_GATE:${gate}`))
-  blockers.push(...evidenceGuards.map((guard) => `EVIDENCE_GUARD:${guard}`))
+  if (!sameDayPilotAuthorized) {
+    if (['hold', 'rejected', 'listed', 'archived'].includes(text(opportunity.queue_status))) blockers.push("OPPORTUNITY_STATUS_BLOCKED")
+    if (!exactIdentityConfirmed) blockers.push("EXACT_IDENTITY_REQUIRED")
+    if (potentialScore < 70) blockers.push("POTENTIAL_SCORE_BELOW_70")
+    if (confidenceScore < 70) blockers.push("CONFIDENCE_SCORE_BELOW_70")
+    blockers.push(...remainingHardGates.map((gate) => `HARD_GATE:${gate}`))
+    blockers.push(...evidenceGuards.map((guard) => `EVIDENCE_GUARD:${guard}`))
+  }
   if (opportunity.supplier_available !== true || supplierStock === null || supplierStock <= 0) blockers.push("LUNA_STOCK_UNAVAILABLE")
   if (supplierPrice === null || supplierPrice <= 0) blockers.push("LUNA_COST_REQUIRED")
   if (!recent(opportunity.supplier_snapshot_at ?? opportunity.last_scanned_at, sourceMaxAge, now)) blockers.push("LUNA_SNAPSHOT_STALE")
@@ -695,6 +711,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     target,
     accountFingerprint,
     economicsConfig,
+    sameDayPilotAuthorized ? sameDayPilotAuthorization : null,
   )
   const uniqueBlockers = unique(blockers)
   return {

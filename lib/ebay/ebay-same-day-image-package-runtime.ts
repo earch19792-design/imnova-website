@@ -153,6 +153,39 @@ async function exactListingPackage(input: {
     text(data.candidate_key, 300) !== candidateKey || data.status === "archived") {
     throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_OWNERSHIP_INVALID")
   }
+  const existingPackageData = record(data.package_data)
+  const existingBinding = record(existingPackageData.sameDayPilot)
+  const requestedBinding = {
+    runId: input.runId,
+    candidateId: input.candidate.id,
+  }
+  if (Object.keys(existingBinding).length && (
+    uuid(existingBinding.runId) !== input.runId
+    || uuid(existingBinding.candidateId) !== uuid(input.candidate.id)
+  )) {
+    throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_BINDING_CONFLICT")
+  }
+  if (!Object.keys(existingBinding).length) {
+    const { data: bound, error: bindingError } = await input.supabase
+      .from("ebay_listing_packages")
+      .update({
+        package_data: {
+          ...existingPackageData,
+          sameDayPilot: requestedBinding,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", data.id)
+      .eq("account_key", input.accountKey)
+      .eq("created_by", input.actorId)
+      .eq("updated_at", data.updated_at)
+      .select("*")
+      .maybeSingle()
+    if (bindingError || !bound) {
+      throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_BINDING_FAILED")
+    }
+    data = bound
+  }
   return record(data)
 }
 

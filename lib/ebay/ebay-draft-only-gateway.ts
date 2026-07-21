@@ -1493,5 +1493,16 @@ export function ebayDraftOnlyRuntimeStatus() {
     allowedWriteOperations: ["PUT createOrReplaceInventoryItem", "POST createOffer (UNPUBLISHED)"],
     forbiddenOperation: "publishOffer",
     canPublish: false,
+    authorizedPublication: {
+      scope: "SEPARATE_ONE_SHOT_HUMAN_AUTHORIZATION",
+      operation: "POST publishOffer",
+      productionOnly: true,
+      exactFinalPreviewRequired: true,
+      exactConfirmation: EBAY_FINAL_PUBLISH_CONFIRMATION,
+      maximumPublishAttempts: 1,
+      unattendedPublicationAllowed: false,
+      reconciliationUsesGetOnly: true,
+      available: config.enabled && config.configured && config.target === "PRODUCTION",
+    },
   }
 }

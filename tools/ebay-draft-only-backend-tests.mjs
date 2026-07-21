@@ -57,6 +57,18 @@ const publicationMigrationSource = readFileSync(
   new URL("../supabase/migrations/20260720041000_create_ebay_authorized_listing_publication.sql", import.meta.url),
   "utf8",
 )
+const sameDayPublicationSource = readFileSync(
+  new URL("../lib/ebay/ebay-same-day-authorized-publication.ts", import.meta.url),
+  "utf8",
+)
+const sameDayImageRuntimeSource = readFileSync(
+  new URL("../lib/ebay/ebay-same-day-image-package-runtime.ts", import.meta.url),
+  "utf8",
+)
+const sameDaySourceSyncMigration = readFileSync(
+  new URL("../supabase/migrations/20260721041000_sync_same_day_source_before_authorized_publication.sql", import.meta.url),
+  "utf8",
+)
 
 async function importTypeScript(source) {
   const javascript = ts.transpileModule(source, {
@@ -275,6 +287,38 @@ test("readiness binds all required evidence to one deterministic approval hash",
   assert.equal(result.payload.safety.publishOfferPresent, false)
   assert.deepEqual(result.payload.safety.permittedOperations, ["createOrReplaceInventoryItem", "createOffer"])
   assert.equal(module.hashEbayDraftOnlyPayload(result.payload), result.payloadHash)
+})
+
+test("a server-validated same-day binding supersedes only stale generic scoring gates", async () => {
+  const module = await importTypeScript(readinessSource)
+  const input = validInput()
+  input.opportunity.queue_status = "hold"
+  input.opportunity.hard_gates = ["LEGACY_SCORE_GATE"]
+  input.opportunity.evidence_guards = ["LEGACY_RESEARCH_GUARD"]
+  input.opportunity.identity_score = 0
+  input.opportunity.assessment.identity.exactIdentityConfirmed = false
+  input.opportunity.assessment.scores = { potentialScore: 0, confidenceScore: 0 }
+  input.sameDayPilotAuthorization = {
+    validated: true,
+    version: "SELLER_OS_AUTHORIZED_PUBLICATION_V1_2026_07_20",
+    runId: "33333333-3333-4333-8333-333333333333",
+    candidateId: "44444444-4444-4444-8444-444444444444",
+    listingPackageId: input.listingPackage.id,
+    finalHumanAuthorizationRequired: true,
+    unattendedPublicationAllowed: false,
+  }
+  const authorized = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(authorized.ready, true)
+  assert.deepEqual(
+    authorized.payload.compliance.sameDayPilotAuthorization,
+    input.sameDayPilotAuthorization,
+  )
+
+  input.sameDayPilotAuthorization.unattendedPublicationAllowed = true
+  const forged = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(forged.ready, false)
+  assert.ok(forged.blockers.includes("OPPORTUNITY_STATUS_BLOCKED"))
+  assert.ok(forged.blockers.includes("EXACT_IDENTITY_REQUIRED"))
 })
 
 test("taxonomy constraint validation fails closed on selection, cardinality, length and dependencies", async () => {
@@ -1190,6 +1234,130 @@ test("Offer verification binds offer, SKU and marketplace; unique unknown outcom
   }
 })
 
+test("authorized publication sends publishOffer exactly once and returns the listing ID", async () => {
+  const module = await importTypeScript(gatewaySource)
+  const original = { ...process.env }
+  Object.assign(process.env, {
+    EBAY_DRAFT_ONLY_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_TARGET: "PRODUCTION",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID: "production-client-publish-success",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET: "production-secret",
+    EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN: "production-refresh",
+    EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID: "production-user-1",
+    EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET: SNAPSHOT_SECRET,
+    EBAY_DRAFT_ONLY_PRODUCTION_ALLOWED_GIT_BRANCH: "feature/draft-production",
+    VERCEL_ENV: "preview",
+    VERCEL_GIT_COMMIT_REF: "feature/draft-production",
+    EBAY_PRO_RUNTIME: "staging",
+  })
+  const calls = []
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url)
+    const method = init.method ?? "GET"
+    calls.push({ pathname: parsed.pathname, method })
+    if (parsed.pathname.endsWith("/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: "access" }), { status: 200 })
+    }
+    if (parsed.pathname === "/commerce/identity/v1/user/") {
+      return new Response(JSON.stringify({ userId: "production-user-1", status: "CONFIRMED" }), { status: 200 })
+    }
+    if (parsed.pathname === "/sell/inventory/v1/offer/offer-123" && method === "GET") {
+      return new Response(JSON.stringify({
+        offerId: "offer-123",
+        sku: RESERVED_SKU,
+        marketplaceId: "EBAY_US",
+        status: "UNPUBLISHED",
+      }), { status: 200 })
+    }
+    if (parsed.pathname === "/sell/inventory/v1/offer/offer-123/publish" && method === "POST") {
+      return new Response(JSON.stringify({ listingId: "123456789012" }), { status: 200 })
+    }
+    throw new Error(`unexpected ${method} ${parsed.pathname}`)
+  }
+  try {
+    const result = await module.publishEbayOfferOnce({
+      offerId: "offer-123",
+      expectedSku: RESERVED_SKU,
+      previewHash: "a".repeat(64),
+      publicationControlId: "55555555-5555-4555-8555-555555555555",
+      confirmPublish: "PUBLICAR LISTING EN EBAY",
+    }, fetchImpl)
+    assert.equal(result.ok, true)
+    assert.equal(result.listingId, "123456789012")
+    assert.equal(result.publishRequestSent, true)
+    assert.equal(result.reconciled, false)
+    assert.equal(calls.filter((call) => call.method === "POST"
+      && call.pathname.endsWith("/publish")).length, 1)
+  } finally {
+    process.env = original
+  }
+})
+
+test("an uncertain publish response is reconciled with GET and never repeats POST", async () => {
+  const module = await importTypeScript(gatewaySource)
+  const original = { ...process.env }
+  Object.assign(process.env, {
+    EBAY_DRAFT_ONLY_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_TARGET: "PRODUCTION",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID: "production-client-publish-timeout",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET: "production-secret",
+    EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN: "production-refresh",
+    EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID: "production-user-1",
+    EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET: SNAPSHOT_SECRET,
+    EBAY_DRAFT_ONLY_PRODUCTION_ALLOWED_GIT_BRANCH: "feature/draft-production",
+    VERCEL_ENV: "preview",
+    VERCEL_GIT_COMMIT_REF: "feature/draft-production",
+    EBAY_PRO_RUNTIME: "staging",
+  })
+  const calls = []
+  let offerReads = 0
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url)
+    const method = init.method ?? "GET"
+    calls.push({ pathname: parsed.pathname, method })
+    if (parsed.pathname.endsWith("/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: "access" }), { status: 200 })
+    }
+    if (parsed.pathname === "/commerce/identity/v1/user/") {
+      return new Response(JSON.stringify({ userId: "production-user-1", status: "CONFIRMED" }), { status: 200 })
+    }
+    if (parsed.pathname === "/sell/inventory/v1/offer/offer-456" && method === "GET") {
+      offerReads += 1
+      return new Response(JSON.stringify({
+        offerId: "offer-456",
+        sku: RESERVED_SKU,
+        marketplaceId: "EBAY_US",
+        status: offerReads === 1 ? "UNPUBLISHED" : "PUBLISHED",
+        ...(offerReads === 1 ? {} : { listing: { listingId: "987654321098" } }),
+      }), { status: 200 })
+    }
+    if (parsed.pathname === "/sell/inventory/v1/offer/offer-456/publish" && method === "POST") {
+      throw new Error("simulated connection timeout after dispatch")
+    }
+    throw new Error(`unexpected ${method} ${parsed.pathname}`)
+  }
+  try {
+    const result = await module.publishEbayOfferOnce({
+      offerId: "offer-456",
+      expectedSku: RESERVED_SKU,
+      previewHash: "b".repeat(64),
+      publicationControlId: "66666666-6666-4666-8666-666666666666",
+      confirmPublish: "PUBLICAR LISTING EN EBAY",
+    }, fetchImpl)
+    assert.equal(result.ok, true)
+    assert.equal(result.listingId, "987654321098")
+    assert.equal(result.reconciled, true)
+    assert.equal(calls.filter((call) => call.method === "POST"
+      && call.pathname.endsWith("/publish")).length, 1)
+    assert.ok(calls.filter((call) => call.method === "GET"
+      && call.pathname.endsWith("/offer/offer-456")).length >= 2)
+  } finally {
+    process.env = original
+  }
+})
+
 test("Production draft and final publication use separate account-bound one-shot ledgers", async () => {
   const module = await importTypeScript(readinessSource)
   const input = validInput()
@@ -1234,12 +1402,30 @@ test("Production draft and final publication use separate account-bound one-shot
   assert.match(gatewaySource, /EBAY_FINAL_PUBLISH_CONFIRMATION = "PUBLICAR LISTING EN EBAY"/)
   assert.match(gatewaySource, /A timeout is never retried with POST/)
   assert.match(routeSource, /verifyEbayPublishedOffer/)
+  assert.match(routeSource, /sync_same_day_source_before_authorized_publication/)
+  assert.match(routeSource, /EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_REQUIRED/)
+  assert.match(sameDayPublicationSource, /SELLER_OS_AUTHORIZED_PUBLICATION_V1_2026_07_20/)
+  assert.match(sameDayPublicationSource, /exactSixHttpsUrls/)
+  assert.match(sameDayPublicationSource, /finalHumanAuthorizationRequired: true/)
+  assert.match(sameDayPublicationSource, /unattendedPublicationAllowed: false/)
+  assert.match(sameDayImageRuntimeSource, /SAME_DAY_IMAGE_LISTING_PACKAGE_BINDING_CONFLICT/)
+  assert.match(sameDayImageRuntimeSource, /sameDayPilot: requestedBinding/)
   assert.match(publicationMigrationSource, /ebay_authorized_listing_publications/)
   assert.match(publicationMigrationSource, /preview_hash text not null/)
   assert.match(publicationMigrationSource, /publish_attempt_count between 0 and 1/)
   assert.match(publicationMigrationSource, /p_confirm_publish <> 'PUBLICAR LISTING EN EBAY'/)
   assert.match(publicationMigrationSource, /phase = 'published_pending_verification'/)
   assert.match(publicationMigrationSource, /phase = 'monitor_registered'/)
+  assert.match(sameDaySourceSyncMigration, /sync_same_day_source_before_authorized_publication/)
+  assert.match(sameDaySourceSyncMigration, /candidate\.machine_state in \('READY_FOR_MANUAL_PUBLICATION', 'WAITING_ITEM_ID'\)/)
+  assert.match(sameDaySourceSyncMigration, /jsonb_array_length\(coalesce\(v_package\.package_data->'imageUrls'/)
+  assert.match(sameDaySourceSyncMigration, /EBAY_SAME_DAY_PUBLICATION_IMAGE_BINDING_INVALID/)
+  assert.match(sameDaySourceSyncMigration, /v_image_summary->'publicUrls'[\s\S]*v_handoff#>'\{images,urls\}'/)
+  assert.match(sameDaySourceSyncMigration, /v_source_observed_at < clock_timestamp\(\) - interval '6 hours'/)
+  assert.match(sameDaySourceSyncMigration, /abs\(v_approved_source_price - v_source_price\) >= 0\.005/)
+  assert.match(sameDaySourceSyncMigration, /ebay_writes, production_changed[\s\S]*0, 0, 0, false/)
+  assert.match(sameDaySourceSyncMigration, /revoke all[\s\S]*from public, anon, authenticated/)
+  assert.match(sameDaySourceSyncMigration, /grant execute[\s\S]*to service_role/)
   assert.match(routeSource, /p_account_fingerprint: fingerprint/)
   assert.match(productionMigrationSource, /target in \('SANDBOX', 'PRODUCTION'\)/)
   assert.match(productionMigrationSource, /account_fingerprint/)

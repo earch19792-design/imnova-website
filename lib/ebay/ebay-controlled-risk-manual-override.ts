@@ -128,7 +128,10 @@ export function evaluateControlledRiskManualOverride(input: ControlledRiskOverri
       voluntaryReturns: "NOT_ACCEPTED_WHERE_EBAY_ALLOWS",
       ebayMoneyBackGuaranteeStillApplies: true,
       automaticPricingUsed: false,
-      manualPublicationOnly: true,
+      manualPublicationOnly: false,
+      finalHumanAuthorizationRequired: true,
+      sellerOsPublicationAfterAuthorization: true,
+      unattendedPublicationAllowed: false,
       ebayWrites: 0,
     },
   }

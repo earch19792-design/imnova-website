@@ -121,7 +121,7 @@ test("listing workspace is resumable and gates one unpublished environment-aware
     /save_package/,
     /package_data/,
     /Item specifics/,
-    /Offer API no publicado · \{draftTarget\}/,
+    /Offer no publicado \+ autorización final · \{draftTarget\}/,
     /CREAR DRAFT NO PUBLICADO/,
     /Preparar preview final no publicado/,
     /PUBLICAR LISTING EN EBAY/,
@@ -135,15 +135,15 @@ test("listing workspace is resumable and gates one unpublished environment-aware
   }
 })
 
-test("seller handoff has actionable economics, manual publication and valid mobile CTAs", () => {
+test("seller handoff has actionable economics and a Seller OS publication CTA", () => {
   for (const signal of [
     /Guardar y recalcular rentabilidad/,
     /Precio mínimo estimado/,
     /estimatedNetMarginPercent/,
     /estimatedRoiPercent/,
-    /Copiar SKU reservado/,
-    /Abrir Seller Hub/,
-    /registrar Item ID/,
+    /Publicación controlada desde Seller OS/,
+    /seller-os-final-publication/,
+    /guardará el Item ID/,
     /humanWorkspaceBlocker/,
   ]) assert.match(workspace, signal)
   assert.match(mobile, /comparables activos y señales de mercado/i)

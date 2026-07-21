@@ -474,6 +474,23 @@ function humanImageError(error: unknown) {
   return messages[code] ?? getMobileReviewRequestError(error, "No se pudo optimizar la imagen.")
 }
 
+function humanFinalPublicationError(error: unknown) {
+  const code = error instanceof Error ? error.message : String(error ?? "")
+  const messages: Array<[string, string]> = [
+    ["SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED", "La lectura de Luna venció o no confirma stock y costo. Vuelve al producto, actualiza la confirmación de Luna y prepara nuevamente el preview."],
+    ["EBAY_SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED", "La lectura de Luna venció o no confirma stock y costo. Vuelve al producto, actualiza la confirmación de Luna y prepara nuevamente el preview."],
+    ["EBAY_FINAL_PUBLICATION_LUNA_COST_CHANGED", "El costo de Luna cambió después de tu aprobación. Seller OS detuvo la publicación para que recalcules precio y margen."],
+    ["EBAY_SAME_DAY_PUBLICATION_LUNA_COST_CHANGED", "El costo de Luna cambió después de tu aprobación. Seller OS detuvo la publicación para que recalcules precio y margen."],
+    ["EBAY_SAME_DAY_PUBLICATION_LUNA_UNAVAILABLE", "Luna ya no confirma disponibilidad. Seller OS detuvo la publicación; reemplaza el candidato o espera una nueva lectura con stock."],
+    ["EBAY_FINAL_PUBLICATION_SCOPE_OR_STOCK_INVALID", "La cuenta, el paquete o el stock ya no coinciden con lo autorizado. Seller OS no publicó nada."],
+    ["EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_CHANGED", "El candidato o su paquete cambió después de la aprobación. Reabre el producto exacto y autoriza un preview nuevo."],
+    ["EBAY_FINAL_PUBLICATION_RECONCILIATION_REQUIRED", "La llamada de publicación ya fue reclamada. Usa “Verificar ACTIVE”; Seller OS no repetirá publishOffer."],
+    ["EBAY_FINAL_PUBLICATION_PREVIEW_CHANGED", "El preview cambió después de tu autorización. Prepara y revisa uno nuevo antes de publicar."],
+  ]
+  return messages.find(([candidate]) => code.includes(candidate))?.[1]
+    ?? getMobileReviewRequestError(error, "No se pudo completar la publicación autorizada.")
+}
+
 function fromPackage(value: Record<string, unknown>): FormState {
   const pricing = object(value.pricing)
   const aspects = object(value.aspects)
@@ -554,7 +571,6 @@ export default function EbayListingWorkspacePage() {
   const [publishConfirmation, setPublishConfirmation] = useState("")
   const [confirmFinalPublication, setConfirmFinalPublication] = useState(false)
   const [confirmPublishProductionAccount, setConfirmPublishProductionAccount] = useState(false)
-  const [skuCopied, setSkuCopied] = useState(false)
   const [activeRevisionItemId, setActiveRevisionItemId] = useState("")
   const [activeRevisionConfirmation, setActiveRevisionConfirmation] = useState("")
   const [activeRevisionApplication, setActiveRevisionApplication] = useState<Record<string, unknown> | null>(null)
@@ -564,6 +580,7 @@ export default function EbayListingWorkspacePage() {
   const [activeTitleConfirmation, setActiveTitleConfirmation] = useState("")
   const [activeTitleBusy, setActiveTitleBusy] = useState(false)
   const activeTitleIdempotency = useRef<{ scope: string; key: string } | null>(null)
+  const publicationIntentScrolled = useRef(false)
 
   const imageRequest = useCallback(async (
     body?: Record<string, unknown> | FormData,
@@ -820,6 +837,20 @@ export default function EbayListingWorkspacePage() {
     })()
   }, [request, draftRequest, loadImageAssets, loadImageRevision])
 
+  useEffect(() => {
+    if (!listingPackage || workspaceMode !== "CREATION"
+      || publicationIntentScrolled.current) return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("intent") !== "publish") return
+    publicationIntentScrolled.current = true
+    window.requestAnimationFrame(() => {
+      document.getElementById("seller-os-final-publication")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      })
+    })
+  }, [listingPackage, workspaceMode])
+
   const approvedImageAssets = useMemo(() => imageAssets
     .filter((asset) => asset.status === "approved")
     .sort((left, right) => left.position - right.position), [imageAssets])
@@ -971,20 +1002,6 @@ export default function EbayListingWorkspacePage() {
         : getMobileReviewRequestError(requestError, "No se pudo guardar el paquete."))
       setMessage("")
     } finally { setBusy(false) }
-  }
-
-  async function copyReservedSku() {
-    if (!draftConfiguration.sku) return
-    try {
-      await navigator.clipboard.writeText(draftConfiguration.sku)
-      setSkuCopied(true)
-      setError("")
-      setMessage("SKU reservado copiado. Pégalo sin cambios en Custom label (SKU) de Seller Hub.")
-    } catch {
-      setSkuCopied(false)
-      setError("No se pudo copiar automáticamente. Mantén presionado el SKU, cópialo completo y no lo modifiques.")
-      setMessage("")
-    }
   }
 
   function draftConfigurationPayload() {
@@ -1552,7 +1569,6 @@ export default function EbayListingWorkspacePage() {
     accountPreflightAutoStarted.current = true
     void runAccountPreflight()
     // The initial account read is intentionally executed once per page load.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -1569,7 +1585,6 @@ export default function EbayListingWorkspacePage() {
     accountPreflightAutoSaveKey.current = selectionKey
     void runAccountPreflight()
     // Revalidate only when a complete selection changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     accountPreflight,
     draftBusy,
@@ -1678,7 +1693,7 @@ export default function EbayListingWorkspacePage() {
       }))
       setMessage("Preview final persistido. Revisa precio, cantidad, imágenes, policies y ubicación antes de autorizar.")
     } catch (requestError) {
-      setError(getMobileReviewRequestError(requestError, "No se pudo preparar el preview final.")); setMessage("")
+      setError(humanFinalPublicationError(requestError)); setMessage("")
     } finally { setDraftBusy(false) }
   }
 
@@ -1699,7 +1714,7 @@ export default function EbayListingWorkspacePage() {
         ? `Listing ${payload.listing?.listingId} ACTIVE y registrado en monitoreo.`
         : `Listing ${payload.listing?.listingId} publicado; eBay aún no confirma ACTIVE. Usa reconciliar, nunca vuelvas a publicar.`)
     } catch (requestError) {
-      setError(getMobileReviewRequestError(requestError, "No se pudo completar la publicación autorizada.")); setMessage("")
+      setError(humanFinalPublicationError(requestError)); setMessage("")
     } finally { setDraftBusy(false) }
   }
 
@@ -1716,7 +1731,7 @@ export default function EbayListingWorkspacePage() {
         ? `Listing ${payload.listing?.listingId} ACTIVE y registrado en monitoreo.`
         : `Listing ${payload.listing?.listingId} sigue pendiente de verificación ACTIVE.`)
     } catch (requestError) {
-      setError(getMobileReviewRequestError(requestError, "No se pudo reconciliar el listing publicado.")); setMessage("")
+      setError(humanFinalPublicationError(requestError)); setMessage("")
     } finally { setDraftBusy(false) }
   }
 
@@ -1740,7 +1755,7 @@ export default function EbayListingWorkspacePage() {
       <section className="mx-auto max-w-xl space-y-4">
         <header className="sticky top-0 z-30 -mx-4 border-b border-white/10 bg-[#05070d]/95 px-4 pb-3 pt-2 backdrop-blur">
           <a href="/admin/ebay/mobile-review" className="inline-flex min-h-11 items-center rounded-full border border-white/20 px-4 text-sm font-bold">← Command Center</a>
-          <p className="mt-3 text-xs font-black uppercase tracking-widest text-emerald-100/70">Paso 4 · Draft / listing manual</p>
+          <p className="mt-3 text-xs font-black uppercase tracking-widest text-emerald-100/70">Paso 4 · Autorizar y publicar</p>
           <h1 className="mt-1 text-2xl font-black">Workspace del producto</h1>
         </header>
 
@@ -1779,20 +1794,17 @@ export default function EbayListingWorkspacePage() {
           <section className={`${maintenanceMode ? "hidden" : ""} rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4`}>
             <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase text-emerald-100/65">Datos reales de Luna + evidencia eBay</p><h2 className="mt-2 text-xl font-black">{opportunity.product_title}</h2><p className="mt-1 text-sm text-white/60">{opportunity.variant_title ?? "Variante general"} · {opportunity.supplier_sku ?? "SKU pendiente"}</p></div><strong className="rounded-2xl bg-white px-3 py-2 text-xl text-black">{Math.round(Number(opportunity.opportunity_score))}</strong></div>
             <dl className="mt-3 grid grid-cols-3 gap-2 text-xs"><div><dt className="text-white/50">Costo Luna</dt><dd className="font-black">{opportunity.supplier_price == null ? "Pendiente" : `$${Number(opportunity.supplier_price).toFixed(2)}`}</dd></div><div><dt className="text-white/50">Stock</dt><dd className="font-black">{opportunity.supplier_inventory_quantity ?? "Pendiente"}</dd></div><div><dt className="text-white/50">Fuente</dt><dd className="font-black">{listingPackage.source_observed_at ? new Date(listingPackage.source_observed_at).toLocaleDateString("es") : "Pendiente"}</dd></div></dl>
-            <div className="mt-4 rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-3 text-xs leading-5 text-amber-50">
-              <strong>Publicación manual segura:</strong>
+            <div className="mt-4 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50">
+              <strong>Publicación controlada desde Seller OS:</strong>
               <ol className="mt-2 list-decimal space-y-1 pl-5">
-                <li>Copia el SKU reservado y pégalo sin cambios en <strong>Custom label (SKU)</strong>.</li>
-                <li>El botón abre el CTA real de <strong>Single listing</strong>; completa el formulario y publica manualmente desde tu cuenta oficial.</li>
-                <li>Regresa y registra el Item ID para que el OS verifique cuenta, producto y variante.</li>
+                <li>Revisa contenido, precio, cantidad, policies y las seis imágenes aprobadas.</li>
+                <li>Autoriza la creación del Offer <strong>UNPUBLISHED</strong>; ese primer permiso no publica.</li>
+                <li>Revisa el preview exacto y autoriza la publicación final dentro de Seller OS.</li>
+                <li>Seller OS publicará una sola vez, verificará <strong>ACTIVE</strong>, guardará el Item ID y activará el monitoreo.</li>
               </ol>
               <span className="mt-2 block break-all rounded-xl bg-black/25 p-2 font-mono font-black text-white">{draftConfiguration.sku}</span>
             </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <button type="button" onClick={() => void copyReservedSku()} disabled={!draftConfiguration.sku} className="min-h-12 rounded-2xl bg-white px-4 text-sm font-black text-black disabled:opacity-40">{skuCopied ? "✓ SKU copiado" : "1. Copiar SKU reservado"}</button>
-              <a href="https://www.ebay.com/sl/prelist/home?sr=shListingsCTA" className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-cyan-200/30 px-4 text-center text-sm font-black text-cyan-50">2. Abrir Create listing en Seller Hub</a>
-            </div>
-            <a href={`/admin/ebay/listings/register?opportunityId=${encodeURIComponent(opportunity.id)}&candidateKey=${encodeURIComponent(opportunity.candidate_key)}&supplierSku=${encodeURIComponent(opportunity.supplier_sku ?? "")}&supplierVariantId=${encodeURIComponent(opportunity.supplier_variant_id ?? "")}&expectedSku=${encodeURIComponent(draftConfiguration.sku)}`} className="mt-2 inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-emerald-200/30 px-4 text-center text-sm font-black text-emerald-50">3. Ya está publicado · registrar Item ID</a>
+            <a href="#seller-os-final-publication" className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-2xl bg-emerald-200 px-4 text-center text-sm font-black text-black">Continuar a autorización y publicación</a>
             {safeDefaultsMetadata.source === "EBAY_OBSERVED_OWN_LISTING_TEMPLATE" && Array.isArray(safeDefaultsMetadata.appliedFields) && safeDefaultsMetadata.appliedFields.length > 0 && <div className="mt-3 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.05] p-3 text-xs leading-5 text-cyan-50"><strong>Autocompletado desde la lectura oficial de tu listing:</strong> {safeDefaultsMetadata.appliedFields.join(", ")}. No se reutilizaron título, descripción, imágenes ni valores de aspectos; todo se revalida contra eBay.</div>}
           </section>
 
@@ -1937,17 +1949,17 @@ export default function EbayListingWorkspacePage() {
             <div className="mt-3 grid grid-cols-[1fr_auto] gap-2 sm:grid-cols-[1fr_1fr_auto]"><input aria-label="Nombre del nuevo aspecto" placeholder="Marca" value={aspectName} onChange={(event) => setAspectName(event.target.value)} className="col-span-2 min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3 sm:col-span-1" /><input aria-label="Valor del nuevo aspecto" placeholder="Valor" value={aspectValue} onChange={(event) => setAspectValue(event.target.value)} className="min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3" /><button type="button" aria-label="Agregar aspecto" disabled={!aspectName.trim() || !aspectValue.trim()} onClick={() => { setForm((current) => ({ ...current, aspects: { ...current.aspects, [aspectName.trim()]: aspectValue.trim() } })); setAspectName(""); setAspectValue("") }} className="size-11 rounded-xl bg-violet-200 font-black text-black disabled:opacity-40">+</button></div>
           </section>
 
-          <section className={`${maintenanceMode ? "hidden" : ""} space-y-4 rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.05] p-4`}>
+          <section id="seller-os-final-publication" className={`${maintenanceMode ? "hidden" : ""} scroll-mt-28 space-y-4 rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.05] p-4`}>
             <div>
-              <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Draft eBay controlado</p>
-              <h2 className="mt-1 text-xl font-black">Offer API no publicado · {draftTarget}</h2>
-              <p className="mt-2 text-sm leading-6 text-white/65">Primero validas, después autorizas por 15 minutos y finalmente ejecutas. Ningún paso puede publicar el listing.</p>
+              <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Publicación eBay controlada</p>
+              <h2 className="mt-1 text-xl font-black">Offer no publicado + autorización final · {draftTarget}</h2>
+              <p className="mt-2 text-sm leading-6 text-white/65">Primero autorizas y creas el Offer UNPUBLISHED. Después Seller OS vuelve a validar todo, muestra el preview exacto y sólo lo publica cuando das una segunda autorización explícita.</p>
               <p className="mt-2 rounded-xl border border-white/15 p-2 text-xs leading-5 text-white/60">Esto crea Inventory Item + Offer con estado UNPUBLISHED mediante la API. No garantiza que eBay lo muestre como un “draft” editable dentro de Seller Hub.</p>
             </div>
             <div className={`rounded-2xl border p-3 text-sm ${productionTarget ? "border-rose-200/40 bg-rose-200/[0.09] text-rose-50" : draftState.runtime?.enabled && draftState.runtime?.configured ? "border-emerald-200/25 bg-emerald-200/[0.06] text-emerald-50" : "border-amber-200/25 bg-amber-200/[0.06] text-amber-50"}`}>
               <strong>{draftState.runtime?.enabled && draftState.runtime?.configured ? `Conector ${draftTarget} listo` : `Conector ${draftTarget} bloqueado por configuración`}</strong>
-              <p className="mt-1 text-xs opacity-75">Target: {draftTarget} · publicación: desactivada · la ejecución exige coincidencia exacta de cuenta</p>
-              {productionTarget && <p className="mt-2 text-xs font-black">ATENCIÓN: Inventory Item y Offer se crearán dentro de tu cuenta real de vendedor eBay, aunque permanecerán sin publicar.</p>}
+              <p className="mt-1 text-xs opacity-75">Target: {draftTarget} · publicación final: autorización separada de un solo uso · cuenta exacta obligatoria</p>
+              {productionTarget && <p className="mt-2 text-xs font-black">ATENCIÓN: el primer permiso crea el Offer sin publicarlo; el segundo publica el preview aprobado en tu cuenta real.</p>}
               {productionTarget && draftState.runtime?.environmentAllowed === false && <p className="mt-2 text-xs font-black">Producción draft-only sólo se permite en el Preview y la rama autorizada.</p>}
             </div>
             <div className="rounded-2xl border border-sky-200/25 bg-sky-200/[0.05] p-3 text-sm">
@@ -1971,15 +1983,14 @@ export default function EbayListingWorkspacePage() {
             <label className="flex min-h-14 items-start gap-3 rounded-2xl border border-white/15 p-3"><input type="checkbox" checked={imagesAuthorized} onChange={(event) => setImagesAuthorized(event.target.checked)} className="mt-1 size-5" /><span className="text-sm"><strong className="block">Confirmo derechos sobre todas las imágenes</strong><span className="text-white/55">Provienen de Luna/proveedor y están autorizadas; no fueron copiadas de eBay ni de competidores.</span></span></label>
             <button type="button" disabled={draftBusy} onClick={() => void validateDraft()} className="min-h-13 w-full rounded-2xl border border-cyan-200/35 px-4 font-black text-cyan-50 disabled:opacity-50">{draftBusy ? "Validando…" : "Validar draft seguro"}</button>
             {draftState.readiness && <div className={`rounded-2xl border p-3 ${draftState.readiness.ready ? "border-emerald-200/30 bg-emerald-200/[0.06]" : "border-amber-200/30 bg-amber-200/[0.06]"}`}><strong>{draftState.readiness.ready ? "Listo para tu aprobación" : `${draftState.readiness.blockers.length} bloqueos pendientes`}</strong>{!draftState.readiness.ready && <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-50">{draftState.readiness.blockers.map((blocker) => <li key={blocker}>{humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)}</li>)}</ul>}</div>}
-            {draftState.readiness?.ready && !approvalActive && !executionCompleted && <div className="space-y-3 rounded-2xl border border-emerald-200/25 p-3"><label className="block"><span className="text-sm font-black">Escribe exactamente: {expectedApprovalPhrase}</span><input value={approvalPhrase} onChange={(event) => setApprovalPhrase(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmUnpublishedOnly} onChange={(event) => setConfirmUnpublishedOnly(event.target.checked)} />Entiendo que sólo autoriza un Offer no publicado.</label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmNoPublish} onChange={(event) => setConfirmNoPublish(event.target.checked)} />Confirmo que publicar permanece prohibido.</label>{productionTarget && <label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmProductionAccount} onChange={(event) => setConfirmProductionAccount(event.target.checked)} />Confirmo que {draftTarget} es mi cuenta real: autorizo crear Inventory Item + Offer API UNPUBLISHED, sin publicarlo.</label>}<button type="button" disabled={draftBusy || approvalPhrase !== expectedApprovalPhrase || !confirmUnpublishedOnly || !confirmNoPublish || !imagesAuthorized || (productionTarget && !confirmProductionAccount)} onClick={() => void approveDraft()} className="min-h-13 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">Aprobar {draftTarget} por 15 minutos</button></div>}
+            {draftState.readiness?.ready && !approvalActive && !executionCompleted && <div className="space-y-3 rounded-2xl border border-emerald-200/25 p-3"><label className="block"><span className="text-sm font-black">Escribe exactamente: {expectedApprovalPhrase}</span><input value={approvalPhrase} onChange={(event) => setApprovalPhrase(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmUnpublishedOnly} onChange={(event) => setConfirmUnpublishedOnly(event.target.checked)} />Entiendo que sólo autoriza un Offer no publicado.</label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmNoPublish} onChange={(event) => setConfirmNoPublish(event.target.checked)} />Confirmo que este primer permiso no publica; la publicación final requerirá otra autorización.</label>{productionTarget && <label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmProductionAccount} onChange={(event) => setConfirmProductionAccount(event.target.checked)} />Confirmo que {draftTarget} es mi cuenta real: autorizo crear Inventory Item + Offer API UNPUBLISHED, sin publicarlo.</label>}<button type="button" disabled={draftBusy || approvalPhrase !== expectedApprovalPhrase || !confirmUnpublishedOnly || !confirmNoPublish || !imagesAuthorized || (productionTarget && !confirmProductionAccount)} onClick={() => void approveDraft()} className="min-h-13 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">Aprobar {draftTarget} por 15 minutos</button></div>}
             {approvalActive && !executionCompleted && draftState.approval && <div className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.06] p-3"><strong>Aprobación {draftTarget} activa hasta {new Date(draftState.approval.expires_at).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}</strong><p className="mt-2 text-sm text-white/65">El siguiente botón es el único que puede escribir y sólo crea Inventory Item + Offer API UNPUBLISHED en {draftTarget}.</p><button type="button" disabled={draftBusy || !draftState.runtime?.enabled || !draftState.runtime?.configured} onClick={() => void executeDraft()} className="mt-3 min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Crear Offer no publicado en {draftTarget}</button><button type="button" disabled={draftBusy} onClick={() => void revokeDraftApproval()} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 px-4 font-black disabled:opacity-40">Cancelar aprobación</button></div>}
             {executionCompleted && <div className="rounded-2xl border border-emerald-200/30 bg-emerald-200/[0.07] p-3 text-emerald-50"><strong>UNPUBLISHED verificado al crear {draftState.execution?.completed_at ? new Date(draftState.execution.completed_at).toLocaleString("es") : "en la ejecución registrada"}</strong><p className="mt-1 text-xs">Este estado describe la verificación realizada en ese momento; vuelve a consultar eBay antes de asumir que sigue igual.</p><p className="mt-1 break-all text-xs">Offer ID: {draftState.execution?.offer_id ?? "guardado"}</p></div>}
-            {executionCompleted && !draftState.publication && <div className="rounded-2xl border border-cyan-200/30 bg-cyan-200/[0.06] p-3"><strong>Preparar publicación automática</strong><p className="mt-2 text-sm text-white/65">El sistema revalidará cuenta, stock, seis imágenes, policies y ubicación. Después mostrará el preview final; este paso todavía no publica.</p><button type="button" disabled={draftBusy || !draftState.execution?.id} onClick={() => void prepareFinalPublication()} className="mt-3 min-h-14 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">Preparar preview final no publicado</button></div>}
+            {executionCompleted && !draftState.publication && <div className="rounded-2xl border border-cyan-200/30 bg-cyan-200/[0.06] p-3"><strong>Preparar publicación desde Seller OS</strong><p className="mt-2 text-sm text-white/65">Seller OS revalidará cuenta, costo y stock de Luna, seis imágenes, policies y ubicación. Después mostrará el preview final; este paso todavía no publica.</p><button type="button" disabled={draftBusy || !draftState.execution?.id} onClick={() => void prepareFinalPublication()} className="mt-3 min-h-14 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">Preparar preview final no publicado</button></div>}
             {publicationPhase === "preview_ready" && <div className="space-y-3 rounded-2xl border border-amber-200/35 bg-amber-200/[0.07] p-3"><div><p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Preview final persistido</p><h3 className="mt-1 font-black">{String(publicationProduct.title ?? "Título pendiente")}</h3><p className="mt-2 text-xs text-white/65">SKU: {String(publicationOffer.sku ?? draftState.publication?.sku ?? "")} · Category ID: {String(publicationOffer.categoryId ?? "")} · Cantidad: {String(publicationOffer.availableQuantity ?? "")}</p><p className="mt-1 text-sm font-black">Precio exacto: {String(publicationPrice.currency ?? "USD")} {String(publicationPrice.value ?? "")}</p><p className="mt-1 text-xs text-white/65">Imágenes aprobadas: {Array.isArray(publicationProduct.imageUrls) ? publicationProduct.imageUrls.length : 0} · Location: {String(publicationOffer.merchantLocationKey ?? "")}</p><p className="mt-1 break-all text-[10px] text-white/50">Policies: {String(publicationPolicies.fulfillmentPolicyId ?? "")} · {String(publicationPolicies.paymentPolicyId ?? "")} · {String(publicationPolicies.returnPolicyId ?? "")}</p><p className="mt-2 rounded-xl border border-white/10 p-2 text-xs text-white/60">Sin promociones, Best Offer ni volume pricing. Se publicará exactamente este Offer una sola vez.</p></div><label className="block"><span className="text-sm font-black">Escribe exactamente: {finalPublishPhrase}</span><input value={publishConfirmation} onChange={(event) => setPublishConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmFinalPublication} onChange={(event) => setConfirmFinalPublication(event.target.checked)} />Revisé este preview final, incluidas las seis imágenes y el precio.</label><label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmPublishProductionAccount} onChange={(event) => setConfirmPublishProductionAccount(event.target.checked)} />Confirmo publicar en mi cuenta eBay PRODUCTION y registrar el listing ACTIVE en monitoreo.</label><button type="button" disabled={draftBusy || publishConfirmation !== finalPublishPhrase || !confirmFinalPublication || !confirmPublishProductionAccount} onClick={() => void publishFinalListing()} className="min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Publicar una sola vez en eBay</button></div>}
             {["publish_in_flight", "outcome_unknown", "published_pending_verification"].includes(publicationPhase) && <div className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.07] p-3"><strong>{publicationPhase === "published_pending_verification" ? "Publicado; falta confirmar ACTIVE" : "Resultado de publicación en reconciliación"}</strong><p className="mt-2 text-sm text-white/65">Esta acción sólo consulta eBay y registra monitoreo. Nunca vuelve a llamar publishOffer.</p>{draftState.publication?.listing_id && <a href={`https://www.ebay.com/itm/${draftState.publication.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-sm font-black text-cyan-100 underline">Ver listing {draftState.publication.listing_id}</a>}<button type="button" disabled={draftBusy} onClick={() => void reconcileFinalListing()} className="mt-3 min-h-13 w-full rounded-2xl border border-amber-200/40 px-4 font-black disabled:opacity-40">Verificar ACTIVE y registrar monitoreo</button></div>}
             {publicationPhase === "monitor_registered" && <div className="rounded-2xl border border-emerald-200/35 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y ciclo cerrado</strong><p className="mt-2 text-sm">Item ID {draftState.publication?.listing_id} · monitoreo comercial y disponibilidad Luna registrados.</p><a href={`https://www.ebay.com/itm/${draftState.publication?.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-black underline">Abrir listing en eBay</a></div>}
-            {publicationPhase === "terminal_failure" && <div className="rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-3 text-rose-50"><strong>Publicación detenida sin reintento automático</strong><p className="mt-2 text-sm">{draftState.publication?.last_error_code ?? "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE"}</p></div>}
-            <a href="https://www.ebay.com/sh/lst/active" target="_blank" rel="noreferrer" className="inline-flex min-h-11 w-full items-center justify-center rounded-xl border border-white/15 text-xs font-black text-white/60">Abrir Seller Hub (respaldo manual)</a>
+            {publicationPhase === "terminal_failure" && <div className="rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-3 text-rose-50"><strong>Publicación detenida sin reintento automático</strong><p className="mt-2 text-sm">{humanFinalPublicationError(new Error(draftState.publication?.last_error_code ?? "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE"))}</p><p className="mt-2 text-xs text-rose-50/70">No publiques manualmente hasta confirmar si eBay recibió la llamada; así se evita duplicar el listing.</p></div>}
           </section>
 
           <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4"><div className="flex justify-between gap-3"><h2 className="font-black">Preparación del paquete</h2><strong>{listingPackage.readiness}%</strong></div>{blockers.length ? <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-50">{blockers.map((blocker) => <li key={blocker}>{humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)}</li>)}</ul> : <p className="mt-2 text-sm text-emerald-100">Sin bloqueos. Puedes enviarlo a revisión humana.</p>}<p className="mt-3 text-xs leading-5 text-white/50">Guardar y validar sólo modifican datos internos. Crear el Offer permanece separado de la autorización final: publishOffer exige el preview persistido, la frase exacta y una única confirmación humana.</p></section>
