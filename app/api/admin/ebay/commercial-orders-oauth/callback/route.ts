@@ -21,6 +21,12 @@ import {
   hasPendingEbayMerchantLocationOAuth,
   sanitizeEbayMerchantLocationOAuthCallbackError,
 } from "@/lib/ebay/ebay-merchant-location-oauth-authorization"
+import {
+  completeEbayPublicationOAuth,
+  failPendingEbayPublicationOAuth,
+  hasPendingEbayPublicationOAuth,
+  sanitizeEbayPublicationOAuthCallbackError,
+} from "@/lib/ebay/ebay-publication-oauth-authorization"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
 function safeCode(error: unknown) {
@@ -79,6 +85,24 @@ function merchantLocationRedirect(
   })
 }
 
+function publicationRedirect(
+  req: Request,
+  outcome: "ready" | "error",
+  reason?: string,
+) {
+  const target = new URL("/admin/ebay-seller-os", req.url)
+  target.searchParams.set("ebayPublicationOAuth", outcome)
+  if (reason) target.searchParams.set("reason", reason)
+  return NextResponse.redirect(target, {
+    status: 303,
+    headers: {
+      "Cache-Control": "no-store, max-age=0",
+      "Referrer-Policy": "no-referrer",
+      "X-Robots-Tag": "noindex",
+    },
+  })
+}
+
 function redirect(req: Request, outcome: "ready" | "error", reason?: string) {
   const target = new URL("/admin/ebay/mobile-review", req.url)
   target.searchParams.set("commercialOrdersOAuth", outcome)
@@ -101,6 +125,32 @@ export async function GET(req: Request) {
     state: url.searchParams.get("state")?.trim() ?? "",
   }
   const supabase = getSupabaseAdminClient()
+
+  if (
+    input.state &&
+    (await hasPendingEbayPublicationOAuth(supabase, input.state))
+  ) {
+    if (callbackError) {
+      const reason = sanitizeEbayPublicationOAuthCallbackError(callbackError)
+      await failPendingEbayPublicationOAuth(supabase, input.state, reason)
+      input.code = ""
+      input.state = ""
+      return publicationRedirect(req, "error", reason)
+    }
+    if (!isValidEbayCommercialAuthorizationCode(input.code)) {
+      const reason = "EBAY_PUBLICATION_OAUTH_CALLBACK_INVALID"
+      await failPendingEbayPublicationOAuth(supabase, input.state, reason)
+      input.code = ""
+      input.state = ""
+      return publicationRedirect(req, "error", reason)
+    }
+    try {
+      await completeEbayPublicationOAuth(supabase, input)
+      return publicationRedirect(req, "ready")
+    } catch (error) {
+      return publicationRedirect(req, "error", safeCode(error))
+    }
+  }
 
   if (
     input.state
