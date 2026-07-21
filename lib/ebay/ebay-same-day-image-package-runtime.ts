@@ -14,6 +14,7 @@ import {
   buildSafeOpenAiBackgroundPlatePlan,
   EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION,
   EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
+  EBAY_IMAGE_TEXT_RENDERER_VERSION,
   EBAY_LISTING_IMAGE_SET_VERSION,
   EBAY_LISTING_IMAGE_SLOTS,
   getListingImageFactoryConfiguration,
@@ -249,7 +250,10 @@ async function reusableCompletedSet(input: {
           EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION &&
         qa.foregroundMatteValidated === true &&
         qa.opaqueSourceFrameRemoved === true &&
-        qa.textSafeAreaVerified === true
+        qa.textSafeAreaVerified === true &&
+        transformation.textRendererVersion ===
+          EBAY_IMAGE_TEXT_RENDERER_VERSION &&
+        qa.textGlyphsValidated === true
     })
   if (!currentContract || !secondaryForegroundsValid) {
     throw new Error("SAME_DAY_IMAGE_COMPOSITOR_REGENERATION_REQUIRED")
@@ -693,7 +697,10 @@ export async function reviewSameDayImagePackage(input: {
             EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION &&
           qa.foregroundMatteValidated === true &&
           qa.opaqueSourceFrameRemoved === true &&
-          qa.textSafeAreaVerified === true
+          qa.textSafeAreaVerified === true &&
+          transformation.textRendererVersion ===
+            EBAY_IMAGE_TEXT_RENDERER_VERSION &&
+          qa.textGlyphsValidated === true
       })
     const generated = transformations.filter((transformation) =>
       transformation.generativeAiUsed === true)

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { readFileSync } from "node:fs"
 
 import sharp from "sharp"
 import { z } from "zod"
@@ -19,6 +20,8 @@ export const EBAY_VISUAL_STRATEGY_VERSION =
   "EBAY_VISUAL_STRATEGY_COMPILER_V2_2026_07_21"
 export const EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION =
   "EBAY_AUTHORIZED_FOREGROUND_MATTE_V1_2026_07_21"
+export const EBAY_IMAGE_TEXT_RENDERER_VERSION =
+  "EBAY_IMAGE_TEXT_PANGO_FONTFILE_V2_2026_07_21"
 export const EBAY_OPENAI_IMAGE_PREVIEW_BRANCH =
   "feature/centralize-ebay-mobile-command-center"
 
@@ -117,6 +120,7 @@ export type EbayListingImageComposition = {
     foregroundTransparentBorderRatio?: number
     foregroundProtectedPixelRetentionRatio?: number
     foregroundOpaqueCornerRatio?: number
+    textRendererVersion?: typeof EBAY_IMAGE_TEXT_RENDERER_VERSION
   }
   qa: {
     automaticStatus: "PASSED" | "PARTIAL"
@@ -134,6 +138,7 @@ export type EbayListingImageComposition = {
     foregroundMatteValidated?: true
     opaqueSourceFrameRemoved?: true
     textSafeAreaVerified?: true
+    textGlyphsValidated?: true
     manualChecksRequired: string[]
   }
 }
@@ -187,6 +192,78 @@ function escapeXml(value: string) {
   })[character] ?? character)
 }
 
+const LISTING_FONT_FILE = `${process.cwd()}/public/fonts/DejaVuSans.ttf`
+const LISTING_FONT_SHA256 =
+  "b4c632e3cdf9acc7f28758fb5a323c8524d7fc6660d46904d9b6cbe2809c419c"
+let listingFontVerified = false
+let listingFontRendererVerification: Promise<void> | null = null
+
+function assertPackagedListingFont() {
+  if (listingFontVerified) return
+  let font: Buffer
+  try {
+    font = readFileSync(LISTING_FONT_FILE)
+  } catch {
+    throw new Error("EBAY_IMAGE_PACKAGED_FONT_MISSING")
+  }
+  try {
+    if (sha256(font) !== LISTING_FONT_SHA256) {
+      throw new Error("EBAY_IMAGE_PACKAGED_FONT_INVALID")
+    }
+  } finally {
+    font.fill(0)
+  }
+  listingFontVerified = true
+}
+
+async function assertPackagedListingFontRenderer() {
+  assertPackagedListingFont()
+  listingFontRendererVerification ??= (async () => {
+    const rendered = await sharp({
+      text: {
+        text: '<span font_desc="DejaVu Sans Book 72" ' +
+          'foreground="#172033">M W i l . 1</span>',
+        font: "DejaVu Sans",
+        fontfile: LISTING_FONT_FILE,
+        align: "centre",
+        rgba: true,
+        wrap: "none",
+      },
+    }).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+    try {
+      const inkColumns = Array.from(
+        { length: rendered.info.width },
+        (_, x) => {
+          for (let y = 0; y < rendered.info.height; y += 1) {
+            const alpha = rendered.data[
+              (y * rendered.info.width + x) * rendered.info.channels + 3
+            ]
+            if (alpha > 32) return true
+          }
+          return false
+        },
+      )
+      const runs: number[] = []
+      for (let x = 0; x < inkColumns.length;) {
+        if (!inkColumns[x]) {
+          x += 1
+          continue
+        }
+        const start = x
+        while (x < inkColumns.length && inkColumns[x]) x += 1
+        runs.push(x - start)
+      }
+      if (runs.length < 6 || new Set(runs).size < 3 ||
+        Math.min(...runs) * 2 > Math.max(...runs)) {
+        throw new Error("EBAY_IMAGE_PACKAGED_FONT_RENDER_INVALID")
+      }
+    } finally {
+      rendered.data.fill(0)
+    }
+  })()
+  await listingFontRendererVerification
+}
+
 async function renderVerifiedText(input: {
   value: string
   width: number
@@ -196,28 +273,45 @@ async function renderVerifiedText(input: {
 }) {
   const value = input.value.normalize("NFKC").trim()
   if (!value) throw new Error("EBAY_IMAGE_TEXT_REQUIRED")
+  await assertPackagedListingFontRenderer()
   const lines = value.split("\n").map((line) => line.trim()).filter(Boolean)
   const minimumVisiblePixels = Math.max(
     32,
     Math.min(400, value.replace(/\s+/g, "").length * 4),
   )
   for (let size = input.size; size >= 14; size -= 2) {
-    const lineHeight = Math.ceil(size * 1.3)
-    const totalHeight = lineHeight * lines.length
-    const firstBaseline = Math.round(
-      (input.height - totalHeight) / 2 + size,
-    )
-    const tspans = lines.map((line, index) =>
-      `<tspan x="${input.width / 2}" dy="${index === 0 ? 0 : lineHeight}">` +
-      `${escapeXml(line)}</tspan>`).join("")
-    const output = await sharp(Buffer.from(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${input.width}" ` +
-      `height="${input.height}" viewBox="0 0 ${input.width} ${input.height}">` +
-      `<text x="${input.width / 2}" y="${firstBaseline}" ` +
-      `text-anchor="middle" fill="#172033" font-family="DejaVu Sans" ` +
-      `font-size="${size}px" font-weight="${input.bold ? 700 : 400}">` +
-      `${tspans}</text></svg>`,
-    )).png().toBuffer()
+    // Pango's explicit fontfile is required in Vercel functions. An SVG
+    // font-family name alone falls back to the LastResort font there and
+    // produces visible tofu boxes even though the alpha-area QA passes.
+    const glyphs = await sharp({
+      text: {
+        text: `<span font_desc="DejaVu Sans ${input.bold ? "Bold" : "Book"} ${size}" ` +
+          `foreground="#172033">${lines.map(escapeXml).join("\n")}</span>`,
+        font: "DejaVu Sans",
+        fontfile: LISTING_FONT_FILE,
+        align: "centre",
+        rgba: true,
+        spacing: 8,
+        wrap: "none",
+      },
+    }).png().toBuffer()
+    const glyphMetadata = await sharp(glyphs).metadata()
+    const safeMargin = 4
+    if (!glyphMetadata.width || !glyphMetadata.height ||
+      glyphMetadata.width > input.width - safeMargin * 2 ||
+      glyphMetadata.height > input.height - safeMargin * 2) {
+      glyphs.fill(0)
+      continue
+    }
+    const output = await sharp({
+      create: {
+        width: input.width,
+        height: input.height,
+        channels: 4,
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+      },
+    }).composite([{ input: glyphs, gravity: "centre" }]).png().toBuffer()
+    glyphs.fill(0)
     const rendered = await sharp(output).ensureAlpha().raw()
       .toBuffer({ resolveWithObject: true })
     let visiblePixels = 0
@@ -239,7 +333,6 @@ async function renderVerifiedText(input: {
       }
     }
     rendered.data.fill(0)
-    const safeMargin = 4
     if (visiblePixels >= minimumVisiblePixels &&
       left >= safeMargin && top >= safeMargin &&
       right < input.width - safeMargin &&
@@ -1408,6 +1501,7 @@ export async function composeAuthorizedEbayListingImageSet(
             main.secondaryForeground.qa.protectedPixelRetentionRatio,
           foregroundOpaqueCornerRatio:
             main.secondaryForeground.qa.opaqueCornerRatio,
+          textRendererVersion: EBAY_IMAGE_TEXT_RENDERER_VERSION,
         } : {}),
       },
       qa: {
@@ -1432,6 +1526,7 @@ export async function composeAuthorizedEbayListingImageSet(
           foregroundMatteValidated: true as const,
           opaqueSourceFrameRemoved: true as const,
           textSafeAreaVerified: true as const,
+          textGlyphsValidated: true as const,
         } : {}),
         manualChecksRequired: [
           "MANUFACTURER_BRAND_MATCH",

@@ -6,6 +6,11 @@ const nextConfig = {
   experimental: {
     cpus: 1,
   },
+  outputFileTracingIncludes: {
+    "/api/cron/ebay-same-day-pilot": ["./public/fonts/DejaVuSans.ttf"],
+    "/api/admin/ebay/images": ["./public/fonts/DejaVuSans.ttf"],
+    "/api/admin/ebay/same-day-pilot": ["./public/fonts/DejaVuSans.ttf"],
+  },
   images: {
     unoptimized: true,
   },

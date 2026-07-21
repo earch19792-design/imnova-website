@@ -10,6 +10,7 @@ import {
 } from "./ebay-image-storage-cleanup"
 import {
   EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
+  EBAY_IMAGE_TEXT_RENDERER_VERSION,
   EBAY_LISTING_IMAGE_SET_VERSION,
   EBAY_LISTING_IMAGE_SLOTS,
   getListingImageFactoryConfiguration,
@@ -409,6 +410,12 @@ export async function generateAndPersistSameDayImageRevision(input: {
       text(asset.outputSha256, 64))
     const generatedContracts = generated.transientAssets.map((asset) =>
       text(record(asset.transformation).compositorContractVersion, 120))
+    const generatedTextEvidence = generated.transientAssets
+      .filter((asset) => asset.slot !== "MAIN_WHITE_BACKGROUND")
+      .every((asset) =>
+        record(asset.transformation).textRendererVersion ===
+          EBAY_IMAGE_TEXT_RENDERER_VERSION &&
+        record(asset.qa).textGlyphsValidated === true)
     if (generated.transientAssets.length !== 6
       || new Set(generatedSlots).size !== 6
       || EBAY_LISTING_IMAGE_SLOTS.some((slot) => !generatedSlots.includes(slot))
@@ -417,7 +424,8 @@ export async function generateAndPersistSameDayImageRevision(input: {
       || generatedHashes.some((hash) => !/^[0-9a-f]{64}$/.test(hash))
       || new Set(generatedHashes).size !== 6
       || generatedContracts.some((contract) =>
-        contract !== EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION)) {
+        contract !== EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION)
+      || !generatedTextEvidence) {
       throw new Error("SAME_DAY_IMAGE_REVISION_EXACT_SIX_INVALID")
     }
     const roleBySlot: Record<string, string> = {

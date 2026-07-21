@@ -950,7 +950,10 @@ function completeImageReviewSet(assets: Row[]) {
       ) &&
       asset.foregroundMatteValidated === true &&
       asset.opaqueSourceFrameRemoved === true &&
-      asset.textSafeAreaVerified === true)
+      asset.textSafeAreaVerified === true &&
+      asset.textRendererVersion ===
+        "EBAY_IMAGE_TEXT_PANGO_FONTFILE_V2_2026_07_21" &&
+      asset.textGlyphsValidated === true)
   const aiBoardSet = main?.generativeAiUsed !== true && generated.length === 5 &&
     generated.every((asset) =>
       asset.slot !== "MAIN_WHITE_BACKGROUND" &&

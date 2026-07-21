@@ -9,7 +9,7 @@ import { productFactsHash } from "./ebay-product-facts-readiness.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { buildCurrentSameDayImageFactoryInput, type CurrentSameDayImageFactBinding } from "./ebay-same-day-image-factory-input.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
-import { buildSafeOpenAiBackgroundPlatePlan, composeAuthorizedEbayListingImageSet, EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, EBAY_VISUAL_STRATEGY_VERSION, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan, type EbayOpenAiImageQuality } from "./ebay-listing-image-factory.ts"
+import { buildSafeOpenAiBackgroundPlatePlan, composeAuthorizedEbayListingImageSet, EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_IMAGE_TEXT_RENDERER_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, EBAY_VISUAL_STRATEGY_VERSION, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan, type EbayOpenAiImageQuality } from "./ebay-listing-image-factory.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { ebayImageMarketBriefSchema, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
 
@@ -43,6 +43,7 @@ const persistenceAssetSchema = z.object({
   foregroundTransparentBorderRatio: z.number().min(0).max(1).optional(),
   foregroundProtectedPixelRetentionRatio: z.number().min(0).max(1).optional(),
   foregroundOpaqueCornerRatio: z.number().min(0).max(1).optional(),
+  textRendererVersion: z.literal(EBAY_IMAGE_TEXT_RENDERER_VERSION).optional(),
   sourceSha256: rawSha256Schema,
   outputSha256: rawSha256Schema,
   width: z.literal(1600),
@@ -60,6 +61,7 @@ const persistenceAssetSchema = z.object({
   foregroundMatteValidated: z.literal(true).optional(),
   opaqueSourceFrameRemoved: z.literal(true).optional(),
   textSafeAreaVerified: z.literal(true).optional(),
+  textGlyphsValidated: z.literal(true).optional(),
   visualStrategyVersion: z.literal(EBAY_VISUAL_STRATEGY_VERSION).optional(),
   backgroundPlateQuality: z.enum(["low", "high"]).optional(),
   selectedSceneBoardPanel: z.number().int().min(1).max(6).optional(),
@@ -349,6 +351,9 @@ function validateTransientAssets(input: {
         asset.qa.foregroundMatteValidated !== true ||
         asset.qa.opaqueSourceFrameRemoved !== true ||
         asset.qa.textSafeAreaVerified !== true ||
+        asset.transformation.textRendererVersion !==
+          EBAY_IMAGE_TEXT_RENDERER_VERSION ||
+        asset.qa.textGlyphsValidated !== true ||
         !asset.qa.manualChecksRequired.includes(
           "AUTHORIZED_FOREGROUND_MATTE_HUMAN_ACCEPTANCE",
         )) {
@@ -361,7 +366,9 @@ function validateTransientAssets(input: {
       asset.transformation.foregroundMatteSha256 !== undefined ||
       asset.qa.foregroundMatteValidated !== undefined ||
       asset.qa.opaqueSourceFrameRemoved !== undefined ||
-      asset.qa.textSafeAreaVerified !== undefined) {
+      asset.qa.textSafeAreaVerified !== undefined ||
+      asset.transformation.textRendererVersion !== undefined ||
+      asset.qa.textGlyphsValidated !== undefined) {
       throw new Error("SAME_DAY_IMAGE_SET_MAIN_FOREGROUND_EVIDENCE_INVALID")
     }
     if (outputs.has(asset.outputSha256)) {
@@ -490,6 +497,7 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
         asset.transformation.foregroundProtectedPixelRetentionRatio,
       foregroundOpaqueCornerRatio:
         asset.transformation.foregroundOpaqueCornerRatio,
+      textRendererVersion: asset.transformation.textRendererVersion,
       sourceSha256: asset.sourceSha256,
       outputSha256: asset.outputSha256,
       width: asset.width,
@@ -509,6 +517,7 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       foregroundMatteValidated: asset.qa.foregroundMatteValidated,
       opaqueSourceFrameRemoved: asset.qa.opaqueSourceFrameRemoved,
       textSafeAreaVerified: asset.qa.textSafeAreaVerified,
+      textGlyphsValidated: asset.qa.textGlyphsValidated,
       visualStrategyVersion: asset.transformation.visualStrategyVersion,
       backgroundPlateQuality: asset.transformation.backgroundPlateQuality,
       selectedSceneBoardPanel:
