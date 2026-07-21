@@ -5,6 +5,7 @@ import {
   issueEbayDraftOnlyPreflightSnapshot,
   verifyEbayDraftOnlyPreflightSnapshot,
 } from "./ebay-draft-only-preflight-snapshot"
+import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"
 import { getEbayDraftWriteEnvironmentBoundary } from "./environment-boundaries"
 
 const DRAFT_ONLY_SCOPE = [
@@ -276,10 +277,31 @@ async function authenticatedToken(
   if (!identity.ok || !actualUserId) {
     throw new Error("EBAY_DRAFT_ONLY_ACCOUNT_IDENTITY_UNAVAILABLE")
   }
-  if (confirmedStatus !== "CONFIRMED") {
+  if (confirmedStatus && confirmedStatus !== "CONFIRMED") {
     throw new Error("EBAY_DRAFT_ONLY_ACCOUNT_IDENTITY_NOT_CONFIRMED")
   }
-  const actualFingerprint = accountFingerprint(config.target, actualUserId)
+  let actualFingerprint = accountFingerprint(config.target, actualUserId)
+  if (
+    config.target === "PRODUCTION" &&
+    config.identityBound &&
+    actualFingerprint !== config.accountFingerprint
+  ) {
+    try {
+      const tradingUserId = await readEbayTradingUserIdWithAccessToken(
+        token,
+        fetchImpl,
+      )
+      const tradingFingerprint = accountFingerprint(
+        config.target,
+        tradingUserId,
+      )
+      if (tradingFingerprint === config.accountFingerprint) {
+        actualFingerprint = tradingFingerprint
+      }
+    } catch {
+      // The exact bound fingerprint below remains the final fail-closed gate.
+    }
+  }
   const accountType = typeof identity.body.accountType === "string"
     ? identity.body.accountType.trim().toUpperCase().replace(/[^A-Z_]/g, "").slice(0, 32)
     : ""

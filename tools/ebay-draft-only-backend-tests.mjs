@@ -15,6 +15,10 @@ const environmentBoundarySource = readFileSync(
   new URL("../lib/ebay/environment-boundaries.ts", import.meta.url),
   "utf8",
 )
+const tradingIdentityProofSource = readFileSync(
+  new URL("../lib/ebay/ebay-trading-identity-proof.ts", import.meta.url),
+  "utf8",
+)
 
 function embedSnapshotModule(source) {
   const withoutImport = source
@@ -22,7 +26,8 @@ function embedSnapshotModule(source) {
     .replace(/import \{\n  calculateEbayUnitEconomics,\n  DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,\n  normalizeEbayUnitEconomicsConfig,\n  type EbayUnitEconomicsConfig,\n\} from "\.\/ebay-unit-economics"\n/, "")
     .replace(/import \{\n  issueEbayDraftOnlyPreflightSnapshot,\n  verifyEbayDraftOnlyPreflightSnapshot,\n\} from "\.\/ebay-draft-only-preflight-snapshot"\n/, "")
     .replace('import { getEbayDraftWriteEnvironmentBoundary } from "./environment-boundaries"\n', "")
-  return `${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${withoutImport}`
+    .replace('import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"\n', "")
+  return `${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${tradingIdentityProofSource}\n${withoutImport}`
 }
 
 const readinessSource = embedSnapshotModule(readFileSync(
@@ -1068,6 +1073,73 @@ test("Production account identity mismatch fails closed before every seller writ
       /EBAY_DRAFT_ONLY_ACCOUNT_IDENTITY_MISMATCH/,
     )
     assert.equal(calls.filter((call) => call.url.pathname.startsWith("/sell/")).length, 0)
+  } finally {
+    process.env = original
+  }
+})
+
+test("Production identity preserves its verified legacy binding after eBay immutable ID migration", async () => {
+  const module = await importTypeScript(gatewaySource)
+  const original = { ...process.env }
+  Object.assign(process.env, {
+    EBAY_DRAFT_ONLY_WRITES_ENABLED: "false",
+    EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "false",
+    EBAY_DRAFT_ONLY_TARGET: "PRODUCTION",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID: "identity-migration-client",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET: "identity-migration-secret",
+    EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN: "identity-migration-refresh",
+    EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID: "legacy-official-seller",
+    EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET: SNAPSHOT_SECRET,
+  })
+  const calls = []
+  try {
+    const result = await module.verifyEbayUnpublishedOffer(
+      "offer-identity-migration",
+      "SKU-IDENTITY-MIGRATION",
+      "EBAY_US",
+      async (url, init = {}) => {
+        const parsed = new URL(url)
+        const method = init.method ?? "GET"
+        calls.push({ origin: parsed.origin, pathname: parsed.pathname, method })
+        if (parsed.pathname.endsWith("/oauth2/token")) {
+          return new Response(JSON.stringify({
+            access_token: "identity-migration-access",
+            expires_in: 7200,
+          }), { status: 200 })
+        }
+        if (parsed.pathname === "/commerce/identity/v1/user/") {
+          return new Response(JSON.stringify({
+            userId: "immutable-replacement-user-id",
+          }), { status: 200 })
+        }
+        if (parsed.pathname === "/ws/api.dll") {
+          return new Response(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+              "<GetUserResponse xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
+              "<Ack>Success</Ack><User><UserID>legacy-official-seller</UserID></User>" +
+              "</GetUserResponse>",
+            { status: 200 },
+          )
+        }
+        if (parsed.pathname === "/sell/inventory/v1/offer/offer-identity-migration") {
+          return new Response(JSON.stringify({
+            offerId: "offer-identity-migration",
+            sku: "SKU-IDENTITY-MIGRATION",
+            marketplaceId: "EBAY_US",
+            status: "UNPUBLISHED",
+          }), { status: 200 })
+        }
+        throw new Error(`unexpected ${method} ${parsed}`)
+      },
+    )
+    assert.equal(result.safe, true)
+    assert.equal(
+      calls.filter((call) => call.pathname === "/ws/api.dll").length,
+      1,
+    )
+    assert.ok(calls.every((call) => call.method === "GET" ||
+      call.pathname.endsWith("/oauth2/token") ||
+      call.pathname === "/ws/api.dll"))
   } finally {
     process.env = original
   }

@@ -23,6 +23,7 @@ import {
   getEbayProductionIdentityBindingConfiguration,
   getEbaySellerAccountScopeConfiguration,
 } from "./ebay-seller-account-scope"
+import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"
 
 const AUTHORIZED_PREVIEW_BRANCH =
   "feature/centralize-ebay-mobile-command-center"
@@ -312,18 +313,29 @@ async function verifyOfficialIdentity(
   if (!response.ok || !publicationIdentityConfirmed(payload) || !userId) {
     throw new Error("EBAY_PUBLICATION_OAUTH_IDENTITY_UNAVAILABLE")
   }
-  if (
-    binding.expectedUserId &&
-    binding.expectedUserId.toLocaleLowerCase("en-US") !==
-      userId.toLocaleLowerCase("en-US")
-  ) {
-    throw new Error("EBAY_PUBLICATION_OAUTH_IDENTITY_MISMATCH")
-  }
-  if (
-    ebayProductionAccountFingerprint(userId) !==
-      binding.expectedAccountFingerprint
-  ) {
-    throw new Error("EBAY_PUBLICATION_OAUTH_FINGERPRINT_MISMATCH")
+  const expectedUserId = binding.expectedUserId.toLocaleLowerCase("en-US")
+  const restUserMatches = !expectedUserId ||
+    expectedUserId === userId.toLocaleLowerCase("en-US")
+  const restFingerprintMatches = ebayProductionAccountFingerprint(userId) ===
+    binding.expectedAccountFingerprint
+  if (!restUserMatches || !restFingerprintMatches) {
+    let tradingUserId = ""
+    try {
+      tradingUserId = await readEbayTradingUserIdWithAccessToken(
+        accessToken,
+        fetchImpl,
+      )
+    } catch {
+      throw new Error("EBAY_PUBLICATION_OAUTH_IDENTITY_MISMATCH")
+    }
+    if (
+      (expectedUserId && expectedUserId !==
+        tradingUserId.toLocaleLowerCase("en-US")) ||
+      ebayProductionAccountFingerprint(tradingUserId) !==
+        binding.expectedAccountFingerprint
+    ) {
+      throw new Error("EBAY_PUBLICATION_OAUTH_FINGERPRINT_MISMATCH")
+    }
   }
   return true
 }
