@@ -5,18 +5,20 @@ import { z } from "zod"
 
 // Node's native type stripping needs the explicit extension in direct tests.
 // @ts-expect-error Next's bundler resolves the same TypeScript source at build time.
-import { EBAY_IMAGE_OUTPUT_SIZE, optimizeAuthorizedEbayMainImage, type EbayOptimizedImage } from "./ebay-image-optimization-service.ts"
+import { EBAY_IMAGE_OUTPUT_SIZE, optimizeAuthorizedEbayMainImage, prepareAuthorizedEbaySecondaryForeground, type EbayAuthorizedSecondaryForeground, type EbayOptimizedImage } from "./ebay-image-optimization-service.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { ebayImageMarketBriefSchema, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
 
 export const EBAY_LISTING_IMAGE_SET_VERSION =
   "EBAY_LISTING_IMAGE_COMPOSITION_SET_V1"
 export const EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION =
-  "EBAY_IMAGE_COMPOSITOR_DIVERSITY_V5_2026_07_21"
+  "EBAY_IMAGE_COMPOSITOR_FOREGROUND_V6_2026_07_21"
 export const EBAY_OPENAI_BACKGROUND_PLATE_VERSION =
   "EBAY_OPENAI_COMMERCIAL_SCENE_BOARD_V3"
 export const EBAY_VISUAL_STRATEGY_VERSION =
   "EBAY_VISUAL_STRATEGY_COMPILER_V2_2026_07_21"
+export const EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION =
+  "EBAY_AUTHORIZED_FOREGROUND_MATTE_V1_2026_07_21"
 export const EBAY_OPENAI_IMAGE_PREVIEW_BRANCH =
   "feature/centralize-ebay-mobile-command-center"
 
@@ -82,7 +84,7 @@ export type EbayListingImageComposition = {
     authorizedSourceIndex: number
     presentationMode: "AUTHORIZED_MULTI_SOURCE" | "SINGLE_SOURCE_INFORMATIONAL"
     authorizedSourceTreatment: "NORMALIZED_LIGHT_NEUTRAL" |
-      "PRESERVED_FRAMED_SOURCE"
+      "PRESERVED_FRAMED_SOURCE" | "LOCAL_AUTHORIZED_FOREGROUND"
     generativeAiUsed: boolean
     originalPackagePixelsPreserved: true
     competitorImageUsed: false
@@ -103,6 +105,14 @@ export type EbayListingImageComposition = {
       palette: "COOL" | "NEUTRAL" | "WARM" | "MIXED"
       productToneRisk: "LIGHT_NEUTRAL_AMBIGUITY" | "STANDARD"
     }
+    foregroundMatteVersion?: typeof EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION
+    foregroundMatteMethod?: "NATIVE_ALPHA" |
+      "EDGE_CONNECTED_LIGHT_NEUTRAL_V1"
+    foregroundMatteSha256?: string
+    foregroundBackgroundRemovalRatio?: number
+    foregroundTransparentBorderRatio?: number
+    foregroundProtectedPixelRetentionRatio?: number
+    foregroundOpaqueCornerRatio?: number
   }
   qa: {
     automaticStatus: "PASSED" | "PARTIAL"
@@ -117,6 +127,9 @@ export type EbayListingImageComposition = {
     structuralDiversityVerified: true
     foregroundEdgeCoverage: number
     deterministicBackgroundSelection: boolean
+    foregroundMatteValidated?: true
+    opaqueSourceFrameRemoved?: true
+    textSafeAreaVerified?: true
     manualChecksRequired: string[]
   }
 }
@@ -170,8 +183,6 @@ function escapeXml(value: string) {
   })[character] ?? character)
 }
 
-const LISTING_FONT_FILE = `${process.cwd()}/public/fonts/DejaVuSans.ttf`
-
 async function renderVerifiedText(input: {
   value: string
   width: number
@@ -181,28 +192,57 @@ async function renderVerifiedText(input: {
 }) {
   const value = input.value.normalize("NFKC").trim()
   if (!value) throw new Error("EBAY_IMAGE_TEXT_REQUIRED")
-  const fontDescription = `DejaVu Sans ${input.bold ? "Bold" : "Book"} ${input.size}`
-  const output = await sharp({
-    text: {
-      text: `<span font_desc="${fontDescription}" foreground="#172033">${escapeXml(value)}</span>`,
-      font: "DejaVu Sans",
-      fontfile: LISTING_FONT_FILE,
-      width: input.width,
-      height: input.height,
-      align: "centre",
-      rgba: true,
-      spacing: 8,
-    },
-  }).png().toBuffer()
-  const rendered = await sharp(output).ensureAlpha().raw()
-    .toBuffer({ resolveWithObject: true })
-  let visiblePixels = 0
-  for (let index = 3; index < rendered.data.length; index += rendered.info.channels) {
-    if (rendered.data[index] > 24) visiblePixels += 1
+  const lines = value.split("\n").map((line) => line.trim()).filter(Boolean)
+  const minimumVisiblePixels = Math.max(
+    32,
+    Math.min(400, value.replace(/\s+/g, "").length * 4),
+  )
+  for (let size = input.size; size >= 14; size -= 2) {
+    const lineHeight = Math.ceil(size * 1.3)
+    const totalHeight = lineHeight * lines.length
+    const firstBaseline = Math.round(
+      (input.height - totalHeight) / 2 + size,
+    )
+    const tspans = lines.map((line, index) =>
+      `<tspan x="${input.width / 2}" dy="${index === 0 ? 0 : lineHeight}">` +
+      `${escapeXml(line)}</tspan>`).join("")
+    const output = await sharp(Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${input.width}" ` +
+      `height="${input.height}" viewBox="0 0 ${input.width} ${input.height}">` +
+      `<text x="${input.width / 2}" y="${firstBaseline}" ` +
+      `text-anchor="middle" fill="#172033" font-family="DejaVu Sans" ` +
+      `font-size="${size}px" font-weight="${input.bold ? 700 : 400}">` +
+      `${tspans}</text></svg>`,
+    )).png().toBuffer()
+    const rendered = await sharp(output).ensureAlpha().raw()
+      .toBuffer({ resolveWithObject: true })
+    let visiblePixels = 0
+    let left = rendered.info.width
+    let top = rendered.info.height
+    let right = -1
+    let bottom = -1
+    for (let y = 0; y < rendered.info.height; y += 1) {
+      for (let x = 0; x < rendered.info.width; x += 1) {
+        const alpha = rendered.data[
+          (y * rendered.info.width + x) * rendered.info.channels + 3
+        ]
+        if (alpha <= 24) continue
+        visiblePixels += 1
+        left = Math.min(left, x)
+        top = Math.min(top, y)
+        right = Math.max(right, x)
+        bottom = Math.max(bottom, y)
+      }
+    }
+    rendered.data.fill(0)
+    const safeMargin = 4
+    if (visiblePixels >= minimumVisiblePixels &&
+      left >= safeMargin && top >= safeMargin &&
+      right < input.width - safeMargin &&
+      bottom < input.height - safeMargin) return output
+    output.fill(0)
   }
-  const minimum = Math.max(32, Math.min(400, value.replace(/\s+/g, "").length * 4))
-  if (visiblePixels < minimum) throw new Error("EBAY_IMAGE_TEXT_NOT_RENDERED")
-  return output
+  throw new Error("EBAY_IMAGE_TEXT_SAFE_AREA_INVALID")
 }
 
 function titleCase(value: string | null) {
@@ -215,26 +255,104 @@ function isSingleCompleteSet(facts: EbayListingImageFactoryInput["facts"]) {
     /\b(?:set|kit)\b/iu.test(facts.normalizedProductName)
 }
 
+function verifiedQuantityLines(facts: EbayListingImageFactoryInput["facts"]) {
+  const completeSet = isSingleCompleteSet(facts)
+  const packCount = facts.packCount
+  const unitCount = facts.unitCount
+  if (completeSet) return ["1 Complete Set", `${unitCount} Pieces Total`]
+  if (packCount === 1 && unitCount === 1) return ["1 Item"]
+  const quantities: string[] = []
+  if (packCount && packCount > 1) quantities.push(`${packCount} Pack`)
+  if (unitCount && unitCount > 1) {
+    quantities.push(packCount && packCount > 1
+      ? `${unitCount} Count Each`
+      : `${unitCount} Count`)
+  }
+  if (!quantities.length && (packCount === 1 || unitCount === 1)) {
+    quantities.push("1 Item")
+  }
+  return quantities
+}
+
+function escapedRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function removeVerifiedPhrase(value: string, phrase: string | null) {
+  if (!phrase?.trim()) return value
+  return value.replace(new RegExp(
+    `(^|[^\\p{L}\\p{N}])${escapedRegExp(phrase.trim())}` +
+    `(?=$|[^\\p{L}\\p{N}])`,
+    "giu",
+  ), "$1 ")
+}
+
+function wrapWithEllipsis(value: string, maxCharacters: number, maxLines: number) {
+  const words = value.split(/\s+/).filter(Boolean)
+  const lines: string[] = []
+  let truncated = false
+  for (const word of words) {
+    const current = lines.at(-1)
+    if (!current) {
+      lines.push(word.slice(0, maxCharacters))
+      if (word.length > maxCharacters) truncated = true
+      continue
+    }
+    if (`${current} ${word}`.length <= maxCharacters) {
+      lines[lines.length - 1] = `${current} ${word}`
+      continue
+    }
+    if (lines.length >= maxLines) {
+      truncated = true
+      break
+    }
+    lines.push(word.slice(0, maxCharacters))
+    if (word.length > maxCharacters) truncated = true
+  }
+  if (truncated && lines.length) {
+    const last = lines.length - 1
+    lines[last] = `${lines[last].slice(0, Math.max(1, maxCharacters - 1)).trimEnd()}…`
+  }
+  return lines
+}
+
+function compactVerifiedProductLines(
+  facts: EbayListingImageFactoryInput["facts"],
+) {
+  let descriptor = titleCase(facts.normalizedProductName) ??
+    facts.normalizedProductName
+  for (const phrase of [
+    facts.manufacturerBrand,
+    facts.size,
+    facts.color,
+    facts.scent,
+  ]) descriptor = removeVerifiedPhrase(descriptor, phrase)
+  descriptor = descriptor.replace(/\bby\b/giu, " ")
+    .replace(/\s*[,|/()-]+\s*/g, " ").replace(/\s+/g, " ").trim()
+  const brand = titleCase(facts.manufacturerBrand)
+  const descriptorLines = wrapWithEllipsis(descriptor, 29, brand ? 2 : 3)
+  const details = [titleCase(facts.size), titleCase(
+    facts.scent ?? facts.color ?? facts.variant,
+  )].filter((value, index, values): value is string =>
+    Boolean(value) && values.indexOf(value) === index).join(" • ")
+  return [brand, ...descriptorLines, details || null]
+    .filter((value): value is string => Boolean(value)).slice(0, 4)
+}
+
 function verifiedLines(
   slot: Exclude<EbayListingImageSlot, "MAIN_WHITE_BACKGROUND">,
   facts: EbayListingImageFactoryInput["facts"],
 ) {
-  const completeSet = isSingleCompleteSet(facts)
-  const pack = facts.packCount
-    ? completeSet ? "1 Complete Set" : `${facts.packCount} Pack`
-    : null
-  const units = facts.unitCount
-    ? completeSet ? `${facts.unitCount} Pieces Total` : `${facts.unitCount} Count Each`
-    : null
+  const quantities = verifiedQuantityLines(facts)
   const size = titleCase(facts.size)
   const variant = titleCase(facts.scent ?? facts.color ?? facts.variant)
-  const product = titleCase(facts.normalizedProductName) ?? facts.normalizedProductName
   const values: Record<typeof slot, Array<string | null>> = {
-    PACK_AND_COUNT: [pack, units],
+    PACK_AND_COUNT: quantities,
     KEY_FEATURES: [titleCase(facts.manufacturerBrand), variant, titleCase(facts.condition)],
-    SIZE_AND_CONTENT: [size, units, pack],
-    USE_CONTEXT: [product, "Product shown exactly as supplied"],
-    PACKAGE_CONTENTS: ["You receive", pack, units, variant],
+    SIZE_AND_CONTENT: [size, ...quantities],
+    USE_CONTEXT: [...compactVerifiedProductLines(facts),
+      "Product shown exactly as supplied"],
+    PACKAGE_CONTENTS: ["You receive", ...quantities, variant],
   }
   return values[slot].filter((value): value is string => Boolean(value)).slice(0, 4)
 }
@@ -264,6 +382,29 @@ function labelForSlot(
     USE_CONTEXT: "PRODUCT VIEW",
     PACKAGE_CONTENTS: "PACKAGE CONTENTS",
   } satisfies Record<typeof slot, string>)[slot]
+}
+
+export function buildVerifiedEbayImageCopy(
+  slot: InformationSlot,
+  facts: EbayListingImageFactoryInput["facts"],
+) {
+  const lines = slot === "USE_CONTEXT"
+    ? compactVerifiedProductLines(facts)
+    : verifiedLines(slot, facts)
+  return { label: labelForSlot(slot, facts), lines }
+}
+
+function fittedBodyTextSize(input: {
+  lines: string[]
+  width: number
+  height: number
+  maximum: number
+}) {
+  const longest = Math.max(1, ...input.lines.map((line) => line.length))
+  const widthBound = Math.floor(input.width / (longest * .62))
+  const heightBound = Math.floor(input.height /
+    (Math.max(1, input.lines.length) * 1.35))
+  return Math.max(24, Math.min(input.maximum, widthBound, heightBound))
 }
 
 async function canonicalizeMainForV3(normalizedMain: Buffer) {
@@ -440,15 +581,18 @@ function informationCanvasSvg(
 }
 
 async function composeInformationImage(
-  normalizedMain: Buffer,
+  productForeground: Buffer,
   slot: InformationSlot,
   facts: EbayListingImageFactoryInput["facts"],
   sceneBackground: Buffer | null = null,
 ) {
   const layout = INFORMATION_LAYOUTS[slot]
-  const packageLayer = await sharp(normalizedMain)
-    .resize(layout.packageSize, layout.packageSize, { fit: "contain", background: "#ffffff" })
-    .jpeg({ quality: 94, chromaSubsampling: "4:4:4" })
+  const packageLayer = await sharp(productForeground)
+    .resize(layout.packageSize, layout.packageSize, {
+      fit: "contain",
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
+    .png()
     .toBuffer()
   const lines = verifiedLines(slot, facts).flatMap((value) => wrap(value))
   const header = await renderVerifiedText({
@@ -456,7 +600,14 @@ async function composeInformationImage(
   })
   const body = await renderVerifiedText({
     value: lines.join("\n"), width: layout.textWidth,
-    height: Math.max(140, layout.textHeight - 130), size: 42, bold: true,
+    height: Math.max(140, layout.textHeight - 130),
+    size: fittedBodyTextSize({
+      lines,
+      width: layout.textWidth,
+      height: Math.max(140, layout.textHeight - 130),
+      maximum: 42,
+    }),
+    bold: true,
   })
   const textBackdrop = Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.textWidth}" height="${layout.textHeight}">` +
@@ -895,26 +1046,25 @@ export async function requestSafeOpenAiBackgroundPlate(input: {
 }
 
 async function composeContextImage(
-  normalizedMain: Buffer,
+  productForeground: Buffer,
   facts: EbayListingImageFactoryInput["facts"],
   background: Buffer,
 ) {
-  const packageLayer = await sharp(normalizedMain)
-    .resize(860, 860, { fit: "contain", background: "#ffffff" })
-    .jpeg({ quality: 94, chromaSubsampling: "4:4:4" })
-    .toBuffer()
-  const productPanel = Buffer.from(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000">' +
-    '<rect x="0" y="0" width="1000" height="1000" rx="52" fill="#ffffff" ' +
-    'fill-opacity="0.96" stroke="#d8e0ed" stroke-width="4"/></svg>',
-  )
+  const packageLayer = await sharp(productForeground)
+    .resize(860, 860, {
+      fit: "contain",
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
+    .png().toBuffer()
+  const productLines = compactVerifiedProductLines(facts)
   const productText = await renderVerifiedText({
-    value: wrap(titleCase(facts.normalizedProductName) ?? facts.normalizedProductName).join("\n"),
-    width: 1160, height: 220, size: 38, bold: true,
+    value: productLines.join("\n"), width: 1160, height: 220,
+    size: fittedBodyTextSize({
+      lines: productLines, width: 1160, height: 220, maximum: 38,
+    }), bold: true,
   })
   return sharp(background)
     .composite([
-      { input: productPanel, left: 300, top: 130 },
       { input: packageLayer, left: 370, top: 200 },
       { input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="280"><rect width="1260" height="280" rx="40" fill="#fff" fill-opacity=".96" stroke="#d8e0ed" stroke-width="4"/></svg>'), left: 170, top: 1260 },
       { input: productText, left: 220, top: 1290 },
@@ -1122,13 +1272,30 @@ export async function composeAuthorizedEbayListingImageSet(
   if (!sources.length || sources.some((entry) => !Buffer.isBuffer(entry) || !entry.length)) {
     throw new Error("EBAY_IMAGE_AUTHORIZED_SOURCES_INVALID")
   }
-  const mains = await Promise.all(sources.map((entry) =>
-    optimizeAuthorizedEbayMainImage(entry)))
+  const mains: Array<EbayOptimizedImage & {
+    secondaryForeground: EbayAuthorizedSecondaryForeground
+  }> = []
   const outputs: EbayListingImageComposition[] = []
+  const transientOutputs: Buffer[] = []
   const signatures: StructuralSignature[] = []
   const presentationMode = sources.length > 1
     ? "AUTHORIZED_MULTI_SOURCE" as const
     : "SINGLE_SOURCE_INFORMATIONAL" as const
+  try {
+  for (const entry of sources) {
+    const main = await optimizeAuthorizedEbayMainImage(entry)
+    try {
+      const secondaryForeground =
+        await prepareAuthorizedEbaySecondaryForeground(entry)
+      if (!secondaryForeground) {
+        throw new Error("EBAY_IMAGE_FOREGROUND_EXTRACTION_UNSAFE")
+      }
+      mains.push({ ...main, secondaryForeground })
+    } catch (error) {
+      main.output.fill(0)
+      throw error
+    }
+  }
   for (const slot of EBAY_LISTING_IMAGE_SLOTS) {
     const authorizedSourceIndex = sourceIndexForSlot(slot, mains.length)
     const main = mains[authorizedSourceIndex]
@@ -1142,17 +1309,25 @@ export async function composeAuthorizedEbayListingImageSet(
       )
       : null
     const generatedPanel = panelSelection?.output ?? null
-    const output = slot === "MAIN_WHITE_BACKGROUND"
-      ? await canonicalizeMainForV3(main.output)
-      : slot === "USE_CONTEXT" && generatedPanel
-        ? await composeContextImage(main.output, input.facts, generatedPanel)
-        : await composeInformationImage(
-          main.output,
-          slot,
-          input.facts,
-          generatedPanel,
-        )
-    generatedPanel?.fill(0)
+    const productLayer = slot !== "MAIN_WHITE_BACKGROUND"
+      ? main.secondaryForeground.output
+      : main.output
+    let output: Buffer
+    try {
+      output = slot === "MAIN_WHITE_BACKGROUND"
+        ? await canonicalizeMainForV3(main.output)
+        : slot === "USE_CONTEXT" && generatedPanel
+          ? await composeContextImage(productLayer, input.facts, generatedPanel)
+          : await composeInformationImage(
+            productLayer,
+            slot,
+            input.facts,
+            generatedPanel,
+          )
+    } finally {
+      generatedPanel?.fill(0)
+    }
+    transientOutputs.push(output)
     const metadata = await sharp(output).metadata()
     if (
       metadata.format !== "jpeg" ||
@@ -1176,7 +1351,7 @@ export async function composeAuthorizedEbayListingImageSet(
     const layoutId = slot === "MAIN_WHITE_BACKGROUND"
       ? "MAIN_WHITE_BACKGROUND_CANONICAL_V3"
       : backgroundPlate
-        ? `OPENAI_COMMERCIAL_SCENE_${slot}_V5_P${panelSelection?.selectedPanel ?? 0}`
+        ? `OPENAI_COMMERCIAL_SCENE_${slot}_V6_P${panelSelection?.selectedPanel ?? 0}`
         : INFORMATION_LAYOUTS[slot].id
     outputs.push({
       slot,
@@ -1193,9 +1368,11 @@ export async function composeAuthorizedEbayListingImageSet(
         compositorContractVersion: EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
         authorizedSourceIndex,
         presentationMode,
-        authorizedSourceTreatment: framedAuthorizedSource
-          ? "PRESERVED_FRAMED_SOURCE"
-          : "NORMALIZED_LIGHT_NEUTRAL",
+        authorizedSourceTreatment: slot !== "MAIN_WHITE_BACKGROUND"
+          ? "LOCAL_AUTHORIZED_FOREGROUND"
+          : framedAuthorizedSource
+            ? "PRESERVED_FRAMED_SOURCE"
+            : "NORMALIZED_LIGHT_NEUTRAL",
         generativeAiUsed: slot !== "MAIN_WHITE_BACKGROUND" && Boolean(backgroundPlate),
         originalPackagePixelsPreserved: true,
         competitorImageUsed: false,
@@ -1215,9 +1392,23 @@ export async function composeAuthorizedEbayListingImageSet(
           backgroundCompatibilityScore: panelSelection?.score,
           sourceVisualProfile: main.qa.sourceVisualProfile,
         } : {}),
+        ...(slot !== "MAIN_WHITE_BACKGROUND" ? {
+          foregroundMatteVersion: EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION,
+          foregroundMatteMethod: main.secondaryForeground.method,
+          foregroundMatteSha256: main.secondaryForeground.outputSha256,
+          foregroundBackgroundRemovalRatio:
+            main.secondaryForeground.qa.backgroundRemovalRatio,
+          foregroundTransparentBorderRatio:
+            main.secondaryForeground.qa.transparentBorderRatio,
+          foregroundProtectedPixelRetentionRatio:
+            main.secondaryForeground.qa.protectedPixelRetentionRatio,
+          foregroundOpaqueCornerRatio:
+            main.secondaryForeground.qa.opaqueCornerRatio,
+        } : {}),
       },
       qa: {
-        automaticStatus: framedAuthorizedSource ||
+        automaticStatus: (slot === "MAIN_WHITE_BACKGROUND" &&
+          framedAuthorizedSource) ||
           (slot !== "MAIN_WHITE_BACKGROUND" && backgroundPlate)
           ? "PARTIAL"
           : "PASSED",
@@ -1233,6 +1424,11 @@ export async function composeAuthorizedEbayListingImageSet(
         structuralDiversityVerified: true,
         foregroundEdgeCoverage: signature.edgeCoverage,
         deterministicBackgroundSelection: Boolean(panelSelection),
+        ...(slot !== "MAIN_WHITE_BACKGROUND" ? {
+          foregroundMatteValidated: true as const,
+          opaqueSourceFrameRemoved: true as const,
+          textSafeAreaVerified: true as const,
+        } : {}),
         manualChecksRequired: [
           "MANUFACTURER_BRAND_MATCH",
           "PACK_AND_UNIT_COUNT_MATCH",
@@ -1243,10 +1439,13 @@ export async function composeAuthorizedEbayListingImageSet(
           ...(slot !== "MAIN_WHITE_BACKGROUND" && backgroundPlate
             ? ["GENERATED_BACKGROUND_HAS_NO_PRODUCT_BRAND_TEXT_OR_PEOPLE"]
             : []),
+          ...(slot !== "MAIN_WHITE_BACKGROUND"
+            ? ["AUTHORIZED_FOREGROUND_MATTE_HUMAN_ACCEPTANCE"]
+            : []),
           ...(presentationMode === "SINGLE_SOURCE_INFORMATIONAL"
             ? ["SINGLE_SOURCE_INFORMATIONAL_PANELS_NOT_MULTIPLE_PRODUCT_VIEWS"]
             : []),
-          ...(framedAuthorizedSource ? [
+          ...(slot === "MAIN_WHITE_BACKGROUND" && framedAuthorizedSource ? [
             "AUTHORIZED_SOURCE_FRAME_PRESERVED_WITHOUT_BACKGROUND_REMOVAL",
             "FRAMED_MAIN_BACKGROUND_HUMAN_ACCEPTANCE",
           ] : []),
@@ -1255,11 +1454,20 @@ export async function composeAuthorizedEbayListingImageSet(
     })
     signatures.push(signature)
   }
-  for (const signature of signatures) {
-    signature.pixels.fill(0)
-    signature.edges.fill(0)
+    return outputs
+  } catch (error) {
+    for (const output of transientOutputs) output.fill(0)
+    throw error
+  } finally {
+    for (const signature of signatures) {
+      signature.pixels.fill(0)
+      signature.edges.fill(0)
+    }
+    for (const main of mains) {
+      main.output.fill(0)
+      main.secondaryForeground.output.fill(0)
+    }
   }
-  return outputs
 }
 
 export function getListingImageFactoryConfiguration(environment = process.env) {

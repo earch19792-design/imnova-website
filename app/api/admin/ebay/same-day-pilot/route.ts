@@ -117,6 +117,33 @@ async function imageReviewAssetsForPilot(
           120,
         ),
         presentationMode: text(transformation.presentationMode, 80),
+        authorizedSourceTreatment: text(
+          transformation.authorizedSourceTreatment,
+          80,
+        ),
+        backgroundPlateVersion: text(
+          transformation.backgroundPlateVersion,
+          120,
+        ),
+        backgroundPlateQuality: text(
+          transformation.backgroundPlateQuality,
+          20,
+        ),
+        visualStrategyVersion: text(
+          transformation.visualStrategyVersion,
+          120,
+        ),
+        foregroundMatteVersion: text(
+          transformation.foregroundMatteVersion,
+          120,
+        ),
+        foregroundMatteMethod: text(
+          transformation.foregroundMatteMethod,
+          80,
+        ),
+        foregroundMatteValidated: qa.foregroundMatteValidated === true,
+        opaqueSourceFrameRemoved: qa.opaqueSourceFrameRemoved === true,
+        textSafeAreaVerified: qa.textSafeAreaVerified === true,
         transformationVersion: asset.transformation_version,
         automaticQaStatus: text(qa.automaticStatus, 40),
         manualChecksRequired: Array.isArray(qa.manualChecksRequired)

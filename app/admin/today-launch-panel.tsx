@@ -859,7 +859,7 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
           <input type="checkbox" checked={openAiImageSpendApproved}
             onChange={(event) => setOpenAiImageSpendApproved(event.target.checked)}
             className="mt-1 h-5 w-5 shrink-0 accent-emerald-200" />
-          <span><strong>Autorizo hasta 1 llamada OpenAI de calidad low.</strong> Creará un tablero seguro de escenas comerciales basado en el expediente y, cuando exista, en patrones agregados de vendedores. La foto exacta autorizada de Luna se compondrá localmente; las seis imágenes requerirán mi revisión.</span>
+          <span><strong>Autorizo hasta 1 llamada OpenAI de calidad high.</strong> Creará un tablero seguro de escenas comerciales basado en el expediente y, cuando exista, en patrones agregados de vendedores. La foto exacta autorizada de Luna se compondrá localmente; las seis imágenes requerirán mi revisión.</span>
         </label>
       </fieldset>
       {(controlledRiskActiveMarket || nonCompetitiveControlledRisk) && <label className={`mt-3 flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${noPromotionConfirmed ? "border-emerald-200/25 text-emerald-50" : "border-red-300/30 text-red-100"}`}>
@@ -933,14 +933,33 @@ function completeImageReviewSet(assets: Row[]) {
     new Set(assets.map((asset) => asset.id)).size === IMAGE_REVIEW_SLOTS.length &&
     IMAGE_REVIEW_SLOTS.every((slot) =>
       assets.filter((asset) => asset.slot === slot).length === 1) &&
-    assets.every((asset) => asset.compositorContractVersion ===
-      "EBAY_IMAGE_COMPOSITOR_DIVERSITY_V4_2026_07_21"))) return false
+    assets.every((asset) =>
+      asset.compositorContractVersion ===
+        "EBAY_IMAGE_COMPOSITOR_FOREGROUND_V6_2026_07_21" &&
+      Number(asset.width) === 1600 && Number(asset.height) === 1600))) return false
   const main = assets.find((asset) => asset.slot === "MAIN_WHITE_BACKGROUND")
   const generated = assets.filter((asset) => asset.generativeAiUsed === true)
+  const secondaryForegroundsValid = assets
+    .filter((asset) => asset.slot !== "MAIN_WHITE_BACKGROUND")
+    .every((asset) =>
+      asset.authorizedSourceTreatment === "LOCAL_AUTHORIZED_FOREGROUND" &&
+      asset.foregroundMatteVersion ===
+        "EBAY_AUTHORIZED_FOREGROUND_MATTE_V1_2026_07_21" &&
+      ["NATIVE_ALPHA", "EDGE_CONNECTED_LIGHT_NEUTRAL_V1"].includes(
+        String(asset.foregroundMatteMethod),
+      ) &&
+      asset.foregroundMatteValidated === true &&
+      asset.opaqueSourceFrameRemoved === true &&
+      asset.textSafeAreaVerified === true)
   const aiBoardSet = main?.generativeAiUsed !== true && generated.length === 5 &&
-    generated.every((asset) => asset.slot !== "MAIN_WHITE_BACKGROUND")
+    generated.every((asset) =>
+      asset.slot !== "MAIN_WHITE_BACKGROUND" &&
+      asset.backgroundPlateVersion === "EBAY_OPENAI_COMMERCIAL_SCENE_BOARD_V3" &&
+      asset.backgroundPlateQuality === "high") &&
+    secondaryForegroundsValid
   const deterministicMultiSourceSet = generated.length === 0 &&
-    assets.every((asset) => asset.presentationMode === "AUTHORIZED_MULTI_SOURCE")
+    assets.every((asset) => asset.presentationMode === "AUTHORIZED_MULTI_SOURCE") &&
+    secondaryForegroundsValid
   return aiBoardSet || deterministicMultiSourceSet
 }
 

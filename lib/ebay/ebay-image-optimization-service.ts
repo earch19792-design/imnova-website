@@ -62,6 +62,18 @@ export type EbayOptimizedImage = {
   }
 }
 
+export type EbayAuthorizedSecondaryForeground = {
+  output: Buffer
+  outputSha256: string
+  method: "NATIVE_ALPHA" | "EDGE_CONNECTED_LIGHT_NEUTRAL_V1"
+  qa: {
+    backgroundRemovalRatio: number
+    transparentBorderRatio: number
+    protectedPixelRetentionRatio: number
+    opaqueCornerRatio: number
+  }
+}
+
 function sha256(value: Buffer) {
   return createHash("sha256").update(value).digest("hex")
 }
@@ -346,6 +358,431 @@ function whitenNearNeutralPixels(pixels: Buffer, channels: number) {
     }
   }
   return output
+}
+
+const FOREGROUND_MAX_DIMENSION = 1_600
+
+function lightNeutralPixel(pixels: Buffer, offset: number) {
+  const red = pixels[offset]
+  const green = pixels[offset + 1]
+  const blue = pixels[offset + 2]
+  // Deliberately conservative: near-white enamel can be 235-249 after JPEG
+  // compression. Treat it as protected product, not removable background.
+  // Only essentially-white, neutral pixels may join the border flood.
+  return Math.min(red, green, blue) >= 250 &&
+    Math.max(red, green, blue) - Math.min(red, green, blue) <= 8
+}
+
+function foregroundCornerIndexes(width: number, height: number) {
+  const insetX = Math.max(1, Math.floor(width * .06))
+  const insetY = Math.max(1, Math.floor(height * .06))
+  const indexes: number[] = []
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const inHorizontalCorner = x < insetX || x >= width - insetX
+      const inVerticalCorner = y < insetY || y >= height - insetY
+      if (inHorizontalCorner && inVerticalCorner) indexes.push(y * width + x)
+    }
+  }
+  return indexes
+}
+
+function nativeAlphaHasOpaqueLightNeutralFrame(
+  data: Buffer,
+  width: number,
+  height: number,
+  channels: number,
+  sourceAlpha: Uint8Array,
+) {
+  const pixels = width * height
+  const visited = new Uint8Array(pixels)
+  const queue = new Int32Array(pixels)
+  try {
+    for (let start = 0; start < pixels; start += 1) {
+      if (visited[start] || sourceAlpha[start] < 247 ||
+        !lightNeutralPixel(data, start * channels)) continue
+      let head = 0
+      let tail = 0
+      let area = 0
+      let left = width
+      let top = height
+      let right = -1
+      let bottom = -1
+      let touchesNonOpaquePixels = false
+      visited[start] = 1
+      queue[tail++] = start
+      while (head < tail) {
+        const index = queue[head++]
+        const x = index % width
+        const y = Math.floor(index / width)
+        area += 1
+        left = Math.min(left, x)
+        top = Math.min(top, y)
+        right = Math.max(right, x)
+        bottom = Math.max(bottom, y)
+        const neighbors = [
+          x > 0 ? index - 1 : -1,
+          x + 1 < width ? index + 1 : -1,
+          y > 0 ? index - width : -1,
+          y + 1 < height ? index + width : -1,
+        ]
+        for (const neighbor of neighbors) {
+          if (neighbor < 0) continue
+          if (sourceAlpha[neighbor] < 247) touchesNonOpaquePixels = true
+          if (visited[neighbor] || sourceAlpha[neighbor] < 247 ||
+            !lightNeutralPixel(data, neighbor * channels)) continue
+          visited[neighbor] = 1
+          queue[tail++] = neighbor
+        }
+      }
+      const boxWidth = right - left + 1
+      const boxHeight = bottom - top + 1
+      const boxArea = Math.max(1, boxWidth * boxHeight)
+      // Native alpha is accepted only when an opaque white rectangle is not
+      // hiding inside the transparent canvas. A large rectangular component
+      // directly touching transparency is ambiguous, so fail closed. A white
+      // product enclosed by a darker outline does not meet the adjacency gate.
+      if (touchesNonOpaquePixels && area / pixels >= .02 &&
+        boxWidth / width >= .45 && boxHeight / height >= .45 &&
+        area / boxArea >= .02) return true
+    }
+    return false
+  } finally {
+    visited.fill(0)
+    queue.fill(0)
+  }
+}
+
+function buildBorderContactGuard(
+  data: Buffer,
+  width: number,
+  height: number,
+  channels: number,
+  sourceAlpha: Uint8Array,
+) {
+  const guard = new Uint8Array(width * height)
+  const borderPixels = Math.max(1, width * 2 + Math.max(0, height - 2) * 2)
+  const maximumContactSpan = Math.max(2, Math.floor(borderPixels * .009))
+  const guardDepth = 3
+  const ambiguityScanDepth = guardDepth
+  let unsafe = false
+  const protectedAt = (index: number) => sourceAlpha[index] >= 247 &&
+    !lightNeutralPixel(data, index * channels)
+  const guardEdge = (
+    length: number,
+    indexAt: (position: number, inward: number) => number,
+  ) => {
+    const contacts: number[] = []
+    for (let position = 0; position < length; position += 1) {
+      if (protectedAt(indexAt(position, 0))) contacts.push(position)
+    }
+    if (!contacts.length) {
+      // A dark/object pixel immediately behind an all-white edge can mean a
+      // white product reaches the frame. That geometry is not separable with
+      // deterministic color evidence, so reject it instead of erasing it.
+      for (let position = 0; position < length; position += 1) {
+        for (let inward = 1; inward <= ambiguityScanDepth; inward += 1) {
+          if (protectedAt(indexAt(position, inward))) unsafe = true
+        }
+      }
+      return
+    }
+    const first = contacts[0]
+    const last = contacts[contacts.length - 1]
+    const span = last - first + 1
+    if (span > maximumContactSpan) {
+      unsafe = true
+      return
+    }
+    for (let position = Math.max(0, first - 1);
+      position <= Math.min(length - 1, last + 1); position += 1) {
+      for (let inward = 0; inward <= guardDepth; inward += 1) {
+        guard[indexAt(position, inward)] = 1
+      }
+    }
+  }
+  guardEdge(width, (position, inward) =>
+    Math.min(height - 1, inward) * width + position)
+  guardEdge(width, (position, inward) =>
+    Math.max(0, height - 1 - inward) * width + position)
+  guardEdge(height, (position, inward) =>
+    position * width + Math.min(width - 1, inward))
+  guardEdge(height, (position, inward) =>
+    position * width + Math.max(0, width - 1 - inward))
+  return { guard, unsafe }
+}
+
+/**
+ * Remove only a light-neutral background that is connected to the outside of
+ * an authorized image. Unlike a global white/chroma key, this preserves white
+ * product pixels enclosed by a darker rim (for example white enamelware).
+ */
+export async function prepareAuthorizedEbaySecondaryForeground(
+  source: Buffer,
+): Promise<EbayAuthorizedSecondaryForeground | null> {
+  const decoded = await sharp(source, {
+    failOn: "warning",
+    limitInputPixels: 40_000_000,
+  }).rotate().resize({
+    width: FOREGROUND_MAX_DIMENSION,
+    height: FOREGROUND_MAX_DIMENSION,
+    fit: "inside",
+    withoutEnlargement: true,
+    kernel: sharp.kernel.lanczos3,
+  }).toColourspace("srgb").ensureAlpha().raw()
+    .toBuffer({ resolveWithObject: true })
+  const { data, info } = decoded
+  const width = info.width
+  const height = info.height
+  const pixels = width * height
+  const channels = info.channels
+  if (channels !== 4 || pixels === 0) {
+    data.fill(0)
+    return null
+  }
+
+  const sourceAlpha = new Uint8Array(pixels)
+  let transparentPixels = 0
+  let opaquePixels = 0
+  let protectedPixels = 0
+  let protectedLeft = width
+  let protectedTop = height
+  let protectedRight = -1
+  let protectedBottom = -1
+  for (let index = 0; index < pixels; index += 1) {
+    const offset = index * channels
+    const alpha = data[offset + 3]
+    sourceAlpha[index] = alpha
+    if (alpha <= 8) transparentPixels += 1
+    if (alpha >= 247) opaquePixels += 1
+    if (!lightNeutralPixel(data, offset) && alpha >= 247) {
+      protectedPixels += 1
+      const x = index % width
+      const y = Math.floor(index / width)
+      protectedLeft = Math.min(protectedLeft, x)
+      protectedTop = Math.min(protectedTop, y)
+      protectedRight = Math.max(protectedRight, x)
+      protectedBottom = Math.max(protectedBottom, y)
+    }
+  }
+
+  let method: EbayAuthorizedSecondaryForeground["method"]
+  const mask = new Uint8Array(pixels)
+  let borderContactGuard: Uint8Array | null = null
+  let foregroundGeometrySafe = true
+  if (transparentPixels / pixels >= .005) {
+    method = "NATIVE_ALPHA"
+    if (nativeAlphaHasOpaqueLightNeutralFrame(
+      data, width, height, channels, sourceAlpha,
+    )) {
+      data.fill(0)
+      sourceAlpha.fill(0)
+      mask.fill(0)
+      return null
+    }
+    mask.set(sourceAlpha)
+  } else {
+    method = "EDGE_CONNECTED_LIGHT_NEUTRAL_V1"
+    let sampledBorder = 0
+    let lightBorder = 0
+    const sampleBorder = (index: number) => {
+      sampledBorder += 1
+      if (lightNeutralPixel(data, index * channels)) lightBorder += 1
+    }
+    for (let x = 0; x < width; x += 1) {
+      sampleBorder(x)
+      if (height > 1) sampleBorder((height - 1) * width + x)
+    }
+    for (let y = 1; y < height - 1; y += 1) {
+      sampleBorder(y * width)
+      if (width > 1) sampleBorder(y * width + width - 1)
+    }
+    // A non-neutral or photographic edge is not a safe candidate for local
+    // background removal. Fail closed instead of placing an opaque source over
+    // a generated scene or erasing an ambiguous product.
+    if (!sampledBorder || lightBorder / sampledBorder < .96) {
+      data.fill(0)
+      sourceAlpha.fill(0)
+      return null
+    }
+
+    const contact = buildBorderContactGuard(
+      data, width, height, channels, sourceAlpha,
+    )
+    borderContactGuard = contact.guard
+    if (contact.unsafe) {
+      data.fill(0)
+      sourceAlpha.fill(0)
+      mask.fill(0)
+      borderContactGuard.fill(0)
+      return null
+    }
+    const background = new Uint8Array(pixels)
+    const queue = new Int32Array(pixels)
+    let head = 0
+    let tail = 0
+    const enqueue = (index: number) => {
+      if (background[index] || borderContactGuard?.[index] ||
+        !lightNeutralPixel(data, index * channels)) return
+      background[index] = 1
+      queue[tail] = index
+      tail += 1
+    }
+    for (let x = 0; x < width; x += 1) {
+      enqueue(x)
+      if (height > 1) enqueue((height - 1) * width + x)
+    }
+    for (let y = 1; y < height - 1; y += 1) {
+      enqueue(y * width)
+      if (width > 1) enqueue(y * width + width - 1)
+    }
+    while (head < tail) {
+      const index = queue[head]
+      head += 1
+      const x = index % width
+      const y = Math.floor(index / width)
+      if (x > 0) enqueue(index - 1)
+      if (x + 1 < width) enqueue(index + 1)
+      if (y > 0) enqueue(index - width)
+      if (y + 1 < height) enqueue(index + width)
+    }
+    const protectedBoxWidth = protectedRight - protectedLeft + 1
+    const protectedBoxHeight = protectedBottom - protectedTop + 1
+    const protectedBoxArea = Math.max(
+      0,
+      protectedBoxWidth * protectedBoxHeight,
+    )
+    if (protectedPixels / pixels < .01 || protectedBoxArea / pixels < .04) {
+      foregroundGeometrySafe = false
+    } else {
+      const rowLeft = new Int32Array(height)
+      const rowRight = new Int32Array(height)
+      const columnTop = new Int32Array(width)
+      const columnBottom = new Int32Array(width)
+      rowLeft.fill(width)
+      rowRight.fill(-1)
+      columnTop.fill(height)
+      columnBottom.fill(-1)
+      for (let index = 0; index < pixels; index += 1) {
+        if (sourceAlpha[index] < 247 ||
+          lightNeutralPixel(data, index * channels)) continue
+        const x = index % width
+        const y = Math.floor(index / width)
+        rowLeft[y] = Math.min(rowLeft[y], x)
+        rowRight[y] = Math.max(rowRight[y], x)
+        columnTop[x] = Math.min(columnTop[x], y)
+        columnBottom[x] = Math.max(columnBottom[x], y)
+      }
+      let envelopePixels = 0
+      let removedEnvelopePixels = 0
+      for (let y = protectedTop; y <= protectedBottom; y += 1) {
+        if (rowRight[y] < rowLeft[y]) continue
+        for (let x = rowLeft[y]; x <= rowRight[y]; x += 1) {
+          if (columnBottom[x] < columnTop[x] ||
+            y < columnTop[x] || y > columnBottom[x]) continue
+          const index = y * width + x
+          envelopePixels += 1
+          if (background[index]) removedEnvelopePixels += 1
+        }
+      }
+      if (envelopePixels / pixels < .02 ||
+        removedEnvelopePixels / Math.max(1, envelopePixels) > .12) {
+        foregroundGeometrySafe = false
+      }
+      rowLeft.fill(0)
+      rowRight.fill(0)
+      columnTop.fill(0)
+      columnBottom.fill(0)
+    }
+    mask.fill(255)
+    for (let index = 0; index < pixels; index += 1) {
+      if (background[index]) mask[index] = 0
+    }
+    background.fill(0)
+    queue.fill(0)
+  }
+
+  let transparentBorder = 0
+  let borderPixels = 0
+  const inspectBorder = (index: number) => {
+    borderPixels += 1
+    if (mask[index] <= 8) transparentBorder += 1
+  }
+  for (let x = 0; x < width; x += 1) {
+    inspectBorder(x)
+    if (height > 1) inspectBorder((height - 1) * width + x)
+  }
+  for (let y = 1; y < height - 1; y += 1) {
+    inspectBorder(y * width)
+    if (width > 1) inspectBorder(y * width + width - 1)
+  }
+  let removedPixels = 0
+  let retainedProtectedPixels = 0
+  for (let index = 0; index < pixels; index += 1) {
+    if (mask[index] <= 8) removedPixels += 1
+    const offset = index * channels
+    const protectedPixel = method === "NATIVE_ALPHA"
+      ? sourceAlpha[index] >= 247
+      : sourceAlpha[index] >= 247 && (
+        !lightNeutralPixel(data, offset) || borderContactGuard?.[index] === 1
+      )
+    if (protectedPixel && mask[index] >= 247) retainedProtectedPixels += 1
+  }
+  const corners = foregroundCornerIndexes(width, height)
+  let opaqueCorners = 0
+  for (const index of corners) {
+    if (mask[index] >= 247) opaqueCorners += 1
+  }
+  const backgroundRemovalRatio = removedPixels / pixels
+  const transparentBorderRatio = transparentBorder / Math.max(1, borderPixels)
+  const protectedPixelCount = method === "NATIVE_ALPHA"
+    ? opaquePixels
+    : protectedPixels + (borderContactGuard
+      ? borderContactGuard.reduce((count, value, index) => count + (
+        value === 1 && lightNeutralPixel(data, index * channels) &&
+        sourceAlpha[index] >= 247 ? 1 : 0
+      ), 0)
+      : 0)
+  const protectedPixelRetentionRatio = retainedProtectedPixels /
+    Math.max(1, protectedPixelCount)
+  const opaqueCornerRatio = opaqueCorners / Math.max(1, corners.length)
+  const safe = foregroundGeometrySafe &&
+    backgroundRemovalRatio >= .02 && backgroundRemovalRatio <= .98 &&
+    transparentBorderRatio >= .99 && protectedPixelCount / pixels >= .001 &&
+    protectedPixelRetentionRatio >= .9999 && opaqueCornerRatio <= .001
+  if (!safe) {
+    data.fill(0)
+    sourceAlpha.fill(0)
+    mask.fill(0)
+    borderContactGuard?.fill(0)
+    return null
+  }
+
+  for (let index = 0; index < pixels; index += 1) {
+    data[index * channels + 3] = mask[index]
+  }
+  let output: Buffer
+  try {
+    output = await sharp(data, {
+      raw: { width, height, channels: 4 },
+    }).trim({ background: "#00000000", threshold: 1 }).png().toBuffer()
+  } finally {
+    data.fill(0)
+    sourceAlpha.fill(0)
+    mask.fill(0)
+    borderContactGuard?.fill(0)
+  }
+  return {
+    output,
+    outputSha256: sha256(output),
+    method,
+    qa: {
+      backgroundRemovalRatio: Number(backgroundRemovalRatio.toFixed(4)),
+      transparentBorderRatio: Number(transparentBorderRatio.toFixed(4)),
+      protectedPixelRetentionRatio: Number(protectedPixelRetentionRatio.toFixed(4)),
+      opaqueCornerRatio: Number(opaqueCornerRatio.toFixed(4)),
+    },
+  }
 }
 
 export async function optimizeAuthorizedEbayMainImage(

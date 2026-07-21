@@ -12,6 +12,7 @@ import {
 } from "./ebay-image-storage-cleanup"
 import {
   buildSafeOpenAiBackgroundPlatePlan,
+  EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION,
   EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
   EBAY_LISTING_IMAGE_SET_VERSION,
   EBAY_LISTING_IMAGE_SLOTS,
@@ -218,7 +219,7 @@ async function reusableCompletedSet(input: {
   const assetIds = exactSixAssetIds(input.control.asset_ids)
   if (!assetIds.length) throw new Error("SAME_DAY_IMAGE_COMPLETED_SET_INVALID")
   const { data, error } = await input.supabase.from("ebay_listing_image_assets")
-    .select("id,transformation,status,position")
+    .select("id,transformation,qa_result,status,position")
     .eq("account_key", input.accountKey)
     .eq("created_by", input.actorId)
     .eq("listing_package_id", input.listingPackageId)
@@ -233,6 +234,26 @@ async function reusableCompletedSet(input: {
   }
   const generated = data.map((asset) => record(asset.transformation))
     .filter((transformation) => transformation.generativeAiUsed === true)
+  const currentContract = data.every((asset) =>
+    record(asset.transformation).compositorContractVersion ===
+      EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION)
+  const secondaryForegroundsValid = data
+    .filter((asset) => record(asset.transformation).slot !==
+      "MAIN_WHITE_BACKGROUND")
+    .every((asset) => {
+      const transformation = record(asset.transformation)
+      const qa = record(asset.qa_result)
+      return transformation.authorizedSourceTreatment ===
+          "LOCAL_AUTHORIZED_FOREGROUND" &&
+        transformation.foregroundMatteVersion ===
+          EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION &&
+        qa.foregroundMatteValidated === true &&
+        qa.opaqueSourceFrameRemoved === true &&
+        qa.textSafeAreaVerified === true
+    })
+  if (!currentContract || !secondaryForegroundsValid) {
+    throw new Error("SAME_DAY_IMAGE_COMPOSITOR_REGENERATION_REQUIRED")
+  }
   if (generated.length && generated.some((transformation) =>
     transformation.backgroundPlateQuality !== PUBLISH_OPENAI_IMAGE_QUALITY)) {
     throw new Error("SAME_DAY_IMAGE_PUBLISH_QUALITY_REGENERATION_REQUIRED")
@@ -353,6 +374,7 @@ export async function generateAndPersistSameDayImagePackage(input: {
   const idempotencyKeyHash = sha256([
     input.accountKey, actorId, runId, candidateId, listingPackageId,
     facts.factRunId, packageHash, requestHash,
+    EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
   ].join(":"))
   const leaseToken = randomUUID()
   const { data: claimData, error: claimError } = await input.supabase.rpc(
@@ -659,6 +681,20 @@ export async function reviewSameDayImagePackage(input: {
   }
   if (input.decision === "APPROVE") {
     const transformations = assets.map((asset) => record(asset.transformation))
+    const secondaryForegroundsValid = assets
+      .filter((asset) => record(asset.transformation).slot !==
+        "MAIN_WHITE_BACKGROUND")
+      .every((asset) => {
+        const transformation = record(asset.transformation)
+        const qa = record(asset.qa_result)
+        return transformation.authorizedSourceTreatment ===
+            "LOCAL_AUTHORIZED_FOREGROUND" &&
+          transformation.foregroundMatteVersion ===
+            EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION &&
+          qa.foregroundMatteValidated === true &&
+          qa.opaqueSourceFrameRemoved === true &&
+          qa.textSafeAreaVerified === true
+      })
     const generated = transformations.filter((transformation) =>
       transformation.generativeAiUsed === true)
     const aiBoardSet = generated.length === 5 && transformations.every((transformation) =>
@@ -666,13 +702,15 @@ export async function reviewSameDayImagePackage(input: {
         EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION) &&
       generated.every((transformation) =>
         transformation.backgroundPlateQuality === PUBLISH_OPENAI_IMAGE_QUALITY) &&
+      secondaryForegroundsValid &&
       transformations.find((transformation) =>
         transformation.slot === "MAIN_WHITE_BACKGROUND")?.generativeAiUsed !== true
     const deterministicMultiSourceSet = generated.length === 0 &&
       transformations.every((transformation) =>
         transformation.compositorContractVersion ===
           EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION &&
-        transformation.presentationMode === "AUTHORIZED_MULTI_SOURCE")
+        transformation.presentationMode === "AUTHORIZED_MULTI_SOURCE") &&
+      secondaryForegroundsValid
     if (!aiBoardSet && !deterministicMultiSourceSet) {
       throw new Error("SAME_DAY_IMAGE_LEGACY_SET_REGENERATION_REQUIRED")
     }

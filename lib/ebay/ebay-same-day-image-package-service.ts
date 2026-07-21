@@ -3,20 +3,20 @@ import { createHash } from "node:crypto"
 import { z } from "zod"
 
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
-import { validateImageRightsEvidence } from "./ebay-image-optimization-service.ts"
+import { prepareAuthorizedEbaySecondaryForeground, validateImageRightsEvidence } from "./ebay-image-optimization-service.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { productFactsHash } from "./ebay-product-facts-readiness.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { buildCurrentSameDayImageFactoryInput, type CurrentSameDayImageFactBinding } from "./ebay-same-day-image-factory-input.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
-import { buildSafeOpenAiBackgroundPlatePlan, composeAuthorizedEbayListingImageSet, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, EBAY_VISUAL_STRATEGY_VERSION, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan, type EbayOpenAiImageQuality } from "./ebay-listing-image-factory.ts"
+import { buildSafeOpenAiBackgroundPlatePlan, composeAuthorizedEbayListingImageSet, EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, EBAY_VISUAL_STRATEGY_VERSION, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan, type EbayOpenAiImageQuality } from "./ebay-listing-image-factory.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { ebayImageMarketBriefSchema, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
 
 export const SAME_DAY_IMAGE_PACKAGE_SERVICE_VERSION =
-  "SAME_DAY_IMAGE_PACKAGE_SERVICE_V2_2026_07_21"
+  "SAME_DAY_IMAGE_PACKAGE_SERVICE_V3_2026_07_21"
 export const SAME_DAY_IMAGE_PACKAGE_MANIFEST_VERSION =
-  "SAME_DAY_IMAGE_PACKAGE_METADATA_V2_2026_07_21"
+  "SAME_DAY_IMAGE_PACKAGE_METADATA_V3_2026_07_21"
 
 const rawSha256Schema = z.string().regex(/^[0-9a-f]{64}$/)
 const prefixedSha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/)
@@ -31,7 +31,18 @@ const persistenceAssetSchema = z.object({
   presentationMode: z.enum(["AUTHORIZED_MULTI_SOURCE", "SINGLE_SOURCE_INFORMATIONAL"]).optional(),
   authorizedSourceTreatment: z.enum([
     "NORMALIZED_LIGHT_NEUTRAL", "PRESERVED_FRAMED_SOURCE",
+    "LOCAL_AUTHORIZED_FOREGROUND",
   ]).optional(),
+  foregroundMatteVersion:
+    z.literal(EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION).optional(),
+  foregroundMatteMethod: z.enum([
+    "NATIVE_ALPHA", "EDGE_CONNECTED_LIGHT_NEUTRAL_V1",
+  ]).optional(),
+  foregroundMatteSha256: rawSha256Schema.optional(),
+  foregroundBackgroundRemovalRatio: z.number().min(0).max(1).optional(),
+  foregroundTransparentBorderRatio: z.number().min(0).max(1).optional(),
+  foregroundProtectedPixelRetentionRatio: z.number().min(0).max(1).optional(),
+  foregroundOpaqueCornerRatio: z.number().min(0).max(1).optional(),
   sourceSha256: rawSha256Schema,
   outputSha256: rawSha256Schema,
   width: z.literal(1600),
@@ -46,6 +57,9 @@ const persistenceAssetSchema = z.object({
   structuralDiversityVerified: z.literal(true).optional(),
   foregroundEdgeCoverage: z.number().min(0.004).max(1).optional(),
   deterministicBackgroundSelection: z.boolean(),
+  foregroundMatteValidated: z.literal(true).optional(),
+  opaqueSourceFrameRemoved: z.literal(true).optional(),
+  textSafeAreaVerified: z.literal(true).optional(),
   visualStrategyVersion: z.literal(EBAY_VISUAL_STRATEGY_VERSION).optional(),
   backgroundPlateQuality: z.enum(["low", "high"]).optional(),
   selectedSceneBoardPanel: z.number().int().min(1).max(6).optional(),
@@ -286,7 +300,10 @@ function validateTransientAssets(input: {
       asset.transformation.verifiedFactsOnly !== true ||
       !["AUTHORIZED_MULTI_SOURCE", "SINGLE_SOURCE_INFORMATIONAL"]
         .includes(asset.transformation.presentationMode) ||
-      !["NORMALIZED_LIGHT_NEUTRAL", "PRESERVED_FRAMED_SOURCE"]
+      ![
+        "NORMALIZED_LIGHT_NEUTRAL", "PRESERVED_FRAMED_SOURCE",
+        "LOCAL_AUTHORIZED_FOREGROUND",
+      ]
         .includes(asset.transformation.authorizedSourceTreatment) ||
       asset.qa.dimensionsValid !== true ||
       asset.qa.sourceHashRecorded !== true ||
@@ -299,6 +316,53 @@ function validateTransientAssets(input: {
       asset.qa.foregroundEdgeCoverage < 0.004 ||
       asset.qa.foregroundEdgeCoverage > 1) {
       throw new Error("SAME_DAY_IMAGE_SET_ASSET_INVALID")
+    }
+    const secondary = slot !== "MAIN_WHITE_BACKGROUND"
+    if (secondary) {
+      if (asset.transformation.authorizedSourceTreatment !==
+          "LOCAL_AUTHORIZED_FOREGROUND" ||
+        asset.transformation.foregroundMatteVersion !==
+          EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION ||
+        !["NATIVE_ALPHA", "EDGE_CONNECTED_LIGHT_NEUTRAL_V1"].includes(
+          asset.transformation.foregroundMatteMethod ?? "",
+        ) ||
+        !/^[0-9a-f]{64}$/.test(
+          asset.transformation.foregroundMatteSha256 ?? "",
+        ) ||
+        !Number.isFinite(
+          asset.transformation.foregroundBackgroundRemovalRatio,
+        ) ||
+        asset.transformation.foregroundBackgroundRemovalRatio! < .02 ||
+        asset.transformation.foregroundBackgroundRemovalRatio! > .98 ||
+        !Number.isFinite(
+          asset.transformation.foregroundTransparentBorderRatio,
+        ) ||
+        asset.transformation.foregroundTransparentBorderRatio! < .99 ||
+        !Number.isFinite(
+          asset.transformation.foregroundProtectedPixelRetentionRatio,
+        ) ||
+        asset.transformation.foregroundProtectedPixelRetentionRatio! < .9999 ||
+        !Number.isFinite(
+          asset.transformation.foregroundOpaqueCornerRatio,
+        ) ||
+        asset.transformation.foregroundOpaqueCornerRatio! > .001 ||
+        asset.qa.foregroundMatteValidated !== true ||
+        asset.qa.opaqueSourceFrameRemoved !== true ||
+        asset.qa.textSafeAreaVerified !== true ||
+        !asset.qa.manualChecksRequired.includes(
+          "AUTHORIZED_FOREGROUND_MATTE_HUMAN_ACCEPTANCE",
+        )) {
+        throw new Error("SAME_DAY_IMAGE_SET_FOREGROUND_EVIDENCE_INVALID")
+      }
+    } else if (asset.transformation.authorizedSourceTreatment ===
+        "LOCAL_AUTHORIZED_FOREGROUND" ||
+      asset.transformation.foregroundMatteVersion !== undefined ||
+      asset.transformation.foregroundMatteMethod !== undefined ||
+      asset.transformation.foregroundMatteSha256 !== undefined ||
+      asset.qa.foregroundMatteValidated !== undefined ||
+      asset.qa.opaqueSourceFrameRemoved !== undefined ||
+      asset.qa.textSafeAreaVerified !== undefined) {
+      throw new Error("SAME_DAY_IMAGE_SET_MAIN_FOREGROUND_EVIDENCE_INVALID")
     }
     if (outputs.has(asset.outputSha256)) {
       throw new Error("SAME_DAY_IMAGE_SET_OUTPUT_DUPLICATED")
@@ -412,6 +476,20 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       presentationMode: asset.transformation.presentationMode,
       authorizedSourceTreatment:
         asset.transformation.authorizedSourceTreatment,
+      foregroundMatteVersion:
+        asset.transformation.foregroundMatteVersion,
+      foregroundMatteMethod:
+        asset.transformation.foregroundMatteMethod,
+      foregroundMatteSha256:
+        asset.transformation.foregroundMatteSha256,
+      foregroundBackgroundRemovalRatio:
+        asset.transformation.foregroundBackgroundRemovalRatio,
+      foregroundTransparentBorderRatio:
+        asset.transformation.foregroundTransparentBorderRatio,
+      foregroundProtectedPixelRetentionRatio:
+        asset.transformation.foregroundProtectedPixelRetentionRatio,
+      foregroundOpaqueCornerRatio:
+        asset.transformation.foregroundOpaqueCornerRatio,
       sourceSha256: asset.sourceSha256,
       outputSha256: asset.outputSha256,
       width: asset.width,
@@ -428,6 +506,9 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       foregroundEdgeCoverage: asset.qa.foregroundEdgeCoverage,
       deterministicBackgroundSelection:
         asset.qa.deterministicBackgroundSelection,
+      foregroundMatteValidated: asset.qa.foregroundMatteValidated,
+      opaqueSourceFrameRemoved: asset.qa.opaqueSourceFrameRemoved,
+      textSafeAreaVerified: asset.qa.textSafeAreaVerified,
       visualStrategyVersion: asset.transformation.visualStrategyVersion,
       backgroundPlateQuality: asset.transformation.backgroundPlateQuality,
       selectedSceneBoardPanel:
@@ -540,6 +621,16 @@ export async function generateTransientSameDayImagePackage(input: {
     throw new Error("SAME_DAY_IMAGE_AUTHORIZED_SOURCES_INVALID")
   }
   const sourceSha256s = sources.map(sha256)
+  const preflightForegrounds: Buffer[] = []
+  try {
+    for (const source of sources) {
+      const foreground = await prepareAuthorizedEbaySecondaryForeground(source)
+      if (!foreground) throw new Error("EBAY_IMAGE_FOREGROUND_EXTRACTION_UNSAFE")
+      preflightForegrounds.push(foreground.output)
+    }
+  } finally {
+    for (const foreground of preflightForegrounds) foreground.fill(0)
+  }
   let backgroundPlate: EbayOpenAiBackgroundPlate | null = null
   let assets: EbayListingImageComposition[] = []
   const openAiCalls: 0 | 1 = plan.backgroundPlatePlan ? 1 : 0
