@@ -3,11 +3,10 @@ import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import type { DirectedLunaProduct } from "./ebay-luna-directed-product-import"
-// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
 import {
   fetchDirectedLunaProduct,
   parseDirectedLunaProductUrl,
-} from "./ebay-luna-directed-product-import.ts"
+} from "./ebay-luna-directed-product-import"
 
 export const TARGETED_ACTIVE_LISTING_LUNA_MONITOR_VERSION =
   "EBAY_TARGETED_ACTIVE_LISTING_LUNA_MONITOR_V1" as const
