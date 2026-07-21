@@ -5321,6 +5321,10 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
         handoffState = "PREPARING_IMAGE_PACKAGE"
       }
       if (handoffState === "PREPARING_IMAGE_PACKAGE") {
+        const visualEvidenceBatchId = text(candidate.product_research_capture_batch_id)
+        if (!visualEvidenceBatchId) {
+          throw new Error("SAME_DAY_PILOT_IMAGE_VISUAL_EVIDENCE_BINDING_MISSING")
+        }
         const { error: stateUpdateError } = await input.supabase.from("ebay_same_day_pilot_candidates").update({
           state: "READY_FOR_CONTENT", updated_at: new Date().toISOString(),
         }).eq("id", candidate.id).eq("run_id", state.run.id)
@@ -5331,9 +5335,11 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           candidateId: candidate.id,
           job: {
             jobType: "GENERATE_SIX_IMAGE_PACKAGE",
-            idempotencyKey: `${state.run.id}:${candidate.id}:GENERATE_SIX_IMAGE_PACKAGE`,
+            idempotencyKey: `${state.run.id}:${candidate.id}:GENERATE_SIX_IMAGE_PACKAGE:VISUAL_V2:${visualEvidenceBatchId}:${handoffSummary.packageHash}`,
             checkpoint: { packageHash: handoffSummary.packageHash,
               factRunId: record(candidate.product_facts_summary).factRunId,
+              productResearchCaptureBatchId: visualEvidenceBatchId,
+              generationAttemptVersion: "VISUAL_V2_CAPTURE_BOUND_V1_2026_07_21",
               maximumOpenAiCalls: 1, competitorImages: 0, ebayWrites: 0 },
             maxAttempts: 4,
           },
