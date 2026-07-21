@@ -70,6 +70,8 @@ export type ResolvedFact = {
   selectedValue: unknown
   selectedUnit: string | null
   supportingObservationIds: string[]
+  /** The subset that may be used as ancestry for another verified derivation. */
+  authoritativeSupportingObservationIds?: string[]
   supportingSourceTypes: FactSourceType[]
   supportingSourceAuthorities: FactAuthority[]
   conflictingObservationIds: string[]
@@ -85,11 +87,14 @@ export type TaxonomyAspect = {
   required: boolean
   values?: string[]
   aspectMode?: string | null
+  allowedValuesComplete?: boolean
 }
 
 export type FactRequirement = {
   aspectName: string
   required: boolean
+  selectionOnly: boolean
+  allowedValuesComplete: boolean
   mappedFactKey: string | null
   status: RequirementStatus
   selectedValue: string | null
@@ -296,7 +301,8 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
     if (critical && valueGroups.size > 1) {
       const conflicting = [...valueGroups.values()].flat()
       facts.push({ factScope: first.factScope, factKey: first.factKey, selectedValue: null,
-        selectedUnit: null, supportingObservationIds: [], supportingSourceTypes: [], supportingSourceAuthorities: [],
+        selectedUnit: null, supportingObservationIds: [], authoritativeSupportingObservationIds: [],
+        supportingSourceTypes: [], supportingSourceAuthorities: [],
         conflictingObservationIds: conflicting.map((entry) => entry.id ?? factObservationKey(entry)),
         resolutionRule: "CRITICAL_CONFLICT_BLOCKED", confidence: 0, verificationStatus: "CONFLICTED",
         resolvedAt: now.toISOString(), resolverVersion: PRODUCT_FACTS_RESOLVER_VERSION })
@@ -313,9 +319,17 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
     if (winner) {
       const same = trusted.filter((entry) => valueKey(entry.normalizedValue, entry.normalizedUnit) ===
         valueKey(winner.normalizedValue, winner.normalizedUnit))
+      const authoritativeSame = same.filter((entry) => entry.verificationStatus === "DERIVED_VERIFIED"
+        ? authorizedDerivation(entry)
+        : TECHNICAL_AUTHORITY_SOURCES.has(entry.sourceType))
       facts.push({ factScope: first.factScope, factKey: first.factKey,
         selectedValue: winner.normalizedValue, selectedUnit: winner.normalizedUnit,
         supportingObservationIds: same.map((entry) => entry.id ?? factObservationKey(entry)),
+        // Corroborating eBay listings remain in the full provenance list, but
+        // cannot poison a derivation that is already anchored to Luna, a
+        // manufacturer/label or another permitted technical authority.
+        authoritativeSupportingObservationIds: authoritativeSame
+          .map((entry) => entry.id ?? factObservationKey(entry)),
         supportingSourceTypes: [...new Set(same.map((entry) => entry.sourceType))],
         supportingSourceAuthorities: [...new Set(same.map((entry) => entry.sourceAuthority))],
         conflictingObservationIds: trusted.filter((entry) => !same.includes(entry)).map((entry) => entry.id ?? factObservationKey(entry)),
@@ -328,6 +342,7 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
       if (estimate) {
         facts.push({ factScope: first.factScope, factKey: first.factKey, selectedValue: estimate.normalizedValue,
           selectedUnit: estimate.normalizedUnit, supportingObservationIds: [estimate.id ?? factObservationKey(estimate)],
+          authoritativeSupportingObservationIds: [],
           supportingSourceTypes: [estimate.sourceType], supportingSourceAuthorities: [estimate.sourceAuthority],
           conflictingObservationIds: [], resolutionRule: "INTERNAL_ESTIMATE_NON_PUBLISHABLE", confidence: estimate.confidence,
           verificationStatus: "ESTIMATED_INTERNAL", resolvedAt: now.toISOString(), resolverVersion: PRODUCT_FACTS_RESOLVER_VERSION })
@@ -335,7 +350,8 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
       }
       const status = entries.some((entry) => entry.verificationStatus === "NOT_APPLICABLE") ? "NOT_APPLICABLE" : "MISSING"
       facts.push({ factScope: first.factScope, factKey: first.factKey, selectedValue: null,
-        selectedUnit: null, supportingObservationIds: [], supportingSourceTypes: [], supportingSourceAuthorities: [],
+        selectedUnit: null, supportingObservationIds: [], authoritativeSupportingObservationIds: [],
+        supportingSourceTypes: [], supportingSourceAuthorities: [],
         conflictingObservationIds: [],
         resolutionRule: status === "NOT_APPLICABLE" ? "NOT_APPLICABLE" : "NO_TRUSTED_OBSERVATION",
         confidence: 0, verificationStatus: status, resolvedAt: now.toISOString(),
@@ -367,6 +383,9 @@ export function deriveOfferPackFacts(input: {
   const unitCount = positiveInteger(unit?.selectedValue)
   const packCount = positiveInteger(packs?.selectedValue)
   if (!unitCount || !packCount || !unit || !packs || !hasPermittedSource(unit) || !hasPermittedSource(packs)) return []
+  const unitAuthorityIds = unit.authoritativeSupportingObservationIds ?? unit.supportingObservationIds
+  const packAuthorityIds = packs.authoritativeSupportingObservationIds ?? packs.supportingObservationIds
+  if (!unitAuthorityIds.length || !packAuthorityIds.length) return []
   const unitsPerPack: FactObservation = {
     candidateId: input.candidateId, lunaVariantId: input.lunaVariantId, factScope: "OFFER_PACK",
     factKey: "unitsPerPack", rawValue: null, normalizedValue: unitCount,
@@ -376,7 +395,7 @@ export function deriveOfferPackFacts(input: {
     confidence: unit.confidence, verificationStatus: "DERIVED_VERIFIED",
     adapterVersion: PRODUCT_FACTS_RESOLVER_VERSION,
     derivation: { formula: "OFFER_PACK.unitsPerPack = PRODUCT_UNIT.unitCount", sourceObservationIds: [
-      ...unit.supportingObservationIds], version: PRODUCT_FACTS_RESOLVER_VERSION, derivedAt: now.toISOString() },
+      ...unitAuthorityIds], version: PRODUCT_FACTS_RESOLVER_VERSION, derivedAt: now.toISOString() },
   }
   unitsPerPack.evidenceHash = factObservationKey(unitsPerPack)
   const totalUnitCount: FactObservation = {
@@ -387,7 +406,7 @@ export function deriveOfferPackFacts(input: {
     confidence: Math.min(unit.confidence, packs.confidence), verificationStatus: "DERIVED_VERIFIED",
     adapterVersion: PRODUCT_FACTS_RESOLVER_VERSION,
     derivation: { formula: "PRODUCT_UNIT.unitCount × OFFER_PACK.offerPackCount", sourceObservationIds: [
-      ...unit.supportingObservationIds, ...packs.supportingObservationIds], version: PRODUCT_FACTS_RESOLVER_VERSION, derivedAt: now.toISOString() },
+      ...unitAuthorityIds, ...packAuthorityIds], version: PRODUCT_FACTS_RESOLVER_VERSION, derivedAt: now.toISOString() },
   }
   totalUnitCount.evidenceHash = factObservationKey(totalUnitCount)
   return [unitsPerPack, totalUnitCount]
@@ -452,13 +471,22 @@ export function mapTaxonomyRequirements(aspects: TaxonomyAspect[], facts: Resolv
     const selectedValue = resolvedValue
       ? (aspect.values ?? []).find((value) => key(value) === key(resolvedValue)) ?? resolvedValue
       : null
-    const permittedSource = hasPermittedSource(resolved) || hasSafeSellSimilarAspect(aspect, resolved, selectedValue)
+    const allowedValues = (aspect.values ?? []).slice(0, 250)
+    const selectionOnly = aspect.aspectMode === "SELECTION_ONLY"
+    const allowedValuesComplete = selectionOnly && aspect.allowedValuesComplete === true
+    const taxonomyValueCompatible = !selectionOnly || !allowedValuesComplete || !selectedValue ||
+      allowedValues.some((value) => key(value) === key(selectedValue))
+    const permittedSource = taxonomyValueCompatible &&
+      (hasPermittedSource(resolved) || hasSafeSellSimilarAspect(aspect, resolved, selectedValue))
     const status: RequirementStatus = resolved?.verificationStatus === "CONFLICTED" ? "CONFLICTED_BLOCKING" :
       permittedSource ? (resolved?.verificationStatus === "VERIFIED" ||
         resolved?.verificationStatus === "DERIVED_VERIFIED" ? "SATISFIED_VERIFIED" : "SATISFIED_CORROBORATED") :
         aspect.required ? "MISSING_BLOCKING" : "MISSING_OPTIONAL"
-    return { aspectName: aspect.name, required: aspect.required, mappedFactKey: resolved?.factKey ?? null,
-      status, selectedValue, allowedValues: (aspect.values ?? []).slice(0, 250), source: "EBAY_TAXONOMY_OFFICIAL_READONLY" }
+    return { aspectName: aspect.name, required: aspect.required,
+      selectionOnly,
+      allowedValuesComplete,
+      mappedFactKey: resolved?.factKey ?? null,
+      status, selectedValue, allowedValues, source: "EBAY_TAXONOMY_OFFICIAL_READONLY" }
   })
 }
 

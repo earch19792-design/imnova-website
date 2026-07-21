@@ -1,15 +1,30 @@
 import { createHash } from "node:crypto"
 
 export const OFFICIAL_MANUFACTURER_FACTS_ADAPTER_VERSION =
-  "OFFICIAL_MANUFACTURER_FACTS_V1_2026_07_19"
+  "OFFICIAL_MANUFACTURER_FACTS_V2_2026_07_21"
 
 const MAX_OFFICIAL_PAGE_BYTES = 750_000
 const REQUEST_TIMEOUT_MS = 8_000
 
-type OfficialFact = {
+export type OfficialFact = {
   key: string
   value: string
   unit: string | null
+}
+
+export type OfficialManufacturerFactsResult = {
+  status: "AVAILABLE" | "NO_MATCH" | "REQUEST_FAILED" | "NOT_ALLOWLISTED" |
+    "SEARCH_BUDGET_EXCEEDED"
+  observedAt: string
+  sourceReference: string | null
+  facts: OfficialFact[]
+  audit: {
+    allowlistedOfficialDomainConfigured: boolean
+    externalPageFetched: boolean
+    identityMatched: boolean
+    rawHtmlStored: boolean
+    sourceUrlStored: boolean
+  }
 }
 
 type OfficialSourceDefinition = {
@@ -18,6 +33,8 @@ type OfficialSourceDefinition = {
   origin: string
   path: string
   identityTerms: string[]
+  candidatePattern?: RegExp
+  pagePattern?: RegExp
   extractors?: Array<{ key: string; value: string; pattern: RegExp; unit?: string | null }>
 }
 
@@ -34,6 +51,21 @@ const OFFICIAL_SOURCES: readonly OfficialSourceDefinition[] = [
     extractors: [
       { key: "countryOfManufacture", value: "Sweden", pattern: /made in sweden/i },
       { key: "material", value: "Unbleached paper", pattern: /unbleached pulp|unbleached paper/i },
+    ],
+  },
+  {
+    id: "TESLA_GEN_2_NEMA_14_30_ADAPTER",
+    brand: "Tesla",
+    origin: "https://shop.tesla.com",
+    path: "/product/gen-2-nema-adapters?redirect=no",
+    // The official page is a product-family page. Bind the candidate to the
+    // exact 14-30 variant before accepting Brand/Type, and deliberately do not
+    // infer an MPN because Tesla does not expose one on this public page.
+    identityTerms: ["nema", "adapter"],
+    candidatePattern: /\b14[\s/-]*30\b/i,
+    pagePattern: /\bNEMA\s*14[\s/-]*30\b/i,
+    extractors: [
+      { key: "type", value: "NEMA Adapter", pattern: /\bNEMA\s*14[\s/-]*30\b/i },
     ],
   },
 ]
@@ -62,7 +94,8 @@ function sourceReference(source: OfficialSourceDefinition) {
 function sourceForProduct(productTitle: string) {
   const title = normalized(productTitle)
   return OFFICIAL_SOURCES.find((source) =>
-    source.identityTerms.every((term) => title.includes(normalized(term)))) ?? null
+    source.identityTerms.every((term) => title.includes(normalized(term))) &&
+    (!source.candidatePattern || source.candidatePattern.test(productTitle))) ?? null
 }
 
 function jsonLdProduct(html: string) {
@@ -125,7 +158,7 @@ export async function fetchOfficialManufacturerFacts(input: {
   productTitle: string
   fetchImpl?: typeof fetch
   now?: Date
-}) {
+}): Promise<OfficialManufacturerFactsResult> {
   const source = sourceForProduct(input.productTitle)
   const observedAt = (input.now ?? new Date()).toISOString()
   if (!source) return {
@@ -162,7 +195,8 @@ export async function fetchOfficialManufacturerFacts(input: {
     const expected = normalized(input.productTitle)
     const observed = normalized(officialTitle)
     const identityMatched = source.identityTerms.every((term) =>
-      expected.includes(normalized(term)) && observed.includes(normalized(term)))
+      expected.includes(normalized(term)) && observed.includes(normalized(term))) &&
+      (!source.pagePattern || source.pagePattern.test(html))
     if (!identityMatched) return { status: "NO_MATCH" as const, observedAt,
       sourceReference: sourceReference(source), facts: [] as OfficialFact[],
       audit: { allowlistedOfficialDomainConfigured: true, externalPageFetched: true,

@@ -41,9 +41,12 @@ import {
 } from "./ebay-official-manufacturer-facts"
 import { aggregateEbayMarketPricingByPack } from "./ebay-market-pricing-strategy"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V16_2026_07_20"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V17_2026_07_21"
+export const PRODUCT_FACTS_AUTOMATIC_SEARCH_BUDGET_MS = 4 * 60 * 1_000
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
+const PRODUCT_FACTS_SEARCH_BUDGET_EXCEEDED =
+  "PRODUCT_FACTS_AUTOMATIC_SEARCH_BUDGET_EXCEEDED"
 type JsonRecord = Record<string, unknown>
 type ControlledExploratoryFactsTarget = {
   candidateId: string
@@ -87,6 +90,41 @@ function array(value: unknown) { return Array.isArray(value) ? value : [] }
 function safeCode(error: unknown) {
   const value = error instanceof Error ? error.message : ""
   return /^[A-Z0-9_:-]+$/.test(value) ? value : "REQUEST_FAILED"
+}
+async function budgetedAutomaticRead<T>(
+  deadlineMs: number,
+  read: () => Promise<T>,
+): Promise<T> {
+  const remainingMs = deadlineMs - Date.now()
+  if (remainingMs <= 0) throw new Error(PRODUCT_FACTS_SEARCH_BUDGET_EXCEEDED)
+  let timeout: ReturnType<typeof setTimeout> | null = null
+  try {
+    return await Promise.race([
+      read(),
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(
+          new Error(PRODUCT_FACTS_SEARCH_BUDGET_EXCEEDED),
+        ), remainingMs)
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+async function budgetedAutomaticReadOr<T>(
+  deadlineMs: number,
+  read: () => Promise<T>,
+  fallback: () => T,
+) {
+  try {
+    return await budgetedAutomaticRead(deadlineMs, read)
+  } catch (error) {
+    if (safeCode(error) === PRODUCT_FACTS_SEARCH_BUDGET_EXCEEDED) {
+      return fallback()
+    }
+    throw error
+  }
 }
 function safeFactValue(value: unknown): string | number | boolean | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null
@@ -687,17 +725,23 @@ export async function runProductFactsEnrichment(input: {
     requirementCounts?: JsonRecord
     authoritativeFactsPackage?: AuthoritativeFactsInputPackage | ReturnType<typeof buildOpenAiFactsInputPackage>
     resolvedFacts?: Array<{ scope: string; key: string; value: unknown; unit: string | null; status: string }>
-    resolvedRequirements?: Array<{ aspectName: string; required: boolean; mappedFactKey: string | null;
+    resolvedRequirements?: Array<{ aspectName: string; required: boolean; selectionOnly: boolean;
+      allowedValuesComplete: boolean;
+      mappedFactKey: string | null;
       status: string; selectedValue: string | null; allowedValues: string[] }>
     taxonomy?: { status: string; categoryId: string | null; categoryTreeId: string | null;
       observedAt: string | null; variationAspects: string[] }
     marketPricing?: ReturnType<typeof aggregateEbayMarketPricingByPack>
+    automaticSearch?: { budgetMs: number; elapsedMs: number; budgetExceeded: boolean }
     evidenceBinding?: { factRunId: string; currentRunBound: boolean; sourceSnapshotLinks: number;
       observationLinks: number; resolutionLinks: number; requirementLinks: number; readinessEventLinks: number }
   }> = []
   const prepared: Array<{ candidate: JsonRecord; variant: JsonRecord; observations: FactObservation[]; facts: ResolvedFact[]; requirements: ReturnType<typeof mapTaxonomyRequirements>; readiness: ReturnType<typeof calculateReadiness>; authoritativeFactsPackage: AuthoritativeFactsInputPackage | ReturnType<typeof buildOpenAiFactsInputPackage>; authoritativeFactsExpiresAt: string | null; exception: ReturnType<typeof targetedFactException>; sourceSnapshots: JsonRecord[]; taxonomy: JsonRecord; sourceAttempts: JsonRecord }> = []
   for (const candidate of candidates) {
     try {
+      const automaticSearchStartedAt = Date.now()
+      const automaticSearchDeadline = automaticSearchStartedAt +
+        PRODUCT_FACTS_AUTOMATIC_SEARCH_BUDGET_MS
       const [variant, officialDescription, operatorLabelFacts] = await Promise.all([
         variantForCandidate(input.supabase, candidate),
         officialDescriptionForCandidate(input.supabase, candidate),
@@ -723,10 +767,20 @@ export async function runProductFactsEnrichment(input: {
       const knownCategoryId = categoryIdFromCandidateEvidence(candidate)
       const semanticCategoryId = semanticCategoryIdFromTitle(base.title)
       const [catalog, manufacturerOfficial] = await Promise.all([
-        searchEbayCatalogIdentity({ query: base.title, gtin: authoritativeGtin,
-          mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])),
-          categoryId: semanticCategoryId || knownCategoryId || null }),
-        fetchOfficialManufacturerFacts({ productTitle: base.title, now }),
+        budgetedAutomaticReadOr(automaticSearchDeadline,
+          () => searchEbayCatalogIdentity({ query: base.title, gtin: authoritativeGtin,
+            mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])),
+            categoryId: semanticCategoryId || knownCategoryId || null }),
+          () => ({ status: "REQUEST_FAILED" as const, products: [],
+            observedAt: now.toISOString(), source: "EBAY_CATALOG_OFFICIAL_READONLY" as const })),
+        budgetedAutomaticReadOr(automaticSearchDeadline,
+          () => fetchOfficialManufacturerFacts({ productTitle: base.title, now }),
+          () => ({ status: "SEARCH_BUDGET_EXCEEDED" as const, observedAt: now.toISOString(),
+            sourceReference: null, facts: [], audit: {
+              allowlistedOfficialDomainConfigured: false,
+              externalPageFetched: false, identityMatched: false,
+              rawHtmlStored: false, sourceUrlStored: false,
+            } })),
       ])
       const catalogSelection = selectCatalogIdentityMatches({
         title: base.title,
@@ -746,14 +800,15 @@ export async function runProductFactsEnrichment(input: {
       let browseComparableCount = 0
       let browseReport: JsonRecord | null = null
       try {
-        const browse = record(await runEbaySellerKeywordDemandValidation({ productName: base.title, productTitle: base.title,
+        const browse = record(await budgetedAutomaticRead(automaticSearchDeadline,
+          () => runEbaySellerKeywordDemandValidation({ productName: base.title, productTitle: base.title,
           variantTitle: text(variant.variant_title) || null, supplierSku: text(variant.sku) || null,
           categoryId: semanticCategoryId || catalogCategoryId || null, gtin: authoritativeGtin,
           brand: text(fromMetadata(base.metadata, ["brand", "manufacturerBrand"])) || null,
           mpn: text(fromMetadata(base.metadata, ["mpn", "manufacturerPartNumber"])) || null,
           size: text(fromMetadata(base.metadata, ["size", "netContent"])) || null,
           packQuantity: browsePackQuantity,
-          productType: text(variant.product_type) || null }))
+          productType: text(variant.product_type) || null })))
         browseStatus = "AVAILABLE"
         browseComparableCount = array(browse.comparableEvidence).length
         browseReport = browse
@@ -785,7 +840,8 @@ export async function runProductFactsEnrichment(input: {
       }).slice(0, 3)
       for (const attempt of tradingAttempts) {
         try {
-          const comparable = record(await readEbayTradingItemIdentityReadonly(attempt.itemId))
+          const comparable = record(await budgetedAutomaticRead(automaticSearchDeadline,
+            () => readEbayTradingItemIdentityReadonly(attempt.itemId)))
           if (comparableTitleMatches(base.title, comparable.title)) {
             tradingComparables.push(comparable)
             tradingStatus = "AVAILABLE"
@@ -806,7 +862,14 @@ export async function runProductFactsEnrichment(input: {
       // wins, followed by the title-verified Trading comparable. Existing
       // evidence remains a last category seed for official Taxonomy.
       const taxonomyCategoryId = semanticCategoryId || catalogCategoryId || tradingCategoryId || knownCategoryId
-      const taxonomy = await getEbayTaxonomyListingIntelligence(base.title, taxonomyCategoryId || undefined)
+      const taxonomy = await budgetedAutomaticReadOr(automaticSearchDeadline,
+        () => getEbayTaxonomyListingIntelligence(base.title, taxonomyCategoryId || undefined),
+        () => ({ status: "REQUEST_FAILED" as const, categoryTreeId: null,
+          categoryTreeVersion: null, categoryId: taxonomyCategoryId || null,
+          categoryName: null, observedAt: null, aspects: [], requiredAspects: [],
+          recommendedAspects: [], categoryResolution: "UNRESOLVED" as const,
+          failureCode: PRODUCT_FACTS_SEARCH_BUDGET_EXCEEDED,
+          source: "EBAY_TAXONOMY_OFFICIAL_READONLY" as const }))
       const taxonomyRecord = record(taxonomy)
       const requiredAspectNames = new Set(array(taxonomyRecord.requiredAspects).map(record)
         .map((aspect) => text(aspect.name).toLocaleLowerCase()).filter(Boolean))
@@ -816,6 +879,13 @@ export async function runProductFactsEnrichment(input: {
           const values = array(specific.values).map(text).filter(Boolean)
           return requiredAspectNames.has(name) && SELL_SIMILAR_SAFE_ITEM_SPECIFICS.has(name) && values.length === 1
         }))
+      const automaticSearchElapsedMs = Math.max(0,
+        Date.now() - automaticSearchStartedAt)
+      const automaticSearchBudgetExceeded = [browseStatus, tradingStatus,
+        text(taxonomyRecord.failureCode), manufacturerOfficial.status]
+        .includes(PRODUCT_FACTS_SEARCH_BUDGET_EXCEEDED) ||
+        manufacturerOfficial.status === "SEARCH_BUDGET_EXCEEDED" ||
+        automaticSearchElapsedMs >= PRODUCT_FACTS_AUTOMATIC_SEARCH_BUDGET_MS
       const sourceSnapshots = [
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
           sourceType: "LUNA_EXACT_VARIANT", authority: "SUPPLIER", observedAt: base.observedAt, status: "AVAILABLE",
@@ -897,10 +967,21 @@ export async function runProductFactsEnrichment(input: {
       const taxonomySourceReady = text(taxonomyRecord.status) === "AVAILABLE" && /^\d+$/.test(text(taxonomyRecord.categoryId)) &&
         array(taxonomyRecord.aspects).length > 0
       const taxonomyAspects = taxonomySourceReady ? array(taxonomyRecord.aspects) : []
-      const requirements = mapTaxonomyRequirements(taxonomyAspects.map(record).map((aspect) => ({
-        name: text(aspect.name), required: aspect.required === true || requiredAspectNames.has(text(aspect.name).toLocaleLowerCase()),
-        values: array(aspect.suggestedValues).map((value) => text(value)).filter(Boolean), aspectMode: text(aspect.mode) || null,
-      })).filter((aspect) => aspect.name), resolved.facts)
+      const requirements = mapTaxonomyRequirements(taxonomyAspects.map(record).map((aspect) => {
+        const taxonomyValues = array(aspect.values).map(record)
+        const allowedValues = taxonomyValues.map((value) => text(value.value)).filter(Boolean)
+        const hasConditionalValues = taxonomyValues.some((value) =>
+          array(value.valueConstraints).length > 0)
+        return {
+          name: text(aspect.name),
+          required: aspect.required === true ||
+            requiredAspectNames.has(text(aspect.name).toLocaleLowerCase()),
+          values: allowedValues,
+          aspectMode: text(aspect.mode) || null,
+          allowedValuesComplete: aspect.valuesComplete === true &&
+            !hasConditionalValues && allowedValues.length <= 250,
+        }
+      }).filter((aspect) => aspect.name), resolved.facts)
       const controlledIdentityExact = input.controlledExploratoryTarget?.candidateId === text(candidate.id)
       const calculatedReadiness = calculateReadiness({ identityExact: candidate.luna_match_status === "EXACT_LUNA_MATCH" || controlledIdentityExact, facts: resolved.facts,
         requirements, regulated: regulatedCandidate(variant, base.metadata), taxonomySourceReady })
@@ -927,7 +1008,10 @@ export async function runProductFactsEnrichment(input: {
         exception, sourceSnapshots, taxonomy: taxonomyRecord,
         sourceAttempts: { catalog: text(catalogRecord.status) || "REQUEST_FAILED", taxonomy: text(taxonomyRecord.status) || "REQUEST_FAILED",
           browse: browseStatus, trading: tradingStatus,
-          manufacturer: manufacturerOfficial.status } })
+          manufacturer: manufacturerOfficial.status,
+          automaticSearchBudgetMs: PRODUCT_FACTS_AUTOMATIC_SEARCH_BUDGET_MS,
+          automaticSearchElapsedMs,
+          automaticSearchBudgetExceeded } })
       const factCounts = resolved.facts.reduce<JsonRecord>((counts, fact) => {
         counts.total = Number(counts.total ?? 0) + 1
         counts[fact.verificationStatus] = Number(counts[fact.verificationStatus] ?? 0) + 1
@@ -946,7 +1030,9 @@ export async function runProductFactsEnrichment(input: {
           .map((fact) => ({ scope: fact.factScope, key: fact.factKey, value: fact.selectedValue,
             unit: fact.selectedUnit, status: fact.verificationStatus })),
         resolvedRequirements: requirements.map((requirement) => ({ aspectName: requirement.aspectName,
-          required: requirement.required, mappedFactKey: requirement.mappedFactKey,
+          required: requirement.required, selectionOnly: requirement.selectionOnly,
+          allowedValuesComplete: requirement.allowedValuesComplete,
+          mappedFactKey: requirement.mappedFactKey,
           status: requirement.status, selectedValue: requirement.selectedValue,
           allowedValues: requirement.allowedValues })),
         taxonomy: { status: text(taxonomyRecord.status), categoryId: text(taxonomyRecord.categoryId) || null,
@@ -954,6 +1040,9 @@ export async function runProductFactsEnrichment(input: {
           variationAspects: array(taxonomyRecord.aspects).map(record)
             .filter((aspect) => aspect.enabledForVariations === true)
             .map((aspect) => text(aspect.name)).filter(Boolean) },
+        automaticSearch: { budgetMs: PRODUCT_FACTS_AUTOMATIC_SEARCH_BUDGET_MS,
+          elapsedMs: automaticSearchElapsedMs,
+          budgetExceeded: automaticSearchBudgetExceeded },
         marketPricing: aggregateEbayMarketPricingByPack({
           comparableEvidence: record(browseReport).comparableEvidence,
           nativePackCount: nativePresentationUnitCount,
@@ -1139,7 +1228,8 @@ export async function runProductFactsEnrichment(input: {
   if (finalizeError) throw new Error("PRODUCT_FACT_RUN_FINALIZATION_FAILED")
   return { runId: run.id, candidatesRequested: candidates.length, candidatesProcessed: prepared.length,
     candidatesExcluded: candidates.length - prepared.length, sourceReads, candidateResults, openAiCalls: 0, ebayWrites: 0,
-    productionChanged: false, discoveryRepeated: false }
+    productionChanged: false, discoveryRepeated: false,
+    automaticSearchBudgetMsPerCandidate: PRODUCT_FACTS_AUTOMATIC_SEARCH_BUDGET_MS }
 }
 
 export async function getProductFactsStatus(input: { supabase: SupabaseClient; accountKey: string; candidateIds?: string[] }) {

@@ -139,7 +139,11 @@ export function buildVerifiedManualSellerHubHandoff(input: {
   }
   const shippingKeys = ["shippingWeight", "shippingLength", "shippingWidth", "shippingHeight"]
   const confirmedShipping = shippingKeys.every((key) => fact("SHIPPING_PACKAGE", key))
-  if (!confirmedShipping && gates.SHIPPING_ESTIMATE_READY !== true) blockers.push("SHIPPING_ESTIMATE_REQUIRED")
+  const conservativeShippingReserve = number(record(input.economics.config).estimatedOutboundShipping)
+  const conservativeShippingReserveReady = conservativeShippingReserve !== null &&
+    conservativeShippingReserve > 0
+  if (!confirmedShipping && gates.SHIPPING_ESTIMATE_READY !== true &&
+    !conservativeShippingReserveReady) blockers.push("SHIPPING_ESTIMATE_REQUIRED")
   for (const requirement of requirements) {
     const authoritativeFact = requirement.mappedFactKey
       ? fact("PRODUCT_UNIT", requirement.mappedFactKey) ?? fact("OFFER_PACK", requirement.mappedFactKey)
@@ -216,6 +220,8 @@ export function buildVerifiedManualSellerHubHandoff(input: {
     })), operatorConfirmationRequired: false, estimatedValuesExcluded: true }
     : { status: "ESTIMATE_ONLY_NOT_FOR_LISTING", values: {}, operatorConfirmationRequired: true,
       estimatedValuesExcluded: true,
+      conservativeEconomicReserveUsd: conservativeShippingReserveReady
+        ? conservativeShippingReserve : null,
       operatorAction: "Confirma peso y dimensiones en Seller Hub o utiliza una política de envío verificada que no los requiera." }
   const feePolicy = record(input.economics.feePolicy)
   const controlledRiskOverride = record(input.economics.controlledRiskOverride)

@@ -69,17 +69,34 @@ import {
 } from "./ebay-same-day-image-package-runtime"
 
 const MARKETPLACE = "EBAY_US"
-const SINGLE_FACT_EXCEPTION_VERSION = "SAME_DAY_SINGLE_FACT_EXCEPTION_V2_2026_07_19"
+const SINGLE_FACT_EXCEPTION_VERSION = "SAME_DAY_SINGLE_FACT_EXCEPTION_V3_2026_07_21"
 const OPERATOR_CONFIRMABLE_OFFICIAL_LABEL_FACTS: Record<string, { factKey: string; label: string }> = {
   brand: { factKey: "brand", label: "Marca (Brand)" },
   color: { factKey: "color", label: "Color" },
   type: { factKey: "type", label: "Tipo de producto (Type)" },
   style: { factKey: "style", label: "Estilo (Style)" },
+  mpn: { factKey: "mpn", label: "Número de parte del fabricante (MPN)" },
   "item length": { factKey: "itemLength", label: "Largo del producto (Item Length)" },
   "item width": { factKey: "itemWidth", label: "Ancho del producto (Item Width)" },
 }
+function operatorConfirmableOfficialLabelFact(aspectNameValue: unknown) {
+  const aspectName = text(aspectNameValue, 100).normalize("NFKC").replace(/\s+/g, " ")
+  const configured = OPERATOR_CONFIRMABLE_OFFICIAL_LABEL_FACTS[
+    aspectName.toLocaleLowerCase()
+  ]
+  if (configured) return configured
+  // Taxonomy can introduce category-specific mandatory aspects at any time.
+  // A server-originated aspect may enter the final manual lane, but its value
+  // must still be copied from the exact official label/page and is rechecked
+  // against Taxonomy before publication.
+  if (!aspectName || /[\p{C}]/u.test(aspectName)) return null
+  return { factKey: aspectName, label: `${aspectName} (obligatorio eBay)` }
+}
+const PRODUCT_FACT_AUTHORITY_LINEAGE_RECOVERY_VERSION =
+  "PRODUCT_FACT_AUTHORITY_AND_SOURCE_RECOVERY_V2_2026_07_21"
 const LEGACY_PRODUCT_FACTS_RECOVERY_VERSION = "LEGACY_PRODUCT_FACTS_RECOVERY_V2_2026_07_19"
 const STALE_DECISION_FACTS_RECOVERY_VERSION = "STALE_DECISION_FACTS_RECOVERY_V1_2026_07_19"
+const PRE_FACTS_DECISION_REFRESH_VERSION = "PRE_FACTS_DECISION_REFRESH_V1_2026_07_21"
 const SAME_DAY_LUNA_DECISION_REFRESH_VERSION = "SAME_DAY_LUNA_DECISION_REFRESH_V1_2026_07_19"
 const SAME_DAY_REPLENISHMENT_VERSION = "SAME_RUN_REPLENISHMENT_V1_2026_07_20"
 const SAME_DAY_MAX_TOTAL_CANDIDATE_ATTEMPTS =
@@ -121,14 +138,28 @@ function text(value: unknown, limit = 500) {
   return typeof value === "string" ? value.trim().slice(0, limit) : ""
 }
 function officialLabelFactText(value: unknown) {
-  const normalized = text(value, 100).normalize("NFKC").replace(/\s+/g, " ")
-  return /^[\p{L}\p{N}][\p{L}\p{N}\s&'’().,+\-/#]{0,99}$/u.test(normalized)
+  const normalized = text(value, 250).normalize("NFKC").replace(/\s+/g, " ")
+  return /^[\p{L}\p{N}][\p{L}\p{N}\s&'’().,+\-/#:;]{0,249}$/u.test(normalized)
     ? normalized : ""
+}
+function explicitPackCountFromTitle(value: unknown) {
+  const normalized = text(value, 500).normalize("NFKC")
+  const match = normalized.match(/\b(\d{1,3})\s*(?:pack|pk)\b/i) ??
+    normalized.match(/\b(?:pack|set|lot|case)\s+(?:of\s+)?(\d{1,3})\b/i)
+  const parsed = number(match?.[1])
+  return parsed !== null && Number.isInteger(parsed) && parsed > 0 && parsed <= 100
+    ? parsed : null
 }
 function number(value: unknown) {
   if (value === null || value === undefined || (typeof value === "string" && !value.trim())) return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
+}
+function conservativeShippingReserveReady(candidateValue: unknown) {
+  const candidate = record(candidateValue)
+  const config = record(record(candidate.economics_summary).config)
+  const reserve = number(config.estimatedOutboundShipping)
+  return reserve !== null && reserve > 0
 }
 function safeHttpsUrl(value: unknown) {
   const submitted = text(value, 2_000)
@@ -274,12 +305,12 @@ function recoverableSingleFactException(summaryValue: unknown) {
   const missing = (Array.isArray(summary.resolvedRequirements)
     ? summary.resolvedRequirements.map(record) : [])
     .filter((requirement) => text(requirement.status) === "MISSING_BLOCKING")
-  if (!missing.length || missing.length > 6 || gates.IDENTITY_READY !== true ||
+  if (!missing.length || gates.IDENTITY_READY !== true ||
     gates.PRODUCT_FACTS_READY !== true || gates.OFFER_PACK_READY !== true ||
-    gates.REGULATORY_READY !== true || gates.SHIPPING_ESTIMATE_READY !== true) return null
+    gates.REGULATORY_READY !== true) return null
   const configured = missing.map((requirement) => {
     const aspectName = text(requirement.aspectName, 100)
-    const configuration = OPERATOR_CONFIRMABLE_OFFICIAL_LABEL_FACTS[aspectName.toLocaleLowerCase()]
+    const configuration = operatorConfirmableOfficialLabelFact(aspectName)
     return configuration ? { requirement, aspectName, configuration } : null
   })
   // Manual fallback is allowed only when every remaining blocking aspect is a
@@ -289,13 +320,98 @@ function recoverableSingleFactException(summaryValue: unknown) {
   const selected = configured[0]
   if (!selected) return null
   return {
+    actionType: "CONFIRM_OFFICIAL_LABEL_FACT" as const,
+    factScope: "PRODUCT_UNIT" as const,
     aspectName: selected.aspectName,
     factKey: selected.configuration.factKey,
     label: selected.configuration.label,
     remainingBlockingFields: configured.map((entry) => entry?.aspectName).filter(Boolean),
+    selectionOnly: selected.requirement.selectionOnly === true,
+    allowedValuesComplete: selected.requirement.allowedValuesComplete === true,
     allowedValues: Array.isArray(selected.requirement.allowedValues)
       ? selected.requirement.allowedValues.map((entry) => text(entry, 100)).filter(Boolean).slice(0, 100)
       : [],
+  }
+}
+
+function recoverableOfferPackException(candidateValue: unknown, summaryValue: unknown) {
+  const candidate = record(candidateValue)
+  const summary = record(summaryValue)
+  const gates = record(summary.gates)
+  const selectionIdentity = record(record(candidate.evidence_summary).selectionIdentity)
+  const nativePackCount = number(selectionIdentity.nativePackCount)
+  if (gates.IDENTITY_READY !== true || gates.PRODUCT_FACTS_READY !== true ||
+    gates.REGULATORY_READY !== true || gates.OFFER_PACK_READY === true ||
+    selectionIdentity.exactIdentityConfirmed !== true ||
+    selectionIdentity.exactOfferPackVerified !== true ||
+    nativePackCount === null || !Number.isInteger(nativePackCount) ||
+    nativePackCount <= 0 || nativePackCount > 100) return null
+  return {
+    actionType: "CONFIRM_OFFICIAL_OFFER_PACK" as const,
+    factScope: "OFFER_PACK" as const,
+    aspectName: "Offer Pack",
+    factKey: "offerPackCount",
+    label: "Unidades físicas contenidas en cada presentación de Luna",
+    remainingBlockingFields: ["Offer Pack"],
+    selectionOnly: false,
+    allowedValuesComplete: false,
+    allowedValues: [],
+    currentValue: nativePackCount,
+    explicitTitlePackCount: explicitPackCountFromTitle(candidate.product_title),
+  }
+}
+
+function recoverableTaxonomyException(summaryValue: unknown) {
+  const summary = record(summaryValue)
+  const gates = record(summary.gates)
+  const taxonomy = record(summary.taxonomy)
+  if (gates.IDENTITY_READY !== true || gates.PRODUCT_FACTS_READY !== true ||
+    gates.OFFER_PACK_READY !== true || gates.REGULATORY_READY !== true ||
+    gates.EBAY_ASPECTS_READY === true || text(taxonomy.status) === "AVAILABLE") return null
+  return {
+    actionType: "CONFIRM_OFFICIAL_EBAY_CATEGORY" as const,
+    factScope: "EBAY_LISTING_REQUIREMENTS" as const,
+    aspectName: "Categoría eBay oficial",
+    factKey: "categoryId",
+    label: "ID numérico de la categoría exacta en eBay",
+    remainingBlockingFields: ["Categoría eBay oficial"],
+    selectionOnly: false,
+    allowedValuesComplete: false,
+    allowedValues: [] as string[],
+  }
+}
+
+const MANUAL_REGULATORY_FACTS: Record<string, string> = {
+  warnings: "Advertencia oficial visible",
+  hazardousMaterialStatus: "Estado de material peligroso visible",
+  regulatoryIdentifiers: "Identificador regulatorio oficial",
+}
+
+function recoverableRegulatoryFactException(summaryValue: unknown) {
+  const summary = record(summaryValue)
+  const gates = record(summary.gates)
+  if (gates.IDENTITY_READY !== true || gates.PRODUCT_FACTS_READY !== true ||
+    gates.OFFER_PACK_READY !== true || gates.EBAY_ASPECTS_READY !== true ||
+    gates.REGULATORY_READY === true) return null
+  const present = new Set((Array.isArray(summary.resolvedFacts)
+    ? summary.resolvedFacts.map(record) : [])
+    .filter((fact) => text(fact.scope) === "PRODUCT_UNIT")
+    .map((fact) => text(fact.key)).filter(Boolean))
+  const factKey = Object.keys(MANUAL_REGULATORY_FACTS)
+    .find((key) => !present.has(key))
+  if (!factKey) return null
+  return {
+    actionType: "CONFIRM_OFFICIAL_LABEL_FACT" as const,
+    factScope: "PRODUCT_UNIT" as const,
+    aspectName: MANUAL_REGULATORY_FACTS[factKey],
+    factKey,
+    label: MANUAL_REGULATORY_FACTS[factKey],
+    remainingBlockingFields: Object.keys(MANUAL_REGULATORY_FACTS)
+      .filter((key) => !present.has(key)).map((key) => MANUAL_REGULATORY_FACTS[key]),
+    selectionOnly: false,
+    allowedValuesComplete: false,
+    allowedValues: [] as string[],
+    regulatoryFact: true as const,
   }
 }
 function operationDate(now: Date) {
@@ -343,7 +459,8 @@ function controlledRiskEvaluationForCandidate(
     decisionFresh: decision.fresh === true,
     decisionPackageHashMatches: decision.packageHashMatches === true,
     factsReady: facts.currentRunBound === true && gates.OPENAI_INPUT_READY === true,
-    shippingEstimateReady: gates.SHIPPING_ESTIMATE_READY === true,
+    shippingEstimateReady: gates.SHIPPING_ESTIMATE_READY === true ||
+      conservativeShippingReserveReady(candidate),
     decisionVerdict: decision.verdict,
     decisionBlockers: decision.blockers,
     baseConfig: {
@@ -752,8 +869,27 @@ async function serializeOpenHumanTasksForRun(supabase: SupabaseClient, runId: st
     gate_type: text(task.gate_type),
     created_at: text(task.created_at),
   })).filter((task) => task.id) as SerializedOpenHumanTask[]
-  const openTask = openTasks[0] ?? null
-  const duplicateIds = openTasks.slice(1).map((task) => task.id)
+  // Required-fact corrections are a non-terminal inbox: several candidates
+  // may wait for one precise manual value while the rest of the batch keeps
+  // moving. Decision, capture and publication gates remain serialized.
+  const correctionTasks = openTasks.filter((task) =>
+    task.gate_type === "CRITICAL_EXCEPTION_REQUIRED")
+  const primaryTasks = openTasks.filter((task) =>
+    task.gate_type !== "CRITICAL_EXCEPTION_REQUIRED")
+  const primaryOpenTask = primaryTasks[0] ?? null
+  const seenCorrectionCandidates = new Set<string>()
+  const duplicateCorrectionIds: string[] = []
+  for (const task of correctionTasks) {
+    if (seenCorrectionCandidates.has(task.candidate_id)) {
+      duplicateCorrectionIds.push(task.id)
+    } else {
+      seenCorrectionCandidates.add(task.candidate_id)
+    }
+  }
+  const duplicateIds = [
+    ...primaryTasks.slice(1).map((task) => task.id),
+    ...duplicateCorrectionIds,
+  ]
   if (duplicateIds.length) {
     const completedAt = new Date().toISOString()
     const { error: supersedeError } = await supabase.from("ebay_same_day_pilot_human_tasks").update({
@@ -761,7 +897,8 @@ async function serializeOpenHumanTasksForRun(supabase: SupabaseClient, runId: st
     }).eq("run_id", runId).eq("status", "OPEN").in("id", duplicateIds)
     if (supersedeError) throw new Error("SAME_DAY_PILOT_OPEN_TASK_SERIALIZATION_FAILED")
   }
-  return { openTask, superseded: duplicateIds.length }
+  return { openTask: primaryOpenTask ?? correctionTasks[0] ?? null,
+    primaryOpenTask, correctionTasks, openTasks, superseded: duplicateIds.length }
 }
 
 async function createHumanTask(input: {
@@ -769,8 +906,11 @@ async function createHumanTask(input: {
   seconds: number; impact: string; evidence: JsonRecord; actionSchema: JsonRecord; continuationJobType: string
 }) {
   const before = await serializeOpenHumanTasksForRun(input.supabase, input.runId)
-  if (before.openTask && (before.openTask.candidate_id !== input.candidateId ||
-    before.openTask.gate_type !== input.gateType)) return false
+  const correctionTask = input.gateType === "CRITICAL_EXCEPTION_REQUIRED"
+  const existingSameTask = before.openTasks.find((task) =>
+    task.candidate_id === input.candidateId && task.gate_type === input.gateType)
+  if (existingSameTask) return true
+  if (!correctionTask && before.primaryOpenTask) return false
   const { data, error } = await input.supabase.rpc("ensure_same_day_pilot_human_task", {
     p_run_id: input.runId, p_candidate_id: input.candidateId, p_expected_machine_state: input.expectedState,
     p_gate_type: input.gateType, p_title: input.title, p_why_needed: input.why,
@@ -779,11 +919,11 @@ async function createHumanTask(input: {
   })
   if (error) throw new Error("SAME_DAY_PILOT_HUMAN_TASK_PERSIST_FAILED")
   // The SQL helper serializes per candidate. This second pass closes the
-  // cross-candidate race if a worker and a user continuation both reached a
-  // human gate between the preflight read and the RPC commit.
+  // cross-candidate race for primary decisions. Correction tasks intentionally
+  // coexist across candidates so one missing required field cannot stop a lot.
   const after = await serializeOpenHumanTasksForRun(input.supabase, input.runId)
-  return Boolean(after.openTask && (after.openTask.id === text(data) ||
-    (after.openTask.candidate_id === input.candidateId && after.openTask.gate_type === input.gateType)))
+  return after.openTasks.some((task) => task.id === text(data) ||
+    (task.candidate_id === input.candidateId && task.gate_type === input.gateType))
 }
 
 async function completeAndAdvanceHumanGate(input: {
@@ -915,15 +1055,13 @@ async function bootstrapCandidate(supabase: SupabaseClient, runId: string, candi
     const identityConfirmationRequired = selectionIdentity.confirmationRequired === true &&
       selectionIdentity.independentlyVerified !== true
     await createHumanTask({ supabase, runId, candidateId: id, expectedState: "WAITING_LUNA_CONFIRMATION", gateType: "LUNA_CONFIRMATION_REQUIRED",
-      title: identityConfirmationRequired
-        ? "Confirma producto, presentación, precio y stock Luna"
-        : "Confirma precio y disponibilidad Luna",
+      title: "Confirma producto, presentación, precio y stock Luna",
       why: identityConfirmationRequired
         ? "Luna aún no entregó identidad estructurada suficiente; confirma visualmente el producto exacto y cuántas unidades contiene la presentación comprada."
-        : "El costo y stock actuales son necesarios antes de comprometer margen o cantidad.", seconds: 45,
+        : "El costo, stock y número físico de unidades de la presentación deben quedar ligados a la misma página exacta antes de calcular el listing.", seconds: 45,
       impact: "Seller OS recalculará economía y ejecutará Product Facts automáticamente.", evidence: { product: candidate.product_title, sku: candidate.supplier_sku },
       actionSchema: { type: "LUNA_CONFIRMATION", fields: ["price", "availability", "quantityIfVisible",
-        ...(identityConfirmationRequired ? ["identityAndPackConfirmed", "nativePackCount"] : [])] }, continuationJobType: "CALCULATE_ECONOMICS" })
+        "identityAndPackConfirmed", "nativePackCount"] }, continuationJobType: "CALCULATE_ECONOMICS" })
     return
   }
   if (machineState === "WAITING_PRODUCT_APPROVAL") {
@@ -1176,21 +1314,112 @@ async function repairLegacyProductFactsRejections(
 }
 
 /**
+ * Resolver V3 separates technical ancestry from non-authoritative competitor
+ * corroboration, and the reviewed official-source registry may now resolve a
+ * missing field before manual fallback. Re-run only Product Facts once for
+ * affected rejections; Product Research and eBay writes are never repeated.
+ */
+async function repairRejectedProductFactAuthorityLineage(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const selected = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .find((candidate) => {
+      const evidence = record(candidate.evidence_summary)
+      const selectionIdentity = record(evidence.selectionIdentity)
+      const facts = record(candidate.product_facts_summary)
+      const gates = record(facts.gates)
+      const confirmation = record(record(candidate.economics_summary).lunaConfirmation)
+      const confirmedAt = Date.parse(text(confirmation.confirmedAt))
+      const nativePackCount = number(selectionIdentity.nativePackCount)
+      return candidate.machine_state === "REJECTED" && candidate.state === "REJECTED_TODAY" &&
+        strings(candidate.blockers).includes("MISSING_BLOCKING") &&
+        facts.currentRunBound === true && gates.IDENTITY_READY === true &&
+        gates.PRODUCT_FACTS_READY === true && gates.REGULATORY_READY === true &&
+        selectionIdentity.exactIdentityConfirmed === true &&
+        selectionIdentity.exactOfferPackVerified === true &&
+        nativePackCount !== null && Number.isInteger(nativePackCount) &&
+        nativePackCount > 0 && nativePackCount <= 100 &&
+        text(candidate.queue_item_id) && Number.isFinite(confirmedAt) &&
+        now.getTime() - confirmedAt <= 24 * 60 * 60_000 &&
+        text(evidence.productFactAuthorityLineageRecoveryVersion) !==
+          PRODUCT_FACT_AUTHORITY_LINEAGE_RECOVERY_VERSION
+    })
+  if (!selected) return 0
+  const evidenceSummary = {
+    ...record(selected.evidence_summary),
+    productFactAuthorityLineageRecoveryVersion:
+      PRODUCT_FACT_AUTHORITY_LINEAGE_RECOVERY_VERSION,
+    productFactAuthorityLineageRecoveredAt: now.toISOString(),
+    productResearchRepeated: false,
+    fullCatalogRescan: false,
+  }
+  await transition({
+    supabase,
+    runId: state.run.id,
+    candidateId: text(selected.id),
+    previousState: "REJECTED",
+    nextState: "ENRICHING_PRODUCT_FACTS",
+    reasonCode: "PRODUCT_FACT_AUTHORITY_LINEAGE_RECALCULATION",
+    triggeredBy: "RETRY",
+    checkpoint: {
+      version: PRODUCT_FACT_AUTHORITY_LINEAGE_RECOVERY_VERSION,
+      productResearchRepeated: false,
+      fullCatalogRescan: false,
+      ebayWrites: 0,
+    },
+    nextAutomaticAction: "Recalcular únicamente Ficha y cumplimiento.",
+    nextHumanAction: "Ninguna.",
+    job: {
+      jobType: "ENRICH_PRODUCT_FACTS",
+      idempotencyKey: `${state.run.id}:${selected.id}:ENRICH_PRODUCT_FACTS:${PRODUCT_FACT_AUTHORITY_LINEAGE_RECOVERY_VERSION}`,
+      checkpoint: { queueItemId: selected.queue_item_id, authorityLineageRecovery: true },
+      availableAt: now.toISOString(),
+      maxAttempts: 10,
+      apiFamily: "BROWSE",
+      apiOperation: "EXACT_VERIFICATION",
+      ownerLane: "P1_EXACT_VERIFICATION",
+    },
+  })
+  const { error } = await supabase.from("ebay_same_day_pilot_candidates").update({
+    state: "READY_FOR_CONTENT",
+    blockers: [],
+    evidence_summary: evidenceSummary,
+    product_facts_summary: {},
+    next_automated_action: "Recalcular Ficha y cumplimiento con procedencia y fuentes oficiales actualizadas.",
+    next_human_action: "Ninguna.",
+    updated_at: now.toISOString(),
+  }).eq("id", selected.id).eq("run_id", state.run.id)
+    .eq("machine_state", "ENRICHING_PRODUCT_FACTS")
+  if (error) throw new Error("SAME_DAY_PILOT_PRODUCT_FACT_AUTHORITY_LINEAGE_RECOVERY_FAILED")
+  await refreshRunProjection(supabase, state.run.id)
+  return 1
+}
+
+/**
  * Operator-verifiable label facts are requested one at a time instead of
  * discarding an otherwise safe candidate. Recovery remains serialized and is
- * bounded to six distinct fields; regulatory gaps remain rejected.
+ * limited to one field per task. Category and regulatory evidence remain
+ * publication gates, but they become explicit manual-last-resort tasks rather
+ * than silently discarding the candidate. Taxonomy itself determines how many
+ * required aspects exist; Seller OS does not discard a product merely because
+ * that count is high.
  */
 async function repairRejectedSingleFactException(
   supabase: SupabaseClient,
   state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
   now: Date,
 ) {
-  if (state.tasks.some((task) => task.status === "OPEN")) return 0
   const selected = [...state.candidates]
     .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
     .map((candidate) => ({
       candidate,
-      exception: recoverableSingleFactException(candidate.product_facts_summary),
+      exception: recoverableOfferPackException(candidate, candidate.product_facts_summary) ??
+        recoverableSingleFactException(candidate.product_facts_summary) ??
+        recoverableTaxonomyException(candidate.product_facts_summary) ??
+        recoverableRegulatoryFactException(candidate.product_facts_summary),
     }))
     .find(({ candidate, exception }) => {
       const evidence = record(candidate.evidence_summary)
@@ -1199,10 +1428,15 @@ async function repairRejectedSingleFactException(
         ...(evidence.singleFactExceptionConfirmed === true
           ? [text(evidence.singleFactExceptionField)] : []),
       ].map((field) => field.toLocaleLowerCase()).filter(Boolean))
+      const recoverableBlocker = strings(candidate.blockers).some((blocker) => [
+        "MISSING_BLOCKING", "EBAY_TAXONOMY_NOT_READY", "EBAY_REQUIRED_ASPECTS_NOT_READY_TODAY",
+        "REGULATORY_NOT_READY", "REGULATORY_READY_FALSE",
+      ].includes(blocker))
       return Boolean(exception) && candidate.machine_state === "REJECTED" &&
-        candidate.state === "REJECTED_TODAY" && strings(candidate.blockers).includes("MISSING_BLOCKING") &&
+        candidate.state === "REJECTED_TODAY" && recoverableBlocker &&
         text(candidate.queue_item_id) && text(candidate.supplier_variant_id) &&
-        attemptedFields.size < 6 &&
+        !state.tasks.some((task) => task.status === "OPEN" &&
+          task.candidate_id === candidate.id) &&
         !attemptedFields.has(text(exception?.aspectName).toLocaleLowerCase())
     })
   if (!selected?.exception) return 0
@@ -1220,7 +1454,7 @@ async function repairRejectedSingleFactException(
     singleFactExceptionRecoveryVersion: SINGLE_FACT_EXCEPTION_VERSION,
     singleFactExceptionOpenedAt: now.toISOString(),
     singleFactExceptionField: exception.aspectName,
-    singleFactExceptionFields: [...attemptedFields].slice(0, 6),
+    singleFactExceptionFields: [...attemptedFields],
     singleFactExceptionGeneration: Number(previousEvidence.singleFactExceptionGeneration ?? 0) + 1,
     fullCatalogRescan: false,
   }
@@ -1257,16 +1491,26 @@ async function repairRejectedSingleFactException(
     expectedState: "VALIDATING_TAXONOMY",
     gateType: "CRITICAL_EXCEPTION_REQUIRED",
     title: `Confirma únicamente: ${exception.label}`,
-    why: `eBay exige ${exception.aspectName}. Seller OS revisó Luna, Catalog y Taxonomy, pero no encontró un valor estructurado verificable.`,
+    why: exception.actionType === "CONFIRM_OFFICIAL_OFFER_PACK"
+      ? "Seller OS conserva la identidad exacta, pero encontró una contradicción entre la presentación confirmada y los datos del producto."
+      : exception.actionType === "CONFIRM_OFFICIAL_EBAY_CATEGORY"
+        ? "Seller OS agotó Catalog y Taxonomy dentro del presupuesto automático sin resolver la categoría hoja. Confirma el ID desde el selector oficial de eBay."
+      : `eBay exige ${exception.aspectName}. Seller OS revisó Luna, Catalog y Taxonomy, pero no encontró un valor estructurado verificable.`,
     seconds: 45,
     impact: "Seller OS guardará sólo el fact confirmado con procedencia, repetirá Product Facts para este candidato y continuará automáticamente.",
     evidence: { fieldRequired: exception.aspectName,
       remainingBlockingFields: exception.remainingBlockingFields,
+      currentValue: "currentValue" in exception ? exception.currentValue : null,
+      explicitTitlePackCount: "explicitTitlePackCount" in exception
+        ? exception.explicitTitlePackCount : null,
       sourcesAlreadyChecked: ["Luna exact variant", "eBay Catalog oficial", "eBay Taxonomy oficial",
         "fuente pública oficial del fabricante cuando existe"] },
-    actionSchema: { type: "CONFIRM_OFFICIAL_LABEL_FACT", factScope: "PRODUCT_UNIT",
+    actionSchema: { type: exception.actionType, factScope: exception.factScope,
       factKey: exception.factKey, fieldRequired: exception.aspectName,
-      fieldLabel: exception.label, allowedValues: exception.allowedValues,
+      fieldLabel: exception.label, selectionOnly: exception.selectionOnly,
+      allowedValuesComplete: exception.allowedValuesComplete,
+      allowedValues: exception.allowedValues,
+      regulatoryFact: "regulatoryFact" in exception && exception.regulatoryFact === true,
       requiresVisibleOfficialLabel: true },
     continuationJobType: "ENRICH_PRODUCT_FACTS",
   })
@@ -1285,7 +1529,6 @@ async function repairStaleDecisionProductFactsRejection(
   state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
   now: Date,
 ) {
-  if (state.tasks.some((task) => task.status === "OPEN")) return 0
   const selected = [...state.candidates]
     .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
     .find((candidate) => {
@@ -1297,10 +1540,12 @@ async function repairStaleDecisionProductFactsRejection(
         strings(candidate.blockers).includes("OPENAI_INPUT_NOT_READY") &&
         gates.IDENTITY_READY === true && gates.PRODUCT_FACTS_READY === true &&
         gates.OFFER_PACK_READY === true && gates.EBAY_ASPECTS_READY === true &&
-        gates.REGULATORY_READY === true && gates.SHIPPING_ESTIMATE_READY === true &&
+        gates.REGULATORY_READY === true &&
+        (gates.SHIPPING_ESTIMATE_READY === true ||
+          conservativeShippingReserveReady(candidate)) &&
         text(candidate.queue_item_id) && Number(candidate.economics_summary?.confirmedLunaPrice) > 0 &&
         confirmation.status !== "OUT_OF_STOCK" && Number.isFinite(confirmedAt) &&
-        now.getTime() - confirmedAt <= 4 * 60 * 60_000 &&
+        now.getTime() - confirmedAt <= 24 * 60 * 60_000 &&
         text(evidence.staleDecisionFactsRecoveryVersion) !== STALE_DECISION_FACTS_RECOVERY_VERSION
     })
   if (!selected) return 0
@@ -1366,6 +1611,55 @@ async function repairStaleDecisionProductFactsRejection(
   return 1
 }
 
+async function refreshCandidateDecisionBeforeProductFacts(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorId: string
+  candidate: JsonRecord
+  now: Date
+}) {
+  if (!/^[0-9a-f-]{36}$/i.test(input.actorId) ||
+    !text(input.candidate.queue_item_id)) return false
+  const { data: queueItem, error } = await input.supabase
+    .from("marketplace_listing_approval_queue_items")
+    .select("id,decision_package_id,package_hash,stale_after")
+    .eq("id", input.candidate.queue_item_id)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", MARKETPLACE)
+    .maybeSingle()
+  if (error) throw new Error("SAME_DAY_PILOT_PRE_FACTS_DECISION_READ_FAILED")
+  if (!queueItem) return false
+  const staleAt = Date.parse(text(queueItem.stale_after))
+  const bindingFresh = /^[0-9a-f-]{36}$/i.test(text(queueItem.decision_package_id)) &&
+    /^sha256:[0-9a-f]{64}$/.test(text(queueItem.package_hash)) &&
+    Number.isFinite(staleAt) && staleAt > input.now.getTime()
+  if (bindingFresh) return false
+  const lunaConfirmation = record(record(input.candidate.economics_summary).lunaConfirmation)
+  const confirmedAt = Date.parse(text(lunaConfirmation.confirmedAt))
+  const confirmedPrice = number(record(input.candidate.economics_summary).confirmedLunaPrice)
+  const priorFactsAvailable = record(input.candidate.product_facts_summary).currentRunBound === true
+  if ((!text(queueItem.decision_package_id) && !priorFactsAvailable) ||
+    confirmedPrice === null || confirmedPrice <= 0 ||
+    !text(lunaConfirmation.status).startsWith("AVAILABLE_") ||
+    !Number.isFinite(confirmedAt) || confirmedAt > input.now.getTime() + 300_000 ||
+    input.now.getTime() - confirmedAt > 24 * 60 * 60_000) return false
+  const exactQuantity = lunaConfirmation.quantityVisible === true
+    ? number(lunaConfirmation.confirmedQuantity) : null
+  await confirmListingAiQueueLunaObservation({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    actorId: input.actorId,
+    itemId: text(input.candidate.queue_item_id),
+    idempotencyKey: `${text(input.candidate.id)}:${PRE_FACTS_DECISION_REFRESH_VERSION}:${text(lunaConfirmation.confirmedAt)}`,
+    priceObserved: confirmedPrice,
+    availability: exactQuantity !== null
+      ? "EXACT_QUANTITY_VISIBLE" : "AVAILABLE_QUANTITY_NOT_SHOWN",
+    exactQuantity,
+    now: input.now,
+  })
+  return true
+}
+
 async function repairSameDayPilotBootstrap(
   supabase: SupabaseClient,
   state: Awaited<ReturnType<typeof currentState>>,
@@ -1403,7 +1697,8 @@ async function repairSameDayPilotBootstrap(
   // explicit exception below: promoteImmediateSuccessorDuringQuotaPause may
   // activate only the immediate successor, and its RUN_CREATED check makes a
   // replay unable to leapfrog to another candidate.
-  if (activeState.tasks.some((task) => task.status === "OPEN")) return repaired
+  if (activeState.tasks.some((task) => task.status === "OPEN" &&
+    task.gate_type !== "CRITICAL_EXCEPTION_REQUIRED")) return repaired
   const gateByState: Record<string, string> = {
     WAITING_PRODUCT_RESEARCH_CAPTURE: "PRODUCT_RESEARCH_CAPTURE_REQUIRED",
     WAITING_LUNA_CONFIRMATION: "LUNA_CONFIRMATION_REQUIRED",
@@ -1433,20 +1728,18 @@ async function createLunaGate(supabase: SupabaseClient, runId: string, candidate
     reasonCode: "LUNA_CONFIRMATION_REQUIRED", triggeredBy: "SYSTEM", nextAutomaticAction: "Recalcular economía y enriquecer facts.",
     nextHumanAction: "Confirmar precio y disponibilidad visibles en Luna." })
   await createHumanTask({ supabase, runId, candidateId: text(candidate.id), expectedState: "WAITING_LUNA_CONFIRMATION", gateType: "LUNA_CONFIRMATION_REQUIRED",
-    title: identityConfirmationRequired
-      ? "Confirma producto, presentación, precio y stock Luna"
-      : "Confirma precio y disponibilidad Luna",
+    title: "Confirma producto, presentación, precio y stock Luna",
     why: identityConfirmationRequired
       ? "Luna aún no entregó identidad estructurada suficiente; una confirmación visible del producto exacto y su presentación permite investigar sin inventar datos."
-      : "El costo y stock actuales son necesarios antes de comprometer margen o cantidad.", seconds: 45,
+      : "El costo, stock y número físico de unidades de la presentación deben quedar ligados a la misma página exacta antes de calcular el listing.", seconds: 45,
     impact: "Seller OS recalculará economía y ejecutará Product Facts automáticamente.", evidence: { product: candidate.product_title, sku: candidate.supplier_sku },
     actionSchema: { type: "LUNA_CONFIRMATION", fields: ["price", "availability", "quantityIfVisible",
-      ...(identityConfirmationRequired ? ["identityAndPackConfirmed", "nativePackCount"] : [])] }, continuationJobType: "CALCULATE_ECONOMICS" })
+      "identityAndPackConfirmed", "nativePackCount"] }, continuationJobType: "CALCULATE_ECONOMICS" })
 }
 
 async function promoteNextCandidate(supabase: SupabaseClient, runId: string, ordinal: number) {
   const serialized = await serializeOpenHumanTasksForRun(supabase, runId)
-  if (serialized.openTask) return false
+  if (serialized.primaryOpenTask) return false
   const { data, error } = await supabase.from("ebay_same_day_pilot_candidates").select("*")
     .eq("run_id", runId).gt("ordinal", ordinal)
     .in("machine_state", ["RUN_CREATED", "WAITING_PRODUCT_RESEARCH_CAPTURE"])
@@ -1468,7 +1761,7 @@ async function promoteImmediateSuccessorDuringQuotaPause(
   ordinal: number,
 ) {
   const serialized = await serializeOpenHumanTasksForRun(supabase, runId)
-  if (serialized.openTask) return false
+  if (serialized.primaryOpenTask) return false
   const { data: pausedCandidate, error: pausedCandidateError } = await supabase
     .from("ebay_same_day_pilot_candidates")
     .select("id")
@@ -2114,6 +2407,11 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
       await refreshRunProjection(input.supabase, existing.run.id)
       existing = await currentState(input.supabase, input.accountKey, date)
     }
+    if (existing && await repairRejectedProductFactAuthorityLineage(input.supabase, existing, now)) {
+      repaired = true
+      existing = await currentState(input.supabase, input.accountKey,
+        text(existing.run.operation_date) || date)
+    }
     if (existing && await repairRejectedSingleFactException(input.supabase, existing, now)) {
       repaired = true
       existing = await currentState(input.supabase, input.accountKey,
@@ -2364,18 +2662,28 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
   if (!candidate) throw new Error("SAME_DAY_PILOT_LUNA_CANDIDATE_MISSING")
   const evidence = record(candidate.evidence_summary)
   const selectionIdentity = record(evidence.selectionIdentity)
+  const taskFields = strings(record(task.action_schema).fields)
   const identityConfirmationRequired = selectionIdentity.confirmationRequired === true &&
     selectionIdentity.independentlyVerified !== true
+  // New Luna gates always bind the physical presentation. Legacy gates retain
+  // their original contract unless identity was already explicitly required.
+  const packConfirmationRequired = taskFields.includes("nativePackCount") ||
+    identityConfirmationRequired
   const confirmedNativePackCount = number(input.nativePackCount) ??
     number(selectionIdentity.nativePackCount)
-  if (input.available && identityConfirmationRequired &&
+  if (input.available && packConfirmationRequired &&
     (input.identityAndPackConfirmed !== true || !Number.isInteger(confirmedNativePackCount) ||
       Number(confirmedNativePackCount) <= 0 || Number(confirmedNativePackCount) > 100)) {
     throw new Error("SAME_DAY_PILOT_LUNA_IDENTITY_PACK_CONFIRMATION_REQUIRED")
   }
+  const explicitTitlePackCount = explicitPackCountFromTitle(candidate.product_title)
+  if (input.available && packConfirmationRequired && explicitTitlePackCount !== null &&
+    confirmedNativePackCount !== explicitTitlePackCount) {
+    throw new Error("SAME_DAY_PILOT_OFFER_PACK_VISIBLE_COUNT_CONFLICT")
+  }
   const quantity = listingQuantityFromLuna(input.quantity, input.available)
   const now = new Date().toISOString()
-  const confirmedSelectionIdentity = input.available && identityConfirmationRequired
+  const confirmedSelectionIdentity = input.available && packConfirmationRequired
     ? {
         ...selectionIdentity,
         exactIdentityConfirmed: true,
@@ -2400,6 +2708,39 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
   const confirmedEvidence = {
     ...evidence,
     selectionIdentity: confirmedSelectionIdentity,
+  }
+  if (input.available && packConfirmationRequired && text(candidate.queue_item_id)) {
+    const { data: queueItem, error: queueReadError } = await input.supabase
+      .from("marketplace_listing_approval_queue_items")
+      .select("id,evidence_snapshot")
+      .eq("id", candidate.queue_item_id)
+      .eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .maybeSingle()
+    if (queueReadError || !queueItem) {
+      throw new Error("SAME_DAY_PILOT_OFFER_PACK_QUEUE_ITEM_READ_FAILED")
+    }
+    const queueSnapshot = record(queueItem.evidence_snapshot)
+    const packStrategy = record(queueSnapshot.packStrategy)
+    const recommendedPack = record(packStrategy.recommendedPack)
+    const { error: queueUpdateError } = await input.supabase
+      .from("marketplace_listing_approval_queue_items")
+      .update({ recommended_pack_count: confirmedNativePackCount,
+        evidence_snapshot: { ...queueSnapshot,
+          packStrategy: { ...packStrategy,
+            recommendedPack: { ...recommendedPack,
+              packCount: confirmedNativePackCount } },
+          operatorOfferPackConfirmation: {
+            nativePackCount: confirmedNativePackCount,
+            evidenceHash: text(confirmedSelectionIdentity.evidenceHash),
+            confirmedAt: now,
+            source: "OPERATOR_VISIBLE_LUNA_EXACT_PRODUCT_PAGE",
+            actorRecorded: Boolean(input.actorId), urlStored: false,
+          } },
+        updated_at: now })
+      .eq("id", queueItem.id)
+      .eq("marketplace_account_key", input.accountKey)
+    if (queueUpdateError) throw new Error("SAME_DAY_PILOT_OFFER_PACK_QUEUE_ITEM_UPDATE_FAILED")
   }
   const lunaConfirmation = {
     status: input.available
@@ -2500,7 +2841,7 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
         previousState: "WAITING_LUNA_CONFIRMATION", nextState: "WAITING_PRODUCT_RESEARCH_CAPTURE",
         reasonCode: "LUNA_CONFIRMED_MARKET_EVIDENCE_PENDING", triggeredBy: "USER",
         checkpoint: { price: confirmedPrice, available: true, quantityKnown: input.quantity != null,
-          identityAndPackConfirmed: identityConfirmationRequired,
+          identityAndPackConfirmed: packConfirmationRequired,
           nativePackCount: confirmedNativePackCount },
         candidatePatch: { ...basePatch, state: "NEEDS_PRODUCT_RESEARCH_CAPTURE" },
         nextAutomaticAction: "Importar y reconciliar la captura autorizada.",
@@ -2551,7 +2892,7 @@ export async function confirmSameDayLuna(input: { supabase: SupabaseClient; acco
           ? "LUNA_CONFIRMED_CONTROLLED_TEST_AUTO_RESUME"
           : "LUNA_CONFIRMED_AUTO_RESUME", triggeredBy: "USER",
         checkpoint: { price: confirmedPrice, available: true, quantityKnown: input.quantity != null,
-          identityAndPackConfirmed: identityConfirmationRequired,
+          identityAndPackConfirmed: packConfirmationRequired,
           nativePackCount: confirmedNativePackCount,
           reusedPriorLunaConfirmation: reusablePriorLunaConfirmation },
         candidatePatch: basePatch,
@@ -2582,14 +2923,35 @@ export async function decideSameDayFactException(input: {
     throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_TASK_INVALID")
   }
   const candidate = state.candidates.find((entry) => entry.id === task.candidate_id)
-  if (!candidate || candidate.machine_state !== "VALIDATING_TAXONOMY") {
+  if (!candidate || !["VALIDATING_TAXONOMY", "VALIDATING_REGULATION"]
+    .includes(candidate.machine_state)) {
     throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_CANDIDATE_INVALID")
   }
   const schema = record(task.action_schema)
   const factKey = text(schema.factKey, 100)
   const fieldRequired = text(schema.fieldRequired, 100)
-  if (schema.type !== "CONFIRM_OFFICIAL_LABEL_FACT" || schema.factScope !== "PRODUCT_UNIT" ||
-    OPERATOR_CONFIRMABLE_OFFICIAL_LABEL_FACTS[fieldRequired.toLocaleLowerCase()]?.factKey !== factKey) {
+  const resolvedRequirementsValue = record(candidate.product_facts_summary).resolvedRequirements
+  const resolvedRequirements = Array.isArray(resolvedRequirementsValue)
+    ? resolvedRequirementsValue.map(record) : []
+  const resolvedFactKeys = new Set((Array.isArray(record(candidate.product_facts_summary).resolvedFacts)
+    ? record(candidate.product_facts_summary).resolvedFacts as unknown[] : [])
+    .map(record).filter((fact) => text(fact.scope) === "PRODUCT_UNIT")
+    .map((fact) => text(fact.key)).filter(Boolean))
+  const regulatoryLabelException = schema.regulatoryFact === true &&
+    Object.hasOwn(MANUAL_REGULATORY_FACTS, factKey) && !resolvedFactKeys.has(factKey)
+  const officialLabelException = schema.type === "CONFIRM_OFFICIAL_LABEL_FACT" &&
+    schema.factScope === "PRODUCT_UNIT" &&
+    (regulatoryLabelException ||
+      (operatorConfirmableOfficialLabelFact(fieldRequired)?.factKey === factKey &&
+        resolvedRequirements.some((requirement) =>
+          text(requirement.status) === "MISSING_BLOCKING" &&
+          text(requirement.aspectName).toLocaleLowerCase() === fieldRequired.toLocaleLowerCase())))
+  const offerPackException = schema.type === "CONFIRM_OFFICIAL_OFFER_PACK" &&
+    schema.factScope === "OFFER_PACK" && factKey === "offerPackCount"
+  const taxonomyException = schema.type === "CONFIRM_OFFICIAL_EBAY_CATEGORY" &&
+    schema.factScope === "EBAY_LISTING_REQUIREMENTS" && factKey === "categoryId" &&
+    record(record(candidate.product_facts_summary).taxonomy).status !== "AVAILABLE"
+  if (!officialLabelException && !offerPackException && !taxonomyException) {
     throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_SCHEMA_INVALID")
   }
   const now = new Date().toISOString()
@@ -2603,7 +2965,7 @@ export async function decideSameDayFactException(input: {
   if (input.decision === "REJECT") {
     await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
       gateType: "CRITICAL_EXCEPTION_REQUIRED", runId: state.run.id,
-      candidateId: task.candidate_id, previousState: "VALIDATING_TAXONOMY",
+      candidateId: task.candidate_id, previousState: candidate.machine_state,
       nextState: "REJECTED", reasonCode: "SINGLE_FACT_EXCEPTION_NOT_VERIFIABLE",
       triggeredBy: "USER", checkpoint: { fieldRequired, rejected: true },
       candidatePatch: { state: "REJECTED_TODAY", blockers: ["MISSING_BLOCKING"],
@@ -2613,10 +2975,158 @@ export async function decideSameDayFactException(input: {
     await refreshRunProjection(input.supabase, state.run.id)
     return getSameDayPilot(input)
   }
+  if (offerPackException) {
+    const confirmedPackCount = number(input.value)
+    if (input.visibleOfficialLabelConfirmed !== true || confirmedPackCount === null ||
+      !Number.isInteger(confirmedPackCount) || confirmedPackCount <= 0 ||
+      confirmedPackCount > 100) {
+      throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_EVIDENCE_REQUIRED")
+    }
+    const explicitTitlePackCount = explicitPackCountFromTitle(candidate.product_title)
+    if (explicitTitlePackCount !== null && explicitTitlePackCount !== confirmedPackCount) {
+      throw new Error("SAME_DAY_PILOT_OFFER_PACK_VISIBLE_COUNT_CONFLICT")
+    }
+    const evidenceMode = "OPERATOR_CONFIRMED_VISIBLE_OFFER_PACK"
+    const evidenceHash = versionedHash({ version: SINGLE_FACT_EXCEPTION_VERSION,
+      taskId: task.id, candidateId: candidate.id, factKey,
+      value: confirmedPackCount, evidenceMode })
+    const selectionIdentity = {
+      ...record(record(candidate.evidence_summary).selectionIdentity),
+      exactIdentityConfirmed: true,
+      independentlyVerified: true,
+      exactOfferPackVerified: true,
+      nativePackCount: confirmedPackCount,
+      confidence: 100,
+      evidenceSource: "OPERATOR_VISIBLE_LUNA_EXACT_PRODUCT_PAGE",
+      evidenceHash,
+      confirmationRequired: false,
+      confirmedAt: now,
+      actorRecorded: Boolean(input.actorId),
+    }
+    if (!text(candidate.queue_item_id)) {
+      throw new Error("SAME_DAY_PILOT_FACT_QUEUE_ITEM_MISSING")
+    }
+    const { data: queueItem, error: queueReadError } = await input.supabase
+      .from("marketplace_listing_approval_queue_items")
+      .select("id,evidence_snapshot")
+      .eq("id", candidate.queue_item_id)
+      .eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .maybeSingle()
+    if (queueReadError || !queueItem) {
+      throw new Error("SAME_DAY_PILOT_OFFER_PACK_QUEUE_ITEM_READ_FAILED")
+    }
+    const queueSnapshot = record(queueItem.evidence_snapshot)
+    const packStrategy = record(queueSnapshot.packStrategy)
+    const recommendedPack = record(packStrategy.recommendedPack)
+    const { error: queueUpdateError } = await input.supabase
+      .from("marketplace_listing_approval_queue_items")
+      .update({ recommended_pack_count: confirmedPackCount,
+        evidence_snapshot: { ...queueSnapshot,
+          packStrategy: { ...packStrategy,
+            recommendedPack: { ...recommendedPack,
+              packCount: confirmedPackCount } },
+          operatorOfferPackConfirmation: {
+            nativePackCount: confirmedPackCount, evidenceHash,
+            confirmedAt: now,
+            source: "OPERATOR_VISIBLE_LUNA_EXACT_PRODUCT_PAGE",
+            actorRecorded: Boolean(input.actorId), urlStored: false,
+          } },
+        // Force the next enrichment to rebuild the commercial binding with the
+        // corrected physical presentation before content approval.
+        stale_after: now, updated_at: now })
+      .eq("id", queueItem.id)
+      .eq("marketplace_account_key", input.accountKey)
+    if (queueUpdateError) throw new Error("SAME_DAY_PILOT_OFFER_PACK_QUEUE_ITEM_UPDATE_FAILED")
+    await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
+      gateType: "CRITICAL_EXCEPTION_REQUIRED", runId: state.run.id,
+      candidateId: task.candidate_id, previousState: "VALIDATING_TAXONOMY",
+      nextState: "ENRICHING_PRODUCT_FACTS", reasonCode: "OFFICIAL_OFFER_PACK_CONFIRMED",
+      triggeredBy: "USER", checkpoint: { fieldRequired, factKey,
+        confirmedPackCount, evidenceHash, evidenceMode, imageStored: false },
+      candidatePatch: { state: "READY_FOR_CONTENT", blockers: [],
+        evidenceSummary: { ...evidenceSummary, selectionIdentity,
+          singleFactExceptionConfirmed: true,
+          singleFactExceptionEvidenceHash: evidenceHash } },
+      nextAutomaticAction: "Recalcular Product Facts con la presentación corregida.",
+      nextHumanAction: "Ninguna.",
+      job: { jobType: "ENRICH_PRODUCT_FACTS",
+        idempotencyKey: `${state.run.id}:${candidate.id}:ENRICH_PRODUCT_FACTS:${evidenceHash}`,
+        checkpoint: { queueItemId: candidate.queue_item_id,
+          officialOfferPackEvidenceHash: evidenceHash }, maxAttempts: 10,
+        apiFamily: "BROWSE", apiOperation: "EXACT_VERIFICATION",
+        ownerLane: "P1_EXACT_VERIFICATION" } })
+    await refreshRunProjection(input.supabase, state.run.id)
+    return getSameDayPilot(input)
+  }
+  if (taxonomyException) {
+    const categoryId = text(input.value, 20)
+    if (input.visibleOfficialLabelConfirmed !== true || !/^\d{1,20}$/.test(categoryId) ||
+      !text(candidate.queue_item_id)) {
+      throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_EVIDENCE_REQUIRED")
+    }
+    const { data: queueItem, error: queueReadError } = await input.supabase
+      .from("marketplace_listing_approval_queue_items")
+      .select("id,evidence_snapshot")
+      .eq("id", candidate.queue_item_id)
+      .eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .maybeSingle()
+    if (queueReadError || !queueItem) {
+      throw new Error("SAME_DAY_PILOT_CATEGORY_QUEUE_ITEM_READ_FAILED")
+    }
+    const snapshot = record(queueItem.evidence_snapshot)
+    const identityEnrichment = record(snapshot.identityEnrichment)
+    const identity = record(identityEnrichment.identity)
+    const evidenceHash = versionedHash({ version: SINGLE_FACT_EXCEPTION_VERSION,
+      taskId: task.id, candidateId: candidate.id, factKey, categoryId,
+      evidenceMode: "OPERATOR_CONFIRMED_OFFICIAL_EBAY_CATEGORY" })
+    const { error: queueUpdateError } = await input.supabase
+      .from("marketplace_listing_approval_queue_items")
+      .update({ evidence_snapshot: {
+        ...snapshot,
+        identityEnrichment: { ...identityEnrichment,
+          identity: { ...identity, categoryId } },
+        operatorCategoryConfirmation: {
+          categoryId, evidenceHash, confirmedAt: now,
+          source: "OPERATOR_VISIBLE_EBAY_OFFICIAL_CATEGORY_SELECTOR",
+          actorRecorded: Boolean(input.actorId), urlStored: false,
+        },
+      }, updated_at: now })
+      .eq("id", queueItem.id)
+      .eq("marketplace_account_key", input.accountKey)
+    if (queueUpdateError) throw new Error("SAME_DAY_PILOT_CATEGORY_QUEUE_ITEM_UPDATE_FAILED")
+    await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
+      gateType: "CRITICAL_EXCEPTION_REQUIRED", runId: state.run.id,
+      candidateId: task.candidate_id, previousState: candidate.machine_state,
+      nextState: "ENRICHING_PRODUCT_FACTS", reasonCode: "OFFICIAL_EBAY_CATEGORY_CONFIRMED",
+      triggeredBy: "USER", checkpoint: { fieldRequired, factKey, categoryId,
+        evidenceHash, sourceUrlStored: false },
+      candidatePatch: { state: "READY_FOR_CONTENT", blockers: [],
+        evidenceSummary: { ...evidenceSummary,
+          singleFactExceptionConfirmed: true,
+          singleFactExceptionEvidenceHash: evidenceHash } },
+      nextAutomaticAction: "Consultar Taxonomy oficial para la categoría confirmada.",
+      nextHumanAction: "Ninguna.",
+      job: { jobType: "ENRICH_PRODUCT_FACTS",
+        idempotencyKey: `${state.run.id}:${candidate.id}:ENRICH_PRODUCT_FACTS:${evidenceHash}`,
+        checkpoint: { queueItemId: candidate.queue_item_id,
+          officialCategoryEvidenceHash: evidenceHash }, maxAttempts: 10,
+        apiFamily: "TAXONOMY", apiOperation: "CATEGORY_ASPECTS",
+        ownerLane: "P1_EXACT_VERIFICATION" } })
+    await refreshRunProjection(input.supabase, state.run.id)
+    return getSameDayPilot(input)
+  }
   const brandAbsentConfirmed = factKey === "brand" && input.brandAbsentConfirmed === true
   const value = brandAbsentConfirmed ? "Unbranded" : officialLabelFactText(input.value)
   if (!value || (!brandAbsentConfirmed && input.visibleOfficialLabelConfirmed !== true)) {
     throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_EVIDENCE_REQUIRED")
+  }
+  const allowedValues = strings(schema.allowedValues).map((entry) => entry.normalize("NFKC"))
+  if (schema.selectionOnly === true && schema.allowedValuesComplete === true &&
+    allowedValues.length && !allowedValues.some((entry) =>
+    entry.toLocaleLowerCase() === value.toLocaleLowerCase())) {
+    throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_VALUE_NOT_ALLOWED")
   }
   const factRunId = text(record(candidate.product_facts_summary).factRunId, 40)
   if (!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(factRunId) || !text(candidate.queue_item_id)) {
@@ -2655,7 +3165,7 @@ export async function decideSameDayFactException(input: {
   if (observationError) throw new Error("SAME_DAY_PILOT_FACT_EXCEPTION_PERSIST_FAILED")
   await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
     gateType: "CRITICAL_EXCEPTION_REQUIRED", runId: state.run.id,
-    candidateId: task.candidate_id, previousState: "VALIDATING_TAXONOMY",
+    candidateId: task.candidate_id, previousState: candidate.machine_state,
     nextState: "ENRICHING_PRODUCT_FACTS", reasonCode: "OFFICIAL_LABEL_FACT_CONFIRMED",
     triggeredBy: "USER", checkpoint: { fieldRequired, factKey, evidenceHash,
       evidenceMode, rawLabelStored: false, imageStored: false },
@@ -2878,8 +3388,17 @@ export async function decideSameDayProduct(input: {
   }
   const salePrice = number(input.salePrice)
   const pricingRecommendation = record(record(candidate.economics_summary).pricingRecommendation)
-  if (pricingRecommendation.marketReferenceUsed !== true ||
-    !(number(pricingRecommendation.recommendedSalePrice) ?? 0)) {
+  const evidence = record(candidate.evidence_summary)
+  const controlledExploratoryTest = text(evidence.commercialEvidenceMode) ===
+    "CONTROLLED_EXPLORATORY_TEST"
+  const controlledTestPlan = record(evidence.controlledTestPlan)
+  const controlledTestPriceReady = controlledExploratoryTest &&
+    pricingRecommendation.controlledExploratoryFloorUsed === true &&
+    controlledTestPlan.listingQuantity === 1 &&
+    controlledTestPlan.commercialMonitorRequired === true &&
+    Number(candidate.listing_quantity) === 1
+  if (!(number(pricingRecommendation.recommendedSalePrice) ?? 0) ||
+    (pricingRecommendation.marketReferenceUsed !== true && !controlledTestPriceReady)) {
     throw new Error("SAME_DAY_PILOT_MARKET_PRICE_REFERENCE_REQUIRED")
   }
   const fulfillmentBasis = normalizeEbayCompliantFulfillmentBasis(
@@ -2916,6 +3435,8 @@ export async function decideSameDayProduct(input: {
     openAiImageSpendActorRecorded: Boolean(input.actorId),
     openAiImageMaximumCallsApproved: 1,
     openAiImageQualityApproved: "low",
+    controlledExploratoryTestApproved: controlledTestPriceReady,
+    commercialMonitorRequired: controlledTestPriceReady,
     fulfillmentDocumentsStored: false, fulfillmentPiiStored: false }
   await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
     gateType: "PRODUCT_APPROVAL_REQUIRED", runId: state.run.id, candidateId: candidate.id,
@@ -3422,18 +3943,22 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       state,
       input.accountKey,
     )
-  const singleFactExceptionsRecovered =
+  const productFactAuthorityLineageRecovered =
+    await repairRejectedProductFactAuthorityLineage(input.supabase, state, now)
+  const singleFactExceptionsRecovered = productFactAuthorityLineageRecovered ? 0 :
     await repairRejectedSingleFactException(input.supabase, state, now)
   // Repair at most one durable lane per worker cycle. Each repair can create a
   // job or human task, so later repair decisions must observe the refreshed
   // state on the following cycle instead of opening parallel operator work.
-  const staleDecisionFactsRecovered = singleFactExceptionsRecovered ? 0 :
+  const staleDecisionFactsRecovered = productFactAuthorityLineageRecovered || singleFactExceptionsRecovered ? 0 :
     await repairStaleDecisionProductFactsRejection(input.supabase, state, now)
-  const legacyProductFactsRejectionsRepaired = singleFactExceptionsRecovered || staleDecisionFactsRecovered ? 0 :
+  const legacyProductFactsRejectionsRepaired = productFactAuthorityLineageRecovered ||
+    singleFactExceptionsRecovered || staleDecisionFactsRecovered ? 0 :
     await repairLegacyProductFactsRejections(input.supabase, state, now)
-  const deadLettersRecovered = singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
+  const deadLettersRecovered = productFactAuthorityLineageRecovered || singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
     legacyProductFactsRejectionsRepaired ? 0 : await recoverDeadLetterCandidates(input.supabase, state)
-  if (legacyPrematureRejectionsRepaired || singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
+  if (legacyPrematureRejectionsRepaired || productFactAuthorityLineageRecovered ||
+    singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
     legacyProductFactsRejectionsRepaired || deadLettersRecovered) {
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
     if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
@@ -3872,6 +4397,13 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
               lunaConfirmedAt: text(lunaConfirmation.confirmedAt),
             }
           : undefined
+        await refreshCandidateDecisionBeforeProductFacts({
+          supabase: input.supabase,
+          accountKey: input.accountKey,
+          actorId: text(state.run.created_by),
+          candidate: record(candidate),
+          now,
+        })
         const factRun = await runProductFactsEnrichment({ supabase: input.supabase, accountKey: input.accountKey,
           candidateIds: [candidate.queue_item_id], controlledExploratoryTarget })
         await heartbeatPilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId })
@@ -3892,6 +4424,8 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             marketPricing: currentResult.marketPricing,
             exactSoldMarketReference: record(candidate.evidence_summary).exactSoldMarketReference,
             variationAspectNames: currentResult.taxonomy?.variationAspects,
+            controlledExploratoryTest: text(record(candidate.evidence_summary).commercialEvidenceMode) ===
+              "CONTROLLED_EXPLORATORY_TEST",
           })
           const nextEconomics = {
             ...currentEconomics,
@@ -3899,9 +4433,12 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             recommendedSalePrice: pricingRecommendation.recommendedSalePrice,
             status: pricingRecommendation.marketReferenceUsed
               ? "PRICE_RECOMMENDED_PENDING_APPROVAL"
-              : "MARKET_REFERENCE_PENDING",
+              : pricingRecommendation.controlledExploratoryFloorUsed
+                ? "CONTROLLED_TEST_PRICE_PENDING_APPROVAL"
+                : "MARKET_REFERENCE_PENDING",
             automaticPricingUsed: false,
-            automaticPricingRecommendationUsed: pricingRecommendation.marketReferenceUsed,
+            automaticPricingRecommendationUsed: pricingRecommendation.marketReferenceUsed ||
+              pricingRecommendation.controlledExploratoryFloorUsed,
             competitorPriceUsedForRecommendation: pricingRecommendation.marketReferenceUsed,
             individualCompetitorPriceCopied: false,
           }
@@ -3939,12 +4476,16 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       const regulatoryReady = gates.REGULATORY_READY === true
       const openAiReady = gates.OPENAI_INPUT_READY === true
       const shippingEstimateReady = gates.SHIPPING_ESTIMATE_READY === true
+      const contentShippingReady = shippingEstimateReady ||
+        conservativeShippingReserveReady(candidate)
       const exceptionStatus = text(record(summary.exception).blockingStatus)
       const missingBlockingAspects = Number(record(summary.requirements).MISSING_BLOCKING ?? 0)
       if (productFactsState === "VALIDATING_TAXONOMY") {
         if (!taxonomyReady) {
-          const singleFactException = recoverableSingleFactException(summary)
-          if (missingBlockingAspects >= 1 && singleFactException) {
+          const singleFactException = recoverableOfferPackException(candidate, summary) ??
+            recoverableSingleFactException(summary) ??
+            recoverableTaxonomyException(summary)
+          if (singleFactException) {
             const exceptionEvidence = {
               ...record(candidate.evidence_summary),
               singleFactExceptionRecoveryVersion: SINGLE_FACT_EXCEPTION_VERSION,
@@ -3966,18 +4507,29 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
               candidateId: text(candidate.id), expectedState: "VALIDATING_TAXONOMY",
               gateType: "CRITICAL_EXCEPTION_REQUIRED",
               title: `Confirma únicamente: ${singleFactException.label}`,
-              why: `eBay exige ${singleFactException.aspectName}. Seller OS revisó Luna, Catalog y Taxonomy, pero no encontró un valor estructurado verificable.`,
+              why: singleFactException.actionType === "CONFIRM_OFFICIAL_OFFER_PACK"
+                ? "Seller OS conserva la identidad exacta, pero encontró una contradicción entre la presentación confirmada y los datos del producto."
+                : `eBay exige ${singleFactException.aspectName}. Seller OS revisó Luna, Catalog y Taxonomy, pero no encontró un valor estructurado verificable.`,
               seconds: 45,
               impact: "Seller OS guardará sólo el fact confirmado con procedencia, repetirá Product Facts para este candidato y continuará automáticamente.",
               evidence: { fieldRequired: singleFactException.aspectName,
                 remainingBlockingFields: singleFactException.remainingBlockingFields,
+                currentValue: "currentValue" in singleFactException
+                  ? singleFactException.currentValue : null,
+                explicitTitlePackCount: "explicitTitlePackCount" in singleFactException
+                  ? singleFactException.explicitTitlePackCount : null,
                 sourcesAlreadyChecked: ["Luna exact variant", "eBay Catalog oficial", "eBay Taxonomy oficial",
                   "fuente pública oficial del fabricante cuando existe"] },
-              actionSchema: { type: "CONFIRM_OFFICIAL_LABEL_FACT", factScope: "PRODUCT_UNIT",
+              actionSchema: { type: singleFactException.actionType,
+                factScope: singleFactException.factScope,
                 factKey: singleFactException.factKey,
                 fieldRequired: singleFactException.aspectName,
                 fieldLabel: singleFactException.label,
+                selectionOnly: singleFactException.selectionOnly,
+                allowedValuesComplete: singleFactException.allowedValuesComplete,
                 allowedValues: singleFactException.allowedValues,
+                regulatoryFact: "regulatoryFact" in singleFactException &&
+                  singleFactException.regulatoryFact === true,
                 requiresVisibleOfficialLabel: true },
               continuationJobType: "ENRICH_PRODUCT_FACTS" })
           } else {
@@ -3995,14 +4547,56 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       }
       if (productFactsState === "VALIDATING_REGULATION") {
         if (!regulatoryReady) {
-          await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
-            previousState: "VALIDATING_REGULATION", reasonCode: "REGULATORY_NOT_READY_TODAY",
-            blockers: [text(record(summary.exception).blockingStatus) || "REGULATORY_READY_FALSE"] })
-          productFactsState = "REJECTED"
-        } else if (!openAiReady || !shippingEstimateReady) {
+          const regulatoryException = recoverableRegulatoryFactException(summary)
+          if (regulatoryException) {
+            const exceptionEvidence = {
+              ...record(candidate.evidence_summary),
+              singleFactExceptionRecoveryVersion: SINGLE_FACT_EXCEPTION_VERSION,
+              singleFactExceptionOpenedAt: new Date().toISOString(),
+              singleFactExceptionField: regulatoryException.aspectName,
+              fullCatalogRescan: false,
+            }
+            const { error: exceptionUpdateError } = await input.supabase
+              .from("ebay_same_day_pilot_candidates")
+              .update({ state: "NEEDS_ONE_CRITICAL_FACT", blockers: [],
+                evidence_summary: exceptionEvidence,
+                next_automated_action: "Reanudar Product Facts después de confirmar la evidencia regulatoria.",
+                next_human_action: `Confirmar ${regulatoryException.label} desde la etiqueta o fuente oficial exacta.`,
+                updated_at: new Date().toISOString() })
+              .eq("id", candidate.id).eq("run_id", state.run.id)
+              .eq("machine_state", "VALIDATING_REGULATION")
+            if (exceptionUpdateError) throw new Error("SAME_DAY_PILOT_REGULATORY_FACT_TASK_UPDATE_FAILED")
+            await createHumanTask({ supabase: input.supabase, runId: state.run.id,
+              candidateId: text(candidate.id), expectedState: "VALIDATING_REGULATION",
+              gateType: "CRITICAL_EXCEPTION_REQUIRED",
+              title: `Confirma únicamente: ${regulatoryException.label}`,
+              why: "La búsqueda automática no encontró la evidencia regulatoria exacta. La publicación permanece cerrada, pero el producto se conserva para una confirmación oficial puntual.",
+              seconds: 60,
+              impact: "Seller OS guardará únicamente el dato atestiguado, repetirá la validación y continuará sin afectar los otros candidatos.",
+              evidence: { fieldRequired: regulatoryException.aspectName,
+                remainingBlockingFields: regulatoryException.remainingBlockingFields,
+                sourcesAlreadyChecked: ["Luna exact variant", "fabricante oficial", "fuente regulatoria autorizada"] },
+              actionSchema: { type: regulatoryException.actionType,
+                factScope: regulatoryException.factScope,
+                factKey: regulatoryException.factKey,
+                fieldRequired: regulatoryException.aspectName,
+                fieldLabel: regulatoryException.label,
+                selectionOnly: regulatoryException.selectionOnly,
+                allowedValuesComplete: regulatoryException.allowedValuesComplete,
+                allowedValues: regulatoryException.allowedValues,
+                regulatoryFact: true,
+                requiresVisibleOfficialLabel: true },
+              continuationJobType: "ENRICH_PRODUCT_FACTS" })
+          } else {
+            await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
+              previousState: "VALIDATING_REGULATION", reasonCode: "REGULATORY_NOT_READY_TODAY",
+              blockers: [text(record(summary.exception).blockingStatus) || "REGULATORY_READY_FALSE"] })
+            productFactsState = "REJECTED"
+          }
+        } else if (!openAiReady || !contentShippingReady) {
           await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
             previousState: "VALIDATING_REGULATION", reasonCode: "PRODUCT_FACTS_NOT_READY_TODAY",
-            blockers: [!shippingEstimateReady
+            blockers: [!contentShippingReady
               ? "SHIPPING_ESTIMATE_REQUIRED_FOR_CONTENT"
               : exceptionStatus === "SHIPPING_CONFIRMATION_DEFERRED_TO_PUBLICATION"
                 ? "OPENAI_INPUT_NOT_READY"
@@ -4016,10 +4610,10 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
         }
       }
       if (productFactsState === "BUILDING_OPENAI_INPUT") {
-        if (!openAiReady || !shippingEstimateReady) {
+        if (!openAiReady || !contentShippingReady) {
           await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
             previousState: "BUILDING_OPENAI_INPUT", reasonCode: "PRODUCT_FACTS_NOT_READY_TODAY",
-            blockers: [!shippingEstimateReady
+            blockers: [!contentShippingReady
               ? "SHIPPING_ESTIMATE_REQUIRED_FOR_CONTENT"
               : exceptionStatus === "SHIPPING_CONFIRMATION_DEFERRED_TO_PUBLICATION"
                 ? "OPENAI_INPUT_NOT_READY"
@@ -4044,7 +4638,8 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
             allowedFulfillmentBases: ["OWNED_INVENTORY", "AUTHORIZED_WHOLESALE_FULFILLMENT_AGREEMENT"],
             automaticPricingUsed: false, automaticPricingRecommendationUsed: true,
             requiresManualPriceEntry: false, humanPriceApprovalRequired: true,
-            requiresMarketReference: true,
+            requiresMarketReference: text(record(candidate.evidence_summary).commercialEvidenceMode) !==
+              "CONTROLLED_EXPLORATORY_TEST",
             presentationPortfolio: record(record(candidate.economics_summary).pricingRecommendation)
               .publicationPortfolio ?? null },
           continuationJobType: "PREPARE_VERIFIED_HANDOFF" })

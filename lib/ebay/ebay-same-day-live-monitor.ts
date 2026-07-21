@@ -22,6 +22,7 @@ export type SameDayCandidateRejectionSummary = {
   productTitle: string
   headline: string
   details: string[]
+  disposition: "CORRECTION_PENDING" | "REJECTED"
   controlledRiskOverride: {
     available: boolean
     blockers: string[]
@@ -189,6 +190,22 @@ export function explainSameDayRejectedCandidate(candidate: Row): SameDayCandidat
     ? candidate.blockers.map((blocker) => text(blocker)).filter(Boolean) : []
   let headline = translateSameDayPilotBlocker(candidateBlockers[0]) ??
     "El candidato no superó las puertas de publicación."
+  const correctionOnlyBlockers = new Set([
+    "MISSING_BLOCKING", "EBAY_REQUIRED_ASPECTS_NOT_READY_TODAY",
+    "EBAY_ASPECTS_READY_FALSE", "EBAY_TAXONOMY_NOT_READY",
+    "PRODUCT_UNIT_FACTS_REQUIRED", "OFFER_PACK_FACTS_REQUIRED",
+    "SHIPPING_ESTIMATE_REQUIRED_FOR_CONTENT", "OPENAI_INPUT_NOT_READY",
+    "PRODUCT_FACTS_NOT_READY_TODAY", "REGULATORY_NOT_READY_TODAY",
+    "REGULATORY_READY_FALSE", "SHIPPING_CONFIRMATION_DEFERRED_TO_PUBLICATION",
+  ])
+  const correctionPending = missingRequiredAspects.length > 0 ||
+    (candidateBlockers.length > 0 && candidateBlockers.every((blocker) =>
+      correctionOnlyBlockers.has(blocker)))
+  if (correctionPending) {
+    headline = missingRequiredAspects.length
+      ? "Ficha pendiente: faltan datos obligatorios que deben agotarse automáticamente y, como última instancia, confirmarse manualmente."
+      : "Ficha pendiente de corrección verificable; el producto no ha sido descartado."
+  }
   const marketPriceIsCurrentBlocker = candidateBlockers.includes("MARKET_PRICE_BELOW_MINIMUM_SAFE_PRICE")
 
   if (marketPriceIsCurrentBlocker && text(decision.verdict) === "NO_GO" &&
@@ -224,7 +241,7 @@ export function explainSameDayRejectedCandidate(candidate: Row): SameDayCandidat
   }
   details.push(soldExact > 0
     ? `${soldExact} venta(s) exacta(s) confirmada(s) en la evidencia disponible.`
-    : "No hay ventas exactas confirmadas para esta presentación.")
+    : "No hay ventas exactas confirmadas para esta presentación; esto no descarta ni bloquea comercialmente el producto.")
   const reviewedObservations = numeric(reconciliationCoverage.reviewedObservations)
   const relatedPackReferences = numeric(evidenceTiers.confirmedSoldRelatedPack) ?? 0
   const relatedSizeReferences = numeric(evidenceTiers.confirmedSoldRelatedSize) ?? 0
@@ -247,6 +264,7 @@ export function explainSameDayRejectedCandidate(candidate: Row): SameDayCandidat
     productTitle: text(candidate.product_title) || "Producto sin nombre",
     headline,
     details: [...new Set(details)],
+    disposition: correctionPending ? "CORRECTION_PENDING" : "REJECTED",
     controlledRiskOverride: {
       available: controlledRisk.available === true,
       blockers: Array.isArray(controlledRisk.blockers)

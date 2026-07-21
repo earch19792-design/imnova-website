@@ -300,6 +300,7 @@ export function buildEbayMarketPricingRecommendation(input: {
   marketPricing: unknown
   exactSoldMarketReference?: unknown
   variationAspectNames?: unknown
+  controlledExploratoryTest?: boolean
   now?: Date
 }) {
   const floor = positiveNumber(input.minimumOperatorPrice)
@@ -318,13 +319,22 @@ export function buildEbayMarketPricingRecommendation(input: {
     input.now ?? new Date(),
   ) ?? soldReference ?? activeReference
   const provisionalFloorPrice = floor === null ? null : moneyUp(floor)
-  const recommendedSalePrice = floor === null || !marketReference
+  const controlledExploratoryFloorUsed = Boolean(
+    input.controlledExploratoryTest && floor !== null && !marketReference,
+  )
+  const recommendedSalePrice = floor === null
     ? null
-    : moneyUp(Math.max(floor, marketReference.medianPrice))
+    : marketReference
+      ? moneyUp(Math.max(floor, marketReference.medianPrice))
+      : controlledExploratoryFloorUsed
+        ? provisionalFloorPrice
+        : null
   const competitiveness = floor === null
     ? "ECONOMICS_NOT_READY" as const
     : !marketReference
-      ? "MARKET_REFERENCE_INSUFFICIENT" as const
+      ? controlledExploratoryFloorUsed
+        ? "UNBENCHMARKED_CONTROLLED_TEST" as const
+        : "MARKET_REFERENCE_INSUFFICIENT" as const
       : floor <= marketReference.medianPrice
         ? "COMPETITIVE" as const
         : floor <= marketReference.maximumPrice
@@ -364,7 +374,9 @@ export function buildEbayMarketPricingRecommendation(input: {
     status: floor === null
       ? "ECONOMICS_NOT_READY" as const
       : !marketReference
-        ? "MARKET_REFERENCE_REQUIRED" as const
+        ? controlledExploratoryFloorUsed
+          ? "CONTROLLED_TEST_PRICE_READY_FOR_HUMAN_APPROVAL" as const
+          : "MARKET_REFERENCE_REQUIRED" as const
         : "RECOMMENDATION_READY_FOR_HUMAN_APPROVAL" as const,
     currency: "USD",
     ownCostFloor: provisionalFloorPrice,
@@ -372,6 +384,7 @@ export function buildEbayMarketPricingRecommendation(input: {
     recommendedSalePrice,
     competitiveness,
     marketReferenceUsed: Boolean(marketReference),
+    controlledExploratoryFloorUsed,
     marketReference: marketReference ?? null,
     recommendedPackCount,
     relatedPackStrategy: relatedPackCount && relatedPackCount !== recommendedPackCount
@@ -397,8 +410,10 @@ export function buildEbayMarketPricingRecommendation(input: {
     },
     decisionLogic: marketReference
       ? "OWN_COST_FLOOR_THEN_EQUIVALENT_PACK_MARKET_MEDIAN"
-      : "OWN_COST_FLOOR_ONLY_MARKET_SAMPLE_INSUFFICIENT",
-    automaticRecommendationUsed: Boolean(marketReference),
+      : controlledExploratoryFloorUsed
+        ? "OWN_COST_FLOOR_CONTROLLED_TEST_QUANTITY_ONE"
+        : "OWN_COST_FLOOR_ONLY_MARKET_SAMPLE_INSUFFICIENT",
+    automaticRecommendationUsed: Boolean(marketReference) || controlledExploratoryFloorUsed,
     humanPriceApprovalRequired: true,
     manualPriceEntryRequired: false,
     fulfillmentConfirmationRequired: true,

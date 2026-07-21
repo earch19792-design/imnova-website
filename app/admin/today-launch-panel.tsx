@@ -13,6 +13,25 @@ import {
 
 type Row = Record<string, any>
 
+function pilotErrorMessage(value: unknown) {
+  const code = typeof value === "string" ? value : ""
+  const messages: Record<string, string> = {
+    SAME_DAY_PILOT_OFFER_PACK_VISIBLE_COUNT_CONFLICT:
+      "La cantidad escrita no coincide con el pack visible en el título. Revisa cuántas unidades físicas contiene una compra.",
+    SAME_DAY_PILOT_LUNA_IDENTITY_PACK_CONFIRMATION_REQUIRED:
+      "Confirma el producto exacto e indica cuántas unidades físicas contiene la presentación de Luna.",
+    SAME_DAY_PILOT_FACT_EXCEPTION_VALUE_NOT_ALLOWED:
+      "Ese valor no pertenece a las opciones oficiales permitidas por eBay para la categoría.",
+    SAME_DAY_PILOT_FACT_EXCEPTION_EVIDENCE_REQUIRED:
+      "Confirma el valor exacto visible y marca la fuente oficial antes de continuar.",
+    SAME_DAY_PILOT_FACT_EXCEPTION_SCHEMA_INVALID:
+      "La tarea quedó desactualizada. Seller OS la regenerará desde la evidencia vigente.",
+  }
+  return messages[code] ?? (/^[A-Z0-9_]+$/.test(code)
+    ? "Seller OS no pudo aceptar esa confirmación. Revisa el dato visible e inténtalo nuevamente."
+    : code || "No se pudo continuar.")
+}
+
 async function token() {
   const { data } = await supabase.auth.getSession()
   return data.session?.access_token ?? ""
@@ -47,7 +66,7 @@ export function TodayLaunchPanel() {
       const accessToken = await token()
       const response = await fetch("/api/admin/ebay/same-day-pilot", { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify(body) })
       const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(payload.error || "No se pudo continuar.")
+      if (!response.ok) throw new Error(pilotErrorMessage(payload.error))
       setPilot(payload.pilot)
       // The API schedules the worker continuation after returning. Refresh in a
       // short burst so the operator sees the next gate without waiting for the
@@ -189,11 +208,15 @@ function RejectedCandidateExplanations({ summaries, working, onAuthorize }: {
   working: boolean
   onAuthorize: (body: Row) => Promise<void>
 }) {
+  const correctionCount = summaries.filter((summary) =>
+    summary.disposition === "CORRECTION_PENDING").length
   return <section aria-labelledby="rejected-candidates-heading"
     className="mt-4 rounded-3xl border border-red-200/25 bg-red-300/[0.055] p-4 sm:p-5">
-    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-red-100/65">Decisión comercial explicada</p>
-    <h3 id="rejected-candidates-heading" className="mt-1 text-lg font-black text-red-50">Por qué no se publicarán estos productos</h3>
-    <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">Cada descarte muestra el motivo real, el cálculo económico y los campos obligatorios pendientes. Seller OS nunca publicará sólo para llenar el piloto.</p>
+    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-red-100/65">Estado y siguiente corrección</p>
+    <h3 id="rejected-candidates-heading" className="mt-1 text-lg font-black text-red-50">Productos pendientes de corregir antes de publicar</h3>
+    <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">{correctionCount > 0
+      ? `${correctionCount} producto(s) conservan su lugar: Seller OS agotará las fuentes automáticas y pedirá sólo el dato obligatorio restante. Los otros candidatos del lote pueden continuar.`
+      : "Cada descarte muestra el motivo real. Seller OS nunca publicará sólo para llenar el piloto."}</p>
     <div className="mt-4 grid gap-3">{summaries.map((summary) => <article key={summary.candidateId || `${summary.ordinal}:${summary.productTitle}`}
       className="min-w-0 rounded-2xl border border-red-100/15 bg-black/25 p-4">
       <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
@@ -201,12 +224,15 @@ function RejectedCandidateExplanations({ summaries, working, onAuthorize }: {
           <p className="text-[10px] font-black uppercase tracking-widest text-red-100/50">Candidato {summary.ordinal ?? "—"}</p>
           <h4 className="mt-1 break-words font-black text-white">{summary.productTitle}</h4>
         </div>
-        <span className="rounded-full border border-red-200/25 bg-red-200/[0.08] px-2.5 py-1 text-[10px] font-black text-red-100">NO PUBLICAR AHORA</span>
+        <span className="rounded-full border border-red-200/25 bg-red-200/[0.08] px-2.5 py-1 text-[10px] font-black text-red-100">{summary.disposition === "CORRECTION_PENDING"
+          ? "CORREGIR FICHA" : "DESCARTADO"}</span>
       </div>
       <p className="mt-3 break-words text-sm font-black leading-6 text-red-100">{summary.headline}</p>
       {summary.details.length > 0 && <ul className="mt-2 grid gap-1.5 text-xs leading-5 text-white/60">{summary.details.map((detail) => <li key={detail} className="flex gap-2"><span aria-hidden="true" className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-red-200/70" /><span>{detail}</span></li>)}</ul>}
-      <ControlledRiskOverrideAuthorization summary={summary} working={working}
-        onAuthorize={onAuthorize} />
+      {summary.disposition === "CORRECTION_PENDING"
+        ? <p className="mt-4 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.05] p-3 text-xs leading-5 text-cyan-50">No requiere una excepción económica. La publicación seguirá cerrada hasta resolver los obligatorios, pero el producto permanece en la cola de corrección.</p>
+        : <ControlledRiskOverrideAuthorization summary={summary} working={working}
+          onAuthorize={onAuthorize} />}
     </article>)}</div>
   </section>
 }
@@ -543,8 +569,12 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
 }) {
   const pricingRecommendation = candidate?.economics_summary?.pricingRecommendation ?? {}
   const recommendedSalePrice = Number(pricingRecommendation.recommendedSalePrice)
-  const marketRecommendationReady = pricingRecommendation.marketReferenceUsed === true &&
-    Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0
+  const controlledExploratoryTest = candidate?.evidence_summary?.commercialEvidenceMode ===
+    "CONTROLLED_EXPLORATORY_TEST"
+  const marketRecommendationReady = Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0 && (
+    pricingRecommendation.marketReferenceUsed === true ||
+    (controlledExploratoryTest && pricingRecommendation.controlledExploratoryFloorUsed === true)
+  )
   const recommendedSalePriceText = marketRecommendationReady
     ? recommendedSalePrice.toFixed(2)
     : ""
@@ -577,10 +607,11 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
   const imageSet = normalizedImageReviewSet(reviewAssets)
   const imageSetReady = completeImageReviewSet(imageSet)
   const openAiContextUsed = imageSet.some((asset) => asset.generativeAiUsed === true)
-  const controlledExploratoryTest = candidate?.evidence_summary?.commercialEvidenceMode ===
-    "CONTROLLED_EXPLORATORY_TEST"
   const selectionIdentity = candidate?.evidence_summary?.selectionIdentity ?? {}
-  const identityAndPackConfirmationRequired = selectionIdentity.confirmationRequired === true
+  const lunaTaskFields = Array.isArray(task.action_schema?.fields)
+    ? task.action_schema.fields.map((value: unknown) => String(value)) : []
+  const identityAndPackConfirmationRequired =
+    lunaTaskFields.includes("nativePackCount") || selectionIdentity.confirmationRequired === true
   const identityAndPackConfirmationApplies = identityAndPackConfirmationRequired && availability !== "out"
   const identityConfirmationMissing = identityAndPackConfirmationApplies && !identityAndPackConfirmed
   const nativePackCountMissing = identityAndPackConfirmationApplies && (
@@ -593,15 +624,19 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
     : []
   const factValueListId = `fact-values-${fieldId}`
   const measurementFact = ["itemLength", "itemWidth"].includes(factKey)
+  const offerPackFact = factKey === "offerPackCount"
+  const categoryFact = factKey === "categoryId"
 
   useEffect(() => {
     setSalePrice(recommendedSalePriceText)
     setIdentityAndPackConfirmed(false)
-    setNativePackCount("")
+    const knownPackCount = Number(selectionIdentity.nativePackCount)
+    setNativePackCount(Number.isInteger(knownPackCount) && knownPackCount > 0
+      ? String(knownPackCount) : "")
     setFactExceptionValue("")
     setVisibleOfficialLabelConfirmed(false)
     setBrandAbsentConfirmed(false)
-  }, [task.id, recommendedSalePriceText])
+  }, [task.id, recommendedSalePriceText, selectionIdentity.nativePackCount])
 
   return <article className="min-w-0 overflow-hidden rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-4">
     <div className="flex flex-wrap justify-between gap-3">
@@ -663,7 +698,7 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
             className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${nativePackCountMissing ? "border-red-400" : "border-white/15"}`} />
           <span id={`${fieldId}-native-pack-help`} className={`mt-1 block font-normal ${nativePackCountMissing ? "text-red-200" : "text-white/55"}`}>{nativePackCountMissing
             ? "Obligatorio: indica un número entero mayor que cero."
-            : "Pack nativo confirmado. No es la cantidad disponible en inventario."}</span>
+            : "Cuenta las unidades físicas dentro de una compra: si el título dice “2 Pack”, escribe 2, aunque sea una sola compra. No es el inventario disponible."}</span>
         </label>
         <p id={`${fieldId}-identity-pack-help`} className={`text-xs leading-5 sm:col-span-2 ${identityConfirmationMissing ? "font-bold text-red-200" : "text-white/55"}`}>{identityConfirmationMissing
           ? "Obligatorio: confirma visualmente que el producto y su presentación son exactos antes de continuar."
@@ -674,14 +709,19 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
 
     {task.gate_type === "CRITICAL_EXCEPTION_REQUIRED" && <div className="mt-4 rounded-xl border border-amber-200/25 bg-amber-200/[0.05] p-3">
       <p className="text-sm font-black text-amber-50">Sólo falta un dato verificable</p>
-      <p className="mt-1 text-xs leading-5 text-white/60">No completes una ficha. Mira el empaque oficial o la página exacta del producto en Luna y confirma únicamente este campo.</p>
+      <p className="mt-1 text-xs leading-5 text-white/60">No completes una ficha. Confirma únicamente este campo desde el empaque, Luna, el selector oficial de eBay o la página oficial del fabricante/regulador aplicable.</p>
       <label className="mt-3 block text-xs font-bold">{factFieldLabel} <span className="text-red-200">*</span>
         <input value={brandAbsentConfirmed ? "Unbranded" : factExceptionValue}
           onChange={(event) => setFactExceptionValue(event.target.value)}
           disabled={brandAbsentConfirmed}
+          type={offerPackFact || categoryFact ? "number" : "text"}
+          min={offerPackFact || categoryFact ? 1 : undefined}
+          max={offerPackFact ? 100 : undefined}
+          step={offerPackFact || categoryFact ? 1 : undefined}
+          inputMode={offerPackFact || categoryFact ? "numeric" : undefined}
           list={factAllowedValues.length ? factValueListId : undefined}
-          placeholder={measurementFact ? "Ejemplo: 7.5 in" : factAllowedValues.length ? "Elige o escribe el valor visible" : "Escribe el valor exacto visible"}
-          maxLength={100} aria-required="true" aria-invalid={!brandAbsentConfirmed && !factExceptionValue.trim()}
+          placeholder={categoryFact ? "Ejemplo: 179006" : offerPackFact ? "Ejemplo: 2" : measurementFact ? "Ejemplo: 7.5 in" : factAllowedValues.length ? "Elige o escribe el valor visible" : "Escribe el valor exacto visible"}
+          maxLength={250} aria-required="true" aria-invalid={!brandAbsentConfirmed && !factExceptionValue.trim()}
           className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${brandAbsentConfirmed || factExceptionValue.trim() ? "border-white/15" : "border-red-400"}`} />
         {factAllowedValues.length > 0 && <datalist id={factValueListId}>{factAllowedValues.map((value) =>
           <option key={value} value={value} />)}</datalist>}
@@ -689,6 +729,8 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
           ? "Se enviará el valor estándar Unbranded porque confirmaste que no existe marca visible."
           : factExceptionValue.trim()
           ? "Valor recibido; Seller OS lo guardará con procedencia y volverá a validar Taxonomy."
+          : categoryFact ? "Copia únicamente el ID numérico de la categoría exacta mostrado por el selector oficial de eBay."
+          : offerPackFact ? "Escribe cuántas unidades físicas contiene la presentación visible; una compra no significa necesariamente una unidad."
           : measurementFact ? "Escribe el número y la unidad que aparecen en el producto o empaque; no uses dimensiones estimadas de envío."
           : "Obligatorio sólo si puedes verificarlo visualmente."}</span>
       </label>
@@ -701,7 +743,7 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
             if (event.target.checked) setBrandAbsentConfirmed(false)
           }}
           className="mt-1 h-5 w-5 shrink-0 accent-emerald-200" />
-        <span><strong>El dato sí aparece.</strong> El valor escrito arriba está visible en el producto, empaque/etiqueta oficial o en la página exacta autorizada de Luna para esta misma presentación.</span>
+        <span><strong>El dato sí aparece.</strong> El valor escrito arriba está visible en el producto, empaque/etiqueta oficial, Luna, el selector oficial de eBay o la página oficial autorizada del fabricante/regulador para esta misma presentación.</span>
       </label>
       {factKey === "brand" && <label className={`mt-3 flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${brandAbsentConfirmed ? "border-emerald-200/25 text-emerald-50" : "border-white/15 text-white/65"}`}>
         <input type="checkbox" checked={brandAbsentConfirmed}
@@ -737,9 +779,15 @@ function HumanTask({ task, candidate, reviewAssets, working, onConfirm }: {
       <MarketPriceReference candidate={candidate} />
       <p className="mt-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.06] p-3 text-xs text-amber-50"><strong>Fulfillment obligatorio:</strong> confirma la base real antes de aprobar. No selecciones un acuerdo mayorista si sólo planeas comprar el producto después de la venta en un retailer o marketplace.</p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <label className="text-xs font-bold">{marketRecommendationReady ? "Precio recomendado por Seller OS" : "Precio pendiente de mercado"} <span className="text-red-200">*</span>
+        <label className="text-xs font-bold">{marketRecommendationReady
+          ? controlledExploratoryTest ? "Precio inicial de prueba calculado por costos" : "Precio recomendado por Seller OS"
+          : "Precio pendiente de validación"} <span className="text-red-200">*</span>
           <input value={salePrice} onChange={(event) => setSalePrice(event.target.value)} inputMode="decimal" disabled={!marketRecommendationReady} aria-required="true" aria-invalid={salePriceMissing} aria-describedby={`${fieldId}-sale-price-help`} className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${salePriceMissing ? "border-red-400" : "border-white/15"}`} />
-          <span id={`${fieldId}-sale-price-help`} className={`mt-1 block font-normal ${salePriceMissing ? "text-red-200" : "text-white/55"}`}>{!marketRecommendationReady ? "Seller OS todavía no tiene una muestra agregada válida. El piso propio es provisional y no puede aprobarse como precio de mercado." : "Recomendación precargada. Puedes ajustarla antes de aprobar; el servidor volverá a comprobar utilidad, ROI y margen."}</span>
+          <span id={`${fieldId}-sale-price-help`} className={`mt-1 block font-normal ${salePriceMissing ? "text-red-200" : "text-white/55"}`}>{!marketRecommendationReady
+            ? "Seller OS todavía no tiene costos suficientes para proponer un precio seguro."
+            : controlledExploratoryTest
+              ? "No se presenta como precio de mercado: parte del piso rentable propio, requiere tu aprobación, cantidad inicial 1 y monitoreo."
+              : "Recomendación precargada. Puedes ajustarla antes de aprobar; el servidor volverá a comprobar utilidad, ROI y margen."}</span>
         </label>
         <label className="text-xs font-bold">Base de fulfillment <span className="text-red-200">*</span>
           <select value={fulfillmentBasis} onChange={(event) => setFulfillmentBasis(event.target.value)} aria-required="true" aria-invalid={!fulfillmentBasis} aria-describedby={`${fieldId}-fulfillment-help`} className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${fulfillmentBasis ? "border-white/15" : "border-red-400"}`}><option value="">Seleccionar</option><option value="OWNED_INVENTORY">Inventario propio disponible</option><option value="AUTHORIZED_WHOLESALE_FULFILLMENT_AGREEMENT">Acuerdo vigente con proveedor mayorista autorizado</option></select>
@@ -864,6 +912,9 @@ function MarketPriceReference({ candidate }: { candidate?: Row }) {
   const recommendedSalePrice = Number(recommendation.recommendedSalePrice)
   const ownCostFloor = Number(recommendation.ownCostFloor)
   const marketReferenceUsed = recommendation.marketReferenceUsed === true
+  const controlledExploratoryFloorUsed =
+    candidate?.evidence_summary?.commercialEvidenceMode === "CONTROLLED_EXPLORATORY_TEST" &&
+    recommendation.controlledExploratoryFloorUsed === true
   if ((Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0) ||
     (Number.isFinite(ownCostFloor) && ownCostFloor > 0)) {
     const market = recommendation.marketReference ?? {}
@@ -881,6 +932,7 @@ function MarketPriceReference({ candidate }: { candidate?: Row }) {
       MARGINAL: "COMPETITIVIDAD LIMITADA",
       NOT_COMPETITIVE: "NO COMPETITIVO AL PISO RENTABLE",
       MARKET_REFERENCE_INSUFFICIENT: "MUESTRA DE MERCADO INSUFICIENTE",
+      UNBENCHMARKED_CONTROLLED_TEST: "PRUEBA CONTROLADA SIN REFERENCIA DE COMPETENCIA",
     }
     const relatedPack = recommendation.relatedPackStrategy ?? {}
     const relatedPackCount = Number(relatedPack.recommendedPackCountForEvaluation)
@@ -897,14 +949,15 @@ function MarketPriceReference({ candidate }: { candidate?: Row }) {
       <p className="font-black">DECISIÓN ESTRATÉGICA AUTOMÁTICA</p>
       <div className="mt-2 grid gap-2 sm:grid-cols-5">
         <Metric label="Piso propio" value={Number.isFinite(ownCostFloor) ? `$${ownCostFloor.toFixed(2)}` : "N/D"} />
-        <Metric label="Precio recomendado" value={marketReferenceUsed && Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0 ? `$${recommendedSalePrice.toFixed(2)}` : "PENDIENTE"} />
+        <Metric label={controlledExploratoryFloorUsed ? "Precio inicial de prueba" : "Precio recomendado"} value={(marketReferenceUsed || controlledExploratoryFloorUsed) && Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0 ? `$${recommendedSalePrice.toFixed(2)}` : "PENDIENTE"} />
         <Metric label="Mediana equivalente" value={Number.isFinite(marketMedian) ? `$${marketMedian.toFixed(2)}` : "N/D"} />
         <Metric label="Rango de mercado" value={Number.isFinite(marketMinimum) && Number.isFinite(marketMaximum) ? `$${marketMinimum.toFixed(2)}–$${marketMaximum.toFixed(2)}` : "N/D"} />
         <Metric label="Presentación evaluada" value={recommendation.recommendedPackCount ? `${recommendation.recommendedPackCount} unidad(es)` : "N/D"} />
       </div>
       <p className="mt-2 font-black">{String(competitivenessLabels[String(recommendation.competitiveness)] ?? recommendation.competitiveness ?? "N/D")}</p>
       <p className="mt-1 text-cyan-100/70">Fuente: {sourceLabel} · muestra {Number(market.sampleSize ?? 0)} · vendedores {Number(market.sellerCount ?? 0)} · confianza {String(market.confidence ?? "limitada").toLowerCase()}. Se usa el agregado; nunca el precio de un vendedor individual.</p>
-      {!marketReferenceUsed && <p className="mt-2 rounded-lg border border-red-300/30 bg-red-300/[0.07] p-2 font-bold text-red-100">El piso de ${ownCostFloor.toFixed(2)} es sólo una referencia económica provisional. La aprobación permanecerá bloqueada hasta obtener una mediana equivalente de al menos dos vendedores.</p>}
+      {!marketReferenceUsed && controlledExploratoryFloorUsed && <p className="mt-2 rounded-lg border border-violet-200/30 bg-violet-200/[0.07] p-2 font-bold text-violet-50">No apareció una referencia equivalente suficiente. Esto no bloquea el producto: ${ownCostFloor.toFixed(2)} será el precio inicial calculado por costos, sujeto a aprobación humana, cantidad 1 y monitoreo comercial.</p>}
+      {!marketReferenceUsed && !controlledExploratoryFloorUsed && <p className="mt-2 rounded-lg border border-red-300/30 bg-red-300/[0.07] p-2 font-bold text-red-100">El piso de ${ownCostFloor.toFixed(2)} es sólo una referencia económica provisional. Faltan identidad, evidencia o costos suficientes para habilitar una prueba controlada.</p>}
       {Number.isFinite(relatedPackCount) && relatedPackCount > 0 && relatedPackCount !== Number(recommendation.recommendedPackCount) && <p className="mt-2 rounded-lg border border-amber-200/25 bg-amber-200/[0.06] p-2 text-amber-50"><strong>Presentación estratégica detectada:</strong> evaluar {relatedPackCount} unidades por oferta. Tiene mejor señal agregada, pero no se aplicará hasta confirmar que fulfillment puede prepararla y recalcular su costo exacto.</p>}
       {presentations.length > 1 && <div className="mt-2 rounded-lg border border-emerald-200/25 bg-emerald-200/[0.06] p-2 text-emerald-50">
         <p className="font-black">PORTAFOLIO CON VENTAS CONFIRMADAS</p>
