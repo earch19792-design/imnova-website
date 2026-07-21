@@ -7,7 +7,7 @@ import { createHash } from "node:crypto"
  * estimated fulfilment value from accidentally becoming listing copy.
  */
 export const PRODUCT_FACTS_SCHEMA_VERSION = "PRODUCT_FACTS_V1_2026_07_17"
-export const PRODUCT_FACTS_RESOLVER_VERSION = "PRODUCT_FACTS_RESOLVER_V4_2026_07_21"
+export const PRODUCT_FACTS_RESOLVER_VERSION = "PRODUCT_FACTS_RESOLVER_V5_2026_07_21"
 export const SHIPPING_ESTIMATION_MODEL_VERSION = "SHIPPING_ESTIMATE_V1_2026_07_17"
 export const OPENAI_FACTS_INPUT_VERSION = "OPENAI_FACTS_INPUT_V2_2026_07_19"
 export const AUTHORITATIVE_FACT_SOURCE_POLICY = "TECHNICAL_AUTHORITY_ONLY_V2_2026_07_19"
@@ -493,7 +493,9 @@ export function createShippingEstimate(input: {
 
 const ASPECT_MAPPING: Record<string, string[]> = {
   brand: ["brand"], manufacturer: ["manufacturer"], upc: ["upc", "gtin"], ean: ["ean", "gtin"],
-  gtin: ["gtin", "upc", "ean"], mpn: ["mpn"], model: ["model"], color: ["color"],
+  gtin: ["gtin", "upc", "ean"], mpn: ["mpn"],
+  manufacturerpartnumber: ["mpn"], manufacturerpartno: ["mpn"],
+  model: ["model"], color: ["color"],
   scent: ["scent"], flavor: ["flavor"], formulation: ["formulation", "variant"],
   "numberinpack": ["offerPackCount", "unitCount"], "unitcount": ["unitCount", "totalUnitCount"],
   size: ["netContent", "size"], material: ["material"], condition: ["condition"],
