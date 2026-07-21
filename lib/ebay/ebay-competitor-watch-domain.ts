@@ -1,12 +1,16 @@
 import { createHash } from "node:crypto"
 
 import type { SafeEbayActiveCompetitorObservation } from "./ebay-seller-keyword-demand-gateway"
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics } from "./ebay-unit-economics.ts"
 
 export const EBAY_COMPETITOR_WATCH_VERSION =
-  "EBAY_LISTING_COMPETITOR_WATCH_V1" as const
+  "EBAY_LISTING_COMPETITOR_WATCH_V2" as const
 
 const RESEARCH_RECOMMENDATION_COOLDOWN_DAYS = 7
+const CONFIRMED_SOLD_PRICE_MAX_AGE_DAYS = 90
 const MATERIAL_PRICE_ADVANTAGE_RATIO = 0.9
+const MATERIAL_PRICE_RECOMMENDATION_RATIO = 0.05
 const COMMON_PATTERN_RATIO = 0.67
 const MULTI_IMAGE_MINIMUM = 4
 
@@ -21,8 +25,13 @@ export type CompetitorWatchPreviousOffer = {
 }
 
 export type CompetitorWatchOwnListing = {
+  itemPrice: number | null
   landedPrice: number | null
   shippingCost: number | null
+  packQuantity: number
+  supplierUnitCost: number | null
+  supplierCostFresh: boolean
+  supplierAvailable: boolean | null
   returnsAccepted: boolean | null
   imageCount: number | null
   title: string
@@ -35,6 +44,10 @@ export type CompetitorWatchObservation = Omit<
   evidenceClass: "ACTIVE_ONLY" | "ESTIMATED_ACTIVITY" | "CONFIRMED_SOLD_HISTORY"
   confirmedSoldQuantity?: number
   confirmedSoldLastDate?: string | null
+  confirmedSoldItemPrice?: number | null
+  confirmedSoldShippingCost?: number | null
+  confirmedSoldLandedPrice?: number | null
+  confirmedSoldOfferPackCount?: number | null
 }
 
 export type CompetitorWatchAnalysisInput = {
@@ -65,6 +78,144 @@ function median(values: number[]) {
     ? ordered[middle]
     : (ordered[middle - 1] + ordered[middle]) / 2
   return Number(value.toFixed(2))
+}
+
+function money(value: number) {
+  return Math.round(value * 100) / 100
+}
+
+function recentConfirmedSoldDate(value: string | null | undefined, observedAt: string) {
+  const soldAt = Date.parse(value ?? "")
+  const observed = Date.parse(observedAt)
+  return Number.isFinite(soldAt) && Number.isFinite(observed) && soldAt <= observed &&
+    observed - soldAt <= CONFIRMED_SOLD_PRICE_MAX_AGE_DAYS * 86_400_000
+}
+
+export function buildConfirmedSoldPriceRecommendation(input: Pick<
+  CompetitorWatchAnalysisInput,
+  "observations" | "ownListing" | "observedAt"
+>) {
+  const ownItemPrice = finite(input.ownListing.itemPrice)
+  const ownShippingCost = finite(input.ownListing.shippingCost) ?? 0
+  const ownPackQuantity = Number(input.ownListing.packQuantity)
+  const supplierUnitCost = finite(input.ownListing.supplierUnitCost)
+  if (ownItemPrice === null || ownItemPrice <= 0 || ownShippingCost < 0 ||
+    !Number.isInteger(ownPackQuantity) || ownPackQuantity <= 0 ||
+    supplierUnitCost === null || supplierUnitCost < 0 ||
+    !input.ownListing.supplierCostFresh || input.ownListing.supplierAvailable !== true) {
+    return null
+  }
+
+  const comparableBySeller = new Map<string, CompetitorWatchObservation>()
+  for (const observation of input.observations) {
+    const soldQuantity = Math.max(0, Math.trunc(finite(
+      observation.confirmedSoldQuantity,
+    ) ?? 0))
+    const soldLandedPrice = finite(observation.confirmedSoldLandedPrice)
+    const observedPackQuantity = finite(observation.confirmedSoldOfferPackCount)
+    if (observation.evidenceClass !== "CONFIRMED_SOLD_HISTORY" ||
+      soldQuantity < 1 || soldLandedPrice === null || soldLandedPrice <= 0 ||
+      observedPackQuantity !== ownPackQuantity ||
+      !recentConfirmedSoldDate(observation.confirmedSoldLastDate, input.observedAt)) {
+      continue
+    }
+    const previous = comparableBySeller.get(observation.sellerReferenceHash)
+    const previousSoldQuantity = Math.max(0, Math.trunc(finite(
+      previous?.confirmedSoldQuantity,
+    ) ?? 0))
+    const previousSoldAt = Date.parse(previous?.confirmedSoldLastDate ?? "")
+    const currentSoldAt = Date.parse(observation.confirmedSoldLastDate ?? "")
+    if (!previous || soldQuantity > previousSoldQuantity ||
+      (soldQuantity === previousSoldQuantity && currentSoldAt > previousSoldAt)) {
+      comparableBySeller.set(observation.sellerReferenceHash, observation)
+    }
+  }
+  const confirmedSellerOffers = [...comparableBySeller.values()]
+  const confirmedSoldBenchmarkLandedPrice = median(confirmedSellerOffers
+    .map((observation) => finite(observation.confirmedSoldLandedPrice))
+    .filter((value): value is number => value !== null && value > 0))
+  if (confirmedSoldBenchmarkLandedPrice === null) return null
+
+  const totalSupplierCost = money(supplierUnitCost * ownPackQuantity)
+  const floor = calculateEbayMinimumOperatorPrice({ supplierCost: totalSupplierCost })
+  if (!floor.ready || floor.minimumOperatorPrice === null) return null
+  const minimumSafeLandedPrice = floor.minimumOperatorPrice
+  const currentLandedPrice = money(ownItemPrice + ownShippingCost)
+  const benchmarkGapRatio = confirmedSoldBenchmarkLandedPrice > 0
+    ? (currentLandedPrice - confirmedSoldBenchmarkLandedPrice) /
+      confirmedSoldBenchmarkLandedPrice
+    : 0
+  let action: "RAISE_TO_CONFIRMED_SOLD_BAND" | "LOWER_TO_CONFIRMED_SOLD_BAND" |
+    "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND" | "DO_NOT_MATCH_BELOW_ECONOMIC_FLOOR"
+  let proposedLandedPrice = currentLandedPrice
+  if (confirmedSoldBenchmarkLandedPrice < minimumSafeLandedPrice) {
+    action = "DO_NOT_MATCH_BELOW_ECONOMIC_FLOOR"
+    proposedLandedPrice = Math.max(currentLandedPrice, minimumSafeLandedPrice)
+  } else if (currentLandedPrice < minimumSafeLandedPrice ||
+    benchmarkGapRatio <= -MATERIAL_PRICE_RECOMMENDATION_RATIO) {
+    action = "RAISE_TO_CONFIRMED_SOLD_BAND"
+    proposedLandedPrice = Math.max(
+      minimumSafeLandedPrice,
+      confirmedSoldBenchmarkLandedPrice,
+    )
+  } else if (benchmarkGapRatio >= MATERIAL_PRICE_RECOMMENDATION_RATIO) {
+    action = "LOWER_TO_CONFIRMED_SOLD_BAND"
+    proposedLandedPrice = Math.max(
+      minimumSafeLandedPrice,
+      confirmedSoldBenchmarkLandedPrice,
+    )
+  } else {
+    action = "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND"
+  }
+  proposedLandedPrice = money(proposedLandedPrice)
+  const proposedItemPrice = money(Math.max(0.01,
+    proposedLandedPrice - ownShippingCost))
+  const expected = calculateEbayUnitEconomics({
+    salePrice: proposedLandedPrice,
+    supplierCost: totalSupplierCost,
+  })
+  const current = calculateEbayUnitEconomics({
+    salePrice: currentLandedPrice,
+    supplierCost: totalSupplierCost,
+  })
+  const confirmedSoldQuantity = confirmedSellerOffers.reduce((total, observation) =>
+    total + Math.max(0, Math.trunc(finite(observation.confirmedSoldQuantity) ?? 0)), 0)
+  const confirmedSoldSellerCount = confirmedSellerOffers.length
+  const confidence = confirmedSoldSellerCount >= 3 && confirmedSoldQuantity >= 10
+    ? "HIGH" : confirmedSoldSellerCount >= 2 || confirmedSoldQuantity >= 5
+      ? "MEDIUM" : "LOW"
+  return {
+    action,
+    confidence,
+    currentItemPrice: money(ownItemPrice),
+    currentLandedPrice,
+    proposedItemPrice,
+    proposedLandedPrice,
+    confirmedSoldBenchmarkLandedPrice,
+    confirmedSoldSellerCount,
+    confirmedSoldOfferCount: confirmedSellerOffers.length,
+    confirmedSoldQuantity,
+    newestConfirmedSoldAt: confirmedSellerOffers
+      .map((observation) => observation.confirmedSoldLastDate ?? "")
+      .filter(Boolean)
+      .sort()
+      .at(-1) ?? null,
+    ownPackQuantity,
+    supplierUnitCost: money(supplierUnitCost),
+    totalSupplierCost,
+    minimumSafeLandedPrice,
+    currentEstimatedNetProfit: current.estimatedNetProfit,
+    currentEstimatedMarginPercent: current.estimatedNetMarginPercent,
+    proposedEstimatedNetProfit: expected.estimatedNetProfit,
+    proposedEstimatedMarginPercent: expected.estimatedNetMarginPercent,
+    proposedEstimatedRoiPercent: expected.estimatedRoiPercent,
+    proposedPassesProfitGate: expected.passesProfitGate,
+    comparisonBasis: "PRODUCT_RESEARCH_CONFIRMED_SOLD_LANDED_PRICE" as const,
+    soldEvidenceMaxAgeDays: CONFIRMED_SOLD_PRICE_MAX_AGE_DAYS,
+    activeOfferPriceTreatedAsSoldPrice: false,
+    automaticPriceChangeAllowed: false,
+    humanApprovalRequired: true,
+  }
 }
 
 function normalizedText(value: unknown) {
@@ -188,6 +339,10 @@ export function buildCompetitorWatchAnalysis(input: CompetitorWatchAnalysisInput
     .filter((term) => term.length >= 3 && !ownTitle.includes(term))
     .slice(0, 5)
   if (suggestedTerms.length) suggestionCodes.push("REVIEW_CROSS_SELLER_TERMS")
+  const priceRecommendation = buildConfirmedSoldPriceRecommendation(input)
+  if (priceRecommendation) {
+    suggestionCodes.push("REVIEW_CONFIRMED_SOLD_PRICE_RECOMMENDATION")
+  }
   const previousSuggestions = new Set(input.previousSuggestionCodes ?? [])
   const newSuggestionCodes = suggestionCodes.filter((code) =>
     !previousSuggestions.has(code))
@@ -206,13 +361,22 @@ export function buildCompetitorWatchAnalysis(input: CompetitorWatchAnalysisInput
   const alertRequired = input.baselineExists && (
     potentialSellerHashes.length > 0 ||
     newlyConfirmedOfferHashes.length > 0 ||
-    newSuggestionCodes.length > 0
+    newSuggestionCodes.length > 0 ||
+    priceRecommendation !== null
   )
   const eventFingerprint = alertRequired
     ? createHash("sha256").update([
         ...potentialSellerHashes,
         ...newlyConfirmedOfferHashes,
         ...newSuggestionCodes,
+        priceRecommendation
+          ? [
+              priceRecommendation.action,
+              priceRecommendation.proposedItemPrice.toFixed(2),
+              priceRecommendation.confirmedSoldBenchmarkLandedPrice.toFixed(2),
+              priceRecommendation.confirmedSoldQuantity,
+            ].join(":")
+          : "NO_PRICE_RECOMMENDATION",
         researchRefreshRecommended ? "RESEARCH_REFRESH" : "OBSERVE",
       ].join("|")).digest("hex")
     : null
@@ -241,6 +405,7 @@ export function buildCompetitorWatchAnalysis(input: CompetitorWatchAnalysisInput
     suggestionCodes: [...new Set(suggestionCodes)],
     newSuggestionCodes,
     suggestedTerms,
+    priceRecommendation,
     researchRefreshRecommended,
     researchRefreshReasonCodes: researchRefreshRecommended
       ? [

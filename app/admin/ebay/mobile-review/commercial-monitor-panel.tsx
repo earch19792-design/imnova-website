@@ -225,6 +225,29 @@ type Dashboard = {
       research_refresh_reason_codes?: string[]
       last_research_refresh_recommended_at?: string | null
     }>
+    priceRecommendations?: Array<{
+      id?: string
+      listingId?: string
+      sku?: string | null
+      detectedAt?: string
+      recommendedAction?: string
+      status?: "AWAITING_HUMAN_APPROVAL"
+      changeApplied?: false
+      whatsappEnqueued?: true
+      priceRecommendation?: {
+        action?: string
+        confidence?: string
+        currentItemPrice?: number
+        proposedItemPrice?: number
+        confirmedSoldBenchmarkLandedPrice?: number
+        confirmedSoldSellerCount?: number
+        confirmedSoldQuantity?: number
+        minimumSafeLandedPrice?: number
+        proposedEstimatedNetProfit?: number | null
+        proposedEstimatedMarginPercent?: number | null
+        proposedEstimatedRoiPercent?: number | null
+      }
+    }>
     automaticActiveSellerDiscovery?: boolean
     productResearchRefreshIsSelective?: boolean
     automaticProductResearchImport?: false
@@ -361,6 +384,7 @@ function competitorSuggestionLabel(code: string) {
     REVIEW_RETURNS_ACCEPTED_COMMON_PATTERN: "Revisar política de devoluciones común",
     REVIEW_MULTI_IMAGE_COMMON_PATTERN: "Revisar si conviene ampliar el set de imágenes",
     REVIEW_MARKET_PRICE_POSITION: "Revisar posición del precio total frente al mercado",
+    REVIEW_CONFIRMED_SOLD_PRICE_RECOMMENDATION: "Revisar precio propuesto con ventas exactas confirmadas y piso económico propio",
     REVIEW_CROSS_SELLER_TERMS: "Revisar términos repetidos y confirmados por el producto Luna",
   }
   return labels[code] ?? code.replaceAll("_", " ").toLocaleLowerCase("es")
@@ -717,6 +741,8 @@ export function CommercialMonitorPanel() {
   const primaryOptimizationTask = optimizationTasks[0]
   const additionalOptimizationTasks = optimizationTasks.slice(1, 5)
   const competitorProfiles = dashboard?.competitorWatch?.profiles ?? []
+  const competitorPriceRecommendations =
+    dashboard?.competitorWatch?.priceRecommendations ?? []
   const researchRefreshProfiles = competitorProfiles.filter((profile) =>
     profile.research_refresh_recommended)
 
@@ -1031,6 +1057,23 @@ export function CommercialMonitorPanel() {
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Con actividad estimada</span><strong className="mt-1 block text-lg">{competitorProfiles.reduce((sum, profile) => sum + Number(profile.latest_estimated_activity_seller_count ?? 0), 0)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Venta confirmada</span><strong className="mt-1 block text-lg">{competitorProfiles.reduce((sum, profile) => sum + Number(profile.latest_confirmed_sold_seller_count ?? 0), 0)}</strong></div>
         </div>
+        {competitorPriceRecommendations.length > 0 && <div className="mt-3 rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3">
+          <p className="font-black text-emerald-50">Recomendaciones de precio con ventas confirmadas</p>
+          <div className="mt-2 grid gap-2">
+            {competitorPriceRecommendations.slice(0, 3).map((entry) => {
+              const recommendation = entry.priceRecommendation ?? {}
+              const money = (amount: number | undefined) => typeof amount === "number"
+                ? `$${amount.toFixed(2)}` : "—"
+              return <article key={entry.id} className="rounded-xl bg-black/25 p-3 text-xs">
+                <p className="font-black text-white">Listing {entry.listingId} · SKU {entry.sku ?? "pendiente"}</p>
+                <p className="mt-1 text-white/70">Actual {money(recommendation.currentItemPrice)} → propuesta {money(recommendation.proposedItemPrice)} · referencia vendida {money(recommendation.confirmedSoldBenchmarkLandedPrice)}</p>
+                <p className="mt-1 text-white/55">{recommendation.confirmedSoldSellerCount ?? 0} vendedor(es) exacto(s) · {recommendation.confirmedSoldQuantity ?? 0} venta(s) · piso propio {money(recommendation.minimumSafeLandedPrice)} · utilidad {money(recommendation.proposedEstimatedNetProfit ?? undefined)} · margen {typeof recommendation.proposedEstimatedMarginPercent === "number" ? `${recommendation.proposedEstimatedMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.proposedEstimatedRoiPercent === "number" ? `${recommendation.proposedEstimatedRoiPercent.toFixed(2)}%` : "—"}</p>
+                <p className="mt-2 font-bold text-emerald-50">{entry.recommendedAction}</p>
+                <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Esperando revisión humana · WhatsApp encolado · ningún cambio aplicado</p>
+              </article>
+            })}
+          </div>
+        </div>}
         {researchRefreshProfiles.length > 0 && <div className="mt-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.08] p-3">
           <p className="font-black text-amber-50">Product Research recomendado · {researchRefreshProfiles.length} listing(s)</p>
           <p className="mt-1 text-xs leading-5 text-white/65">Actualizar una sola captura dirigida para confirmar si el nuevo competidor realmente vende. La recomendación tiene enfriamiento y no importa ni modifica nada automáticamente.</p>

@@ -141,6 +141,11 @@ type CommercialQuotaDependency = {
   endpoint: string
 }
 
+function jsonRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {}
+}
+
 function numeric(value: unknown) {
   if (value === null || value === undefined || value === "") return null
   const parsed = Number(value)
@@ -2318,6 +2323,7 @@ export async function runEbayCommercialMonitor(
           !verifiedIdentities.has(`${listing.ebay_item_id}:${listing.ebay_sku}`)) return []
         const supply = supplyForListing(listing, supplies)
         if (!supply || !listing.supplier_variant_id) return []
+        const supplyFresh = isFreshLunaSupplyEvidence(supply, observedAt)
         return [{
           listingId: listing.ebay_item_id,
           sku: listing.ebay_sku,
@@ -2335,6 +2341,10 @@ export async function runEbayCommercialMonitor(
             vendor: supply.vendor,
             productType: supply.product_type,
             metadata: supply.metadata,
+            unitCost: supplyFresh && supply.available === true
+              ? numeric(supply.price) : null,
+            costFresh: supplyFresh,
+            available: supply.available,
           },
         }]
       })
@@ -2370,7 +2380,11 @@ export async function runEbayCommercialMonitor(
             newSellers: competitorWork.newSellers,
             potentialSellers: competitorWork.potentialSellers,
             researchRefreshRecommendations: competitorWork.researchRefreshRecommendations,
+            confirmedSoldPriceRecommendations:
+              competitorWork.confirmedSoldPriceRecommendations,
             activeOfferTreatedAsConfirmedSale: false,
+            confirmedSoldPriceRequired: true,
+            ownCostFloorRequired: true,
             rawCompetitorContentStored: false,
             ebayWrites: 0,
           },
@@ -2919,8 +2933,8 @@ export async function getEbayCommercialMonitorDashboard(
   const [
     latestRun, latestDryRun, latestPersistentRun, latestCompleted, taskRows,
     outboxRows, divergenceRows, manualEvidenceRows, identityRows,
-    schedulerAuthorizationRow, optimizationEventRows, competitorProfileRows,
-    competitorScanRows,
+    schedulerAuthorizationRow, optimizationEventRows, competitorPriceEventRows,
+    competitorProfileRows, competitorScanRows,
   ] = await Promise.all([
     supabase.from("commercial_monitor_runs").select("*")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
@@ -2964,6 +2978,11 @@ export async function getEbayCommercialMonitorDashboard(
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
       .in("event_type", [...POST_PUBLICATION_OPTIMIZATION_EVENT_TYPES])
       .order("detected_at", { ascending: false }).limit(20),
+    supabase.from("commercial_alert_events")
+      .select("id,event_type,severity,evidence,detected_at,listing_id,sku,recommended_action")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .eq("event_type", "COMPETITOR_CONFIRMED_SOLD_PRICE_RECOMMENDATION")
+      .order("detected_at", { ascending: false }).limit(20),
     supabase.from("ebay_listing_competitor_watch_profiles")
       .select("listing_id,sku,last_scanned_at,baseline_completed_at,latest_active_offer_count,latest_active_seller_count,latest_estimated_activity_seller_count,latest_confirmed_sold_seller_count,latest_median_landed_price,latest_free_shipping_ratio,latest_returns_accepted_ratio,latest_multi_image_ratio,latest_evidence_class,latest_suggestion_codes,latest_suggested_terms,research_refresh_recommended,research_refresh_reason_codes,last_research_refresh_recommended_at")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
@@ -2976,7 +2995,8 @@ export async function getEbayCommercialMonitorDashboard(
   const firstError = latestRun.error ?? latestDryRun.error ?? latestPersistentRun.error ??
     latestCompleted.error ?? taskRows.error ?? outboxRows.error ?? divergenceRows.error ??
     manualEvidenceRows.error ?? identityRows.error ?? schedulerAuthorizationRow.error ??
-    optimizationEventRows.error ?? competitorProfileRows.error ?? competitorScanRows.error
+    optimizationEventRows.error ?? competitorPriceEventRows.error ??
+    competitorProfileRows.error ?? competitorScanRows.error
   if (firstError) throw new Error("COMMERCIAL_MONITOR_DASHBOARD_READ_FAILED")
   const readerLast = new Map<string, string>()
   for (const run of latestCompleted.data ?? []) {
@@ -3058,6 +3078,19 @@ export async function getEbayCommercialMonitorDashboard(
       status: (competitorProfileRows.data ?? []).length ? "ACTIVE" : "WAITING_BASELINE",
       profiles: competitorProfileRows.data ?? [],
       latestScans: competitorScanRows.data ?? [],
+      priceRecommendations: (competitorPriceEventRows.data ?? []).map((row) => ({
+        id: row.id,
+        eventType: row.event_type,
+        severity: row.severity,
+        listingId: row.listing_id,
+        sku: row.sku,
+        detectedAt: row.detected_at,
+        recommendedAction: row.recommended_action,
+        priceRecommendation: jsonRecord(jsonRecord(row.evidence).priceRecommendation),
+        status: "AWAITING_HUMAN_APPROVAL",
+        changeApplied: false,
+        whatsappEnqueued: true,
+      })),
       definitions: {
         activeOffer: "Oferta actualmente visible; no demuestra una venta.",
         estimatedActivity: "Señal estimada de eBay; no equivale a venta confirmada.",

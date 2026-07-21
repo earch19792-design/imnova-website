@@ -36,6 +36,9 @@ export type CompetitorWatchListingInput = {
     vendor: string | null
     productType: string | null
     metadata: JsonRecord | null
+    unitCost: number | null
+    costFresh: boolean
+    available: boolean | null
   } | null
 }
 
@@ -65,6 +68,10 @@ type ResearchObservationRow = {
   source_listing_reference_hash: string
   confirmed_sold_quantity: number
   last_sold_date: string
+  average_sold_price: number | string
+  average_shipping: number | string | null
+  free_shipping_percent: number | string | null
+  detected_offer_pack_count: number | null
 }
 
 function record(value: unknown): JsonRecord {
@@ -185,7 +192,7 @@ async function readResearchMatches(
   }
   const { data, error } = await supabase
     .from("marketplace_product_research_capture_observations")
-    .select("source_listing_reference_hash,confirmed_sold_quantity,last_sold_date")
+    .select("source_listing_reference_hash,confirmed_sold_quantity,last_sold_date,average_sold_price,average_shipping,free_shipping_percent,detected_offer_pack_count")
     .eq("marketplace_account_key", accountKey)
     .eq("marketplace", MARKETPLACE)
     .eq("match_classification", "EXACT_LUNA_MATCH")
@@ -197,7 +204,11 @@ async function readResearchMatches(
   const matches = new Map<string, ResearchObservationRow>()
   for (const row of (data ?? []) as ResearchObservationRow[]) {
     const existing = matches.get(row.source_listing_reference_hash)
-    if (!existing || row.confirmed_sold_quantity > existing.confirmed_sold_quantity) {
+    const currentSoldAt = Date.parse(row.last_sold_date)
+    const existingSoldAt = Date.parse(existing?.last_sold_date ?? "")
+    if (!existing || currentSoldAt > existingSoldAt ||
+      (currentSoldAt === existingSoldAt &&
+        row.confirmed_sold_quantity > existing.confirmed_sold_quantity)) {
       matches.set(row.source_listing_reference_hash, row)
     }
   }
@@ -360,6 +371,9 @@ async function persistOffers(input: {
 }
 
 function competitorEventKind(analysis: ReturnType<typeof buildCompetitorWatchAnalysis>) {
+  if (analysis.priceRecommendation) {
+    return "COMPETITOR_CONFIRMED_SOLD_PRICE_RECOMMENDATION"
+  }
   if (analysis.potentialSellerHashes.length) return "COMPETITOR_NEW_POTENTIAL_SELLER"
   if (analysis.newlyConfirmedOfferHashes.length) return "COMPETITOR_SOLD_EVIDENCE_CONFIRMED"
   return "COMPETITOR_PATTERN_SUGGESTION"
@@ -376,6 +390,7 @@ async function persistCompetitorAlert(input: {
     return { eventsCreated: 0, alertsGenerated: 0, duplicatesAvoided: 0 }
   }
   const eventType = competitorEventKind(input.analysis)
+  const priceRecommendation = input.analysis.priceRecommendation
   const deduplicationKey = stableCommercialKey(
     input.accountKey,
     eventType,
@@ -383,9 +398,25 @@ async function persistCompetitorAlert(input: {
     input.listing.sku,
     input.analysis.eventFingerprint,
   )
-  const recommendedAction = input.analysis.researchRefreshRecommended
-    ? "Actualizar una sola captura dirigida de Product Research para esta familia y confirmar ventas antes de modificar el listing."
-    : "Revisar la sugerencia comercial en Seller OS; no cambiar precio, título, imágenes ni políticas sin aprobación humana."
+  const priceActionLabels = {
+    RAISE_TO_CONFIRMED_SOLD_BAND: "Evaluar subir el precio a",
+    LOWER_TO_CONFIRMED_SOLD_BAND: "Evaluar bajar el precio a",
+    KEEP_PRICE_IN_CONFIRMED_SOLD_BAND: "Mantener el precio en",
+    DO_NOT_MATCH_BELOW_ECONOMIC_FLOOR:
+      "No igualar la referencia vendida; conservar o elevar el precio a",
+  } as const
+  const recommendedAction = priceRecommendation
+    ? `${priceActionLabels[priceRecommendation.action]} ` +
+      `$${priceRecommendation.proposedItemPrice.toFixed(2)}. Referencia vendida exacta: ` +
+      `$${priceRecommendation.confirmedSoldBenchmarkLandedPrice.toFixed(2)} total; ` +
+      `piso económico propio: $${priceRecommendation.minimumSafeLandedPrice.toFixed(2)}. ` +
+      `Utilidad estimada $${Number(priceRecommendation.proposedEstimatedNetProfit ?? 0).toFixed(2)}, ` +
+      `margen ${Number(priceRecommendation.proposedEstimatedMarginPercent ?? 0).toFixed(2)}% ` +
+      `y ROI ${Number(priceRecommendation.proposedEstimatedRoiPercent ?? 0).toFixed(2)}%. ` +
+      "Requiere revisión humana; no se modificó eBay."
+    : input.analysis.researchRefreshRecommended
+      ? "Actualizar una sola captura dirigida de Product Research para esta familia y confirmar ventas antes de modificar el listing."
+      : "Revisar la sugerencia comercial en Seller OS; no cambiar precio, título, imágenes ni políticas sin aprobación humana."
   const evidence = {
     evidenceClass: input.analysis.evidenceClass,
     activeSellerCount: input.analysis.activeSellerCount,
@@ -394,6 +425,10 @@ async function persistCompetitorAlert(input: {
     medianLandedPrice: input.analysis.medianLandedPrice,
     suggestionCodes: input.analysis.suggestionCodes,
     researchRefreshRecommended: input.analysis.researchRefreshRecommended,
+    priceRecommendation,
+    confirmedSoldPriceRecommendationReady: priceRecommendation !== null,
+    confirmedSoldPriceUsed: priceRecommendation !== null,
+    currentActiveOfferPriceUsedAsSoldPrice: false,
     activeOfferIsNotConfirmedSale: true,
     estimatedActivityIsNotConfirmedSale: true,
     rawCompetitorContentStored: false,
@@ -401,15 +436,24 @@ async function persistCompetitorAlert(input: {
     ebayWrites: 0,
   }
   const payload = {
-    title: input.analysis.researchRefreshRecommended
-      ? "Competidor potencial · refrescar Product Research"
-      : eventType === "COMPETITOR_SOLD_EVIDENCE_CONFIRMED"
-        ? "Competidor con venta confirmada en Research"
-        : "Nueva sugerencia del monitor de competencia",
-    summary: `Listing ${input.listing.listingId} · SKU ${input.listing.sku ?? "pendiente"}. ` +
-      `${input.analysis.potentialSellerHashes.length} vendedor(es) potencial(es) nuevo(s); ` +
-      `${input.analysis.newlyConfirmedOfferHashes.length} oferta(s) con venta confirmada. ` +
-      `Clase de evidencia: ${input.analysis.evidenceClass}.`,
+    title: priceRecommendation
+      ? "Recomendación de precio · competidor con venta confirmada"
+      : input.analysis.researchRefreshRecommended
+        ? "Competidor potencial · refrescar Product Research"
+        : eventType === "COMPETITOR_SOLD_EVIDENCE_CONFIRMED"
+          ? "Competidor con venta confirmada en Research"
+          : "Nueva sugerencia del monitor de competencia",
+    summary: priceRecommendation
+      ? `Listing ${input.listing.listingId} · SKU ${input.listing.sku ?? "pendiente"}. ` +
+        `Precio actual $${priceRecommendation.currentItemPrice.toFixed(2)}; ` +
+        `${priceRecommendation.confirmedSoldSellerCount} vendedor(es) exacto(s), ` +
+        `${priceRecommendation.confirmedSoldQuantity} venta(s) confirmada(s), ` +
+        `referencia total $${priceRecommendation.confirmedSoldBenchmarkLandedPrice.toFixed(2)}. ` +
+        `Confianza ${priceRecommendation.confidence}.`
+      : `Listing ${input.listing.listingId} · SKU ${input.listing.sku ?? "pendiente"}. ` +
+        `${input.analysis.potentialSellerHashes.length} vendedor(es) potencial(es) nuevo(s); ` +
+        `${input.analysis.newlyConfirmedOfferHashes.length} oferta(s) con venta confirmada. ` +
+        `Clase de evidencia: ${input.analysis.evidenceClass}.`,
     action: recommendedAction,
     classification: eventType,
   }
@@ -422,7 +466,8 @@ async function persistCompetitorAlert(input: {
       marketplace_account_key: input.accountKey,
       marketplace: MARKETPLACE,
       event_type: eventType,
-      severity: "medium",
+      severity: priceRecommendation && priceRecommendation.action !==
+        "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND" ? "high" : "medium",
       evidence,
       threshold_config_version: EBAY_COMPETITOR_WATCH_VERSION,
       detected_at: input.observedAt,
@@ -456,7 +501,8 @@ async function persistCompetitorAlert(input: {
     commercial_event_id: eventId,
     channel: "whatsapp",
     delivery_class: "immediate",
-    severity: "medium",
+    severity: priceRecommendation && priceRecommendation.action !==
+      "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND" ? "high" : "medium",
     deduplication_key: `whatsapp:${deduplicationKey}`,
     status: "pending",
     payload,
@@ -533,12 +579,20 @@ async function scanOneListing(input: {
   )
   const observations: CompetitorWatchObservation[] = scan.observations.map((entry) => {
     const research = researchMatches.get(entry.itemReferenceHash)
+    const soldItemPrice = numeric(research?.average_sold_price)
+    const soldShipping = numeric(research?.average_shipping) ??
+      (numeric(research?.free_shipping_percent) === 100 ? 0 : null)
     return research
       ? {
           ...entry,
           evidenceClass: "CONFIRMED_SOLD_HISTORY" as const,
           confirmedSoldQuantity: research.confirmed_sold_quantity,
           confirmedSoldLastDate: research.last_sold_date,
+          confirmedSoldItemPrice: soldItemPrice,
+          confirmedSoldShippingCost: soldShipping,
+          confirmedSoldLandedPrice: soldItemPrice !== null && soldShipping !== null
+            ? Number((soldItemPrice + soldShipping).toFixed(2)) : null,
+          confirmedSoldOfferPackCount: research.detected_offer_pack_count,
         }
       : entry
   })
@@ -548,10 +602,19 @@ async function scanOneListing(input: {
     previousOffers: previousRows.map(previousOffer),
     baselineExists: baselineHistoryComplete,
     ownListing: {
+      itemPrice: input.listing.price,
       landedPrice: input.listing.price === null
         ? null
         : Number((input.listing.price + (shippingCost ?? 0)).toFixed(2)),
       shippingCost,
+      packQuantity: extractPackQuantity([
+        input.listing.supply?.title,
+        input.listing.supply?.variantTitle,
+        input.listing.title,
+      ].filter(Boolean).join(" ")),
+      supplierUnitCost: input.listing.supply?.unitCost ?? null,
+      supplierCostFresh: input.listing.supply?.costFresh === true,
+      supplierAvailable: input.listing.supply?.available ?? null,
       returnsAccepted: ownReturnsAccepted(input.listing.rawPayload),
       imageCount: ownImageCount(input.listing.rawPayload),
       title: input.listing.title,
@@ -673,6 +736,8 @@ export async function monitorEbayListingCompetitors(input: {
       sum + analysis.potentialSellerHashes.length, 0),
     researchRefreshRecommendations: analyses.filter((analysis) =>
       analysis.researchRefreshRecommended).length,
+    confirmedSoldPriceRecommendations: analyses.filter((analysis) =>
+      analysis.priceRecommendation !== null).length,
     eventsCreated: results.reduce((sum, result) => sum + (result.alert?.eventsCreated ?? 0), 0),
     alertsGenerated: results.reduce((sum, result) => sum + (result.alert?.alertsGenerated ?? 0), 0),
     duplicatesAvoided: results.reduce((sum, result) =>
@@ -685,6 +750,8 @@ export async function monitorEbayListingCompetitors(input: {
       competitorImagesDownloaded: false,
       activeOfferTreatedAsConfirmedSale: false,
       automaticProductResearchImport: false,
+      confirmedSoldPriceRequired: true,
+      ownCostFloorRequired: true,
       automaticEbayMutation: false,
       ebayWrites: 0,
     },
