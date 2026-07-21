@@ -39,16 +39,29 @@ function priorityLabel(value: OutboxRow["severity"]) {
   return "SEÑAL INFORMATIVA"
 }
 
+// Meta validates the fully hydrated template body, not each variable in
+// isolation. The approved Spanish template contains a substantial amount of
+// static copy, so 500 characters for both summary and action can exceed the
+// provider body limit (META_132005). These budgets keep the whole message
+// below that limit while preserving the action URL, which is deliberately
+// stored first in actionable payloads.
+const WHATSAPP_TEMPLATE_TEXT_BUDGET = {
+  priority: 40,
+  title: 90,
+  summary: 220,
+  action: 300,
+} as const
+
 export function renderCommercialWhatsAppMessage(row: OutboxRow): SellerWhatsAppTemplateMessage {
   if (containsPrivateBuyerData(row.payload)) {
     throw new Error("COMMERCIAL_ALERT_PRIVATE_BUYER_DATA_BLOCKED")
   }
   return {
     deliveryClass: row.delivery_class === "digest" ? "digest" : "immediate",
-    priorityLabel: priorityLabel(row.severity),
-    title: text(row.payload.title, 120),
-    summary: text(row.payload.summary, 500),
-    action: text(row.payload.action, 500),
+    priorityLabel: text(priorityLabel(row.severity), WHATSAPP_TEMPLATE_TEXT_BUDGET.priority),
+    title: text(row.payload.title, WHATSAPP_TEMPLATE_TEXT_BUDGET.title),
+    summary: text(row.payload.summary, WHATSAPP_TEMPLATE_TEXT_BUDGET.summary),
+    action: text(row.payload.action, WHATSAPP_TEMPLATE_TEXT_BUDGET.action),
   }
 }
 
