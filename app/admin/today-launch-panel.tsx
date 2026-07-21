@@ -575,6 +575,8 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
     "CONTROLLED_EXPLORATORY_TEST"
   const controlledRiskActiveMarket =
     pricingRecommendation.controlledRiskActiveMarketFallbackUsed === true
+  const nonCompetitiveControlledRisk =
+    pricingRecommendation.nonCompetitiveControlledRiskOverrideAvailable === true
   const controlledExploratoryPricing = controlledExploratoryTest &&
     pricingRecommendation.controlledExploratoryFloorUsed === true
   const marketRecommendationReady = Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0 && (
@@ -811,6 +813,8 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
     {task.gate_type === "PRODUCT_APPROVAL_REQUIRED" && <div className="mt-4 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm text-cyan-50">
       <p>{controlledRiskActiveMarket
         ? "El piso normal quedó por encima del mercado, pero la prueba excepcional conserva al menos 10% de margen sin publicidad y entra en la banda equivalente activa."
+        : nonCompetitiveControlledRisk
+        ? "NO RECOMENDADO: incluso el precio excepcional con 10% de margen queda por encima del mercado. Seller OS no lo bloquea, pero sólo permite continuar por decisión humana expresa, cantidad 1, sin publicidad y con monitoreo."
         : controlledExploratoryPricing
         ? "La búsqueda histórica terminó sin ventas exactas confirmadas. Seller OS calculó el piso propio y usó sólo la muestra agregada equivalente disponible; esta oferta comienza como prueba comercial controlada."
         : "La identidad y la ficha técnica pasaron. Seller OS calculó primero el piso económico propio y después comparó la presentación equivalente contra Product Research y Sell Similar."}</p>
@@ -821,6 +825,8 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
         <label className="text-xs font-bold">{marketRecommendationReady
           ? controlledRiskActiveMarket
             ? "Precio competitivo excepcional · margen mínimo 10%"
+            : nonCompetitiveControlledRisk
+              ? "Precio mínimo excepcional · NO COMPETITIVO"
             : controlledExploratoryPricing ? "Precio inicial de prueba calculado por costos" : "Precio recomendado por Seller OS"
           : "Precio pendiente de validación"} <span className="text-red-200">*</span>
           <input value={salePrice} onChange={(event) => setSalePrice(event.target.value)} inputMode="decimal" disabled={!marketRecommendationReady} aria-required="true" aria-invalid={salePriceMissing} aria-describedby={`${fieldId}-sale-price-help`} className={`mt-1 min-h-11 w-full rounded-xl border bg-black/30 px-3 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${salePriceMissing ? "border-red-400" : "border-white/15"}`} />
@@ -828,6 +834,8 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
             ? "Seller OS todavía no tiene costos suficientes para proponer un precio seguro."
             : controlledRiskActiveMarket
               ? "Dentro del rango activo equivalente. No hay margen para aplicar promoción: Promoted Listings queda bloqueado en 0% y el monitoreo es obligatorio."
+            : nonCompetitiveControlledRisk
+              ? "Queda por encima del mercado observado. Es una excepción comercial no recomendada; conserva 10% mínimo, cantidad 1, publicidad 0% y monitoreo obligatorio."
             : controlledExploratoryPricing
               ? "No se presenta como precio de mercado: parte del piso rentable propio, requiere tu aprobación, cantidad inicial 1 y monitoreo."
               : "Recomendación precargada. Puedes ajustarla antes de aprobar; el servidor volverá a comprobar utilidad, ROI y margen."}</span>
@@ -852,14 +860,14 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
           <span><strong>Autorizo hasta 1 llamada OpenAI de calidad low.</strong> Se utilizará únicamente para un fondo contextual seguro; el producto autorizado se compondrá localmente y las seis imágenes requerirán mi revisión.</span>
         </label>
       </fieldset>
-      {controlledRiskActiveMarket && <label className={`mt-3 flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${noPromotionConfirmed ? "border-emerald-200/25 text-emerald-50" : "border-red-300/30 text-red-100"}`}>
+      {(controlledRiskActiveMarket || nonCompetitiveControlledRisk) && <label className={`mt-3 flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${noPromotionConfirmed ? "border-emerald-200/25 text-emerald-50" : "border-red-300/30 text-red-100"}`}>
         <input type="checkbox" checked={noPromotionConfirmed}
           onChange={(event) => setNoPromotionConfirmed(event.target.checked)}
           className="mt-1 h-5 w-5 shrink-0 accent-emerald-200" />
-        <span><strong>Confirmo prueba sin promoción.</strong> No hay margen para aplicar promoción. El margen excepcional de 10% sólo es válido con Promoted Listings y cualquier otra publicidad en 0%; el listing queda con cantidad 1, monitoreo y autorización humana para cambios posteriores.</span>
+        <span><strong>{nonCompetitiveControlledRisk ? "Acepto continuar aunque no es competitivo." : "Confirmo prueba sin promoción."}</strong> No hay margen para aplicar promoción. El margen excepcional de 10% sólo es válido con Promoted Listings y cualquier otra publicidad en 0%; el listing queda con cantidad 1, monitoreo y autorización humana para cambios posteriores.</span>
       </label>}
       <div className="mt-3 flex flex-wrap gap-3">
-        <button type="button" disabled={working || salePriceMissing || !fulfillmentBasis || !imageRightsConfirmed || !openAiImageSpendApproved || (controlledRiskActiveMarket && !noPromotionConfirmed)} onClick={() => void onConfirm({ action: "product_decision", taskId: task.id, decision: "APPROVE", salePrice: Number(salePrice), fulfillmentBasis, imageRightsConfirmed, openAiImageSpendApproved, noPromotionConfirmed })} className="min-h-12 w-full rounded-xl bg-cyan-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 disabled:opacity-40 sm:w-auto">{controlledRiskActiveMarket ? "APROBAR PRUEBA 10% · SIN PROMOCIÓN" : controlledExploratoryPricing ? "APROBAR PRUEBA CONTROLADA · CANTIDAD 1" : "APROBAR PRODUCTO CON MERCADO VALIDADO"}</button>
+        <button type="button" disabled={working || salePriceMissing || !fulfillmentBasis || !imageRightsConfirmed || !openAiImageSpendApproved || ((controlledRiskActiveMarket || nonCompetitiveControlledRisk) && !noPromotionConfirmed)} onClick={() => void onConfirm({ action: "product_decision", taskId: task.id, decision: "APPROVE", salePrice: Number(salePrice), fulfillmentBasis, imageRightsConfirmed, openAiImageSpendApproved, noPromotionConfirmed })} className="min-h-12 w-full rounded-xl bg-cyan-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 disabled:opacity-40 sm:w-auto">{nonCompetitiveControlledRisk ? "CONTINUAR BAJO MI RESPONSABILIDAD · SIN PROMOCIÓN" : controlledRiskActiveMarket ? "APROBAR PRUEBA 10% · SIN PROMOCIÓN" : controlledExploratoryPricing ? "APROBAR PRUEBA CONTROLADA · CANTIDAD 1" : "APROBAR PRODUCTO CON MERCADO VALIDADO"}</button>
         <button type="button" disabled={working} onClick={() => void onConfirm({ action: "product_decision", taskId: task.id, decision: "REJECT" })} className="min-h-12 w-full rounded-xl border border-red-300/35 px-4 font-black text-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-200 disabled:opacity-40 sm:w-auto">RECHAZAR</button>
       </div>
       {candidate?.economics_summary?.minimumOperatorPrice && <p className="mt-2 text-xs text-white/60">Piso interno estimado con costo y reservas propias: ${Number(candidate.economics_summary.minimumOperatorPrice).toFixed(2)}. Debe validarse con el precio que tú apruebes.</p>}
@@ -966,6 +974,8 @@ function MarketPriceReference({ candidate }: { candidate?: Row }) {
     recommendation.controlledExploratoryFloorUsed === true
   const controlledRiskActiveMarket =
     recommendation.controlledRiskActiveMarketFallbackUsed === true
+  const nonCompetitiveControlledRisk =
+    recommendation.nonCompetitiveControlledRiskOverrideAvailable === true
   if ((Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0) ||
     (Number.isFinite(ownCostFloor) && ownCostFloor > 0)) {
     const market = recommendation.marketReference ?? {}
@@ -1002,7 +1012,7 @@ function MarketPriceReference({ candidate }: { candidate?: Row }) {
       <p className="font-black">DECISIÓN ESTRATÉGICA AUTOMÁTICA</p>
       <div className="mt-2 grid gap-2 sm:grid-cols-5">
         <Metric label="Piso propio" value={Number.isFinite(ownCostFloor) ? `$${ownCostFloor.toFixed(2)}` : "N/D"} />
-        <Metric label={controlledRiskActiveMarket ? "Precio excepcional 10%" : controlledExploratoryFloorUsed ? "Precio inicial de prueba" : "Precio recomendado"} value={(marketReferenceUsed || controlledExploratoryFloorUsed) && Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0 ? `$${recommendedSalePrice.toFixed(2)}` : "PENDIENTE"} />
+        <Metric label={controlledRiskActiveMarket ? "Precio excepcional 10%" : nonCompetitiveControlledRisk ? "Precio excepcional no competitivo" : controlledExploratoryFloorUsed ? "Precio inicial de prueba" : "Precio recomendado"} value={(marketReferenceUsed || controlledExploratoryFloorUsed) && Number.isFinite(recommendedSalePrice) && recommendedSalePrice > 0 ? `$${recommendedSalePrice.toFixed(2)}` : "PENDIENTE"} />
         <Metric label="Mediana equivalente" value={Number.isFinite(marketMedian) ? `$${marketMedian.toFixed(2)}` : "N/D"} />
         <Metric label="Rango de mercado" value={Number.isFinite(marketMinimum) && Number.isFinite(marketMaximum) ? `$${marketMinimum.toFixed(2)}–$${marketMaximum.toFixed(2)}` : "N/D"} />
         <Metric label="Presentación evaluada" value={recommendation.recommendedPackCount ? `${recommendation.recommendedPackCount} unidad(es)` : "N/D"} />
@@ -1011,6 +1021,7 @@ function MarketPriceReference({ candidate }: { candidate?: Row }) {
       <p className="mt-1 text-cyan-100/70">Fuente: {sourceLabel} · muestra {Number(market.sampleSize ?? 0)} · vendedores {Number(market.sellerCount ?? 0)} · confianza {String(market.confidence ?? "limitada").toLowerCase()}. Se usa el agregado; nunca el precio de un vendedor individual.</p>
       {excludedOutlierCount > 0 && <p className="mt-1 text-cyan-100/65">Seller OS excluyó {excludedOutlierCount} oferta(s) activa(s) atípica(s) del rango competitivo. La evidencia permanece auditada, pero no puede distorsionar el precio recomendado.</p>}
       {controlledRiskActiveMarket && <p className="mt-2 rounded-lg border border-amber-200/30 bg-amber-200/[0.07] p-2 font-bold text-amber-50">El piso normal no compite. La única ventana viable usa margen neto mínimo 10%, publicidad 0%, cantidad 1, monitoreo y aprobación humana para cada cambio. No hay margen para aplicar promoción.</p>}
+      {nonCompetitiveControlledRisk && <p className="mt-2 rounded-lg border border-red-300/35 bg-red-300/[0.08] p-2 font-bold text-red-100">NO RECOMENDADO: incluso el piso excepcional de 10% queda por encima del mercado equivalente. Puedes continuar expresamente, pero Seller OS fija publicidad en 0%, cantidad 1 y monitoreo; nunca lo aprobará de forma automática.</p>}
       {controlledRiskActiveMarket && Number(recommendation.competitiveTolerancePercent) > 0 && <p className="mt-1 text-amber-100/70">El precio excepcional entra en la tolerancia competitiva agregada de hasta {Number(recommendation.competitiveTolerancePercent).toFixed(0)}%; si la supera, Seller OS no autoriza la prueba.</p>}
       {!marketReferenceUsed && controlledExploratoryFloorUsed && <p className="mt-2 rounded-lg border border-violet-200/30 bg-violet-200/[0.07] p-2 font-bold text-violet-50">No apareció una referencia equivalente suficiente. Esto no bloquea el producto: ${ownCostFloor.toFixed(2)} será el precio inicial calculado por costos, sujeto a aprobación humana, cantidad 1 y monitoreo comercial.</p>}
       {!marketReferenceUsed && !controlledExploratoryFloorUsed && <p className="mt-2 rounded-lg border border-red-300/30 bg-red-300/[0.07] p-2 font-bold text-red-100">El piso de ${ownCostFloor.toFixed(2)} es sólo una referencia económica provisional. Faltan identidad, evidencia o costos suficientes para habilitar una prueba controlada.</p>}

@@ -3823,7 +3823,16 @@ export async function decideSameDayProduct(input: {
     pricingRecommendation.promotionAllowed === false &&
     number(pricingRecommendation.minimumNetMarginPercent) === 10 &&
     Number(candidate.listing_quantity) === 1
-  if (controlledRiskActiveMarketReady && input.noPromotionConfirmed !== true) {
+  const nonCompetitiveControlledRiskReady =
+    pricingRecommendation.nonCompetitiveControlledRiskOverrideAvailable === true &&
+    pricingRecommendation.status === "OWN_COST_FLOOR_ABOVE_MARKET" &&
+    pricingRecommendation.marketReferenceUsed === true &&
+    pricingRecommendation.promotionAllowed === false &&
+    number(pricingRecommendation.minimumNetMarginPercent) === 10 &&
+    Number(candidate.listing_quantity) === 1
+  const controlledRiskOperatorOverrideReady = controlledRiskActiveMarketReady ||
+    nonCompetitiveControlledRiskReady
+  if (controlledRiskOperatorOverrideReady && input.noPromotionConfirmed !== true) {
     throw new Error("SAME_DAY_PILOT_CONTROLLED_RISK_NO_PROMOTION_CONFIRMATION_REQUIRED")
   }
   if (!(number(pricingRecommendation.recommendedSalePrice) ?? 0) ||
@@ -3846,7 +3855,7 @@ export async function decideSameDayProduct(input: {
   if (factsSummary.currentRunBound !== true || record(factsSummary.gates).OPENAI_INPUT_READY !== true) {
     throw new Error("SAME_DAY_PILOT_PRODUCT_FACTS_APPROVAL_BLOCKED")
   }
-  const economicsConfig = controlledRiskActiveMarketReady
+  const economicsConfig = controlledRiskOperatorOverrideReady
     ? controlledRiskEconomicsConfig(ebayDraftOnlyEconomicsConfig())
     : ebayDraftOnlyEconomicsConfig()
   const economics = calculateEbayUnitEconomics({ salePrice, supplierCost }, economicsConfig)
@@ -3868,12 +3877,14 @@ export async function decideSameDayProduct(input: {
     openAiImageMaximumCallsApproved: 1,
     openAiImageQualityApproved: "low",
     controlledExploratoryTestApproved: controlledTestPriceReady,
-    commercialMonitorRequired: controlledTestPriceReady || controlledRiskActiveMarketReady,
-    controlledRiskOverride: controlledRiskActiveMarketReady ? {
+    commercialMonitorRequired: controlledTestPriceReady || controlledRiskOperatorOverrideReady,
+    controlledRiskOverride: controlledRiskOperatorOverrideReady ? {
       authorized: true,
       version: EBAY_CONTROLLED_RISK_OVERRIDE_VERSION,
       authorizedAt: operatorApprovedAt,
-      evidenceBasis: "FRESH_EQUIVALENT_PACK_ACTIVE_MULTI_SELLER_MARKET",
+      evidenceBasis: nonCompetitiveControlledRiskReady
+        ? "NON_COMPETITIVE_EQUIVALENT_PACK_ACTIVE_MULTI_SELLER_MARKET_OPERATOR_EXCEPTION"
+        : "FRESH_EQUIVALENT_PACK_ACTIVE_MULTI_SELLER_MARKET",
       minimumNetMarginPercent: 10,
       minimumRiskPrice: pricingRecommendation.controlledRiskMinimumPrice,
       maximumCompetitivePrice: record(pricingRecommendation.marketReference).maximumPrice,
@@ -3887,6 +3898,7 @@ export async function decideSameDayProduct(input: {
       finalHumanAuthorizationRequired: true,
       sellerOsPublicationAfterAuthorization: true,
       unattendedPublicationAllowed: false,
+      commerciallyRecommended: !nonCompetitiveControlledRiskReady,
       ebayWrites: 0,
     } : null,
     fulfillmentDocumentsStored: false, fulfillmentPiiStored: false }
@@ -3896,7 +3908,8 @@ export async function decideSameDayProduct(input: {
     reasonCode: "OPENAI_SKIPPED_MANUAL_FACTS_ONLY", triggeredBy: "USER",
     checkpoint: { operatorPriceApproved: true, automaticPricingUsed: false, fulfillmentBasis,
       imageRightsConfirmed: true, openAiImageSpendApproved: true,
-      noPromotionConfirmed: controlledRiskActiveMarketReady,
+      noPromotionConfirmed: controlledRiskOperatorOverrideReady,
+      nonCompetitiveOperatorException: nonCompetitiveControlledRiskReady,
       openAiImageMaximumCallsApproved: 1 },
     candidatePatch: { economicsSummary },
     nextAutomaticAction: "Construir un paquete original desde facts verificados.", nextHumanAction: "Ninguna.",

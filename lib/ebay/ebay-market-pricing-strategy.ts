@@ -412,13 +412,19 @@ export function buildEbayMarketPricingRecommendation(input: {
     ownCostFloorAboveMarket && controlledRiskPrice !== null &&
     competitiveCeilingPrice !== null && controlledRiskPrice <= competitiveCeilingPrice,
   )
+  const nonCompetitiveControlledRiskOverrideAvailable = Boolean(
+    ownCostFloorAboveMarket && !controlledRiskActiveMarketFallbackUsed &&
+    controlledRiskPrice !== null && marketReference,
+  )
   const recommendedSalePrice = floor === null
     ? null
     : marketReference
       ? controlledRiskActiveMarketFallbackUsed
         ? moneyUp(Math.max(controlledRiskPrice!, marketReference.medianPrice))
         : ownCostFloorAboveMarket
-        ? null
+        ? nonCompetitiveControlledRiskOverrideAvailable
+          ? controlledRiskPrice
+          : null
         : moneyUp(Math.max(floor, marketReference.medianPrice))
       : controlledExploratoryFloorUsed
         ? provisionalFloorPrice
@@ -490,14 +496,18 @@ export function buildEbayMarketPricingRecommendation(input: {
     marketReferenceUsed: Boolean(marketReference),
     controlledExploratoryFloorUsed,
     controlledRiskActiveMarketFallbackUsed,
+    nonCompetitiveControlledRiskOverrideAvailable,
     controlledRiskMinimumPrice: controlledRiskPrice,
     competitiveCeilingPrice,
     competitiveTolerancePercent: marketReference
       ? ACTIVE_MARKET_COMPETITIVE_TOLERANCE_RATE * 100
       : null,
-    promotionAllowed: controlledRiskActiveMarketFallbackUsed ? false : null,
-    promotedListingsReserveRate: controlledRiskActiveMarketFallbackUsed ? 0 : null,
-    minimumNetMarginPercent: controlledRiskActiveMarketFallbackUsed ? 10 : null,
+    promotionAllowed: controlledRiskActiveMarketFallbackUsed ||
+      nonCompetitiveControlledRiskOverrideAvailable ? false : null,
+    promotedListingsReserveRate: controlledRiskActiveMarketFallbackUsed ||
+      nonCompetitiveControlledRiskOverrideAvailable ? 0 : null,
+    minimumNetMarginPercent: controlledRiskActiveMarketFallbackUsed ||
+      nonCompetitiveControlledRiskOverrideAvailable ? 10 : null,
     marketReference: marketReference ?? null,
     recommendedPackCount,
     relatedPackStrategy: relatedPackCount && relatedPackCount !== recommendedPackCount
@@ -537,7 +547,9 @@ export function buildEbayMarketPricingRecommendation(input: {
       ? controlledRiskActiveMarketFallbackUsed
         ? "TEN_PERCENT_FLOOR_WITHOUT_PROMOTION_INSIDE_EQUIVALENT_MARKET_RANGE"
         : ownCostFloorAboveMarket
-        ? "OWN_COST_FLOOR_ABOVE_EQUIVALENT_PACK_MARKET_MAXIMUM"
+        ? nonCompetitiveControlledRiskOverrideAvailable
+          ? "TEN_PERCENT_FLOOR_WITHOUT_PROMOTION_ABOVE_EQUIVALENT_MARKET_RANGE_OPERATOR_ONLY"
+          : "OWN_COST_FLOOR_ABOVE_EQUIVALENT_PACK_MARKET_MAXIMUM"
         : "OWN_COST_FLOOR_THEN_EQUIVALENT_PACK_MARKET_MEDIAN"
       : controlledExploratoryFloorUsed
         ? "OWN_COST_FLOOR_CONTROLLED_TEST_QUANTITY_ONE"
