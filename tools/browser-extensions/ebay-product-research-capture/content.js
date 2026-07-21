@@ -21,6 +21,10 @@
   const MAX_COORDINATE_CONTAINERS = 6
   const MAX_FALLBACK_HEADERS = 200
   const MAX_FALLBACK_CONTAINERS = 80
+  const VISUAL_FALLBACK_BATCH_SIZE = 5
+  const VISUAL_FALLBACK_LIMIT = 20
+  const VISUAL_FALLBACK_MESSAGE_TIMEOUT_MS = 2_500
+  const VISUAL_FALLBACK_TOTAL_BUDGET_MS = 12_000
   const REQUIRED_FIELDS = ["temporaryTitle", "averageSoldPrice", "totalSold", "lastSoldDate"]
   const HEADER_SELECTOR = [
     "th", '[role="columnheader"]', '[data-testid*="header" i]',
@@ -1007,16 +1011,40 @@
     }
   }
 
+  async function boundedVisualFallbackAnalysis(imageUrl, timeoutMs) {
+    let timeout = null
+    try {
+      return await Promise.race([
+        chrome.runtime.sendMessage({
+          type: ANALYZE_THUMBNAIL_MESSAGE,
+          imageUrl,
+        }),
+        new Promise((resolve) => {
+          timeout = window.setTimeout(() => resolve(null), timeoutMs)
+        }),
+      ])
+    } finally {
+      if (timeout) window.clearTimeout(timeout)
+    }
+  }
+
   async function enrichVisualFallbacks(fallbacks) {
     let analyzed = 0
-    for (let offset = 0; offset < fallbacks.length; offset += 5) {
-      const group = fallbacks.slice(offset, offset + 5)
+    const startedAt = performance.now()
+    const eligible = fallbacks.slice(0, VISUAL_FALLBACK_LIMIT)
+    for (let offset = 0; offset < eligible.length; offset += VISUAL_FALLBACK_BATCH_SIZE) {
+      const remainingBudget = VISUAL_FALLBACK_TOTAL_BUDGET_MS -
+        (performance.now() - startedAt)
+      if (remainingBudget <= 0) break
+      const messageTimeout = Math.max(250, Math.min(
+        VISUAL_FALLBACK_MESSAGE_TIMEOUT_MS, remainingBudget,
+      ))
+      const group = eligible.slice(offset, offset + VISUAL_FALLBACK_BATCH_SIZE)
       const results = await Promise.all(group.map(async (fallback) => {
         try {
-          const response = await chrome.runtime.sendMessage({
-            type: ANALYZE_THUMBNAIL_MESSAGE,
-            imageUrl: fallback.imageUrl,
-          })
+          const response = await boundedVisualFallbackAnalysis(
+            fallback.imageUrl, messageTimeout,
+          )
           const enriched = response?.success
             ? visualPatternFromStats(fallback.pattern, fallback.facts, response.stats)
             : fallback.pattern
@@ -1031,6 +1059,7 @@
       }))
       analyzed += results.filter(Boolean).length
     }
+    for (const fallback of fallbacks) delete fallback.imageUrl
     fallbacks.length = 0
     return analyzed
   }
@@ -1894,7 +1923,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.9"
+  title.textContent = "Seller OS · Product Research · v1.2.10"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"

@@ -9,9 +9,9 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Ejecuta una búsqueda y usa **Capturar y continuar**.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.9.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.10.
 
-## Consulta guiada, sesión de lote y patrones locales (v1.2.9)
+## Consulta guiada, sesión de lote y patrones locales (v1.2.10)
 
 Seller OS puede abrir Product Research con una consulta preparada en el fragmento
 local de la URL. La extensión aplica la consulta automáticamente y el usuario sólo
@@ -33,7 +33,7 @@ nunca inicia sesión automáticamente. Si eBay recarga la página, conserva en e
 local la consulta y una huella SHA-256 no reconstructiva de la tabla anterior; no guarda
 Item IDs ni filas en storage y sólo reactiva la captura cuando prueba que los resultados cambiaron.
 
-La versión 1.2.9 conserva sin cambios la validación estricta de v1.2.8 para las columnas de unidades vendidas y fecha de
+La versión 1.2.10 conserva sin cambios la validación estricta y el contrato tabular de v1.2.9. El análisis visual remoto queda limitado a 20 miniaturas y a un presupuesto total de 12 segundos; cualquier miniatura lenta queda como `UNKNOWN` y la captura comercial continúa. La versión mantiene además las mismas reglas de v1.2.8 para las columnas de unidades vendidas y fecha de
 última venta. Un precio nunca puede convertirse en cantidad y una fecha numérica ambigua
 no puede convertirse en evidencia histórica; Seller OS rechaza además cualquier venta fuera
 de la ventana visible autorizada.
