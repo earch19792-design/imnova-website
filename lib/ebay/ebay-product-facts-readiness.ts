@@ -7,7 +7,7 @@ import { createHash } from "node:crypto"
  * estimated fulfilment value from accidentally becoming listing copy.
  */
 export const PRODUCT_FACTS_SCHEMA_VERSION = "PRODUCT_FACTS_V1_2026_07_17"
-export const PRODUCT_FACTS_RESOLVER_VERSION = "PRODUCT_FACTS_RESOLVER_V5_2026_07_21"
+export const PRODUCT_FACTS_RESOLVER_VERSION = "PRODUCT_FACTS_RESOLVER_V6_2026_07_21"
 export const SHIPPING_ESTIMATION_MODEL_VERSION = "SHIPPING_ESTIMATE_V1_2026_07_17"
 export const OPENAI_FACTS_INPUT_VERSION = "OPENAI_FACTS_INPUT_V2_2026_07_19"
 export const AUTHORITATIVE_FACT_SOURCE_POLICY = "TECHNICAL_AUTHORITY_ONLY_V2_2026_07_19"
@@ -337,11 +337,58 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
     // A single value visibly confirmed from the exact product label resolves
     // older supplier/catalog disagreement. Conflicting label confirmations
     // remain fail-closed.
-    const resolutionCandidates = exactLabelValues.size === 1
-      ? preliminaryCandidates.filter((entry) => exactLabelValues.has(
+    const authoritativeCandidates = preliminaryCandidates.filter((entry) =>
+      entry.verificationStatus === "DERIVED_VERIFIED"
+        ? authorizedDerivation(entry)
+        : TECHNICAL_AUTHORITY_SOURCES.has(entry.sourceType))
+    const authoritativeValues = new Set(authoritativeCandidates.map((entry) =>
+      valueKey(entry.normalizedValue, entry.normalizedUnit)))
+    // An exact supplier/manufacturer/label fact must not be invalidated by a
+    // seller who populated an eBay item specific with a different semantic
+    // meaning (for example Unit Quantity=2 for a two-pack versus one physical
+    // unit per supplier presentation). Multiple technical authorities that
+    // disagree still fail closed.
+    let resolutionCandidates = authoritativeValues.size === 1
+      ? preliminaryCandidates.filter((entry) => authoritativeValues.has(
           valueKey(entry.normalizedValue, entry.normalizedUnit),
         ))
-      : preliminaryCandidates
+      : exactLabelValues.size === 1
+        ? preliminaryCandidates.filter((entry) => exactLabelValues.has(
+            valueKey(entry.normalizedValue, entry.normalizedUnit),
+          ))
+        : preliminaryCandidates
+    const critical = CRITICAL_CONFLICT_KEYS.has(key(first.factKey))
+    let exactComparableMajorityUsed = false
+    if (critical && authoritativeValues.size === 0 && exactLabelValues.size === 0) {
+      const comparableCandidates = preliminaryCandidates.filter((entry) =>
+        entry.verificationStatus === "CORROBORATED" &&
+        ["EBAY_BROWSE_OFFICIAL_READONLY", "EBAY_TRADING_GET_ITEM_READONLY"].includes(entry.sourceType))
+      const sourceMajorities = ["EBAY_BROWSE_OFFICIAL_READONLY", "EBAY_TRADING_GET_ITEM_READONLY"]
+        .map((sourceType) => {
+          const sourceCandidates = comparableCandidates.filter((entry) => entry.sourceType === sourceType)
+          const comparableGroups = new Map<string, FactObservation[]>()
+          for (const entry of sourceCandidates) {
+            const entryKey = valueKey(entry.normalizedValue, entry.normalizedUnit)
+            comparableGroups.set(entryKey, [...(comparableGroups.get(entryKey) ?? []), entry])
+          }
+          const ranked = [...comparableGroups.entries()].map(([value, entries]) => ({
+            value,
+            sellers: new Set(entries.map((entry) => entry.sourceReference)).size,
+          })).sort((left, right) => right.sellers - left.sellers)
+          const totalSellers = new Set(sourceCandidates.map((entry) => entry.sourceReference)).size
+          return (ranked[0]?.sellers ?? 0) >= 2 &&
+            (ranked[0]?.sellers ?? 0) > (ranked[1]?.sellers ?? 0) &&
+            (ranked[0]?.sellers ?? 0) / Math.max(1, totalSellers) >= 2 / 3
+            ? ranked[0] : null
+        }).filter((entry): entry is { value: string; sellers: number } => Boolean(entry))
+        .sort((left, right) => right.sellers - left.sellers)
+      if (sourceMajorities[0] && sourceMajorities.every((entry) =>
+        entry.value === sourceMajorities[0].value)) {
+        resolutionCandidates = preliminaryCandidates.filter((entry) =>
+          valueKey(entry.normalizedValue, entry.normalizedUnit) === sourceMajorities[0].value)
+        exactComparableMajorityUsed = true
+      }
+    }
     const comparable = resolutionCandidates.filter((entry) =>
       entry.normalizedValue !== null && entry.normalizedValue !== "")
     const valueGroups = new Map<string, FactObservation[]>()
@@ -349,7 +396,6 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
       const entryKey = valueKey(entry.normalizedValue, entry.normalizedUnit)
       valueGroups.set(entryKey, [...(valueGroups.get(entryKey) ?? []), entry])
     }
-    const critical = CRITICAL_CONFLICT_KEYS.has(key(first.factKey))
     if (critical && valueGroups.size > 1) {
       const conflicting = [...valueGroups.values()].flat()
       facts.push({ factScope: first.factScope, factKey: first.factKey, selectedValue: null,
@@ -385,8 +431,9 @@ export function resolveProductFacts(observations: FactObservation[], now = new D
         supportingSourceTypes: [...new Set(same.map((entry) => entry.sourceType))],
         supportingSourceAuthorities: [...new Set(same.map((entry) => entry.sourceAuthority))],
         conflictingObservationIds: trusted.filter((entry) => !same.includes(entry)).map((entry) => entry.id ?? factObservationKey(entry)),
-        resolutionRule: winner.verificationStatus === "DERIVED_VERIFIED" && authorizedDerivation(winner)
-          ? "AUTHORIZED_DERIVATION" : same.length > 1 ? "AUTHORITY_WITH_CORROBORATION" : "FIELD_AUTHORITY_MATRIX",
+        resolutionRule: exactComparableMajorityUsed ? "EXACT_COMPARABLE_MULTI_SELLER_MAJORITY" :
+          winner.verificationStatus === "DERIVED_VERIFIED" && authorizedDerivation(winner)
+            ? "AUTHORIZED_DERIVATION" : same.length > 1 ? "AUTHORITY_WITH_CORROBORATION" : "FIELD_AUTHORITY_MATRIX",
         confidence: Math.max(0, Math.min(1, winner.confidence)), verificationStatus: winner.verificationStatus,
         resolvedAt: now.toISOString(), resolverVersion: PRODUCT_FACTS_RESOLVER_VERSION })
     } else {

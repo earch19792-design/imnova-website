@@ -42,7 +42,7 @@ import {
 } from "./ebay-official-manufacturer-facts"
 import { aggregateEbayMarketPricingByPack } from "./ebay-market-pricing-strategy"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V23_2026_07_21"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V24_2026_07_21"
 export const PRODUCT_FACTS_AUTOMATIC_SEARCH_BUDGET_MS = 4 * 60 * 1_000
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
@@ -319,6 +319,11 @@ function tradingObservations(input: { candidateId: string; lunaVariantId: string
     .filter((entry): entry is FactObservation => Boolean(entry))
 }
 
+const SELL_SIMILAR_SAFE_ITEM_SPECIFICS = new Set([
+  "type", "style", "theme", "material", "department", "features", "feature", "character",
+  "character family", "occasion", "pattern", "shape", "finish", "item length", "item width",
+])
+
 function browseObservations(input: { candidateId: string; lunaVariantId: string | null;
   browse: JsonRecord | null; observedAt: string }) {
   const rows = array(input.browse?.comparableEvidence).map(record)
@@ -353,6 +358,11 @@ function browseObservations(input: { candidateId: string; lunaVariantId: string 
     add("PRODUCT_UNIT", "unitCount", integer(aspect(["unit quantity", "unit count", "count per pack"])), "count")
     add("OFFER_PACK", "offerPackCount", integer(row.lotSize) ??
       integer(aspect(["number in pack", "pack quantity", "pack size"])), "count")
+    for (const entry of aspects) {
+      const name = text(entry.name).toLocaleLowerCase("en-US").replace(/\s+/g, " ")
+      if (!SELL_SIMILAR_SAFE_ITEM_SPECIFICS.has(name)) continue
+      add("PRODUCT_UNIT", name, entry.value)
+    }
   }
   return observations
 }
@@ -699,11 +709,6 @@ function browseSellSimilarTradingCandidates(input: { browse: JsonRecord | null; 
       right.matchScore - left.matchScore)
     .slice(0, 3)
 }
-
-const SELL_SIMILAR_SAFE_ITEM_SPECIFICS = new Set([
-  "type", "style", "theme", "material", "department", "features", "feature", "character",
-  "character family", "occasion", "pattern", "shape", "finish", "item length", "item width",
-])
 
 function tradingItemSpecificObservations(input: {
   candidateId: string
