@@ -42,7 +42,7 @@ import {
 } from "./ebay-official-manufacturer-facts"
 import { aggregateEbayMarketPricingByPack } from "./ebay-market-pricing-strategy"
 
-export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V18_2026_07_21"
+export const PRODUCT_FACTS_ENGINE_VERSION = "PRODUCT_FACTS_ENGINE_V19_2026_07_21"
 export const PRODUCT_FACTS_AUTOMATIC_SEARCH_BUDGET_MS = 4 * 60 * 1_000
 const MARKETPLACE = "EBAY_US"
 const MAX_CANDIDATES = 20
@@ -479,6 +479,36 @@ function comparableTitleMatches(productTitle: unknown, listingTitle: unknown) {
   return matchingTokens >= Math.min(3, productTokens.size) && matchingTokens / productTokens.size >= 0.6
 }
 
+async function cachedExactComparableCategoryRows(
+  supabase: SupabaseClient,
+  productTitle: string,
+  now: Date,
+) {
+  const anchor = [...comparableTitleTokens(productTitle)]
+    .sort((left, right) => right.length - left.length || left.localeCompare(right))[0]
+  if (!anchor) return [] as Array<{ categoryId: string }>
+  const { data, error } = await supabase
+    .from("ebay_readonly_detail_cache")
+    .select("safe_payload,observed_at")
+    .eq("api_family", "BROWSE_ITEM_DETAIL")
+    .ilike("safe_payload->>title", `%${anchor}%`)
+    .gte("observed_at", new Date(now.getTime() - 72 * 60 * 60_000).toISOString())
+    .order("observed_at", { ascending: false })
+    .limit(500)
+  if (error) return []
+  const latestByItem = new Map<string, JsonRecord>()
+  for (const row of data ?? []) {
+    const payload = record(row.safe_payload)
+    const itemId = text(payload.itemId)
+    if (!itemId || latestByItem.has(itemId) ||
+      !comparableTitleMatches(productTitle, payload.title)) continue
+    latestByItem.set(itemId, payload)
+  }
+  return [...latestByItem.values()].map((payload) => ({
+    categoryId: numericCategoryId(payload.categoryId),
+  })).filter((entry) => entry.categoryId)
+}
+
 async function operatorConfirmedOfficialLabelFacts(
   supabase: SupabaseClient,
   candidateId: string,
@@ -864,12 +894,24 @@ export async function runProductFactsEnrichment(input: {
       const tradingCategoryConsensus = strongExactComparableCategoryConsensus(
         tradingComparables.map((comparable) => ({ categoryId: comparable.categoryId })),
       )
+      const cachedCategoryRows = await cachedExactComparableCategoryRows(
+        input.supabase,
+        base.title,
+        now,
+      )
+      const cachedCategoryConsensus = strongExactComparableCategoryConsensus(
+        cachedCategoryRows,
+      )
+      const categoryConsensus = [tradingCategoryConsensus, cachedCategoryConsensus]
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+        .sort((left, right) => right.matchingComparables - left.matchingComparables ||
+          right.comparableCount - left.comparableCount)[0] ?? null
       // Category is resolved before aspect evaluation. Exact Catalog identity
       // normally wins, but a strong majority of title-validated exact Trading
       // comparables corrects an isolated incompatible Catalog category. Existing
       // evidence remains a last category seed for official Taxonomy.
       const taxonomyCategoryId = semanticCategoryId ||
-        tradingCategoryConsensus?.categoryId || catalogCategoryId ||
+        categoryConsensus?.categoryId || catalogCategoryId ||
         tradingCategoryId || knownCategoryId
       const taxonomy = await budgetedAutomaticReadOr(automaticSearchDeadline,
         () => getEbayTaxonomyListingIntelligence(base.title, taxonomyCategoryId || undefined),
@@ -914,7 +956,9 @@ export async function runProductFactsEnrichment(input: {
           status: text(taxonomyRecord.status) || "REQUEST_FAILED", payload: { categoryId: text(taxonomyRecord.categoryId) || null,
             categorySeedPresent: Boolean(taxonomyCategoryId),
             categorySeedSource: semanticCategoryId ? "TITLE_SEMANTIC_CATEGORY_GUARD"
-              : tradingCategoryConsensus ? "EBAY_TRADING_EXACT_CATEGORY_CONSENSUS"
+              : categoryConsensus ? cachedCategoryConsensus === categoryConsensus
+                ? "EBAY_BROWSE_CACHE_EXACT_CATEGORY_CONSENSUS"
+                : "EBAY_TRADING_EXACT_CATEGORY_CONSENSUS"
               : catalogCategoryId
               ? "EBAY_CATALOG_EXACT" : tradingCategoryId
               ? tradingSelectionSource === "BROWSE_SELL_SIMILAR"
@@ -922,7 +966,8 @@ export async function runProductFactsEnrichment(input: {
                 : "EBAY_TRADING_EXACT_COMPARABLE"
               : knownCategoryId ? "EXISTING_EXACT_COMPARABLE" : "TITLE_SUGGESTION",
             categoryResolution: text(taxonomyRecord.categoryResolution) || "UNRESOLVED",
-            exactComparableCategoryConsensus: tradingCategoryConsensus,
+            exactComparableCategoryConsensus: categoryConsensus,
+            cachedExactComparableCategoryCount: cachedCategoryRows.length,
             failureCode: text(taxonomyRecord.failureCode) || null,
             requiredAspectCount: array(taxonomyRecord.requiredAspects).length } }),
         snapshot({ runId: "", candidateId: text(candidate.id), lunaVariantId: text(candidate.supplier_variant_id) || null,
