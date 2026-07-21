@@ -561,7 +561,8 @@ export function buildCompetitorWatchAnalysis(input: CompetitorWatchAnalysisInput
     input.baselineExists && (
       potentialSellerHashes.length > 0 || newlyConfirmedOfferHashes.length > 0
     )
-  ) || newSuggestionCodes.length > 0 || priceRecommendation !== null
+  ) || newSuggestionCodes.length > 0 || priceRecommendation !== null ||
+    activeMarketPriceRecommendation !== null
   const eventFingerprint = alertRequired
     ? createHash("sha256").update([
         ...potentialSellerHashes,
