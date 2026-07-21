@@ -93,7 +93,7 @@ function operatorConfirmableOfficialLabelFact(aspectNameValue: unknown) {
   return { factKey: aspectName, label: `${aspectName} (obligatorio eBay)` }
 }
 const PRODUCT_FACT_AUTHORITY_LINEAGE_RECOVERY_VERSION =
-  "PRODUCT_FACT_AUTHORITY_AND_SOURCE_RECOVERY_V2_2026_07_21"
+  "PRODUCT_FACT_AUTHORITY_AND_SOURCE_RECOVERY_V3_2026_07_21"
 const LEGACY_PRODUCT_FACTS_RECOVERY_VERSION = "LEGACY_PRODUCT_FACTS_RECOVERY_V2_2026_07_19"
 const STALE_DECISION_FACTS_RECOVERY_VERSION = "STALE_DECISION_FACTS_RECOVERY_V1_2026_07_19"
 const PRE_FACTS_DECISION_REFRESH_VERSION = "PRE_FACTS_DECISION_REFRESH_V1_2026_07_21"
@@ -160,6 +160,66 @@ function conservativeShippingReserveReady(candidateValue: unknown) {
   const config = record(record(candidate.economics_summary).config)
   const reserve = number(config.estimatedOutboundShipping)
   return reserve !== null && reserve > 0
+}
+
+async function persistConfirmedOfferPackQueueBinding(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  candidate: JsonRecord
+  now: Date
+}) {
+  const selectionIdentity = record(record(input.candidate.evidence_summary).selectionIdentity)
+  const nativePackCount = number(selectionIdentity.nativePackCount)
+  const explicitTitlePackCount = explicitPackCountFromTitle(input.candidate.product_title)
+  if (selectionIdentity.exactIdentityConfirmed !== true ||
+    selectionIdentity.exactOfferPackVerified !== true ||
+    nativePackCount === null || !Number.isInteger(nativePackCount) ||
+    nativePackCount <= 0 || nativePackCount > 100 ||
+    (explicitTitlePackCount !== null && explicitTitlePackCount !== nativePackCount) ||
+    !text(input.candidate.queue_item_id)) return false
+  const { data: queueItem, error: readError } = await input.supabase
+    .from("marketplace_listing_approval_queue_items")
+    .select("id,recommended_pack_count,evidence_snapshot")
+    .eq("id", input.candidate.queue_item_id)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", MARKETPLACE)
+    .maybeSingle()
+  if (readError || !queueItem) {
+    throw new Error("SAME_DAY_PILOT_OFFER_PACK_QUEUE_ITEM_READ_FAILED")
+  }
+  const snapshot = record(queueItem.evidence_snapshot)
+  const packStrategy = record(snapshot.packStrategy)
+  const recommendedPack = record(packStrategy.recommendedPack)
+  if (number(queueItem.recommended_pack_count) === nativePackCount &&
+    number(recommendedPack.packCount) === nativePackCount) return true
+  const evidenceHash = text(selectionIdentity.evidenceHash) || versionedHash({
+    version: PRODUCT_FACT_AUTHORITY_LINEAGE_RECOVERY_VERSION,
+    candidateId: input.candidate.id,
+    nativePackCount,
+  })
+  const { error: updateError } = await input.supabase
+    .from("marketplace_listing_approval_queue_items")
+    .update({
+      recommended_pack_count: nativePackCount,
+      evidence_snapshot: {
+        ...snapshot,
+        packStrategy: { ...packStrategy,
+          recommendedPack: { ...recommendedPack, packCount: nativePackCount } },
+        operatorOfferPackConfirmation: {
+          nativePackCount,
+          evidenceHash,
+          confirmedAt: text(selectionIdentity.confirmedAt) || input.now.toISOString(),
+          source: "OPERATOR_VISIBLE_LUNA_EXACT_PRODUCT_PAGE",
+          actorRecorded: selectionIdentity.actorRecorded === true,
+          urlStored: false,
+        },
+      },
+      updated_at: input.now.toISOString(),
+    })
+    .eq("id", queueItem.id)
+    .eq("marketplace_account_key", input.accountKey)
+  if (updateError) throw new Error("SAME_DAY_PILOT_OFFER_PACK_QUEUE_ITEM_UPDATE_FAILED")
+  return true
 }
 function safeHttpsUrl(value: unknown) {
   const submitted = text(value, 2_000)
@@ -1334,10 +1394,15 @@ async function repairRejectedProductFactAuthorityLineage(
       const confirmation = record(record(candidate.economics_summary).lunaConfirmation)
       const confirmedAt = Date.parse(text(confirmation.confirmedAt))
       const nativePackCount = number(selectionIdentity.nativePackCount)
-      return candidate.machine_state === "REJECTED" && candidate.state === "REJECTED_TODAY" &&
-        strings(candidate.blockers).includes("MISSING_BLOCKING") &&
+      const blockers = strings(candidate.blockers)
+      const recoverableMissingFacts = blockers.includes("MISSING_BLOCKING") &&
         facts.currentRunBound === true && gates.IDENTITY_READY === true &&
-        gates.PRODUCT_FACTS_READY === true && gates.REGULATORY_READY === true &&
+        gates.PRODUCT_FACTS_READY === true && gates.REGULATORY_READY === true
+      const recoverablePreFactsDecisionFailure = blockers.includes(
+        "TOP10_CANONICAL_FACT_RECOVERY_NOT_READY",
+      )
+      return candidate.machine_state === "REJECTED" && candidate.state === "REJECTED_TODAY" &&
+        (recoverableMissingFacts || recoverablePreFactsDecisionFailure) &&
         selectionIdentity.exactIdentityConfirmed === true &&
         selectionIdentity.exactOfferPackVerified === true &&
         nativePackCount !== null && Number.isInteger(nativePackCount) &&
@@ -1348,6 +1413,14 @@ async function repairRejectedProductFactAuthorityLineage(
           PRODUCT_FACT_AUTHORITY_LINEAGE_RECOVERY_VERSION
     })
   if (!selected) return 0
+  const packBindingReady = await persistConfirmedOfferPackQueueBinding({
+    supabase,
+    accountKey: text(state.run.marketplace_account_key),
+    candidate: record(selected),
+    now,
+  })
+  if (strings(selected.blockers).includes("TOP10_CANONICAL_FACT_RECOVERY_NOT_READY") &&
+    !packBindingReady) return 0
   const evidenceSummary = {
     ...record(selected.evidence_summary),
     productFactAuthorityLineageRecoveryVersion:
@@ -1387,7 +1460,6 @@ async function repairRejectedProductFactAuthorityLineage(
     state: "READY_FOR_CONTENT",
     blockers: [],
     evidence_summary: evidenceSummary,
-    product_facts_summary: {},
     next_automated_action: "Recalcular Ficha y cumplimiento con procedencia y fuentes oficiales actualizadas.",
     next_human_action: "Ninguna.",
     updated_at: now.toISOString(),
@@ -1637,8 +1709,13 @@ async function refreshCandidateDecisionBeforeProductFacts(input: {
   const lunaConfirmation = record(record(input.candidate.economics_summary).lunaConfirmation)
   const confirmedAt = Date.parse(text(lunaConfirmation.confirmedAt))
   const confirmedPrice = number(record(input.candidate.economics_summary).confirmedLunaPrice)
-  const priorFactsAvailable = record(input.candidate.product_facts_summary).currentRunBound === true
-  if ((!text(queueItem.decision_package_id) && !priorFactsAvailable) ||
+  const priorFacts = record(input.candidate.product_facts_summary)
+  const priorGates = record(priorFacts.gates)
+  const canonicalRecoveryReady = priorFacts.currentRunBound === true && [
+    "IDENTITY_READY", "PRODUCT_FACTS_READY", "OFFER_PACK_READY",
+    "EBAY_ASPECTS_READY", "REGULATORY_READY",
+  ].every((gate) => priorGates[gate] === true)
+  if ((!text(queueItem.decision_package_id) && !canonicalRecoveryReady) ||
     confirmedPrice === null || confirmedPrice <= 0 ||
     !text(lunaConfirmation.status).startsWith("AVAILABLE_") ||
     !Number.isFinite(confirmedAt) || confirmedAt > input.now.getTime() + 300_000 ||
