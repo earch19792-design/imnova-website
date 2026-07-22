@@ -361,13 +361,6 @@ export type EbayReferenceGuidedProviderResult = {
   providerRequestId: string | null
 }
 
-function retryDelayMs(response: Response, attempt: number) {
-  const header = Number(response.headers.get("Retry-After"))
-  return Number.isFinite(header) && header > 0
-    ? Math.min(30_000, header * 1000)
-    : Math.min(30_000, 500 * 2 ** attempt)
-}
-
 /** Calls Images Edit with MAIN first and SIDE second. The caller owns persistence and QA. */
 export async function requestReferenceGuidedProductGeneration(input: {
   plan: EbayReferenceGuidedGenerationPlan
@@ -384,50 +377,41 @@ export async function requestReferenceGuidedProductGeneration(input: {
     !input.main.length || !input.side.length) {
     throw new Error("REFERENCE_GUIDED_SOURCE_BYTES_INVALID")
   }
+  if (input.plan.jobs.length !== 1) {
+    throw new Error("REFERENCE_GUIDED_ATOMIC_PROVIDER_RESERVATION_REQUIRED")
+  }
   if (sha256(input.main) !== input.plan.jobs[0]?.sourceHashes[0] ||
     sha256(input.side) !== input.plan.jobs[0]?.sourceHashes[1]) {
     throw new Error("MANIFEST_SOURCE_MISMATCH")
   }
-  const results: EbayReferenceGuidedProviderResult[] = []
-  const queue = [...input.plan.jobs]
-  let cursor = 0
-  async function worker() {
-    while (cursor < queue.length) {
-      const job = queue[cursor++]
-      if (!input.shouldContinue?.()) throw new Error("REFERENCE_GUIDED_MANIFEST_CHANGED")
-      let response: Response | null = null
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        // Rebuild multipart bodies because a consumed FormData stream cannot be retried.
-        const form = new FormData()
-        form.append("model", input.plan.model)
-        form.append("prompt", job.prompt)
-        form.append("size", input.plan.size)
-        form.append("quality", input.plan.quality)
-        form.append("output_format", input.plan.outputFormat)
-        form.append("image[]", new Blob([input.main], { type: "image/jpeg" }), "MAIN.jpg")
-        form.append("image[]", new Blob([input.side], { type: "image/jpeg" }), "SIDE.jpg")
-        response = await (input.fetchImpl ?? fetch)(OPENAI_IMAGE_EDIT_ENDPOINT, {
-          method: "POST", headers: { Authorization: `Bearer ${input.apiKey.trim()}` },
-          body: form,
-        })
-        if (response.status !== 429 && response.status < 500) break
-        await new Promise((resolve) => setTimeout(resolve, retryDelayMs(response!, attempt)))
-      }
-      if (!response?.ok) throw new Error(`REFERENCE_GUIDED_PROVIDER_HTTP_${response?.status ?? 0}`)
-      const payload = await response.json() as { id?: string; data?: Array<{ b64_json?: string }> }
-      const encoded = payload.data?.[0]?.b64_json
-      if (!encoded) throw new Error("REFERENCE_GUIDED_PROVIDER_OUTPUT_INVALID")
-      const output = Buffer.from(encoded, "base64")
-      const metadata = await sharp(output).metadata()
-      if (metadata.format !== "png" || metadata.width !== 1600 || metadata.height !== 1600) {
-        output.fill(0)
-        throw new Error("REFERENCE_GUIDED_PROVIDER_OUTPUT_DIMENSIONS_INVALID")
-      }
-      results.push({ slot: job.slot, output, outputSha256: sha256(output), providerRequestId: payload.id ?? null })
-    }
+  const job = input.plan.jobs[0]
+  if (sha256Text(job.prompt) !== job.promptHash) {
+    throw new Error("REFERENCE_GUIDED_EXACT_PROMPT_MISMATCH")
   }
-  await Promise.all([worker(), worker()])
-  return results.sort((a, b) => input.plan.jobs.findIndex((job) => job.slot === a.slot) - input.plan.jobs.findIndex((job) => job.slot === b.slot))
+  if (!input.shouldContinue?.()) throw new Error("REFERENCE_GUIDED_MANIFEST_CHANGED")
+  const form = new FormData()
+  form.append("model", input.plan.model)
+  form.append("prompt", job.prompt)
+  form.append("size", input.plan.size)
+  form.append("quality", input.plan.quality)
+  form.append("output_format", input.plan.outputFormat)
+  form.append("image[]", new Blob([input.main], { type: "image/jpeg" }), "MAIN.jpg")
+  form.append("image[]", new Blob([input.side], { type: "image/jpeg" }), "SIDE.jpg")
+  const response = await (input.fetchImpl ?? fetch)(OPENAI_IMAGE_EDIT_ENDPOINT, {
+    method: "POST", headers: { Authorization: `Bearer ${input.apiKey.trim()}` },
+    body: form,
+  })
+  if (!response.ok) throw new Error(`REFERENCE_GUIDED_PROVIDER_HTTP_${response.status}`)
+  const payload = await response.json() as { id?: string; data?: Array<{ b64_json?: string }> }
+  const encoded = payload.data?.[0]?.b64_json
+  if (!encoded) throw new Error("REFERENCE_GUIDED_PROVIDER_OUTPUT_INVALID")
+  const output = Buffer.from(encoded, "base64")
+  const metadata = await sharp(output).metadata()
+  if (metadata.format !== "png" || metadata.width !== 1600 || metadata.height !== 1600) {
+    output.fill(0)
+    throw new Error("REFERENCE_GUIDED_PROVIDER_OUTPUT_DIMENSIONS_INVALID")
+  }
+  return [{ slot: job.slot, output, outputSha256: sha256(output), providerRequestId: payload.id ?? null }]
 }
 
 /** Builds the fail-closed V3 provider contract; it never accepts competitor or excluded media. */

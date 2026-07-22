@@ -58,6 +58,18 @@ for (const name of migrationNames) {
 // changed by the project migration role. Future Seller OS tables must close
 // client table ACLs explicitly in the migration that creates them.
 const sellerOsAclEnforcementStart = "20260713100000"
+// Applied migrations are immutable. These narrowly-scoped append-only
+// remediations satisfy the same ACL invariant without rewriting history.
+const sellerOsAclRemediations = new Map([
+  [
+    "20260722008000:ebay_reference_guided_generation_attempts",
+    "20260722017000_harden_reference_guided_orchestrator_acl.sql",
+  ],
+  [
+    "20260722008000:ebay_reference_guided_generation_jobs",
+    "20260722017000_harden_reference_guided_orchestrator_acl.sql",
+  ],
+])
 for (const name of migrationNames) {
   const timestamp = name.match(/^(\d{12}|\d{14})_/)?.[1]
   const source = readFileSync(join(migrationDirectory, name), "utf8")
@@ -81,7 +93,12 @@ for (const name of migrationNames) {
       `revoke\\s+all\\s+on\\s+table\\s+public\\.${escapedTable}\\s+from\\s+anon\\s*,\\s*authenticated\\s*;`,
       "i",
     )
-    if (!explicitRevoke.test(source)) {
+    const remediationName = sellerOsAclRemediations.get(`${timestamp}:${table}`)
+    const remediationSource = remediationName &&
+      migrationNames.includes(remediationName)
+      ? readFileSync(join(migrationDirectory, remediationName), "utf8")
+      : ""
+    if (!explicitRevoke.test(source) && !explicitRevoke.test(remediationSource)) {
       failures.push(`SELLER_OS_TABLE_ACL_REVOKE_MISSING:${name}:${table}`)
     }
   }

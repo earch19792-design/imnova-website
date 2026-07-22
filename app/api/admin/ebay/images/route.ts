@@ -50,6 +50,10 @@ import { persistAuthorizedCatalogSourcePack } from "@/lib/ebay/luna-catalog-sour
 import { LUNA_CATALOG_SOURCE_RESOLVER_VERSION } from "@/lib/ebay/luna-catalog-original-source-resolver"
 import { productFactsHash } from "@/lib/ebay/ebay-product-facts-readiness"
 import { resolveCanonicalProductIdentity } from "@/lib/ebay/canonical-product-identity"
+import {
+  buildReferenceGuidedV3CompositionManifest,
+  verifyExactReferenceGuidedPrompt,
+} from "@/lib/ebay/reference-guided-v3-manifest"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
 const SOURCE_BUCKET = EBAY_IMAGE_SOURCE_BUCKET
@@ -651,27 +655,51 @@ export async function POST(req: Request) {
       if (!revisionId) return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_DIRECT_PREPARE_FORBIDDEN" }, { status: 400 })
       const { data: revisionRow, error: revisionLookupError } = await supabase
         .from("ebay_same_day_pilot_image_revisions")
-        .select("id,listing_package_id,strategy_version,revision_contract")
+        .select("id,listing_package_id,candidate_id,status,strategy_version,revision_contract,product_dossier_hash,market_visual_brief_hash,main_source_hash,side_source_hash")
         .eq("id", revisionId)
         .maybeSingle()
       if (revisionLookupError || !revisionRow) return NextResponse.json({ success: false, error: "SAME_DAY_IMAGE_REVISION_NOT_FOUND" }, { status: 404 })
       if (!revisionRow.strategy_version) return NextResponse.json({ success: false, error: "REVISION_STRATEGY_MISSING", attemptRows: 0, jobRows: 0 }, { status: 409 })
       if (!revisionRow.revision_contract) return NextResponse.json({ success: false, error: "REVISION_CONTRACT_MISSING", attemptRows: 0, jobRows: 0 }, { status: 409 })
       if (revisionRow.strategy_version !== "VISUAL_STRATEGY_V3" || revisionRow.revision_contract !== "REFERENCE_GUIDED_PRODUCT_GENERATION_V1") return NextResponse.json({ success: false, error: "REVISION_STRATEGY_CONTRACT_MISMATCH", attemptRows: 0, jobRows: 0 }, { status: 409 })
+      if (revisionRow.status !== "READY_FOR_PREPARE") return NextResponse.json({ success: false, error: "VISUAL_STRATEGY_V3_NOT_READY_FOR_PREPARE", attemptRows: 0, jobRows: 0 }, { status: 409 })
+      if (!revisionRow.product_dossier_hash || !revisionRow.market_visual_brief_hash ||
+        !revisionRow.main_source_hash || !revisionRow.side_source_hash) {
+        return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_REVISION_BINDING_INCOMPLETE", attemptRows: 0, jobRows: 0 }, { status: 422 })
+      }
+      const { data: binding, error: bindingError } = await supabase
+        .from("luna_catalog_source_pack_dossier_bindings")
+        .select("source_pack_id,dossier_hash,source_pack_manifest_hash,policy_version")
+        .eq("listing_package_id", revisionRow.listing_package_id)
+        .eq("dossier_hash", revisionRow.product_dossier_hash)
+        .eq("policy_version", "REFERENCE_GUIDED_PRODUCT_GENERATION_V1")
+        .order("verified_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (bindingError || !binding) return NextResponse.json({ success: false, error: "SOURCE_PACK_DOSSIER_BINDING_REQUIRED", attemptRows: 0, jobRows: 0 }, { status: 422 })
       const { data: sourcePack, error: packError } = await supabase
         .from("luna_catalog_authorized_source_packs")
-        .select("id,source_pack_hash,resolver_version,source_assets,precheck,authoritative_fact_package_hash")
+        .select("id,source_pack_hash,manifest_hash,source_pack_version,resolver_version,source_assets,precheck")
+        .eq("id", binding.source_pack_id)
         .eq("marketplace_account_key", accountKey)
         .eq("listing_package_id", revisionRow.listing_package_id)
-        .order("created_at", { ascending: false }).limit(1).maybeSingle()
+        .maybeSingle()
       if (packError || !sourcePack) return NextResponse.json({ success: false, error: "AUTHORIZED_SOURCE_COUNT_INVALID" }, { status: 422 })
-      const { data: visualBrief, error: briefError } = await supabase
-        .from("marketplace_product_research_visual_market_briefs")
-        .select("id,brief,confidence,sample_size,visual_market_brief_version,created_at,query_context_hash,product_family_fingerprint")
-        .eq("marketplace_account_key", accountKey)
-        .in("confidence", ["HIGH", "MEDIUM"])
-        .order("created_at", { ascending: false }).limit(1).maybeSingle()
-      if (briefError || !visualBrief || Number(visualBrief.sample_size) < 3) return NextResponse.json({ success: false, error: "MARKET_VISUAL_BRIEF_REFRESH_REQUIRED", attemptRows: 0, jobRows: 0, providerCalls: 0, retryConsumed: false, ebayWrites: 0 }, { status: 422 })
+      const sourcePackManifestHash = text(sourcePack.manifest_hash || sourcePack.source_pack_hash, 100)
+      if (sourcePackManifestHash !== binding.source_pack_manifest_hash ||
+        sourcePack.source_pack_hash !== binding.source_pack_manifest_hash ||
+        binding.dossier_hash !== revisionRow.product_dossier_hash) {
+        return NextResponse.json({ success: false, error: "SOURCE_PACK_BINDING_INVALID", attemptRows: 0, jobRows: 0 }, { status: 422 })
+      }
+      const { data: dossierCandidate, error: dossierError } = await supabase
+        .from("ebay_same_day_pilot_candidates")
+        .select("product_facts_summary")
+        .eq("id", revisionRow.candidate_id)
+        .maybeSingle()
+      const authoritativeFactsPackage = record(record(dossierCandidate?.product_facts_summary).authoritativeFactsPackage)
+      if (dossierError || authoritativeFactsPackage.factPackageHash !== revisionRow.product_dossier_hash) {
+        return NextResponse.json({ success: false, error: "PRODUCT_DOSSIER_HASH_MISMATCH", attemptRows: 0, jobRows: 0 }, { status: 422 })
+      }
       const sourceAssets = Array.isArray(sourcePack.source_assets) ? sourcePack.source_assets as Array<Record<string, unknown>> : []
       const nativeMainAssets = sourceAssets.filter((asset) => asset.sourceImageId === "MAIN" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
       const nativeSideAssets = sourceAssets.filter((asset) => asset.sourceImageId === "SIDE" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
@@ -697,20 +725,30 @@ export async function POST(req: Request) {
       }
       const mainVerified = await readAndVerify(main)
       const sideVerified = await readAndVerify(side)
-      const strategyVersion = "SELLER_OS_EBAY_VISUAL_STRATEGY_V3"
-      const roles = ["MATERIAL_AND_FINISH_DETAIL", "CONFIRMED_PACKAGE_CONTENTS", "SCALE_AND_CAPACITY_CONTEXT", "PRIMARY_BENEFIT_IN_ACTION", "ASPIRATIONAL_LIFESTYLE", "REAL_HUMAN_USE"]
-      const sourcePackVersion = text(sourcePack.resolver_version, 120)
-      const marketVisualBriefHash = createHash("sha256").update(JSON.stringify(visualBrief)).digest("hex")
-      const manifestHash = createHash("sha256").update(JSON.stringify({ revisionId, strategyVersion, sourcePackVersion, sourcePackHash: sourcePack.source_pack_hash, main: { sourceImageId: "MAIN", sourceAngle: "FRONT", sourceSha256: mainVerified.actual, width: mainVerified.width, height: mainVerified.height }, side: { sourceImageId: "SIDE", sourceAngle: "SIDE", sourceSha256: sideVerified.actual, width: sideVerified.width, height: sideVerified.height }, excludedSourceSha256s: [...excluded].sort(), productDossierHash: sourcePack.authoritative_fact_package_hash, marketVisualBriefHash, roles, promptVersion: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1", model: "gpt-image-2", quality: "high", size: "1600x1600", qaVersion: "SELLER_OS_EBAY_VISUAL_QA_V2" })).digest("hex")
-      const mainHash = mainVerified.actual
-      const sideHash = sideVerified.actual
-      const promptHashes = roles.map((role) => createHash("sha256").update(`${manifestHash}:${role}`).digest("hex"))
-      const { data, error } = await supabase.rpc("create_ebay_reference_guided_generation_attempt", { p_revision_id: revisionId, p_manifest_hash: manifestHash, p_roles: roles, p_main_hash: mainHash, p_side_hash: sideHash, p_prompt_hashes: promptHashes, p_market_brief_hash: marketVisualBriefHash, p_product_dossier_hash: sourcePack.authoritative_fact_package_hash })
+      if (mainVerified.actual !== revisionRow.main_source_hash ||
+        sideVerified.actual !== revisionRow.side_source_hash) {
+        return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_REVISION_SOURCE_MISMATCH", attemptRows: 0, jobRows: 0 }, { status: 422 })
+      }
+      const preparedManifest = buildReferenceGuidedV3CompositionManifest({
+        revisionId,
+        strategyVersion: revisionRow.strategy_version,
+        revisionContract: revisionRow.revision_contract,
+        productDossierHash: revisionRow.product_dossier_hash,
+        marketVisualBriefHash: revisionRow.market_visual_brief_hash,
+        sourcePackManifestHash,
+        mainSourceHash: mainVerified.actual,
+        sideSourceHash: sideVerified.actual,
+        authoritativeFactsPackage,
+      })
+      const { data, error } = await supabase.rpc("create_ebay_reference_guided_generation_attempt_v2", {
+        p_revision_id: revisionId,
+        p_composition_manifest_text: preparedManifest.compositionManifestText,
+      })
       if (error) throw error
       const attempt = Array.isArray(data) ? data[0] : data
       const { data: persistedJobs, error: persistedJobsError } = await supabase
         .from("ebay_reference_guided_generation_jobs")
-        .select("position,status,lease_owner,lease_expires_at")
+        .select("position,commercial_role,status,lease_owner,lease_expires_at,exact_prompt_text,prompt_hash,prompt_template_version,allowed_product_facts,allowed_generated_context,prohibited_claims")
         .eq("generation_attempt_id", attempt?.id)
         .order("position", { ascending: true })
       if (persistedJobsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
@@ -720,12 +758,16 @@ export async function POST(req: Request) {
           job.position === index + 1
           && job.status === "PENDING"
           && job.lease_owner == null
-          && job.lease_expires_at == null)
+          && job.lease_expires_at == null
+          && job.commercial_role === preparedManifest.manifest.jobs[index].commercialObjective
+          && job.exact_prompt_text === preparedManifest.manifest.jobs[index].exactPromptText
+          && job.prompt_hash === preparedManifest.manifest.jobs[index].promptHash
+          && verifyExactReferenceGuidedPrompt(job.exact_prompt_text, job.prompt_hash))
         && Number(attempt?.provider_calls) === 0
       if (!REFERENCE_GUIDED_PROVIDER_ENABLED && !preparedOnly) {
         throw new Error("REFERENCE_GUIDED_PREPARE_INVARIANT_FAILED")
       }
-      return NextResponse.json({ success: true, revisionId, attemptId: attempt?.id, manifestHash, state: "PREPARED", providerState: REFERENCE_GUIDED_PROVIDER_ENABLED ? "READY_FOR_EXPLICIT_EXECUTION" : "WAITING_PROVIDER_ENABLEMENT", featureFlagEnabled: REFERENCE_GUIDED_PROVIDER_ENABLED, attemptRows: 1, jobRows: persistedJobs?.length ?? 0, jobs: persistedJobs ?? [], providerCalls: Number(attempt?.provider_calls ?? 0), retryConsumed: Boolean(attempt?.retry_consumed), ebayWrites: 0, productionChanged: false }, { status: 202 })
+      return NextResponse.json({ success: true, revisionId, attemptId: attempt?.id, manifestHash: preparedManifest.compositionManifestHash, state: "PREPARED", providerState: REFERENCE_GUIDED_PROVIDER_ENABLED ? "READY_FOR_EXPLICIT_EXECUTION" : "WAITING_PROVIDER_ENABLEMENT", featureFlagEnabled: REFERENCE_GUIDED_PROVIDER_ENABLED, attemptRows: 1, jobRows: persistedJobs?.length ?? 0, jobs: persistedJobs ?? [], providerCalls: Number(attempt?.provider_calls ?? 0), retryConsumed: Boolean(attempt?.retry_consumed), ebayWrites: 0, productionChanged: false }, { status: 202 })
     }
 
     if (action === "generate") {

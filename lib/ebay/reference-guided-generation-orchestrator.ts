@@ -10,12 +10,19 @@ export type ReferenceGuidedJobRecord = {
   sourceMainHash: string
   sourceSideHash: string
   promptHash: string
+  exactPromptText: string
 }
 
 export type ReferenceGuidedPersistence = {
   claim(limit: 2, manifestHash: string, leaseOwner: string): Promise<ReferenceGuidedJobRecord[]>
-  markCalling(jobId: string, manifestHash: string): Promise<void>
-  incrementProviderCalls(attemptId: string): Promise<void>
+  reserveProviderCall(input: {
+    attemptId: string
+    jobId: string
+    manifestHash: string
+    leaseOwner: string
+    exactPromptHash: string
+    maximumProviderCalls: 6
+  }): Promise<number>
   saveGenerated(jobId: string, result: EbayReferenceGuidedProviderResult, manifestHash: string): Promise<void>
   markOutcomeUnknown(jobId: string, errorCode: string): Promise<void>
   markRetryable(jobId: string, errorCode: string): Promise<void>
@@ -50,12 +57,23 @@ export async function runReferenceGuidedGenerationWorker(input: {
     if (!input.shouldContinue?.()) throw new Error("REFERENCE_GUIDED_MANIFEST_CHANGED")
     const planned = input.plan.jobs[job.position - 1]
     if (!planned || planned.promptHash !== job.promptHash ||
+      planned.prompt !== job.exactPromptText ||
+      createHash("sha256").update(Buffer.from(job.exactPromptText, "utf8"))
+        .digest("hex") !== job.promptHash ||
       planned.sourceHashes[0] !== job.sourceMainHash || planned.sourceHashes[1] !== job.sourceSideHash) {
       throw new Error("MANIFEST_SOURCE_MISMATCH")
     }
-    await input.persistence.markCalling(job.id, input.manifestHash)
-    await input.persistence.incrementProviderCalls(input.attemptId)
-    providerCalls += 1
+    providerCalls = await input.persistence.reserveProviderCall({
+      attemptId: input.attemptId,
+      jobId: job.id,
+      manifestHash: input.manifestHash,
+      leaseOwner: input.leaseOwner,
+      exactPromptHash: job.promptHash,
+      maximumProviderCalls: 6,
+    })
+    if (providerCalls < 1 || providerCalls > 6) {
+      throw new Error("REFERENCE_GUIDED_PROVIDER_CALL_BUDGET_EXHAUSTED")
+    }
     try {
       const result = await requestReferenceGuidedProductGeneration({
         plan: { ...input.plan, jobs: [planned] }, main: input.main, side: input.side,
