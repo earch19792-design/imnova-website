@@ -443,6 +443,31 @@ export async function POST(req: Request) {
     let action = text(body.action, 40)
     const supabase = getSupabaseAdminClient()
 
+    if (action === "ensure_visual_strategy_v3_revision") {
+      const parentRevisionId = uuid(body.parentRevisionId)
+      if (!parentRevisionId) return NextResponse.json({ success: false, error: "PARENT_REVISION_ID_REQUIRED" }, { status: 400 })
+      const { data: parent, error: parentError } = await supabase.from("ebay_same_day_pilot_image_revisions").select("*").eq("id", parentRevisionId).maybeSingle()
+      if (parentError || !parent) return NextResponse.json({ success: false, error: "PARENT_REVISION_NOT_FOUND" }, { status: 404 })
+      if (parent.strategy_version !== "VISUAL_STRATEGY_V2" || parent.revision_contract !== "LEGACY_VISUAL_STRATEGY_V2") return NextResponse.json({ success: false, error: "PARENT_REVISION_STRATEGY_INVALID" }, { status: 409 })
+      const { data: pack } = await supabase.from("luna_catalog_authorized_source_packs").select("id,source_pack_hash,resolver_version,source_assets,authoritative_fact_package_hash").eq("marketplace_account_key", accountKey).eq("listing_package_id", parent.listing_package_id).order("created_at", { ascending: false }).limit(1).maybeSingle()
+      const assets = Array.isArray(pack?.source_assets) ? pack.source_assets as Array<Record<string, unknown>> : []
+      const mains = assets.filter((asset) => asset.sourceImageId === "MAIN" && asset.sourceAngle === "FRONT" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
+      const sides = assets.filter((asset) => asset.sourceImageId === "SIDE" && asset.sourceAngle === "SIDE" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
+      if (!pack || mains.length !== 1 || sides.length !== 1) return NextResponse.json({ success: false, error: "V3_SOURCE_PACK_INVALID", attemptRows: 0, jobRows: 0 }, { status: 422 })
+      const { data: brief } = await supabase.from("marketplace_product_research_visual_market_briefs").select("id,brief,confidence,sample_size,created_at,query_context_hash,product_family_fingerprint,visual_market_brief_version").eq("marketplace_account_key", accountKey).in("confidence", ["HIGH", "MEDIUM"]).order("created_at", { ascending: false }).limit(1).maybeSingle()
+      if (!brief || Number(brief.sample_size) < 3) return NextResponse.json({ success: false, error: "MARKET_VISUAL_BRIEF_REFRESH_REQUIRED", attemptRows: 0, jobRows: 0 }, { status: 422 })
+      const briefHash = createHash("sha256").update(JSON.stringify(brief)).digest("hex")
+      const sourcePackVersion = text(pack.resolver_version, 120)
+      const fingerprint = createHash("sha256").update(JSON.stringify({ parentRevisionId, listingPackageId: parent.listing_package_id, strategyVersion: "VISUAL_STRATEGY_V3", revisionContract: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1", sourcePackVersion, main: mains[0].sha256, side: sides[0].sha256, productDossierHash: pack.authoritative_fact_package_hash, marketVisualBriefHash: briefHash })).digest("hex")
+      const { data: existing } = await supabase.from("ebay_same_day_pilot_image_revisions").select("id").eq("revision_fingerprint", fingerprint).maybeSingle()
+      if (existing?.id) return NextResponse.json({ success: true, revisionId: existing.id, revisionFingerprint: fingerprint, reused: true })
+      const { data: maxRow } = await supabase.from("ebay_same_day_pilot_image_revisions").select("revision_number").eq("base_control_id", parent.base_control_id).order("revision_number", { ascending: false }).limit(1).maybeSingle()
+      const revisionId = crypto.randomUUID()
+      const { data: created, error: createError } = await supabase.from("ebay_same_day_pilot_image_revisions").insert({ id: revisionId, marketplace_account_key: accountKey, created_by: actor, base_control_id: parent.base_control_id, run_id: parent.run_id, candidate_id: parent.candidate_id, listing_package_id: parent.listing_package_id, fact_run_id: parent.fact_run_id, revision_number: Number(maxRow?.revision_number ?? parent.revision_number) + 1, revision_version: "EBAY_LISTING_IMAGE_REVISION_V1", status: "CLAIMED", attempt: 1, idempotency_key_hash: fingerprint, lease_token: crypto.randomUUID(), lease_expires_at: new Date(Date.now() + 300000).toISOString(), strategy_version: "VISUAL_STRATEGY_V3", revision_contract: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1", parent_revision_id: parentRevisionId, revision_fingerprint: fingerprint, source_pack_version: sourcePackVersion, main_source_id: String(mains[0].sourceImageId), main_source_hash: String(mains[0].sha256), side_source_id: String(sides[0].sourceImageId), side_source_hash: String(sides[0].sha256), product_dossier_hash: String(pack.authoritative_fact_package_hash), market_visual_brief_hash: briefHash, authorized_source_count: 2, openai_calls: 0, ebay_writes: 0, production_changed: false })
+      if (createError) throw createError
+      return NextResponse.json({ success: true, revisionId, revisionFingerprint: fingerprint, reused: false })
+    }
+
     if (action === "prepare_visual_review") {
       const requestedRevisionId = uuid(body.revisionId)
       if (!requestedRevisionId) return NextResponse.json({ success: false, error: "REVISION_ID_REQUIRED" }, { status: 400 })
