@@ -10,6 +10,8 @@ import {
   getMobileReviewRequestError,
   readMobileReviewJson,
 } from "@/lib/ebay/ebay-mobile-review-http"
+import { v3VisualReviewAccessible } from
+  "@/lib/ebay/reference-guided-visual-review-access"
 
 type Opportunity = {
   id: string
@@ -734,7 +736,8 @@ function ListingWorkspacePageContent() {
 
   useEffect(() => {
     const candidateKey = searchParams.get("candidate")
-    if (!candidateKey) return
+    const visualReviewRevisionId = validUuid(searchParams.get("revisionId"))
+    if (!candidateKey && !visualReviewRevisionId) return
     const controller = new AbortController()
     let current = true
     setRevisionLoading(true); setRevisionLoaded(false); setRevisionError("")
@@ -742,7 +745,12 @@ function ListingWorkspacePageContent() {
       try {
         const { data: sessionData } = await supabase.auth.getSession()
         if (!sessionData.session) throw new Error("ADMIN_SESSION_REQUIRED")
-        const response = await fetch(`/api/admin/ebay/images?activeRevision=1&candidateKey=${encodeURIComponent(candidateKey)}`, { cache: "no-store", signal: controller.signal, headers: { Authorization: `Bearer ${sessionData.session.access_token}` } })
+        const query = new URLSearchParams({ activeRevision: "1" })
+        if (candidateKey) query.set("candidateKey", candidateKey)
+        if (visualReviewRevisionId) {
+          query.set("visualReviewRevisionId", visualReviewRevisionId)
+        }
+        const response = await fetch(`/api/admin/ebay/images?${query}`, { cache: "no-store", signal: controller.signal, headers: { Authorization: `Bearer ${sessionData.session.access_token}` } })
         const payload = await response.json()
         if (!response.ok || !payload.success) throw new Error(String(payload.error ?? "ACTIVE_REVISION_LOOKUP_FAILED"))
         if (!current) return
@@ -924,10 +932,16 @@ function ListingWorkspacePageContent() {
     const opportunityId = params.get("opportunity") ?? ""
     const candidateKey = params.get("candidate") ?? ""
     const requestedItemId = params.get("ebayItemId") ?? ""
+    const visualReviewRevisionId = validUuid(params.get("revisionId"))
     const maintenanceRequested = params.get("mode") === "maintenance" || /^\d{9,20}$/.test(requestedItemId)
     if (!opportunityId || !candidateKey) {
-      setError("Abre este workspace desde una oportunidad de Seller Command Center.")
-      setMessage("")
+      if (visualReviewRevisionId) {
+        setError("")
+        setMessage("Abriendo directamente la revisión visual V3. La frescura comercial de Luna se comprobará únicamente antes del Offer o la publicación.")
+      } else {
+        setError("Abre este workspace desde una oportunidad de Seller Command Center.")
+        setMessage("")
+      }
       return
     }
     void (async () => {
@@ -985,7 +999,7 @@ function ListingWorkspacePageContent() {
             setListingPackage(null)
             setDraftState((current) => ({ preflight: current.preflight }))
             setError("")
-            setMessage("Las policies y las imágenes están listas. Sólo falta reconfirmar el costo y la disponibilidad actuales en Luna para abrir la publicación.")
+            setMessage("La revisión visual V3 sigue disponible. Costo y disponibilidad de Luna deben reconfirmarse únicamente antes de crear o autorizar el Offer o publicar.")
             return
           }
           const gateBlockers = typedPrepareError.blockers ?? []
@@ -1063,7 +1077,7 @@ function ListingWorkspacePageContent() {
             )
           if (legacyVisualUpgradeRequired) {
             setDraftState((current) => ({ preflight: current.preflight }))
-            draftWarning = " Genera y aprueba la revisión visual V2 de siete imágenes antes de validar el conector de publicación."
+            draftWarning = " Completa y aprueba la revisión visual activa de siete imágenes antes de validar el conector de publicación."
           } else {
             try {
               const draft = await draftRequest(undefined, nextPackage.id)
@@ -1166,9 +1180,18 @@ function ListingWorkspacePageContent() {
   const deterministicPositionOnePreview = object(
     referenceGuidedAttempt?.deterministicPreview,
   )
+  const primaryMainPreview = object(referenceGuidedAttempt?.primaryMainPreview)
+  const referenceGuidedAssetReviews = Array.isArray(referenceGuidedAttempt?.assetReviews)
+    ? referenceGuidedAttempt.assetReviews as Array<Record<string, any>>
+    : []
   const referenceGuidedAssetSlots = Array.isArray(referenceGuidedAttempt?.assetSlots)
     ? referenceGuidedAttempt.assetSlots as Array<Record<string, any>>
     : []
+  const v3ReviewAccessible = v3VisualReviewAccessible({
+    strategyVersion: activeVisualRevision?.strategy_version,
+    revisionContract: activeVisualRevision?.revision_contract,
+    attemptId: referenceGuidedAttemptId,
+  })
   const requiredTaxonomyAspects = useMemo(() => new Set(
     draftState.taxonomy?.requiredAspects.map((aspect) => aspect.name) ?? [],
   ), [draftState.taxonomy])
@@ -1428,13 +1451,15 @@ function ListingWorkspacePageContent() {
   }
 
   async function prepareVisualStrategyV3() {
-    if (!listingPackage?.id || imageRevisionBusy) return
+    const listingPackageId = validUuid(listingPackage?.id)
+      ?? validUuid(activeVisualRevision?.listing_package_id)
+    if (!listingPackageId || imageRevisionBusy) return
     setImageRevisionBusy(true)
     setError("")
     try {
       const prepared = await imageRequest({
         action: "prepare_visual_review",
-        listingPackageId: listingPackage.id,
+        listingPackageId,
       })
       const attemptId = validUuid(prepared.attemptId)
       if (!attemptId) throw new Error("REFERENCE_GUIDED_ATTEMPT_ID_INVALID")
@@ -1451,6 +1476,37 @@ function ListingWorkspacePageContent() {
     } finally {
       setImageRevisionBusy(false)
     }
+  }
+
+  async function reviewReferenceGuidedAsset(input: {
+    assetOrdinal: 0 | 1
+    previewSha256: string
+    decision: "APPROVED" | "REJECTED"
+  }) {
+    const revisionId = validUuid(activeVisualRevision?.id)
+    if (!revisionId || !referenceGuidedAttemptId || imageRevisionBusy) return
+    setImageRevisionBusy(true); setError("")
+    try {
+      await imageRequest({
+        action: "review_reference_guided_asset",
+        attemptId: referenceGuidedAttemptId,
+        revisionId,
+        assetOrdinal: input.assetOrdinal,
+        previewSha256: input.previewSha256,
+        decision: input.decision,
+        reason: input.decision === "APPROVED"
+          ? "HUMAN_VISUAL_QA_APPROVED"
+          : "HUMAN_VISUAL_QA_REJECTED",
+      })
+      const persisted = await imageRequest(
+        undefined, undefined, undefined, undefined, referenceGuidedAttemptId,
+      )
+      setReferenceGuidedAttempt(persisted)
+      setMessage(`${input.assetOrdinal === 0 ? "Portada principal" : "Secundaria 1"}: veredicto visual ${input.decision === "APPROVED" ? "aprobado" : "rechazado"}. No se modificó Luna ni se escribió en eBay.`)
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(requestError,
+        "No se pudo guardar el veredicto visual."))
+    } finally { setImageRevisionBusy(false) }
   }
 
   async function createVisualStrategyV3Revision() {
@@ -1852,7 +1908,7 @@ function ListingWorkspacePageContent() {
     if (!opportunity || !publicationLunaRecheck || publicationLunaBusy) return
     if (publicationLunaReconfirmed) {
       setError("")
-      setMessage("Reabriendo autorización y publicación con la reconfirmación ya guardada…")
+      setMessage("Revalidando únicamente la puerta comercial con la reconfirmación ya guardada…")
       setWorkspaceRetry((current) => current + 1)
       return
     }
@@ -1868,7 +1924,7 @@ function ListingWorkspacePageContent() {
     }
     setPublicationLunaBusy(true)
     setError("")
-    setMessage("Guardando la reconfirmación Luna y reabriendo el paquete aprobado…")
+    setMessage("Guardando la reconfirmación Luna para las acciones comerciales…")
     try {
       await request({
         action: "reconfirm_publication_luna",
@@ -1881,7 +1937,7 @@ function ListingWorkspacePageContent() {
         quantity,
       })
       setPublicationLunaReconfirmed(true)
-      setMessage("Luna quedó reconfirmado. Reabriendo autorización y publicación…")
+      setMessage("Luna quedó reconfirmado para creación/autorización de Offer y publicación…")
       setWorkspaceRetry((current) => current + 1)
     } catch (requestError) {
       const code = requestError instanceof Error ? requestError.message : ""
@@ -2177,28 +2233,46 @@ function ListingWorkspacePageContent() {
     } finally { setDraftBusy(false) }
   }
 
+  const primaryMainDecision = referenceGuidedAssetReviews.find((review) =>
+    Number(review.asset_ordinal) === 0)
+  const materialDetailDecision = referenceGuidedAssetReviews.find((review) =>
+    Number(review.asset_ordinal) === 1)
+  const visualReviewPanel = (v3ReviewAccessible || v3ReadyForPrepare)
+    ? <section id="v3-human-review" className="space-y-4 rounded-3xl border border-violet-200/30 bg-violet-200/[0.07] p-4">
+      <div><p className="text-xs font-black uppercase tracking-widest text-violet-100/70">Revisión visual V3 · independiente de Luna</p><h2 className="mt-1 text-xl font-black">Portada principal y secundarias</h2><p className="mt-2 text-sm leading-6 text-white/65">Puedes abrir previews privados y registrar QA visual aunque costo o stock estén vencidos. La frescura comercial seguirá bloqueando el Offer y la publicación final.</p></div>
+      {publicationLunaRecheck && <p className="rounded-xl border border-amber-200/25 bg-amber-200/[0.07] p-3 text-xs text-amber-50"><strong>Publicación bloqueada por Luna;</strong> revisión visual disponible. Esta pantalla no actualiza costo, cantidad ni disponibilidad.</p>}
+      {!referenceGuidedAttemptId && <button type="button" disabled={imageRevisionBusy} onClick={() => void prepareVisualStrategyV3()} className="min-h-12 w-full rounded-xl bg-violet-200 px-4 text-sm font-black text-black disabled:opacity-40">Preparar seis trabajos Visual Strategy V3</button>}
+      {referenceGuidedAttemptId && !referenceGuidedAttempt && <p className="rounded-xl border border-white/10 p-3 text-xs text-white/60">Cargando previews privados del intento V3…</p>}
+      {referenceGuidedAttempt && <><div className="rounded-xl bg-black/20 p-3 text-xs"><strong>Intento {String(referenceGuidedAttempt.attempt?.id ?? referenceGuidedAttemptId)}</strong><span className="mt-1 block">Contrato: 0 Portada principal + 1–6 secundarias · providerCalls: {String(referenceGuidedAttempt.attempt?.provider_calls ?? 0)}</span></div>{referenceGuidedAssetSlots.length === 7 && <ol className="grid gap-1 rounded-xl bg-black/20 p-3 text-xs">{referenceGuidedAssetSlots.map((slot) => <li key={String(slot.asset_ordinal)}><strong>{Number(slot.asset_ordinal) === 0 ? "Portada principal" : `Secundaria ${String(slot.asset_ordinal)}`}</strong> · {String(slot.asset_role)}</li>)}</ol>}
+        {primaryMainPreview.output_preview_url && <figure className="rounded-xl border border-emerald-200/25 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img src={String(primaryMainPreview.output_preview_url)} alt="Preview privado de Portada principal V3" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-emerald-50"><strong>Portada principal · PRIMARY_MAIN</strong><span className="mt-1 block">1600×1600 · fondo #FFFFFF · composición determinista · sin píxeles generativos</span>{primaryMainDecision && <span className="mt-1 block">Último veredicto: {String(primaryMainDecision.decision)}</span>}<div className="mt-2 grid grid-cols-2 gap-2"><button type="button" disabled={imageRevisionBusy} onClick={() => void reviewReferenceGuidedAsset({ assetOrdinal: 0, previewSha256: String(primaryMainPreview.output_sha256), decision: "APPROVED" })} className="min-h-11 rounded-lg bg-emerald-200 px-2 font-black text-black disabled:opacity-40">Aprobar QA visual</button><button type="button" disabled={imageRevisionBusy} onClick={() => void reviewReferenceGuidedAsset({ assetOrdinal: 0, previewSha256: String(primaryMainPreview.output_sha256), decision: "REJECTED" })} className="min-h-11 rounded-lg border border-rose-200/40 px-2 font-black text-rose-50 disabled:opacity-40">Rechazar QA visual</button></div></figcaption></figure>}
+        {referenceGuidedPositionOne?.output_preview_url && <figure className="rounded-xl border border-rose-200/25 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img src={String(referenceGuidedPositionOne.output_preview_url)} alt="Evidencia rechazada del canary de Secundaria 1" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-rose-50"><strong>Canary rechazado · evidencia preservada</strong><span className="mt-1 block">No se reasigna ni se usa como otra posición.</span></figcaption></figure>}
+        {deterministicPositionOnePreview.output_preview_url && <figure className="rounded-xl border border-amber-200/25 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img src={String(deterministicPositionOnePreview.output_preview_url)} alt="Preview privado de Secundaria 1 material y acabado" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-amber-50"><strong>Secundaria 1 · SECONDARY_MATERIAL_DETAIL</strong><span className="mt-1 block">DETERMINISTIC_SOURCE_CROP_V1 · 1600×1600 · sin píxeles generativos</span>{materialDetailDecision && <span className="mt-1 block">Último veredicto: {String(materialDetailDecision.decision)}</span>}<div className="mt-2 grid grid-cols-2 gap-2"><button type="button" disabled={imageRevisionBusy} onClick={() => void reviewReferenceGuidedAsset({ assetOrdinal: 1, previewSha256: String(deterministicPositionOnePreview.output_sha256), decision: "APPROVED" })} className="min-h-11 rounded-lg bg-emerald-200 px-2 font-black text-black disabled:opacity-40">Aprobar QA visual</button><button type="button" disabled={imageRevisionBusy} onClick={() => void reviewReferenceGuidedAsset({ assetOrdinal: 1, previewSha256: String(deterministicPositionOnePreview.output_sha256), decision: "REJECTED" })} className="min-h-11 rounded-lg border border-rose-200/40 px-2 font-black text-rose-50 disabled:opacity-40">Rechazar QA visual</button></div></figcaption></figure>}
+      </>}
+    </section> : null
+
   return (
     <main className="min-h-screen bg-[#05070d] px-4 pb-32 pt-4 text-white sm:px-6">
       <section className="mx-auto max-w-xl space-y-4">
         <header className="sticky top-0 z-30 -mx-4 border-b border-white/10 bg-[#05070d]/95 px-4 pb-3 pt-2 backdrop-blur">
           <a href="/admin/ebay/mobile-review" className="inline-flex min-h-11 items-center rounded-full border border-white/20 px-4 text-sm font-bold">← Command Center</a>
-          <p className="mt-3 text-xs font-black uppercase tracking-widest text-emerald-100/70">Paso 4 · Autorizar y publicar</p>
+          <p className="mt-3 text-xs font-black uppercase tracking-widest text-emerald-100/70">{v3ReviewAccessible ? "Revisión humana · Visual Strategy V3" : "Paso 4 · Autorizar y publicar"}</p>
           <h1 className="mt-1 text-2xl font-black">Workspace del producto</h1>
         </header>
 
         {error && <p role="alert" className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm font-bold text-rose-50">{error}</p>}
         {message && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm text-cyan-50">{message}</p>}
+        {visualReviewPanel}
         {maintenanceMode && <section className="rounded-3xl border border-emerald-200/30 bg-emerald-200/[0.07] p-4"><p className="text-xs font-black uppercase tracking-widest text-emerald-100/70">Mantenimiento ACTIVE</p><h2 className="mt-1 text-xl font-black">Item {String(maintenance?.ebayItemId ?? "")}</h2><p className="mt-2 text-sm leading-6 text-white/65">Cuenta, SKU y estado ACTIVE ya fueron verificados. Aquí sólo se revisan título e imágenes; no se repiten policies ni guardas de creación.</p><div className="mt-4 rounded-2xl border border-white/15 bg-black/20 p-3"><p className="text-xs text-white/50">Título actual observado</p><p className="mt-1 text-sm font-bold">{String(maintenance?.title ?? "Pendiente de lectura")}</p><button type="button" disabled={!listingPackage || activeTitleBusy} onClick={() => void previewActiveTitleRevision()} className="mt-3 min-h-11 w-full rounded-xl border border-emerald-200/30 px-3 text-sm font-black disabled:opacity-40">{activeTitleBusy ? "Procesando…" : activeTitleRevision ? "Revalidar título propuesto" : "Preparar título verificado"}</button>{activeTitleRevision && <div className="mt-3 space-y-3"><div className="rounded-xl bg-emerald-200/10 p-3"><p className="text-xs text-emerald-100/60">Título calculado por el servidor</p><p className="mt-1 font-black">{String(activeTitleRevision.targetTitle ?? "")}</p></div><label className="block"><span className="text-xs font-black">Escribe exactamente: <code>{activeTitleExactPhrase}</code></span><input value={activeTitleConfirmation} onChange={(event) => setActiveTitleConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><button type="button" onClick={() => setActiveTitleConfirmation(activeTitleExactPhrase)} className="min-h-11 w-full rounded-xl border border-emerald-200/30 px-3 text-sm font-black">Usar frase exacta</button><button type="button" disabled={activeTitleBusy || !activeTitleConfirmationReady || activeTitlePhase === "applied_verified"} onClick={() => void applyActiveTitleRevision()} className="min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">{activeTitlePhase === "applied_verified" ? "Título aplicado y verificado" : /outcome_unknown|write_in_flight/i.test(activeTitlePhase) ? "Reconciliar sin repetir write" : "Aplicar sólo Title"}</button><p className="text-xs leading-5 text-white/50">Máximo una llamada ReviseFixedPriceItem. El XML contiene únicamente ItemID + Title; no modifica imágenes, precio, cantidad ni policies.</p></div>}</div></section>}
 
         {publicationLunaRecheck && <section aria-labelledby="publication-luna-recheck-heading" className="space-y-4 rounded-3xl border border-amber-200/35 bg-amber-200/[0.08] p-4">
-          <div><p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Última verificación requerida</p><h2 id="publication-luna-recheck-heading" className="mt-1 text-xl font-black">Reconfirmar Luna para publicar</h2><p className="mt-2 text-sm leading-6 text-amber-50/80">El conjunto histórico permanece guardado, pero no puede publicarse hasta completar la revisión visual V2 de siete imágenes PASSED. Esta reconfirmación sólo actualiza costo y stock; no regenera imágenes ni escribe en eBay.</p></div>
+          <div><p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Puerta comercial pendiente</p><h2 id="publication-luna-recheck-heading" className="mt-1 text-xl font-black">Reconfirmar Luna antes del Offer o publicación</h2><p className="mt-2 text-sm leading-6 text-amber-50/80">La revisión visual permanece disponible arriba. El costo o stock vencidos bloquean únicamente la creación/autorización del Offer y la publicación final. Reconfirmar no regenera imágenes ni escribe en eBay.</p></div>
           <div className="rounded-2xl bg-black/25 p-3"><p className="font-black">{publicationLunaRecheck.productTitle}</p><p className="mt-1 text-xs text-white/55">SKU {publicationLunaRecheck.supplierSku || "N/D"} · último costo vencido {money(publicationLunaRecheck.confirmedPrice)}{publicationLunaRecheck.quantityVisible ? ` · última cantidad ${publicationLunaRecheck.confirmedQuantity ?? "N/D"}` : " · cantidad no visible"}</p></div>
           {publicationLunaRecheck.supplierProductUrl
             ? <a href={publicationLunaRecheck.supplierProductUrl} target="_blank" rel="noreferrer" onClick={() => setPublicationLunaLinkOpened(true)} className="flex min-h-12 w-full items-center justify-center rounded-xl bg-violet-200 px-4 text-center font-black text-black">{publicationLunaLinkOpened ? "✓ Producto Luna abierto" : "Abrir producto exacto en Luna"}</a>
             : <p className="rounded-xl border border-rose-200/30 p-3 text-sm text-rose-100">El enlace exacto de Luna no está disponible. Vuelve a Command Center.</p>}
           <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm font-black">Costo actual en Luna<input type="number" min="0.01" step="0.01" inputMode="decimal" value={publicationLunaPrice} onChange={(event) => setPublicationLunaPrice(event.target.value)} placeholder="Escríbelo después de abrir Luna" disabled={publicationLunaReconfirmed} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3 disabled:opacity-50" /></label><label className="text-sm font-black">Cantidad visible (opcional)<input type="number" min="1" step="1" inputMode="numeric" value={publicationLunaQuantity} onChange={(event) => setPublicationLunaQuantity(event.target.value)} placeholder="Déjalo vacío si Luna no la muestra" disabled={publicationLunaReconfirmed} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3 disabled:opacity-50" /></label></div>
           <label className="flex min-h-12 items-start gap-3 rounded-xl border border-amber-100/25 p-3 text-sm leading-6"><input type="checkbox" checked={publicationLunaAvailable} disabled={publicationLunaReconfirmed} onChange={(event) => setPublicationLunaAvailable(event.target.checked)} className="mt-1 h-5 w-5 shrink-0 accent-emerald-200 disabled:opacity-50" /><span>Confirmo que abrí el producto exacto en Luna y ahora aparece disponible al costo indicado.</span></label>
-          <button type="button" disabled={publicationLunaBusy || (!publicationLunaReconfirmed && (!publicationLunaLinkOpened || !publicationLunaAvailable || !publicationLunaRecheck.supplierProductUrl || !(Number(publicationLunaPrice) > 0)))} onClick={() => void reconfirmPublicationLuna()} className="min-h-13 w-full rounded-2xl bg-amber-200 px-4 font-black text-black disabled:opacity-40">{publicationLunaBusy ? "Reabriendo producto…" : publicationLunaReconfirmed ? "Reintentar abrir el workspace" : "Confirmar Luna y abrir el workspace"}</button>
+          <button type="button" disabled={publicationLunaBusy || (!publicationLunaReconfirmed && (!publicationLunaLinkOpened || !publicationLunaAvailable || !publicationLunaRecheck.supplierProductUrl || !(Number(publicationLunaPrice) > 0)))} onClick={() => void reconfirmPublicationLuna()} className="min-h-13 w-full rounded-2xl bg-amber-200 px-4 font-black text-black disabled:opacity-40">{publicationLunaBusy ? "Revalidando puerta comercial…" : publicationLunaReconfirmed ? "Reintentar preparar publicación" : "Confirmar Luna para habilitar acciones comerciales"}</button>
           <p className="text-xs leading-5 text-white/55">Si Luna lo muestra agotado, no confirmes: vuelve a Command Center para detener este candidato. Si cambió el costo, Seller OS bloqueará la publicación y exigirá recalcular.</p>
         </section>}
 
@@ -2296,11 +2370,9 @@ function ListingWorkspacePageContent() {
           </section>
 
           <section className="rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.04] p-4">
-            {v3ReadyForPrepare ? <>
-              {!referenceGuidedAttemptId && <button type="button" disabled={imageRevisionBusy} onClick={() => void prepareVisualStrategyV3()} className="min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">Preparar seis trabajos Visual Strategy V3</button>}
-              {referenceGuidedAttemptId && !referenceGuidedAttempt && <div className="rounded-xl border border-cyan-200/25 bg-cyan-200/[0.05] p-3 text-xs text-cyan-50">Cargando el intento Visual Strategy V3 existente…</div>}
-              {referenceGuidedAttempt && <div className="rounded-xl border border-cyan-200/25 bg-cyan-200/[0.05] p-3 text-xs leading-5 text-cyan-50"><strong>Intento existente · {String(referenceGuidedAttempt.attempt?.status ?? "ESTADO_DESCONOCIDO")}</strong><span className="mt-1 block font-mono">Intento {String(referenceGuidedAttempt.attempt?.id ?? referenceGuidedAttemptId)}</span><span className="mt-1 block">Progreso iniciado: {String(referenceGuidedAttempt.progress ?? "0/6")}</span><span className="mt-1 block">Contrato: 0 Portada principal + 1–6 secundarias · providerCalls: {String(referenceGuidedAttempt.attempt?.provider_calls ?? 0)}</span>{referenceGuidedAssetSlots.length === 7 && <ol className="mt-2 grid gap-1 rounded-lg bg-black/20 p-2">{referenceGuidedAssetSlots.map((slot) => <li key={String(slot.asset_ordinal)}><strong>{Number(slot.asset_ordinal) === 0 ? "Portada principal" : `Secundaria ${String(slot.asset_ordinal)}`}</strong> · {String(slot.asset_role)}</li>)}</ol>}{referenceGuidedPositionOne?.output_preview_url && <figure className="mt-3 rounded-xl border border-rose-200/25 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img src={String(referenceGuidedPositionOne.output_preview_url)} alt="Evidencia rechazada de Secundaria 1: detalle de material y acabado" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-rose-50"><strong>Secundaria 1 rechazada · evidencia preservada</strong><span className="mt-1 block">SECONDARY_MATERIAL_DETAIL · {String(referenceGuidedPositionOne.status)}</span><span className="mt-1 block">Motivo: {String(referenceGuidedPositionOne.error_code ?? "COMMERCIAL_OBJECTIVE_MISMATCH")}</span></figcaption></figure>}{deterministicPositionOnePreview.output_preview_url && <figure className="mt-3 rounded-xl border border-amber-200/25 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img src={String(deterministicPositionOnePreview.output_preview_url)} alt="Vista determinista para revisión humana de Secundaria 1" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-amber-50"><strong>Revisión humana · Secundaria 1</strong><span className="mt-1 block">DETERMINISTIC_SOURCE_CROP_V1 · {String(deterministicPositionOnePreview.status)}</span><span className="mt-1 block">Crop {String(deterministicPositionOnePreview.crop_width)}×{String(deterministicPositionOnePreview.crop_height)} · escala {String(deterministicPositionOnePreview.upscale_factor)}× · sin píxeles generativos</span></figcaption></figure>}</div>}
-            </> : <>
+            {activeVisualRevision?.strategy_version === "VISUAL_STRATEGY_V3"
+              ? <p className="text-sm text-violet-50">La revisión visual V3 se muestra arriba y permanece accesible independientemente de la reconfirmación comercial.</p>
+              : <>
             <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Pipeline seguro de imágenes</p>
             <h2 className="mt-1 text-xl font-black">Fondo blanco y 1600×1600</h2>
             <p className="mt-2 text-sm leading-6 text-white/60">El optimizador es determinista: limpia únicamente fondos claros, centra el producto y no inventa piezas. Cada resultado queda pendiente hasta compararlo y aprobarlo.</p>

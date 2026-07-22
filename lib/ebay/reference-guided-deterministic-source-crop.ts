@@ -95,6 +95,29 @@ export async function createDeterministicPrimaryMain(input: {
   }
 }
 
+export async function createDeterministicPrimaryMainPreview(input: {
+  attemptId: string
+  revisionId: string
+  source: Buffer
+  sourceSha256: string
+  sourceStoragePath: string
+}) {
+  const primary = await createDeterministicPrimaryMain(input)
+  const transformManifest = {
+    ...primary.transform,
+    attemptId: input.attemptId,
+    revisionId: input.revisionId,
+    sourceStoragePath: input.sourceStoragePath,
+  }
+  const transformManifestText = JSON.stringify(transformManifest)
+  return {
+    ...primary,
+    transformManifest,
+    transformManifestText,
+    transformManifestHash: sha256(Buffer.from(transformManifestText, "utf8")),
+  }
+}
+
 export async function createDeterministicPositionOneCrop(input: {
   attemptId: string
   revisionId: string

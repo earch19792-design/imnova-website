@@ -368,13 +368,35 @@ export async function GET(req: Request) {
     }
     if (url.searchParams.get("activeRevision") === "1") {
       const candidateKey = text(url.searchParams.get("candidateKey"), 300)
-      if (!candidateKey) return NextResponse.json({ success: false, error: "CANDIDATE_KEY_REQUIRED" }, { status: 400 })
-      const { data: candidate } = await getSupabaseAdminClient().from("ebay_same_day_pilot_candidates").select("id").eq("candidate_key", candidateKey).order("created_at", { ascending: false }).limit(1).maybeSingle()
-      if (!candidate) return NextResponse.json({ success: true, revision: null, v3Eligible: false, blockedReason: "ACTIVE_REVISION_NOT_FOUND" })
       const adminDb = getSupabaseAdminClient()
+      const visualReviewRevisionId = uuid(
+        url.searchParams.get("visualReviewRevisionId"),
+      )
+      if (!candidateKey && !visualReviewRevisionId) return NextResponse.json({ success: false, error: "VISUAL_REVIEW_SCOPE_REQUIRED" }, { status: 400 })
+      const { data: requestedRevision, error: requestedRevisionError } =
+        visualReviewRevisionId
+          ? await adminDb.from("ebay_same_day_pilot_image_revisions")
+            .select("id,candidate_id")
+            .eq("id", visualReviewRevisionId)
+            .eq("created_by", validation.userId)
+            .eq("marketplace_account_key", accountKey)
+            .maybeSingle()
+          : { data: null, error: null }
+      if (requestedRevisionError || (visualReviewRevisionId && !requestedRevision)) {
+        return NextResponse.json({ success: false, error: "ACTIVE_REVISION_NOT_FOUND" }, { status: 404 })
+      }
+      const { data: candidate } = requestedRevision
+        ? { data: { id: requestedRevision.candidate_id } }
+        : await adminDb.from("ebay_same_day_pilot_candidates").select("id")
+          .eq("candidate_key", candidateKey).order("created_at", { ascending: false })
+          .limit(1).maybeSingle()
+      if (!candidate) return NextResponse.json({ success: true, revision: null, v3Eligible: false, blockedReason: "ACTIVE_REVISION_NOT_FOUND" })
       const { data: revisions, error: revisionError } = await adminDb.from("ebay_same_day_pilot_image_revisions").select("id,listing_package_id,strategy_version,revision_contract,parent_revision_id,status,revision_fingerprint,created_at").eq("candidate_id", candidate.id).eq("created_by", validation.userId).eq("marketplace_account_key", accountKey).order("created_at", { ascending: false }).limit(20)
       if (revisionError) throw new Error("ACTIVE_REVISION_LOOKUP_FAILED")
       const active = (revisions ?? []).find((row) => row.strategy_version === "VISUAL_STRATEGY_V3" && row.revision_contract === "REFERENCE_GUIDED_PRODUCT_GENERATION_V1") ?? (revisions ?? []).find((row) => row.strategy_version === "VISUAL_STRATEGY_V2") ?? null
+      if (visualReviewRevisionId && active?.id !== visualReviewRevisionId) {
+        return NextResponse.json({ success: false, error: "VISUAL_REVIEW_REVISION_NOT_ACTIVE" }, { status: 409 })
+      }
       const child = active?.strategy_version === "VISUAL_STRATEGY_V2" ? (revisions ?? []).find((row) => row.parent_revision_id === active.id && row.strategy_version === "VISUAL_STRATEGY_V3") : active
       const { data: pack } = active?.listing_package_id ? await adminDb.from("luna_catalog_authorized_source_packs").select("id,source_pack_hash,manifest_hash,source_assets,authoritative_fact_package_hash").eq("marketplace_account_key", accountKey).eq("listing_package_id", active.listing_package_id).order("created_at", { ascending: false }).limit(1).maybeSingle() : { data: null }
       const packAssets = Array.isArray(pack?.source_assets) ? pack.source_assets as Array<Record<string, unknown>> : []
@@ -401,7 +423,9 @@ export async function GET(req: Request) {
       const supabase = getSupabaseAdminClient()
       const [{ data: attempt, error: attemptError }, { data: jobs, error: jobsError },
         { data: deterministicPreview, error: deterministicPreviewError },
-        { data: assetSlots, error: assetSlotsError }] = await Promise.all([
+        { data: assetSlots, error: assetSlotsError },
+        { data: primaryMainPreview, error: primaryMainPreviewError },
+        { data: assetReviews, error: assetReviewsError }] = await Promise.all([
         supabase.from("ebay_reference_guided_generation_attempts").select("id,revision_id,composition_manifest_hash,status,completed_job_count,expected_job_count,provider_calls,retry_consumed,created_at,started_at,completed_at").eq("id", attemptId).maybeSingle(),
         supabase.from("ebay_reference_guided_generation_jobs").select("id,position,commercial_role,status,provider_request_id,output_storage_path,output_sha256,qa_result,error_code,lease_owner,lease_expires_at,provider_call_started_at,provider_call_completed_at").eq("generation_attempt_id", attemptId).order("position"),
         supabase.from("ebay_reference_guided_deterministic_previews")
@@ -411,8 +435,14 @@ export async function GET(req: Request) {
         supabase.from("ebay_reference_guided_asset_contract_slots")
           .select("asset_ordinal,asset_role,source_job_position,source_job_id,rendering_contract")
           .eq("attempt_id", attemptId).order("asset_ordinal"),
+        supabase.from("ebay_reference_guided_primary_main_previews")
+          .select("id,revision_id,asset_ordinal,asset_role,contract_version,source_sha256,safe_margin_pixels,background_color,output_width,output_height,output_storage_path,output_sha256,transform_manifest_hash,status,created_at")
+          .eq("attempt_id", attemptId).eq("asset_ordinal", 0).maybeSingle(),
+        supabase.from("ebay_reference_guided_asset_review_events")
+          .select("id,asset_ordinal,asset_role,preview_sha256,decision,reason,created_at")
+          .eq("attempt_id", attemptId).order("created_at", { ascending: false }),
       ])
-      if (attemptError || jobsError || deterministicPreviewError || assetSlotsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
+      if (attemptError || jobsError || deterministicPreviewError || assetSlotsError || primaryMainPreviewError || assetReviewsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
       if (!attempt) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
       if (requestedRevisionId && attempt.revision_id !== requestedRevisionId) return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_REVISION_MISMATCH" }, { status: 409 })
       const { data: ownedRevision, error: ownedRevisionError } = await supabase
@@ -446,7 +476,19 @@ export async function GET(req: Request) {
         deterministicReview = { ...deterministicPreview,
           output_preview_url: preview.data.signedUrl }
       }
-      const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, deterministicPreview: deterministicReview, assetContract: REFERENCE_GUIDED_SEVEN_ASSET_ROLES, assetSlots: assetSlots ?? [], progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
+      let primaryReview = primaryMainPreview
+        ? { ...primaryMainPreview, output_preview_url: null as string | null }
+        : null
+      if (primaryMainPreview?.output_storage_path) {
+        const preview = await supabase.storage.from(STAGING_BUCKET)
+          .createSignedUrl(primaryMainPreview.output_storage_path, 300)
+        if (preview.error || !preview.data?.signedUrl) {
+          throw new Error("REFERENCE_GUIDED_OUTPUT_PREVIEW_FAILED")
+        }
+        primaryReview = { ...primaryMainPreview,
+          output_preview_url: preview.data.signedUrl }
+      }
+      const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, primaryMainPreview: primaryReview, deterministicPreview: deterministicReview, assetReviews: assetReviews ?? [], assetContract: REFERENCE_GUIDED_SEVEN_ASSET_ROLES, assetSlots: assetSlots ?? [], progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
       response.headers.set("Cache-Control", "no-store")
       return response
     }
@@ -661,6 +703,80 @@ export async function POST(req: Request) {
       if (rpcError) throw new Error(`ENSURE_V3_RPC:${rpcError.code ?? "UNKNOWN"}`)
       const result = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult
       return NextResponse.json({ success: true, revisionId: result?.revision_id, revisionFingerprint: fingerprint, reused: result?.created !== true })
+    }
+
+    if (action === "review_reference_guided_asset") {
+      const attemptId = uuid(body.attemptId)
+      const revisionId = uuid(body.revisionId)
+      const assetOrdinal = Number(body.assetOrdinal)
+      const previewSha256 = text(body.previewSha256, 80)
+      const decision = body.decision === "APPROVED" || body.decision === "REJECTED"
+        ? body.decision
+        : ""
+      const reason = text(body.reason, 200)
+      if (!attemptId || !revisionId || ![0, 1].includes(assetOrdinal) ||
+        !/^[0-9a-f]{64}$/.test(previewSha256) || !decision || !reason) {
+        return NextResponse.json({ success: false,
+          error: "REFERENCE_GUIDED_VISUAL_REVIEW_INVALID" }, { status: 400 })
+      }
+      const [{ data: revision, error: revisionError },
+        { data: attempt, error: attemptError },
+        { data: slot, error: slotError }] = await Promise.all([
+        supabase.from("ebay_same_day_pilot_image_revisions")
+          .select("id,strategy_version,revision_contract")
+          .eq("id", revisionId).eq("created_by", actor)
+          .eq("marketplace_account_key", accountKey).maybeSingle(),
+        supabase.from("ebay_reference_guided_generation_attempts")
+          .select("id,revision_id,status,provider_calls,ebay_writes,production_changed")
+          .eq("id", attemptId).eq("revision_id", revisionId)
+          .neq("status", "SUPERSEDED_INVALID_MANIFEST").maybeSingle(),
+        supabase.from("ebay_reference_guided_asset_contract_slots")
+          .select("asset_ordinal,asset_role")
+          .eq("attempt_id", attemptId).eq("asset_ordinal", assetOrdinal)
+          .maybeSingle(),
+      ])
+      if (revisionError || attemptError || slotError || !revision || !attempt ||
+        !slot || revision.strategy_version !== "VISUAL_STRATEGY_V3" ||
+        revision.revision_contract !== "REFERENCE_GUIDED_PRODUCT_GENERATION_V1" ||
+        Number(attempt.provider_calls) !== 2 || Number(attempt.ebay_writes) !== 0 ||
+        attempt.production_changed !== false) {
+        return NextResponse.json({ success: false,
+          error: "REFERENCE_GUIDED_VISUAL_REVIEW_SCOPE_INVALID" }, { status: 409 })
+      }
+      const previewQuery = assetOrdinal === 0
+        ? supabase.from("ebay_reference_guided_primary_main_previews")
+          .select("output_sha256").eq("attempt_id", attemptId)
+          .eq("asset_ordinal", 0).eq("output_sha256", previewSha256).maybeSingle()
+        : supabase.from("ebay_reference_guided_deterministic_previews")
+          .select("output_sha256").eq("attempt_id", attemptId)
+          .eq("asset_ordinal", 1).eq("output_sha256", previewSha256).maybeSingle()
+      const { data: preview, error: previewError } = await previewQuery
+      if (previewError || !preview) return NextResponse.json({ success: false,
+        error: "REFERENCE_GUIDED_VISUAL_PREVIEW_NOT_FOUND" }, { status: 404 })
+      const { data: prior, error: priorError } = await supabase
+        .from("ebay_reference_guided_asset_review_events")
+        .select("id,asset_ordinal,asset_role,preview_sha256,decision,reason,created_at")
+        .eq("attempt_id", attemptId).eq("asset_ordinal", assetOrdinal)
+        .eq("preview_sha256", previewSha256).eq("decision", decision)
+        .maybeSingle()
+      if (priorError) throw new Error("REFERENCE_GUIDED_VISUAL_REVIEW_FAILED")
+      let review = prior
+      if (!review) {
+        const inserted = await supabase.from("ebay_reference_guided_asset_review_events")
+          .insert({ attempt_id: attemptId, revision_id: revisionId,
+            asset_ordinal: assetOrdinal, asset_role: slot.asset_role,
+            preview_sha256: previewSha256, decision, reason,
+            reviewer_id: actor })
+          .select("id,asset_ordinal,asset_role,preview_sha256,decision,reason,created_at")
+          .single()
+        if (inserted.error || !inserted.data) {
+          throw new Error("REFERENCE_GUIDED_VISUAL_REVIEW_FAILED")
+        }
+        review = inserted.data
+      }
+      return NextResponse.json({ success: true, review, reused: Boolean(prior),
+        safety: { commercialFieldsUpdated: false, providerCalls: 2,
+          ebayWrites: 0, productionChanged: false } })
     }
 
     if (action === "prepare_visual_review") {
