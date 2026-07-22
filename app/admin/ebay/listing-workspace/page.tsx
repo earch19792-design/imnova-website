@@ -653,6 +653,7 @@ function ListingWorkspacePageContent() {
   const [protectedPixels, setProtectedPixels] = useState<Record<string, any> | null>(null)
   const [protectedObjectUrls, setProtectedObjectUrls] = useState<Record<string, string>>({})
   const [protectedVisualConfirmed, setProtectedVisualConfirmed] = useState(false)
+  const [protectedStatus, setProtectedStatus] = useState<"idle" | "reviewing" | "protecting" | "success" | "error">("idle")
   const [imageRevisionLocalError, setImageRevisionLocalError] = useState("")
   const [imageRevisionConfirmed, setImageRevisionConfirmed] = useState(false)
   const [imageRightsBasis, setImageRightsBasis] = useState("supplier_authorized")
@@ -1433,12 +1434,15 @@ function ListingWorkspacePageContent() {
     const parentRevisionId = activeVisualRevision?.id ?? imageRevision?.revision.id
     if (!parentRevisionId || protectedSourceBusy) return
     setProtectedSourceBusy(true)
+    setProtectedStatus(confirm ? "protecting" : "reviewing")
     try {
       const payload = await imageRequest({ action: "ensure_protected_authorized_source_pack", parentRevisionId, ...(confirm ? { confirm: true, previewSetId: protectedPixels?.previewSetId, visualConfirmation: protectedVisualConfirmed } : {}) })
       setProtectedSourcePreview(payload)
       if (payload.sourcePackId) setMessage("Fuentes protegidas y verificadas; la revisión V3 aún requiere una acción separada.")
+      setProtectedStatus(payload.sourcePackId ? "success" : "idle")
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "PROTECTED_SOURCE_REVIEW_FAILED")
+      setProtectedStatus("error")
     } finally {
       setProtectedSourceBusy(false)
     }
