@@ -1158,6 +1158,11 @@ function ListingWorkspacePageContent() {
     && !revisionError
     && activeVisualRevision?.strategy_version === "VISUAL_STRATEGY_V3"
     && activeVisualRevision.status === "READY_FOR_PREPARE"
+  const referenceGuidedJobs = Array.isArray(referenceGuidedAttempt?.jobs)
+    ? referenceGuidedAttempt.jobs as Array<Record<string, any>>
+    : []
+  const referenceGuidedPositionOne = referenceGuidedJobs.find((job) =>
+    Number(job.position) === 1)
   const requiredTaxonomyAspects = useMemo(() => new Set(
     draftState.taxonomy?.requiredAspects.map((aspect) => aspect.name) ?? [],
   ), [draftState.taxonomy])
@@ -2286,8 +2291,9 @@ function ListingWorkspacePageContent() {
 
           <section className="rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.04] p-4">
             {v3ReadyForPrepare ? <>
-              <button type="button" disabled={imageRevisionBusy} onClick={() => void prepareVisualStrategyV3()} className="min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">Preparar seis trabajos Visual Strategy V3</button>
-              {referenceGuidedAttempt && <div className="mt-3 rounded-xl border border-cyan-200/25 bg-cyan-200/[0.05] p-3 text-xs leading-5 text-cyan-50"><strong>Preparado · proveedor deshabilitado</strong><span className="mt-1 block font-mono">Intento {String(referenceGuidedAttempt.attempt?.id ?? referenceGuidedAttemptId)}</span><span className="mt-1 block">Progreso: {String(referenceGuidedAttempt.progress ?? `${referenceGuidedAttempt.attempt?.completed_job_count ?? 0}/6`)}</span><span className="mt-1 block">Trabajos persistidos: {Array.isArray(referenceGuidedAttempt.jobs) ? referenceGuidedAttempt.jobs.length : 0}/6 · providerCalls: {String(referenceGuidedAttempt.attempt?.provider_calls ?? 0)}</span></div>}
+              {!referenceGuidedAttemptId && <button type="button" disabled={imageRevisionBusy} onClick={() => void prepareVisualStrategyV3()} className="min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">Preparar seis trabajos Visual Strategy V3</button>}
+              {referenceGuidedAttemptId && !referenceGuidedAttempt && <div className="rounded-xl border border-cyan-200/25 bg-cyan-200/[0.05] p-3 text-xs text-cyan-50">Cargando el intento Visual Strategy V3 existente…</div>}
+              {referenceGuidedAttempt && <div className="rounded-xl border border-cyan-200/25 bg-cyan-200/[0.05] p-3 text-xs leading-5 text-cyan-50"><strong>Intento existente · {String(referenceGuidedAttempt.attempt?.status ?? "ESTADO_DESCONOCIDO")}</strong><span className="mt-1 block font-mono">Intento {String(referenceGuidedAttempt.attempt?.id ?? referenceGuidedAttemptId)}</span><span className="mt-1 block">Progreso iniciado: {String(referenceGuidedAttempt.progress ?? "0/6")}</span><span className="mt-1 block">Trabajos persistidos: {referenceGuidedJobs.length}/6 · providerCalls: {String(referenceGuidedAttempt.attempt?.provider_calls ?? 0)}</span>{referenceGuidedPositionOne?.output_preview_url && <figure className="mt-3 rounded-xl border border-amber-200/25 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img src={String(referenceGuidedPositionOne.output_preview_url)} alt="Revisión humana de posición 1: detalle de material y acabado" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-amber-50"><strong>Revisión humana · posición 1</strong><span className="mt-1 block">MATERIAL_AND_FINISH_DETAIL · {String(referenceGuidedPositionOne.status)}</span><span className="mt-1 block">QA automático: {String(referenceGuidedPositionOne.qa_result?.automaticStatus ?? "PENDIENTE")} · no aprobada automáticamente</span></figcaption></figure>}</div>}
             </> : <>
             <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Pipeline seguro de imágenes</p>
             <h2 className="mt-1 text-xl font-black">Fondo blanco y 1600×1600</h2>

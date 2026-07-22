@@ -54,6 +54,10 @@ import {
   buildReferenceGuidedV3CompositionManifest,
   verifyExactReferenceGuidedPrompt,
 } from "@/lib/ebay/reference-guided-v3-manifest"
+import {
+  isInitialReferenceGuidedPrepare,
+  persistedReferenceGuidedManifestMatches,
+} from "@/lib/ebay/reference-guided-prepare-idempotency"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
 const SOURCE_BUCKET = EBAY_IMAGE_SOURCE_BUCKET
@@ -381,6 +385,7 @@ export async function GET(req: Request) {
         ? await adminDb.from("ebay_reference_guided_generation_attempts")
           .select("id,revision_id,status,completed_job_count,expected_job_count,provider_calls")
           .eq("revision_id", active.id)
+          .neq("status", "SUPERSEDED_INVALID_MANIFEST")
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle()
@@ -394,7 +399,7 @@ export async function GET(req: Request) {
       const supabase = getSupabaseAdminClient()
       const [{ data: attempt, error: attemptError }, { data: jobs, error: jobsError }] = await Promise.all([
         supabase.from("ebay_reference_guided_generation_attempts").select("id,revision_id,composition_manifest_hash,status,completed_job_count,expected_job_count,provider_calls,retry_consumed,created_at,started_at,completed_at").eq("id", attemptId).maybeSingle(),
-        supabase.from("ebay_reference_guided_generation_jobs").select("id,position,commercial_role,status,provider_request_id,output_sha256,qa_result,error_code,provider_call_started_at,provider_call_completed_at").eq("generation_attempt_id", attemptId).order("position"),
+        supabase.from("ebay_reference_guided_generation_jobs").select("id,position,commercial_role,status,provider_request_id,output_storage_path,output_sha256,qa_result,error_code,lease_owner,lease_expires_at,provider_call_started_at,provider_call_completed_at").eq("generation_attempt_id", attemptId).order("position"),
       ])
       if (attemptError || jobsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
       if (!attempt) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
@@ -407,7 +412,20 @@ export async function GET(req: Request) {
         .eq("marketplace_account_key", accountKey)
         .maybeSingle()
       if (ownedRevisionError || !ownedRevision) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
-      return NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: jobs ?? [], progress: `${attempt.completed_job_count}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
+      const reviewJobs = await Promise.all((jobs ?? []).map(async (job) => {
+        const outputPath = text(job.output_storage_path, 1_000)
+        if (!outputPath) return { ...job, output_preview_url: null }
+        const preview = await supabase.storage.from(STAGING_BUCKET)
+          .createSignedUrl(outputPath, 300)
+        if (preview.error || !preview.data?.signedUrl) {
+          throw new Error("REFERENCE_GUIDED_OUTPUT_PREVIEW_FAILED")
+        }
+        return { ...job, output_preview_url: preview.data.signedUrl }
+      }))
+      const progressedJobs = reviewJobs.filter((job) => job.status !== "PENDING").length
+      const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
+      response.headers.set("Cache-Control", "no-store")
+      return response
     }
     const revisionId = uuid(url.searchParams.get("revisionId"))
     if (revisionId) {
@@ -740,34 +758,48 @@ export async function POST(req: Request) {
         sideSourceHash: sideVerified.actual,
         authoritativeFactsPackage,
       })
-      const { data, error } = await supabase.rpc("create_ebay_reference_guided_generation_attempt_v2", {
-        p_revision_id: revisionId,
-        p_composition_manifest_text: preparedManifest.compositionManifestText,
-      })
-      if (error) throw error
-      const attempt = Array.isArray(data) ? data[0] : data
+      const { data: existingAttempt, error: existingAttemptError } = await supabase
+        .from("ebay_reference_guided_generation_attempts")
+        .select("id,revision_id,composition_manifest_hash,status,provider_calls,retry_consumed,expected_job_count,completed_job_count")
+        .eq("revision_id", revisionId)
+        .eq("composition_manifest_hash", preparedManifest.compositionManifestHash)
+        .maybeSingle()
+      if (existingAttemptError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
+      if (existingAttempt?.status === "SUPERSEDED_INVALID_MANIFEST") {
+        return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_MANIFEST_PERMANENTLY_SUPERSEDED" }, { status: 409 })
+      }
+      let attempt = existingAttempt
+      if (!attempt) {
+        const { data, error } = await supabase.rpc("create_ebay_reference_guided_generation_attempt_v2", {
+          p_revision_id: revisionId,
+          p_composition_manifest_text: preparedManifest.compositionManifestText,
+        })
+        if (error) throw error
+        attempt = Array.isArray(data) ? data[0] : data
+      }
       const { data: persistedJobs, error: persistedJobsError } = await supabase
         .from("ebay_reference_guided_generation_jobs")
-        .select("position,commercial_role,status,lease_owner,lease_expires_at,exact_prompt_text,prompt_hash,prompt_template_version,allowed_product_facts,allowed_generated_context,prohibited_claims")
+        .select("position,commercial_role,status,lease_owner,lease_expires_at,provider_request_id,output_storage_path,output_sha256,qa_result,error_code,exact_prompt_text,prompt_hash,prompt_template_version,allowed_product_facts,allowed_generated_context,prohibited_claims")
         .eq("generation_attempt_id", attempt?.id)
         .order("position", { ascending: true })
       if (persistedJobsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
-      const preparedOnly = !REFERENCE_GUIDED_PROVIDER_ENABLED
-        && persistedJobs?.length === 6
-        && persistedJobs.every((job, index) =>
-          job.position === index + 1
-          && job.status === "PENDING"
-          && job.lease_owner == null
-          && job.lease_expires_at == null
-          && job.commercial_role === preparedManifest.manifest.jobs[index].commercialObjective
-          && job.exact_prompt_text === preparedManifest.manifest.jobs[index].exactPromptText
-          && job.prompt_hash === preparedManifest.manifest.jobs[index].promptHash
-          && verifyExactReferenceGuidedPrompt(job.exact_prompt_text, job.prompt_hash))
-        && Number(attempt?.provider_calls) === 0
-      if (!REFERENCE_GUIDED_PROVIDER_ENABLED && !preparedOnly) {
-        throw new Error("REFERENCE_GUIDED_PREPARE_INVARIANT_FAILED")
+      const persistedManifestMatches = persistedReferenceGuidedManifestMatches({
+        jobs: persistedJobs ?? [],
+        manifestJobs: preparedManifest.manifest.jobs,
+        verifyPrompt: verifyExactReferenceGuidedPrompt,
+      })
+      if (!persistedManifestMatches) {
+        return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_PERSISTED_JOB_MANIFEST_MISMATCH" }, { status: 409 })
       }
-      return NextResponse.json({ success: true, revisionId, attemptId: attempt?.id, manifestHash: preparedManifest.compositionManifestHash, state: "PREPARED", providerState: REFERENCE_GUIDED_PROVIDER_ENABLED ? "READY_FOR_EXPLICIT_EXECUTION" : "WAITING_PROVIDER_ENABLEMENT", featureFlagEnabled: REFERENCE_GUIDED_PROVIDER_ENABLED, attemptRows: 1, jobRows: persistedJobs?.length ?? 0, jobs: persistedJobs ?? [], providerCalls: Number(attempt?.provider_calls ?? 0), retryConsumed: Boolean(attempt?.retry_consumed), ebayWrites: 0, productionChanged: false }, { status: 202 })
+      const initialPrepareInvariant = isInitialReferenceGuidedPrepare({
+        jobs: persistedJobs ?? [],
+        providerCalls: Number(attempt?.provider_calls),
+      })
+      if (!existingAttempt && !REFERENCE_GUIDED_PROVIDER_ENABLED && !initialPrepareInvariant) {
+        return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_INITIAL_PREPARE_INVARIANT_FAILED" }, { status: 422 })
+      }
+      const progressedJobs = persistedJobs?.filter((job) => job.status !== "PENDING").length ?? 0
+      return NextResponse.json({ success: true, revisionId, attemptId: attempt?.id, manifestHash: preparedManifest.compositionManifestHash, state: attempt?.status ?? "PENDING", progress: `${progressedJobs}/6`, reused: Boolean(existingAttempt), providerState: REFERENCE_GUIDED_PROVIDER_ENABLED ? "READY_FOR_EXPLICIT_EXECUTION" : "WAITING_PROVIDER_ENABLEMENT", featureFlagEnabled: REFERENCE_GUIDED_PROVIDER_ENABLED, attemptRows: 1, jobRows: persistedJobs?.length ?? 0, jobs: persistedJobs ?? [], providerCalls: Number(attempt?.provider_calls ?? 0), retryConsumed: Boolean(attempt?.retry_consumed), ebayWrites: 0, productionChanged: false }, { status: existingAttempt ? 200 : 202 })
     }
 
     if (action === "generate") {
