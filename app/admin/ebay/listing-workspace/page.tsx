@@ -651,6 +651,7 @@ function ListingWorkspacePageContent() {
   const [protectedSourcePreview, setProtectedSourcePreview] = useState<Record<string, any> | null>(null)
   const [protectedSourceBusy, setProtectedSourceBusy] = useState(false)
   const [protectedPixels, setProtectedPixels] = useState<Record<string, any> | null>(null)
+  const [protectedObjectUrls, setProtectedObjectUrls] = useState<Record<string, string>>({})
   const [protectedVisualConfirmed, setProtectedVisualConfirmed] = useState(false)
   const [imageRevisionLocalError, setImageRevisionLocalError] = useState("")
   const [imageRevisionConfirmed, setImageRevisionConfirmed] = useState(false)
@@ -1449,11 +1450,19 @@ function ListingWorkspacePageContent() {
     setProtectedSourceBusy(true)
     try {
       const payload = await imageRequest(undefined, undefined, undefined, undefined, undefined, parentRevisionId)
-      setProtectedPixels(payload)
+      const urls: Record<string, string> = {}
+      for (const image of payload.images ?? []) {
+        const blob = await fetch(image.dataUrl).then((response) => response.blob())
+        urls[image.sourceImageId] = URL.createObjectURL(blob)
+      }
+      setProtectedObjectUrls((old) => { Object.values(old).forEach((value) => URL.revokeObjectURL(value)); return urls })
+      setProtectedPixels({ ...payload, images: (payload.images ?? []).map((image: any) => ({ ...image, dataUrl: urls[image.sourceImageId] })) })
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "PROTECTED_SOURCE_PIXELS_FAILED")
     } finally { setProtectedSourceBusy(false) }
   }
+
+  useEffect(() => () => { Object.values(protectedObjectUrls).forEach((value) => URL.revokeObjectURL(value)) }, [protectedObjectUrls])
 
   async function decideImageRevision(decision: "APPROVE" | "REJECT") {
     const revisionId = validUuid(imageRevision?.revision.id)
