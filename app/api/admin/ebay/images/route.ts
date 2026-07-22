@@ -468,7 +468,6 @@ export async function POST(req: Request) {
         .select("id,listing_package_id,candidate_id,product_dossier_hash")
         .eq("id", parentRevisionId).maybeSingle()
       if (parentError || !parent) return NextResponse.json({ success: false, error: "PARENT_REVISION_NOT_FOUND" }, { status: 404 })
-      if (!parent.product_dossier_hash) return NextResponse.json({ success: false, error: "PRODUCT_DOSSIER_REQUIRED", sourcePackCreated: false }, { status: 422 })
       const { data: candidate } = await supabase.from("ebay_same_day_pilot_candidates")
         .select("candidate_key,opportunity_id,supplier_sku,supplier_variant_id")
         .eq("id", parent.candidate_id).maybeSingle()
@@ -489,6 +488,11 @@ export async function POST(req: Request) {
         supplierVariantId,
       })
       const assets = await resolveProtectedAuthorizedCatalogNativeMedia({ definitions })
+      const preview = assets.map((asset) => ({ sourceImageId: asset.sourceImageId, sourceAngle: asset.sourceAngle, width: asset.nativeWidth, height: asset.nativeHeight, sha256: asset.sha256, historicalSha256: definitions.find((d) => d.sourceImageId === asset.sourceImageId)?.expectedSha256 ?? null, changed: asset.sourceImageId === "SIDE" && asset.sha256 !== definitions.find((d) => d.sourceImageId === asset.sourceImageId)?.expectedSha256 }))
+      if (body.confirm !== true) {
+        return NextResponse.json({ success: true, preview, sideChanged: preview.some((item) => item.sourceImageId === "SIDE" && item.changed), protectedSnapshotExecuted: false, requiresConfirmation: true, productDossierFound: Boolean(parent.product_dossier_hash), missingDossier: parent.product_dossier_hash ? [] : ["product_dossier_hash"] })
+      }
+      if (!parent.product_dossier_hash) return NextResponse.json({ success: false, error: "PRODUCT_DOSSIER_REQUIRED", preview, sourcePackCreated: false }, { status: 422 })
       const sourcePack = {
         productId: supplierProductId,
         productIdentityHash: `sha256:${createHash("sha256").update(`${supplierProductId}:${supplierVariantId}`).digest("hex")}`,

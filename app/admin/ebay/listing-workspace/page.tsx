@@ -648,6 +648,8 @@ function ListingWorkspacePageContent() {
   const [referenceGuidedAttemptId, setReferenceGuidedAttemptId] = useState("")
   const [v3Revision, setV3Revision] = useState<Record<string, unknown> | null>(null)
   const [v3RevisionBusy, setV3RevisionBusy] = useState(false)
+  const [protectedSourcePreview, setProtectedSourcePreview] = useState<Record<string, any> | null>(null)
+  const [protectedSourceBusy, setProtectedSourceBusy] = useState(false)
   const [imageRevisionLocalError, setImageRevisionLocalError] = useState("")
   const [imageRevisionConfirmed, setImageRevisionConfirmed] = useState(false)
   const [imageRightsBasis, setImageRightsBasis] = useState("supplier_authorized")
@@ -1418,6 +1420,21 @@ function ListingWorkspacePageContent() {
       setError(error instanceof Error ? error.message : "V3_REVISION_CREATE_FAILED")
     } finally {
       setV3RevisionBusy(false)
+    }
+  }
+
+  async function reviewProtectedSources(confirm = false) {
+    const parentRevisionId = activeVisualRevision?.id ?? imageRevision?.revision.id
+    if (!parentRevisionId || protectedSourceBusy) return
+    setProtectedSourceBusy(true)
+    try {
+      const payload = await imageRequest({ action: "ensure_protected_authorized_source_pack", parentRevisionId, ...(confirm ? { confirm: true } : {}) })
+      setProtectedSourcePreview(payload)
+      if (payload.sourcePackId) setMessage("Fuentes protegidas y verificadas; la revisión V3 aún requiere una acción separada.")
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "PROTECTED_SOURCE_REVIEW_FAILED")
+    } finally {
+      setProtectedSourceBusy(false)
     }
   }
 
@@ -2222,7 +2239,7 @@ function ListingWorkspacePageContent() {
               {revisionError && <p role="alert" className="mt-3 rounded-xl border border-rose-200/25 p-3 text-xs text-rose-50">No se pudo cargar la estrategia visual: {revisionError}</p>}
               {!revisionLoading && !revisionError && revisionLoaded && activeVisualRevision?.strategy_version !== "VISUAL_STRATEGY_V2" && <button type="button" disabled className="mt-3 min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black opacity-40">Generar revisión corregida</button>}
               {referenceGuidedAttempt && <div className="mt-3 rounded-xl border border-cyan-200/25 bg-cyan-200/[0.05] p-3 text-xs leading-5 text-cyan-50"><strong>Preparado · proveedor deshabilitado</strong><span className="mt-1 block font-mono">Intento {String(referenceGuidedAttempt.attempt?.id ?? referenceGuidedAttemptId)}</span><span className="mt-1 block">Progreso: {String(referenceGuidedAttempt.progress ?? `${referenceGuidedAttempt.attempt?.completed_job_count ?? 0}/6`)}</span><span className="mt-1 block">Trabajos persistidos: {Array.isArray(referenceGuidedAttempt.jobs) ? referenceGuidedAttempt.jobs.length : 0}/6 · providerCalls: {String(referenceGuidedAttempt.attempt?.provider_calls ?? 0)}</span></div>}
-              {!revisionLoading && !revisionError && revisionLoaded && activeVisualRevision?.strategy_version === "VISUAL_STRATEGY_V2" && v3Eligibility.eligible && !v3Eligibility.existingId && <div className="mt-3 rounded-xl border border-violet-200/25 bg-violet-200/[0.06] p-3 text-xs leading-5 text-violet-50"><strong>Revisión activa: Visual Strategy V2</strong><p className="mt-1">Evidencia exacta insuficiente; la estrategia V3 utilizará únicamente señales agregadas de categoría para orientar la composición.</p><button type="button" disabled={v3RevisionBusy} onClick={() => void createVisualStrategyV3Revision()} className="mt-3 min-h-11 w-full rounded-xl bg-violet-200 px-3 text-sm font-black text-black disabled:opacity-40">{v3RevisionBusy ? "Creando revisión V3…" : "Crear revisión Visual Strategy V3"}</button></div>}
+              {!revisionLoading && !revisionError && revisionLoaded && activeVisualRevision?.strategy_version === "VISUAL_STRATEGY_V2" && v3Eligibility.eligible && !v3Eligibility.existingId && <div className="mt-3 rounded-xl border border-violet-200/25 bg-violet-200/[0.06] p-3 text-xs leading-5 text-violet-50"><strong>Revisión activa: Visual Strategy V2</strong><p className="mt-1">Evidencia exacta insuficiente; la estrategia V3 utilizará únicamente señales agregadas de categoría para orientar la composición.</p>{!protectedSourcePreview?.sourcePackId && <><button type="button" disabled={protectedSourceBusy} onClick={() => void reviewProtectedSources(false)} className="mt-3 min-h-11 w-full rounded-xl border border-violet-200/40 px-3 text-sm font-black disabled:opacity-40">{protectedSourceBusy ? "Revisando fuentes…" : "Revisar y proteger fuentes MAIN/SIDE"}</button>{protectedSourcePreview?.preview && <div className="mt-2 rounded-lg bg-black/20 p-2 font-mono text-[11px]">{protectedSourcePreview.preview.map((item: any) => <div key={item.sourceImageId}>{item.sourceImageId}: {item.width}×{item.height} · {item.sha256} {item.changed ? "· SIDE cambió; requiere confirmación visual" : ""}</div>)}<button type="button" disabled={protectedSourceBusy} onClick={() => void reviewProtectedSources(true)} className="mt-2 min-h-10 w-full rounded-lg bg-amber-200 px-2 text-xs font-black text-black disabled:opacity-40">Confirmar bytes exactos y proteger</button></div>}</>}{protectedSourcePreview?.sourcePackId ? <span className="mt-3 block">Fuentes protegidas. La creación V3 permanece separada.</span> : null}</div>}
               {v3Revision && <div className="mt-3 rounded-xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50"><strong>Visual Strategy V3 · READY_FOR_PREPARE</strong><span className="mt-1 block">Evidencia exacta insuficiente; se utilizarán señales de categoría sin convertirlas en hechos del producto.</span><span className="mt-1 block font-mono">Revisión: {String(v3Revision.revisionId ?? "")}</span></div>}
               {imageRevisionLocalError && <div role="alert" className="mt-2 rounded-xl border border-amber-200/30 bg-amber-200/[0.06] p-3 text-xs leading-5 text-amber-50"><strong>Generación detenida antes del reintento.</strong><span className="mt-1 block">{imageRevisionLocalError}</span></div>}
               {imageRevisionId && <button type="button" disabled={imageRevisionBusy} onClick={() => void loadImageRevision(imageRevisionId)} className="mt-2 min-h-11 w-full rounded-xl border border-cyan-200/30 px-4 text-sm font-black text-cyan-50 disabled:opacity-40">Actualizar vista</button>}
