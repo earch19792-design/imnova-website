@@ -130,9 +130,9 @@ test("route and bundle surface regress downward", () => {
   // strategic-advisor route -> one Preview-only active-listing Luna monitor
   // -> one isolated, GET-only eBay account-policy preflight route -> two
   // service-role/admin-only publication OAuth handoff routes -> one isolated
-  // reference-guided canary route -> two service-role-only successor position
-  // executors. The old product/community domain remains at zero.
-  assert.ok(countNamed("app/api", "route.ts") <= 74, "API route count regressed")
+  // reference-guided canary route -> four service-role-only successor position
+  // executors (3–6). The old product/community domain remains at zero.
+  assert.ok(countNamed("app/api", "route.ts") <= 75, "API route count regressed")
   assert.equal(countNamed("app/api/community", "route.ts"), 0)
   assert.equal(countNamed("app/api/store", "route.ts"), 0)
 })
