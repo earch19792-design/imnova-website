@@ -58,6 +58,8 @@ import {
   isInitialReferenceGuidedPrepare,
   persistedReferenceGuidedManifestMatches,
 } from "@/lib/ebay/reference-guided-prepare-idempotency"
+import { REFERENCE_GUIDED_SEVEN_ASSET_ROLES } from
+  "@/lib/ebay/reference-guided-seven-asset-contract"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
 const SOURCE_BUCKET = EBAY_IMAGE_SOURCE_BUCKET
@@ -397,11 +399,20 @@ export async function GET(req: Request) {
     if (attemptId) {
       const requestedRevisionId = uuid(url.searchParams.get("revisionId"))
       const supabase = getSupabaseAdminClient()
-      const [{ data: attempt, error: attemptError }, { data: jobs, error: jobsError }] = await Promise.all([
+      const [{ data: attempt, error: attemptError }, { data: jobs, error: jobsError },
+        { data: deterministicPreview, error: deterministicPreviewError },
+        { data: assetSlots, error: assetSlotsError }] = await Promise.all([
         supabase.from("ebay_reference_guided_generation_attempts").select("id,revision_id,composition_manifest_hash,status,completed_job_count,expected_job_count,provider_calls,retry_consumed,created_at,started_at,completed_at").eq("id", attemptId).maybeSingle(),
         supabase.from("ebay_reference_guided_generation_jobs").select("id,position,commercial_role,status,provider_request_id,output_storage_path,output_sha256,qa_result,error_code,lease_owner,lease_expires_at,provider_call_started_at,provider_call_completed_at").eq("generation_attempt_id", attemptId).order("position"),
+        supabase.from("ebay_reference_guided_deterministic_previews")
+          .select("id,job_id,job_position,asset_ordinal,asset_role,contract_version,source_sha256,crop_left,crop_top,crop_width,crop_height,upscale_factor,output_width,output_height,output_storage_path,output_sha256,transform_manifest_hash,status,original_canary_output_sha256,created_at")
+          .eq("attempt_id", attemptId).eq("job_position", 1)
+          .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+        supabase.from("ebay_reference_guided_asset_contract_slots")
+          .select("asset_ordinal,asset_role,source_job_position,source_job_id,rendering_contract")
+          .eq("attempt_id", attemptId).order("asset_ordinal"),
       ])
-      if (attemptError || jobsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
+      if (attemptError || jobsError || deterministicPreviewError || assetSlotsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
       if (!attempt) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
       if (requestedRevisionId && attempt.revision_id !== requestedRevisionId) return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_REVISION_MISMATCH" }, { status: 409 })
       const { data: ownedRevision, error: ownedRevisionError } = await supabase
@@ -423,7 +434,19 @@ export async function GET(req: Request) {
         return { ...job, output_preview_url: preview.data.signedUrl }
       }))
       const progressedJobs = reviewJobs.filter((job) => job.status !== "PENDING").length
-      const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
+      let deterministicReview = deterministicPreview
+        ? { ...deterministicPreview, output_preview_url: null as string | null }
+        : null
+      if (deterministicPreview?.output_storage_path) {
+        const preview = await supabase.storage.from(STAGING_BUCKET)
+          .createSignedUrl(deterministicPreview.output_storage_path, 300)
+        if (preview.error || !preview.data?.signedUrl) {
+          throw new Error("REFERENCE_GUIDED_OUTPUT_PREVIEW_FAILED")
+        }
+        deterministicReview = { ...deterministicPreview,
+          output_preview_url: preview.data.signedUrl }
+      }
+      const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, deterministicPreview: deterministicReview, assetContract: REFERENCE_GUIDED_SEVEN_ASSET_ROLES, assetSlots: assetSlots ?? [], progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
       response.headers.set("Cache-Control", "no-store")
       return response
     }

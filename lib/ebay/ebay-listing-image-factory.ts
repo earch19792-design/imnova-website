@@ -9,6 +9,8 @@ import { z } from "zod"
 import { EBAY_IMAGE_OUTPUT_SIZE, optimizeAuthorizedEbayMainImage, prepareAuthorizedEbayFullFrameLayer, prepareAuthorizedEbaySecondaryForeground, type EbayAuthorizedSecondaryForeground, type EbayOptimizedImage } from "./ebay-image-optimization-service.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { EBAY_IMAGE_MARKET_BRIEF_VERSION, ebayImageMarketBriefSchema, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
+// @ts-expect-error Node's native TypeScript test runner needs the extension.
+import { assertReferenceGuidedProviderAllowed } from "./reference-guided-deterministic-source-crop.ts"
 
 export const EBAY_LISTING_IMAGE_SET_VERSION =
   "EBAY_LISTING_IMAGE_COMPOSITION_SET_V2"
@@ -380,6 +382,7 @@ export async function requestReferenceGuidedProductGeneration(input: {
   if (input.plan.jobs.length !== 1) {
     throw new Error("REFERENCE_GUIDED_ATOMIC_PROVIDER_RESERVATION_REQUIRED")
   }
+  assertReferenceGuidedProviderAllowed(input.plan.jobs[0].salesObjective)
   if (sha256(input.main) !== input.plan.jobs[0]?.sourceHashes[0] ||
     sha256(input.side) !== input.plan.jobs[0]?.sourceHashes[1]) {
     throw new Error("MANIFEST_SOURCE_MISMATCH")

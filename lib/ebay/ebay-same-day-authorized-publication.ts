@@ -5,6 +5,11 @@ import {
   EBAY_CONTROLLED_RISK_OVERRIDE_VERSION,
 } from "./ebay-controlled-risk-manual-override"
 import type { EbayUnitEconomicsConfig } from "./ebay-unit-economics"
+import {
+  orderReferenceGuidedAssetsForEbay,
+  REFERENCE_GUIDED_SEVEN_ASSET_ROLES,
+  type ReferenceGuidedSevenAssetRole,
+} from "./reference-guided-seven-asset-contract"
 
 export const SAME_DAY_SELLER_OS_PUBLICATION_AUTHORIZATION_VERSION =
   "SELLER_OS_AUTHORIZED_PUBLICATION_V1_2026_07_20"
@@ -121,6 +126,24 @@ function validatedManifest(packageData: JsonRecord, imageUrls: string[]) {
   const manifest = packageData.imageAssetManifest.map(record)
   const manifestUrls = manifest.map((asset) => text(asset.url)).filter(Boolean)
   const manifestAssetIds = manifest.map((asset) => uuid(asset.assetId)).filter(Boolean)
+  const contractRoles = manifest.map((asset) => text(
+    asset.referenceGuidedAssetRole ?? asset.assetRole, 80))
+  const referenceGuidedContractPresent = contractRoles.some(Boolean)
+  if (referenceGuidedContractPresent) {
+    if (!contractRoles.every((role) =>
+      REFERENCE_GUIDED_SEVEN_ASSET_ROLES.includes(
+        role as ReferenceGuidedSevenAssetRole))) return false
+    let ordered: string[]
+    try {
+      ordered = orderReferenceGuidedAssetsForEbay(manifest.map((asset, index) => ({
+        role: contractRoles[index] as ReferenceGuidedSevenAssetRole,
+        url: text(asset.url),
+      })))
+    } catch {
+      return false
+    }
+    if (!ordered.every((url, index) => imageUrls[index] === url)) return false
+  }
   return new Set(manifestAssetIds).size === 7
     && manifest.every((asset) =>
     uuid(asset.assetId)
@@ -128,7 +151,7 @@ function validatedManifest(packageData: JsonRecord, imageUrls: string[]) {
     && /^[0-9a-f]{64}$/.test(text(asset.sha256, 80))
     && Number.isFinite(Date.parse(text(asset.humanApprovedAt, 50)))
     && text(asset.url).startsWith("https://"))
-    && imageUrls.every((url) => manifestUrls.includes(url))
+    && imageUrls.every((url, index) => manifestUrls[index] === url)
 }
 
 function exactManifestAssetIds(packageData: JsonRecord, expected: number) {
