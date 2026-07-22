@@ -49,6 +49,7 @@ import {
 import { persistAuthorizedCatalogSourcePack } from "@/lib/ebay/luna-catalog-source-pack-persistence"
 import { LUNA_CATALOG_SOURCE_RESOLVER_VERSION } from "@/lib/ebay/luna-catalog-original-source-resolver"
 import { productFactsHash } from "@/lib/ebay/ebay-product-facts-readiness"
+import { resolveCanonicalProductIdentity } from "@/lib/ebay/canonical-product-identity"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
 const SOURCE_BUCKET = EBAY_IMAGE_SOURCE_BUCKET
@@ -567,8 +568,8 @@ export async function POST(req: Request) {
       const recomputedDossierHash = productFactsHash({ version: dossier.version, sourcePolicy: dossier.sourcePolicy, facts: dossierFacts })
       const expectedDossierHash = "sha256:94c279fcca948a0d1767fe4a0d5ae602545e131a8fd5d96cd2df47f5f98c74c8"
       if (recomputedDossierHash !== expectedDossierHash) return NextResponse.json({ success: false, error: "PRODUCT_DOSSIER_HASH_MISMATCH", attemptRows: 0, jobRows: 0 }, { status: 422 })
-      const values = new Map(dossierFacts.map((fact) => [String(record(fact).key), record(fact).value]))
-      if (values.get("mpn") !== "08300" || values.get("gtin") !== "036588083005" || values.get("color") !== "White" || String(values.get("netContent")) !== "1.5") return NextResponse.json({ success: false, error: "PRODUCT_DOSSIER_IDENTITY_MISMATCH", attemptRows: 0, jobRows: 0 }, { status: 422 })
+      const canonicalIdentity = resolveCanonicalProductIdentity(dossierCandidate?.product_facts_summary)
+      if (canonicalIdentity.identity.mpn !== "08300" || canonicalIdentity.identity.gtin !== "036588083005" || canonicalIdentity.identity.color !== "White" || String(canonicalIdentity.identity.netContent) !== "1.5") return NextResponse.json({ success: false, error: "PRODUCT_DOSSIER_IDENTITY_MISMATCH", attemptRows: 0, jobRows: 0 }, { status: 422 })
       await supabase.from("luna_catalog_source_pack_dossier_bindings").insert({ source_pack_id: pack.id, listing_package_id: parent.listing_package_id, dossier_hash: recomputedDossierHash, source_pack_manifest_hash: pack.source_pack_hash, policy_version: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1" }).then(({ error }) => { if (error && !String(error.message).includes("duplicate")) throw new Error("SOURCE_PACK_DOSSIER_BINDING_FAILED") })
       for (const asset of assets) {
         const path = text(asset.storagePath, 1000)
