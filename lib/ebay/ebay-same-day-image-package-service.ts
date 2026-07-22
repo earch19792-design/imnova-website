@@ -10,7 +10,7 @@ import { productFactsHash } from "./ebay-product-facts-readiness.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { buildCurrentSameDayImageFactoryInput, type CurrentSameDayImageFactBinding } from "./ebay-same-day-image-factory-input.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
-import { assertEbayImageEvidenceSufficiency, buildSafeOpenAiBackgroundPlatePlan, buildSellerOsEbayVisualStrategyV2, composeAuthorizedEbayListingImageSet, EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_IMAGE_TEXT_RENDERER_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, EBAY_VISUAL_SALES_OBJECTIVES, EBAY_VISUAL_STRATEGY_VERSION, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan, type EbayOpenAiImageQuality } from "./ebay-listing-image-factory.ts"
+import { assertEbayImageEvidenceSufficiency, buildControlledCompositePreflightManifest, buildSafeOpenAiBackgroundPlatePlan, buildSellerOsEbayVisualStrategyV2, composeAuthorizedEbayListingImageSet, CONTROLLED_COMPOSITE_VERSION, EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_IMAGE_TEXT_RENDERER_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, EBAY_VISUAL_QA_EVALUATOR_VERSION, EBAY_VISUAL_SALES_OBJECTIVES, EBAY_VISUAL_STRATEGY_VERSION, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan, type EbayOpenAiImageQuality } from "./ebay-listing-image-factory.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { ebayImageMarketBriefSchema, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
 
@@ -62,6 +62,7 @@ const persistenceAssetSchema = z.object({
     z.literal(EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION).optional(),
   foregroundMatteMethod: z.enum([
     "NATIVE_ALPHA", "EDGE_CONNECTED_LIGHT_NEUTRAL_V1",
+    "PROTECTED_TRIMAP_MATTING_V1", "FULL_AUTHORIZED_FRAME",
   ]).optional(),
   foregroundMatteSha256: rawSha256Schema.optional(),
   foregroundBackgroundRemovalRatio: z.number().min(0).max(1).optional(),
@@ -84,6 +85,31 @@ const persistenceAssetSchema = z.object({
   sourceVisualPolicy:
     z.literal("EXACT_AUTHORIZED_PIXELS_ONLY").optional(),
   authorizedSourceViewReused: z.literal(true).optional(),
+  controlledCompositeVersion: z.literal(CONTROLLED_COMPOSITE_VERSION).optional(),
+  controlledCompositeManifestHash: rawSha256Schema.optional(),
+  sourceAuthorizationStatus: z.literal(
+    "AUTHORIZED_CATALOG_NATIVE_HIGH_RES",
+  ).optional(),
+  sourceImageId: z.enum(["MAIN", "SIDE"]).optional(),
+  sourceAngle: z.enum(["FRONT", "SIDE"]).optional(),
+  sourceOriginalSha256: rawSha256Schema.optional(),
+  protectedLayerSha256: rawSha256Schema.optional(),
+  protectedMaskSha256: rawSha256Schema.optional(),
+  protectedLayerScale: z.number().positive().max(2).optional(),
+  protectedLayerPosition: z.object({
+    left: z.number().int().min(0).max(1599),
+    top: z.number().int().min(0).max(1599),
+    width: z.number().int().min(1).max(1600),
+    height: z.number().int().min(1).max(1600),
+  }).strict().optional(),
+  composedLayerSha256: rawSha256Schema.optional(),
+  productRetouchGenerative: z.literal(false).optional(),
+  productRelighting: z.literal(false).optional(),
+  productDeformation: z.literal(false).optional(),
+  productOcclusion: z.literal(false).optional(),
+  outputOriginLabel: z.literal(
+    "OPTIMIZED_FROM_AUTHORIZED_CATALOG_SOURCE",
+  ).optional(),
   visualStrategyPosition: visualStrategyPositionSchema.optional(),
   sourceSha256: rawSha256Schema,
   outputSha256: rawSha256Schema,
@@ -192,6 +218,7 @@ const manifestWithoutHashSchema = z.object({
       unitCount: z.number().int().positive(),
     }).strict(),
     strategyVersion: z.literal(EBAY_VISUAL_STRATEGY_VERSION),
+    compositionManifestHash: rawSha256Schema.nullable(),
   }).strict(),
   assets: z.array(persistenceAssetSchema).length(7),
   ai: z.object({
@@ -328,7 +355,7 @@ export function buildSameDayImagePackagePlan(input: {
     ? ebayImageMarketBriefSchema.parse(input.marketVisualBrief)
     : null
   const authorizedCatalogSources = input.authorizedCatalogSources
-  const enrichedFactoryInput = validateListingImageFactoryInput({
+  const baseFactoryInput = validateListingImageFactoryInput({
     ...factoryInput,
     ...(authorizedCatalogSources ? {
       authorizedSourceImageIds: authorizedCatalogSources.map((source) => source.id),
@@ -336,6 +363,17 @@ export function buildSameDayImagePackagePlan(input: {
     } : {}),
     marketVisualBrief,
   })
+  const controlledComposite = authorizedCatalogSources?.every((source) =>
+    source.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
+    ? buildControlledCompositePreflightManifest(baseFactoryInput)
+    : null
+  const enrichedFactoryInput = controlledComposite
+    ? validateListingImageFactoryInput({
+      ...baseFactoryInput,
+      controlledCompositeManifestHash:
+        controlledComposite.compositionManifestHash,
+    })
+    : baseFactoryInput
   const backgroundPlatePlan = input.aiContext.enabled
     ? buildSafeOpenAiBackgroundPlatePlan(
       enrichedFactoryInput,
@@ -388,6 +426,8 @@ function validateTransientAssets(input: {
   const layoutIds = new Set<string>()
   const salesObjectives = new Set<string>()
   let generativeAssets = 0
+  let controlledCompositeManifestHash: string | null = null
+  let controlledCompositeAssets = 0
   const ordered = EBAY_LISTING_IMAGE_SLOTS.map((slot) => {
     const asset = bySlot.get(slot)!
     if (!Buffer.isBuffer(asset.output) || !asset.output.length ||
@@ -467,13 +507,54 @@ function validateTransientAssets(input: {
           asset.qa.textMinimumPixelSize !== 0)) {
       throw new Error("SAME_DAY_IMAGE_SET_QA_NOT_PASSED")
     }
+    const controlledComposite = asset.transformation
+      .controlledCompositeVersion === CONTROLLED_COMPOSITE_VERSION
+    if (controlledComposite) {
+      controlledCompositeAssets += 1
+      const position = asset.transformation.protectedLayerPosition
+      if (!/^[0-9a-f]{64}$/.test(
+        asset.transformation.controlledCompositeManifestHash ?? "",
+      ) || asset.transformation.sourceAuthorizationStatus !==
+          "AUTHORIZED_CATALOG_NATIVE_HIGH_RES" ||
+        !["MAIN", "SIDE"].includes(asset.transformation.sourceImageId ?? "") ||
+        !["FRONT", "SIDE"].includes(asset.transformation.sourceAngle ?? "") ||
+        asset.transformation.sourceOriginalSha256 !== asset.sourceSha256 ||
+        !/^[0-9a-f]{64}$/.test(
+          asset.transformation.protectedLayerSha256 ?? "",
+        ) || !/^[0-9a-f]{64}$/.test(
+          asset.transformation.protectedMaskSha256 ?? "",
+        ) || asset.transformation.composedLayerSha256 !==
+          asset.transformation.protectedLayerSha256 ||
+        !Number.isFinite(asset.transformation.protectedLayerScale) ||
+        asset.transformation.protectedLayerScale! <= 0 ||
+        asset.transformation.protectedLayerScale! > 2 || !position ||
+        position.left + position.width > 1600 ||
+        position.top + position.height > 1600 ||
+        asset.transformation.productRetouchGenerative !== false ||
+        asset.transformation.productRelighting !== false ||
+        asset.transformation.productDeformation !== false ||
+        asset.transformation.productOcclusion !== false ||
+        asset.transformation.outputOriginLabel !==
+          "OPTIMIZED_FROM_AUTHORIZED_CATALOG_SOURCE") {
+        throw new Error("CONTROLLED_COMPOSITE_OUTPUT_CONTRACT_INVALID")
+      }
+      controlledCompositeManifestHash ??=
+        asset.transformation.controlledCompositeManifestHash!
+      if (controlledCompositeManifestHash !==
+        asset.transformation.controlledCompositeManifestHash) {
+        throw new Error("CONTROLLED_COMPOSITE_MANIFEST_CHANGED")
+      }
+    } else if (controlledCompositeManifestHash) {
+      throw new Error("CONTROLLED_COMPOSITE_SET_MIXED")
+    }
     const secondary = slot !== "MAIN_WHITE_BACKGROUND"
     if (secondary) {
       if (asset.transformation.authorizedSourceTreatment !==
           "LOCAL_AUTHORIZED_FOREGROUND" ||
         asset.transformation.foregroundMatteVersion !==
           EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION ||
-        !["NATIVE_ALPHA", "EDGE_CONNECTED_LIGHT_NEUTRAL_V1"].includes(
+        !["NATIVE_ALPHA", "EDGE_CONNECTED_LIGHT_NEUTRAL_V1",
+          "PROTECTED_TRIMAP_MATTING_V1", "FULL_AUTHORIZED_FRAME"].includes(
           asset.transformation.foregroundMatteMethod ?? "",
         ) ||
         !/^[0-9a-f]{64}$/.test(
@@ -510,7 +591,8 @@ function validateTransientAssets(input: {
         )) {
         throw new Error("SAME_DAY_IMAGE_SET_FOREGROUND_EVIDENCE_INVALID")
       }
-    } else if (asset.transformation.authorizedSourceTreatment ===
+    } else if (!controlledComposite && (
+      asset.transformation.authorizedSourceTreatment ===
         "LOCAL_AUTHORIZED_FOREGROUND" ||
       asset.transformation.foregroundMatteVersion !== undefined ||
       asset.transformation.foregroundMatteMethod !== undefined ||
@@ -519,7 +601,7 @@ function validateTransientAssets(input: {
       asset.qa.opaqueSourceFrameRemoved !== undefined ||
       asset.qa.textSafeAreaVerified !== undefined ||
       asset.transformation.textRendererVersion !== undefined ||
-      asset.qa.textGlyphsValidated !== undefined) {
+      asset.qa.textGlyphsValidated !== undefined)) {
       throw new Error("SAME_DAY_IMAGE_SET_MAIN_FOREGROUND_EVIDENCE_INVALID")
     }
     if (secondary) {
@@ -563,6 +645,10 @@ function validateTransientAssets(input: {
   if ((input.openAiCalls === 0 && generativeAssets !== 0) ||
     (input.openAiCalls === 1 && generativeAssets !== 6)) {
     throw new Error("SAME_DAY_IMAGE_OPENAI_CALL_ASSET_MISMATCH")
+  }
+  if (controlledCompositeAssets !== 0 &&
+    controlledCompositeAssets !== EBAY_LISTING_IMAGE_SLOTS.length) {
+    throw new Error("CONTROLLED_COMPOSITE_SET_MIXED")
   }
   return ordered
 }
@@ -616,6 +702,12 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
     backgroundPlateRequestHash: requestHash,
     requestedQuality: input.plan.backgroundPlatePlan?.quality ?? null,
   })
+  if (input.plan.factoryInput.controlledCompositeManifestHash &&
+    ordered.some((asset) => asset.transformation
+      .controlledCompositeManifestHash !==
+        input.plan.factoryInput.controlledCompositeManifestHash)) {
+    throw new Error("CONTROLLED_COMPOSITE_MANIFEST_CHANGED")
+  }
   if ((input.openAiCalls === 1) !== Boolean(input.plan.backgroundPlatePlan)) {
     throw new Error("SAME_DAY_IMAGE_OPENAI_PLAN_CALL_MISMATCH")
   }
@@ -663,6 +755,8 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
         unitCount: input.plan.factoryInput.facts.unitCount,
       },
       strategyVersion: EBAY_VISUAL_STRATEGY_VERSION,
+      compositionManifestHash:
+        input.plan.factoryInput.controlledCompositeManifestHash ?? null,
     },
     assets: ordered.map((asset, index) => ({
       position: index + 1,
@@ -702,6 +796,26 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       sourceVisualPolicy: asset.transformation.sourceVisualPolicy,
       authorizedSourceViewReused:
         asset.transformation.authorizedSourceViewReused,
+      controlledCompositeVersion:
+        asset.transformation.controlledCompositeVersion,
+      controlledCompositeManifestHash:
+        asset.transformation.controlledCompositeManifestHash,
+      sourceAuthorizationStatus:
+        asset.transformation.sourceAuthorizationStatus,
+      sourceImageId: asset.transformation.sourceImageId,
+      sourceAngle: asset.transformation.sourceAngle,
+      sourceOriginalSha256: asset.transformation.sourceOriginalSha256,
+      protectedLayerSha256: asset.transformation.protectedLayerSha256,
+      protectedMaskSha256: asset.transformation.protectedMaskSha256,
+      protectedLayerScale: asset.transformation.protectedLayerScale,
+      protectedLayerPosition: asset.transformation.protectedLayerPosition,
+      composedLayerSha256: asset.transformation.composedLayerSha256,
+      productRetouchGenerative:
+        asset.transformation.productRetouchGenerative,
+      productRelighting: asset.transformation.productRelighting,
+      productDeformation: asset.transformation.productDeformation,
+      productOcclusion: asset.transformation.productOcclusion,
+      outputOriginLabel: asset.transformation.outputOriginLabel,
       visualStrategyPosition:
         asset.transformation.visualStrategyPosition,
       sourceSha256: asset.sourceSha256,
@@ -859,8 +973,14 @@ export async function generateTransientSameDayImagePackage(input: {
   requestBackgroundPlate?: (
     plan: EbayOpenAiBackgroundPlatePlan,
   ) => Promise<EbayOpenAiBackgroundPlate>
+  expectedControlledCompositeManifestHash?: string
 }): Promise<SameDayTransientImagePackage> {
   const plan = buildSameDayImagePackagePlan(input)
+  if (input.expectedControlledCompositeManifestHash &&
+    plan.factoryInput.controlledCompositeManifestHash !==
+      input.expectedControlledCompositeManifestHash) {
+    throw new Error("CONTROLLED_COMPOSITE_MANIFEST_CHANGED")
+  }
   const sources = (Array.isArray(input.source) ? input.source : [input.source]).slice(0, 3)
   if (!sources.length || sources.some((source) =>
     !Buffer.isBuffer(source) || !source.length)) {
@@ -887,7 +1007,11 @@ export async function generateTransientSameDayImagePackage(input: {
         Math.max(metadata.width ?? 0, metadata.height ?? 0) < 1_200) {
         throw new Error("NEEDS_ADDITIONAL_SOURCE_IMAGE:PRIMARY")
       }
-      const foreground = await prepareAuthorizedEbaySecondaryForeground(source)
+      const foreground = await prepareAuthorizedEbaySecondaryForeground(source, {
+        authorizedNativeHighResolution: plan.factoryInput
+          .authorizedSourceCapabilities?.[sourceIndex]
+          ?.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES",
+      })
       if (!foreground) throw new Error("EBAY_IMAGE_FOREGROUND_EXTRACTION_UNSAFE")
       preflightForegrounds.push(foreground.output)
     }

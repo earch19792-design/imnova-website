@@ -13,7 +13,9 @@ import {
   EBAY_LISTING_IMAGE_SET_VERSION,
   EBAY_LISTING_IMAGE_SLOTS,
   buildSellerOsEbayVisualStrategyV2,
+  buildControlledCompositePreflightManifest,
   getListingImageFactoryConfiguration,
+  requestSafeOpenAiBackgroundPlate,
 } from "./ebay-listing-image-factory"
 import {
   disposeTransientSameDayImageAssets,
@@ -29,12 +31,19 @@ import {
   selectLunaCatalogGenerationSources,
 } from "./luna-catalog-original-source-resolver"
 import { persistAuthorizedCatalogSourcePack } from "./luna-catalog-source-pack-persistence"
+import {
+  loadAuthorizedCatalogNativeMedia,
+  resolveAuthorizedCatalogNativeMedia,
+} from "./authorized-catalog-native-media"
+import { buildAuthorizedForegroundIdentityEvidence } from
+  "./authorized-product-foreground-identity"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
 const REVISION_VERSION = "EBAY_LISTING_IMAGE_REVISION_V2_VERIFIED_ACTIVE_HANDOFF_COMPAT"
 const VERIFIED_ACTIVE_HISTORICAL_HANDOFF_VERSION =
   "SELLER_HUB_FACTS_ONLY_V7_2026_07_20"
 const MAX_OUTPUT_BYTES = 12 * 1024 * 1024
+const REVISION_OPENAI_IMAGE_QUALITY = "high" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -397,15 +406,44 @@ export async function generateAndPersistSameDayImageRevision(input: {
     context.factPackageHash,
     context.productUrl,
   ].join(":"))
-  const catalogPack = await resolveLunaCatalogOriginalSourcePack({
-    productUrl: context.productUrl,
-    expectedProductId: context.supplierProductId,
-    expectedVariantId: context.supplierVariantId,
-    productIdentityHash: context.factPackageHash,
-    authorizationEvidenceHash,
-    marketVisualSignalsUsable: true,
-    knownCatalogImageUrls: context.knownCatalogImageUrls,
+  const nativeDefinitions = await loadAuthorizedCatalogNativeMedia({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    actorId,
+    listingPackageId: context.listingPackageId,
+    candidateId: context.candidateId,
+    supplierProductId: context.supplierProductId,
+    supplierVariantId: context.supplierVariantId,
   })
+  const nativeAssets = await resolveAuthorizedCatalogNativeMedia({
+    definitions: nativeDefinitions,
+  })
+  let catalogPack: Awaited<ReturnType<
+    typeof resolveLunaCatalogOriginalSourcePack
+  >>
+  try {
+    for (const asset of nativeAssets) {
+      asset.foregroundIdentityEvidence =
+        await buildAuthorizedForegroundIdentityEvidence(
+          asset.buffer,
+          "PROTECTED_TRIMAP",
+          asset.sourceAngle === "SIDE" ? "SIDE" : "FRONT",
+        )
+    }
+    catalogPack = await resolveLunaCatalogOriginalSourcePack({
+      productUrl: context.productUrl,
+      expectedProductId: context.supplierProductId,
+      expectedVariantId: context.supplierVariantId,
+      productIdentityHash: context.factPackageHash,
+      authorizationEvidenceHash,
+      marketVisualSignalsUsable: true,
+      knownCatalogImageUrls: context.knownCatalogImageUrls,
+      authorizedNativeAssets: nativeAssets,
+    })
+  } catch (error) {
+    for (const asset of nativeAssets) asset.buffer.fill(0)
+    throw error
+  }
   const generationSources = selectLunaCatalogGenerationSources(catalogPack)
   const catalogCapabilities = generationSources.map((asset) => ({
     id: `LUNA_CATALOG_SOURCE:${asset.sha256}`,
@@ -416,6 +454,16 @@ export async function generateAndPersistSameDayImageRevision(input: {
     qualityTier: asset.qualityTier,
     viewClassification: asset.viewClassification,
     enhancedDerivative: asset.enhancedDerivative,
+    sourceImageId: asset.sourceImageId as "MAIN" | "SIDE",
+    sourceAngle: asset.sourceAngle as "FRONT" | "SIDE",
+    sourceSha256: asset.sourceSha256,
+    authorizationStatus: asset.authorizationStatus as
+      "AUTHORIZED_CATALOG_NATIVE_HIGH_RES",
+    foregroundSha256:
+      asset.foregroundIdentityEvidence?.foregroundSha256,
+    foregroundMaskSha256:
+      asset.foregroundIdentityEvidence?.maskSha256,
+    excludedSourceSha256s: asset.excludedSourceSha256s,
   }))
   const resolvedHandoffPackage = {
     ...context.handoffPackage,
@@ -442,7 +490,11 @@ export async function generateAndPersistSameDayImageRevision(input: {
         authorizationReference: `APPROVED_IMAGE_CONTROL:${baseControlId}`,
         rightsEvidenceConfirmed: true,
       },
-      aiContext: { enabled: false },
+      aiContext: {
+        enabled: true,
+        model: process.env.OPENAI_IMAGE_MODEL?.trim() ?? "",
+        quality: REVISION_OPENAI_IMAGE_QUALITY,
+      },
       marketVisualBrief,
       authorizedCatalogSources: catalogCapabilities,
       allowVerifiedActiveHistoricalHandoff:
@@ -461,6 +513,11 @@ export async function generateAndPersistSameDayImageRevision(input: {
       catalogCapabilities.map((source) => source.id),
       precheckStrategy,
     )
+    const controlledPreflight = buildControlledCompositePreflightManifest(
+      precheckPlan.factoryInput,
+    )
+    catalogPack.precheck.compositionManifestHash =
+      controlledPreflight.compositionManifestHash
   } catch (error) {
     disposeAuthorizedCatalogSourcePack(catalogPack)
     throw error
@@ -558,12 +615,23 @@ export async function generateAndPersistSameDayImageRevision(input: {
         authorizationReference: `APPROVED_IMAGE_CONTROL:${baseControlId}`,
         rightsEvidenceConfirmed: true,
       },
-      aiContext: { enabled: false },
+      aiContext: {
+        enabled: true,
+        model: process.env.OPENAI_IMAGE_MODEL?.trim() ?? "",
+        quality: REVISION_OPENAI_IMAGE_QUALITY,
+      },
       marketVisualBrief,
       authorizedCatalogSources: catalogCapabilities,
       allowVerifiedActiveHistoricalHandoff:
         context.allowVerifiedActiveHistoricalHandoff,
       source: uniqueSources.map((entry) => entry.source.buffer),
+      expectedControlledCompositeManifestHash:
+        catalogPack.precheck.compositionManifestHash,
+      requestBackgroundPlate: async (safePlan) =>
+        requestSafeOpenAiBackgroundPlate({
+          plan: safePlan,
+          apiKey: process.env.OPENAI_API_KEY?.trim() ?? "",
+        }),
     })
     const generatedSlots = generated.transientAssets.map((asset) => asset.slot)
     const generatedLayouts = generated.transientAssets.map((asset) =>
@@ -572,12 +640,10 @@ export async function generateAndPersistSameDayImageRevision(input: {
       text(asset.outputSha256, 64))
     const generatedContracts = generated.transientAssets.map((asset) =>
       text(record(asset.transformation).compositorContractVersion, 120))
-    const generatedTextEvidence = generated.transientAssets
-      .filter((asset) => asset.slot !== "MAIN_WHITE_BACKGROUND")
-      .every((asset) =>
-        record(asset.transformation).textRendererVersion ===
-          EBAY_IMAGE_TEXT_RENDERER_VERSION &&
-        record(asset.qa).textGlyphsValidated === true)
+    const generatedTextEvidence = generated.transientAssets.every((asset) =>
+      record(asset.transformation).textRendererVersion === undefined &&
+      record(asset.qa).textLineCount === 0 &&
+      record(asset.qa).textPolicyPassed === true)
     if (generated.transientAssets.length !== 7
       || new Set(generatedSlots).size !== 7
       || EBAY_LISTING_IMAGE_SLOTS.some((slot) => !generatedSlots.includes(slot))

@@ -68,12 +68,44 @@ export type EbayOptimizedImage = {
 export type EbayAuthorizedSecondaryForeground = {
   output: Buffer
   outputSha256: string
-  method: "NATIVE_ALPHA" | "EDGE_CONNECTED_LIGHT_NEUTRAL_V1"
+  maskSha256: string
+  method: "NATIVE_ALPHA" | "EDGE_CONNECTED_LIGHT_NEUTRAL_V1" |
+    "PROTECTED_TRIMAP_MATTING_V1" | "FULL_AUTHORIZED_FRAME"
   qa: {
     backgroundRemovalRatio: number
     transparentBorderRatio: number
     protectedPixelRetentionRatio: number
     opaqueCornerRatio: number
+  }
+}
+
+export async function prepareAuthorizedEbayFullFrameLayer(
+  source: Buffer,
+): Promise<EbayAuthorizedSecondaryForeground> {
+  const output = await sharp(source, {
+    failOn: "warning",
+    limitInputPixels: 40_000_000,
+  }).rotate().ensureAlpha().png().toBuffer()
+  const metadata = await sharp(output).metadata()
+  const pixels = (metadata.width ?? 0) * (metadata.height ?? 0)
+  if (!pixels) {
+    output.fill(0)
+    throw new Error("AUTHORIZED_FULL_FRAME_INVALID")
+  }
+  const mask = Buffer.alloc(pixels, 255)
+  const maskSha256 = sha256(mask)
+  mask.fill(0)
+  return {
+    output,
+    outputSha256: sha256(output),
+    maskSha256,
+    method: "FULL_AUTHORIZED_FRAME",
+    qa: {
+      backgroundRemovalRatio: 0,
+      transparentBorderRatio: 0,
+      protectedPixelRetentionRatio: 1,
+      opaqueCornerRatio: 1,
+    },
   }
 }
 
@@ -550,6 +582,7 @@ function buildBorderContactGuard(
  */
 export async function prepareAuthorizedEbaySecondaryForeground(
   source: Buffer,
+  options: { authorizedNativeHighResolution?: boolean } = {},
 ): Promise<EbayAuthorizedSecondaryForeground | null> {
   const decoded = await sharp(source, {
     failOn: "warning",
@@ -571,6 +604,16 @@ export async function prepareAuthorizedEbaySecondaryForeground(
     data.fill(0)
     return null
   }
+  const removableBackgroundPixel = (offset: number) => {
+    if (!options.authorizedNativeHighResolution) {
+      return lightNeutralPixel(data, offset)
+    }
+    const red = data[offset]
+    const green = data[offset + 1]
+    const blue = data[offset + 2]
+    return Math.min(red, green, blue) >= 242 &&
+      Math.max(red, green, blue) - Math.min(red, green, blue) <= 12
+  }
 
   const sourceAlpha = new Uint8Array(pixels)
   let transparentPixels = 0
@@ -586,7 +629,7 @@ export async function prepareAuthorizedEbaySecondaryForeground(
     sourceAlpha[index] = alpha
     if (alpha <= 8) transparentPixels += 1
     if (alpha >= 247) opaquePixels += 1
-    if (!lightNeutralPixel(data, offset) && alpha >= 247) {
+    if (!removableBackgroundPixel(offset) && alpha >= 247) {
       protectedPixels += 1
       const x = index % width
       const y = Math.floor(index / width)
@@ -613,12 +656,14 @@ export async function prepareAuthorizedEbaySecondaryForeground(
     }
     mask.set(sourceAlpha)
   } else {
-    method = "EDGE_CONNECTED_LIGHT_NEUTRAL_V1"
+    method = options.authorizedNativeHighResolution
+      ? "PROTECTED_TRIMAP_MATTING_V1"
+      : "EDGE_CONNECTED_LIGHT_NEUTRAL_V1"
     let sampledBorder = 0
     let lightBorder = 0
     const sampleBorder = (index: number) => {
       sampledBorder += 1
-      if (lightNeutralPixel(data, index * channels)) lightBorder += 1
+      if (removableBackgroundPixel(index * channels)) lightBorder += 1
     }
     for (let x = 0; x < width; x += 1) {
       sampleBorder(x)
@@ -631,7 +676,8 @@ export async function prepareAuthorizedEbaySecondaryForeground(
     // A non-neutral or photographic edge is not a safe candidate for local
     // background removal. Fail closed instead of placing an opaque source over
     // a generated scene or erasing an ambiguous product.
-    if (!sampledBorder || lightBorder / sampledBorder < .96) {
+    if (!sampledBorder || lightBorder / sampledBorder <
+      (options.authorizedNativeHighResolution ? .9 : .96)) {
       data.fill(0)
       sourceAlpha.fill(0)
       return null
@@ -640,8 +686,10 @@ export async function prepareAuthorizedEbaySecondaryForeground(
     const contact = buildBorderContactGuard(
       data, width, height, channels, sourceAlpha,
     )
-    borderContactGuard = contact.guard
-    if (contact.unsafe) {
+    borderContactGuard = options.authorizedNativeHighResolution
+      ? new Uint8Array(pixels) : contact.guard
+    if (options.authorizedNativeHighResolution) contact.guard.fill(0)
+    if (contact.unsafe && !options.authorizedNativeHighResolution) {
       data.fill(0)
       sourceAlpha.fill(0)
       mask.fill(0)
@@ -654,7 +702,7 @@ export async function prepareAuthorizedEbaySecondaryForeground(
     let tail = 0
     const enqueue = (index: number) => {
       if (background[index] || borderContactGuard?.[index] ||
-        !lightNeutralPixel(data, index * channels)) return
+        !removableBackgroundPixel(index * channels)) return
       background[index] = 1
       queue[tail] = index
       tail += 1
@@ -696,7 +744,7 @@ export async function prepareAuthorizedEbaySecondaryForeground(
       columnBottom.fill(-1)
       for (let index = 0; index < pixels; index += 1) {
         if (sourceAlpha[index] < 247 ||
-          lightNeutralPixel(data, index * channels)) continue
+          removableBackgroundPixel(index * channels)) continue
         const x = index % width
         const y = Math.floor(index / width)
         rowLeft[y] = Math.min(rowLeft[y], x)
@@ -717,7 +765,8 @@ export async function prepareAuthorizedEbaySecondaryForeground(
         }
       }
       if (envelopePixels / pixels < .02 ||
-        removedEnvelopePixels / Math.max(1, envelopePixels) > .12) {
+        removedEnvelopePixels / Math.max(1, envelopePixels) >
+          (options.authorizedNativeHighResolution ? .72 : .12)) {
         foregroundGeometrySafe = false
       }
       rowLeft.fill(0)
@@ -755,7 +804,7 @@ export async function prepareAuthorizedEbaySecondaryForeground(
     const protectedPixel = method === "NATIVE_ALPHA"
       ? sourceAlpha[index] >= 247
       : sourceAlpha[index] >= 247 && (
-        !lightNeutralPixel(data, offset) || borderContactGuard?.[index] === 1
+        !removableBackgroundPixel(offset) || borderContactGuard?.[index] === 1
       )
     if (protectedPixel && mask[index] >= 247) retainedProtectedPixels += 1
   }
@@ -770,25 +819,38 @@ export async function prepareAuthorizedEbaySecondaryForeground(
     ? opaquePixels
     : protectedPixels + (borderContactGuard
       ? borderContactGuard.reduce((count, value, index) => count + (
-        value === 1 && lightNeutralPixel(data, index * channels) &&
+        value === 1 && removableBackgroundPixel(index * channels) &&
         sourceAlpha[index] >= 247 ? 1 : 0
       ), 0)
       : 0)
   const protectedPixelRetentionRatio = retainedProtectedPixels /
     Math.max(1, protectedPixelCount)
   const opaqueCornerRatio = opaqueCorners / Math.max(1, corners.length)
-  const safe = foregroundGeometrySafe &&
-    backgroundRemovalRatio >= .02 && backgroundRemovalRatio <= .98 &&
-    transparentBorderRatio >= .99 && protectedPixelCount / pixels >= .001 &&
-    protectedPixelRetentionRatio >= .9999 && opaqueCornerRatio <= .001
+  const safe = (foregroundGeometrySafe ||
+    options.authorizedNativeHighResolution === true) &&
+    backgroundRemovalRatio >=
+      (options.authorizedNativeHighResolution ? .005 : .02) &&
+    backgroundRemovalRatio <= .98 &&
+    transparentBorderRatio >=
+      (options.authorizedNativeHighResolution ? .05 : .99) &&
+    protectedPixelCount / pixels >= .001 &&
+    protectedPixelRetentionRatio >=
+      (options.authorizedNativeHighResolution ? .99 : .9999) &&
+    opaqueCornerRatio <=
+      (options.authorizedNativeHighResolution ? .4 : .001)
   if (!safe) {
+    const controlledFailure = options.authorizedNativeHighResolution
+      ? `AUTHORIZED_NATIVE_FOREGROUND_QA_FAILED:REMOVAL_${backgroundRemovalRatio.toFixed(4)}:BORDER_${transparentBorderRatio.toFixed(4)}:RETENTION_${protectedPixelRetentionRatio.toFixed(4)}:CORNERS_${opaqueCornerRatio.toFixed(4)}`
+      : ""
     data.fill(0)
     sourceAlpha.fill(0)
     mask.fill(0)
     borderContactGuard?.fill(0)
+    if (controlledFailure) throw new Error(controlledFailure)
     return null
   }
 
+  const maskSha256 = sha256(Buffer.from(mask))
   for (let index = 0; index < pixels; index += 1) {
     data[index * channels + 3] = mask[index]
   }
@@ -806,6 +868,7 @@ export async function prepareAuthorizedEbaySecondaryForeground(
   return {
     output,
     outputSha256: sha256(output),
+    maskSha256,
     method,
     qa: {
       backgroundRemovalRatio: Number(backgroundRemovalRatio.toFixed(4)),

@@ -22,6 +22,10 @@ function sha256(value: string) {
 
 function catalogAssetEvidence(asset: ResolvedLunaCatalogSourceAsset) {
   return {
+    sourceImageId: asset.sourceImageId,
+    sourceAngle: asset.sourceAngle,
+    productId: asset.productId,
+    variantId: asset.variantId,
     sourceUrl: asset.sourceUrl,
     nativeWidth: asset.nativeWidth,
     nativeHeight: asset.nativeHeight,
@@ -36,6 +40,8 @@ function catalogAssetEvidence(asset: ResolvedLunaCatalogSourceAsset) {
     enhancedSha256: asset.enhancedSha256,
     effectiveWidth: asset.effectiveWidth,
     effectiveHeight: asset.effectiveHeight,
+    excludedSourceSha256s: asset.excludedSourceSha256s,
+    foregroundIdentityEvidence: asset.foregroundIdentityEvidence,
   }
 }
 

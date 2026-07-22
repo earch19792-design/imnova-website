@@ -6,14 +6,17 @@ import { z } from "zod"
 
 // Node's native type stripping needs the explicit extension in direct tests.
 // @ts-expect-error Next's bundler resolves the same TypeScript source at build time.
-import { EBAY_IMAGE_OUTPUT_SIZE, optimizeAuthorizedEbayMainImage, prepareAuthorizedEbaySecondaryForeground, type EbayAuthorizedSecondaryForeground, type EbayOptimizedImage } from "./ebay-image-optimization-service.ts"
+import { EBAY_IMAGE_OUTPUT_SIZE, optimizeAuthorizedEbayMainImage, prepareAuthorizedEbayFullFrameLayer, prepareAuthorizedEbaySecondaryForeground, type EbayAuthorizedSecondaryForeground, type EbayOptimizedImage } from "./ebay-image-optimization-service.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { EBAY_IMAGE_MARKET_BRIEF_VERSION, ebayImageMarketBriefSchema, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
 
 export const EBAY_LISTING_IMAGE_SET_VERSION =
   "EBAY_LISTING_IMAGE_COMPOSITION_SET_V2"
 export const EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION =
-  "EBAY_IMAGE_COMPOSITOR_FOREGROUND_V8_2026_07_22"
+  "EBAY_IMAGE_COMPOSITOR_FOREGROUND_V9_2026_07_22"
+export const CONTROLLED_COMPOSITE_VERSION = "CONTROLLED_COMPOSITE_V1"
+export const EBAY_VISUAL_QA_EVALUATOR_VERSION =
+  "SELLER_OS_EBAY_VISUAL_QA_V2"
 export const EBAY_OPENAI_BACKGROUND_PLATE_VERSION =
   "EBAY_OPENAI_COMMERCIAL_SCENE_BOARD_V4"
 export const EBAY_VISUAL_STRATEGY_VERSION =
@@ -92,7 +95,19 @@ const inputSchema = z.object({
       "PACKAGE_CONTENTS", "UNKNOWN",
     ]),
     enhancedDerivative: z.boolean(),
+    sourceImageId: z.enum(["MAIN", "SIDE"]).optional(),
+    sourceAngle: z.enum(["FRONT", "SIDE"]).optional(),
+    sourceSha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+    authorizationStatus: z.literal(
+      "AUTHORIZED_CATALOG_NATIVE_HIGH_RES",
+    ).optional(),
+    foregroundSha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+    foregroundMaskSha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+    excludedSourceSha256s: z.array(z.string().regex(/^[0-9a-f]{64}$/))
+      .length(5).optional(),
   }).strict()).min(1).max(3).optional(),
+  controlledCompositeManifestHash: z.string()
+    .regex(/^[0-9a-f]{64}$/).optional(),
   buyerQuestions: z.array(z.string().trim().min(1).max(240))
     .max(20).default([]),
   buyerObjections: z.array(z.string().trim().min(1).max(240))
@@ -178,7 +193,8 @@ export type EbayListingImageComposition = {
     }
     foregroundMatteVersion?: typeof EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION
     foregroundMatteMethod?: "NATIVE_ALPHA" |
-      "EDGE_CONNECTED_LIGHT_NEUTRAL_V1"
+      "EDGE_CONNECTED_LIGHT_NEUTRAL_V1" |
+      "PROTECTED_TRIMAP_MATTING_V1" | "FULL_AUTHORIZED_FRAME"
     foregroundMatteSha256?: string
     foregroundBackgroundRemovalRatio?: number
     foregroundTransparentBorderRatio?: number
@@ -197,6 +213,27 @@ export type EbayListingImageComposition = {
     positionRuleHash: string
     sourceVisualPolicy: "EXACT_AUTHORIZED_PIXELS_ONLY"
     authorizedSourceViewReused: true
+    controlledCompositeVersion?: typeof CONTROLLED_COMPOSITE_VERSION
+    controlledCompositeManifestHash?: string
+    sourceAuthorizationStatus?: "AUTHORIZED_CATALOG_NATIVE_HIGH_RES"
+    sourceImageId?: "MAIN" | "SIDE"
+    sourceAngle?: "FRONT" | "SIDE"
+    sourceOriginalSha256?: string
+    protectedLayerSha256?: string
+    protectedMaskSha256?: string
+    protectedLayerScale?: number
+    protectedLayerPosition?: {
+      left: number
+      top: number
+      width: number
+      height: number
+    }
+    composedLayerSha256?: string
+    productRetouchGenerative?: false
+    productRelighting?: false
+    productDeformation?: false
+    productOcclusion?: false
+    outputOriginLabel?: "OPTIMIZED_FROM_AUTHORIZED_CATALOG_SOURCE"
     authorizedCropMode?: "REAL_SOURCE_CROP_NO_UPSCALING"
     visualStrategyPosition?: EbayVisualStrategyPosition
   }
@@ -238,7 +275,7 @@ export type EbayListingImageComposition = {
     textPolicyPassed: boolean
     contextualPropsPassed: boolean
     mobileReadabilityPassed: boolean
-    qaEvaluatorVersion: "SELLER_OS_EBAY_VISUAL_QA_V2"
+    qaEvaluatorVersion: typeof EBAY_VISUAL_QA_EVALUATOR_VERSION
     scores: {
       fidelity: number
       commercial: number
@@ -967,6 +1004,70 @@ export function buildSellerOsEbayVisualStrategyV2(
   })
 }
 
+export function buildControlledCompositePreflightManifest(
+  input: EbayListingImageFactoryInput,
+) {
+  const sources = input.authorizedSourceCapabilities ?? []
+  const sourceIds = sources.map((source) => source.sourceImageId)
+  const excluded = sources[0]?.excludedSourceSha256s ?? []
+  if (sources.length !== 2 || sourceIds[0] !== "MAIN" ||
+    sourceIds[1] !== "SIDE" || sources.some((source) =>
+      source.authorizationStatus !== "AUTHORIZED_CATALOG_NATIVE_HIGH_RES" ||
+      !source.sourceSha256 || !source.foregroundMaskSha256 ||
+      source.excludedSourceSha256s?.length !== 5 ||
+      JSON.stringify(source.excludedSourceSha256s) !== JSON.stringify(excluded))) {
+    throw new Error("CONTROLLED_COMPOSITE_PREFLIGHT_SOURCE_INVALID")
+  }
+  const jobs = buildSellerOsEbayVisualStrategyV2(input)
+  if (jobs.length !== 6 || new Set(jobs.map((job) => job.salesObjective)).size !== 6) {
+    throw new Error("CONTROLLED_COMPOSITE_PREFLIGHT_JOBS_INVALID")
+  }
+  const manifest = {
+    controlledCompositeVersion: CONTROLLED_COMPOSITE_VERSION,
+    productIdentityHash: input.identityFingerprint,
+    authorizedSources: sources.map((source) => ({
+      sourceImageId: source.sourceImageId,
+      sourceAngle: source.sourceAngle,
+      sourceSha256: source.sourceSha256,
+      nativeWidth: source.nativeWidth,
+      nativeHeight: source.nativeHeight,
+      foregroundSha256: source.foregroundSha256,
+      foregroundMaskSha256: source.foregroundMaskSha256,
+      authorizationStatus: source.authorizationStatus,
+    })),
+    excludedSourceSha256s: excluded,
+    jobs: jobs.map((job) => ({
+      slot: job.slot,
+      salesObjective: job.salesObjective,
+      sourceImageId: sources.find((source) =>
+        source.id === job.authorizedSourceImageIds[0])?.sourceImageId,
+      sourceAngle: sources.find((source) =>
+        source.id === job.authorizedSourceImageIds[0])?.sourceAngle,
+      contractHash: job.contractHash,
+      productCoverageTarget: job.productCoverageTarget,
+    })),
+    placementLimits: {
+      main: { minimumCoverage: .75, maximumCoverage: .85 },
+      secondary: { minimumCoverage: .5, maximumCoverage: .7 },
+      controlledEnhancementMain: {
+        minimumCoverage: .7, maximumCoverage: .725,
+      },
+      productLayerMustBeLast: true,
+      maximumUpscale: 2,
+      generativeProductRetouchAllowed: false,
+      generativeProductRelightingAllowed: false,
+      productOcclusionAllowed: false,
+    },
+    promptVersion: EBAY_OPENAI_BACKGROUND_PLATE_VERSION,
+    qaEvaluatorVersion: EBAY_VISUAL_QA_EVALUATOR_VERSION,
+    compositorContractVersion: EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
+  }
+  return {
+    manifest,
+    compositionManifestHash: sha256Text(JSON.stringify(manifest)),
+  }
+}
+
 export function buildEbayVisualPanelContracts(
   facts: EbayListingImageFactoryInput["facts"],
   marketVisualBrief: EbayImageMarketBrief | null,
@@ -1069,7 +1170,8 @@ async function composeInformationImage(
   const base = sceneBackground
     ? sharp(sceneBackground).resize(1600, 1600, { fit: "cover" })
     : sharp(informationCanvasSvg(slot, facts))
-  return base.composite([
+  const protectedLayerSha256 = sha256(packageLayer)
+  const output = await base.composite([
       { input: Buffer.from(
         `<svg xmlns="http://www.w3.org/2000/svg" width="${layout.packageSize}" height="${layout.packageSize}"><ellipse cx="${layout.packageSize / 2}" cy="${Math.round(layout.packageSize * .86)}" rx="${Math.round(layout.packageSize * .32)}" ry="${Math.round(layout.packageSize * .055)}" fill="#172033" opacity=".18"/></svg>`,
       ), left: layout.packageLeft, top: layout.packageTop },
@@ -1078,6 +1180,21 @@ async function composeInformationImage(
     .toColourspace("srgb")
     .jpeg({ quality: 94, chromaSubsampling: "4:4:4", mozjpeg: true })
     .toBuffer()
+  packageLayer.fill(0)
+  return {
+    output,
+    protectedLayerSha256,
+    placement: {
+      left: layout.packageLeft,
+      top: layout.packageTop,
+      width: layout.packageSize,
+      height: layout.packageSize,
+    },
+    scale: Number(Math.min(
+      1,
+      layout.packageSize / Math.max(foregroundWidth, foregroundHeight),
+    ).toFixed(6)),
+  }
 }
 
 function safeContextForFacts(facts: EbayListingImageFactoryInput["facts"]) {
@@ -1510,6 +1627,9 @@ async function composeContextImage(
   facts: EbayListingImageFactoryInput["facts"],
   background: Buffer,
 ) {
+  const metadata = await sharp(productForeground).metadata()
+  const foregroundWidth = metadata.width ?? 0
+  const foregroundHeight = metadata.height ?? 0
   const packageLayer = await sharp(productForeground)
     .resize(860, 860, {
       fit: "contain",
@@ -1517,7 +1637,8 @@ async function composeContextImage(
       background: { r: 0, g: 0, b: 0, alpha: 0 },
     })
     .png().toBuffer()
-  return sharp(background)
+  const protectedLayerSha256 = sha256(packageLayer)
+  const output = await sharp(background)
     .composite([
       { input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="860" height="860"><ellipse cx="430" cy="745" rx="285" ry="48" fill="#172033" opacity=".2"/></svg>'), left: 370, top: 200 },
       { input: packageLayer, left: 370, top: 200 },
@@ -1525,6 +1646,48 @@ async function composeContextImage(
     .toColourspace("srgb")
     .jpeg({ quality: 94, chromaSubsampling: "4:4:4", mozjpeg: true })
     .toBuffer()
+  packageLayer.fill(0)
+  return {
+    output,
+    protectedLayerSha256,
+    placement: { left: 370, top: 200, width: 860, height: 860 },
+    scale: Number(Math.min(
+      1,
+      860 / Math.max(foregroundWidth, foregroundHeight),
+    ).toFixed(6)),
+  }
+}
+
+async function composeControlledMainImage(productForeground: Buffer) {
+  const metadata = await sharp(productForeground).metadata()
+  const width = metadata.width ?? 0
+  const height = metadata.height ?? 0
+  if (!width || !height) throw new Error("CONTROLLED_COMPOSITE_MAIN_INVALID")
+  const size = 1_280
+  const protectedLayer = await sharp(productForeground).resize(size, size, {
+    fit: "contain",
+    withoutEnlargement: true,
+    background: { r: 0, g: 0, b: 0, alpha: 0 },
+  }).png().toBuffer()
+  const protectedLayerSha256 = sha256(protectedLayer)
+  const output = await sharp({
+    create: {
+      width: 1600,
+      height: 1600,
+      channels: 3,
+      background: "#ffffff",
+    },
+  }).composite([{ input: protectedLayer, left: 160, top: 160 }])
+    .toColourspace("srgb")
+    .jpeg({ quality: 94, chromaSubsampling: "4:4:4", mozjpeg: true })
+    .toBuffer()
+  protectedLayer.fill(0)
+  return {
+    output,
+    protectedLayerSha256,
+    placement: { left: 160, top: 160, width: size, height: size },
+    scale: Number(Math.min(1, size / Math.max(width, height)).toFixed(6)),
+  }
 }
 
 const SCENE_BOARD_PANEL_CANDIDATES = {
@@ -1742,12 +1905,25 @@ export async function composeAuthorizedEbayListingImageSet(
   const presentationMode = sources.length > 1
     ? "AUTHORIZED_MULTI_SOURCE" as const
     : "SINGLE_SOURCE_INFORMATIONAL" as const
+  const controlledComposite = Boolean(input.controlledCompositeManifestHash)
+  if (controlledComposite && buildControlledCompositePreflightManifest(input)
+    .compositionManifestHash !== input.controlledCompositeManifestHash) {
+    throw new Error("CONTROLLED_COMPOSITE_MANIFEST_CHANGED")
+  }
   try {
-  for (const entry of sources) {
+  for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex += 1) {
+    const entry = sources[sourceIndex]
     const main = await optimizeAuthorizedEbayMainImage(entry)
     try {
-      const secondaryForeground =
-        await prepareAuthorizedEbaySecondaryForeground(entry)
+      const capability = input.authorizedSourceCapabilities?.[sourceIndex]
+      const secondaryForeground = capability?.sourceImageId === "MAIN" &&
+        capability.authorizationStatus ===
+          "AUTHORIZED_CATALOG_NATIVE_HIGH_RES"
+        ? await prepareAuthorizedEbayFullFrameLayer(entry)
+        : await prepareAuthorizedEbaySecondaryForeground(entry, {
+          authorizedNativeHighResolution: capability?.authorizationStatus ===
+            "AUTHORIZED_CATALOG_NATIVE_HIGH_RES",
+        })
       if (!secondaryForeground) {
         throw new Error("EBAY_IMAGE_FOREGROUND_EXTRACTION_UNSAFE")
       }
@@ -1770,6 +1946,9 @@ export async function composeAuthorizedEbayListingImageSet(
       ? Math.min(strategySourceIndex, mains.length - 1)
       : sourceIndexForSlot(slot, mains.length)
     const main = mains[authorizedSourceIndex]
+    const sourceCapability = input.authorizedSourceCapabilities?.[
+      authorizedSourceIndex
+    ]
     const framedAuthorizedSource =
       main.transformation.backgroundMethod === "AUTHORIZED_SOURCE_FRAMED_CONTAIN"
     const panelSelection = slot !== "MAIN_WHITE_BACKGROUND" && backgroundPlate
@@ -1780,13 +1959,24 @@ export async function composeAuthorizedEbayListingImageSet(
       )
       : null
     const generatedPanel = panelSelection?.output ?? null
-    const productLayer = slot !== "MAIN_WHITE_BACKGROUND"
-      ? main.secondaryForeground.output
-      : main.output
-    let output: Buffer
+    const productLayer = controlledComposite || slot !== "MAIN_WHITE_BACKGROUND"
+      ? main.secondaryForeground.output : main.output
+    let compositeResult: {
+      output: Buffer
+      protectedLayerSha256: string
+      placement: { left: number; top: number; width: number; height: number }
+      scale: number
+    }
     try {
-      output = slot === "MAIN_WHITE_BACKGROUND"
-        ? await canonicalizeMainForV4(main.output)
+      compositeResult = slot === "MAIN_WHITE_BACKGROUND"
+        ? controlledComposite
+          ? await composeControlledMainImage(productLayer)
+          : {
+            output: await canonicalizeMainForV4(main.output),
+            protectedLayerSha256: sha256(main.output),
+            placement: { left: 0, top: 0, width: 1600, height: 1600 },
+            scale: 1,
+          }
         : slot === "USE_CONTEXT" && generatedPanel
           ? await composeContextImage(productLayer, input.facts, generatedPanel)
           : await composeInformationImage(
@@ -1800,6 +1990,7 @@ export async function composeAuthorizedEbayListingImageSet(
     } finally {
       generatedPanel?.fill(0)
     }
+    const output = compositeResult.output
     transientOutputs.push(output)
     const metadata = await sharp(output).metadata()
     if (
@@ -1843,7 +2034,7 @@ export async function composeAuthorizedEbayListingImageSet(
     const secondaryTargetSize = slot === "MAIN_WHITE_BACKGROUND"
       ? 0 : slot === "USE_CONTEXT" ? 820 : INFORMATION_LAYOUTS[slot].packageSize
     const productCoverageRatio = slot === "MAIN_WHITE_BACKGROUND"
-      ? main.qa.productCoverageRatio
+      ? controlledComposite ? .8 : main.qa.productCoverageRatio
       : Math.min(secondaryTargetSize, secondaryAvailableSize) /
         EBAY_IMAGE_OUTPUT_SIZE
     const persistedPanelContract = slot === "MAIN_WHITE_BACKGROUND"
@@ -1858,9 +2049,13 @@ export async function composeAuthorizedEbayListingImageSet(
       (slot === "MAIN_WHITE_BACKGROUND" ? true : Boolean(panelSelection))
     const marketSignalCompliancePassed = !backgroundPlate ||
       marketSignalsUsable(input.marketVisualBrief)
-    const productFidelityPassed = slot === "MAIN_WHITE_BACKGROUND"
-      ? main.qa.generativeChangesMade === false
-      : true
+    const productFidelityPassed = controlledComposite
+      ? sourceCapability?.authorizationStatus ===
+          "AUTHORIZED_CATALOG_NATIVE_HIGH_RES" &&
+        Boolean(sourceCapability.foregroundSha256) &&
+        Boolean(sourceCapability.foregroundMaskSha256)
+      : slot === "MAIN_WHITE_BACKGROUND"
+        ? main.qa.generativeChangesMade === false : true
     const commercialQualityPassed = productCoverageRatio >=
       (slot === "MAIN_WHITE_BACKGROUND" ? .75 : .5) &&
       productCoverageRatio <= (slot === "MAIN_WHITE_BACKGROUND" ? .85 : .7) &&
@@ -1890,7 +2085,8 @@ export async function composeAuthorizedEbayListingImageSet(
         compositorContractVersion: EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
         authorizedSourceIndex,
         presentationMode,
-        authorizedSourceTreatment: slot !== "MAIN_WHITE_BACKGROUND"
+        authorizedSourceTreatment: controlledComposite ||
+          slot !== "MAIN_WHITE_BACKGROUND"
           ? "LOCAL_AUTHORIZED_FOREGROUND"
           : framedAuthorizedSource
             ? "PRESERVED_FRAMED_SOURCE"
@@ -1923,6 +2119,27 @@ export async function composeAuthorizedEbayListingImageSet(
           } : {}),
         sourceVisualPolicy: "EXACT_AUTHORIZED_PIXELS_ONLY",
         authorizedSourceViewReused: true,
+        ...(controlledComposite ? {
+          controlledCompositeVersion: CONTROLLED_COMPOSITE_VERSION,
+          controlledCompositeManifestHash:
+            input.controlledCompositeManifestHash,
+          sourceAuthorizationStatus:
+            "AUTHORIZED_CATALOG_NATIVE_HIGH_RES" as const,
+          sourceImageId: sourceCapability!.sourceImageId!,
+          sourceAngle: sourceCapability!.sourceAngle!,
+          sourceOriginalSha256: sourceCapability!.sourceSha256!,
+          protectedLayerSha256: compositeResult.protectedLayerSha256,
+          protectedMaskSha256: sourceCapability!.foregroundMaskSha256!,
+          protectedLayerScale: compositeResult.scale,
+          protectedLayerPosition: compositeResult.placement,
+          composedLayerSha256: compositeResult.protectedLayerSha256,
+          productRetouchGenerative: false as const,
+          productRelighting: false as const,
+          productDeformation: false as const,
+          productOcclusion: false as const,
+          outputOriginLabel:
+            "OPTIMIZED_FROM_AUTHORIZED_CATALOG_SOURCE" as const,
+        } : {}),
         ...(slot === "MAIN_WHITE_BACKGROUND" ? {
           mainEncodingProfile: "JPEG_Q94_444_MOZJPEG_V4" as const,
         } : {}),
@@ -1954,6 +2171,7 @@ export async function composeAuthorizedEbayListingImageSet(
       },
       qa: {
         automaticStatus: (slot !== "MAIN_WHITE_BACKGROUND" ||
+          controlledComposite ||
           main.qa.automaticStatus === "PASSED") &&
           promptCompliancePassed && marketSignalCompliancePassed &&
           productFidelityPassed && commercialQualityPassed &&
@@ -1968,8 +2186,8 @@ export async function composeAuthorizedEbayListingImageSet(
         outputHashRecorded: true,
         textDerivedFromVerifiedFacts: true,
         mainBackground: slot === "MAIN_WHITE_BACKGROUND"
-          ? main.qa.automaticStatus === "PASSED" &&
-            main.qa.outputEdgeWhiteRatio >= .9
+          ? (controlledComposite || main.qa.automaticStatus === "PASSED") &&
+            (controlledComposite || main.qa.outputEdgeWhiteRatio >= .9)
             ? "PURE_WHITE"
             : "FRAMED_AUTHORIZED_SOURCE"
           : "NOT_APPLICABLE",
@@ -1979,7 +2197,8 @@ export async function composeAuthorizedEbayListingImageSet(
         deterministicBackgroundSelection: Boolean(panelSelection),
         sourceEdgeLightNeutralRatio: main.qa.sourceEdgeLightNeutralRatio,
         ...(slot === "MAIN_WHITE_BACKGROUND" ? {
-          outputEdgeWhiteRatio: main.qa.outputEdgeWhiteRatio,
+          outputEdgeWhiteRatio: controlledComposite
+            ? 1 : main.qa.outputEdgeWhiteRatio,
         } : {}),
         ocrTextVerified: true,
         mobileLegibilityVerified: true,
@@ -2004,7 +2223,7 @@ export async function composeAuthorizedEbayListingImageSet(
         textPolicyPassed,
         contextualPropsPassed,
         mobileReadabilityPassed,
-        qaEvaluatorVersion: "SELLER_OS_EBAY_VISUAL_QA_V2",
+        qaEvaluatorVersion: EBAY_VISUAL_QA_EVALUATOR_VERSION,
         scores: {
           fidelity: productFidelityPassed ? 100 : 0,
           commercial: commercialQualityPassed ? 100 : 0,

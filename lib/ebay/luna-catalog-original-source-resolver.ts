@@ -2,6 +2,9 @@ import { createHash } from "node:crypto"
 
 import sharp from "sharp"
 
+import type { AuthorizedForegroundIdentityEvidence } from
+  "./authorized-product-foreground-identity"
+
 // @ts-expect-error Node's native TypeScript tests need the explicit extension.
 import { parseDirectedLunaProductUrl } from "./ebay-luna-directed-product-import.ts"
 
@@ -33,6 +36,10 @@ export type LunaCatalogViewClassification =
   | "UNKNOWN"
 
 export type ResolvedLunaCatalogSourceAsset = {
+  sourceImageId: string
+  sourceAngle: "FRONT" | "SIDE" | "UNKNOWN"
+  productId: string
+  variantId: string
   sourceUrl: string
   nativeWidth: number
   nativeHeight: number
@@ -41,12 +48,15 @@ export type ResolvedLunaCatalogSourceAsset = {
   viewClassification: LunaCatalogViewClassification
   qualityTier: Exclude<LunaCatalogQualityTier, "BLOCKED">
   selectedForSlots: string[]
-  authorizationStatus: "AUTHORIZED_CATALOG"
+  authorizationStatus: "AUTHORIZED_CATALOG" |
+    "AUTHORIZED_CATALOG_NATIVE_HIGH_RES"
   enhancedDerivative: boolean
   sourceSha256: string
   enhancedSha256: string | null
   effectiveWidth: number
   effectiveHeight: number
+  excludedSourceSha256s: string[]
+  foregroundIdentityEvidence?: AuthorizedForegroundIdentityEvidence
   nativeBuffer: Buffer
   buffer: Buffer
 }
@@ -72,6 +82,7 @@ export type AuthorizedCatalogSourcePack = {
     SOURCE_PACK_READY: true
     SIX_SECONDARY_JOBS_FEASIBLE: true
     MARKET_VISUAL_SIGNALS_USABLE: true
+    compositionManifestHash?: string
   }
 }
 
@@ -350,6 +361,7 @@ export async function resolveLunaCatalogOriginalSourcePack(input: {
   authorizationEvidenceHash: string
   marketVisualSignalsUsable: boolean
   knownCatalogImageUrls?: string[]
+  authorizedNativeAssets?: ResolvedLunaCatalogSourceAsset[]
   fetchImpl?: typeof fetch
 }): Promise<AuthorizedCatalogSourcePack> {
   const parsed = parseDirectedLunaProductUrl(input.productUrl)
@@ -482,7 +494,13 @@ export async function resolveLunaCatalogOriginalSourcePack(input: {
         original.fill(0)
         return null
       }
+      const sourceAngle: ResolvedLunaCatalogSourceAsset["sourceAngle"] =
+        classification === "PRIMARY" ? "FRONT" : "UNKNOWN"
       return {
+        sourceImageId: `LUNA_CATALOG:${sourceSha256}`,
+        sourceAngle,
+        productId: input.expectedProductId,
+        variantId: input.expectedVariantId,
         sourceUrl: candidate.url,
         nativeWidth: width,
         nativeHeight: height,
@@ -497,6 +515,7 @@ export async function resolveLunaCatalogOriginalSourcePack(input: {
         enhancedSha256,
         effectiveWidth,
         effectiveHeight,
+        excludedSourceSha256s: [],
         nativeBuffer: original,
         buffer,
       }
@@ -505,8 +524,11 @@ export async function resolveLunaCatalogOriginalSourcePack(input: {
       return null
     }
   }))
-  const usable = inspected.filter((asset): asset is NonNullable<typeof asset> =>
-    asset !== null)
+  const usable = [
+    ...(input.authorizedNativeAssets ?? []),
+    ...inspected.filter((asset): asset is NonNullable<typeof asset> =>
+      asset !== null),
+  ]
   const uniqueMap = new Map<string, ResolvedLunaCatalogSourceAsset>()
   for (const asset of usable) {
     if (!uniqueMap.has(asset.sha256)) {
@@ -570,6 +592,16 @@ export function selectLunaCatalogGenerationSources(
   pack: AuthorizedCatalogSourcePack,
   maximum = 3,
 ) {
+  const authorizedNative = pack.sourceAssets.filter((asset) =>
+    asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
+  if (authorizedNative.length) {
+    const main = authorizedNative.find((asset) => asset.sourceImageId === "MAIN")
+    const side = authorizedNative.find((asset) => asset.sourceImageId === "SIDE")
+    if (!main || !side || authorizedNative.length !== 2) {
+      throw new Error("AUTHORIZED_CATALOG_NATIVE_MEDIA_CONTRACT_INVALID")
+    }
+    return [main, side]
+  }
   const selected: ResolvedLunaCatalogSourceAsset[] = []
   const add = (asset: ResolvedLunaCatalogSourceAsset | undefined) => {
     if (asset && !selected.includes(asset) && selected.length < maximum) {
