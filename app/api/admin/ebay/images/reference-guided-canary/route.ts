@@ -352,24 +352,25 @@ export async function POST(req: Request) {
         automaticQaResult = await automaticQa(result.output)
         outputSha256 = result.outputSha256
         providerRequestId = result.providerRequestId ?? providerRequestId
-        outputStoragePath = `${revision.created_by}/reference-guided-canary/${AUTHORIZED_ATTEMPT_ID}/position-1/${outputSha256}.png`
+        const proposedStoragePath = `${revision.created_by}/reference-guided-canary/${AUTHORIZED_ATTEMPT_ID}/position-1/${outputSha256}.png`
         const upload = await supabase.storage.from(EBAY_IMAGE_STAGING_BUCKET)
-          .upload(outputStoragePath, result.output, { contentType: "image/png",
+          .upload(proposedStoragePath, result.output, { contentType: "image/png",
             cacheControl: "private, no-store", upsert: false })
         if (upload.error) throw new Error("REFERENCE_GUIDED_CANARY_PRIVATE_STORAGE_UPLOAD_FAILED")
         const { data: updated, error: updateError } = await supabase
           .from("ebay_reference_guided_generation_jobs")
           .update({ status: "QA_PENDING", provider_request_id: providerRequestId,
             provider_call_completed_at: new Date().toISOString(),
-            output_storage_path: outputStoragePath, output_sha256: outputSha256,
+            output_storage_path: proposedStoragePath, output_sha256: outputSha256,
             qa_result: automaticQaResult, error_code: null,
             lease_owner: null, lease_expires_at: null })
           .eq("id", jobId).eq("status", "PROVIDER_CALLING")
           .select("id").maybeSingle()
         if (updateError || !updated) {
-          await supabase.storage.from(EBAY_IMAGE_STAGING_BUCKET).remove([outputStoragePath])
+          await supabase.storage.from(EBAY_IMAGE_STAGING_BUCKET).remove([proposedStoragePath])
           throw new Error("REFERENCE_GUIDED_CANARY_RESULT_PERSIST_FAILED")
         }
+        outputStoragePath = proposedStoragePath
       },
       async markOutcomeUnknown(jobId, errorCode) {
         await supabase.from("ebay_reference_guided_generation_jobs")
