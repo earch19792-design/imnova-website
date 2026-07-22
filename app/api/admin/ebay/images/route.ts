@@ -426,6 +426,7 @@ export async function GET(req: Request) {
         { data: assetSlots, error: assetSlotsError },
         { data: primaryMainPreview, error: primaryMainPreviewError },
         { data: deterministicVariants, error: deterministicVariantsError },
+        { data: finalAssetSelection, error: finalAssetSelectionError },
         { data: assetReviews, error: assetReviewsError }] = await Promise.all([
         supabase.from("ebay_reference_guided_generation_attempts").select("id,revision_id,composition_manifest_hash,status,completed_job_count,expected_job_count,provider_calls,retry_consumed,created_at,started_at,completed_at").eq("id", attemptId).maybeSingle(),
         supabase.from("ebay_reference_guided_generation_jobs").select("id,position,commercial_role,status,provider_request_id,output_storage_path,output_sha256,qa_result,error_code,lease_owner,lease_expires_at,provider_call_started_at,provider_call_completed_at").eq("generation_attempt_id", attemptId).order("position"),
@@ -442,11 +443,14 @@ export async function GET(req: Request) {
         supabase.from("ebay_reference_guided_deterministic_asset_variants")
           .select("id,revision_id,asset_ordinal,asset_role,variant_version,source_image_id,source_sha256,crop_coordinates,output_width,output_height,output_storage_path,output_sha256,transform_manifest_hash,qa_metrics,status,created_at")
           .eq("attempt_id", attemptId).order("asset_ordinal"),
+        supabase.from("ebay_reference_guided_final_asset_selection_events")
+          .select("id,primary_sha256,primary_verdict,primary_background,primary_safe_margin_pixels,material_detail_sha256,material_detail_source,material_detail_verdict,rejected_main_detail_sha256,rejected_main_detail_reason,rejected_canary_sha256,rejected_canary_reason,provider_calls_snapshot,created_at")
+          .eq("attempt_id", attemptId).maybeSingle(),
         supabase.from("ebay_reference_guided_asset_review_events")
           .select("id,asset_ordinal,asset_role,preview_sha256,decision,reason,created_at")
           .eq("attempt_id", attemptId).order("created_at", { ascending: false }),
       ])
-      if (attemptError || jobsError || deterministicPreviewError || assetSlotsError || primaryMainPreviewError || deterministicVariantsError || assetReviewsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
+      if (attemptError || jobsError || deterministicPreviewError || assetSlotsError || primaryMainPreviewError || deterministicVariantsError || finalAssetSelectionError || assetReviewsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
       if (!attempt) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
       if (requestedRevisionId && attempt.revision_id !== requestedRevisionId) return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_REVISION_MISMATCH" }, { status: 409 })
       const { data: ownedRevision, error: ownedRevisionError } = await supabase
@@ -501,7 +505,7 @@ export async function GET(req: Request) {
           }
           return { ...variant, output_preview_url: preview.data.signedUrl }
         }))
-      const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, primaryMainPreview: primaryReview, deterministicPreview: deterministicReview, deterministicVariants: variantReviews, assetReviews: assetReviews ?? [], assetContract: REFERENCE_GUIDED_SEVEN_ASSET_ROLES, assetSlots: assetSlots ?? [], progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
+      const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, primaryMainPreview: primaryReview, deterministicPreview: deterministicReview, deterministicVariants: variantReviews, finalAssetSelection: finalAssetSelection ?? null, assetReviews: assetReviews ?? [], assetContract: REFERENCE_GUIDED_SEVEN_ASSET_ROLES, assetSlots: assetSlots ?? [], progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
       response.headers.set("Cache-Control", "no-store")
       return response
     }
