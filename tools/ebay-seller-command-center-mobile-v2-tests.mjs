@@ -25,6 +25,10 @@ const restoreSameDayApprovedPackageMigration = readFileSync(
   "supabase/migrations/20260722001000_restore_same_day_approved_package.sql",
   "utf8",
 )
+const normalizeEstimateOnlyShippingMigration = readFileSync(
+  "supabase/migrations/20260722002000_normalize_estimate_only_shipping.sql",
+  "utf8",
+)
 
 test("mobile command center centralizes the five Seller OS areas", () => {
   for (const label of ["Inicio", "Oportunidades eBay", "Listings", "Operación", "Salud y configuración"]) {
@@ -275,6 +279,31 @@ test("same-day prepare calls only the dedicated approved-package restore RPC", (
   assert.doesNotMatch(
     prepareApi,
     /publishOffer\s*\(|createOffer\s*\(|createOrReplaceInventoryItem\s*\(/,
+  )
+})
+
+test("estimate-only shipping omits partial supplier measurements and keeps workspace recovery visible", () => {
+  assert.match(workspace, /shipping\.status === "ESTIMATE_ONLY_NOT_FOR_LISTING"/)
+  assert.match(workspace, /shipping\.estimatedValuesExcluded === true/)
+  assert.match(workspace, /estimatesExcluded \? null : fallback\.weight/)
+  assert.match(workspace, /El workspace del producto no terminó de abrir/)
+  assert.match(workspace, /Reintentar abrir producto/)
+  assert.match(workspace, /setWorkspaceRetry/)
+
+  assert.match(normalizeEstimateOnlyShippingMigration, /ESTIMATE_ONLY_NOT_FOR_LISTING/)
+  assert.match(normalizeEstimateOnlyShippingMigration, /estimatedValuesExcluded/)
+  assert.match(normalizeEstimateOnlyShippingMigration, /operatorConfirmationRequired/)
+  assert.match(
+    normalizeEstimateOnlyShippingMigration,
+    /v_package_weight_and_size := '\{\}'::jsonb/,
+  )
+  assert.match(
+    normalizeEstimateOnlyShippingMigration,
+    /SAME_DAY_WORKSPACE_REFRESH_ALREADY_EXECUTED/,
+  )
+  assert.doesNotMatch(
+    normalizeEstimateOnlyShippingMigration,
+    /publishOffer|createOffer|createOrReplaceInventoryItem|createInventoryLocation/,
   )
 })
 

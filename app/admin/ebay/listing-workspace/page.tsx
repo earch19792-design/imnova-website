@@ -427,6 +427,9 @@ function draftConfigurationFromPackage(
 ): DraftConfiguration {
   const fallback = initialDraftConfiguration(opportunity)
   const saved = object(packageData.draftConfiguration)
+  const shipping = object(packageData.shipping)
+  const estimatesExcluded = shipping.status === "ESTIMATE_ONLY_NOT_FOR_LISTING"
+    && shipping.estimatedValuesExcluded === true
   const policies = object(saved.businessPolicies)
   const packageWeightAndSize = object(saved.packageWeightAndSize)
   const dimensions = object(packageWeightAndSize.dimensions)
@@ -440,12 +443,14 @@ function draftConfigurationFromPackage(
     fulfillmentPolicyId: String(policies.fulfillmentPolicyId ?? fallback.fulfillmentPolicyId),
     paymentPolicyId: String(policies.paymentPolicyId ?? fallback.paymentPolicyId),
     returnPolicyId: String(policies.returnPolicyId ?? fallback.returnPolicyId),
-    length: numberOrNull(dimensions.length) ?? fallback.length,
-    width: numberOrNull(dimensions.width) ?? fallback.width,
-    height: numberOrNull(dimensions.height) ?? fallback.height,
-    dimensionUnit: normalizedDraftDimensionUnit(dimensions.unit) || fallback.dimensionUnit,
-    weight: numberOrNull(weight.value) ?? fallback.weight,
-    weightUnit: normalizedDraftWeightUnit(weight.unit) || fallback.weightUnit,
+    length: numberOrNull(dimensions.length) ?? (estimatesExcluded ? null : fallback.length),
+    width: numberOrNull(dimensions.width) ?? (estimatesExcluded ? null : fallback.width),
+    height: numberOrNull(dimensions.height) ?? (estimatesExcluded ? null : fallback.height),
+    dimensionUnit: normalizedDraftDimensionUnit(dimensions.unit)
+      || (estimatesExcluded ? "" : fallback.dimensionUnit),
+    weight: numberOrNull(weight.value) ?? (estimatesExcluded ? null : fallback.weight),
+    weightUnit: normalizedDraftWeightUnit(weight.unit)
+      || (estimatesExcluded ? "" : fallback.weightUnit),
     imageRightsBasis: String(object(saved.imageAuthorization).rightsBasis ?? fallback.imageRightsBasis),
     imageSource: String(object(saved.imageAuthorization).source ?? fallback.imageSource),
     ebayPreflightSnapshot: String(saved.ebayPreflightSnapshot ?? fallback.ebayPreflightSnapshot),
@@ -1954,6 +1959,17 @@ export default function EbayListingWorkspacePage() {
           <button type="button" disabled={draftBusy} onClick={() => void runAccountPreflight()} className="min-h-13 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-50">{draftBusy ? "Consultando eBay…" : !accountPreflight ? "Cargar configuración desde eBay" : accountPoliciesSelected ? "Revalidar y guardar policies" : "Revalidar selección"}</button>
           <p className="text-xs leading-5 text-white/50">Sólo consulta Account API y guarda la selección verificada en IMNOVA. No crea Inventory Item, Offer ni listing; publicar permanece prohibido.</p>
         </section>
+
+        {opportunity && !listingPackage && !publicationLunaRecheck
+          && workspaceGateBlockers.length === 0 && <section className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.07] p-4">
+          <strong className="text-amber-50">El workspace del producto no terminó de abrir.</strong>
+          <p className="mt-2 text-sm leading-6 text-white/65">Las policies permanecen guardadas. Reintenta únicamente la apertura del producto; esta acción no crea Offer ni publica en eBay.</p>
+          <button type="button" disabled={draftBusy} onClick={() => {
+            setError("")
+            setMessage("Reabriendo el paquete guardado del producto…")
+            setWorkspaceRetry((current) => current + 1)
+          }} className="mt-3 min-h-13 w-full rounded-2xl bg-amber-200 px-4 font-black text-black disabled:opacity-50">Reintentar abrir producto</button>
+        </section>}
 
         {opportunity && listingPackage && <>
           <section className={`${maintenanceMode ? "hidden" : ""} rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4`}>
