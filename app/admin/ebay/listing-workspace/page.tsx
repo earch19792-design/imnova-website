@@ -943,12 +943,29 @@ export default function EbayListingWorkspacePage() {
             verified_active_at: String(nextMaintenance.verifiedAt ?? ""),
           } as DraftState["publication"] })
         } else {
-          try {
-            const draft = await draftRequest(undefined, nextPackage.id)
-            setDraftState((current) => ({ ...current, ...draft }))
-          } catch (draftError) {
-            setDraftState({})
-            draftWarning = ` ${getMobileReviewRequestError(draftError, "El conector draft todavía no pudo validarse.")}`
+          const nextPackageData = object(nextPackage.package_data)
+          const sameDayAuthorization = object(
+            object(nextPackageData.evidenceSnapshot)
+              .sameDayPilotAuthorization,
+          )
+          const legacyVisualUpgradeRequired =
+            sameDayAuthorization.legacyImageRevisionRequired === true
+            || (
+              Array.isArray(nextPackageData.imageUrls)
+              && nextPackageData.imageUrls.length === 6
+              && Object.keys(object(nextPackageData.sameDayPilot)).length > 0
+            )
+          if (legacyVisualUpgradeRequired) {
+            setDraftState((current) => ({ preflight: current.preflight }))
+            draftWarning = " Genera y aprueba la revisión visual V2 de siete imágenes antes de validar el conector de publicación."
+          } else {
+            try {
+              const draft = await draftRequest(undefined, nextPackage.id)
+              setDraftState((current) => ({ ...current, ...draft }))
+            } catch (draftError) {
+              setDraftState((current) => ({ preflight: current.preflight }))
+              draftWarning = ` ${getMobileReviewRequestError(draftError, "El conector draft todavía no pudo validarse.")}`
+            }
           }
         }
         const defaultsMessage = prepared.safeDefaultsApplied
@@ -986,6 +1003,16 @@ export default function EbayListingWorkspacePage() {
     .filter((asset) => asset.status === "approved" &&
       asset.qa_result?.automaticStatus === "PASSED")
     .sort((left, right) => left.position - right.position), [imageAssets])
+  const currentPackageImageAssets = useMemo(() => {
+    const currentUrls = new Set(form.imageUrls)
+    return imageAssets.filter((asset) =>
+      asset.status === "pending_review"
+      || Boolean(asset.public_url && currentUrls.has(asset.public_url)))
+  }, [form.imageUrls, imageAssets])
+  const hiddenHistoricalImageAssetCount = Math.max(
+    0,
+    imageAssets.length - currentPackageImageAssets.length,
+  )
   const approvedBaseImageControlId = useMemo(() => {
     const controls = new Map<string, Set<string>>()
     for (const asset of imageAssets.filter((entry) => entry.status === "approved")) {
@@ -2013,7 +2040,7 @@ export default function EbayListingWorkspacePage() {
             <div className="mt-4 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50">
               <strong>Publicación controlada desde Seller OS:</strong>
               <ol className="mt-2 list-decimal space-y-1 pl-5">
-                <li>Revisa contenido, precio, cantidad, policies y las seis imágenes aprobadas.</li>
+                <li>Revisa contenido, precio, cantidad, policies y las siete imágenes V2 aprobadas.</li>
                 <li>Autoriza la creación del Offer <strong>UNPUBLISHED</strong>; ese primer permiso no publica.</li>
                 <li>Revisa el preview exacto y autoriza la publicación final dentro de Seller OS.</li>
                 <li>Seller OS publicará una sola vez, verificará <strong>ACTIVE</strong>, guardará el Item ID y activará el monitoreo.</li>
@@ -2107,10 +2134,10 @@ export default function EbayListingWorkspacePage() {
               <button type="button" disabled={imageBusy || !imageFile || imageAuthorizationReference.trim().length < 8 || !rightsEvidenceConfirmed} onClick={() => void optimizeImageUpload()} className="mt-2 min-h-12 w-full rounded-2xl border border-cyan-200/35 px-4 font-black text-cyan-50 disabled:opacity-40">{imageBusy ? "Procesando…" : "Subir y optimizar"}</button>
             </div>
 
-            {form.imageUrls.length > 0 && <details className="mt-3 rounded-2xl border border-white/10 p-3"><summary className="cursor-pointer text-sm font-black">Fuentes/URLs actuales del paquete · {form.imageUrls.length}</summary><div className="mt-3 space-y-2">{form.imageUrls.map((url) => <div key={url} className="grid grid-cols-[64px_1fr] gap-3 rounded-xl bg-black/25 p-2"><img src={url} alt="Fuente actual autorizada" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="size-16 rounded-lg bg-white object-contain" /><div className="min-w-0"><p className="truncate text-xs text-white/55">{url}</p><button type="button" disabled={imageBusy || imageAuthorizationReference.trim().length < 8 || !rightsEvidenceConfirmed} onClick={() => void optimizeImageUrl(url)} className="mt-2 min-h-10 rounded-xl border border-cyan-200/30 px-3 text-xs font-black text-cyan-50 disabled:opacity-40">Crear versión blanca</button></div></div>)}</div></details>}
+            {form.imageUrls.length > 0 && <details className="mt-3 rounded-2xl border border-white/10 p-3"><summary className="cursor-pointer text-sm font-black">{form.imageUrls.length === 6 ? "Conjunto histórico actual · 6 · no publicable" : `Fuentes/URLs actuales del paquete · ${form.imageUrls.length}`}</summary><div className="mt-3 space-y-2">{form.imageUrls.map((url) => <div key={url} className="grid grid-cols-[64px_1fr] gap-3 rounded-xl bg-black/25 p-2"><img src={url} alt="Fuente actual autorizada" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="size-16 rounded-lg bg-white object-contain" /><div className="min-w-0"><p className="truncate text-xs text-white/55">{url}</p><button type="button" disabled={imageBusy || imageAuthorizationReference.trim().length < 8 || !rightsEvidenceConfirmed} onClick={() => void optimizeImageUrl(url)} className="mt-2 min-h-10 rounded-xl border border-cyan-200/30 px-3 text-xs font-black text-cyan-50 disabled:opacity-40">Crear versión blanca</button></div></div>)}</div></details>}
 
             <div className="mt-4 space-y-3">
-              {imageAssets.map((asset) => <article key={asset.id} className={`rounded-2xl border p-3 ${asset.status === "approved" && asset.qa_result?.automaticStatus === "PASSED" ? "border-emerald-200/30 bg-emerald-200/[0.05]" : asset.status === "rejected" ? "border-rose-200/20 bg-rose-200/[0.04]" : "border-amber-200/25 bg-amber-200/[0.04]"}`}>
+              {currentPackageImageAssets.map((asset) => <article key={asset.id} className={`rounded-2xl border p-3 ${asset.status === "approved" && asset.qa_result?.automaticStatus === "PASSED" ? "border-emerald-200/30 bg-emerald-200/[0.05]" : asset.status === "rejected" ? "border-rose-200/20 bg-rose-200/[0.04]" : "border-amber-200/25 bg-amber-200/[0.04]"}`}>
                 <div className="flex items-center justify-between gap-3"><strong className="text-sm">{asset.status === "approved" ? asset.qa_result?.automaticStatus === "PASSED" ? `Aprobada · posición ${approvedImageAssets.findIndex((item) => item.id === asset.id) + 1}` : "Histórica · bloqueada por QA" : asset.status === "rejected" ? "Rechazada" : asset.qa_result?.automaticStatus === "PASSED" ? "Pendiente de revisión humana" : "Bloqueada por QA automático"}</strong><span className="rounded-full border border-white/15 px-2 py-1 text-[10px] font-black">{asset.output_width}×{asset.output_height}</span></div>
                 <div className="mt-3 grid grid-cols-2 gap-2"><figure><div className="aspect-square overflow-hidden rounded-xl bg-white">{asset.source_preview_url ? <img src={asset.source_preview_url} alt="Imagen original autorizada" className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center bg-black text-xs text-white/50">Original protegida</div>}</div><figcaption className="mt-1 text-center text-[10px] text-white/50">Original</figcaption></figure><figure><div className="aspect-square overflow-hidden rounded-xl bg-white">{asset.output_preview_url || asset.public_url ? <img src={asset.output_preview_url ?? asset.public_url ?? ""} alt="Versión optimizada para revisión" className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center bg-black text-center text-xs text-white/50">Vista eliminada tras rechazo</div>}</div><figcaption className="mt-1 text-center text-[10px] text-white/50">Optimizada</figcaption></figure></div>
                 <p className="mt-2 text-xs leading-5 text-white/60">QA automático: {asset.qa_result?.automaticStatus ?? "ausente (bloqueado)"} · fondo de fuente {Math.round(Number(asset.qa_result?.sourceEdgeLightNeutralRatio ?? 0) * 100)}% · fondo blanco de salida {typeof asset.qa_result?.outputEdgeWhiteRatio === "number" ? `${Math.round(asset.qa_result.outputEdgeWhiteRatio * 100)}%` : "no aplica"} · {asset.transformation_version}</p>
@@ -2118,7 +2145,8 @@ export default function EbayListingWorkspacePage() {
                 {asset.status === "pending_review" && asset.qa_result?.automaticStatus !== "PASSED" && <p role="alert" className="mt-2 text-xs leading-5 text-amber-50">Sólo `PASSED` puede aprobarse. Regenera o agrega más fotografías/hechos verificados.</p>}
                 {asset.status === "approved" && asset.qa_result?.automaticStatus === "PASSED" && <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={imageBusy || approvedImageAssets.findIndex((item) => item.id === asset.id) === 0} onClick={() => void moveApprovedImage(asset.id, -1)} className="min-h-10 rounded-xl border border-white/15 text-xs font-black disabled:opacity-30">↑ Hacer principal</button><button type="button" disabled={imageBusy || approvedImageAssets.findIndex((item) => item.id === asset.id) >= approvedImageAssets.length - 1} onClick={() => void moveApprovedImage(asset.id, 1)} className="min-h-10 rounded-xl border border-white/15 text-xs font-black disabled:opacity-30">↓ Mover</button></div>}
               </article>)}
-              {!imageAssets.length && <p className="rounded-2xl border border-amber-200/20 p-3 text-sm text-amber-50">Todavía no hay una versión optimizada y aprobada. Puedes trabajar el contenido, pero el draft seguirá bloqueado.</p>}
+              {hiddenHistoricalImageAssetCount > 0 && <p className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs leading-5 text-white/50">{hiddenHistoricalImageAssetCount} activos rechazados o versiones anteriores permanecen en el historial técnico, pero se ocultaron para no repetirlos en esta revisión.</p>}
+              {!currentPackageImageAssets.length && <p className="rounded-2xl border border-amber-200/20 p-3 text-sm text-amber-50">Todavía no hay una versión optimizada y aprobada. Puedes trabajar el contenido, pero el draft seguirá bloqueado.</p>}
             </div>
           </section>
 

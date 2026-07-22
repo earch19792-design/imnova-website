@@ -462,7 +462,7 @@ export async function POST(req: Request) {
           ...result,
           revisionState: imageRevisionResultState(result),
           safety: {
-            exactSixHumanReviewRequired: true,
+            exactSevenHumanReviewRequired: true,
             ebayWrites: 0,
             productionChanged: false,
           },
