@@ -448,10 +448,13 @@ export async function POST(req: Request) {
       if (!revisionId) return NextResponse.json({ success: false, error: "REVISION_ID_REQUIRED" }, { status: 400 })
       const { data: revisionRow, error: revisionLookupError } = await supabase
         .from("ebay_same_day_pilot_image_revisions")
-        .select("id,listing_package_id")
+        .select("id,listing_package_id,strategy_version,revision_contract")
         .eq("id", revisionId)
         .maybeSingle()
       if (revisionLookupError || !revisionRow) return NextResponse.json({ success: false, error: "SAME_DAY_IMAGE_REVISION_NOT_FOUND" }, { status: 404 })
+      if (!revisionRow.strategy_version) return NextResponse.json({ success: false, error: "REVISION_STRATEGY_MISSING", attemptRows: 0, jobRows: 0 }, { status: 409 })
+      if (!revisionRow.revision_contract) return NextResponse.json({ success: false, error: "REVISION_CONTRACT_MISSING", attemptRows: 0, jobRows: 0 }, { status: 409 })
+      if (revisionRow.strategy_version !== "VISUAL_STRATEGY_V3" || revisionRow.revision_contract !== "REFERENCE_GUIDED_PRODUCT_GENERATION_V1") return NextResponse.json({ success: false, error: "REVISION_STRATEGY_CONTRACT_MISMATCH", attemptRows: 0, jobRows: 0 }, { status: 409 })
       const { data: sourcePack, error: packError } = await supabase
         .from("luna_catalog_authorized_source_packs")
         .select("id,source_pack_hash,resolver_version,source_assets,precheck,authoritative_fact_package_hash")
