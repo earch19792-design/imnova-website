@@ -129,9 +129,10 @@ test("route and bundle surface regress downward", () => {
   // 68 legacy-era routes -> 65 isolated routes -> one approval-only Seller OS
   // strategic-advisor route -> one Preview-only active-listing Luna monitor
   // -> one isolated, GET-only eBay account-policy preflight route -> two
-  // service-role/admin-only publication OAuth handoff routes.
-  // The old product/community domain remains at zero.
-  assert.ok(countNamed("app/api", "route.ts") <= 70, "API route count regressed")
+  // service-role/admin-only publication OAuth handoff routes -> one isolated
+  // reference-guided canary route -> one service-role-only successor position-5
+  // executor. The old product/community domain remains at zero.
+  assert.ok(countNamed("app/api", "route.ts") <= 72, "API route count regressed")
   assert.equal(countNamed("app/api/community", "route.ts"), 0)
   assert.equal(countNamed("app/api/store", "route.ts"), 0)
 })
