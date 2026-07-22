@@ -459,6 +459,13 @@ export async function POST(req: Request) {
         .eq("listing_package_id", revisionRow.listing_package_id)
         .order("created_at", { ascending: false }).limit(1).maybeSingle()
       if (packError || !sourcePack) return NextResponse.json({ success: false, error: "AUTHORIZED_SOURCE_COUNT_INVALID" }, { status: 422 })
+      const { data: visualBrief, error: briefError } = await supabase
+        .from("marketplace_product_research_visual_market_briefs")
+        .select("id,brief,confidence,sample_size,visual_market_brief_version,created_at,query_context_hash,product_family_fingerprint")
+        .eq("marketplace_account_key", accountKey)
+        .in("confidence", ["HIGH", "MEDIUM"])
+        .order("created_at", { ascending: false }).limit(1).maybeSingle()
+      if (briefError || !visualBrief || Number(visualBrief.sample_size) < 3) return NextResponse.json({ success: false, error: "MARKET_VISUAL_BRIEF_REFRESH_REQUIRED", attemptRows: 0, jobRows: 0, providerCalls: 0, retryConsumed: false, ebayWrites: 0 }, { status: 422 })
       const sourceAssets = Array.isArray(sourcePack.source_assets) ? sourcePack.source_assets as Array<Record<string, unknown>> : []
       const nativeMainAssets = sourceAssets.filter((asset) => asset.sourceImageId === "MAIN" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
       const nativeSideAssets = sourceAssets.filter((asset) => asset.sourceImageId === "SIDE" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
@@ -487,11 +494,12 @@ export async function POST(req: Request) {
       const strategyVersion = "SELLER_OS_EBAY_VISUAL_STRATEGY_V3"
       const roles = ["MATERIAL_AND_FINISH_DETAIL", "CONFIRMED_PACKAGE_CONTENTS", "SCALE_AND_CAPACITY_CONTEXT", "PRIMARY_BENEFIT_IN_ACTION", "ASPIRATIONAL_LIFESTYLE", "REAL_HUMAN_USE"]
       const sourcePackVersion = text(sourcePack.resolver_version, 120)
-      const manifestHash = createHash("sha256").update(JSON.stringify({ revisionId, strategyVersion, sourcePackVersion, sourcePackHash: sourcePack.source_pack_hash, main: { sourceImageId: "MAIN", sourceAngle: "FRONT", sourceSha256: mainVerified.actual, width: mainVerified.width, height: mainVerified.height }, side: { sourceImageId: "SIDE", sourceAngle: "SIDE", sourceSha256: sideVerified.actual, width: sideVerified.width, height: sideVerified.height }, excludedSourceSha256s: [...excluded].sort(), productDossierHash: sourcePack.authoritative_fact_package_hash, marketVisualBriefHash: null, roles, promptVersion: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1", model: "gpt-image-2", quality: "high", size: "1600x1600", qaVersion: "SELLER_OS_EBAY_VISUAL_QA_V2" })).digest("hex")
+      const marketVisualBriefHash = createHash("sha256").update(JSON.stringify(visualBrief)).digest("hex")
+      const manifestHash = createHash("sha256").update(JSON.stringify({ revisionId, strategyVersion, sourcePackVersion, sourcePackHash: sourcePack.source_pack_hash, main: { sourceImageId: "MAIN", sourceAngle: "FRONT", sourceSha256: mainVerified.actual, width: mainVerified.width, height: mainVerified.height }, side: { sourceImageId: "SIDE", sourceAngle: "SIDE", sourceSha256: sideVerified.actual, width: sideVerified.width, height: sideVerified.height }, excludedSourceSha256s: [...excluded].sort(), productDossierHash: sourcePack.authoritative_fact_package_hash, marketVisualBriefHash, roles, promptVersion: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1", model: "gpt-image-2", quality: "high", size: "1600x1600", qaVersion: "SELLER_OS_EBAY_VISUAL_QA_V2" })).digest("hex")
       const mainHash = mainVerified.actual
       const sideHash = sideVerified.actual
       const promptHashes = roles.map((role) => createHash("sha256").update(`${manifestHash}:${role}`).digest("hex"))
-      const { data, error } = await supabase.rpc("create_ebay_reference_guided_generation_attempt", { p_revision_id: revisionId, p_manifest_hash: manifestHash, p_roles: roles, p_main_hash: mainHash, p_side_hash: sideHash, p_prompt_hashes: promptHashes, p_market_brief_hash: null, p_product_dossier_hash: null })
+      const { data, error } = await supabase.rpc("create_ebay_reference_guided_generation_attempt", { p_revision_id: revisionId, p_manifest_hash: manifestHash, p_roles: roles, p_main_hash: mainHash, p_side_hash: sideHash, p_prompt_hashes: promptHashes, p_market_brief_hash: marketVisualBriefHash, p_product_dossier_hash: sourcePack.authoritative_fact_package_hash })
       if (error) throw error
       const attempt = Array.isArray(data) ? data[0] : data
       return NextResponse.json({ success: true, attemptId: attempt?.id, manifestHash, state: "PREPARED", providerState: "WAITING_PROVIDER_ENABLEMENT", providerCalls: 0, retryConsumed: false, ebayWrites: 0, productionChanged: false }, { status: 202 })
