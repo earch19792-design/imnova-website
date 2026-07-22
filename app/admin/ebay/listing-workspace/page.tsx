@@ -1310,8 +1310,9 @@ function ListingWorkspacePageContent() {
       }
       // Prepare the persistent V3 attempt; provider remains disabled in this checkpoint.
       const prepared = await imageRequest({
-        action: "reference_guided_prepare",
+        action: "prepare_visual_review",
         revisionId: revision.id,
+        baseControlId: revision.base_control_id,
       })
       if (prepared.attemptId) {
         setReferenceGuidedAttemptId(String(prepared.attemptId))

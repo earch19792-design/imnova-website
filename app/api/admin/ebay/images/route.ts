@@ -440,8 +440,27 @@ export async function POST(req: Request) {
       )
     }
     const body = await parseBody(req)
-    const action = text(body.action, 40)
+    let action = text(body.action, 40)
     const supabase = getSupabaseAdminClient()
+
+    if (action === "prepare_visual_review") {
+      const requestedRevisionId = uuid(body.revisionId)
+      if (!requestedRevisionId) return NextResponse.json({ success: false, error: "REVISION_ID_REQUIRED" }, { status: 400 })
+      const { data: routingRevision, error: routingError } = await supabase
+        .from("ebay_same_day_pilot_image_revisions")
+        .select("strategy_version,revision_contract")
+        .eq("id", requestedRevisionId).maybeSingle()
+      if (routingError || !routingRevision) return NextResponse.json({ success: false, error: "SAME_DAY_IMAGE_REVISION_NOT_FOUND" }, { status: 404 })
+      if (!routingRevision.strategy_version) return NextResponse.json({ success: false, error: "REVISION_STRATEGY_MISSING", attemptRows: 0, jobRows: 0 }, { status: 409 })
+      if (!routingRevision.revision_contract) return NextResponse.json({ success: false, error: "REVISION_CONTRACT_MISSING", attemptRows: 0, jobRows: 0 }, { status: 409 })
+      if (routingRevision.strategy_version === "VISUAL_STRATEGY_V3" && routingRevision.revision_contract === "REFERENCE_GUIDED_PRODUCT_GENERATION_V1") {
+        action = "reference_guided_prepare"
+      } else if (routingRevision.strategy_version === "VISUAL_STRATEGY_V2" && routingRevision.revision_contract === "LEGACY_VISUAL_STRATEGY_V2") {
+        action = "generate"
+      } else {
+        return NextResponse.json({ success: false, error: "REVISION_STRATEGY_CONTRACT_MISMATCH", attemptRows: 0, jobRows: 0 }, { status: 409 })
+      }
+    }
 
     if (action === "reference_guided_prepare") {
       const revisionId = uuid(body.revisionId)
