@@ -491,6 +491,10 @@ function validUuid(value: unknown) {
 
 function humanImageError(error: unknown) {
   const code = error instanceof Error ? error.message : ""
+  if (code.startsWith("LUNA_CATALOG_JSON_HTTP_") ||
+    code.startsWith("LUNA_CATALOG_IMAGE_HTTP_")) {
+    return "Luna no respondió temporalmente durante la resolución del catálogo. No se llamó a OpenAI ni se consumió el intento; vuelve a intentar cuando Luna responda."
+  }
   if (code.startsWith("NEEDS_ADDITIONAL_SOURCE_IMAGE:")) {
     const slot = code.slice("NEEDS_ADDITIONAL_SOURCE_IMAGE:".length) ||
       "DESCONOCIDA"
@@ -522,6 +526,14 @@ function humanImageError(error: unknown) {
       "Faltan fotografías autorizadas para una o más posiciones. Seller OS no generará vistas inventadas.",
     NEEDS_MORE_VERIFIED_FACTS:
       "No hay suficientes hechos comerciales verificados y no se generarán imágenes repetitivas de relleno.",
+    LUNA_CATALOG_MEDIA_MISSING:
+      "El catálogo Luna no expone imágenes utilizables para este producto. No se consumió el intento de generación.",
+    LUNA_CATALOG_PRODUCT_IDENTITY_MISMATCH:
+      "Las imágenes del catálogo no coinciden de forma verificable con el producto y la variante seleccionados. Generación bloqueada.",
+    LUNA_CATALOG_CANONICAL_PRODUCT_MISSING:
+      "Falta la URL canónica exacta de Luna para resolver sus imágenes originales. No se consumió el intento.",
+    MARKET_VISUAL_SIGNALS_INSUFFICIENT:
+      "El Market Visual Brief no es vigente o confiable. Seller OS detuvo el proceso antes de generar imágenes.",
     PUBLIC_STORAGE_COMPENSATION_FAILED:
       "La aprobación quedó bloqueada porque no se pudo limpiar una copia pública temporal. El incidente quedó registrado para recuperación segura.",
   }
@@ -1234,7 +1246,7 @@ export default function EbayListingWorkspacePage() {
     setImageRevisionBusy(true)
     setImageRevisionConfirmed(false)
     setError("")
-    setMessage("Generando seis composiciones corregidas sin tocar eBay…")
+    setMessage("Resolviendo originales de Luna y preparando siete imágenes sin tocar eBay…")
     try {
       const currentRevisionStatus = String(imageRevision?.revision.status ?? "")
       const payload = await imageRequest({
@@ -1984,7 +1996,7 @@ export default function EbayListingWorkspacePage() {
         {maintenanceMode && <section className="rounded-3xl border border-emerald-200/30 bg-emerald-200/[0.07] p-4"><p className="text-xs font-black uppercase tracking-widest text-emerald-100/70">Mantenimiento ACTIVE</p><h2 className="mt-1 text-xl font-black">Item {String(maintenance?.ebayItemId ?? "")}</h2><p className="mt-2 text-sm leading-6 text-white/65">Cuenta, SKU y estado ACTIVE ya fueron verificados. Aquí sólo se revisan título e imágenes; no se repiten policies ni guardas de creación.</p><div className="mt-4 rounded-2xl border border-white/15 bg-black/20 p-3"><p className="text-xs text-white/50">Título actual observado</p><p className="mt-1 text-sm font-bold">{String(maintenance?.title ?? "Pendiente de lectura")}</p><button type="button" disabled={!listingPackage || activeTitleBusy} onClick={() => void previewActiveTitleRevision()} className="mt-3 min-h-11 w-full rounded-xl border border-emerald-200/30 px-3 text-sm font-black disabled:opacity-40">{activeTitleBusy ? "Procesando…" : activeTitleRevision ? "Revalidar título propuesto" : "Preparar título verificado"}</button>{activeTitleRevision && <div className="mt-3 space-y-3"><div className="rounded-xl bg-emerald-200/10 p-3"><p className="text-xs text-emerald-100/60">Título calculado por el servidor</p><p className="mt-1 font-black">{String(activeTitleRevision.targetTitle ?? "")}</p></div><label className="block"><span className="text-xs font-black">Escribe exactamente: <code>{activeTitleExactPhrase}</code></span><input value={activeTitleConfirmation} onChange={(event) => setActiveTitleConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><button type="button" onClick={() => setActiveTitleConfirmation(activeTitleExactPhrase)} className="min-h-11 w-full rounded-xl border border-emerald-200/30 px-3 text-sm font-black">Usar frase exacta</button><button type="button" disabled={activeTitleBusy || !activeTitleConfirmationReady || activeTitlePhase === "applied_verified"} onClick={() => void applyActiveTitleRevision()} className="min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">{activeTitlePhase === "applied_verified" ? "Título aplicado y verificado" : /outcome_unknown|write_in_flight/i.test(activeTitlePhase) ? "Reconciliar sin repetir write" : "Aplicar sólo Title"}</button><p className="text-xs leading-5 text-white/50">Máximo una llamada ReviseFixedPriceItem. El XML contiene únicamente ItemID + Title; no modifica imágenes, precio, cantidad ni policies.</p></div>}</div></section>}
 
         {publicationLunaRecheck && <section aria-labelledby="publication-luna-recheck-heading" className="space-y-4 rounded-3xl border border-amber-200/35 bg-amber-200/[0.08] p-4">
-          <div><p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Última verificación requerida</p><h2 id="publication-luna-recheck-heading" className="mt-1 text-xl font-black">Reconfirmar Luna antes de continuar</h2><p className="mt-2 text-sm leading-6 text-amber-50/80">El conjunto histórico permanece guardado, pero no puede publicarse hasta completar la revisión visual V2 de siete imágenes PASSED. Esta reconfirmación sólo actualiza costo y stock; no regenera imágenes ni escribe en eBay.</p></div>
+          <div><p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Última verificación requerida</p><h2 id="publication-luna-recheck-heading" className="mt-1 text-xl font-black">Reconfirmar Luna para publicar</h2><p className="mt-2 text-sm leading-6 text-amber-50/80">El conjunto histórico permanece guardado, pero no puede publicarse hasta completar la revisión visual V2 de siete imágenes PASSED. Esta reconfirmación sólo actualiza costo y stock; no regenera imágenes ni escribe en eBay.</p></div>
           <div className="rounded-2xl bg-black/25 p-3"><p className="font-black">{publicationLunaRecheck.productTitle}</p><p className="mt-1 text-xs text-white/55">SKU {publicationLunaRecheck.supplierSku || "N/D"} · último costo vencido {money(publicationLunaRecheck.confirmedPrice)}{publicationLunaRecheck.quantityVisible ? ` · última cantidad ${publicationLunaRecheck.confirmedQuantity ?? "N/D"}` : " · cantidad no visible"}</p></div>
           {publicationLunaRecheck.supplierProductUrl
             ? <a href={publicationLunaRecheck.supplierProductUrl} target="_blank" rel="noreferrer" onClick={() => setPublicationLunaLinkOpened(true)} className="flex min-h-12 w-full items-center justify-center rounded-xl bg-violet-200 px-4 text-center font-black text-black">{publicationLunaLinkOpened ? "✓ Producto Luna abierto" : "Abrir producto exacto en Luna"}</a>

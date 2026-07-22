@@ -7,9 +7,6 @@ import { assertStoredSameDayImageSetQaPassed, currentAttemptPublicObjects } from
 import sharp from "sharp"
 
 import {
-  fetchAuthorizedImageSource,
-} from "./ebay-image-optimization-service"
-import {
   EBAY_IMAGE_SOURCE_BUCKET,
   EBAY_IMAGE_STAGING_BUCKET,
 } from "./ebay-image-storage-cleanup"
@@ -20,6 +17,7 @@ import {
   EBAY_IMAGE_TEXT_RENDERER_VERSION,
   EBAY_LISTING_IMAGE_SET_VERSION,
   EBAY_LISTING_IMAGE_SLOTS,
+  buildSellerOsEbayVisualStrategyV2,
   getListingImageFactoryConfiguration,
   requestSafeOpenAiBackgroundPlate,
 } from "./ebay-listing-image-factory"
@@ -29,6 +27,14 @@ import {
   generateTransientSameDayImagePackage,
 } from "./ebay-same-day-image-package-service"
 import { loadEbayImageMarketBrief } from "./ebay-image-market-brief"
+import {
+  disposeAuthorizedCatalogSourcePack,
+  bindLunaCatalogSourcesToStrategy,
+  LUNA_CATALOG_SOURCE_RESOLVER_VERSION,
+  resolveLunaCatalogOriginalSourcePack,
+  selectLunaCatalogGenerationSources,
+} from "./luna-catalog-original-source-resolver"
+import { persistAuthorizedCatalogSourcePack } from "./luna-catalog-source-pack-persistence"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
 const MAX_OUTPUT_BYTES = 12 * 1024 * 1024
@@ -326,13 +332,6 @@ export async function generateAndPersistSameDayImagePackage(input: {
   if (handoffError || !handoff || !uuid(handoff.id)) {
     throw new Error("SAME_DAY_IMAGE_DURABLE_HANDOFF_MISSING")
   }
-  const imageUrls = Array.isArray(record(handoffPackage.images).urls)
-    ? record(handoffPackage.images).urls as unknown[]
-    : []
-  const sourceUrls = [...new Set(imageUrls.map((value) => text(value, 2_000))
-    .filter(Boolean))].slice(0, 3)
-  if (!sourceUrls.length) throw new Error("SAME_DAY_IMAGE_AUTHORIZED_SOURCE_MISSING")
-
   const configuration = getListingImageFactoryConfiguration()
   if (configuration.deterministicComposition !== "READY") {
     throw new Error("SAME_DAY_IMAGE_COMPOSITION_ENVIRONMENT_BLOCKED")
@@ -340,9 +339,6 @@ export async function generateAndPersistSameDayImagePackage(input: {
   const aiEnabled = configuration.aiGeneration === "READY"
   const model = process.env.OPENAI_IMAGE_MODEL?.trim() ?? ""
   const apiKey = process.env.OPENAI_API_KEY?.trim() ?? ""
-  if (sourceUrls.length === 1 && !aiEnabled) {
-    throw new Error("SAME_DAY_IMAGE_SINGLE_SOURCE_AI_REQUIRED")
-  }
   const marketVisualBrief = await loadEbayImageMarketBrief({
     supabase: input.supabase,
     accountKey: input.accountKey,
@@ -352,31 +348,129 @@ export async function generateAndPersistSameDayImagePackage(input: {
   // In the durable same-day flow, an AI-generated scene must be grounded in
   // both the verified product dossier and usable aggregate visual evidence.
   // Never silently fall back to generic seller-pattern defaults.
-  if (aiEnabled && (!marketVisualBrief || marketVisualBrief.confidence === "LOW" ||
+  if (!marketVisualBrief || marketVisualBrief.confidence === "LOW" ||
     !marketVisualBrief.recencyWeightingApplied ||
-    (marketVisualBrief.supportingSignals.recentObservationPercent ?? 0) < 25)) {
+    (marketVisualBrief.supportingSignals.recentObservationPercent ?? 0) < 25 ||
+    Date.parse(marketVisualBrief.freshUntil ?? "") <= Date.now()) {
     throw new Error("MARKET_VISUAL_SIGNALS_INSUFFICIENT")
   }
-  const plan = buildSameDayImagePackagePlan({
-    handoffPackage,
-    authoritativeFactsPackage: facts.factsPackage,
-    currentBinding: {
-      candidateId,
-      factRunId: facts.factRunId,
-      factPackageHash: facts.factPackageHash,
-    },
-    rightsEvidence: {
-      rightsBasis: "supplier_authorized",
-      authorizationReference: rightsReference,
-      rightsEvidenceConfirmed: true,
-    },
-    aiContext: aiEnabled ? {
-      enabled: true,
-      model,
-      quality: PUBLISH_OPENAI_IMAGE_QUALITY,
-    } : { enabled: false },
-    marketVisualBrief,
+  const opportunityId = uuid(input.candidate.opportunity_id)
+  const supplierVariantId = text(input.candidate.supplier_variant_id, 160)
+  const { data: opportunity, error: opportunityError } = await input.supabase
+    .from("ebay_luna_opportunity_queue")
+    .select("market_radar_product_id,supplier_variant_id")
+    .eq("id", opportunityId)
+    .maybeSingle()
+  const marketRadarProductId = uuid(opportunity?.market_radar_product_id)
+  if (opportunityError || !opportunityId || !marketRadarProductId ||
+    !supplierVariantId ||
+    text(opportunity?.supplier_variant_id, 160) !== supplierVariantId) {
+    throw new Error("LUNA_CATALOG_PRODUCT_IDENTITY_MISMATCH")
+  }
+  const { data: lunaCatalog, error: lunaCatalogError } = await input.supabase
+    .from("market_radar_latest_variants")
+    .select("supplier_product_id,supplier_variant_id,product_url,featured_image_url,image_urls")
+    .eq("source_key", "lunaportex")
+    .eq("product_id", marketRadarProductId)
+    .eq("supplier_variant_id", supplierVariantId)
+    .maybeSingle()
+  const supplierProductId = text(lunaCatalog?.supplier_product_id, 40)
+  const productUrl = text(lunaCatalog?.product_url, 2_000)
+  if (lunaCatalogError || !/^\d{1,30}$/.test(supplierProductId) ||
+    !productUrl.startsWith("https://")) {
+    throw new Error("LUNA_CATALOG_CANONICAL_PRODUCT_MISSING")
+  }
+  const catalogPack = await resolveLunaCatalogOriginalSourcePack({
+    productUrl,
+    expectedProductId: supplierProductId,
+    expectedVariantId: supplierVariantId,
+    productIdentityHash: facts.factPackageHash,
+    authorizationEvidenceHash: sha256([
+      rightsReference,
+      facts.factPackageHash,
+      productUrl,
+    ].join(":")),
+    marketVisualSignalsUsable: true,
+    knownCatalogImageUrls: [
+      text(lunaCatalog?.featured_image_url, 2_000),
+      ...(Array.isArray(lunaCatalog?.image_urls) ? lunaCatalog.image_urls : []),
+    ].map((value) => text(value, 2_000)).filter(Boolean),
   })
+  const generationSources = selectLunaCatalogGenerationSources(catalogPack)
+  const catalogCapabilities = generationSources.map((asset) => ({
+    id: `LUNA_CATALOG_SOURCE:${asset.sha256}`,
+    nativeWidth: asset.nativeWidth,
+    nativeHeight: asset.nativeHeight,
+    effectiveWidth: asset.effectiveWidth,
+    effectiveHeight: asset.effectiveHeight,
+    qualityTier: asset.qualityTier,
+    viewClassification: asset.viewClassification,
+    enhancedDerivative: asset.enhancedDerivative,
+  }))
+  const resolvedHandoffPackage = {
+    ...handoffPackage,
+    images: {
+      ...record(handoffPackage.images),
+      urls: generationSources.map((asset) => asset.sourceUrl),
+      count: generationSources.length,
+      catalogSourceResolverVersion: LUNA_CATALOG_SOURCE_RESOLVER_VERSION,
+    },
+  }
+  let plan: ReturnType<typeof buildSameDayImagePackagePlan>
+  try {
+    plan = buildSameDayImagePackagePlan({
+      handoffPackage: resolvedHandoffPackage,
+      authoritativeFactsPackage: facts.factsPackage,
+      currentBinding: {
+        candidateId,
+        factRunId: facts.factRunId,
+        factPackageHash: facts.factPackageHash,
+      },
+      rightsEvidence: {
+        rightsBasis: "supplier_authorized",
+        authorizationReference: rightsReference,
+        rightsEvidenceConfirmed: true,
+      },
+      aiContext: aiEnabled ? {
+        enabled: true,
+        model,
+        quality: PUBLISH_OPENAI_IMAGE_QUALITY,
+      } : { enabled: false },
+      marketVisualBrief,
+      authorizedCatalogSources: catalogCapabilities,
+    })
+    const strategy = buildSellerOsEbayVisualStrategyV2(plan.factoryInput)
+    if (strategy.length !== 6 ||
+      new Set(strategy.map((position) => position.salesObjective)).size !== 6) {
+      throw new Error("NEEDS_VERIFIED_PRODUCT_FACTS:VISUAL_STRATEGY")
+    }
+    bindLunaCatalogSourcesToStrategy(
+      catalogPack,
+      generationSources,
+      catalogCapabilities.map((source) => source.id),
+      strategy,
+    )
+  } catch (error) {
+    disposeAuthorizedCatalogSourcePack(catalogPack)
+    throw error
+  }
+  let persistedCatalogPack: { packId: string; sourcePackHash: string }
+  try {
+    persistedCatalogPack = await persistAuthorizedCatalogSourcePack({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      actorId,
+      listingPackageId,
+      candidateId,
+      marketRadarProductId,
+      supplierVariantId,
+      factPackageHash: facts.factPackageHash,
+      pack: catalogPack,
+    })
+  } catch (error) {
+    disposeAuthorizedCatalogSourcePack(catalogPack)
+    throw error
+  }
   const generationMode = aiEnabled
     ? "OPENAI_CONTEXT_PLATE"
     : "DETERMINISTIC_ONLY"
@@ -403,13 +497,19 @@ export async function generateAndPersistSameDayImagePackage(input: {
       p_lease_token: leaseToken,
     },
   )
-  if (claimError) throw new Error(databaseErrorCode(
-    claimError,
-    "SAME_DAY_IMAGE_CONTROL_CLAIM_FAILED",
-  ))
+  if (claimError) {
+    disposeAuthorizedCatalogSourcePack(catalogPack)
+    throw new Error(databaseErrorCode(
+      claimError,
+      "SAME_DAY_IMAGE_CONTROL_CLAIM_FAILED",
+    ))
+  }
   const claim = record(claimData)
   const controlId = uuid(claim.controlId ?? claim.runId ?? claim.id)
-  if (!controlId) throw new Error("SAME_DAY_IMAGE_CONTROL_ID_INVALID")
+  if (!controlId) {
+    disposeAuthorizedCatalogSourcePack(catalogPack)
+    throw new Error("SAME_DAY_IMAGE_CONTROL_ID_INVALID")
+  }
   if (claim.claimed !== true) {
     const control = await controlRow(input.supabase, controlId, actorId)
     const reused = await reusableCompletedSet({
@@ -419,32 +519,33 @@ export async function generateAndPersistSameDayImagePackage(input: {
       actorId,
       listingPackageId,
     })
-    if (reused) return { ...reused, aiConfiguration: configuration.aiGeneration }
+    if (reused) {
+      disposeAuthorizedCatalogSourcePack(catalogPack)
+      return { ...reused, aiConfiguration: configuration.aiGeneration }
+    }
+    disposeAuthorizedCatalogSourcePack(catalogPack)
     throw new Error("SAME_DAY_IMAGE_CONTROL_NOT_CLAIMED")
   }
 
   let providerDispatched = false
   let providerRequestId: string | null = null
-  let sources: Array<Awaited<ReturnType<typeof fetchAuthorizedImageSource>>> = []
   let generated: Awaited<ReturnType<typeof generateTransientSameDayImagePackage>> | null = null
   const uploaded: Array<{ bucket: string; path: string }> = []
   const persistedAssetIds: string[] = []
   try {
-    sources = await Promise.all(sourceUrls.map((sourceUrl) =>
-      fetchAuthorizedImageSource(sourceUrl)))
-    const sourceDetails = await Promise.all(sources.map(async (source, index) => ({
-      source,
+    const uniqueSourceDetails = await Promise.all(generationSources.map(async (asset, index) => ({
+      source: {
+        buffer: asset.buffer,
+        sourceUrl: asset.sourceUrl,
+        contentType: asset.enhancedDerivative ? "image/jpeg" as const : asset.contentType,
+      },
       index,
-      sourceSha256: sha256(source.buffer),
-      metadata: await sharp(source.buffer).metadata(),
+      sourceSha256: asset.sha256,
+      metadata: await sharp(asset.buffer).metadata(),
+      catalogAsset: asset,
     })))
-    const uniqueSourceDetails = [...new Map(sourceDetails.map((entry) =>
-      [entry.sourceSha256, entry])).values()]
-    if (uniqueSourceDetails.length === 1 && !aiEnabled) {
-      throw new Error("SAME_DAY_IMAGE_SINGLE_SOURCE_AI_REQUIRED")
-    }
     generated = await generateTransientSameDayImagePackage({
-      handoffPackage,
+      handoffPackage: resolvedHandoffPackage,
       authoritativeFactsPackage: facts.factsPackage,
       currentBinding: {
         candidateId,
@@ -462,6 +563,7 @@ export async function generateAndPersistSameDayImagePackage(input: {
         quality: PUBLISH_OPENAI_IMAGE_QUALITY,
       } : { enabled: false },
       marketVisualBrief,
+      authorizedCatalogSources: catalogCapabilities,
       source: uniqueSourceDetails.map((entry) => entry.source.buffer),
       requestBackgroundPlate: aiEnabled ? async (safePlan) => {
         providerDispatched = true
@@ -533,6 +635,12 @@ export async function generateAndPersistSameDayImagePackage(input: {
           sameDayPilotCandidateId: candidateId,
           sameDayImageControlId: controlId,
           authoritativeFactPackageHash: facts.factPackageHash,
+          authorizedCatalogSourcePackId: persistedCatalogPack.packId,
+          authorizedCatalogSourcePackHash: persistedCatalogPack.sourcePackHash,
+          catalogSourceResolverVersion: LUNA_CATALOG_SOURCE_RESOLVER_VERSION,
+          catalogNativeSourceSha256: selectedSource.catalogAsset.sourceSha256,
+          catalogEnhancedDerivative: selectedSource.catalogAsset.enhancedDerivative,
+          catalogEnhancedSha256: selectedSource.catalogAsset.enhancedSha256,
         },
         qa_result: composition.qa,
       })
@@ -606,7 +714,7 @@ export async function generateAndPersistSameDayImagePackage(input: {
     throw error
   } finally {
     if (generated) disposeTransientSameDayImageAssets(generated.transientAssets)
-    for (const source of sources) source.buffer.fill(0)
+    disposeAuthorizedCatalogSourcePack(catalogPack)
   }
 }
 

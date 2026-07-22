@@ -3,7 +3,6 @@ import { createHash, randomUUID } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import sharp from "sharp"
 
-import { fetchAuthorizedImageSource } from "./ebay-image-optimization-service"
 import {
   EBAY_IMAGE_SOURCE_BUCKET,
   EBAY_IMAGE_STAGING_BUCKET,
@@ -13,12 +12,23 @@ import {
   EBAY_IMAGE_TEXT_RENDERER_VERSION,
   EBAY_LISTING_IMAGE_SET_VERSION,
   EBAY_LISTING_IMAGE_SLOTS,
+  buildSellerOsEbayVisualStrategyV2,
   getListingImageFactoryConfiguration,
 } from "./ebay-listing-image-factory"
 import {
   disposeTransientSameDayImageAssets,
+  buildSameDayImagePackagePlan,
   generateTransientSameDayImagePackage,
 } from "./ebay-same-day-image-package-service"
+import { loadEbayImageMarketBrief } from "./ebay-image-market-brief"
+import {
+  disposeAuthorizedCatalogSourcePack,
+  bindLunaCatalogSourcesToStrategy,
+  LUNA_CATALOG_SOURCE_RESOLVER_VERSION,
+  resolveLunaCatalogOriginalSourcePack,
+  selectLunaCatalogGenerationSources,
+} from "./luna-catalog-original-source-resolver"
+import { persistAuthorizedCatalogSourcePack } from "./luna-catalog-source-pack-persistence"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
 const REVISION_VERSION = "EBAY_LISTING_IMAGE_REVISION_V2_VERIFIED_ACTIVE_HANDOFF_COMPAT"
@@ -70,6 +80,18 @@ function databaseErrorCode(error: unknown, fallback: string) {
 
 function candidatePath(candidateKey: string) {
   return sha256(candidateKey).slice(0, 24)
+}
+
+function marketVisualSignalsUsable(value: unknown) {
+  const brief = record(value)
+  const signals = record(brief.supportingSignals)
+  const observedAt = Date.parse(text(brief.observedAt, 50))
+  const freshUntil = Date.parse(text(brief.freshUntil, 50))
+  return ["HIGH", "MEDIUM"].includes(text(brief.confidence, 20)) &&
+    brief.recencyWeightingApplied === true &&
+    Number(signals.recentObservationPercent) >= 25 &&
+    Number.isFinite(observedAt) && observedAt <= Date.now() &&
+    Number.isFinite(freshUntil) && freshUntil > Date.now()
 }
 
 function exactSevenIds(value: unknown) {
@@ -209,13 +231,29 @@ async function loadBaseContext(input: {
     }
     allowVerifiedActiveHistoricalHandoff = true
   }
-  const sourceValues = Array.isArray(record(handoffPackage.images).urls)
-    ? record(handoffPackage.images).urls as unknown[]
-    : []
-  const sourceUrls = [...new Set(sourceValues.map((value) => text(value, 2_000))
-    .filter((value) => value.startsWith("https://")))].slice(0, 3)
-  if (!sourceUrls.length) {
-    throw new Error("SAME_DAY_IMAGE_REVISION_AUTHORIZED_SOURCE_MISSING")
+  const supplierVariantId = text(candidate.supplier_variant_id, 160)
+  const { data: opportunity, error: opportunityError } = await input.supabase
+    .from("ebay_luna_opportunity_queue")
+    .select("market_radar_product_id,supplier_variant_id")
+    .eq("id", opportunityId)
+    .maybeSingle()
+  const marketRadarProductId = uuid(opportunity?.market_radar_product_id)
+  if (opportunityError || !marketRadarProductId || !supplierVariantId ||
+    text(opportunity?.supplier_variant_id, 160) !== supplierVariantId) {
+    throw new Error("LUNA_CATALOG_PRODUCT_IDENTITY_MISMATCH")
+  }
+  const { data: lunaCatalog, error: lunaCatalogError } = await input.supabase
+    .from("market_radar_latest_variants")
+    .select("supplier_product_id,supplier_variant_id,product_url,featured_image_url,image_urls")
+    .eq("source_key", "lunaportex")
+    .eq("product_id", marketRadarProductId)
+    .eq("supplier_variant_id", supplierVariantId)
+    .maybeSingle()
+  const supplierProductId = text(lunaCatalog?.supplier_product_id, 40)
+  const productUrl = text(lunaCatalog?.product_url, 2_000)
+  if (lunaCatalogError || !/^\d{1,30}$/.test(supplierProductId) ||
+    !productUrl.startsWith("https://")) {
+    throw new Error("LUNA_CATALOG_CANONICAL_PRODUCT_MISSING")
   }
   return {
     base,
@@ -225,11 +263,18 @@ async function loadBaseContext(input: {
     factRunId,
     factPackageHash,
     allowVerifiedActiveHistoricalHandoff,
-    sourceUrls,
     listingPackageId,
     candidateId,
     candidateKey,
     opportunityId,
+    marketRadarProductId,
+    supplierProductId,
+    supplierVariantId,
+    productUrl,
+    knownCatalogImageUrls: [
+      text(lunaCatalog?.featured_image_url, 2_000),
+      ...(Array.isArray(lunaCatalog?.image_urls) ? lunaCatalog.image_urls : []),
+    ].map((value) => text(value, 2_000)).filter(Boolean),
   }
 }
 
@@ -338,6 +383,105 @@ export async function generateAndPersistSameDayImageRevision(input: {
   if (configuration.deterministicComposition !== "READY") {
     throw new Error("SAME_DAY_IMAGE_REVISION_FACTORY_BLOCKED")
   }
+  const marketVisualBrief = await loadEbayImageMarketBrief({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    captureBatchId: context.candidate.product_research_capture_batch_id,
+    familyFingerprint: context.candidate.family_fingerprint,
+  })
+  if (!marketVisualSignalsUsable(marketVisualBrief)) {
+    throw new Error("MARKET_VISUAL_SIGNALS_INSUFFICIENT")
+  }
+  const authorizationEvidenceHash = sha256([
+    `APPROVED_IMAGE_CONTROL:${baseControlId}`,
+    context.factPackageHash,
+    context.productUrl,
+  ].join(":"))
+  const catalogPack = await resolveLunaCatalogOriginalSourcePack({
+    productUrl: context.productUrl,
+    expectedProductId: context.supplierProductId,
+    expectedVariantId: context.supplierVariantId,
+    productIdentityHash: context.factPackageHash,
+    authorizationEvidenceHash,
+    marketVisualSignalsUsable: true,
+    knownCatalogImageUrls: context.knownCatalogImageUrls,
+  })
+  const generationSources = selectLunaCatalogGenerationSources(catalogPack)
+  const catalogCapabilities = generationSources.map((asset) => ({
+    id: `LUNA_CATALOG_SOURCE:${asset.sha256}`,
+    nativeWidth: asset.nativeWidth,
+    nativeHeight: asset.nativeHeight,
+    effectiveWidth: asset.effectiveWidth,
+    effectiveHeight: asset.effectiveHeight,
+    qualityTier: asset.qualityTier,
+    viewClassification: asset.viewClassification,
+    enhancedDerivative: asset.enhancedDerivative,
+  }))
+  const resolvedHandoffPackage = {
+    ...context.handoffPackage,
+    images: {
+      ...record(context.handoffPackage.images),
+      urls: generationSources.map((asset) => asset.sourceUrl),
+      count: generationSources.length,
+      catalogSourceResolverVersion: LUNA_CATALOG_SOURCE_RESOLVER_VERSION,
+    },
+  }
+  // Building the exact six-position strategy is a pure precheck. It neither
+  // claims the revision nor calls OpenAI.
+  try {
+    const precheckPlan = buildSameDayImagePackagePlan({
+      handoffPackage: resolvedHandoffPackage,
+      authoritativeFactsPackage: context.factsPackage,
+      currentBinding: {
+        candidateId: context.candidateId,
+        factRunId: context.factRunId,
+        factPackageHash: context.factPackageHash,
+      },
+      rightsEvidence: {
+        rightsBasis: "supplier_authorized",
+        authorizationReference: `APPROVED_IMAGE_CONTROL:${baseControlId}`,
+        rightsEvidenceConfirmed: true,
+      },
+      aiContext: { enabled: false },
+      marketVisualBrief,
+      authorizedCatalogSources: catalogCapabilities,
+      allowVerifiedActiveHistoricalHandoff:
+        context.allowVerifiedActiveHistoricalHandoff,
+    })
+    const precheckStrategy = buildSellerOsEbayVisualStrategyV2(
+      precheckPlan.factoryInput,
+    )
+    if (precheckStrategy.length !== 6 ||
+      new Set(precheckStrategy.map((position) => position.salesObjective)).size !== 6) {
+      throw new Error("NEEDS_VERIFIED_PRODUCT_FACTS:VISUAL_STRATEGY")
+    }
+    bindLunaCatalogSourcesToStrategy(
+      catalogPack,
+      generationSources,
+      catalogCapabilities.map((source) => source.id),
+      precheckStrategy,
+    )
+  } catch (error) {
+    disposeAuthorizedCatalogSourcePack(catalogPack)
+    throw error
+  }
+  let persistedCatalogPack: { packId: string; sourcePackHash: string }
+  try {
+    persistedCatalogPack = await persistAuthorizedCatalogSourcePack({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      actorId,
+      listingPackageId: context.listingPackageId,
+      candidateId: context.candidateId,
+      marketRadarProductId: context.marketRadarProductId,
+      supplierVariantId: context.supplierVariantId,
+      factPackageHash: context.factPackageHash,
+      pack: catalogPack,
+    })
+  } catch (error) {
+    disposeAuthorizedCatalogSourcePack(catalogPack)
+    throw error
+  }
   const idempotencyKeyHash = sha256([
     input.accountKey,
     actorId,
@@ -357,13 +501,19 @@ export async function generateAndPersistSameDayImageRevision(input: {
       p_lease_token: leaseToken,
     },
   )
-  if (claimError) throw new Error(databaseErrorCode(
-    claimError,
-    "SAME_DAY_IMAGE_REVISION_CLAIM_FAILED",
-  ))
+  if (claimError) {
+    disposeAuthorizedCatalogSourcePack(catalogPack)
+    throw new Error(databaseErrorCode(
+      claimError,
+      "SAME_DAY_IMAGE_REVISION_CLAIM_FAILED",
+    ))
+  }
   const claim = record(claimData)
   const revisionId = uuid(claim.revisionId)
-  if (!revisionId) throw new Error("SAME_DAY_IMAGE_REVISION_ID_INVALID")
+  if (!revisionId) {
+    disposeAuthorizedCatalogSourcePack(catalogPack)
+    throw new Error("SAME_DAY_IMAGE_REVISION_ID_INVALID")
+  }
   if (claim.claimed !== true) {
     const current = await getSameDayImageRevision({
       supabase: input.supabase,
@@ -373,28 +523,30 @@ export async function generateAndPersistSameDayImageRevision(input: {
     })
     if (["PENDING_REVIEW", "APPROVED", "REJECTED", "FAILED_FINAL"]
       .includes(text(current.revision.status))) {
+      disposeAuthorizedCatalogSourcePack(catalogPack)
       return { ...current, reused: true }
     }
+    disposeAuthorizedCatalogSourcePack(catalogPack)
     throw new Error("SAME_DAY_IMAGE_REVISION_BUSY")
   }
 
-  let sources: Array<Awaited<ReturnType<typeof fetchAuthorizedImageSource>>> = []
   let generated: Awaited<ReturnType<typeof generateTransientSameDayImagePackage>> | null = null
   const uploaded: Array<{ bucket: string; path: string; requestedId: string }> = []
   const createdAssetIds: string[] = []
   let completed = false
   try {
-    sources = await Promise.all(context.sourceUrls.map((url) =>
-      fetchAuthorizedImageSource(url)))
-    const sourceDetails = await Promise.all(sources.map(async (source) => ({
-      source,
-      sourceSha256: sha256(source.buffer),
-      metadata: await sharp(source.buffer).metadata(),
+    const uniqueSources = await Promise.all(generationSources.map(async (asset) => ({
+      source: {
+        buffer: asset.buffer,
+        sourceUrl: asset.sourceUrl,
+        contentType: asset.enhancedDerivative ? "image/jpeg" : asset.contentType,
+      },
+      sourceSha256: asset.sha256,
+      metadata: await sharp(asset.buffer).metadata(),
+      catalogAsset: asset,
     })))
-    const uniqueSources = [...new Map(sourceDetails.map((entry) =>
-      [entry.sourceSha256, entry])).values()].slice(0, 3)
     generated = await generateTransientSameDayImagePackage({
-      handoffPackage: context.handoffPackage,
+      handoffPackage: resolvedHandoffPackage,
       authoritativeFactsPackage: context.factsPackage,
       currentBinding: {
         candidateId: context.candidateId,
@@ -407,6 +559,8 @@ export async function generateAndPersistSameDayImageRevision(input: {
         rightsEvidenceConfirmed: true,
       },
       aiContext: { enabled: false },
+      marketVisualBrief,
+      authorizedCatalogSources: catalogCapabilities,
       allowVerifiedActiveHistoricalHandoff:
         context.allowVerifiedActiveHistoricalHandoff,
       source: uniqueSources.map((entry) => entry.source.buffer),
@@ -500,6 +654,12 @@ export async function generateAndPersistSameDayImageRevision(input: {
           sameDayImageRevisionId: revisionId,
           baseSameDayImageControlId: baseControlId,
           authoritativeFactPackageHash: context.factPackageHash,
+          authorizedCatalogSourcePackId: persistedCatalogPack.packId,
+          authorizedCatalogSourcePackHash: persistedCatalogPack.sourcePackHash,
+          catalogSourceResolverVersion: LUNA_CATALOG_SOURCE_RESOLVER_VERSION,
+          catalogNativeSourceSha256: selected.catalogAsset.sourceSha256,
+          catalogEnhancedDerivative: selected.catalogAsset.enhancedDerivative,
+          catalogEnhancedSha256: selected.catalogAsset.enhancedSha256,
         },
         qa_result: composition.qa,
       })
@@ -632,7 +792,7 @@ export async function generateAndPersistSameDayImageRevision(input: {
     throw error
   } finally {
     if (generated) disposeTransientSameDayImageAssets(generated.transientAssets)
-    for (const source of sources) source.buffer.fill(0)
+    disposeAuthorizedCatalogSourcePack(catalogPack)
   }
 }
 

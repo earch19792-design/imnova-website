@@ -312,6 +312,7 @@ export function buildSameDayImagePackagePlan(input: {
     quality?: EbayOpenAiImageQuality
   }
   marketVisualBrief?: EbayImageMarketBrief | null
+  authorizedCatalogSources?: EbayListingImageFactoryInput["authorizedSourceCapabilities"]
   allowVerifiedActiveHistoricalHandoff?: boolean
 }): SameDayImagePackagePlan {
   const factoryInput = buildCurrentSameDayImageFactoryInput({
@@ -326,8 +327,13 @@ export function buildSameDayImagePackagePlan(input: {
   const marketVisualBrief = input.marketVisualBrief
     ? ebayImageMarketBriefSchema.parse(input.marketVisualBrief)
     : null
+  const authorizedCatalogSources = input.authorizedCatalogSources
   const enrichedFactoryInput = validateListingImageFactoryInput({
     ...factoryInput,
+    ...(authorizedCatalogSources ? {
+      authorizedSourceImageIds: authorizedCatalogSources.map((source) => source.id),
+      authorizedSourceCapabilities: authorizedCatalogSources,
+    } : {}),
     marketVisualBrief,
   })
   const backgroundPlatePlan = input.aiContext.enabled
@@ -846,6 +852,7 @@ export async function generateTransientSameDayImagePackage(input: {
     quality?: EbayOpenAiImageQuality
   }
   marketVisualBrief?: EbayImageMarketBrief | null
+  authorizedCatalogSources?: EbayListingImageFactoryInput["authorizedSourceCapabilities"]
   source: Buffer | Buffer[]
   generatedAt?: string
   allowVerifiedActiveHistoricalHandoff?: boolean
@@ -867,41 +874,48 @@ export async function generateTransientSameDayImagePackage(input: {
   })
   const preflightForegrounds: Buffer[] = []
   try {
-    for (const source of sources) {
+    for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex += 1) {
+      const source = sources[sourceIndex]
       const metadata = await sharp(source).metadata()
-      if ((metadata.width ?? 0) < 1_200 || (metadata.height ?? 0) < 1_200) {
-        throw new Error("NEEDS_ADDITIONAL_SOURCE_IMAGE:HIGH_RESOLUTION")
+      if (Math.max(metadata.width ?? 0, metadata.height ?? 0) < 500) {
+        throw new Error("NEEDS_ADDITIONAL_SOURCE_IMAGE:SOURCE_TOO_SMALL")
+      }
+      // The primary is the only position with a native/effective 1200px gate.
+      // Secondary positions are evaluated below against their actual crop and
+      // coverage requirements instead of inheriting one global threshold.
+      if (sourceIndex === 0 &&
+        Math.max(metadata.width ?? 0, metadata.height ?? 0) < 1_200) {
+        throw new Error("NEEDS_ADDITIONAL_SOURCE_IMAGE:PRIMARY")
       }
       const foreground = await prepareAuthorizedEbaySecondaryForeground(source)
       if (!foreground) throw new Error("EBAY_IMAGE_FOREGROUND_EXTRACTION_UNSAFE")
-      const foregroundMetadata = await sharp(foreground.output).metadata()
-      if (Math.max(foregroundMetadata.width ?? 0,
-        foregroundMetadata.height ?? 0) < 1_120) {
-        foreground.output.fill(0)
-        throw new Error("NEEDS_ADDITIONAL_SOURCE_IMAGE:HIGH_RESOLUTION_PRODUCT_VIEW")
-      }
       preflightForegrounds.push(foreground.output)
     }
     const strategy = buildSellerOsEbayVisualStrategyV2(plan.factoryInput)
-    const detail = strategy.find((position) =>
-      position.salesObjective === "QUALITY_DETAIL")
-    if (detail) {
-      const sourceId = detail.authorizedSourceImageIds[0]
+    for (const position of strategy) {
+      const sourceId = position.authorizedSourceImageIds[0]
       const sourceIndex = plan.factoryInput.authorizedSourceImageIds
         .indexOf(sourceId)
-      const detailMetadata = await sharp(preflightForegrounds[sourceIndex])
+      if (sourceIndex < 0 || !preflightForegrounds[sourceIndex]) {
+        throw new Error(`NEEDS_ADDITIONAL_SOURCE_IMAGE:${position.slot}`)
+      }
+      const foregroundMetadata = await sharp(preflightForegrounds[sourceIndex])
         .metadata()
-      const requiredCropSize = ({
+      const targetSize = ({
         PACK_AND_COUNT: 980,
         KEY_FEATURES: 1_120,
         SIZE_AND_CONTENT: 900,
-        USE_CONTEXT: 860,
+        USE_CONTEXT: 820,
         PACKAGE_CONTENTS: 1_030,
         SECONDARY_6: 880,
-      } as const)[detail.slot]
-      if (Math.min(detailMetadata.width ?? 0,
-        detailMetadata.height ?? 0) < requiredCropSize) {
-        throw new Error(`NEEDS_ADDITIONAL_SOURCE_IMAGE:${detail.slot}`)
+      } as const)[position.slot]
+      const available = position.salesObjective === "QUALITY_DETAIL"
+        ? Math.min(foregroundMetadata.width ?? 0, foregroundMetadata.height ?? 0)
+        : Math.max(foregroundMetadata.width ?? 0, foregroundMetadata.height ?? 0)
+      const requiredSize = position.salesObjective === "QUALITY_DETAIL"
+        ? targetSize : 800
+      if (available < requiredSize) {
+        throw new Error(`NEEDS_ADDITIONAL_SOURCE_IMAGE:${position.slot}`)
       }
     }
   } finally {

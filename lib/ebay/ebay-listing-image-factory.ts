@@ -78,6 +78,21 @@ const inputSchema = z.object({
   }).strict(),
   authorizedSourceImageIds: z.array(z.string().trim().min(1).max(200))
     .min(1).max(3).default(["LUNA_SOURCE_1"]),
+  authorizedSourceCapabilities: z.array(z.object({
+    id: z.string().trim().min(1).max(200),
+    nativeWidth: z.number().int().min(1).max(20_000),
+    nativeHeight: z.number().int().min(1).max(20_000),
+    effectiveWidth: z.number().int().min(1).max(20_000),
+    effectiveHeight: z.number().int().min(1).max(20_000),
+    qualityTier: z.enum([
+      "NATIVE_HIGH_RES", "NATIVE_MEDIUM_RES", "CONTROLLED_ENHANCEMENT",
+    ]),
+    viewClassification: z.enum([
+      "PRIMARY", "ALTERNATE_AUTHORIZED_ANGLE", "DETAIL",
+      "PACKAGE_CONTENTS", "UNKNOWN",
+    ]),
+    enhancedDerivative: z.boolean(),
+  }).strict()).min(1).max(3).optional(),
   buyerQuestions: z.array(z.string().trim().min(1).max(240))
     .max(20).default([]),
   buyerObjections: z.array(z.string().trim().min(1).max(240))
@@ -777,6 +792,36 @@ export function buildSellerOsEbayVisualStrategyV2(
 ): EbayVisualStrategyPosition[] {
   const facts = input.facts
   const sourceIds = input.authorizedSourceImageIds
+  const sourceCapabilities = input.authorizedSourceCapabilities ?? sourceIds
+    .map((id, index) => ({
+      id,
+      nativeWidth: 1600,
+      nativeHeight: 1600,
+      effectiveWidth: 1600,
+      effectiveHeight: 1600,
+      qualityTier: "NATIVE_HIGH_RES" as const,
+      viewClassification: index === 0
+        ? "PRIMARY" as const
+        : "ALTERNATE_AUTHORIZED_ANGLE" as const,
+      enhancedDerivative: false,
+    }))
+  if (sourceCapabilities.length !== sourceIds.length ||
+    sourceCapabilities.some((source, index) => source.id !== sourceIds[index])) {
+    throw new Error("EBAY_IMAGE_SOURCE_CAPABILITIES_INVALID")
+  }
+  const alternateSource = sourceCapabilities.find((source) =>
+    source.viewClassification === "ALTERNATE_AUTHORIZED_ANGLE")
+  const detailSource = sourceCapabilities.find((source) =>
+    source.viewClassification === "DETAIL" &&
+    source.qualityTier === "NATIVE_HIGH_RES" &&
+    Math.min(source.nativeWidth, source.nativeHeight) >= 900) ??
+    sourceCapabilities.find((source) =>
+    source.qualityTier === "NATIVE_HIGH_RES" &&
+    Math.min(source.nativeWidth, source.nativeHeight) >= 900)
+  const packageSource = sourceCapabilities.find((source) =>
+    source.viewClassification === "PACKAGE_CONTENTS")
+  const packageContentsCommerciallyUseful = facts.packCount !== 1 ||
+    facts.unitCount !== 1 || Boolean(packageSource)
   const market = input.marketVisualBrief
   const marketSignals = market ? [
     `background:${market.dominantBackgroundType}`,
@@ -788,7 +833,8 @@ export function buildSellerOsEbayVisualStrategyV2(
   ] : ["PROFESSIONAL_FALLBACK_EXPLICIT"]
   const common = { sourceIds, marketSignals }
   const candidates: StrategyCandidate[] = [
-    ...(facts.material ? [strategyCandidate({ ...common, score: 100,
+    ...(facts.material ? [strategyCandidate({ ...common,
+      sourceIds: [detailSource?.id ?? sourceIds[0]], score: 100,
       salesObjective: "DETAIL_AND_MATERIAL",
       buyerQuestionAnswered: "What verified material and visible finish am I buying?",
       objectionReduced: "Material and finish ambiguity",
@@ -798,7 +844,8 @@ export function buildSellerOsEbayVisualStrategyV2(
       lightingDirection: "Soft raking light that preserves the authorized foreground pixels.",
       allowedContextualProps: [],
     })] : []),
-    strategyCandidate({ ...common, score: 99,
+    ...(packageContentsCommerciallyUseful ? [strategyCandidate({ ...common,
+      sourceIds: [packageSource?.id ?? sourceIds[0]], score: 99,
       salesObjective: "PACKAGE_CONTENTS",
       buyerQuestionAnswered: "What exactly is included in this offer?",
       objectionReduced: "Quantity and included-content ambiguity",
@@ -807,7 +854,7 @@ export function buildSellerOsEbayVisualStrategyV2(
       backgroundDirection: "Organized clean surface, visually empty around the exact offer.",
       lightingDirection: "Even commercial light with physically coherent contact shadow.",
       allowedContextualProps: [],
-    }),
+    })] : []),
     ...((facts.dimensions || facts.capacity || facts.size || facts.weight)
       ? [strategyCandidate({ ...common, score: 98,
         salesObjective: "SIZE_AND_SCALE",
@@ -847,8 +894,8 @@ export function buildSellerOsEbayVisualStrategyV2(
       lightingDirection: "Balanced commercial light preserving logos, color and contours.",
       allowedContextualProps: [],
     }),
-    ...(sourceIds.length > 1 ? [strategyCandidate({ ...common,
-      sourceIds: sourceIds.slice(1, 2), score: 90,
+    ...(alternateSource ? [strategyCandidate({ ...common,
+      sourceIds: [alternateSource.id], score: 90,
       salesObjective: "ALTERNATE_AUTHORIZED_ANGLE",
       buyerQuestionAnswered: "What does the product look like from another authorized view?",
       objectionReduced: "Visible geometry uncertainty",
@@ -858,7 +905,8 @@ export function buildSellerOsEbayVisualStrategyV2(
       lightingDirection: "Match the source perspective and visible illumination.",
       allowedContextualProps: [],
     })] : []),
-    strategyCandidate({ ...common, score: 89,
+    ...(detailSource ? [strategyCandidate({ ...common,
+      sourceIds: [detailSource.id], score: 89,
       salesObjective: "QUALITY_DETAIL",
       buyerQuestionAnswered: "Can I inspect a real visible detail before buying?",
       objectionReduced: "Visible quality-detail uncertainty",
@@ -867,7 +915,7 @@ export function buildSellerOsEbayVisualStrategyV2(
       backgroundDirection: "Minimal neutral surround that keeps the real crop dominant.",
       lightingDirection: "Preserve source lighting; add no synthetic highlights to the product.",
       allowedContextualProps: [],
-    }),
+    })] : []),
     strategyCandidate({ ...common, score: 88,
       salesObjective: "RETURN_RISK_CLARIFICATION",
       buyerQuestionAnswered: input.returnRiskSignals[0] ??
@@ -923,7 +971,7 @@ export function buildEbayVisualPanelContracts(
   facts: EbayListingImageFactoryInput["facts"],
   marketVisualBrief: EbayImageMarketBrief | null,
   strategyInput?: Pick<EbayListingImageFactoryInput,
-    "authorizedSourceImageIds" | "buyerQuestions" |
+    "authorizedSourceImageIds" | "authorizedSourceCapabilities" | "buyerQuestions" |
     "buyerObjections" | "returnRiskSignals">,
 ): EbayVisualPanelContract[] {
   const normalized = inputSchema.parse({
@@ -931,6 +979,7 @@ export function buildEbayVisualPanelContracts(
     facts,
     marketVisualBrief,
     authorizedSourceImageIds: strategyInput?.authorizedSourceImageIds,
+    authorizedSourceCapabilities: strategyInput?.authorizedSourceCapabilities,
     buyerQuestions: strategyInput?.buyerQuestions,
     buyerObjections: strategyInput?.buyerObjections,
     returnRiskSignals: strategyInput?.returnRiskSignals,
@@ -997,7 +1046,7 @@ async function composeInformationImage(
   const foregroundMetadata = await sharp(productForeground).metadata()
   const foregroundWidth = foregroundMetadata.width ?? 0
   const foregroundHeight = foregroundMetadata.height ?? 0
-  if (Math.max(foregroundWidth, foregroundHeight) < layout.packageSize ||
+  if ((!realDetailCrop && Math.max(foregroundWidth, foregroundHeight) < 800) ||
     (realDetailCrop && Math.min(foregroundWidth, foregroundHeight) <
       layout.packageSize)) {
     throw new Error(`NEEDS_ADDITIONAL_SOURCE_IMAGE:${slot}`)
@@ -1778,9 +1827,24 @@ export async function composeAuthorizedEbayListingImageSet(
         ? `OPENAI_COMMERCIAL_SCENE_${slot}_V6_P${panelSelection?.selectedPanel ?? 0}`
         : INFORMATION_LAYOUTS[slot].id
     const textLines = 0
+    const secondaryForegroundMetadata = slot === "MAIN_WHITE_BACKGROUND"
+      ? null : await sharp(main.secondaryForeground.output).metadata()
+    const secondaryAvailableSize = secondaryForegroundMetadata
+      ? panelContract?.visualStrategyPosition.salesObjective === "QUALITY_DETAIL"
+        ? Math.min(
+          secondaryForegroundMetadata.width ?? 0,
+          secondaryForegroundMetadata.height ?? 0,
+        )
+        : Math.max(
+          secondaryForegroundMetadata.width ?? 0,
+          secondaryForegroundMetadata.height ?? 0,
+        )
+      : 0
+    const secondaryTargetSize = slot === "MAIN_WHITE_BACKGROUND"
+      ? 0 : slot === "USE_CONTEXT" ? 820 : INFORMATION_LAYOUTS[slot].packageSize
     const productCoverageRatio = slot === "MAIN_WHITE_BACKGROUND"
       ? main.qa.productCoverageRatio
-      : (slot === "USE_CONTEXT" ? 860 : INFORMATION_LAYOUTS[slot].packageSize) /
+      : Math.min(secondaryTargetSize, secondaryAvailableSize) /
         EBAY_IMAGE_OUTPUT_SIZE
     const persistedPanelContract = slot === "MAIN_WHITE_BACKGROUND"
       ? {
@@ -1889,7 +1953,8 @@ export async function composeAuthorizedEbayListingImageSet(
         } : {}),
       },
       qa: {
-        automaticStatus: main.qa.automaticStatus === "PASSED" &&
+        automaticStatus: (slot !== "MAIN_WHITE_BACKGROUND" ||
+          main.qa.automaticStatus === "PASSED") &&
           promptCompliancePassed && marketSignalCompliancePassed &&
           productFidelityPassed && commercialQualityPassed &&
           technicalQualityPassed && productCoveragePassed &&
