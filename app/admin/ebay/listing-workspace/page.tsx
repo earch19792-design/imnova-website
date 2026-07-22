@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
+import { Suspense } from "react"
 
 import { supabase } from "@/lib/supabase"
 import {
@@ -606,7 +607,11 @@ function taxonomyOptionAvailable(
   return true
 }
 
-export default function EbayListingWorkspacePage() {
+function ListingWorkspaceLoading() {
+  return <main className="min-h-screen bg-[#070b12] p-6 text-white"><div className="mx-auto max-w-xl animate-pulse rounded-3xl border border-white/10 bg-white/[0.04] p-6"><div className="h-6 w-2/3 rounded bg-white/10" /><div className="mt-4 h-24 rounded-2xl bg-white/5" /><p className="mt-4 text-sm text-white/50">Cargando workspace…</p></div></main>
+}
+
+function ListingWorkspacePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null)
@@ -2308,4 +2313,8 @@ export default function EbayListingWorkspacePage() {
       {opportunity && listingPackage && <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/15 bg-[#0b1018]/95 px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 backdrop-blur"><div className="mx-auto grid max-w-xl grid-cols-2 gap-2"><button disabled={busy} onClick={() => void save(false)} className="min-h-14 rounded-2xl border border-white/20 font-black disabled:opacity-50">{busy ? "Guardando…" : "Guardar"}</button><button disabled={busy || blockers.length > 0} onClick={() => void save(true)} className="min-h-14 rounded-2xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">Listo para revisión</button></div></div>}
     </main>
   )
+}
+
+export default function EbayListingWorkspacePage() {
+  return <Suspense fallback={<ListingWorkspaceLoading />}><ListingWorkspacePageContent /></Suspense>
 }
