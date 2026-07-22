@@ -638,6 +638,11 @@ function ListingWorkspacePageContent() {
   const [imageAssets, setImageAssets] = useState<ImageAsset[]>([])
   const [imageBusy, setImageBusy] = useState(false)
   const [imageRevision, setImageRevision] = useState<ImageRevisionPayload | null>(null)
+  const [revisionLoading, setRevisionLoading] = useState(false)
+  const [revisionLoaded, setRevisionLoaded] = useState(false)
+  const [revisionError, setRevisionError] = useState("")
+  const [activeVisualRevision, setActiveVisualRevision] = useState<Record<string, any> | null>(null)
+  const [v3Eligibility, setV3Eligibility] = useState<{ eligible: boolean; blockedReason: string | null; existingId: string | null }>({ eligible: false, blockedReason: null, existingId: null })
   const [imageRevisionBusy, setImageRevisionBusy] = useState(false)
   const [referenceGuidedAttempt, setReferenceGuidedAttempt] = useState<Record<string, any> | null>(null)
   const [referenceGuidedAttemptId, setReferenceGuidedAttemptId] = useState("")
@@ -709,6 +714,31 @@ function ListingWorkspacePageContent() {
   useEffect(() => {
     const fromUrl = searchParams.get("v3Attempt")
     if (fromUrl && validUuid(fromUrl)) setReferenceGuidedAttemptId(fromUrl)
+  }, [searchParams])
+
+  useEffect(() => {
+    const candidateKey = searchParams.get("candidate")
+    if (!candidateKey) return
+    const controller = new AbortController()
+    let current = true
+    setRevisionLoading(true); setRevisionLoaded(false); setRevisionError("")
+    void (async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession()
+        if (!sessionData.session) throw new Error("ADMIN_SESSION_REQUIRED")
+        const response = await fetch(`/api/admin/ebay/images?activeRevision=1&candidateKey=${encodeURIComponent(candidateKey)}`, { cache: "no-store", signal: controller.signal, headers: { Authorization: `Bearer ${sessionData.session.access_token}` } })
+        const payload = await response.json()
+        if (!response.ok || !payload.success) throw new Error(String(payload.error ?? "ACTIVE_REVISION_LOOKUP_FAILED"))
+        if (!current) return
+        setActiveVisualRevision(payload.revision ?? null)
+        setV3Eligibility({ eligible: payload.v3Eligible === true, blockedReason: payload.blockedReason ?? null, existingId: payload.existingV3RevisionId ?? null })
+        setRevisionLoaded(true)
+      } catch (error) {
+        if (controller.signal.aborted || !current) return
+        setRevisionError(error instanceof Error ? error.message : "ACTIVE_REVISION_LOOKUP_FAILED")
+      } finally { if (current) setRevisionLoading(false) }
+    })()
+    return () => { current = false; controller.abort() }
   }, [searchParams])
 
   useEffect(() => {
@@ -1373,7 +1403,7 @@ function ListingWorkspacePageContent() {
   }
 
   async function createVisualStrategyV3Revision() {
-    const parentRevisionId = imageRevision?.revision.id
+    const parentRevisionId = activeVisualRevision?.id ?? imageRevision?.revision.id
     if (!parentRevisionId || v3RevisionBusy) return
     setV3RevisionBusy(true)
     try {
@@ -2188,9 +2218,11 @@ function ListingWorkspacePageContent() {
                 <div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-100/60">Corrección append-only</p><h3 className="mt-1 font-black">Revisión visual V2 de siete imágenes</h3><p className="mt-1 text-xs leading-5 text-white/55">Motivo predeterminado: <strong>IMAGE_COMPOSITOR_DEFECT</strong>. El set aprobado anterior nunca se borra ni se desactiva.</p></div>
                 <span className={`rounded-full border px-2 py-1 text-[10px] font-black ${approvedBaseImageControlId ? "border-emerald-200/30 text-emerald-100" : "border-amber-200/30 text-amber-100"}`}>{approvedBaseImageControlId ? "CONTROL BASE ENCONTRADO" : "SIN CONTROL BASE COMPATIBLE"}</span>
               </div>
-              <button type="button" disabled={!approvedBaseImageControlId || imageRevisionBusy} onClick={() => void generateImageRevision()} className="mt-3 min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">{imageRevisionBusy ? "Procesando las siete…" : imageRevisionFailed ? "Reintentar generación" : "Generar revisión corregida"}</button>
+              {revisionLoading && <p className="mt-3 rounded-xl border border-white/15 p-3 text-xs text-white/60">Cargando estrategia visual…</p>}
+              {revisionError && <p role="alert" className="mt-3 rounded-xl border border-rose-200/25 p-3 text-xs text-rose-50">No se pudo cargar la estrategia visual: {revisionError}</p>}
+              {!revisionLoading && !revisionError && revisionLoaded && activeVisualRevision?.strategy_version !== "VISUAL_STRATEGY_V2" && <button type="button" disabled className="mt-3 min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black opacity-40">Generar revisión corregida</button>}
               {referenceGuidedAttempt && <div className="mt-3 rounded-xl border border-cyan-200/25 bg-cyan-200/[0.05] p-3 text-xs leading-5 text-cyan-50"><strong>Preparado · proveedor deshabilitado</strong><span className="mt-1 block font-mono">Intento {String(referenceGuidedAttempt.attempt?.id ?? referenceGuidedAttemptId)}</span><span className="mt-1 block">Progreso: {String(referenceGuidedAttempt.progress ?? `${referenceGuidedAttempt.attempt?.completed_job_count ?? 0}/6`)}</span><span className="mt-1 block">Trabajos persistidos: {Array.isArray(referenceGuidedAttempt.jobs) ? referenceGuidedAttempt.jobs.length : 0}/6 · providerCalls: {String(referenceGuidedAttempt.attempt?.provider_calls ?? 0)}</span></div>}
-              {imageRevision?.revision && !v3Revision && <div className="mt-3 rounded-xl border border-violet-200/25 bg-violet-200/[0.06] p-3 text-xs leading-5 text-violet-50"><strong>Revisión activa: Visual Strategy V2</strong><p className="mt-1">Evidencia exacta insuficiente; la estrategia V3 utilizará únicamente señales agregadas de categoría para orientar la composición.</p><button type="button" disabled={v3RevisionBusy} onClick={() => void createVisualStrategyV3Revision()} className="mt-3 min-h-11 w-full rounded-xl bg-violet-200 px-3 text-sm font-black text-black disabled:opacity-40">{v3RevisionBusy ? "Creando revisión V3…" : "Crear revisión Visual Strategy V3"}</button></div>}
+              {!revisionLoading && !revisionError && revisionLoaded && activeVisualRevision?.strategy_version === "VISUAL_STRATEGY_V2" && v3Eligibility.eligible && !v3Eligibility.existingId && <div className="mt-3 rounded-xl border border-violet-200/25 bg-violet-200/[0.06] p-3 text-xs leading-5 text-violet-50"><strong>Revisión activa: Visual Strategy V2</strong><p className="mt-1">Evidencia exacta insuficiente; la estrategia V3 utilizará únicamente señales agregadas de categoría para orientar la composición.</p><button type="button" disabled={v3RevisionBusy} onClick={() => void createVisualStrategyV3Revision()} className="mt-3 min-h-11 w-full rounded-xl bg-violet-200 px-3 text-sm font-black text-black disabled:opacity-40">{v3RevisionBusy ? "Creando revisión V3…" : "Crear revisión Visual Strategy V3"}</button></div>}
               {v3Revision && <div className="mt-3 rounded-xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50"><strong>Visual Strategy V3 · READY_FOR_PREPARE</strong><span className="mt-1 block">Evidencia exacta insuficiente; se utilizarán señales de categoría sin convertirlas en hechos del producto.</span><span className="mt-1 block font-mono">Revisión: {String(v3Revision.revisionId ?? "")}</span></div>}
               {imageRevisionLocalError && <div role="alert" className="mt-2 rounded-xl border border-amber-200/30 bg-amber-200/[0.06] p-3 text-xs leading-5 text-amber-50"><strong>Generación detenida antes del reintento.</strong><span className="mt-1 block">{imageRevisionLocalError}</span></div>}
               {imageRevisionId && <button type="button" disabled={imageRevisionBusy} onClick={() => void loadImageRevision(imageRevisionId)} className="mt-2 min-h-11 w-full rounded-xl border border-cyan-200/30 px-4 text-sm font-black text-cyan-50 disabled:opacity-40">Actualizar vista</button>}
