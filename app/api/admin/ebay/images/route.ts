@@ -329,6 +329,7 @@ export async function GET(req: Request) {
     const url = new URL(req.url)
     const attemptId = uuid(url.searchParams.get("attemptId"))
     if (attemptId) {
+      const requestedRevisionId = uuid(url.searchParams.get("revisionId"))
       const supabase = getSupabaseAdminClient()
       const [{ data: attempt, error: attemptError }, { data: jobs, error: jobsError }] = await Promise.all([
         supabase.from("ebay_reference_guided_generation_attempts").select("id,revision_id,composition_manifest_hash,status,completed_job_count,expected_job_count,provider_calls,retry_consumed,created_at,started_at,completed_at").eq("id", attemptId).maybeSingle(),
@@ -336,6 +337,7 @@ export async function GET(req: Request) {
       ])
       if (attemptError || jobsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
       if (!attempt) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
+      if (requestedRevisionId && attempt.revision_id !== requestedRevisionId) return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_REVISION_MISMATCH" }, { status: 409 })
       return NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: jobs ?? [], progress: `${attempt.completed_job_count}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
     }
     const revisionId = uuid(url.searchParams.get("revisionId"))
@@ -444,6 +446,12 @@ export async function POST(req: Request) {
     if (action === "reference_guided_prepare") {
       const revisionId = uuid(body.revisionId)
       if (!revisionId) return NextResponse.json({ success: false, error: "REVISION_ID_REQUIRED" }, { status: 400 })
+      const { data: revisionRow, error: revisionLookupError } = await supabase
+        .from("ebay_same_day_pilot_image_revisions")
+        .select("id")
+        .eq("id", revisionId)
+        .maybeSingle()
+      if (revisionLookupError || !revisionRow) return NextResponse.json({ success: false, error: "SAME_DAY_IMAGE_REVISION_NOT_FOUND" }, { status: 404 })
       const strategyVersion = "SELLER_OS_EBAY_VISUAL_STRATEGY_V3"
       const manifestHash = createHash("sha256").update(`${revisionId}:${strategyVersion}`).digest("hex")
       const roles = ["MATERIAL_AND_FINISH_DETAIL", "CONFIRMED_PACKAGE_CONTENTS", "SCALE_AND_CAPACITY_CONTEXT", "PRIMARY_BENEFIT_IN_ACTION", "ASPIRATIONAL_LIFESTYLE", "REAL_HUMAN_USE"]

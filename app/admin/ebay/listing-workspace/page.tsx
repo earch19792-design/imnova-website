@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 
 import { supabase } from "@/lib/supabase"
 import {
@@ -606,6 +607,8 @@ function taxonomyOptionAvailable(
 }
 
 export default function EbayListingWorkspacePage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [opportunity, setOpportunity] = useState<Opportunity | null>(null)
   const [listingPackage, setListingPackage] = useState<ListingPackage | null>(null)
   const [workspaceGateBlockers, setWorkspaceGateBlockers] = useState<string[]>([])
@@ -631,6 +634,8 @@ export default function EbayListingWorkspacePage() {
   const [imageBusy, setImageBusy] = useState(false)
   const [imageRevision, setImageRevision] = useState<ImageRevisionPayload | null>(null)
   const [imageRevisionBusy, setImageRevisionBusy] = useState(false)
+  const [referenceGuidedAttempt, setReferenceGuidedAttempt] = useState<Record<string, any> | null>(null)
+  const [referenceGuidedAttemptId, setReferenceGuidedAttemptId] = useState("")
   const [imageRevisionLocalError, setImageRevisionLocalError] = useState("")
   const [imageRevisionConfirmed, setImageRevisionConfirmed] = useState(false)
   const [imageRightsBasis, setImageRightsBasis] = useState("supplier_authorized")
@@ -665,11 +670,14 @@ export default function EbayListingWorkspacePage() {
     packageId?: string,
     candidateKey?: string,
     revisionId?: string,
+    attemptId?: string,
   ) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
     if (sessionError || !data.session) throw new Error("La sesión Admin expiró.")
     const endpoint = body
       ? "/api/admin/ebay/images"
+      : attemptId
+        ? `/api/admin/ebay/images?attemptId=${encodeURIComponent(attemptId)}`
       : revisionId
         ? `/api/admin/ebay/images?revisionId=${encodeURIComponent(revisionId)}`
         : `/api/admin/ebay/images?packageId=${encodeURIComponent(packageId ?? "")}&candidateKey=${encodeURIComponent(candidateKey ?? "")}`
@@ -690,6 +698,33 @@ export default function EbayListingWorkspacePage() {
     if (!payload.success) throw new Error(getMobileReviewPayloadError(payload, "No se pudo procesar la imagen."))
     return payload
   }, [])
+
+  useEffect(() => {
+    const fromUrl = searchParams.get("v3Attempt")
+    if (fromUrl && validUuid(fromUrl)) setReferenceGuidedAttemptId(fromUrl)
+  }, [searchParams])
+
+  useEffect(() => {
+    if (!referenceGuidedAttemptId) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let delay = 2_000
+    const poll = async () => {
+      try {
+        const payload = await imageRequest(undefined, undefined, undefined, undefined, referenceGuidedAttemptId)
+        if (cancelled) return
+        setReferenceGuidedAttempt(payload)
+        const state = String(payload.attempt?.status ?? payload.attempt?.state ?? "")
+        if (["WAITING_PROVIDER_ENABLEMENT", "READY_FOR_HUMAN_REVIEW", "FAILED_RETRYABLE", "BLOCKED", "PROVIDER_OUTCOME_UNKNOWN", "QUARANTINED"].includes(state)) return
+        delay = Math.min(5_000, Math.round(delay * 1.4))
+        timer = setTimeout(() => void poll(), delay)
+      } catch {
+        if (!cancelled) timer = setTimeout(() => void poll(), Math.min(5_000, delay))
+      }
+    }
+    void poll()
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [imageRequest, referenceGuidedAttemptId])
 
   const titleRevisionRequest = useCallback(async (body: Record<string, unknown>) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
@@ -1274,6 +1309,10 @@ export default function EbayListingWorkspacePage() {
         revisionId: revision.id,
       })
       if (prepared.attemptId) {
+        setReferenceGuidedAttemptId(String(prepared.attemptId))
+        const next = new URLSearchParams(searchParams.toString())
+        next.set("v3Attempt", String(prepared.attemptId))
+        router.replace(`?${next.toString()}`, { scroll: false })
         setMessage(`Preparado · proveedor deshabilitado · intento ${String(prepared.attemptId).slice(0, 8)}…`)
       }
       if (["FAILED_RETRYABLE", "FAILED_FINAL"].includes(revisionStatus)) {
@@ -2123,6 +2162,7 @@ export default function EbayListingWorkspacePage() {
                 <span className={`rounded-full border px-2 py-1 text-[10px] font-black ${approvedBaseImageControlId ? "border-emerald-200/30 text-emerald-100" : "border-amber-200/30 text-amber-100"}`}>{approvedBaseImageControlId ? "CONTROL BASE ENCONTRADO" : "SIN CONTROL BASE COMPATIBLE"}</span>
               </div>
               <button type="button" disabled={!approvedBaseImageControlId || imageRevisionBusy} onClick={() => void generateImageRevision()} className="mt-3 min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">{imageRevisionBusy ? "Procesando las siete…" : imageRevisionFailed ? "Reintentar generación" : "Generar revisión corregida"}</button>
+              {referenceGuidedAttempt && <div className="mt-3 rounded-xl border border-cyan-200/25 bg-cyan-200/[0.05] p-3 text-xs leading-5 text-cyan-50"><strong>Preparado · proveedor deshabilitado</strong><span className="mt-1 block font-mono">Intento {String(referenceGuidedAttempt.attempt?.id ?? referenceGuidedAttemptId)}</span><span className="mt-1 block">Progreso: {String(referenceGuidedAttempt.progress ?? `${referenceGuidedAttempt.attempt?.completed_job_count ?? 0}/6`)}</span><span className="mt-1 block">Trabajos persistidos: {Array.isArray(referenceGuidedAttempt.jobs) ? referenceGuidedAttempt.jobs.length : 0}/6 · providerCalls: {String(referenceGuidedAttempt.attempt?.provider_calls ?? 0)}</span></div>}
               {imageRevisionLocalError && <div role="alert" className="mt-2 rounded-xl border border-amber-200/30 bg-amber-200/[0.06] p-3 text-xs leading-5 text-amber-50"><strong>Generación detenida antes del reintento.</strong><span className="mt-1 block">{imageRevisionLocalError}</span></div>}
               {imageRevisionId && <button type="button" disabled={imageRevisionBusy} onClick={() => void loadImageRevision(imageRevisionId)} className="mt-2 min-h-11 w-full rounded-xl border border-cyan-200/30 px-4 text-sm font-black text-cyan-50 disabled:opacity-40">Actualizar vista</button>}
               {!approvedBaseImageControlId && <p className="mt-2 text-xs leading-5 text-amber-50">Esta acción aparece cuando el candidato conserva un set histórico compatible de seis o siete slots ligado al mismo control. El servidor vuelve a comprobar que el control esté APPROVED.</p>}
