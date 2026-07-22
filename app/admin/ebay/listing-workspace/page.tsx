@@ -889,7 +889,7 @@ export default function EbayListingWorkspacePage() {
           if (!gatePending) throw prepareError
           setWorkspaceGateBlockers(gateBlockers)
           setListingPackage(null)
-          setDraftState({})
+          setDraftState((current) => ({ preflight: current.preflight }))
           setError(gateBlockers.length
             ? ""
             : getMobileReviewRequestError(prepareError, "No se pudo preparar el paquete."))
@@ -1970,9 +1970,9 @@ export default function EbayListingWorkspacePage() {
 
         <section aria-labelledby="ebay-account-configuration-heading" className={`${maintenanceMode ? "hidden" : ""} space-y-4 rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.05] p-4`}>
           <div>
-            <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Configuración independiente del producto</p>
+            <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Configuración reutilizada de la cuenta</p>
             <h2 id="ebay-account-configuration-heading" className="mt-1 text-xl font-black">Policies de la cuenta eBay</h2>
-            <p className="mt-2 text-sm leading-6 text-white/65">Carga las opciones oficiales de la cuenta y revalida tu selección. Este paso no prepara el paquete ni habilita ninguna escritura o publicación eBay.</p>
+            <p className="mt-2 text-sm leading-6 text-white/65">Seller OS carga automáticamente las policies vigentes de tu cuenta. Sólo usa la actualización manual si cambiaste una policy directamente en eBay.</p>
           </div>
           {workspaceGateBlockers.length > 0 && <div role="status" className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-amber-50">
             <strong className="text-sm">El paquete sigue bloqueado por estas guardas:</strong>
@@ -1991,7 +1991,7 @@ export default function EbayListingWorkspacePage() {
             <label><span className="text-sm font-black">Return policy</span><select value={draftConfiguration.returnPolicyId} onChange={(event) => updatePreflightSelection("returnPolicyId", event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3"><option value="">Seleccionar returns</option>{draftConfiguration.returnPolicyId && !accountPreflight?.options.returnPolicies.some((option) => option.id === draftConfiguration.returnPolicyId) && <option value={draftConfiguration.returnPolicyId}>{draftConfiguration.returnPolicyId} · revalidar</option>}{accountPreflight?.options.returnPolicies.map((option) => <option key={option.id} value={option.id} disabled={!option.usable}>{option.name} · {option.id}{option.usable ? "" : " · no apta"}</option>)}</select></label>
             <label><span className="text-sm font-black">Merchant location</span><select value={draftConfiguration.merchantLocationKey} onChange={(event) => updatePreflightSelection("merchantLocationKey", event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3"><option value="">Seleccionar location</option>{draftConfiguration.merchantLocationKey && !accountPreflight?.options.merchantLocations.some((option) => option.id === draftConfiguration.merchantLocationKey) && <option value={draftConfiguration.merchantLocationKey}>{draftConfiguration.merchantLocationKey} · revalidar</option>}{accountPreflight?.options.merchantLocations.map((option) => <option key={option.id} value={option.id} disabled={!option.usable}>{option.name} · {option.id}{option.usable ? "" : " · disabled"}</option>)}</select></label>
           </div>
-          <button type="button" disabled={draftBusy} onClick={() => void runAccountPreflight()} className="min-h-13 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-50">{draftBusy ? "Consultando eBay…" : !accountPreflight ? "Cargar configuración desde eBay" : accountPoliciesSelected ? "Revalidar y guardar policies" : "Revalidar selección"}</button>
+          <button type="button" disabled={draftBusy} onClick={() => void runAccountPreflight()} className="min-h-13 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-50">{draftBusy ? "Consultando eBay…" : !accountPreflight ? "Cargar policies guardadas" : accountPoliciesSelected ? "Actualizar policies desde eBay" : "Recuperar policies guardadas"}</button>
           <p className="text-xs leading-5 text-white/50">Sólo consulta Account API y guarda la selección verificada en IMNOVA. No crea Inventory Item, Offer ni listing; publicar permanece prohibido.</p>
         </section>
 

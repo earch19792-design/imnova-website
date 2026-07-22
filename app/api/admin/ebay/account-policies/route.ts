@@ -170,6 +170,16 @@ export async function POST(req: Request) {
     }
 
     const requested = record(body.selection)
+    const { data: savedProfile, error: savedProfileError } = await supabase
+      .from("ebay_account_policy_profiles")
+      .select("fulfillment_policy_id,payment_policy_id,return_policy_id,merchant_location_key")
+      .eq("account_key", accountScope.accountKey)
+      .eq("marketplace_id", "EBAY_US")
+      .gt("expires_at", new Date().toISOString())
+      .maybeSingle()
+    if (savedProfileError) {
+      throw new Error("EBAY_ACCOUNT_POLICY_PROFILE_READ_FAILED")
+    }
     const { data: vaultRefreshToken, error: vaultReadError } =
       await supabase.rpc(
         "get_ebay_account_policy_readonly_refresh_token_v1",
@@ -179,10 +189,14 @@ export async function POST(req: Request) {
       throw new Error("EBAY_ACCOUNT_POLICY_OAUTH_VAULT_READ_FAILED")
     }
     const preflight = await preflightEbayAccountPoliciesReadonly({
-      fulfillmentPolicyId: text(requested.fulfillmentPolicyId),
-      paymentPolicyId: text(requested.paymentPolicyId),
-      returnPolicyId: text(requested.returnPolicyId),
-      merchantLocationKey: text(requested.merchantLocationKey),
+      fulfillmentPolicyId: text(requested.fulfillmentPolicyId)
+        || text(savedProfile?.fulfillment_policy_id),
+      paymentPolicyId: text(requested.paymentPolicyId)
+        || text(savedProfile?.payment_policy_id),
+      returnPolicyId: text(requested.returnPolicyId)
+        || text(savedProfile?.return_policy_id),
+      merchantLocationKey: text(requested.merchantLocationKey)
+        || text(savedProfile?.merchant_location_key),
     }, fetch, text(vaultRefreshToken))
     const accountPolicyProfileSaved =
       await saveVerifiedEbayAccountPolicyProfile({

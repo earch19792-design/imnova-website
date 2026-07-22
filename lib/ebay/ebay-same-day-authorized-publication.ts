@@ -64,6 +64,10 @@ function strings(value: unknown) {
 }
 
 function exactSevenHttpsUrls(value: unknown) {
+  return exactHttpsUrls(value, 7)
+}
+
+function exactHttpsUrls(value: unknown, expected: number) {
   if (!Array.isArray(value)) return []
   const urls = value.map((entry) => text(entry)).filter((entry) => {
     try {
@@ -72,7 +76,7 @@ function exactSevenHttpsUrls(value: unknown) {
       return false
     }
   })
-  return urls.length === 7 && new Set(urls).size === 7 ? urls : []
+  return urls.length === expected && new Set(urls).size === expected ? urls : []
 }
 
 function latestIso(...values: unknown[]) {
@@ -125,6 +129,51 @@ function validatedManifest(packageData: JsonRecord, imageUrls: string[]) {
     && Number.isFinite(Date.parse(text(asset.humanApprovedAt, 50)))
     && text(asset.url).startsWith("https://"))
     && imageUrls.every((url) => manifestUrls.includes(url))
+}
+
+function exactManifestAssetIds(packageData: JsonRecord, expected: number) {
+  if (!Array.isArray(packageData.imageAssetManifest)
+    || packageData.imageAssetManifest.length !== expected) return []
+  const ids = packageData.imageAssetManifest.map((entry) =>
+    uuid(record(entry).assetId)).filter(Boolean)
+  return ids.length === expected && new Set(ids).size === expected ? ids : []
+}
+
+async function approvedPreferredImageRevision(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorUserId: string
+  packageId: string
+  candidateId: string
+  runId: string
+  packageData: JsonRecord
+  packageImageUrls: string[]
+}) {
+  const revisionId = uuid(input.packageData.preferredImageRevisionId)
+  const manifestAssetIds = exactManifestAssetIds(input.packageData, 7)
+  if (!revisionId || input.packageImageUrls.length !== 7
+    || !validatedManifest(input.packageData, input.packageImageUrls)
+    || manifestAssetIds.length !== 7) return null
+  const { data, error } = await input.supabase
+    .from("ebay_same_day_pilot_image_revisions")
+    .select("id,asset_ids,image_set_hash,status")
+    .eq("id", revisionId)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("created_by", input.actorUserId)
+    .eq("listing_package_id", input.packageId)
+    .eq("candidate_id", input.candidateId)
+    .eq("run_id", input.runId)
+    .eq("status", "APPROVED")
+    .maybeSingle()
+  if (error) throw new Error("SAME_DAY_PUBLICATION_IMAGE_REVISION_READ_FAILED")
+  const revisionAssetIds = Array.isArray(data?.asset_ids)
+    ? data.asset_ids.map(uuid).filter(Boolean)
+    : []
+  if (!data || revisionAssetIds.length !== 7
+    || new Set(revisionAssetIds).size !== 7
+    || manifestAssetIds.some((id) => !revisionAssetIds.includes(id))
+    || !/^[0-9a-f]{64}$/.test(text(data.image_set_hash, 80))) return null
+  return { id: revisionId, imageSetHash: text(data.image_set_hash, 80) }
 }
 
 function normalizedAspects(value: unknown) {
@@ -202,16 +251,74 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
   const packageImageUrls = exactSevenHttpsUrls(packageData.imageUrls)
   const approvedImageUrls = exactSevenHttpsUrls(imageSummary.publicUrls)
   const handoffImageUrls = exactSevenHttpsUrls(record(handoffPackage.images).urls)
+  const approvedRevision = await approvedPreferredImageRevision({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    actorUserId: input.actorUserId,
+    packageId,
+    candidateId,
+    runId,
+    packageData,
+    packageImageUrls,
+  })
+  const legacyPackageImageUrls = exactHttpsUrls(packageData.imageUrls, 6)
+  const legacyApprovedImageUrls = exactHttpsUrls(imageSummary.publicUrls, 6)
+  const legacyHandoffImageUrls = exactHttpsUrls(
+    record(handoffPackage.images).urls,
+    6,
+  )
   const recoverableMissingPackageImages =
     input.allowRecoverablePackageImages === true
     && Array.isArray(packageData.imageUrls)
     && packageData.imageUrls.length === 0
     && Array.isArray(packageData.imageAssetManifest)
     && packageData.imageAssetManifest.length === 0
-  const packageImagesReady = packageImageUrls.length === 7
+  const recoverableLegacySixImageSet =
+    input.allowRecoverablePackageImages === true
+    && legacyApprovedImageUrls.length === 6
+    && legacyHandoffImageUrls.length === 6
+    && legacyApprovedImageUrls.every((url, index) =>
+      legacyHandoffImageUrls[index] === url)
+    && (
+      recoverableMissingPackageImages
+      || (
+        legacyPackageImageUrls.length === 6
+        && legacyPackageImageUrls.every((url, index) =>
+          legacyApprovedImageUrls[index] === url)
+        && exactManifestAssetIds(packageData, 6).length === 6
+      )
+    )
+  const approvedRevisionImagesReady = Boolean(approvedRevision)
+  const packageImagesReady = approvedRevisionImagesReady || (
+    packageImageUrls.length === 7
     && validatedManifest(packageData, packageImageUrls)
     && packageImageUrls.every((url, index) =>
       approvedImageUrls[index] === url && handoffImageUrls[index] === url)
+  )
+  const effectiveApprovedImageUrls = approvedRevisionImagesReady
+    ? packageImageUrls
+    : recoverableLegacySixImageSet ? legacyApprovedImageUrls : approvedImageUrls
+  const effectiveHandoffImageUrls = approvedRevisionImagesReady
+    ? packageImageUrls
+    : recoverableLegacySixImageSet ? legacyHandoffImageUrls : handoffImageUrls
+  const effectiveHandoffPackage = approvedRevisionImagesReady
+    ? {
+      ...handoffPackage,
+      images: {
+        ...record(handoffPackage.images),
+        urls: packageImageUrls,
+        count: 7,
+        source: "LUNA_AUTHORIZED_DERIVATIVE_SET",
+      },
+      imageApproval: {
+        ...record(handoffPackage.imageApproval),
+        approved: true,
+        approvedImageCount: 7,
+        revisionId: approvedRevision?.id,
+        imageSetHash: approvedRevision?.imageSetHash,
+      },
+    }
+    : handoffPackage
   if (
     text(candidate.state, 80) !== "READY_FOR_MANUAL_PUBLICATION"
     || !READY_STATES.has(text(candidate.machine_state, 80))
@@ -227,11 +334,11 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
     || imageSummary.approved !== true
     || uuid(imageSummary.listingPackageId) !== packageId
     || !uuid(imageSummary.controlId)
-    || !approvedImageUrls.length || !handoffImageUrls.length
-    || (!packageImagesReady && !recoverableMissingPackageImages)
+    || !effectiveApprovedImageUrls.length || !effectiveHandoffImageUrls.length
+    || (!packageImagesReady && !recoverableLegacySixImageSet)
   ) throw new Error("SAME_DAY_PUBLICATION_PACKAGE_NOT_READY")
 
-  const policies = record(handoffPackage.businessPolicies)
+  const policies = record(effectiveHandoffPackage.businessPolicies)
   if (![policies.fulfillmentPolicyId, policies.paymentPolicyId, policies.returnPolicyId]
     .every((value) => /^[A-Za-z0-9_-]{1,80}$/.test(text(value, 80)))) {
     throw new Error("SAME_DAY_PUBLICATION_POLICIES_NOT_READY")
@@ -288,7 +395,7 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
     text(controlledRisk.version, 100) !== EBAY_CONTROLLED_RISK_OVERRIDE_VERSION
     || controlledRisk.promotionAllowed !== false
     || number(controlledRisk.minimumNetMarginPercent) !== 10
-    || number(handoffPackage.price) !== number(economics.operatorApprovedSalePrice)
+    || number(effectiveHandoffPackage.price) !== number(economics.operatorApprovedSalePrice)
   )) throw new Error("SAME_DAY_PUBLICATION_CONTROLLED_RISK_INVALID")
 
   const opportunity = {
@@ -310,6 +417,9 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
     machineState: text(candidate.machine_state, 80),
     handoffPackageHash: text(handoffSummary.packageHash, 80),
     imageControlId: uuid(imageSummary.controlId),
+    imageRevisionId: approvedRevision?.id ?? null,
+    imageRevisionSetHash: approvedRevision?.imageSetHash ?? null,
+    legacyImageRevisionRequired: recoverableLegacySixImageSet,
     sourceObservedAt,
     source: latestVariantIsNewest
       ? "LUNA_LATEST_VARIANT"
@@ -324,7 +434,7 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
   return {
     authorization,
     candidate,
-    handoffPackage,
+    handoffPackage: effectiveHandoffPackage,
     opportunity,
     economicsConfig: isControlledRisk
       ? controlledRiskEconomicsConfig(economicsOverrides(economics))
@@ -348,6 +458,14 @@ export function buildSameDayAuthorizedWorkspacePackage(input: {
   const handoffPackageWeightAndSize = shippingConfiguration(handoff.shipping)
   const currentImageUrls = exactSevenHttpsUrls(current.imageUrls)
   const handoffImageUrls = exactSevenHttpsUrls(record(handoff.images).urls)
+  const legacyRevisionRequired =
+    input.context.authorization.legacyImageRevisionRequired === true
+  const recoverableCurrentImageUrls = legacyRevisionRequired
+    ? exactHttpsUrls(current.imageUrls, 6)
+    : []
+  const recoverableHandoffImageUrls = legacyRevisionRequired
+    ? exactHttpsUrls(record(handoff.images).urls, 6)
+    : []
   const currentDimensions = record(currentPackageWeightAndSize.dimensions)
   const currentWeight = record(currentPackageWeightAndSize.weight)
   const currentMeasurementsProvided = [
@@ -366,7 +484,13 @@ export function buildSameDayAuthorizedWorkspacePackage(input: {
     categoryName: text(current.categoryName, 200),
     aspects: normalizedAspects(handoff.itemSpecifics),
     description: text(handoff.description, 100_000),
-    imageUrls: currentImageUrls.length ? currentImageUrls : handoffImageUrls,
+    imageUrls: currentImageUrls.length
+      ? currentImageUrls
+      : handoffImageUrls.length
+        ? handoffImageUrls
+        : recoverableCurrentImageUrls.length
+          ? recoverableCurrentImageUrls
+          : recoverableHandoffImageUrls,
     imageAssetManifest: current.imageAssetManifest,
     pricing: input.pricing,
     shipping: record(handoff.shipping),
