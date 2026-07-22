@@ -13,12 +13,14 @@ import {
   validateImageRightsEvidence,
 } from "@/lib/ebay/ebay-image-optimization-service"
 import {
+  assertEbayImageEvidenceSufficiency,
   buildSafeOpenAiBackgroundPlatePlan,
   composeAuthorizedEbayListingImageSet,
   EBAY_LISTING_IMAGE_SLOTS,
   EBAY_LISTING_IMAGE_SET_VERSION,
   getListingImageFactoryConfiguration,
   requestSafeOpenAiBackgroundPlate,
+  validateListingImageFactoryInput,
 } from "@/lib/ebay/ebay-listing-image-factory"
 import {
   EBAY_IMAGE_SOURCE_BUCKET,
@@ -589,6 +591,10 @@ export async function POST(req: Request) {
         sourceKind = "owned_upload"
       }
       const sourceMetadata = await sharp(sourceBuffer).metadata()
+      assertEbayImageEvidenceSufficiency({
+        facts: validateListingImageFactoryInput(approved.factoryInput).facts,
+        sourceSha256s: [createHash("sha256").update(sourceBuffer).digest("hex")],
+      })
       const aiRuntime = aiContextRequested ? openAiImageRuntime() : null
       const aiPlan = aiRuntime
         ? buildSafeOpenAiBackgroundPlatePlan(
@@ -1088,9 +1094,14 @@ export async function POST(req: Request) {
       if (reviewAssetError || !reviewAsset) {
         throw new Error("EBAY_IMAGE_ASSET_NOT_REVIEWABLE")
       }
+      if (action === "approve" &&
+        record(reviewAsset.qa_result).automaticStatus !== "PASSED") {
+        throw new Error("SAME_DAY_IMAGE_SET_QA_NOT_PASSED")
+      }
 
       let publicUrl: string | null = null
       let publishedPath: string | null = null
+      let publishedObjectCreated = false
       if (action === "approve") {
         const stagingPath = text(reviewAsset.output_storage_path, 1_000)
         if (!stagingPath) throw new Error("EBAY_IMAGE_STAGING_ASSET_MISSING")
@@ -1119,6 +1130,7 @@ export async function POST(req: Request) {
             contentType: "image/jpeg",
             upsert: false,
           })
+        publishedObjectCreated = !publishError
         if (publishError) {
           // The storage upload and SQL review cannot be one cross-service
           // transaction. A prior request may therefore have uploaded these
@@ -1185,15 +1197,12 @@ export async function POST(req: Request) {
             },
           }
         } else {
-          // Keep an exact public promotion while its database row is still
-          // pending: it is the idempotency record for a safe retry and another
-          // concurrent approval may be about to commit it. Delete only after
-          // the asset has definitively disappeared or been rejected.
-          if (
-            publishedPath &&
-            (!reconciledAsset || reconciledAsset.status === "rejected")
-          ) {
-            await supabase.storage.from(OUTPUT_BUCKET).remove([publishedPath])
+          if (publishedPath && publishedObjectCreated) {
+            const compensation = await supabase.storage.from(OUTPUT_BUCKET)
+              .remove([publishedPath])
+            if (compensation.error) {
+              throw new Error("PUBLIC_STORAGE_COMPENSATION_FAILED")
+            }
           }
           throw new Error(databaseErrorCode(
             reviewError,
@@ -1317,7 +1326,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ success: false, error: "EBAY_IMAGE_ACTION_INVALID" }, { status: 400 })
   } catch (error) {
     const code = safeError(error)
-    const status = /CAP_REACHED|NOT_REVIEWABLE|PENDING_REVIEW_BLOCKS_REORDER|STAGING_INTEGRITY/.test(code)
+    const status = /CAP_REACHED|NOT_REVIEWABLE|PENDING_REVIEW_BLOCKS_REORDER|STAGING_INTEGRITY|QA_NOT_PASSED|NEEDS_MORE|MARKET_VISUAL_SIGNALS_INSUFFICIENT|PUBLIC_STORAGE_COMPENSATION_FAILED/.test(code)
       ? 409
       : /REQUIRED|INVALID|NOT_ALLOWED|BELOW_500PX|MANUAL_REMOVAL|MISMATCH/.test(code)
       ? 400

@@ -51,6 +51,7 @@ test("preserves the full authorized frame when removing a complex background cou
   assert.equal(result.transformation.sourcePixelsTreatment, "PRESERVED_FULL_FRAME")
   assert.equal(result.transformation.generativeAiUsed, false)
   assert.equal(result.qa.automaticStatus, "PARTIAL")
+  assert.ok(result.qa.outputEdgeWhiteRatio >= .9)
   assert.equal(result.qa.fullAuthorizedFramePreserved, true)
   assert.equal(result.qa.humanApprovalRequired, true)
   assert.ok(result.qa.manualChecksRequired.includes("SOURCE_BACKGROUND_PRESERVED_NOT_REMOVED"))
@@ -179,7 +180,7 @@ test("the protected API stores originals privately and only attaches human-appro
   )
   assert.match(
     route,
-    /reconciledAsset\.status === "rejected"[\s\S]*?\.from\(OUTPUT_BUCKET\)\.remove\(\[publishedPath\]\)/,
+    /publishedObjectCreated[\s\S]*?\.from\(OUTPUT_BUCKET\)[\s\S]*?\.remove\(\[publishedPath\]\)/,
   )
   assert.match(
     route,

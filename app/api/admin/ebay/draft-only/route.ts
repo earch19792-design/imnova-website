@@ -457,6 +457,7 @@ function serverApprovedConfiguration(
   const approvedImageManifest = Array.isArray(packageData.imageAssetManifest)
     ? packageData.imageAssetManifest.map(record).filter((asset) =>
         text(asset.url) && text(asset.humanApprovedAt) &&
+        asset.automaticQa === "PASSED" &&
         /^[0-9a-f]{64}$/.test(text(asset.sha256))
       )
     : []

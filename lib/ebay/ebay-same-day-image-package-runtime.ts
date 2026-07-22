@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
+
+// @ts-expect-error Node's native TypeScript tests need the explicit extension.
+import { assertStoredSameDayImageSetQaPassed, currentAttemptPublicObjects } from "./ebay-image-approval-policy.ts"
 import sharp from "sharp"
 
 import {
@@ -74,6 +77,7 @@ function exactSixAssetIds(value: unknown) {
   const ids = [...new Set(value.map(uuid).filter(Boolean))]
   return ids.length === 6 ? ids : []
 }
+
 
 function currentHandoffPackage(candidate: JsonRecord) {
   const summary = record(candidate.manual_handoff_package)
@@ -348,8 +352,10 @@ export async function generateAndPersistSameDayImagePackage(input: {
   // In the durable same-day flow, an AI-generated scene must be grounded in
   // both the verified product dossier and usable aggregate visual evidence.
   // Never silently fall back to generic seller-pattern defaults.
-  if (aiEnabled && !marketVisualBrief) {
-    throw new Error("SAME_DAY_IMAGE_MARKET_BRIEF_REQUIRED")
+  if (aiEnabled && (!marketVisualBrief || marketVisualBrief.confidence === "LOW" ||
+    !marketVisualBrief.recencyWeightingApplied ||
+    (marketVisualBrief.supportingSignals.recentObservationPercent ?? 0) < 25)) {
+    throw new Error("MARKET_VISUAL_SIGNALS_INSUFFICIENT")
   }
   const plan = buildSameDayImagePackagePlan({
     handoffPackage,
@@ -643,7 +649,13 @@ async function verifiedStagedPublication(input: {
     }
     const publicUrl = input.supabase.storage.from(OUTPUT_BUCKET)
       .getPublicUrl(publishedPath).data.publicUrl
-    return { asset_id: assetId, public_url: publicUrl, published_storage_path: publishedPath }
+    return {
+      asset_id: assetId,
+      public_url: publicUrl,
+      published_storage_path: publishedPath,
+      public_object_created: !uploaded.error,
+      output_sha256: text(input.asset.output_sha256, 64),
+    }
   } finally {
     bytes.fill(0)
   }
@@ -684,6 +696,7 @@ export async function reviewSameDayImagePackage(input: {
     throw new Error("SAME_DAY_IMAGE_REVIEW_SET_SLOTS_INVALID")
   }
   if (input.decision === "APPROVE") {
+    assertStoredSameDayImageSetQaPassed(assets)
     const transformations = assets.map((asset) => record(asset.transformation))
     const secondaryForegroundsValid = assets
       .filter((asset) => record(asset.transformation).slot !==
@@ -724,21 +737,33 @@ export async function reviewSameDayImagePackage(input: {
   }
   let manifest: JsonRecord[] = []
   if (input.decision === "APPROVE") {
-    manifest = await Promise.all(assets.map(async (asset) => {
-      if (asset.status === "approved") {
-        return {
-          asset_id: asset.id,
-          public_url: asset.public_url,
-          published_storage_path: asset.published_storage_path,
-        }
+    const publications = await Promise.allSettled(assets.map(async (asset) => {
+      if (asset.status === "approved") return {
+        asset_id: asset.id,
+        public_url: asset.public_url,
+        published_storage_path: asset.published_storage_path,
+        public_object_created: false,
       }
       return verifiedStagedPublication({
-        supabase: input.supabase,
-        actorId,
-        candidateKey,
-        asset,
+        supabase: input.supabase, actorId, candidateKey, asset,
       })
     }))
+    const completed = publications.flatMap((entry) =>
+      entry.status === "fulfilled" ? [entry.value] : [])
+    const failed = publications.find((entry) => entry.status === "rejected")
+    if (failed) {
+      const createdPaths = currentAttemptPublicObjects(completed)
+        .map((entry) => entry.path)
+      if (createdPaths.length) {
+        const cleanup = await input.supabase.storage.from(OUTPUT_BUCKET)
+          .remove(createdPaths)
+        if (cleanup.error) {
+          throw new Error("PUBLIC_STORAGE_COMPENSATION_FAILED")
+        }
+      }
+      throw failed.reason
+    }
+    manifest = completed
   }
   const { data: reviewed, error: reviewError } = await input.supabase.rpc(
     "review_ebay_same_day_pilot_image_package_set",
@@ -747,13 +772,28 @@ export async function reviewSameDayImagePackage(input: {
       p_actor: actorId,
       p_decision: input.decision,
       p_confirmed: true,
-      p_publication_manifest: manifest,
+      p_publication_manifest: manifest.map((entry) => ({
+        asset_id: entry.asset_id,
+        public_url: entry.public_url,
+        published_storage_path: entry.published_storage_path,
+      })),
     },
   )
-  if (reviewError || !reviewed) throw new Error(databaseErrorCode(
-    reviewError,
-    "SAME_DAY_IMAGE_SET_REVIEW_FAILED",
-  ))
+  if (reviewError || !reviewed) {
+    const createdPaths = currentAttemptPublicObjects(manifest)
+      .map((entry) => entry.path)
+    if (createdPaths.length) {
+      const cleanup = await input.supabase.storage.from(OUTPUT_BUCKET)
+        .remove(createdPaths)
+      if (cleanup.error) {
+        throw new Error("PUBLIC_STORAGE_COMPENSATION_FAILED")
+      }
+    }
+    throw new Error(databaseErrorCode(
+      reviewError,
+      "SAME_DAY_IMAGE_SET_REVIEW_FAILED",
+    ))
+  }
   const result = record(reviewed)
   const urls = Array.isArray(result.publicUrls)
     ? result.publicUrls.map((value) => text(value, 2_000)).filter((value) => value.startsWith("https://"))

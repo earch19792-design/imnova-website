@@ -120,6 +120,7 @@ function validatedManifest(packageData: JsonRecord, imageUrls: string[]) {
   return new Set(manifestAssetIds).size === 6
     && manifest.every((asset) =>
     uuid(asset.assetId)
+    && asset.automaticQa === "PASSED"
     && /^[0-9a-f]{64}$/.test(text(asset.sha256, 80))
     && Number.isFinite(Date.parse(text(asset.humanApprovedAt, 50)))
     && text(asset.url).startsWith("https://"))

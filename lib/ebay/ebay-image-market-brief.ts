@@ -8,6 +8,10 @@ export const EBAY_IMAGE_MARKET_BRIEF_VERSION =
   "VISUAL_MARKET_BRIEF_V2_2026_07_21"
 
 export const ebayImageMarketBriefSchema = z.object({
+  visualMarketBriefVersion: z.literal(EBAY_IMAGE_MARKET_BRIEF_VERSION)
+    .optional(),
+  observedAt: z.string().datetime().optional(),
+  freshUntil: z.string().datetime().optional(),
   confidence: z.enum(["HIGH", "MEDIUM", "LOW"]),
   sampleSize: z.number().int().min(1).max(500),
   dominantBackgroundType: unknownAware([
@@ -77,7 +81,16 @@ function parsedStoredBrief(value: unknown): EbayImageMarketBrief | null {
   const data = record(value)
   const brief = record(data.brief)
   const signals = record(brief.supportingSignals)
+  const observedAt = typeof data.created_at === "string" &&
+    Number.isFinite(Date.parse(data.created_at))
+    ? new Date(data.created_at).toISOString()
+    : null
+  const freshUntil = observedAt
+    ? new Date(Date.parse(observedAt) + 30 * 24 * 60 * 60 * 1_000).toISOString()
+    : null
   const parsed = ebayImageMarketBriefSchema.safeParse({
+    visualMarketBriefVersion: EBAY_IMAGE_MARKET_BRIEF_VERSION,
+    ...(observedAt && freshUntil ? { observedAt, freshUntil } : {}),
     confidence: data.confidence,
     sampleSize: Number(data.sample_size),
     dominantBackgroundType: brief.dominantBackgroundType,

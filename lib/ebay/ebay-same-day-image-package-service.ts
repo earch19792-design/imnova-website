@@ -9,7 +9,7 @@ import { productFactsHash } from "./ebay-product-facts-readiness.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { buildCurrentSameDayImageFactoryInput, type CurrentSameDayImageFactBinding } from "./ebay-same-day-image-factory-input.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
-import { buildSafeOpenAiBackgroundPlatePlan, composeAuthorizedEbayListingImageSet, EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_IMAGE_TEXT_RENDERER_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, EBAY_VISUAL_STRATEGY_VERSION, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan, type EbayOpenAiImageQuality } from "./ebay-listing-image-factory.ts"
+import { assertEbayImageEvidenceSufficiency, buildSafeOpenAiBackgroundPlatePlan, composeAuthorizedEbayListingImageSet, EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_IMAGE_TEXT_RENDERER_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, EBAY_VISUAL_STRATEGY_VERSION, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan, type EbayOpenAiImageQuality } from "./ebay-listing-image-factory.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { ebayImageMarketBriefSchema, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
 
@@ -44,6 +44,18 @@ const persistenceAssetSchema = z.object({
   foregroundProtectedPixelRetentionRatio: z.number().min(0).max(1).optional(),
   foregroundOpaqueCornerRatio: z.number().min(0).max(1).optional(),
   textRendererVersion: z.literal(EBAY_IMAGE_TEXT_RENDERER_VERSION).optional(),
+  visualEvidenceMode: z.enum([
+    "MARKET_SIGNAL_PROMPT", "PROFESSIONAL_FALLBACK",
+  ]).optional(),
+  promptVersion: z.string().trim().min(1).max(100).optional(),
+  promptHash: rawSha256Schema.optional(),
+  marketSignalHash: rawSha256Schema.optional(),
+  marketSignalConfidence: z.enum(["HIGH", "MEDIUM", "LOW"]).optional(),
+  marketSignalVersion: z.string().trim().min(1).max(100).optional(),
+  marketSignalObservedAt: z.string().datetime().optional(),
+  marketSignalFreshUntil: z.string().datetime().optional(),
+  productVariantFingerprint: prefixedSha256Schema.optional(),
+  positionRuleHash: rawSha256Schema.optional(),
   sourceSha256: rawSha256Schema,
   outputSha256: rawSha256Schema,
   width: z.literal(1600),
@@ -62,6 +74,22 @@ const persistenceAssetSchema = z.object({
   opaqueSourceFrameRemoved: z.literal(true).optional(),
   textSafeAreaVerified: z.literal(true).optional(),
   textGlyphsValidated: z.literal(true).optional(),
+  sourceEdgeLightNeutralRatio: z.number().min(0).max(1).optional(),
+  outputEdgeWhiteRatio: z.number().min(0).max(1).optional(),
+  ocrTextVerified: z.literal(true).optional(),
+  mobileLegibilityVerified: z.literal(true).optional(),
+  productCoverageRatio: z.number().min(0).max(1).optional(),
+  productCoverageVerified: z.literal(true).optional(),
+  cropSafe: z.literal(true).optional(),
+  copyDuplicateFree: z.literal(true).optional(),
+  commercialUtilityVerified: z.literal(true).optional(),
+  textMinimumPixelSize: z.number().int().min(0).optional(),
+  textLineCount: z.number().int().min(0).max(3).optional(),
+  groundedPresentation: z.literal(true).optional(),
+  promptCompliancePassed: z.literal(true).optional(),
+  marketSignalCompliancePassed: z.literal(true).optional(),
+  productFidelityPassed: z.literal(true).optional(),
+  commercialQualityPassed: z.literal(true).optional(),
   visualStrategyVersion: z.literal(EBAY_VISUAL_STRATEGY_VERSION).optional(),
   backgroundPlateQuality: z.enum(["low", "high"]).optional(),
   selectedSceneBoardPanel: z.number().int().min(1).max(6).optional(),
@@ -319,6 +347,32 @@ function validateTransientAssets(input: {
       asset.qa.foregroundEdgeCoverage > 1) {
       throw new Error("SAME_DAY_IMAGE_SET_ASSET_INVALID")
     }
+    if (asset.qa.automaticStatus !== "PASSED" ||
+      asset.qa.ocrTextVerified !== true ||
+      asset.qa.mobileLegibilityVerified !== true ||
+      asset.qa.productCoverageVerified !== true ||
+      asset.qa.cropSafe !== true ||
+      asset.qa.copyDuplicateFree !== true ||
+      asset.qa.commercialUtilityVerified !== true ||
+      asset.qa.groundedPresentation !== true ||
+      asset.qa.promptCompliancePassed !== true ||
+      asset.qa.marketSignalCompliancePassed !== true ||
+      asset.qa.productFidelityPassed !== true ||
+      asset.qa.commercialQualityPassed !== true ||
+      !Number.isFinite(asset.qa.productCoverageRatio) ||
+      (slot === "MAIN_WHITE_BACKGROUND"
+        ? asset.qa.productCoverageRatio < .7 ||
+          asset.qa.productCoverageRatio > .85 ||
+          !Number.isFinite(asset.qa.outputEdgeWhiteRatio) ||
+          (asset.qa.outputEdgeWhiteRatio ?? 0) < .9 ||
+          asset.qa.textLineCount !== 0 ||
+          asset.qa.textMinimumPixelSize !== 0
+        : asset.qa.productCoverageRatio < .45 ||
+          asset.qa.productCoverageRatio > .7 ||
+          asset.qa.textLineCount < 1 || asset.qa.textLineCount > 3 ||
+          asset.qa.textMinimumPixelSize < 54)) {
+      throw new Error("SAME_DAY_IMAGE_SET_QA_NOT_PASSED")
+    }
     const secondary = slot !== "MAIN_WHITE_BACKGROUND"
     if (secondary) {
       if (asset.transformation.authorizedSourceTreatment !==
@@ -498,6 +552,17 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       foregroundOpaqueCornerRatio:
         asset.transformation.foregroundOpaqueCornerRatio,
       textRendererVersion: asset.transformation.textRendererVersion,
+      visualEvidenceMode: asset.transformation.visualEvidenceMode,
+      promptVersion: asset.transformation.promptVersion,
+      promptHash: asset.transformation.promptHash,
+      marketSignalHash: asset.transformation.marketSignalHash,
+      marketSignalConfidence: asset.transformation.marketSignalConfidence,
+      marketSignalVersion: asset.transformation.marketSignalVersion,
+      marketSignalObservedAt: asset.transformation.marketSignalObservedAt,
+      marketSignalFreshUntil: asset.transformation.marketSignalFreshUntil,
+      productVariantFingerprint:
+        asset.transformation.productVariantFingerprint,
+      positionRuleHash: asset.transformation.positionRuleHash,
       sourceSha256: asset.sourceSha256,
       outputSha256: asset.outputSha256,
       width: asset.width,
@@ -518,6 +583,22 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       opaqueSourceFrameRemoved: asset.qa.opaqueSourceFrameRemoved,
       textSafeAreaVerified: asset.qa.textSafeAreaVerified,
       textGlyphsValidated: asset.qa.textGlyphsValidated,
+      sourceEdgeLightNeutralRatio: asset.qa.sourceEdgeLightNeutralRatio,
+      outputEdgeWhiteRatio: asset.qa.outputEdgeWhiteRatio,
+      ocrTextVerified: asset.qa.ocrTextVerified,
+      mobileLegibilityVerified: asset.qa.mobileLegibilityVerified,
+      productCoverageRatio: asset.qa.productCoverageRatio,
+      productCoverageVerified: asset.qa.productCoverageVerified,
+      cropSafe: asset.qa.cropSafe,
+      copyDuplicateFree: asset.qa.copyDuplicateFree,
+      commercialUtilityVerified: asset.qa.commercialUtilityVerified,
+      textMinimumPixelSize: asset.qa.textMinimumPixelSize,
+      textLineCount: asset.qa.textLineCount,
+      groundedPresentation: asset.qa.groundedPresentation,
+      promptCompliancePassed: asset.qa.promptCompliancePassed,
+      marketSignalCompliancePassed: asset.qa.marketSignalCompliancePassed,
+      productFidelityPassed: asset.qa.productFidelityPassed,
+      commercialQualityPassed: asset.qa.commercialQualityPassed,
       visualStrategyVersion: asset.transformation.visualStrategyVersion,
       backgroundPlateQuality: asset.transformation.backgroundPlateQuality,
       selectedSceneBoardPanel:
@@ -630,6 +711,10 @@ export async function generateTransientSameDayImagePackage(input: {
     throw new Error("SAME_DAY_IMAGE_AUTHORIZED_SOURCES_INVALID")
   }
   const sourceSha256s = sources.map(sha256)
+  assertEbayImageEvidenceSufficiency({
+    facts: plan.factoryInput.facts,
+    sourceSha256s,
+  })
   const preflightForegrounds: Buffer[] = []
   try {
     for (const source of sources) {

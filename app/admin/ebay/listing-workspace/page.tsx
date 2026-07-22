@@ -236,6 +236,7 @@ type ImageAsset = {
   qa_result: {
     automaticStatus?: string
     sourceEdgeLightNeutralRatio?: number
+    outputEdgeWhiteRatio?: number
     humanApprovalRequired?: boolean
     manualChecksRequired?: string[]
   }
@@ -502,6 +503,14 @@ function humanImageError(error: unknown) {
       "Selecciona una base válida de derechos sobre la imagen.",
     EBAY_IMAGE_RIGHTS_EVIDENCE_CONFIRMATION_REQUIRED:
       "Confirma que conservas la foto original o el permiso/licencia por escrito.",
+    SAME_DAY_IMAGE_SET_QA_NOT_PASSED:
+      "El conjunto está bloqueado: todas las imágenes deben tener QA automático PASSED.",
+    NEEDS_MORE_SOURCE_IMAGES:
+      "Se necesitan al menos dos fotografías autorizadas distintas para crear una galería profesional sin relleno.",
+    NEEDS_MORE_VERIFIED_FACTS:
+      "No hay suficientes hechos comerciales verificados y no se generarán imágenes repetitivas de relleno.",
+    PUBLIC_STORAGE_COMPENSATION_FAILED:
+      "La aprobación quedó bloqueada porque no se pudo limpiar una copia pública temporal. El incidente quedó registrado para recuperación segura.",
   }
   return messages[code] ?? getMobileReviewRequestError(error, "No se pudo optimizar la imagen.")
 }
@@ -961,7 +970,8 @@ export default function EbayListingWorkspacePage() {
   }, [listingPackage, workspaceMode])
 
   const approvedImageAssets = useMemo(() => imageAssets
-    .filter((asset) => asset.status === "approved")
+    .filter((asset) => asset.status === "approved" &&
+      asset.qa_result?.automaticStatus === "PASSED")
     .sort((left, right) => left.position - right.position), [imageAssets])
   const approvedBaseImageControlId = useMemo(() => {
     const controls = new Map<string, Set<string>>()
@@ -1519,7 +1529,8 @@ export default function EbayListingWorkspacePage() {
 
   async function moveApprovedImage(assetId: string, direction: -1 | 1) {
     if (!opportunity || !listingPackage || imageBusy) return
-    const approved = imageAssets.filter((asset) => asset.status === "approved")
+    const approved = imageAssets.filter((asset) => asset.status === "approved" &&
+      asset.qa_result?.automaticStatus === "PASSED")
       .sort((left, right) => left.position - right.position)
     const index = approved.findIndex((asset) => asset.id === assetId)
     const target = index + direction
@@ -2075,12 +2086,13 @@ export default function EbayListingWorkspacePage() {
             {form.imageUrls.length > 0 && <details className="mt-3 rounded-2xl border border-white/10 p-3"><summary className="cursor-pointer text-sm font-black">Fuentes/URLs actuales del paquete · {form.imageUrls.length}</summary><div className="mt-3 space-y-2">{form.imageUrls.map((url) => <div key={url} className="grid grid-cols-[64px_1fr] gap-3 rounded-xl bg-black/25 p-2"><img src={url} alt="Fuente actual autorizada" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="size-16 rounded-lg bg-white object-contain" /><div className="min-w-0"><p className="truncate text-xs text-white/55">{url}</p><button type="button" disabled={imageBusy || imageAuthorizationReference.trim().length < 8 || !rightsEvidenceConfirmed} onClick={() => void optimizeImageUrl(url)} className="mt-2 min-h-10 rounded-xl border border-cyan-200/30 px-3 text-xs font-black text-cyan-50 disabled:opacity-40">Crear versión blanca</button></div></div>)}</div></details>}
 
             <div className="mt-4 space-y-3">
-              {imageAssets.map((asset) => <article key={asset.id} className={`rounded-2xl border p-3 ${asset.status === "approved" ? "border-emerald-200/30 bg-emerald-200/[0.05]" : asset.status === "rejected" ? "border-rose-200/20 bg-rose-200/[0.04]" : "border-amber-200/25 bg-amber-200/[0.04]"}`}>
-                <div className="flex items-center justify-between gap-3"><strong className="text-sm">{asset.status === "approved" ? `Aprobada · posición ${approvedImageAssets.findIndex((item) => item.id === asset.id) + 1}` : asset.status === "rejected" ? "Rechazada" : "Pendiente de revisión humana"}</strong><span className="rounded-full border border-white/15 px-2 py-1 text-[10px] font-black">{asset.output_width}×{asset.output_height}</span></div>
+              {imageAssets.map((asset) => <article key={asset.id} className={`rounded-2xl border p-3 ${asset.status === "approved" && asset.qa_result?.automaticStatus === "PASSED" ? "border-emerald-200/30 bg-emerald-200/[0.05]" : asset.status === "rejected" ? "border-rose-200/20 bg-rose-200/[0.04]" : "border-amber-200/25 bg-amber-200/[0.04]"}`}>
+                <div className="flex items-center justify-between gap-3"><strong className="text-sm">{asset.status === "approved" ? asset.qa_result?.automaticStatus === "PASSED" ? `Aprobada · posición ${approvedImageAssets.findIndex((item) => item.id === asset.id) + 1}` : "Histórica · bloqueada por QA" : asset.status === "rejected" ? "Rechazada" : asset.qa_result?.automaticStatus === "PASSED" ? "Pendiente de revisión humana" : "Bloqueada por QA automático"}</strong><span className="rounded-full border border-white/15 px-2 py-1 text-[10px] font-black">{asset.output_width}×{asset.output_height}</span></div>
                 <div className="mt-3 grid grid-cols-2 gap-2"><figure><div className="aspect-square overflow-hidden rounded-xl bg-white">{asset.source_preview_url ? <img src={asset.source_preview_url} alt="Imagen original autorizada" className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center bg-black text-xs text-white/50">Original protegida</div>}</div><figcaption className="mt-1 text-center text-[10px] text-white/50">Original</figcaption></figure><figure><div className="aspect-square overflow-hidden rounded-xl bg-white">{asset.output_preview_url || asset.public_url ? <img src={asset.output_preview_url ?? asset.public_url ?? ""} alt="Versión optimizada para revisión" className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center bg-black text-center text-xs text-white/50">Vista eliminada tras rechazo</div>}</div><figcaption className="mt-1 text-center text-[10px] text-white/50">Optimizada</figcaption></figure></div>
-                <p className="mt-2 text-xs leading-5 text-white/60">QA automático: {asset.qa_result?.automaticStatus ?? "pendiente"} · fondo claro {Math.round(Number(asset.qa_result?.sourceEdgeLightNeutralRatio ?? 0) * 100)}% · {asset.transformation_version}</p>
-                {asset.status === "pending_review" && <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={imageBusy} onClick={() => void reviewImage(asset, "reject")} className="min-h-11 rounded-xl border border-rose-200/30 text-sm font-black text-rose-50">Rechazar</button><button type="button" disabled={imageBusy} onClick={() => void reviewImage(asset, "approve")} className="min-h-11 rounded-xl bg-emerald-200 text-sm font-black text-black">Comparé y apruebo</button></div>}
-                {asset.status === "approved" && <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={imageBusy || approvedImageAssets.findIndex((item) => item.id === asset.id) === 0} onClick={() => void moveApprovedImage(asset.id, -1)} className="min-h-10 rounded-xl border border-white/15 text-xs font-black disabled:opacity-30">↑ Hacer principal</button><button type="button" disabled={imageBusy || approvedImageAssets.findIndex((item) => item.id === asset.id) >= approvedImageAssets.length - 1} onClick={() => void moveApprovedImage(asset.id, 1)} className="min-h-10 rounded-xl border border-white/15 text-xs font-black disabled:opacity-30">↓ Mover</button></div>}
+                <p className="mt-2 text-xs leading-5 text-white/60">QA automático: {asset.qa_result?.automaticStatus ?? "ausente (bloqueado)"} · fondo de fuente {Math.round(Number(asset.qa_result?.sourceEdgeLightNeutralRatio ?? 0) * 100)}% · fondo blanco de salida {typeof asset.qa_result?.outputEdgeWhiteRatio === "number" ? `${Math.round(asset.qa_result.outputEdgeWhiteRatio * 100)}%` : "no aplica"} · {asset.transformation_version}</p>
+                {asset.status === "pending_review" && <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={imageBusy} onClick={() => void reviewImage(asset, "reject")} className="min-h-11 rounded-xl border border-rose-200/30 text-sm font-black text-rose-50">Rechazar</button><button type="button" disabled={imageBusy || asset.qa_result?.automaticStatus !== "PASSED"} onClick={() => void reviewImage(asset, "approve")} className="min-h-11 rounded-xl bg-emerald-200 text-sm font-black text-black disabled:cursor-not-allowed disabled:opacity-35">Comparé y apruebo</button></div>}
+                {asset.status === "pending_review" && asset.qa_result?.automaticStatus !== "PASSED" && <p role="alert" className="mt-2 text-xs leading-5 text-amber-50">Sólo `PASSED` puede aprobarse. Regenera o agrega más fotografías/hechos verificados.</p>}
+                {asset.status === "approved" && asset.qa_result?.automaticStatus === "PASSED" && <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={imageBusy || approvedImageAssets.findIndex((item) => item.id === asset.id) === 0} onClick={() => void moveApprovedImage(asset.id, -1)} className="min-h-10 rounded-xl border border-white/15 text-xs font-black disabled:opacity-30">↑ Hacer principal</button><button type="button" disabled={imageBusy || approvedImageAssets.findIndex((item) => item.id === asset.id) >= approvedImageAssets.length - 1} onClick={() => void moveApprovedImage(asset.id, 1)} className="min-h-10 rounded-xl border border-white/15 text-xs font-black disabled:opacity-30">↓ Mover</button></div>}
               </article>)}
               {!imageAssets.length && <p className="rounded-2xl border border-amber-200/20 p-3 text-sm text-amber-50">Todavía no hay una versión optimizada y aprobada. Puedes trabajar el contenido, pero el draft seguirá bloqueado.</p>}
             </div>

@@ -43,6 +43,9 @@ export type EbayOptimizedImage = {
   qa: {
     automaticStatus: "PASSED" | "PARTIAL"
     sourceEdgeLightNeutralRatio: number
+    outputEdgeWhiteRatio: number
+    productCoverageRatio: number
+    productCoverageVerified: boolean
     sourceCenterLightNeutralRatio: number
     sourceCenterChromaticRatio: number
     sourceVisualProfile: {
@@ -236,6 +239,34 @@ function lightNeutralRatio(
     }
   }
   return sampled ? lightNeutral / sampled : 0
+}
+
+function edgeWhiteRatio(
+  pixels: Buffer,
+  width: number,
+  height: number,
+  channels: number,
+) {
+  const borderX = Math.max(2, Math.floor(width * 0.06))
+  const borderY = Math.max(2, Math.floor(height * 0.06))
+  let sampled = 0
+  let white = 0
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (x >= borderX && x < width - borderX &&
+        y >= borderY && y < height - borderY) continue
+      const offset = (y * width + x) * channels
+      const red = pixels[offset]
+      const green = pixels[offset + 1]
+      const blue = pixels[offset + 2]
+      sampled += 1
+      if (Math.min(red, green, blue) >= 245 &&
+        Math.max(red, green, blue) - Math.min(red, green, blue) <= 10) {
+        white += 1
+      }
+    }
+  }
+  return sampled ? white / sampled : 0
 }
 
 function centerLightNeutralRatio(
@@ -876,12 +907,12 @@ export async function optimizeAuthorizedEbayMainImage(
           },
         })
           .trim({ background: "#ffffff", threshold: 12 })
-          .resize(1_400, 1_400, {
+          .resize(1_360, 1_360, {
             fit: "contain",
             background: "#ffffff",
             kernel: sharp.kernel.lanczos3,
           })
-          .extend({ top: 100, right: 100, bottom: 100, left: 100,
+          .extend({ top: 120, right: 120, bottom: 120, left: 120,
             background: "#ffffff" })
           .jpeg({ quality: 92, chromaSubsampling: "4:4:4", mozjpeg: true })
           .toBuffer()
@@ -897,6 +928,19 @@ export async function optimizeAuthorizedEbayMainImage(
   if (outputMetadata.width !== EBAY_IMAGE_OUTPUT_SIZE || outputMetadata.height !== EBAY_IMAGE_OUTPUT_SIZE) {
     throw new Error("EBAY_IMAGE_OUTPUT_DIMENSIONS_INVALID")
   }
+  const decodedOutput = await sharp(output).removeAlpha().toColourspace("srgb")
+    .raw().toBuffer({ resolveWithObject: true })
+  const outputWhiteRatio = edgeWhiteRatio(
+    decodedOutput.data,
+    decodedOutput.info.width,
+    decodedOutput.info.height,
+    decodedOutput.info.channels,
+  )
+  decodedOutput.data.fill(0)
+  const productCoverageRatio = 1_360 / EBAY_IMAGE_OUTPUT_SIZE
+  const outputQaPassed = outputWhiteRatio >= 0.9 &&
+    productCoverageRatio >= 0.7 && productCoverageRatio <= 0.85 &&
+    (!preserveAuthorizedFrame || edgeRatio >= .9)
 
   return {
     output,
@@ -925,11 +969,15 @@ export async function optimizeAuthorizedEbayMainImage(
         : "NEAR_NEUTRAL_WHITEN_ONLY",
       canvas: "WHITE",
       fit: "CONTAIN",
-      maxProductBoxPixels: preserveAuthorizedFrame ? 1_360 : 1_400,
+      maxProductBoxPixels: 1_360,
     },
     qa: {
-      automaticStatus: preserveAuthorizedFrame ? "PARTIAL" : "PASSED",
+      automaticStatus: outputQaPassed ? "PASSED" : "PARTIAL",
       sourceEdgeLightNeutralRatio: Number(edgeRatio.toFixed(4)),
+      outputEdgeWhiteRatio: Number(outputWhiteRatio.toFixed(4)),
+      productCoverageRatio: Number(productCoverageRatio.toFixed(4)),
+      productCoverageVerified: productCoverageRatio >= 0.7 &&
+        productCoverageRatio <= 0.85,
       sourceCenterLightNeutralRatio: Number(centerRatio.toFixed(4)),
       sourceCenterChromaticRatio: Number(centerColorRatio.toFixed(4)),
       sourceVisualProfile: {
