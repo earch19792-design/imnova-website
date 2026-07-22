@@ -490,7 +490,8 @@ function validUuid(value: unknown) {
 }
 
 function humanImageError(error: unknown) {
-  const code = error instanceof Error ? error.message : ""
+  const rawCode = error instanceof Error ? error.message : ""
+  const code = rawCode.match(/^[A-Z0-9_:.-]+/)?.[0] ?? rawCode
   if (code.startsWith("LUNA_CATALOG_JSON_HTTP_") ||
     code.startsWith("LUNA_CATALOG_IMAGE_HTTP_")) {
     return "Luna no respondió temporalmente durante la resolución del catálogo. No se llamó a OpenAI ni se consumió el intento; vuelve a intentar cuando Luna responda."
@@ -630,6 +631,7 @@ export default function EbayListingWorkspacePage() {
   const [imageBusy, setImageBusy] = useState(false)
   const [imageRevision, setImageRevision] = useState<ImageRevisionPayload | null>(null)
   const [imageRevisionBusy, setImageRevisionBusy] = useState(false)
+  const [imageRevisionLocalError, setImageRevisionLocalError] = useState("")
   const [imageRevisionConfirmed, setImageRevisionConfirmed] = useState(false)
   const [imageRightsBasis, setImageRightsBasis] = useState("supplier_authorized")
   const [imageAuthorizationReference, setImageAuthorizationReference] = useState("")
@@ -1244,6 +1246,7 @@ export default function EbayListingWorkspacePage() {
   async function generateImageRevision() {
     if (!approvedBaseImageControlId || imageRevisionBusy) return
     setImageRevisionBusy(true)
+    setImageRevisionLocalError("")
     setImageRevisionConfirmed(false)
     setError("")
     setMessage("Resolviendo originales de Luna y preparando siete imágenes sin tocar eBay…")
@@ -1305,10 +1308,9 @@ export default function EbayListingWorkspacePage() {
         ? "La revisión corregida ya estaba aprobada y sigue lista para el próximo preview. No se escribió en eBay."
         : "Se prepararon siete imágenes nuevas. Compara la principal y las seis secundarias antes de decidir el conjunto completo.")
     } catch (requestError) {
-      setError(getMobileReviewRequestError(
-        requestError,
-        "No se pudo generar la revisión corregida.",
-      ))
+      const detail = humanImageError(requestError)
+      setImageRevisionLocalError(detail)
+      setError(detail)
       setMessage("")
     } finally {
       setImageRevisionBusy(false)
@@ -2113,6 +2115,7 @@ export default function EbayListingWorkspacePage() {
                 <span className={`rounded-full border px-2 py-1 text-[10px] font-black ${approvedBaseImageControlId ? "border-emerald-200/30 text-emerald-100" : "border-amber-200/30 text-amber-100"}`}>{approvedBaseImageControlId ? "CONTROL BASE ENCONTRADO" : "SIN CONTROL BASE COMPATIBLE"}</span>
               </div>
               <button type="button" disabled={!approvedBaseImageControlId || imageRevisionBusy} onClick={() => void generateImageRevision()} className="mt-3 min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">{imageRevisionBusy ? "Procesando las siete…" : imageRevisionFailed ? "Reintentar generación" : "Generar revisión corregida"}</button>
+              {imageRevisionLocalError && <div role="alert" className="mt-2 rounded-xl border border-amber-200/30 bg-amber-200/[0.06] p-3 text-xs leading-5 text-amber-50"><strong>Generación detenida antes del reintento.</strong><span className="mt-1 block">{imageRevisionLocalError}</span></div>}
               {imageRevisionId && <button type="button" disabled={imageRevisionBusy} onClick={() => void loadImageRevision(imageRevisionId)} className="mt-2 min-h-11 w-full rounded-xl border border-cyan-200/30 px-4 text-sm font-black text-cyan-50 disabled:opacity-40">Actualizar vista</button>}
               {!approvedBaseImageControlId && <p className="mt-2 text-xs leading-5 text-amber-50">Esta acción aparece cuando el candidato conserva un set histórico compatible de seis o siete slots ligado al mismo control. El servidor vuelve a comprobar que el control esté APPROVED.</p>}
 

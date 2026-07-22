@@ -75,6 +75,9 @@ function safeError(error: unknown) {
 
 function imageRevisionErrorStatus(code: string) {
   if (/NOT_FOUND/.test(code)) return 404
+  if (/^(NEEDS_ADDITIONAL_SOURCE_IMAGE:|NEEDS_VERIFIED_PRODUCT_FACTS:|MARKET_VISUAL_SIGNALS_INSUFFICIENT$|LUNA_CATALOG_MEDIA_MISSING$)/.test(code)) {
+    return 422
+  }
   if (/INVALID|REQUIRED|MISSING/.test(code)) return 400
   if (/CONFLICT|BUSY|NOT_APPROVED|NOT_REVIEWABLE|BLOCKED|LEASE|OUTCOME_UNKNOWN|TERMINAL|MISMATCH|WRITE_IN_PROGRESS/.test(code)) {
     return 409
