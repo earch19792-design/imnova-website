@@ -12,8 +12,12 @@ import {
 } from "@/lib/ebay/ebay-listing-image-factory"
 import {
   EBAY_IMAGE_SOURCE_BUCKET,
-  EBAY_IMAGE_STAGING_BUCKET,
 } from "@/lib/ebay/ebay-image-storage-cleanup"
+import {
+  persistReferenceGuidedCanaryPng,
+  REFERENCE_GUIDED_CANARY_OUTPUT_BUCKET,
+  removeReferenceGuidedCanaryPng,
+} from "@/lib/ebay/reference-guided-canary-persistence"
 import {
   runReferenceGuidedGenerationCanary,
   type ReferenceGuidedJobRecord,
@@ -35,8 +39,6 @@ const SOURCE_AUTHORIZATION = "AUTHORIZED_CATALOG_NATIVE_HIGH_RES"
 const PROMPT_TEMPLATE_VERSION = "REFERENCE_GUIDED_EXACT_PROMPT_V2_2026_07_22"
 const MANIFEST_VERSION = "REFERENCE_GUIDED_COMPOSITION_MANIFEST_V2"
 const GENERATION_VERSION = "REFERENCE_GUIDED_PRODUCT_GENERATION_V1"
-const OUTPUT_SIZE = 1600
-const OUTPUT_MAX_BYTES = 16 * 1024 * 1024
 
 type JsonRecord = Record<string, unknown>
 
@@ -84,46 +86,6 @@ function assertPreviewBoundary() {
     !process.env.OPENAI_API_KEY?.trim()) {
     throw new Error("REFERENCE_GUIDED_CANARY_PROVIDER_CONFIGURATION_INVALID")
   }
-}
-
-function automaticQa(output: Buffer) {
-  return sharp(output).metadata().then(async (metadata) => {
-    if (metadata.format !== "png" || metadata.width !== OUTPUT_SIZE ||
-      metadata.height !== OUTPUT_SIZE || output.length > OUTPUT_MAX_BYTES) {
-      throw new Error("REFERENCE_GUIDED_PROVIDER_OUTPUT_DIMENSIONS_INVALID")
-    }
-    const stats = await sharp(output).removeAlpha().stats()
-    const channels = stats.channels.slice(0, 3)
-    const finiteChannels = channels.length === 3 && channels.every((channel) =>
-      Number.isFinite(channel.mean) && Number.isFinite(channel.stdev))
-    if (!finiteChannels) {
-      throw new Error("REFERENCE_GUIDED_CANARY_TECHNICAL_QA_INVALID")
-    }
-    return {
-      automaticStatus: "PARTIAL",
-      evaluatorVersion: "REFERENCE_GUIDED_CANARY_QA_V1_2026_07_22",
-      technicalChecks: {
-        png: true,
-        width: OUTPUT_SIZE,
-        height: OUTPUT_SIZE,
-        square: true,
-        decodable: true,
-        nonEmptyColorChannels: true,
-      },
-      identityChecks: {
-        sameWhiteColor: "REQUIRES_HUMAN_CONFIRMATION",
-        sameHandles: "REQUIRES_HUMAN_CONFIRMATION",
-        sameRim: "REQUIRES_HUMAN_CONFIRMATION",
-        samePerforations: "REQUIRES_HUMAN_CONFIRMATION",
-        sameBaseAndProportions: "REQUIRES_HUMAN_CONFIRMATION",
-        noAddedTextOrLogos: "REQUIRES_HUMAN_CONFIRMATION",
-        noAccessoriesPresentedAsIncluded: "REQUIRES_HUMAN_CONFIRMATION",
-      },
-      humanApprovalRequired: true,
-      autoApproved: false,
-      publicationAuthorized: false,
-    }
-  })
 }
 
 export async function POST(req: Request) {
@@ -225,7 +187,7 @@ export async function POST(req: Request) {
       throw new Error("REFERENCE_GUIDED_CANARY_POSITION_INVALID")
     }
     const stagingBucket = rows<{ id?: string; public?: boolean }>(buckets)
-      .find((bucket) => bucket.id === EBAY_IMAGE_STAGING_BUCKET)
+      .find((bucket) => bucket.id === REFERENCE_GUIDED_CANARY_OUTPUT_BUCKET)
     const sourceBucket = rows<{ id?: string; public?: boolean }>(buckets)
       .find((bucket) => bucket.id === EBAY_IMAGE_SOURCE_BUCKET)
     if (!stagingBucket || stagingBucket.public !== false ||
@@ -349,14 +311,16 @@ export async function POST(req: Request) {
         if (manifestHash !== attempt.composition_manifest_hash) {
           throw new Error("REFERENCE_GUIDED_CANARY_MANIFEST_CHANGED")
         }
-        automaticQaResult = await automaticQa(result.output)
         outputSha256 = result.outputSha256
         providerRequestId = result.providerRequestId ?? providerRequestId
         const proposedStoragePath = `${revision.created_by}/reference-guided-canary/${AUTHORIZED_ATTEMPT_ID}/position-1/${outputSha256}.png`
-        const upload = await supabase.storage.from(EBAY_IMAGE_STAGING_BUCKET)
-          .upload(proposedStoragePath, result.output, { contentType: "image/png",
-            cacheControl: "private, no-store", upsert: false })
-        if (upload.error) throw new Error("REFERENCE_GUIDED_CANARY_PRIVATE_STORAGE_UPLOAD_FAILED")
+        const persisted = await persistReferenceGuidedCanaryPng({
+          supabase,
+          output: result.output,
+          expectedSha256: result.outputSha256,
+          storagePath: proposedStoragePath,
+        })
+        automaticQaResult = persisted.qaResult
         const { data: updated, error: updateError } = await supabase
           .from("ebay_reference_guided_generation_jobs")
           .update({ status: "QA_PENDING", provider_request_id: providerRequestId,
@@ -367,7 +331,10 @@ export async function POST(req: Request) {
           .eq("id", jobId).eq("status", "PROVIDER_CALLING")
           .select("id").maybeSingle()
         if (updateError || !updated) {
-          await supabase.storage.from(EBAY_IMAGE_STAGING_BUCKET).remove([proposedStoragePath])
+          await removeReferenceGuidedCanaryPng({
+            supabase,
+            storagePath: proposedStoragePath,
+          })
           throw new Error("REFERENCE_GUIDED_CANARY_RESULT_PERSIST_FAILED")
         }
         outputStoragePath = proposedStoragePath
