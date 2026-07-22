@@ -509,17 +509,38 @@ export async function GET(req: Request) {
           }
           return { ...variant, output_preview_url: preview.data.signedUrl }
         }))
-      let phaseAReview = phaseAPosition2Asset
+      let phaseAReview: Record<string, unknown> | null = phaseAPosition2Asset
         ? { ...phaseAPosition2Asset, output_preview_url: null as string | null }
         : null
       if (phaseAPosition2Asset?.output_storage_path) {
+        const position2Job = reviewJobs.find((job) => Number(job.position) === 2)
+        if (Number(phaseAPosition2Asset.position) !== 2 ||
+          Number(phaseAPosition2Asset.asset_ordinal) !== 2 ||
+          phaseAPosition2Asset.asset_role !== "SECONDARY_PACKAGE_CONTENTS" ||
+          position2Job?.output_storage_path !==
+            phaseAPosition2Asset.output_storage_path ||
+          position2Job?.output_sha256 !== phaseAPosition2Asset.output_sha256) {
+          throw new Error("REFERENCE_GUIDED_POSITION_2_PREVIEW_BINDING_INVALID")
+        }
         const preview = await supabase.storage.from(STAGING_BUCKET)
           .createSignedUrl(phaseAPosition2Asset.output_storage_path, 300)
         if (preview.error || !preview.data?.signedUrl) {
           throw new Error("REFERENCE_GUIDED_OUTPUT_PREVIEW_FAILED")
         }
+        const signedPath = decodeURIComponent(new URL(
+          preview.data.signedUrl,
+        ).pathname)
+        if (!signedPath.endsWith(
+          `/${STAGING_BUCKET}/${phaseAPosition2Asset.output_storage_path}`,
+        )) {
+          throw new Error("REFERENCE_GUIDED_POSITION_2_SIGNED_URL_INVALID")
+        }
         phaseAReview = { ...phaseAPosition2Asset,
-          output_preview_url: preview.data.signedUrl }
+          output_preview_url: preview.data.signedUrl,
+          preview_binding: { position: 2, assetOrdinal: 2,
+            assetRole: "SECONDARY_PACKAGE_CONTENTS",
+            storagePath: phaseAPosition2Asset.output_storage_path,
+            outputSha256: phaseAPosition2Asset.output_sha256 } }
       }
       const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, primaryMainPreview: primaryReview, deterministicPreview: deterministicReview, deterministicVariants: variantReviews, phaseAPosition2Asset: phaseAReview, finalAssetSelection: finalAssetSelection ?? null, assetReviews: assetReviews ?? [], assetContract: REFERENCE_GUIDED_SEVEN_ASSET_ROLES, assetSlots: assetSlots ?? [], progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
       response.headers.set("Cache-Control", "no-store")
