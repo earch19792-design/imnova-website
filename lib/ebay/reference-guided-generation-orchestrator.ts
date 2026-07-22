@@ -14,14 +14,14 @@ export type ReferenceGuidedJobRecord = {
 }
 
 export type ReferenceGuidedPersistence = {
-  claim(limit: 2, manifestHash: string, leaseOwner: string): Promise<ReferenceGuidedJobRecord[]>
-  reserveProviderCall(input: {
+  claimCanary(manifestHash: string, leaseOwner: string): Promise<ReferenceGuidedJobRecord[]>
+  reserveCanaryProviderCall(input: {
     attemptId: string
     jobId: string
     manifestHash: string
     leaseOwner: string
     exactPromptHash: string
-    maximumProviderCalls: 6
+    maximumProviderCalls: 1
   }): Promise<number>
   saveGenerated(jobId: string, result: EbayReferenceGuidedProviderResult, manifestHash: string): Promise<void>
   markOutcomeUnknown(jobId: string, errorCode: string): Promise<void>
@@ -32,8 +32,8 @@ export function sha256Bytes(value: Buffer) {
   return createHash("sha256").update(value).digest("hex")
 }
 
-/** Resumable worker: persistence owns leases and CAS; this function never holds SQL open. */
-export async function runReferenceGuidedGenerationWorker(input: {
+/** Single-job canary: persistence owns its position-1 lease and one-call CAS. */
+export async function runReferenceGuidedGenerationCanary(input: {
   attemptId: string
   manifestHash: string
   leaseOwner: string
@@ -51,7 +51,13 @@ export async function runReferenceGuidedGenerationWorker(input: {
     sha256Bytes(input.side) !== input.plan.jobs[0].sourceHashes[1]) {
     throw new Error("MANIFEST_SOURCE_MISMATCH")
   }
-  const jobs = await input.persistence.claim(2, input.manifestHash, input.leaseOwner)
+  const jobs = await input.persistence.claimCanary(
+    input.manifestHash,
+    input.leaseOwner,
+  )
+  if (jobs.length !== 1 || jobs[0]?.position !== 1) {
+    throw new Error("REFERENCE_GUIDED_CANARY_SINGLE_JOB_REQUIRED")
+  }
   let providerCalls = 0
   for (const job of jobs) {
     if (!input.shouldContinue?.()) throw new Error("REFERENCE_GUIDED_MANIFEST_CHANGED")
@@ -63,15 +69,15 @@ export async function runReferenceGuidedGenerationWorker(input: {
       planned.sourceHashes[0] !== job.sourceMainHash || planned.sourceHashes[1] !== job.sourceSideHash) {
       throw new Error("MANIFEST_SOURCE_MISMATCH")
     }
-    providerCalls = await input.persistence.reserveProviderCall({
+    providerCalls = await input.persistence.reserveCanaryProviderCall({
       attemptId: input.attemptId,
       jobId: job.id,
       manifestHash: input.manifestHash,
       leaseOwner: input.leaseOwner,
       exactPromptHash: job.promptHash,
-      maximumProviderCalls: 6,
+      maximumProviderCalls: 1,
     })
-    if (providerCalls < 1 || providerCalls > 6) {
+    if (providerCalls !== 1) {
       throw new Error("REFERENCE_GUIDED_PROVIDER_CALL_BUDGET_EXHAUSTED")
     }
     try {
