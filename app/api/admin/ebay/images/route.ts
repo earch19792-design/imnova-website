@@ -592,11 +592,10 @@ export async function POST(req: Request) {
       const fingerprint = createHash("sha256").update(JSON.stringify({ parentRevisionId, listingPackageId: parent.listing_package_id, strategyVersion: "VISUAL_STRATEGY_V3", revisionContract: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1", sourcePackVersion, main: mains[0].sha256, side: sides[0].sha256, productDossierHash: recomputedDossierHash, marketVisualBriefHash: briefHash })).digest("hex")
       const { data: existing } = await supabase.from("ebay_same_day_pilot_image_revisions").select("id").eq("revision_fingerprint", fingerprint).maybeSingle()
       if (existing?.id) return NextResponse.json({ success: true, revisionId: existing.id, revisionFingerprint: fingerprint, reused: true })
-      const { data: maxRow } = await supabase.from("ebay_same_day_pilot_image_revisions").select("revision_number").eq("base_control_id", parent.base_control_id).order("revision_number", { ascending: false }).limit(1).maybeSingle()
-      const revisionId = crypto.randomUUID()
-      const { data: created, error: createError } = await supabase.from("ebay_same_day_pilot_image_revisions").insert({ id: revisionId, marketplace_account_key: accountKey, created_by: actor, base_control_id: parent.base_control_id, run_id: parent.run_id, candidate_id: parent.candidate_id, listing_package_id: parent.listing_package_id, fact_run_id: parent.fact_run_id, revision_number: Number(maxRow?.revision_number ?? parent.revision_number) + 1, revision_version: "EBAY_LISTING_IMAGE_REVISION_V1", status: "READY_FOR_PREPARE", attempt: 1, idempotency_key_hash: fingerprint, strategy_version: "VISUAL_STRATEGY_V3", revision_contract: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1", parent_revision_id: parentRevisionId, revision_fingerprint: fingerprint, source_pack_version: sourcePackVersion, main_source_id: String(mains[0].sourceImageId), main_source_hash: String(mains[0].sha256), side_source_id: String(sides[0].sourceImageId), side_source_hash: String(sides[0].sha256), product_dossier_hash: recomputedDossierHash, market_visual_brief_hash: briefHash, authorized_source_count: 2, openai_calls: 0, ebay_writes: 0, production_changed: false })
-      if (createError) throw createError
-      return NextResponse.json({ success: true, revisionId, revisionFingerprint: fingerprint, reused: false })
+      const { data: rpcResult, error: rpcError } = await supabase.rpc("ensure_visual_strategy_v3_revision_from_binding", { p_parent_revision_id: parentRevisionId })
+      if (rpcError) throw new Error(`ENSURE_V3_RPC:${rpcError.code ?? "UNKNOWN"}`)
+      const result = Array.isArray(rpcResult) ? rpcResult[0] : rpcResult
+      return NextResponse.json({ success: true, revisionId: result?.revision_id, revisionFingerprint: fingerprint, reused: result?.created !== true })
     }
 
     if (action === "prepare_visual_review") {
