@@ -48,6 +48,7 @@ import {
 } from "@/lib/ebay/authorized-catalog-native-media"
 import { persistAuthorizedCatalogSourcePack } from "@/lib/ebay/luna-catalog-source-pack-persistence"
 import { LUNA_CATALOG_SOURCE_RESOLVER_VERSION } from "@/lib/ebay/luna-catalog-original-source-resolver"
+import { productFactsHash } from "@/lib/ebay/ebay-product-facts-readiness"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
 const SOURCE_BUCKET = EBAY_IMAGE_SOURCE_BUCKET
@@ -551,7 +552,27 @@ export async function POST(req: Request) {
       if (parent.strategy_version !== "VISUAL_STRATEGY_V2" || parent.revision_contract !== "LEGACY_VISUAL_STRATEGY_V2") return NextResponse.json({ success: false, error: "PARENT_REVISION_STRATEGY_INVALID" }, { status: 409 })
       const { data: pack } = await supabase.from("luna_catalog_authorized_source_packs").select("id,source_pack_hash,resolver_version,source_assets,authoritative_fact_package_hash").eq("marketplace_account_key", accountKey).eq("listing_package_id", parent.listing_package_id).order("created_at", { ascending: false }).limit(1).maybeSingle()
       const assets = Array.isArray(pack?.source_assets) ? pack.source_assets as Array<Record<string, unknown>> : []
-      if (!pack?.authoritative_fact_package_hash) return NextResponse.json({ success: false, error: "PRODUCT_DOSSIER_REQUIRED", attemptRows: 0, jobRows: 0 }, { status: 422 })
+      if (!pack) return NextResponse.json({ success: false, error: "V3_SOURCE_PACK_INVALID", attemptRows: 0, jobRows: 0 }, { status: 422 })
+      const { data: dossierCandidate } = await supabase.from("ebay_same_day_pilot_candidates").select("candidate_key,product_facts_summary").eq("id", parent.candidate_id).maybeSingle()
+      const dossier = record(record(dossierCandidate?.product_facts_summary).authoritativeFactsPackage)
+      const dossierFacts = Array.isArray(dossier.facts) ? dossier.facts : []
+      const recomputedDossierHash = productFactsHash({ version: dossier.version, sourcePolicy: dossier.sourcePolicy, facts: dossierFacts })
+      const expectedDossierHash = "sha256:94c279fcca948a0d1767fe4a0d5ae602545e131a8fd5d96cd2df47f5f98c74c8"
+      if (recomputedDossierHash !== expectedDossierHash) return NextResponse.json({ success: false, error: "PRODUCT_DOSSIER_HASH_MISMATCH", attemptRows: 0, jobRows: 0 }, { status: 422 })
+      const values = new Map(dossierFacts.map((fact) => [String(record(fact).key), record(fact).value]))
+      if (values.get("mpn") !== "08300" || values.get("gtin") !== "036588083005" || values.get("color") !== "White" || String(values.get("netContent")) !== "1.5") return NextResponse.json({ success: false, error: "PRODUCT_DOSSIER_IDENTITY_MISMATCH", attemptRows: 0, jobRows: 0 }, { status: 422 })
+      await supabase.from("luna_catalog_source_pack_dossier_bindings").insert({ source_pack_id: pack.id, listing_package_id: parent.listing_package_id, dossier_hash: recomputedDossierHash, source_pack_manifest_hash: pack.source_pack_hash, policy_version: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1" }).then(({ error }) => { if (error && !String(error.message).includes("duplicate")) throw new Error("SOURCE_PACK_DOSSIER_BINDING_FAILED") })
+      for (const asset of assets) {
+        const path = text(asset.storagePath, 1000)
+        if (!path) return NextResponse.json({ success: false, error: "SOURCE_STORAGE_PATH_MISSING", attemptRows: 0, jobRows: 0 }, { status: 422 })
+        const downloaded = await supabase.storage.from(SOURCE_BUCKET).download(path)
+        if (downloaded.error || !downloaded.data) return NextResponse.json({ success: false, error: "SOURCE_STORAGE_ROUNDTRIP_FAILED", attemptRows: 0, jobRows: 0 }, { status: 422 })
+        const bytes = Buffer.from(await downloaded.data.arrayBuffer())
+        const actual = createHash("sha256").update(bytes).digest("hex")
+        const metadata = await sharp(bytes).metadata()
+        const expected = asset.sourceImageId === "MAIN" ? { hash: "3e920855560159a9722cb54680f565beae9c41ff1cd247cd47af4cf626c5aed1", width: 1500, height: 905 } : { hash: "f15c9e6e24018241290ded5a4838df1f9477f7b028fdf1f74c627b0780d42f21", width: 1500, height: 1051 }
+        if (actual !== expected.hash || metadata.width !== expected.width || metadata.height !== expected.height) return NextResponse.json({ success: false, error: "SOURCE_STORAGE_ROUNDTRIP_FAILED", attemptRows: 0, jobRows: 0 }, { status: 422 })
+      }
       const mains = assets.filter((asset) => asset.sourceImageId === "MAIN" && asset.sourceAngle === "FRONT" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
       const sides = assets.filter((asset) => asset.sourceImageId === "SIDE" && asset.sourceAngle === "SIDE" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
       if (!pack || mains.length !== 1 || sides.length !== 1) return NextResponse.json({ success: false, error: "V3_SOURCE_PACK_INVALID", attemptRows: 0, jobRows: 0 }, { status: 422 })
@@ -559,12 +580,12 @@ export async function POST(req: Request) {
       if (!brief || Number(brief.sample_size) < 3) return NextResponse.json({ success: false, error: "MARKET_VISUAL_BRIEF_REFRESH_REQUIRED", attemptRows: 0, jobRows: 0 }, { status: 422 })
       const briefHash = createHash("sha256").update(JSON.stringify(brief)).digest("hex")
       const sourcePackVersion = text(pack.resolver_version, 120)
-      const fingerprint = createHash("sha256").update(JSON.stringify({ parentRevisionId, listingPackageId: parent.listing_package_id, strategyVersion: "VISUAL_STRATEGY_V3", revisionContract: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1", sourcePackVersion, main: mains[0].sha256, side: sides[0].sha256, productDossierHash: pack.authoritative_fact_package_hash, marketVisualBriefHash: briefHash })).digest("hex")
+      const fingerprint = createHash("sha256").update(JSON.stringify({ parentRevisionId, listingPackageId: parent.listing_package_id, strategyVersion: "VISUAL_STRATEGY_V3", revisionContract: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1", sourcePackVersion, main: mains[0].sha256, side: sides[0].sha256, productDossierHash: recomputedDossierHash, marketVisualBriefHash: briefHash })).digest("hex")
       const { data: existing } = await supabase.from("ebay_same_day_pilot_image_revisions").select("id").eq("revision_fingerprint", fingerprint).maybeSingle()
       if (existing?.id) return NextResponse.json({ success: true, revisionId: existing.id, revisionFingerprint: fingerprint, reused: true })
       const { data: maxRow } = await supabase.from("ebay_same_day_pilot_image_revisions").select("revision_number").eq("base_control_id", parent.base_control_id).order("revision_number", { ascending: false }).limit(1).maybeSingle()
       const revisionId = crypto.randomUUID()
-      const { data: created, error: createError } = await supabase.from("ebay_same_day_pilot_image_revisions").insert({ id: revisionId, marketplace_account_key: accountKey, created_by: actor, base_control_id: parent.base_control_id, run_id: parent.run_id, candidate_id: parent.candidate_id, listing_package_id: parent.listing_package_id, fact_run_id: parent.fact_run_id, revision_number: Number(maxRow?.revision_number ?? parent.revision_number) + 1, revision_version: "EBAY_LISTING_IMAGE_REVISION_V1", status: "READY_FOR_PREPARE", attempt: 1, idempotency_key_hash: fingerprint, strategy_version: "VISUAL_STRATEGY_V3", revision_contract: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1", parent_revision_id: parentRevisionId, revision_fingerprint: fingerprint, source_pack_version: sourcePackVersion, main_source_id: String(mains[0].sourceImageId), main_source_hash: String(mains[0].sha256), side_source_id: String(sides[0].sourceImageId), side_source_hash: String(sides[0].sha256), product_dossier_hash: String(pack.authoritative_fact_package_hash), market_visual_brief_hash: briefHash, authorized_source_count: 2, openai_calls: 0, ebay_writes: 0, production_changed: false })
+      const { data: created, error: createError } = await supabase.from("ebay_same_day_pilot_image_revisions").insert({ id: revisionId, marketplace_account_key: accountKey, created_by: actor, base_control_id: parent.base_control_id, run_id: parent.run_id, candidate_id: parent.candidate_id, listing_package_id: parent.listing_package_id, fact_run_id: parent.fact_run_id, revision_number: Number(maxRow?.revision_number ?? parent.revision_number) + 1, revision_version: "EBAY_LISTING_IMAGE_REVISION_V1", status: "READY_FOR_PREPARE", attempt: 1, idempotency_key_hash: fingerprint, strategy_version: "VISUAL_STRATEGY_V3", revision_contract: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1", parent_revision_id: parentRevisionId, revision_fingerprint: fingerprint, source_pack_version: sourcePackVersion, main_source_id: String(mains[0].sourceImageId), main_source_hash: String(mains[0].sha256), side_source_id: String(sides[0].sourceImageId), side_source_hash: String(sides[0].sha256), product_dossier_hash: recomputedDossierHash, market_visual_brief_hash: briefHash, authorized_source_count: 2, openai_calls: 0, ebay_writes: 0, production_changed: false })
       if (createError) throw createError
       return NextResponse.json({ success: true, revisionId, revisionFingerprint: fingerprint, reused: false })
     }
