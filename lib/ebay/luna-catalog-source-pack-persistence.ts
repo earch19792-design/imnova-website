@@ -53,7 +53,7 @@ export async function persistAuthorizedCatalogSourcePack(input: {
   candidateId: string
   marketRadarProductId: string
   supplierVariantId: string
-  factPackageHash: string
+  factPackageHash?: string
   pack: AuthorizedCatalogSourcePack
   sourcePackVersion?: string
   policyVersion?: string
@@ -114,6 +114,9 @@ export async function persistAuthorizedCatalogSourcePack(input: {
         enhancedStoragePath,
       })
     }
+    const dossierFields = input.factPackageHash
+      ? { authoritative_fact_package_hash: input.factPackageHash }
+      : {}
     const { error } = await input.supabase
       .from("luna_catalog_authorized_source_packs")
       .insert({
@@ -126,7 +129,7 @@ export async function persistAuthorizedCatalogSourcePack(input: {
         supplier_product_id: input.pack.productId,
         supplier_variant_id: input.supplierVariantId,
         product_identity_hash: input.pack.productIdentityHash,
-        authoritative_fact_package_hash: input.factPackageHash,
+        ...dossierFields,
         product_url: input.pack.productUrl,
         source_assets: persistedAssets,
         source_asset_count: persistedAssets.length,

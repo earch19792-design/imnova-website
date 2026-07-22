@@ -516,7 +516,6 @@ export async function POST(req: Request) {
       if (!body.visualConfirmation || !suppliedPreview || !Number.isFinite(suppliedExpiry) || suppliedExpiry < Date.now() || suppliedPreview !== previewToken(parentRevisionId, suppliedExpiry, assets.map((a) => a.sha256))) {
         return NextResponse.json({ success: false, error: "PROTECTED_SOURCE_PREVIEW_INVALID", preview, sourcePackCreated: false }, { status: 409 })
       }
-      if (!parent.product_dossier_hash) return NextResponse.json({ success: false, error: "PRODUCT_DOSSIER_REQUIRED", preview, sourcePackCreated: false }, { status: 422 })
       const sourcePack = {
         productId: supplierProductId,
         productIdentityHash: `sha256:${createHash("sha256").update(`${supplierProductId}:${supplierVariantId}`).digest("hex")}`,
@@ -535,7 +534,7 @@ export async function POST(req: Request) {
       const persisted = await persistAuthorizedCatalogSourcePack({
         supabase, accountKey, actorId: actor, listingPackageId: parent.listing_package_id,
         candidateId: parent.candidate_id, marketRadarProductId: opportunity.market_radar_product_id,
-        supplierVariantId, factPackageHash: parent.product_dossier_hash,
+        supplierVariantId, factPackageHash: parent.product_dossier_hash || undefined,
         pack: sourcePack,
         sourcePackVersion: `PROTECTED_SNAPSHOT_${assets.map((a) => a.sha256).sort().join("").slice(0, 16)}`,
         policyVersion: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1",
@@ -552,6 +551,7 @@ export async function POST(req: Request) {
       if (parent.strategy_version !== "VISUAL_STRATEGY_V2" || parent.revision_contract !== "LEGACY_VISUAL_STRATEGY_V2") return NextResponse.json({ success: false, error: "PARENT_REVISION_STRATEGY_INVALID" }, { status: 409 })
       const { data: pack } = await supabase.from("luna_catalog_authorized_source_packs").select("id,source_pack_hash,resolver_version,source_assets,authoritative_fact_package_hash").eq("marketplace_account_key", accountKey).eq("listing_package_id", parent.listing_package_id).order("created_at", { ascending: false }).limit(1).maybeSingle()
       const assets = Array.isArray(pack?.source_assets) ? pack.source_assets as Array<Record<string, unknown>> : []
+      if (!pack?.authoritative_fact_package_hash) return NextResponse.json({ success: false, error: "PRODUCT_DOSSIER_REQUIRED", attemptRows: 0, jobRows: 0 }, { status: 422 })
       const mains = assets.filter((asset) => asset.sourceImageId === "MAIN" && asset.sourceAngle === "FRONT" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
       const sides = assets.filter((asset) => asset.sourceImageId === "SIDE" && asset.sourceAngle === "SIDE" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
       if (!pack || mains.length !== 1 || sides.length !== 1) return NextResponse.json({ success: false, error: "V3_SOURCE_PACK_INVALID", attemptRows: 0, jobRows: 0 }, { status: 422 })
