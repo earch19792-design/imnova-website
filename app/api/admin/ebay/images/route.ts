@@ -821,6 +821,20 @@ export async function POST(req: Request) {
         return NextResponse.json({ success: false,
           error: "REFERENCE_GUIDED_VISUAL_PREVIEW_NOT_FOUND" }, { status: 404 })
       }
+      if (assetOrdinal === 2 && decision === "APPROVED") {
+        const approved = await supabase.rpc(
+          "approve_ebay_reference_guided_phase_a_position_2", {
+            p_attempt_id: attemptId,
+            p_output_sha256: previewSha256,
+            p_reason: reason,
+          })
+        if (approved.error || !approved.data) {
+          throw new Error("REFERENCE_GUIDED_POSITION_2_APPROVAL_FAILED")
+        }
+        return NextResponse.json({ success: true, review: approved.data,
+          safety: { commercialFieldsUpdated: false, providerCalls: 2,
+            ebayWrites: 0, productionChanged: false } })
+      }
       const { data: prior, error: priorError } = await supabase
         .from("ebay_reference_guided_asset_review_events")
         .select("id,asset_ordinal,asset_role,preview_sha256,decision,reason,created_at")
