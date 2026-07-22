@@ -1,7 +1,7 @@
 export const runtime = "nodejs"
 export const maxDuration = 300
 
-import { createHash } from "node:crypto"
+import { createHash, createHmac } from "node:crypto"
 import { NextResponse } from "next/server"
 import sharp from "sharp"
 
@@ -53,6 +53,11 @@ const OUTPUT_BUCKET = "ebay-listing-images"
 const SOURCE_BUCKET = EBAY_IMAGE_SOURCE_BUCKET
 const STAGING_BUCKET = EBAY_IMAGE_STAGING_BUCKET
 const MAX_OUTPUT_BYTES = 12 * 1024 * 1024
+const PREVIEW_SECRET = process.env.SELLER_OS_PREVIEW_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || "staging-preview-secret"
+function previewToken(parentRevisionId: string, expiresAt: number, hashes: string[]) {
+  const body = `${parentRevisionId}.${expiresAt}.${hashes.sort().join(",")}`
+  return `${expiresAt}.${createHmac("sha256", PREVIEW_SECRET).update(body).digest("hex")}`
+}
 
 type JsonRecord = Record<string, unknown>
 
@@ -333,6 +338,20 @@ export async function GET(req: Request) {
       )
     }
     const url = new URL(req.url)
+    const protectedParentId = uuid(url.searchParams.get("protectedSourcePreview"))
+    if (protectedParentId) {
+      const { data: parent } = await getSupabaseAdminClient().from("ebay_same_day_pilot_image_revisions").select("listing_package_id,candidate_id").eq("id", protectedParentId).maybeSingle()
+      if (!parent) return NextResponse.json({ success: false, error: "PARENT_REVISION_NOT_FOUND" }, { status: 404 })
+      const { data: candidate } = await getSupabaseAdminClient().from("ebay_same_day_pilot_candidates").select("opportunity_id,supplier_sku,supplier_variant_id").eq("id", parent.candidate_id).maybeSingle()
+      const { data: opportunity } = candidate?.opportunity_id ? await getSupabaseAdminClient().from("ebay_luna_opportunity_queue").select("supplier_product_id,supplier_variant_id").eq("id", candidate.opportunity_id).maybeSingle() : { data: null }
+      const definitions = await loadAuthorizedCatalogNativeMedia({ supabase: getSupabaseAdminClient(), accountKey, actorId: validation.userId, listingPackageId: parent.listing_package_id, candidateId: parent.candidate_id, supplierProductId: text(opportunity?.supplier_product_id || candidate?.supplier_sku, 40), supplierVariantId: text(opportunity?.supplier_variant_id || candidate?.supplier_variant_id, 40) })
+      const assets = await resolveProtectedAuthorizedCatalogNativeMedia({ definitions })
+      const expiresAt = Date.now() + 5 * 60 * 1000
+      const previewSetId = previewToken(protectedParentId, expiresAt, assets.map((a) => a.sha256))
+      const response = NextResponse.json({ success: true, previewSetId, expiresAt, images: assets.map((asset) => ({ sourceImageId: asset.sourceImageId, sourceAngle: asset.sourceAngle, width: asset.nativeWidth, height: asset.nativeHeight, sha256: asset.sha256, dataUrl: `data:image/jpeg;base64,${asset.nativeBuffer.toString("base64")}` })) })
+      response.headers.set("Cache-Control", "no-store")
+      return response
+    }
     if (url.searchParams.get("activeRevision") === "1") {
       const candidateKey = text(url.searchParams.get("candidateKey"), 300)
       if (!candidateKey) return NextResponse.json({ success: false, error: "CANDIDATE_KEY_REQUIRED" }, { status: 400 })
@@ -491,6 +510,11 @@ export async function POST(req: Request) {
       const preview = assets.map((asset) => ({ sourceImageId: asset.sourceImageId, sourceAngle: asset.sourceAngle, width: asset.nativeWidth, height: asset.nativeHeight, sha256: asset.sha256, historicalSha256: definitions.find((d) => d.sourceImageId === asset.sourceImageId)?.expectedSha256 ?? null, changed: asset.sourceImageId === "SIDE" && asset.sha256 !== definitions.find((d) => d.sourceImageId === asset.sourceImageId)?.expectedSha256 }))
       if (body.confirm !== true) {
         return NextResponse.json({ success: true, preview, sideChanged: preview.some((item) => item.sourceImageId === "SIDE" && item.changed), protectedSnapshotExecuted: false, requiresConfirmation: true, productDossierFound: Boolean(parent.product_dossier_hash), missingDossier: parent.product_dossier_hash ? [] : ["product_dossier_hash"] })
+      }
+      const suppliedPreview = text(body.previewSetId, 200)
+      const suppliedExpiry = Number(suppliedPreview.split(".")[0])
+      if (!body.visualConfirmation || !suppliedPreview || !Number.isFinite(suppliedExpiry) || suppliedExpiry < Date.now() || suppliedPreview !== previewToken(parentRevisionId, suppliedExpiry, assets.map((a) => a.sha256))) {
+        return NextResponse.json({ success: false, error: "PROTECTED_SOURCE_PREVIEW_INVALID", preview, sourcePackCreated: false }, { status: 409 })
       }
       if (!parent.product_dossier_hash) return NextResponse.json({ success: false, error: "PRODUCT_DOSSIER_REQUIRED", preview, sourcePackCreated: false }, { status: 422 })
       const sourcePack = {
