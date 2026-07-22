@@ -63,7 +63,7 @@ function strings(value: unknown) {
     : []
 }
 
-function exactSixHttpsUrls(value: unknown) {
+function exactSevenHttpsUrls(value: unknown) {
   if (!Array.isArray(value)) return []
   const urls = value.map((entry) => text(entry)).filter((entry) => {
     try {
@@ -72,7 +72,7 @@ function exactSixHttpsUrls(value: unknown) {
       return false
     }
   })
-  return urls.length === 6 && new Set(urls).size === 6 ? urls : []
+  return urls.length === 7 && new Set(urls).size === 7 ? urls : []
 }
 
 function latestIso(...values: unknown[]) {
@@ -113,11 +113,11 @@ function economicsOverrides(value: JsonRecord) {
 
 function validatedManifest(packageData: JsonRecord, imageUrls: string[]) {
   if (!Array.isArray(packageData.imageAssetManifest)
-    || packageData.imageAssetManifest.length !== 6) return false
+    || packageData.imageAssetManifest.length !== 7) return false
   const manifest = packageData.imageAssetManifest.map(record)
   const manifestUrls = manifest.map((asset) => text(asset.url)).filter(Boolean)
   const manifestAssetIds = manifest.map((asset) => uuid(asset.assetId)).filter(Boolean)
-  return new Set(manifestAssetIds).size === 6
+  return new Set(manifestAssetIds).size === 7
     && manifest.every((asset) =>
     uuid(asset.assetId)
     && asset.automaticQa === "PASSED"
@@ -199,16 +199,16 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
   const handoffSummary = record(candidate.manual_handoff_package)
   const handoffPackage = record(handoffSummary.package)
   const imageSummary = record(candidate.image_package_summary)
-  const packageImageUrls = exactSixHttpsUrls(packageData.imageUrls)
-  const approvedImageUrls = exactSixHttpsUrls(imageSummary.publicUrls)
-  const handoffImageUrls = exactSixHttpsUrls(record(handoffPackage.images).urls)
+  const packageImageUrls = exactSevenHttpsUrls(packageData.imageUrls)
+  const approvedImageUrls = exactSevenHttpsUrls(imageSummary.publicUrls)
+  const handoffImageUrls = exactSevenHttpsUrls(record(handoffPackage.images).urls)
   const recoverableMissingPackageImages =
     input.allowRecoverablePackageImages === true
     && Array.isArray(packageData.imageUrls)
     && packageData.imageUrls.length === 0
     && Array.isArray(packageData.imageAssetManifest)
     && packageData.imageAssetManifest.length === 0
-  const packageImagesReady = packageImageUrls.length === 6
+  const packageImagesReady = packageImageUrls.length === 7
     && validatedManifest(packageData, packageImageUrls)
     && packageImageUrls.every((url, index) =>
       approvedImageUrls[index] === url && handoffImageUrls[index] === url)
@@ -346,8 +346,8 @@ export function buildSameDayAuthorizedWorkspacePackage(input: {
   const currentAuthorization = record(currentDraft.imageAuthorization)
   const currentPackageWeightAndSize = record(currentDraft.packageWeightAndSize)
   const handoffPackageWeightAndSize = shippingConfiguration(handoff.shipping)
-  const currentImageUrls = exactSixHttpsUrls(current.imageUrls)
-  const handoffImageUrls = exactSixHttpsUrls(record(handoff.images).urls)
+  const currentImageUrls = exactSevenHttpsUrls(current.imageUrls)
+  const handoffImageUrls = exactSevenHttpsUrls(record(handoff.images).urls)
   const currentDimensions = record(currentPackageWeightAndSize.dimensions)
   const currentWeight = record(currentPackageWeightAndSize.weight)
   const currentMeasurementsProvided = [

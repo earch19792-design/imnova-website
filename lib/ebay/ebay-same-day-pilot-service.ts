@@ -5450,7 +5450,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           idempotencyKey: `${state.run.id}:${candidate.id}:FINALIZE_MANUAL_HANDOFF`,
           checkpoint: { controlId: reviewed.controlId,
             openAiCalls: record(candidate.image_package_summary).openAiCalls ?? 0,
-            approvedImages: 6, ebayWrites: 0 },
+            approvedImages: 7, ebayWrites: 0 },
           maxAttempts: 4,
         },
       })
@@ -5463,20 +5463,20 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       const approvedImageUrls = Array.isArray(imageSummary.publicUrls)
         ? imageSummary.publicUrls.map((value) => safeHttpsUrl(value)).filter(Boolean)
         : []
-      if (imageSummary.approved !== true || approvedImageUrls.length !== 6) {
-        throw new Error("SAME_DAY_PILOT_APPROVED_SIX_IMAGE_SET_REQUIRED")
+      if (imageSummary.approved !== true || approvedImageUrls.length !== 7) {
+        throw new Error("SAME_DAY_PILOT_APPROVED_SEVEN_IMAGE_SET_REQUIRED")
       }
       const openAiImageCalls = Number(imageSummary.openAiCalls) === 1 ? 1 : 0
       const readyPackage = currentSummary.status === "READY_FOR_MANUAL_PUBLICATION"
         ? basePackage
         : { ...basePackage,
-          images: { urls: approvedImageUrls, count: 6,
+          images: { urls: approvedImageUrls, count: 7,
             source: "LUNA_AUTHORIZED_DERIVATIVE_SET", competitorImages: 0,
             openAiBackgroundPlates: openAiImageCalls },
           safety: { ...record(basePackage.safety), openAiCalls: openAiImageCalls,
             ebayWrites: 0, competitorContentUsed: false },
           imageApproval: { approved: true, approvedAt: new Date().toISOString(),
-            controlId: imageSummary.controlId, approvedImageCount: 6 } }
+            controlId: imageSummary.controlId, approvedImageCount: 7 } }
       const packageHash = currentSummary.status === "READY_FOR_MANUAL_PUBLICATION"
         ? text(currentSummary.packageHash)
         : hash(readyPackage)
@@ -5502,7 +5502,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       await transition({ supabase: input.supabase, runId: state.run.id, candidateId: candidate.id,
         previousState: "BUILDING_SELLER_HUB_HANDOFF", nextState: "READY_FOR_MANUAL_PUBLICATION",
         reasonCode: "MANUAL_SELLER_HUB_HANDOFF_READY", triggeredBy: "SYSTEM",
-        checkpoint: { packageHash, openAiCalls: openAiImageCalls, approvedImages: 6, ebayWrites: 0 },
+        checkpoint: { packageHash, openAiCalls: openAiImageCalls, approvedImages: 7, ebayWrites: 0 },
         nextAutomaticAction: "Esperar la autorización final en Seller OS; después publicar una sola vez, verificar ACTIVE y registrar monitoreo.", nextHumanAction: "Abrir el workspace exacto, revisar el preview final y autorizar la publicación." })
       await promoteNextCandidateAfterPreparedPackage(
         input.supabase,

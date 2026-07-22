@@ -58,11 +58,13 @@ function objectiveForSlot(slot: EbayListingImageSlot) {
       "Place the unchanged authorized product in a neutral context that makes no performance claim.",
     PACKAGE_CONTENTS:
       "Show exactly what the verified offer contains and no additional product or accessory.",
+    SECONDARY_6:
+      "Resolve a distinct buyer objection using only verified evidence and the unchanged authorized product.",
   } satisfies Record<EbayListingImageSlot, string>)[slot]
 }
 
 /**
- * Builds the strict six-slot image-factory input from the current same-day
+ * Builds the seven-position V2 image-factory input from the current same-day
  * facts boundary. It intentionally does not read image URLs, product bytes,
  * marketplace observations or listing-generation output. The authorized
  * source image remains a separate, rights-checked input to the compositor.
@@ -146,6 +148,30 @@ export function buildCurrentSameDayImageFactoryInput(input: {
       ? `${netContentValue} ${netContentUnit}`.slice(0, 100)
       : netContentValue
     : null
+  const dimensions = factText(
+    "PRODUCT_UNIT", 160, "dimensions", "productDimensions", "itemDimensions",
+  )
+  const capacity = factText(
+    "PRODUCT_UNIT", 100, "capacity", "volumeCapacity",
+  ) ?? (/\b(?:quart|qt|ounce|oz|liter|litre|ml|gallon)\b/i.test(size ?? "")
+    ? size
+    : null)
+  const weight = factText(
+    "PRODUCT_UNIT", 100, "weight", "itemWeight", "netWeight",
+  )
+  const material = factText(
+    "PRODUCT_UNIT", 120, "material", "materials", "constructionMaterial",
+  ) ?? (/\b(?:enamel(?:ed)?|stainless steel|aluminum|plastic|glass|ceramic|wood|silicone|cotton|leather)\b/i.exec(
+    normalizedProductName,
+  )?.[0] ?? null)
+  const verifiedUseCases = factsPackage.facts.filter((entry) =>
+    entry.scope === "PRODUCT_UNIT" &&
+    ["intendeduse", "usecase", "recommendeduse"].includes(
+      entry.key.toLocaleLowerCase("en-US"),
+    )).map((entry) => safeText(entry.value, 160)).filter(
+      (entry): entry is string => Boolean(entry),
+    ).slice(0, 10)
+  const authorizedImageCount = positiveInteger(images.count) ?? 1
 
   return validateListingImageFactoryInput({
     // The immutable authoritative package hash binds the exact unit, variant
@@ -167,7 +193,34 @@ export function buildCurrentSameDayImageFactoryInput(input: {
         "flavor",
       ),
       condition,
+      dimensions,
+      capacity,
+      weight,
+      material,
+      verifiedUseCases,
     },
+    authorizedSourceImageIds: [
+      "LUNA_AUTHORIZED_SOURCE_1",
+      "LUNA_AUTHORIZED_SOURCE_2",
+      "LUNA_AUTHORIZED_SOURCE_3",
+    ].slice(0, Math.min(3, authorizedImageCount)),
+    buyerQuestions: [
+      "What exactly will I receive?",
+      "Is this the exact product variant shown?",
+      ...(size || capacity || dimensions
+        ? ["Will the verified size or capacity fit my need?"]
+        : []),
+    ],
+    buyerObjections: [
+      "Offer quantity ambiguity",
+      "Product identity or variant ambiguity",
+      "Concern that environmental props are included",
+    ],
+    returnRiskSignals: [
+      "Wrong quantity expectation",
+      "Wrong size, capacity, color or variant expectation",
+      "Mistaking contextual props for package contents",
+    ],
     briefs: EBAY_LISTING_IMAGE_SLOTS.map((slot) => ({
       slot,
       objective: objectiveForSlot(slot),

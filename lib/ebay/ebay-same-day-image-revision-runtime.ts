@@ -72,10 +72,17 @@ function candidatePath(candidateKey: string) {
   return sha256(candidateKey).slice(0, 24)
 }
 
-function exactSixIds(value: unknown) {
+function exactSevenIds(value: unknown) {
   if (!Array.isArray(value)) return []
   const ids = value.map(uuid).filter(Boolean)
-  return ids.length === 6 && new Set(ids).size === 6 ? ids : []
+  return ids.length === 7 && new Set(ids).size === 7 ? ids : []
+}
+
+function historicalBaseImageIds(value: unknown) {
+  if (!Array.isArray(value)) return []
+  const ids = value.map(uuid).filter(Boolean)
+  return (ids.length === 6 || ids.length === 7) &&
+    new Set(ids).size === ids.length ? ids : []
 }
 
 async function cleanupObjects(
@@ -112,7 +119,7 @@ async function loadBaseContext(input: {
   const handoffId = uuid(base.handoff_id)
   const listingPackageId = uuid(base.listing_package_id)
   if (!candidateId || !handoffId || !listingPackageId ||
-    exactSixIds(base.asset_ids).length !== 6) {
+    historicalBaseImageIds(base.asset_ids).length < 6) {
     throw new Error("SAME_DAY_IMAGE_REVISION_BASE_INVALID")
   }
   const [candidateRead, handoffRead, packageRead] = await Promise.all([
@@ -241,7 +248,7 @@ export async function getSameDayImageRevision(input: {
     .maybeSingle()
   if (error || !data) throw new Error("SAME_DAY_IMAGE_REVISION_NOT_FOUND")
   const revision = record(data)
-  const assetIds = exactSixIds(revision.asset_ids)
+  const assetIds = exactSevenIds(revision.asset_ids)
   if (!assetIds.length) return { revision, assets: [] }
   const { data: assetData, error: assetError } = await input.supabase
     .from("ebay_listing_image_assets")
@@ -250,7 +257,7 @@ export async function getSameDayImageRevision(input: {
     .eq("created_by", input.actorId)
     .eq("listing_package_id", revision.listing_package_id)
     .in("id", assetIds)
-  if (assetError || assetData?.length !== 6) {
+  if (assetError || assetData?.length !== 7) {
     throw new Error("SAME_DAY_IMAGE_REVISION_ASSETS_MISSING")
   }
   const byId = new Map(assetData.map((asset) => [asset.id, asset]))
@@ -278,6 +285,7 @@ export async function getSameDayImageRevision(input: {
       slot: text(entry.slot, 80),
       layoutId: text(entry.layoutId, 120),
       outputSha256: asset.output_sha256,
+      automaticStatus: text(record(asset.qa_result).automaticStatus, 40),
       reusedFromHistory: entry.reused === true,
       previewUrl: previewUrl || null,
       previewExpiresInSeconds: asset.status === "pending_review" ? 300 : null,
@@ -416,17 +424,17 @@ export async function generateAndPersistSameDayImageRevision(input: {
         record(asset.transformation).textRendererVersion ===
           EBAY_IMAGE_TEXT_RENDERER_VERSION &&
         record(asset.qa).textGlyphsValidated === true)
-    if (generated.transientAssets.length !== 6
-      || new Set(generatedSlots).size !== 6
+    if (generated.transientAssets.length !== 7
+      || new Set(generatedSlots).size !== 7
       || EBAY_LISTING_IMAGE_SLOTS.some((slot) => !generatedSlots.includes(slot))
       || generatedLayouts.some((layout) => !layout)
-      || new Set(generatedLayouts).size !== 6
+      || new Set(generatedLayouts).size !== 7
       || generatedHashes.some((hash) => !/^[0-9a-f]{64}$/.test(hash))
-      || new Set(generatedHashes).size !== 6
+      || new Set(generatedHashes).size !== 7
       || generatedContracts.some((contract) =>
         contract !== EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION)
       || !generatedTextEvidence) {
-      throw new Error("SAME_DAY_IMAGE_REVISION_EXACT_SIX_INVALID")
+      throw new Error("SAME_DAY_IMAGE_REVISION_EXACT_SEVEN_INVALID")
     }
     const roleBySlot: Record<string, string> = {
       MAIN_WHITE_BACKGROUND: "main",
@@ -435,6 +443,7 @@ export async function generateAndPersistSameDayImageRevision(input: {
       SIZE_AND_CONTENT: "label",
       USE_CONTEXT: "lifestyle",
       PACKAGE_CONTENTS: "packaging",
+      SECONDARY_6: "detail",
     }
     const requestedAssets: JsonRecord[] = []
     const uploadedById = new Map<string, Array<{ bucket: string; path: string }>>()
@@ -509,7 +518,7 @@ export async function generateAndPersistSameDayImageRevision(input: {
     )
     const saved = (Array.isArray(savedData) ? savedData : savedData ? [savedData] : [])
       .map(record)
-    if (savedError || saved.length !== 6) {
+    if (savedError || saved.length !== 7) {
       throw new Error(databaseErrorCode(
         savedError,
         "SAME_DAY_IMAGE_REVISION_ASSET_SAVE_FAILED",
@@ -548,10 +557,10 @@ export async function generateAndPersistSameDayImageRevision(input: {
         reused,
       })
     }
-    if (assetIds.length !== 6 || new Set(assetIds).size !== 6 ||
+    if (assetIds.length !== 7 || new Set(assetIds).size !== 7 ||
       EBAY_LISTING_IMAGE_SLOTS.some((slot) =>
         !manifest.some((entry) => entry.slot === slot))) {
-      throw new Error("SAME_DAY_IMAGE_REVISION_EXACT_SIX_INVALID")
+      throw new Error("SAME_DAY_IMAGE_REVISION_EXACT_SEVEN_INVALID")
     }
     const { data: completion, error: completionError } = await input.supabase.rpc(
       "complete_ebay_same_day_image_revision",
@@ -640,7 +649,13 @@ async function verifiedPublication(input: {
     if (!assetId || !publicUrl.startsWith("https://") || !publishedPath) {
       throw new Error("SAME_DAY_IMAGE_REVISION_APPROVED_ASSET_INVALID")
     }
-    return { asset_id: assetId, public_url: publicUrl, published_storage_path: publishedPath }
+    return {
+      asset_id: assetId,
+      public_url: publicUrl,
+      published_storage_path: publishedPath,
+      createdByCurrentAttempt: false,
+      sha256: text(input.asset.output_sha256, 64),
+    }
   }
   const stagingPath = text(input.asset.output_storage_path, 1_000)
   if (!assetId || !stagingPath) {
@@ -659,6 +674,7 @@ async function verifiedPublication(input: {
     const publishedPath = `${input.actorId}/${candidatePath(input.candidateKey)}/${assetId}.jpg`
     const uploaded = await input.supabase.storage.from(OUTPUT_BUCKET)
       .upload(publishedPath, bytes, { contentType: "image/jpeg", upsert: false })
+    let createdByCurrentAttempt = !uploaded.error
     if (uploaded.error) {
       const existing = await input.supabase.storage.from(OUTPUT_BUCKET)
         .download(publishedPath)
@@ -673,10 +689,17 @@ async function verifiedPublication(input: {
       } finally {
         existingBytes.fill(0)
       }
+      createdByCurrentAttempt = false
     }
     const publicUrl = input.supabase.storage.from(OUTPUT_BUCKET)
       .getPublicUrl(publishedPath).data.publicUrl
-    return { asset_id: assetId, public_url: publicUrl, published_storage_path: publishedPath }
+    return {
+      asset_id: assetId,
+      public_url: publicUrl,
+      published_storage_path: publishedPath,
+      createdByCurrentAttempt,
+      sha256: text(input.asset.output_sha256, 64),
+    }
   } finally {
     bytes.fill(0)
   }
@@ -696,7 +719,7 @@ export async function reviewSameDayImageRevision(input: {
   }
   const current = await getSameDayImageRevision({ ...input, actorId, revisionId })
   const revision = current.revision
-  const assetIds = exactSixIds(revision.asset_ids)
+  const assetIds = exactSevenIds(revision.asset_ids)
   const candidateId = uuid(revision.candidate_id)
   if (!assetIds.length || !candidateId) {
     throw new Error("SAME_DAY_IMAGE_REVISION_REVIEW_SET_INVALID")
@@ -715,21 +738,44 @@ export async function reviewSameDayImageRevision(input: {
     .from("ebay_listing_image_assets").select("*")
     .eq("account_key", input.accountKey).eq("created_by", actorId)
     .eq("listing_package_id", revision.listing_package_id).in("id", assetIds)
-  if (assetError || assetData?.length !== 6) {
+  if (assetError || assetData?.length !== 7) {
     throw new Error("SAME_DAY_IMAGE_REVISION_ASSETS_MISSING")
   }
   const byId = new Map(assetData.map((asset) => [asset.id, record(asset)]))
   const ordered = assetIds.map((id) => byId.get(id)).filter(Boolean) as JsonRecord[]
+  if (ordered.some((asset) =>
+    text(record(asset.qa_result).automaticStatus, 40) !== "PASSED")) {
+    throw new Error("SAME_DAY_IMAGE_SET_QA_NOT_PASSED")
+  }
   const pendingAssets = ordered.filter((asset) => asset.status === "pending_review")
   let publicationManifest: JsonRecord[] = []
   if (input.decision === "APPROVE") {
-    publicationManifest = await Promise.all(ordered.map((asset) =>
-      verifiedPublication({
-        supabase: input.supabase,
-        actorId,
-        candidateKey,
-        asset,
-      })))
+    try {
+      for (const asset of ordered) {
+        publicationManifest.push(await verifiedPublication({
+          supabase: input.supabase,
+          actorId,
+          candidateKey,
+          asset,
+        }))
+      }
+    } catch (error) {
+      const createdPaths = publicationManifest.filter((entry) =>
+        entry.createdByCurrentAttempt === true).map((entry) =>
+        text(entry.published_storage_path, 1_000)).filter(Boolean)
+      if (createdPaths.length) {
+        const cleanup = await input.supabase.storage.from(OUTPUT_BUCKET)
+          .remove(createdPaths)
+        if (cleanup.error) {
+          console.error("PUBLIC_STORAGE_COMPENSATION_FAILED", {
+            revisionId,
+            createdObjectCount: createdPaths.length,
+          })
+          throw new Error("PUBLIC_STORAGE_COMPENSATION_FAILED")
+        }
+      }
+      throw error
+    }
   }
   const { data: reviewData, error: reviewError } = await input.supabase.rpc(
     "review_ebay_same_day_image_revision",
@@ -742,10 +788,26 @@ export async function reviewSameDayImageRevision(input: {
       p_publication_manifest: publicationManifest,
     },
   )
-  if (reviewError || !reviewData) throw new Error(databaseErrorCode(
-    reviewError,
-    "SAME_DAY_IMAGE_REVISION_REVIEW_FAILED",
-  ))
+  if (reviewError || !reviewData) {
+    const createdPaths = publicationManifest.filter((entry) =>
+      entry.createdByCurrentAttempt === true).map((entry) =>
+      text(entry.published_storage_path, 1_000)).filter(Boolean)
+    if (createdPaths.length) {
+      const cleanup = await input.supabase.storage.from(OUTPUT_BUCKET)
+        .remove(createdPaths)
+      if (cleanup.error) {
+        console.error("PUBLIC_STORAGE_COMPENSATION_FAILED", {
+          revisionId,
+          createdObjectCount: createdPaths.length,
+        })
+        throw new Error("PUBLIC_STORAGE_COMPENSATION_FAILED")
+      }
+    }
+    throw new Error(databaseErrorCode(
+      reviewError,
+      "SAME_DAY_IMAGE_REVISION_REVIEW_FAILED",
+    ))
+  }
   await cleanupObjects(input.supabase, pendingAssets.flatMap((asset) => [
     { bucket: EBAY_IMAGE_STAGING_BUCKET, path: text(asset.output_storage_path, 1_000) },
     { bucket: EBAY_IMAGE_SOURCE_BUCKET, path: text(asset.source_storage_path, 1_000) },

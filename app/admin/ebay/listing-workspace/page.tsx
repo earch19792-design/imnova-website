@@ -258,6 +258,7 @@ type ImageRevisionPayload = {
     slot: string
     layoutId: string
     outputSha256: string
+    automaticStatus: string
     reusedFromHistory: boolean
     previewUrl: string | null
     previewExpiresInSeconds: number | null
@@ -490,6 +491,16 @@ function validUuid(value: unknown) {
 
 function humanImageError(error: unknown) {
   const code = error instanceof Error ? error.message : ""
+  if (code.startsWith("NEEDS_ADDITIONAL_SOURCE_IMAGE:")) {
+    const slot = code.slice("NEEDS_ADDITIONAL_SOURCE_IMAGE:".length) ||
+      "DESCONOCIDA"
+    return `Falta una fotografía autorizada de Luna Portex para la posición ${slot}. Seller OS no inventará ese ángulo, detalle u oclusión.`
+  }
+  if (code.startsWith("NEEDS_VERIFIED_PRODUCT_FACTS:")) {
+    const field = code.slice("NEEDS_VERIFIED_PRODUCT_FACTS:".length) ||
+      "DESCONOCIDO"
+    return `Falta evidencia verificada para ${field}. Seller OS detuvo la generación antes de llamar al proveedor de imágenes.`
+  }
   const messages: Record<string, string> = {
     EBAY_IMAGE_BACKGROUND_REQUIRES_MANUAL_REMOVAL:
       "El fondo no es suficientemente claro para una normalización segura. Usa una toma con fondo blanco o la herramienta de fondo de eBay.",
@@ -505,8 +516,10 @@ function humanImageError(error: unknown) {
       "Confirma que conservas la foto original o el permiso/licencia por escrito.",
     SAME_DAY_IMAGE_SET_QA_NOT_PASSED:
       "El conjunto está bloqueado: todas las imágenes deben tener QA automático PASSED.",
+    SAME_DAY_IMAGE_SOURCE_VISUAL_POLICY_NOT_PASSED:
+      "El conjunto está bloqueado: el producto debe conservar exclusivamente los píxeles de una fotografía autorizada de Luna Portex.",
     NEEDS_MORE_SOURCE_IMAGES:
-      "Se necesitan al menos dos fotografías autorizadas distintas para crear una galería profesional sin relleno.",
+      "Faltan fotografías autorizadas para una o más posiciones. Seller OS no generará vistas inventadas.",
     NEEDS_MORE_VERIFIED_FACTS:
       "No hay suficientes hechos comerciales verificados y no se generarán imágenes repetitivas de relleno.",
     PUBLIC_STORAGE_COMPENSATION_FAILED:
@@ -975,7 +988,7 @@ export default function EbayListingWorkspacePage() {
     .sort((left, right) => left.position - right.position), [imageAssets])
   const approvedBaseImageControlId = useMemo(() => {
     const controls = new Map<string, Set<string>>()
-    for (const asset of approvedImageAssets) {
+    for (const asset of imageAssets.filter((entry) => entry.status === "approved")) {
       const controlId = validUuid(asset.transformation?.sameDayImageControlId)
       const slot = String(asset.transformation?.slot ?? "").trim()
       if (!controlId || !slot) continue
@@ -990,15 +1003,21 @@ export default function EbayListingWorkspacePage() {
       "SIZE_AND_CONTENT",
       "USE_CONTEXT",
       "PACKAGE_CONTENTS",
+      "SECONDARY_6",
     ]
+    const legacySlots = exactSlots.slice(0, 6)
     return [...controls].find(([, slots]) =>
-      exactSlots.every((slot) => slots.has(slot)) && slots.size === 6
+      (exactSlots.every((slot) => slots.has(slot)) && slots.size === 7) ||
+      (legacySlots.every((slot) => slots.has(slot)) && slots.size === 6)
     )?.[0] ?? ""
-  }, [approvedImageAssets])
+  }, [imageAssets])
   const imageRevisionId = validUuid(imageRevision?.revision.id)
   const imageRevisionFailed = ["FAILED_RETRYABLE", "FAILED_FINAL"].includes(
     String(imageRevision?.revision.status ?? ""),
   )
+  const imageRevisionAllPassed = Boolean(imageRevision &&
+    imageRevision.assets.length === 7 && imageRevision.assets.every((asset) =>
+      asset.automaticStatus === "PASSED"))
   const requiredTaxonomyAspects = useMemo(() => new Set(
     draftState.taxonomy?.requiredAspects.map((aspect) => aspect.name) ?? [],
   ), [draftState.taxonomy])
@@ -1224,19 +1243,20 @@ export default function EbayListingWorkspacePage() {
         "SIZE_AND_CONTENT",
         "USE_CONTEXT",
         "PACKAGE_CONTENTS",
+        "SECONDARY_6",
       ]
       const assetIds = assets.map((asset) => String(asset.id ?? ""))
       const outputHashes = assets.map((asset) => String(asset.outputSha256 ?? ""))
       const layoutIds = assets.map((asset) => String(asset.layoutId ?? ""))
       const slots = assets.map((asset) => String(asset.slot ?? ""))
       const previewUrls = assets.map((asset) => httpsImageUrl(asset.previewUrl) ?? "")
-      const exactSixReady = ["PENDING_REVIEW", "APPROVED"].includes(revisionStatus)
-        && assets.length === 6
+      const exactSevenReady = ["PENDING_REVIEW", "APPROVED"].includes(revisionStatus)
+        && assets.length === 7
         && [assetIds, outputHashes, layoutIds, slots, previewUrls].every((values) =>
-          values.every(Boolean) && new Set(values).size === 6)
+          values.every(Boolean) && new Set(values).size === 7)
         && requiredSlots.every((slot) => slots.includes(slot))
-      if (!exactSixReady) {
-        throw new Error("SAME_DAY_IMAGE_REVISION_EXACT_SIX_INVALID")
+      if (!exactSevenReady) {
+        throw new Error("SAME_DAY_IMAGE_REVISION_EXACT_SEVEN_INVALID")
       }
       setImageRevision({
         revision: payload.revision,
@@ -1244,7 +1264,7 @@ export default function EbayListingWorkspacePage() {
       })
       setMessage(revisionStatus === "APPROVED"
         ? "La revisión corregida ya estaba aprobada y sigue lista para el próximo preview. No se escribió en eBay."
-        : "Se prepararon seis imágenes nuevas. Compara las seis antes de aprobar o rechazar el conjunto completo.")
+        : "Se prepararon siete imágenes nuevas. Compara la principal y las seis secundarias antes de decidir el conjunto completo.")
     } catch (requestError) {
       setError(getMobileReviewRequestError(
         requestError,
@@ -1259,10 +1279,14 @@ export default function EbayListingWorkspacePage() {
   async function decideImageRevision(decision: "APPROVE" | "REJECT") {
     const revisionId = validUuid(imageRevision?.revision.id)
     if (!revisionId || !imageRevisionConfirmed || imageRevisionBusy) return
+    if (decision === "APPROVE" && !imageRevisionAllPassed) {
+      setError("SAME_DAY_IMAGE_SET_QA_NOT_PASSED")
+      return
+    }
     setImageRevisionBusy(true)
     setError("")
     setMessage(decision === "APPROVE"
-      ? "Aprobando atómicamente las seis imágenes internas…"
+      ? "Aprobando atómicamente las siete imágenes internas…"
       : "Rechazando atómicamente la revisión interna…")
     try {
       const payload = await imageRequest({
@@ -1277,7 +1301,7 @@ export default function EbayListingWorkspacePage() {
           .map(httpsImageUrl)
           .filter((url): url is string => Boolean(url))
         : []
-      if (decision === "APPROVE" && approvedUrls.length === 6) {
+      if (decision === "APPROVE" && approvedUrls.length === 7) {
         setForm((current) => ({ ...current, imageUrls: approvedUrls }))
         setListingPackage((current) => current ? {
           ...current,
@@ -2046,21 +2070,21 @@ export default function EbayListingWorkspacePage() {
 
             <div className="mt-4 rounded-2xl border border-cyan-200/30 bg-[#071820] p-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-100/60">Corrección append-only</p><h3 className="mt-1 font-black">Revisión estratégica de seis imágenes</h3><p className="mt-1 text-xs leading-5 text-white/55">Motivo predeterminado: <strong>IMAGE_COMPOSITOR_DEFECT</strong>. El set aprobado anterior nunca se borra ni se desactiva.</p></div>
-                <span className={`rounded-full border px-2 py-1 text-[10px] font-black ${approvedBaseImageControlId ? "border-emerald-200/30 text-emerald-100" : "border-amber-200/30 text-amber-100"}`}>{approvedBaseImageControlId ? "CONTROL BASE APPROVED" : "SIN CONTROL BASE EXACT-SIX"}</span>
+                <div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-100/60">Corrección append-only</p><h3 className="mt-1 font-black">Revisión visual V2 de siete imágenes</h3><p className="mt-1 text-xs leading-5 text-white/55">Motivo predeterminado: <strong>IMAGE_COMPOSITOR_DEFECT</strong>. El set aprobado anterior nunca se borra ni se desactiva.</p></div>
+                <span className={`rounded-full border px-2 py-1 text-[10px] font-black ${approvedBaseImageControlId ? "border-emerald-200/30 text-emerald-100" : "border-amber-200/30 text-amber-100"}`}>{approvedBaseImageControlId ? "CONTROL BASE ENCONTRADO" : "SIN CONTROL BASE COMPATIBLE"}</span>
               </div>
-              <button type="button" disabled={!approvedBaseImageControlId || imageRevisionBusy} onClick={() => void generateImageRevision()} className="mt-3 min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">{imageRevisionBusy ? "Procesando las seis…" : imageRevisionFailed ? "Reintentar generación" : "Generar revisión corregida"}</button>
+              <button type="button" disabled={!approvedBaseImageControlId || imageRevisionBusy} onClick={() => void generateImageRevision()} className="mt-3 min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">{imageRevisionBusy ? "Procesando las siete…" : imageRevisionFailed ? "Reintentar generación" : "Generar revisión corregida"}</button>
               {imageRevisionId && <button type="button" disabled={imageRevisionBusy} onClick={() => void loadImageRevision(imageRevisionId)} className="mt-2 min-h-11 w-full rounded-xl border border-cyan-200/30 px-4 text-sm font-black text-cyan-50 disabled:opacity-40">Actualizar vista</button>}
-              {!approvedBaseImageControlId && <p className="mt-2 text-xs leading-5 text-amber-50">Esta acción aparece únicamente cuando el candidato conserva seis slots aprobados ligados al mismo control. El servidor vuelve a comprobar que el control esté APPROVED.</p>}
+              {!approvedBaseImageControlId && <p className="mt-2 text-xs leading-5 text-amber-50">Esta acción aparece cuando el candidato conserva un set histórico compatible de seis o siete slots ligado al mismo control. El servidor vuelve a comprobar que el control esté APPROVED.</p>}
 
               {imageRevision && <div className="mt-4 space-y-3">
-                <div className="flex items-center justify-between gap-3"><strong className="text-sm">Revisión {imageRevision.revision.revision_number} · {imageRevision.revision.status}</strong><span className="text-xs text-white/50">{imageRevision.assets.length}/6</span></div>
-                {imageRevisionFailed && <div role="alert" className="rounded-xl border border-rose-200/30 bg-rose-200/[0.06] p-3 text-xs leading-5 text-rose-50"><strong>{imageRevision.revision.status}</strong><code className="mt-1 block break-all">{imageRevision.revision.last_error_code ?? "SAME_DAY_IMAGE_REVISION_FAILED"}</code><span className="mt-1 block">{imageRevision.assets.length} imágenes nuevas. Las seis imágenes históricas no pertenecen a esta revisión y no se muestran aquí.</span></div>}
+                <div className="flex items-center justify-between gap-3"><strong className="text-sm">Revisión {imageRevision.revision.revision_number} · {imageRevision.revision.status}</strong><span className="text-xs text-white/50">{imageRevision.assets.length}/7</span></div>
+                {imageRevisionFailed && <div role="alert" className="rounded-xl border border-rose-200/30 bg-rose-200/[0.06] p-3 text-xs leading-5 text-rose-50"><strong>{imageRevision.revision.status}</strong><code className="mt-1 block break-all">{imageRevision.revision.last_error_code ?? "SAME_DAY_IMAGE_REVISION_FAILED"}</code><span className="mt-1 block">{imageRevision.assets.length} imágenes nuevas. El set histórico no pertenece a esta revisión y no se muestra aquí.</span></div>}
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  {imageRevision.assets.map((asset, index) => <figure key={asset.id} className="min-w-0 rounded-xl border border-white/10 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white">{asset.previewUrl ? <img src={asset.previewUrl} alt={`Revisión corregida ${index + 1}: ${asset.slot}`} className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center bg-black p-2 text-center text-xs text-white/50">Vista no disponible</div>}</div><figcaption className="mt-2 min-w-0"><strong className="block truncate text-[10px]">{index + 1}. {asset.slot}</strong><span className="mt-1 block truncate text-[9px] text-cyan-100/55">{asset.layoutId}</span>{asset.reusedFromHistory && <span className="mt-1 block text-[9px] text-emerald-100/70">Activo histórico reutilizado</span>}</figcaption></figure>)}
+                  {imageRevision.assets.map((asset, index) => <figure key={asset.id} className="min-w-0 rounded-xl border border-white/10 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white">{asset.previewUrl ? <img src={asset.previewUrl} alt={`Revisión corregida ${index + 1}: ${asset.slot}`} className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center bg-black p-2 text-center text-xs text-white/50">Vista no disponible</div>}</div><figcaption className="mt-2 min-w-0"><strong className="block truncate text-[10px]">{index + 1}. {asset.slot}</strong><span className="mt-1 block truncate text-[9px] text-cyan-100/55">{asset.layoutId}</span><span className={`mt-1 block text-[9px] ${asset.automaticStatus === "PASSED" ? "text-emerald-100" : "text-amber-100"}`}>QA {asset.automaticStatus || "AUSENTE"}</span>{asset.reusedFromHistory && <span className="mt-1 block text-[9px] text-emerald-100/70">Activo histórico reutilizado</span>}</figcaption></figure>)}
                 </div>
-                {imageRevision.assets.length !== 6 && <p className="rounded-xl border border-rose-200/25 p-2 text-xs text-rose-50">El conjunto no contiene exactamente seis vistas; aprobación bloqueada.</p>}
-                {imageRevision.revision.status === "PENDING_REVIEW" && <div className="space-y-2 rounded-xl border border-amber-200/25 bg-amber-200/[0.05] p-3"><label className="flex items-start gap-2 text-xs leading-5"><input type="checkbox" checked={imageRevisionConfirmed} onChange={(event) => setImageRevisionConfirmed(event.target.checked)} className="mt-1 size-4" /><span>Comparé las seis imágenes, sus productos, cantidades, textos, slots y layouts. Confirmo decidir el conjunto completo de forma atómica.</span></label><div className="grid grid-cols-2 gap-2"><button type="button" disabled={imageRevisionBusy || !imageRevisionConfirmed || imageRevision.assets.length !== 6} onClick={() => void decideImageRevision("REJECT")} className="min-h-11 rounded-xl border border-rose-200/35 text-xs font-black text-rose-50 disabled:opacity-40">Rechazar las 6</button><button type="button" disabled={imageRevisionBusy || !imageRevisionConfirmed || imageRevision.assets.length !== 6} onClick={() => void decideImageRevision("APPROVE")} className="min-h-11 rounded-xl bg-emerald-200 px-2 text-xs font-black text-black disabled:opacity-40">Aprobar las 6</button></div></div>}
+                {imageRevision.assets.length !== 7 && <p className="rounded-xl border border-rose-200/25 p-2 text-xs text-rose-50">El conjunto no contiene una principal y seis secundarias; aprobación bloqueada.</p>}
+                {imageRevision.revision.status === "PENDING_REVIEW" && <div className="space-y-2 rounded-xl border border-amber-200/25 bg-amber-200/[0.05] p-3">{!imageRevisionAllPassed && <p role="alert" className="text-xs leading-5 text-amber-50">Aprobación bloqueada: las siete imágenes deben tener QA automático PASSED. Aún puedes rechazar el conjunto.</p>}<label className="flex items-start gap-2 text-xs leading-5"><input type="checkbox" checked={imageRevisionConfirmed} onChange={(event) => setImageRevisionConfirmed(event.target.checked)} className="mt-1 size-4" /><span>Comparé la principal y las seis secundarias, su fidelidad, objetivos, fuentes y QA. Confirmo decidir el conjunto completo de forma atómica.</span></label><div className="grid grid-cols-2 gap-2"><button type="button" disabled={imageRevisionBusy || !imageRevisionConfirmed || imageRevision.assets.length !== 7} onClick={() => void decideImageRevision("REJECT")} className="min-h-11 rounded-xl border border-rose-200/35 text-xs font-black text-rose-50 disabled:opacity-40">Rechazar las 7</button><button type="button" disabled={imageRevisionBusy || !imageRevisionConfirmed || !imageRevisionAllPassed} onClick={() => void decideImageRevision("APPROVE")} className="min-h-11 rounded-xl bg-emerald-200 px-2 text-xs font-black text-black disabled:opacity-40">Aprobar las 7</button></div></div>}
                 {imageRevision.revision.status === "APPROVED" && <div className="space-y-3"><div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50"><strong>APPROVED y listo para el próximo preview.</strong> Esta decisión sólo cambió la preferencia interna del paquete. No actualizó ni publicó nada en eBay.</div><div className="rounded-xl border border-rose-200/25 bg-rose-200/[0.04] p-3"><p className="text-[10px] font-black uppercase tracking-[0.16em] text-rose-100/65">Acción eBay separada</p><h4 className="mt-1 text-sm font-black">Aplicar al listing ACTIVE verificado</h4><p className="mt-1 text-xs leading-5 text-white/55">Esta acción actualiza exclusivamente las seis imágenes. Nunca envía URLs desde el navegador ni modifica SKU, precio, cantidad, policies o promociones.</p><label className="mt-3 block"><span className="text-xs font-black">Item ID eBay verificado ACTIVE</span><input inputMode="numeric" value={activeRevisionItemId} onChange={(event) => setActiveRevisionItemId(event.target.value.replace(/\D/g, "").slice(0, 20))} placeholder="Item ID" className="mt-1 min-h-11 w-full rounded-xl border border-white/20 bg-black/30 px-3 font-mono text-sm" /></label>{verifiedActiveItemId ? activeRevisionItemId === verifiedActiveItemId ? <p className="mt-2 text-xs text-emerald-100">Coincide con el Item ID ACTIVE verificado por el sistema.</p> : <p className="mt-2 text-xs text-rose-100">El Item ID debe coincidir exactamente con {verifiedActiveItemId}; otro listing permanece bloqueado.</p> : <p className="mt-2 rounded-xl border border-amber-200/25 p-2 text-xs leading-5 text-amber-50">Todavía no existe una verificación ACTIVE asociada a este paquete. Publica y reconcilia el listing antes de aplicar la revisión.</p>}<label className="mt-3 block"><span className="text-xs font-black">Escribe exactamente: {activeRevisionExactPhrase}</span><input value={activeRevisionConfirmation} onChange={(event) => setActiveRevisionConfirmation(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-white/20 bg-black/30 px-3 text-sm" /></label><button type="button" disabled={activeRevisionBusy || !verifiedActiveItemId || activeRevisionItemId !== verifiedActiveItemId || activeRevisionConfirmation !== activeRevisionExactPhrase || activeRevisionApplied} onClick={() => void applyApprovedRevisionToActiveListing()} className="mt-3 min-h-12 w-full rounded-xl bg-rose-200 px-3 text-sm font-black text-black disabled:opacity-40">{activeRevisionBusy ? "Procesando una sola operación…" : activeRevisionOutcomeUnknown ? "Reconciliar sin repetir escritura" : activeRevisionApplied ? "6 imágenes aplicadas y verificadas" : "Aplicar 6 imágenes al listing ACTIVE"}</button>{activeRevisionApplication && <div className={`mt-3 rounded-xl border p-2 text-xs leading-5 ${activeRevisionOutcomeUnknown ? "border-amber-200/30 text-amber-50" : activeRevisionApplied ? "border-emerald-200/30 text-emerald-50" : "border-white/15 text-white/65"}`}><strong>Fase: {activeRevisionPhase || "PENDIENTE"}</strong>{typeof activeRevisionApplication.error === "string" && <span className="mt-1 block">{activeRevisionApplication.error}</span>}{activeRevisionOutcomeUnknown && <span className="mt-1 block">La reconciliación reutiliza Item ID, revision, control y clave originales.</span>}</div>}</div></div>}
                 {imageRevision.revision.status === "REJECTED" && <div className="rounded-xl border border-rose-200/25 p-3 text-xs leading-5 text-rose-50">Revisión rechazada y preservada. Usa “Generar revisión corregida” para abrir una nueva revisión append-only.</div>}
               </div>}

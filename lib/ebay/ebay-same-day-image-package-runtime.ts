@@ -72,10 +72,10 @@ function candidatePath(candidateKey: string) {
   return sha256(candidateKey).slice(0, 24)
 }
 
-function exactSixAssetIds(value: unknown) {
+function exactSevenAssetIds(value: unknown) {
   if (!Array.isArray(value)) return []
   const ids = [...new Set(value.map(uuid).filter(Boolean))]
-  return ids.length === 6 ? ids : []
+  return ids.length === 7 ? ids : []
 }
 
 
@@ -221,7 +221,7 @@ async function reusableCompletedSet(input: {
   listingPackageId: string
 }) {
   if (!["PENDING_REVIEW", "APPROVED"].includes(text(input.control.status))) return null
-  const assetIds = exactSixAssetIds(input.control.asset_ids)
+  const assetIds = exactSevenAssetIds(input.control.asset_ids)
   if (!assetIds.length) throw new Error("SAME_DAY_IMAGE_COMPLETED_SET_INVALID")
   const { data, error } = await input.supabase.from("ebay_listing_image_assets")
     .select("id,transformation,qa_result,status,position")
@@ -230,7 +230,7 @@ async function reusableCompletedSet(input: {
     .eq("listing_package_id", input.listingPackageId)
     .in("id", assetIds)
     .in("status", ["pending_review", "approved"])
-  if (error || data?.length !== 6) {
+  if (error || data?.length !== 7) {
     throw new Error("SAME_DAY_IMAGE_COMPLETED_SET_ASSETS_MISSING")
   }
   const slots = new Set(data.map((asset) => text(record(asset.transformation).slot)))
@@ -480,6 +480,7 @@ export async function generateAndPersistSameDayImagePackage(input: {
       SIZE_AND_CONTENT: "label",
       USE_CONTEXT: "lifestyle",
       PACKAGE_CONTENTS: "packaging",
+      SECONDARY_6: "detail",
     }
     const pendingAssets: JsonRecord[] = []
     for (const composition of generated.transientAssets) {
@@ -550,7 +551,7 @@ export async function generateAndPersistSameDayImagePackage(input: {
     const savedRows = (Array.isArray(saved) ? saved : saved ? [saved] : [])
       .map(record)
     persistedAssetIds.push(...savedRows.map((row) => uuid(row.id)).filter(Boolean))
-    if (saveError || persistedAssetIds.length !== 6) {
+    if (saveError || persistedAssetIds.length !== 7) {
       throw new Error(databaseErrorCode(
         saveError,
         "SAME_DAY_IMAGE_ASSET_SET_SAVE_FAILED",
@@ -674,7 +675,7 @@ export async function reviewSameDayImagePackage(input: {
   const summary = record(input.candidate.image_package_summary)
   const controlId = uuid(summary.controlId)
   const listingPackageId = uuid(summary.listingPackageId)
-  const assetIds = exactSixAssetIds(summary.assetIds)
+  const assetIds = exactSevenAssetIds(summary.assetIds)
   if (!actorId || !candidateId || !candidateKey || !controlId ||
     !listingPackageId || !assetIds.length) {
     throw new Error("SAME_DAY_IMAGE_REVIEW_SET_SCOPE_INVALID")
@@ -689,7 +690,7 @@ export async function reviewSameDayImagePackage(input: {
       ? ["pending_review", "rejected"]
       : ["pending_review", "approved"])
     .order("position", { ascending: true })
-  if (error || data?.length !== 6) throw new Error("SAME_DAY_IMAGE_REVIEW_SET_MISSING")
+  if (error || data?.length !== 7) throw new Error("SAME_DAY_IMAGE_REVIEW_SET_MISSING")
   const assets = data.map(record)
   const slots = new Set(assets.map((asset) => text(record(asset.transformation).slot)))
   if (EBAY_LISTING_IMAGE_SLOTS.some((slot) => !slots.has(slot))) {
@@ -798,7 +799,7 @@ export async function reviewSameDayImagePackage(input: {
   const urls = Array.isArray(result.publicUrls)
     ? result.publicUrls.map((value) => text(value, 2_000)).filter((value) => value.startsWith("https://"))
     : manifest.map((entry) => text(entry.public_url, 2_000)).filter((value) => value.startsWith("https://"))
-  if (input.decision === "APPROVE" && urls.length !== 6) {
+  if (input.decision === "APPROVE" && urls.length !== 7) {
     throw new Error("SAME_DAY_IMAGE_APPROVED_URL_SET_INVALID")
   }
   await Promise.all(assets.map(async (asset) => {

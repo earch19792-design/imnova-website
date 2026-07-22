@@ -143,6 +143,8 @@ async function imageReviewAssetsForPilot(
         ),
         foregroundMatteValidated: qa.foregroundMatteValidated === true,
         opaqueSourceFrameRemoved: qa.opaqueSourceFrameRemoved === true,
+        textPolicyPassed: qa.textPolicyPassed === true,
+        qaEvaluatorVersion: text(qa.qaEvaluatorVersion, 120),
         textSafeAreaVerified: qa.textSafeAreaVerified === true,
         textRendererVersion: text(
           transformation.textRendererVersion,

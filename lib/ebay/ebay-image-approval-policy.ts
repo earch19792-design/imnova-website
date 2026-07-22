@@ -11,7 +11,7 @@ function text(value: unknown, maximum: number) {
 }
 
 export function assertStoredSameDayImageSetQaPassed(assets: unknown) {
-  if (!Array.isArray(assets) || assets.length !== 6 || assets.some((asset) =>
+  if (!Array.isArray(assets) || assets.length !== 7 || assets.some((asset) =>
     record(record(asset).qa_result).automaticStatus !== "PASSED")) {
     throw new Error("SAME_DAY_IMAGE_SET_QA_NOT_PASSED")
   }

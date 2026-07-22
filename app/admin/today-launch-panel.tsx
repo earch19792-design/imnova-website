@@ -914,6 +914,7 @@ const IMAGE_REVIEW_SLOTS = [
   "SIZE_AND_CONTENT",
   "USE_CONTEXT",
   "PACKAGE_CONTENTS",
+  "SECONDARY_6",
 ] as const
 
 function normalizedImageReviewSet(value: unknown): Row[] {
@@ -925,7 +926,7 @@ function normalizedImageReviewSet(value: unknown): Row[] {
       Boolean(safeHttpsUrl(asset.outputPreviewUrl)))
     .map((asset): Row => ({ ...asset, outputPreviewUrl: safeHttpsUrl(asset.outputPreviewUrl) }))
     .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0))
-    .slice(0, 6)
+    .slice(0, 7)
 }
 
 function completeImageReviewSet(assets: Row[]) {
@@ -935,7 +936,7 @@ function completeImageReviewSet(assets: Row[]) {
       assets.filter((asset) => asset.slot === slot).length === 1) &&
     assets.every((asset) =>
       asset.compositorContractVersion ===
-        "EBAY_IMAGE_COMPOSITOR_FOREGROUND_V6_2026_07_21" &&
+        "EBAY_IMAGE_COMPOSITOR_FOREGROUND_V8_2026_07_22" &&
       Number(asset.width) === 1600 && Number(asset.height) === 1600))) return false
   const main = assets.find((asset) => asset.slot === "MAIN_WHITE_BACKGROUND")
   const generated = assets.filter((asset) => asset.generativeAiUsed === true)
@@ -950,18 +951,18 @@ function completeImageReviewSet(assets: Row[]) {
       ) &&
       asset.foregroundMatteValidated === true &&
       asset.opaqueSourceFrameRemoved === true &&
-      asset.textSafeAreaVerified === true &&
-      asset.textRendererVersion ===
-        "EBAY_IMAGE_TEXT_PANGO_FONTFILE_V2_2026_07_21" &&
-      asset.textGlyphsValidated === true)
-  const aiBoardSet = main?.generativeAiUsed !== true && generated.length === 5 &&
+      asset.textPolicyPassed === true &&
+      asset.automaticQaStatus === "PASSED" &&
+      asset.qaEvaluatorVersion === "SELLER_OS_EBAY_VISUAL_QA_V2")
+  const aiBoardSet = main?.generativeAiUsed !== true && generated.length === 6 &&
     generated.every((asset) =>
       asset.slot !== "MAIN_WHITE_BACKGROUND" &&
-      asset.backgroundPlateVersion === "EBAY_OPENAI_COMMERCIAL_SCENE_BOARD_V3" &&
+      asset.backgroundPlateVersion === "EBAY_OPENAI_COMMERCIAL_SCENE_BOARD_V4" &&
       asset.backgroundPlateQuality === "high") &&
     secondaryForegroundsValid
   const deterministicMultiSourceSet = generated.length === 0 &&
-    assets.every((asset) => asset.presentationMode === "AUTHORIZED_MULTI_SOURCE") &&
+    assets.every((asset) => ["AUTHORIZED_MULTI_SOURCE",
+      "SINGLE_SOURCE_INFORMATIONAL"].includes(String(asset.presentationMode))) &&
     secondaryForegroundsValid
   return aiBoardSet || deterministicMultiSourceSet
 }
@@ -974,6 +975,7 @@ function imageSlotLabel(value: unknown) {
     SIZE_AND_CONTENT: "Tamaño y contenido",
     USE_CONTEXT: "Contexto de uso",
     PACKAGE_CONTENTS: "Contenido del paquete",
+    SECONDARY_6: "Objetivo comercial adicional",
   } as Record<string, string>)[String(value)] ?? "Imagen del listing"
 }
 

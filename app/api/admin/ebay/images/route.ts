@@ -96,10 +96,10 @@ function imageRevisionResultState(value: unknown) {
   return {
     status,
     assetCount,
-    ready: ["PENDING_REVIEW", "APPROVED"].includes(status) && assetCount === 6,
+    ready: ["PENDING_REVIEW", "APPROVED"].includes(status) && assetCount === 7,
     error: failed
       ? text(revision.last_error_code, 120) || "SAME_DAY_IMAGE_REVISION_FAILED"
-      : assetCount === 6 ? null : "SAME_DAY_IMAGE_REVISION_EXACT_SIX_INVALID",
+      : assetCount === 7 ? null : "SAME_DAY_IMAGE_REVISION_EXACT_SEVEN_INVALID",
   }
 }
 
@@ -265,7 +265,21 @@ async function approvedGenerationForPackage(
   ) throw new Error("EBAY_IMAGE_PRODUCT_IDENTITY_MISMATCH")
   const output = record(generation.generation_output)
   const facts = record(output.factAssertions)
-  const briefs = Array.isArray(output.imageBriefs) ? output.imageBriefs : []
+  const legacyBriefs = Array.isArray(output.imageBriefs)
+    ? output.imageBriefs.map(record)
+    : []
+  const briefs = EBAY_LISTING_IMAGE_SLOTS.map((slot) => {
+    const existing = legacyBriefs.find((brief) => brief.slot === slot)
+    return existing ?? {
+      slot,
+      objective: slot === "MAIN_WHITE_BACKGROUND"
+        ? "Preserve the exact authorized Luna Portex product on pure white."
+        : "Execute the evidence-selected commercial objective without reconstructing the product.",
+      overlayText: null,
+      preserveOriginalPackage: true,
+      sourcePolicy: "AUTHORIZED_PRODUCT_IMAGE_ONLY",
+    }
+  })
   return {
     generation,
     factoryInput: {
@@ -280,6 +294,13 @@ async function approvedGenerationForPackage(
         scent: text(facts.scent, 100) || null,
         variant: text(facts.variant, 100) || null,
         condition: text(facts.condition, 100) || null,
+        dimensions: text(facts.dimensions, 160) || null,
+        capacity: text(facts.capacity, 100) || null,
+        weight: text(facts.weight, 100) || null,
+        material: text(facts.material, 120) || null,
+        verifiedUseCases: Array.isArray(facts.verifiedUseCases)
+          ? facts.verifiedUseCases.map((value) => text(value, 160)).filter(Boolean)
+          : [],
       },
       briefs,
     },
@@ -374,7 +395,7 @@ export async function GET(req: Request) {
         pendingOutputsPrivate: true,
         generativeAiEnabled:
           getListingImageFactoryConfiguration().aiGeneration === "READY",
-        sixImageComposition: true,
+        sevenImageVisualStrategyV2: true,
         listingImageFactory: getListingImageFactoryConfiguration(),
         reviewActions: ["APPROVE", "REGENERATE", "CORRECT", "REJECT"],
         output: "1600x1600 JPEG",
@@ -521,7 +542,7 @@ export async function POST(req: Request) {
           application,
           safety: {
             permittedMutation: "PICTURE_DETAILS_ONLY",
-            exactSixApprovedImages: application.imageCount === 6,
+            exactSevenApprovedImages: application.imageCount === 7,
             maxEbayListingWrites: 1,
             ebayListingWriteAttempts: application.ebayWriteAttemptCount,
             priceChanged: false,
@@ -591,8 +612,12 @@ export async function POST(req: Request) {
         sourceKind = "owned_upload"
       }
       const sourceMetadata = await sharp(sourceBuffer).metadata()
+      const validatedFactoryInput = validateListingImageFactoryInput(
+        approved.factoryInput,
+      )
       assertEbayImageEvidenceSufficiency({
-        facts: validateListingImageFactoryInput(approved.factoryInput).facts,
+        facts: validatedFactoryInput.facts,
+        briefs: validatedFactoryInput.briefs,
         sourceSha256s: [createHash("sha256").update(sourceBuffer).digest("hex")],
       })
       const aiRuntime = aiContextRequested ? openAiImageRuntime() : null
@@ -620,7 +645,7 @@ export async function POST(req: Request) {
             assets: existing,
             created: 0,
             reused: existing.length,
-            expected: 6,
+            expected: 7,
             status: "PENDING_HUMAN_REVIEW",
             sourcePolicy: "AUTHORIZED_PRODUCT_IMAGE_ONLY",
             openAiBackgroundPlates: 0,
@@ -696,7 +721,7 @@ export async function POST(req: Request) {
                   assets: existing,
                   created: 0,
                   reused: existing.length,
-                  expected: 6,
+                  expected: 7,
                   status: "PENDING_HUMAN_REVIEW",
                   sourcePolicy: "AUTHORIZED_PRODUCT_IMAGE_ONLY",
                   openAiBackgroundPlates: 0,
@@ -744,6 +769,7 @@ export async function POST(req: Request) {
         SIZE_AND_CONTENT: "label",
         USE_CONTEXT: "lifestyle",
         PACKAGE_CONTENTS: "packaging",
+        SECONDARY_6: "detail",
       }
       const created: JsonRecord[] = []
       const reused: JsonRecord[] = []
@@ -867,7 +893,7 @@ export async function POST(req: Request) {
         assets: [...reused, ...created],
         created: created.length,
         reused: reused.length,
-        expected: 6,
+        expected: 7,
         status: "PENDING_HUMAN_REVIEW",
         sourcePolicy: "AUTHORIZED_PRODUCT_IMAGE_ONLY",
         openAiBackgroundPlates: aiContextRequested ? 1 : 0,

@@ -1477,7 +1477,7 @@ test("Production draft and final publication use separate account-bound one-shot
   assert.match(routeSource, /sync_same_day_source_before_authorized_publication/)
   assert.match(routeSource, /EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_REQUIRED/)
   assert.match(sameDayPublicationSource, /SELLER_OS_AUTHORIZED_PUBLICATION_V1_2026_07_20/)
-  assert.match(sameDayPublicationSource, /exactSixHttpsUrls/)
+  assert.match(sameDayPublicationSource, /exactSevenHttpsUrls/)
   assert.match(sameDayPublicationSource, /finalHumanAuthorizationRequired: true/)
   assert.match(sameDayPublicationSource, /unattendedPublicationAllowed: false/)
   assert.match(sameDayImageRuntimeSource, /SAME_DAY_IMAGE_LISTING_PACKAGE_BINDING_CONFLICT/)

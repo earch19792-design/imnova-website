@@ -125,7 +125,7 @@ function exactApprovedImages(payload: JsonRecord) {
       return false
     }
   })
-  return normalized.length === 6 && new Set(normalized).size === 6 ? normalized : []
+  return normalized.length === 7 && new Set(normalized).size === 7 ? normalized : []
 }
 
 function buildFinalPublicationPreview(
@@ -145,7 +145,7 @@ function buildFinalPublicationPreview(
     || execution.phase !== "completed"
     || !offerId
     || !/^IMNOVA-[A-Z0-9]{16,32}$/.test(sku)
-    || images.length !== 6
+    || images.length !== 7
     || authorization.approved !== true
     || authorization.protectedManifestVerified !== true
     || Number(authorization.protectedManifestAssetCount) < 6
