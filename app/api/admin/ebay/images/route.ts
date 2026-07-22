@@ -448,15 +448,48 @@ export async function POST(req: Request) {
       if (!revisionId) return NextResponse.json({ success: false, error: "REVISION_ID_REQUIRED" }, { status: 400 })
       const { data: revisionRow, error: revisionLookupError } = await supabase
         .from("ebay_same_day_pilot_image_revisions")
-        .select("id")
+        .select("id,listing_package_id")
         .eq("id", revisionId)
         .maybeSingle()
       if (revisionLookupError || !revisionRow) return NextResponse.json({ success: false, error: "SAME_DAY_IMAGE_REVISION_NOT_FOUND" }, { status: 404 })
+      const { data: sourcePack, error: packError } = await supabase
+        .from("luna_catalog_authorized_source_packs")
+        .select("id,source_pack_hash,resolver_version,source_assets,precheck,authoritative_fact_package_hash")
+        .eq("marketplace_account_key", accountKey)
+        .eq("listing_package_id", revisionRow.listing_package_id)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle()
+      if (packError || !sourcePack) return NextResponse.json({ success: false, error: "AUTHORIZED_SOURCE_COUNT_INVALID" }, { status: 422 })
+      const sourceAssets = Array.isArray(sourcePack.source_assets) ? sourcePack.source_assets as Array<Record<string, unknown>> : []
+      const nativeMainAssets = sourceAssets.filter((asset) => asset.sourceImageId === "MAIN" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
+      const nativeSideAssets = sourceAssets.filter((asset) => asset.sourceImageId === "SIDE" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
+      if (nativeMainAssets.length !== 1 || nativeSideAssets.length !== 1) return NextResponse.json({ success: false, error: "AUTHORIZED_SOURCE_COUNT_INVALID" }, { status: 422 })
+      const main = sourceAssets.find((asset) => asset.sourceImageId === "MAIN" && asset.sourceAngle === "FRONT" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
+      const side = sourceAssets.find((asset) => asset.sourceImageId === "SIDE" && asset.sourceAngle === "SIDE" && asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")
+      if (!main) return NextResponse.json({ success: false, error: "AUTHORIZED_MAIN_MISSING" }, { status: 422 })
+      if (!side) return NextResponse.json({ success: false, error: "AUTHORIZED_SIDE_MISSING" }, { status: 422 })
+      if (main.sha256 === side.sha256 || main.sourceSha256 === side.sourceSha256) return NextResponse.json({ success: false, error: "AUTHORIZED_SOURCE_COUNT_INVALID" }, { status: 422 })
+      const excluded = new Set(sourceAssets.flatMap((asset) => Array.isArray(asset.excludedSourceSha256s) ? asset.excludedSourceSha256s.filter((value): value is string => typeof value === "string") : []))
+      const readAndVerify = async (asset: Record<string, unknown>) => {
+        const path = text(asset.storagePath, 1_000)
+        if (!path) throw new Error("AUTHORIZED_MAIN_MISSING")
+        const downloaded = await supabase.storage.from(EBAY_IMAGE_SOURCE_BUCKET).download(path)
+        if (downloaded.error || !downloaded.data) throw new Error("SOURCE_BYTES_HASH_MISMATCH")
+        const bytes = Buffer.from(await downloaded.data.arrayBuffer())
+        const actual = createHash("sha256").update(bytes).digest("hex")
+        const expected = text(asset.sha256, 100) || text(asset.sourceSha256, 100)
+        if (actual !== expected || excluded.has(actual)) throw new Error(excluded.has(actual) ? "SOURCE_HASH_EXCLUDED" : "SOURCE_BYTES_HASH_MISMATCH")
+        const meta = await sharp(bytes).metadata()
+        if (meta.width !== Number(asset.nativeWidth) || meta.height !== Number(asset.nativeHeight)) throw new Error("SOURCE_DIMENSIONS_MISMATCH")
+        return { actual, width: meta.width, height: meta.height }
+      }
+      const mainVerified = await readAndVerify(main)
+      const sideVerified = await readAndVerify(side)
       const strategyVersion = "SELLER_OS_EBAY_VISUAL_STRATEGY_V3"
-      const manifestHash = createHash("sha256").update(`${revisionId}:${strategyVersion}`).digest("hex")
       const roles = ["MATERIAL_AND_FINISH_DETAIL", "CONFIRMED_PACKAGE_CONTENTS", "SCALE_AND_CAPACITY_CONTEXT", "PRIMARY_BENEFIT_IN_ACTION", "ASPIRATIONAL_LIFESTYLE", "REAL_HUMAN_USE"]
-      const mainHash = createHash("sha256").update(`MAIN:${revisionId}`).digest("hex")
-      const sideHash = createHash("sha256").update(`SIDE:${revisionId}`).digest("hex")
+      const sourcePackVersion = text(sourcePack.resolver_version, 120)
+      const manifestHash = createHash("sha256").update(JSON.stringify({ revisionId, strategyVersion, sourcePackVersion, sourcePackHash: sourcePack.source_pack_hash, main: { sourceImageId: "MAIN", sourceAngle: "FRONT", sourceSha256: mainVerified.actual, width: mainVerified.width, height: mainVerified.height }, side: { sourceImageId: "SIDE", sourceAngle: "SIDE", sourceSha256: sideVerified.actual, width: sideVerified.width, height: sideVerified.height }, excludedSourceSha256s: [...excluded].sort(), productDossierHash: sourcePack.authoritative_fact_package_hash, marketVisualBriefHash: null, roles, promptVersion: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1", model: "gpt-image-2", quality: "high", size: "1600x1600", qaVersion: "SELLER_OS_EBAY_VISUAL_QA_V2" })).digest("hex")
+      const mainHash = mainVerified.actual
+      const sideHash = sideVerified.actual
       const promptHashes = roles.map((role) => createHash("sha256").update(`${manifestHash}:${role}`).digest("hex"))
       const { data, error } = await supabase.rpc("create_ebay_reference_guided_generation_attempt", { p_revision_id: revisionId, p_manifest_hash: manifestHash, p_roles: roles, p_main_hash: mainHash, p_side_hash: sideHash, p_prompt_hashes: promptHashes, p_market_brief_hash: null, p_product_dossier_hash: null })
       if (error) throw error
