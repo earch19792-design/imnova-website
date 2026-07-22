@@ -32,9 +32,13 @@ const AUTHORIZED_ATTEMPT_ID = "f166b395-8d3a-4921-b273-1a62a6032707"
 const AUTHORIZED_REVISION_ID = "3a4a233e-d4bc-4a65-825f-c4882bceb9d1"
 const AUTHORIZED_POSITION = 1
 const AUTHORIZED_OBJECTIVE = "MATERIAL_AND_FINISH_DETAIL"
+const AUTHORIZED_REPLACEMENT_REASON =
+  "REPLACEMENT_AFTER_STORAGE_MIME_CONFIGURATION_DEFECT"
 const AUTHORIZED_BRANCH = "feature/centralize-ebay-mobile-command-center"
 const STAGING_PROJECT_REF = "vsfthqydfrdzulldbfbe"
-const EXECUTION_CONFIRMATION = "RUN_ONE_STAGING_REFERENCE_GUIDED_CANARY_POSITION_1"
+const EXECUTION_CONFIRMATION =
+  "RUN_ONE_STAGING_REFERENCE_GUIDED_REPLACEMENT_CANARY_POSITION_1_CALL_2"
+const ORIGINAL_PROVIDER_REQUEST_ID = "req_31cfc5b2287440f6844abd213c98aad4"
 const SOURCE_AUTHORIZATION = "AUTHORIZED_CATALOG_NATIVE_HIGH_RES"
 const PROMPT_TEMPLATE_VERSION = "REFERENCE_GUIDED_EXACT_PROMPT_V2_2026_07_22"
 const MANIFEST_VERSION = "REFERENCE_GUIDED_COMPOSITION_MANIFEST_V2"
@@ -113,8 +117,14 @@ export async function POST(req: Request) {
     if (body.attemptId !== AUTHORIZED_ATTEMPT_ID ||
       body.position !== AUTHORIZED_POSITION ||
       body.objective !== AUTHORIZED_OBJECTIVE ||
+      body.reason !== AUTHORIZED_REPLACEMENT_REASON ||
       body.confirmation !== EXECUTION_CONFIRMATION) {
       throw new Error("REFERENCE_GUIDED_CANARY_AUTHORIZATION_MISMATCH")
+    }
+    const authorizationEventId = text(body.authorizationEventId, 40)
+    const humanConfirmationHash = sha256(Buffer.from(EXECUTION_CONFIRMATION, "utf8"))
+    if (!authorizationEventId || body.humanConfirmationHash !== humanConfirmationHash) {
+      throw new Error("REFERENCE_GUIDED_REPLACEMENT_HUMAN_AUTHORIZATION_REQUIRED")
     }
 
     const supabase = getSupabaseAdminClient()
@@ -124,7 +134,7 @@ export async function POST(req: Request) {
       .eq("id", AUTHORIZED_ATTEMPT_ID)
       .maybeSingle()
     if (attemptError || !attempt || attempt.revision_id !== AUTHORIZED_REVISION_ID ||
-      attempt.status !== "PENDING" || Number(attempt.provider_calls) !== 0 ||
+      attempt.status !== "GENERATING" || Number(attempt.provider_calls) !== 1 ||
       Number(attempt.max_provider_calls) !== 6 || attempt.retry_consumed !== false ||
       Number(attempt.ebay_writes) !== 0 || attempt.production_changed !== false) {
       throw new Error("REFERENCE_GUIDED_CANARY_ATTEMPT_INVALID")
@@ -167,9 +177,17 @@ export async function POST(req: Request) {
     const jobs = rows<JsonRecord>(persistedJobs)
     if (jobs.length !== 6 || jobs.some((job, index) => {
       const planned = manifestJobs[index]
-      return Number(job.position) !== index + 1 || job.status !== "PENDING" ||
+      const isReplacementJob = index === 0
+      const expectedStatus = isReplacementJob
+        ? "PROVIDER_SUCCEEDED_PERSISTENCE_FAILED"
+        : "PENDING"
+      return Number(job.position) !== index + 1 || job.status !== expectedStatus ||
         job.lease_owner != null || job.lease_expires_at != null ||
-        job.provider_request_id != null || job.provider_call_started_at != null ||
+        (isReplacementJob
+          ? job.provider_request_id !== ORIGINAL_PROVIDER_REQUEST_ID ||
+            job.error_code !== "STORAGE_MIME_CONFIGURATION_DEFECT" ||
+            job.provider_call_started_at == null
+          : job.provider_request_id != null || job.provider_call_started_at != null) ||
         job.commercial_role !== planned?.commercialObjective ||
         job.exact_prompt_text !== planned?.exactPromptText ||
         job.prompt_hash !== planned?.promptHash ||
@@ -278,8 +296,10 @@ export async function POST(req: Request) {
     const persistence: ReferenceGuidedPersistence = {
       async claimCanary(manifestHash, owner) {
         const { data, error } = await supabase.rpc(
-          "claim_ebay_reference_guided_canary_job",
+          "claim_ebay_reference_guided_replacement_canary",
           { p_attempt_id: AUTHORIZED_ATTEMPT_ID, p_manifest_hash: manifestHash,
+            p_authorization_event_id: authorizationEventId,
+            p_human_confirmation_hash: humanConfirmationHash,
             p_lease_owner: owner, p_feature_enabled: true },
         )
         if (error) throw new Error(safeCode(error, "REFERENCE_GUIDED_CANARY_CLAIM_FAILED"))
@@ -292,8 +312,10 @@ export async function POST(req: Request) {
       },
       async reserveCanaryProviderCall(input) {
         const { data, error } = await supabase.rpc(
-          "reserve_ebay_reference_guided_canary_call",
+          "reserve_ebay_reference_guided_replacement_call",
           { p_attempt_id: input.attemptId, p_job_id: input.jobId,
+            p_authorization_event_id: authorizationEventId,
+            p_human_confirmation_hash: humanConfirmationHash,
             p_manifest_hash: input.manifestHash, p_lease_owner: input.leaseOwner,
             p_exact_prompt_hash: input.exactPromptHash, p_feature_enabled: true },
         )
@@ -303,8 +325,8 @@ export async function POST(req: Request) {
             .eq("id", input.jobId).eq("status", "RESERVED").eq("lease_owner", input.leaseOwner)
           throw new Error(safeCode(error, "REFERENCE_GUIDED_CANARY_RESERVE_FAILED"))
         }
-        budgetReserved = Number(data) === 1
-        return Number(data)
+        budgetReserved = Number(data) === 2
+        return budgetReserved ? 1 : 0
       },
       async saveGenerated(jobId: string, result: EbayReferenceGuidedProviderResult,
         manifestHash: string) {
@@ -393,7 +415,7 @@ export async function POST(req: Request) {
       canaryStarted: true,
       positionClaimed: result.claimedJobs === 1 ? 1 : null,
       providerBudgetReserved: budgetReserved,
-      providerCalls: result.providerCalls,
+      providerCalls: result.providerCalls === 1 ? 2 : null,
       httpStatus,
       providerRequestId,
       outputCreated: Boolean(outputStoragePath),
@@ -417,7 +439,7 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ success: false, error: code,
       canaryStarted: Boolean(claimedJobId), providerBudgetReserved: budgetReserved,
-      providerCalls: budgetReserved ? 1 : 0, httpStatus, providerRequestId,
+      providerCalls: budgetReserved ? 2 : 1, httpStatus, providerRequestId,
       outputCreated: false, automaticQaStatus: "NOT_RUN",
       automaticRetryOccurred: false, ebayWrites: 0, productionChanged: false },
     { status: budgetReserved ? 502 : 409 })
