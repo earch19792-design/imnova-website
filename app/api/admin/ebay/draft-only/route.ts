@@ -40,6 +40,10 @@ import {
 import { enqueueSellerWhatsAppAlert } from "@/lib/ebay/ebay-seller-whatsapp-alerts"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { loadSameDayAuthorizedPublicationContext } from "@/lib/ebay/ebay-same-day-authorized-publication"
+import {
+  assertVisualStrategyV3PublicationAllowed,
+  loadVisualStrategyV3PublicationGate,
+} from "@/lib/ebay/visual-strategy-v3-publication-gate"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
 function record(value: unknown): JsonRecord {
@@ -639,6 +643,12 @@ export async function GET(req: Request) {
       target,
       accountFingerprint: fingerprint,
     })
+    const visualPublicationGate = await loadVisualStrategyV3PublicationGate({
+      supabase,
+      listingPackageId: packageId,
+      actorId: auth.actor,
+      accountKey: getEbaySellerAccountScopeConfiguration().accountKey || undefined,
+    })
     const { data: ledger, error: ledgerError } = latestApproval?.id
       ? await supabase
         .from("ebay_draft_only_execution_ledger")
@@ -657,6 +667,7 @@ export async function GET(req: Request) {
     if (publicationError) throw new Error("EBAY_FINAL_PUBLICATION_READ_FAILED")
     return NextResponse.json({
       success: true,
+      visualPublicationGate,
       readiness,
       approval: latestApproval ? { ...latestApproval, approved_payload: undefined } : null,
       execution: ledger,
@@ -820,6 +831,14 @@ async function previewDraft(body: JsonRecord, actor: string) {
     target,
     fingerprint,
   )
+  assertVisualStrategyV3PublicationAllowed(
+    await loadVisualStrategyV3PublicationGate({
+      supabase,
+      listingPackageId: packageId,
+      actorId: actor,
+      accountKey: getEbaySellerAccountScopeConfiguration().accountKey || undefined,
+    }),
+  )
   const now = new Date()
   const liveTaxonomy = await loadLivePackageTaxonomy(context.listingPackage)
   const draftConfiguration = serverApprovedConfiguration(
@@ -875,6 +894,14 @@ async function approveDraft(body: JsonRecord, actor: string) {
     text(requestedConfiguration.sku),
     target,
     fingerprint,
+  )
+  assertVisualStrategyV3PublicationAllowed(
+    await loadVisualStrategyV3PublicationGate({
+      supabase,
+      listingPackageId: packageId,
+      actorId: actor,
+      accountKey: getEbaySellerAccountScopeConfiguration().accountKey || undefined,
+    }),
   )
   const now = new Date()
   const liveTaxonomy = await loadLivePackageTaxonomy(context.listingPackage)
@@ -945,6 +972,14 @@ async function executeDraft(body: JsonRecord, actor: string) {
     .eq("actor_user_id", actor)
     .maybeSingle()
   if (approvalError || !approval) return jsonError(new Error("EBAY_DRAFT_ONLY_APPROVAL_NOT_FOUND"), 404)
+  assertVisualStrategyV3PublicationAllowed(
+    await loadVisualStrategyV3PublicationGate({
+      supabase,
+      listingPackageId: text(approval.listing_package_id),
+      actorId: actor,
+      accountKey: getEbaySellerAccountScopeConfiguration().accountKey || undefined,
+    }),
+  )
   const runtime = ebayDraftOnlyRuntimeStatus()
   const target = runtime.target
   const fingerprint = runtime.accountFingerprint || ""
@@ -1556,6 +1591,14 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   if (!executionId) return jsonError(new Error("EBAY_FINAL_PUBLICATION_EXECUTION_REQUIRED"), 400)
   const supabase = getSupabaseAdminClient()
   const context = await loadFinalPublicationContext(supabase, executionId, actor)
+  assertVisualStrategyV3PublicationAllowed(
+    await loadVisualStrategyV3PublicationGate({
+      supabase,
+      listingPackageId: text(record(context.approval).listing_package_id),
+      actorId: actor,
+      accountKey: context.accountKey,
+    }),
+  )
   if (!context.sameDayPilotAuthorization) {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_REQUIRED"), 409)
   }
@@ -1719,6 +1762,13 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     .eq("actor_user_id", actor)
     .maybeSingle()
   if (currentError || !current) return jsonError(new Error("EBAY_FINAL_PUBLICATION_NOT_FOUND"), 404)
+  assertVisualStrategyV3PublicationAllowed(
+    await loadVisualStrategyV3PublicationGate({
+      supabase,
+      listingPackageId: text(current.listing_package_id),
+      actorId: actor,
+    }),
+  )
   if (current.phase === "monitor_registered") {
     return NextResponse.json({
       success: true,
@@ -1819,6 +1869,13 @@ async function reconcileFinalPublication(body: JsonRecord, actor: string) {
     .eq("actor_user_id", actor)
     .maybeSingle()
   if (error || !publication) return jsonError(new Error("EBAY_FINAL_PUBLICATION_NOT_FOUND"), 404)
+  assertVisualStrategyV3PublicationAllowed(
+    await loadVisualStrategyV3PublicationGate({
+      supabase,
+      listingPackageId: text(publication.listing_package_id),
+      actorId: actor,
+    }),
+  )
   const context = await loadFinalPublicationContext(
     supabase,
     text(publication.draft_execution_id),

@@ -156,6 +156,16 @@ type EbayTaxonomyAspect = {
 }
 
 type DraftState = {
+  visualPublicationGate?: {
+    required: boolean
+    allowed: boolean
+    reason: string | null
+    revisionId: string | null
+    revisionStatus: string | null
+    attemptId: string | null
+    passedJobs: number
+    totalJobs: number
+  }
   readiness?: { ready: boolean; blockers: string[]; payloadHash?: string; requiredSku?: string }
   approval?: { id: string; status: string; expires_at: string } | null
   execution?: { id?: string; phase: string; offer_id?: string | null; last_error_code?: string | null; completed_at?: string | null } | null
@@ -723,11 +733,6 @@ function ListingWorkspacePageContent() {
   }, [])
 
   useEffect(() => {
-    const fromUrl = searchParams.get("v3Attempt")
-    if (fromUrl && validUuid(fromUrl)) setReferenceGuidedAttemptId(fromUrl)
-  }, [searchParams])
-
-  useEffect(() => {
     const candidateKey = searchParams.get("candidate")
     if (!candidateKey) return
     const controller = new AbortController()
@@ -742,6 +747,7 @@ function ListingWorkspacePageContent() {
         if (!response.ok || !payload.success) throw new Error(String(payload.error ?? "ACTIVE_REVISION_LOOKUP_FAILED"))
         if (!current) return
         setActiveVisualRevision(payload.revision ?? null)
+        setReferenceGuidedAttemptId(validUuid(payload.persistedAttemptId) ?? "")
         setProtectedSourcePackReady(payload.protectedSourcePackReady === true)
         setProtectedSourcePackId(payload.sourcePackId ?? null)
         if (payload.protectedSourcePackReady === true) setProtectedSourcePreview({ sourcePackId: payload.sourcePackId, sourcePackManifestHash: payload.sourcePackManifestHash })
@@ -1145,6 +1151,13 @@ function ListingWorkspacePageContent() {
   const imageRevisionAllPassed = Boolean(imageRevision &&
     imageRevision.assets.length === 7 && imageRevision.assets.every((asset) =>
       asset.automaticStatus === "PASSED"))
+  const publicationGateAllowed = revisionLoaded
+    && !revisionError
+    && draftState.visualPublicationGate?.allowed === true
+  const v3ReadyForPrepare = revisionLoaded
+    && !revisionError
+    && activeVisualRevision?.strategy_version === "VISUAL_STRATEGY_V3"
+    && activeVisualRevision.status === "READY_FOR_PREPARE"
   const requiredTaxonomyAspects = useMemo(() => new Set(
     draftState.taxonomy?.requiredAspects.map((aspect) => aspect.name) ?? [],
   ), [draftState.taxonomy])
@@ -1354,19 +1367,6 @@ function ListingWorkspacePageContent() {
       if (!validUuid(revision.id)) {
         throw new Error("SAME_DAY_IMAGE_REVISION_ID_INVALID")
       }
-      // Prepare the persistent V3 attempt; provider remains disabled in this checkpoint.
-      const prepared = await imageRequest({
-        action: "prepare_visual_review",
-        revisionId: revision.id,
-        baseControlId: revision.base_control_id,
-      })
-      if (prepared.attemptId) {
-        setReferenceGuidedAttemptId(String(prepared.attemptId))
-        const next = new URLSearchParams(searchParams.toString())
-        next.set("v3Attempt", String(prepared.attemptId))
-        router.replace(`?${next.toString()}`, { scroll: false })
-        setMessage(`Preparado · proveedor deshabilitado · intento ${String(prepared.attemptId).slice(0, 8)}…`)
-      }
       if (["FAILED_RETRYABLE", "FAILED_FINAL"].includes(revisionStatus)) {
         setImageRevision({ revision: payload.revision, assets })
         setError(
@@ -1411,6 +1411,32 @@ function ListingWorkspacePageContent() {
       setImageRevisionLocalError(detail)
       setError(detail)
       setMessage("")
+    } finally {
+      setImageRevisionBusy(false)
+    }
+  }
+
+  async function prepareVisualStrategyV3() {
+    if (!listingPackage?.id || imageRevisionBusy) return
+    setImageRevisionBusy(true)
+    setError("")
+    try {
+      const prepared = await imageRequest({
+        action: "prepare_visual_review",
+        listingPackageId: listingPackage.id,
+      })
+      const attemptId = validUuid(prepared.attemptId)
+      if (!attemptId) throw new Error("REFERENCE_GUIDED_ATTEMPT_ID_INVALID")
+      setReferenceGuidedAttemptId(attemptId)
+      const persisted = await imageRequest(
+        undefined, undefined, undefined, undefined, attemptId,
+      )
+      setReferenceGuidedAttempt(persisted)
+      setMessage(`Preparado · seis trabajos persistidos · intento ${attemptId.slice(0, 8)}…`)
+    } catch (requestError) {
+      setError(requestError instanceof Error
+        ? requestError.message
+        : "REFERENCE_GUIDED_PREPARE_FAILED")
     } finally {
       setImageRevisionBusy(false)
     }
@@ -2207,17 +2233,16 @@ function ListingWorkspacePageContent() {
           <section className={`${maintenanceMode ? "hidden" : ""} rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4`}>
             <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase text-emerald-100/65">Datos reales de Luna + evidencia eBay</p><h2 className="mt-2 text-xl font-black">{opportunity.product_title}</h2><p className="mt-1 text-sm text-white/60">{opportunity.variant_title ?? "Variante general"} · {opportunity.supplier_sku ?? "SKU pendiente"}</p></div><strong className="rounded-2xl bg-white px-3 py-2 text-xl text-black">{Math.round(Number(opportunity.opportunity_score))}</strong></div>
             <dl className="mt-3 grid grid-cols-3 gap-2 text-xs"><div><dt className="text-white/50">Costo Luna</dt><dd className="font-black">{opportunity.supplier_price == null ? "Pendiente" : `$${Number(opportunity.supplier_price).toFixed(2)}`}</dd></div><div><dt className="text-white/50">Stock</dt><dd className="font-black">{opportunity.supplier_inventory_quantity ?? "Pendiente"}</dd></div><div><dt className="text-white/50">Fuente</dt><dd className="font-black">{listingPackage.source_observed_at ? new Date(listingPackage.source_observed_at).toLocaleDateString("es") : "Pendiente"}</dd></div></dl>
-            <div className="mt-4 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50">
+            {publicationGateAllowed && <div className="mt-4 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50">
               <strong>Publicación controlada desde Seller OS:</strong>
               <ol className="mt-2 list-decimal space-y-1 pl-5">
-                <li>Revisa contenido, precio, cantidad, policies y las siete imágenes V2 aprobadas.</li>
+                <li>Revisa contenido, precio, cantidad, policies y los seis trabajos Visual Strategy V3 aprobados.</li>
                 <li>Autoriza la creación del Offer <strong>UNPUBLISHED</strong>; ese primer permiso no publica.</li>
                 <li>Revisa el preview exacto y autoriza la publicación final dentro de Seller OS.</li>
                 <li>Seller OS publicará una sola vez, verificará <strong>ACTIVE</strong>, guardará el Item ID y activará el monitoreo.</li>
               </ol>
               <span className="mt-2 block break-all rounded-xl bg-black/25 p-2 font-mono font-black text-white">{draftConfiguration.sku}</span>
-            </div>
-            <a href="#seller-os-final-publication" className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-2xl bg-emerald-200 px-4 text-center text-sm font-black text-black">Continuar a autorización y publicación</a>
+            </div>}
             {safeDefaultsMetadata.source === "EBAY_OBSERVED_OWN_LISTING_TEMPLATE" && Array.isArray(safeDefaultsMetadata.appliedFields) && safeDefaultsMetadata.appliedFields.length > 0 && <div className="mt-3 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.05] p-3 text-xs leading-5 text-cyan-50"><strong>Autocompletado desde la lectura oficial de tu listing:</strong> {safeDefaultsMetadata.appliedFields.join(", ")}. No se reutilizaron título, descripción, imágenes ni valores de aspectos; todo se revalida contra eBay.</div>}
           </section>
 
@@ -2260,27 +2285,29 @@ function ListingWorkspacePageContent() {
           </section>
 
           <section className="rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.04] p-4">
+            {v3ReadyForPrepare ? <>
+              <button type="button" disabled={imageRevisionBusy} onClick={() => void prepareVisualStrategyV3()} className="min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">Preparar seis trabajos Visual Strategy V3</button>
+              {referenceGuidedAttempt && <div className="mt-3 rounded-xl border border-cyan-200/25 bg-cyan-200/[0.05] p-3 text-xs leading-5 text-cyan-50"><strong>Preparado · proveedor deshabilitado</strong><span className="mt-1 block font-mono">Intento {String(referenceGuidedAttempt.attempt?.id ?? referenceGuidedAttemptId)}</span><span className="mt-1 block">Progreso: {String(referenceGuidedAttempt.progress ?? `${referenceGuidedAttempt.attempt?.completed_job_count ?? 0}/6`)}</span><span className="mt-1 block">Trabajos persistidos: {Array.isArray(referenceGuidedAttempt.jobs) ? referenceGuidedAttempt.jobs.length : 0}/6 · providerCalls: {String(referenceGuidedAttempt.attempt?.provider_calls ?? 0)}</span></div>}
+            </> : <>
             <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Pipeline seguro de imágenes</p>
             <h2 className="mt-1 text-xl font-black">Fondo blanco y 1600×1600</h2>
             <p className="mt-2 text-sm leading-6 text-white/60">El optimizador es determinista: limpia únicamente fondos claros, centra el producto y no inventa piezas. Cada resultado queda pendiente hasta compararlo y aprobarlo.</p>
             <div className="mt-3 rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.05] p-3 text-xs leading-5 text-emerald-50"><strong>Protección:</strong> no se usan imágenes de competidores, no se genera el producto desde cero y la imagen original queda identificada por hash.</div>
 
             <div className="mt-4 rounded-2xl border border-cyan-200/30 bg-[#071820] p-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
+              {activeVisualRevision?.strategy_version === "VISUAL_STRATEGY_V2" && <div className="flex flex-wrap items-start justify-between gap-3">
                 <div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-100/60">Corrección append-only</p><h3 className="mt-1 font-black">Revisión visual V2 de siete imágenes</h3><p className="mt-1 text-xs leading-5 text-white/55">Motivo predeterminado: <strong>IMAGE_COMPOSITOR_DEFECT</strong>. El set aprobado anterior nunca se borra ni se desactiva.</p></div>
                 <span className={`rounded-full border px-2 py-1 text-[10px] font-black ${approvedBaseImageControlId ? "border-emerald-200/30 text-emerald-100" : "border-amber-200/30 text-amber-100"}`}>{approvedBaseImageControlId ? "CONTROL BASE ENCONTRADO" : "SIN CONTROL BASE COMPATIBLE"}</span>
-              </div>
+              </div>}
               {revisionLoading && <p className="mt-3 rounded-xl border border-white/15 p-3 text-xs text-white/60">Cargando estrategia visual…</p>}
               {revisionError && <p role="alert" className="mt-3 rounded-xl border border-rose-200/25 p-3 text-xs text-rose-50">No se pudo cargar la estrategia visual: {revisionError}</p>}
-              {!revisionLoading && !revisionError && revisionLoaded && activeVisualRevision?.strategy_version !== "VISUAL_STRATEGY_V2" && <button type="button" disabled className="mt-3 min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black opacity-40">Generar revisión corregida</button>}
-              {referenceGuidedAttempt && <div className="mt-3 rounded-xl border border-cyan-200/25 bg-cyan-200/[0.05] p-3 text-xs leading-5 text-cyan-50"><strong>Preparado · proveedor deshabilitado</strong><span className="mt-1 block font-mono">Intento {String(referenceGuidedAttempt.attempt?.id ?? referenceGuidedAttemptId)}</span><span className="mt-1 block">Progreso: {String(referenceGuidedAttempt.progress ?? `${referenceGuidedAttempt.attempt?.completed_job_count ?? 0}/6`)}</span><span className="mt-1 block">Trabajos persistidos: {Array.isArray(referenceGuidedAttempt.jobs) ? referenceGuidedAttempt.jobs.length : 0}/6 · providerCalls: {String(referenceGuidedAttempt.attempt?.provider_calls ?? 0)}</span></div>}
               {!revisionLoading && !revisionError && revisionLoaded && activeVisualRevision?.strategy_version === "VISUAL_STRATEGY_V2" && !v3Eligibility.existingId && <div className="mt-3 rounded-xl border border-violet-200/25 bg-violet-200/[0.06] p-3 text-xs leading-5 text-violet-50"><strong>Revisión activa: Visual Strategy V2</strong><p className="mt-1">Evidencia exacta insuficiente; la estrategia V3 utilizará únicamente señales agregadas de categoría para orientar la composición.</p>{!protectedSourcePreview?.sourcePackId && <><button type="button" disabled={protectedSourceBusy} onClick={() => void reviewProtectedSources(false)} className="mt-3 min-h-11 w-full rounded-xl border border-violet-200/40 px-3 text-sm font-black disabled:opacity-40">{protectedSourceBusy ? "Revisando fuentes…" : "Revisar y proteger fuentes MAIN/SIDE"}</button>{protectedSourcePreview?.preview && <div className="mt-2 rounded-lg bg-black/20 p-2 font-mono text-[11px]">{protectedSourcePreview.preview.map((item: any) => <div key={item.sourceImageId}>{item.sourceImageId}: {item.width}×{item.height} · {item.sha256} {item.changed ? "· SIDE cambió; requiere confirmación visual" : ""}</div>)}<button type="button" disabled={protectedSourceBusy} onClick={() => void loadProtectedPixels()} className="mt-2 min-h-10 w-full rounded-lg border border-amber-200/60 px-2 text-xs font-black disabled:opacity-40">Cargar y mostrar píxeles reales</button>{protectedPixels?.images && <><div className="mt-2 grid grid-cols-2 gap-2">{protectedPixels.images.map((item: any) => <img key={item.sourceImageId} src={item.dataUrl} alt={item.sourceImageId} className="w-full rounded-lg bg-white object-contain" />)}</div><label className="mt-2 flex items-start gap-2 font-sans text-[11px]"><input type="checkbox" checked={protectedVisualConfirmed} onChange={(event) => setProtectedVisualConfirmed(event.target.checked)} />Confirmo que MAIN y SIDE muestran exactamente el mismo producto y variante</label><button type="button" disabled={protectedSourceBusy || !protectedVisualConfirmed || protectedPixels.images.length !== 2} onClick={() => void reviewProtectedSources(true)} className="mt-2 min-h-10 w-full rounded-lg bg-amber-200 px-2 text-xs font-black text-black disabled:opacity-40">Confirmar bytes exactos y proteger</button></>}</div>}</>}{protectedSourcePreview?.sourcePackId ? <span className="mt-3 block">Fuentes protegidas. La creación V3 permanece separada.</span> : null}{v3Eligibility.eligible && protectedSourcePreview?.sourcePackId && <button type="button" disabled={v3RevisionBusy} onClick={() => void createVisualStrategyV3Revision()} className="mt-3 min-h-11 w-full rounded-xl bg-violet-200 px-3 text-sm font-black text-black disabled:opacity-40">{v3RevisionBusy ? "Creando revisión V3…" : "Crear revisión Visual Strategy V3"}</button>}</div>}
-              {v3Revision && <div className="mt-3 rounded-xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50"><strong>Visual Strategy V3 · READY_FOR_PREPARE</strong><span className="mt-1 block">Evidencia exacta insuficiente; se utilizarán señales de categoría sin convertirlas en hechos del producto.</span><span className="mt-1 block font-mono">Revisión: {String(v3Revision.revisionId ?? "")}</span></div>}
+              {v3Revision && activeVisualRevision?.strategy_version !== "VISUAL_STRATEGY_V3" && <div className="mt-3 rounded-xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50"><strong>Visual Strategy V3 creada</strong><span className="mt-1 block">Recarga el estado persistido para preparar sus seis trabajos.</span></div>}
               {imageRevisionLocalError && <div role="alert" className="mt-2 rounded-xl border border-amber-200/30 bg-amber-200/[0.06] p-3 text-xs leading-5 text-amber-50"><strong>Generación detenida antes del reintento.</strong><span className="mt-1 block">{imageRevisionLocalError}</span></div>}
               {imageRevisionId && <button type="button" disabled={imageRevisionBusy} onClick={() => void loadImageRevision(imageRevisionId)} className="mt-2 min-h-11 w-full rounded-xl border border-cyan-200/30 px-4 text-sm font-black text-cyan-50 disabled:opacity-40">Actualizar vista</button>}
-              {!approvedBaseImageControlId && <p className="mt-2 text-xs leading-5 text-amber-50">Esta acción aparece cuando el candidato conserva un set histórico compatible de seis o siete slots ligado al mismo control. El servidor vuelve a comprobar que el control esté APPROVED.</p>}
+              {activeVisualRevision?.strategy_version === "VISUAL_STRATEGY_V2" && !approvedBaseImageControlId && <p className="mt-2 text-xs leading-5 text-amber-50">Esta acción aparece cuando el candidato conserva un set histórico compatible de seis o siete slots ligado al mismo control. El servidor vuelve a comprobar que el control esté APPROVED.</p>}
 
-              {imageRevision && <div className="mt-4 space-y-3">
+              {activeVisualRevision?.strategy_version === "VISUAL_STRATEGY_V2" && imageRevision && <div className="mt-4 space-y-3">
                 <div className="flex items-center justify-between gap-3"><strong className="text-sm">Revisión {imageRevision.revision.revision_number} · {imageRevision.revision.status}</strong><span className="text-xs text-white/50">{imageRevision.assets.length}/7</span></div>
                 {imageRevisionFailed && <div role="alert" className="rounded-xl border border-rose-200/30 bg-rose-200/[0.06] p-3 text-xs leading-5 text-rose-50"><strong>{imageRevision.revision.status}</strong><code className="mt-1 block break-all">{imageRevision.revision.last_error_code ?? "SAME_DAY_IMAGE_REVISION_FAILED"}</code><span className="mt-1 block">{imageRevision.assets.length} imágenes nuevas. El set histórico no pertenece a esta revisión y no se muestra aquí.</span></div>}
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -2324,6 +2351,7 @@ function ListingWorkspacePageContent() {
               {hiddenHistoricalImageAssetCount > 0 && <p className="rounded-xl border border-white/10 bg-black/20 p-3 text-xs leading-5 text-white/50">{hiddenHistoricalImageAssetCount} activos rechazados o versiones anteriores permanecen en el historial técnico, pero se ocultaron para no repetirlos en esta revisión.</p>}
               {!currentPackageImageAssets.length && <p className="rounded-2xl border border-amber-200/20 p-3 text-sm text-amber-50">Todavía no hay una versión optimizada y aprobada. Puedes trabajar el contenido, pero el draft seguirá bloqueado.</p>}
             </div>
+            </>}
           </section>
 
           <section className="rounded-3xl border border-violet-200/20 bg-violet-200/[0.05] p-4">
@@ -2370,7 +2398,7 @@ function ListingWorkspacePageContent() {
             <div className="mt-3 grid grid-cols-[1fr_auto] gap-2 sm:grid-cols-[1fr_1fr_auto]"><input aria-label="Nombre del nuevo aspecto" placeholder="Marca" value={aspectName} onChange={(event) => setAspectName(event.target.value)} className="col-span-2 min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3 sm:col-span-1" /><input aria-label="Valor del nuevo aspecto" placeholder="Valor" value={aspectValue} onChange={(event) => setAspectValue(event.target.value)} className="min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3" /><button type="button" aria-label="Agregar aspecto" disabled={!aspectName.trim() || !aspectValue.trim()} onClick={() => { setForm((current) => ({ ...current, aspects: { ...current.aspects, [aspectName.trim()]: aspectValue.trim() } })); setAspectName(""); setAspectValue("") }} className="size-11 rounded-xl bg-violet-200 font-black text-black disabled:opacity-40">+</button></div>
           </section>
 
-          <section id="seller-os-final-publication" className={`${maintenanceMode ? "hidden" : ""} scroll-mt-28 space-y-4 rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.05] p-4`}>
+          {publicationGateAllowed && <section id="seller-os-final-publication" className={`${maintenanceMode ? "hidden" : ""} scroll-mt-28 space-y-4 rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.05] p-4`}>
             <div>
               <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Publicación eBay controlada</p>
               <h2 className="mt-1 text-xl font-black">Offer no publicado + autorización final · {draftTarget}</h2>
@@ -2412,7 +2440,7 @@ function ListingWorkspacePageContent() {
             {["publish_in_flight", "outcome_unknown", "published_pending_verification"].includes(publicationPhase) && <div className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.07] p-3"><strong>{publicationPhase === "published_pending_verification" ? "Publicado; falta confirmar ACTIVE" : "Resultado de publicación en reconciliación"}</strong><p className="mt-2 text-sm text-white/65">Esta acción sólo consulta eBay y registra monitoreo. Nunca vuelve a llamar publishOffer.</p>{draftState.publication?.listing_id && <a href={`https://www.ebay.com/itm/${draftState.publication.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-sm font-black text-cyan-100 underline">Ver listing {draftState.publication.listing_id}</a>}<button type="button" disabled={draftBusy} onClick={() => void reconcileFinalListing()} className="mt-3 min-h-13 w-full rounded-2xl border border-amber-200/40 px-4 font-black disabled:opacity-40">Verificar ACTIVE y registrar monitoreo</button></div>}
             {publicationPhase === "monitor_registered" && <div className="rounded-2xl border border-emerald-200/35 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y ciclo cerrado</strong><p className="mt-2 text-sm">Item ID {draftState.publication?.listing_id} · monitoreo comercial y disponibilidad Luna registrados.</p><a href={`https://www.ebay.com/itm/${draftState.publication?.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-black underline">Abrir listing en eBay</a></div>}
             {publicationPhase === "terminal_failure" && <div className="rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-3 text-rose-50"><strong>Publicación detenida sin reintento automático</strong><p className="mt-2 text-sm">{humanFinalPublicationError(new Error(draftState.publication?.last_error_code ?? "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE"))}</p><p className="mt-2 text-xs text-rose-50/70">No publiques manualmente hasta confirmar si eBay recibió la llamada; así se evita duplicar el listing.</p></div>}
-          </section>
+          </section>}
 
           <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4"><div className="flex justify-between gap-3"><h2 className="font-black">Preparación del paquete</h2><strong>{listingPackage.readiness}%</strong></div>{blockers.length ? <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-50">{blockers.map((blocker) => <li key={blocker}>{humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)}</li>)}</ul> : <p className="mt-2 text-sm text-emerald-100">Sin bloqueos. Puedes enviarlo a revisión humana.</p>}<p className="mt-3 text-xs leading-5 text-white/50">Guardar y validar sólo modifican datos internos. Crear el Offer permanece separado de la autorización final: publishOffer exige el preview persistido, la frase exacta y una única confirmación humana.</p></section>
         </>}

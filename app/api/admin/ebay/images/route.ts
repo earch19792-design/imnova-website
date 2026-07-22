@@ -56,6 +56,8 @@ const SOURCE_BUCKET = EBAY_IMAGE_SOURCE_BUCKET
 const STAGING_BUCKET = EBAY_IMAGE_STAGING_BUCKET
 const MAX_OUTPUT_BYTES = 12 * 1024 * 1024
 const PREVIEW_SECRET = process.env.SELLER_OS_PREVIEW_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || "staging-preview-secret"
+const REFERENCE_GUIDED_PROVIDER_ENABLED =
+  process.env.OPENAI_REFERENCE_GUIDED_PRODUCT_GENERATION_ENABLED === "true"
 function previewToken(parentRevisionId: string, expiresAt: number, hashes: string[]) {
   const body = `${parentRevisionId}.${expiresAt}.${hashes.sort().join(",")}`
   return `${expiresAt}.${createHmac("sha256", PREVIEW_SECRET).update(body).digest("hex")}`
@@ -360,7 +362,7 @@ export async function GET(req: Request) {
       const { data: candidate } = await getSupabaseAdminClient().from("ebay_same_day_pilot_candidates").select("id").eq("candidate_key", candidateKey).order("created_at", { ascending: false }).limit(1).maybeSingle()
       if (!candidate) return NextResponse.json({ success: true, revision: null, v3Eligible: false, blockedReason: "ACTIVE_REVISION_NOT_FOUND" })
       const adminDb = getSupabaseAdminClient()
-      const { data: revisions, error: revisionError } = await adminDb.from("ebay_same_day_pilot_image_revisions").select("id,listing_package_id,strategy_version,revision_contract,parent_revision_id,status,revision_fingerprint,created_at").eq("candidate_id", candidate.id).order("created_at", { ascending: false }).limit(20)
+      const { data: revisions, error: revisionError } = await adminDb.from("ebay_same_day_pilot_image_revisions").select("id,listing_package_id,strategy_version,revision_contract,parent_revision_id,status,revision_fingerprint,created_at").eq("candidate_id", candidate.id).eq("created_by", validation.userId).eq("marketplace_account_key", accountKey).order("created_at", { ascending: false }).limit(20)
       if (revisionError) throw new Error("ACTIVE_REVISION_LOOKUP_FAILED")
       const active = (revisions ?? []).find((row) => row.strategy_version === "VISUAL_STRATEGY_V3" && row.revision_contract === "REFERENCE_GUIDED_PRODUCT_GENERATION_V1") ?? (revisions ?? []).find((row) => row.strategy_version === "VISUAL_STRATEGY_V2") ?? null
       const child = active?.strategy_version === "VISUAL_STRATEGY_V2" ? (revisions ?? []).find((row) => row.parent_revision_id === active.id && row.strategy_version === "VISUAL_STRATEGY_V3") : active
@@ -371,7 +373,16 @@ export async function GET(req: Request) {
       const factsPackage = record(record(candidateFacts?.product_facts_summary).authoritativeFactsPackage)
       const productDossierAvailable = factsPackage.ready === true && typeof factsPackage.factPackageHash === "string" && factsPackage.factPackageHash.length > 0
       const v3CreateEligible = Boolean(active?.strategy_version === "VISUAL_STRATEGY_V2" && protectedSourcePackReady && productDossierAvailable && !child)
-      return NextResponse.json({ success: true, revision: active, existingV3RevisionId: child?.id ?? null, sourcePackId: pack?.id ?? null, protectedSourcePackReady, sourcePackManifestHash: pack?.manifest_hash ?? pack?.source_pack_hash ?? null, productDossierAvailable, v3CreateEligible, v3Eligible: v3CreateEligible, blockedReason: active ? null : "ACTIVE_REVISION_NOT_FOUND" })
+      const { data: persistedAttempt, error: persistedAttemptError } = active?.strategy_version === "VISUAL_STRATEGY_V3"
+        ? await adminDb.from("ebay_reference_guided_generation_attempts")
+          .select("id,revision_id,status,completed_job_count,expected_job_count,provider_calls")
+          .eq("revision_id", active.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        : { data: null, error: null }
+      if (persistedAttemptError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
+      return NextResponse.json({ success: true, revision: active, existingV3RevisionId: child?.id ?? null, persistedAttemptId: persistedAttempt?.id ?? null, persistedAttempt: persistedAttempt ?? null, sourcePackId: pack?.id ?? null, protectedSourcePackReady, sourcePackManifestHash: pack?.manifest_hash ?? pack?.source_pack_hash ?? null, productDossierAvailable, v3CreateEligible, v3Eligible: v3CreateEligible, blockedReason: active ? null : "ACTIVE_REVISION_NOT_FOUND" })
     }
     const attemptId = uuid(url.searchParams.get("attemptId"))
     if (attemptId) {
@@ -384,6 +395,14 @@ export async function GET(req: Request) {
       if (attemptError || jobsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
       if (!attempt) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
       if (requestedRevisionId && attempt.revision_id !== requestedRevisionId) return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_REVISION_MISMATCH" }, { status: 409 })
+      const { data: ownedRevision, error: ownedRevisionError } = await supabase
+        .from("ebay_same_day_pilot_image_revisions")
+        .select("id")
+        .eq("id", attempt.revision_id)
+        .eq("created_by", validation.userId)
+        .eq("marketplace_account_key", accountKey)
+        .maybeSingle()
+      if (ownedRevisionError || !ownedRevision) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
       return NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: jobs ?? [], progress: `${attempt.completed_job_count}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
     }
     const revisionId = uuid(url.searchParams.get("revisionId"))
@@ -487,6 +506,7 @@ export async function POST(req: Request) {
     }
     const body = await parseBody(req)
     let action = text(body.action, 40)
+    let persistedPrepareRevisionId = ""
     const supabase = getSupabaseAdminClient()
 
     if (action === "ensure_protected_authorized_source_pack") {
@@ -599,27 +619,36 @@ export async function POST(req: Request) {
     }
 
     if (action === "prepare_visual_review") {
-      const requestedRevisionId = uuid(body.revisionId)
-      if (!requestedRevisionId) return NextResponse.json({ success: false, error: "REVISION_ID_REQUIRED" }, { status: 400 })
+      const listingPackageId = uuid(body.listingPackageId)
+      if (!listingPackageId) return NextResponse.json({ success: false, error: "LISTING_PACKAGE_ID_REQUIRED" }, { status: 400 })
+      await packageForActor(supabase, listingPackageId, actor, accountKey)
       const { data: routingRevision, error: routingError } = await supabase
         .from("ebay_same_day_pilot_image_revisions")
-        .select("strategy_version,revision_contract")
-        .eq("id", requestedRevisionId).maybeSingle()
+        .select("id,status,strategy_version,revision_contract")
+        .eq("listing_package_id", listingPackageId)
+        .eq("created_by", actor)
+        .eq("marketplace_account_key", accountKey)
+        .eq("strategy_version", "VISUAL_STRATEGY_V3")
+        .order("revision_number", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
       if (routingError || !routingRevision) return NextResponse.json({ success: false, error: "SAME_DAY_IMAGE_REVISION_NOT_FOUND" }, { status: 404 })
       if (!routingRevision.strategy_version) return NextResponse.json({ success: false, error: "REVISION_STRATEGY_MISSING", attemptRows: 0, jobRows: 0 }, { status: 409 })
       if (!routingRevision.revision_contract) return NextResponse.json({ success: false, error: "REVISION_CONTRACT_MISSING", attemptRows: 0, jobRows: 0 }, { status: 409 })
-      if (routingRevision.strategy_version === "VISUAL_STRATEGY_V3" && routingRevision.revision_contract === "REFERENCE_GUIDED_PRODUCT_GENERATION_V1") {
-        action = "reference_guided_prepare"
-      } else if (routingRevision.strategy_version === "VISUAL_STRATEGY_V2" && routingRevision.revision_contract === "LEGACY_VISUAL_STRATEGY_V2") {
-        action = "generate"
-      } else {
+      if (routingRevision.strategy_version !== "VISUAL_STRATEGY_V3" || routingRevision.revision_contract !== "REFERENCE_GUIDED_PRODUCT_GENERATION_V1") {
         return NextResponse.json({ success: false, error: "REVISION_STRATEGY_CONTRACT_MISMATCH", attemptRows: 0, jobRows: 0 }, { status: 409 })
       }
+      if (routingRevision.status !== "READY_FOR_PREPARE") {
+        return NextResponse.json({ success: false, error: "VISUAL_STRATEGY_V3_NOT_READY_FOR_PREPARE", attemptRows: 0, jobRows: 0 }, { status: 409 })
+      }
+      persistedPrepareRevisionId = routingRevision.id
+      action = "reference_guided_prepare"
     }
 
     if (action === "reference_guided_prepare") {
-      const revisionId = uuid(body.revisionId)
-      if (!revisionId) return NextResponse.json({ success: false, error: "REVISION_ID_REQUIRED" }, { status: 400 })
+      const revisionId = persistedPrepareRevisionId
+      if (!revisionId) return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_DIRECT_PREPARE_FORBIDDEN" }, { status: 400 })
       const { data: revisionRow, error: revisionLookupError } = await supabase
         .from("ebay_same_day_pilot_image_revisions")
         .select("id,listing_package_id,strategy_version,revision_contract")
@@ -679,7 +708,24 @@ export async function POST(req: Request) {
       const { data, error } = await supabase.rpc("create_ebay_reference_guided_generation_attempt", { p_revision_id: revisionId, p_manifest_hash: manifestHash, p_roles: roles, p_main_hash: mainHash, p_side_hash: sideHash, p_prompt_hashes: promptHashes, p_market_brief_hash: marketVisualBriefHash, p_product_dossier_hash: sourcePack.authoritative_fact_package_hash })
       if (error) throw error
       const attempt = Array.isArray(data) ? data[0] : data
-      return NextResponse.json({ success: true, attemptId: attempt?.id, manifestHash, state: "PREPARED", providerState: "WAITING_PROVIDER_ENABLEMENT", providerCalls: 0, retryConsumed: false, ebayWrites: 0, productionChanged: false }, { status: 202 })
+      const { data: persistedJobs, error: persistedJobsError } = await supabase
+        .from("ebay_reference_guided_generation_jobs")
+        .select("position,status,lease_owner,lease_expires_at")
+        .eq("generation_attempt_id", attempt?.id)
+        .order("position", { ascending: true })
+      if (persistedJobsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
+      const preparedOnly = !REFERENCE_GUIDED_PROVIDER_ENABLED
+        && persistedJobs?.length === 6
+        && persistedJobs.every((job, index) =>
+          job.position === index + 1
+          && job.status === "PENDING"
+          && job.lease_owner == null
+          && job.lease_expires_at == null)
+        && Number(attempt?.provider_calls) === 0
+      if (!REFERENCE_GUIDED_PROVIDER_ENABLED && !preparedOnly) {
+        throw new Error("REFERENCE_GUIDED_PREPARE_INVARIANT_FAILED")
+      }
+      return NextResponse.json({ success: true, revisionId, attemptId: attempt?.id, manifestHash, state: "PREPARED", providerState: REFERENCE_GUIDED_PROVIDER_ENABLED ? "READY_FOR_EXPLICIT_EXECUTION" : "WAITING_PROVIDER_ENABLEMENT", featureFlagEnabled: REFERENCE_GUIDED_PROVIDER_ENABLED, attemptRows: 1, jobRows: persistedJobs?.length ?? 0, jobs: persistedJobs ?? [], providerCalls: Number(attempt?.provider_calls ?? 0), retryConsumed: Boolean(attempt?.retry_consumed), ebayWrites: 0, productionChanged: false }, { status: 202 })
     }
 
     if (action === "generate") {
