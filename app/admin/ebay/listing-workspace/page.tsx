@@ -1268,6 +1268,14 @@ export default function EbayListingWorkspacePage() {
       if (!validUuid(revision.id)) {
         throw new Error("SAME_DAY_IMAGE_REVISION_ID_INVALID")
       }
+      // Prepare the persistent V3 attempt; provider remains disabled in this checkpoint.
+      const prepared = await imageRequest({
+        action: "reference_guided_prepare",
+        revisionId: revision.id,
+      })
+      if (prepared.attemptId) {
+        setMessage(`Preparado · proveedor deshabilitado · intento ${String(prepared.attemptId).slice(0, 8)}…`)
+      }
       if (["FAILED_RETRYABLE", "FAILED_FINAL"].includes(revisionStatus)) {
         setImageRevision({ revision: payload.revision, assets })
         setError(

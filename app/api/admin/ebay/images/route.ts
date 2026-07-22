@@ -327,6 +327,17 @@ export async function GET(req: Request) {
       )
     }
     const url = new URL(req.url)
+    const attemptId = uuid(url.searchParams.get("attemptId"))
+    if (attemptId) {
+      const supabase = getSupabaseAdminClient()
+      const [{ data: attempt, error: attemptError }, { data: jobs, error: jobsError }] = await Promise.all([
+        supabase.from("ebay_reference_guided_generation_attempts").select("id,revision_id,composition_manifest_hash,status,completed_job_count,expected_job_count,provider_calls,retry_consumed,created_at,started_at,completed_at").eq("id", attemptId).maybeSingle(),
+        supabase.from("ebay_reference_guided_generation_jobs").select("id,position,commercial_role,status,provider_request_id,output_sha256,qa_result,error_code,provider_call_started_at,provider_call_completed_at").eq("generation_attempt_id", attemptId).order("position"),
+      ])
+      if (attemptError || jobsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
+      if (!attempt) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
+      return NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: jobs ?? [], progress: `${attempt.completed_job_count}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
+    }
     const revisionId = uuid(url.searchParams.get("revisionId"))
     if (revisionId) {
       try {
@@ -429,6 +440,21 @@ export async function POST(req: Request) {
     const body = await parseBody(req)
     const action = text(body.action, 40)
     const supabase = getSupabaseAdminClient()
+
+    if (action === "reference_guided_prepare") {
+      const revisionId = uuid(body.revisionId)
+      if (!revisionId) return NextResponse.json({ success: false, error: "REVISION_ID_REQUIRED" }, { status: 400 })
+      const strategyVersion = "SELLER_OS_EBAY_VISUAL_STRATEGY_V3"
+      const manifestHash = createHash("sha256").update(`${revisionId}:${strategyVersion}`).digest("hex")
+      const roles = ["MATERIAL_AND_FINISH_DETAIL", "CONFIRMED_PACKAGE_CONTENTS", "SCALE_AND_CAPACITY_CONTEXT", "PRIMARY_BENEFIT_IN_ACTION", "ASPIRATIONAL_LIFESTYLE", "REAL_HUMAN_USE"]
+      const mainHash = createHash("sha256").update(`MAIN:${revisionId}`).digest("hex")
+      const sideHash = createHash("sha256").update(`SIDE:${revisionId}`).digest("hex")
+      const promptHashes = roles.map((role) => createHash("sha256").update(`${manifestHash}:${role}`).digest("hex"))
+      const { data, error } = await supabase.rpc("create_ebay_reference_guided_generation_attempt", { p_revision_id: revisionId, p_manifest_hash: manifestHash, p_roles: roles, p_main_hash: mainHash, p_side_hash: sideHash, p_prompt_hashes: promptHashes, p_market_brief_hash: null, p_product_dossier_hash: null })
+      if (error) throw error
+      const attempt = Array.isArray(data) ? data[0] : data
+      return NextResponse.json({ success: true, attemptId: attempt?.id, manifestHash, state: "PREPARED", providerState: "WAITING_PROVIDER_ENABLEMENT", providerCalls: 0, retryConsumed: false, ebayWrites: 0, productionChanged: false }, { status: 202 })
+    }
 
     if (action === "generate") {
       try {
