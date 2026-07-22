@@ -358,11 +358,19 @@ export async function GET(req: Request) {
       if (!candidateKey) return NextResponse.json({ success: false, error: "CANDIDATE_KEY_REQUIRED" }, { status: 400 })
       const { data: candidate } = await getSupabaseAdminClient().from("ebay_same_day_pilot_candidates").select("id").eq("candidate_key", candidateKey).order("created_at", { ascending: false }).limit(1).maybeSingle()
       if (!candidate) return NextResponse.json({ success: true, revision: null, v3Eligible: false, blockedReason: "ACTIVE_REVISION_NOT_FOUND" })
-      const { data: revisions, error: revisionError } = await getSupabaseAdminClient().from("ebay_same_day_pilot_image_revisions").select("id,listing_package_id,strategy_version,revision_contract,parent_revision_id,status,revision_fingerprint,created_at").eq("candidate_id", candidate.id).order("created_at", { ascending: false }).limit(20)
+      const adminDb = getSupabaseAdminClient()
+      const { data: revisions, error: revisionError } = await adminDb.from("ebay_same_day_pilot_image_revisions").select("id,listing_package_id,strategy_version,revision_contract,parent_revision_id,status,revision_fingerprint,created_at").eq("candidate_id", candidate.id).order("created_at", { ascending: false }).limit(20)
       if (revisionError) throw new Error("ACTIVE_REVISION_LOOKUP_FAILED")
       const active = (revisions ?? []).find((row) => row.strategy_version === "VISUAL_STRATEGY_V3" && row.revision_contract === "REFERENCE_GUIDED_PRODUCT_GENERATION_V1") ?? (revisions ?? []).find((row) => row.strategy_version === "VISUAL_STRATEGY_V2") ?? null
       const child = active?.strategy_version === "VISUAL_STRATEGY_V2" ? (revisions ?? []).find((row) => row.parent_revision_id === active.id && row.strategy_version === "VISUAL_STRATEGY_V3") : active
-      return NextResponse.json({ success: true, revision: active, existingV3RevisionId: child?.id ?? null, v3Eligible: Boolean(active?.strategy_version === "VISUAL_STRATEGY_V2"), blockedReason: active ? null : "ACTIVE_REVISION_NOT_FOUND" })
+      const { data: pack } = active?.listing_package_id ? await adminDb.from("luna_catalog_authorized_source_packs").select("id,source_pack_hash,manifest_hash,source_assets,authoritative_fact_package_hash").eq("marketplace_account_key", accountKey).eq("listing_package_id", active.listing_package_id).order("created_at", { ascending: false }).limit(1).maybeSingle() : { data: null }
+      const packAssets = Array.isArray(pack?.source_assets) ? pack.source_assets as Array<Record<string, unknown>> : []
+      const protectedSourcePackReady = Boolean(pack?.id && packAssets.length === 2 && packAssets.every((asset) => typeof asset.storagePath === "string" && asset.storagePath.length > 0))
+      const { data: candidateFacts } = await adminDb.from("ebay_same_day_pilot_candidates").select("product_facts_summary").eq("id", candidate.id).maybeSingle()
+      const factsPackage = record(record(candidateFacts?.product_facts_summary).authoritativeFactsPackage)
+      const productDossierAvailable = factsPackage.ready === true && typeof factsPackage.factPackageHash === "string" && factsPackage.factPackageHash.length > 0
+      const v3CreateEligible = Boolean(active?.strategy_version === "VISUAL_STRATEGY_V2" && protectedSourcePackReady && productDossierAvailable && !child)
+      return NextResponse.json({ success: true, revision: active, existingV3RevisionId: child?.id ?? null, sourcePackId: pack?.id ?? null, protectedSourcePackReady, sourcePackManifestHash: pack?.manifest_hash ?? pack?.source_pack_hash ?? null, productDossierAvailable, v3CreateEligible, v3Eligible: v3CreateEligible, blockedReason: active ? null : "ACTIVE_REVISION_NOT_FOUND" })
     }
     const attemptId = uuid(url.searchParams.get("attemptId"))
     if (attemptId) {

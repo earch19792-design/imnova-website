@@ -643,6 +643,8 @@ function ListingWorkspacePageContent() {
   const [revisionError, setRevisionError] = useState("")
   const [activeVisualRevision, setActiveVisualRevision] = useState<Record<string, any> | null>(null)
   const [v3Eligibility, setV3Eligibility] = useState<{ eligible: boolean; blockedReason: string | null; existingId: string | null }>({ eligible: false, blockedReason: null, existingId: null })
+  const [protectedSourcePackReady, setProtectedSourcePackReady] = useState(false)
+  const [protectedSourcePackId, setProtectedSourcePackId] = useState<string | null>(null)
   const [imageRevisionBusy, setImageRevisionBusy] = useState(false)
   const [referenceGuidedAttempt, setReferenceGuidedAttempt] = useState<Record<string, any> | null>(null)
   const [referenceGuidedAttemptId, setReferenceGuidedAttemptId] = useState("")
@@ -740,7 +742,10 @@ function ListingWorkspacePageContent() {
         if (!response.ok || !payload.success) throw new Error(String(payload.error ?? "ACTIVE_REVISION_LOOKUP_FAILED"))
         if (!current) return
         setActiveVisualRevision(payload.revision ?? null)
-        setV3Eligibility({ eligible: payload.v3Eligible === true, blockedReason: payload.blockedReason ?? null, existingId: payload.existingV3RevisionId ?? null })
+        setProtectedSourcePackReady(payload.protectedSourcePackReady === true)
+        setProtectedSourcePackId(payload.sourcePackId ?? null)
+        if (payload.protectedSourcePackReady === true) setProtectedSourcePreview({ sourcePackId: payload.sourcePackId, sourcePackManifestHash: payload.sourcePackManifestHash })
+        setV3Eligibility({ eligible: payload.v3CreateEligible === true, blockedReason: payload.blockedReason ?? null, existingId: payload.existingV3RevisionId ?? null })
         setRevisionLoaded(true)
       } catch (error) {
         if (controller.signal.aborted || !current) return
