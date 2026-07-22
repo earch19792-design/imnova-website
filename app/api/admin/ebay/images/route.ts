@@ -425,6 +425,7 @@ export async function GET(req: Request) {
         { data: deterministicPreview, error: deterministicPreviewError },
         { data: assetSlots, error: assetSlotsError },
         { data: primaryMainPreview, error: primaryMainPreviewError },
+        { data: deterministicVariants, error: deterministicVariantsError },
         { data: assetReviews, error: assetReviewsError }] = await Promise.all([
         supabase.from("ebay_reference_guided_generation_attempts").select("id,revision_id,composition_manifest_hash,status,completed_job_count,expected_job_count,provider_calls,retry_consumed,created_at,started_at,completed_at").eq("id", attemptId).maybeSingle(),
         supabase.from("ebay_reference_guided_generation_jobs").select("id,position,commercial_role,status,provider_request_id,output_storage_path,output_sha256,qa_result,error_code,lease_owner,lease_expires_at,provider_call_started_at,provider_call_completed_at").eq("generation_attempt_id", attemptId).order("position"),
@@ -438,11 +439,14 @@ export async function GET(req: Request) {
         supabase.from("ebay_reference_guided_primary_main_previews")
           .select("id,revision_id,asset_ordinal,asset_role,contract_version,source_sha256,safe_margin_pixels,background_color,output_width,output_height,output_storage_path,output_sha256,transform_manifest_hash,status,created_at")
           .eq("attempt_id", attemptId).eq("asset_ordinal", 0).maybeSingle(),
+        supabase.from("ebay_reference_guided_deterministic_asset_variants")
+          .select("id,revision_id,asset_ordinal,asset_role,variant_version,source_image_id,source_sha256,crop_coordinates,output_width,output_height,output_storage_path,output_sha256,transform_manifest_hash,qa_metrics,status,created_at")
+          .eq("attempt_id", attemptId).order("asset_ordinal"),
         supabase.from("ebay_reference_guided_asset_review_events")
           .select("id,asset_ordinal,asset_role,preview_sha256,decision,reason,created_at")
           .eq("attempt_id", attemptId).order("created_at", { ascending: false }),
       ])
-      if (attemptError || jobsError || deterministicPreviewError || assetSlotsError || primaryMainPreviewError || assetReviewsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
+      if (attemptError || jobsError || deterministicPreviewError || assetSlotsError || primaryMainPreviewError || deterministicVariantsError || assetReviewsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
       if (!attempt) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
       if (requestedRevisionId && attempt.revision_id !== requestedRevisionId) return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_REVISION_MISMATCH" }, { status: 409 })
       const { data: ownedRevision, error: ownedRevisionError } = await supabase
@@ -488,7 +492,16 @@ export async function GET(req: Request) {
         primaryReview = { ...primaryMainPreview,
           output_preview_url: preview.data.signedUrl }
       }
-      const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, primaryMainPreview: primaryReview, deterministicPreview: deterministicReview, assetReviews: assetReviews ?? [], assetContract: REFERENCE_GUIDED_SEVEN_ASSET_ROLES, assetSlots: assetSlots ?? [], progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
+      const variantReviews = await Promise.all((deterministicVariants ?? [])
+        .map(async (variant) => {
+          const preview = await supabase.storage.from(STAGING_BUCKET)
+            .createSignedUrl(variant.output_storage_path, 300)
+          if (preview.error || !preview.data?.signedUrl) {
+            throw new Error("REFERENCE_GUIDED_OUTPUT_PREVIEW_FAILED")
+          }
+          return { ...variant, output_preview_url: preview.data.signedUrl }
+        }))
+      const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, primaryMainPreview: primaryReview, deterministicPreview: deterministicReview, deterministicVariants: variantReviews, assetReviews: assetReviews ?? [], assetContract: REFERENCE_GUIDED_SEVEN_ASSET_ROLES, assetSlots: assetSlots ?? [], progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
       response.headers.set("Cache-Control", "no-store")
       return response
     }
@@ -750,9 +763,18 @@ export async function POST(req: Request) {
         : supabase.from("ebay_reference_guided_deterministic_previews")
           .select("output_sha256").eq("attempt_id", attemptId)
           .eq("asset_ordinal", 1).eq("output_sha256", previewSha256).maybeSingle()
-      const { data: preview, error: previewError } = await previewQuery
-      if (previewError || !preview) return NextResponse.json({ success: false,
+      const { data: basePreview, error: previewError } = await previewQuery
+      if (previewError) return NextResponse.json({ success: false,
         error: "REFERENCE_GUIDED_VISUAL_PREVIEW_NOT_FOUND" }, { status: 404 })
+      const variantResult = basePreview ? { data: null, error: null }
+        : await supabase.from("ebay_reference_guided_deterministic_asset_variants")
+          .select("output_sha256").eq("attempt_id", attemptId)
+          .eq("asset_ordinal", assetOrdinal).eq("output_sha256", previewSha256)
+          .maybeSingle()
+      if (variantResult.error || (!basePreview && !variantResult.data)) {
+        return NextResponse.json({ success: false,
+          error: "REFERENCE_GUIDED_VISUAL_PREVIEW_NOT_FOUND" }, { status: 404 })
+      }
       const { data: prior, error: priorError } = await supabase
         .from("ebay_reference_guided_asset_review_events")
         .select("id,asset_ordinal,asset_role,preview_sha256,decision,reason,created_at")
