@@ -78,8 +78,10 @@ try {
   }
   await removeReferenceGuidedCanaryPng({ supabase, storagePath })
   const afterCleanup = await supabase.storage
-    .from("ebay-listing-image-staging").download(storagePath)
-  fixtureCleanedUp = Boolean(afterCleanup.error && !afterCleanup.data)
+    .from("ebay-listing-image-staging")
+    .list(prefix, { limit: 10, search: "fixture.png" })
+  fixtureCleanedUp = !afterCleanup.error &&
+    !(afterCleanup.data ?? []).some((entry) => entry.name === "fixture.png")
   console.log(JSON.stringify({
     fixtureUpload: persisted.uploaded,
     fixtureDownload: persisted.downloaded,
