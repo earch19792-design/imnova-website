@@ -109,10 +109,10 @@ function assertPreflight(state) {
     Number(state.position.planned_provider_calls) !== 1 ||
     promptHash !== state.position.exact_prompt_hash || /\bmay\b/i.test(state.position.exact_prompt_text) ||
     !state.position.exact_prompt_text.includes("POSITION_MUST_INCLUDE MUST take priority") ||
-    JSON.stringify(sources) !== JSON.stringify([
-      { sourceImageId: "MAIN", sha256: MAIN_SHA256 },
-      { sourceImageId: "SIDE", sha256: SIDE_SHA256 },
-    ]) || !p5 || p5.status !== "PENDING" || p5.commercial_role !== "ASPIRATIONAL_LIFESTYLE" ||
+    !Array.isArray(sources) || sources.length !== 2 ||
+    sources[0]?.sourceImageId !== "MAIN" || sources[0]?.sha256 !== MAIN_SHA256 ||
+    sources[1]?.sourceImageId !== "SIDE" || sources[1]?.sha256 !== SIDE_SHA256 ||
+    !p5 || p5.status !== "PENDING" || p5.commercial_role !== "ASPIRATIONAL_LIFESTYLE" ||
     p5.lease_owner != null || p5.lease_expires_at != null ||
     p5.provider_request_id != null || p5.provider_call_started_at != null ||
     p5.provider_call_completed_at != null || p5.output_storage_path != null ||
