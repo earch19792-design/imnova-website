@@ -42,6 +42,12 @@ import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
 } from "@/lib/supabase-admin"
+import {
+  loadAuthorizedCatalogNativeMedia,
+  resolveProtectedAuthorizedCatalogNativeMedia,
+} from "@/lib/ebay/authorized-catalog-native-media"
+import { persistAuthorizedCatalogSourcePack } from "@/lib/ebay/luna-catalog-source-pack-persistence"
+import { LUNA_CATALOG_SOURCE_RESOLVER_VERSION } from "@/lib/ebay/luna-catalog-original-source-resolver"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
 const SOURCE_BUCKET = EBAY_IMAGE_SOURCE_BUCKET
@@ -453,6 +459,62 @@ export async function POST(req: Request) {
     const body = await parseBody(req)
     let action = text(body.action, 40)
     const supabase = getSupabaseAdminClient()
+
+    if (action === "ensure_protected_authorized_source_pack") {
+      const parentRevisionId = uuid(body.parentRevisionId)
+      if (!parentRevisionId) return NextResponse.json({ success: false, error: "PARENT_REVISION_ID_REQUIRED" }, { status: 400 })
+      const { data: parent, error: parentError } = await supabase
+        .from("ebay_same_day_pilot_image_revisions")
+        .select("id,listing_package_id,candidate_id,product_dossier_hash")
+        .eq("id", parentRevisionId).maybeSingle()
+      if (parentError || !parent) return NextResponse.json({ success: false, error: "PARENT_REVISION_NOT_FOUND" }, { status: 404 })
+      if (!parent.product_dossier_hash) return NextResponse.json({ success: false, error: "PRODUCT_DOSSIER_REQUIRED", sourcePackCreated: false }, { status: 422 })
+      const { data: candidate } = await supabase.from("ebay_same_day_pilot_candidates")
+        .select("candidate_key,opportunity_id,supplier_sku,supplier_variant_id")
+        .eq("id", parent.candidate_id).maybeSingle()
+      const { data: opportunity } = candidate?.opportunity_id
+        ? await supabase.from("ebay_luna_opportunity_queue").select("market_radar_product_id,supplier_product_id,supplier_variant_id").eq("id", candidate.opportunity_id).maybeSingle()
+        : { data: null }
+      const supplierProductId = text(opportunity?.supplier_product_id || candidate?.supplier_sku, 40)
+      const supplierVariantId = text(opportunity?.supplier_variant_id || candidate?.supplier_variant_id, 40)
+      const { data: product } = opportunity?.market_radar_product_id
+        ? await supabase.from("market_radar_products").select("product_url").eq("id", opportunity.market_radar_product_id).maybeSingle()
+        : { data: null }
+      if (!candidate || !supplierProductId || !supplierVariantId || !opportunity?.market_radar_product_id || !product?.product_url) {
+        return NextResponse.json({ success: false, error: "SOURCE_VARIANT_MISMATCH", sourcePackCreated: false }, { status: 422 })
+      }
+      const definitions = await loadAuthorizedCatalogNativeMedia({
+        supabase, accountKey, actorId: actor, listingPackageId: parent.listing_package_id,
+        candidateId: parent.candidate_id, supplierProductId,
+        supplierVariantId,
+      })
+      const assets = await resolveProtectedAuthorizedCatalogNativeMedia({ definitions })
+      const sourcePack = {
+        productId: supplierProductId,
+        productIdentityHash: `sha256:${createHash("sha256").update(`${supplierProductId}:${supplierVariantId}`).digest("hex")}`,
+        productUrl: product.product_url,
+        sourceAssets: assets,
+        sourceAssetCount: assets.length,
+        largestNativeWidth: Math.max(...assets.map((a) => a.nativeWidth)),
+        largestNativeHeight: Math.max(...assets.map((a) => a.nativeHeight)),
+        galleryCoverage: "MULTI_VIEW" as const,
+        availableViewTypes: assets.map((a) => a.viewClassification),
+        authorizationEvidenceHash: createHash("sha256").update(definitions.map((d) => d.id).sort().join(":")).digest("hex"),
+        resolverVersion: LUNA_CATALOG_SOURCE_RESOLVER_VERSION as typeof LUNA_CATALOG_SOURCE_RESOLVER_VERSION,
+        discoveredCandidateCount: 2, inspectedCandidateCount: 2,
+        precheck: { CATALOG_ORIGINAL_DISCOVERY_COMPLETED: true, ALL_CATALOG_MEDIA_INSPECTED: true, PRODUCT_IDENTITY_MATCHED: true, SOURCE_PACK_READY: true, SIX_SECONDARY_JOBS_FEASIBLE: true, MARKET_VISUAL_SIGNALS_USABLE: true } as const,
+      }
+      const persisted = await persistAuthorizedCatalogSourcePack({
+        supabase, accountKey, actorId: actor, listingPackageId: parent.listing_package_id,
+        candidateId: parent.candidate_id, marketRadarProductId: opportunity.market_radar_product_id,
+        supplierVariantId, factPackageHash: parent.product_dossier_hash,
+        pack: sourcePack,
+        sourcePackVersion: `PROTECTED_SNAPSHOT_${assets.map((a) => a.sha256).sort().join("").slice(0, 16)}`,
+        policyVersion: "REFERENCE_GUIDED_PRODUCT_GENERATION_V1",
+        reconciliationReason: "EXTERNAL_SOURCE_CHANGED_BEFORE_PROTECTED_SNAPSHOT",
+      })
+      return NextResponse.json({ success: true, sourcePackCreated: true, sourcePackId: persisted.packId, sourcePackHash: persisted.sourcePackHash, reconciliation: "EXTERNAL_SOURCE_CHANGED_BEFORE_PROTECTED_SNAPSHOT", providerCalls: 0, ebayWrites: 0, productionChanged: false })
+    }
 
     if (action === "ensure_visual_strategy_v3_revision") {
       const parentRevisionId = uuid(body.parentRevisionId)

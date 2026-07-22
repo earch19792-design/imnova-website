@@ -55,6 +55,9 @@ export async function persistAuthorizedCatalogSourcePack(input: {
   supplierVariantId: string
   factPackageHash: string
   pack: AuthorizedCatalogSourcePack
+  sourcePackVersion?: string
+  policyVersion?: string
+  reconciliationReason?: string
 }) {
   const sourceEvidence = input.pack.sourceAssets.map(catalogAssetEvidence)
   const sourcePackHash = sha256(JSON.stringify({
@@ -84,7 +87,7 @@ export async function persistAuthorizedCatalogSourcePack(input: {
     for (const asset of input.pack.sourceAssets) {
       const nativeExtension = asset.contentType === "image/png"
         ? "png" : asset.contentType === "image/webp" ? "webp" : "jpg"
-      const storagePath = `${input.actorId}/catalog-source-packs/${packId}/${asset.sourceSha256}-native.${nativeExtension}`
+      const storagePath = `${input.actorId}/catalog-source-packs/content-addressed/${asset.sourceSha256}-native.${nativeExtension}`
       const upload = await input.supabase.storage.from(EBAY_IMAGE_SOURCE_BUCKET)
         .upload(storagePath, asset.nativeBuffer, {
           contentType: asset.contentType,
@@ -94,7 +97,7 @@ export async function persistAuthorizedCatalogSourcePack(input: {
       uploadedPaths.push(storagePath)
       let enhancedStoragePath: string | null = null
       if (asset.enhancedDerivative && asset.enhancedSha256) {
-        enhancedStoragePath = `${input.actorId}/catalog-source-packs/${packId}/${asset.enhancedSha256}-enhanced.jpg`
+        enhancedStoragePath = `${input.actorId}/catalog-source-packs/content-addressed/${asset.enhancedSha256}-enhanced.jpg`
         const enhancedUpload = await input.supabase.storage
           .from(EBAY_IMAGE_SOURCE_BUCKET).upload(enhancedStoragePath, asset.buffer, {
             contentType: "image/jpeg",
@@ -138,6 +141,11 @@ export async function persistAuthorizedCatalogSourcePack(input: {
         openai_calls: 0,
         ebay_writes: 0,
         production_changed: false,
+        source_pack_version: input.sourcePackVersion ?? input.pack.resolverVersion,
+        policy_version: input.policyVersion ?? "REFERENCE_GUIDED_PRODUCT_GENERATION_V1",
+        manifest_hash: sourcePackHash,
+        reconciliation_reason: input.reconciliationReason ?? null,
+        verified_at: new Date().toISOString(),
       })
     if (error) throw new Error("LUNA_CATALOG_SOURCE_PACK_SAVE_FAILED")
     return { packId, sourcePackHash }

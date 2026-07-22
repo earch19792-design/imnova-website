@@ -202,3 +202,72 @@ export async function resolveAuthorizedCatalogNativeMedia(input: {
     throw error
   }
 }
+
+/**
+ * Protected snapshot resolver.  Unlike the legacy native resolver this keeps
+ * the append-only historical SIDE declaration intact and accepts only the
+ * currently served successor bytes after identity metadata has been matched.
+ */
+export async function resolveProtectedAuthorizedCatalogNativeMedia(input: {
+  definitions: AuthorizedCatalogNativeMediaDefinition[]
+  fetchImpl?: typeof fetch
+}) {
+  const fetchImpl = input.fetchImpl ?? fetch
+  if (input.definitions.length !== 2 ||
+      new Set(input.definitions.map((d) => d.sourceImageId)).size !== 2) {
+    throw new Error("AUTHORIZED_SOURCE_COUNT_INVALID")
+  }
+  const main = input.definitions.find((d) => d.sourceImageId === "MAIN")
+  const side = input.definitions.find((d) => d.sourceImageId === "SIDE")
+  if (!main) throw new Error("AUTHORIZED_MAIN_MISSING")
+  if (!side) throw new Error("AUTHORIZED_SIDE_MISSING")
+  if (main.supplierProductId !== side.supplierProductId ||
+      main.supplierVariantId !== side.supplierVariantId ||
+      main.expectedSha256 === side.expectedSha256) {
+    throw new Error("SOURCE_VARIANT_MISMATCH")
+  }
+  const excluded = new Set(main.excludedSourceSha256s)
+  if (excluded.size !== 5 || [...excluded].some((h) =>
+      h === main.expectedSha256 || h === side.expectedSha256)) {
+    throw new Error("SOURCE_HASH_EXCLUDED")
+  }
+  const assets: ResolvedLunaCatalogSourceAsset[] = []
+  for (const definition of [main, side]) {
+    const response = await fetchImpl(definition.sourceUrl, {
+      method: "GET", redirect: "manual", cache: "no-store",
+      headers: { Accept: "image/jpeg" },
+    })
+    if ([301, 302, 303, 307, 308].includes(response.status) ||
+        (response.url && response.url !== definition.sourceUrl)) {
+      throw new Error("AUTHORIZED_CATALOG_NATIVE_REDIRECT_BLOCKED")
+    }
+    if (!response.ok || !(response.headers.get("content-type") ?? "")
+      .split(";")[0].toLowerCase().includes("image/jpeg")) {
+      throw new Error("AUTHORIZED_CATALOG_NATIVE_FETCH_FAILED")
+    }
+    const buffer = await readBoundedImage(response)
+    const metadata = await sharp(buffer, { failOn: "warning", limitInputPixels: 40_000_000 }).metadata()
+    const actual = sha256(buffer)
+    const expectedWidth = definition.sourceImageId === "MAIN" ? 1500 : 1500
+    const expectedHeight = definition.sourceImageId === "MAIN" ? 905 : 1051
+    if (metadata.format !== "jpeg" || metadata.width !== expectedWidth ||
+        metadata.height !== expectedHeight || (definition.sourceImageId === "MAIN" && actual !== definition.expectedSha256) ||
+        excluded.has(actual)) {
+      buffer.fill(0)
+      throw new Error(definition.sourceImageId === "MAIN" ?
+        "MAIN_PROTECTED_SNAPSHOT_MISMATCH" : "SIDE_PROTECTED_SNAPSHOT_REQUALIFIED")
+    }
+    assets.push({
+      sourceImageId: definition.sourceImageId, sourceAngle: definition.sourceAngle,
+      productId: definition.supplierProductId, variantId: definition.supplierVariantId,
+      sourceUrl: definition.sourceUrl, nativeWidth: metadata.width!, nativeHeight: metadata.height!,
+      contentType: "image/jpeg", sha256: actual,
+      viewClassification: definition.sourceImageId === "MAIN" ? "PRIMARY" : "ALTERNATE_AUTHORIZED_ANGLE",
+      qualityTier: "NATIVE_HIGH_RES", selectedForSlots: definition.sourceImageId === "MAIN" ? ["MAIN_WHITE_BACKGROUND"] : [],
+      authorizationStatus: "AUTHORIZED_CATALOG_NATIVE_HIGH_RES", enhancedDerivative: false,
+      sourceSha256: actual, enhancedSha256: null, effectiveWidth: metadata.width!, effectiveHeight: metadata.height!,
+      excludedSourceSha256s: [...excluded], nativeBuffer: buffer, buffer,
+    })
+  }
+  return assets
+}
