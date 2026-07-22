@@ -2,10 +2,8 @@ import { createHash } from "node:crypto"
 
 import sharp from "sharp"
 
-import {
-  prepareAuthorizedEbayFullFrameLayer,
-  prepareAuthorizedEbaySecondaryForeground,
-} from "./ebay-image-optimization-service"
+// @ts-expect-error Node's native TypeScript tests need the explicit extension.
+import { prepareAuthorizedEbayFullFrameLayer, prepareAuthorizedEbaySecondaryForeground } from "./ebay-image-optimization-service.ts"
 
 export const AUTHORIZED_FOREGROUND_IDENTITY_VERSION =
   "AUTHORIZED_PRODUCT_FOREGROUND_IDENTITY_V1_2026_07_22"
