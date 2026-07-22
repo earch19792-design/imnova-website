@@ -15,6 +15,9 @@ export const EBAY_LISTING_IMAGE_SET_VERSION =
 export const EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION =
   "EBAY_IMAGE_COMPOSITOR_FOREGROUND_V9_2026_07_22"
 export const CONTROLLED_COMPOSITE_VERSION = "CONTROLLED_COMPOSITE_V1"
+/** Reference-guided secondary generation. Disabled unless explicitly enabled in staging. */
+export const REFERENCE_GUIDED_PRODUCT_GENERATION_VERSION =
+  "REFERENCE_GUIDED_PRODUCT_GENERATION_V1"
 export const EBAY_VISUAL_QA_EVALUATOR_VERSION =
   "SELLER_OS_EBAY_VISUAL_QA_V2"
 export const EBAY_OPENAI_BACKGROUND_PLATE_VERSION =
@@ -39,6 +42,10 @@ const OPENAI_IMAGE_MODELS = new Set(["gpt-image-2"])
 const OPENAI_IMAGE_QUALITIES = new Set(["low", "high"])
 
 export type EbayOpenAiImageQuality = "low" | "high"
+
+export type EbayImageGenerationMode =
+  | typeof CONTROLLED_COMPOSITE_VERSION
+  | typeof REFERENCE_GUIDED_PRODUCT_GENERATION_VERSION
 
 export const EBAY_LISTING_IMAGE_SLOTS = [
   "MAIN_WHITE_BACKGROUND",
@@ -321,6 +328,68 @@ export type EbayOpenAiBackgroundPlate = {
     totalTokens: number | null
   }
   plan: EbayOpenAiBackgroundPlatePlan
+}
+
+export type EbayReferenceGuidedImageJob = {
+  slot: Exclude<EbayListingImageSlot, "MAIN_WHITE_BACKGROUND">
+  salesObjective: EbayVisualSalesObjective
+  prompt: string
+  promptHash: string
+  sourceImageIds: ["MAIN", "SIDE"]
+  sourceHashes: [string, string]
+}
+
+export type EbayReferenceGuidedGenerationPlan = {
+  version: typeof REFERENCE_GUIDED_PRODUCT_GENERATION_VERSION
+  model: "gpt-image-2"
+  size: "1600x1600"
+  quality: "high"
+  outputFormat: "png"
+  productBytesSentToProvider: true
+  competitorImagesSentToProvider: false
+  excludedSourceSha256s: string[]
+  jobs: EbayReferenceGuidedImageJob[]
+  compositionManifestHash: string
+}
+
+/** Builds the fail-closed V3 provider contract; it never accepts competitor or excluded media. */
+export function buildReferenceGuidedProductGenerationPlan(
+  inputValue: unknown,
+): EbayReferenceGuidedGenerationPlan {
+  const input = validateListingImageFactoryInput(inputValue)
+  const sources = input.authorizedSourceCapabilities ?? []
+  if (sources.length !== 2 || sources[0]?.sourceImageId !== "MAIN" ||
+    sources[1]?.sourceImageId !== "SIDE" || sources.some((source) =>
+      source.authorizationStatus !== "AUTHORIZED_CATALOG_NATIVE_HIGH_RES" ||
+      !source.sourceSha256 || source.excludedSourceSha256s?.length !== 5)) {
+    throw new Error("REFERENCE_GUIDED_PREFLIGHT_SOURCE_INVALID")
+  }
+  const excluded = sources[0].excludedSourceSha256s ?? []
+  const jobs = buildSellerOsEbayVisualStrategyV2(input).map((position) => {
+    const prompt = [
+      "REFERENCE-GUIDED PRODUCT GENERATION V1",
+      "Use MAIN and SIDE only as identity references. Preserve the exact product; generate only the surrounding scene.",
+      `Commercial objective: ${position.salesObjective}`,
+      position.visualDirection,
+      "No invented accessories, geometry, text, logos, watermark, or competitor imagery.",
+    ].join("\\n")
+    return {
+      slot: position.slot,
+      salesObjective: position.salesObjective,
+      prompt,
+      promptHash: sha256Text(prompt),
+      sourceImageIds: ["MAIN", "SIDE"],
+      sourceHashes: [sources[0].sourceSha256!, sources[1].sourceSha256!],
+    } as EbayReferenceGuidedImageJob
+  })
+  if (jobs.length !== 6 || new Set(jobs.map((job) => job.salesObjective)).size !== 6) {
+    throw new Error("REFERENCE_GUIDED_PREFLIGHT_JOBS_INVALID")
+  }
+  const manifest = { version: REFERENCE_GUIDED_PRODUCT_GENERATION_VERSION as typeof REFERENCE_GUIDED_PRODUCT_GENERATION_VERSION,
+    model: "gpt-image-2" as const, size: "1600x1600" as const, quality: "high" as const, outputFormat: "png" as const,
+    excludedSourceSha256s: excluded, jobs }
+  return { ...manifest, productBytesSentToProvider: true,
+    competitorImagesSentToProvider: false, compositionManifestHash: sha256Text(JSON.stringify(manifest)) }
 }
 
 function sha256(value: Buffer) {
@@ -2291,6 +2360,7 @@ export function getListingImageFactoryConfiguration(environment = process.env) {
   const keyPresent = validOpenAiApiKey(environment.OPENAI_API_KEY)
   const enabled = environment.OPENAI_IMAGE_FACTORY_ENABLED?.trim() === "true"
     && environment.OPENAI_IMAGE_CONTEXT_PLATE_ENABLED?.trim() === "true"
+  const referenceGuidedEnabled = environment.OPENAI_REFERENCE_GUIDED_PRODUCT_GENERATION_ENABLED?.trim() === "true"
   const model = environment.OPENAI_IMAGE_MODEL?.trim() ?? ""
   const modelPresent = Boolean(model)
   const modelAllowed = OPENAI_IMAGE_MODELS.has(model)
@@ -2317,6 +2387,9 @@ export function getListingImageFactoryConfiguration(environment = process.env) {
     researchImageQuality: "low" as const,
     publishImageQuality: "high" as const,
     contextPlateFeatureEnabled: enabled,
+    referenceGuidedProductGeneration: referenceGuidedEnabled && preview && staging
+      ? "STAGING_ENABLED" as const
+      : "DISABLED" as const,
     preview,
     staging,
     authorizedBranch,
