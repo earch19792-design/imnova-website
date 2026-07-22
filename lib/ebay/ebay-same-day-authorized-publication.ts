@@ -120,7 +120,8 @@ function economicsOverrides(value: JsonRecord) {
   }
 }
 
-function validatedManifest(packageData: JsonRecord, imageUrls: string[]) {
+function validatedManifest(packageData: JsonRecord, imageUrls: string[],
+  requireReferenceGuidedContract = false) {
   if (!Array.isArray(packageData.imageAssetManifest)
     || packageData.imageAssetManifest.length !== 7) return false
   const manifest = packageData.imageAssetManifest.map(record)
@@ -129,6 +130,9 @@ function validatedManifest(packageData: JsonRecord, imageUrls: string[]) {
   const contractRoles = manifest.map((asset) => text(
     asset.referenceGuidedAssetRole ?? asset.assetRole, 80))
   const referenceGuidedContractPresent = contractRoles.some(Boolean)
+  if (requireReferenceGuidedContract && !referenceGuidedContractPresent) {
+    return false
+  }
   if (referenceGuidedContractPresent) {
     if (!contractRoles.every((role) =>
       REFERENCE_GUIDED_SEVEN_ASSET_ROLES.includes(
@@ -175,11 +179,10 @@ async function approvedPreferredImageRevision(input: {
   const revisionId = uuid(input.packageData.preferredImageRevisionId)
   const manifestAssetIds = exactManifestAssetIds(input.packageData, 7)
   if (!revisionId || input.packageImageUrls.length !== 7
-    || !validatedManifest(input.packageData, input.packageImageUrls)
     || manifestAssetIds.length !== 7) return null
   const { data, error } = await input.supabase
     .from("ebay_same_day_pilot_image_revisions")
-    .select("id,asset_ids,image_set_hash,status")
+    .select("id,asset_ids,image_set_hash,status,strategy_version,revision_contract")
     .eq("id", revisionId)
     .eq("marketplace_account_key", input.accountKey)
     .eq("created_by", input.actorUserId)
@@ -196,6 +199,10 @@ async function approvedPreferredImageRevision(input: {
     || new Set(revisionAssetIds).size !== 7
     || manifestAssetIds.some((id) => !revisionAssetIds.includes(id))
     || !/^[0-9a-f]{64}$/.test(text(data.image_set_hash, 80))) return null
+  const referenceGuidedV3 = data.strategy_version === "VISUAL_STRATEGY_V3"
+    && data.revision_contract === "REFERENCE_GUIDED_PRODUCT_GENERATION_V1"
+  if (!validatedManifest(input.packageData, input.packageImageUrls,
+    referenceGuidedV3)) return null
   return { id: revisionId, imageSetHash: text(data.image_set_hash, 80) }
 }
 
