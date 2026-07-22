@@ -641,6 +641,8 @@ function ListingWorkspacePageContent() {
   const [imageRevisionBusy, setImageRevisionBusy] = useState(false)
   const [referenceGuidedAttempt, setReferenceGuidedAttempt] = useState<Record<string, any> | null>(null)
   const [referenceGuidedAttemptId, setReferenceGuidedAttemptId] = useState("")
+  const [v3Revision, setV3Revision] = useState<Record<string, unknown> | null>(null)
+  const [v3RevisionBusy, setV3RevisionBusy] = useState(false)
   const [imageRevisionLocalError, setImageRevisionLocalError] = useState("")
   const [imageRevisionConfirmed, setImageRevisionConfirmed] = useState(false)
   const [imageRightsBasis, setImageRightsBasis] = useState("supplier_authorized")
@@ -1367,6 +1369,25 @@ function ListingWorkspacePageContent() {
       setMessage("")
     } finally {
       setImageRevisionBusy(false)
+    }
+  }
+
+  async function createVisualStrategyV3Revision() {
+    const parentRevisionId = imageRevision?.revision.id
+    if (!parentRevisionId || v3RevisionBusy) return
+    setV3RevisionBusy(true)
+    try {
+      const payload = await imageRequest({ action: "ensure_visual_strategy_v3_revision", parentRevisionId })
+      setV3Revision(payload)
+      if (payload.revisionId) {
+        const next = new URLSearchParams(searchParams.toString())
+        next.set("revisionId", String(payload.revisionId))
+        router.replace(`?${next.toString()}`, { scroll: false })
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "V3_REVISION_CREATE_FAILED")
+    } finally {
+      setV3RevisionBusy(false)
     }
   }
 
@@ -2169,6 +2190,8 @@ function ListingWorkspacePageContent() {
               </div>
               <button type="button" disabled={!approvedBaseImageControlId || imageRevisionBusy} onClick={() => void generateImageRevision()} className="mt-3 min-h-12 w-full rounded-xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40">{imageRevisionBusy ? "Procesando las siete…" : imageRevisionFailed ? "Reintentar generación" : "Generar revisión corregida"}</button>
               {referenceGuidedAttempt && <div className="mt-3 rounded-xl border border-cyan-200/25 bg-cyan-200/[0.05] p-3 text-xs leading-5 text-cyan-50"><strong>Preparado · proveedor deshabilitado</strong><span className="mt-1 block font-mono">Intento {String(referenceGuidedAttempt.attempt?.id ?? referenceGuidedAttemptId)}</span><span className="mt-1 block">Progreso: {String(referenceGuidedAttempt.progress ?? `${referenceGuidedAttempt.attempt?.completed_job_count ?? 0}/6`)}</span><span className="mt-1 block">Trabajos persistidos: {Array.isArray(referenceGuidedAttempt.jobs) ? referenceGuidedAttempt.jobs.length : 0}/6 · providerCalls: {String(referenceGuidedAttempt.attempt?.provider_calls ?? 0)}</span></div>}
+              {imageRevision?.revision && !v3Revision && <div className="mt-3 rounded-xl border border-violet-200/25 bg-violet-200/[0.06] p-3 text-xs leading-5 text-violet-50"><strong>Revisión activa: Visual Strategy V2</strong><p className="mt-1">Evidencia exacta insuficiente; la estrategia V3 utilizará únicamente señales agregadas de categoría para orientar la composición.</p><button type="button" disabled={v3RevisionBusy} onClick={() => void createVisualStrategyV3Revision()} className="mt-3 min-h-11 w-full rounded-xl bg-violet-200 px-3 text-sm font-black text-black disabled:opacity-40">{v3RevisionBusy ? "Creando revisión V3…" : "Crear revisión Visual Strategy V3"}</button></div>}
+              {v3Revision && <div className="mt-3 rounded-xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50"><strong>Visual Strategy V3 · READY_FOR_PREPARE</strong><span className="mt-1 block">Evidencia exacta insuficiente; se utilizarán señales de categoría sin convertirlas en hechos del producto.</span><span className="mt-1 block font-mono">Revisión: {String(v3Revision.revisionId ?? "")}</span></div>}
               {imageRevisionLocalError && <div role="alert" className="mt-2 rounded-xl border border-amber-200/30 bg-amber-200/[0.06] p-3 text-xs leading-5 text-amber-50"><strong>Generación detenida antes del reintento.</strong><span className="mt-1 block">{imageRevisionLocalError}</span></div>}
               {imageRevisionId && <button type="button" disabled={imageRevisionBusy} onClick={() => void loadImageRevision(imageRevisionId)} className="mt-2 min-h-11 w-full rounded-xl border border-cyan-200/30 px-4 text-sm font-black text-cyan-50 disabled:opacity-40">Actualizar vista</button>}
               {!approvedBaseImageControlId && <p className="mt-2 text-xs leading-5 text-amber-50">Esta acción aparece cuando el candidato conserva un set histórico compatible de seis o siete slots ligado al mismo control. El servidor vuelve a comprobar que el control esté APPROVED.</p>}
