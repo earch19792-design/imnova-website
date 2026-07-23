@@ -10,6 +10,8 @@ const route = readFileSync(
   "app/api/admin/ebay/images/reference-guided-extraordinary-position-4/route.ts", "utf8")
 const authorizationFix = readFileSync(
   "supabase/migrations/20260722048000_fix_extraordinary_authorization_rpc.sql", "utf8")
+const consumeFix = readFileSync(
+  "supabase/migrations/20260722049000_fix_extraordinary_consume_rpc.sql", "utf8")
 
 test("extraordinary ordinal 7 is exact, atomic, and scoped to one attempt", () => {
   assert.match(migration, /extraordinary_ordinal<>7/)
@@ -26,6 +28,13 @@ test("authorization RPC qualifies ordinal columns and stays service-role-only", 
   assert.match(authorizationFix, /existing\.extraordinary_ordinal=v_position\.extraordinary_ordinal/)
   assert.match(authorizationFix, /grant execute[\s\S]*to service_role/)
   assert.doesNotMatch(authorizationFix, /grant execute[\s\S]*to authenticated/)
+})
+
+test("consume RPC qualifies authorization event and preserves migration history", () => {
+  assert.match(consumeFix, /pg_get_functiondef/)
+  assert.match(consumeFix, /authorization_provider_event\.authorization_event_id/)
+  assert.match(consumeFix, /REPAIR_NOT_APPLIED/)
+  assert.match(consumeFix, /to service_role/)
 })
 
 test("exact persisted plan, amendment, contract, prompt, and sources gate execution", () => {
