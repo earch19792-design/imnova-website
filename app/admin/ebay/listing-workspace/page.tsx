@@ -698,6 +698,19 @@ function ListingWorkspacePageContent() {
     useState<FinalListingReviewPayload | null>(null)
   const [finalListingReviewError, setFinalListingReviewError] = useState("")
   const [finalListingReviewChecked, setFinalListingReviewChecked] = useState(false)
+  const [unpublishedAuthorization, setUnpublishedAuthorization] =
+    useState<Record<string, any> | null>(null)
+  const [unpublishedAuthorizationError, setUnpublishedAuthorizationError] =
+    useState("")
+  const [unpublishedAuthorizationBusy, setUnpublishedAuthorizationBusy] =
+    useState(false)
+  const [unpublishedConfirmation, setUnpublishedConfirmation] = useState("")
+  const [confirmExactUnpublishedPayload, setConfirmExactUnpublishedPayload] =
+    useState(false)
+  const [confirmEbayWritesWithoutPublish, setConfirmEbayWritesWithoutPublish] =
+    useState(false)
+  const [confirmNoUnpublishedRetry, setConfirmNoUnpublishedRetry] =
+    useState(false)
   const [positionSixPreviewError, setPositionSixPreviewError] = useState("")
   const [extraordinaryAuthorizationBusy,
     setExtraordinaryAuthorizationBusy] = useState<number | null>(null)
@@ -931,6 +944,62 @@ function ListingWorkspacePageContent() {
     })()
     return () => controller.abort()
   }, [referenceGuidedAttemptId])
+
+  useEffect(() => {
+    const review = object(finalListingReview?.review)
+    if (
+      review.visualPhase !== "COMPLETED"
+      || review.finalVisualSetLocked !== true
+      || review.readyForUnpublishedOfferAuthorization !== true
+      || !referenceGuidedAttemptId
+      || unpublishedAuthorization
+      || unpublishedAuthorizationBusy
+    ) return
+    const controller = new AbortController()
+    setUnpublishedAuthorizationBusy(true)
+    void (async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession()
+        if (!sessionData.session) throw new Error("ADMIN_SESSION_REQUIRED")
+        const response = await fetch(
+          "/api/admin/ebay/unpublished-offer-authorization",
+          {
+            method: "POST",
+            cache: "no-store",
+            signal: controller.signal,
+            headers: {
+              Authorization: `Bearer ${sessionData.session.access_token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              action: "prepare",
+              attemptId: referenceGuidedAttemptId,
+              previewHash: String(review.previewHash ?? ""),
+            }),
+          },
+        )
+        const payload = await response.json() as Record<string, any>
+        if (!response.ok || payload.success !== true || !payload.authorization) {
+          throw new Error(String(payload.error
+            ?? "EBAY_V3_UNPUBLISHED_AUTHORIZATION_PREPARE_FAILED"))
+        }
+        setUnpublishedAuthorization(payload.authorization)
+        setUnpublishedAuthorizationError("")
+      } catch (prepareError) {
+        if (controller.signal.aborted) return
+        setUnpublishedAuthorizationError(prepareError instanceof Error
+          ? prepareError.message
+          : "EBAY_V3_UNPUBLISHED_AUTHORIZATION_PREPARE_FAILED")
+      } finally {
+        if (!controller.signal.aborted) setUnpublishedAuthorizationBusy(false)
+      }
+    })()
+    return () => controller.abort()
+  }, [
+    finalListingReview,
+    referenceGuidedAttemptId,
+    unpublishedAuthorization,
+  ])
 
   const titleRevisionRequest = useCallback(async (body: Record<string, unknown>) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
@@ -2450,6 +2519,67 @@ function ListingWorkspacePageContent() {
     } finally { setDraftBusy(false) }
   }
 
+  async function authorizeExactV3UnpublishedOffer() {
+    if (!unpublishedAuthorization) return
+    setUnpublishedAuthorizationBusy(true)
+    setError("")
+    setMessage("Revalidando el payload inmutable antes de una sola ejecución UNPUBLISHED…")
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      if (!sessionData.session) throw new Error("ADMIN_SESSION_REQUIRED")
+      const authorizationResponse = await fetch(
+        "/api/admin/ebay/unpublished-offer-authorization",
+        {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${sessionData.session.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "authorize",
+            authorizationPreviewId: unpublishedAuthorization.id,
+            previewHash: unpublishedAuthorization.previewHash,
+            payloadHash: unpublishedAuthorization.payloadHash,
+            confirmation: unpublishedConfirmation,
+            confirmExactPayload: confirmExactUnpublishedPayload,
+            confirmWritesButNoPublication: confirmEbayWritesWithoutPublish,
+            confirmNoAutomaticRetry: confirmNoUnpublishedRetry,
+          }),
+        },
+      )
+      const authorizationPayload =
+        await authorizationResponse.json() as Record<string, any>
+      if (!authorizationResponse.ok || authorizationPayload.success !== true) {
+        throw new Error(String(authorizationPayload.error
+          ?? "EBAY_V3_UNPUBLISHED_AUTHORIZATION_FAILED"))
+      }
+      const execution = object(authorizationPayload.execution)
+      const executionPayload = await draftRequest({
+        action: "execute",
+        approvalId: execution.approvalId,
+        idempotencyKey: execution.idempotencyKey,
+      })
+      setDraftState((current) => ({
+        ...current,
+        ...executionPayload,
+        approval: authorizationPayload.approval,
+        execution: executionPayload.execution,
+      }))
+      setMessage(
+        "Inventory Item y Offer creados y verificados como UNPUBLISHED. publishOffer no fue llamado.",
+      )
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(
+        requestError,
+        "La ejecución UNPUBLISHED se detuvo sin retry automático.",
+      ))
+      setMessage("")
+    } finally {
+      setUnpublishedAuthorizationBusy(false)
+    }
+  }
+
   async function prepareFinalPublication() {
     if (!draftState.execution?.id) return
     setDraftBusy(true); setError(""); setMessage("Preparando el preview final exacto sin publicar…")
@@ -2597,6 +2727,61 @@ function ListingWorkspacePageContent() {
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Mercado/demanda</dt><dd className="mt-1 font-black">{String(finalReviewMarketDemand.status ?? "PENDIENTE")}</dd></div>
         </dl>
         <p className="rounded-xl border border-amber-200/25 bg-amber-200/[0.07] p-3 text-xs text-amber-50">Inventory Item: NO CREADO · Offer: NO CREADO · publicación y autorización final deshabilitadas.</p>
+      </section>
+      <section data-v3-unpublished-authorization className="space-y-3 rounded-2xl border border-orange-200/30 bg-orange-200/[0.06] p-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-widest text-orange-100/70">Autorización humana · eBay UNPUBLISHED</p>
+          <h3 className="mt-1 text-lg font-black">Inventory Item + Offer sin publicar</h3>
+          <p className="mt-2 text-xs leading-5 text-orange-50/75">Esta pantalla prepara transporte permanente y el payload exacto. El único botón inferior realizará escrituras reales en la cuenta eBay enlazada, pero tiene prohibido llamar <code>publishOffer</code>.</p>
+        </div>
+        {unpublishedAuthorizationBusy && !unpublishedAuthorization && <p className="rounded-xl border border-white/10 p-3 text-sm text-white/60">Verificando siete PNG, cuenta, policies y payload server-side…</p>}
+        {unpublishedAuthorizationError && <p role="alert" className="rounded-xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50">Autorización bloqueada: {unpublishedAuthorizationError}. No se escribió en eBay.</p>}
+        {unpublishedAuthorization && <>
+          <dl className="grid gap-2 text-xs sm:grid-cols-2">
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Cuenta eBay destino</dt><dd className="mt-1 break-all font-black">{String(unpublishedAuthorization.target)} · BOUND · {String(object(unpublishedAuthorization.targetAccount).fingerprint)}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">SKU exacto</dt><dd className="mt-1 break-all font-black">{String(unpublishedAuthorization.sku)}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2 sm:col-span-2"><dt className="text-white/45">Título</dt><dd className="mt-1 font-black">{String(unpublishedAuthorization.title)}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Precio</dt><dd className="mt-1 font-black">{String(object(unpublishedAuthorization.price).currency)} {String(object(unpublishedAuthorization.price).value)}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Cantidad listing</dt><dd className="mt-1 font-black">{String(unpublishedAuthorization.listingQuantity)}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Categoría / mercado</dt><dd className="mt-1 font-black">{String(unpublishedAuthorization.categoryId)} · {String(unpublishedAuthorization.marketplaceId)} · {String(unpublishedAuthorization.format)}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Merchant location</dt><dd className="mt-1 font-black">{String(unpublishedAuthorization.merchantLocationKey)}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2 sm:col-span-2"><dt className="text-white/45">Policies verificadas</dt><dd className="mt-1 break-all font-black">{JSON.stringify(unpublishedAuthorization.policies)}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2 sm:col-span-2"><dt className="text-white/45">Item specifics</dt><dd className="mt-1 break-all font-black">{JSON.stringify(unpublishedAuthorization.itemSpecifics)}</dd></div>
+          </dl>
+          <ol className="space-y-2 rounded-xl bg-black/25 p-3 text-xs">
+            {(Array.isArray(unpublishedAuthorization.images)
+              ? unpublishedAuthorization.images
+              : []).map((asset: Record<string, any>) => <li key={`publication-${asset.position}-${asset.sha256}`} className="rounded-lg border border-white/10 p-2">
+                <strong>{Number(asset.position) === 0 ? "0 · Portada principal" : `${String(asset.position)} · Secundaria ${String(asset.position)}`} · {String(asset.assetRole)}</strong>
+                <span className="mt-1 block break-all text-white/55">SHA-256 {String(asset.sha256)}</span>
+                <a href={String(asset.url)} target="_blank" rel="noreferrer" className="mt-1 block break-all text-cyan-100 underline">{String(asset.url)}</a>
+                <span className="mt-1 block text-white/45">image/png · 1600×1600 · URL HTTPS estable</span>
+              </li>)}
+          </ol>
+          <div className="rounded-xl border border-cyan-200/20 bg-black/25 p-3 text-xs">
+            <strong>Payload hash inmutable</strong>
+            <p className="mt-1 break-all font-mono text-cyan-100">{String(unpublishedAuthorization.payloadHash)}</p>
+            <p className="mt-2 break-all text-white/55">Preview hash {String(unpublishedAuthorization.previewHash)}</p>
+          </div>
+          <details className="rounded-xl border border-white/10 bg-black/25 p-3 text-xs">
+            <summary className="cursor-pointer font-black">Mostrar payload exacto completo</summary>
+            <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all text-[10px] text-white/65">{JSON.stringify(unpublishedAuthorization.exactPayload, null, 2)}</pre>
+          </details>
+          <div className="space-y-3 rounded-xl border border-rose-200/30 bg-rose-200/[0.06] p-3">
+            <p className="text-sm font-black text-rose-50">Advertencia: esta autorización realizará escrituras reales en eBay PRODUCTION. Creará o reanudará sólo el Inventory Item y el Offer UNPUBLISHED; no publicará un listing.</p>
+            <label className="block text-xs"><span className="font-black">Escribe exactamente: {String(unpublishedAuthorization.confirmationPhrase)}</span><input value={unpublishedConfirmation} onChange={(event) => setUnpublishedConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label>
+            <label className="flex gap-2 text-xs"><input type="checkbox" checked={confirmExactUnpublishedPayload} onChange={(event) => setConfirmExactUnpublishedPayload(event.target.checked)} />Revisé el payload hash, los campos y las siete imágenes en este orden.</label>
+            <label className="flex gap-2 text-xs"><input type="checkbox" checked={confirmEbayWritesWithoutPublish} onChange={(event) => setConfirmEbayWritesWithoutPublish(event.target.checked)} />Autorizo createOrReplaceInventoryItem y createOffer; no autorizo publishOffer.</label>
+            <label className="flex gap-2 text-xs"><input type="checkbox" checked={confirmNoUnpublishedRetry} onChange={(event) => setConfirmNoUnpublishedRetry(event.target.checked)} />Entiendo que no habrá retry automático y que una reanudación reconciliará por SKU sin duplicar.</label>
+            <button type="button" disabled={
+              unpublishedAuthorizationBusy
+              || unpublishedConfirmation !== unpublishedAuthorization.confirmationPhrase
+              || !confirmExactUnpublishedPayload
+              || !confirmEbayWritesWithoutPublish
+              || !confirmNoUnpublishedRetry
+            } onClick={() => void authorizeExactV3UnpublishedOffer()} className="min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Autorizar Inventory Item + Offer UNPUBLISHED</button>
+          </div>
+        </>}
       </section>
     </section>
     : (v3ReviewAccessible || v3ReadyForPrepare)

@@ -44,6 +44,11 @@ import {
   assertVisualStrategyV3PublicationAllowed,
   loadVisualStrategyV3PublicationGate,
 } from "@/lib/ebay/visual-strategy-v3-publication-gate"
+import {
+  packageWithV3PublicationAssets,
+  validateV3PublicationAssets,
+  withV3FinalSetAuthorization,
+} from "@/lib/ebay/ebay-v3-unpublished-offer-authorization"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
 function record(value: unknown): JsonRecord {
@@ -1235,7 +1240,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
   }
   const draftConfiguration = configurationFromApprovedPayload(approvedPayload)
   const sku = text(draftConfiguration.sku)
-  const context = await loadPackageContext(
+  let context = await loadPackageContext(
     supabase,
     approval.listing_package_id,
     actor,
@@ -1244,13 +1249,48 @@ async function executeDraft(body: JsonRecord, actor: string) {
     fingerprint,
     approvalId,
   )
+  const v3Binding = record(record(approvedPayload.compliance).v3FinalSetAuthorization)
+  if (Object.keys(v3Binding).length) {
+    const transportId = uuid(v3Binding.imageTransportId)
+    const transportHash = text(v3Binding.imageTransportHash)
+    const finalPreviewHash = text(v3Binding.finalPreviewHash)
+    if (
+      !transportId
+      || !/^[0-9a-f]{64}$/.test(transportHash)
+      || !/^[0-9a-f]{64}$/.test(finalPreviewHash)
+    ) return jsonError(new Error("EBAY_V3_AUTHORIZATION_BINDING_INVALID"), 409)
+    const { data: transport, error: transportError } = await supabase
+      .from("ebay_v3_publication_image_transports")
+      .select("*")
+      .eq("id", transportId)
+      .eq("transport_hash", transportHash)
+      .eq("preview_hash", finalPreviewHash)
+      .eq("listing_package_id", approval.listing_package_id)
+      .eq("status", "READY")
+      .maybeSingle()
+    if (transportError || !transport) {
+      return jsonError(new Error("EBAY_V3_PUBLICATION_TRANSPORT_NOT_CURRENT"), 409)
+    }
+    const assets = validateV3PublicationAssets(transport.assets)
+    if (
+      hashEbayDraftOnlyPayload(assets)
+      !== hashEbayDraftOnlyPayload(v3Binding.selectedAssets)
+    ) return jsonError(new Error("EBAY_V3_PUBLICATION_ASSET_BINDING_CHANGED"), 409)
+    context = {
+      ...context,
+      listingPackage: packageWithV3PublicationAssets(
+        context.listingPackage,
+        assets,
+      ),
+    }
+  }
   const readiness = evaluateEbayDraftOnlyReadiness({
     ...context,
     draftConfiguration,
     target,
     accountFingerprint: fingerprint,
   })
-  const currentPayload = buildEbayDraftOnlyPayload(
+  const rebuiltPayload = buildEbayDraftOnlyPayload(
     context.listingPackage,
     context.opportunity,
     draftConfiguration,
@@ -1259,6 +1299,9 @@ async function executeDraft(body: JsonRecord, actor: string) {
     context.economicsConfig,
     context.sameDayPilotAuthorization,
   )
+  const currentPayload = Object.keys(v3Binding).length
+    ? withV3FinalSetAuthorization(rebuiltPayload, v3Binding)
+    : rebuiltPayload
   const currentHash = hashEbayDraftOnlyPayload(currentPayload)
   if (!readiness.ready || currentHash !== approval.payload_hash) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_REAPPROVAL_REQUIRED"), 409, [
