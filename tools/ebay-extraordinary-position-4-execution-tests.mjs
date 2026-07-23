@@ -8,6 +8,8 @@ const executor = readFileSync(
   "scripts/execute-reference-guided-extraordinary-position-4.mjs", "utf8")
 const route = readFileSync(
   "app/api/admin/ebay/images/reference-guided-extraordinary-position-4/route.ts", "utf8")
+const authorizationFix = readFileSync(
+  "supabase/migrations/20260722048000_fix_extraordinary_authorization_rpc.sql", "utf8")
 
 test("extraordinary ordinal 7 is exact, atomic, and scoped to one attempt", () => {
   assert.match(migration, /extraordinary_ordinal<>7/)
@@ -17,6 +19,13 @@ test("extraordinary ordinal 7 is exact, atomic, and scoped to one attempt", () =
   assert.match(migration, /position=6 and status='BLOCKED_FIDELITY'/)
   assert.match(migration, /extraordinary_ordinal=8/)
   assert.match(migration, /EXTRAORDINARY_POSITION_4_ATOMIC_BUDGET_INVALID/)
+})
+
+test("authorization RPC qualifies ordinal columns and stays service-role-only", () => {
+  assert.match(authorizationFix, /auth4\.extraordinary_ordinal=7/)
+  assert.match(authorizationFix, /existing\.extraordinary_ordinal=v_position\.extraordinary_ordinal/)
+  assert.match(authorizationFix, /grant execute[\s\S]*to service_role/)
+  assert.doesNotMatch(authorizationFix, /grant execute[\s\S]*to authenticated/)
 })
 
 test("exact persisted plan, amendment, contract, prompt, and sources gate execution", () => {
