@@ -57,6 +57,8 @@ test("provider transport is one-shot Preview staging and never retries", () => {
   assert.match(executor, /providerFetches !== 1/)
   assert.match(executor, /https:\/\/api\.openai\.com\/v1\/images\/edits/)
   assert.match(executor, /automaticRetryOccurred: false/)
+  assert.match(executor, /state\.authorizations\.length > 1/)
+  assert.match(executor, /before\.authorizations\.length === 1/)
   assert.doesNotMatch(executor, /for \(let attempt|while \(|retry\(/i)
   assert.match(route, /VERCEL_ENV !== "preview"/)
   assert.match(route, /authenticationMode !== "service_role"/)

@@ -92,6 +92,7 @@ function assertPreflight(state) {
   const j4 = state.jobs.find((job) => Number(job.position) === 4)
   const j6 = state.jobs.find((job) => Number(job.position) === 6)
   const passed = state.jobs.filter((job) => [2, 3, 5].includes(Number(job.position)))
+  const existingAuthorization = state.authorizations[0]
   if (state.attempt.id !== ATTEMPT_ID || state.attempt.revision_id !== REVISION_ID ||
     state.attempt.status !== "GENERATING" || Number(state.attempt.provider_calls) !== 6 ||
     Number(state.attempt.max_provider_calls) !== 6 || state.attempt.retry_consumed ||
@@ -104,7 +105,11 @@ function assertPreflight(state) {
     sha256(Buffer.from(state.plan.plan_text, "utf8")) !== PLAN_HASH ||
     Number(state.plan.absolute_cap) !== 8 || Number(state.plan.max_concurrency) !== 1 ||
     state.plan.automatic_retries || state.plan.feature_flags_enabled ||
-    state.authorizations.length !== 0 || state.events.length !== 0 ||
+    state.authorizations.length > 1 ||
+    (existingAuthorization && (Number(existingAuthorization.position) !== 4 ||
+      Number(existingAuthorization.extraordinary_ordinal) !== 7 ||
+      existingAuthorization.event_type !== "AUTHORIZED")) ||
+    state.events.length !== 0 ||
     !p4 || p4.extraordinary_ordinal !== 7 || p4.amendment_id !== AMENDMENT_ID ||
     p4.amendment_hash !== AMENDMENT_HASH ||
     p4.final_effective_contract_hash !== CONTRACT_HASH ||
@@ -169,7 +174,8 @@ if (auth.error || rows(auth.data).length !== 1) {
 }
 const authorization = auth.data[0]
 if (authorization.authorized_position !== 4 ||
-  Number(authorization.extraordinary_ordinal) !== 7 || authorization.reused) {
+  Number(authorization.extraordinary_ordinal) !== 7 ||
+  Boolean(authorization.reused) !== (before.authorizations.length === 1)) {
   throw new Error("EXTRAORDINARY_POSITION_4_AUTHORIZATION_RESULT_INVALID")
 }
 const authRowResult = await supabase.from(
