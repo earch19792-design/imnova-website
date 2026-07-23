@@ -19,6 +19,10 @@ const tradingIdentityProofSource = readFileSync(
   new URL("../lib/ebay/ebay-trading-identity-proof.ts", import.meta.url),
   "utf8",
 )
+const skuSource = readFileSync(
+  new URL("../lib/ebay/ebay-sku.ts", import.meta.url),
+  "utf8",
+)
 
 function embedSnapshotModule(source) {
   const withoutImport = source
@@ -27,7 +31,9 @@ function embedSnapshotModule(source) {
     .replace(/import \{\n  issueEbayDraftOnlyPreflightSnapshot,\n  verifyEbayDraftOnlyPreflightSnapshot,\n\} from "\.\/ebay-draft-only-preflight-snapshot"\n/, "")
     .replace('import { getEbayDraftWriteEnvironmentBoundary } from "./environment-boundaries"\n', "")
     .replace('import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"\n', "")
-  return `${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${tradingIdentityProofSource}\n${withoutImport}`
+    .replace(/import \{\n  canonicalEbayPackageSku,\n  isCanonicalEbayPackageSku,\n\} from "\.\/ebay-sku"\n/, "")
+    .replace('import { isCanonicalEbayPackageSku } from "./ebay-sku"\n', "")
+  return `${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${tradingIdentityProofSource}\n${skuSource}\n${withoutImport}`
 }
 
 const readinessSource = embedSnapshotModule(readFileSync(
@@ -78,6 +84,10 @@ const sameDaySourceSyncMigration = readFileSync(
   new URL("../supabase/migrations/20260721041000_sync_same_day_source_before_authorized_publication.sql", import.meta.url),
   "utf8",
 )
+const alphanumericSkuMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260723017000_use_ebay_inventory_alphanumeric_sku.sql", import.meta.url),
+  "utf8",
+)
 
 async function importTypeScript(source) {
   const javascript = ts.transpileModule(source, {
@@ -89,7 +99,7 @@ async function importTypeScript(source) {
 const SNAPSHOT_SECRET = "test-only-preflight-snapshot-secret-0123456789"
 const SANDBOX_FINGERPRINT = "a".repeat(64)
 const PRODUCTION_FINGERPRINT = "b".repeat(64)
-const RESERVED_SKU = "IMNOVA-11111111111141118111111111111111"
+const RESERVED_SKU = "IMNOVA11111111111141118111111111111111"
 const snapshotModule = await importTypeScript(snapshotSource)
 const prewriteRetirementModule = await importTypeScript(
   prewriteRetirementSource,
@@ -744,10 +754,10 @@ test("gateway uses Sandbox GETs to verify policies, enabled location and SKU bef
     assert.equal(dependencies.checks.paymentPolicy.valid, true)
     assert.equal(dependencies.checks.returnPolicy.valid, true)
     assert.equal(dependencies.checks.merchantLocation.enabled, true)
-    const collision = await module.preflightEbayDraftSkuCollision("IMNOVA-ITEM-1", fetchImpl)
+    const collision = await module.preflightEbayDraftSkuCollision("IMNOVAITEM0000000001", fetchImpl)
     assert.equal(collision.safe, true)
-    const inventory = await module.createOrReplaceEbayDraftInventoryItem("IMNOVA-ITEM-1", { product: {} }, fetchImpl)
-    const offer = await module.createEbayUnpublishedOffer({ sku: "IMNOVA-ITEM-1" }, fetchImpl)
+    const inventory = await module.createOrReplaceEbayDraftInventoryItem("IMNOVAITEM0000000001", { product: {} }, fetchImpl)
+    const offer = await module.createEbayUnpublishedOffer({ sku: "IMNOVAITEM0000000001" }, fetchImpl)
     assert.equal(inventory.ok, true)
     assert.equal(offer.ok, true)
     const tokenCalls = calls.filter((call) => call.url.pathname.endsWith("/oauth2/token"))
@@ -768,7 +778,7 @@ test("gateway uses Sandbox GETs to verify policies, enabled location and SKU bef
         "/sell/account/v1/payment_policy/payment_1",
         "/sell/account/v1/return_policy/return_1",
         "/sell/inventory/v1/location/LUNA_PORTEX_US",
-        "/sell/inventory/v1/inventory_item/IMNOVA-ITEM-1",
+        "/sell/inventory/v1/inventory_item/IMNOVAITEM0000000001",
         "/sell/inventory/v1/offer",
       ],
     )
@@ -777,10 +787,14 @@ test("gateway uses Sandbox GETs to verify policies, enabled location and SKU bef
   }
 })
 
-test("SKU preflight accepts explicit eBay absence, retries transient reads and rejects ambiguous pages", async () => {
+test("SKU preflight accepts contracted eBay absence, retries transient reads and classifies rejected requests", async () => {
   const module = await importTypeScript(gatewaySource)
   const original = { ...process.env }
-  const runCase = async (name, offerResponses) => {
+  const runCase = async (
+    name,
+    offerResponses,
+    inventoryResponse = { status: 404, body: { errors: [] } },
+  ) => {
     Object.assign(process.env, {
       EBAY_DRAFT_ONLY_WRITES_ENABLED: "true",
       EBAY_DRAFT_ONLY_TARGET: "SANDBOX",
@@ -793,7 +807,7 @@ test("SKU preflight accepts explicit eBay absence, retries transient reads and r
     let offerIndex = 0
     const calls = []
     const result = await module.preflightEbayDraftSkuCollision(
-      `IMNOVA-${name.toUpperCase()}`,
+      `IMNOVA${name.replace(/[^A-Za-z0-9]/g, "").toUpperCase()}0000000000000000`,
       async (url, init = {}) => {
         const parsed = new URL(url)
         calls.push({ url: parsed, method: init.method })
@@ -810,7 +824,9 @@ test("SKU preflight accepts explicit eBay absence, retries transient reads and r
           }), { status: 200 })
         }
         if (parsed.pathname.includes("/inventory_item/")) {
-          return new Response(JSON.stringify({ errors: [] }), { status: 404 })
+          return new Response(JSON.stringify(inventoryResponse.body), {
+            status: inventoryResponse.status,
+          })
         }
         if (parsed.pathname.endsWith("/offer")) {
           const response = offerResponses[
@@ -861,6 +877,31 @@ test("SKU preflight accepts explicit eBay absence, retries transient reads and r
       "EXPLICIT_EMPTY_PAGE",
     )
 
+    const inventoryBadRequestAbsence = await runCase(
+      "inventory-absence",
+      [{
+        status: 200,
+        body: { href: "/offer", limit: 100, size: 0, total: 0 },
+      }],
+      {
+        status: 400,
+        body: {
+          errors: [{
+            errorId: 25702,
+            domain: "API_INVENTORY",
+            category: "REQUEST",
+            message: "SKU could not be found.",
+          }],
+        },
+      },
+    )
+    assert.equal(inventoryBadRequestAbsence.result.safe, true)
+    assert.equal(inventoryBadRequestAbsence.result.inventoryAbsent, true)
+    assert.deepEqual(
+      inventoryBadRequestAbsence.result.inventoryErrorIds,
+      ["25702"],
+    )
+
     const retried = await runCase("transient", [
       {
         status: 503,
@@ -892,11 +933,47 @@ test("SKU preflight accepts explicit eBay absence, retries transient reads and r
       "EBAY_SKU_PREFLIGHT_UNAVAILABLE",
     )
     assert.equal(ambiguous.result.offerResponseShape, "UNAVAILABLE")
+
+    const rejected = await runCase(
+      "request-rejected",
+      [{
+        status: 400,
+        body: {
+          errors: [{
+            errorId: 25709,
+            domain: "API_INVENTORY",
+            category: "REQUEST",
+            message: "Invalid value for sku.",
+          }],
+        },
+      }],
+      {
+        status: 400,
+        body: {
+          errors: [{
+            errorId: 25709,
+            domain: "API_INVENTORY",
+            category: "REQUEST",
+            message: "Invalid value for sku.",
+          }],
+        },
+      },
+    )
+    assert.equal(rejected.result.safe, false)
+    assert.equal(rejected.result.requestRejected, true)
+    assert.equal(
+      rejected.result.blocker,
+      "EBAY_SKU_PREFLIGHT_REQUEST_REJECTED",
+    )
+    assert.deepEqual(rejected.result.inventoryErrorIds, ["25709"])
+    assert.deepEqual(rejected.result.offersErrorIds, ["25709"])
     assert.ok([
       ...notFound.sellMethods,
       ...explicitEmpty.sellMethods,
+      ...inventoryBadRequestAbsence.sellMethods,
       ...retried.sellMethods,
       ...ambiguous.sellMethods,
+      ...rejected.sellMethods,
     ].every((method) => method === "GET"))
   } finally {
     process.env = original
@@ -1170,7 +1247,8 @@ test("route requires a human Admin, exact approval, fresh revalidation and unkno
     executeSource.indexOf("retireSupersededPrewriteSkuPreflight")
       < executeSource.indexOf("loadPackageContext"),
   )
-  assert.match(executeSource, /preflight\.collision \? "terminal_failure" : "claimed"/)
+  assert.match(executeSource, /const terminalPreflight = preflight\.collision/)
+  assert.match(executeSource, /phase: terminalPreflight \? "terminal_failure" : "claimed"/)
   assert.match(
     routeSource,
     /EBAY_SKU_PREFLIGHT_SUPERSEDED_BY_REAPPROVAL/,
@@ -1228,6 +1306,39 @@ test("migration enforces one-time TTL approvals, idempotency, SKU uniqueness and
   assert.match(migrationSource, /approve_ebay_draft_only_package/)
   assert.match(migrationSource, /claim_ebay_draft_only_execution/)
   assert.match(migrationSource, /complete_ebay_draft_only_execution/)
+})
+
+test("alphanumeric SKU migration supersedes only pre-write legacy authority", () => {
+  assert.match(
+    alphanumericSkuMigrationSource,
+    /EBAY_LEGACY_SKU_WRITE_EVIDENCE_RECONCILIATION_REQUIRED/,
+  )
+  assert.match(
+    alphanumericSkuMigrationSource,
+    /EBAY_SKU_NAMESPACE_MIGRATED_BEFORE_WRITE/,
+  )
+  assert.match(
+    alphanumericSkuMigrationSource,
+    /\^IMNOVA\[A-Z0-9\]\{16,32\}\$/,
+  )
+  assert.match(
+    alphanumericSkuMigrationSource,
+    /SUPERSEDED_BY_RECONCILIATION/,
+  )
+  assert.match(
+    alphanumericSkuMigrationSource,
+    /This migration performs no external eBay operation/,
+  )
+})
+
+test("canonical package SKU is alphanumeric and deterministic", async () => {
+  const module = await importTypeScript(readinessSource)
+  const sku = module.expectedEbayDraftOnlySku({
+    id: "123e4567-e89b-42d3-a456-426614174000",
+  })
+  assert.equal(sku, "IMNOVA123E4567E89B42D3A456426614174000")
+  assert.match(sku, /^[A-Z0-9]+$/)
+  assert.equal(sku.length, 38)
 })
 
 test("professional package evidence resolves only package-level hard gates", async () => {

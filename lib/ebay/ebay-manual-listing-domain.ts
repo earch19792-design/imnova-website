@@ -86,7 +86,7 @@ export function evaluateManualListingProductSkuIdentity(
 ) {
   const expected = stringValue(expectedEbaySku)
   const observed = stringValue(observedEbaySku)
-  if (!/^IMNOVA-[A-Z0-9]{16,32}$/.test(expected)) {
+  if (!/^IMNOVA[A-Z0-9]{16,32}$/.test(expected)) {
     return {
       verified: false as const,
       reason: "EBAY_CANONICAL_LISTING_PACKAGE_REQUIRED" as const,

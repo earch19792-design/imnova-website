@@ -2,6 +2,10 @@ import { createHash } from "node:crypto"
 
 import { verifyEbayDraftOnlyPreflightSnapshot } from "./ebay-draft-only-preflight-snapshot"
 import {
+  canonicalEbayPackageSku,
+  isCanonicalEbayPackageSku,
+} from "./ebay-sku"
+import {
   calculateEbayUnitEconomics,
   DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,
   normalizeEbayUnitEconomicsConfig,
@@ -174,8 +178,7 @@ export function hashEbayDraftOnlyPayload(value: unknown) {
 }
 
 export function expectedEbayDraftOnlySku(listingPackage: JsonRecord) {
-  const packageId = text(listingPackage.id).replace(/[^A-Za-z0-9]/g, "").toUpperCase()
-  return packageId.length >= 16 ? `IMNOVA-${packageId.slice(0, 32)}` : ""
+  return canonicalEbayPackageSku(text(listingPackage.id))
 }
 
 function normalizeAspects(value: unknown) {
@@ -680,7 +683,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (!['supplier_authorized', 'owned', 'licensed'].includes(rightsBasis)) blockers.push("IMAGE_RIGHTS_BASIS_INVALID")
   if (!['luna', 'supplier', 'owned', 'licensed_asset'].includes(imageSource)) blockers.push("IMAGE_SOURCE_INVALID")
   if (images.some((url) => !authorizedImages.includes(url))) blockers.push("IMAGE_NOT_AUTHORIZED")
-  if (!requiredSku || sku !== requiredSku || !/^IMNOVA-[A-Z0-9]{16,32}$/.test(sku)) {
+  if (!requiredSku || sku !== requiredSku || !isCanonicalEbayPackageSku(sku)) {
     blockers.push("SKU_NAMESPACE_OR_OWNERSHIP_INVALID")
   }
   if (input.activeSkuCollision || input.ledgerSkuCollision) blockers.push("SKU_COLLISION")

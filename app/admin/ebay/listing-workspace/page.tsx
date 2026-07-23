@@ -16,6 +16,7 @@ import {
   visibleWorkspaceBlockers,
 } from
   "@/lib/ebay/reference-guided-visual-review-access"
+import { canonicalEbayPackageSku } from "@/lib/ebay/ebay-sku"
 
 type Opportunity = {
   id: string
@@ -456,6 +457,8 @@ function humanUnpublishedPreflightError(code: string) {
       "La verificación server-side agotó el tiempo de espera. Finalizó sin escribir en eBay.",
     EBAY_SKU_PREFLIGHT_UNAVAILABLE:
       "eBay no confirmó todavía si el SKU está libre. Seller OS se detuvo antes de crear Inventory Item u Offer; el botón único volverá a consultar sin duplicar operaciones.",
+    EBAY_SKU_PREFLIGHT_REQUEST_REJECTED:
+      "eBay rechazó el formato o los parámetros del SKU antes de cualquier escritura. Seller OS detuvo el flujo y conservó los códigos técnicos seguros para corregir la causa exacta.",
     EBAY_DRAFT_ONLY_REAPPROVAL_STATE_UNAVAILABLE:
       "eBay no confirmó el estado del SKU asociado a la aprobación anterior. Seller OS se detuvo antes de reanudar cualquier escritura.",
   }
@@ -527,8 +530,7 @@ function normalizedDraftDimensionUnit(value: unknown) {
 }
 
 function reservedDraftSku(packageId: string) {
-  const normalized = packageId.replace(/[^A-Za-z0-9]/g, "").toUpperCase()
-  return normalized.length >= 16 ? `IMNOVA-${normalized.slice(0, 32)}` : ""
+  return canonicalEbayPackageSku(packageId)
 }
 
 function initialDraftConfiguration(opportunity: Opportunity): DraftConfiguration {

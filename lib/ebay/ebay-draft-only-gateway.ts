@@ -5,6 +5,7 @@ import {
   issueEbayDraftOnlyPreflightSnapshot,
   verifyEbayDraftOnlyPreflightSnapshot,
 } from "./ebay-draft-only-preflight-snapshot"
+import { isCanonicalEbayPackageSku } from "./ebay-sku"
 import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"
 import { getEbayDraftWriteEnvironmentBoundary } from "./environment-boundaries"
 
@@ -117,6 +118,29 @@ function safeBody(value: JsonRecord) {
     }
   }) : []
   return { errors }
+}
+
+function safeReadErrors(result: ReadResult) {
+  return Array.isArray(result.body.errors)
+    ? result.body.errors.map(record).filter((item) => item.errorId)
+    : []
+}
+
+function readErrorIds(result: ReadResult) {
+  return safeReadErrors(result)
+    .map((item) => String(item.errorId ?? "").trim())
+    .filter(Boolean)
+}
+
+function isInventoryAbsenceResponse(result: ReadResult) {
+  if (result.status === 404) return true
+  if (result.status !== 400) return false
+  const errors = safeReadErrors(result)
+  return errors.length > 0 && errors.every((item) =>
+    ["25702", "25710"].includes(String(item.errorId ?? "").trim())
+    && item.domain === "API_INVENTORY"
+    && item.category === "REQUEST"
+  )
 }
 
 function accountFingerprint(target: EbayDraftOnlyTarget, userId: string) {
@@ -611,7 +635,7 @@ async function preflightSkuCollisionWithToken(
     preflightReadWithRetry(config, token, inventoryUrl, fetchImpl),
     preflightReadWithRetry(config, token, offerUrl, fetchImpl),
   ])
-  const inventoryAbsent = inventory.status === 404
+  const inventoryAbsent = isInventoryAbsenceResponse(inventory)
   const offerArray = Array.isArray(offers.body.offers)
     ? offers.body.offers
     : null
@@ -653,16 +677,24 @@ async function preflightSkuCollisionWithToken(
     offersHttpStatus: offers.status,
     inventoryReadAttempts: inventory.attempts ?? 1,
     offersReadAttempts: offers.attempts ?? 1,
+    inventoryErrorIds: readErrorIds(inventory),
+    offersErrorIds: readErrorIds(offers),
     offerResponseShape,
   }
   if ((!inventory.ok && !inventoryAbsent) || !offersKnown) {
+    const requestRejected = (
+      inventory.status === 400 && !inventoryAbsent
+    ) || offers.status === 400
     return {
       safe: false,
       collision: false,
       inventoryExists: false,
       inventoryAbsent,
       offerCount: 0,
-      blocker: "EBAY_SKU_PREFLIGHT_UNAVAILABLE",
+      requestRejected,
+      blocker: requestRejected
+        ? "EBAY_SKU_PREFLIGHT_REQUEST_REJECTED"
+        : "EBAY_SKU_PREFLIGHT_UNAVAILABLE",
       ...diagnostics,
     }
   }
@@ -672,6 +704,7 @@ async function preflightSkuCollisionWithToken(
     inventoryExists: inventory.ok,
     inventoryAbsent,
     offerCount,
+    requestRejected: false,
     blocker: inventory.ok || offerCount > 0 ? "EBAY_SKU_ALREADY_EXISTS" : null,
     ...diagnostics,
   }
@@ -1335,7 +1368,7 @@ async function verifyPublishedOfferWithToken(
 ) {
   const normalizedOfferId = sanitizeEbayOfferId(offerId)
   const normalizedSku = typeof expectedSku === "string" ? expectedSku.trim() : ""
-  if (!normalizedOfferId || !/^IMNOVA-[A-Z0-9]{16,32}$/.test(normalizedSku)) {
+  if (!normalizedOfferId || !isCanonicalEbayPackageSku(normalizedSku)) {
     return {
       safe: false,
       active: false,
@@ -1413,7 +1446,7 @@ export async function publishEbayOfferOnce(input: {
     config.target !== "PRODUCTION"
     || input.confirmPublish !== EBAY_FINAL_PUBLISH_CONFIRMATION
     || !offerId
-    || !/^IMNOVA-[A-Z0-9]{16,32}$/.test(expectedSku)
+    || !isCanonicalEbayPackageSku(expectedSku)
     || !/^[0-9a-f]{64}$/.test(input.previewHash)
     || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(input.publicationControlId)
   ) throw new Error("EBAY_FINAL_PUBLISH_AUTHORIZATION_INVALID")

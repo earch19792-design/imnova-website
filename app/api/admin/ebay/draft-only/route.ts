@@ -33,6 +33,7 @@ import {
   type EbayDraftOnlyTarget,
   type JsonRecord,
 } from "@/lib/ebay/ebay-draft-only-readiness"
+import { isCanonicalEbayPackageSku } from "@/lib/ebay/ebay-sku"
 import {
   canRetireSupersededSkuPreflight,
 } from "@/lib/ebay/ebay-draft-only-prewrite-retirement"
@@ -235,7 +236,7 @@ function buildFinalPublicationPreview(
     || !approval.consumed_at
     || execution.phase !== "completed"
     || !offerId
-    || !/^IMNOVA-[A-Z0-9]{16,32}$/.test(sku)
+    || !isCanonicalEbayPackageSku(sku)
     || images.length !== 7
     || authorization.approved !== true
     || authorization.protectedManifestVerified !== true
@@ -1273,6 +1274,9 @@ async function executeDraft(body: JsonRecord, actor: string) {
     const ledgerId = uuid(existing.id)
     if (!ledgerId) throw new Error("EBAY_DRAFT_ONLY_LEDGER_ID_INVALID")
     const skuState = await inspectEbayDraftSkuState(approvedSku)
+    if (skuState.blocker === "EBAY_SKU_PREFLIGHT_REQUEST_REJECTED") {
+      return jsonError(new Error(skuState.blocker), 409)
+    }
     if (skuState.blocker === "EBAY_SKU_PREFLIGHT_UNAVAILABLE") {
       return jsonError(new Error("EBAY_DRAFT_ONLY_REAPPROVAL_STATE_UNAVAILABLE"), 503)
     }
@@ -1565,8 +1569,10 @@ async function executeDraft(body: JsonRecord, actor: string) {
         }
         return jsonError(new Error("EBAY_DRAFT_ONLY_OFFER_RECONCILIATION_REQUIRED"), 503)
       } else {
+        const terminalPreflight = preflight.collision
+          || preflight.requestRejected
         const { data: stopped, error: stopError } = await supabase.from("ebay_draft_only_execution_ledger").update({
-          phase: preflight.collision ? "terminal_failure" : "claimed",
+          phase: terminalPreflight ? "terminal_failure" : "claimed",
           last_error_code: preflight.blocker,
           sanitized_result: {
             collision: preflight.collision,
@@ -1575,6 +1581,8 @@ async function executeDraft(body: JsonRecord, actor: string) {
             offersHttpStatus: preflight.offersHttpStatus,
             inventoryReadAttempts: preflight.inventoryReadAttempts,
             offersReadAttempts: preflight.offersReadAttempts,
+            inventoryErrorIds: preflight.inventoryErrorIds,
+            offersErrorIds: preflight.offersErrorIds,
             offerResponseShape: preflight.offerResponseShape,
           },
           lease_token: null,
@@ -1586,7 +1594,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
         }
         return jsonError(
           new Error(preflight.blocker ?? "EBAY_SKU_PREFLIGHT_UNAVAILABLE"),
-          preflight.collision ? 409 : 503,
+          terminalPreflight ? 409 : 503,
         )
       }
     }

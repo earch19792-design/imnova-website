@@ -55,7 +55,7 @@ test("active listing reads offers per SKU and preserves multi-variation identity
   assert.match(service, /CANONICAL_LISTING_PACKAGE_SKU/)
   assert.match(service, /RESERVED_UNRESOLVED/)
   assert.match(service, /AMBIGUOUS_SUPPLIER_SKU/)
-  assert.match(service, /fallbackSkus = uniqueSkus\.filter\(\(sku\) => !\/\^IMNOVA-\/i\.test\(sku\)\)/)
+  assert.match(service, /fallbackSkus = uniqueSkus\.filter\(\(sku\) => !isReservedEbaySku\(sku\)\)/)
   assert.match(service, /market_radar_product_id: mapping \? mapping\.productId : null/)
   assert.match(service, /supplier_variant_id: mapping \? mapping\.variantId : null/)
   assert.match(service, /supplier_sku: mapping \? mapping\.supplierSku : null/)
