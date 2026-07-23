@@ -608,7 +608,7 @@ export async function GET(req: Request) {
         && positionSixSlot?.asset_role === "SECONDARY_HUMAN_CONTEXT"
         && Number(positionSixSlot?.source_job_position) === 6
         && positionSixSlot?.source_job_id === positionSixJob.id
-        && positionSixJob.status === "QA_PENDING"
+        && ["QA_PENDING", "PASSED"].includes(positionSixJob.status)
         && positionSixJob.output_storage_path === ordinal8StoragePath
         && positionSixJob.output_sha256 === ordinal8OutputSha256
         && /^[0-9a-f]{64}$/.test(ordinal8OutputSha256)
