@@ -167,9 +167,29 @@ async function loadFinalReview(
     .eq("created_by", review.created_by)
     .maybeSingle()
   if (packageError || !listingPackage) throw new Error("EBAY_V3_LISTING_PACKAGE_NOT_FOUND")
-  if (listingPackage.updated_at !== review.listing_package_updated_at) {
-    throw new Error("EBAY_V3_FINAL_PREVIEW_PACKAGE_CHANGED")
-  }
+  const finalListing = record(snapshot.listing)
+  const currentPackage = record(listingPackage.package_data)
+  const currentDraft = record(currentPackage.draftConfiguration)
+  const currentPolicies = record(currentDraft.businessPolicies)
+  const finalPolicies = record(finalListing.businessPolicies)
+  if (
+    text(currentPackage.title) !== text(finalListing.title)
+    || text(currentPackage.categoryId) !== text(finalListing.categoryId)
+    || v3AuthorizationHash(currentPackage.aspects)
+      !== v3AuthorizationHash(finalListing.itemSpecifics)
+    || Number(record(currentPackage.pricing).targetPrice)
+      !== Number(record(finalListing.pricing).targetPrice)
+    || Number(currentDraft.quantity) !== Number(finalListing.quantity)
+    || text(currentDraft.condition).toUpperCase() !== "NEW"
+    || text(currentDraft.merchantLocationKey)
+      !== text(finalListing.merchantLocationKey)
+    || text(currentPolicies.fulfillmentPolicyId)
+      !== text(finalPolicies.fulfillmentPolicyId)
+    || text(currentPolicies.paymentPolicyId)
+      !== text(finalPolicies.paymentPolicyId)
+    || text(currentPolicies.returnPolicyId)
+      !== text(finalPolicies.returnPolicyId)
+  ) throw new Error("EBAY_V3_FINAL_PREVIEW_PACKAGE_CHANGED")
   const { data: opportunity, error: opportunityError } = await supabase
     .from("ebay_luna_opportunity_queue")
     .select("*")
@@ -310,6 +330,14 @@ async function prepare(actor: string) {
   if (!resolvedActor) throw new Error("EBAY_V3_PREVIEW_ACTOR_INVALID")
   const transport = await ensurePublicationTransport(context)
   const assets = validateV3PublicationAssets(transport.assets)
+  const persistedPackageData = record(listingPackage.package_data)
+  const persistedUrls = Array.isArray(persistedPackageData.imageUrls)
+    ? persistedPackageData.imageUrls.map(text)
+    : []
+  if (
+    persistedUrls.length !== 7
+    || persistedUrls.some((url, index) => url !== assets[index].url)
+  ) throw new Error("EBAY_V3_FINAL_PREVIEW_IMAGE_TRANSPORT_CHANGED")
   const listing = record(snapshot.listing)
   const policies = record(listing.businessPolicies)
   const packageData = record(listingPackage.package_data)
