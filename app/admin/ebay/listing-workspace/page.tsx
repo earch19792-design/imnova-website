@@ -475,10 +475,17 @@ function shouldRenewExpiredSkuPreflight(
   const approvalFresh = approval?.status === "approved"
     && Number.isFinite(expiresAt)
     && expiresAt > now
-  return !approvalFresh
-    && execution?.phase === "claimed"
+  const retryablePrewriteFailure = (
+    execution?.phase === "claimed"
     && execution.last_error_code === "EBAY_SKU_PREFLIGHT_UNAVAILABLE"
-    && !execution.offer_id
+  ) || (
+    execution?.phase === "terminal_failure"
+    && [
+      "EBAY_SKU_NAMESPACE_MIGRATED_BEFORE_WRITE",
+      "EBAY_SKU_PREFLIGHT_SUPERSEDED_BY_REAPPROVAL",
+    ].includes(String(execution.last_error_code ?? ""))
+  )
+  return !approvalFresh && retryablePrewriteFailure && !execution?.offer_id
 }
 
 const LEGACY_V3_IMAGE_MESSAGES = new Set([
@@ -2079,7 +2086,12 @@ function ListingWorkspacePageContent() {
       ? "CREAR DRAFT NO PUBLICADO EN PRODUCCIÓN"
       : draftTarget === "SANDBOX" ? "CREAR DRAFT NO PUBLICADO" : "")
   const unpublishedExecutionPhase = String(draftState.execution?.phase ?? "")
+  const retiredPrewriteExecution = shouldRenewExpiredSkuPreflight(
+    draftState.approval,
+    draftState.execution,
+  )
   const unpublishedExecutionExists = Boolean(draftState.execution?.id)
+    && !retiredPrewriteExecution
   const executionCompleted = unpublishedExecutionPhase === "completed"
   const publicationPhase = draftState.publication?.phase ?? ""
   const publicationButtonBlockReason = !listingPackage

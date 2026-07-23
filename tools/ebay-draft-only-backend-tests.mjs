@@ -1289,6 +1289,14 @@ test("route requires a human Admin, exact approval, fresh revalidation and unkno
     workspaceSource,
     /execution\.last_error_code === "EBAY_SKU_PREFLIGHT_UNAVAILABLE"/,
   )
+  assert.match(
+    workspaceSource,
+    /EBAY_SKU_NAMESPACE_MIGRATED_BEFORE_WRITE/,
+  )
+  assert.match(
+    workspaceSource,
+    /const retiredPrewriteExecution = shouldRenewExpiredSkuPreflight/,
+  )
 })
 
 test("migration enforces one-time TTL approvals, idempotency, SKU uniqueness and no publish operation", () => {
