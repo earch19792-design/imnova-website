@@ -1672,8 +1672,17 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   if (!offerVerification.safe) {
     return jsonError(new Error(offerVerification.blocker), 409)
   }
+  const approvedCompliance = record(
+    record(context.approval.approved_payload).compliance,
+  )
+  const v3FinalSetAuthorization = record(
+    approvedCompliance.v3FinalSetAuthorization,
+  )
+  const sourceSyncFunction = Object.keys(v3FinalSetAuthorization).length
+    ? "sync_ebay_v3_source_before_authorized_publication"
+    : "sync_same_day_source_before_authorized_publication"
   const { error: sourceSyncError } = await supabase.rpc(
-    "sync_same_day_source_before_authorized_publication",
+    sourceSyncFunction,
     {
       p_draft_execution_id: executionId,
       p_actor_user_id: actor,

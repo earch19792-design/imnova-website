@@ -10,6 +10,10 @@ import {
   REFERENCE_GUIDED_SEVEN_ASSET_ROLES,
   type ReferenceGuidedSevenAssetRole,
 } from "./reference-guided-seven-asset-contract"
+import {
+  validateV3PublicationAssets,
+  v3AuthorizationHash,
+} from "./ebay-v3-unpublished-offer-authorization"
 
 export const SAME_DAY_SELLER_OS_PUBLICATION_AUTHORIZATION_VERSION =
   "SELLER_OS_AUTHORIZED_PUBLICATION_V1_2026_07_20"
@@ -206,6 +210,116 @@ async function approvedPreferredImageRevision(input: {
   return { id: revisionId, imageSetHash: text(data.image_set_hash, 80) }
 }
 
+async function approvedFinalV3ImageTransport(input: {
+  supabase: SupabaseClient
+  actorUserId: string
+  packageId: string
+  packageData: JsonRecord
+  packageImageUrls: string[]
+}) {
+  if (input.packageImageUrls.length !== 7) return null
+  const packageManifest = Array.isArray(input.packageData.imageAssetManifest)
+    ? input.packageData.imageAssetManifest.map(record)
+    : []
+  const imageAuthorization = record(
+    record(input.packageData.draftConfiguration).imageAuthorization,
+  )
+  const approvedImageUrls = exactSevenHttpsUrls(
+    imageAuthorization.approvedImageUrls,
+  )
+  if (
+    packageManifest.length !== 7
+    || imageAuthorization.approved !== true
+    || imageAuthorization.protectedManifestVerified !== true
+    || number(imageAuthorization.protectedManifestAssetCount) !== 7
+    || approvedImageUrls.length !== 7
+    || text(imageAuthorization.approvedBy, 50) !== input.actorUserId
+    || !Number.isFinite(Date.parse(text(imageAuthorization.approvedAt, 50)))
+    || approvedImageUrls.some((url, index) =>
+      input.packageImageUrls[index] !== url)
+  ) return null
+
+  const { data: review, error: reviewError } = await input.supabase
+    .from("ebay_reference_guided_final_listing_review_previews")
+    .select("id,revision_id,attempt_id,preview_hash,blockers,visual_phase,final_visual_set_locked,generation_controls_hidden,ready_for_unpublished_offer_authorization,provider_calls_snapshot,created_by")
+    .eq("listing_package_id", input.packageId)
+    .eq("created_by", input.actorUserId)
+    .eq("visual_phase", "COMPLETED")
+    .eq("final_visual_set_locked", true)
+    .eq("generation_controls_hidden", true)
+    .eq("ready_for_unpublished_offer_authorization", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (reviewError) {
+    throw new Error("SAME_DAY_PUBLICATION_V3_FINAL_REVIEW_READ_FAILED")
+  }
+  if (
+    !review
+    || review.provider_calls_snapshot !== 8
+    || !Array.isArray(review.blockers)
+    || review.blockers.length > 0
+    || !/^[0-9a-f]{64}$/.test(text(review.preview_hash, 80))
+  ) return null
+
+  const { data: transport, error: transportError } = await input.supabase
+    .from("ebay_v3_publication_image_transports")
+    .select("id,revision_id,attempt_id,listing_package_id,final_preview_id,preview_hash,transport_hash,assets,image_count,scope,status,created_by")
+    .eq("listing_package_id", input.packageId)
+    .eq("final_preview_id", review.id)
+    .eq("attempt_id", review.attempt_id)
+    .eq("preview_hash", review.preview_hash)
+    .eq("status", "READY")
+    .eq("image_count", 7)
+    .eq("scope", "EBAY_US_UNPUBLISHED_OFFER_ONLY")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (transportError) {
+    throw new Error("SAME_DAY_PUBLICATION_V3_TRANSPORT_READ_FAILED")
+  }
+  if (
+    !transport
+    || transport.revision_id !== review.revision_id
+    || transport.created_by !== input.actorUserId
+    || !/^[0-9a-f]{64}$/.test(text(transport.transport_hash, 80))
+  ) return null
+
+  let assets
+  try {
+    assets = validateV3PublicationAssets(transport.assets)
+  } catch {
+    return null
+  }
+  const exactContract = assets.every((asset, index) =>
+    asset.position === index
+    && asset.assetRole === REFERENCE_GUIDED_SEVEN_ASSET_ROLES[index]
+    && asset.url === input.packageImageUrls[index]
+    && packageManifest[index]?.position === asset.position
+    && text(
+      packageManifest[index]?.assetRole
+        ?? packageManifest[index]?.referenceGuidedAssetRole,
+      80,
+    ) === asset.assetRole
+    && text(packageManifest[index]?.sha256, 80) === asset.sha256
+    && text(packageManifest[index]?.url) === asset.url
+  )
+  const expectedTransportHash = v3AuthorizationHash({
+    version: "EBAY_V3_PUBLICATION_IMAGE_TRANSPORT_V1",
+    previewHash: review.preview_hash,
+    assets,
+  })
+  if (!exactContract || expectedTransportHash !== transport.transport_hash) {
+    return null
+  }
+  return {
+    finalPreviewId: text(review.id, 50),
+    imageTransportId: text(transport.id, 50),
+    previewHash: text(review.preview_hash, 80),
+    transportHash: text(transport.transport_hash, 80),
+  }
+}
+
 function normalizedAspects(value: unknown) {
   const output: Record<string, string> = {}
   for (const [name, rawValue] of Object.entries(record(value))) {
@@ -291,6 +405,13 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
     packageData,
     packageImageUrls,
   })
+  const finalV3ImageTransport = await approvedFinalV3ImageTransport({
+    supabase: input.supabase,
+    actorUserId: input.actorUserId,
+    packageId,
+    packageData,
+    packageImageUrls,
+  })
   const legacyPackageImageUrls = exactHttpsUrls(packageData.imageUrls, 6)
   const legacyApprovedImageUrls = exactHttpsUrls(imageSummary.publicUrls, 6)
   const legacyHandoffImageUrls = exactHttpsUrls(
@@ -319,26 +440,31 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
       )
     )
   const approvedRevisionImagesReady = Boolean(approvedRevision)
-  const packageImagesReady = approvedRevisionImagesReady || (
+  const finalV3ImagesReady = Boolean(finalV3ImageTransport)
+  const authoritativeSevenImageSetReady =
+    approvedRevisionImagesReady || finalV3ImagesReady
+  const packageImagesReady = authoritativeSevenImageSetReady || (
     packageImageUrls.length === 7
     && validatedManifest(packageData, packageImageUrls)
     && packageImageUrls.every((url, index) =>
       approvedImageUrls[index] === url && handoffImageUrls[index] === url)
   )
-  const effectiveApprovedImageUrls = approvedRevisionImagesReady
+  const effectiveApprovedImageUrls = authoritativeSevenImageSetReady
     ? packageImageUrls
     : recoverableLegacySixImageSet ? legacyApprovedImageUrls : approvedImageUrls
-  const effectiveHandoffImageUrls = approvedRevisionImagesReady
+  const effectiveHandoffImageUrls = authoritativeSevenImageSetReady
     ? packageImageUrls
     : recoverableLegacySixImageSet ? legacyHandoffImageUrls : handoffImageUrls
-  const effectiveHandoffPackage = approvedRevisionImagesReady
+  const effectiveHandoffPackage = authoritativeSevenImageSetReady
     ? {
       ...handoffPackage,
       images: {
         ...record(handoffPackage.images),
         urls: packageImageUrls,
         count: 7,
-        source: "LUNA_AUTHORIZED_DERIVATIVE_SET",
+        source: finalV3ImagesReady
+          ? "REFERENCE_GUIDED_V3_FINAL_SET"
+          : "LUNA_AUTHORIZED_DERIVATIVE_SET",
       },
       imageApproval: {
         ...record(handoffPackage.imageApproval),
@@ -346,6 +472,8 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
         approvedImageCount: 7,
         revisionId: approvedRevision?.id,
         imageSetHash: approvedRevision?.imageSetHash,
+        finalPreviewId: finalV3ImageTransport?.finalPreviewId,
+        imageTransportId: finalV3ImageTransport?.imageTransportId,
       },
     }
     : handoffPackage
@@ -396,12 +524,25 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
   const supplierObservedTimestamp = Date.parse(supplierObservedAt)
   const latestVariantIsNewest = Number.isFinite(supplierObservedTimestamp)
     && sourceObservedAt === new Date(supplierObservedTimestamp).toISOString()
-  const operatorAvailable = ["AVAILABLE_QUANTITY_NOT_SHOWN", "AVAILABLE_EXACT_QUANTITY"]
-    .includes(text(lunaConfirmation.status, 80))
-    && text(lunaConfirmation.source, 80) === "OPERATOR_VISIBLE_LUNA_PRODUCT_PAGE"
+  const confirmationStatusValid = [
+    "AVAILABLE_QUANTITY_NOT_SHOWN",
+    "AVAILABLE_EXACT_QUANTITY",
+  ].includes(text(lunaConfirmation.status, 80))
+  const confirmationSource = text(lunaConfirmation.source, 80)
+  const operatorAvailable = confirmationStatusValid
+    && confirmationSource === "OPERATOR_VISIBLE_LUNA_PRODUCT_PAGE"
+  const automatedPublicObservationAvailable = confirmationStatusValid
+    && confirmationSource === "LUNA_PUBLIC_PRODUCT_JSON"
+    && lunaConfirmation.automatedPublicPreflight === true
+    && lunaConfirmation.confirmedByActorRecorded === false
+    && /^[0-9a-f]{64}$/.test(text(lunaConfirmation.observationHash, 80))
+    && text(lunaConfirmation.publicVariantId, 300) === supplierVariantId
+    && text(lunaConfirmation.publicSku, 300) === text(candidate.supplier_sku, 300)
+  const confirmedAvailable =
+    operatorAvailable || automatedPublicObservationAvailable
   const available = latestVariantIsNewest
     ? latestVariant?.available === true
-    : operatorAvailable
+    : confirmedAvailable
   const currentSupplierCost = latestVariantIsNewest
     ? number(latestVariant?.price)
     : number(economics.confirmedLunaPrice ?? economics.supplierCost)
@@ -453,7 +594,7 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
     sourceObservedAt,
     source: latestVariantIsNewest
       ? "LUNA_LATEST_VARIANT"
-      : "OPERATOR_VISIBLE_LUNA_PRODUCT_PAGE",
+      : confirmationSource,
     quantityVisible: latestVariantIsNewest
       ? exactQuantity !== null
       : lunaConfirmation.quantityVisible === true,

@@ -20,6 +20,12 @@ import {
 } from "@/lib/ebay/ebay-draft-only-readiness"
 import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
+import { loadSameDayAuthorizedPublicationContext } from
+  "@/lib/ebay/ebay-same-day-authorized-publication"
+import { getEbaySellerAccountScopeConfiguration } from
+  "@/lib/ebay/ebay-seller-account-scope"
+import { fetchPublicLunaProductForActiveListingMonitor } from
+  "@/lib/ebay/ebay-targeted-active-listing-luna-monitor"
 import {
   packageWithV3PublicationAssets,
   resolveV3UnpublishedAuthorizationPreflight,
@@ -103,10 +109,15 @@ function safeCode(error: unknown) {
     : "EBAY_V3_UNPUBLISHED_AUTHORIZATION_FAILED"
 }
 
-function responseError(error: unknown, status = 409) {
+function responseError(
+  error: unknown,
+  status = 409,
+  retryAfterSeconds?: number,
+) {
   return NextResponse.json({
     success: false,
     error: safeCode(error),
+    ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
     safety: {
       inventoryItemCreated: false,
       offerCreated: false,
@@ -114,7 +125,12 @@ function responseError(error: unknown, status = 409) {
       ebayWrites: 0,
       productionChanged: false,
     },
-  }, { status })
+  }, {
+    status,
+    ...(retryAfterSeconds
+      ? { headers: { "Retry-After": String(retryAfterSeconds) } }
+      : {}),
+  })
 }
 
 async function authenticate(req: Request) {
@@ -341,6 +357,121 @@ async function ensurePublicationTransport(
   }
 }
 
+async function loadFreshSameDayPublicationContext(
+  context: Awaited<ReturnType<typeof loadFinalReview>>,
+) {
+  const { supabase, listingPackage, opportunity, review } = context
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!accountKey || text(listingPackage.account_key) !== accountKey) {
+    throw new Error("EBAY_V3_SAME_DAY_ACCOUNT_SCOPE_INVALID")
+  }
+  const load = () => loadSameDayAuthorizedPublicationContext({
+    supabase,
+    accountKey,
+    actorUserId: text(review.created_by),
+    listingPackage: listingPackage as JsonRecord,
+    opportunity: opportunity as JsonRecord,
+  })
+  try {
+    const current = await load()
+    if (!current) throw new Error("EBAY_V3_SAME_DAY_BINDING_REQUIRED")
+    return current
+  } catch (error) {
+    if (
+      !(error instanceof Error)
+      || error.message !== "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED"
+    ) throw error
+  }
+
+  const packageData = record(listingPackage.package_data)
+  const sameDayBinding = record(packageData.sameDayPilot)
+  const candidateId = text(sameDayBinding.candidateId)
+  if (!/^[0-9a-f-]{36}$/i.test(candidateId)) {
+    throw new Error("EBAY_V3_PUBLIC_LUNA_CANDIDATE_INVALID")
+  }
+  const { data: candidate, error: candidateError } = await supabase
+    .from("ebay_same_day_pilot_candidates")
+    .select("id,run_id,opportunity_id,candidate_key,supplier_variant_id,supplier_sku,economics_summary,local_preparation_package")
+    .eq("id", candidateId)
+    .eq("opportunity_id", listingPackage.opportunity_id)
+    .eq("candidate_key", listingPackage.candidate_key)
+    .maybeSingle()
+  if (candidateError || !candidate) {
+    throw new Error("EBAY_V3_PUBLIC_LUNA_CANDIDATE_NOT_FOUND")
+  }
+  const productUrl = text(
+    record(record(candidate.local_preparation_package).product)
+      .supplierProductUrl,
+  )
+  if (!productUrl) throw new Error("EBAY_V3_PUBLIC_LUNA_URL_REQUIRED")
+  let product: Awaited<
+    ReturnType<typeof fetchPublicLunaProductForActiveListingMonitor>
+  >
+  try {
+    product = await fetchPublicLunaProductForActiveListingMonitor(
+      productUrl,
+      { timeoutMs: 8_000 },
+    )
+  } catch (error) {
+    if (
+      error instanceof Error
+      && error.message === "LUNA_DIRECTED_IMPORT_FETCH_429"
+    ) {
+      throw new Error("EBAY_V3_PUBLIC_LUNA_RATE_LIMITED")
+    }
+    throw error
+  }
+  const supplierProductId = text(opportunity.supplier_product_id)
+  const supplierVariantId = text(candidate.supplier_variant_id)
+  const supplierSku = text(candidate.supplier_sku)
+  const variant = product.variants.find((entry) =>
+    entry.id === supplierVariantId && entry.sku === supplierSku)
+  if (
+    !supplierProductId
+    || product.productId !== supplierProductId
+    || !variant
+    || !variant.available
+    || !Number.isFinite(variant.sourceUnitPrice)
+    || variant.sourceUnitPrice <= 0
+  ) throw new Error("EBAY_V3_PUBLIC_LUNA_IDENTITY_OR_STOCK_INVALID")
+  const observedAt = new Date().toISOString()
+  const observationHash = v3AuthorizationHash({
+    version: "EBAY_V3_PUBLIC_LUNA_PREFLIGHT_V1",
+    productId: product.productId,
+    variantId: variant.id,
+    sku: variant.sku,
+    price: variant.sourceUnitPrice,
+    available: variant.available,
+    observedAt,
+  })
+  const { error: persistError } = await supabase.rpc(
+    "record_ebay_v3_public_luna_preflight_v1",
+    {
+      p_account_key: accountKey,
+      p_actor: review.created_by,
+      p_listing_package_id: listingPackage.id,
+      p_candidate_id: candidate.id,
+      p_supplier_product_id: product.productId,
+      p_supplier_variant_id: variant.id,
+      p_supplier_sku: variant.sku,
+      p_supplier_price: variant.sourceUnitPrice,
+      p_available: variant.available,
+      p_observed_at: observedAt,
+      p_observation_hash: observationHash,
+    },
+  )
+  if (persistError) {
+    throw new Error(
+      String(persistError.message ?? "")
+        .match(/EBAY_[A-Z0-9_]+/)?.[0]
+        ?? "EBAY_V3_PUBLIC_LUNA_PREFLIGHT_PERSIST_FAILED",
+    )
+  }
+  const refreshed = await load()
+  if (!refreshed) throw new Error("EBAY_V3_SAME_DAY_BINDING_REQUIRED")
+  return refreshed
+}
+
 function aspectValidation(
   taxonomy: Awaited<ReturnType<typeof getEbayTaxonomyListingIntelligence>>,
 ) {
@@ -364,7 +495,6 @@ async function prepare(actor: string) {
   const { review, snapshot, listingPackage, opportunity, supabase } = context
   const resolvedActor = text(review.created_by)
   if (!resolvedActor) throw new Error("EBAY_V3_PREVIEW_ACTOR_INVALID")
-  const currentPreview = await latest(resolvedActor, EXPECTED_ATTEMPT)
   const { data: activeApproval, error: activeApprovalError } = await supabase
     .from("ebay_draft_only_approvals")
     .select("id,status,expires_at,approved_at,consumed_at,revoked_at,payload_hash,approved_payload,approval_idempotency_key")
@@ -382,40 +512,9 @@ async function prepare(actor: string) {
     && !activeApproval.consumed_at
     && !activeApproval.revoked_at,
   )
-  const currentPreviewFresh = Boolean(
-    currentPreview
-    && Number.isFinite(
-      Date.parse(text(currentPreview.preflight_snapshot_expires_at)),
-    )
-    && Date.parse(text(currentPreview.preflight_snapshot_expires_at))
-      > Date.now(),
-  )
-  if (
-    currentPreview
-    && activeApproval
-    && activeApprovalFresh
-    && currentPreviewFresh
-    && text(currentPreview.preview_hash) === text(review.preview_hash)
-    && text(activeApproval.payload_hash) === text(currentPreview.payload_hash)
-  ) {
-    return {
-      authorization: currentPreview,
-      authorizationMode: "resume_existing_authorization" as const,
-      approval: {
-        id: activeApproval.id,
-        status: activeApproval.status,
-        expires_at: activeApproval.expires_at,
-        approved_at: activeApproval.approved_at,
-        consumed_at: activeApproval.consumed_at,
-        revoked_at: activeApproval.revoked_at,
-        payload_hash: activeApproval.payload_hash,
-        approval_idempotency_key: activeApproval.approval_idempotency_key,
-      },
-      reconciliation: null,
-    }
-  }
   const transport = await ensurePublicationTransport(context)
   const assets = validateV3PublicationAssets(transport.assets)
+  const sameDayContext = await loadFreshSameDayPublicationContext(context)
   const persistedPackageData = record(listingPackage.package_data)
   const persistedUrls = Array.isArray(persistedPackageData.imageUrls)
     ? persistedPackageData.imageUrls.map(text)
@@ -426,7 +525,6 @@ async function prepare(actor: string) {
   ) throw new Error("EBAY_V3_FINAL_PREVIEW_IMAGE_TRANSPORT_CHANGED")
   const listing = record(snapshot.listing)
   const policies = record(listing.businessPolicies)
-  const packageData = record(listingPackage.package_data)
   const runtime = ebayDraftOnlyRuntimeStatus()
   if (
     runtime.target !== "PRODUCTION"
@@ -517,8 +615,7 @@ async function prepare(actor: string) {
     },
     ebayPreflightSnapshot: preflight.snapshot,
   }
-  const sameDayAuthorization = record(record(packageData.evidenceSnapshot)
-    .sameDayPilotAuthorization)
+  const sameDayAuthorization = sameDayContext.authorization
   const authorizationPreviewId = randomUUID()
   const authoritySnapshot = {
     version: "CALYPSO_UNPUBLISHED_SCREEN_AUTHORITY_V1",
@@ -559,7 +656,7 @@ async function prepare(actor: string) {
   const exactPayload = withV3FinalSetAuthorization(
     buildEbayDraftOnlyPayload(
       publicationPackage,
-      opportunity as JsonRecord,
+      sameDayContext.opportunity,
       draftConfiguration,
       runtime.target,
       preflight.identity.accountFingerprint,
@@ -1174,6 +1271,9 @@ export async function POST(req: Request) {
     }
     return responseError(new Error("EBAY_V3_AUTHORIZATION_ACTION_INVALID"), 400)
   } catch (error) {
-    return responseError(error)
+    return error instanceof Error
+      && error.message === "EBAY_V3_PUBLIC_LUNA_RATE_LIMITED"
+      ? responseError(error, 429, 60)
+      : responseError(error)
   }
 }

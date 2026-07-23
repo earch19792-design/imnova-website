@@ -268,6 +268,18 @@ type UnpublishedPreflightState =
   | "ready_new"
   | "error"
 
+type PublicationAutomationPhase =
+  | "idle"
+  | "research"
+  | "identity"
+  | "visuals"
+  | "authorization"
+  | "draft"
+  | "preview"
+  | "publishing"
+  | "verifying"
+  | "complete"
+
 type ImageRevisionPayload = {
   revision: {
     id: string
@@ -699,6 +711,403 @@ function taxonomyOptionAvailable(
   return true
 }
 
+const PUBLICATION_JOURNEY_STAGES = [
+  {
+    id: "research",
+    x: 60,
+    y: 90,
+    productX: 60,
+    productY: 145,
+    accessibleLabel:
+      "Research contrasta señales visuales de vendedores y confirma la fuente Luna.",
+  },
+  {
+    id: "identity",
+    x: 210,
+    y: 90,
+    productX: 210,
+    productY: 145,
+    accessibleLabel:
+      "La identidad exacta del producto, variante y SKU queda vinculada.",
+  },
+  {
+    id: "visuals",
+    x: 360,
+    y: 90,
+    productX: 360,
+    productY: 145,
+    accessibleLabel:
+      "Las siete imágenes aprobadas se inspeccionan y se sellan por posición.",
+  },
+  {
+    id: "authorization",
+    x: 360,
+    y: 280,
+    productX: 305,
+    productY: 280,
+    accessibleLabel:
+      "La autorización humana se vincula al payload exacto y a la cuenta.",
+  },
+  {
+    id: "draft",
+    x: 210,
+    y: 280,
+    productX: 210,
+    productY: 335,
+    accessibleLabel:
+      "Inventory Item y Offer se ensamblan sin publicar.",
+  },
+  {
+    id: "preview",
+    x: 60,
+    y: 280,
+    productX: 60,
+    productY: 335,
+    accessibleLabel:
+      "Precio, cantidad, ubicación y políticas pasan el cierre inteligente.",
+  },
+  {
+    id: "ebay",
+    x: 210,
+    y: 465,
+    productX: 210,
+    productY: 505,
+    accessibleLabel:
+      "El producto cruza el portal eBay y queda bajo monitoreo.",
+  },
+] as const
+
+const PUBLICATION_JOURNEY_PATH =
+  "M60 90 C110 30 160 150 210 90 C260 30 310 150 360 90 C420 145 420 225 360 280 C310 220 260 340 210 280 C160 220 110 340 60 280 C75 380 135 440 210 465"
+
+function publicationJourneyStageIndex(phase: PublicationAutomationPhase) {
+  if (phase === "research") return 0
+  if (phase === "identity") return 1
+  if (phase === "visuals") return 2
+  if (phase === "authorization" || phase === "idle") return 3
+  if (phase === "draft") return 4
+  if (phase === "preview") return 5
+  return 6
+}
+
+function PublicationLaunchVisualizer({
+  phase,
+  busy,
+  failed,
+  elapsedSeconds,
+  productImageUrl,
+  status,
+}: {
+  phase: PublicationAutomationPhase
+  busy: boolean
+  failed: boolean
+  elapsedSeconds: number
+  productImageUrl: string
+  status: string
+}) {
+  const activeIndex = publicationJourneyStageIndex(phase)
+  const activeStage = PUBLICATION_JOURNEY_STAGES[activeIndex]
+  const completedPath = phase === "complete"
+    ? 6
+    : Math.min(6, activeIndex + (busy ? 0.38 : 0))
+  const elapsed = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:${String(elapsedSeconds % 60).padStart(2, "0")}`
+
+  return <div
+    data-publication-launch-visualizer
+    data-publication-phase={phase}
+    data-active-stage={activeStage.id}
+    className="relative overflow-hidden rounded-[1.75rem] border border-cyan-200/20 bg-[#040914] shadow-[inset_0_0_70px_rgba(34,211,238,0.06),0_24px_80px_rgba(0,0,0,0.35)]"
+  >
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between border-b border-cyan-100/10 bg-black/30 px-3 py-2 backdrop-blur">
+      <div aria-hidden="true" className="flex items-end gap-1">
+        {[0, 1, 2, 3, 4].map((bar) => <span
+          key={bar}
+          className={`w-1 rounded-full bg-cyan-200 ${busy ? "animate-pulse" : ""}`}
+          style={{
+            height: `${7 + (bar % 3) * 4}px`,
+            animationDelay: `${bar * 120}ms`,
+          }}
+        />)}
+        <span className={`ml-1 h-2 w-2 rounded-full ${failed ? "bg-rose-300" : phase === "complete" ? "bg-emerald-300" : "bg-cyan-300"} ${busy ? "animate-ping" : ""}`} />
+      </div>
+      <span className="font-mono text-[10px] font-black tracking-[0.24em] text-cyan-100/75">
+        T+{elapsed}
+      </span>
+    </div>
+
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 420 540"
+      className="h-[430px] w-full sm:h-[520px]"
+      role="img"
+    >
+      <defs>
+        <pattern id="publication-circuit-grid" width="24" height="24" patternUnits="userSpaceOnUse">
+          <path d="M24 0H0V24" fill="none" stroke="#67e8f9" strokeOpacity=".055" strokeWidth=".6" />
+          <circle cx="0" cy="0" r="1.2" fill="#67e8f9" fillOpacity=".12" />
+        </pattern>
+        <filter id="publication-cyan-glow" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="5" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+        <filter id="publication-emerald-glow" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="4" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+        <clipPath id="publication-product-clip">
+          <rect x="-24" y="-24" width="48" height="48" rx="13" />
+        </clipPath>
+        <linearGradient id="publication-route-gradient" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#22d3ee" />
+          <stop offset=".52" stopColor="#a78bfa" />
+          <stop offset="1" stopColor="#34d399" />
+        </linearGradient>
+        <radialGradient id="publication-core-gradient">
+          <stop offset="0" stopColor="#ecfeff" stopOpacity=".22" />
+          <stop offset=".7" stopColor="#22d3ee" stopOpacity=".08" />
+          <stop offset="1" stopColor="#020617" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+
+      <rect width="420" height="540" fill="url(#publication-circuit-grid)" />
+      <circle cx="210" cy="270" r="205" fill="url(#publication-core-gradient)">
+        {busy && <animate attributeName="r" values="175;215;175" dur="5s" repeatCount="indefinite" />}
+      </circle>
+
+      <g opacity=".32" stroke="#67e8f9" strokeWidth="1">
+        <path d="M16 55H42L52 65" />
+        <path d="M378 55H404V135H390" />
+        <path d="M18 338H42L55 325" />
+        <path d="M365 352H404V420H380" />
+        <path d="M28 478H92L110 496" />
+        <circle cx="16" cy="55" r="2" fill="#67e8f9" />
+        <circle cx="404" cy="135" r="2" fill="#67e8f9" />
+        <circle cx="18" cy="338" r="2" fill="#67e8f9" />
+        <circle cx="404" cy="420" r="2" fill="#67e8f9" />
+      </g>
+
+      <path
+        d={PUBLICATION_JOURNEY_PATH}
+        pathLength="6"
+        fill="none"
+        stroke="#1e293b"
+        strokeWidth="13"
+        strokeLinecap="round"
+      />
+      <path
+        d={PUBLICATION_JOURNEY_PATH}
+        pathLength="6"
+        fill="none"
+        stroke="url(#publication-route-gradient)"
+        strokeOpacity=".18"
+        strokeWidth="5"
+        strokeLinecap="round"
+      />
+      <path
+        d={PUBLICATION_JOURNEY_PATH}
+        pathLength="6"
+        fill="none"
+        stroke="url(#publication-route-gradient)"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeDasharray={`${completedPath} 6`}
+        className="transition-all duration-700"
+        filter="url(#publication-cyan-glow)"
+      />
+      {busy && <>
+        <circle r="2.8" fill="#ecfeff" filter="url(#publication-cyan-glow)">
+          <animateMotion dur="2.6s" repeatCount="indefinite" path={PUBLICATION_JOURNEY_PATH} />
+        </circle>
+        <circle r="1.8" fill="#a78bfa">
+          <animateMotion dur="3.8s" begin="-.9s" repeatCount="indefinite" path={PUBLICATION_JOURNEY_PATH} />
+        </circle>
+        <circle r="1.5" fill="#34d399">
+          <animateMotion dur="4.4s" begin="-2.1s" repeatCount="indefinite" path={PUBLICATION_JOURNEY_PATH} />
+        </circle>
+      </>}
+
+      {PUBLICATION_JOURNEY_STAGES.map((stage, index) => {
+        const active = index === activeIndex
+        const complete = phase === "complete" || index < activeIndex
+        const stroke = failed && active
+          ? "#fda4af"
+          : active
+            ? "#67e8f9"
+            : complete ? "#6ee7b7" : "#475569"
+        const opacity = active || complete ? 1 : .46
+        return <g
+          key={stage.id}
+          transform={`translate(${stage.x} ${stage.y})`}
+          opacity={opacity}
+        >
+          <circle r="35" fill="#020617" stroke="#0f172a" strokeWidth="8" />
+          <circle
+            r="31"
+            fill="#07111f"
+            stroke={stroke}
+            strokeWidth={active ? 2.5 : 1.3}
+            strokeDasharray={active ? "4 3" : complete ? "2 2" : "1 6"}
+            filter={active ? "url(#publication-cyan-glow)" : complete ? "url(#publication-emerald-glow)" : undefined}
+          >
+            {active && busy && <animateTransform
+              attributeName="transform"
+              type="rotate"
+              from="0"
+              to="360"
+              dur="3s"
+              repeatCount="indefinite"
+            />}
+          </circle>
+          {active && <circle r="39" fill="none" stroke={stroke} strokeOpacity=".35">
+            {busy && <>
+              <animate attributeName="r" values="34;44;34" dur="1.8s" repeatCount="indefinite" />
+              <animate attributeName="stroke-opacity" values=".7;.05;.7" dur="1.8s" repeatCount="indefinite" />
+            </>}
+          </circle>}
+          <text x="-29" y="-39" fill={stroke} fontSize="7" fontFamily="monospace" fontWeight="700">
+            0{index + 1}
+          </text>
+
+          {stage.id === "research" && <g fill="none" stroke={stroke} strokeWidth="1.5">
+            <rect x="-25" y="-19" width="18" height="25" rx="3" />
+            <rect x="7" y="-19" width="18" height="25" rx="3" />
+            <path d="M-21 1l4-5 4 3 3-5M11 1l4-6 6 5" />
+            <circle cx="0" cy="8" r="8" />
+            <circle cx="0" cy="8" r="3" fill={stroke} fillOpacity=".28" />
+            {active && busy && <line x1="-27" x2="27" y1="-14" y2="-14" stroke="#fff">
+              <animate attributeName="y1" values="-18;18;-18" dur="1.5s" repeatCount="indefinite" />
+              <animate attributeName="y2" values="-18;18;-18" dur="1.5s" repeatCount="indefinite" />
+            </line>}
+          </g>}
+
+          {stage.id === "identity" && <g fill="none" stroke={stroke} strokeLinecap="round">
+            <path d="M0-21C-14-21-22-12-22 1M0-15C-10-15-16-8-16 2c0 8-3 13-6 17M0-9c-7 0-10 5-10 11 0 10-3 16-6 21M0-3c-3 0-4 2-4 6 0 9-1 15-4 21M6-14c7 3 10 9 10 17 0 9 3 14 6 18M7-7c3 3 4 7 4 12 0 8 2 13 5 17M3 3c0 10 2 16 6 21" />
+            {active && busy && <circle r="26" strokeDasharray="2 7" strokeWidth="1.4">
+              <animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="4s" repeatCount="indefinite" />
+            </circle>}
+          </g>}
+
+          {stage.id === "visuals" && <g fill="none" stroke={stroke}>
+            <rect x="-12" y="-12" width="24" height="24" rx="4" strokeWidth="1.5" />
+            <path d="M-8 7l6-7 5 4 5-7" />
+            <g>
+              {[0, 1, 2, 3, 4, 5, 6].map((asset) => {
+                const angle = (Math.PI * 2 * asset) / 7
+                return <circle
+                  key={asset}
+                  cx={Math.cos(angle) * 24}
+                  cy={Math.sin(angle) * 24}
+                  r="2.2"
+                  fill={stroke}
+                  stroke="none"
+                />
+              })}
+              {active && busy && <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="4s" repeatCount="indefinite" />}
+            </g>
+          </g>}
+
+          {stage.id === "authorization" && <g fill="none" stroke={stroke} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M0-23l18 7v13c0 13-8 21-18 27-10-6-18-14-18-27v-13z" />
+            <circle cx="-3" cy="-2" r="5" />
+            <path d="M2-2h14m-4 0v5m-5-5v4" />
+            {active && busy && <path d="M-25-2A25 25 0 0125-2" strokeDasharray="3 5">
+              <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="2.6s" repeatCount="indefinite" />
+            </path>}
+          </g>}
+
+          {stage.id === "draft" && <g fill="none" stroke={stroke} strokeWidth="1.6" strokeLinejoin="round">
+            <path d="M-20-9L-2-19 16-9-2 1zM-20-9V10L-2 21V1M16-9V10L-2 21" />
+            <path d="M9 4h16v12H9zM12 8h9M12 12h6" />
+            {active && busy && <path d="M-25 25h50" strokeDasharray="2 5">
+              <animate attributeName="stroke-dashoffset" values="0;-14" dur="1s" repeatCount="indefinite" />
+            </path>}
+          </g>}
+
+          {stage.id === "preview" && <g fill="none" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M-23-16H4L22 1 4 18h-27z" />
+            <circle cx="-13" cy="1" r="3" />
+            <path d="M-2-6h14M-2 0h10M-2 6h6" />
+            <path d="M-22-25v5M-27-22l4 3M-17-22l-4 3M21-22v5M16-19l4 3M26-19l-4 3">
+              {active && busy && <animate attributeName="stroke-opacity" values=".15;1;.15" dur="1.1s" repeatCount="indefinite" />}
+            </path>
+          </g>}
+
+          {stage.id === "ebay" && <g fill="none" stroke={stroke} strokeWidth="1.7">
+            <rect x="-25" y="-25" width="50" height="50" rx="13" />
+            <rect x="-18" y="-18" width="36" height="36" rx="9" strokeDasharray="3 3">
+              {active && busy && <animate attributeName="rx" values="9;15;9" dur="1.8s" repeatCount="indefinite" />}
+            </rect>
+            <circle cx="-11" cy="0" r="4" fill="#e53238" stroke="none" />
+            <circle cx="-3.5" cy="0" r="4" fill="#0064d2" stroke="none" />
+            <circle cx="4" cy="0" r="4" fill="#f5af02" stroke="none" />
+            <circle cx="11.5" cy="0" r="4" fill="#86b817" stroke="none" />
+          </g>}
+
+          {complete && <g transform="translate(24 -24)">
+            <circle r="8" fill="#052e2b" stroke="#6ee7b7" />
+            <path d="M-3 0l2 3 5-6" fill="none" stroke="#a7f3d0" strokeWidth="1.8" strokeLinecap="round" />
+          </g>}
+        </g>
+      })}
+
+      <line
+        x1={activeStage.x}
+        y1={activeStage.y}
+        x2={activeStage.productX}
+        y2={activeStage.productY}
+        stroke={failed ? "#fb7185" : "#67e8f9"}
+        strokeOpacity=".7"
+        strokeWidth="1.5"
+        strokeDasharray="3 4"
+        className="transition-all duration-700"
+      >
+        {busy && <animate attributeName="stroke-dashoffset" values="0;-14" dur=".8s" repeatCount="indefinite" />}
+      </line>
+      <g
+        data-traveling-product
+        style={{
+          transform: `translate(${activeStage.productX}px, ${activeStage.productY}px)`,
+          transition: "transform 850ms cubic-bezier(.2,.8,.2,1)",
+        }}
+      >
+        <circle r="33" fill="#020617" fillOpacity=".88" stroke={failed ? "#fda4af" : "#cffafe"} strokeOpacity=".7" strokeWidth="1.5" filter="url(#publication-cyan-glow)" />
+        {busy && <circle r="38" fill="none" stroke={failed ? "#fb7185" : "#67e8f9"} strokeDasharray="3 8">
+          <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="2s" repeatCount="indefinite" />
+        </circle>}
+        <rect x="-25" y="-25" width="50" height="50" rx="14" fill="#fff" />
+        {productImageUrl
+          ? <image
+            href={productImageUrl}
+            x="-24"
+            y="-24"
+            width="48"
+            height="48"
+            preserveAspectRatio="xMidYMid meet"
+            clipPath="url(#publication-product-clip)"
+          />
+          : <g fill="none" stroke="#0f172a" strokeWidth="1.7" strokeLinejoin="round">
+            <path d="M-15-7L0-15 15-7 0 1zM-15-7V9L0 17V1M15-7V9L0 17" />
+          </g>}
+        {busy && <circle cx="22" cy="-22" r="3.5" fill="#67e8f9">
+          <animate attributeName="opacity" values=".25;1;.25" dur=".8s" repeatCount="indefinite" />
+        </circle>}
+      </g>
+    </svg>
+
+    <ol className="sr-only">
+      {PUBLICATION_JOURNEY_STAGES.map((stage, index) => <li
+        key={stage.id}
+        aria-current={index === activeIndex ? "step" : undefined}
+      >
+        {stage.accessibleLabel}
+      </li>)}
+    </ol>
+    <p className="sr-only" role="status" aria-live="polite">
+      {status || activeStage.accessibleLabel}
+    </p>
+  </div>
+}
+
 function ListingWorkspaceLoading() {
   return <main className="min-h-screen bg-[#070b12] p-6 text-white"><div className="mx-auto max-w-xl animate-pulse rounded-3xl border border-white/10 bg-white/[0.04] p-6"><div className="h-6 w-2/3 rounded bg-white/10" /><div className="mt-4 h-24 rounded-2xl bg-white/5" /><p className="mt-4 text-sm text-white/50">Cargando workspace…</p></div></main>
 }
@@ -759,6 +1168,14 @@ function ListingWorkspacePageContent() {
     useState(false)
   const [publicationAutomationStep, setPublicationAutomationStep] =
     useState("")
+  const [publicationAutomationPhase, setPublicationAutomationPhase] =
+    useState<PublicationAutomationPhase>("idle")
+  const [publicationAutomationStartedAt, setPublicationAutomationStartedAt] =
+    useState<number | null>(null)
+  const [publicationAutomationElapsed, setPublicationAutomationElapsed] =
+    useState(0)
+  const [publicationAutomationFailed, setPublicationAutomationFailed] =
+    useState(false)
   const [positionSixPreviewError, setPositionSixPreviewError] = useState("")
   const [extraordinaryAuthorizationBusy,
     setExtraordinaryAuthorizationBusy] = useState<number | null>(null)
@@ -1669,6 +2086,38 @@ function ListingWorkspacePageContent() {
   const publicationPolicies = object(publicationOffer.listingPolicies)
   const approvalActive = draftState.approval?.status === "approved"
     && Date.parse(draftState.approval.expires_at) > Date.now()
+  const persistedPublicationAutomationPhase: PublicationAutomationPhase =
+    publicationPhase === "monitor_registered"
+      ? "complete"
+      : ["publish_in_flight", "outcome_unknown", "published_pending_verification"]
+          .includes(publicationPhase)
+        ? "verifying"
+        : publicationPhase === "preview_ready"
+          ? "preview"
+          : executionCompleted
+            ? "preview"
+            : unpublishedExecutionExists
+              ? "draft"
+              : approvalActive
+                ? "draft"
+                : "authorization"
+  const visiblePublicationAutomationPhase =
+    publicationAutomationPhase === "idle"
+      ? persistedPublicationAutomationPhase
+      : publicationAutomationPhase
+  const publicationReadOnlyPreflightActive =
+    !unpublishedExecutionExists
+    && unpublishedPreflightState === "loading"
+    && !publicationAutomationBusy
+  const publicationVisualizerPhase =
+    publicationReadOnlyPreflightActive
+      ? "research"
+      : visiblePublicationAutomationPhase
+  const publicationProductImageUrl =
+    finalListingReview?.signedImages.find((asset) => asset.position === 0)
+      ?.signedPreviewUrl
+      ?? form.imageUrls[0]
+      ?? ""
   const effectiveDraftQuantity = productionTarget ? 1 : draftConfiguration.quantity
   const accountPreflightAutoStarted = useRef(false)
   const accountPreflightAutoSaveKey = useRef("")
@@ -1678,6 +2127,21 @@ function ListingWorkspacePageContent() {
     draftConfiguration.paymentPolicyId,
     draftConfiguration.returnPolicyId,
   ].every((value) => value.trim().length > 0)
+
+  useEffect(() => {
+    if (!publicationAutomationBusy || publicationAutomationStartedAt === null) {
+      return
+    }
+    const updateElapsed = () => {
+      setPublicationAutomationElapsed(Math.max(
+        0,
+        Math.floor((Date.now() - publicationAutomationStartedAt) / 1_000),
+      ))
+    }
+    updateElapsed()
+    const interval = window.setInterval(updateElapsed, 1_000)
+    return () => window.clearInterval(interval)
+  }, [publicationAutomationBusy, publicationAutomationStartedAt])
 
   useEffect(() => {
     if (verifiedActiveItemId && !activeRevisionItemId) {
@@ -2584,10 +3048,41 @@ function ListingWorkspacePageContent() {
         body: JSON.stringify(body),
       },
     )
-    const payload = await readMobileReviewJson<Record<string, any>>(
-      response,
-      "No se pudo preparar la publicación automatizada",
-    )
+    const failureResponse = response.clone()
+    let payload: Record<string, any>
+    try {
+      payload = await readMobileReviewJson<Record<string, any>>(
+        response,
+        "No se pudo preparar la publicación automatizada",
+      )
+    } catch (requestFailure) {
+      const requestError = new Error(
+        getMobileReviewRequestError(
+          requestFailure,
+          "No se pudo preparar la publicación automatizada",
+        ),
+      ) as Error & {
+        httpStatus?: number
+        retryAfterSeconds?: number
+      }
+      requestError.httpStatus = response.status
+      const retryAfterHeader = Number(
+        failureResponse.headers.get("Retry-After"),
+      )
+      try {
+        const failurePayload = await failureResponse.json() as
+          Record<string, unknown>
+        const retryAfterPayload = Number(failurePayload.retryAfterSeconds)
+        requestError.retryAfterSeconds = Number.isFinite(retryAfterPayload)
+          ? retryAfterPayload
+          : Number.isFinite(retryAfterHeader) ? retryAfterHeader : undefined
+      } catch {
+        requestError.retryAfterSeconds = Number.isFinite(retryAfterHeader)
+          ? retryAfterHeader
+          : undefined
+      }
+      throw requestError
+    }
     if (!response.ok || payload.success !== true) {
       throw new Error(String(payload.error
         ?? "EBAY_V3_UNPUBLISHED_AUTHORIZATION_FAILED"))
@@ -2609,8 +3104,26 @@ function ListingWorkspacePageContent() {
     let nextApproval = draftState.approval
     let nextExecution = draftState.execution
     let nextPublication = draftState.publication
+    const prepareVisualTimers: number[] = []
+    setPublicationAutomationFailed(false)
+    setPublicationAutomationStartedAt(Date.now())
+    setPublicationAutomationElapsed(0)
+    setPublicationAutomationPhase(
+      nextPublication?.phase === "monitor_registered"
+        ? "complete"
+        : nextPublication
+            && ["publish_in_flight", "outcome_unknown", "published_pending_verification"]
+              .includes(nextPublication.phase)
+          ? "verifying"
+          : nextExecution?.phase === "completed"
+            ? "preview"
+            : nextExecution?.id
+              ? "draft"
+              : "research",
+    )
     try {
       if (nextPublication?.phase === "monitor_registered") {
+        setPublicationAutomationPhase("complete")
         setMessage(`Listing ${nextPublication.listing_id} ya está ACTIVE y monitoreado.`)
         return
       }
@@ -2619,6 +3132,7 @@ function ListingWorkspacePageContent() {
         && ["publish_in_flight", "outcome_unknown", "published_pending_verification"]
           .includes(nextPublication.phase)
       ) {
+        setPublicationAutomationPhase("verifying")
         setPublicationAutomationStep("Verificando el resultado existente sin volver a publicar…")
         const reconciled = await draftRequest({
           action: "reconcile_publish",
@@ -2629,6 +3143,9 @@ function ListingWorkspacePageContent() {
           ...current,
           publication: reconciled.publication,
         }))
+        setPublicationAutomationPhase(
+          reconciled.monitoring?.registered ? "complete" : "verifying",
+        )
         setMessage(reconciled.monitoring?.registered
           ? `Listing ${reconciled.listing?.listingId} ACTIVE y registrado en monitoreo.`
           : `Listing ${reconciled.listing?.listingId} publicado; eBay aún no confirma ACTIVE.`)
@@ -2640,12 +3157,70 @@ function ListingWorkspacePageContent() {
       }
 
       if (!nextExecution?.id) {
-        setPublicationAutomationStep("1/4 · Revalidando cuenta, policies y las 7 imágenes…")
-        const prepared = await requestV3UnpublishedAuthorization({
-          action: "prepare",
-          attemptId: referenceGuidedAttemptId,
-          previewHash: finalReviewRecord.previewHash,
-        })
+        let prepared: Record<string, any> | null = null
+        for (let sourceAttempt = 0; sourceAttempt < 2; sourceAttempt += 1) {
+          setPublicationAutomationPhase("research")
+          setPublicationAutomationStep(
+            "1/4 · Revalidando Luna, cuenta, policies y las 7 imágenes…",
+          )
+          prepareVisualTimers.splice(0).forEach((timer) =>
+            window.clearTimeout(timer))
+          prepareVisualTimers.push(
+            window.setTimeout(
+              () => setPublicationAutomationPhase("identity"),
+              900,
+            ),
+            window.setTimeout(
+              () => setPublicationAutomationPhase("visuals"),
+              1_800,
+            ),
+          )
+          try {
+            prepared = await requestV3UnpublishedAuthorization({
+              action: "prepare",
+              attemptId: referenceGuidedAttemptId,
+              previewHash: finalReviewRecord.previewHash,
+            })
+            break
+          } catch (prepareError) {
+            prepareVisualTimers.splice(0).forEach((timer) =>
+              window.clearTimeout(timer))
+            const rateLimited = prepareError instanceof Error
+              && (
+                prepareError.message.includes(
+                  "EBAY_V3_PUBLIC_LUNA_RATE_LIMITED",
+                )
+                || (prepareError as Error & { httpStatus?: number })
+                  .httpStatus === 429
+              )
+            if (!rateLimited || sourceAttempt > 0) throw prepareError
+            const requestedDelay = Number(
+              (prepareError as Error & { retryAfterSeconds?: number })
+                .retryAfterSeconds,
+            )
+            const retryAfterSeconds = Math.min(
+              65,
+              Math.max(
+                2,
+                (Number.isFinite(requestedDelay)
+                  ? Math.ceil(requestedDelay)
+                  : 60) + 1,
+              ),
+            )
+            setPublicationAutomationPhase("research")
+            setPublicationAutomationStep(
+              `Luna pidió una pausa de ${retryAfterSeconds} segundos; el escáner reanudará una sola vez antes de cualquier escritura eBay.`,
+            )
+            await new Promise<void>((resolve) => {
+              window.setTimeout(resolve, retryAfterSeconds * 1_000)
+            })
+          }
+        }
+        prepareVisualTimers.splice(0).forEach((timer) =>
+          window.clearTimeout(timer))
+        if (!prepared) {
+          throw new Error("EBAY_V3_PUBLIC_LUNA_PREFLIGHT_NOT_PREPARED")
+        }
         const preparedAuthorization = object(prepared.authorization)
         const preparedApproval = object(prepared.approval)
         setUnpublishedAuthorization(preparedAuthorization)
@@ -2678,6 +3253,7 @@ function ListingWorkspacePageContent() {
             expires_at: String(preparedApproval.expires_at ?? ""),
           }
         } else {
+          setPublicationAutomationPhase("authorization")
           setPublicationAutomationStep("2/4 · Registrando tu autorización de este clic…")
           const confirmationPhrase = String(
             preparedAuthorization.confirmationPhrase ?? "",
@@ -2711,6 +3287,7 @@ function ListingWorkspacePageContent() {
           setUnpublishedAuthorizationMode("resume_existing_authorization")
           setUnpublishedPreflightState("ready_resume")
         }
+        setPublicationAutomationPhase("draft")
         setDraftState((current) => ({
           ...current,
           approval: nextApproval,
@@ -2722,6 +3299,7 @@ function ListingWorkspacePageContent() {
         if (!nextApproval?.id) {
           throw new Error("EBAY_V3_UNPUBLISHED_APPROVAL_REQUIRED")
         }
+        setPublicationAutomationPhase("draft")
         setPublicationAutomationStep("3/4 · Creando Inventory Item y Offer UNPUBLISHED…")
         const executed = await draftRequest({
           action: "execute",
@@ -2744,6 +3322,7 @@ function ListingWorkspacePageContent() {
       }
 
       if (!nextPublication || nextPublication.phase !== "preview_ready") {
+        setPublicationAutomationPhase("preview")
         setPublicationAutomationStep("4/4 · Revalidando y cerrando el preview final…")
         const preparedPublication = await draftRequest({
           action: "prepare_publish",
@@ -2761,6 +3340,7 @@ function ListingWorkspacePageContent() {
         throw new Error("EBAY_FINAL_PUBLICATION_PREVIEW_NOT_READY")
       }
 
+      setPublicationAutomationPhase("publishing")
       setPublicationAutomationStep("Publicando una sola vez y verificando ACTIVE…")
       const published = await draftRequest({
         action: "publish",
@@ -2777,6 +3357,9 @@ function ListingWorkspacePageContent() {
         ...current,
         publication: published.publication,
       }))
+      setPublicationAutomationPhase(
+        published.monitoring?.registered ? "complete" : "verifying",
+      )
       setMessage(published.monitoring?.registered
         ? `Listing ${published.listing?.listingId} ACTIVE y registrado en monitoreo.`
         : `Listing ${published.listing?.listingId} publicado; eBay aún no confirma ACTIVE. El mismo botón sólo verificará el resultado.`)
@@ -2796,6 +3379,7 @@ function ListingWorkspacePageContent() {
           && ["publish_in_flight", "outcome_unknown", "published_pending_verification"]
             .includes(refreshedPublication.phase)
         ) {
+          setPublicationAutomationPhase("verifying")
           setPublicationAutomationStep(
             "Verificando el resultado existente sin volver a publicar…",
           )
@@ -2807,6 +3391,10 @@ function ListingWorkspacePageContent() {
             ...current,
             publication: reconciled.publication,
           }))
+          setPublicationAutomationPhase(
+            reconciled.monitoring?.registered ? "complete" : "verifying",
+          )
+          setPublicationAutomationFailed(false)
           setUnpublishedAuthorizationError("")
           setError("")
           setMessage(reconciled.monitoring?.registered
@@ -2818,9 +3406,12 @@ function ListingWorkspacePageContent() {
         // The original failure remains authoritative. A later click will load
         // and reconcile persisted state before any new publication attempt.
       }
+      setPublicationAutomationFailed(true)
       setUnpublishedAuthorizationError(code)
       setError(
-        code.includes("EBAY_FINAL_")
+        code.includes("EBAY_V3_PUBLIC_LUNA_RATE_LIMITED")
+          ? "Luna mantuvo el límite temporal después de la pausa automática. Seller OS se detuvo antes de autorizar o escribir en eBay; el mismo botón podrá reanudar cuando Luna libere la lectura."
+          : code.includes("EBAY_FINAL_")
           ? humanFinalPublicationError(requestError)
           : getMobileReviewRequestError(
               requestError,
@@ -2830,7 +3421,8 @@ function ListingWorkspacePageContent() {
       setMessage("")
       setUnpublishedPreflightRetry((current) => current + 1)
     } finally {
-      setPublicationAutomationStep("")
+      prepareVisualTimers.splice(0).forEach((timer) =>
+        window.clearTimeout(timer))
       setPublicationAutomationBusy(false)
       setDraftBusy(false)
     }
@@ -3185,15 +3777,17 @@ function ListingWorkspacePageContent() {
       <section data-v3-one-click-publication data-unpublished-preflight-state={unpublishedPreflightState} className="space-y-3 rounded-2xl border border-rose-200/35 bg-rose-200/[0.07] p-3">
         <div>
           <p className="text-xs font-black uppercase tracking-widest text-rose-100/70">Publicación eBay automatizada · PRODUCTION</p>
-          <h3 className="mt-1 text-lg font-black">Una sola acción, con reanudación segura</h3>
-          <p className="mt-2 text-sm leading-6 text-rose-50/80">Al pulsar <strong>Publicar en eBay</strong> autorizas este producto, precio, cantidad y conjunto exacto de 7 imágenes. Seller OS renovará el preflight si venció, creará Inventory Item + Offer UNPUBLISHED, preparará el preview final y llamará <code>publishOffer</code> una sola vez.</p>
+          <h3 className="mt-1 text-lg font-black">El producto viaja; el sistema trabaja</h3>
+          <p className="mt-2 text-sm leading-6 text-rose-50/75">Un clic activa la construcción completa y conserva reanudación segura en cada cámara.</p>
         </div>
-        <dl className="grid grid-cols-3 gap-2 text-center text-xs">
-          <div className={`rounded-xl border p-2 ${unpublishedExecutionExists ? "border-emerald-200/25 text-emerald-50" : "border-white/10 text-white/55"}`}><dt>1 · Offer</dt><dd className="mt-1 font-black">{executionCompleted ? "VERIFICADO" : unpublishedExecutionExists ? "REANUDABLE" : "AUTOMÁTICO"}</dd></div>
-          <div className={`rounded-xl border p-2 ${publicationPhase ? "border-emerald-200/25 text-emerald-50" : "border-white/10 text-white/55"}`}><dt>2 · Preview</dt><dd className="mt-1 font-black">{publicationPhase ? "PERSISTIDO" : "AUTOMÁTICO"}</dd></div>
-          <div className={`rounded-xl border p-2 ${publicationPhase === "monitor_registered" ? "border-emerald-200/25 text-emerald-50" : "border-white/10 text-white/55"}`}><dt>3 · Listing</dt><dd className="mt-1 font-black">{publicationPhase === "monitor_registered" ? "ACTIVE" : "AUTOMÁTICO"}</dd></div>
-        </dl>
-        {!unpublishedExecutionExists && unpublishedPreflightState === "loading" && <p className="rounded-xl border border-white/10 p-3 text-xs text-white/60">Comprobando en segundo plano las 7 imágenes, cuenta y policies…</p>}
+        <PublicationLaunchVisualizer
+          phase={publicationVisualizerPhase}
+          busy={publicationAutomationBusy || publicationReadOnlyPreflightActive}
+          failed={publicationAutomationFailed || unpublishedPreflightState === "error"}
+          elapsedSeconds={publicationAutomationElapsed}
+          productImageUrl={publicationProductImageUrl}
+          status={publicationAutomationStep}
+        />
         {!unpublishedExecutionExists && unpublishedPreflightState === "error" && <p role="status" className="rounded-xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-xs text-amber-50"><strong>La comprobación previa necesita renovarse.</strong><span className="mt-1 block">{humanUnpublishedPreflightError(unpublishedAuthorizationError || unpublishedPreflightReason)}</span><span className="mt-1 block">El botón único volverá a prepararla antes de cualquier escritura.</span></p>}
         {!unpublishedExecutionExists && unpublishedPreflightState === "ready_new" && <p role="status" className="rounded-xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3 text-xs text-emerald-50">Listo para registrar la autorización de este clic y ejecutar la secuencia completa.</p>}
         {unpublishedAuthorization && <details className="rounded-xl border border-white/10 bg-black/25 p-3 text-xs">
@@ -3207,7 +3801,6 @@ function ListingWorkspacePageContent() {
           </dl>
           <p className="mt-3 break-all font-mono text-[10px] text-cyan-100">Payload {String(unpublishedAuthorization.payloadHash)}</p>
         </details>}
-        {publicationAutomationBusy && <p role="status" className="rounded-xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3 text-sm font-black text-cyan-50">{publicationAutomationStep || "Continuando la publicación segura…"}</p>}
         {publicationPhase === "monitor_registered"
           ? <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y monitoreado</strong><p className="mt-1 text-xs">Item ID {draftState.publication?.listing_id}</p><a href={`https://www.ebay.com/itm/${draftState.publication?.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-black underline">Abrir listing en eBay</a></div>
           : <button type="button" disabled={
@@ -3215,11 +3808,14 @@ function ListingWorkspacePageContent() {
             || draftBusy
             || !listingPackage
             || publicationPhase === "terminal_failure"
-          } onClick={() => void publishV3Automatically()} className="min-h-16 w-full rounded-2xl bg-rose-200 px-4 text-lg font-black text-black disabled:opacity-40">{publicationAutomationBusy
-              ? "Publicando…"
+          } onClick={() => void publishV3Automatically()} className="relative min-h-16 w-full overflow-hidden rounded-2xl bg-rose-200 px-4 text-lg font-black text-black shadow-[0_0_38px_rgba(254,205,211,0.2)] disabled:opacity-40">
+            {publicationAutomationBusy && <span aria-hidden="true" className="absolute inset-y-0 left-0 w-1/3 animate-pulse bg-gradient-to-r from-transparent via-white/45 to-transparent" />}
+            <span className="relative">{publicationAutomationBusy
+              ? "Sistema en operación"
               : ["publish_in_flight", "outcome_unknown", "published_pending_verification"].includes(publicationPhase)
                 ? "Verificar publicación en eBay"
-                : "Publicar en eBay"}</button>}
+                : "Publicar en eBay"}</span>
+          </button>}
         <p className="text-xs leading-5 text-rose-50/65">Si una llamada queda con resultado incierto, la automatización se detiene y este mismo control cambia a verificación por lectura. Nunca repite <code>publishOffer</code> a ciegas.</p>
       </section>
     </section>
