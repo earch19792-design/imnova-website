@@ -39,6 +39,9 @@ function assertPreviewBoundary() {
     process.env.OPENAI_IMAGE_MODEL?.trim() !== "gpt-image-2") {
     throw new Error("EXTRAORDINARY_POSITION_4_PROVIDER_CONFIGURATION_INVALID")
   }
+  if (process.env[FEATURE_FLAG] === "true") {
+    throw new Error("EXTRAORDINARY_POSITION_4_FEATURE_MUST_START_DISABLED")
+  }
 }
 
 export async function POST(req: Request) {

@@ -43,6 +43,7 @@ test("provider transport is one-shot Preview staging and never retries", () => {
   assert.match(route, /VERCEL_ENV !== "preview"/)
   assert.match(route, /authenticationMode !== "service_role"/)
   assert.match(route, /RUN_ONE_STAGING_EXTRAORDINARY_POSITION_4_PROVIDER_CALL_7/)
+  assert.match(route, /FEATURE_MUST_START_DISABLED/)
   assert.match(route, /process\.env\[FEATURE_FLAG\] = "false"/)
 })
 
