@@ -775,7 +775,7 @@ async function prepare(actor: string) {
         payload_hash: activeApproval.payload_hash,
         approval_idempotency_key: activeApproval.approval_idempotency_key,
       }
-    } else {
+    } else if (activeApproval.payload_hash !== payloadHash) {
       const changedFields = diffJsonPaths(activeApproval.approved_payload, exactPayload)
       const { error: reconcileError } = await supabase
         .rpc("reconcile_ebay_draft_only_approval_conflict", {
@@ -794,9 +794,12 @@ async function prepare(actor: string) {
         oldPayloadHash: activeApproval.payload_hash,
         newPayloadHash: payloadHash,
         reason: "PAYLOAD_CHANGED_AFTER_LUNA_RECONFIRMATION",
-      changedFields,
+        changedFields,
       }
     }
+    // An identical but expired approval is intentionally left in place here.
+    // The human authorize action below renews it with a distinct idempotency key,
+    // while the approval RPC atomically expires the old row before insertion.
   }
   const response: JsonRecord = {
     authorization: prepared,
