@@ -22,6 +22,7 @@ import { getEbayTaxonomyListingIntelligence } from
   "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import {
   packageWithV3PublicationAssets,
+  resolveV3UnpublishedAuthorizationPreflight,
   V3_PUBLICATION_BUCKET,
   V3_PUBLICATION_SOURCE_BUCKET,
   buildV3UnpublishedAuthorizationIdempotencyKey,
@@ -784,6 +785,123 @@ async function latest(actor: string, attemptId: string) {
   return data
 }
 
+async function readOnlyPreflight(actor: string, attemptId: string) {
+  const context = await loadFinalReview(actor, attemptId, EXPECTED_PREVIEW)
+  const { review, supabase } = context
+  const authorization = await latest(actor, attemptId)
+  const { data: approvalRows, error: approvalError } = await supabase
+    .from("ebay_draft_only_approvals")
+    .select("id,listing_package_id,status,target,account_fingerprint,payload_hash,approved_payload,approved_at,expires_at,consumed_at,revoked_at,approval_idempotency_key,created_at")
+    .eq("listing_package_id", review.listing_package_id)
+    .eq("actor_user_id", actor)
+    .order("created_at", { ascending: false })
+    .limit(10)
+  if (approvalError) {
+    throw new Error("EBAY_V3_APPROVAL_STATE_READ_FAILED")
+  }
+  const approval = approvalRows?.find((row) => row.status === "approved")
+    ?? approvalRows?.[0]
+    ?? null
+  const { data: invalidation, error: invalidationError } = authorization
+    ? await supabase
+      .from("ebay_v3_unpublished_offer_authorization_invalidations")
+      .select("authorization_preview_id")
+      .eq("authorization_preview_id", authorization.id)
+      .limit(1)
+      .maybeSingle()
+    : { data: null, error: null }
+  if (invalidationError) {
+    throw new Error("EBAY_V3_AUTHORIZATION_INVALIDATION_READ_FAILED")
+  }
+  const runtime = ebayDraftOnlyRuntimeStatus()
+  let authorizationView: ReturnType<typeof publicPreview> | null = null
+  let exactPayloadHashValid = false
+  let authoritySnapshotHashValid = false
+  if (authorization) {
+    authorizationView = publicPreview(authorization as JsonRecord)
+    exactPayloadHashValid =
+      hashEbayDraftOnlyPayload(record(authorization.exact_payload))
+        === text(authorization.payload_hash)
+    authoritySnapshotHashValid =
+      v3AuthorizationHash(record(authorization.authority_snapshot))
+        === text(authorization.exact_preview_hash)
+  }
+  const approvedPayloadHashValid = !approval || (
+    hashEbayDraftOnlyPayload(record(approval.approved_payload))
+      === text(approval.payload_hash)
+  )
+  const runtimeReady = runtime.enabled
+    && runtime.configured
+    && runtime.environmentAllowed
+    && runtime.identityBound
+    && runtime.identityConfigurationConsistent
+    && runtime.target === "PRODUCTION"
+  const preflight = resolveV3UnpublishedAuthorizationPreflight({
+    authorizationPreview: authorization ? {
+      listingPackageId: text(authorization.listing_package_id),
+      revisionId: text(authorization.revision_id),
+      finalPreviewId: text(authorization.final_preview_id),
+      status: text(authorization.status),
+      invalidated: Boolean(invalidation),
+      sourcePreviewHash: text(authorization.preview_hash),
+      exactPreviewHash: text(authorization.exact_preview_hash),
+      payloadHash: text(authorization.payload_hash),
+      target: text(authorization.target),
+      accountFingerprint: text(authorization.account_fingerprint),
+      preflightExpiresAt:
+        text(authorization.preflight_snapshot_expires_at) || null,
+      exactPayloadHashValid,
+      authoritySnapshotHashValid,
+      screenConsistencyValid:
+        authorizationView?.screenConsistency.all === true,
+    } : null,
+    approval: approval ? {
+      id: text(approval.id),
+      listingPackageId: text(approval.listing_package_id),
+      status: text(approval.status),
+      payloadHash: text(approval.payload_hash),
+      target: text(approval.target),
+      accountFingerprint: text(approval.account_fingerprint),
+      expiresAt: text(approval.expires_at) || null,
+      consumedAt: text(approval.consumed_at) || null,
+      revokedAt: text(approval.revoked_at) || null,
+      approvedPayloadHashValid,
+    } : null,
+    expectedListingPackageId: text(review.listing_package_id),
+    expectedRevisionId: text(review.revision_id),
+    expectedFinalPreviewId: text(review.id),
+    expectedSourcePreviewHash: text(review.preview_hash),
+    runtimeTarget: runtime.target,
+    runtimeAccountFingerprint: runtime.accountFingerprint || "",
+    runtimeReady,
+  })
+  return {
+    authorization,
+    approval: approval ? {
+      id: approval.id,
+      status: approval.status,
+      target: approval.target,
+      payload_hash: approval.payload_hash,
+      approved_at: approval.approved_at,
+      expires_at: approval.expires_at,
+      consumed_at: approval.consumed_at,
+      revoked_at: approval.revoked_at,
+      approval_idempotency_key: approval.approval_idempotency_key,
+    } : null,
+    preflight,
+    runtime: {
+      ready: runtimeReady,
+      target: runtime.target,
+      enabled: runtime.enabled,
+      configured: runtime.configured,
+      environmentAllowed: runtime.environmentAllowed,
+      identityBound: runtime.identityBound,
+      identityConfigurationConsistent:
+        runtime.identityConfigurationConsistent,
+    },
+  }
+}
+
 async function authorizeAndPrepareExecution(actor: string, body: JsonRecord) {
   const authorizationId = text(body.authorizationPreviewId)
   const exactPreviewHash = text(body.previewHash)
@@ -923,10 +1041,19 @@ export async function GET(req: Request) {
     if (attemptId !== EXPECTED_ATTEMPT) {
       return responseError(new Error("EBAY_V3_ATTEMPT_INVALID"), 400)
     }
-    const row = await latest(auth.actor, attemptId)
+    const state = await readOnlyPreflight(auth.actor, attemptId)
+    const preflightFailed = state.preflight.result === "ERROR"
     return NextResponse.json({
-      success: true,
-      authorization: row ? publicPreview(row as JsonRecord) : null,
+      success: !preflightFailed,
+      error: preflightFailed ? state.preflight.reason : undefined,
+      preflightResult: state.preflight.result,
+      preflightReason: state.preflight.reason,
+      preflight: state.preflight,
+      runtime: state.runtime,
+      authorization: state.authorization
+        ? publicPreview(state.authorization as JsonRecord)
+        : null,
+      approval: state.approval,
       safety: {
         readOnly: true,
         inventoryItemCreated: false,
@@ -935,9 +1062,21 @@ export async function GET(req: Request) {
         ebayWrites: 0,
         productionChanged: false,
       },
-    }, { headers: { "Cache-Control": "private, no-store, max-age=0" } })
+    }, {
+      status: preflightFailed ? 409 : 200,
+      headers: { "Cache-Control": "private, no-store, max-age=0" },
+    })
   } catch (error) {
-    return responseError(error)
+    const response = responseError(error)
+    const payload = await response.json() as JsonRecord
+    return NextResponse.json({
+      ...payload,
+      preflightResult: "ERROR",
+      preflightReason: payload.error,
+    }, {
+      status: response.status,
+      headers: { "Cache-Control": "private, no-store, max-age=0" },
+    })
   }
 }
 

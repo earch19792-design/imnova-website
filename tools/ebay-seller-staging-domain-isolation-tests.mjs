@@ -135,8 +135,9 @@ test("route and bundle surface regress downward", () => {
   // authorization route -> one Preview-only extraordinary position-4 ordinal-7
   // executor -> one final Preview-only extraordinary position-6 ordinal-8
   // executor -> one authenticated, read-only final-listing-review hydration
-  // route. The old product/community domain remains at zero.
-  assert.ok(countNamed("app/api", "route.ts") <= 79, "API route count regressed")
+  // route -> one authenticated V3 UNPUBLISHED authorization/preflight route.
+  // The old product/community domain remains at zero.
+  assert.ok(countNamed("app/api", "route.ts") <= 80, "API route count regressed")
   assert.equal(countNamed("app/api/community", "route.ts"), 0)
   assert.equal(countNamed("app/api/store", "route.ts"), 0)
 })

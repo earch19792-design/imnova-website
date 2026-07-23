@@ -22,6 +22,10 @@ const workspace = readFileSync(
   "app/admin/ebay/listing-workspace/page.tsx",
   "utf8",
 )
+const visualAccess = readFileSync(
+  "lib/ebay/reference-guided-visual-review-access.ts",
+  "utf8",
+)
 
 test("final listing review is append-only, service-role only and creates no eBay object", () => {
   assert.match(migration, /final_listing_review_append_only/)
@@ -84,8 +88,9 @@ test("authenticated GET signs exact private objects and remains read-only", () =
 test("workspace shows COMPLETED, seven previews and no generation controls in final state", () => {
   assert.match(workspace, /Visual Strategy V3 · COMPLETED/)
   assert.match(workspace, /Conjunto final bloqueado · 7\/7 PASSED/)
-  assert.match(workspace, /finalReview\.generationControlsHidden === true/)
-  assert.match(workspace, /finalListingReview\?\.signedImages\.length === 7/)
+  assert.match(workspace, /v3FinalListingReviewCanonicalReady/)
+  assert.match(visualAccess, /input\.generationControlsHidden === true/)
+  assert.match(visualAccess, /images\.length === V3_FINAL_ASSET_ROLES\.length/)
   assert.match(workspace, /Inventory Item: NO CREADO · Offer: NO CREADO/)
   assert.match(workspace, /FINAL_LISTING_REVIEW persistente/)
 })
@@ -96,8 +101,9 @@ test("reconciliation uses only the atomic V3 final selection for the visual gate
   assert.match(reconciliationMigration, /legacy_v2_visual_blockers_active boolean not null check \(not legacy_v2_visual_blockers_active\)/)
   assert.match(reconciliationMigration,
     /legacyV2VisualBlockersActive'[\s\S]*'false'::jsonb/)
-  assert.match(workspace, /finalReview\.visualPhase === "COMPLETED"/)
-  assert.match(workspace, /return Array\.isArray\(finalReview\.blockers\)/)
+  assert.match(visualAccess, /input\.visualPhase === "COMPLETED"/)
+  assert.match(visualAccess, /blockers\.length === 0/)
+  assert.match(workspace, /visibleWorkspaceGateBlockers/)
 })
 
 test("exact title and taxonomy-normalized exact facts are persisted without eBay writes", () => {
