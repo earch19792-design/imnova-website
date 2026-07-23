@@ -170,7 +170,7 @@ type DraftState = {
     totalJobs: number
   }
   readiness?: { ready: boolean; blockers: string[]; payloadHash?: string; requiredSku?: string }
-  approval?: { id: string; status: string; expires_at: string } | null
+  approval?: { id: string; status: string; expires_at: string; payload_hash?: string } | null
   execution?: { id?: string; phase: string; offer_id?: string | null; last_error_code?: string | null; completed_at?: string | null } | null
   publication?: {
     id: string
@@ -972,132 +972,6 @@ function ListingWorkspacePageContent() {
     })()
     return () => controller.abort()
   }, [referenceGuidedAttemptId])
-
-  useEffect(() => {
-    const review = object(finalListingReview?.review)
-    if (
-      review.visualPhase !== "COMPLETED"
-      || review.finalVisualSetLocked !== true
-      || review.readyForUnpublishedOfferAuthorization !== true
-      || !referenceGuidedAttemptId
-      || unpublishedAuthorization
-      || unpublishedAuthorizationBusy
-    ) return
-    const controller = new AbortController()
-    setUnpublishedAuthorizationBusy(true)
-    void (async () => {
-      try {
-        const { data: sessionData } = await supabase.auth.getSession()
-        if (!sessionData.session) throw new Error("ADMIN_SESSION_REQUIRED")
-        const response = await fetch(
-          "/api/admin/ebay/unpublished-offer-authorization",
-          {
-            method: "POST",
-            cache: "no-store",
-            signal: controller.signal,
-            headers: {
-              Authorization: `Bearer ${sessionData.session.access_token}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              action: "prepare",
-              attemptId: referenceGuidedAttemptId,
-              previewHash: String(review.previewHash ?? ""),
-            }),
-          },
-        )
-        const payload = await response.json() as Record<string, any>
-        if (!response.ok || payload.success !== true || !payload.authorization) {
-          throw new Error(String(payload.error
-            ?? "EBAY_V3_UNPUBLISHED_AUTHORIZATION_PREPARE_FAILED"))
-        }
-        const authorization = payload.authorization
-        setUnpublishedAuthorization(authorization)
-        setUnpublishedAuthorizationMode(
-          String(payload.authorizationMode ?? "new_authorization") as
-            "new_authorization" | "resume_existing_authorization",
-        )
-        setUnpublishedAuthorizationReconciliation(
-          payload.reconciliation && typeof payload.reconciliation === "object"
-            ? payload.reconciliation as Record<string, any>
-            : null,
-        )
-        const exactPayload = object(authorization.exactPayload)
-        const packageBaseline = fromPackage(object(object(exactPayload.listingPackage).packageData))
-        const stableImages = Array.isArray(authorization.images)
-          ? authorization.images.map((asset: Record<string, unknown>) =>
-              String(asset.url ?? "")).filter(Boolean)
-          : []
-        const authorizationItemSpecifics = object(authorization.itemSpecifics)
-        const authorizationPrice = object(authorization.price)
-        const authorizationPolicies = object(authorization.policies)
-        setForm({
-          title: String(authorization.title ?? ""),
-          categoryId: String(authorization.categoryId ?? ""),
-          categoryName: String(authorization.categoryName ?? packageBaseline.categoryName ?? ""),
-          description: String(authorization.description ?? ""),
-          imageUrls: stableImages,
-          aspects: Object.fromEntries(
-            Object.entries(authorizationItemSpecifics).map(([key, item]) => [
-              key,
-              String(Array.isArray(item) ? item[0] ?? "" : item ?? ""),
-            ]),
-          ),
-          pricing: {
-            ...packageBaseline.pricing,
-            currency: String(authorizationPrice.currency ?? "USD"),
-            targetPrice: numberOrNull(authorizationPrice.value),
-          },
-          shipping: packageBaseline.shipping,
-        })
-        const offer = object(exactPayload.offerPayload)
-        const inventory = object(exactPayload.inventoryItemPayload)
-        const policies = object(offer.listingPolicies)
-        setDraftConfiguration((current) => ({
-          ...current,
-          sku: String(authorization.sku ?? ""),
-          quantity: Math.max(1, Math.trunc(
-            numberOrNull(authorization.listingQuantity) ?? 1,
-          )),
-          condition: String(inventory.condition ?? "NEW"),
-          merchantLocationKey: String(authorization.merchantLocationKey ?? offer.merchantLocationKey ?? ""),
-          fulfillmentPolicyId: String(authorizationPolicies.fulfillmentPolicyId ?? policies.fulfillmentPolicyId ?? ""),
-          paymentPolicyId: String(authorizationPolicies.paymentPolicyId ?? policies.paymentPolicyId ?? ""),
-          returnPolicyId: String(authorizationPolicies.returnPolicyId ?? policies.returnPolicyId ?? ""),
-          length: null,
-          width: null,
-          height: null,
-          dimensionUnit: "",
-          weight: null,
-          weightUnit: "",
-        }))
-        setDraftState((current) => ({
-          ...current,
-          approval: payload.approval && typeof payload.approval === "object"
-            ? {
-                id: String((payload.approval as Record<string, any>).id ?? ""),
-                status: String((payload.approval as Record<string, any>).status ?? ""),
-                expires_at: String((payload.approval as Record<string, any>).expires_at ?? ""),
-              }
-            : null,
-          execution: payload.approval ? current.execution : null,
-        }))
-        setUnpublishedAuthorizationError("")
-      } catch (prepareError) {
-        if (controller.signal.aborted) return
-        setUnpublishedAuthorizationError(prepareError instanceof Error
-          ? prepareError.message
-          : "EBAY_V3_UNPUBLISHED_AUTHORIZATION_PREPARE_FAILED")
-      } finally {
-        if (!controller.signal.aborted) setUnpublishedAuthorizationBusy(false)
-      }
-    })()
-    return () => controller.abort()
-  }, [
-    finalListingReview,
-    referenceGuidedAttemptId,
-    unpublishedAuthorization,
-  ])
 
   const titleRevisionRequest = useCallback(async (body: Record<string, unknown>) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
@@ -2654,7 +2528,14 @@ function ListingWorkspacePageContent() {
       }
       setDraftState((current) => ({
         ...current,
-        approval: authorizationPayload.approval,
+        approval: authorizationPayload.approval && typeof authorizationPayload.approval === "object"
+          ? {
+              id: String((authorizationPayload.approval as Record<string, any>).id ?? ""),
+              status: String((authorizationPayload.approval as Record<string, any>).status ?? ""),
+              payload_hash: String((authorizationPayload.approval as Record<string, any>).payload_hash ?? unpublishedAuthorization.payloadHash ?? ""),
+              expires_at: String((authorizationPayload.approval as Record<string, any>).expires_at ?? ""),
+            }
+          : null,
         execution: null,
       }))
       setUnpublishedAuthorizationMode("resume_existing_authorization")
@@ -2815,6 +2696,20 @@ function ListingWorkspacePageContent() {
       url === authorizationImageUrls[index])
   const unpublishedAuthorizationFlow =
     unpublishedAuthorizationMode ?? "new_authorization"
+  const approvalPayloadHash = String(draftState.approval?.payload_hash ?? "")
+  const authorizationPayloadHash = String(unpublishedAuthorization?.payloadHash ?? "")
+  const authorizationPayloadMatchesApproval = Boolean(
+    draftState.approval?.status === "approved"
+    && approvalPayloadHash
+    && authorizationPayloadHash
+    && approvalPayloadHash === authorizationPayloadHash,
+  )
+  const authorizationPayloadNeedsRefresh = Boolean(
+    draftState.approval?.status === "approved"
+    && approvalPayloadHash
+    && authorizationPayloadHash
+    && approvalPayloadHash !== authorizationPayloadHash,
+  )
   const unpublishedAuthorizationChangedFields = Array.isArray(
     unpublishedAuthorizationReconciliation?.changedFields,
   )
@@ -2824,6 +2719,147 @@ function ListingWorkspacePageContent() {
     unpublishedAuthorizationFlow === "resume_existing_authorization"
       ? "Reanudar Inventory Item + Offer UNPUBLISHED"
       : `Crear Offer no publicado en ${draftTarget}`
+
+  useEffect(() => {
+    const review = object(finalListingReview?.review)
+    if (
+      review.visualPhase !== "COMPLETED"
+      || review.finalVisualSetLocked !== true
+      || review.readyForUnpublishedOfferAuthorization !== true
+      || !referenceGuidedAttemptId
+      || (unpublishedAuthorization && !authorizationPayloadNeedsRefresh)
+      || unpublishedAuthorizationBusy
+    ) return
+    const controller = new AbortController()
+    setUnpublishedAuthorizationBusy(true)
+    void (async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession()
+        if (!sessionData.session) throw new Error("ADMIN_SESSION_REQUIRED")
+        const response = await fetch(
+          "/api/admin/ebay/unpublished-offer-authorization",
+          {
+            method: "POST",
+            cache: "no-store",
+            signal: controller.signal,
+            headers: {
+              Authorization: `Bearer ${sessionData.session.access_token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              action: "prepare",
+              attemptId: referenceGuidedAttemptId,
+              previewHash: String(review.previewHash ?? ""),
+            }),
+          },
+        )
+        const payload = await response.json() as Record<string, any>
+        if (!response.ok || payload.success !== true || !payload.authorization) {
+          throw new Error(String(payload.error
+            ?? "EBAY_V3_UNPUBLISHED_AUTHORIZATION_PREPARE_FAILED"))
+        }
+        const authorization = payload.authorization
+        setUnpublishedAuthorization(authorization)
+        setUnpublishedAuthorizationMode(
+          String(payload.authorizationMode ?? "new_authorization") as
+            "new_authorization" | "resume_existing_authorization",
+        )
+        setUnpublishedAuthorizationReconciliation(
+          payload.reconciliation && typeof payload.reconciliation === "object"
+            ? payload.reconciliation as Record<string, any>
+            : null,
+        )
+        const exactPayload = object(authorization.exactPayload)
+        const packageBaseline = fromPackage(object(object(exactPayload.listingPackage).packageData))
+        const stableImages = Array.isArray(authorization.images)
+          ? authorization.images.map((asset: Record<string, unknown>) =>
+              String(asset.url ?? "")).filter(Boolean)
+          : []
+        const authorizationItemSpecifics = object(authorization.itemSpecifics)
+        const authorizationPrice = object(authorization.price)
+        const authorizationPolicies = object(authorization.policies)
+        setForm({
+          title: String(authorization.title ?? ""),
+          categoryId: String(authorization.categoryId ?? ""),
+          categoryName: String(authorization.categoryName ?? packageBaseline.categoryName ?? ""),
+          description: String(authorization.description ?? ""),
+          imageUrls: stableImages,
+          aspects: Object.fromEntries(
+            Object.entries(authorizationItemSpecifics).map(([key, item]) => [
+              key,
+              String(Array.isArray(item) ? item[0] ?? "" : item ?? ""),
+            ]),
+          ),
+          pricing: {
+            ...packageBaseline.pricing,
+            currency: String(authorizationPrice.currency ?? "USD"),
+            targetPrice: numberOrNull(authorizationPrice.value),
+          },
+          shipping: packageBaseline.shipping,
+        })
+        const offer = object(exactPayload.offerPayload)
+        const inventory = object(exactPayload.inventoryItemPayload)
+        const policies = object(offer.listingPolicies)
+        setDraftConfiguration((current) => ({
+          ...current,
+          sku: String(authorization.sku ?? ""),
+          quantity: Math.max(1, Math.trunc(
+            numberOrNull(authorization.listingQuantity) ?? 1,
+          )),
+          condition: String(inventory.condition ?? "NEW"),
+          merchantLocationKey: String(authorization.merchantLocationKey ?? offer.merchantLocationKey ?? ""),
+          fulfillmentPolicyId: String(authorizationPolicies.fulfillmentPolicyId ?? policies.fulfillmentPolicyId ?? ""),
+          paymentPolicyId: String(authorizationPolicies.paymentPolicyId ?? policies.paymentPolicyId ?? ""),
+          returnPolicyId: String(authorizationPolicies.returnPolicyId ?? policies.returnPolicyId ?? ""),
+          length: null,
+          width: null,
+          height: null,
+          dimensionUnit: "",
+          weight: null,
+          weightUnit: "",
+        }))
+        setDraftState((current) => ({
+          ...current,
+          approval: payload.approval && typeof payload.approval === "object"
+            ? {
+                id: String((payload.approval as Record<string, any>).id ?? ""),
+                status: String((payload.approval as Record<string, any>).status ?? ""),
+                payload_hash: String((payload.approval as Record<string, any>).payload_hash ?? ""),
+                expires_at: String((payload.approval as Record<string, any>).expires_at ?? ""),
+              }
+            : null,
+          execution: payload.approval ? current.execution : null,
+        }))
+        setUnpublishedAuthorizationError("")
+      } catch (prepareError) {
+        if (controller.signal.aborted) return
+        setUnpublishedAuthorizationError(prepareError instanceof Error
+          ? prepareError.message
+          : "EBAY_V3_UNPUBLISHED_AUTHORIZATION_PREPARE_FAILED")
+      } finally {
+        if (!controller.signal.aborted) setUnpublishedAuthorizationBusy(false)
+      }
+    })()
+    return () => controller.abort()
+  }, [
+    finalListingReview,
+    referenceGuidedAttemptId,
+    unpublishedAuthorization,
+    unpublishedAuthorizationBusy,
+    authorizationPayloadNeedsRefresh,
+  ])
+
+  useEffect(() => {
+    if (!authorizationPayloadMatchesApproval) return
+    publicationLunaRecheckRequired.current = false
+    setPublicationLunaRecheck(null)
+    setPublicationLunaPrice("")
+    setPublicationLunaQuantity("")
+    setPublicationLunaAvailable(false)
+    setPublicationLunaLinkOpened(false)
+    setPublicationLunaReconfirmed(false)
+  }, [authorizationPayloadMatchesApproval])
+
   const visualReviewPanel = referenceGuidedAttemptId && !finalListingReviewChecked
     ? <section className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/60">Comprobando si el conjunto V3 ya está cerrado antes de mostrar controles…</section>
     : finalReviewCompleted
@@ -2929,7 +2965,7 @@ function ListingWorkspacePageContent() {
     : (v3ReviewAccessible || v3ReadyForPrepare)
     ? <section id="v3-human-review" className="space-y-4 rounded-3xl border border-violet-200/30 bg-violet-200/[0.07] p-4">
       <div><p className="text-xs font-black uppercase tracking-widest text-violet-100/70">Revisión visual V3 · independiente de Luna</p><h2 className="mt-1 text-xl font-black">Portada principal y secundarias</h2><p className="mt-2 text-sm leading-6 text-white/65">Puedes abrir previews privados y registrar QA visual aunque costo o stock estén vencidos. La frescura comercial seguirá bloqueando el Offer y la publicación final.</p></div>
-      {publicationLunaRecheck && <p className="rounded-xl border border-amber-200/25 bg-amber-200/[0.07] p-3 text-xs text-amber-50"><strong>Publicación bloqueada por Luna;</strong> revisión visual disponible. Esta pantalla no actualiza costo, cantidad ni disponibilidad.</p>}
+      {publicationLunaRecheck && !authorizationPayloadMatchesApproval && <p className="rounded-xl border border-amber-200/25 bg-amber-200/[0.07] p-3 text-xs text-amber-50"><strong>Publicación bloqueada por Luna;</strong> revisión visual disponible. Esta pantalla no actualiza costo, cantidad ni disponibilidad.</p>}
       {!referenceGuidedAttemptId && <button type="button" disabled={imageRevisionBusy} onClick={() => void prepareVisualStrategyV3()} className="min-h-12 w-full rounded-xl bg-violet-200 px-4 text-sm font-black text-black disabled:opacity-40">Preparar seis trabajos Visual Strategy V3</button>}
       {referenceGuidedAttemptId && !referenceGuidedAttempt && <p className="rounded-xl border border-white/10 p-3 text-xs text-white/60">Cargando previews privados del intento V3…</p>}
       {Boolean(finalAssetSelection.id) && <p className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-sm text-emerald-50"><strong>Selección humana final registrada.</strong><span className="mt-1 block">Portada determinista aprobada · Secundaria 1 seleccionada desde SIDE · variante MAIN y canary preservados como rechazados.</span></p>}
@@ -2966,7 +3002,7 @@ function ListingWorkspacePageContent() {
         {visualReviewPanel}
         {maintenanceMode && <section className="rounded-3xl border border-emerald-200/30 bg-emerald-200/[0.07] p-4"><p className="text-xs font-black uppercase tracking-widest text-emerald-100/70">Mantenimiento ACTIVE</p><h2 className="mt-1 text-xl font-black">Item {String(maintenance?.ebayItemId ?? "")}</h2><p className="mt-2 text-sm leading-6 text-white/65">Cuenta, SKU y estado ACTIVE ya fueron verificados. Aquí sólo se revisan título e imágenes; no se repiten policies ni guardas de creación.</p><div className="mt-4 rounded-2xl border border-white/15 bg-black/20 p-3"><p className="text-xs text-white/50">Título actual observado</p><p className="mt-1 text-sm font-bold">{String(maintenance?.title ?? "Pendiente de lectura")}</p><button type="button" disabled={!listingPackage || activeTitleBusy} onClick={() => void previewActiveTitleRevision()} className="mt-3 min-h-11 w-full rounded-xl border border-emerald-200/30 px-3 text-sm font-black disabled:opacity-40">{activeTitleBusy ? "Procesando…" : activeTitleRevision ? "Revalidar título propuesto" : "Preparar título verificado"}</button>{activeTitleRevision && <div className="mt-3 space-y-3"><div className="rounded-xl bg-emerald-200/10 p-3"><p className="text-xs text-emerald-100/60">Título calculado por el servidor</p><p className="mt-1 font-black">{String(activeTitleRevision.targetTitle ?? "")}</p></div><label className="block"><span className="text-xs font-black">Escribe exactamente: <code>{activeTitleExactPhrase}</code></span><input value={activeTitleConfirmation} onChange={(event) => setActiveTitleConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><button type="button" onClick={() => setActiveTitleConfirmation(activeTitleExactPhrase)} className="min-h-11 w-full rounded-xl border border-emerald-200/30 px-3 text-sm font-black">Usar frase exacta</button><button type="button" disabled={activeTitleBusy || !activeTitleConfirmationReady || activeTitlePhase === "applied_verified"} onClick={() => void applyActiveTitleRevision()} className="min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">{activeTitlePhase === "applied_verified" ? "Título aplicado y verificado" : /outcome_unknown|write_in_flight/i.test(activeTitlePhase) ? "Reconciliar sin repetir write" : "Aplicar sólo Title"}</button><p className="text-xs leading-5 text-white/50">Máximo una llamada ReviseFixedPriceItem. El XML contiene únicamente ItemID + Title; no modifica imágenes, precio, cantidad ni policies.</p></div>}</div></section>}
 
-        {publicationLunaRecheck && <section aria-labelledby="publication-luna-recheck-heading" className="space-y-4 rounded-3xl border border-amber-200/35 bg-amber-200/[0.08] p-4">
+        {publicationLunaRecheck && !authorizationPayloadMatchesApproval && <section aria-labelledby="publication-luna-recheck-heading" className="space-y-4 rounded-3xl border border-amber-200/35 bg-amber-200/[0.08] p-4">
           <div><p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Puerta comercial pendiente</p><h2 id="publication-luna-recheck-heading" className="mt-1 text-xl font-black">Reconfirmar Luna antes del Offer o publicación</h2><p className="mt-2 text-sm leading-6 text-amber-50/80">La revisión visual permanece disponible arriba. El costo o stock vencidos bloquean únicamente la creación/autorización del Offer y la publicación final. Reconfirmar no regenera imágenes ni escribe en eBay.</p></div>
           <div className="rounded-2xl bg-black/25 p-3"><p className="font-black">{publicationLunaRecheck.productTitle}</p><p className="mt-1 text-xs text-white/55">SKU {publicationLunaRecheck.supplierSku || "N/D"} · último costo vencido {money(publicationLunaRecheck.confirmedPrice)}{publicationLunaRecheck.quantityVisible ? ` · última cantidad ${publicationLunaRecheck.confirmedQuantity ?? "N/D"}` : " · cantidad no visible"}</p></div>
           {publicationLunaRecheck.supplierProductUrl
