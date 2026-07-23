@@ -132,8 +132,9 @@ test("route and bundle surface regress downward", () => {
   // service-role/admin-only publication OAuth handoff routes -> one isolated
   // reference-guided canary route -> four service-role-only successor position
   // executors (3–6) -> one admin-only, non-consuming extraordinary replacement
-  // authorization route. The old product/community domain remains at zero.
-  assert.ok(countNamed("app/api", "route.ts") <= 76, "API route count regressed")
+  // authorization route -> one Preview-only extraordinary position-4 ordinal-7
+  // executor. The old product/community domain remains at zero.
+  assert.ok(countNamed("app/api", "route.ts") <= 77, "API route count regressed")
   assert.equal(countNamed("app/api/community", "route.ts"), 0)
   assert.equal(countNamed("app/api/store", "route.ts"), 0)
 })
