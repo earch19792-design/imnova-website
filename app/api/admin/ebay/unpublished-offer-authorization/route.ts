@@ -363,6 +363,38 @@ async function prepare(actor: string) {
   const { review, snapshot, listingPackage, opportunity, supabase } = context
   const resolvedActor = text(review.created_by)
   if (!resolvedActor) throw new Error("EBAY_V3_PREVIEW_ACTOR_INVALID")
+  const currentPreview = await latest(resolvedActor, EXPECTED_ATTEMPT)
+  const { data: activeApproval, error: activeApprovalError } = await supabase
+    .from("ebay_draft_only_approvals")
+    .select("id,status,expires_at,approved_at,consumed_at,revoked_at,payload_hash,approved_payload,approval_idempotency_key")
+    .eq("listing_package_id", review.listing_package_id)
+    .eq("status", "approved")
+    .maybeSingle()
+  if (activeApprovalError) {
+    throw new Error("EBAY_V3_APPROVAL_STATE_READ_FAILED")
+  }
+  if (
+    currentPreview
+    && activeApproval
+    && text(currentPreview.preview_hash) === text(review.preview_hash)
+    && text(activeApproval.payload_hash) === text(currentPreview.payload_hash)
+  ) {
+    return {
+      authorization: currentPreview,
+      authorizationMode: "resume_existing_authorization" as const,
+      approval: {
+        id: activeApproval.id,
+        status: activeApproval.status,
+        expires_at: activeApproval.expires_at,
+        approved_at: activeApproval.approved_at,
+        consumed_at: activeApproval.consumed_at,
+        revoked_at: activeApproval.revoked_at,
+        payload_hash: activeApproval.payload_hash,
+        approval_idempotency_key: activeApproval.approval_idempotency_key,
+      },
+      reconciliation: null,
+    }
+  }
   const transport = await ensurePublicationTransport(context)
   const assets = validateV3PublicationAssets(transport.assets)
   const persistedPackageData = record(listingPackage.package_data)
@@ -610,16 +642,6 @@ async function prepare(actor: string) {
       throw new Error("EBAY_V3_PRIOR_AUTHORIZATION_INVALIDATION_FAILED")
     }
   }
-  const { data: activeApproval, error: activeApprovalError } = await supabase
-    .from("ebay_draft_only_approvals")
-    .select("id,status,expires_at,approved_at,consumed_at,revoked_at,payload_hash,approved_payload,approval_idempotency_key")
-    .eq("listing_package_id", review.listing_package_id)
-    .eq("status", "approved")
-    .maybeSingle()
-  if (activeApprovalError) {
-    throw new Error("EBAY_V3_APPROVAL_STATE_READ_FAILED")
-  }
-
   let authorizationMode: "new_authorization" | "resume_existing_authorization" =
     "new_authorization"
   let reconciliation: JsonRecord | null = null

@@ -12,6 +12,8 @@ import {
 } from "@/lib/ebay/ebay-mobile-review-http"
 import { v3VisualReviewAccessible } from
   "@/lib/ebay/reference-guided-visual-review-access"
+import { v3FinalListingReviewCanonicalReady } from
+  "@/lib/ebay/reference-guided-visual-review-access"
 
 type Opportunity = {
   id: string
@@ -1540,13 +1542,19 @@ function ListingWorkspacePageContent() {
       ...(taxonomyReady ? ["NEED_EBAY_TAXONOMY_CATEGORY", "NEED_REQUIRED_EBAY_ITEM_ASPECTS"] : []),
     ])
   }, [approvedImageAssets, draftConfiguration, form.aspects, form.categoryId, form.imageUrls, requiredTaxonomyAspects])
+  const finalReviewCompleted = v3FinalListingReviewCanonicalReady({
+    visualPhase: object(finalListingReview?.review).visualPhase,
+    finalVisualSetLocked: object(finalListingReview?.review).finalVisualSetLocked,
+    generationControlsHidden: object(finalListingReview?.review).generationControlsHidden,
+    readyForUnpublishedOfferAuthorization:
+      object(finalListingReview?.review).readyForUnpublishedOfferAuthorization,
+    signedImageCount: finalListingReview?.signedImages.length,
+    primaryMainFirst: finalListingReview?.signedImages[0]?.assetRole === "PRIMARY_MAIN",
+  })
   const blockers = useMemo(() => {
     const finalReview = object(finalListingReview?.review)
-    if (finalReview.visualPhase === "COMPLETED"
-      && finalReview.finalVisualSetLocked === true) {
-      return Array.isArray(finalReview.blockers)
-        ? finalReview.blockers.map(String)
-        : []
+    if (finalReviewCompleted) {
+      return []
     }
     return [
       ...(!form.title ? ["Falta título"] : []),
@@ -1558,7 +1566,7 @@ function ListingWorkspacePageContent() {
         .filter((gate) => !resolvedWorkspaceGates.has(gate)),
       ...(opportunity?.evidence_guards ?? []),
     ]
-  }, [finalListingReview, form, opportunity, resolvedWorkspaceGates])
+  }, [finalListingReview, finalReviewCompleted, form, opportunity, resolvedWorkspaceGates])
   const draftTarget = draftState.runtime?.target ?? "PENDIENTE"
   const productionTarget = draftTarget === "PRODUCTION"
   const expectedApprovalPhrase = draftState.approvalRequirements?.exactPhrase
@@ -2659,10 +2667,6 @@ function ListingWorkspacePageContent() {
       passed,
       source: "FINAL_LISTING_REVIEW persistente",
     }))
-  const finalReviewCompleted = finalReview.visualPhase === "COMPLETED"
-    && finalReview.finalVisualSetLocked === true
-    && finalReview.generationControlsHidden === true
-    && finalListingReview?.signedImages.length === 7
   const authorizationAspects = object(
     unpublishedAuthorization?.itemSpecifics,
   )
@@ -2721,19 +2725,18 @@ function ListingWorkspacePageContent() {
       : `Crear Offer no publicado en ${draftTarget}`
 
   useEffect(() => {
-    const review = object(finalListingReview?.review)
     if (
-      review.visualPhase !== "COMPLETED"
-      || review.finalVisualSetLocked !== true
-      || review.readyForUnpublishedOfferAuthorization !== true
+      !finalReviewCompleted
       || !referenceGuidedAttemptId
       || (unpublishedAuthorization && !authorizationPayloadNeedsRefresh)
       || unpublishedAuthorizationBusy
     ) return
     const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 15_000)
     setUnpublishedAuthorizationBusy(true)
     void (async () => {
       try {
+        const review = object(finalListingReview?.review)
         const { data: sessionData } = await supabase.auth.getSession()
         if (!sessionData.session) throw new Error("ADMIN_SESSION_REQUIRED")
         const response = await fetch(
@@ -2832,17 +2835,22 @@ function ListingWorkspacePageContent() {
         }))
         setUnpublishedAuthorizationError("")
       } catch (prepareError) {
-        if (controller.signal.aborted) return
+        if (controller.signal.aborted) {
+          setUnpublishedAuthorizationError("EBAY_V3_UNPUBLISHED_AUTHORIZATION_PREPARE_TIMEOUT")
+          return
+        }
         setUnpublishedAuthorizationError(prepareError instanceof Error
           ? prepareError.message
           : "EBAY_V3_UNPUBLISHED_AUTHORIZATION_PREPARE_FAILED")
       } finally {
+        window.clearTimeout(timeout)
         if (!controller.signal.aborted) setUnpublishedAuthorizationBusy(false)
       }
     })()
     return () => controller.abort()
   }, [
     finalListingReview,
+    finalReviewCompleted,
     referenceGuidedAttemptId,
     unpublishedAuthorization,
     unpublishedAuthorizationBusy,

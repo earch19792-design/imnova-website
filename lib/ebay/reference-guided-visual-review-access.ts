@@ -21,3 +21,19 @@ export function v3PublicationAllowed(input: {
     && !input.staleCostOrStock
     && input.commercialAuthorizationComplete
 }
+
+export function v3FinalListingReviewCanonicalReady(input: {
+  visualPhase: unknown
+  finalVisualSetLocked: unknown
+  generationControlsHidden: unknown
+  readyForUnpublishedOfferAuthorization: unknown
+  signedImageCount: unknown
+  primaryMainFirst: unknown
+}) {
+  return input.visualPhase === "COMPLETED"
+    && input.finalVisualSetLocked === true
+    && input.generationControlsHidden === true
+    && input.readyForUnpublishedOfferAuthorization === true
+    && input.signedImageCount === 7
+    && input.primaryMainFirst === true
+}
