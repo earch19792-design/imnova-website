@@ -319,6 +319,7 @@ async function loadPackageContext(
   target: EbayDraftOnlyTarget,
   accountFingerprint: string,
   excludeApprovalId?: string,
+  allowFinalV3ReadOnlyFallback = false,
 ) {
   const sellerAccountKey = getEbaySellerAccountScopeConfiguration().accountKey
   if (!sellerAccountKey) throw new Error("EBAY_DRAFT_ONLY_PACKAGE_ACCOUNT_SCOPE_REQUIRED")
@@ -339,13 +340,29 @@ async function loadPackageContext(
     .eq("id", listingPackage.opportunity_id)
     .maybeSingle()
   if (opportunityError || !opportunity) throw new Error("EBAY_DRAFT_ONLY_OPPORTUNITY_NOT_FOUND")
-  const sameDayContext = await loadSameDayAuthorizedPublicationContext({
-    supabase,
-    accountKey: sellerAccountKey,
-    actorUserId,
-    listingPackage: listingPackage as JsonRecord,
-    opportunity: opportunity as JsonRecord,
-  })
+  let sameDayContext: Awaited<ReturnType<
+    typeof loadSameDayAuthorizedPublicationContext
+  >> = null
+  try {
+    sameDayContext = await loadSameDayAuthorizedPublicationContext({
+      supabase,
+      accountKey: sellerAccountKey,
+      actorUserId,
+      listingPackage: listingPackage as JsonRecord,
+      opportunity: opportunity as JsonRecord,
+    })
+  } catch (contextError) {
+    if (
+      !allowFinalV3ReadOnlyFallback
+      || errorCode(contextError) !== "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY"
+    ) throw contextError
+    const finalReviewGate = await loadFinalListingReviewPublicationGate({
+      supabase,
+      listingPackageId: packageId,
+      actorId: actorUserId,
+    })
+    if (!finalReviewGate.allowed) throw contextError
+  }
   const effectiveOpportunity = sameDayContext?.opportunity ?? (opportunity as JsonRecord)
   const collisionSku = expectedEbayDraftOnlySku(listingPackage as JsonRecord)
   const candidateKey = text(listingPackage.candidate_key)
@@ -624,6 +641,7 @@ export async function GET(req: Request) {
       target,
       fingerprint,
       latestApproval?.id,
+      true,
     )
     const packageConfig = record(initialContext.listingPackage.package_data).draftConfiguration
     const draftConfiguration = latestApproval
@@ -639,6 +657,7 @@ export async function GET(req: Request) {
         target,
         fingerprint,
         latestApproval?.id,
+        true,
       )
       : initialContext
     const readiness = evaluateEbayDraftOnlyReadiness({
