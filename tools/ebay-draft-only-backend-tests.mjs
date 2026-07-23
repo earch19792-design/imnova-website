@@ -708,6 +708,132 @@ test("gateway uses Sandbox GETs to verify policies, enabled location and SKU bef
   }
 })
 
+test("SKU preflight accepts explicit eBay absence, retries transient reads and rejects ambiguous pages", async () => {
+  const module = await importTypeScript(gatewaySource)
+  const original = { ...process.env }
+  const runCase = async (name, offerResponses) => {
+    Object.assign(process.env, {
+      EBAY_DRAFT_ONLY_WRITES_ENABLED: "true",
+      EBAY_DRAFT_ONLY_TARGET: "SANDBOX",
+      EBAY_DRAFT_ONLY_SANDBOX_CLIENT_ID: `client-${name}`,
+      EBAY_DRAFT_ONLY_SANDBOX_CLIENT_SECRET: `secret-${name}`,
+      EBAY_DRAFT_ONLY_SANDBOX_REFRESH_TOKEN: `refresh-${name}`,
+      EBAY_DRAFT_ONLY_SANDBOX_EXPECTED_USER_ID: "sandbox-user-1",
+      EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_SNAPSHOT_SECRET: SNAPSHOT_SECRET,
+    })
+    let offerIndex = 0
+    const calls = []
+    const result = await module.preflightEbayDraftSkuCollision(
+      `IMNOVA-${name.toUpperCase()}`,
+      async (url, init = {}) => {
+        const parsed = new URL(url)
+        calls.push({ url: parsed, method: init.method })
+        if (parsed.pathname.endsWith("/oauth2/token")) {
+          return new Response(JSON.stringify({
+            access_token: `access-${name}`,
+            expires_in: 7200,
+          }), { status: 200 })
+        }
+        if (parsed.pathname === "/commerce/identity/v1/user/") {
+          return new Response(JSON.stringify({
+            userId: "sandbox-user-1",
+            status: "CONFIRMED",
+          }), { status: 200 })
+        }
+        if (parsed.pathname.includes("/inventory_item/")) {
+          return new Response(JSON.stringify({ errors: [] }), { status: 404 })
+        }
+        if (parsed.pathname.endsWith("/offer")) {
+          const response = offerResponses[
+            Math.min(offerIndex, offerResponses.length - 1)
+          ]
+          offerIndex += 1
+          return new Response(JSON.stringify(response.body), {
+            status: response.status,
+          })
+        }
+        throw new Error("unexpected request")
+      },
+    )
+    return {
+      result,
+      offerCalls: calls.filter((call) =>
+        call.url.pathname.endsWith("/offer")).length,
+      sellMethods: calls
+        .filter((call) => call.url.pathname.startsWith("/sell/"))
+        .map((call) => call.method),
+    }
+  }
+  try {
+    const notFound = await runCase("not-found", [{
+      status: 404,
+      body: {
+        errors: [{
+          errorId: 25710,
+          domain: "API_INVENTORY",
+          category: "REQUEST",
+          message: "Resource not found.",
+        }],
+      },
+    }])
+    assert.equal(notFound.result.safe, true)
+    assert.equal(notFound.result.offerCount, 0)
+    assert.equal(notFound.result.offersHttpStatus, 404)
+    assert.equal(notFound.result.offerResponseShape, "NOT_FOUND")
+
+    const explicitEmpty = await runCase("empty-page", [{
+      status: 200,
+      body: { href: "/offer", limit: 100, size: 0, total: 0 },
+    }])
+    assert.equal(explicitEmpty.result.safe, true)
+    assert.equal(explicitEmpty.result.offerCount, 0)
+    assert.equal(
+      explicitEmpty.result.offerResponseShape,
+      "EXPLICIT_EMPTY_PAGE",
+    )
+
+    const retried = await runCase("transient", [
+      {
+        status: 503,
+        body: {
+          errors: [{
+            errorId: 2000,
+            domain: "API_INVENTORY",
+            category: "APPLICATION",
+            message: "Temporary service error.",
+          }],
+        },
+      },
+      {
+        status: 200,
+        body: { href: "/offer", limit: 100, size: 0, total: 0 },
+      },
+    ])
+    assert.equal(retried.result.safe, true)
+    assert.equal(retried.result.offersReadAttempts, 2)
+    assert.equal(retried.offerCalls, 2)
+
+    const ambiguous = await runCase("ambiguous", [{
+      status: 200,
+      body: { total: 0 },
+    }])
+    assert.equal(ambiguous.result.safe, false)
+    assert.equal(
+      ambiguous.result.blocker,
+      "EBAY_SKU_PREFLIGHT_UNAVAILABLE",
+    )
+    assert.equal(ambiguous.result.offerResponseShape, "UNAVAILABLE")
+    assert.ok([
+      ...notFound.sellMethods,
+      ...explicitEmpty.sellMethods,
+      ...retried.sellMethods,
+      ...ambiguous.sellMethods,
+    ].every((method) => method === "GET"))
+  } finally {
+    process.env = original
+  }
+})
+
 test("dependency preflight fails closed for a missing policy or disabled merchant location", async () => {
   const module = await importTypeScript(gatewaySource)
   const original = { ...process.env }
@@ -1003,6 +1129,11 @@ test("route requires a human Admin, exact approval, fresh revalidation and unkno
       < executeSource.lastIndexOf('if (approval.status !== "approved"'),
   )
   assert.doesNotMatch(routeSource, /publishOffer\s*\(/)
+  assert.match(workspaceSource, /shouldRenewExpiredSkuPreflight/)
+  assert.match(
+    workspaceSource,
+    /execution\.last_error_code === "EBAY_SKU_PREFLIGHT_UNAVAILABLE"/,
+  )
 })
 
 test("migration enforces one-time TTL approvals, idempotency, SKU uniqueness and no publish operation", () => {

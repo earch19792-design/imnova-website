@@ -1481,6 +1481,11 @@ async function executeDraft(body: JsonRecord, actor: string) {
           sanitized_result: {
             collision: preflight.collision,
             inventoryOwnershipVerified: false,
+            inventoryHttpStatus: preflight.inventoryHttpStatus,
+            offersHttpStatus: preflight.offersHttpStatus,
+            inventoryReadAttempts: preflight.inventoryReadAttempts,
+            offersReadAttempts: preflight.offersReadAttempts,
+            offerResponseShape: preflight.offerResponseShape,
           },
           lease_token: null,
           lease_expires_at: null,

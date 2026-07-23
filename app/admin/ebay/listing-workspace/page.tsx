@@ -432,6 +432,7 @@ function humanWorkspaceBlocker(code: string, minimumProfitablePrice?: number | n
 }
 
 function humanUnpublishedPreflightError(code: string) {
+  const normalizedCode = code.split(" · ")[0]?.trim() ?? code
   const labels: Record<string, string> = {
     AUTHORIZATION_PREVIEW_NOT_PREPARED:
       "Todavía no existe un snapshot server-side vigente para esta autorización.",
@@ -453,9 +454,28 @@ function humanUnpublishedPreflightError(code: string) {
       "La ejecución draft-only no está habilitada y enlazada de forma consistente en este Preview.",
     EBAY_V3_UNPUBLISHED_PREFLIGHT_TIMEOUT:
       "La verificación server-side agotó el tiempo de espera. Finalizó sin escribir en eBay.",
+    EBAY_SKU_PREFLIGHT_UNAVAILABLE:
+      "eBay no confirmó todavía si el SKU está libre. Seller OS se detuvo antes de crear Inventory Item u Offer; el botón único volverá a consultar sin duplicar operaciones.",
+    EBAY_DRAFT_ONLY_REAPPROVAL_STATE_UNAVAILABLE:
+      "eBay no confirmó el estado del SKU asociado a la aprobación anterior. Seller OS se detuvo antes de reanudar cualquier escritura.",
   }
-  return labels[code]
-    ?? `La verificación server-side terminó con el código ${code}.`
+  return labels[normalizedCode]
+    ?? `La verificación server-side terminó con el código ${normalizedCode}.`
+}
+
+function shouldRenewExpiredSkuPreflight(
+  approval: DraftState["approval"],
+  execution: DraftState["execution"],
+  now = Date.now(),
+) {
+  const expiresAt = Date.parse(String(approval?.expires_at ?? ""))
+  const approvalFresh = approval?.status === "approved"
+    && Number.isFinite(expiresAt)
+    && expiresAt > now
+  return !approvalFresh
+    && execution?.phase === "claimed"
+    && execution.last_error_code === "EBAY_SKU_PREFLIGHT_UNAVAILABLE"
+    && !execution.offer_id
 }
 
 const LEGACY_V3_IMAGE_MESSAGES = new Set([
@@ -3112,8 +3132,16 @@ function ListingWorkspacePageContent() {
     setDraftBusy(true)
     setError("")
     setMessage("")
-    let nextApproval = draftState.approval
-    let nextExecution = draftState.execution
+    const renewExpiredSkuPreflight = shouldRenewExpiredSkuPreflight(
+      draftState.approval,
+      draftState.execution,
+    )
+    let nextApproval = renewExpiredSkuPreflight
+      ? null
+      : draftState.approval
+    let nextExecution = renewExpiredSkuPreflight
+      ? null
+      : draftState.execution
     let nextPublication = draftState.publication
     const prepareVisualTimers: number[] = []
     setPublicationAutomationFailed(false)

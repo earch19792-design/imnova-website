@@ -16,6 +16,8 @@ const DRAFT_ONLY_SCOPE = [
 ].join(" ")
 const REQUEST_TIMEOUT_MS = 12_000
 const TRANSIENT_STATUSES = new Set([429, 500, 502, 503, 504])
+const PREFLIGHT_READ_ATTEMPTS = 2
+const PREFLIGHT_READ_RETRY_DELAY_MS = 150
 
 export type EbayDraftOnlyTarget = "SANDBOX" | "PRODUCTION"
 
@@ -65,6 +67,7 @@ type ReadResult = {
   ok: boolean
   status: number
   body: JsonRecord
+  attempts?: number
 }
 
 type CachedAuthentication = {
@@ -466,6 +469,35 @@ async function preflightRead(
   }
 }
 
+function retryablePreflightRead(result: ReadResult) {
+  return result.status === 0 || TRANSIENT_STATUSES.has(result.status)
+}
+
+async function preflightReadWithRetry(
+  config: GatewayConfig,
+  token: string,
+  url: URL,
+  fetchImpl: typeof fetch,
+) {
+  let lastResult: ReadResult = {
+    ok: false,
+    status: 0,
+    body: {},
+    attempts: 0,
+  }
+  for (let attempt = 1; attempt <= PREFLIGHT_READ_ATTEMPTS; attempt += 1) {
+    const result = await preflightRead(config, token, url, fetchImpl)
+    lastResult = { ...result, attempts: attempt }
+    if (
+      !retryablePreflightRead(result)
+      || attempt === PREFLIGHT_READ_ATTEMPTS
+    ) return lastResult
+    await new Promise((resolve) =>
+      setTimeout(resolve, PREFLIGHT_READ_RETRY_DELAY_MS))
+  }
+  return lastResult
+}
+
 function blankDependencyChecks(): DependencyChecks {
   return {
     fulfillmentPolicy: { valid: false, httpStatus: 0 },
@@ -576,11 +608,53 @@ async function preflightSkuCollisionWithToken(
   offerUrl.searchParams.set("sku", sku)
   offerUrl.searchParams.set("limit", "100")
   const [inventory, offers] = await Promise.all([
-    preflightRead(config, token, inventoryUrl, fetchImpl),
-    preflightRead(config, token, offerUrl, fetchImpl),
+    preflightReadWithRetry(config, token, inventoryUrl, fetchImpl),
+    preflightReadWithRetry(config, token, offerUrl, fetchImpl),
   ])
   const inventoryAbsent = inventory.status === 404
-  const offersKnown = offers.ok && Array.isArray(offers.body.offers)
+  const offerArray = Array.isArray(offers.body.offers)
+    ? offers.body.offers
+    : null
+  const total = typeof offers.body.total === "number"
+    && Number.isInteger(offers.body.total)
+    && offers.body.total >= 0
+    ? offers.body.total
+    : null
+  const size = typeof offers.body.size === "number"
+    && Number.isInteger(offers.body.size)
+    && offers.body.size >= 0
+    ? offers.body.size
+    : null
+  // For a new SKU, eBay can report absence as 404 or as a zero-result
+  // pagination envelope with no collection. Every other shape stays blocked.
+  const arrayConsistent = offerArray !== null
+    && (total === null || total === offerArray.length)
+    && (size === null || size === offerArray.length)
+  const explicitEmptyPage = offers.ok
+    && offerArray === null
+    && total === 0
+    && size === 0
+  const absentByStatus = offers.status === 404
+  const offersKnown = (offers.ok && arrayConsistent)
+    || explicitEmptyPage
+    || absentByStatus
+  const offerCount = arrayConsistent && offerArray
+    ? offerArray.length
+    : 0
+  const offerResponseShape = absentByStatus
+    ? "NOT_FOUND"
+    : arrayConsistent
+      ? "OFFERS_ARRAY"
+      : explicitEmptyPage
+        ? "EXPLICIT_EMPTY_PAGE"
+        : "UNAVAILABLE"
+  const diagnostics = {
+    inventoryHttpStatus: inventory.status,
+    offersHttpStatus: offers.status,
+    inventoryReadAttempts: inventory.attempts ?? 1,
+    offersReadAttempts: offers.attempts ?? 1,
+    offerResponseShape,
+  }
   if ((!inventory.ok && !inventoryAbsent) || !offersKnown) {
     return {
       safe: false,
@@ -589,9 +663,9 @@ async function preflightSkuCollisionWithToken(
       inventoryAbsent,
       offerCount: 0,
       blocker: "EBAY_SKU_PREFLIGHT_UNAVAILABLE",
+      ...diagnostics,
     }
   }
-  const offerCount = (offers.body.offers as unknown[]).length
   return {
     safe: inventoryAbsent && offerCount === 0,
     collision: inventory.ok || offerCount > 0,
@@ -599,6 +673,7 @@ async function preflightSkuCollisionWithToken(
     inventoryAbsent,
     offerCount,
     blocker: inventory.ok || offerCount > 0 ? "EBAY_SKU_ALREADY_EXISTS" : null,
+    ...diagnostics,
   }
 }
 
