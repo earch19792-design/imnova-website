@@ -85,15 +85,18 @@ test("authenticated GET signs exact private objects and remains read-only", () =
   assert.match(route, /offerCreated: false/)
 })
 
-test("workspace shows COMPLETED, seven previews and no generation controls in final state", () => {
+test("workspace shows COMPLETED, seven previews and one publication control in final state", () => {
   assert.match(workspace, /Visual Strategy V3 · COMPLETED/)
   assert.match(workspace, /Conjunto final bloqueado · 7\/7 PASSED/)
   assert.match(workspace, /v3FinalListingReviewCanonicalReady/)
   assert.match(visualAccess, /input\.generationControlsHidden === true/)
   assert.match(visualAccess, /images\.length === V3_FINAL_ASSET_ROLES\.length/)
-  assert.match(workspace, /Estado previo a la autorización: Inventory Item: NO CREADO · Offer: NO CREADO/)
-  assert.match(workspace, /Paso UNPUBLISHED completado/)
-  assert.match(workspace, /Ejecución UNPUBLISHED registrada/)
+  assert.match(workspace, /Inventory Item y Offer todavía no existen/)
+  assert.match(workspace, /Inventory Item \+ Offer UNPUBLISHED creados y verificados/)
+  assert.match(workspace, /Ejecución registrada · fase/)
+  assert.match(workspace, /data-v3-one-click-publication/)
+  assert.match(workspace, /Publicar en eBay/)
+  assert.match(workspace, /!finalReviewCompleted && <div className="fixed/)
   assert.match(workspace, /FINAL_LISTING_REVIEW persistente/)
 })
 
