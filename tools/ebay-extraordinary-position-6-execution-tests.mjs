@@ -27,6 +27,8 @@ test("position 4 approval and assets 0 through 5 gate final call",()=>{
   assert.match(sql,/job2\.status='PASSED'/)
   assert.match(sql,/job3\.status='PASSED'/)
   assert.match(sql,/job5\.status='PASSED'/)
+  assert.match(executor,/ebay_reference_guided_asset_review_events/)
+  assert.match(executor,/p4Approval\.decision!=="APPROVED"/)
 })
 
 test("one-shot Preview transport has no retry",()=>{

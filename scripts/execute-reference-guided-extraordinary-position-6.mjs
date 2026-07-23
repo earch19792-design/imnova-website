@@ -56,9 +56,14 @@ async function loadState(){
       supabase.from("ebay_reference_guided_final_asset_selection_events")
         .select("primary_verdict,material_detail_verdict,primary_sha256,material_detail_sha256")
         .eq("attempt_id",ATTEMPT_ID).maybeSingle(),
-      supabase.from("ebay_reference_guided_position_4_extraordinary_human_verdict_events")
-        .select("human_verdict,output_sha256,extraordinary_ordinal,position_6_authorized")
-        .eq("attempt_id",ATTEMPT_ID).maybeSingle(),
+      // Use the long-lived visual-review ledger for runtime hydration. The
+      // ordinal-7 consume RPC independently validates the dedicated immutable
+      // extraordinary verdict table inside PostgreSQL.
+      supabase.from("ebay_reference_guided_asset_review_events")
+        .select("decision,preview_sha256,reason").eq("attempt_id",ATTEMPT_ID)
+        .eq("asset_ordinal",4).eq("decision","APPROVED")
+        .eq("preview_sha256","d2e22d365178742d4cb9baaac72f286fea2c7745fa607082b8a940f18bb7ed24")
+        .maybeSingle(),
     ])
   const results=[attempt,revision,plan,positions,jobs,authorizations,events,selection,p4Approval]
   if(results.some((result)=>result.error)||!attempt.data||!revision.data||!plan.data||
@@ -101,9 +106,9 @@ function assertPreflight(state){
     sha256(Buffer.from(binding.final_effective_prompt_text,"utf8"))!==PROMPT_HASH||
     state.selection.primary_verdict!=="APPROVED"||
     state.selection.material_detail_verdict!=="APPROVED"||
-    state.p4Approval.human_verdict!=="APPROVED"||
-    Number(state.p4Approval.extraordinary_ordinal)!==7||state.p4Approval.position_6_authorized||
-    !p4||p4.status!=="PASSED"||p4.output_sha256!==state.p4Approval.output_sha256||
+    state.p4Approval.decision!=="APPROVED"||
+    state.p4Approval.preview_sha256!=="d2e22d365178742d4cb9baaac72f286fea2c7745fa607082b8a940f18bb7ed24"||
+    !p4||p4.status!=="PASSED"||p4.output_sha256!==state.p4Approval.preview_sha256||
     !p6||p6.status!=="BLOCKED_FIDELITY"||
     p6.output_sha256!=="0fb3b3241860c3f045ad822eb576cb0a8a11fb5b0f02cb522825c3d82bdfda14"||
     state.jobs.filter((job)=>[2,3,5].includes(Number(job.position)))
