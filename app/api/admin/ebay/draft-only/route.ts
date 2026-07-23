@@ -1267,6 +1267,10 @@ async function executeDraft(body: JsonRecord, actor: string) {
     approvalId,
   )
   const v3Binding = record(record(approvedPayload.compliance).v3FinalSetAuthorization)
+  let revalidatedExecutionEvidence:
+    NonNullable<Parameters<typeof evaluateEbayDraftOnlyReadiness>[0][
+      "revalidatedExecutionEvidence"
+    ]> | undefined
   if (Object.keys(v3Binding).length) {
     const transportId = uuid(v3Binding.imageTransportId)
     const transportHash = text(v3Binding.imageTransportHash)
@@ -1284,6 +1288,9 @@ async function executeDraft(body: JsonRecord, actor: string) {
       .eq("preview_hash", finalPreviewHash)
       .eq("listing_package_id", approval.listing_package_id)
       .eq("status", "READY")
+      .eq("image_count", 7)
+      .eq("scope", "EBAY_US_UNPUBLISHED_OFFER_ONLY")
+      .eq("created_by", actor)
       .maybeSingle()
     if (transportError || !transport) {
       return jsonError(new Error("EBAY_V3_PUBLICATION_TRANSPORT_NOT_CURRENT"), 409)
@@ -1293,6 +1300,44 @@ async function executeDraft(body: JsonRecord, actor: string) {
       hashEbayDraftOnlyPayload(assets)
       !== hashEbayDraftOnlyPayload(v3Binding.selectedAssets)
     ) return jsonError(new Error("EBAY_V3_PUBLICATION_ASSET_BINDING_CHANGED"), 409)
+    const imageAuthorization = record(draftConfiguration.imageAuthorization)
+    const approvedImageUrls = Array.isArray(
+      imageAuthorization.approvedImageUrls,
+    )
+      ? imageAuthorization.approvedImageUrls.map((value) => text(value))
+      : []
+    const sameDayAuthorization = record(
+      context.sameDayPilotAuthorization,
+    )
+    const exactV3ExecutionEvidence =
+      v3Binding.version
+        === "EBAY_V3_FINAL_SET_UNPUBLISHED_AUTHORIZATION_V1"
+      && imageAuthorization.approved === true
+      && imageAuthorization.protectedManifestVerified === true
+      && Number(imageAuthorization.protectedManifestAssetCount) === 7
+      && text(imageAuthorization.approvedBy) === actor
+      && Number.isFinite(Date.parse(text(imageAuthorization.approvedAt)))
+      && approvedImageUrls.length === 7
+      && approvedImageUrls.every((url, index) =>
+        url === assets[index]?.url)
+      && sameDayAuthorization.validated === true
+      && text(sameDayAuthorization.listingPackageId)
+        === text(approval.listing_package_id)
+      && sameDayAuthorization.finalHumanAuthorizationRequired === true
+      && sameDayAuthorization.unattendedPublicationAllowed === false
+      && Number.isFinite(Date.parse(
+        text(sameDayAuthorization.sourceObservedAt),
+      ))
+    if (!exactV3ExecutionEvidence) {
+      return jsonError(
+        new Error("EBAY_V3_EXECUTION_EVIDENCE_INVALID"),
+        409,
+      )
+    }
+    revalidatedExecutionEvidence = {
+      freshSameDaySourceVerified: true,
+      finalV3ImageTransportVerified: true,
+    }
     context = {
       ...context,
       listingPackage: packageWithV3PublicationAssets(
@@ -1306,6 +1351,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
     draftConfiguration,
     target,
     accountFingerprint: fingerprint,
+    revalidatedExecutionEvidence,
   })
   const rebuiltPayload = buildEbayDraftOnlyPayload(
     context.listingPackage,

@@ -24,6 +24,10 @@ export type DraftOnlyReadinessInput = {
   opportunity: JsonRecord
   draftConfiguration: JsonRecord
   sameDayPilotAuthorization?: JsonRecord | null
+  revalidatedExecutionEvidence?: {
+    freshSameDaySourceVerified?: boolean
+    finalV3ImageTransportVerified?: boolean
+  }
   activeSkuCollision?: boolean
   ledgerSkuCollision?: boolean
   identityCollisionReasons?: string[]
@@ -595,6 +599,18 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     && images.every((url) => authorizedImages.includes(url))
     && ['supplier_authorized', 'owned', 'licensed'].includes(rightsBasis)
     && ['luna', 'supplier', 'owned', 'licensed_asset'].includes(imageSource)
+  const executionEvidence = input.revalidatedExecutionEvidence ?? {}
+  const freshSameDaySourceVerified =
+    executionEvidence.freshSameDaySourceVerified === true
+    && sameDayPilotAuthorized
+    && recent(sameDayPilotAuthorization.sourceObservedAt, sourceMaxAge, now)
+  const finalV3ImageTransportVerified =
+    executionEvidence.finalV3ImageTransportVerified === true
+    && imageEvidenceReady
+    && images.length === 7
+    && authorization.protectedManifestVerified === true
+    && Number(authorization.protectedManifestAssetCount) === 7
+    && Number.isFinite(Date.parse(text(authorization.approvedAt)))
   const aspectConstraintBlockers = validateEbayTaxonomyAspectValues(aspects, taxonomy)
   const taxonomyEvidenceReady = taxonomy.validated === true
     && text(taxonomy.categoryId) === categoryId
@@ -639,7 +655,10 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (opportunity.supplier_available !== true || supplierStock === null || supplierStock <= 0) blockers.push("LUNA_STOCK_UNAVAILABLE")
   if (supplierPrice === null || supplierPrice <= 0) blockers.push("LUNA_COST_REQUIRED")
   if (!recent(opportunity.supplier_snapshot_at ?? opportunity.last_scanned_at, sourceMaxAge, now)) blockers.push("LUNA_SNAPSHOT_STALE")
-  if (!recent(listingPackage.source_observed_at, sourceMaxAge, now)) blockers.push("PACKAGE_SOURCE_STALE")
+  if (
+    !recent(listingPackage.source_observed_at, sourceMaxAge, now)
+    && !freshSameDaySourceVerified
+  ) blockers.push("PACKAGE_SOURCE_STALE")
   if (!text(packageData.title) || text(packageData.title).length > 80) blockers.push("TITLE_INVALID")
   if (!/^\d{1,12}$/.test(categoryId)) blockers.push("CATEGORY_ID_REQUIRED")
   if (!text(packageData.description)) blockers.push("DESCRIPTION_REQUIRED")
@@ -650,7 +669,13 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   blockers.push(...aspectConstraintBlockers)
   for (const name of requiredAspects) if (!aspects[name]?.length) blockers.push(`REQUIRED_ASPECT_MISSING:${name}`)
   if (!images.length || images.length !== strings(packageData.imageUrls, 24).length) blockers.push("HTTPS_IMAGES_REQUIRED")
-  if (authorization.approved !== true || !recent(authorization.approvedAt, sourceMaxAge, now)) blockers.push("IMAGE_AUTHORIZATION_REQUIRED")
+  if (
+    authorization.approved !== true
+    || (
+      !recent(authorization.approvedAt, sourceMaxAge, now)
+      && !finalV3ImageTransportVerified
+    )
+  ) blockers.push("IMAGE_AUTHORIZATION_REQUIRED")
   if (authorization.approved === true && !images.length) blockers.push("IMAGE_AUTHORIZATION_WITHOUT_SOURCE_IMAGE")
   if (!['supplier_authorized', 'owned', 'licensed'].includes(rightsBasis)) blockers.push("IMAGE_RIGHTS_BASIS_INVALID")
   if (!['luna', 'supplier', 'owned', 'licensed_asset'].includes(imageSource)) blockers.push("IMAGE_SOURCE_INVALID")

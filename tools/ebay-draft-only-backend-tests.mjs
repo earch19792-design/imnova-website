@@ -326,6 +326,59 @@ test("a server-validated same-day binding supersedes only stale generic scoring 
   assert.ok(forged.blockers.includes("EXACT_IDENTITY_REQUIRED"))
 })
 
+test("locked V3 execution evidence supersedes only redundant package and image age", async () => {
+  const module = await importTypeScript(readinessSource)
+  const now = new Date("2026-07-13T12:00:00.000Z")
+  const stale = new Date(now.getTime() - 361 * 60_000).toISOString()
+  const input = validInput(now)
+  const images = Array.from(
+    { length: 7 },
+    (_, index) => `https://supplier.example.test/v3-${index}.png`,
+  )
+  input.listingPackage.source_observed_at = stale
+  input.listingPackage.package_data.imageUrls = images
+  input.draftConfiguration.imageAuthorization = {
+    ...input.draftConfiguration.imageAuthorization,
+    approvedAt: stale,
+    approvedImageUrls: images,
+    protectedManifestVerified: true,
+    protectedManifestAssetCount: 7,
+  }
+  input.sameDayPilotAuthorization = {
+    validated: true,
+    version: "SELLER_OS_AUTHORIZED_PUBLICATION_V1_2026_07_20",
+    runId: "33333333-3333-4333-8333-333333333333",
+    candidateId: "44444444-4444-4444-8444-444444444444",
+    listingPackageId: input.listingPackage.id,
+    sourceObservedAt: now.toISOString(),
+    finalHumanAuthorizationRequired: true,
+    unattendedPublicationAllowed: false,
+  }
+  const generic = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(generic.ready, false)
+  assert.ok(generic.blockers.includes("PACKAGE_SOURCE_STALE"))
+  assert.ok(generic.blockers.includes("IMAGE_AUTHORIZATION_REQUIRED"))
+
+  input.revalidatedExecutionEvidence = {
+    freshSameDaySourceVerified: true,
+    finalV3ImageTransportVerified: true,
+  }
+  const verified = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(verified.ready, true)
+  assert.equal(verified.payloadHash, generic.payloadHash)
+
+  input.sameDayPilotAuthorization.sourceObservedAt = stale
+  const staleSource = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(staleSource.ready, false)
+  assert.ok(staleSource.blockers.includes("PACKAGE_SOURCE_STALE"))
+
+  input.sameDayPilotAuthorization.sourceObservedAt = now.toISOString()
+  input.draftConfiguration.imageAuthorization.protectedManifestVerified = false
+  const unprotectedImages = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(unprotectedImages.ready, false)
+  assert.ok(unprotectedImages.blockers.includes("IMAGE_AUTHORIZATION_REQUIRED"))
+})
+
 test("taxonomy constraint validation fails closed on selection, cardinality, length and dependencies", async () => {
   const module = await importTypeScript(readinessSource)
   const base = {
@@ -935,6 +988,10 @@ test("route requires a human Admin, exact approval, fresh revalidation and unkno
   assert.match(routeSource, /EBAY_DRAFT_ONLY_EXECUTION_BUSY/)
   assert.match(routeSource, /inspectEbayDraftSkuState/)
   assert.match(routeSource, /EBAY_DRAFT_ONLY_REAPPROVAL_REQUIRED/)
+  assert.match(routeSource, /EBAY_V3_EXECUTION_EVIDENCE_INVALID/)
+  assert.match(routeSource, /revalidatedExecutionEvidence/)
+  assert.match(routeSource, /finalV3ImageTransportVerified:\s*true/)
+  assert.match(routeSource, /freshSameDaySourceVerified:\s*true/)
   assert.match(routeSource, /UNPUBLISHED_VERIFIED_AT_CREATE/)
   assert.match(routeSource, /\.eq\("lease_token", claimToken\)/)
   assert.ok(
