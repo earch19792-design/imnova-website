@@ -13,6 +13,9 @@ import {
   loadSameDayAuthorizedPublicationContext,
 } from "@/lib/ebay/ebay-same-day-authorized-publication"
 import {
+  loadFinalListingReviewPublicationGate,
+} from "@/lib/ebay/final-listing-review-publication-gate"
+import {
   ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION,
   applyVerifiedTitleToActiveListing,
   prepareVerifiedActiveListingTitle,
@@ -660,6 +663,7 @@ export async function POST(req: Request) {
       let sameDayContext: Awaited<ReturnType<
         typeof loadSameDayAuthorizedPublicationContext
       >> = null
+      let finalListingReviewReady = false
       if (existing) {
         try {
           sameDayContext = await loadSameDayAuthorizedPublicationContext({
@@ -672,7 +676,18 @@ export async function POST(req: Request) {
           })
         } catch (contextError) {
           const code = errorCode(contextError)
-          if (code !== "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED") throw contextError
+          if (code === "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY") {
+            const finalReviewGate = await loadFinalListingReviewPublicationGate({
+              supabase,
+              listingPackageId: existing.id,
+              actorId: reviewer,
+            })
+            if (!finalReviewGate.allowed) throw contextError
+            finalListingReviewReady = true
+            sameDayContext = null
+          } else if (code !== "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED") {
+            throw contextError
+          }
           const sourceRecheck = await publicationLunaRecheckDetails(
             supabase,
             existing,
@@ -696,7 +711,7 @@ export async function POST(req: Request) {
         }
       }
       const eligibility = evaluateEbayListingWorkspaceEligibility(sourceOpportunity)
-      if (!eligibility.allowed && !sameDayContext) {
+      if (!eligibility.allowed && !sameDayContext && !finalListingReviewReady) {
         return NextResponse.json({
           success: false,
           error: "COMMAND_CENTER_WORKSPACE_GATES_PENDING",
@@ -848,17 +863,33 @@ export async function POST(req: Request) {
         .maybeSingle()
       if (currentPackageError || !currentPackage) throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
       const currentPackageData = object(currentPackage.package_data)
-      const sameDayContext = await loadSameDayAuthorizedPublicationContext({
-        supabase,
-        accountKey,
-        actorUserId: reviewer,
-        listingPackage: {
-          ...currentPackage,
-          opportunity_id: opportunityId,
-          candidate_key: candidateKey,
-        },
-        opportunity: sourceOpportunity,
-      })
+      let sameDayContext: Awaited<ReturnType<
+        typeof loadSameDayAuthorizedPublicationContext
+      >> = null
+      let finalListingReviewReady = false
+      try {
+        sameDayContext = await loadSameDayAuthorizedPublicationContext({
+          supabase,
+          accountKey,
+          actorUserId: reviewer,
+          listingPackage: {
+            ...currentPackage,
+            opportunity_id: opportunityId,
+            candidate_key: candidateKey,
+          },
+          opportunity: sourceOpportunity,
+        })
+      } catch (contextError) {
+        const code = errorCode(contextError)
+        if (code !== "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY") throw contextError
+        const finalReviewGate = await loadFinalListingReviewPublicationGate({
+          supabase,
+          listingPackageId: packageId,
+          actorId: reviewer,
+        })
+        if (!finalReviewGate.allowed) throw contextError
+        finalListingReviewReady = true
+      }
       const form = object(body.packageData)
       const effectiveOpportunity = sameDayContext?.opportunity ?? sourceOpportunity
       const sourceSeed = buildInitialPackage(effectiveOpportunity)
@@ -887,9 +918,9 @@ export async function POST(req: Request) {
       const status = body.markReady === true ? "ready_for_review" : "draft"
       const resolvedHardGates = resolvedPackageHardGates(packageForValidation)
       const sourceGates = [
-        ...(sameDayContext ? [] : strings(sourceOpportunity.hard_gates)
+        ...((sameDayContext || finalListingReviewReady) ? [] : strings(sourceOpportunity.hard_gates)
           .filter((gate) => !resolvedHardGates.has(gate))),
-        ...(sameDayContext ? [] : strings(sourceOpportunity.evidence_guards)),
+        ...((sameDayContext || finalListingReviewReady) ? [] : strings(sourceOpportunity.evidence_guards)),
         ...(canonicalPricing.passesProfitGate ? [] : ["MINIMUM_NET_MARGIN_NOT_MET"]),
       ]
       const completeFields = [title, form.categoryId, String(form.description ?? ""), strings(form.imageUrls, 24)[0], canonicalPricing.targetPrice]
