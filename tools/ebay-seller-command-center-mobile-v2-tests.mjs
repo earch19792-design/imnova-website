@@ -263,13 +263,29 @@ test("same-day approved package restore is exact-six, human-approved and fail-cl
   )
 })
 
-test("same-day prepare calls only the dedicated approved-package restore RPC", () => {
+test("approved V3 packages hydrate read-only before any legacy restore", () => {
   const prepareStart = api.indexOf('if (action === "prepare_package")')
   const saveStart = api.indexOf('if (action === "save_package")')
   assert.ok(prepareStart >= 0 && saveStart > prepareStart)
   const prepareApi = api.slice(prepareStart, saveStart)
   const afterPrepareApi = api.slice(saveStart)
 
+  const approvedReadOnlyStart = prepareApi.indexOf(
+    'if (existing?.status === "approved")',
+  )
+  const legacyRestoreStart = prepareApi.indexOf(
+    '"restore_ebay_same_day_authorized_listing_package_v1"',
+  )
+  assert.ok(approvedReadOnlyStart >= 0)
+  assert.ok(legacyRestoreStart > approvedReadOnlyStart)
+  assert.match(prepareApi, /loadFinalListingReviewPublicationGate/)
+  assert.match(prepareApi, /hydrationMode:\s*"APPROVED_V3_READ_ONLY"/)
+  assert.match(prepareApi, /databaseWriteUsed:\s*false/)
+  assert.match(prepareApi, /productionChanged:\s*false/)
+  assert.match(
+    prepareApi,
+    /COMMAND_CENTER_APPROVED_PACKAGE_FINAL_REVIEW_REQUIRED/,
+  )
   assert.match(prepareApi, /restore_ebay_same_day_authorized_listing_package_v1/)
   assert.match(prepareApi, /p_account_key:\s*accountKey/)
   assert.match(prepareApi, /p_actor:\s*reviewer/)
@@ -280,6 +296,18 @@ test("same-day prepare calls only the dedicated approved-package restore RPC", (
   assert.doesNotMatch(
     prepareApi,
     /publishOffer\s*\(|createOffer\s*\(|createOrReplaceInventoryItem\s*\(/,
+  )
+})
+
+test("one-click publication exposes why its only control is protected", () => {
+  assert.match(workspace, /const publicationButtonBlockReason/)
+  assert.match(workspace, /const publicationButtonDisabled/)
+  assert.match(workspace, /!referenceGuidedAttemptId \|\| !finalReviewRecord\.previewHash/)
+  assert.match(workspace, /data-publication-button-blocker/)
+  assert.match(workspace, /Control protegido temporalmente/)
+  assert.doesNotMatch(
+    workspace,
+    /disabled=\{\s*publicationAutomationBusy\s*\|\|\s*draftBusy\s*\|\|\s*!listingPackage/,
   )
 })
 

@@ -2060,6 +2060,17 @@ function ListingWorkspacePageContent() {
   const unpublishedExecutionExists = Boolean(draftState.execution?.id)
   const executionCompleted = unpublishedExecutionPhase === "completed"
   const publicationPhase = draftState.publication?.phase ?? ""
+  const publicationButtonBlockReason = !listingPackage
+    ? "El paquete V3 aprobado todavía no terminó de cargarse."
+    : !referenceGuidedAttemptId || !finalReviewRecord.previewHash
+      ? "La firma visual final todavía no terminó de enlazarse."
+      : publicationPhase === "terminal_failure"
+        ? "La publicación quedó detenida para evitar un duplicado; primero debe verificarse el resultado existente."
+        : draftBusy && !publicationAutomationBusy
+          ? "Hay otra comprobación segura en curso. El control se activará al terminar."
+          : ""
+  const publicationButtonDisabled =
+    publicationAutomationBusy || Boolean(publicationButtonBlockReason)
   const maintenanceMode = workspaceMode === "ACTIVE_MAINTENANCE"
   const activeTitleExactPhrase = "APLICAR TITULO VERIFICADO AL LISTING ACTIVO"
   const activeTitleConfirmationReady = activeTitleConfirmation
@@ -3803,12 +3814,7 @@ function ListingWorkspacePageContent() {
         </details>}
         {publicationPhase === "monitor_registered"
           ? <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y monitoreado</strong><p className="mt-1 text-xs">Item ID {draftState.publication?.listing_id}</p><a href={`https://www.ebay.com/itm/${draftState.publication?.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-black underline">Abrir listing en eBay</a></div>
-          : <button type="button" disabled={
-            publicationAutomationBusy
-            || draftBusy
-            || !listingPackage
-            || publicationPhase === "terminal_failure"
-          } onClick={() => void publishV3Automatically()} className="relative min-h-16 w-full overflow-hidden rounded-2xl bg-rose-200 px-4 text-lg font-black text-black shadow-[0_0_38px_rgba(254,205,211,0.2)] disabled:opacity-40">
+          : <button type="button" disabled={publicationButtonDisabled} onClick={() => void publishV3Automatically()} className="relative min-h-16 w-full overflow-hidden rounded-2xl bg-rose-200 px-4 text-lg font-black text-black shadow-[0_0_38px_rgba(254,205,211,0.2)] disabled:opacity-40">
             {publicationAutomationBusy && <span aria-hidden="true" className="absolute inset-y-0 left-0 w-1/3 animate-pulse bg-gradient-to-r from-transparent via-white/45 to-transparent" />}
             <span className="relative">{publicationAutomationBusy
               ? "Sistema en operación"
@@ -3816,6 +3822,7 @@ function ListingWorkspacePageContent() {
                 ? "Verificar publicación en eBay"
                 : "Publicar en eBay"}</span>
           </button>}
+        {!publicationAutomationBusy && publicationButtonBlockReason && <p data-publication-button-blocker role="status" className="rounded-xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-xs text-amber-50"><strong>Control protegido temporalmente.</strong><span className="mt-1 block">{publicationButtonBlockReason}</span></p>}
         <p className="text-xs leading-5 text-rose-50/65">Si una llamada queda con resultado incierto, la automatización se detiene y este mismo control cambia a verificación por lectura. Nunca repite <code>publishOffer</code> a ciegas.</p>
       </section>
     </section>

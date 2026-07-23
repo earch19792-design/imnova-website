@@ -663,6 +663,49 @@ export async function POST(req: Request) {
       if (existing && existing.created_by !== reviewer) {
         throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
       }
+      if (existing?.status === "approved") {
+        const finalReviewGate = await loadFinalListingReviewPublicationGate({
+          supabase,
+          listingPackageId: existing.id,
+          actorId: reviewer,
+        })
+        if (!finalReviewGate.allowed) {
+          return NextResponse.json({
+            success: false,
+            error: "COMMAND_CENTER_APPROVED_PACKAGE_FINAL_REVIEW_REQUIRED",
+            blockers: [
+              finalReviewGate.reason
+                ?? "FINAL_LISTING_REVIEW_NOT_READY",
+            ],
+            listingPackage: existing,
+            safety: {
+              ebayWriteUsed: false,
+              databaseWriteUsed: false,
+              productionChanged: false,
+              canPublish: false,
+            },
+          }, { status: 409 })
+        }
+        const persistedPackageData = object(existing.package_data)
+        return NextResponse.json({
+          success: true,
+          listingPackage: existing,
+          created: false,
+          evidenceRefreshed: false,
+          preservedUserFields: true,
+          sameDayAuthorizedPublication: true,
+          finalListingReviewReady: true,
+          hydrationMode: "APPROVED_V3_READ_ONLY",
+          safeDefaultsApplied:
+            strings(object(persistedPackageData.safeDefaults).appliedFields).length > 0,
+          safety: {
+            ebayWriteUsed: false,
+            databaseWriteUsed: false,
+            productionChanged: false,
+            canPublish: false,
+          },
+        })
+      }
       let sameDayContext: Awaited<ReturnType<
         typeof loadSameDayAuthorizedPublicationContext
       >> = null
