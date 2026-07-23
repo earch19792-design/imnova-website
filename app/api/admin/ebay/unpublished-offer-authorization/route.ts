@@ -83,16 +83,21 @@ function responseError(error: unknown, status = 409) {
 
 async function authenticate(req: Request) {
   const validation = await validateAdminApiRequest(req)
-  if (!validation.ok || !validation.userId) {
+  if (!validation.ok) {
     return {
       actor: "",
+      serviceRole: false,
       response: responseError(
         new Error(validation.error ?? "ADMIN_FORBIDDEN"),
         validation.status || 403,
       ),
     }
   }
-  return { actor: validation.userId, response: null }
+  return {
+    actor: validation.userId ?? "",
+    serviceRole: validation.authenticationMode === "service_role",
+    response: null,
+  }
 }
 
 function imageSourcePath(asset: JsonRecord) {
@@ -123,13 +128,13 @@ async function loadFinalReview(
   previewHash = EXPECTED_PREVIEW,
 ) {
   const supabase = getSupabaseAdminClient()
-  const { data: review, error } = await supabase
+  let reviewQuery = supabase
     .from("ebay_reference_guided_final_listing_review_previews")
     .select("*")
     .eq("attempt_id", attemptId)
     .eq("preview_hash", previewHash)
-    .eq("created_by", actor)
-    .maybeSingle()
+  if (actor) reviewQuery = reviewQuery.eq("created_by", actor)
+  const { data: review, error } = await reviewQuery.maybeSingle()
   if (error || !review) throw new Error("EBAY_V3_FINAL_PREVIEW_NOT_FOUND")
   const snapshot = record(review.preview_snapshot)
   const gates = record(review.gates)
@@ -159,7 +164,7 @@ async function loadFinalReview(
     .from("ebay_listing_packages")
     .select("*")
     .eq("id", review.listing_package_id)
-    .eq("created_by", actor)
+    .eq("created_by", review.created_by)
     .maybeSingle()
   if (packageError || !listingPackage) throw new Error("EBAY_V3_LISTING_PACKAGE_NOT_FOUND")
   const { data: opportunity, error: opportunityError } = await supabase
@@ -298,6 +303,8 @@ function aspectValidation(
 async function prepare(actor: string) {
   const context = await loadFinalReview(actor)
   const { review, snapshot, listingPackage, opportunity, supabase } = context
+  const resolvedActor = text(review.created_by)
+  if (!resolvedActor) throw new Error("EBAY_V3_PREVIEW_ACTOR_INVALID")
   const transport = await ensurePublicationTransport(context)
   const assets = validateV3PublicationAssets(transport.assets)
   const listing = record(snapshot.listing)
@@ -366,7 +373,7 @@ async function prepare(actor: string) {
     imageAuthorization: {
       approved: true,
       approvedAt: review.created_at,
-      approvedBy: actor,
+      approvedBy: resolvedActor,
       approvedImageUrls: assets.map((asset) => asset.url),
       protectedManifestVerified: true,
       protectedManifestAssetCount: 7,
@@ -443,7 +450,7 @@ async function prepare(actor: string) {
     blockers: [],
     status: "READY_FOR_HUMAN_AUTHORIZATION",
     provider_calls_snapshot: 8,
-    created_by: actor,
+    created_by: resolvedActor,
   }
   const { data: persisted, error } = await supabase
     .from("ebay_v3_unpublished_offer_authorization_previews")
@@ -601,6 +608,9 @@ async function authorizeAndPrepareExecution(actor: string, body: JsonRecord) {
 export async function GET(req: Request) {
   const auth = await authenticate(req)
   if (auth.response) return auth.response
+  if (auth.serviceRole || !auth.actor) {
+    return responseError(new Error("EBAY_V3_HUMAN_ADMIN_REQUIRED"), 403)
+  }
   try {
     const attemptId = text(new URL(req.url).searchParams.get("attemptId"))
     if (attemptId !== EXPECTED_ATTEMPT) {
@@ -649,6 +659,9 @@ export async function POST(req: Request) {
       }, { status: 201 })
     }
     if (body.action === "authorize") {
+      if (auth.serviceRole || !auth.actor) {
+        throw new Error("EBAY_V3_HUMAN_ADMIN_REQUIRED")
+      }
       const result = await authorizeAndPrepareExecution(auth.actor, body)
       return NextResponse.json({
         success: true,
