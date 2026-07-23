@@ -279,6 +279,18 @@ type ImageRevisionPayload = {
   }>
 }
 
+type FinalListingReviewPayload = {
+  review: Record<string, any>
+  signedImages: Array<{
+    position: number
+    assetRole: string
+    status: string
+    sha256: string
+    storagePath: string
+    signedPreviewUrl: string
+  }>
+}
+
 const emptyForm: FormState = {
   title: "",
   categoryId: "",
@@ -660,6 +672,10 @@ function ListingWorkspacePageContent() {
   const [imageRevisionBusy, setImageRevisionBusy] = useState(false)
   const [referenceGuidedAttempt, setReferenceGuidedAttempt] = useState<Record<string, any> | null>(null)
   const [referenceGuidedAttemptId, setReferenceGuidedAttemptId] = useState("")
+  const [finalListingReview, setFinalListingReview] =
+    useState<FinalListingReviewPayload | null>(null)
+  const [finalListingReviewError, setFinalListingReviewError] = useState("")
+  const [finalListingReviewChecked, setFinalListingReviewChecked] = useState(false)
   const [positionSixPreviewError, setPositionSixPreviewError] = useState("")
   const [extraordinaryAuthorizationBusy,
     setExtraordinaryAuthorizationBusy] = useState<number | null>(null)
@@ -838,6 +854,58 @@ function ListingWorkspacePageContent() {
     void poll()
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
   }, [imageRequest, referenceGuidedAttemptId])
+
+  useEffect(() => {
+    if (!referenceGuidedAttemptId) {
+      setFinalListingReview(null)
+      setFinalListingReviewError("")
+      setFinalListingReviewChecked(false)
+      return
+    }
+    const controller = new AbortController()
+    setFinalListingReviewChecked(false)
+    void (async () => {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession()
+        if (!sessionData.session) throw new Error("ADMIN_SESSION_REQUIRED")
+        const response = await fetch(
+          `/api/admin/ebay/final-listing-review?attemptId=${encodeURIComponent(referenceGuidedAttemptId)}`,
+          {
+            cache: "no-store",
+            signal: controller.signal,
+            headers: {
+              Authorization: `Bearer ${sessionData.session.access_token}`,
+            },
+          },
+        )
+        const payload = await response.json() as Record<string, any>
+        if (response.status === 404) {
+          setFinalListingReview(null)
+          setFinalListingReviewError("")
+          return
+        }
+        if (!response.ok || payload.success !== true) {
+          throw new Error(String(payload.error ?? "FINAL_LISTING_REVIEW_READ_FAILED"))
+        }
+        setFinalListingReview({
+          review: object(payload.review),
+          signedImages: Array.isArray(payload.signedImages)
+            ? payload.signedImages
+            : [],
+        })
+        setFinalListingReviewError("")
+      } catch (reviewError) {
+        if (controller.signal.aborted) return
+        setFinalListingReview(null)
+        setFinalListingReviewError(reviewError instanceof Error
+          ? reviewError.message
+          : "FINAL_LISTING_REVIEW_READ_FAILED")
+      } finally {
+        if (!controller.signal.aborted) setFinalListingReviewChecked(true)
+      }
+    })()
+    return () => controller.abort()
+  }, [referenceGuidedAttemptId])
 
   const titleRevisionRequest = useCallback(async (body: Record<string, unknown>) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
@@ -2431,7 +2499,47 @@ function ListingWorkspacePageContent() {
   const packageContentsStatus = packageContentsDecision?.decision === "APPROVED"
     ? "APPROVED" : packageContentsDecision?.decision === "REJECTED"
       ? "REJECTED" : String(phaseAPosition2Asset.status)
-  const visualReviewPanel = (v3ReviewAccessible || v3ReadyForPrepare)
+  const finalReview = object(finalListingReview?.review)
+  const finalReviewSnapshot = object(finalReview.snapshot)
+  const finalReviewListing = object(finalReviewSnapshot.listing)
+  const finalReviewGates = object(finalReview.gates)
+  const finalReviewCompleted = finalReview.visualPhase === "COMPLETED"
+    && finalReview.finalVisualSetLocked === true
+    && finalReview.generationControlsHidden === true
+    && finalListingReview?.signedImages.length === 7
+  const visualReviewPanel = referenceGuidedAttemptId && !finalListingReviewChecked
+    ? <section className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/60">Comprobando si el conjunto V3 ya está cerrado antes de mostrar controles…</section>
+    : finalReviewCompleted
+    ? <section id="v3-final-listing-review" className="space-y-4 rounded-3xl border border-emerald-200/35 bg-emerald-200/[0.07] p-4">
+      <div>
+        <p className="text-xs font-black uppercase tracking-widest text-emerald-100/70">Visual Strategy V3 · COMPLETED</p>
+        <h2 className="mt-1 text-xl font-black">Conjunto final bloqueado · 7/7 PASSED</h2>
+        <p className="mt-2 text-sm leading-6 text-white/65">El presupuesto visual terminó en {String(finalReview.providerCalls)} llamadas. Todos los controles de generación están ocultos y los siete objetos privados permanecen inmutables.</p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {finalListingReview?.signedImages.map((asset) => <figure key={`final-v3-${asset.position}-${asset.sha256}`} data-final-asset-position={asset.position} data-final-asset-role={asset.assetRole} data-final-asset-sha256={asset.sha256} className={`${asset.position === 0 ? "col-span-2" : ""} rounded-xl border border-white/10 bg-black/25 p-2`}>
+          <div className="aspect-square overflow-hidden rounded-lg bg-white"><img src={asset.signedPreviewUrl} alt={`${asset.position === 0 ? "Portada principal" : `Secundaria ${asset.position}`} ${asset.assetRole}`} className="h-full w-full object-contain" /></div>
+          <figcaption className="mt-2 text-xs"><strong>{asset.position === 0 ? "Portada principal" : `Secundaria ${asset.position}`} · {asset.assetRole}</strong><span className="mt-1 block text-white/50">{asset.status} · {asset.sha256.slice(0, 12)}…</span></figcaption>
+        </figure>)}
+      </div>
+      <section className="space-y-3 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.05] p-3">
+        <div><p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">FINAL_LISTING_REVIEW persistente</p><h3 className="mt-1 text-lg font-black">{String(finalReviewListing.title)}</h3><p className="mt-1 text-xs text-white/55">Preview hash {String(finalReview.previewHash)} · los campos editados por el usuario no fueron reemplazados.</p></div>
+        <dl className="grid grid-cols-2 gap-2 text-xs">
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Categoría</dt><dd className="mt-1 font-black">{String(finalReviewListing.categoryId)}</dd></div>
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Cantidad</dt><dd className="mt-1 font-black">{String(finalReviewListing.quantity)}</dd></div>
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Shipping weight</dt><dd className="mt-1 font-black">{String(finalReviewListing.shippingWeight)}</dd></div>
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Package dimensions</dt><dd className="mt-1 font-black">{String(finalReviewListing.packageDimensions)}</dd></div>
+        </dl>
+        <div className="rounded-xl bg-black/25 p-3 text-xs">
+          <strong>Puertas comerciales</strong>
+          <ul className="mt-2 grid gap-1">
+            {Object.entries(finalReviewGates).map(([gate, passed]) => <li key={gate} className={passed === true ? "text-emerald-100" : "text-rose-100"}>{passed === true ? "✓" : "✕"} {gate}</li>)}
+          </ul>
+        </div>
+        <p className="rounded-xl border border-amber-200/25 bg-amber-200/[0.07] p-3 text-xs text-amber-50">Inventory Item: NO CREADO · Offer: NO CREADO · publicación y autorización final deshabilitadas.</p>
+      </section>
+    </section>
+    : (v3ReviewAccessible || v3ReadyForPrepare)
     ? <section id="v3-human-review" className="space-y-4 rounded-3xl border border-violet-200/30 bg-violet-200/[0.07] p-4">
       <div><p className="text-xs font-black uppercase tracking-widest text-violet-100/70">Revisión visual V3 · independiente de Luna</p><h2 className="mt-1 text-xl font-black">Portada principal y secundarias</h2><p className="mt-2 text-sm leading-6 text-white/65">Puedes abrir previews privados y registrar QA visual aunque costo o stock estén vencidos. La frescura comercial seguirá bloqueando el Offer y la publicación final.</p></div>
       {publicationLunaRecheck && <p className="rounded-xl border border-amber-200/25 bg-amber-200/[0.07] p-3 text-xs text-amber-50"><strong>Publicación bloqueada por Luna;</strong> revisión visual disponible. Esta pantalla no actualiza costo, cantidad ni disponibilidad.</p>}
@@ -2453,7 +2561,9 @@ function ListingWorkspacePageContent() {
         {positionSixMappingValid && positionSixExtraordinaryReview.signedPreviewUrl && !positionSixPreviewError && <figure data-position-6-extraordinary-ordinal="8" data-asset-ordinal="6" data-asset-role="SECONDARY_HUMAN_CONTEXT" data-output-sha256={String(positionSixExtraordinaryReview.output_sha256)} className="rounded-xl border border-fuchsia-200/40 bg-fuchsia-200/[0.07] p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-6-ordinal-8-${String(positionSixExtraordinaryReview.output_sha256)}`} src={String(positionSixExtraordinaryReview.signedPreviewUrl)} onError={() => setPositionSixPreviewError("REFERENCE_GUIDED_POSITION_6_ORDINAL_8_SIGNED_PREVIEW_LOAD_FAILED")} alt="Reemplazo extraordinario ordinal 8 de Secundaria 6" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-fuchsia-50"><strong>Secundaria 6 · SECONDARY_HUMAN_CONTEXT</strong><span className="mt-1 block font-black">Reemplazo extraordinario · ordinal 8 · {positionSixExtraordinaryReview.status === "PASSED" ? "Aprobado por revisión humana" : "Pendiente de revisión humana"}</span><span className="mt-1 block">Estado: {String(positionSixExtraordinaryReview.status)} · HUMAN_REVIEW_REQUIRED</span><span className="mt-1 block text-white/60">SHA privado: {String(positionSixExtraordinaryReview.output_sha256)} · PNG 1600×1600 verificado server-side</span><span className="mt-1 block text-white/60">Plan: {String(positionSixExtraordinaryReview.batchPlanHash)}</span></figcaption></figure>}
         {referenceGuidedPositionSix && (!positionSixMappingValid || !positionSixExtraordinaryReview.signedPreviewUrl || Boolean(positionSixExtraordinaryReview.preview_error) || Boolean(positionSixPreviewError)) && <div role="alert" data-position-6-preview-error className="space-y-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50"><p>No se pudo mostrar el reemplazo extraordinario ordinal 8 de forma segura. Código: {String(positionSixExtraordinaryReview.preview_error || positionSixPreviewError || "REFERENCE_GUIDED_POSITION_6_ORDINAL_8_PREVIEW_BINDING_INVALID")}.</p><p>La aprobación permanece bloqueada. Recarga para solicitar una URL firmada nueva.</p></div>}
       </>}
-    </section> : null
+    </section> : finalListingReviewError
+      ? <p role="alert" className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50">No se pudo hidratar el FINAL_LISTING_REVIEW: {finalListingReviewError}. No se habilitó ninguna acción comercial.</p>
+      : null
 
   return (
     <main className="min-h-screen bg-[#05070d] px-4 pb-32 pt-4 text-white sm:px-6">

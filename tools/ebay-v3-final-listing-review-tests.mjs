@@ -1,0 +1,83 @@
+import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import test from "node:test"
+
+const migration = readFileSync(
+  "supabase/migrations/20260722053000_create_v3_final_listing_review_preview.sql",
+  "utf8",
+)
+const route = readFileSync(
+  "app/api/admin/ebay/final-listing-review/route.ts",
+  "utf8",
+)
+const workspace = readFileSync(
+  "app/admin/ebay/listing-workspace/page.tsx",
+  "utf8",
+)
+
+test("final listing review is append-only, service-role only and creates no eBay object", () => {
+  assert.match(migration, /final_listing_review_append_only/)
+  assert.match(migration, /force row level security/i)
+  assert.match(migration, /grant select, insert[\s\S]*to service_role/i)
+  assert.match(migration, /authorization_enabled boolean not null check \(not authorization_enabled\)/)
+  assert.match(migration, /inventory_item_created boolean not null check \(not inventory_item_created\)/)
+  assert.match(migration, /offer_created boolean not null check \(not offer_created\)/)
+  assert.match(migration, /ebay_writes integer not null check \(ebay_writes = 0\)/)
+  assert.doesNotMatch(migration, /createOrReplaceInventoryItem|createOffer|publishOffer/)
+})
+
+test("seven selected V3 images are immutable, ordered and primary-first", () => {
+  assert.match(migration, /jsonb_array_length\(v_final\.selected_assets\) <> 7/)
+  assert.match(migration, /count\(distinct \(asset->>'position'\)::integer\) = 7/)
+  assert.match(migration, /v_selected->0->>'assetRole'\) = 'PRIMARY_MAIN'/)
+  assert.match(migration, /bool_and\(asset->>'status' = 'PASSED'\)/)
+  assert.match(migration, /ebay-listing-image-staging/)
+  assert.match(migration, /and not bucket\.public/)
+})
+
+test("canonical product gates reject contradictions and keep shipping facts unknown", () => {
+  for (const expected of [
+    "Calypso Basics",
+    "08300",
+    "036588083005",
+    "White",
+    "powder coated enamel on steel",
+    "1.5",
+    "20636",
+  ]) {
+    assert.ok(migration.includes(expected))
+  }
+  assert.match(migration, /'shippingWeight','UNKNOWN'/)
+  assert.match(migration, /'packageDimensions','UNKNOWN'/)
+  assert.match(migration, /PRESENTATION_AND_COPY_GUIDANCE_ONLY_NOT_PRODUCT_FACTS/)
+  assert.match(migration, /length\(v_title\) between 1 and 80/)
+})
+
+test("Luna, economics, policy and location gates are independently fail-closed", () => {
+  assert.match(migration, /interval '24 hours'/)
+  assert.match(migration, /AVAILABLE_EXACT_QUANTITY/)
+  assert.match(migration, /IMAGE_RIGHTS_CONFIRMATION_REQUIRED/)
+  assert.match(migration, /PRICE_OR_MARGIN_INVALID/)
+  assert.match(migration, /EBAY_BUSINESS_POLICIES_NOT_VERIFIED/)
+  assert.match(migration, /EBAY_MERCHANT_LOCATION_NOT_VERIFIED/)
+  assert.match(migration, /MANDATORY_LISTING_FIELD_MISSING/)
+})
+
+test("authenticated GET signs exact private objects and remains read-only", () => {
+  assert.match(route, /validateAdminApiRequest/)
+  assert.match(route, /createSignedUrl\(storagePath, 600\)/)
+  assert.match(route, /\.eq\("created_by", validation\.userId\)/)
+  assert.match(route, /Cache-Control": "private, no-store, max-age=0/)
+  assert.match(route, /authorizationEnabled: false/)
+  assert.match(route, /inventoryItemCreated: false/)
+  assert.match(route, /offerCreated: false/)
+})
+
+test("workspace shows COMPLETED, seven previews and no generation controls in final state", () => {
+  assert.match(workspace, /Visual Strategy V3 · COMPLETED/)
+  assert.match(workspace, /Conjunto final bloqueado · 7\/7 PASSED/)
+  assert.match(workspace, /finalReview\.generationControlsHidden === true/)
+  assert.match(workspace, /finalListingReview\?\.signedImages\.length === 7/)
+  assert.match(workspace, /Inventory Item: NO CREADO · Offer: NO CREADO/)
+  assert.match(workspace, /FINAL_LISTING_REVIEW persistente/)
+})
