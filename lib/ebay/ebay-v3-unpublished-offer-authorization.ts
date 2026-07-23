@@ -250,8 +250,10 @@ export function resolveV3UnpublishedAuthorizationPreflight(input: {
   }
   if (approvalActive && !approvalFresh) {
     return {
-      result: "ERROR" as const,
-      reason: "ACTIVE_APPROVAL_EXPIRED",
+      result: "READY_FOR_NEW_HUMAN_AUTHORIZATION" as const,
+      reason: preflightSnapshotFresh
+        ? "ACTIVE_APPROVAL_EXPIRED"
+        : "AUTHORIZATION_PREFLIGHT_EXPIRED",
       activeApprovalFound: true,
       activeApprovalReusable: false,
       previewHashMatch,
@@ -283,10 +285,8 @@ export function resolveV3UnpublishedAuthorizationPreflight(input: {
 
   if (!preflightSnapshotFresh) {
     return {
-      result: "ERROR" as const,
-      reason: approvalActive && !approvalFresh
-        ? "ACTIVE_APPROVAL_EXPIRED"
-        : "AUTHORIZATION_PREFLIGHT_EXPIRED",
+      result: "READY_FOR_NEW_HUMAN_AUTHORIZATION" as const,
+      reason: "AUTHORIZATION_PREFLIGHT_EXPIRED",
       activeApprovalFound: Boolean(approval),
       activeApprovalReusable: false,
       previewHashMatch,

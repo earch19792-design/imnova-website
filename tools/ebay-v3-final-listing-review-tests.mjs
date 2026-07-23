@@ -91,7 +91,9 @@ test("workspace shows COMPLETED, seven previews and no generation controls in fi
   assert.match(workspace, /v3FinalListingReviewCanonicalReady/)
   assert.match(visualAccess, /input\.generationControlsHidden === true/)
   assert.match(visualAccess, /images\.length === V3_FINAL_ASSET_ROLES\.length/)
-  assert.match(workspace, /Inventory Item: NO CREADO · Offer: NO CREADO/)
+  assert.match(workspace, /Estado previo a la autorización: Inventory Item: NO CREADO · Offer: NO CREADO/)
+  assert.match(workspace, /Paso UNPUBLISHED completado/)
+  assert.match(workspace, /Ejecución UNPUBLISHED registrada/)
   assert.match(workspace, /FINAL_LISTING_REVIEW persistente/)
 })
 
@@ -154,7 +156,7 @@ test("package preparation shows each persisted gate and only shows a percentage 
   assert.match(reconciliationMigration, /'gateDetails',v_gate_details/)
   assert.match(workspace, /blockers\.length\s*\?\s*"BLOQUEADO"/)
   assert.match(workspace, /finalReviewGateDetails\.map/)
-  assert.match(workspace, /Inventory Item, Offer y publicación permanecen deshabilitados/)
+  assert.match(workspace, /esta tarjeta no ejecuta escrituras/)
 })
 
 test("gate sources are corrected append-only with explicit V3, candidate and market mappings", () => {

@@ -7,6 +7,10 @@ const migrationPath =
   "supabase/migrations/20260713100000_revoke_unsafe_ebay_table_privileges.sql"
 const migration = readFileSync(migrationPath, "utf8")
 const ciGuard = readFileSync("tools/ebay-seller-os-ci-guards.mjs", "utf8")
+const v3AclRemediation = readFileSync(
+  "supabase/migrations/20260723014000_harden_v3_reference_guided_table_acl.sql",
+  "utf8",
+)
 
 const sellerOsTables = [
   "ebay_active_listing_risk_events",
@@ -113,6 +117,27 @@ test("CI forbids managed-role changes and requires explicit future table revokes
   assert.match(ciGuard, /create\\s\+table/)
   assert.ok(ciGuard.includes("`revoke\\\\s+all"))
   assert.match(ciGuard, /SELLER_OS_TABLE_ACL_REVOKE_MISSING/)
+})
+
+test("append-only V3 ACL remediation closes all 37 client table grants", () => {
+  const clientRevokes = [...v3AclRemediation.matchAll(
+    /revoke all on table public\.(ebay_[a-z0-9_]+) from anon, authenticated;/gi,
+  )].map((match) => match[1])
+  const publicRevokes = [...v3AclRemediation.matchAll(
+    /revoke all on table public\.(ebay_[a-z0-9_]+) from public;/gi,
+  )].map((match) => match[1])
+  assert.equal(clientRevokes.length, 37)
+  assert.equal(new Set(clientRevokes).size, 37)
+  assert.deepEqual(publicRevokes, clientRevokes)
+  assert.match(
+    ciGuard,
+    /20260723014000_harden_v3_reference_guided_table_acl\.sql/,
+  )
+  assert.doesNotMatch(
+    v3AclRemediation,
+    /\b(?:insert\s+into|update\s+public\.|delete\s+from|truncate\s+table|grant\s+)\b/i,
+  )
+  assert.doesNotMatch(v3AclRemediation, /from service_role/i)
 })
 
 test("all previously applied Seller OS migrations remain byte-for-byte immutable", () => {

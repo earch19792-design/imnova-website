@@ -369,14 +369,32 @@ async function prepare(actor: string) {
     .from("ebay_draft_only_approvals")
     .select("id,status,expires_at,approved_at,consumed_at,revoked_at,payload_hash,approved_payload,approval_idempotency_key")
     .eq("listing_package_id", review.listing_package_id)
+    .eq("actor_user_id", resolvedActor)
     .eq("status", "approved")
     .maybeSingle()
   if (activeApprovalError) {
     throw new Error("EBAY_V3_APPROVAL_STATE_READ_FAILED")
   }
+  const activeApprovalFresh = Boolean(
+    activeApproval
+    && Number.isFinite(Date.parse(text(activeApproval.expires_at)))
+    && Date.parse(text(activeApproval.expires_at)) > Date.now()
+    && !activeApproval.consumed_at
+    && !activeApproval.revoked_at,
+  )
+  const currentPreviewFresh = Boolean(
+    currentPreview
+    && Number.isFinite(
+      Date.parse(text(currentPreview.preflight_snapshot_expires_at)),
+    )
+    && Date.parse(text(currentPreview.preflight_snapshot_expires_at))
+      > Date.now(),
+  )
   if (
     currentPreview
     && activeApproval
+    && activeApprovalFresh
+    && currentPreviewFresh
     && text(currentPreview.preview_hash) === text(review.preview_hash)
     && text(activeApproval.payload_hash) === text(currentPreview.payload_hash)
   ) {
@@ -648,7 +666,7 @@ async function prepare(actor: string) {
   let reconciliation: JsonRecord | null = null
   let reusableApproval: JsonRecord | null = null
   if (activeApproval) {
-    if (activeApproval.payload_hash === payloadHash) {
+    if (activeApproval.payload_hash === payloadHash && activeApprovalFresh) {
       authorizationMode = "resume_existing_authorization"
       reusableApproval = {
         id: activeApproval.id,
@@ -972,12 +990,27 @@ async function authorizeAndPrepareExecution(actor: string, body: JsonRecord) {
   }
   const { data: activeApproval, error: activeApprovalError } = await supabase
     .from("ebay_draft_only_approvals")
-    .select("id,payload_hash,status,approval_idempotency_key")
+    .select("id,payload_hash,status,approval_idempotency_key,expires_at,approved_at,consumed_at,revoked_at")
     .eq("listing_package_id", prepared.listing_package_id)
+    .eq("actor_user_id", actor)
     .eq("status", "approved")
     .maybeSingle()
   if (activeApprovalError) {
     throw new Error("EBAY_V3_APPROVAL_STATE_READ_FAILED")
+  }
+  const activeApprovalFresh = Boolean(
+    activeApproval
+    && Number.isFinite(Date.parse(text(activeApproval.expires_at)))
+    && Date.parse(text(activeApproval.expires_at)) > Date.now()
+    && !activeApproval.consumed_at
+    && !activeApproval.revoked_at,
+  )
+  if (
+    activeApproval
+    && activeApproval.payload_hash === payloadHash
+    && activeApprovalFresh
+  ) {
+    return { approval: activeApproval, idempotentReplay: true }
   }
   if (activeApproval && activeApproval.payload_hash !== payloadHash) {
     const { error: reconcileError } = await supabase
@@ -994,12 +1027,17 @@ async function authorizeAndPrepareExecution(actor: string, body: JsonRecord) {
     }
     throw new Error("EBAY_V3_AUTHORIZATION_SUPERSEDED")
   }
+  const approvalActionVersion = activeApproval && !activeApprovalFresh
+    ? `${V3_UNPUBLISHED_AUTHORIZATION_ACTION_VERSION}_RENEW_${
+      v3AuthorizationHash(activeApproval.id).slice(0, 12)
+    }`
+    : V3_UNPUBLISHED_AUTHORIZATION_ACTION_VERSION
   const approvalKey = buildV3UnpublishedAuthorizationIdempotencyKey({
     listingPackageId: prepared.listing_package_id,
     previewHash: exactPreviewHash,
     payloadHash,
     targetAccountFingerprint: prepared.account_fingerprint,
-    actionVersion: V3_UNPUBLISHED_AUTHORIZATION_ACTION_VERSION,
+    actionVersion: approvalActionVersion,
   })
   const { data: approval, error: approvalError } = await supabase
     .rpc("approve_ebay_draft_only_package", {

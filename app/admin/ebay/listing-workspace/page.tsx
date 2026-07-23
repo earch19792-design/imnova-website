@@ -421,8 +421,10 @@ function humanWorkspaceBlocker(code: string, minimumProfitablePrice?: number | n
 
 function humanUnpublishedPreflightError(code: string) {
   const labels: Record<string, string> = {
+    AUTHORIZATION_PREVIEW_NOT_PREPARED:
+      "Todavía no existe un snapshot server-side vigente para esta autorización.",
     ACTIVE_APPROVAL_EXPIRED:
-      "La aprobación humana registrada venció antes de ejecutarse. Se necesita una autorización nueva; no se creó automáticamente.",
+      "La aprobación humana anterior venció. Puedes revisar el mismo payload vigente y autorizarlo nuevamente.",
     AUTHORIZATION_PREFLIGHT_EXPIRED:
       "El snapshot server-side de cuenta y policies venció. Se necesita preparar una autorización nueva; no se creó automáticamente.",
     ACTIVE_APPROVAL_PAYLOAD_MISMATCH:
@@ -756,6 +758,7 @@ function ListingWorkspacePageContent() {
     useState<UnpublishedPreflightState>("idle")
   const [unpublishedPreflightReason, setUnpublishedPreflightReason] =
     useState("")
+  const [unpublishedPreflightRetry, setUnpublishedPreflightRetry] = useState(0)
   const [unpublishedConfirmation, setUnpublishedConfirmation] = useState("")
   const [confirmExactUnpublishedPayload, setConfirmExactUnpublishedPayload] =
     useState(false)
@@ -1643,7 +1646,9 @@ function ListingWorkspacePageContent() {
     ?? (productionTarget
       ? "CREAR DRAFT NO PUBLICADO EN PRODUCCIÓN"
       : draftTarget === "SANDBOX" ? "CREAR DRAFT NO PUBLICADO" : "")
-  const executionCompleted = draftState.execution?.phase === "completed"
+  const unpublishedExecutionPhase = String(draftState.execution?.phase ?? "")
+  const unpublishedExecutionExists = Boolean(draftState.execution?.id)
+  const executionCompleted = unpublishedExecutionPhase === "completed"
   const publicationPhase = draftState.publication?.phase ?? ""
   const maintenanceMode = workspaceMode === "ACTIVE_MAINTENANCE"
   const activeTitleExactPhrase = "APLICAR TITULO VERIFICADO AL LISTING ACTIVO"
@@ -2630,6 +2635,66 @@ function ListingWorkspacePageContent() {
     }
   }
 
+  async function prepareExactV3UnpublishedAuthorization() {
+    if (
+      !referenceGuidedAttemptId
+      || !finalReviewRecord.previewHash
+      || unpublishedAuthorizationBusy
+    ) return
+    setUnpublishedAuthorizationBusy(true)
+    setError("")
+    setMessage("Actualizando el preflight de cuenta y policies sin escribir en eBay…")
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      if (!sessionData.session) throw new Error("ADMIN_SESSION_REQUIRED")
+      const response = await fetch(
+        "/api/admin/ebay/unpublished-offer-authorization",
+        {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${sessionData.session.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "prepare",
+            attemptId: referenceGuidedAttemptId,
+            previewHash: finalReviewRecord.previewHash,
+          }),
+        },
+      )
+      const payload = await response.json() as Record<string, any>
+      if (!response.ok || payload.success !== true) {
+        throw new Error(String(payload.error
+          ?? "EBAY_V3_UNPUBLISHED_AUTHORIZATION_PREPARE_FAILED"))
+      }
+      setUnpublishedPreflightState("loading")
+      setUnpublishedPreflightReason("")
+      setUnpublishedAuthorizationError("")
+      setUnpublishedAuthorization(null)
+      setUnpublishedConfirmation("")
+      setConfirmExactUnpublishedPayload(false)
+      setConfirmEbayWritesWithoutPublish(false)
+      setConfirmNoUnpublishedRetry(false)
+      setUnpublishedPreflightRetry((current) => current + 1)
+      setMessage("Preflight renovado sin escrituras eBay. Verificando el nuevo payload exacto…")
+    } catch (requestError) {
+      const code = requestError instanceof Error
+        ? requestError.message
+        : "EBAY_V3_UNPUBLISHED_AUTHORIZATION_PREPARE_FAILED"
+      setUnpublishedAuthorizationError(code)
+      setUnpublishedPreflightReason(code)
+      setUnpublishedPreflightState("error")
+      setError(getMobileReviewRequestError(
+        requestError,
+        "No se pudo preparar una autorización UNPUBLISHED nueva.",
+      ))
+      setMessage("")
+    } finally {
+      setUnpublishedAuthorizationBusy(false)
+    }
+  }
+
   async function prepareFinalPublication() {
     if (!draftState.execution?.id) return
     setDraftBusy(true); setError(""); setMessage("Preparando el preview final exacto sin publicar…")
@@ -2771,6 +2836,12 @@ function ListingWorkspacePageContent() {
       url === authorizationImageUrls[index])
   const unpublishedAuthorizationFlow =
     unpublishedAuthorizationMode ?? "new_authorization"
+  const unpublishedAuthorizationPreparationRequired =
+    unpublishedPreflightState === "ready_new"
+    && (
+      !unpublishedAuthorization
+      || unpublishedPreflightReason === "AUTHORIZATION_PREFLIGHT_EXPIRED"
+    )
   const approvalPayloadHash = String(draftState.approval?.payload_hash ?? "")
   const authorizationPayloadHash = String(unpublishedAuthorization?.payloadHash ?? "")
   const authorizationPayloadMatchesApproval = Boolean(
@@ -2790,7 +2861,11 @@ function ListingWorkspacePageContent() {
       : `Crear Offer no publicado en ${draftTarget}`
 
   useEffect(() => {
-    if (!finalReviewCompleted || !referenceGuidedAttemptId) {
+    if (
+      !finalReviewCompleted
+      || !referenceGuidedAttemptId
+      || unpublishedExecutionExists
+    ) {
       setUnpublishedPreflightState("idle")
       return
     }
@@ -2951,6 +3026,8 @@ function ListingWorkspacePageContent() {
     finalReviewCompleted,
     referenceGuidedAttemptId,
     finalReviewRecord.previewHash,
+    unpublishedPreflightRetry,
+    unpublishedExecutionExists,
   ])
 
   useEffect(() => {
@@ -3005,18 +3082,20 @@ function ListingWorkspacePageContent() {
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Oportunidad vigente</dt><dd className="mt-1 font-black">{String(finalReviewOpportunity.status ?? "PENDIENTE")}</dd></div>
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Mercado/demanda</dt><dd className="mt-1 font-black">{String(finalReviewMarketDemand.status ?? "PENDIENTE")}</dd></div>
         </dl>
-        <p className="rounded-xl border border-amber-200/25 bg-amber-200/[0.07] p-3 text-xs text-amber-50">Inventory Item: NO CREADO · Offer: NO CREADO · publicación y autorización final deshabilitadas.</p>
+        <p className={`rounded-xl border p-3 text-xs ${executionCompleted ? "border-emerald-200/25 bg-emerald-200/[0.07] text-emerald-50" : unpublishedExecutionExists ? "border-amber-200/25 bg-amber-200/[0.07] text-amber-50" : "border-white/15 bg-black/20 text-white/65"}`}>{executionCompleted ? "Paso UNPUBLISHED completado: Inventory Item + Offer creados y verificados. Este paso no llamó publishOffer." : unpublishedExecutionExists ? `Ejecución UNPUBLISHED registrada · fase ${unpublishedExecutionPhase || "PENDIENTE"}. Debe reconciliarse antes de cualquier acción nueva.` : "Estado previo a la autorización: Inventory Item: NO CREADO · Offer: NO CREADO. publishOffer permanece prohibido en este paso."}</p>
       </section>
       <section data-v3-unpublished-authorization data-unpublished-preflight-state={unpublishedPreflightState} className="space-y-3 rounded-2xl border border-orange-200/30 bg-orange-200/[0.06] p-3">
         <div>
           <p className="text-xs font-black uppercase tracking-widest text-orange-100/70">Autorización humana · eBay UNPUBLISHED</p>
           <h3 className="mt-1 text-lg font-black">Inventory Item + Offer sin publicar</h3>
-          <p className="mt-2 text-xs leading-5 text-orange-50/75">Esta pantalla prepara transporte permanente y el payload exacto. El único botón inferior realizará escrituras reales en la cuenta eBay enlazada, pero tiene prohibido llamar <code>publishOffer</code>.</p>
+          <p className="mt-2 text-xs leading-5 text-orange-50/75">Preparar y autorizar sólo persiste el preflight y la aprobación humana. Únicamente el botón separado de ejecución puede escribir Inventory Item + Offer en la cuenta enlazada; <code>publishOffer</code> permanece prohibido en todo este paso.</p>
         </div>
-        {unpublishedPreflightState === "loading" && <p className="rounded-xl border border-white/10 p-3 text-sm text-white/60">Verificando siete PNG, cuenta, policies y payload server-side…</p>}
-        {unpublishedPreflightState === "error" && <p role="alert" className="rounded-xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50"><strong>Preflight bloqueado.</strong><span className="mt-1 block">{humanUnpublishedPreflightError(unpublishedAuthorizationError || unpublishedPreflightReason)}</span><span className="mt-1 block text-xs text-rose-50/70">La verificación terminó y no se escribió en eBay.</span></p>}
-        {unpublishedPreflightState === "ready_new" && <p role="status" className="rounded-xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-sm text-amber-50">Se requiere una nueva autorización humana. Motivo: {unpublishedPreflightReason || "AUTHORIZATION_PREVIEW_NOT_PREPARED"}. No se creó automáticamente.</p>}
-        {unpublishedAuthorization && <>
+        {unpublishedExecutionExists && <div className={`rounded-xl border p-3 ${executionCompleted ? "border-emerald-200/30 bg-emerald-200/[0.06] text-emerald-50" : "border-amber-200/30 bg-amber-200/[0.07] text-amber-50"}`}><strong>{executionCompleted ? "Inventory Item + Offer UNPUBLISHED verificados" : "Ejecución UNPUBLISHED pendiente de reconciliación"}</strong><span className="mt-1 block text-xs">Fase: {unpublishedExecutionPhase || "PENDIENTE"} · este flujo nunca llama publishOffer.</span>{!executionCompleted && <button type="button" disabled={draftBusy || !draftState.approval?.id} onClick={() => void executeDraft()} className="mt-3 min-h-13 w-full rounded-xl border border-amber-200/40 px-3 font-black disabled:opacity-40">Reconciliar Inventory Item + Offer UNPUBLISHED</button>}</div>}
+        {!unpublishedExecutionExists && unpublishedPreflightState === "loading" && <p className="rounded-xl border border-white/10 p-3 text-sm text-white/60">Verificando siete PNG, cuenta, policies y payload server-side…</p>}
+        {!unpublishedExecutionExists && unpublishedPreflightState === "error" && <p role="alert" className="rounded-xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50"><strong>Preflight bloqueado.</strong><span className="mt-1 block">{humanUnpublishedPreflightError(unpublishedAuthorizationError || unpublishedPreflightReason)}</span><span className="mt-1 block text-xs text-rose-50/70">La verificación terminó y no se escribió en eBay.</span></p>}
+        {!unpublishedExecutionExists && unpublishedPreflightState === "ready_new" && <p role="status" className="rounded-xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-sm text-amber-50">Se requiere una nueva autorización humana. {humanUnpublishedPreflightError(unpublishedPreflightReason || "AUTHORIZATION_PREVIEW_NOT_PREPARED")} No se creó automáticamente.</p>}
+        {!unpublishedExecutionExists && unpublishedAuthorizationPreparationRequired && <button type="button" disabled={unpublishedAuthorizationBusy} onClick={() => void prepareExactV3UnpublishedAuthorization()} className="min-h-14 w-full rounded-2xl bg-orange-200 px-4 font-black text-black disabled:opacity-40">{unpublishedAuthorizationBusy ? "Preparando preflight nuevo…" : "Preparar nueva autorización UNPUBLISHED"}</button>}
+        {!unpublishedExecutionExists && unpublishedAuthorization && !unpublishedAuthorizationPreparationRequired && <>
           <dl className="grid gap-2 text-xs sm:grid-cols-2">
             <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Cuenta eBay destino</dt><dd className="mt-1 font-black">{String(object(unpublishedAuthorization.targetAccount).environment)} · {String(object(unpublishedAuthorization.targetAccount).registrationMarketplaceId ?? unpublishedAuthorization.marketplaceId)} · {String(object(unpublishedAuthorization.targetAccount).accountType)} · seller {String(object(unpublishedAuthorization.targetAccount).maskedSellerAccountId)}</dd></div>
             <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">SKU exacto</dt><dd className="mt-1 break-all font-black">{String(unpublishedAuthorization.sku)}</dd></div>
@@ -3064,7 +3143,7 @@ function ListingWorkspacePageContent() {
               </div>
             : <div className="space-y-3 rounded-xl border border-rose-200/30 bg-rose-200/[0.06] p-3">
                 {unpublishedAuthorizationReconciliation && unpublishedAuthorizationChangedFields.length > 0 && <p className="rounded-xl border border-amber-200/25 bg-amber-200/[0.07] p-3 text-xs text-amber-50"><strong>Aprobación anterior supersedida por PAYLOAD_CHANGED_AFTER_LUNA_RECONFIRMATION.</strong><span className="mt-1 block">Campos cambiados: {unpublishedAuthorizationChangedFields.join(", ")}</span></p>}
-                <p className="text-sm font-black text-rose-50">Advertencia: esta autorización realizará escrituras reales en eBay PRODUCTION. Creará o reanudará sólo el Inventory Item y el Offer UNPUBLISHED; no publicará un listing.</p>
+                <p className="text-sm font-black text-rose-50">Esta autorización no escribe todavía en eBay. Habilita una ejecución separada que sólo podrá crear o reanudar Inventory Item + Offer UNPUBLISHED en PRODUCTION y tendrá prohibido publicar el listing.</p>
                 <label className="block text-xs"><span className="font-black">Escribe exactamente: {String(unpublishedAuthorization.confirmationPhrase)}</span><input value={unpublishedConfirmation} onChange={(event) => setUnpublishedConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label>
                 <label className="flex gap-2 text-xs"><input type="checkbox" checked={confirmExactUnpublishedPayload} onChange={(event) => setConfirmExactUnpublishedPayload(event.target.checked)} />Revisé el payload hash, los campos y las siete imágenes en este orden.</label>
                 <label className="flex gap-2 text-xs"><input type="checkbox" checked={confirmEbayWritesWithoutPublish} onChange={(event) => setConfirmEbayWritesWithoutPublish(event.target.checked)} />Autorizo createOrReplaceInventoryItem y createOffer; no autorizo publishOffer.</label>
@@ -3411,7 +3490,7 @@ function ListingWorkspacePageContent() {
               : blockers.length
                 ? <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-50">{blockers.map((blocker) => <li key={blocker}>{humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)}</li>)}</ul>
                 : <p className="mt-2 text-sm text-emerald-100">Sin bloqueos. Puedes enviarlo a revisión humana.</p>}
-            <p className="mt-3 text-xs leading-5 text-white/50">La preparación V3 se calcula desde fuentes persistidas y muestra cada puerta por separado. Inventory Item, Offer y publicación permanecen deshabilitados.</p>
+            <p className="mt-3 text-xs leading-5 text-white/50">La preparación V3 se calcula desde fuentes persistidas y muestra cada puerta por separado. El estado de Inventory Item, Offer y publicación aparece arriba; esta tarjeta no ejecuta escrituras.</p>
           </section>
         </>}
       </section>
