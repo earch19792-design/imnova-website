@@ -1237,22 +1237,66 @@ function ListingWorkspacePageContent() {
   const referenceGuidedPositionSix = referenceGuidedJobs.find((job) =>
     Number(job.position) === 6 &&
       String(job.commercial_role) === "REAL_HUMAN_USE")
-  const positionSixBinding = object(
-    referenceGuidedPositionSix?.preview_binding,
+  const positionSixExtraordinaryReview = object(
+    referenceGuidedAttempt?.positionSixExtraordinaryReview,
+  )
+  const positionSixExtraordinaryBinding = object(
+    positionSixExtraordinaryReview.preview_binding,
+  )
+  const positionSixRejectedEvidence = object(
+    referenceGuidedAttempt?.positionSixRejectedEvidence,
+  )
+  const positionSixRejectedBinding = object(
+    positionSixRejectedEvidence.preview_binding,
   )
   const positionSixMappingValid = Boolean(referenceGuidedPositionSix)
-    && ["QA_PENDING", "BLOCKED_FIDELITY"]
-      .includes(String(referenceGuidedPositionSix?.status))
+    && referenceGuidedPositionSix?.status === "QA_PENDING"
     && referenceGuidedPositionSix?.assetRole === "SECONDARY_HUMAN_CONTEXT"
-    && positionSixBinding.attemptId === referenceGuidedAttemptId
-    && Number(positionSixBinding.position) === 6
-    && positionSixBinding.assetRole === "SECONDARY_HUMAN_CONTEXT"
-    && positionSixBinding.storagePath === referenceGuidedPositionSix?.output_storage_path
-    && positionSixBinding.outputSha256 === referenceGuidedPositionSix?.output_sha256
-    && positionSixBinding.roundtripVerified === true
+    && referenceGuidedPositionSix?.currentOutputSource ===
+      "EXTRAORDINARY_ORDINAL_8"
+    && Number(positionSixExtraordinaryReview.position) === 6
+    && positionSixExtraordinaryReview.assetRole ===
+      "SECONDARY_HUMAN_CONTEXT"
+    && Number(positionSixExtraordinaryReview.extraordinaryOrdinal) === 8
+    && positionSixExtraordinaryReview.status === "QA_PENDING"
+    && positionSixExtraordinaryReview.automaticStatus ===
+      "HUMAN_REVIEW_REQUIRED"
+    && positionSixExtraordinaryBinding.attemptId === referenceGuidedAttemptId
+    && Number(positionSixExtraordinaryBinding.position) === 6
+    && positionSixExtraordinaryBinding.assetRole ===
+      "SECONDARY_HUMAN_CONTEXT"
+    && Number(positionSixExtraordinaryBinding.extraordinaryOrdinal) === 8
+    && positionSixExtraordinaryBinding.batchPlanHash ===
+      positionSixExtraordinaryReview.batchPlanHash
+    && positionSixExtraordinaryBinding.storagePath ===
+      positionSixExtraordinaryReview.output_storage_path
+    && positionSixExtraordinaryBinding.outputSha256 ===
+      positionSixExtraordinaryReview.output_sha256
+    && positionSixExtraordinaryBinding.roundtripVerified === true
+    && positionSixExtraordinaryBinding.mime === "image/png"
+    && Number(positionSixExtraordinaryBinding.width) === 1600
+    && Number(positionSixExtraordinaryBinding.height) === 1600
+    && referenceGuidedPositionSix?.output_storage_path ===
+      positionSixExtraordinaryReview.output_storage_path
+    && referenceGuidedPositionSix?.output_sha256 ===
+      positionSixExtraordinaryReview.output_sha256
+  const positionSixRejectedMappingValid =
+    positionSixRejectedEvidence.status === "REJECTED"
+    && positionSixRejectedEvidence.decision === "REJECTED"
+    && positionSixRejectedEvidence.preservedAsEvidence === true
+    && positionSixRejectedBinding.attemptId === referenceGuidedAttemptId
+    && Number(positionSixRejectedBinding.position) === 6
+    && positionSixRejectedBinding.assetRole === "SECONDARY_HUMAN_CONTEXT"
+    && Number(positionSixRejectedBinding.providerCallOrdinal) === 6
+    && positionSixRejectedBinding.evidenceStatus === "REJECTED"
+    && positionSixRejectedBinding.storagePath ===
+      positionSixRejectedEvidence.output_storage_path
+    && positionSixRejectedBinding.outputSha256 ===
+      positionSixRejectedEvidence.output_sha256
+    && positionSixRejectedBinding.roundtripVerified === true
   const positionSixPreviewIdentity = [
-    referenceGuidedPositionSix?.output_sha256,
-    referenceGuidedPositionSix?.signedPreviewUrl,
+    positionSixExtraordinaryReview.output_sha256,
+    positionSixExtraordinaryReview.signedPreviewUrl,
   ].join(":")
   useEffect(() => {
     setPositionSixPreviewError("")
@@ -2401,8 +2445,9 @@ function ListingWorkspacePageContent() {
         {referenceGuidedPositionThree?.output_preview_url && <figure data-asset-ordinal="3" data-asset-role="SECONDARY_SCALE_CAPACITY" data-output-sha256={String(referenceGuidedPositionThree.output_sha256)} className="rounded-xl border border-lime-200/30 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-3-${String(referenceGuidedPositionThree.output_sha256)}`} src={String(referenceGuidedPositionThree.output_preview_url)} alt="Preview privado de Secundaria 3 escala cotidiana" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-lime-50"><strong>Secundaria 3 · SECONDARY_SCALE_CAPACITY</strong><span className="mt-1 block">Comparación cotidiana no métrica · salida privada 1600×1600 · revisión humana obligatoria</span><span className="mt-1 block text-white/60">SHA privado: {String(referenceGuidedPositionThree.output_sha256).slice(0, 12)}… · Estado: {String(referenceGuidedPositionThree.status)} · nunca aprobada automáticamente</span><span className="mt-2 block rounded-lg border border-amber-200/20 bg-amber-200/[0.06] p-2 text-amber-50">Confirma producto exacto completo y vacío, exactamente un limón común al lado, ningún otro objeto, manos, agua, texto o medición, e identidad sin deformaciones.</span></figcaption></figure>}
         {referenceGuidedPositionFour?.output_preview_url && <figure data-asset-ordinal="4" data-asset-role="SECONDARY_USE_CONTEXT" data-output-sha256={String(referenceGuidedPositionFour.output_sha256)} className="rounded-xl border border-sky-200/30 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-4-${String(referenceGuidedPositionFour.output_sha256)}`} src={String(referenceGuidedPositionFour.output_preview_url)} alt="Preview privado de Secundaria 4 uso ordinario" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-sky-50"><strong>Secundaria 4 · SECONDARY_USE_CONTEXT</strong><span className="mt-1 block">Contrato efectivo con enmienda · salida privada 1600×1600 · revisión humana obligatoria</span><span className="mt-1 block text-white/60">SHA privado: {String(referenceGuidedPositionFour.output_sha256).slice(0, 12)}… · Estado: {String(referenceGuidedPositionFour.status)} · nunca aprobada automáticamente</span><span className="mt-2 block rounded-lg border border-amber-200/20 bg-amber-200/[0.06] p-2 text-amber-50">Confirma producto completo bajo agua suave, frutas o vegetales moderados dentro, asas/borde/base/perforaciones visibles, sin manos, dedos, brazos, personas, partes humanas, texto, objetos extra, deformaciones o claims.</span></figcaption></figure>}
         {referenceGuidedPositionFive?.output_preview_url && <figure data-asset-ordinal="5" data-asset-role="SECONDARY_ASPIRATIONAL_LIFESTYLE" data-output-sha256={String(referenceGuidedPositionFive.output_sha256)} className="rounded-xl border border-cyan-200/30 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-5-${String(referenceGuidedPositionFive.output_sha256)}`} src={String(referenceGuidedPositionFive.output_preview_url)} alt="Preview privado de Secundaria 5 lifestyle aspiracional" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-cyan-50"><strong>Secundaria 5 · SECONDARY_ASPIRATIONAL_LIFESTYLE</strong><span className="mt-1 block">Validación canaria del contrato V2 · salida privada 1600×1600 · revisión humana obligatoria</span><span className="mt-1 block text-white/60">SHA privado: {String(referenceGuidedPositionFive.output_sha256).slice(0, 12)}… · Estado: {String(referenceGuidedPositionFive.status)} · nunca aprobada automáticamente</span><span className="mt-2 block rounded-lg border border-amber-200/20 bg-amber-200/[0.06] p-2 text-amber-50">Confirma producto exacto vacío, cocina moderna luminosa, luz natural suave, fondo ligeramente desenfocado, props mínimos separados, ausencia de manos/agua/comida/texto y composición distinta de escala, uso y contexto humano.</span></figcaption></figure>}
-        {referenceGuidedPositionSix && ["QA_PENDING", "BLOCKED_FIDELITY"].includes(String(referenceGuidedPositionSix.status)) && positionSixMappingValid && referenceGuidedPositionSix.signedPreviewUrl && !positionSixPreviewError && <figure data-asset-ordinal="6" data-asset-role="SECONDARY_HUMAN_CONTEXT" data-output-sha256={String(referenceGuidedPositionSix.output_sha256)} className="rounded-xl border border-fuchsia-200/30 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-6-${String(referenceGuidedPositionSix.output_sha256)}`} src={String(referenceGuidedPositionSix.signedPreviewUrl)} onError={() => setPositionSixPreviewError("REFERENCE_GUIDED_POSITION_6_SIGNED_PREVIEW_LOAD_FAILED")} alt="Preview privado de Secundaria 6 contexto humano" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-fuchsia-50"><strong>Secundaria 6 · SECONDARY_HUMAN_CONTEXT</strong><span className="mt-1 block">Estado: {String(referenceGuidedPositionSix.status)} · evidencia humana preservada</span><span className="mt-1 block text-white/60">SHA privado: {String(referenceGuidedPositionSix.output_sha256)} · PNG 1600×1600 verificado server-side</span><span className="mt-2 block rounded-lg border border-amber-200/20 bg-amber-200/[0.06] p-2 text-amber-50">El output rechazado permanece como evidencia. El reemplazo futuro exige fondo completamente vacío, exactamente dos manos y fidelidad geométrica explícita.</span></figcaption></figure>}
-        {referenceGuidedPositionSix && ["QA_PENDING", "BLOCKED_FIDELITY"].includes(String(referenceGuidedPositionSix.status)) && (!positionSixMappingValid || !referenceGuidedPositionSix.signedPreviewUrl || Boolean(referenceGuidedPositionSix.preview_error) || Boolean(positionSixPreviewError)) && <p role="alert" data-position-6-preview-error className="rounded-xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50">No se pudo mostrar el preview privado de Secundaria 6 de forma segura. Código: {String(referenceGuidedPositionSix.preview_error || positionSixPreviewError || "REFERENCE_GUIDED_POSITION_6_PREVIEW_BINDING_INVALID")}. Recarga para solicitar una URL firmada nueva.</p>}
+        {positionSixRejectedMappingValid && positionSixRejectedEvidence.signedPreviewUrl && <figure data-position-6-rejected-evidence data-asset-ordinal="6" data-asset-role="SECONDARY_HUMAN_CONTEXT" data-output-sha256={String(positionSixRejectedEvidence.output_sha256)} className="rounded-xl border border-rose-200/25 bg-rose-200/[0.05] p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-6-rejected-${String(positionSixRejectedEvidence.output_sha256)}`} src={String(positionSixRejectedEvidence.signedPreviewUrl)} alt="Output anterior rechazado de Secundaria 6" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-rose-50"><strong>Output anterior rechazado · evidencia preservada</strong><span className="mt-1 block">Secundaria 6 · SECONDARY_HUMAN_CONTEXT · no es el candidato actual</span><span className="mt-1 block text-white/60">SHA privado: {String(positionSixRejectedEvidence.output_sha256)} · Motivo: {String(positionSixRejectedEvidence.reason)}</span></figcaption></figure>}
+        {positionSixMappingValid && positionSixExtraordinaryReview.signedPreviewUrl && !positionSixPreviewError && <figure data-position-6-extraordinary-ordinal="8" data-asset-ordinal="6" data-asset-role="SECONDARY_HUMAN_CONTEXT" data-output-sha256={String(positionSixExtraordinaryReview.output_sha256)} className="rounded-xl border border-fuchsia-200/40 bg-fuchsia-200/[0.07] p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-6-ordinal-8-${String(positionSixExtraordinaryReview.output_sha256)}`} src={String(positionSixExtraordinaryReview.signedPreviewUrl)} onError={() => setPositionSixPreviewError("REFERENCE_GUIDED_POSITION_6_ORDINAL_8_SIGNED_PREVIEW_LOAD_FAILED")} alt="Reemplazo extraordinario ordinal 8 de Secundaria 6" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-fuchsia-50"><strong>Secundaria 6 · SECONDARY_HUMAN_CONTEXT</strong><span className="mt-1 block font-black">Reemplazo extraordinario · ordinal 8 · Pendiente de revisión humana</span><span className="mt-1 block">Estado: QA_PENDING · HUMAN_REVIEW_REQUIRED</span><span className="mt-1 block text-white/60">SHA privado: {String(positionSixExtraordinaryReview.output_sha256)} · PNG 1600×1600 verificado server-side</span><span className="mt-1 block text-white/60">Plan: {String(positionSixExtraordinaryReview.batchPlanHash)}</span></figcaption></figure>}
+        {referenceGuidedPositionSix && (!positionSixMappingValid || !positionSixExtraordinaryReview.signedPreviewUrl || Boolean(positionSixExtraordinaryReview.preview_error) || Boolean(positionSixPreviewError)) && <div role="alert" data-position-6-preview-error className="space-y-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50"><p>No se pudo mostrar el reemplazo extraordinario ordinal 8 de forma segura. Código: {String(positionSixExtraordinaryReview.preview_error || positionSixPreviewError || "REFERENCE_GUIDED_POSITION_6_ORDINAL_8_PREVIEW_BINDING_INVALID")}.</p><p>La aprobación permanece bloqueada. Recarga para solicitar una URL firmada nueva.</p></div>}
       </>}
     </section> : null
 

@@ -139,6 +139,81 @@ function sha256Text(value: string) {
   return createHash("sha256").update(value).digest("hex")
 }
 
+async function verifiedPrivatePngPreview(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  input: {
+    storagePath: string
+    outputSha256: string
+    binding: Record<string, unknown>
+  },
+) {
+  const previewBinding = {
+    ...input.binding,
+    storagePath: input.storagePath,
+    outputSha256: input.outputSha256,
+  }
+  const roundtrip = await supabase.storage.from(STAGING_BUCKET)
+    .download(input.storagePath)
+  if (roundtrip.error || !roundtrip.data) {
+    return {
+      signedPreviewUrl: null,
+      signedPreviewExpiresAt: null,
+      preview_binding: previewBinding,
+      preview_error: "REFERENCE_GUIDED_PRIVATE_OUTPUT_ROUNDTRIP_FAILED",
+    }
+  }
+  const bytes = Buffer.from(await roundtrip.data.arrayBuffer())
+  const metadata = await sharp(bytes).metadata().catch(() => null)
+  const actualSha256 = createHash("sha256").update(bytes).digest("hex")
+  const roundtripValid = roundtrip.data.type === "image/png"
+    && metadata?.format === "png"
+    && metadata.width === 1600
+    && metadata.height === 1600
+    && actualSha256 === input.outputSha256
+  bytes.fill(0)
+  if (!roundtripValid) {
+    return {
+      signedPreviewUrl: null,
+      signedPreviewExpiresAt: null,
+      preview_binding: previewBinding,
+      preview_error: "REFERENCE_GUIDED_PRIVATE_OUTPUT_ROUNDTRIP_INVALID",
+    }
+  }
+  const preview = await supabase.storage.from(STAGING_BUCKET)
+    .createSignedUrl(input.storagePath, 300)
+  if (preview.error || !preview.data?.signedUrl) {
+    return {
+      signedPreviewUrl: null,
+      signedPreviewExpiresAt: null,
+      preview_binding: { ...previewBinding, roundtripVerified: true },
+      preview_error: "REFERENCE_GUIDED_PRIVATE_OUTPUT_SIGNING_FAILED",
+    }
+  }
+  const signedPath = decodeURIComponent(new URL(
+    preview.data.signedUrl,
+  ).pathname)
+  if (!signedPath.endsWith(`/${STAGING_BUCKET}/${input.storagePath}`)) {
+    return {
+      signedPreviewUrl: null,
+      signedPreviewExpiresAt: null,
+      preview_binding: { ...previewBinding, roundtripVerified: true },
+      preview_error: "REFERENCE_GUIDED_PRIVATE_OUTPUT_SIGNED_URL_INVALID",
+    }
+  }
+  return {
+    signedPreviewUrl: preview.data.signedUrl,
+    signedPreviewExpiresAt: new Date(Date.now() + 300_000).toISOString(),
+    preview_binding: {
+      ...previewBinding,
+      roundtripVerified: true,
+      mime: "image/png",
+      width: 1600,
+      height: 1600,
+    },
+    preview_error: null,
+  }
+}
+
 function openAiImageRuntime() {
   const capabilities = getListingImageFactoryConfiguration()
   if (capabilities.aiGeneration !== "READY") {
@@ -432,7 +507,11 @@ export async function GET(req: Request) {
         { data: extraordinaryPlan, error: extraordinaryPlanError },
         { data: extraordinaryPositions, error: extraordinaryPositionsError },
         { data: extraordinaryAuthorizations,
-          error: extraordinaryAuthorizationsError }] = await Promise.all([
+          error: extraordinaryAuthorizationsError },
+        { data: extraordinaryProviderEvents,
+          error: extraordinaryProviderEventsError },
+        { data: successorPositionSixOutputs,
+          error: successorPositionSixOutputsError }] = await Promise.all([
         supabase.from("ebay_reference_guided_generation_attempts").select("id,revision_id,composition_manifest_hash,status,completed_job_count,expected_job_count,provider_calls,retry_consumed,created_at,started_at,completed_at").eq("id", attemptId).maybeSingle(),
         supabase.from("ebay_reference_guided_generation_jobs").select("id,position,commercial_role,status,provider_request_id,output_storage_path,output_sha256,qa_result,error_code,lease_owner,lease_expires_at,provider_call_started_at,provider_call_completed_at").eq("generation_attempt_id", attemptId).order("position"),
         supabase.from("ebay_reference_guided_deterministic_previews")
@@ -466,6 +545,14 @@ export async function GET(req: Request) {
         supabase.from("ebay_reference_guided_extraordinary_authorization_events")
           .select("id,correction_plan_id,position,extraordinary_ordinal,event_type,created_at")
           .eq("attempt_id", attemptId).order("extraordinary_ordinal"),
+        supabase.from("ebay_reference_guided_extraordinary_provider_events")
+          .select("id,correction_plan_id,authorization_event_id,attempt_id,position,extraordinary_ordinal,event_type,consumed_event_id,evidence,created_at")
+          .eq("attempt_id", attemptId).eq("position", 6)
+          .eq("extraordinary_ordinal", 8).order("created_at"),
+        supabase.from("ebay_reference_guided_successor_provider_events")
+          .select("id,attempt_id,position,event_type,provider_call_ordinal,provider_request_id,output_storage_path,output_sha256,created_at")
+          .eq("attempt_id", attemptId).eq("position", 6)
+          .eq("event_type", "OUTPUT_PERSISTED").order("created_at"),
       ])
       if (attemptError || jobsError || deterministicPreviewError ||
         assetSlotsError || primaryMainPreviewError || deterministicVariantsError ||
@@ -473,6 +560,9 @@ export async function GET(req: Request) {
         assetReviewsError || extraordinaryPlanError ||
         extraordinaryPositionsError || extraordinaryAuthorizationsError) {
         throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
+      }
+      if (extraordinaryProviderEventsError || successorPositionSixOutputsError) {
+        throw new Error("REFERENCE_GUIDED_POSITION_6_OUTPUT_HISTORY_FAILED")
       }
       if (!attempt) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
       if (requestedRevisionId && attempt.revision_id !== requestedRevisionId) return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_REVISION_MISMATCH" }, { status: 409 })
@@ -487,77 +577,176 @@ export async function GET(req: Request) {
       if (ownedRevisionError || !ownedRevision) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
       const positionSixSlot = (assetSlots ?? []).find((slot) =>
         Number(slot.asset_ordinal) === 6)
+      const positionSixJob = (jobs ?? []).find((job) =>
+        Number(job.position) === 6)
+      const positionSixExtraordinaryBinding = (extraordinaryPositions ?? [])
+        .find((binding) => Number(binding.position) === 6
+          && Number(binding.extraordinary_ordinal) === 8)
+      const ordinal8OutputEvent = (extraordinaryProviderEvents ?? []).find(
+        (event) => event.event_type === "OUTPUT_PERSISTED"
+          && Number(event.position) === 6
+          && Number(event.extraordinary_ordinal) === 8,
+      )
+      const ordinal8Evidence = record(ordinal8OutputEvent?.evidence)
+      const ordinal8Qa = record(ordinal8Evidence.qa)
+      const ordinal8StoragePath = text(
+        ordinal8Evidence.outputStoragePath, 1_000,
+      )
+      const ordinal8OutputSha256 = text(
+        ordinal8Evidence.outputSha256, 64,
+      )
+      const ordinal8BindingValid = Boolean(
+        extraordinaryPlan
+        && positionSixJob
+        && positionSixExtraordinaryBinding
+        && ordinal8OutputEvent
+        && ordinal8OutputEvent.correction_plan_id === extraordinaryPlan.id
+        && positionSixExtraordinaryBinding.correction_plan_id ===
+          extraordinaryPlan.id
+        && positionSixExtraordinaryBinding.asset_role ===
+          "SECONDARY_HUMAN_CONTEXT"
+        && positionSixSlot?.asset_role === "SECONDARY_HUMAN_CONTEXT"
+        && Number(positionSixSlot?.source_job_position) === 6
+        && positionSixSlot?.source_job_id === positionSixJob.id
+        && positionSixJob.status === "QA_PENDING"
+        && positionSixJob.output_storage_path === ordinal8StoragePath
+        && positionSixJob.output_sha256 === ordinal8OutputSha256
+        && /^[0-9a-f]{64}$/.test(ordinal8OutputSha256)
+        && ordinal8Qa.automaticStatus === "HUMAN_REVIEW_REQUIRED"
+        && ordinal8Qa.batchPlanHash === extraordinaryPlan.plan_hash
+        && ordinal8Qa.amendmentHash ===
+          positionSixExtraordinaryBinding.amendment_hash
+        && ordinal8Qa.effectiveContractHash ===
+          positionSixExtraordinaryBinding.final_effective_contract_hash
+        && ordinal8Qa.effectivePromptHash ===
+          positionSixExtraordinaryBinding.final_effective_prompt_hash
+        && ordinal8StoragePath.includes("/reference-guided-extraordinary/")
+        && ordinal8StoragePath.includes(`/${attempt.id}/position-6/ordinal-8/`)
+        && ordinal8StoragePath.includes(`/${extraordinaryPlan.plan_hash}/`)
+        && ordinal8StoragePath.endsWith(`/${ordinal8OutputSha256}.png`),
+      )
+      const ordinal8Preview = ordinal8BindingValid
+        ? await verifiedPrivatePngPreview(supabase, {
+          storagePath: ordinal8StoragePath,
+          outputSha256: ordinal8OutputSha256,
+          binding: {
+            attemptId: attempt.id,
+            position: 6,
+            assetRole: "SECONDARY_HUMAN_CONTEXT",
+            extraordinaryOrdinal: 8,
+            batchPlanHash: extraordinaryPlan?.plan_hash,
+          },
+        })
+        : {
+          signedPreviewUrl: null,
+          signedPreviewExpiresAt: null,
+          preview_binding: {
+            attemptId: attempt.id,
+            position: 6,
+            assetRole: "SECONDARY_HUMAN_CONTEXT",
+            extraordinaryOrdinal: 8,
+            batchPlanHash: extraordinaryPlan?.plan_hash ?? null,
+            storagePath: ordinal8StoragePath || null,
+            outputSha256: ordinal8OutputSha256 || null,
+          },
+          preview_error:
+            "REFERENCE_GUIDED_POSITION_6_ORDINAL_8_BINDING_INVALID",
+        }
+      const positionSixExtraordinaryReview = {
+        position: 6,
+        assetRole: "SECONDARY_HUMAN_CONTEXT",
+        extraordinaryOrdinal: 8,
+        batchPlanHash: extraordinaryPlan?.plan_hash ?? null,
+        status: positionSixJob?.status ?? null,
+        automaticStatus: ordinal8Qa.automaticStatus ?? null,
+        providerRequestId: ordinal8Evidence.providerRequestId ?? null,
+        output_storage_path: ordinal8StoragePath || null,
+        output_sha256: ordinal8OutputSha256 || null,
+        currentCandidate: true,
+        humanReviewRequired: true,
+        approvalEnabled: Boolean(
+          ordinal8BindingValid && ordinal8Preview.signedPreviewUrl
+          && ordinal8Preview.preview_error === null,
+        ),
+        ...ordinal8Preview,
+      }
+      const rejectedPositionSixReview = (assetReviews ?? []).find((review) =>
+        Number(review.asset_ordinal) === 6
+        && review.asset_role === "SECONDARY_HUMAN_CONTEXT"
+        && review.decision === "REJECTED")
+      const rejectedPositionSixOutput = (successorPositionSixOutputs ?? [])
+        .find((output) => output.output_sha256 ===
+          rejectedPositionSixReview?.preview_sha256)
+      const rejectedStoragePath = text(
+        rejectedPositionSixOutput?.output_storage_path, 1_000,
+      )
+      const rejectedOutputSha256 = text(
+        rejectedPositionSixOutput?.output_sha256, 64,
+      )
+      const rejectedBindingValid = Boolean(
+        rejectedPositionSixReview
+        && rejectedPositionSixOutput
+        && Number(rejectedPositionSixOutput.position) === 6
+        && Number(rejectedPositionSixOutput.provider_call_ordinal) === 6
+        && /^[0-9a-f]{64}$/.test(rejectedOutputSha256)
+        && rejectedStoragePath.includes("/reference-guided-successor/")
+        && rejectedStoragePath.includes(`/${attempt.id}/position-6/`)
+        && rejectedStoragePath.endsWith(`/${rejectedOutputSha256}.png`),
+      )
+      const rejectedPreview = rejectedBindingValid
+        ? await verifiedPrivatePngPreview(supabase, {
+          storagePath: rejectedStoragePath,
+          outputSha256: rejectedOutputSha256,
+          binding: {
+            attemptId: attempt.id,
+            position: 6,
+            assetRole: "SECONDARY_HUMAN_CONTEXT",
+            providerCallOrdinal: 6,
+            evidenceStatus: "REJECTED",
+          },
+        })
+        : {
+          signedPreviewUrl: null,
+          signedPreviewExpiresAt: null,
+          preview_binding: {
+            attemptId: attempt.id,
+            position: 6,
+            assetRole: "SECONDARY_HUMAN_CONTEXT",
+            providerCallOrdinal: 6,
+            evidenceStatus: "REJECTED",
+            storagePath: rejectedStoragePath || null,
+            outputSha256: rejectedOutputSha256 || null,
+          },
+          preview_error:
+            "REFERENCE_GUIDED_POSITION_6_REJECTED_EVIDENCE_BINDING_INVALID",
+        }
+      const positionSixRejectedEvidence = {
+        position: 6,
+        assetRole: "SECONDARY_HUMAN_CONTEXT",
+        providerCallOrdinal: 6,
+        status: "REJECTED",
+        decision: rejectedPositionSixReview?.decision ?? null,
+        reason: rejectedPositionSixReview?.reason ?? null,
+        providerRequestId:
+          rejectedPositionSixOutput?.provider_request_id ?? null,
+        output_storage_path: rejectedStoragePath || null,
+        output_sha256: rejectedOutputSha256 || null,
+        preservedAsEvidence: Boolean(rejectedBindingValid),
+        currentCandidate: false,
+        ...rejectedPreview,
+      }
       const reviewJobs = await Promise.all((jobs ?? []).map(async (job) => {
         const outputPath = text(job.output_storage_path, 1_000)
         if (!outputPath) return { ...job, output_preview_url: null }
         if (Number(job.position) === 6) {
-          const outputSha256 = text(job.output_sha256, 64)
-          const previewBinding = {
-            attemptId: attempt.id,
-            position: 6,
+          return {
+            ...job,
             assetRole: "SECONDARY_HUMAN_CONTEXT",
-            storagePath: outputPath,
-            outputSha256,
+            currentOutputSource: "EXTRAORDINARY_ORDINAL_8",
+            output_preview_url: null,
+            signedPreviewUrl: null,
+            preview_error: null,
           }
-          const bindingValid = ["QA_PENDING", "BLOCKED_FIDELITY"]
-            .includes(String(job.status))
-            && positionSixSlot?.asset_role === "SECONDARY_HUMAN_CONTEXT"
-            && Number(positionSixSlot?.source_job_position) === 6
-            && positionSixSlot?.source_job_id === job.id
-            && /^[0-9a-f]{64}$/.test(outputSha256)
-            && outputPath.includes("/reference-guided-successor/")
-            && outputPath.includes(`/${attempt.id}/position-6/`)
-            && outputPath.endsWith(`/${outputSha256}.png`)
-          if (!bindingValid) {
-            return { ...job, assetRole: "SECONDARY_HUMAN_CONTEXT",
-              output_preview_url: null, signedPreviewUrl: null,
-              preview_binding: previewBinding,
-              preview_error: "REFERENCE_GUIDED_POSITION_6_PREVIEW_BINDING_INVALID" }
-          }
-          const roundtrip = await supabase.storage.from(STAGING_BUCKET)
-            .download(outputPath)
-          if (roundtrip.error || !roundtrip.data) {
-            return { ...job, assetRole: "SECONDARY_HUMAN_CONTEXT",
-              output_preview_url: null, signedPreviewUrl: null,
-              preview_binding: previewBinding,
-              preview_error: "REFERENCE_GUIDED_POSITION_6_ROUNDTRIP_FAILED" }
-          }
-          const bytes = Buffer.from(await roundtrip.data.arrayBuffer())
-          const metadata = await sharp(bytes).metadata().catch(() => null)
-          const roundtripValid = roundtrip.data.type === "image/png"
-            && metadata?.format === "png"
-            && metadata.width === 1600 && metadata.height === 1600
-            && createHash("sha256").update(bytes).digest("hex") === outputSha256
-          bytes.fill(0)
-          if (!roundtripValid) {
-            return { ...job, assetRole: "SECONDARY_HUMAN_CONTEXT",
-              output_preview_url: null, signedPreviewUrl: null,
-              preview_binding: previewBinding,
-              preview_error: "REFERENCE_GUIDED_POSITION_6_ROUNDTRIP_INVALID" }
-          }
-          const preview = await supabase.storage.from(STAGING_BUCKET)
-            .createSignedUrl(outputPath, 300)
-          if (preview.error || !preview.data?.signedUrl) {
-            return { ...job, assetRole: "SECONDARY_HUMAN_CONTEXT",
-              output_preview_url: null, signedPreviewUrl: null,
-              preview_binding: previewBinding,
-              preview_error: "REFERENCE_GUIDED_POSITION_6_SIGNING_FAILED" }
-          }
-          const signedPath = decodeURIComponent(new URL(
-            preview.data.signedUrl,
-          ).pathname)
-          if (!signedPath.endsWith(`/${STAGING_BUCKET}/${outputPath}`)) {
-            return { ...job, assetRole: "SECONDARY_HUMAN_CONTEXT",
-              output_preview_url: null, signedPreviewUrl: null,
-              preview_binding: previewBinding,
-              preview_error: "REFERENCE_GUIDED_POSITION_6_SIGNED_URL_INVALID" }
-          }
-          return { ...job, assetRole: "SECONDARY_HUMAN_CONTEXT",
-            output_preview_url: preview.data.signedUrl,
-            signedPreviewUrl: preview.data.signedUrl,
-            signedPreviewExpiresAt: new Date(Date.now() + 300_000).toISOString(),
-            preview_binding: { ...previewBinding, roundtripVerified: true },
-            preview_error: null }
         }
         const preview = await supabase.storage.from(STAGING_BUCKET)
           .createSignedUrl(outputPath, 300)
@@ -644,7 +833,7 @@ export async function GET(req: Request) {
           position4Passed: positionFourPassed,
           position6BlockedUntilPosition4Passed: !positionFourPassed }
         : null
-      const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, primaryMainPreview: primaryReview, deterministicPreview: deterministicReview, deterministicVariants: variantReviews, phaseAPosition2Asset: phaseAReview, finalAssetSelection: finalAssetSelection ?? null, assetReviews: assetReviews ?? [], assetContract: REFERENCE_GUIDED_SEVEN_ASSET_ROLES, assetSlots: assetSlots ?? [], extraordinaryReplacementPlan, progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
+      const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, primaryMainPreview: primaryReview, deterministicPreview: deterministicReview, deterministicVariants: variantReviews, phaseAPosition2Asset: phaseAReview, finalAssetSelection: finalAssetSelection ?? null, assetReviews: assetReviews ?? [], assetContract: REFERENCE_GUIDED_SEVEN_ASSET_ROLES, assetSlots: assetSlots ?? [], extraordinaryReplacementPlan, positionSixExtraordinaryReview, positionSixRejectedEvidence, progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
       response.headers.set("Cache-Control", "no-store")
       return response
     }
