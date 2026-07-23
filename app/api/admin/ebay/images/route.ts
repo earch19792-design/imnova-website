@@ -457,17 +457,90 @@ export async function GET(req: Request) {
       if (attemptError || jobsError || deterministicPreviewError || assetSlotsError || primaryMainPreviewError || deterministicVariantsError || finalAssetSelectionError || phaseAPosition2AssetError || assetReviewsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
       if (!attempt) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
       if (requestedRevisionId && attempt.revision_id !== requestedRevisionId) return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_REVISION_MISMATCH" }, { status: 409 })
-      const { data: ownedRevision, error: ownedRevisionError } = await supabase
+      let ownedRevisionQuery = supabase
         .from("ebay_same_day_pilot_image_revisions")
         .select("id")
         .eq("id", attempt.revision_id)
-        .eq("created_by", validation.userId)
         .eq("marketplace_account_key", accountKey)
-        .maybeSingle()
+      if (validation.authenticationMode !== "service_role") {
+        ownedRevisionQuery = ownedRevisionQuery.eq("created_by", validation.userId)
+      }
+      const { data: ownedRevision, error: ownedRevisionError } =
+        await ownedRevisionQuery.maybeSingle()
       if (ownedRevisionError || !ownedRevision) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
+      const positionSixSlot = (assetSlots ?? []).find((slot) =>
+        Number(slot.asset_ordinal) === 6)
       const reviewJobs = await Promise.all((jobs ?? []).map(async (job) => {
         const outputPath = text(job.output_storage_path, 1_000)
         if (!outputPath) return { ...job, output_preview_url: null }
+        if (Number(job.position) === 6) {
+          const outputSha256 = text(job.output_sha256, 64)
+          const previewBinding = {
+            attemptId: attempt.id,
+            position: 6,
+            assetRole: "SECONDARY_HUMAN_CONTEXT",
+            storagePath: outputPath,
+            outputSha256,
+          }
+          const bindingValid = job.status === "QA_PENDING"
+            && positionSixSlot?.asset_role === "SECONDARY_HUMAN_CONTEXT"
+            && Number(positionSixSlot?.source_job_position) === 6
+            && positionSixSlot?.source_job_id === job.id
+            && /^[0-9a-f]{64}$/.test(outputSha256)
+            && outputPath.includes("/reference-guided-successor/")
+            && outputPath.includes(`/${attempt.id}/position-6/`)
+            && outputPath.endsWith(`/${outputSha256}.png`)
+          if (!bindingValid) {
+            return { ...job, assetRole: "SECONDARY_HUMAN_CONTEXT",
+              output_preview_url: null, signedPreviewUrl: null,
+              preview_binding: previewBinding,
+              preview_error: "REFERENCE_GUIDED_POSITION_6_PREVIEW_BINDING_INVALID" }
+          }
+          const roundtrip = await supabase.storage.from(STAGING_BUCKET)
+            .download(outputPath)
+          if (roundtrip.error || !roundtrip.data) {
+            return { ...job, assetRole: "SECONDARY_HUMAN_CONTEXT",
+              output_preview_url: null, signedPreviewUrl: null,
+              preview_binding: previewBinding,
+              preview_error: "REFERENCE_GUIDED_POSITION_6_ROUNDTRIP_FAILED" }
+          }
+          const bytes = Buffer.from(await roundtrip.data.arrayBuffer())
+          const metadata = await sharp(bytes).metadata().catch(() => null)
+          const roundtripValid = roundtrip.data.type === "image/png"
+            && metadata?.format === "png"
+            && metadata.width === 1600 && metadata.height === 1600
+            && createHash("sha256").update(bytes).digest("hex") === outputSha256
+          bytes.fill(0)
+          if (!roundtripValid) {
+            return { ...job, assetRole: "SECONDARY_HUMAN_CONTEXT",
+              output_preview_url: null, signedPreviewUrl: null,
+              preview_binding: previewBinding,
+              preview_error: "REFERENCE_GUIDED_POSITION_6_ROUNDTRIP_INVALID" }
+          }
+          const preview = await supabase.storage.from(STAGING_BUCKET)
+            .createSignedUrl(outputPath, 300)
+          if (preview.error || !preview.data?.signedUrl) {
+            return { ...job, assetRole: "SECONDARY_HUMAN_CONTEXT",
+              output_preview_url: null, signedPreviewUrl: null,
+              preview_binding: previewBinding,
+              preview_error: "REFERENCE_GUIDED_POSITION_6_SIGNING_FAILED" }
+          }
+          const signedPath = decodeURIComponent(new URL(
+            preview.data.signedUrl,
+          ).pathname)
+          if (!signedPath.endsWith(`/${STAGING_BUCKET}/${outputPath}`)) {
+            return { ...job, assetRole: "SECONDARY_HUMAN_CONTEXT",
+              output_preview_url: null, signedPreviewUrl: null,
+              preview_binding: previewBinding,
+              preview_error: "REFERENCE_GUIDED_POSITION_6_SIGNED_URL_INVALID" }
+          }
+          return { ...job, assetRole: "SECONDARY_HUMAN_CONTEXT",
+            output_preview_url: preview.data.signedUrl,
+            signedPreviewUrl: preview.data.signedUrl,
+            signedPreviewExpiresAt: new Date(Date.now() + 300_000).toISOString(),
+            preview_binding: { ...previewBinding, roundtripVerified: true },
+            preview_error: null }
+        }
         const preview = await supabase.storage.from(STAGING_BUCKET)
           .createSignedUrl(outputPath, 300)
         if (preview.error || !preview.data?.signedUrl) {

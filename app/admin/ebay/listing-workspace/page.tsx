@@ -660,6 +660,7 @@ function ListingWorkspacePageContent() {
   const [imageRevisionBusy, setImageRevisionBusy] = useState(false)
   const [referenceGuidedAttempt, setReferenceGuidedAttempt] = useState<Record<string, any> | null>(null)
   const [referenceGuidedAttemptId, setReferenceGuidedAttemptId] = useState("")
+  const [positionSixPreviewError, setPositionSixPreviewError] = useState("")
   const [v3Revision, setV3Revision] = useState<Record<string, unknown> | null>(null)
   const [v3RevisionBusy, setV3RevisionBusy] = useState(false)
   const [protectedSourcePreview, setProtectedSourcePreview] = useState<Record<string, any> | null>(null)
@@ -779,6 +780,11 @@ function ListingWorkspacePageContent() {
         const payload = await imageRequest(undefined, undefined, undefined, undefined, referenceGuidedAttemptId)
         if (cancelled) return
         setReferenceGuidedAttempt(payload)
+        const positionSix = Array.isArray(payload.jobs)
+          ? payload.jobs.find((job: Record<string, unknown>) =>
+            Number(job.position) === 6)
+          : null
+        if (positionSix?.status === "QA_PENDING") return
         const state = String(payload.attempt?.status ?? payload.attempt?.state ?? "")
         if (["WAITING_PROVIDER_ENABLEMENT", "READY_FOR_HUMAN_REVIEW", "FAILED_RETRYABLE", "BLOCKED", "PROVIDER_OUTCOME_UNKNOWN", "QUARANTINED"].includes(state)) return
         delay = Math.min(5_000, Math.round(delay * 1.4))
@@ -1186,6 +1192,28 @@ function ListingWorkspacePageContent() {
   const referenceGuidedPositionFive = referenceGuidedJobs.find((job) =>
     Number(job.position) === 5 &&
       String(job.commercial_role) === "ASPIRATIONAL_LIFESTYLE")
+  const referenceGuidedPositionSix = referenceGuidedJobs.find((job) =>
+    Number(job.position) === 6 &&
+      String(job.commercial_role) === "REAL_HUMAN_USE")
+  const positionSixBinding = object(
+    referenceGuidedPositionSix?.preview_binding,
+  )
+  const positionSixMappingValid = Boolean(referenceGuidedPositionSix)
+    && referenceGuidedPositionSix.status === "QA_PENDING"
+    && referenceGuidedPositionSix.assetRole === "SECONDARY_HUMAN_CONTEXT"
+    && positionSixBinding.attemptId === referenceGuidedAttemptId
+    && Number(positionSixBinding.position) === 6
+    && positionSixBinding.assetRole === "SECONDARY_HUMAN_CONTEXT"
+    && positionSixBinding.storagePath === referenceGuidedPositionSix.output_storage_path
+    && positionSixBinding.outputSha256 === referenceGuidedPositionSix.output_sha256
+    && positionSixBinding.roundtripVerified === true
+  const positionSixPreviewIdentity = [
+    referenceGuidedPositionSix?.output_sha256,
+    referenceGuidedPositionSix?.signedPreviewUrl,
+  ].join(":")
+  useEffect(() => {
+    setPositionSixPreviewError("")
+  }, [positionSixPreviewIdentity])
   const deterministicPositionOnePreview = object(
     referenceGuidedAttempt?.deterministicPreview,
   )
@@ -2295,6 +2323,8 @@ function ListingWorkspacePageContent() {
         {referenceGuidedPositionThree?.output_preview_url && <figure data-asset-ordinal="3" data-asset-role="SECONDARY_SCALE_CAPACITY" data-output-sha256={String(referenceGuidedPositionThree.output_sha256)} className="rounded-xl border border-lime-200/30 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-3-${String(referenceGuidedPositionThree.output_sha256)}`} src={String(referenceGuidedPositionThree.output_preview_url)} alt="Preview privado de Secundaria 3 escala cotidiana" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-lime-50"><strong>Secundaria 3 · SECONDARY_SCALE_CAPACITY</strong><span className="mt-1 block">Comparación cotidiana no métrica · salida privada 1600×1600 · revisión humana obligatoria</span><span className="mt-1 block text-white/60">SHA privado: {String(referenceGuidedPositionThree.output_sha256).slice(0, 12)}… · Estado: {String(referenceGuidedPositionThree.status)} · nunca aprobada automáticamente</span><span className="mt-2 block rounded-lg border border-amber-200/20 bg-amber-200/[0.06] p-2 text-amber-50">Confirma producto exacto completo y vacío, exactamente un limón común al lado, ningún otro objeto, manos, agua, texto o medición, e identidad sin deformaciones.</span></figcaption></figure>}
         {referenceGuidedPositionFour?.output_preview_url && <figure data-asset-ordinal="4" data-asset-role="SECONDARY_USE_CONTEXT" data-output-sha256={String(referenceGuidedPositionFour.output_sha256)} className="rounded-xl border border-sky-200/30 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-4-${String(referenceGuidedPositionFour.output_sha256)}`} src={String(referenceGuidedPositionFour.output_preview_url)} alt="Preview privado de Secundaria 4 uso ordinario" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-sky-50"><strong>Secundaria 4 · SECONDARY_USE_CONTEXT</strong><span className="mt-1 block">Contrato efectivo con enmienda · salida privada 1600×1600 · revisión humana obligatoria</span><span className="mt-1 block text-white/60">SHA privado: {String(referenceGuidedPositionFour.output_sha256).slice(0, 12)}… · Estado: {String(referenceGuidedPositionFour.status)} · nunca aprobada automáticamente</span><span className="mt-2 block rounded-lg border border-amber-200/20 bg-amber-200/[0.06] p-2 text-amber-50">Confirma producto completo bajo agua suave, frutas o vegetales moderados dentro, asas/borde/base/perforaciones visibles, sin manos, dedos, brazos, personas, partes humanas, texto, objetos extra, deformaciones o claims.</span></figcaption></figure>}
         {referenceGuidedPositionFive?.output_preview_url && <figure data-asset-ordinal="5" data-asset-role="SECONDARY_ASPIRATIONAL_LIFESTYLE" data-output-sha256={String(referenceGuidedPositionFive.output_sha256)} className="rounded-xl border border-cyan-200/30 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-5-${String(referenceGuidedPositionFive.output_sha256)}`} src={String(referenceGuidedPositionFive.output_preview_url)} alt="Preview privado de Secundaria 5 lifestyle aspiracional" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-cyan-50"><strong>Secundaria 5 · SECONDARY_ASPIRATIONAL_LIFESTYLE</strong><span className="mt-1 block">Validación canaria del contrato V2 · salida privada 1600×1600 · revisión humana obligatoria</span><span className="mt-1 block text-white/60">SHA privado: {String(referenceGuidedPositionFive.output_sha256).slice(0, 12)}… · Estado: {String(referenceGuidedPositionFive.status)} · nunca aprobada automáticamente</span><span className="mt-2 block rounded-lg border border-amber-200/20 bg-amber-200/[0.06] p-2 text-amber-50">Confirma producto exacto vacío, cocina moderna luminosa, luz natural suave, fondo ligeramente desenfocado, props mínimos separados, ausencia de manos/agua/comida/texto y composición distinta de escala, uso y contexto humano.</span></figcaption></figure>}
+        {referenceGuidedPositionSix?.status === "QA_PENDING" && positionSixMappingValid && referenceGuidedPositionSix.signedPreviewUrl && !positionSixPreviewError && <figure data-asset-ordinal="6" data-asset-role="SECONDARY_HUMAN_CONTEXT" data-output-sha256={String(referenceGuidedPositionSix.output_sha256)} className="rounded-xl border border-fuchsia-200/30 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-6-${String(referenceGuidedPositionSix.output_sha256)}`} src={String(referenceGuidedPositionSix.signedPreviewUrl)} onError={() => setPositionSixPreviewError("REFERENCE_GUIDED_POSITION_6_SIGNED_PREVIEW_LOAD_FAILED")} alt="Preview privado de Secundaria 6 contexto humano" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-fuchsia-50"><strong>Secundaria 6 · SECONDARY_HUMAN_CONTEXT</strong><span className="mt-1 block">Estado: QA_PENDING · revisión humana requerida</span><span className="mt-1 block text-white/60">SHA privado: {String(referenceGuidedPositionSix.output_sha256)} · PNG 1600×1600 verificado server-side</span><span className="mt-2 block rounded-lg border border-amber-200/20 bg-amber-200/[0.06] p-2 text-amber-50">Confirma exactamente dos manos adultas, una por asa, anatomía natural, producto completo y vacío, identidad fiel, y ausencia de persona, rostro, joyería, agua, comida, utensilios, texto o logos añadidos.</span></figcaption></figure>}
+        {referenceGuidedPositionSix?.status === "QA_PENDING" && (!positionSixMappingValid || !referenceGuidedPositionSix.signedPreviewUrl || Boolean(referenceGuidedPositionSix.preview_error) || Boolean(positionSixPreviewError)) && <p role="alert" data-position-6-preview-error className="rounded-xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50">No se pudo mostrar el preview privado de Secundaria 6 de forma segura. Código: {String(referenceGuidedPositionSix.preview_error || positionSixPreviewError || "REFERENCE_GUIDED_POSITION_6_PREVIEW_BINDING_INVALID")}. Recarga para solicitar una URL firmada nueva.</p>}
       </>}
     </section> : null
 
