@@ -167,6 +167,9 @@ async function loadFinalReview(
     .eq("created_by", review.created_by)
     .maybeSingle()
   if (packageError || !listingPackage) throw new Error("EBAY_V3_LISTING_PACKAGE_NOT_FOUND")
+  if (listingPackage.updated_at !== review.listing_package_updated_at) {
+    throw new Error("EBAY_V3_FINAL_PREVIEW_PACKAGE_CHANGED")
+  }
   const { data: opportunity, error: opportunityError } = await supabase
     .from("ebay_luna_opportunity_queue")
     .select("*")
@@ -337,6 +340,19 @@ async function prepare(actor: string) {
     || preflight.snapshotStatus !== "READY"
     || !preflight.selectionComplete
   ) throw new Error("EBAY_V3_TARGET_ACCOUNT_PREFLIGHT_BLOCKED")
+  const accountIdentity = {
+    environment: "PRODUCTION",
+    marketplaceId: "EBAY_US",
+    registrationMarketplaceId:
+      preflight.identity.registrationMarketplaceId || "EBAY_US",
+    accountType: preflight.identity.accountType || "SELLER",
+    maskedSellerAccountId: preflight.identity.maskedSellerAccountId,
+    status: preflight.identity.status,
+  }
+  if (
+    !accountIdentity.maskedSellerAccountId
+    || accountIdentity.registrationMarketplaceId !== "EBAY_US"
+  ) throw new Error("EBAY_V3_TARGET_ACCOUNT_HUMAN_IDENTITY_UNAVAILABLE")
   const taxonomy = await getEbayTaxonomyListingIntelligence(
     EXPECTED_TITLE,
     "20636",
@@ -390,6 +406,29 @@ async function prepare(actor: string) {
   const sameDayAuthorization = record(record(packageData.evidenceSnapshot)
     .sameDayPilotAuthorization)
   const authorizationPreviewId = randomUUID()
+  const authoritySnapshot = {
+    version: "CALYPSO_UNPUBLISHED_SCREEN_AUTHORITY_V1",
+    sourceFinalPreviewHash: review.preview_hash,
+    title: EXPECTED_TITLE,
+    categoryId: "20636",
+    condition: "NEW",
+    gtin: "036588083005",
+    itemSpecifics: listing.itemSpecifics,
+    price: { value: "21.39", currency: "USD" },
+    quantity: 1,
+    marketplaceId: "EBAY_US",
+    format: "FIXED_PRICE",
+    businessPolicies: draftConfiguration.businessPolicies,
+    merchantLocationKey: "luna-boca-raton-fl",
+    accountIdentity,
+    images: assets.map((asset) => ({
+      position: asset.position,
+      assetRole: asset.assetRole,
+      sha256: asset.sha256,
+      url: asset.url,
+    })),
+  }
+  const exactPreviewHash = v3AuthorizationHash(authoritySnapshot)
   const binding = {
     version: "EBAY_V3_FINAL_SET_UNPUBLISHED_AUTHORIZATION_V1",
     authorizationPreviewId,
@@ -397,8 +436,10 @@ async function prepare(actor: string) {
     attemptId: review.attempt_id,
     finalPreviewId: review.id,
     finalPreviewHash: review.preview_hash,
+    exactPreviewHash,
     imageTransportId: transport.id,
     imageTransportHash: transport.transport_hash,
+    accountIdentity,
     selectedAssets: assets,
   }
   const exactPayload = withV3FinalSetAuthorization(
@@ -436,10 +477,13 @@ async function prepare(actor: string) {
     listing_package_id: review.listing_package_id,
     final_preview_id: review.id,
     preview_hash: review.preview_hash,
+    exact_preview_hash: exactPreviewHash,
     image_transport_id: transport.id,
     image_transport_hash: transport.transport_hash,
     target: runtime.target,
     account_fingerprint: preflight.identity.accountFingerprint,
+    account_identity: accountIdentity,
+    authority_snapshot: authoritySnapshot,
     sku: exactPayload.sku,
     listing_quantity: 1,
     exact_payload: exactPayload,
@@ -470,6 +514,37 @@ async function prepare(actor: string) {
     if (!existing) throw new Error("EBAY_V3_UNPUBLISHED_AUTHORIZATION_READ_FAILED")
     return existing
   }
+  const { data: priorRows, error: priorError } = await supabase
+    .from("ebay_v3_unpublished_offer_authorization_previews")
+    .select("id,exact_preview_hash,payload_hash")
+    .eq("attempt_id", review.attempt_id)
+    .eq("created_by", resolvedActor)
+    .neq("id", persisted.id)
+  if (priorError) {
+    throw new Error("EBAY_V3_PRIOR_AUTHORIZATION_READ_FAILED")
+  }
+  if (priorRows?.length) {
+    const invalidations = priorRows.map((prior) => ({
+      authorization_preview_id: prior.id,
+      attempt_id: review.attempt_id,
+      old_exact_preview_hash: prior.exact_preview_hash,
+      old_payload_hash: prior.payload_hash,
+      successor_authorization_preview_id: persisted.id,
+      successor_exact_preview_hash: exactPreviewHash,
+      successor_payload_hash: payloadHash,
+      reason: "SCREEN_AND_PAYLOAD_AUTHORITY_RECONCILIATION",
+      created_by: resolvedActor,
+    }))
+    const { error: invalidationError } = await supabase
+      .from("ebay_v3_unpublished_offer_authorization_invalidations")
+      .upsert(invalidations, {
+        onConflict: "authorization_preview_id",
+        ignoreDuplicates: true,
+      })
+    if (invalidationError) {
+      throw new Error("EBAY_V3_PRIOR_AUTHORIZATION_INVALIDATION_FAILED")
+    }
+  }
   return persisted
 }
 
@@ -478,15 +553,47 @@ function publicPreview(row: JsonRecord) {
   const inventory = record(payload.inventoryItemPayload)
   const product = record(inventory.product)
   const offer = record(payload.offerPayload)
+  const authority = record(row.authority_snapshot)
+  const targetAccount = {
+    status: "BOUND",
+    ...record(row.account_identity),
+  }
+  const images = validateV3PublicationAssets(
+    record(record(payload.compliance).v3FinalSetAuthorization).selectedAssets
+      ? record(record(payload.compliance).v3FinalSetAuthorization).selectedAssets
+      : [],
+  )
+  const aspectValue = (name: string) => {
+    const value = record(product.aspects)[name]
+    return Array.isArray(value) ? text(value[0]) : text(value)
+  }
+  const policies = record(offer.listingPolicies)
+  const authorityPolicies = record(authority.businessPolicies)
+  const checks = {
+    account: v3AuthorizationHash(targetAccount)
+      === v3AuthorizationHash(authority.accountIdentity),
+    title: text(product.title) === text(authority.title),
+    size: aspectValue("Size") === text(record(authority.itemSpecifics).Size),
+    price: v3AuthorizationHash(record(record(offer.pricingSummary).price))
+      === v3AuthorizationHash(authority.price),
+    quantity: Number(offer.availableQuantity) === Number(authority.quantity)
+      && Number(row.listing_quantity) === Number(authority.quantity),
+    policies: v3AuthorizationHash(policies)
+      === v3AuthorizationHash(authorityPolicies),
+    images: v3AuthorizationHash(images.map((asset) => ({
+      position: asset.position,
+      assetRole: asset.assetRole,
+      sha256: asset.sha256,
+      url: asset.url,
+    }))) === v3AuthorizationHash(authority.images),
+  }
   return {
     id: row.id,
     status: row.status,
     target: row.target,
-    targetAccount: {
-      status: "BOUND",
-      fingerprint: row.account_fingerprint,
-    },
-    previewHash: row.preview_hash,
+    targetAccount,
+    previewHash: row.exact_preview_hash,
+    sourceFinalPreviewHash: row.preview_hash,
     payloadHash: row.payload_hash,
     sku: row.sku,
     listingQuantity: row.listing_quantity,
@@ -495,16 +602,17 @@ function publicPreview(row: JsonRecord) {
     categoryId: offer.categoryId,
     marketplaceId: offer.marketplaceId,
     format: offer.format,
-    policies: offer.listingPolicies,
+    policies,
     merchantLocationKey: offer.merchantLocationKey,
     itemSpecifics: product.aspects,
     description: product.description,
-    images: validateV3PublicationAssets(
-      record(record(payload.compliance).v3FinalSetAuthorization).selectedAssets
-        ? record(record(payload.compliance).v3FinalSetAuthorization).selectedAssets
-        : [],
-    ),
+    images,
     exactPayload: payload,
+    authoritySnapshot: authority,
+    screenConsistency: {
+      ...checks,
+      all: Object.values(checks).every(Boolean),
+    },
     gates: row.gates,
     confirmationPhrase: row.confirmation_phrase,
     expiresAt: row.preflight_snapshot_expires_at,
@@ -535,7 +643,7 @@ async function latest(actor: string, attemptId: string) {
 
 async function authorizeAndPrepareExecution(actor: string, body: JsonRecord) {
   const authorizationId = text(body.authorizationPreviewId)
-  const previewHash = text(body.previewHash)
+  const exactPreviewHash = text(body.previewHash)
   const payloadHash = text(body.payloadHash)
   if (
     text(body.confirmation) !== V3_UNPUBLISHED_CONFIRMATION
@@ -549,15 +657,41 @@ async function authorizeAndPrepareExecution(actor: string, body: JsonRecord) {
     .select("*")
     .eq("id", authorizationId)
     .eq("created_by", actor)
-    .eq("preview_hash", previewHash)
+    .eq("exact_preview_hash", exactPreviewHash)
     .eq("payload_hash", payloadHash)
     .eq("status", "READY_FOR_HUMAN_AUTHORIZATION")
     .maybeSingle()
   if (error || !prepared) throw new Error("EBAY_V3_AUTHORIZATION_PREVIEW_NOT_CURRENT")
+  const { data: latestPrepared, error: latestError } = await supabase
+    .from("ebay_v3_unpublished_offer_authorization_previews")
+    .select("id")
+    .eq("attempt_id", prepared.attempt_id)
+    .eq("created_by", actor)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  const { data: invalidation, error: invalidationError } = await supabase
+    .from("ebay_v3_unpublished_offer_authorization_invalidations")
+    .select("id")
+    .eq("authorization_preview_id", prepared.id)
+    .maybeSingle()
+  if (
+    latestError
+    || invalidationError
+    || !latestPrepared
+    || latestPrepared.id !== prepared.id
+    || invalidation
+  ) throw new Error("EBAY_V3_AUTHORIZATION_SUPERSEDED")
   if (Date.parse(prepared.preflight_snapshot_expires_at) <= Date.now()) {
     throw new Error("EBAY_V3_AUTHORIZATION_PREFLIGHT_EXPIRED")
   }
-  await loadFinalReview(actor, EXPECTED_ATTEMPT, previewHash)
+  const reconciledPreview = publicPreview(prepared as JsonRecord)
+  if (
+    reconciledPreview.screenConsistency.all !== true
+    || v3AuthorizationHash(prepared.authority_snapshot)
+      !== prepared.exact_preview_hash
+  ) throw new Error("EBAY_V3_SCREEN_PAYLOAD_MISMATCH")
+  await loadFinalReview(actor, EXPECTED_ATTEMPT, text(prepared.preview_hash))
   const payload = record(prepared.exact_payload)
   if (hashEbayDraftOnlyPayload(payload) !== payloadHash) {
     throw new Error("EBAY_V3_AUTHORIZATION_PAYLOAD_HASH_MISMATCH")
@@ -575,7 +709,7 @@ async function authorizeAndPrepareExecution(actor: string, body: JsonRecord) {
   if (!dependencies.safe) {
     throw new Error(dependencies.blocker ?? "EBAY_V3_DEPENDENCY_PREFLIGHT_FAILED")
   }
-  const approvalKey = `v3-unpublished:${previewHash.slice(0, 24)}`
+  const approvalKey = `v3-unpublished:${exactPreviewHash.slice(0, 24)}`
   const { data: approval, error: approvalError } = await supabase
     .rpc("approve_ebay_draft_only_package", {
       p_listing_package_id: prepared.listing_package_id,

@@ -71,6 +71,7 @@ type CachedAuthentication = {
   token: string
   expiresAt: number
   actualFingerprint: string
+  maskedSellerAccountId: string
   accountType: string
   registrationMarketplaceId: string
 }
@@ -119,6 +120,15 @@ function accountFingerprint(target: EbayDraftOnlyTarget, userId: string) {
   return userId
     ? createHash("sha256").update(`${target}:${userId}`).digest("hex")
     : ""
+}
+
+function maskedSellerAccountId(value: string) {
+  const normalized = value.trim().replace(/[\r\n\t]/g, "").slice(0, 128)
+  if (!normalized) return ""
+  if (normalized.length <= 4) {
+    return `${normalized.slice(0, 1)}${"•".repeat(Math.max(2, normalized.length))}${normalized.slice(-1)}`
+  }
+  return `${normalized.slice(0, 2)}${"•".repeat(Math.min(8, normalized.length - 4))}${normalized.slice(-2)}`
 }
 
 function normalizedFingerprint(value: unknown) {
@@ -321,6 +331,7 @@ async function authenticatedToken(
     token,
     actualFingerprint,
     identityStatus,
+    maskedSellerAccountId: maskedSellerAccountId(actualUserId),
     accountType,
     registrationMarketplaceId,
   }
@@ -328,6 +339,7 @@ async function authenticatedToken(
     authenticationCache.set(cacheKey, {
       token,
       actualFingerprint,
+      maskedSellerAccountId: authenticated.maskedSellerAccountId,
       accountType,
       registrationMarketplaceId,
       expiresAt: Date.now() + (expiresInSeconds - 60) * 1_000,
@@ -935,6 +947,7 @@ export async function preflightEbayDraftOnlyMobile(
     identity: {
       status: authenticated.identityStatus,
       accountFingerprint: authenticated.actualFingerprint,
+      maskedSellerAccountId: authenticated.maskedSellerAccountId,
       expectedIdentityConfigured: config.identityBound,
       accountType: authenticated.accountType,
       registrationMarketplaceId: authenticated.registrationMarketplaceId,

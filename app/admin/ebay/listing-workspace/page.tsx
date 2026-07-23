@@ -107,6 +107,7 @@ type EbayMobilePreflight = {
   identity: {
     status: "BOUND" | "IDENTITY_UNBOUND" | "IDENTITY_MISMATCH"
     accountFingerprint: string
+    maskedSellerAccountId: string
     expectedIdentityConfigured: boolean
     accountType: string
     registrationMarketplaceId: string
@@ -931,6 +932,29 @@ function ListingWorkspacePageContent() {
             ? payload.signedImages
             : [],
         })
+        const reconciledListing = object(
+          object(object(payload.review).snapshot).listing,
+        )
+        if (Object.keys(reconciledListing).length) {
+          setForm(fromPackage(reconciledListing))
+          const policies = object(reconciledListing.businessPolicies)
+          setDraftConfiguration((current) => ({
+            ...current,
+            quantity: Math.max(1, Math.trunc(
+              numberOrNull(reconciledListing.quantity) ?? 1,
+            )),
+            condition: String(reconciledListing.condition ?? "New")
+              .toUpperCase(),
+            merchantLocationKey: String(
+              reconciledListing.merchantLocationKey ?? "",
+            ),
+            fulfillmentPolicyId: String(
+              policies.fulfillmentPolicyId ?? "",
+            ),
+            paymentPolicyId: String(policies.paymentPolicyId ?? ""),
+            returnPolicyId: String(policies.returnPolicyId ?? ""),
+          }))
+        }
         setFinalListingReviewError("")
       } catch (reviewError) {
         if (controller.signal.aborted) return
@@ -983,7 +1007,41 @@ function ListingWorkspacePageContent() {
           throw new Error(String(payload.error
             ?? "EBAY_V3_UNPUBLISHED_AUTHORIZATION_PREPARE_FAILED"))
         }
-        setUnpublishedAuthorization(payload.authorization)
+        const authorization = payload.authorization
+        setUnpublishedAuthorization(authorization)
+        const exactPayload = object(authorization.exactPayload)
+        const authoritativePackage = object(
+          object(exactPayload.listingPackage).packageData,
+        )
+        const stableImages = Array.isArray(authorization.images)
+          ? authorization.images.map((asset: Record<string, unknown>) =>
+              String(asset.url ?? "")).filter(Boolean)
+          : []
+        setForm({
+          ...fromPackage(authoritativePackage),
+          imageUrls: stableImages,
+        })
+        const offer = object(exactPayload.offerPayload)
+        const inventory = object(exactPayload.inventoryItemPayload)
+        const policies = object(offer.listingPolicies)
+        setDraftConfiguration((current) => ({
+          ...current,
+          sku: String(authorization.sku ?? ""),
+          quantity: Math.max(1, Math.trunc(
+            numberOrNull(authorization.listingQuantity) ?? 1,
+          )),
+          condition: String(inventory.condition ?? "NEW"),
+          merchantLocationKey: String(offer.merchantLocationKey ?? ""),
+          fulfillmentPolicyId: String(policies.fulfillmentPolicyId ?? ""),
+          paymentPolicyId: String(policies.paymentPolicyId ?? ""),
+          returnPolicyId: String(policies.returnPolicyId ?? ""),
+          length: null,
+          width: null,
+          height: null,
+          dimensionUnit: "",
+          weight: null,
+          weightUnit: "",
+        }))
         setUnpublishedAuthorizationError("")
       } catch (prepareError) {
         if (controller.signal.aborted) return
@@ -2692,6 +2750,37 @@ function ListingWorkspacePageContent() {
     && finalReview.finalVisualSetLocked === true
     && finalReview.generationControlsHidden === true
     && finalListingReview?.signedImages.length === 7
+  const authorizationAspects = object(
+    unpublishedAuthorization?.itemSpecifics,
+  )
+  const authorizationAspect = (name: string) => {
+    const value = authorizationAspects[name]
+    return Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "")
+  }
+  const authorizationPolicies = object(unpublishedAuthorization?.policies)
+  const authorizationImageUrls = Array.isArray(unpublishedAuthorization?.images)
+    ? unpublishedAuthorization.images.map((asset: Record<string, unknown>) =>
+        String(asset.url ?? ""))
+    : []
+  const authorizationScreenMatches = Boolean(unpublishedAuthorization)
+    && object(unpublishedAuthorization?.screenConsistency).all === true
+    && form.title === String(unpublishedAuthorization?.title ?? "")
+    && form.aspects.Size === authorizationAspect("Size")
+    && Number(form.pricing.targetPrice)
+      === Number(object(unpublishedAuthorization?.price).value)
+    && effectiveDraftQuantity
+      === Number(unpublishedAuthorization?.listingQuantity)
+    && draftConfiguration.merchantLocationKey
+      === String(unpublishedAuthorization?.merchantLocationKey ?? "")
+    && draftConfiguration.fulfillmentPolicyId
+      === String(authorizationPolicies.fulfillmentPolicyId ?? "")
+    && draftConfiguration.paymentPolicyId
+      === String(authorizationPolicies.paymentPolicyId ?? "")
+    && draftConfiguration.returnPolicyId
+      === String(authorizationPolicies.returnPolicyId ?? "")
+    && form.imageUrls.length === 7
+    && form.imageUrls.every((url, index) =>
+      url === authorizationImageUrls[index])
   const visualReviewPanel = referenceGuidedAttemptId && !finalListingReviewChecked
     ? <section className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/60">Comprobando si el conjunto V3 ya está cerrado antes de mostrar controles…</section>
     : finalReviewCompleted
@@ -2738,7 +2827,7 @@ function ListingWorkspacePageContent() {
         {unpublishedAuthorizationError && <p role="alert" className="rounded-xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50">Autorización bloqueada: {unpublishedAuthorizationError}. No se escribió en eBay.</p>}
         {unpublishedAuthorization && <>
           <dl className="grid gap-2 text-xs sm:grid-cols-2">
-            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Cuenta eBay destino</dt><dd className="mt-1 break-all font-black">{String(unpublishedAuthorization.target)} · BOUND · {String(object(unpublishedAuthorization.targetAccount).fingerprint)}</dd></div>
+            <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Cuenta eBay destino</dt><dd className="mt-1 font-black">{String(object(unpublishedAuthorization.targetAccount).environment)} · {String(object(unpublishedAuthorization.targetAccount).registrationMarketplaceId ?? unpublishedAuthorization.marketplaceId)} · {String(object(unpublishedAuthorization.targetAccount).accountType)} · seller {String(object(unpublishedAuthorization.targetAccount).maskedSellerAccountId)}</dd></div>
             <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">SKU exacto</dt><dd className="mt-1 break-all font-black">{String(unpublishedAuthorization.sku)}</dd></div>
             <div className="rounded-xl bg-black/25 p-2 sm:col-span-2"><dt className="text-white/45">Título</dt><dd className="mt-1 font-black">{String(unpublishedAuthorization.title)}</dd></div>
             <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Precio</dt><dd className="mt-1 font-black">{String(object(unpublishedAuthorization.price).currency)} {String(object(unpublishedAuthorization.price).value)}</dd></div>
@@ -2761,8 +2850,10 @@ function ListingWorkspacePageContent() {
           <div className="rounded-xl border border-cyan-200/20 bg-black/25 p-3 text-xs">
             <strong>Payload hash inmutable</strong>
             <p className="mt-1 break-all font-mono text-cyan-100">{String(unpublishedAuthorization.payloadHash)}</p>
-            <p className="mt-2 break-all text-white/55">Preview hash {String(unpublishedAuthorization.previewHash)}</p>
+            <p className="mt-2 break-all text-white/55">Exact preview hash {String(unpublishedAuthorization.previewHash)}</p>
+            <p className="mt-1 break-all text-white/40">Snapshot visual fuente {String(unpublishedAuthorization.sourceFinalPreviewHash)}</p>
           </div>
+          <p className={`rounded-xl border p-3 text-xs ${authorizationScreenMatches ? "border-emerald-200/25 bg-emerald-200/[0.06] text-emerald-50" : "border-rose-200/30 bg-rose-200/[0.08] text-rose-50"}`}>{authorizationScreenMatches ? "✓ Pantalla, cuenta, título, Size, precio, cantidad, policies e imágenes coinciden con el payload exacto." : "Autorización deshabilitada: la pantalla visible no coincide exactamente con el payload persistido."}</p>
           <details className="rounded-xl border border-white/10 bg-black/25 p-3 text-xs">
             <summary className="cursor-pointer font-black">Mostrar payload exacto completo</summary>
             <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all text-[10px] text-white/65">{JSON.stringify(unpublishedAuthorization.exactPayload, null, 2)}</pre>
@@ -2775,6 +2866,7 @@ function ListingWorkspacePageContent() {
             <label className="flex gap-2 text-xs"><input type="checkbox" checked={confirmNoUnpublishedRetry} onChange={(event) => setConfirmNoUnpublishedRetry(event.target.checked)} />Entiendo que no habrá retry automático y que una reanudación reconciliará por SKU sin duplicar.</label>
             <button type="button" disabled={
               unpublishedAuthorizationBusy
+              || !authorizationScreenMatches
               || unpublishedConfirmation !== unpublishedAuthorization.confirmationPhrase
               || !confirmExactUnpublishedPayload
               || !confirmEbayWritesWithoutPublish
