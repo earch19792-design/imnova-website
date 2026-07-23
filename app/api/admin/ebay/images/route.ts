@@ -428,7 +428,11 @@ export async function GET(req: Request) {
         { data: deterministicVariants, error: deterministicVariantsError },
         { data: finalAssetSelection, error: finalAssetSelectionError },
         { data: phaseAPosition2Asset, error: phaseAPosition2AssetError },
-        { data: assetReviews, error: assetReviewsError }] = await Promise.all([
+        { data: assetReviews, error: assetReviewsError },
+        { data: extraordinaryPlan, error: extraordinaryPlanError },
+        { data: extraordinaryPositions, error: extraordinaryPositionsError },
+        { data: extraordinaryAuthorizations,
+          error: extraordinaryAuthorizationsError }] = await Promise.all([
         supabase.from("ebay_reference_guided_generation_attempts").select("id,revision_id,composition_manifest_hash,status,completed_job_count,expected_job_count,provider_calls,retry_consumed,created_at,started_at,completed_at").eq("id", attemptId).maybeSingle(),
         supabase.from("ebay_reference_guided_generation_jobs").select("id,position,commercial_role,status,provider_request_id,output_storage_path,output_sha256,qa_result,error_code,lease_owner,lease_expires_at,provider_call_started_at,provider_call_completed_at").eq("generation_attempt_id", attemptId).order("position"),
         supabase.from("ebay_reference_guided_deterministic_previews")
@@ -453,8 +457,23 @@ export async function GET(req: Request) {
         supabase.from("ebay_reference_guided_asset_review_events")
           .select("id,asset_ordinal,asset_role,preview_sha256,decision,reason,created_at")
           .eq("attempt_id", attemptId).order("created_at", { ascending: false }),
+        supabase.from("ebay_reference_guided_extraordinary_replacement_plans")
+          .select("id,plan_type,plan_hash,current_provider_calls,max_extra_calls,absolute_cap,max_concurrency,automatic_retries,requires_separate_human_authorization,human_checkpoint_between_calls,feature_flags_enabled,status,created_at")
+          .eq("attempt_id", attemptId).maybeSingle(),
+        supabase.from("ebay_reference_guided_extraordinary_replacement_positions")
+          .select("id,correction_plan_id,position,asset_role,extraordinary_ordinal,amendment_id,amendment_hash,final_effective_contract_hash,final_effective_prompt_hash,rejected_output_sha256,authorization_state,requires_position_4_passed")
+          .eq("attempt_id", attemptId).order("position"),
+        supabase.from("ebay_reference_guided_extraordinary_authorization_events")
+          .select("id,correction_plan_id,position,extraordinary_ordinal,event_type,created_at")
+          .eq("attempt_id", attemptId).order("extraordinary_ordinal"),
       ])
-      if (attemptError || jobsError || deterministicPreviewError || assetSlotsError || primaryMainPreviewError || deterministicVariantsError || finalAssetSelectionError || phaseAPosition2AssetError || assetReviewsError) throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
+      if (attemptError || jobsError || deterministicPreviewError ||
+        assetSlotsError || primaryMainPreviewError || deterministicVariantsError ||
+        finalAssetSelectionError || phaseAPosition2AssetError ||
+        assetReviewsError || extraordinaryPlanError ||
+        extraordinaryPositionsError || extraordinaryAuthorizationsError) {
+        throw new Error("REFERENCE_GUIDED_STATUS_FAILED")
+      }
       if (!attempt) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
       if (requestedRevisionId && attempt.revision_id !== requestedRevisionId) return NextResponse.json({ success: false, error: "REFERENCE_GUIDED_REVISION_MISMATCH" }, { status: 409 })
       let ownedRevisionQuery = supabase
@@ -462,9 +481,7 @@ export async function GET(req: Request) {
         .select("id")
         .eq("id", attempt.revision_id)
         .eq("marketplace_account_key", accountKey)
-      if (validation.authenticationMode !== "service_role") {
-        ownedRevisionQuery = ownedRevisionQuery.eq("created_by", validation.userId)
-      }
+      ownedRevisionQuery = ownedRevisionQuery.eq("created_by", validation.userId)
       const { data: ownedRevision, error: ownedRevisionError } =
         await ownedRevisionQuery.maybeSingle()
       if (ownedRevisionError || !ownedRevision) return NextResponse.json({ success: false, error: "ATTEMPT_NOT_FOUND" }, { status: 404 })
@@ -482,7 +499,8 @@ export async function GET(req: Request) {
             storagePath: outputPath,
             outputSha256,
           }
-          const bindingValid = job.status === "QA_PENDING"
+          const bindingValid = ["QA_PENDING", "BLOCKED_FIDELITY"]
+            .includes(String(job.status))
             && positionSixSlot?.asset_role === "SECONDARY_HUMAN_CONTEXT"
             && Number(positionSixSlot?.source_job_position) === 6
             && positionSixSlot?.source_job_id === job.id
@@ -615,7 +633,18 @@ export async function GET(req: Request) {
             storagePath: phaseAPosition2Asset.output_storage_path,
             outputSha256: phaseAPosition2Asset.output_sha256 } }
       }
-      const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, primaryMainPreview: primaryReview, deterministicPreview: deterministicReview, deterministicVariants: variantReviews, phaseAPosition2Asset: phaseAReview, finalAssetSelection: finalAssetSelection ?? null, assetReviews: assetReviews ?? [], assetContract: REFERENCE_GUIDED_SEVEN_ASSET_ROLES, assetSlots: assetSlots ?? [], progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
+      const positionFourPassed = (jobs ?? []).some((job) =>
+        Number(job.position) === 4 && job.status === "PASSED")
+      const extraordinaryReplacementPlan = extraordinaryPlan
+        ? { ...extraordinaryPlan, positions: extraordinaryPositions ?? [],
+          authorizations: extraordinaryAuthorizations ?? [],
+          providerCalls: Number(attempt.provider_calls),
+          providerCallsRemaining: Math.max(0,
+            Number(extraordinaryPlan.absolute_cap) - Number(attempt.provider_calls)),
+          position4Passed: positionFourPassed,
+          position6BlockedUntilPosition4Passed: !positionFourPassed }
+        : null
+      const response = NextResponse.json({ success: true, attempt: { ...attempt, executionAuthorizedAt: null }, jobs: reviewJobs, primaryMainPreview: primaryReview, deterministicPreview: deterministicReview, deterministicVariants: variantReviews, phaseAPosition2Asset: phaseAReview, finalAssetSelection: finalAssetSelection ?? null, assetReviews: assetReviews ?? [], assetContract: REFERENCE_GUIDED_SEVEN_ASSET_ROLES, assetSlots: assetSlots ?? [], extraordinaryReplacementPlan, progress: `${progressedJobs}/${attempt.expected_job_count}`, safety: { providerCalls: attempt.provider_calls, retryConsumed: attempt.retry_consumed, ebayWrites: 0, productionChanged: false } })
       response.headers.set("Cache-Control", "no-store")
       return response
     }

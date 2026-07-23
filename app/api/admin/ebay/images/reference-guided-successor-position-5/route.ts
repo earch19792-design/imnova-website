@@ -61,7 +61,6 @@ export async function POST(req: Request) {
     process.env[FEATURE_FLAG] = "true"
     process.env.CANARY_EXECUTION_ENVIRONMENT = "preview"
     // The module accepts no browser plan, position, prompt, source or hash.
-    // @ts-expect-error The audited executor is a Node ESM operations module.
     const executed = await import(
       "@/scripts/execute-reference-guided-successor-phase-b-position-5.mjs"
     ) as { executionResult: Record<string, unknown> }
