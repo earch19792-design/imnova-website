@@ -10,6 +10,10 @@ const reconciliationMigration = readFileSync(
   "supabase/migrations/20260722054500_reconcile_calypso_final_listing_review.sql",
   "utf8",
 )
+const gateSourceMigration = readFileSync(
+  "supabase/migrations/20260722055000_fix_final_listing_gate_source_attribution.sql",
+  "utf8",
+)
 const route = readFileSync(
   "app/api/admin/ebay/final-listing-review/route.ts",
   "utf8",
@@ -145,4 +149,20 @@ test("package preparation shows each persisted gate and only shows a percentage 
   assert.match(workspace, /blockers\.length\s*\?\s*"BLOQUEADO"/)
   assert.match(workspace, /finalReviewGateDetails\.map/)
   assert.match(workspace, /Inventory Item, Offer y publicación permanecen deshabilitados/)
+})
+
+test("gate sources are corrected append-only with explicit V3, candidate and market mappings", () => {
+  assert.match(gateSourceMigration,
+    /PERSISTED_GATE_SOURCE_ATTRIBUTION_FIX/)
+  assert.match(gateSourceMigration,
+    /visualFinalSetAtomic','legacyV2VisualBlockersInactive'/)
+  assert.match(gateSourceMigration,
+    /opportunityValidationCurrent'[\s\S]*v_gate_sources->>'opportunity'/)
+  assert.match(gateSourceMigration,
+    /marketDemandControlledRouteValid'[\s\S]*v_gate_sources->>'marketDemand'/)
+  assert.match(gateSourceMigration,
+    /before update or delete/)
+  assert.match(gateSourceMigration, /provider_calls_snapshot,ebay_writes,production_changed/)
+  assert.doesNotMatch(gateSourceMigration,
+    /createOrReplaceInventoryItem|createOffer|publishOffer/)
 })
