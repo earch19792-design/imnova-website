@@ -477,7 +477,6 @@ async function preflightRead(
       method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
-        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
       },
       cache: "no-store",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -679,6 +678,8 @@ async function preflightSkuCollisionWithToken(
     offersReadAttempts: offers.attempts ?? 1,
     inventoryErrorIds: readErrorIds(inventory),
     offersErrorIds: readErrorIds(offers),
+    inventoryErrors: safeReadErrors(inventory),
+    offersErrors: safeReadErrors(offers),
     offerResponseShape,
   }
   if ((!inventory.ok && !inventoryAbsent) || !offersKnown) {
@@ -1111,7 +1112,6 @@ async function write(
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
         "Content-Language": "en-US",
-        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
       },
       body: JSON.stringify(payload),
       cache: "no-store",
@@ -1502,8 +1502,6 @@ export async function publishEbayOfferOnce(input: {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
-        "Content-Language": "en-US",
-        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
       },
       cache: "no-store",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),

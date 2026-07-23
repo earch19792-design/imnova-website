@@ -88,6 +88,10 @@ const alphanumericSkuMigrationSource = readFileSync(
   new URL("../supabase/migrations/20260723017000_use_ebay_inventory_alphanumeric_sku.sql", import.meta.url),
   "utf8",
 )
+const inventoryHeaderMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260723018000_retire_invalid_inventory_header_preflight.sql", import.meta.url),
+  "utf8",
+)
 
 async function importTypeScript(source) {
   const javascript = ts.transpileModule(source, {
@@ -701,7 +705,12 @@ test("gateway uses Sandbox GETs to verify policies, enabled location and SKU bef
   const calls = []
   const fetchImpl = async (url, init = {}) => {
     const parsed = new URL(url)
-    calls.push({ url: parsed, method: init.method, body: init.body })
+    calls.push({
+      url: parsed,
+      method: init.method,
+      body: init.body,
+      headers: init.headers ?? {},
+    })
     if (parsed.pathname.endsWith("/oauth2/token")) {
       return new Response(JSON.stringify({ access_token: "access", expires_in: 7200 }), { status: 200 })
     }
@@ -770,6 +779,20 @@ test("gateway uses Sandbox GETs to verify policies, enabled location and SKU bef
     assert.deepEqual(ebayCalls.map((call) => call.method), ["GET", "GET", "GET", "GET", "GET", "GET", "GET", "PUT", "POST"])
     assert.ok(ebayCalls.every((call) => call.url.origin === "https://api.sandbox.ebay.com"))
     assert.ok(ebayCalls.every((call) => !call.url.pathname.includes("publish_offer")))
+    assert.ok(ebayCalls
+      .filter((call) => call.method === "GET")
+      .every((call) =>
+        Object.keys(call.headers).length === 1
+        && typeof call.headers.Authorization === "string"
+        && !("X-EBAY-C-MARKETPLACE-ID" in call.headers)
+      ))
+    assert.ok(ebayCalls
+      .filter((call) => call.method === "PUT" || call.method === "POST")
+      .every((call) =>
+        call.headers["Content-Type"] === "application/json"
+        && call.headers["Content-Language"] === "en-US"
+        && !("X-EBAY-C-MARKETPLACE-ID" in call.headers)
+      ))
     assert.deepEqual(
       ebayCalls.filter((call) => call.method === "GET").map((call) => call.url.pathname),
       [
@@ -967,6 +990,10 @@ test("SKU preflight accepts contracted eBay absence, retries transient reads and
     )
     assert.deepEqual(rejected.result.inventoryErrorIds, ["25709"])
     assert.deepEqual(rejected.result.offersErrorIds, ["25709"])
+    assert.equal(
+      rejected.result.inventoryErrors[0].message,
+      "Invalid value for sku.",
+    )
     assert.ok([
       ...notFound.sellMethods,
       ...explicitEmpty.sellMethods,
@@ -1295,6 +1322,10 @@ test("route requires a human Admin, exact approval, fresh revalidation and unkno
   )
   assert.match(
     workspaceSource,
+    /EBAY_PREFLIGHT_HEADER_CONTRACT_MIGRATED_BEFORE_WRITE/,
+  )
+  assert.match(
+    workspaceSource,
     /const retiredPrewriteExecution = shouldRenewExpiredSkuPreflight/,
   )
 })
@@ -1336,6 +1367,37 @@ test("alphanumeric SKU migration supersedes only pre-write legacy authority", ()
   assert.match(
     alphanumericSkuMigrationSource,
     /This migration performs no external eBay operation/,
+  )
+})
+
+test("Inventory header migration retires only the exact pre-write 25709 pair", () => {
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /EBAY_PREFLIGHT_HEADER_RECONCILIATION_WRITE_EVIDENCE_REQUIRED/,
+  )
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /EBAY_PREFLIGHT_HEADER_CONTRACT_MIGRATED_BEFORE_WRITE/,
+  )
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /inventoryErrorIds[\s\S]*25709/,
+  )
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /offersErrorIds[\s\S]*25709/,
+  )
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /inventory_http_status is null/,
+  )
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /offer_id is null/,
+  )
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /This migration performs no[\s\S]*external eBay operation/,
   )
 })
 
@@ -1711,7 +1773,11 @@ test("authorized publication sends publishOffer exactly once and returns the lis
   const fetchImpl = async (url, init = {}) => {
     const parsed = new URL(url)
     const method = init.method ?? "GET"
-    calls.push({ pathname: parsed.pathname, method })
+    calls.push({
+      pathname: parsed.pathname,
+      method,
+      headers: init.headers ?? {},
+    })
     if (parsed.pathname.endsWith("/oauth2/token")) {
       return new Response(JSON.stringify({ access_token: "access" }), { status: 200 })
     }
@@ -1745,6 +1811,12 @@ test("authorized publication sends publishOffer exactly once and returns the lis
     assert.equal(result.reconciled, false)
     assert.equal(calls.filter((call) => call.method === "POST"
       && call.pathname.endsWith("/publish")).length, 1)
+    const publishCall = calls.find((call) => call.method === "POST"
+      && call.pathname.endsWith("/publish"))
+    assert.deepEqual(
+      Object.keys(publishCall.headers),
+      ["Authorization"],
+    )
   } finally {
     process.env = original
   }

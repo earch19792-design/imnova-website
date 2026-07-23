@@ -1583,6 +1583,8 @@ async function executeDraft(body: JsonRecord, actor: string) {
             offersReadAttempts: preflight.offersReadAttempts,
             inventoryErrorIds: preflight.inventoryErrorIds,
             offersErrorIds: preflight.offersErrorIds,
+            inventoryErrors: preflight.inventoryErrors,
+            offersErrors: preflight.offersErrors,
             offerResponseShape: preflight.offerResponseShape,
           },
           lease_token: null,

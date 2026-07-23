@@ -10,6 +10,7 @@ import {
   ebayDraftOnlyRuntimeStatus,
   preflightEbayDraftDependencies,
   preflightEbayDraftOnlyMobile,
+  preflightEbayDraftSkuCollision,
 } from "@/lib/ebay/ebay-draft-only-gateway"
 import {
   approvalExpiresAt,
@@ -565,6 +566,15 @@ async function prepare(actor: string) {
     !accountIdentity.maskedSellerAccountId
     || accountIdentity.registrationMarketplaceId !== "EBAY_US"
   ) throw new Error("EBAY_V3_TARGET_ACCOUNT_HUMAN_IDENTITY_UNAVAILABLE")
+  const reservedSku = expectedEbayDraftOnlySku(
+    listingPackage as JsonRecord,
+  )
+  const skuPreflight = await preflightEbayDraftSkuCollision(reservedSku)
+  if (!skuPreflight.safe) {
+    throw new Error(
+      skuPreflight.blocker ?? "EBAY_SKU_PREFLIGHT_UNAVAILABLE",
+    )
+  }
   const taxonomy = await getEbayTaxonomyListingIntelligence(
     EXPECTED_TITLE,
     "20636",
@@ -588,7 +598,7 @@ async function prepare(actor: string) {
     pricing: listing.pricing,
   }
   const draftConfiguration = {
-    sku: expectedEbayDraftOnlySku(listingPackage as JsonRecord),
+    sku: reservedSku,
     quantity: 1,
     condition: "NEW",
     merchantLocationKey: "luna-boca-raton-fl",
@@ -610,7 +620,11 @@ async function prepare(actor: string) {
     },
     aspectValidation: aspectValidation(taxonomy),
     skuCollisionCheck: {
-      sku: expectedEbayDraftOnlySku(listingPackage as JsonRecord),
+      sku: reservedSku,
+      preparationVerified: true,
+      inventoryHttpStatus: skuPreflight.inventoryHttpStatus,
+      offersHttpStatus: skuPreflight.offersHttpStatus,
+      verifiedAt: new Date().toISOString(),
       serverPreflightRequiredAtExecution: true,
     },
     ebayPreflightSnapshot: preflight.snapshot,
@@ -628,6 +642,7 @@ async function prepare(actor: string) {
     price: { value: "21.39", currency: "USD" },
     quantity: 1,
     marketplaceId: "EBAY_US",
+    sku: reservedSku,
     format: "FIXED_PRICE",
     businessPolicies: draftConfiguration.businessPolicies,
     merchantLocationKey: "luna-boca-raton-fl",
@@ -678,6 +693,7 @@ async function prepare(actor: string) {
     priceFinal: true,
     categoryAndSpecificsValid: true,
     policiesAndLocationValid: true,
+    skuPreflightClear: true,
     unpublishedOnly: true,
     publishOfferProhibited: true,
   }

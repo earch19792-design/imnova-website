@@ -483,6 +483,7 @@ function shouldRenewExpiredSkuPreflight(
     && [
       "EBAY_SKU_NAMESPACE_MIGRATED_BEFORE_WRITE",
       "EBAY_SKU_PREFLIGHT_SUPERSEDED_BY_REAPPROVAL",
+      "EBAY_PREFLIGHT_HEADER_CONTRACT_MIGRATED_BEFORE_WRITE",
     ].includes(String(execution.last_error_code ?? ""))
   )
   return !approvalFresh && retryablePrewriteFailure && !execution?.offer_id
