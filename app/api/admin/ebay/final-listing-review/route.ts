@@ -3,6 +3,8 @@ export const dynamic = "force-dynamic"
 
 import { NextResponse } from "next/server"
 
+import { getEbayTaxonomyListingIntelligence } from
+  "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
@@ -29,6 +31,43 @@ function safeCode(error: unknown) {
   return /^[A-Z0-9_:-]+$/.test(value)
     ? value
     : "FINAL_LISTING_REVIEW_READ_FAILED"
+}
+
+function taxonomySummary(value: Awaited<ReturnType<
+  typeof getEbayTaxonomyListingIntelligence
+>>) {
+  const requestedNames = new Set([
+    "Brand",
+    "MPN",
+    "Type",
+    "Color",
+    "Material",
+    "Size",
+  ])
+  return {
+    status: value.status,
+    source: value.source,
+    categoryId: value.categoryId,
+    categoryName: value.categoryName,
+    categoryTreeId: value.categoryTreeId,
+    categoryTreeVersion: value.categoryTreeVersion,
+    categoryResolution: value.categoryResolution,
+    observedAt: value.observedAt,
+    failureCode: value.failureCode,
+    requiredAspectNames: value.requiredAspects.map((aspect) => aspect.name),
+    relevantAspects: value.aspects
+      .filter((aspect) => requestedNames.has(aspect.name))
+      .map((aspect) => ({
+        name: aspect.name,
+        required: aspect.required,
+        mode: aspect.mode,
+        cardinality: aspect.cardinality,
+        dataType: aspect.dataType,
+        valuesComplete: aspect.valuesComplete,
+        constraintsComplete: aspect.constraintsComplete,
+        suggestedValues: aspect.suggestedValues.slice(0, 40),
+      })),
+  }
 }
 
 export async function GET(req: Request) {
@@ -104,13 +143,19 @@ export async function GET(req: Request) {
 
     const { data: currentPackage, error: packageError } = await supabase
       .from("ebay_listing_packages")
-      .select("updated_at")
+      .select("updated_at,package_data")
       .eq("id", review.listing_package_id)
       .eq("created_by", validation.userId)
       .maybeSingle()
     if (packageError || !currentPackage) {
       throw new Error("FINAL_LISTING_REVIEW_PACKAGE_READ_FAILED")
     }
+    const packageData = object(currentPackage.package_data)
+    const taxonomy = await getEbayTaxonomyListingIntelligence(
+      String(packageData.title ?? "").slice(0, 350),
+      String(packageData.categoryId ?? "") || null,
+      { allowTitleSuggestionFallback: false },
+    )
 
     return NextResponse.json({
       success: true,
@@ -140,6 +185,7 @@ export async function GET(req: Request) {
         createdAt: review.created_at,
       },
       signedImages,
+      taxonomy: taxonomySummary(taxonomy),
       cache: {
         signedUrlTtlSeconds: 600,
         refreshedOnEveryGet: true,

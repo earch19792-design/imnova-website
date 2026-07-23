@@ -6,6 +6,10 @@ const migration = readFileSync(
   "supabase/migrations/20260722053000_create_v3_final_listing_review_preview.sql",
   "utf8",
 )
+const reconciliationMigration = readFileSync(
+  "supabase/migrations/20260722054500_reconcile_calypso_final_listing_review.sql",
+  "utf8",
+)
 const route = readFileSync(
   "app/api/admin/ebay/final-listing-review/route.ts",
   "utf8",
@@ -80,4 +84,65 @@ test("workspace shows COMPLETED, seven previews and no generation controls in fi
   assert.match(workspace, /finalListingReview\?\.signedImages\.length === 7/)
   assert.match(workspace, /Inventory Item: NO CREADO · Offer: NO CREADO/)
   assert.match(workspace, /FINAL_LISTING_REVIEW persistente/)
+})
+
+test("reconciliation uses only the atomic V3 final selection for the visual gate", () => {
+  assert.match(reconciliationMigration,
+    /V3_FINAL_ATOMIC_SELECTION:ebay_reference_guided_position_6_extraordinary_human_verdict_events\.selected_assets/)
+  assert.match(reconciliationMigration, /legacy_v2_visual_blockers_active boolean not null check \(not legacy_v2_visual_blockers_active\)/)
+  assert.match(reconciliationMigration,
+    /legacyV2VisualBlockersActive'[\s\S]*'false'::jsonb/)
+  assert.match(workspace, /finalReview\.visualPhase === "COMPLETED"/)
+  assert.match(workspace, /return Array\.isArray\(finalReview\.blockers\)/)
+})
+
+test("exact title and taxonomy-normalized exact facts are persisted without eBay writes", () => {
+  const title =
+    "Calypso Basics by Reston Lloyd 1.5 Qt Powder Coated Enamel Colander White"
+  assert.equal([...title].length, 73)
+  assert.ok(reconciliationMigration.includes(title))
+  for (const fact of [
+    "Calypso Basics",
+    "08300",
+    "Colander",
+    "White",
+    "powder coated enamel on steel",
+    "1.5 Quart",
+    "036588083005",
+  ]) assert.ok(reconciliationMigration.includes(fact))
+  assert.match(reconciliationMigration,
+    /EBAY_TAXONOMY_OFFICIAL_READONLY/)
+  assert.match(reconciliationMigration, /inventory_item_created boolean not null check \(not inventory_item_created\)/)
+  assert.match(reconciliationMigration, /offer_created boolean not null check \(not offer_created\)/)
+  assert.match(reconciliationMigration, /ebay_writes integer not null check \(ebay_writes = 0\)/)
+  assert.doesNotMatch(reconciliationMigration,
+    /createOrReplaceInventoryItem|createOffer|publishOffer/)
+})
+
+test("official taxonomy is GET-only and the UI never shows it as unqueried after final review", () => {
+  assert.match(route, /getEbayTaxonomyListingIntelligence/)
+  assert.match(route, /allowTitleSuggestionFallback: false/)
+  assert.match(route, /taxonomy: taxonomySummary\(taxonomy\)/)
+  assert.match(workspace,
+    /finalReviewTaxonomy\.status \?\? finalListingReview\?\.taxonomy\?\.status/)
+  assert.match(workspace, /APPROVED_BY_HUMAN/)
+})
+
+test("opportunity and demand states are reconciled without synthetic completion", () => {
+  assert.match(reconciliationMigration,
+    /CURRENT_CANDIDATE_READY_LEGACY_QUEUE_GATES_SUPERSEDED/)
+  assert.match(reconciliationMigration,
+    /CONTROLLED_TEST_APPROVED_WITH_INSUFFICIENT_EQUIVALENT_MARKET_DATA/)
+  assert.match(reconciliationMigration, /'syntheticCompletionUsed',false/)
+  assert.match(reconciliationMigration,
+    /controlledExploratoryTestApproved' = 'true'/)
+  assert.match(reconciliationMigration, /operatorPriceApproved' = 'true'/)
+})
+
+test("package preparation shows each persisted gate and only shows a percentage when unblocked", () => {
+  assert.match(reconciliationMigration, /'percent',100/)
+  assert.match(reconciliationMigration, /'gateDetails',v_gate_details/)
+  assert.match(workspace, /blockers\.length\s*\?\s*"BLOQUEADO"/)
+  assert.match(workspace, /finalReviewGateDetails\.map/)
+  assert.match(workspace, /Inventory Item, Offer y publicación permanecen deshabilitados/)
 })

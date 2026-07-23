@@ -281,6 +281,28 @@ type ImageRevisionPayload = {
 
 type FinalListingReviewPayload = {
   review: Record<string, any>
+  taxonomy?: {
+    status: string
+    source: string
+    categoryId: string | null
+    categoryName: string | null
+    categoryTreeId: string | null
+    categoryTreeVersion: string | null
+    categoryResolution: string
+    observedAt: string | null
+    failureCode: string | null
+    requiredAspectNames: string[]
+    relevantAspects: Array<{
+      name: string
+      required: boolean
+      mode: string | null
+      cardinality: string | null
+      dataType: string | null
+      valuesComplete: boolean
+      constraintsComplete: boolean
+      suggestedValues: string[]
+    }>
+  }
   signedImages: Array<{
     position: number
     assetRole: string
@@ -889,6 +911,9 @@ function ListingWorkspacePageContent() {
         }
         setFinalListingReview({
           review: object(payload.review),
+          taxonomy: payload.taxonomy && typeof payload.taxonomy === "object"
+            ? payload.taxonomy
+            : undefined,
           signedImages: Array.isArray(payload.signedImages)
             ? payload.signedImages
             : [],
@@ -1439,9 +1464,12 @@ function ListingWorkspacePageContent() {
     revisionContract: activeVisualRevision?.revision_contract,
     attemptId: referenceGuidedAttemptId,
   })
-  const requiredTaxonomyAspects = useMemo(() => new Set(
-    draftState.taxonomy?.requiredAspects.map((aspect) => aspect.name) ?? [],
-  ), [draftState.taxonomy])
+  const requiredTaxonomyAspects = useMemo(() => {
+    const names = finalListingReview?.taxonomy?.requiredAspectNames ?? []
+    return new Set(names.length
+      ? names
+      : draftState.taxonomy?.requiredAspects.map((aspect) => aspect.name) ?? [])
+  }, [draftState.taxonomy, finalListingReview?.taxonomy?.requiredAspectNames])
   const safeDefaultsMetadata = useMemo(
     () => object(object(listingPackage?.package_data).safeDefaults),
     [listingPackage],
@@ -1471,15 +1499,25 @@ function ListingWorkspacePageContent() {
       ...(taxonomyReady ? ["NEED_EBAY_TAXONOMY_CATEGORY", "NEED_REQUIRED_EBAY_ITEM_ASPECTS"] : []),
     ])
   }, [approvedImageAssets, draftConfiguration, form.aspects, form.categoryId, form.imageUrls, requiredTaxonomyAspects])
-  const blockers = useMemo(() => [
-    ...(!form.title ? ["Falta título"] : []),
-    ...(!form.categoryId ? ["Falta categoría"] : []),
-    ...(!form.description ? ["Falta descripción"] : []),
-    ...(!form.imageUrls.length ? ["Faltan imágenes"] : []),
-    ...(!(Number(form.pricing.targetPrice) > 0) ? ["Falta precio"] : []),
-    ...(opportunity?.hard_gates ?? []).filter((gate) => !resolvedWorkspaceGates.has(gate)),
-    ...(opportunity?.evidence_guards ?? []),
-  ], [form, opportunity, resolvedWorkspaceGates])
+  const blockers = useMemo(() => {
+    const finalReview = object(finalListingReview?.review)
+    if (finalReview.visualPhase === "COMPLETED"
+      && finalReview.finalVisualSetLocked === true) {
+      return Array.isArray(finalReview.blockers)
+        ? finalReview.blockers.map(String)
+        : []
+    }
+    return [
+      ...(!form.title ? ["Falta título"] : []),
+      ...(!form.categoryId ? ["Falta categoría"] : []),
+      ...(!form.description ? ["Falta descripción"] : []),
+      ...(!form.imageUrls.length ? ["Faltan imágenes"] : []),
+      ...(!(Number(form.pricing.targetPrice) > 0) ? ["Falta precio"] : []),
+      ...(opportunity?.hard_gates ?? [])
+        .filter((gate) => !resolvedWorkspaceGates.has(gate)),
+      ...(opportunity?.evidence_guards ?? []),
+    ]
+  }, [finalListingReview, form, opportunity, resolvedWorkspaceGates])
   const draftTarget = draftState.runtime?.target ?? "PENDIENTE"
   const productionTarget = draftTarget === "PRODUCTION"
   const expectedApprovalPhrase = draftState.approvalRequirements?.exactPhrase
@@ -2503,6 +2541,23 @@ function ListingWorkspacePageContent() {
   const finalReviewSnapshot = object(finalReview.snapshot)
   const finalReviewListing = object(finalReviewSnapshot.listing)
   const finalReviewGates = object(finalReview.gates)
+  const finalReviewTaxonomy = object(finalReviewSnapshot.taxonomy)
+  const finalReviewOpportunity = object(
+    finalReviewSnapshot.opportunityValidation,
+  )
+  const finalReviewMarketDemand = object(
+    finalReviewSnapshot.marketDemandValidation,
+  )
+  const finalReviewPreparation = object(
+    finalReviewSnapshot.packagePreparation,
+  )
+  const finalReviewGateDetails = Array.isArray(finalReviewPreparation.gateDetails)
+    ? finalReviewPreparation.gateDetails.map(object)
+    : Object.entries(finalReviewGates).map(([gate, passed]) => ({
+      gate,
+      passed,
+      source: "FINAL_LISTING_REVIEW persistente",
+    }))
   const finalReviewCompleted = finalReview.visualPhase === "COMPLETED"
     && finalReview.finalVisualSetLocked === true
     && finalReview.generationControlsHidden === true
@@ -2519,7 +2574,7 @@ function ListingWorkspacePageContent() {
       <div className="grid grid-cols-2 gap-2">
         {finalListingReview?.signedImages.map((asset) => <figure key={`final-v3-${asset.position}-${asset.sha256}`} data-final-asset-position={asset.position} data-final-asset-role={asset.assetRole} data-final-asset-sha256={asset.sha256} className={`${asset.position === 0 ? "col-span-2" : ""} rounded-xl border border-white/10 bg-black/25 p-2`}>
           <div className="aspect-square overflow-hidden rounded-lg bg-white"><img src={asset.signedPreviewUrl} alt={`${asset.position === 0 ? "Portada principal" : `Secundaria ${asset.position}`} ${asset.assetRole}`} className="h-full w-full object-contain" /></div>
-          <figcaption className="mt-2 text-xs"><strong>{asset.position === 0 ? "Portada principal" : `Secundaria ${asset.position}`} · {asset.assetRole}</strong><span className="mt-1 block text-white/50">{asset.status} · {asset.sha256.slice(0, 12)}…</span></figcaption>
+          <figcaption className="mt-2 text-xs"><strong>{asset.position === 0 ? "Portada principal" : `Secundaria ${asset.position}`} · {asset.assetRole}</strong><span className="mt-1 block text-white/50">{asset.status}{asset.position === 6 ? " · APPROVED_BY_HUMAN" : ""} · {asset.sha256.slice(0, 12)}…</span></figcaption>
         </figure>)}
       </div>
       <section className="space-y-3 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.05] p-3">
@@ -2531,11 +2586,16 @@ function ListingWorkspacePageContent() {
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Package dimensions</dt><dd className="mt-1 font-black">{String(finalReviewListing.packageDimensions)}</dd></div>
         </dl>
         <div className="rounded-xl bg-black/25 p-3 text-xs">
-          <strong>Puertas comerciales</strong>
+          <strong>Puertas internas · fuentes persistidas</strong>
           <ul className="mt-2 grid gap-1">
-            {Object.entries(finalReviewGates).map(([gate, passed]) => <li key={gate} className={passed === true ? "text-emerald-100" : "text-rose-100"}>{passed === true ? "✓" : "✕"} {gate}</li>)}
+            {finalReviewGateDetails.map((detail) => <li key={String(detail.gate)} className={detail.passed === true ? "text-emerald-100" : "text-rose-100"}>{detail.passed === true ? "✓" : "✕"} {String(detail.gate)}<span className="block pl-4 text-[10px] text-white/40">{String(detail.source ?? "")}</span></li>)}
           </ul>
         </div>
+        <dl className="grid gap-2 text-xs">
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Taxonomy oficial</dt><dd className="mt-1 font-black">{String(finalReviewTaxonomy.status ?? finalListingReview?.taxonomy?.status ?? "NO CONSULTADA")} · Category {String(finalReviewTaxonomy.categoryId ?? finalListingReview?.taxonomy?.categoryId ?? "")}</dd></div>
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Oportunidad vigente</dt><dd className="mt-1 font-black">{String(finalReviewOpportunity.status ?? "PENDIENTE")}</dd></div>
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Mercado/demanda</dt><dd className="mt-1 font-black">{String(finalReviewMarketDemand.status ?? "PENDIENTE")}</dd></div>
+        </dl>
         <p className="rounded-xl border border-amber-200/25 bg-amber-200/[0.07] p-3 text-xs text-amber-50">Inventory Item: NO CREADO · Offer: NO CREADO · publicación y autorización final deshabilitadas.</p>
       </section>
     </section>
@@ -2558,7 +2618,7 @@ function ListingWorkspacePageContent() {
         {referenceGuidedPositionFour?.output_preview_url && <figure data-asset-ordinal="4" data-asset-role="SECONDARY_USE_CONTEXT" data-output-sha256={String(referenceGuidedPositionFour.output_sha256)} className="rounded-xl border border-sky-200/30 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-4-${String(referenceGuidedPositionFour.output_sha256)}`} src={String(referenceGuidedPositionFour.output_preview_url)} alt="Preview privado de Secundaria 4 uso ordinario" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-sky-50"><strong>Secundaria 4 · SECONDARY_USE_CONTEXT</strong><span className="mt-1 block">Contrato efectivo con enmienda · salida privada 1600×1600 · revisión humana obligatoria</span><span className="mt-1 block text-white/60">SHA privado: {String(referenceGuidedPositionFour.output_sha256).slice(0, 12)}… · Estado: {String(referenceGuidedPositionFour.status)} · nunca aprobada automáticamente</span><span className="mt-2 block rounded-lg border border-amber-200/20 bg-amber-200/[0.06] p-2 text-amber-50">Confirma producto completo bajo agua suave, frutas o vegetales moderados dentro, asas/borde/base/perforaciones visibles, sin manos, dedos, brazos, personas, partes humanas, texto, objetos extra, deformaciones o claims.</span></figcaption></figure>}
         {referenceGuidedPositionFive?.output_preview_url && <figure data-asset-ordinal="5" data-asset-role="SECONDARY_ASPIRATIONAL_LIFESTYLE" data-output-sha256={String(referenceGuidedPositionFive.output_sha256)} className="rounded-xl border border-cyan-200/30 bg-black/25 p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-5-${String(referenceGuidedPositionFive.output_sha256)}`} src={String(referenceGuidedPositionFive.output_preview_url)} alt="Preview privado de Secundaria 5 lifestyle aspiracional" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-cyan-50"><strong>Secundaria 5 · SECONDARY_ASPIRATIONAL_LIFESTYLE</strong><span className="mt-1 block">Validación canaria del contrato V2 · salida privada 1600×1600 · revisión humana obligatoria</span><span className="mt-1 block text-white/60">SHA privado: {String(referenceGuidedPositionFive.output_sha256).slice(0, 12)}… · Estado: {String(referenceGuidedPositionFive.status)} · nunca aprobada automáticamente</span><span className="mt-2 block rounded-lg border border-amber-200/20 bg-amber-200/[0.06] p-2 text-amber-50">Confirma producto exacto vacío, cocina moderna luminosa, luz natural suave, fondo ligeramente desenfocado, props mínimos separados, ausencia de manos/agua/comida/texto y composición distinta de escala, uso y contexto humano.</span></figcaption></figure>}
         {positionSixRejectedMappingValid && positionSixRejectedEvidence.signedPreviewUrl && <figure data-position-6-rejected-evidence data-asset-ordinal="6" data-asset-role="SECONDARY_HUMAN_CONTEXT" data-output-sha256={String(positionSixRejectedEvidence.output_sha256)} className="rounded-xl border border-rose-200/25 bg-rose-200/[0.05] p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-6-rejected-${String(positionSixRejectedEvidence.output_sha256)}`} src={String(positionSixRejectedEvidence.signedPreviewUrl)} alt="Output anterior rechazado de Secundaria 6" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-rose-50"><strong>Output anterior rechazado · evidencia preservada</strong><span className="mt-1 block">Secundaria 6 · SECONDARY_HUMAN_CONTEXT · no es el candidato actual</span><span className="mt-1 block text-white/60">SHA privado: {String(positionSixRejectedEvidence.output_sha256)} · Motivo: {String(positionSixRejectedEvidence.reason)}</span></figcaption></figure>}
-        {positionSixMappingValid && positionSixExtraordinaryReview.signedPreviewUrl && !positionSixPreviewError && <figure data-position-6-extraordinary-ordinal="8" data-asset-ordinal="6" data-asset-role="SECONDARY_HUMAN_CONTEXT" data-output-sha256={String(positionSixExtraordinaryReview.output_sha256)} className="rounded-xl border border-fuchsia-200/40 bg-fuchsia-200/[0.07] p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-6-ordinal-8-${String(positionSixExtraordinaryReview.output_sha256)}`} src={String(positionSixExtraordinaryReview.signedPreviewUrl)} onError={() => setPositionSixPreviewError("REFERENCE_GUIDED_POSITION_6_ORDINAL_8_SIGNED_PREVIEW_LOAD_FAILED")} alt="Reemplazo extraordinario ordinal 8 de Secundaria 6" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-fuchsia-50"><strong>Secundaria 6 · SECONDARY_HUMAN_CONTEXT</strong><span className="mt-1 block font-black">Reemplazo extraordinario · ordinal 8 · {positionSixExtraordinaryReview.status === "PASSED" ? "Aprobado por revisión humana" : "Pendiente de revisión humana"}</span><span className="mt-1 block">Estado: {String(positionSixExtraordinaryReview.status)} · HUMAN_REVIEW_REQUIRED</span><span className="mt-1 block text-white/60">SHA privado: {String(positionSixExtraordinaryReview.output_sha256)} · PNG 1600×1600 verificado server-side</span><span className="mt-1 block text-white/60">Plan: {String(positionSixExtraordinaryReview.batchPlanHash)}</span></figcaption></figure>}
+        {positionSixMappingValid && positionSixExtraordinaryReview.signedPreviewUrl && !positionSixPreviewError && <figure data-position-6-extraordinary-ordinal="8" data-asset-ordinal="6" data-asset-role="SECONDARY_HUMAN_CONTEXT" data-output-sha256={String(positionSixExtraordinaryReview.output_sha256)} className="rounded-xl border border-fuchsia-200/40 bg-fuchsia-200/[0.07] p-2"><div className="aspect-square overflow-hidden rounded-lg bg-white"><img key={`position-6-ordinal-8-${String(positionSixExtraordinaryReview.output_sha256)}`} src={String(positionSixExtraordinaryReview.signedPreviewUrl)} onError={() => setPositionSixPreviewError("REFERENCE_GUIDED_POSITION_6_ORDINAL_8_SIGNED_PREVIEW_LOAD_FAILED")} alt="Reemplazo extraordinario ordinal 8 de Secundaria 6" className="h-full w-full object-contain" /></div><figcaption className="mt-2 text-fuchsia-50"><strong>Secundaria 6 · SECONDARY_HUMAN_CONTEXT</strong><span className="mt-1 block font-black">Reemplazo extraordinario · ordinal 8 · {positionSixExtraordinaryReview.status === "PASSED" ? "Aprobado por revisión humana" : "Pendiente de revisión humana"}</span><span className="mt-1 block">Estado: {String(positionSixExtraordinaryReview.status)} · {positionSixExtraordinaryReview.status === "PASSED" ? "APPROVED_BY_HUMAN" : "HUMAN_REVIEW_REQUIRED"}</span><span className="mt-1 block text-white/60">SHA privado: {String(positionSixExtraordinaryReview.output_sha256)} · PNG 1600×1600 verificado server-side</span><span className="mt-1 block text-white/60">Plan: {String(positionSixExtraordinaryReview.batchPlanHash)}</span></figcaption></figure>}
         {referenceGuidedPositionSix && (!positionSixMappingValid || !positionSixExtraordinaryReview.signedPreviewUrl || Boolean(positionSixExtraordinaryReview.preview_error) || Boolean(positionSixPreviewError)) && <div role="alert" data-position-6-preview-error className="space-y-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50"><p>No se pudo mostrar el reemplazo extraordinario ordinal 8 de forma segura. Código: {String(positionSixExtraordinaryReview.preview_error || positionSixPreviewError || "REFERENCE_GUIDED_POSITION_6_ORDINAL_8_PREVIEW_BINDING_INVALID")}.</p><p>La aprobación permanece bloqueada. Recarga para solicitar una URL firmada nueva.</p></div>}
       </>}
     </section> : finalListingReviewError
@@ -2754,13 +2814,26 @@ function ListingWorkspacePageContent() {
           </section>
 
           <section className="rounded-3xl border border-violet-200/20 bg-violet-200/[0.05] p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-black">Item specifics</h2><p className="mt-1 text-xs leading-5 text-white/50">eBay Taxonomy define los nombres y opciones; tú confirmas los valores reales del producto Luna.</p></div><span className="rounded-full border border-violet-200/20 px-2 py-1 text-[10px] font-black">{draftState.taxonomy?.status ?? "SIN CONSULTAR"}</span></div>
-            <button type="button" disabled={draftBusy || !/^\d{1,12}$/.test(form.categoryId)} onClick={() => void validateDraft()} className="mt-3 min-h-11 w-full rounded-xl border border-violet-200/30 px-3 text-sm font-black text-violet-50 disabled:opacity-40">Cargar requisitos oficiales del Category ID</button>
+            <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-black">Item specifics</h2><p className="mt-1 text-xs leading-5 text-white/50">eBay Taxonomy define los nombres y opciones; tú confirmas los valores reales del producto Luna.</p></div><span className="rounded-full border border-violet-200/20 px-2 py-1 text-[10px] font-black">{String(finalReviewTaxonomy.status ?? finalListingReview?.taxonomy?.status ?? draftState.taxonomy?.status ?? "SIN CONSULTAR")}</span></div>
+            {!finalReviewCompleted && <button type="button" disabled={draftBusy || !/^\d{1,12}$/.test(form.categoryId)} onClick={() => void validateDraft()} className="mt-3 min-h-11 w-full rounded-xl border border-violet-200/30 px-3 text-sm font-black text-violet-50 disabled:opacity-40">Cargar requisitos oficiales del Category ID</button>}
             <div className="mt-3 space-y-2">{Object.entries(form.aspects).map(([name, value]) => {
-              const taxonomyAspect = (draftState.taxonomy?.aspects ?? [
-                ...(draftState.taxonomy?.requiredAspects ?? []),
-                ...(draftState.taxonomy?.recommendedAspects ?? []),
-              ]).find((aspect) => aspect.name === name)
+              const finalTaxonomyAspect =
+                finalListingReview?.taxonomy?.relevantAspects.find(
+                  (aspect) => aspect.name === name,
+                )
+              const taxonomyAspect = finalTaxonomyAspect
+                ? {
+                  ...finalTaxonomyAspect,
+                  maxLength: null,
+                  format: null,
+                  advancedDataType: null,
+                  expectedRequiredByDate: null,
+                  values: [],
+                }
+                : (draftState.taxonomy?.aspects ?? [
+                  ...(draftState.taxonomy?.requiredAspects ?? []),
+                  ...(draftState.taxonomy?.recommendedAspects ?? []),
+                ]).find((aspect) => aspect.name === name)
               const required = requiredTaxonomyAspects.has(name)
               const selectionOnly = taxonomyAspect?.mode === "SELECTION_ONLY"
               const selectionOptions = taxonomyAspect?.values ?? []
@@ -2841,7 +2914,22 @@ function ListingWorkspacePageContent() {
             {publicationPhase === "terminal_failure" && <div className="rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-3 text-rose-50"><strong>Publicación detenida sin reintento automático</strong><p className="mt-2 text-sm">{humanFinalPublicationError(new Error(draftState.publication?.last_error_code ?? "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE"))}</p><p className="mt-2 text-xs text-rose-50/70">No publiques manualmente hasta confirmar si eBay recibió la llamada; así se evita duplicar el listing.</p></div>}
           </section>}
 
-          <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4"><div className="flex justify-between gap-3"><h2 className="font-black">Preparación del paquete</h2><strong>{listingPackage.readiness}%</strong></div>{blockers.length ? <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-50">{blockers.map((blocker) => <li key={blocker}>{humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)}</li>)}</ul> : <p className="mt-2 text-sm text-emerald-100">Sin bloqueos. Puedes enviarlo a revisión humana.</p>}<p className="mt-3 text-xs leading-5 text-white/50">Guardar y validar sólo modifican datos internos. Crear el Offer permanece separado de la autorización final: publishOffer exige el preview persistido, la frase exacta y una única confirmación humana.</p></section>
+          <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4">
+            <div className="flex justify-between gap-3">
+              <h2 className="font-black">Preparación del paquete</h2>
+              <strong>{finalReviewCompleted
+                ? blockers.length
+                  ? "BLOQUEADO"
+                  : `${String(finalReviewPreparation.percent ?? 100)}%`
+                : `${listingPackage.readiness}%`}</strong>
+            </div>
+            {finalReviewCompleted
+              ? <ul className="mt-3 grid gap-2 text-xs">{finalReviewGateDetails.map((detail) => <li key={`package-${String(detail.gate)}`} className={`rounded-xl border p-2 ${detail.passed === true ? "border-emerald-200/20 text-emerald-100" : "border-rose-200/25 text-rose-100"}`}><strong>{detail.passed === true ? "✓" : "✕"} {String(detail.gate)}</strong><span className="mt-1 block text-[10px] text-white/45">{String(detail.source ?? "")}</span></li>)}</ul>
+              : blockers.length
+                ? <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-50">{blockers.map((blocker) => <li key={blocker}>{humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)}</li>)}</ul>
+                : <p className="mt-2 text-sm text-emerald-100">Sin bloqueos. Puedes enviarlo a revisión humana.</p>}
+            <p className="mt-3 text-xs leading-5 text-white/50">La preparación V3 se calcula desde fuentes persistidas y muestra cada puerta por separado. Inventory Item, Offer y publicación permanecen deshabilitados.</p>
+          </section>
         </>}
       </section>
 
