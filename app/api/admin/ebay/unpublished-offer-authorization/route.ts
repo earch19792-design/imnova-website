@@ -62,6 +62,39 @@ function text(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
 }
 
+function jsonType(value: unknown) {
+  return Array.isArray(value) ? "array" : (value && typeof value === "object" ? "object" : typeof value)
+}
+
+function diffJsonPaths(oldValue: unknown, newValue: unknown, prefix = ""): string[] {
+  const oldType = jsonType(oldValue)
+  const newType = jsonType(newValue)
+  if (oldType !== newType) return prefix ? [prefix] : []
+  if (oldType !== "object" && oldType !== "array") {
+    return Object.is(oldValue, newValue) ? [] : (prefix ? [prefix] : [])
+  }
+  if (oldType === "array") {
+    const oldItems = Array.isArray(oldValue) ? oldValue : []
+    const newItems = Array.isArray(newValue) ? newValue : []
+    const length = Math.max(oldItems.length, newItems.length)
+    const paths: string[] = []
+    for (let index = 0; index < length; index += 1) {
+      const childPrefix = `${prefix}[${index}]`
+      paths.push(...diffJsonPaths(oldItems[index], newItems[index], childPrefix))
+    }
+    return paths
+  }
+  const oldObject = record(oldValue)
+  const newObject = record(newValue)
+  const keys = [...new Set([...Object.keys(oldObject), ...Object.keys(newObject)])].sort()
+  const paths: string[] = []
+  for (const key of keys) {
+    const childPrefix = prefix ? `${prefix}.${key}` : key
+    paths.push(...diffJsonPaths(oldObject[key], newObject[key], childPrefix))
+  }
+  return paths
+}
+
 function safeCode(error: unknown) {
   const value = error instanceof Error ? error.message : ""
   return /^[A-Z0-9_:-]+$/.test(value)
@@ -534,22 +567,24 @@ async function prepare(actor: string) {
   if (error && error.code !== "23505") {
     throw new Error("EBAY_V3_UNPUBLISHED_AUTHORIZATION_PERSIST_FAILED")
   }
-  if (!persisted) {
+  const prepared = persisted ?? await (async () => {
     const { data: existing } = await supabase
       .from("ebay_v3_unpublished_offer_authorization_previews")
       .select("*")
       .eq("preview_hash", review.preview_hash)
       .eq("payload_hash", payloadHash)
       .maybeSingle()
-    if (!existing) throw new Error("EBAY_V3_UNPUBLISHED_AUTHORIZATION_READ_FAILED")
-    return existing
+    return existing ?? null
+  })()
+  if (!prepared) {
+    throw new Error("EBAY_V3_UNPUBLISHED_AUTHORIZATION_READ_FAILED")
   }
   const { data: priorRows, error: priorError } = await supabase
     .from("ebay_v3_unpublished_offer_authorization_previews")
     .select("id,exact_preview_hash,payload_hash")
     .eq("attempt_id", review.attempt_id)
     .eq("created_by", resolvedActor)
-    .neq("id", persisted.id)
+    .neq("id", prepared.id)
   if (priorError) {
     throw new Error("EBAY_V3_PRIOR_AUTHORIZATION_READ_FAILED")
   }
@@ -559,7 +594,7 @@ async function prepare(actor: string) {
       attempt_id: review.attempt_id,
       old_exact_preview_hash: prior.exact_preview_hash,
       old_payload_hash: prior.payload_hash,
-      successor_authorization_preview_id: persisted.id,
+      successor_authorization_preview_id: prepared.id,
       successor_exact_preview_hash: exactPreviewHash,
       successor_payload_hash: payloadHash,
       reason: "SCREEN_AND_PAYLOAD_AUTHORITY_RECONCILIATION",
@@ -575,7 +610,63 @@ async function prepare(actor: string) {
       throw new Error("EBAY_V3_PRIOR_AUTHORIZATION_INVALIDATION_FAILED")
     }
   }
-  return persisted
+  const { data: activeApproval, error: activeApprovalError } = await supabase
+    .from("ebay_draft_only_approvals")
+    .select("id,status,expires_at,approved_at,consumed_at,revoked_at,payload_hash,approved_payload,approval_idempotency_key")
+    .eq("listing_package_id", review.listing_package_id)
+    .eq("status", "approved")
+    .maybeSingle()
+  if (activeApprovalError) {
+    throw new Error("EBAY_V3_APPROVAL_STATE_READ_FAILED")
+  }
+
+  let authorizationMode: "new_authorization" | "resume_existing_authorization" =
+    "new_authorization"
+  let reconciliation: JsonRecord | null = null
+  let reusableApproval: JsonRecord | null = null
+  if (activeApproval) {
+    if (activeApproval.payload_hash === payloadHash) {
+      authorizationMode = "resume_existing_authorization"
+      reusableApproval = {
+        id: activeApproval.id,
+        status: activeApproval.status,
+        expires_at: activeApproval.expires_at,
+        approved_at: activeApproval.approved_at,
+        consumed_at: activeApproval.consumed_at,
+        revoked_at: activeApproval.revoked_at,
+        payload_hash: activeApproval.payload_hash,
+        approval_idempotency_key: activeApproval.approval_idempotency_key,
+      }
+    } else {
+      const changedFields = diffJsonPaths(activeApproval.approved_payload, exactPayload)
+      const { error: reconcileError } = await supabase
+        .rpc("reconcile_ebay_draft_only_approval_conflict", {
+          p_listing_package_id: review.listing_package_id,
+          p_actor_user_id: resolvedActor,
+          p_current_preview_hash: exactPreviewHash,
+          p_current_payload_hash: payloadHash,
+          p_target_account_fingerprint: preflight.identity.accountFingerprint,
+          p_action_version: V3_UNPUBLISHED_AUTHORIZATION_ACTION_VERSION,
+        })
+      if (reconcileError) {
+        throw new Error("EBAY_V3_RECONCILIATION_FAILED")
+      }
+      reconciliation = {
+        approvalId: activeApproval.id,
+        oldPayloadHash: activeApproval.payload_hash,
+        newPayloadHash: payloadHash,
+        reason: "PAYLOAD_CHANGED_AFTER_LUNA_RECONFIRMATION",
+      changedFields,
+      }
+    }
+  }
+  const response: JsonRecord = {
+    authorization: prepared,
+    authorizationMode,
+    approval: reusableApproval,
+    reconciliation,
+  }
+  return response
 }
 
 function publicPreview(row: JsonRecord) {
@@ -841,7 +932,10 @@ export async function POST(req: Request) {
       const prepared = await prepare(auth.actor)
       return NextResponse.json({
         success: true,
-        authorization: publicPreview(prepared as JsonRecord),
+        authorization: publicPreview(record(prepared.authorization)),
+        authorizationMode: text(prepared.authorizationMode),
+        approval: prepared.approval ?? null,
+        reconciliation: prepared.reconciliation ?? null,
         idempotent: true,
         safety: {
           inventoryItemCreated: false,

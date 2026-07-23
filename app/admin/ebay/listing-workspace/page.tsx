@@ -701,6 +701,10 @@ function ListingWorkspacePageContent() {
   const [finalListingReviewChecked, setFinalListingReviewChecked] = useState(false)
   const [unpublishedAuthorization, setUnpublishedAuthorization] =
     useState<Record<string, any> | null>(null)
+  const [unpublishedAuthorizationMode,
+    setUnpublishedAuthorizationMode] = useState<"new_authorization" | "resume_existing_authorization" | null>(null)
+  const [unpublishedAuthorizationReconciliation,
+    setUnpublishedAuthorizationReconciliation] = useState<Record<string, any> | null>(null)
   const [unpublishedAuthorizationError, setUnpublishedAuthorizationError] =
     useState("")
   const [unpublishedAuthorizationBusy, setUnpublishedAuthorizationBusy] =
@@ -1009,8 +1013,17 @@ function ListingWorkspacePageContent() {
         }
         const authorization = payload.authorization
         setUnpublishedAuthorization(authorization)
+        setUnpublishedAuthorizationMode(
+          String(payload.authorizationMode ?? "new_authorization") as
+            "new_authorization" | "resume_existing_authorization",
+        )
+        setUnpublishedAuthorizationReconciliation(
+          payload.reconciliation && typeof payload.reconciliation === "object"
+            ? payload.reconciliation as Record<string, any>
+            : null,
+        )
         const exactPayload = object(authorization.exactPayload)
-        const packageBaseline = fromPackage(object(exactPayload.listingPackage?.packageData))
+        const packageBaseline = fromPackage(object(object(exactPayload.listingPackage).packageData))
         const stableImages = Array.isArray(authorization.images)
           ? authorization.images.map((asset: Record<string, unknown>) =>
               String(asset.url ?? "")).filter(Boolean)
@@ -1057,6 +1070,17 @@ function ListingWorkspacePageContent() {
           dimensionUnit: "",
           weight: null,
           weightUnit: "",
+        }))
+        setDraftState((current) => ({
+          ...current,
+          approval: payload.approval && typeof payload.approval === "object"
+            ? {
+                id: String((payload.approval as Record<string, any>).id ?? ""),
+                status: String((payload.approval as Record<string, any>).status ?? ""),
+                expires_at: String((payload.approval as Record<string, any>).expires_at ?? ""),
+              }
+            : null,
+          execution: payload.approval ? current.execution : null,
         }))
         setUnpublishedAuthorizationError("")
       } catch (prepareError) {
@@ -2633,6 +2657,7 @@ function ListingWorkspacePageContent() {
         approval: authorizationPayload.approval,
         execution: null,
       }))
+      setUnpublishedAuthorizationMode("resume_existing_authorization")
       setMessage("Autorización registrada; ejecución pendiente. Usa el botón inferior para crear el Offer no publicado.")
     } catch (requestError) {
       setError(getMobileReviewRequestError(
@@ -2788,6 +2813,17 @@ function ListingWorkspacePageContent() {
     && form.imageUrls.length === 7
     && form.imageUrls.every((url, index) =>
       url === authorizationImageUrls[index])
+  const unpublishedAuthorizationFlow =
+    unpublishedAuthorizationMode ?? "new_authorization"
+  const unpublishedAuthorizationChangedFields = Array.isArray(
+    unpublishedAuthorizationReconciliation?.changedFields,
+  )
+    ? unpublishedAuthorizationReconciliation.changedFields.map(String)
+    : []
+  const unpublishedExecutionButtonLabel =
+    unpublishedAuthorizationFlow === "resume_existing_authorization"
+      ? "Reanudar Inventory Item + Offer UNPUBLISHED"
+      : `Crear Offer no publicado en ${draftTarget}`
   const visualReviewPanel = referenceGuidedAttemptId && !finalListingReviewChecked
     ? <section className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/60">Comprobando si el conjunto V3 ya está cerrado antes de mostrar controles…</section>
     : finalReviewCompleted
@@ -2865,21 +2901,28 @@ function ListingWorkspacePageContent() {
             <summary className="cursor-pointer font-black">Mostrar payload exacto completo</summary>
             <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-all text-[10px] text-white/65">{JSON.stringify(unpublishedAuthorization.exactPayload, null, 2)}</pre>
           </details>
-          <div className="space-y-3 rounded-xl border border-rose-200/30 bg-rose-200/[0.06] p-3">
-            <p className="text-sm font-black text-rose-50">Advertencia: esta autorización realizará escrituras reales en eBay PRODUCTION. Creará o reanudará sólo el Inventory Item y el Offer UNPUBLISHED; no publicará un listing.</p>
-            <label className="block text-xs"><span className="font-black">Escribe exactamente: {String(unpublishedAuthorization.confirmationPhrase)}</span><input value={unpublishedConfirmation} onChange={(event) => setUnpublishedConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label>
-            <label className="flex gap-2 text-xs"><input type="checkbox" checked={confirmExactUnpublishedPayload} onChange={(event) => setConfirmExactUnpublishedPayload(event.target.checked)} />Revisé el payload hash, los campos y las siete imágenes en este orden.</label>
-            <label className="flex gap-2 text-xs"><input type="checkbox" checked={confirmEbayWritesWithoutPublish} onChange={(event) => setConfirmEbayWritesWithoutPublish(event.target.checked)} />Autorizo createOrReplaceInventoryItem y createOffer; no autorizo publishOffer.</label>
-            <label className="flex gap-2 text-xs"><input type="checkbox" checked={confirmNoUnpublishedRetry} onChange={(event) => setConfirmNoUnpublishedRetry(event.target.checked)} />Entiendo que no habrá retry automático y que una reanudación reconciliará por SKU sin duplicar.</label>
-            <button type="button" disabled={
-              unpublishedAuthorizationBusy
-              || !authorizationScreenMatches
-              || unpublishedConfirmation !== unpublishedAuthorization.confirmationPhrase
-              || !confirmExactUnpublishedPayload
-              || !confirmEbayWritesWithoutPublish
-              || !confirmNoUnpublishedRetry
-            } onClick={() => void authorizeExactV3UnpublishedOffer()} className="min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Autorizar Inventory Item + Offer UNPUBLISHED</button>
-          </div>
+          {unpublishedAuthorizationFlow === "resume_existing_authorization"
+            ? <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.06] p-3">
+                <p className="text-sm font-black text-emerald-50">Autorización registrada · ejecución pendiente.</p>
+                <p className="mt-2 text-xs leading-5 text-emerald-50/75">approvalId {String(draftState.approval?.id ?? "N/D")} · payload vigente reconciliado · no se volverá a pedir frase ni casillas.</p>
+                <p className="mt-2 text-xs leading-5 text-emerald-50/65">Reanudar usa la aprobación ya persistida y conserva el payload canónico actual sin recrear una autorización nueva.</p>
+              </div>
+            : <div className="space-y-3 rounded-xl border border-rose-200/30 bg-rose-200/[0.06] p-3">
+                {unpublishedAuthorizationReconciliation && unpublishedAuthorizationChangedFields.length > 0 && <p className="rounded-xl border border-amber-200/25 bg-amber-200/[0.07] p-3 text-xs text-amber-50"><strong>Aprobación anterior supersedida por PAYLOAD_CHANGED_AFTER_LUNA_RECONFIRMATION.</strong><span className="mt-1 block">Campos cambiados: {unpublishedAuthorizationChangedFields.join(", ")}</span></p>}
+                <p className="text-sm font-black text-rose-50">Advertencia: esta autorización realizará escrituras reales en eBay PRODUCTION. Creará o reanudará sólo el Inventory Item y el Offer UNPUBLISHED; no publicará un listing.</p>
+                <label className="block text-xs"><span className="font-black">Escribe exactamente: {String(unpublishedAuthorization.confirmationPhrase)}</span><input value={unpublishedConfirmation} onChange={(event) => setUnpublishedConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label>
+                <label className="flex gap-2 text-xs"><input type="checkbox" checked={confirmExactUnpublishedPayload} onChange={(event) => setConfirmExactUnpublishedPayload(event.target.checked)} />Revisé el payload hash, los campos y las siete imágenes en este orden.</label>
+                <label className="flex gap-2 text-xs"><input type="checkbox" checked={confirmEbayWritesWithoutPublish} onChange={(event) => setConfirmEbayWritesWithoutPublish(event.target.checked)} />Autorizo createOrReplaceInventoryItem y createOffer; no autorizo publishOffer.</label>
+                <label className="flex gap-2 text-xs"><input type="checkbox" checked={confirmNoUnpublishedRetry} onChange={(event) => setConfirmNoUnpublishedRetry(event.target.checked)} />Entiendo que no habrá retry automático y que una reanudación reconciliará por SKU sin duplicar.</label>
+                <button type="button" disabled={
+                  unpublishedAuthorizationBusy
+                  || !authorizationScreenMatches
+                  || unpublishedConfirmation !== unpublishedAuthorization.confirmationPhrase
+                  || !confirmExactUnpublishedPayload
+                  || !confirmEbayWritesWithoutPublish
+                  || !confirmNoUnpublishedRetry
+                } onClick={() => void authorizeExactV3UnpublishedOffer()} className="min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Autorizar Inventory Item + Offer UNPUBLISHED</button>
+              </div>}
         </>}
       </section>
     </section>
@@ -3189,7 +3232,7 @@ function ListingWorkspacePageContent() {
             <button type="button" disabled={draftBusy} onClick={() => void validateDraft()} className="min-h-13 w-full rounded-2xl border border-cyan-200/35 px-4 font-black text-cyan-50 disabled:opacity-50">{draftBusy ? "Validando…" : "Validar draft seguro"}</button>
             {draftState.readiness && <div className={`rounded-2xl border p-3 ${draftState.readiness.ready ? "border-emerald-200/30 bg-emerald-200/[0.06]" : "border-amber-200/30 bg-amber-200/[0.06]"}`}><strong>{draftState.readiness.ready ? "Listo para tu aprobación" : `${draftState.readiness.blockers.length} bloqueos pendientes`}</strong>{!draftState.readiness.ready && <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-50">{draftState.readiness.blockers.map((blocker) => <li key={blocker}>{humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)}</li>)}</ul>}</div>}
             {draftState.readiness?.ready && !approvalActive && !executionCompleted && <div className="space-y-3 rounded-2xl border border-emerald-200/25 p-3"><label className="block"><span className="text-sm font-black">Escribe exactamente: {expectedApprovalPhrase}</span><input value={approvalPhrase} onChange={(event) => setApprovalPhrase(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmUnpublishedOnly} onChange={(event) => setConfirmUnpublishedOnly(event.target.checked)} />Entiendo que sólo autoriza un Offer no publicado.</label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmNoPublish} onChange={(event) => setConfirmNoPublish(event.target.checked)} />Confirmo que este primer permiso no publica; la publicación final requerirá otra autorización.</label>{productionTarget && <label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmProductionAccount} onChange={(event) => setConfirmProductionAccount(event.target.checked)} />Confirmo que {draftTarget} es mi cuenta real: autorizo crear Inventory Item + Offer API UNPUBLISHED, sin publicarlo.</label>}<button type="button" disabled={draftBusy || approvalPhrase !== expectedApprovalPhrase || !confirmUnpublishedOnly || !confirmNoPublish || !imagesAuthorized || (productionTarget && !confirmProductionAccount)} onClick={() => void approveDraft()} className="min-h-13 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">Aprobar {draftTarget} por 15 minutos</button></div>}
-            {approvalActive && !executionCompleted && draftState.approval && <div className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.06] p-3"><strong>Aprobación {draftTarget} activa hasta {new Date(draftState.approval.expires_at).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}</strong><p className="mt-2 text-sm text-white/65">Autorización registrada; ejecución pendiente. El siguiente botón es el único que puede escribir y sólo crea Inventory Item + Offer API UNPUBLISHED en {draftTarget}.</p><button type="button" disabled={draftBusy || !draftState.runtime?.enabled || !draftState.runtime?.configured} onClick={() => void executeDraft()} className="mt-3 min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Crear Offer no publicado en {draftTarget}</button><button type="button" disabled={draftBusy} onClick={() => void revokeDraftApproval()} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 px-4 font-black disabled:opacity-40">Cancelar aprobación</button></div>}
+            {approvalActive && !executionCompleted && draftState.approval && <div className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.06] p-3"><strong>Aprobación {draftTarget} activa hasta {new Date(draftState.approval.expires_at).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}</strong><p className="mt-2 text-sm text-white/65">Autorización registrada; ejecución pendiente. El siguiente botón es el único que puede escribir y sólo crea Inventory Item + Offer API UNPUBLISHED en {draftTarget}.</p><button type="button" disabled={draftBusy || !draftState.runtime?.enabled || !draftState.runtime?.configured} onClick={() => void executeDraft()} className="mt-3 min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">{unpublishedExecutionButtonLabel}</button><button type="button" disabled={draftBusy} onClick={() => void revokeDraftApproval()} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 px-4 font-black disabled:opacity-40">Cancelar aprobación</button></div>}
             {executionCompleted && <div className="rounded-2xl border border-emerald-200/30 bg-emerald-200/[0.07] p-3 text-emerald-50"><strong>UNPUBLISHED verificado al crear {draftState.execution?.completed_at ? new Date(draftState.execution.completed_at).toLocaleString("es") : "en la ejecución registrada"}</strong><p className="mt-1 text-xs">Este estado describe la verificación realizada en ese momento; vuelve a consultar eBay antes de asumir que sigue igual.</p><p className="mt-1 break-all text-xs">Offer ID: {draftState.execution?.offer_id ?? "guardado"}</p></div>}
             {executionCompleted && !draftState.publication && <div className="rounded-2xl border border-cyan-200/30 bg-cyan-200/[0.06] p-3"><strong>Preparar publicación desde Seller OS</strong><p className="mt-2 text-sm text-white/65">Seller OS revalidará cuenta, costo y stock de Luna, seis imágenes, policies y ubicación. Después mostrará el preview final; este paso todavía no publica.</p><button type="button" disabled={draftBusy || !draftState.execution?.id} onClick={() => void prepareFinalPublication()} className="mt-3 min-h-14 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">Preparar preview final no publicado</button></div>}
             {publicationPhase === "preview_ready" && <div className="space-y-3 rounded-2xl border border-amber-200/35 bg-amber-200/[0.07] p-3"><div><p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Preview final persistido</p><h3 className="mt-1 font-black">{String(publicationProduct.title ?? "Título pendiente")}</h3><p className="mt-2 text-xs text-white/65">SKU: {String(publicationOffer.sku ?? draftState.publication?.sku ?? "")} · Category ID: {String(publicationOffer.categoryId ?? "")} · Cantidad: {String(publicationOffer.availableQuantity ?? "")}</p><p className="mt-1 text-sm font-black">Precio exacto: {String(publicationPrice.currency ?? "USD")} {String(publicationPrice.value ?? "")}</p><p className="mt-1 text-xs text-white/65">Imágenes aprobadas: {Array.isArray(publicationProduct.imageUrls) ? publicationProduct.imageUrls.length : 0} · Location: {String(publicationOffer.merchantLocationKey ?? "")}</p><p className="mt-1 break-all text-[10px] text-white/50">Policies: {String(publicationPolicies.fulfillmentPolicyId ?? "")} · {String(publicationPolicies.paymentPolicyId ?? "")} · {String(publicationPolicies.returnPolicyId ?? "")}</p><p className="mt-2 rounded-xl border border-white/10 p-2 text-xs text-white/60">Sin promociones, Best Offer ni volume pricing. Se publicará exactamente este Offer una sola vez.</p></div><label className="block"><span className="text-sm font-black">Escribe exactamente: {finalPublishPhrase}</span><input value={publishConfirmation} onChange={(event) => setPublishConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmFinalPublication} onChange={(event) => setConfirmFinalPublication(event.target.checked)} />Revisé este preview final, incluidas las seis imágenes y el precio.</label><label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmPublishProductionAccount} onChange={(event) => setConfirmPublishProductionAccount(event.target.checked)} />Confirmo publicar en mi cuenta eBay PRODUCTION y registrar el listing ACTIVE en monitoreo.</label><button type="button" disabled={draftBusy || publishConfirmation !== finalPublishPhrase || !confirmFinalPublication || !confirmPublishProductionAccount} onClick={() => void publishFinalListing()} className="min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Publicar una sola vez en eBay</button></div>}
