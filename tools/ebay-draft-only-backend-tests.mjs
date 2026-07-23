@@ -42,6 +42,10 @@ const routeSource = readFileSync(
   new URL("../app/api/admin/ebay/draft-only/route.ts", import.meta.url),
   "utf8",
 )
+const prewriteRetirementSource = readFileSync(
+  new URL("../lib/ebay/ebay-draft-only-prewrite-retirement.ts", import.meta.url),
+  "utf8",
+)
 const taxonomyGatewaySource = readFileSync(
   new URL("../lib/ebay/ebay-seller-keyword-demand-gateway.ts", import.meta.url),
   "utf8",
@@ -87,8 +91,73 @@ const SANDBOX_FINGERPRINT = "a".repeat(64)
 const PRODUCTION_FINGERPRINT = "b".repeat(64)
 const RESERVED_SKU = "IMNOVA-11111111111141118111111111111111"
 const snapshotModule = await importTypeScript(snapshotSource)
+const prewriteRetirementModule = await importTypeScript(
+  prewriteRetirementSource,
+)
 
 process.env.EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_SNAPSHOT_SECRET = SNAPSHOT_SECRET
+
+test("only a superseded, provably pre-write SKU preflight can be retired", () => {
+  const now = Date.parse("2026-07-23T12:30:00.000Z")
+  const execution = {
+    phase: "claimed",
+    last_error_code: "EBAY_SKU_PREFLIGHT_UNAVAILABLE",
+    inventory_http_status: null,
+    inventory_confirmed_at: null,
+    offer_create_started_at: null,
+    offer_http_status: null,
+    offer_id: null,
+    completed_at: null,
+    lease_expires_at: null,
+    sanitized_result: {
+      collision: false,
+      inventoryOwnershipVerified: false,
+    },
+  }
+  const approval = { status: "SUPERSEDED_BY_RECONCILIATION" }
+  assert.equal(
+    prewriteRetirementModule.canRetireSupersededSkuPreflight(
+      execution,
+      approval,
+      now,
+    ),
+    true,
+  )
+  for (const unsafeExecution of [
+    { ...execution, phase: "inventory_confirmed" },
+    { ...execution, inventory_http_status: 200 },
+    { ...execution, inventory_confirmed_at: "2026-07-23T12:00:00.000Z" },
+    { ...execution, offer_create_started_at: "2026-07-23T12:00:00.000Z" },
+    { ...execution, offer_http_status: 201 },
+    { ...execution, offer_id: "offer-1" },
+    { ...execution, completed_at: "2026-07-23T12:00:00.000Z" },
+    { ...execution, lease_expires_at: "2026-07-23T12:31:00.000Z" },
+    {
+      ...execution,
+      sanitized_result: {
+        collision: true,
+        inventoryOwnershipVerified: false,
+      },
+    },
+  ]) {
+    assert.equal(
+      prewriteRetirementModule.canRetireSupersededSkuPreflight(
+        unsafeExecution,
+        approval,
+        now,
+      ),
+      false,
+    )
+  }
+  assert.equal(
+    prewriteRetirementModule.canRetireSupersededSkuPreflight(
+      execution,
+      { status: "approved" },
+      now,
+    ),
+    false,
+  )
+})
 
 function signedSnapshot({
   target = "SANDBOX",
@@ -1097,7 +1166,15 @@ test("route requires a human Admin, exact approval, fresh revalidation and unkno
   const executeSource = routeSource.slice(routeSource.indexOf("async function executeDraft"))
   assert.ok(executeSource.indexOf("preflightEbayDraftDependencies") < executeSource.indexOf("claim_ebay_draft_only_execution"))
   assert.ok(executeSource.indexOf("preflightEbayDraftSkuCollision") < executeSource.indexOf("createOrReplaceEbayDraftInventoryItem"))
+  assert.ok(
+    executeSource.indexOf("retireSupersededPrewriteSkuPreflight")
+      < executeSource.indexOf("loadPackageContext"),
+  )
   assert.match(executeSource, /preflight\.collision \? "terminal_failure" : "claimed"/)
+  assert.match(
+    routeSource,
+    /EBAY_SKU_PREFLIGHT_SUPERSEDED_BY_REAPPROVAL/,
+  )
   assert.match(routeSource, /serverApprovedConfiguration/)
   assert.match(routeSource, /imageAssetManifest/)
   assert.match(routeSource, /imageManifestConfirmed/)

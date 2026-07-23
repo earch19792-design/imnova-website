@@ -34,6 +34,9 @@ import {
   type JsonRecord,
 } from "@/lib/ebay/ebay-draft-only-readiness"
 import {
+  canRetireSupersededSkuPreflight,
+} from "@/lib/ebay/ebay-draft-only-prewrite-retirement"
+import {
   getEbayTaxonomyListingIntelligence,
   type EbayTaxonomyListingIntelligence,
 } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
@@ -117,6 +120,86 @@ function configurationFromApprovedPayload(payload: JsonRecord) {
     skuCollisionCheck: compliance.skuCollisionCheck,
     ebayPreflightSnapshot: compliance.ebayPreflightSnapshot,
   }
+}
+
+async function retireSupersededPrewriteSkuPreflight(input: {
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  approvalId: string
+  sku: string
+  target: EbayDraftOnlyTarget
+  accountFingerprint: string
+}) {
+  const { data: executions, error: executionError } = await input.supabase
+    .from("ebay_draft_only_execution_ledger")
+    .select(
+      "id,approval_id,phase,last_error_code,inventory_http_status,"
+      + "inventory_confirmed_at,offer_create_started_at,offer_http_status,"
+      + "offer_id,completed_at,lease_expires_at,sanitized_result",
+    )
+    .eq("target", input.target)
+    .eq("account_fingerprint", input.accountFingerprint)
+    .eq("sku", input.sku)
+    .neq("approval_id", input.approvalId)
+    .neq("phase", "terminal_failure")
+    .limit(2)
+  if (executionError) {
+    throw new Error("EBAY_DRAFT_ONLY_SUPERSEDED_PREFLIGHT_READ_FAILED")
+  }
+  if (!executions?.length) return false
+  if (executions.length !== 1) return false
+
+  const candidate = record(executions[0])
+  const priorApprovalId = uuid(candidate.approval_id)
+  if (!priorApprovalId) return false
+  const { data: priorApproval, error: priorApprovalError } = await input.supabase
+    .from("ebay_draft_only_approvals")
+    .select("id,status,expires_at,consumed_at,revoked_at")
+    .eq("id", priorApprovalId)
+    .maybeSingle()
+  if (priorApprovalError) {
+    throw new Error("EBAY_DRAFT_ONLY_SUPERSEDED_APPROVAL_READ_FAILED")
+  }
+  if (
+    !priorApproval
+    || !canRetireSupersededSkuPreflight(
+      candidate,
+      priorApproval as JsonRecord,
+    )
+  ) return false
+
+  const nowIso = new Date().toISOString()
+  const { data: retired, error: retirementError } = await input.supabase
+    .from("ebay_draft_only_execution_ledger")
+    .update({
+      phase: "terminal_failure",
+      last_error_code: "EBAY_SKU_PREFLIGHT_SUPERSEDED_BY_REAPPROVAL",
+      sanitized_result: {
+        ...record(candidate.sanitized_result),
+        supersededPrewritePreflight: true,
+        successorApprovalId: input.approvalId,
+        retiredAt: nowIso,
+      },
+      lease_token: null,
+      lease_expires_at: null,
+      updated_at: nowIso,
+    })
+    .eq("id", text(candidate.id))
+    .eq("approval_id", priorApprovalId)
+    .eq("phase", "claimed")
+    .eq("last_error_code", "EBAY_SKU_PREFLIGHT_UNAVAILABLE")
+    .is("inventory_http_status", null)
+    .is("inventory_confirmed_at", null)
+    .is("offer_create_started_at", null)
+    .is("offer_http_status", null)
+    .is("offer_id", null)
+    .is("completed_at", null)
+    .or(`lease_expires_at.is.null,lease_expires_at.lte.${nowIso}`)
+    .select("id")
+    .maybeSingle()
+  if (retirementError || !retired) {
+    throw new Error("EBAY_DRAFT_ONLY_SUPERSEDED_PREFLIGHT_RETIRE_FAILED")
+  }
+  return true
 }
 
 function publicationPreviewHash(value: JsonRecord) {
@@ -1257,6 +1340,13 @@ async function executeDraft(body: JsonRecord, actor: string) {
   }
   const draftConfiguration = configurationFromApprovedPayload(approvedPayload)
   const sku = text(draftConfiguration.sku)
+  await retireSupersededPrewriteSkuPreflight({
+    supabase,
+    approvalId,
+    sku,
+    target,
+    accountFingerprint: fingerprint,
+  })
   let context = await loadPackageContext(
     supabase,
     approval.listing_package_id,
