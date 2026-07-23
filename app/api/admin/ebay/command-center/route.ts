@@ -16,6 +16,9 @@ import {
   loadFinalListingReviewPublicationGate,
 } from "@/lib/ebay/final-listing-review-publication-gate"
 import {
+  resolveCommandCenterCommercialFreshness,
+} from "@/lib/ebay/ebay-command-center-commercial-freshness"
+import {
   ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION,
   applyVerifiedTitleToActiveListing,
   prepareVerifiedActiveListingTitle,
@@ -664,6 +667,10 @@ export async function POST(req: Request) {
         typeof loadSameDayAuthorizedPublicationContext
       >> = null
       let finalListingReviewReady = false
+      let legacySourceRecheck: Awaited<ReturnType<
+        typeof publicationLunaRecheckDetails
+      >> = null
+      let legacySourceRecheckCode = ""
       if (existing) {
         try {
           sameDayContext = await loadSameDayAuthorizedPublicationContext({
@@ -676,39 +683,48 @@ export async function POST(req: Request) {
           })
         } catch (contextError) {
           const code = errorCode(contextError)
-          if (code === "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY") {
-            const finalReviewGate = await loadFinalListingReviewPublicationGate({
-              supabase,
-              listingPackageId: existing.id,
-              actorId: reviewer,
-            })
-            if (!finalReviewGate.allowed) throw contextError
-            finalListingReviewReady = true
-            sameDayContext = null
-          } else if (code !== "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED") {
+          if (code !== "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY"
+            && code !== "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED") {
             throw contextError
           }
-          const sourceRecheck = await publicationLunaRecheckDetails(
+          const finalReviewGate = await loadFinalListingReviewPublicationGate({
             supabase,
-            existing,
-            sourceOpportunity,
-          )
-          if (!sourceRecheck) throw contextError
-          return NextResponse.json({
-            success: false,
-            error: code,
-            sourceRecheckRequired: true,
-            listingPackage: existing,
-            sourceRecheck,
-            safety: {
-              ebayWriteUsed: false,
-              productionChanged: false,
-              imagesRegenerated: false,
-              handoffRegenerated: false,
-              canPublish: false,
-            },
-          }, { status: 409 })
+            listingPackageId: existing.id,
+            actorId: reviewer,
+          })
+          const freshnessResolution = resolveCommandCenterCommercialFreshness({
+            errorCode: code,
+            finalListingReviewAllowed: finalReviewGate.allowed,
+            sourceRecheckAvailable: true,
+          })
+          finalListingReviewReady = freshnessResolution.finalListingReviewReady
+          sameDayContext = finalListingReviewReady ? null : sameDayContext
+          if (freshnessResolution.sourceRecheckRequired) {
+            legacySourceRecheckCode = code
+            legacySourceRecheck = await publicationLunaRecheckDetails(
+              supabase,
+              existing,
+              sourceOpportunity,
+            )
+            if (!legacySourceRecheck) throw contextError
+          }
         }
+      }
+      if (legacySourceRecheck) {
+        return NextResponse.json({
+          success: false,
+          error: legacySourceRecheckCode || "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY",
+          sourceRecheckRequired: true,
+          listingPackage: existing,
+          sourceRecheck: legacySourceRecheck,
+          safety: {
+            ebayWriteUsed: false,
+            productionChanged: false,
+            imagesRegenerated: false,
+            handoffRegenerated: false,
+            canPublish: false,
+          },
+        }, { status: 409 })
       }
       const eligibility = evaluateEbayListingWorkspaceEligibility(sourceOpportunity)
       if (!eligibility.allowed && !sameDayContext && !finalListingReviewReady) {
