@@ -24,6 +24,8 @@ import {
   packageWithV3PublicationAssets,
   V3_PUBLICATION_BUCKET,
   V3_PUBLICATION_SOURCE_BUCKET,
+  buildV3UnpublishedAuthorizationIdempotencyKey,
+  V3_UNPUBLISHED_AUTHORIZATION_ACTION_VERSION,
   V3_UNPUBLISHED_CONFIRMATION,
   v3AuthorizationHash,
   validateV3PublicationAssets,
@@ -737,7 +739,37 @@ async function authorizeAndPrepareExecution(actor: string, body: JsonRecord) {
   if (!dependencies.safe) {
     throw new Error(dependencies.blocker ?? "EBAY_V3_DEPENDENCY_PREFLIGHT_FAILED")
   }
-  const approvalKey = `v3-unpublished:${exactPreviewHash.slice(0, 24)}`
+  const { data: activeApproval, error: activeApprovalError } = await supabase
+    .from("ebay_draft_only_approvals")
+    .select("id,payload_hash,status,approval_idempotency_key")
+    .eq("listing_package_id", prepared.listing_package_id)
+    .eq("status", "approved")
+    .maybeSingle()
+  if (activeApprovalError) {
+    throw new Error("EBAY_V3_APPROVAL_STATE_READ_FAILED")
+  }
+  if (activeApproval && activeApproval.payload_hash !== payloadHash) {
+    const { error: reconcileError } = await supabase
+      .rpc("reconcile_ebay_draft_only_approval_conflict", {
+        p_listing_package_id: prepared.listing_package_id,
+        p_actor_user_id: actor,
+        p_current_preview_hash: exactPreviewHash,
+        p_current_payload_hash: payloadHash,
+        p_target_account_fingerprint: prepared.account_fingerprint,
+        p_action_version: V3_UNPUBLISHED_AUTHORIZATION_ACTION_VERSION,
+      })
+    if (reconcileError) {
+      throw new Error("EBAY_V3_RECONCILIATION_FAILED")
+    }
+    throw new Error("EBAY_V3_AUTHORIZATION_SUPERSEDED")
+  }
+  const approvalKey = buildV3UnpublishedAuthorizationIdempotencyKey({
+    listingPackageId: prepared.listing_package_id,
+    previewHash: exactPreviewHash,
+    payloadHash,
+    targetAccountFingerprint: prepared.account_fingerprint,
+    actionVersion: V3_UNPUBLISHED_AUTHORIZATION_ACTION_VERSION,
+  })
   const { data: approval, error: approvalError } = await supabase
     .rpc("approve_ebay_draft_only_package", {
       p_listing_package_id: prepared.listing_package_id,

@@ -4,6 +4,8 @@ import type { JsonRecord } from "./ebay-draft-only-readiness"
 
 export const V3_UNPUBLISHED_CONFIRMATION =
   "AUTORIZAR INVENTORY ITEM Y OFFER UNPUBLISHED"
+export const V3_UNPUBLISHED_AUTHORIZATION_ACTION_VERSION =
+  "AUTHORIZE_RECONCILED_V1"
 export const V3_PUBLICATION_SOURCE_BUCKET = "ebay-listing-image-staging"
 export const V3_PUBLICATION_BUCKET = "ebay-listing-images"
 
@@ -34,6 +36,23 @@ export function v3AuthorizationHash(value: unknown) {
   return createHash("sha256")
     .update(JSON.stringify(canonical(value)))
     .digest("hex")
+}
+
+export function buildV3UnpublishedAuthorizationIdempotencyKey(input: {
+  listingPackageId: string
+  previewHash: string
+  payloadHash: string
+  targetAccountFingerprint: string
+  actionVersion: string
+}) {
+  const bindingHash = v3AuthorizationHash({
+    listingPackageId: input.listingPackageId,
+    previewHash: input.previewHash,
+    payloadHash: input.payloadHash,
+    targetAccountFingerprint: input.targetAccountFingerprint,
+    actionVersion: input.actionVersion,
+  })
+  return `v3-unpublished:${input.actionVersion}:${bindingHash.slice(0, 32)}`
 }
 
 export function validateV3PublicationAssets(value: unknown) {
