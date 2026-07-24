@@ -2171,6 +2171,21 @@ async function repairSameDayPilotBootstrap(
   if (await repairProcessedProductResearchCaptureGate(supabase, activeState, accountKey)) {
     return true
   }
+  const deferredLaterTasks =
+    await supersedeLaterTasksForVisualMarketRecovery(
+      supabase,
+      activeState,
+      new Date(),
+    )
+  if (deferredLaterTasks.length) {
+    repaired = true
+    activeState = await currentState(
+      supabase,
+      accountKey,
+      text(state.run.operation_date),
+    )
+    if (!activeState) return repaired
+  }
   // Normal repair must never widen the operator queue. Quota pauses have one
   // explicit exception below: promoteImmediateSuccessorDuringQuotaPause may
   // activate only the immediate successor, and its RUN_CREATED check makes a
@@ -2184,10 +2199,16 @@ async function repairSameDayPilotBootstrap(
     WAITING_IMAGE_APPROVAL: "IMAGE_APPROVAL_REQUIRED",
   }
   const bootstrapStates = ["RUN_CREATED", "LOCAL_FILTERING", "CANDIDATE_SELECTION", "PRODUCT_RESEARCH_PLAN_READY"]
+  const priorityVisualRecovery = visualMarketRecoveryPriorityCandidate(activeState)
   const active = activeState.candidates.find((candidate) => {
     const machineState = text(candidate.machine_state)
     if (["REJECTED", "BLOCKED", "READY_FOR_MANUAL_PUBLICATION", "VERIFIED_ACTIVE", "COMPLETED"]
       .includes(machineState)) return false
+    if (priorityVisualRecovery &&
+      text(candidate.id) !== text(priorityVisualRecovery.id) &&
+      Number(candidate.ordinal) > Number(priorityVisualRecovery.ordinal)) {
+      return false
+    }
     if (bootstrapStates.includes(machineState)) return true
     const expectedGate = gateByState[machineState]
     return Boolean(expectedGate && !activeState.tasks.some((task) =>
@@ -4754,6 +4775,85 @@ async function routeCandidateToVisualMarketRecapture(input: {
   return { priorCaptureBatchId, queryPlan }
 }
 
+function visualMarketRecoveryPriorityCandidate(
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+) {
+  return [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .find((candidate) => {
+      const evidence = record(candidate.evidence_summary)
+      return text(evidence.visualMarketRecaptureRecoveryVersion) ===
+        VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION &&
+        !["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"]
+          .includes(text(candidate.machine_state))
+    }) ?? null
+}
+
+async function supersedeLaterTasksForVisualMarketRecovery(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const priority = visualMarketRecoveryPriorityCandidate(state)
+  if (!priority) return [] as string[]
+  const visualFailureAt = Math.max(0, ...state.transitions
+    .filter((entry) =>
+      text(entry.candidate_id) === text(priority.id) &&
+      text(entry.next_state) === "REJECTED" &&
+      VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(text(entry.reason_code)))
+    .map((entry) => Date.parse(text(entry.created_at)))
+    .filter(Number.isFinite))
+  const laterCandidateIds = new Set(state.candidates
+    .filter((candidate) =>
+      Number(candidate.ordinal) > Number(priority.ordinal))
+    .map((candidate) => text(candidate.id))
+    .filter(Boolean))
+  const deferredTasks = state.tasks.filter((task) =>
+    task.status === "OPEN" &&
+    task.gate_type !== "CRITICAL_EXCEPTION_REQUIRED" &&
+    laterCandidateIds.has(text(task.candidate_id)) &&
+    Date.parse(text(task.created_at)) >= visualFailureAt)
+  const taskIds = deferredTasks.map((task) => text(task.id)).filter(Boolean)
+  if (!taskIds.length) return []
+  const { error } = await supabase.from("ebay_same_day_pilot_human_tasks")
+    .update({
+      status: "SUPERSEDED",
+      completed_at: now.toISOString(),
+      updated_at: now.toISOString(),
+    })
+    .eq("run_id", state.run.id)
+    .eq("status", "OPEN")
+    .in("id", taskIds)
+  if (error) {
+    throw new Error("SAME_DAY_PILOT_VISUAL_RECOVERY_SUCCESSOR_TASK_DEFER_FAILED")
+  }
+  const { error: eventError } = await supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({
+      run_id: state.run.id,
+      candidate_id: priority.id,
+      event_type: "VISUAL_MARKET_RECOVERY_SUCCESSOR_TASK_DEFERRED",
+      event_payload: {
+        recoveryVersion: VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION,
+        priorityCandidateId: priority.id,
+        deferredTaskIds: taskIds,
+        deferredCandidateIds: deferredTasks.map((task) => task.candidate_id),
+        resumeOnlyAfterPriorityCandidateSettles: true,
+        historyDeleted: false,
+      },
+      idempotency_key:
+        `${state.run.id}:${priority.id}:VISUAL_RECOVERY_TASK_DEFER:${hash(taskIds.sort())}`,
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) {
+    throw new Error("SAME_DAY_PILOT_VISUAL_RECOVERY_SUCCESSOR_EVENT_FAILED")
+  }
+  return taskIds
+}
+
 async function repairRejectedVisualMarketRecapture(
   supabase: SupabaseClient,
   state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
@@ -4775,7 +4875,7 @@ async function repairRejectedVisualMarketRecapture(
     .eq("run_id", state.run.id)
     .eq("candidate_id", candidate.id)
     .eq("job_type", "GENERATE_SIX_IMAGE_PACKAGE")
-    .in("status", ["DEAD_LETTER", "CANCELLED"])
+    .in("status", ["DEAD_LETTER", "CANCELLED", "COMPLETED"])
     .order("created_at", { ascending: false })
   if (imageJobsError) {
     throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_IMAGE_JOB_READ_FAILED")
@@ -4783,10 +4883,13 @@ async function repairRejectedVisualMarketRecapture(
   const failedJob = (imageJobs ?? []).find((job) => {
     const recovery = record(record(job.checkpoint)._visualMarketRecaptureRecovery)
     return VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(text(job.last_error_code)) ||
-      VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(text(recovery.previousErrorCode))
+      VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(text(recovery.previousErrorCode)) ||
+      (job.status === "COMPLETED" &&
+        text(job.last_error_code) === "EFFECT_ALREADY_APPLIED_RECOVERED")
   })
   if (!failedJob) return 0
 
+  const candidateErrorCode = strings(candidate.blockers)[0]
   await routeCandidateToVisualMarketRecapture({
     supabase,
     state,
@@ -4796,8 +4899,13 @@ async function repairRejectedVisualMarketRecapture(
       text(failedJob.last_error_code),
     )
       ? text(failedJob.last_error_code)
-      : text(record(record(failedJob.checkpoint)._visualMarketRecaptureRecovery)
-        .previousErrorCode),
+      : VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(
+        text(record(record(failedJob.checkpoint)._visualMarketRecaptureRecovery)
+          .previousErrorCode),
+      )
+      ? text(record(record(failedJob.checkpoint)._visualMarketRecaptureRecovery)
+        .previousErrorCode)
+      : candidateErrorCode,
     now,
   })
   if (failedJob.status === "DEAD_LETTER") {
@@ -4821,6 +4929,19 @@ async function repairRejectedVisualMarketRecapture(
     if (error) {
       throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_DEAD_LETTER_CANCEL_FAILED")
     }
+  }
+  const recoveredState = await currentState(
+    supabase,
+    text(state.run.marketplace_account_key),
+    text(state.run.operation_date),
+    now,
+  )
+  if (recoveredState) {
+    await repairSameDayPilotBootstrap(
+      supabase,
+      recoveredState,
+      text(state.run.marketplace_account_key),
+    )
   }
   await refreshRunProjection(supabase, state.run.id)
   return 1
@@ -4917,6 +5038,16 @@ async function recoverDeadLetterCandidates(supabase: SupabaseClient, state: NonN
     const candidate = state.candidates.find((entry) => entry.id === failed.candidate_id)
     if (!candidate) continue
     const candidateId = text(candidate.id)
+    const candidateBlockers = strings(candidate.blockers)
+    if (text(failed.job_type) === "GENERATE_SIX_IMAGE_PACKAGE" &&
+      text(candidate.machine_state) === "REJECTED" &&
+      candidateBlockers.length === 1 &&
+      VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(candidateBlockers[0])) {
+      // The targeted visual-recapture repair runs before this generic lane.
+      // If it could not prove its bindings, retain the dead letter for the
+      // next safe retry instead of erasing the original recoverable error.
+      continue
+    }
     if (jobEffectAlreadyApplied(text(failed.job_type), text(candidate.machine_state))) {
       if (text(failed.job_type) === "FINALIZE_MANUAL_HANDOFF") {
         await promoteNextCandidateAfterPreparedPackage(
