@@ -1948,7 +1948,10 @@ async function completeFinalPublicationMonitor(input: {
     })
     .single()
   if (completionError || !completed) {
-    throw new Error("EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED")
+    throw new Error(databaseExceptionCode(
+      completionError,
+      "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED",
+    ))
   }
   return NextResponse.json({
     success: true,
@@ -2146,6 +2149,16 @@ async function reconcileFinalPublication(body: JsonRecord, actor: string) {
     .eq("actor_user_id", actor)
     .maybeSingle()
   if (error || !publication) return jsonError(new Error("EBAY_FINAL_PUBLICATION_NOT_FOUND"), 404)
+  if (publication.phase === "monitor_registered") {
+    return NextResponse.json({
+      success: true,
+      idempotentReplay: true,
+      publication,
+      listing: { listingId: publication.listing_id, status: "ACTIVE" },
+      monitoring: { registered: true, activeListingId: publication.active_listing_id },
+      safety: { ebayWriteUsed: false },
+    })
+  }
   const visualPublicationGate = await loadFinalListingReviewPublicationGate({
     supabase,
     listingPackageId: text(publication.listing_package_id),
@@ -2159,16 +2172,6 @@ async function reconcileFinalPublication(body: JsonRecord, actor: string) {
     text(publication.draft_execution_id),
     actor,
   )
-  if (publication.phase === "monitor_registered") {
-    return NextResponse.json({
-      success: true,
-      idempotentReplay: true,
-      publication,
-      listing: { listingId: publication.listing_id, status: "ACTIVE" },
-      monitoring: { registered: true, activeListingId: publication.active_listing_id },
-      safety: { ebayWriteUsed: false },
-    })
-  }
   let reconciledPublication = publication as JsonRecord
   let listingId = text(publication.listing_id)
   if (["publish_in_flight", "outcome_unknown"].includes(text(publication.phase))) {

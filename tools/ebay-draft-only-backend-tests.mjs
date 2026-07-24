@@ -100,6 +100,10 @@ const v3PublicationClaimMigrationSource = readFileSync(
   new URL("../supabase/migrations/20260724002000_support_v3_publication_claim_image_gate.sql", import.meta.url),
   "utf8",
 )
+const finalMonitorClosureMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260724003000_fix_final_publication_monitor_closure.sql", import.meta.url),
+  "utf8",
+)
 
 async function importTypeScript(source) {
   const javascript = ts.transpileModule(source, {
@@ -2041,5 +2045,28 @@ test("V3 final publication claim validates the append-only seven-image chain", (
   assert.match(
     routeSource,
     /EBAY_FINAL_PUBLICATION_PREVIEW_REFRESH_FAILED/,
+  )
+})
+
+test("published ACTIVE monitor closure uses schema-qualified pgcrypto", () => {
+  assert.match(
+    finalMonitorClosureMigrationSource,
+    /extensions\.digest/,
+  )
+  assert.match(
+    finalMonitorClosureMigrationSource,
+    /complete_ebay_authorized_listing_monitor_registration/,
+  )
+  assert.match(
+    finalMonitorClosureMigrationSource,
+    /never calls eBay/,
+  )
+  assert.match(
+    routeSource,
+    /databaseExceptionCode\([\s\S]*EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED/,
+  )
+  assert.match(
+    routeSource,
+    /if \(publication\.phase === "monitor_registered"\)[\s\S]*loadFinalListingReviewPublicationGate/,
   )
 })
