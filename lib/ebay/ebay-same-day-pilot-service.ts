@@ -5383,6 +5383,7 @@ async function repairRejectedSingleUnitVisualStrategy(
   const recoverableErrorCodes = new Set([
     "NEEDS_VERIFIED_PRODUCT_FACTS:VISUAL_STRATEGY",
     "NEEDS_MORE_VERIFIED_FACTS",
+    "LUNA_CATALOG_SOURCE_PACK_STORAGE_FAILED",
   ])
   const candidates = [...state.candidates]
     .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))

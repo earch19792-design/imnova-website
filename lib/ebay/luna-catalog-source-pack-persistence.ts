@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
-import { EBAY_IMAGE_SOURCE_BUCKET } from "./ebay-image-storage-cleanup"
+// @ts-expect-error Node's native TypeScript tests need the explicit extension.
+import { EBAY_IMAGE_SOURCE_BUCKET } from "./ebay-image-storage-cleanup.ts"
 import type {
   AuthorizedCatalogSourcePack,
   ResolvedLunaCatalogSourceAsset,
@@ -16,8 +17,56 @@ function uuid(value: unknown) {
     .test(normalized) ? normalized : ""
 }
 
-function sha256(value: string) {
+function sha256(value: string | Buffer) {
   return createHash("sha256").update(value).digest("hex")
+}
+
+function storageObjectAlreadyExists(error: unknown) {
+  const row = error && typeof error === "object"
+    ? error as JsonRecord
+    : {}
+  const status = Number(row.statusCode ?? row.status ?? 0)
+  const message = typeof row.message === "string" ? row.message : ""
+  return status === 409 || /already exists|duplicate|resource exists/i
+    .test(message)
+}
+
+async function persistContentAddressedObject(input: {
+  supabase: SupabaseClient
+  path: string
+  bytes: Buffer
+  contentType: string
+  expectedSha256: string
+}) {
+  if (sha256(input.bytes) !== input.expectedSha256) {
+    throw new Error("LUNA_CATALOG_SOURCE_PACK_SOURCE_HASH_INVALID")
+  }
+  const bucket = input.supabase.storage.from(EBAY_IMAGE_SOURCE_BUCKET)
+  const upload = await bucket.upload(input.path, input.bytes, {
+    contentType: input.contentType,
+    upsert: false,
+  })
+  if (!upload.error) return { created: true }
+  if (!storageObjectAlreadyExists(upload.error)) {
+    throw new Error("LUNA_CATALOG_SOURCE_PACK_STORAGE_FAILED")
+  }
+
+  // Content-addressed retries are legitimate only when the existing object is
+  // byte-identical. Never overwrite or trust a path collision blindly.
+  const existing = await bucket.download(input.path)
+  if (existing.error || !existing.data ||
+    existing.data.size !== input.bytes.length) {
+    throw new Error("LUNA_CATALOG_SOURCE_PACK_STORAGE_HASH_MISMATCH")
+  }
+  const existingBytes = Buffer.from(await existing.data.arrayBuffer())
+  try {
+    if (sha256(existingBytes) !== input.expectedSha256) {
+      throw new Error("LUNA_CATALOG_SOURCE_PACK_STORAGE_HASH_MISMATCH")
+    }
+  } finally {
+    existingBytes.fill(0)
+  }
+  return { created: false }
 }
 
 function catalogAssetEvidence(asset: ResolvedLunaCatalogSourceAsset) {
@@ -88,25 +137,25 @@ export async function persistAuthorizedCatalogSourcePack(input: {
       const nativeExtension = asset.contentType === "image/png"
         ? "png" : asset.contentType === "image/webp" ? "webp" : "jpg"
       const storagePath = `${input.actorId}/catalog-source-packs/content-addressed/${asset.sourceSha256}-native.${nativeExtension}`
-      const upload = await input.supabase.storage.from(EBAY_IMAGE_SOURCE_BUCKET)
-        .upload(storagePath, asset.nativeBuffer, {
-          contentType: asset.contentType,
-          upsert: false,
-        })
-      if (upload.error) throw new Error("LUNA_CATALOG_SOURCE_PACK_STORAGE_FAILED")
-      uploadedPaths.push(storagePath)
+      const nativeUpload = await persistContentAddressedObject({
+        supabase: input.supabase,
+        path: storagePath,
+        bytes: asset.nativeBuffer,
+        contentType: asset.contentType,
+        expectedSha256: asset.sourceSha256,
+      })
+      if (nativeUpload.created) uploadedPaths.push(storagePath)
       let enhancedStoragePath: string | null = null
       if (asset.enhancedDerivative && asset.enhancedSha256) {
         enhancedStoragePath = `${input.actorId}/catalog-source-packs/content-addressed/${asset.enhancedSha256}-enhanced.jpg`
-        const enhancedUpload = await input.supabase.storage
-          .from(EBAY_IMAGE_SOURCE_BUCKET).upload(enhancedStoragePath, asset.buffer, {
-            contentType: "image/jpeg",
-            upsert: false,
-          })
-        if (enhancedUpload.error) {
-          throw new Error("LUNA_CATALOG_SOURCE_PACK_STORAGE_FAILED")
-        }
-        uploadedPaths.push(enhancedStoragePath)
+        const enhancedUpload = await persistContentAddressedObject({
+          supabase: input.supabase,
+          path: enhancedStoragePath,
+          bytes: asset.buffer,
+          contentType: "image/jpeg",
+          expectedSha256: asset.enhancedSha256,
+        })
+        if (enhancedUpload.created) uploadedPaths.push(enhancedStoragePath)
       }
       persistedAssets.push({
         ...catalogAssetEvidence(asset),
