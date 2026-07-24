@@ -96,7 +96,7 @@ Vercel Preview. A Vercel Production deployment is always blocked.
 | `EBAY_COMMERCIAL_ANALYTICS_INTERVAL_MINUTES` | Minimum Analytics interval | No | Preview server | `360` | Clamped to 60–1440 minutes |
 | `EBAY_COMMERCIAL_WATCHERS_INTERVAL_MINUTES` | Minimum WatchCount interval | No | Preview server | `240` | Clamped to 15–1440 minutes |
 | `EBAY_COMMERCIAL_DISPATCHER_INTERVAL_MINUTES` | WhatsApp worker target interval | No | Preview server | `5` | Independent outbox worker |
-| `EBAY_COMMERCIAL_DAILY_SUMMARY_HOUR_UTC` | Daily summary hour | No | Preview server | `14` | Integer 0–23 |
+| `EBAY_COMMERCIAL_DAILY_SUMMARY_HOUR_UTC` | Daily summary hour | No | Preview server | `0` (18:00 Guatemala) | Integer 0–23 |
 | `EBAY_COMMERCIAL_ANALYTICS_WINDOW_DAYS` | Comparable Traffic Report window | No | Preview server | `7` | Clamped to 1–30 complete days |
 | `EBAY_COMMERCIAL_ORDER_LOOKBACK_HOURS` | Initial order catch-up window | No | Preview server | `168` | Clamped to 1–2160 hours and then advances with overlap |
 
@@ -118,7 +118,7 @@ credential is accepted from the client.
 | `EBAY_SELLER_WHATSAPP_TEMPLATE_NAME` | Immediate approved template | No | Server | Missing blocks | Must pass Meta preflight |
 | `EBAY_SELLER_WHATSAPP_DIGEST_TEMPLATE_NAME` | Digest approved template | No | Server | Missing blocks | Must pass Meta preflight |
 | `EBAY_SELLER_WHATSAPP_TEMPLATE_LANGUAGE` | Exact template language | No | Server | `es` | Must match Meta approval |
-| `EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC` | Digest hour | No | Server | Application default | Integer 0–23 |
+| `EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC` | Digest hour | No | Server | `0` (18:00 Guatemala) | Integer 0–23 |
 | `EBAY_SELLER_COMMAND_CENTER_URL` | Link rendered in messages | No | Server; HTTPS | Missing blocks complete configuration | Never accept credentials in URL |
 | `WHATSAPP_ACCESS_TOKEN` | Meta Cloud API token | Yes | Server only | Missing blocks | Shared with non-Seller WhatsApp code; inheritance risk |
 | `WHATSAPP_PHONE_NUMBER_ID` | Meta sender phone ID | Sensitive | Server | Missing blocks | Shared global namespace |

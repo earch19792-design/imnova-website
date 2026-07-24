@@ -137,22 +137,24 @@ vez para el listing piloto y revisar que WhatsApp apunte al único destinatario
 autorizado. El token general validado no se sustituye. Sólo después se
 habilitan el flag de Vercel Preview y la variable del workflow.
 
-### Piloto temporal de 24 horas
+### Monitoreo continuo mientras existan listings activos
 
-Un piloto Preview requiere simultáneamente
+El monitor Preview requiere simultáneamente
 `EBAY_COMMERCIAL_PREVIEW_MONITOR_ENABLED=true` y
 `EBAY_COMMERCIAL_MONITOR_ENABLED=true`, ambos limitados a la rama Preview.
-También exige `EBAY_COMMERCIAL_PILOT_STARTED_AT` y
-`EBAY_COMMERCIAL_PILOT_EXPIRES_AT`; la diferencia debe ser positiva y no puede
-superar 24 horas. Al vencer, los endpoints del monitor y del dispatcher quedan
-bloqueados aunque un scheduler externo continúe intentando invocarlos.
+Las fechas históricas `EBAY_COMMERCIAL_PILOT_STARTED_AT` y
+`EBAY_COMMERCIAL_PILOT_EXPIRES_AT` ya no detienen el servicio. Después de un
+dry run satisfactorio y una activación explícita, el monitor continúa mientras
+la configuración siga habilitada y exista al menos un listing activo con
+identidad exacta. Sólo una revocación o desactivación explícita lo detiene.
 
 Cuando el workflow todavía no existe en la rama por defecto, no se debe
 desplegarlo en Production para habilitar un Preview. El piloto puede ser
 invocado desde Supabase staging mediante `pg_cron` + `pg_net`, con un secreto
 dedicado guardado en Vault y configurado como
 `EBAY_COMMERCIAL_PILOT_CRON_SECRET` únicamente en el Preview de la rama. Los
-jobs temporales deben eliminarse al finalizar la observación.
+jobs se mantienen durante toda la vida de los listings activos y deben
+deshabilitarse explícitamente cuando ya no deban operar.
 
 Frecuencias iniciales del piloto: invocación base y dispatcher cada 5 minutos,
 Orders cada 5 minutos, Watchers cada 360 minutos, Analytics cada 1440 minutos y

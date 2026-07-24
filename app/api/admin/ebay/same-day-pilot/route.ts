@@ -117,6 +117,14 @@ async function imageReviewAssetsForPilot(
           120,
         ),
         presentationMode: text(transformation.presentationMode, 80),
+        squarePresentationVersion: text(
+          transformation.squarePresentationVersion,
+          120,
+        ),
+        artificialFrameAdded:
+          transformation.artificialFrameAdded === true,
+        outputEncodingQuality:
+          Number(transformation.outputEncodingQuality),
         authorizedSourceTreatment: text(
           transformation.authorizedSourceTreatment,
           80,
@@ -143,6 +151,18 @@ async function imageReviewAssetsForPilot(
         ),
         foregroundMatteValidated: qa.foregroundMatteValidated === true,
         opaqueSourceFrameRemoved: qa.opaqueSourceFrameRemoved === true,
+        squarePresentationQaVersion: text(
+          qa.squarePresentationQaVersion,
+          120,
+        ),
+        squareFormatPassed: qa.squareFormatPassed === true,
+        artificialInsetFrameFree:
+          qa.artificialInsetFrameFree === true,
+        sourceQualityPassed: qa.sourceQualityPassed === true,
+        safeCanvasPlacementPassed:
+          qa.safeCanvasPlacementPassed === true,
+        mobileFocalPointPassed: qa.mobileFocalPointPassed === true,
+        productCoverageRatio: Number(qa.productCoverageRatio),
         textPolicyPassed: qa.textPolicyPassed === true,
         qaEvaluatorVersion: text(qa.qaEvaluatorVersion, 120),
         textSafeAreaVerified: qa.textSafeAreaVerified === true,

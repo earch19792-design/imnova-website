@@ -9,9 +9,30 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Ejecuta una búsqueda y usa **Capturar y continuar**.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.11.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.16.
 
-## Consulta guiada, cero resultados y patrones locales (v1.2.11)
+## Recuperación extremo a extremo (v1.2.16)
+
+La versión 1.2.16 respeta la señal `returnToSellerOs` después de una captura
+aceptada: bloquea una segunda captura accidental de la misma tabla y convierte
+la única acción disponible en `VOLVER A SELLER OS`.
+
+Si la confirmación entre la pestaña de eBay y el receptor se pierde, la extensión
+reenvía una sola vez el mismo `captureId`. El receptor devuelve el resultado
+cacheado y la API conserva la misma clave de idempotencia, por lo que no repite
+la importación. La llamada del receptor también se cancela de forma segura tras
+60 segundos y devuelve un error recuperable en lugar de quedar esperando
+indefinidamente.
+
+## Continuidad del lote activo (v1.2.15)
+
+La versión 1.2.15 corrige el regreso desde Product Research: al terminar el
+plan guiado, `Volver a Seller OS` abre directamente el lanzamiento activo en
+`/admin#today-launch`, no el hub operativo anterior. La autenticación,
+captura visible, consulta guiada y validación de resultados conservan el
+contrato de v1.2.14.
+
+## Consulta guiada, cero resultados y patrones locales (v1.2.14)
 
 Seller OS puede abrir Product Research con una consulta preparada en el fragmento
 local de la URL. La extensión aplica la consulta automáticamente y el usuario sólo
@@ -33,7 +54,7 @@ nunca inicia sesión automáticamente. Si eBay recarga la página, conserva en e
 local la consulta y una huella SHA-256 no reconstructiva de la tabla anterior; no guarda
 Item IDs ni filas en storage y sólo reactiva la captura cuando prueba que los resultados cambiaron.
 
-La versión 1.2.11 conserva sin cambios el lector y el contrato tabular de v1.2.10. Cuando no existe una tabla, sólo acepta el mensaje visible oficial `No sold results found for` si la consulta mostrada coincide con la consulta preparada; registra cero filas y nunca inventa evidencia vendida. El análisis visual remoto queda limitado a 20 miniaturas y a un presupuesto total de 12 segundos; cualquier miniatura lenta queda como `UNKNOWN` y la captura comercial continúa. La versión mantiene además las mismas reglas de v1.2.8 para las columnas de unidades vendidas y fecha de
+La versión 1.2.14 conserva sin cambios el lector y el contrato tabular de v1.2.13. Cuando no existen ventas, acepta el mensaje visible oficial `No sold results found for` si la consulta mostrada coincide con la consulta preparada. También reconoce las variantes visibles de eBay que explican que no encontraron coincidencias y sustituyeron la tabla por anuncios activos, incluso cuando el aviso aparece dentro de un componente sin rol, clase o selector estable. Para ello revisa únicamente texto renderizado, en fragmentos acotados; no lee ni transmite HTML completo. En ese caso ignora las filas activas, registra cero ventas y nunca inventa evidencia vendida. El análisis visual remoto queda limitado a 20 miniaturas y a un presupuesto total de 12 segundos; cualquier miniatura lenta queda como `UNKNOWN` y la captura comercial continúa. La versión mantiene además las mismas reglas de v1.2.8 para las columnas de unidades vendidas y fecha de
 última venta. Un precio nunca puede convertirse en cantidad y una fecha numérica ambigua
 no puede convertirse en evidencia histórica; Seller OS rechaza además cualquier venta fuera
 de la ventana visible autorizada.

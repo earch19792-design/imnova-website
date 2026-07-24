@@ -16,3 +16,13 @@ export function reviseActiveListingPriceRequestXml(input: {
     `<Item><ItemID>${input.listingId}</ItemID><StartPrice currencyID="${xmlEscape(input.currency)}">` +
     `${input.price.toFixed(2)}</StartPrice></Item></ReviseFixedPriceItemRequest>`
 }
+
+export function endActiveListingOutOfStockRequestXml(input: {
+  listingId: string
+}) {
+  return "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+    "<EndFixedPriceItemRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
+    `<ItemID>${xmlEscape(input.listingId)}</ItemID>` +
+    "<EndingReason>NotAvailable</EndingReason>" +
+    "</EndFixedPriceItemRequest>"
+}

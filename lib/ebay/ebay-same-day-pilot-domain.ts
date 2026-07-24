@@ -127,6 +127,11 @@ const TERMINAL_SAME_DAY_MACHINE_STATES = new Set([
   "COMPLETED",
 ])
 
+export function isSameDayCandidateBatchSettled(machineStates: string[]) {
+  return machineStates.length > 0 && machineStates.every((state) =>
+    TERMINAL_SAME_DAY_MACHINE_STATES.has(state))
+}
+
 export function canStartNextSameDayCandidateCycle(input: {
   runStatus: string
   cycle: number
@@ -140,9 +145,9 @@ export function canStartNextSameDayCandidateCycle(input: {
   nextCandidateSetExhausted?: boolean
 }) {
   const cycle = Number.isInteger(input.cycle) ? input.cycle : 1
-  const candidatesTerminal = input.candidateMachineStates.length > 0
-    && input.candidateMachineStates.every((state) =>
-      TERMINAL_SAME_DAY_MACHINE_STATES.has(state))
+  const candidatesTerminal = isSameDayCandidateBatchSettled(
+    input.candidateMachineStates,
+  )
   const allowed = input.runStatus === "BLOCKED"
     && cycle < SAME_DAY_MAX_CANDIDATE_CYCLES
     && candidatesTerminal

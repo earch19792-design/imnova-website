@@ -342,6 +342,126 @@ function RiskCheckbox({ checked, onChange, label }: {
   </label>
 }
 
+function JourneyPhaseVisual({
+  visual,
+  active,
+  done,
+}: {
+  visual: SameDayLiveMonitor["timeline"][number]["visual"]
+  active: boolean
+  done: boolean
+}) {
+  const stroke = done ? "#a7f3d0" : active ? "#cffafe" : "#94a3b8"
+  const accent = done ? "#34d399" : active ? "#22d3ee" : "#475569"
+  const motion = active ? "motion-safe:" : ""
+
+  return <div
+    data-journey-phase-visual={visual}
+    data-journey-phase-active={active ? "true" : "false"}
+    className={`relative mb-3 h-16 overflow-hidden rounded-xl border ${done
+      ? "border-emerald-200/20 bg-emerald-200/[0.055]"
+      : active
+        ? "border-cyan-200/25 bg-[#06121c] shadow-[inset_0_0_24px_rgba(34,211,238,0.08)]"
+        : "border-white/[0.07] bg-black/20"}`}
+    aria-hidden="true"
+  >
+    <span className="absolute inset-0 opacity-40 [background-image:linear-gradient(rgba(103,232,249,.07)_1px,transparent_1px),linear-gradient(90deg,rgba(103,232,249,.07)_1px,transparent_1px)] [background-size:12px_12px]" />
+    <svg viewBox="0 0 160 64" className="relative h-full w-full" fill="none">
+      {visual === "radar" && <>
+        <circle cx="80" cy="32" r="23" stroke={stroke} strokeOpacity=".28" />
+        <circle cx="80" cy="32" r="14" stroke={stroke} strokeOpacity=".22" />
+        <path d="M80 9V55M57 32H103" stroke={stroke} strokeOpacity=".16" />
+        <path d="M80 32L99 18" stroke={accent} strokeWidth="2" strokeLinecap="round"
+          className={active ? `${motion}animate-[spin_2.4s_linear_infinite] origin-[80px_32px]` : ""} />
+        {[["68", "22"], ["93", "38"], ["76", "45"]].map(([cx, cy], index) =>
+          <circle key={`${cx}:${cy}`} cx={cx} cy={cy} r="2.5" fill={accent}
+            className={active ? `${motion}animate-pulse` : ""}
+            style={{ animationDelay: `${index * 180}ms` }} />)}
+      </>}
+      {visual === "research" && <>
+        <path d="M35 47H125" stroke={stroke} strokeOpacity=".25" />
+        {[18, 29, 21, 37, 27].map((height, index) => <rect
+          key={height + index} x={43 + index * 15} y={48 - height} width="8"
+          height={height} rx="2" fill={accent} fillOpacity={.28 + index * .1}
+          className={active ? `${motion}animate-pulse` : ""}
+          style={{ animationDelay: `${index * 140}ms` }} />)}
+        <circle cx="108" cy="22" r="10" stroke={stroke} strokeWidth="2" />
+        <path d="M116 30L125 39" stroke={accent} strokeWidth="3" strokeLinecap="round"
+          className={active ? `${motion}animate-pulse` : ""} />
+      </>}
+      {visual === "identity" && <>
+        <circle cx="48" cy="32" r="13" stroke={stroke} strokeWidth="2"
+          className={active ? `${motion}animate-pulse` : ""} />
+        <circle cx="112" cy="32" r="13" stroke={stroke} strokeWidth="2"
+          className={active ? `${motion}animate-pulse` : ""} />
+        <path d="M62 32H98" stroke={accent} strokeWidth="2" strokeDasharray="4 4"
+          className={active ? `${motion}animate-pulse` : ""} />
+        <path d="M75 26L81 32L75 38M85 26L79 32L85 38" stroke={accent}
+          strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="48" cy="32" r="3" fill={accent} />
+        <circle cx="112" cy="32" r="3" fill={accent} />
+      </>}
+      {visual === "economics" && <>
+        <path d="M35 45L57 34L76 39L96 20L125 27" stroke={accent} strokeWidth="2.5"
+          strokeLinecap="round" strokeLinejoin="round" />
+        {[["35", "45"], ["57", "34"], ["76", "39"], ["96", "20"], ["125", "27"]].map(([cx, cy], index) =>
+          <circle key={`${cx}:${cy}`} cx={cx} cy={cy} r="3" fill={stroke}
+            className={active ? `${motion}animate-pulse` : ""}
+            style={{ animationDelay: `${index * 130}ms` }} />)}
+        <circle cx="51" cy="19" r="10" stroke={stroke} strokeOpacity=".6" />
+        <text x="51" y="23" textAnchor="middle" fill={stroke} fontSize="11" fontWeight="900">$</text>
+      </>}
+      {visual === "facts" && <>
+        <rect x="50" y="9" width="60" height="46" rx="7" stroke={stroke} strokeWidth="2" />
+        {[20, 32, 44].map((y, index) => <g key={y}>
+          <path d={`M59 ${y}l3 3 6-7`} stroke={accent} strokeWidth="2" strokeLinecap="round"
+            strokeLinejoin="round" className={active ? `${motion}animate-pulse` : ""}
+            style={{ animationDelay: `${index * 180}ms` }} />
+          <path d={`M75 ${y + 1}H101`} stroke={stroke} strokeOpacity=".5" strokeWidth="2" />
+        </g>)}
+      </>}
+      {visual === "creative" && <>
+        {[0, 1, 2].map((index) => <g key={index}
+          className={active ? `${motion}animate-pulse` : ""}
+          style={{ animationDelay: `${index * 180}ms` }}>
+          <rect x={38 + index * 30} y={14 + (index % 2) * 5} width="35" height="35"
+            rx="6" fill={accent} fillOpacity={.09 + index * .06} stroke={stroke}
+            strokeOpacity=".55" />
+          <circle cx={48 + index * 30} cy={24 + (index % 2) * 5} r="3" fill={accent} />
+          <path d={`M43 ${43 + (index % 2) * 5}l9-9 7 6 7-8 3 3`} stroke={stroke}
+            strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </g>)}
+      </>}
+      {visual === "publish" && <>
+        <path d="M30 32H124" stroke={stroke} strokeOpacity=".25" strokeWidth="2" />
+        <path d="M35 32C55 9 70 54 91 32S119 27 125 32" stroke={accent}
+          strokeWidth="2" strokeDasharray="5 4" />
+        <g className={active ? `${motion}animate-[bounce_1.4s_ease-in-out_infinite]` : ""}>
+          <rect x="65" y="21" width="24" height="22" rx="6" fill={accent} fillOpacity=".22"
+            stroke={stroke} />
+          <path d="M72 28H82M72 33H82M72 38H78" stroke={stroke} strokeWidth="1.5" />
+        </g>
+        <rect x="119" y="19" width="30" height="27" rx="7" stroke={stroke} strokeWidth="2" />
+        <text x="134" y="36" textAnchor="middle" fill={stroke} fontSize="9" fontWeight="900">eBay</text>
+      </>}
+      {visual === "monitor" && <>
+        <path d="M30 35H51L58 22L69 47L79 29L89 35H130" stroke={accent}
+          strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+          className={active ? `${motion}animate-pulse` : ""} />
+        <circle cx="80" cy="32" r="22" stroke={stroke} strokeOpacity=".25"
+          className={active ? `${motion}animate-ping` : ""} />
+        <circle cx="80" cy="32" r="5" fill={accent}
+          className={active ? `${motion}animate-pulse` : ""} />
+        <path d="M115 16l4 4 8-9" stroke={stroke} strokeWidth="2.5"
+          strokeLinecap="round" strokeLinejoin="round" />
+      </>}
+    </svg>
+    {active && <span className="absolute inset-x-3 bottom-1 h-px overflow-hidden bg-cyan-100/15">
+      <span className="block h-full w-1/3 bg-cyan-100 motion-safe:animate-[progress-scan_1.4s_ease-in-out_infinite]" />
+    </span>}
+  </div>
+}
+
 function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt, nextCycleAllowed }: {
   monitor: SameDayLiveMonitor
   pilotProgress: number
@@ -349,10 +469,14 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt, nextCycleAll
   nextCycleAllowed: boolean
 }) {
   const palette = liveMonitorPalette(monitor.status)
-  const settled = monitor.batch.completed + monitor.batch.blocked
-  const progressValue = monitor.batch.total
-    ? Math.max(settled, monitor.batch.currentOrdinal ?? 0)
-    : 0
+  const [selectedPhaseId, setSelectedPhaseId] = useState(
+    monitor.currentPhase.id,
+  )
+  useEffect(() => {
+    setSelectedPhaseId(monitor.currentPhase.id)
+  }, [monitor.currentPhase.id])
+  const selectedPhase = monitor.timeline.find((step) =>
+    step.id === selectedPhaseId) ?? monitor.timeline[0]
   const observedLabel = lastObservedAt
     ? new Date(lastObservedAt).toLocaleTimeString("es-NI", {
       hour: "2-digit", minute: "2-digit", second: "2-digit",
@@ -380,6 +504,16 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt, nextCycleAll
           <p className="mt-1 text-xs font-bold text-cyan-100/65">{nextCycleAllowed
             ? "Próxima acción: autorizar un lote acotado de hasta cinco candidatos distintos."
             : monitor.activityEvidence}</p>
+          {!nextCycleAllowed && <div className={`relative mt-3 overflow-hidden rounded-xl border px-3 py-2.5 ${monitor.shouldAnimate
+            ? "border-cyan-200/30 bg-cyan-200/[0.07]"
+            : monitor.status === "WAITING_OPERATOR" || monitor.status === "PAUSED_EBAY"
+              ? "border-amber-200/25 bg-amber-200/[0.06]"
+              : "border-white/10 bg-black/20"}`}>
+            {monitor.shouldAnimate && <span aria-hidden="true"
+              className="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-cyan-100/10 to-transparent motion-safe:animate-[pulse_1.4s_ease-in-out_infinite]" />}
+            <p className="relative text-[10px] font-black uppercase tracking-[0.18em] text-white/45">Evaluación actual · {monitor.currentState.replaceAll("_", " ")}</p>
+            <p className="relative mt-1 text-sm font-bold leading-5 text-white/85">{monitor.currentPhase.activity}</p>
+          </div>}
         </div>
       </div>
       <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2">
@@ -392,27 +526,81 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt, nextCycleAll
 
     <div className="mt-5">
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <span className="font-black text-white/70">Recorrido del candidato</span>
-        <span className="text-white/45">Actualización {observedLabel}</span>
+        <span className="font-black text-white/70">Recorrido completo · toca una fase para entenderla</span>
+        <span className="text-white/45">Fase {monitor.timeline.findIndex((step) => step.id === monitor.currentPhase.id) + 1} de {monitor.timeline.length} · actualización {observedLabel}</span>
       </div>
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10" role="progressbar"
-        aria-label="Progreso del lote actual" aria-valuemin={0} aria-valuemax={monitor.batch.total || 1}
-        aria-valuenow={Math.min(progressValue, monitor.batch.total || 1)}>
-        <div className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-violet-300 to-emerald-300 transition-[width] motion-reduce:transition-none"
-          style={{ width: monitor.batch.total ? `${Math.min(100, (progressValue / monitor.batch.total) * 100)}%` : "0%" }} />
+      <div className="mt-2 h-2 overflow-hidden rounded-full border border-white/[0.06] bg-white/[0.06]" role="progressbar"
+        aria-label="Posición dentro del recorrido completo" aria-valuemin={0} aria-valuemax={100}
+        aria-valuenow={monitor.journeyPositionPercent}>
+        <div className={`relative h-full overflow-hidden rounded-full bg-gradient-to-r from-cyan-300 via-violet-300 to-emerald-300 transition-[width] duration-700 motion-reduce:transition-none ${monitor.shouldAnimate ? "shadow-[0_0_16px_rgba(103,232,249,0.45)]" : ""}`}
+          style={{ width: `${monitor.journeyPositionPercent}%` }}>
+          {monitor.shouldAnimate && <span aria-hidden="true" className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/60 to-transparent motion-safe:animate-[progress-scan_1.6s_ease-in-out_infinite]" />}
+        </div>
       </div>
-      <ol className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
-        {monitor.timeline.map((step, index) => <li key={step.id} aria-current={step.status === "CURRENT" ? "step" : undefined}
-          className={`min-w-0 rounded-xl border p-2.5 ${step.status === "DONE"
-            ? "border-emerald-200/25 bg-emerald-200/[0.07] text-emerald-50"
-            : step.status === "CURRENT"
-              ? "border-cyan-200/40 bg-cyan-200/[0.12] text-cyan-50 shadow-[0_0_24px_rgba(34,211,238,0.10)]"
-              : "border-white/[0.08] bg-white/[0.025] text-white/30"}`}>
-          <p className="text-[9px] font-black uppercase tracking-wider">{step.status === "DONE" ? "Completado" : step.status === "CURRENT" ? "Ahora" : "Después"}</p>
-          <p className="mt-1 break-words text-xs font-black">{index + 1}. {step.label}</p>
+      <ol className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {monitor.timeline.map((step, index) => <li key={step.id}
+          aria-current={step.status === "CURRENT" ? "step" : undefined}
+          className="min-w-0">
+          <button type="button" onClick={() => setSelectedPhaseId(step.id)}
+            aria-pressed={selectedPhase.id === step.id}
+            className={`group relative min-h-32 w-full overflow-hidden rounded-2xl border p-3 text-left transition duration-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 motion-reduce:transition-none ${step.status === "DONE"
+              ? "border-emerald-200/25 bg-emerald-200/[0.07] text-emerald-50 hover:bg-emerald-200/[0.11]"
+              : step.status === "CURRENT"
+                ? "border-cyan-200/45 bg-cyan-200/[0.12] text-cyan-50 shadow-[0_0_28px_rgba(34,211,238,0.11)] hover:bg-cyan-200/[0.16]"
+                : "border-white/[0.08] bg-white/[0.025] text-white/45 hover:border-white/20 hover:bg-white/[0.055]"} ${selectedPhase.id === step.id ? "ring-1 ring-inset ring-white/30" : ""}`}>
+            {step.status === "CURRENT" && monitor.shouldAnimate && <span aria-hidden="true"
+              className="absolute inset-x-0 bottom-0 h-0.5 bg-gradient-to-r from-transparent via-cyan-100 to-transparent motion-safe:animate-pulse" />}
+            <JourneyPhaseVisual visual={step.visual}
+              active={step.status === "CURRENT" && monitor.shouldAnimate}
+              done={step.status === "DONE"} />
+            <span className="flex items-center justify-between gap-2">
+              <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[10px] font-black ${step.status === "DONE"
+                ? "border-emerald-100/35 bg-emerald-100/15"
+                : step.status === "CURRENT"
+                  ? "border-cyan-100/40 bg-cyan-100/15"
+                  : "border-white/10 bg-white/[0.03]"}`}>{step.status === "DONE" ? "✓" : index + 1}</span>
+              <span className="text-[9px] font-black uppercase tracking-wider">{step.status === "DONE" ? "Completado" : step.status === "CURRENT" ? (monitor.shouldAnimate ? "Evaluando" : "Fase actual") : "Después"}</span>
+            </span>
+            <span className="mt-2 block break-words text-xs font-black leading-4">{step.label}</span>
+            <span className="mt-1.5 block text-[10px] leading-4 opacity-65">{step.checks.slice(0, 2).join(" · ")}</span>
+            <span className="mt-2 block text-[9px] font-black uppercase tracking-wider opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70">Ver detalle →</span>
+          </button>
         </li>)}
       </ol>
-      <p className="mt-2 text-[11px] leading-5 text-white/45">La etapa actual está resaltada. Las etapas futuras permanecen en gris y no habilitan acciones antes de tiempo.</p>
+      <article aria-live="polite" className={`mt-3 overflow-hidden rounded-2xl border p-4 transition-colors motion-reduce:transition-none ${selectedPhase.status === "DONE"
+        ? "border-emerald-200/20 bg-emerald-200/[0.045]"
+        : selectedPhase.status === "CURRENT"
+          ? "border-cyan-200/25 bg-gradient-to-br from-cyan-200/[0.08] to-violet-200/[0.035]"
+          : "border-white/10 bg-black/20"}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/45">{selectedPhase.status === "DONE" ? "Resultado confirmado" : selectedPhase.status === "CURRENT" ? "Qué está haciendo ahora" : "Qué hará esta fase"}</p>
+            <h4 className="mt-1 break-words text-base font-black text-white">{selectedPhase.label}</h4>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-white/65">{selectedPhase.activity}</p>
+          </div>
+          <span className={`rounded-full border px-3 py-1 text-[10px] font-black ${selectedPhase.status === "DONE"
+            ? "border-emerald-200/25 text-emerald-100"
+            : selectedPhase.status === "CURRENT"
+              ? "border-cyan-200/30 text-cyan-100"
+              : "border-white/10 text-white/40"}`}>{selectedPhase.status === "DONE" ? "LISTO" : selectedPhase.status === "CURRENT" ? monitor.businessLabel : "PROGRAMADO"}</span>
+        </div>
+        <p className="mt-3 text-xs leading-5 text-white/50">{selectedPhase.description}</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">{selectedPhase.checks.map((check) => <div key={check}
+          className="flex min-h-11 items-center gap-2 rounded-xl border border-white/[0.08] bg-black/20 px-3 text-xs font-bold text-white/65">
+          <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${selectedPhase.status === "DONE"
+            ? "bg-emerald-200"
+            : selectedPhase.status === "CURRENT" && monitor.shouldAnimate
+              ? "bg-cyan-200 motion-safe:animate-pulse"
+              : selectedPhase.status === "CURRENT"
+                ? "bg-amber-200"
+                : "bg-white/20"}`} />
+          <span>{check}</span>
+        </div>)}</div>
+        <p className="mt-3 text-[11px] font-bold leading-5 text-white/45">{selectedPhase.status === "DONE"
+          ? selectedPhase.completionResult
+          : `Resultado esperado: ${selectedPhase.completionResult}`}</p>
+      </article>
+      <p className="mt-2 text-[11px] leading-5 text-white/45">La fase actual se actualiza con el estado durable real. Las etapas futuras permanecen bloqueadas y la interfaz no simula trabajo cuando un job está solamente en cola.</p>
     </div>
 
     <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -937,6 +1125,21 @@ function completeImageReviewSet(assets: Row[]) {
     assets.every((asset) =>
       asset.compositorContractVersion ===
         "EBAY_IMAGE_COMPOSITOR_FOREGROUND_V9_2026_07_22" &&
+      asset.squarePresentationVersion ===
+        "SELLER_OS_EBAY_SQUARE_PRESENTATION_QA_V1_2026_07_24" &&
+      asset.squarePresentationQaVersion ===
+        "SELLER_OS_EBAY_SQUARE_PRESENTATION_QA_V1_2026_07_24" &&
+      asset.artificialFrameAdded !== true &&
+      Number(asset.outputEncodingQuality) === 94 &&
+      asset.squareFormatPassed === true &&
+      asset.artificialInsetFrameFree === true &&
+      asset.sourceQualityPassed === true &&
+      asset.safeCanvasPlacementPassed === true &&
+      asset.mobileFocalPointPassed === true &&
+      Number(asset.productCoverageRatio) >=
+        (asset.slot === "MAIN_WHITE_BACKGROUND" ? .75 : .68) &&
+      Number(asset.productCoverageRatio) <=
+        (asset.slot === "MAIN_WHITE_BACKGROUND" ? .85 : .82) &&
       Number(asset.width) === 1600 && Number(asset.height) === 1600))) return false
   const main = assets.find((asset) => asset.slot === "MAIN_WHITE_BACKGROUND")
   const generated = assets.filter((asset) => asset.generativeAiUsed === true)
@@ -946,7 +1149,8 @@ function completeImageReviewSet(assets: Row[]) {
       asset.authorizedSourceTreatment === "LOCAL_AUTHORIZED_FOREGROUND" &&
       asset.foregroundMatteVersion ===
         "EBAY_AUTHORIZED_FOREGROUND_MATTE_V1_2026_07_21" &&
-      ["NATIVE_ALPHA", "EDGE_CONNECTED_LIGHT_NEUTRAL_V1"].includes(
+      ["NATIVE_ALPHA", "EDGE_CONNECTED_LIGHT_NEUTRAL_V1",
+        "PROTECTED_TRIMAP_MATTING_V1"].includes(
         String(asset.foregroundMatteMethod),
       ) &&
       asset.foregroundMatteValidated === true &&

@@ -385,6 +385,33 @@ export function evaluateCommercialRules(input: {
   }
 
   const active = snapshot.listingStatus === "active"
+  if (
+    active &&
+    snapshot.supplierCost !== null &&
+    input.previous?.supplierCost !== null &&
+    input.previous?.supplierCost !== undefined &&
+    Math.abs(snapshot.supplierCost - input.previous.supplierCost) >= 0.01
+  ) {
+    const direction = snapshot.supplierCost > input.previous.supplierCost
+      ? "up"
+      : "down"
+    events.push(baseEvent(
+      snapshot,
+      thresholds,
+      "LUNA_COST_CHANGED",
+      direction === "up" ? "high" : "medium",
+      {
+        previousSupplierCost: input.previous.supplierCost,
+        currentSupplierCost: snapshot.supplierCost,
+        direction,
+        source: "FRESH_EXACT_LUNA_VARIANT",
+      },
+      direction === "up"
+        ? "Recalcular el precio y autorizar el nuevo piso seguro desde Seller OS."
+        : "Recalcular el precio; mantenerlo o cambiarlo sólo después de revisar el margen.",
+      `${input.previous.supplierCost}->${snapshot.supplierCost}`,
+    ))
+  }
   if (active && snapshot.stockAvailable !== null && snapshot.stockAvailable >= thresholds.lowStockMinimum && snapshot.stockAvailable <= thresholds.lowStockMaximum) {
     events.push(baseEvent(snapshot, thresholds, "LOW_STOCK", "high", {
       stockAvailable: snapshot.stockAvailable,

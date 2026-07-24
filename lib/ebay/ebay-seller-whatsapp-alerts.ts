@@ -50,6 +50,7 @@ export type EnqueueSellerWhatsAppAlertInput = {
   title: string
   summary: string
   mobileUrl?: string | null
+  actionUrl?: string | null
   facts?: SellerWhatsAppAlertFacts
 }
 
@@ -66,10 +67,22 @@ function safeUrl(value: unknown) {
   if (!candidate) return null
   try {
     const url = new URL(candidate)
-    return url.protocol === "https:" ? url.toString() : null
+    return url.protocol === "https:" &&
+      url.hostname !== "imnova-ebay-mobile-preprod.vercel.app"
+      ? url.toString()
+      : null
   } catch {
     return null
   }
+}
+
+function runtimeSellerCommandCenterUrl() {
+  const configured = safeUrl(process.env.EBAY_SELLER_COMMAND_CENTER_URL)
+  if (configured) return configured
+  const vercelHost = process.env.VERCEL_BRANCH_URL ?? process.env.VERCEL_URL
+  return safeUrl(vercelHost
+    ? `${String(vercelHost).startsWith("https://") ? "" : "https://"}${vercelHost}`
+    : null)
 }
 
 function numeric(value: unknown) {
@@ -119,9 +132,9 @@ function sellerWhatsAppDedupeKey(
 
 function digestHourUtc() {
   const configured = Number(
-    process.env.EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC ?? "14",
+    process.env.EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC ?? "0",
   )
-  return Number.isFinite(configured) ? configured : 14
+  return Number.isFinite(configured) ? configured : 0
 }
 
 export async function enqueueSellerWhatsAppAlert(
@@ -167,6 +180,7 @@ export async function enqueueSellerWhatsAppAlert(
     summary: text(input.summary, 360),
     recommendedAction: text(decision.recommendedAction, 300),
     mobileUrl: safeUrl(input.mobileUrl),
+    actionUrl: safeUrl(input.actionUrl),
     facts,
   }
   const { data, error } = await supabase.rpc(
@@ -237,15 +251,16 @@ export function renderSellerWhatsAppAlert(
 ): SellerWhatsAppTemplateMessage {
   const data = payload(row)
   const url = safeUrl(data.mobileUrl) || safeUrl(
-    process.env.EBAY_SELLER_COMMAND_CENTER_URL,
+    runtimeSellerCommandCenterUrl(),
   )
+  const actionUrl = safeUrl(data.actionUrl) || runtimeSellerCommandCenterUrl()
   const action = text(data.recommendedAction, 320)
   return {
     deliveryClass: row.delivery_class === "digest" ? "digest" : "immediate",
     priorityLabel: priorityLabel(row.priority),
     title: text(data.title || row.alert_type, 120),
     summary: text(data.summary || "Alerta del Seller Command Center.", 500),
-    action: text([action, url].filter(Boolean).join(" "), 500),
+    action: text([action, url, actionUrl].filter(Boolean).join(" "), 500),
   }
 }
 
@@ -254,7 +269,7 @@ function renderDigest(rows: AlertOutboxRow[]): SellerWhatsAppTemplateMessage {
     const rendered = renderSellerWhatsAppAlert(row)
     return `${index + 1}. ${rendered.title}: ${rendered.summary}`
   })
-  const commandCenterUrl = safeUrl(process.env.EBAY_SELLER_COMMAND_CENTER_URL)
+  const commandCenterUrl = runtimeSellerCommandCenterUrl()
   return {
     deliveryClass: "digest",
     priorityLabel: "RESUMEN DIARIO",

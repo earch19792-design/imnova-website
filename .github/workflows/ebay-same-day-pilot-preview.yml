@@ -27,7 +27,7 @@ jobs:
           test -n "$PREVIEW_URL"
           test -n "$CRON_SECRET"
           args=(--fail --silent --show-error --max-time 240
-            -H "Authorization: Bearer $CRON_SECRET")
+            -H "x-ebay-same-day-authorization: Bearer $CRON_SECRET")
           if [ -n "$VERCEL_BYPASS_SECRET" ]; then
             args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
           fi

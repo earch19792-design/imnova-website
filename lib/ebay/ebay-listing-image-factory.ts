@@ -8,9 +8,11 @@ import { z } from "zod"
 // @ts-expect-error Next's bundler resolves the same TypeScript source at build time.
 import { EBAY_IMAGE_OUTPUT_SIZE, optimizeAuthorizedEbayMainImage, prepareAuthorizedEbayFullFrameLayer, prepareAuthorizedEbaySecondaryForeground, type EbayAuthorizedSecondaryForeground, type EbayOptimizedImage } from "./ebay-image-optimization-service.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
-import { EBAY_IMAGE_MARKET_BRIEF_VERSION, ebayImageMarketBriefSchema, isEbayImageMarketBriefUsable, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
+import { EBAY_IMAGE_MARKET_BRIEF_VERSION, ebayImageMarketBriefSchema, isEbayImageMarketBriefUsable, resolveEbayImageMarketEvidencePolicy, type EbayImageMarketBrief, type EbayImageMarketEvidencePolicy } from "./ebay-image-market-brief.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { assertReferenceGuidedProviderAllowed } from "./reference-guided-deterministic-source-crop.ts"
+// @ts-expect-error Node's native TypeScript test runner needs the extension.
+import { auditEbaySquareImagePresentation, EBAY_SQUARE_PRESENTATION_QA_VERSION } from "./ebay-image-square-presentation.ts"
 
 export const EBAY_LISTING_IMAGE_SET_VERSION =
   "EBAY_LISTING_IMAGE_COMPOSITION_SET_V2"
@@ -26,10 +28,15 @@ export const EBAY_OPENAI_BACKGROUND_PLATE_VERSION =
   "EBAY_OPENAI_COMMERCIAL_SCENE_BOARD_V4"
 export const EBAY_VISUAL_STRATEGY_VERSION =
   "SELLER_OS_EBAY_VISUAL_STRATEGY_V2"
+export const EBAY_SET_LEVEL_CREATIVE_BRIEF_VERSION =
+  "SELLER_OS_SET_LEVEL_CREATIVE_BRIEF_V1_2026_07_24"
+export const EBAY_MARKET_TO_VISUAL_STRATEGY_TRACE_VERSION =
+  "MARKET_TO_VISUAL_STRATEGY_TRACE_V1_2026_07_24"
 export const EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION =
   "EBAY_AUTHORIZED_FOREGROUND_MATTE_V1_2026_07_21"
 export const EBAY_IMAGE_TEXT_RENDERER_VERSION =
   "EBAY_IMAGE_TEXT_PANGO_FONTFILE_V2_2026_07_21"
+export { EBAY_SQUARE_PRESENTATION_QA_VERSION }
 export const EBAY_OPENAI_IMAGE_PREVIEW_BRANCH =
   "feature/centralize-ebay-mobile-command-center"
 
@@ -142,10 +149,26 @@ export const EBAY_VISUAL_SALES_OBJECTIVES = [
   "SECONDARY_USE",
   "QUALITY_DETAIL",
   "RETURN_RISK_CLARIFICATION",
+  "CONDITION_CLARIFICATION",
 ] as const
 
 export type EbayVisualSalesObjective =
   typeof EBAY_VISUAL_SALES_OBJECTIVES[number]
+
+export type EbayMarketToVisualStrategyTrace = {
+  version: typeof EBAY_MARKET_TO_VISUAL_STRATEGY_TRACE_VERSION
+  evidenceTier: EbayImageMarketEvidencePolicy["tier"]
+  influenceScope: EbayImageMarketEvidencePolicy["influenceScope"]
+  evidenceCount: number
+  confidence: EbayImageMarketBrief["confidence"] | "UNAVAILABLE"
+  signalsUsed: string[]
+  creativeDecisions: string[]
+  exactProductFactsAllowed: string[]
+  prohibitedMarketEvidenceUses: string[]
+  productFactsSource: "PRODUCT_DOSSIER_AND_AUTHORIZED_SOURCES_ONLY"
+  competitorPixelsUsed: false
+  competitorClaimsUsedAsProductFacts: false
+}
 
 export type EbayVisualStrategyPosition = {
   slot: Exclude<EbayListingImageSlot, "MAIN_WHITE_BACKGROUND">
@@ -162,7 +185,34 @@ export type EbayVisualStrategyPosition = {
   allowedContextualProps: string[]
   forbiddenElements: string[]
   marketSignalsApplied: string[]
+  marketToVisualStrategyTrace: EbayMarketToVisualStrategyTrace
   contractHash: string
+}
+
+export type EbaySetLevelCreativeBrief = {
+  version: typeof EBAY_SET_LEVEL_CREATIVE_BRIEF_VERSION
+  evidencePolicy: EbayImageMarketEvidencePolicy
+  productIdentitySource: "PRODUCT_DOSSIER_AND_AUTHORIZED_SOURCES_ONLY"
+  setNarrative: [
+    "IDENTIFY_EXACT_PRODUCT",
+    "CLARIFY_EXACT_OFFER",
+    "ANSWER_BUYER_QUESTIONS",
+    "SHOW_VERIFIED_CONTEXT_ONLY",
+    "REDUCE_RETURN_RISK",
+    "CLOSE_WITH_DISTINCT_REAL_DETAIL",
+  ]
+  coherentArtDirection: {
+    background: string
+    lighting: string
+    composition: string
+    palette: string
+    complexity: string
+  }
+  observedCommercialSignal: string
+  commercialRolePrioritizationAllowed: boolean
+  prohibitedMarketEvidenceUses: string[]
+  competitorPixelsSentToProvider: false
+  competitorClaimsUsedAsProductFacts: false
 }
 
 export type EbayListingImageComposition = {
@@ -246,6 +296,10 @@ export type EbayListingImageComposition = {
     productOcclusion?: false
     outputOriginLabel?: "OPTIMIZED_FROM_AUTHORIZED_CATALOG_SOURCE"
     authorizedCropMode?: "REAL_SOURCE_CROP_NO_UPSCALING"
+    squarePresentationVersion:
+      typeof EBAY_SQUARE_PRESENTATION_QA_VERSION
+    artificialFrameAdded: false
+    outputEncodingQuality: 94
     visualStrategyPosition?: EbayVisualStrategyPosition
   }
   qa: {
@@ -286,6 +340,18 @@ export type EbayListingImageComposition = {
     textPolicyPassed: boolean
     contextualPropsPassed: boolean
     mobileReadabilityPassed: boolean
+    squareFormatPassed: true
+    artificialInsetFrameFree: true
+    sourceQualityPassed: true
+    safeCanvasPlacementPassed: true
+    mobileFocalPointPassed: true
+    sourceUpscaleRatio: number
+    safeMarginRatio: number
+    focalCenterOffsetRatio: number
+    detailSignalRatio: number
+    artificialInsetFrameScore: number
+    squarePresentationQaVersion:
+      typeof EBAY_SQUARE_PRESENTATION_QA_VERSION
     qaEvaluatorVersion: typeof EBAY_VISUAL_QA_EVALUATOR_VERSION
     scores: {
       fidelity: number
@@ -865,30 +931,50 @@ async function canonicalizeMainForV4(normalizedMain: Buffer) {
 
 type InformationSlot = Exclude<EbayListingImageSlot, "MAIN_WHITE_BACKGROUND">
 
+export const EBAY_SECONDARY_IMAGE_PRODUCT_TARGETS = {
+  PACK_AND_COUNT: 1_120,
+  KEY_FEATURES: 1_120,
+  SIZE_AND_CONTENT: 1_088,
+  USE_CONTEXT: 1_088,
+  PACKAGE_CONTENTS: 1_120,
+  SECONDARY_6: 1_088,
+} as const satisfies Record<InformationSlot, number>
+
 const INFORMATION_LAYOUTS = {
   PACK_AND_COUNT: {
-    id: "PACK_COUNT_SPLIT_V2", packageSize: 980, packageLeft: 50, packageTop: 310,
+    id: "PACK_COUNT_SQUARE_FILL_V3",
+    packageSize: EBAY_SECONDARY_IMAGE_PRODUCT_TARGETS.PACK_AND_COUNT,
+    packageLeft: 100, packageTop: 240,
     textLeft: 990, textTop: 340, textWidth: 520, textHeight: 760,
   },
   KEY_FEATURES: {
-    id: "FEATURES_ASYMMETRIC_V2", packageSize: 1120, packageLeft: 500, packageTop: 230,
+    id: "FEATURES_SQUARE_FILL_V3",
+    packageSize: EBAY_SECONDARY_IMAGE_PRODUCT_TARGETS.KEY_FEATURES,
+    packageLeft: 380, packageTop: 160,
     textLeft: 70, textTop: 270, textWidth: 520, textHeight: 820,
   },
   SIZE_AND_CONTENT: {
-    id: "SIZE_CONTENT_DIAGONAL_V2", packageSize: 900, packageLeft: 650, packageTop: 590,
+    id: "SIZE_CONTENT_SQUARE_FILL_V3",
+    packageSize: EBAY_SECONDARY_IMAGE_PRODUCT_TARGETS.SIZE_AND_CONTENT,
+    packageLeft: 220, packageTop: 340,
     textLeft: 100, textTop: 120, textWidth: 760, textHeight: 650,
   },
   USE_CONTEXT: {
-    id: "NEUTRAL_STUDIO_CONTEXT_V2", packageSize: 820, packageLeft: 390, packageTop: 260,
+    id: "NEUTRAL_STUDIO_SQUARE_FILL_V3",
+    packageSize: EBAY_SECONDARY_IMAGE_PRODUCT_TARGETS.USE_CONTEXT,
+    packageLeft: 256, packageTop: 160,
     textLeft: 250, textTop: 1190, textWidth: 1100, textHeight: 390,
   },
   PACKAGE_CONTENTS: {
-    id: "PACKAGE_CONTENTS_OVERVIEW_V2", packageSize: 1030, packageLeft: 285, packageTop: 80,
+    id: "PACKAGE_CONTENTS_SQUARE_FILL_V3",
+    packageSize: EBAY_SECONDARY_IMAGE_PRODUCT_TARGETS.PACKAGE_CONTENTS,
+    packageLeft: 240, packageTop: 240,
     textLeft: 210, textTop: 1130, textWidth: 1180, textHeight: 360,
   },
   SECONDARY_6: {
-    id: "DYNAMIC_OBJECTION_RESOLUTION_V2", packageSize: 880,
-    packageLeft: 100, packageTop: 560,
+    id: "DYNAMIC_SQUARE_FILL_V3",
+    packageSize: EBAY_SECONDARY_IMAGE_PRODUCT_TARGETS.SECONDARY_6,
+    packageLeft: 392, packageTop: 320,
     textLeft: 850, textTop: 120, textWidth: 620, textHeight: 520,
   },
 } satisfies Record<InformationSlot, {
@@ -916,7 +1002,8 @@ export type EbayVisualPanelContract = {
 }
 
 type StrategyCandidate = Omit<EbayVisualStrategyPosition,
-  "slot" | "contractHash" | "feasibilityStatus"> & { score: number }
+  "slot" | "contractHash" | "feasibilityStatus" |
+  "marketToVisualStrategyTrace"> & { score: number }
 
 function strategyCandidate(
   input: Omit<StrategyCandidate, "productCoverageTarget" |
@@ -932,7 +1019,7 @@ function strategyCandidate(
     ...position,
     authorizedSourceImageIds: sourceIds,
     productCoverageTarget: productCoverageTarget ?? {
-      minimum: .5, maximum: .7,
+      minimum: .68, maximum: .82,
     },
     marketSignalsApplied: marketSignals,
     forbiddenElements: [
@@ -945,6 +1032,105 @@ function strategyCandidate(
       "PROPS_THAT_APPEAR_INCLUDED",
     ],
   }
+}
+
+function marketDirectionLabel(
+  value: string,
+  fallback: string,
+) {
+  return value === "UNKNOWN" ? fallback : value
+}
+
+export function buildSellerOsEbaySetLevelCreativeBrief(
+  input: EbayListingImageFactoryInput,
+): EbaySetLevelCreativeBrief {
+  const market = input.marketVisualBrief
+  const evidencePolicy = resolveEbayImageMarketEvidencePolicy(market)
+  const evidenceUsable = evidencePolicy.influenceScope !==
+    "PROFESSIONAL_FALLBACK_ONLY"
+  return {
+    version: EBAY_SET_LEVEL_CREATIVE_BRIEF_VERSION,
+    evidencePolicy,
+    productIdentitySource: "PRODUCT_DOSSIER_AND_AUTHORIZED_SOURCES_ONLY",
+    setNarrative: [
+      "IDENTIFY_EXACT_PRODUCT",
+      "CLARIFY_EXACT_OFFER",
+      "ANSWER_BUYER_QUESTIONS",
+      "SHOW_VERIFIED_CONTEXT_ONLY",
+      "REDUCE_RETURN_RISK",
+      "CLOSE_WITH_DISTINCT_REAL_DETAIL",
+    ],
+    coherentArtDirection: {
+      background: evidenceUsable && market
+        ? marketDirectionLabel(
+          market.dominantBackgroundType,
+          "CLEAN_NEUTRAL_MARKETPLACE_DEFAULT",
+        )
+        : "CLEAN_NEUTRAL_MARKETPLACE_DEFAULT",
+      lighting: evidenceUsable && market
+        ? marketDirectionLabel(
+          market.brightnessPattern,
+          "SOFT_BALANCED_COMMERCIAL_LIGHT",
+        )
+        : "SOFT_BALANCED_COMMERCIAL_LIGHT",
+      composition: evidenceUsable && market
+        ? marketDirectionLabel(
+          market.compositionPattern,
+          "BALANCED_PRODUCT_DOMINANT",
+        )
+        : "BALANCED_PRODUCT_DOMINANT",
+      palette: evidenceUsable && market
+        ? marketDirectionLabel(
+          market.palettePattern,
+          "NEUTRAL",
+        )
+        : "NEUTRAL",
+      complexity: evidenceUsable && market
+        ? marketDirectionLabel(
+          market.recommendedComplexity,
+          "LOW",
+        )
+        : "LOW",
+    },
+    observedCommercialSignal: evidenceUsable && market
+      ? market.dominantPresentationType
+      : "UNAVAILABLE",
+    commercialRolePrioritizationAllowed:
+      evidencePolicy.commercialRolePrioritizationAllowed,
+    prohibitedMarketEvidenceUses: [...evidencePolicy.prohibitedUses],
+    competitorPixelsSentToProvider: false,
+    competitorClaimsUsedAsProductFacts: false,
+  }
+}
+
+function commercialRoleEvidenceBoost(input: {
+  objective: EbayVisualSalesObjective
+  facts: EbayListingImageFactoryInput["facts"]
+  brief: EbayImageMarketBrief | null
+  policy: EbayImageMarketEvidencePolicy
+}) {
+  if (!input.brief ||
+    !input.policy.commercialRolePrioritizationAllowed) return 0
+  const presentation = input.brief.dominantPresentationType
+  if (presentation === "PRODUCT_ONLY") {
+    if (input.objective === "TRUST_OR_OBJECTION") return 8
+    if (input.objective === "ALTERNATE_AUTHORIZED_ANGLE") return 6
+    if (input.objective === "QUALITY_DETAIL") return 3
+  }
+  if (presentation === "PRODUCT_WITH_PACKAGING") {
+    if (input.objective === "PACKAGE_CONTENTS") return 8
+    if (input.objective === "RETURN_RISK_CLARIFICATION") return 3
+  }
+  if (presentation === "LIFESTYLE_LIKELY") {
+    if (input.objective === "ASPIRATIONAL_LIFESTYLE") return 12
+    if (input.objective === "PRIMARY_USE") return 4
+  }
+  if (presentation === "MULTIPACK_LIKELY" &&
+    (input.facts.packCount ?? 0) > 1) {
+    if (input.objective === "PACKAGE_CONTENTS") return 8
+    if (input.objective === "RETURN_RISK_CLARIFICATION") return 2
+  }
+  return 0
 }
 
 export function buildSellerOsEbayVisualStrategyV2(
@@ -970,29 +1156,48 @@ export function buildSellerOsEbayVisualStrategyV2(
     throw new Error("EBAY_IMAGE_SOURCE_CAPABILITIES_INVALID")
   }
   const alternateSource = sourceCapabilities.find((source) =>
-    source.viewClassification === "ALTERNATE_AUTHORIZED_ANGLE")
+    source.viewClassification === "ALTERNATE_AUTHORIZED_ANGLE" &&
+    Math.max(source.effectiveWidth, source.effectiveHeight) >= 1_100)
   const detailSource = sourceCapabilities.find((source) =>
     source.viewClassification === "DETAIL" &&
-    source.qualityTier === "NATIVE_HIGH_RES" &&
-    Math.min(source.nativeWidth, source.nativeHeight) >= 900) ??
-    sourceCapabilities.find((source) =>
-    source.qualityTier === "NATIVE_HIGH_RES" &&
-    Math.min(source.nativeWidth, source.nativeHeight) >= 900)
+    Math.min(source.effectiveWidth, source.effectiveHeight) >= 1_120)
   const packageSource = sourceCapabilities.find((source) =>
-    source.viewClassification === "PACKAGE_CONTENTS")
-  const market = input.marketVisualBrief
+    source.viewClassification === "PACKAGE_CONTENTS" &&
+    Math.max(source.effectiveWidth, source.effectiveHeight) >= 1_100)
+  const setLevelBrief = buildSellerOsEbaySetLevelCreativeBrief(input)
+  const marketPolicy = setLevelBrief.evidencePolicy
+  const market = marketPolicy.influenceScope !==
+    "PROFESSIONAL_FALLBACK_ONLY"
+    ? input.marketVisualBrief
+    : null
   const marketSignals = market ? [
+    `tier:${marketPolicy.tier}`,
+    `scope:${marketPolicy.influenceScope}`,
+    `evidenceCount:${marketPolicy.evidenceCount}`,
     `background:${market.dominantBackgroundType}`,
     `coverage:${market.recommendedFrameCoverage}`,
     `contrast:${market.contrastPattern}`,
     `complexity:${market.recommendedComplexity}`,
+    `presentation:${market.dominantPresentationType}`,
     `confidence:${market.confidence}`,
     `observedAt:${market.observedAt}`,
-  ] : ["PROFESSIONAL_FALLBACK_EXPLICIT"]
+  ] : [
+    "PROFESSIONAL_FALLBACK_EXPLICIT",
+    `tier:${marketPolicy.tier}`,
+    `scope:${marketPolicy.influenceScope}`,
+  ]
   const common = { sourceIds, marketSignals }
+  const score = (base: number, objective: EbayVisualSalesObjective) =>
+    base + commercialRoleEvidenceBoost({
+      objective,
+      facts,
+      brief: market,
+      policy: marketPolicy,
+    })
   const candidates: StrategyCandidate[] = [
     ...(facts.material ? [strategyCandidate({ ...common,
-      sourceIds: [detailSource?.id ?? sourceIds[0]], score: 100,
+      sourceIds: [detailSource?.id ?? sourceIds[0]],
+      score: score(100, "DETAIL_AND_MATERIAL"),
       salesObjective: "DETAIL_AND_MATERIAL",
       buyerQuestionAnswered: "What verified material and visible finish am I buying?",
       objectionReduced: "Material and finish ambiguity",
@@ -1007,7 +1212,8 @@ export function buildSellerOsEbayVisualStrategyV2(
     // answers "what is included" and reduces returns without inventing a
     // multipack, accessory, package or hidden geometry.
     strategyCandidate({ ...common,
-      sourceIds: [packageSource?.id ?? sourceIds[0]], score: 99,
+      sourceIds: [packageSource?.id ?? sourceIds[0]],
+      score: score(99, "PACKAGE_CONTENTS"),
       salesObjective: "PACKAGE_CONTENTS",
       buyerQuestionAnswered: "What exactly is included in this offer?",
       objectionReduced: "Quantity and included-content ambiguity",
@@ -1018,7 +1224,8 @@ export function buildSellerOsEbayVisualStrategyV2(
       allowedContextualProps: [],
     }),
     ...((facts.dimensions || facts.capacity || facts.size || facts.weight)
-      ? [strategyCandidate({ ...common, score: 98,
+      ? [strategyCandidate({ ...common,
+        score: score(98, "SIZE_AND_SCALE"),
         salesObjective: "SIZE_AND_SCALE",
         buyerQuestionAnswered: "Is the verified size, capacity or weight right for my need?",
         objectionReduced: "Scale and capacity ambiguity",
@@ -1033,7 +1240,7 @@ export function buildSellerOsEbayVisualStrategyV2(
         lightingDirection: "Crisp edge light with no altered geometry.",
         allowedContextualProps: [],
       })] : []),
-    strategyCandidate({ ...common, score: 97,
+    strategyCandidate({ ...common, score: score(97, "PRIMARY_USE"),
       salesObjective: "PRIMARY_USE",
       buyerQuestionAnswered: "What category-appropriate setting is this exact product intended for?",
       objectionReduced: "Primary-use context ambiguity",
@@ -1045,7 +1252,7 @@ export function buildSellerOsEbayVisualStrategyV2(
       lightingDirection: "Natural directional light matched to the authorized perspective.",
       allowedContextualProps: ["NON_PRODUCT_AMBIENT_SURFACE"],
     }),
-    strategyCandidate({ ...common, score: 91,
+    strategyCandidate({ ...common, score: score(91, "TRUST_OR_OBJECTION"),
       salesObjective: "TRUST_OR_OBJECTION",
       buyerQuestionAnswered: "Is this the exact authorized product and variant?",
       objectionReduced: "Identity, color and variant uncertainty",
@@ -1057,7 +1264,8 @@ export function buildSellerOsEbayVisualStrategyV2(
       allowedContextualProps: [],
     }),
     ...(alternateSource ? [strategyCandidate({ ...common,
-      sourceIds: [alternateSource.id], score: 90,
+      sourceIds: [alternateSource.id],
+      score: score(90, "ALTERNATE_AUTHORIZED_ANGLE"),
       salesObjective: "ALTERNATE_AUTHORIZED_ANGLE",
       buyerQuestionAnswered: "What does the product look like from another authorized view?",
       objectionReduced: "Visible geometry uncertainty",
@@ -1068,17 +1276,19 @@ export function buildSellerOsEbayVisualStrategyV2(
       allowedContextualProps: [],
     })] : []),
     ...(detailSource ? [strategyCandidate({ ...common,
-      sourceIds: [detailSource.id], score: 89,
+      sourceIds: [detailSource.id],
+      score: score(89, "QUALITY_DETAIL"),
       salesObjective: "QUALITY_DETAIL",
       buyerQuestionAnswered: "Can I inspect a real visible detail before buying?",
       objectionReduced: "Visible quality-detail uncertainty",
       evidenceReferences: ["AUTHORIZED_SOURCE:REAL_CROP"],
-      visualDirection: "Use only a real crop from the authorized image; no macro reconstruction or upscaling.",
-      backgroundDirection: "Minimal neutral surround that keeps the real crop dominant.",
+      visualDirection: "Use only a real crop from the explicitly classified authorized detail image; no macro reconstruction or upscaling.",
+      backgroundDirection: "Minimal neutral surround that keeps the authorized inspection view dominant.",
       lightingDirection: "Preserve source lighting; add no synthetic highlights to the product.",
       allowedContextualProps: [],
     })] : []),
-    strategyCandidate({ ...common, score: 88,
+    strategyCandidate({ ...common,
+      score: score(88, "RETURN_RISK_CLARIFICATION"),
       salesObjective: "RETURN_RISK_CLARIFICATION",
       buyerQuestionAnswered: input.returnRiskSignals[0] ??
         "Could the quantity, variant or included contents differ from my expectation?",
@@ -1090,8 +1300,20 @@ export function buildSellerOsEbayVisualStrategyV2(
       lightingDirection: "Clear even light with grounded contact shadow.",
       allowedContextualProps: [],
     }),
+    ...(facts.condition ? [strategyCandidate({ ...common,
+      sourceIds: [sourceIds[0]],
+      score: score(87, "CONDITION_CLARIFICATION"),
+      salesObjective: "CONDITION_CLARIFICATION",
+      buyerQuestionAnswered: "What verified condition is being offered?",
+      objectionReduced: "Condition and visible-appearance uncertainty",
+      evidenceReferences: ["FACT:condition", "AUTHORIZED_SOURCE:VISIBLE_CONDITION"],
+      visualDirection: "Show the unchanged authorized product clearly; do not invent, hide or repair visible wear.",
+      backgroundDirection: "Clean neutral inspection surface with no props that imply a different condition.",
+      lightingDirection: "Balanced revealing light that preserves the authorized visible appearance.",
+      allowedContextualProps: [],
+    })] : []),
     ...(facts.verifiedUseCases.length > 1 ? [strategyCandidate({ ...common,
-      score: 86, salesObjective: "SECONDARY_USE",
+      score: score(86, "SECONDARY_USE"), salesObjective: "SECONDARY_USE",
       buyerQuestionAnswered: "What second verified use is supported?",
       objectionReduced: "Secondary-use uncertainty",
       evidenceReferences: ["FACT:verifiedUseCases:1"],
@@ -1100,7 +1322,9 @@ export function buildSellerOsEbayVisualStrategyV2(
       lightingDirection: "Natural coherent light matched to the source.",
       allowedContextualProps: ["NON_PRODUCT_AMBIENT_SURFACE"],
     })] : []),
-    strategyCandidate({ ...common, score: 82,
+    ...(marketPolicy.influenceScope !== "GENERAL_CATEGORY_ART_DIRECTION"
+      ? [strategyCandidate({ ...common,
+      score: score(82, "ASPIRATIONAL_LIFESTYLE"),
       salesObjective: "ASPIRATIONAL_LIFESTYLE",
       buyerQuestionAnswered: "How can this exact product fit naturally into its verified category setting?",
       objectionReduced: "Low confidence in real-world fit",
@@ -1109,7 +1333,7 @@ export function buildSellerOsEbayVisualStrategyV2(
       backgroundDirection: "Professional category lifestyle scene with a clearly empty product zone.",
       lightingDirection: "Soft natural light with coherent contact shadow.",
       allowedContextualProps: ["NON_PRODUCT_AMBIENT_SURFACE"],
-    }),
+      })] : []),
   ]
   const selected = candidates.sort((left, right) => right.score - left.score)
     .slice(0, 6)
@@ -1120,10 +1344,33 @@ export function buildSellerOsEbayVisualStrategyV2(
     EbayListingImageSlot, "MAIN_WHITE_BACKGROUND">>
   return selected.map((candidate, index) => {
     const { score: _score, ...position } = candidate
+    const marketToVisualStrategyTrace: EbayMarketToVisualStrategyTrace = {
+      version: EBAY_MARKET_TO_VISUAL_STRATEGY_TRACE_VERSION,
+      evidenceTier: marketPolicy.tier,
+      influenceScope: marketPolicy.influenceScope,
+      evidenceCount: marketPolicy.evidenceCount,
+      confidence: market?.confidence ?? "UNAVAILABLE",
+      signalsUsed: [...position.marketSignalsApplied],
+      creativeDecisions: [
+        position.visualDirection,
+        position.backgroundDirection,
+        position.lightingDirection,
+      ],
+      exactProductFactsAllowed: position.evidenceReferences.filter(
+        (reference) => reference.startsWith("FACT:") ||
+          reference.startsWith("AUTHORIZED_SOURCE:"),
+      ),
+      prohibitedMarketEvidenceUses: [...marketPolicy.prohibitedUses],
+      productFactsSource:
+        "PRODUCT_DOSSIER_AND_AUTHORIZED_SOURCES_ONLY",
+      competitorPixelsUsed: false,
+      competitorClaimsUsedAsProductFacts: false,
+    }
     const base = {
       ...position,
       slot: slots[index],
       feasibilityStatus: "FEASIBLE" as const,
+      marketToVisualStrategyTrace,
     }
     return { ...base, contractHash: sha256Text(JSON.stringify(base)) }
   })
@@ -1216,7 +1463,13 @@ export function buildEbayVisualPanelContracts(
     })),
   })
   const strategy = buildSellerOsEbayVisualStrategyV2(normalized)
+  const evidencePolicy = resolveEbayImageMarketEvidencePolicy(
+    marketVisualBrief,
+  )
   const evidenceBasis = marketVisualBrief ? [
+    `evidence tier ${evidencePolicy.tier}`,
+    `influence scope ${evidencePolicy.influenceScope}`,
+    `eligible evidence ${evidencePolicy.evidenceCount}`,
     `aggregate sold-sample confidence ${marketVisualBrief.confidence}`,
     `background ${marketVisualBrief.dominantBackgroundType}`,
     `coverage ${marketVisualBrief.recommendedFrameCoverage}`,
@@ -1246,17 +1499,17 @@ function informationCanvasSvg(
 ) {
   const artwork = ({
     PACK_AND_COUNT:
-      '<rect width="1600" height="1600" fill="#f5efe4"/><circle cx="480" cy="800" r="610" fill="#fff"/><rect x="950" y="250" width="590" height="1100" rx="70" fill="#e7d6bd"/>',
+      '<rect width="1600" height="1600" fill="#f5efe4"/><circle cx="700" cy="800" r="710" fill="#fff"/><ellipse cx="720" cy="1320" rx="500" ry="100" fill="#e7d6bd" opacity=".55"/>',
     KEY_FEATURES:
-      '<rect width="1600" height="1600" fill="#eaf2f4"/><circle cx="1230" cy="760" r="720" fill="#fff"/><rect x="55" y="210" width="575" height="980" rx="56" fill="#d7e6e8"/>',
+      '<rect width="1600" height="1600" fill="#eaf2f4"/><circle cx="930" cy="760" r="740" fill="#fff"/><circle cx="180" cy="220" r="270" fill="#d7e6e8"/>',
     SIZE_AND_CONTENT:
-      '<rect width="1600" height="1600" fill="#f1f4ee"/><path d="M0 0h1180L0 1180z" fill="#dbe7d7"/><circle cx="1110" cy="1080" r="500" fill="#fff"/>',
+      '<rect width="1600" height="1600" fill="#f1f4ee"/><path d="M0 0h1180L0 1180z" fill="#dbe7d7"/><circle cx="820" cy="900" r="660" fill="#fff"/>',
     USE_CONTEXT:
-      '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#edf2f2"/><stop offset="1" stop-color="#d7dfdc"/></linearGradient></defs><rect width="1600" height="1600" fill="url(#g)"/><ellipse cx="800" cy="1115" rx="500" ry="95" fill="#9aa7a3" opacity=".28"/><rect x="245" y="1040" width="1110" height="170" rx="70" fill="#f9faf8"/>',
+      '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#edf2f2"/><stop offset="1" stop-color="#d7dfdc"/></linearGradient></defs><rect width="1600" height="1600" fill="url(#g)"/><ellipse cx="800" cy="1290" rx="540" ry="105" fill="#9aa7a3" opacity=".28"/>',
     PACKAGE_CONTENTS:
-      '<rect width="1600" height="1600" fill="#f7f3ee"/><rect x="120" y="60" width="1360" height="1320" rx="72" fill="#fff"/>',
+      '<rect width="1600" height="1600" fill="#f7f3ee"/><circle cx="800" cy="720" r="720" fill="#fff"/><ellipse cx="800" cy="1320" rx="490" ry="90" fill="#e9ddd0" opacity=".55"/>',
     SECONDARY_6:
-      '<defs><linearGradient id="s6" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e8edf1"/><stop offset="1" stop-color="#cfd8df"/></linearGradient></defs><rect width="1600" height="1600" fill="url(#s6)"/><ellipse cx="520" cy="1120" rx="480" ry="150" fill="#fff" opacity=".68"/>',
+      '<defs><linearGradient id="s6" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e8edf1"/><stop offset="1" stop-color="#cfd8df"/></linearGradient></defs><rect width="1600" height="1600" fill="url(#s6)"/><ellipse cx="880" cy="1120" rx="560" ry="190" fill="#fff" opacity=".68"/>',
   } satisfies Record<InformationSlot, string>)[slot]
   return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1600">${artwork}</svg>`)
 }
@@ -1287,7 +1540,7 @@ async function composeInformationImage(
     : await sharp(productForeground)
       .resize(layout.packageSize, layout.packageSize, {
         fit: "contain",
-        withoutEnlargement: true,
+        withoutEnlargement: false,
         background: { r: 0, g: 0, b: 0, alpha: 0 },
       })
       .png()
@@ -1315,9 +1568,8 @@ async function composeInformationImage(
       width: layout.packageSize,
       height: layout.packageSize,
     },
-    scale: Number(Math.min(
-      1,
-      layout.packageSize / Math.max(foregroundWidth, foregroundHeight),
+    scale: Number((
+      layout.packageSize / Math.max(foregroundWidth, foregroundHeight)
     ).toFixed(6)),
   }
 }
@@ -1372,6 +1624,10 @@ function marketVisualDirections(brief: EbayImageMarketBrief | null) {
   if (!brief) {
     return "No usable aggregate visual evidence is available; production generation must stop before provider dispatch."
   }
+  const evidencePolicy = resolveEbayImageMarketEvidencePolicy(brief)
+  if (evidencePolicy.influenceScope === "PROFESSIONAL_FALLBACK_ONLY") {
+    return "Market evidence is present but below the safe influence threshold; use professional marketplace defaults and do not apply seller-derived direction."
+  }
   const background = ({
     WHITE_OR_NEUTRAL:
       "use predominantly white or light-neutral surfaces with restrained category-safe accents",
@@ -1402,14 +1658,16 @@ function marketVisualDirections(brief: EbayImageMarketBrief | null) {
   } satisfies Record<EbayImageMarketBrief["recommendedComplexity"], string>)[
     brief.recommendedComplexity
   ]
-  const pack = ({
-    CLEAR: "preserve one unobstructed contiguous zone where the exact offer pack will remain fully visible",
-    PARTIAL: "preserve a coherent product zone without inventing or implying hidden package contents",
-    UNCLEAR: "do not infer pack presentation; leave the exact authorized product layer to establish it",
-    UNKNOWN: "do not infer pack presentation; leave the exact authorized product layer to establish it",
-  } satisfies Record<EbayImageMarketBrief["packVisibilityPattern"], string>)[
-    brief.packVisibilityPattern
-  ]
+  const pack = evidencePolicy.tier === "C_CATEGORY"
+    ? "category evidence must not influence package contents or pack presentation"
+    : ({
+        CLEAR: "preserve one unobstructed contiguous zone where the exact authorized offer pack will remain fully visible",
+        PARTIAL: "preserve a coherent product zone without inventing or implying hidden package contents",
+        UNCLEAR: "do not infer pack presentation; leave the exact authorized product layer to establish it",
+        UNKNOWN: "do not infer pack presentation; leave the exact authorized product layer to establish it",
+      } satisfies Record<EbayImageMarketBrief["packVisibilityPattern"], string>)[
+        brief.packVisibilityPattern
+      ]
   const copy = ({
     NONE: "use minimal copy-area emphasis while still reserving the required blank copy zones",
     LOW: "reserve calm, high-contrast blank copy zones with restrained visual weight",
@@ -1439,8 +1697,11 @@ function marketVisualDirections(brief: EbayImageMarketBrief | null) {
     `observed palette ${brief.palettePattern}`,
     `observed subject geometry ${brief.subjectGeometryPattern}`,
   ].join(", ")
+  const presentation = evidencePolicy.commercialRolePrioritizationAllowed
+    ? `observed cover presentation ${brief.dominantPresentationType} may prioritize a commercial role, but never define product facts`
+    : "observed presentation cannot prioritize product-specific commercial roles at this evidence tier"
   return [
-    `Evidence strength: ${brief.confidence} confidence from ${brief.sampleSize} comparable sold observations; primary cohort ${brief.primaryCohort}; recency weighting ${brief.recencyWeightingApplied ? "applied" : "unavailable"}`,
+    `Evidence strength: ${brief.confidence} confidence from ${brief.sampleSize} comparable sold observations; tier ${evidencePolicy.tier}; influence scope ${evidencePolicy.influenceScope}; primary cohort ${brief.primaryCohort}; recency weighting ${brief.recencyWeightingApplied ? "applied" : "unavailable"}`,
     background,
     coverage,
     complexity,
@@ -1448,6 +1709,7 @@ function marketVisualDirections(brief: EbayImageMarketBrief | null) {
     copy,
     copySpace,
     tonal,
+    presentation,
     `${composition}; apply this tendency to scenery only and never move the panel-specific reserved zones`,
   ].join("; ") + "."
 }
@@ -1458,8 +1720,12 @@ function safeBackgroundPlatePrompt(
 ) {
   const { facts, marketVisualBrief } = input
   const contracts = buildEbayVisualPanelContracts(facts, marketVisualBrief, input)
+  const setLevelCreativeBrief = buildSellerOsEbaySetLevelCreativeBrief(input)
   const marketDirection = marketVisualBrief
-    ? JSON.stringify(marketVisualBrief)
+    ? JSON.stringify({
+        brief: marketVisualBrief,
+        evidencePolicy: setLevelCreativeBrief.evidencePolicy,
+      })
     : "UNAVAILABLE — use clean professional marketplace defaults; do not infer seller patterns."
   return [
     "GOAL",
@@ -1473,6 +1739,9 @@ function safeBackgroundPlatePrompt(
     marketDirection,
     marketVisualDirections(marketVisualBrief),
     "",
+    `SET-LEVEL CREATIVE BRIEF — ${EBAY_SET_LEVEL_CREATIVE_BRIEF_VERSION}`,
+    JSON.stringify(setLevelCreativeBrief),
+    "",
     "SCENE FAMILY",
     contextDescription(context),
     "",
@@ -1485,6 +1754,7 @@ function safeBackgroundPlatePrompt(
     ]),
     "",
     "INVARIANTS",
+    "Obey the evidence policy in the set-level brief: category-only evidence may guide general art direction but cannot prioritize product-specific roles or scenarios.",
     "Market evidence may influence only the empty background, lighting, context, composition and commercial style.",
     "Never reconstruct, reinterpret, rotate, redraw or modify the product. Never invent a top, rear, interior, underside, hidden component, texture, accessory or interaction.",
     "Every reserved product zone stays empty, calm and unobstructed for local insertion of authorized Luna Portex pixels.",
@@ -1755,18 +2025,23 @@ async function composeContextImage(
   const metadata = await sharp(productForeground).metadata()
   const foregroundWidth = metadata.width ?? 0
   const foregroundHeight = metadata.height ?? 0
+  const size = EBAY_SECONDARY_IMAGE_PRODUCT_TARGETS.USE_CONTEXT
+  const left = INFORMATION_LAYOUTS.USE_CONTEXT.packageLeft
+  const top = INFORMATION_LAYOUTS.USE_CONTEXT.packageTop
   const packageLayer = await sharp(productForeground)
-    .resize(860, 860, {
+    .resize(size, size, {
       fit: "contain",
-      withoutEnlargement: true,
+      withoutEnlargement: false,
       background: { r: 0, g: 0, b: 0, alpha: 0 },
     })
     .png().toBuffer()
   const protectedLayerSha256 = sha256(packageLayer)
   const output = await sharp(background)
     .composite([
-      { input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="860" height="860"><ellipse cx="430" cy="745" rx="285" ry="48" fill="#172033" opacity=".2"/></svg>'), left: 370, top: 200 },
-      { input: packageLayer, left: 370, top: 200 },
+      { input: Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><ellipse cx="${size / 2}" cy="${Math.round(size * .86)}" rx="${Math.round(size * .32)}" ry="${Math.round(size * .055)}" fill="#172033" opacity=".2"/></svg>`,
+      ), left, top },
+      { input: packageLayer, left, top },
     ])
     .toColourspace("srgb")
     .jpeg({ quality: 94, chromaSubsampling: "4:4:4", mozjpeg: true })
@@ -1775,10 +2050,9 @@ async function composeContextImage(
   return {
     output,
     protectedLayerSha256,
-    placement: { left: 370, top: 200, width: 860, height: 860 },
-    scale: Number(Math.min(
-      1,
-      860 / Math.max(foregroundWidth, foregroundHeight),
+    placement: { left, top, width: size, height: size },
+    scale: Number((
+      size / Math.max(foregroundWidth, foregroundHeight)
     ).toFixed(6)),
   }
 }
@@ -2110,7 +2384,8 @@ export async function composeAuthorizedEbayListingImageSet(
             input.facts,
             generatedPanel,
             panelContract?.visualStrategyPosition.salesObjective ===
-              "QUALITY_DETAIL",
+              "QUALITY_DETAIL" &&
+              sourceCapability?.viewClassification === "DETAIL",
           )
     } finally {
       generatedPanel?.fill(0)
@@ -2126,8 +2401,15 @@ export async function composeAuthorizedEbayListingImageSet(
     const signature = await structuralSignature(output)
     for (const previous of signatures) {
       const distance = structuralDistance(signature, previous)
-      if (distance.pixelMae < 5 || distance.edgeMae < 2 ||
-        distance.edgeOverlap > 0.94) {
+      const duplicateSignals = [
+        distance.pixelMae < 5,
+        distance.edgeMae < 2,
+        distance.edgeOverlap > 0.94,
+      ].filter(Boolean).length
+      // A similar neutral palette alone is not a duplicate. Require at least
+      // two independent signals so a changed crop/placement remains useful,
+      // while exact or near-exact repeated scenes still fail closed.
+      if (duplicateSignals >= 2) {
         signature.pixels.fill(0)
         signature.edges.fill(0)
         for (const stored of signatures) {
@@ -2157,11 +2439,42 @@ export async function composeAuthorizedEbayListingImageSet(
         )
       : 0
     const secondaryTargetSize = slot === "MAIN_WHITE_BACKGROUND"
-      ? 0 : slot === "USE_CONTEXT" ? 820 : INFORMATION_LAYOUTS[slot].packageSize
+      ? 0 : INFORMATION_LAYOUTS[slot].packageSize
     const productCoverageRatio = slot === "MAIN_WHITE_BACKGROUND"
       ? controlledComposite ? .8 : main.qa.productCoverageRatio
-      : Math.min(secondaryTargetSize, secondaryAvailableSize) /
-        EBAY_IMAGE_OUTPUT_SIZE
+      : secondaryTargetSize / EBAY_IMAGE_OUTPUT_SIZE
+    const foregroundLongSide = secondaryForegroundMetadata
+      ? Math.max(
+        secondaryForegroundMetadata.width ?? 0,
+        secondaryForegroundMetadata.height ?? 0,
+      )
+      : Math.max(main.source.width, main.source.height)
+    const placedProductLongSide = slot === "MAIN_WHITE_BACKGROUND"
+      ? productCoverageRatio * EBAY_IMAGE_OUTPUT_SIZE
+      : secondaryTargetSize
+    const squarePresentation = await auditEbaySquareImagePresentation({
+      output,
+      slot,
+      productCoverageRatio,
+      placement: compositeResult.placement,
+      sourceEffectiveLongSide: slot === "MAIN_WHITE_BACKGROUND"
+        ? Math.max(main.source.width, main.source.height)
+        : Math.max(main.source.width, main.source.height),
+      productPixelLongSide: slot === "MAIN_WHITE_BACKGROUND"
+        ? Math.max(main.source.width, main.source.height)
+        : foregroundLongSide,
+      placedProductLongSide,
+      jpegQuality: 94,
+      artificialFrameAdded: slot !== "MAIN_WHITE_BACKGROUND" &&
+        main.secondaryForeground.method === "FULL_AUTHORIZED_FRAME",
+    })
+    if (!squarePresentation.passed) {
+      throw new Error([
+        "EBAY_IMAGE_SQUARE_PRESENTATION_QA_FAILED",
+        slot,
+        ...squarePresentation.failureReasons,
+      ].join(":"))
+    }
     const persistedPanelContract = slot === "MAIN_WHITE_BACKGROUND"
       ? {
         slot,
@@ -2181,20 +2494,23 @@ export async function composeAuthorizedEbayListingImageSet(
         Boolean(sourceCapability.foregroundMaskSha256)
       : slot === "MAIN_WHITE_BACKGROUND"
         ? main.qa.generativeChangesMade === false : true
-    const commercialQualityPassed = productCoverageRatio >=
-      (slot === "MAIN_WHITE_BACKGROUND" ? .75 : .5) &&
-      productCoverageRatio <= (slot === "MAIN_WHITE_BACKGROUND" ? .85 : .7) &&
-      textLines <= 3
+    const commercialQualityPassed = squarePresentation.productFillPassed &&
+      squarePresentation.mobileFocalPointPassed &&
+      squarePresentation.artificialInsetFrameFree && textLines <= 3
     const technicalQualityPassed = metadata.format === "jpeg" &&
-      metadata.width === 1600 && metadata.height === 1600
-    const productCoveragePassed = productCoverageRatio >=
-      (slot === "MAIN_WHITE_BACKGROUND" ? .75 : .5) &&
-      productCoverageRatio <=
-      (slot === "MAIN_WHITE_BACKGROUND" ? .85 : .7)
-    const compositionPassed = true
+      metadata.width === 1600 && metadata.height === 1600 &&
+      squarePresentation.square1600Passed &&
+      squarePresentation.jpegQualityProfilePassed &&
+      squarePresentation.sourceQualityPassed
+    const productCoveragePassed = squarePresentation.productFillPassed
+    const compositionPassed =
+      squarePresentation.safeCanvasPlacementPassed &&
+      squarePresentation.artificialInsetFrameFree
     const textPolicyPassed = textLines === 0
     const contextualPropsPassed = true
-    const mobileReadabilityPassed = true
+    const mobileReadabilityPassed =
+      squarePresentation.mobileFocalPointPassed &&
+      squarePresentation.productFillPassed
     outputs.push({
       slot,
       output,
@@ -2239,11 +2555,15 @@ export async function composeAuthorizedEbayListingImageSet(
           ? undefined
           : panelContract!.visualStrategyPosition,
         ...(panelContract?.visualStrategyPosition.salesObjective ===
-          "QUALITY_DETAIL" ? {
+          "QUALITY_DETAIL" &&
+          sourceCapability?.viewClassification === "DETAIL" ? {
             authorizedCropMode: "REAL_SOURCE_CROP_NO_UPSCALING" as const,
           } : {}),
         sourceVisualPolicy: "EXACT_AUTHORIZED_PIXELS_ONLY",
         authorizedSourceViewReused: true,
+        squarePresentationVersion: EBAY_SQUARE_PRESENTATION_QA_VERSION,
+        artificialFrameAdded: false,
+        outputEncodingQuality: 94,
         ...(controlledComposite ? {
           controlledCompositeVersion: CONTROLLED_COMPOSITE_VERSION,
           controlledCompositeManifestHash:
@@ -2348,6 +2668,20 @@ export async function composeAuthorizedEbayListingImageSet(
         textPolicyPassed,
         contextualPropsPassed,
         mobileReadabilityPassed,
+        squareFormatPassed: true,
+        artificialInsetFrameFree: true,
+        sourceQualityPassed: true,
+        safeCanvasPlacementPassed: true,
+        mobileFocalPointPassed: true,
+        sourceUpscaleRatio: squarePresentation.sourceUpscaleRatio,
+        safeMarginRatio: squarePresentation.safeMarginRatio,
+        focalCenterOffsetRatio:
+          squarePresentation.focalCenterOffsetRatio,
+        detailSignalRatio: squarePresentation.detailSignalRatio,
+        artificialInsetFrameScore:
+          squarePresentation.artificialInsetFrameScore,
+        squarePresentationQaVersion:
+          EBAY_SQUARE_PRESENTATION_QA_VERSION,
         qaEvaluatorVersion: EBAY_VISUAL_QA_EVALUATOR_VERSION,
         scores: {
           fidelity: productFidelityPassed ? 100 : 0,

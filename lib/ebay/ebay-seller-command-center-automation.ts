@@ -211,6 +211,7 @@ type LatestSupplyRow = {
   inventory_quantity: number | null
   captured_at: string | null
   snapshot_id: string | null
+  product_url: string | null
 }
 
 async function exactUniqueLunaMappingForUnlinkedListing(
@@ -481,7 +482,10 @@ async function upsertProtectionAlert(
       candidateKey: input.listing.supplier_sku,
       title: input.listing.title || "Listing activo eBay",
       summary: copy.summary,
-      mobileUrl: process.env.EBAY_SELLER_COMMAND_CENTER_URL,
+      mobileUrl: typeof input.evidence.productUrl === "string"
+        ? input.evidence.productUrl
+        : null,
+      actionUrl: process.env.EBAY_SELLER_COMMAND_CENTER_URL,
       facts: {
         hasActiveListing: true,
         supplierAvailable: input.evidence.available === true
@@ -616,7 +620,7 @@ export async function reconcileActiveListingProtectionRisks(
     if (listing.market_radar_product_id) {
       let query = supabase
         .from("market_radar_latest_variants")
-        .select("product_id,supplier_variant_id,sku,price,available,inventory_quantity,captured_at,snapshot_id")
+        .select("product_id,supplier_variant_id,sku,price,available,inventory_quantity,captured_at,snapshot_id,product_url")
         .eq("product_id", listing.market_radar_product_id)
       if (listing.supplier_variant_id) query = query.eq("supplier_variant_id", listing.supplier_variant_id)
       else if (listing.supplier_sku) query = query.eq("sku", listing.supplier_sku)
@@ -683,6 +687,7 @@ export async function reconcileActiveListingProtectionRisks(
           supplierPrice: latest?.price ?? null,
           capturedAt: latest?.captured_at ?? null,
           snapshotId: latest?.snapshot_id ?? null,
+          productUrl: latest?.product_url ?? null,
         },
       })
       await resolveProtectionRisks(supabase, {

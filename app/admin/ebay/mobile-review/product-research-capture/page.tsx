@@ -9,6 +9,7 @@ const CAPTURE_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_VISIBLE_CAPTURE_V1"
 const RECEIVER_READY_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_RECEIVER_READY_V1"
 const CAPTURE_RESULT_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1"
 const RECEIVER_HEARTBEAT_MS = 1_000
+const CAPTURE_IMPORT_TIMEOUT_MS = 60_000
 
 type SafeResult = {
   captureAlreadyProcessed?: boolean
@@ -56,6 +57,8 @@ function captureErrorMessage(code: string) {
       "El plan ya no tiene una consulta pendiente. Actualiza Seller OS antes de volver a capturar.",
     PRODUCT_RESEARCH_CAPTURE_ADMIN_SESSION_REQUIRED:
       "Tu sesión de administrador venció. Inicia sesión nuevamente y repite la captura.",
+    PRODUCT_RESEARCH_CAPTURE_IMPORT_TIMEOUT:
+      "Seller OS tardó demasiado en validar la captura. No se cambió el identificador; vuelve a intentarlo.",
   }
   return messages[code] ?? "Seller OS no pudo validar esta captura. Regresa al panel y vuelve a intentarlo."
 }
@@ -125,17 +128,33 @@ export default function ProductResearchCaptureReceiverPage() {
       try {
         const { data: { session } } = await supabase.auth.getSession()
         if (!session?.access_token) throw new Error("PRODUCT_RESEARCH_CAPTURE_ADMIN_SESSION_REQUIRED")
-        const response = await fetch("/api/admin/ebay/listing-ai/product-research-capture", {
-          method: "POST",
-          cache: "no-store",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${session.access_token}`,
-            "Idempotency-Key": `product-research-capture:${captureId}`,
-          },
-          body: JSON.stringify({ action: "capture", capture }),
-        })
-        const payload = await response.json() as { success?: boolean; error?: string; result?: SafeResult }
+        const importController = new AbortController()
+        const importTimeout = window.setTimeout(() =>
+          importController.abort(), CAPTURE_IMPORT_TIMEOUT_MS)
+        let response: Response
+        let payload: { success?: boolean; error?: string; result?: SafeResult }
+        try {
+          response = await fetch("/api/admin/ebay/listing-ai/product-research-capture", {
+            method: "POST",
+            cache: "no-store",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${session.access_token}`,
+              "Idempotency-Key": `product-research-capture:${captureId}`,
+            },
+            body: JSON.stringify({ action: "capture", capture }),
+            signal: importController.signal,
+          })
+          payload = await response.json() as {
+            success?: boolean; error?: string; result?: SafeResult }
+        } catch (requestError) {
+          if (importController.signal.aborted) {
+            throw new Error("PRODUCT_RESEARCH_CAPTURE_IMPORT_TIMEOUT")
+          }
+          throw requestError
+        } finally {
+          window.clearTimeout(importTimeout)
+        }
         if (!response.ok || !payload.success || !payload.result) {
           throw new Error(safeCode(payload.error))
         }

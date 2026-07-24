@@ -3,9 +3,14 @@ import { createHash } from "node:crypto"
 import { z } from "zod"
 
 export const LISTING_AI_PACK_STRATEGY_VERSION =
-  "EBAY_LISTING_AI_PACK_STRATEGY_V1_2026_07_16"
+  "EBAY_LISTING_AI_PACK_STRATEGY_V2_2026_07_24"
 export const CONSUMABLE_PAIRED_OFFER_PLAN_VERSION =
   "EBAY_CONSUMABLE_PAIRED_OFFER_PLAN_V1_2026_07_23"
+export const LOW_COST_SMALL_ITEM_PACK_OPPORTUNITY_VERSION =
+  "EBAY_LOW_COST_SMALL_ITEM_PACK_OPPORTUNITY_V1_2026_07_24"
+export const LOW_COST_UNIT_THRESHOLD_USD = 6
+export const SMALL_ITEM_MAX_VOLUME_CUBIC_INCHES = 216
+export const SMALL_ITEM_MAX_SIDE_INCHES = 12
 
 const hashSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/)
 const confidenceSchema = z.enum(["STRONG", "MEDIUM", "LOW", "INSUFFICIENT"])
@@ -199,6 +204,49 @@ export const listingAiPackStrategySchema = z.object({
   alternativePack: listingAiPackMatrixRowSchema.nullable(),
   packMatrix: z.array(listingAiPackMatrixRowSchema).max(30),
   pairedOfferPlan: consumablePairedOfferPlanSchema.optional(),
+  lowCostSmallItemOpportunity: z.object({
+    version: z.literal(LOW_COST_SMALL_ITEM_PACK_OPPORTUNITY_VERSION),
+    status: z.enum([
+      "NOT_APPLICABLE",
+      "NEEDS_SIZE_OR_SHIPPING_EVIDENCE",
+      "EVALUATE_PACK_OPTIONS",
+      "PACK_RECOMMENDED",
+    ]),
+    trigger: z.object({
+      unitSupplierCostUsd: nullableMoney,
+      unitCostBelowThreshold: z.boolean(),
+      thresholdUsdExclusive: z.literal(LOW_COST_UNIT_THRESHOLD_USD),
+      smallItemConfirmed: z.boolean(),
+      packageVolumeCubicInches: z.number().finite().nonnegative().nullable(),
+      maximumPackageSideInches: z.number().finite().nonnegative().nullable(),
+      maximumSmallVolumeCubicInches: z.literal(
+        SMALL_ITEM_MAX_VOLUME_CUBIC_INCHES,
+      ),
+      maximumSmallSideInches: z.literal(SMALL_ITEM_MAX_SIDE_INCHES),
+    }).strict(),
+    shippingComparison: z.object({
+      currentPackCount: z.number().int().positive(),
+      currentShippingCostUsd: nullableMoney,
+      currentShippingCostPerBaseItemUsd: nullableMoney,
+      recommendedPackCount: z.number().int().positive().nullable(),
+      recommendedShippingCostUsd: nullableMoney,
+      recommendedShippingCostPerBaseItemUsd: nullableMoney,
+      shippingIncreasePercent: nullablePercent,
+      shippingCostPerBaseItemReductionPercent: nullablePercent,
+      shippingNearlyFlat: z.boolean().nullable(),
+    }).strict(),
+    proposedPackCounts: z.array(z.number().int().positive()).min(1).max(3),
+    requiredChecks: z.tuple([
+      z.literal("EXACT_PACK_DEMAND"),
+      z.literal("EXACT_SUPPLIER_STOCK"),
+      z.literal("PACK_COST_AND_MARGIN"),
+      z.literal("PACK_SHIPPING_WEIGHT_AND_DIMENSIONS"),
+      z.literal("PACK_CONTENT_AND_GTIN"),
+      z.literal("HUMAN_FINAL_APPROVAL"),
+    ]),
+    autoPublish: z.literal(false),
+    explanation: z.string().trim().min(1).max(600),
+  }).strict(),
   safeguards: z.object({
     unitGtinUsedAsMultipackGtin: z.literal(false),
     inventedGtin: z.literal(false),
@@ -316,6 +364,154 @@ function packEconomicsAndOperationsSafe(row: ListingAiPackMatrixRow) {
     && row.economics.meetsMinimumProfit === true
     && row.economics.meetsMinimumRoi === true
     && row.economics.meetsMinimumMargin === true
+}
+
+function packageSizeInInches(
+  dimensions: ListingAiPackMatrixRow["packageDimensions"],
+) {
+  if (!dimensions) return null
+  const divisor = dimensions.unit === "cm" ? 2.54 : 1
+  const sides = [
+    dimensions.length / divisor,
+    dimensions.width / divisor,
+    dimensions.height / divisor,
+  ]
+  return {
+    volume: rounded(sides.reduce((total, side) => total * side, 1)),
+    maximumSide: rounded(Math.max(...sides)),
+  }
+}
+
+function buildLowCostSmallItemOpportunity(input: {
+  current: ListingAiPackMatrixRow
+  matrix: ListingAiPackMatrixRow[]
+}) {
+  const unitSupplierCost = input.current.cost === null
+    ? null
+    : rounded(input.current.cost / input.current.packCount)
+  const unitCostBelowThreshold = unitSupplierCost !== null
+    && unitSupplierCost < LOW_COST_UNIT_THRESHOLD_USD
+  const size = packageSizeInInches(input.current.packageDimensions)
+  const smallItemConfirmed = Boolean(
+    size
+    && (size.volume ?? Number.POSITIVE_INFINITY)
+      <= SMALL_ITEM_MAX_VOLUME_CUBIC_INCHES
+    && (size.maximumSide ?? Number.POSITIVE_INFINITY)
+      <= SMALL_ITEM_MAX_SIDE_INCHES,
+  )
+  const proposedPackCounts = [2, 3, 4]
+    .map((multiplier) => input.current.packCount * multiplier)
+  const currentShipping = input.current.shippingCost
+  const currentShippingPerItemRaw = currentShipping === null
+    ? null
+    : currentShipping / input.current.packCount
+  const currentShippingPerItem = rounded(currentShippingPerItemRaw)
+  const viableCandidates = input.matrix
+    .filter((row) =>
+      row.packCount > input.current.packCount
+      && row.packCount % input.current.packCount === 0
+      && packEconomicsAndOperationsSafe(row)
+      && row.shippingCost !== null)
+    .map((row) => {
+      const candidateShipping = row.shippingCost as number
+      const shippingIncreasePercent = currentShipping === null
+        ? null
+        : currentShipping === 0
+          ? candidateShipping === 0 ? 0 : null
+          : rounded((candidateShipping / currentShipping - 1) * 100)
+      const shippingPerItemRaw = candidateShipping / row.packCount
+      const shippingPerItem = rounded(shippingPerItemRaw)
+      const shippingReductionPercent = currentShippingPerItemRaw === null
+        || currentShippingPerItemRaw === 0
+        ? null
+        : rounded(
+          (1 - shippingPerItemRaw / currentShippingPerItemRaw) * 100,
+        )
+      const shippingNearlyFlat = currentShipping === null
+        ? null
+        : candidateShipping <= currentShipping * 1.35 + 1
+      return {
+        row,
+        shippingIncreasePercent,
+        shippingPerItem,
+        shippingReductionPercent,
+        shippingNearlyFlat,
+      }
+    })
+    .filter((candidate) =>
+      candidate.shippingNearlyFlat === true
+      && (candidate.shippingReductionPercent ?? 0) >= 25
+      && (
+        candidate.row.soldEvidenceCount > 0
+        || candidate.row.activeListingCount > 0
+      ))
+    .sort((left, right) =>
+      right.row.soldEvidenceCount - left.row.soldEvidenceCount
+      || (right.shippingReductionPercent ?? 0)
+        - (left.shippingReductionPercent ?? 0)
+      || right.row.scores.overallPackStrategy
+        - left.row.scores.overallPackStrategy)[0] ?? null
+  const fullyTriggered = unitCostBelowThreshold && smallItemConfirmed
+  const missingOperationalEvidence = unitCostBelowThreshold && (
+    size === null || currentShipping === null
+  )
+  const status = !unitCostBelowThreshold
+    ? "NOT_APPLICABLE" as const
+    : missingOperationalEvidence
+      ? "NEEDS_SIZE_OR_SHIPPING_EVIDENCE" as const
+      : !smallItemConfirmed
+        ? "NOT_APPLICABLE" as const
+        : viableCandidates
+          ? "PACK_RECOMMENDED" as const
+          : "EVALUATE_PACK_OPTIONS" as const
+  return {
+    version: LOW_COST_SMALL_ITEM_PACK_OPPORTUNITY_VERSION,
+    status,
+    trigger: {
+      unitSupplierCostUsd: unitSupplierCost,
+      unitCostBelowThreshold,
+      thresholdUsdExclusive: LOW_COST_UNIT_THRESHOLD_USD,
+      smallItemConfirmed,
+      packageVolumeCubicInches: size?.volume ?? null,
+      maximumPackageSideInches: size?.maximumSide ?? null,
+      maximumSmallVolumeCubicInches: SMALL_ITEM_MAX_VOLUME_CUBIC_INCHES,
+      maximumSmallSideInches: SMALL_ITEM_MAX_SIDE_INCHES,
+    },
+    shippingComparison: {
+      currentPackCount: input.current.packCount,
+      currentShippingCostUsd: currentShipping,
+      currentShippingCostPerBaseItemUsd: currentShippingPerItem,
+      recommendedPackCount: viableCandidates?.row.packCount ?? null,
+      recommendedShippingCostUsd:
+        viableCandidates?.row.shippingCost ?? null,
+      recommendedShippingCostPerBaseItemUsd:
+        viableCandidates?.shippingPerItem ?? null,
+      shippingIncreasePercent:
+        viableCandidates?.shippingIncreasePercent ?? null,
+      shippingCostPerBaseItemReductionPercent:
+        viableCandidates?.shippingReductionPercent ?? null,
+      shippingNearlyFlat: viableCandidates?.shippingNearlyFlat ?? null,
+    },
+    proposedPackCounts,
+    requiredChecks: [
+      "EXACT_PACK_DEMAND",
+      "EXACT_SUPPLIER_STOCK",
+      "PACK_COST_AND_MARGIN",
+      "PACK_SHIPPING_WEIGHT_AND_DIMENSIONS",
+      "PACK_CONTENT_AND_GTIN",
+      "HUMAN_FINAL_APPROVAL",
+    ] as const,
+    autoPublish: false as const,
+    explanation: status === "PACK_RECOMMENDED"
+      ? `The base item costs under USD ${LOW_COST_UNIT_THRESHOLD_USD}, is small, and the ${viableCandidates?.row.packCount}-pack reduces shipping cost per base item while keeping shipping nearly flat and passing demand, stock and margin gates.`
+      : status === "EVALUATE_PACK_OPTIONS"
+        ? `The base item costs under USD ${LOW_COST_UNIT_THRESHOLD_USD} and is small. Compare the proposed pack sizes because shipping dilution may be commercially stronger than a unit offer; no pack is recommended until exact demand, shipping, stock and margin pass.`
+        : status === "NEEDS_SIZE_OR_SHIPPING_EVIDENCE"
+          ? `The base item costs under USD ${LOW_COST_UNIT_THRESHOLD_USD}, but exact package dimensions and current shipping cost are required before proposing a safe pack.`
+          : fullyTriggered
+            ? "Low-cost small-item pack evaluation did not produce a safe recommendation."
+            : `The exact offer does not meet both triggers: unit supplier cost under USD ${LOW_COST_UNIT_THRESHOLD_USD} and confirmed small package size.`,
+  }
 }
 
 function soldDemand(row: ListingAiPackMatrixRow) {
@@ -752,6 +948,8 @@ export function buildListingAiPackStrategy(row: DecisionRow): ListingAiPackStrat
     current: currentOffer,
     matrix,
   })
+  const lowCostSmallItemOpportunity =
+    buildLowCostSmallItemOpportunity({ current: currentOffer, matrix })
   const withoutHash = {
     version: LISTING_AI_PACK_STRATEGY_VERSION,
     baseProductFingerprint,
@@ -767,6 +965,7 @@ export function buildListingAiPackStrategy(row: DecisionRow): ListingAiPackStrat
     alternativePack,
     packMatrix: matrix,
     pairedOfferPlan,
+    lowCostSmallItemOpportunity,
     safeguards: {
       unitGtinUsedAsMultipackGtin: false as const,
       inventedGtin: false as const,

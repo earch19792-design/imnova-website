@@ -690,6 +690,31 @@ export async function selectForegroundSafeLunaCatalogGenerationSources(
   }, maximum)
 }
 
+export function assertLunaCatalogCommercialSourceDiversity(
+  pack: AuthorizedCatalogSourcePack,
+  selected: ResolvedLunaCatalogSourceAsset[],
+  sourceIds: string[],
+  strategy: Array<{ authorizedSourceImageIds: string[] }>,
+) {
+  if (pack.galleryCoverage === "SINGLE_VIEW") return
+  if (selected.length < 2 || sourceIds.length < 2) {
+    throw new Error("EBAY_IMAGE_SET_COMMERCIAL_SOURCE_DIVERSITY_REQUIRED")
+  }
+  const eligibleIds = new Set(sourceIds)
+  const secondaryIds = strategy.map((position) =>
+    position.authorizedSourceImageIds[0] ?? "").filter((id) =>
+    eligibleIds.has(id))
+  const usedIds = new Set([
+    sourceIds[0],
+    ...secondaryIds,
+  ].filter(Boolean))
+  const minimumUsedSources = Math.min(3, selected.length)
+  if (new Set(secondaryIds).size < 2 ||
+    usedIds.size < minimumUsedSources) {
+    throw new Error("EBAY_IMAGE_SET_COMMERCIAL_SOURCE_DIVERSITY_REQUIRED")
+  }
+}
+
 export function bindLunaCatalogSourcesToStrategy(
   pack: AuthorizedCatalogSourcePack,
   selected: ResolvedLunaCatalogSourceAsset[],

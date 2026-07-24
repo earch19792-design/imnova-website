@@ -3,7 +3,7 @@
 
   const SELLER_OS_ORIGIN = "https://imnova-website-z1qh-git-featur-438554-earch19792-6888s-projects.vercel.app"
   const RECEIVER_URL = `${SELLER_OS_ORIGIN}/admin/ebay/mobile-review/product-research-capture`
-  const SELLER_OS_HOME_URL = `${SELLER_OS_ORIGIN}/admin/ebay-seller-os`
+  const SELLER_OS_HOME_URL = `${SELLER_OS_ORIGIN}/admin#today-launch`
   const RECEIVER_WINDOW_NAME = "sellerOsProductResearchBatchReceiver"
   const RECEIVER_WINDOW_FEATURES = "popup=yes,width=720,height=780,resizable=yes,scrollbars=yes"
   const CAPTURE_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_VISIBLE_CAPTURE_V1"
@@ -1220,21 +1220,103 @@
       .toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, " ").trim()
   }
 
+  const CAPTURE_RESULT_RETRY_MS = 20_000
+  const CAPTURE_RESULT_REPLAY_WAIT_MS = 50_000
+  const CAPTURE_RESULT_TIMEOUT_MESSAGE =
+    "Seller OS no confirmó la captura. La entrega idempotente se reintentó sin duplicar datos; vuelve a intentarlo."
+  let captureResultRetryTimeout = null
+  let captureDispatchAttempts = 0
+
+  function switchedToActiveListingsNotice(message) {
+    const normalized = text(message).normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("en-US")
+      .replace(/[’']/g, "")
+      .replace(/\s+/g, " ")
+    if (normalized.length < 20 || normalized.length > 600) return false
+    const activeReplacement = /\bactive (?:listings?|items?|offers?)\b/.test(normalized) ||
+      /\b(?:anuncios|listados|publicaciones|articulos|ofertas) activ[oa]s?\b/.test(normalized)
+    if (!activeReplacement) return false
+    const englishNoSold = (
+      /\b(?:couldnt|could not|didnt|did not|cant|cannot)\b/.test(normalized) &&
+      /\bfind\b/.test(normalized) &&
+      /\b(?:any\s+)?(?:sold|sales)\s+results?\b/.test(normalized)
+    ) || /\bno\s+(?:sold|sales)\s+results?\b/.test(normalized)
+    const spanishNoSold = /\bno\b/.test(normalized) &&
+      /\b(?:encontrar|encontramos|encontraron|hay)\b/.test(normalized) &&
+      /\bresultados?\b/.test(normalized) &&
+      /\b(?:vendidos?|ventas?)\b/.test(normalized)
+    const noMatchingResults = (
+      /\b(?:couldnt|could not|didnt|did not|cant|cannot|unable to)\b/.test(normalized) &&
+      /\b(?:find|match)\b/.test(normalized)
+    ) || /\bno (?:matching )?(?:items?|listings?|results?|matches)\b/.test(normalized) ||
+      /\bzero results?\b/.test(normalized) ||
+      /\b(?:no|sin) (?:hay |encontramos? )?(?:articulos |anuncios |resultados )?(?:coincidentes|que coincidan|encontrados)\b/.test(normalized)
+    const replacementTransition =
+      /\b(?:show|showing|shown|display|displaying|switch|switched|instead|try|see|replace|replaced)\b/.test(normalized) ||
+      /\b(?:mostrar|mostramos|mostrando|cambiar|cambiamos|sustituir|sustituimos|en su lugar|intenta|ver)\b/.test(normalized)
+    return englishNoSold || spanishNoSold ||
+      noMatchingResults && replacementTransition
+  }
+
+  function visibleNoticeMessages(noticeSelector) {
+    const messages = smallestVisibleMatches(document, noticeSelector)
+      .slice(0, 1_000)
+      .map((element) => text(element.innerText || element.textContent))
+    // eBay sometimes paints the zero-result explanation inside an unnamed
+    // custom element. body.innerText contains rendered text only, so use
+    // bounded adjacent lines as a selector-independent fallback without
+    // reading or transmitting page HTML.
+    const rendered = text(document.body?.innerText)
+    const lines = rendered.split(/\n+|(?<=[.!?])\s+/)
+      .map((line) => text(line)).filter((line) => line.length >= 4)
+      .slice(0, 2_000)
+    for (let start = 0; start < lines.length; start += 1) {
+      let combined = ""
+      for (let length = 1; length <= 4 && start + length <= lines.length; length += 1) {
+        combined = text(`${combined} ${lines[start + length - 1]}`)
+        if (combined.length > 600) break
+        if (combined.length >= 20 &&
+          /active|activ[oa]s?|sold|sales|vendid|ventas?|matching|coincid/i.test(combined)) {
+          messages.push(combined)
+        }
+      }
+    }
+    return [...new Set(messages)].filter((message) =>
+      message.length >= 20 && message.length <= 600)
+  }
+
   function officialNoSoldResultsProof(searchQuery) {
     const expected = comparableQuery(searchQuery)
     if (!expected) return null
-    const elements = deepQueryAll("main h1,main h2,main h3,main p,main div,main span,[role='main'] h1,[role='main'] h2,[role='main'] h3,[role='main'] p")
-      .filter(visible).slice(0, 500)
-    for (const element of elements) {
-      const message = text(element.innerText || element.textContent)
-      if (message.length < 20 || message.length > 300) continue
+    const noticeSelector = [
+      "main h1", "main h2", "main h3", "main p", "main div", "main span",
+      "[role='main'] h1", "[role='main'] h2", "[role='main'] h3", "[role='main'] p",
+      "[role='alert']", "[role='status']", "[aria-live]",
+      "[data-testid*='alert' i]", "[data-testid*='notice' i]",
+      "[data-testid*='message' i]", "[data-testid*='empty' i]",
+      "[class*='alert' i]", "[class*='notice' i]", "[class*='message' i]",
+      "[class*='empty' i]", "[class*='banner' i]",
+    ].join(",")
+    const messages = visibleNoticeMessages(noticeSelector)
+    for (const message of messages) {
       const match = message.match(
         /^No (?:sold|sales) results found for\s+["“]?(.+?)["”]?\.?$/i,
       ) ?? message.match(
         /^No se encontraron resultados (?:vendidos|de ventas) para\s+["“]?(.+?)["”]?\.?$/i,
       )
-      const displayedQuery = text(match?.[1]).replace(/["”]\.?$/, "")
-      if (comparableQuery(displayedQuery) !== expected) continue
+      if (match) {
+        const displayedQuery = text(match[1]).replace(/["”]\.?$/, "")
+        if (comparableQuery(displayedQuery) !== expected) continue
+      } else {
+        // Product Research can replace an empty Sold table with Active
+        // listings. Those rows are not sold evidence. Accept only eBay's
+        // visible notice while retaining the verified query and selected date
+        // range as capture context. eBay varies the connector sentence and
+        // can render the notice as an aria-live banner outside <main>.
+        const switchedToActiveListings = switchedToActiveListingsNotice(message)
+        if (!switchedToActiveListings) continue
+      }
       return {
         status: "OFFICIAL_NO_SOLD_RESULTS_MESSAGE_VISIBLE",
         queryMatched: true,
@@ -1803,8 +1885,48 @@
     receiverReadyTimeout = null
   }
 
+  function resetCaptureResultRetry() {
+    if (captureResultRetryTimeout) window.clearTimeout(captureResultRetryTimeout)
+    captureResultRetryTimeout = null
+  }
+
+  function armCaptureResultRetry() {
+    resetCaptureResultRetry()
+    const captureId = pending?.captureId
+    if (!captureId) return
+    captureResultRetryTimeout = window.setTimeout(() => {
+      captureResultRetryTimeout = null
+      if (!pending || pending.captureId !== captureId ||
+        dispatchedCaptureId !== captureId) return
+      if (captureDispatchAttempts >= 2) {
+        pending = null
+        dispatchedCaptureId = null
+        captureDispatchAttempts = 0
+        setStatus(CAPTURE_RESULT_TIMEOUT_MESSAGE, "error")
+        finishCapture()
+        return
+      }
+      // The receiver caches results by captureId. Clearing only the dispatch
+      // marker lets its next heartbeat replay the same result without a
+      // second import or a different idempotency key.
+      dispatchedCaptureId = null
+      setStatus("Seller OS tardó en confirmar. Reintentando la misma captura de forma idempotente…",
+        "warning")
+      resetReceiverTimeout()
+      receiverReadyTimeout = window.setTimeout(() => {
+        if (!pending || pending.captureId !== captureId ||
+          dispatchedCaptureId !== null) return
+        pending = null
+        captureDispatchAttempts = 0
+        setStatus(CAPTURE_RESULT_TIMEOUT_MESSAGE, "error")
+        finishCapture()
+      }, CAPTURE_RESULT_REPLAY_WAIT_MS)
+    }, CAPTURE_RESULT_RETRY_MS)
+  }
+
   function finishCapture() {
     resetReceiverTimeout()
+    resetCaptureResultRetry()
     updateCaptureAvailability()
   }
 
@@ -1899,6 +2021,8 @@
           await enrichVisualFallbacks(captureContext.visualFallbacks)
         }
         pending = prepared
+        dispatchedCaptureId = null
+        captureDispatchAttempts = 0
         const elapsed = Math.max(1, Math.round(performance.now() - startedAt))
         setStatus(pending.resultState === "NO_SOLD_RESULTS"
           ? `Cero resultados vendidos confirmado en ${elapsed} ms. Esperando Seller OS…`
@@ -1913,6 +2037,7 @@
       } catch (error) {
         pending = null
         dispatchedCaptureId = null
+        captureDispatchAttempts = 0
         const code = error instanceof Error ? error.message : "PRODUCT_RESEARCH_CAPTURE_FAILED"
         if (code === "PRODUCT_RESEARCH_VISIBLE_TABLE_NOT_FOUND") {
           const diagnostic = safeStructureDiagnostics()
@@ -1931,7 +2056,9 @@
       dispatchedCaptureId !== pending.captureId) {
       resetReceiverTimeout()
       dispatchedCaptureId = pending.captureId
+      captureDispatchAttempts += 1
       receiver.postMessage({ type: CAPTURE_MESSAGE, capture: pending }, SELLER_OS_ORIGIN)
+      armCaptureResultRetry()
       setStatus("Enviando datos estructurados a Seller OS…")
     }
     if (event.data.type === CAPTURE_RESULT_MESSAGE && event.data.captureId === pending?.captureId) {
@@ -1948,10 +2075,12 @@
       event.data.success ? "success" : "error")
       pending = null
       dispatchedCaptureId = null
+      captureDispatchAttempts = 0
       if (event.data.success && event.data.nextQuery) {
         const advance = navigationOnly ? advanceAfterCorrectedCapture : advanceAfterAcceptedCapture
         advance(event.data.nextQuery, event.data.nextQueryOrdinal, event.data.queryCount)
-      } else if (event.data.success && positivePlanInteger(event.data.queryCount)) {
+      } else if (event.data.success && (event.data.returnToSellerOs === true ||
+        positivePlanInteger(event.data.queryCount))) {
         completeGuidedPlan(event.data.queryCount)
       } else if (event.data.success) clearNextQuery()
       finishCapture()
@@ -1965,7 +2094,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.11"
+  title.textContent = "Seller OS · Product Research · v1.2.16"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"

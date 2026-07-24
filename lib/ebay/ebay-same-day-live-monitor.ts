@@ -13,8 +13,23 @@ export type SameDayLiveMonitorStatus =
 export type SameDayLiveTimelineStep = {
   id: string
   label: string
+  visual: SameDayJourneyVisual
+  description: string
+  activity: string
+  checks: string[]
+  completionResult: string
   status: "DONE" | "CURRENT" | "NEXT"
 }
+
+export type SameDayJourneyVisual =
+  | "radar"
+  | "research"
+  | "identity"
+  | "economics"
+  | "facts"
+  | "creative"
+  | "publish"
+  | "monitor"
 
 export type SameDayCandidateRejectionSummary = {
   candidateId: string
@@ -40,6 +55,16 @@ export type SameDayLiveMonitor = {
   detail: string
   activityEvidence: string
   shouldAnimate: boolean
+  currentState: string
+  journeyPositionPercent: number
+  currentPhase: {
+    id: string
+    label: string
+    visual: SameDayJourneyVisual
+    activity: string
+    description: string
+    checks: string[]
+  }
   batch: {
     total: number
     completed: number
@@ -59,14 +84,108 @@ const TERMINAL_STATES = new Set(["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMP
 const READY_STATES = new Set(["READY_FOR_MANUAL_PUBLICATION", "WAITING_ITEM_ID"])
 
 const TIMELINE = [
-  { id: "selection", label: "Selección", states: ["RUN_CREATED", "LOCAL_FILTERING", "CANDIDATE_SELECTION"] },
-  { id: "research", label: "Product Research", states: ["PRODUCT_RESEARCH_PLAN_READY", "WAITING_PRODUCT_RESEARCH_CAPTURE", "IMPORTING_SOLD_EVIDENCE"] },
-  { id: "identity", label: "Identidad", states: ["RECONCILING_IDENTITY", "MATCHING_LUNA", "RUNNING_LOOP_1"] },
-  { id: "economics", label: "Luna y economía", states: ["CALCULATING_ECONOMICS", "WAITING_LUNA_CONFIRMATION"] },
-  { id: "facts", label: "Ficha y cumplimiento", states: ["ENRICHING_PRODUCT_FACTS", "VALIDATING_TAXONOMY", "VALIDATING_REGULATION", "BUILDING_OPENAI_INPUT", "WAITING_PRODUCT_APPROVAL"] },
-  { id: "creative", label: "Contenido e imágenes", states: ["GENERATING_LISTING_CONTENT", "VALIDATING_LISTING_CONTENT", "PREPARING_IMAGE_PACKAGE", "WAITING_IMAGE_APPROVAL", "BUILDING_SELLER_HUB_HANDOFF"] },
-  { id: "publish", label: "Publicación y monitor", states: ["READY_FOR_MANUAL_PUBLICATION", "WAITING_ITEM_ID", "VERIFYING_PUBLISHED_LISTING", "REGISTERING_COMMERCIAL_MONITOR", "VERIFIED_ACTIVE"] },
+  {
+    id: "selection",
+    label: "Selección inteligente",
+    visual: "radar",
+    description: "Filtra la cola y elige un candidato distinto que pueda recorrer controles profesionales.",
+    checks: ["Stock y duplicados", "Elegibilidad del candidato", "Orden durable del lote"],
+    completionResult: "Candidato elegible, ordenado y trazable.",
+    states: ["RUN_CREATED", "LOCAL_FILTERING", "CANDIDATE_SELECTION"],
+  },
+  {
+    id: "research",
+    label: "Research de mercado",
+    visual: "research",
+    description: "Recopila y depura evidencia vendida para entender demanda, presentación y señales comerciales.",
+    checks: ["Listings vendidos", "Duplicados y variantes", "Evidencia A / B / C"],
+    completionResult: "Evidencia comercial clasificada sin convertir señales en hechos.",
+    states: ["PRODUCT_RESEARCH_PLAN_READY", "WAITING_PRODUCT_RESEARCH_CAPTURE", "IMPORTING_SOLD_EVIDENCE"],
+  },
+  {
+    id: "identity",
+    label: "Identidad exacta",
+    visual: "identity",
+    description: "Reconcilia eBay, Research y Luna para evitar mezclar SKU, tamaño, variante o paquete.",
+    checks: ["GTIN / MPN / modelo", "Variante y pack", "Coincidencia con Luna"],
+    completionResult: "Producto y presentación exactos vinculados.",
+    states: ["RECONCILING_IDENTITY", "MATCHING_LUNA", "RUNNING_LOOP_1"],
+  },
+  {
+    id: "economics",
+    label: "Rentabilidad",
+    visual: "economics",
+    description: "Calcula precio, costos, tarifas, envío, margen y riesgo antes de recomendar la oferta.",
+    checks: ["Costo Luna", "Mercado y precio", "Margen, ROI y reservas"],
+    completionResult: "Oferta económicamente evaluada con un precio defendible.",
+    states: ["CALCULATING_ECONOMICS", "WAITING_LUNA_CONFIRMATION"],
+  },
+  {
+    id: "facts",
+    label: "Ficha eBay segura",
+    visual: "facts",
+    description: "Construye la ficha verificable y valida categoría, aspectos, cumplimiento y contenido permitido.",
+    checks: ["Taxonomía eBay", "Hechos del expediente", "Cumplimiento y obligatorios"],
+    completionResult: "Ficha lista sin claims ni datos inventados.",
+    states: ["ENRICHING_PRODUCT_FACTS", "VALIDATING_TAXONOMY", "VALIDATING_REGULATION", "BUILDING_OPENAI_INPUT", "WAITING_PRODUCT_APPROVAL"],
+  },
+  {
+    id: "creative",
+    label: "Listing e imágenes",
+    visual: "creative",
+    description: "Convierte el expediente en título, descripción y un set visual distinto, comercial y fiel.",
+    checks: ["Estrategia de venta", "Identidad visual", "Calidad móvil y diversidad"],
+    completionResult: "Listing coherente y set visual comercial aprobado.",
+    states: ["GENERATING_LISTING_CONTENT", "VALIDATING_LISTING_CONTENT", "PREPARING_IMAGE_PACKAGE", "WAITING_IMAGE_APPROVAL", "BUILDING_SELLER_HUB_HANDOFF"],
+  },
+  {
+    id: "publish",
+    label: "Publicación verificada",
+    visual: "publish",
+    description: "Crea la oferta una sola vez y confirma en eBay que el listing quedó ACTIVE.",
+    checks: ["Preflight final", "Publicación idempotente", "Verificación ACTIVE"],
+    completionResult: "Listing activo e Item ID verificado.",
+    states: ["READY_FOR_MANUAL_PUBLICATION", "WAITING_ITEM_ID", "VERIFYING_PUBLISHED_LISTING"],
+  },
+  {
+    id: "monitor",
+    label: "Monitoreo activo",
+    visual: "monitor",
+    description: "Registra el listing y mantiene vigilancia de estado, stock, precio, margen y señales comerciales.",
+    checks: ["Heartbeat eBay y Luna", "Alertas con acción", "Resumen comercial"],
+    completionResult: "Listing protegido y seguimiento comercial encendido.",
+    states: ["REGISTERING_COMMERCIAL_MONITOR", "VERIFIED_ACTIVE"],
+  },
 ] as const
+
+const STATE_ACTIVITY: Record<string, string> = {
+  RUN_CREATED: "El lote fue creado y está esperando su turno durable.",
+  LOCAL_FILTERING: "Revisando stock, duplicados, historial y exclusiones locales.",
+  CANDIDATE_SELECTION: "Puntuando candidatos y seleccionando el siguiente producto trazable.",
+  PRODUCT_RESEARCH_PLAN_READY: "Preparando la consulta exacta y el alcance de evidencia.",
+  WAITING_PRODUCT_RESEARCH_CAPTURE: "Esperando la captura autorizada de Product Research; no se simula trabajo automático.",
+  IMPORTING_SOLD_EVIDENCE: "Importando, deduplicando y clasificando la evidencia vendida.",
+  RECONCILING_IDENTITY: "Comparando identificadores, títulos, variantes, tamaños y presentaciones.",
+  MATCHING_LUNA: "Buscando la variante exacta y la oferta nativa correspondiente en Luna.",
+  RUNNING_LOOP_1: "Auditando la coincidencia exacta antes de aceptar la identidad.",
+  CALCULATING_ECONOMICS: "Calculando costo total, tarifas, envío, reservas, margen y ROI.",
+  WAITING_LUNA_CONFIRMATION: "Esperando confirmar precio, disponibilidad y pack exactos de Luna.",
+  ENRICHING_PRODUCT_FACTS: "Consolidando hechos autorizados y separando datos verificados de estimaciones.",
+  VALIDATING_TAXONOMY: "Consultando la categoría hoja y sus aspectos oficiales de eBay.",
+  VALIDATING_REGULATION: "Comprobando restricciones y requisitos aplicables a la publicación.",
+  BUILDING_OPENAI_INPUT: "Preparando un contexto limitado exclusivamente a hechos permitidos.",
+  WAITING_PRODUCT_APPROVAL: "Esperando la decisión comercial visible antes de construir el listing.",
+  GENERATING_LISTING_CONTENT: "Construyendo título, descripción y específicos desde el expediente aprobado.",
+  VALIDATING_LISTING_CONTENT: "Revisando coherencia, claims, cantidad, categoría y riesgo de devolución.",
+  PREPARING_IMAGE_PACKAGE: "Diseñando y evaluando siete imágenes distintas con identidad protegida.",
+  WAITING_IMAGE_APPROVAL: "Esperando la validación del set visual completo.",
+  BUILDING_SELLER_HUB_HANDOFF: "Ensamblando el paquete exacto que llegará al preflight de publicación.",
+  READY_FOR_MANUAL_PUBLICATION: "Todos los controles previos terminaron; falta autorizar la publicación.",
+  WAITING_ITEM_ID: "La operación fue enviada una sola vez y espera reconciliar el Item ID.",
+  VERIFYING_PUBLISHED_LISTING: "Consultando eBay para confirmar que el listing quedó ACTIVE y consistente.",
+  REGISTERING_COMMERCIAL_MONITOR: "Registrando Item ID, evidencia final y seguimiento comercial.",
+  VERIFIED_ACTIVE: "eBay confirmó el listing ACTIVE y Seller OS cerró el recorrido.",
+}
 
 const BLOCKER_LABELS: Record<string, string> = {
   AUTHORIZED_CAPTURE_OBSERVATIONS_MISSING: "La captura no aportó referencias vendidas válidas para este producto.",
@@ -295,6 +414,15 @@ function timelineForState(state: string): SameDayLiveTimelineStep[] {
   return TIMELINE.map((step, index) => ({
     id: step.id,
     label: step.label,
+    visual: step.visual,
+    description: step.description,
+    checks: [...step.checks],
+    completionResult: step.completionResult,
+    activity: index < current
+      ? step.completionResult
+      : index === current
+        ? STATE_ACTIVITY[state] ?? step.description
+        : `Esperará hasta completar ${TIMELINE[Math.max(0, index - 1)].label.toLocaleLowerCase("es-NI")}.`,
     status: index < current ? "DONE" : index === current ? "CURRENT" : "NEXT",
   }))
 }
@@ -336,6 +464,11 @@ export function deriveSameDayLiveMonitor(input: {
   const currentCandidate = activeCandidates[0] ?? readyCandidates[0] ?? queuedCandidates[0] ?? candidates[0]
   const currentState = text(currentCandidate?.machine_state) || text(run?.stage) || "RUN_CREATED"
   const currentOrdinal = Number(currentCandidate?.ordinal)
+  const timeline = timelineForState(currentState)
+  const currentPhase = timeline.find((step) => step.status === "CURRENT") ??
+    timeline[0]
+  const currentPhaseIndex = Math.max(0, timeline.findIndex((step) =>
+    step.status === "CURRENT"))
 
   const leasedJobs = jobs.filter((job) => text(job.status) === "LEASED")
   const pendingJobs = jobs.filter((job) => ["PENDING", "WAITING_RETRY"].includes(text(job.status)))
@@ -392,6 +525,19 @@ export function deriveSameDayLiveMonitor(input: {
     detail: label.detail,
     activityEvidence,
     shouldAnimate: status === "WORKING",
+    currentState,
+    journeyPositionPercent: status === "COMPLETED" ||
+      currentState === "VERIFIED_ACTIVE"
+      ? 100
+      : Math.round((currentPhaseIndex + 1) / TIMELINE.length * 100),
+    currentPhase: {
+      id: currentPhase.id,
+      label: currentPhase.label,
+      visual: currentPhase.visual,
+      activity: currentPhase.activity,
+      description: currentPhase.description,
+      checks: [...currentPhase.checks],
+    },
     batch: {
       total: candidates.length,
       completed: completedCandidates.length,
@@ -400,7 +546,7 @@ export function deriveSameDayLiveMonitor(input: {
       queued: queuedCandidates.length,
       currentOrdinal: Number.isInteger(currentOrdinal) && currentOrdinal > 0 ? currentOrdinal : null,
     },
-    timeline: timelineForState(currentState),
+    timeline,
     nextAutomaticAction: text(run?.next_automated_action) || text(currentCandidate?.next_automated_action) || "Preservar el checkpoint y esperar la siguiente señal.",
     nextHumanAction: openTasks.length
       ? text(openTasks[0]?.title) || "Completar la tarea visible."

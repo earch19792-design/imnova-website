@@ -348,7 +348,15 @@ test("seller handoff has actionable economics and a Seller OS publication CTA", 
     /humanWorkspaceBlocker/,
   ]) assert.match(workspace, signal)
   assert.match(mobile, /comparables activos y señales de mercado/i)
-  assert.match(mobile, /oportunidad con evidencia suficiente/)
+  assert.match(
+    mobile,
+    /venta confirmada o listing activo con stock Luna exacto en cero/,
+  )
+  assert.match(mobile, /resumen diario de las 18:00 Guatemala/)
+  assert.doesNotMatch(
+    mobile,
+    /Inmediatas: oportunidad con evidencia suficiente/,
+  )
   assert.doesNotMatch(mobile, /ganador verificado/i)
   assert.match(mobile, /Vincular con la oportunidad canónica/)
   assert.match(mobile, /preferredMarketRadarProductId=/)

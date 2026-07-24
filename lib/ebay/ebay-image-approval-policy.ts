@@ -1,3 +1,6 @@
+// @ts-expect-error Node's native TypeScript tests need the explicit extension.
+import { EBAY_SQUARE_PRESENTATION_QA_VERSION } from "./ebay-image-square-presentation.ts"
+
 type JsonRecord = Record<string, unknown>
 
 function record(value: unknown): JsonRecord {
@@ -17,8 +20,23 @@ function stringArray(value: unknown) {
 }
 
 export function assertStoredSameDayImageSetQaPassed(assets: unknown) {
-  if (!Array.isArray(assets) || assets.length !== 7 || assets.some((asset) =>
-    record(record(asset).qa_result).automaticStatus !== "PASSED")) {
+  if (!Array.isArray(assets) || assets.length !== 7 || assets.some((asset) => {
+    const row = record(asset)
+    const transformation = record(row.transformation)
+    const qa = record(row.qa_result)
+    return qa.automaticStatus !== "PASSED" ||
+      transformation.squarePresentationVersion !==
+        EBAY_SQUARE_PRESENTATION_QA_VERSION ||
+      transformation.artificialFrameAdded !== false ||
+      transformation.outputEncodingQuality !== 94 ||
+      qa.squarePresentationQaVersion !==
+        EBAY_SQUARE_PRESENTATION_QA_VERSION ||
+      qa.squareFormatPassed !== true ||
+      qa.artificialInsetFrameFree !== true ||
+      qa.sourceQualityPassed !== true ||
+      qa.safeCanvasPlacementPassed !== true ||
+      qa.mobileFocalPointPassed !== true
+  })) {
     throw new Error("SAME_DAY_IMAGE_SET_QA_NOT_PASSED")
   }
 }
@@ -46,6 +64,20 @@ export function hasReviewableSameDaySecondaryAssetContracts(
       "LOCAL_AUTHORIZED_FOREGROUND" &&
     transformation.foregroundMatteVersion ===
       expected.foregroundMatteVersion &&
+    ["NATIVE_ALPHA", "EDGE_CONNECTED_LIGHT_NEUTRAL_V1",
+      "PROTECTED_TRIMAP_MATTING_V1"].includes(
+      text(transformation.foregroundMatteMethod, 80),
+    ) &&
+    transformation.squarePresentationVersion ===
+      EBAY_SQUARE_PRESENTATION_QA_VERSION &&
+    transformation.artificialFrameAdded === false &&
+    qa.squarePresentationQaVersion ===
+      EBAY_SQUARE_PRESENTATION_QA_VERSION &&
+    qa.squareFormatPassed === true &&
+    qa.artificialInsetFrameFree === true &&
+    qa.sourceQualityPassed === true &&
+    qa.safeCanvasPlacementPassed === true &&
+    qa.mobileFocalPointPassed === true &&
     qa.foregroundMatteValidated === true &&
     qa.opaqueSourceFrameRemoved === true &&
     (noRenderedText || renderedTextContract)

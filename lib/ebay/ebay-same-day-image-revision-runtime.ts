@@ -12,6 +12,7 @@ import {
   EBAY_IMAGE_TEXT_RENDERER_VERSION,
   EBAY_LISTING_IMAGE_SET_VERSION,
   EBAY_LISTING_IMAGE_SLOTS,
+  EBAY_SQUARE_PRESENTATION_QA_VERSION,
   buildSellerOsEbayVisualStrategyV2,
   buildControlledCompositePreflightManifest,
   getListingImageFactoryConfiguration,
@@ -546,6 +547,7 @@ export async function generateAndPersistSameDayImageRevision(input: {
     baseControlId,
     REVISION_VERSION,
     EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
+    EBAY_SQUARE_PRESENTATION_QA_VERSION,
     requestKey || "DEFAULT_DIVERSIFIED_REVISION",
   ].join(":"))
   const leaseToken = randomUUID()

@@ -13,6 +13,7 @@ import {
   SAME_DAY_RECONCILIATION_DECISION_REFERENCE_LIMIT,
   SAME_DAY_TRADING_DETAIL_READ_LIMIT_PER_BATCH,
   isValidSameDayLunaConfirmation,
+  isSameDayCandidateBatchSettled,
   listingQuantityFromLuna,
   selectSameDayQueue,
   type SameDayCandidateInput,
@@ -130,6 +131,10 @@ const VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION =
   "VISUAL_MARKET_RECAPTURE_RECOVERY_V1_2026_07_23"
 const QUERY_FAMILY_VISUAL_BRIEF_RECOVERY_VERSION =
   "QUERY_FAMILY_VISUAL_BRIEF_RECOVERY_V1_2026_07_23"
+const RETIRED_V6_IMAGE_APPROVAL_ERROR =
+  "SAME_DAY_IMAGE_V6_EXACT_SIX_REQUIRED"
+const V9_EXACT_SEVEN_SQL_GATE_RECOVERY_REASON =
+  "V9_EXACT_SEVEN_SQL_GATE_RECOVERED"
 const VISUAL_MARKET_RECAPTURE_LIMIT_REASON =
   "MARKET_VISUAL_EVIDENCE_NOT_ACTIONABLE_AFTER_RECAPTURE"
 const VISUAL_MARKET_RECAPTURE_ERROR_CODES = new Set([
@@ -782,12 +787,36 @@ async function currentState(
     // fresh one; this preserves candidates, captures and checkpoints.
     const { data: carryoverRuns, error: carryoverError } = await supabase
       .from("ebay_same_day_pilot_runs").select("*")
-      .eq("marketplace_account_key", accountKey)
-      .in("status", ["ACTIVE", "PARTIALLY_READY", "READY_FOR_OPERATOR", "BLOCKED"])
+      .eq("marketplace_account_key", accountKey).in("status", [
+        "ACTIVE", "PARTIALLY_READY", "READY_FOR_OPERATOR", "BLOCKED", "COMPLETED",
+      ])
       .order("operation_date", { ascending: false })
       .order("cycle", { ascending: false }).limit(10)
     if (carryoverError) throw new Error("SAME_DAY_PILOT_CARRYOVER_RUN_READ_FAILED")
+    const completedRunIds = (carryoverRuns ?? []).filter((candidateRun) =>
+      candidateRun.status === "COMPLETED").map((candidateRun) =>
+      text(candidateRun.id)).filter(Boolean)
+    const { data: completedRunCandidates, error: completedRunCandidateError } =
+      completedRunIds.length
+        ? await supabase.from("ebay_same_day_pilot_candidates")
+          .select("run_id,machine_state").in("run_id", completedRunIds)
+        : { data: [], error: null }
+    if (completedRunCandidateError) {
+      throw new Error("SAME_DAY_PILOT_CARRYOVER_CANDIDATE_READ_FAILED")
+    }
+    const completedRunStates = new Map<string, string[]>()
+    for (const candidate of completedRunCandidates ?? []) {
+      const runId = text(candidate.run_id)
+      const states = completedRunStates.get(runId) ?? []
+      states.push(text(candidate.machine_state))
+      completedRunStates.set(runId, states)
+    }
     run = (carryoverRuns ?? []).find((candidateRun) => {
+      if (candidateRun.status === "COMPLETED") {
+        return !isSameDayCandidateBatchSettled(
+          completedRunStates.get(text(candidateRun.id)) ?? [],
+        )
+      }
       if (candidateRun.status !== "BLOCKED") return true
       const verified = number(candidateRun.verified_new_listings) ?? 0
       const target = number(candidateRun.target_new_listings) ?? 2
@@ -2212,6 +2241,20 @@ async function repairSameDayPilotBootstrap(
   )) {
     return true
   }
+  if (await activateNextDeferredVisualMarketRecovery(
+    supabase,
+    activeState,
+    accountKey,
+    new Date(),
+  )) {
+    repaired = true
+    activeState = await currentState(
+      supabase,
+      accountKey,
+      text(state.run.operation_date),
+    )
+    if (!activeState) return true
+  }
   // A capture is durable before the Same-Day transition is attempted. If an
   // older deployment or a transient continuation failure left the query task
   // PROCESSED while its human gate stayed OPEN, consume that exact stored
@@ -2283,6 +2326,161 @@ async function createLunaGate(supabase: SupabaseClient, runId: string, candidate
     impact: "Seller OS recalculará economía y ejecutará Product Facts automáticamente.", evidence: { product: candidate.product_title, sku: candidate.supplier_sku },
     actionSchema: { type: "LUNA_CONFIRMATION", fields: ["price", "availability", "quantityIfVisible",
       "identityAndPackConfirmed", "nativePackCount"] }, continuationJobType: "CALCULATE_ECONOMICS" })
+}
+
+const STALE_CONTROLLED_LUNA_CONFIRMATION_RECOVERY_VERSION =
+  "STALE_CONTROLLED_LUNA_CONFIRMATION_RECOVERY_V1_2026_07_24"
+
+function controlledExploratoryLunaConfirmationNeedsRefresh(
+  candidate: JsonRecord,
+  now: Date,
+) {
+  const evidence = record(candidate.evidence_summary)
+  if (!["CONTROLLED_EXPLORATORY_TEST", "MARKET_VALIDATED"]
+    .includes(text(evidence.commercialEvidenceMode))) return false
+  const economics = record(candidate.economics_summary)
+  const confirmation = record(economics.lunaConfirmation)
+  const confirmedAt = Date.parse(text(confirmation.confirmedAt))
+  const confirmedPrice = number(economics.confirmedLunaPrice)
+  const ageMs = now.getTime() - confirmedAt
+  return confirmedPrice === null || confirmedPrice <= 0 ||
+    !text(confirmation.status).startsWith("AVAILABLE_") ||
+    !Number.isFinite(confirmedAt) ||
+    ageMs < -5 * 60_000 ||
+    ageMs > 24 * 60 * 60_000
+}
+
+async function routeStaleControlledLunaConfirmationToGate(input: {
+  supabase: SupabaseClient
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>
+  candidate: JsonRecord
+  previousState: "ENRICHING_PRODUCT_FACTS" | "REJECTED"
+  now: Date
+  recoveryJobId?: string | null
+}) {
+  await createLunaGate(
+    input.supabase,
+    text(input.state.run.id),
+    input.candidate,
+    input.previousState,
+  )
+  const candidateId = text(input.candidate.id)
+  const { error: candidateError } = await input.supabase
+    .from("ebay_same_day_pilot_candidates")
+    .update({
+      state: "NEEDS_LUNA_CONFIRMATION",
+      blockers: ["LUNA_CONFIRMATION_STALE"],
+      next_automated_action:
+        "Recalcular economía y Product Facts con una confirmación Luna fresca.",
+      next_human_action:
+        "Confirmar nuevamente precio, disponibilidad, identidad y pack visibles en Luna.",
+      updated_at: input.now.toISOString(),
+    })
+    .eq("id", candidateId)
+    .eq("run_id", input.state.run.id)
+    .eq("machine_state", "WAITING_LUNA_CONFIRMATION")
+  if (candidateError) {
+    throw new Error("SAME_DAY_PILOT_STALE_LUNA_GATE_CANDIDATE_FAILED")
+  }
+  const { error: eventError } = await input.supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({
+      run_id: input.state.run.id,
+      candidate_id: candidateId,
+      event_type: "STALE_CONTROLLED_LUNA_CONFIRMATION_RECOVERED",
+      event_payload: {
+        recoveryVersion:
+          STALE_CONTROLLED_LUNA_CONFIRMATION_RECOVERY_VERSION,
+        previousState: input.previousState,
+        recoveryJobId: input.recoveryJobId ?? null,
+        freshLunaConfirmationRequired: true,
+        productResearchRepeated: false,
+        commercialEvidencePreserved: true,
+        productFactsHistoryPreserved: true,
+        historyDeleted: false,
+      },
+      idempotency_key: [
+        input.state.run.id,
+        candidateId,
+        STALE_CONTROLLED_LUNA_CONFIRMATION_RECOVERY_VERSION,
+        input.recoveryJobId ?? input.previousState,
+      ].join(":"),
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) {
+    throw new Error("SAME_DAY_PILOT_STALE_LUNA_GATE_EVENT_FAILED")
+  }
+}
+
+async function repairStaleControlledLunaConfirmationRejection(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  if (state.tasks.some((task) => task.status === "OPEN" &&
+    task.gate_type !== "CRITICAL_EXCEPTION_REQUIRED")) return 0
+  const candidate = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .find((entry) =>
+      text(entry.machine_state) === "REJECTED" &&
+      text(entry.state) === "REJECTED_TODAY" &&
+      strings(entry.blockers).length === 1 &&
+      strings(entry.blockers)[0] ===
+        "PRODUCT_FACT_CONTROLLED_EXPLORATORY_TARGET_INVALID" &&
+      controlledExploratoryLunaConfirmationNeedsRefresh(record(entry), now))
+  if (!candidate) return 0
+  const { data: failedJob, error: failedJobError } = await supabase
+    .from("ebay_same_day_pilot_jobs")
+    .select("id,status,last_error_code,checkpoint")
+    .eq("run_id", state.run.id)
+    .eq("candidate_id", candidate.id)
+    .eq("job_type", "ENRICH_PRODUCT_FACTS")
+    .in("status", ["DEAD_LETTER", "COMPLETED"])
+    .in("last_error_code", [
+      "PRODUCT_FACT_CONTROLLED_EXPLORATORY_TARGET_INVALID",
+      "EFFECT_ALREADY_APPLIED_RECOVERED",
+    ])
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (failedJobError) {
+    throw new Error("SAME_DAY_PILOT_STALE_LUNA_DEAD_LETTER_READ_FAILED")
+  }
+  if (!failedJob) return 0
+  if (failedJob.status === "DEAD_LETTER") {
+    const { data: cancelled, error: cancelError } = await supabase
+      .from("ebay_same_day_pilot_jobs")
+      .update({
+        status: "CANCELLED",
+        checkpoint: {
+          ...record(failedJob.checkpoint),
+          staleLunaConfirmationRecoveryVersion:
+            STALE_CONTROLLED_LUNA_CONFIRMATION_RECOVERY_VERSION,
+          supersededAt: now.toISOString(),
+          historyDeleted: false,
+        },
+        updated_at: now.toISOString(),
+      })
+      .eq("id", failedJob.id)
+      .eq("status", "DEAD_LETTER")
+      .select("id")
+    if (cancelError || (cancelled ?? []).length !== 1) {
+      throw new Error("SAME_DAY_PILOT_STALE_LUNA_DEAD_LETTER_CANCEL_FAILED")
+    }
+  }
+  await routeStaleControlledLunaConfirmationToGate({
+    supabase,
+    state,
+    candidate: record(candidate),
+    previousState: "REJECTED",
+    now,
+    recoveryJobId: text(failedJob.id),
+  })
+  await refreshRunProjection(supabase, state.run.id, true)
+  return 1
 }
 
 async function promoteNextCandidate(supabase: SupabaseClient, runId: string, ordinal: number) {
@@ -2379,8 +2577,16 @@ async function refreshRunProjection(supabase: SupabaseClient, runId: string, wor
   const waitingRetry = (jobs ?? []).some((job) => job.status === "WAITING_RETRY")
   const targetNewListings = Math.max(0, Math.min(SAME_DAY_QUEUE_LIMIT,
     Number(run?.target_new_listings ?? 2)))
-  const completed = verifiedCount >= targetNewListings
-  const exhausted = rows.length === 0 || rows.every((row) => ["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(row.machine_state))
+  const candidateWorkSettled = isSameDayCandidateBatchSettled(
+    rows.map((row) => text(row.machine_state)),
+  )
+  const openHumanWork = taskRows.some((task) => task.status === "OPEN")
+  const unresolvedBackgroundWork = (jobs ?? []).some((job) =>
+    ["PENDING", "WAITING_RETRY", "LEASED", "DEAD_LETTER"]
+      .includes(text(job.status)))
+  const completed = verifiedCount >= targetNewListings &&
+    candidateWorkSettled && !openHumanWork && !unresolvedBackgroundWork
+  const exhausted = rows.length === 0 || candidateWorkSettled
   const systemTransitions = (transitions ?? []).filter((row) => row.triggered_by !== "USER").length
   const userTransitions = (transitions ?? []).filter((row) => row.triggered_by === "USER").length
   const totalTransitions = (transitions ?? []).length
@@ -4380,6 +4586,50 @@ function jobEffectAlreadyApplied(jobType: string, machineState: string) {
   return SAME_DAY_MACHINE_ORDER.indexOf(machineState) >= SAME_DAY_MACHINE_ORDER.indexOf(minimum)
 }
 
+function isSupersededRetiredV6ApprovalDeadLetter(input: {
+  failed: unknown
+  candidate: unknown
+  jobs: unknown[]
+  transitions: unknown[]
+}) {
+  const failed = record(input.failed)
+  const candidate = record(input.candidate)
+  const candidateId = text(candidate.id)
+  const imageSummary = record(candidate.image_package_summary)
+  const handoffSummary = record(candidate.manual_handoff_package)
+  const assetIds = strings(imageSummary.assetIds)
+  const hasReplacementApprovalJob = input.jobs.some((jobValue) => {
+    const job = record(jobValue)
+    return text(job.id) !== text(failed.id) &&
+      text(job.candidate_id) === candidateId &&
+      text(job.job_type) === "APPROVE_SIX_IMAGE_SET" &&
+      ["PENDING", "WAITING_RETRY", "LEASED"].includes(text(job.status))
+  })
+  const hasRecoveryTransition = input.transitions.some((transitionValue) => {
+    const transitionRow = record(transitionValue)
+    return text(transitionRow.candidate_id) === candidateId &&
+      text(transitionRow.previous_state) === "REJECTED" &&
+      text(transitionRow.next_state) === "BUILDING_SELLER_HUB_HANDOFF" &&
+      text(transitionRow.reason_code) === V9_EXACT_SEVEN_SQL_GATE_RECOVERY_REASON
+  })
+  return text(failed.job_type) === "APPROVE_SIX_IMAGE_SET" &&
+    text(failed.last_error_code) === RETIRED_V6_IMAGE_APPROVAL_ERROR &&
+    text(candidate.machine_state) === "BUILDING_SELLER_HUB_HANDOFF" &&
+    text(candidate.state) === "READY_FOR_IMAGE_REVIEW" &&
+    strings(candidate.blockers).length === 0 &&
+    text(imageSummary.status) === "PENDING_HUMAN_REVIEW" &&
+    imageSummary.approved !== true &&
+    assetIds.length === 7 &&
+    number(imageSummary.count) === 7 &&
+    Boolean(text(imageSummary.controlId)) &&
+    Boolean(text(imageSummary.listingPackageId)) &&
+    text(handoffSummary.status) === "AWAITING_IMAGE_APPROVAL" &&
+    text(handoffSummary.version) === SAME_DAY_MANUAL_HANDOFF_VERSION &&
+    Boolean(text(handoffSummary.packageHash)) &&
+    hasReplacementApprovalJob &&
+    hasRecoveryTransition
+}
+
 async function verifiedBusinessPoliciesFromOwnActiveListing(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -4706,6 +4956,10 @@ async function routeCandidateToVisualMarketRecapture(input: {
     priorCaptureBatchId,
     now: input.now,
   })
+  const boundProductResearchQueryPlan = {
+    ...record(input.candidate.product_research_query_plan),
+    productResearchPlanId: queryPlan.planId,
+  }
   const facts = record(input.candidate.product_facts_summary)
   const handoff = record(input.candidate.manual_handoff_package)
   const evidenceSummary = {
@@ -4741,6 +4995,7 @@ async function routeCandidateToVisualMarketRecapture(input: {
   const { error: markerError } = await input.supabase
     .from("ebay_same_day_pilot_candidates")
     .update({
+      product_research_query_plan: boundProductResearchQueryPlan,
       evidence_summary: evidenceSummary,
       image_package_summary: imageSummary,
       next_automated_action:
@@ -4792,6 +5047,7 @@ async function routeCandidateToVisualMarketRecapture(input: {
       state: "NEEDS_PRODUCT_RESEARCH_CAPTURE",
       blockers: ["VISUAL_MARKET_EVIDENCE_REQUIRED"],
       product_research_capture_batch_id: null,
+      product_research_query_plan: boundProductResearchQueryPlan,
       evidence_summary: evidenceSummary,
       image_package_summary: imageSummary,
       updated_at: input.now.toISOString(),
@@ -4809,6 +5065,7 @@ async function routeCandidateToVisualMarketRecapture(input: {
     state: "NEEDS_PRODUCT_RESEARCH_CAPTURE",
     blockers: ["VISUAL_MARKET_EVIDENCE_REQUIRED"],
     product_research_capture_batch_id: null,
+    product_research_query_plan: boundProductResearchQueryPlan,
     evidence_summary: evidenceSummary,
     image_package_summary: imageSummary,
   })
@@ -5089,6 +5346,204 @@ function isDeferredLegacyVisualMarketRecovery(candidate: JsonRecord) {
     text(evidence.visualMarketEvidenceReason) ===
       "SAME_DAY_IMAGE_MARKET_BRIEF_REQUIRED" &&
     text(evidence.visualMarketRecaptureRecoveryOrigin) !== "ACTIVE_IMAGE_JOB"
+}
+
+const DEFERRED_VISUAL_CAPTURE_GATE_RECOVERY_VERSION =
+  "DEFERRED_VISUAL_CAPTURE_GATE_RECOVERY_V1_2026_07_24"
+
+/**
+ * A foreground image failure can temporarily defer older visual-market
+ * recaptures. Once that foreground recovery settles, restore exactly one
+ * deferred candidate to the serialized operator inbox. A capture accepted
+ * after the recapture request is consumed as durable evidence; an older
+ * superseded capture is reset to PENDING so the operator receives one real
+ * query instead of an inert PROCESSED plan.
+ */
+async function activateNextDeferredVisualMarketRecovery(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  accountKey: string,
+  now: Date,
+) {
+  if (visualMarketRecoveryPriorityCandidate(state) ||
+    state.tasks.some((task) => task.status === "OPEN" &&
+      task.gate_type !== "CRITICAL_EXCEPTION_REQUIRED")) return false
+  const candidate = [...state.candidates]
+    .filter((entry) =>
+      isDeferredLegacyVisualMarketRecovery(record(entry)) &&
+      text(entry.machine_state) === "WAITING_PRODUCT_RESEARCH_CAPTURE" &&
+      !text(entry.product_research_capture_batch_id))
+    .sort((left, right) => {
+      const leftRequestedAt = Date.parse(text(
+        record(left.evidence_summary).visualMarketRecaptureRequestedAt,
+      ))
+      const rightRequestedAt = Date.parse(text(
+        record(right.evidence_summary).visualMarketRecaptureRequestedAt,
+      ))
+      if (Number.isFinite(leftRequestedAt) &&
+        Number.isFinite(rightRequestedAt) &&
+        leftRequestedAt !== rightRequestedAt) {
+        return leftRequestedAt - rightRequestedAt
+      }
+      return Number(left.ordinal) - Number(right.ordinal)
+    })[0] ?? null
+  if (!candidate) return false
+
+  const candidateId = text(candidate.id)
+  const candidatePlan = record(candidate.product_research_query_plan)
+  const plannedQuery = text(candidatePlan.query, 100)
+  const recoveryTransition = [...state.transitions].reverse().find((entry) =>
+    text(entry.candidate_id) === candidateId &&
+    text(entry.next_state) === "WAITING_PRODUCT_RESEARCH_CAPTURE" &&
+    text(entry.reason_code) === "VISUAL_MARKET_RECAPTURE_REQUIRED")
+  const recoveryCheckpoint = record(recoveryTransition?.checkpoint)
+  const planId = text(candidatePlan.productResearchPlanId) ||
+    text(recoveryCheckpoint.productResearchPlanId)
+  const preferredTaskId = text(recoveryCheckpoint.productResearchQueryTaskId)
+  if (!candidateId || !plannedQuery ||
+    !/^[0-9a-f-]{36}$/i.test(planId)) {
+    throw new Error("SAME_DAY_PILOT_DEFERRED_VISUAL_PLAN_BINDING_MISSING")
+  }
+
+  const [{ data: plan, error: planError }, { data: tasks, error: taskError }] =
+    await Promise.all([
+      supabase.from("marketplace_product_research_query_plans")
+        .select("id,status")
+        .eq("id", planId)
+        .eq("marketplace_account_key", accountKey)
+        .eq("marketplace", MARKETPLACE)
+        .in("status", ["ACTIVE", "COMPLETED"])
+        .maybeSingle(),
+      supabase.from("marketplace_product_research_query_tasks")
+        .select("id,status,search_query,capture_batch_id,captured_at")
+        .eq("plan_id", planId)
+        .eq("marketplace_account_key", accountKey)
+        .eq("marketplace", MARKETPLACE)
+        .in("status", ["PENDING", "PROCESSED"])
+        .order("ordinal", { ascending: true }),
+    ])
+  if (planError || taskError || !plan) {
+    throw new Error("SAME_DAY_PILOT_DEFERRED_VISUAL_PLAN_READ_FAILED")
+  }
+  const task = (tasks ?? []).find((entry) =>
+    (preferredTaskId && text(entry.id) === preferredTaskId) ||
+    productResearchQueriesMatch(plannedQuery, entry.search_query))
+  if (!task) {
+    throw new Error("SAME_DAY_PILOT_DEFERRED_VISUAL_QUERY_TASK_MISSING")
+  }
+
+  const evidence = record(candidate.evidence_summary)
+  const requestedAt = Date.parse(text(evidence.visualMarketRecaptureRequestedAt))
+  const capturedAt = Date.parse(text(task.captured_at))
+  const captureBatchId = text(task.capture_batch_id)
+  const supersededCaptureBatchId = text(evidence.supersededVisualCaptureBatchId)
+  const freshProcessedCapture = task.status === "PROCESSED" &&
+    Boolean(captureBatchId) &&
+    captureBatchId !== supersededCaptureBatchId &&
+    Number.isFinite(requestedAt) &&
+    Number.isFinite(capturedAt) &&
+    capturedAt >= requestedAt
+  const resetForFreshCapture = task.status === "PROCESSED" &&
+    !freshProcessedCapture
+
+  if (resetForFreshCapture) {
+    const { data: resetTasks, error } = await supabase
+      .from("marketplace_product_research_query_tasks")
+      .update({
+        status: "PENDING",
+        capture_batch_id: null,
+        captured_at: null,
+        processed_at: null,
+        last_error_code: "VISUAL_MARKET_RECAPTURE_REQUIRED",
+        updated_at: now.toISOString(),
+      })
+      .eq("id", task.id)
+      .eq("plan_id", planId)
+      .eq("status", "PROCESSED")
+      .select("id")
+    if (error || (resetTasks ?? []).length !== 1) {
+      throw new Error("SAME_DAY_PILOT_DEFERRED_VISUAL_QUERY_RESET_FAILED")
+    }
+  }
+  if (plan.status === "COMPLETED" &&
+    (resetForFreshCapture || task.status === "PENDING")) {
+    const { data: resetPlans, error } = await supabase
+      .from("marketplace_product_research_query_plans")
+      .update({
+        status: "ACTIVE",
+        completed_at: null,
+        updated_at: now.toISOString(),
+      })
+      .eq("id", planId)
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("status", "COMPLETED")
+      .select("id")
+    if (error || (resetPlans ?? []).length !== 1) {
+      throw new Error("SAME_DAY_PILOT_DEFERRED_VISUAL_PLAN_RESET_FAILED")
+    }
+  }
+
+  const boundProductResearchQueryPlan = {
+    ...candidatePlan,
+    productResearchPlanId: planId,
+  }
+  const { error: candidateError } = await supabase
+    .from("ebay_same_day_pilot_candidates")
+    .update({
+      product_research_query_plan: boundProductResearchQueryPlan,
+      updated_at: now.toISOString(),
+    })
+    .eq("id", candidateId)
+    .eq("run_id", state.run.id)
+    .eq("machine_state", "WAITING_PRODUCT_RESEARCH_CAPTURE")
+  if (candidateError) {
+    throw new Error("SAME_DAY_PILOT_DEFERRED_VISUAL_BINDING_REPAIR_FAILED")
+  }
+  const boundCandidate = {
+    ...record(candidate),
+    product_research_query_plan: boundProductResearchQueryPlan,
+  }
+  await activateCandidateProductResearchPlan(
+    supabase,
+    text(state.run.id),
+    boundCandidate,
+  )
+  await bootstrapCandidate(supabase, text(state.run.id), boundCandidate)
+
+  const { error: eventError } = await supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({
+      run_id: state.run.id,
+      candidate_id: candidateId,
+      event_type: "DEFERRED_VISUAL_CAPTURE_GATE_RECOVERED",
+      event_payload: {
+        recoveryVersion: DEFERRED_VISUAL_CAPTURE_GATE_RECOVERY_VERSION,
+        productResearchPlanId: planId,
+        productResearchQueryTaskId: task.id,
+        freshProcessedCapture,
+        captureBatchId: freshProcessedCapture ? captureBatchId : null,
+        resetForFreshCapture,
+        serializedOneAtATime: true,
+        commercialEvidencePreserved: true,
+        productFactsPreserved: true,
+        productApprovalPreservedForRevalidation: true,
+        historyDeleted: false,
+      },
+      idempotency_key: [
+        state.run.id,
+        candidateId,
+        DEFERRED_VISUAL_CAPTURE_GATE_RECOVERY_VERSION,
+      ].join(":"),
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) {
+    throw new Error("SAME_DAY_PILOT_DEFERRED_VISUAL_GATE_EVENT_FAILED")
+  }
+  return true
 }
 
 async function restoreDeferredLegacyVisualMarketRecoveryQueryTasks(
@@ -5660,6 +6115,25 @@ async function recoverDeadLetterCandidates(supabase: SupabaseClient, state: NonN
     if (!candidate) continue
     const candidateId = text(candidate.id)
     const candidateBlockers = strings(candidate.blockers)
+    if (isSupersededRetiredV6ApprovalDeadLetter({
+      failed,
+      candidate,
+      jobs: state.jobs,
+      transitions: state.transitions,
+    })) {
+      const { error: cancelError } = await supabase
+        .from("ebay_same_day_pilot_jobs")
+        .update({
+          status: "CANCELLED",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", failed.id)
+        .eq("status", "DEAD_LETTER")
+      if (cancelError) {
+        throw new Error("SAME_DAY_PILOT_RETIRED_V6_DEAD_LETTER_CANCEL_FAILED")
+      }
+      continue
+    }
     if (text(failed.job_type) === "GENERATE_SIX_IMAGE_PACKAGE" &&
       text(candidate.machine_state) === "REJECTED" &&
       candidateBlockers.length === 1 &&
@@ -5830,14 +6304,28 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     productFactAuthorityLineageRecovered ||
     singleFactExceptionsRecovered || staleDecisionFactsRecovered ? 0 :
     await repairLegacyProductFactsRejections(input.supabase, state, now)
+  const staleControlledLunaConfirmationsRecovered =
+    orphanedImagePreparationsRecovered ||
+    prematureTaxonomyRejectionsRecovered ||
+    productFactAuthorityLineageRecovered ||
+    singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
+    legacyProductFactsRejectionsRepaired ? 0 :
+    await repairStaleControlledLunaConfirmationRejection(
+      input.supabase,
+      state,
+      now,
+    )
   const deadLettersRecovered = orphanedImagePreparationsRecovered ||
     prematureTaxonomyRejectionsRecovered ||
     productFactAuthorityLineageRecovered || singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
-    legacyProductFactsRejectionsRepaired ? 0 : await recoverDeadLetterCandidates(input.supabase, state)
+    legacyProductFactsRejectionsRepaired ||
+    staleControlledLunaConfirmationsRecovered ? 0 :
+    await recoverDeadLetterCandidates(input.supabase, state)
   if (legacyPrematureRejectionsRepaired || prematureTaxonomyRejectionsRecovered ||
     productFactAuthorityLineageRecovered ||
     singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
-    legacyProductFactsRejectionsRepaired || deadLettersRecovered) {
+    legacyProductFactsRejectionsRepaired ||
+    staleControlledLunaConfirmationsRecovered || deadLettersRecovered) {
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
     if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
   }
@@ -5867,6 +6355,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       legacyPrematureRejectionsRepaired, singleFactExceptionsRecovered,
       staleDecisionFactsRecovered,
       legacyProductFactsRejectionsRepaired,
+      staleControlledLunaConfirmationsRecovered,
       deadLettersRecovered }
   }
   const candidate = state.candidates.find((entry) => entry.id === leased.candidate_id)
@@ -6264,6 +6753,33 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       let productFactsState = text(candidate.machine_state)
       let summary = record(candidate.product_facts_summary)
       if (productFactsState === "ENRICHING_PRODUCT_FACTS") {
+        if (controlledExploratoryLunaConfirmationNeedsRefresh(
+          record(candidate),
+          now,
+        )) {
+          await routeStaleControlledLunaConfirmationToGate({
+            supabase: input.supabase,
+            state,
+            candidate: record(candidate),
+            previousState: "ENRICHING_PRODUCT_FACTS",
+            now,
+            recoveryJobId: text(leased.id),
+          })
+          await settlePilotJob({
+            supabase: input.supabase,
+            job: record(leased),
+            workerId: input.workerId,
+            status: "COMPLETED",
+          })
+          await refreshRunProjection(input.supabase, state.run.id, true)
+          return {
+            processed: 1,
+            status: "COMPLETED",
+            jobType: leased.job_type,
+            waitingFor: "FRESH_LUNA_CONFIRMATION",
+            ebayWrites: 0,
+          }
+        }
         const marketEvidence = record(candidate.evidence_summary)
         const selectionIdentity = record(marketEvidence.selectionIdentity)
         const lunaConfirmation = record(record(candidate.economics_summary).lunaConfirmation)

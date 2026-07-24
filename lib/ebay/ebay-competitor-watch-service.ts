@@ -19,6 +19,21 @@ const MAX_LISTINGS_PER_RUN = 10
 
 type JsonRecord = Record<string, unknown>
 
+function nextCompetitorDigestAt(observedAt: string) {
+  const now = new Date(observedAt)
+  const safeNow = Number.isFinite(now.getTime()) ? now : new Date()
+  const configuredHour = Number(
+    process.env.EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC ?? "0",
+  )
+  const hour = Number.isFinite(configuredHour)
+    ? Math.max(0, Math.min(23, Math.trunc(configuredHour)))
+    : 0
+  const due = new Date(safeNow)
+  due.setUTCHours(hour, 0, 0, 0)
+  if (due.getTime() <= safeNow.getTime()) due.setUTCDate(due.getUTCDate() + 1)
+  return due.toISOString()
+}
+
 export type CompetitorWatchListingInput = {
   listingId: string
   sku: string | null
@@ -606,7 +621,7 @@ async function persistCompetitorAlert(input: {
     marketplace: MARKETPLACE,
     commercial_event_id: eventId,
     channel: "whatsapp",
-    delivery_class: "immediate",
+    delivery_class: "digest",
     severity: (priceRecommendation && priceRecommendation.action !==
       "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND") ||
       (activeMarketPriceRecommendation &&
@@ -622,7 +637,7 @@ async function persistCompetitorAlert(input: {
       whatsappAction,
       improvementUrl,
     },
-    due_at: input.observedAt,
+    due_at: nextCompetitorDigestAt(input.observedAt),
   })
   if (outboxError && outboxError.code !== "23505") {
     throw new Error("COMPETITOR_WATCH_ALERT_ENQUEUE_FAILED")

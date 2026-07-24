@@ -1018,6 +1018,9 @@ async function enqueueAlert(supabase: SupabaseClient, input: {
     throw new Error("COMMERCIAL_ALERT_PRIVATE_BUYER_DATA_BLOCKED")
   }
   const channel = input.channel ?? "whatsapp"
+  const dueAt = input.deliveryClass === "digest"
+    ? nextCommercialDigestAt().toISOString()
+    : new Date().toISOString()
   const { error } = await supabase.from("alert_delivery_outbox").insert({
     marketplace_account_key: input.accountKey,
     marketplace: MARKETPLACE,
@@ -1028,32 +1031,98 @@ async function enqueueAlert(supabase: SupabaseClient, input: {
     deduplication_key: `${channel}:${input.deduplicationKey}`,
     status: "pending",
     payload: input.payload,
-    due_at: new Date().toISOString(),
+    due_at: dueAt,
   })
   if (error && error.code !== "23505") throw new Error("COMMERCIAL_ALERT_ENQUEUE_FAILED")
   return !error
+}
+
+function nextCommercialDigestAt(now = new Date()) {
+  const configuredHour = Number(
+    process.env.EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC ?? "0",
+  )
+  const hour = Number.isFinite(configuredHour)
+    ? Math.max(0, Math.min(23, Math.trunc(configuredHour)))
+    : 0
+  const due = new Date(now)
+  due.setUTCHours(hour, 0, 0, 0)
+  if (due.getTime() <= now.getTime()) due.setUTCDate(due.getUTCDate() + 1)
+  return due
 }
 
 function safeHttpsUrl(value: string | undefined) {
   if (!value) return null
   try {
     const url = new URL(value)
-    return url.protocol === "https:" ? url.toString().replace(/\/$/, "") : null
+    return url.protocol === "https:" &&
+      url.hostname !== "imnova-ebay-mobile-preprod.vercel.app"
+      ? url.toString().replace(/\/$/, "")
+      : null
   } catch {
     return null
   }
 }
 
+function sellerCommandCenterBaseUrl() {
+  const configured = safeHttpsUrl(process.env.EBAY_SELLER_COMMAND_CENTER_URL)
+  if (configured) return configured
+  const vercelHost = process.env.VERCEL_BRANCH_URL ?? process.env.VERCEL_URL
+  return safeHttpsUrl(vercelHost
+    ? `${vercelHost.startsWith("https://") ? "" : "https://"}${vercelHost}`
+    : undefined)
+}
+
 function sellerOrderUrl(orderId: string) {
-  const base = safeHttpsUrl(process.env.EBAY_SELLER_COMMAND_CENTER_URL)
+  const base = sellerCommandCenterBaseUrl()
   return base ? `${base}?section=fulfillment&order=${encodeURIComponent(orderId)}` : null
 }
 
 function sellerImprovementUrl(eventId: string) {
-  const base = safeHttpsUrl(process.env.EBAY_SELLER_COMMAND_CENTER_URL)
+  const base = sellerCommandCenterBaseUrl()
   return base
     ? `${base}?section=commercial-monitor&improvement=${encodeURIComponent(eventId)}#listing-optimization-tasks-heading`
     : null
+}
+
+function commercialEventSummary(event: CommercialEvent) {
+  const identity = `Listing ${event.listingId}${event.sku ? ` · SKU ${event.sku}` : ""}.`
+  const evidenceNumber = (key: string) => {
+    const value = Number(event.evidence[key])
+    return Number.isFinite(value) ? value : null
+  }
+  if (event.eventType === "LUNA_SUPPLY_RECHECK_REQUIRED") {
+    return `${identity} La evidencia de Luna necesita reconfirmación. Seller OS no usó stock ni costo vencidos como datos actuales.`
+  }
+  if (event.eventType === "LOW_STOCK") {
+    return `${identity} Luna reportó ${evidenceNumber("stockAvailable") ?? "pocas"} unidad(es) disponibles.`
+  }
+  if (event.eventType === "ACTIVE_LISTING_OUT_OF_STOCK") {
+    return `${identity} El listing sigue ACTIVE y Luna reportó inventario en cero.`
+  }
+  if (event.eventType === "LUNA_COST_CHANGED") {
+    const previous = evidenceNumber("previousSupplierCost")
+    const current = evidenceNumber("currentSupplierCost")
+    return `${identity} El costo exacto en Luna cambió${previous === null || current === null
+      ? "."
+      : ` de $${previous.toFixed(2)} a $${current.toFixed(2)}.`}`
+  }
+  if (event.eventType === "MARGIN_RISK") {
+    const margin = evidenceNumber("estimatedMarginPercent")
+    return `${identity} El margen estimado${margin === null ? "" : ` es ${margin.toFixed(1)}% y`} quedó bajo el umbral seguro.`
+  }
+  if (event.eventType === "ACCELERATED_SALES") {
+    return `${identity} Se confirmaron ${evidenceNumber("confirmedUnits24h") ?? "varias"} unidad(es) vendidas en 24 horas.`
+  }
+  if (event.eventType === "GOOD_TRAFFIC_LOW_CTR") {
+    return `${identity} Acumuló ${evidenceNumber("impressions") ?? "suficientes"} impresiones y un CTR de ${evidenceNumber("ctr") ?? 0}%, sin ventas confirmadas.`
+  }
+  if (event.eventType === "GOOD_CTR_LOW_CONVERSION") {
+    return `${identity} Acumuló ${evidenceNumber("views") ?? "suficientes"} vistas con interés, pero todavía no convirtió en ventas confirmadas.`
+  }
+  if (event.eventType.startsWith("WATCHER_")) {
+    return `${identity} Alcanzó ${evidenceNumber("currentWatchers") ?? "nuevos"} watcher(s). Es una señal de interés, no una venta.`
+  }
+  return `${identity} Seller OS detectó una señal comercial verificada y no aplicó cambios automáticos.`
 }
 
 function eventPayload(event: CommercialEvent) {
@@ -1063,6 +1132,7 @@ function eventPayload(event: CommercialEvent) {
     ACCELERATED_SALES: "Ventas aceleradas",
     LOW_STOCK: "Stock Luna bajo",
     ACTIVE_LISTING_OUT_OF_STOCK: "Listing activo sin stock Luna",
+    LUNA_COST_CHANGED: "Cambio de costo confirmado en Luna",
     MARGIN_RISK: "Margen estimado en riesgo",
     WATCHER_MILESTONE: "Hito de watchers",
     WATCHER_INCREASE: "Aumento de watchers",
@@ -1075,7 +1145,7 @@ function eventPayload(event: CommercialEvent) {
   }
   return {
     title: labels[event.eventType] ?? event.eventType,
-    summary: `Listing ${event.listingId} · SKU ${event.sku ?? "pendiente"}. Evidencia: ${JSON.stringify(event.evidence)}`,
+    summary: commercialEventSummary(event),
     action: event.recommendedAction,
     classification: event.eventType.startsWith("WATCHER_")
       ? "INTEREST_SIGNAL_NOT_SALE"
@@ -1117,17 +1187,24 @@ async function persistLunaSupplyRecheckAlert(input: {
     recommendedAction: "Abrir el producto exacto en Luna y reconfirmar costo y disponibilidad antes de comprar.",
   }
   const persisted = await insertEvent(input.supabase, input.accountKey, event)
+  const lunaProductUrl = isAllowedLunaProductUrl(input.supply?.product_url)
+    ? input.supply?.product_url ?? null
+    : null
+  const improvementUrl = sellerImprovementUrl(persisted.id)
   const alertCreated = await enqueueAlert(input.supabase, {
     accountKey: input.accountKey,
     eventId: persisted.id,
     severity: event.severity,
     deduplicationKey,
-    deliveryClass: "immediate",
+    deliveryClass: "digest",
     payload: {
       ...eventPayload(event),
-      lunaProductUrl: isAllowedLunaProductUrl(input.supply?.product_url)
-        ? input.supply?.product_url
-        : null,
+      action: [
+        lunaProductUrl ? `Verificar producto exacto en Luna: ${lunaProductUrl}.` : null,
+        improvementUrl ? `Continuar en Seller OS: ${improvementUrl}.` : null,
+      ].filter(Boolean).join(" ") || event.recommendedAction,
+      lunaProductUrl,
+      improvementUrl,
       staleStockForwardedAsCurrent: false,
       staleCostForwardedAsCurrent: false,
     },
@@ -1221,7 +1298,7 @@ async function persistSellerInboxMessageAlerts(input: {
       eventId: persisted.id,
       severity: event.severity,
       deduplicationKey: eventKey,
-      deliveryClass: "immediate",
+      deliveryClass: "digest",
       payload: sellerMessageAlertPayload(header),
     })) alertsGenerated += 1
   }
@@ -1709,14 +1786,47 @@ async function persistSnapshotsAndRules(input: {
     for (const event of legacyEvents) {
       const eventResult = await insertEvent(input.supabase, input.accountKey, event)
       if (eventResult.created) eventsGenerated += 1
-      const deliveryClass = event.eventType.startsWith("WATCHER_") ? "digest" : "immediate"
+      // Only a confirmed exact Luna stock-out warrants an immediate supplier
+      // alert. Cost, margin, low-stock and performance signals are grouped in
+      // the daily digest; confirmed sales have their own immediate event.
+      const deliveryClass = event.eventType === "ACTIVE_LISTING_OUT_OF_STOCK"
+        ? "immediate"
+        : "digest"
+      const lunaProductUrl = supplyFresh &&
+        isAllowedLunaProductUrl(supply?.product_url)
+        ? supply?.product_url ?? null
+        : null
+      const improvementUrl = [
+        "ACTIVE_LISTING_OUT_OF_STOCK",
+        "LUNA_COST_CHANGED",
+        "MARGIN_RISK",
+      ].includes(event.eventType)
+        ? sellerImprovementUrl(eventResult.id)
+        : null
+      const action = improvementUrl || lunaProductUrl
+        ? [
+            lunaProductUrl
+              ? `Abrir producto exacto en Luna: ${lunaProductUrl}.`
+              : null,
+            improvementUrl
+              ? `Revisar y autorizar la acción en Seller OS: ${improvementUrl}.`
+              : null,
+          ].filter(Boolean).join(" ")
+        : event.recommendedAction
       if (await enqueueAlert(input.supabase, {
         accountKey: input.accountKey,
         eventId: eventResult.id,
         severity: event.severity,
         deduplicationKey: event.deduplicationKey,
         deliveryClass,
-        payload: eventPayload(event),
+        payload: {
+          ...eventPayload(event),
+          action,
+          lunaProductUrl,
+          improvementUrl,
+          changeApplied: false,
+          confirmationRequired: Boolean(improvementUrl),
+        },
       })) alertsGenerated += 1
     }
 
@@ -1787,7 +1897,7 @@ async function persistSnapshotsAndRules(input: {
         eventId: eventResult.id,
         severity: event.severity,
         deduplicationKey: event.deduplicationKey,
-        deliveryClass: "immediate",
+        deliveryClass: "digest",
         channel: "whatsapp",
         payload: {
           ...eventPayload(event),
@@ -2845,7 +2955,7 @@ export function getCommercialMonitorScheduleConfiguration() {
     analyticsIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_ANALYTICS_INTERVAL_MINUTES, 360, 60, 1_440),
     watchersIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_WATCHERS_INTERVAL_MINUTES, 240, 15, 1_440),
     competitorsIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_COMPETITORS_INTERVAL_MINUTES, 1_440, 60, 10_080),
-    dailySummaryHourUtc: integer(process.env.EBAY_COMMERCIAL_DAILY_SUMMARY_HOUR_UTC, 14, 0, 23),
+    dailySummaryHourUtc: integer(process.env.EBAY_COMMERCIAL_DAILY_SUMMARY_HOUR_UTC, 0, 0, 23),
     dispatcherIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_DISPATCHER_INTERVAL_MINUTES, 5, 5, 60),
   }
 }
@@ -2856,9 +2966,9 @@ async function getCommercialPilotReport(
   schedule: ReturnType<typeof getCommercialMonitorScheduleConfiguration>,
   divergenceStatus: string | null,
 ) {
-  const startedAt = schedule.pilot.startedAt
-  const expiresAt = schedule.pilot.expiresAt
-  if (!startedAt || !expiresAt) return null
+  const reportThroughAt = new Date().toISOString()
+  const startedAt = schedule.pilot.startedAt ??
+    new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString()
   const [runResult, attemptResult, deadLetterResult] = await Promise.all([
     supabase.from("commercial_monitor_runs")
       .select("status,metrics")
@@ -2866,7 +2976,7 @@ async function getCommercialPilotReport(
       .eq("marketplace", MARKETPLACE)
       .eq("trigger_source", "schedule")
       .gte("started_at", startedAt)
-      .lt("started_at", expiresAt)
+      .lt("started_at", reportThroughAt)
       .order("started_at", { ascending: true })
       .limit(500),
     supabase.from("alert_delivery_attempts")
@@ -2874,7 +2984,7 @@ async function getCommercialPilotReport(
       .eq("alert_delivery_outbox.marketplace_account_key", accountKey)
       .eq("alert_delivery_outbox.marketplace", MARKETPLACE)
       .gte("attempted_at", startedAt)
-      .lt("attempted_at", expiresAt)
+      .lt("attempted_at", reportThroughAt)
       .limit(500),
     supabase.from("alert_delivery_outbox")
       .select("id", { count: "exact", head: true })
@@ -2882,7 +2992,7 @@ async function getCommercialPilotReport(
       .eq("marketplace", MARKETPLACE)
       .eq("status", "dead_letter")
       .gte("updated_at", startedAt)
-      .lt("updated_at", expiresAt),
+      .lt("updated_at", reportThroughAt),
   ])
   if (runResult.error || attemptResult.error || deadLetterResult.error) {
     throw new Error("COMMERCIAL_PILOT_REPORT_READ_FAILED")
@@ -2890,7 +3000,9 @@ async function getCommercialPilotReport(
   return {
     status: schedule.pilot.status,
     startedAt,
-    expiresAt,
+    expiresAt: null,
+    reportThroughAt,
+    monitoringMode: schedule.pilot.monitoringMode,
     ...summarizeCommercialPilotRuns({
       runs: runResult.data ?? [],
       deliveryAttempts: attemptResult.data ?? [],
@@ -3006,8 +3118,8 @@ export async function getEbayCommercialMonitorDashboard(
   const [
     latestRun, latestDryRun, latestPersistentRun, latestCompleted, taskRows,
     outboxRows, divergenceRows, manualEvidenceRows, identityRows,
-    schedulerAuthorizationRow, optimizationEventRows, competitorPriceEventRows,
-    competitorProfileRows, competitorScanRows,
+    schedulerAuthorizationRow, continuousAuthorizationRow, optimizationEventRows, competitorPriceEventRows,
+    supplyActionEventRows, competitorProfileRows, competitorScanRows,
   ] = await Promise.all([
     supabase.from("commercial_monitor_runs").select("*")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
@@ -3046,6 +3158,10 @@ export async function getEbayCommercialMonitorDashboard(
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
       .is("revoked_at", null)
       .order("authorized_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.rpc("ebay_continuous_monitoring_authorized", {
+      p_marketplace_account_key: accountKey,
+      p_marketplace: MARKETPLACE,
+    }),
     supabase.from("commercial_alert_events")
       .select("id,event_type,severity,evidence,detected_at,listing_id,sku,recommended_action")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
@@ -3057,6 +3173,15 @@ export async function getEbayCommercialMonitorDashboard(
       .in("event_type", [
         "COMPETITOR_CONFIRMED_SOLD_PRICE_RECOMMENDATION",
         "COMPETITOR_ACTIVE_MARKET_PRICE_RECOMMENDATION",
+      ])
+      .order("detected_at", { ascending: false }).limit(20),
+    supabase.from("commercial_alert_events")
+      .select("id,event_type,severity,evidence,detected_at,listing_id,sku,recommended_action")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .in("event_type", [
+        "ACTIVE_LISTING_OUT_OF_STOCK",
+        "LUNA_COST_CHANGED",
+        "MARGIN_RISK",
       ])
       .order("detected_at", { ascending: false }).limit(20),
     supabase.from("ebay_listing_competitor_watch_profiles")
@@ -3071,7 +3196,9 @@ export async function getEbayCommercialMonitorDashboard(
   const firstError = latestRun.error ?? latestDryRun.error ?? latestPersistentRun.error ??
     latestCompleted.error ?? taskRows.error ?? outboxRows.error ?? divergenceRows.error ??
     manualEvidenceRows.error ?? identityRows.error ?? schedulerAuthorizationRow.error ??
+    continuousAuthorizationRow.error ??
     optimizationEventRows.error ?? competitorPriceEventRows.error ??
+    supplyActionEventRows.error ??
     competitorProfileRows.error ?? competitorScanRows.error
   if (firstError) throw new Error("COMMERCIAL_MONITOR_DASHBOARD_READ_FAILED")
   const readerLast = new Map<string, string>()
@@ -3113,14 +3240,8 @@ export async function getEbayCommercialMonitorDashboard(
     : manualEvidenceRows.data?.[0] ?? null
   const identity = identityRows.data ?? null
   const schedulerAuthorization = schedulerAuthorizationRow.data ?? null
-  const schedulerAuthorizationExpiresAt = Date.parse(
-    schedulerAuthorization?.expires_at ?? "",
-  )
-  const schedulerAuthorizationActive = Boolean(
-    schedulerAuthorization &&
-    Number.isFinite(schedulerAuthorizationExpiresAt) &&
-    schedulerAuthorizationExpiresAt > Date.now()
-  )
+  const schedulerAuthorizationActive =
+    continuousAuthorizationRow.data === true
   const divergenceOpen = openDivergences.length > 0
   const pilot24h = await getCommercialPilotReport(
     supabase,
@@ -3138,12 +3259,14 @@ export async function getEbayCommercialMonitorDashboard(
     },
     schedulerAuthorization: schedulerAuthorization ? {
       status: schedulerAuthorizationActive ? "ACTIVE" : "EXPIRED",
+      mode: "CONTINUOUS_WHILE_ACTIVE",
       authorizedAt: schedulerAuthorization.authorized_at,
       expiresAt: schedulerAuthorization.expires_at,
       lastUsedAt: schedulerAuthorization.last_used_at,
       useCount: schedulerAuthorization.use_count,
     } : {
       status: "MISSING",
+      mode: "CONTINUOUS_WHILE_ACTIVE",
       authorizedAt: null,
       expiresAt: null,
       lastUsedAt: null,
@@ -3178,6 +3301,19 @@ export async function getEbayCommercialMonitorDashboard(
       humanReviewRequired: true,
       ebayWrites: 0,
     },
+    supplyActions: (supplyActionEventRows.data ?? []).map((row) => ({
+      id: row.id,
+      eventType: row.event_type,
+      severity: row.severity,
+      listingId: row.listing_id,
+      sku: row.sku,
+      detectedAt: row.detected_at,
+      recommendedAction: row.recommended_action,
+      evidence: row.evidence,
+      status: "AWAITING_HUMAN_APPROVAL",
+      changeApplied: false,
+      humanConfirmationRequired: true,
+    })),
     optimizationTasks: (optimizationEventRows.data ?? []).map((row) => ({
       id: row.id,
       eventType: row.event_type,

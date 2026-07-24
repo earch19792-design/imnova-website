@@ -91,7 +91,7 @@ function winnerDecision(
     eligible: blockers.length === 0,
     reason: blockers.length ? blockers.join(",") : "verified_winner_ready",
     priority: "high",
-    deliveryClass: "immediate",
+    deliveryClass: "digest",
     cooldownSeconds: 12 * 60 * 60,
     recommendedAction:
       "Revisar el paquete móvil y autorizar el draft antes de que cambie la oportunidad.",
@@ -127,7 +127,7 @@ export function classifySellerWhatsAppAlert(
         : "active_listing_out_of_stock_not_confirmed",
       priority: "critical",
       deliveryClass: "immediate",
-      cooldownSeconds: 60 * 60,
+      cooldownSeconds: 12 * 60 * 60,
       recommendedAction:
         "Pausar o corregir cantidad en eBay y confirmar la reposición inmediatamente.",
     }
@@ -143,7 +143,7 @@ export function classifySellerWhatsAppAlert(
         ? "active_listing_low_supplier_stock"
         : "active_listing_low_stock_not_confirmed",
       priority: "high",
-      deliveryClass: "immediate",
+      deliveryClass: "digest",
       cooldownSeconds: 6 * 60 * 60,
       recommendedAction:
         "Ajustar la cantidad disponible o asegurar reposición antes de nuevas ventas.",
@@ -167,7 +167,7 @@ export function classifySellerWhatsAppAlert(
           ? "margin_below_10"
           : "supplier_cost_or_margin_changed",
       priority: critical ? "critical" : "high",
-      deliveryClass: "immediate",
+      deliveryClass: "digest",
       cooldownSeconds: 6 * 60 * 60,
       recommendedAction:
         "Recalcular precio y margen; no modificar eBay sin revisión humana.",
@@ -182,8 +182,8 @@ export function classifySellerWhatsAppAlert(
         ? "listing_supplier_mapping_broken"
         : "active_listing_mapping_break_not_confirmed",
       priority: "high",
-      deliveryClass: "immediate",
-      cooldownSeconds: 12 * 60 * 60,
+      deliveryClass: "digest",
+      cooldownSeconds: 24 * 60 * 60,
       recommendedAction:
         "Corregir el vínculo SKU/variante y verificar stock antes de continuar vendiendo.",
     }
@@ -200,7 +200,7 @@ export function classifySellerWhatsAppAlert(
       eligible: confirmedRestock,
       reason: confirmedRestock ? "confirmed_supplier_restock" : "restock_not_material",
       priority: urgent ? "high" : "medium",
-      deliveryClass: urgent ? "immediate" : "digest",
+      deliveryClass: "digest",
       cooldownSeconds: 12 * 60 * 60,
       recommendedAction:
         "Revalidar costo, margen y demanda; reactivar o preparar el draft si sigue siendo rentable.",
@@ -216,7 +216,7 @@ export function classifySellerWhatsAppAlert(
       eligible: drop >= 3,
       reason: drop >= 3 ? "supplier_cost_drop_material" : "cost_drop_below_3",
       priority: urgent ? "high" : "medium",
-      deliveryClass: urgent ? "immediate" : "digest",
+      deliveryClass: "digest",
       cooldownSeconds: 24 * 60 * 60,
       recommendedAction:
         "Recalcular el precio ganador y proteger margen antes de autorizar el draft.",
@@ -228,7 +228,7 @@ export function classifySellerWhatsAppAlert(
       eligible: true,
       reason: facts.terminalFailure === true ? "draft_terminal_failure" : "draft_retry_required",
       priority: facts.terminalFailure === true ? "critical" : "high",
-      deliveryClass: "immediate",
+      deliveryClass: "digest",
       cooldownSeconds: 2 * 60 * 60,
       recommendedAction:
         "Abrir el workspace, revisar el error seguro y reintentar sólo después de corregirlo.",
@@ -252,7 +252,7 @@ export function classifySellerWhatsAppAlert(
     eligible: true,
     reason: urgent ? "approval_expires_within_6h" : "approval_expires_within_24h",
     priority: urgent ? "high" : "medium",
-    deliveryClass: urgent ? "immediate" : "digest",
+    deliveryClass: "digest",
     cooldownSeconds: 12 * 60 * 60,
     recommendedAction:
       "Revalidar stock, costo y evidencia; aprobar o rechazar antes del vencimiento.",

@@ -8,14 +8,19 @@ import {
   readManualListingFromTradingApi,
   tradingXmlTagValue,
 } from "./ebay-manual-listing-trading-readonly"
-import { calculateEbayUnitEconomics } from "./ebay-unit-economics"
+import {
+  calculateEbayMinimumOperatorPrice,
+  calculateEbayUnitEconomics,
+} from "./ebay-unit-economics"
 import { controlledRiskEconomicsConfig } from "./ebay-controlled-risk-manual-override"
 import {
   COMMERCIAL_IMPROVEMENT_CONFIRMATION,
+  endActiveListingOutOfStockRequestXml,
   reviseActiveListingPriceRequestXml,
 } from "./ebay-commercial-improvement-action-domain"
 
 export { COMMERCIAL_IMPROVEMENT_CONFIRMATION,
+  endActiveListingOutOfStockRequestXml,
   reviseActiveListingPriceRequestXml } from "./ebay-commercial-improvement-action-domain"
 
 const MARKETPLACE = "EBAY_US"
@@ -24,7 +29,7 @@ const MARKETING_ENDPOINT = "https://api.ebay.com/sell/marketing/v1"
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const BASE_SCOPE = "https://api.ebay.com/oauth/api_scope"
 const MARKETING_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.marketing"
-const RULE_VERSION = "SELLER_OS_COMMERCIAL_IMPROVEMENT_ACTION_V1"
+const RULE_VERSION = "SELLER_OS_COMMERCIAL_IMPROVEMENT_ACTION_V2"
 
 type JsonRecord = Record<string, unknown>
 type FetchLike = typeof fetch
@@ -60,6 +65,17 @@ function money(value: number) {
   return Math.round(value * 100) / 100
 }
 
+function isExactLunaUrl(value: unknown) {
+  try {
+    const url = new URL(text(value, 2_000))
+    return url.protocol === "https:" &&
+      ["lunaportex.com", "www.lunaportex.com"].includes(url.hostname) &&
+      url.pathname.startsWith("/products/")
+  } catch {
+    return false
+  }
+}
+
 
 async function loadEventAndListing(input: {
   supabase: SupabaseClient
@@ -78,7 +94,7 @@ async function loadEventAndListing(input: {
   }
   const { data: listings, error: listingError } = await input.supabase
     .from("ebay_active_listings")
-    .select("id,ebay_item_id,ebay_sku,supplier_sku,supplier_variant_id,title,ebay_price,currency,raw_payload,listing_status,updated_at")
+    .select("id,ebay_item_id,ebay_sku,market_radar_product_id,supplier_sku,supplier_variant_id,title,ebay_price,currency,raw_payload,listing_status,updated_at")
     .eq("account_key", input.accountKey)
     .eq("ebay_item_id", event.listing_id)
     .eq("listing_status", "active")
@@ -219,6 +235,111 @@ function proposalFromEvent(event: JsonRecord) {
   throw new Error("COMMERCIAL_IMPROVEMENT_NOT_ACTIONABLE")
 }
 
+async function freshExactLunaVariant(input: {
+  supabase: SupabaseClient
+  listing: JsonRecord
+  observedAt?: Date
+}) {
+  const variantId = text(input.listing.supplier_variant_id, 80)
+  const supplierSku = text(input.listing.supplier_sku, 100)
+  const productId = text(input.listing.market_radar_product_id, 80)
+  if (!variantId || !supplierSku || !productId) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_LUNA_LINK_REQUIRED")
+  }
+  const query = input.supabase.from("market_radar_latest_variants")
+    .select("product_id,supplier_variant_id,sku,price,available,inventory_quantity,captured_at,product_url")
+    .eq("source_key", "lunaportex")
+    .eq("product_id", productId)
+    .eq("supplier_variant_id", variantId)
+    .eq("sku", supplierSku)
+    .order("captured_at", { ascending: false })
+    .limit(2)
+  const { data, error } = await query
+  if (error || !data || data.length !== 1 || !isExactLunaUrl(data[0].product_url)) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_LUNA_EXACT_IDENTITY_REQUIRED")
+  }
+  const capturedAt = Date.parse(data[0].captured_at ?? "")
+  const now = (input.observedAt ?? new Date()).getTime()
+  if (!Number.isFinite(capturedAt) || capturedAt > now ||
+    now - capturedAt > 24 * 60 * 60_000) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_LUNA_FRESHNESS_REQUIRED")
+  }
+  return data[0]
+}
+
+async function lunaChangeProposal(input: {
+  supabase: SupabaseClient
+  event: JsonRecord
+  listing: JsonRecord
+}) {
+  const eventType = text(input.event.event_type)
+  if (!["ACTIVE_LISTING_OUT_OF_STOCK", "LUNA_COST_CHANGED", "MARGIN_RISK"]
+    .includes(eventType)) return null
+  const luna = await freshExactLunaVariant(input)
+  if (eventType === "ACTIVE_LISTING_OUT_OF_STOCK") {
+    if (luna.available !== false && numeric(luna.inventory_quantity) !== 0) {
+      throw new Error("COMMERCIAL_IMPROVEMENT_LUNA_OUT_OF_STOCK_REQUIRED")
+    }
+    return {
+      actionType: "END_LISTING" as const,
+      targetValue: {
+        endingReason: "NotAvailable",
+        supplierAvailable: false,
+        supplierInventoryQuantity: numeric(luna.inventory_quantity),
+        lunaObservedAt: luna.captured_at,
+        lunaProductUrl: luna.product_url,
+        evidenceClass: "FRESH_EXACT_LUNA_OUT_OF_STOCK",
+      },
+    }
+  }
+  if (luna.available !== true) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_LUNA_AVAILABLE_REQUIRED")
+  }
+  const unitCost = numeric(luna.price)
+  const currentPrice = numeric(input.listing.ebay_price)
+  if (unitCost === null || unitCost < 0 || currentPrice === null ||
+    currentPrice <= 0) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_LUNA_COST_REQUIRED")
+  }
+  const packCount = extractPackQuantity(text(input.listing.title, 500))
+  const currentEconomics = calculateEbayUnitEconomics({
+    salePrice: currentPrice,
+    supplierCost: unitCost * packCount,
+  })
+  if (currentEconomics.ready && currentEconomics.passesProfitGate) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_PRICE_CHANGE_NOT_REQUIRED")
+  }
+  const floor = calculateEbayMinimumOperatorPrice({
+    supplierCost: unitCost * packCount,
+  })
+  if (!floor.ready || floor.minimumOperatorPrice === null ||
+    floor.minimumOperatorPrice <= currentPrice) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_PRICE_CHANGE_NOT_REQUIRED")
+  }
+  const economics = calculateEbayUnitEconomics({
+    salePrice: floor.minimumOperatorPrice,
+    supplierCost: unitCost * packCount,
+  })
+  if (!economics.ready || !economics.passesProfitGate) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_ECONOMICS_GATE_FAILED")
+  }
+  return {
+    actionType: "PRICE" as const,
+    targetValue: {
+      currentPrice: money(currentPrice),
+      proposedPrice: money(floor.minimumOperatorPrice),
+      proposedLandedPrice: money(floor.minimumOperatorPrice),
+      expectedMarginPercent: economics.estimatedNetMarginPercent,
+      expectedNetProfit: economics.estimatedNetProfit,
+      confidence: "HIGH",
+      evidenceClass: "FRESH_EXACT_LUNA_COST_RECALCULATION",
+      lunaObservedAt: luna.captured_at,
+      lunaProductUrl: luna.product_url,
+      packCount,
+    },
+  }
+}
+
 function publicExecution(row: JsonRecord) {
   return {
     executionId: text(row.id, 40),
@@ -249,7 +370,11 @@ export async function prepareEbayCommercialImprovement(input: {
     throw new Error("COMMERCIAL_IMPROVEMENT_PREPARE_INVALID")
   }
   const { event, listing } = await loadEventAndListing({ ...input, eventId })
-  const proposal = proposalFromEvent(event)
+  const proposal = await lunaChangeProposal({
+    supabase: input.supabase,
+    event: record(event),
+    listing: record(listing),
+  }) ?? proposalFromEvent(event)
   if (proposal.actionType === "PROMOTED_LISTINGS_GENERAL" && await promotionBlocked({
     supabase: input.supabase,
     accountKey: input.accountKey,
@@ -304,22 +429,9 @@ async function freshEconomics(input: {
   controlledRiskTenPercent?: boolean
   observedAt?: Date
 }) {
-  const variantId = text(input.listing.supplier_variant_id, 80)
-  if (!variantId) throw new Error("COMMERCIAL_IMPROVEMENT_LUNA_LINK_REQUIRED")
-  const { data, error } = await input.supabase.from("market_radar_latest_variants")
-    .select("price,available,captured_at")
-    .eq("supplier_variant_id", variantId)
-    .eq("source_key", "lunaportex")
-    .order("captured_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  if (error || !data || data.available !== true) {
+  const data = await freshExactLunaVariant(input)
+  if (data.available !== true) {
     throw new Error("COMMERCIAL_IMPROVEMENT_LUNA_AVAILABLE_REQUIRED")
-  }
-  const capturedAt = Date.parse(data.captured_at ?? "")
-  const now = (input.observedAt ?? new Date()).getTime()
-  if (!Number.isFinite(capturedAt) || capturedAt > now || now - capturedAt > 24 * 60 * 60_000) {
-    throw new Error("COMMERCIAL_IMPROVEMENT_LUNA_FRESHNESS_REQUIRED")
   }
   const unitCost = numeric(data.price)
   if (unitCost === null || unitCost < 0) {
@@ -436,6 +548,34 @@ async function revisePrice(input: {
     throw new Error(/^\d{1,20}$/.test(code)
       ? `COMMERCIAL_IMPROVEMENT_EBAY_PRICE_REJECTED_${code}`
       : "COMMERCIAL_IMPROVEMENT_EBAY_PRICE_REJECTED")
+  }
+}
+
+async function endListingOutOfStock(input: {
+  accessToken: string
+  listingId: string
+  fetchImpl: FetchLike
+}) {
+  const response = await input.fetchImpl(TRADING_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/xml",
+      "X-EBAY-API-CALL-NAME": "EndFixedPriceItem",
+      "X-EBAY-API-COMPATIBILITY-LEVEL": "1423",
+      "X-EBAY-API-SITEID": "0",
+      "X-EBAY-API-IAF-TOKEN": input.accessToken,
+    },
+    body: endActiveListingOutOfStockRequestXml(input),
+    cache: "no-store",
+    signal: AbortSignal.timeout(25_000),
+  })
+  const xml = await response.text()
+  const ack = text(tradingXmlTagValue(xml, "Ack"), 20).toLowerCase()
+  if (!response.ok || !["success", "warning"].includes(ack)) {
+    const code = text(tradingXmlTagValue(xml, "ErrorCode"), 20)
+    throw new Error(/^\d{1,20}$/.test(code)
+      ? `COMMERCIAL_IMPROVEMENT_EBAY_END_REJECTED_${code}`
+      : "COMMERCIAL_IMPROVEMENT_EBAY_END_REJECTED")
   }
 }
 
@@ -596,18 +736,29 @@ export async function applyEbayCommercialImprovement(input: {
     (event.sku && ![officialBefore.ebaySku, listing.supplier_sku].includes(event.sku))) {
     throw new Error("COMMERCIAL_IMPROVEMENT_OFFICIAL_IDENTITY_MISMATCH")
   }
+  const endingListing = preview.actionType === "END_LISTING"
   const salePrice = preview.actionType === "PRICE"
     ? numeric(target.proposedLandedPrice)
     : numeric(officialBefore.price)
-  if (salePrice === null || salePrice <= 0) {
+  const lunaState = endingListing
+    ? await freshExactLunaVariant({
+        supabase: input.supabase,
+        listing: record(listing),
+      })
+    : null
+  if (endingListing && lunaState?.available !== false &&
+    numeric(lunaState?.inventory_quantity) !== 0) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_LUNA_OUT_OF_STOCK_REQUIRED")
+  }
+  if (!endingListing && (salePrice === null || salePrice <= 0)) {
     throw new Error("COMMERCIAL_IMPROVEMENT_PRICE_REQUIRED")
   }
-  const economics = await freshEconomics({
-    supabase: input.supabase,
-    listing: record(listing),
-    salePrice,
-    controlledRiskTenPercent: target.controlledRiskTenPercent === true,
-  })
+  const economics = endingListing ? null : await freshEconomics({
+      supabase: input.supabase,
+      listing: record(listing),
+      salePrice: salePrice as number,
+      controlledRiskTenPercent: target.controlledRiskTenPercent === true,
+    })
   if (preview.actionType === "PROMOTED_LISTINGS_GENERAL" && await promotionBlocked({
     supabase: input.supabase,
     accountKey: input.accountKey,
@@ -635,8 +786,11 @@ export async function applyEbayCommercialImprovement(input: {
         observedPrice: officialBefore.price,
         currency: officialBefore.currency,
         sku: officialBefore.ebaySku,
-        lunaObservedAt: economics.lunaObservedAt,
-        economics: economics.economics,
+        lunaObservedAt: economics?.lunaObservedAt ?? lunaState?.captured_at,
+        lunaProductUrl: target.lunaProductUrl ?? lunaState?.product_url,
+        supplierAvailable: lunaState?.available ?? true,
+        supplierInventoryQuantity: lunaState?.inventory_quantity ?? null,
+        economics: economics?.economics ?? null,
       },
       last_error_code: null,
       updated_at: new Date().toISOString(),
@@ -655,6 +809,57 @@ export async function applyEbayCommercialImprovement(input: {
   }
   let row = record(claimed)
   try {
+    if (preview.actionType === "END_LISTING") {
+      const accessToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
+      await endListingOutOfStock({
+        accessToken,
+        listingId: String(event.listing_id),
+        fetchImpl,
+      })
+      row = { ...row, ebay_write_attempt_count: 1, ebay_write_dispatched: true }
+      const { data: acknowledged, error } = await input.supabase
+        .from("ebay_commercial_improvement_executions")
+        .update({ phase: "write_acknowledged", ebay_write_attempt_count: 1,
+          ebay_write_dispatched: true, updated_at: new Date().toISOString() })
+        .eq("id", row.id).eq("phase", "write_in_flight").select("*").single()
+      if (error || !acknowledged) {
+        throw new Error("COMMERCIAL_IMPROVEMENT_ACK_RECORD_FAILED")
+      }
+      row = record(acknowledged)
+      const after = await readManualListingFromTradingApi(
+        String(event.listing_id),
+        fetchImpl,
+      )
+      if (after.ownership !== "inactive" ||
+        after.listingStatus?.toLowerCase() === "active") {
+        throw new Error("COMMERCIAL_IMPROVEMENT_END_READBACK_MISMATCH")
+      }
+      const endedAt = new Date().toISOString()
+      const { error: registryError } = await input.supabase
+        .from("ebay_active_listings")
+        .update({ listing_status: "ended", updated_at: endedAt })
+        .eq("id", listing.id)
+        .eq("account_key", input.accountKey)
+        .eq("listing_status", "active")
+      if (registryError) {
+        throw new Error("COMMERCIAL_IMPROVEMENT_ACTIVE_REGISTRY_UPDATE_FAILED")
+      }
+      const { data: completed, error: completeError } = await input.supabase
+        .from("ebay_commercial_improvement_executions")
+        .update({ phase: "applied_verified", postflight_snapshot: {
+          source: "EBAY_TRADING_GET_ITEM_READBACK",
+          listingStatus: after.listingStatus,
+          ownership: after.ownership,
+          observedAt: after.observedAt,
+          localRegistryStatus: "ended",
+        }, applied_verified_at: endedAt, updated_at: endedAt })
+        .eq("id", row.id).select("*").single()
+      if (completeError || !completed) {
+        throw new Error("COMMERCIAL_IMPROVEMENT_COMPLETE_FAILED")
+      }
+      return publicExecution(record(completed))
+    }
+
     if (preview.actionType === "PRICE") {
       const proposedPrice = numeric(target.proposedPrice)
       const currentPrice = numeric(target.currentPrice)

@@ -250,6 +250,8 @@ export function buildVisualMarketBriefs(rows: VisualComparableRow[], context: {
     const recommendedFrameCoverage = mode(topQuartile.map((row) => row.visualPattern.frameCoverage), "UNKNOWN" as Bucket)
     const recommendedComplexity = mode(topQuartile.map((row) => row.visualPattern.visualComplexity), "UNKNOWN" as Bucket)
     const packVisibilityPattern = mode(topQuartile.map((row) => row.visualPattern.packClarity), "UNKNOWN" as "CLEAR" | "PARTIAL" | "UNCLEAR" | "UNKNOWN")
+    const dominantPresentationType = mode(topQuartile.map((row) =>
+      row.visualPattern.presentationType), "UNKNOWN" as Presentation)
     const textOverlayPattern = mode(topQuartile.map((row) => row.visualPattern.textOverlayLikelihood), "UNKNOWN" as Presence)
     const compositionPattern = mode(topQuartile.map((row) => row.visualPattern.dominantComposition), "UNKNOWN" as Composition)
     const recommendedCopySpace = mode(topQuartile.map((row) =>
@@ -274,6 +276,7 @@ export function buildVisualMarketBriefs(rows: VisualComparableRow[], context: {
       recommendedFrameCoverage,
       recommendedComplexity,
       packVisibilityPattern,
+      dominantPresentationType,
       textOverlayPattern,
       compositionPattern,
       recommendedCopySpace,
@@ -282,6 +285,12 @@ export function buildVisualMarketBriefs(rows: VisualComparableRow[], context: {
       palettePattern,
       subjectGeometryPattern,
       primaryCohort: exact.length >= 3 ? "EXACT_PRODUCT" : "FAMILY_FALLBACK",
+      marketEvidenceTier: exact.length >= 3
+        ? "A_EXACT_PRODUCT"
+        : "B_PRODUCT_FAMILY",
+      exactProductEvidenceCount: exact.length,
+      productFamilyEvidenceCount: Math.max(0, group.length - exact.length),
+      categoryEvidenceCount: 0,
       recencyWeightingApplied: true,
       supportingSignals: {
         sampleSize: group.length,

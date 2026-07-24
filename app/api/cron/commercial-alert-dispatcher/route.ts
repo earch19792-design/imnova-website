@@ -30,9 +30,83 @@ function record(value: unknown) {
     : null
 }
 
+function nextDigestAt(now = new Date()) {
+  const configured = Number(
+    process.env.EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC ?? "0",
+  )
+  const hour = Number.isFinite(configured)
+    ? Math.max(0, Math.min(23, Math.trunc(configured)))
+    : 0
+  const due = new Date(now)
+  due.setUTCHours(hour, 0, 0, 0)
+  if (due.getTime() <= now.getTime()) due.setUTCDate(due.getUTCDate() + 1)
+  return due.toISOString()
+}
+
+const IMMEDIATE_WHATSAPP_EVENT_TYPES = new Set([
+  "SALE_DETECTED",
+  "ACTIVE_LISTING_OUT_OF_STOCK",
+])
+
+async function deferNonUrgentWhatsappAlerts(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  accountKey: string,
+) {
+  const { data: queued, error: queuedError } = await supabase
+    .from("alert_delivery_outbox")
+    .select("id,commercial_event_id")
+    .eq("marketplace_account_key", accountKey)
+    .eq("marketplace", "EBAY_US")
+    .eq("channel", "whatsapp")
+    .eq("delivery_class", "immediate")
+    .in("status", ["pending", "failed", "dead_letter"])
+    .limit(100)
+  if (queuedError) throw new Error("COMMERCIAL_WHATSAPP_POLICY_QUEUE_READ_FAILED")
+  const eventIds = [...new Set((queued ?? [])
+    .map((row) => row.commercial_event_id)
+    .filter((id): id is string => typeof id === "string"))]
+  if (!eventIds.length) return 0
+
+  const { data: events, error: eventsError } = await supabase
+    .from("commercial_alert_events")
+    .select("id,event_type")
+    .in("id", eventIds)
+  if (eventsError) throw new Error("COMMERCIAL_WHATSAPP_POLICY_EVENT_READ_FAILED")
+  const immediateEventIds = new Set((events ?? [])
+    .filter((event) => IMMEDIATE_WHATSAPP_EVENT_TYPES.has(event.event_type))
+    .map((event) => event.id))
+  const digestOutboxIds = (queued ?? [])
+    .filter((row) => !immediateEventIds.has(row.commercial_event_id))
+    .map((row) => row.id)
+    .filter((id): id is string => typeof id === "string")
+  if (!digestOutboxIds.length) return 0
+
+  const { error: deferError } = await supabase
+    .from("alert_delivery_outbox")
+    .update({
+      delivery_class: "digest",
+      due_at: nextDigestAt(),
+    })
+    .eq("delivery_class", "immediate")
+    .in("status", ["pending", "failed", "dead_letter"])
+    .in("id", digestOutboxIds)
+  if (deferError) throw new Error("COMMERCIAL_WHATSAPP_POLICY_DEFER_FAILED")
+  return digestOutboxIds.length
+}
+
 export async function GET(req: Request) {
   if (!commercialPreviewCronAuthorized(req)) return NextResponse.json(
-    { success: false, error: "CRON_UNAUTHORIZED" },
+    {
+      success: false,
+      error: "CRON_UNAUTHORIZED",
+      authorizationHeaders: {
+        standardPresent: Boolean(req.headers.get("authorization")),
+        dedicatedPresent: Boolean(
+          req.headers.get("x-ebay-commercial-authorization"),
+        ),
+      },
+      secretsReturned: false,
+    },
     { status: 401 },
   )
   const schedule = getCommercialMonitorScheduleConfiguration()
@@ -124,16 +198,39 @@ export async function GET(req: Request) {
         },
       }, { status: 423 })
     }
+    // Only a confirmed sale or a confirmed exact Luna stock-out is immediate.
+    // Reclassify legacy pending rows once; rows already marked digest keep their
+    // original due_at so the five-minute cron cannot postpone them forever.
+    const deferredNonUrgent = await deferNonUrgentWhatsappAlerts(
+      supabase,
+      accountKey,
+    )
     const result = await dispatchCommercialAlertOutbox(
       supabase,
       {
         marketplaceAccountKey: accountKey,
         workerId: `commercial-dispatch-schedule:${randomUUID()}`,
-        limit: 1,
+        // Immediate events remain individual. Due digest events are claimed
+        // together and rendered as one WhatsApp summary by the dispatcher.
+        limit: 10,
         dryRun: false,
       },
     )
-    return NextResponse.json({ success: true, heartbeat, result })
+    return NextResponse.json({
+      success: true,
+      heartbeat,
+      result,
+      whatsappPolicy: {
+        immediateEventTypes: [...IMMEDIATE_WHATSAPP_EVENT_TYPES],
+        deferredNonUrgent,
+        digestHourUtc: boundedInteger(
+          process.env.EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC,
+          0,
+          0,
+          23,
+        ),
+      },
+    })
   } catch {
     return NextResponse.json(
       { success: false, error: "COMMERCIAL_ALERT_DISPATCH_CRON_FAILED" },

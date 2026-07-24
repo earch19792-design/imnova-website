@@ -21,6 +21,7 @@ import {
   EBAY_IMAGE_TEXT_RENDERER_VERSION,
   EBAY_LISTING_IMAGE_SET_VERSION,
   EBAY_LISTING_IMAGE_SLOTS,
+  EBAY_SQUARE_PRESENTATION_QA_VERSION,
   buildSellerOsEbayVisualStrategyV2,
   getListingImageFactoryConfiguration,
   requestSafeOpenAiBackgroundPlate,
@@ -35,6 +36,7 @@ import {
   loadEbayImageMarketBrief,
 } from "./ebay-image-market-brief"
 import {
+  assertLunaCatalogCommercialSourceDiversity,
   disposeAuthorizedCatalogSourcePack,
   bindLunaCatalogSourcesToStrategy,
   LUNA_CATALOG_SOURCE_RESOLVER_VERSION,
@@ -449,6 +451,12 @@ export async function generateAndPersistSameDayImagePackage(input: {
       new Set(strategy.map((position) => position.salesObjective)).size !== 6) {
       throw new Error("NEEDS_VERIFIED_PRODUCT_FACTS:VISUAL_STRATEGY")
     }
+    assertLunaCatalogCommercialSourceDiversity(
+      catalogPack,
+      generationSources,
+      catalogCapabilities.map((source) => source.id),
+      strategy,
+    )
     bindLunaCatalogSourcesToStrategy(
       catalogPack,
       generationSources,
@@ -484,6 +492,7 @@ export async function generateAndPersistSameDayImagePackage(input: {
     input.accountKey, actorId, runId, candidateId, listingPackageId,
     facts.factRunId, packageHash, requestHash,
     EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
+    EBAY_SQUARE_PRESENTATION_QA_VERSION,
   ].join(":"))
   const leaseToken = randomUUID()
   const claimInput = {

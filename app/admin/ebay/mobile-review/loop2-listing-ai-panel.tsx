@@ -26,6 +26,7 @@ type Decision = {
       alternativePack: PackStrategyRow | null
       packMatrix: PackStrategyRow[]
       pairedOfferPlan?: PairedOfferPlan
+      lowCostSmallItemOpportunity: LowCostSmallItemOpportunity
     }
   } | null
   assessment: {
@@ -108,6 +109,33 @@ type PairedOfferPlan = {
     publicationSequence: string
   }
   blockers: string[]
+}
+
+type LowCostSmallItemOpportunity = {
+  status:
+    | "NOT_APPLICABLE"
+    | "NEEDS_SIZE_OR_SHIPPING_EVIDENCE"
+    | "EVALUATE_PACK_OPTIONS"
+    | "PACK_RECOMMENDED"
+  trigger: {
+    unitSupplierCostUsd: number | null
+    unitCostBelowThreshold: boolean
+    thresholdUsdExclusive: 6
+    smallItemConfirmed: boolean
+    packageVolumeCubicInches: number | null
+  }
+  shippingComparison: {
+    currentShippingCostUsd: number | null
+    currentShippingCostPerBaseItemUsd: number | null
+    recommendedPackCount: number | null
+    recommendedShippingCostUsd: number | null
+    recommendedShippingCostPerBaseItemUsd: number | null
+    shippingIncreasePercent: number | null
+    shippingCostPerBaseItemReductionPercent: number | null
+  }
+  proposedPackCounts: number[]
+  autoPublish: false
+  explanation: string
 }
 
 type GenerationRun = {
@@ -321,6 +349,9 @@ export function Loop2ListingAiPanel() {
   const currentVersion = details?.versions.find((entry) => entry.id === details.run.current_version_id) ?? null
   const pairedOfferPlan =
     decision?.evidenceDistillation?.packStrategy.pairedOfferPlan ?? null
+  const lowCostSmallItemOpportunity =
+    decision?.evidenceDistillation?.packStrategy
+      .lowCostSmallItemOpportunity ?? null
 
   const generate = async () => {
     if (!decision || blockedReason) return
@@ -428,6 +459,38 @@ export function Loop2ListingAiPanel() {
                 <h3 id="pack-strategy-heading" className="font-black">Estrategia de presentación y paquetes</h3>
                 <p className="text-xs text-white/60">Packs distintos informan estrategia, pero nunca se mezclan con el offer exacto.</p>
               </div>
+              {lowCostSmallItemOpportunity
+                && lowCostSmallItemOpportunity.status !== "NOT_APPLICABLE"
+                && (
+                  <article className="space-y-2 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <h4 className="font-black">Oportunidad: producto pequeño de costo bajo</h4>
+                        <p className="mt-1 text-xs text-white/65">
+                          Costo base {money(lowCostSmallItemOpportunity.trigger.unitSupplierCostUsd)} · umbral exclusivo USD 6 · tamaño pequeño {lowCostSmallItemOpportunity.trigger.smallItemConfirmed ? "confirmado" : "pendiente"}.
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-emerald-100/30 px-2 py-1 text-xs font-black">
+                        {lowCostSmallItemOpportunity.status === "PACK_RECOMMENDED"
+                          ? "PACK RECOMENDADO"
+                          : lowCostSmallItemOpportunity.status === "EVALUATE_PACK_OPTIONS"
+                            ? "COMPARAR PACKS"
+                            : "FALTA LOGÍSTICA"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-white/75">
+                      Comparar: {lowCostSmallItemOpportunity.proposedPackCounts.map((pack) => `${pack}-pack`).join(" · ")}. El objetivo es diluir un envío casi igual entre más unidades sin sacrificar demanda, stock ni margen.
+                    </p>
+                    {lowCostSmallItemOpportunity.shippingComparison.recommendedPackCount && (
+                      <p className="rounded-xl border border-emerald-200/20 bg-black/20 p-2 text-xs text-emerald-50">
+                        Mejor opción verificada: {lowCostSmallItemOpportunity.shippingComparison.recommendedPackCount}-pack · envío {money(lowCostSmallItemOpportunity.shippingComparison.recommendedShippingCostUsd)} · envío por unidad {money(lowCostSmallItemOpportunity.shippingComparison.recommendedShippingCostPerBaseItemUsd)} · reducción por unidad {lowCostSmallItemOpportunity.shippingComparison.shippingCostPerBaseItemReductionPercent?.toFixed(1) ?? "N/D"}%.
+                      </p>
+                    )}
+                    <p className="text-xs text-white/65">
+                      Requiere demanda exacta del pack, stock Luna, costo/margen, peso/dimensiones, contenido/GTIN y aprobación final. Publicación automática: no.
+                    </p>
+                  </article>
+                )}
               {pairedOfferPlan && (
                 <article className="space-y-3 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">

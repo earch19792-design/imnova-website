@@ -59,6 +59,16 @@ A dominant pack does not automatically become the recommendation. The pack margi
 
 When pack signals, quantity, margin, and shipping are safe, the enriched B2-RUN candidate includes the primary and secondary pack sizes, bundle strategy, original pack-title candidate, readiness, and approval requirement.
 
+Low-cost small items receive an additional shipping-dilution evaluation. When
+the verified supplier cost per base item is strictly below USD 6 and the exact
+package is at most 216 cubic inches with no side above 12 inches, the system
+proposes 2×, 3× and 4× presentations. It recommends a specific pack only when
+its shipping remains nearly flat (no more than 35% plus USD 1 above the base
+shipment), shipping per base item falls at least 25%, and the exact pack also
+passes demand, stock, contents/GTIN, weight/dimensions, profit, ROI and margin
+gates. Missing evidence produces a review proposal, never an inferred pack or
+automatic publication.
+
 ## Route decisions
 
 - `NEED_MARKET_DATA`: official comparable data is missing or insufficient.

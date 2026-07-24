@@ -331,11 +331,29 @@ test("mocked backup, verify and empty-target restore complete without network ac
       MOCK_LOG: mockLog,
       TMPDIR: secureTmp,
     }
-    const mockPreflight = run("bash", ["-c", "type stat; type supabase"], { env })
+    const runMockedScript = (script, args) => run("bash", [
+      "-c",
+      [
+        'source "$1"',
+        "shift",
+        'script=$1',
+        "shift",
+        'source "$script" "$@"',
+      ].join("; "),
+      "seller-os-backup-test",
+      mockEnvironment,
+      script,
+      ...args,
+    ], { env })
+    const mockPreflight = run("bash", [
+      "-c", 'source "$1"; type stat; type supabase',
+      "seller-os-backup-test", mockEnvironment,
+    ], { env })
     assert.equal(mockPreflight.status, 0, mockPreflight.stderr)
     assert.match(mockPreflight.stdout, /stat is a function/)
     assert.match(mockPreflight.stdout, /supabase is a function/)
-    const backupRun = run("bash", [path.join(toolkit, "backup.sh"), "--env-file", backupEnv], { env })
+    const backupRun = runMockedScript(path.join(toolkit, "backup.sh"),
+      ["--env-file", backupEnv])
     assert.equal(backupRun.status, 0, backupRun.stderr)
     const backupId = backupRun.stdout.match(/Seller OS backup completed: (seller-os_[^\s]+)/)?.[1]
     assert.ok(backupId)
@@ -348,11 +366,11 @@ test("mocked backup, verify and empty-target restore complete without network ac
     assert.equal(manifest.coverage.customAuthStorageSchemaChanges, false)
     assert.doesNotMatch(JSON.stringify(manifest), /source_password|source\.example|postgresql:\/\//)
 
-    const verifyRun = run("bash", [
-      path.join(toolkit, "restore.sh"), "verify",
+    const verifyRun = runMockedScript(path.join(toolkit, "restore.sh"), [
+      "verify",
       "--backup-id", backupId,
       "--backup-dir", backupDir,
-    ], { env })
+    ])
     assert.equal(verifyRun.status, 0, verifyRun.stderr)
     assert.match(verifyRun.stdout, /backup verified/)
 
@@ -365,13 +383,13 @@ test("mocked backup, verify and empty-target restore complete without network ac
       "",
     ].join("\n"), { mode: 0o600 })
     const confirmation = `RESTORE ${backupId} TO ${destinationLabel}`
-    const restoreRun = run("bash", [
-      path.join(toolkit, "restore.sh"), "restore",
+    const restoreRun = runMockedScript(path.join(toolkit, "restore.sh"), [
+      "restore",
       "--backup-id", backupId,
       "--backup-dir", backupDir,
       "--env-file", restoreEnv,
       "--confirm", confirmation,
-    ], { env })
+    ])
     assert.equal(restoreRun.status, 0, restoreRun.stderr)
     assert.match(restoreRun.stdout, /restore completed/)
 

@@ -13,16 +13,21 @@ usa `preview`; ningún test llama Meta ni envía un mensaje.
 
 | Evento | Regla mínima | Prioridad | Entrega | Acción esperada |
 | --- | --- | --- | --- | --- |
-| Ganador listo | Potencial ≥75, confianza ≥70, stock ≥4, margen ≥20%, beneficio ≥US$5 y evidencia exacta | Alta | Inmediata | Revisar y autorizar el draft |
-| Reposición Luna | Antes 0, ahora ≥4 | Alta si hay listing/potencial; si no, media | Inmediata o digest | Revalidar margen y reactivar/preparar |
-| Baja de costo Luna | Baja ≥3%; urgente desde 8% con potencial ≥60 | Alta/media | Inmediata o digest | Recalcular precio ganador |
+| Venta confirmada | Orden oficial nueva y pagada | Crítica | Inmediata | Comprar en Luna y continuar fulfillment |
+| Ganador listo | Potencial ≥75, confianza ≥70, stock ≥4, margen ≥20%, beneficio ≥US$5 y evidencia exacta | Alta | Digest | Revisar y autorizar el draft |
+| Reposición Luna | Antes 0, ahora ≥4 | Alta si hay listing/potencial; si no, media | Digest | Revalidar margen y reactivar/preparar |
+| Baja de costo Luna | Baja ≥3%; urgente desde 8% con potencial ≥60 | Alta/media | Digest | Recalcular precio ganador |
 | Listing sin stock | Listing activo y stock Luna 0/no disponible | Crítica | Inmediata | Pausar o corregir cantidad |
-| Listing con poco stock | Listing activo y stock Luna entre 1 y 3 | Alta | Inmediata | Ajustar cantidad o reponer |
-| Costo/margen en riesgo | Listing activo y aumento de costo ≥5% o margen <20%; crítica bajo 10% | Alta/crítica | Inmediata | Recalcular antes de tocar eBay |
-| Fallo de draft | Fallo accionable; crítico si agotó reintentos | Alta/crítica | Inmediata | Corregir y reintentar desde workspace |
-| Aprobación larga por vencer | ≤6 h alta; 6–24 h media | Alta/media | Inmediata o digest | Revalidar y decidir |
+| Listing con poco stock | Listing activo y stock Luna entre 1 y 3 | Alta | Digest | Ajustar cantidad o reponer |
+| Costo/margen en riesgo | Listing activo y aumento de costo ≥5% o margen <20%; crítica bajo 10% | Alta/crítica | Digest | Recalcular antes de tocar eBay |
+| Competencia y oportunidades | Señal verificable de mercado | Alta/media | Digest | Revisar la oportunidad |
+| Fallo de draft | Fallo accionable; crítico si agotó reintentos | Alta/crítica | Digest | Corregir y reintentar desde workspace |
+| Aprobación larga por vencer | ≤6 h alta; 6–24 h media | Alta/media | Digest | Revalidar y decidir |
 
-Los eventos medianos se agrupan en un resumen diario. Los cool-downs evitan que
+Sólo la venta confirmada y el stock Luna exacto en cero de un listing activo se
+envían inmediatamente. Los demás eventos se agrupan en un resumen diario a las
+18:00 Guatemala. La prueba manual del canal es una excepción operativa explícita,
+no un evento de monitoreo. Los cool-downs evitan que
 una condición repetida genere ruido. Al resolverse una condición debe llamarse
 `resolveSellerWhatsAppAlert`; si reaparece, se considera una nueva ocurrencia.
 La resolución cancela filas pendientes o en reintento. Un lease ya en vuelo no
@@ -53,7 +58,7 @@ apagado, y `READY` cuando puede entregar. Se requieren estas variables:
 - `EBAY_SELLER_WHATSAPP_TEMPLATE_NAME`
 - `EBAY_SELLER_WHATSAPP_DIGEST_TEMPLATE_NAME`
 - `EBAY_SELLER_WHATSAPP_TEMPLATE_LANGUAGE=es`
-- `EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC=14` (08:00 Nicaragua)
+- `EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC=0` (18:00 Guatemala del día anterior)
 - `EBAY_SELLER_COMMAND_CENTER_URL`
 - `WHATSAPP_ACCESS_TOKEN` y `WHATSAPP_PHONE_NUMBER_ID` existentes en el servidor
 
@@ -72,6 +77,11 @@ salud y previews. `POST` acepta:
 La entrega requiere Admin o `CRON_SECRET`, `action=deliver`, `dryRun=false`, flag
 habilitado y configuración `READY`. Cualquier JSON inválido recibe una respuesta
 JSON controlada.
+
+Los crons aceptan `Authorization: Bearer <secreto>` o el equivalente dedicado
+`X-Ebay-Commercial-Authorization: Bearer <secreto>`. El segundo existe para
+previews protegidos donde Vercel reserva `Authorization`; exige exactamente el
+mismo secreto server-side y no se acepta en Production.
 
 ## Puntos de integración
 

@@ -10,7 +10,7 @@ import { productFactsHash } from "./ebay-product-facts-readiness.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { buildCurrentSameDayImageFactoryInput, type CurrentSameDayImageFactBinding } from "./ebay-same-day-image-factory-input.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
-import { assertEbayImageEvidenceSufficiency, buildControlledCompositePreflightManifest, buildSafeOpenAiBackgroundPlatePlan, buildSellerOsEbayVisualStrategyV2, composeAuthorizedEbayListingImageSet, CONTROLLED_COMPOSITE_VERSION, EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_IMAGE_TEXT_RENDERER_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, EBAY_VISUAL_QA_EVALUATOR_VERSION, EBAY_VISUAL_SALES_OBJECTIVES, EBAY_VISUAL_STRATEGY_VERSION, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan, type EbayOpenAiImageQuality } from "./ebay-listing-image-factory.ts"
+import { assertEbayImageEvidenceSufficiency, buildControlledCompositePreflightManifest, buildSafeOpenAiBackgroundPlatePlan, buildSellerOsEbayVisualStrategyV2, composeAuthorizedEbayListingImageSet, CONTROLLED_COMPOSITE_VERSION, EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION, EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION, EBAY_IMAGE_TEXT_RENDERER_VERSION, EBAY_LISTING_IMAGE_SET_VERSION, EBAY_LISTING_IMAGE_SLOTS, EBAY_MARKET_TO_VISUAL_STRATEGY_TRACE_VERSION, EBAY_SECONDARY_IMAGE_PRODUCT_TARGETS, EBAY_SQUARE_PRESENTATION_QA_VERSION, EBAY_VISUAL_QA_EVALUATOR_VERSION, EBAY_VISUAL_SALES_OBJECTIVES, EBAY_VISUAL_STRATEGY_VERSION, validateListingImageFactoryInput, type EbayListingImageComposition, type EbayListingImageFactoryInput, type EbayOpenAiBackgroundPlate, type EbayOpenAiBackgroundPlatePlan, type EbayOpenAiImageQuality } from "./ebay-listing-image-factory.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { ebayImageMarketBriefSchema, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
 
@@ -37,14 +37,38 @@ const visualStrategyPositionSchema = z.object({
   feasibilityStatus: z.literal("FEASIBLE"),
   visualDirection: z.string().trim().min(1).max(500),
   productCoverageTarget: z.object({
-    minimum: z.number().min(.5).max(.7),
-    maximum: z.number().min(.5).max(.7),
+    minimum: z.number().min(.68).max(.82),
+    maximum: z.number().min(.68).max(.82),
   }).strict(),
   backgroundDirection: z.string().trim().min(1).max(500),
   lightingDirection: z.string().trim().min(1).max(500),
   allowedContextualProps: z.array(z.string().trim().min(1).max(120)).max(20),
   forbiddenElements: z.array(z.string().trim().min(1).max(120)).min(1).max(20),
   marketSignalsApplied: z.array(z.string().trim().min(1).max(240)).min(1).max(20),
+  marketToVisualStrategyTrace: z.object({
+    version: z.literal(EBAY_MARKET_TO_VISUAL_STRATEGY_TRACE_VERSION),
+    evidenceTier: z.enum([
+      "A_EXACT_PRODUCT", "B_PRODUCT_FAMILY", "C_CATEGORY",
+    ]),
+    influenceScope: z.enum([
+      "PRODUCT_SPECIFIC_COMMERCIAL_DIRECTION",
+      "PRODUCT_FAMILY_COMMERCIAL_DIRECTION",
+      "GENERAL_CATEGORY_ART_DIRECTION",
+      "PROFESSIONAL_FALLBACK_ONLY",
+    ]),
+    evidenceCount: z.number().int().min(0).max(500),
+    confidence: z.enum(["HIGH", "MEDIUM", "LOW", "UNAVAILABLE"]),
+    signalsUsed: z.array(z.string().trim().min(1).max(240)).max(20),
+    creativeDecisions: z.array(z.string().trim().min(1).max(500)).max(20),
+    exactProductFactsAllowed:
+      z.array(z.string().trim().min(1).max(240)).max(20),
+    prohibitedMarketEvidenceUses:
+      z.array(z.string().trim().min(1).max(120)).min(1).max(20),
+    productFactsSource:
+      z.literal("PRODUCT_DOSSIER_AND_AUTHORIZED_SOURCES_ONLY"),
+    competitorPixelsUsed: z.literal(false),
+    competitorClaimsUsedAsProductFacts: z.literal(false),
+  }).strict(),
   contractHash: rawSha256Schema,
 }).strict()
 
@@ -110,6 +134,10 @@ const persistenceAssetSchema = z.object({
   outputOriginLabel: z.literal(
     "OPTIMIZED_FROM_AUTHORIZED_CATALOG_SOURCE",
   ).optional(),
+  squarePresentationVersion:
+    z.literal(EBAY_SQUARE_PRESENTATION_QA_VERSION),
+  artificialFrameAdded: z.literal(false),
+  outputEncodingQuality: z.literal(94),
   visualStrategyPosition: visualStrategyPositionSchema.optional(),
   sourceSha256: rawSha256Schema,
   outputSha256: rawSha256Schema,
@@ -154,6 +182,18 @@ const persistenceAssetSchema = z.object({
   textPolicyPassed: z.literal(true).optional(),
   contextualPropsPassed: z.literal(true).optional(),
   mobileReadabilityPassed: z.literal(true).optional(),
+  squareFormatPassed: z.literal(true),
+  artificialInsetFrameFree: z.literal(true),
+  sourceQualityPassed: z.literal(true),
+  safeCanvasPlacementPassed: z.literal(true),
+  mobileFocalPointPassed: z.literal(true),
+  sourceUpscaleRatio: z.number().min(0).max(1.25),
+  safeMarginRatio: z.number().min(0).max(1),
+  focalCenterOffsetRatio: z.number().min(0).max(.14),
+  detailSignalRatio: z.number().min(.004).max(1),
+  artificialInsetFrameScore: z.number().min(0).max(32),
+  squarePresentationQaVersion:
+    z.literal(EBAY_SQUARE_PRESENTATION_QA_VERSION),
   qaEvaluatorVersion:
     z.literal("SELLER_OS_EBAY_VISUAL_QA_V2").optional(),
   scores: z.object({
@@ -446,6 +486,10 @@ function validateTransientAssets(input: {
       asset.transformation.originalPackagePixelsPreserved !== true ||
       asset.transformation.competitorImageUsed !== false ||
       asset.transformation.verifiedFactsOnly !== true ||
+      asset.transformation.squarePresentationVersion !==
+        EBAY_SQUARE_PRESENTATION_QA_VERSION ||
+      asset.transformation.artificialFrameAdded !== false ||
+      asset.transformation.outputEncodingQuality !== 94 ||
       !["AUTHORIZED_MULTI_SOURCE", "SINGLE_SOURCE_INFORMATIONAL"]
         .includes(asset.transformation.presentationMode) ||
       ![
@@ -479,6 +523,22 @@ function validateTransientAssets(input: {
       asset.qa.sourceViewCapabilityPassed !== true ||
       asset.qa.marketSignalsLimitedToScene !== true ||
       asset.qa.hiddenProductGeometryGenerated !== false ||
+      asset.qa.squareFormatPassed !== true ||
+      asset.qa.artificialInsetFrameFree !== true ||
+      asset.qa.sourceQualityPassed !== true ||
+      asset.qa.safeCanvasPlacementPassed !== true ||
+      asset.qa.mobileFocalPointPassed !== true ||
+      asset.qa.squarePresentationQaVersion !==
+        EBAY_SQUARE_PRESENTATION_QA_VERSION ||
+      !Number.isFinite(asset.qa.sourceUpscaleRatio) ||
+      asset.qa.sourceUpscaleRatio! > 1.25 ||
+      !Number.isFinite(asset.qa.safeMarginRatio) ||
+      !Number.isFinite(asset.qa.focalCenterOffsetRatio) ||
+      asset.qa.focalCenterOffsetRatio! > .14 ||
+      !Number.isFinite(asset.qa.detailSignalRatio) ||
+      asset.qa.detailSignalRatio! < .004 ||
+      !Number.isFinite(asset.qa.artificialInsetFrameScore) ||
+      asset.qa.artificialInsetFrameScore! >= 32 ||
       asset.qa.technicalQualityPassed !== true ||
       asset.qa.productCoveragePassed !== true ||
       asset.qa.compositionPassed !== true ||
@@ -501,8 +561,8 @@ function validateTransientAssets(input: {
           (asset.qa.outputEdgeWhiteRatio ?? 0) < .9 ||
           asset.qa.textLineCount !== 0 ||
           asset.qa.textMinimumPixelSize !== 0
-        : asset.qa.productCoverageRatio < .5 ||
-          asset.qa.productCoverageRatio > .7 ||
+        : asset.qa.productCoverageRatio < .68 ||
+          asset.qa.productCoverageRatio > .82 ||
           asset.qa.textLineCount !== 0 ||
           asset.qa.textMinimumPixelSize !== 0)) {
       throw new Error("SAME_DAY_IMAGE_SET_QA_NOT_PASSED")
@@ -554,7 +614,7 @@ function validateTransientAssets(input: {
         asset.transformation.foregroundMatteVersion !==
           EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION ||
         !["NATIVE_ALPHA", "EDGE_CONNECTED_LIGHT_NEUTRAL_V1",
-          "PROTECTED_TRIMAP_MATTING_V1", "FULL_AUTHORIZED_FRAME"].includes(
+          "PROTECTED_TRIMAP_MATTING_V1"].includes(
           asset.transformation.foregroundMatteMethod ?? "",
         ) ||
         !/^[0-9a-f]{64}$/.test(
@@ -816,6 +876,12 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       productDeformation: asset.transformation.productDeformation,
       productOcclusion: asset.transformation.productOcclusion,
       outputOriginLabel: asset.transformation.outputOriginLabel,
+      squarePresentationVersion:
+        asset.transformation.squarePresentationVersion,
+      artificialFrameAdded:
+        asset.transformation.artificialFrameAdded,
+      outputEncodingQuality:
+        asset.transformation.outputEncodingQuality,
       visualStrategyPosition:
         asset.transformation.visualStrategyPosition,
       sourceSha256: asset.sourceSha256,
@@ -864,6 +930,18 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       textPolicyPassed: asset.qa.textPolicyPassed,
       contextualPropsPassed: asset.qa.contextualPropsPassed,
       mobileReadabilityPassed: asset.qa.mobileReadabilityPassed,
+      squareFormatPassed: asset.qa.squareFormatPassed,
+      artificialInsetFrameFree: asset.qa.artificialInsetFrameFree,
+      sourceQualityPassed: asset.qa.sourceQualityPassed,
+      safeCanvasPlacementPassed: asset.qa.safeCanvasPlacementPassed,
+      mobileFocalPointPassed: asset.qa.mobileFocalPointPassed,
+      sourceUpscaleRatio: asset.qa.sourceUpscaleRatio,
+      safeMarginRatio: asset.qa.safeMarginRatio,
+      focalCenterOffsetRatio: asset.qa.focalCenterOffsetRatio,
+      detailSignalRatio: asset.qa.detailSignalRatio,
+      artificialInsetFrameScore: asset.qa.artificialInsetFrameScore,
+      squarePresentationQaVersion:
+        asset.qa.squarePresentationQaVersion,
       qaEvaluatorVersion: asset.qa.qaEvaluatorVersion,
       scores: asset.qa.scores,
       failureReasons: asset.qa.failureReasons,
@@ -901,6 +979,7 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
     idempotencyKeyHash: productFactsHash({
       serviceVersion: SAME_DAY_IMAGE_PACKAGE_SERVICE_VERSION,
       compositorContractVersion: EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
+      squarePresentationVersion: EBAY_SQUARE_PRESENTATION_QA_VERSION,
       candidateId: input.plan.binding.candidateId,
       factRunId: input.plan.binding.factRunId,
       factPackageHash: input.plan.binding.factPackageHash,
@@ -1045,19 +1124,13 @@ export async function generateTransientSameDayImagePackage(input: {
       }
       const foregroundMetadata = await sharp(preflightForegrounds[sourceIndex])
         .metadata()
-      const targetSize = ({
-        PACK_AND_COUNT: 980,
-        KEY_FEATURES: 1_120,
-        SIZE_AND_CONTENT: 900,
-        USE_CONTEXT: 820,
-        PACKAGE_CONTENTS: 1_030,
-        SECONDARY_6: 880,
-      } as const)[position.slot]
+      const targetSize =
+        EBAY_SECONDARY_IMAGE_PRODUCT_TARGETS[position.slot]
       const available = position.salesObjective === "QUALITY_DETAIL"
         ? Math.min(foregroundMetadata.width ?? 0, foregroundMetadata.height ?? 0)
         : Math.max(foregroundMetadata.width ?? 0, foregroundMetadata.height ?? 0)
       const requiredSize = position.salesObjective === "QUALITY_DETAIL"
-        ? targetSize : 800
+        ? targetSize : Math.ceil(targetSize / 1.25)
       if (available < requiredSize) {
         throw new Error(`NEEDS_ADDITIONAL_SOURCE_IMAGE:${position.slot}`)
       }

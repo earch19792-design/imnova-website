@@ -168,6 +168,7 @@ type Dashboard = {
   nextAutomaticRunAt?: string | null
   schedulerAuthorization?: {
     status?: "ACTIVE" | "EXPIRED" | "MISSING"
+    mode?: "CONTINUOUS_WHILE_ACTIVE"
     authorizedAt?: string | null
     expiresAt?: string | null
     lastUsedAt?: string | null
@@ -281,6 +282,24 @@ type Dashboard = {
     humanReviewRequired?: boolean
     ebayWrites?: 0
   }
+  supplyActions?: Array<{
+    id?: string
+    eventType?: "ACTIVE_LISTING_OUT_OF_STOCK" | "LUNA_COST_CHANGED" | "MARGIN_RISK"
+    severity?: "critical" | "high" | "medium" | "low"
+    listingId?: string
+    sku?: string | null
+    detectedAt?: string
+    recommendedAction?: string
+    status?: "AWAITING_HUMAN_APPROVAL"
+    changeApplied?: false
+    humanConfirmationRequired?: true
+    evidence?: {
+      previousSupplierCost?: number
+      currentSupplierCost?: number
+      estimatedMarginPercent?: number
+      stockAvailable?: number
+    }
+  }>
   optimizationTasks?: Array<{
     id?: string
     eventType?: string
@@ -337,7 +356,7 @@ type Payload = {
   improvement?: {
     executionId?: string
     listingId?: string
-    actionType?: "PRICE" | "PROMOTED_LISTINGS_GENERAL"
+    actionType?: "PRICE" | "PROMOTED_LISTINGS_GENERAL" | "END_LISTING"
     phase?: string
     appliedVerified?: boolean
     confirmationRequired?: string
@@ -566,7 +585,9 @@ export function CommercialMonitorPanel() {
       const preview = await call("prepare_improvement")
       const label = preview.actionType === "PRICE"
         ? "el nuevo precio verificado"
-        : "Promoted Listings General al 5% durante 7 días"
+        : preview.actionType === "END_LISTING"
+          ? "el retiro del listing porque Luna confirmó stock cero"
+          : "Promoted Listings General al 5% durante 7 días"
       if (!window.confirm(`Seller OS aplicará ${label} al listing ${preview.listingId}. Se verificará identidad, stock, costo y economía antes de escribir en eBay. ¿Deseas autorizarlo?`)) {
         setMessage("Mejora no autorizada; eBay no fue modificado.")
         return
@@ -856,6 +877,7 @@ export function CommercialMonitorPanel() {
   const competitorProfiles = dashboard?.competitorWatch?.profiles ?? []
   const competitorPriceRecommendations =
     dashboard?.competitorWatch?.priceRecommendations ?? []
+  const supplyActions = dashboard?.supplyActions ?? []
   const researchRefreshProfiles = competitorProfiles.filter((profile) =>
     profile.research_refresh_recommended)
 
@@ -875,7 +897,8 @@ export function CommercialMonitorPanel() {
       target.focus({ preventScroll: true })
     }, 50)
     return () => window.clearTimeout(timer)
-  }, [loading, requestedImprovementId, competitorPriceRecommendations])
+  }, [loading, requestedImprovementId, competitorPriceRecommendations,
+    supplyActions])
 
   return (
     <section aria-labelledby="commercial-monitor-heading" className="min-w-0 overflow-hidden rounded-3xl border border-emerald-200/25 bg-gradient-to-br from-emerald-200/[0.10] via-cyan-200/[0.04] to-black p-4 sm:p-5">
@@ -883,7 +906,7 @@ export function CommercialMonitorPanel() {
         <div className="min-w-0">
           <p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Monitoreo comercial · separado de Radar</p>
           <h2 id="commercial-monitor-heading" className="mt-2 text-2xl font-black">Ventas y rendimiento</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/65">Lee órdenes, mensajes pendientes de Seller Hub, Analytics, WatchCount y competidores activos. Product Research sólo se solicita para confirmar ventas cuando aparece una señal relevante. No cambia listings, precios, inventario ni órdenes.</p>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/65">Lee órdenes, mensajes pendientes de Seller Hub, Analytics, WatchCount, Luna y competidores activos. Product Research sólo se solicita para confirmar ventas cuando aparece una señal relevante. Las acciones de precio o retiro se preparan con evidencia fresca y sólo se ejecutan después de tu confirmación.</p>
         </div>
         <span className={`rounded-full border border-white/15 px-3 py-2 text-xs font-black uppercase ${statusTone(run?.status)}`}>
           {loading ? "cargando" : run?.status ?? dashboard?.status ?? "sin ejecutar"}
@@ -931,11 +954,11 @@ export function CommercialMonitorPanel() {
             <p className="text-sm font-black text-white">Automatización de Preview</p>
             <p className="mt-1 text-xs leading-5 text-white/55">
               {dashboard?.schedule?.effectivelyEnabled
-                ? `Activa temporalmente hasta ${formatDate(dashboard.schedulerAuthorization?.expiresAt)}.`
+                ? "Activa continuamente mientras existan listings ACTIVE."
                 : schedulerAuthorized
-                  ? `Autorización vigente hasta ${formatDate(dashboard?.schedulerAuthorization?.expiresAt)}; el runner de Preview aún está deshabilitado en configuración.`
+                  ? "Autorización continua vigente; el runner de Preview aún está deshabilitado en configuración."
                 : dryRunSatisfactory
-                  ? "La prueba segura pasó. Puedes autorizar una ventana temporal de 60 minutos."
+                  ? "La prueba segura pasó. Puedes autorizar el monitoreo continuo mientras haya listings ACTIVE."
                   : "Primero debe pasar un dry run reciente; el sistema no se activará a ciegas."}
             </p>
           </div>
@@ -1058,6 +1081,46 @@ export function CommercialMonitorPanel() {
         </dl>
         {run && dryRunConsumedAt && <p className="mt-3 text-xs font-bold text-cyan-50">Ejecuta un dry run nuevo antes de otra actualización.</p>}
       </details>
+
+      <section aria-labelledby="luna-action-queue-heading" className="mt-4 rounded-2xl border border-cyan-200/30 bg-cyan-200/[0.06] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-cyan-100/60">Luna Portex → acción Seller OS</p>
+            <h3 id="luna-action-queue-heading" className="text-lg font-black">Cambios de costo y stock</h3>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-white/60">Seller OS vuelve a comprobar la variante exacta de Luna antes de preparar la acción. Precio: recalcula el piso económico. Stock cero: prepara el retiro del listing. Nada se escribe en eBay sin tu confirmación.</p>
+          </div>
+          <span className="rounded-full border border-cyan-100/25 px-3 py-1 text-xs font-black uppercase text-cyan-50">{supplyActions.length} pendientes</span>
+        </div>
+        {supplyActions.length === 0
+          ? <p className="mt-3 rounded-xl bg-black/20 p-3 text-sm text-white/55">No hay cambios frescos de Luna que requieran una acción.</p>
+          : <div className="mt-3 grid gap-3">
+            {supplyActions.slice(0, 8).map((entry) => {
+              const isOutOfStock = entry.eventType === "ACTIVE_LISTING_OUT_OF_STOCK"
+              const previousCost = entry.evidence?.previousSupplierCost
+              const currentCost = entry.evidence?.currentSupplierCost
+              return <article
+                key={entry.id}
+                id={entry.id ? `commercial-improvement-${entry.id}` : undefined}
+                tabIndex={entry.id === requestedImprovementId ? -1 : undefined}
+                className={`scroll-mt-32 rounded-xl border bg-black/25 p-3 outline-none ${entry.id === requestedImprovementId ? "border-cyan-100 ring-2 ring-cyan-200" : "border-white/10"}`}
+              >
+                <p className="font-black text-white">Listing {entry.listingId} · SKU {entry.sku ?? "pendiente"}</p>
+                <p className="mt-1 text-xs text-white/65">{isOutOfStock
+                  ? "Luna confirmó disponibilidad cero; la acción propuesta es retirar el listing con razón NotAvailable."
+                  : typeof previousCost === "number" && typeof currentCost === "number"
+                    ? `Costo Luna: $${previousCost.toFixed(2)} → $${currentCost.toFixed(2)}. Seller OS recalculará el precio seguro.`
+                    : `Margen estimado: ${typeof entry.evidence?.estimatedMarginPercent === "number" ? `${entry.evidence.estimatedMarginPercent.toFixed(2)}%` : "en riesgo"}. Seller OS recalculará el precio seguro.`}</p>
+                <p className="mt-2 text-xs font-bold text-cyan-50">{entry.recommendedAction}</p>
+                <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Esperando confirmación · ningún cambio aplicado</p>
+                {entry.id && <button type="button" disabled={Boolean(improvementBusyId)} onClick={() => void applyImprovement(entry.id!)} className={`mt-3 min-h-12 w-full rounded-xl px-3 font-black text-black disabled:opacity-40 ${isOutOfStock ? "bg-rose-200" : "bg-cyan-200"}`}>{improvementBusyId === entry.id
+                  ? "Verificando evidencia fresca…"
+                  : isOutOfStock
+                    ? "VERIFICAR Y RETIRAR LISTING"
+                    : "RECALCULAR Y REVISAR PRECIO"}</button>}
+              </article>
+            })}
+          </div>}
+      </section>
 
       <section aria-labelledby="listing-optimization-tasks-heading" className="mt-4 rounded-2xl border border-amber-200/30 bg-amber-200/[0.06] p-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1265,7 +1328,7 @@ export function CommercialMonitorPanel() {
         <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
           <div><dt className="text-white/45">Última actualización</dt><dd className="font-bold">{formatDate(run?.completed_at ?? run?.started_at)}</dd></div>
           <div><dt className="text-white/45">Scheduler Preview</dt><dd className="font-bold">{dashboard?.schedule?.effectivelyEnabled ? "AUTORIZADO" : `BLOQUEADO · ${dashboard?.schedulerAuthorization?.status ?? "SIN DRY RUN"}`}</dd></div>
-          <div><dt className="text-white/45">Autorización vigente hasta</dt><dd className="font-bold">{formatDate(dashboard?.schedulerAuthorization?.expiresAt)}</dd></div>
+          <div><dt className="text-white/45">Vigencia</dt><dd className="font-bold">{dashboard?.schedulerAuthorization?.mode === "CONTINUOUS_WHILE_ACTIVE" ? "CONTINUA MIENTRAS HAYA LISTINGS ACTIVE" : formatDate(dashboard?.schedulerAuthorization?.expiresAt)}</dd></div>
           <div><dt className="text-white/45">Próxima ejecución</dt><dd className="font-bold">{dashboard?.schedule?.effectivelyEnabled ? formatDate(dashboard.nextAutomaticRunAt) : "Requiere dry run satisfactorio y autorización durable"}</dd></div>
           <div><dt className="text-white/45">Pendientes de compra</dt><dd className="font-bold">{value(health?.pendingManualPurchase)}</dd></div>
           <div><dt className="text-white/45">Esperando tracking</dt><dd className="font-bold">{value(health?.awaitingTracking)}</dd></div>
@@ -1277,11 +1340,11 @@ export function CommercialMonitorPanel() {
       </details>
 
       {dashboard?.pilot24h && <details className="mt-4 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.04] p-3">
-        <summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Piloto controlado de 24 horas</summary>
+        <summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Reporte acumulado del monitor continuo</summary>
         <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
           <div><dt className="text-white/45">Estado</dt><dd className="font-black uppercase text-cyan-100">{dashboard.pilot24h.status}</dd></div>
           <div><dt className="text-white/45">Inicio</dt><dd className="font-bold">{formatDate(dashboard.pilot24h.startedAt)}</dd></div>
-          <div><dt className="text-white/45">Corte automático</dt><dd className="font-bold">{formatDate(dashboard.pilot24h.expiresAt)}</dd></div>
+          <div><dt className="text-white/45">Corte automático</dt><dd className="font-bold">NO · continúa mientras haya listings ACTIVE</dd></div>
           <div><dt className="text-white/45">Ejecuciones</dt><dd className="font-bold">{value(dashboard.pilot24h.totalRuns)}</dd></div>
           <div><dt className="text-white/45">Completadas / parciales / fallidas</dt><dd className="font-bold">{value(dashboard.pilot24h.completedRuns)} / {value(dashboard.pilot24h.partialRuns)} / {value(dashboard.pilot24h.failedRuns)}</dd></div>
           <div><dt className="text-white/45">Órdenes leídas</dt><dd className="font-bold">{value(dashboard.pilot24h.ordersRead)}</dd></div>
