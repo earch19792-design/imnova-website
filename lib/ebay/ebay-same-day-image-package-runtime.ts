@@ -889,7 +889,7 @@ export async function reviewSameDayImagePackage(input: {
       }))
     const generated = transformations.filter((transformation) =>
       transformation.generativeAiUsed === true)
-    const aiBoardSet = generated.length === 5 && transformations.every((transformation) =>
+    const aiBoardSet = generated.length === 6 && transformations.every((transformation) =>
       transformation.compositorContractVersion ===
         EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION) &&
       generated.every((transformation) =>
