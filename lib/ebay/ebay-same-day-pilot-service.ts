@@ -54,6 +54,11 @@ import {
   reconcileProductResearchObservations,
 } from "./ebay-product-research-identity-reconciliation"
 import {
+  PRODUCT_RESEARCH_VISUAL_PATTERN_ALGORITHM_VERSION,
+  PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION,
+  VISUAL_MARKET_BRIEF_VERSION,
+} from "./ebay-product-research-visual-pattern"
+import {
   productResearchPlannedQueryHash,
   productResearchQueriesMatch,
   skipProductResearchQuery,
@@ -113,6 +118,12 @@ const PREMATURE_TAXONOMY_REJECTION_RECOVERY_VERSION =
   "PREMATURE_TAXONOMY_REJECTION_RECOVERY_V1_2026_07_21"
 const SAME_DAY_LUNA_DECISION_REFRESH_VERSION = "SAME_DAY_LUNA_DECISION_REFRESH_V1_2026_07_19"
 const SAME_DAY_REPLENISHMENT_VERSION = "SAME_RUN_REPLENISHMENT_V1_2026_07_20"
+const VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION =
+  "VISUAL_MARKET_RECAPTURE_RECOVERY_V1_2026_07_23"
+const VISUAL_MARKET_RECAPTURE_ERROR_CODES = new Set([
+  "MARKET_VISUAL_SIGNALS_INSUFFICIENT",
+  "SAME_DAY_IMAGE_MARKET_BRIEF_REQUIRED",
+])
 const SAME_DAY_MAX_TOTAL_CANDIDATE_ATTEMPTS =
   SAME_DAY_QUEUE_LIMIT * SAME_DAY_MAX_CANDIDATE_CYCLES
 const LEGACY_PRODUCT_FACTS_REJECTION_REASONS = new Set([
@@ -749,14 +760,20 @@ async function currentState(
     // A launch is durable work, not a disposable calendar view. If Ernesto
     // pauses overnight, resume the newest unfinished run before offering a
     // fresh one; this preserves candidates, captures and checkpoints.
-    const { data: carryoverRun, error: carryoverError } = await supabase
+    const { data: carryoverRuns, error: carryoverError } = await supabase
       .from("ebay_same_day_pilot_runs").select("*")
       .eq("marketplace_account_key", accountKey)
-      .in("status", ["ACTIVE", "PARTIALLY_READY", "READY_FOR_OPERATOR"])
+      .in("status", ["ACTIVE", "PARTIALLY_READY", "READY_FOR_OPERATOR", "BLOCKED"])
       .order("operation_date", { ascending: false })
-      .order("cycle", { ascending: false }).limit(1).maybeSingle()
+      .order("cycle", { ascending: false }).limit(10)
     if (carryoverError) throw new Error("SAME_DAY_PILOT_CARRYOVER_RUN_READ_FAILED")
-    run = carryoverRun
+    run = (carryoverRuns ?? []).find((candidateRun) => {
+      if (candidateRun.status !== "BLOCKED") return true
+      const verified = number(candidateRun.verified_new_listings) ?? 0
+      const target = number(candidateRun.target_new_listings) ?? 2
+      return verified < target &&
+        record(candidateRun.source_inventory).nextCandidateSetExhausted !== true
+    }) ?? null
   }
   if (!run) return null
   const productResearchPlanId = text(record(run.source_inventory).productResearchPlanId)
@@ -1214,12 +1231,70 @@ async function bootstrapCandidate(supabase: SupabaseClient, runId: string, candi
     machineState = "WAITING_LUNA_CONFIRMATION"
   }
   if (machineState === "WAITING_PRODUCT_RESEARCH_CAPTURE") {
+    const evidence = record(candidate.evidence_summary)
+    const visualMarketRecapture =
+      text(evidence.visualMarketRecaptureRecoveryVersion) ===
+        VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION
+    if (visualMarketRecapture && (
+      candidate.state !== "NEEDS_PRODUCT_RESEARCH_CAPTURE" ||
+      text(candidate.product_research_capture_batch_id) ||
+      !strings(candidate.blockers).includes("VISUAL_MARKET_EVIDENCE_REQUIRED")
+    )) {
+      const { error } = await supabase.from("ebay_same_day_pilot_candidates")
+        .update({
+          state: "NEEDS_PRODUCT_RESEARCH_CAPTURE",
+          blockers: ["VISUAL_MARKET_EVIDENCE_REQUIRED"],
+          product_research_capture_batch_id: null,
+          next_automated_action:
+            "Validar la nueva evidencia visual y reanudar desde el paquete ya aprobado.",
+          next_human_action:
+            "Recapturar una sola vez la consulta Product Research preparada.",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id)
+        .eq("run_id", runId)
+        .eq("machine_state", "WAITING_PRODUCT_RESEARCH_CAPTURE")
+      if (error) {
+        throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_CANDIDATE_REPAIR_FAILED")
+      }
+      candidate = {
+        ...candidate,
+        state: "NEEDS_PRODUCT_RESEARCH_CAPTURE",
+        blockers: ["VISUAL_MARKET_EVIDENCE_REQUIRED"],
+        product_research_capture_batch_id: null,
+      }
+    }
     await activateCandidateProductResearchPlan(supabase, runId, candidate)
     await createHumanTask({ supabase, runId, candidateId: id, expectedState: "WAITING_PRODUCT_RESEARCH_CAPTURE", gateType: "PRODUCT_RESEARCH_CAPTURE_REQUIRED",
-      title: "Captura Product Research para esta familia", why: "Falta evidencia vendida exacta y fresca para decidir sin confundir resultados amplios con demanda.",
-      seconds: 60, impact: "La captura enriquecerá la familia y Seller OS continuará automáticamente.",
-      evidence: { product: candidate.product_title, queryPlan: candidate.product_research_query_plan },
-      actionSchema: { type: "OPEN_PRODUCT_RESEARCH", query: record(candidate.product_research_query_plan).query }, continuationJobType: "IMPORT_SOLD_EVIDENCE" })
+      title: visualMarketRecapture
+        ? "Recaptura Product Research con análisis visual"
+        : "Captura Product Research para esta familia",
+      why: visualMarketRecapture
+        ? "La evidencia comercial ya es válida, pero las miniaturas de la captura anterior no produjeron señales visuales utilizables para diseñar el listing."
+        : "Falta evidencia vendida exacta y fresca para decidir sin confundir resultados amplios con demanda.",
+      seconds: 60,
+      impact: visualMarketRecapture
+        ? "Seller OS conservará identidad, economía, ficha y aprobación; sólo reconstruirá la evidencia visual y continuará automáticamente."
+        : "La captura enriquecerá la familia y Seller OS continuará automáticamente.",
+      evidence: { product: candidate.product_title,
+        queryPlan: candidate.product_research_query_plan,
+        commercialEvidencePreserved: visualMarketRecapture,
+        requiredVisualPatternSchemaVersion:
+          visualMarketRecapture ? PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION : null,
+        requiredVisualPatternAlgorithmVersion:
+          visualMarketRecapture ? PRODUCT_RESEARCH_VISUAL_PATTERN_ALGORITHM_VERSION : null,
+        requiredVisualMarketBriefVersion:
+          visualMarketRecapture ? VISUAL_MARKET_BRIEF_VERSION : null },
+      actionSchema: { type: "OPEN_PRODUCT_RESEARCH",
+        query: record(candidate.product_research_query_plan).query,
+        requiresVisualPatternCapture: visualMarketRecapture,
+        requiredVisualPatternSchemaVersion:
+          visualMarketRecapture ? PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION : null,
+        requiredVisualPatternAlgorithmVersion:
+          visualMarketRecapture ? PRODUCT_RESEARCH_VISUAL_PATTERN_ALGORITHM_VERSION : null },
+      continuationJobType: visualMarketRecapture
+        ? "RECONCILE_PRODUCT_RESEARCH_CAPTURE"
+        : "IMPORT_SOLD_EVIDENCE" })
     return
   }
   if (machineState === "WAITING_LUNA_CONFIRMATION") {
@@ -4048,6 +4123,8 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
     const task = state.tasks.find((entry) => entry.candidate_id === candidate.id && entry.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" && entry.status === "OPEN")
     if (!task) throw new Error("SAME_DAY_PILOT_CAPTURE_GATE_TASK_MISSING")
     resumed += 1
+    const captureResolvedBlockers = strings(candidate.blockers).filter((blocker) =>
+      blocker !== "VISUAL_MARKET_EVIDENCE_REQUIRED")
     const evidenceSummary = { ...record(candidate.evidence_summary),
       captureCandidateReferencesPendingReconciliation: authorizedObservationCount,
       groupedCaptureObservedAt: input.capturedAt ?? new Date().toISOString() }
@@ -4123,6 +4200,7 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
         "AUTHORIZED_CAPTURE_OBSERVATIONS_MISSING",
         "PRODUCT_RESEARCH_EVIDENCE_QUARANTINED",
         "LAST_SOLD_DATE_OUTSIDE_CAPTURE_WINDOW",
+        "VISUAL_MARKET_EVIDENCE_REQUIRED",
       ].includes(blocker))
       await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
         gateType: "PRODUCT_RESEARCH_CAPTURE_REQUIRED", runId: state.run.id, candidateId: candidate.id,
@@ -4168,7 +4246,8 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
         checkpoint: { captureBatchId: input.batchId, authorizedObservationCount,
           provisionalExactLunaMatches: Number(input.exactLunaMatches ?? 0),
           soldEvidenceImported: true },
-        candidatePatch: { productResearchCaptureBatchId: input.batchId, evidenceSummary },
+        candidatePatch: { productResearchCaptureBatchId: input.batchId,
+          evidenceSummary, blockers: captureResolvedBlockers },
         nextAutomaticAction: "Reconciliar sólo las referencias de este candidato.", nextHumanAction: "Ninguna.",
         job: { jobType: "RECONCILE_PRODUCT_RESEARCH_CAPTURE",
           idempotencyKey: `${state.run.id}:${candidate.id}:RECONCILE_PRODUCT_RESEARCH_CAPTURE:${input.batchId}`,
@@ -4198,6 +4277,8 @@ const SAME_DAY_MACHINE_ORDER = [
 
 function jobEffectAlreadyApplied(jobType: string, machineState: string) {
   if (["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(machineState)) return true
+  if (jobType === "GENERATE_SIX_IMAGE_PACKAGE" &&
+    machineState === "WAITING_PRODUCT_RESEARCH_CAPTURE") return true
   const minimumState: Record<string, string> = {
     RECONCILE_PRODUCT_RESEARCH_CAPTURE: "RUNNING_LOOP_1",
     WAIT_FOR_LOOP1_REANALYSIS: "CALCULATING_ECONOMICS",
@@ -4427,6 +4508,324 @@ async function prepareFactsOnlyManualHandoff(input: {
   return { ...result, summary }
 }
 
+async function resetVisualMarketRecaptureQueryPlan(input: {
+  supabase: SupabaseClient
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>
+  candidate: JsonRecord
+  priorCaptureBatchId: string
+  now: Date
+}) {
+  const accountKey = text(input.state.run.marketplace_account_key)
+  const candidatePlan = record(input.candidate.product_research_query_plan)
+  const planId = text(candidatePlan.productResearchPlanId) ||
+    text(record(input.state.run.source_inventory).productResearchPlanId)
+  const plannedQuery = text(candidatePlan.query, 100)
+  if (!planId || !plannedQuery) {
+    throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_PLAN_BINDING_MISSING")
+  }
+
+  const [{ data: plan, error: planError }, { data: tasks, error: taskError }] =
+    await Promise.all([
+      input.supabase.from("marketplace_product_research_query_plans")
+        .select("id,status")
+        .eq("id", planId)
+        .eq("marketplace_account_key", accountKey)
+        .eq("marketplace", MARKETPLACE)
+        .in("status", ["ACTIVE", "COMPLETED"])
+        .maybeSingle(),
+      input.supabase.from("marketplace_product_research_query_tasks")
+        .select("id,status,search_query,capture_batch_id")
+        .eq("plan_id", planId)
+        .eq("marketplace_account_key", accountKey)
+        .eq("marketplace", MARKETPLACE)
+        .in("status", ["PENDING", "PROCESSED"])
+        .order("ordinal", { ascending: true }),
+    ])
+  if (planError || taskError || !plan) {
+    throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_PLAN_READ_FAILED")
+  }
+  const task = (tasks ?? []).find((entry) =>
+    productResearchQueriesMatch(plannedQuery, entry.search_query) && (
+      entry.status === "PENDING" ||
+      (entry.status === "PROCESSED" &&
+        text(entry.capture_batch_id) === input.priorCaptureBatchId)
+    ))
+  if (!task) {
+    throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_QUERY_TASK_MISSING")
+  }
+
+  if (task.status === "PROCESSED") {
+    const { data: resetTasks, error } = await input.supabase
+      .from("marketplace_product_research_query_tasks")
+      .update({
+        status: "PENDING",
+        capture_batch_id: null,
+        captured_at: null,
+        processed_at: null,
+        last_error_code: "VISUAL_MARKET_RECAPTURE_REQUIRED",
+        updated_at: input.now.toISOString(),
+      })
+      .eq("id", task.id)
+      .eq("plan_id", planId)
+      .eq("status", "PROCESSED")
+      .eq("capture_batch_id", input.priorCaptureBatchId)
+      .select("id")
+    if (error || (resetTasks ?? []).length !== 1) {
+      throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_QUERY_TASK_RESET_FAILED")
+    }
+  }
+  if (plan.status === "COMPLETED") {
+    const { data: resetPlans, error } = await input.supabase
+      .from("marketplace_product_research_query_plans")
+      .update({
+        status: "ACTIVE",
+        completed_at: null,
+        updated_at: input.now.toISOString(),
+      })
+      .eq("id", planId)
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("status", "COMPLETED")
+      .select("id")
+    if (error || (resetPlans ?? []).length !== 1) {
+      throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_PLAN_RESET_FAILED")
+    }
+  }
+  return { planId, taskId: text(task.id) }
+}
+
+async function routeCandidateToVisualMarketRecapture(input: {
+  supabase: SupabaseClient
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>
+  candidate: JsonRecord
+  previousState: string
+  errorCode: string
+  now: Date
+}) {
+  if (!VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(input.errorCode)) {
+    throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_ERROR_NOT_RECOVERABLE")
+  }
+  const candidateId = text(input.candidate.id)
+  const priorCaptureBatchId = text(
+    input.candidate.product_research_capture_batch_id,
+  )
+  if (!candidateId || !priorCaptureBatchId) {
+    throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_CAPTURE_BINDING_MISSING")
+  }
+  const queryPlan = await resetVisualMarketRecaptureQueryPlan({
+    supabase: input.supabase,
+    state: input.state,
+    candidate: input.candidate,
+    priorCaptureBatchId,
+    now: input.now,
+  })
+  const facts = record(input.candidate.product_facts_summary)
+  const handoff = record(input.candidate.manual_handoff_package)
+  const evidenceSummary = {
+    ...record(input.candidate.evidence_summary),
+    visualMarketRecaptureRecoveryVersion:
+      VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION,
+    visualMarketRecaptureRequestedAt: input.now.toISOString(),
+    visualMarketEvidenceStatus: "RECAPTURE_REQUIRED",
+    visualMarketEvidenceReason: input.errorCode,
+    supersededVisualCaptureBatchId: priorCaptureBatchId,
+    requiredVisualPatternSchemaVersion:
+      PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION,
+    requiredVisualPatternAlgorithmVersion:
+      PRODUCT_RESEARCH_VISUAL_PATTERN_ALGORITHM_VERSION,
+    requiredVisualMarketBriefVersion: VISUAL_MARKET_BRIEF_VERSION,
+    commercialEvidencePreserved: true,
+    productFactsPreserved: true,
+    productApprovalPreservedForRevalidation: true,
+    fullCatalogRescan: false,
+  }
+  const imageSummary = {
+    ...record(input.candidate.image_package_summary),
+    status: "WAITING_VISUAL_MARKET_RECAPTURE",
+    approved: false,
+    regenerationReason: "VISUAL_MARKET_EVIDENCE_REQUIRED",
+    openAiCalls: 0,
+    ebayWrites: 0,
+  }
+  // Persist the recovery marker before the state transition. If the worker
+  // loses its lease between calls, bootstrap can still recreate the exact
+  // visual task instead of falling back to a generic commercial recapture.
+  const { error: markerError } = await input.supabase
+    .from("ebay_same_day_pilot_candidates")
+    .update({
+      evidence_summary: evidenceSummary,
+      image_package_summary: imageSummary,
+      next_automated_action:
+        "Validar la nueva evidencia visual y continuar desde el paquete conservado.",
+      next_human_action:
+        "Recapturar una sola vez la consulta Product Research preparada.",
+      updated_at: input.now.toISOString(),
+    })
+    .eq("id", candidateId)
+    .eq("run_id", input.state.run.id)
+    .eq("machine_state", input.previousState)
+  if (markerError) {
+    throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_MARKER_FAILED")
+  }
+
+  await transition({
+    supabase: input.supabase,
+    runId: input.state.run.id,
+    candidateId,
+    previousState: input.previousState,
+    nextState: "WAITING_PRODUCT_RESEARCH_CAPTURE",
+    reasonCode: "VISUAL_MARKET_RECAPTURE_REQUIRED",
+    triggeredBy: "RETRY",
+    checkpoint: {
+      recoveryVersion: VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION,
+      previousErrorCode: input.errorCode,
+      supersededCaptureBatchId: priorCaptureBatchId,
+      productResearchPlanId: queryPlan.planId,
+      productResearchQueryTaskId: queryPlan.taskId,
+      factRunId: facts.factRunId ?? null,
+      packageHash: handoff.packageHash ?? null,
+      commercialEvidencePreserved: true,
+      productFactsPreserved: true,
+      productApprovalPreservedForRevalidation: true,
+      fullCatalogRescan: false,
+      openAiCalls: 0,
+      ebayWrites: 0,
+      productionChanged: false,
+    },
+    nextAutomaticAction:
+      "Validar la nueva evidencia visual y continuar desde el paquete conservado.",
+    nextHumanAction:
+      "Recapturar una sola vez la consulta Product Research preparada.",
+  })
+  const { error: candidateError } = await input.supabase
+    .from("ebay_same_day_pilot_candidates")
+    .update({
+      state: "NEEDS_PRODUCT_RESEARCH_CAPTURE",
+      blockers: ["VISUAL_MARKET_EVIDENCE_REQUIRED"],
+      product_research_capture_batch_id: null,
+      evidence_summary: evidenceSummary,
+      image_package_summary: imageSummary,
+      updated_at: input.now.toISOString(),
+    })
+    .eq("id", candidateId)
+    .eq("run_id", input.state.run.id)
+    .eq("machine_state", "WAITING_PRODUCT_RESEARCH_CAPTURE")
+  if (candidateError) {
+    throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_CANDIDATE_UPDATE_FAILED")
+  }
+
+  await bootstrapCandidate(input.supabase, input.state.run.id, {
+    ...input.candidate,
+    machine_state: "WAITING_PRODUCT_RESEARCH_CAPTURE",
+    state: "NEEDS_PRODUCT_RESEARCH_CAPTURE",
+    blockers: ["VISUAL_MARKET_EVIDENCE_REQUIRED"],
+    product_research_capture_batch_id: null,
+    evidence_summary: evidenceSummary,
+    image_package_summary: imageSummary,
+  })
+  const { error: eventError } = await input.supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({
+      run_id: input.state.run.id,
+      candidate_id: candidateId,
+      event_type: "VISUAL_MARKET_RECAPTURE_REQUIRED",
+      event_payload: {
+        recoveryVersion: VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION,
+        previousErrorCode: input.errorCode,
+        supersededCaptureBatchId: priorCaptureBatchId,
+        productResearchPlanId: queryPlan.planId,
+        productResearchQueryTaskId: queryPlan.taskId,
+        commercialEvidencePreserved: true,
+        productFactsPreserved: true,
+        productApprovalPreservedForRevalidation: true,
+        requestedAt: input.now.toISOString(),
+        historyDeleted: false,
+      },
+      idempotency_key:
+        `${input.state.run.id}:${candidateId}:${VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION}`,
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) {
+    throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_EVENT_FAILED")
+  }
+  return { priorCaptureBatchId, queryPlan }
+}
+
+async function repairRejectedVisualMarketRecapture(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const candidate = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .find((entry) => {
+      const blockers = strings(entry.blockers)
+      return entry.machine_state === "REJECTED" &&
+        entry.state === "REJECTED_TODAY" &&
+        blockers.length === 1 &&
+        VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(blockers[0])
+    })
+  if (!candidate) return 0
+  const { data: imageJobs, error: imageJobsError } = await supabase
+    .from("ebay_same_day_pilot_jobs")
+    .select("id,status,last_error_code,checkpoint")
+    .eq("run_id", state.run.id)
+    .eq("candidate_id", candidate.id)
+    .eq("job_type", "GENERATE_SIX_IMAGE_PACKAGE")
+    .in("status", ["DEAD_LETTER", "CANCELLED"])
+    .order("created_at", { ascending: false })
+  if (imageJobsError) {
+    throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_IMAGE_JOB_READ_FAILED")
+  }
+  const failedJob = (imageJobs ?? []).find((job) => {
+    const recovery = record(record(job.checkpoint)._visualMarketRecaptureRecovery)
+    return VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(text(job.last_error_code)) ||
+      VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(text(recovery.previousErrorCode))
+  })
+  if (!failedJob) return 0
+
+  await routeCandidateToVisualMarketRecapture({
+    supabase,
+    state,
+    candidate: record(candidate),
+    previousState: "REJECTED",
+    errorCode: VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(
+      text(failedJob.last_error_code),
+    )
+      ? text(failedJob.last_error_code)
+      : text(record(record(failedJob.checkpoint)._visualMarketRecaptureRecovery)
+        .previousErrorCode),
+    now,
+  })
+  if (failedJob.status === "DEAD_LETTER") {
+    const { error } = await supabase.from("ebay_same_day_pilot_jobs")
+      .update({
+        status: "CANCELLED",
+        last_error_code: "SUPERSEDED_BY_VISUAL_MARKET_RECAPTURE",
+        checkpoint: {
+          ...record(failedJob.checkpoint),
+          _visualMarketRecaptureRecovery: {
+            version: VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION,
+            previousErrorCode: text(failedJob.last_error_code),
+            recoveredAt: now.toISOString(),
+            historyDeleted: false,
+          },
+        },
+        updated_at: now.toISOString(),
+      })
+      .eq("id", failedJob.id)
+      .eq("status", "DEAD_LETTER")
+    if (error) {
+      throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_DEAD_LETTER_CANCEL_FAILED")
+    }
+  }
+  await refreshRunProjection(supabase, state.run.id)
+  return 1
+}
+
 async function repairOrphanedImagePreparation(
   supabase: SupabaseClient,
   state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
@@ -4613,6 +5012,18 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
   if (repaired) {
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
     if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
+  }
+  const visualMarketRecapturesRecovered =
+    await repairRejectedVisualMarketRecapture(input.supabase, state, now)
+  if (visualMarketRecapturesRecovered) {
+    await refreshRunProjection(input.supabase, state.run.id, true)
+    return {
+      processed: 1,
+      status: "COMPLETED",
+      jobType: "RECOVER_VISUAL_MARKET_RECAPTURE",
+      visualMarketRecapturesRecovered,
+      ebayWrites: 0,
+    }
   }
   const orphanedImagePreparationsRecovered =
     await repairOrphanedImagePreparation(input.supabase, state, now)
@@ -5624,6 +6035,33 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     return { processed: 1, status: "COMPLETED", jobType: leased.job_type }
   } catch (error) {
     const code = error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message) ? error.message : "SAME_DAY_PILOT_JOB_FAILED"
+    if (leased.job_type === "GENERATE_SIX_IMAGE_PACKAGE" &&
+      VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(code)) {
+      await routeCandidateToVisualMarketRecapture({
+        supabase: input.supabase,
+        state,
+        candidate: record(candidate),
+        previousState: "PREPARING_IMAGE_PACKAGE",
+        errorCode: code,
+        now,
+      })
+      await settlePilotJob({
+        supabase: input.supabase,
+        job: record(leased),
+        workerId: input.workerId,
+        status: "COMPLETED",
+        errorCode: "VISUAL_MARKET_RECAPTURE_REQUIRED",
+      })
+      await refreshRunProjection(input.supabase, state.run.id, true)
+      return {
+        processed: 1,
+        status: "COMPLETED",
+        jobType: leased.job_type,
+        waitingFor: "VISUAL_PRODUCT_RESEARCH_RECAPTURE",
+        error: code,
+        ebayWrites: 0,
+      }
+    }
     const rateLimitMetadata = getEbayReadonlyRateLimitMetadata(error)
     const rateLimited = Boolean(rateLimitMetadata) || /429|QUOTA_PAUSED/.test(code)
     const canRetry = rateLimited || (retryable(code) && Number(leased.attempt) < Number(leased.max_attempts))
