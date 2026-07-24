@@ -208,8 +208,11 @@ export async function GET(req: Request) {
     const imageFactoryConfiguration = getListingImageFactoryConfiguration()
     const productResearchPlanId = typeof pilot?.run?.source_inventory?.productResearchPlanId === "string"
       ? pilot.run.source_inventory.productResearchPlanId : null
-    const productResearchTaskOpen = pilot?.tasks?.some((task) =>
-      task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" && task.status === "OPEN") === true
+    const productResearchTask = pilot?.tasks?.find((task) =>
+      task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" && task.status === "OPEN")
+    const productResearchTaskOpen = Boolean(productResearchTask)
+    const preferredProductResearchQuery =
+      object(productResearchTask?.action_schema).query
     let productResearchGuidance: Record<string, unknown> | null = null
     if (productResearchPlanId && productResearchTaskOpen) {
       try {
@@ -217,6 +220,7 @@ export async function GET(req: Request) {
           supabase: access.supabase,
           accountKey: access.accountKey,
           planId: productResearchPlanId,
+          preferredSearchQuery: preferredProductResearchQuery,
         })
         productResearchGuidance = plan ? {
           status: plan.status,

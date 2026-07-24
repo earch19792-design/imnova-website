@@ -38,21 +38,38 @@ function object(value: unknown): Record<string, unknown> {
     ? value as Record<string, unknown> : {}
 }
 
-async function currentPilotProductResearchPlanId(input: {
+async function currentPilotProductResearchCaptureContext(input: {
   supabase: Parameters<typeof getSameDayPilot>[0]["supabase"]
   accountKey: string
 }) {
   const pilot = await getSameDayPilot(input)
   if (!pilot) return null
-  const productResearchTaskOpen = pilot.tasks.some((task) =>
+  const productResearchTask = pilot.tasks.find((task) =>
     task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" && task.status === "OPEN")
-  if (!productResearchTaskOpen) return null
+  if (!productResearchTask) return null
+  const candidate = pilot.candidates.find((entry) =>
+    entry.id === productResearchTask.candidate_id)
+  if (!candidate) throw new Error("PRODUCT_RESEARCH_ACTIVE_PILOT_CANDIDATE_REQUIRED")
   const planId = object(pilot.run.source_inventory).productResearchPlanId
   if (typeof planId !== "string" ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(planId)) {
     throw new Error("PRODUCT_RESEARCH_ACTIVE_PILOT_PLAN_REQUIRED")
   }
-  return planId
+  const candidatePlan = object(candidate.product_research_query_plan)
+  if (candidatePlan.productResearchPlanId !== planId) {
+    throw new Error("PRODUCT_RESEARCH_ACTIVE_PILOT_PLAN_BINDING_MISMATCH")
+  }
+  const taskQuery = object(productResearchTask.action_schema).query
+  const candidateQuery = candidatePlan.query
+  const requiredSearchQuery = typeof taskQuery === "string"
+    ? taskQuery.trim().slice(0, 100)
+    : typeof candidateQuery === "string"
+      ? candidateQuery.trim().slice(0, 100)
+      : ""
+  if (requiredSearchQuery.length < 3) {
+    throw new Error("PRODUCT_RESEARCH_ACTIVE_PILOT_QUERY_REQUIRED")
+  }
+  return { planId, requiredSearchQuery }
 }
 
 function scheduleSameDayPilotContinuation(input: {
@@ -100,7 +117,7 @@ export async function GET(req: Request) {
   if (!auth.ok) return auth.response
   try {
     enforceListingAiRouteRateLimit(auth.actorId, "READ")
-    const pilotPlanId = await currentPilotProductResearchPlanId({
+    const pilotContext = await currentPilotProductResearchCaptureContext({
       supabase: auth.supabase, accountKey: auth.accountKey,
     })
     const [status, queryPlan, browseQuota, visual] = await Promise.all([
@@ -108,7 +125,9 @@ export async function GET(req: Request) {
         supabase: auth.supabase, accountKey: auth.accountKey,
       }),
       getProductResearchQueryPlanStatus({
-        supabase: auth.supabase, accountKey: auth.accountKey, planId: pilotPlanId,
+        supabase: auth.supabase, accountKey: auth.accountKey,
+        planId: pilotContext?.planId,
+        preferredSearchQuery: pilotContext?.requiredSearchQuery,
       }),
       getEbayApplicationBrowseQuota(),
       visualStatusOrUnavailable({
@@ -133,14 +152,15 @@ export async function POST(req: Request) {
       throw new Error("PRODUCT_RESEARCH_CAPTURE_BODY_INVALID")
     }
     const capture = body.capture as ProductResearchBrowserCapture
-    const pilotPlanId = await currentPilotProductResearchPlanId({
+    const pilotContext = await currentPilotProductResearchCaptureContext({
       supabase: auth.supabase, accountKey: auth.accountKey,
     })
     let plannedTask: Awaited<ReturnType<typeof assertProductResearchCaptureMatchesNextQuery>>
     try {
       plannedTask = await assertProductResearchCaptureMatchesNextQuery({
         supabase: auth.supabase, accountKey: auth.accountKey,
-        searchQuery: capture.searchQuery, planId: pilotPlanId,
+        searchQuery: capture.searchQuery, planId: pilotContext?.planId,
+        requiredSearchQuery: pilotContext?.requiredSearchQuery,
       })
     } catch (planError) {
       const code = planError instanceof Error ? planError.message : ""
@@ -151,7 +171,9 @@ export async function POST(req: Request) {
       let queryPlan: Awaited<ReturnType<typeof getProductResearchQueryPlanStatus>> = null
       try {
         queryPlan = await getProductResearchQueryPlanStatus({
-          supabase: auth.supabase, accountKey: auth.accountKey, planId: pilotPlanId,
+          supabase: auth.supabase, accountKey: auth.accountKey,
+          planId: pilotContext?.planId,
+          preferredSearchQuery: pilotContext?.requiredSearchQuery,
         })
       } catch {
         throw planError

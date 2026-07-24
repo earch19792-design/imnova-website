@@ -59,6 +59,7 @@ import {
   VISUAL_MARKET_BRIEF_VERSION,
 } from "./ebay-product-research-visual-pattern"
 import {
+  markProductResearchQueryCaptured,
   productResearchPlannedQueryHash,
   productResearchQueriesMatch,
   skipProductResearchQuery,
@@ -2169,6 +2170,21 @@ async function repairSameDayPilotBootstrap(
     if (projectionError) throw new Error("SAME_DAY_PILOT_QUEUE_PROJECTION_REPAIR_FAILED")
     repaired = true
     activeState = await currentState(supabase, accountKey, text(state.run.operation_date))
+    if (!activeState) return repaired
+  }
+  const deferredVisualQueryTasksRestored =
+    await restoreDeferredLegacyVisualMarketRecoveryQueryTasks(
+      supabase,
+      activeState,
+      new Date(),
+    )
+  if (deferredVisualQueryTasksRestored > 0) {
+    repaired = true
+    activeState = await currentState(
+      supabase,
+      accountKey,
+      text(state.run.operation_date),
+    )
     if (!activeState) return repaired
   }
   // A capture is durable before the Same-Day transition is attempted. If an
@@ -4825,6 +4841,109 @@ function isDeferredLegacyVisualMarketRecovery(candidate: JsonRecord) {
     text(evidence.visualMarketEvidenceReason) ===
       "SAME_DAY_IMAGE_MARKET_BRIEF_REQUIRED" &&
     text(evidence.visualMarketRecaptureRecoveryOrigin) !== "ACTIVE_IMAGE_JOB"
+}
+
+async function restoreDeferredLegacyVisualMarketRecoveryQueryTasks(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  // A current image-job failure has priority. Historical visual-v1 candidates
+  // remain available for later review, but their original PROCESSED query
+  // tasks must not stay PENDING and consume the visible candidate's capture.
+  if (!visualMarketRecoveryPriorityCandidate(state)) return 0
+  const bindings = state.candidates.flatMap((candidate) => {
+    if (!isDeferredLegacyVisualMarketRecovery(record(candidate)) ||
+      text(candidate.machine_state) !== "WAITING_PRODUCT_RESEARCH_CAPTURE" ||
+      text(candidate.product_research_capture_batch_id)) return []
+    const candidatePlan = record(candidate.product_research_query_plan)
+    const planId = text(candidatePlan.productResearchPlanId)
+    const plannedQuery = text(candidatePlan.query, 100)
+    const priorCaptureBatchId = text(
+      record(candidate.evidence_summary).supersededVisualCaptureBatchId,
+    )
+    if (!/^[0-9a-f-]{36}$/i.test(planId) ||
+      !/^[0-9a-f-]{36}$/i.test(priorCaptureBatchId) ||
+      !plannedQuery) return []
+    return [{
+      candidateId: text(candidate.id),
+      planId,
+      queryHash: productResearchPlannedQueryHash(plannedQuery),
+      priorCaptureBatchId,
+    }]
+  })
+  if (!bindings.length) return 0
+  const planIds = [...new Set(bindings.map((binding) => binding.planId))]
+  const batchIds = [...new Set(bindings.map((binding) =>
+    binding.priorCaptureBatchId))]
+  const accountKey = text(state.run.marketplace_account_key)
+  const [{ data: tasks, error: taskError }, { data: batches, error: batchError }] =
+    await Promise.all([
+      supabase.from("marketplace_product_research_query_tasks")
+        .select("id,plan_id,query_hash,status")
+        .eq("marketplace_account_key", accountKey)
+        .eq("marketplace", MARKETPLACE)
+        .in("plan_id", planIds)
+        .eq("status", "PENDING"),
+      supabase.from("marketplace_product_research_capture_batches")
+        .select("id,captured_at,search_query_hash")
+        .eq("marketplace_account_key", accountKey)
+        .eq("marketplace", MARKETPLACE)
+        .in("id", batchIds),
+    ])
+  if (taskError || batchError) {
+    throw new Error("SAME_DAY_PILOT_DEFERRED_VISUAL_QUERY_RESTORE_READ_FAILED")
+  }
+  const batchesById = new Map((batches ?? []).map((batch) => [
+    text(batch.id),
+    batch,
+  ]))
+  let restored = 0
+  for (const binding of bindings) {
+    const task = (tasks ?? []).find((entry) =>
+      text(entry.plan_id) === binding.planId &&
+      text(entry.query_hash) === binding.queryHash)
+    const batch = batchesById.get(binding.priorCaptureBatchId)
+    const capturedAt = new Date(text(batch?.captured_at))
+    if (!task || text(batch?.search_query_hash) !== binding.queryHash ||
+      !Number.isFinite(capturedAt.getTime())) continue
+    await markProductResearchQueryCaptured({
+      supabase,
+      accountKey,
+      searchQueryHash: binding.queryHash,
+      captureBatchId: binding.priorCaptureBatchId,
+      planId: binding.planId,
+      taskId: text(task.id),
+      capturedAt,
+      now,
+    })
+    const { error: eventError } = await supabase
+      .from("ebay_same_day_pilot_events")
+      .upsert({
+        run_id: state.run.id,
+        candidate_id: binding.candidateId,
+        event_type: "DEFERRED_VISUAL_QUERY_TASK_RESTORED",
+        event_payload: {
+          recoveryVersion: VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION,
+          queryTaskId: task.id,
+          restoredCaptureBatchId: binding.priorCaptureBatchId,
+          deferredBehindCandidateId:
+            visualMarketRecoveryPriorityCandidate(state)?.id ?? null,
+          historyDeleted: false,
+        },
+        idempotency_key:
+          `${state.run.id}:${binding.candidateId}:DEFERRED_VISUAL_QUERY_RESTORE:${task.id}`,
+        ebay_read_calls: 0,
+        openai_calls: 0,
+        ebay_writes: 0,
+        production_changed: false,
+      }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+    if (eventError) {
+      throw new Error("SAME_DAY_PILOT_DEFERRED_VISUAL_QUERY_RESTORE_EVENT_FAILED")
+    }
+    restored += 1
+  }
+  return restored
 }
 
 async function supersedeLaterTasksForVisualMarketRecovery(

@@ -292,6 +292,7 @@ export async function getProductResearchQueryPlanStatus(input: {
   accountKey: string
   runId?: string | null
   planId?: string | null
+  preferredSearchQuery?: unknown
 }) {
   let query = input.supabase.from("marketplace_product_research_query_plans")
     .select("id,run_id,plan_version,status,query_count,candidate_count,created_at,completed_at")
@@ -304,11 +305,20 @@ export async function getProductResearchQueryPlanStatus(input: {
   if (!plan) return null
   const { data: tasks, error: taskError } = await input.supabase
     .from("marketplace_product_research_query_tasks")
-    .select("id,ordinal,search_query,category_id,candidate_count,status,captured_at,processed_at")
+    .select("id,ordinal,search_query,query_hash,category_id,candidate_count,status,captured_at,processed_at")
     .eq("plan_id", plan.id).eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", "EBAY_US").order("ordinal", { ascending: true })
   if (taskError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_STATUS_READ_FAILED")
-  const pending = (tasks ?? []).find((task) => task.status === "PENDING") ?? null
+  const preferredQueryHash = text(input.preferredSearchQuery, 100)
+    ? productResearchPlannedQueryHash(input.preferredSearchQuery)
+    : null
+  // The visible Same-Day human gate is the authority. Recovery can leave a
+  // lower-ordinal historical task pending in the same durable plan; it must
+  // never replace the exact product currently shown to the operator.
+  const pending = preferredQueryHash
+    ? (tasks ?? []).find((task) =>
+      task.status === "PENDING" && task.query_hash === preferredQueryHash) ?? null
+    : (tasks ?? []).find((task) => task.status === "PENDING") ?? null
   const taskCounts = summarizeProductResearchQueryTaskStatuses(
     (tasks ?? []).map((task) => task.status),
   )
@@ -423,7 +433,11 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
   accountKey: string
   searchQuery: unknown
   planId?: string | null
+  requiredSearchQuery?: unknown
 }) {
+  const requiredQueryHash = text(input.requiredSearchQuery, 100)
+    ? productResearchPlannedQueryHash(input.requiredSearchQuery)
+    : null
   const processedReplayForPlan = async (plan: { id: string; run_id: string | null }) => {
     const { data: processedTasks, error: processedError } = await input.supabase
       .from("marketplace_product_research_query_tasks")
@@ -432,8 +446,11 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
       .eq("marketplace", "EBAY_US").eq("status", "PROCESSED")
       .not("capture_batch_id", "is", null).order("ordinal", { ascending: false })
     if (processedError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_STATUS_READ_FAILED")
-    const replay = (processedTasks ?? []).find((processed) =>
-      productResearchQueriesMatch(input.searchQuery, processed.search_query))
+    const replay = requiredQueryHash
+      ? (processedTasks ?? []).find((processed) =>
+        processed.query_hash === requiredQueryHash)
+      : (processedTasks ?? []).find((processed) =>
+        productResearchQueriesMatch(input.searchQuery, processed.search_query))
     if (!replay?.capture_batch_id) return null
     return {
       planId: plan.id,
@@ -488,13 +505,17 @@ export async function assertProductResearchCaptureMatchesNextQuery(input: {
     if (!completedPlan) return null
     return await processedReplayForPlan(completedPlan)
   }
-  const { data: task, error: taskError } = await input.supabase
+  const { data: pendingTasks, error: taskError } = await input.supabase
     .from("marketplace_product_research_query_tasks")
     .select("id,ordinal,search_query,query_hash,category_id")
     .eq("plan_id", plan.id).eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", "EBAY_US").eq("status", "PENDING")
-    .order("ordinal", { ascending: true }).limit(1).maybeSingle()
+    .order("ordinal", { ascending: true })
   if (taskError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_STATUS_READ_FAILED")
+  const task = requiredQueryHash
+    ? (pendingTasks ?? []).find((entry) =>
+      entry.query_hash === requiredQueryHash) ?? null
+    : pendingTasks?.[0] ?? null
   if (!task) {
     const replay = await processedReplayForPlan(plan)
     if (replay) return replay
@@ -531,9 +552,11 @@ export async function markProductResearchQueryCaptured(input: {
   captureBatchId: string
   planId?: string | null
   taskId?: string | null
+  capturedAt?: Date
   now?: Date
 }) {
   const now = (input.now ?? new Date()).toISOString()
+  const capturedAt = (input.capturedAt ?? input.now ?? new Date()).toISOString()
   let planId = input.planId ?? null
   if (!planId) {
     const { data: plan, error: planError } = await input.supabase
@@ -547,7 +570,7 @@ export async function markProductResearchQueryCaptured(input: {
   if (!planId) return null
   const settledPlanId = planId
   const patch = { status: "PROCESSED", capture_batch_id: input.captureBatchId,
-    captured_at: now, processed_at: now, last_error_code: null, updated_at: now }
+    captured_at: capturedAt, processed_at: now, last_error_code: null, updated_at: now }
   if (input.taskId) {
     const { data: updated, error: updateError } = await input.supabase
       .from("marketplace_product_research_query_tasks").update(patch)
