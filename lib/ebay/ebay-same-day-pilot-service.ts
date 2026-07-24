@@ -124,6 +124,9 @@ const VISUAL_MARKET_RECAPTURE_ERROR_CODES = new Set([
   "MARKET_VISUAL_SIGNALS_INSUFFICIENT",
   "SAME_DAY_IMAGE_MARKET_BRIEF_REQUIRED",
 ])
+const VISUAL_MARKET_BACKGROUND_RECAPTURE_ERROR_CODES = new Set([
+  "MARKET_VISUAL_SIGNALS_INSUFFICIENT",
+])
 const VISUAL_MARKET_RECAPTURE_UNBOUND_CANDIDATE_CODES = new Set([
   "SAME_DAY_PILOT_VISUAL_RECAPTURE_CAPTURE_BINDING_MISSING",
   "SAME_DAY_PILOT_VISUAL_RECAPTURE_PLAN_BINDING_MISSING",
@@ -2210,10 +2213,10 @@ async function repairSameDayPilotBootstrap(
     if (["REJECTED", "BLOCKED", "READY_FOR_MANUAL_PUBLICATION", "VERIFIED_ACTIVE", "COMPLETED"]
       .includes(machineState)) return false
     if (priorityVisualRecovery &&
-      text(candidate.id) !== text(priorityVisualRecovery.id) &&
-      Number(candidate.ordinal) > Number(priorityVisualRecovery.ordinal)) {
+      text(candidate.id) !== text(priorityVisualRecovery.id)) {
       return false
     }
+    if (isDeferredLegacyVisualMarketRecovery(candidate)) return false
     if (bootstrapStates.includes(machineState)) return true
     const expectedGate = gateByState[machineState]
     return Boolean(expectedGate && !activeState.tasks.some((task) =>
@@ -4626,6 +4629,7 @@ async function routeCandidateToVisualMarketRecapture(input: {
   candidate: JsonRecord
   previousState: string
   errorCode: string
+  recoveryOrigin: "ACTIVE_IMAGE_JOB" | "REJECTED_HISTORY_REPAIR"
   now: Date
 }) {
   if (!VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(input.errorCode)) {
@@ -4652,6 +4656,7 @@ async function routeCandidateToVisualMarketRecapture(input: {
     visualMarketRecaptureRecoveryVersion:
       VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION,
     visualMarketRecaptureRequestedAt: input.now.toISOString(),
+    visualMarketRecaptureRecoveryOrigin: input.recoveryOrigin,
     visualMarketEvidenceStatus: "RECAPTURE_REQUIRED",
     visualMarketEvidenceReason: input.errorCode,
     supersededVisualCaptureBatchId: priorCaptureBatchId,
@@ -4705,6 +4710,7 @@ async function routeCandidateToVisualMarketRecapture(input: {
     checkpoint: {
       recoveryVersion: VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION,
       previousErrorCode: input.errorCode,
+      recoveryOrigin: input.recoveryOrigin,
       supersededCaptureBatchId: priorCaptureBatchId,
       productResearchPlanId: queryPlan.planId,
       productResearchQueryTaskId: queryPlan.taskId,
@@ -4758,6 +4764,7 @@ async function routeCandidateToVisualMarketRecapture(input: {
       event_payload: {
         recoveryVersion: VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION,
         previousErrorCode: input.errorCode,
+        recoveryOrigin: input.recoveryOrigin,
         supersededCaptureBatchId: priorCaptureBatchId,
         productResearchPlanId: queryPlan.planId,
         productResearchQueryTaskId: queryPlan.taskId,
@@ -4784,14 +4791,40 @@ function visualMarketRecoveryPriorityCandidate(
   state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
 ) {
   return [...state.candidates]
-    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
-    .find((candidate) => {
+    .filter((candidate) => {
       const evidence = record(candidate.evidence_summary)
       return text(evidence.visualMarketRecaptureRecoveryVersion) ===
         VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION &&
+        (text(evidence.visualMarketEvidenceReason) ===
+          "MARKET_VISUAL_SIGNALS_INSUFFICIENT" ||
+          text(evidence.visualMarketRecaptureRecoveryOrigin) ===
+            "ACTIVE_IMAGE_JOB") &&
         !["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"]
           .includes(text(candidate.machine_state))
-    }) ?? null
+    })
+    .sort((left, right) => {
+      const leftRequestedAt = Date.parse(text(
+        record(left.evidence_summary).visualMarketRecaptureRequestedAt,
+      ))
+      const rightRequestedAt = Date.parse(text(
+        record(right.evidence_summary).visualMarketRecaptureRequestedAt,
+      ))
+      if (Number.isFinite(leftRequestedAt) &&
+        Number.isFinite(rightRequestedAt) &&
+        leftRequestedAt !== rightRequestedAt) {
+        return leftRequestedAt - rightRequestedAt
+      }
+      return Number(left.ordinal) - Number(right.ordinal)
+    })[0] ?? null
+}
+
+function isDeferredLegacyVisualMarketRecovery(candidate: JsonRecord) {
+  const evidence = record(candidate.evidence_summary)
+  return text(evidence.visualMarketRecaptureRecoveryVersion) ===
+    VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION &&
+    text(evidence.visualMarketEvidenceReason) ===
+      "SAME_DAY_IMAGE_MARKET_BRIEF_REQUIRED" &&
+    text(evidence.visualMarketRecaptureRecoveryOrigin) !== "ACTIVE_IMAGE_JOB"
 }
 
 async function supersedeLaterTasksForVisualMarketRecovery(
@@ -4808,15 +4841,15 @@ async function supersedeLaterTasksForVisualMarketRecovery(
       VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(text(entry.reason_code)))
     .map((entry) => Date.parse(text(entry.created_at)))
     .filter(Number.isFinite))
-  const laterCandidateIds = new Set(state.candidates
+  const competingCandidateIds = new Set(state.candidates
     .filter((candidate) =>
-      Number(candidate.ordinal) > Number(priority.ordinal))
+      text(candidate.id) !== text(priority.id))
     .map((candidate) => text(candidate.id))
     .filter(Boolean))
   const deferredTasks = state.tasks.filter((task) =>
     task.status === "OPEN" &&
     task.gate_type !== "CRITICAL_EXCEPTION_REQUIRED" &&
-    laterCandidateIds.has(text(task.candidate_id)) &&
+    competingCandidateIds.has(text(task.candidate_id)) &&
     Date.parse(text(task.created_at)) >= visualFailureAt)
   const taskIds = deferredTasks.map((task) => text(task.id)).filter(Boolean)
   if (!taskIds.length) return []
@@ -4864,6 +4897,7 @@ async function repairRejectedVisualMarketRecapture(
   state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
   now: Date,
 ) {
+  if (visualMarketRecoveryPriorityCandidate(state)) return 0
   const candidates = [...state.candidates]
     .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
     .filter((entry) => {
@@ -4871,7 +4905,7 @@ async function repairRejectedVisualMarketRecapture(
       return entry.machine_state === "REJECTED" &&
         entry.state === "REJECTED_TODAY" &&
         blockers.length === 1 &&
-        VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(blockers[0])
+        VISUAL_MARKET_BACKGROUND_RECAPTURE_ERROR_CODES.has(blockers[0])
     })
   for (const candidate of candidates) {
     const { data: imageJobs, error: imageJobsError } = await supabase
@@ -4905,6 +4939,7 @@ async function repairRejectedVisualMarketRecapture(
         state,
         candidate: record(candidate),
         previousState: "REJECTED",
+        recoveryOrigin: "REJECTED_HISTORY_REPAIR",
         errorCode: VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(
           text(failedJob.last_error_code),
         )
@@ -6200,6 +6235,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
         candidate: record(candidate),
         previousState: "PREPARING_IMAGE_PACKAGE",
         errorCode: code,
+        recoveryOrigin: "ACTIVE_IMAGE_JOB",
         now,
       })
       await settlePilotJob({
