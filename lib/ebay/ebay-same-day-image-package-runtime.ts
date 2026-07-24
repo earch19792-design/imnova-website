@@ -2,8 +2,12 @@ import { createHash, randomUUID } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
-// @ts-expect-error Node's native TypeScript tests need the explicit extension.
-import { assertStoredSameDayImageSetQaPassed, currentAttemptPublicObjects } from "./ebay-image-approval-policy.ts"
+import {
+  assertStoredSameDayImageSetQaPassed,
+  currentAttemptPublicObjects,
+  hasReviewableSameDaySecondaryAssetContracts,
+  isReviewableDeterministicSingleSourceInformationalSet,
+} from "./ebay-image-approval-policy"
 import sharp from "sharp"
 
 import {
@@ -879,20 +883,10 @@ export async function reviewSameDayImagePackage(input: {
     const secondaryForegroundsValid = assets
       .filter((asset) => record(asset.transformation).slot !==
         "MAIN_WHITE_BACKGROUND")
-      .every((asset) => {
-        const transformation = record(asset.transformation)
-        const qa = record(asset.qa_result)
-        return transformation.authorizedSourceTreatment ===
-            "LOCAL_AUTHORIZED_FOREGROUND" &&
-          transformation.foregroundMatteVersion ===
-            EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION &&
-          qa.foregroundMatteValidated === true &&
-          qa.opaqueSourceFrameRemoved === true &&
-          qa.textSafeAreaVerified === true &&
-          transformation.textRendererVersion ===
-            EBAY_IMAGE_TEXT_RENDERER_VERSION &&
-          qa.textGlyphsValidated === true
-      })
+      .every((asset) => hasReviewableSameDaySecondaryAssetContracts(asset, {
+        foregroundMatteVersion: EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION,
+        textRendererVersion: EBAY_IMAGE_TEXT_RENDERER_VERSION,
+      }))
     const generated = transformations.filter((transformation) =>
       transformation.generativeAiUsed === true)
     const aiBoardSet = generated.length === 5 && transformations.every((transformation) =>
@@ -909,7 +903,15 @@ export async function reviewSameDayImagePackage(input: {
           EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION &&
         transformation.presentationMode === "AUTHORIZED_MULTI_SOURCE") &&
       secondaryForegroundsValid
-    if (!aiBoardSet && !deterministicMultiSourceSet) {
+    const deterministicSingleSourceInformationalSet =
+      isReviewableDeterministicSingleSourceInformationalSet(assets, {
+        compositorContractVersion: EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
+        foregroundMatteVersion: EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION,
+        textRendererVersion: EBAY_IMAGE_TEXT_RENDERER_VERSION,
+        slots: EBAY_LISTING_IMAGE_SLOTS,
+      })
+    if (!aiBoardSet && !deterministicMultiSourceSet &&
+      !deterministicSingleSourceInformationalSet) {
       throw new Error("SAME_DAY_IMAGE_LEGACY_SET_REGENERATION_REQUIRED")
     }
   }
