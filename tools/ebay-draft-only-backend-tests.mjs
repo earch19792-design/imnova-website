@@ -96,6 +96,10 @@ const v3PublicationPreviewMigrationSource = readFileSync(
   new URL("../supabase/migrations/20260724001000_support_v3_authorized_publication_preview.sql", import.meta.url),
   "utf8",
 )
+const v3PublicationClaimMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260724002000_support_v3_publication_claim_image_gate.sql", import.meta.url),
+  "utf8",
+)
 
 async function importTypeScript(source) {
   const javascript = ts.transpileModule(source, {
@@ -2003,4 +2007,31 @@ test("V3 final publication persists the exact seven-image authority and preserve
     /databaseExceptionCode\([\s\S]*EBAY_FINAL_PUBLICATION_PREVIEW_PERSIST_FAILED/,
   )
   assert.match(workspaceSource, /siete imágenes V3/)
+})
+
+test("V3 final publication claim validates the append-only seven-image chain", () => {
+  assert.match(
+    v3PublicationClaimMigrationSource,
+    /assert_ebay_authorized_publication_image_set_high_quality/,
+  )
+  assert.match(
+    v3PublicationClaimMigrationSource,
+    /v_transport\.assets is distinct from v_assets/,
+  )
+  assert.match(
+    v3PublicationClaimMigrationSource,
+    /v_final\.selected_assets is distinct from v_review_assets/,
+  )
+  assert.match(
+    v3PublicationClaimMigrationSource,
+    /object\.metadata->>'size' = asset->>'bytes'/,
+  )
+  assert.match(
+    v3PublicationClaimMigrationSource,
+    /perform public\.assert_ebay_publish_image_set_high_quality/,
+  )
+  assert.match(
+    routeSource,
+    /databaseExceptionCode\([\s\S]*EBAY_FINAL_PUBLICATION_CLAIM_FAILED/,
+  )
 })

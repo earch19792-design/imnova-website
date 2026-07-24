@@ -2039,7 +2039,10 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     })
     .single()
   if (claimError || !claimed) {
-    return jsonError(new Error("EBAY_FINAL_PUBLICATION_CLAIM_FAILED"), 409)
+    return jsonError(new Error(databaseExceptionCode(
+      claimError,
+      "EBAY_FINAL_PUBLICATION_CLAIM_FAILED",
+    )), 409)
   }
   const claimedPublication = record(claimed)
   if (text(claimedPublication.phase) !== "publish_in_flight") {
