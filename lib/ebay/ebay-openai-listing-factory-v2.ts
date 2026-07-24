@@ -13,7 +13,7 @@ export const LISTING_AI_SCHEMA_VERSION = "EBAY_LISTING_AI_OUTPUT_V2_1"
 export const LISTING_AI_ENGINE_VERSION = "EBAY_LISTING_AI_ENGINE_V2_1"
 export const LISTING_AI_VALIDATION_POLICY_VERSION = "EBAY_LISTING_AI_VALIDATION_V2_1"
 export const LISTING_AI_DEFAULT_PROMPT_VERSION =
-  "EBAY_LISTING_AI_PROMPT_V2_1_EVIDENCE_2026_07_16"
+  "EBAY_LISTING_AI_PROMPT_V2_2_PAIRED_OFFERS_2026_07_23"
 export const LISTING_AI_STAGING_REF = "vsfthqydfrdzulldbfbe"
 
 const SYSTEM_PROMPT = [
@@ -23,6 +23,7 @@ const SYSTEM_PROMPT = [
   "Treat evidenceDistillation as the canonical market evidence; do not treat productFacts alone as sufficient context.",
   "Use sold/completed exact evidence as confirmed demand evidence and active exact evidence as competition context; never merge them or present estimated signals as sales.",
   "Near matches, different packs and different variants are excluded and must never be described as exact evidence.",
+  "Treat pairedOfferPlan as downstream strategy only: generate content for the current recommendedPack, never merge the optional package into the current listing, and keep every title, item specific, description and image brief aligned to the exact current pack count.",
   "Describe market observations as associations, never as causal proof.",
   "Use only authorized keywords and compact evidence summaries supplied in the structured input.",
   "Return only JSON that conforms to the supplied schema.",
