@@ -878,14 +878,14 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
     {task.gate_type === "IMAGE_APPROVAL_REQUIRED" && <div className="mt-4">
       <div className="rounded-xl border border-violet-200/20 bg-violet-200/[0.05] p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-black text-violet-50">Set de publicación para revisión · {imageSet.length}/6</p>
+          <p className="text-sm font-black text-violet-50">Set de publicación para revisión · {imageSet.length}/7</p>
           <span className="rounded-full border border-violet-100/20 px-2.5 py-1 text-[10px] font-black text-violet-100">{generatedSecondaryCount === 5 ? "5 ESCENAS · 1 LLAMADA OPENAI" : "COMPOSICIÓN LOCAL MULTIFUENTE"}</span>
         </div>
         <p className="mt-2 text-xs leading-5 text-white/60">Estas son las siete imágenes derivadas guardadas por Seller OS para este candidato: una principal y seis estrategias secundarias. La imagen Luna superior sólo sirve como referencia de identidad y no sustituye este set.</p>
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">{imageSet.map((asset, index) => <figure key={asset.id} className="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-white p-2 text-black">
         {asset.outputPreviewUrl
-          ? <img src={asset.outputPreviewUrl} alt={`${imageSlotLabel(asset.slot)} · imagen ${index + 1} de 6`} className="aspect-square w-full object-contain" />
+          ? <img src={asset.outputPreviewUrl} alt={`${imageSlotLabel(asset.slot)} · imagen ${index + 1} de 7`} className="aspect-square w-full object-contain" />
           : <div role="img" aria-label="Preview temporal no disponible" className="flex aspect-square w-full items-center justify-center bg-slate-100 p-3 text-center text-xs font-black text-slate-600">PREVIEW TEMPORAL NO DISPONIBLE</div>}
         <figcaption className="mt-2 min-w-0">
           <p className="break-words text-xs font-black">{index + 1}. {imageSlotLabel(asset.slot)}</p>

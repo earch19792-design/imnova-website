@@ -1348,7 +1348,7 @@ async function bootstrapCandidate(supabase: SupabaseClient, runId: string, candi
       title: "Revisa el set completo de siete imágenes", why: "Debes confirmar que el producto autorizado, pack, variante, textos y elementos incluidos son exactos.",
       seconds: 120, impact: "Seller OS publicará internamente el set aprobado y preparará el paquete para tu autorización final dentro del sistema.",
       evidence: { product: candidate.product_title, imagePackage: candidate.image_package_summary },
-      actionSchema: { type: "IMAGE_APPROVAL", actions: ["APPROVE", "REJECT"], expectedImages: 6,
+      actionSchema: { type: "IMAGE_APPROVAL", actions: ["APPROVE", "REJECT"], expectedImages: 7,
         maximumOpenAiCalls: 1 }, continuationJobType: "APPROVE_SIX_IMAGE_SET" })
   }
 }
@@ -6679,7 +6679,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           listingPackageId: generated.listingPackageId,
           assetIds: generated.assetIds,
           openAiCalls: generated.openAiCalls,
-          generatedImages: 6, competitorImages: 0, ebayWrites: 0 },
+          generatedImages: 7, competitorImages: 0, ebayWrites: 0 },
         nextAutomaticAction: "Esperar una sola aprobación visual.",
         nextHumanAction: "Revisar y aprobar o rechazar el set completo de siete imágenes.",
       })
@@ -6695,7 +6695,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
         impact: "Una sola aprobación publicará internamente el set y preparará el paquete para la autorización final en Seller OS.",
         evidence: { product: candidate.product_title, imagePackage: imageSummary },
         actionSchema: { type: "IMAGE_APPROVAL", actions: ["APPROVE", "REJECT"],
-          expectedImages: 6, maximumOpenAiCalls: 1 },
+          expectedImages: 7, maximumOpenAiCalls: 1 },
         continuationJobType: "APPROVE_SIX_IMAGE_SET",
       })
     } else if (leased.job_type === "APPROVE_SIX_IMAGE_SET") {

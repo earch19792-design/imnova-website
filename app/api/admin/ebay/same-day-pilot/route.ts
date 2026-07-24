@@ -68,7 +68,7 @@ async function imageReviewAssetsForPilot(
       ...(Array.isArray(summary.assetIds) ? summary.assetIds.map(uuid) : []),
       ...(Array.isArray(summary.asset_ids) ? summary.asset_ids.map(uuid) : []),
       ...embeddedAssets,
-    ].filter(Boolean))].slice(0, 6)
+    ].filter(Boolean))].slice(0, 7)
     const listingPackageId = uuid(summary.listingPackageId ?? summary.listing_package_id)
     return assetIds.length ? [{ candidateId, listingPackageId, assetIds }] : []
   })
