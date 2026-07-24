@@ -2,6 +2,8 @@ export const SAME_DAY_IMAGE_JOB_LINEAGE_VERSION =
   "VISUAL_V3_FACT_RUN_BOUND_V1_2026_07_23"
 export const SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION =
   "IMAGE_PREPARATION_ORPHAN_RECOVERY_V1_2026_07_23"
+export const SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION =
+  "IMAGE_SINGLE_UNIT_VISUAL_STRATEGY_RECOVERY_V1_2026_07_23"
 
 export type SameDayImageGenerationJobSpec = {
   jobType: "GENERATE_SIX_IMAGE_PACKAGE"
@@ -12,6 +14,8 @@ export type SameDayImageGenerationJobSpec = {
     productResearchCaptureBatchId: string
     generationAttemptVersion: typeof SAME_DAY_IMAGE_JOB_LINEAGE_VERSION
     orphanRecoveryVersion?: typeof SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION
+    visualStrategyRecoveryVersion?:
+      typeof SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION
     maximumOpenAiCalls: 1
     competitorImages: 0
     ebayWrites: 0
@@ -34,6 +38,7 @@ export function buildSameDayImageGenerationJobSpec(input: {
   factRunId: unknown
   packageHash: unknown
   orphanRecovery?: boolean
+  visualStrategyRecovery?: boolean
 }): SameDayImageGenerationJobSpec | null {
   const runId = text(input.runId)
   const candidateId = text(input.candidateId)
@@ -50,9 +55,14 @@ export function buildSameDayImageGenerationJobSpec(input: {
     !SHA256_PATTERN.test(packageHash)
   ) return null
 
-  const recoverySegment = input.orphanRecovery
-    ? `:${SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION}`
-    : ""
+  const recoverySegments = [
+    ...(input.orphanRecovery
+      ? [SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION]
+      : []),
+    ...(input.visualStrategyRecovery
+      ? [SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION]
+      : []),
+  ]
   return {
     jobType: "GENERATE_SIX_IMAGE_PACKAGE",
     idempotencyKey: [
@@ -63,7 +73,9 @@ export function buildSameDayImageGenerationJobSpec(input: {
       productResearchCaptureBatchId,
       factRunId,
       packageHash,
-    ].join(":") + recoverySegment,
+    ].join(":") + (recoverySegments.length
+      ? `:${recoverySegments.join(":")}`
+      : ""),
     checkpoint: {
       packageHash,
       factRunId,
@@ -71,6 +83,12 @@ export function buildSameDayImageGenerationJobSpec(input: {
       generationAttemptVersion: SAME_DAY_IMAGE_JOB_LINEAGE_VERSION,
       ...(input.orphanRecovery
         ? { orphanRecoveryVersion: SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION }
+        : {}),
+      ...(input.visualStrategyRecovery
+        ? {
+            visualStrategyRecoveryVersion:
+              SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION,
+          }
         : {}),
       maximumOpenAiCalls: 1,
       competitorImages: 0,

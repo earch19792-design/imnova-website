@@ -980,8 +980,6 @@ export function buildSellerOsEbayVisualStrategyV2(
     Math.min(source.nativeWidth, source.nativeHeight) >= 900)
   const packageSource = sourceCapabilities.find((source) =>
     source.viewClassification === "PACKAGE_CONTENTS")
-  const packageContentsCommerciallyUseful = facts.packCount !== 1 ||
-    facts.unitCount !== 1 || Boolean(packageSource)
   const market = input.marketVisualBrief
   const marketSignals = market ? [
     `background:${market.dominantBackgroundType}`,
@@ -1004,7 +1002,11 @@ export function buildSellerOsEbayVisualStrategyV2(
       lightingDirection: "Soft raking light that preserves the authorized foreground pixels.",
       allowedContextualProps: [],
     })] : []),
-    ...(packageContentsCommerciallyUseful ? [strategyCandidate({ ...common,
+    // A verified 1 × 1 offer still needs an explicit offer-scope image. For
+    // replacement parts in particular, showing the authorized product once
+    // answers "what is included" and reduces returns without inventing a
+    // multipack, accessory, package or hidden geometry.
+    strategyCandidate({ ...common,
       sourceIds: [packageSource?.id ?? sourceIds[0]], score: 99,
       salesObjective: "PACKAGE_CONTENTS",
       buyerQuestionAnswered: "What exactly is included in this offer?",
@@ -1014,7 +1016,7 @@ export function buildSellerOsEbayVisualStrategyV2(
       backgroundDirection: "Organized clean surface, visually empty around the exact offer.",
       lightingDirection: "Even commercial light with physically coherent contact shadow.",
       allowedContextualProps: [],
-    })] : []),
+    }),
     ...((facts.dimensions || facts.capacity || facts.size || facts.weight)
       ? [strategyCandidate({ ...common, score: 98,
         salesObjective: "SIZE_AND_SCALE",

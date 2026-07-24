@@ -81,10 +81,13 @@ import {
   generateAndPersistSameDayImagePackage,
   reviewSameDayImagePackage,
 } from "./ebay-same-day-image-package-runtime"
+import { buildCurrentSameDayImageFactoryInput } from
+  "./ebay-same-day-image-factory-input"
 import {
   buildSameDayImageGenerationJobSpec,
   isSameDayImagePreparationOrphan,
   SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION,
+  SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION,
 } from "./ebay-same-day-image-job-lineage"
 import { reviewedOfficialManufacturerIdentity } from "./ebay-official-manufacturer-facts"
 
@@ -5372,6 +5375,191 @@ async function repairRejectedVisualMarketRecapture(
   return 0
 }
 
+async function repairRejectedSingleUnitVisualStrategy(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const priorErrorCode = "NEEDS_VERIFIED_PRODUCT_FACTS:VISUAL_STRATEGY"
+  const candidates = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .filter((candidate) => {
+      const blockers = strings(candidate.blockers)
+      return text(candidate.machine_state) === "REJECTED" &&
+        text(candidate.state) === "REJECTED_TODAY" &&
+        blockers.length === 1 &&
+        blockers[0] === priorErrorCode
+    })
+  for (const candidate of candidates) {
+    const factsSummary = record(candidate.product_facts_summary)
+    const factsPackage = record(factsSummary.authoritativeFactsPackage)
+    const handoffSummary = record(candidate.manual_handoff_package)
+    let factoryInput: ReturnType<typeof buildCurrentSameDayImageFactoryInput>
+    try {
+      factoryInput = buildCurrentSameDayImageFactoryInput({
+        handoffPackage: handoffSummary.package,
+        authoritativeFactsPackage: factsPackage,
+        currentBinding: {
+          candidateId: text(candidate.id),
+          factRunId: text(factsSummary.factRunId),
+          factPackageHash: text(factsPackage.factPackageHash),
+        },
+      })
+    } catch {
+      continue
+    }
+    // This recovery is deliberately narrow. Visual Strategy V2 now treats an
+    // exact single-unit offer as a useful PACKAGE_CONTENTS objective; products
+    // with genuinely missing identity/pack facts remain rejected.
+    if (factoryInput.facts.packCount !== 1 ||
+      factoryInput.facts.unitCount !== 1) continue
+
+    const { data: priorJobs, error: priorJobsError } = await supabase
+      .from("ebay_same_day_pilot_jobs")
+      .select("id,status,last_error_code,checkpoint")
+      .eq("run_id", state.run.id)
+      .eq("candidate_id", candidate.id)
+      .eq("job_type", "GENERATE_SIX_IMAGE_PACKAGE")
+      .in("status", ["DEAD_LETTER", "CANCELLED", "COMPLETED"])
+      .order("created_at", { ascending: false })
+    if (priorJobsError) {
+      throw new Error("SAME_DAY_PILOT_SINGLE_UNIT_VISUAL_JOB_READ_FAILED")
+    }
+    const failureTransitionPresent = state.transitions.some((entry) =>
+      text(entry.candidate_id) === text(candidate.id) &&
+      text(entry.previous_state) === "PREPARING_IMAGE_PACKAGE" &&
+      text(entry.next_state) === "REJECTED" &&
+      text(entry.reason_code) === priorErrorCode)
+    const priorFailurePresent = (priorJobs ?? []).some((job) =>
+      text(job.last_error_code) === priorErrorCode ||
+      text(record(job.checkpoint).singleUnitVisualStrategyPreviousError) ===
+        priorErrorCode)
+    if (!failureTransitionPresent && !priorFailurePresent) continue
+
+    const imageJob = buildSameDayImageGenerationJobSpec({
+      runId: state.run.id,
+      candidateId: candidate.id,
+      productResearchCaptureBatchId:
+        candidate.product_research_capture_batch_id,
+      factRunId: factsSummary.factRunId,
+      packageHash: handoffSummary.packageHash,
+      visualStrategyRecovery: true,
+    })
+    if (!imageJob) continue
+
+    for (const failed of (priorJobs ?? []).filter((job) =>
+      job.status === "DEAD_LETTER" &&
+      text(job.last_error_code) === priorErrorCode)) {
+      const { error } = await supabase.from("ebay_same_day_pilot_jobs")
+        .update({
+          status: "CANCELLED",
+          checkpoint: {
+            ...record(failed.checkpoint),
+            singleUnitVisualStrategyRecoveryVersion:
+              SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION,
+            singleUnitVisualStrategyPreviousError: priorErrorCode,
+            supersededAt: now.toISOString(),
+            historyDeleted: false,
+          },
+          updated_at: now.toISOString(),
+        })
+        .eq("id", failed.id)
+        .eq("status", "DEAD_LETTER")
+      if (error) {
+        throw new Error(
+          "SAME_DAY_PILOT_SINGLE_UNIT_VISUAL_DEAD_LETTER_CANCEL_FAILED",
+        )
+      }
+    }
+
+    await transition({
+      supabase,
+      runId: state.run.id,
+      candidateId: text(candidate.id),
+      previousState: "REJECTED",
+      nextState: "PREPARING_IMAGE_PACKAGE",
+      reasonCode: "SINGLE_UNIT_VISUAL_STRATEGY_RECOVERED",
+      triggeredBy: "RETRY",
+      checkpoint: {
+        recoveryVersion: SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION,
+        priorErrorCode,
+        verifiedOfferPackCount: 1,
+        verifiedUnitCount: 1,
+        factRunId: factsSummary.factRunId,
+        productResearchCaptureBatchId:
+          candidate.product_research_capture_batch_id,
+        packageHash: handoffSummary.packageHash,
+        commercialEvidencePreserved: true,
+        productFactsPreserved: true,
+        productApprovalPreserved: true,
+        historyDeleted: false,
+      },
+      nextAutomaticAction:
+        "Regenerar las seis estrategias desde el paquete 1 × 1 verificado.",
+      nextHumanAction: "Ninguna hasta revisar las imágenes.",
+      job: imageJob,
+    })
+    const { data: repairedCandidate, error: candidateError } = await supabase
+      .from("ebay_same_day_pilot_candidates")
+      .update({
+        state: "READY_FOR_CONTENT",
+        blockers: [],
+        evidence_summary: {
+          ...record(candidate.evidence_summary),
+          singleUnitVisualStrategyRecoveryVersion:
+            SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION,
+          singleUnitVisualStrategyRecoveredAt: now.toISOString(),
+          productResearchRepeated: false,
+        },
+        image_package_summary: {
+          ...record(candidate.image_package_summary),
+          status: "PREPARING",
+          approved: false,
+          regenerationReason: "SINGLE_UNIT_OFFER_SCOPE_SUPPORTED",
+          ebayWrites: 0,
+        },
+        updated_at: now.toISOString(),
+      })
+      .eq("id", candidate.id)
+      .eq("run_id", state.run.id)
+      .eq("machine_state", "PREPARING_IMAGE_PACKAGE")
+      .select("id")
+      .maybeSingle()
+    if (candidateError || !repairedCandidate) {
+      throw new Error("SAME_DAY_PILOT_SINGLE_UNIT_VISUAL_CANDIDATE_FAILED")
+    }
+    const { error: eventError } = await supabase
+      .from("ebay_same_day_pilot_events")
+      .upsert({
+        run_id: state.run.id,
+        candidate_id: candidate.id,
+        event_type: "SINGLE_UNIT_VISUAL_STRATEGY_RECOVERED",
+        event_payload: {
+          recoveryVersion: SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION,
+          priorErrorCode,
+          verifiedOfferPackCount: 1,
+          verifiedUnitCount: 1,
+          exactOfferShownOnce: true,
+          fabricatedFacts: false,
+          productResearchRepeated: false,
+          priorJobsPreserved: (priorJobs ?? []).length,
+          historyDeleted: false,
+        },
+        idempotency_key: `${imageJob.idempotencyKey}:EVENT`,
+        ebay_read_calls: 0,
+        openai_calls: 0,
+        ebay_writes: 0,
+        production_changed: false,
+      }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+    if (eventError) {
+      throw new Error("SAME_DAY_PILOT_SINGLE_UNIT_VISUAL_EVENT_FAILED")
+    }
+    await refreshRunProjection(supabase, state.run.id, true)
+    return 1
+  }
+  return 0
+}
+
 async function repairOrphanedImagePreparation(
   supabase: SupabaseClient,
   state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
@@ -5578,6 +5766,18 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       status: "COMPLETED",
       jobType: "RECOVER_VISUAL_MARKET_RECAPTURE",
       visualMarketRecapturesRecovered,
+      ebayWrites: 0,
+    }
+  }
+  const singleUnitVisualStrategiesRecovered =
+    await repairRejectedSingleUnitVisualStrategy(input.supabase, state, now)
+  if (singleUnitVisualStrategiesRecovered) {
+    await refreshRunProjection(input.supabase, state.run.id, true)
+    return {
+      processed: 1,
+      status: "COMPLETED",
+      jobType: "RECOVER_SINGLE_UNIT_VISUAL_STRATEGY",
+      singleUnitVisualStrategiesRecovered,
       ebayWrites: 0,
     }
   }
