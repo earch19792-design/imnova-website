@@ -482,22 +482,54 @@ export async function generateAndPersistSameDayImagePackage(input: {
     EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
   ].join(":"))
   const leaseToken = randomUUID()
-  const { data: claimData, error: claimError } = await input.supabase.rpc(
+  const claimInput = {
+    p_account_key: input.accountKey,
+    p_actor: actorId,
+    p_run_id: runId,
+    p_candidate_id: candidateId,
+    p_listing_package_id: listingPackageId,
+    p_fact_run_id: facts.factRunId,
+    p_handoff_id: handoff.id,
+    p_handoff_hash: packageHash,
+    p_generation_mode: generationMode,
+    p_idempotency_key_hash: idempotencyKeyHash,
+    p_lease_token: leaseToken,
+  }
+  let claimResponse = await input.supabase.rpc(
     "claim_ebay_same_day_pilot_image_package_run",
-    {
-      p_account_key: input.accountKey,
-      p_actor: actorId,
-      p_run_id: runId,
-      p_candidate_id: candidateId,
-      p_listing_package_id: listingPackageId,
-      p_fact_run_id: facts.factRunId,
-      p_handoff_id: handoff.id,
-      p_handoff_hash: packageHash,
-      p_generation_mode: generationMode,
-      p_idempotency_key_hash: idempotencyKeyHash,
-      p_lease_token: leaseToken,
-    },
+    claimInput,
   )
+  if (claimResponse.error &&
+    generationMode === "DETERMINISTIC_ONLY" &&
+    databaseErrorCode(claimResponse.error, "") ===
+      "SAME_DAY_IMAGE_PACKAGE_IDEMPOTENCY_CONFLICT") {
+    const { error: reconciliationError } = await input.supabase.rpc(
+      "reconcile_same_day_pregeneration_image_mode_v1",
+      {
+        p_account_key: input.accountKey,
+        p_actor: actorId,
+        p_run_id: runId,
+        p_candidate_id: candidateId,
+        p_listing_package_id: listingPackageId,
+        p_fact_run_id: facts.factRunId,
+        p_handoff_id: handoff.id,
+        p_handoff_hash: packageHash,
+        p_expected_idempotency_hash: idempotencyKeyHash,
+      },
+    )
+    if (reconciliationError) {
+      disposeAuthorizedCatalogSourcePack(catalogPack)
+      throw new Error(databaseErrorCode(
+        reconciliationError,
+        "SAME_DAY_IMAGE_PREGENERATION_RECONCILIATION_FAILED",
+      ))
+    }
+    claimResponse = await input.supabase.rpc(
+      "claim_ebay_same_day_pilot_image_package_run",
+      claimInput,
+    )
+  }
+  const { data: claimData, error: claimError } = claimResponse
   if (claimError) {
     disposeAuthorizedCatalogSourcePack(catalogPack)
     throw new Error(databaseErrorCode(
