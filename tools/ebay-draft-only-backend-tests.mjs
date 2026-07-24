@@ -2034,4 +2034,12 @@ test("V3 final publication claim validates the append-only seven-image chain", (
     routeSource,
     /databaseExceptionCode\([\s\S]*EBAY_FINAL_PUBLICATION_CLAIM_FAILED/,
   )
+  assert.match(
+    routeSource,
+    /verifyEbayUnpublishedOffer\([\s\S]*sync_ebay_v3_source_before_authorized_publication[\s\S]*prepare_ebay_authorized_listing_publication[\s\S]*claim_ebay_authorized_listing_publication/,
+  )
+  assert.match(
+    routeSource,
+    /EBAY_FINAL_PUBLICATION_PREVIEW_REFRESH_FAILED/,
+  )
 })

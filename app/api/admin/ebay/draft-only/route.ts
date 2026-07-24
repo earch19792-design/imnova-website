@@ -2027,6 +2027,51 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
   await revalidateFinalPublicationDependencies(record(context.approval.approved_payload))
   const unpublished = await verifyEbayUnpublishedOffer(built.offerId, built.sku, "EBAY_US")
   if (!unpublished.safe) return jsonError(new Error(unpublished.blocker), 409)
+  const approvedPayload = record(context.approval.approved_payload)
+  const approvedCompliance = record(approvedPayload.compliance)
+  const v3FinalSetAuthorization = record(
+    approvedCompliance.v3FinalSetAuthorization,
+  )
+  const sourceSyncFunction = Object.keys(v3FinalSetAuthorization).length
+    ? "sync_ebay_v3_source_before_authorized_publication"
+    : "sync_same_day_source_before_authorized_publication"
+  const { error: sourceSyncError } = await supabase.rpc(
+    sourceSyncFunction,
+    {
+      p_draft_execution_id: text(context.execution.id),
+      p_actor_user_id: actor,
+      p_marketplace_account_key: context.accountKey,
+    },
+  )
+  if (sourceSyncError) {
+    return jsonError(new Error(databaseExceptionCode(
+      sourceSyncError,
+      "EBAY_FINAL_PUBLICATION_LUNA_SOURCE_SYNC_FAILED",
+    )), 409)
+  }
+  const { data: refreshed, error: refreshError } = await supabase
+    .rpc("prepare_ebay_authorized_listing_publication", {
+      p_draft_execution_id: text(context.execution.id),
+      p_actor_user_id: actor,
+      p_marketplace_account_key: context.accountKey,
+      p_preview_hash: built.previewHash,
+      p_preview: built.preview,
+      p_target: "PRODUCTION",
+      p_account_fingerprint: context.runtime.accountFingerprint,
+    })
+    .single()
+  const refreshedPublication = record(refreshed)
+  if (
+    refreshError
+    || text(refreshedPublication.id) !== publicationId
+    || text(refreshedPublication.phase) !== "preview_ready"
+    || text(refreshedPublication.preview_hash) !== built.previewHash
+  ) {
+    return jsonError(new Error(databaseExceptionCode(
+      refreshError,
+      "EBAY_FINAL_PUBLICATION_PREVIEW_REFRESH_FAILED",
+    )), 409)
+  }
   const claimToken = randomUUID()
   const { data: claimed, error: claimError } = await supabase
     .rpc("claim_ebay_authorized_listing_publication", {
