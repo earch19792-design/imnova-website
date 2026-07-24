@@ -38,6 +38,9 @@ import {
   canRetireSupersededSkuPreflight,
 } from "@/lib/ebay/ebay-draft-only-prewrite-retirement"
 import {
+  isCommandCenterCommercialFreshnessRecheck,
+} from "@/lib/ebay/ebay-command-center-commercial-freshness"
+import {
   getEbayTaxonomyListingIntelligence,
   type EbayTaxonomyListingIntelligence,
 } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
@@ -436,9 +439,11 @@ async function loadPackageContext(
       opportunity: opportunity as JsonRecord,
     })
   } catch (contextError) {
+    const commercialFreshnessRecheck =
+      isCommandCenterCommercialFreshnessRecheck(errorCode(contextError))
     if (
       !allowFinalV3ReadOnlyFallback
-      || errorCode(contextError) !== "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY"
+      || !commercialFreshnessRecheck
     ) throw contextError
     const finalReviewGate = await loadFinalListingReviewPublicationGate({
       supabase,

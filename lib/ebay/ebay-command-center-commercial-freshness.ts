@@ -14,6 +14,12 @@ const LEGACY_PACKAGE_RECHECK_CODES = new Set([
   "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED",
 ])
 
+export function isCommandCenterCommercialFreshnessRecheck(
+  errorCode: string,
+) {
+  return LEGACY_PACKAGE_RECHECK_CODES.has(errorCode)
+}
+
 export function resolveCommandCenterCommercialFreshness(
   input: CommandCenterCommercialFreshnessInput,
 ): CommandCenterCommercialFreshnessResolution {
@@ -27,7 +33,7 @@ export function resolveCommandCenterCommercialFreshness(
   return {
     finalListingReviewReady: false,
     sourceRecheckRequired:
-      LEGACY_PACKAGE_RECHECK_CODES.has(input.errorCode)
+      isCommandCenterCommercialFreshnessRecheck(input.errorCode)
       && input.sourceRecheckAvailable,
   }
 }
