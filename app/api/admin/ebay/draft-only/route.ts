@@ -1863,7 +1863,10 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
     })
     .single()
   if (error || !publication) {
-    throw new Error("EBAY_FINAL_PUBLICATION_PREVIEW_PERSIST_FAILED")
+    throw new Error(databaseExceptionCode(
+      error,
+      "EBAY_FINAL_PUBLICATION_PREVIEW_PERSIST_FAILED",
+    ))
   }
   return NextResponse.json({
     success: true,

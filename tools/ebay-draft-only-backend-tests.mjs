@@ -92,6 +92,10 @@ const inventoryHeaderMigrationSource = readFileSync(
   new URL("../supabase/migrations/20260723018000_retire_invalid_inventory_header_preflight.sql", import.meta.url),
   "utf8",
 )
+const v3PublicationPreviewMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260724001000_support_v3_authorized_publication_preview.sql", import.meta.url),
+  "utf8",
+)
 
 async function importTypeScript(source) {
   const javascript = ts.transpileModule(source, {
@@ -1971,4 +1975,32 @@ test("Production draft and final publication use separate account-bound one-shot
   assert.match(productionMigrationSource, /p_claim_token uuid/)
   assert.match(productionMigrationSource, /lease_token is distinct from p_claim_token/)
   assert.match(productionMigrationSource, /inventoryItemPayload,availability,shipToLocationAvailability,quantity.*is distinct from '1'/s)
+})
+
+test("V3 final publication persists the exact seven-image authority and preserves legacy six", () => {
+  assert.match(
+    v3PublicationPreviewMigrationSource,
+    /jsonb_array_length\(v_images\) not in \(6, 7\)/,
+  )
+  assert.match(
+    v3PublicationPreviewMigrationSource,
+    /EBAY_AUTHORIZED_PUBLICATION_V3_SEVEN_APPROVED_IMAGES_REQUIRED/,
+  )
+  assert.match(
+    v3PublicationPreviewMigrationSource,
+    /v3FinalSetAuthorization,selectedAssets/,
+  )
+  assert.match(
+    v3PublicationPreviewMigrationSource,
+    /v_images is distinct from[\s\S]*jsonb_agg\([\s\S]*asset->'url'/,
+  )
+  assert.match(
+    v3PublicationPreviewMigrationSource,
+    /EBAY_AUTHORIZED_PUBLICATION_SIX_APPROVED_IMAGES_REQUIRED/,
+  )
+  assert.match(
+    routeSource,
+    /databaseExceptionCode\([\s\S]*EBAY_FINAL_PUBLICATION_PREVIEW_PERSIST_FAILED/,
+  )
+  assert.match(workspaceSource, /siete imágenes V3/)
 })
