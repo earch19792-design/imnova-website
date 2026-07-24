@@ -48,6 +48,9 @@ export type EbayOptimizedImage = {
     productCoverageVerified: boolean
     sourceCenterLightNeutralRatio: number
     sourceCenterChromaticRatio: number
+    sourceAmbiguousConnectedLightRatio: number
+    sourceAmbiguousInteriorLightRatio: number
+    sourceAmbiguousInteriorShare: number
     sourceVisualProfile: {
       brightness: "DARK" | "MID" | "LIGHT"
       contrast: "LOW" | "MEDIUM" | "HIGH"
@@ -438,6 +441,134 @@ function lightNeutralPixel(pixels: Buffer, offset: number) {
     Math.max(red, green, blue) - Math.min(red, green, blue) <= 8
 }
 
+function conservativeBackgroundPixel(pixels: Buffer, offset: number) {
+  const red = pixels[offset]
+  const green = pixels[offset + 1]
+  const blue = pixels[offset + 2]
+  return Math.min(red, green, blue) >= 254 &&
+    Math.max(red, green, blue) - Math.min(red, green, blue) <= 3
+}
+
+function connectedBorderBackground(
+  data: Buffer,
+  width: number,
+  height: number,
+  channels: number,
+  removable: (pixels: Buffer, offset: number) => boolean,
+) {
+  const pixels = width * height
+  const background = new Uint8Array(pixels)
+  const queue = new Int32Array(pixels)
+  let head = 0
+  let tail = 0
+  const enqueue = (index: number) => {
+    if (background[index] || !removable(data, index * channels)) return
+    background[index] = 1
+    queue[tail++] = index
+  }
+  for (let x = 0; x < width; x += 1) {
+    enqueue(x)
+    if (height > 1) enqueue((height - 1) * width + x)
+  }
+  for (let y = 1; y < height - 1; y += 1) {
+    enqueue(y * width)
+    if (width > 1) enqueue(y * width + width - 1)
+  }
+  while (head < tail) {
+    const index = queue[head++]
+    const x = index % width
+    const y = Math.floor(index / width)
+    if (x > 0) enqueue(index - 1)
+    if (x + 1 < width) enqueue(index + 1)
+    if (y > 0) enqueue(index - width)
+    if (y + 1 < height) enqueue(index + width)
+  }
+  queue.fill(0)
+  return background
+}
+
+/**
+ * A white product connected to a white catalog background is not separable
+ * from color alone. Compare the normal border flood with a much stricter
+ * pure-white flood. A material delta that penetrates the protected
+ * foreground envelope means the normal matte can erase real product pixels.
+ */
+function lightNeutralSeparationAmbiguity(
+  data: Buffer,
+  width: number,
+  height: number,
+  channels: number,
+) {
+  const pixels = width * height
+  const aggressive = connectedBorderBackground(
+    data,
+    width,
+    height,
+    channels,
+    lightNeutralPixel,
+  )
+  const conservative = connectedBorderBackground(
+    data,
+    width,
+    height,
+    channels,
+    conservativeBackgroundPixel,
+  )
+  const rowLeft = new Int32Array(height)
+  const rowRight = new Int32Array(height)
+  const columnTop = new Int32Array(width)
+  const columnBottom = new Int32Array(width)
+  rowLeft.fill(width)
+  rowRight.fill(-1)
+  columnTop.fill(height)
+  columnBottom.fill(-1)
+  try {
+    for (let index = 0; index < pixels; index += 1) {
+      if (aggressive[index]) continue
+      const x = index % width
+      const y = Math.floor(index / width)
+      rowLeft[y] = Math.min(rowLeft[y], x)
+      rowRight[y] = Math.max(rowRight[y], x)
+      columnTop[x] = Math.min(columnTop[x], y)
+      columnBottom[x] = Math.max(columnBottom[x], y)
+    }
+    let ambiguous = 0
+    let ambiguousInterior = 0
+    for (let index = 0; index < pixels; index += 1) {
+      if (!aggressive[index] || conservative[index]) continue
+      ambiguous += 1
+      const x = index % width
+      const y = Math.floor(index / width)
+      if (
+        x > rowLeft[y] && x < rowRight[y] &&
+        y > columnTop[x] && y < columnBottom[x]
+      ) {
+        ambiguousInterior += 1
+      }
+    }
+    const connectedLightRatio = ambiguous / Math.max(1, pixels)
+    const interiorLightRatio = ambiguousInterior / Math.max(1, pixels)
+    const interiorShare = ambiguousInterior / Math.max(1, ambiguous)
+    return {
+      connectedLightRatio,
+      interiorLightRatio,
+      interiorShare,
+      mainFrameMustBePreserved: connectedLightRatio >= .01,
+      foregroundExtractionUnsafe:
+        connectedLightRatio >= .01 &&
+        interiorLightRatio >= .0005 &&
+        interiorShare >= .03,
+    }
+  } finally {
+    aggressive.fill(0)
+    conservative.fill(0)
+    rowLeft.fill(0)
+    rowRight.fill(0)
+    columnTop.fill(0)
+    columnBottom.fill(0)
+  }
+}
+
 function foregroundCornerIndexes(width: number, height: number) {
   const insetX = Math.max(1, Math.floor(width * .06))
   const insetY = Math.max(1, Math.floor(height * .06))
@@ -646,6 +777,36 @@ async function prepareAuthorizedEbaySecondaryForegroundOnce(
   const mask = new Uint8Array(pixels)
   let borderContactGuard: Uint8Array | null = null
   let foregroundGeometrySafe = true
+  const separationAmbiguity = transparentPixels / pixels >= .005
+    ? {
+      connectedLightRatio: 0,
+      interiorLightRatio: 0,
+      interiorShare: 0,
+      mainFrameMustBePreserved: false,
+      foregroundExtractionUnsafe: false,
+    }
+    : lightNeutralSeparationAmbiguity(
+      data,
+      width,
+      height,
+      channels,
+    )
+  const separationProfile = sourceVisualProfile(
+    data,
+    width,
+    height,
+    channels,
+  )
+  if (
+    separationAmbiguity.foregroundExtractionUnsafe &&
+    separationProfile.brightness === "LIGHT" &&
+    separationProfile.palette === "NEUTRAL"
+  ) {
+    data.fill(0)
+    sourceAlpha.fill(0)
+    mask.fill(0)
+    throw new Error("AUTHORIZED_FOREGROUND_LIGHT_NEUTRAL_AMBIGUITY")
+  }
   if (transparentPixels / pixels >= .005) {
     method = "NATIVE_ALPHA"
     if (nativeAlphaHasOpaqueLightNeutralFrame(
@@ -1007,13 +1168,26 @@ export async function optimizeAuthorizedEbayMainImage(
     decoded.info.height,
     decoded.info.channels,
   )
+  // Inspect the flattened pixels even when the container declares an alpha
+  // channel. Fully opaque PNG/WebP files are common and their mere presence
+  // of alpha is not evidence that white-on-white geometry is separable.
+  const separationAmbiguity = lightNeutralSeparationAmbiguity(
+    decoded.data,
+    decoded.info.width,
+    decoded.info.height,
+    decoded.info.channels,
+  )
   // A mostly light-neutral center can be a white or reflective product, not
   // removable background. Whitening those pixels erased the exact product in
   // legitimate supplier photos such as white enamelware on white. Preserve
   // the full authorized frame whenever segmentation is ambiguous.
+  const separationRequiresPreservedFrame =
+    separationAmbiguity.mainFrameMustBePreserved &&
+    visualProfile.brightness === "LIGHT" &&
+    visualProfile.palette === "NEUTRAL"
   const preserveAuthorizedFrame = edgeRatio < 0.72 || (
     centerRatio >= 0.60 && centerColorRatio <= 0.08
-  )
+  ) || separationRequiresPreservedFrame
   let output: Buffer
   try {
     if (preserveAuthorizedFrame) {
@@ -1122,9 +1296,20 @@ export async function optimizeAuthorizedEbayMainImage(
         productCoverageRatio <= 0.85,
       sourceCenterLightNeutralRatio: Number(centerRatio.toFixed(4)),
       sourceCenterChromaticRatio: Number(centerColorRatio.toFixed(4)),
+      sourceAmbiguousConnectedLightRatio: Number(
+        separationAmbiguity.connectedLightRatio.toFixed(6),
+      ),
+      sourceAmbiguousInteriorLightRatio: Number(
+        separationAmbiguity.interiorLightRatio.toFixed(6),
+      ),
+      sourceAmbiguousInteriorShare: Number(
+        separationAmbiguity.interiorShare.toFixed(6),
+      ),
       sourceVisualProfile: {
         ...visualProfile,
-        productToneRisk: centerRatio >= .60 && centerColorRatio <= .08
+        productToneRisk: (
+          centerRatio >= .60 && centerColorRatio <= .08
+        ) || separationRequiresPreservedFrame
           ? "LIGHT_NEUTRAL_AMBIGUITY"
           : "STANDARD",
       },

@@ -9,7 +9,7 @@ import { parseAuthoritativeFactsInputPackage } from "./ebay-product-facts-readin
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { buildVerifiedEbayTitle } from "./ebay-verified-title-strategy.ts"
 
-export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V9_2026_07_21"
+export const SAME_DAY_MANUAL_HANDOFF_VERSION = "SELLER_HUB_FACTS_ONLY_V10_2026_07_24"
 
 type JsonRecord = Record<string, unknown>
 type SafeFact = { scope: string; key: string; value: unknown; unit: string | null; status: string }
@@ -204,6 +204,34 @@ export function buildVerifiedManualSellerHubHandoff(input: {
   addAspect("MPN", "mpn")
   addAspect("UPC", "upc")
   addAspect("Model", "model")
+  const totalUnitFact = fact("OFFER_PACK", "totalUnitCount") ??
+    fact("PRODUCT_UNIT", "unitCount")
+  const totalUnitCount = number(totalUnitFact?.value)
+  const wholeUnitCount = totalUnitCount !== null &&
+    Number.isInteger(totalUnitCount) && totalUnitCount >= 1
+    ? totalUnitCount
+    : null
+  const unitQuantityRequirement = requirements.find((requirement) =>
+    requirement.aspectName.toLocaleLowerCase("en-US") === "unit quantity")
+  if (wholeUnitCount && unitQuantityRequirement &&
+    (!unitQuantityRequirement.selectionOnly ||
+      !unitQuantityRequirement.allowedValuesComplete ||
+      !unitQuantityRequirement.allowedValues.length ||
+      unitQuantityRequirement.allowedValues.some((value) =>
+        aspectValueKey(value) === aspectValueKey(String(wholeUnitCount))))) {
+    aspects[unitQuantityRequirement.aspectName] = [String(wholeUnitCount)]
+  }
+  const unitTypeRequirement = requirements.find((requirement) =>
+    requirement.aspectName.toLocaleLowerCase("en-US") === "unit type")
+  const countBasedUnit = text(totalUnitFact?.unit)
+    .toLocaleLowerCase("en-US") === "count"
+  if (wholeUnitCount && countBasedUnit && unitTypeRequirement &&
+    (!unitTypeRequirement.selectionOnly ||
+      !unitTypeRequirement.allowedValuesComplete ||
+      unitTypeRequirement.allowedValues.some((value) =>
+        aspectValueKey(value) === aspectValueKey("Unit")))) {
+    aspects[unitTypeRequirement.aspectName] = ["Unit"]
+  }
   const title = buildVerifiedEbayTitle({
     productTitle: exactName || input.productTitle,
     brand,
@@ -213,13 +241,23 @@ export function buildVerifiedManualSellerHubHandoff(input: {
     audience: text(fact("PRODUCT_UNIT", "audience")?.value || fact("PRODUCT_UNIT", "department")?.value),
     relationship: text(fact("PRODUCT_UNIT", "relationship")?.value),
   })
-  const includedCount = text(fact("OFFER_PACK", "totalUnitCount")?.value)
+  const includedCount = wholeUnitCount ? String(wholeUnitCount) : ""
   const descriptionLines = [
     exactName,
-    brand ? `Marca: ${brand}.` : "",
-    includedCount ? `Contenido total verificado: ${includedCount}.` : "",
-    `Condición: ${condition}.`,
-    "El contenido, la variante y la presentación corresponden exactamente a los datos verificados antes de publicar.",
+    "Product details",
+    brand ? `- Brand: ${brand}` : "",
+    `- Condition: ${condition}`,
+    includedCount
+      ? `- Package quantity: ${includedCount} ${wholeUnitCount === 1 ? "unit" : "units"}`
+      : "",
+    "",
+    "Package contents",
+    includedCount
+      ? `- ${includedCount} ${wholeUnitCount === 1 ? "unit" : "units"} of the exact product named above`
+      : "- The exact product and presentation shown in the approved photos",
+    "",
+    "Please review the approved photos and item specifics before ordering to confirm that the exact product, variant, and package quantity meet your needs.",
+    "Only the item and quantity described in this listing are included.",
   ].filter(Boolean)
   const shipping = confirmedShipping
     ? { status: "CONFIRMED", values: Object.fromEntries(shippingKeys.map((key) => {
@@ -244,7 +282,9 @@ export function buildVerifiedManualSellerHubHandoff(input: {
       "VOLUNTARY_RETURNS_NOT_ACCEPTED_WHERE_EBAY_ALLOWS",
       "EBAY_MONEY_BACK_GUARANTEE_STILL_APPLIES",
     ] : []),
-    ...requirements.filter((requirement) => !requirement.required && requirement.status === "MISSING_OPTIONAL")
+    ...requirements.filter((requirement) => !requirement.required &&
+      requirement.status === "MISSING_OPTIONAL" &&
+      !aspects[requirement.aspectName]?.length)
       .map((requirement) => `OPTIONAL_ASPECT_MISSING_${text(requirement.aspectName).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`),
   ]
   const listingPackage = {
