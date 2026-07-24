@@ -1003,8 +1003,28 @@ export async function generateTransientSameDayImagePackage(input: {
       // The primary is the only position with a native/effective 1200px gate.
       // Secondary positions are evaluated below against their actual crop and
       // coverage requirements instead of inheriting one global threshold.
-      if (sourceIndex === 0 &&
-        Math.max(metadata.width ?? 0, metadata.height ?? 0) < 1_200) {
+      const actualMaximum = Math.max(
+        metadata.width ?? 0,
+        metadata.height ?? 0,
+      )
+      const capability = plan.factoryInput
+        .authorizedSourceCapabilities?.[sourceIndex]
+      const capabilityMaximum = Math.max(
+        capability?.effectiveWidth ?? 0,
+        capability?.effectiveHeight ?? 0,
+      )
+      // A verified 580px Luna source is enhanced at the resolver's strict 2x
+      // ceiling to 1160px. Accept that narrow 1100-1199px band only when the
+      // capability proves the bounded derivative and matches the actual
+      // source. Native and unbound images retain the 1200px requirement.
+      const boundedControlledEnhancement =
+        capability?.qualityTier === "CONTROLLED_ENHANCEMENT" &&
+        capability.enhancedDerivative === true &&
+        Math.max(capability.nativeWidth, capability.nativeHeight) >= 500 &&
+        capabilityMaximum === actualMaximum &&
+        actualMaximum >= 1_100
+      if (sourceIndex === 0 && actualMaximum < 1_200 &&
+        !boundedControlledEnhancement) {
         throw new Error("NEEDS_ADDITIONAL_SOURCE_IMAGE:PRIMARY")
       }
       const foreground = await prepareAuthorizedEbaySecondaryForeground(source, {

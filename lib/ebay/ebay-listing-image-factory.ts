@@ -726,7 +726,7 @@ function verifiedLines(
   const values: Record<typeof slot, Array<string | null>> = {
     PACK_AND_COUNT: quantities,
     KEY_FEATURES: [titleCase(facts.manufacturerBrand), variant, titleCase(facts.condition)],
-    SIZE_AND_CONTENT: [size],
+    SIZE_AND_CONTENT: size ? [size] : quantities,
     USE_CONTEXT: [...compactVerifiedProductLines(facts),
       "Product shown exactly as supplied"],
     PACKAGE_CONTENTS: ["Exact Product Shown", variant],
@@ -828,12 +828,12 @@ export function assertEbayImageEvidenceSufficiency(input: {
   const commercialFacts = [
     input.facts.normalizedProductName,
     input.facts.manufacturerBrand,
+    input.facts.condition,
     input.facts.size,
     input.facts.color,
     input.facts.scent,
     input.facts.variant,
-    (input.facts.packCount ?? 0) > 1 ? String(input.facts.packCount) : null,
-    (input.facts.unitCount ?? 0) > 1 ? String(input.facts.unitCount) : null,
+    ...verifiedQuantityLines(input.facts),
   ].filter((value, index, values): value is string =>
     Boolean(value) && values.indexOf(value) === index)
   if (commercialFacts.length < 4) {

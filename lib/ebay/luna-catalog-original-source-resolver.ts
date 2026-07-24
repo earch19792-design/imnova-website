@@ -4,6 +4,8 @@ import sharp from "sharp"
 
 import type { AuthorizedForegroundIdentityEvidence } from
   "./authorized-product-foreground-identity"
+// @ts-expect-error Node's native TypeScript tests need the explicit extension.
+import { prepareAuthorizedEbaySecondaryForeground } from "./ebay-image-optimization-service.ts"
 
 // @ts-expect-error Node's native TypeScript tests need the explicit extension.
 import { parseDirectedLunaProductUrl } from "./ebay-luna-directed-product-import.ts"
@@ -300,10 +302,29 @@ function classifyView(hint: string, index: number): LunaCatalogViewClassificatio
   }
   if (/detail|close|macro|material|texture/.test(normalized)) return "DETAIL"
   if (index === 0 || /featured|primary|main|hero/.test(normalized)) return "PRIMARY"
+  // market_radar_latest_variants.image_urls is the ordered authorized Luna
+  // gallery. When Shopify JSON is temporarily unavailable, the first snapshot
+  // remains primary and later entries retain alternate-view semantics. The
+  // foreground-safety preflight still rejects hands, installation scenes and
+  // inseparable photographic frames before any such asset can be generated.
+  if (normalized === "catalog-snapshot") {
+    return "ALTERNATE_AUTHORIZED_ANGLE"
+  }
   if (/alternate|angle|side|back|top|bottom|gallery|media|variant/.test(normalized)) {
     return "ALTERNATE_AUTHORIZED_ANGLE"
   }
   return "UNKNOWN"
+}
+
+function discoveredHintPriority(hint: string) {
+  const normalized = hint.toLocaleLowerCase("en-US")
+  if (/featured|primary|main|hero/.test(normalized)) return 5
+  if (/package|packaging|box|included|contents|detail|close|macro|material|texture/
+    .test(normalized)) return 4
+  if (/alternate|angle|side|back|top|bottom|gallery|media|variant/
+    .test(normalized)) return 3
+  if (normalized && normalized !== "catalog-snapshot") return 2
+  return 1
 }
 
 async function controlledEnhancement(
@@ -439,7 +460,15 @@ export async function resolveLunaCatalogOriginalSourcePack(input: {
   }
   const candidateMap = new Map<string, DiscoveredImage>()
   for (const entry of discovered) {
-    if (!candidateMap.has(entry.url)) candidateMap.set(entry.url, entry)
+    const existing = candidateMap.get(entry.url)
+    if (!existing) {
+      candidateMap.set(entry.url, entry)
+    } else if (discoveredHintPriority(entry.hint) >
+      discoveredHintPriority(existing.hint)) {
+      // Keep the original insertion position while retaining the richer
+      // product-JSON/gallery evidence for view classification.
+      candidateMap.set(entry.url, { ...entry, order: existing.order })
+    }
   }
   const candidates = [...candidateMap.values()].slice(0, MAX_CATALOG_ASSETS)
   if (!candidates.length) throw new Error("LUNA_CATALOG_MEDIA_MISSING")
@@ -620,6 +649,45 @@ export function selectLunaCatalogGenerationSources(
   }
   for (const asset of pack.sourceAssets) add(asset)
   return selected
+}
+
+/**
+ * Preflight ordinary Luna catalog sources with the exact local matte used by
+ * the compositor. This prevents a photographic, hand-held or otherwise
+ * inseparable source from becoming the main image merely because it has more
+ * pixels. Controlled MAIN/SIDE native assets have their own identity-bound
+ * contract and retain the existing two-source path.
+ */
+export async function selectForegroundSafeLunaCatalogGenerationSources(
+  pack: AuthorizedCatalogSourcePack,
+  maximum = 3,
+) {
+  if (pack.sourceAssets.some((asset) =>
+    asset.authorizationStatus === "AUTHORIZED_CATALOG_NATIVE_HIGH_RES")) {
+    return selectLunaCatalogGenerationSources(pack, maximum)
+  }
+  const safeAssets: ResolvedLunaCatalogSourceAsset[] = []
+  for (const asset of pack.sourceAssets) {
+    let foreground: Awaited<ReturnType<
+      typeof prepareAuthorizedEbaySecondaryForeground
+    >> = null
+    try {
+      foreground = await prepareAuthorizedEbaySecondaryForeground(asset.buffer)
+      if (foreground) safeAssets.push(asset)
+    } catch {
+      // A source that cannot satisfy the deterministic matte is not eligible
+      // for generation. The full resolver pack remains intact for evidence.
+    } finally {
+      foreground?.output.fill(0)
+    }
+  }
+  if (!safeAssets.length) {
+    throw new Error("NEEDS_ADDITIONAL_SOURCE_IMAGE:FOREGROUND")
+  }
+  return selectLunaCatalogGenerationSources({
+    ...pack,
+    sourceAssets: safeAssets,
+  }, maximum)
 }
 
 export function bindLunaCatalogSourcesToStrategy(

@@ -5380,7 +5380,10 @@ async function repairRejectedSingleUnitVisualStrategy(
   state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
   now: Date,
 ) {
-  const priorErrorCode = "NEEDS_VERIFIED_PRODUCT_FACTS:VISUAL_STRATEGY"
+  const recoverableErrorCodes = new Set([
+    "NEEDS_VERIFIED_PRODUCT_FACTS:VISUAL_STRATEGY",
+    "NEEDS_MORE_VERIFIED_FACTS",
+  ])
   const candidates = [...state.candidates]
     .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
     .filter((candidate) => {
@@ -5388,9 +5391,10 @@ async function repairRejectedSingleUnitVisualStrategy(
       return text(candidate.machine_state) === "REJECTED" &&
         text(candidate.state) === "REJECTED_TODAY" &&
         blockers.length === 1 &&
-        blockers[0] === priorErrorCode
+        recoverableErrorCodes.has(blockers[0])
     })
   for (const candidate of candidates) {
+    const priorErrorCode = strings(candidate.blockers)[0]
     const factsSummary = record(candidate.product_facts_summary)
     const factsPackage = record(factsSummary.authoritativeFactsPackage)
     const handoffSummary = record(candidate.manual_handoff_package)

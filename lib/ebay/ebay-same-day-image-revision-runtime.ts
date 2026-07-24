@@ -28,7 +28,7 @@ import {
   bindLunaCatalogSourcesToStrategy,
   LUNA_CATALOG_SOURCE_RESOLVER_VERSION,
   resolveLunaCatalogOriginalSourcePack,
-  selectLunaCatalogGenerationSources,
+  selectForegroundSafeLunaCatalogGenerationSources,
 } from "./luna-catalog-original-source-resolver"
 import { persistAuthorizedCatalogSourcePack } from "./luna-catalog-source-pack-persistence"
 import {
@@ -444,7 +444,8 @@ export async function generateAndPersistSameDayImageRevision(input: {
     for (const asset of nativeAssets) asset.buffer.fill(0)
     throw error
   }
-  const generationSources = selectLunaCatalogGenerationSources(catalogPack)
+  const generationSources =
+    await selectForegroundSafeLunaCatalogGenerationSources(catalogPack)
   const catalogCapabilities = generationSources.map((asset) => ({
     id: `LUNA_CATALOG_SOURCE:${asset.sha256}`,
     nativeWidth: asset.nativeWidth,

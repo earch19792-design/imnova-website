@@ -424,6 +424,8 @@ function whitenNearNeutralPixels(pixels: Buffer, channels: number) {
 }
 
 const FOREGROUND_MAX_DIMENSION = 1_600
+const FOREGROUND_RECOVERY_PADDING_RATIO = .12
+const FOREGROUND_RECOVERY_MINIMUM_ORIGINAL_BACKGROUND_RATIO = .10
 
 function lightNeutralPixel(pixels: Buffer, offset: number) {
   const red = pixels[offset]
@@ -580,7 +582,7 @@ function buildBorderContactGuard(
  * an authorized image. Unlike a global white/chroma key, this preserves white
  * product pixels enclosed by a darker rim (for example white enamelware).
  */
-export async function prepareAuthorizedEbaySecondaryForeground(
+async function prepareAuthorizedEbaySecondaryForegroundOnce(
   source: Buffer,
   options: { authorizedNativeHighResolution?: boolean } = {},
 ): Promise<EbayAuthorizedSecondaryForeground | null> {
@@ -876,6 +878,83 @@ export async function prepareAuthorizedEbaySecondaryForeground(
       protectedPixelRetentionRatio: Number(protectedPixelRetentionRatio.toFixed(4)),
       opaqueCornerRatio: Number(opaqueCornerRatio.toFixed(4)),
     },
+  }
+}
+
+/**
+ * Catalog photos sometimes contain the exact isolated product on white while
+ * the product itself touches the source frame. The strict first pass rejects
+ * that geometry because it cannot prove where the product ends. A bounded
+ * white margin makes the original edge inspectable, but the recovery is only
+ * accepted when the matte removes substantial background from inside the
+ * original frame as well. Photographic sources therefore remove only the
+ * synthetic margin and remain rejected.
+ */
+export async function prepareAuthorizedEbaySecondaryForeground(
+  source: Buffer,
+  options: { authorizedNativeHighResolution?: boolean } = {},
+): Promise<EbayAuthorizedSecondaryForeground | null> {
+  const direct = await prepareAuthorizedEbaySecondaryForegroundOnce(
+    source,
+    options,
+  )
+  if (direct || options.authorizedNativeHighResolution) return direct
+
+  const metadata = await sharp(source, {
+    failOn: "warning",
+    limitInputPixels: 40_000_000,
+  }).metadata()
+  // Native transparency already carries its own edge evidence. Never replace
+  // or flatten it merely to make a failed matte pass.
+  if (metadata.hasAlpha) return null
+
+  let normalized: Buffer | null = null
+  let padded: Buffer | null = null
+  let recovered: EbayAuthorizedSecondaryForeground | null = null
+  try {
+    normalized = await sharp(source, {
+      failOn: "warning",
+      limitInputPixels: 40_000_000,
+    }).rotate().resize({
+      width: FOREGROUND_MAX_DIMENSION,
+      height: FOREGROUND_MAX_DIMENSION,
+      fit: "inside",
+      withoutEnlargement: true,
+      kernel: sharp.kernel.lanczos3,
+    }).toColourspace("srgb").removeAlpha().png().toBuffer()
+    const normalizedMetadata = await sharp(normalized).metadata()
+    const width = normalizedMetadata.width ?? 0
+    const height = normalizedMetadata.height ?? 0
+    if (!width || !height) return null
+    const padding = Math.max(
+      48,
+      Math.round(Math.max(width, height) *
+        FOREGROUND_RECOVERY_PADDING_RATIO),
+    )
+    const paddedWidth = width + padding * 2
+    const paddedHeight = height + padding * 2
+    if (paddedWidth * paddedHeight > 40_000_000) return null
+    padded = await sharp(normalized).extend({
+      top: padding,
+      bottom: padding,
+      left: padding,
+      right: padding,
+      background: "#ffffff",
+    }).png().toBuffer()
+    const paddingOnlyRemovalRatio = 1 -
+      (width * height) / (paddedWidth * paddedHeight)
+    recovered = await prepareAuthorizedEbaySecondaryForegroundOnce(padded)
+    if (!recovered ||
+      recovered.qa.backgroundRemovalRatio <
+        paddingOnlyRemovalRatio +
+          FOREGROUND_RECOVERY_MINIMUM_ORIGINAL_BACKGROUND_RATIO) {
+      recovered?.output.fill(0)
+      return null
+    }
+    return recovered
+  } finally {
+    normalized?.fill(0)
+    padded?.fill(0)
   }
 }
 
