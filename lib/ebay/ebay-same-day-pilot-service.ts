@@ -802,7 +802,7 @@ async function currentState(
     supabase.from("ebay_same_day_pilot_candidates").select("*").eq("run_id", run.id).order("ordinal"),
     supabase.from("ebay_same_day_pilot_human_tasks").select("*").eq("run_id", run.id).order("created_at"),
     supabase.from("ebay_same_day_pilot_transitions").select("*").eq("run_id", run.id).order("created_at"),
-    supabase.from("ebay_same_day_pilot_jobs").select("id,job_type,status,attempt,available_at,rate_limit_resume_at,last_error_code,created_at,updated_at").eq("run_id", run.id).order("created_at"),
+    supabase.from("ebay_same_day_pilot_jobs").select("id,candidate_id,job_type,status,attempt,available_at,rate_limit_resume_at,last_error_code,created_at,updated_at").eq("run_id", run.id).order("created_at"),
     supabase.from("ebay_same_day_pilot_handoffs").select("id,candidate_id,status,package_data,package_hash,created_at")
       .eq("run_id", run.id).order("created_at"),
     supabase.from("ebay_api_quota_states")
@@ -2202,6 +2202,12 @@ async function repairSameDayPilotBootstrap(
     new Date(),
   )) {
     repaired = true
+  }
+  if (await repairQueryFamilyVisualReconciliationOrphan(
+    supabase,
+    activeState,
+  )) {
+    return true
   }
   // A capture is durable before the Same-Day transition is attempted. If an
   // older deployment or a transient continuation failure left the query task
@@ -4300,6 +4306,21 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
       }
     } else {
       familyEnriched += 1
+      const queryFamilyVisualBriefReused =
+        text(record(candidate.evidence_summary)
+          .visualMarketRecaptureRecoveryVersion) ===
+          VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION &&
+        text(record(candidate.evidence_summary)
+          .supersededVisualCaptureBatchId) === input.batchId
+      const reconciliationJobIdempotencyKey = [
+        state.run.id,
+        candidate.id,
+        "RECONCILE_PRODUCT_RESEARCH_CAPTURE",
+        input.batchId,
+        ...(queryFamilyVisualBriefReused
+          ? [QUERY_FAMILY_VISUAL_BRIEF_RECOVERY_VERSION]
+          : []),
+      ].join(":")
       await completeAndAdvanceHumanGate({ supabase: input.supabase, taskId: task.id,
         gateType: "PRODUCT_RESEARCH_CAPTURE_REQUIRED", runId: state.run.id, candidateId: candidate.id,
         previousState: "WAITING_PRODUCT_RESEARCH_CAPTURE", nextState: "RECONCILING_IDENTITY",
@@ -4311,9 +4332,10 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
           evidenceSummary, blockers: captureResolvedBlockers },
         nextAutomaticAction: "Reconciliar sólo las referencias de este candidato.", nextHumanAction: "Ninguna.",
         job: { jobType: "RECONCILE_PRODUCT_RESEARCH_CAPTURE",
-          idempotencyKey: `${state.run.id}:${candidate.id}:RECONCILE_PRODUCT_RESEARCH_CAPTURE:${input.batchId}`,
+          idempotencyKey: reconciliationJobIdempotencyKey,
           checkpoint: { captureBatchId: input.batchId, supplierVariantId: candidate.supplier_variant_id,
-            capturedAt: input.capturedAt ?? new Date().toISOString() }, maxAttempts: 10,
+            capturedAt: input.capturedAt ?? new Date().toISOString(),
+            queryFamilyVisualBriefReused }, maxAttempts: 10,
           apiFamily: "BROWSE", apiOperation: "EXACT_VERIFICATION", ownerLane: "P1_EXACT_VERIFICATION" } })
     }
   }
@@ -4952,6 +4974,107 @@ async function restoreUsableSupersededVisualCapture(
     }, { onConflict: "idempotency_key", ignoreDuplicates: true })
   if (eventError) {
     throw new Error("SAME_DAY_PILOT_QUERY_FAMILY_VISUAL_RECOVERY_EVENT_FAILED")
+  }
+  return true
+}
+
+async function repairQueryFamilyVisualReconciliationOrphan(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+) {
+  const candidate = state.candidates.find((entry) => {
+    const evidence = record(entry.evidence_summary)
+    return text(entry.machine_state) === "RECONCILING_IDENTITY" &&
+      text(entry.product_research_capture_batch_id) &&
+      text(entry.product_research_capture_batch_id) ===
+        text(evidence.supersededVisualCaptureBatchId) &&
+      text(evidence.visualMarketRecaptureRecoveryVersion) ===
+        VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION
+  })
+  if (!candidate) return false
+  const candidateId = text(candidate.id)
+  const captureBatchId = text(candidate.product_research_capture_batch_id)
+  const activeReconciliationJob = state.jobs.some((job) =>
+    text(job.candidate_id) === candidateId &&
+    text(job.job_type) === "RECONCILE_PRODUCT_RESEARCH_CAPTURE" &&
+    ["PENDING", "WAITING_RETRY", "LEASED"].includes(text(job.status)))
+  if (activeReconciliationJob) return false
+
+  const recoveryJobKey = [
+    state.run.id,
+    candidateId,
+    "RECONCILE_PRODUCT_RESEARCH_CAPTURE",
+    captureBatchId,
+    QUERY_FAMILY_VISUAL_BRIEF_RECOVERY_VERSION,
+  ].join(":")
+  const [{ data: recoveryEvents, error: recoveryEventReadError },
+    { data: existingJob, error: existingJobError }] = await Promise.all([
+    supabase.from("ebay_same_day_pilot_events")
+      .select("id,event_payload")
+      .eq("run_id", state.run.id)
+      .eq("candidate_id", candidateId)
+      .eq("event_type", "QUERY_FAMILY_VISUAL_BRIEF_REUSED")
+      .order("created_at", { ascending: false })
+      .limit(10),
+    supabase.from("ebay_same_day_pilot_jobs")
+      .select("id,status")
+      .eq("idempotency_key", recoveryJobKey)
+      .maybeSingle(),
+  ])
+  if (recoveryEventReadError || existingJobError) {
+    throw new Error(
+      "SAME_DAY_PILOT_QUERY_FAMILY_RECONCILIATION_ORPHAN_READ_FAILED",
+    )
+  }
+  const exactRecoveryEvent = (recoveryEvents ?? []).find((event) =>
+    text(record(event.event_payload).captureBatchId) === captureBatchId)
+  if (!exactRecoveryEvent || existingJob) return false
+
+  await enqueuePilotJob({
+    supabase,
+    runId: text(state.run.id),
+    candidateId,
+    job: {
+      jobType: "RECONCILE_PRODUCT_RESEARCH_CAPTURE",
+      idempotencyKey: recoveryJobKey,
+      checkpoint: {
+        captureBatchId,
+        supplierVariantId: candidate.supplier_variant_id,
+        capturedAt:
+          record(candidate.evidence_summary).groupedCaptureObservedAt ?? null,
+        queryFamilyVisualBriefReused: true,
+        orphanRecovery: true,
+      },
+      maxAttempts: 10,
+      apiFamily: "BROWSE",
+      apiOperation: "EXACT_VERIFICATION",
+      ownerLane: "P1_EXACT_VERIFICATION",
+    },
+  })
+  const { error: eventError } = await supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({
+      run_id: state.run.id,
+      candidate_id: candidateId,
+      event_type: "QUERY_FAMILY_VISUAL_RECONCILIATION_ORPHAN_REPAIRED",
+      event_payload: {
+        recoveryVersion: QUERY_FAMILY_VISUAL_BRIEF_RECOVERY_VERSION,
+        captureBatchId,
+        recoveryJobKey,
+        priorCompletedJobPreserved: true,
+        historyDeleted: false,
+      },
+      idempotency_key:
+        `${recoveryJobKey}:ORPHAN_REPAIR_EVENT`,
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) {
+    throw new Error(
+      "SAME_DAY_PILOT_QUERY_FAMILY_RECONCILIATION_ORPHAN_EVENT_FAILED",
+    )
   }
   return true
 }
