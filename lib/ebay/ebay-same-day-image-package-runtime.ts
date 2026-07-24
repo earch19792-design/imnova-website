@@ -529,6 +529,42 @@ export async function generateAndPersistSameDayImagePackage(input: {
       claimInput,
     )
   }
+  const priorClaim = record(claimResponse.data)
+  if (!claimResponse.error &&
+    generationMode === "DETERMINISTIC_ONLY" &&
+    priorClaim.claimed !== true &&
+    text(priorClaim.status) === "FAILED_FINAL") {
+    const {
+      data: gateReconciliationData,
+      error: gateReconciliationError,
+    } = await input.supabase.rpc(
+      "reconcile_same_day_visual_gate_version_v1",
+      {
+        p_account_key: input.accountKey,
+        p_actor: actorId,
+        p_run_id: runId,
+        p_candidate_id: candidateId,
+        p_listing_package_id: listingPackageId,
+        p_fact_run_id: facts.factRunId,
+        p_handoff_id: handoff.id,
+        p_handoff_hash: packageHash,
+        p_expected_idempotency_hash: idempotencyKeyHash,
+      },
+    )
+    if (gateReconciliationError) {
+      disposeAuthorizedCatalogSourcePack(catalogPack)
+      throw new Error(databaseErrorCode(
+        gateReconciliationError,
+        "SAME_DAY_IMAGE_VISUAL_GATE_RECONCILIATION_FAILED",
+      ))
+    }
+    if (record(gateReconciliationData).reconciled === true) {
+      claimResponse = await input.supabase.rpc(
+        "claim_ebay_same_day_pilot_image_package_run",
+        claimInput,
+      )
+    }
+  }
   const { data: claimData, error: claimError } = claimResponse
   if (claimError) {
     disposeAuthorizedCatalogSourcePack(catalogPack)

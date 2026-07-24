@@ -326,7 +326,7 @@ function ControlledRiskOverrideAuthorization({ summary, working, onAuthorize }: 
       className="mt-4 min-h-12 w-full rounded-xl bg-amber-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 disabled:opacity-40 sm:w-auto">
       AUTORIZAR EXCEPCIÓN Y PREPARAR LISTING EN SELLER OS
     </button>
-    <p className="mt-2 text-xs leading-5 text-amber-50/75">Todavía no publica en eBay: prepara contenido, seis imágenes y el paquete exacto para una autorización final separada dentro de Seller OS.</p>
+    <p className="mt-2 text-xs leading-5 text-amber-50/75">Todavía no publica en eBay: prepara contenido, siete imágenes y el paquete exacto para una autorización final separada dentro de Seller OS.</p>
   </section>
 }
 
@@ -859,7 +859,7 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
           <input type="checkbox" checked={openAiImageSpendApproved}
             onChange={(event) => setOpenAiImageSpendApproved(event.target.checked)}
             className="mt-1 h-5 w-5 shrink-0 accent-emerald-200" />
-          <span><strong>Autorizo hasta 1 llamada OpenAI de calidad high.</strong> Creará un tablero seguro de escenas comerciales basado en el expediente y, cuando exista, en patrones agregados de vendedores. La foto exacta autorizada de Luna se compondrá localmente; las seis imágenes requerirán mi revisión.</span>
+          <span><strong>Autorizo hasta 1 llamada OpenAI de calidad high.</strong> Creará un tablero seguro de escenas comerciales basado en el expediente y, cuando exista, en patrones agregados de vendedores. La foto exacta autorizada de Luna se compondrá localmente; las siete imágenes requerirán mi revisión.</span>
         </label>
       </fieldset>
       {(controlledRiskActiveMarket || nonCompetitiveControlledRisk) && <label className={`mt-3 flex min-h-12 items-start gap-3 rounded-xl border p-3 text-xs leading-5 ${noPromotionConfirmed ? "border-emerald-200/25 text-emerald-50" : "border-red-300/30 text-red-100"}`}>
@@ -881,7 +881,7 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
           <p className="text-sm font-black text-violet-50">Set de publicación para revisión · {imageSet.length}/6</p>
           <span className="rounded-full border border-violet-100/20 px-2.5 py-1 text-[10px] font-black text-violet-100">{generatedSecondaryCount === 5 ? "5 ESCENAS · 1 LLAMADA OPENAI" : "COMPOSICIÓN LOCAL MULTIFUENTE"}</span>
         </div>
-        <p className="mt-2 text-xs leading-5 text-white/60">Estas son las seis imágenes derivadas guardadas por Seller OS para este candidato. La imagen Luna superior sólo sirve como referencia de identidad y no sustituye este set.</p>
+        <p className="mt-2 text-xs leading-5 text-white/60">Estas son las siete imágenes derivadas guardadas por Seller OS para este candidato: una principal y seis estrategias secundarias. La imagen Luna superior sólo sirve como referencia de identidad y no sustituye este set.</p>
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">{imageSet.map((asset, index) => <figure key={asset.id} className="min-w-0 overflow-hidden rounded-xl border border-white/10 bg-white p-2 text-black">
         {asset.outputPreviewUrl
@@ -897,10 +897,10 @@ function HumanTask({ task, candidate, reviewAssets, working, submissionError, on
         : legacyImageSet
           ? "Este set pertenece al generador anterior y no puede aprobarse: repite una sola fuente sin la diversidad comercial exigida. Seller OS debe regenerarlo."
         : imageSet.length
-          ? `El set todavía no está listo para aprobar: se recibieron ${imageSet.length} de 6 previews válidos o falta un slot obligatorio.`
-          : "Seller OS todavía no entregó el set derivado de seis imágenes. Las URLs Luna no se usarán como sustituto."}</p>
+          ? `El set todavía no está listo para aprobar: se recibieron ${imageSet.length} de 7 previews válidos o falta un slot obligatorio.`
+          : "Seller OS todavía no entregó el set derivado de siete imágenes. Las URLs Luna no se usarán como sustituto."}</p>
       <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" disabled={working || !imageSetReady} onClick={() => void onConfirm({ action: "image_decision", taskId: task.id, decision: "APPROVE" })} className="min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-100 disabled:opacity-40 sm:w-auto">APROBAR IMÁGENES · SET DE 6</button>
+        <button type="button" disabled={working || !imageSetReady} onClick={() => void onConfirm({ action: "image_decision", taskId: task.id, decision: "APPROVE" })} className="min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-100 disabled:opacity-40 sm:w-auto">APROBAR IMÁGENES · SET DE 7</button>
         <button type="button" disabled={working} onClick={() => void onConfirm({ action: "image_decision", taskId: task.id, decision: "REJECT" })} className="min-h-12 w-full rounded-xl border border-red-300/35 px-4 font-black text-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-200 disabled:opacity-40 sm:w-auto">RECHAZAR</button>
       </div>
     </div>}
@@ -936,7 +936,7 @@ function completeImageReviewSet(assets: Row[]) {
       assets.filter((asset) => asset.slot === slot).length === 1) &&
     assets.every((asset) =>
       asset.compositorContractVersion ===
-        "EBAY_IMAGE_COMPOSITOR_FOREGROUND_V8_2026_07_22" &&
+        "EBAY_IMAGE_COMPOSITOR_FOREGROUND_V9_2026_07_22" &&
       Number(asset.width) === 1600 && Number(asset.height) === 1600))) return false
   const main = assets.find((asset) => asset.slot === "MAIN_WHITE_BACKGROUND")
   const generated = assets.filter((asset) => asset.generativeAiUsed === true)
@@ -1124,7 +1124,7 @@ function ManualHandoffCard({ candidate }: { candidate: Row }) {
     <div className="mt-4 grid gap-3 sm:grid-cols-2"><CopyField label="Título" value={String(handoff.title ?? "")} /><CopyField label="Descripción" value={String(handoff.description ?? "")} multiline /></div>
     <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><CopyField label="Precio" value={handoff.price ? Number(handoff.price).toFixed(2) : ""} /><CopyField label="Cantidad" value={handoff.quantity == null ? "" : String(handoff.quantity)} /><CopyField label="Custom Label / SKU" value={String(handoff.customLabel ?? "")} /><CopyField label="Categoría eBay" value={String(handoff.categoryId ?? "")} /><CopyField label="Condición eBay" value={String(handoff.conditionId ?? "")} /><CopyField label="Base de fulfillment" value={fulfillmentBasisLabel(String(fulfillmentCompliance.basis ?? ""))} /><CopyField label="Item specifics" value={specificsText} multiline /></div>
     <details className="mt-4 rounded-xl border border-white/10 p-3"><summary className="flex min-h-11 cursor-pointer items-center text-sm font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">3 · Envío, políticas e imágenes</summary><div className="mt-3 grid gap-3 sm:grid-cols-2"><CopyField label="Envío" value={shippingText} multiline /><div className="grid gap-3"><CopyField label="Política de fulfillment" value={String(businessPolicies.fulfillmentPolicyId ?? "")} /><CopyField label="Política de pago" value={String(businessPolicies.paymentPolicyId ?? "")} /><CopyField label="Política de devolución" value={String(businessPolicies.returnPolicyId ?? "")} /></div></div><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">{imageUrls.map((url: string, index: number) => <figure key={url} className="min-w-0 rounded-xl border border-white/10 bg-white p-2"><img src={url} alt={`Imagen autorizada ${index + 1} de Luna`} className="aspect-square w-full object-contain" /><figcaption className="mt-1 text-center text-xs font-black text-black">Orden {index + 1}</figcaption></figure>)}</div><div className="mt-3"><CopyField label="URLs autorizadas en orden" value={imageUrls.join("\n")} multiline /></div></details>
-    <details className="mt-3 rounded-xl border border-white/10 p-3"><summary className="flex min-h-11 cursor-pointer items-center text-sm font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">4 · Qué hará Seller OS después de tu autorización</summary><ol className="mt-3 list-decimal space-y-1 pl-5 text-xs text-white/60"><li>Revalidará stock, costo, identidad, ficha, seis imágenes, policies y cuenta Production.</li><li>Persistirá el preview final exacto para que confirmes precio y cantidad.</li><li>Publicará el Offer una sola vez; ante una respuesta incierta sólo reconciliará por lectura.</li><li>Guardará el Item ID, verificará ACTIVE y activará monitoreo comercial y de Luna.</li></ol></details>
+    <details className="mt-3 rounded-xl border border-white/10 p-3"><summary className="flex min-h-11 cursor-pointer items-center text-sm font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">4 · Qué hará Seller OS después de tu autorización</summary><ol className="mt-3 list-decimal space-y-1 pl-5 text-xs text-white/60"><li>Revalidará stock, costo, identidad, ficha, siete imágenes, policies y cuenta Production.</li><li>Persistirá el preview final exacto para que confirmes precio y cantidad.</li><li>Publicará el Offer una sola vez; ante una respuesta incierta sólo reconciliará por lectura.</li><li>Guardará el Item ID, verificará ACTIVE y activará monitoreo comercial y de Luna.</li></ol></details>
   </article>
 }
 

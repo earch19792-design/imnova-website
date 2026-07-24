@@ -1345,7 +1345,7 @@ async function bootstrapCandidate(supabase: SupabaseClient, runId: string, candi
   }
   if (machineState === "WAITING_IMAGE_APPROVAL") {
     await createHumanTask({ supabase, runId, candidateId: id, expectedState: "WAITING_IMAGE_APPROVAL", gateType: "IMAGE_APPROVAL_REQUIRED",
-      title: "Revisa el set completo de seis imágenes", why: "Debes confirmar que el producto autorizado, pack, variante, textos y elementos incluidos son exactos.",
+      title: "Revisa el set completo de siete imágenes", why: "Debes confirmar que el producto autorizado, pack, variante, textos y elementos incluidos son exactos.",
       seconds: 120, impact: "Seller OS publicará internamente el set aprobado y preparará el paquete para tu autorización final dentro del sistema.",
       evidence: { product: candidate.product_title, imagePackage: candidate.image_package_summary },
       actionSchema: { type: "IMAGE_APPROVAL", actions: ["APPROVE", "REJECT"], expectedImages: 6,
@@ -5386,6 +5386,7 @@ async function repairRejectedSingleUnitVisualStrategy(
     "LUNA_CATALOG_SOURCE_PACK_STORAGE_FAILED",
     "LUNA_CATALOG_SOURCE_PACK_SAVE_FAILED",
     "SAME_DAY_IMAGE_PACKAGE_IDEMPOTENCY_CONFLICT",
+    "SAME_DAY_IMAGE_SET_VISUAL_STRATEGY_V2_INVALID",
   ])
   const candidates = [...state.candidates]
     .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
@@ -6680,7 +6681,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           openAiCalls: generated.openAiCalls,
           generatedImages: 6, competitorImages: 0, ebayWrites: 0 },
         nextAutomaticAction: "Esperar una sola aprobación visual.",
-        nextHumanAction: "Revisar y aprobar o rechazar el set completo de seis imágenes.",
+        nextHumanAction: "Revisar y aprobar o rechazar el set completo de siete imágenes.",
       })
       await createHumanTask({
         supabase: input.supabase,
@@ -6688,7 +6689,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
         candidateId: candidate.id,
         expectedState: "WAITING_IMAGE_APPROVAL",
         gateType: "IMAGE_APPROVAL_REQUIRED",
-        title: "Revisa el set completo de seis imágenes",
+        title: "Revisa el set completo de siete imágenes",
         why: "Confirma que producto, pack, variante, textos y elementos incluidos coinciden exactamente.",
         seconds: 120,
         impact: "Una sola aprobación publicará internamente el set y preparará el paquete para la autorización final en Seller OS.",
