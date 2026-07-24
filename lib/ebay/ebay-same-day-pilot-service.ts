@@ -124,6 +124,11 @@ const VISUAL_MARKET_RECAPTURE_ERROR_CODES = new Set([
   "MARKET_VISUAL_SIGNALS_INSUFFICIENT",
   "SAME_DAY_IMAGE_MARKET_BRIEF_REQUIRED",
 ])
+const VISUAL_MARKET_RECAPTURE_UNBOUND_CANDIDATE_CODES = new Set([
+  "SAME_DAY_PILOT_VISUAL_RECAPTURE_CAPTURE_BINDING_MISSING",
+  "SAME_DAY_PILOT_VISUAL_RECAPTURE_PLAN_BINDING_MISSING",
+  "SAME_DAY_PILOT_VISUAL_RECAPTURE_QUERY_TASK_MISSING",
+])
 const SAME_DAY_MAX_TOTAL_CANDIDATE_ATTEMPTS =
   SAME_DAY_QUEUE_LIMIT * SAME_DAY_MAX_CANDIDATE_CYCLES
 const LEGACY_PRODUCT_FACTS_REJECTION_REASONS = new Set([
@@ -4859,92 +4864,113 @@ async function repairRejectedVisualMarketRecapture(
   state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
   now: Date,
 ) {
-  const candidate = [...state.candidates]
+  const candidates = [...state.candidates]
     .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
-    .find((entry) => {
+    .filter((entry) => {
       const blockers = strings(entry.blockers)
       return entry.machine_state === "REJECTED" &&
         entry.state === "REJECTED_TODAY" &&
         blockers.length === 1 &&
         VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(blockers[0])
     })
-  if (!candidate) return 0
-  const { data: imageJobs, error: imageJobsError } = await supabase
-    .from("ebay_same_day_pilot_jobs")
-    .select("id,status,last_error_code,checkpoint")
-    .eq("run_id", state.run.id)
-    .eq("candidate_id", candidate.id)
-    .eq("job_type", "GENERATE_SIX_IMAGE_PACKAGE")
-    .in("status", ["DEAD_LETTER", "CANCELLED", "COMPLETED"])
-    .order("created_at", { ascending: false })
-  if (imageJobsError) {
-    throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_IMAGE_JOB_READ_FAILED")
-  }
-  const failedJob = (imageJobs ?? []).find((job) => {
-    const recovery = record(record(job.checkpoint)._visualMarketRecaptureRecovery)
-    return VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(text(job.last_error_code)) ||
-      VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(text(recovery.previousErrorCode)) ||
-      (job.status === "COMPLETED" &&
-        text(job.last_error_code) === "EFFECT_ALREADY_APPLIED_RECOVERED")
-  })
-  if (!failedJob) return 0
-
-  const candidateErrorCode = strings(candidate.blockers)[0]
-  await routeCandidateToVisualMarketRecapture({
-    supabase,
-    state,
-    candidate: record(candidate),
-    previousState: "REJECTED",
-    errorCode: VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(
-      text(failedJob.last_error_code),
-    )
-      ? text(failedJob.last_error_code)
-      : VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(
-        text(record(record(failedJob.checkpoint)._visualMarketRecaptureRecovery)
-          .previousErrorCode),
-      )
-      ? text(record(record(failedJob.checkpoint)._visualMarketRecaptureRecovery)
-        .previousErrorCode)
-      : candidateErrorCode,
-    now,
-  })
-  if (failedJob.status === "DEAD_LETTER") {
-    const { error } = await supabase.from("ebay_same_day_pilot_jobs")
-      .update({
-        status: "CANCELLED",
-        last_error_code: "SUPERSEDED_BY_VISUAL_MARKET_RECAPTURE",
-        checkpoint: {
-          ...record(failedJob.checkpoint),
-          _visualMarketRecaptureRecovery: {
-            version: VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION,
-            previousErrorCode: text(failedJob.last_error_code),
-            recoveredAt: now.toISOString(),
-            historyDeleted: false,
-          },
-        },
-        updated_at: now.toISOString(),
-      })
-      .eq("id", failedJob.id)
-      .eq("status", "DEAD_LETTER")
-    if (error) {
-      throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_DEAD_LETTER_CANCEL_FAILED")
+  for (const candidate of candidates) {
+    const { data: imageJobs, error: imageJobsError } = await supabase
+      .from("ebay_same_day_pilot_jobs")
+      .select("id,status,last_error_code,checkpoint")
+      .eq("run_id", state.run.id)
+      .eq("candidate_id", candidate.id)
+      .eq("job_type", "GENERATE_SIX_IMAGE_PACKAGE")
+      .in("status", ["DEAD_LETTER", "CANCELLED", "COMPLETED"])
+      .order("created_at", { ascending: false })
+    if (imageJobsError) {
+      throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_IMAGE_JOB_READ_FAILED")
     }
-  }
-  const recoveredState = await currentState(
-    supabase,
-    text(state.run.marketplace_account_key),
-    text(state.run.operation_date),
-    now,
-  )
-  if (recoveredState) {
-    await repairSameDayPilotBootstrap(
+    const failedJob = (imageJobs ?? []).find((job) => {
+      const recovery = record(
+        record(job.checkpoint)._visualMarketRecaptureRecovery,
+      )
+      return VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(
+        text(job.last_error_code),
+      ) || VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(
+        text(recovery.previousErrorCode),
+      ) || (job.status === "COMPLETED" &&
+        text(job.last_error_code) === "EFFECT_ALREADY_APPLIED_RECOVERED")
+    })
+    if (!failedJob) continue
+
+    const candidateErrorCode = strings(candidate.blockers)[0]
+    try {
+      await routeCandidateToVisualMarketRecapture({
+        supabase,
+        state,
+        candidate: record(candidate),
+        previousState: "REJECTED",
+        errorCode: VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(
+          text(failedJob.last_error_code),
+        )
+          ? text(failedJob.last_error_code)
+          : VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(
+            text(record(
+              record(failedJob.checkpoint)._visualMarketRecaptureRecovery,
+            ).previousErrorCode),
+          )
+          ? text(record(
+            record(failedJob.checkpoint)._visualMarketRecaptureRecovery,
+          ).previousErrorCode)
+          : candidateErrorCode,
+        now,
+      })
+    } catch (error) {
+      const code = error instanceof Error ? error.message : ""
+      if (VISUAL_MARKET_RECAPTURE_UNBOUND_CANDIDATE_CODES.has(code)) {
+        // Older rejected candidates may predate the durable query-task
+        // binding. Preserve them unchanged and keep looking for the first
+        // candidate whose exact plan, query and capture can be proved.
+        continue
+      }
+      throw error
+    }
+    if (failedJob.status === "DEAD_LETTER") {
+      const { error } = await supabase.from("ebay_same_day_pilot_jobs")
+        .update({
+          status: "CANCELLED",
+          last_error_code: "SUPERSEDED_BY_VISUAL_MARKET_RECAPTURE",
+          checkpoint: {
+            ...record(failedJob.checkpoint),
+            _visualMarketRecaptureRecovery: {
+              version: VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION,
+              previousErrorCode: text(failedJob.last_error_code),
+              recoveredAt: now.toISOString(),
+              historyDeleted: false,
+            },
+          },
+          updated_at: now.toISOString(),
+        })
+        .eq("id", failedJob.id)
+        .eq("status", "DEAD_LETTER")
+      if (error) {
+        throw new Error(
+          "SAME_DAY_PILOT_VISUAL_RECAPTURE_DEAD_LETTER_CANCEL_FAILED",
+        )
+      }
+    }
+    const recoveredState = await currentState(
       supabase,
-      recoveredState,
       text(state.run.marketplace_account_key),
+      text(state.run.operation_date),
+      now,
     )
+    if (recoveredState) {
+      await repairSameDayPilotBootstrap(
+        supabase,
+        recoveredState,
+        text(state.run.marketplace_account_key),
+      )
+    }
+    await refreshRunProjection(supabase, state.run.id)
+    return 1
   }
-  await refreshRunProjection(supabase, state.run.id)
-  return 1
+  return 0
 }
 
 async function repairOrphanedImagePreparation(
