@@ -690,7 +690,7 @@ test("readiness fails closed on evidence, freshness, rights, margin, policies an
   assert.ok(result.blockers.includes("SKU_COLLISION"))
 })
 
-test("gateway uses Sandbox GETs to verify policies, enabled location and SKU before PUT", async () => {
+test("gateway uses valid-language Sandbox GETs to verify policies, enabled location and SKU before PUT", async () => {
   const module = await importTypeScript(gatewaySource)
   const original = { ...process.env }
   Object.assign(process.env, {
@@ -782,8 +782,9 @@ test("gateway uses Sandbox GETs to verify policies, enabled location and SKU bef
     assert.ok(ebayCalls
       .filter((call) => call.method === "GET")
       .every((call) =>
-        Object.keys(call.headers).length === 1
+        Object.keys(call.headers).length === 2
         && typeof call.headers.Authorization === "string"
+        && call.headers["Accept-Language"] === "en-US"
         && !("X-EBAY-C-MARKETPLACE-ID" in call.headers)
       ))
     assert.ok(ebayCalls
@@ -791,6 +792,7 @@ test("gateway uses Sandbox GETs to verify policies, enabled location and SKU bef
       .every((call) =>
         call.headers["Content-Type"] === "application/json"
         && call.headers["Content-Language"] === "en-US"
+        && call.headers["Accept-Language"] === "en-US"
         && !("X-EBAY-C-MARKETPLACE-ID" in call.headers)
       ))
     assert.deepEqual(
@@ -1815,8 +1817,9 @@ test("authorized publication sends publishOffer exactly once and returns the lis
       && call.pathname.endsWith("/publish"))
     assert.deepEqual(
       Object.keys(publishCall.headers),
-      ["Authorization"],
+      ["Authorization", "Accept-Language"],
     )
+    assert.equal(publishCall.headers["Accept-Language"], "en-US")
   } finally {
     process.env = original
   }

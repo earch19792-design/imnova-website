@@ -19,6 +19,7 @@ const REQUEST_TIMEOUT_MS = 12_000
 const TRANSIENT_STATUSES = new Set([429, 500, 502, 503, 504])
 const PREFLIGHT_READ_ATTEMPTS = 2
 const PREFLIGHT_READ_RETRY_DELAY_MS = 150
+const EBAY_ACCEPT_LANGUAGE = "en-US"
 
 export type EbayDraftOnlyTarget = "SANDBOX" | "PRODUCTION"
 
@@ -477,6 +478,7 @@ async function preflightRead(
       method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
+        "Accept-Language": EBAY_ACCEPT_LANGUAGE,
       },
       cache: "no-store",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -1110,6 +1112,7 @@ async function write(
       method,
       headers: {
         Authorization: `Bearer ${token}`,
+        "Accept-Language": EBAY_ACCEPT_LANGUAGE,
         "Content-Type": "application/json",
         "Content-Language": "en-US",
       },
@@ -1502,6 +1505,7 @@ export async function publishEbayOfferOnce(input: {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
+        "Accept-Language": EBAY_ACCEPT_LANGUAGE,
       },
       cache: "no-store",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
