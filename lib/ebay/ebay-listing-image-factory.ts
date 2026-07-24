@@ -8,7 +8,7 @@ import { z } from "zod"
 // @ts-expect-error Next's bundler resolves the same TypeScript source at build time.
 import { EBAY_IMAGE_OUTPUT_SIZE, optimizeAuthorizedEbayMainImage, prepareAuthorizedEbayFullFrameLayer, prepareAuthorizedEbaySecondaryForeground, type EbayAuthorizedSecondaryForeground, type EbayOptimizedImage } from "./ebay-image-optimization-service.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
-import { EBAY_IMAGE_MARKET_BRIEF_VERSION, ebayImageMarketBriefSchema, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
+import { EBAY_IMAGE_MARKET_BRIEF_VERSION, ebayImageMarketBriefSchema, isEbayImageMarketBriefUsable, type EbayImageMarketBrief } from "./ebay-image-market-brief.ts"
 // @ts-expect-error Node's native TypeScript test runner needs the extension.
 import { assertReferenceGuidedProviderAllowed } from "./reference-guided-deterministic-source-crop.ts"
 
@@ -856,17 +856,6 @@ export function assertEbayImageEvidenceSufficiency(input: {
   }
 }
 
-function marketSignalsUsable(brief: EbayImageMarketBrief | null) {
-  const now = Date.now()
-  const observedAt = Date.parse(brief?.observedAt ?? "")
-  const freshUntil = Date.parse(brief?.freshUntil ?? "")
-  return Boolean(brief && brief.confidence !== "LOW" &&
-    brief.recencyWeightingApplied &&
-    (brief.supportingSignals.recentObservationPercent ?? 0) >= 25 &&
-    Number.isFinite(observedAt) && observedAt <= now &&
-    Number.isFinite(freshUntil) && freshUntil > now)
-}
-
 async function canonicalizeMainForV4(normalizedMain: Buffer) {
   return sharp(normalizedMain)
     .toColourspace("srgb")
@@ -1519,7 +1508,7 @@ export function buildSafeOpenAiBackgroundPlatePlan(
   if (!OPENAI_IMAGE_QUALITIES.has(quality)) {
     throw new Error("EBAY_IMAGE_OPENAI_QUALITY_NOT_ALLOWED")
   }
-  if (quality === "high" && !marketSignalsUsable(input.marketVisualBrief)) {
+  if (quality === "high" && !isEbayImageMarketBriefUsable(input.marketVisualBrief)) {
     throw new Error("MARKET_VISUAL_SIGNALS_INSUFFICIENT")
   }
   const context = safeContextForFacts(input.facts)
@@ -2182,7 +2171,7 @@ export async function composeAuthorizedEbayListingImageSet(
     const promptCompliancePassed = !backgroundPlate ||
       (slot === "MAIN_WHITE_BACKGROUND" ? true : Boolean(panelSelection))
     const marketSignalCompliancePassed = !backgroundPlate ||
-      marketSignalsUsable(input.marketVisualBrief)
+      isEbayImageMarketBriefUsable(input.marketVisualBrief)
     const productFidelityPassed = controlledComposite
       ? sourceCapability?.authorizationStatus ===
           "AUTHORIZED_CATALOG_NATIVE_HIGH_RES" &&

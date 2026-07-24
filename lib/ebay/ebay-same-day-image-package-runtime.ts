@@ -26,7 +26,10 @@ import {
   disposeTransientSameDayImageAssets,
   generateTransientSameDayImagePackage,
 } from "./ebay-same-day-image-package-service"
-import { loadEbayImageMarketBrief } from "./ebay-image-market-brief"
+import {
+  isEbayImageMarketBriefUsable,
+  loadEbayImageMarketBrief,
+} from "./ebay-image-market-brief"
 import {
   disposeAuthorizedCatalogSourcePack,
   bindLunaCatalogSourcesToStrategy,
@@ -348,10 +351,7 @@ export async function generateAndPersistSameDayImagePackage(input: {
   // In the durable same-day flow, an AI-generated scene must be grounded in
   // both the verified product dossier and usable aggregate visual evidence.
   // Never silently fall back to generic seller-pattern defaults.
-  if (!marketVisualBrief || marketVisualBrief.confidence === "LOW" ||
-    !marketVisualBrief.recencyWeightingApplied ||
-    (marketVisualBrief.supportingSignals.recentObservationPercent ?? 0) < 25 ||
-    Date.parse(marketVisualBrief.freshUntil ?? "") <= Date.now()) {
+  if (!isEbayImageMarketBriefUsable(marketVisualBrief)) {
     throw new Error("MARKET_VISUAL_SIGNALS_INSUFFICIENT")
   }
   const opportunityId = uuid(input.candidate.opportunity_id)

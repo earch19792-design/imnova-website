@@ -59,6 +59,10 @@ import {
   VISUAL_MARKET_BRIEF_VERSION,
 } from "./ebay-product-research-visual-pattern"
 import {
+  isEbayImageMarketBriefUsable,
+  loadEbayImageMarketBrief,
+} from "./ebay-image-market-brief"
+import {
   markProductResearchQueryCaptured,
   productResearchPlannedQueryHash,
   productResearchQueriesMatch,
@@ -121,6 +125,10 @@ const SAME_DAY_LUNA_DECISION_REFRESH_VERSION = "SAME_DAY_LUNA_DECISION_REFRESH_V
 const SAME_DAY_REPLENISHMENT_VERSION = "SAME_RUN_REPLENISHMENT_V1_2026_07_20"
 const VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION =
   "VISUAL_MARKET_RECAPTURE_RECOVERY_V1_2026_07_23"
+const QUERY_FAMILY_VISUAL_BRIEF_RECOVERY_VERSION =
+  "QUERY_FAMILY_VISUAL_BRIEF_RECOVERY_V1_2026_07_23"
+const VISUAL_MARKET_RECAPTURE_LIMIT_REASON =
+  "MARKET_VISUAL_EVIDENCE_NOT_ACTIONABLE_AFTER_RECAPTURE"
 const VISUAL_MARKET_RECAPTURE_ERROR_CODES = new Set([
   "MARKET_VISUAL_SIGNALS_INSUFFICIENT",
   "SAME_DAY_IMAGE_MARKET_BRIEF_REQUIRED",
@@ -2186,6 +2194,14 @@ async function repairSameDayPilotBootstrap(
       text(state.run.operation_date),
     )
     if (!activeState) return repaired
+  }
+  if (await restoreUsableSupersededVisualCapture(
+    supabase,
+    activeState,
+    accountKey,
+    new Date(),
+  )) {
+    repaired = true
   }
   // A capture is durable before the Same-Day transition is attempted. If an
   // older deployment or a transient continuation failure left the query task
@@ -4834,6 +4850,112 @@ function visualMarketRecoveryPriorityCandidate(
     })[0] ?? null
 }
 
+async function restoreUsableSupersededVisualCapture(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  accountKey: string,
+  now: Date,
+) {
+  const candidate = visualMarketRecoveryPriorityCandidate(state)
+  if (!candidate ||
+    text(candidate.machine_state) !== "WAITING_PRODUCT_RESEARCH_CAPTURE" ||
+    text(candidate.product_research_capture_batch_id)) return false
+  const candidateId = text(candidate.id)
+  const evidence = record(candidate.evidence_summary)
+  const captureBatchId = text(evidence.supersededVisualCaptureBatchId)
+  const familyFingerprint = text(candidate.family_fingerprint)
+  const candidatePlan = record(candidate.product_research_query_plan)
+  const planId = text(candidatePlan.productResearchPlanId) ||
+    text(record(state.run.source_inventory).productResearchPlanId)
+  const plannedQuery = text(candidatePlan.query, 100)
+  const queryHash = productResearchPlannedQueryHash(plannedQuery)
+  const hasOpenCaptureGate = state.tasks.some((task) =>
+    text(task.candidate_id) === candidateId &&
+    task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" &&
+    task.status === "OPEN")
+  if (!candidateId || !hasOpenCaptureGate ||
+    !/^[0-9a-f-]{36}$/i.test(captureBatchId) ||
+    !/^[0-9a-f-]{36}$/i.test(planId) ||
+    !/^sha256:[0-9a-f]{64}$/.test(familyFingerprint) ||
+    !plannedQuery) return false
+
+  const [{ data: queryTasks, error: queryTaskError },
+    { data: captureBatch, error: captureBatchError },
+    marketVisualBrief] = await Promise.all([
+    supabase.from("marketplace_product_research_query_tasks")
+      .select("id,status,query_hash")
+      .eq("plan_id", planId)
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("query_hash", queryHash)
+      .eq("status", "PENDING"),
+    supabase.from("marketplace_product_research_capture_batches")
+      .select("id,captured_at,search_query_hash")
+      .eq("id", captureBatchId)
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .maybeSingle(),
+    loadEbayImageMarketBrief({
+      supabase,
+      accountKey,
+      captureBatchId,
+      familyFingerprint,
+    }),
+  ])
+  if (queryTaskError || captureBatchError) {
+    throw new Error("SAME_DAY_PILOT_QUERY_FAMILY_VISUAL_RECOVERY_READ_FAILED")
+  }
+  const queryTask = (queryTasks ?? []).find((task) =>
+    text(task.query_hash) === queryHash)
+  const capturedAt = new Date(text(captureBatch?.captured_at))
+  if (!queryTask || text(captureBatch?.search_query_hash) !== queryHash ||
+    !Number.isFinite(capturedAt.getTime()) ||
+    !isEbayImageMarketBriefUsable(marketVisualBrief, now)) return false
+
+  await markProductResearchQueryCaptured({
+    supabase,
+    accountKey,
+    searchQueryHash: queryHash,
+    captureBatchId,
+    planId,
+    taskId: text(queryTask.id),
+    capturedAt,
+    now,
+  })
+  const { error: eventError } = await supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({
+      run_id: state.run.id,
+      candidate_id: candidateId,
+      event_type: "QUERY_FAMILY_VISUAL_BRIEF_REUSED",
+      event_payload: {
+        recoveryVersion: QUERY_FAMILY_VISUAL_BRIEF_RECOVERY_VERSION,
+        captureBatchId,
+        productResearchPlanId: planId,
+        productResearchQueryTaskId: queryTask.id,
+        confidence: marketVisualBrief?.confidence ?? null,
+        aggregateSampleSize: marketVisualBrief?.sampleSize ?? 0,
+        primaryCohort: marketVisualBrief?.primaryCohort ?? null,
+        sameCaptureBatchOnly: true,
+        commercialEvidencePreserved: true,
+        productFactsPreserved: true,
+        productApprovalPreservedForRevalidation: true,
+        identityClaimsInferred: false,
+        historyDeleted: false,
+      },
+      idempotency_key:
+        `${state.run.id}:${candidateId}:${QUERY_FAMILY_VISUAL_BRIEF_RECOVERY_VERSION}:${captureBatchId}`,
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) {
+    throw new Error("SAME_DAY_PILOT_QUERY_FAMILY_VISUAL_RECOVERY_EVENT_FAILED")
+  }
+  return true
+}
+
 function isDeferredLegacyVisualMarketRecovery(candidate: JsonRecord) {
   const evidence = record(candidate.evidence_summary)
   return text(evidence.visualMarketRecaptureRecoveryVersion) ===
@@ -6348,6 +6470,63 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     const code = error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message) ? error.message : "SAME_DAY_PILOT_JOB_FAILED"
     if (leased.job_type === "GENERATE_SIX_IMAGE_PACKAGE" &&
       VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(code)) {
+      const priorVisualRecaptures = state.transitions.filter((entry) =>
+        text(entry.candidate_id) === text(candidate.id) &&
+        text(entry.next_state) === "WAITING_PRODUCT_RESEARCH_CAPTURE" &&
+        text(entry.reason_code) === "VISUAL_MARKET_RECAPTURE_REQUIRED").length
+      if (priorVisualRecaptures >= 1) {
+        await settlePilotJob({
+          supabase: input.supabase,
+          job: record(leased),
+          workerId: input.workerId,
+          status: "COMPLETED",
+          errorCode: VISUAL_MARKET_RECAPTURE_LIMIT_REASON,
+        })
+        await rejectAndPromote({
+          supabase: input.supabase,
+          runId: state.run.id,
+          candidate: record(candidate),
+          previousState: "PREPARING_IMAGE_PACKAGE",
+          reasonCode: VISUAL_MARKET_RECAPTURE_LIMIT_REASON,
+          blockers: [
+            VISUAL_MARKET_RECAPTURE_LIMIT_REASON,
+            code,
+          ],
+        })
+        const { error: limitEventError } = await input.supabase
+          .from("ebay_same_day_pilot_events")
+          .upsert({
+            run_id: state.run.id,
+            candidate_id: candidate.id,
+            event_type: "VISUAL_MARKET_RECAPTURE_LIMIT_REACHED",
+            event_payload: {
+              recoveryVersion: VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION,
+              priorVisualRecaptures,
+              finalEvidenceError: code,
+              evidencePreserved: true,
+              operatorRecaptureRequestedAgain: false,
+              historyDeleted: false,
+            },
+            idempotency_key:
+              `${state.run.id}:${candidate.id}:VISUAL_MARKET_RECAPTURE_LIMIT:${leased.id}`,
+            ebay_read_calls: 0,
+            openai_calls: 0,
+            ebay_writes: 0,
+            production_changed: false,
+          }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+        if (limitEventError) {
+          throw new Error("SAME_DAY_PILOT_VISUAL_RECAPTURE_LIMIT_EVENT_FAILED")
+        }
+        await refreshRunProjection(input.supabase, state.run.id, true)
+        return {
+          processed: 1,
+          status: "COMPLETED",
+          jobType: leased.job_type,
+          rejectedAfterBoundedRecapture: true,
+          error: VISUAL_MARKET_RECAPTURE_LIMIT_REASON,
+          ebayWrites: 0,
+        }
+      }
       await routeCandidateToVisualMarketRecapture({
         supabase: input.supabase,
         state,

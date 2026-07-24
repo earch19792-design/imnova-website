@@ -56,6 +56,23 @@ export const ebayImageMarketBriefSchema = z.object({
 export type EbayImageMarketBrief = z.infer<typeof ebayImageMarketBriefSchema>
 
 type JsonRecord = Record<string, unknown>
+type WeightedFallbackBrief = {
+  fingerprint: string
+  brief: EbayImageMarketBrief
+}
+
+const SUPPORTING_SIGNAL_KEYS = [
+  "whiteOrNeutralPercent",
+  "highCoveragePercent",
+  "lowComplexityPercent",
+  "lowOrNoTextOverlayPercent",
+  "clearMultipackPercent",
+  "usableCopySpacePercent",
+  "highContrastPercent",
+  "lightBrightnessPercent",
+  "neutralPalettePercent",
+  "recentObservationPercent",
+] as const
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -138,11 +155,166 @@ function parsedStoredBrief(value: unknown): EbayImageMarketBrief | null {
     : null
 }
 
+function weightedMode<T extends string>(
+  values: WeightedFallbackBrief[],
+  select: (brief: EbayImageMarketBrief) => T,
+  fallback: T,
+) {
+  const weights = new Map<T, number>()
+  for (const value of values) {
+    const selected = select(value.brief)
+    weights.set(selected, (weights.get(selected) ?? 0) + value.brief.sampleSize)
+  }
+  return [...weights.entries()]
+    .sort(([left, leftWeight], [right, rightWeight]) =>
+      rightWeight - leftWeight || left.localeCompare(right))[0]?.[0] ?? fallback
+}
+
+function weightedPercent(
+  values: WeightedFallbackBrief[],
+  key: typeof SUPPORTING_SIGNAL_KEYS[number],
+) {
+  let weightedTotal = 0
+  let totalWeight = 0
+  for (const value of values) {
+    const signal = value.brief.supportingSignals[key]
+    if (signal === null) continue
+    weightedTotal += signal * value.brief.sampleSize
+    totalWeight += value.brief.sampleSize
+  }
+  return totalWeight > 0
+    ? Math.round(weightedTotal / totalWeight * 100) / 100
+    : null
+}
+
+/**
+ * A prepared Product Research query can contain many legitimate seller-title
+ * variants for one product family. The visual analyzer intentionally keeps
+ * those identity cohorts separate, but that can leave every cohort below the
+ * confidence threshold even when the capture contains enough independent
+ * visual observations. Aggregate only disjoint, self-consistent fallback
+ * cohorts from this one capture batch. The result is capped at MEDIUM and is
+ * scenery guidance only; it cannot establish product identity or claims.
+ */
+function aggregateCaptureQueryFamilyFallbacks(
+  values: WeightedFallbackBrief[],
+): EbayImageMarketBrief | null {
+  const byFingerprint = new Map<string, WeightedFallbackBrief>()
+  for (const value of values) {
+    const existing = byFingerprint.get(value.fingerprint)
+    if (!existing || value.brief.sampleSize > existing.brief.sampleSize) {
+      byFingerprint.set(value.fingerprint, value)
+    }
+  }
+  const cohorts = [...byFingerprint.values()]
+  const totalSampleSize = cohorts.reduce(
+    (sum, value) => sum + value.brief.sampleSize,
+    0,
+  )
+  if (cohorts.length < 3 || totalSampleSize < 6) return null
+
+  const observedTimes = cohorts.map((value) =>
+    Date.parse(value.brief.observedAt ?? "")).filter(Number.isFinite)
+  const freshUntilTimes = cohorts.map((value) =>
+    Date.parse(value.brief.freshUntil ?? "")).filter(Number.isFinite)
+  const hasCompleteTimeBinding = observedTimes.length === cohorts.length &&
+    freshUntilTimes.length === cohorts.length
+  const supportingSignals = Object.fromEntries(SUPPORTING_SIGNAL_KEYS.map((key) =>
+    [key, weightedPercent(cohorts, key)])) as EbayImageMarketBrief["supportingSignals"]
+  const parsed = ebayImageMarketBriefSchema.safeParse({
+    visualMarketBriefVersion: EBAY_IMAGE_MARKET_BRIEF_VERSION,
+    ...(hasCompleteTimeBinding
+      ? {
+          observedAt: new Date(Math.max(...observedTimes)).toISOString(),
+          freshUntil: new Date(Math.min(...freshUntilTimes)).toISOString(),
+        }
+      : {}),
+    confidence: "MEDIUM",
+    sampleSize: Math.min(500, totalSampleSize),
+    dominantBackgroundType: weightedMode(
+      cohorts,
+      (brief) => brief.dominantBackgroundType,
+      "UNKNOWN",
+    ),
+    recommendedFrameCoverage: weightedMode(
+      cohorts,
+      (brief) => brief.recommendedFrameCoverage,
+      "UNKNOWN",
+    ),
+    recommendedComplexity: weightedMode(
+      cohorts,
+      (brief) => brief.recommendedComplexity,
+      "UNKNOWN",
+    ),
+    packVisibilityPattern: weightedMode(
+      cohorts,
+      (brief) => brief.packVisibilityPattern,
+      "UNKNOWN",
+    ),
+    textOverlayPattern: weightedMode(
+      cohorts,
+      (brief) => brief.textOverlayPattern,
+      "UNKNOWN",
+    ),
+    compositionPattern: weightedMode(
+      cohorts,
+      (brief) => brief.compositionPattern,
+      "UNKNOWN",
+    ),
+    recommendedCopySpace: weightedMode(
+      cohorts,
+      (brief) => brief.recommendedCopySpace,
+      "UNKNOWN",
+    ),
+    contrastPattern: weightedMode(
+      cohorts,
+      (brief) => brief.contrastPattern,
+      "UNKNOWN",
+    ),
+    brightnessPattern: weightedMode(
+      cohorts,
+      (brief) => brief.brightnessPattern,
+      "UNKNOWN",
+    ),
+    palettePattern: weightedMode(
+      cohorts,
+      (brief) => brief.palettePattern,
+      "UNKNOWN",
+    ),
+    subjectGeometryPattern: weightedMode(
+      cohorts,
+      (brief) => brief.subjectGeometryPattern,
+      "UNKNOWN",
+    ),
+    primaryCohort: "FAMILY_FALLBACK",
+    recencyWeightingApplied: cohorts.every((value) =>
+      value.brief.recencyWeightingApplied),
+    supportingSignals,
+  })
+  if (!parsed.success) return null
+  return parsed.data
+}
+
+export function isEbayImageMarketBriefUsable(
+  brief: EbayImageMarketBrief | null,
+  now = new Date(),
+) {
+  const nowMs = now.getTime()
+  const observedAt = Date.parse(brief?.observedAt ?? "")
+  const freshUntil = Date.parse(brief?.freshUntil ?? "")
+  return Boolean(brief && brief.confidence !== "LOW" &&
+    brief.recencyWeightingApplied &&
+    (brief.supportingSignals.recentObservationPercent ?? 0) >= 25 &&
+    Number.isFinite(observedAt) && observedAt <= nowMs &&
+    Number.isFinite(freshUntil) && freshUntil > nowMs)
+}
+
 /**
  * Exact candidate-family evidence wins. If seller wording produced different
- * normalized fingerprints, use only a self-consistent FAMILY_FALLBACK cohort
- * from the same capture batch. The database query orders fallback cohorts by
- * sample size and recency before this selector runs.
+ * normalized fingerprints, prefer one usable self-consistent FAMILY_FALLBACK
+ * cohort from the same capture batch. If seller wording fragmented otherwise
+ * valid evidence into several small cohorts, combine only those disjoint
+ * capture-bound fallbacks under the conservative query-family rule above.
  */
 export function selectCaptureBoundEbayImageMarketBrief(
   values: unknown,
@@ -156,6 +328,7 @@ export function selectCaptureBoundEbayImageMarketBrief(
   const parsedExact = exact ? parsedStoredBrief(exact) : null
   if (parsedExact) return parsedExact
 
+  const fallbackBriefs: WeightedFallbackBrief[] = []
   for (const row of rows) {
     const fingerprint = normalizedFamilyFingerprint(row.product_family_fingerprint)
     const brief = record(row.brief)
@@ -163,9 +336,14 @@ export function selectCaptureBoundEbayImageMarketBrief(
       || brief.primaryCohort !== "FAMILY_FALLBACK"
       || normalizedFamilyFingerprint(brief.productBaseFingerprint) !== fingerprint) continue
     const parsed = parsedStoredBrief(row)
-    if (parsed) return parsed
+    if (parsed) fallbackBriefs.push({ fingerprint, brief: parsed })
   }
-  return null
+  const usableFallback = fallbackBriefs.find((value) =>
+    value.brief.confidence !== "LOW")
+  if (usableFallback) return usableFallback.brief
+  return aggregateCaptureQueryFamilyFallbacks(fallbackBriefs)
+    ?? fallbackBriefs[0]?.brief
+    ?? null
 }
 
 /**
