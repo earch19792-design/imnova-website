@@ -5384,6 +5384,7 @@ async function repairRejectedSingleUnitVisualStrategy(
     "NEEDS_VERIFIED_PRODUCT_FACTS:VISUAL_STRATEGY",
     "NEEDS_MORE_VERIFIED_FACTS",
     "LUNA_CATALOG_SOURCE_PACK_STORAGE_FAILED",
+    "LUNA_CATALOG_SOURCE_PACK_SAVE_FAILED",
   ])
   const candidates = [...state.candidates]
     .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))

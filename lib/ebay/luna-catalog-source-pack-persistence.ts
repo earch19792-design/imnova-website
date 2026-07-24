@@ -118,6 +118,8 @@ export async function persistAuthorizedCatalogSourcePack(input: {
     sourceAssets: sourceEvidence,
     precheck: input.pack.precheck,
   }))
+  const sourcePackVersion = input.sourcePackVersion ??
+    `${input.pack.resolverVersion}_${sourcePackHash.slice(0, 16)}`
   const { data: existing, error: existingError } = await input.supabase
     .from("luna_catalog_authorized_source_packs")
     .select("id,source_pack_hash")
@@ -193,13 +195,29 @@ export async function persistAuthorizedCatalogSourcePack(input: {
         openai_calls: 0,
         ebay_writes: 0,
         production_changed: false,
-        source_pack_version: input.sourcePackVersion ?? input.pack.resolverVersion,
+        source_pack_version: sourcePackVersion,
         policy_version: input.policyVersion ?? "REFERENCE_GUIDED_PRODUCT_GENERATION_V1",
         manifest_hash: sourcePackHash,
         reconciliation_reason: input.reconciliationReason ?? null,
         verified_at: new Date().toISOString(),
       })
-    if (error) throw new Error("LUNA_CATALOG_SOURCE_PACK_SAVE_FAILED")
+    if (error) {
+      // Another retry may have committed the same immutable manifest after
+      // our initial lookup. Re-read by the content hash and accept only that
+      // exact row; every other insert failure remains closed.
+      const { data: raced, error: racedError } = await input.supabase
+        .from("luna_catalog_authorized_source_packs")
+        .select("id,source_pack_hash")
+        .eq("marketplace_account_key", input.accountKey)
+        .eq("listing_package_id", input.listingPackageId)
+        .eq("source_pack_hash", sourcePackHash)
+        .maybeSingle()
+      const racedPackId = uuid(raced?.id)
+      if (!racedError && racedPackId) {
+        return { packId: racedPackId, sourcePackHash }
+      }
+      throw new Error("LUNA_CATALOG_SOURCE_PACK_SAVE_FAILED")
+    }
     return { packId, sourcePackHash }
   } catch (error) {
     if (uploadedPaths.length) {
