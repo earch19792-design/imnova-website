@@ -4876,7 +4876,7 @@ async function restoreUsableSupersededVisualCapture(
   if (!candidateId || !hasOpenCaptureGate ||
     !/^[0-9a-f-]{36}$/i.test(captureBatchId) ||
     !/^[0-9a-f-]{36}$/i.test(planId) ||
-    !/^sha256:[0-9a-f]{64}$/.test(familyFingerprint) ||
+    !/^(?:sha256:)?[0-9a-f]{64}$/.test(familyFingerprint) ||
     !plannedQuery) return false
 
   const [{ data: queryTasks, error: queryTaskError },
