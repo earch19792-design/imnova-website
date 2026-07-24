@@ -25,7 +25,10 @@ import { loadSameDayAuthorizedPublicationContext } from
   "@/lib/ebay/ebay-same-day-authorized-publication"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
-import { fetchPublicLunaProductForActiveListingMonitor } from
+import {
+  fetchPublicLunaProductForActiveListingMonitor,
+  isRetryablePublicLunaFetchError,
+} from
   "@/lib/ebay/ebay-targeted-active-listing-luna-monitor"
 import {
   packageWithV3PublicationAssets,
@@ -411,7 +414,11 @@ async function loadFreshSameDayPublicationContext(
   try {
     product = await fetchPublicLunaProductForActiveListingMonitor(
       productUrl,
-      { timeoutMs: 8_000 },
+      {
+        timeoutMs: 8_000,
+        maxAttempts: 3,
+        retryBaseDelayMs: 500,
+      },
     )
   } catch (error) {
     if (
@@ -419,6 +426,9 @@ async function loadFreshSameDayPublicationContext(
       && error.message === "LUNA_DIRECTED_IMPORT_FETCH_429"
     ) {
       throw new Error("EBAY_V3_PUBLIC_LUNA_RATE_LIMITED")
+    }
+    if (isRetryablePublicLunaFetchError(error)) {
+      throw new Error("EBAY_V3_PUBLIC_LUNA_TEMPORARILY_UNAVAILABLE")
     }
     throw error
   }
@@ -1290,9 +1300,14 @@ export async function POST(req: Request) {
     }
     return responseError(new Error("EBAY_V3_AUTHORIZATION_ACTION_INVALID"), 400)
   } catch (error) {
-    return error instanceof Error
+    if (
+      error instanceof Error
       && error.message === "EBAY_V3_PUBLIC_LUNA_RATE_LIMITED"
-      ? responseError(error, 429, 60)
-      : responseError(error)
+    ) return responseError(error, 429, 60)
+    if (
+      error instanceof Error
+      && error.message === "EBAY_V3_PUBLIC_LUNA_TEMPORARILY_UNAVAILABLE"
+    ) return responseError(error, 503, 5)
+    return responseError(error)
   }
 }

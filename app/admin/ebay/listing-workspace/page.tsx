@@ -3239,31 +3239,40 @@ function ListingWorkspacePageContent() {
           } catch (prepareError) {
             prepareVisualTimers.splice(0).forEach((timer) =>
               window.clearTimeout(timer))
-            const rateLimited = prepareError instanceof Error
+            const sourceUnavailable = prepareError instanceof Error
               && (
                 prepareError.message.includes(
                   "EBAY_V3_PUBLIC_LUNA_RATE_LIMITED",
                 )
-                || (prepareError as Error & { httpStatus?: number })
-                  .httpStatus === 429
+                || prepareError.message.includes(
+                  "EBAY_V3_PUBLIC_LUNA_TEMPORARILY_UNAVAILABLE",
+                )
+                || [429, 502, 503, 504].includes(
+                  Number((prepareError as Error & { httpStatus?: number })
+                    .httpStatus),
+                )
               )
-            if (!rateLimited || sourceAttempt > 0) throw prepareError
+            if (!sourceUnavailable || sourceAttempt > 0) throw prepareError
             const requestedDelay = Number(
               (prepareError as Error & { retryAfterSeconds?: number })
                 .retryAfterSeconds,
             )
+            const rateLimited = prepareError.message.includes(
+              "EBAY_V3_PUBLIC_LUNA_RATE_LIMITED",
+            ) || (prepareError as Error & { httpStatus?: number })
+              .httpStatus === 429
             const retryAfterSeconds = Math.min(
               65,
               Math.max(
                 2,
                 (Number.isFinite(requestedDelay)
                   ? Math.ceil(requestedDelay)
-                  : 60) + 1,
+                  : rateLimited ? 60 : 5) + 1,
               ),
             )
             setPublicationAutomationPhase("research")
             setPublicationAutomationStep(
-              `Luna pidió una pausa de ${retryAfterSeconds} segundos; el escáner reanudará una sola vez antes de cualquier escritura eBay.`,
+              `Luna pidió una pausa temporal de ${retryAfterSeconds} segundos; el escáner reanudará una sola vez antes de cualquier escritura eBay.`,
             )
             await new Promise<void>((resolve) => {
               window.setTimeout(resolve, retryAfterSeconds * 1_000)
@@ -3465,6 +3474,8 @@ function ListingWorkspacePageContent() {
       setError(
         code.includes("EBAY_V3_PUBLIC_LUNA_RATE_LIMITED")
           ? "Luna mantuvo el límite temporal después de la pausa automática. Seller OS se detuvo antes de autorizar o escribir en eBay; el mismo botón podrá reanudar cuando Luna libere la lectura."
+          : code.includes("EBAY_V3_PUBLIC_LUNA_TEMPORARILY_UNAVAILABLE")
+          ? "Luna siguió temporalmente indisponible después de los reintentos seguros. Seller OS se detuvo antes de autorizar o escribir en eBay; el mismo botón podrá reanudar."
           : code.includes("EBAY_FINAL_")
           ? humanFinalPublicationError(requestError)
           : getMobileReviewRequestError(

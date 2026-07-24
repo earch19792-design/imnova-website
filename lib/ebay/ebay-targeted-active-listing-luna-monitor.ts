@@ -241,13 +241,49 @@ export async function fetchPublicLunaProductForActiveListingMonitor(
   options: {
     fetchImpl?: typeof fetch
     timeoutMs?: number
+    maxAttempts?: number
+    retryBaseDelayMs?: number
+    sleep?: (milliseconds: number) => Promise<void>
   } = {},
 ) {
   const timeoutMs = Math.max(1_000, Math.min(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, 15_000))
-  return fetchDirectedLunaProduct(
-    productUrl,
-    publicLunaFetch(options.fetchImpl ?? fetch, timeoutMs),
+  const maxAttempts = boundedInteger(options.maxAttempts, 1, 1, 3)
+  const retryBaseDelayMs = boundedInteger(
+    options.retryBaseDelayMs,
+    500,
+    100,
+    2_000,
   )
+  const sleep = options.sleep
+    ?? ((milliseconds: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, milliseconds)))
+  let lastError: unknown
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      return await fetchDirectedLunaProduct(
+        productUrl,
+        publicLunaFetch(options.fetchImpl ?? fetch, timeoutMs),
+      )
+    } catch (error) {
+      lastError = error
+      if (
+        attempt + 1 >= maxAttempts
+        || !isRetryablePublicLunaFetchError(error)
+      ) throw error
+      await sleep(retryBaseDelayMs * (2 ** attempt))
+    }
+  }
+  throw lastError
+}
+
+export function isRetryablePublicLunaFetchError(error: unknown) {
+  const code = error instanceof Error ? error.message : ""
+  if (
+    /^LUNA_DIRECTED_IMPORT_FETCH_(?:408|425|500|502|503|504)$/.test(code)
+  ) return true
+  if (error instanceof TypeError) return true
+  return error instanceof DOMException
+    && (error.name === "AbortError" || error.name === "TimeoutError")
 }
 
 function eventStrength(type: TargetedLunaEventInsert["event_type"]) {
