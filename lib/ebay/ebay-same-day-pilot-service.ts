@@ -71,6 +71,11 @@ import {
   generateAndPersistSameDayImagePackage,
   reviewSameDayImagePackage,
 } from "./ebay-same-day-image-package-runtime"
+import {
+  buildSameDayImageGenerationJobSpec,
+  isSameDayImagePreparationOrphan,
+  SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION,
+} from "./ebay-same-day-image-job-lineage"
 import { reviewedOfficialManufacturerIdentity } from "./ebay-official-manufacturer-facts"
 
 const MARKETPLACE = "EBAY_US"
@@ -4422,6 +4427,87 @@ async function prepareFactsOnlyManualHandoff(input: {
   return { ...result, summary }
 }
 
+async function repairOrphanedImagePreparation(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const candidate = state.candidates.find((entry) =>
+    text(entry.machine_state) === "PREPARING_IMAGE_PACKAGE")
+  if (!candidate) return 0
+
+  const { data: imageJobs, error: imageJobsError } = await supabase
+    .from("ebay_same_day_pilot_jobs")
+    .select("status")
+    .eq("run_id", state.run.id)
+    .eq("candidate_id", candidate.id)
+    .eq("job_type", "GENERATE_SIX_IMAGE_PACKAGE")
+  if (imageJobsError) {
+    throw new Error("SAME_DAY_PILOT_IMAGE_ORPHAN_JOB_READ_FAILED")
+  }
+
+  const handoffSummary = record(candidate.manual_handoff_package)
+  const factsSummary = record(candidate.product_facts_summary)
+  const openPrimaryHumanTasks = state.tasks.filter((task) =>
+    task.status === "OPEN" &&
+    task.gate_type !== "CRITICAL_EXCEPTION_REQUIRED").length
+  if (!isSameDayImagePreparationOrphan({
+    machineState: candidate.machine_state,
+    handoffStatus: handoffSummary.status,
+    packageHash: handoffSummary.packageHash,
+    productResearchCaptureBatchId:
+      candidate.product_research_capture_batch_id,
+    factRunId: factsSummary.factRunId,
+    openPrimaryHumanTasks,
+    imageJobStatuses: (imageJobs ?? []).map((job) => job.status),
+  })) return 0
+
+  const job = buildSameDayImageGenerationJobSpec({
+    runId: state.run.id,
+    candidateId: candidate.id,
+    productResearchCaptureBatchId:
+      candidate.product_research_capture_batch_id,
+    factRunId: factsSummary.factRunId,
+    packageHash: handoffSummary.packageHash,
+    orphanRecovery: true,
+  })
+  if (!job) return 0
+
+  await enqueuePilotJob({
+    supabase,
+    runId: state.run.id,
+    candidateId: text(candidate.id),
+    job,
+  })
+  const { error: eventError } = await supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({
+      run_id: state.run.id,
+      candidate_id: candidate.id,
+      event_type: "IMAGE_PREPARATION_ORPHAN_RECOVERED",
+      event_payload: {
+        version: SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION,
+        factRunId: factsSummary.factRunId,
+        productResearchCaptureBatchId:
+          candidate.product_research_capture_batch_id,
+        packageHash: handoffSummary.packageHash,
+        priorImageJobsPreserved: (imageJobs ?? []).length,
+        recoveredAt: now.toISOString(),
+        maximumOpenAiCalls: 1,
+        historyDeleted: false,
+      },
+      idempotency_key: `${job.idempotencyKey}:EVENT`,
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) {
+    throw new Error("SAME_DAY_PILOT_IMAGE_ORPHAN_EVENT_FAILED")
+  }
+  return 1
+}
+
 async function recoverDeadLetterCandidates(supabase: SupabaseClient, state: NonNullable<Awaited<ReturnType<typeof currentState>>>) {
   const { data, error } = await supabase.from("ebay_same_day_pilot_jobs")
     .select("id,candidate_id,job_type,last_error_code").eq("run_id", state.run.id).eq("status", "DEAD_LETTER")
@@ -4528,30 +4614,49 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
     if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
   }
+  const orphanedImagePreparationsRecovered =
+    await repairOrphanedImagePreparation(input.supabase, state, now)
+  if (orphanedImagePreparationsRecovered) {
+    state = await getSameDayPilot({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      now,
+    })
+    if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
+  }
   const legacyPrematureRejectionsRepaired =
-    await repairLegacyPrematureProductResearchRejections(
-      input.supabase,
-      state,
-      input.accountKey,
-    )
-  const prematureTaxonomyRejectionsRecovered = legacyPrematureRejectionsRepaired ? 0 :
+    orphanedImagePreparationsRecovered ? 0 :
+      await repairLegacyPrematureProductResearchRejections(
+        input.supabase,
+        state,
+        input.accountKey,
+      )
+  const prematureTaxonomyRejectionsRecovered =
+    orphanedImagePreparationsRecovered || legacyPrematureRejectionsRepaired ? 0 :
     await repairPrematureTaxonomyRejections(input.supabase, state, now)
-  const productFactAuthorityLineageRecovered = prematureTaxonomyRejectionsRecovered ? 0 :
+  const productFactAuthorityLineageRecovered =
+    orphanedImagePreparationsRecovered ||
+    prematureTaxonomyRejectionsRecovered ? 0 :
     await repairRejectedProductFactAuthorityLineage(input.supabase, state, now)
-  const singleFactExceptionsRecovered = prematureTaxonomyRejectionsRecovered ||
+  const singleFactExceptionsRecovered = orphanedImagePreparationsRecovered ||
+    prematureTaxonomyRejectionsRecovered ||
     productFactAuthorityLineageRecovered ? 0 :
     await repairRejectedSingleFactException(input.supabase, state, now)
   // Repair at most one durable lane per worker cycle. Each repair can create a
   // job or human task, so later repair decisions must observe the refreshed
   // state on the following cycle instead of opening parallel operator work.
-  const staleDecisionFactsRecovered = prematureTaxonomyRejectionsRecovered ||
+  const staleDecisionFactsRecovered = orphanedImagePreparationsRecovered ||
+    prematureTaxonomyRejectionsRecovered ||
     productFactAuthorityLineageRecovered || singleFactExceptionsRecovered ? 0 :
     await repairStaleDecisionProductFactsRejection(input.supabase, state, now)
-  const legacyProductFactsRejectionsRepaired = prematureTaxonomyRejectionsRecovered ||
+  const legacyProductFactsRejectionsRepaired =
+    orphanedImagePreparationsRecovered ||
+    prematureTaxonomyRejectionsRecovered ||
     productFactAuthorityLineageRecovered ||
     singleFactExceptionsRecovered || staleDecisionFactsRecovered ? 0 :
     await repairLegacyProductFactsRejections(input.supabase, state, now)
-  const deadLettersRecovered = prematureTaxonomyRejectionsRecovered ||
+  const deadLettersRecovered = orphanedImagePreparationsRecovered ||
+    prematureTaxonomyRejectionsRecovered ||
     productFactAuthorityLineageRecovered || singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
     legacyProductFactsRejectionsRepaired ? 0 : await recoverDeadLetterCandidates(input.supabase, state)
   if (legacyPrematureRejectionsRepaired || prematureTaxonomyRejectionsRecovered ||
@@ -4583,6 +4688,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     return { processed: 0, status: "IDLE", repaired,
       supersededAuthorityLineageDeadLetters,
       officialBrandMarketPricingRecovered,
+      orphanedImagePreparationsRecovered,
       legacyPrematureRejectionsRepaired, singleFactExceptionsRecovered,
       staleDecisionFactsRecovered,
       legacyProductFactsRejectionsRepaired,
@@ -5325,6 +5431,16 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
         if (!visualEvidenceBatchId) {
           throw new Error("SAME_DAY_PILOT_IMAGE_VISUAL_EVIDENCE_BINDING_MISSING")
         }
+        const imageJob = buildSameDayImageGenerationJobSpec({
+          runId: state.run.id,
+          candidateId: candidate.id,
+          productResearchCaptureBatchId: visualEvidenceBatchId,
+          factRunId: record(candidate.product_facts_summary).factRunId,
+          packageHash: handoffSummary.packageHash,
+        })
+        if (!imageJob) {
+          throw new Error("SAME_DAY_PILOT_IMAGE_LINEAGE_BINDING_INVALID")
+        }
         const { error: stateUpdateError } = await input.supabase.from("ebay_same_day_pilot_candidates").update({
           state: "READY_FOR_CONTENT", updated_at: new Date().toISOString(),
         }).eq("id", candidate.id).eq("run_id", state.run.id)
@@ -5333,16 +5449,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           supabase: input.supabase,
           runId: state.run.id,
           candidateId: candidate.id,
-          job: {
-            jobType: "GENERATE_SIX_IMAGE_PACKAGE",
-            idempotencyKey: `${state.run.id}:${candidate.id}:GENERATE_SIX_IMAGE_PACKAGE:VISUAL_V2:${visualEvidenceBatchId}:${handoffSummary.packageHash}`,
-            checkpoint: { packageHash: handoffSummary.packageHash,
-              factRunId: record(candidate.product_facts_summary).factRunId,
-              productResearchCaptureBatchId: visualEvidenceBatchId,
-              generationAttemptVersion: "VISUAL_V2_CAPTURE_BOUND_V1_2026_07_21",
-              maximumOpenAiCalls: 1, competitorImages: 0, ebayWrites: 0 },
-            maxAttempts: 4,
-          },
+          job: imageJob,
         })
       }
     } else if (leased.job_type === "GENERATE_SIX_IMAGE_PACKAGE") {
