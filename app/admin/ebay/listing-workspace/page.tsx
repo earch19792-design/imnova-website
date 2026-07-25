@@ -189,6 +189,9 @@ type DraftState = {
     published_at?: string | null
     verified_active_at?: string | null
     monitor_registered_at?: string | null
+    publish_http_status?: number | null
+    publish_attempt_count?: number | null
+    publish_recovery_count?: number | null
     last_error_code?: string | null
   } | null
   categoryRepair?: {
@@ -717,6 +720,9 @@ function humanFinalPublicationError(error: unknown) {
     ["EBAY_OFFER_CATEGORY_REPAIR_REJECTED", "eBay rechazó la corrección de categoría. El Offer continúa sin publicar y el incidente quedó detenido para revisión."],
     ["EBAY_OFFER_CATEGORY_REPAIR_OUTCOME_UNKNOWN", "No se pudo confirmar el resultado de la actualización del Offer. Seller OS no publicará ni repetirá la escritura hasta reconciliarlo por lectura."],
     ["EBAY_REJECTED_CATEGORY_REPAIR_PERSIST_FAILED", "eBay aceptó o ya tenía la categoría corregida, pero faltó cerrar el registro interno. Pulsa nuevamente la misma corrección: sólo reconciliará el Offer, sin publicar."],
+    ["EBAY_FINAL_PUBLICATION_RECOVERY_NOT_ELIGIBLE", "La publicación ya no cumple condiciones seguras de reintento único. Valida el estado actual del listing o reinicia con la traza correcta de error."],
+    ["EBAY_FINAL_PUBLICATION_RECOVERY_REQUIRED", "Esta publicación quedó en estado terminal seguro. Ejecuta rearmado y luego confirma el botón final para un único reintento."],
+    ["EBAY_AUTHORIZED_PUBLICATION_RECOVERY_NOT_ELIGIBLE", "Esta publicación no está en la condición de reintento único permitido. Verifica preview y estado actual."],
   ]
   return messages.find(([candidate]) => code.includes(candidate))?.[1]
     ?? getMobileReviewRequestError(error, "No se pudo completar la publicación autorizada.")
@@ -1648,6 +1654,8 @@ function ListingWorkspacePageContent() {
       ? "No se pudo consultar la configuración de cuenta eBay"
       : body?.action === "repair_rejected_category"
         ? "No se pudo corregir la categoría del Offer"
+        : body?.action === "rearm_publish"
+          ? "No se pudo rearmar la publicación"
         : body?.action === "prepare_publish"
           ? "No se pudo preparar el preview final"
           : body?.action === "publish"
@@ -2208,12 +2216,20 @@ function ListingWorkspacePageContent() {
     && !retiredPrewriteExecution
   const executionCompleted = unpublishedExecutionPhase === "completed"
   const publicationPhase = draftState.publication?.phase ?? ""
+  const publicationCanRearmAfterReject = publicationPhase === "terminal_failure"
+    && draftState.publication?.last_error_code === "EBAY_PUBLISH_WRITE_REJECTED"
+    && Number(draftState.publication?.publish_http_status) === 400
+    && Number(draftState.publication?.publish_attempt_count) === 1
+    && Number(draftState.publication?.publish_recovery_count) === 0
+    && !draftState.publication?.listing_id
   const publicationButtonBlockReason = !listingPackage
     ? "El paquete V3 aprobado todavía no terminó de cargarse."
     : !referenceGuidedAttemptId || !finalReviewRecord.previewHash
       ? "La firma visual final todavía no terminó de enlazarse."
       : publicationPhase === "terminal_failure"
-        ? "La publicación quedó detenida para evitar un duplicado; primero debe verificarse el resultado existente."
+        ? publicationCanRearmAfterReject
+          ? "La publicación fue rechazada con un error seguro de eBay (HTTP 400). Puedes rearmarla para un único reintento."
+          : "La publicación quedó detenida para evitar un duplicado; primero debe verificarse el resultado existente."
         : draftBusy && !publicationAutomationBusy
           ? "Hay otra comprobación segura en curso. El control se activará al terminar."
           : ""
@@ -3813,6 +3829,35 @@ function ListingWorkspacePageContent() {
     } finally { setDraftBusy(false) }
   }
 
+  async function rearmFinalPublication() {
+    const publicationId = draftState.publication?.id
+    if (!publicationId) return
+    setDraftBusy(true)
+    setError("")
+    setMessage(
+      "Rearmando publicación para un único intento seguro tras rechazo de eBay…",
+    )
+    try {
+      const payload = await draftRequest({
+        action: "rearm_publish",
+        publicationId,
+        confirmPublish: draftState.publicationRequirements?.exactConfirmPublish
+          ?? "PUBLICAR LISTING EN EBAY",
+        confirmFinalPreview: true,
+        confirmProductionAccount: true,
+        confirmRetryRejectedPublish: true,
+      })
+      setDraftState((current) => ({ ...current, publication: payload.publication }))
+      setMessage("Publicación rearmada. Confirma otra vez y publica en eBay sin duplicar el listing.")
+      setPublishConfirmation("")
+      setConfirmFinalPublication(false)
+      setConfirmPublishProductionAccount(false)
+    } catch (requestError) {
+      setError(humanFinalPublicationError(requestError))
+      setMessage("")
+    } finally { setDraftBusy(false) }
+  }
+
   async function repairRejectedCategory() {
     const publicationId = draftState.publication?.id
     const confirmation = draftState.categoryRepair?.exactConfirmation
@@ -4576,7 +4621,9 @@ function ListingWorkspacePageContent() {
             {draftState.readiness?.ready && !approvalActive && !executionCompleted && <div className="space-y-3 rounded-2xl border border-emerald-200/25 p-3"><label className="block"><span className="text-sm font-black">Escribe exactamente: {expectedApprovalPhrase}</span><input value={approvalPhrase} onChange={(event) => setApprovalPhrase(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmUnpublishedOnly} onChange={(event) => setConfirmUnpublishedOnly(event.target.checked)} />Entiendo que sólo autoriza un Offer no publicado.</label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmNoPublish} onChange={(event) => setConfirmNoPublish(event.target.checked)} />Confirmo que este primer permiso no publica; la publicación final requerirá otra autorización.</label>{productionTarget && <label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmProductionAccount} onChange={(event) => setConfirmProductionAccount(event.target.checked)} />Confirmo que {draftTarget} es mi cuenta real: autorizo crear Inventory Item + Offer API UNPUBLISHED, sin publicarlo.</label>}<button type="button" disabled={draftBusy || approvalPhrase !== expectedApprovalPhrase || !confirmUnpublishedOnly || !confirmNoPublish || !imagesAuthorized || (productionTarget && !confirmProductionAccount)} onClick={() => void approveDraft()} className="min-h-13 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">Aprobar {draftTarget} por 15 minutos</button></div>}
             {approvalActive && !executionCompleted && draftState.approval && <div className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.06] p-3"><strong>Aprobación {draftTarget} activa hasta {new Date(draftState.approval.expires_at).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}</strong><p className="mt-2 text-sm text-white/65">Autorización registrada; ejecución pendiente. El siguiente botón es el único que puede escribir y sólo crea Inventory Item + Offer API UNPUBLISHED en {draftTarget}.</p><button type="button" disabled={draftBusy || !draftState.runtime?.enabled || !draftState.runtime?.configured} onClick={() => void executeDraft()} className="mt-3 min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">{unpublishedExecutionButtonLabel}</button><button type="button" disabled={draftBusy} onClick={() => void revokeDraftApproval()} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 px-4 font-black disabled:opacity-40">Cancelar aprobación</button></div>}
             {executionCompleted && <div className="rounded-2xl border border-emerald-200/30 bg-emerald-200/[0.07] p-3 text-emerald-50"><strong>UNPUBLISHED verificado al crear {draftState.execution?.completed_at ? new Date(draftState.execution.completed_at).toLocaleString("es") : "en la ejecución registrada"}</strong><p className="mt-1 text-xs">Este estado describe la verificación realizada en ese momento; vuelve a consultar eBay antes de asumir que sigue igual.</p><p className="mt-1 break-all text-xs">Offer ID: {draftState.execution?.offer_id ?? "guardado"}</p></div>}
-            {executionCompleted && !["publish_in_flight", "outcome_unknown", "published_pending_verification", "monitor_registered", "terminal_failure"].includes(publicationPhase) && <div className="space-y-3 rounded-2xl border border-amber-200/35 bg-amber-200/[0.07] p-3">
+            {executionCompleted
+              && !["publish_in_flight", "outcome_unknown", "published_pending_verification", "monitor_registered"].includes(publicationPhase)
+              && !publicationCanRearmAfterReject && <div className="space-y-3 rounded-2xl border border-amber-200/35 bg-amber-200/[0.07] p-3">
               <div>
                 <p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Preview final y publicación</p>
                 {draftState.publication
@@ -4597,7 +4644,21 @@ function ListingWorkspacePageContent() {
             </div>}
             {["publish_in_flight", "outcome_unknown", "published_pending_verification"].includes(publicationPhase) && <div className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.07] p-3"><strong>{publicationPhase === "published_pending_verification" ? "Publicado; falta confirmar ACTIVE" : "Resultado de publicación en reconciliación"}</strong><p className="mt-2 text-sm text-white/65">Esta acción sólo consulta eBay y registra monitoreo. Nunca vuelve a llamar publishOffer.</p>{draftState.publication?.listing_id && <a href={`https://www.ebay.com/itm/${draftState.publication.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-sm font-black text-cyan-100 underline">Ver listing {draftState.publication.listing_id}</a>}<button type="button" disabled={draftBusy} onClick={() => void reconcileFinalListing()} className="mt-3 min-h-13 w-full rounded-2xl border border-amber-200/40 px-4 font-black disabled:opacity-40">Verificar ACTIVE y registrar monitoreo</button></div>}
             {publicationPhase === "monitor_registered" && <div className="rounded-2xl border border-emerald-200/35 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y ciclo cerrado</strong><p className="mt-2 text-sm">Item ID {draftState.publication?.listing_id} · monitoreo comercial y disponibilidad Luna registrados.</p><a href={`https://www.ebay.com/itm/${draftState.publication?.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-black underline">Abrir listing en eBay</a></div>}
-            {publicationPhase === "terminal_failure" && <div className="rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-3 text-rose-50"><strong>{draftState.categoryRepair?.eligible ? "eBay rechazó la categoría; el Offer sigue sin publicar" : "Publicación detenida sin reintento automático"}</strong><p className="mt-2 text-sm">{draftState.categoryRepair?.eligible ? `Inventory API confirmó que Category ID ${draftState.categoryRepair.oldCategoryId ?? ""} ya no es válida. Seller OS puede consultar Taxonomy, actualizar sólo la categoría del mismo Offer y guardar el antes/después para auditoría.` : humanFinalPublicationError(new Error(draftState.publication?.last_error_code ?? "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE"))}</p><p className="mt-2 text-xs text-rose-50/70">{draftState.categoryRepair?.eligible ? "Esta corrección no crea otro Offer, no cambia imágenes, precio, cantidad ni policies y no llama a publishOffer." : "No publiques manualmente hasta confirmar si eBay recibió la llamada; así se evita duplicar el listing."}</p>{draftState.categoryRepair?.eligible && <button type="button" disabled={draftBusy || !draftState.categoryRepair.exactConfirmation} onClick={() => void repairRejectedCategory()} className="mt-3 min-h-14 w-full rounded-2xl bg-amber-200 px-4 font-black text-black disabled:opacity-40">{draftBusy ? "Verificando y corrigiendo…" : "Corregir categoría oficial del mismo Offer · no publica"}</button>}</div>}
+            {publicationPhase === "terminal_failure" && <div className="rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-3 text-rose-50">
+              <strong>{draftState.categoryRepair?.eligible ? "eBay rechazó la categoría; el Offer sigue sin publicar" : publicationCanRearmAfterReject ? "Publicación rechazada por eBay; posible reintento seguro habilitado" : "Publicación detenida sin reintento automático"}</strong>
+              <p className="mt-2 text-sm">{draftState.categoryRepair?.eligible
+                ? `Inventory API confirmó que Category ID ${draftState.categoryRepair.oldCategoryId ?? ""} ya no es válida. Seller OS puede consultar Taxonomy, actualizar sólo la categoría del mismo Offer y guardar el antes/después para auditoría.`
+                : publicationCanRearmAfterReject
+                  ? "eBay devolvió un rechazo de escritura (HTTP 400) reconocido. Para evitar bloqueo total, primero rearmas la publicación y luego confirmas una sola vez."
+                  : humanFinalPublicationError(new Error(draftState.publication?.last_error_code ?? "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE"))}</p>
+              <p className="mt-2 text-xs text-rose-50/70">{draftState.categoryRepair?.eligible || publicationCanRearmAfterReject
+                ? draftState.categoryRepair?.eligible
+                  ? "Esta corrección no crea otro Offer, no cambia imágenes, precio, cantidad ni policies y no llama a publishOffer."
+                  : "Este rearmado no publica de nuevo: solo reinicia el estado seguro para un único intento de publicación autorizado."
+                : "No publiques manualmente hasta confirmar si eBay recibió la llamada; así se evita duplicar el listing."}</p>
+              {draftState.categoryRepair?.eligible && <button type="button" disabled={draftBusy || !draftState.categoryRepair.exactConfirmation} onClick={() => void repairRejectedCategory()} className="mt-3 min-h-14 w-full rounded-2xl bg-amber-200 px-4 font-black text-black disabled:opacity-40">{draftBusy ? "Verificando y corrigiendo…" : "Corregir categoría oficial del mismo Offer · no publica"}</button>}
+              {!draftState.categoryRepair?.eligible && publicationCanRearmAfterReject && <button type="button" disabled={draftBusy} onClick={() => void rearmFinalPublication()} className="mt-3 min-h-14 w-full rounded-2xl bg-amber-200 px-4 font-black text-black disabled:opacity-40">{draftBusy ? "Rearmando…" : "Rearmar publicación para un único reintento"}</button>}
+            </div>}
           </section>}
 
           <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4">
