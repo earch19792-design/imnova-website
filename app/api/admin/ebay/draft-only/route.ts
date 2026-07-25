@@ -59,6 +59,9 @@ import {
   loadFinalListingReviewPublicationGate,
 } from "@/lib/ebay/final-listing-review-publication-gate"
 import {
+  quarantineSameDayCandidateForAuxiliaryPublicationFailure,
+} from "@/lib/ebay/ebay-same-day-pilot-service"
+import {
   packageWithV3PublicationAssets,
   validateV3PublicationAssets,
   withV3FinalSetAuthorization,
@@ -377,6 +380,7 @@ async function loadFinalPublicationContext(
     listingPackage: listingPackage as JsonRecord,
     opportunity: effectiveOpportunity,
     sameDayPilotAuthorization: sameDayContext.authorization,
+    sameDayContext,
     runtime,
     accountKey,
   }
@@ -917,6 +921,96 @@ async function loadFinalPublicationContextWithRecoverableError(
       response: jsonError(new Error(code), 409),
     }
   }
+}
+
+const KNOWN_FINAL_PUBLICATION_RETRY_BLOCKERS = new Set<string>([
+  "SAME_DAY_PILOT_ACCOUNT_SCOPE_REQUIRED",
+  "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY",
+  "SAME_DAY_PUBLICATION_POLICIES_NOT_READY",
+  "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED",
+  "SAME_DAY_PUBLICATION_LUNA_COST_CHANGED",
+  "SAME_DAY_PUBLICATION_LUNA_RECHECK_SCOPE_REQUIRED",
+  "SAME_DAY_PUBLICATION_LUNA_RECHECK_TIME_INVALID",
+  "SAME_DAY_PUBLICATION_LUNA_RECHECK_VALUES_INVALID",
+  "SAME_DAY_PUBLICATION_LUNA_RECHECK_FAILED",
+  "SAME_DAY_PUBLICATION_LUNA_UNAVAILABLE",
+  "SAME_DAY_PUBLICATION_LUNA_IDENTITY_INVALID",
+  "SAME_DAY_PUBLICATION_CONTROLLED_RISK_INVALID",
+  "SAME_DAY_PUBLICATION_SCOPE_INVALID",
+  "SAME_DAY_PUBLICATION_LUNA_READ_FAILED",
+  "EBAY_FINAL_PUBLICATION_SCOPE_OR_STOCK_INVALID",
+  "EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_CHANGED",
+  "EBAY_FINAL_PUBLICATION_RECONCILIATION_REQUIRED",
+  "EBAY_FINAL_PUBLICATION_PREVIEW_CHANGED",
+  "EBAY_FINAL_PUBLICATION_RECOVERY_NOT_ELIGIBLE",
+  "EBAY_FINAL_PUBLICATION_RECOVERY_REQUIRED",
+  "EBAY_FINAL_PUBLICATION_NOT_RECONCILABLE",
+  "EBAY_FINAL_PUBLISH_RECOVERY_NOT_ELIGIBLE",
+  "EBAY_FINAL_PUBLISH_EXPLICIT_CONFIRMATION_REQUIRED",
+  "EBAY_FINAL_PUBLISH_RECOVERY_CONFIRMATION_REQUIRED",
+  "EBAY_FINAL_PUBLICATION_NOT_FOUND",
+  "EBAY_FINAL_PUBLICATION_PREVIEW_NOT_READY",
+  "EBAY_FINAL_PUBLICATION_ACCOUNT_PREFLIGHT_FAILED",
+  "EBAY_FINAL_PUBLICATION_CLAIM_FAILED",
+  "EBAY_AUTHORIZED_PUBLICATION_CONFIRMATION_INVALID",
+  "EBAY_AUTHORIZED_PUBLICATION_NOT_CLAIMABLE",
+  "EBAY_AUTHORIZED_PUBLICATION_IDEMPOTENCY_MISMATCH",
+])
+
+function shouldQuarantineUnknownFinalPublicationError(code: string) {
+  if (isCommandCenterCommercialFreshnessRecheck(code)) return false
+  return !KNOWN_FINAL_PUBLICATION_RETRY_BLOCKERS.has(code)
+}
+
+async function attemptAuxiliaryFinalPublicationQuarantine(input: {
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  actor: string
+  context: Awaited<ReturnType<typeof loadFinalPublicationContext>>
+  sourceError: unknown
+  requestId: string
+}) {
+  const code = errorCode(input.sourceError)
+  if (!shouldQuarantineUnknownFinalPublicationError(code)) return null
+  const authorization = input.context.sameDayPilotAuthorization
+  const expectedCandidateId = text(authorization?.candidateId)
+  const expectedMachineState = text(authorization?.machineState)
+  if (!expectedCandidateId || !expectedMachineState || !input.context.accountKey) {
+    return null
+  }
+  const rescue = await quarantineSameDayCandidateForAuxiliaryPublicationFailure({
+    supabase: input.supabase,
+    accountKey: input.context.accountKey,
+    actorId: input.actor,
+    requestId: input.requestId,
+    expectedCandidateId,
+    expectedMachineState,
+    engineErrorCode: code,
+  })
+  if (!rescue) return null
+  return NextResponse.json({
+    success: false,
+    error: "EBAY_FINAL_PUBLICATION_AUXILIARY_QUARANTINE_TRIGGERED",
+    blockers: ["FINAL_PUBLICATION_QUARANTINE_TRIGGERED"],
+    continuity: {
+      requestId: input.requestId,
+      code,
+      incidentFingerprint: rescue.incidentFingerprint ?? null,
+      occurrenceNumber: rescue.occurrenceNumber ?? null,
+      candidateId: rescue.candidateId,
+      failedMachineState: rescue.failedMachineState,
+      successorPromoted: rescue.successorPromoted,
+      pendingCodexDiagnosis: rescue.pendingCodexDiagnosis,
+      candidateRejectedCommercially: rescue.candidateRejectedCommercially,
+      circuitBreakerOpen: rescue.circuitBreakerOpen,
+      auditEventPersisted: rescue.auditEventPersisted,
+    },
+    safety: {
+      target: "PRODUCTION",
+      canPublish: false,
+      automaticContinuity: true,
+      auxiliaryRecovery: true,
+    },
+  }, { status: 409 })
 }
 
 async function preflightDraft(body: JsonRecord, actor: string) {
@@ -1887,6 +1981,7 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   const executionId = uuid(body.executionId)
   if (!executionId) return jsonError(new Error("EBAY_FINAL_PUBLICATION_EXECUTION_REQUIRED"), 400)
   const supabase = getSupabaseAdminClient()
+  const requestId = randomUUID()
   const contextResult = await loadFinalPublicationContextWithRecoverableError(
     supabase,
     executionId,
@@ -1894,85 +1989,97 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   )
   if (!contextResult.success) return contextResult.response
   const context = contextResult.context
-  const visualPublicationGate = await loadFinalListingReviewPublicationGate({
-    supabase,
-    listingPackageId: text(record(context.approval).listing_package_id),
-    actorId: actor,
-  })
-  if (!visualPublicationGate.allowed) {
-    throw new Error(visualPublicationGate.reason ?? "FINAL_LISTING_REVIEW_NOT_READY")
-  }
-  if (!context.sameDayPilotAuthorization) {
-    return jsonError(new Error("EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_REQUIRED"), 409)
-  }
-  const built = buildFinalPublicationPreview(context.approval, context.execution)
-  await revalidateFinalPublicationDependencies(record(context.approval.approved_payload))
-  const offerVerification = await verifyEbayUnpublishedOffer(
-    built.offerId,
-    built.sku,
-    "EBAY_US",
-  )
-  if (!offerVerification.safe) {
-    return jsonError(new Error(offerVerification.blocker), 409)
-  }
-  const approvedCompliance = record(
-    record(context.approval.approved_payload).compliance,
-  )
-  const v3FinalSetAuthorization = record(
-    approvedCompliance.v3FinalSetAuthorization,
-  )
-  const sourceSyncFunction = Object.keys(v3FinalSetAuthorization).length
-    ? "sync_ebay_v3_source_before_authorized_publication"
-    : "sync_same_day_source_before_authorized_publication"
-  const { error: sourceSyncError } = await supabase.rpc(
-    sourceSyncFunction,
-    {
-      p_draft_execution_id: executionId,
-      p_actor_user_id: actor,
-      p_marketplace_account_key: context.accountKey,
-    },
-  )
-  if (sourceSyncError) {
-    throw new Error(databaseExceptionCode(
-      sourceSyncError,
-      "EBAY_FINAL_PUBLICATION_LUNA_SOURCE_SYNC_FAILED",
-    ))
-  }
-  const { data: publication, error } = await supabase
-    .rpc("prepare_ebay_authorized_listing_publication", {
-      p_draft_execution_id: executionId,
-      p_actor_user_id: actor,
-      p_marketplace_account_key: context.accountKey,
-      p_preview_hash: built.previewHash,
-      p_preview: built.preview,
-      p_target: "PRODUCTION",
-      p_account_fingerprint: context.runtime.accountFingerprint,
+  try {
+    const visualPublicationGate = await loadFinalListingReviewPublicationGate({
+      supabase,
+      listingPackageId: text(record(context.approval).listing_package_id),
+      actorId: actor,
     })
-    .single()
-  if (error || !publication) {
-    throw new Error(databaseExceptionCode(
-      error,
-      "EBAY_FINAL_PUBLICATION_PREVIEW_PERSIST_FAILED",
-    ))
+    if (!visualPublicationGate.allowed) {
+      throw new Error(visualPublicationGate.reason ?? "FINAL_LISTING_REVIEW_NOT_READY")
+    }
+    if (!context.sameDayPilotAuthorization) {
+      return jsonError(new Error("EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_REQUIRED"), 409)
+    }
+    const built = buildFinalPublicationPreview(context.approval, context.execution)
+    await revalidateFinalPublicationDependencies(record(context.approval.approved_payload))
+    const offerVerification = await verifyEbayUnpublishedOffer(
+      built.offerId,
+      built.sku,
+      "EBAY_US",
+    )
+    if (!offerVerification.safe) {
+      return jsonError(new Error(offerVerification.blocker), 409)
+    }
+    const approvedCompliance = record(
+      record(context.approval.approved_payload).compliance,
+    )
+    const v3FinalSetAuthorization = record(
+      approvedCompliance.v3FinalSetAuthorization,
+    )
+    const sourceSyncFunction = Object.keys(v3FinalSetAuthorization).length
+      ? "sync_ebay_v3_source_before_authorized_publication"
+      : "sync_same_day_source_before_authorized_publication"
+    const { error: sourceSyncError } = await supabase.rpc(
+      sourceSyncFunction,
+      {
+        p_draft_execution_id: executionId,
+        p_actor_user_id: actor,
+        p_marketplace_account_key: context.accountKey,
+      },
+    )
+    if (sourceSyncError) {
+      throw new Error(databaseExceptionCode(
+        sourceSyncError,
+        "EBAY_FINAL_PUBLICATION_LUNA_SOURCE_SYNC_FAILED",
+      ))
+    }
+    const { data: publication, error } = await supabase
+      .rpc("prepare_ebay_authorized_listing_publication", {
+        p_draft_execution_id: executionId,
+        p_actor_user_id: actor,
+        p_marketplace_account_key: context.accountKey,
+        p_preview_hash: built.previewHash,
+        p_preview: built.preview,
+        p_target: "PRODUCTION",
+        p_account_fingerprint: context.runtime.accountFingerprint,
+      })
+      .single()
+    if (error || !publication) {
+      throw new Error(databaseExceptionCode(
+        error,
+        "EBAY_FINAL_PUBLICATION_PREVIEW_PERSIST_FAILED",
+      ))
+    }
+    return NextResponse.json({
+      success: true,
+      publication,
+      publicationRequirements: {
+        exactConfirmPublish: EBAY_FINAL_PUBLISH_CONFIRMATION,
+        finalPreviewRequired: true,
+        productionAccountConfirmationRequired: true,
+        publishOfferCallsAllowed: 1,
+        promotionsAllowed: false,
+        volumePricingAllowed: false,
+      },
+      safety: {
+        ebayWriteUsed: false,
+        offerStatus: "UNPUBLISHED",
+        previewPersisted: true,
+        canPublishOnlyWithExactConfirmation: true,
+      },
+    }, { status: 201 })
+  } catch (error) {
+    const quarantine = await attemptAuxiliaryFinalPublicationQuarantine({
+      supabase,
+      actor,
+      context,
+      sourceError: error,
+      requestId,
+    })
+    if (quarantine) return quarantine
+    throw error
   }
-  return NextResponse.json({
-    success: true,
-    publication,
-    publicationRequirements: {
-      exactConfirmPublish: EBAY_FINAL_PUBLISH_CONFIRMATION,
-      finalPreviewRequired: true,
-      productionAccountConfirmationRequired: true,
-      publishOfferCallsAllowed: 1,
-      promotionsAllowed: false,
-      volumePricingAllowed: false,
-    },
-    safety: {
-      ebayWriteUsed: false,
-      offerStatus: "UNPUBLISHED",
-      previewPersisted: true,
-      canPublishOnlyWithExactConfirmation: true,
-    },
-  }, { status: 201 })
 }
 
 async function completeFinalPublicationMonitor(input: {
@@ -2073,6 +2180,7 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     || body.confirmProductionAccount !== true
   ) return jsonError(new Error("EBAY_FINAL_PUBLISH_EXPLICIT_CONFIRMATION_REQUIRED"), 409)
   const supabase = getSupabaseAdminClient()
+  const requestId = randomUUID()
   const { data: current, error: currentError } = await supabase
     .from("ebay_authorized_listing_publications")
     .select("*")
@@ -2116,74 +2224,87 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
   if (built.previewHash !== current.preview_hash) {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_PREVIEW_CHANGED"), 409)
   }
-  await revalidateFinalPublicationDependencies(record(context.approval.approved_payload))
-  const unpublished = await verifyEbayUnpublishedOffer(built.offerId, built.sku, "EBAY_US")
-  if (!unpublished.safe) return jsonError(new Error(unpublished.blocker), 409)
-  const approvedPayload = record(context.approval.approved_payload)
-  const approvedCompliance = record(approvedPayload.compliance)
-  const v3FinalSetAuthorization = record(
-    approvedCompliance.v3FinalSetAuthorization,
-  )
-  const sourceSyncFunction = Object.keys(v3FinalSetAuthorization).length
-    ? "sync_ebay_v3_source_before_authorized_publication"
-    : "sync_same_day_source_before_authorized_publication"
-  const { error: sourceSyncError } = await supabase.rpc(
-    sourceSyncFunction,
-    {
-      p_draft_execution_id: text(context.execution.id),
-      p_actor_user_id: actor,
-      p_marketplace_account_key: context.accountKey,
-    },
-  )
-  if (sourceSyncError) {
-    return jsonError(new Error(databaseExceptionCode(
-      sourceSyncError,
-      "EBAY_FINAL_PUBLICATION_LUNA_SOURCE_SYNC_FAILED",
-    )), 409)
-  }
-  const { data: refreshed, error: refreshError } = await supabase
-    .rpc("prepare_ebay_authorized_listing_publication", {
-      p_draft_execution_id: text(context.execution.id),
-      p_actor_user_id: actor,
-      p_marketplace_account_key: context.accountKey,
-      p_preview_hash: built.previewHash,
-      p_preview: built.preview,
-      p_target: "PRODUCTION",
-      p_account_fingerprint: context.runtime.accountFingerprint,
+  let claimToken = ""
+  try {
+    await revalidateFinalPublicationDependencies(record(context.approval.approved_payload))
+    const unpublished = await verifyEbayUnpublishedOffer(built.offerId, built.sku, "EBAY_US")
+    if (!unpublished.safe) return jsonError(new Error(unpublished.blocker), 409)
+    const approvedPayload = record(context.approval.approved_payload)
+    const approvedCompliance = record(approvedPayload.compliance)
+    const v3FinalSetAuthorization = record(
+      approvedCompliance.v3FinalSetAuthorization,
+    )
+    const sourceSyncFunction = Object.keys(v3FinalSetAuthorization).length
+      ? "sync_ebay_v3_source_before_authorized_publication"
+      : "sync_same_day_source_before_authorized_publication"
+    const { error: sourceSyncError } = await supabase.rpc(
+      sourceSyncFunction,
+      {
+        p_draft_execution_id: text(context.execution.id),
+        p_actor_user_id: actor,
+        p_marketplace_account_key: context.accountKey,
+      },
+    )
+    if (sourceSyncError) {
+      throw new Error(databaseExceptionCode(
+        sourceSyncError,
+        "EBAY_FINAL_PUBLICATION_LUNA_SOURCE_SYNC_FAILED",
+      ))
+    }
+    const { data: refreshed, error: refreshError } = await supabase
+      .rpc("prepare_ebay_authorized_listing_publication", {
+        p_draft_execution_id: text(context.execution.id),
+        p_actor_user_id: actor,
+        p_marketplace_account_key: context.accountKey,
+        p_preview_hash: built.previewHash,
+        p_preview: built.preview,
+        p_target: "PRODUCTION",
+        p_account_fingerprint: context.runtime.accountFingerprint,
+      })
+      .single()
+    const refreshedPublication = record(refreshed)
+    if (
+      refreshError
+      || text(refreshedPublication.id) !== publicationId
+      || text(refreshedPublication.phase) !== "preview_ready"
+      || text(refreshedPublication.preview_hash) !== built.previewHash
+    ) {
+      throw new Error(databaseExceptionCode(
+        refreshError,
+        "EBAY_FINAL_PUBLICATION_PREVIEW_REFRESH_FAILED",
+      ))
+    }
+    claimToken = randomUUID()
+    const { data: claimed, error: claimError } = await supabase
+      .rpc("claim_ebay_authorized_listing_publication", {
+        p_publication_id: publicationId,
+        p_actor_user_id: actor,
+        p_idempotency_key: executionKey,
+        p_preview_hash: built.previewHash,
+        p_confirm_publish: text(body.confirmPublish),
+        p_claim_token: claimToken,
+      })
+      .single()
+    if (claimError || !claimed) {
+      throw new Error(databaseExceptionCode(
+        claimError,
+        "EBAY_FINAL_PUBLICATION_CLAIM_FAILED",
+      ))
+    }
+    const claimedPublication = record(claimed)
+    if (text(claimedPublication.phase) !== "publish_in_flight") {
+      throw new Error("EBAY_FINAL_PUBLICATION_RECONCILIATION_REQUIRED")
+    }
+  } catch (error) {
+    const quarantine = await attemptAuxiliaryFinalPublicationQuarantine({
+      supabase,
+      actor,
+      context,
+      sourceError: error,
+      requestId,
     })
-    .single()
-  const refreshedPublication = record(refreshed)
-  if (
-    refreshError
-    || text(refreshedPublication.id) !== publicationId
-    || text(refreshedPublication.phase) !== "preview_ready"
-    || text(refreshedPublication.preview_hash) !== built.previewHash
-  ) {
-    return jsonError(new Error(databaseExceptionCode(
-      refreshError,
-      "EBAY_FINAL_PUBLICATION_PREVIEW_REFRESH_FAILED",
-    )), 409)
-  }
-  const claimToken = randomUUID()
-  const { data: claimed, error: claimError } = await supabase
-    .rpc("claim_ebay_authorized_listing_publication", {
-      p_publication_id: publicationId,
-      p_actor_user_id: actor,
-      p_idempotency_key: executionKey,
-      p_preview_hash: built.previewHash,
-      p_confirm_publish: text(body.confirmPublish),
-      p_claim_token: claimToken,
-    })
-    .single()
-  if (claimError || !claimed) {
-    return jsonError(new Error(databaseExceptionCode(
-      claimError,
-      "EBAY_FINAL_PUBLICATION_CLAIM_FAILED",
-    )), 409)
-  }
-  const claimedPublication = record(claimed)
-  if (text(claimedPublication.phase) !== "publish_in_flight") {
-    return jsonError(new Error("EBAY_FINAL_PUBLICATION_RECONCILIATION_REQUIRED"), 409)
+    if (quarantine) return quarantine
+    throw error
   }
   const publishResult = await publishEbayOfferOnce({
     offerId: built.offerId,

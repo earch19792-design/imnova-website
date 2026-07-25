@@ -3383,6 +3383,21 @@ async function quarantineUnknownContinuityFailure(input: {
   }
 }
 
+export async function quarantineSameDayCandidateForAuxiliaryPublicationFailure(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorId: string
+  requestId: string
+  expectedCandidateId: string
+  expectedMachineState: string
+  engineErrorCode: string | null
+}) {
+  return quarantineUnknownContinuityFailure({
+    ...input,
+    now: new Date(),
+  })
+}
+
 export async function previewSameDayPilot(input: {
   supabase: SupabaseClient
   accountKey: string

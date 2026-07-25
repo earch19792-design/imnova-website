@@ -752,6 +752,7 @@ function humanFinalPublicationError(error: unknown) {
     ["EBAY_FINAL_PUBLICATION_RECOVERY_NOT_ELIGIBLE", "La publicación ya no cumple condiciones seguras de reintento único. Valida el estado actual del listing o reinicia con la traza correcta de error."],
     ["EBAY_FINAL_PUBLICATION_RECOVERY_REQUIRED", "Esta publicación quedó en estado terminal seguro. Ejecuta rearmado y luego confirma el botón final para un único reintento."],
     ["EBAY_AUTHORIZED_PUBLICATION_RECOVERY_NOT_ELIGIBLE", "Esta publicación no está en la condición de reintento único permitido. Verifica preview y estado actual."],
+    ["EBAY_FINAL_PUBLICATION_AUXILIARY_QUARANTINE_TRIGGERED", "El fallo no previsto se aisló en continuidad y el producto se puso en cuarentena para no bloquear el lote; continúa con el siguiente artículo y corrige este incidente en cola técnica."],
   ]
   return messages.find(([candidate]) => code.includes(candidate))?.[1]
     ?? getMobileReviewRequestError(error, "No se pudo completar la publicación autorizada.")
