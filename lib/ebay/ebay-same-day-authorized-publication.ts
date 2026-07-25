@@ -41,6 +41,62 @@ const READY_STATES = new Set([
   "READY_FOR_MANUAL_PUBLICATION",
   "WAITING_ITEM_ID",
 ])
+const OPERATOR_RECHECK_ACCEPTANCE_MINUTES = 24 * 60
+
+type OperatorRecheck = {
+  validForReuse: boolean
+  validPrice: boolean
+  validQuantity: boolean
+  observedAt: number
+}
+
+function isOperatorRecheckValid(input: {
+  confirmation: JsonRecord
+  economics: JsonRecord
+  now: Date
+}): OperatorRecheck {
+  const confirmation = input.confirmation
+  const economics = input.economics
+  const observedAt = Date.parse(text(confirmation.confirmedAt, 50))
+  const supplierCost = number(economics.confirmedLunaPrice)
+  const confirmationCost = number(confirmation.confirmedUnitCost)
+  const confirmationStatusValid = [
+    "AVAILABLE_QUANTITY_NOT_SHOWN",
+    "AVAILABLE_EXACT_QUANTITY",
+  ].includes(text(confirmation.status, 80))
+  const confirmationSource = text(confirmation.source, 80)
+  const quantityVisible = confirmation.quantityVisible === true
+  const quantityValue = quantityVisible ? number(confirmation.confirmedQuantity) : null
+  const quantityKnownMatches = quantityVisible ? quantityValue !== null && quantityValue >= 1 : true
+  const confirmationPublishedByOperator = confirmation.confirmedByActorRecorded === true
+    || confirmation.publicationRecheck === true
+  const costMatches = supplierCost === null
+    ? Number.isFinite(confirmationCost)
+    : Number.isFinite(confirmationCost)
+      && Number.isFinite(supplierCost)
+      && Math.abs(supplierCost - confirmationCost) <= 0.005
+  const ageMs = observedAt - input.now.getTime()
+  const maxAgeMs = OPERATOR_RECHECK_ACCEPTANCE_MINUTES * 60_000
+  const isRecent = Number.isFinite(observedAt) && ageMs <= 0 && ageMs >= -maxAgeMs
+  const validForReuse = confirmationStatusValid
+    && confirmationSource === "OPERATOR_VISIBLE_LUNA_PRODUCT_PAGE"
+    && confirmationPublishedByOperator === true
+    && costMatches
+    && quantityKnownMatches
+    && isRecent
+  return {
+    validForReuse,
+    validPrice: costMatches,
+    validQuantity: quantityKnownMatches,
+    observedAt,
+  }
+}
+
+function isFreshForSource(value: string, now: Date, freshnessMinutesOverride: number | null = null) {
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) && parsed <= now.getTime()
+    && now.getTime() - parsed <= (freshnessMinutesOverride ?? sourceMaximumAgeMinutes()) * 60_000
+}
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -100,13 +156,6 @@ function sourceMaximumAgeMinutes() {
   return Number.isFinite(configured) && configured > 0
     ? Math.min(Math.trunc(configured), 1_440)
     : 360
-}
-
-function recent(value: string, now: Date) {
-  const timestamp = Date.parse(value)
-  const age = now.getTime() - timestamp
-  return Number.isFinite(timestamp) && age >= 0
-    && age <= sourceMaximumAgeMinutes() * 60_000
 }
 
 function economicsOverrides(value: JsonRecord) {
@@ -520,10 +569,11 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
   const lunaConfirmation = record(economics.lunaConfirmation)
   const operatorObservedAt = text(lunaConfirmation.confirmedAt, 50)
   const supplierObservedAt = text(latestVariant?.captured_at, 50)
-  const sourceObservedAt = latestIso(supplierObservedAt, operatorObservedAt)
+  const sourceObservedAtCandidate = latestIso(supplierObservedAt, operatorObservedAt)
   const supplierObservedTimestamp = Date.parse(supplierObservedAt)
+  const now = input.now ?? new Date()
   const latestVariantIsNewest = Number.isFinite(supplierObservedTimestamp)
-    && sourceObservedAt === new Date(supplierObservedTimestamp).toISOString()
+    && sourceObservedAtCandidate === new Date(supplierObservedTimestamp).toISOString()
   const confirmationStatusValid = [
     "AVAILABLE_QUANTITY_NOT_SHOWN",
     "AVAILABLE_EXACT_QUANTITY",
@@ -540,23 +590,45 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
     && text(lunaConfirmation.publicSku, 300) === text(candidate.supplier_sku, 300)
   const confirmedAvailable =
     operatorAvailable || automatedPublicObservationAvailable
-  const available = latestVariantIsNewest
-    ? latestVariant?.available === true
-    : confirmedAvailable
-  const currentSupplierCost = latestVariantIsNewest
-    ? number(latestVariant?.price)
-    : number(economics.confirmedLunaPrice ?? economics.supplierCost)
-  const exactQuantity = latestVariantIsNewest
-    ? number(latestVariant?.inventory_quantity)
-    : lunaConfirmation.quantityVisible === true
+  const operatorRecheck = isOperatorRecheckValid({
+    confirmation: lunaConfirmation,
+    economics,
+    now,
+  })
+  const useOperatorAvailableOverride = operatorRecheck.validForReuse
+    && (latestVariantIsNewest ? latestVariant?.available !== true : true)
+  const sourceObservedAt = useOperatorAvailableOverride
+    ? operatorObservedAt
+    : sourceObservedAtCandidate
+  const available = useOperatorAvailableOverride
+    ? true
+    : latestVariantIsNewest
+      ? latestVariant?.available === true
+      : confirmedAvailable || operatorRecheck.validForReuse
+  const currentSupplierCost = useOperatorAvailableOverride
+    ? number(economics.confirmedLunaPrice ?? economics.supplierCost)
+    : latestVariantIsNewest
+      ? number(latestVariant?.price)
+      : number(economics.confirmedLunaPrice ?? economics.supplierCost)
+  const exactQuantity = useOperatorAvailableOverride
+    ? (lunaConfirmation.quantityVisible === true
       ? number(lunaConfirmation.confirmedQuantity)
-      : 1
+      : 1)
+    : latestVariantIsNewest
+      ? number(latestVariant?.inventory_quantity)
+      : lunaConfirmation.quantityVisible === true
+        ? number(lunaConfirmation.confirmedQuantity)
+        : 1
   const effectiveQuantity = exactQuantity !== null && exactQuantity > 0
     ? Math.trunc(exactQuantity)
     : available && lunaConfirmation.quantityVisible !== true ? 1 : 0
-  const now = input.now ?? new Date()
+  const sourceObservationAccepted = useOperatorAvailableOverride
+    ? true
+    : operatorRecheck.validForReuse
+    ? true
+    : isFreshForSource(sourceObservedAt, now)
   if (!available || !currentSupplierCost || effectiveQuantity < 1
-    || !sourceObservedAt || !recent(sourceObservedAt, now)) {
+    || !sourceObservedAt || !sourceObservationAccepted) {
     throw new Error("SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED")
   }
 
@@ -592,12 +664,16 @@ export async function loadSameDayAuthorizedPublicationContext(input: {
     imageRevisionSetHash: approvedRevision?.imageSetHash ?? null,
     legacyImageRevisionRequired: recoverableLegacySixImageSet,
     sourceObservedAt,
-    source: latestVariantIsNewest
-      ? "LUNA_LATEST_VARIANT"
-      : confirmationSource,
-    quantityVisible: latestVariantIsNewest
-      ? exactQuantity !== null
-      : lunaConfirmation.quantityVisible === true,
+    source: useOperatorAvailableOverride
+      ? confirmationSource
+      : latestVariantIsNewest
+        ? "LUNA_LATEST_VARIANT"
+        : confirmationSource,
+    quantityVisible: useOperatorAvailableOverride
+      ? lunaConfirmation.quantityVisible === true
+      : latestVariantIsNewest
+        ? exactQuantity !== null
+        : lunaConfirmation.quantityVisible === true,
     controlledRisk: isControlledRisk,
     finalHumanAuthorizationRequired: true,
     unattendedPublicationAllowed: false,

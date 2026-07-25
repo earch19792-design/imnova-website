@@ -4628,7 +4628,7 @@ function ListingWorkspacePageContent() {
             <div>
               <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Publicación eBay controlada</p>
               <h2 className="mt-1 text-xl font-black">Offer no publicado + autorización final · {draftTarget}</h2>
-              <p className="mt-2 text-sm leading-6 text-white/65">Primero autorizas y creas el Offer UNPUBLISHED. En el tramo final, con una sola autorización final, Seller OS vuelve a validar todo, prepara el preview si hace falta y publica en un único clic.</p>
+              <p className="mt-2 text-sm leading-6 text-white/65">Primero autorizas y creas el Offer UNPUBLISHED. En el tramo final, con una sola autorización final, Seller OS vuelve a validar todo, prepara el preview si hace falta y publica en un único clic. <strong>Preparar preview final no publicado</strong> está integrado en este tramo.</p>
               <p className="mt-2 rounded-xl border border-white/15 p-2 text-xs leading-5 text-white/60">Esto crea Inventory Item + Offer con estado UNPUBLISHED mediante la API. No garantiza que eBay lo muestre como un “draft” editable dentro de Seller Hub.</p>
             </div>
             <div className={`rounded-2xl border p-3 text-sm ${productionTarget ? "border-rose-200/40 bg-rose-200/[0.09] text-rose-50" : draftState.runtime?.enabled && draftState.runtime?.configured ? "border-emerald-200/25 bg-emerald-200/[0.06] text-emerald-50" : "border-amber-200/25 bg-amber-200/[0.06] text-amber-50"}`}>
@@ -4673,7 +4673,7 @@ function ListingWorkspacePageContent() {
                     <p className="mt-1 text-sm font-black">Precio exacto: {String(publicationPrice.currency ?? "USD")} {String(publicationPrice.value ?? "")}</p>
                     <p className="mt-1 text-xs text-white/65">Imágenes aprobadas: {Array.isArray(publicationProduct.imageUrls) ? publicationProduct.imageUrls.length : 0} · Location: {String(publicationOffer.merchantLocationKey ?? "")}</p>
                     <p className="mt-1 break-all text-[10px] text-white/50">Policies: {String(publicationPolicies.fulfillmentPolicyId ?? "")} · {String(publicationPolicies.paymentPolicyId ?? "")} · {String(publicationPolicies.returnPolicyId ?? "")}</p>
-                    <p className="mt-2 rounded-xl border border-white/10 p-2 text-xs text-white/60">Sin promociones, Best Offer ni volume pricing. Se publicará exactamente este Offer una sola vez.</p>
+                    <p className="mt-2 rounded-xl border border-white/10 p-2 text-xs text-white/60">Sin promociones, Best Offer ni volume pricing. Se publicará exactamente este Offer una sola vez. <strong>Publicar una sola vez en eBay</strong>.</p>
                   </>
                   : <p className="mt-2 text-sm text-white/65">Seller OS revalidará cuenta, costo y stock de Luna, siete imágenes V3, policies y ubicación; preparará el preview final y publicará en este mismo paso.</p>}
               </div>
