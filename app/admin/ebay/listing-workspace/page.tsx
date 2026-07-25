@@ -3576,6 +3576,7 @@ function ListingWorkspacePageContent() {
       "Consultando Taxonomy y corrigiendo únicamente la categoría del mismo Offer UNPUBLISHED…",
     )
     try {
+      await persistCurrentPackage()
       const payload = await draftRequest({
         action: "repair_rejected_category",
         publicationId,

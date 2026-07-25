@@ -2253,6 +2253,17 @@ async function repairRejectedOfferCategory(
     currentApprovedPayload.inventoryItemPayload,
   )
   const product = record(inventoryItemPayload.product)
+  const packageData = record(context.listingPackage.package_data)
+  const packageAspects = object(packageData.aspects)
+  const normalizedPackageAspects = Object.fromEntries(
+    Object.entries(packageAspects)
+      .map(([name, value]) => [String(name), String(value ?? "").trim()])
+      .filter(([, value]) => value.length > 0),
+  )
+  const enrichedProductAspects = {
+    ...record(product.aspects),
+    ...normalizedPackageAspects,
+  }
   const title = text(product.title) || text(packageData.title)
   if (!title) {
     return jsonError(
@@ -2288,10 +2299,9 @@ async function repairRejectedOfferCategory(
     )
   }
 
-  const productAspects = record(product.aspects)
   const missingRequiredAspects = taxonomy.requiredAspects
     .map((aspect) => text(aspect.name))
-    .filter((name) => name && !taxonomyAspectHasValue(productAspects, name))
+    .filter((name) => name && !taxonomyAspectHasValue(enrichedProductAspects, name))
   if (missingRequiredAspects.length) {
     return jsonError(
       new Error("EBAY_REJECTED_CATEGORY_REPAIR_ASPECTS_REQUIRED"),
@@ -2306,9 +2316,17 @@ async function repairRejectedOfferCategory(
     ...currentOfferPayload,
     categoryId: newCategoryId,
   }
+  const replacementInventoryPayload: JsonRecord = {
+    ...inventoryItemPayload,
+    product: {
+      ...product,
+      aspects: enrichedProductAspects,
+    },
+  }
   const replacementApprovedPayload: JsonRecord = {
     ...currentApprovedPayload,
     offerPayload: replacementOfferPayload,
+    inventoryItemPayload: replacementInventoryPayload,
     compliance: {
       ...currentCompliance,
       aspectValidation: {
