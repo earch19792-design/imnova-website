@@ -83,6 +83,8 @@ alter table public.ebay_rejected_category_repair_events
 alter table public.ebay_rejected_category_repair_events
   force row level security;
 
+revoke all on table public.ebay_rejected_category_repair_events
+from anon, authenticated;
 revoke all on public.ebay_rejected_category_repair_events
   from public, anon, authenticated, service_role;
 grant select, insert on public.ebay_rejected_category_repair_events

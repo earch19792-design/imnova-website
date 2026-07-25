@@ -1321,6 +1321,175 @@ function categoryOnlyOfferReplacement(
   )
 }
 
+function requiredAspectAdditionOnlyInventoryReplacement(
+  currentPayload: JsonRecord,
+  replacementPayload: JsonRecord,
+) {
+  const currentProduct = record(currentPayload.product)
+  const replacementProduct = record(replacementPayload.product)
+  const currentAspects = record(currentProduct.aspects)
+  const replacementAspects = record(replacementProduct.aspects)
+  if (
+    exactJsonShape(currentAspects, replacementAspects)
+    || !containsExpected(replacementAspects, currentAspects)
+  ) return false
+  return exactJsonShape(
+    {
+      ...currentPayload,
+      product: {
+        ...currentProduct,
+        aspects: replacementAspects,
+      },
+    },
+    replacementPayload,
+  )
+}
+
+/**
+ * Adds only newly-required official Item Specifics to the existing Inventory
+ * Item associated with a rejected UNPUBLISHED Offer.
+ *
+ * Existing aspects and every non-aspect inventory field remain exact. The PUT
+ * is attempted at most once and an unknown result is reconciled by bounded GET
+ * reads. This helper never creates an Offer and never calls publishOffer.
+ */
+export async function updateEbayRejectedCategoryInventoryItemOnce(input: {
+  expectedSku: string
+  publicationControlId: string
+  expectedCurrentPayload: JsonRecord
+  replacementPayload: JsonRecord
+  confirmRepair: string
+}, fetchImpl: typeof fetch = fetch) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  const expectedSku = typeof input.expectedSku === "string"
+    ? input.expectedSku.trim()
+    : ""
+  if (
+    config.target !== "PRODUCTION"
+    || input.confirmRepair !== EBAY_REJECTED_CATEGORY_REPAIR_CONFIRMATION
+    || !isCanonicalEbayPackageSku(expectedSku)
+    || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(input.publicationControlId)
+    || !requiredAspectAdditionOnlyInventoryReplacement(
+      input.expectedCurrentPayload,
+      input.replacementPayload,
+    )
+  ) {
+    throw new Error(
+      "EBAY_INVENTORY_CATEGORY_REPAIR_AUTHORIZATION_INVALID",
+    )
+  }
+
+  const configWithToken = config
+  const token = await accessToken(configWithToken, fetchImpl)
+  const replacementVerification = await verifyInventoryItemWithToken(
+    configWithToken,
+    token,
+    expectedSku,
+    input.replacementPayload,
+    fetchImpl,
+  )
+  if (replacementVerification.safe) {
+    return {
+      ok: true,
+      status: replacementVerification.httpStatus,
+      outcomeKnown: true,
+      reconciled: true,
+      writeAttempted: false,
+      publishRequestSent: false,
+      blocker: "",
+      body: { alreadyRepaired: true },
+    }
+  }
+
+  const currentVerification = await verifyInventoryItemWithToken(
+    configWithToken,
+    token,
+    expectedSku,
+    input.expectedCurrentPayload,
+    fetchImpl,
+  )
+  if (!currentVerification.safe) {
+    return {
+      ok: false,
+      status: currentVerification.httpStatus,
+      outcomeKnown: true,
+      reconciled: false,
+      writeAttempted: false,
+      publishRequestSent: false,
+      blocker: currentVerification.blocker
+        || "EBAY_INVENTORY_CATEGORY_REPAIR_STATE_CHANGED",
+      body: {},
+    }
+  }
+
+  const url = new URL(
+    `/sell/inventory/v1/inventory_item/${encodeURIComponent(expectedSku)}`,
+    configWithToken.apiOrigin,
+  )
+  const updateResult = await write(
+    configWithToken,
+    token,
+    url,
+    "PUT",
+    input.replacementPayload,
+    fetchImpl,
+  )
+  if (!updateResult.ok && updateResult.outcomeKnown) {
+    return {
+      ...updateResult,
+      reconciled: false,
+      writeAttempted: true,
+      publishRequestSent: false,
+      blocker: "EBAY_INVENTORY_CATEGORY_REPAIR_REJECTED",
+    }
+  }
+
+  let verification: Awaited<
+    ReturnType<typeof verifyInventoryItemWithToken>
+  > | null = null
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 200 * attempt))
+    }
+    verification = await verifyInventoryItemWithToken(
+      configWithToken,
+      token,
+      expectedSku,
+      input.replacementPayload,
+      fetchImpl,
+    )
+    if (verification.safe) break
+  }
+  if (verification?.safe) {
+    return {
+      ok: true,
+      status: updateResult.status || verification.httpStatus,
+      outcomeKnown: true,
+      reconciled: !updateResult.ok,
+      writeAttempted: true,
+      publishRequestSent: false,
+      blocker: "",
+      body: {
+        verifiedAfterUpdate: true,
+        boundedReadAttempts: 3,
+      },
+    }
+  }
+  return {
+    ok: false,
+    status: updateResult.status || verification?.httpStatus || 0,
+    outcomeKnown: false,
+    reconciled: false,
+    writeAttempted: true,
+    publishRequestSent: false,
+    blocker: "EBAY_INVENTORY_CATEGORY_REPAIR_OUTCOME_UNKNOWN",
+    body: {
+      boundedReadAttempts: 3,
+      lastVerificationBlocker: verification?.blocker ?? null,
+    },
+  }
+}
+
 async function verifyUnpublishedOfferPayloadWithToken(
   config: GatewayConfig,
   token: string,

@@ -1618,15 +1618,62 @@ function ListingWorkspacePageContent() {
         )
         : undefined,
     })
-    const payload = await readMobileReviewJson<Record<string, any>>(
-      response,
-      body?.action === "account_preflight"
-        ? "No se pudo consultar la configuración de cuenta eBay"
-        : "No se pudo validar el draft no publicado",
-    )
+    const failureResponse = response.clone()
+    const fallback = body?.action === "account_preflight"
+      ? "No se pudo consultar la configuración de cuenta eBay"
+      : body?.action === "repair_rejected_category"
+        ? "No se pudo corregir la categoría del Offer"
+        : body?.action === "prepare_publish"
+          ? "No se pudo preparar el preview final"
+          : body?.action === "publish"
+            ? "No se pudo publicar el listing"
+            : body?.action === "reconcile_publish"
+              ? "No se pudo verificar el resultado de publicación"
+              : "No se pudo validar el draft no publicado"
+    let payload: Record<string, any>
+    try {
+      payload = await readMobileReviewJson<Record<string, any>>(
+        response,
+        fallback,
+      )
+    } catch (requestFailure) {
+      const requestError = new Error(
+        getMobileReviewRequestError(requestFailure, `${fallback}.`),
+      ) as Error & {
+        blockers?: string[]
+        code?: string
+        httpStatus?: number
+        payload?: Record<string, unknown>
+      }
+      requestError.httpStatus = response.status
+      try {
+        const failurePayload = await failureResponse.json() as
+          Record<string, unknown>
+        requestError.blockers = Array.isArray(failurePayload.blockers)
+          ? failurePayload.blockers.filter(
+            (item): item is string => typeof item === "string",
+          )
+          : []
+        requestError.code = String(failurePayload.error ?? "")
+        requestError.payload = failurePayload
+      } catch {
+        requestError.blockers = []
+      }
+      throw requestError
+    }
     if (!payload.success) {
-      const requestError = new Error(getMobileReviewPayloadError(payload, "No se pudo validar el draft.")) as Error & { blockers?: string[] }
+      const requestError = new Error(
+        getMobileReviewPayloadError(payload, `${fallback}.`),
+      ) as Error & {
+        blockers?: string[]
+        code?: string
+        httpStatus?: number
+        payload?: Record<string, unknown>
+      }
       requestError.blockers = Array.isArray(payload.blockers) ? payload.blockers : []
+      requestError.code = String(payload.error ?? "")
+      requestError.httpStatus = response.status
+      requestError.payload = payload
       throw requestError
     }
     return payload
@@ -3576,10 +3623,10 @@ function ListingWorkspacePageContent() {
       "Consultando Taxonomy y corrigiendo únicamente la categoría del mismo Offer UNPUBLISHED…",
     )
     try {
-      await persistCurrentPackage()
       const payload = await draftRequest({
         action: "repair_rejected_category",
         publicationId,
+        itemSpecifics: form.aspects,
         confirmRepair: confirmation,
         confirmNoPublish: true,
         confirmProductionAccount: true,
