@@ -896,6 +896,34 @@ export async function POST(req: Request) {
   }
 }
 
+async function loadFinalPublicationContextWithRecoverableError(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  executionId: string,
+  actor: string,
+  options: {
+    allowRejectedCategoryRepairDraftStatus?: boolean
+  } = {},
+) {
+  try {
+    return {
+      success: true as const,
+      context: await loadFinalPublicationContext(
+        supabase,
+        executionId,
+        actor,
+        options,
+      ),
+    }
+  } catch (contextError) {
+    const code = errorCode(contextError)
+    if (!isCommandCenterCommercialFreshnessRecheck(code)) throw contextError
+    return {
+      success: false as const,
+      response: jsonError(new Error(code), 409),
+    }
+  }
+}
+
 async function preflightDraft(body: JsonRecord, actor: string) {
   const packageId = uuid(body.packageId)
   if (!packageId) return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_REQUIRED"), 400)
@@ -1864,7 +1892,13 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   const executionId = uuid(body.executionId)
   if (!executionId) return jsonError(new Error("EBAY_FINAL_PUBLICATION_EXECUTION_REQUIRED"), 400)
   const supabase = getSupabaseAdminClient()
-  const context = await loadFinalPublicationContext(supabase, executionId, actor)
+  const contextResult = await loadFinalPublicationContextWithRecoverableError(
+    supabase,
+    executionId,
+    actor,
+  )
+  if (!contextResult.success) return contextResult.response
+  const context = contextResult.context
   const visualPublicationGate = await loadFinalListingReviewPublicationGate({
     supabase,
     listingPackageId: text(record(context.approval).listing_package_id),
@@ -2076,11 +2110,13 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
   if (current.phase !== "preview_ready") {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_RECONCILIATION_REQUIRED"), 409)
   }
-  const context = await loadFinalPublicationContext(
+  const contextResult = await loadFinalPublicationContextWithRecoverableError(
     supabase,
     text(current.draft_execution_id),
     actor,
   )
+  if (!contextResult.success) return contextResult.response
+  const context = contextResult.context
   const built = buildFinalPublicationPreview(context.approval, context.execution)
   if (built.previewHash !== current.preview_hash) {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_PREVIEW_CHANGED"), 409)
@@ -2342,12 +2378,14 @@ async function repairRejectedOfferCategory(
     )
   }
 
-  const context = await loadFinalPublicationContext(
+  const contextResult = await loadFinalPublicationContextWithRecoverableError(
     supabase,
     text(publication.draft_execution_id),
     actor,
     { allowRejectedCategoryRepairDraftStatus: true },
   )
+  if (!contextResult.success) return contextResult.response
+  const context = contextResult.context
   const currentBuilt = buildFinalPublicationPreview(
     context.approval,
     context.execution,
@@ -2676,11 +2714,13 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
       visualPublicationGate.reason ?? "FINAL_LISTING_REVIEW_NOT_READY",
     )
   }
-  const context = await loadFinalPublicationContext(
+  const contextResult = await loadFinalPublicationContextWithRecoverableError(
     supabase,
     text(publication.draft_execution_id),
     actor,
   )
+  if (!contextResult.success) return contextResult.response
+  const context = contextResult.context
   const built = buildFinalPublicationPreview(
     context.approval,
     context.execution,
@@ -2760,11 +2800,13 @@ async function reconcileFinalPublication(body: JsonRecord, actor: string) {
   if (!visualPublicationGate.allowed) {
     throw new Error(visualPublicationGate.reason ?? "FINAL_LISTING_REVIEW_NOT_READY")
   }
-  const context = await loadFinalPublicationContext(
+  const contextResult = await loadFinalPublicationContextWithRecoverableError(
     supabase,
     text(publication.draft_execution_id),
     actor,
   )
+  if (!contextResult.success) return contextResult.response
+  const context = contextResult.context
   let reconciledPublication = publication as JsonRecord
   let listingId = text(publication.listing_id)
   if (["publish_in_flight", "outcome_unknown"].includes(text(publication.phase))) {
