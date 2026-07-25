@@ -202,6 +202,134 @@ function taxonomyBlockerName(value: unknown) {
     .slice(0, 80) || "UNKNOWN"
 }
 
+function canonicalAspectName(value: unknown) {
+  return text(value)
+    .toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9]+/g, "")
+}
+
+function extractTaxonomyConstraintValues(constraint: JsonRecord) {
+  const values = Array.isArray(constraint.values)
+    ? constraint.values
+        .map(record)
+        .map((entry) => text(entry.value))
+        .filter(Boolean)
+    : []
+  const hasExplicitValues = values.length > 0
+  if (!hasExplicitValues && constraint.suggestedValues !== undefined) {
+    values.push(...strings(constraint.suggestedValues, 40))
+  }
+  return unique(values)
+}
+
+function collectAspectHintsFromCandidate(value: unknown, context: unknown) {
+  const source = {
+    title: text(value),
+    description: text(record(context).description),
+    brand: text(record(context).brand),
+    manufacturer: text(record(context).manufacturer),
+    type: text(record(context).type),
+    model: text(record(context).model),
+    productType: text(record(context).productType),
+    variantType: text(record(context).variantType),
+    connectionType: text(record(context).connectionType),
+    plugType: text(record(context).plugType),
+  }
+  const packed = [
+    source.title,
+    source.description,
+    source.brand,
+    source.manufacturer,
+    source.type,
+    source.model,
+    source.productType,
+    source.variantType,
+    source.connectionType,
+    source.plugType,
+  ].filter(Boolean)
+  return packed
+}
+
+function normalizeAspectValue(value: string) {
+  return value
+    .normalize("NFKC")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+function containsExactText(value: string, haystack: string[]) {
+  const normalizedNeedle = normalizeAspectValue(value).toLocaleLowerCase("en-US")
+  if (!normalizedNeedle) return false
+  return haystack.some((line) => normalizeAspectValue(line).toLocaleLowerCase("en-US").includes(normalizedNeedle))
+}
+
+function inferRequiredAspectValuesFromTaxonomy(
+  requiredName: string,
+  constraint: JsonRecord,
+  sourceLines: string[],
+) {
+  const suggestedValues = unique(extractTaxonomyConstraintValues(constraint)
+    .map((value) => normalizeAspectValue(value))
+    .filter(Boolean))
+  if (!suggestedValues.length) return []
+  const cardinality = text(constraint.cardinality).toUpperCase()
+  const mode = text(constraint.mode).toUpperCase()
+  const selectionOnly = mode === "SELECTION_ONLY"
+  if (selectionOnly && suggestedValues.length === 1) return [suggestedValues[0]]
+  const matching = suggestedValues.filter((value) => containsExactText(value, sourceLines))
+  if (matching.length === 1 && cardinality === "SINGLE") return [matching[0]]
+  return matching.length > 0 ? unique(matching).slice(0, 1) : []
+}
+
+export function enrichDraftOnlyRequiredAspects(params: {
+  aspects: Record<string, string[]>
+  requiredAspectNames: string[]
+  taxonomy: JsonRecord
+  listingPackageHintSource: JsonRecord
+}) {
+  const sourceLines = collectAspectHintsFromCandidate(
+    text(record(params.listingPackageHintSource).title),
+    params.listingPackageHintSource,
+  )
+  const constraints = Array.isArray(params.taxonomy.aspectConstraints)
+    ? params.taxonomy.aspectConstraints.map(record)
+    : []
+  const constraintsByName = new Map<string, JsonRecord>()
+  for (const constraint of constraints) {
+    const name = text(constraint.name)
+    const key = canonicalAspectName(name)
+    if (!name || constraintsByName.has(key)) continue
+    constraintsByName.set(key, constraint)
+  }
+  const enriched = { ...params.aspects }
+  const addedRequiredAspects: Record<string, string[]> = {}
+  const missing = [] as string[]
+  for (const requiredName of params.requiredAspectNames) {
+    const requiredKey = canonicalAspectName(requiredName)
+    const existing = Object.entries(enriched).find(
+      ([name]) => canonicalAspectName(name) === requiredKey,
+    )
+    if (existing && existing[1]?.length) continue
+    const constraint = constraintsByName.get(requiredKey)
+    const inferred = constraint
+      ? inferRequiredAspectValuesFromTaxonomy(requiredName, constraint, sourceLines)
+      : []
+    if (!inferred.length) {
+      missing.push(requiredName)
+      continue
+    }
+    const normalizedName = requiredName.trim()
+    if (!normalizedName) continue
+    enriched[normalizedName] = unique(inferred)
+    addedRequiredAspects[normalizedName] = unique(inferred)
+  }
+  return {
+    enrichedAspects: enriched,
+    addedRequiredAspects,
+    missingRequiredAspects: unique(missing),
+  }
+}
+
 function validCalendarDate(value: string, format: string) {
   if (format === "YYYY") return /^\d{4}$/.test(value)
   const match = format === "YYYYMM"
@@ -545,9 +673,16 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const dimensions = record(record(configuration.packageWeightAndSize).dimensions)
   const weight = record(record(configuration.packageWeightAndSize).weight)
   const aspects = normalizeAspects(packageData.aspects)
+  const requiredAspects = strings(taxonomy.requiredAspects)
+  const aspectEnrichment = enrichDraftOnlyRequiredAspects({
+    aspects,
+    requiredAspectNames: requiredAspects,
+    taxonomy,
+    listingPackageHintSource: packageData,
+  })
+  const enrichedAspects = aspectEnrichment.enrichedAspects
   const images = normalizeImageUrls(packageData.imageUrls)
   const authorizedImages = normalizeImageUrls(authorization.approvedImageUrls)
-  const requiredAspects = strings(taxonomy.requiredAspects)
   const hardGates = strings(opportunity.hard_gates)
   const evidenceGuards = strings(opportunity.evidence_guards)
   const sameDayPilotAuthorization = record(input.sameDayPilotAuthorization)
@@ -614,10 +749,10 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     && authorization.protectedManifestVerified === true
     && Number(authorization.protectedManifestAssetCount) === 7
     && Number.isFinite(Date.parse(text(authorization.approvedAt)))
-  const aspectConstraintBlockers = validateEbayTaxonomyAspectValues(aspects, taxonomy)
+  const aspectConstraintBlockers = validateEbayTaxonomyAspectValues(enrichedAspects, taxonomy)
   const taxonomyEvidenceReady = taxonomy.validated === true
     && text(taxonomy.categoryId) === categoryId
-    && requiredAspects.every((name) => Boolean(aspects[name]?.length))
+    && aspectEnrichment.missingRequiredAspects.length === 0
     && aspectConstraintBlockers.length === 0
   const packageMeasurementsProvided = dimensionValues.some((value) => value !== null)
     || Boolean(dimensionUnit)
@@ -665,12 +800,14 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (!text(packageData.title) || text(packageData.title).length > 80) blockers.push("TITLE_INVALID")
   if (!/^\d{1,12}$/.test(categoryId)) blockers.push("CATEGORY_ID_REQUIRED")
   if (!text(packageData.description)) blockers.push("DESCRIPTION_REQUIRED")
-  if (requiredAspects.length > 0 && !Object.keys(aspects).length) {
+  if (requiredAspects.length > 0 && !Object.keys(enrichedAspects).length) {
     blockers.push("ASPECTS_REQUIRED")
   }
   if (taxonomy.validated !== true || text(taxonomy.categoryId) !== categoryId || !recent(taxonomy.validatedAt, taxonomyMaxAge, now)) blockers.push("CATEGORY_ASPECTS_NOT_VALIDATED")
   blockers.push(...aspectConstraintBlockers)
-  for (const name of requiredAspects) if (!aspects[name]?.length) blockers.push(`REQUIRED_ASPECT_MISSING:${name}`)
+  for (const name of aspectEnrichment.missingRequiredAspects) {
+    blockers.push(`REQUIRED_ASPECT_MISSING:${name}`)
+  }
   if (!images.length || images.length !== strings(packageData.imageUrls, 24).length) blockers.push("HTTPS_IMAGES_REQUIRED")
   if (
     authorization.approved !== true
@@ -741,6 +878,16 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     economicsConfig,
     sameDayPilotAuthorized ? sameDayPilotAuthorization : null,
   )
+  const enrichedPayload = {
+    ...payload,
+    inventoryItemPayload: {
+      ...payload.inventoryItemPayload,
+      product: {
+        ...payload.inventoryItemPayload.product,
+        aspects: enrichedAspects,
+      },
+    },
+  }
   const uniqueBlockers = unique(blockers)
   return {
     ready: uniqueBlockers.length === 0,
@@ -770,9 +917,9 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
       passesProfitGate: economics.passesProfitGate,
       calculationSource: economics.calculationSource,
     },
-    payloadHash: hashEbayDraftOnlyPayload(payload),
+    payloadHash: hashEbayDraftOnlyPayload(enrichedPayload),
     requiredSku,
-    payload,
+    payload: enrichedPayload,
     safety: {
       canCreateUnpublishedDraft: uniqueBlockers.length === 0,
       canPublish: false,

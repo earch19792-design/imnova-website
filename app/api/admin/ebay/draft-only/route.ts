@@ -32,6 +32,7 @@ import {
   ebayDraftOnlyApprovalPhrase,
   evaluateEbayDraftOnlyReadiness,
   expectedEbayDraftOnlySku,
+  enrichDraftOnlyRequiredAspects,
   hashEbayDraftOnlyPayload,
   validateEbayTaxonomyAspectValues,
   type EbayDraftOnlyTarget,
@@ -2378,6 +2379,10 @@ async function repairRejectedOfferCategory(
     ...normalizedRepairItemSpecifics(listingPackageData.aspects),
     ...normalizedRepairItemSpecifics(body.itemSpecifics),
   }
+  const requestedOrCurrentAspects = {
+    ...currentProductAspects,
+    ...requestedItemSpecifics,
+  }
   const title = text(product.title) || text(listingPackageData.title)
   if (!title) {
     return jsonError(
@@ -2413,21 +2418,17 @@ async function repairRejectedOfferCategory(
     )
   }
 
-  const addedRequiredAspects: Record<string, string[]> = {}
-  const missingRequiredAspects: string[] = []
-  for (const aspect of taxonomy.requiredAspects) {
-    const name = text(aspect.name)
-    if (!name || taxonomyAspectHasValue(currentProductAspects, name)) continue
-    const requestedValues = findRepairItemSpecific(
-      requestedItemSpecifics,
-      name,
-    )
-    if (!requestedValues.length) {
-      missingRequiredAspects.push(name)
-      continue
-    }
-    addedRequiredAspects[name] = requestedValues
-  }
+  const requiredAspectNames = taxonomy.requiredAspects
+    .map((aspect) => text(aspect.name))
+    .filter(Boolean)
+  const repairAspectEnrichment = enrichDraftOnlyRequiredAspects({
+    aspects: requestedOrCurrentAspects,
+    requiredAspectNames,
+    taxonomy: { aspectConstraints: taxonomy.aspects },
+    listingPackageHintSource: listingPackageData,
+  })
+  const addedRequiredAspects = repairAspectEnrichment.addedRequiredAspects
+  const missingRequiredAspects = repairAspectEnrichment.missingRequiredAspects
   if (missingRequiredAspects.length) {
     return jsonError(
       new Error("EBAY_REJECTED_CATEGORY_REPAIR_ASPECTS_REQUIRED"),
@@ -2440,7 +2441,7 @@ async function repairRejectedOfferCategory(
   // Preserve every approved aspect byte-for-byte and add only official
   // required names that were absent from the rejected payload.
   const enrichedProductAspects: JsonRecord = {
-    ...record(product.aspects),
+    ...repairAspectEnrichment.enrichedAspects,
     ...addedRequiredAspects,
   }
   const replacementAspectValidation: JsonRecord = {
