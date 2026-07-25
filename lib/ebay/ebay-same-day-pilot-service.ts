@@ -7421,6 +7421,41 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     return { processed: 1, status: "COMPLETED", jobType: leased.job_type }
   } catch (error) {
     const code = error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message) ? error.message : "SAME_DAY_PILOT_JOB_FAILED"
+    // A controlled exploratory candidate can become stale between its last
+    // Luna confirmation and Product Facts. Route it directly to the exact Luna
+    // gate instead of briefly dead-lettering/rejecting the candidate and
+    // relying on the next scheduler cycle to repair that false terminal state.
+    if (leased.job_type === "ENRICH_PRODUCT_FACTS" &&
+      code === "PRODUCT_FACT_CONTROLLED_EXPLORATORY_TARGET_INVALID" &&
+      controlledExploratoryLunaConfirmationNeedsRefresh(
+        record(candidate),
+        now,
+      )) {
+      await routeStaleControlledLunaConfirmationToGate({
+        supabase: input.supabase,
+        state,
+        candidate: record(candidate),
+        previousState: "ENRICHING_PRODUCT_FACTS",
+        now,
+        recoveryJobId: text(leased.id),
+      })
+      await settlePilotJob({
+        supabase: input.supabase,
+        job: record(leased),
+        workerId: input.workerId,
+        status: "COMPLETED",
+        errorCode: "STALE_LUNA_CONFIRMATION_RECOVERED",
+      })
+      await refreshRunProjection(input.supabase, state.run.id, true)
+      return {
+        processed: 1,
+        status: "COMPLETED",
+        jobType: leased.job_type,
+        waitingFor: "FRESH_LUNA_CONFIRMATION",
+        recoveredWithoutRejection: true,
+        ebayWrites: 0,
+      }
+    }
     if (leased.job_type === "GENERATE_SIX_IMAGE_PACKAGE" &&
       VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(code)) {
       const priorVisualRecaptures = state.transitions.filter((entry) =>
