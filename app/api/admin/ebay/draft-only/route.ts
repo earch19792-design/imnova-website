@@ -2233,11 +2233,11 @@ async function repairRejectedOfferCategory(
   )
   const currentApprovedPayload = record(context.approval.approved_payload)
   const currentOfferPayload = record(currentApprovedPayload.offerPayload)
-  const packageData = record(context.listingPackage.package_data)
+  const listingPackageData = record(context.listingPackage.package_data)
   if (
     currentBuilt.previewHash !== text(publication.preview_hash)
     || text(currentOfferPayload.categoryId) !== eligibility.oldCategoryId
-    || text(packageData.categoryId) !== eligibility.oldCategoryId
+    || text(listingPackageData.categoryId) !== eligibility.oldCategoryId
     || text(currentBuilt.preview.offerPayload
       && record(currentBuilt.preview.offerPayload).categoryId)
       !== eligibility.oldCategoryId
@@ -2253,10 +2253,9 @@ async function repairRejectedOfferCategory(
     currentApprovedPayload.inventoryItemPayload,
   )
   const product = record(inventoryItemPayload.product)
-  const packageData = record(context.listingPackage.package_data)
-  const packageAspects = object(packageData.aspects)
+  const packageAspects = listingPackageData.aspects
   const normalizedPackageAspects = Object.fromEntries(
-    Object.entries(packageAspects)
+    Object.entries(record(packageAspects))
       .map(([name, value]) => [String(name), String(value ?? "").trim()])
       .filter(([, value]) => value.length > 0),
   )
@@ -2264,7 +2263,7 @@ async function repairRejectedOfferCategory(
     ...record(product.aspects),
     ...normalizedPackageAspects,
   }
-  const title = text(product.title) || text(packageData.title)
+  const title = text(product.title) || text(listingPackageData.title)
   if (!title) {
     return jsonError(
       new Error("EBAY_REJECTED_CATEGORY_REPAIR_TITLE_REQUIRED"),
