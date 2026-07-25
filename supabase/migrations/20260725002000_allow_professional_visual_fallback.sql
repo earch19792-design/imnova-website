@@ -161,7 +161,171 @@ begin
     raise exception 'SAME_DAY_IMAGE_SET_QA_NOT_PASSED';
   end if;
   if v_asset_count <> 7 or v_slot_count <> 7
-    or v_secondary_objective_count <> 6 or v_invalid_count <> 0 then
+    or v_secondary_objective_count <> 6 then
+    raise exception 'SAME_DAY_IMAGE_SET_STRUCTURE_INVALID';
+  end if;
+  if v_invalid_count <> 0 and exists (
+    select 1
+    from unnest(p_asset_ids) requested(id)
+    left join public.ebay_listing_image_assets asset
+      on asset.id = requested.id
+    where asset.id is null
+      or asset.listing_package_id is distinct from v_control.listing_package_id
+      or asset.account_key is distinct from v_control.marketplace_account_key
+      or asset.created_by is distinct from p_actor
+      or asset.status <> 'pending_review'
+      or asset.rights_evidence_confirmed is distinct from true
+      or asset.output_width <> 1600 or asset.output_height <> 1600
+      or asset.output_sha256 !~ '^[0-9a-f]{64}$'
+      or asset.transformation ->> 'compositorContractVersion'
+        <> 'EBAY_IMAGE_COMPOSITOR_FOREGROUND_V9_2026_07_22'
+      or asset.transformation ->> 'sourceVisualPolicy'
+        is distinct from 'EXACT_AUTHORIZED_PIXELS_ONLY'
+      or asset.transformation ->> 'authorizedSourceViewReused'
+        is distinct from 'true'
+      or asset.transformation ->> 'competitorImageUsed' is distinct from 'false'
+  ) then
+    raise exception 'SAME_DAY_IMAGE_SET_SCOPE_INVALID';
+  end if;
+  if v_invalid_count <> 0 and exists (
+    select 1
+    from unnest(p_asset_ids) requested(id)
+    join public.ebay_listing_image_assets asset on asset.id = requested.id
+    where asset.qa_result ->> 'sourceViewCapabilityPassed'
+        is distinct from 'true'
+      or asset.qa_result ->> 'marketSignalsLimitedToScene'
+        is distinct from 'true'
+      or asset.qa_result ->> 'hiddenProductGeometryGenerated'
+        is distinct from 'false'
+      or asset.qa_result ->> 'promptCompliancePassed' is distinct from 'true'
+      or asset.qa_result ->> 'marketSignalCompliancePassed'
+        is distinct from 'true'
+      or asset.qa_result ->> 'productFidelityPassed' is distinct from 'true'
+      or asset.qa_result ->> 'commercialQualityPassed' is distinct from 'true'
+      or asset.qa_result ->> 'technicalQualityPassed' is distinct from 'true'
+      or asset.qa_result ->> 'productCoveragePassed' is distinct from 'true'
+      or asset.qa_result ->> 'compositionPassed' is distinct from 'true'
+      or asset.qa_result ->> 'textPolicyPassed' is distinct from 'true'
+      or asset.qa_result ->> 'contextualPropsPassed' is distinct from 'true'
+      or asset.qa_result ->> 'mobileReadabilityPassed' is distinct from 'true'
+      or asset.qa_result ->> 'qaEvaluatorVersion'
+        is distinct from 'SELLER_OS_EBAY_VISUAL_QA_V2'
+      or coalesce(jsonb_array_length(asset.qa_result -> 'failureReasons'), -1)
+        <> 0
+      or coalesce(jsonb_array_length(asset.qa_result -> 'blockers'), -1) <> 0
+      or coalesce((asset.qa_result ->> 'textLineCount')::integer, -1) <> 0
+      or coalesce(
+        (asset.qa_result ->> 'textMinimumPixelSize')::integer,
+        -1
+      ) <> 0
+  ) then
+    raise exception 'SAME_DAY_IMAGE_SET_QA_CONTRACT_INVALID';
+  end if;
+  if v_invalid_count <> 0 and exists (
+    select 1
+    from unnest(p_asset_ids) requested(id)
+    join public.ebay_listing_image_assets asset on asset.id = requested.id
+    where asset.transformation ->> 'slot' = 'MAIN_WHITE_BACKGROUND'
+      and (
+        asset.transformation ->> 'generativeAiUsed' is distinct from 'false'
+        or coalesce(
+          (asset.qa_result ->> 'outputEdgeWhiteRatio')::numeric,
+          0
+        ) < .90
+        or coalesce(
+          (asset.qa_result ->> 'productCoverageRatio')::numeric,
+          0
+        ) not between .75 and .85
+        or asset.transformation ? 'visualStrategyPosition'
+      )
+  ) then
+    raise exception 'SAME_DAY_IMAGE_SET_MAIN_PRESENTATION_INVALID';
+  end if;
+  if v_invalid_count <> 0 and exists (
+    select 1
+    from unnest(p_asset_ids) requested(id)
+    join public.ebay_listing_image_assets asset on asset.id = requested.id
+    where asset.transformation ->> 'slot' <> 'MAIN_WHITE_BACKGROUND'
+      and (
+        coalesce(
+          (asset.qa_result ->> 'productCoverageRatio')::numeric,
+          0
+        ) not between .50 and .70
+        or asset.transformation #>>
+          '{visualStrategyPosition,feasibilityStatus}' is distinct from
+            'FEASIBLE'
+        or coalesce(
+          asset.transformation #>>
+            '{visualStrategyPosition,contractHash}',
+          ''
+        ) !~ '^[0-9a-f]{64}$'
+        or coalesce(
+          asset.transformation #>>
+            '{visualStrategyPosition,salesObjective}',
+          ''
+        ) not in (
+          'DETAIL_AND_MATERIAL', 'PACKAGE_CONTENTS', 'SIZE_AND_SCALE',
+          'PRIMARY_USE', 'ASPIRATIONAL_LIFESTYLE',
+          'TRUST_OR_OBJECTION', 'ALTERNATE_AUTHORIZED_ANGLE',
+          'SECONDARY_USE', 'QUALITY_DETAIL',
+          'RETURN_RISK_CLARIFICATION'
+        )
+      )
+  ) then
+    raise exception 'SAME_DAY_IMAGE_SET_SECONDARY_STRATEGY_INVALID';
+  end if;
+  if v_invalid_count <> 0 and exists (
+    select 1
+    from unnest(p_asset_ids) requested(id)
+    join public.ebay_listing_image_assets asset on asset.id = requested.id
+    where asset.transformation ->> 'generativeAiUsed' = 'true'
+      and (
+        asset.transformation ->> 'backgroundPlateQuality' <> 'high'
+        or coalesce(asset.transformation ->> 'promptHash', '')
+          !~ '^[0-9a-f]{64}$'
+        or coalesce(asset.transformation ->> 'visualEvidenceMode', '')
+          not in ('MARKET_SIGNAL_PROMPT', 'PROFESSIONAL_FALLBACK')
+        or (
+          asset.transformation ->> 'visualEvidenceMode'
+            = 'MARKET_SIGNAL_PROMPT'
+          and (
+            coalesce(asset.transformation ->> 'marketSignalHash', '')
+              !~ '^[0-9a-f]{64}$'
+            or coalesce(
+              asset.transformation ->> 'marketSignalConfidence',
+              ''
+            ) not in ('HIGH', 'MEDIUM')
+            or coalesce(
+              asset.transformation ->> 'marketSignalObservedAt',
+              ''
+            ) = ''
+            or coalesce(
+              asset.transformation ->> 'marketSignalFreshUntil',
+              ''
+            ) = ''
+          )
+        )
+        or (
+          asset.transformation ->> 'visualEvidenceMode'
+            = 'PROFESSIONAL_FALLBACK'
+          and (
+            asset.transformation ->> 'professionalFallbackPolicy'
+              is distinct from 'PROFESSIONAL_FALLBACK_EXPLICIT'
+            or asset.transformation ->> 'professionalFallbackReason'
+              is distinct from
+                'MARKET_VISUAL_EVIDENCE_UNAVAILABLE_OR_BELOW_THRESHOLD'
+            or asset.transformation ->> 'competitorEvidenceUsed'
+              is distinct from 'false'
+            or asset.transformation ? 'marketSignalConfidence'
+            or asset.transformation ? 'marketSignalObservedAt'
+            or asset.transformation ? 'marketSignalFreshUntil'
+          )
+        )
+      )
+  ) then
+    raise exception 'SAME_DAY_IMAGE_SET_GENERATION_METADATA_INVALID';
+  end if;
+  if v_invalid_count <> 0 then
     raise exception 'SAME_DAY_IMAGE_SET_VISUAL_STRATEGY_V2_INVALID';
   end if;
 end;

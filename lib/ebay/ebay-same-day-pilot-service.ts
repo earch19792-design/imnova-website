@@ -6523,6 +6523,11 @@ async function repairRejectedSingleUnitVisualStrategy(
     "LUNA_CATALOG_SOURCE_PACK_SAVE_FAILED",
     "SAME_DAY_IMAGE_PACKAGE_IDEMPOTENCY_CONFLICT",
     "SAME_DAY_IMAGE_SET_VISUAL_STRATEGY_V2_INVALID",
+    "SAME_DAY_IMAGE_SET_SCOPE_INVALID",
+    "SAME_DAY_IMAGE_SET_QA_CONTRACT_INVALID",
+    "SAME_DAY_IMAGE_SET_MAIN_PRESENTATION_INVALID",
+    "SAME_DAY_IMAGE_SET_SECONDARY_STRATEGY_INVALID",
+    "SAME_DAY_IMAGE_SET_GENERATION_METADATA_INVALID",
     "SAME_DAY_IMAGE_CONTROL_NOT_CLAIMED",
   ])
   const candidates = [...state.candidates]
@@ -6553,11 +6558,21 @@ async function repairRejectedSingleUnitVisualStrategy(
     } catch {
       continue
     }
-    // This recovery is deliberately narrow. Visual Strategy V2 now treats an
-    // exact single-unit offer as a useful PACKAGE_CONTENTS objective; products
-    // with genuinely missing identity/pack facts remain rejected.
-    if (factoryInput.facts.packCount !== 1 ||
-      factoryInput.facts.unitCount !== 1) continue
+    const deterministicFallbackRecovery = [
+      "SAME_DAY_IMAGE_SET_VISUAL_STRATEGY_V2_INVALID",
+      "SAME_DAY_IMAGE_SET_SCOPE_INVALID",
+      "SAME_DAY_IMAGE_SET_QA_CONTRACT_INVALID",
+      "SAME_DAY_IMAGE_SET_MAIN_PRESENTATION_INVALID",
+      "SAME_DAY_IMAGE_SET_SECONDARY_STRATEGY_INVALID",
+      "SAME_DAY_IMAGE_SET_GENERATION_METADATA_INVALID",
+      "SAME_DAY_IMAGE_CONTROL_NOT_CLAIMED",
+    ].includes(priorErrorCode)
+    // Fact-driven strategy recovery remains deliberately narrow. A technical
+    // post-generation contract failure, however, is independent of offer pack
+    // size and must recover any verified pack without rejecting the product.
+    if (!deterministicFallbackRecovery &&
+      (factoryInput.facts.packCount !== 1 ||
+        factoryInput.facts.unitCount !== 1)) continue
 
     const { data: priorJobs, error: priorJobsError } = await supabase
       .from("ebay_same_day_pilot_jobs")
@@ -6581,10 +6596,6 @@ async function repairRejectedSingleUnitVisualStrategy(
         priorErrorCode)
     if (!failureTransitionPresent && !priorFailurePresent) continue
 
-    const deterministicFallbackRecovery = [
-      "SAME_DAY_IMAGE_SET_VISUAL_STRATEGY_V2_INVALID",
-      "SAME_DAY_IMAGE_CONTROL_NOT_CLAIMED",
-    ].includes(priorErrorCode)
     let recoveryHandoffSummary = handoffSummary
     if (deterministicFallbackRecovery) {
       const previousPackageHash = text(handoffSummary.packageHash)
