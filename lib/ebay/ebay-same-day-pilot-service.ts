@@ -2514,7 +2514,7 @@ async function repairStaleControlledLunaConfirmationRejection(
   const { error: candidateError } = await supabase
     .from("ebay_same_day_pilot_candidates")
     .update({
-      state: "ACTIVE",
+      state: "READY_FOR_CONTENT",
       blockers: [],
       evidence_summary: {
         ...record(candidate.evidence_summary),
