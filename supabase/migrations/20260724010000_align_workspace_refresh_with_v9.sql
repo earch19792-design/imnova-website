@@ -260,7 +260,6 @@ begin
         is distinct from 'true'
       or asset.qa_result ->> 'hiddenProductGeometryGenerated'
         is distinct from 'false'
-      or asset.position not between 0 and 6
       or coalesce(asset.transformation ->> 'slot', '') <> all(array[
         'MAIN_WHITE_BACKGROUND',
         'PACK_AND_COUNT',
