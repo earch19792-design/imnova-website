@@ -664,6 +664,46 @@ export async function POST(req: Request) {
         throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
       }
       if (existing?.status === "approved") {
+        // Reused approved packages still need the final Luna freshness gate.
+        // Do this before returning the cached package so the Workspace cannot
+        // silently carry an expired supplier price/stock snapshot forward.
+        try {
+          await loadSameDayAuthorizedPublicationContext({
+            supabase,
+            accountKey,
+            actorUserId: reviewer,
+            listingPackage: existing,
+            opportunity: sourceOpportunity,
+            allowRecoverablePackageImages: true,
+          })
+        } catch (contextError) {
+          const code = errorCode(contextError)
+          if (code === "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED") {
+            const sourceRecheck = await publicationLunaRecheckDetails(
+              supabase,
+              existing,
+              sourceOpportunity,
+            )
+            if (!sourceRecheck) throw contextError
+            return NextResponse.json({
+              success: false,
+              error: code,
+              sourceRecheckRequired: true,
+              listingPackage: existing,
+              sourceRecheck,
+              safety: {
+                ebayWriteUsed: false,
+                productionChanged: false,
+                imagesRegenerated: false,
+                handoffRegenerated: false,
+                canPublish: false,
+              },
+            }, { status: 409 })
+          }
+          if (code !== "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY") {
+            throw contextError
+          }
+        }
         const finalReviewGate = await loadFinalListingReviewPublicationGate({
           supabase,
           listingPackageId: existing.id,
