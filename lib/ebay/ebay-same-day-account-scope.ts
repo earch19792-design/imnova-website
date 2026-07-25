@@ -63,6 +63,7 @@ export async function resolveSameDayPilotAccountScope(): Promise<SameDayPilotAcc
   try {
     const probe = await probeEbayProductionIdentityReadOnly(undefined, {
       allowConfiguredFingerprintMismatch: true,
+      bypassIdentityConsistencyForRescue: true,
     })
     const probeReason = reasonFromProbe(probe)
     if (probe.configuredFingerprintPresent) {
