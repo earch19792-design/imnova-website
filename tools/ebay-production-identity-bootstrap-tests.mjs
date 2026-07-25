@@ -361,6 +361,62 @@ test("configured Production fingerprint matches in constant-time probe output", 
   })
 })
 
+test("identity probe can report configured fingerprint mismatch when allowed", async () => {
+  const fullUserId = "shopOfficialSellerMart"
+  const actualFingerprint = createHash("sha256")
+    .update(`PRODUCTION:${fullUserId}`)
+    .digest("hex")
+  const accessToken = "access-token-sensitive"
+  const calls = []
+
+  await withEnvironment({
+    ...unboundIdentityEnvironment,
+    EBAY_CLIENT_ID: "client-id-sensitive",
+    EBAY_CLIENT_SECRET: "client-secret-sensitive",
+    EBAY_SELLER_REFRESH_TOKEN: "refresh-token-sensitive",
+    EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_CREDENTIAL_FINGERPRINT: "0".repeat(64),
+    EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID: fullUserId,
+  }, async () => {
+    const fetchMock = async (input, init = {}) => {
+      const url = String(input)
+      calls.push({ url, init })
+      if (url === "https://api.ebay.com/identity/v1/oauth2/token") {
+        return new Response(JSON.stringify({
+          access_token: accessToken,
+          expires_in: 7200,
+        }), { status: 200 })
+      }
+      if (url === "https://api.ebay.com/ws/api.dll") {
+        return new Response(acceptedGetUserXml(fullUserId), { status: 200 })
+      }
+      throw new Error(`unexpected endpoint: ${url}`)
+    }
+
+    const result = await probeEbayProductionIdentityReadOnly(fetchMock, {
+      allowConfiguredFingerprintMismatch: true,
+    })
+    assert.deepEqual(result, {
+      oauthValid: true,
+      accessTokenReceived: true,
+      getUserValid: true,
+      environment: "PRODUCTION",
+      maskedUserId: "sh******rt",
+      fingerprintFormatValid: true,
+      fingerprint: actualFingerprint,
+      configuredFingerprintPresent: true,
+      configuredFingerprintMatches: false,
+      identityBindingStatus: "BOUND_MISMATCH",
+      scopesVerified: true,
+      ebayWriteUsed: false,
+      canPublish: false,
+    })
+    assert.deepEqual(calls.map(({ url }) => url), [
+      "https://api.ebay.com/identity/v1/oauth2/token",
+      "https://api.ebay.com/ws/api.dll",
+    ])
+  })
+})
+
 test("configured fingerprint mismatch and malformed values fail closed", async () => {
   const fullUserId = "shopOfficialSellerMart"
   const credentials = {
