@@ -110,6 +110,20 @@ function errorCode(error: unknown) {
     : "EBAY_DRAFT_ONLY_REQUEST_FAILED"
 }
 
+function extractUpperErrorCodeFromUnknownShape(value: unknown) {
+  const tokens = (value === null || value === undefined)
+    ? []
+    : String(typeof value === "string" ? value : JSON.stringify(value)).split(/\s+/)
+  for (const token of tokens) {
+    const candidate = token.replace(/[^A-Za-z0-9_]/g, "")
+    if (!candidate) continue
+    if (/^(EBAY|SAME_DAY)_([A-Z0-9_]{4,})(?:_[0-9]{3})?$/.test(candidate)) {
+      return candidate
+    }
+  }
+  return null
+}
+
 function databaseExceptionCode(error: unknown, fallback: string) {
   const value = record(error)
   const combined = [value.message, value.details, value.hint, value.code]
@@ -1004,7 +1018,20 @@ async function attemptAuxiliaryFinalPublicationQuarantine(input: {
       expectedMachineState,
       engineErrorCode: code,
     })
-  if (contextRescue) {
+  const forcedRescue = (!contextRescue && expectedCandidateId && expectedMachineState && input.context.accountKey)
+    ? await quarantineSameDayCandidateForAuxiliaryPublicationFailure({
+      supabase: input.supabase,
+      accountKey: input.context.accountKey,
+      actorId: input.actor,
+      requestId: input.requestId,
+      expectedCandidateId,
+      expectedMachineState,
+      engineErrorCode: code,
+      requireUnknownFailureMode: false,
+    })
+    : null
+  const rescue = contextRescue ?? forcedRescue
+  if (rescue) {
     return NextResponse.json({
       success: false,
       error: "EBAY_FINAL_PUBLICATION_AUXILIARY_QUARANTINE_TRIGGERED",
@@ -1012,15 +1039,15 @@ async function attemptAuxiliaryFinalPublicationQuarantine(input: {
       continuity: {
         requestId: input.requestId,
         code,
-        incidentFingerprint: contextRescue.incidentFingerprint ?? null,
-        occurrenceNumber: contextRescue.occurrenceNumber ?? null,
-        candidateId: contextRescue.candidateId,
-        failedMachineState: contextRescue.failedMachineState,
-        successorPromoted: contextRescue.successorPromoted,
-        pendingCodexDiagnosis: contextRescue.pendingCodexDiagnosis,
-        candidateRejectedCommercially: contextRescue.candidateRejectedCommercially,
-        circuitBreakerOpen: contextRescue.circuitBreakerOpen,
-        auditEventPersisted: contextRescue.auditEventPersisted,
+        incidentFingerprint: rescue.incidentFingerprint ?? null,
+        occurrenceNumber: rescue.occurrenceNumber ?? null,
+        candidateId: rescue.candidateId,
+        failedMachineState: rescue.failedMachineState,
+        successorPromoted: rescue.successorPromoted,
+        pendingCodexDiagnosis: rescue.pendingCodexDiagnosis,
+        candidateRejectedCommercially: rescue.candidateRejectedCommercially,
+        circuitBreakerOpen: rescue.circuitBreakerOpen,
+        auditEventPersisted: rescue.auditEventPersisted,
       },
       safety: {
         target: "PRODUCTION",
@@ -2191,11 +2218,21 @@ async function attemptAuxiliaryFinalPublicationQuarantineFromExecution(input: {
     expectedMachineState,
     engineErrorCode: code,
   })
-  if (!rescue) return null
+  const finalRescue = rescue ?? await quarantineSameDayCandidateForAuxiliaryPublicationFailure({
+    supabase: input.supabase,
+    accountKey,
+    actorId: input.actor,
+    requestId: input.requestId,
+    expectedCandidateId,
+    expectedMachineState,
+    engineErrorCode: code,
+    requireUnknownFailureMode: false,
+  })
+  if (!finalRescue) return null
   return buildAuxiliaryFinalPublicationQuarantineResponse({
     requestId: input.requestId,
     sourceError: input.sourceError,
-    rescue,
+    rescue: finalRescue,
   })
 }
 
@@ -2433,18 +2470,30 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     confirmPublish: text(body.confirmPublish),
   })
   if (!publishResult.ok || !publishResult.listingId) {
+    const publishFailureCode = extractUpperErrorCodeFromUnknownShape(publishResult.body)
+      ?? publishResult.blocker
     await supabase.rpc("fail_ebay_authorized_listing_publication", {
       p_publication_id: publicationId,
       p_actor_user_id: actor,
       p_claim_token: claimToken,
       p_http_status: publishResult.status || null,
-      p_error_code: publishResult.blocker,
+      p_error_code: publishFailureCode,
       p_outcome_unknown: !publishResult.outcomeKnown,
       p_error_details: record(publishResult.body),
     })
+    if (publishResult.status < 500 && shouldQuarantineUnknownFinalPublicationError(publishFailureCode)) {
+      const quarantine = await attemptAuxiliaryFinalPublicationQuarantine({
+        supabase,
+        actor,
+        context,
+        sourceError: new Error(publishFailureCode),
+        requestId,
+      })
+      if (quarantine) return quarantine
+    }
     return NextResponse.json({
       success: false,
-      error: publishResult.blocker,
+      error: publishFailureCode,
       details: record(publishResult.body),
       safety: {
         target: "PRODUCTION",

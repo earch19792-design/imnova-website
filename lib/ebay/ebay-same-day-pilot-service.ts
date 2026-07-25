@@ -3172,6 +3172,7 @@ async function quarantineUnknownContinuityFailure(input: {
   expectedMachineState: string
   engineErrorCode: string | null
   now: Date
+  requireUnknownFailureMode?: boolean
 }) {
   const workerId = `continuity-quarantine:${input.actorId}:${input.requestId}`
   const initialState = await getSameDayPilot({
@@ -3194,12 +3195,27 @@ async function quarantineUnknownContinuityFailure(input: {
       now: input.now,
     })
     const assessment = evaluateSameDayContinuityRescue(state)
-    if (!state || assessment.mode !== "UNKNOWN_FAILURE_SUSPECTED" ||
-      assessment.candidateId !== input.expectedCandidateId ||
-      assessment.machineState !== input.expectedMachineState) return null
+    if (!state) return null
     const candidate = state.candidates.find((entry) =>
       text(entry.id) === input.expectedCandidateId)
     if (!candidate) return null
+    const requireUnknownFailureMode = input.requireUnknownFailureMode !== false
+    if (requireUnknownFailureMode && (
+      assessment.mode !== "UNKNOWN_FAILURE_SUSPECTED" ||
+      assessment.candidateId !== input.expectedCandidateId ||
+      assessment.machineState !== input.expectedMachineState
+    )) return null
+    const candidateMachineState = text(candidate.machine_state)
+    if (!candidateMachineState) return null
+    if (!requireUnknownFailureMode) {
+      if (["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"]
+        .includes(candidateMachineState)) {
+        return null
+      }
+    }
+    const effectiveMachineState = requireUnknownFailureMode
+      ? input.expectedMachineState
+      : candidateMachineState
     const candidateJobs = state.jobs.filter((entry) =>
       text(entry.candidate_id) === input.expectedCandidateId)
     const latestJob = candidateJobs.at(-1)
@@ -3208,7 +3224,7 @@ async function quarantineUnknownContinuityFailure(input: {
     const latestTransition = candidateTransitions.at(-1)
     const incidentFingerprint = hash({
       version: SAME_DAY_CONTINUITY_RESCUE_VERSION,
-      machineState: input.expectedMachineState,
+      machineState: effectiveMachineState,
       latestJobType: text(latestJob?.job_type) || null,
       latestJobStatus: text(latestJob?.status) || null,
       latestJobErrorCode: text(latestJob?.last_error_code) || null,
@@ -3235,7 +3251,7 @@ async function quarantineUnknownContinuityFailure(input: {
       return {
         incidentFingerprint,
         candidateId: input.expectedCandidateId,
-        failedMachineState: input.expectedMachineState,
+        failedMachineState: effectiveMachineState,
         successorPromoted: false,
         pendingCodexDiagnosis: true,
         candidateRejectedCommercially: false,
@@ -3252,14 +3268,14 @@ async function quarantineUnknownContinuityFailure(input: {
       supabase: input.supabase,
       runId: state.run.id,
       candidateId: input.expectedCandidateId,
-      previousState: input.expectedMachineState,
+      previousState: effectiveMachineState,
       nextState: "BLOCKED",
       reasonCode: "UNKNOWN_SYSTEM_FAILURE_QUARANTINED_FOR_CONTINUITY",
       triggeredBy: "USER",
       checkpoint: {
         continuityRescueVersion: SAME_DAY_CONTINUITY_RESCUE_VERSION,
         incidentFingerprint,
-        failedMachineState: input.expectedMachineState,
+        failedMachineState: effectiveMachineState,
         latestJobId: text(latestJob?.id) || null,
         latestJobType: text(latestJob?.job_type) || null,
         latestJobStatus: text(latestJob?.status) || null,
@@ -3288,7 +3304,7 @@ async function quarantineUnknownContinuityFailure(input: {
             requestId: input.requestId,
             incidentFingerprint,
             occurrenceNumber,
-            failedMachineState: input.expectedMachineState,
+            failedMachineState: effectiveMachineState,
             engineErrorCode: input.engineErrorCode,
             latestJobId: text(latestJob?.id) || null,
             latestJobType: text(latestJob?.job_type) || null,
@@ -3323,7 +3339,7 @@ async function quarantineUnknownContinuityFailure(input: {
           requestId: input.requestId,
           incidentFingerprint,
           occurrenceNumber,
-          failedMachineState: input.expectedMachineState,
+          failedMachineState: effectiveMachineState,
           engineErrorCode: input.engineErrorCode,
           latestJob: latestJob ? {
             id: latestJob.id,
@@ -3366,7 +3382,7 @@ async function quarantineUnknownContinuityFailure(input: {
       incidentFingerprint,
       occurrenceNumber,
       candidateId: input.expectedCandidateId,
-      failedMachineState: input.expectedMachineState,
+      failedMachineState: effectiveMachineState,
       successorPromoted,
       pendingCodexDiagnosis: true,
       candidateRejectedCommercially: false,
@@ -3391,6 +3407,7 @@ export async function quarantineSameDayCandidateForAuxiliaryPublicationFailure(i
   expectedCandidateId: string
   expectedMachineState: string
   engineErrorCode: string | null
+  requireUnknownFailureMode?: boolean
 }) {
   return quarantineUnknownContinuityFailure({
     ...input,
