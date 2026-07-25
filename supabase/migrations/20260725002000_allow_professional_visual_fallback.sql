@@ -91,7 +91,7 @@ begin
           or asset.transformation ? 'visualStrategyPosition'
         else
           coalesce((asset.qa_result ->> 'productCoverageRatio')::numeric, 0)
-            not between .50 and .70
+            not between .68 and .82
           or asset.transformation #>> '{visualStrategyPosition,feasibilityStatus}'
             is distinct from 'FEASIBLE'
           or coalesce(asset.transformation #>>
@@ -250,7 +250,7 @@ begin
         coalesce(
           (asset.qa_result ->> 'productCoverageRatio')::numeric,
           0
-        ) not between .50 and .70
+        ) not between .68 and .82
         or asset.transformation #>>
           '{visualStrategyPosition,feasibilityStatus}' is distinct from
             'FEASIBLE'
