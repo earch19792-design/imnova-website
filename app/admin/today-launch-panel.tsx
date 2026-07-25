@@ -729,6 +729,14 @@ function Metric({ label, value }: { label: string; value: string }) { return <di
 
 function ProductResearchQueueTask({ guidance, researchTasks, candidates, fallbackQuery, openTaskCount }: { guidance?: Row | null; researchTasks: Row[]; candidates: Row[]; fallbackQuery?: unknown; openTaskCount: number }) {
   const [copyStatus, setCopyStatus] = useState<"IDLE" | "COPIED" | "FAILED">("IDLE")
+  const isLikelyReadableProductFamily = (value: string) => {
+    const trimmed = value.trim()
+    if (trimmed.length < 2) return false
+    if (/^\d+$/.test(trimmed)) return false
+    if (/^[\d,.\-_\s]+$/.test(trimmed)) return false
+    if (!/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/.test(trimmed)) return false
+    return true
+  }
   const activeFlowCandidates = candidates.filter((candidate) =>
     !["REJECTED", "BLOCKED"].includes(String(candidate.machine_state ?? "")))
   const discardedCandidateCount = candidates.length - activeFlowCandidates.length
@@ -751,8 +759,18 @@ function ProductResearchQueueTask({ guidance, researchTasks, candidates, fallbac
   const nextQuery = guidedTask ? guidedQuery : durableTaskQuery
   const matchedTask = guidedTask ?? (nextQuery ? researchTasks.find((task) =>
     queryKey(task?.action_schema?.query) === queryKey(nextQuery)) : undefined)
-  const productFamily = typeof matchedTask?.evidence?.product === "string"
-    ? matchedTask.evidence.product.trim().slice(0, 180) : ""
+  const matchedCandidate = matchedTask?.candidate_id
+    ? candidates.find((candidate) => String(candidate.id) === String(matchedTask.candidate_id))
+    : undefined
+  const evidenceProduct = typeof matchedTask?.evidence?.product === "string"
+    ? matchedTask.evidence.product.trim() : ""
+  const fallbackFamily = typeof matchedCandidate?.product_title === "string"
+    ? matchedCandidate.product_title.trim() : ""
+  const productFamily = isLikelyReadableProductFamily(evidenceProduct)
+    ? evidenceProduct.slice(0, 180)
+    : isLikelyReadableProductFamily(fallbackFamily)
+      ? fallbackFamily.slice(0, 180)
+      : ""
   const queryCount = Number(guidance?.queryCount ?? 0)
   const capturedCount = Number(guidance?.capturedCount ?? 0)
   const pendingCount = Number(guidance?.pendingCount ?? openTaskCount)
