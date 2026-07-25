@@ -225,12 +225,15 @@ function reusableOperatorProductApproval(candidateValue: unknown, now: Date) {
   const fulfillmentBasis = normalizeEbayCompliantFulfillmentBasis(
     economics.fulfillmentBasis,
   )
-  const approvalFresh = Number.isFinite(approvedAt) &&
-    now.getTime() - approvedAt >= -5 * 60_000 &&
-    now.getTime() - approvedAt <= 24 * 60 * 60_000
+  // Price, fulfillment basis, image rights and spend authorization are durable
+  // decisions. Supplier availability has its own freshness advisory and is
+  // rechecked at publication/purchase, so it must not expire this approval or
+  // block content and image preparation after 24 hours.
+  const approvalRecorded = Number.isFinite(approvedAt) &&
+    now.getTime() - approvedAt >= -5 * 60_000
   const priceStillMatches = approvedPrice !== null && recommendedPrice !== null &&
     Math.abs(approvedPrice - recommendedPrice) <= Math.max(.01, recommendedPrice * .02)
-  if (economics.operatorPriceApproved !== true || !approvalFresh ||
+  if (economics.operatorPriceApproved !== true || !approvalRecorded ||
     approvedPrice === null || supplierCost === null || !priceStillMatches ||
     !fulfillmentBasis || economics.imageRightsConfirmed !== true ||
     economics.openAiImageSpendApproved !== true) return false
@@ -240,6 +243,99 @@ function reusableOperatorProductApproval(candidateValue: unknown, now: Date) {
       ? controlledRiskEconomicsConfig(ebayDraftOnlyEconomicsConfig())
       : ebayDraftOnlyEconomicsConfig())
   return evaluation.ready && evaluation.passesProfitGate
+}
+
+const DURABLE_PRODUCT_APPROVAL_RECOVERY_VERSION =
+  "DURABLE_PRODUCT_APPROVAL_RECOVERY_V1_2026_07_24"
+
+async function resumeReusableOperatorProductApprovalGate(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const task = state.tasks.find((entry) =>
+    entry.status === "OPEN" &&
+    entry.gate_type === "PRODUCT_APPROVAL_REQUIRED")
+  if (!task) return false
+  const candidate = state.candidates.find((entry) =>
+    text(entry.id) === text(task.candidate_id) &&
+    text(entry.machine_state) === "WAITING_PRODUCT_APPROVAL")
+  if (!candidate || !reusableOperatorProductApproval(candidate, now)) {
+    return false
+  }
+  const factsSummary = record(candidate.product_facts_summary)
+  const factRunId = text(factsSummary.factRunId)
+  if (!/^[0-9a-f-]{36}$/i.test(factRunId)) {
+    throw new Error("SAME_DAY_PILOT_REUSABLE_APPROVAL_FACT_RUN_MISSING")
+  }
+  const economics = record(candidate.economics_summary)
+  const supplyAdvisory = lunaSupplyFreshnessAdvisory(candidate, now)
+  await completeAndAdvanceHumanGate({
+    supabase,
+    taskId: text(task.id),
+    gateType: "PRODUCT_APPROVAL_REQUIRED",
+    runId: text(state.run.id),
+    candidateId: text(candidate.id),
+    previousState: "WAITING_PRODUCT_APPROVAL",
+    nextState: "GENERATING_LISTING_CONTENT",
+    reasonCode: "DURABLE_PRODUCT_APPROVAL_REUSED_SUPPLY_ALERT_NON_BLOCKING",
+    triggeredBy: "SYSTEM",
+    checkpoint: {
+      recoveryVersion: DURABLE_PRODUCT_APPROVAL_RECOVERY_VERSION,
+      originalOperatorApprovedAt: economics.operatorApprovedAt ?? null,
+      operatorPriceApproved: true,
+      approvalRepeated: false,
+      supplyFreshnessStatus: supplyAdvisory.status,
+      supplyRecheckRequiredAt: supplyAdvisory.nextRequiredAt,
+      openAiCalls: 0,
+      ebayWrites: 0,
+    },
+    nextAutomaticAction:
+      "Construir el listing y preparar las imágenes con la aprobación vigente.",
+    nextHumanAction: "Ninguna hasta revisar las imágenes.",
+    job: {
+      jobType: "BUILD_MANUAL_SELLER_HUB_HANDOFF",
+      idempotencyKey:
+        `${state.run.id}:${candidate.id}:BUILD_MANUAL_SELLER_HUB_HANDOFF:${factRunId}`,
+      checkpoint: {
+        factRunId,
+        priorApprovalPreserved: true,
+        recoveryVersion: DURABLE_PRODUCT_APPROVAL_RECOVERY_VERSION,
+        supplyFreshnessStatus: supplyAdvisory.status,
+        openAiCalls: 0,
+        ebayWrites: 0,
+      },
+    },
+  })
+  const { error } = await supabase.from("ebay_same_day_pilot_events").upsert({
+    run_id: state.run.id,
+    candidate_id: candidate.id,
+    event_type: "DURABLE_PRODUCT_APPROVAL_REUSED",
+    event_payload: {
+      recoveryVersion: DURABLE_PRODUCT_APPROVAL_RECOVERY_VERSION,
+      originalOperatorApprovedAt: economics.operatorApprovedAt ?? null,
+      approvalRepeated: false,
+      supplyFreshnessStatus: supplyAdvisory.status,
+      supplyRecheckRequiredAt: supplyAdvisory.nextRequiredAt,
+      blocksAnalysis: false,
+      blocksPublication: supplyAdvisory.blocksPublication,
+      historyDeleted: false,
+    },
+    idempotency_key: [
+      state.run.id,
+      candidate.id,
+      DURABLE_PRODUCT_APPROVAL_RECOVERY_VERSION,
+      factRunId,
+    ].join(":"),
+    ebay_read_calls: 0,
+    openai_calls: 0,
+    ebay_writes: 0,
+    production_changed: false,
+  }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (error) {
+    throw new Error("SAME_DAY_PILOT_REUSABLE_APPROVAL_EVENT_FAILED")
+  }
+  return true
 }
 
 async function persistConfirmedOfferPackQueueBinding(input: {
@@ -2439,6 +2535,13 @@ async function repairSameDayPilotBootstrap(
       text(state.run.operation_date),
     )
     if (!activeState) return repaired
+  }
+  if (await resumeReusableOperatorProductApprovalGate(
+    supabase,
+    activeState,
+    new Date(),
+  )) {
+    return true
   }
   // Normal repair must never widen the operator queue. Quota pauses have one
   // explicit exception below: promoteImmediateSuccessorDuringQuotaPause may
