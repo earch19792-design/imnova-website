@@ -1183,9 +1183,17 @@ async function completeAndAdvanceHumanGate(input: {
   const startedAt = new Date().toISOString()
   const completedAt = new Date().toISOString()
   const checkpoint = input.checkpoint ?? {}
-  const evidenceHash = hash({ candidateId: input.candidateId, previousState: input.previousState,
+  // taskId is the durable generation of a human gate. The same candidate can
+  // legitimately revisit the same state with the same capture batch and
+  // checkpoint later. Scoping both ledgers to this task prevents an older
+  // COMPLETED transition/job from swallowing the new continuation.
+  const evidenceHash = hash({ taskId: input.taskId,
+    candidateId: input.candidateId, previousState: input.previousState,
     nextState: input.nextState, reasonCode: input.reasonCode, checkpoint })
   const idempotencyKey = `${input.runId}:${input.candidateId}:${input.nextState}:${evidenceHash}`
+  const jobIdempotencyKey = input.job
+    ? `${input.job.idempotencyKey}:GATE:${input.taskId}`
+    : null
   const { data, error } = await input.supabase.rpc("complete_and_advance_same_day_pilot_gate_v1", {
     p_task_id: input.taskId, p_run_id: input.runId, p_candidate_id: input.candidateId,
     p_expected_gate_type: input.gateType, p_expected_previous_state: input.previousState,
@@ -1195,7 +1203,7 @@ async function completeAndAdvanceHumanGate(input: {
     p_transition_idempotency_key: idempotencyKey,
     p_next_automatic_action: input.nextAutomaticAction, p_next_human_action: input.nextHumanAction,
     p_candidate_patch: input.candidatePatch ?? {}, p_job_type: input.job?.jobType ?? null,
-    p_job_idempotency_key: input.job?.idempotencyKey ?? null,
+    p_job_idempotency_key: jobIdempotencyKey,
     p_job_checkpoint: input.job?.checkpoint ?? {}, p_job_available_at: input.job?.availableAt ?? completedAt,
     p_job_max_attempts: input.job?.maxAttempts ?? 4, p_api_family: input.job?.apiFamily ?? null,
     p_api_operation: input.job?.apiOperation ?? null, p_owner_lane: input.job?.ownerLane ?? null,
@@ -5559,6 +5567,15 @@ async function restoreDeferredLegacyVisualMarketRecoveryQueryTasks(
     if (!isDeferredLegacyVisualMarketRecovery(record(candidate)) ||
       text(candidate.machine_state) !== "WAITING_PRODUCT_RESEARCH_CAPTURE" ||
       text(candidate.product_research_capture_batch_id)) return []
+    // Once a fresh recapture gate is visible, its PENDING query belongs to the
+    // operator. Restoring the superseded batch here would complete that gate
+    // with old evidence and could strand the candidate in an automatic state
+    // without a new job.
+    const hasOpenFreshCaptureGate = state.tasks.some((task) =>
+      text(task.candidate_id) === text(candidate.id) &&
+      task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED" &&
+      task.status === "OPEN")
+    if (hasOpenFreshCaptureGate) return []
     const candidatePlan = record(candidate.product_research_query_plan)
     const planId = text(candidatePlan.productResearchPlanId)
     const plannedQuery = text(candidatePlan.query, 100)
@@ -5647,6 +5664,83 @@ async function restoreDeferredLegacyVisualMarketRecoveryQueryTasks(
     restored += 1
   }
   return restored
+}
+
+const STALE_VISUAL_AUTO_RESUME_RECOVERY_VERSION =
+  "STALE_VISUAL_AUTO_RESUME_RECOVERY_V1_2026_07_24"
+
+/**
+ * A superseded visual capture can be consumed again after a deferred recovery
+ * race. The atomic gate transition then lands on CALCULATING_ECONOMICS while
+ * the reused CALCULATE_ECONOMICS idempotency key already belongs to a
+ * COMPLETED job. Restore the exact visual recapture gate instead of pretending
+ * that profitability is still running or asking for Luna again.
+ */
+async function repairStaleVisualAutoResumeOrphan(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const candidate = state.candidates.find((entry) => {
+    const evidence = record(entry.evidence_summary)
+    const candidateId = text(entry.id)
+    const activeJob = state.jobs.some((job) =>
+      text(job.candidate_id) === candidateId &&
+      ["PENDING", "WAITING_RETRY", "LEASED"].includes(text(job.status)))
+    return text(entry.machine_state) === "CALCULATING_ECONOMICS" &&
+      !activeJob &&
+      text(entry.product_research_capture_batch_id) &&
+      text(entry.product_research_capture_batch_id) ===
+        text(evidence.supersededVisualCaptureBatchId) &&
+      text(evidence.visualMarketRecaptureRecoveryVersion) ===
+        VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION &&
+      text(evidence.visualMarketEvidenceStatus) === "RECAPTURE_REQUIRED"
+  })
+  if (!candidate) return 0
+
+  const evidence = record(candidate.evidence_summary)
+  await routeCandidateToVisualMarketRecapture({
+    supabase,
+    state,
+    candidate: record(candidate),
+    previousState: "CALCULATING_ECONOMICS",
+    errorCode: VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(
+      text(evidence.visualMarketEvidenceReason),
+    )
+      ? text(evidence.visualMarketEvidenceReason)
+      : "SAME_DAY_IMAGE_MARKET_BRIEF_REQUIRED",
+    recoveryOrigin: "REJECTED_HISTORY_REPAIR",
+    now,
+  })
+  const { error } = await supabase.from("ebay_same_day_pilot_events").upsert({
+    run_id: state.run.id,
+    candidate_id: candidate.id,
+    event_type: "STALE_VISUAL_AUTO_RESUME_ORPHAN_REPAIRED",
+    event_payload: {
+      recoveryVersion: STALE_VISUAL_AUTO_RESUME_RECOVERY_VERSION,
+      previousState: "CALCULATING_ECONOMICS",
+      restoredState: "WAITING_PRODUCT_RESEARCH_CAPTURE",
+      supersededCaptureBatchId:
+        evidence.supersededVisualCaptureBatchId ?? null,
+      commercialEvidencePreserved: true,
+      productFactsPreserved: true,
+      productApprovalPreservedForRevalidation: true,
+      historyDeleted: false,
+    },
+    idempotency_key: [
+      state.run.id,
+      candidate.id,
+      STALE_VISUAL_AUTO_RESUME_RECOVERY_VERSION,
+    ].join(":"),
+    ebay_read_calls: 0,
+    openai_calls: 0,
+    ebay_writes: 0,
+    production_changed: false,
+  }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (error) {
+    throw new Error("SAME_DAY_PILOT_STALE_VISUAL_AUTO_RESUME_EVENT_FAILED")
+  }
+  return 1
 }
 
 async function supersedeLaterTasksForVisualMarketRecovery(
@@ -6238,6 +6332,18 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
   if (repaired) {
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
     if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
+  }
+  const staleVisualAutoResumeOrphansRecovered =
+    await repairStaleVisualAutoResumeOrphan(input.supabase, state, now)
+  if (staleVisualAutoResumeOrphansRecovered) {
+    await refreshRunProjection(input.supabase, state.run.id, true)
+    return {
+      processed: 1,
+      status: "COMPLETED",
+      jobType: "RECOVER_STALE_VISUAL_AUTO_RESUME_ORPHAN",
+      staleVisualAutoResumeOrphansRecovered,
+      ebayWrites: 0,
+    }
   }
   const visualMarketRecapturesRecovered =
     await repairRejectedVisualMarketRecapture(input.supabase, state, now)

@@ -274,6 +274,34 @@ export async function POST(req: Request) {
   if ("response" in access) return access.response
   try {
     const body = object(await req.json())
+    if (body.action === "resume") {
+      const pilot = await getSameDayPilot({
+        supabase: access.supabase,
+        accountKey: access.accountKey,
+      })
+      if (!pilot) {
+        return NextResponse.json(
+          { success: false, error: "SAME_DAY_PILOT_RUN_MISSING" },
+          { status: 404 },
+        )
+      }
+      const continuation = scheduleImmediateContinuation({
+        supabase: access.supabase,
+        accountKey: access.accountKey,
+        workerId: `pilot-resume:${access.auth.userId}`,
+      })
+      return NextResponse.json({
+        success: true,
+        pilot,
+        continuation,
+        safety: {
+          checkpointPreserved: true,
+          fullCatalogRescan: false,
+          ebayWrites: 0,
+          productionChanged: false,
+        },
+      })
+    }
     if (body.action === "start") {
       const pilot = await startSameDayPilot({ supabase: access.supabase, accountKey: access.accountKey, actorId: access.auth.userId })
       const continuation = scheduleImmediateContinuation({ supabase: access.supabase,

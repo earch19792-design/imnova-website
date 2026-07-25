@@ -4,6 +4,7 @@ export type SameDayLiveMonitorStatus =
   | "NOT_STARTED"
   | "WORKING"
   | "QUEUED"
+  | "RECOVERY_REQUIRED"
   | "WAITING_OPERATOR"
   | "PAUSED_EBAY"
   | "READY_TO_PUBLISH"
@@ -74,6 +75,12 @@ export type SameDayLiveMonitor = {
     currentOrdinal: number | null
   }
   timeline: SameDayLiveTimelineStep[]
+  recovery: {
+    required: boolean
+    stalledSince: string | null
+    stalledForMs: number
+    message: string | null
+  }
   nextAutomaticAction: string
   nextHumanAction: string
   blockerSummary: string | null
@@ -82,6 +89,25 @@ export type SameDayLiveMonitor = {
 
 const TERMINAL_STATES = new Set(["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"])
 const READY_STATES = new Set(["READY_FOR_MANUAL_PUBLICATION", "WAITING_ITEM_ID"])
+const AUTOMATIC_STATES = new Set([
+  "LOCAL_FILTERING",
+  "CANDIDATE_SELECTION",
+  "IMPORTING_SOLD_EVIDENCE",
+  "RECONCILING_IDENTITY",
+  "MATCHING_LUNA",
+  "RUNNING_LOOP_1",
+  "CALCULATING_ECONOMICS",
+  "ENRICHING_PRODUCT_FACTS",
+  "VALIDATING_TAXONOMY",
+  "VALIDATING_REGULATION",
+  "BUILDING_OPENAI_INPUT",
+  "GENERATING_LISTING_CONTENT",
+  "VALIDATING_LISTING_CONTENT",
+  "PREPARING_IMAGE_PACKAGE",
+  "BUILDING_SELLER_HUB_HANDOFF",
+  "VERIFYING_PUBLISHED_LISTING",
+  "REGISTERING_COMMERCIAL_MONITOR",
+])
 
 const TIMELINE = [
   {
@@ -472,6 +498,17 @@ export function deriveSameDayLiveMonitor(input: {
 
   const leasedJobs = jobs.filter((job) => text(job.status) === "LEASED")
   const pendingJobs = jobs.filter((job) => ["PENDING", "WAITING_RETRY"].includes(text(job.status)))
+  const unresolvedJobStatuses = new Set(["PENDING", "WAITING_RETRY", "LEASED"])
+  const orphanedAutomaticCandidate = activeCandidates.find((candidate) =>
+    AUTOMATIC_STATES.has(text(candidate.machine_state)) &&
+    !jobs.some((job) => text(job.candidate_id) === text(candidate.id) &&
+      unresolvedJobStatuses.has(text(job.status))))
+  const orphanedUpdatedAt = dateMs(orphanedAutomaticCandidate?.updated_at)
+  const orphanedForMs = orphanedUpdatedAt == null
+    ? 0
+    : Math.max(0, nowMs - orphanedUpdatedAt)
+  const recoveryRequired = Boolean(orphanedAutomaticCandidate &&
+    openTasks.length === 0)
   const freshHeartbeat = isRecent(run?.last_worker_heartbeat_at, nowMs, 3 * 60_000)
   const activeWorkerLease = (dateMs(run?.worker_lease_expires_at) ?? 0) > nowMs
   const freshLeasedJob = leasedJobs.some((job) => isRecent(job.updated_at, nowMs, 6 * 60_000))
@@ -486,6 +523,7 @@ export function deriveSameDayLiveMonitor(input: {
   else if (runStatus === "COMPLETED") status = "COMPLETED"
   else if (openTasks.length > 0) status = "WAITING_OPERATOR"
   else if (input.quotaPaused === true || jobs.some((job) => text(job.status) === "WAITING_RETRY")) status = "PAUSED_EBAY"
+  else if (recoveryRequired) status = "RECOVERY_REQUIRED"
   else if (readyCandidates.length > 0 || runStatus === "READY_FOR_OPERATOR") status = "READY_TO_PUBLISH"
   else if (runStatus === "BLOCKED" || (candidates.length > 0 && blockedCandidates.length === candidates.length)) status = "BLOCKED"
   else if (activeExecution) status = "WORKING"
@@ -496,6 +534,7 @@ export function deriveSameDayLiveMonitor(input: {
     NOT_STARTED: { business: "NO INICIADO", headline: "El lanzamiento está listo para comenzar", detail: "Seller OS todavía no ha creado un lote." },
     WORKING: { business: "TRABAJANDO", headline: "Seller OS está procesando el lote", detail: "Existe un lease o latido reciente del worker durable." },
     QUEUED: { business: "EN COLA", headline: "El trabajo está preparado y preservado", detail: "No hay ejecución activa confirmada ahora; el siguiente turno retomará el checkpoint." },
+    RECOVERY_REQUIRED: { business: "RECUPERACIÓN REQUERIDA", headline: "La fase perdió su trabajo durable", detail: "El checkpoint está preservado, pero no existe un job pendiente o en ejecución que pueda hacer avanzar esta fase." },
     WAITING_OPERATOR: { business: "ESPERANDO TU CONFIRMACIÓN", headline: "Seller OS necesita una sola acción tuya", detail: "Las etapas automáticas posteriores permanecen bloqueadas hasta completar el gate visible." },
     PAUSED_EBAY: { business: "PAUSADO POR EBAY", headline: "La lane de eBay espera su ventana segura", detail: "El checkpoint está preservado y no se harán reintentos agresivos." },
     READY_TO_PUBLISH: { business: "LISTO PARA PUBLICAR", headline: "Hay un paquete preparado para Seller Hub", detail: "La publicación continúa siendo manual y requiere tu aprobación." },
@@ -514,6 +553,12 @@ export function deriveSameDayLiveMonitor(input: {
       : "Job con lease vigente confirmado."
     : status === "QUEUED"
       ? `${pendingJobs.length} trabajo(s) en cola; no se simula actividad mientras esperan.`
+      : status === "RECOVERY_REQUIRED"
+        ? `Sin job durable desde ${orphanedUpdatedAt == null
+          ? "una hora no determinada"
+          : new Intl.DateTimeFormat("es-NI", {
+              dateStyle: "short", timeStyle: "medium",
+            }).format(new Date(orphanedUpdatedAt))}.`
       : status === "WAITING_OPERATOR"
         ? `${openTasks.length} tarea(s) humana(s) abiertas; sólo se muestra la primera.`
         : label.detail
@@ -547,8 +592,22 @@ export function deriveSameDayLiveMonitor(input: {
       currentOrdinal: Number.isInteger(currentOrdinal) && currentOrdinal > 0 ? currentOrdinal : null,
     },
     timeline,
-    nextAutomaticAction: text(run?.next_automated_action) || text(currentCandidate?.next_automated_action) || "Preservar el checkpoint y esperar la siguiente señal.",
-    nextHumanAction: openTasks.length
+    recovery: {
+      required: recoveryRequired,
+      stalledSince: orphanedUpdatedAt == null
+        ? null
+        : new Date(orphanedUpdatedAt).toISOString(),
+      stalledForMs: orphanedForMs,
+      message: recoveryRequired
+        ? "Seller OS debe reconstruir el job desde el checkpoint antes de continuar."
+        : null,
+    },
+    nextAutomaticAction: recoveryRequired
+      ? "Reconstruir el job durable desde el checkpoint y reanudar esta misma fase."
+      : text(run?.next_automated_action) || text(currentCandidate?.next_automated_action) || "Preservar el checkpoint y esperar la siguiente señal.",
+    nextHumanAction: recoveryRequired
+      ? "Pulsa “Reanudar ahora”; Seller OS conservará el checkpoint y solo pedirá la evidencia que realmente falte."
+      : openTasks.length
       ? text(openTasks[0]?.title) || "Completar la tarea visible."
       : text(run?.next_human_action) || text(currentCandidate?.next_human_action) || "Ninguna.",
     blockerSummary,

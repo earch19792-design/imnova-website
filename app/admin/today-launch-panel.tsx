@@ -165,7 +165,9 @@ export function TodayLaunchPanel() {
     {error && <p role="alert" className="mt-4 rounded-2xl border border-red-300/30 bg-red-400/10 p-3 text-sm font-bold text-red-100">{error}</p>}
     {pilot && <>
       <LivePilotMonitor monitor={liveMonitor} pilotProgress={pilotProgress}
-        lastObservedAt={lastObservedAt} nextCycleAllowed={nextCycleAllowed} />
+        lastObservedAt={lastObservedAt} nextCycleAllowed={nextCycleAllowed}
+        recoveryWorking={working}
+        onRecover={() => request({ action: "resume" })} />
       {liveMonitor.rejectionSummaries.length > 0 && <RejectedCandidateExplanations
         summaries={liveMonitor.rejectionSummaries} working={working}
         onAuthorize={(body) => request(body)} />}
@@ -462,11 +464,14 @@ function JourneyPhaseVisual({
   </div>
 }
 
-function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt, nextCycleAllowed }: {
+function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
+  nextCycleAllowed, recoveryWorking, onRecover }: {
   monitor: SameDayLiveMonitor
   pilotProgress: number
   lastObservedAt: string | null
   nextCycleAllowed: boolean
+  recoveryWorking: boolean
+  onRecover: () => Promise<void>
 }) {
   const palette = liveMonitorPalette(monitor.status)
   const [selectedPhaseId, setSelectedPhaseId] = useState(
@@ -513,6 +518,16 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt, nextCycleAll
               className="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-cyan-100/10 to-transparent motion-safe:animate-[pulse_1.4s_ease-in-out_infinite]" />}
             <p className="relative text-[10px] font-black uppercase tracking-[0.18em] text-white/45">Evaluación actual · {monitor.currentState.replaceAll("_", " ")}</p>
             <p className="relative mt-1 text-sm font-bold leading-5 text-white/85">{monitor.currentPhase.activity}</p>
+          </div>}
+          {monitor.recovery.required && <div role="alert"
+            className="mt-3 rounded-2xl border border-amber-200/35 bg-amber-200/[0.08] p-3">
+            <p className="text-sm font-black text-amber-50">Esta fase no está avanzando</p>
+            <p className="mt-1 text-xs leading-5 text-amber-50/75">{monitor.recovery.message} El costo, las decisiones y la evidencia válida ya guardada se conservarán; solo se pedirá el dato que realmente falte.</p>
+            <button type="button" disabled={recoveryWorking}
+              onClick={() => void onRecover()}
+              className="mt-3 min-h-11 rounded-xl bg-amber-200 px-4 text-sm font-black text-black disabled:opacity-50">
+              {recoveryWorking ? "REANUDANDO…" : "REANUDAR AHORA"}
+            </button>
           </div>}
         </div>
       </div>
