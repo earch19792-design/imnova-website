@@ -5781,7 +5781,9 @@ function visualMarketRecoveryPriorityCandidate(
           "MARKET_VISUAL_SIGNALS_INSUFFICIENT" ||
           text(evidence.visualMarketRecaptureRecoveryOrigin) ===
             "ACTIVE_IMAGE_JOB") &&
-        !["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"]
+        !["REJECTED", "BLOCKED", "READY_FOR_MANUAL_PUBLICATION",
+          "WAITING_ITEM_ID", "VERIFYING_PUBLISHED_LISTING",
+          "REGISTERING_COMMERCIAL_MONITOR", "VERIFIED_ACTIVE", "COMPLETED"]
           .includes(text(candidate.machine_state))
     })
     .sort((left, right) => {
