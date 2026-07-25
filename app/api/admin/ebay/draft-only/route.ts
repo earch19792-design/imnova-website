@@ -672,6 +672,17 @@ function jsonError(error: unknown, status = 502, blockers?: string[]) {
   }, { status })
 }
 
+async function safeAuthenticate(req: Request) {
+  try {
+    return await authenticate(req)
+  } catch {
+    return {
+      response: jsonError(new Error("EBAY_DRAFT_ONLY_AUTH_INTERNAL_ERROR"), 503),
+      actor: null,
+    }
+  }
+}
+
 async function enqueueDraftFailure(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   approval: JsonRecord,
@@ -705,12 +716,12 @@ async function authenticate(req: Request) {
 }
 
 export async function GET(req: Request) {
-  const auth = await authenticate(req)
-  if (auth.response) return auth.response
-  if (!auth.actor) return jsonError(new Error("EBAY_DRAFT_ONLY_HUMAN_ADMIN_REQUIRED"), 403)
-  const packageId = uuid(new URL(req.url).searchParams.get("packageId"))
-  if (!packageId) return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_REQUIRED"), 400)
   try {
+    const auth = await safeAuthenticate(req)
+    if (auth.response) return auth.response
+    if (!auth.actor) return jsonError(new Error("EBAY_DRAFT_ONLY_HUMAN_ADMIN_REQUIRED"), 403)
+    const packageId = uuid(new URL(req.url).searchParams.get("packageId"))
+    if (!packageId) return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_REQUIRED"), 400)
     const runtime = ebayDraftOnlyRuntimeStatus()
     const target = runtime.target
     const fingerprint = runtime.accountFingerprint || ""
@@ -826,31 +837,35 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const auth = await authenticate(req)
-  if (auth.response) return auth.response
-  if (!auth.actor) return jsonError(new Error("EBAY_DRAFT_ONLY_HUMAN_ADMIN_REQUIRED"), 403)
-  let body: JsonRecord
   try {
-    body = record(await req.json())
-  } catch {
-    return jsonError(new Error("EBAY_DRAFT_ONLY_JSON_INVALID"), 400)
-  }
-  const action = text(body.action)
-  try {
-    if (action === "preview") return previewDraft(body, auth.actor)
-    if (action === "preflight") return preflightDraft(body, auth.actor)
-    if (action === "account_preflight") return preflightAccount(body, auth.actor)
-    if (action === "approve") return approveDraft(body, auth.actor)
-    if (action === "execute") return executeDraft(body, auth.actor)
-    if (action === "prepare_publish") return prepareFinalPublication(body, auth.actor)
-    if (action === "publish") return publishFinalPublication(body, auth.actor)
-    if (action === "repair_rejected_category") {
-      return repairRejectedOfferCategory(body, auth.actor)
+    const auth = await safeAuthenticate(req)
+    if (auth.response) return auth.response
+    if (!auth.actor) return jsonError(new Error("EBAY_DRAFT_ONLY_HUMAN_ADMIN_REQUIRED"), 403)
+    let body: JsonRecord
+    try {
+      body = record(await req.json())
+    } catch {
+      return jsonError(new Error("EBAY_DRAFT_ONLY_JSON_INVALID"), 400)
     }
-    if (action === "rearm_publish") return rearmFinalPublication(body, auth.actor)
-    if (action === "reconcile_publish") return reconcileFinalPublication(body, auth.actor)
-    if (action === "revoke") return revokeApproval(body, auth.actor)
-    return jsonError(new Error("EBAY_DRAFT_ONLY_ACTION_INVALID"), 400)
+    const action = text(body.action)
+    try {
+      if (action === "preview") return previewDraft(body, auth.actor)
+      if (action === "preflight") return preflightDraft(body, auth.actor)
+      if (action === "account_preflight") return preflightAccount(body, auth.actor)
+      if (action === "approve") return approveDraft(body, auth.actor)
+      if (action === "execute") return executeDraft(body, auth.actor)
+      if (action === "prepare_publish") return prepareFinalPublication(body, auth.actor)
+      if (action === "publish") return publishFinalPublication(body, auth.actor)
+      if (action === "repair_rejected_category") {
+        return repairRejectedOfferCategory(body, auth.actor)
+      }
+      if (action === "rearm_publish") return rearmFinalPublication(body, auth.actor)
+      if (action === "reconcile_publish") return reconcileFinalPublication(body, auth.actor)
+      if (action === "revoke") return revokeApproval(body, auth.actor)
+      return jsonError(new Error("EBAY_DRAFT_ONLY_ACTION_INVALID"), 400)
+    } catch (error) {
+      return jsonError(error)
+    }
   } catch (error) {
     return jsonError(error)
   }
