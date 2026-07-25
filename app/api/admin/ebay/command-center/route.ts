@@ -117,6 +117,19 @@ function sameDayPublicationErrorCode(error: unknown, fallback: string) {
   return fallback
 }
 
+async function safeValidateAdminApiRequest(req: Request) {
+  try {
+    return await validateAdminApiRequest(req)
+  } catch {
+    return {
+      ok: false,
+      status: 503,
+      error: "COMMAND_CENTER_ADMIN_REQUEST_INTERNAL_ERROR",
+      userId: null,
+    }
+  }
+}
+
 async function publicationLunaRecheckDetails(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   listingPackage: Record<string, unknown>,
@@ -345,7 +358,7 @@ async function applicableSafeDefaults(
 }
 
 export async function GET(req: Request) {
-  const validation = await validateAdminApiRequest(req)
+  const validation = await safeValidateAdminApiRequest(req)
   if (!validation.ok) return NextResponse.json(
     { success: false, error: validation.error ?? "admin_forbidden" },
     { status: validation.status || 403 },
@@ -406,7 +419,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const validation = await validateAdminApiRequest(req)
+  const validation = await safeValidateAdminApiRequest(req)
   if (!validation.ok) return NextResponse.json(
     { success: false, error: validation.error ?? "admin_forbidden" },
     { status: validation.status || 403 },
