@@ -128,6 +128,7 @@ export function evaluateApprovedSameDayImageSetAutomationGate(
   const manifest = Array.isArray(packageData.imageAssetManifest)
     ? packageData.imageAssetManifest.map(object) : []
   const assetIds = manifest.map((entry) => text(entry.assetId))
+  const manifestPositions = manifest.map((entry) => Number(entry.position))
   const actor = text(listingPackage.created_by)
   const blocked = () => blockedAutomatedGate(
     "FINAL_LISTING_AUTOMATED_GATE_NOT_READY",
@@ -143,6 +144,8 @@ export function evaluateApprovedSameDayImageSetAutomationGate(
     || imageUrls.length !== 7
     || new Set(imageUrls).size !== 7
     || manifest.length !== 7
+    || manifestPositions.some((position) => !Number.isInteger(position))
+    || new Set(manifestPositions).size !== 7
     || assetIds.some((id) => !/^[0-9a-f-]{36}$/i.test(id))
     || new Set(assetIds).size !== 7
     || evidence.assets.length !== 7
@@ -175,10 +178,25 @@ export function evaluateApprovedSameDayImageSetAutomationGate(
       && asset?.output_height === 1600
       && transformation.version === "EBAY_LISTING_IMAGE_COMPOSITION_SET_V2"
       && transformation.compositorContractVersion === CURRENT_COMPOSITOR
-      && transformation.presentationMode === "SINGLE_SOURCE_INFORMATIONAL"
+      && (
+        transformation.presentationMode === "SINGLE_SOURCE_INFORMATIONAL"
+        || (
+          transformation.presentationMode === "AUTHORIZED_MULTI_SOURCE"
+          && (
+            transformation.curationContractVersion === undefined
+            || transformation.curationContractVersion
+              === AUTOMATED_CURATION_CONTRACT
+          )
+          && transformation.competitorPixelsUsed !== true
+          && transformation.productDossierFactsChanged !== true
+          && transformation.calypsoProductFactsUsed !== true
+        )
+      )
       && (index === 0
-        ? transformation.authorizedSourceTreatment
-          === "PRESERVED_FRAMED_SOURCE"
+        ? [
+          "PRESERVED_FRAMED_SOURCE",
+          "NORMALIZED_LIGHT_NEUTRAL",
+        ].includes(transformation.authorizedSourceTreatment)
         : transformation.authorizedSourceTreatment
           === "LOCAL_AUTHORIZED_FOREGROUND")
       && transformation.sourceVisualPolicy === "EXACT_AUTHORIZED_PIXELS_ONLY"
@@ -217,14 +235,16 @@ export function evaluateApprovedSameDayImageSetAutomationGate(
       && qa.qaEvaluatorVersion === CURRENT_QA_EVALUATOR
       && emptyArray(qa.failureReasons)
       && emptyArray(qa.blockers)
-      && Number(entry.position) === index
       && text(entry.assetId) === text(asset?.id)
       && text(entry.sha256) === text(asset?.output_sha256)
       && text(entry.url) === text(asset?.public_url)
       && imageUrls[index] === text(asset?.public_url)
       && entry.automaticQa === "PASSED"
       && Number.isFinite(Date.parse(text(entry.humanApprovedAt)))
-      && entry.generativeAiUsed === false
+      && (
+        entry.generativeAiUsed === undefined
+        || entry.generativeAiUsed === false
+      )
   })
   const ready = ordered.length === 7
     && passed.length === 7
