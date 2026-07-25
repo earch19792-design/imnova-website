@@ -129,6 +129,8 @@ export function TodayLaunchPanel() {
     }, quotaNow),
   })).filter((entry: Row) => entry.decision.status === "PAUSED_429")
   const quotaPaused = pausedJobs.length > 0 || pausedQuotaLanes.length > 0
+  const staleLunaCandidates = candidates.filter((candidate: Row) =>
+    lunaSupplyNeedsReconfirmation(candidate, quotaNow))
   const quotaResumeAt = [
     ...pausedJobs.map((entry: Row) => String(entry.decision.resumeAt || "")),
     ...pausedQuotaLanes.map((entry: Row) => String(entry.decision.resumeAt || "")),
@@ -172,6 +174,10 @@ export function TodayLaunchPanel() {
         summaries={liveMonitor.rejectionSummaries} working={working}
         onAuthorize={(body) => request(body)} />}
       {quotaPaused && <p className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 text-sm text-amber-50">eBay pausó únicamente la verificación exacta. La selección, Luna y los paquetes locales permanecen disponibles; Seller OS retomará el mismo producto automáticamente{quotaResumeAt ? ` después de ${new Date(quotaResumeAt).toLocaleString("es-NI")}` : " cuando eBay libere la cuota"}.</p>}
+      {staleLunaCandidates.length > 0 && <p role="alert"
+        className="mt-4 rounded-2xl border border-amber-300/30 bg-amber-400/10 p-4 text-sm leading-6 text-amber-50">
+        <strong>Alerta de frescura Luna:</strong> {staleLunaCandidates.length} producto(s) tienen costo o stock confirmado hace más de 24 horas. El análisis continuará con identidad y pack preservados; Seller OS exigirá una reconfirmación antes de publicar o comprar.
+      </p>}
       <section aria-labelledby="operator-task-heading" className="mt-6">
         <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/60">2 · Tu decisión</p>
         <h3 id="operator-task-heading" className="mt-1 text-lg font-black">Tarea para Ernesto</h3>
@@ -1313,7 +1319,21 @@ function LunaConfirmationSummary({ candidate }: { candidate?: Row }) {
   const status = String(confirmation.status ?? "")
   if (!status.startsWith("AVAILABLE_")) return <p className="mt-3 rounded-xl border border-red-300/30 bg-red-400/10 p-3 text-xs text-red-100">Falta confirmación humana reciente de Luna.</p>
   const quantity = confirmation.quantityVisible === true ? String(confirmation.confirmedQuantity ?? "N/D") : "no visible; eBay 1"
-  return <p className="mt-3 rounded-xl border border-emerald-200/20 bg-emerald-200/[0.05] p-3 text-xs text-emerald-50"><strong>Luna confirmada por el operador:</strong> {quantity} · {confirmation.confirmedAt ? new Date(String(confirmation.confirmedAt)).toLocaleString("es-NI") : "hora no disponible"}. eBay no se presenta como fuente del stock del proveedor.</p>
+  const stale = lunaSupplyNeedsReconfirmation(candidate)
+  return <p className={`mt-3 rounded-xl border p-3 text-xs ${stale
+    ? "border-amber-200/25 bg-amber-200/[0.06] text-amber-50"
+    : "border-emerald-200/20 bg-emerald-200/[0.05] text-emerald-50"}`}><strong>{stale ? "Luna requiere reconfirmación antes de publicar:" : "Luna confirmada por el operador:"}</strong> {quantity} · {confirmation.confirmedAt ? new Date(String(confirmation.confirmedAt)).toLocaleString("es-NI") : "hora no disponible"}. {stale ? "No bloquea el análisis actual; sí bloquea publicación y compra." : "eBay no se presenta como fuente del stock del proveedor."}</p>
+}
+
+function lunaSupplyNeedsReconfirmation(candidate?: Row, now = new Date()) {
+  if (candidate?.evidence_summary?.lunaSupplyFreshness?.alertRequired === true) {
+    return true
+  }
+  const confirmation = candidate?.economics_summary?.lunaConfirmation ?? {}
+  if (!String(confirmation.status ?? "").startsWith("AVAILABLE_")) return false
+  const confirmedAt = Date.parse(String(confirmation.confirmedAt ?? ""))
+  return Number.isFinite(confirmedAt) &&
+    now.getTime() - confirmedAt > 24 * 60 * 60_000
 }
 
 function ManualHandoffCard({ candidate }: { candidate: Row }) {

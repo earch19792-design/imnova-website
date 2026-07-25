@@ -2336,90 +2336,59 @@ async function createLunaGate(supabase: SupabaseClient, runId: string, candidate
       "identityAndPackConfirmed", "nativePackCount"] }, continuationJobType: "CALCULATE_ECONOMICS" })
 }
 
-const STALE_CONTROLLED_LUNA_CONFIRMATION_RECOVERY_VERSION =
-  "STALE_CONTROLLED_LUNA_CONFIRMATION_RECOVERY_V1_2026_07_24"
+const STALE_LUNA_ANALYSIS_ADVISORY_RECOVERY_VERSION =
+  "STALE_LUNA_ANALYSIS_ADVISORY_RECOVERY_V1_2026_07_24"
+const LUNA_ANALYSIS_ADVISORY_AFTER_MS = 24 * 60 * 60_000
 
-function controlledExploratoryLunaConfirmationNeedsRefresh(
+function controlledExploratoryFactsCanContinue(
   candidate: JsonRecord,
   now: Date,
 ) {
   const evidence = record(candidate.evidence_summary)
   if (!["CONTROLLED_EXPLORATORY_TEST", "MARKET_VALIDATED"]
     .includes(text(evidence.commercialEvidenceMode))) return false
+  const selectionIdentity = record(evidence.selectionIdentity)
   const economics = record(candidate.economics_summary)
   const confirmation = record(economics.lunaConfirmation)
   const confirmedAt = Date.parse(text(confirmation.confirmedAt))
   const confirmedPrice = number(economics.confirmedLunaPrice)
   const ageMs = now.getTime() - confirmedAt
-  return confirmedPrice === null || confirmedPrice <= 0 ||
-    !text(confirmation.status).startsWith("AVAILABLE_") ||
-    !Number.isFinite(confirmedAt) ||
-    ageMs < -5 * 60_000 ||
-    ageMs > 24 * 60 * 60_000
+  return Boolean(text(candidate.queue_item_id)) &&
+    Boolean(text(candidate.supplier_variant_id)) &&
+    confirmedPrice !== null && confirmedPrice > 0 &&
+    text(confirmation.status).startsWith("AVAILABLE_") &&
+    Number.isFinite(confirmedAt) &&
+    ageMs >= -5 * 60_000 &&
+    selectionIdentity.exactOfferPackVerified === true &&
+    Number.isInteger(number(selectionIdentity.nativePackCount)) &&
+    Number(selectionIdentity.nativePackCount) > 0 &&
+    Number(selectionIdentity.nativePackCount) <= 100 &&
+    /^sha256:[0-9a-f]{64}$/.test(
+      text(evidence.controlledIdentityEvidenceHash),
+    ) &&
+    /^sha256:[0-9a-f]{64}$/.test(text(evidence.commercialEvidenceHash))
 }
 
-async function routeStaleControlledLunaConfirmationToGate(input: {
-  supabase: SupabaseClient
-  state: NonNullable<Awaited<ReturnType<typeof currentState>>>
-  candidate: JsonRecord
-  previousState: "ENRICHING_PRODUCT_FACTS" | "REJECTED"
-  now: Date
-  recoveryJobId?: string | null
-}) {
-  await createLunaGate(
-    input.supabase,
-    text(input.state.run.id),
-    input.candidate,
-    input.previousState,
+function lunaSupplyFreshnessAdvisory(candidate: JsonRecord, now: Date) {
+  const confirmation = record(
+    record(candidate.economics_summary).lunaConfirmation,
   )
-  const candidateId = text(input.candidate.id)
-  const { error: candidateError } = await input.supabase
-    .from("ebay_same_day_pilot_candidates")
-    .update({
-      state: "NEEDS_LUNA_CONFIRMATION",
-      blockers: ["LUNA_CONFIRMATION_STALE"],
-      next_automated_action:
-        "Recalcular economía y Product Facts con una confirmación Luna fresca.",
-      next_human_action:
-        "Confirmar nuevamente precio, disponibilidad, identidad y pack visibles en Luna.",
-      updated_at: input.now.toISOString(),
-    })
-    .eq("id", candidateId)
-    .eq("run_id", input.state.run.id)
-    .eq("machine_state", "WAITING_LUNA_CONFIRMATION")
-  if (candidateError) {
-    throw new Error("SAME_DAY_PILOT_STALE_LUNA_GATE_CANDIDATE_FAILED")
-  }
-  const { error: eventError } = await input.supabase
-    .from("ebay_same_day_pilot_events")
-    .upsert({
-      run_id: input.state.run.id,
-      candidate_id: candidateId,
-      event_type: "STALE_CONTROLLED_LUNA_CONFIRMATION_RECOVERED",
-      event_payload: {
-        recoveryVersion:
-          STALE_CONTROLLED_LUNA_CONFIRMATION_RECOVERY_VERSION,
-        previousState: input.previousState,
-        recoveryJobId: input.recoveryJobId ?? null,
-        freshLunaConfirmationRequired: true,
-        productResearchRepeated: false,
-        commercialEvidencePreserved: true,
-        productFactsHistoryPreserved: true,
-        historyDeleted: false,
-      },
-      idempotency_key: [
-        input.state.run.id,
-        candidateId,
-        STALE_CONTROLLED_LUNA_CONFIRMATION_RECOVERY_VERSION,
-        input.recoveryJobId ?? input.previousState,
-      ].join(":"),
-      ebay_read_calls: 0,
-      openai_calls: 0,
-      ebay_writes: 0,
-      production_changed: false,
-    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
-  if (eventError) {
-    throw new Error("SAME_DAY_PILOT_STALE_LUNA_GATE_EVENT_FAILED")
+  const confirmedAt = Date.parse(text(confirmation.confirmedAt))
+  const ageMs = Number.isFinite(confirmedAt)
+    ? Math.max(0, now.getTime() - confirmedAt)
+    : null
+  const stale = ageMs === null || ageMs > LUNA_ANALYSIS_ADVISORY_AFTER_MS
+  return {
+    status: stale ? "RECONFIRM_BEFORE_PUBLICATION" : "FRESH",
+    lastConfirmedAt: Number.isFinite(confirmedAt)
+      ? new Date(confirmedAt).toISOString()
+      : null,
+    ageMs,
+    alertRequired: stale,
+    blocksAnalysis: false,
+    blocksPublication: stale,
+    blocksPurchase: stale,
+    nextRequiredAt: "FINAL_PUBLICATION_OR_PURCHASE_GATE",
   }
 }
 
@@ -2438,7 +2407,7 @@ async function repairStaleControlledLunaConfirmationRejection(
       strings(entry.blockers).length === 1 &&
       strings(entry.blockers)[0] ===
         "PRODUCT_FACT_CONTROLLED_EXPLORATORY_TARGET_INVALID" &&
-      controlledExploratoryLunaConfirmationNeedsRefresh(record(entry), now))
+      controlledExploratoryFactsCanContinue(record(entry), now))
   if (!candidate) return 0
   const { data: failedJob, error: failedJobError } = await supabase
     .from("ebay_same_day_pilot_jobs")
@@ -2465,8 +2434,8 @@ async function repairStaleControlledLunaConfirmationRejection(
         status: "CANCELLED",
         checkpoint: {
           ...record(failedJob.checkpoint),
-          staleLunaConfirmationRecoveryVersion:
-            STALE_CONTROLLED_LUNA_CONFIRMATION_RECOVERY_VERSION,
+          staleLunaAnalysisAdvisoryRecoveryVersion:
+            STALE_LUNA_ANALYSIS_ADVISORY_RECOVERY_VERSION,
           supersededAt: now.toISOString(),
           historyDeleted: false,
         },
@@ -2479,14 +2448,99 @@ async function repairStaleControlledLunaConfirmationRejection(
       throw new Error("SAME_DAY_PILOT_STALE_LUNA_DEAD_LETTER_CANCEL_FAILED")
     }
   }
-  await routeStaleControlledLunaConfirmationToGate({
-    supabase,
-    state,
-    candidate: record(candidate),
-    previousState: "REJECTED",
+  const candidateId = text(candidate.id)
+  const freshnessAdvisory = lunaSupplyFreshnessAdvisory(
+    record(candidate),
     now,
-    recoveryJobId: text(failedJob.id),
+  )
+  await transition({
+    supabase,
+    runId: text(state.run.id),
+    candidateId,
+    previousState: "REJECTED",
+    nextState: "ENRICHING_PRODUCT_FACTS",
+    reasonCode: "STALE_LUNA_SUPPLY_DOES_NOT_BLOCK_ANALYSIS",
+    triggeredBy: "RETRY",
+    checkpoint: {
+      recoveryVersion: STALE_LUNA_ANALYSIS_ADVISORY_RECOVERY_VERSION,
+      failedJobId: failedJob.id,
+      freshnessAdvisory,
+    },
+    nextAutomaticAction:
+      "Continuar Product Facts con identidad y pack preservados.",
+    nextHumanAction:
+      "Ninguna ahora; reconfirmar Luna antes de publicar o comprar.",
+    job: {
+      jobType: "ENRICH_PRODUCT_FACTS",
+      idempotencyKey: [
+        state.run.id,
+        candidateId,
+        "ENRICH_PRODUCT_FACTS",
+        STALE_LUNA_ANALYSIS_ADVISORY_RECOVERY_VERSION,
+        failedJob.id,
+      ].join(":"),
+      checkpoint: {
+        queueItemId: candidate.queue_item_id,
+        freshnessAdvisory,
+      },
+      maxAttempts: 10,
+      apiFamily: "BROWSE",
+      apiOperation: "EXACT_VERIFICATION",
+      ownerLane: "P1_EXACT_VERIFICATION",
+    },
   })
+  const { error: candidateError } = await supabase
+    .from("ebay_same_day_pilot_candidates")
+    .update({
+      state: "ACTIVE",
+      blockers: [],
+      evidence_summary: {
+        ...record(candidate.evidence_summary),
+        lunaSupplyFreshness: freshnessAdvisory,
+      },
+      next_automated_action:
+        "Continuar Product Facts con identidad y pack preservados.",
+      next_human_action:
+        "Ninguna ahora; reconfirmar Luna antes de publicar o comprar.",
+      updated_at: now.toISOString(),
+    })
+    .eq("id", candidateId)
+    .eq("run_id", state.run.id)
+    .eq("machine_state", "ENRICHING_PRODUCT_FACTS")
+  if (candidateError) {
+    throw new Error("SAME_DAY_PILOT_STALE_LUNA_ADVISORY_CANDIDATE_FAILED")
+  }
+  const { error: eventError } = await supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({
+      run_id: state.run.id,
+      candidate_id: candidateId,
+      event_type: "STALE_LUNA_ANALYSIS_CONTINUED",
+      event_payload: {
+        recoveryVersion: STALE_LUNA_ANALYSIS_ADVISORY_RECOVERY_VERSION,
+        failedJobId: failedJob.id,
+        freshnessAdvisory,
+        productResearchRepeated: false,
+        lunaGateOpened: false,
+        finalPublicationRecheckRequired: true,
+        commercialEvidencePreserved: true,
+        productFactsHistoryPreserved: true,
+        historyDeleted: false,
+      },
+      idempotency_key: [
+        state.run.id,
+        candidateId,
+        STALE_LUNA_ANALYSIS_ADVISORY_RECOVERY_VERSION,
+        failedJob.id,
+      ].join(":"),
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) {
+    throw new Error("SAME_DAY_PILOT_STALE_LUNA_ADVISORY_EVENT_FAILED")
+  }
   await refreshRunProjection(supabase, state.run.id, true)
   return 1
 }
@@ -6859,34 +6913,11 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       let productFactsState = text(candidate.machine_state)
       let summary = record(candidate.product_facts_summary)
       if (productFactsState === "ENRICHING_PRODUCT_FACTS") {
-        if (controlledExploratoryLunaConfirmationNeedsRefresh(
+        const marketEvidence = record(candidate.evidence_summary)
+        const lunaSupplyFreshness = lunaSupplyFreshnessAdvisory(
           record(candidate),
           now,
-        )) {
-          await routeStaleControlledLunaConfirmationToGate({
-            supabase: input.supabase,
-            state,
-            candidate: record(candidate),
-            previousState: "ENRICHING_PRODUCT_FACTS",
-            now,
-            recoveryJobId: text(leased.id),
-          })
-          await settlePilotJob({
-            supabase: input.supabase,
-            job: record(leased),
-            workerId: input.workerId,
-            status: "COMPLETED",
-          })
-          await refreshRunProjection(input.supabase, state.run.id, true)
-          return {
-            processed: 1,
-            status: "COMPLETED",
-            jobType: leased.job_type,
-            waitingFor: "FRESH_LUNA_CONFIRMATION",
-            ebayWrites: 0,
-          }
-        }
-        const marketEvidence = record(candidate.evidence_summary)
+        )
         const selectionIdentity = record(marketEvidence.selectionIdentity)
         const lunaConfirmation = record(record(candidate.economics_summary).lunaConfirmation)
         const controlledExploratoryTarget = ["CONTROLLED_EXPLORATORY_TEST", "MARKET_VALIDATED"]
@@ -6972,9 +7003,19 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
           }
           const { error: summaryError } = await input.supabase.from("ebay_same_day_pilot_candidates")
             .update({ product_facts_summary: summary, economics_summary: nextEconomics,
+              evidence_summary: {
+                ...marketEvidence,
+                lunaSupplyFreshness,
+              },
               updated_at: new Date().toISOString() }).eq("id", candidate.id)
           if (summaryError) throw new Error("SAME_DAY_PILOT_FACT_SUMMARY_UPDATE_FAILED")
-          Object.assign(candidate, { economics_summary: nextEconomics })
+          Object.assign(candidate, {
+            economics_summary: nextEconomics,
+            evidence_summary: {
+              ...marketEvidence,
+              lunaSupplyFreshness,
+            },
+          })
         }
       }
       if (productFactsState === "ENRICHING_PRODUCT_FACTS") {
@@ -7421,41 +7462,6 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     return { processed: 1, status: "COMPLETED", jobType: leased.job_type }
   } catch (error) {
     const code = error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message) ? error.message : "SAME_DAY_PILOT_JOB_FAILED"
-    // A controlled exploratory candidate can become stale between its last
-    // Luna confirmation and Product Facts. Route it directly to the exact Luna
-    // gate instead of briefly dead-lettering/rejecting the candidate and
-    // relying on the next scheduler cycle to repair that false terminal state.
-    if (leased.job_type === "ENRICH_PRODUCT_FACTS" &&
-      code === "PRODUCT_FACT_CONTROLLED_EXPLORATORY_TARGET_INVALID" &&
-      controlledExploratoryLunaConfirmationNeedsRefresh(
-        record(candidate),
-        now,
-      )) {
-      await routeStaleControlledLunaConfirmationToGate({
-        supabase: input.supabase,
-        state,
-        candidate: record(candidate),
-        previousState: "ENRICHING_PRODUCT_FACTS",
-        now,
-        recoveryJobId: text(leased.id),
-      })
-      await settlePilotJob({
-        supabase: input.supabase,
-        job: record(leased),
-        workerId: input.workerId,
-        status: "COMPLETED",
-        errorCode: "STALE_LUNA_CONFIRMATION_RECOVERED",
-      })
-      await refreshRunProjection(input.supabase, state.run.id, true)
-      return {
-        processed: 1,
-        status: "COMPLETED",
-        jobType: leased.job_type,
-        waitingFor: "FRESH_LUNA_CONFIRMATION",
-        recoveredWithoutRejection: true,
-        ebayWrites: 0,
-      }
-    }
     if (leased.job_type === "GENERATE_SIX_IMAGE_PACKAGE" &&
       VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(code)) {
       const priorVisualRecaptures = state.transitions.filter((entry) =>

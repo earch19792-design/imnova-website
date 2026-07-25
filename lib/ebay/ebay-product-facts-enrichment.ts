@@ -424,7 +424,10 @@ async function eligibleCandidates(
       Number.isInteger(target.confirmedNativePackCount) && target.confirmedNativePackCount > 0 &&
       target.confirmedNativePackCount <= 100 &&
       Number.isFinite(Date.parse(target.lunaConfirmedAt)) &&
-      lunaConfirmationAgeMs >= -5 * 60_000 && lunaConfirmationAgeMs <= 24 * 60 * 60_000 &&
+      // Identity and pack evidence remain valid for Product Facts even when
+      // volatile Luna stock/cost is old. Fresh supply is enforced later by the
+      // publication and purchase gates, where it can affect a real decision.
+      lunaConfirmationAgeMs >= -5 * 60_000 &&
       /^sha256:[0-9a-f]{64}$/.test(target.identityEvidenceHash) &&
       /^sha256:[0-9a-f]{64}$/.test(target.commercialEvidenceHash)
     if (!validTarget) throw new Error("PRODUCT_FACT_CONTROLLED_EXPLORATORY_TARGET_INVALID")
