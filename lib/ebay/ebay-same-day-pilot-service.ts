@@ -2624,8 +2624,7 @@ async function repairSameDayPilotBootstrap(
   const priorityVisualRecovery = visualMarketRecoveryPriorityCandidate(activeState)
   const active = activeState.candidates.find((candidate) => {
     const machineState = text(candidate.machine_state)
-    if (["REJECTED", "BLOCKED", "READY_FOR_MANUAL_PUBLICATION", "VERIFIED_ACTIVE", "COMPLETED"]
-      .includes(machineState)) return false
+    if (isNonRestartableMachineState(machineState)) return false
     if (priorityVisualRecovery &&
       text(candidate.id) !== text(priorityVisualRecovery.id)) {
       return false
@@ -2954,8 +2953,7 @@ async function refreshRunProjection(supabase: SupabaseClient, runId: string, wor
   const readyCount = rows.filter((row) => row.machine_state === "READY_FOR_MANUAL_PUBLICATION").length
   const verifiedCount = rows.filter((row) => row.machine_state === "VERIFIED_ACTIVE").length
   const active = rows.find((row) =>
-    !["REJECTED", "BLOCKED", "READY_FOR_MANUAL_PUBLICATION", "VERIFIED_ACTIVE", "COMPLETED"]
-      .includes(row.machine_state))
+    !isNonRestartableMachineState(row.machine_state))
   const taskRows = tasks ?? []
   const openTask = taskRows.find((task) => task.status === "OPEN")
   const waitingRetry = (jobs ?? []).some((job) => job.status === "WAITING_RETRY")
@@ -5307,8 +5305,17 @@ const SAME_DAY_MACHINE_ORDER = [
   "REGISTERING_COMMERCIAL_MONITOR", "VERIFIED_ACTIVE", "COMPLETED",
 ]
 
+const SAME_DAY_NON_RESTARTABLE_MACHINE_STATES = [
+  "REJECTED", "BLOCKED", "READY_FOR_MANUAL_PUBLICATION", "WAITING_ITEM_ID",
+  "VERIFYING_PUBLISHED_LISTING", "REGISTERING_COMMERCIAL_MONITOR", "VERIFIED_ACTIVE", "COMPLETED",
+]
+
+function isNonRestartableMachineState(state: string) {
+  return SAME_DAY_NON_RESTARTABLE_MACHINE_STATES.includes(state)
+}
+
 function jobEffectAlreadyApplied(jobType: string, machineState: string) {
-  if (["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(machineState)) return true
+  if (isNonRestartableMachineState(machineState)) return true
   if (jobType === "GENERATE_SIX_IMAGE_PACKAGE" &&
     machineState === "WAITING_PRODUCT_RESEARCH_CAPTURE") return true
   const minimumState: Record<string, string> = {
@@ -5853,10 +5860,7 @@ function visualMarketRecoveryPriorityCandidate(
           "MARKET_VISUAL_SIGNALS_INSUFFICIENT" ||
           text(evidence.visualMarketRecaptureRecoveryOrigin) ===
             "ACTIVE_IMAGE_JOB") &&
-        !["REJECTED", "BLOCKED", "READY_FOR_MANUAL_PUBLICATION",
-          "WAITING_ITEM_ID", "VERIFYING_PUBLISHED_LISTING",
-          "REGISTERING_COMMERCIAL_MONITOR", "VERIFIED_ACTIVE", "COMPLETED"]
-          .includes(text(candidate.machine_state))
+        !isNonRestartableMachineState(text(candidate.machine_state))
     })
     .sort((left, right) => {
       const leftRequestedAt = Date.parse(text(
