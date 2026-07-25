@@ -146,6 +146,19 @@ const VISUAL_MARKET_RECAPTURE_ERROR_CODES = new Set([
 const VISUAL_MARKET_BACKGROUND_RECAPTURE_ERROR_CODES = new Set([
   "MARKET_VISUAL_SIGNALS_INSUFFICIENT",
 ])
+const IMAGE_CORRECTION_REQUIRED_ERROR_PREFIXES = [
+  "NEEDS_ADDITIONAL_SOURCE_IMAGE",
+  "EBAY_IMAGE_SET_SOURCE_REUSE_LIMIT_EXCEEDED",
+  "EBAY_IMAGE_SET_PERCEPTUALLY_DUPLICATED",
+  "SAME_DAY_IMAGE_SET_PERCEPTUALLY_DUPLICATED",
+  "SAME_DAY_IMAGE_SET_SOURCE_DIVERSITY_NOT_PASSED",
+  "SAME_DAY_IMAGE_SET_OFFER_PACK_PRESENTATION_INVALID",
+  "SAME_DAY_IMAGE_DETERMINISTIC_CLONE_RECOVERY_RETIRED",
+] as const
+function imageCorrectionRequired(errorCode: string) {
+  return IMAGE_CORRECTION_REQUIRED_ERROR_PREFIXES.some((prefix) =>
+    errorCode === prefix || errorCode.startsWith(`${prefix}:`))
+}
 const VISUAL_MARKET_RECAPTURE_UNBOUND_CANDIDATE_CODES = new Set([
   "SAME_DAY_PILOT_VISUAL_RECAPTURE_CAPTURE_BINDING_MISSING",
   "SAME_DAY_PILOT_VISUAL_RECAPTURE_PLAN_BINDING_MISSING",
@@ -3066,6 +3079,62 @@ async function rejectAndPromote(input: {
   }).eq("id", input.candidate.id).eq("run_id", input.runId)
   if (error) throw new Error("SAME_DAY_PILOT_CANDIDATE_REJECT_FAILED")
   await promoteNextCandidate(input.supabase, input.runId, Number(input.candidate.ordinal))
+}
+
+async function blockImageCorrectionAndPromote(input: {
+  supabase: SupabaseClient
+  runId: string
+  candidate: JsonRecord
+  previousState: string
+  reasonCode: string
+}) {
+  const blockers = [input.reasonCode]
+  await transition({
+    supabase: input.supabase,
+    runId: input.runId,
+    candidateId: text(input.candidate.id),
+    previousState: input.previousState,
+    nextState: "BLOCKED",
+    reasonCode: "IMAGE_SOURCE_OR_QUALITY_CORRECTION_REQUIRED",
+    triggeredBy: "SYSTEM",
+    checkpoint: {
+      blockers,
+      evidenceRetained: true,
+      deterministicCloneRecoveryRetired: true,
+      ebayWrites: 0,
+    },
+    nextAutomaticAction:
+      "Conservar el producto y continuar con el siguiente candidato del lote.",
+    nextHumanAction:
+      "Agregar o reemplazar vistas autorizadas que muestren el pack exacto y regenerar el set.",
+  })
+  const priorImageSummary = record(input.candidate.image_package_summary)
+  const { error } = await input.supabase
+    .from("ebay_same_day_pilot_candidates")
+    .update({
+      state: "NEEDS_IMAGE_CORRECTION",
+      blockers,
+      image_package_summary: {
+        ...priorImageSummary,
+        status: "BLOCKED_CORRECTION_REQUIRED",
+        approved: false,
+        failureCode: input.reasonCode,
+        deterministicCloneRecoveryRetired: true,
+      },
+      next_automated_action:
+        "Continuar con el siguiente candidato sin descartar este producto.",
+      next_human_action:
+        "Aportar vistas autorizadas del producto y del contenido exacto del pack.",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.candidate.id)
+    .eq("run_id", input.runId)
+  if (error) throw new Error("SAME_DAY_PILOT_IMAGE_CORRECTION_BLOCK_FAILED")
+  await promoteNextCandidate(
+    input.supabase,
+    input.runId,
+    Number(input.candidate.ordinal),
+  )
 }
 
 async function blockRelatedPresentationAndPromote(input: {
@@ -6558,7 +6627,7 @@ async function repairRejectedSingleUnitVisualStrategy(
     } catch {
       continue
     }
-    const deterministicFallbackRecovery = [
+    const retiredDeterministicFallbackRecovery = [
       "SAME_DAY_IMAGE_SET_VISUAL_STRATEGY_V2_INVALID",
       "SAME_DAY_IMAGE_SET_SCOPE_INVALID",
       "SAME_DAY_IMAGE_SET_QA_CONTRACT_INVALID",
@@ -6567,10 +6636,11 @@ async function repairRejectedSingleUnitVisualStrategy(
       "SAME_DAY_IMAGE_SET_GENERATION_METADATA_INVALID",
       "SAME_DAY_IMAGE_CONTROL_NOT_CLAIMED",
     ].includes(priorErrorCode)
-    // Fact-driven strategy recovery remains deliberately narrow. A technical
-    // post-generation contract failure, however, is independent of offer pack
-    // size and must recover any verified pack without rejecting the product.
-    if (!deterministicFallbackRecovery &&
+    // Never turn a failed commercial set into six derivatives of one catalog
+    // photo. Those failures retain their evidence for an explicit corrected
+    // regeneration or manual asset replacement.
+    if (retiredDeterministicFallbackRecovery) continue
+    if (
       (factoryInput.facts.packCount !== 1 ||
         factoryInput.facts.unitCount !== 1)) continue
 
@@ -6596,84 +6666,14 @@ async function repairRejectedSingleUnitVisualStrategy(
         priorErrorCode)
     if (!failureTransitionPresent && !priorFailurePresent) continue
 
-    let recoveryHandoffSummary = handoffSummary
-    if (deterministicFallbackRecovery) {
-      const previousPackageHash = text(handoffSummary.packageHash)
-      const previousPackage = record(handoffSummary.package)
-      const recoveryVersion =
-        "IMAGE_POST_AI_DETERMINISTIC_HANDOFF_V1_2026_07_24"
-      const replacementPackage = {
-        ...previousPackage,
-        imageGenerationRecovery: {
-          version: recoveryVersion,
-          previousErrorCode: priorErrorCode,
-          previousPackageHash,
-          generationMode: "DETERMINISTIC_ONLY",
-          additionalOpenAiSpendRequired: false,
-          previousOpenAiCallPreservedInAudit: true,
-          ebayWrites: 0,
-        },
-      }
-      const replacementHash = hash(replacementPackage)
-      const { data: priorHandoff, error: priorHandoffError } = await supabase
-        .from("ebay_same_day_pilot_handoffs")
-        .select("fact_run_id,source_image_type,image_count,operator_price_approved")
-        .eq("run_id", state.run.id)
-        .eq("candidate_id", candidate.id)
-        .eq("package_hash", previousPackageHash)
-        .maybeSingle()
-      if (priorHandoffError || !priorHandoff) {
-        throw new Error(
-          "SAME_DAY_PILOT_DETERMINISTIC_RECOVERY_HANDOFF_READ_FAILED",
-        )
-      }
-      const { error: insertHandoffError } = await supabase
-        .from("ebay_same_day_pilot_handoffs")
-        .upsert({
-          run_id: state.run.id,
-          candidate_id: candidate.id,
-          fact_run_id: priorHandoff.fact_run_id,
-          handoff_version:
-            "SELLER_HUB_FACTS_ONLY_DETERMINISTIC_RECOVERY_V1_2026_07_24",
-          status: "AWAITING_IMAGE_APPROVAL",
-          package_data: replacementPackage,
-          package_hash: replacementHash,
-          source_image_type: priorHandoff.source_image_type,
-          image_count: priorHandoff.image_count,
-          operator_price_approved: priorHandoff.operator_price_approved,
-          openai_calls: 0,
-          ebay_writes: 0,
-          production_changed: false,
-          created_at: now.toISOString(),
-        }, { onConflict: "candidate_id,package_hash", ignoreDuplicates: true })
-      if (insertHandoffError) {
-        throw new Error(
-          "SAME_DAY_PILOT_DETERMINISTIC_RECOVERY_HANDOFF_CREATE_FAILED",
-        )
-      }
-      recoveryHandoffSummary = {
-        ...handoffSummary,
-        package: replacementPackage,
-        packageHash: replacementHash,
-        generationRecovery: {
-          version: recoveryVersion,
-          previousErrorCode: priorErrorCode,
-          previousPackageHash,
-          forceDeterministicImageFallback: true,
-          historyDeleted: false,
-        },
-      }
-    }
-
     const imageJob = buildSameDayImageGenerationJobSpec({
       runId: state.run.id,
       candidateId: candidate.id,
       productResearchCaptureBatchId:
         candidate.product_research_capture_batch_id,
       factRunId: factsSummary.factRunId,
-      packageHash: recoveryHandoffSummary.packageHash,
+      packageHash: handoffSummary.packageHash,
       visualStrategyRecovery: true,
-      deterministicFallbackRecovery,
     })
     if (!imageJob) continue
 
@@ -6718,8 +6718,8 @@ async function repairRejectedSingleUnitVisualStrategy(
         factRunId: factsSummary.factRunId,
         productResearchCaptureBatchId:
           candidate.product_research_capture_batch_id,
-        packageHash: recoveryHandoffSummary.packageHash,
-        forceDeterministicImageFallback: deterministicFallbackRecovery,
+        packageHash: handoffSummary.packageHash,
+        deterministicCloneRecoveryRetired: true,
         commercialEvidencePreserved: true,
         productFactsPreserved: true,
         productApprovalPreserved: true,
@@ -6749,7 +6749,7 @@ async function repairRejectedSingleUnitVisualStrategy(
           regenerationReason: "SINGLE_UNIT_OFFER_SCOPE_SUPPORTED",
           ebayWrites: 0,
         },
-        manual_handoff_package: recoveryHandoffSummary,
+        manual_handoff_package: handoffSummary,
         updated_at: now.toISOString(),
       })
       .eq("id", candidate.id)
@@ -6774,7 +6774,8 @@ async function repairRejectedSingleUnitVisualStrategy(
           exactOfferShownOnce: true,
           fabricatedFacts: false,
           productResearchRepeated: false,
-          deterministicFallbackRecovery,
+          deterministicFallbackRecovery: false,
+          deterministicCloneRecoveryRetired: true,
           additionalOpenAiSpendRequired: false,
           priorJobsPreserved: (priorJobs ?? []).length,
           historyDeleted: false,
@@ -8110,6 +8111,33 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     return { processed: 1, status: "COMPLETED", jobType: leased.job_type }
   } catch (error) {
     const code = error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message) ? error.message : "SAME_DAY_PILOT_JOB_FAILED"
+    if (leased.job_type === "GENERATE_SIX_IMAGE_PACKAGE" &&
+      imageCorrectionRequired(code)) {
+      await settlePilotJob({
+        supabase: input.supabase,
+        job: record(leased),
+        workerId: input.workerId,
+        status: "COMPLETED",
+        errorCode: code,
+      })
+      await blockImageCorrectionAndPromote({
+        supabase: input.supabase,
+        runId: state.run.id,
+        candidate: record(candidate),
+        previousState: "PREPARING_IMAGE_PACKAGE",
+        reasonCode: code,
+      })
+      await refreshRunProjection(input.supabase, state.run.id, true)
+      return {
+        processed: 1,
+        status: "COMPLETED",
+        jobType: leased.job_type,
+        waitingFor: "AUTHORIZED_IMAGE_SOURCE_CORRECTION",
+        error: code,
+        rejected: false,
+        ebayWrites: 0,
+      }
+    }
     if (leased.job_type === "GENERATE_SIX_IMAGE_PACKAGE" &&
       VISUAL_MARKET_RECAPTURE_ERROR_CODES.has(code)) {
       const priorVisualRecaptures = state.transitions.filter((entry) =>

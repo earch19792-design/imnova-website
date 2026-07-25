@@ -297,7 +297,8 @@ async function readImageWithLimit(response: Response) {
 
 function classifyView(hint: string, index: number): LunaCatalogViewClassification {
   const normalized = hint.toLocaleLowerCase("en-US")
-  if (/package|packaging|box|included|contents/.test(normalized)) {
+  if (/\b(?:\d{1,3}\s*[- ]?\s*pack|pack|package|packaging|box|included|contents)\b/
+    .test(normalized)) {
     return "PACKAGE_CONTENTS"
   }
   if (/detail|close|macro|material|texture/.test(normalized)) return "DETAIL"
@@ -637,9 +638,9 @@ export function selectLunaCatalogGenerationSources(
   add(pack.sourceAssets.find((asset) => asset.viewClassification === "PRIMARY")
     ?? pack.sourceAssets[0])
   for (const view of [
+    "PACKAGE_CONTENTS",
     "DETAIL",
     "ALTERNATE_AUTHORIZED_ANGLE",
-    "PACKAGE_CONTENTS",
     "UNKNOWN",
   ] as const) {
     add(pack.sourceAssets.find((asset) => asset.viewClassification === view))
@@ -693,14 +694,16 @@ export function assertLunaCatalogCommercialSourceDiversity(
   sourceIds: string[],
   strategy: Array<{ authorizedSourceImageIds: string[] }>,
 ) {
-  if (pack.galleryCoverage === "SINGLE_VIEW") return
-  // Unsafe gallery angles are not valid generation sources. If exactly one
-  // foreground-safe Luna image remains, reuse that exact product view across
-  // distinct backgrounds instead of rejecting the product or fabricating an
-  // alternate angle.
-  if (selected.length === 1 && sourceIds.length === 1) return
-  if (selected.length < 2 || sourceIds.length < 2) {
-    throw new Error("EBAY_IMAGE_SET_COMMERCIAL_SOURCE_DIVERSITY_REQUIRED")
+  // One catalog photograph is sufficient for the eBay main image, but it is
+  // not sufficient evidence for six different secondary commercial views.
+  // Repeating it over different backgrounds created reviewable-looking clones
+  // that did not satisfy their stated objectives. Stop before generation and
+  // request another authorized view instead.
+  if (pack.galleryCoverage === "SINGLE_VIEW" ||
+    selected.length < 2 || sourceIds.length < 2) {
+    throw new Error(
+      "NEEDS_ADDITIONAL_SOURCE_IMAGE:COMMERCIAL_DIVERSITY",
+    )
   }
   const eligibleIds = new Set(sourceIds)
   const secondaryIds = strategy.map((position) =>
@@ -714,6 +717,14 @@ export function assertLunaCatalogCommercialSourceDiversity(
   if (new Set(secondaryIds).size < 2 ||
     usedIds.size < minimumUsedSources) {
     throw new Error("EBAY_IMAGE_SET_COMMERCIAL_SOURCE_DIVERSITY_REQUIRED")
+  }
+  const reuseCounts = new Map<string, number>()
+  for (const sourceId of secondaryIds) {
+    reuseCounts.set(sourceId, (reuseCounts.get(sourceId) ?? 0) + 1)
+  }
+  if (secondaryIds.length !== 6 ||
+    Math.max(...reuseCounts.values()) > 3) {
+    throw new Error("EBAY_IMAGE_SET_SOURCE_REUSE_LIMIT_EXCEEDED")
   }
 }
 

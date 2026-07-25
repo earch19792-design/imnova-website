@@ -13,18 +13,35 @@ function text(value: unknown, maximum: number) {
   return typeof value === "string" ? value.trim().slice(0, maximum) : ""
 }
 
-function stringArray(value: unknown) {
-  return Array.isArray(value)
-    ? value.map((entry) => text(entry, 240)).filter(Boolean)
-    : []
-}
-
 export function assertStoredSameDayImageSetQaPassed(assets: unknown) {
-  if (!Array.isArray(assets) || assets.length !== 7 || assets.some((asset) => {
+  if (!Array.isArray(assets) || assets.length !== 7) {
+    throw new Error("SAME_DAY_IMAGE_SET_QA_NOT_PASSED")
+  }
+  const rows = assets.map(record)
+  const secondary = rows.filter((asset) =>
+    text(record(asset.transformation).slot, 80) !== "MAIN_WHITE_BACKGROUND")
+  const secondarySourceCounts = new Map<string, number>()
+  for (const asset of secondary) {
+    const sourceHash = text(asset.source_sha256, 64)
+    if (/^[0-9a-f]{64}$/.test(sourceHash)) {
+      secondarySourceCounts.set(
+        sourceHash,
+        (secondarySourceCounts.get(sourceHash) ?? 0) + 1,
+      )
+    }
+  }
+  if (secondary.length !== 6 || secondarySourceCounts.size < 2 ||
+    Math.max(...secondarySourceCounts.values()) > 3) {
+    throw new Error("SAME_DAY_IMAGE_SET_SOURCE_DIVERSITY_NOT_PASSED")
+  }
+  if (rows.some((asset) => {
     const row = record(asset)
     const transformation = record(row.transformation)
     const qa = record(row.qa_result)
     return qa.automaticStatus !== "PASSED" ||
+      qa.structuralDiversityVerified !== true ||
+      qa.copyDuplicateFree !== true ||
+      qa.offerPackPresentationPassed !== true ||
       transformation.squarePresentationVersion !==
         EBAY_SQUARE_PRESENTATION_QA_VERSION ||
       transformation.artificialFrameAdded !== false ||
@@ -81,73 +98,6 @@ export function hasReviewableSameDaySecondaryAssetContracts(
     qa.foregroundMatteValidated === true &&
     qa.opaqueSourceFrameRemoved === true &&
     (noRenderedText || renderedTextContract)
-}
-
-/**
- * The V9 compositor intentionally supports a deterministic informational set
- * when exactly one catalog view can be separated without altering the
- * product. Keep that current, human-reviewed fallback distinct from legacy
- * single-source sets: it must be an exact seven-slot set, use one authorized
- * source hash, carry six different commercial objectives and satisfy every
- * stored professional QA contract.
- */
-export function isReviewableDeterministicSingleSourceInformationalSet(
-  assets: unknown,
-  expected: {
-    compositorContractVersion: string
-    foregroundMatteVersion: string
-    textRendererVersion: string
-    slots: readonly string[]
-  },
-) {
-  if (!Array.isArray(assets) || assets.length !== 7 ||
-    expected.slots.length !== 7) return false
-  const rows = assets.map(record)
-  const transformations = rows.map((asset) => record(asset.transformation))
-  const qaResults = rows.map((asset) => record(asset.qa_result))
-  const slots = transformations.map((transformation) =>
-    text(transformation.slot, 80))
-  if (new Set(slots).size !== 7 ||
-    expected.slots.some((slot) => !slots.includes(slot))) return false
-  const sourceHashes = rows.map((asset) => text(asset.source_sha256, 64))
-  if (sourceHashes.some((hash) => !/^[0-9a-f]{64}$/.test(hash)) ||
-    new Set(sourceHashes).size !== 1) return false
-  if (transformations.some((transformation) =>
-    transformation.compositorContractVersion !==
-      expected.compositorContractVersion ||
-    transformation.presentationMode !== "SINGLE_SOURCE_INFORMATIONAL" ||
-    transformation.generativeAiUsed !== false ||
-    transformation.competitorImageUsed !== false ||
-    transformation.verifiedFactsOnly !== true ||
-    transformation.sourceVisualPolicy !== "EXACT_AUTHORIZED_PIXELS_ONLY" ||
-    transformation.authorizedSourceViewReused !== true ||
-    transformation.visualEvidenceMode !== "PROFESSIONAL_FALLBACK")) {
-    return false
-  }
-  if (qaResults.some((qa) =>
-    qa.automaticStatus !== "PASSED" ||
-    qa.productFidelityPassed !== true ||
-    qa.commercialQualityPassed !== true ||
-    qa.technicalQualityPassed !== true ||
-    qa.compositionPassed !== true ||
-    qa.textPolicyPassed !== true ||
-    qa.contextualPropsPassed !== true ||
-    qa.mobileReadabilityPassed !== true ||
-    qa.sourceViewCapabilityPassed !== true ||
-    qa.marketSignalsLimitedToScene !== true ||
-    qa.hiddenProductGeometryGenerated !== false ||
-    !stringArray(qa.manualChecksRequired).includes(
-      "SINGLE_SOURCE_INFORMATIONAL_PANELS_NOT_MULTIPLE_PRODUCT_VIEWS",
-    ))) return false
-  const secondaryIndexes = slots.flatMap((slot, index) =>
-    slot === "MAIN_WHITE_BACKGROUND" ? [] : [index])
-  if (secondaryIndexes.length !== 6 || secondaryIndexes.some((index) =>
-    !hasReviewableSameDaySecondaryAssetContracts(rows[index], expected))) {
-    return false
-  }
-  const objectives = secondaryIndexes.map((index) =>
-    text(record(transformations[index].visualStrategyPosition).salesObjective, 120))
-  return objectives.every(Boolean) && new Set(objectives).size === 6
 }
 
 export function currentAttemptPublicObjects(entries: unknown) {

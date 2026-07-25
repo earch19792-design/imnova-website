@@ -300,6 +300,10 @@ export type EbayListingImageComposition = {
       typeof EBAY_SQUARE_PRESENTATION_QA_VERSION
     artificialFrameAdded: false
     outputEncodingQuality: 94
+    authorizedSourceViewClassification?: NonNullable<
+      EbayListingImageFactoryInput["authorizedSourceCapabilities"]
+    >[number]["viewClassification"]
+    verifiedOfferPackCount: number | null
     visualStrategyPosition?: EbayVisualStrategyPosition
   }
   qa: {
@@ -323,6 +327,7 @@ export type EbayListingImageComposition = {
     productCoverageVerified: true
     cropSafe: true
     copyDuplicateFree: true
+    offerPackPresentationPassed: boolean
     commercialUtilityVerified: true
     textMinimumPixelSize: number
     textLineCount: number
@@ -878,8 +883,8 @@ export function assertEbayImageEvidenceSufficiency(input: {
   briefs?: EbayListingImageFactoryInput["briefs"]
   authorizedViewSlots?: EbayListingImageSlot[]
 }) {
-  if (new Set(input.sourceSha256s).size < 1) {
-    throw new Error("NEEDS_ADDITIONAL_SOURCE_IMAGE:MAIN_WHITE_BACKGROUND")
+  if (new Set(input.sourceSha256s).size < 2) {
+    throw new Error("NEEDS_ADDITIONAL_SOURCE_IMAGE:COMMERCIAL_DIVERSITY")
   }
   const novelOrHiddenView = /\b(?:top|top-down|overhead|rear|back|behind|interior|inside|underside|bottom|side view|alternate angle|opened|open view|cutaway|cross-section|hand|hands|handheld|in hand|worn|detail view|close-up|macro|accessory|accessories|vista superior|vista trasera|vista posterior|interior|parte inferior|ángulo alterno|detalle|mano|manos|accesorio|accesorios)\b/iu
   const authorizedViewSlots = new Set(input.authorizedViewSlots ?? [])
@@ -1164,6 +1169,13 @@ export function buildSellerOsEbayVisualStrategyV2(
   const packageSource = sourceCapabilities.find((source) =>
     source.viewClassification === "PACKAGE_CONTENTS" &&
     Math.max(source.effectiveWidth, source.effectiveHeight) >= 1_100)
+  if ((facts.packCount ?? 0) > 1 &&
+    input.authorizedSourceCapabilities?.length &&
+    !packageSource) {
+    throw new Error(
+      "NEEDS_ADDITIONAL_SOURCE_IMAGE:CONFIRMED_PACKAGE_CONTENTS",
+    )
+  }
   const setLevelBrief = buildSellerOsEbaySetLevelCreativeBrief(input)
   const marketPolicy = setLevelBrief.evidencePolicy
   const market = marketPolicy.influenceScope !==
@@ -1340,9 +1352,27 @@ export function buildSellerOsEbayVisualStrategyV2(
   if (selected.length < 6) {
     throw new Error("NEEDS_VERIFIED_PRODUCT_FACTS:VISUAL_STRATEGY")
   }
+  // A candidate can permit several authorized catalog views. Persist one
+  // exact choice per objective and balance flexible objectives across those
+  // views. Previously the compositor always read index zero, which let the
+  // MAIN photograph occupy five or six secondary positions even when SIDE or
+  // DETAIL evidence was available.
+  const sourceUseCounts = new Map(sourceIds.map((id) => [id, 0]))
+  const selectedWithBalancedSources = selected.map((candidate) => {
+    const eligible = candidate.authorizedSourceImageIds.filter((id) =>
+      sourceUseCounts.has(id))
+    if (!eligible.length) {
+      throw new Error("EBAY_IMAGE_VISUAL_STRATEGY_SOURCE_BINDING_INVALID")
+    }
+    const chosen = [...eligible].sort((left, right) =>
+      (sourceUseCounts.get(left) ?? 0) - (sourceUseCounts.get(right) ?? 0) ||
+      sourceIds.indexOf(left) - sourceIds.indexOf(right))[0]
+    sourceUseCounts.set(chosen, (sourceUseCounts.get(chosen) ?? 0) + 1)
+    return { ...candidate, authorizedSourceImageIds: [chosen] }
+  })
   const slots = EBAY_LISTING_IMAGE_SLOTS.slice(1) as Array<Exclude<
     EbayListingImageSlot, "MAIN_WHITE_BACKGROUND">>
-  return selected.map((candidate, index) => {
+  return selectedWithBalancedSources.map((candidate, index) => {
     const { score: _score, ...position } = candidate
     const marketToVisualStrategyTrace: EbayMarketToVisualStrategyTrace = {
       version: EBAY_MARKET_TO_VISUAL_STRATEGY_TRACE_VERSION,
@@ -2507,6 +2537,18 @@ export async function composeAuthorizedEbayListingImageSet(
       squarePresentation.artificialInsetFrameFree
     const textPolicyPassed = textLines === 0
     const contextualPropsPassed = true
+    const verifiedOfferPackCount = Number.isInteger(input.facts.packCount) &&
+        Number(input.facts.packCount) > 0
+      ? Number(input.facts.packCount)
+      : null
+    const offerPackPresentationRequired =
+      Boolean(input.authorizedSourceCapabilities?.length) &&
+      Number(verifiedOfferPackCount) > 1 &&
+      (slot === "MAIN_WHITE_BACKGROUND" ||
+        panelContract?.visualStrategyPosition.salesObjective ===
+          "PACKAGE_CONTENTS")
+    const offerPackPresentationPassed = !offerPackPresentationRequired ||
+      sourceCapability?.viewClassification === "PACKAGE_CONTENTS"
     const mobileReadabilityPassed =
       squarePresentation.mobileFocalPointPassed &&
       squarePresentation.productFillPassed
@@ -2571,6 +2613,9 @@ export async function composeAuthorizedEbayListingImageSet(
         squarePresentationVersion: EBAY_SQUARE_PRESENTATION_QA_VERSION,
         artificialFrameAdded: false,
         outputEncodingQuality: 94,
+        authorizedSourceViewClassification:
+          sourceCapability?.viewClassification,
+        verifiedOfferPackCount,
         ...(controlledComposite ? {
           controlledCompositeVersion: CONTROLLED_COMPOSITE_VERSION,
           controlledCompositeManifestHash:
@@ -2629,7 +2674,8 @@ export async function composeAuthorizedEbayListingImageSet(
           productFidelityPassed && commercialQualityPassed &&
           technicalQualityPassed && productCoveragePassed &&
           compositionPassed && textPolicyPassed &&
-          contextualPropsPassed && mobileReadabilityPassed
+          contextualPropsPassed && mobileReadabilityPassed &&
+          offerPackPresentationPassed
           ? "PASSED"
           : "PARTIAL",
         format: "jpeg",
@@ -2658,6 +2704,7 @@ export async function composeAuthorizedEbayListingImageSet(
         productCoverageVerified: true,
         cropSafe: true,
         copyDuplicateFree: true,
+        offerPackPresentationPassed,
         commercialUtilityVerified: true,
         textMinimumPixelSize: 0,
         textLineCount: textLines,

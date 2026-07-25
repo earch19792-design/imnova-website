@@ -206,6 +206,12 @@ export function buildVerifiedManualSellerHubHandoff(input: {
   addAspect("Model", "model")
   const totalUnitFact = fact("OFFER_PACK", "totalUnitCount") ??
     fact("PRODUCT_UNIT", "unitCount")
+  const offerPackCount = number(
+    fact("OFFER_PACK", "offerPackCount")?.value,
+  )
+  const unitsPerPack = number(
+    fact("OFFER_PACK", "unitsPerPack")?.value,
+  )
   const totalUnitCount = number(totalUnitFact?.value)
   const wholeUnitCount = totalUnitCount !== null &&
     Number.isInteger(totalUnitCount) && totalUnitCount >= 1
@@ -236,7 +242,7 @@ export function buildVerifiedManualSellerHubHandoff(input: {
     productTitle: exactName || input.productTitle,
     brand,
     productType: text(fact("PRODUCT_UNIT", "type")?.value || fact("PRODUCT_UNIT", "productType")?.value),
-    packCount: number(fact("OFFER_PACK", "totalUnitCount")?.value),
+    packCount: offerPackCount,
     color: text(fact("PRODUCT_UNIT", "color")?.value),
     audience: text(fact("PRODUCT_UNIT", "audience")?.value || fact("PRODUCT_UNIT", "department")?.value),
     relationship: text(fact("PRODUCT_UNIT", "relationship")?.value),
@@ -247,8 +253,14 @@ export function buildVerifiedManualSellerHubHandoff(input: {
     "Product details",
     brand ? `- Brand: ${brand}` : "",
     `- Condition: ${condition}`,
-    includedCount
-      ? `- Package quantity: ${includedCount} ${wholeUnitCount === 1 ? "unit" : "units"}`
+    offerPackCount && offerPackCount > 1
+      ? `- Offer quantity: ${offerPackCount} packs` +
+        (unitsPerPack
+          ? ` × ${unitsPerPack} ${unitsPerPack === 1 ? "unit" : "units"} each`
+          : "") +
+        (includedCount ? ` (${includedCount} total units)` : "")
+      : includedCount
+        ? `- Package quantity: ${includedCount} ${wholeUnitCount === 1 ? "unit" : "units"}`
       : "",
     "",
     "Package contents",

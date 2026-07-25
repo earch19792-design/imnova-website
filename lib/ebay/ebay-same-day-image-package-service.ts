@@ -138,6 +138,11 @@ const persistenceAssetSchema = z.object({
     z.literal(EBAY_SQUARE_PRESENTATION_QA_VERSION),
   artificialFrameAdded: z.literal(false),
   outputEncodingQuality: z.literal(94),
+  authorizedSourceViewClassification: z.enum([
+    "PRIMARY", "ALTERNATE_AUTHORIZED_ANGLE", "DETAIL",
+    "PACKAGE_CONTENTS", "UNKNOWN",
+  ]).optional(),
+  verifiedOfferPackCount: z.number().int().positive().max(100).nullable(),
   visualStrategyPosition: visualStrategyPositionSchema.optional(),
   sourceSha256: rawSha256Schema,
   outputSha256: rawSha256Schema,
@@ -165,6 +170,7 @@ const persistenceAssetSchema = z.object({
   productCoverageVerified: z.literal(true).optional(),
   cropSafe: z.literal(true).optional(),
   copyDuplicateFree: z.literal(true).optional(),
+  offerPackPresentationPassed: z.literal(true),
   commercialUtilityVerified: z.literal(true).optional(),
   textMinimumPixelSize: z.number().int().min(0).optional(),
   textLineCount: z.number().int().min(0).max(3).optional(),
@@ -882,6 +888,10 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
         asset.transformation.artificialFrameAdded,
       outputEncodingQuality:
         asset.transformation.outputEncodingQuality,
+      authorizedSourceViewClassification:
+        asset.transformation.authorizedSourceViewClassification,
+      verifiedOfferPackCount:
+        asset.transformation.verifiedOfferPackCount,
       visualStrategyPosition:
         asset.transformation.visualStrategyPosition,
       sourceSha256: asset.sourceSha256,
@@ -912,6 +922,7 @@ export function buildSameDayImagePackagePersistenceManifest(input: {
       productCoverageVerified: asset.qa.productCoverageVerified,
       cropSafe: asset.qa.cropSafe,
       copyDuplicateFree: asset.qa.copyDuplicateFree,
+      offerPackPresentationPassed: asset.qa.offerPackPresentationPassed,
       commercialUtilityVerified: asset.qa.commercialUtilityVerified,
       textMinimumPixelSize: asset.qa.textMinimumPixelSize,
       textLineCount: asset.qa.textLineCount,
@@ -1168,6 +1179,18 @@ export async function generateTransientSameDayImagePackage(input: {
       plan.factoryInput,
       backgroundPlate,
     )
+    const secondarySourceCounts = new Map<string, number>()
+    for (const asset of assets.filter((entry) =>
+      entry.slot !== "MAIN_WHITE_BACKGROUND")) {
+      secondarySourceCounts.set(
+        asset.sourceSha256,
+        (secondarySourceCounts.get(asset.sourceSha256) ?? 0) + 1,
+      )
+    }
+    if (secondarySourceCounts.size < 2 ||
+      Math.max(...secondarySourceCounts.values()) > 3) {
+      throw new Error("SAME_DAY_IMAGE_SET_SOURCE_DIVERSITY_NOT_PASSED")
+    }
     const persistenceManifest = buildSameDayImagePackagePersistenceManifest({
       plan,
       assets,

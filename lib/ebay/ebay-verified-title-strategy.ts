@@ -21,7 +21,8 @@ function key(value: string) {
 }
 
 function packFromVerifiedName(value: string) {
-  const match = value.match(/(?:^|\b)(\d{1,3})\s*(?:pcs?|pieces?|count|ct)(?:\s*\/\s*set)?\b/i)
+  const match = value.match(/\b(\d{1,3})\s*[- ]?\s*(?:pack|pk)\b/i)
+    ?? value.match(/(?:^|\b)(\d{1,3})\s*(?:pcs?|pieces?|count|ct)(?:\s*\/\s*set)?\b/i)
     ?? value.match(/\b(?:set|pack)\s+of\s+(\d{1,3})\b/i)
   const parsed = match ? Number(match[1]) : NaN
   return Number.isInteger(parsed) && parsed >= 2 && parsed <= 999 ? parsed : null
@@ -29,12 +30,14 @@ function packFromVerifiedName(value: string) {
 
 function stripPackClaim(value: string, packCount: number | null) {
   let result = value
+    .replace(/^\s*\d{1,3}\s*[- ]?\s*(?:pack|pk)\s*[-,:/]?\s*/i, "")
     .replace(/^\s*\d{1,3}\s*(?:pcs?|pieces?|count|ct)(?:\s*\/\s*set)?\s*[-,:/]?\s*/i, "")
     .replace(/^\s*(?:set|pack)\s+of\s+\d{1,3}\s*[-,:/]?\s*/i, "")
   if (packCount) {
     result = result
+      .replace(new RegExp(`\\b${packCount}\\s*[- ]?\\s*(?:pack|pk)\\b`, "ig"), "")
       .replace(new RegExp(`\\b${packCount}\\s*(?:count|ct|pcs?|pieces?)\\b`, "ig"), "")
-      .replace(new RegExp(`\\b(?:set|pack)\\s+of\\s+${packCount}\\b`, "ig"), "")
+      .replace(new RegExp(`\\b(?:set|pack)\\s+(?:of\\s+)?${packCount}\\b`, "ig"), "")
   }
   return clean(result)
     .replace(/\bkeychains?\s+set\b/gi, "Keychain Set")
@@ -70,8 +73,11 @@ export function buildVerifiedEbayTitle(input: {
 }) {
   const verifiedName = clean(input.productTitle)
   const explicitPack = Number(input.packCount)
-  const packCount = Number.isInteger(explicitPack) && explicitPack >= 2 && explicitPack <= 999
-    ? explicitPack
+  const verifiedExplicitPack = input.packCount !== null &&
+    input.packCount !== undefined &&
+    Number.isInteger(explicitPack) && explicitPack >= 1 && explicitPack <= 999
+  const packCount = verifiedExplicitPack
+    ? explicitPack >= 2 ? explicitPack : null
     : packFromVerifiedName(verifiedName)
   const core = stripPackClaim(verifiedName, packCount)
   const brand = clean(input.brand)

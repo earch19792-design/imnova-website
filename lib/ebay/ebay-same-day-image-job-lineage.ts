@@ -63,7 +63,10 @@ export function buildSameDayImageGenerationJobSpec(input: {
     !UUID_PATTERN.test(candidateId) ||
     !UUID_PATTERN.test(productResearchCaptureBatchId) ||
     !UUID_PATTERN.test(factRunId) ||
-    !SHA256_PATTERN.test(packageHash)
+    !SHA256_PATTERN.test(packageHash) ||
+    // A deterministic recovery can only restyle one authorized photograph;
+    // it cannot turn that photograph into six truthful commercial views.
+    input.deterministicFallbackRecovery === true
   ) return null
 
   const recoverySegments = [
@@ -72,9 +75,6 @@ export function buildSameDayImageGenerationJobSpec(input: {
       : []),
     ...(input.visualStrategyRecovery
       ? [SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION]
-      : []),
-    ...(input.deterministicFallbackRecovery
-      ? [SAME_DAY_IMAGE_DETERMINISTIC_FALLBACK_RECOVERY_VERSION]
       : []),
     ...(input.professionalMarketFallbackRecovery
       ? [SAME_DAY_IMAGE_PROFESSIONAL_MARKET_FALLBACK_RECOVERY_VERSION]
@@ -105,13 +105,6 @@ export function buildSameDayImageGenerationJobSpec(input: {
         ? {
             visualStrategyRecoveryVersion:
               SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION,
-          }
-        : {}),
-      ...(input.deterministicFallbackRecovery
-        ? {
-            deterministicFallbackRecoveryVersion:
-              SAME_DAY_IMAGE_DETERMINISTIC_FALLBACK_RECOVERY_VERSION,
-            forceDeterministicImageFallback: true as const,
           }
         : {}),
       ...(input.professionalMarketFallbackRecovery

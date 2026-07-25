@@ -6,7 +6,6 @@ import {
   assertStoredSameDayImageSetQaPassed,
   currentAttemptPublicObjects,
   hasReviewableSameDaySecondaryAssetContracts,
-  isReviewableDeterministicSingleSourceInformationalSet,
 } from "./ebay-image-approval-policy"
 import sharp from "sharp"
 
@@ -346,8 +345,10 @@ export async function generateAndPersistSameDayImagePackage(input: {
   if (configuration.deterministicComposition !== "READY") {
     throw new Error("SAME_DAY_IMAGE_COMPOSITION_ENVIRONMENT_BLOCKED")
   }
-  const aiEnabled = configuration.aiGeneration === "READY" &&
-    input.forceDeterministicImageFallback !== true
+  if (input.forceDeterministicImageFallback === true) {
+    throw new Error("SAME_DAY_IMAGE_DETERMINISTIC_CLONE_RECOVERY_RETIRED")
+  }
+  const aiEnabled = configuration.aiGeneration === "READY"
   const model = process.env.OPENAI_IMAGE_MODEL?.trim() ?? ""
   const apiKey = process.env.OPENAI_API_KEY?.trim() ?? ""
   const capturedMarketVisualBrief = await loadEbayImageMarketBrief({
@@ -407,8 +408,31 @@ export async function generateAndPersistSameDayImagePackage(input: {
       ...(Array.isArray(lunaCatalog?.image_urls) ? lunaCatalog.image_urls : []),
     ].map((value) => text(value, 2_000)).filter(Boolean),
   })
-  const generationSources =
+  let generationSources =
     await selectForegroundSafeLunaCatalogGenerationSources(catalogPack)
+  const offerPackFact = (Array.isArray(record(facts.factsPackage).facts)
+    ? record(facts.factsPackage).facts as unknown[]
+    : []).map(record).find((fact) =>
+      fact.scope === "OFFER_PACK" &&
+      fact.key === "offerPackCount" &&
+      ["VERIFIED", "CORROBORATED", "DERIVED_VERIFIED"].includes(
+        text(fact.verificationStatus),
+      ))
+  const offerPackCount = Number(offerPackFact?.value)
+  if (Number.isInteger(offerPackCount) && offerPackCount > 1) {
+    const exactPackSource = generationSources.find((asset) =>
+      asset.viewClassification === "PACKAGE_CONTENTS")
+    if (!exactPackSource) {
+      disposeAuthorizedCatalogSourcePack(catalogPack)
+      throw new Error(
+        "NEEDS_ADDITIONAL_SOURCE_IMAGE:CONFIRMED_PACKAGE_CONTENTS",
+      )
+    }
+    generationSources = [
+      exactPackSource,
+      ...generationSources.filter((asset) => asset !== exactPackSource),
+    ]
+  }
   const catalogCapabilities = generationSources.map((asset) => ({
     id: `LUNA_CATALOG_SOURCE:${asset.sha256}`,
     nativeWidth: asset.nativeWidth,
@@ -917,15 +941,7 @@ export async function reviewSameDayImagePackage(input: {
           EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION &&
         transformation.presentationMode === "AUTHORIZED_MULTI_SOURCE") &&
       secondaryForegroundsValid
-    const deterministicSingleSourceInformationalSet =
-      isReviewableDeterministicSingleSourceInformationalSet(assets, {
-        compositorContractVersion: EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
-        foregroundMatteVersion: EBAY_AUTHORIZED_FOREGROUND_MATTE_VERSION,
-        textRendererVersion: EBAY_IMAGE_TEXT_RENDERER_VERSION,
-        slots: EBAY_LISTING_IMAGE_SLOTS,
-      })
-    if (!aiBoardSet && !deterministicMultiSourceSet &&
-      !deterministicSingleSourceInformationalSet) {
+    if (!aiBoardSet && !deterministicMultiSourceSet) {
       throw new Error("SAME_DAY_IMAGE_LEGACY_SET_REGENERATION_REQUIRED")
     }
   }
