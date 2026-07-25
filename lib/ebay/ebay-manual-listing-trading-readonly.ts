@@ -28,6 +28,13 @@ type CachedToken = {
 
 type FetchLike = typeof fetch
 
+type TradingReadOnlyCredentials = {
+  clientId: string
+  clientSecret: string
+  refreshToken: string
+  source: "GENERIC_READONLY" | "DRAFT_ONLY_PRODUCTION" | "NONE"
+}
+
 export type TradingManualListingResult = {
   ownership: "verified" | "not_owned" | "identity_mismatch" | "inactive"
   itemId: string
@@ -83,6 +90,47 @@ function normalizedFingerprint(value: unknown) {
     ? value.trim().toLowerCase()
     : ""
   return /^[0-9a-f]{64}$/.test(normalized) ? normalized : ""
+}
+
+function tradingReadOnlyCredentials(
+  environment: NodeJS.ProcessEnv = process.env,
+): TradingReadOnlyCredentials {
+  const generic = {
+    clientId: environment.EBAY_CLIENT_ID?.trim() ?? "",
+    clientSecret: environment.EBAY_CLIENT_SECRET?.trim() ?? "",
+    refreshToken: environment.EBAY_SELLER_REFRESH_TOKEN?.trim() ?? "",
+  }
+  if (generic.clientId && generic.clientSecret && generic.refreshToken) {
+    return { ...generic, source: "GENERIC_READONLY" }
+  }
+
+  // Seller OS already isolates the real publication credential set under the
+  // DRAFT_ONLY_PRODUCTION names. Reusing that complete triplet for GetUser and
+  // GetItem read-only probes keeps Same-Day on the same verified eBay account
+  // when the legacy generic read-only variables are absent. Never combine
+  // values from the two families.
+  const production = {
+    clientId:
+      environment.EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID?.trim() ?? "",
+    clientSecret:
+      environment.EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET?.trim() ?? "",
+    refreshToken:
+      environment.EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN?.trim() ?? "",
+  }
+  if (
+    production.clientId &&
+    production.clientSecret &&
+    production.refreshToken
+  ) {
+    return { ...production, source: "DRAFT_ONLY_PRODUCTION" }
+  }
+
+  return {
+    clientId: "",
+    clientSecret: "",
+    refreshToken: "",
+    source: "NONE",
+  }
 }
 
 function decodeXml(value: string) {
@@ -268,9 +316,8 @@ async function getTradingAccessToken(
   if (useCache && cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
     return cachedToken.value
   }
-  const clientId = process.env.EBAY_CLIENT_ID?.trim() ?? ""
-  const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim() ?? ""
-  const refreshToken = process.env.EBAY_SELLER_REFRESH_TOKEN?.trim() ?? ""
+  const { clientId, clientSecret, refreshToken } =
+    tradingReadOnlyCredentials()
   if (!clientId || !clientSecret || !refreshToken) {
     throw new Error("EBAY_TRADING_READONLY_NOT_CONFIGURED")
   }
@@ -419,12 +466,10 @@ async function tradingRead(
 
 export function getTradingManualListingReadonlyConfiguration() {
   const identity = getEbayProductionIdentityBindingConfiguration()
+  const credentials = tradingReadOnlyCredentials()
   return {
-    configured: Boolean(
-      process.env.EBAY_CLIENT_ID?.trim() &&
-      process.env.EBAY_CLIENT_SECRET?.trim() &&
-      process.env.EBAY_SELLER_REFRESH_TOKEN?.trim()
-    ),
+    configured: credentials.source !== "NONE",
+    credentialSource: credentials.source,
     environment: "PRODUCTION" as const,
     identityBound: identity.bound,
     identityConfigurationConsistent: identity.consistent,
@@ -442,6 +487,7 @@ function maskEbayUserId(userId: string) {
 
 type ProbeOptions = {
   allowConfiguredFingerprintMismatch?: boolean
+  bypassIdentityConsistencyForRescue?: boolean
 }
 
 export async function probeEbayProductionIdentityReadOnly(
@@ -472,10 +518,13 @@ export async function probeEbayProductionIdentityReadOnly(
     identity.expectedAccountFingerprint &&
     identity.expectedUserId,
   )
+  const bypassIdentityConsistencyForRescue =
+    options.bypassIdentityConsistencyForRescue === true
   if (
-    !identity.configuredFingerprintValid ||
-    !identity.expectedUserIdValid ||
-    (!identity.consistent && !allowConfiguredFingerprintMismatch)
+    !bypassIdentityConsistencyForRescue &&
+    (!identity.configuredFingerprintValid ||
+      !identity.expectedUserIdValid ||
+      (!identity.consistent && !allowConfiguredFingerprintMismatch))
   ) {
     throw new Error("EBAY_TRADING_CONFIGURED_FINGERPRINT_MISMATCH")
   }
