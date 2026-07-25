@@ -333,6 +333,7 @@ async function loadFinalPublicationContext(
     throw new Error("EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_REQUIRED")
   }
   const effectiveOpportunity = sameDayContext.opportunity
+  const allowedPackageStatuses = new Set(["draft", "ready_for_review", "approved"])
   if (
     !runtime.enabled
     || !runtime.configured
@@ -341,13 +342,7 @@ async function loadFinalPublicationContext(
     || execution.target !== "PRODUCTION"
     || !accountKey
     || listingPackage.account_key !== accountKey
-    || (
-      listingPackage.status !== "approved"
-      && !(
-        options.allowRejectedCategoryRepairDraftStatus === true
-        && listingPackage.status === "draft"
-      )
-    )
+    || !allowedPackageStatuses.has(text(listingPackage.status))
     || effectiveOpportunity.supplier_available !== true
     || Number(effectiveOpportunity.supplier_inventory_quantity) < 1
   ) throw new Error("EBAY_FINAL_PUBLICATION_SCOPE_OR_STOCK_INVALID")
