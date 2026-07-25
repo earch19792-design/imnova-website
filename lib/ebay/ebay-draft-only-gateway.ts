@@ -24,6 +24,8 @@ const EBAY_ACCEPT_LANGUAGE = "en-US"
 export type EbayDraftOnlyTarget = "SANDBOX" | "PRODUCTION"
 
 export const EBAY_FINAL_PUBLISH_CONFIRMATION = "PUBLICAR LISTING EN EBAY"
+export const EBAY_REJECTED_CATEGORY_REPAIR_CONFIRMATION =
+  "REPARAR CATEGORIA OFICIAL SIN PUBLICAR"
 
 type GatewayConfig = {
   enabled: boolean
@@ -412,7 +414,12 @@ function assertAllowedInventoryWrite(config: GatewayConfig, url: URL, method: st
   }
   const inventoryItem = method === "PUT" && /^\/sell\/inventory\/v1\/inventory_item\/[^/]+$/.test(url.pathname)
   const createOffer = method === "POST" && url.pathname === "/sell/inventory/v1/offer"
-  if (url.origin !== config.apiOrigin || (!inventoryItem && !createOffer)) {
+  const updateOffer = method === "PUT"
+    && /^\/sell\/inventory\/v1\/offer\/[^/]+$/.test(url.pathname)
+  if (
+    url.origin !== config.apiOrigin
+    || (!inventoryItem && !createOffer && !updateOffer)
+  ) {
     throw new Error("EBAY_DRAFT_ONLY_ENDPOINT_BLOCKED")
   }
   if (url.pathname.includes("publish_offer") || url.pathname.includes("withdraw_offer")) {
@@ -1286,6 +1293,226 @@ export async function verifyEbayUnpublishedOffer(
     expectedMarketplaceId,
     fetchImpl,
   )
+}
+
+function exactJsonShape(left: unknown, right: unknown) {
+  return containsExpected(left, right) && containsExpected(right, left)
+}
+
+function categoryOnlyOfferReplacement(
+  currentPayload: JsonRecord,
+  replacementPayload: JsonRecord,
+) {
+  const currentCategoryId = typeof currentPayload.categoryId === "string"
+    ? currentPayload.categoryId.trim()
+    : ""
+  const replacementCategoryId =
+    typeof replacementPayload.categoryId === "string"
+      ? replacementPayload.categoryId.trim()
+      : ""
+  if (
+    !/^\d{1,12}$/.test(currentCategoryId)
+    || !/^\d{1,12}$/.test(replacementCategoryId)
+    || currentCategoryId === replacementCategoryId
+  ) return false
+  return exactJsonShape(
+    { ...currentPayload, categoryId: replacementCategoryId },
+    replacementPayload,
+  )
+}
+
+async function verifyUnpublishedOfferPayloadWithToken(
+  config: GatewayConfig,
+  token: string,
+  offerId: string,
+  expectedSku: string,
+  expectedPayload: JsonRecord,
+  fetchImpl: typeof fetch,
+) {
+  const identity = await verifyOfferWithToken(
+    config,
+    token,
+    offerId,
+    expectedSku,
+    "EBAY_US",
+    fetchImpl,
+  )
+  if (!identity.safe) {
+    return {
+      ...identity,
+      payloadMatches: false,
+    }
+  }
+  const url = new URL(
+    `/sell/inventory/v1/offer/${encodeURIComponent(offerId)}`,
+    config.apiOrigin,
+  )
+  const result = await preflightRead(config, token, url, fetchImpl)
+  const payloadMatches = result.ok
+    && result.body.status === "UNPUBLISHED"
+    && !Object.prototype.hasOwnProperty.call(result.body, "listing")
+    && !Object.prototype.hasOwnProperty.call(result.body, "listingId")
+    && containsExpected(result.body, expectedPayload)
+  return {
+    ...identity,
+    safe: identity.safe && payloadMatches,
+    httpStatus: result.status,
+    payloadMatches,
+    blocker: payloadMatches
+      ? ""
+      : "EBAY_OFFER_REPAIR_PAYLOAD_VERIFICATION_FAILED",
+  }
+}
+
+/**
+ * Repairs one known-invalid category on an existing UNPUBLISHED Offer.
+ *
+ * This path can only replace categoryId, performs at most one PUT, never calls
+ * publishOffer, and reconciles an unknown PUT outcome with bounded GET reads.
+ */
+export async function updateEbayRejectedCategoryOnUnpublishedOfferOnce(input: {
+  offerId: string
+  expectedSku: string
+  publicationControlId: string
+  expectedCurrentPayload: JsonRecord
+  replacementPayload: JsonRecord
+  confirmRepair: string
+}, fetchImpl: typeof fetch = fetch) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  const offerId = sanitizeEbayOfferId(input.offerId)
+  const expectedSku = typeof input.expectedSku === "string"
+    ? input.expectedSku.trim()
+    : ""
+  if (
+    config.target !== "PRODUCTION"
+    || input.confirmRepair !== EBAY_REJECTED_CATEGORY_REPAIR_CONFIRMATION
+    || !offerId
+    || !isCanonicalEbayPackageSku(expectedSku)
+    || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(input.publicationControlId)
+    || input.expectedCurrentPayload.sku !== expectedSku
+    || input.replacementPayload.sku !== expectedSku
+    || input.expectedCurrentPayload.marketplaceId !== "EBAY_US"
+    || input.replacementPayload.marketplaceId !== "EBAY_US"
+    || !categoryOnlyOfferReplacement(
+      input.expectedCurrentPayload,
+      input.replacementPayload,
+    )
+  ) throw new Error("EBAY_OFFER_CATEGORY_REPAIR_AUTHORIZATION_INVALID")
+
+  const token = await accessToken(config, fetchImpl)
+  const replacementVerification =
+    await verifyUnpublishedOfferPayloadWithToken(
+      config,
+      token,
+      offerId,
+      expectedSku,
+      input.replacementPayload,
+      fetchImpl,
+    )
+  if (replacementVerification.safe) {
+    return {
+      ok: true,
+      status: replacementVerification.httpStatus,
+      outcomeKnown: true,
+      reconciled: true,
+      writeAttempted: false,
+      publishRequestSent: false,
+      blocker: "",
+      body: { alreadyRepaired: true },
+    }
+  }
+
+  const currentVerification = await verifyUnpublishedOfferPayloadWithToken(
+    config,
+    token,
+    offerId,
+    expectedSku,
+    input.expectedCurrentPayload,
+    fetchImpl,
+  )
+  if (!currentVerification.safe) {
+    return {
+      ok: false,
+      status: currentVerification.httpStatus,
+      outcomeKnown: true,
+      reconciled: false,
+      writeAttempted: false,
+      publishRequestSent: false,
+      blocker: currentVerification.blocker
+        || "EBAY_OFFER_CATEGORY_REPAIR_STATE_CHANGED",
+      body: {},
+    }
+  }
+
+  const url = new URL(
+    `/sell/inventory/v1/offer/${encodeURIComponent(offerId)}`,
+    config.apiOrigin,
+  )
+  // updateOffer is attempted exactly once. A retry after a timeout could
+  // overwrite a seller-side edit; bounded GET reconciliation is used instead.
+  const updateResult = await write(
+    config,
+    token,
+    url,
+    "PUT",
+    input.replacementPayload,
+    fetchImpl,
+  )
+  if (!updateResult.ok && updateResult.outcomeKnown) {
+    return {
+      ...updateResult,
+      reconciled: false,
+      writeAttempted: true,
+      publishRequestSent: false,
+      blocker: "EBAY_OFFER_CATEGORY_REPAIR_REJECTED",
+    }
+  }
+
+  let verification: Awaited<
+    ReturnType<typeof verifyUnpublishedOfferPayloadWithToken>
+  > | null = null
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 200 * attempt))
+    }
+    verification = await verifyUnpublishedOfferPayloadWithToken(
+      config,
+      token,
+      offerId,
+      expectedSku,
+      input.replacementPayload,
+      fetchImpl,
+    )
+    if (verification.safe) break
+  }
+  if (verification?.safe) {
+    return {
+      ok: true,
+      status: updateResult.status || verification.httpStatus,
+      outcomeKnown: true,
+      reconciled: !updateResult.ok,
+      writeAttempted: true,
+      publishRequestSent: false,
+      blocker: "",
+      body: {
+        verifiedAfterUpdate: true,
+        boundedReadAttempts: 3,
+      },
+    }
+  }
+  return {
+    ok: false,
+    status: updateResult.status || verification?.httpStatus || 0,
+    outcomeKnown: false,
+    reconciled: false,
+    writeAttempted: true,
+    publishRequestSent: false,
+    blocker: "EBAY_OFFER_CATEGORY_REPAIR_OUTCOME_UNKNOWN",
+    body: {
+      boundedReadAttempts: 3,
+      lastVerificationBlocker: verification?.blocker ?? null,
+    },
+  }
 }
 
 export async function discoverEbayUnpublishedOfferBySku(

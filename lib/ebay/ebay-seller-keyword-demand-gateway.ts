@@ -254,13 +254,31 @@ function retryDelay(response: Response, attempt: number) {
 }
 
 async function getApplicationToken(scope: string) {
-  const cached = tokenCache.get(scope)
-  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token
-  const clientId = process.env.EBAY_CLIENT_ID?.trim() ?? ""
-  const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim() ?? ""
-  if (!clientId || !clientSecret) {
+  // Taxonomy/Browse in the Production publication workspace must use one
+  // complete credential family. Preview intentionally has no generic eBay
+  // application credentials, so prefer the dedicated Production application
+  // pair and only fall back to the generic read-only pair when the dedicated
+  // pair is entirely absent. Never combine one value from each family.
+  const dedicatedClientId =
+    process.env.EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID?.trim() ?? ""
+  const dedicatedClientSecret =
+    process.env.EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET?.trim() ?? ""
+  const genericClientId = process.env.EBAY_CLIENT_ID?.trim() ?? ""
+  const genericClientSecret = process.env.EBAY_CLIENT_SECRET?.trim() ?? ""
+  const dedicatedComplete = Boolean(
+    dedicatedClientId && dedicatedClientSecret,
+  )
+  const genericComplete = Boolean(genericClientId && genericClientSecret)
+  const clientId = dedicatedComplete ? dedicatedClientId : genericClientId
+  const clientSecret = dedicatedComplete
+    ? dedicatedClientSecret
+    : genericClientSecret
+  if (!dedicatedComplete && !genericComplete) {
     throw new Error("EBAY_READONLY_ENV_MISSING")
   }
+  const cacheKey = `${scope}:${cacheFingerprint(clientId)}`
+  const cached = tokenCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token
   const credentials = Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")
   for (let attempt = 0; attempt < EBAY_MAX_RETRIES; attempt += 1) {
     try {
@@ -279,7 +297,7 @@ async function getApplicationToken(scope: string) {
         const accessToken = text(payload.access_token)
         if (!accessToken) throw new Error("EBAY_OAUTH_TOKEN_MISSING")
         const expiresIn = Math.max(120, numberOrNull(payload.expires_in) ?? 7_200)
-        tokenCache.set(scope, {
+        tokenCache.set(cacheKey, {
           token: accessToken,
           expiresAt: Date.now() + expiresIn * 1_000,
         })

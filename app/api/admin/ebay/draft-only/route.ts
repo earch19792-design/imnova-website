@@ -10,6 +10,7 @@ import {
   createOrReplaceEbayDraftInventoryItem,
   discoverEbayUnpublishedOfferBySku,
   EBAY_FINAL_PUBLISH_CONFIRMATION,
+  EBAY_REJECTED_CATEGORY_REPAIR_CONFIRMATION,
   ebayDraftOnlyRuntimeStatus,
   inspectEbayDraftSkuState,
   preflightEbayDraftDependencies,
@@ -17,6 +18,7 @@ import {
   preflightEbayDraftSkuCollision,
   publishEbayOfferOnce,
   sanitizeEbayOfferId,
+  updateEbayRejectedCategoryOnUnpublishedOfferOnce,
   verifyEbayDraftInventoryItem,
   verifyEbayPublishedOffer,
   verifyEbayUnpublishedOffer,
@@ -33,6 +35,9 @@ import {
   type EbayDraftOnlyTarget,
   type JsonRecord,
 } from "@/lib/ebay/ebay-draft-only-readiness"
+import {
+  inspectRejectedCategoryRepair,
+} from "@/lib/ebay/ebay-rejected-category-repair"
 import { isCanonicalEbayPackageSku } from "@/lib/ebay/ebay-sku"
 import {
   canRetireSupersededSkuPreflight,
@@ -771,11 +776,14 @@ export async function GET(req: Request) {
     const { data: publication, error: publicationError } = ledger?.id
       ? await supabase
         .from("ebay_authorized_listing_publications")
-        .select("id,phase,offer_id,sku,preview_hash,preview,listing_id,publish_http_status,published_at,verified_active_at,monitor_registered_at,last_error_code,updated_at")
+        .select("id,phase,offer_id,sku,preview_hash,preview,listing_id,publish_http_status,publish_attempt_count,publish_recovery_count,published_at,verified_active_at,monitor_registered_at,last_error_code,sanitized_result,updated_at")
         .eq("draft_execution_id", ledger.id)
         .maybeSingle()
       : { data: null, error: null }
     if (publicationError) throw new Error("EBAY_FINAL_PUBLICATION_READ_FAILED")
+    const categoryRepair = inspectRejectedCategoryRepair(
+      publication as JsonRecord | null,
+    )
     return NextResponse.json({
       success: true,
       visualPublicationGate,
@@ -783,6 +791,12 @@ export async function GET(req: Request) {
       approval: latestApproval ? { ...latestApproval, approved_payload: undefined } : null,
       execution: ledger,
       publication,
+      categoryRepair: {
+        ...categoryRepair,
+        exactConfirmation: EBAY_REJECTED_CATEGORY_REPAIR_CONFIRMATION,
+        offerUpdateOnly: true,
+        publishOfferAllowed: false,
+      },
       runtime,
       approvalRequirements: {
         exactPhrase: ebayDraftOnlyApprovalPhrase(target),
@@ -830,6 +844,9 @@ export async function POST(req: Request) {
     if (action === "execute") return executeDraft(body, auth.actor)
     if (action === "prepare_publish") return prepareFinalPublication(body, auth.actor)
     if (action === "publish") return publishFinalPublication(body, auth.actor)
+    if (action === "repair_rejected_category") {
+      return repairRejectedOfferCategory(body, auth.actor)
+    }
     if (action === "rearm_publish") return rearmFinalPublication(body, auth.actor)
     if (action === "reconcile_publish") return reconcileFinalPublication(body, auth.actor)
     if (action === "revoke") return revokeApproval(body, auth.actor)
@@ -2144,6 +2161,267 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     publication: published as JsonRecord,
     context,
     listingId: publishResult.listingId,
+  })
+}
+
+function taxonomyAspectHasValue(
+  aspects: JsonRecord,
+  aspectName: string,
+) {
+  const value = aspects[aspectName]
+  return Array.isArray(value)
+    ? value.some((item) => text(item))
+    : Boolean(text(value))
+}
+
+async function repairRejectedOfferCategory(
+  body: JsonRecord,
+  actor: string,
+) {
+  const publicationId = uuid(body.publicationId)
+  if (
+    !publicationId
+    || body.confirmRepair !== EBAY_REJECTED_CATEGORY_REPAIR_CONFIRMATION
+    || body.confirmNoPublish !== true
+    || body.confirmProductionAccount !== true
+  ) {
+    return jsonError(
+      new Error("EBAY_REJECTED_CATEGORY_REPAIR_CONFIRMATION_REQUIRED"),
+      409,
+    )
+  }
+
+  const supabase = getSupabaseAdminClient()
+  const { data: publication, error: publicationError } = await supabase
+    .from("ebay_authorized_listing_publications")
+    .select("*")
+    .eq("id", publicationId)
+    .eq("actor_user_id", actor)
+    .maybeSingle()
+  if (publicationError || !publication) {
+    return jsonError(new Error("EBAY_FINAL_PUBLICATION_NOT_FOUND"), 404)
+  }
+  const eligibility = inspectRejectedCategoryRepair(
+    publication as JsonRecord,
+  )
+  if (!eligibility.eligible || !eligibility.oldCategoryId) {
+    return jsonError(
+      new Error("EBAY_REJECTED_CATEGORY_REPAIR_NOT_ELIGIBLE"),
+      409,
+    )
+  }
+
+  const visualPublicationGate = await loadFinalListingReviewPublicationGate({
+    supabase,
+    listingPackageId: text(publication.listing_package_id),
+    actorId: actor,
+  })
+  if (!visualPublicationGate.allowed) {
+    throw new Error(
+      visualPublicationGate.reason ?? "FINAL_LISTING_REVIEW_NOT_READY",
+    )
+  }
+
+  const context = await loadFinalPublicationContext(
+    supabase,
+    text(publication.draft_execution_id),
+    actor,
+  )
+  const currentBuilt = buildFinalPublicationPreview(
+    context.approval,
+    context.execution,
+  )
+  const currentApprovedPayload = record(context.approval.approved_payload)
+  const currentOfferPayload = record(currentApprovedPayload.offerPayload)
+  const packageData = record(context.listingPackage.package_data)
+  if (
+    currentBuilt.previewHash !== text(publication.preview_hash)
+    || text(currentOfferPayload.categoryId) !== eligibility.oldCategoryId
+    || text(packageData.categoryId) !== eligibility.oldCategoryId
+    || text(currentBuilt.preview.offerPayload
+      && record(currentBuilt.preview.offerPayload).categoryId)
+      !== eligibility.oldCategoryId
+  ) {
+    return jsonError(
+      new Error("EBAY_REJECTED_CATEGORY_REPAIR_CHAIN_CHANGED"),
+      409,
+    )
+  }
+
+  await revalidateFinalPublicationDependencies(currentApprovedPayload)
+  const inventoryItemPayload = record(
+    currentApprovedPayload.inventoryItemPayload,
+  )
+  const product = record(inventoryItemPayload.product)
+  const title = text(product.title) || text(packageData.title)
+  if (!title) {
+    return jsonError(
+      new Error("EBAY_REJECTED_CATEGORY_REPAIR_TITLE_REQUIRED"),
+      409,
+    )
+  }
+
+  // Resolve a fresh current leaf from official eBay Taxonomy. Supplying no
+  // known category is intentional: error 25005 already proved that the stored
+  // category cannot be trusted.
+  const taxonomy = await getEbayTaxonomyListingIntelligence(title, null)
+  const newCategoryId = text(taxonomy.categoryId)
+  const newCategoryName = text(taxonomy.categoryName)
+  const categoryTreeId = text(taxonomy.categoryTreeId)
+  const categoryTreeVersion = text(taxonomy.categoryTreeVersion)
+  const taxonomyObservedAt = text(taxonomy.observedAt)
+  if (
+    taxonomy.status !== "AVAILABLE"
+    || taxonomy.taxonomyMarketplaceId !== "EBAY_US"
+    || !["TITLE_SUGGESTION", "TITLE_SUGGESTION_FALLBACK"]
+      .includes(taxonomy.categoryResolution)
+    || !/^\d{1,12}$/.test(newCategoryId)
+    || newCategoryId === eligibility.oldCategoryId
+    || !newCategoryName
+    || !/^\d{1,12}$/.test(categoryTreeId)
+    || !categoryTreeVersion
+    || !Number.isFinite(Date.parse(taxonomyObservedAt))
+  ) {
+    return jsonError(
+      new Error("EBAY_REJECTED_CATEGORY_OFFICIAL_REPLACEMENT_UNAVAILABLE"),
+      409,
+    )
+  }
+
+  const productAspects = record(product.aspects)
+  const missingRequiredAspects = taxonomy.requiredAspects
+    .map((aspect) => text(aspect.name))
+    .filter((name) => name && !taxonomyAspectHasValue(productAspects, name))
+  if (missingRequiredAspects.length) {
+    return jsonError(
+      new Error("EBAY_REJECTED_CATEGORY_REPAIR_ASPECTS_REQUIRED"),
+      409,
+      missingRequiredAspects.map((name) =>
+        `ITEM_SPECIFIC_REQUIRED:${name}`),
+    )
+  }
+
+  const currentCompliance = record(currentApprovedPayload.compliance)
+  const replacementOfferPayload: JsonRecord = {
+    ...currentOfferPayload,
+    categoryId: newCategoryId,
+  }
+  const replacementApprovedPayload: JsonRecord = {
+    ...currentApprovedPayload,
+    offerPayload: replacementOfferPayload,
+    compliance: {
+      ...currentCompliance,
+      aspectValidation: {
+        validated: true,
+        validatedAt: taxonomyObservedAt,
+        categoryId: newCategoryId,
+        categoryTreeId,
+        categoryTreeVersion,
+        taxonomyMarketplaceId: taxonomy.taxonomyMarketplaceId,
+        categoryResolution: taxonomy.categoryResolution,
+        requiredAspects: taxonomy.requiredAspects
+          .map((aspect) => text(aspect.name))
+          .filter(Boolean),
+        aspectConstraints: taxonomy.aspects,
+        constraintSnapshotStatus: "AVAILABLE",
+        source: taxonomy.source,
+      },
+    },
+  }
+  const replacementPayloadHash = hashEbayDraftOnlyPayload(
+    replacementApprovedPayload,
+  )
+  const replacementApproval: JsonRecord = {
+    ...context.approval,
+    approved_payload: replacementApprovedPayload,
+    payload_hash: replacementPayloadHash,
+  }
+  const replacementExecution: JsonRecord = {
+    ...context.execution,
+    request_hash: replacementPayloadHash,
+  }
+  const replacementBuilt = buildFinalPublicationPreview(
+    replacementApproval,
+    replacementExecution,
+  )
+
+  const updateResult =
+    await updateEbayRejectedCategoryOnUnpublishedOfferOnce({
+      offerId: currentBuilt.offerId,
+      expectedSku: currentBuilt.sku,
+      publicationControlId: publicationId,
+      expectedCurrentPayload: currentOfferPayload,
+      replacementPayload: replacementOfferPayload,
+      confirmRepair: text(body.confirmRepair),
+    })
+  if (!updateResult.ok) {
+    return jsonError(
+      new Error(
+        updateResult.blocker || "EBAY_OFFER_CATEGORY_REPAIR_FAILED",
+      ),
+      updateResult.outcomeKnown ? 409 : 503,
+    )
+  }
+
+  const { data: repaired, error: repairError } = await supabase
+    .rpc("repair_rejected_ebay_offer_category_once", {
+      p_publication_id: publicationId,
+      p_actor_user_id: actor,
+      p_confirmation: text(body.confirmRepair),
+      p_old_category_id: eligibility.oldCategoryId,
+      p_new_category_id: newCategoryId,
+      p_new_category_name: newCategoryName,
+      p_taxonomy_tree_id: categoryTreeId,
+      p_taxonomy_tree_version: categoryTreeVersion,
+      p_taxonomy_observed_at: taxonomyObservedAt,
+      p_category_resolution: taxonomy.categoryResolution,
+      p_new_payload_hash: replacementPayloadHash,
+      p_new_approved_payload: replacementApprovedPayload,
+      p_new_preview_hash: replacementBuilt.previewHash,
+      p_new_preview: replacementBuilt.preview,
+      p_ebay_update_http_status: updateResult.status,
+      p_ebay_update_reconciled: updateResult.reconciled === true,
+      p_ebay_write_attempted: updateResult.writeAttempted === true,
+    })
+    .single()
+  if (repairError || !repaired) {
+    throw new Error(databaseExceptionCode(
+      repairError,
+      "EBAY_REJECTED_CATEGORY_REPAIR_PERSIST_FAILED",
+    ))
+  }
+
+  return NextResponse.json({
+    success: true,
+    publication: repaired,
+    taxonomy,
+    categoryRepair: {
+      eligible: false,
+      applied: true,
+      oldCategoryId: eligibility.oldCategoryId,
+      newCategoryId,
+      newCategoryName,
+      auditPersisted: true,
+      offerPayloadVerified: true,
+    },
+    publicationRequirements: {
+      exactConfirmPublish: EBAY_FINAL_PUBLISH_CONFIRMATION,
+      finalPreviewRequired: true,
+      productionAccountConfirmationRequired: true,
+      publishOfferCallsAllowed: 1,
+      promotionsAllowed: false,
+      volumePricingAllowed: false,
+    },
+    safety: {
+      target: "PRODUCTION",
+      offerId: currentBuilt.offerId,
+      offerStatus: "UNPUBLISHED",
+      offerUpdated: updateResult.writeAttempted === true,
+      offerUpdateReconciled: updateResult.reconciled === true,
+      publishOfferCalled: false,
+      listingCreated: false,
+      correctedPreviewReady: true,
+    },
   })
 }
 

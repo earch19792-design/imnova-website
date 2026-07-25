@@ -191,6 +191,19 @@ type DraftState = {
     monitor_registered_at?: string | null
     last_error_code?: string | null
   } | null
+  categoryRepair?: {
+    eligible: boolean
+    applied?: boolean
+    errorId?: string | null
+    oldCategoryId?: string | null
+    newCategoryId?: string | null
+    newCategoryName?: string | null
+    exactConfirmation?: string
+    offerUpdateOnly?: boolean
+    publishOfferAllowed?: boolean
+    auditPersisted?: boolean
+    offerPayloadVerified?: boolean
+  }
   runtime?: {
     enabled: boolean
     configured: boolean
@@ -689,6 +702,11 @@ function humanFinalPublicationError(error: unknown) {
     ["EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_CHANGED", "El candidato o su paquete cambió después de la aprobación. Reabre el producto exacto y autoriza un preview nuevo."],
     ["EBAY_FINAL_PUBLICATION_RECONCILIATION_REQUIRED", "La llamada de publicación ya fue reclamada. Usa “Verificar ACTIVE”; Seller OS no repetirá publishOffer."],
     ["EBAY_FINAL_PUBLICATION_PREVIEW_CHANGED", "El preview cambió después de tu autorización. Prepara y revisa uno nuevo antes de publicar."],
+    ["EBAY_REJECTED_CATEGORY_OFFICIAL_REPLACEMENT_UNAVAILABLE", "eBay confirmó que la categoría anterior es inválida, pero Taxonomy todavía no devolvió una categoría hoja vigente y verificable. No se modificó ni publicó el Offer."],
+    ["EBAY_REJECTED_CATEGORY_REPAIR_ASPECTS_REQUIRED", "La categoría oficial exige Item Specifics que aún no están confirmados. Seller OS no modificó el Offer; completa los campos indicados y vuelve a intentar."],
+    ["EBAY_OFFER_CATEGORY_REPAIR_REJECTED", "eBay rechazó la corrección de categoría. El Offer continúa sin publicar y el incidente quedó detenido para revisión."],
+    ["EBAY_OFFER_CATEGORY_REPAIR_OUTCOME_UNKNOWN", "No se pudo confirmar el resultado de la actualización del Offer. Seller OS no publicará ni repetirá la escritura hasta reconciliarlo por lectura."],
+    ["EBAY_REJECTED_CATEGORY_REPAIR_PERSIST_FAILED", "eBay aceptó o ya tenía la categoría corregida, pero faltó cerrar el registro interno. Pulsa nuevamente la misma corrección: sólo reconciliará el Offer, sin publicar."],
   ]
   return messages.find(([candidate]) => code.includes(candidate))?.[1]
     ?? getMobileReviewRequestError(error, "No se pudo completar la publicación autorizada.")
@@ -3533,6 +3551,86 @@ function ListingWorkspacePageContent() {
     } finally { setDraftBusy(false) }
   }
 
+  async function repairRejectedCategory() {
+    const publicationId = draftState.publication?.id
+    const confirmation = draftState.categoryRepair?.exactConfirmation
+    if (!publicationId || !confirmation) return
+    setDraftBusy(true)
+    setError("")
+    setMessage(
+      "Consultando Taxonomy y corrigiendo únicamente la categoría del mismo Offer UNPUBLISHED…",
+    )
+    try {
+      const payload = await draftRequest({
+        action: "repair_rejected_category",
+        publicationId,
+        confirmRepair: confirmation,
+        confirmNoPublish: true,
+        confirmProductionAccount: true,
+      })
+      const taxonomy = payload.taxonomy as DraftState["taxonomy"]
+      const newCategoryId = String(
+        payload.categoryRepair?.newCategoryId
+          ?? taxonomy?.categoryId
+          ?? "",
+      )
+      const newCategoryName = String(
+        payload.categoryRepair?.newCategoryName
+          ?? taxonomy?.categoryName
+          ?? "",
+      )
+      setDraftState((current) => ({
+        ...current,
+        publication: payload.publication,
+        taxonomy,
+        categoryRepair: payload.categoryRepair,
+        publicationRequirements:
+          payload.publicationRequirements
+          ?? current.publicationRequirements,
+      }))
+      if (newCategoryId) {
+        setForm((current) => ({
+          ...current,
+          categoryId: newCategoryId,
+          categoryName: newCategoryName || current.categoryName,
+        }))
+        setListingPackage((current) => current ? {
+          ...current,
+          package_data: {
+            ...current.package_data,
+            categoryId: newCategoryId,
+            categoryName: newCategoryName,
+          },
+        } : current)
+      }
+      setPublishConfirmation("")
+      setConfirmFinalPublication(false)
+      setConfirmPublishProductionAccount(false)
+      setMessage(
+        `Categoría corregida a ${newCategoryId}${newCategoryName
+          ? ` · ${newCategoryName}`
+          : ""}. El mismo Offer sigue UNPUBLISHED; revisa el preview corregido y autoriza el último paso.`,
+      )
+    } catch (requestError) {
+      const blockers = (
+        requestError as Error & { blockers?: string[] }
+      ).blockers ?? []
+      setError(
+        blockers.length
+          ? `${humanFinalPublicationError(requestError)} ${blockers
+            .map((blocker) => humanWorkspaceBlocker(
+              blocker,
+              form.pricing.minimumProfitablePrice,
+            ))
+            .join(" ")}`
+          : humanFinalPublicationError(requestError),
+      )
+      setMessage("")
+    } finally {
+      setDraftBusy(false)
+    }
+  }
+
   async function reconcileFinalListing() {
     if (!draftState.publication?.id) return
     setDraftBusy(true); setError(""); setMessage("Reconciliando por lectura; no se volverá a llamar publishOffer…")
@@ -4192,7 +4290,7 @@ function ListingWorkspacePageContent() {
             {publicationPhase === "preview_ready" && <div className="space-y-3 rounded-2xl border border-amber-200/35 bg-amber-200/[0.07] p-3"><div><p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Preview final persistido</p><h3 className="mt-1 font-black">{String(publicationProduct.title ?? "Título pendiente")}</h3><p className="mt-2 text-xs text-white/65">SKU: {String(publicationOffer.sku ?? draftState.publication?.sku ?? "")} · Category ID: {String(publicationOffer.categoryId ?? "")} · Cantidad: {String(publicationOffer.availableQuantity ?? "")}</p><p className="mt-1 text-sm font-black">Precio exacto: {String(publicationPrice.currency ?? "USD")} {String(publicationPrice.value ?? "")}</p><p className="mt-1 text-xs text-white/65">Imágenes aprobadas: {Array.isArray(publicationProduct.imageUrls) ? publicationProduct.imageUrls.length : 0} · Location: {String(publicationOffer.merchantLocationKey ?? "")}</p><p className="mt-1 break-all text-[10px] text-white/50">Policies: {String(publicationPolicies.fulfillmentPolicyId ?? "")} · {String(publicationPolicies.paymentPolicyId ?? "")} · {String(publicationPolicies.returnPolicyId ?? "")}</p><p className="mt-2 rounded-xl border border-white/10 p-2 text-xs text-white/60">Sin promociones, Best Offer ni volume pricing. Se publicará exactamente este Offer una sola vez.</p></div><label className="block"><span className="text-sm font-black">Escribe exactamente: {finalPublishPhrase}</span><input value={publishConfirmation} onChange={(event) => setPublishConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmFinalPublication} onChange={(event) => setConfirmFinalPublication(event.target.checked)} />Revisé este preview final, incluidas las siete imágenes V3 y el precio.</label><label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmPublishProductionAccount} onChange={(event) => setConfirmPublishProductionAccount(event.target.checked)} />Confirmo publicar en mi cuenta eBay PRODUCTION y registrar el listing ACTIVE en monitoreo.</label><button type="button" disabled={draftBusy || publishConfirmation !== finalPublishPhrase || !confirmFinalPublication || !confirmPublishProductionAccount} onClick={() => void publishFinalListing()} className="min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Publicar una sola vez en eBay</button></div>}
             {["publish_in_flight", "outcome_unknown", "published_pending_verification"].includes(publicationPhase) && <div className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.07] p-3"><strong>{publicationPhase === "published_pending_verification" ? "Publicado; falta confirmar ACTIVE" : "Resultado de publicación en reconciliación"}</strong><p className="mt-2 text-sm text-white/65">Esta acción sólo consulta eBay y registra monitoreo. Nunca vuelve a llamar publishOffer.</p>{draftState.publication?.listing_id && <a href={`https://www.ebay.com/itm/${draftState.publication.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-sm font-black text-cyan-100 underline">Ver listing {draftState.publication.listing_id}</a>}<button type="button" disabled={draftBusy} onClick={() => void reconcileFinalListing()} className="mt-3 min-h-13 w-full rounded-2xl border border-amber-200/40 px-4 font-black disabled:opacity-40">Verificar ACTIVE y registrar monitoreo</button></div>}
             {publicationPhase === "monitor_registered" && <div className="rounded-2xl border border-emerald-200/35 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y ciclo cerrado</strong><p className="mt-2 text-sm">Item ID {draftState.publication?.listing_id} · monitoreo comercial y disponibilidad Luna registrados.</p><a href={`https://www.ebay.com/itm/${draftState.publication?.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-black underline">Abrir listing en eBay</a></div>}
-            {publicationPhase === "terminal_failure" && <div className="rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-3 text-rose-50"><strong>Publicación detenida sin reintento automático</strong><p className="mt-2 text-sm">{humanFinalPublicationError(new Error(draftState.publication?.last_error_code ?? "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE"))}</p><p className="mt-2 text-xs text-rose-50/70">No publiques manualmente hasta confirmar si eBay recibió la llamada; así se evita duplicar el listing.</p></div>}
+            {publicationPhase === "terminal_failure" && <div className="rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-3 text-rose-50"><strong>{draftState.categoryRepair?.eligible ? "eBay rechazó la categoría; el Offer sigue sin publicar" : "Publicación detenida sin reintento automático"}</strong><p className="mt-2 text-sm">{draftState.categoryRepair?.eligible ? `Inventory API confirmó que Category ID ${draftState.categoryRepair.oldCategoryId ?? ""} ya no es válida. Seller OS puede consultar Taxonomy, actualizar sólo la categoría del mismo Offer y guardar el antes/después para auditoría.` : humanFinalPublicationError(new Error(draftState.publication?.last_error_code ?? "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE"))}</p><p className="mt-2 text-xs text-rose-50/70">{draftState.categoryRepair?.eligible ? "Esta corrección no crea otro Offer, no cambia imágenes, precio, cantidad ni policies y no llama a publishOffer." : "No publiques manualmente hasta confirmar si eBay recibió la llamada; así se evita duplicar el listing."}</p>{draftState.categoryRepair?.eligible && <button type="button" disabled={draftBusy || !draftState.categoryRepair.exactConfirmation} onClick={() => void repairRejectedCategory()} className="mt-3 min-h-14 w-full rounded-2xl bg-amber-200 px-4 font-black text-black disabled:opacity-40">{draftBusy ? "Verificando y corrigiendo…" : "Corregir categoría oficial del mismo Offer · no publica"}</button>}</div>}
           </section>}
 
           <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4">
