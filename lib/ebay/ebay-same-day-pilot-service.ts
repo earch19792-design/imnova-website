@@ -3438,6 +3438,7 @@ export async function previewSameDayPilot(input: {
     { data: monitor, error: monitorError }, productResearchCount,
     { data: monitoredListings, error: monitoredListingError },
     { data: activePublications, error: activePublicationError },
+    { data: legacyPublishedCandidates, error: legacyPublishedCandidateError },
   ] = await Promise.all([
     input.supabase.from("ebay_luna_opportunity_queue").select("*").in("queue_status", ["watchlist", "review", "ready"]).order("opportunity_score", { ascending: false }).limit(70),
     input.supabase.from("ebay_api_quota_states").select("api_family,operation,status,remaining,reserved_budget,available_budget,reset_at,owner_lane"),
@@ -3447,9 +3448,16 @@ export async function previewSameDayPilot(input: {
       .eq("account_key", input.accountKey).in("listing_status", ["active", "paused"]),
     input.supabase.from("ebay_authorized_listing_publications").select("opportunity_id")
       .eq("marketplace_account_key", input.accountKey).neq("phase", "terminal_failure"),
+    input.supabase.from("ebay_same_day_pilot_candidates").select("supplier_variant_id,supplier_sku,market_radar_product_id,family_fingerprint,machine_state,run:ebay_same_day_pilot_runs!inner(id,marketplace_account_key)")
+      .eq("run.marketplace_account_key", input.accountKey)
+      .in("machine_state", [
+        "READY_FOR_MANUAL_PUBLICATION", "WAITING_ITEM_ID",
+        "VERIFYING_PUBLISHED_LISTING", "REGISTERING_COMMERCIAL_MONITOR",
+        "VERIFIED_ACTIVE", "COMPLETED",
+      ]),
   ])
   if (opportunityError || quotaError || monitorError || productResearchCount.error || monitoredListingError
-    || activePublicationError) {
+    || activePublicationError || legacyPublishedCandidateError) {
     throw new Error("SAME_DAY_PILOT_SOURCE_READ_FAILED")
   }
   const excludedOpportunityIds = new Set(
@@ -3512,21 +3520,48 @@ export async function previewSameDayPilot(input: {
   const publicationMonitoredOpportunityIds = new Set((activePublications ?? [])
     .map((row) => text(row.opportunity_id).toLowerCase())
     .filter(Boolean))
+  const legacyPublishedOpportunityIds = new Set((legacyPublishedCandidates ?? [])
+    .map((row) => text(row.opportunity_id).toLowerCase())
+    .filter(Boolean))
+  const legacyPublishedSupplierVariantIds = new Set((legacyPublishedCandidates ?? [])
+    .map((row) => text(row.supplier_variant_id))
+    .filter(Boolean))
+  const legacyPublishedSupplierSkus = new Set((legacyPublishedCandidates ?? [])
+    .flatMap((row) => [text(row.supplier_sku)])
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean))
+  const legacyPublishedFamilyFingerprints = new Set((legacyPublishedCandidates ?? [])
+    .map((row) => text(row.family_fingerprint))
+    .filter(Boolean))
+  const legacyPublishedMarketRadarProductIds = new Set((legacyPublishedCandidates ?? [])
+    .map((row) => text(row.market_radar_product_id))
+    .filter(Boolean))
   const evaluatedCandidates = candidateInputs.map((candidate) =>
     evaluateSameDayCandidate(candidate, now))
   const selected = selectSameDayQueue(candidateInputs, now, {
     opportunityIds: [...new Set([
       ...excludedOpportunityIds,
       ...publicationMonitoredOpportunityIds,
+      ...legacyPublishedOpportunityIds,
     ])],
     candidateKeys: input.excludeCandidateKeys,
-    supplierVariantIds: input.excludeSupplierVariantIds,
+    supplierVariantIds: [...new Set([
+      ...(input.excludeSupplierVariantIds ?? []),
+      ...legacyPublishedSupplierVariantIds,
+    ])],
     supplierSkus: [...new Set([
       ...((input.excludeSupplierSkus ?? []).map((value) => text(value)).filter(Boolean)),
       ...[...monitoredListingBySku],
+      ...[...legacyPublishedSupplierSkus],
     ])],
-    marketRadarProductIds: monitoredListingMarketRadarProductIds,
-    familyFingerprints: input.excludeFamilyFingerprints,
+    marketRadarProductIds: new Set([
+      ...monitoredListingMarketRadarProductIds,
+      ...legacyPublishedMarketRadarProductIds,
+    ]),
+    familyFingerprints: [
+      ...(input.excludeFamilyFingerprints ?? []),
+      ...legacyPublishedFamilyFingerprints,
+    ],
   })
   const effectiveQuotaLanes = (quotas ?? []).map((lane) =>
     projectEffectiveEbayQuotaLane(lane, now))
