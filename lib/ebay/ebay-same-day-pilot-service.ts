@@ -796,13 +796,25 @@ async function currentState(
     const completedRunIds = (carryoverRuns ?? []).filter((candidateRun) =>
       candidateRun.status === "COMPLETED").map((candidateRun) =>
       text(candidateRun.id)).filter(Boolean)
+    const blockedRunIds = (carryoverRuns ?? []).filter((candidateRun) =>
+      candidateRun.status === "BLOCKED").map((candidateRun) =>
+      text(candidateRun.id)).filter(Boolean)
     const { data: completedRunCandidates, error: completedRunCandidateError } =
       completedRunIds.length
         ? await supabase.from("ebay_same_day_pilot_candidates")
           .select("run_id,machine_state").in("run_id", completedRunIds)
         : { data: [], error: null }
+    const { data: blockedRunCandidates, error: blockedRunCandidateError } =
+      blockedRunIds.length
+        ? await supabase.from("ebay_same_day_pilot_candidates")
+          .select("run_id,machine_state,state,blockers,queue_item_id,supplier_variant_id,evidence_summary,economics_summary")
+          .in("run_id", blockedRunIds)
+        : { data: [], error: null }
     if (completedRunCandidateError) {
       throw new Error("SAME_DAY_PILOT_CARRYOVER_CANDIDATE_READ_FAILED")
+    }
+    if (blockedRunCandidateError) {
+      throw new Error("SAME_DAY_PILOT_BLOCKED_RECOVERY_CANDIDATE_READ_FAILED")
     }
     const completedRunStates = new Map<string, string[]>()
     for (const candidate of completedRunCandidates ?? []) {
@@ -811,6 +823,15 @@ async function currentState(
       states.push(text(candidate.machine_state))
       completedRunStates.set(runId, states)
     }
+    const recoverableBlockedRunIds = new Set((blockedRunCandidates ?? [])
+      .filter((candidate) =>
+        text(candidate.machine_state) === "REJECTED" &&
+        text(candidate.state) === "REJECTED_TODAY" &&
+        strings(candidate.blockers).length === 1 &&
+        strings(candidate.blockers)[0] ===
+          "PRODUCT_FACT_CONTROLLED_EXPLORATORY_TARGET_INVALID" &&
+        controlledExploratoryFactsCanContinue(record(candidate), now))
+      .map((candidate) => text(candidate.run_id)))
     run = (carryoverRuns ?? []).find((candidateRun) => {
       if (candidateRun.status === "COMPLETED") {
         return !isSameDayCandidateBatchSettled(
@@ -818,6 +839,7 @@ async function currentState(
         )
       }
       if (candidateRun.status !== "BLOCKED") return true
+      if (recoverableBlockedRunIds.has(text(candidateRun.id))) return true
       const verified = number(candidateRun.verified_new_listings) ?? 0
       const target = number(candidateRun.target_new_listings) ?? 2
       return verified < target &&
