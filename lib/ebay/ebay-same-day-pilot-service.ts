@@ -256,10 +256,16 @@ async function resumeReusableOperatorProductApprovalGate(
   const task = state.tasks.find((entry) =>
     entry.status === "OPEN" &&
     entry.gate_type === "PRODUCT_APPROVAL_REQUIRED")
-  if (!task) return false
-  const candidate = state.candidates.find((entry) =>
-    text(entry.id) === text(task.candidate_id) &&
-    text(entry.machine_state) === "WAITING_PRODUCT_APPROVAL")
+  const otherOpenTask = state.tasks.some((entry) =>
+    entry.status === "OPEN" &&
+    entry.gate_type !== "CRITICAL_EXCEPTION_REQUIRED")
+  if (!task && (otherOpenTask ||
+    visualMarketRecoveryPriorityCandidate(state))) return false
+  const candidate = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .find((entry) =>
+      text(entry.machine_state) === "WAITING_PRODUCT_APPROVAL" &&
+      (!task || text(entry.id) === text(task.candidate_id)))
   if (!candidate || !reusableOperatorProductApproval(candidate, now)) {
     return false
   }
@@ -270,43 +276,62 @@ async function resumeReusableOperatorProductApprovalGate(
   }
   const economics = record(candidate.economics_summary)
   const supplyAdvisory = lunaSupplyFreshnessAdvisory(candidate, now)
-  await completeAndAdvanceHumanGate({
-    supabase,
-    taskId: text(task.id),
-    gateType: "PRODUCT_APPROVAL_REQUIRED",
-    runId: text(state.run.id),
-    candidateId: text(candidate.id),
-    previousState: "WAITING_PRODUCT_APPROVAL",
-    nextState: "GENERATING_LISTING_CONTENT",
-    reasonCode: "DURABLE_PRODUCT_APPROVAL_REUSED_SUPPLY_ALERT_NON_BLOCKING",
-    triggeredBy: "SYSTEM",
+  const checkpoint = {
+    recoveryVersion: DURABLE_PRODUCT_APPROVAL_RECOVERY_VERSION,
+    originalOperatorApprovedAt: economics.operatorApprovedAt ?? null,
+    operatorPriceApproved: true,
+    approvalRepeated: false,
+    supplyFreshnessStatus: supplyAdvisory.status,
+    supplyRecheckRequiredAt: supplyAdvisory.nextRequiredAt,
+    openAiCalls: 0,
+    ebayWrites: 0,
+  }
+  const job = {
+    jobType: "BUILD_MANUAL_SELLER_HUB_HANDOFF",
+    idempotencyKey:
+      `${state.run.id}:${candidate.id}:BUILD_MANUAL_SELLER_HUB_HANDOFF:${factRunId}`,
     checkpoint: {
+      factRunId,
+      priorApprovalPreserved: true,
       recoveryVersion: DURABLE_PRODUCT_APPROVAL_RECOVERY_VERSION,
-      originalOperatorApprovedAt: economics.operatorApprovedAt ?? null,
-      operatorPriceApproved: true,
-      approvalRepeated: false,
       supplyFreshnessStatus: supplyAdvisory.status,
-      supplyRecheckRequiredAt: supplyAdvisory.nextRequiredAt,
       openAiCalls: 0,
       ebayWrites: 0,
     },
-    nextAutomaticAction:
-      "Construir el listing y preparar las imágenes con la aprobación vigente.",
-    nextHumanAction: "Ninguna hasta revisar las imágenes.",
-    job: {
-      jobType: "BUILD_MANUAL_SELLER_HUB_HANDOFF",
-      idempotencyKey:
-        `${state.run.id}:${candidate.id}:BUILD_MANUAL_SELLER_HUB_HANDOFF:${factRunId}`,
-      checkpoint: {
-        factRunId,
-        priorApprovalPreserved: true,
-        recoveryVersion: DURABLE_PRODUCT_APPROVAL_RECOVERY_VERSION,
-        supplyFreshnessStatus: supplyAdvisory.status,
-        openAiCalls: 0,
-        ebayWrites: 0,
-      },
-    },
-  })
+  }
+  if (task) {
+    await completeAndAdvanceHumanGate({
+      supabase,
+      taskId: text(task.id),
+      gateType: "PRODUCT_APPROVAL_REQUIRED",
+      runId: text(state.run.id),
+      candidateId: text(candidate.id),
+      previousState: "WAITING_PRODUCT_APPROVAL",
+      nextState: "GENERATING_LISTING_CONTENT",
+      reasonCode: "DURABLE_PRODUCT_APPROVAL_REUSED_SUPPLY_ALERT_NON_BLOCKING",
+      triggeredBy: "SYSTEM",
+      checkpoint,
+      nextAutomaticAction:
+        "Construir el listing y preparar las imágenes con la aprobación vigente.",
+      nextHumanAction: "Ninguna hasta revisar las imágenes.",
+      job,
+    })
+  } else {
+    await transition({
+      supabase,
+      runId: text(state.run.id),
+      candidateId: text(candidate.id),
+      previousState: "WAITING_PRODUCT_APPROVAL",
+      nextState: "GENERATING_LISTING_CONTENT",
+      reasonCode: "DURABLE_PRODUCT_APPROVAL_REUSED_SUPPLY_ALERT_NON_BLOCKING",
+      triggeredBy: "SYSTEM",
+      checkpoint,
+      nextAutomaticAction:
+        "Construir el listing y preparar las imágenes con la aprobación vigente.",
+      nextHumanAction: "Ninguna hasta revisar las imágenes.",
+      job,
+    })
+  }
   const { error } = await supabase.from("ebay_same_day_pilot_events").upsert({
     run_id: state.run.id,
     candidate_id: candidate.id,
