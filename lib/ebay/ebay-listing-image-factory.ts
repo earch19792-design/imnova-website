@@ -1622,7 +1622,7 @@ function safePromptFacts(facts: EbayListingImageFactoryInput["facts"]) {
 
 function marketVisualDirections(brief: EbayImageMarketBrief | null) {
   if (!brief) {
-    return "No usable aggregate visual evidence is available; production generation must stop before provider dispatch."
+    return "No usable aggregate visual evidence is available; use clean professional marketplace defaults for scenery only and preserve every verified product fact and authorized Luna product pixel."
   }
   const evidencePolicy = resolveEbayImageMarketEvidencePolicy(brief)
   if (evidencePolicy.influenceScope === "PROFESSIONAL_FALLBACK_ONLY") {
@@ -2535,18 +2535,26 @@ export async function composeAuthorizedEbayListingImageSet(
         originalPackagePixelsPreserved: true,
         competitorImageUsed: false,
         verifiedFactsOnly: true,
-        visualEvidenceMode: backgroundPlate
+        visualEvidenceMode: backgroundPlate &&
+          isEbayImageMarketBriefUsable(input.marketVisualBrief)
           ? "MARKET_SIGNAL_PROMPT"
           : "PROFESSIONAL_FALLBACK",
         ...(backgroundPlate ? {
           promptVersion: backgroundPlate.plan.version,
           promptHash: backgroundPlate.plan.promptHash,
+          ...(isEbayImageMarketBriefUsable(input.marketVisualBrief) ? {
           marketSignalHash: sha256Text(JSON.stringify(input.marketVisualBrief)),
           marketSignalConfidence: input.marketVisualBrief?.confidence,
           marketSignalVersion: input.marketVisualBrief?.visualMarketBriefVersion ??
             EBAY_IMAGE_MARKET_BRIEF_VERSION,
           marketSignalObservedAt: input.marketVisualBrief?.observedAt,
           marketSignalFreshUntil: input.marketVisualBrief?.freshUntil,
+          } : {
+            professionalFallbackPolicy: "PROFESSIONAL_FALLBACK_EXPLICIT",
+            professionalFallbackReason:
+              "MARKET_VISUAL_EVIDENCE_UNAVAILABLE_OR_BELOW_THRESHOLD",
+            competitorEvidenceUsed: false,
+          }),
         } : {}),
         productVariantFingerprint: input.identityFingerprint,
         positionRuleHash: sha256Text(JSON.stringify(persistedPanelContract)),
