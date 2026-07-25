@@ -5566,11 +5566,15 @@ async function repairQueryFamilyVisualReconciliationOrphan(
 
 function isDeferredLegacyVisualMarketRecovery(candidate: JsonRecord) {
   const evidence = record(candidate.evidence_summary)
-  return text(evidence.visualMarketRecaptureRecoveryVersion) ===
-    VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION &&
+  return (
+    text(candidate.machine_state) ===
+      "WAITING_PRODUCT_RESEARCH_CAPTURE" &&
+    text(evidence.visualMarketRecaptureRecoveryVersion) ===
+      VISUAL_MARKET_RECAPTURE_RECOVERY_VERSION &&
     text(evidence.visualMarketEvidenceReason) ===
       "SAME_DAY_IMAGE_MARKET_BRIEF_REQUIRED" &&
     text(evidence.visualMarketRecaptureRecoveryOrigin) !== "ACTIVE_IMAGE_JOB"
+  )
 }
 
 const DEFERRED_VISUAL_CAPTURE_GATE_RECOVERY_VERSION =
