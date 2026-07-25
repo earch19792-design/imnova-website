@@ -52,6 +52,14 @@ function cleanAlertTitle(value: unknown) {
   )
 }
 
+function payloadText(
+  row: CommercialWhatsappOutboxRow,
+  key: string,
+  maximum: number,
+) {
+  return sentence(row.payload[key], maximum)
+}
+
 function cleanAlertSummary(row: CommercialWhatsappOutboxRow) {
   const raw = String(row.payload.summary ?? "")
     .replace(/[\u0000-\u001f\u007f]/g, " ")
@@ -87,6 +95,21 @@ function cleanAlertSummary(row: CommercialWhatsappOutboxRow) {
 export function renderCommercialWhatsAppMessage(
   row: CommercialWhatsappOutboxRow,
 ) {
+  const strategicHeadline = payloadText(
+    row,
+    "whatsappHeadline",
+    TEMPLATE_TEXT_BUDGET.title,
+  )
+  const strategicSummary = payloadText(
+    row,
+    "whatsappStrategicSummary",
+    TEMPLATE_TEXT_BUDGET.summary,
+  )
+  const decisionAction = payloadText(
+    row,
+    "whatsappDecisionAction",
+    TEMPLATE_TEXT_BUDGET.action,
+  )
   return {
     deliveryClass: row.delivery_class === "digest"
       ? "digest" as const
@@ -99,12 +122,15 @@ export function renderCommercialWhatsAppMessage(
       TEMPLATE_TEXT_BUDGET.priority,
     ),
     title: templateLine(
-      cleanAlertTitle(row.payload.title),
+      strategicHeadline || cleanAlertTitle(row.payload.title),
       TEMPLATE_TEXT_BUDGET.title,
     ),
-    summary: templateLine(cleanAlertSummary(row), TEMPLATE_TEXT_BUDGET.summary),
+    summary: templateLine(
+      strategicSummary || cleanAlertSummary(row),
+      TEMPLATE_TEXT_BUDGET.summary,
+    ),
     action: templateLine(
-      row.payload.whatsappAction ?? row.payload.action,
+      decisionAction || (row.payload.whatsappAction ?? row.payload.action),
       TEMPLATE_TEXT_BUDGET.action,
     ),
   }
@@ -114,12 +140,26 @@ export function renderCommercialWhatsAppDigest(
   rows: CommercialWhatsappOutboxRow[],
 ) {
   const boundedRows = rows.slice(0, 10)
-  const summaries = boundedRows.map((row, index) =>
-    `${index + 1}. ${cleanAlertTitle(row.payload.title) || "Novedad"}`
-  )
+  const summaries = boundedRows.map((row, index) => {
+    const strategicSummary = payloadText(
+      row,
+      "whatsappStrategicSummary",
+      TEMPLATE_TEXT_BUDGET.summary,
+    )
+    return `${index + 1}. ${strategicSummary || cleanAlertSummary(row)}`
+  })
   const highestSeverity = boundedRows.some((row) => row.severity === "critical")
     ? "high" as const
     : "medium" as const
+  const firstStrategicHeadline = boundedRows
+    .map((row) => payloadText(row, "whatsappHeadline", TEMPLATE_TEXT_BUDGET.title))
+    .find(Boolean)
+  const firstDecisionAction = boundedRows
+    .map((row) => payloadText(row, "whatsappDecisionAction", TEMPLATE_TEXT_BUDGET.action))
+    .find(Boolean)
+  const firstOperationalAction = boundedRows
+    .map((row) => row.payload.whatsappAction ?? row.payload.action)
+    .find((value) => sentence(value, TEMPLATE_TEXT_BUDGET.action))
   const firstReviewUrl = boundedRows
     .map((row) => row.payload.improvementUrl ?? row.payload.actionUrl)
     .find((value) => typeof value === "string" && value.startsWith("https://"))
@@ -131,7 +171,9 @@ export function renderCommercialWhatsAppDigest(
       TEMPLATE_TEXT_BUDGET.priority,
     ),
     title: templateLine(
-      `${boundedRows.length} novedades comerciales`,
+      boundedRows.length === 1 && firstStrategicHeadline
+        ? firstStrategicHeadline
+        : `${boundedRows.length} decisiones comerciales priorizadas`,
       TEMPLATE_TEXT_BUDGET.title,
     ),
     summary: templateLine(
@@ -139,7 +181,9 @@ export function renderCommercialWhatsAppDigest(
       TEMPLATE_TEXT_BUDGET.summary,
     ),
     action: templateLine(
-      `Revisar el resumen y autorizar sólo las acciones necesarias en Seller OS.${firstReviewUrl ? ` ${firstReviewUrl}` : ""}`,
+      firstDecisionAction ||
+        firstOperationalAction ||
+        `Decidir en Seller OS sin ejecutar cambios automáticos.${firstReviewUrl ? ` ${firstReviewUrl}` : ""}`,
       TEMPLATE_TEXT_BUDGET.action,
     ),
   }

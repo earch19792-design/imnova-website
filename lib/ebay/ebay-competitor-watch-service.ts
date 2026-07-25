@@ -602,6 +602,48 @@ async function persistCompetitorAlert(input: {
     throw new Error("COMPETITOR_WATCH_EVENT_WRITE_FAILED")
   }
   const improvementUrl = sellerImprovementUrl(eventId)
+  const whatsappHeadline = priceRecommendation
+    ? "DECISIÓN: revisar precio con ventas confirmadas"
+    : activeMarketPriceRecommendation?.action ===
+        "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"
+      ? "DECISIÓN: mantener precio; protege tu margen"
+      : activeMarketPriceRecommendation
+        ? "DECISIÓN: evaluar precio sin romper margen"
+        : marketPricePositionDetected
+          ? "DECISIÓN: validar ventas antes de mover precio"
+          : input.analysis.researchRefreshRecommended
+            ? "DECISIÓN: comprobar si la competencia realmente vende"
+            : "DECISIÓN: revisar la señal competitiva"
+  const whatsappStrategicSummary = priceRecommendation
+    ? `Listing ${input.listing.listingId}: ${priceRecommendation.confirmedSoldQuantity} ` +
+      `venta(s) confirmada(s). Referencia total $${priceRecommendation.confirmedSoldBenchmarkLandedPrice.toFixed(2)} ` +
+      `frente a tu precio $${priceRecommendation.currentItemPrice.toFixed(2)}.`
+    : activeMarketPriceRecommendation
+      ? `Listing ${input.listing.listingId}: mercado activo ` +
+        `$${activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2)}, ` +
+        `tu precio $${activeMarketPriceRecommendation.currentItemPrice.toFixed(2)} y piso seguro ` +
+        `$${activeMarketPriceRecommendation.minimumSafeLandedPrice.toFixed(2)}. No son ventas confirmadas.`
+      : marketPricePositionDetected && ownLandedPrice !== null &&
+          input.analysis.medianLandedPrice !== null
+        ? `Listing ${input.listing.listingId}: tu total $${ownLandedPrice.toFixed(2)} frente a ` +
+          `$${input.analysis.medianLandedPrice.toFixed(2)} de mercado activo. Aún no hay ventas ` +
+          "confirmadas que justifiquen cambiar precio."
+        : `Listing ${input.listing.listingId}: ` +
+          `${input.analysis.potentialSellerHashes.length} vendedor(es) nuevo(s) y ` +
+          `${input.analysis.newlyConfirmedOfferHashes.length} venta(s) confirmada(s). ` +
+          "Hay presión competitiva, pero sin ventas no conviene bajar precio ni cambiar el listing."
+  const whatsappDecisionAction = improvementUrl
+    ? `Abrir: ${improvementUrl}. ${
+      priceRecommendation
+        ? "Compara la referencia vendida con tu piso de margen y autoriza sólo si mejora la posición sin destruir rentabilidad."
+        : activeMarketPriceRecommendation?.action ===
+            "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"
+          ? "Mantén el precio: igualar ese mercado rompería el piso seguro."
+          : activeMarketPriceRecommendation
+            ? "Evalúa el ajuste; nunca bajes del piso seguro ni actives promoción."
+            : "Regla: 0 ventas confirmadas = mantener; con ventas confirmadas = comparar precio total y piso de margen antes de ajustar."
+    }`
+    : recommendedAction
   const whatsappAction = improvementUrl
     ? `Abrir acción en Seller OS: ${improvementUrl}. ${anyPriceRecommendation
         ? activeMarketPriceRecommendation?.action ===
@@ -631,6 +673,9 @@ async function persistCompetitorAlert(input: {
     status: "pending",
     payload: {
       ...payload,
+      whatsappHeadline,
+      whatsappStrategicSummary,
+      whatsappDecisionAction,
       action: `${improvementUrl
         ? `Revisar y autorizar en Seller OS: ${improvementUrl}. `
         : "Revisar y autorizar desde Seller OS. "}${payload.action}`,
