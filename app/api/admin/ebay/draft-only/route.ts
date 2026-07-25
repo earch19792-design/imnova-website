@@ -830,6 +830,7 @@ export async function POST(req: Request) {
     if (action === "execute") return executeDraft(body, auth.actor)
     if (action === "prepare_publish") return prepareFinalPublication(body, auth.actor)
     if (action === "publish") return publishFinalPublication(body, auth.actor)
+    if (action === "rearm_publish") return rearmFinalPublication(body, auth.actor)
     if (action === "reconcile_publish") return reconcileFinalPublication(body, auth.actor)
     if (action === "revoke") return revokeApproval(body, auth.actor)
     return jsonError(new Error("EBAY_DRAFT_ONLY_ACTION_INVALID"), 400)
@@ -2111,11 +2112,19 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
       p_http_status: publishResult.status || null,
       p_error_code: publishResult.blocker,
       p_outcome_unknown: !publishResult.outcomeKnown,
+      p_error_details: record(publishResult.body),
     })
-    return jsonError(
-      new Error(publishResult.blocker),
-      publishResult.outcomeKnown ? 409 : 503,
-    )
+    return NextResponse.json({
+      success: false,
+      error: publishResult.blocker,
+      details: record(publishResult.body),
+      safety: {
+        target: "PRODUCTION",
+        canPublish: false,
+        publishRequestSent: publishResult.publishRequestSent,
+        outcomeKnown: publishResult.outcomeKnown,
+      },
+    }, { status: publishResult.outcomeKnown ? 409 : 503 })
   }
   const { data: published, error: publishedError } = await supabase
     .rpc("record_ebay_authorized_listing_published", {
@@ -2135,6 +2144,106 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     publication: published as JsonRecord,
     context,
     listingId: publishResult.listingId,
+  })
+}
+
+async function rearmFinalPublication(body: JsonRecord, actor: string) {
+  const publicationId = uuid(body.publicationId)
+  if (
+    !publicationId
+    || body.confirmPublish !== EBAY_FINAL_PUBLISH_CONFIRMATION
+    || body.confirmFinalPreview !== true
+    || body.confirmProductionAccount !== true
+    || body.confirmRetryRejectedPublish !== true
+  ) {
+    return jsonError(
+      new Error("EBAY_FINAL_PUBLISH_RECOVERY_CONFIRMATION_REQUIRED"),
+      409,
+    )
+  }
+  const supabase = getSupabaseAdminClient()
+  const { data: publication, error } = await supabase
+    .from("ebay_authorized_listing_publications")
+    .select("*")
+    .eq("id", publicationId)
+    .eq("actor_user_id", actor)
+    .maybeSingle()
+  if (error || !publication) {
+    return jsonError(new Error("EBAY_FINAL_PUBLICATION_NOT_FOUND"), 404)
+  }
+  if (
+    publication.phase !== "terminal_failure"
+    || publication.publish_http_status !== 400
+    || publication.last_error_code !== "EBAY_PUBLISH_WRITE_REJECTED"
+    || publication.listing_id
+  ) {
+    return jsonError(
+      new Error("EBAY_FINAL_PUBLISH_RECOVERY_NOT_ELIGIBLE"),
+      409,
+    )
+  }
+  const visualPublicationGate = await loadFinalListingReviewPublicationGate({
+    supabase,
+    listingPackageId: text(publication.listing_package_id),
+    actorId: actor,
+  })
+  if (!visualPublicationGate.allowed) {
+    throw new Error(
+      visualPublicationGate.reason ?? "FINAL_LISTING_REVIEW_NOT_READY",
+    )
+  }
+  const context = await loadFinalPublicationContext(
+    supabase,
+    text(publication.draft_execution_id),
+    actor,
+  )
+  const built = buildFinalPublicationPreview(
+    context.approval,
+    context.execution,
+  )
+  if (built.previewHash !== publication.preview_hash) {
+    return jsonError(
+      new Error("EBAY_FINAL_PUBLICATION_PREVIEW_CHANGED"),
+      409,
+    )
+  }
+  await revalidateFinalPublicationDependencies(
+    record(context.approval.approved_payload),
+  )
+  const unpublished = await verifyEbayUnpublishedOffer(
+    built.offerId,
+    built.sku,
+    "EBAY_US",
+  )
+  if (!unpublished.safe) {
+    return jsonError(
+      new Error(unpublished.blocker || "EBAY_OFFER_NOT_PUBLISHABLE"),
+      409,
+    )
+  }
+  const { data: rearmed, error: rearmError } = await supabase
+    .rpc("rearm_ebay_authorized_listing_publication_once", {
+      p_publication_id: publicationId,
+      p_actor_user_id: actor,
+      p_confirm_publish: text(body.confirmPublish),
+      p_expected_error_code: "EBAY_PUBLISH_WRITE_REJECTED",
+    })
+    .single()
+  if (rearmError || !rearmed) {
+    throw new Error(databaseExceptionCode(
+      rearmError,
+      "EBAY_FINAL_PUBLISH_RECOVERY_FAILED",
+    ))
+  }
+  return NextResponse.json({
+    success: true,
+    publication: rearmed,
+    safety: {
+      ebayWriteUsed: false,
+      offerStatus: "UNPUBLISHED",
+      recoveryAttemptsRemaining: 0,
+      exactPreviewRevalidated: true,
+    },
   })
 }
 
