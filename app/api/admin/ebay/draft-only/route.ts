@@ -937,7 +937,7 @@ async function loadFinalPublicationContextWithRecoverableError(
     }
     return {
       success: false as const,
-      response: jsonError(contextError, 502),
+      response: jsonError(contextError, 409),
     }
   }
 }
@@ -2099,7 +2099,7 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
       requestId,
     })
     if (quarantine) return quarantine
-    throw error
+    return jsonError(new Error(errorCode(error)), 409)
   }
 }
 
@@ -2416,7 +2416,7 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
       requestId,
     })
     if (quarantine) return quarantine
-    throw error
+    return jsonError(new Error(errorCode(error)), 409)
   }
   const publishResult = await publishEbayOfferOnce({
     offerId: built.offerId,
