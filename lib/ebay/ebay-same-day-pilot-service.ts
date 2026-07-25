@@ -3439,15 +3439,19 @@ export async function previewSameDayPilot(input: {
   const [{ data: opportunities, error: opportunityError }, { data: quotas, error: quotaError },
     { data: monitor, error: monitorError }, productResearchCount,
     { data: monitoredListings, error: monitoredListingError },
+    { data: activePublications, error: activePublicationError },
   ] = await Promise.all([
     input.supabase.from("ebay_luna_opportunity_queue").select("*").in("queue_status", ["watchlist", "review", "ready"]).order("opportunity_score", { ascending: false }).limit(70),
     input.supabase.from("ebay_api_quota_states").select("api_family,operation,status,remaining,reserved_budget,available_budget,reset_at,owner_lane"),
     input.supabase.from("commercial_monitor_runs").select("status,heartbeat_at,readers,errors,completed_at").eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     input.supabase.from("marketplace_product_research_capture_observations").select("id", { count: "exact", head: true }).eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE),
-    input.supabase.from("ebay_active_listings").select("supplier_variant_id,supplier_sku,market_radar_product_id")
+    input.supabase.from("ebay_active_listings").select("supplier_variant_id,supplier_sku,market_radar_product_id,ebay_sku")
       .eq("account_key", input.accountKey).in("listing_status", ["active", "paused"]),
+    input.supabase.from("ebay_authorized_listing_publications").select("opportunity_id")
+      .eq("marketplace_account_key", input.accountKey).neq("phase", "terminal_failure"),
   ])
-  if (opportunityError || quotaError || monitorError || productResearchCount.error || monitoredListingError) {
+  if (opportunityError || quotaError || monitorError || productResearchCount.error || monitoredListingError
+    || activePublicationError) {
     throw new Error("SAME_DAY_PILOT_SOURCE_READ_FAILED")
   }
   const excludedOpportunityIds = new Set(
@@ -3502,13 +3506,21 @@ export async function previewSameDayPilot(input: {
   const monitoredListingByVariant = new Set((monitoredListings ?? [])
     .map((row) => text(row.supplier_variant_id)))
   const monitoredListingBySku = new Set((monitoredListings ?? [])
-    .map((row) => text(row.supplier_sku)))
+    .flatMap((row) => [text(row.supplier_sku), text(row.ebay_sku)])
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean))
   const monitoredListingMarketRadarProductIds = new Set((monitoredListings ?? [])
     .map((row) => text(row.market_radar_product_id)))
+  const publicationMonitoredOpportunityIds = new Set((activePublications ?? [])
+    .map((row) => text(row.opportunity_id).toLowerCase())
+    .filter(Boolean))
   const evaluatedCandidates = candidateInputs.map((candidate) =>
     evaluateSameDayCandidate(candidate, now))
   const selected = selectSameDayQueue(candidateInputs, now, {
-    opportunityIds: excludedOpportunityIds,
+    opportunityIds: [...new Set([
+      ...excludedOpportunityIds,
+      ...publicationMonitoredOpportunityIds,
+    ])],
     candidateKeys: input.excludeCandidateKeys,
     supplierVariantIds: input.excludeSupplierVariantIds,
     supplierSkus: [...new Set([

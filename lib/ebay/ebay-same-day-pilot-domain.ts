@@ -232,6 +232,20 @@ function normalized(value: unknown) {
     : ""
 }
 
+function normalizedIdentifier(value: unknown) {
+  return typeof value === "string"
+    ? value.trim().toLowerCase()
+    : ""
+}
+
+function normalizedTrim(value: unknown) {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function normalizedKey(value: unknown) {
+  return normalizedIdentifier(value)
+}
+
 function productIdentityText(value: unknown) {
   return normalized(value).replace(/\bdefault title\b/gi, " ")
     .trim().replace(/\s+/g, " ")
@@ -396,19 +410,30 @@ export function selectSameDayQueue(
     familyFingerprints?: Iterable<string>
   } = {},
 ) {
-  const excludedOpportunityIds = new Set(exclusions.opportunityIds ?? [])
-  const excludedCandidateKeys = new Set(exclusions.candidateKeys ?? [])
-  const excludedSupplierVariantIds = new Set(exclusions.supplierVariantIds ?? [])
-  const excludedSupplierSkus = new Set(exclusions.supplierSkus ?? [])
-  const excludedMarketRadarProductIds = new Set(exclusions.marketRadarProductIds ?? [])
-  const excludedFamilyFingerprints = new Set(exclusions.familyFingerprints ?? [])
+  const excludedOpportunityIds = new Set((exclusions.opportunityIds ?? [])
+    .map(normalizedKey).filter(Boolean))
+  const excludedCandidateKeys = new Set((exclusions.candidateKeys ?? [])
+    .map(normalizedTrim).filter(Boolean))
+  const excludedSupplierVariantIds = new Set((exclusions.supplierVariantIds ?? [])
+    .map(normalizedIdentifier).filter(Boolean))
+  const excludedSupplierSkus = new Set((exclusions.supplierSkus ?? [])
+    .map(normalizedIdentifier).filter(Boolean))
+  const excludedMarketRadarProductIds = new Set((exclusions.marketRadarProductIds ?? [])
+    .map(normalizedKey).filter(Boolean))
+  const excludedFamilyFingerprints = new Set((exclusions.familyFingerprints ?? [])
+    .map(normalizedTrim).filter(Boolean))
   const evaluated = inputs.map((input) => evaluateSameDayCandidate(input, now))
     .filter((entry) => entry.eligibleForQueue)
-    .filter((entry) => !excludedOpportunityIds.has(entry.id)
+    .filter((entry) => {
+      const candidateOpportunityId = normalizedKey(entry.id)
+      const candidateSupplierVariantId = normalizedIdentifier(entry.supplierVariantId)
+      const candidateSupplierSku = normalizedIdentifier(entry.supplierSku)
+      const candidateMarketRadarProductId = normalizedIdentifier(entry.marketRadarProductId)
+      return !excludedOpportunityIds.has(candidateOpportunityId)
       && !excludedCandidateKeys.has(entry.candidateKey)
-      && !excludedSupplierVariantIds.has(entry.supplierVariantId ?? "")
-      && !excludedSupplierSkus.has(entry.supplierSku ?? "")
-      && !excludedMarketRadarProductIds.has(entry.marketRadarProductId ?? "")
+      && !excludedSupplierVariantIds.has(candidateSupplierVariantId)
+      && !excludedSupplierSkus.has(candidateSupplierSku)
+      && !excludedMarketRadarProductIds.has(candidateMarketRadarProductId)
       && !excludedFamilyFingerprints.has(entry.familyFingerprint))
     .sort((left, right) => right.priority - left.priority
       || left.candidateKey.localeCompare(right.candidateKey)
