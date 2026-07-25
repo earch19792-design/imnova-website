@@ -1052,7 +1052,7 @@ async function attemptAuxiliaryFinalPublicationQuarantine(input: {
       safety: {
         target: "PRODUCTION",
         canPublish: false,
-        automaticContinuity: true,
+        automaticContinuity: rescue.successorPromoted,
         auxiliaryRecovery: true,
       },
     }, { status: 409 })
@@ -2170,12 +2170,12 @@ function buildAuxiliaryFinalPublicationQuarantineResponse(input: {
       auditEventPersisted: input.rescue.auditEventPersisted,
     },
     safety: {
-      target: "PRODUCTION",
-      canPublish: false,
-      automaticContinuity: true,
-      auxiliaryRecovery: true,
-    },
-  }, { status: 409 })
+        target: "PRODUCTION",
+        canPublish: false,
+        automaticContinuity: rescue.successorPromoted,
+        auxiliaryRecovery: true,
+      },
+    }, { status: 409 })
 }
 
 async function attemptAuxiliaryFinalPublicationQuarantineFromExecution(input: {

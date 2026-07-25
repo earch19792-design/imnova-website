@@ -3173,6 +3173,7 @@ async function quarantineUnknownContinuityFailure(input: {
   engineErrorCode: string | null
   now: Date
   requireUnknownFailureMode?: boolean
+  suppressSuccessorPromotion?: boolean
 }) {
   const workerId = `continuity-quarantine:${input.actorId}:${input.requestId}`
   const initialState = await getSameDayPilot({
@@ -3292,7 +3293,7 @@ async function quarantineUnknownContinuityFailure(input: {
         "Ninguna para el lote actual; Codex debe diagnosticar el fingerprint acumulado.",
     })
     const priorEvidence = record(candidate.evidence_summary)
-    const { error: candidateError } = await input.supabase
+    const { data: updatedCandidate, error: candidateError } = await input.supabase
       .from("ebay_same_day_pilot_candidates")
       .update({
         state: "NEEDS_ONE_CRITICAL_FACT",
@@ -3325,7 +3326,12 @@ async function quarantineUnknownContinuityFailure(input: {
       .eq("id", input.expectedCandidateId)
       .eq("run_id", state.run.id)
       .eq("machine_state", "BLOCKED")
+      .select("id")
+      .maybeSingle()
     if (candidateError) {
+      throw new Error("SAME_DAY_CONTINUITY_QUARANTINE_PERSIST_FAILED")
+    }
+    if (!updatedCandidate) {
       throw new Error("SAME_DAY_CONTINUITY_QUARANTINE_PERSIST_FAILED")
     }
     const { error: eventError } = await input.supabase
@@ -3372,11 +3378,13 @@ async function quarantineUnknownContinuityFailure(input: {
     // temporary event-ledger failure must not prevent promotion of the
     // successor and recreate the exact operational delay this lane avoids.
     const auditEventPersisted = !eventError
-    const successorPromoted = await promoteNextCandidate(
-      input.supabase,
-      state.run.id,
-      Number(candidate.ordinal),
-    )
+    const successorPromoted = input.suppressSuccessorPromotion === true
+      ? false
+      : await promoteNextCandidate(
+        input.supabase,
+        state.run.id,
+        Number(candidate.ordinal),
+      )
     await refreshRunProjection(input.supabase, state.run.id, true)
     return {
       incidentFingerprint,
@@ -3412,6 +3420,7 @@ export async function quarantineSameDayCandidateForAuxiliaryPublicationFailure(i
   return quarantineUnknownContinuityFailure({
     ...input,
     now: new Date(),
+    suppressSuccessorPromotion: true,
   })
 }
 
