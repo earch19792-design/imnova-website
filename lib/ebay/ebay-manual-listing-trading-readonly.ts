@@ -50,7 +50,7 @@ type EbayProductionIdentityReadOnlyProbeBaseResult = {
   fingerprintFormatValid: true
   configuredFingerprintPresent: boolean
   configuredFingerprintMatches: boolean
-  identityBindingStatus: "UNBOUND" | "BOUND_MATCH"
+  identityBindingStatus: "UNBOUND" | "BOUND_MATCH" | "BOUND_MISMATCH"
   scopesVerified: true
   ebayWriteUsed: false
   canPublish: false
@@ -62,6 +62,12 @@ export type EbayProductionIdentityReadOnlyProbeResult =
     configuredFingerprintPresent: false
     configuredFingerprintMatches: false
     identityBindingStatus: "UNBOUND"
+  }
+  | EbayProductionIdentityReadOnlyProbeBaseResult & {
+    fingerprint: string
+    configuredFingerprintPresent: true
+    configuredFingerprintMatches: false
+    identityBindingStatus: "BOUND_MISMATCH"
   }
   | EbayProductionIdentityReadOnlyProbeBaseResult & {
     fingerprint?: never
@@ -434,8 +440,13 @@ function maskEbayUserId(userId: string) {
   return `${userId.slice(0, 2)}******${userId.slice(-2)}`
 }
 
+type ProbeOptions = {
+  allowConfiguredFingerprintMismatch?: boolean
+}
+
 export async function probeEbayProductionIdentityReadOnly(
   fetchImpl: FetchLike = fetch,
+  options: ProbeOptions = {},
 ): Promise<EbayProductionIdentityReadOnlyProbeResult> {
   // The identity probe intentionally bypasses the process token cache so each
   // invocation validates the currently configured Preview refresh token.
@@ -456,7 +467,16 @@ export async function probeEbayProductionIdentityReadOnly(
   }
 
   const identity = getEbayProductionIdentityBindingConfiguration()
-  if (!identity.configuredFingerprintValid || !identity.consistent) {
+  const allowConfiguredFingerprintMismatch = Boolean(
+    options.allowConfiguredFingerprintMismatch &&
+    identity.expectedAccountFingerprint &&
+    identity.expectedUserId,
+  )
+  if (
+    !identity.configuredFingerprintValid ||
+    !identity.expectedUserIdValid ||
+    (!identity.consistent && !allowConfiguredFingerprintMismatch)
+  ) {
     throw new Error("EBAY_TRADING_CONFIGURED_FINGERPRINT_MISMATCH")
   }
   const configuredFingerprint = normalizedFingerprint(
@@ -488,8 +508,17 @@ export async function probeEbayProductionIdentityReadOnly(
     Buffer.from(fingerprint, "hex"),
     Buffer.from(configuredFingerprint, "hex"),
   )
-  if (!configuredFingerprintMatches) {
+  if (!configuredFingerprintMatches && !options.allowConfiguredFingerprintMismatch) {
     throw new Error("EBAY_TRADING_CONFIGURED_FINGERPRINT_MISMATCH")
+  }
+  if (!configuredFingerprintMatches) {
+    return {
+      ...baseResult,
+      fingerprint,
+      configuredFingerprintPresent: true,
+      configuredFingerprintMatches: false,
+      identityBindingStatus: "BOUND_MISMATCH",
+    }
   }
 
   return {
