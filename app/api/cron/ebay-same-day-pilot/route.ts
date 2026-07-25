@@ -5,7 +5,7 @@ export const maxDuration = 300
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto"
 import { NextResponse } from "next/server"
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import { resolveSameDayPilotAccountScope } from "@/lib/ebay/ebay-same-day-account-scope"
 import { previewSameDayPilot, processSameDayPilotJobChain } from "@/lib/ebay/ebay-same-day-pilot-service"
 import { getListingImageFactoryConfiguration } from "@/lib/ebay/ebay-listing-image-factory"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
@@ -81,8 +81,13 @@ export async function GET(req: Request) {
     if (!(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").includes("vsfthqydfrdzulldbfbe")) {
       return NextResponse.json({ success: false, error: "SAME_DAY_PILOT_STAGING_DATABASE_REQUIRED" }, { status: 503 })
     }
-    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
-    if (!accountKey) return NextResponse.json({ success: false, error: "SAME_DAY_PILOT_ACCOUNT_SCOPE_REQUIRED" }, { status: 503 })
+    const scopeResolution = await resolveSameDayPilotAccountScope()
+    const accountKey = scopeResolution.accountKey
+    if (!accountKey) return NextResponse.json({
+      success: false,
+      error: "SAME_DAY_PILOT_ACCOUNT_SCOPE_REQUIRED",
+      scopeResolution,
+    }, { status: 503 })
     if (validationMode) {
       const preview = await previewSameDayPilot({ supabase, accountKey })
       const imageFactory = getListingImageFactoryConfiguration()

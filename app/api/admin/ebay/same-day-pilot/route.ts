@@ -6,12 +6,12 @@ import { after, NextResponse } from "next/server"
 
 import { EBAY_IMAGE_STAGING_BUCKET } from "@/lib/ebay/ebay-image-storage-cleanup"
 import { getListingImageFactoryConfiguration } from "@/lib/ebay/ebay-listing-image-factory"
-import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { evaluateEbayProductApprovalFulfillmentBasis } from "@/lib/ebay/ebay-fulfillment-policy-compliance"
 import { getProductResearchQueryPlanStatus } from "@/lib/ebay/ebay-product-research-query-plan"
 import { isValidSameDayLunaConfirmation } from "@/lib/ebay/ebay-same-day-pilot-domain"
 import { evaluateSameDayContinuityRescue } from
   "@/lib/ebay/ebay-same-day-continuity-rescue"
+import { resolveSameDayPilotAccountScope } from "@/lib/ebay/ebay-same-day-account-scope"
 import {
   authorizeSameDayControlledRiskOverride,
   confirmSameDayLuna,
@@ -199,9 +199,22 @@ function safeErrorStatus(error: unknown) {
 async function authorization(req: Request) {
   const auth = await validateAdminApiRequest(req)
   if (!auth.ok || !auth.userId) return { response: NextResponse.json({ success: false, error: auth.error ?? "admin_forbidden" }, { status: auth.status || 403 }) }
-  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
-  if (!accountKey) return { response: NextResponse.json({ success: false, error: "SAME_DAY_PILOT_ACCOUNT_SCOPE_REQUIRED" }, { status: 503 }) }
-  return { auth, accountKey, supabase: getSupabaseAdminClient() }
+  const scopeResolution = await resolveSameDayPilotAccountScope()
+  const accountKey = scopeResolution.accountKey
+  if (!accountKey) {
+    return { response: NextResponse.json({
+      success: false,
+      error: "SAME_DAY_PILOT_ACCOUNT_SCOPE_REQUIRED",
+      scopeDiagnostics: {
+        accountScopeResolutionSource: scopeResolution.source,
+        fallbackAttempted: scopeResolution.fallbackAttempted,
+        scopeResolutionReason: scopeResolution.scopeResolutionReason,
+      },
+    }, { status: 503 }) }
+  }
+  return { auth, accountKey, supabase: getSupabaseAdminClient(),
+    scopeResolution,
+  }
 }
 
 function scheduleImmediateContinuation(input: {
