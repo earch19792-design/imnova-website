@@ -4543,7 +4543,7 @@ function ListingWorkspacePageContent() {
             <div>
               <p className="text-xs font-black uppercase tracking-widest text-cyan-100/65">Publicación eBay controlada</p>
               <h2 className="mt-1 text-xl font-black">Offer no publicado + autorización final · {draftTarget}</h2>
-              <p className="mt-2 text-sm leading-6 text-white/65">Primero autorizas y creas el Offer UNPUBLISHED. Después Seller OS vuelve a validar todo, muestra el preview exacto y sólo lo publica cuando das una segunda autorización explícita.</p>
+              <p className="mt-2 text-sm leading-6 text-white/65">Primero autorizas y creas el Offer UNPUBLISHED. En el tramo final, con una sola autorización final, Seller OS vuelve a validar todo, prepara el preview si hace falta y publica en un único clic.</p>
               <p className="mt-2 rounded-xl border border-white/15 p-2 text-xs leading-5 text-white/60">Esto crea Inventory Item + Offer con estado UNPUBLISHED mediante la API. No garantiza que eBay lo muestre como un “draft” editable dentro de Seller Hub.</p>
             </div>
             <div className={`rounded-2xl border p-3 text-sm ${productionTarget ? "border-rose-200/40 bg-rose-200/[0.09] text-rose-50" : draftState.runtime?.enabled && draftState.runtime?.configured ? "border-emerald-200/25 bg-emerald-200/[0.06] text-emerald-50" : "border-amber-200/25 bg-amber-200/[0.06] text-amber-50"}`}>
