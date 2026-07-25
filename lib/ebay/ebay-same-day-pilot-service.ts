@@ -1514,10 +1514,32 @@ async function bootstrapCandidate(supabase: SupabaseClient, runId: string, candi
     return
   }
   if (machineState === "WAITING_PRODUCT_APPROVAL") {
+    const economics = record(candidate.economics_summary)
+    const priorApprovedPrice = number(economics.operatorApprovedSalePrice)
+    const recommendedPrice = number(
+      record(economics.pricingRecommendation).recommendedSalePrice,
+    )
+    const priorPriceApprovalChanged = economics.operatorPriceApproved === true &&
+      priorApprovedPrice !== null &&
+      recommendedPrice !== null &&
+      Math.abs(priorApprovedPrice - recommendedPrice) >
+        Math.max(.01, recommendedPrice * .02)
     await createHumanTask({ supabase, runId, candidateId: id, expectedState: "WAITING_PRODUCT_APPROVAL", gateType: "PRODUCT_APPROVAL_REQUIRED",
-      title: "Revisa el producto y confirma su fulfillment", why: "La identidad, economía y ficha técnica pasaron; antes de preparar el listing debes confirmar inventario propio o un acuerdo vigente con proveedor mayorista autorizado.",
+      title: priorPriceApprovalChanged
+        ? "Confirma el precio actualizado del producto"
+        : "Revisa el producto y confirma su fulfillment",
+      why: priorPriceApprovalChanged
+        ? `La ficha y la aprobación anterior siguen vigentes, pero el precio recomendado cambió de $${priorApprovedPrice.toFixed(2)} a $${recommendedPrice.toFixed(2)}. El stock vencido no bloquea este paso y se reconfirmará antes de publicar o comprar.`
+        : "La identidad, economía y ficha técnica pasaron; antes de preparar el listing debes confirmar inventario propio o un acuerdo vigente con proveedor mayorista autorizado.",
       seconds: 180, impact: "Seller OS conservará el checkpoint y continuará automáticamente sólo después de una aprobación explícita.",
-      evidence: { product: candidate.product_title, economics: candidate.economics_summary, facts: candidate.product_facts_summary },
+      evidence: { product: candidate.product_title, economics: candidate.economics_summary,
+        facts: candidate.product_facts_summary,
+        approvalReviewReason: priorPriceApprovalChanged
+          ? "RECOMMENDED_PRICE_CHANGED"
+          : "INITIAL_PRODUCT_APPROVAL",
+        priorApprovedPrice, recommendedPrice,
+        staleSupplyBlocksAnalysis: false,
+        staleSupplyRecheckAt: "FINAL_PUBLICATION_OR_PURCHASE_GATE" },
       actionSchema: { type: "PRODUCT_APPROVAL", actions: ["APPROVE", "REQUEST_ONE_REVISION", "REJECT"],
         fields: ["operatorSalePrice", "fulfillmentBasis", "imageRightsConfirmed",
           "openAiImageSpendApproved"],
