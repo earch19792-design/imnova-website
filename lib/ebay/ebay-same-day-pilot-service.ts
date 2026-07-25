@@ -120,6 +120,8 @@ const PRODUCT_FACT_AUTHORITY_LINEAGE_RECOVERY_VERSION =
   "PRODUCT_FACT_AUTHORITY_AND_SOURCE_RECOVERY_V3_2026_07_21"
 const LEGACY_PRODUCT_FACTS_RECOVERY_VERSION = "LEGACY_PRODUCT_FACTS_RECOVERY_V2_2026_07_19"
 const STALE_DECISION_FACTS_RECOVERY_VERSION = "STALE_DECISION_FACTS_RECOVERY_V1_2026_07_19"
+const STALE_SUPPLY_OPENAI_INPUT_RECOVERY_VERSION =
+  "STALE_SUPPLY_OPENAI_INPUT_RECOVERY_V1_2026_07_25"
 const PRE_FACTS_DECISION_REFRESH_VERSION = "PRE_FACTS_DECISION_REFRESH_V1_2026_07_21"
 const OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_VERSION =
   "OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_V3_2026_07_21"
@@ -2066,6 +2068,136 @@ async function repairStaleDecisionProductFactsRejection(
 }
 
 /**
+ * A stale supplier observation must not invalidate an otherwise durable
+ * technical facts package. Re-run only Product Facts with the controlled
+ * identity/pack binding and retain the mandatory publication/purchase alert.
+ */
+async function repairStaleSupplyOpenAiInputRejection(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const selected = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .find((candidate) => {
+      const gates = record(record(candidate.product_facts_summary).gates)
+      const evidence = record(candidate.evidence_summary)
+      return text(candidate.machine_state) === "REJECTED" &&
+        text(candidate.state) === "REJECTED_TODAY" &&
+        strings(candidate.blockers).length === 1 &&
+        strings(candidate.blockers)[0] === "OPENAI_INPUT_NOT_READY" &&
+        gates.IDENTITY_READY === true &&
+        gates.PRODUCT_FACTS_READY === true &&
+        gates.OFFER_PACK_READY === true &&
+        gates.EBAY_ASPECTS_READY === true &&
+        gates.REGULATORY_READY === true &&
+        controlledExploratoryFactsCanContinue(record(candidate), now) &&
+        text(evidence.staleSupplyOpenAiInputRecoveryVersion) !==
+          STALE_SUPPLY_OPENAI_INPUT_RECOVERY_VERSION
+    })
+  if (!selected) return 0
+  const candidateId = text(selected.id)
+  const freshnessAdvisory = lunaSupplyFreshnessAdvisory(
+    record(selected),
+    now,
+  )
+  await transition({
+    supabase,
+    runId: text(state.run.id),
+    candidateId,
+    previousState: "REJECTED",
+    nextState: "ENRICHING_PRODUCT_FACTS",
+    reasonCode: "STALE_SUPPLY_DOES_NOT_EXPIRE_TECHNICAL_FACTS",
+    triggeredBy: "RETRY",
+    checkpoint: {
+      recoveryVersion: STALE_SUPPLY_OPENAI_INPUT_RECOVERY_VERSION,
+      freshnessAdvisory,
+      productResearchRepeated: false,
+    },
+    nextAutomaticAction:
+      "Reconstruir el paquete técnico con identidad y pack preservados.",
+    nextHumanAction:
+      "Ninguna ahora; reconfirmar Luna antes de publicar o comprar.",
+    job: {
+      jobType: "ENRICH_PRODUCT_FACTS",
+      idempotencyKey: [
+        state.run.id,
+        candidateId,
+        "ENRICH_PRODUCT_FACTS",
+        STALE_SUPPLY_OPENAI_INPUT_RECOVERY_VERSION,
+      ].join(":"),
+      checkpoint: {
+        queueItemId: selected.queue_item_id,
+        freshnessAdvisory,
+        durableTechnicalFactsBinding: true,
+      },
+      availableAt: now.toISOString(),
+      maxAttempts: 10,
+      apiFamily: "BROWSE",
+      apiOperation: "EXACT_VERIFICATION",
+      ownerLane: "P1_EXACT_VERIFICATION",
+    },
+  })
+  const nextEvidence = {
+    ...record(selected.evidence_summary),
+    lunaSupplyFreshness: freshnessAdvisory,
+    staleSupplyOpenAiInputRecoveryVersion:
+      STALE_SUPPLY_OPENAI_INPUT_RECOVERY_VERSION,
+    staleSupplyOpenAiInputRecoveredAt: now.toISOString(),
+    productResearchRepeated: false,
+  }
+  const { data: updated, error: updateError } = await supabase
+    .from("ebay_same_day_pilot_candidates")
+    .update({
+      state: "READY_FOR_CONTENT",
+      blockers: [],
+      evidence_summary: nextEvidence,
+      next_automated_action:
+        "Reconstruir Product Facts sin repetir stock ni Product Research.",
+      next_human_action:
+        "Ninguna ahora; reconfirmar Luna antes de publicar o comprar.",
+      updated_at: now.toISOString(),
+    })
+    .eq("id", candidateId)
+    .eq("run_id", state.run.id)
+    .eq("machine_state", "ENRICHING_PRODUCT_FACTS")
+    .select("id")
+  if (updateError || (updated ?? []).length !== 1) {
+    throw new Error("SAME_DAY_PILOT_STALE_SUPPLY_OPENAI_RECOVERY_FAILED")
+  }
+  const { error: eventError } = await supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({
+      run_id: state.run.id,
+      candidate_id: candidateId,
+      event_type: "STALE_SUPPLY_TECHNICAL_FACTS_CONTINUED",
+      event_payload: {
+        recoveryVersion: STALE_SUPPLY_OPENAI_INPUT_RECOVERY_VERSION,
+        freshnessAdvisory,
+        technicalFactsPreserved: true,
+        productResearchRepeated: false,
+        lunaGateOpened: false,
+        finalPublicationRecheckRequired: true,
+        historyDeleted: false,
+      },
+      idempotency_key: [
+        state.run.id,
+        candidateId,
+        STALE_SUPPLY_OPENAI_INPUT_RECOVERY_VERSION,
+      ].join(":"),
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) {
+    throw new Error("SAME_DAY_PILOT_STALE_SUPPLY_OPENAI_EVENT_FAILED")
+  }
+  await refreshRunProjection(supabase, state.run.id)
+  return 1
+}
+
+/**
  * Replays Product Facts when a reviewed manufacturer identity contradicts a
  * legacy generic Brand marker and active Browse comparables were consequently
  * filtered out. Historical ambiguous rows remain non-qualifying and no eBay
@@ -3256,6 +3388,15 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
         text(existing.run.operation_date) || date)
     }
     if (existing && await repairRejectedSingleFactException(input.supabase, existing, now)) {
+      repaired = true
+      existing = await currentState(input.supabase, input.accountKey,
+        text(existing.run.operation_date) || date)
+    }
+    if (existing && await repairStaleSupplyOpenAiInputRejection(
+      input.supabase,
+      existing,
+      now,
+    )) {
       repaired = true
       existing = await currentState(input.supabase, input.accountKey,
         text(existing.run.operation_date) || date)
@@ -6476,21 +6617,29 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
   // Repair at most one durable lane per worker cycle. Each repair can create a
   // job or human task, so later repair decisions must observe the refreshed
   // state on the following cycle instead of opening parallel operator work.
-  const staleDecisionFactsRecovered = orphanedImagePreparationsRecovered ||
+  const staleSupplyOpenAiInputsRecovered =
+    orphanedImagePreparationsRecovered ||
     prematureTaxonomyRejectionsRecovered ||
     productFactAuthorityLineageRecovered || singleFactExceptionsRecovered ? 0 :
+    await repairStaleSupplyOpenAiInputRejection(input.supabase, state, now)
+  const staleDecisionFactsRecovered = orphanedImagePreparationsRecovered ||
+    prematureTaxonomyRejectionsRecovered ||
+    productFactAuthorityLineageRecovered || singleFactExceptionsRecovered ||
+    staleSupplyOpenAiInputsRecovered ? 0 :
     await repairStaleDecisionProductFactsRejection(input.supabase, state, now)
   const legacyProductFactsRejectionsRepaired =
     orphanedImagePreparationsRecovered ||
     prematureTaxonomyRejectionsRecovered ||
     productFactAuthorityLineageRecovered ||
-    singleFactExceptionsRecovered || staleDecisionFactsRecovered ? 0 :
+    singleFactExceptionsRecovered || staleSupplyOpenAiInputsRecovered ||
+    staleDecisionFactsRecovered ? 0 :
     await repairLegacyProductFactsRejections(input.supabase, state, now)
   const staleControlledLunaConfirmationsRecovered =
     orphanedImagePreparationsRecovered ||
     prematureTaxonomyRejectionsRecovered ||
     productFactAuthorityLineageRecovered ||
-    singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
+    singleFactExceptionsRecovered || staleSupplyOpenAiInputsRecovered ||
+    staleDecisionFactsRecovered ||
     legacyProductFactsRejectionsRepaired ? 0 :
     await repairStaleControlledLunaConfirmationRejection(
       input.supabase,
@@ -6498,14 +6647,16 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       now,
     )
   const deadLettersRecovered = orphanedImagePreparationsRecovered ||
-    prematureTaxonomyRejectionsRecovered ||
-    productFactAuthorityLineageRecovered || singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
+    prematureTaxonomyRejectionsRecovered || productFactAuthorityLineageRecovered ||
+    singleFactExceptionsRecovered || staleSupplyOpenAiInputsRecovered ||
+    staleDecisionFactsRecovered ||
     legacyProductFactsRejectionsRepaired ||
     staleControlledLunaConfirmationsRecovered ? 0 :
     await recoverDeadLetterCandidates(input.supabase, state)
   if (legacyPrematureRejectionsRepaired || prematureTaxonomyRejectionsRecovered ||
     productFactAuthorityLineageRecovered ||
-    singleFactExceptionsRecovered || staleDecisionFactsRecovered ||
+    singleFactExceptionsRecovered || staleSupplyOpenAiInputsRecovered ||
+    staleDecisionFactsRecovered ||
     legacyProductFactsRejectionsRepaired ||
     staleControlledLunaConfirmationsRecovered || deadLettersRecovered) {
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
@@ -6535,6 +6686,7 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       officialBrandMarketPricingRecovered,
       orphanedImagePreparationsRecovered,
       legacyPrematureRejectionsRepaired, singleFactExceptionsRecovered,
+      staleSupplyOpenAiInputsRecovered,
       staleDecisionFactsRecovered,
       legacyProductFactsRejectionsRepaired,
       staleControlledLunaConfirmationsRecovered,

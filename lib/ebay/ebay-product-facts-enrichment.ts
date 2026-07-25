@@ -1058,12 +1058,23 @@ export async function runProductFactsEnrichment(input: {
         requirements, regulated: regulatedCandidate(variant, base.metadata), taxonomySourceReady })
       const candidateStaleAt = Date.parse(text(candidate.stale_after))
       const maximumFactsExpiry = now.getTime() + 72 * 60 * 60 * 1_000
-      const authoritativeFactsExpiresAt = Number.isFinite(candidateStaleAt) && candidateStaleAt > now.getTime()
-        ? new Date(Math.min(candidateStaleAt, maximumFactsExpiry)).toISOString() : null
       const candidateDecisionId = text(candidate.decision_package_id)
       const candidateDecisionHash = text(candidate.package_hash)
-      const packageBindingReady = /^[0-9a-f-]{36}$/i.test(candidateDecisionId) &&
-        /^sha256:[0-9a-f]{64}$/.test(candidateDecisionHash) && Boolean(authoritativeFactsExpiresAt)
+      const durableDecisionBindingReady =
+        /^[0-9a-f-]{36}$/i.test(candidateDecisionId) &&
+        /^sha256:[0-9a-f]{64}$/.test(candidateDecisionHash)
+      const authoritativeFactsExpiresAt =
+        Number.isFinite(candidateStaleAt) && candidateStaleAt > now.getTime()
+          ? new Date(Math.min(candidateStaleAt, maximumFactsExpiry)).toISOString()
+          : controlledIdentityExact && durableDecisionBindingReady
+            // Controlled analysis carries independently verified identity,
+            // pack and commercial hashes. Volatile Luna supply can be stale
+            // without expiring the technical facts package; publication and
+            // purchase remain protected by their dedicated Luna recheck.
+            ? new Date(maximumFactsExpiry).toISOString()
+            : null
+      const packageBindingReady = durableDecisionBindingReady &&
+        Boolean(authoritativeFactsExpiresAt)
       const initialAuthoritativePackage = buildOpenAiFactsInputPackage({ facts: resolved.facts,
         readiness: calculatedReadiness })
       const readiness = packageBindingReady && initialAuthoritativePackage.ready
