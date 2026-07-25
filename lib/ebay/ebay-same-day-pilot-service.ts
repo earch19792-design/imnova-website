@@ -3163,6 +3163,226 @@ async function blockRelatedPresentationAndPromote(input: {
   await promoteNextCandidate(input.supabase, input.runId, Number(input.candidate.ordinal))
 }
 
+async function quarantineUnknownContinuityFailure(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorId: string
+  requestId: string
+  expectedCandidateId: string
+  expectedMachineState: string
+  engineErrorCode: string | null
+  now: Date
+}) {
+  const workerId = `continuity-quarantine:${input.actorId}:${input.requestId}`
+  const initialState = await getSameDayPilot({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    now: input.now,
+  })
+  if (!initialState) return null
+  const leaseToken = await acquirePilotRunLease({
+    supabase: input.supabase,
+    runId: initialState.run.id,
+    workerId,
+    now: input.now,
+  })
+  if (!leaseToken) return null
+  try {
+    const state = await getSameDayPilot({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      now: input.now,
+    })
+    const assessment = evaluateSameDayContinuityRescue(state)
+    if (!state || assessment.mode !== "UNKNOWN_FAILURE_SUSPECTED" ||
+      assessment.candidateId !== input.expectedCandidateId ||
+      assessment.machineState !== input.expectedMachineState) return null
+    const candidate = state.candidates.find((entry) =>
+      text(entry.id) === input.expectedCandidateId)
+    if (!candidate) return null
+    const candidateJobs = state.jobs.filter((entry) =>
+      text(entry.candidate_id) === input.expectedCandidateId)
+    const latestJob = candidateJobs.at(-1)
+    const candidateTransitions = state.transitions.filter((entry) =>
+      text(entry.candidate_id) === input.expectedCandidateId)
+    const latestTransition = candidateTransitions.at(-1)
+    const incidentFingerprint = hash({
+      version: SAME_DAY_CONTINUITY_RESCUE_VERSION,
+      machineState: input.expectedMachineState,
+      latestJobType: text(latestJob?.job_type) || null,
+      latestJobStatus: text(latestJob?.status) || null,
+      latestJobErrorCode: text(latestJob?.last_error_code) || null,
+      latestTransitionReason: text(latestTransition?.reason_code) || null,
+      engineErrorCode: input.engineErrorCode,
+    })
+    const [
+      { count: priorRunIncidents, error: runIncidentError },
+      { count: priorFingerprintIncidents, error: fingerprintIncidentError },
+    ] = await Promise.all([
+      input.supabase.from("ebay_same_day_pilot_events")
+        .select("id", { count: "exact", head: true })
+        .eq("run_id", state.run.id)
+        .eq("event_type", "UNKNOWN_SYSTEM_FAILURE_QUARANTINED"),
+      input.supabase.from("ebay_same_day_pilot_events")
+        .select("id", { count: "exact", head: true })
+        .eq("event_type", "UNKNOWN_SYSTEM_FAILURE_QUARANTINED")
+        .contains("event_payload", { incidentFingerprint }),
+    ])
+    if (runIncidentError || fingerprintIncidentError) {
+      throw new Error("SAME_DAY_CONTINUITY_INCIDENT_COUNTER_READ_FAILED")
+    }
+    if (Number(priorRunIncidents ?? 0) >= 1) {
+      return {
+        incidentFingerprint,
+        candidateId: input.expectedCandidateId,
+        failedMachineState: input.expectedMachineState,
+        successorPromoted: false,
+        pendingCodexDiagnosis: true,
+        candidateRejectedCommercially: false,
+        circuitBreakerOpen: true,
+        reasonCode: "SAME_DAY_CONTINUITY_SYSTEMIC_FAILURE_LIMIT_REACHED",
+      }
+    }
+    const occurrenceNumber = Number(priorFingerprintIncidents ?? 0) + 1
+    const blockers = [
+      "UNKNOWN_SYSTEM_FAILURE_QUARANTINED_FOR_CODEX_AUDIT",
+      ...(input.engineErrorCode ? [input.engineErrorCode] : []),
+    ]
+    await transition({
+      supabase: input.supabase,
+      runId: state.run.id,
+      candidateId: input.expectedCandidateId,
+      previousState: input.expectedMachineState,
+      nextState: "BLOCKED",
+      reasonCode: "UNKNOWN_SYSTEM_FAILURE_QUARANTINED_FOR_CONTINUITY",
+      triggeredBy: "USER",
+      checkpoint: {
+        continuityRescueVersion: SAME_DAY_CONTINUITY_RESCUE_VERSION,
+        incidentFingerprint,
+        failedMachineState: input.expectedMachineState,
+        latestJobId: text(latestJob?.id) || null,
+        latestJobType: text(latestJob?.job_type) || null,
+        latestJobStatus: text(latestJob?.status) || null,
+        latestJobErrorCode: text(latestJob?.last_error_code) || null,
+        latestTransitionReason: text(latestTransition?.reason_code) || null,
+        engineErrorCode: input.engineErrorCode,
+        evidenceRetained: true,
+        historyDeleted: false,
+        ebayWrites: 0,
+      },
+      nextAutomaticAction:
+        "Continuar con el siguiente candidato sin borrar el incidente.",
+      nextHumanAction:
+        "Ninguna para el lote actual; Codex debe diagnosticar el fingerprint acumulado.",
+    })
+    const priorEvidence = record(candidate.evidence_summary)
+    const { error: candidateError } = await input.supabase
+      .from("ebay_same_day_pilot_candidates")
+      .update({
+        state: "NEEDS_ONE_CRITICAL_FACT",
+        blockers,
+        evidence_summary: {
+          ...priorEvidence,
+          continuityIncident: {
+            version: SAME_DAY_CONTINUITY_RESCUE_VERSION,
+            requestId: input.requestId,
+            incidentFingerprint,
+            occurrenceNumber,
+            failedMachineState: input.expectedMachineState,
+            engineErrorCode: input.engineErrorCode,
+            latestJobId: text(latestJob?.id) || null,
+            latestJobType: text(latestJob?.job_type) || null,
+            latestJobStatus: text(latestJob?.status) || null,
+            latestJobErrorCode: text(latestJob?.last_error_code) || null,
+            latestTransitionReason: text(latestTransition?.reason_code) || null,
+            quarantinedAt: input.now.toISOString(),
+            evidenceRetained: true,
+            pendingCodexDiagnosis: true,
+          },
+        },
+        next_automated_action:
+          "Mantener el incidente en cuarentena hasta que Codex implemente una reparación versionada.",
+        next_human_action:
+          "Ninguna para este lote; el siguiente candidato puede continuar.",
+        updated_at: input.now.toISOString(),
+      })
+      .eq("id", input.expectedCandidateId)
+      .eq("run_id", state.run.id)
+      .eq("machine_state", "BLOCKED")
+    if (candidateError) {
+      throw new Error("SAME_DAY_CONTINUITY_QUARANTINE_PERSIST_FAILED")
+    }
+    const { error: eventError } = await input.supabase
+      .from("ebay_same_day_pilot_events")
+      .insert({
+        run_id: state.run.id,
+        candidate_id: input.expectedCandidateId,
+        event_type: "UNKNOWN_SYSTEM_FAILURE_QUARANTINED",
+        event_payload: {
+          version: SAME_DAY_CONTINUITY_RESCUE_VERSION,
+          requestId: input.requestId,
+          incidentFingerprint,
+          occurrenceNumber,
+          failedMachineState: input.expectedMachineState,
+          engineErrorCode: input.engineErrorCode,
+          latestJob: latestJob ? {
+            id: latestJob.id,
+            jobType: latestJob.job_type,
+            status: latestJob.status,
+            attempt: latestJob.attempt,
+            lastErrorCode: latestJob.last_error_code,
+          } : null,
+          latestTransition: latestTransition ? {
+            id: latestTransition.id,
+            previousState: latestTransition.previous_state,
+            nextState: latestTransition.next_state,
+            reasonCode: latestTransition.reason_code,
+          } : null,
+          evidenceRetained: true,
+          pendingCodexDiagnosis: true,
+          cumulativeFingerprint: true,
+          candidateRejectedCommercially: false,
+          historyDeleted: false,
+          ebayWrites: 0,
+        },
+        idempotency_key:
+          `${state.run.id}:${input.expectedCandidateId}:UNKNOWN_FAILURE:${input.requestId}`,
+        ebay_read_calls: 0,
+        openai_calls: 0,
+        ebay_writes: 0,
+        production_changed: false,
+      })
+    // The incident is also embedded in the candidate evidence above. A
+    // temporary event-ledger failure must not prevent promotion of the
+    // successor and recreate the exact operational delay this lane avoids.
+    const auditEventPersisted = !eventError
+    const successorPromoted = await promoteNextCandidate(
+      input.supabase,
+      state.run.id,
+      Number(candidate.ordinal),
+    )
+    await refreshRunProjection(input.supabase, state.run.id, true)
+    return {
+      incidentFingerprint,
+      occurrenceNumber,
+      candidateId: input.expectedCandidateId,
+      failedMachineState: input.expectedMachineState,
+      successorPromoted,
+      pendingCodexDiagnosis: true,
+      candidateRejectedCommercially: false,
+      circuitBreakerOpen: false,
+      auditEventPersisted,
+    }
+  } finally {
+    await releasePilotRunLease({
+      supabase: input.supabase,
+      runId: initialState.run.id,
+      workerId,
+      leaseToken,
+    })
+  }
+}
+
 export async function previewSameDayPilot(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -6880,7 +7100,11 @@ async function repairOrphanedImagePreparation(
   return 1
 }
 
-async function recoverDeadLetterCandidates(supabase: SupabaseClient, state: NonNullable<Awaited<ReturnType<typeof currentState>>>) {
+async function recoverDeadLetterCandidates(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  options: { preserveUnknownFailureCandidate?: boolean } = {},
+) {
   const { data, error } = await supabase.from("ebay_same_day_pilot_jobs")
     .select("id,candidate_id,job_type,last_error_code").eq("run_id", state.run.id).eq("status", "DEAD_LETTER")
   if (error) throw new Error("SAME_DAY_PILOT_DEAD_LETTER_READ_FAILED")
@@ -6934,6 +7158,13 @@ async function recoverDeadLetterCandidates(supabase: SupabaseClient, state: NonN
       if (appliedError) throw new Error("SAME_DAY_PILOT_APPLIED_DEAD_LETTER_RECOVERY_FAILED")
       continue
     }
+    if (options.preserveUnknownFailureCandidate === true) {
+      // The exceptional continuity lane must not turn an unlearned software
+      // incident into a commercial product rejection. Targeted learned
+      // repairs already ran above; leave the unknown dead letter intact so
+      // the continuity quarantine can preserve it for later Codex diagnosis.
+      continue
+    }
     if (!handledCandidates.has(candidateId)) {
       await rejectAndPromote({ supabase, runId: state.run.id, candidate: record(candidate),
         previousState: text(candidate.machine_state), reasonCode: text(failed.last_error_code) || "BACKGROUND_JOB_ATTEMPTS_EXHAUSTED" })
@@ -6973,7 +7204,13 @@ async function releasePilotRunLease(input: {
   return !error && data === true
 }
 
-export async function processSameDayPilotJobs(input: { supabase: SupabaseClient; accountKey: string; workerId: string; now?: Date }) {
+export async function processSameDayPilotJobs(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  workerId: string
+  now?: Date
+  preserveUnknownFailureCandidate?: boolean
+}) {
   const now = input.now ?? new Date()
   // The scheduler heartbeat also reconciles expired persistent pauses, even
   // when the run is currently waiting at a human gate and has no quota job to
@@ -7129,7 +7366,10 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
     staleDecisionFactsRecovered ||
     legacyProductFactsRejectionsRepaired ||
     staleControlledLunaConfirmationsRecovered ? 0 :
-    await recoverDeadLetterCandidates(input.supabase, state)
+    await recoverDeadLetterCandidates(input.supabase, state, {
+      preserveUnknownFailureCandidate:
+        input.preserveUnknownFailureCandidate === true,
+    })
   if (legacyPrematureRejectionsRepaired || prematureTaxonomyRejectionsRecovered ||
     productFactAuthorityLineageRecovered ||
     singleFactExceptionsRecovered || staleSupplyOpenAiInputsRecovered ||
@@ -8272,6 +8512,7 @@ export async function processSameDayPilotJobChain(input: {
   now?: Date
   maximumJobs?: number
   maximumDurationMs?: number
+  preserveUnknownFailureCandidate?: boolean
 }) {
   const maximumJobs = Math.max(1, Math.min(30, Math.trunc(input.maximumJobs ?? 30)))
   const maximumDurationMs = Math.max(1_000, Math.min(240_000,
@@ -8286,6 +8527,8 @@ export async function processSameDayPilotJobChain(input: {
       accountKey: input.accountKey,
       workerId: `${input.workerId}:chain:${index + 1}`,
       now: input.now ? new Date(input.now.getTime() + index) : undefined,
+      preserveUnknownFailureCandidate:
+        input.preserveUnknownFailureCandidate === true,
     })
     results.push(result)
     if (result.processed !== 1) {
@@ -8341,24 +8584,82 @@ export async function runSameDayPilotContinuityRescue(input: {
     }
   }
 
-  const execution = assessmentBefore.canRunAutomaticRescue
-    ? await processSameDayPilotJobChain({
+  let execution:
+    Awaited<ReturnType<typeof processSameDayPilotJobChain>> | null = null
+  let continuation:
+    Awaited<ReturnType<typeof processSameDayPilotJobChain>> | null = null
+  let engineErrorCode: string | null = null
+  if (assessmentBefore.canRunAutomaticRescue) {
+    try {
+      execution = await processSameDayPilotJobChain({
         supabase: input.supabase,
         accountKey: input.accountKey,
-        workerId: `continuity-rescue:${input.actorId}:${requestId}`,
+        workerId: `continuity-known-repair:${input.actorId}:${requestId}`,
         now,
         maximumJobs: 30,
         maximumDurationMs: 240_000,
+        preserveUnknownFailureCandidate: true,
+      })
+    } catch (error) {
+      engineErrorCode = error instanceof Error &&
+        /^[A-Z0-9_:-]+$/.test(error.message)
+        ? error.message
+        : "SAME_DAY_CONTINUITY_UNKNOWN_ENGINE_FAILURE"
+    }
+  }
+  const afterKnownRepair = await getSameDayPilot({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+  })
+  const assessmentAfterKnownRepair =
+    evaluateSameDayContinuityRescue(afterKnownRepair)
+  const unknownFailurePersisted =
+    assessmentBefore.canRunAutomaticRescue &&
+    assessmentAfterKnownRepair.mode === "UNKNOWN_FAILURE_SUSPECTED" &&
+    assessmentAfterKnownRepair.candidateId === assessmentBefore.candidateId &&
+    assessmentAfterKnownRepair.machineState === assessmentBefore.machineState
+  const quarantine = unknownFailurePersisted &&
+    assessmentBefore.candidateId && assessmentBefore.machineState
+    ? await quarantineUnknownContinuityFailure({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        actorId: input.actorId,
+        requestId,
+        expectedCandidateId: assessmentBefore.candidateId,
+        expectedMachineState: assessmentBefore.machineState,
+        engineErrorCode,
+        now,
       })
     : null
+  if (quarantine && quarantine.circuitBreakerOpen !== true) {
+    try {
+      continuation = await processSameDayPilotJobChain({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        workerId: `continuity-successor:${input.actorId}:${requestId}`,
+        maximumJobs: 30,
+        maximumDurationMs: 240_000,
+        preserveUnknownFailureCandidate: true,
+      })
+    } catch (error) {
+      engineErrorCode = engineErrorCode ?? (error instanceof Error &&
+        /^[A-Z0-9_:-]+$/.test(error.message)
+        ? error.message
+        : "SAME_DAY_CONTINUITY_SUCCESSOR_ENGINE_FAILURE")
+    }
+  }
   const after = await getSameDayPilot({
     supabase: input.supabase,
     accountKey: input.accountKey,
   })
   const assessmentAfter = evaluateSameDayContinuityRescue(after)
-  const actionTaken = execution
-    ? "EXISTING_ENGINE_RESUMED"
-    : "STOPPED_AT_SAFETY_GATE"
+  const actionTaken = quarantine?.circuitBreakerOpen === true
+    ? "SYSTEMIC_FAILURE_CIRCUIT_BREAKER_OPEN"
+    : quarantine
+      ? "UNKNOWN_FAILURE_QUARANTINED_AND_SUCCESSOR_CONTINUED"
+      : assessmentBefore.canRunAutomaticRescue
+        ? "KNOWN_RECOVERY_APPLIED"
+        : "STOPPED_AT_SAFETY_GATE"
   const beforeFingerprint = hash({
     runId: assessmentBefore.runId,
     candidateId: assessmentBefore.candidateId,
@@ -8403,6 +8704,15 @@ export async function runSameDayPilotContinuityRescue(input: {
               executions: execution.executions,
             }
           : null,
+        continuation: continuation
+          ? {
+              processed: continuation.processed,
+              stoppedReason: continuation.stoppedReason,
+              executions: continuation.executions,
+            }
+          : null,
+        engineErrorCode,
+        quarantine,
         safety: {
           existingStateMachineOnly: true,
           checkpointPreserved: true,
@@ -8430,5 +8740,8 @@ export async function runSameDayPilotContinuityRescue(input: {
     assessmentBefore,
     assessmentAfter,
     execution,
+    continuation,
+    quarantine,
+    engineErrorCode,
   }
 }

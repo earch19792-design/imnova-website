@@ -503,8 +503,10 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
   const rescueMode = String(continuityRescue.mode ?? "")
   const rescueAvailable =
     continuityRescue.canRunAutomaticRescue === true
-  const rescueStatus = rescueMode === "SAFE_AUTOMATIC_RESUME"
-    ? "LISTO PARA REANUDAR"
+  const rescueStatus = rescueMode === "UNKNOWN_FAILURE_SUSPECTED"
+    ? "FALLA NUEVA DETECTADA · AUXILIO DISPONIBLE"
+    : rescueMode === "HEALTHY"
+      ? "FLUJO NORMAL · AUXILIO NO NECESARIO"
     : rescueMode === "WAITING_HUMAN_GATE"
       ? "ESPERANDO DECISIÓN HUMANA"
       : rescueMode === "FINAL_AUTHORIZATION_REQUIRED"
@@ -570,7 +572,7 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
                 "El diagnóstico seguro estará disponible cuando exista un lanzamiento.")}
             </p>
             <p className="mt-2 text-[11px] leading-5 text-white/45">
-              Nunca salta estados, inventa evidencia, aprueba imágenes o autoriza la publicación. Si el flujo llega al preflight final, se detiene para tu autorización.
+              Sólo se habilita ante una falla no reconocida. Primero intenta una reparación aprendida; si no existe, pone ese candidato en cuarentena técnica, continúa con el siguiente y conserva el fingerprint para la corrección posterior de Codex.
             </p>
             <button type="button"
               disabled={recoveryWorking || !rescueAvailable}
@@ -579,8 +581,8 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
               {recoveryWorking
                 ? "EJECUTANDO AUXILIO…"
                 : rescueAvailable
-                  ? "ACTIVAR AUXILIO SEGURO"
-                  : "AUXILIO DETENIDO EN COMPUERTA"}
+                  ? "AISLAR FALLA Y CONTINUAR LOTE"
+                  : "AUXILIO RESERVADO PARA FALLAS NUEVAS"}
             </button>
           </div>
         </div>

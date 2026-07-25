@@ -5,7 +5,8 @@ export const SAME_DAY_CONTINUITY_RESCUE_VERSION =
 
 export type SameDayContinuityRescueMode =
   | "NO_ACTIVE_RUN"
-  | "SAFE_AUTOMATIC_RESUME"
+  | "HEALTHY"
+  | "UNKNOWN_FAILURE_SUSPECTED"
   | "WAITING_HUMAN_GATE"
   | "FINAL_AUTHORIZATION_REQUIRED"
   | "PUBLICATION_RECONCILIATION_REQUIRED"
@@ -74,7 +75,7 @@ function assessment(
   return {
     version: SAME_DAY_CONTINUITY_RESCUE_VERSION,
     mode,
-    canRunAutomaticRescue: mode === "SAFE_AUTOMATIC_RESUME",
+    canRunAutomaticRescue: mode === "UNKNOWN_FAILURE_SUSPECTED",
     runId: context.runId || null,
     candidateId: context.candidateId || null,
     machineState: context.machineState || null,
@@ -182,9 +183,13 @@ export function evaluateSameDayContinuityRescue(
 
   const unsettledCandidate = candidates.find((candidate) =>
     !SETTLED_MACHINE_STATES.has(text(candidate.machine_state)))
-  const recoverableJob = rows(snapshot.jobs).find((job) =>
-    ["PENDING", "LEASED", "WAITING_RETRY", "DEAD_LETTER"]
-      .includes(text(job.status)))
+  const jobs = rows(snapshot.jobs)
+  const activeJob = jobs.find((job) =>
+    text(job.candidate_id) === text(unsettledCandidate?.id) &&
+    ["PENDING", "LEASED", "WAITING_RETRY"].includes(text(job.status)))
+  const deadLetter = jobs.find((job) =>
+    text(job.candidate_id) === text(unsettledCandidate?.id) &&
+    text(job.status) === "DEAD_LETTER")
   const target = Math.max(0, Number(run.target_new_listings ?? 0))
   const verified = Math.max(0, Number(run.verified_new_listings ?? 0))
   const targetPending = verified < target
@@ -199,24 +204,41 @@ export function evaluateSameDayContinuityRescue(
     "COMPLETED",
   ].includes(text(run.status)) && targetPending && !candidateSetExhausted
 
-  if (unsettledCandidate || recoverableJob || runCanContinue) {
-    const candidate = unsettledCandidate ?? candidates.find((entry) =>
-      text(entry.id) === text(recoverableJob?.candidate_id))
-    return assessment("SAFE_AUTOMATIC_RESUME", {
+  if (unsettledCandidate && !activeJob) {
+    return assessment("UNKNOWN_FAILURE_SUSPECTED", {
       runId,
-      candidateId: text(candidate?.id || recoverableJob?.candidate_id),
-      machineState: text(candidate?.machine_state),
-      reasonCode: unsettledCandidate
-        ? "SAME_DAY_CONTINUITY_AUTOMATIC_STATE_RECOVERABLE"
-        : recoverableJob
-          ? "SAME_DAY_CONTINUITY_DURABLE_JOB_RECOVERABLE"
-          : "SAME_DAY_CONTINUITY_NEXT_CANDIDATE_RECOVERABLE",
+      candidateId: text(unsettledCandidate.id),
+      machineState: text(unsettledCandidate.machine_state),
+      reasonCode: deadLetter
+        ? "SAME_DAY_CONTINUITY_UNRESOLVED_DEAD_LETTER"
+        : "SAME_DAY_CONTINUITY_ORPHANED_UNKNOWN_STATE",
       nextAction:
-        "Ejecutar el motor durable desde el último checkpoint válido.",
+        "Activar el auxilio: intentar la reparación aprendida y, si no existe, aislar el incidente para continuar con el siguiente candidato.",
+    })
+  }
+
+  if (activeJob) {
+    return assessment("HEALTHY", {
+      runId,
+      candidateId: text(unsettledCandidate?.id),
+      machineState: text(unsettledCandidate?.machine_state),
+      reasonCode: "SAME_DAY_CONTINUITY_DURABLE_WORK_PRESENT",
+      nextAction:
+        "No usar auxilio; existe trabajo durable pendiente o en ejecución.",
     })
   }
 
   if (targetPending) {
+    if (runCanContinue) {
+      return assessment("HEALTHY", {
+        runId,
+        candidateId: text(unsettledCandidate?.id),
+        machineState: text(unsettledCandidate?.machine_state),
+        reasonCode: "SAME_DAY_CONTINUITY_NORMAL_SCHEDULER_CONTINUATION",
+        nextAction:
+          "No usar auxilio; el scheduler puede continuar o preparar el siguiente candidato normalmente.",
+      })
+    }
     return assessment("MANUAL_CORRECTION_REQUIRED", {
       runId,
       candidateId: text(candidates[0]?.id),
