@@ -726,6 +726,31 @@ function distinctValues(values: string[]) {
   return Array.from(new Set(values))
 }
 
+function applyItemSpecificBlockers(
+  blockers: string[],
+  updater: (fn: (current: FormState) => FormState) => void,
+) {
+  const missingAspects = distinctValues(
+    blockers
+      .map(parseRequiredItemSpecificBlocker)
+      .filter(Boolean),
+  )
+  if (!missingAspects.length) return []
+  updater((current) => {
+    const nextAspects = { ...current.aspects }
+    for (const name of missingAspects) {
+      if (!String(nextAspects[name] ?? "").trim()) {
+        nextAspects[name] = ""
+      }
+    }
+    return {
+      ...current,
+      aspects: nextAspects,
+    }
+  })
+  return missingAspects
+}
+
 function fromPackage(value: Record<string, unknown>): FormState {
   const pricing = object(value.pricing)
   const aspects = object(value.aspects)
@@ -2081,6 +2106,14 @@ function ListingWorkspacePageContent() {
       ? names
       : draftState.taxonomy?.requiredAspects.map((aspect) => aspect.name) ?? [])
   }, [draftState.taxonomy, finalListingReview?.taxonomy?.requiredAspectNames])
+  const displayedItemSpecificEntries = useMemo(() => {
+    const current = Object.entries(form.aspects)
+    const existingNames = new Set(current.map(([name]) => name))
+    const requiredEntries = Array.from(requiredTaxonomyAspects)
+      .filter((name) => !existingNames.has(name))
+      .map((name) => [name, ""] as const)
+    return [...current, ...requiredEntries]
+  }, [form.aspects, requiredTaxonomyAspects])
   const safeDefaultsMetadata = useMemo(
     () => object(object(listingPackage?.package_data).safeDefaults),
     [listingPackage],
@@ -3106,8 +3139,28 @@ function ListingWorkspacePageContent() {
           : `Faltan ${payload.readiness?.blockers?.length ?? 0} validaciones para autorizar.`)
     } catch (requestError) {
       const blockers = (requestError as Error & { blockers?: string[] }).blockers ?? []
+      const blockerMessages = distinctValues(blockers
+        .map((blocker) => humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)))
+      const missingItemSpecificAspects = applyItemSpecificBlockers(
+        blockers,
+        setForm,
+      )
+      if (missingItemSpecificAspects.length) {
+        setMessage(
+          `Faltan Item Specifics obligatorios: ${missingItemSpecificAspects.join(", ")}.`,
+        )
+        itemSpecificsSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        })
+        setError(
+          `${getMobileReviewRequestError(requestError, "No se pudo validar el draft.")} ${blockerMessages.join(" ")}`,
+        )
+      } else {
+        setError(getMobileReviewRequestError(requestError, "No se pudo validar el draft."))
+        setMessage("")
+      }
       if (blockers.length) setDraftState((current) => ({ ...current, readiness: { ready: false, blockers } }))
-      setError(getMobileReviewRequestError(requestError, "No se pudo validar el draft.")); setMessage("")
     } finally { setDraftBusy(false) }
   }
 
@@ -3133,8 +3186,28 @@ function ListingWorkspacePageContent() {
       setMessage("Aprobación registrada por 15 minutos. La ejecución requiere el siguiente paso.")
     } catch (requestError) {
       const blockers = (requestError as Error & { blockers?: string[] }).blockers ?? []
+      const blockerMessages = distinctValues(blockers
+        .map((blocker) => humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)))
       if (blockers.length) setDraftState((current) => ({ ...current, readiness: { ready: false, blockers } }))
-      setError(getMobileReviewRequestError(requestError, "No se pudo aprobar el draft.")); setMessage("")
+      const missingItemSpecificAspects = applyItemSpecificBlockers(
+        blockers,
+        setForm,
+      )
+      if (missingItemSpecificAspects.length) {
+        setMessage(
+          `Faltan Item Specifics obligatorios: ${missingItemSpecificAspects.join(", ")}.`,
+        )
+        itemSpecificsSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        })
+        setError(
+          `${getMobileReviewRequestError(requestError, "No se pudo aprobar el draft.")} ${blockerMessages.join(" ")}`,
+        )
+      } else {
+        setError(getMobileReviewRequestError(requestError, "No se pudo aprobar el draft."))
+        setMessage("")
+      }
     } finally { setDraftBusy(false) }
   }
 
@@ -3551,19 +3624,39 @@ function ListingWorkspacePageContent() {
       }
       setPublicationAutomationFailed(true)
       setUnpublishedAuthorizationError(code)
-      setError(
-        code.includes("EBAY_V3_PUBLIC_LUNA_RATE_LIMITED")
-          ? "Luna mantuvo el límite temporal después de la pausa automática. Seller OS se detuvo antes de autorizar o escribir en eBay; el mismo botón podrá reanudar cuando Luna libere la lectura."
-          : code.includes("EBAY_V3_PUBLIC_LUNA_TEMPORARILY_UNAVAILABLE")
-          ? "Luna siguió temporalmente indisponible después de los reintentos seguros. Seller OS se detuvo antes de autorizar o escribir en eBay; el mismo botón podrá reanudar."
-          : code.includes("EBAY_FINAL_")
-          ? humanFinalPublicationError(requestError)
-          : getMobileReviewRequestError(
-              requestError,
-              "La publicación automatizada se detuvo sin repetir operaciones.",
-            ),
+      const blockers = (requestError as Error & { blockers?: string[] }).blockers ?? []
+      const missingItemSpecificAspects = applyItemSpecificBlockers(
+        blockers,
+        setForm,
       )
-      setMessage("")
+      if (missingItemSpecificAspects.length) {
+        itemSpecificsSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        })
+        const blockerMessages = distinctValues(blockers
+          .map((blocker) => humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)))
+        setMessage(
+          `Faltan Item Specifics obligatorios: ${missingItemSpecificAspects.join(", ")}.`,
+        )
+        setError(
+          `${humanFinalPublicationError(requestError)} ${blockerMessages.join(" ")}`
+        )
+      } else {
+        setError(
+          code.includes("EBAY_V3_PUBLIC_LUNA_RATE_LIMITED")
+            ? "Luna mantuvo el límite temporal después de la pausa automática. Seller OS se detuvo antes de autorizar o escribir en eBay; el mismo botón podrá reanudar cuando Luna libere la lectura."
+            : code.includes("EBAY_V3_PUBLIC_LUNA_TEMPORARILY_UNAVAILABLE")
+              ? "Luna siguió temporalmente indisponible después de los reintentos seguros. Seller OS se detuvo antes de autorizar o escribir en eBay; el mismo botón podrá reanudar."
+              : code.includes("EBAY_FINAL_")
+                ? humanFinalPublicationError(requestError)
+                : getMobileReviewRequestError(
+                    requestError,
+                    "La publicación automatizada se detuvo sin repetir operaciones.",
+                  ),
+        )
+        setMessage("")
+      }
       setUnpublishedPreflightRetry((current) => current + 1)
     } finally {
       prepareVisualTimers.splice(0).forEach((timer) =>
@@ -3588,7 +3681,28 @@ function ListingWorkspacePageContent() {
       }))
       setMessage("Preview final persistido. Revisa precio, cantidad, imágenes, policies y ubicación antes de autorizar.")
     } catch (requestError) {
-      setError(humanFinalPublicationError(requestError)); setMessage("")
+      const blockers = (requestError as Error & { blockers?: string[] }).blockers ?? []
+      const missingItemSpecificAspects = applyItemSpecificBlockers(
+        blockers,
+        setForm,
+      )
+      if (missingItemSpecificAspects.length) {
+        const blockerMessages = distinctValues(blockers
+          .map((blocker) => humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)))
+        setError(
+          `${humanFinalPublicationError(requestError)} ${blockerMessages.join(" ")}`
+        )
+        setMessage(
+          `Faltan Item Specifics obligatorios: ${missingItemSpecificAspects.join(", ")}.`,
+        )
+        itemSpecificsSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        })
+      } else {
+        setError(humanFinalPublicationError(requestError))
+        setMessage("")
+      }
     } finally { setDraftBusy(false) }
   }
 
@@ -3609,7 +3723,27 @@ function ListingWorkspacePageContent() {
         ? `Listing ${payload.listing?.listingId} ACTIVE y registrado en monitoreo.`
         : `Listing ${payload.listing?.listingId} publicado; eBay aún no confirma ACTIVE. Usa reconciliar, nunca vuelvas a publicar.`)
     } catch (requestError) {
-      setError(humanFinalPublicationError(requestError)); setMessage("")
+      const blockers = (requestError as Error & { blockers?: string[] }).blockers ?? []
+      const missingItemSpecificAspects = applyItemSpecificBlockers(
+        blockers,
+        setForm,
+      )
+      if (missingItemSpecificAspects.length) {
+        const blockerMessages = distinctValues(blockers
+          .map((blocker) => humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)))
+        setError(
+          `${humanFinalPublicationError(requestError)} ${blockerMessages.join(" ")}`
+        )
+        setMessage(
+          `Faltan Item Specifics obligatorios: ${missingItemSpecificAspects.join(", ")}.`,
+        )
+        itemSpecificsSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        })
+      } else {
+        setError(humanFinalPublicationError(requestError)); setMessage("")
+      }
     } finally { setDraftBusy(false) }
   }
 
@@ -4285,7 +4419,7 @@ function ListingWorkspacePageContent() {
           <section ref={itemSpecificsSectionRef} className="rounded-3xl border border-violet-200/20 bg-violet-200/[0.05] p-4">
             <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-black">Item specifics</h2><p className="mt-1 text-xs leading-5 text-white/50">eBay Taxonomy define los nombres y opciones; tú confirmas los valores reales del producto Luna.</p></div><span className="rounded-full border border-violet-200/20 px-2 py-1 text-[10px] font-black">{String(finalReviewTaxonomy.status ?? finalListingReview?.taxonomy?.status ?? draftState.taxonomy?.status ?? "SIN CONSULTAR")}</span></div>
             {!finalReviewCompleted && <button type="button" disabled={draftBusy || !/^\d{1,12}$/.test(form.categoryId)} onClick={() => void validateDraft()} className="mt-3 min-h-11 w-full rounded-xl border border-violet-200/30 px-3 text-sm font-black text-violet-50 disabled:opacity-40">Cargar requisitos oficiales del Category ID</button>}
-            <div className="mt-3 space-y-2">{Object.entries(form.aspects).map(([name, value]) => {
+            <div className="mt-3 space-y-2">{displayedItemSpecificEntries.map(([name, value]) => {
               const finalTaxonomyAspect =
                 finalListingReview?.taxonomy?.relevantAspects.find(
                   (aspect) => aspect.name === name,
