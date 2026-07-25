@@ -6309,8 +6309,11 @@ async function repairRejectedMarketVisualFallback(
       const blockers = strings(entry.blockers)
       return text(entry.machine_state) === "REJECTED" &&
         text(entry.state) === "REJECTED_TODAY" &&
-        blockers.includes(VISUAL_MARKET_RECAPTURE_LIMIT_REASON) &&
-        blockers.includes("MARKET_VISUAL_SIGNALS_INSUFFICIENT")
+        ((blockers.includes(VISUAL_MARKET_RECAPTURE_LIMIT_REASON) &&
+          blockers.includes("MARKET_VISUAL_SIGNALS_INSUFFICIENT")) ||
+          (blockers.length === 1 &&
+            blockers[0] ===
+              "EBAY_IMAGE_SET_COMMERCIAL_SOURCE_DIVERSITY_REQUIRED"))
     })
   if (!candidate) return 0
   const candidateOrdinal = Number(candidate.ordinal)
@@ -6354,6 +6357,8 @@ async function repairRejectedMarketVisualFallback(
     ...previousPackage,
     marketVisualFallback: {
       version: PROFESSIONAL_MARKET_VISUAL_FALLBACK_RECOVERY_VERSION,
+      previousErrorCode: strings(candidate.blockers)[0] ?? null,
+      previousPackageHash,
       sourceIdentity: "LUNA_PORTEX_AUTHORIZED_PRODUCT_IMAGE",
       factualAuthority: "AUTHORITATIVE_PRODUCT_FACTS_PACKAGE",
       artDirection: "PROFESSIONAL_MARKETPLACE_DEFAULTS",

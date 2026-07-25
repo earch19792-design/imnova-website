@@ -694,6 +694,11 @@ export function assertLunaCatalogCommercialSourceDiversity(
   strategy: Array<{ authorizedSourceImageIds: string[] }>,
 ) {
   if (pack.galleryCoverage === "SINGLE_VIEW") return
+  // Unsafe gallery angles are not valid generation sources. If exactly one
+  // foreground-safe Luna image remains, reuse that exact product view across
+  // distinct backgrounds instead of rejecting the product or fabricating an
+  // alternate angle.
+  if (selected.length === 1 && sourceIds.length === 1) return
   if (selected.length < 2 || sourceIds.length < 2) {
     throw new Error("EBAY_IMAGE_SET_COMMERCIAL_SOURCE_DIVERSITY_REQUIRED")
   }
