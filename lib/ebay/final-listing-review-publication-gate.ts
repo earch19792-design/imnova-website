@@ -47,11 +47,17 @@ export type FinalListingReviewPublicationGate = {
   source:
     | "ebay_reference_guided_final_listing_review_previews"
     | "APPROVED_IMAGE_REVISION_AUTOMATED_QA"
+    | "APPROVED_SAME_DAY_IMAGE_SET_AUTOMATED_QA"
 }
 
 type AutomatedRevisionEvidence = {
   listingPackage: Record<string, any> | null
   revision: Record<string, any> | null
+  assets: Array<Record<string, any>>
+}
+
+type AutomatedSameDayEvidence = {
+  listingPackage: Record<string, any> | null
   assets: Array<Record<string, any>>
 }
 
@@ -90,6 +96,8 @@ function emptyArray(value: unknown) {
 
 function blockedAutomatedGate(
   reason = "FINAL_LISTING_AUTOMATED_GATE_NOT_READY",
+  source: FinalListingReviewPublicationGate["source"] =
+    "APPROVED_IMAGE_REVISION_AUTOMATED_QA",
 ): FinalListingReviewPublicationGate {
   return {
     required: true,
@@ -106,7 +114,150 @@ function blockedAutomatedGate(
     providerCallsSnapshot: 0,
     selectedAssets: 0,
     passedAssets: 0,
-    source: "APPROVED_IMAGE_REVISION_AUTOMATED_QA",
+    source,
+  }
+}
+
+export function evaluateApprovedSameDayImageSetAutomationGate(
+  evidence: AutomatedSameDayEvidence,
+): FinalListingReviewPublicationGate {
+  const listingPackage = object(evidence.listingPackage)
+  const packageData = object(listingPackage.package_data)
+  const sameDayPilot = object(packageData.sameDayPilot)
+  const imageUrls = stringArray(packageData.imageUrls)
+  const manifest = Array.isArray(packageData.imageAssetManifest)
+    ? packageData.imageAssetManifest.map(object) : []
+  const assetIds = manifest.map((entry) => text(entry.assetId))
+  const actor = text(listingPackage.created_by)
+  const blocked = () => blockedAutomatedGate(
+    "FINAL_LISTING_AUTOMATED_GATE_NOT_READY",
+    "APPROVED_SAME_DAY_IMAGE_SET_AUTOMATED_QA",
+  )
+  if (
+    !["draft", "ready_for_review", "approved"].includes(
+      text(listingPackage.status),
+    )
+    || !/^[0-9a-f-]{36}$/i.test(text(sameDayPilot.runId))
+    || !/^[0-9a-f-]{36}$/i.test(text(sameDayPilot.candidateId))
+    || !actor
+    || imageUrls.length !== 7
+    || new Set(imageUrls).size !== 7
+    || manifest.length !== 7
+    || assetIds.some((id) => !/^[0-9a-f-]{36}$/i.test(id))
+    || new Set(assetIds).size !== 7
+    || evidence.assets.length !== 7
+  ) return blocked()
+
+  const byId = new Map(evidence.assets.map((asset) => [
+    text(asset.id), object(asset),
+  ]))
+  const ordered = assetIds.map((id) => byId.get(id)).filter(Boolean)
+  const controlIds = new Set(ordered.map((asset) =>
+    text(object(asset?.transformation).sameDayImageControlId)))
+  const slots = ordered.map((asset) =>
+    text(object(asset?.transformation).slot))
+  const sourceHashes = ordered.map((asset) => text(asset?.source_sha256))
+  const outputHashes = ordered.map((asset) => text(asset?.output_sha256))
+  const objectives = ordered.slice(1).map((asset) => text(
+    object(object(asset?.transformation).visualStrategyPosition)
+      .salesObjective,
+  ))
+  const passed = ordered.filter((asset, index) => {
+    const transformation = object(asset?.transformation)
+    const qa = object(asset?.qa_result)
+    const entry = manifest[index]
+    return asset?.status === "approved"
+      && text(asset?.approved_by) === actor
+      && text(asset?.created_by) === actor
+      && Number.isFinite(Date.parse(text(asset?.approved_at)))
+      && asset?.rights_evidence_confirmed === true
+      && asset?.output_width === 1600
+      && asset?.output_height === 1600
+      && transformation.version === "EBAY_LISTING_IMAGE_COMPOSITION_SET_V2"
+      && transformation.compositorContractVersion === CURRENT_COMPOSITOR
+      && transformation.presentationMode === "SINGLE_SOURCE_INFORMATIONAL"
+      && (index === 0
+        ? transformation.authorizedSourceTreatment
+          === "PRESERVED_FRAMED_SOURCE"
+        : transformation.authorizedSourceTreatment
+          === "LOCAL_AUTHORIZED_FOREGROUND")
+      && transformation.sourceVisualPolicy === "EXACT_AUTHORIZED_PIXELS_ONLY"
+      && transformation.authorizedSourceViewReused === true
+      && transformation.originalPackagePixelsPreserved === true
+      && transformation.competitorImageUsed === false
+      && transformation.verifiedFactsOnly === true
+      && transformation.generativeAiUsed === false
+      && transformation.squarePresentationVersion
+        === EBAY_SQUARE_PRESENTATION_QA_VERSION
+      && transformation.artificialFrameAdded === false
+      && transformation.outputEncodingQuality === 94
+      && text(transformation.sameDayPilotRunId) === text(sameDayPilot.runId)
+      && text(transformation.sameDayPilotCandidateId)
+        === text(sameDayPilot.candidateId)
+      && qa.automaticStatus === "PASSED"
+      && qa.productFidelityPassed === true
+      && qa.commercialQualityPassed === true
+      && qa.technicalQualityPassed === true
+      && qa.compositionPassed === true
+      && qa.textPolicyPassed === true
+      && qa.contextualPropsPassed === true
+      && qa.mobileReadabilityPassed === true
+      && qa.squarePresentationQaVersion
+        === EBAY_SQUARE_PRESENTATION_QA_VERSION
+      && qa.squareFormatPassed === true
+      && qa.artificialInsetFrameFree === true
+      && qa.sourceQualityPassed === true
+      && qa.safeCanvasPlacementPassed === true
+      && qa.mobileFocalPointPassed === true
+      && Number(qa.productCoverageRatio) >= (index === 0 ? .75 : .68)
+      && Number(qa.productCoverageRatio) <= (index === 0 ? .85 : .82)
+      && qa.sourceViewCapabilityPassed === true
+      && qa.marketSignalsLimitedToScene === true
+      && qa.hiddenProductGeometryGenerated === false
+      && qa.qaEvaluatorVersion === CURRENT_QA_EVALUATOR
+      && emptyArray(qa.failureReasons)
+      && emptyArray(qa.blockers)
+      && Number(entry.position) === index
+      && text(entry.assetId) === text(asset?.id)
+      && text(entry.sha256) === text(asset?.output_sha256)
+      && text(entry.url) === text(asset?.public_url)
+      && imageUrls[index] === text(asset?.public_url)
+      && entry.automaticQa === "PASSED"
+      && Number.isFinite(Date.parse(text(entry.humanApprovedAt)))
+      && entry.generativeAiUsed === false
+  })
+  const ready = ordered.length === 7
+    && passed.length === 7
+    && slots[0] === "MAIN_WHITE_BACKGROUND"
+    && object(ordered[0]?.qa_result).mainBackground === "PURE_WHITE"
+    && new Set(slots).size === 7
+    && controlIds.size === 1
+    && Boolean([...controlIds][0])
+    && new Set(sourceHashes).size >= 1
+    && new Set(sourceHashes).size <= 5
+    && sourceHashes.every((value) => /^[0-9a-f]{64}$/.test(value))
+    && new Set(outputHashes).size === 7
+    && outputHashes.every((value) => /^[0-9a-f]{64}$/.test(value))
+    && objectives.length === 6
+    && new Set(objectives).size === 6
+    && objectives.every(Boolean)
+
+  return {
+    required: true,
+    allowed: ready,
+    reason: ready ? null : "FINAL_LISTING_AUTOMATED_GATE_NOT_READY",
+    reviewId: ready ? [...controlIds][0] : null,
+    revisionId: null,
+    attemptId: null,
+    previewHash: null,
+    finalVisualSetLocked: ready,
+    generationControlsHidden: true,
+    readyForUnpublishedOfferAuthorization: ready,
+    visualPhase: ready ? "COMPLETED" : null,
+    providerCallsSnapshot: 0,
+    selectedAssets: ordered.length,
+    passedAssets: passed.length,
+    source: "APPROVED_SAME_DAY_IMAGE_SET_AUTOMATED_QA",
   }
 }
 
@@ -357,10 +508,37 @@ export async function loadFinalListingReviewPublicationGate(input: {
   const { data: listingPackage, error: packageError } =
     await packageQuery.maybeSingle()
   if (packageError) throw new Error("FINAL_LISTING_AUTOMATED_GATE_LOOKUP_FAILED")
-  const preferredRevisionId = text(
-    object(listingPackage?.package_data).preferredImageRevisionId,
-  )
-  if (!listingPackage || !preferredRevisionId) return legacyGate
+  const packageData = object(listingPackage?.package_data)
+  const preferredRevisionId = text(packageData.preferredImageRevisionId)
+  const packageManifest = Array.isArray(packageData.imageAssetManifest)
+    ? packageData.imageAssetManifest.map(object) : []
+  const packageAssetIds = packageManifest
+    .map((entry) => text(entry.assetId))
+    .filter(Boolean)
+  if (!listingPackage) return legacyGate
+
+  if (!preferredRevisionId && packageAssetIds.length === 7) {
+    let assetsQuery = input.supabase
+      .from("ebay_listing_image_assets")
+      .select([
+        "id", "status", "approved_by", "approved_at", "public_url",
+        "source_sha256", "output_sha256", "output_width", "output_height",
+        "rights_evidence_confirmed", "transformation", "qa_result",
+        "created_by",
+      ].join(","))
+      .eq("listing_package_id", input.listingPackageId)
+      .in("id", packageAssetIds)
+    if (input.actorId) assetsQuery = assetsQuery.eq("created_by", input.actorId)
+    const { data: assets, error: assetsError } = await assetsQuery
+    if (assetsError) {
+      throw new Error("FINAL_LISTING_AUTOMATED_GATE_LOOKUP_FAILED")
+    }
+    return evaluateApprovedSameDayImageSetAutomationGate({
+      listingPackage: listingPackage as Record<string, any>,
+      assets: (assets ?? []) as Array<Record<string, any>>,
+    })
+  }
+  if (!preferredRevisionId) return legacyGate
 
   let revisionQuery = input.supabase
     .from("ebay_same_day_pilot_image_revisions")
