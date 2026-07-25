@@ -915,6 +915,20 @@ export async function POST(req: Request) {
             refreshError,
             "COMMAND_CENTER_PACKAGE_REFRESH_FAILED",
           )
+          if (code === "SAME_DAY_WORKSPACE_REFRESH_ALREADY_EXECUTED") {
+            const persistedRefreshedPackageData = object(existing.package_data)
+            return NextResponse.json({
+              success: true,
+              listingPackage: existing,
+              created: false,
+              evidenceRefreshed: false,
+              preservedUserFields: true,
+              sameDayAuthorizedPublication: Boolean(sameDayContext),
+              safeDefaultsApplied:
+                strings(object(persistedRefreshedPackageData.safeDefaults).appliedFields).length > 0,
+              safety: { ebayWriteUsed: false, canPublish: false },
+            })
+          }
           if (code === "EBAY_LISTING_PACKAGE_STALE_VERSION") {
             return NextResponse.json({
               success: false,
