@@ -902,6 +902,7 @@ async function loadFinalPublicationContextWithRecoverableError(
   options: {
     allowRejectedCategoryRepairDraftStatus?: boolean
   } = {},
+  requestId: string = randomUUID(),
 ) {
   try {
     return {
@@ -915,10 +916,28 @@ async function loadFinalPublicationContextWithRecoverableError(
     }
   } catch (contextError) {
     const code = errorCode(contextError)
-    if (!isCommandCenterCommercialFreshnessRecheck(code)) throw contextError
+    if (
+      isCommandCenterCommercialFreshnessRecheck(code)
+      || KNOWN_FINAL_PUBLICATION_RETRY_BLOCKERS.has(code)
+    ) {
+      return {
+        success: false as const,
+        response: jsonError(new Error(code), 409),
+      }
+    }
+    if (shouldQuarantineUnknownFinalPublicationError(code)) {
+      const quarantine = await attemptAuxiliaryFinalPublicationQuarantineFromExecution({
+        supabase,
+        actor,
+        executionId,
+        sourceError: contextError,
+        requestId,
+      })
+      if (quarantine) return { success: false as const, response: quarantine }
+    }
     return {
       success: false as const,
-      response: jsonError(new Error(code), 409),
+      response: jsonError(contextError, 502),
     }
   }
 }
@@ -1986,6 +2005,8 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
     supabase,
     executionId,
     actor,
+    {},
+    requestId,
   )
   if (!contextResult.success) return contextResult.response
   const context = contextResult.context
@@ -2080,6 +2101,95 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
     if (quarantine) return quarantine
     throw error
   }
+}
+
+function buildAuxiliaryFinalPublicationQuarantineResponse(input: {
+  requestId: string
+  sourceError: unknown
+  rescue: {
+    incidentFingerprint: string | null
+    occurrenceNumber: number | null
+    candidateId: string
+    failedMachineState: string
+    successorPromoted: boolean
+    pendingCodexDiagnosis: boolean
+    candidateRejectedCommercially: boolean
+    circuitBreakerOpen: boolean
+    auditEventPersisted: boolean
+  }
+}) {
+  return NextResponse.json({
+    success: false,
+    error: "EBAY_FINAL_PUBLICATION_AUXILIARY_QUARANTINE_TRIGGERED",
+    blockers: ["FINAL_PUBLICATION_QUARANTINE_TRIGGERED"],
+    continuity: {
+      requestId: input.requestId,
+      code: errorCode(input.sourceError),
+      incidentFingerprint: input.rescue.incidentFingerprint ?? null,
+      occurrenceNumber: input.rescue.occurrenceNumber ?? null,
+      candidateId: input.rescue.candidateId,
+      failedMachineState: input.rescue.failedMachineState,
+      successorPromoted: input.rescue.successorPromoted,
+      pendingCodexDiagnosis: input.rescue.pendingCodexDiagnosis,
+      candidateRejectedCommercially: input.rescue.candidateRejectedCommercially,
+      circuitBreakerOpen: input.rescue.circuitBreakerOpen,
+      auditEventPersisted: input.rescue.auditEventPersisted,
+    },
+    safety: {
+      target: "PRODUCTION",
+      canPublish: false,
+      automaticContinuity: true,
+      auxiliaryRecovery: true,
+    },
+  }, { status: 409 })
+}
+
+async function attemptAuxiliaryFinalPublicationQuarantineFromExecution(input: {
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  actor: string
+  executionId: string
+  sourceError: unknown
+  requestId: string
+}) {
+  const code = errorCode(input.sourceError)
+  if (!shouldQuarantineUnknownFinalPublicationError(code)) return null
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!accountKey) return null
+  const { data: execution, error: executionError } = await input.supabase
+    .from("ebay_draft_only_execution_ledger")
+    .select("id,approval_id")
+    .eq("id", input.executionId)
+    .eq("actor_user_id", input.actor)
+    .maybeSingle()
+  if (executionError || !execution) return null
+  const { data: approval, error: approvalError } = await input.supabase
+    .from("ebay_draft_only_approvals")
+    .select("approved_payload")
+    .eq("id", execution.approval_id)
+    .eq("actor_user_id", input.actor)
+    .maybeSingle()
+  if (approvalError || !approval) return null
+  const sameDayPilotAuthorization = record(
+    record(record(approval.approved_payload).compliance).sameDayPilotAuthorization,
+  )
+  const expectedCandidateId = text(sameDayPilotAuthorization.candidateId)
+  const expectedMachineState = text(sameDayPilotAuthorization.machineState)
+  if (!expectedCandidateId || !expectedMachineState) return null
+  const rescue = await quarantineSameDayCandidateForAuxiliaryPublicationFailure({
+    supabase: input.supabase,
+    accountKey,
+    actorId: input.actor,
+    requestId: input.requestId,
+    expectedCandidateId,
+    expectedMachineState,
+    engineErrorCode: code,
+  })
+  if (!rescue) return null
+  return buildAuxiliaryFinalPublicationQuarantineResponse({
+    requestId: input.requestId,
+    sourceError: input.sourceError,
+    rescue,
+  })
 }
 
 async function completeFinalPublicationMonitor(input: {
@@ -2217,6 +2327,8 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     supabase,
     text(current.draft_execution_id),
     actor,
+    {},
+    requestId,
   )
   if (!contextResult.success) return contextResult.response
   const context = contextResult.context
