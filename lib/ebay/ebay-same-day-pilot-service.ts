@@ -874,6 +874,7 @@ function candidateInput(
     id: text(row.id), candidateKey: text(row.candidate_key), productTitle: text(row.product_title),
     variantTitle: text(latestVariant.variant_title || row.variant_title) || null,
     supplierSku: text(latestVariant.sku || row.supplier_sku) || null,
+    marketRadarProductId: text(row.market_radar_product_id) || null,
     supplierVariantId: text(latestVariant.supplier_variant_id || row.supplier_variant_id) || null,
     supplierProductUrl: isAllowedLunaProductUrl(supplierProductUrl) ? supplierProductUrl : null,
     supplierImageUrl: safeHttpsUrl(latestVariant.featured_image_url || row.featured_image_url),
@@ -3431,18 +3432,22 @@ export async function previewSameDayPilot(input: {
   excludeOpportunityIds?: string[]
   excludeCandidateKeys?: string[]
   excludeSupplierVariantIds?: string[]
+  excludeSupplierSkus?: string[]
   excludeFamilyFingerprints?: string[]
 }) {
   const now = input.now ?? new Date()
   const [{ data: opportunities, error: opportunityError }, { data: quotas, error: quotaError },
-    { data: monitor, error: monitorError }, productResearchCount, existingPilotListing] = await Promise.all([
+    { data: monitor, error: monitorError }, productResearchCount,
+    { data: monitoredListings, error: monitoredListingError },
+  ] = await Promise.all([
     input.supabase.from("ebay_luna_opportunity_queue").select("*").in("queue_status", ["watchlist", "review", "ready"]).order("opportunity_score", { ascending: false }).limit(70),
     input.supabase.from("ebay_api_quota_states").select("api_family,operation,status,remaining,reserved_budget,available_budget,reset_at,owner_lane"),
     input.supabase.from("commercial_monitor_runs").select("status,heartbeat_at,readers,errors,completed_at").eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     input.supabase.from("marketplace_product_research_capture_observations").select("id", { count: "exact", head: true }).eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE),
-    input.supabase.from("ebay_active_listings").select("id", { count: "exact", head: true }).eq("account_key", input.accountKey).eq("ebay_item_id", "366543596425").eq("listing_status", "active"),
+    input.supabase.from("ebay_active_listings").select("supplier_variant_id,supplier_sku,market_radar_product_id")
+      .eq("account_key", input.accountKey).in("listing_status", ["active", "paused"]),
   ])
-  if (opportunityError || quotaError || monitorError || productResearchCount.error || existingPilotListing.error) {
+  if (opportunityError || quotaError || monitorError || productResearchCount.error || monitoredListingError) {
     throw new Error("SAME_DAY_PILOT_SOURCE_READ_FAILED")
   }
   const excludedOpportunityIds = new Set(
@@ -3494,12 +3499,23 @@ export async function previewSameDayPilot(input: {
     return { ...candidate,
       queueItemAvailable: queueItemByVariant.has(text(candidate.supplierVariantId)) }
   })
+  const monitoredListingByVariant = new Set((monitoredListings ?? [])
+    .map((row) => text(row.supplier_variant_id)))
+  const monitoredListingBySku = new Set((monitoredListings ?? [])
+    .map((row) => text(row.supplier_sku)))
+  const monitoredListingMarketRadarProductIds = new Set((monitoredListings ?? [])
+    .map((row) => text(row.market_radar_product_id)))
   const evaluatedCandidates = candidateInputs.map((candidate) =>
     evaluateSameDayCandidate(candidate, now))
   const selected = selectSameDayQueue(candidateInputs, now, {
     opportunityIds: excludedOpportunityIds,
     candidateKeys: input.excludeCandidateKeys,
     supplierVariantIds: input.excludeSupplierVariantIds,
+    supplierSkus: [...new Set([
+      ...((input.excludeSupplierSkus ?? []).map((value) => text(value)).filter(Boolean)),
+      ...[...monitoredListingBySku],
+    ])],
+    marketRadarProductIds: monitoredListingMarketRadarProductIds,
     familyFingerprints: input.excludeFamilyFingerprints,
   })
   const effectiveQuotaLanes = (quotas ?? []).map((lane) =>
@@ -3524,9 +3540,12 @@ export async function previewSameDayPilot(input: {
         candidate.blockers.includes("IDENTITY_QUERY_TOO_GENERIC") ||
         candidate.blockers.includes("GTIN_INVALID_OR_UNVERIFIED") ||
         candidate.blockers.includes("OFFER_PACK_IDENTITY_MISSING")).length,
-      verifiedExistingListings: (existingPilotListing.count ?? 0) > 0 ? 1 : 0,
+      verifiedExistingListings: Math.min(3,
+        monitoredListings?.filter((listing) =>
+          text(listing.listing_status) === "active" || text(listing.listing_status) === "paused").length ?? 0),
       selectedCandidates: selected.length,
       localPreparationPackages: selected.length,
+      monitoredListingsEvaluated: monitoredListings?.length ?? 0,
     },
     localPreparationPackages: selected.map((candidate) => ({
       candidateKey: candidate.candidateKey,

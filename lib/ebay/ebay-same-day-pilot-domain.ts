@@ -35,6 +35,7 @@ export type SameDayCandidateInput = {
   variantTitle?: string | null
   supplierSku?: string | null
   supplierVariantId?: string | null
+  marketRadarProductId?: string | null
   supplierProductUrl?: string | null
   supplierImageUrl?: string | null
   gtin?: string | null
@@ -390,18 +391,24 @@ export function selectSameDayQueue(
     opportunityIds?: Iterable<string>
     candidateKeys?: Iterable<string>
     supplierVariantIds?: Iterable<string>
+    supplierSkus?: Iterable<string>
+    marketRadarProductIds?: Iterable<string>
     familyFingerprints?: Iterable<string>
   } = {},
 ) {
   const excludedOpportunityIds = new Set(exclusions.opportunityIds ?? [])
   const excludedCandidateKeys = new Set(exclusions.candidateKeys ?? [])
   const excludedSupplierVariantIds = new Set(exclusions.supplierVariantIds ?? [])
+  const excludedSupplierSkus = new Set(exclusions.supplierSkus ?? [])
+  const excludedMarketRadarProductIds = new Set(exclusions.marketRadarProductIds ?? [])
   const excludedFamilyFingerprints = new Set(exclusions.familyFingerprints ?? [])
   const evaluated = inputs.map((input) => evaluateSameDayCandidate(input, now))
     .filter((entry) => entry.eligibleForQueue)
     .filter((entry) => !excludedOpportunityIds.has(entry.id)
       && !excludedCandidateKeys.has(entry.candidateKey)
       && !excludedSupplierVariantIds.has(entry.supplierVariantId ?? "")
+      && !excludedSupplierSkus.has(entry.supplierSku ?? "")
+      && !excludedMarketRadarProductIds.has(entry.marketRadarProductId ?? "")
       && !excludedFamilyFingerprints.has(entry.familyFingerprint))
     .sort((left, right) => right.priority - left.priority
       || left.candidateKey.localeCompare(right.candidateKey)
