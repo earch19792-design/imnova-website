@@ -993,43 +993,50 @@ async function attemptAuxiliaryFinalPublicationQuarantine(input: {
   const authorization = input.context.sameDayPilotAuthorization
   const expectedCandidateId = text(authorization?.candidateId)
   const expectedMachineState = text(authorization?.machineState)
-  if (!expectedCandidateId || !expectedMachineState || !input.context.accountKey) {
-    return null
-  }
-  const rescue = await quarantineSameDayCandidateForAuxiliaryPublicationFailure({
-    supabase: input.supabase,
-    accountKey: input.context.accountKey,
-    actorId: input.actor,
-    requestId: input.requestId,
-    expectedCandidateId,
-    expectedMachineState,
-    engineErrorCode: code,
-  })
-  if (!rescue) return null
-  return NextResponse.json({
-    success: false,
-    error: "EBAY_FINAL_PUBLICATION_AUXILIARY_QUARANTINE_TRIGGERED",
-    blockers: ["FINAL_PUBLICATION_QUARANTINE_TRIGGERED"],
-    continuity: {
+  const contextRescue = (!expectedCandidateId || !expectedMachineState || !input.context.accountKey)
+    ? null
+    : await quarantineSameDayCandidateForAuxiliaryPublicationFailure({
+      supabase: input.supabase,
+      accountKey: input.context.accountKey,
+      actorId: input.actor,
       requestId: input.requestId,
-      code,
-      incidentFingerprint: rescue.incidentFingerprint ?? null,
-      occurrenceNumber: rescue.occurrenceNumber ?? null,
-      candidateId: rescue.candidateId,
-      failedMachineState: rescue.failedMachineState,
-      successorPromoted: rescue.successorPromoted,
-      pendingCodexDiagnosis: rescue.pendingCodexDiagnosis,
-      candidateRejectedCommercially: rescue.candidateRejectedCommercially,
-      circuitBreakerOpen: rescue.circuitBreakerOpen,
-      auditEventPersisted: rescue.auditEventPersisted,
-    },
-    safety: {
-      target: "PRODUCTION",
-      canPublish: false,
-      automaticContinuity: true,
-      auxiliaryRecovery: true,
-    },
-  }, { status: 409 })
+      expectedCandidateId,
+      expectedMachineState,
+      engineErrorCode: code,
+    })
+  if (contextRescue) {
+    return NextResponse.json({
+      success: false,
+      error: "EBAY_FINAL_PUBLICATION_AUXILIARY_QUARANTINE_TRIGGERED",
+      blockers: ["FINAL_PUBLICATION_QUARANTINE_TRIGGERED"],
+      continuity: {
+        requestId: input.requestId,
+        code,
+        incidentFingerprint: contextRescue.incidentFingerprint ?? null,
+        occurrenceNumber: contextRescue.occurrenceNumber ?? null,
+        candidateId: contextRescue.candidateId,
+        failedMachineState: contextRescue.failedMachineState,
+        successorPromoted: contextRescue.successorPromoted,
+        pendingCodexDiagnosis: contextRescue.pendingCodexDiagnosis,
+        candidateRejectedCommercially: contextRescue.candidateRejectedCommercially,
+        circuitBreakerOpen: contextRescue.circuitBreakerOpen,
+        auditEventPersisted: contextRescue.auditEventPersisted,
+      },
+      safety: {
+        target: "PRODUCTION",
+        canPublish: false,
+        automaticContinuity: true,
+        auxiliaryRecovery: true,
+      },
+    }, { status: 409 })
+  }
+  return attemptAuxiliaryFinalPublicationQuarantineFromExecution({
+    supabase: input.supabase,
+    actor: input.actor,
+    executionId: text(input.context.execution.id),
+    sourceError: input.sourceError,
+    requestId: input.requestId,
+  })
 }
 
 async function preflightDraft(body: JsonRecord, actor: string) {
