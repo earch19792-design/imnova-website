@@ -651,6 +651,33 @@ function validUuid(value: unknown) {
     .test(normalized) ? normalized : ""
 }
 
+function normalizeLunaRecheckErrorCode(error: unknown) {
+  const candidate = error as Record<string, unknown> | null
+  const fromCode = candidate?.code
+  const fromPayload = candidate && typeof candidate.payload === "object"
+    ? (candidate.payload as Record<string, unknown>)?.error
+    : undefined
+  const fromDetail = candidate && typeof candidate.payload === "object"
+    ? (candidate.payload as Record<string, unknown>)?.detail
+    : undefined
+  const fromMessage = error instanceof Error ? error.message : undefined
+  const matchToken = (value: unknown) => {
+    const text = String(value ?? "")
+    const match = text.match(/(?:EBAY_)?SAME_DAY_PUBLICATION_[A-Z0-9_]+/)
+      || text.match(/[A-Z]{2,}_[A-Z0-9_]{3,}/)
+    return match?.[0] ?? ""
+  }
+  return matchToken(fromCode)
+    || matchToken(fromPayload)
+    || matchToken(fromDetail)
+    || matchToken(fromMessage)
+}
+
+function canonicalSameDayPublicationCode(value: unknown) {
+  const raw = normalizeLunaRecheckErrorCode(value)
+  return raw.startsWith("EBAY_") ? raw.slice(5) : raw
+}
+
 function humanImageError(error: unknown) {
   const rawCode = error instanceof Error ? error.message : ""
   const code = rawCode.match(/^[A-Z0-9_:.-]+/)?.[0] ?? rawCode
@@ -704,13 +731,15 @@ function humanImageError(error: unknown) {
 }
 
 function humanFinalPublicationError(error: unknown) {
-  const code = error instanceof Error ? error.message : String(error ?? "")
+  const code = canonicalSameDayPublicationCode(error) || (error instanceof Error ? error.message : String(error ?? ""))
   const messages: Array<[string, string]> = [
     ["SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED", "La lectura de Luna venció o no confirma stock y costo. Vuelve al producto, actualiza la confirmación de Luna y prepara nuevamente el preview."],
-    ["EBAY_SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED", "La lectura de Luna venció o no confirma stock y costo. Vuelve al producto, actualiza la confirmación de Luna y prepara nuevamente el preview."],
-    ["EBAY_FINAL_PUBLICATION_LUNA_COST_CHANGED", "El costo de Luna cambió después de tu aprobación. Seller OS detuvo la publicación para que recalcules precio y margen."],
-    ["EBAY_SAME_DAY_PUBLICATION_LUNA_COST_CHANGED", "El costo de Luna cambió después de tu aprobación. Seller OS detuvo la publicación para que recalcules precio y margen."],
-    ["EBAY_SAME_DAY_PUBLICATION_LUNA_UNAVAILABLE", "Luna ya no confirma disponibilidad. Seller OS detuvo la publicación; reemplaza el candidato o espera una nueva lectura con stock."],
+    ["SAME_DAY_PUBLICATION_LUNA_COST_CHANGED", "El costo de Luna cambió después de tu aprobación. Seller OS detuvo la publicación para que recalcules precio y margen."],
+    ["SAME_DAY_PUBLICATION_LUNA_RECHECK_SCOPE_REQUIRED", "Se perdió el alcance de sesión/cuenta para la reconfirmación. Reabre el workspace y vuelve a este paso para continuar."],
+    ["SAME_DAY_PUBLICATION_LUNA_RECHECK_TIME_INVALID", "La reconfirmación llegó fuera de ventana de coherencia. Reabre el workspace y vuelve a intentar sin cambiar precios ni publicar."],
+    ["SAME_DAY_PUBLICATION_LUNA_RECHECK_VALUES_INVALID", "La reconfirmación quedó incompleta: revisa costo y, si aplica, cantidad visible en Luna antes de continuar."],
+    ["SAME_DAY_PUBLICATION_LUNA_RECHECK_FAILED", "No se pudo guardar la reconfirmación de Luna. Reintenta el bloque de reconfirmación sin modificar Oferta ni publicar aún."],
+    ["SAME_DAY_PUBLICATION_LUNA_UNAVAILABLE", "Luna ya no confirma disponibilidad. Seller OS detuvo la publicación; reemplaza un candidato o espera una nueva lectura con stock."],
     ["EBAY_FINAL_PUBLICATION_SCOPE_OR_STOCK_INVALID", "La cuenta, el paquete o el stock ya no coinciden con lo autorizado. Seller OS no publicó nada."],
     ["EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_CHANGED", "El candidato o su paquete cambió después de la aprobación. Reabre el producto exacto y autoriza un preview nuevo."],
     ["EBAY_FINAL_PUBLICATION_RECONCILIATION_REQUIRED", "La llamada de publicación ya fue reclamada. Usa “Verificar ACTIVE”; Seller OS no repetirá publishOffer."],
@@ -1759,6 +1788,8 @@ function ListingWorkspacePageContent() {
           const sourceRecheckPayload = object(typedPrepareError.payload?.sourceRecheck)
           const sourceRecheckRequired = typedPrepareError.payload?.sourceRecheckRequired === true
             || typedPrepareError.code === "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED"
+            || typedPrepareError.code === "EBAY_SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED"
+            || canonicalSameDayPublicationCode(typedPrepareError) === "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED"
             || (prepareError instanceof Error
               && prepareError.message.includes("SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED"))
           if (sourceRecheckRequired) {
@@ -1775,8 +1806,10 @@ function ListingWorkspacePageContent() {
             }
             publicationLunaRecheckRequired.current = true
             setPublicationLunaRecheck(recheck)
-            setPublicationLunaPrice("")
-            setPublicationLunaQuantity("")
+            setPublicationLunaPrice(recheck.confirmedPrice != null ? String(recheck.confirmedPrice) : "")
+            setPublicationLunaQuantity(recheck.confirmedQuantity != null && recheck.quantityVisible
+              ? String(recheck.confirmedQuantity)
+              : "")
             setPublicationLunaAvailable(false)
             setPublicationLunaLinkOpened(false)
             setPublicationLunaReconfirmed(false)
@@ -2985,12 +3018,19 @@ function ListingWorkspacePageContent() {
       setMessage("Luna quedó reconfirmado para creación/autorización de Offer y publicación…")
       setWorkspaceRetry((current) => current + 1)
     } catch (requestError) {
-      const code = requestError instanceof Error ? requestError.message : ""
-      setError(code.includes("LUNA_COST_CHANGED")
-        ? "El costo cambió. Seller OS detuvo la publicación para recalcular precio y margen; vuelve a Command Center."
-        : code.includes("LUNA_UNAVAILABLE")
-          ? "Luna ya no confirma disponibilidad. Este producto no se puede publicar ahora."
-          : getMobileReviewRequestError(requestError, "No se pudo guardar la reconfirmación Luna."))
+      const code = canonicalSameDayPublicationCode(requestError)
+      if (code === "SAME_DAY_PUBLICATION_LUNA_COST_CHANGED") {
+        setError("El costo cambió. Seller OS detuvo la publicación para recalcular precio y margen; vuelve a Command Center.")
+      } else if (code === "SAME_DAY_PUBLICATION_LUNA_UNAVAILABLE") {
+        setError("Luna ya no confirma disponibilidad. Este producto no se puede publicar ahora.")
+      } else if (code === "SAME_DAY_PUBLICATION_LUNA_RECHECK_VALUES_INVALID") {
+        setError("Revisa costo y cantidad. Si hay cantidad visible úsala; si no, déjala vacía.")
+      } else if (code === "SAME_DAY_PUBLICATION_LUNA_RECHECK_SCOPE_REQUIRED"
+        || code === "SAME_DAY_PUBLICATION_LUNA_RECHECK_TIME_INVALID") {
+        setError("La sesión del reconfirmante cambió o caducó. Abre de nuevo el workspace y repite la reconfirmación.")
+      } else {
+        setError(getMobileReviewRequestError(requestError, "No se pudo guardar la reconfirmación Luna."))
+      }
       setMessage("")
     } finally {
       setPublicationLunaBusy(false)

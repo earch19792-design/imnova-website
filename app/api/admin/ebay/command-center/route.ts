@@ -117,6 +117,10 @@ function sameDayPublicationErrorCode(error: unknown, fallback: string) {
   return fallback
 }
 
+function stripSameDayErrorPrefix(value: string) {
+  return value.startsWith("EBAY_") ? value.slice(5) : value
+}
+
 async function safeValidateAdminApiRequest(req: Request) {
   try {
     return await validateAdminApiRequest(req)
@@ -691,7 +695,8 @@ export async function POST(req: Request) {
           })
         } catch (contextError) {
           const code = errorCode(contextError)
-          if (code === "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED") {
+          const normalizedCode = stripSameDayErrorPrefix(code)
+          if (normalizedCode === "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED") {
             const sourceRecheck = await publicationLunaRecheckDetails(
               supabase,
               existing,
@@ -713,7 +718,8 @@ export async function POST(req: Request) {
               },
             }, { status: 409 })
           }
-          if (code !== "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY") {
+          if (code !== "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY"
+            && stripSameDayErrorPrefix(code) !== "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED") {
             throw contextError
           }
         }
@@ -779,8 +785,9 @@ export async function POST(req: Request) {
           })
         } catch (contextError) {
           const code = errorCode(contextError)
+          const normalizedCode = stripSameDayErrorPrefix(code)
           if (code !== "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY"
-            && code !== "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED") {
+            && normalizedCode !== "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED") {
             throw contextError
           }
           const finalReviewGate = await loadFinalListingReviewPublicationGate({
@@ -789,7 +796,7 @@ export async function POST(req: Request) {
             actorId: reviewer,
           })
           const freshnessResolution = resolveCommandCenterCommercialFreshness({
-            errorCode: code,
+            errorCode: normalizedCode,
             finalListingReviewAllowed: finalReviewGate.allowed,
             sourceRecheckAvailable: true,
           })
