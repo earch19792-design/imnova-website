@@ -392,9 +392,6 @@ export async function resolveLunaCatalogOriginalSourcePack(input: {
     !/^\d{1,30}$/.test(input.expectedVariantId)) {
     throw new Error("LUNA_CATALOG_IDENTITY_INPUT_INVALID")
   }
-  if (!input.marketVisualSignalsUsable) {
-    throw new Error("MARKET_VISUAL_SIGNALS_INSUFFICIENT")
-  }
   const fetchImpl = input.fetchImpl ?? fetch
   const discovered: DiscoveredImage[] = []
   for (const value of input.knownCatalogImageUrls ?? []) {

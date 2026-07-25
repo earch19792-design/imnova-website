@@ -4,6 +4,10 @@ export const SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION =
   "IMAGE_PREPARATION_ORPHAN_RECOVERY_V1_2026_07_23"
 export const SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION =
   "IMAGE_SINGLE_UNIT_VISUAL_STRATEGY_RECOVERY_V6_2026_07_24"
+export const SAME_DAY_IMAGE_DETERMINISTIC_FALLBACK_RECOVERY_VERSION =
+  "IMAGE_POST_AI_DETERMINISTIC_FALLBACK_V1_2026_07_24"
+export const SAME_DAY_IMAGE_PROFESSIONAL_MARKET_FALLBACK_RECOVERY_VERSION =
+  "IMAGE_PROFESSIONAL_MARKET_FALLBACK_V1_2026_07_24"
 
 export type SameDayImageGenerationJobSpec = {
   jobType: "GENERATE_SIX_IMAGE_PACKAGE"
@@ -16,6 +20,11 @@ export type SameDayImageGenerationJobSpec = {
     orphanRecoveryVersion?: typeof SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION
     visualStrategyRecoveryVersion?:
       typeof SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION
+    deterministicFallbackRecoveryVersion?:
+      typeof SAME_DAY_IMAGE_DETERMINISTIC_FALLBACK_RECOVERY_VERSION
+    forceDeterministicImageFallback?: true
+    professionalMarketFallbackRecoveryVersion?:
+      typeof SAME_DAY_IMAGE_PROFESSIONAL_MARKET_FALLBACK_RECOVERY_VERSION
     maximumOpenAiCalls: 1
     competitorImages: 0
     ebayWrites: 0
@@ -39,6 +48,8 @@ export function buildSameDayImageGenerationJobSpec(input: {
   packageHash: unknown
   orphanRecovery?: boolean
   visualStrategyRecovery?: boolean
+  deterministicFallbackRecovery?: boolean
+  professionalMarketFallbackRecovery?: boolean
 }): SameDayImageGenerationJobSpec | null {
   const runId = text(input.runId)
   const candidateId = text(input.candidateId)
@@ -61,6 +72,12 @@ export function buildSameDayImageGenerationJobSpec(input: {
       : []),
     ...(input.visualStrategyRecovery
       ? [SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION]
+      : []),
+    ...(input.deterministicFallbackRecovery
+      ? [SAME_DAY_IMAGE_DETERMINISTIC_FALLBACK_RECOVERY_VERSION]
+      : []),
+    ...(input.professionalMarketFallbackRecovery
+      ? [SAME_DAY_IMAGE_PROFESSIONAL_MARKET_FALLBACK_RECOVERY_VERSION]
       : []),
   ]
   return {
@@ -88,6 +105,19 @@ export function buildSameDayImageGenerationJobSpec(input: {
         ? {
             visualStrategyRecoveryVersion:
               SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION,
+          }
+        : {}),
+      ...(input.deterministicFallbackRecovery
+        ? {
+            deterministicFallbackRecoveryVersion:
+              SAME_DAY_IMAGE_DETERMINISTIC_FALLBACK_RECOVERY_VERSION,
+            forceDeterministicImageFallback: true as const,
+          }
+        : {}),
+      ...(input.professionalMarketFallbackRecovery
+        ? {
+            professionalMarketFallbackRecoveryVersion:
+              SAME_DAY_IMAGE_PROFESSIONAL_MARKET_FALLBACK_RECOVERY_VERSION,
           }
         : {}),
       maximumOpenAiCalls: 1,

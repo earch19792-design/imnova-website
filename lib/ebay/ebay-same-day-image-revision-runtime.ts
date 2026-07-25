@@ -393,15 +393,17 @@ export async function generateAndPersistSameDayImageRevision(input: {
   if (configuration.deterministicComposition !== "READY") {
     throw new Error("SAME_DAY_IMAGE_REVISION_FACTORY_BLOCKED")
   }
-  const marketVisualBrief = await loadEbayImageMarketBrief({
+  const capturedMarketVisualBrief = await loadEbayImageMarketBrief({
     supabase: input.supabase,
     accountKey: input.accountKey,
     captureBatchId: context.candidate.product_research_capture_batch_id,
     familyFingerprint: context.candidate.family_fingerprint,
   })
-  if (!marketVisualSignalsUsable(marketVisualBrief)) {
-    throw new Error("MARKET_VISUAL_SIGNALS_INSUFFICIENT")
-  }
+  const marketVisualBrief = marketVisualSignalsUsable(
+    capturedMarketVisualBrief,
+  )
+    ? capturedMarketVisualBrief
+    : null
   const authorizationEvidenceHash = sha256([
     `APPROVED_IMAGE_CONTROL:${baseControlId}`,
     context.factPackageHash,

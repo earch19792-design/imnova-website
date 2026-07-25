@@ -1780,9 +1780,6 @@ export function buildSafeOpenAiBackgroundPlatePlan(
   if (!OPENAI_IMAGE_QUALITIES.has(quality)) {
     throw new Error("EBAY_IMAGE_OPENAI_QUALITY_NOT_ALLOWED")
   }
-  if (quality === "high" && !isEbayImageMarketBriefUsable(input.marketVisualBrief)) {
-    throw new Error("MARKET_VISUAL_SIGNALS_INSUFFICIENT")
-  }
   const context = safeContextForFacts(input.facts)
   const prompt = safeBackgroundPlatePrompt(
     context,
@@ -2486,7 +2483,9 @@ export async function composeAuthorizedEbayListingImageSet(
     const promptCompliancePassed = !backgroundPlate ||
       (slot === "MAIN_WHITE_BACKGROUND" ? true : Boolean(panelSelection))
     const marketSignalCompliancePassed = !backgroundPlate ||
-      isEbayImageMarketBriefUsable(input.marketVisualBrief)
+      isEbayImageMarketBriefUsable(input.marketVisualBrief) ||
+      resolveEbayImageMarketEvidencePolicy(input.marketVisualBrief)
+        .influenceScope === "PROFESSIONAL_FALLBACK_ONLY"
     const productFidelityPassed = controlledComposite
       ? sourceCapability?.authorizationStatus ===
           "AUTHORIZED_CATALOG_NATIVE_HIGH_RES" &&

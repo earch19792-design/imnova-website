@@ -6295,6 +6295,217 @@ async function repairRejectedVisualMarketRecapture(
   return 0
 }
 
+const PROFESSIONAL_MARKET_VISUAL_FALLBACK_RECOVERY_VERSION =
+  "PROFESSIONAL_MARKET_VISUAL_FALLBACK_RECOVERY_V1_2026_07_24"
+
+async function repairRejectedMarketVisualFallback(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const candidate = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .find((entry) => {
+      const blockers = strings(entry.blockers)
+      return text(entry.machine_state) === "REJECTED" &&
+        text(entry.state) === "REJECTED_TODAY" &&
+        blockers.includes(VISUAL_MARKET_RECAPTURE_LIMIT_REASON) &&
+        blockers.includes("MARKET_VISUAL_SIGNALS_INSUFFICIENT")
+    })
+  if (!candidate) return 0
+  const candidateOrdinal = Number(candidate.ordinal)
+  const candidateOrdinalById = new Map(state.candidates.map((entry) => [
+    text(entry.id),
+    Number(entry.ordinal),
+  ]))
+  const openPrimaryTasks = state.tasks.filter((task) =>
+    task.status === "OPEN" &&
+    task.gate_type !== "CRITICAL_EXCEPTION_REQUIRED")
+  if (openPrimaryTasks.some((task) =>
+    (candidateOrdinalById.get(text(task.candidate_id)) ?? 0) <=
+      candidateOrdinal)) return 0
+  const laterTaskIds = openPrimaryTasks
+    .map((task) => text(task.id))
+    .filter(Boolean)
+  if (laterTaskIds.length) {
+    const { error } = await supabase
+      .from("ebay_same_day_pilot_human_tasks")
+      .update({
+        status: "SUPERSEDED",
+        completed_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      })
+      .eq("run_id", state.run.id)
+      .eq("status", "OPEN")
+      .in("id", laterTaskIds)
+    if (error) {
+      throw new Error("SAME_DAY_PILOT_MARKET_FALLBACK_TASK_DEFER_FAILED")
+    }
+  }
+  const factsSummary = record(candidate.product_facts_summary)
+  const handoffSummary = record(candidate.manual_handoff_package)
+  const previousPackageHash = text(handoffSummary.packageHash)
+  const previousPackage = record(handoffSummary.package)
+  const factRunId = text(factsSummary.factRunId)
+  if (!/^[0-9a-f-]{36}$/i.test(factRunId) ||
+    !/^[0-9a-f]{64}$/i.test(previousPackageHash)) return 0
+
+  const replacementPackage = {
+    ...previousPackage,
+    marketVisualFallback: {
+      version: PROFESSIONAL_MARKET_VISUAL_FALLBACK_RECOVERY_VERSION,
+      sourceIdentity: "LUNA_PORTEX_AUTHORIZED_PRODUCT_IMAGE",
+      factualAuthority: "AUTHORITATIVE_PRODUCT_FACTS_PACKAGE",
+      artDirection: "PROFESSIONAL_MARKETPLACE_DEFAULTS",
+      competitorEvidenceUsed: false,
+      competitorPixelsUsed: false,
+      fabricatedProductFacts: false,
+      ebayWrites: 0,
+    },
+  }
+  const replacementHash = hash(replacementPackage)
+  const { data: priorHandoff, error: priorHandoffError } = await supabase
+    .from("ebay_same_day_pilot_handoffs")
+    .select("fact_run_id,source_image_type,image_count,operator_price_approved")
+    .eq("run_id", state.run.id)
+    .eq("candidate_id", candidate.id)
+    .eq("package_hash", previousPackageHash)
+    .maybeSingle()
+  if (priorHandoffError || !priorHandoff) {
+    throw new Error("SAME_DAY_PILOT_MARKET_FALLBACK_HANDOFF_READ_FAILED")
+  }
+  const { error: insertHandoffError } = await supabase
+    .from("ebay_same_day_pilot_handoffs")
+    .upsert({
+      run_id: state.run.id,
+      candidate_id: candidate.id,
+      fact_run_id: priorHandoff.fact_run_id,
+      handoff_version:
+        "SELLER_HUB_FACTS_ONLY_MARKET_FALLBACK_V1_2026_07_24",
+      status: "AWAITING_IMAGE_APPROVAL",
+      package_data: replacementPackage,
+      package_hash: replacementHash,
+      source_image_type: priorHandoff.source_image_type,
+      image_count: priorHandoff.image_count,
+      operator_price_approved: priorHandoff.operator_price_approved,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+      created_at: now.toISOString(),
+    }, { onConflict: "candidate_id,package_hash", ignoreDuplicates: true })
+  if (insertHandoffError) {
+    throw new Error("SAME_DAY_PILOT_MARKET_FALLBACK_HANDOFF_CREATE_FAILED")
+  }
+  const recoveryHandoffSummary = {
+    ...handoffSummary,
+    package: replacementPackage,
+    packageHash: replacementHash,
+    marketVisualFallback: {
+      version: PROFESSIONAL_MARKET_VISUAL_FALLBACK_RECOVERY_VERSION,
+        competitorEvidenceUsed: false,
+        productResearchRepeated: false,
+        deferredLaterTaskIds: laterTaskIds,
+        historyDeleted: false,
+    },
+  }
+  const imageJob = buildSameDayImageGenerationJobSpec({
+    runId: state.run.id,
+    candidateId: candidate.id,
+    productResearchCaptureBatchId:
+      candidate.product_research_capture_batch_id,
+    factRunId,
+    packageHash: replacementHash,
+    professionalMarketFallbackRecovery: true,
+  })
+  if (!imageJob) {
+    throw new Error("SAME_DAY_PILOT_MARKET_FALLBACK_JOB_INVALID")
+  }
+  await transition({
+    supabase,
+    runId: state.run.id,
+    candidateId: text(candidate.id),
+    previousState: "REJECTED",
+    nextState: "PREPARING_IMAGE_PACKAGE",
+    reasonCode: "PROFESSIONAL_MARKET_VISUAL_FALLBACK_ACTIVATED",
+    triggeredBy: "RETRY",
+    checkpoint: {
+      recoveryVersion: PROFESSIONAL_MARKET_VISUAL_FALLBACK_RECOVERY_VERSION,
+      previousBlockers: candidate.blockers,
+      factRunId,
+      packageHash: replacementHash,
+      lunaPortexAuthorizedImageRequired: true,
+      professionalFallbackPromptRequired: true,
+      competitorEvidenceUsed: false,
+      productResearchRepeated: false,
+      openAiCalls: 0,
+      ebayWrites: 0,
+    },
+    nextAutomaticAction:
+      "Generar el set con imagen autorizada Luna Portex y prompt profesional.",
+    nextHumanAction: "Ninguna hasta revisar las imágenes.",
+    job: imageJob,
+  })
+  const { data: updatedCandidate, error: candidateError } = await supabase
+    .from("ebay_same_day_pilot_candidates")
+    .update({
+      state: "READY_FOR_CONTENT",
+      blockers: [],
+      evidence_summary: {
+        ...record(candidate.evidence_summary),
+        professionalMarketVisualFallbackVersion:
+          PROFESSIONAL_MARKET_VISUAL_FALLBACK_RECOVERY_VERSION,
+        competitorEvidenceUsedForGeneration: false,
+        productResearchRepeated: false,
+      },
+      manual_handoff_package: recoveryHandoffSummary,
+      image_package_summary: {
+        ...record(candidate.image_package_summary),
+        status: "PREPARING",
+        approved: false,
+        generationStrategy: "PROFESSIONAL_MARKETPLACE_FALLBACK",
+        competitorImages: 0,
+        ebayWrites: 0,
+      },
+      updated_at: now.toISOString(),
+    })
+    .eq("id", candidate.id)
+    .eq("run_id", state.run.id)
+    .eq("machine_state", "PREPARING_IMAGE_PACKAGE")
+    .select("id")
+    .maybeSingle()
+  if (candidateError || !updatedCandidate) {
+    throw new Error("SAME_DAY_PILOT_MARKET_FALLBACK_CANDIDATE_FAILED")
+  }
+  const { error: eventError } = await supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({
+      run_id: state.run.id,
+      candidate_id: candidate.id,
+      event_type: "PROFESSIONAL_MARKET_VISUAL_FALLBACK_ACTIVATED",
+      event_payload: {
+        recoveryVersion: PROFESSIONAL_MARKET_VISUAL_FALLBACK_RECOVERY_VERSION,
+        previousBlockers: candidate.blockers,
+        sourceIdentity: "LUNA_PORTEX_AUTHORIZED_PRODUCT_IMAGE",
+        factualAuthority: "AUTHORITATIVE_PRODUCT_FACTS_PACKAGE",
+        professionalFallbackPromptRequired: true,
+        competitorEvidenceUsed: false,
+        competitorPixelsUsed: false,
+        productResearchRepeated: false,
+        historyDeleted: false,
+      },
+      idempotency_key: `${imageJob.idempotencyKey}:EVENT`,
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) {
+    throw new Error("SAME_DAY_PILOT_MARKET_FALLBACK_EVENT_FAILED")
+  }
+  await refreshRunProjection(supabase, state.run.id, true)
+  return 1
+}
+
 async function repairRejectedSingleUnitVisualStrategy(
   supabase: SupabaseClient,
   state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
@@ -6307,6 +6518,7 @@ async function repairRejectedSingleUnitVisualStrategy(
     "LUNA_CATALOG_SOURCE_PACK_SAVE_FAILED",
     "SAME_DAY_IMAGE_PACKAGE_IDEMPOTENCY_CONFLICT",
     "SAME_DAY_IMAGE_SET_VISUAL_STRATEGY_V2_INVALID",
+    "SAME_DAY_IMAGE_CONTROL_NOT_CLAIMED",
   ])
   const candidates = [...state.candidates]
     .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
@@ -6364,14 +6576,88 @@ async function repairRejectedSingleUnitVisualStrategy(
         priorErrorCode)
     if (!failureTransitionPresent && !priorFailurePresent) continue
 
+    const deterministicFallbackRecovery = [
+      "SAME_DAY_IMAGE_SET_VISUAL_STRATEGY_V2_INVALID",
+      "SAME_DAY_IMAGE_CONTROL_NOT_CLAIMED",
+    ].includes(priorErrorCode)
+    let recoveryHandoffSummary = handoffSummary
+    if (deterministicFallbackRecovery) {
+      const previousPackageHash = text(handoffSummary.packageHash)
+      const previousPackage = record(handoffSummary.package)
+      const recoveryVersion =
+        "IMAGE_POST_AI_DETERMINISTIC_HANDOFF_V1_2026_07_24"
+      const replacementPackage = {
+        ...previousPackage,
+        imageGenerationRecovery: {
+          version: recoveryVersion,
+          previousErrorCode: priorErrorCode,
+          previousPackageHash,
+          generationMode: "DETERMINISTIC_ONLY",
+          additionalOpenAiSpendRequired: false,
+          previousOpenAiCallPreservedInAudit: true,
+          ebayWrites: 0,
+        },
+      }
+      const replacementHash = hash(replacementPackage)
+      const { data: priorHandoff, error: priorHandoffError } = await supabase
+        .from("ebay_same_day_pilot_handoffs")
+        .select("fact_run_id,source_image_type,image_count,operator_price_approved")
+        .eq("run_id", state.run.id)
+        .eq("candidate_id", candidate.id)
+        .eq("package_hash", previousPackageHash)
+        .maybeSingle()
+      if (priorHandoffError || !priorHandoff) {
+        throw new Error(
+          "SAME_DAY_PILOT_DETERMINISTIC_RECOVERY_HANDOFF_READ_FAILED",
+        )
+      }
+      const { error: insertHandoffError } = await supabase
+        .from("ebay_same_day_pilot_handoffs")
+        .upsert({
+          run_id: state.run.id,
+          candidate_id: candidate.id,
+          fact_run_id: priorHandoff.fact_run_id,
+          handoff_version:
+            "SELLER_HUB_FACTS_ONLY_DETERMINISTIC_RECOVERY_V1_2026_07_24",
+          status: "AWAITING_IMAGE_APPROVAL",
+          package_data: replacementPackage,
+          package_hash: replacementHash,
+          source_image_type: priorHandoff.source_image_type,
+          image_count: priorHandoff.image_count,
+          operator_price_approved: priorHandoff.operator_price_approved,
+          openai_calls: 0,
+          ebay_writes: 0,
+          production_changed: false,
+          created_at: now.toISOString(),
+        }, { onConflict: "candidate_id,package_hash", ignoreDuplicates: true })
+      if (insertHandoffError) {
+        throw new Error(
+          "SAME_DAY_PILOT_DETERMINISTIC_RECOVERY_HANDOFF_CREATE_FAILED",
+        )
+      }
+      recoveryHandoffSummary = {
+        ...handoffSummary,
+        package: replacementPackage,
+        packageHash: replacementHash,
+        generationRecovery: {
+          version: recoveryVersion,
+          previousErrorCode: priorErrorCode,
+          previousPackageHash,
+          forceDeterministicImageFallback: true,
+          historyDeleted: false,
+        },
+      }
+    }
+
     const imageJob = buildSameDayImageGenerationJobSpec({
       runId: state.run.id,
       candidateId: candidate.id,
       productResearchCaptureBatchId:
         candidate.product_research_capture_batch_id,
       factRunId: factsSummary.factRunId,
-      packageHash: handoffSummary.packageHash,
+      packageHash: recoveryHandoffSummary.packageHash,
       visualStrategyRecovery: true,
+      deterministicFallbackRecovery,
     })
     if (!imageJob) continue
 
@@ -6416,7 +6702,8 @@ async function repairRejectedSingleUnitVisualStrategy(
         factRunId: factsSummary.factRunId,
         productResearchCaptureBatchId:
           candidate.product_research_capture_batch_id,
-        packageHash: handoffSummary.packageHash,
+        packageHash: recoveryHandoffSummary.packageHash,
+        forceDeterministicImageFallback: deterministicFallbackRecovery,
         commercialEvidencePreserved: true,
         productFactsPreserved: true,
         productApprovalPreserved: true,
@@ -6446,6 +6733,7 @@ async function repairRejectedSingleUnitVisualStrategy(
           regenerationReason: "SINGLE_UNIT_OFFER_SCOPE_SUPPORTED",
           ebayWrites: 0,
         },
+        manual_handoff_package: recoveryHandoffSummary,
         updated_at: now.toISOString(),
       })
       .eq("id", candidate.id)
@@ -6470,6 +6758,8 @@ async function repairRejectedSingleUnitVisualStrategy(
           exactOfferShownOnce: true,
           fabricatedFacts: false,
           productResearchRepeated: false,
+          deterministicFallbackRecovery,
+          additionalOpenAiSpendRequired: false,
           priorJobsPreserved: (priorJobs ?? []).length,
           historyDeleted: false,
         },
@@ -6713,6 +7003,18 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
       status: "COMPLETED",
       jobType: "RECOVER_STALE_VISUAL_AUTO_RESUME_ORPHAN",
       staleVisualAutoResumeOrphansRecovered,
+      ebayWrites: 0,
+    }
+  }
+  const professionalMarketVisualFallbacksRecovered =
+    await repairRejectedMarketVisualFallback(input.supabase, state, now)
+  if (professionalMarketVisualFallbacksRecovered) {
+    await refreshRunProjection(input.supabase, state.run.id, true)
+    return {
+      processed: 1,
+      status: "COMPLETED",
+      jobType: "RECOVER_PROFESSIONAL_MARKET_VISUAL_FALLBACK",
+      professionalMarketVisualFallbacksRecovered,
       ebayWrites: 0,
     }
   }
@@ -7628,6 +7930,8 @@ export async function processSameDayPilotJobs(input: { supabase: SupabaseClient;
         actorId: text(state.run.created_by),
         runId: state.run.id,
         candidate: record(candidate),
+        forceDeterministicImageFallback:
+          record(leased.checkpoint).forceDeterministicImageFallback === true,
       })
       await heartbeatPilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId })
       const imageSummary = {

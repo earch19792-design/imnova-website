@@ -309,6 +309,7 @@ export async function generateAndPersistSameDayImagePackage(input: {
   actorId: string
   runId: string
   candidate: JsonRecord
+  forceDeterministicImageFallback?: boolean
 }) {
   const runId = uuid(input.runId)
   const candidateId = uuid(input.candidate.id)
@@ -345,21 +346,25 @@ export async function generateAndPersistSameDayImagePackage(input: {
   if (configuration.deterministicComposition !== "READY") {
     throw new Error("SAME_DAY_IMAGE_COMPOSITION_ENVIRONMENT_BLOCKED")
   }
-  const aiEnabled = configuration.aiGeneration === "READY"
+  const aiEnabled = configuration.aiGeneration === "READY" &&
+    input.forceDeterministicImageFallback !== true
   const model = process.env.OPENAI_IMAGE_MODEL?.trim() ?? ""
   const apiKey = process.env.OPENAI_API_KEY?.trim() ?? ""
-  const marketVisualBrief = await loadEbayImageMarketBrief({
+  const capturedMarketVisualBrief = await loadEbayImageMarketBrief({
     supabase: input.supabase,
     accountKey: input.accountKey,
     captureBatchId: input.candidate.product_research_capture_batch_id,
     familyFingerprint: input.candidate.family_fingerprint,
   })
-  // In the durable same-day flow, an AI-generated scene must be grounded in
-  // both the verified product dossier and usable aggregate visual evidence.
-  // Never silently fall back to generic seller-pattern defaults.
-  if (!isEbayImageMarketBriefUsable(marketVisualBrief)) {
-    throw new Error("MARKET_VISUAL_SIGNALS_INSUFFICIENT")
-  }
+  // Aggregate market imagery improves art direction but never defines the
+  // product. When it is unavailable, the factory uses its explicit
+  // professional fallback prompt while Luna Portex supplies the authorized
+  // product pixels and the dossier supplies every factual claim.
+  const marketVisualBrief = isEbayImageMarketBriefUsable(
+    capturedMarketVisualBrief,
+  )
+    ? capturedMarketVisualBrief
+    : null
   const opportunityId = uuid(input.candidate.opportunity_id)
   const supplierVariantId = text(input.candidate.supplier_variant_id, 160)
   const { data: opportunity, error: opportunityError } = await input.supabase
