@@ -5,15 +5,15 @@ export const EBAY_WINNER_EVIDENCE_V2_VERSION =
 export const PRODUCT_IDENTITY_FINGERPRINT_VERSION =
   "EBAY_PRODUCT_IDENTITY_FINGERPRINT_V2"
 export const WINNER_ECONOMICS_CONFIG_VERSION =
-  "EBAY_WINNER_ECONOMICS_US_V2"
+  "EBAY_WINNER_ECONOMICS_US_V3_2026_07_18"
 
 export const WINNER_ECONOMICS_CONFIG = Object.freeze({
   minimumProfitUsd: 5,
   idealProfitUsd: 7,
   minimumRoiPercent: 30,
   minimumNetMarginPercent: 20,
-  estimatedEbayFeeRate: 0.15,
-  fixedOrderFee: 0.30,
+  estimatedEbayFeeRate: 0.153,
+  fixedOrderFee: 0.40,
   returnsReserveRate: 0.04,
   promotedListingsReserveRate: 0.05,
 })
@@ -612,7 +612,8 @@ function economicsAtPrice(price: number | null, totalBaseCost: number | null) {
     WINNER_ECONOMICS_CONFIG.returnsReserveRate +
     WINNER_ECONOMICS_CONFIG.promotedListingsReserveRate
   const variableFees = price * variableRate
-  const profit = price - totalBaseCost - WINNER_ECONOMICS_CONFIG.fixedOrderFee - variableFees
+  const appliedFixedOrderFee = price <= 10 ? 0.30 : WINNER_ECONOMICS_CONFIG.fixedOrderFee
+  const profit = price - totalBaseCost - appliedFixedOrderFee - variableFees
   const margin = (profit / price) * 100
   const roi = totalBaseCost > 0 ? (profit / totalBaseCost) * 100 : null
   return {

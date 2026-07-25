@@ -21,6 +21,31 @@ export type SafeListingDefaults = Partial<
   Record<ReusableListingDefaultField, string>
 >
 
+export const EBAY_US_NEW_CONDITION_ID = "1000" as const
+
+const verifiedConditionContracts = new Map([
+  ["new", { conditionId: EBAY_US_NEW_CONDITION_ID, canonicalLabel: "New" }],
+  ["brand new", { conditionId: EBAY_US_NEW_CONDITION_ID, canonicalLabel: "New" }],
+  ["nuevo", { conditionId: EBAY_US_NEW_CONDITION_ID, canonicalLabel: "New" }],
+])
+
+/**
+ * Maps a verified product-condition fact to eBay's numeric condition contract.
+ *
+ * The mapping is intentionally narrow: Seller OS currently prepares only new
+ * Luna inventory. Used/refurbished condition IDs can be category-specific and
+ * must come from an official condition-policy adapter before being added here.
+ */
+export function ebayConditionContractFromVerifiedFact(value: unknown) {
+  const normalized = stringValue(value)
+    .normalize("NFKC")
+    .toLocaleLowerCase("en-US")
+    .replace(/[\s_-]+/g, " ")
+    .trim()
+  const contract = verifiedConditionContracts.get(normalized)
+  return contract ? { ...contract, marketplaceId: "EBAY_US" as const } : null
+}
+
 export type ManualListingRegistrationInput = {
   ebayItemId: string
   ebayUrl: string
@@ -57,10 +82,11 @@ export type ManualListingVerification = {
 export function evaluateManualListingProductSkuIdentity(
   expectedEbaySku: unknown,
   observedEbaySku: unknown,
+  authoritativeCustomLabels: unknown[] = [],
 ) {
   const expected = stringValue(expectedEbaySku)
   const observed = stringValue(observedEbaySku)
-  if (!/^IMNOVA-[A-Z0-9]{16,32}$/.test(expected)) {
+  if (!/^IMNOVA[A-Z0-9]{16,32}$/.test(expected)) {
     return {
       verified: false as const,
       reason: "EBAY_CANONICAL_LISTING_PACKAGE_REQUIRED" as const,
@@ -72,7 +98,18 @@ export function evaluateManualListingProductSkuIdentity(
       reason: "EBAY_ITEM_CUSTOM_LABEL_REQUIRED" as const,
     }
   }
-  if (observed !== expected) {
+  if (observed === expected) {
+    return {
+      verified: true as const,
+      reason: "PRODUCT_SKU_IDENTITY_CONFIRMED" as const,
+    }
+  }
+  const authoritative = new Set(
+    authoritativeCustomLabels
+      .map(normalizeAuthoritativeEbayCustomLabel)
+      .filter((value): value is string => Boolean(value)),
+  )
+  if (!authoritative.has(observed)) {
     return {
       verified: false as const,
       reason: "EBAY_ITEM_CUSTOM_LABEL_MISMATCH" as const,
@@ -80,7 +117,7 @@ export function evaluateManualListingProductSkuIdentity(
   }
   return {
     verified: true as const,
-    reason: "PRODUCT_SKU_IDENTITY_CONFIRMED" as const,
+    reason: "PRODUCT_AUTHORITATIVE_HANDOFF_CUSTOM_LABEL_CONFIRMED" as const,
   }
 }
 
@@ -92,6 +129,13 @@ function record(value: unknown): JsonRecord {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
+}
+
+export function normalizeAuthoritativeEbayCustomLabel(value: unknown) {
+  const normalized = stringValue(value)
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,49}$/.test(normalized)
+    ? normalized
+    : null
 }
 
 function boundedText(

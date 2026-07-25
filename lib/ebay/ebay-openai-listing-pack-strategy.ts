@@ -3,7 +3,14 @@ import { createHash } from "node:crypto"
 import { z } from "zod"
 
 export const LISTING_AI_PACK_STRATEGY_VERSION =
-  "EBAY_LISTING_AI_PACK_STRATEGY_V1_2026_07_16"
+  "EBAY_LISTING_AI_PACK_STRATEGY_V2_2026_07_24"
+export const CONSUMABLE_PAIRED_OFFER_PLAN_VERSION =
+  "EBAY_CONSUMABLE_PAIRED_OFFER_PLAN_V1_2026_07_23"
+export const LOW_COST_SMALL_ITEM_PACK_OPPORTUNITY_VERSION =
+  "EBAY_LOW_COST_SMALL_ITEM_PACK_OPPORTUNITY_V1_2026_07_24"
+export const LOW_COST_UNIT_THRESHOLD_USD = 6
+export const SMALL_ITEM_MAX_VOLUME_CUBIC_INCHES = 216
+export const SMALL_ITEM_MAX_SIDE_INCHES = 12
 
 const hashSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/)
 const confidenceSchema = z.enum(["STRONG", "MEDIUM", "LOW", "INSUFFICIENT"])
@@ -76,6 +83,111 @@ export const listingAiPackMatrixRowSchema = z.object({
   explanation: z.string().trim().min(1).max(500),
 }).strict()
 
+const pairedOfferSchema = z.object({
+  offerPackFingerprint: hashSchema,
+  source: z.enum([
+    "CURRENT_EXACT_OFFER",
+    "VERIFIED_SOLD_PACK_LEADER",
+    "ACTIVE_PACK_PATTERN",
+  ]),
+  packCount: z.number().int().positive(),
+  unitCountPerItem: z.number().int().positive().nullable(),
+  totalUnitCount: z.number().int().positive().nullable(),
+  supplierOfferMultiplier: z.number().int().positive(),
+  targetPrice: nullableMoney,
+  soldEvidenceCount: z.number().int().nonnegative(),
+  verifiedSoldQuantity: z.number().finite().nonnegative().nullable(),
+  activeListingCount: z.number().int().nonnegative(),
+  evidenceConfidence: confidenceSchema,
+}).strict()
+
+export const consumablePairedOfferPlanSchema = z.object({
+  version: z.literal(CONSUMABLE_PAIRED_OFFER_PLAN_VERSION),
+  applicability: z.enum([
+    "CONSUMABLE_REPEAT_PURCHASE",
+    "NOT_APPLICABLE",
+  ]),
+  recommendedMode: z.enum([
+    "UNIT_ONLY",
+    "UNIT_PLUS_VOLUME_PRICING",
+    "UNIT_PLUS_SEPARATE_PACK",
+  ]),
+  demandBasis: z.enum([
+    "VERIFIED_SOLD_OR_COMPLETED_FIRST",
+    "ACTIVE_PACK_PATTERN_EXPLORATORY",
+    "NO_SAFE_PACK_EVIDENCE",
+    "NOT_APPLICABLE",
+  ]),
+  evidencePriority: z.tuple([
+    z.literal("VERIFIED_SOLD_OR_COMPLETED"),
+    z.literal("ACTIVE_EXACT_PACK"),
+    z.literal("ESTIMATED_SIGNALS"),
+  ]),
+  primaryCommercialUnit: pairedOfferSchema,
+  optionalPackage: pairedOfferSchema.nullable(),
+  volumePricing: z.object({
+    status: z.enum([
+      "NOT_SELECTED",
+      "READY_FOR_FINAL_RECALCULATION",
+      "NOT_ELIGIBLE",
+    ]),
+    tiers: z.array(z.object({
+      minimumQuantity: z.number().int().min(2).max(4),
+      calculatedDiscountPercent: z.number().finite().min(5).max(79),
+      sourcePackFingerprint: hashSchema,
+    }).strict()).max(3),
+    requiresMultiQuantityInventory: z.literal(true),
+    requiresMarketingApiPromotion: z.literal(true),
+    appliedDuringListingPublication: z.literal(false),
+  }).strict(),
+  analysisReuse: z.object({
+    canonicalProductIdentityReused: z.literal(true),
+    categoryAndComplianceReused: z.literal(true),
+    exactMarketResearchReused: z.literal(true),
+    fullProductResearchRerunRequired: z.literal(false),
+    packSpecificDeltaReviewRequired: z.boolean(),
+    soldEvidenceHasPriority: z.literal(true),
+    activeListingsTreatedAsSales: z.literal(false),
+  }).strict(),
+  listingAlignment: z.object({
+    titlePackCountMustMatch: z.literal(true),
+    itemSpecificsPackCountMustMatch: z.literal(true),
+    descriptionContentsMustMatch: z.literal(true),
+    imageVisiblePackCountMustMatch: z.literal(true),
+    costAndFeesMustMatchPack: z.literal(true),
+    shippingWeightAndDimensionsMustMatchPack: z.literal(true),
+    supplierStockMustCoverPack: z.literal(true),
+    unitGtinCannotIdentifyMultipack: z.literal(true),
+  }).strict(),
+  deltaGates: z.array(z.enum([
+    "PACK_DEMAND_EVIDENCE_CURRENT",
+    "EXACT_CONTENTS_AND_NATIVE_PACK_IDENTITY",
+    "SUPPLIER_STOCK_CAPACITY",
+    "PACK_COST_FEES_AND_MARGIN",
+    "PACK_SHIPPING_WEIGHT_AND_DIMENSIONS",
+    "PACK_TITLE_SPECIFICS_DESCRIPTION",
+    "PACK_IMAGE_VISIBLE_QUANTITY",
+    "PACK_GTIN_POLICY",
+    "PACK_COMPLIANCE_AND_HAZMAT",
+    "HUMAN_FINAL_APPROVAL",
+  ])).min(1).max(10),
+  automation: z.object({
+    autoPrepareOptionalVariant: z.boolean(),
+    autoCreatePromotionPreview: z.boolean(),
+    autoPublish: z.literal(false),
+    humanApprovalRequired: z.literal(true),
+    publicationSequence: z.enum([
+      "PRIMARY_ONLY",
+      "PRIMARY_THEN_PROMOTION_AFTER_STOCK_RESERVATION",
+      "PRIMARY_THEN_SECONDARY_AFTER_ACTIVE_MONITOR",
+    ]),
+    ebayWrites: z.literal(0),
+    publications: z.literal(0),
+  }).strict(),
+  blockers: z.array(z.string().regex(/^[A-Z0-9_]+$/)).max(20),
+  explanation: z.string().trim().min(1).max(600),
+}).strict()
+
 export const listingAiPackStrategySchema = z.object({
   version: z.literal(LISTING_AI_PACK_STRATEGY_VERSION),
   strategyHash: hashSchema,
@@ -91,6 +203,50 @@ export const listingAiPackStrategySchema = z.object({
   recommendedPack: listingAiPackMatrixRowSchema.nullable(),
   alternativePack: listingAiPackMatrixRowSchema.nullable(),
   packMatrix: z.array(listingAiPackMatrixRowSchema).max(30),
+  pairedOfferPlan: consumablePairedOfferPlanSchema.optional(),
+  lowCostSmallItemOpportunity: z.object({
+    version: z.literal(LOW_COST_SMALL_ITEM_PACK_OPPORTUNITY_VERSION),
+    status: z.enum([
+      "NOT_APPLICABLE",
+      "NEEDS_SIZE_OR_SHIPPING_EVIDENCE",
+      "EVALUATE_PACK_OPTIONS",
+      "PACK_RECOMMENDED",
+    ]),
+    trigger: z.object({
+      unitSupplierCostUsd: nullableMoney,
+      unitCostBelowThreshold: z.boolean(),
+      thresholdUsdExclusive: z.literal(LOW_COST_UNIT_THRESHOLD_USD),
+      smallItemConfirmed: z.boolean(),
+      packageVolumeCubicInches: z.number().finite().nonnegative().nullable(),
+      maximumPackageSideInches: z.number().finite().nonnegative().nullable(),
+      maximumSmallVolumeCubicInches: z.literal(
+        SMALL_ITEM_MAX_VOLUME_CUBIC_INCHES,
+      ),
+      maximumSmallSideInches: z.literal(SMALL_ITEM_MAX_SIDE_INCHES),
+    }).strict(),
+    shippingComparison: z.object({
+      currentPackCount: z.number().int().positive(),
+      currentShippingCostUsd: nullableMoney,
+      currentShippingCostPerBaseItemUsd: nullableMoney,
+      recommendedPackCount: z.number().int().positive().nullable(),
+      recommendedShippingCostUsd: nullableMoney,
+      recommendedShippingCostPerBaseItemUsd: nullableMoney,
+      shippingIncreasePercent: nullablePercent,
+      shippingCostPerBaseItemReductionPercent: nullablePercent,
+      shippingNearlyFlat: z.boolean().nullable(),
+    }).strict(),
+    proposedPackCounts: z.array(z.number().int().positive()).min(1).max(3),
+    requiredChecks: z.tuple([
+      z.literal("EXACT_PACK_DEMAND"),
+      z.literal("EXACT_SUPPLIER_STOCK"),
+      z.literal("PACK_COST_AND_MARGIN"),
+      z.literal("PACK_SHIPPING_WEIGHT_AND_DIMENSIONS"),
+      z.literal("PACK_CONTENT_AND_GTIN"),
+      z.literal("HUMAN_FINAL_APPROVAL"),
+    ]),
+    autoPublish: z.literal(false),
+    explanation: z.string().trim().min(1).max(600),
+  }).strict(),
   safeguards: z.object({
     unitGtinUsedAsMultipackGtin: z.literal(false),
     inventedGtin: z.literal(false),
@@ -107,6 +263,7 @@ export const listingAiPackStrategySchema = z.object({
 }).strict()
 
 export type ListingAiPackStrategy = z.infer<typeof listingAiPackStrategySchema>
+type ListingAiPackMatrixRow = z.infer<typeof listingAiPackMatrixRowSchema>
 
 type JsonRecord = Record<string, unknown>
 type DecisionRow = { product_identity_fingerprint: string; package_payload: unknown }
@@ -181,6 +338,383 @@ function sourceCohort(source: string | null) {
 
 function packKey(packCount: number, unitCount: number | null) {
   return `${packCount}:${unitCount ?? "N/D"}`
+}
+
+function repeatPurchaseConsumable(payload: JsonRecord, identity: JsonRecord) {
+  const intake = record(payload.listingAiIntake)
+  const category = record(intake.category)
+  const searchable = [
+    text(identity.normalizedProductName),
+    text(category.name),
+    ...records(intake.requiredAspects).flatMap((entry) => [
+      text(entry.name),
+      text(entry.value),
+    ]),
+  ].filter(Boolean).join(" ").toLocaleLowerCase("en-US")
+  if (/\b(soap dish|soap dispenser|holder|storage container)\b/.test(searchable)) {
+    return false
+  }
+  return /\b(soap|body wash|deodorant|antiperspirant|cleaner|cleaning|detergent|disinfect|wipes|laundry|dishwashing|dish soap|shampoo|conditioner|toothpaste|mouthwash|paper towels?|toilet paper|trash bags?|sponges?|air freshener|jab[oó]n|desodorante|limpieza)\b/.test(searchable)
+}
+
+function packEconomicsAndOperationsSafe(row: ListingAiPackMatrixRow) {
+  return row.operationalRisk.length === 0
+    && row.exactContents.length > 0
+    && row.economics.targetPrice !== null
+    && row.economics.meetsMinimumProfit === true
+    && row.economics.meetsMinimumRoi === true
+    && row.economics.meetsMinimumMargin === true
+}
+
+function packageSizeInInches(
+  dimensions: ListingAiPackMatrixRow["packageDimensions"],
+) {
+  if (!dimensions) return null
+  const divisor = dimensions.unit === "cm" ? 2.54 : 1
+  const sides = [
+    dimensions.length / divisor,
+    dimensions.width / divisor,
+    dimensions.height / divisor,
+  ]
+  return {
+    volume: rounded(sides.reduce((total, side) => total * side, 1)),
+    maximumSide: rounded(Math.max(...sides)),
+  }
+}
+
+function buildLowCostSmallItemOpportunity(input: {
+  current: ListingAiPackMatrixRow
+  matrix: ListingAiPackMatrixRow[]
+}) {
+  const unitSupplierCost = input.current.cost === null
+    ? null
+    : rounded(input.current.cost / input.current.packCount)
+  const unitCostBelowThreshold = unitSupplierCost !== null
+    && unitSupplierCost < LOW_COST_UNIT_THRESHOLD_USD
+  const size = packageSizeInInches(input.current.packageDimensions)
+  const smallItemConfirmed = Boolean(
+    size
+    && (size.volume ?? Number.POSITIVE_INFINITY)
+      <= SMALL_ITEM_MAX_VOLUME_CUBIC_INCHES
+    && (size.maximumSide ?? Number.POSITIVE_INFINITY)
+      <= SMALL_ITEM_MAX_SIDE_INCHES,
+  )
+  const proposedPackCounts = [2, 3, 4]
+    .map((multiplier) => input.current.packCount * multiplier)
+  const currentShipping = input.current.shippingCost
+  const currentShippingPerItemRaw = currentShipping === null
+    ? null
+    : currentShipping / input.current.packCount
+  const currentShippingPerItem = rounded(currentShippingPerItemRaw)
+  const viableCandidates = input.matrix
+    .filter((row) =>
+      row.packCount > input.current.packCount
+      && row.packCount % input.current.packCount === 0
+      && packEconomicsAndOperationsSafe(row)
+      && row.shippingCost !== null)
+    .map((row) => {
+      const candidateShipping = row.shippingCost as number
+      const shippingIncreasePercent = currentShipping === null
+        ? null
+        : currentShipping === 0
+          ? candidateShipping === 0 ? 0 : null
+          : rounded((candidateShipping / currentShipping - 1) * 100)
+      const shippingPerItemRaw = candidateShipping / row.packCount
+      const shippingPerItem = rounded(shippingPerItemRaw)
+      const shippingReductionPercent = currentShippingPerItemRaw === null
+        || currentShippingPerItemRaw === 0
+        ? null
+        : rounded(
+          (1 - shippingPerItemRaw / currentShippingPerItemRaw) * 100,
+        )
+      const shippingNearlyFlat = currentShipping === null
+        ? null
+        : candidateShipping <= currentShipping * 1.35 + 1
+      return {
+        row,
+        shippingIncreasePercent,
+        shippingPerItem,
+        shippingReductionPercent,
+        shippingNearlyFlat,
+      }
+    })
+    .filter((candidate) =>
+      candidate.shippingNearlyFlat === true
+      && (candidate.shippingReductionPercent ?? 0) >= 25
+      && (
+        candidate.row.soldEvidenceCount > 0
+        || candidate.row.activeListingCount > 0
+      ))
+    .sort((left, right) =>
+      right.row.soldEvidenceCount - left.row.soldEvidenceCount
+      || (right.shippingReductionPercent ?? 0)
+        - (left.shippingReductionPercent ?? 0)
+      || right.row.scores.overallPackStrategy
+        - left.row.scores.overallPackStrategy)[0] ?? null
+  const fullyTriggered = unitCostBelowThreshold && smallItemConfirmed
+  const missingOperationalEvidence = unitCostBelowThreshold && (
+    size === null || currentShipping === null
+  )
+  const status = !unitCostBelowThreshold
+    ? "NOT_APPLICABLE" as const
+    : missingOperationalEvidence
+      ? "NEEDS_SIZE_OR_SHIPPING_EVIDENCE" as const
+      : !smallItemConfirmed
+        ? "NOT_APPLICABLE" as const
+        : viableCandidates
+          ? "PACK_RECOMMENDED" as const
+          : "EVALUATE_PACK_OPTIONS" as const
+  return {
+    version: LOW_COST_SMALL_ITEM_PACK_OPPORTUNITY_VERSION,
+    status,
+    trigger: {
+      unitSupplierCostUsd: unitSupplierCost,
+      unitCostBelowThreshold,
+      thresholdUsdExclusive: LOW_COST_UNIT_THRESHOLD_USD,
+      smallItemConfirmed,
+      packageVolumeCubicInches: size?.volume ?? null,
+      maximumPackageSideInches: size?.maximumSide ?? null,
+      maximumSmallVolumeCubicInches: SMALL_ITEM_MAX_VOLUME_CUBIC_INCHES,
+      maximumSmallSideInches: SMALL_ITEM_MAX_SIDE_INCHES,
+    },
+    shippingComparison: {
+      currentPackCount: input.current.packCount,
+      currentShippingCostUsd: currentShipping,
+      currentShippingCostPerBaseItemUsd: currentShippingPerItem,
+      recommendedPackCount: viableCandidates?.row.packCount ?? null,
+      recommendedShippingCostUsd:
+        viableCandidates?.row.shippingCost ?? null,
+      recommendedShippingCostPerBaseItemUsd:
+        viableCandidates?.shippingPerItem ?? null,
+      shippingIncreasePercent:
+        viableCandidates?.shippingIncreasePercent ?? null,
+      shippingCostPerBaseItemReductionPercent:
+        viableCandidates?.shippingReductionPercent ?? null,
+      shippingNearlyFlat: viableCandidates?.shippingNearlyFlat ?? null,
+    },
+    proposedPackCounts,
+    requiredChecks: [
+      "EXACT_PACK_DEMAND",
+      "EXACT_SUPPLIER_STOCK",
+      "PACK_COST_AND_MARGIN",
+      "PACK_SHIPPING_WEIGHT_AND_DIMENSIONS",
+      "PACK_CONTENT_AND_GTIN",
+      "HUMAN_FINAL_APPROVAL",
+    ] as const,
+    autoPublish: false as const,
+    explanation: status === "PACK_RECOMMENDED"
+      ? `The base item costs under USD ${LOW_COST_UNIT_THRESHOLD_USD}, is small, and the ${viableCandidates?.row.packCount}-pack reduces shipping cost per base item while keeping shipping nearly flat and passing demand, stock and margin gates.`
+      : status === "EVALUATE_PACK_OPTIONS"
+        ? `The base item costs under USD ${LOW_COST_UNIT_THRESHOLD_USD} and is small. Compare the proposed pack sizes because shipping dilution may be commercially stronger than a unit offer; no pack is recommended until exact demand, shipping, stock and margin pass.`
+        : status === "NEEDS_SIZE_OR_SHIPPING_EVIDENCE"
+          ? `The base item costs under USD ${LOW_COST_UNIT_THRESHOLD_USD}, but exact package dimensions and current shipping cost are required before proposing a safe pack.`
+          : fullyTriggered
+            ? "Low-cost small-item pack evaluation did not produce a safe recommendation."
+            : `The exact offer does not meet both triggers: unit supplier cost under USD ${LOW_COST_UNIT_THRESHOLD_USD} and confirmed small package size.`,
+  }
+}
+
+function soldDemand(row: ListingAiPackMatrixRow) {
+  return row.verifiedSoldQuantity ?? row.soldEvidenceCount
+}
+
+function pairedOffer(
+  row: ListingAiPackMatrixRow,
+  source: "CURRENT_EXACT_OFFER" | "VERIFIED_SOLD_PACK_LEADER" | "ACTIVE_PACK_PATTERN",
+  supplierOfferMultiplier: number,
+) {
+  return pairedOfferSchema.parse({
+    offerPackFingerprint: row.offerPackFingerprint,
+    source,
+    packCount: row.packCount,
+    unitCountPerItem: row.unitCountPerItem,
+    totalUnitCount: row.totalUnitCount,
+    supplierOfferMultiplier,
+    targetPrice: row.economics.targetPrice,
+    soldEvidenceCount: row.soldEvidenceCount,
+    verifiedSoldQuantity: row.verifiedSoldQuantity,
+    activeListingCount: row.activeListingCount,
+    evidenceConfidence: row.evidenceConfidence,
+  })
+}
+
+function buildConsumablePairedOfferPlan(input: {
+  payload: JsonRecord
+  identity: JsonRecord
+  current: ListingAiPackMatrixRow
+  matrix: ListingAiPackMatrixRow[]
+}) {
+  const applicable = repeatPurchaseConsumable(input.payload, input.identity)
+  const restrictions = texts(record(input.payload.listingAiIntake).complianceRestrictions)
+  const complianceRevalidationRequired = restrictions.some((restriction) =>
+    /\b(hazmat|aerosol|flammable|dangerous goods|restricted shipping)\b/i
+      .test(restriction))
+  const largerSafePacks = input.matrix.filter((row) =>
+    row.packCount > input.current.packCount
+    && row.packCount % input.current.packCount === 0
+    && row.unitCountPerItem === input.current.unitCountPerItem
+    && packEconomicsAndOperationsSafe(row))
+  const soldLeader = [...largerSafePacks]
+    .filter((row) => row.soldEvidenceCount > 0)
+    .sort((left, right) =>
+      soldDemand(right) - soldDemand(left)
+      || right.soldEvidenceCount - left.soldEvidenceCount
+      || right.scores.demandConfidence - left.scores.demandConfidence
+      || left.packCount - right.packCount)[0] ?? null
+  const activeLeader = [...largerSafePacks]
+    .filter((row) => row.activeListingCount > 0)
+    .sort((left, right) =>
+      right.activeListingCount - left.activeListingCount
+      || right.scores.overallPackStrategy - left.scores.overallPackStrategy
+      || left.packCount - right.packCount)[0] ?? null
+  const candidate = soldLeader ?? activeLeader
+  const multiplier = candidate
+    ? candidate.packCount / input.current.packCount
+    : null
+  const currentTarget = input.current.economics.targetPrice
+  const candidateTarget = candidate?.economics.targetPrice ?? null
+  const calculatedDiscount = multiplier && currentTarget && candidateTarget
+    ? rounded((1 - candidateTarget / (currentTarget * multiplier)) * 100)
+    : null
+  const volumePricingReady = !soldLeader && Boolean(
+    activeLeader
+    && multiplier
+    && multiplier >= 2
+    && multiplier <= 4
+    && calculatedDiscount !== null
+    && calculatedDiscount >= 5
+    && calculatedDiscount <= 79,
+  )
+  const blockers = [
+    !applicable ? "PAIRED_OFFER_NOT_REPEAT_PURCHASE_CONSUMABLE" : null,
+    !packEconomicsAndOperationsSafe(input.current)
+      ? "CURRENT_COMMERCIAL_UNIT_NOT_READY" : null,
+    applicable && complianceRevalidationRequired
+      ? "PACK_COMPLIANCE_REVALIDATION_REQUIRED" : null,
+    applicable && !candidate ? "NO_SAFE_LARGER_PACK_EVIDENCE" : null,
+  ].filter((entry): entry is string => Boolean(entry))
+  const recommendedMode = !applicable
+    || complianceRevalidationRequired
+    || !packEconomicsAndOperationsSafe(input.current)
+    || !candidate
+    ? "UNIT_ONLY" as const
+    : soldLeader
+      ? "UNIT_PLUS_SEPARATE_PACK" as const
+      : volumePricingReady
+        ? "UNIT_PLUS_VOLUME_PRICING" as const
+        : "UNIT_PLUS_SEPARATE_PACK" as const
+  const demandBasis = !applicable
+    ? "NOT_APPLICABLE" as const
+    : soldLeader
+      ? "VERIFIED_SOLD_OR_COMPLETED_FIRST" as const
+      : activeLeader
+        ? "ACTIVE_PACK_PATTERN_EXPLORATORY" as const
+        : "NO_SAFE_PACK_EVIDENCE" as const
+  const optionalPackage = candidate && applicable
+    ? pairedOffer(
+      candidate,
+      soldLeader
+        ? "VERIFIED_SOLD_PACK_LEADER"
+        : "ACTIVE_PACK_PATTERN",
+      multiplier as number,
+    )
+    : null
+  const volumeTiers = recommendedMode === "UNIT_PLUS_VOLUME_PRICING"
+    && optionalPackage
+    && calculatedDiscount !== null
+    ? [{
+      minimumQuantity: optionalPackage.supplierOfferMultiplier,
+      calculatedDiscountPercent: calculatedDiscount,
+      sourcePackFingerprint: optionalPackage.offerPackFingerprint,
+    }]
+    : []
+  const packSpecificDeltaReviewRequired =
+    recommendedMode !== "UNIT_ONLY"
+  return consumablePairedOfferPlanSchema.parse({
+    version: CONSUMABLE_PAIRED_OFFER_PLAN_VERSION,
+    applicability: applicable
+      ? "CONSUMABLE_REPEAT_PURCHASE"
+      : "NOT_APPLICABLE",
+    recommendedMode,
+    demandBasis,
+    evidencePriority: [
+      "VERIFIED_SOLD_OR_COMPLETED",
+      "ACTIVE_EXACT_PACK",
+      "ESTIMATED_SIGNALS",
+    ],
+    primaryCommercialUnit: pairedOffer(
+      input.current,
+      "CURRENT_EXACT_OFFER",
+      1,
+    ),
+    optionalPackage,
+    volumePricing: {
+      status: recommendedMode === "UNIT_PLUS_VOLUME_PRICING"
+        ? "READY_FOR_FINAL_RECALCULATION"
+        : candidate ? "NOT_SELECTED" : "NOT_ELIGIBLE",
+      tiers: volumeTiers,
+      requiresMultiQuantityInventory: true,
+      requiresMarketingApiPromotion: true,
+      appliedDuringListingPublication: false,
+    },
+    analysisReuse: {
+      canonicalProductIdentityReused: true,
+      categoryAndComplianceReused: true,
+      exactMarketResearchReused: true,
+      fullProductResearchRerunRequired: false,
+      packSpecificDeltaReviewRequired,
+      soldEvidenceHasPriority: true,
+      activeListingsTreatedAsSales: false,
+    },
+    listingAlignment: {
+      titlePackCountMustMatch: true,
+      itemSpecificsPackCountMustMatch: true,
+      descriptionContentsMustMatch: true,
+      imageVisiblePackCountMustMatch: true,
+      costAndFeesMustMatchPack: true,
+      shippingWeightAndDimensionsMustMatchPack: true,
+      supplierStockMustCoverPack: true,
+      unitGtinCannotIdentifyMultipack: true,
+    },
+    deltaGates: packSpecificDeltaReviewRequired ? [
+      "PACK_DEMAND_EVIDENCE_CURRENT",
+      "EXACT_CONTENTS_AND_NATIVE_PACK_IDENTITY",
+      "SUPPLIER_STOCK_CAPACITY",
+      "PACK_COST_FEES_AND_MARGIN",
+      "PACK_SHIPPING_WEIGHT_AND_DIMENSIONS",
+      "PACK_TITLE_SPECIFICS_DESCRIPTION",
+      "PACK_IMAGE_VISIBLE_QUANTITY",
+      "PACK_GTIN_POLICY",
+      "PACK_COMPLIANCE_AND_HAZMAT",
+      "HUMAN_FINAL_APPROVAL",
+    ] : ["HUMAN_FINAL_APPROVAL"],
+    automation: {
+      autoPrepareOptionalVariant:
+        recommendedMode === "UNIT_PLUS_SEPARATE_PACK",
+      autoCreatePromotionPreview:
+        recommendedMode === "UNIT_PLUS_VOLUME_PRICING",
+      autoPublish: false,
+      humanApprovalRequired: true,
+      publicationSequence:
+        recommendedMode === "UNIT_PLUS_SEPARATE_PACK"
+          ? "PRIMARY_THEN_SECONDARY_AFTER_ACTIVE_MONITOR"
+          : recommendedMode === "UNIT_PLUS_VOLUME_PRICING"
+            ? "PRIMARY_THEN_PROMOTION_AFTER_STOCK_RESERVATION"
+            : "PRIMARY_ONLY",
+      ebayWrites: 0,
+      publications: 0,
+    },
+    blockers,
+    explanation: !applicable
+      ? "The paired offer workflow is reserved for repeat-purchase consumables."
+      : soldLeader
+        ? `Verified sold/completed evidence leads with the safe ${soldLeader.packCount}-pack; prepare a pack-aligned secondary listing after the primary is ACTIVE.`
+        : activeLeader && volumePricingReady
+          ? `No verified sold pack leader exists; test the observed ${activeLeader.packCount}-pack demand pattern through a recalculated volume-pricing preview.`
+          : activeLeader
+            ? `Active listings show a safe ${activeLeader.packCount}-pack pattern, but it remains exploratory and requires a separate pack-aligned review.`
+            : "No larger pack passes demand, stock, shipping and canonical economics gates.",
+  })
 }
 
 function observedVisualPatterns(rows: JsonRecord[]) {
@@ -401,8 +935,21 @@ export function buildListingAiPackStrategy(row: DecisionRow): ListingAiPackStrat
   }).sort((left, right) => right.scores.overallPackStrategy - left.scores.overallPackStrategy || left.packCount - right.packCount)
   const recommendedPack = matrix.find((entry) => entry.decision === "RECOMMENDED_PACK") ?? null
   const alternativePack = matrix.find((entry) => entry.decision === "TEST_AS_SECONDARY_PACK") ?? null
-  const currentOfferPackFingerprint = matrix.find((entry) => entry.packCount === currentPackCount && entry.unitCountPerItem === currentUnitCount)?.offerPackFingerprint
-  if (!currentOfferPackFingerprint) throw new Error("LISTING_AI_CURRENT_PACK_FINGERPRINT_MISSING")
+  const currentOffer = matrix.find((entry) =>
+    entry.packCount === currentPackCount
+    && entry.unitCountPerItem === currentUnitCount)
+  const currentOfferPackFingerprint = currentOffer?.offerPackFingerprint
+  if (!currentOffer || !currentOfferPackFingerprint) {
+    throw new Error("LISTING_AI_CURRENT_PACK_FINGERPRINT_MISSING")
+  }
+  const pairedOfferPlan = buildConsumablePairedOfferPlan({
+    payload,
+    identity,
+    current: currentOffer,
+    matrix,
+  })
+  const lowCostSmallItemOpportunity =
+    buildLowCostSmallItemOpportunity({ current: currentOffer, matrix })
   const withoutHash = {
     version: LISTING_AI_PACK_STRATEGY_VERSION,
     baseProductFingerprint,
@@ -417,6 +964,8 @@ export function buildListingAiPackStrategy(row: DecisionRow): ListingAiPackStrat
     recommendedPack,
     alternativePack,
     packMatrix: matrix,
+    pairedOfferPlan,
+    lowCostSmallItemOpportunity,
     safeguards: {
       unitGtinUsedAsMultipackGtin: false as const,
       inventedGtin: false as const,

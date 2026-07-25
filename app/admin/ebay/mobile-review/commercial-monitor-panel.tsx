@@ -21,20 +21,35 @@ type MonitorMetrics = Record<string, unknown> & {
   activeListings?: number
   officialOrdersRead?: number
   completedCheckoutLineItems?: number
+  sellerHubMessageHeadersRead?: number
+  sellerHubMessageContentReturned?: boolean
+  sellerHubMessageRawXmlPersisted?: boolean
   analyticsListingsRead?: number
   watcherListingsRead?: number
+  competitorListingsRead?: number
+  competitorActiveSellers?: number
+  competitorResearchRefreshRecommendations?: number
   newSales?: number
   fulfillmentTasksCreated?: number
   snapshotsCreated?: number
   eventsCreated?: number
   alertsGenerated?: number
   alertsEnqueued?: number
+  outboxRowsCreated?: number
+  persistenceWrites?: number
+  buyerPiiFieldsReturned?: number
+  listingIdentityVerified?: boolean
+  lunaExactSupplyLinked?: boolean
+  lunaSupplyFresh?: boolean
+  lunaSupplyObservedAt?: string | null
+  whatsappMetaAccepted?: number
   whatsappDelivered?: number
   ebayWrites?: number
   buyerPiiReturned?: boolean
   commercialDataPersistencePerformed?: boolean
   authentication?: {
     ordersOAuth?: string
+    messagesAuth?: string
     watchersAuth?: string
     analyticsAuth?: string
     fulfillmentScopeConfirmed?: boolean
@@ -47,6 +62,27 @@ type MonitorMetrics = Record<string, unknown> & {
     transactions?: number | null
     watchers?: number | null
   }
+  sellerHubMessages?: {
+    headersRead?: number | null
+    eventsCreated?: number
+    alertsEnqueued?: number
+    duplicatesAvoided?: number
+    contentStored?: false
+    buyerPiiStored?: false
+    rawXmlStored?: false
+  }
+  competitors?: {
+    listingsScanned?: number
+    activeOffers?: number
+    activeSellers?: number
+    newSellers?: number
+    potentialSellers?: number
+    researchRefreshRecommendations?: number
+    activeOfferTreatedAsConfirmedSale?: false
+    automaticProductResearchImport?: false
+    automaticEbayMutation?: false
+    ebayWrites?: 0
+  } | null
 }
 
 type MonitorRun = Omit<CommercialMonitorRunView, "metrics"> & {
@@ -79,9 +115,15 @@ type Dashboard = {
     sku?: string
     manualSource?: {
       source?: string
+      entityScope?: string
       impressionsMetric?: string
       viewsMetric?: string
       transactionsMetric?: string
+      ctrMetric?: string
+      ctrUnit?: string
+      windowStart?: string | null
+      windowEnd?: string | null
+      timeZone?: string | null
       observedOn?: string
       metrics?: { impressions?: number | null; views?: number | null; transactions?: number | null; ctr?: number | null }
     } | null
@@ -91,6 +133,9 @@ type Dashboard = {
       viewsMetric?: string
       transactionsMetric?: string
       ctrMetric?: string
+      ctrUnit?: string
+      entityScope?: string
+      timeZone?: string | null
       observedAt?: string | null
       windowStart?: string | null
       windowEnd?: string | null
@@ -99,6 +144,10 @@ type Dashboard = {
     }
     lastCheckedAt?: string | null
     nextCheckAt?: string | null
+    comparison?: {
+      comparable?: boolean
+      reasonCodes?: string[]
+    }
     manualEvidenceUsedAsApiMetric?: boolean
   } | null
   listingIdentity?: {
@@ -117,6 +166,14 @@ type Dashboard = {
     salesProcessingBlocked?: boolean
   }
   nextAutomaticRunAt?: string | null
+  schedulerAuthorization?: {
+    status?: "ACTIVE" | "EXPIRED" | "MISSING"
+    mode?: "CONTINUOUS_WHILE_ACTIVE"
+    authorizedAt?: string | null
+    expiresAt?: string | null
+    lastUsedAt?: string | null
+    useCount?: number
+  }
   pilot24h?: {
     status?: string
     startedAt?: string | null
@@ -129,6 +186,7 @@ type Dashboard = {
     newSales?: number
     fulfillmentTasksCreated?: number
     alertsGenerated?: number
+    whatsappMetaAccepted?: number
     whatsappDelivered?: number
     whatsappFailed?: number
     duplicatesAvoided?: number
@@ -140,6 +198,7 @@ type Dashboard = {
   } | null
   schedule?: {
     enabled?: boolean
+    effectivelyEnabled?: boolean
     previewOnly?: boolean
     pilot?: {
       status?: string
@@ -148,6 +207,143 @@ type Dashboard = {
       automaticCutoff?: boolean
     }
   }
+  competitorWatch?: {
+    status?: "ACTIVE" | "WAITING_BASELINE"
+    profiles?: Array<{
+      listing_id?: string
+      sku?: string | null
+      last_scanned_at?: string | null
+      baseline_completed_at?: string | null
+      latest_active_offer_count?: number
+      latest_active_seller_count?: number
+      latest_estimated_activity_seller_count?: number
+      latest_confirmed_sold_seller_count?: number
+      latest_median_landed_price?: number | null
+      latest_evidence_class?: string
+      latest_suggestion_codes?: string[]
+      latest_suggested_terms?: string[]
+      research_refresh_recommended?: boolean
+      research_refresh_reason_codes?: string[]
+      last_research_refresh_recommended_at?: string | null
+    }>
+    priceRecommendations?: Array<{
+      id?: string
+      listingId?: string
+      sku?: string | null
+      detectedAt?: string
+      recommendedAction?: string
+      status?: "AWAITING_HUMAN_APPROVAL"
+      changeApplied?: false
+      whatsappEnqueued?: true
+      priceRecommendation?: {
+        action?: string
+        confidence?: string
+        currentItemPrice?: number
+        proposedItemPrice?: number
+        confirmedSoldBenchmarkLandedPrice?: number
+        confirmedSoldSellerCount?: number
+        confirmedSoldQuantity?: number
+        activeMarketMedianLandedPrice?: number
+        activeSellerCount?: number
+        minimumSafeLandedPrice?: number
+        standardMinimumSafeLandedPrice?: number
+        floorWithPromotionReserve?: number
+        floorWithoutPromotion?: number
+        controlledRiskMinimumLandedPrice?: number
+        controlledRiskTenPercent?: boolean
+        promotionReserveIncluded?: boolean
+        canReachActiveMarketSafely?: boolean
+        comparisonBasis?: string
+        activeMarketNotConfirmedSale?: boolean
+        proposedPassesProfitGate?: boolean
+        activeMarketEconomics?: {
+          estimatedNetProfit?: number | null
+          estimatedNetMarginPercent?: number | null
+          estimatedRoiPercent?: number | null
+          estimatedOutboundShipping?: number | null
+          estimatedEbayFees?: number | null
+          returnsReserve?: number | null
+          promotedListingsReserve?: number | null
+          minimumNetProfit?: number
+          minimumNetMarginPercent?: number
+          minimumRoiPercent?: number
+          passesProfitGate?: boolean
+          failedGateCodes?: string[]
+          shippingSource?: string
+        }
+        proposedEstimatedNetProfit?: number | null
+        proposedEstimatedMarginPercent?: number | null
+        proposedEstimatedRoiPercent?: number | null
+      }
+    }>
+    automaticActiveSellerDiscovery?: boolean
+    productResearchRefreshIsSelective?: boolean
+    automaticProductResearchImport?: false
+    humanReviewRequired?: boolean
+    ebayWrites?: 0
+  }
+  supplyActions?: Array<{
+    id?: string
+    eventType?: "ACTIVE_LISTING_OUT_OF_STOCK" | "LUNA_COST_CHANGED" | "MARGIN_RISK"
+    severity?: "critical" | "high" | "medium" | "low"
+    listingId?: string
+    sku?: string | null
+    detectedAt?: string
+    recommendedAction?: string
+    status?: "AWAITING_HUMAN_APPROVAL"
+    changeApplied?: false
+    humanConfirmationRequired?: true
+    evidence?: {
+      previousSupplierCost?: number
+      currentSupplierCost?: number
+      estimatedMarginPercent?: number
+      stockAvailable?: number
+    }
+  }>
+  optimizationTasks?: Array<{
+    id?: string
+    eventType?: string
+    severity?: "critical" | "high" | "medium" | "low"
+    listingId?: string
+    sku?: string | null
+    detectedAt?: string
+    recommendedAction?: string
+    status?: "AWAITING_HUMAN_APPROVAL"
+    changeApplied?: false
+    whatsappEnqueued?: true
+    evidence?: {
+      notificationTitle?: string
+      whyItNeedsAttention?: string
+      reviewSequence?: string[]
+      nextEligibleAt?: string
+      rulesetVersion?: string
+      listingAgeEvidence?: {
+        startedAt?: string
+        ageHours?: number
+        source?: "EBAY_OFFICIAL_START_TIME" | "SELLER_OS_REGISTRATION_FALLBACK"
+        sourceLabel?: "FUENTE EBAY" | "ESTIMACIÓN CONSERVADORA"
+        conservativeEstimate?: boolean
+        explanation?: string
+      }
+      experiment?: {
+        variable?: string
+        changeCount?: 1
+        proposal?: string
+        measurementPlan?: string
+        guardrail?: string
+        status?: "AWAITING_HUMAN_APPROVAL"
+        automaticChangeAllowed?: false
+        ebayWriteAllowed?: false
+      }
+      promotionRecommendation?: {
+        status?: "READY_FOR_HUMAN_APPROVAL" | "NOT_RECOMMENDED" | "BLOCKED_CONTROLLED_RISK"
+        recommendedRatePercent?: number
+        durationDays?: number
+        reason?: string
+        applyFromSellerOs?: boolean
+      }
+    }
+  }>
 }
 
 type Payload = {
@@ -156,6 +352,15 @@ type Payload = {
   dashboard?: Dashboard
   run?: MonitorRun
   comparison?: SellerHubComparison
+  action?: string
+  improvement?: {
+    executionId?: string
+    listingId?: string
+    actionType?: "PRICE" | "PROMOTED_LISTINGS_GENERAL" | "END_LISTING"
+    phase?: string
+    appliedVerified?: boolean
+    confirmationRequired?: string
+  }
 }
 
 type AnalyticsAudit = {
@@ -234,6 +439,18 @@ function authLabel(status: string | undefined) {
   return status ?? "PENDIENTE"
 }
 
+function competitorSuggestionLabel(code: string) {
+  const labels: Record<string, string> = {
+    REVIEW_FREE_SHIPPING_COMMON_PATTERN: "Revisar envío gratis observado entre varios vendedores",
+    REVIEW_RETURNS_ACCEPTED_COMMON_PATTERN: "Revisar política de devoluciones común",
+    REVIEW_MULTI_IMAGE_COMMON_PATTERN: "Revisar si conviene ampliar el set de imágenes",
+    REVIEW_MARKET_PRICE_POSITION: "Revisar posición del precio total frente al mercado",
+    REVIEW_CONFIRMED_SOLD_PRICE_RECOMMENDATION: "Revisar precio propuesto con ventas exactas confirmadas y piso económico propio",
+    REVIEW_CROSS_SELLER_TERMS: "Revisar términos repetidos y confirmados por el producto Luna",
+  }
+  return labels[code] ?? code.replaceAll("_", " ").toLocaleLowerCase("es")
+}
+
 function AnalyticsWindowAudit({ label, audit }: { label: string; audit?: AnalyticsAudit }) {
   const row = audit?.metrics?.[0]
   const metric = (input: number | null | undefined, suffix = "") =>
@@ -268,15 +485,128 @@ function AnalyticsWindowAudit({ label, audit }: { label: string; audit?: Analyti
   </article>
 }
 
+function OptimizationTaskCard({ task, applying, onApply }: {
+  task: NonNullable<Dashboard["optimizationTasks"]>[number]
+  applying: boolean
+  onApply: (eventId: string) => void
+}) {
+  const evidence = task.evidence
+  const experiment = evidence?.experiment
+  const promotion = evidence?.promotionRecommendation
+  const listingAgeEvidence = evidence?.listingAgeEvidence
+  const officialListingStart = listingAgeEvidence?.source ===
+    "EBAY_OFFICIAL_START_TIME"
+  const critical = task.severity === "critical" || task.severity === "high"
+  return <article className={`min-w-0 rounded-xl border p-3 ${critical ? "border-rose-200/30 bg-rose-200/[0.06]" : "border-amber-100/20 bg-black/20"}`}>
+    <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="min-w-0">
+        <h4 className={`break-words font-black ${critical ? "text-rose-50" : "text-amber-50"}`}>
+          {evidence?.notificationTitle ?? "Este listing necesita optimización"}
+        </h4>
+        <p className="mt-1 break-words text-[11px] text-white/45">SKU {task.sku ?? "pendiente"} · Detectado {formatDate(task.detectedAt)}</p>
+      </div>
+      <span className="rounded-full border border-white/15 px-2 py-1 text-[10px] font-black uppercase text-white/70">esperando tu aprobación</span>
+    </div>
+    {listingAgeEvidence && <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-bold text-white/70">Inicio usado: {formatDate(listingAgeEvidence.startedAt)} · {typeof listingAgeEvidence.ageHours === "number" ? `${listingAgeEvidence.ageHours} h evaluadas` : "edad pendiente"}</p>
+        <span className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase ${officialListingStart ? "border-emerald-200/25 text-emerald-100" : "border-amber-200/25 text-amber-100"}`}>{officialListingStart ? "FUENTE EBAY" : "ESTIMACIÓN CONSERVADORA"}</span>
+      </div>
+      <p className="mt-1 text-[11px] leading-5 text-white/50">{listingAgeEvidence.explanation ?? (officialListingStart ? "Fecha oficial de inicio informada por eBay." : "Edad mínima desde el registro en Seller OS; el listing puede ser más antiguo.")}</p>
+    </div>}
+    <p className="mt-3 break-words text-sm leading-6 text-white/75"><strong>Por qué:</strong> {evidence?.whyItNeedsAttention ?? "Seller OS detectó una excepción con evidencia propia."}</p>
+    <p className="mt-2 break-words text-sm leading-6 text-cyan-50"><strong>Siguiente revisión:</strong> {task.recommendedAction}</p>
+    {(evidence?.reviewSequence?.length ?? 0) > 0 && <p className="mt-2 break-words text-xs text-white/50">Orden recomendado: {evidence?.reviewSequence?.join(" → ")}</p>}
+    {experiment && <details className="mt-3 rounded-xl border border-cyan-100/20 bg-cyan-100/[0.05] p-3">
+      <summary className="flex min-h-11 cursor-pointer items-center text-sm font-black text-cyan-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver propuesta de una sola variable</summary>
+      <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-cyan-100/60">Experimento propuesto · una sola variable</p>
+      <p className="mt-1 text-sm font-black text-cyan-50">{experiment.variable ?? "REVISIÓN"}</p>
+      <p className="mt-1 break-words text-xs leading-5 text-white/65">{experiment.proposal}</p>
+      <p className="mt-2 break-words text-[11px] text-white/45">{experiment.measurementPlan}</p>
+      <p className="mt-2 text-[11px] font-bold text-amber-100">Requiere aprobación humana. No prueba causalidad y no se aplicó ningún cambio.</p>
+    </details>}
+    {promotion && <div className={`mt-3 rounded-xl border p-3 ${promotion.status === "READY_FOR_HUMAN_APPROVAL" ? "border-emerald-200/30 bg-emerald-200/[0.07]" : "border-white/10 bg-black/20"}`}>
+      <p className="text-xs font-black uppercase tracking-widest text-white/60">Promoción</p>
+      <p className="mt-1 text-sm font-black text-white">{promotion.recommendedRatePercent ?? 0}%{promotion.durationDays ? ` · ${promotion.durationDays} días` : " · no recomendada"}</p>
+      <p className="mt-1 text-xs leading-5 text-white/60">{promotion.reason}</p>
+      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && <p className="mt-2 text-xs font-bold text-emerald-100">Disponible para autorización desde Seller OS; nunca se activa sólo por la alerta.</p>}
+      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && task.id && <button type="button" disabled={applying} onClick={() => onApply(task.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{applying ? "Verificando y aplicando…" : "REVISAR Y AUTORIZAR PROMOCIÓN 5%"}</button>}
+      {promotion.status === "BLOCKED_CONTROLLED_RISK" && <p className="mt-2 text-xs font-black text-amber-100">No hay margen para aplicar promoción.</p>}
+    </div>}
+  </article>
+}
+
 export function CommercialMonitorPanel() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
-  const [busyMode, setBusyMode] = useState<"dry_run" | "persistent" | "comparison" | null>(null)
+  const [busyMode, setBusyMode] = useState<"luna" | "dry_run" | "persistent" | "comparison" | "scheduler" | null>(null)
   const [dryRunResult, setDryRunResult] = useState<MonitorRun | null>(null)
   const [comparison, setComparison] = useState<SellerHubComparison | null>(null)
   const [gateNow, setGateNow] = useState(0)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
+  const [improvementBusyId, setImprovementBusyId] = useState<string | null>(null)
+  const [requestedImprovementId, setRequestedImprovementId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("section") !== "commercial-monitor") return
+    setRequestedImprovementId(params.get("improvement"))
+  }, [])
+
+  async function applyImprovement(eventId: string) {
+    if (improvementBusyId) return
+    setImprovementBusyId(eventId)
+    setError("")
+    setMessage("Preparando evidencia y comprobaciones de seguridad…")
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError || !data.session) throw new Error("AUTH_REQUIRED")
+      const storageKey = `seller-os-commercial-improvement:${eventId}`
+      const existing = window.sessionStorage.getItem(storageKey)
+      const idempotencyKey = existing ?? `commercial-improvement-${crypto.randomUUID()}`
+      window.sessionStorage.setItem(storageKey, idempotencyKey)
+      const call = async (action: "prepare_improvement" | "apply_improvement", confirmation?: string) => {
+        const response = await fetch("/api/admin/ebay/commercial-monitor", {
+          method: "POST",
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${data.session.access_token}`,
+            "Content-Type": "application/json" },
+          body: JSON.stringify({ action, eventId, idempotencyKey, confirmation }),
+        })
+        const payload = await readMobileReviewJson<Payload>(response,
+          "No se pudo procesar la mejora comercial")
+        if (!payload.success || !payload.improvement) {
+          throw new Error(getMobileReviewPayloadError(payload,
+            "COMMERCIAL_IMPROVEMENT_REQUEST_FAILED"))
+        }
+        return payload.improvement
+      }
+      const preview = await call("prepare_improvement")
+      const label = preview.actionType === "PRICE"
+        ? "el nuevo precio verificado"
+        : preview.actionType === "END_LISTING"
+          ? "el retiro del listing porque Luna confirmó stock cero"
+          : "Promoted Listings General al 5% durante 7 días"
+      if (!window.confirm(`Seller OS aplicará ${label} al listing ${preview.listingId}. Se verificará identidad, stock, costo y economía antes de escribir en eBay. ¿Deseas autorizarlo?`)) {
+        setMessage("Mejora no autorizada; eBay no fue modificado.")
+        return
+      }
+      const applied = await call("apply_improvement", preview.confirmationRequired)
+      if (!applied.appliedVerified) {
+        throw new Error(applied.phase === "outcome_unknown"
+          ? "COMMERCIAL_IMPROVEMENT_OUTCOME_UNKNOWN"
+          : "COMMERCIAL_IMPROVEMENT_NOT_VERIFIED")
+      }
+      setMessage("Mejora aplicada desde Seller OS y confirmada por lectura posterior de eBay.")
+      await load()
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(requestError,
+        "No se pudo aplicar la mejora. Seller OS no la marcará como completada sin verificación de eBay."))
+    } finally {
+      setImprovementBusyId(null)
+    }
+  }
 
   const request = useCallback(async (
     mode?: "dry_run" | "persistent",
@@ -367,6 +697,45 @@ export function CommercialMonitorPanel() {
     return () => window.clearInterval(interval)
   }, [])
 
+  async function refreshLunaEvidence() {
+    if (busyMode) return
+    setBusyMode("luna")
+    setError("")
+    setMessage("Actualizando catálogo, stock y precios desde Luna…")
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError || !data.session) throw new Error("AUTH_REQUIRED")
+      const response = await fetch("/api/admin/market-radar", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "sync_lunaportex" }),
+      })
+      const payload = await readMobileReviewJson<Payload>(
+        response,
+        "No se pudo actualizar la evidencia Luna",
+      )
+      if (!payload.success) {
+        throw new Error(getMobileReviewPayloadError(
+          payload,
+          "MARKET_RADAR_SYNC_FAILED",
+        ))
+      }
+      await load()
+      setMessage("Evidencia Luna actualizada. Ejecuta ahora el dry run comercial.")
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(
+        requestError,
+        "No se pudo actualizar la evidencia Luna.",
+      ))
+    } finally {
+      setBusyMode(null)
+    }
+  }
+
   async function executeDryRun() {
     if (busyMode) return
     setDryRunResult(null)
@@ -420,12 +789,74 @@ export function CommercialMonitorPanel() {
     }
   }
 
+  async function updateSchedulerAuthorization(action: "authorize_scheduler" | "revoke_scheduler") {
+    if (busyMode) return
+    const dryRunId = displayedDryRun?.runId ?? displayedDryRun?.id
+    if (action === "authorize_scheduler" && (!dryRunSatisfactory || !dryRunId)) return
+    const confirmed = window.confirm(action === "authorize_scheduler"
+      ? "Autorizar el monitor automático únicamente en Preview durante 60 minutos. Seguirá siendo de lectura en eBay y respetará las pausas de cuota. ¿Continuar?"
+      : "Pausar ahora el monitor automático de Preview. ¿Continuar?")
+    if (!confirmed) return
+
+    setBusyMode("scheduler")
+    setError("")
+    setMessage(action === "authorize_scheduler"
+      ? "Registrando autorización temporal y auditable…"
+      : "Pausando el monitor automático…")
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError || !data.session) throw new Error("AUTH_REQUIRED")
+      const response = await fetch("/api/admin/ebay/commercial-monitor", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action,
+          confirmed: true,
+          ...(action === "authorize_scheduler"
+            ? { dryRunId, durationMinutes: 60 }
+            : {}),
+        }),
+      })
+      const payload = await readMobileReviewJson<Payload>(
+        response,
+        action === "authorize_scheduler"
+          ? "No se pudo autorizar el monitor"
+          : "No se pudo pausar el monitor",
+      )
+      if (!payload.success || !payload.dashboard) {
+        throw new Error(getMobileReviewPayloadError(payload, "COMMERCIAL_MONITOR_SCHEDULER_CONTROL_FAILED"))
+      }
+      setDashboard(payload.dashboard)
+      setMessage(action === "authorize_scheduler"
+        ? "Monitor Preview autorizado por 60 minutos. Se detendrá al vencer la autorización."
+        : "Monitor automático de Preview pausado.")
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(
+        requestError,
+        action === "authorize_scheduler"
+          ? "No se pudo autorizar el monitor."
+          : "No se pudo pausar el monitor.",
+      ))
+      await load().catch(() => undefined)
+    } finally {
+      setBusyMode(null)
+    }
+  }
+
   const run = dashboard?.lastPersistentRun ??
     (dashboard?.latestRun?.metrics?.dryRun === true ? null : dashboard?.latestRun)
   const metrics = run?.metrics
   const analytics = metrics?.analytics
   const health = dashboard?.health
   const divergence = dashboard?.analyticsSourceDivergence
+  const analyticsDivergenceOpen = divergence?.status === "open" &&
+    divergence.healthFlag === "ANALYTICS_SOURCE_DIVERGENCE"
+  const manualEvidenceNotComparable =
+    divergence?.classification === "MANUAL_EVIDENCE_NOT_COMPARABLE"
   const listingIdentity = dashboard?.listingIdentity
   const readers: Record<string, CommercialMonitorReaderView> = run?.readers ?? {}
   const displayedDryRun = dryRunResult ?? dashboard?.lastDryRun ??
@@ -438,27 +869,64 @@ export function CommercialMonitorPanel() {
   const dryRunConsumedAt = displayedDryRun?.consumedAt ?? displayedDryRun?.dry_run_consumed_at
   const dryRunWasSatisfactory = displayedDryRun?.satisfactory === true ||
     displayedDryRun?.dry_run_satisfactory === true || dryRunSatisfactory || Boolean(dryRunConsumedAt)
+  const schedulerAuthorized = dashboard?.schedulerAuthorization?.status === "ACTIVE"
   const dryRunValue = (input: unknown) => displayedDryRun ? value(input) : "—"
+  const optimizationTasks = dashboard?.optimizationTasks ?? []
+  const primaryOptimizationTask = optimizationTasks[0]
+  const additionalOptimizationTasks = optimizationTasks.slice(1, 5)
+  const competitorProfiles = dashboard?.competitorWatch?.profiles ?? []
+  const competitorPriceRecommendations =
+    dashboard?.competitorWatch?.priceRecommendations ?? []
+  const supplyActions = dashboard?.supplyActions ?? []
+  const researchRefreshProfiles = competitorProfiles.filter((profile) =>
+    profile.research_refresh_recommended)
+
+  useEffect(() => {
+    if (loading || !requestedImprovementId) return
+    const target = document.getElementById(
+      `commercial-improvement-${requestedImprovementId}`,
+    ) ?? document.getElementById("competitor-watch-heading")
+    if (!target) return
+    const timer = window.setTimeout(() => {
+      target.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+        block: "start",
+      })
+      target.focus({ preventScroll: true })
+    }, 50)
+    return () => window.clearTimeout(timer)
+  }, [loading, requestedImprovementId, competitorPriceRecommendations,
+    supplyActions])
 
   return (
-    <section aria-labelledby="commercial-monitor-heading" className="rounded-3xl border border-emerald-200/25 bg-gradient-to-br from-emerald-200/[0.10] via-cyan-200/[0.04] to-black p-4">
+    <section aria-labelledby="commercial-monitor-heading" className="min-w-0 overflow-hidden rounded-3xl border border-emerald-200/25 bg-gradient-to-br from-emerald-200/[0.10] via-cyan-200/[0.04] to-black p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Monitoreo comercial · separado de Radar</p>
           <h2 id="commercial-monitor-heading" className="mt-2 text-2xl font-black">Ventas y rendimiento</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/65">Lee órdenes con checkout completado, Analytics oficial y WatchCount. No cambia listings, precios, inventario ni órdenes.</p>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/65">Lee órdenes, mensajes pendientes de Seller Hub, Analytics, WatchCount, Luna y competidores activos. Product Research sólo se solicita para confirmar ventas cuando aparece una señal relevante. Las acciones de precio o retiro se preparan con evidencia fresca y sólo se ejecutan después de tu confirmación.</p>
         </div>
         <span className={`rounded-full border border-white/15 px-3 py-2 text-xs font-black uppercase ${statusTone(run?.status)}`}>
           {loading ? "cargando" : run?.status ?? dashboard?.status ?? "sin ejecutar"}
         </span>
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        <button
+          type="button"
+          disabled={Boolean(busyMode) || loading}
+          onClick={() => void refreshLunaEvidence()}
+          className="min-h-14 rounded-2xl border border-amber-200/35 bg-amber-200/[0.08] px-4 font-black text-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 disabled:opacity-50"
+        >
+          {busyMode === "luna" ? "Actualizando Luna…" : "Actualizar evidencia Luna"}
+        </button>
         <button
           type="button"
           disabled={Boolean(busyMode) || loading}
           onClick={() => void executeDryRun()}
-          className="min-h-14 rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-50"
+          className="min-h-14 rounded-2xl bg-cyan-200 px-4 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-100 disabled:opacity-50"
         >
           {busyMode === "dry_run" ? "Ejecutando dry run…" : "Ejecutar dry run"}
         </button>
@@ -467,7 +935,7 @@ export function CommercialMonitorPanel() {
           disabled={Boolean(busyMode) || loading || !dryRunSatisfactory}
           onClick={() => void updatePerformance()}
           aria-describedby="persistent-update-gate"
-          className="min-h-14 rounded-2xl bg-emerald-200 px-4 font-black text-black disabled:cursor-not-allowed disabled:opacity-35"
+          className="min-h-14 rounded-2xl border border-emerald-200/35 bg-emerald-200/[0.08] px-4 font-black text-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-100 disabled:cursor-not-allowed disabled:opacity-35"
         >
           {busyMode === "persistent" ? "Actualizando rendimiento…" : "Actualizar rendimiento"}
         </button>
@@ -480,12 +948,40 @@ export function CommercialMonitorPanel() {
             : "Actualizar rendimiento permanece bloqueado hasta completar un dry run satisfactorio en los últimos 30 minutos."}
       </p>
 
-      <section aria-labelledby="dry-run-results-heading" className="mt-4 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-cyan-100/60">Modo</p>
-            <h3 id="dry-run-results-heading" className="text-lg font-black text-cyan-50">DRY RUN</h3>
+      <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-black text-white">Automatización de Preview</p>
+            <p className="mt-1 text-xs leading-5 text-white/55">
+              {dashboard?.schedule?.effectivelyEnabled
+                ? "Activa continuamente mientras existan listings ACTIVE."
+                : schedulerAuthorized
+                  ? "Autorización continua vigente; el runner de Preview aún está deshabilitado en configuración."
+                : dryRunSatisfactory
+                  ? "La prueba segura pasó. Puedes autorizar el monitoreo continuo mientras haya listings ACTIVE."
+                  : "Primero debe pasar un dry run reciente; el sistema no se activará a ciegas."}
+            </p>
           </div>
+          <button
+            type="button"
+            disabled={Boolean(busyMode) || loading || (!schedulerAuthorized && !dryRunSatisfactory)}
+            onClick={() => void updateSchedulerAuthorization(
+              schedulerAuthorized ? "revoke_scheduler" : "authorize_scheduler",
+            )}
+            className={`min-h-11 shrink-0 rounded-xl border px-4 text-sm font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-35 ${schedulerAuthorized ? "border-rose-200/35 bg-rose-200/[0.08] text-rose-50 focus-visible:outline-rose-100" : "border-cyan-200/35 bg-cyan-200/[0.08] text-cyan-50 focus-visible:outline-cyan-100"}`}
+          >
+            {busyMode === "scheduler"
+              ? "Procesando…"
+              : schedulerAuthorized
+                ? "Pausar monitor"
+                : "Autorizar 60 minutos"}
+          </button>
+        </div>
+      </div>
+
+      <details data-technical-details="dry-run" className="mt-4 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
+        <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center justify-between gap-2 font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
+          <span><span className="block text-[10px] uppercase tracking-widest text-cyan-100/60">Ver detalles técnicos</span><span className="text-lg text-cyan-50">DRY RUN</span></span>
           <span className={`rounded-full border border-white/15 px-3 py-1 text-[10px] font-black uppercase ${dryRunSatisfactory ? "text-emerald-100" : "text-white/55"}`}>
             {displayedDryRun
               ? dryRunConsumedAt
@@ -495,7 +991,8 @@ export function CommercialMonitorPanel() {
                   : displayedDryRun.status ?? "requiere revisión"
               : "sin ejecutar"}
           </span>
-        </div>
+        </summary>
+        <div className="min-w-0">
 
         <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
           <div className="rounded-xl border border-white/10 p-2"><dt className="text-white/45">Status</dt><dd className="mt-1 font-black uppercase">{displayedDryRun?.status ?? "sin ejecutar"}</dd></div>
@@ -508,22 +1005,26 @@ export function CommercialMonitorPanel() {
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Órdenes leídas</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.officialOrdersRead)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Line items leídos</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.completedCheckoutLineItems)}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Mensajes pendientes</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.sellerHubMessageHeadersRead)}</strong><span className="mt-1 block text-[10px] text-white/40">sólo encabezados seguros</span></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Listings Analytics</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.analyticsListingsRead)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Listings Watchers</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.watcherListingsRead)}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Listings competencia</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.competitorListingsRead)}</strong><span className="mt-1 block text-[10px] text-white/40">lectura activa, no ventas</span></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Persistencia comercial</span><strong className="mt-1 block text-lg">{dryRunMetrics?.commercialDataPersistencePerformed === false ? "NO" : "—"}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Alertas encoladas</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.alertsEnqueued)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Tareas de fulfillment creadas</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.fulfillmentTasksCreated)}</strong></div>
-          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">WhatsApp entregados</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.whatsappDelivered)}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">WhatsApp META_ACCEPTED</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.whatsappMetaAccepted)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Escrituras eBay</span><strong className="mt-1 block text-lg">{dryRunValue(dryRunMetrics?.ebayWrites)}</strong></div>
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Última ejecución</span><strong className="mt-1 block text-xs">{formatDate(displayedDryRun?.completedAt ?? displayedDryRun?.completed_at)}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Vínculo Luna exacto</span><strong className="mt-1 block text-lg">{dryRunMetrics?.lunaExactSupplyLinked === true ? "SÍ" : "NO"}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Snapshot Luna fresco</span><strong className="mt-1 block text-lg">{dryRunMetrics?.lunaSupplyFresh === true ? "SÍ" : "NO"}</strong><span className="mt-1 block text-[10px] text-white/40">{formatDate(dryRunMetrics?.lunaSupplyObservedAt)}</span></div>
         </div>
 
-        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
-          {(["orders", "analytics", "watchers"] as const).map((name) => {
+        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
+          {(["orders", "messages", "analytics", "watchers", "competitors"] as const).map((name) => {
             const recordedError = displayedDryRun?.errors?.find((item) => item.reader === name)?.code
             const readerError = dryRunReaders[name]?.error ?? recordedError
             return <div key={`dry-${name}`} className="rounded-xl border border-white/10 p-2">
-              <span className="font-black uppercase text-white/45">{name === "orders" ? "Orders" : name === "analytics" ? "Analytics" : "Watchers"}</span>
+              <span className="font-black uppercase text-white/45">{name === "orders" ? "Orders" : name === "messages" ? "Mensajes" : name === "analytics" ? "Analytics" : name === "watchers" ? "Watchers" : "Competencia"}</span>
               <span className={`mt-1 block break-words font-bold ${readerError ? "text-rose-100" : "text-emerald-100"}`}>
                 {readerError ?? (displayedDryRun ? "Sin errores" : "Pendiente")}
               </span>
@@ -535,6 +1036,10 @@ export function CommercialMonitorPanel() {
           <div className="rounded-xl border border-white/10 p-2">
             <dt className="text-white/45">Orders OAuth</dt>
             <dd className="mt-1 break-words font-black text-cyan-50">{authLabel(dryRunReaders.orders?.auth?.status ?? dryRunAuthentication?.ordersOAuth)}</dd>
+          </div>
+          <div className="rounded-xl border border-white/10 p-2">
+            <dt className="text-white/45">Mensajes auth</dt>
+            <dd className="mt-1 break-words font-black text-cyan-50">{authLabel(dryRunReaders.messages?.auth?.status ?? dryRunAuthentication?.messagesAuth)}</dd>
           </div>
           <div className="rounded-xl border border-white/10 p-2">
             <dt className="text-white/45">Watchers auth</dt>
@@ -558,41 +1063,96 @@ export function CommercialMonitorPanel() {
           <span className="text-white/45">Próxima acción</span>
           <p className="mt-1 font-bold text-cyan-50">{dryRunAuthentication?.actionRequired ?? displayedDryRun?.nextAction ?? displayedDryRun?.next_action ?? "Ejecutar el dry run seguro."}</p>
         </div>
-      </section>
-
-      <section aria-labelledby="persistent-run-heading" className="mt-4 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100/60">Última actualización persistente</p>
-            <h3 id="persistent-run-heading" className="text-lg font-black text-emerald-50">
-              Última actualización: {run ? (run.status === "completed" ? "COMPLETADA" : run.status?.toUpperCase()) : "PENDIENTE"}
-            </h3>
-          </div>
-          {dryRunConsumedAt && <span className="rounded-full border border-white/15 px-3 py-1 text-[10px] font-black uppercase text-cyan-100">Dry run anterior: CONSUMIDO</span>}
         </div>
+      </details>
+
+      <details data-technical-details="persistent-run" className="mt-4 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3">
+        <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center justify-between gap-2 font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200">
+          <span><span className="block text-[10px] uppercase tracking-widest text-emerald-100/60">Última actualización persistente · ver detalles técnicos</span><span className="text-lg text-emerald-50">Última actualización: {run ? (run.status === "completed" ? "COMPLETADA" : run.status?.toUpperCase()) : "PENDIENTE"}</span></span>
+          {dryRunConsumedAt && <span className="rounded-full border border-white/15 px-3 py-1 text-[10px] font-black uppercase text-cyan-100">Dry run anterior: CONSUMIDO</span>}
+        </summary>
         <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Completed at</dt><dd className="mt-1 font-black">{formatDate(run?.completedAt ?? run?.completed_at)}</dd></div>
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Snapshots creados</dt><dd className="mt-1 text-lg font-black">{value(metrics?.snapshotsCreated)}</dd></div>
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Eventos creados</dt><dd className="mt-1 text-lg font-black">{value(metrics?.eventsCreated)}</dd></div>
           <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Alertas generadas</dt><dd className="mt-1 text-lg font-black">{value(metrics?.alertsGenerated)}</dd></div>
-          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">WhatsApp delivered</dt><dd className="mt-1 text-lg font-black">{value(metrics?.whatsappDelivered)}</dd></div>
+          <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">WhatsApp META_ACCEPTED</dt><dd className="mt-1 text-lg font-black">{value(metrics?.whatsappMetaAccepted)}</dd><span className="mt-1 block text-[10px] text-white/40">Aceptado por Meta; entrega final requiere webhook.</span></div>
           <div className="rounded-xl bg-black/25 p-2 sm:col-span-3"><dt className="text-white/45">Próxima acción</dt><dd className="mt-1 font-black text-emerald-50">{run?.nextAction ?? run?.next_action ?? "Ejecuta un dry run nuevo antes de otra actualización."}</dd></div>
         </dl>
         {run && dryRunConsumedAt && <p className="mt-3 text-xs font-bold text-cyan-50">Ejecuta un dry run nuevo antes de otra actualización.</p>}
+      </details>
+
+      <section aria-labelledby="luna-action-queue-heading" className="mt-4 rounded-2xl border border-cyan-200/30 bg-cyan-200/[0.06] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-cyan-100/60">Luna Portex → acción Seller OS</p>
+            <h3 id="luna-action-queue-heading" className="text-lg font-black">Cambios de costo y stock</h3>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-white/60">Seller OS vuelve a comprobar la variante exacta de Luna antes de preparar la acción. Precio: recalcula el piso económico. Stock cero: prepara el retiro del listing. Nada se escribe en eBay sin tu confirmación.</p>
+          </div>
+          <span className="rounded-full border border-cyan-100/25 px-3 py-1 text-xs font-black uppercase text-cyan-50">{supplyActions.length} pendientes</span>
+        </div>
+        {supplyActions.length === 0
+          ? <p className="mt-3 rounded-xl bg-black/20 p-3 text-sm text-white/55">No hay cambios frescos de Luna que requieran una acción.</p>
+          : <div className="mt-3 grid gap-3">
+            {supplyActions.slice(0, 8).map((entry) => {
+              const isOutOfStock = entry.eventType === "ACTIVE_LISTING_OUT_OF_STOCK"
+              const previousCost = entry.evidence?.previousSupplierCost
+              const currentCost = entry.evidence?.currentSupplierCost
+              return <article
+                key={entry.id}
+                id={entry.id ? `commercial-improvement-${entry.id}` : undefined}
+                tabIndex={entry.id === requestedImprovementId ? -1 : undefined}
+                className={`scroll-mt-32 rounded-xl border bg-black/25 p-3 outline-none ${entry.id === requestedImprovementId ? "border-cyan-100 ring-2 ring-cyan-200" : "border-white/10"}`}
+              >
+                <p className="font-black text-white">Listing {entry.listingId} · SKU {entry.sku ?? "pendiente"}</p>
+                <p className="mt-1 text-xs text-white/65">{isOutOfStock
+                  ? "Luna confirmó disponibilidad cero; la acción propuesta es retirar el listing con razón NotAvailable."
+                  : typeof previousCost === "number" && typeof currentCost === "number"
+                    ? `Costo Luna: $${previousCost.toFixed(2)} → $${currentCost.toFixed(2)}. Seller OS recalculará el precio seguro.`
+                    : `Margen estimado: ${typeof entry.evidence?.estimatedMarginPercent === "number" ? `${entry.evidence.estimatedMarginPercent.toFixed(2)}%` : "en riesgo"}. Seller OS recalculará el precio seguro.`}</p>
+                <p className="mt-2 text-xs font-bold text-cyan-50">{entry.recommendedAction}</p>
+                <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Esperando confirmación · ningún cambio aplicado</p>
+                {entry.id && <button type="button" disabled={Boolean(improvementBusyId)} onClick={() => void applyImprovement(entry.id!)} className={`mt-3 min-h-12 w-full rounded-xl px-3 font-black text-black disabled:opacity-40 ${isOutOfStock ? "bg-rose-200" : "bg-cyan-200"}`}>{improvementBusyId === entry.id
+                  ? "Verificando evidencia fresca…"
+                  : isOutOfStock
+                    ? "VERIFICAR Y RETIRAR LISTING"
+                    : "RECALCULAR Y REVISAR PRECIO"}</button>}
+              </article>
+            })}
+          </div>}
       </section>
 
-      <section aria-labelledby="seller-hub-comparison-heading" className="mt-4 rounded-2xl border border-violet-200/25 bg-violet-200/[0.05] p-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/60">Diagnóstico oficial · listing 366543596425</p>
-            <h3 id="seller-hub-comparison-heading" className="text-lg font-black">Comparar con Seller Hub</h3>
-            <p className="mt-1 text-xs text-white/55">Compara 7 días cerrados contra hasta 90 días. No persiste snapshots, reglas, alertas ni WhatsApp.</p>
+      <section aria-labelledby="listing-optimization-tasks-heading" className="mt-4 rounded-2xl border border-amber-200/30 bg-amber-200/[0.06] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/60">Diagnóstico post-publicación</p>
+            <h3 id="listing-optimization-tasks-heading" className="text-lg font-black">Listings que necesitan atención</h3>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-white/60">Seller OS avisa primero y explica la etapa del embudo. No cambia imágenes, títulos, precios, cantidad ni políticas automáticamente.</p>
           </div>
+          <span className="rounded-full border border-amber-100/25 px-3 py-1 text-xs font-black uppercase text-amber-50">
+            {optimizationTasks.length} detectadas
+          </span>
+        </div>
+        {optimizationTasks.length === 0
+          ? <p className="mt-3 rounded-xl bg-black/20 p-3 text-sm text-white/55">Aún no hay una muestra oficial suficiente que justifique una propuesta de optimización.</p>
+          : <div className="mt-3 grid gap-3">
+            {primaryOptimizationTask && <OptimizationTaskCard task={primaryOptimizationTask} applying={improvementBusyId === primaryOptimizationTask.id} onApply={(eventId) => void applyImprovement(eventId)} />}
+            {additionalOptimizationTasks.length > 0 && <details className="rounded-xl border border-white/10 p-3">
+              <summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver {additionalOptimizationTasks.length} diagnóstico(s) posterior(es)</summary>
+              <div className="mt-3 grid gap-3">{additionalOptimizationTasks.map((task) => <OptimizationTaskCard key={task.id} task={task} applying={improvementBusyId === task.id} onApply={(eventId) => void applyImprovement(eventId)} />)}</div>
+            </details>}
+          </div>}
+      </section>
+
+      <details data-technical-details="seller-hub-comparison" className="mt-4 rounded-2xl border border-violet-200/25 bg-violet-200/[0.05] p-3">
+        <summary className="flex min-h-11 cursor-pointer items-center text-lg font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-200">Comparar con Seller Hub · diagnóstico opcional</summary>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="max-w-2xl text-xs leading-5 text-white/55">Compara 7 días cerrados contra hasta 90 días para el listing 366543596425. No persiste snapshots, reglas, alertas ni WhatsApp.</p>
           <button
             type="button"
             disabled={Boolean(busyMode) || loading}
             onClick={() => void compareWithSellerHub()}
-            className="min-h-12 rounded-2xl border border-violet-100/30 bg-violet-100 px-4 font-black text-black disabled:opacity-50"
+            className="min-h-12 w-full rounded-2xl border border-violet-100/30 px-4 font-black text-violet-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-200 disabled:opacity-50 sm:w-auto"
           >
             {busyMode === "comparison" ? "Comparando…" : "Comparar con Seller Hub"}
           </button>
@@ -613,30 +1173,32 @@ export function CommercialMonitorPanel() {
             Persistencia: {comparison.safety?.persistencePerformed === false ? "NO" : "—"} · Alertas: {value(comparison.safety?.alertsGenerated)} · Fulfillment: {value(comparison.safety?.fulfillmentTasksCreated)} · WhatsApp: {value(comparison.safety?.whatsappDelivered)} · Escrituras eBay: {value(comparison.safety?.ebayWrites)}
           </p>
         </>}
-      </section>
+      </details>
 
-      <section aria-labelledby="analytics-source-health-heading" className="mt-4 rounded-2xl border border-amber-200/30 bg-amber-200/[0.06] p-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-amber-100/60">Salud de fuentes Analytics</p>
-            <h3 id="analytics-source-health-heading" className="text-lg font-black">
-              {divergence?.healthFlag ?? "SIN DIVERGENCIA ABIERTA"}
-            </h3>
-            <p className="mt-1 text-xs text-white/60">
-              {divergence?.classification ?? "Las fuentes no tienen una discrepancia registrada."}
-            </p>
-          </div>
+      <details data-technical-details="analytics-source-health" className="mt-4 rounded-2xl border border-amber-200/30 bg-amber-200/[0.06] p-3">
+        <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center justify-between gap-3 font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-200">
+          <span><span className="block text-[10px] uppercase tracking-widest text-amber-100/60">Ver salud de fuentes Analytics</span><span className="text-lg">{divergence?.healthFlag ?? "SIN DIVERGENCIA ABIERTA"}</span></span>
           <span className="rounded-full border border-amber-100/25 px-3 py-1 text-xs font-black uppercase">
             {divergence?.status ?? "clear"}
           </span>
-        </div>
+        </summary>
+        <div className="min-w-0">
+        <p className="mt-2 text-xs text-white/60">{divergence?.classification ?? "Las fuentes no tienen una discrepancia registrada."}</p>
         {divergence && <>
-          <p className="mt-2 text-[11px] font-black uppercase text-amber-100">Health flag: ANALYTICS_SOURCE_DIVERGENCE</p>
+          <p className={`mt-2 text-[11px] font-black uppercase ${analyticsDivergenceOpen ? "text-amber-100" : "text-emerald-100"}`}>{analyticsDivergenceOpen
+            ? "Health flag: ANALYTICS_SOURCE_DIVERGENCE"
+            : "Health flag: SIN DIVERGENCIA ABIERTA"}</p>
+          {manualEvidenceNotComparable && <p className="mt-2 rounded-xl border border-emerald-200/25 bg-emerald-200/[0.07] p-3 text-xs leading-5 text-emerald-50">
+            La observación manual es orgánica y no declara una ventana. El reporte oficial es total, por listing y con ventana UTC; se conservan ambos datos, pero no se comparan como si midieran lo mismo.
+          </p>}
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
             <article className="rounded-xl bg-black/25 p-3">
               <h4 className="font-black text-amber-50">Seller Hub · evidencia manual separada</h4>
               <p className="mt-1 text-xs text-white/50">Fuente: {divergence.manualSource?.source ?? "—"} · Observada: {divergence.manualSource?.observedOn ?? "—"}</p>
-              <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
+              <p className="mt-1 text-[11px] text-white/45">Ventana: {divergence.manualSource?.windowStart && divergence.manualSource?.windowEnd
+                ? `${divergence.manualSource.windowStart} → ${divergence.manualSource.windowEnd}`
+                : "no declarada"} · zona horaria: {divergence.manualSource?.timeZone ?? "no declarada"}</p>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                 <div><span className="text-white/45">Organic impressions</span><strong className="block">{value(divergence.manualSource?.metrics?.impressions)}</strong></div>
                 <div><span className="text-white/45">Organic listing views</span><strong className="block">{value(divergence.manualSource?.metrics?.views)}</strong></div>
                 <div><span className="text-white/45">Quantity sold</span><strong className="block">{value(divergence.manualSource?.metrics?.transactions)}</strong></div>
@@ -647,7 +1209,7 @@ export function CommercialMonitorPanel() {
               <h4 className="font-black text-cyan-50">Traffic API · fuente oficial</h4>
               <p className="mt-1 text-xs text-white/50">Fuente: {divergence.officialSource?.source ?? "—"} · Consultada: {formatDate(divergence.officialSource?.observedAt)}</p>
               <p className="mt-1 text-[11px] text-white/45">Ventana: {divergence.officialSource?.windowStart ?? "—"} → {divergence.officialSource?.windowEnd ?? "—"} · lastUpdated: {divergence.officialSource?.lastUpdatedDate ?? "—"}</p>
-              <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                 <div><span className="text-white/45">Total impressions</span><strong className="block">{value(divergence.officialSource?.metrics?.impressions)}</strong></div>
                 <div><span className="text-white/45">Listing views total</span><strong className="block">{value(divergence.officialSource?.metrics?.views)}</strong></div>
                 <div><span className="text-white/45">Transaction</span><strong className="block">{value(divergence.officialSource?.metrics?.transactions)}</strong></div>
@@ -655,9 +1217,9 @@ export function CommercialMonitorPanel() {
               </div>
             </article>
           </div>
-          <p className="mt-3 text-xs font-bold text-amber-50">
-            Reglas de impresiones, CTR y conversión: SUSPENDIDAS · Próxima reconciliación: {formatDate(divergence.nextCheckAt)}
-          </p>
+          <p className={`mt-3 text-xs font-bold ${analyticsDivergenceOpen ? "text-amber-50" : "text-emerald-100"}`}>{analyticsDivergenceOpen
+            ? `Reglas de impresiones, CTR y conversión: SUSPENDIDAS · Próxima reconciliación: ${formatDate(divergence.nextCheckAt)}`
+            : "Reglas de impresiones, CTR y conversión: ACTIVAS con la fuente oficial completa."}</p>
           <p className="mt-1 text-xs text-emerald-100">Orders, Watchers, stock, fulfillment y WhatsApp continúan independientes.</p>
           <p className="mt-1 text-[11px] text-white/45">Evidencia manual usada como métrica API: {divergence.manualEvidenceUsedAsApiMetric === false ? "NO" : "—"}</p>
         </>}
@@ -669,6 +1231,73 @@ export function CommercialMonitorPanel() {
           <p>Estado oficial: {listingIdentity?.observedListingStatus ?? "—"} · Match exacto: {listingIdentity?.activeListingConfirmed ? "SÍ" : "NO"}</p>
           <p className="mt-1 font-black">Procesamiento de ventas: {listingIdentity?.salesProcessingBlocked ? "BLOQUEADO" : "HABILITADO"}</p>
         </div>
+        </div>
+      </details>
+
+      <section aria-labelledby="competitor-watch-heading" className="mt-4 rounded-2xl border border-violet-200/25 bg-violet-200/[0.06] p-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/60">Monitoreo automático por listing</p>
+            <h3 id="competitor-watch-heading" className="mt-1 text-lg font-black text-violet-50">Competidores y Product Research</h3>
+          </div>
+          <span className="rounded-full border border-violet-100/20 px-2 py-1 text-[10px] font-black uppercase text-violet-100">
+            {dashboard?.competitorWatch?.status === "ACTIVE" ? "activo" : "esperando línea base"}
+          </span>
+        </div>
+        <p className="mt-2 text-xs leading-5 text-white/60">Los vendedores activos se descubren desde eBay sin importar otra tabla. Una oferta activa no se cuenta como venta; la venta sólo pasa a confirmada cuando coincide con una captura oficial de Product Research.</p>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Listings cubiertos</span><strong className="mt-1 block text-lg">{competitorProfiles.length}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Vendedores activos</span><strong className="mt-1 block text-lg">{competitorProfiles.reduce((sum, profile) => sum + Number(profile.latest_active_seller_count ?? 0), 0)}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Con actividad estimada</span><strong className="mt-1 block text-lg">{competitorProfiles.reduce((sum, profile) => sum + Number(profile.latest_estimated_activity_seller_count ?? 0), 0)}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Venta confirmada</span><strong className="mt-1 block text-lg">{competitorProfiles.reduce((sum, profile) => sum + Number(profile.latest_confirmed_sold_seller_count ?? 0), 0)}</strong></div>
+        </div>
+        {competitorPriceRecommendations.length > 0 && <div className="mt-3 rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3">
+          <p className="font-black text-emerald-50">Recomendaciones de precio con piso económico</p>
+          <div className="mt-2 grid gap-2">
+            {competitorPriceRecommendations.slice(0, 3).map((entry) => {
+              const recommendation = entry.priceRecommendation ?? {}
+              const money = (amount: number | undefined) => typeof amount === "number"
+                ? `$${amount.toFixed(2)}` : "—"
+              return <article
+                key={entry.id}
+                id={entry.id ? `commercial-improvement-${entry.id}` : undefined}
+                tabIndex={entry.id === requestedImprovementId ? -1 : undefined}
+                className={`scroll-mt-32 rounded-xl bg-black/25 p-3 text-xs outline-none ${entry.id === requestedImprovementId ? "ring-2 ring-emerald-200" : ""}`}
+              >
+                <p className="font-black text-white">Listing {entry.listingId} · SKU {entry.sku ?? "pendiente"}</p>
+                <p className="mt-1 text-white/70">Actual {money(recommendation.currentItemPrice)} → propuesta {money(recommendation.proposedItemPrice)} · {recommendation.activeMarketNotConfirmedSale
+                  ? `mediana activa ${money(recommendation.activeMarketMedianLandedPrice)}`
+                  : `referencia vendida ${money(recommendation.confirmedSoldBenchmarkLandedPrice)}`}</p>
+                <p className="mt-1 text-white/55">{recommendation.activeMarketNotConfirmedSale
+                  ? `${recommendation.activeSellerCount ?? 0} vendedor(es) activos · no son ventas confirmadas`
+                  : `${recommendation.confirmedSoldSellerCount ?? 0} vendedor(es) exacto(s) · ${recommendation.confirmedSoldQuantity ?? 0} venta(s)`} · piso propio {money(recommendation.minimumSafeLandedPrice)} · utilidad {money(recommendation.proposedEstimatedNetProfit ?? undefined)} · margen {typeof recommendation.proposedEstimatedMarginPercent === "number" ? `${recommendation.proposedEstimatedMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.proposedEstimatedRoiPercent === "number" ? `${recommendation.proposedEstimatedRoiPercent.toFixed(2)}%` : "—"}</p>
+                {recommendation.activeMarketNotConfirmedSale && <p className="mt-1 text-white/55">Piso normal con reserva publicitaria 5%: {money(recommendation.floorWithPromotionReserve)} · sin promoción: {money(recommendation.floorWithoutPromotion)} · piso controlado 10%: {money(recommendation.controlledRiskMinimumLandedPrice)} · alcanza la mediana activa: {recommendation.canReachActiveMarketSafely ? "SÍ" : "NO"}</p>}
+                {recommendation.controlledRiskTenPercent && <p className="mt-2 rounded-lg border border-amber-200/25 bg-amber-200/[0.08] p-2 font-black text-amber-50">PRECIO COMPETITIVO CON MARGEN CONTROLADO 10% · PROMOCIÓN BLOQUEADA</p>}
+                {recommendation.activeMarketNotConfirmedSale && recommendation.activeMarketEconomics && <p className="mt-1 text-white/55">A precio de mercado: utilidad {money(recommendation.activeMarketEconomics.estimatedNetProfit ?? undefined)} · margen {typeof recommendation.activeMarketEconomics.estimatedNetMarginPercent === "number" ? `${recommendation.activeMarketEconomics.estimatedNetMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.activeMarketEconomics.estimatedRoiPercent === "number" ? `${recommendation.activeMarketEconomics.estimatedRoiPercent.toFixed(2)}%` : "—"} · envío conservador {money(recommendation.activeMarketEconomics.estimatedOutboundShipping ?? undefined)}. Regla(s) que fallan: {(recommendation.activeMarketEconomics.failedGateCodes ?? []).join(", ") || "ninguna"}.</p>}
+                <p className="mt-2 font-bold text-emerald-50">{entry.recommendedAction}</p>
+                <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Esperando revisión humana · WhatsApp encolado · ningún cambio aplicado</p>
+                {entry.id && !["KEEP_PRICE_IN_CONFIRMED_SOLD_BAND", "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"].includes(recommendation.action ?? "") && recommendation.proposedPassesProfitGate !== false && <button type="button" disabled={Boolean(improvementBusyId)} onClick={() => void applyImprovement(entry.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{improvementBusyId === entry.id ? "Verificando y aplicando…" : `ACEPTAR PRECIO SEGURO ${money(recommendation.proposedItemPrice)}`}</button>}
+                {recommendation.action === "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR" && <p className="mt-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.08] p-3 text-center font-black text-amber-50">MANTENER {money(recommendation.currentItemPrice)} · YA ESTÁ EN EL PISO</p>}
+              </article>
+            })}
+          </div>
+        </div>}
+        {researchRefreshProfiles.length > 0 && <div className="mt-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.08] p-3">
+          <p className="font-black text-amber-50">Product Research recomendado · {researchRefreshProfiles.length} listing(s)</p>
+          <p className="mt-1 text-xs leading-5 text-white/65">Actualizar una sola captura dirigida para confirmar si el nuevo competidor realmente vende. La recomendación tiene enfriamiento y no importa ni modifica nada automáticamente.</p>
+        </div>}
+        <div className="mt-3 space-y-2">
+          {competitorProfiles.slice(0, 5).map((profile) => <article key={profile.listing_id} className="rounded-xl border border-white/10 bg-black/20 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div><p className="font-black text-white">Listing {profile.listing_id}</p><p className="text-[11px] text-white/45">SKU {profile.sku ?? "pendiente"} · {formatDate(profile.last_scanned_at)}</p></div>
+              <span className="rounded-full border border-white/15 px-2 py-1 text-[10px] font-black uppercase text-white/65">{profile.latest_evidence_class?.replaceAll("_", " ") ?? "sin evidencia"}</span>
+            </div>
+            <p className="mt-2 text-xs text-white/65">{profile.latest_active_seller_count ?? 0} vendedor(es) activo(s) · precio total mediano {typeof profile.latest_median_landed_price === "number" ? `$${profile.latest_median_landed_price.toFixed(2)}` : "—"}</p>
+            {(profile.latest_suggestion_codes?.length ?? 0) > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-violet-50">{profile.latest_suggestion_codes?.map((code) => <li key={code}>{competitorSuggestionLabel(code)}</li>)}</ul>}
+          </article>)}
+          {competitorProfiles.length === 0 && <p className="rounded-xl border border-white/10 p-3 text-xs text-white/55">La primera ejecución segura establecerá la línea base sin generar una avalancha de alertas.</p>}
+        </div>
+        <p className="mt-3 text-[11px] font-bold text-emerald-100">Descubrimiento automático: SÍ · importación automática de Research: NO · cambios automáticos en eBay: NO.</p>
       </section>
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
@@ -678,14 +1307,15 @@ export function CommercialMonitorPanel() {
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Watchers</span><strong className="mt-1 block text-xl">{value(analytics?.watchers)}</strong><span className="mt-1 block text-[10px] text-white/40">señales de interés</span></div>
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Transacciones Analytics</span><strong className="mt-1 block text-xl">{value(analytics?.transactions)}</strong><span className="mt-1 block text-[10px] text-white/40">no sustituyen órdenes</span></div>
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Alertas</span><strong className="mt-1 block text-xl">{value(metrics?.alertsGenerated)}</strong></div>
+        <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Mensajes Seller Hub</span><strong className="mt-1 block text-xl">{value(metrics?.sellerHubMessages?.headersRead)}</strong><span className="mt-1 block text-[10px] text-white/40">contenido protegido</span></div>
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Fulfillment</span><strong className="mt-1 block text-xl">{value(health?.fulfillmentTasks)}</strong></div>
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Reintentos</span><strong className="mt-1 block text-xl">{value(health?.retries)}</strong></div>
       </div>
 
-      <dl className="mt-4 grid gap-2 text-xs sm:grid-cols-3">
-        {(["orders", "analytics", "watchers"] as const).map((name) => (
+      <dl className="mt-4 grid gap-2 text-xs sm:grid-cols-4">
+        {(["orders", "messages", "analytics", "watchers", "competitors"] as const).map((name) => (
           <div key={name} className="rounded-2xl border border-white/10 p-3">
-            <dt className="font-black uppercase text-white/45">{name === "orders" ? "Órdenes" : name === "analytics" ? "Analytics" : "Watchers"}</dt>
+            <dt className="font-black uppercase text-white/45">{name === "orders" ? "Órdenes" : name === "messages" ? "Mensajes" : name === "analytics" ? "Analytics" : name === "watchers" ? "Watchers" : "Competencia"}</dt>
             <dd className={`mt-1 font-black uppercase ${statusTone(readers[name]?.status)}`}>{readers[name]?.status ?? "sin ejecutar"}</dd>
             <dd className="mt-1 break-words text-white/45">{readers[name]?.source ?? "Fuente pendiente"}</dd>
             {readers[name]?.error && <dd className="mt-1 break-words text-rose-100">{readers[name]?.error}</dd>}
@@ -694,10 +1324,12 @@ export function CommercialMonitorPanel() {
       </dl>
 
       <details className="mt-4 rounded-2xl border border-white/10 p-3">
-        <summary className="cursor-pointer font-black">Salud, errores y próxima acción</summary>
+        <summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Salud, errores y próxima acción</summary>
         <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
           <div><dt className="text-white/45">Última actualización</dt><dd className="font-bold">{formatDate(run?.completed_at ?? run?.started_at)}</dd></div>
-          <div><dt className="text-white/45">Próxima ejecución</dt><dd className="font-bold">{dashboard?.schedule?.enabled ? formatDate(dashboard.nextAutomaticRunAt) : "Scheduler Preview pendiente de activar"}</dd></div>
+          <div><dt className="text-white/45">Scheduler Preview</dt><dd className="font-bold">{dashboard?.schedule?.effectivelyEnabled ? "AUTORIZADO" : `BLOQUEADO · ${dashboard?.schedulerAuthorization?.status ?? "SIN DRY RUN"}`}</dd></div>
+          <div><dt className="text-white/45">Vigencia</dt><dd className="font-bold">{dashboard?.schedulerAuthorization?.mode === "CONTINUOUS_WHILE_ACTIVE" ? "CONTINUA MIENTRAS HAYA LISTINGS ACTIVE" : formatDate(dashboard?.schedulerAuthorization?.expiresAt)}</dd></div>
+          <div><dt className="text-white/45">Próxima ejecución</dt><dd className="font-bold">{dashboard?.schedule?.effectivelyEnabled ? formatDate(dashboard.nextAutomaticRunAt) : "Requiere dry run satisfactorio y autorización durable"}</dd></div>
           <div><dt className="text-white/45">Pendientes de compra</dt><dd className="font-bold">{value(health?.pendingManualPurchase)}</dd></div>
           <div><dt className="text-white/45">Esperando tracking</dt><dd className="font-bold">{value(health?.awaitingTracking)}</dd></div>
           <div><dt className="text-white/45">Alertas fallidas</dt><dd className="font-bold">{value(health?.alertsFailed)}</dd></div>
@@ -707,18 +1339,18 @@ export function CommercialMonitorPanel() {
         {(run?.errors?.length ?? 0) > 0 && <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-rose-100">{run?.errors?.map((item, index) => <li key={`${item.code}-${index}`}>{item.reader}: {item.code}{item.retryable ? " · reintentable" : ""}</li>)}</ul>}
       </details>
 
-      {dashboard?.pilot24h && <details open className="mt-4 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.04] p-3">
-        <summary className="cursor-pointer font-black">Piloto controlado de 24 horas</summary>
+      {dashboard?.pilot24h && <details className="mt-4 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.04] p-3">
+        <summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Reporte acumulado del monitor continuo</summary>
         <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
           <div><dt className="text-white/45">Estado</dt><dd className="font-black uppercase text-cyan-100">{dashboard.pilot24h.status}</dd></div>
           <div><dt className="text-white/45">Inicio</dt><dd className="font-bold">{formatDate(dashboard.pilot24h.startedAt)}</dd></div>
-          <div><dt className="text-white/45">Corte automático</dt><dd className="font-bold">{formatDate(dashboard.pilot24h.expiresAt)}</dd></div>
+          <div><dt className="text-white/45">Corte automático</dt><dd className="font-bold">NO · continúa mientras haya listings ACTIVE</dd></div>
           <div><dt className="text-white/45">Ejecuciones</dt><dd className="font-bold">{value(dashboard.pilot24h.totalRuns)}</dd></div>
           <div><dt className="text-white/45">Completadas / parciales / fallidas</dt><dd className="font-bold">{value(dashboard.pilot24h.completedRuns)} / {value(dashboard.pilot24h.partialRuns)} / {value(dashboard.pilot24h.failedRuns)}</dd></div>
           <div><dt className="text-white/45">Órdenes leídas</dt><dd className="font-bold">{value(dashboard.pilot24h.ordersRead)}</dd></div>
           <div><dt className="text-white/45">Ventas / fulfillment</dt><dd className="font-bold">{value(dashboard.pilot24h.newSales)} / {value(dashboard.pilot24h.fulfillmentTasksCreated)}</dd></div>
           <div><dt className="text-white/45">Alertas</dt><dd className="font-bold">{value(dashboard.pilot24h.alertsGenerated)}</dd></div>
-          <div><dt className="text-white/45">WhatsApp entregados / fallidos</dt><dd className="font-bold">{value(dashboard.pilot24h.whatsappDelivered)} / {value(dashboard.pilot24h.whatsappFailed)}</dd></div>
+          <div><dt className="text-white/45">WhatsApp META_ACCEPTED / fallidos</dt><dd className="font-bold">{value(dashboard.pilot24h.whatsappMetaAccepted)} / {value(dashboard.pilot24h.whatsappFailed)}</dd></div>
           <div><dt className="text-white/45">Duplicados evitados</dt><dd className="font-bold">{value(dashboard.pilot24h.duplicatesAvoided)}</dd></div>
           <div><dt className="text-white/45">Reintentos / dead-letter</dt><dd className="font-bold">{value(dashboard.pilot24h.retries)} / {value(dashboard.pilot24h.deadLetter)}</dd></div>
           <div><dt className="text-white/45">Divergencia Analytics</dt><dd className="font-bold uppercase">{dashboard.pilot24h.analyticsDivergenceStatus ?? "sin evidencia"}</dd></div>

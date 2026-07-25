@@ -87,6 +87,7 @@ export async function signInAdmin(
     if (error || !data.session) {
       return {
         isAdmin: false,
+        session: null,
         error:
           error?.message ||
           "No se pudo iniciar sesion.",
@@ -96,6 +97,7 @@ export async function signInAdmin(
     if (hasAdminMetadata(data.user)) {
       return {
         isAdmin: true,
+        session: data.session,
         error: null,
       }
     }
@@ -114,6 +116,7 @@ export async function signInAdmin(
 
       return {
         isAdmin: false,
+        session: null,
         error:
           adminError?.message ||
           "Este usuario no tiene permisos de administrador.",
@@ -122,11 +125,13 @@ export async function signInAdmin(
 
     return {
       isAdmin: true,
+      session: data.session,
       error: null,
     }
   } catch (error) {
     return {
       isAdmin: false,
+      session: null,
       error:
         getAdminAuthErrorMessage(error) ||
         "No se pudo conectar con Supabase para iniciar sesion.",

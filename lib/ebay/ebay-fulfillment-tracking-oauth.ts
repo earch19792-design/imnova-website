@@ -11,6 +11,7 @@ import {
   ebayFulfillmentTrackingScopeConfirmed,
 } from "./ebay-fulfillment-tracking-oauth-domain"
 import { getEbayProductionIdentityBindingConfiguration } from "./ebay-seller-account-scope"
+import { evaluateEbayFulfillmentWrittenConsent } from "./ebay-fulfillment-policy-compliance"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const AUTHORIZED_PREVIEW_BRANCH = "feature/centralize-ebay-mobile-command-center"
@@ -79,6 +80,7 @@ export function getEbayFulfillmentTrackingConfiguration(
 ) {
   const value = credentials(environment)
   const identity = getEbayProductionIdentityBindingConfiguration(environment)
+  const writtenConsent = evaluateEbayFulfillmentWrittenConsent(environment)
   const preview = environment.VERCEL_ENV === "preview"
   const staging = stagingMatches(environment)
   const branch = environment.VERCEL_GIT_COMMIT_REF === AUTHORIZED_PREVIEW_BRANCH
@@ -87,6 +89,7 @@ export function getEbayFulfillmentTrackingConfiguration(
     writeEnabled: enabled(environment, "EBAY_FULFILLMENT_TRACKING_WRITE_ENABLED"),
     realAdapterEnabled: enabled(environment, "MARKETPLACE_FULFILLMENT_REAL_ADAPTER_ENABLED"),
     submitterEnabled: enabled(environment, "MARKETPLACE_FULFILLMENT_SUBMITTER_ENABLED"),
+    writtenConsentEnabled: writtenConsent.enabled,
   }
   const tokenPresent = Boolean(value.refreshToken)
   const clientPairPresent = Boolean(value.clientId && value.clientSecret && !value.partialDedicatedPair)
@@ -98,8 +101,8 @@ export function getEbayFulfillmentTrackingConfiguration(
     branchAuthorized: branch,
     flags,
     allFlagsEnabled,
-    executable: preview && staging && branch && allFlagsEnabled && tokenPresent &&
-      clientPairPresent && identity.bound,
+    executable: preview && staging && branch && allFlagsEnabled && writtenConsent.ready &&
+      tokenPresent && clientPairPresent && identity.bound,
     oauthAuthorizationReady: preview && staging && branch &&
       clientPairPresent && Boolean(value.runame) && identity.bound,
     token: tokenPresent ? "PRESENT" as const : "MISSING" as const,
@@ -114,6 +117,11 @@ export function getEbayFulfillmentTrackingConfiguration(
     requiredScope: EBAY_FULFILLMENT_TRACKING_WRITE_SCOPE,
     scopes: [...EBAY_FULFILLMENT_TRACKING_OAUTH_SCOPES],
     identityBound: identity.bound,
+    trackingWriteReadiness: writtenConsent.readiness,
+    writtenConsentReferenceHash: writtenConsent.referenceHash,
+    writtenConsentReference: writtenConsent.referenceHashPresent ? "PRESENT" as const : "MISSING_OR_INVALID" as const,
+    writtenConsentDocumentsStored: writtenConsent.documentsStored,
+    writtenConsentPiiStored: writtenConsent.piiStored,
     secretsReturned: false as const,
   }
 }
@@ -125,6 +133,10 @@ export function assertEbayFulfillmentTrackingWriterEnabled(
   if (!configuration.preview) throw new Error("EBAY_FULFILLMENT_TRACKING_PRODUCTION_BLOCKED")
   if (!configuration.staging) throw new Error("EBAY_FULFILLMENT_TRACKING_STAGING_REQUIRED")
   if (!configuration.branchAuthorized) throw new Error("EBAY_FULFILLMENT_TRACKING_BRANCH_BLOCKED")
+  if (configuration.trackingWriteReadiness !== "WRITTEN_CONSENT_REFERENCE_RECORDED" ||
+    !configuration.writtenConsentReferenceHash) {
+    throw new Error("EBAY_FULFILLMENT_WRITTEN_CONSENT_REQUIRED")
+  }
   if (!configuration.allFlagsEnabled) throw new Error("EBAY_FULFILLMENT_TRACKING_FLAGS_DISABLED")
   if (!configuration.executable) throw new Error("EBAY_FULFILLMENT_TRACKING_NOT_READY")
   return configuration

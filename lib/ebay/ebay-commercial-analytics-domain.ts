@@ -141,14 +141,22 @@ export function reconcileEbayTrafficAnalyticsReport(input: {
       const searchViews = metric(row, "LISTING_VIEWS_SOURCE_SEARCH_RESULTS_PAGE")
       const views = metric(row, "LISTING_VIEWS_TOTAL")
       const transactions = metric(row, "TRANSACTION")
+      const reportedCtr = metric(row, "CLICK_THROUGH_RATE")
+      const reportedSalesConversionRate = metric(row, "SALES_CONVERSION_RATE")
+      const canonicalCtrPercent = derivedRate(searchViews, searchImpressions)
+      const canonicalSalesConversionPercent = derivedRate(transactions, views)
       return [{
         listingId,
         returnedDimension: row.dimension,
         impressions,
         views,
-        ctr: metric(row, "CLICK_THROUGH_RATE") ?? derivedRate(searchViews, searchImpressions),
+        // The UI and rule engine use percentage points. Deriving from the
+        // official numerator/denominator keeps that contract stable even when
+        // eBay serializes a reported rate as a ratio.
+        ctr: canonicalCtrPercent ?? reportedCtr,
         transactions,
-        salesConversionRate: metric(row, "SALES_CONVERSION_RATE") ?? derivedRate(transactions, views),
+        salesConversionRate: canonicalSalesConversionPercent ??
+          reportedSalesConversionRate,
         revenue: null,
         applicability: {
           impressions: row.applicability.TOTAL_IMPRESSION_TOTAL === true,

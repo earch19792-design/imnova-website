@@ -38,7 +38,6 @@ const forbiddenRuntimePatterns = [
   [".", "delete", "("].join(""),
   [".", "upsert", "("].join(""),
   [".", "rpc", "("].join(""),
-  ["fetch", "("].join(""),
   ["new ", "OpenAI"].join(""),
   ["images", "generate"].join("."),
   ["create", "Draft"].join(""),
@@ -159,6 +158,7 @@ test("environment boundary module exists and avoids external systems", () => {
       `${modulePath} contains ${pattern}`,
     );
   }
+
 });
 
 test("middleware contains eBay Pro gate without live system calls", () => {
@@ -198,6 +198,12 @@ test("middleware contains eBay Pro gate without live system calls", () => {
       `${middlewarePath} contains ${pattern}`,
     );
   }
+
+  // Server-side admin verification is an allowed read-only exception.
+  assert.equal(content.includes("/auth/v1/user"), true);
+  assert.equal(content.includes("/rest/v1/rpc/is_admin"), true);
+  assert.equal(content.includes("method: \"POST\""), true);
+  assert.equal(content.includes("publishOffer"), false);
 });
 
 test("production blocks eBay Pro paths while core paths remain allowed", () => {

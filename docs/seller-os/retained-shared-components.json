@@ -1,0 +1,11 @@
+{
+  "version": "SELLER_OS_RETAINED_SHARED_V1",
+  "retained": [
+    { "path": "lib/products-service.ts", "reason": "Shared source retained for another application/branch; no active Seller OS route imports it.", "runtimeConsumerInSellerStaging": false },
+    { "path": "components/imnova-popup.tsx", "reason": "Shared component retained for rollback/other deployment; removed from root layout and public home runtime.", "runtimeConsumerInSellerStaging": false },
+    { "path": "components/innovations-section.tsx", "reason": "Shared public-domain component retained outside active Seller OS routes.", "runtimeConsumerInSellerStaging": false },
+    { "path": "components/global-section.tsx", "reason": "Shared public-domain component retained outside active Seller OS routes.", "runtimeConsumerInSellerStaging": false },
+    { "path": "lib/ebay/real-product-listing-generator.ts", "reason": "Historical dead-end module retained pending separate dependency removal; no app or API route imports its chain.", "runtimeConsumerInSellerStaging": false },
+    { "path": "supabase/migrations", "reason": "Historical migrations are append-only and may be shared; no migration was deleted.", "runtimeConsumerInSellerStaging": false }
+  ]
+}

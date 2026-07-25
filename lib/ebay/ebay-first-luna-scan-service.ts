@@ -1,4 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
+import {
+  assertEbayLaneAvailable,
+  recordPersistentEbayRateLimit,
+} from "./ebay-persistent-quota-coordinator"
+import { projectEffectiveEbayQuotaLane } from "./ebay-quota-lane-domain"
+import { runLightweightFamilyDiscovery } from "./ebay-two-speed-discovery-service"
 
 import {
   EBAY_LUNA_DEMAND_OPPORTUNITY_ENGINE_VERSION,
@@ -48,6 +55,7 @@ import {
 const SCAN_BATCH_SIZE = 2
 const QUEUE_LIMIT = 100
 export const EBAY_LUNA_SCAN_STRATEGY = "priority_first"
+const ALL_SCAN_LANES: SellerScanLane[] = ["protection", "event", "hot", "baseline", "coverage"]
 
 type ScanRun = {
   id: string
@@ -65,6 +73,135 @@ type ScanRun = {
 function safeMessage(error: unknown) {
   const message = error instanceof Error ? error.message : "EBAY_LUNA_SCAN_FAILED"
   return /^[A-Z0-9_]+$/.test(message) ? message : "EBAY_LUNA_SCAN_FAILED"
+}
+
+type ScannerQuotaPause = {
+  apiFamily: string
+  operation: string
+  lane: string
+  resumeAt: string | null
+  rateLimit: {
+    httpStatus: 429
+    retryAfterSeconds: number | null
+    retryAfterSource: string
+    observedAt: string
+    resumeAt: string | null
+    affectedLane: string
+  }
+}
+
+function scannerQuotaPause(
+  quota: unknown,
+  input: { apiFamily: string; operation: string; lane: string },
+  now = new Date(),
+): ScannerQuotaPause {
+  const row = quota && typeof quota === "object" ? quota as Record<string, unknown> : {}
+  const resumeAt = typeof row.resumeAt === "string" && Number.isFinite(Date.parse(row.resumeAt))
+    ? row.resumeAt
+    : null
+  const persistedSeconds = typeof row.retryAfterSeconds === "number"
+    ? row.retryAfterSeconds
+    : null
+  const derivedSeconds = resumeAt
+    ? Math.max(0, Math.ceil((Date.parse(resumeAt) - now.getTime()) / 1_000))
+    : null
+  return {
+    ...input,
+    resumeAt,
+    rateLimit: {
+      httpStatus: 429,
+      retryAfterSeconds: derivedSeconds !== null
+        ? derivedSeconds
+        : persistedSeconds !== null && Number.isFinite(persistedSeconds) ? persistedSeconds : null,
+      retryAfterSource: typeof row.retryAfterSource === "string"
+        ? row.retryAfterSource
+        : derivedSeconds === null ? "UNAVAILABLE" : "RETRY_AFTER_HTTP_DATE",
+      observedAt: typeof row.observedAt === "string" ? row.observedAt : now.toISOString(),
+      resumeAt,
+      affectedLane: typeof row.affectedLane === "string" ? row.affectedLane : input.lane,
+    },
+  }
+}
+
+function earliestQuotaPause(pauses: ScannerQuotaPause[]) {
+  return [...pauses].sort((left, right) => {
+    const leftAt = Date.parse(left.resumeAt ?? "")
+    const rightAt = Date.parse(right.resumeAt ?? "")
+    if (!Number.isFinite(leftAt)) return 1
+    if (!Number.isFinite(rightAt)) return -1
+    return leftAt - rightAt
+  })[0] ?? null
+}
+
+async function eligibleScanLanes(
+  supabase: SupabaseClient,
+  requestedLanes: SellerScanLane[],
+  now = new Date(),
+) {
+  const needsProtection = requestedLanes.includes("protection")
+  const discoveryLanes = requestedLanes.filter((lane) => lane !== "protection")
+  const [exact, lightweight, deep] = await Promise.all([
+    needsProtection
+      ? assertEbayLaneAvailable(supabase, "BROWSE", "EXACT_VERIFICATION", now)
+      : Promise.resolve(null),
+    discoveryLanes.length
+      ? assertEbayLaneAvailable(supabase, "BROWSE", "LIGHTWEIGHT_DISCOVERY", now)
+      : Promise.resolve(null),
+    discoveryLanes.length
+      ? assertEbayLaneAvailable(supabase, "BROWSE", "DEEP_EXPLORATION", now)
+      : Promise.resolve(null),
+  ])
+  const pauses: ScannerQuotaPause[] = []
+  if (exact && !exact.available) pauses.push(scannerQuotaPause(exact, {
+    apiFamily: "BROWSE",
+    operation: "EXACT_VERIFICATION",
+    lane: "P1_EXACT_VERIFICATION",
+  }, now))
+  if (lightweight && !lightweight.available) pauses.push(scannerQuotaPause(lightweight, {
+    apiFamily: "BROWSE",
+    operation: "LIGHTWEIGHT_DISCOVERY",
+    lane: "P2_DISCOVERY",
+  }, now))
+  if (deep && !deep.available) pauses.push(scannerQuotaPause(deep, {
+    apiFamily: "BROWSE",
+    operation: "DEEP_EXPLORATION",
+    lane: "P3_DEEP_ANALYSIS",
+  }, now))
+  return {
+    lanes: [
+      ...(needsProtection && exact?.available ? ["protection" as const] : []),
+      ...(discoveryLanes.length && lightweight?.available && deep?.available ? discoveryLanes : []),
+    ],
+    pauses,
+  }
+}
+
+async function pauseClaimedScanTasks(
+  supabase: SupabaseClient,
+  tasks: SellerScanTask[],
+  workerId: string,
+  resumeAt: string,
+  reasonCode = "EBAY_READONLY_GET_429",
+) {
+  if (!tasks.length) return 0
+  const { data, error } = await supabase.rpc("pause_ebay_seller_scan_tasks_for_quota", {
+    p_task_ids: tasks.map((task) => task.id),
+    p_worker_id: workerId,
+    p_resume_at: resumeAt,
+    p_reason_code: reasonCode,
+  })
+  if (error) throw new Error("EBAY_QUOTA_PAUSED_TASK_RELEASE_FAILED")
+  const released = Array.isArray(data) ? data.length : data ? 1 : 0
+  if (released !== tasks.length) throw new Error("EBAY_QUOTA_PAUSED_TASK_RELEASE_INCOMPLETE")
+  return released
+}
+
+function taskUsesQuotaLane(task: SellerScanTask, affectedLane: string | undefined) {
+  if (affectedLane === "P1_EXACT_VERIFICATION") return task.lane === "protection"
+  if (affectedLane === "P2_DISCOVERY" || affectedLane === "P3_DEEP_ANALYSIS") {
+    return task.lane !== "protection"
+  }
+  return true
 }
 
 function numericCategoryIds(values: unknown) {
@@ -394,6 +531,88 @@ async function processClaimedCandidate(
 ) {
   const variant = await loadVariantForTask(supabase, task)
   const candidate = mapLatestVariantToLunaCandidate(variant)
+  const lightweight = task.lane === "protection"
+    ? {
+        stage: "PROTECTION_EXACT_VERIFICATION" as const,
+        promoteToDeep: true,
+        familyFingerprint: candidate.candidateKey,
+        cacheHit: false,
+        sourceCallCount: 0,
+        local: { eligible: true, blockers: [] as string[] },
+      }
+    : await runLightweightFamilyDiscovery(supabase, candidate)
+  if (lightweight.stage === "QUOTA_PAUSED") {
+    return {
+      newSignalCount: 0,
+      quotaPause: scannerQuotaPause(lightweight.quota, {
+        apiFamily: "BROWSE",
+        operation: "LIGHTWEIGHT_DISCOVERY",
+        lane: "P2_DISCOVERY",
+      }),
+      result: {
+        taskId: task.id,
+        lane: task.lane,
+        candidateKey: candidate.candidateKey,
+        title: candidate.title,
+        classification: "NEW_LUNA_SIGNAL",
+        stage: lightweight.stage,
+        familyFingerprint: lightweight.familyFingerprint,
+        cacheHit: lightweight.cacheHit,
+        sourceCallCount: lightweight.sourceCallCount,
+        blockers: ["LIGHTWEIGHT_DISCOVERY_QUOTA_PAUSED"],
+        deepAnalysisPerformed: false,
+        ebayWrites: 0,
+      },
+    }
+  }
+  if (!lightweight.promoteToDeep) {
+    return {
+      newSignalCount: 0,
+      result: {
+        taskId: task.id,
+        lane: task.lane,
+        candidateKey: candidate.candidateKey,
+        title: candidate.title,
+        classification: lightweight.stage === "LOCAL_FILTERED" ? "BLOCKED" : "NEW_LUNA_SIGNAL",
+        stage: lightweight.stage,
+        familyFingerprint: lightweight.familyFingerprint,
+        cacheHit: lightweight.cacheHit,
+        sourceCallCount: lightweight.sourceCallCount,
+        blockers: lightweight.local.blockers,
+        deepAnalysisPerformed: false,
+        ebayWrites: 0,
+      },
+    }
+  }
+  const deepQuota = await assertEbayLaneAvailable(
+    supabase,
+    "BROWSE",
+    task.lane === "protection" ? "EXACT_VERIFICATION" : "DEEP_EXPLORATION",
+  )
+  if (!deepQuota.available) {
+    return {
+      newSignalCount: 0,
+      quotaPause: scannerQuotaPause(deepQuota, {
+        apiFamily: "BROWSE",
+        operation: task.lane === "protection" ? "EXACT_VERIFICATION" : "DEEP_EXPLORATION",
+        lane: task.lane === "protection" ? "P1_EXACT_VERIFICATION" : "P3_DEEP_ANALYSIS",
+      }),
+      result: {
+        taskId: task.id,
+        lane: task.lane,
+        candidateKey: candidate.candidateKey,
+        title: candidate.title,
+        classification: "PRELIMINARY_POTENTIAL",
+        stage: "DEEP_QUOTA_PAUSED",
+        familyFingerprint: lightweight.familyFingerprint,
+        cacheHit: lightweight.cacheHit,
+        sourceCallCount: lightweight.sourceCallCount,
+        blockers: ["DEEP_DISCOVERY_QUOTA_PAUSED"],
+        deepAnalysisPerformed: false,
+        ebayWrites: 0,
+      },
+    }
+  }
   const since = new Date(Date.now() - 38 * 86_400_000).toISOString()
   const history = candidate.candidateKey
     ? await loadEbayListingObservationHistory(supabase, candidate.candidateKey, since)
@@ -592,14 +811,41 @@ export async function processNextEbayFirstLunaBatch(
   const run = await getRun(supabase, runId)
   if (run.status !== "running") return { run, processed: 0, completed: true, results: [], failures: [] }
   const workerId = options.workerId ?? buildSellerWorkerId("seller-command-center")
+  const requestedLanes = options.lanes?.length
+    ? [...new Set(options.lanes)]
+    : ALL_SCAN_LANES
+  const quotaPlan = await eligibleScanLanes(supabase, requestedLanes)
+  const preflightPause = earliestQuotaPause(quotaPlan.pauses)
+  if (!quotaPlan.lanes.length && preflightPause) {
+    return {
+      run,
+      processed: 0,
+      completed: false,
+      results: [],
+      failures: [],
+      pausedTasks: 0,
+      rateLimit: preflightPause.rateLimit,
+    }
+  }
   const tasks = await claimSellerScanTasks(supabase, {
     workerId,
     limit: options.batchSize ?? SCAN_BATCH_SIZE,
     leaseSeconds: 300,
-    lanes: options.lanes,
+    lanes: quotaPlan.lanes,
   })
 
   if (!tasks.length) {
+    if (preflightPause) {
+      return {
+        run,
+        processed: 0,
+        completed: false,
+        results: [],
+        failures: [],
+        pausedTasks: 0,
+        rateLimit: preflightPause.rateLimit,
+      }
+    }
     const completedAt = new Date().toISOString()
     const { data: completedRun } = await supabase
       .from("ebay_luna_scan_runs")
@@ -623,21 +869,90 @@ export async function processNextEbayFirstLunaBatch(
   const failures: Array<Record<string, unknown>> = []
   let newSignalCount = 0
   let deadLetterCount = 0
-  for (const task of tasks) {
+  let terminalCount = 0
+  let pauseTaskIndex: number | null = null
+  let pauseResumeAt: string | null = null
+  let batchRateLimit: ScannerQuotaPause["rateLimit"] | null = null
+  for (let taskIndex = 0; taskIndex < tasks.length; taskIndex += 1) {
+    const task = tasks[taskIndex]
     try {
       const processed = await processClaimedCandidate(supabase, run, task)
+      if ("quotaPause" in processed && processed.quotaPause) {
+        pauseTaskIndex = taskIndex
+        pauseResumeAt = processed.quotaPause.resumeAt
+        batchRateLimit = processed.quotaPause.rateLimit
+        break
+      }
       newSignalCount += processed.newSignalCount
       results.push(processed.result)
       await completeSellerScanTask(supabase, task.id, workerId, processed.result)
+      terminalCount += 1
     } catch (error) {
+      const rateLimit = getEbayReadonlyRateLimitMetadata(error)
+      if (rateLimit) {
+        const quotaError = error && typeof error === "object"
+          ? error as Record<string, unknown>
+          : {}
+        const operation = typeof quotaError.quotaOperation === "string"
+          ? quotaError.quotaOperation
+          : task.lane === "protection" ? "EXACT_VERIFICATION" : "DEEP_EXPLORATION"
+        const affectedLane = typeof quotaError.quotaLane === "string"
+          ? quotaError.quotaLane
+          : task.lane === "protection" ? "P1_EXACT_VERIFICATION" : "P3_DEEP_ANALYSIS"
+        if (!(error && typeof error === "object" && "quotaPersisted" in error)) {
+          const persisted = await recordPersistentEbayRateLimit(supabase, {
+            error,
+            apiFamily: typeof quotaError.quotaApiFamily === "string" ? quotaError.quotaApiFamily : "BROWSE",
+            endpoint: "BUY_BROWSE_READONLY",
+            operation,
+            lane: affectedLane === "P1_EXACT_VERIFICATION"
+              ? "P1_EXACT_VERIFICATION"
+              : affectedLane === "P2_DISCOVERY" ? "P2_DISCOVERY" : "P3_DEEP_ANALYSIS",
+            checkpoint: { runId: run.id, taskId: task.id, candidateKey: task.candidate_key },
+            retryCount: task.attempts,
+          })
+          pauseResumeAt = persisted?.resumeAt ?? null
+        } else {
+          pauseResumeAt = typeof quotaError.quotaResumeAt === "string"
+            ? quotaError.quotaResumeAt : null
+        }
+        pauseTaskIndex = taskIndex
+        batchRateLimit = {
+          ...rateLimit,
+          resumeAt: pauseResumeAt,
+          affectedLane,
+        }
+        break
+      }
       const failedTask = await failSellerScanTask(supabase, task, workerId, error)
       if (failedTask?.status === "dead_letter") deadLetterCount += 1
       failures.push({ taskId: task.id, candidateKey: task.candidate_key, error: safeMessage(error) })
+      terminalCount += 1
     }
   }
 
+  const remainingClaimedTasks = pauseTaskIndex === null ? [] : tasks.slice(pauseTaskIndex)
+  const affectedLane = batchRateLimit?.affectedLane
+  const quotaPausedTasks = remainingClaimedTasks.filter((task) => taskUsesQuotaLane(task, affectedLane))
+  const unaffectedTasks = remainingClaimedTasks.filter((task) => !taskUsesQuotaLane(task, affectedLane))
+  if (quotaPausedTasks.length) {
+    const exactResumeAt = pauseResumeAt ?? new Date(Date.now() + 15 * 60_000).toISOString()
+    pauseResumeAt = exactResumeAt
+    if (batchRateLimit) batchRateLimit.resumeAt = exactResumeAt
+    await pauseClaimedScanTasks(supabase, quotaPausedTasks, workerId, exactResumeAt)
+  }
+  if (unaffectedTasks.length) {
+    await pauseClaimedScanTasks(
+      supabase,
+      unaffectedTasks,
+      workerId,
+      new Date().toISOString(),
+      "QUOTA_OTHER_LANE_DEFERRED",
+    )
+  }
+
   const now = new Date().toISOString()
-  const nextOffset = run.next_offset + tasks.length
+  const nextOffset = run.next_offset + terminalCount
   const { data: updatedRun, error: updateError } = await supabase
     .from("ebay_luna_scan_runs")
     .update({
@@ -648,7 +963,9 @@ export async function processNextEbayFirstLunaBatch(
       failed_candidates: run.failed_candidates + failures.length,
       best_selling_signals_found: run.best_selling_signals_found + newSignalCount,
       last_batch_at: now,
-      last_error: failures.length ? String(failures[failures.length - 1]?.error ?? "EBAY_CANDIDATE_SCAN_FAILED") : null,
+      last_error: batchRateLimit
+        ? "EBAY_READONLY_GET_429"
+        : failures.length ? String(failures[failures.length - 1]?.error ?? "EBAY_CANDIDATE_SCAN_FAILED") : null,
     })
     .eq("id", run.id)
     .select("*")
@@ -663,7 +980,12 @@ export async function processNextEbayFirstLunaBatch(
         failed_tasks: run.failed_candidates + failures.length,
         dead_letter_tasks: deadLetterCount,
         heartbeat_at: now,
-        metrics: { lastBatchSize: tasks.length, workerId },
+        metrics: {
+          lastBatchSize: tasks.length,
+          pausedTasks: quotaPausedTasks.length,
+          unaffectedTasksReleased: unaffectedTasks.length,
+          workerId,
+        },
       })
       .eq("id", run.automation_run_id)
   }
@@ -674,7 +996,16 @@ export async function processNextEbayFirstLunaBatch(
       dryRun: false,
     }).catch(() => undefined)
   }
-  return { run: updatedRun, processed: tasks.length, completed: false, results, failures }
+  return {
+    run: updatedRun,
+    processed: terminalCount,
+    completed: false,
+    results,
+    failures,
+    pausedTasks: quotaPausedTasks.length,
+    unaffectedTasksReleased: unaffectedTasks.length,
+    rateLimit: batchRateLimit,
+  }
 }
 
 export async function recordEbayFirstLunaScanFailure(
@@ -705,7 +1036,7 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
     : Promise.resolve({ data: [], error: null })
   const [runs, queue, events, activeRisks, total, ready, review, watchlist, holds] = await Promise.all([
     supabase.from("ebay_luna_scan_runs").select("*").order("started_at", { ascending: false }).limit(5),
-    supabase.from("ebay_luna_opportunity_queue").select("id,candidate_key,market_radar_product_id,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,supply_score,listing_readiness_score,active_comparables,sellers_with_movement,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,best_selling_match_score,hard_gates,evidence_guards,assessment,last_scanned_at").order("opportunity_score", { ascending: false }).limit(QUEUE_LIMIT),
+    supabase.from("ebay_luna_opportunity_queue").select("id,candidate_key,market_radar_product_id,supplier_variant_id,product_title,variant_title,supplier_sku,queue_status,decision,opportunity_score,demand_score,economics_score,identity_score,competition_score,supply_score,listing_readiness_score,active_comparables,sellers_with_movement,estimated_weekly_velocity,median_total_buyer_price,estimated_net_profit,supplier_price,supplier_available,supplier_inventory_quantity,best_selling_match_score,hard_gates,evidence_guards,assessment,last_scanned_at").order("opportunity_score", { ascending: false }).limit(QUEUE_LIMIT),
     supabase.from("ebay_luna_opportunity_queue_events").select("*,ebay_luna_opportunity_queue(product_title,supplier_sku)").order("created_at", { ascending: false }).limit(40),
     activeRisksQuery,
     supabase.from("ebay_luna_opportunity_queue").select("id", { count: "exact", head: true }),
@@ -716,10 +1047,93 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
   ])
   const firstError = runs.error ?? queue.error ?? events.error ?? activeRisks.error ?? total.error ?? ready.error ?? review.error ?? watchlist.error ?? holds.error
   if (firstError) throw new Error("EBAY_LUNA_QUEUE_DASHBOARD_READ_FAILED")
+  const [{ data: quotaStates, error: quotaError }, { data: quotaEvents, error: quotaEventError }] = await Promise.all([
+    supabase.from("ebay_api_quota_states")
+      .select("api_family,operation,remaining,reset_at,reserved_budget,available_budget,status,owner_lane,last_refreshed_at")
+      .order("owner_lane", { ascending: true }),
+    supabase.from("ebay_api_quota_events")
+      .select("api_family,http_status,retry_after_seconds,retry_after_source,observed_at,pause_started_at,resume_at,affected_lane,retry_count")
+      .order("observed_at", { ascending: false }).limit(1),
+  ])
+  if (quotaError || quotaEventError) throw new Error("EBAY_QUOTA_DASHBOARD_READ_FAILED")
+  const quotaObservedAt = new Date()
+  const effectiveQuotaStates = (quotaStates ?? []).map((state) =>
+    projectEffectiveEbayQuotaLane(state, quotaObservedAt))
   const automationHealth = await getSellerAutomationHealth(supabase)
   const rows = queue.data ?? []
+  const supplierVariantIds = [...new Set(rows
+    .map((row) => row.supplier_variant_id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0))]
+  const productResearchBySupplierVariant = new Map<string, {
+    soldExactCount: number
+    soldRelatedPackCount: number
+    soldRelatedSizeCount: number
+    latestObservedAt: string | null
+  }>()
+  let productResearchRankingStatus: "AVAILABLE" | "UNAVAILABLE" | "NOT_APPLICABLE" = supplierVariantIds.length
+    ? "AVAILABLE"
+    : "NOT_APPLICABLE"
+  if (supplierVariantIds.length) {
+    const { data: researchRows, error: researchError } = await supabase
+      .from("marketplace_product_research_capture_observations")
+      .select("matched_supplier_variant_id,match_classification,confirmed_sold_quantity,last_sold_date")
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", "EBAY_US")
+      .in("matched_supplier_variant_id", supplierVariantIds)
+      .eq("evidence_reviewed", true)
+      .eq("quality_status", "VALID")
+      .limit(5_000)
+    if (researchError) {
+      // Product Research enriches ranking but must never take down the operational queue.
+      productResearchRankingStatus = "UNAVAILABLE"
+    } else {
+      for (const observation of researchRows ?? []) {
+        if (!observation.matched_supplier_variant_id) continue
+        const current = productResearchBySupplierVariant.get(observation.matched_supplier_variant_id) ?? {
+          soldExactCount: 0,
+          soldRelatedPackCount: 0,
+          soldRelatedSizeCount: 0,
+          latestObservedAt: null,
+        }
+        const sold = Math.max(0, Number(observation.confirmed_sold_quantity ?? 0))
+        if (observation.match_classification === "EXACT_LUNA_MATCH") current.soldExactCount += sold
+        else if (observation.match_classification === "SAME_PRODUCT_DIFFERENT_PACK") current.soldRelatedPackCount += sold
+        else if (observation.match_classification === "SAME_PRODUCT_DIFFERENT_SIZE") current.soldRelatedSizeCount += sold
+        if (!current.latestObservedAt || observation.last_sold_date > current.latestObservedAt) {
+          current.latestObservedAt = observation.last_sold_date
+        }
+        productResearchBySupplierVariant.set(observation.matched_supplier_variant_id, current)
+      }
+    }
+  }
   const professionalRows = rows
-    .map((row) => buildProfessionalSellerQueueView(row))
+    .map((row) => {
+      const research = row.supplier_variant_id
+        ? productResearchBySupplierVariant.get(row.supplier_variant_id)
+        : undefined
+      if (!research) return buildProfessionalSellerQueueView({
+        ...row,
+        product_research_ranking_status: productResearchRankingStatus,
+      })
+      const assessment = row.assessment && typeof row.assessment === "object"
+        ? row.assessment as Record<string, unknown> : {}
+      const market = assessment.market && typeof assessment.market === "object"
+        ? assessment.market as Record<string, unknown> : {}
+      return buildProfessionalSellerQueueView({
+        ...row,
+        product_research_ranking_status: productResearchRankingStatus,
+        assessment: {
+          ...assessment,
+          market: {
+            ...market,
+            soldExactCount: research.soldExactCount,
+            soldRelatedPackCount: research.soldRelatedPackCount,
+            soldRelatedSizeCount: research.soldRelatedSizeCount,
+            productResearchObservedAt: research.latestObservedAt,
+          },
+        },
+      })
+    })
     .sort((left, right) =>
       right.seller_priority_score - left.seller_priority_score ||
       Number(right.opportunity_score ?? 0) - Number(left.opportunity_score ?? 0),
@@ -759,6 +1173,20 @@ export async function getEbayFirstLunaQueueDashboard(supabase: SupabaseClient) {
       variantsPerBatch: SCAN_BATCH_SIZE,
       lanes: ["protection", "event", "hot", "baseline", "coverage"],
       health: automationHealth,
+    },
+    quota: {
+      states: effectiveQuotaStates,
+      latestPause: quotaEvents?.[0] ?? null,
+      discoveryPaused: effectiveQuotaStates.some((state) =>
+        ["P2_DISCOVERY", "P3_DEEP_ANALYSIS"].includes(state.owner_lane) && state.status === "PAUSED_429"),
+      monitorBudgetProtected: effectiveQuotaStates.filter((state) =>
+        String(state.owner_lane).startsWith("P0_")).every((state) => Number(state.reserved_budget ?? 0) > 0),
+    },
+    rankingEvidence: {
+      productResearchStatus: productResearchRankingStatus,
+      failureCode: productResearchRankingStatus === "UNAVAILABLE"
+        ? "EBAY_PRODUCT_RESEARCH_RANKING_UNAVAILABLE"
+        : null,
     },
   }
 }

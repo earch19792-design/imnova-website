@@ -15,6 +15,14 @@ const environmentBoundarySource = readFileSync(
   new URL("../lib/ebay/environment-boundaries.ts", import.meta.url),
   "utf8",
 )
+const tradingIdentityProofSource = readFileSync(
+  new URL("../lib/ebay/ebay-trading-identity-proof.ts", import.meta.url),
+  "utf8",
+)
+const skuSource = readFileSync(
+  new URL("../lib/ebay/ebay-sku.ts", import.meta.url),
+  "utf8",
+)
 
 function embedSnapshotModule(source) {
   const withoutImport = source
@@ -22,7 +30,10 @@ function embedSnapshotModule(source) {
     .replace(/import \{\n  calculateEbayUnitEconomics,\n  DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,\n  normalizeEbayUnitEconomicsConfig,\n  type EbayUnitEconomicsConfig,\n\} from "\.\/ebay-unit-economics"\n/, "")
     .replace(/import \{\n  issueEbayDraftOnlyPreflightSnapshot,\n  verifyEbayDraftOnlyPreflightSnapshot,\n\} from "\.\/ebay-draft-only-preflight-snapshot"\n/, "")
     .replace('import { getEbayDraftWriteEnvironmentBoundary } from "./environment-boundaries"\n', "")
-  return `${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${withoutImport}`
+    .replace('import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"\n', "")
+    .replace(/import \{\n  canonicalEbayPackageSku,\n  isCanonicalEbayPackageSku,\n\} from "\.\/ebay-sku"\n/, "")
+    .replace('import { isCanonicalEbayPackageSku } from "./ebay-sku"\n', "")
+  return `${snapshotSource}\n${economicsSource}\n${environmentBoundarySource}\n${tradingIdentityProofSource}\n${skuSource}\n${withoutImport}`
 }
 
 const readinessSource = embedSnapshotModule(readFileSync(
@@ -35,6 +46,10 @@ const gatewaySource = embedSnapshotModule(readFileSync(
 ))
 const routeSource = readFileSync(
   new URL("../app/api/admin/ebay/draft-only/route.ts", import.meta.url),
+  "utf8",
+)
+const prewriteRetirementSource = readFileSync(
+  new URL("../lib/ebay/ebay-draft-only-prewrite-retirement.ts", import.meta.url),
   "utf8",
 )
 const taxonomyGatewaySource = readFileSync(
@@ -53,6 +68,42 @@ const productionMigrationSource = readFileSync(
   new URL("../supabase/migrations/20260713052000_enable_production_ebay_unpublished_drafts.sql", import.meta.url),
   "utf8",
 )
+const publicationMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260720041000_create_ebay_authorized_listing_publication.sql", import.meta.url),
+  "utf8",
+)
+const sameDayPublicationSource = readFileSync(
+  new URL("../lib/ebay/ebay-same-day-authorized-publication.ts", import.meta.url),
+  "utf8",
+)
+const sameDayImageRuntimeSource = readFileSync(
+  new URL("../lib/ebay/ebay-same-day-image-package-runtime.ts", import.meta.url),
+  "utf8",
+)
+const sameDaySourceSyncMigration = readFileSync(
+  new URL("../supabase/migrations/20260721041000_sync_same_day_source_before_authorized_publication.sql", import.meta.url),
+  "utf8",
+)
+const alphanumericSkuMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260723017000_use_ebay_inventory_alphanumeric_sku.sql", import.meta.url),
+  "utf8",
+)
+const inventoryHeaderMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260723018000_retire_invalid_inventory_header_preflight.sql", import.meta.url),
+  "utf8",
+)
+const v3PublicationPreviewMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260724001000_support_v3_authorized_publication_preview.sql", import.meta.url),
+  "utf8",
+)
+const v3PublicationClaimMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260724002000_support_v3_publication_claim_image_gate.sql", import.meta.url),
+  "utf8",
+)
+const finalMonitorClosureMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260724003000_fix_final_publication_monitor_closure.sql", import.meta.url),
+  "utf8",
+)
 
 async function importTypeScript(source) {
   const javascript = ts.transpileModule(source, {
@@ -64,10 +115,75 @@ async function importTypeScript(source) {
 const SNAPSHOT_SECRET = "test-only-preflight-snapshot-secret-0123456789"
 const SANDBOX_FINGERPRINT = "a".repeat(64)
 const PRODUCTION_FINGERPRINT = "b".repeat(64)
-const RESERVED_SKU = "IMNOVA-11111111111141118111111111111111"
+const RESERVED_SKU = "IMNOVA11111111111141118111111111111111"
 const snapshotModule = await importTypeScript(snapshotSource)
+const prewriteRetirementModule = await importTypeScript(
+  prewriteRetirementSource,
+)
 
 process.env.EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_SNAPSHOT_SECRET = SNAPSHOT_SECRET
+
+test("only a superseded, provably pre-write SKU preflight can be retired", () => {
+  const now = Date.parse("2026-07-23T12:30:00.000Z")
+  const execution = {
+    phase: "claimed",
+    last_error_code: "EBAY_SKU_PREFLIGHT_UNAVAILABLE",
+    inventory_http_status: null,
+    inventory_confirmed_at: null,
+    offer_create_started_at: null,
+    offer_http_status: null,
+    offer_id: null,
+    completed_at: null,
+    lease_expires_at: null,
+    sanitized_result: {
+      collision: false,
+      inventoryOwnershipVerified: false,
+    },
+  }
+  const approval = { status: "SUPERSEDED_BY_RECONCILIATION" }
+  assert.equal(
+    prewriteRetirementModule.canRetireSupersededSkuPreflight(
+      execution,
+      approval,
+      now,
+    ),
+    true,
+  )
+  for (const unsafeExecution of [
+    { ...execution, phase: "inventory_confirmed" },
+    { ...execution, inventory_http_status: 200 },
+    { ...execution, inventory_confirmed_at: "2026-07-23T12:00:00.000Z" },
+    { ...execution, offer_create_started_at: "2026-07-23T12:00:00.000Z" },
+    { ...execution, offer_http_status: 201 },
+    { ...execution, offer_id: "offer-1" },
+    { ...execution, completed_at: "2026-07-23T12:00:00.000Z" },
+    { ...execution, lease_expires_at: "2026-07-23T12:31:00.000Z" },
+    {
+      ...execution,
+      sanitized_result: {
+        collision: true,
+        inventoryOwnershipVerified: false,
+      },
+    },
+  ]) {
+    assert.equal(
+      prewriteRetirementModule.canRetireSupersededSkuPreflight(
+        unsafeExecution,
+        approval,
+        now,
+      ),
+      false,
+    )
+  }
+  assert.equal(
+    prewriteRetirementModule.canRetireSupersededSkuPreflight(
+      execution,
+      { status: "approved" },
+      now,
+    ),
+    false,
+  )
+})
 
 function signedSnapshot({
   target = "SANDBOX",
@@ -273,6 +389,91 @@ test("readiness binds all required evidence to one deterministic approval hash",
   assert.equal(module.hashEbayDraftOnlyPayload(result.payload), result.payloadHash)
 })
 
+test("a server-validated same-day binding supersedes only stale generic scoring gates", async () => {
+  const module = await importTypeScript(readinessSource)
+  const input = validInput()
+  input.opportunity.queue_status = "hold"
+  input.opportunity.hard_gates = ["LEGACY_SCORE_GATE"]
+  input.opportunity.evidence_guards = ["LEGACY_RESEARCH_GUARD"]
+  input.opportunity.identity_score = 0
+  input.opportunity.assessment.identity.exactIdentityConfirmed = false
+  input.opportunity.assessment.scores = { potentialScore: 0, confidenceScore: 0 }
+  input.sameDayPilotAuthorization = {
+    validated: true,
+    version: "SELLER_OS_AUTHORIZED_PUBLICATION_V1_2026_07_20",
+    runId: "33333333-3333-4333-8333-333333333333",
+    candidateId: "44444444-4444-4444-8444-444444444444",
+    listingPackageId: input.listingPackage.id,
+    finalHumanAuthorizationRequired: true,
+    unattendedPublicationAllowed: false,
+  }
+  const authorized = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(authorized.ready, true)
+  assert.deepEqual(
+    authorized.payload.compliance.sameDayPilotAuthorization,
+    input.sameDayPilotAuthorization,
+  )
+
+  input.sameDayPilotAuthorization.unattendedPublicationAllowed = true
+  const forged = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(forged.ready, false)
+  assert.ok(forged.blockers.includes("OPPORTUNITY_STATUS_BLOCKED"))
+  assert.ok(forged.blockers.includes("EXACT_IDENTITY_REQUIRED"))
+})
+
+test("locked V3 execution evidence supersedes only redundant package and image age", async () => {
+  const module = await importTypeScript(readinessSource)
+  const now = new Date("2026-07-13T12:00:00.000Z")
+  const stale = new Date(now.getTime() - 361 * 60_000).toISOString()
+  const input = validInput(now)
+  const images = Array.from(
+    { length: 7 },
+    (_, index) => `https://supplier.example.test/v3-${index}.png`,
+  )
+  input.listingPackage.source_observed_at = stale
+  input.listingPackage.package_data.imageUrls = images
+  input.draftConfiguration.imageAuthorization = {
+    ...input.draftConfiguration.imageAuthorization,
+    approvedAt: stale,
+    approvedImageUrls: images,
+    protectedManifestVerified: true,
+    protectedManifestAssetCount: 7,
+  }
+  input.sameDayPilotAuthorization = {
+    validated: true,
+    version: "SELLER_OS_AUTHORIZED_PUBLICATION_V1_2026_07_20",
+    runId: "33333333-3333-4333-8333-333333333333",
+    candidateId: "44444444-4444-4444-8444-444444444444",
+    listingPackageId: input.listingPackage.id,
+    sourceObservedAt: now.toISOString(),
+    finalHumanAuthorizationRequired: true,
+    unattendedPublicationAllowed: false,
+  }
+  const generic = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(generic.ready, false)
+  assert.ok(generic.blockers.includes("PACKAGE_SOURCE_STALE"))
+  assert.ok(generic.blockers.includes("IMAGE_AUTHORIZATION_REQUIRED"))
+
+  input.revalidatedExecutionEvidence = {
+    freshSameDaySourceVerified: true,
+    finalV3ImageTransportVerified: true,
+  }
+  const verified = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(verified.ready, true)
+  assert.equal(verified.payloadHash, generic.payloadHash)
+
+  input.sameDayPilotAuthorization.sourceObservedAt = stale
+  const staleSource = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(staleSource.ready, false)
+  assert.ok(staleSource.blockers.includes("PACKAGE_SOURCE_STALE"))
+
+  input.sameDayPilotAuthorization.sourceObservedAt = now.toISOString()
+  input.draftConfiguration.imageAuthorization.protectedManifestVerified = false
+  const unprotectedImages = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(unprotectedImages.ready, false)
+  assert.ok(unprotectedImages.blockers.includes("IMAGE_AUTHORIZATION_REQUIRED"))
+})
+
 test("taxonomy constraint validation fails closed on selection, cardinality, length and dependencies", async () => {
   const module = await importTypeScript(readinessSource)
   const base = {
@@ -419,10 +620,10 @@ test("readiness recalculates profit on the server and ignores client profit clai
   const baseline = validInput()
   const result = module.evaluateEbayDraftOnlyReadiness(baseline)
   assert.equal(result.ready, true)
-  assert.equal(result.economics.estimatedNetProfit, 8.51)
-  assert.equal(result.economics.marginPercent, 28.37)
+  assert.equal(result.economics.estimatedNetProfit, 8.32)
+  assert.equal(result.economics.marginPercent, 27.73)
   assert.equal(result.economics.calculationSource, "SERVER_CANONICAL_EBAY_UNIT_ECONOMICS_V1")
-  assert.equal(result.payload.listingPackage.packageData.pricing.estimatedNetProfit, 8.51)
+  assert.equal(result.payload.listingPackage.packageData.pricing.estimatedNetProfit, 8.32)
   assert.notEqual(result.payload.listingPackage.packageData.pricing.estimatedNetProfit, 999_999)
 
   const tamperedProfit = validInput()
@@ -434,7 +635,7 @@ test("readiness recalculates profit on the server and ignores client profit clai
   repriced.listingPackage.package_data.pricing.targetPrice = 20
   repriced.listingPackage.package_data.pricing.estimatedNetProfit = 1_000_000
   const repricedResult = module.evaluateEbayDraftOnlyReadiness(repriced)
-  assert.equal(repricedResult.economics.estimatedNetProfit, 0.91)
+  assert.equal(repricedResult.economics.estimatedNetProfit, 0.75)
   assert.equal(repricedResult.ready, false)
   assert.ok(repricedResult.blockers.includes("MINIMUM_NET_MARGIN_NOT_MET"))
 
@@ -501,7 +702,7 @@ test("readiness fails closed on evidence, freshness, rights, margin, policies an
   assert.ok(result.blockers.includes("SKU_COLLISION"))
 })
 
-test("gateway uses Sandbox GETs to verify policies, enabled location and SKU before PUT", async () => {
+test("gateway uses valid-language Sandbox GETs to verify policies, enabled location and SKU before PUT", async () => {
   const module = await importTypeScript(gatewaySource)
   const original = { ...process.env }
   Object.assign(process.env, {
@@ -516,7 +717,12 @@ test("gateway uses Sandbox GETs to verify policies, enabled location and SKU bef
   const calls = []
   const fetchImpl = async (url, init = {}) => {
     const parsed = new URL(url)
-    calls.push({ url: parsed, method: init.method, body: init.body })
+    calls.push({
+      url: parsed,
+      method: init.method,
+      body: init.body,
+      headers: init.headers ?? {},
+    })
     if (parsed.pathname.endsWith("/oauth2/token")) {
       return new Response(JSON.stringify({ access_token: "access", expires_in: 7200 }), { status: 200 })
     }
@@ -569,10 +775,10 @@ test("gateway uses Sandbox GETs to verify policies, enabled location and SKU bef
     assert.equal(dependencies.checks.paymentPolicy.valid, true)
     assert.equal(dependencies.checks.returnPolicy.valid, true)
     assert.equal(dependencies.checks.merchantLocation.enabled, true)
-    const collision = await module.preflightEbayDraftSkuCollision("IMNOVA-ITEM-1", fetchImpl)
+    const collision = await module.preflightEbayDraftSkuCollision("IMNOVAITEM0000000001", fetchImpl)
     assert.equal(collision.safe, true)
-    const inventory = await module.createOrReplaceEbayDraftInventoryItem("IMNOVA-ITEM-1", { product: {} }, fetchImpl)
-    const offer = await module.createEbayUnpublishedOffer({ sku: "IMNOVA-ITEM-1" }, fetchImpl)
+    const inventory = await module.createOrReplaceEbayDraftInventoryItem("IMNOVAITEM0000000001", { product: {} }, fetchImpl)
+    const offer = await module.createEbayUnpublishedOffer({ sku: "IMNOVAITEM0000000001" }, fetchImpl)
     assert.equal(inventory.ok, true)
     assert.equal(offer.ok, true)
     const tokenCalls = calls.filter((call) => call.url.pathname.endsWith("/oauth2/token"))
@@ -585,6 +791,22 @@ test("gateway uses Sandbox GETs to verify policies, enabled location and SKU bef
     assert.deepEqual(ebayCalls.map((call) => call.method), ["GET", "GET", "GET", "GET", "GET", "GET", "GET", "PUT", "POST"])
     assert.ok(ebayCalls.every((call) => call.url.origin === "https://api.sandbox.ebay.com"))
     assert.ok(ebayCalls.every((call) => !call.url.pathname.includes("publish_offer")))
+    assert.ok(ebayCalls
+      .filter((call) => call.method === "GET")
+      .every((call) =>
+        Object.keys(call.headers).length === 2
+        && typeof call.headers.Authorization === "string"
+        && call.headers["Accept-Language"] === "en-US"
+        && !("X-EBAY-C-MARKETPLACE-ID" in call.headers)
+      ))
+    assert.ok(ebayCalls
+      .filter((call) => call.method === "PUT" || call.method === "POST")
+      .every((call) =>
+        call.headers["Content-Type"] === "application/json"
+        && call.headers["Content-Language"] === "en-US"
+        && call.headers["Accept-Language"] === "en-US"
+        && !("X-EBAY-C-MARKETPLACE-ID" in call.headers)
+      ))
     assert.deepEqual(
       ebayCalls.filter((call) => call.method === "GET").map((call) => call.url.pathname),
       [
@@ -593,10 +815,207 @@ test("gateway uses Sandbox GETs to verify policies, enabled location and SKU bef
         "/sell/account/v1/payment_policy/payment_1",
         "/sell/account/v1/return_policy/return_1",
         "/sell/inventory/v1/location/LUNA_PORTEX_US",
-        "/sell/inventory/v1/inventory_item/IMNOVA-ITEM-1",
+        "/sell/inventory/v1/inventory_item/IMNOVAITEM0000000001",
         "/sell/inventory/v1/offer",
       ],
     )
+  } finally {
+    process.env = original
+  }
+})
+
+test("SKU preflight accepts contracted eBay absence, retries transient reads and classifies rejected requests", async () => {
+  const module = await importTypeScript(gatewaySource)
+  const original = { ...process.env }
+  const runCase = async (
+    name,
+    offerResponses,
+    inventoryResponse = { status: 404, body: { errors: [] } },
+  ) => {
+    Object.assign(process.env, {
+      EBAY_DRAFT_ONLY_WRITES_ENABLED: "true",
+      EBAY_DRAFT_ONLY_TARGET: "SANDBOX",
+      EBAY_DRAFT_ONLY_SANDBOX_CLIENT_ID: `client-${name}`,
+      EBAY_DRAFT_ONLY_SANDBOX_CLIENT_SECRET: `secret-${name}`,
+      EBAY_DRAFT_ONLY_SANDBOX_REFRESH_TOKEN: `refresh-${name}`,
+      EBAY_DRAFT_ONLY_SANDBOX_EXPECTED_USER_ID: "sandbox-user-1",
+      EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_SNAPSHOT_SECRET: SNAPSHOT_SECRET,
+    })
+    let offerIndex = 0
+    const calls = []
+    const result = await module.preflightEbayDraftSkuCollision(
+      `IMNOVA${name.replace(/[^A-Za-z0-9]/g, "").toUpperCase()}0000000000000000`,
+      async (url, init = {}) => {
+        const parsed = new URL(url)
+        calls.push({ url: parsed, method: init.method })
+        if (parsed.pathname.endsWith("/oauth2/token")) {
+          return new Response(JSON.stringify({
+            access_token: `access-${name}`,
+            expires_in: 7200,
+          }), { status: 200 })
+        }
+        if (parsed.pathname === "/commerce/identity/v1/user/") {
+          return new Response(JSON.stringify({
+            userId: "sandbox-user-1",
+            status: "CONFIRMED",
+          }), { status: 200 })
+        }
+        if (parsed.pathname.includes("/inventory_item/")) {
+          return new Response(JSON.stringify(inventoryResponse.body), {
+            status: inventoryResponse.status,
+          })
+        }
+        if (parsed.pathname.endsWith("/offer")) {
+          const response = offerResponses[
+            Math.min(offerIndex, offerResponses.length - 1)
+          ]
+          offerIndex += 1
+          return new Response(JSON.stringify(response.body), {
+            status: response.status,
+          })
+        }
+        throw new Error("unexpected request")
+      },
+    )
+    return {
+      result,
+      offerCalls: calls.filter((call) =>
+        call.url.pathname.endsWith("/offer")).length,
+      sellMethods: calls
+        .filter((call) => call.url.pathname.startsWith("/sell/"))
+        .map((call) => call.method),
+    }
+  }
+  try {
+    const notFound = await runCase("not-found", [{
+      status: 404,
+      body: {
+        errors: [{
+          errorId: 25710,
+          domain: "API_INVENTORY",
+          category: "REQUEST",
+          message: "Resource not found.",
+        }],
+      },
+    }])
+    assert.equal(notFound.result.safe, true)
+    assert.equal(notFound.result.offerCount, 0)
+    assert.equal(notFound.result.offersHttpStatus, 404)
+    assert.equal(notFound.result.offerResponseShape, "NOT_FOUND")
+
+    const explicitEmpty = await runCase("empty-page", [{
+      status: 200,
+      body: { href: "/offer", limit: 100, size: 0, total: 0 },
+    }])
+    assert.equal(explicitEmpty.result.safe, true)
+    assert.equal(explicitEmpty.result.offerCount, 0)
+    assert.equal(
+      explicitEmpty.result.offerResponseShape,
+      "EXPLICIT_EMPTY_PAGE",
+    )
+
+    const inventoryBadRequestAbsence = await runCase(
+      "inventory-absence",
+      [{
+        status: 200,
+        body: { href: "/offer", limit: 100, size: 0, total: 0 },
+      }],
+      {
+        status: 400,
+        body: {
+          errors: [{
+            errorId: 25702,
+            domain: "API_INVENTORY",
+            category: "REQUEST",
+            message: "SKU could not be found.",
+          }],
+        },
+      },
+    )
+    assert.equal(inventoryBadRequestAbsence.result.safe, true)
+    assert.equal(inventoryBadRequestAbsence.result.inventoryAbsent, true)
+    assert.deepEqual(
+      inventoryBadRequestAbsence.result.inventoryErrorIds,
+      ["25702"],
+    )
+
+    const retried = await runCase("transient", [
+      {
+        status: 503,
+        body: {
+          errors: [{
+            errorId: 2000,
+            domain: "API_INVENTORY",
+            category: "APPLICATION",
+            message: "Temporary service error.",
+          }],
+        },
+      },
+      {
+        status: 200,
+        body: { href: "/offer", limit: 100, size: 0, total: 0 },
+      },
+    ])
+    assert.equal(retried.result.safe, true)
+    assert.equal(retried.result.offersReadAttempts, 2)
+    assert.equal(retried.offerCalls, 2)
+
+    const ambiguous = await runCase("ambiguous", [{
+      status: 200,
+      body: { total: 0 },
+    }])
+    assert.equal(ambiguous.result.safe, false)
+    assert.equal(
+      ambiguous.result.blocker,
+      "EBAY_SKU_PREFLIGHT_UNAVAILABLE",
+    )
+    assert.equal(ambiguous.result.offerResponseShape, "UNAVAILABLE")
+
+    const rejected = await runCase(
+      "request-rejected",
+      [{
+        status: 400,
+        body: {
+          errors: [{
+            errorId: 25709,
+            domain: "API_INVENTORY",
+            category: "REQUEST",
+            message: "Invalid value for sku.",
+          }],
+        },
+      }],
+      {
+        status: 400,
+        body: {
+          errors: [{
+            errorId: 25709,
+            domain: "API_INVENTORY",
+            category: "REQUEST",
+            message: "Invalid value for sku.",
+          }],
+        },
+      },
+    )
+    assert.equal(rejected.result.safe, false)
+    assert.equal(rejected.result.requestRejected, true)
+    assert.equal(
+      rejected.result.blocker,
+      "EBAY_SKU_PREFLIGHT_REQUEST_REJECTED",
+    )
+    assert.deepEqual(rejected.result.inventoryErrorIds, ["25709"])
+    assert.deepEqual(rejected.result.offersErrorIds, ["25709"])
+    assert.equal(
+      rejected.result.inventoryErrors[0].message,
+      "Invalid value for sku.",
+    )
+    assert.ok([
+      ...notFound.sellMethods,
+      ...explicitEmpty.sellMethods,
+      ...inventoryBadRequestAbsence.sellMethods,
+      ...retried.sellMethods,
+      ...ambiguous.sellMethods,
+      ...rejected.sellMethods,
+    ].every((method) => method === "GET"))
   } finally {
     process.env = original
   }
@@ -865,7 +1284,16 @@ test("route requires a human Admin, exact approval, fresh revalidation and unkno
   const executeSource = routeSource.slice(routeSource.indexOf("async function executeDraft"))
   assert.ok(executeSource.indexOf("preflightEbayDraftDependencies") < executeSource.indexOf("claim_ebay_draft_only_execution"))
   assert.ok(executeSource.indexOf("preflightEbayDraftSkuCollision") < executeSource.indexOf("createOrReplaceEbayDraftInventoryItem"))
-  assert.match(executeSource, /preflight\.collision \? "terminal_failure" : "claimed"/)
+  assert.ok(
+    executeSource.indexOf("retireSupersededPrewriteSkuPreflight")
+      < executeSource.indexOf("loadPackageContext"),
+  )
+  assert.match(executeSource, /const terminalPreflight = preflight\.collision/)
+  assert.match(executeSource, /phase: terminalPreflight \? "terminal_failure" : "claimed"/)
+  assert.match(
+    routeSource,
+    /EBAY_SKU_PREFLIGHT_SUPERSEDED_BY_REAPPROVAL/,
+  )
   assert.match(routeSource, /serverApprovedConfiguration/)
   assert.match(routeSource, /imageAssetManifest/)
   assert.match(routeSource, /imageManifestConfirmed/)
@@ -882,6 +1310,10 @@ test("route requires a human Admin, exact approval, fresh revalidation and unkno
   assert.match(routeSource, /EBAY_DRAFT_ONLY_EXECUTION_BUSY/)
   assert.match(routeSource, /inspectEbayDraftSkuState/)
   assert.match(routeSource, /EBAY_DRAFT_ONLY_REAPPROVAL_REQUIRED/)
+  assert.match(routeSource, /EBAY_V3_EXECUTION_EVIDENCE_INVALID/)
+  assert.match(routeSource, /revalidatedExecutionEvidence/)
+  assert.match(routeSource, /finalV3ImageTransportVerified:\s*true/)
+  assert.match(routeSource, /freshSameDaySourceVerified:\s*true/)
   assert.match(routeSource, /UNPUBLISHED_VERIFIED_AT_CREATE/)
   assert.match(routeSource, /\.eq\("lease_token", claimToken\)/)
   assert.ok(
@@ -893,6 +1325,23 @@ test("route requires a human Admin, exact approval, fresh revalidation and unkno
       < executeSource.lastIndexOf('if (approval.status !== "approved"'),
   )
   assert.doesNotMatch(routeSource, /publishOffer\s*\(/)
+  assert.match(workspaceSource, /shouldRenewExpiredSkuPreflight/)
+  assert.match(
+    workspaceSource,
+    /execution\.last_error_code === "EBAY_SKU_PREFLIGHT_UNAVAILABLE"/,
+  )
+  assert.match(
+    workspaceSource,
+    /EBAY_SKU_NAMESPACE_MIGRATED_BEFORE_WRITE/,
+  )
+  assert.match(
+    workspaceSource,
+    /EBAY_PREFLIGHT_HEADER_CONTRACT_MIGRATED_BEFORE_WRITE/,
+  )
+  assert.match(
+    workspaceSource,
+    /const retiredPrewriteExecution = shouldRenewExpiredSkuPreflight/,
+  )
 })
 
 test("migration enforces one-time TTL approvals, idempotency, SKU uniqueness and no publish operation", () => {
@@ -910,6 +1359,70 @@ test("migration enforces one-time TTL approvals, idempotency, SKU uniqueness and
   assert.match(migrationSource, /approve_ebay_draft_only_package/)
   assert.match(migrationSource, /claim_ebay_draft_only_execution/)
   assert.match(migrationSource, /complete_ebay_draft_only_execution/)
+})
+
+test("alphanumeric SKU migration supersedes only pre-write legacy authority", () => {
+  assert.match(
+    alphanumericSkuMigrationSource,
+    /EBAY_LEGACY_SKU_WRITE_EVIDENCE_RECONCILIATION_REQUIRED/,
+  )
+  assert.match(
+    alphanumericSkuMigrationSource,
+    /EBAY_SKU_NAMESPACE_MIGRATED_BEFORE_WRITE/,
+  )
+  assert.match(
+    alphanumericSkuMigrationSource,
+    /\^IMNOVA\[A-Z0-9\]\{16,32\}\$/,
+  )
+  assert.match(
+    alphanumericSkuMigrationSource,
+    /SUPERSEDED_BY_RECONCILIATION/,
+  )
+  assert.match(
+    alphanumericSkuMigrationSource,
+    /This migration performs no external eBay operation/,
+  )
+})
+
+test("Inventory header migration retires only the exact pre-write 25709 pair", () => {
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /EBAY_PREFLIGHT_HEADER_RECONCILIATION_WRITE_EVIDENCE_REQUIRED/,
+  )
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /EBAY_PREFLIGHT_HEADER_CONTRACT_MIGRATED_BEFORE_WRITE/,
+  )
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /inventoryErrorIds[\s\S]*25709/,
+  )
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /offersErrorIds[\s\S]*25709/,
+  )
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /inventory_http_status is null/,
+  )
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /offer_id is null/,
+  )
+  assert.match(
+    inventoryHeaderMigrationSource,
+    /This migration performs no[\s\S]*external eBay operation/,
+  )
+})
+
+test("canonical package SKU is alphanumeric and deterministic", async () => {
+  const module = await importTypeScript(readinessSource)
+  const sku = module.expectedEbayDraftOnlySku({
+    id: "123e4567-e89b-42d3-a456-426614174000",
+  })
+  assert.equal(sku, "IMNOVA123E4567E89B42D3A456426614174000")
+  assert.match(sku, /^[A-Z0-9]+$/)
+  assert.equal(sku.length, 38)
 })
 
 test("professional package evidence resolves only package-level hard gates", async () => {
@@ -1020,6 +1533,73 @@ test("Production account identity mismatch fails closed before every seller writ
       /EBAY_DRAFT_ONLY_ACCOUNT_IDENTITY_MISMATCH/,
     )
     assert.equal(calls.filter((call) => call.url.pathname.startsWith("/sell/")).length, 0)
+  } finally {
+    process.env = original
+  }
+})
+
+test("Production identity preserves its verified legacy binding after eBay immutable ID migration", async () => {
+  const module = await importTypeScript(gatewaySource)
+  const original = { ...process.env }
+  Object.assign(process.env, {
+    EBAY_DRAFT_ONLY_WRITES_ENABLED: "false",
+    EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "false",
+    EBAY_DRAFT_ONLY_TARGET: "PRODUCTION",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID: "identity-migration-client",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET: "identity-migration-secret",
+    EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN: "identity-migration-refresh",
+    EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID: "legacy-official-seller",
+    EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET: SNAPSHOT_SECRET,
+  })
+  const calls = []
+  try {
+    const result = await module.verifyEbayUnpublishedOffer(
+      "offer-identity-migration",
+      "SKU-IDENTITY-MIGRATION",
+      "EBAY_US",
+      async (url, init = {}) => {
+        const parsed = new URL(url)
+        const method = init.method ?? "GET"
+        calls.push({ origin: parsed.origin, pathname: parsed.pathname, method })
+        if (parsed.pathname.endsWith("/oauth2/token")) {
+          return new Response(JSON.stringify({
+            access_token: "identity-migration-access",
+            expires_in: 7200,
+          }), { status: 200 })
+        }
+        if (parsed.pathname === "/commerce/identity/v1/user/") {
+          return new Response(JSON.stringify({
+            userId: "immutable-replacement-user-id",
+          }), { status: 200 })
+        }
+        if (parsed.pathname === "/ws/api.dll") {
+          return new Response(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+              "<GetUserResponse xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
+              "<Ack>Success</Ack><User><UserID>legacy-official-seller</UserID></User>" +
+              "</GetUserResponse>",
+            { status: 200 },
+          )
+        }
+        if (parsed.pathname === "/sell/inventory/v1/offer/offer-identity-migration") {
+          return new Response(JSON.stringify({
+            offerId: "offer-identity-migration",
+            sku: "SKU-IDENTITY-MIGRATION",
+            marketplaceId: "EBAY_US",
+            status: "UNPUBLISHED",
+          }), { status: 200 })
+        }
+        throw new Error(`unexpected ${method} ${parsed}`)
+      },
+    )
+    assert.equal(result.safe, true)
+    assert.equal(
+      calls.filter((call) => call.pathname === "/ws/api.dll").length,
+      1,
+    )
+    assert.ok(calls.every((call) => call.method === "GET" ||
+      call.pathname.endsWith("/oauth2/token") ||
+      call.pathname === "/ws/api.dll"))
   } finally {
     process.env = original
   }
@@ -1186,7 +1766,142 @@ test("Offer verification binds offer, SKU and marketplace; unique unknown outcom
   }
 })
 
-test("Production payload, approvals and ledger are target/account-bound and publish endpoints remain absent", async () => {
+test("authorized publication sends publishOffer exactly once and returns the listing ID", async () => {
+  const module = await importTypeScript(gatewaySource)
+  const original = { ...process.env }
+  Object.assign(process.env, {
+    EBAY_DRAFT_ONLY_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_TARGET: "PRODUCTION",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID: "production-client-publish-success",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET: "production-secret",
+    EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN: "production-refresh",
+    EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID: "production-user-1",
+    EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET: SNAPSHOT_SECRET,
+    EBAY_DRAFT_ONLY_PRODUCTION_ALLOWED_GIT_BRANCH: "feature/draft-production",
+    VERCEL_ENV: "preview",
+    VERCEL_GIT_COMMIT_REF: "feature/draft-production",
+    EBAY_PRO_RUNTIME: "staging",
+  })
+  const calls = []
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url)
+    const method = init.method ?? "GET"
+    calls.push({
+      pathname: parsed.pathname,
+      method,
+      headers: init.headers ?? {},
+    })
+    if (parsed.pathname.endsWith("/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: "access" }), { status: 200 })
+    }
+    if (parsed.pathname === "/commerce/identity/v1/user/") {
+      return new Response(JSON.stringify({ userId: "production-user-1", status: "CONFIRMED" }), { status: 200 })
+    }
+    if (parsed.pathname === "/sell/inventory/v1/offer/offer-123" && method === "GET") {
+      return new Response(JSON.stringify({
+        offerId: "offer-123",
+        sku: RESERVED_SKU,
+        marketplaceId: "EBAY_US",
+        status: "UNPUBLISHED",
+      }), { status: 200 })
+    }
+    if (parsed.pathname === "/sell/inventory/v1/offer/offer-123/publish" && method === "POST") {
+      return new Response(JSON.stringify({ listingId: "123456789012" }), { status: 200 })
+    }
+    throw new Error(`unexpected ${method} ${parsed.pathname}`)
+  }
+  try {
+    const result = await module.publishEbayOfferOnce({
+      offerId: "offer-123",
+      expectedSku: RESERVED_SKU,
+      previewHash: "a".repeat(64),
+      publicationControlId: "55555555-5555-4555-8555-555555555555",
+      confirmPublish: "PUBLICAR LISTING EN EBAY",
+    }, fetchImpl)
+    assert.equal(result.ok, true)
+    assert.equal(result.listingId, "123456789012")
+    assert.equal(result.publishRequestSent, true)
+    assert.equal(result.reconciled, false)
+    assert.equal(calls.filter((call) => call.method === "POST"
+      && call.pathname.endsWith("/publish")).length, 1)
+    const publishCall = calls.find((call) => call.method === "POST"
+      && call.pathname.endsWith("/publish"))
+    assert.deepEqual(
+      Object.keys(publishCall.headers),
+      ["Authorization", "Accept-Language"],
+    )
+    assert.equal(publishCall.headers["Accept-Language"], "en-US")
+  } finally {
+    process.env = original
+  }
+})
+
+test("an uncertain publish response is reconciled with GET and never repeats POST", async () => {
+  const module = await importTypeScript(gatewaySource)
+  const original = { ...process.env }
+  Object.assign(process.env, {
+    EBAY_DRAFT_ONLY_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_TARGET: "PRODUCTION",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID: "production-client-publish-timeout",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET: "production-secret",
+    EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN: "production-refresh",
+    EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID: "production-user-1",
+    EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET: SNAPSHOT_SECRET,
+    EBAY_DRAFT_ONLY_PRODUCTION_ALLOWED_GIT_BRANCH: "feature/draft-production",
+    VERCEL_ENV: "preview",
+    VERCEL_GIT_COMMIT_REF: "feature/draft-production",
+    EBAY_PRO_RUNTIME: "staging",
+  })
+  const calls = []
+  let offerReads = 0
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url)
+    const method = init.method ?? "GET"
+    calls.push({ pathname: parsed.pathname, method })
+    if (parsed.pathname.endsWith("/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: "access" }), { status: 200 })
+    }
+    if (parsed.pathname === "/commerce/identity/v1/user/") {
+      return new Response(JSON.stringify({ userId: "production-user-1", status: "CONFIRMED" }), { status: 200 })
+    }
+    if (parsed.pathname === "/sell/inventory/v1/offer/offer-456" && method === "GET") {
+      offerReads += 1
+      return new Response(JSON.stringify({
+        offerId: "offer-456",
+        sku: RESERVED_SKU,
+        marketplaceId: "EBAY_US",
+        status: offerReads === 1 ? "UNPUBLISHED" : "PUBLISHED",
+        ...(offerReads === 1 ? {} : { listing: { listingId: "987654321098" } }),
+      }), { status: 200 })
+    }
+    if (parsed.pathname === "/sell/inventory/v1/offer/offer-456/publish" && method === "POST") {
+      throw new Error("simulated connection timeout after dispatch")
+    }
+    throw new Error(`unexpected ${method} ${parsed.pathname}`)
+  }
+  try {
+    const result = await module.publishEbayOfferOnce({
+      offerId: "offer-456",
+      expectedSku: RESERVED_SKU,
+      previewHash: "b".repeat(64),
+      publicationControlId: "66666666-6666-4666-8666-666666666666",
+      confirmPublish: "PUBLICAR LISTING EN EBAY",
+    }, fetchImpl)
+    assert.equal(result.ok, true)
+    assert.equal(result.listingId, "987654321098")
+    assert.equal(result.reconciled, true)
+    assert.equal(calls.filter((call) => call.method === "POST"
+      && call.pathname.endsWith("/publish")).length, 1)
+    assert.ok(calls.filter((call) => call.method === "GET"
+      && call.pathname.endsWith("/offer/offer-456")).length >= 2)
+  } finally {
+    process.env = original
+  }
+})
+
+test("Production draft and final publication use separate account-bound one-shot ledgers", async () => {
   const module = await importTypeScript(readinessSource)
   const input = validInput()
   input.target = "PRODUCTION"
@@ -1221,9 +1936,39 @@ test("Production payload, approvals and ledger are target/account-bound and publ
   assert.match(gatewaySource, /bulk_publish_offer/)
   assert.match(gatewaySource, /publish_by_inventory_item_group/)
   assert.match(gatewaySource, /offer\\\/\[\^\/\]\+\\\/publish/)
-  assert.doesNotMatch(routeSource, /publishOffer\s*\(/)
   assert.match(routeSource, /verifyEbayUnpublishedOffer/)
   assert.match(routeSource, /discoverEbayUnpublishedOfferBySku/)
+  assert.match(routeSource, /prepare_publish/)
+  assert.match(routeSource, /reconcile_publish/)
+  assert.match(routeSource, /confirmPublish !== EBAY_FINAL_PUBLISH_CONFIRMATION/)
+  assert.equal((routeSource.match(/publishEbayOfferOnce\(/g) ?? []).length, 1)
+  assert.match(gatewaySource, /EBAY_FINAL_PUBLISH_CONFIRMATION = "PUBLICAR LISTING EN EBAY"/)
+  assert.match(gatewaySource, /A timeout is never retried with POST/)
+  assert.match(routeSource, /verifyEbayPublishedOffer/)
+  assert.match(routeSource, /sync_same_day_source_before_authorized_publication/)
+  assert.match(routeSource, /EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_REQUIRED/)
+  assert.match(sameDayPublicationSource, /SELLER_OS_AUTHORIZED_PUBLICATION_V1_2026_07_20/)
+  assert.match(sameDayPublicationSource, /exactSevenHttpsUrls/)
+  assert.match(sameDayPublicationSource, /finalHumanAuthorizationRequired: true/)
+  assert.match(sameDayPublicationSource, /unattendedPublicationAllowed: false/)
+  assert.match(sameDayImageRuntimeSource, /SAME_DAY_IMAGE_LISTING_PACKAGE_BINDING_CONFLICT/)
+  assert.match(sameDayImageRuntimeSource, /sameDayPilot: requestedBinding/)
+  assert.match(publicationMigrationSource, /ebay_authorized_listing_publications/)
+  assert.match(publicationMigrationSource, /preview_hash text not null/)
+  assert.match(publicationMigrationSource, /publish_attempt_count between 0 and 1/)
+  assert.match(publicationMigrationSource, /p_confirm_publish <> 'PUBLICAR LISTING EN EBAY'/)
+  assert.match(publicationMigrationSource, /phase = 'published_pending_verification'/)
+  assert.match(publicationMigrationSource, /phase = 'monitor_registered'/)
+  assert.match(sameDaySourceSyncMigration, /sync_same_day_source_before_authorized_publication/)
+  assert.match(sameDaySourceSyncMigration, /candidate\.machine_state in \('READY_FOR_MANUAL_PUBLICATION', 'WAITING_ITEM_ID'\)/)
+  assert.match(sameDaySourceSyncMigration, /jsonb_array_length\(coalesce\(v_package\.package_data->'imageUrls'/)
+  assert.match(sameDaySourceSyncMigration, /EBAY_SAME_DAY_PUBLICATION_IMAGE_BINDING_INVALID/)
+  assert.match(sameDaySourceSyncMigration, /v_image_summary->'publicUrls'[\s\S]*v_handoff#>'\{images,urls\}'/)
+  assert.match(sameDaySourceSyncMigration, /v_source_observed_at < clock_timestamp\(\) - interval '6 hours'/)
+  assert.match(sameDaySourceSyncMigration, /abs\(v_approved_source_price - v_source_price\) >= 0\.005/)
+  assert.match(sameDaySourceSyncMigration, /ebay_writes, production_changed[\s\S]*0, 0, 0, false/)
+  assert.match(sameDaySourceSyncMigration, /revoke all[\s\S]*from public, anon, authenticated/)
+  assert.match(sameDaySourceSyncMigration, /grant execute[\s\S]*to service_role/)
   assert.match(routeSource, /p_account_fingerprint: fingerprint/)
   assert.match(productionMigrationSource, /target in \('SANDBOX', 'PRODUCTION'\)/)
   assert.match(productionMigrationSource, /account_fingerprint/)
@@ -1238,4 +1983,90 @@ test("Production payload, approvals and ledger are target/account-bound and publ
   assert.match(productionMigrationSource, /p_claim_token uuid/)
   assert.match(productionMigrationSource, /lease_token is distinct from p_claim_token/)
   assert.match(productionMigrationSource, /inventoryItemPayload,availability,shipToLocationAvailability,quantity.*is distinct from '1'/s)
+})
+
+test("V3 final publication persists the exact seven-image authority and preserves legacy six", () => {
+  assert.match(
+    v3PublicationPreviewMigrationSource,
+    /jsonb_array_length\(v_images\) not in \(6, 7\)/,
+  )
+  assert.match(
+    v3PublicationPreviewMigrationSource,
+    /EBAY_AUTHORIZED_PUBLICATION_V3_SEVEN_APPROVED_IMAGES_REQUIRED/,
+  )
+  assert.match(
+    v3PublicationPreviewMigrationSource,
+    /v3FinalSetAuthorization,selectedAssets/,
+  )
+  assert.match(
+    v3PublicationPreviewMigrationSource,
+    /v_images is distinct from[\s\S]*jsonb_agg\([\s\S]*asset->'url'/,
+  )
+  assert.match(
+    v3PublicationPreviewMigrationSource,
+    /EBAY_AUTHORIZED_PUBLICATION_SIX_APPROVED_IMAGES_REQUIRED/,
+  )
+  assert.match(
+    routeSource,
+    /databaseExceptionCode\([\s\S]*EBAY_FINAL_PUBLICATION_PREVIEW_PERSIST_FAILED/,
+  )
+  assert.match(workspaceSource, /siete imágenes V3/)
+})
+
+test("V3 final publication claim validates the append-only seven-image chain", () => {
+  assert.match(
+    v3PublicationClaimMigrationSource,
+    /assert_ebay_authorized_publication_image_set_high_quality/,
+  )
+  assert.match(
+    v3PublicationClaimMigrationSource,
+    /v_transport\.assets is distinct from v_assets/,
+  )
+  assert.match(
+    v3PublicationClaimMigrationSource,
+    /v_final\.selected_assets is distinct from v_review_assets/,
+  )
+  assert.match(
+    v3PublicationClaimMigrationSource,
+    /object\.metadata->>'size' = asset->>'bytes'/,
+  )
+  assert.match(
+    v3PublicationClaimMigrationSource,
+    /perform public\.assert_ebay_publish_image_set_high_quality/,
+  )
+  assert.match(
+    routeSource,
+    /databaseExceptionCode\([\s\S]*EBAY_FINAL_PUBLICATION_CLAIM_FAILED/,
+  )
+  assert.match(
+    routeSource,
+    /verifyEbayUnpublishedOffer\([\s\S]*sync_ebay_v3_source_before_authorized_publication[\s\S]*prepare_ebay_authorized_listing_publication[\s\S]*claim_ebay_authorized_listing_publication/,
+  )
+  assert.match(
+    routeSource,
+    /EBAY_FINAL_PUBLICATION_PREVIEW_REFRESH_FAILED/,
+  )
+})
+
+test("published ACTIVE monitor closure uses schema-qualified pgcrypto", () => {
+  assert.match(
+    finalMonitorClosureMigrationSource,
+    /extensions\.digest/,
+  )
+  assert.match(
+    finalMonitorClosureMigrationSource,
+    /complete_ebay_authorized_listing_monitor_registration/,
+  )
+  assert.match(
+    finalMonitorClosureMigrationSource,
+    /never calls eBay/,
+  )
+  assert.match(
+    routeSource,
+    /databaseExceptionCode\([\s\S]*EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED/,
+  )
+  assert.match(
+    routeSource,
+    /if \(publication\.phase === "monitor_registered"\)[\s\S]*loadFinalListingReviewPublicationGate/,
+  )
 })

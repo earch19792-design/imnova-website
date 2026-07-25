@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
 import { getListingAiConfiguration } from "./ebay-openai-listing-factory-v2"
+import { getEbayReadonlyRateLimitMetadata } from "./ebay-readonly-rate-limit"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "../supabase-admin"
 
 const routeBuckets = new Map<string, number[]>()
@@ -34,6 +35,7 @@ export function listingAiSafeCode(error: unknown) {
 
 export function listingAiErrorStatus(code: string) {
   if (code.includes("NOT_FOUND")) return 404
+  if (code === "EBAY_READONLY_GET_429") return 429
   if (code.includes("RATE_LIMIT")) return 429
   if (code.includes("HARD_STOP")) return 402
   if (code.includes("DISABLED") || code.includes("MISSING") || code.includes("REQUIRED")) return 409
@@ -105,9 +107,14 @@ export async function listingAiJson(req: Request) {
 
 export function listingAiFailure(error: unknown) {
   const code = listingAiSafeCode(error)
-  return listingAiResponse({
+  const rateLimit = code === "EBAY_READONLY_GET_429"
+    ? getEbayReadonlyRateLimitMetadata(error)
+    : null
+  const retryAfterSeconds = rateLimit?.retryAfterSeconds ?? null
+  const response = listingAiResponse({
     success: false,
     error: code,
+    ...(retryAfterSeconds !== null ? { retryAfterSeconds } : {}),
     safety: {
       secretsExposed: false,
       piiExposed: false,
@@ -115,4 +122,8 @@ export function listingAiFailure(error: unknown) {
       ebayWrites: 0,
     },
   }, listingAiErrorStatus(code))
+  if (retryAfterSeconds !== null) {
+    response.headers.set("Retry-After", String(Math.max(1, Math.ceil(retryAfterSeconds))))
+  }
+  return response
 }

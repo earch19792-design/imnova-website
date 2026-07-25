@@ -6,6 +6,7 @@ import {
   ebayProductionAccountFingerprint,
   getEbayProductionIdentityBindingConfiguration,
 } from "./ebay-seller-account-scope"
+import { createEbayReadonlyRateLimitError } from "./ebay-readonly-rate-limit"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const TRADING_ENDPOINT = "https://api.ebay.com/ws/api.dll"
@@ -71,6 +72,13 @@ async function assertAnalyticsSellerAccount(accessToken: string) {
     signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
   })
   const xml = await response.text()
+  if (response.status === 429) {
+    throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response, {
+      apiFamily: "TRADING",
+      operation: "GET_USER",
+      endpoint: "/ws/api.dll",
+    })
+  }
   const ack = tradingXmlValue(xml, "Ack")?.toLowerCase()
   const userId = tradingXmlValue(xml, "UserID")
   if (!response.ok || !["success", "warning"].includes(ack ?? "") || !userId) {
@@ -117,6 +125,13 @@ async function getSellerAnalyticsAccessToken() {
     cache: "no-store",
     signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
   })
+  if (response.status === 429) {
+    throw createEbayReadonlyRateLimitError("EBAY_OAUTH_429", response, {
+      apiFamily: "OAUTH",
+      operation: "ANALYTICS_REFRESH_TOKEN",
+      endpoint: "/identity/v1/oauth2/token",
+    })
+  }
   if (!response.ok) throw new Error(`EBAY_SELLER_OAUTH_${response.status}`)
   const accessToken = text(record(await response.json()).access_token)
   if (!accessToken) throw new Error("EBAY_SELLER_OAUTH_TOKEN_MISSING")
@@ -138,6 +153,13 @@ export async function getEbaySellerTrafficPerformance(
       cache: "no-store",
       signal: AbortSignal.timeout(EBAY_REQUEST_TIMEOUT_MS),
     })
+    if (response.status === 429) {
+      throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response, {
+        apiFamily: "SELL_ANALYTICS",
+        operation: "GET_TRAFFIC_REPORT",
+        endpoint: "/sell/analytics/v1/traffic_report",
+      })
+    }
     if (!response.ok) throw new Error(`EBAY_ANALYTICS_READ_${response.status}`)
     const payload = record(await response.json())
     return {

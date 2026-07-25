@@ -9,6 +9,7 @@ import {
   evaluateEbayAnalyticsReportCoverage,
   evaluateEbayCategoryLearning,
   getEbayCategoryLearningAccountKey,
+  getEbayCategoryLearningActivationConfiguration,
   loadEbayCategoryLearningAdjustments,
   persistOwnEbayPerformanceSnapshots,
 } from "../lib/ebay/ebay-category-performance-learning.ts"
@@ -23,6 +24,12 @@ const accountKey = `${accountAlias}:${accountFingerprint}`
 const categoryId = "50335"
 const predictionEngineVersion =
   "EBAY-SELLER-COMMAND-CENTER-OPPORTUNITY-ENGINE-V3"
+const previewActivationEnvironment = {
+  VERCEL_ENV: "preview",
+  VERCEL_GIT_COMMIT_REF: "feature/centralize-ebay-mobile-command-center",
+  NEXT_PUBLIC_SUPABASE_URL: "https://vsfthqydfrdzulldbfbe.supabase.co",
+  EBAY_CATEGORY_PERFORMANCE_LEARNING_PREVIEW_ENABLED: "true",
+}
 
 function buildSnapshots(count, options = {}) {
   const totalImpressions = options.totalImpressions ?? count * 50
@@ -91,6 +98,28 @@ test("learning account scope fails closed without a valid official identity", ()
       originalFingerprint
     process.env.EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID = originalUserId
   }
+})
+
+test("performance learning activation is explicit, Preview-only and staging-bound", () => {
+  assert.equal(getEbayCategoryLearningActivationConfiguration({}).active, false)
+  assert.equal(getEbayCategoryLearningActivationConfiguration({
+    ...previewActivationEnvironment,
+    VERCEL_ENV: "production",
+  }).active, false)
+  assert.equal(getEbayCategoryLearningActivationConfiguration({
+    ...previewActivationEnvironment,
+    VERCEL_GIT_COMMIT_REF: "main",
+  }).active, false)
+  const active = getEbayCategoryLearningActivationConfiguration(
+    previewActivationEnvironment,
+  )
+  assert.equal(active.status, "ACTIVE_PREVIEW_ONLY")
+  assert.equal(active.active, true)
+  assert.equal(active.safety.verifiedOwnListingsOnly, true)
+  assert.equal(active.safety.ebayWrites, 0)
+  assert.equal(active.safety.openAiCalls, 0)
+  assert.equal(active.safety.automaticPriceChanges, 0)
+  assert.equal(active.safety.automaticDeployments, 0)
 })
 
 test("one listing and nine listings only collect evidence with zero adjustment", () => {
@@ -353,6 +382,7 @@ test("automatic collector filters links at the causal window boundary", async ()
   }
   const result = await collectOwnEbayPerformanceForLearning(supabase, {
     now: "2026-07-13T12:00:00.000Z",
+    environment: previewActivationEnvironment,
   })
   assert.equal(result.status, "NO_CAUSALLY_ELIGIBLE_VERIFIED_LISTINGS")
   assert.deepEqual(
@@ -418,7 +448,7 @@ test("ranking adjustments require fresh, non-future computed evidence", async ()
   const adjustments = await loadEbayCategoryLearningAdjustments(
     supabase,
     predictionEngineVersion,
-    { now },
+    { now, environment: previewActivationEnvironment },
   )
   assert.deepEqual(Object.keys(adjustments), ["1"])
   assert.deepEqual(filters, [
@@ -520,6 +550,7 @@ test("official listing rows persist only through a verified own link and preserv
       dateTo: "2026-06-30",
       listingIds: ["120000000000"],
       observedAt: "2026-07-01T12:00:00.000Z",
+      environment: previewActivationEnvironment,
     },
   )
   const snapshotWrite = calls.find((call) =>
@@ -549,6 +580,7 @@ test("official listing rows persist only through a verified own link and preserv
       dateTo: "2026-06-30",
       listingIds: ["120000000000"],
       observedAt: "2026-07-01T12:00:00.000Z",
+      environment: previewActivationEnvironment,
     },
   )
   assert.equal(causallyRejected.status, "CAUSAL_WINDOW_REQUIRED")
@@ -620,8 +652,17 @@ test("migration, performance route and scan enforce the conservative learning pa
   assert.match(engine, /safetyGatesChanged: false/)
   assert.match(engine, /competitorPerformanceUsed: false/)
   assert.match(cron, /CRON_SECRET/)
+  assert.match(cron, /getEbayCategoryLearningActivationConfiguration/)
+  assert.match(cron, /PREVIEW_LEARNING_DISABLED/)
   assert.match(cron, /collectOwnEbayPerformanceForLearning/)
   assert.match(cron, /ebayWriteUsed: false/)
+  assert.match(
+    learningService,
+    /EBAY_CATEGORY_PERFORMANCE_LEARNING_PREVIEW_ENABLED/,
+  )
+  assert.match(learningService, /VERCEL_ENV === "preview"/)
+  assert.match(learningService, /VERCEL_GIT_COMMIT_REF/)
+  assert.match(learningService, /EBAY_CATEGORY_LEARNING_STAGING_REF/)
   assert.match(scanCron, /collectOwnEbayPerformanceForLearning/)
   assert.match(scanCron, /reverifyManualEbayListingsReadonly/)
   assert.match(scanCron, /postListingLearning/)

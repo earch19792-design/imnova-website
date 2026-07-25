@@ -151,7 +151,13 @@ export async function POST(req: Request) {
   }
 
   try {
-    const input = parseManualListingRegistrationInput(await req.json())
+    const parsedInput = parseManualListingRegistrationInput(await req.json())
+    const input = {
+      ...parsedInput,
+      // Product identity is resolved from the opportunity and its bound handoff.
+      // A browser-declared supplier SKU is never an accepted identity source.
+      supplierSku: null,
+    }
     const supabase = getSupabaseAdminClient()
     const result = await registerManualEbayListing(
       supabase,
@@ -166,6 +172,8 @@ export async function POST(req: Request) {
         ebayWriteUsed: false,
         canPublish: false,
         verifiedFailClosed: true,
+        productSkuIdentitySource:
+          "CANONICAL_PACKAGE_OR_BOUND_MANUAL_HANDOFF",
         reusableContentRestrictedToSellerOperationalDefaults: true,
       },
     })

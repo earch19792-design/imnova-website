@@ -13,6 +13,7 @@ import {
   getListingAiApprovalQueueStatus,
   startListingAiApprovalQueueScan,
 } from "@/lib/ebay/ebay-listing-ai-approval-queue-service"
+import { getProductFactsStatus } from "@/lib/ebay/ebay-product-facts-enrichment"
 import { enqueueListingAiTop20Continuation } from "@/lib/ebay/ebay-listing-ai-top20-queue"
 
 export async function GET(req: Request) {
@@ -20,8 +21,12 @@ export async function GET(req: Request) {
   if (!auth.ok) return auth.response
   try {
     enforceListingAiRouteRateLimit(auth.actorId, "READ")
-    return listingAiResponse({ success: true,
-      ...(await getListingAiApprovalQueueStatus(auth.supabase, auth.accountKey)) })
+    const queue = await getListingAiApprovalQueueStatus(auth.supabase, auth.accountKey)
+    const productFacts = await getProductFactsStatus({
+      supabase: auth.supabase, accountKey: auth.accountKey,
+      candidateIds: (queue.pool ?? []).map((item) => item.id),
+    })
+    return listingAiResponse({ success: true, ...queue, productFacts })
   } catch (error) {
     return listingAiFailure(error)
   }

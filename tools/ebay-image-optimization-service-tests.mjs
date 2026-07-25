@@ -34,17 +34,27 @@ test("normalizes a light authorized product photo to a reviewed 1600px white can
   assert.equal(result.transformation.generativeAiUsed, false)
   assert.equal(result.qa.humanApprovalRequired, true)
   assert.equal(result.qa.automaticStatus, "PASSED")
+  assert.ok(result.qa.sourceCenterChromaticRatio > 0.08)
   assert.match(result.sourceSha256, /^[0-9a-f]{64}$/)
   assert.match(result.outputSha256, /^[0-9a-f]{64}$/)
   assert.notEqual(result.sourceSha256, result.outputSha256)
 })
 
-test("fails closed when the edge is complex instead of erasing a product", async () => {
+test("preserves the full authorized frame when removing a complex background could erase the product", async () => {
   const source = await productOnBackground("#252b35")
-  await assert.rejects(
-    optimizeAuthorizedEbayMainImage(source),
-    /EBAY_IMAGE_BACKGROUND_REQUIRES_MANUAL_REMOVAL/,
-  )
+  const result = await optimizeAuthorizedEbayMainImage(source)
+  const metadata = await sharp(result.output).metadata()
+
+  assert.equal(metadata.width, EBAY_IMAGE_OUTPUT_SIZE)
+  assert.equal(metadata.height, EBAY_IMAGE_OUTPUT_SIZE)
+  assert.equal(result.transformation.backgroundMethod, "AUTHORIZED_SOURCE_FRAMED_CONTAIN")
+  assert.equal(result.transformation.sourcePixelsTreatment, "PRESERVED_FULL_FRAME")
+  assert.equal(result.transformation.generativeAiUsed, false)
+  assert.equal(result.qa.automaticStatus, "PARTIAL")
+  assert.ok(result.qa.outputEdgeWhiteRatio >= .9)
+  assert.equal(result.qa.fullAuthorizedFramePreserved, true)
+  assert.equal(result.qa.humanApprovalRequired, true)
+  assert.ok(result.qa.manualChecksRequired.includes("SOURCE_BACKGROUND_PRESERVED_NOT_REMOVED"))
 })
 
 test("allows only documented HTTPS supplier hosts and explicit rights evidence", () => {
@@ -170,7 +180,7 @@ test("the protected API stores originals privately and only attaches human-appro
   )
   assert.match(
     route,
-    /reconciledAsset\.status === "rejected"[\s\S]*?\.from\(OUTPUT_BUCKET\)\.remove\(\[publishedPath\]\)/,
+    /publishedObjectCreated[\s\S]*?\.from\(OUTPUT_BUCKET\)[\s\S]*?\.remove\(\[publishedPath\]\)/,
   )
   assert.match(
     route,
@@ -249,10 +259,14 @@ test("listing package writes are server-only and atomically derive the protected
   const guardedCalls = route.match(
     /\.rpc\(\s*"ebay_save_listing_package_guarded"/g,
   ) ?? []
-  assert.equal(guardedCalls.length, 2)
+  const sameDayRestoreCalls = route.match(
+    /restore_ebay_same_day_authorized_listing_package_v1/g,
+  ) ?? []
+  assert.equal(guardedCalls.length, 1)
+  assert.equal(sameDayRestoreCalls.length, 1)
   assert.equal(
     (route.match(/p_expected_updated_at:/g) ?? []).length,
-    2,
+    3,
   )
   assert.doesNotMatch(
     route,

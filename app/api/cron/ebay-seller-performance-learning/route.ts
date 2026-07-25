@@ -5,6 +5,7 @@ import { NextResponse } from "next/server"
 
 import {
   collectOwnEbayPerformanceForLearning,
+  getEbayCategoryLearningActivationConfiguration,
 } from "@/lib/ebay/ebay-category-performance-learning"
 import { reverifyManualEbayListingsReadonly } from "@/lib/ebay/ebay-manual-listing-service"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
@@ -17,6 +18,25 @@ function authorized(req: Request) {
 export async function GET(req: Request) {
   if (!authorized(req)) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" }, { status: 401 })
+  }
+  const activation = getEbayCategoryLearningActivationConfiguration()
+  if (!activation.active) {
+    return NextResponse.json({
+      success: true,
+      status: "PREVIEW_LEARNING_DISABLED",
+      activation,
+      safety: {
+        previewOnly: true,
+        verifiedOwnListingsOnly: true,
+        externalReadsPerformed: false,
+        persistencePerformed: false,
+        ebayWriteUsed: false,
+        openAiCalls: 0,
+        automaticPriceChanges: 0,
+        automaticDeployments: 0,
+        canPublish: false,
+      },
+    })
   }
   try {
     const supabase = getSupabaseAdminClient()
@@ -31,11 +51,17 @@ export async function GET(req: Request) {
       status: learning.status,
       learning,
       manualListingReverification,
+      activation,
       safety: {
+        previewOnly: true,
+        verifiedOwnListingsOnly: true,
         ebayReadOnly: true,
         ebayResourceMethods: ["GET"],
         oauthTokenExchangeMethod: "POST",
         ebayWriteUsed: false,
+        openAiCalls: 0,
+        automaticPriceChanges: 0,
+        automaticDeployments: 0,
         canPublish: false,
       },
     })
@@ -43,7 +69,17 @@ export async function GET(req: Request) {
     return NextResponse.json({
       success: false,
       error: "EBAY_PERFORMANCE_LEARNING_CRON_FAILED",
-      safety: { ebayReadOnly: true, ebayWriteUsed: false, canPublish: false },
+      activation,
+      safety: {
+        previewOnly: true,
+        verifiedOwnListingsOnly: true,
+        ebayReadOnly: true,
+        ebayWriteUsed: false,
+        openAiCalls: 0,
+        automaticPriceChanges: 0,
+        automaticDeployments: 0,
+        canPublish: false,
+      },
     }, { status: 502 })
   }
 }

@@ -7,7 +7,7 @@ const fixturePath =
 const manifestPath =
   "lib/ebay/professional-suite-manifest.ts";
 const hubPath =
-  "app/admin/ebay-pro/page.tsx";
+  "app/admin/ebay-seller-os/page.tsx";
 const boundaryPath =
   "lib/ebay/environment-boundaries.ts";
 const sidebarPath =
@@ -243,7 +243,7 @@ test("professional suite manifest is pure and declares routes", () => {
   }
 });
 
-test("eBay Pro hub is lightweight and does not read data", () => {
+test("canonical Seller OS hub is lightweight and does not read data", () => {
   assert.equal(
     fileExists(hubPath),
     true,
@@ -253,19 +253,19 @@ test("eBay Pro hub is lightweight and does not read data", () => {
     readText(hubPath);
 
   assert.equal(
-    content.includes("eBay Professional Seller Suite"),
+    content.includes("eBay Seller OS"),
     true,
   );
   assert.equal(
-    content.includes("La publicación automática permanece prohibida"),
+    content.includes("Crear o publicar un listing en eBay requiere una autorización separada"),
     true,
   );
   assert.equal(
-    content.includes("staging/lab"),
+    content.includes("MODO SEGURO"),
     true,
   );
   assert.equal(
-    content.includes("Market Radar eBay"),
+    content.includes("Seller Command Center"),
     true,
   );
   assert.equal(
@@ -273,11 +273,11 @@ test("eBay Pro hub is lightweight and does not read data", () => {
     true,
   );
   assert.equal(
-    content.includes("eBay Listing"),
+    content.includes("Optimizar listing"),
     true,
   );
   assert.equal(
-    content.includes("WhatsApp Seller Alerts"),
+    content.includes("OpenAI: apagado"),
     true,
   );
 

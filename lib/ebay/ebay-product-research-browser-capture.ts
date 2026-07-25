@@ -5,13 +5,43 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { normalizeProductIdentity } from "./ebay-winner-evidence-v2.ts"
 import type { ProductIdentityInput } from "./ebay-winner-evidence-v2.ts"
+import {
+  PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION,
+  persistProductResearchVisualPatterns,
+  rejectedProductResearchVisualPattern,
+  sanitizeProductResearchVisualPattern,
+  type ProductResearchVisualPattern,
+  type VisualComparableRow,
+// @ts-ignore Node's native TypeScript runner requires explicit extensions.
+} from "./ebay-product-research-visual-pattern.ts"
 
 export const PRODUCT_RESEARCH_BROWSER_CAPTURE_VERSION =
-  "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE_V1_2026_07_17"
+  "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE_V2_2026_07_21"
 export const PRODUCT_RESEARCH_BROWSER_CAPTURE_SOURCE =
   "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE" as const
 export const PRODUCT_RESEARCH_CAPTURE_MAX_ROWS = 200
 export const PRODUCT_RESEARCH_CAPTURE_MAX_BYTES = 100_000
+
+export function isProductResearchNinetyDayWindow(
+  value: ProductResearchBrowserCapture["dateRange"],
+) {
+  const label = typeof value?.label === "string"
+    ? value.label.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    : ""
+  if (/\b90\b/.test(label) && /(?:day|days|dia|dias)/.test(label)) return true
+  const timestamp = (entry: unknown) => {
+    if (typeof entry !== "string" || !entry.trim()) return null
+    const numeric = Number(entry)
+    if (Number.isFinite(numeric) && numeric > 0) return numeric
+    const parsed = Date.parse(entry)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  const start = timestamp(value?.start)
+  const end = timestamp(value?.end)
+  if (start === null || end === null || end <= start) return false
+  const days = (end - start) / 86_400_000
+  return days >= 89 && days <= 91
+}
 
 type JsonRecord = Record<string, unknown>
 
@@ -31,12 +61,15 @@ export type ProductResearchCaptureTarget = {
   supplierSku?: string | null
   sourceType?: "LOOP1_EVIDENCE" | "LUNA_CATALOG" | "VERIFIED_ACTIVE_LISTING_LINK"
   officialLinkVerified?: boolean
+  identityEvidenceSource?: "LUNA_STRUCTURED_CATALOG" | "LUNA_OFFICIAL_PRODUCT_DESCRIPTION" | null
+  identityEvidenceHash?: string | null
   identity: ProductIdentityInput
   productName: string
 }
 
 export type ProductResearchBrowserCapture = {
   source: typeof PRODUCT_RESEARCH_BROWSER_CAPTURE_SOURCE
+  visualPatternSchemaVersion?: string | null
   captureId: string
   listingSite: string
   pagePath: string
@@ -46,6 +79,11 @@ export type ProductResearchBrowserCapture = {
   visibleResultCount: number
   visibleColumns: string[]
   rows: unknown[]
+  resultState?: "SOLD_ROWS_VISIBLE" | "NO_SOLD_RESULTS"
+  emptyResultProof?: {
+    status?: "OFFICIAL_NO_SOLD_RESULTS_MESSAGE_VISIBLE"
+    queryMatched?: boolean
+  } | null
 }
 
 type NormalizedCaptureRow = {
@@ -53,6 +91,7 @@ type NormalizedCaptureRow = {
   sourceListingReferenceHash: string
   titleFingerprint: string
   identityHash: string
+  productFamilyFingerprint: string
   detectedOfferPackCount: number | null
   detectedUnitCount: number | null
   detectedSize: string | null
@@ -66,6 +105,7 @@ type NormalizedCaptureRow = {
   freeShippingPercent: number | null
   bids: number | null
   visibleImageCount: number | null
+  visualPattern: ProductResearchVisualPattern | null
   keywordSignals: string[]
   transientTitle: string
 }
@@ -85,6 +125,8 @@ const FORBIDDEN_KEYS = new Set([
   "billingaddress", "postaladdress", "orderid", "ebayorderid", "cookie", "cookies",
   "authorization", "accesstoken", "refreshtoken", "jwt", "password", "payment",
   "card", "pagehtml", "outerhtml", "innerhtml", "imagesrc", "imageurl",
+  "thumbnailurl", "base64", "blob", "screenshot", "imagebytes", "imagedata",
+  "pixels", "pixeldata", "canvas", "binary", "buffer",
 ])
 
 const STOP_WORDS = new Set([
@@ -144,6 +186,21 @@ function positiveInteger(value: unknown) {
   return parsed !== null && Number.isInteger(parsed) && parsed > 0 ? parsed : null
 }
 
+function confirmedSoldQuantity(value: unknown) {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value > 0 ? value : null
+  }
+  const normalized = normalizedText(value, 80)
+  if (!normalized || /[$€£%]/.test(normalized)) return null
+  const withoutLabel = normalized
+    .replace(/^(?:total\s+sold|quantity\s+sold|sold\s+quantity|total\s+vendido|cantidad\s+vendida|unidades\s+vendidas)\s*:?\s*/i, "")
+    .replace(/\s*(?:sold|vendid[oa]s?)$/i, "")
+    .trim()
+  if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)$/.test(withoutLabel)) return null
+  const parsed = Number(withoutLabel.replace(/,/g, ""))
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
 function nonNegativeInteger(value: unknown) {
   const parsed = finiteNonNegative(value)
   return parsed !== null && Number.isInteger(parsed) ? parsed : null
@@ -154,11 +211,39 @@ function percent(value: unknown) {
   return parsed !== null && parsed <= 100 ? parsed : null
 }
 
-function normalizedDate(value: unknown, capturedAt: Date) {
+function captureDateBounds(input: ProductResearchBrowserCapture["dateRange"], capturedAt: Date) {
+  const timestamp = (value: unknown) => {
+    if (typeof value !== "string" || !value.trim()) return null
+    const numeric = Number(value)
+    if (Number.isFinite(numeric) && numeric > 0) return numeric
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  const explicitStart = timestamp(input?.start)
+  const explicitEnd = timestamp(input?.end)
+  if (explicitStart !== null && explicitEnd !== null && explicitEnd > explicitStart) {
+    return { earliest: explicitStart - 86_400_000, latest: explicitEnd + 86_400_000 }
+  }
+  const label = normalizedText(input?.label, 120)?.normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "").toLowerCase() ?? ""
+  const days = Number(label.match(/\b(\d{1,3})\b(?=[^\d]*(?:day|days|dia|dias))/)?.[1])
+  const boundedDays = Number.isInteger(days) && days > 0 && days <= 366 ? days : 90
+  return {
+    earliest: capturedAt.getTime() - (boundedDays + 2) * 86_400_000,
+    latest: capturedAt.getTime() + 86_400_000,
+  }
+}
+
+function normalizedDate(
+  value: unknown,
+  capturedAt: Date,
+  bounds: ReturnType<typeof captureDateBounds>,
+) {
   const text = normalizedText(value, 80)
-  if (!text) return null
+  if (!text || /^\d+(?:[.,]\d+)?$/.test(text)) return null
   const parsed = new Date(text)
-  if (!Number.isFinite(parsed.getTime()) || parsed.getTime() > capturedAt.getTime() + 86_400_000) return null
+  if (!Number.isFinite(parsed.getTime()) || parsed.getTime() < bounds.earliest ||
+    parsed.getTime() > bounds.latest || parsed.getTime() > capturedAt.getTime() + 86_400_000) return null
   return parsed.toISOString()
 }
 
@@ -235,8 +320,13 @@ function validateContext(input: ProductResearchBrowserCapture) {
   if (!captureId || !/^[0-9a-f-]{36}$/i.test(captureId)) {
     throw new Error("PRODUCT_RESEARCH_CAPTURE_ID_INVALID")
   }
-  if (!Array.isArray(input.rows) || !input.rows.length || input.rows.length > PRODUCT_RESEARCH_CAPTURE_MAX_ROWS ||
-    input.visibleResultCount !== input.rows.length) {
+  const officialNoSoldResults = input.resultState === "NO_SOLD_RESULTS" &&
+    input.emptyResultProof?.status === "OFFICIAL_NO_SOLD_RESULTS_MESSAGE_VISIBLE" &&
+    input.emptyResultProof?.queryMatched === true
+  if (!Array.isArray(input.rows) || input.rows.length > PRODUCT_RESEARCH_CAPTURE_MAX_ROWS ||
+    input.visibleResultCount !== input.rows.length ||
+    (officialNoSoldResults && (input.rows.length !== 0 || input.visibleResultCount !== 0)) ||
+    (!officialNoSoldResults && input.rows.length === 0)) {
     throw new Error("PRODUCT_RESEARCH_CAPTURE_VISIBLE_ROWS_INVALID")
   }
   const columns = (Array.isArray(input.visibleColumns) ? input.visibleColumns : [])
@@ -248,22 +338,35 @@ function validateContext(input: ProductResearchBrowserCapture) {
     return Object.hasOwn(row, "temporaryTitle") && Object.hasOwn(row, "averageSoldPrice") &&
       Object.hasOwn(row, "totalSold") && Object.hasOwn(row, "lastSoldDate")
   })
-  if (!columns.length || columns.some((column) => FORBIDDEN_KEYS.has(column)) ||
-    !visibleColumnsMatch && !structuredColumnsMatch) {
+  if (!officialNoSoldResults && (!columns.length ||
+    columns.some((column) => FORBIDDEN_KEYS.has(column)) ||
+    !visibleColumnsMatch && !structuredColumnsMatch)) {
     throw new Error("PRODUCT_RESEARCH_CAPTURE_REQUIRED_COLUMNS_MISSING")
   }
-  return { query, capturedAt, rangeLabel, rangeStart, rangeEnd }
+  const visualPatternSchemaVersion = normalizedText(input.visualPatternSchemaVersion, 120)
+  if (visualPatternSchemaVersion &&
+    visualPatternSchemaVersion !== PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION) {
+    throw new Error("PRODUCT_RESEARCH_VISUAL_SCHEMA_VERSION_INVALID")
+  }
+  return { query, capturedAt, rangeLabel, rangeStart, rangeEnd, visualPatternSchemaVersion,
+    officialNoSoldResults,
+    dateBounds: captureDateBounds(input.dateRange, capturedAt) }
 }
 
-function normalizeCaptureRow(value: unknown, capturedAt: Date): NormalizedCaptureRow | { error: string } {
+function normalizeCaptureRow(
+  value: unknown,
+  capturedAt: Date,
+  dateBounds: ReturnType<typeof captureDateBounds>,
+  visualCaptureEnabled: boolean,
+): NormalizedCaptureRow | { error: string } {
   const row = record(value)
   const transientTitle = normalizedText(row.temporaryTitle)
   const sourceListingId = normalizedText(row.listingId, 30)
   const averageSoldPrice = finiteNonNegative(row.averageSoldPrice)
   const averageShipping = row.averageShipping === null || row.averageShipping === undefined
     ? null : finiteNonNegative(row.averageShipping)
-  const totalSold = positiveInteger(row.totalSold)
-  const lastSoldDate = normalizedDate(row.lastSoldDate, capturedAt)
+  const totalSold = confirmedSoldQuantity(row.totalSold)
+  const lastSoldDate = normalizedDate(row.lastSoldDate, capturedAt, dateBounds)
   if (!transientTitle) return { error: "TEMPORARY_TITLE_REQUIRED" }
   if (sourceListingId && !/^\d{9,20}$/.test(sourceListingId)) return { error: "LISTING_ID_INVALID" }
   if (averageSoldPrice === null) return { error: "AVERAGE_SOLD_PRICE_INVALID" }
@@ -288,11 +391,23 @@ function normalizeCaptureRow(value: unknown, capturedAt: Date): NormalizedCaptur
   const variant = normalizedText(row.detectedVariant, 80)?.toLocaleLowerCase("en-US") ?? null
   const keywords = titleTokens(transientTitle)
   const identityHash = sha256({ keywords, packCount, unitCount, size, variant })
+  const productFamilyFingerprint = sha256({ keywords })
+  // A malformed or unavailable visual feature must never reject otherwise valid sold evidence.
+  // The extension sends no pixels or image references; the receiver retains only this safe schema.
+  const visualPattern = visualCaptureEnabled
+    ? sanitizeProductResearchVisualPattern(row.visualPattern, capturedAt) ??
+      rejectedProductResearchVisualPattern({
+        detectedPackCount: packCount,
+        detectedUnitCount: unitCount,
+        analyzedAt: capturedAt,
+      })
+    : null
   return {
     sourceListingId,
     sourceListingReferenceHash: sha256(sourceListingId ?? identityHash),
     titleFingerprint: sha256(transientTitle.toLocaleLowerCase("en-US")),
     identityHash,
+    productFamilyFingerprint,
     detectedOfferPackCount: packCount,
     detectedUnitCount: unitCount,
     detectedSize: size,
@@ -306,6 +421,7 @@ function normalizeCaptureRow(value: unknown, capturedAt: Date): NormalizedCaptur
     freeShippingPercent: percent(row.freeShippingPercent),
     bids: nonNegativeInteger(row.bids),
     visibleImageCount: nonNegativeInteger(row.visibleImageCount),
+    visualPattern,
     keywordSignals: keywords,
     transientTitle,
   }
@@ -416,13 +532,26 @@ export function parseProductResearchBrowserCapture(input: {
   }
   rejectForbiddenKeys(input.capture)
   const context = validateContext(input.capture)
-  const normalized = input.capture.rows.map((row) => normalizeCaptureRow(row, context.capturedAt))
+  const normalized = input.capture.rows.map((row) => normalizeCaptureRow(
+    row,
+    context.capturedAt,
+    context.dateBounds,
+    context.visualPatternSchemaVersion === PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION,
+  ))
   const errorCounts = normalized.reduce<Record<string, number>>((counts, row) => {
     if ("error" in row) counts[row.error] = (counts[row.error] ?? 0) + 1
     return counts
-  }, {})
+  }, context.officialNoSoldResults ? { OFFICIAL_NO_SOLD_RESULTS: 1 } : {})
   const valid = normalized.filter((row): row is NormalizedCaptureRow => !("error" in row))
-  if (!valid.length) {
+  // A structurally valid official table can legitimately contain no usable
+  // historical-sale date. Preserve that negative result without converting a
+  // displayed price or another numeric label into sold evidence. Other
+  // all-row parser failures still reject the capture because they can signal
+  // a broken extractor rather than an empty historical market.
+  const zeroValidSoldRowsAccepted = context.officialNoSoldResults ||
+    valid.length === 0 && Object.keys(errorCounts).length === 1 &&
+      errorCounts.LAST_SOLD_DATE_INVALID === input.capture.rows.length
+  if (!valid.length && !zeroValidSoldRowsAccepted) {
     const reasons = Object.entries(errorCounts).sort((left, right) => right[1] - left[1])
       .map(([code]) => code).slice(0, 3)
     throw new Error(`PRODUCT_RESEARCH_CAPTURE_NO_VALID_SOLD_ROWS:${reasons.join(":") || "UNKNOWN"}`)
@@ -463,9 +592,12 @@ export function parseProductResearchBrowserCapture(input: {
   return {
     source: PRODUCT_RESEARCH_BROWSER_CAPTURE_SOURCE,
     importVersion: PRODUCT_RESEARCH_BROWSER_CAPTURE_VERSION,
+    visualPatternSchemaVersion: context.visualPatternSchemaVersion,
     captureId: input.capture.captureId,
     captureHash: sha256({ captureId: input.capture.captureId, captureWindowHash,
-      queryHash: sha256(context.query), rows: uniqueRows.map((row) => row.deduplicationKey) }),
+      queryHash: sha256(context.query),
+      resultState: context.officialNoSoldResults ? "NO_SOLD_RESULTS" : "SOLD_ROWS_VISIBLE",
+      rows: uniqueRows.map((row) => row.deduplicationKey) }),
     captureWindowHash,
     listingSite: input.capture.listingSite,
     searchQueryHash: sha256(context.query.toLocaleLowerCase("en-US")),
@@ -477,6 +609,8 @@ export function parseProductResearchBrowserCapture(input: {
     duplicateWithinCaptureCount: rows.length - uniqueRows.length,
     rejectedCount: input.capture.rows.length - valid.length,
     errorCounts,
+    zeroValidSoldRowsAccepted,
+    officialNoSoldResults: context.officialNoSoldResults,
     rows: uniqueRows,
     matchCounts: {
       exactLuna: matchCount("EXACT_LUNA_MATCH"),
@@ -577,6 +711,10 @@ export function targetFromCatalogRow(row: JsonRecord): ProductResearchCaptureTar
     supplierVariantId,
     supplierSku: normalizedText(row.sku, 100),
     sourceType: "LUNA_CATALOG",
+    identityEvidenceSource: normalizedText(metadata.identityEvidenceSource, 80) ===
+      "LUNA_OFFICIAL_PRODUCT_DESCRIPTION"
+      ? "LUNA_OFFICIAL_PRODUCT_DESCRIPTION" : "LUNA_STRUCTURED_CATALOG",
+    identityEvidenceHash: normalizedText(metadata.identityEvidenceHash, 100),
     identity,
     productName,
   }
@@ -673,22 +811,91 @@ async function latestCaptureTargets(supabase: SupabaseClient, accountKey: string
   return { runId: run?.id ?? null, targets: [...byVariant.values()] }
 }
 
+function visualComparableRows(rows: ClassifiedProductResearchCapture[]): VisualComparableRow[] {
+  return rows.flatMap((row) => row.visualPattern ? [{
+    evidenceDeduplicationKey: row.deduplicationKey,
+    identityHash: row.identityHash,
+    productFamilyFingerprint: row.productFamilyFingerprint,
+    matchClassification: row.matchClassification,
+    detectedOfferPackCount: row.detectedOfferPackCount,
+    confirmedSoldQuantity: row.totalSold,
+    lastSoldDate: row.lastSoldDate,
+    visualPattern: row.visualPattern,
+  }] : [])
+}
+
+function visualImportUnavailable(rows: VisualComparableRow[], error: string | null) {
+  const count = (status: ProductResearchVisualPattern["analysisStatus"]) => rows.filter((row) =>
+    row.visualPattern.analysisStatus === status).length
+  return {
+    captureSupported: rows.length > 0,
+    thumbnailDetectedCount: rows.filter((row) => row.visualPattern.imagePresent).length,
+    analyzedCount: count("ANALYZED"),
+    partialCount: count("PARTIAL"),
+    unavailableCount: count("UNAVAILABLE"),
+    rejectedCount: count("REJECTED"),
+    persistedCount: 0,
+    existingVisualCount: 0,
+    visualBriefs: [],
+    error,
+  }
+}
+
+async function persistVisualEnrichment(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  batchId: string
+  runId: string | null
+  parsed: ReturnType<typeof parseProductResearchBrowserCapture>
+  categoryId: string | null
+}) {
+  const rows = visualComparableRows(input.parsed.rows)
+  if (input.parsed.visualPatternSchemaVersion !== PRODUCT_RESEARCH_VISUAL_PATTERN_SCHEMA_VERSION) {
+    return visualImportUnavailable([], null)
+  }
+  try {
+    return await persistProductResearchVisualPatterns({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      captureBatchId: input.batchId,
+      captureRunId: input.runId,
+      queryContextHash: input.parsed.searchQueryHash,
+      categoryId: input.categoryId,
+      capturedAt: input.parsed.capturedAt,
+      rows,
+    })
+  } catch {
+    // Commercial evidence has already been durably imported. Visual enrichment is additive only.
+    return visualImportUnavailable(rows, "VISUAL_PATTERN_PERSIST_UNAVAILABLE")
+  }
+}
+
 export async function importProductResearchBrowserCapture(input: {
   supabase: SupabaseClient
   accountKey: string
   actorId: string
   capture: ProductResearchBrowserCapture
+  visualContext?: { categoryId?: string | null }
   now?: Date
 }) {
   const { runId, targets } = await latestCaptureTargets(input.supabase, input.accountKey)
   const parsed = parseProductResearchBrowserCapture({ capture: input.capture, targets })
   const { data: duplicateBatch, error: duplicateBatchError } = await input.supabase
     .from("marketplace_product_research_capture_batches")
-    .select("id,search_query_hash,source_row_count,valid_count,imported_count,duplicate_count,rejected_count,exact_luna_match_count,different_pack_count,different_size_count,different_variant_count,ambiguous_count,no_luna_match_count,candidates_enriched_count,captured_at")
+    .select("id,search_query_hash,source_row_count,valid_count,imported_count,duplicate_count,rejected_count,exact_luna_match_count,different_pack_count,different_size_count,different_variant_count,ambiguous_count,no_luna_match_count,candidates_enriched_count,error_counts,captured_at")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
     .eq("capture_hash", parsed.captureHash).maybeSingle()
   if (duplicateBatchError) throw new Error("PRODUCT_RESEARCH_CAPTURE_DEDUP_READ_FAILED")
-  if (duplicateBatch) return { duplicate: true, batchId: duplicateBatch.id,
+  if (duplicateBatch) {
+    const visual = await persistVisualEnrichment({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      batchId: duplicateBatch.id,
+      runId,
+      parsed,
+      categoryId: input.visualContext?.categoryId ?? null,
+    })
+    return { duplicate: true, batchId: duplicateBatch.id,
     searchQueryHash: duplicateBatch.search_query_hash,
     rowCount: duplicateBatch.source_row_count, validCount: duplicateBatch.valid_count,
     importedCount: duplicateBatch.imported_count, duplicateCount: duplicateBatch.duplicate_count,
@@ -700,8 +907,13 @@ export async function importProductResearchBrowserCapture(input: {
       ambiguous: duplicateBatch.ambiguous_count, noLunaMatch: duplicateBatch.no_luna_match_count },
     candidatesEnriched: duplicateBatch.candidates_enriched_count,
     capturedAt: duplicateBatch.captured_at, reanalysisRequired: false,
+    zeroValidSoldRowsAccepted: Number(duplicateBatch.valid_count) === 0,
+    officialNoSoldResults:
+      Number(record(duplicateBatch.error_counts).OFFICIAL_NO_SOLD_RESULTS) === 1,
+    visual,
     rawHtmlStored: false, temporaryTitlesStored: false, competitorImagesDownloaded: 0,
     piiStored: false, openAiCalls: 0, ebayWrites: 0 }
+  }
 
   const keys = parsed.rows.map((row) => row.deduplicationKey)
   const existing = new Set<string>()
@@ -765,11 +977,22 @@ export async function importProductResearchBrowserCapture(input: {
       .eq("id", runId).eq("marketplace_account_key", input.accountKey)
     if (error) throw new Error("PRODUCT_RESEARCH_CAPTURE_RUN_MARK_FAILED")
   }
+  const visual = await persistVisualEnrichment({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    batchId,
+    runId,
+    parsed,
+    categoryId: input.visualContext?.categoryId ?? null,
+  })
   return { duplicate: false, batchId, searchQueryHash: parsed.searchQueryHash,
     rowCount: parsed.sourceRowCount,
     validCount: parsed.validCount, importedCount: fresh.length, duplicateCount,
     rejectedCount: parsed.rejectedCount, matchCounts: parsed.matchCounts,
     candidatesEnriched, capturedAt: parsed.capturedAt, reanalysisRequired: fresh.length > 0,
+    zeroValidSoldRowsAccepted: parsed.zeroValidSoldRowsAccepted,
+    officialNoSoldResults: parsed.officialNoSoldResults,
+    visual,
     rawHtmlStored: false, temporaryTitlesStored: false, competitorImagesDownloaded: 0,
     piiStored: false, openAiCalls: 0, ebayWrites: 0 }
 }

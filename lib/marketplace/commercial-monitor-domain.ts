@@ -153,6 +153,34 @@ function isoDate(value: unknown) {
   return candidate && Number.isFinite(Date.parse(candidate)) ? candidate : null
 }
 
+function activeRefund(value: unknown) {
+  const refund = record(value)
+  const status = text(
+    refund.refundStatus ?? refund.refundState ?? refund.status,
+    40,
+  ).toUpperCase()
+  return !status || !["FAILED", "CANCELLED", "REJECTED"].includes(status)
+}
+
+function orderCannotBeFulfilled(order: Record<string, unknown>) {
+  const cancel = record(order.cancelStatus)
+  const cancellationStatus = text(
+    cancel.cancelState ?? cancel.cancelStatus,
+    40,
+  ).toUpperCase()
+  const cancelled = Boolean(cancellationStatus) && ![
+    "NONE_REQUESTED",
+    "CANCEL_REJECTED",
+    "CANCEL_CLOSED_NO_REFUND",
+  ].includes(cancellationStatus)
+  const paymentRefunded = array(record(order.paymentSummary).refunds)
+    .some(activeRefund)
+  const lineRefunded = array(order.lineItems).some((line) =>
+    array(record(line).refunds).some(activeRefund)
+  )
+  return cancelled || paymentRefunded || lineRefunded
+}
+
 export function normalizeCompletedEbayOrders(payload: unknown): SafeMarketplaceOrder[] {
   return array(record(payload).orders).flatMap((value) => {
     const order = record(value)
@@ -161,7 +189,14 @@ export function normalizeCompletedEbayOrders(payload: unknown): SafeMarketplaceO
     const lastModifiedDate = isoDate(order.lastModifiedDate)
     const orderPaymentStatus = text(order.orderPaymentStatus, 40).toUpperCase()
     const orderFulfillmentStatus = text(order.orderFulfillmentStatus, 40).toUpperCase()
-    if (!ebayOrderId || !creationDate || !lastModifiedDate || orderPaymentStatus !== "PAID") {
+    if (
+      !ebayOrderId ||
+      !creationDate ||
+      !lastModifiedDate ||
+      orderPaymentStatus !== "PAID" ||
+      !["NOT_STARTED", "IN_PROGRESS"].includes(orderFulfillmentStatus) ||
+      orderCannotBeFulfilled(order)
+    ) {
       return []
     }
     const pricing = record(order.pricingSummary)
@@ -350,6 +385,33 @@ export function evaluateCommercialRules(input: {
   }
 
   const active = snapshot.listingStatus === "active"
+  if (
+    active &&
+    snapshot.supplierCost !== null &&
+    input.previous?.supplierCost !== null &&
+    input.previous?.supplierCost !== undefined &&
+    Math.abs(snapshot.supplierCost - input.previous.supplierCost) >= 0.01
+  ) {
+    const direction = snapshot.supplierCost > input.previous.supplierCost
+      ? "up"
+      : "down"
+    events.push(baseEvent(
+      snapshot,
+      thresholds,
+      "LUNA_COST_CHANGED",
+      direction === "up" ? "high" : "medium",
+      {
+        previousSupplierCost: input.previous.supplierCost,
+        currentSupplierCost: snapshot.supplierCost,
+        direction,
+        source: "FRESH_EXACT_LUNA_VARIANT",
+      },
+      direction === "up"
+        ? "Recalcular el precio y autorizar el nuevo piso seguro desde Seller OS."
+        : "Recalcular el precio; mantenerlo o cambiarlo sólo después de revisar el margen.",
+      `${input.previous.supplierCost}->${snapshot.supplierCost}`,
+    ))
+  }
   if (active && snapshot.stockAvailable !== null && snapshot.stockAvailable >= thresholds.lowStockMinimum && snapshot.stockAvailable <= thresholds.lowStockMaximum) {
     events.push(baseEvent(snapshot, thresholds, "LOW_STOCK", "high", {
       stockAvailable: snapshot.stockAvailable,
@@ -390,6 +452,7 @@ export function evaluateCommercialRules(input: {
 }
 
 export type DailyCommercialSummary = {
+  healthStatus: "ZERO_SALES_HEALTHY" | "ZERO_SALES_DATA_INCOMPLETE" | "SALES_ACTIVITY_CONFIRMED"
   activeListings: number
   impressions: number | null
   views: number | null
@@ -427,6 +490,9 @@ export function buildDailyCommercialSummary(input: {
   const impressions = sumWhenComplete("impressions")
   const views = sumWhenComplete("views")
   return {
+    healthStatus: input.confirmedSales > 0
+      ? "SALES_ACTIVITY_CONFIRMED"
+      : complete ? "ZERO_SALES_HEALTHY" : "ZERO_SALES_DATA_INCOMPLETE",
     activeListings: input.snapshots.filter((row) => row.listingStatus === "active").length,
     impressions,
     views,
@@ -453,6 +519,7 @@ export function renderDailyCommercialSummary(summary: DailyCommercialSummary) {
   return [
     "📊 RESUMEN DIARIO EBAY",
     "",
+    `Estado: ${summary.healthStatus}`,
     `Listings activos: ${summary.activeListings}`,
     `Impresiones: ${value(summary.impressions)}`,
     `Vistas: ${value(summary.views)}`,

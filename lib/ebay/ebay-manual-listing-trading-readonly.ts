@@ -5,6 +5,10 @@ import {
   ebayProductionAccountFingerprint,
   getEbayProductionIdentityBindingConfiguration,
 } from "./ebay-seller-account-scope"
+import {
+  createEbayReadonlyRateLimitError,
+  getEbayReadonlyRateLimitMetadata,
+} from "./ebay-readonly-rate-limit"
 
 export const EBAY_MANUAL_LISTING_TRADING_CONNECTOR =
   "EBAY_TRADING_GET_ITEM_READONLY" as const
@@ -29,6 +33,10 @@ export type TradingManualListingResult = {
   itemId: string
   listingStatus: string | null
   ebaySku: string | null
+  title: string | null
+  availableQuantity: number | null
+  price: number | null
+  currency: string | null
   safeDefaults: SafeListingDefaults
   observedAt: string
 }
@@ -115,6 +123,24 @@ function numericIdentifier(value: string | null, maximumLength = 20) {
     : null
 }
 
+function safeListingTitle(value: string | null) {
+  return value && value.length <= 80 && !/[\u0000-\u001f\u007f]/.test(value)
+    ? value
+    : null
+}
+
+function nonNegativeInteger(value: string | null) {
+  if (value === null || value === "") return null
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
+}
+
+function positiveNumber(value: string | null) {
+  if (value === null || value === "") return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
 export function parseTradingManualListingResponses(
   getUserXml: string,
   getItemXml: string,
@@ -145,6 +171,16 @@ export function parseTradingManualListingResponses(
     tradingXmlContainer(item, "SellingStatus"),
     "ListingStatus",
   )
+  const sellingStatus = tradingXmlContainer(item, "SellingStatus")
+  const listedQuantity = nonNegativeInteger(
+    tradingXmlTagValue(item, "Quantity"),
+  )
+  const quantitySold = nonNegativeInteger(
+    tradingXmlTagValue(sellingStatus, "QuantitySold"),
+  ) ?? 0
+  const availableQuantity = listedQuantity === null
+    ? null
+    : Math.max(0, listedQuantity - quantitySold)
   const sameSeller =
     authenticatedUser.toLocaleLowerCase("en-US") ===
     sellerUser.toLocaleLowerCase("en-US")
@@ -200,6 +236,11 @@ export function parseTradingManualListingResponses(
     itemId: expectedItemId,
     listingStatus: safeIdentifier(listingStatus, 40),
     ebaySku: safeIdentifier(tradingXmlTagValue(item, "SKU")),
+    title: safeListingTitle(tradingXmlTagValue(item, "Title")),
+    availableQuantity,
+    price: positiveNumber(tradingXmlTagValue(sellingStatus, "CurrentPrice")),
+    currency: safeIdentifier(tradingXmlTagValue(item, "Currency"), 3)
+      ?.toUpperCase() ?? null,
     safeDefaults,
     observedAt: now.toISOString(),
   }
@@ -246,6 +287,13 @@ async function getTradingAccessToken(
     cache: "no-store",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
+  if (response.status === 429) {
+    throw createEbayReadonlyRateLimitError("EBAY_OAUTH_429", response, {
+      apiFamily: "OAUTH",
+      operation: "TRADING_REFRESH_TOKEN",
+      endpoint: "/identity/v1/oauth2/token",
+    })
+  }
   if (!response.ok) {
     throw new Error(`EBAY_TRADING_OAUTH_${response.status}`)
   }
@@ -293,7 +341,12 @@ function requestXml(callName: "GetUser" | "GetItem", ebayItemId?: string) {
       "Item.ItemID",
       "Item.Seller.UserID",
       "Item.SellingStatus.ListingStatus",
+      "Item.Title",
       "Item.SKU",
+      "Item.Quantity",
+      "Item.SellingStatus.QuantitySold",
+      "Item.SellingStatus.CurrentPrice",
+      "Item.Currency",
       "Item.PrimaryCategory.CategoryID",
       "Item.ConditionID",
       "Item.SellerProfiles.SellerShippingProfile.ShippingProfileID",
@@ -335,14 +388,22 @@ async function tradingRead(
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
       const xml = await response.text()
+      if (response.status === 429) {
+        throw createEbayReadonlyRateLimitError("EBAY_READONLY_GET_429", response, {
+          apiFamily: "TRADING",
+          operation: callName === "GetUser" ? "GET_USER" : "GET_ITEM_IDENTITY",
+          endpoint: "/ws/api.dll",
+        })
+      }
       if (response.ok && responseAccepted(xml)) return xml
       if (
-        ![429, 500, 502, 503, 504].includes(response.status) ||
+        ![500, 502, 503, 504].includes(response.status) ||
         attempt === MAX_RETRIES - 1
       ) {
         throw new Error(`EBAY_TRADING_${callName.toUpperCase()}_${response.status}`)
       }
     } catch (error) {
+      if (getEbayReadonlyRateLimitMetadata(error)) throw error
       if (attempt === MAX_RETRIES - 1) throw error
     }
     await wait(400 * (attempt + 1))

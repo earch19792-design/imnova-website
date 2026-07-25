@@ -86,7 +86,8 @@ export function getEbayFulfillmentTrackingAuthorizationConfiguration(
     !value.partialDedicatedPair
   const operatorPrepared = validateEbayFulfillmentTrackingPublicKey(value.handoffPublicKey)
   const writeGatesAllOff = !runtime.flags.oauthEnabled && !runtime.flags.writeEnabled &&
-    !runtime.flags.realAdapterEnabled && !runtime.flags.submitterEnabled
+    !runtime.flags.realAdapterEnabled && !runtime.flags.submitterEnabled &&
+    !runtime.flags.writtenConsentEnabled
   return {
     configured: baseConfigured && operatorPrepared && writeGatesAllOff,
     baseConfigured,

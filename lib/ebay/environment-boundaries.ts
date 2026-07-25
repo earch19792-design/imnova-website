@@ -19,6 +19,7 @@ export const EBAY_SELLER_OS_API_PATHS = [
   "/api/admin/ebay/images",
   "/api/admin/ebay/listings/register",
   "/api/admin/ebay/draft-only",
+  "/api/admin/ebay/account-policies",
   "/api/admin/ebay/active-listings/sync",
   "/api/admin/ebay/command-center",
   "/api/admin/ebay/configuration",
@@ -31,6 +32,7 @@ export const EBAY_SELLER_OS_API_PATHS = [
   "/api/admin/ebay/luna-opportunity-queue",
   "/api/admin/ebay/luna-product-import",
   "/api/admin/ebay/listing-optimization",
+  "/api/admin/ebay/publication-oauth",
 ] as const
 
 const LEGACY_EBAY_PRO_PATHS = [

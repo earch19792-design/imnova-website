@@ -1,6 +1,5 @@
 import { timingSafeEqual } from "node:crypto"
 
-const PILOT_MAX_DURATION_MS = 24 * 60 * 60 * 1_000
 const SCHEDULE_TICK_TOLERANCE_MS = 30_000
 
 type PilotEnvironment = {
@@ -30,31 +29,28 @@ export function commercialPreviewPilotConfiguration(
   const durationMs = startedAtMs !== null && expiresAtMs !== null
     ? expiresAtMs - startedAtMs
     : null
-  const validWindow = durationMs !== null && durationMs > 0 && durationMs <= PILOT_MAX_DURATION_MS
-  const nowMs = now.getTime()
-  const withinWindow = validWindow && startedAtMs !== null && expiresAtMs !== null &&
-    nowMs >= startedAtMs && nowMs < expiresAtMs
+  const legacyDatesValid =
+    (!environment.startedAt || startedAtMs !== null) &&
+    (!environment.expiresAt || expiresAtMs !== null)
 
-  let status: "production_blocked" | "disabled" | "misconfigured" | "scheduled" | "active" | "expired"
+  let status: "production_blocked" | "disabled" | "misconfigured" | "active"
   if (!previewOnly) status = "production_blocked"
   else if (!previewFlagEnabled || !runtimeFlagEnabled) status = "disabled"
-  else if (!validWindow || startedAtMs === null || expiresAtMs === null) status = "misconfigured"
-  else if (nowMs < startedAtMs) status = "scheduled"
-  else if (nowMs >= expiresAtMs) status = "expired"
+  else if (!legacyDatesValid) status = "misconfigured"
   else status = "active"
 
   return {
-    enabled: status === "active" && withinWindow,
+    enabled: status === "active",
     status,
     previewOnly: true,
     currentEnvironment,
     startedAt: startedAtMs === null ? null : new Date(startedAtMs).toISOString(),
     expiresAt: expiresAtMs === null ? null : new Date(expiresAtMs).toISOString(),
     durationHours: durationMs === null ? null : durationMs / (60 * 60 * 1_000),
-    remainingSeconds: status === "active" && expiresAtMs !== null
-      ? Math.max(0, Math.ceil((expiresAtMs - nowMs) / 1_000))
-      : 0,
-    automaticCutoff: true,
+    remainingSeconds: null,
+    automaticCutoff: false,
+    monitoringMode: "continuous_while_active" as const,
+    requiresActiveListings: true,
     productionEnabled: false,
   }
 }
@@ -70,16 +66,22 @@ export function currentCommercialPreviewPilotConfiguration(now = new Date()) {
 }
 
 export function commercialPreviewCronAuthorized(request: Request) {
-  const authorization = request.headers.get("authorization") ?? ""
-  const provided = Buffer.from(authorization)
+  const providedHeaders = [
+    request.headers.get("authorization"),
+    // Vercel Deployment Protection may reserve Authorization for its own
+    // identity. This dedicated equivalent keeps Preview cron/preflight access
+    // possible without weakening the shared-secret check.
+    request.headers.get("x-ebay-commercial-authorization"),
+  ].map((value) => value?.trim() ?? "").filter(Boolean)
   const allowed = [
     process.env.EBAY_COMMERCIAL_PILOT_CRON_SECRET,
     process.env.CRON_SECRET,
   ].map((value) => value?.trim() ?? "").filter(Boolean)
-  return allowed.some((secret) => {
+  return providedHeaders.some((providedHeader) => allowed.some((secret) => {
+    const provided = Buffer.from(providedHeader)
     const expected = Buffer.from(`Bearer ${secret}`)
     return provided.length === expected.length && timingSafeEqual(provided, expected)
-  })
+  }))
 }
 
 export function commercialScheduleLaneDue(
@@ -138,7 +140,8 @@ export function summarizeCommercialPilotRuns(input: {
     ),
     alertsGenerated: runs.reduce((sum, run) => sum + numberMetric(run.metrics, "alertsGenerated"), 0),
     duplicatesAvoided: runs.reduce((sum, run) => sum + numberMetric(run.metrics, "duplicatesAvoided"), 0),
-    whatsappDelivered: input.deliveryAttempts.filter((attempt) => attempt.status === "delivered").length,
+    whatsappMetaAccepted: input.deliveryAttempts.filter((attempt) => attempt.status === "delivered").length,
+    whatsappDelivered: 0,
     whatsappFailed: input.deliveryAttempts.filter((attempt) => attempt.status === "failed").length,
     retries: input.deliveryAttempts.filter(
       (attempt) => Number(attempt.attempt_number ?? 1) > 1,

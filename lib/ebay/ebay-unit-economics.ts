@@ -10,8 +10,10 @@ export type EbayUnitEconomicsConfig = {
 }
 
 export const DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG: EbayUnitEconomicsConfig = {
-  estimatedEbayFeeRate: 0.15,
-  fixedOrderFee: 0.30,
+  // Conservative pre-Taxonomy reserve. It is intentionally distinct from an
+  // exact category fee and must be labelled as an estimate in every consumer.
+  estimatedEbayFeeRate: 0.153,
+  fixedOrderFee: 0.40,
   estimatedOutboundShipping: 6.99,
   returnsReserveRate: 0.04,
   promotedListingsReserveRate: 0.05,
@@ -40,6 +42,14 @@ function bounded(
 
 function money(value: number) {
   return Math.round(value * 100) / 100
+}
+
+function minimumMoney(value: number) {
+  // A price floor that lands exactly on a cent can otherwise miss its own
+  // gate by a floating-point fraction (for example 4.999999999999999 profit).
+  // The tiny guard makes that boundary one cent conservative without changing
+  // ordinary non-boundary values.
+  return Math.ceil((value + 1e-9) * 100) / 100
 }
 
 export function normalizeEbayUnitEconomicsConfig(
@@ -123,7 +133,10 @@ export function calculateEbayUnitEconomics(
     }
   }
 
-  const estimatedEbayFees = salePrice * config.estimatedEbayFeeRate + config.fixedOrderFee
+  const appliedFixedOrderFee = salePrice <= 10
+    ? Math.min(config.fixedOrderFee, 0.30)
+    : Math.max(config.fixedOrderFee, 0.40)
+  const estimatedEbayFees = salePrice * config.estimatedEbayFeeRate + appliedFixedOrderFee
   const returnsReserve = salePrice * config.returnsReserveRate
   const promotedListingsReserve = salePrice * config.promotedListingsReserveRate
   const estimatedNetProfit = salePrice - supplierCost - config.estimatedOutboundShipping -
@@ -137,7 +150,7 @@ export function calculateEbayUnitEconomics(
   const variableRate = config.estimatedEbayFeeRate + config.returnsReserveRate +
     config.promotedListingsReserveRate
   const minimumProfitablePrice = (
-    supplierCost + config.estimatedOutboundShipping + config.fixedOrderFee + config.minimumNetProfit
+    supplierCost + config.estimatedOutboundShipping + appliedFixedOrderFee + config.minimumNetProfit
   ) / Math.max(0.01, 1 - variableRate)
   const passesProfitGate = estimatedNetProfit >= config.minimumNetProfit &&
     estimatedNetMarginPercent >= config.minimumNetMarginPercent &&
@@ -159,6 +172,65 @@ export function calculateEbayUnitEconomics(
     minimumProfitablePrice: money(minimumProfitablePrice),
     passesProfitGate,
     config,
+    feePolicy: {
+      version: "EBAY_US_SELLING_FEES_2026_07_01_PRE_TAXONOMY_RESERVE_V1",
+      status: "CONSERVATIVE_CATEGORY_AND_ACCOUNT_PROFILE_PENDING",
+      appliedFixedOrderFee: money(appliedFixedOrderFee),
+      salesTaxIncludedInFeeBasis: false,
+      sellerPerformanceSurchargeIncluded: false,
+      internationalFeeIncluded: false,
+      exactFeeClaimed: false,
+    },
     calculationSource: "SERVER_CANONICAL_EBAY_UNIT_ECONOMICS_V1" as const,
+  }
+}
+
+export function calculateEbayMinimumOperatorPrice(
+  input: { supplierCost: unknown },
+  overrides: Partial<EbayUnitEconomicsConfig> = {},
+) {
+  const config = normalizeEbayUnitEconomicsConfig(overrides)
+  const supplierCost = finite(input.supplierCost)
+  if (supplierCost === null || supplierCost < 0) {
+    return {
+      ready: false as const,
+      supplierCost,
+      minimumOperatorPrice: null,
+      config,
+      calculationSource: "SERVER_OWN_COST_PRICE_FLOOR_V1" as const,
+    }
+  }
+
+  const variableRate = config.estimatedEbayFeeRate + config.returnsReserveRate +
+    config.promotedListingsReserveRate
+  const appliedFixedOrderFee = Math.max(config.fixedOrderFee, 0.40)
+  const fixedBase = supplierCost + config.estimatedOutboundShipping + appliedFixedOrderFee
+  const profitFloor = (fixedBase + config.minimumNetProfit) / Math.max(0.01, 1 - variableRate)
+  const marginRate = config.minimumNetMarginPercent / 100
+  const marginFloor = fixedBase / Math.max(0.01, 1 - variableRate - marginRate)
+  const roiRate = config.minimumRoiPercent / 100
+  const roiFloor = (supplierCost * (1 + roiRate) + config.estimatedOutboundShipping + appliedFixedOrderFee) /
+    Math.max(0.01, 1 - variableRate)
+
+  return {
+    ready: true as const,
+    supplierCost: money(supplierCost),
+    minimumOperatorPrice: minimumMoney(Math.max(profitFloor, marginFloor, roiFloor)),
+    components: {
+      minimumNetProfitPrice: minimumMoney(profitFloor),
+      minimumNetMarginPrice: minimumMoney(marginFloor),
+      minimumRoiPrice: minimumMoney(roiFloor),
+    },
+    config,
+    feePolicy: {
+      version: "EBAY_US_SELLING_FEES_2026_07_01_PRE_TAXONOMY_RESERVE_V1",
+      status: "CONSERVATIVE_CATEGORY_AND_ACCOUNT_PROFILE_PENDING",
+      appliedFixedOrderFee: money(appliedFixedOrderFee),
+      salesTaxIncludedInFeeBasis: false,
+      sellerPerformanceSurchargeIncluded: false,
+      internationalFeeIncluded: false,
+      exactFeeClaimed: false,
+    },
+    calculationSource: "SERVER_OWN_COST_PRICE_FLOOR_V1" as const,
   }
 }

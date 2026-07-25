@@ -449,8 +449,21 @@ export default function RegisterManualEbayListingPage() {
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search)
+    const requestedEbayItemId = (search.get("ebayItemId") ?? "").trim()
+    const ebayItemId = /^\d{9,20}$/.test(requestedEbayItemId)
+      ? requestedEbayItemId
+      : ""
+    const canonicalEbayUrl = ebayItemId
+      ? `https://www.ebay.com/itm/${ebayItemId}`
+      : ""
+    const requestedEbayUrl = (search.get("ebayUrl") ?? "").trim()
+    const ebayUrl = requestedEbayUrl
+      ? requestedEbayUrl === canonicalEbayUrl ? canonicalEbayUrl : ""
+      : canonicalEbayUrl
     setForm((current) => ({
       ...current,
+      ebayItemId: ebayItemId || current.ebayItemId,
+      ebayUrl: ebayUrl || current.ebayUrl,
       opportunityId: search.get("opportunityId") ?? current.opportunityId,
       candidateKey: search.get("candidateKey") ?? current.candidateKey,
       supplierSku: search.get("supplierSku") ?? current.supplierSku,
@@ -824,7 +837,7 @@ export default function RegisterManualEbayListingPage() {
           </div>
         </section>
       </section>
-      <SellerOsMobileNav active="operation" />
+      <SellerOsMobileNav active="operations" />
     </main>
   )
 }

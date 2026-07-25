@@ -1,5 +1,8 @@
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { validateGtinChecksum } from "./ebay-winner-evidence-v2.ts"
+
 export const EBAY_SELLER_KEYWORD_DEMAND_VALIDATION_VERSION =
-  "EBAY-PROFESSIONAL-KEYWORD-CLASSIFICATION-V2"
+  "EBAY-PROFESSIONAL-KEYWORD-CLASSIFICATION-V4"
 
 export type EbaySalesEvidenceSource =
   | "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
@@ -8,6 +11,7 @@ export type EbaySalesEvidenceSource =
 
 export type EbaySellerComparableInput = {
   itemId?: string | null
+  epid?: string | null
   title?: string | null
   itemWebUrl?: string | null
   imageUrl?: string | null
@@ -24,6 +28,8 @@ export type EbaySellerComparableInput = {
   gtin?: string | null
   brand?: string | null
   mpn?: string | null
+  model?: string | null
+  lotSize?: number | null
   color?: string | null
   size?: string | null
   shortDescription?: string | null
@@ -68,8 +74,10 @@ export type EbaySellerKeywordCandidate = {
   supplierSku?: string | null
   categoryId?: string | null
   gtin?: string | null
+  epid?: string | null
   brand?: string | null
   mpn?: string | null
+  model?: string | null
   color?: string | null
   size?: string | null
   packQuantity?: number | null
@@ -94,9 +102,9 @@ export type EbaySellerKeywordDemandInput = {
 
 const STOP_WORDS = new Set([
   "a", "an", "and", "at", "authentic", "best", "brand", "by", "fast",
-  "for", "free", "from", "genuine", "in", "is", "item", "new", "of",
-  "on", "original", "sale", "seller", "shipping", "the", "to", "with",
-  "your", "usa", "us",
+  "default", "for", "free", "from", "genuine", "in", "is", "item", "new", "of",
+  "on", "original", "sale", "seller", "shipping", "the", "title", "to", "with",
+  "your", "usa", "us", "variant",
 ])
 
 const UNIT_ALIASES: Record<string, string> = {
@@ -162,6 +170,22 @@ function numberOrNull(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function packCountFromListingTitle(value: unknown) {
+  const title = cleanText(value).toLocaleLowerCase("en-US")
+  const multiplied = title.match(/\b(\d{1,3})\s*(?:sets?|packs?)\b.{0,30}?\b(\d{1,3})\s*(?:pcs?|pieces?)\b/i)
+  if (multiplied) {
+    const groups = Number(multiplied[1])
+    const units = Number(multiplied[2])
+    return Number.isInteger(groups) && groups > 0 && Number.isInteger(units) && units > 0
+      ? groups * units
+      : null
+  }
+  const explicit = title.match(/\b(?:pack|set|lot|case)\s+(?:of\s+)?(\d{1,3})\b/i) ??
+    title.match(/\b(\d{1,3})\s*(?:pcs?|pieces?|pack|pk)\b/i)
+  const parsed = Number(explicit?.[1])
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
 export function buildOfficialEbayVisualMetadata(
   value: unknown,
   observedAt = new Date().toISOString(),
@@ -194,6 +218,11 @@ function booleanOrNull(value: unknown) {
 
 function normalizedIdentifier(value: unknown) {
   return cleanText(value).toLowerCase().replace(/[^a-z0-9]/g, "")
+}
+
+function normalizedGtinIdentifier(value: unknown) {
+  const candidate = cleanText(value).replace(/[^0-9]/g, "")
+  return validateGtinChecksum(candidate) ? candidate : ""
 }
 
 function comparableAspectValue(
@@ -277,6 +306,7 @@ export function assertEbaySellerKeywordReadonlyRequest(
     url.pathname.startsWith("/buy/browse/v1/item/") ||
     url.pathname === "/buy/marketplace-insights/v1_beta/item_sales/search" ||
     url.pathname === "/buy/marketing/v1_beta/merchandised_product" ||
+    url.pathname === "/commerce/catalog/v1_beta/product_summary/search" ||
     url.pathname === "/commerce/taxonomy/v1/get_default_category_tree_id" ||
     /^\/commerce\/taxonomy\/v1\/category_tree\/[^/]+\/(get_category_suggestions|get_item_aspects_for_category)$/.test(url.pathname)
   if (method !== "GET" || url.origin !== "https://api.ebay.com" || !allowedPath) {
@@ -411,10 +441,22 @@ function buildBuyerIntentType(terms: string[]) {
 export function buildEbaySellerKeywordSearchQuery(
   candidate: EbaySellerKeywordCandidate
 ) {
-  const source = [candidate.productName ?? candidate.productTitle, candidate.variantTitle]
+  const productTitle = cleanText(candidate.productName) || cleanText(candidate.productTitle)
+  const variantTitle = cleanText(candidate.variantTitle)
+  const meaningfulVariantTitle = /^(?:default(?:\s+title)?|single(?:\s+variant)?|n\/?a|none)$/i
+    .test(variantTitle) ? "" : variantTitle
+  const source = [productTitle, meaningfulVariantTitle]
     .filter(Boolean)
     .join(" ")
-  return unique(tokens(source)).slice(0, 12).join(" ").slice(0, 180)
+  const completeTokens = unique(tokens(source))
+  const identityTokens = completeTokens.filter((token, index) =>
+    !GENERIC_LOW_SIGNAL_TERMS.has(token) &&
+    !/^\d+(?:ct|pc|pcs|pk|pack)$/.test(token) &&
+    !(/^\d+$/.test(token) && ["ct", "pc", "pack"].includes(completeTokens[index + 1] ?? "")) &&
+    !["ct", "pc", "pack"].includes(token)
+  )
+  const selectedTokens = identityTokens.length >= 3 ? identityTokens : completeTokens
+  return selectedTokens.slice(0, 10).join(" ").slice(0, 180)
 }
 
 export function buildEbaySellerKeywordDemandValidation(
@@ -429,27 +471,57 @@ export function buildEbaySellerKeywordDemandValidation(
   const requestedAsOf = input.asOf ? new Date(input.asOf) : new Date()
   const asOf = Number.isFinite(requestedAsOf.getTime()) ? requestedAsOf : new Date()
   const soldRecencyDays = Math.max(1, numberOrZero(input.soldRecencyDays) || 90)
-  const candidateGtin = normalizedIdentifier(input.candidate.gtin)
+  const candidateGtin = normalizedGtinIdentifier(input.candidate.gtin)
+  const candidateEpid = normalizedIdentifier(input.candidate.epid)
   const candidateBrand = normalizedIdentifier(input.candidate.brand)
-  const candidateMpn = normalizedIdentifier(input.candidate.mpn)
+  const candidateMpn = normalizedIdentifier(input.candidate.mpn ?? input.candidate.model)
+  const candidatePack = numberOrNull(input.candidate.packQuantity)
+  const candidateSize = normalizedIdentifier(input.candidate.size)
+  const candidateColor = normalizedIdentifier(input.candidate.color)
   const comparables = (input.comparables ?? []).map((entry, index) => {
     const title = cleanText(entry.title)
     const identity = buildIdentityAssessment(candidateText, title)
-    const listingGtin = normalizedIdentifier(entry.gtin)
+    const listingGtin = normalizedGtinIdentifier(entry.gtin)
+    const listingEpid = normalizedIdentifier(entry.epid)
     const listingBrand = normalizedIdentifier(entry.brand) ||
       normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["brand"]))
-    const listingMpn = normalizedIdentifier(entry.mpn) ||
+    const listingMpn = normalizedIdentifier(entry.mpn ?? entry.model) ||
       normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["mpn", "model"]))
+    const listingPack = numberOrNull(
+      comparableAspectValue(entry.localizedAspects, ["number in pack", "pack quantity", "pack size"]),
+    ) ?? packCountFromListingTitle(title) ?? numberOrNull(entry.lotSize)
+    const listingSize = normalizedIdentifier(entry.size) ||
+      normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["size", "capacity", "volume"]))
+    const listingColor = normalizedIdentifier(entry.color) ||
+      normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["color", "colour"]))
     const exactGtin = Boolean(candidateGtin && listingGtin && candidateGtin === listingGtin)
+    const exactEpid = Boolean(candidateEpid && listingEpid && candidateEpid === listingEpid)
     const exactBrandMpn = Boolean(
       candidateBrand && listingBrand && candidateBrand === listingBrand &&
       candidateMpn && listingMpn && candidateMpn === listingMpn
     )
     const gtinConflict = Boolean(candidateGtin && listingGtin && candidateGtin !== listingGtin)
+    const epidConflict = Boolean(candidateEpid && listingEpid && candidateEpid !== listingEpid)
+    const candidatePackKnown = candidatePack !== null && Number.isInteger(candidatePack) && candidatePack > 0
+    const listingPackKnown = listingPack !== null && Number.isInteger(listingPack) && listingPack > 0
+    const packConflict = candidatePackKnown && listingPackKnown && candidatePack !== listingPack
+    const brandConflict = Boolean(candidateBrand && listingBrand && candidateBrand !== listingBrand)
+    const mpnConflict = Boolean(candidateMpn && listingMpn && candidateMpn !== listingMpn)
+    const sizeConflict = Boolean(candidateSize && listingSize && candidateSize !== listingSize)
+    const colorConflict = Boolean(candidateColor && listingColor && candidateColor !== listingColor)
+    const epidStructuredConflict = exactEpid &&
+      (brandConflict || mpnConflict || sizeConflict || colorConflict)
     const softBrandConflict = Boolean(
       exactGtin && candidateBrand && listingBrand && candidateBrand !== listingBrand
     )
-    const identifierExact = !gtinConflict && (exactGtin || exactBrandMpn)
+    const baseIdentifierExact = !gtinConflict && !epidConflict &&
+      (exactGtin || exactEpid || exactBrandMpn)
+    // GTIN and ePID normally identify the catalog product, while brand + MPN/model
+    // identifies its base model. None of them proves the seller's exact offer pack.
+    // When our intended pack is known, the comparable must expose the same pack.
+    const offerPackUnresolved = baseIdentifierExact && candidatePackKnown && !listingPackKnown
+    const identifierExact = baseIdentifierExact && !packConflict &&
+      !epidStructuredConflict && !offerPackUnresolved
     const verifiedSoldQuantity =
       entry.source === "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
         ? numberOrZero(entry.totalSoldQuantity)
@@ -464,20 +536,28 @@ export function buildEbaySellerKeywordDemandValidation(
         ? numberOrZero(entry.estimatedSoldQuantity)
         : 0
     const salesQuantity = (verifiedSoldRecent ? verifiedSoldQuantity : 0) || estimatedSoldQuantity
-    const eligibleComparable = Boolean(title) && !gtinConflict &&
+    const eligibleComparable = Boolean(title) && !gtinConflict && !epidConflict && !packConflict &&
+      !epidStructuredConflict && !offerPackUnresolved &&
       identity.conflicts.length === 0 &&
       (identifierExact || ["EXACT", "STRONG"].includes(identity.matchQuality))
-    const identityEvidenceClass = identifierExact
-      ? exactGtin
-        ? "IDENTIFIER_EXACT_GTIN"
-        : "IDENTIFIER_EXACT_BRAND_MPN"
+    const identityEvidenceClass = packConflict
+      ? "OFFER_PACK_CONFLICT"
+      : offerPackUnresolved
+        ? "BASE_PRODUCT_EXACT_OFFER_UNRESOLVED"
+      : epidStructuredConflict || gtinConflict || epidConflict || identity.conflicts.length
+          ? "IDENTITY_CONFLICT"
+      : identifierExact
+        ? exactGtin
+          ? "IDENTIFIER_EXACT_GTIN"
+          : exactEpid
+            ? "IDENTIFIER_EXACT_EPID"
+            : "IDENTIFIER_EXACT_BRAND_MPN"
       : eligibleComparable
         ? "STRONG_SIMILAR_NO_IDENTIFIER"
-        : gtinConflict || identity.conflicts.length
-          ? "IDENTITY_CONFLICT"
           : "CANDIDATE_ONLY"
     return {
       comparableId: cleanText(entry.itemId) || `ebay-comparable-${index + 1}`,
+      epid: cleanText(entry.epid) || null,
       title,
       itemWebUrl: safeEbayUrl(entry.itemWebUrl),
       imageUrl: safeEbayImageUrl(entry.imageUrl),
@@ -497,6 +577,8 @@ export function buildEbaySellerKeywordDemandValidation(
       gtin: cleanText(entry.gtin) || null,
       brand: cleanText(entry.brand) || null,
       mpn: cleanText(entry.mpn) || null,
+      model: cleanText(entry.model) || null,
+      lotSize: listingPack,
       color: cleanText(entry.color) || null,
       size: cleanText(entry.size) || null,
       shortDescription: cleanText(entry.shortDescription) || null,
@@ -547,12 +629,18 @@ export function buildEbaySellerKeywordDemandValidation(
       identityMatchScore: identifierExact ? 100 : identity.score,
       identityMatchQuality: identifierExact ? "EXACT_IDENTIFIER" : identity.matchQuality,
       identityEvidenceClass,
-      identifierMatchType: exactGtin ? "GTIN" : exactBrandMpn ? "BRAND_MPN" : null,
+      identifierMatchType: exactGtin ? "GTIN" : exactEpid ? "EPID"
+        : exactBrandMpn ? "BRAND_MPN" : null,
       identifierExact,
+      baseIdentifierExact,
+      offerPackResolved: candidatePackKnown && listingPackKnown && !packConflict,
       softIdentityConflicts: softBrandConflict ? ["BRAND_CONFLICT_OVERRIDDEN_BY_EXACT_GTIN"] : [],
       identityConflicts: [
         ...identity.conflicts,
         ...(gtinConflict ? ["GTIN_CONFLICT"] : []),
+        ...(epidConflict ? ["EPID_CONFLICT"] : []),
+        ...(packConflict ? ["OFFER_PACK_CONFLICT"] : []),
+        ...(offerPackUnresolved ? ["OFFER_PACK_UNRESOLVED"] : []),
       ],
       eligibleComparable,
       exactTitleCopied: false,

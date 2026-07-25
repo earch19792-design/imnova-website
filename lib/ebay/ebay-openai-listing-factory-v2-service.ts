@@ -1,9 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { buildListingAiEvidenceDistillation } from "./ebay-openai-listing-evidence-distillation"
+import { loadBoundAuthoritativeFactPackage } from "./ebay-authoritative-fact-package"
 
 import {
   assessListingAiDecisionPackage,
+  assertListingAiRevisionFactPackageCurrent,
   buildListingAiInputHash,
   buildListingAiInputFromDecisionPackage,
   createRealOpenAiListingAdapter,
@@ -142,6 +144,29 @@ async function readDecisionPackage(
   if (error) throw new Error("LISTING_AI_DECISION_READ_FAILED")
   if (!data) throw new Error("LISTING_AI_DECISION_NOT_FOUND")
   return data as ListingAiDecisionRow
+}
+
+async function loadDecisionAuthoritativeFacts(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  decision: ListingAiDecisionRow
+  now: Date
+}) {
+  const { data: item, error } = await input.supabase
+    .from("marketplace_listing_approval_queue_items")
+    .select("id,run_id,decision_package_id,package_hash")
+    .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
+    .eq("decision_package_id", input.decision.id).eq("package_hash", input.decision.package_hash)
+    .order("updated_at", { ascending: false }).limit(1).maybeSingle()
+  if (error) throw new Error("LISTING_AI_FACT_BINDING_READ_FAILED")
+  if (!item) throw new Error("AUTHORITATIVE_FACT_PACKAGE_REQUIRED")
+  const bound = await loadBoundAuthoritativeFactPackage({
+    supabase: input.supabase, accountKey: input.accountKey, itemId: item.id,
+    binding: { queueRunId: item.run_id, decisionPackageId: input.decision.id,
+      decisionPackageHash: input.decision.package_hash }, now: input.now,
+  })
+  if (!bound) throw new Error("AUTHORITATIVE_FACT_PACKAGE_REQUIRED")
+  return bound
 }
 
 async function readRunSummary(supabase: SupabaseClient, accountKey: string, runId: string) {
@@ -495,7 +520,12 @@ export async function generateListingAi(input: {
   const now = input.now ?? new Date()
   const decision = await readDecisionPackage(input.supabase, input.accountKey, input.packageId)
   if (decision.package_hash !== input.packageHash) throw new Error("LISTING_AI_PACKAGE_HASH_STALE")
-  const factoryInput = buildListingAiInputFromDecisionPackage(decision, now)
+  const authoritativeFacts = await loadDecisionAuthoritativeFacts({
+    supabase: input.supabase, accountKey: input.accountKey, decision, now,
+  })
+  const factoryInput = buildListingAiInputFromDecisionPackage(decision, now, {
+    authoritativeFactsPackage: authoritativeFacts.package,
+  })
   const promptVersion = configuration.promptVersion
   const model = input.adapterModel ?? configuration.model ?? ""
   if (!model) throw new Error("OPENAI_LISTING_MODEL_MISSING")
@@ -772,7 +802,19 @@ export async function requestListingAiRevision(input: {
     decision.product_identity_fingerprint !== details.run.identity_fingerprint) {
     throw new Error("LISTING_AI_REVISION_PACKAGE_STALE")
   }
-  const factoryInput = buildListingAiInputFromDecisionPackage(decision)
+  const authoritativeFacts = await loadDecisionAuthoritativeFacts({
+    supabase: input.supabase, accountKey: input.accountKey, decision, now: new Date(),
+  })
+  const factoryInput = buildListingAiInputFromDecisionPackage(decision, new Date(), {
+    authoritativeFactsPackage: authoritativeFacts.package,
+  })
+  const revisionModel = input.adapterModel ?? details.run.model
+  // A revision is part of the original auditable generation run. New facts
+  // must start a new run instead of being recorded beneath an obsolete hash.
+  const currentInputHash = assertListingAiRevisionFactPackageCurrent({
+    factoryInput, storedInputHash: details.run.input_hash,
+    promptVersion: details.run.prompt_version, model: revisionModel,
+  })
   const adapter = input.adapter ?? createRealOpenAiListingAdapter(environment)
   return {
     generation: await executeGeneration({
@@ -781,10 +823,10 @@ export async function requestListingAiRevision(input: {
       runId: input.runId,
       candidateId: details.run.candidate_id,
       factoryInput,
-      inputHash: details.run.input_hash,
+      inputHash: currentInputHash,
       idempotencyKeyHash: event.idempotencyHash,
       promptVersion: details.run.prompt_version,
-      model: input.adapterModel ?? details.run.model,
+      model: revisionModel,
       adapter,
       startRevision: details.run.revision_count + 1,
       maxRevisions: details.run.max_revisions,
@@ -830,14 +872,9 @@ export async function getListingAiStatus(
     } catch {
       evidenceDistillation = null
     }
-    if (assessment.eligible) {
-      const factoryInput = buildListingAiInputFromDecisionPackage(typedRow, now)
-      if (configuration.model) {
-        estimatedCostUsd = estimateListingAiPreflightCost(
-          factoryInput, configuration.promptVersion,
-        ).estimatedCostUsd
-      }
-    }
+    // Cost preflight is intentionally deferred until the decision package has
+    // a current, bound authoritative fact package. Status reads never fall back
+    // to the unfiltered decision payload.
     return {
       id: row.id,
       candidateId: row.candidate_id,

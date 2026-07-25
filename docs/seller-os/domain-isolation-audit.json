@@ -1,0 +1,31 @@
+{
+  "version": "SELLER_STAGING_DOMAIN_ISOLATION_AUDIT_V1",
+  "realityCheck": {
+    "repository": "earch19792-design/imnova-website",
+    "branch": "feature/centralize-ebay-mobile-command-center",
+    "sellerStagingSupabaseRef": "vsfthqydfrdzulldbfbe",
+    "productApplicationSupabaseRefPresentInSellerRepository": false,
+    "supabaseRefsFoundInWorkspace": ["vsfthqydfrdzulldbfbe"],
+    "productionChanged": false
+  },
+  "before": { "pageRouteCount": 30, "apiRouteCount": 68, "publicHomeRuntimeCalls": 3, "legacyPublicApiRouteCount": 6, "canonicalMenuAreas": 0 },
+  "afterStaticInventory": { "pageRouteCount": 13, "apiRouteCount": 65, "publicHomeRuntimeCalls": 0, "legacyPublicApiRouteCount": 0, "canonicalMenuAreas": 5, "compiledStaticAssetsBytes": 2317919, "sourceLinesNetReduction": 41189 },
+  "runtimeDependencies": {
+    "community": 0,
+    "publicProducts": 0,
+    "voting": 0,
+    "campaigns": 0,
+    "ideaLab": 0,
+    "publicPopup": 0,
+    "oldDatabaseProjectRefs": 0
+  },
+  "retainedSellerCapabilities": ["Discovery", "Product Research", "Radar eBay", "Top 20", "sold evidence", "Luna matching", "product facts", "economics", "approval"],
+  "validation": {
+    "productionBuild": "PASSED",
+    "typecheck": "PASSED",
+    "lint": "PASSED",
+    "sellerOsTests": "PASSED",
+    "localSmoke": { "publicHome": 200, "adminLogin": 200, "adminWithoutSession": 307, "retiredStore": 410, "privacyLegacyRedirect": 308, "privacy": 200, "terms": 200 }
+  },
+  "limitations": ["The products application's Supabase reference is intentionally not configured or discoverable in this Seller repository.", "A comparable pre-change client bundle and staging p50/p95 were not preserved; source and route reductions are reported without fabricating those measurements."]
+}

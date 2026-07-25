@@ -198,7 +198,7 @@ export default function EbayListingOptimizationPage() {
         <section className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.04] p-5"><h2 className="text-xl font-black">Archivos de salida</h2><div className="mt-4 grid gap-2 sm:grid-cols-2">{Object.entries(files).map(([name, content]) => <button type="button" key={name} onClick={() => download(name, content)} className="min-h-11 rounded-xl border border-emerald-100/20 px-3 text-sm font-black text-emerald-50">Descargar {name}</button>)}</div></section>
       </>}
     </section>
-    <SellerOsMobileNav active="operation" />
+    <SellerOsMobileNav active="listings" />
   </main>
 }
 

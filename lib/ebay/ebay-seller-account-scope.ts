@@ -58,9 +58,11 @@ export function getEbayProductionIdentityBindingConfiguration(
  * fingerprint. Rotating a refresh token to another seller can therefore never
  * inherit templates or performance adjustments from the previous account.
  */
-export function getEbaySellerAccountScopeConfiguration() {
-  const accountAlias = process.env.EBAY_SELLER_ACCOUNT_KEY?.trim() ?? ""
-  const identity = getEbayProductionIdentityBindingConfiguration()
+export function getEbaySellerAccountScopeConfiguration(
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  const accountAlias = environment.EBAY_SELLER_ACCOUNT_KEY?.trim() ?? ""
+  const identity = getEbayProductionIdentityBindingConfiguration(environment)
   const aliasValid = /^[A-Za-z0-9._-]{1,80}$/.test(accountAlias)
   const reason = !accountAlias
     ? "ACCOUNT_KEY_REQUIRED"

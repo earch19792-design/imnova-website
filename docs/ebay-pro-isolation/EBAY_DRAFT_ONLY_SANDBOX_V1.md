@@ -94,7 +94,7 @@ La aprobación se puede cancelar desde el teléfono antes de ejecutar.
 - La economía se recalcula en el servidor cada vez que cambia el precio. Valores
   configurables (los valores indicados son los defaults):
   - `EBAY_DRAFT_ONLY_ESTIMATED_EBAY_FEE_RATE=0.15`
-  - `EBAY_DRAFT_ONLY_FIXED_ORDER_FEE=0.30`
+  - `EBAY_DRAFT_ONLY_FIXED_ORDER_FEE=0.40` (el cálculo aplica $0.30 automáticamente cuando el total de la orden no supera $10)
   - `EBAY_DRAFT_ONLY_ESTIMATED_OUTBOUND_SHIPPING=6.99`
   - `EBAY_DRAFT_ONLY_RETURNS_RESERVE_RATE=0.04`
   - `EBAY_DRAFT_ONLY_PROMOTED_LISTINGS_RESERVE_RATE=0.05`

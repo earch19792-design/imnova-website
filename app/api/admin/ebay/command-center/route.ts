@@ -8,6 +8,21 @@ import { getEbayFirstLunaQueueDashboard } from "@/lib/ebay/ebay-first-luna-scan-
 import { selectApplicableSafeListingDefaults } from "@/lib/ebay/ebay-manual-listing-service"
 import { ebayDraftOnlyEconomicsConfig } from "@/lib/ebay/ebay-draft-only-readiness"
 import { calculateEbayUnitEconomics } from "@/lib/ebay/ebay-unit-economics"
+import {
+  buildSameDayAuthorizedWorkspacePackage,
+  loadSameDayAuthorizedPublicationContext,
+} from "@/lib/ebay/ebay-same-day-authorized-publication"
+import {
+  loadFinalListingReviewPublicationGate,
+} from "@/lib/ebay/final-listing-review-publication-gate"
+import {
+  resolveCommandCenterCommercialFreshness,
+} from "@/lib/ebay/ebay-command-center-commercial-freshness"
+import {
+  ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION,
+  applyVerifiedTitleToActiveListing,
+  prepareVerifiedActiveListingTitle,
+} from "@/lib/ebay/ebay-active-listing-title-revision-service"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
@@ -40,7 +55,9 @@ function databaseErrorCode(error: unknown, fallback: string) {
   ]
   for (const candidate of candidates) {
     if (typeof candidate !== "string") continue
-    const match = candidate.match(/EBAY_LISTING_PACKAGE_[A-Z0-9_]+/)
+    const match = candidate.match(
+      /(?:EBAY_LISTING_PACKAGE|SAME_DAY_WORKSPACE)_[A-Z0-9_]+/,
+    )
     if (match) return match[0]
   }
   return fallback
@@ -64,10 +81,89 @@ function positive(value: unknown) {
   return Number.isFinite(Number(value)) && Number(value) > 0
 }
 
-function canonicalPackagePricing(supplierCost: unknown, targetPrice: unknown) {
+function validUuid(value: unknown) {
+  const normalized = String(value ?? "").trim()
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(normalized) ? normalized : ""
+}
+
+function safeLunaProductUrl(value: unknown) {
+  try {
+    const parsed = new URL(String(value ?? "").trim())
+    if (parsed.protocol !== "https:"
+      || !["lunaportex.com", "www.lunaportex.com"].includes(parsed.hostname)
+      || parsed.username || parsed.password
+      || !/^\/products\/[a-z0-9][a-z0-9-]*\/?$/i.test(parsed.pathname)) return null
+    parsed.search = ""
+    parsed.hash = ""
+    return parsed.toString()
+  } catch {
+    return null
+  }
+}
+
+function sameDayPublicationErrorCode(error: unknown, fallback: string) {
+  if (!error || typeof error !== "object") return fallback
+  const candidates = [
+    "message" in error ? error.message : null,
+    "details" in error ? error.details : null,
+    "hint" in error ? error.hint : null,
+  ]
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue
+    const match = candidate.match(/(?:EBAY_)?SAME_DAY_PUBLICATION_[A-Z0-9_]+/)
+    if (match) return match[0]
+  }
+  return fallback
+}
+
+async function publicationLunaRecheckDetails(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  listingPackage: Record<string, unknown>,
+  sourceOpportunity: Record<string, unknown>,
+) {
+  const packageData = object(listingPackage.package_data)
+  const binding = object(packageData.sameDayPilot)
+  const candidateId = validUuid(binding.candidateId)
+  const listingPackageId = validUuid(listingPackage.id)
+  if (!candidateId || !listingPackageId) return null
+  const { data: candidate, error } = await supabase
+    .from("ebay_same_day_pilot_candidates")
+    .select("id,opportunity_id,candidate_key,product_title,supplier_sku,economics_summary,local_preparation_package")
+    .eq("id", candidateId)
+    .eq("opportunity_id", listingPackage.opportunity_id)
+    .eq("candidate_key", listingPackage.candidate_key)
+    .maybeSingle()
+  if (error || !candidate) return null
+  const economics = object(candidate.economics_summary)
+  const confirmation = object(economics.lunaConfirmation)
+  const product = object(object(candidate.local_preparation_package).product)
+  return {
+    candidateId,
+    listingPackageId,
+    productTitle: String(candidate.product_title ?? sourceOpportunity.product_title ?? ""),
+    supplierSku: String(candidate.supplier_sku ?? sourceOpportunity.supplier_sku ?? ""),
+    supplierProductUrl: safeLunaProductUrl(product.supplierProductUrl),
+    confirmedPrice: positive(economics.confirmedLunaPrice)
+      ? Number(economics.confirmedLunaPrice) : null,
+    confirmedAt: typeof confirmation.confirmedAt === "string"
+      && Number.isFinite(Date.parse(confirmation.confirmedAt))
+      ? new Date(confirmation.confirmedAt).toISOString() : null,
+    quantityVisible: confirmation.quantityVisible === true,
+    confirmedQuantity: Number.isInteger(Number(confirmation.confirmedQuantity))
+      && Number(confirmation.confirmedQuantity) >= 1
+      ? Number(confirmation.confirmedQuantity) : null,
+  }
+}
+
+function canonicalPackagePricing(
+  supplierCost: unknown,
+  targetPrice: unknown,
+  economicsOverrides: Parameters<typeof ebayDraftOnlyEconomicsConfig>[0] = {},
+) {
   const economics = calculateEbayUnitEconomics(
     { salePrice: targetPrice, supplierCost },
-    ebayDraftOnlyEconomicsConfig(),
+    ebayDraftOnlyEconomicsConfig(economicsOverrides),
   )
   return {
     currency: "USD",
@@ -344,6 +440,112 @@ export async function POST(req: Request) {
       )
     }
 
+    if (action === "reconfirm_publication_luna") {
+      const listingPackageId = validUuid(body.listingPackageId)
+      const candidateId = validUuid(body.candidateId)
+      const price = Number(body.price)
+      const quantity = body.quantity === null || body.quantity === undefined
+        || body.quantity === "" ? null : Number(body.quantity)
+      if (!listingPackageId || !candidateId || body.available !== true
+        || !Number.isFinite(price) || price <= 0
+        || (quantity !== null && (!Number.isInteger(quantity) || quantity < 1))) {
+        return NextResponse.json({ success: false,
+          error: "SAME_DAY_PUBLICATION_LUNA_RECHECK_VALUES_INVALID" }, { status: 400 })
+      }
+      const { data: recheck, error: recheckError } = await supabase.rpc(
+        "reconfirm_ebay_ready_publication_luna_v1",
+        {
+          p_account_key: accountKey,
+          p_actor: reviewer,
+          p_listing_package_id: listingPackageId,
+          p_candidate_id: candidateId,
+          p_supplier_price: price,
+          p_available: true,
+          p_quantity: quantity,
+        },
+      )
+      if (recheckError || !recheck) {
+        const code = sameDayPublicationErrorCode(
+          recheckError,
+          "SAME_DAY_PUBLICATION_LUNA_RECHECK_FAILED",
+        )
+        const status = /COST_CHANGED|UNAVAILABLE|PRIOR_AUTHORIZATION|READY_BINDING/.test(code)
+          ? 409 : /INVALID|REQUIRED/.test(code) ? 400 : 502
+        return NextResponse.json({ success: false, error: code,
+          safety: { ebayWriteUsed: false, productionChanged: false } }, { status })
+      }
+      const { data: refreshedPackage, error: refreshedPackageError } = await supabase
+        .from("ebay_listing_packages")
+        .select("*")
+        .eq("id", listingPackageId)
+        .eq("opportunity_id", opportunityId)
+        .eq("candidate_key", candidateKey)
+        .eq("created_by", reviewer)
+        .eq("account_key", accountKey)
+        .maybeSingle()
+      if (refreshedPackageError || !refreshedPackage) {
+        throw new Error("SAME_DAY_PUBLICATION_LUNA_RECHECK_PACKAGE_READ_FAILED")
+      }
+      const sourceRecheckDetails = await publicationLunaRecheckDetails(
+        supabase,
+        refreshedPackage,
+        sourceOpportunity,
+      )
+      if (!sourceRecheckDetails) {
+        throw new Error("SAME_DAY_PUBLICATION_LUNA_RECHECK_DETAILS_FAILED")
+      }
+      return NextResponse.json({ success: true, listingPackage: refreshedPackage,
+        sourceRecheck: { ...sourceRecheckDetails, ...object(recheck) },
+        safety: { ebayWriteUsed: false, productionChanged: false,
+          imagesRegenerated: false, handoffRegenerated: false, canPublish: false } })
+    }
+
+    if (action === "active_title_preview" || action === "active_title_apply") {
+      const listingPackageId = typeof body.listingPackageId === "string"
+        && /^[0-9a-f-]{36}$/i.test(body.listingPackageId)
+        ? body.listingPackageId : ""
+      const ebayItemId = typeof body.ebayItemId === "string"
+        && /^\d{9,20}$/.test(body.ebayItemId) ? body.ebayItemId : ""
+      const idempotencyKey = typeof body.idempotencyKey === "string"
+        && /^[A-Za-z0-9._:-]{8,120}$/.test(body.idempotencyKey)
+        ? body.idempotencyKey : ""
+      if (!listingPackageId || !ebayItemId || !idempotencyKey) {
+        return NextResponse.json({ success: false,
+          error: "EBAY_ACTIVE_TITLE_REVISION_PREPARE_INVALID" }, { status: 400 })
+      }
+      const common = { supabase, accountKey, actorId: reviewer,
+        listingPackageId, ebayItemId, idempotencyKey }
+      try {
+        if (action === "active_title_preview") {
+          const revision = await prepareVerifiedActiveListingTitle(common)
+          return NextResponse.json({ success: true, revision,
+            confirmationPhrase: ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION,
+            safety: { ebayWrites: 0, titleDerivedServerSide: true,
+              canPublish: false } })
+        }
+        if (body.confirmation !== ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION) {
+          return NextResponse.json({ success: false,
+            error: "EBAY_ACTIVE_TITLE_REVISION_CONFIRMATION_INVALID" },
+          { status: 400 })
+        }
+        const revision = await applyVerifiedTitleToActiveListing({ ...common,
+          confirmation: ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION })
+        const success = revision.phase === "applied_verified"
+        return NextResponse.json({ success, revision, safety: {
+          permittedMutation: "TITLE_ONLY", maxEbayWrites: 1,
+          ebayWriteAttempts: revision.ebayWriteAttemptCount,
+          imagesChanged: false, priceChanged: false, quantityChanged: false,
+          policiesChanged: false, blindRetryAllowed: false,
+        } }, { status: success ? 200 : 409 })
+      } catch (titleError) {
+        const code = errorCode(titleError)
+        const status = /INVALID|REQUIRED|CONFIRMATION/.test(code) ? 400
+          : /MISMATCH|CONFLICT|UNKNOWN|IN_PROGRESS|TERMINAL|WRITE_LIMIT/.test(code)
+            ? 409 : 502
+        return NextResponse.json({ success: false, error: code }, { status })
+      }
+    }
+
     if (action === "save_review") {
       const currentStep = REVIEW_STEPS.includes(String(body.currentStep)) ? String(body.currentStep) : "luna"
       const status = OPEN_REVIEW_STATUSES.includes(String(body.status)) ? String(body.status) : "in_progress"
@@ -374,47 +576,310 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, review: result.data, savedAt: new Date().toISOString(), safety: { ebayWriteUsed: false, canPublish: false } })
     }
 
+    if (action === "open_active_maintenance") {
+      const [packageResult, linkResult] = await Promise.all([
+        supabase
+          .from("ebay_listing_packages")
+          .select("*")
+          .eq("account_key", accountKey)
+          .eq("opportunity_id", opportunityId)
+          .eq("candidate_key", candidateKey)
+          .maybeSingle(),
+        supabase
+          .from("ebay_manual_listing_links")
+          .select("id,ebay_item_id,ebay_url,connector_listing_id,verified_at")
+          .eq("account_key", accountKey)
+          .eq("opportunity_id", opportunityId)
+          .eq("candidate_key", candidateKey)
+          .eq("verification_status", "verified")
+          .eq("connector_listing_status", "active")
+          .maybeSingle(),
+      ])
+      if (packageResult.error || linkResult.error) {
+        throw new Error("COMMAND_CENTER_ACTIVE_MAINTENANCE_READ_FAILED")
+      }
+      const existing = packageResult.data
+      const link = linkResult.data
+      if (!existing || !link?.connector_listing_id || !link.verified_at) {
+        return NextResponse.json({
+          success: false,
+          error: "COMMAND_CENTER_ACTIVE_MAINTENANCE_EVIDENCE_REQUIRED",
+        }, { status: 409 })
+      }
+      if (existing.created_by !== reviewer) {
+        throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
+      }
+      const { data: activeListing, error: activeListingError } = await supabase
+        .from("ebay_active_listings")
+        .select("id,ebay_item_id,listing_status,title,ebay_sku,last_ebay_sync_at")
+        .eq("id", link.connector_listing_id)
+        .eq("account_key", accountKey)
+        .eq("ebay_item_id", link.ebay_item_id)
+        .eq("listing_status", "active")
+        .maybeSingle()
+      if (activeListingError) {
+        throw new Error("COMMAND_CENTER_ACTIVE_MAINTENANCE_READ_FAILED")
+      }
+      if (!activeListing) {
+        return NextResponse.json({
+          success: false,
+          error: "COMMAND_CENTER_ACTIVE_MAINTENANCE_EVIDENCE_REQUIRED",
+        }, { status: 409 })
+      }
+      return NextResponse.json({
+        success: true,
+        workspaceMode: "ACTIVE_MAINTENANCE",
+        listingPackage: existing,
+        created: false,
+        evidenceRefreshed: false,
+        maintenance: {
+          manualLinkId: link.id,
+          connectorListingId: activeListing.id,
+          ebayItemId: activeListing.ebay_item_id,
+          ebayUrl: link.ebay_url,
+          listingStatus: activeListing.listing_status,
+          title: activeListing.title,
+          sku: activeListing.ebay_sku,
+          verifiedAt: link.verified_at,
+          lastEbaySyncAt: activeListing.last_ebay_sync_at,
+        },
+        safety: {
+          ebayWriteUsed: false,
+          canPublish: false,
+          canMaintainVerifiedActiveListing: true,
+        },
+      })
+    }
+
     if (action === "prepare_package") {
+      const { data: existing, error: readError } = await supabase
+        .from("ebay_listing_packages")
+        .select("*")
+        .eq("account_key", accountKey)
+        .eq("opportunity_id", opportunityId)
+        .eq("candidate_key", candidateKey)
+        .maybeSingle()
+      if (readError) throw new Error("COMMAND_CENTER_PACKAGE_READ_FAILED")
+      if (existing && existing.created_by !== reviewer) {
+        throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
+      }
+      if (existing?.status === "approved") {
+        // Reused approved packages still need the final Luna freshness gate.
+        // Do this before returning the cached package so the Workspace cannot
+        // silently carry an expired supplier price/stock snapshot forward.
+        try {
+          await loadSameDayAuthorizedPublicationContext({
+            supabase,
+            accountKey,
+            actorUserId: reviewer,
+            listingPackage: existing,
+            opportunity: sourceOpportunity,
+            allowRecoverablePackageImages: true,
+          })
+        } catch (contextError) {
+          const code = errorCode(contextError)
+          if (code === "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED") {
+            const sourceRecheck = await publicationLunaRecheckDetails(
+              supabase,
+              existing,
+              sourceOpportunity,
+            )
+            if (!sourceRecheck) throw contextError
+            return NextResponse.json({
+              success: false,
+              error: code,
+              sourceRecheckRequired: true,
+              listingPackage: existing,
+              sourceRecheck,
+              safety: {
+                ebayWriteUsed: false,
+                productionChanged: false,
+                imagesRegenerated: false,
+                handoffRegenerated: false,
+                canPublish: false,
+              },
+            }, { status: 409 })
+          }
+          if (code !== "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY") {
+            throw contextError
+          }
+        }
+        const finalReviewGate = await loadFinalListingReviewPublicationGate({
+          supabase,
+          listingPackageId: existing.id,
+          actorId: reviewer,
+        })
+        if (!finalReviewGate.allowed) {
+          return NextResponse.json({
+            success: false,
+            error: "COMMAND_CENTER_APPROVED_PACKAGE_FINAL_REVIEW_REQUIRED",
+            blockers: [
+              finalReviewGate.reason
+                ?? "FINAL_LISTING_REVIEW_NOT_READY",
+            ],
+            listingPackage: existing,
+            safety: {
+              ebayWriteUsed: false,
+              databaseWriteUsed: false,
+              productionChanged: false,
+              canPublish: false,
+            },
+          }, { status: 409 })
+        }
+        const persistedPackageData = object(existing.package_data)
+        return NextResponse.json({
+          success: true,
+          listingPackage: existing,
+          created: false,
+          evidenceRefreshed: false,
+          preservedUserFields: true,
+          sameDayAuthorizedPublication: true,
+          finalListingReviewReady: true,
+          hydrationMode: "APPROVED_V3_READ_ONLY",
+          safeDefaultsApplied:
+            strings(object(persistedPackageData.safeDefaults).appliedFields).length > 0,
+          safety: {
+            ebayWriteUsed: false,
+            databaseWriteUsed: false,
+            productionChanged: false,
+            canPublish: false,
+          },
+        })
+      }
+      let sameDayContext: Awaited<ReturnType<
+        typeof loadSameDayAuthorizedPublicationContext
+      >> = null
+      let finalListingReviewReady = false
+      let legacySourceRecheck: Awaited<ReturnType<
+        typeof publicationLunaRecheckDetails
+      >> = null
+      let legacySourceRecheckCode = ""
+      if (existing) {
+        try {
+          sameDayContext = await loadSameDayAuthorizedPublicationContext({
+            supabase,
+            accountKey,
+            actorUserId: reviewer,
+            listingPackage: existing,
+            opportunity: sourceOpportunity,
+            allowRecoverablePackageImages: true,
+          })
+        } catch (contextError) {
+          const code = errorCode(contextError)
+          if (code !== "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY"
+            && code !== "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED") {
+            throw contextError
+          }
+          const finalReviewGate = await loadFinalListingReviewPublicationGate({
+            supabase,
+            listingPackageId: existing.id,
+            actorId: reviewer,
+          })
+          const freshnessResolution = resolveCommandCenterCommercialFreshness({
+            errorCode: code,
+            finalListingReviewAllowed: finalReviewGate.allowed,
+            sourceRecheckAvailable: true,
+          })
+          finalListingReviewReady = freshnessResolution.finalListingReviewReady
+          sameDayContext = finalListingReviewReady ? null : sameDayContext
+          if (freshnessResolution.sourceRecheckRequired) {
+            legacySourceRecheckCode = code
+            legacySourceRecheck = await publicationLunaRecheckDetails(
+              supabase,
+              existing,
+              sourceOpportunity,
+            )
+            if (!legacySourceRecheck) throw contextError
+          }
+        }
+      }
+      if (legacySourceRecheck) {
+        return NextResponse.json({
+          success: false,
+          error: legacySourceRecheckCode || "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY",
+          sourceRecheckRequired: true,
+          listingPackage: existing,
+          sourceRecheck: legacySourceRecheck,
+          safety: {
+            ebayWriteUsed: false,
+            productionChanged: false,
+            imagesRegenerated: false,
+            handoffRegenerated: false,
+            canPublish: false,
+          },
+        }, { status: 409 })
+      }
       const eligibility = evaluateEbayListingWorkspaceEligibility(sourceOpportunity)
-      if (!eligibility.allowed) {
+      if (!eligibility.allowed && !sameDayContext && !finalListingReviewReady) {
         return NextResponse.json({
           success: false,
           error: "COMMAND_CENTER_WORKSPACE_GATES_PENDING",
           blockers: eligibility.blockers,
         }, { status: 409 })
       }
-      const seed = buildInitialPackage(sourceOpportunity)
+      const effectiveOpportunity = sameDayContext?.opportunity ?? sourceOpportunity
+      const initialSeed = buildInitialPackage(effectiveOpportunity)
+      const existingPricing = object(object(existing?.package_data).pricing)
+      const authorizedTargetPrice = sameDayContext
+        ? sameDayContext.authorization.controlledRisk
+          ? sameDayContext.handoffPackage.price
+          : existingPricing.targetPrice ?? sameDayContext.handoffPackage.price
+        : object(initialSeed.pricing).targetPrice
+      const sameDayPricing = canonicalPackagePricing(
+        effectiveOpportunity.supplier_price,
+        authorizedTargetPrice,
+        sameDayContext?.economicsConfig,
+      )
+      const seed = sameDayContext && existing
+        ? buildSameDayAuthorizedWorkspacePackage({
+          context: sameDayContext,
+          currentPackageData: object(existing.package_data),
+          pricing: sameDayPricing,
+        })
+        : initialSeed
       const selectedSafeDefaults = await applicableSafeDefaults(supabase, seed)
-      const { data: existing, error: readError } = await supabase
-        .from("ebay_listing_packages")
-        .select("*")
-        .eq("opportunity_id", opportunityId)
-        .maybeSingle()
-      if (readError) throw new Error("COMMAND_CENTER_PACKAGE_READ_FAILED")
       if (existing) {
-        if (existing.created_by !== reviewer) throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
         if (existing.account_key !== accountKey) {
           throw new Error("COMMAND_CENTER_PACKAGE_ACCOUNT_SCOPE_REQUIRED")
         }
-        const currentPackageData = object(existing.package_data)
+        const currentPackageData = sameDayContext ? object(seed) : object(existing.package_data)
         const currentPricing = object(currentPackageData.pricing)
         const seedPricing = object(seed.pricing)
         const refreshedPricing = canonicalPackagePricing(
-          seedPricing.supplierCost,
+          effectiveOpportunity.supplier_price ?? seedPricing.supplierCost,
           currentPricing.targetPrice ?? seedPricing.targetPrice,
+          sameDayContext?.economicsConfig,
         )
         const refreshedPackageData = applySafeSellerDefaults({
           ...currentPackageData,
           pricing: refreshedPricing,
-          evidenceSnapshot: seed.evidenceSnapshot,
+          evidenceSnapshot: sameDayContext
+            ? currentPackageData.evidenceSnapshot
+            : seed.evidenceSnapshot,
           sourceRefresh: {
             refreshedAt: new Date().toISOString(),
-            strategy: "SAFE_EVIDENCE_ONLY_USER_FIELDS_PRESERVED",
+            strategy: sameDayContext
+              ? "SAME_DAY_APPROVED_PACKAGE_AND_FRESH_LUNA_SOURCE"
+              : "SAFE_EVIDENCE_ONLY_USER_FIELDS_PRESERVED",
           },
         }, selectedSafeDefaults)
-        const { data: refreshedData, error: refreshError } = await supabase.rpc(
-          "ebay_save_listing_package_guarded",
-          {
+        const sourceObservedAt = sameDayContext?.sourceObservedAt
+          ?? latestEvidenceTimestamp(sourceOpportunity)
+        const packageRpc = sameDayContext
+          ? "restore_ebay_same_day_authorized_listing_package_v1"
+          : "ebay_save_listing_package_guarded"
+        const packageRpcArguments = sameDayContext
+          ? {
+            p_listing_package_id: existing.id,
+            p_account_key: accountKey,
+            p_actor: reviewer,
+            p_opportunity_id: opportunityId,
+            p_candidate_key: candidateKey,
+            p_package_patch: refreshedPackageData,
+            p_source_observed_at: sourceObservedAt,
+            p_expected_updated_at: existing.updated_at,
+          }
+          : {
             p_package_id: existing.id,
             p_account_key: accountKey,
             p_actor: reviewer,
@@ -424,9 +889,12 @@ export async function POST(req: Request) {
             p_package_patch: refreshedPackageData,
             p_status: "draft",
             p_readiness: 0,
-            p_source_observed_at: latestEvidenceTimestamp(sourceOpportunity),
+            p_source_observed_at: sourceObservedAt,
             p_expected_updated_at: existing.updated_at,
-          },
+          }
+        const { data: refreshedData, error: refreshError } = await supabase.rpc(
+          packageRpc,
+          packageRpcArguments,
         )
         const refreshed = guardedPackageRow(refreshedData)
         if (refreshError || !refreshed) {
@@ -449,6 +917,7 @@ export async function POST(req: Request) {
           created: false,
           evidenceRefreshed: true,
           preservedUserFields: true,
+          sameDayAuthorizedPublication: Boolean(sameDayContext),
           safeDefaultsApplied:
             strings(object(persistedRefreshedPackageData.safeDefaults).appliedFields).length > 0,
           safety: { ebayWriteUsed: false, canPublish: false },
@@ -470,6 +939,7 @@ export async function POST(req: Request) {
         success: true,
         listingPackage: data,
         created: true,
+        sameDayAuthorizedPublication: false,
         safeDefaultsApplied:
           strings(object(packageSeed.safeDefaults).appliedFields).length > 0,
         safety: { ebayWriteUsed: false, canPublish: false },
@@ -492,12 +962,52 @@ export async function POST(req: Request) {
         .maybeSingle()
       if (currentPackageError || !currentPackage) throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
       const currentPackageData = object(currentPackage.package_data)
+      let sameDayContext: Awaited<ReturnType<
+        typeof loadSameDayAuthorizedPublicationContext
+      >> = null
+      let finalListingReviewReady = false
+      try {
+        sameDayContext = await loadSameDayAuthorizedPublicationContext({
+          supabase,
+          accountKey,
+          actorUserId: reviewer,
+          listingPackage: {
+            ...currentPackage,
+            opportunity_id: opportunityId,
+            candidate_key: candidateKey,
+          },
+          opportunity: sourceOpportunity,
+        })
+      } catch (contextError) {
+        const code = errorCode(contextError)
+        if (code !== "SAME_DAY_PUBLICATION_PACKAGE_NOT_READY") throw contextError
+        const finalReviewGate = await loadFinalListingReviewPublicationGate({
+          supabase,
+          listingPackageId: packageId,
+          actorId: reviewer,
+        })
+        if (!finalReviewGate.allowed) throw contextError
+        finalListingReviewReady = true
+      }
       const form = object(body.packageData)
-      const sourceSeed = buildInitialPackage(sourceOpportunity)
+      const effectiveOpportunity = sameDayContext?.opportunity ?? sourceOpportunity
+      const sourceSeed = buildInitialPackage(effectiveOpportunity)
       const requestedPricing = object(form.pricing)
+      const controlledRiskPrice = sameDayContext?.authorization.controlledRisk === true
+        ? Number(sameDayContext.handoffPackage.price)
+        : null
+      if (controlledRiskPrice !== null
+        && Number(requestedPricing.targetPrice) !== controlledRiskPrice) {
+        return NextResponse.json({
+          success: false,
+          error: "COMMAND_CENTER_CONTROLLED_RISK_PRICE_CHANGED",
+          blockers: ["CONTROLLED_RISK_APPROVED_PRICE_REQUIRED"],
+        }, { status: 409 })
+      }
       const canonicalPricing = canonicalPackagePricing(
-        object(sourceSeed.pricing).supplierCost,
+        effectiveOpportunity.supplier_price ?? object(sourceSeed.pricing).supplierCost,
         requestedPricing.targetPrice,
+        sameDayContext?.economicsConfig,
       )
       const packageForValidation = {
         ...form,
@@ -507,8 +1017,9 @@ export async function POST(req: Request) {
       const status = body.markReady === true ? "ready_for_review" : "draft"
       const resolvedHardGates = resolvedPackageHardGates(packageForValidation)
       const sourceGates = [
-        ...strings(sourceOpportunity.hard_gates).filter((gate) => !resolvedHardGates.has(gate)),
-        ...strings(sourceOpportunity.evidence_guards),
+        ...((sameDayContext || finalListingReviewReady) ? [] : strings(sourceOpportunity.hard_gates)
+          .filter((gate) => !resolvedHardGates.has(gate))),
+        ...((sameDayContext || finalListingReviewReady) ? [] : strings(sourceOpportunity.evidence_guards)),
         ...(canonicalPricing.passesProfitGate ? [] : ["MINIMUM_NET_MARGIN_NOT_MET"]),
       ]
       const completeFields = [title, form.categoryId, String(form.description ?? ""), strings(form.imageUrls, 24)[0], canonicalPricing.targetPrice]
@@ -537,12 +1048,16 @@ export async function POST(req: Request) {
           aspects: object(form.aspects),
           description: String(form.description ?? "").slice(0, 100_000),
           imageUrls: strings(form.imageUrls, 24),
+          imageAssetManifest: currentPackageData.imageAssetManifest,
           pricing: canonicalPricing,
           shipping: object(form.shipping),
           draftConfiguration: object(form.draftConfiguration),
           evidenceSnapshot: currentPackageData.evidenceSnapshot ?? sourceSeed.evidenceSnapshot,
           sourceRefresh: currentPackageData.sourceRefresh ?? null,
           safeDefaults: currentPackageData.safeDefaults ?? null,
+          sameDayPilot: currentPackageData.sameDayPilot ?? null,
+          controlledRiskPolicy: currentPackageData.controlledRiskPolicy ?? null,
+          preferredImageRevisionId: currentPackageData.preferredImageRevisionId ?? null,
         },
         readiness,
       }
@@ -558,7 +1073,7 @@ export async function POST(req: Request) {
           p_package_patch: values.package_data,
           p_status: values.status,
           p_readiness: values.readiness,
-          p_source_observed_at: null,
+          p_source_observed_at: sameDayContext?.sourceObservedAt ?? null,
           p_expected_updated_at: currentPackage.updated_at,
         },
       )

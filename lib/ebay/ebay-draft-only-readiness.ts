@@ -2,6 +2,10 @@ import { createHash } from "node:crypto"
 
 import { verifyEbayDraftOnlyPreflightSnapshot } from "./ebay-draft-only-preflight-snapshot"
 import {
+  canonicalEbayPackageSku,
+  isCanonicalEbayPackageSku,
+} from "./ebay-sku"
+import {
   calculateEbayUnitEconomics,
   DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,
   normalizeEbayUnitEconomicsConfig,
@@ -23,6 +27,11 @@ export type DraftOnlyReadinessInput = {
   listingPackage: JsonRecord
   opportunity: JsonRecord
   draftConfiguration: JsonRecord
+  sameDayPilotAuthorization?: JsonRecord | null
+  revalidatedExecutionEvidence?: {
+    freshSameDaySourceVerified?: boolean
+    finalV3ImageTransportVerified?: boolean
+  }
   activeSkuCollision?: boolean
   ledgerSkuCollision?: boolean
   identityCollisionReasons?: string[]
@@ -169,8 +178,7 @@ export function hashEbayDraftOnlyPayload(value: unknown) {
 }
 
 export function expectedEbayDraftOnlySku(listingPackage: JsonRecord) {
-  const packageId = text(listingPackage.id).replace(/[^A-Za-z0-9]/g, "").toUpperCase()
-  return packageId.length >= 16 ? `IMNOVA-${packageId.slice(0, 32)}` : ""
+  return canonicalEbayPackageSku(text(listingPackage.id))
 }
 
 function normalizeAspects(value: unknown) {
@@ -403,6 +411,7 @@ export function buildEbayDraftOnlyPayload(
   target: EbayDraftOnlyTarget = "SANDBOX",
   accountFingerprint = "",
   economicsConfig: Partial<EbayUnitEconomicsConfig> = {},
+  sameDayPilotAuthorization: JsonRecord | null = null,
 ) {
   const packageData = record(listingPackage.package_data)
   const pricing = record(packageData.pricing)
@@ -440,6 +449,16 @@ export function buildEbayDraftOnlyPayload(
   }
   const aspects = normalizeAspects(packageData.aspects)
   const categoryId = text(packageData.categoryId)
+  const dimensionValues = [dimensions.height, dimensions.length, dimensions.width]
+    .map(numberOrNull)
+  const dimensionUnit = text(dimensions.unit).toUpperCase()
+  const weightValue = numberOrNull(weight.value)
+  const weightUnit = text(weight.unit).toUpperCase()
+  const packageMeasurementsReady = dimensionValues.every((value) => value !== null && value > 0)
+    && ['INCH', 'CENTIMETER'].includes(dimensionUnit)
+    && weightValue !== null
+    && weightValue > 0
+    && ['POUND', 'KILOGRAM', 'OUNCE', 'GRAM'].includes(weightUnit)
 
   const inventoryItemPayload = {
     availability: { shipToLocationAvailability: { quantity } },
@@ -450,7 +469,7 @@ export function buildEbayDraftOnlyPayload(
       aspects,
       imageUrls,
     },
-    packageWeightAndSize: {
+    ...(packageMeasurementsReady ? { packageWeightAndSize: {
       dimensions: {
         height: numberOrNull(dimensions.height),
         length: numberOrNull(dimensions.length),
@@ -461,7 +480,7 @@ export function buildEbayDraftOnlyPayload(
         value: numberOrNull(weight.value),
         unit: text(weight.unit).toUpperCase(),
       },
-    },
+    } } : {}),
   }
   const offerPayload = {
     sku,
@@ -493,6 +512,9 @@ export function buildEbayDraftOnlyPayload(
       aspectValidation: record(draftConfiguration.aspectValidation),
       skuCollisionCheck: record(draftConfiguration.skuCollisionCheck),
       ebayPreflightSnapshot: text(draftConfiguration.ebayPreflightSnapshot).slice(0, 4_096),
+      ...(sameDayPilotAuthorization?.validated === true
+        ? { sameDayPilotAuthorization }
+        : {}),
     },
     sku,
     inventoryItemPayload,
@@ -528,6 +550,15 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const requiredAspects = strings(taxonomy.requiredAspects)
   const hardGates = strings(opportunity.hard_gates)
   const evidenceGuards = strings(opportunity.evidence_guards)
+  const sameDayPilotAuthorization = record(input.sameDayPilotAuthorization)
+  const sameDayPilotAuthorized = sameDayPilotAuthorization.validated === true
+    && text(sameDayPilotAuthorization.version)
+      === "SELLER_OS_AUTHORIZED_PUBLICATION_V1_2026_07_20"
+    && Boolean(text(sameDayPilotAuthorization.runId))
+    && Boolean(text(sameDayPilotAuthorization.candidateId))
+    && text(sameDayPilotAuthorization.listingPackageId) === text(listingPackage.id)
+    && sameDayPilotAuthorization.finalHumanAuthorizationRequired === true
+    && sameDayPilotAuthorization.unattendedPublicationAllowed === false
   const supplierPrice = numberOrNull(opportunity.supplier_price)
   const supplierStock = numberOrNull(opportunity.supplier_inventory_quantity)
   const price = numberOrNull(pricing.targetPrice)
@@ -552,7 +583,12 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   const categoryId = text(packageData.categoryId)
   const condition = text(configuration.condition).toUpperCase()
   const weightUnit = text(weight.unit).toUpperCase()
+  const dimensionUnit = text(dimensions.unit).toUpperCase()
+  const dimensionValues = [dimensions.height, dimensions.length, dimensions.width]
+    .map(numberOrNull)
+  const weightValue = numberOrNull(weight.value)
   const validWeightUnit = ['POUND', 'KILOGRAM', 'OUNCE', 'GRAM'].includes(weightUnit)
+  const validDimensionUnit = ['INCH', 'CENTIMETER'].includes(dimensionUnit)
   const rightsBasis = text(authorization.rightsBasis).toLowerCase()
   const imageSource = text(authorization.source).toLowerCase()
   const assessment = record(opportunity.assessment)
@@ -566,15 +602,30 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     && images.every((url) => authorizedImages.includes(url))
     && ['supplier_authorized', 'owned', 'licensed'].includes(rightsBasis)
     && ['luna', 'supplier', 'owned', 'licensed_asset'].includes(imageSource)
+  const executionEvidence = input.revalidatedExecutionEvidence ?? {}
+  const freshSameDaySourceVerified =
+    executionEvidence.freshSameDaySourceVerified === true
+    && sameDayPilotAuthorized
+    && recent(sameDayPilotAuthorization.sourceObservedAt, sourceMaxAge, now)
+  const finalV3ImageTransportVerified =
+    executionEvidence.finalV3ImageTransportVerified === true
+    && imageEvidenceReady
+    && images.length === 7
+    && authorization.protectedManifestVerified === true
+    && Number(authorization.protectedManifestAssetCount) === 7
+    && Number.isFinite(Date.parse(text(authorization.approvedAt)))
   const aspectConstraintBlockers = validateEbayTaxonomyAspectValues(aspects, taxonomy)
   const taxonomyEvidenceReady = taxonomy.validated === true
     && text(taxonomy.categoryId) === categoryId
     && requiredAspects.every((name) => Boolean(aspects[name]?.length))
     && aspectConstraintBlockers.length === 0
-  const dimensionsEvidenceReady = numberOrNull(dimensions.height)! > 0
-    && numberOrNull(dimensions.length)! > 0
-    && numberOrNull(dimensions.width)! > 0
-  const weightEvidenceReady = numberOrNull(weight.value)! > 0 && validWeightUnit
+  const packageMeasurementsProvided = dimensionValues.some((value) => value !== null)
+    || Boolean(dimensionUnit)
+    || weightValue !== null
+    || Boolean(weightUnit)
+  const dimensionsEvidenceReady = dimensionValues.every((value) => value !== null && value > 0)
+    && validDimensionUnit
+  const weightEvidenceReady = weightValue !== null && weightValue > 0 && validWeightUnit
   const resolvablePackageGates = new Set([
     ...(imageEvidenceReady ? ["NEED_AUTHORIZED_PRODUCT_IMAGES"] : []),
     ...(weightEvidenceReady ? ["NEED_PACKAGE_WEIGHT"] : []),
@@ -582,23 +633,35 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     ...(weightEvidenceReady && dimensionsEvidenceReady ? ["NEED_PACKAGE_WEIGHT_AND_DIMENSIONS"] : []),
     ...(taxonomyEvidenceReady ? ["NEED_EBAY_TAXONOMY_CATEGORY", "NEED_REQUIRED_EBAY_ITEM_ASPECTS"] : []),
   ])
-  const remainingHardGates = hardGates.filter((gate) => !resolvablePackageGates.has(gate))
+  const optionalFlatPolicyMeasurementGates = new Set([
+    "NEED_PACKAGE_WEIGHT",
+    "NEED_PACKAGE_DIMENSIONS",
+    "NEED_PACKAGE_WEIGHT_AND_DIMENSIONS",
+  ])
+  const remainingHardGates = hardGates.filter((gate) =>
+    !resolvablePackageGates.has(gate) && !optionalFlatPolicyMeasurementGates.has(gate)
+  )
   const blockers: string[] = []
 
   if (!/^[0-9a-f]{64}$/.test(accountFingerprint)) blockers.push("EBAY_ACCOUNT_FINGERPRINT_REQUIRED")
 
   if (!text(listingPackage.id) || text(listingPackage.candidate_key) !== text(opportunity.candidate_key)) blockers.push("PACKAGE_OPPORTUNITY_MISMATCH")
   if (!['draft', 'ready_for_review', 'approved'].includes(text(listingPackage.status))) blockers.push("PACKAGE_NOT_READY_FOR_APPROVAL")
-  if (['hold', 'rejected', 'listed', 'archived'].includes(text(opportunity.queue_status))) blockers.push("OPPORTUNITY_STATUS_BLOCKED")
-  if (!exactIdentityConfirmed) blockers.push("EXACT_IDENTITY_REQUIRED")
-  if (potentialScore < 70) blockers.push("POTENTIAL_SCORE_BELOW_70")
-  if (confidenceScore < 70) blockers.push("CONFIDENCE_SCORE_BELOW_70")
-  blockers.push(...remainingHardGates.map((gate) => `HARD_GATE:${gate}`))
-  blockers.push(...evidenceGuards.map((guard) => `EVIDENCE_GUARD:${guard}`))
+  if (!sameDayPilotAuthorized) {
+    if (['hold', 'rejected', 'listed', 'archived'].includes(text(opportunity.queue_status))) blockers.push("OPPORTUNITY_STATUS_BLOCKED")
+    if (!exactIdentityConfirmed) blockers.push("EXACT_IDENTITY_REQUIRED")
+    if (potentialScore < 70) blockers.push("POTENTIAL_SCORE_BELOW_70")
+    if (confidenceScore < 70) blockers.push("CONFIDENCE_SCORE_BELOW_70")
+    blockers.push(...remainingHardGates.map((gate) => `HARD_GATE:${gate}`))
+    blockers.push(...evidenceGuards.map((guard) => `EVIDENCE_GUARD:${guard}`))
+  }
   if (opportunity.supplier_available !== true || supplierStock === null || supplierStock <= 0) blockers.push("LUNA_STOCK_UNAVAILABLE")
   if (supplierPrice === null || supplierPrice <= 0) blockers.push("LUNA_COST_REQUIRED")
   if (!recent(opportunity.supplier_snapshot_at ?? opportunity.last_scanned_at, sourceMaxAge, now)) blockers.push("LUNA_SNAPSHOT_STALE")
-  if (!recent(listingPackage.source_observed_at, sourceMaxAge, now)) blockers.push("PACKAGE_SOURCE_STALE")
+  if (
+    !recent(listingPackage.source_observed_at, sourceMaxAge, now)
+    && !freshSameDaySourceVerified
+  ) blockers.push("PACKAGE_SOURCE_STALE")
   if (!text(packageData.title) || text(packageData.title).length > 80) blockers.push("TITLE_INVALID")
   if (!/^\d{1,12}$/.test(categoryId)) blockers.push("CATEGORY_ID_REQUIRED")
   if (!text(packageData.description)) blockers.push("DESCRIPTION_REQUIRED")
@@ -609,12 +672,18 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   blockers.push(...aspectConstraintBlockers)
   for (const name of requiredAspects) if (!aspects[name]?.length) blockers.push(`REQUIRED_ASPECT_MISSING:${name}`)
   if (!images.length || images.length !== strings(packageData.imageUrls, 24).length) blockers.push("HTTPS_IMAGES_REQUIRED")
-  if (authorization.approved !== true || !recent(authorization.approvedAt, sourceMaxAge, now)) blockers.push("IMAGE_AUTHORIZATION_REQUIRED")
+  if (
+    authorization.approved !== true
+    || (
+      !recent(authorization.approvedAt, sourceMaxAge, now)
+      && !finalV3ImageTransportVerified
+    )
+  ) blockers.push("IMAGE_AUTHORIZATION_REQUIRED")
   if (authorization.approved === true && !images.length) blockers.push("IMAGE_AUTHORIZATION_WITHOUT_SOURCE_IMAGE")
   if (!['supplier_authorized', 'owned', 'licensed'].includes(rightsBasis)) blockers.push("IMAGE_RIGHTS_BASIS_INVALID")
   if (!['luna', 'supplier', 'owned', 'licensed_asset'].includes(imageSource)) blockers.push("IMAGE_SOURCE_INVALID")
   if (images.some((url) => !authorizedImages.includes(url))) blockers.push("IMAGE_NOT_AUTHORIZED")
-  if (!requiredSku || sku !== requiredSku || !/^IMNOVA-[A-Z0-9]{16,32}$/.test(sku)) {
+  if (!requiredSku || sku !== requiredSku || !isCanonicalEbayPackageSku(sku)) {
     blockers.push("SKU_NAMESPACE_OR_OWNERSHIP_INVALID")
   }
   if (input.activeSkuCollision || input.ledgerSkuCollision) blockers.push("SKU_COLLISION")
@@ -632,10 +701,14 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (!['NEW', 'NEW_OTHER', 'NEW_WITH_DEFECTS', 'USED_EXCELLENT', 'USED_GOOD', 'USED_ACCEPTABLE'].includes(condition)) blockers.push("CONDITION_INVALID")
   if (price === null || price <= 0) blockers.push("PRICE_REQUIRED")
   if (!economics.ready || !economics.passesProfitGate) blockers.push("MINIMUM_NET_MARGIN_NOT_MET")
-  if (!(numberOrNull(dimensions.height)! > 0 && numberOrNull(dimensions.length)! > 0 && numberOrNull(dimensions.width)! > 0)) blockers.push("PACKAGE_DIMENSIONS_REQUIRED")
-  if (!['INCH', 'CENTIMETER'].includes(text(dimensions.unit).toUpperCase())) blockers.push("PACKAGE_DIMENSION_UNIT_INVALID")
-  if (!(numberOrNull(weight.value)! > 0)) blockers.push("PACKAGE_WEIGHT_REQUIRED")
-  if (!validWeightUnit) blockers.push("PACKAGE_WEIGHT_UNIT_REQUIRED")
+  if (packageMeasurementsProvided && !dimensionsEvidenceReady) {
+    if (!dimensionValues.every((value) => value !== null && value > 0)) blockers.push("PACKAGE_DIMENSIONS_REQUIRED")
+    if (!validDimensionUnit) blockers.push("PACKAGE_DIMENSION_UNIT_INVALID")
+  }
+  if (packageMeasurementsProvided && !weightEvidenceReady) {
+    if (weightValue === null || weightValue <= 0) blockers.push("PACKAGE_WEIGHT_REQUIRED")
+    if (!validWeightUnit) blockers.push("PACKAGE_WEIGHT_UNIT_REQUIRED")
+  }
   for (const [key, value] of Object.entries({
     FULFILLMENT_POLICY_REQUIRED: policies.fulfillmentPolicyId,
     PAYMENT_POLICY_REQUIRED: policies.paymentPolicyId,
@@ -666,6 +739,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     target,
     accountFingerprint,
     economicsConfig,
+    sameDayPilotAuthorized ? sameDayPilotAuthorization : null,
   )
   const uniqueBlockers = unique(blockers)
   return {
@@ -677,6 +751,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
       "HUMAN_APPROVAL_EXPIRES_AND_IS_ONE_TIME",
       "EBAY_SKU_PREFLIGHT_RUNS_AT_EXECUTION",
       "EBAY_PREFLIGHT_SNAPSHOT_EXPIRES_IN_5_MINUTES",
+      ...(!packageMeasurementsProvided ? ["OPTIONAL_PACKAGE_MEASUREMENTS_OMITTED"] : []),
     ],
     economics: {
       targetPrice: price,

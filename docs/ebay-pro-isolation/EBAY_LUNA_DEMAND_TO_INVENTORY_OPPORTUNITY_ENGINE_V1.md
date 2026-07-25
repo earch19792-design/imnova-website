@@ -97,7 +97,7 @@ Evidence guards separately cover missing 7/30-day baseline, single-seller concen
 Default economics include:
 
 - 15% estimated eBay fee rate
-- $0.30 fixed order fee
+- $0.30 fixed order fee up to $10 order total; $0.40 above $10 (EBAY_US fallback)
 - $6.99 outbound shipping estimate
 - 4% returns reserve
 - 5% promoted-listing reserve

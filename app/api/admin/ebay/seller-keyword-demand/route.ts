@@ -1,13 +1,18 @@
 export const runtime = "nodejs"
 
 import { NextResponse } from "next/server"
-import { validateAdminApiRequest } from "@/lib/supabase-admin"
+import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 import {
   getEbayTaxonomyListingIntelligence,
   runEbaySellerKeywordDemandValidation,
 } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
+import { getEbayReadonlyRateLimitMetadata } from "@/lib/ebay/ebay-readonly-rate-limit"
 import { buildEbayLunaOpportunityAssessment } from "@/lib/ebay/ebay-luna-demand-opportunity-engine"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import {
+  assertEbayLaneAvailable,
+  recordPersistentEbayRateLimit,
+} from "@/lib/ebay/ebay-persistent-quota-coordinator"
 import { buildWinnerEvidenceDecisionPackage } from "@/lib/ebay/ebay-winner-evidence-v2"
 import {
   sanitizeWinnerEvidencePackage,
@@ -32,6 +37,80 @@ function safeErrorCode(error: unknown) {
     : "EBAY_READONLY_MARKET_VALIDATION_FAILED"
 }
 
+export async function GET(req: Request) {
+  const validation = await validateAdminApiRequest(req)
+  if (!validation.ok) {
+    return NextResponse.json(
+      { success: false, error: validation.error ?? "admin_forbidden" },
+      { status: validation.status || 403 },
+    )
+  }
+  try {
+    const quota = await assertEbayLaneAvailable(
+      getSupabaseAdminClient(),
+      "BROWSE",
+      "EXACT_VERIFICATION",
+    )
+    return NextResponse.json({
+      success: true,
+      quota: {
+        available: quota.available,
+        status: quota.status,
+        resumeAt: quota.resumeAt,
+        affectedLane: quota.ownerLane ?? "P1_EXACT_VERIFICATION",
+      },
+      safety: {
+        ebayCalls: 0,
+        ebayWrites: 0,
+        openAiCalls: 0,
+        piiReturned: false,
+      },
+    })
+  } catch {
+    return NextResponse.json(
+      { success: false, error: "EBAY_QUOTA_STATE_READ_FAILED" },
+      { status: 502 },
+    )
+  }
+}
+
+async function getExactProductResearchEvidence(input: {
+  accountKey: string | null
+  supplierVariantId: string
+  searchQuery: string
+}) {
+  const base = { source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE" as const,
+    searchQuery: input.searchQuery, recencyDays: 90 }
+  if (!input.accountKey || !input.supplierVariantId) {
+    return { ...base, status: "CAPTURE_REQUIRED" as const,
+      exactObservationCount: 0, confirmedSoldQuantity: 0, latestSoldAt: null }
+  }
+  try {
+    const since = new Date(Date.now() - 90 * 86_400_000).toISOString()
+    const { data, error } = await getSupabaseAdminClient()
+      .from("marketplace_product_research_capture_observations")
+      .select("confirmed_sold_quantity,last_sold_date")
+      .eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", "EBAY_US")
+      .eq("matched_supplier_variant_id", input.supplierVariantId)
+      .eq("match_classification", "EXACT_LUNA_MATCH")
+      .eq("evidence_reviewed", true)
+      .gte("last_sold_date", since)
+      .order("last_sold_date", { ascending: false })
+      .limit(200)
+    if (error) throw error
+    const rows = data ?? []
+    return { ...base, status: rows.length ? "AVAILABLE" as const : "CAPTURE_REQUIRED" as const,
+      exactObservationCount: rows.length,
+      confirmedSoldQuantity: rows.reduce((total, row) =>
+        total + Math.max(0, Number(row.confirmed_sold_quantity ?? 0)), 0),
+      latestSoldAt: rows[0]?.last_sold_date ?? null }
+  } catch {
+    return { ...base, status: "UNAVAILABLE" as const,
+      exactObservationCount: 0, confirmedSoldQuantity: 0, latestSoldAt: null }
+  }
+}
+
 export async function POST(req: Request) {
   const validation = await validateAdminApiRequest(req)
   if (!validation.ok) {
@@ -41,6 +120,7 @@ export async function POST(req: Request) {
     )
   }
 
+  let quotaCheckpoint: Record<string, unknown> = {}
   try {
     const raw = await req.json() as Record<string, unknown>
     const candidate = {
@@ -64,6 +144,33 @@ export async function POST(req: Request) {
         { success: false, error: "EBAY_CANDIDATE_NAME_REQUIRED" },
         { status: 400 }
       )
+    }
+
+    quotaCheckpoint = {
+      candidateKey: text(raw.candidateKey, 240),
+      supplierVariantId: text(raw.supplierVariantId, 120),
+      stage: "MANUAL_MARKET_VERIFICATION",
+    }
+    const quotaLane = await assertEbayLaneAvailable(
+      getSupabaseAdminClient(),
+      "BROWSE",
+      "EXACT_VERIFICATION",
+    )
+    if (!quotaLane.available) {
+      const retryAt = quotaLane.resumeAt
+      const retryAfterSeconds = retryAt
+        ? Math.max(1, Math.ceil((Date.parse(retryAt) - Date.now()) / 1_000))
+        : 60
+      return NextResponse.json({
+        success: false,
+        error: "EBAY_READONLY_GET_429",
+        retryAfterSeconds,
+        retryAt,
+        affectedLane: quotaLane.ownerLane ?? "P1_EXACT_VERIFICATION",
+        pauseSource: "PERSISTENT_QUOTA_COORDINATOR",
+        checkpointPreserved: true,
+        localFlowAvailable: true,
+      }, { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } })
     }
 
     const report = await runEbaySellerKeywordDemandValidation(candidate)
@@ -111,6 +218,11 @@ export async function POST(req: Request) {
       taxonomyIntelligence,
     })
     const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    const productResearchEvidence = await getExactProductResearchEvidence({
+      accountKey,
+      supplierVariantId: text(raw.supplierVariantId, 120),
+      searchQuery: report.searchQuery,
+    })
     const keywordTerms = [
       ...report.keywordEvidenceGroups.verifiedHistoricalMultiSeller,
       ...report.keywordEvidenceGroups.estimatedMultiSellerSignal,
@@ -155,7 +267,8 @@ export async function POST(req: Request) {
           now: report.evidenceAsOf,
         }
       : null
-    const winnerDecisionPackage = accountKey && winnerDecisionPackageInput
+    const winnerDecisionPackage = accountKey && winnerDecisionPackageInput &&
+      productResearchEvidence.status === "AVAILABLE"
       ? buildWinnerEvidenceDecisionPackage({
           ...winnerDecisionPackageInput,
           marketplaceAccountKey: accountKey,
@@ -172,6 +285,7 @@ export async function POST(req: Request) {
         ? sanitizeWinnerEvidencePackage(winnerDecisionPackage)
         : null,
       winnerDecisionPackageInput,
+      productResearchEvidence,
       safety: {
         mode: "EBAY_OFFICIAL_READ_ONLY",
         ebayWriteUsed: false,
@@ -188,6 +302,30 @@ export async function POST(req: Request) {
     })
   } catch (error) {
     const code = safeErrorCode(error)
+    const rateLimit = getEbayReadonlyRateLimitMetadata(error)
+    if (rateLimit) {
+      const persisted = await recordPersistentEbayRateLimit(getSupabaseAdminClient(), {
+        error,
+        apiFamily: "BROWSE",
+        endpoint: "BUY_BROWSE_ITEM_SUMMARY_SEARCH",
+        operation: "EXACT_VERIFICATION",
+        lane: "P1_EXACT_VERIFICATION",
+        checkpoint: quotaCheckpoint,
+      }).catch(() => null)
+      const retryAfterSeconds = rateLimit.retryAfterSeconds ?? 15 * 60
+      const retryAt = persisted?.resumeAt ??
+        new Date(Date.now() + retryAfterSeconds * 1_000).toISOString()
+      return NextResponse.json({
+        success: false,
+        error: code,
+        retryAfterSeconds,
+        retryAt,
+        affectedLane: persisted?.affectedLane ?? "P1_EXACT_VERIFICATION",
+        pauseSource: persisted ? "PERSISTENT_QUOTA_COORDINATOR" : "RESPONSE_FALLBACK",
+        checkpointPreserved: true,
+        localFlowAvailable: true,
+      }, { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } })
+    }
     const status = code === "EBAY_READONLY_ENV_MISSING" ? 503 : 502
     return NextResponse.json(
       { success: false, error: code },

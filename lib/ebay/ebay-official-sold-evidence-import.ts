@@ -84,7 +84,10 @@ const STOP_WORDS = new Set([
 ])
 
 const ALIASES: Record<string, string[]> = {
-  sourceListingId: ["sourcelistingid", "itemid", "ebayitemid", "legacyitemid", "epid"],
+  // ePID identifies a catalog product, not an individual listing. It must
+  // never stand in for Item ID because that would corrupt source dedupe and
+  // read-only listing-detail reconciliation.
+  sourceListingId: ["sourcelistingid", "itemid", "ebayitemid", "legacyitemid"],
   observedAt: ["observedat", "completedat", "solddate", "date", "reportenddate", "enddate"],
   confirmedSoldQuantity: ["confirmedsoldquantity", "quantitysold", "soldquantity", "qtysold", "totalsold"],
   itemPrice: ["itemprice", "price", "soldprice", "averagesoldprice", "averageprice"],
@@ -512,6 +515,7 @@ export async function readReviewedOfficialSoldEvidence(input: {
       .select("id,source,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,evidence_scope,average_sold_price,average_shipping,keyword_signals,visible_image_count,last_sold_date,match_classification,matched_supplier_variant_id")
       .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
       .eq("evidence_reviewed", true)
+      .eq("quality_status", "VALID")
       .gte("last_sold_date", new Date(now.getTime() - OFFICIAL_SOLD_EVIDENCE_RECENCY_DAYS * 86_400_000).toISOString())
       .order("last_sold_date", { ascending: false }).limit(2_000),
     input.supabase.from("marketplace_product_identity_reconciliation_events")

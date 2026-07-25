@@ -1,0 +1,12 @@
+.git/
+.next/
+.tmp/
+.tmp-*/
+.vercel/
+node_modules/
+out/
+reports/
+*.log
+tsconfig.tsbuildinfo
+'REJECTED'
+'VERIFIED_BUSINESS_POLICIES_REQUIRED'

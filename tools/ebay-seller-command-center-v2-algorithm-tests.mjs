@@ -143,7 +143,7 @@ test("candidate, similar, identifier-exact active and identifier-exact sold evid
       brand: null,
       mpn: null,
     },
-    exact({ itemId: "conflict", gtin: "999999999999" }),
+    exact({ itemId: "conflict", gtin: "036000291452" }),
   ])
   assert.deepEqual(demand.evidenceBuckets, {
     candidateFoundCount: 4,
@@ -321,7 +321,7 @@ test("Luna queue mapper connects the complete product restriction detector", () 
   assert.equal(mapped.brand, null, "supplier vendor must not silently become manufacturer brand")
 })
 
-test("mobile queue consumes the canonical V2 priority without re-weighting evidence", () => {
+test("mobile queue applies eligibility before canonical Score V2", () => {
   const view = buildProfessionalSellerQueueView({
     id: "queue-1",
     candidate_key: candidate.candidateKey,
@@ -331,9 +331,14 @@ test("mobile queue consumes the canonical V2 priority without re-weighting evide
     supplier_inventory_quantity: 25,
     supplier_price: 3,
     active_comparables: 2,
+    economics_score: 80,
+    competition_score: 60,
+    listing_readiness_score: 80,
+    last_scanned_at: new Date().toISOString(),
     assessment: {
       identity: { exactIdentityConfirmed: true, comparables: [] },
       economics: { ready: true },
+      market: { soldExactCount: 10, compatibleSellerCount: 2 },
       scores: {
         potentialScore: 88,
         confidenceScore: 80,
@@ -344,7 +349,9 @@ test("mobile queue consumes the canonical V2 priority without re-weighting evide
       listingIntelligencePackage: {},
     },
   })
-  assert.equal(view.seller_priority_score, 73)
+  assert.equal(view.seller_priority_score, 45.2)
+  assert.equal(view.legacy_priority_score, 73)
+  assert.equal(view.classification, "RECOMMENDED_FOR_REVIEW")
   assert.deepEqual(view.score_axes, { potential: 88, confidence: 80, urgency: 70 })
   assert.equal(view.listing_intake_url, "/admin/ebay/listing-workspace?opportunity=queue-1&candidate=luna-portex%3Ap1%3Av1")
 

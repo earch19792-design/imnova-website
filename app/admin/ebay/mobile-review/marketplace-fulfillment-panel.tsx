@@ -107,11 +107,15 @@ type Dashboard = {
       requiredScope?: string
       identityBound?: boolean
       cronConfigured?: boolean
+      trackingWriteReadiness?: "API_TRACKING_WRITE_READY" | "MANUAL_SELLER_HUB_TRACKING_REQUIRED"
+      writtenConsentReference?: "PRESENT" | "MISSING_OR_INVALID"
+      writtenConsentReferenceExposed?: false
       flags?: {
         oauthEnabled?: boolean
         writeEnabled?: boolean
         realAdapterEnabled?: boolean
         submitterEnabled?: boolean
+        writtenConsentEnabled?: boolean
       }
     }
   }
@@ -201,8 +205,10 @@ function stateLabel(value: string) {
 function nextAction(task: Task) {
   if (task.workflow_state === "PENDING_MANUAL_PURCHASE") return "Comprar manualmente en Luna y confirmar la compra."
   if (["LUNA_ORDER_PLACED", "WAITING_FOR_TRACKING"].includes(task.workflow_state)) return "Pegar y validar el tracking cuando Luna lo proporcione."
-  if (task.workflow_state === "TRACKING_READY_FOR_SUBMISSION") return "Revisar el payload exacto y aprobar la simulación."
-  if (task.workflow_state === "TRACKING_SUBMISSION_QUEUED") return "Esperar al adapter simulado; no se escribirá en eBay."
+  if (task.workflow_state === "TRACKING_READY_FOR_SUBMISSION") return "Revisar el preview exacto y confirmar el envío a eBay."
+  if (task.workflow_state === "TRACKING_SUBMISSION_QUEUED") return "El worker hará preflight oficial y reconciliación; no edites ni vuelvas a enviar el tracking."
+  if (task.workflow_state === "TRACKING_SUBMITTED_TO_EBAY") return "Esperar el read-back oficial antes de considerar la orden enviada."
+  if (task.workflow_state === "SHIPPED") return "Tracking confirmado por read-back de eBay; ciclo postventa cerrado."
   if (["TRACKING_SUBMITTED_SIMULATED", "SHIPPED_SIMULATED"].includes(task.workflow_state)) return "Simulación completada; V1A no cierra ni entrega automáticamente."
   if (task.workflow_state === "MANUAL_REVIEW_REQUIRED") return "Resolver manualmente el error antes de continuar."
   return "Revisar el historial de la tarea."
@@ -423,9 +429,9 @@ export function MarketplaceFulfillmentPanel() {
 
   return <section aria-labelledby="fulfillment-v1a-heading" className="space-y-4 rounded-3xl border border-violet-200/25 bg-violet-200/[0.06] p-4">
     <header>
-      <p className="text-xs font-black uppercase tracking-widest text-violet-100/65">Preview · staging · V1A + V1B preparada</p>
-      <h2 id="fulfillment-v1a-heading" className="mt-1 text-xl font-black">Fulfillment manual y tracking reconciliable</h2>
-      <p className="mt-2 text-sm text-white/70">Compra manual en Luna, tracking con aprobación humana y adapter real protegido por cuatro flags. Escrituras eBay durante esta implementación: 0.</p>
+      <p className="text-xs font-black uppercase tracking-widest text-violet-100/65">Postventa eBay · confirmación humana</p>
+      <h2 id="fulfillment-v1a-heading" className="mt-1 text-xl font-black">Venta, tracking y reconciliación</h2>
+      <p className="mt-2 text-sm text-white/70">Pega carrier y tracking, revisa el preview y confirma una sola vez. El sistema valida cuenta, orden, line item, Custom Label, pago y estado oficial antes del POST; un resultado incierto queda en revisión manual y nunca se reenvía automáticamente.</p>
     </header>
 
     {loading && <p role="status" className="rounded-2xl border border-white/10 p-4 text-sm">Cargando cola de fulfillment…</p>}
@@ -476,8 +482,10 @@ export function MarketplaceFulfillmentPanel() {
 
     {dashboard?.enabled && <div className="rounded-2xl border border-amber-200/20 bg-amber-200/[0.05] p-3 text-xs">
       <p className="font-black">Adapter real eBay: {dashboard.config?.realAdapter?.executable ? "ARMADO" : "DESACTIVADO"}</p>
-      <p className="mt-1 text-white/60">OAuth {dashboard.config?.realAdapter?.flags?.oauthEnabled ? "ON" : "OFF"} · write {dashboard.config?.realAdapter?.flags?.writeEnabled ? "ON" : "OFF"} · adapter {dashboard.config?.realAdapter?.flags?.realAdapterEnabled ? "ON" : "OFF"} · submitter {dashboard.config?.realAdapter?.flags?.submitterEnabled ? "ON" : "OFF"} · cron NO</p>
+      <p className="mt-1 text-white/60">OAuth {dashboard.config?.realAdapter?.flags?.oauthEnabled ? "ON" : "OFF"} · write {dashboard.config?.realAdapter?.flags?.writeEnabled ? "ON" : "OFF"} · adapter {dashboard.config?.realAdapter?.flags?.realAdapterEnabled ? "ON" : "OFF"} · submitter {dashboard.config?.realAdapter?.flags?.submitterEnabled ? "ON" : "OFF"} · consentimiento escrito {dashboard.config?.realAdapter?.flags?.writtenConsentEnabled ? "ON" : "OFF"} · cron NO</p>
       <p className="mt-1 text-white/60">Token dedicado: {dashboard.config?.realAdapter?.token ?? "MISSING"} · scope requerido: sell.fulfillment · identidad: {dashboard.config?.realAdapter?.identityBound ? "BOUND" : "BLOCKED"}</p>
+      <p className={`mt-2 rounded-xl border p-2 font-black ${dashboard.config?.realAdapter?.trackingWriteReadiness === "API_TRACKING_WRITE_READY" ? "border-emerald-200/25 text-emerald-50" : "border-amber-200/25 text-amber-50"}`}>{dashboard.config?.realAdapter?.trackingWriteReadiness ?? "MANUAL_SELLER_HUB_TRACKING_REQUIRED"}</p>
+      {dashboard.config?.realAdapter?.trackingWriteReadiness !== "API_TRACKING_WRITE_READY" && <p className="mt-1 text-white/60">Carga el tracking manualmente en Seller Hub. Seller OS no ejecutará la escritura API sin consentimiento escrito verificable; no almacena documentos ni PII.</p>}
     </div>}
 
     {dashboard?.enabled && dashboard.tasks.length === 0 && <p className="rounded-2xl border border-white/10 p-5 text-center text-white/65">No hay ventas que requieran fulfillment.</p>}
@@ -495,6 +503,8 @@ export function MarketplaceFulfillmentPanel() {
           <span className="rounded-full border border-white/15 px-3 py-1 text-xs font-black">Cantidad {task.quantity}</span>
         </div>
         <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+          <div><dt className="text-white/45">Order ID</dt><dd className="break-all font-mono">{task.marketplace_order_id}</dd></div>
+          <div><dt className="text-white/45">Line Item ID</dt><dd className="break-all font-mono">{task.marketplace_line_item_id}</dd></div>
           <div><dt className="text-white/45">Item ID</dt><dd className="font-mono">{task.listing_id}</dd></div>
           <div><dt className="text-white/45">Custom Label</dt><dd className="font-mono">{task.marketplace_listing_sku ?? "—"}</dd></div>
           <div><dt className="text-white/45">Supplier SKU / variant</dt><dd className="font-mono">{task.supplier_sku ?? "—"} / {task.supplier_variant_id ?? "—"}</dd></div>
@@ -519,7 +529,7 @@ export function MarketplaceFulfillmentPanel() {
 
         {purchase && <p className="mt-3 rounded-xl bg-emerald-200/[0.07] p-3 text-xs">Compra Luna {purchase.supplier_order_id} · {money(purchase.total_paid, purchase.currency)} · {formatDate(purchase.purchased_at)}</p>}
 
-        {["WAITING_FOR_TRACKING", "TRACKING_READY_FOR_SUBMISSION", "TRACKING_SUBMISSION_QUEUED"].includes(task.workflow_state) && <form className="mt-4 grid gap-3 rounded-2xl border border-white/10 p-3 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void submit(task, "tracking") }}>
+        {["WAITING_FOR_TRACKING", "TRACKING_READY_FOR_SUBMISSION"].includes(task.workflow_state) && <form className="mt-4 grid gap-3 rounded-2xl border border-white/10 p-3 sm:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void submit(task, "tracking") }}>
           <label className="text-xs">Tracking number<input required value={tForm.trackingNumber} onChange={(event) => setTrackingForms((current) => ({ ...current, [task.id]: { ...tForm, trackingNumber: event.target.value } }))} className="mt-1 min-h-11 w-full rounded-xl bg-black/35 px-3 font-mono" /></label>
           <label className="text-xs">Cantidad del paquete<input required type="number" min="1" max={task.quantity} value={tForm.quantity} onChange={(event) => setTrackingForms((current) => ({ ...current, [task.id]: { ...tForm, quantity: event.target.value } }))} className="mt-1 min-h-11 w-full rounded-xl bg-black/35 px-3" /></label>
           <label className="text-xs">Carrier sugerido<select value={tForm.suggestedCarrier} onChange={(event) => setTrackingForms((current) => ({ ...current, [task.id]: { ...tForm, suggestedCarrier: event.target.value } }))} className="mt-1 min-h-11 w-full rounded-xl bg-black/35 px-3"><option>USPS</option><option>UPS</option><option>FEDEX</option><option>DHL</option><option>ONTRAC</option><option>ESTAFETA</option></select></label>
@@ -528,7 +538,7 @@ export function MarketplaceFulfillmentPanel() {
           <button disabled={busyTask === task.id} className="min-h-12 rounded-xl bg-cyan-200 px-3 font-black text-black sm:col-span-2">Validar tracking y preparar payload</button>
         </form>}
 
-        {shipment && <div className="mt-3 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-xs"><p className="font-black">Payload normalizado · {shipment.approval_status}</p><pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] text-cyan-50/80">{JSON.stringify(shipment.normalized_payload, null, 2)}</pre><p className="mt-2 break-all font-mono">{shipment.payload_hash}</p>{task.workflow_state === "TRACKING_READY_FOR_SUBMISSION" && <div className="mt-3 grid gap-2"><button type="button" disabled={busyTask === task.id} onClick={() => void submit(task, "approve")} className="min-h-12 w-full rounded-xl bg-amber-100 px-3 font-black text-black">Aprobar submission simulada</button>{dashboard.config?.realAdapter?.executable && <button type="button" disabled={busyTask === task.id} onClick={() => void submit(task, "approve-real")} className="min-h-12 w-full rounded-xl border border-rose-100/40 bg-rose-100/10 px-3 font-black text-rose-50">Aprobar escritura real en eBay</button>}</div>}</div>}
+        {shipment && <div className="mt-3 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-xs"><p className="font-black">Preview final inmutable · {shipment.approval_status}</p><p className="mt-2 text-cyan-50/80">Orden {task.marketplace_order_id} · line item {task.marketplace_line_item_id} · Item ID {task.listing_id} · Custom Label {task.marketplace_listing_sku ?? "N/D"}. Sólo se enviará el payload mostrado abajo.</p><pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] text-cyan-50/80">{JSON.stringify(shipment.normalized_payload, null, 2)}</pre><p className="mt-2 break-all font-mono">{shipment.payload_hash}</p>{task.workflow_state === "TRACKING_READY_FOR_SUBMISSION" && <div className="mt-3 grid gap-2"><button type="button" disabled={busyTask === task.id} onClick={() => void submit(task, "approve")} className="min-h-12 w-full rounded-xl bg-amber-100 px-3 font-black text-black">Aprobar submission simulada</button>{dashboard.config?.realAdapter?.executable ? <button type="button" disabled={busyTask === task.id} onClick={() => void submit(task, "approve-real")} className="min-h-12 w-full rounded-xl border border-rose-100/40 bg-rose-100/10 px-3 font-black text-rose-50">Confirmar y enviar tracking a eBay</button> : <p className="rounded-xl border border-amber-200/25 p-2 font-black text-amber-50">MANUAL_SELLER_HUB_TRACKING_REQUIRED</p>}</div>}</div>}
         {submission && <p className="mt-3 rounded-xl bg-violet-200/[0.08] p-3 text-xs">Outbox {submission.status} · adapter {submission.adapter} · intentos {submission.attempts}/{submission.max_attempts}{submission.last_error_code ? ` · ${submission.last_error_code}` : ""}</p>}
         <p className="mt-3 text-sm"><strong>Siguiente acción:</strong> {nextAction(task)}</p>
         {task.last_error_code && <p className="mt-2 text-xs font-bold text-rose-100">Error sanitizado: {task.last_error_code}</p>}

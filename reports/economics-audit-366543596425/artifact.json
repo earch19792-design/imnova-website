@@ -1,0 +1,366 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "Auditoría del margen del listing 366543596425",
+    "description": "Diagnóstico del margen estimado de 3.6% y de los supuestos que deben verificarse antes de tratarlo como margen real.",
+    "generatedAt": "2026-07-21T01:21:29Z",
+    "cards": [
+      {
+        "id": "sale_price",
+        "description": "Precio activo observado por la lectura oficial de eBay.",
+        "dataset": "headline",
+        "sourceId": "staging_economics_audit",
+        "metrics": [
+          {
+            "label": "Precio publicado",
+            "field": "sale_price",
+            "format": "currency"
+          }
+        ]
+      },
+      {
+        "id": "supplier_cost",
+        "description": "Costo Luna confirmado para el paquete de tres unidades.",
+        "dataset": "headline",
+        "sourceId": "staging_economics_audit",
+        "metrics": [
+          {
+            "label": "Costo del 3-pack",
+            "field": "supplier_cost",
+            "format": "currency"
+          }
+        ]
+      },
+      {
+        "id": "current_margin",
+        "description": "Escenario conservador del monitor; no es margen realizado ni verificado.",
+        "dataset": "headline",
+        "sourceId": "staging_economics_audit",
+        "metrics": [
+          {
+            "label": "Margen conservador",
+            "field": "current_margin_rate",
+            "format": "percent"
+          }
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "margin_scenario_chart",
+        "title": "Margen estimado por escenario",
+        "subtitle": "Cuatro escenarios con el mismo precio y costo; todos permanecen por debajo del objetivo de 20%.",
+        "type": "bar",
+        "dataset": "margin_scenarios",
+        "sourceId": "staging_economics_audit",
+        "valueFormat": "percent",
+        "settings": {
+          "orientation": "horizontal"
+        },
+        "encodings": {
+          "x": {
+            "field": "scenario",
+            "type": "nominal",
+            "label": "Escenario"
+          },
+          "y": {
+            "field": "estimated_margin_rate",
+            "type": "quantitative",
+            "label": "Margen estimado",
+            "format": "percent"
+          },
+          "tooltip": [
+            {
+              "field": "estimated_net_profit",
+              "type": "quantitative",
+              "label": "Utilidad estimada",
+              "format": "currency"
+            },
+            {
+              "field": "shipping_cost",
+              "type": "quantitative",
+              "label": "Envío estimado",
+              "format": "currency"
+            }
+          ]
+        }
+      }
+    ],
+    "tables": [
+      {
+        "id": "margin_scenarios",
+        "title": "Escenarios de margen",
+        "subtitle": "Mismo precio y costo; cambian únicamente las reservas aún no verificadas.",
+        "dataset": "margin_scenarios",
+        "sourceId": "staging_economics_audit",
+        "defaultSort": {
+          "field": "estimated_margin_rate",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "scenario",
+            "label": "Escenario",
+            "type": "text"
+          },
+          {
+            "field": "final_value_fee_rate",
+            "label": "Tarifa eBay",
+            "format": "percent"
+          },
+          {
+            "field": "promoted_rate",
+            "label": "Publicidad",
+            "format": "percent"
+          },
+          {
+            "field": "returns_rate",
+            "label": "Reserva devoluciones",
+            "format": "percent"
+          },
+          {
+            "field": "shipping_cost",
+            "label": "Envío estimado",
+            "format": "currency"
+          },
+          {
+            "field": "estimated_net_profit",
+            "label": "Utilidad estimada",
+            "format": "currency"
+          },
+          {
+            "field": "estimated_margin_rate",
+            "label": "Margen estimado",
+            "format": "percent"
+          }
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "staging_economics_audit",
+        "label": "Auditoría económica de Seller OS en staging",
+        "path": "reports/economics-audit-366543596425/economics-audit.sql"
+      },
+      {
+        "id": "canonical_economics_code",
+        "label": "Fórmula canónica de economía unitaria",
+        "path": "lib/ebay/ebay-unit-economics.ts"
+      },
+      {
+        "id": "ebay_selling_fees",
+        "label": "eBay: Selling fees",
+        "href": "https://www.ebay.com/help/selling-fees/selling/selling-fees?id=4822"
+      },
+      {
+        "id": "ebay_promoted_listings",
+        "label": "eBay: Promoted Listings overview",
+        "href": "https://www.ebay.com/help/selling/listings/promoted-listings-overview?id=5295"
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# Auditoría del margen del listing 366543596425"
+      },
+      {
+        "id": "executive_summary",
+        "type": "markdown",
+        "body": "## Executive Summary\n\n- **Sí, el cálculo debe corregirse en su clasificación y en sus entradas.** El 3.6% se reproduce correctamente, pero es un escenario conservador, no un margen económico verificado.\n- **El precio puede seguir siendo débil.** Manteniendo $6.99 de envío, incluso sin publicidad ni reserva de devoluciones, el escenario llega solo a 14.3%, por debajo del objetivo de 20%.\n- **La decisión final sigue abierta.** Falta confirmar el costo real del envío, si el comprador paga shipping, la tarifa aplicable a la cuenta y si existe una campaña publicitaria atribuible."
+      },
+      {
+        "id": "headline_metrics",
+        "type": "metric-strip",
+        "cardIds": [
+          "sale_price",
+          "supplier_cost",
+          "current_margin"
+        ]
+      },
+      {
+        "id": "formula_reconciled",
+        "type": "markdown",
+        "sourceId": "staging_economics_audit",
+        "body": "## El 3.6% sale de una aritmética consistente\n\nEl monitor parte de **$16.49** de precio y **$4.50** de costo Luna para el 3-pack. Después descuenta **$6.99** de envío, **$2.92** de comisión eBay estimada, **$0.66** de reserva por devoluciones y **$0.82** de publicidad. El resultado es **$0.59** de utilidad estimada, equivalente a **3.6%**.\n\nLa alerta se disparó correctamente contra el umbral configurado de 10%; lo que no estaba suficientemente sustentado era presentar todas esas reservas como información verificada."
+      },
+      {
+        "id": "scenario_takeaway",
+        "type": "markdown",
+        "sourceId": "staging_economics_audit",
+        "body": "## Los supuestos cambian el margen, pero no eliminan el riesgo\n\nAl sustituir la reserva de 15.3% por 13.6%, el margen sube a **5.3%**. Sin cargo publicitario sube a **10.3%**; quitando además la reserva de devoluciones alcanza **14.3%**. Por tanto, con un envío real de $6.99 el listing no alcanzaría el objetivo de 20% en ninguno de estos escenarios."
+      },
+      {
+        "id": "scenario_chart",
+        "type": "chart",
+        "chartId": "margin_scenario_chart",
+        "layout": "full"
+      },
+      {
+        "id": "scenario_table",
+        "type": "table",
+        "tableId": "margin_scenarios",
+        "layout": "full"
+      },
+      {
+        "id": "fee_definition",
+        "type": "markdown",
+        "sourceId": "ebay_selling_fees",
+        "body": "## La comisión debe corresponder a la categoría y a la cuenta\n\neBay publica una tarifa base de **13.6% más $0.40 por orden** para la mayoría de las categorías cuando la orden supera $10. La comisión se calcula sobre el total de la venta, que puede incluir shipping cobrado e impuestos. También pueden aplicar diferencias por Store, categoría y desempeño del vendedor. El monitor usa 15.3% como reserva previa a conocer esos detalles, por lo que no puede llamarla tarifa exacta."
+      },
+      {
+        "id": "promoted_definition",
+        "type": "markdown",
+        "sourceId": "ebay_promoted_listings",
+        "body": "## La publicidad no debe cobrarse automáticamente como un hecho\n\nEn Promoted Listings General, eBay cobra la tarifa publicitaria cuando una venta es atribuida a un clic dentro de la ventana aplicable y usa la tasa vigente para ese listing. Las campañas Priority funcionan por clic. Una reserva plana de 5% es útil para estrés económico, pero no demuestra que este listing vaya a pagar 5% en cada venta."
+      },
+      {
+        "id": "recommended_actions",
+        "type": "markdown",
+        "body": "## Qué debe corregirse\n\n1. Guardar el shipping cobrado al comprador y el costo estimado o real de la etiqueta.\n2. Resolver la tarifa por categoría, plan de Store y nivel de vendedor; incluir correctamente la base con impuestos y shipping.\n3. Leer el estado y la tasa de Promoted Listings; usar 0% cuando no exista campaña y separar el escenario con publicidad.\n4. Mostrar dos métricas: **margen conservador** y **margen verificado**.\n5. En WhatsApp, usar `VALIDACIÓN ECONÓMICA REQUERIDA` mientras falten entradas; reservar `CRÍTICA` para una economía verificada o una venta con costos reales.\n\nNo debe cambiarse el precio de eBay automáticamente."
+      },
+      {
+        "id": "further_questions",
+        "type": "markdown",
+        "body": "## Datos que faltan para cerrar la decisión\n\n- ¿El listing ofrece envío gratis o el comprador paga shipping?\n- ¿Cuál es el costo esperado de la etiqueta para el peso y la zona reales?\n- ¿Está el listing dentro de una campaña Promoted Listings y con qué tasa?\n- ¿Qué tarifa corresponde al plan de Store y al nivel actual de la cuenta?"
+      },
+      {
+        "id": "caveats",
+        "type": "markdown",
+        "body": "## Caveats and assumptions\n\nTodavía no existe una orden completada que permita leer `Fee details` y el costo real de la etiqueta. La reserva de devoluciones de 4% es una provisión de riesgo, no un cargo inmediato de eBay. Los escenarios mantienen el envío estimado de $6.99 y no incluyen posibles recargos por desempeño, impuestos sobre tarifas ni descuentos de Store."
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-07-21T01:21:29Z",
+    "status": "partial",
+    "datasets": {
+      "headline": [
+        {
+          "sale_price": 16.49,
+          "supplier_cost": 4.5,
+          "current_margin_rate": 0.036
+        }
+      ],
+      "margin_scenarios": [
+        {
+          "scenario": "Monitor conservador actual",
+          "final_value_fee_rate": 0.153,
+          "promoted_rate": 0.05,
+          "returns_rate": 0.04,
+          "shipping_cost": 6.99,
+          "estimated_net_profit": 0.59,
+          "estimated_margin_rate": 0.036
+        },
+        {
+          "scenario": "Tarifa 13.6%; reservas iguales",
+          "final_value_fee_rate": 0.136,
+          "promoted_rate": 0.05,
+          "returns_rate": 0.04,
+          "shipping_cost": 6.99,
+          "estimated_net_profit": 0.87,
+          "estimated_margin_rate": 0.053
+        },
+        {
+          "scenario": "Tarifa 13.6%; sin cargo publicitario",
+          "final_value_fee_rate": 0.136,
+          "promoted_rate": 0,
+          "returns_rate": 0.04,
+          "shipping_cost": 6.99,
+          "estimated_net_profit": 1.7,
+          "estimated_margin_rate": 0.103
+        },
+        {
+          "scenario": "Tarifa 13.6%; sin publicidad ni reserva de devolución",
+          "final_value_fee_rate": 0.136,
+          "promoted_rate": 0,
+          "returns_rate": 0,
+          "shipping_cost": 6.99,
+          "estimated_net_profit": 2.36,
+          "estimated_margin_rate": 0.143
+        }
+      ]
+    },
+    "accessIssues": [
+      {
+        "id": "actual_shipping_unavailable",
+        "dataset": "verified_actual_margin",
+        "message": "No está disponible el shipping cobrado al comprador ni el costo real de la etiqueta."
+      },
+      {
+        "id": "promoted_listing_status_unavailable",
+        "dataset": "verified_actual_margin",
+        "message": "No está disponible el estado ni la tasa de la campaña Promoted Listings para este listing."
+      },
+      {
+        "id": "account_specific_fee_unavailable",
+        "dataset": "verified_actual_margin",
+        "message": "No está resuelta la tarifa específica por categoría, Store y desempeño de la cuenta."
+      }
+    ]
+  },
+  "sources": [
+    {
+      "id": "staging_economics_audit",
+      "label": "Auditoría económica de Seller OS en staging",
+      "path": "reports/economics-audit-366543596425/economics-audit.sql",
+      "query": {
+        "engine": "Supabase PostgreSQL staging",
+        "sql": "with listing as (select ebay_item_id, ebay_price::numeric as sale_price, title, raw_payload from public.ebay_active_listings where ebay_item_id = '366543596425' and listing_status = 'active' order by case source when 'EBAY_SELL_INVENTORY_READONLY' then 3 when 'EBAY_TRADING_GET_ITEM_READONLY' then 2 else 1 end desc, updated_at desc limit 1), package as (select listing.sale_price, (listing.raw_payload ->> 'listingPackageId')::uuid as listing_package_id, package.package_data from listing join public.ebay_listing_packages as package on package.id = (listing.raw_payload ->> 'listingPackageId')::uuid), base as (select sale_price, (package_data #>> '{pricing,supplierCost}')::numeric as supplier_cost from package), scenarios(scenario_order, scenario, final_value_fee_rate, promoted_rate, returns_rate, shipping_cost) as (values (1, 'Monitor conservador actual', 0.153::numeric, 0.05::numeric, 0.04::numeric, 6.99::numeric), (2, 'Tarifa 13.6%; reservas iguales', 0.136::numeric, 0.05::numeric, 0.04::numeric, 6.99::numeric), (3, 'Tarifa 13.6%; sin cargo publicitario', 0.136::numeric, 0::numeric, 0.04::numeric, 6.99::numeric), (4, 'Tarifa 13.6%; sin publicidad ni reserva de devolucion', 0.136::numeric, 0::numeric, 0::numeric, 6.99::numeric)), calculated as (select scenarios.*, base.sale_price, base.supplier_cost, base.sale_price * scenarios.final_value_fee_rate + 0.40 as ebay_fee, base.sale_price * scenarios.returns_rate as returns_reserve, base.sale_price * scenarios.promoted_rate as promoted_reserve from base cross join scenarios) select scenario_order, scenario, round(sale_price, 2) as sale_price, round(supplier_cost, 2) as supplier_cost, final_value_fee_rate, promoted_rate, returns_rate, round(shipping_cost, 2) as shipping_cost, round(ebay_fee, 2) as ebay_fee, round(returns_reserve, 2) as returns_reserve, round(promoted_reserve, 2) as promoted_reserve, round(sale_price - supplier_cost - shipping_cost - ebay_fee - returns_reserve - promoted_reserve, 2) as estimated_net_profit, round((sale_price - supplier_cost - shipping_cost - ebay_fee - returns_reserve - promoted_reserve) / sale_price * 100, 2) as estimated_margin_percent from calculated order by scenario_order;",
+        "description": "Reconcilia el precio activo, el costo aprobado del paquete y cuatro escenarios de reservas económicas.",
+        "language": "sql",
+        "executed_at": "2026-07-21T01:21:29Z",
+        "tables_used": [
+          "public.ebay_active_listings",
+          "public.ebay_listing_packages"
+        ],
+        "filters": [
+          "listing_id = 366543596425",
+          "listing_status = active",
+          "una fila canónica según prioridad de fuente"
+        ],
+        "metric_definitions": [
+          "Utilidad estimada = precio - costo proveedor - envío - comisión eBay - reserva de devoluciones - reserva publicitaria.",
+          "Margen estimado = utilidad estimada / precio publicado.",
+          "El costo proveedor es el costo aprobado del 3-pack, no el precio de una unidad Luna."
+        ]
+      }
+    },
+    {
+      "id": "canonical_economics_code",
+      "label": "Fórmula canónica de economía unitaria",
+      "path": "lib/ebay/ebay-unit-economics.ts",
+      "query": {
+        "engine": "repository",
+        "description": "Implementación que usa el monitor comercial para calcular utilidad, margen y ROI estimados.",
+        "language": "typescript",
+        "executed_at": "2026-07-21T01:21:29Z"
+      }
+    },
+    {
+      "id": "ebay_selling_fees",
+      "label": "eBay: Selling fees",
+      "href": "https://www.ebay.com/help/selling-fees/selling/selling-fees?id=4822",
+      "query": {
+        "engine": "web",
+        "url": "https://www.ebay.com/help/selling-fees/selling/selling-fees?id=4822",
+        "description": "Documentación oficial de tarifas de venta, base de cálculo y recargos posibles.",
+        "executed_at": "2026-07-21T01:21:29Z"
+      }
+    },
+    {
+      "id": "ebay_promoted_listings",
+      "label": "eBay: Promoted Listings overview",
+      "href": "https://www.ebay.com/help/selling/listings/promoted-listings-overview?id=5295",
+      "query": {
+        "engine": "web",
+        "url": "https://www.ebay.com/help/selling/listings/promoted-listings-overview?id=5295",
+        "description": "Documentación oficial sobre atribución y cobro de campañas General y Priority.",
+        "executed_at": "2026-07-21T01:21:29Z"
+      }
+    }
+  ]
+}

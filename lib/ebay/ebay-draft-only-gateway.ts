@@ -5,6 +5,8 @@ import {
   issueEbayDraftOnlyPreflightSnapshot,
   verifyEbayDraftOnlyPreflightSnapshot,
 } from "./ebay-draft-only-preflight-snapshot"
+import { isCanonicalEbayPackageSku } from "./ebay-sku"
+import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"
 import { getEbayDraftWriteEnvironmentBoundary } from "./environment-boundaries"
 
 const DRAFT_ONLY_SCOPE = [
@@ -15,8 +17,13 @@ const DRAFT_ONLY_SCOPE = [
 ].join(" ")
 const REQUEST_TIMEOUT_MS = 12_000
 const TRANSIENT_STATUSES = new Set([429, 500, 502, 503, 504])
+const PREFLIGHT_READ_ATTEMPTS = 2
+const PREFLIGHT_READ_RETRY_DELAY_MS = 150
+const EBAY_ACCEPT_LANGUAGE = "en-US"
 
 export type EbayDraftOnlyTarget = "SANDBOX" | "PRODUCTION"
+
+export const EBAY_FINAL_PUBLISH_CONFIRMATION = "PUBLICAR LISTING EN EBAY"
 
 type GatewayConfig = {
   enabled: boolean
@@ -62,12 +69,14 @@ type ReadResult = {
   ok: boolean
   status: number
   body: JsonRecord
+  attempts?: number
 }
 
 type CachedAuthentication = {
   token: string
   expiresAt: number
   actualFingerprint: string
+  maskedSellerAccountId: string
   accountType: string
   registrationMarketplaceId: string
 }
@@ -112,10 +121,42 @@ function safeBody(value: JsonRecord) {
   return { errors }
 }
 
+function safeReadErrors(result: ReadResult) {
+  return Array.isArray(result.body.errors)
+    ? result.body.errors.map(record).filter((item) => item.errorId)
+    : []
+}
+
+function readErrorIds(result: ReadResult) {
+  return safeReadErrors(result)
+    .map((item) => String(item.errorId ?? "").trim())
+    .filter(Boolean)
+}
+
+function isInventoryAbsenceResponse(result: ReadResult) {
+  if (result.status === 404) return true
+  if (result.status !== 400) return false
+  const errors = safeReadErrors(result)
+  return errors.length > 0 && errors.every((item) =>
+    ["25702", "25710"].includes(String(item.errorId ?? "").trim())
+    && item.domain === "API_INVENTORY"
+    && item.category === "REQUEST"
+  )
+}
+
 function accountFingerprint(target: EbayDraftOnlyTarget, userId: string) {
   return userId
     ? createHash("sha256").update(`${target}:${userId}`).digest("hex")
     : ""
+}
+
+function maskedSellerAccountId(value: string) {
+  const normalized = value.trim().replace(/[\r\n\t]/g, "").slice(0, 128)
+  if (!normalized) return ""
+  if (normalized.length <= 4) {
+    return `${normalized.slice(0, 1)}${"•".repeat(Math.max(2, normalized.length))}${normalized.slice(-1)}`
+  }
+  return `${normalized.slice(0, 2)}${"•".repeat(Math.min(8, normalized.length - 4))}${normalized.slice(-2)}`
 }
 
 function normalizedFingerprint(value: unknown) {
@@ -274,10 +315,31 @@ async function authenticatedToken(
   if (!identity.ok || !actualUserId) {
     throw new Error("EBAY_DRAFT_ONLY_ACCOUNT_IDENTITY_UNAVAILABLE")
   }
-  if (confirmedStatus !== "CONFIRMED") {
+  if (confirmedStatus && confirmedStatus !== "CONFIRMED") {
     throw new Error("EBAY_DRAFT_ONLY_ACCOUNT_IDENTITY_NOT_CONFIRMED")
   }
-  const actualFingerprint = accountFingerprint(config.target, actualUserId)
+  let actualFingerprint = accountFingerprint(config.target, actualUserId)
+  if (
+    config.target === "PRODUCTION" &&
+    config.identityBound &&
+    actualFingerprint !== config.accountFingerprint
+  ) {
+    try {
+      const tradingUserId = await readEbayTradingUserIdWithAccessToken(
+        token,
+        fetchImpl,
+      )
+      const tradingFingerprint = accountFingerprint(
+        config.target,
+        tradingUserId,
+      )
+      if (tradingFingerprint === config.accountFingerprint) {
+        actualFingerprint = tradingFingerprint
+      }
+    } catch {
+      // The exact bound fingerprint below remains the final fail-closed gate.
+    }
+  }
   const accountType = typeof identity.body.accountType === "string"
     ? identity.body.accountType.trim().toUpperCase().replace(/[^A-Z_]/g, "").slice(0, 32)
     : ""
@@ -297,6 +359,7 @@ async function authenticatedToken(
     token,
     actualFingerprint,
     identityStatus,
+    maskedSellerAccountId: maskedSellerAccountId(actualUserId),
     accountType,
     registrationMarketplaceId,
   }
@@ -304,6 +367,7 @@ async function authenticatedToken(
     authenticationCache.set(cacheKey, {
       token,
       actualFingerprint,
+      maskedSellerAccountId: authenticated.maskedSellerAccountId,
       accountType,
       registrationMarketplaceId,
       expiresAt: Date.now() + (expiresInSeconds - 60) * 1_000,
@@ -414,7 +478,7 @@ async function preflightRead(
       method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
-        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+        "Accept-Language": EBAY_ACCEPT_LANGUAGE,
       },
       cache: "no-store",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -428,6 +492,35 @@ async function preflightRead(
   } catch {
     return { ok: false, status: 0, body: {} as JsonRecord }
   }
+}
+
+function retryablePreflightRead(result: ReadResult) {
+  return result.status === 0 || TRANSIENT_STATUSES.has(result.status)
+}
+
+async function preflightReadWithRetry(
+  config: GatewayConfig,
+  token: string,
+  url: URL,
+  fetchImpl: typeof fetch,
+) {
+  let lastResult: ReadResult = {
+    ok: false,
+    status: 0,
+    body: {},
+    attempts: 0,
+  }
+  for (let attempt = 1; attempt <= PREFLIGHT_READ_ATTEMPTS; attempt += 1) {
+    const result = await preflightRead(config, token, url, fetchImpl)
+    lastResult = { ...result, attempts: attempt }
+    if (
+      !retryablePreflightRead(result)
+      || attempt === PREFLIGHT_READ_ATTEMPTS
+    ) return lastResult
+    await new Promise((resolve) =>
+      setTimeout(resolve, PREFLIGHT_READ_RETRY_DELAY_MS))
+  }
+  return lastResult
 }
 
 function blankDependencyChecks(): DependencyChecks {
@@ -540,29 +633,83 @@ async function preflightSkuCollisionWithToken(
   offerUrl.searchParams.set("sku", sku)
   offerUrl.searchParams.set("limit", "100")
   const [inventory, offers] = await Promise.all([
-    preflightRead(config, token, inventoryUrl, fetchImpl),
-    preflightRead(config, token, offerUrl, fetchImpl),
+    preflightReadWithRetry(config, token, inventoryUrl, fetchImpl),
+    preflightReadWithRetry(config, token, offerUrl, fetchImpl),
   ])
-  const inventoryAbsent = inventory.status === 404
-  const offersKnown = offers.ok && Array.isArray(offers.body.offers)
+  const inventoryAbsent = isInventoryAbsenceResponse(inventory)
+  const offerArray = Array.isArray(offers.body.offers)
+    ? offers.body.offers
+    : null
+  const total = typeof offers.body.total === "number"
+    && Number.isInteger(offers.body.total)
+    && offers.body.total >= 0
+    ? offers.body.total
+    : null
+  const size = typeof offers.body.size === "number"
+    && Number.isInteger(offers.body.size)
+    && offers.body.size >= 0
+    ? offers.body.size
+    : null
+  // For a new SKU, eBay can report absence as 404 or as a zero-result
+  // pagination envelope with no collection. Every other shape stays blocked.
+  const arrayConsistent = offerArray !== null
+    && (total === null || total === offerArray.length)
+    && (size === null || size === offerArray.length)
+  const explicitEmptyPage = offers.ok
+    && offerArray === null
+    && total === 0
+    && size === 0
+  const absentByStatus = offers.status === 404
+  const offersKnown = (offers.ok && arrayConsistent)
+    || explicitEmptyPage
+    || absentByStatus
+  const offerCount = arrayConsistent && offerArray
+    ? offerArray.length
+    : 0
+  const offerResponseShape = absentByStatus
+    ? "NOT_FOUND"
+    : arrayConsistent
+      ? "OFFERS_ARRAY"
+      : explicitEmptyPage
+        ? "EXPLICIT_EMPTY_PAGE"
+        : "UNAVAILABLE"
+  const diagnostics = {
+    inventoryHttpStatus: inventory.status,
+    offersHttpStatus: offers.status,
+    inventoryReadAttempts: inventory.attempts ?? 1,
+    offersReadAttempts: offers.attempts ?? 1,
+    inventoryErrorIds: readErrorIds(inventory),
+    offersErrorIds: readErrorIds(offers),
+    inventoryErrors: safeReadErrors(inventory),
+    offersErrors: safeReadErrors(offers),
+    offerResponseShape,
+  }
   if ((!inventory.ok && !inventoryAbsent) || !offersKnown) {
+    const requestRejected = (
+      inventory.status === 400 && !inventoryAbsent
+    ) || offers.status === 400
     return {
       safe: false,
       collision: false,
       inventoryExists: false,
       inventoryAbsent,
       offerCount: 0,
-      blocker: "EBAY_SKU_PREFLIGHT_UNAVAILABLE",
+      requestRejected,
+      blocker: requestRejected
+        ? "EBAY_SKU_PREFLIGHT_REQUEST_REJECTED"
+        : "EBAY_SKU_PREFLIGHT_UNAVAILABLE",
+      ...diagnostics,
     }
   }
-  const offerCount = (offers.body.offers as unknown[]).length
   return {
     safe: inventoryAbsent && offerCount === 0,
     collision: inventory.ok || offerCount > 0,
     inventoryExists: inventory.ok,
     inventoryAbsent,
     offerCount,
+    requestRejected: false,
     blocker: inventory.ok || offerCount > 0 ? "EBAY_SKU_ALREADY_EXISTS" : null,
+    ...diagnostics,
   }
 }
 
@@ -911,6 +1058,7 @@ export async function preflightEbayDraftOnlyMobile(
     identity: {
       status: authenticated.identityStatus,
       accountFingerprint: authenticated.actualFingerprint,
+      maskedSellerAccountId: authenticated.maskedSellerAccountId,
       expectedIdentityConfigured: config.identityBound,
       accountType: authenticated.accountType,
       registrationMarketplaceId: authenticated.registrationMarketplaceId,
@@ -964,9 +1112,9 @@ async function write(
       method,
       headers: {
         Authorization: `Bearer ${token}`,
+        "Accept-Language": EBAY_ACCEPT_LANGUAGE,
         "Content-Type": "application/json",
         "Content-Language": "en-US",
-        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
       },
       body: JSON.stringify(payload),
       cache: "no-store",
@@ -1204,6 +1352,236 @@ export function sanitizeEbayOfferId(value: unknown) {
   return /^[A-Za-z0-9_-]{1,80}$/.test(offerId) ? offerId : null
 }
 
+function sanitizeEbayListingId(value: unknown) {
+  const listingId = typeof value === "string" ? value.trim() : ""
+  return /^\d{9,20}$/.test(listingId) ? listingId : null
+}
+
+function publishedListingId(body: JsonRecord) {
+  return sanitizeEbayListingId(body.listingId)
+    ?? sanitizeEbayListingId(record(body.listing).listingId)
+}
+
+async function verifyPublishedOfferWithToken(
+  config: GatewayConfig,
+  token: string,
+  offerId: string,
+  expectedSku: string,
+  fetchImpl: typeof fetch,
+) {
+  const normalizedOfferId = sanitizeEbayOfferId(offerId)
+  const normalizedSku = typeof expectedSku === "string" ? expectedSku.trim() : ""
+  if (!normalizedOfferId || !isCanonicalEbayPackageSku(normalizedSku)) {
+    return {
+      safe: false,
+      active: false,
+      httpStatus: 0,
+      status: "",
+      offerId: normalizedOfferId,
+      listingId: null,
+      sku: normalizedSku,
+      marketplaceId: "EBAY_US",
+      blocker: "EBAY_PUBLISHED_OFFER_IDENTITY_INVALID",
+    }
+  }
+  const result = await preflightRead(
+    config,
+    token,
+    new URL(
+      `/sell/inventory/v1/offer/${encodeURIComponent(normalizedOfferId)}`,
+      config.apiOrigin,
+    ),
+    fetchImpl,
+  )
+  const status = typeof result.body.status === "string"
+    ? result.body.status.trim().toUpperCase()
+    : ""
+  const sku = typeof result.body.sku === "string" ? result.body.sku.trim() : ""
+  const marketplaceId = typeof result.body.marketplaceId === "string"
+    ? result.body.marketplaceId.trim().toUpperCase()
+    : ""
+  const listingId = publishedListingId(result.body)
+  const safe = result.ok
+    && status === "PUBLISHED"
+    && sku === normalizedSku
+    && marketplaceId === "EBAY_US"
+    && Boolean(listingId)
+  return {
+    safe,
+    // Inventory API PUBLISHED is reconciled here. Trading GetItem performs the
+    // independent ACTIVE/ownership verification before monitor registration.
+    active: safe,
+    httpStatus: result.status,
+    status,
+    offerId: normalizedOfferId,
+    listingId,
+    sku,
+    marketplaceId,
+    blocker: safe
+      ? ""
+      : status === "UNPUBLISHED"
+        ? "EBAY_OFFER_STILL_UNPUBLISHED"
+        : "EBAY_PUBLISHED_OFFER_VERIFICATION_PENDING",
+  }
+}
+
+export async function verifyEbayPublishedOffer(
+  offerId: string,
+  expectedSku: string,
+  fetchImpl: typeof fetch = fetch,
+) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  const token = await accessToken(config, fetchImpl, false)
+  return verifyPublishedOfferWithToken(config, token, offerId, expectedSku, fetchImpl)
+}
+
+export async function publishEbayOfferOnce(input: {
+  offerId: string
+  expectedSku: string
+  previewHash: string
+  publicationControlId: string
+  confirmPublish: string
+}, fetchImpl: typeof fetch = fetch) {
+  const config = getEbayDraftOnlyGatewayConfig()
+  const offerId = sanitizeEbayOfferId(input.offerId)
+  const expectedSku = typeof input.expectedSku === "string" ? input.expectedSku.trim() : ""
+  if (
+    config.target !== "PRODUCTION"
+    || input.confirmPublish !== EBAY_FINAL_PUBLISH_CONFIRMATION
+    || !offerId
+    || !isCanonicalEbayPackageSku(expectedSku)
+    || !/^[0-9a-f]{64}$/.test(input.previewHash)
+    || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(input.publicationControlId)
+  ) throw new Error("EBAY_FINAL_PUBLISH_AUTHORIZATION_INVALID")
+
+  const token = await accessToken(config, fetchImpl)
+  const unpublished = await verifyOfferWithToken(
+    config,
+    token,
+    offerId,
+    expectedSku,
+    "EBAY_US",
+    fetchImpl,
+  )
+  if (!unpublished.safe) {
+    const alreadyPublished = await verifyPublishedOfferWithToken(
+      config,
+      token,
+      offerId,
+      expectedSku,
+      fetchImpl,
+    )
+    if (alreadyPublished.safe) {
+      return {
+        ok: true,
+        status: alreadyPublished.httpStatus,
+        listingId: alreadyPublished.listingId,
+        outcomeKnown: true,
+        reconciled: true,
+        publishRequestSent: false,
+        blocker: "",
+      }
+    }
+    return {
+      ok: false,
+      status: unpublished.httpStatus,
+      listingId: null,
+      outcomeKnown: true,
+      reconciled: false,
+      publishRequestSent: false,
+      blocker: unpublished.blocker || "EBAY_OFFER_NOT_PUBLISHABLE",
+    }
+  }
+
+  const url = new URL(
+    `/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/publish`,
+    config.apiOrigin,
+  )
+  let responseStatus = 0
+  let responseBody: JsonRecord = {}
+  let requestCompleted = false
+  try {
+    const response = await fetchImpl(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Accept-Language": EBAY_ACCEPT_LANGUAGE,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    responseStatus = response.status
+    responseBody = record(await response.json().catch(() => ({})))
+    requestCompleted = true
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        listingId: null,
+        outcomeKnown: response.status < 500,
+        reconciled: false,
+        publishRequestSent: true,
+        blocker: response.status < 500
+          ? "EBAY_PUBLISH_WRITE_REJECTED"
+          : "EBAY_PUBLISH_OUTCOME_UNKNOWN",
+        body: safeBody(responseBody),
+      }
+    }
+  } catch {
+    // A timeout is never retried with POST. Reconciliation below uses GET only.
+  }
+
+  const returnedListingId = publishedListingId(responseBody)
+  if (requestCompleted && returnedListingId) {
+    return {
+      ok: true,
+      status: responseStatus,
+      listingId: returnedListingId,
+      outcomeKnown: true,
+      reconciled: false,
+      publishRequestSent: true,
+      blocker: "",
+    }
+  }
+
+  let verification = await verifyPublishedOfferWithToken(
+    config,
+    token,
+    offerId,
+    expectedSku,
+    fetchImpl,
+  )
+  for (let attempt = 1; attempt < 3 && !verification.safe; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 250 * attempt))
+    verification = await verifyPublishedOfferWithToken(
+      config,
+      token,
+      offerId,
+      expectedSku,
+      fetchImpl,
+    )
+  }
+  return verification.safe
+    ? {
+      ok: true,
+      status: responseStatus || verification.httpStatus,
+      listingId: verification.listingId,
+      outcomeKnown: true,
+      reconciled: true,
+      publishRequestSent: true,
+      blocker: "",
+    }
+    : {
+      ok: false,
+      status: responseStatus || verification.httpStatus,
+      listingId: null,
+      outcomeKnown: false,
+      reconciled: false,
+      publishRequestSent: true,
+      blocker: "EBAY_PUBLISH_OUTCOME_UNKNOWN",
+    }
+}
+
 export function ebayDraftOnlyRuntimeStatus() {
   const config = getEbayDraftOnlyGatewayConfig()
   return {
@@ -1260,5 +1638,16 @@ export function ebayDraftOnlyRuntimeStatus() {
     allowedWriteOperations: ["PUT createOrReplaceInventoryItem", "POST createOffer (UNPUBLISHED)"],
     forbiddenOperation: "publishOffer",
     canPublish: false,
+    authorizedPublication: {
+      scope: "SEPARATE_ONE_SHOT_HUMAN_AUTHORIZATION",
+      operation: "POST publishOffer",
+      productionOnly: true,
+      exactFinalPreviewRequired: true,
+      exactConfirmation: EBAY_FINAL_PUBLISH_CONFIRMATION,
+      maximumPublishAttempts: 1,
+      unattendedPublicationAllowed: false,
+      reconciliationUsesGetOnly: true,
+      available: config.enabled && config.configured && config.target === "PRODUCTION",
+    },
   }
 }

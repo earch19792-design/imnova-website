@@ -61,13 +61,13 @@ import {
 } from "@/lib/ebay/ebay-mobile-review-local-state"
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 import { OpportunityCommandCenter, type Opportunity } from "./opportunity-command-center"
-import { CommercialMonitorPanel } from "./commercial-monitor-panel"
-import { MarketplaceFulfillmentPanel } from "./marketplace-fulfillment-panel"
 import { Loop1WinnerAnalysisSummary } from "./loop1-winner-analysis-summary"
 import { Loop2ListingAiPanel } from "./loop2-listing-ai-panel"
+import { SellerJourneyGuide, type SellerJourneyStep } from "./seller-journey-guide"
+import { CommercialMonitorPanel } from "./commercial-monitor-panel"
 
 const emptyReport = buildMobileReviewRealRadarConnector({ products: [] })
-type View = "loop1" | "loop2" | "opportunities" | "top5" | "pinned" | "blocked"
+type View = "loop1" | "loop2" | "opportunities" | "pinned" | "blocked"
 
 type ServerReview = {
   id: string
@@ -108,6 +108,16 @@ type SellerWhatsAppStatus = {
     deliveryClass: string
     message: { title: string; summary: string; action: string }
   }>
+}
+
+type ProductResearchEvidenceStatus = {
+  status: "AVAILABLE" | "CAPTURE_REQUIRED" | "UNAVAILABLE"
+  source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE"
+  searchQuery: string
+  recencyDays: number
+  exactObservationCount: number
+  confirmedSoldQuantity: number
+  latestSoldAt: string | null
 }
 
 function toMobileFixture(candidates: RealRadarCandidate[]): MobileReviewFixture {
@@ -179,48 +189,28 @@ const humanGuardLabels: Record<string, string> = {
 
 const formatValue = (value: unknown) => value === null || value === undefined || value === "" ? "Pendiente" : String(value)
 const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat("es", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : "Pendiente"
-const formatStockAge = (hours: number | null) => hours === null ? "edad pendiente" : hours < 1 ? "menos de 1 h" : `${Math.round(hours)} h`
+const formatQuotaResumeAt = (value: string) => new Intl.DateTimeFormat("es", {
+  dateStyle: "medium",
+  timeStyle: "short",
+  timeZoneName: "short",
+}).format(new Date(value))
+const formatQuotaCountdown = (remainingMs: number) => {
+  const seconds = Math.max(0, Math.ceil(remainingMs / 1_000))
+  const hours = Math.floor(seconds / 3_600)
+  const minutes = Math.floor((seconds % 3_600) / 60)
+  const remainder = seconds % 60
+  return hours > 0
+    ? `${hours} h ${minutes} min`
+    : minutes > 0
+      ? `${minutes} min ${remainder} s`
+      : `${remainder} s`
+}
 const routeLabel = (route: string | null) => route ? humanRouteLabels[route] ?? route.replaceAll("_", " ") : "Sin ruta"
 const guardLabel = (guard: string) => humanGuardLabels[guard] ?? humanRouteLabels[guard] ?? guard
 
 function StatusPill({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "good" | "warning" | "danger" }) {
   const colors = { neutral: "border-white/20 bg-white/10 text-white", good: "border-emerald-200/30 bg-emerald-200/10 text-emerald-50", warning: "border-amber-200/30 bg-amber-200/10 text-amber-50", danger: "border-rose-200/30 bg-rose-200/10 text-rose-50" }
   return <span className={`rounded-full border px-3 py-1.5 text-[11px] font-bold ${colors[tone]}`}>{children}</span>
-}
-
-function CandidateCard({ candidate, selected, pinned, provisional, onSelect, onUnavailable }: { candidate: RealRadarCandidate; selected: boolean; pinned: boolean; provisional: boolean; onSelect: () => void; onUnavailable: () => void }) {
-  return (
-    <article className={`rounded-3xl border p-4 ${selected ? "border-emerald-200/60 bg-emerald-200/10" : "border-white/15 bg-white/[0.045]"}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-bold uppercase tracking-wider text-cyan-100">Orden #{candidate.candidateRank}{candidate.candidateRank === 1 && !provisional ? " · Recomendado" : provisional ? " · Provisional" : ""}</p>
-          <h2 className="mt-2 text-lg font-black leading-6">{candidate.productTitle}</h2>
-          <p className="mt-1 text-sm text-white/70">{formatValue(candidate.variantTitle)} · SKU {formatValue(candidate.supplierSku)}</p>
-        </div>
-        <span className="shrink-0 rounded-2xl bg-white/10 px-3 py-2 text-lg font-black">{candidate.opportunityScore.toFixed(2)}</span>
-      </div>
-      <div className="mt-4 grid gap-2 text-sm">
-        <div className="flex justify-between gap-3 rounded-2xl bg-black/30 p-3"><span className="text-white/70">Stock</span><strong className="text-right">{formatValue(candidate.stockQuantity)} · {candidate.stockSource}<span className="block text-xs font-medium text-white/55">Actualizado: {formatStockAge(candidate.stockConfirmationAgeHours)}</span></strong></div>
-        <div className="flex justify-between gap-3 rounded-2xl bg-black/30 p-3"><span className="text-white/70">Precio Luna</span><strong>{candidate.lunaPrice === null ? "Pendiente" : `$${candidate.lunaPrice.toFixed(2)}`}</strong></div>
-        <div className="flex justify-between gap-3 rounded-2xl bg-black/30 p-3"><span className="text-white/70">Siguiente paso</span><strong className="text-right text-amber-100">{routeLabel(candidate.routeRecommendation)}</strong></div>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2">{pinned && <StatusPill tone="warning">También está en revisión</StatusPill>}<StatusPill>Último scan: {formatDate(candidate.lastSeenAt)}</StatusPill></div>
-      <details className="mt-4 rounded-2xl border border-white/15 bg-black/20 p-3">
-        <summary className="cursor-pointer font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200">Ver detalles técnicos</summary>
-        <dl className="mt-3 grid gap-3 text-xs text-white/80">
-          <div><dt className="font-bold text-white">Radar</dt><dd className="break-all">Producto: {candidate.marketRadarProductId}<br />Snapshot: {formatValue(candidate.marketRadarSnapshotId)}</dd></div>
-          <div><dt className="font-bold text-white">Proveedor</dt><dd className="break-all">Producto: {candidate.supplierProductId}<br />Variante: {formatValue(candidate.supplierVariantId)}</dd></div>
-          <div><dt className="font-bold text-white">Readiness</dt><dd>{candidate.professionalReadinessStatus}<br />Pipeline: {candidate.pipelineStatus}<br />Category ID: {formatValue(candidate.categoryId)}</dd></div>
-          <div><dt className="font-bold text-white">Guardas</dt><dd>{candidate.missingFields.join(", ") || "Ninguna"}</dd></div>
-          <div><dt className="font-bold text-white">URL</dt><dd className="break-all">{formatValue(candidate.productUrl)}</dd></div>
-        </dl>
-      </details>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        <button type="button" aria-pressed={selected} onClick={onSelect} className="min-h-12 rounded-2xl bg-emerald-200 px-4 py-3 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white">{selected ? "✓ Producto seleccionado" : "Revisar producto"}</button>
-        <button type="button" onClick={() => { if (window.confirm(`¿Marcar “${candidate.productTitle}” como no disponible?`)) onUnavailable() }} className="min-h-12 rounded-2xl border border-rose-200/35 px-4 py-3 font-bold text-rose-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-rose-200">Marcar no disponible</button>
-      </div>
-    </article>
-  )
 }
 
 export default function EbayMobileReviewPage() {
@@ -239,6 +229,8 @@ export default function EbayMobileReviewPage() {
     compatibleReference: false,
   })
   const [sellerKeywordDemand, setSellerKeywordDemand] = useState<EbaySellerKeywordDemandReport | null>(null)
+  const [productResearchEvidence, setProductResearchEvidence] = useState<ProductResearchEvidenceStatus | null>(null)
+  const [productResearchCaptureOpened, setProductResearchCaptureOpened] = useState(false)
   const [opportunityAssessment, setOpportunityAssessment] = useState<EbayLunaOpportunityAssessment | null>(null)
   const [visualWinnerEvidence, setVisualWinnerEvidence] = useState<WinnerEvidenceDecisionPackage["visualEvidenceAnalysis"] | null>(null)
   const [winnerDecisionPackage, setWinnerDecisionPackage] = useState<SanitizedWinnerEvidenceDecisionPackage | null>(null)
@@ -249,13 +241,15 @@ export default function EbayMobileReviewPage() {
   const [decisionPackageReadbackVerified, setDecisionPackageReadbackVerified] = useState(false)
   const [sellerKeywordDemandLoading, setSellerKeywordDemandLoading] = useState(false)
   const [sellerKeywordDemandError, setSellerKeywordDemandError] = useState("")
+  const [sellerKeywordRetryAt, setSellerKeywordRetryAt] = useState<string | null>(null)
+  const [quotaClock, setQuotaClock] = useState(() => Date.now())
   const [loading, setLoading] = useState(true)
   const [loadState, setLoadState] = useState("LOADING")
   const [loadMessage, setLoadMessage] = useState("Cargando Market Radar read-only…")
   const [lastActionMessage, setLastActionMessage] = useState("Todavía no realizaste ninguna acción.")
   const [pinnedCandidates, setPinnedCandidates] = useState<PinnedCandidate[]>([])
   const [storageRestored, setStorageRestored] = useState(false)
-  const [view, setView] = useState<View>("loop2")
+  const [view, setView] = useState<View>("opportunities")
   const [selectedQueueCandidate, setSelectedQueueCandidate] = useState<RealRadarCandidate | null>(null)
   const [selectedQueueOpportunity, setSelectedQueueOpportunity] = useState<Opportunity | null>(null)
   const [serverReviews, setServerReviews] = useState<ServerReview[]>([])
@@ -267,9 +261,40 @@ export default function EbayMobileReviewPage() {
   const [whatsappLoadError, setWhatsappLoadError] = useState("")
   const [whatsappPreflightRunning, setWhatsappPreflightRunning] = useState(false)
   const [serverSaveState, setServerSaveState] = useState("Sin cambios pendientes")
+
+  useEffect(() => {
+    let active = true
+    void (async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession()
+        if (error || !data.session) return
+        const response = await fetch("/api/admin/ebay/seller-keyword-demand", {
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${data.session.access_token}` },
+        })
+        const payload = await readMobileReviewJson<{
+          success?: boolean
+          quota?: { available?: boolean; resumeAt?: string | null }
+        }>(response, "EBAY_QUOTA_STATE_READ_FAILED")
+        if (!active || !payload.success) return
+        if (payload.quota?.available === false && payload.quota.resumeAt &&
+          Date.parse(payload.quota.resumeAt) > Date.now()) {
+          setSellerKeywordRetryAt(payload.quota.resumeAt)
+          setSellerKeywordDemandError("EBAY_MARKET_VERIFICATION_PAUSED")
+          setQuotaClock(Date.now())
+        }
+      } catch {
+        // Quota status improves guidance but never blocks the rest of Seller OS.
+      }
+    })()
+    return () => { active = false }
+  }, [])
   const [blockedVisible, setBlockedVisible] = useState(5)
   const [copied, setCopied] = useState(false)
   const confirmationRef = useRef<HTMLElement>(null)
+  const opportunityRef = useRef<HTMLDivElement>(null)
+  const comparablesRef = useRef<HTMLElement>(null)
+  const identityConfirmationRef = useRef<HTMLDivElement>(null)
 
   const resetWinnerDecisionState = useCallback(() => {
     setWinnerDecisionPackage(null)
@@ -278,6 +303,7 @@ export default function EbayMobileReviewPage() {
     setDecisionPackageSaveState("IDLE")
     setDecisionPackageSaveError("")
     setDecisionPackageReadbackVerified(false)
+    setProductResearchEvidence(null)
   }, [])
 
   const load = useCallback(async () => {
@@ -290,7 +316,7 @@ export default function EbayMobileReviewPage() {
         return loadMarketRadarReadonlyDashboard(`Bearer ${data.session.access_token}`)
       })()
       const nextReport = buildMobileReviewRealRadarConnector({ products, mode: demoRequested ? "DEMO_FIXTURE_ONLY" : "REAL_READONLY" })
-      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setSelectedQueueCandidate(null); setSelectedQueueOpportunity(null); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState()
+      setReport(nextReport); setState(buildInitialMobileReviewState(toMobileFixture(nextReport.top5Candidates))); setSelectedQueueCandidate(null); setSelectedQueueOpportunity(null); setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setProductResearchCaptureOpened(false); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState()
       if (nextReport.realRadarCandidatesCount === 0) { setLoadState("RADAR_EMPTY"); setLoadMessage("Radar respondió, pero no devolvió productos. Ejecuta o revisa el scan antes de decidir.") }
       else { setLoadState("READY"); setLoadMessage(`Radar anterior: ${nextReport.top5Candidates.length} candidatos disponibles de ${nextReport.realRadarCandidatesCount} productos observados. No son el Top 20 automatizado.`) }
       return nextReport.allCandidates
@@ -323,7 +349,7 @@ export default function EbayMobileReviewPage() {
   useEffect(() => {
     const section = new URLSearchParams(window.location.search).get("section")
     if (section === "in-progress") setView("pinned")
-    if (section === "alerts") setView("blocked")
+    if (section === "alerts" || section === "commercial-monitor") setView("blocked")
   }, [])
   const loadServerReviews = useCallback(async () => {
     setServerReviewsLoadState("LOADING")
@@ -567,7 +593,7 @@ export default function EbayMobileReviewPage() {
 
   const actPinned = (action: PinnedCandidateAction) => { setPinnedCandidates((current) => applyPinnedCandidateAction(current, action, report.allCandidates)); setLastActionMessage(`Acción de candidato en revisión: ${action.type}. Guardada solo en este navegador.`) }
   const act = (action: Parameters<typeof applyMobileReviewAction>[1]) => {
-    if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") { setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState() }
+    if (action.type === "SELECT_CANDIDATE" || action.type === "MARK_UNAVAILABLE") { setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setProductResearchCaptureOpened(false); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState() }
     if (action.type === "APPROVE_B2_RUN_PREFLIGHT") { setLastActionMessage(`B2-RUN continúa bloqueado. Próximo paso: ${routeLabel(effectiveDecision.nextRecommendedRoute)}.`); return }
     setState((current) => applyMobileReviewAction(current, action))
     const messages: Record<string, string> = { MARK_UNAVAILABLE: "Producto marcado no disponible en este navegador. Puedes deshacer recargando antes de persistir otro estado.", SELECT_CANDIDATE: "Producto seleccionado para evaluar; todavía no es una recomendación. Completa las tres confirmaciones.", CONFIRM_SAME_PRODUCT: "Identidad del producto confirmada localmente.", CONFIRM_STOCK_QTY: `Stock confirmado: ${stockQuantity} unidades.`, CONFIRM_IMAGE_OK: "Precio e imagen de Luna confirmados localmente.", REQUEST_LUNA_SCAN_REFRESH: "Se marcó localmente que Radar necesita un refresco; todavía no se envió una solicitud.", HOLD_FOR_REVIEW: "La revisión quedó pausada en esta sesión." }
@@ -588,7 +614,7 @@ export default function EbayMobileReviewPage() {
     const continuesSameLocalCandidate = !selectedQueueOpportunity &&
       selectedRadarCandidate?.marketRadarProductId === marketRadarProductId
     if (!continuesSameLocalCandidate) {
-      setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState()
+      setStockQuantity(""); setLunaPrice(""); setLunaPriceConfirmed(false); setCatalogCheckOpened(false); setEbayListingUrl(""); setEbayObservedTitle(""); setEbayReferenceOpened(false); setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false }); setSellerKeywordDemand(null); setProductResearchCaptureOpened(false); setOpportunityAssessment(null); setSellerKeywordDemandError(""); resetWinnerDecisionState()
       const initial = buildInitialMobileReviewState(toMobileFixture([candidate]))
       setState(applyMobileReviewAction(initial, { type: "SELECT_CANDIDATE", rank: candidate.candidateRank }))
     }
@@ -600,6 +626,13 @@ export default function EbayMobileReviewPage() {
     const savedLunaPrice = Number(savedForm.lunaPrice)
     if (savedForm.sellerKeywordDemand && typeof savedForm.sellerKeywordDemand === "object") {
       setSellerKeywordDemand(savedForm.sellerKeywordDemand as EbaySellerKeywordDemandReport)
+    }
+    if (typeof savedForm.sellerKeywordRetryAt === "string" &&
+      Date.parse(savedForm.sellerKeywordRetryAt) > Date.now()) {
+      setSellerKeywordRetryAt(savedForm.sellerKeywordRetryAt)
+    }
+    if (savedForm.productResearchEvidence && typeof savedForm.productResearchEvidence === "object") {
+      setProductResearchEvidence(savedForm.productResearchEvidence as ProductResearchEvidenceStatus)
     }
     if (savedForm.opportunityAssessment && typeof savedForm.opportunityAssessment === "object") {
       setOpportunityAssessment(savedForm.opportunityAssessment as EbayLunaOpportunityAssessment)
@@ -674,6 +707,7 @@ export default function EbayMobileReviewPage() {
       setEbayReferenceOpened(false)
       setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false })
       setSellerKeywordDemand(null)
+      setProductResearchCaptureOpened(false)
       setOpportunityAssessment(null)
       setVisualWinnerEvidence(null)
       setSellerKeywordDemandError("")
@@ -702,17 +736,25 @@ export default function EbayMobileReviewPage() {
         try {
           const { data, error } = await supabase.auth.getSession()
           if (error || !data.session) throw new Error("AUTH_REQUIRED")
+          const savedMarketEvidenceAge = sellerKeywordDemand?.evidenceAsOf
+            ? Date.now() - Date.parse(sellerKeywordDemand.evidenceAsOf)
+            : Number.POSITIVE_INFINITY
+          const savedMarketEvidenceFresh = Boolean(sellerKeywordDemand &&
+            Number.isFinite(savedMarketEvidenceAge) && savedMarketEvidenceAge <= 72 * 60 * 60_000)
           const confirmedFields = [
             ...(identityComparison.identityComparisonComplete ? ["identity"] : []),
             ...(state.stockQuantityConfirmed ? ["stock"] : []),
             ...(lunaPriceConfirmed && state.imageConfirmed ? ["luna_catalog"] : []),
-            ...(sellerKeywordDemand ? ["ebay_evidence"] : []),
+            ...(savedMarketEvidenceFresh ? ["ebay_active_market"] : []),
+            ...(productResearchEvidence?.status === "AVAILABLE" ? ["ebay_sold_evidence"] : []),
             ...(opportunityAssessment?.economics?.estimatedNetProfit != null ? ["economics"] : []),
           ]
           const currentStep = !state.stockQuantityConfirmed || !lunaPriceConfirmed
             ? "luna"
-            : !sellerKeywordDemand
+            : !savedMarketEvidenceFresh
               ? "ebay"
+              : productResearchEvidence?.status !== "AVAILABLE"
+                ? "product_research"
               : opportunityAssessment?.economics?.estimatedNetProfit == null
                 ? "economics"
                 : "listing"
@@ -724,12 +766,14 @@ export default function EbayMobileReviewPage() {
               action: "save_review",
               opportunityId: selectedQueueOpportunity.id,
               candidateKey: selectedQueueOpportunity.candidate_key,
-              status: opportunityAssessment?.canProceedToListingPackage === true && !marketValidation.pendingGuards.length
+              status: savedMarketEvidenceFresh && productResearchEvidence?.status === "AVAILABLE" &&
+                opportunityAssessment?.canProceedToListingPackage === true && !marketValidation.pendingGuards.length
                 ? "ready_for_package"
                 : "in_progress",
               currentStep,
               confirmedFields,
-              blockers: marketValidation.pendingGuards,
+              blockers: [...marketValidation.pendingGuards,
+                ...(productResearchEvidence?.status === "AVAILABLE" ? [] : ["PRODUCT_RESEARCH_CAPTURE_REQUIRED"])],
               formData: {
                 productTitle: selectedRadarCandidate.productTitle,
                 marketRadarProductId: selectedRadarCandidate.marketRadarProductId,
@@ -741,6 +785,8 @@ export default function EbayMobileReviewPage() {
                 ebayListingUrl,
                 ebayObservedTitle,
                 sellerKeywordDemand,
+                sellerKeywordRetryAt,
+                productResearchEvidence,
                 opportunityAssessment,
                 visualWinnerEvidence,
                 winnerDecisionPackage,
@@ -764,7 +810,7 @@ export default function EbayMobileReviewPage() {
       })()
     }, 800)
     return () => window.clearTimeout(timer)
-  }, [selectedQueueOpportunity, selectedRadarCandidate, state.stockQuantityConfirmed, state.imageConfirmed, lunaPrice, lunaPriceConfirmed, identityComparison.identityComparisonComplete, ebayListingUrl, ebayObservedTitle, sellerKeywordDemand, opportunityAssessment, visualWinnerEvidence, winnerDecisionPackage, winnerDecisionPackageInput, decisionPackageId, marketValidation.pendingGuards, loadServerReviews])
+  }, [selectedQueueOpportunity, selectedRadarCandidate, state.stockQuantityConfirmed, state.imageConfirmed, lunaPrice, lunaPriceConfirmed, identityComparison.identityComparisonComplete, ebayListingUrl, ebayObservedTitle, sellerKeywordDemand, sellerKeywordRetryAt, productResearchEvidence, opportunityAssessment, visualWinnerEvidence, winnerDecisionPackage, winnerDecisionPackageInput, decisionPackageId, marketValidation.pendingGuards, loadServerReviews])
 
   const resetIdentityConfirmation = () => {
     setState((current) =>
@@ -783,18 +829,10 @@ export default function EbayMobileReviewPage() {
   }
 
   const runSellerKeywordDemandValidation = async () => {
-    if (!selectedRadarCandidate || sellerKeywordDemandLoading || !loop1AnalysisGate.analysisEnabled) return
+    if (!selectedRadarCandidate || sellerKeywordDemandLoading || !loop1AnalysisGate.analysisEnabled ||
+      sellerKeywordRetryAt && Date.parse(sellerKeywordRetryAt) > Date.now()) return
     setSellerKeywordDemandLoading(true)
     setSellerKeywordDemandError("")
-    setSellerKeywordDemand(null)
-    setOpportunityAssessment(null)
-    setVisualWinnerEvidence(null)
-    resetWinnerDecisionState()
-    setEbayListingUrl("")
-    setEbayObservedTitle("")
-    setEbayReferenceOpened(false)
-    setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false })
-    resetIdentityConfirmation()
     try {
       const { data, error } = await supabase.auth.getSession()
       if (error || !data.session) throw new Error("AUTH_REQUIRED")
@@ -830,6 +868,30 @@ export default function EbayMobileReviewPage() {
           restrictionGuards: marketValidation.restrictionGuards,
         }),
       })
+      if (response.status === 429) {
+        const pause = await readMobileReviewJson<{
+          retryAt?: string | null
+          retryAfterSeconds?: number | null
+          checkpointPreserved?: boolean
+          localFlowAvailable?: boolean
+        }>(response, "EBAY_READONLY_GET_429")
+        const retryAfterHeader = Number(response.headers.get("Retry-After"))
+        const retryAfterSeconds = Number.isFinite(pause.retryAfterSeconds) && Number(pause.retryAfterSeconds) > 0
+          ? Number(pause.retryAfterSeconds)
+          : Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+            ? retryAfterHeader
+            : 15 * 60
+        const retryAt = pause.retryAt && Number.isFinite(Date.parse(pause.retryAt))
+          ? pause.retryAt
+          : new Date(Date.now() + retryAfterSeconds * 1_000).toISOString()
+        setSellerKeywordRetryAt(retryAt)
+        setQuotaClock(Date.now())
+        setSellerKeywordDemandError("EBAY_MARKET_VERIFICATION_PAUSED")
+        setLastActionMessage(sellerKeywordDemand
+          ? "eBay pausó la actualización. La evidencia anterior permanece visible y puedes continuar con tareas locales."
+          : "eBay pausó esta verificación. El producto quedó guardado; puedes capturar Product Research o revisar otra oportunidad.")
+        return
+      }
       const payload = await readMobileReviewJson<{
         success?: boolean
         error?: string
@@ -838,20 +900,38 @@ export default function EbayMobileReviewPage() {
         visualWinnerEvidence?: WinnerEvidenceDecisionPackage["visualEvidenceAnalysis"] | null
         winnerDecisionPackage?: SanitizedWinnerEvidenceDecisionPackage | null
         winnerDecisionPackageInput?: WinnerEvidenceClientInput | null
+        productResearchEvidence?: ProductResearchEvidenceStatus
       }>(response, "No se pudo consultar la evidencia read-only de eBay")
       if (!payload.success || !payload.report) {
         throw new Error(getMobileReviewPayloadError(payload, "EBAY_READONLY_MARKET_VALIDATION_FAILED"))
       }
+      setOpportunityAssessment(null)
+      setVisualWinnerEvidence(null)
+      resetWinnerDecisionState()
+      setEbayListingUrl("")
+      setEbayObservedTitle("")
+      setEbayReferenceOpened(false)
+      setIdentityChecks({ sameProductAndBrand: false, sameVariantSizeOrPack: false, compatibleReference: false })
+      resetIdentityConfirmation()
       setSellerKeywordDemand(payload.report)
+      setSellerKeywordRetryAt(null)
       setOpportunityAssessment(payload.opportunityAssessment ?? null)
       setVisualWinnerEvidence(payload.visualWinnerEvidence ?? null)
       setWinnerDecisionPackage(payload.winnerDecisionPackage ?? null)
       setWinnerDecisionPackageInput(payload.winnerDecisionPackageInput ?? null)
+      setProductResearchEvidence(payload.productResearchEvidence ?? null)
       setLastActionMessage(
         `eBay analizado en modo read-only: ${payload.report.eligibleComparableListings} comparables y ${payload.report.sellersAnalyzed} vendedores.`
       )
     } catch (error) {
       const code = getMobileReviewRequestError(error, "EBAY_READONLY_MARKET_VALIDATION_FAILED")
+      if (code.includes("EBAY_READONLY_GET_429")) {
+        const retryAt = new Date(Date.now() + 15 * 60_000).toISOString()
+        setSellerKeywordRetryAt(retryAt)
+        setQuotaClock(Date.now())
+        setSellerKeywordDemandError("EBAY_MARKET_VERIFICATION_PAUSED")
+        return
+      }
       setSellerKeywordDemandError(
         code === "EBAY_READONLY_ENV_MISSING"
           ? "EBAY_READONLY_ENV_MISSING · Las credenciales read-only de eBay todavía no están configuradas en este Preview."
@@ -863,6 +943,22 @@ export default function EbayMobileReviewPage() {
       setSellerKeywordDemandLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (!sellerKeywordRetryAt) return
+    setQuotaClock(Date.now())
+    const clock = window.setInterval(() => setQuotaClock(Date.now()), 1_000)
+    const delay = Math.max(0, Date.parse(sellerKeywordRetryAt) - Date.now())
+    const timer = window.setTimeout(() => {
+      setSellerKeywordRetryAt(null)
+      setSellerKeywordDemandError("")
+      setLastActionMessage("La pausa de eBay terminó. Ya puedes verificar el mercado nuevamente.")
+    }, Math.min(delay, 2_147_000_000))
+    return () => {
+      window.clearInterval(clock)
+      window.clearTimeout(timer)
+    }
+  }, [sellerKeywordRetryAt])
 
   const readPersistedDecisionPackage = async (
     packageId: string,
@@ -975,6 +1071,7 @@ export default function EbayMobileReviewPage() {
   const resetStockConfirmation = (value: string) => {
     setStockQuantity(value)
     setSellerKeywordDemand(null)
+    setProductResearchCaptureOpened(false)
     setOpportunityAssessment(null)
     setVisualWinnerEvidence(null)
     resetWinnerDecisionState()
@@ -990,6 +1087,7 @@ export default function EbayMobileReviewPage() {
     setLunaPrice(value)
     setLunaPriceConfirmed(false)
     setSellerKeywordDemand(null)
+    setProductResearchCaptureOpened(false)
     setOpportunityAssessment(null)
     setVisualWinnerEvidence(null)
     resetWinnerDecisionState()
@@ -1016,6 +1114,17 @@ export default function EbayMobileReviewPage() {
     )
   }
 
+  const openProductResearchCapture = () => {
+    const query = productResearchEvidence?.searchQuery || sellerKeywordDemand?.searchQuery ||
+      selectedRadarCandidate?.productTitle || ""
+    if (!query) return
+    const url = `https://www.ebay.com/sh/research#seller-os-query=${encodeURIComponent(query)}`
+    const researchWindow = window.open(url, "_blank")
+    if (researchWindow) researchWindow.opener = null
+    setProductResearchCaptureOpened(true)
+    setLastActionMessage("Product Research abierto y consulta exacta transferida a la extensión. Espera los resultados nuevos y pulsa “Capturar y continuar” cuando se habilite.")
+  }
+
   const sourceLabel = report.dataSource === "MARKET_RADAR_READONLY" ? "REAL RADAR" : report.dataSource === "DEMO_FIXTURE_ONLY" ? "DEMO" : loadState === "AUTH_REQUIRED" ? "SESIÓN REQUERIDA" : loadState === "RADAR_REQUEST_FAILED" ? "ERROR DE RADAR" : "SIN DATOS"
   const professionalKeywordSignals = sellerKeywordDemand
     ? sellerKeywordDemand.keywordEvidenceGroups.verifiedHistoricalMultiSeller.length
@@ -1026,6 +1135,72 @@ export default function EbayMobileReviewPage() {
     sellerKeywordDemand?.keywordEvidenceGroups.verifiedHistoricalMultiSeller.length
   )
   const alertCount = serverAlerts.activeListingRisks.length + serverAlerts.outbox.length + report.stockHoldCandidates.length
+  const lunaMissingCount = selectedRadarCandidate
+    ? Number(!state.stockQuantityConfirmed) + Number(!lunaPriceConfirmed) + Number(!state.imageConfirmed)
+    : 0
+  const ebayRateLimitActive = Boolean(sellerKeywordRetryAt &&
+    Date.parse(sellerKeywordRetryAt) > quotaClock)
+  const ebayRetryRemainingMs = sellerKeywordRetryAt
+    ? Math.max(0, Date.parse(sellerKeywordRetryAt) - quotaClock)
+    : 0
+  const marketEvidenceAgeMs = sellerKeywordDemand?.evidenceAsOf
+    ? quotaClock - Date.parse(sellerKeywordDemand.evidenceAsOf)
+    : Number.POSITIVE_INFINITY
+  const marketEvidenceFresh = Boolean(sellerKeywordDemand &&
+    Number.isFinite(marketEvidenceAgeMs) && marketEvidenceAgeMs <= 72 * 60 * 60_000)
+  const journeyStep: SellerJourneyStep = !selectedRadarCandidate
+    ? 1
+    : lunaMissingCount > 0
+      ? 2
+      : !sellerKeywordDemand || !marketEvidenceFresh || !identityComparison.identityComparisonComplete
+        ? 3
+        : 4
+  const journey = journeyStep === 1
+    ? { title: "Elige una oportunidad", instruction: "No llenes ningún campo todavía. Primero selecciona un solo producto de la lista priorizada.", actionLabel: "Elegir producto", missingCount: 1, pendingLabel: "Falta elegir producto", systemTask: "Ordena las oportunidades por evidencia y match Luna.", userTask: "Pulsa “Validar ahora” en un producto." }
+    : journeyStep === 2
+      ? { title: "Confirma los datos de Luna", instruction: "Ahora completa únicamente los campos rojos. La validación de eBay seguirá bloqueada hasta terminar este paso.", actionLabel: "Ir a los campos de Luna", missingCount: lunaMissingCount, pendingLabel: `${lunaMissingCount} dato${lunaMissingCount === 1 ? "" : "s"} de Luna pendiente${lunaMissingCount === 1 ? "" : "s"}`, systemTask: "Mantiene vinculada la variante exacta y protege contra cambios de pack o tamaño.", userTask: "Confirma stock, costo e imagen en Luna." }
+      : journeyStep === 3
+        ? !sellerKeywordDemand || !marketEvidenceFresh
+          ? ebayRateLimitActive
+            ? { title: "Verificación eBay en espera", instruction: `La lectura eBay se reanudará el ${formatQuotaResumeAt(sellerKeywordRetryAt!)}. Mientras tanto, continúa con Product Research o revisa otra oportunidad; este producto no se pierde.`, actionLabel: "Continuar con Product Research", missingCount: 1, pendingLabel: "Mercado activo pendiente", systemTask: "Conserva el checkpoint y pausa únicamente la lane de verificación eBay.", userTask: "Continúa con evidencia vendida o con otro candidato; no repitas la consulta." }
+            : { title: sellerKeywordDemand ? "Actualiza la evidencia de mercado" : "Verifica el mercado en eBay", instruction: sellerKeywordDemand ? "La evidencia anterior venció. Se mantiene visible como referencia, pero debe actualizarse antes de preparar el listing." : "Luna ya está completo. Seller OS buscará comparables activos oficiales sin escribir ni publicar; las ventas se confirman aparte con Product Research.", actionLabel: sellerKeywordDemand ? "Actualizar verificación eBay" : "Verificar mercado en eBay", missingCount: 1, pendingLabel: sellerKeywordDemand ? "Evidencia de mercado vencida" : "Falta verificar mercado activo", systemTask: "Comparará identidad, precio, competencia, categoría y economía preliminar.", userTask: "Pulsa una vez; Seller OS conservará cualquier evidencia anterior si eBay pausa la lectura." }
+          : productResearchEvidence?.status !== "AVAILABLE"
+            ? { title: "Captura ventas en Product Research", instruction: "La búsqueda activa no sustituye el historial vendido. Abre Product Research, ejecuta la consulta preparada y usa la extensión para capturar la tabla visible.", actionLabel: productResearchCaptureOpened ? "Verificar captura" : "Abrir Product Research", missingCount: 1, pendingLabel: "Falta evidencia vendida", systemTask: "Preparó la misma consulta y mantendrá la captura vinculada a la variante Luna.", userTask: productResearchCaptureOpened ? "Termina la captura y pulsa verificar." : "Abre Product Research y autoriza una captura visible." }
+          : !ebayListingUrl
+            ? { title: "Elige el comparable exacto", instruction: "El análisis automático terminó. Revisa únicamente las referencias compatibles y elige la que representa el mismo producto.", actionLabel: "Ver comparables", missingCount: 1, pendingLabel: "Falta elegir comparable", systemTask: "Descartó packs, tamaños y variantes incompatibles.", userTask: "Selecciona una referencia exacta de eBay." }
+            : { title: "Confirma la identidad", instruction: "Ya elegiste una referencia. Falta confirmar que corresponde exactamente al producto de Luna.", actionLabel: "Confirmar identidad", missingCount: 1, pendingLabel: "Falta confirmar identidad", systemTask: "Contrastó marca, producto, variante, tamaño y pack.", userTask: "Confirma el vínculo Luna ↔ eBay." }
+        : winnerDecisionPackage
+          ? { title: "Continúa a preparación", instruction: "Producto, Luna y evidencia eBay ya están vinculados. Revisa la ficha antes de preparar contenido o draft.", actionLabel: "Preparar listing", missingCount: 0, pendingLabel: "Listo para continuar", systemTask: "Construyó el paquete trazable y mantuvo publicación desactivada.", userTask: "Abre la preparación del listing." }
+          : { title: "Revisa la decisión", instruction: "Los análisis terminaron. Revisa el resumen y guarda la decisión antes de preparar el listing.", actionLabel: "Revisar resultado", missingCount: 1, pendingLabel: "Falta guardar decisión", systemTask: "Resume evidencia, riesgos, rentabilidad y campos pendientes.", userTask: "Revisa el resultado y guarda la decisión." }
+
+  const followJourney = () => {
+    if (journeyStep === 1) {
+      setView("opportunities")
+      window.setTimeout(() => opportunityRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50)
+      return
+    }
+    if (journeyStep === 3 && (!sellerKeywordDemand || !marketEvidenceFresh)) {
+      if (ebayRateLimitActive) {
+        openProductResearchCapture()
+        return
+      }
+      void runSellerKeywordDemandValidation()
+      return
+    }
+    if (journeyStep === 3 && productResearchEvidence?.status !== "AVAILABLE") {
+      if (productResearchCaptureOpened) void runSellerKeywordDemandValidation()
+      else openProductResearchCapture()
+      return
+    }
+    if (journeyStep === 3) {
+      const target = ebayListingUrl ? identityConfirmationRef.current : comparablesRef.current
+      target?.scrollIntoView({ behavior: "smooth", block: "start" })
+      return
+    }
+    else if (journeyStep === 4 && winnerDecisionPackage) setView("loop2")
+    else setView("loop1")
+    window.setTimeout(() => confirmationRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50)
+  }
 
   return (
     <main className="min-h-screen bg-[#05070d] px-4 pb-48 pt-4 text-white sm:px-6">
@@ -1035,26 +1210,26 @@ export default function EbayMobileReviewPage() {
           <div className="mt-3 flex items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-cyan-100">eBay read-only · progreso sincronizado</p><h1 className="mt-1 text-2xl font-black">Seller Command Center</h1></div><StatusPill tone={report.dataSource === "MARKET_RADAR_READONLY" ? "good" : report.fixtureUsed ? "warning" : "danger"}>{sourceLabel}</StatusPill></div>
         </header>
 
-        <section className={`rounded-3xl border p-4 ${loadState === "READY" ? "border-emerald-200/25 bg-emerald-200/[0.07]" : "border-amber-200/25 bg-amber-200/[0.07]"}`}>
-          <p className="font-black">{loadMessage}</p><p className="mt-2 text-sm text-white/75">eBay read-only · scans y cola guardados en Supabase · publicación separada y desactivada.</p>
+        <SellerJourneyGuide currentStep={journeyStep} title={journey.title} instruction={journey.instruction} actionLabel={journey.actionLabel} missingCount={journey.missingCount} pendingLabel={journey.pendingLabel} systemTask={journey.systemTask} userTask={journey.userTask} actionDisabled={false} onAction={followJourney} />
+
+        <details open={loadState !== "READY"} className={`rounded-2xl border p-3 ${loadState === "READY" ? "border-emerald-200/20 bg-emerald-200/[0.05]" : "border-amber-200/25 bg-amber-200/[0.07]"}`}>
+          <summary className="cursor-pointer text-sm font-black">{loadState === "READY" ? "Sistema listo · ver estado" : loadMessage}</summary><p className="mt-2 text-xs leading-5 text-white/65">eBay read-only · scans y cola guardados · publicación separada y desactivada.</p>
           <p className="sr-only">Radar observó {report.realRadarCandidatesCount} productos y muestra {report.top5Candidates.length} candidatos seleccionables. La fuente y antigüedad del stock están disponibles en los detalles.</p>
           {loadState === "AUTH_REQUIRED" ? <a href="/admin/login?returnTo=%2Fadmin%2Febay%2Fmobile-review" className="mt-3 inline-flex min-h-11 items-center rounded-2xl bg-white px-4 py-2 font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-cyan-200">Iniciar sesión</a> : loadState !== "READY" && <button type="button" onClick={() => void load()} className="mt-3 min-h-11 rounded-2xl bg-white px-4 py-2 font-black text-black">Reintentar lectura</button>}
-        </section>
-        <nav aria-label="Loops activos" className="grid grid-cols-2 gap-2">
-          <button type="button" aria-pressed={view === "loop1"} onClick={() => setView("loop1")} className={`min-h-12 rounded-2xl px-3 text-sm font-black ${view === "loop1" ? "bg-violet-200 text-black" : "border border-violet-200/30 text-violet-50"}`}>Loop 1 · Evidencia</button>
-          <button type="button" aria-pressed={view === "loop2"} onClick={() => setView("loop2")} className={`min-h-12 rounded-2xl px-3 text-sm font-black ${view === "loop2" ? "bg-fuchsia-200 text-black" : "border border-fuchsia-200/30 text-fuchsia-50"}`}>Loop 2 · Listing IA</button>
-        </nav>
+        </details>
         {view === "loop1" && (
-          <section aria-labelledby="loop1-main-heading" className="rounded-3xl border border-violet-200/35 bg-violet-200/[0.08] p-4">
+          <details className="rounded-2xl border border-white/10 bg-black/20 p-3">
+            <summary className="cursor-pointer text-sm font-bold text-white/55">Cambiar el producto seleccionado</summary>
+            <div className="mt-3">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-violet-100/70">Validación humana unificada</p>
-            <h2 id="loop1-main-heading" className="mt-1 text-xl font-black">Loop 1 — Analizar producto ganador</h2>
-            <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+            <h2 className="mt-1 text-lg font-black">Producto en revisión</h2>
+            <details className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3"><summary className="cursor-pointer text-xs font-bold text-white/55">Ver detalles técnicos del loop</summary><div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
               <div className="rounded-xl bg-black/25 p-2"><span className="block text-white/50">ACTIVE LOOP</span><strong>{LOOP1_ACTIVE_LOOP}</strong></div>
               <div className="rounded-xl bg-black/25 p-2"><span className="block text-white/50">STATUS</span><strong>{LOOP1_VALIDATION_STATUS}</strong></div>
               <div className="rounded-xl bg-black/25 p-2"><span className="block text-white/50">BACKGROUND MONITOR</span><strong>{LOOP1_BACKGROUND_MONITOR_STATUS}</strong></div>
-            </div>
+            </div></details>
             <label className="mt-4 block text-sm font-black" htmlFor="loop1-candidate-select">Seleccionar candidato Luna</label>
-            <select id="loop1-candidate-select" value={selectedRadarCandidate?.marketRadarProductId ?? ""} onChange={(event) => void selectLoop1Candidate(event.target.value)} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-[#101526] px-3 text-sm text-white">
+            <select id="loop1-candidate-select" aria-invalid={!selectedRadarCandidate} aria-describedby={!selectedRadarCandidate ? "candidate-required-help" : undefined} value={selectedRadarCandidate?.marketRadarProductId ?? ""} onChange={(event) => void selectLoop1Candidate(event.target.value)} className={`mt-2 min-h-12 w-full rounded-2xl border bg-[#101526] px-3 text-sm text-white ${!selectedRadarCandidate ? "border-rose-400 ring-1 ring-rose-400/40" : "border-white/20"}`}>
               <option value="">Selecciona un producto…</option>
               {loop1CandidateOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
             </select>
@@ -1078,29 +1253,20 @@ export default function EbayMobileReviewPage() {
                 {!loop1AnalysisGate.mappingComplete && <div role="alert" className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50"><p className="font-black">Vínculo Luna incompleto</p><ul className="mt-2 list-disc pl-5">{loop1AnalysisGate.missingMapping.map((reason) => <li key={reason}>{reason}</li>)}</ul><p className="mt-2">Elige otro candidato para continuar sin inventar datos.</p></div>}
                 <p className="rounded-2xl border border-white/10 bg-black/20 p-3 text-sm font-bold">Paso actual: {loop1AnalysisGate.disabledReason ?? (winnerDecisionPackage ? "Revisar y guardar el paquete de decisión" : "Listo para analizar mercado eBay")}</p>
               </div>
-            ) : <p className="mt-3 text-sm text-white/65">Selecciona un candidato para comenzar. No necesitas salir de esta página.</p>}
-          </section>
+            ) : <p id="candidate-required-help" role="alert" className="mt-2 text-sm font-bold text-rose-300">Campo requerido: selecciona un candidato para comenzar.</p>}
+            </div>
+          </details>
         )}
         {view === "loop2" && <Loop2ListingAiPanel />}
-        {loadState === "READY" && <div className="grid grid-cols-3 gap-2 rounded-2xl border border-white/15 bg-black/30 p-2 text-center"><div className="rounded-xl bg-white/[0.04] px-2 py-3"><span className="text-[10px] font-bold uppercase tracking-wide text-white/55">Observados</span><strong className="mt-1 block text-xl font-black">{report.realRadarCandidatesCount}</strong></div><button type="button" onClick={() => setView("pinned")} className="rounded-xl bg-emerald-200/[0.07] px-2 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200"><span className="text-[10px] font-bold uppercase tracking-wide text-emerald-50/70">En curso</span><strong className="mt-1 block text-xl font-black">{serverReviewsLoadState === "READY" ? serverReviews.length : "—"}</strong></button><button type="button" onClick={() => setView("blocked")} className="rounded-xl bg-rose-200/[0.07] px-2 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200"><span className="text-[10px] font-bold uppercase tracking-wide text-rose-50/70">Operación</span><strong className="mt-1 block text-xl font-black">{serverReviewsLoadState === "READY" ? alertCount : "—"}</strong></button></div>}
-        <ol aria-label="Flujo seguro de listing" className="grid grid-cols-4 gap-1 rounded-2xl border border-white/10 bg-black/25 p-2 text-center text-[10px] font-black uppercase tracking-wide text-white/60"><li className={view === "opportunities" ? "rounded-xl bg-violet-200 px-1 py-2 text-black" : "px-1 py-2"}>1 Descubrir</li><li className={view === "loop1" || view === "top5" || view === "pinned" ? "rounded-xl bg-cyan-200 px-1 py-2 text-black" : "px-1 py-2"}>2 Validar Loop 1</li><li className={view === "loop2" ? "rounded-xl bg-fuchsia-200 px-1 py-2 text-black" : "px-1 py-2 text-white/45"}>3 Loop 2</li><li className={view === "blocked" ? "rounded-xl bg-amber-100 px-1 py-2 text-black" : "px-1 py-2 text-white/45"}>4 Draft / manual</li></ol>
+        {loadState === "READY" && <details className="rounded-2xl border border-white/10 bg-black/20 p-3"><summary className="cursor-pointer text-sm font-bold text-white/50">Ver resumen operativo</summary><div className="mt-3 grid grid-cols-3 gap-2 text-center"><div className="rounded-xl bg-white/[0.04] px-2 py-3"><span className="text-[10px] font-bold uppercase tracking-wide text-white/55">Observados</span><strong className="mt-1 block text-xl font-black">{report.realRadarCandidatesCount}</strong></div><button type="button" onClick={() => setView("pinned")} className="rounded-xl bg-emerald-200/[0.07] px-2 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200"><span className="text-[10px] font-bold uppercase tracking-wide text-emerald-50/70">En curso</span><strong className="mt-1 block text-xl font-black">{serverReviewsLoadState === "READY" ? serverReviews.length : "—"}</strong></button><button type="button" onClick={() => setView("blocked")} className="rounded-xl bg-rose-200/[0.07] px-2 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200"><span className="text-[10px] font-bold uppercase tracking-wide text-rose-50/70">Operación</span><strong className="mt-1 block text-xl font-black">{serverReviewsLoadState === "READY" ? alertCount : "—"}</strong></button></div></details>}
         {report.fixtureUsed && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4 text-sm"><p className="font-black">FIXTURE/DEMO · no usar para aprobación real</p><p className="mt-2 text-white/80">Fuente actual: fixture modelado · no es data viva. score modelado · Fixture · no precio runtime · Fixture · no Category ID.</p></aside>}
 
-        <div role="status" aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.07] p-3 text-sm text-cyan-50">{lastActionMessage}</div>
-        {view === "top5" && radarGuards.showScoreTieWarning && <aside className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4"><p className="font-black">Orden provisional</p><p className="mt-1 text-sm text-white/80">Los cinco scores son iguales. Ningún producto se considera recomendado hasta desempatar el ranking.</p></aside>}
-
-        {(view === "opportunities" || view === "top5") && <nav aria-label="Vistas de oportunidades" className="grid grid-cols-2 gap-1 rounded-2xl border border-white/15 bg-black/40 p-1"><button type="button" aria-pressed={view === "opportunities"} onClick={() => setView("opportunities")} className={`min-h-12 rounded-xl px-3 py-2 text-xs font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${view === "opportunities" ? "bg-white text-black" : "text-white/75"}`}>Cola eBay-first</button><button type="button" aria-pressed={view === "top5"} onClick={() => setView("top5")} className={`min-h-12 rounded-xl px-3 py-2 text-xs font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200 ${view === "top5" ? "bg-white text-black" : "text-white/75"}`}>Top 5 Radar</button></nav>}
+        {lastActionMessage !== "Todavía no realizaste ninguna acción." && <div role="status" aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.07] p-3 text-sm text-cyan-50">{lastActionMessage}</div>}
         <p className="sr-only">{report.stockHoldCandidates.length} productos están bloqueados por stock. B2-RUN continúa desactivado hasta completar todas las validaciones.</p>
 
         {serverReviewsLoadState === "ERROR" && <div role="alert" className="rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-sm text-rose-50"><strong>No pudimos cargar En curso y Operación.</strong><span className="mt-1 block">{serverReviewsError}</span><button type="button" onClick={() => void loadServerReviews()} className="mt-3 min-h-11 rounded-xl border border-rose-100/30 px-3 font-black">Reintentar</button></div>}
 
-        {view === "opportunities" && <>
-          <CommercialMonitorPanel />
-          <MarketplaceFulfillmentPanel />
-          <OpportunityCommandCenter onReviewCandidate={reviewOpportunityCandidate} onRadarRefresh={load} onRadarLookup={lookupRadarCandidateByProductId} confirmDestructiveRefresh={confirmReviewReset} preferredMarketRadarProductId={!selectedQueueOpportunity ? selectedRadarCandidate?.marketRadarProductId ?? null : null} />
-        </>}
-
-        {view === "top5" && <section aria-labelledby="top5-heading"><h2 id="top5-heading" className="mb-3 text-xl font-black">Top 5 actual</h2><div className="space-y-4">{report.top5Candidates.map((candidate) => <CandidateCard key={candidate.candidateId} candidate={candidate} selected={!selectedQueueCandidate && state.selectedCandidateRank === candidate.candidateRank} pinned={pinnedCandidates.some((item) => pinnedCandidateMatchesRadar(item, candidate))} provisional={radarGuards.needsScoreDisambiguation} onSelect={() => { setSelectedQueueCandidate(null); setSelectedQueueOpportunity(null); act({ type: "SELECT_CANDIDATE", rank: candidate.candidateRank }) }} onUnavailable={() => act({ type: "MARK_UNAVAILABLE", rank: candidate.candidateRank })} />)}{!loading && report.top5Candidates.length === 0 && <p className="rounded-3xl border border-white/15 p-6 text-center text-white/75">No hay candidatos seleccionables.</p>}</div></section>}
+        {view === "opportunities" && <div ref={opportunityRef} className="scroll-mt-32"><OpportunityCommandCenter guided radarCandidates={report.allCandidates} onReviewCandidate={reviewOpportunityCandidate} onRadarRefresh={load} onRadarLookup={lookupRadarCandidateByProductId} confirmDestructiveRefresh={confirmReviewReset} preferredMarketRadarProductId={!selectedQueueOpportunity ? selectedRadarCandidate?.marketRadarProductId ?? null : null} /></div>}
 
         {view === "pinned" && (
           <section aria-labelledby="server-reviews-heading" className="space-y-3">
@@ -1134,7 +1300,7 @@ export default function EbayMobileReviewPage() {
           </section>
         )}
 
-        {view === "blocked" && <section aria-labelledby="blocked-heading" className="space-y-4"><div><p className="text-xs font-black uppercase tracking-widest text-rose-100/60">Operación · listings</p><h2 id="blocked-heading" className="mt-1 text-xl font-black">Listings y alertas Luna ↔ eBay</h2><p className="mt-1 text-sm text-white/65">Primero se muestran riesgos de listings activos; después, productos Luna detenidos por stock.</p><a href="/admin/ebay/listings/register" className="mt-3 inline-flex min-h-11 items-center rounded-2xl bg-white px-4 text-sm font-black text-black">Registrar listing manual</a></div><article className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.05] p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-widest text-emerald-100/60">Canal profesional</p><h3 className="mt-1 font-black">WhatsApp Seller Alerts</h3></div><StatusPill tone={whatsappLoadState === "ERROR" ? "danger" : whatsappStatus.configuration?.status === "READY" ? "good" : "warning"}>{whatsappLoadState === "LOADING" ? "CARGANDO" : whatsappLoadState === "ERROR" ? "SIN DATOS" : whatsappStatus.configuration?.status ?? "NO CONFIGURADO"}</StatusPill></div><p className="mt-2 text-sm leading-6 text-white/65">Inmediatas: oportunidad con evidencia suficiente, listing sin stock, stock 1–3, costo +5%, vínculo roto y fallo de draft. Bajas de costo menores y reposiciones no urgentes van al resumen.</p>{whatsappLoadState === "ERROR" && <p role="alert" className="mt-3 rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-xs leading-5 text-rose-50">{whatsappLoadError}</p>}<dl className="mt-3 grid grid-cols-3 gap-2 text-center text-xs"><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Pendientes</dt><dd className="mt-1 font-black">{whatsappLoadState === "READY" ? whatsappStatus.health?.pending ?? 0 : "—"}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Fallidos</dt><dd className="mt-1 font-black">{whatsappLoadState === "READY" ? whatsappStatus.health?.failed ?? 0 : "—"}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Dead letter</dt><dd className="mt-1 font-black">{whatsappLoadState === "READY" ? whatsappStatus.health?.deadLetter ?? 0 : "—"}</dd></div></dl>{whatsappLoadState === "READY" && whatsappStatus.configuration?.status !== "READY" && <p className="mt-3 rounded-2xl border border-amber-200/20 p-3 text-xs leading-5 text-amber-50">Envíos reales bloqueados hasta configurar destinatario server-side, dos templates aprobados y activar el feature flag. Preflight: {whatsappStatus.configuration?.preflightStatus ?? "NOT_RUN"}.</p>}<div className="mt-3 grid grid-cols-2 gap-2"><button type="button" onClick={() => void runWhatsAppPreflight()} disabled={whatsappPreflightRunning} className="min-h-11 rounded-2xl bg-emerald-200 px-3 text-sm font-black text-black disabled:opacity-50">{whatsappPreflightRunning ? "Validando…" : "Validar Meta"}</button><button type="button" onClick={() => void loadWhatsAppStatus()} disabled={whatsappLoadState === "LOADING"} className="min-h-11 rounded-2xl border border-emerald-200/25 px-3 text-sm font-black disabled:opacity-50">Actualizar canal</button></div></article>{serverReviewsLoadState === "READY" && serverAlerts.activeListingRisks.map((risk) => <article key={risk.id} className="rounded-3xl border border-rose-200/30 bg-rose-200/[0.08] p-4"><StatusPill tone="danger">{risk.risk_priority.toUpperCase()} · {risk.risk_type.replaceAll("_", " ")}</StatusPill><h3 className="mt-3 font-black">{risk.risk_summary}</h3>{risk.recommended_action && <p className="mt-2 text-sm leading-6 text-white/70">Siguiente acción: {risk.recommended_action}</p>}</article>)}{serverReviewsLoadState === "READY" && serverAlerts.outbox.filter((alert) => !serverAlerts.activeListingRisks.some((risk) => risk.id === String(alert.payload.riskId ?? ""))).slice(0, 10).map((alert) => <article key={alert.id} className="rounded-2xl border border-amber-200/20 bg-amber-200/[0.05] p-3"><p className="text-xs font-black uppercase text-amber-100">{alert.priority} · {alert.alert_type.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-white/55">Notificación {alert.status} · {formatDate(alert.created_at)}</p></article>)}{serverReviewsLoadState === "READY" && serverAlerts.activeListingRisks.length === 0 && <p className="rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.05] p-4 text-sm text-emerald-50">No hay riesgos abiertos en listings vinculados. Sincroniza tus listings activos desde Oportunidades para ampliar la cobertura.</p>}<details className="rounded-3xl border border-white/10 p-4" open={serverReviewsLoadState === "READY" && serverAlerts.activeListingRisks.length === 0}><summary className="cursor-pointer font-black">Bloqueados por stock Luna · {report.stockHoldCandidates.length}</summary><div className="mt-3 space-y-3">{report.stockHoldCandidates.slice(0, blockedVisible).map((candidate) => <article key={candidate.candidateId} className="rounded-2xl border border-rose-200/20 bg-rose-200/[0.06] p-4"><h3 className="font-black">{candidate.productTitle}</h3><p className="mt-2 text-sm text-white/75">{routeLabel(candidate.routeRecommendation)} · último scan {formatDate(candidate.lastSeenAt)}</p><p className="mt-2 break-all text-xs text-white/50">SKU: {formatValue(candidate.supplierSku)}</p></article>)}</div>{blockedVisible < report.stockHoldCandidates.length && <button type="button" onClick={() => setBlockedVisible((value) => value + 20)} className="mt-4 min-h-12 w-full rounded-2xl border border-white/25 font-black">Mostrar 20 más</button>}</details></section>}
+        {view === "blocked" && <section aria-labelledby="blocked-heading" className="space-y-4"><div><p className="text-xs font-black uppercase tracking-widest text-rose-100/60">Operación · listings</p><h2 id="blocked-heading" className="mt-1 text-xl font-black">Listings y alertas Luna ↔ eBay</h2><p className="mt-1 text-sm text-white/65">Primero se muestran riesgos de listings activos; después, productos Luna detenidos por stock.</p><a href="/admin/ebay/listings/register" className="mt-3 inline-flex min-h-11 items-center rounded-2xl bg-white px-4 text-sm font-black text-black">Registrar listing manual</a></div><CommercialMonitorPanel /><article className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.05] p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-widest text-emerald-100/60">Canal profesional</p><h3 className="mt-1 font-black">WhatsApp Seller Alerts</h3></div><StatusPill tone={whatsappLoadState === "ERROR" ? "danger" : whatsappStatus.configuration?.status === "READY" ? "good" : "warning"}>{whatsappLoadState === "LOADING" ? "CARGANDO" : whatsappLoadState === "ERROR" ? "SIN DATOS" : whatsappStatus.configuration?.status ?? "NO CONFIGURADO"}</StatusPill></div><p className="mt-2 text-sm leading-6 text-white/65">Inmediatas: venta confirmada o listing activo con stock Luna exacto en cero. Stock bajo, cambios de costo, competencia, oportunidades y fallos operativos se agrupan en el resumen diario de las 18:00 Guatemala.</p>{whatsappLoadState === "ERROR" && <p role="alert" className="mt-3 rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-xs leading-5 text-rose-50">{whatsappLoadError}</p>}<dl className="mt-3 grid grid-cols-3 gap-2 text-center text-xs"><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Pendientes</dt><dd className="mt-1 font-black">{whatsappLoadState === "READY" ? whatsappStatus.health?.pending ?? 0 : "—"}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Fallidos</dt><dd className="mt-1 font-black">{whatsappLoadState === "READY" ? whatsappStatus.health?.failed ?? 0 : "—"}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/50">Dead letter</dt><dd className="mt-1 font-black">{whatsappLoadState === "READY" ? whatsappStatus.health?.deadLetter ?? 0 : "—"}</dd></div></dl>{whatsappLoadState === "READY" && whatsappStatus.configuration?.status !== "READY" && <p className="mt-3 rounded-2xl border border-amber-200/20 p-3 text-xs leading-5 text-amber-50">Envíos reales bloqueados hasta configurar destinatario server-side, dos templates aprobados y activar el feature flag. Preflight: {whatsappStatus.configuration?.preflightStatus ?? "NOT_RUN"}.</p>}<div className="mt-3 grid grid-cols-2 gap-2"><button type="button" onClick={() => void runWhatsAppPreflight()} disabled={whatsappPreflightRunning} className="min-h-11 rounded-2xl bg-emerald-200 px-3 text-sm font-black text-black disabled:opacity-50">{whatsappPreflightRunning ? "Validando…" : "Validar Meta"}</button><button type="button" onClick={() => void loadWhatsAppStatus()} disabled={whatsappLoadState === "LOADING"} className="min-h-11 rounded-2xl border border-emerald-200/25 px-3 text-sm font-black disabled:opacity-50">Actualizar canal</button></div></article>{serverReviewsLoadState === "READY" && serverAlerts.activeListingRisks.map((risk) => <article key={risk.id} className="rounded-3xl border border-rose-200/30 bg-rose-200/[0.08] p-4"><StatusPill tone="danger">{risk.risk_priority.toUpperCase()} · {risk.risk_type.replaceAll("_", " ")}</StatusPill><h3 className="mt-3 font-black">{risk.risk_summary}</h3>{risk.recommended_action && <p className="mt-2 text-sm leading-6 text-white/70">Siguiente acción: {risk.recommended_action}</p>}</article>)}{serverReviewsLoadState === "READY" && serverAlerts.outbox.filter((alert) => !serverAlerts.activeListingRisks.some((risk) => risk.id === String(alert.payload.riskId ?? ""))).slice(0, 10).map((alert) => <article key={alert.id} className="rounded-2xl border border-amber-200/20 bg-amber-200/[0.05] p-3"><p className="text-xs font-black uppercase text-amber-100">{alert.priority} · {alert.alert_type.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-white/55">Notificación {alert.status} · {formatDate(alert.created_at)}</p></article>)}{serverReviewsLoadState === "READY" && serverAlerts.activeListingRisks.length === 0 && <p className="rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.05] p-4 text-sm text-emerald-50">No hay riesgos abiertos en listings vinculados. Sincroniza tus listings activos desde Oportunidades para ampliar la cobertura.</p>}<details className="rounded-3xl border border-white/10 p-4" open={serverReviewsLoadState === "READY" && serverAlerts.activeListingRisks.length === 0}><summary className="cursor-pointer font-black">Bloqueados por stock Luna · {report.stockHoldCandidates.length}</summary><div className="mt-3 space-y-3">{report.stockHoldCandidates.slice(0, blockedVisible).map((candidate) => <article key={candidate.candidateId} className="rounded-2xl border border-rose-200/20 bg-rose-200/[0.06] p-4"><h3 className="font-black">{candidate.productTitle}</h3><p className="mt-2 text-sm text-white/75">{routeLabel(candidate.routeRecommendation)} · último scan {formatDate(candidate.lastSeenAt)}</p><p className="mt-2 break-all text-xs text-white/50">SKU: {formatValue(candidate.supplierSku)}</p></article>)}</div>{blockedVisible < report.stockHoldCandidates.length && <button type="button" onClick={() => setBlockedVisible((value) => value + 20)} className="mt-4 min-h-12 w-full rounded-2xl border border-white/25 font-black">Mostrar 20 más</button>}</details></section>}
 
         {view === "loop1" && (
           <section
@@ -1172,48 +1338,74 @@ export default function EbayMobileReviewPage() {
 
             {selectedRadarCandidate && (
               <>
-                <section aria-labelledby="luna-first-heading" className="rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4">
-                  <p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Paso 1 · Bodega ahora</p>
+                {journeyStep === 2 && <section aria-labelledby="luna-first-heading" className="rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4">
+                  <p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Paso 2 · Luna</p>
                   <h3 id="luna-first-heading" className="mt-1 text-lg font-black">Confirmar Luna: stock, costo e imagen</h3>
                   <p className="mt-2 text-sm leading-6 text-white/65">eBay se analiza después de confirmar que todavía podemos comprar y enviar exactamente este producto.</p>
                   <p className="mt-1 text-xs font-bold text-amber-100">Completa Luna antes de analizar eBay.</p>
                   <div className="mt-3 overflow-hidden rounded-2xl border border-white/15 bg-white">{safeProductImageUrl ? <img src={safeProductImageUrl} alt={`Imagen de ${selectedRadarCandidate.productTitle} registrada por Radar`} loading="lazy" decoding="async" referrerPolicy="no-referrer" className="max-h-64 w-full object-contain" /> : <div className="flex min-h-32 items-center justify-center bg-black/90 p-4 text-center text-sm font-bold text-white/60">Imagen de Luna no disponible</div>}</div>
                   {lunaCatalogUrl ? <a href={lunaCatalogUrl} target="_blank" rel="noreferrer" onClick={() => setCatalogCheckOpened(true)} className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-2xl border border-emerald-200/35 px-4 text-center font-black text-emerald-50">Abrir producto en Luna Portex ↗</a> : <p className="mt-3 rounded-2xl border border-rose-200/25 p-3 text-sm text-rose-50">Falta URL válida del catálogo Luna.</p>}
-                  <div className="mt-3 grid grid-cols-2 gap-2"><label><span className="text-xs font-bold text-white/60">Stock observado</span><input inputMode="numeric" pattern="[0-9]*" placeholder="Ej. 8" value={stockQuantity} onChange={(event) => resetStockConfirmation(event.target.value.replace(/\D/g, ""))} className="mt-1 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3" /></label><label><span className="text-xs font-bold text-white/60">Costo Luna USD</span><input inputMode="decimal" placeholder="Ej. 4.00" value={lunaPrice} onChange={(event) => resetLunaCatalogConfirmation(event.target.value)} className="mt-1 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-3" /></label></div>
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label><span className="text-xs font-bold text-white/70">Stock observado <span className="text-rose-300">*</span></span><input inputMode="numeric" pattern="[0-9]*" placeholder="Ej. 8" value={stockQuantity} aria-invalid={!state.stockQuantityConfirmed} aria-describedby={!state.stockQuantityConfirmed ? "stock-required-help" : undefined} onChange={(event) => resetStockConfirmation(event.target.value.replace(/\D/g, ""))} className={`mt-1 min-h-12 w-full rounded-2xl border bg-black/30 px-3 outline-none focus:ring-2 focus:ring-cyan-200 ${!state.stockQuantityConfirmed ? "border-rose-400 ring-1 ring-rose-400/35" : "border-emerald-300/50"}`} />{!state.stockQuantityConfirmed && <span id="stock-required-help" className="mt-1 block text-xs font-bold text-rose-300">Ingresa una cantidad mayor que cero y confirma el stock.</span>}</label>
+                    <label><span className="text-xs font-bold text-white/70">Costo Luna USD <span className="text-rose-300">*</span></span><input inputMode="decimal" placeholder="Ej. 4.00" value={lunaPrice} aria-invalid={!lunaPriceConfirmed} aria-describedby={!lunaPriceConfirmed ? "price-required-help" : undefined} onChange={(event) => resetLunaCatalogConfirmation(event.target.value)} className={`mt-1 min-h-12 w-full rounded-2xl border bg-black/30 px-3 outline-none focus:ring-2 focus:ring-cyan-200 ${!lunaPriceConfirmed ? "border-rose-400 ring-1 ring-rose-400/35" : "border-emerald-300/50"}`} />{!lunaPriceConfirmed && <span id="price-required-help" className="mt-1 block text-xs font-bold text-rose-300">Ingresa el costo y abre Luna para confirmar precio e imagen.</span>}</label>
+                  </div>
                   <div className="mt-2 grid grid-cols-2 gap-2">
-                    <div><button type="button" disabled={!Number.isInteger(Number(stockQuantity)) || Number(stockQuantity) < 1} onClick={() => act({ type: "CONFIRM_STOCK_QTY", quantity: Number(stockQuantity) })} className="min-h-12 w-full rounded-2xl bg-white px-2 text-sm font-black text-black disabled:opacity-40">{state.stockQuantityConfirmed === Number(stockQuantity) ? "✓ Stock" : "Confirmar stock"}</button>{!state.stockQuantityConfirmed && <p className="mt-1 text-[11px] font-bold text-amber-100">Falta confirmar stock</p>}</div>
+                    <div><button type="button" disabled={!Number.isInteger(Number(stockQuantity)) || Number(stockQuantity) < 1} onClick={() => act({ type: "CONFIRM_STOCK_QTY", quantity: Number(stockQuantity) })} className="min-h-12 w-full rounded-2xl bg-white px-2 text-sm font-black text-black disabled:opacity-40">{state.stockQuantityConfirmed === Number(stockQuantity) ? "✓ Stock confirmado" : "Confirmar stock"}</button></div>
                     <div><button type="button" disabled={!catalogCheckOpened || !lunaCatalogUrl || !safeProductImageUrl || !(Number(lunaPrice) > 0)} onClick={confirmLunaCatalogMatch} className="min-h-12 w-full rounded-2xl bg-emerald-200 px-2 text-sm font-black text-black disabled:opacity-40">{lunaPriceConfirmed && state.imageConfirmed ? "✓ Precio e imagen coinciden" : "Confirmar que precio e imagen coinciden"}</button>{!lunaPriceConfirmed && <div className="mt-1 space-y-0.5 text-[11px] font-bold text-amber-100">{!(Number(lunaPrice) > 0) && <p>Falta confirmar costo</p>}{!safeProductImageUrl && <p>Falta confirmar imagen</p>}{lunaCatalogUrl && !catalogCheckOpened && <p>Abre primero el producto en Luna</p>}</div>}</div>
                   </div>
-                </section>
-                <div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4">
-                  <p className="font-black">2. eBay: comparables y señales de demanda</p>
+                </section>}
+                {journeyStep === 3 && <div className="rounded-3xl border border-white/15 bg-white/[0.045] p-4">
+                  <p className="font-black">Paso 3 · Verificación del mercado activo en eBay</p>
                   <p className="mt-1 text-sm leading-6 text-white/75">
-                    IMNOVA consulta eBay en modo read-only, descarta productos con
-                    tamaño, variante o pack contradictorios y pondera las palabras
-                    según la evidencia disponible. Sólo llama “ventas verificadas”
-                    al historial oficial; las señales de Browse permanecen estimadas.
+                    Seller OS consulta eBay en modo read-only para encontrar comparables
+                    compatibles, precios, competencia y categoría. Los listings activos
+                    no prueban ventas: Product Research confirma la evidencia vendida por separado.
                     No copia títulos ni imágenes.
                   </p>
                   <dl className="mt-3 grid gap-2 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.06] p-3 text-sm">
                     <div><dt className="text-white/55">Producto en Luna</dt><dd className="mt-1 font-black">{selectedRadarCandidate.productTitle}</dd></div>
                     <div className="grid grid-cols-2 gap-2"><div><dt className="text-white/55">Variante</dt><dd className="font-bold">{formatValue(selectedRadarCandidate.variantTitle)}</dd></div><div><dt className="text-white/55">SKU</dt><dd className="break-all font-bold">{formatValue(selectedRadarCandidate.supplierSku)}</dd></div></div>
                   </dl>
+                  <div className="mt-3 rounded-2xl border border-violet-200/20 bg-violet-200/[0.06] p-3 text-xs leading-5 text-violet-50">
+                    <p className="font-black">¿Qué información aporta esta verificación?</p>
+                    <p className="mt-1">Consulta ejecutada, resultados amplios, comparables compatibles, vendedores, rango de precios, categoría, confianza de identidad y economía preliminar. Nunca convierte resultados activos en ventas confirmadas.</p>
+                  </div>
                   <button
                     type="button"
-                    disabled={sellerKeywordDemandLoading || !loop1AnalysisGate.analysisEnabled}
+                    disabled={sellerKeywordDemandLoading || ebayRateLimitActive || !loop1AnalysisGate.analysisEnabled}
                     onClick={() => void runSellerKeywordDemandValidation()}
                     className="mt-3 min-h-14 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-50"
                   >
                     {sellerKeywordDemandLoading
-                      ? "Analizando comparables y demanda…"
+                      ? "Verificando mercado en eBay…"
+                      : ebayRateLimitActive
+                        ? `eBay en espera · ${formatQuotaCountdown(ebayRetryRemainingMs)}`
                       : sellerKeywordDemand
-                        ? "↻ Actualizar mercado eBay"
-                        : "Analizar mercado eBay"}
+                        ? "↻ Actualizar verificación eBay"
+                        : "Verificar mercado en eBay"}
                   </button>
-                  <p className="mt-2 text-xs text-white/55">Analizar comparables y demanda en eBay · lectura oficial sin escrituras.</p>
+                  <p className="mt-2 text-xs text-white/55">Comparables activos y señales de mercado · lectura oficial sin escrituras. Las ventas confirmadas requieren Product Research.</p>
+                  {ebayRateLimitActive && sellerKeywordRetryAt && (
+                    <div role="status" className="mt-3 rounded-2xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-sm text-amber-50">
+                      <p className="font-black">Verificación eBay en espera</p>
+                      <p className="mt-1 leading-6">Disponible nuevamente el <strong>{formatQuotaResumeAt(sellerKeywordRetryAt)}</strong> · faltan <strong>{formatQuotaCountdown(ebayRetryRemainingMs)}</strong>.</p>
+                      <p className="mt-1 text-xs leading-5">La pausa afecta únicamente esta lectura eBay. El producto, las confirmaciones Luna y {sellerKeywordDemand ? "la evidencia anterior" : "el checkpoint"} permanecen guardados.</p>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        <button type="button" onClick={openProductResearchCapture} className="min-h-11 rounded-xl bg-amber-100 px-3 font-black text-black">Capturar ventas en Product Research</button>
+                        <button type="button" onClick={() => setView("opportunities")} className="min-h-11 rounded-xl border border-amber-100/35 px-3 font-black">Revisar otra oportunidad</button>
+                      </div>
+                    </div>
+                  )}
+                  {sellerKeywordDemand && (
+                    <p className={`mt-3 rounded-xl border p-2 text-xs font-bold ${marketEvidenceFresh ? "border-emerald-200/25 bg-emerald-200/[0.06] text-emerald-50" : "border-amber-200/25 bg-amber-200/[0.06] text-amber-50"}`}>
+                      Evidencia anterior conservada · observada {formatDate(sellerKeywordDemand.evidenceAsOf)} · {marketEvidenceFresh ? "vigente" : "vencida; sólo referencia hasta actualizar"}.
+                    </p>
+                  )}
+                  {sellerKeywordDemand && productResearchEvidence?.status === "AVAILABLE" && <div className="mt-3 rounded-2xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-sm text-emerald-50"><p className="font-black">✓ Product Research capturado</p><p className="mt-1 text-xs">{productResearchEvidence.exactObservationCount} observaciones exactas · {productResearchEvidence.confirmedSoldQuantity} unidades vendidas confirmadas · últimos {productResearchEvidence.recencyDays} días.</p></div>}
+                  {sellerKeywordDemand && productResearchEvidence?.status !== "AVAILABLE" && <div className="mt-3 rounded-2xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-sm text-amber-50"><p className="font-black">Product Research pendiente</p><p className="mt-1 text-xs">La búsqueda pública y Browse no sustituyen la tabla oficial de ventas. Usa el Asistente Seller OS para abrir y verificar la captura.</p></div>}
                   {!sellerKeywordDemandLoading && !loop1AnalysisGate.analysisEnabled && <p className="mt-2 text-xs font-bold text-amber-100">{loop1AnalysisGate.disabledReason}</p>}
 
-                  {sellerKeywordDemandError && (
+                  {sellerKeywordDemandError && !ebayRateLimitActive && (
                     <div role="alert" className="mt-3 rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50">
                       <p className="font-bold">{sellerKeywordDemandError}</p>
                       <a href={ebayIdentitySearchUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex min-h-11 items-center underline">Abrir búsqueda de respaldo en eBay ↗</a>
@@ -1357,7 +1549,7 @@ export default function EbayMobileReviewPage() {
                         <section aria-labelledby="professional-opportunity-heading" className="rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.07] p-3">
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                          <h3 id="professional-opportunity-heading" className="font-black">3. Economía y oportunidad profesional</h3>
+                          <h3 id="professional-opportunity-heading" className="font-black">Resultado económico y oportunidad profesional</h3>
                               <p className="mt-1 text-xs leading-5 text-white/65">Combina identidad, demanda, economía, competencia, stock y preparación del listing. No garantiza ventas.</p>
                             </div>
                             <span className="rounded-2xl bg-cyan-100 px-3 py-2 text-xl font-black text-black">{Math.round(opportunityAssessment.scores.opportunityScore)}</span>
@@ -1391,7 +1583,7 @@ export default function EbayMobileReviewPage() {
                         </section>
                       )}
 
-                      <section aria-labelledby="top-selling-heading">
+                      <section ref={comparablesRef} aria-labelledby="top-selling-heading" className="scroll-mt-32">
                         <h3 id="top-selling-heading" className="font-black">Comparables para escoger la mejor referencia</h3>
                         <p className="mt-1 text-xs leading-5 text-white/65">El orden combina identidad, calidad de evidencia, señal comercial y reputación. La cantidad estimada por sí sola no decide.</p>
                         <div className="mt-2 grid gap-3">
@@ -1433,7 +1625,7 @@ export default function EbayMobileReviewPage() {
                   )}
 
                   {identityComparison.ebayIdentity.listingUrl && (
-                    <div className="mt-4 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
+                    <div ref={identityConfirmationRef} className="mt-4 scroll-mt-32 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
                       <p className="text-sm font-black">Confirmación humana final</p>
                       <p className="mt-1 text-xs leading-5 text-white/70">El sistema ya comparó marca/producto, variante, tamaño y pack. Confirma que la referencia elegida corresponde al producto de Luna.</p>
                       <button type="button" disabled={!identityComparison.canConfirmSameProduct} onClick={confirmIdentityComparison} className="mt-3 min-h-12 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">
@@ -1444,8 +1636,9 @@ export default function EbayMobileReviewPage() {
                     </div>
                   )}
                   {identityComparison.identityComparisonComplete && <p className="mt-2 text-xs font-bold text-emerald-100">Fuente: análisis oficial eBay read-only + confirmación humana final.</p>}
-                </div>
+                </div>}
 
+                {journeyStep === 4 && <>
                 <Loop1WinnerAnalysisSummary
                   decisionPackage={winnerDecisionPackage}
                   keywordReport={sellerKeywordDemand}
@@ -1497,6 +1690,7 @@ export default function EbayMobileReviewPage() {
                       Vincular con la oportunidad canónica
                     </button>}
                 </div>
+                </>}
               </>
             )}
 
@@ -1565,14 +1759,11 @@ export default function EbayMobileReviewPage() {
           Sin aprobación oficial · publicación desactivada.
         </footer>
       </section>
-      {selectedRadarCandidate && view === "top5" && <div className="fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 border-t border-white/15 bg-[#0b1018]/95 p-3 backdrop-blur"><div className="mx-auto flex max-w-xl items-center gap-3"><p className="min-w-0 flex-1 truncate text-sm font-bold">Seleccionado: {selectedRadarCandidate.productTitle}</p><button type="button" onClick={() => setView("loop1")} className="min-h-12 rounded-2xl bg-emerald-200 px-4 font-black text-black">Abrir Loop 1</button></div></div>}
       <SellerOsMobileNav
-        active={view === "pinned" || view === "loop1" || view === "loop2" ? "in-progress" : view === "blocked" ? "operation" : "opportunities"}
+        active={view === "blocked" ? "operations" : "ebay-opportunities"}
         operationCount={serverReviewsLoadState === "READY" ? alertCount : 0}
         onNavigate={(destination) => {
-          if (destination === "opportunities") { setView("opportunities"); return true }
-          if (destination === "in-progress") { setView("pinned"); return true }
-          if (destination === "operation") { setView("blocked"); return true }
+          if (destination === "ebay-opportunities") { setView("opportunities"); return true }
           if (hasReviewInProgress && !confirmReviewReset()) return true
           return false
         }}

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { spawnSync } from "node:child_process"
-import { readdirSync, readFileSync, statSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { extname, join, relative } from "node:path"
 
 const root = process.cwd()
@@ -58,6 +58,61 @@ for (const name of migrationNames) {
 // changed by the project migration role. Future Seller OS tables must close
 // client table ACLs explicitly in the migration that creates them.
 const sellerOsAclEnforcementStart = "20260713100000"
+// Applied migrations are immutable. These narrowly-scoped append-only
+// remediations satisfy the same ACL invariant without rewriting history.
+const sellerOsAclRemediations = new Map([
+  [
+    "20260722008000:ebay_reference_guided_generation_attempts",
+    "20260722017000_harden_reference_guided_orchestrator_acl.sql",
+  ],
+  [
+    "20260722008000:ebay_reference_guided_generation_jobs",
+    "20260722017000_harden_reference_guided_orchestrator_acl.sql",
+  ],
+])
+const v3AclRemediation =
+  "20260723014000_harden_v3_reference_guided_table_acl.sql"
+for (const sourceTable of [
+  "20260722020000:ebay_reference_guided_replacement_canary_events",
+  "20260722024000:ebay_reference_guided_human_review_events",
+  "20260722024000:ebay_reference_guided_deterministic_previews",
+  "20260722024000:ebay_reference_guided_asset_contract_slots",
+  "20260722025000:ebay_reference_guided_primary_main_previews",
+  "20260722025000:ebay_reference_guided_asset_review_events",
+  "20260722026000:ebay_reference_guided_deterministic_asset_variants",
+  "20260722027000:ebay_reference_guided_final_asset_selection_events",
+  "20260722028000:ebay_reference_guided_final_batch_plans",
+  "20260722028000:ebay_reference_guided_final_batch_plan_positions",
+  "20260722029000:ebay_reference_guided_batch_plan_successors_v2",
+  "20260722029000:ebay_reference_guided_batch_plan_successor_positions_v2",
+  "20260722030000:ebay_reference_guided_phase_a_position_2_assets",
+  "20260722032000:ebay_reference_guided_successor_provider_events",
+  "20260722035000:ebay_reference_guided_position_5_human_verdict_events",
+  "20260722037000:ebay_reference_guided_position_3_human_verdict_events",
+  "20260722038000:ebay_reference_guided_position_contract_amendments",
+  "20260722040000:ebay_reference_guided_position_4_human_verdict_events",
+  "20260722041000:ebay_reference_guided_position_4_correction_amendments",
+  "20260722042000:ebay_reference_guided_position_6_contract_amendments",
+  "20260722045000:ebay_reference_guided_position_6_human_verdict_events",
+  "20260722046000:ebay_reference_guided_position_4_fidelity_amendments",
+  "20260722046000:ebay_reference_guided_position_6_correction_amendments",
+  "20260722046000:ebay_reference_guided_extraordinary_replacement_plans",
+  "20260722046000:ebay_reference_guided_extraordinary_replacement_positions",
+  "20260722046000:ebay_reference_guided_extraordinary_authorization_events",
+  "20260722046000:ebay_reference_guided_extraordinary_provider_events",
+  "20260722050000:ebay_reference_guided_position_4_extraordinary_human_verdict_events",
+  "20260722052000:ebay_reference_guided_position_6_extraordinary_human_verdict_events",
+  "20260722053000:ebay_reference_guided_final_listing_review_previews",
+  "20260722054500:ebay_reference_guided_final_listing_reconciliation_events",
+  "20260722055000:ebay_reference_guided_final_listing_gate_source_events",
+  "20260722056000:ebay_v3_publication_image_transports",
+  "20260722056000:ebay_v3_unpublished_offer_authorization_previews",
+  "20260722057000:ebay_v3_unpublished_offer_authorization_invalidations",
+  "20260722057500:ebay_v3_listing_package_reconciliations",
+  "20260723012000:ebay_draft_only_approval_reconciliation_events",
+]) {
+  sellerOsAclRemediations.set(sourceTable, v3AclRemediation)
+}
 for (const name of migrationNames) {
   const timestamp = name.match(/^(\d{12}|\d{14})_/)?.[1]
   const source = readFileSync(join(migrationDirectory, name), "utf8")
@@ -81,7 +136,12 @@ for (const name of migrationNames) {
       `revoke\\s+all\\s+on\\s+table\\s+public\\.${escapedTable}\\s+from\\s+anon\\s*,\\s*authenticated\\s*;`,
       "i",
     )
-    if (!explicitRevoke.test(source)) {
+    const remediationName = sellerOsAclRemediations.get(`${timestamp}:${table}`)
+    const remediationSource = remediationName &&
+      migrationNames.includes(remediationName)
+      ? readFileSync(join(migrationDirectory, remediationName), "utf8")
+      : ""
+    if (!explicitRevoke.test(source) && !explicitRevoke.test(remediationSource)) {
       failures.push(`SELLER_OS_TABLE_ACL_REVOKE_MISSING:${name}:${table}`)
     }
   }
@@ -172,6 +232,7 @@ for (const path of trackedPaths) {
   }
   if (/\.(?:png|jpe?g|gif|webp|ico|woff2?|ttf|lock)$/i.test(path)) continue
   const absolute = join(root, path)
+  if (!existsSync(absolute)) continue
   const content = readFileSync(absolute, "utf8")
   for (const pattern of secretPatterns) {
     if (pattern.test(content)) failures.push(`POTENTIAL_SECRET:${path}`)

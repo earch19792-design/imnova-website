@@ -2,6 +2,8 @@ import type { EbayLunaOpportunityAssessment } from "./ebay-luna-demand-opportuni
 import type { EbayBestSellingProductSignal } from "./ebay-seller-keyword-demand-gateway"
 import type { LunaOpportunityCandidateInput } from "./ebay-luna-opportunity-types"
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { calculateCommercialPriorityScoreV2, classifyTwoSpeedCandidate } from "./ebay-two-speed-discovery-domain.ts"
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
 import { isDirectedLunaManualPackAssessment } from "./ebay-luna-directed-product-import.ts"
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
 import { detectEbayProductRestrictionGuards } from "./ebay-product-restriction-guards.ts"
@@ -168,6 +170,39 @@ export function buildProfessionalSellerQueueView(row: ProfessionalQueueRow) {
     ? row.evidence_guards.filter((value): value is string => typeof value === "string")
     : []
   const workspaceEligibility = evaluateEbayListingWorkspaceEligibility(row)
+  const observedAt = text(row.last_scanned_at) ?? text(row.updated_at)
+  const evidenceAge = observedAt ? Date.now() - Date.parse(observedAt) : Number.POSITIVE_INFINITY
+  const evidenceFresh = Number.isFinite(evidenceAge) && evidenceAge <= 72 * 60 * 60_000
+  const compatibleSellerCount = numberOrNull(market.compatibleSellerCount) ?? 0
+  const soldExactCount = numberOrNull(market.soldExactCount) ?? 0
+  const classification = classifyTwoSpeedCandidate({
+    rejected: text(row.queue_status) === "rejected",
+    blockers: [...hardGates, ...evidenceGuards],
+    lunaOnly: candidateCount === 0 && exactComparableCount === 0,
+    exactIdentityConfirmed,
+    identityConfidence: numberOrNull(assessmentScores.confidenceScore) ?? 0,
+    exactComparableCount,
+    compatibleSellerCount,
+    soldExactCount,
+    economicsAvailable: economics.ready === true,
+    stockAvailable: supplierAvailable && (supplierInventory === null || supplierInventory > 0),
+    evidenceFresh,
+    evidenceConfidence: numberOrNull(assessmentScores.confidenceScore) ?? 0,
+    broadResultCount: candidateCount,
+  })
+  const scoreV2 = calculateCommercialPriorityScoreV2({
+    eligible: ["RECOMMENDED_FOR_REVIEW", "PRELIMINARY_POTENTIAL"].includes(classification),
+    confirmedExactSold: Math.min(100, soldExactCount),
+    economicsAndMargin: numberOrNull(row.economics_score) ?? 0,
+    competitionAndSellThrough: numberOrNull(row.competition_score) ?? 0,
+    lunaAvailability: supplierAvailable ? 100 : 0,
+    temporalTrend: evidenceFresh ? 100 : 0,
+    operationalReadiness: numberOrNull(row.listing_readiness_score) ?? 0,
+    identityConfidence: numberOrNull(assessmentScores.confidenceScore) ?? 0,
+    evidenceConfidence: soldExactCount > 0 ? 100 : exactComparableCount > 0 ? 70 : 0,
+    freshnessConfidence: evidenceFresh ? 100 : 0,
+    broadOnly: exactComparableCount === 0,
+  })
 
   let sellerLane = "REFINE_EBAY_SEARCH"
   let nextSellerAction = "Refina la frase de búsqueda o confirma la categoría antes de invertir tiempo en el listing."
@@ -202,7 +237,35 @@ export function buildProfessionalSellerQueueView(row: ProfessionalQueueRow) {
     assessment: undefined,
     ebay_candidate_count: candidateCount,
     exact_comparable_count: exactComparableCount,
-    seller_priority_score: sellerPriorityScore,
+    seller_priority_score: scoreV2,
+    legacy_priority_score: sellerPriorityScore,
+    score_version: "EBAY-COMMERCIAL-PRIORITY-SCORE-V2",
+    classification,
+    evidence_tier: soldExactCount > 0
+      ? "CONFIRMED_SOLD_EXACT"
+      : exactComparableCount > 0
+        ? "ACTIVE_EXACT"
+        : candidateCount > 0
+          ? "BROAD_SEARCH_ONLY"
+          : "NEW_LUNA_SIGNAL",
+    why_here: {
+      executedQuery: text(market.executedQuery) ?? text(row.query_used),
+      analysisDate: observedAt,
+      fresh: evidenceFresh,
+      identityConfidence: numberOrNull(assessmentScores.confidenceScore) ?? 0,
+      broadResultCount: candidateCount,
+      exactComparableCount,
+      compatibleSellerCount,
+      confirmedSoldQuantity: soldExactCount,
+      estimatedSignals: numberOrNull(market.estimatedMovementSignals) ?? 0,
+      productResearchStatus: text(row.product_research_ranking_status) === "UNAVAILABLE"
+        ? "UNAVAILABLE"
+        : soldExactCount > 0
+          ? "CONFIRMED_SOLD_EXACT"
+          : "PENDING_OR_UNMATCHED",
+      margin: numberOrNull(economics.estimatedNetMarginPercent),
+      blockers: [...new Set([...hardGates, ...evidenceGuards, ...workspaceEligibility.blockers])],
+    },
     score_axes: {
       potential: numberOrNull(assessmentScores.potentialScore) ?? opportunityScore,
       confidence: numberOrNull(assessmentScores.confidenceScore) ?? 0,

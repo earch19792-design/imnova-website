@@ -1,0 +1,21 @@
+[Unit]
+Description=Seller OS encrypted Supabase logical backup
+Documentation=https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore
+Wants=docker.service
+After=network-online.target docker.service
+ConditionPathExists=/etc/seller-os/backup.env
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+Environment=GNUPGHOME=/etc/seller-os/gnupg
+ExecStart=/opt/seller-os/imnova-website/ops/seller-os-backup/backup.sh --env-file /etc/seller-os/backup.env
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadOnlyPaths=/etc/seller-os
+ReadWritePaths=/etc/seller-os/gnupg /var/backups/seller-os
+LockPersonality=true

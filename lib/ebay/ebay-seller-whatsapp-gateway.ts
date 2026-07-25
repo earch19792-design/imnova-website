@@ -80,6 +80,12 @@ function safeText(value: unknown, maxLength: number) {
 const META_GRAPH_VERSION = "v25.0"
 const PREFLIGHT_SUCCESS_TTL_MS = 5 * 60 * 1_000
 const PREFLIGHT_FAILURE_TTL_MS = 30 * 1_000
+const APPROVED_TEMPLATE_TEXT_BUDGET = {
+  priority: 40,
+  title: 90,
+  summary: 220,
+  action: 300,
+} as const
 
 let preflightCache: {
   key: string
@@ -513,10 +519,10 @@ export async function sendSellerWhatsAppApprovedTemplate(
             components: [{
               type: "body",
               parameters: [
-                { type: "text", text: safeText(message.priorityLabel, 40) },
-                { type: "text", text: safeText(message.title, 120) },
-                { type: "text", text: safeText(message.summary, 500) },
-                { type: "text", text: safeText(message.action, 500) },
+                { type: "text", text: safeText(message.priorityLabel, APPROVED_TEMPLATE_TEXT_BUDGET.priority) },
+                { type: "text", text: safeText(message.title, APPROVED_TEMPLATE_TEXT_BUDGET.title) },
+                { type: "text", text: safeText(message.summary, APPROVED_TEMPLATE_TEXT_BUDGET.summary) },
+                { type: "text", text: safeText(message.action, APPROVED_TEMPLATE_TEXT_BUDGET.action) },
               ],
             }],
           },

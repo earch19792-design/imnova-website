@@ -22,6 +22,10 @@ const scopeSource = readFileSync(
   "lib/ebay/ebay-seller-account-scope.ts",
   "utf8",
 )
+const rateLimitSource = readFileSync(
+  "lib/ebay/ebay-readonly-rate-limit.ts",
+  "utf8",
+)
 const tradingSource = readFileSync(
   "lib/ebay/ebay-manual-listing-trading-readonly.ts",
   "utf8",
@@ -30,6 +34,10 @@ const tradingSource = readFileSync(
   .replace(
     'from "./ebay-seller-account-scope"',
     `from "${moduleUrl(scopeSource)}"`,
+  )
+  .replace(
+    'from "./ebay-readonly-rate-limit"',
+    `from "${moduleUrl(rateLimitSource)}"`,
   )
 const tradingModuleUrl = moduleUrl(tradingSource)
 const {

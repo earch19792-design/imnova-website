@@ -75,7 +75,8 @@ test("multiple pinned candidates expose independent continuation decisions", () 
 })
 
 test("mobile UI provides progressive disclosure, tabs, safe blank inputs and accessibility states", () => {
-  for (const expected of [/Top 5 actual/, /En revisión/, /Bloqueados/, /Decisión/, /Ver detalles técnicos/, /Mostrar 20 más/, /focus-visible/, /prefers-reduced-motion/, /role="status"/, /Reintentar lectura/, /AUTH_REQUIRED/, /RADAR_REQUEST_FAILED/]) assert.match(pageSource, expected)
+  for (const expected of [/Continuar donde quedé/, /En revisión/, /Bloqueados/, /Decisión/, /Ver detalles técnicos/, /Mostrar 20 más/, /focus-visible/, /prefers-reduced-motion/, /role="status"/, /Reintentar lectura/, /AUTH_REQUIRED/, /RADAR_REQUEST_FAILED/]) assert.match(pageSource, expected)
+  assert.doesNotMatch(pageSource, /Radar alternativo/)
   assert.match(pageSource, /useState\(""\)/)
   assert.doesNotMatch(pageSource, /useState\("20"\)/)
   assert.doesNotMatch(pageSource, /useState\("2\.00"\)/)

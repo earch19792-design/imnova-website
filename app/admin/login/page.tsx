@@ -50,6 +50,23 @@ export default function AdminLoginPage() {
         return
       }
 
+      if (!result.session?.access_token) {
+        setError("No se pudo establecer la sesión administrativa segura.")
+        return
+      }
+
+      const sessionResponse = await fetch("/api/admin/session", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${result.session.access_token}`,
+        },
+      })
+
+      if (!sessionResponse.ok) {
+        setError("No se pudo proteger la sesión administrativa.")
+        return
+      }
+
       const returnTo =
         getSafeAdminReturnPath(
           new URLSearchParams(
@@ -114,7 +131,7 @@ export default function AdminLoginPage() {
             "
           >
 
-            IMNOVA LABS™
+            SELLER OS
 
           </p>
 
@@ -127,7 +144,7 @@ export default function AdminLoginPage() {
             "
           >
 
-            ADMIN ACCESS
+            ACCESO ADMINISTRATIVO
 
           </h1>
 
@@ -138,7 +155,7 @@ export default function AdminLoginPage() {
             "
           >
 
-            Acceso restringido al sistema.
+            Operación profesional para marketplaces. No existe registro público.
 
           </p>
 

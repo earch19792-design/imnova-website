@@ -1,0 +1,344 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "Estado del monitoreo comercial eBay",
+    "description": "Auditoría operativa del monitoreo, WhatsApp y métricas comerciales de los listings activos.",
+    "generatedAt": "2026-07-24T16:33:00Z",
+    "cards": [
+      {
+        "id": "commercial_snapshot",
+        "description": "Última ventana comercial completa observada después de reactivar el monitor.",
+        "dataset": "commercial_metrics",
+        "sourceId": "commercial_summary",
+        "source": {
+          "id": "commercial_summary",
+          "label": "Supabase staging · resumen comercial",
+          "path": "public.commercial_daily_summaries",
+          "query": {
+            "engine": "postgresql",
+            "sql": "select (metrics->>'activeListings')::integer as active_listings, (metrics->>'impressions')::integer as impressions, (metrics->>'views')::integer as views, (metrics->>'ctrPercent')::numeric / 100 as ctr, (metrics->>'sales')::integer as sales from public.commercial_daily_summaries where window_complete is true order by summary_day desc limit 1;",
+            "description": "Lee la última ventana comercial diaria completa.",
+            "executed_at": "2026-07-24T16:31:44Z",
+            "tables_used": ["public.commercial_daily_summaries"],
+            "metric_definitions": [
+              "CTR = vistas / impresiones; se expresa como fracción para formato porcentual.",
+              "Ventas incluye únicamente ventas oficiales confirmadas."
+            ]
+          }
+        },
+        "metrics": [
+          { "label": "Listings activos", "field": "active_listings", "format": "number" },
+          { "label": "Impresiones", "field": "impressions", "format": "number" },
+          { "label": "Vistas", "field": "views", "format": "number" },
+          { "label": "CTR", "field": "ctr", "format": "percent" },
+          { "label": "Ventas", "field": "sales", "format": "number" }
+        ]
+      },
+      {
+        "id": "monitor_health",
+        "description": "Estado operativo confirmado tras la corrección.",
+        "dataset": "monitor_health",
+        "sourceId": "scheduler_audit",
+        "source": {
+          "id": "scheduler_audit",
+          "label": "Supabase staging · salud del scheduler",
+          "path": "public.ebay_monitoring_scheduler_config, cron.job, public.alert_delivery_outbox",
+          "query": {
+            "engine": "postgresql",
+            "sql": "select (select count(*) from cron.job where active is true and jobname in ('seller-os-ebay-commercial-monitor-staging-v1','seller-os-commercial-alert-dispatcher-staging-v1','seller-os-ebay-luna-monitor-staging-v1')) as active_jobs, (select count(*) from public.alert_delivery_outbox where channel='whatsapp' and delivered_at >= timestamptz '2026-07-24 16:31:00+00') as meta_accepted, (select count(*) from public.alert_delivery_outbox where channel='whatsapp' and status='pending') as pending_alerts;",
+            "description": "Cuenta jobs activos, aceptaciones Meta posteriores a la reactivación y alertas vigentes.",
+            "executed_at": "2026-07-24T16:33:00Z",
+            "tables_used": ["cron.job", "public.alert_delivery_outbox"],
+            "metric_definitions": [
+              "Meta aceptado indica aceptación del proveedor; no confirma entrega al teléfono sin webhook.",
+              "Alertas vigentes en cola excluye canceladas, fallidas y dead letter."
+            ]
+          }
+        },
+        "metrics": [
+          { "label": "Jobs activos", "field": "active_jobs", "format": "number" },
+          { "label": "Mensajes Meta aceptados", "field": "meta_accepted", "format": "number" },
+          { "label": "Alertas vigentes en cola", "field": "pending_alerts", "format": "number" }
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "commercial_funnel",
+        "title": "Actividad comercial observada",
+        "subtitle": "Hay visibilidad y clics, pero todavía no existe conversión confirmada.",
+        "type": "bar",
+        "dataset": "commercial_funnel",
+        "sourceId": "commercial_summary",
+        "source": {
+          "id": "commercial_summary",
+          "label": "Supabase staging · resumen comercial",
+          "path": "public.commercial_daily_summaries",
+          "query": {
+            "engine": "postgresql",
+            "sql": "with latest as (select metrics, created_at from public.commercial_daily_summaries where window_complete is true order by summary_day desc limit 1) select stage, count, rate, created_at as observed_at from latest cross join lateral (values ('Impresiones',(metrics->>'impressions')::integer,'Base observada'),('Vistas',(metrics->>'views')::integer,'CTR ' || coalesce(metrics->>'ctrPercent','0') || '%'),('Ventas',(metrics->>'sales')::integer,'Conversión ' || coalesce(metrics->>'conversionPercent','0') || '%')) as funnel(stage,count,rate);",
+            "description": "Transforma la última ventana completa en etapas de actividad comercial.",
+            "executed_at": "2026-07-24T16:31:44Z",
+            "tables_used": ["public.commercial_daily_summaries"],
+            "metric_definitions": [
+              "Impresiones y vistas proceden del resumen oficial de Analytics.",
+              "Ventas incluye únicamente órdenes oficiales confirmadas."
+            ]
+          }
+        },
+        "encodings": {
+          "x": { "field": "stage", "type": "nominal", "label": "Etapa" },
+          "y": { "field": "count", "type": "quantitative", "label": "Cantidad", "format": "number" },
+          "tooltip": [
+            { "field": "rate", "type": "nominal", "label": "Tasa asociada" },
+            { "field": "observed_at", "type": "temporal", "label": "Observado" }
+          ]
+        },
+        "valueFormat": "number"
+      },
+      {
+        "id": "alert_queue",
+        "title": "Recomendaciones WhatsApp vigentes",
+        "subtitle": "Las acciones de suministro tienen prioridad sobre optimizaciones comerciales.",
+        "type": "bar",
+        "dataset": "alert_queue",
+        "sourceId": "alert_outbox",
+        "source": {
+          "id": "alert_outbox",
+          "label": "Supabase staging · recomendaciones WhatsApp",
+          "path": "public.commercial_alert_events, public.alert_delivery_outbox",
+          "query": {
+            "engine": "postgresql",
+            "sql": "select case when event.event_type='LUNA_SUPPLY_RECHECK_REQUIRED' then 'Reconfirmar Luna' when event.event_type='COMPETITOR_PATTERN_SUGGESTION' then 'Revisar competencia' else event.event_type end as alert_type, count(*)::integer as count, max(event.severity) as priority, max(event.recommended_action) as action from public.alert_delivery_outbox outbox join public.commercial_alert_events event on event.id=outbox.commercial_event_id where outbox.channel='whatsapp' and outbox.status='pending' group by 1 order by count desc;",
+            "description": "Agrupa alertas WhatsApp pendientes por tipo y conserva la acción recomendada.",
+            "executed_at": "2026-07-24T16:33:00Z",
+            "tables_used": ["public.alert_delivery_outbox", "public.commercial_alert_events"],
+            "metric_definitions": [
+              "Una alerta pendiente aún no ha sido reclamada por el dispatcher.",
+              "El dispatcher procesa como máximo una alerta por invocación."
+            ]
+          }
+        },
+        "encodings": {
+          "x": { "field": "alert_type", "type": "nominal", "label": "Tipo de recomendación" },
+          "y": { "field": "count", "type": "quantitative", "label": "Alertas", "format": "number" },
+          "tooltip": [
+            { "field": "priority", "type": "nominal", "label": "Prioridad" },
+            { "field": "action", "type": "nominal", "label": "Acción" }
+          ]
+        },
+        "valueFormat": "number"
+      }
+    ],
+    "tables": [
+      {
+        "id": "active_listings",
+        "title": "Listings activos bajo vigilancia",
+        "subtitle": "Estado oficial eBay observado en la auditoría.",
+        "dataset": "active_listings",
+        "sourceId": "active_listing_state",
+        "source": {
+          "id": "active_listing_state",
+          "label": "Supabase staging · listings activos eBay",
+          "path": "public.ebay_active_listings",
+          "query": {
+            "engine": "postgresql",
+            "sql": "select ebay_item_id as item_id, title, ebay_price as price, ebay_quantity as quantity, supplier_sku, last_ebay_sync_at from public.ebay_active_listings where listing_status='active' order by last_ebay_sync_at desc;",
+            "description": "Lee los listings activos y sus últimos valores oficiales sincronizados.",
+            "executed_at": "2026-07-24T16:14:56Z",
+            "tables_used": ["public.ebay_active_listings"],
+            "metric_definitions": [
+              "Precio y cantidad corresponden al último sync oficial eBay.",
+              "supplier_sku identifica la oferta exacta Luna vinculada."
+            ]
+          }
+        },
+        "defaultSort": { "field": "last_ebay_sync_at", "direction": "desc" },
+        "density": "dense",
+        "layout": "full",
+        "columns": [
+          { "field": "item_id", "label": "Item ID", "type": "text" },
+          { "field": "title", "label": "Producto", "type": "text" },
+          { "field": "price", "label": "Precio", "format": "currency" },
+          { "field": "quantity", "label": "Cantidad", "format": "number" },
+          { "field": "supplier_sku", "label": "SKU Luna", "type": "text" },
+          { "field": "last_ebay_sync_at", "label": "Último sync eBay", "type": "datetime" }
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "scheduler_audit",
+        "label": "Supabase staging · scheduler y dispatch audit",
+        "path": "public.ebay_monitoring_scheduler_config, public.ebay_monitoring_scheduler_dispatch_audit"
+      },
+      {
+        "id": "commercial_summary",
+        "label": "Supabase staging · resumen y ejecución comercial",
+        "path": "public.commercial_daily_summaries, public.commercial_monitor_runs"
+      },
+      {
+        "id": "alert_outbox",
+        "label": "Supabase staging · eventos y outbox WhatsApp",
+        "path": "public.commercial_alert_events, public.alert_delivery_outbox, public.alert_delivery_attempts"
+      },
+      {
+        "id": "active_listing_state",
+        "label": "Supabase staging · listings activos eBay",
+        "path": "public.ebay_active_listings, public.ebay_active_listing_sync_state"
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# Estado del monitoreo comercial eBay\n\nEl monitor volvió a operar de punta a punta el 24 de julio de 2026. La interrupción se debió al vencimiento automático de una autorización de 24 horas, no a la ausencia de listings ni a una falla del destinatario WhatsApp."
+      },
+      {
+        "id": "headline_metrics",
+        "type": "metric-strip",
+        "cardIds": ["commercial_snapshot", "monitor_health"]
+      },
+      {
+        "id": "diagnosis",
+        "type": "markdown",
+        "body": "## Diagnóstico confirmado\n\n- El último run anterior había terminado el 21 de julio a las 09:20 UTC; la autorización venció a las 09:26 UTC.\n- Los listings siguieron activos, pero ya no se generaron resúmenes diarios ni recomendaciones comerciales.\n- La corrección conserva Preview, dry run satisfactorio, identidad exacta, revocación manual y cero escrituras eBay automáticas; sólo elimina el corte automático.\n- A las 16:31 UTC se completó un run nuevo con 4 listings, sin errores y con 0 escrituras eBay."
+      },
+      {
+        "id": "funnel_block",
+        "type": "chart",
+        "chartId": "commercial_funnel"
+      },
+      {
+        "id": "commercial_findings",
+        "type": "markdown",
+        "body": "## Lectura comercial\n\nLa cuenta acumuló 560 impresiones y 14 vistas, equivalentes a 2.5% de CTR, con 0 ventas confirmadas. La prioridad inmediata no es reducir precios automáticamente: primero deben reconfirmarse suministro y costo Luna en los listings marcados; después conviene revisar propuesta visual, título y competitividad con aprobación humana. La muestra de 14 vistas todavía es pequeña para atribuir la falta de ventas a una sola causa."
+      },
+      {
+        "id": "alert_block",
+        "type": "chart",
+        "chartId": "alert_queue"
+      },
+      {
+        "id": "recommended_actions",
+        "type": "markdown",
+        "body": "## Acciones recomendadas\n\n1. Reconfirmar costo y disponibilidad Luna de los tres listings marcados antes de aceptar una compra.\n2. Revisar las dos sugerencias de competencia en Seller OS; la evidencia actual es ACTIVE_ONLY, por lo que no justifica un cambio automático.\n3. Dejar que el dispatcher entregue una recomendación cada 5 minutos para evitar spam y mantener deduplicación.\n4. Tras acumular una muestra mayor, comparar conversión por listing y priorizar título, imagen principal, precio total y confianza de la oferta.\n5. Mantener cualquier cambio de precio, promoción o política sujeto a aprobación humana."
+      },
+      {
+        "id": "listings_block",
+        "type": "table",
+        "tableId": "active_listings",
+        "layout": "full"
+      },
+      {
+        "id": "caveats",
+        "type": "markdown",
+        "body": "## Alcance y cautelas\n\nMeta aceptó mensajes nuevos a las 16:31 y 16:32 UTC. Sin un webhook de entrega verificado, esta auditoría no afirma que el mensaje llegó al teléfono; confirma aceptación del proveedor. Las métricas de ventas corresponden a la última ventana comercial completa disponible y pueden actualizarse en la siguiente cadencia."
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-07-24T16:33:00Z",
+    "status": "ready",
+    "datasets": {
+      "commercial_metrics": [
+        {
+          "active_listings": 4,
+          "impressions": 560,
+          "views": 14,
+          "ctr": 0.025,
+          "sales": 0,
+          "observed_at": "2026-07-24T16:31:44Z"
+        }
+      ],
+      "monitor_health": [
+        {
+          "active_jobs": 3,
+          "meta_accepted": 2,
+          "pending_alerts": 5,
+          "commercial_run_status": "completed",
+          "luna_last_success_at": "2026-07-24T16:31:31Z"
+        }
+      ],
+      "commercial_funnel": [
+        {
+          "stage": "Impresiones",
+          "count": 560,
+          "rate": "Base observada",
+          "observed_at": "2026-07-24T16:31:44Z",
+          "active_listings": 4,
+          "sales": 0
+        },
+        {
+          "stage": "Vistas",
+          "count": 14,
+          "rate": "CTR 2.5%",
+          "observed_at": "2026-07-24T16:31:44Z",
+          "active_listings": 4,
+          "sales": 0
+        },
+        {
+          "stage": "Ventas",
+          "count": 0,
+          "rate": "Conversión 0%",
+          "observed_at": "2026-07-24T16:31:44Z",
+          "active_listings": 4,
+          "sales": 0
+        }
+      ],
+      "alert_queue": [
+        {
+          "alert_type": "Reconfirmar Luna",
+          "count": 3,
+          "priority": "Alta",
+          "action": "Confirmar costo y disponibilidad antes de comprar",
+          "status": "pending"
+        },
+        {
+          "alert_type": "Revisar competencia",
+          "count": 2,
+          "priority": "Media",
+          "action": "Revisar en Seller OS; no cambiar automáticamente",
+          "status": "pending"
+        }
+      ],
+      "active_listings": [
+        {
+          "item_id": "366562769246",
+          "title": "One Handle Posi-Temp Faucet Cartridge Replacement",
+          "price": 25.48,
+          "quantity": 1,
+          "supplier_sku": "ITEM3411",
+          "last_ebay_sync_at": "2026-07-24T12:25:00Z"
+        },
+        {
+          "item_id": "366561826512",
+          "title": "Calypso Basics White Colander",
+          "price": 21.39,
+          "quantity": 1,
+          "supplier_sku": "IMNOVA34608F12B90C4241AC113B86D20F0A3E",
+          "last_ebay_sync_at": "2026-07-24T01:47:00Z"
+        },
+        {
+          "item_id": "366553691290",
+          "title": "3-Piece Sister Keychain Set",
+          "price": 17.4,
+          "quantity": 5,
+          "supplier_sku": "FL-3SISTER-KEYCHAIN",
+          "last_ebay_sync_at": "2026-07-20T11:34:00Z"
+        },
+        {
+          "item_id": "366543596425",
+          "title": "Lysol Disinfecting Wipes 3-Pack",
+          "price": 16.49,
+          "quantity": 5,
+          "supplier_sku": "ITEM3995",
+          "last_ebay_sync_at": "2026-07-20T11:43:00Z"
+        }
+      ]
+    }
+  }
+}

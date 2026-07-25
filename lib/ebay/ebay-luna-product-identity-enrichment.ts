@@ -496,6 +496,10 @@ function canonicalKey(value: unknown) {
   return JSON.stringify(value, Object.keys(record(value)).sort())
 }
 
+function canonicalIdentityValueKey(attribute: ProductIdentityAttribute, value: unknown) {
+  return attribute === "mpn" ? JSON.stringify(normalizedKey(value)) : canonicalKey(value)
+}
+
 export function resolveProductIdentity(evidenceRows: IdentityAttributeEvidence[]) {
   const conflicts: ProductIdentityAttribute[] = []
   const canonical: Partial<Record<ProductIdentityAttribute, unknown>> = {}
@@ -503,11 +507,14 @@ export function resolveProductIdentity(evidenceRows: IdentityAttributeEvidence[]
   const grouped = new Map<ProductIdentityAttribute, IdentityAttributeEvidence[]>()
   for (const row of resolvedEvidence) grouped.set(row.attribute, [...(grouped.get(row.attribute) ?? []), row])
   for (const [attribute, rows] of grouped) {
-    const valid = rows.filter((row) => row.conflictStatus !== "INVALID" && row.normalizedValue !== null)
+    const valid = rows.filter((row) => !["CONFLICTED", "INVALID"].includes(row.conflictStatus) &&
+      row.normalizedValue !== null)
     const corroborated = valid.filter((row) => row.conflictStatus !== "UNVERIFIED" ||
-      valid.some((other) => other !== row && canonicalKey(other.normalizedValue) === canonicalKey(row.normalizedValue)))
+      valid.some((other) => other !== row &&
+        canonicalIdentityValueKey(attribute, other.normalizedValue) ===
+          canonicalIdentityValueKey(attribute, row.normalizedValue)))
     const distinct = new Set(corroborated.filter((row) => row.confidence >= .75)
-      .map((row) => canonicalKey(row.normalizedValue)))
+      .map((row) => canonicalIdentityValueKey(attribute, row.normalizedValue)))
     if (CONFLICT_ATTRIBUTES.has(attribute) && distinct.size > 1) {
       conflicts.push(attribute)
       for (const row of rows) if (row.conflictStatus !== "INVALID") row.conflictStatus = "CONFLICTED"

@@ -1,4 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
+
+import {
+  isReservedEbaySku,
+  listingPackageIdFromEbaySku,
+} from "./ebay-sku"
 import {
   ebayProductionAccountFingerprint,
   getEbayProductionIdentityBindingConfiguration,
@@ -289,23 +294,15 @@ async function loadOpportunityMappings(
   const resolutions = new Map<string, MappingResolution>()
   const packageIdBySku = new Map<string, string>()
   for (const sku of uniqueSkus) {
-    if (!/^IMNOVA-/i.test(sku)) {
+    if (!isReservedEbaySku(sku)) {
       resolutions.set(sku, { state: "UNMAPPED", mapping: null })
       continue
     }
     // IMNOVA is a reserved identity namespace. A malformed or unknown value
     // must never be reinterpreted as a supplier SKU.
     resolutions.set(sku, { state: "RESERVED_UNRESOLVED", mapping: null })
-    const match = sku.match(/^IMNOVA-([0-9A-F]{32})$/)
-    if (!match) continue
-    const compact = match[1].toLowerCase()
-    packageIdBySku.set(sku, [
-      compact.slice(0, 8),
-      compact.slice(8, 12),
-      compact.slice(12, 16),
-      compact.slice(16, 20),
-      compact.slice(20),
-    ].join("-"))
+    const packageId = listingPackageIdFromEbaySku(sku)
+    if (packageId) packageIdBySku.set(sku, packageId)
   }
 
   const packageRows: Array<{
@@ -356,7 +353,7 @@ async function loadOpportunityMappings(
     })
   }
 
-  const fallbackSkus = uniqueSkus.filter((sku) => !/^IMNOVA-/i.test(sku))
+  const fallbackSkus = uniqueSkus.filter((sku) => !isReservedEbaySku(sku))
   for (let index = 0; index < fallbackSkus.length; index += 200) {
     const chunk = fallbackSkus.slice(index, index + 200)
     if (!chunk.length) continue

@@ -259,6 +259,22 @@
   }
 }
 
+@keyframes progress-scan {
+  0% {
+    transform: translateX(-120%);
+    opacity: 0;
+  }
+
+  35%, 65% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateX(420%);
+    opacity: 0;
+  }
+}
+
 /* ========================= */
 /* UTILITY ANIMATIONS */
 /* ========================= */

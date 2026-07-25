@@ -49,19 +49,24 @@ test("policy executes strict winner and active-listing thresholds without null c
   assert.equal(policy.classifySellerWhatsAppAlert("out_of_stock", {
     hasActiveListing: true,
     currentStock: 0,
-  }).eligible, true)
-  assert.equal(policy.classifySellerWhatsAppAlert("low_stock", {
+  }).deliveryClass, "immediate")
+  const lowStock = policy.classifySellerWhatsAppAlert("low_stock", {
     hasActiveListing: true,
     currentStock: 3,
-  }).eligible, true)
+  })
+  assert.equal(lowStock.eligible, true)
+  assert.equal(lowStock.deliveryClass, "digest")
   assert.equal(policy.classifySellerWhatsAppAlert("price_up", {
     hasActiveListing: true,
     costChangePct: 4.99,
   }).eligible, false)
-  assert.equal(policy.classifySellerWhatsAppAlert("price_up", {
+  const priceUp = policy.classifySellerWhatsAppAlert("price_up", {
     hasActiveListing: true,
     costChangePct: 5,
-  }).eligible, true)
+  })
+  assert.equal(priceUp.eligible, true)
+  assert.equal(priceUp.deliveryClass, "digest")
+  assert.equal(winner.deliveryClass, "digest")
   assert.equal(policy.classifySellerWhatsAppAlert("approval_expiration", {
     hoursUntilExpiration: null,
   }).eligible, false)

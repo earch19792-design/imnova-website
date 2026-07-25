@@ -20,6 +20,13 @@ import {
   type SafeMarketplaceOrderLine,
 } from "../marketplace/commercial-monitor-domain"
 import {
+  diagnosePostPublicationListing,
+  postPublicationCooldownElapsed,
+  POST_PUBLICATION_OPTIMIZATION_EVENT_TYPES,
+  resolvePostPublicationListingStart,
+  type PostPublicationDiagnostic,
+} from "../marketplace/post-publication-optimization-domain"
+import {
   dispatchCommercialAlertOutbox,
 } from "../marketplace/commercial-alert-dispatcher"
 import {
@@ -32,13 +39,21 @@ import {
   getEbayCommercialReadersConfiguration,
   getEbayCompletedCheckoutOrders,
   getEbayListingWatchers,
+  getEbaySellerInboxMessageHeaders,
   verifyEbayActiveListingIdentities,
 } from "./ebay-commercial-readers"
+import {
+  EBAY_SELLER_MESSAGE_ALERT_SCHEMA_VERSION,
+  sellerMessageAlertPayload,
+  type EbaySellerMessageHeader,
+} from "./ebay-seller-message-alert-domain"
 import {
   ANALYTICS_SOURCE_DIVERGENCE,
   commercialAnalyticsDivergenceState,
   normalizeSellerHubListingEvidence,
   type CommercialAnalyticsMetrics,
+  type CommercialAnalyticsSourceContext,
+  type SellerHubListingEvidence,
 } from "./ebay-commercial-analytics-divergence-domain"
 import { closedEbayAnalyticsWindow } from "./ebay-commercial-analytics-domain"
 import {
@@ -53,15 +68,21 @@ import {
   currentCommercialPreviewPilotConfiguration,
   summarizeCommercialPilotRuns,
 } from "./ebay-commercial-preview-pilot"
+import {
+  assertEbayLaneAvailable,
+  recordPersistentEbayRateLimit,
+  type EbayQuotaLane,
+} from "./ebay-persistent-quota-coordinator"
+import { monitorEbayListingCompetitors } from "./ebay-competitor-watch-service"
 
 const MARKETPLACE = "EBAY_US"
+const COMPETITOR_PARTIAL_RETRY_MINUTES = 15
 const MONITOR_LEASE_SECONDS = 300
 const READER_HISTORY_LIMIT = 500
-const PILOT_LISTING_ID = "366543596425"
-const PILOT_SUPPLIER_SKU = "ITEM3995"
+const DEFAULT_LUNA_SUPPLY_MAX_AGE_MINUTES = 24 * 60
 
 export const COMMERCIAL_MONITOR_LANES = [
-  "orders", "analytics", "watchers", "rules", "daily_summary", "whatsapp",
+  "orders", "messages", "analytics", "watchers", "competitors", "rules", "daily_summary", "whatsapp",
 ] as const
 
 export type CommercialMonitorLane = typeof COMMERCIAL_MONITOR_LANES[number]
@@ -83,6 +104,7 @@ type ListingRow = {
   supplier_cost_at_linking: number | string | null
   last_ebay_sync_at: string | null
   raw_payload: Record<string, unknown> | null
+  created_at: string
 }
 
 type SupplyRow = {
@@ -96,6 +118,10 @@ type SupplyRow = {
   inventory_quantity: number | null
   product_url: string | null
   captured_at: string | null
+  barcode: string | null
+  vendor: string | null
+  product_type: string | null
+  metadata: Record<string, unknown> | null
 }
 
 type ReaderState = {
@@ -108,6 +134,17 @@ type ReaderState = {
 }
 
 type RunError = { reader: string; code: string; retryable: boolean }
+
+type CommercialQuotaDependency = {
+  apiFamily: string
+  operation: string
+  endpoint: string
+}
+
+function jsonRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {}
+}
 
 function numeric(value: unknown) {
   if (value === null || value === undefined || value === "") return null
@@ -133,6 +170,81 @@ function integer(value: unknown, fallback: number, minimum: number, maximum: num
 function safeCode(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : ""
   return /^[A-Z0-9_]+$/.test(message) ? message : fallback
+}
+
+function quotaPauseFrom(error: unknown) {
+  if (!error || typeof error !== "object" || !("quotaPause" in error)) return null
+  const pause = (error as { quotaPause?: unknown }).quotaPause
+  return pause && typeof pause === "object" && !Array.isArray(pause)
+    ? pause as Record<string, unknown>
+    : null
+}
+
+function quotaReaderMetrics(error: unknown) {
+  const pause = quotaPauseFrom(error)
+  if (!pause) return undefined
+  const safeText = (value: unknown) => typeof value === "string"
+    ? value.replace(/[^A-Za-z0-9_./:-]/g, "").slice(0, 160)
+    : null
+  return {
+    httpStatus: 429,
+    apiFamily: safeText(pause.apiFamily),
+    operation: safeText(pause.operation),
+    endpoint: safeText(pause.endpoint),
+    resumeAt: safeText(pause.resumeAt),
+    affectedLane: safeText(pause.affectedLane),
+    retriesPerformedAfter429: 0,
+  }
+}
+
+async function quotaProtectedCommercialRead<T>(
+  supabase: SupabaseClient,
+  input: {
+    dependencies: CommercialQuotaDependency[]
+    lane: EbayQuotaLane
+    checkpoint: Record<string, unknown>
+  },
+  read: () => Promise<T>,
+) {
+  for (const dependency of input.dependencies) {
+    const state = await assertEbayLaneAvailable(
+      supabase,
+      dependency.apiFamily,
+      dependency.operation,
+    )
+    if (!state.available) {
+      const paused = new Error("EBAY_READONLY_GET_429")
+      Object.assign(paused, {
+        quotaPause: {
+          ...state,
+          apiFamily: dependency.apiFamily,
+          operation: dependency.operation,
+          endpoint: dependency.endpoint,
+          affectedLane: input.lane,
+          checkpoint: input.checkpoint,
+        },
+      })
+      throw paused
+    }
+  }
+  try {
+    return await read()
+  } catch (error) {
+    const primary = input.dependencies.at(-1) as CommercialQuotaDependency
+    const persisted = await recordPersistentEbayRateLimit(supabase, {
+      error,
+      apiFamily: primary.apiFamily,
+      operation: primary.operation,
+      endpoint: primary.endpoint,
+      lane: input.lane,
+      checkpoint: input.checkpoint,
+      retryCount: 0,
+    })
+    if (persisted && error && typeof error === "object") {
+      Object.assign(error, { quotaPause: persisted })
+    }
+    throw error
+  }
 }
 
 function isoDay(value: Date) {
@@ -291,16 +403,62 @@ function canonicalListings(rows: ListingRow[]) {
   return [...byIdentity.values()]
 }
 
+function listingAgeEvidenceStart(listing: ListingRow) {
+  const raw = listing.raw_payload && typeof listing.raw_payload === "object"
+    ? listing.raw_payload
+    : {}
+  return resolvePostPublicationListingStart({
+    officialStartTimeCandidates: [
+      raw.startTime,
+      raw.listingStartTime,
+      raw.listing_start_time,
+      raw.StartTime,
+    ],
+    sellerOsRegisteredAt: listing.created_at,
+  })
+}
+
 async function loadActiveListings(supabase: SupabaseClient, accountKey: string) {
   const { data, error } = await supabase
     .from("ebay_active_listings")
-    .select("id,account_key,source,ebay_item_id,ebay_sku,listing_status,title,ebay_price,currency,market_radar_product_id,supplier_variant_id,supplier_sku,supplier_cost_at_linking,last_ebay_sync_at,raw_payload")
+    .select("id,account_key,source,ebay_item_id,ebay_sku,listing_status,title,ebay_price,currency,market_radar_product_id,supplier_variant_id,supplier_sku,supplier_cost_at_linking,last_ebay_sync_at,raw_payload,created_at")
     .eq("account_key", accountKey)
     .eq("listing_status", "active")
     .order("updated_at", { ascending: false })
     .limit(500)
   if (error) throw new Error("COMMERCIAL_ACTIVE_LISTINGS_READ_FAILED")
   return canonicalListings((data ?? []) as ListingRow[])
+}
+
+async function controlledRiskListingIds(
+  supabase: SupabaseClient,
+  accountKey: string,
+  listingIds: string[],
+) {
+  if (!listingIds.length) return new Set<string>()
+  const { data: publications, error: publicationError } = await supabase
+    .from("ebay_authorized_listing_publications")
+    .select("listing_id,listing_package_id")
+    .eq("marketplace_account_key", accountKey)
+    .in("listing_id", listingIds)
+  if (publicationError) throw new Error("COMMERCIAL_CONTROLLED_RISK_PUBLICATION_READ_FAILED")
+  const packageIds = [...new Set((publications ?? [])
+    .map((row) => String(row.listing_package_id ?? "").trim()).filter(Boolean))]
+  if (!packageIds.length) return new Set<string>()
+  const { data: packages, error: packageError } = await supabase
+    .from("ebay_listing_packages")
+    .select("id,package_data")
+    .eq("account_key", accountKey)
+    .in("id", packageIds)
+  if (packageError) throw new Error("COMMERCIAL_CONTROLLED_RISK_PACKAGE_READ_FAILED")
+  const blockedPackages = new Set((packages ?? []).filter((row) => {
+    const policy = jsonRecord(jsonRecord(row.package_data).controlledRiskPolicy)
+    return String(policy.promotion ?? "").trim() === "DO_NOT_PROMOTE" &&
+      numeric(policy.minimumNetMarginPercent) === 10
+  }).map((row) => String(row.id ?? "").trim()).filter(Boolean))
+  return new Set((publications ?? []).filter((row) =>
+    blockedPackages.has(String(row.listing_package_id ?? "").trim()))
+    .map((row) => String(row.listing_id ?? "").trim()).filter(Boolean))
 }
 
 function officialAnalyticsMetrics(value: {
@@ -315,6 +473,65 @@ function officialAnalyticsMetrics(value: {
     views: numeric(value.views),
     transactions: numeric(value.transactions),
     ctr: numeric(value.ctr),
+  }
+}
+
+function sellerHubAnalyticsContext(
+  evidence: Pick<SellerHubListingEvidence,
+    "entityScope" | "impressionsMetric" | "viewsMetric" |
+    "transactionsMetric" | "ctrMetric" | "ctrUnit" | "windowStart" |
+    "windowEnd" | "timeZone">,
+): CommercialAnalyticsSourceContext {
+  return {
+    entityScope: evidence.entityScope,
+    impressionsMetric: evidence.impressionsMetric,
+    viewsMetric: evidence.viewsMetric,
+    transactionsMetric: evidence.transactionsMetric,
+    ctrMetric: evidence.ctrMetric,
+    ctrUnit: evidence.ctrUnit,
+    windowStart: evidence.windowStart,
+    windowEnd: evidence.windowEnd,
+    timeZone: evidence.timeZone,
+  }
+}
+
+function persistedSellerHubAnalyticsContext(value: Record<string, unknown>) {
+  return {
+    entityScope: value.entity_scope === "LISTING" || value.entity_scope === "ACCOUNT"
+      ? value.entity_scope
+      : "UNKNOWN",
+    impressionsMetric: typeof value.impressions_metric === "string"
+      ? value.impressions_metric
+      : null,
+    viewsMetric: typeof value.views_metric === "string" ? value.views_metric : null,
+    transactionsMetric: typeof value.transactions_metric === "string"
+      ? value.transactions_metric
+      : null,
+    ctrMetric: typeof value.ctr_metric === "string" ? value.ctr_metric : null,
+    ctrUnit: value.ctr_unit === "PERCENT" || value.ctr_unit === "RATIO"
+      ? value.ctr_unit
+      : "UNKNOWN",
+    windowStart: typeof value.window_start === "string" ? value.window_start : null,
+    windowEnd: typeof value.window_end === "string" ? value.window_end : null,
+    timeZone: typeof value.time_zone === "string" ? value.time_zone : null,
+  } satisfies CommercialAnalyticsSourceContext
+}
+
+function officialAnalyticsContext(input: {
+  windowStart?: string | null
+  windowEnd?: string | null
+  timeZone?: string | null
+}): CommercialAnalyticsSourceContext {
+  return {
+    entityScope: "LISTING",
+    impressionsMetric: "TOTAL_IMPRESSION_TOTAL",
+    viewsMetric: "LISTING_VIEWS_TOTAL",
+    transactionsMetric: "TRANSACTION",
+    ctrMetric: "CLICK_THROUGH_RATE",
+    ctrUnit: "PERCENT",
+    windowStart: input.windowStart ?? null,
+    windowEnd: input.windowEnd ?? null,
+    timeZone: input.timeZone ?? null,
   }
 }
 
@@ -401,9 +618,15 @@ export async function recordSellerHubListingEvidence(
       listing_id: evidence.listingId,
       sku: evidence.sku,
       source: evidence.source,
+      entity_scope: evidence.entityScope,
       impressions_metric: evidence.impressionsMetric,
       views_metric: evidence.viewsMetric,
       transactions_metric: evidence.transactionsMetric,
+      ctr_metric: evidence.ctrMetric,
+      ctr_unit: evidence.ctrUnit,
+      window_start: evidence.windowStart,
+      window_end: evidence.windowEnd,
+      time_zone: evidence.timeZone,
       observed_on: evidence.observedOn,
       impressions: evidence.impressions,
       views: evidence.views,
@@ -432,6 +655,12 @@ export async function recordSellerHubListingEvidence(
     manual: evidence,
     official,
     officialComparable: snapshot?.completeness_status === "complete",
+    manualContext: sellerHubAnalyticsContext(evidence),
+    officialContext: officialAnalyticsContext({
+      windowStart: snapshot?.window_start,
+      windowEnd: snapshot?.window_end,
+      timeZone: "UTC",
+    }),
   })
   const now = new Date().toISOString()
   const nextCheckAt = new Date(Date.parse(now) + 24 * 60 * 60 * 1_000).toISOString()
@@ -454,6 +683,7 @@ export async function recordSellerHubListingEvidence(
     official_metrics: official,
     official_window_start: snapshot?.window_start ?? null,
     official_window_end: snapshot?.window_end ?? null,
+    comparison_details: state.comparison,
     last_checked_at: now,
     next_check_at: nextCheckAt,
     resolved_at: state.status === "resolved" ? now : null,
@@ -534,7 +764,7 @@ async function reconcileOpenAnalyticsDivergences(
     const evidenceIds = dueRows.map((row) => row.manual_evidence_id)
     const { data: evidenceRows, error: evidenceError } = await supabase
       .from("listing_commercial_manual_evidence")
-      .select("id,listing_id,sku,impressions,views,transactions,ctr")
+      .select("id,listing_id,sku,entity_scope,impressions_metric,views_metric,transactions_metric,ctr_metric,ctr_unit,window_start,window_end,time_zone,impressions,views,transactions,ctr")
       .in("id", evidenceIds)
     if (evidenceError) throw new Error("COMMERCIAL_MANUAL_EVIDENCE_READ_FAILED")
     const evidenceById = new Map((evidenceRows ?? []).map((row) => [row.id, row]))
@@ -563,6 +793,12 @@ async function reconcileOpenAnalyticsDivergences(
         official: api,
         officialComparable: official.completenessStatus === "complete" &&
           official.matchedListingIds.includes(divergence.listing_id),
+        manualContext: persistedSellerHubAnalyticsContext(evidence),
+        officialContext: officialAnalyticsContext({
+          windowStart: official.windowStart,
+          windowEnd: official.windowEnd,
+          timeZone: official.queryTimeZone,
+        }),
       })
       const checkedAt = now.toISOString()
       const nextCheckAt = new Date(now.getTime() + 24 * 60 * 60 * 1_000).toISOString()
@@ -575,6 +811,7 @@ async function reconcileOpenAnalyticsDivergences(
         official_window_start: official.windowStart,
         official_window_end: official.windowEnd,
         official_last_updated_date: official.reportCoverage.lastUpdatedDay,
+        comparison_details: state.comparison,
         last_checked_at: checkedAt,
         next_check_at: nextCheckAt,
         resolved_at: state.status === "resolved" ? checkedAt : null,
@@ -618,7 +855,7 @@ async function loadSupplyRows(supabase: SupabaseClient, listings: ListingRow[]) 
     for (let index = 0; index < values.length; index += 100) {
       const { data, error } = await supabase
         .from("market_radar_latest_variants")
-        .select("product_id,supplier_variant_id,sku,title,variant_title,price,available,inventory_quantity,product_url,captured_at")
+        .select("product_id,supplier_variant_id,sku,title,variant_title,price,available,inventory_quantity,product_url,captured_at,barcode,vendor,product_type,metadata")
         .in(column, values.slice(index, index + 100))
       if (error) throw new Error("COMMERCIAL_LUNA_SUPPLY_READ_FAILED")
       rows.push(...((data ?? []) as SupplyRow[]))
@@ -641,6 +878,21 @@ function supplyForListing(listing: ListingRow, supplies: SupplyRow[]) {
     sku: row.sku,
     value: row,
   })))
+}
+
+function isFreshLunaSupplyEvidence(supply: SupplyRow | null, observedAt: string) {
+  if (!supply?.captured_at) return false
+  const capturedAt = Date.parse(supply.captured_at)
+  const observed = Date.parse(observedAt)
+  if (!Number.isFinite(capturedAt) || !Number.isFinite(observed)) return false
+  const maximumAgeMinutes = integer(
+    process.env.EBAY_COMMERCIAL_LUNA_SUPPLY_MAX_AGE_MINUTES,
+    DEFAULT_LUNA_SUPPLY_MAX_AGE_MINUTES,
+    5,
+    72 * 60,
+  )
+  const age = observed - capturedAt
+  return age >= -60_000 && age <= maximumAgeMinutes * 60_000
 }
 
 async function loadPreviousSnapshots(
@@ -759,40 +1011,118 @@ async function enqueueAlert(supabase: SupabaseClient, input: {
   severity: CommercialEvent["severity"]
   deduplicationKey: string
   deliveryClass: "immediate" | "digest"
+  channel?: "whatsapp" | "in_app"
   payload: Record<string, unknown>
 }) {
   if (containsPrivateBuyerData(input.payload)) {
     throw new Error("COMMERCIAL_ALERT_PRIVATE_BUYER_DATA_BLOCKED")
   }
+  const channel = input.channel ?? "whatsapp"
+  const dueAt = input.deliveryClass === "digest"
+    ? nextCommercialDigestAt().toISOString()
+    : new Date().toISOString()
   const { error } = await supabase.from("alert_delivery_outbox").insert({
     marketplace_account_key: input.accountKey,
     marketplace: MARKETPLACE,
     commercial_event_id: input.eventId,
-    channel: "whatsapp",
+    channel,
     delivery_class: input.deliveryClass,
     severity: input.severity,
-    deduplication_key: `whatsapp:${input.deduplicationKey}`,
+    deduplication_key: `${channel}:${input.deduplicationKey}`,
     status: "pending",
     payload: input.payload,
-    due_at: new Date().toISOString(),
+    due_at: dueAt,
   })
   if (error && error.code !== "23505") throw new Error("COMMERCIAL_ALERT_ENQUEUE_FAILED")
   return !error
+}
+
+function nextCommercialDigestAt(now = new Date()) {
+  const configuredHour = Number(
+    process.env.EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC ?? "0",
+  )
+  const hour = Number.isFinite(configuredHour)
+    ? Math.max(0, Math.min(23, Math.trunc(configuredHour)))
+    : 0
+  const due = new Date(now)
+  due.setUTCHours(hour, 0, 0, 0)
+  if (due.getTime() <= now.getTime()) due.setUTCDate(due.getUTCDate() + 1)
+  return due
 }
 
 function safeHttpsUrl(value: string | undefined) {
   if (!value) return null
   try {
     const url = new URL(value)
-    return url.protocol === "https:" ? url.toString().replace(/\/$/, "") : null
+    return url.protocol === "https:" &&
+      url.hostname !== "imnova-ebay-mobile-preprod.vercel.app"
+      ? url.toString().replace(/\/$/, "")
+      : null
   } catch {
     return null
   }
 }
 
+function sellerCommandCenterBaseUrl() {
+  const configured = safeHttpsUrl(process.env.EBAY_SELLER_COMMAND_CENTER_URL)
+  if (configured) return configured
+  const vercelHost = process.env.VERCEL_BRANCH_URL ?? process.env.VERCEL_URL
+  return safeHttpsUrl(vercelHost
+    ? `${vercelHost.startsWith("https://") ? "" : "https://"}${vercelHost}`
+    : undefined)
+}
+
 function sellerOrderUrl(orderId: string) {
-  const base = safeHttpsUrl(process.env.EBAY_SELLER_COMMAND_CENTER_URL)
+  const base = sellerCommandCenterBaseUrl()
   return base ? `${base}?section=fulfillment&order=${encodeURIComponent(orderId)}` : null
+}
+
+function sellerImprovementUrl(eventId: string) {
+  const base = sellerCommandCenterBaseUrl()
+  return base
+    ? `${base}?section=commercial-monitor&improvement=${encodeURIComponent(eventId)}#listing-optimization-tasks-heading`
+    : null
+}
+
+function commercialEventSummary(event: CommercialEvent) {
+  const identity = `Listing ${event.listingId}${event.sku ? ` · SKU ${event.sku}` : ""}.`
+  const evidenceNumber = (key: string) => {
+    const value = Number(event.evidence[key])
+    return Number.isFinite(value) ? value : null
+  }
+  if (event.eventType === "LUNA_SUPPLY_RECHECK_REQUIRED") {
+    return `${identity} La evidencia de Luna necesita reconfirmación. Seller OS no usó stock ni costo vencidos como datos actuales.`
+  }
+  if (event.eventType === "LOW_STOCK") {
+    return `${identity} Luna reportó ${evidenceNumber("stockAvailable") ?? "pocas"} unidad(es) disponibles.`
+  }
+  if (event.eventType === "ACTIVE_LISTING_OUT_OF_STOCK") {
+    return `${identity} El listing sigue ACTIVE y Luna reportó inventario en cero.`
+  }
+  if (event.eventType === "LUNA_COST_CHANGED") {
+    const previous = evidenceNumber("previousSupplierCost")
+    const current = evidenceNumber("currentSupplierCost")
+    return `${identity} El costo exacto en Luna cambió${previous === null || current === null
+      ? "."
+      : ` de $${previous.toFixed(2)} a $${current.toFixed(2)}.`}`
+  }
+  if (event.eventType === "MARGIN_RISK") {
+    const margin = evidenceNumber("estimatedMarginPercent")
+    return `${identity} El margen estimado${margin === null ? "" : ` es ${margin.toFixed(1)}% y`} quedó bajo el umbral seguro.`
+  }
+  if (event.eventType === "ACCELERATED_SALES") {
+    return `${identity} Se confirmaron ${evidenceNumber("confirmedUnits24h") ?? "varias"} unidad(es) vendidas en 24 horas.`
+  }
+  if (event.eventType === "GOOD_TRAFFIC_LOW_CTR") {
+    return `${identity} Acumuló ${evidenceNumber("impressions") ?? "suficientes"} impresiones y un CTR de ${evidenceNumber("ctr") ?? 0}%, sin ventas confirmadas.`
+  }
+  if (event.eventType === "GOOD_CTR_LOW_CONVERSION") {
+    return `${identity} Acumuló ${evidenceNumber("views") ?? "suficientes"} vistas con interés, pero todavía no convirtió en ventas confirmadas.`
+  }
+  if (event.eventType.startsWith("WATCHER_")) {
+    return `${identity} Alcanzó ${evidenceNumber("currentWatchers") ?? "nuevos"} watcher(s). Es una señal de interés, no una venta.`
+  }
+  return `${identity} Seller OS detectó una señal comercial verificada y no aplicó cambios automáticos.`
 }
 
 function eventPayload(event: CommercialEvent) {
@@ -802,18 +1132,177 @@ function eventPayload(event: CommercialEvent) {
     ACCELERATED_SALES: "Ventas aceleradas",
     LOW_STOCK: "Stock Luna bajo",
     ACTIVE_LISTING_OUT_OF_STOCK: "Listing activo sin stock Luna",
+    LUNA_COST_CHANGED: "Cambio de costo confirmado en Luna",
     MARGIN_RISK: "Margen estimado en riesgo",
     WATCHER_MILESTONE: "Hito de watchers",
     WATCHER_INCREASE: "Aumento de watchers",
+    LISTING_ZERO_VISIBILITY_REVIEW: "Listing sin visibilidad suficiente",
+    LISTING_IMPRESSIONS_NO_ENGAGEMENT_REVIEW: "Impresiones sin interacción",
+    LISTING_ENGAGEMENT_NO_CONVERSION_REVIEW: "Interés sin conversión",
+    LISTING_WATCHERS_NO_SALE_REVIEW: "Watchers sin venta confirmada",
+    LISTING_SALE_MARGIN_OR_STOCK_RISK: "Venta con stock o margen en riesgo",
+    LUNA_SUPPLY_RECHECK_REQUIRED: "Reconfirmar costo y stock en Luna",
   }
   return {
     title: labels[event.eventType] ?? event.eventType,
-    summary: `Listing ${event.listingId} · SKU ${event.sku ?? "pendiente"}. Evidencia: ${JSON.stringify(event.evidence)}`,
+    summary: commercialEventSummary(event),
     action: event.recommendedAction,
     classification: event.eventType.startsWith("WATCHER_")
       ? "INTEREST_SIGNAL_NOT_SALE"
       : "COMMERCIAL_MONITOR_EVENT",
   }
+}
+
+async function persistLunaSupplyRecheckAlert(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  listing: ListingRow
+  supply: SupplyRow | null
+  thresholds: CommercialThresholds
+  observedAt: string
+}) {
+  const deduplicationKey = stableCommercialKey(
+    input.accountKey,
+    "LUNA_SUPPLY_RECHECK_REQUIRED",
+    input.listing.ebay_item_id,
+    input.listing.supplier_sku,
+    input.supply?.captured_at ?? "MISSING",
+  )
+  const event: CommercialEvent = {
+    eventType: "LUNA_SUPPLY_RECHECK_REQUIRED",
+    severity: "high",
+    evidence: {
+      source: "LUNA_MARKET_RADAR_LATEST_VARIANT_LOCAL_SNAPSHOT",
+      supplyObservedAt: input.supply?.captured_at ?? null,
+      exactLunaLinkAvailable: isAllowedLunaProductUrl(input.supply?.product_url),
+      staleValuesUsedAsCurrent: false,
+      stockTreatedAsConfirmed: false,
+      costTreatedAsConfirmed: false,
+    },
+    thresholdConfigVersion: input.thresholds.version,
+    detectedAt: input.observedAt,
+    listingId: input.listing.ebay_item_id,
+    sku: input.listing.supplier_sku ?? input.listing.ebay_sku,
+    deduplicationKey,
+    recommendedAction: "Abrir el producto exacto en Luna y reconfirmar costo y disponibilidad antes de comprar.",
+  }
+  const persisted = await insertEvent(input.supabase, input.accountKey, event)
+  const lunaProductUrl = isAllowedLunaProductUrl(input.supply?.product_url)
+    ? input.supply?.product_url ?? null
+    : null
+  const improvementUrl = sellerImprovementUrl(persisted.id)
+  const alertCreated = await enqueueAlert(input.supabase, {
+    accountKey: input.accountKey,
+    eventId: persisted.id,
+    severity: event.severity,
+    deduplicationKey,
+    deliveryClass: "digest",
+    payload: {
+      ...eventPayload(event),
+      action: [
+        lunaProductUrl ? `Verificar producto exacto en Luna: ${lunaProductUrl}.` : null,
+        improvementUrl ? `Continuar en Seller OS: ${improvementUrl}.` : null,
+      ].filter(Boolean).join(" ") || event.recommendedAction,
+      lunaProductUrl,
+      improvementUrl,
+      staleStockForwardedAsCurrent: false,
+      staleCostForwardedAsCurrent: false,
+    },
+  })
+  return { eventCreated: persisted.created, alertCreated }
+}
+
+function postPublicationCommercialEvent(
+  diagnostic: PostPublicationDiagnostic,
+): CommercialEvent {
+  return {
+    eventType: diagnostic.eventType,
+    severity: diagnostic.severity,
+    evidence: {
+      classification: diagnostic.classification,
+      notificationTitle: diagnostic.notificationTitle,
+      whyItNeedsAttention: diagnostic.whyItNeedsAttention,
+      reviewSequence: diagnostic.reviewSequence,
+      experiment: diagnostic.experiment,
+      promotionRecommendation: diagnostic.promotionRecommendation,
+      listingAgeHours: diagnostic.listingAgeHours,
+      listingAgeEvidence: diagnostic.listingAgeEvidence,
+      completeAnalyticsDays: diagnostic.completeAnalyticsDays,
+      cooldownHours: diagnostic.cooldownHours,
+      nextEligibleAt: diagnostic.nextEligibleAt,
+      rulesetVersion: diagnostic.rulesetVersion,
+      evidence: diagnostic.evidence,
+      safety: diagnostic.safety,
+      taskChannel: "IN_APP_AND_WHATSAPP",
+      whatsappEnqueued: true,
+      operatorApprovalRequired: true,
+      changeApplied: false,
+    },
+    thresholdConfigVersion: diagnostic.rulesetVersion,
+    detectedAt: diagnostic.detectedAt,
+    listingId: diagnostic.listingId,
+    sku: diagnostic.sku,
+    deduplicationKey: diagnostic.deduplicationKey,
+    recommendedAction: diagnostic.recommendedAction,
+  }
+}
+
+async function persistSellerInboxMessageAlerts(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  listings: ListingRow[]
+  headers: EbaySellerMessageHeader[]
+  observedAt: string
+}) {
+  let eventsCreated = 0
+  let alertsGenerated = 0
+  let duplicatesAvoided = 0
+  for (const header of input.headers) {
+    const listing = header.listingId
+      ? input.listings.find((row) => row.ebay_item_id === header.listingId) ?? null
+      : null
+    const eventKey = stableCommercialKey(
+      input.accountKey,
+      "SELLER_HUB_MESSAGE_RECEIVED",
+      header.messageKeyHash,
+    )
+    const event: CommercialEvent = {
+      eventType: "SELLER_HUB_MESSAGE_RECEIVED",
+      severity: header.priority === "HIGH" ? "high" : "medium",
+      evidence: {
+        source: "EBAY_TRADING_GET_MEMBER_MESSAGES_HEADERS_ONLY",
+        messageKeyHash: header.messageKeyHash,
+        messageType: header.messageType,
+        messageStatus: header.messageStatus,
+        messageCreatedAt: header.createdAt,
+        messageLastModifiedAt: header.lastModifiedAt,
+        schemaVersion: EBAY_SELLER_MESSAGE_ALERT_SCHEMA_VERSION,
+        contentStored: false,
+        rawXmlStored: false,
+        buyerPiiStored: false,
+        ebayReadOnly: true,
+        ebayWrites: 0,
+      },
+      thresholdConfigVersion: EBAY_SELLER_MESSAGE_ALERT_SCHEMA_VERSION,
+      detectedAt: header.lastModifiedAt ?? header.createdAt ?? input.observedAt,
+      listingId: header.listingId ?? "SELLER_HUB_INBOX",
+      sku: listing?.supplier_sku ?? listing?.ebay_sku ?? null,
+      deduplicationKey: eventKey,
+      recommendedAction: "Abrir Seller Hub, leer el mensaje protegido y responder manualmente si corresponde.",
+    }
+    const persisted = await insertEvent(input.supabase, input.accountKey, event)
+    if (persisted.created) eventsCreated += 1
+    else duplicatesAvoided += 1
+    if (await enqueueAlert(input.supabase, {
+      accountKey: input.accountKey,
+      eventId: persisted.id,
+      severity: event.severity,
+      deduplicationKey: eventKey,
+      deliveryClass: "digest",
+      payload: sellerMessageAlertPayload(header),
+    })) alertsGenerated += 1
+  }
+  return { eventsCreated, alertsGenerated, duplicatesAvoided }
 }
 
 async function persistOrdersAndSales(input: {
@@ -833,6 +1322,7 @@ async function persistOrdersAndSales(input: {
   let newSales = 0
   let tasksCreated = 0
   let alertsGenerated = 0
+  let eventsCreated = 0
   let duplicatesAvoided = 0
   let estimatedProfit = 0
   const errors: RunError[] = []
@@ -906,6 +1396,24 @@ async function persistOrdersAndSales(input: {
         errors.push({ reader: "orders", code: "SALE_CUSTOM_LABEL_REQUIRED", retryable: false })
         continue
       }
+      const supplyFresh = isFreshLunaSupplyEvidence(supply, observedAt)
+      if (!supplyFresh) {
+        errors.push({
+          reader: "luna_supply",
+          code: "SALE_LUNA_SUPPLY_STALE_RECHECK_REQUIRED",
+          retryable: true,
+        })
+        const recheck = await persistLunaSupplyRecheckAlert({
+          supabase,
+          accountKey,
+          listing,
+          supply,
+          thresholds,
+          observedAt,
+        })
+        if (recheck.eventCreated) eventsCreated += 1
+        if (recheck.alertCreated) alertsGenerated += 1
+      }
       const identityFingerprint = fulfillmentIdentityFingerprint({
         marketplaceAccountKey: accountKey,
         marketplace: MARKETPLACE,
@@ -917,7 +1425,7 @@ async function persistOrdersAndSales(input: {
         supplierVariantId: listing.supplier_variant_id,
         quantity: line.quantity,
       })
-      const supplierUnitCost = numeric(supply?.price) ?? numeric(listing.supplier_cost_at_linking)
+      const supplierUnitCost = supplyFresh ? numeric(supply.price) : null
       const estimatedSupplierCost = supplierUnitCost === null
         ? null
         : Number((supplierUnitCost * packQuantity * line.quantity).toFixed(2))
@@ -927,9 +1435,11 @@ async function persistOrdersAndSales(input: {
       })
       const profit = economics.estimatedNetProfit
       if (profit !== null) estimatedProfit += profit
-      const stockAvailable = supply?.available === false
-        ? 0
-        : supply?.inventory_quantity ?? null
+      const stockAvailable = supplyFresh
+        ? supply.available === false
+          ? 0
+          : supply.inventory_quantity ?? null
+        : null
       const statusHistory = ["SALE_DETECTED", "VALIDATING_ORDER", "PENDING_MANUAL_PURCHASE"]
         .map((status) => ({ status, at: observedAt, actor: "commercial_monitor" }))
       const { data: task, error: taskError } = await supabase
@@ -986,6 +1496,9 @@ async function persistOrdersAndSales(input: {
           estimatedSupplierCost,
           estimatedProfit: profit,
           stockAvailable,
+          lunaSupplyFresh: supplyFresh,
+          lunaSupplyObservedAt: supply.captured_at,
+          staleLunaValuesUsedAsCurrent: false,
           itemIdVerified: true,
           ebayCustomLabelVerified: line.sku === listing.ebay_sku,
           supplierSkuVerified: fulfillmentSku === listing.supplier_sku,
@@ -997,13 +1510,16 @@ async function persistOrdersAndSales(input: {
         listingId: line.listingId,
         sku: fulfillmentSku,
         deduplicationKey: saleKey,
-        recommendedAction: "Comprar manualmente en Luna Portex y luego pegar el tracking en Seller OS.",
+        recommendedAction: supplyFresh
+          ? "Comprar manualmente en Luna Portex y luego pegar el tracking en Seller OS."
+          : "Reconfirmar costo y disponibilidad en Luna, comprar manualmente y luego pegar el tracking en Seller OS.",
         marketplaceOrderId: order.ebayOrderId,
         marketplaceLineItemId: line.lineItemId,
       }
       const saleEventResult = await insertEvent(supabase, accountKey, saleEvent)
       if (saleEventResult.created) {
         newSales += line.quantity
+        eventsCreated += 1
       }
       const message = renderSaleDetectedMessage({
         product: line.title,
@@ -1028,9 +1544,11 @@ async function persistOrdersAndSales(input: {
         payload: {
           title: messageLines[0],
           summary: messageLines.slice(2, 11).join(" · "),
-          action: messageLines.slice(11).join(" "),
+          action: `${supplyFresh ? "" : "Antes de comprar, reconfirma costo y disponibilidad en Luna. "}${messageLines.slice(11).join(" ")}`,
           sellerOrderUrl: sellerOrderUrl(order.ebayOrderId),
           lunaProductUrl: supply?.product_url ?? null,
+          lunaSupplyFresh: supplyFresh,
+          staleLunaValuesForwardedAsCurrent: false,
         },
       })) alertsGenerated += 1
 
@@ -1050,13 +1568,22 @@ async function persistOrdersAndSales(input: {
         deduplicationKey: firstSaleKey,
         recommendedAction: "Conservar esta confirmación y priorizar el fulfillment manual de la primera venta.",
       })
+      if (firstEventResult.created) eventsCreated += 1
       // FIRST_SALE_CONFIRMED is companion audit evidence for the same sale.
       // SALE_DETECTED already queued the immediate message, so a second
       // WhatsApp here would be a duplicate operator notification.
       void firstEventResult
     }
   }
-  return { newSales, tasksCreated, alertsGenerated, duplicatesAvoided, estimatedProfit, errors }
+  return {
+    newSales,
+    tasksCreated,
+    eventsCreated,
+    alertsGenerated,
+    duplicatesAvoided,
+    estimatedProfit,
+    errors,
+  }
 }
 
 async function confirmedUnitsSoldByListing24h(
@@ -1103,10 +1630,37 @@ async function persistSnapshotsAndRules(input: {
   watchers: Awaited<ReturnType<typeof getEbayListingWatchers>> | null
   units24h: Map<string, number>
   analyticsRulesSuspendedListingIds: Set<string>
+  promotionBlockedListingIds: Set<string>
   observedAt: string
 }) {
   const analyticsByListing = new Map(input.analytics?.observations.map((row) => [row.listingId, row]) ?? [])
   const watchersByListing = new Map(input.watchers?.observations.map((row) => [row.listingId, row]) ?? [])
+  const listingIds = [...new Set(input.listings.map((listing) => listing.ebay_item_id))]
+  const { data: priorOptimizationEvents, error: priorOptimizationError } = listingIds.length
+    ? await input.supabase
+        .from("commercial_alert_events")
+        .select("event_type,listing_id,sku,detected_at")
+        .eq("marketplace_account_key", input.accountKey)
+        .eq("marketplace", MARKETPLACE)
+        .in("listing_id", listingIds)
+        .in("event_type", [...POST_PUBLICATION_OPTIMIZATION_EVENT_TYPES])
+        .order("detected_at", { ascending: false })
+        .limit(2_000)
+    : { data: [], error: null }
+  if (priorOptimizationError) {
+    throw new Error("COMMERCIAL_OPTIMIZATION_COOLDOWN_READ_FAILED")
+  }
+  const latestOptimizationByListing = new Map<string, string>()
+  const latestSaleRiskByListing = new Map<string, string>()
+  for (const row of priorOptimizationEvents ?? []) {
+    const key = `${row.listing_id}:${row.sku ?? ""}`
+    const detectedAt = Date.parse(row.detected_at)
+    if (!Number.isFinite(detectedAt)) continue
+    const target = row.event_type === "LISTING_SALE_MARGIN_OR_STOCK_RISK"
+      ? latestSaleRiskByListing
+      : latestOptimizationByListing
+    if (!target.has(key)) target.set(key, new Date(detectedAt).toISOString())
+  }
   const snapshots: CommercialSnapshot[] = []
   let alertsGenerated = 0
   let eventsGenerated = 0
@@ -1114,7 +1668,20 @@ async function persistSnapshotsAndRules(input: {
     const analytics = analyticsByListing.get(listing.ebay_item_id)
     const watcher = watchersByListing.get(listing.ebay_item_id)
     const supply = supplyForListing(listing, input.supplies)
-    const supplierCost = numeric(supply?.price) ?? numeric(listing.supplier_cost_at_linking)
+    const supplyFresh = isFreshLunaSupplyEvidence(supply, input.observedAt)
+    const supplierCost = supplyFresh ? numeric(supply?.price) : null
+    if (!supplyFresh) {
+      const recheck = await persistLunaSupplyRecheckAlert({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        listing,
+        supply,
+        thresholds: input.thresholds,
+        observedAt: input.observedAt,
+      })
+      if (recheck.eventCreated) eventsGenerated += 1
+      if (recheck.alertCreated) alertsGenerated += 1
+    }
     const packQuantity = extractPackQuantity(listing.title)
     const totalSupplierCost = supplierCost === null ? null : supplierCost * packQuantity
     const economics = calculateEbayUnitEconomics({
@@ -1140,7 +1707,11 @@ async function persistSnapshotsAndRules(input: {
       salesConversionRate: analytics?.salesConversionRate ?? null,
       revenue: analytics?.revenue ?? null,
       currentWatchers,
-      stockAvailable: supply?.available === false ? 0 : supply?.inventory_quantity ?? null,
+      stockAvailable: supplyFresh
+        ? supply?.available === false
+          ? 0
+          : supply?.inventory_quantity ?? null
+        : null,
       supplierCost,
       estimatedMarginPercent: economics.estimatedNetMarginPercent,
       observedAt: input.observedAt,
@@ -1183,7 +1754,14 @@ async function persistSnapshotsAndRules(input: {
             : null,
           analyticsRulesSuspended: input.analyticsRulesSuspendedListingIds.has(snapshot.listingId),
           watchers: watcher?.source ?? null,
-          stock: supply ? "LUNA_PORTEX_MARKET_RADAR_LATEST_VARIANT" : null,
+          stock: supplyFresh
+            ? "LUNA_PORTEX_MARKET_RADAR_LATEST_VARIANT"
+            : supply
+              ? "LUNA_PORTEX_STALE_SNAPSHOT_NOT_USED_AS_CURRENT"
+              : null,
+          lunaSupplyObservedAt: supply?.captured_at ?? null,
+          lunaSupplyFresh: supplyFresh,
+          staleLunaValuesUsedAsCurrent: false,
           price: listing.ebay_price_source ??
             (listing.ebay_price === null ? null : "SELLER_OS_LISTING_LINK"),
           transactionsClassification: "ANALYTICS_NOT_CONFIRMED_ORDER",
@@ -1194,23 +1772,143 @@ async function persistSnapshotsAndRules(input: {
     if (error) throw new Error("COMMERCIAL_SNAPSHOT_WRITE_FAILED")
     snapshots.push(snapshot)
 
-    for (const event of evaluateCommercialRules({
+    const legacyEvents = evaluateCommercialRules({
       current: snapshot,
       previous,
       unitsSold24h: input.units24h.get(listing.ebay_item_id) ?? 0,
       thresholds: input.thresholds,
       analyticsRulesSuspended: input.analyticsRulesSuspendedListingIds.has(listing.ebay_item_id),
-    })) {
+    }).filter((event) => ![
+      "GOOD_TRAFFIC_LOW_CTR",
+      "GOOD_CTR_LOW_CONVERSION",
+    ].includes(event.eventType))
+
+    for (const event of legacyEvents) {
       const eventResult = await insertEvent(input.supabase, input.accountKey, event)
       if (eventResult.created) eventsGenerated += 1
-      const deliveryClass = event.eventType.startsWith("WATCHER_") ? "digest" : "immediate"
+      // Only a confirmed exact Luna stock-out warrants an immediate supplier
+      // alert. Cost, margin, low-stock and performance signals are grouped in
+      // the daily digest; confirmed sales have their own immediate event.
+      const deliveryClass = event.eventType === "ACTIVE_LISTING_OUT_OF_STOCK"
+        ? "immediate"
+        : "digest"
+      const lunaProductUrl = supplyFresh &&
+        isAllowedLunaProductUrl(supply?.product_url)
+        ? supply?.product_url ?? null
+        : null
+      const improvementUrl = [
+        "ACTIVE_LISTING_OUT_OF_STOCK",
+        "LUNA_COST_CHANGED",
+        "MARGIN_RISK",
+      ].includes(event.eventType)
+        ? sellerImprovementUrl(eventResult.id)
+        : null
+      const action = improvementUrl || lunaProductUrl
+        ? [
+            lunaProductUrl
+              ? `Abrir producto exacto en Luna: ${lunaProductUrl}.`
+              : null,
+            improvementUrl
+              ? `Revisar y autorizar la acción en Seller OS: ${improvementUrl}.`
+              : null,
+          ].filter(Boolean).join(" ")
+        : event.recommendedAction
       if (await enqueueAlert(input.supabase, {
         accountKey: input.accountKey,
         eventId: eventResult.id,
         severity: event.severity,
         deduplicationKey: event.deduplicationKey,
         deliveryClass,
-        payload: eventPayload(event),
+        payload: {
+          ...eventPayload(event),
+          action,
+          lunaProductUrl,
+          improvementUrl,
+          changeApplied: false,
+          confirmationRequired: Boolean(improvementUrl),
+        },
+      })) alertsGenerated += 1
+    }
+
+    const listingAgeStart = listingAgeEvidenceStart(listing)
+    const postPublicationDiagnostic = diagnosePostPublicationListing({
+      marketplaceAccountKey: input.accountKey,
+      listingId: snapshot.listingId,
+      sku: snapshot.sku,
+      listingStatus: snapshot.listingStatus,
+      listingEvidenceStartedAt: listingAgeStart?.timestamp ?? null,
+      listingEvidenceStartSource: listingAgeStart?.source ?? null,
+      observedAt: snapshot.observedAt,
+      analytics: {
+        source: input.analytics?.source ?? null,
+        completenessStatus: snapshot.completenessStatus,
+        windowStart: snapshot.windowStart,
+        windowEnd: snapshot.windowEnd,
+        impressions: snapshot.impressions,
+        views: snapshot.views,
+        transactions: snapshot.transactions,
+        sourceDivergenceOpen:
+          input.analyticsRulesSuspendedListingIds.has(listing.ebay_item_id),
+      },
+      currentWatchers: snapshot.currentWatchers,
+      confirmedUnitsSold: input.units24h.get(listing.ebay_item_id) ?? 0,
+      stockAvailable: snapshot.stockAvailable,
+      stockEvidenceFresh: supplyFresh,
+      estimatedMarginPercent: snapshot.estimatedMarginPercent,
+      promotionAllowed: !input.promotionBlockedListingIds.has(listing.ebay_item_id),
+    })
+    if (postPublicationDiagnostic) {
+      const cooldownKey = `${postPublicationDiagnostic.listingId}:${postPublicationDiagnostic.sku ?? ""}`
+      const cooldownSource = postPublicationDiagnostic.eventType ===
+        "LISTING_SALE_MARGIN_OR_STOCK_RISK"
+        ? latestSaleRiskByListing
+        : latestOptimizationByListing
+      const cooldownElapsed = postPublicationCooldownElapsed({
+        previousDetectedAt: cooldownSource.get(cooldownKey) ?? null,
+        currentDetectedAt: postPublicationDiagnostic.detectedAt,
+        cooldownHours: postPublicationDiagnostic.cooldownHours,
+      })
+      if (!cooldownElapsed) continue
+      const event = postPublicationCommercialEvent(postPublicationDiagnostic)
+      const eventResult = await insertEvent(input.supabase, input.accountKey, event)
+      if (eventResult.created) {
+        eventsGenerated += 1
+        cooldownSource.set(cooldownKey, postPublicationDiagnostic.detectedAt)
+      }
+      if (await enqueueAlert(input.supabase, {
+        accountKey: input.accountKey,
+        eventId: eventResult.id,
+        severity: event.severity,
+        deduplicationKey: event.deduplicationKey,
+        deliveryClass: "immediate",
+        channel: "in_app",
+        payload: {
+          ...eventPayload(event),
+          taskStatus: "AWAITING_HUMAN_APPROVAL",
+          experiment: postPublicationDiagnostic.experiment,
+          whyItNeedsAttention: postPublicationDiagnostic.whyItNeedsAttention,
+          whatsappEnqueued: true,
+          changeApplied: false,
+        },
+      })) alertsGenerated += 1
+      const improvementUrl = sellerImprovementUrl(eventResult.id)
+      if (await enqueueAlert(input.supabase, {
+        accountKey: input.accountKey,
+        eventId: eventResult.id,
+        severity: event.severity,
+        deduplicationKey: event.deduplicationKey,
+        deliveryClass: "digest",
+        channel: "whatsapp",
+        payload: {
+          ...eventPayload(event),
+          action: `${improvementUrl
+            ? `Revisar y autorizar en Seller OS: ${improvementUrl}. `
+            : "Revisar y autorizar desde Seller OS. "}${event.recommendedAction}`,
+          improvementUrl,
+          taskStatus: "AWAITING_HUMAN_APPROVAL",
+          promotionRecommendation: postPublicationDiagnostic.promotionRecommendation,
+          changeApplied: false,
+        },
       })) alertsGenerated += 1
     }
   }
@@ -1381,7 +2079,15 @@ export async function runEbayCommercialMonitor(
         p_lease_seconds: MONITOR_LEASE_SECONDS,
         p_max_dry_run_age_seconds: 1_800,
       })
-    : await supabase.rpc("start_commercial_monitor_run", {
+    : input.triggerSource === "schedule"
+      ? await supabase.rpc("start_authorized_commercial_monitor_scheduled_run", {
+          p_marketplace_account_key: accountKey,
+          p_marketplace: MARKETPLACE,
+          p_requested_lanes: lanes,
+          p_worker_id: workerId,
+          p_lease_seconds: MONITOR_LEASE_SECONDS,
+        })
+      : await supabase.rpc("start_commercial_monitor_run", {
         p_marketplace_account_key: accountKey,
         p_marketplace: MARKETPLACE,
         p_trigger_source: input.triggerSource,
@@ -1390,7 +2096,12 @@ export async function runEbayCommercialMonitor(
         p_lease_seconds: MONITOR_LEASE_SECONDS,
       })
   const { data: claimed, error: claimError } = claim
-  if (claimError) throw new Error("COMMERCIAL_MONITOR_RUN_CLAIM_FAILED")
+  if (claimError) {
+    const schedulerGateCode = claimError.message.match(
+      /COMMERCIAL_MONITOR_SCHEDULER_(?:GATE_REQUIRED|DRY_RUN_REQUIRED|DRY_RUN_NOT_SATISFIED)/,
+    )?.[0]
+    throw new Error(schedulerGateCode ?? "COMMERCIAL_MONITOR_RUN_CLAIM_FAILED")
+  }
   const run = Array.isArray(claimed) ? claimed[0] : claimed
   if (!run?.id) {
     return {
@@ -1420,32 +2131,82 @@ export async function runEbayCommercialMonitor(
     const window = analyticsWindow(now)
     const orderFrom = await latestOrderModifiedAt(supabase, accountKey, now)
     const orderPromise = lanes.includes("orders")
-      ? getEbayCompletedCheckoutOrders({ modifiedFrom: orderFrom, modifiedTo: observedAt })
+      ? quotaProtectedCommercialRead(supabase, {
+          dependencies: [
+            { apiFamily: "OAUTH", operation: "ORDERS_REFRESH_TOKEN", endpoint: "/identity/v1/oauth2/token" },
+            { apiFamily: "TRADING", operation: "GET_USER", endpoint: "/ws/api.dll" },
+            { apiFamily: "SELL_FULFILLMENT", operation: "GET_ORDERS", endpoint: "/sell/fulfillment/v1/order" },
+          ],
+          lane: "P0_ORDERS",
+          checkpoint: { runId, reader: "orders", modifiedFrom: orderFrom, modifiedTo: observedAt },
+        }, () => getEbayCompletedCheckoutOrders({ modifiedFrom: orderFrom, modifiedTo: observedAt }))
       : Promise.resolve(null)
     const analyticsPromise = lanes.includes("analytics")
-      ? getComparableEbayTrafficAnalytics({
-          listingIds: listings.map((row) => row.ebay_item_id),
-          dateFrom: window.dateFrom,
-          dateTo: window.dateTo,
-          timeZone: "UTC",
-        })
+      ? quotaProtectedCommercialRead(supabase, {
+          dependencies: [
+            { apiFamily: "OAUTH", operation: "ANALYTICS_REFRESH_TOKEN", endpoint: "/identity/v1/oauth2/token" },
+            { apiFamily: "TRADING", operation: "GET_USER", endpoint: "/ws/api.dll" },
+            { apiFamily: "SELL_ANALYTICS", operation: "GET_TRAFFIC_REPORT", endpoint: "/sell/analytics/v1/traffic_report" },
+          ],
+          lane: "P0_COMMERCIAL_MONITOR",
+          checkpoint: { runId, reader: "analytics", dateFrom: window.dateFrom, dateTo: window.dateTo },
+        }, () => getComparableEbayTrafficAnalytics({
+            listingIds: listings.map((row) => row.ebay_item_id),
+            dateFrom: window.dateFrom,
+            dateTo: window.dateTo,
+            timeZone: "UTC",
+          }))
       : Promise.resolve(null)
     const watchersPromise = lanes.includes("watchers")
-      ? getEbayListingWatchers({ listingIds: listings.map((row) => row.ebay_item_id) })
+      ? quotaProtectedCommercialRead(supabase, {
+          dependencies: [
+            { apiFamily: "OAUTH", operation: "TRADING_REFRESH_TOKEN", endpoint: "/identity/v1/oauth2/token" },
+            { apiFamily: "TRADING", operation: "GET_USER", endpoint: "/ws/api.dll" },
+            { apiFamily: "TRADING", operation: "GET_ITEM_WATCHCOUNT", endpoint: "/ws/api.dll" },
+          ],
+          lane: "P0_PROTECTION",
+          checkpoint: { runId, reader: "watchers", listingCount: listings.length },
+        }, () => getEbayListingWatchers({ listingIds: listings.map((row) => row.ebay_item_id) }))
       : Promise.resolve(null)
+    const messageLookbackHours = integer(
+      process.env.EBAY_COMMERCIAL_MESSAGE_LOOKBACK_HOURS,
+      48,
+      1,
+      7 * 24,
+    )
+    const messagesPromise = lanes.includes("messages")
+      ? quotaProtectedCommercialRead(supabase, {
+          dependencies: [
+            { apiFamily: "OAUTH", operation: "TRADING_REFRESH_TOKEN", endpoint: "/identity/v1/oauth2/token" },
+            { apiFamily: "TRADING", operation: "GET_USER", endpoint: "/ws/api.dll" },
+            { apiFamily: "TRADING", operation: "GET_MEMBER_MESSAGES", endpoint: "/ws/api.dll" },
+          ],
+          lane: "P0_COMMERCIAL_MONITOR",
+          checkpoint: { runId, reader: "messages", createdTo: observedAt },
+        }, () => getEbaySellerInboxMessageHeaders({
+            accountKey,
+            createdFrom: new Date(now.getTime() - messageLookbackHours * 60 * 60 * 1_000).toISOString(),
+            createdTo: observedAt,
+          }))
+      : Promise.resolve(null)
+    const [coreReaderResults, [messagesResult]] = await Promise.all([
+      settleEbayCommercialReaderPromises({
+        orders: orderPromise,
+        analytics: analyticsPromise,
+        watchers: watchersPromise,
+      }),
+      Promise.allSettled([messagesPromise]),
+    ])
     const {
       orders: orderResult,
       analytics: analyticsResult,
       watchers: watchersResult,
-    } = await settleEbayCommercialReaderPromises({
-      orders: orderPromise,
-      analytics: analyticsPromise,
-      watchers: watchersPromise,
-    })
+    } = coreReaderResults
 
     let orders: SafeMarketplaceOrder[] = []
     let analytics: Awaited<ReturnType<typeof getComparableEbayTrafficAnalytics>> | null = null
     let watchers: Awaited<ReturnType<typeof getEbayListingWatchers>> | null = null
+    let sellerMessages: Awaited<ReturnType<typeof getEbaySellerInboxMessageHeaders>> | null = null
     const ordersResponseAvailable = orderResult.status === "fulfilled" && Boolean(orderResult.value)
     if (orderResult.status === "fulfilled" && orderResult.value) {
       orders = orderResult.value.orders
@@ -1457,12 +2218,14 @@ export async function runEbayCommercialMonitor(
         auth: getEbayCommercialReaderAuthState("orders"),
       }
     } else if (lanes.includes("orders")) {
-      const code = safeCode(orderResult.status === "rejected" ? orderResult.reason : null, "EBAY_ORDERS_READ_FAILED")
+      const readerFailure = orderResult.status === "rejected" ? orderResult.reason : null
+      const code = safeCode(readerFailure, "EBAY_ORDERS_READ_FAILED")
       readers.orders = {
         status: "unavailable",
         source: "EBAY_SELL_FULFILLMENT_GET_ORDERS",
         observedAt,
         error: code,
+        metrics: quotaReaderMetrics(readerFailure),
         auth: getEbayCommercialReaderAuthState("orders", code),
       }
       errors.push({ reader: "orders", code, retryable: true })
@@ -1498,12 +2261,14 @@ export async function runEbayCommercialMonitor(
         errors.push({ reader: "analytics", code: "EBAY_ANALYTICS_WINDOW_INCOMPLETE", retryable: true })
       }
     } else if (lanes.includes("analytics")) {
-      const code = safeCode(analyticsResult.status === "rejected" ? analyticsResult.reason : null, "EBAY_ANALYTICS_READ_FAILED")
+      const readerFailure = analyticsResult.status === "rejected" ? analyticsResult.reason : null
+      const code = safeCode(readerFailure, "EBAY_ANALYTICS_READ_FAILED")
       readers.analytics = {
         status: "unavailable",
         source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT",
         observedAt,
         error: code,
+        metrics: quotaReaderMetrics(readerFailure),
         auth: getEbayCommercialReaderAuthState("analytics", code),
       }
       errors.push({ reader: "analytics", code, retryable: true })
@@ -1522,24 +2287,68 @@ export async function runEbayCommercialMonitor(
         errors.push({ reader: "watchers", code: error.code, retryable: true })
       }
     } else if (lanes.includes("watchers")) {
-      const code = safeCode(watchersResult.status === "rejected" ? watchersResult.reason : null, "EBAY_WATCHERS_READ_FAILED")
+      const readerFailure = watchersResult.status === "rejected" ? watchersResult.reason : null
+      const code = safeCode(readerFailure, "EBAY_WATCHERS_READ_FAILED")
       readers.watchers = {
         status: "unavailable",
         source: "EBAY_TRADING_GET_ITEM_WATCHCOUNT",
         observedAt,
         error: code,
+        metrics: quotaReaderMetrics(readerFailure),
         auth: getEbayCommercialReaderAuthState("watchers", code),
       }
       errors.push({ reader: "watchers", code, retryable: true })
     } else readers.watchers = { status: "skipped", source: "schedule", observedAt: null }
 
+    if (messagesResult.status === "fulfilled" && messagesResult.value) {
+      sellerMessages = messagesResult.value
+      readers.messages = {
+        status: sellerMessages.status === "AVAILABLE" ? "available" : "partial",
+        source: sellerMessages.source,
+        observedAt: sellerMessages.observedAt,
+        metrics: {
+          unreadHeaders: sellerMessages.headers.length,
+          pagesRead: sellerMessages.pagesRead,
+          rawRowsSeen: sellerMessages.rawRowsSeen,
+          rejectedRows: sellerMessages.rejectedRows,
+          truncated: sellerMessages.truncated,
+          contentReturned: false,
+          buyerPiiReturned: false,
+          rawXmlPersisted: false,
+          ebayWrites: 0,
+        },
+        auth: getEbayCommercialReaderAuthState("messages"),
+      }
+      if (sellerMessages.status === "PARTIAL") {
+        errors.push({
+          reader: "messages",
+          code: "EBAY_SELLER_MESSAGES_PAGE_LIMIT_REACHED",
+          retryable: true,
+        })
+      }
+    } else if (lanes.includes("messages")) {
+      const readerFailure = messagesResult.status === "rejected" ? messagesResult.reason : null
+      const code = safeCode(
+        readerFailure,
+        "EBAY_SELLER_MESSAGES_READ_FAILED",
+      )
+      readers.messages = {
+        status: "unavailable",
+        source: "EBAY_TRADING_GET_MEMBER_MESSAGES_HEADERS_ONLY",
+        observedAt,
+        error: code,
+        metrics: quotaReaderMetrics(readerFailure),
+        auth: getEbayCommercialReaderAuthState("messages", code),
+      }
+      errors.push({ reader: "messages", code, retryable: true })
+    } else readers.messages = { status: "skipped", source: "schedule", observedAt: null }
+
     const expectedIdentityRows = new Map<string, { listingId: string; sku: string }>()
-    const pilotListing = listings.find((row) => row.ebay_item_id === PILOT_LISTING_ID)
-    if (pilotListing?.ebay_sku && pilotListing.supplier_sku === PILOT_SUPPLIER_SKU) {
-      expectedIdentityRows.set(`${PILOT_LISTING_ID}:${pilotListing.ebay_sku}`, {
-        listingId: PILOT_LISTING_ID,
-        sku: pilotListing.ebay_sku,
-      })
+    for (const listing of listings) {
+      if (listing.ebay_sku) expectedIdentityRows.set(
+        `${listing.ebay_item_id}:${listing.ebay_sku}`,
+        { listingId: listing.ebay_item_id, sku: listing.ebay_sku },
+      )
     }
     for (const order of orders) {
       for (const line of order.lineItems) {
@@ -1550,10 +2359,9 @@ export async function runEbayCommercialMonitor(
       }
     }
     const verifiedIdentities = new Set<string>()
-    if (
-      !pilotListing || !pilotListing.ebay_sku ||
-      pilotListing.supplier_sku !== PILOT_SUPPLIER_SKU
-    ) {
+    const activeListingIdentityLinksComplete = listings.length > 0 &&
+      listings.every((listing) => Boolean(listing.ebay_sku && listing.supplier_sku))
+    if (!activeListingIdentityLinksComplete) {
       errors.push({
         reader: "listing_identity",
         code: "COMMERCIAL_LISTING_ITEM_ID_OR_CUSTOM_LABEL_MISMATCH",
@@ -1562,9 +2370,17 @@ export async function runEbayCommercialMonitor(
     }
     if (expectedIdentityRows.size) {
       try {
-        const identityResult = await verifyEbayActiveListingIdentities({
-          listings: [...expectedIdentityRows.values()],
-        })
+        const identityResult = await quotaProtectedCommercialRead(supabase, {
+          dependencies: [
+            { apiFamily: "OAUTH", operation: "TRADING_REFRESH_TOKEN", endpoint: "/identity/v1/oauth2/token" },
+            { apiFamily: "TRADING", operation: "GET_USER", endpoint: "/ws/api.dll" },
+            { apiFamily: "TRADING", operation: "GET_ITEM_IDENTITY", endpoint: "/ws/api.dll" },
+          ],
+          lane: "P0_PROTECTION",
+          checkpoint: { runId, reader: "listing_identity", listingCount: expectedIdentityRows.size },
+        }, () => verifyEbayActiveListingIdentities({
+            listings: [...expectedIdentityRows.values()],
+          }))
         for (const identity of identityResult.observations) {
           if (identity.activeListingConfirmed) {
             verifiedIdentities.add(`${identity.listingId}:${identity.expectedSku}`)
@@ -1613,11 +2429,12 @@ export async function runEbayCommercialMonitor(
           metrics: {
             checked: expectedIdentityRows.size,
             verified: verifiedIdentities.size,
-            itemIdAndCustomLabelExact: Boolean(
-              pilotListing?.ebay_sku &&
-              verifiedIdentities.has(`${PILOT_LISTING_ID}:${pilotListing.ebay_sku}`)
+            itemIdAndCustomLabelExact: listings.length > 0 && listings.every((listing) =>
+              Boolean(listing.ebay_sku) &&
+              verifiedIdentities.has(`${listing.ebay_item_id}:${listing.ebay_sku}`)
             ),
-            supplierSkuLinked: pilotListing?.supplier_sku === PILOT_SUPPLIER_SKU,
+            supplierSkuLinked: listings.length > 0 &&
+              listings.every((listing) => Boolean(listing.supplier_sku)),
           },
         }
       } catch (error) {
@@ -1627,6 +2444,7 @@ export async function runEbayCommercialMonitor(
           source: "EBAY_TRADING_GET_ITEM_READONLY",
           observedAt,
           error: code,
+          metrics: quotaReaderMetrics(error),
         }
         errors.push({ reader: "listing_identity", code, retryable: true })
       }
@@ -1668,7 +2486,160 @@ export async function runEbayCommercialMonitor(
       readers.analytics.metrics.divergenceRecheckError = divergence.error
     }
 
+    const promotionBlockedListingIds = await controlledRiskListingIds(
+      supabase,
+      accountKey,
+      listings.map((listing) => listing.ebay_item_id),
+    )
+    let competitorWork: Awaited<ReturnType<typeof monitorEbayListingCompetitors>> | null = null
+    if (lanes.includes("competitors")) {
+      const competitorListings = listings.flatMap((listing) => {
+        if (!listing.ebay_sku ||
+          !verifiedIdentities.has(`${listing.ebay_item_id}:${listing.ebay_sku}`)) return []
+        const supply = supplyForListing(listing, supplies)
+        if (!supply || !listing.supplier_variant_id) return []
+        const supplyFresh = isFreshLunaSupplyEvidence(supply, observedAt)
+        return [{
+          listingId: listing.ebay_item_id,
+          sku: listing.ebay_sku,
+          title: listing.title,
+          price: numeric(listing.ebay_price),
+          currency: listing.currency,
+          supplierVariantId: listing.supplier_variant_id,
+          supplierSku: listing.supplier_sku,
+          promotionAllowed: !promotionBlockedListingIds.has(listing.ebay_item_id),
+          rawPayload: listing.raw_payload,
+          supply: {
+            title: supply.title,
+            variantTitle: supply.variant_title,
+            sku: supply.sku,
+            barcode: supply.barcode,
+            vendor: supply.vendor,
+            productType: supply.product_type,
+            metadata: supply.metadata,
+            unitCost: supplyFresh && supply.available === true
+              ? numeric(supply.price) : null,
+            costFresh: supplyFresh,
+            available: supply.available,
+          },
+        }]
+      })
+      try {
+        competitorWork = await quotaProtectedCommercialRead(supabase, {
+          dependencies: [
+            { apiFamily: "OAUTH", operation: "BROWSE_APPLICATION_TOKEN", endpoint: "/identity/v1/oauth2/token" },
+            { apiFamily: "BROWSE", operation: "SEARCH_ACTIVE_COMPETITORS", endpoint: "/buy/browse/v1/item_summary/search" },
+          ],
+          lane: "P0_COMMERCIAL_MONITOR",
+          checkpoint: { runId, reader: "competitors", listingCount: competitorListings.length },
+        }, () => monitorEbayListingCompetitors({
+          supabase,
+          accountKey,
+          monitorRunId: runId,
+          listings: competitorListings,
+          ownSellerUsername: accountScope.identity.expectedUserId || null,
+          observedAt,
+          persist: input.triggerSource !== "dry_run",
+        }))
+        readers.competitors = {
+          status: competitorWork.status === "AVAILABLE"
+            ? "available"
+            : competitorWork.status === "PARTIAL" ? "partial" : "unavailable",
+          source: competitorWork.source,
+          observedAt,
+          metrics: {
+            eligibleListings: competitorWork.eligibleListings,
+            scannedListings: competitorWork.scannedListings,
+            baselineListings: competitorWork.baselineListings,
+            activeOffers: competitorWork.activeOffers,
+            activeSellers: competitorWork.activeSellers,
+            newSellers: competitorWork.newSellers,
+            potentialSellers: competitorWork.potentialSellers,
+            researchRefreshRecommendations: competitorWork.researchRefreshRecommendations,
+            confirmedSoldPriceRecommendations:
+              competitorWork.confirmedSoldPriceRecommendations,
+            activeOfferTreatedAsConfirmedSale: false,
+            confirmedSoldPriceRequired: true,
+            ownCostFloorRequired: true,
+            rawCompetitorContentStored: false,
+            ebayWrites: 0,
+          },
+        }
+        for (const competitorError of competitorWork.errors) {
+          errors.push({ reader: "competitors", code: competitorError.code, retryable: true })
+        }
+      } catch (error) {
+        const code = safeCode(error, "EBAY_COMPETITOR_WATCH_READ_FAILED")
+        readers.competitors = {
+          status: "unavailable",
+          source: "EBAY_BROWSE_ACTIVE_COMPETITOR_READONLY",
+          observedAt,
+          error: code,
+          metrics: quotaReaderMetrics(error),
+        }
+        errors.push({ reader: "competitors", code, retryable: true })
+      }
+    } else readers.competitors = { status: "skipped", source: "schedule", observedAt: null }
+
     if (input.triggerSource === "dry_run") {
+      const lunaMaxAgeMinutes = integer(
+        process.env.EBAY_COMMERCIAL_LUNA_SUPPLY_MAX_AGE_MINUTES,
+        DEFAULT_LUNA_SUPPLY_MAX_AGE_MINUTES,
+        5,
+        72 * 60,
+      )
+      const lunaSupplyChecks = listings.map((listing) => {
+        const supply = supplyForListing(listing, supplies)
+        const exact = Boolean(
+          listing.market_radar_product_id &&
+          listing.supplier_variant_id &&
+          listing.supplier_sku &&
+          supply &&
+          supply.product_id === listing.market_radar_product_id &&
+          supply.supplier_variant_id === listing.supplier_variant_id &&
+          supply.sku === listing.supplier_sku
+        )
+        return {
+          supply,
+          exact,
+          fresh: exact && isFreshLunaSupplyEvidence(supply, now.toISOString()),
+        }
+      })
+      const lunaExactSupplyLinked = lunaSupplyChecks.length > 0 &&
+        lunaSupplyChecks.every((check) => check.exact)
+      const lunaSupplyFresh = lunaExactSupplyLinked &&
+        lunaSupplyChecks.every((check) => check.fresh)
+      const lunaSupplyObservedAt = lunaSupplyChecks
+        .map((check) => check.supply?.captured_at ?? null)
+        .filter((capturedAt): capturedAt is string => Boolean(capturedAt))
+        .sort()[0] ?? null
+      readers.luna_supply = {
+        status: lunaExactSupplyLinked && lunaSupplyFresh ? "available" : "unavailable",
+        source: "LUNA_MARKET_RADAR_LATEST_VARIANT_LOCAL_SNAPSHOT",
+        observedAt: lunaSupplyObservedAt,
+        metrics: {
+          exactProductVariantAndSku: lunaExactSupplyLinked,
+          fresh: lunaSupplyFresh,
+          maximumAgeMinutes: lunaMaxAgeMinutes,
+          activeListingsEvaluated: lunaSupplyChecks.length,
+          exactSupplyLinks: lunaSupplyChecks.filter((check) => check.exact).length,
+          freshSupplyLinks: lunaSupplyChecks.filter((check) => check.fresh).length,
+        },
+        ...(!lunaExactSupplyLinked
+          ? { error: "COMMERCIAL_LUNA_EXACT_SUPPLY_LINK_MISSING" }
+          : !lunaSupplyFresh
+            ? { error: "COMMERCIAL_LUNA_SUPPLY_STALE" }
+            : {}),
+      }
+      if (!lunaExactSupplyLinked || !lunaSupplyFresh) {
+        errors.push({
+          reader: "luna_supply",
+          code: !lunaExactSupplyLinked
+            ? "COMMERCIAL_LUNA_EXACT_SUPPLY_LINK_MISSING"
+            : "COMMERCIAL_LUNA_SUPPLY_STALE",
+          retryable: true,
+        })
+      }
       readers.whatsapp = {
         status: "skipped",
         source: "DRY_RUN_NO_OUTBOX_CLAIM",
@@ -1678,6 +2649,7 @@ export async function runEbayCommercialMonitor(
         ordersOAuth: readers.orders.auth?.status ?? "NOT_RUN",
         watchersAuth: readers.watchers.auth?.status ?? "NOT_RUN",
         analyticsAuth: readers.analytics.auth?.status ?? "NOT_RUN",
+        messagesAuth: readers.messages.auth?.status ?? "NOT_RUN",
         fulfillmentScopeConfirmed: readers.orders.auth?.scopeConfirmed === true,
         officialIdentityMatch: Object.values(readers)
           .some((reader) => reader.auth?.identityMatch === false)
@@ -1685,7 +2657,7 @@ export async function runEbayCommercialMonitor(
           : Object.values(readers).some((reader) => reader.auth?.identityMatch === true)
             ? true
             : null,
-        actionRequired: [readers.orders, readers.watchers, readers.analytics]
+        actionRequired: [readers.orders, readers.messages, readers.watchers, readers.analytics]
           .find((reader) => reader.auth?.status && reader.auth.status !== "READY")
           ?.auth?.actionRequired ?? "Sin acción de autenticación; continuar con el dry run read-only.",
       }
@@ -1698,17 +2670,33 @@ export async function runEbayCommercialMonitor(
           : null,
         analyticsListingsRead: analytics ? analytics.observations.length : null,
         watcherListingsRead: watchers ? watchers.observations.length : null,
+        competitorListingsRead: competitorWork?.scannedListings ?? null,
+        competitorActiveSellers: competitorWork?.activeSellers ?? null,
+        competitorResearchRefreshRecommendations:
+          competitorWork?.researchRefreshRecommendations ?? null,
+        competitorConfirmedSoldPriceRecommendations:
+          competitorWork?.confirmedSoldPriceRecommendations ?? null,
+        sellerHubMessageHeadersRead: sellerMessages?.headers.length ?? null,
+        sellerHubMessageContentReturned: false,
+        sellerHubMessageRawXmlPersisted: false,
         healthFlags: divergence.openListingIds.size ? [ANALYTICS_SOURCE_DIVERGENCE] : [],
         analyticsRulesSuspendedListingIds: [...divergence.openListingIds],
-        listingIdentityVerified: Boolean(
-          pilotListing?.ebay_sku &&
-          pilotListing.supplier_sku === PILOT_SUPPLIER_SKU &&
-          verifiedIdentities.has(`${PILOT_LISTING_ID}:${pilotListing.ebay_sku}`)
+        listingIdentityVerified: listings.length > 0 && listings.every((listing) =>
+          Boolean(listing.ebay_sku && listing.supplier_sku) &&
+          verifiedIdentities.has(`${listing.ebay_item_id}:${listing.ebay_sku}`)
         ),
+        lunaExactSupplyLinked,
+        lunaSupplyFresh,
+        lunaSupplyObservedAt,
         commercialDataPersistencePerformed: false,
+        persistenceWrites: 0,
+        eventsCreated: 0,
         alertsEnqueued: 0,
+        outboxRowsCreated: 0,
         fulfillmentTasksCreated: 0,
+        whatsappMetaAccepted: 0,
         whatsappDelivered: 0,
+        buyerPiiFieldsReturned: 0,
         ebayWrites: 0,
         buyerPiiReturned: false,
         authentication,
@@ -1752,6 +2740,16 @@ export async function runEbayCommercialMonitor(
       return { ...result, satisfactory }
     }
 
+    const messageWork = lanes.includes("messages") && sellerMessages
+      ? await persistSellerInboxMessageAlerts({
+          supabase,
+          accountKey,
+          listings,
+          headers: sellerMessages.headers,
+          observedAt,
+        })
+      : { eventsCreated: 0, alertsGenerated: 0, duplicatesAvoided: 0 }
+
     const orderWork = lanes.includes("orders") && orders.length
       ? await persistOrdersAndSales({
           supabase, accountKey, orders, listings, supplies, thresholds, observedAt,
@@ -1760,6 +2758,7 @@ export async function runEbayCommercialMonitor(
       : {
           newSales: 0,
           tasksCreated: 0,
+          eventsCreated: 0,
           alertsGenerated: 0,
           duplicatesAvoided: 0,
           estimatedProfit: 0,
@@ -1785,6 +2784,7 @@ export async function runEbayCommercialMonitor(
           watchers,
           units24h: confirmedUnits24h,
           analyticsRulesSuspendedListingIds: divergence.openListingIds,
+          promotionBlockedListingIds,
           observedAt,
         })
       : { snapshots: [], eventsGenerated: 0, alertsGenerated: 0 }
@@ -1815,7 +2815,8 @@ export async function runEbayCommercialMonitor(
         observedAt,
         metrics: {
           mode: delivery.mode,
-          delivered: delivery.delivered,
+          metaAccepted: delivery.metaAccepted,
+          deliveryConfirmed: delivery.delivered,
           failed: delivery.failed,
         },
       }
@@ -1823,25 +2824,59 @@ export async function runEbayCommercialMonitor(
 
     const metrics = {
       activeListings: listings.length,
-      pilot: {
-        listingId: PILOT_LISTING_ID,
-        supplierSku: PILOT_SUPPLIER_SKU,
-        ebayCustomLabel: pilotListing?.ebay_sku ?? null,
-        activeListingVerified: listings.some((row) =>
-          row.ebay_item_id === PILOT_LISTING_ID &&
-          row.supplier_sku === PILOT_SUPPLIER_SKU &&
+      listingIdentity: {
+        activeListingsEvaluated: listings.length,
+        supplierSkusLinked: listings.filter((row) => Boolean(row.supplier_sku)).length,
+        activeListingsVerified: listings.filter((row) =>
           Boolean(row.ebay_sku) &&
-          verifiedIdentities.has(`${PILOT_LISTING_ID}:${row.ebay_sku}`)
+          verifiedIdentities.has(`${row.ebay_item_id}:${row.ebay_sku}`)
+        ).length,
+        allActiveListingsVerified: listings.length > 0 && listings.every((row) =>
+          Boolean(row.ebay_sku && row.supplier_sku) &&
+          verifiedIdentities.has(`${row.ebay_item_id}:${row.ebay_sku}`)
         ),
       },
       officialOrdersRead: ordersResponseAvailable ? orders.length : null,
       newSales: orderWork.newSales,
       fulfillmentTasksCreated: orderWork.tasksCreated,
       snapshotsCreated: snapshotWork.snapshots.length,
-      commercialEventsCreated: snapshotWork.eventsGenerated + orderWork.newSales,
-      eventsCreated: snapshotWork.eventsGenerated + orderWork.newSales,
-      alertsGenerated: orderWork.alertsGenerated + snapshotWork.alertsGenerated + (daily?.alertGenerated ? 1 : 0),
-      duplicatesAvoided: orderWork.duplicatesAvoided,
+      commercialEventsCreated: snapshotWork.eventsGenerated + orderWork.eventsCreated +
+        messageWork.eventsCreated + (competitorWork?.eventsCreated ?? 0),
+      eventsCreated: snapshotWork.eventsGenerated + orderWork.eventsCreated +
+        messageWork.eventsCreated + (competitorWork?.eventsCreated ?? 0),
+      alertsGenerated: orderWork.alertsGenerated + snapshotWork.alertsGenerated +
+        messageWork.alertsGenerated + (competitorWork?.alertsGenerated ?? 0) +
+        (daily?.alertGenerated ? 1 : 0),
+      duplicatesAvoided: orderWork.duplicatesAvoided + messageWork.duplicatesAvoided +
+        (competitorWork?.duplicatesAvoided ?? 0),
+      competitors: competitorWork ? {
+        listingsScanned: competitorWork.scannedListings,
+        activeOffers: competitorWork.activeOffers,
+        activeSellers: competitorWork.activeSellers,
+        newSellers: competitorWork.newSellers,
+        potentialSellers: competitorWork.potentialSellers,
+        researchRefreshRecommendations: competitorWork.researchRefreshRecommendations,
+        confirmedSoldPriceRecommendations:
+          competitorWork.confirmedSoldPriceRecommendations,
+        eventsCreated: competitorWork.eventsCreated,
+        alertsEnqueued: competitorWork.alertsGenerated,
+        activeOfferTreatedAsConfirmedSale: false,
+        confirmedSoldPriceRequired: true,
+        ownCostFloorRequired: true,
+        automaticProductResearchImport: false,
+        automaticEbayMutation: false,
+        ebayWrites: 0,
+      } : null,
+      sellerHubMessages: {
+        headersRead: sellerMessages?.headers.length ?? null,
+        eventsCreated: messageWork.eventsCreated,
+        alertsEnqueued: messageWork.alertsGenerated,
+        duplicatesAvoided: messageWork.duplicatesAvoided,
+        contentStored: false,
+        buyerPiiStored: false,
+        rawXmlStored: false,
+        ebayWrites: 0,
+      },
       analytics: {
         impressions: sumAvailableSnapshotMetric(snapshotWork.snapshots, "impressions"),
         views: sumAvailableSnapshotMetric(snapshotWork.snapshots, "views"),
@@ -1853,9 +2888,11 @@ export async function runEbayCommercialMonitor(
       dailySummary: daily?.summary ?? null,
       whatsapp: delivery ? {
         mode: delivery.mode,
-        delivered: delivery.delivered,
+        metaAccepted: delivery.metaAccepted,
+        deliveryConfirmed: delivery.delivered,
         failed: delivery.failed,
       } : null,
+      whatsappMetaAccepted: delivery?.metaAccepted ?? 0,
       whatsappDelivered: delivery?.delivered ?? 0,
       ebayWrites: 0,
       thresholdConfigVersion: thresholds.version,
@@ -1914,9 +2951,11 @@ export function getCommercialMonitorScheduleConfiguration() {
     previewOnly: true,
     currentEnvironment: process.env.VERCEL_ENV ?? "development",
     orderIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_ORDERS_INTERVAL_MINUTES, 5, 5, 1_440),
+    messageIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_MESSAGES_INTERVAL_MINUTES, 10, 5, 1_440),
     analyticsIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_ANALYTICS_INTERVAL_MINUTES, 360, 60, 1_440),
     watchersIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_WATCHERS_INTERVAL_MINUTES, 240, 15, 1_440),
-    dailySummaryHourUtc: integer(process.env.EBAY_COMMERCIAL_DAILY_SUMMARY_HOUR_UTC, 14, 0, 23),
+    competitorsIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_COMPETITORS_INTERVAL_MINUTES, 1_440, 60, 10_080),
+    dailySummaryHourUtc: integer(process.env.EBAY_COMMERCIAL_DAILY_SUMMARY_HOUR_UTC, 0, 0, 23),
     dispatcherIntervalMinutes: integer(process.env.EBAY_COMMERCIAL_DISPATCHER_INTERVAL_MINUTES, 5, 5, 60),
   }
 }
@@ -1927,9 +2966,9 @@ async function getCommercialPilotReport(
   schedule: ReturnType<typeof getCommercialMonitorScheduleConfiguration>,
   divergenceStatus: string | null,
 ) {
-  const startedAt = schedule.pilot.startedAt
-  const expiresAt = schedule.pilot.expiresAt
-  if (!startedAt || !expiresAt) return null
+  const reportThroughAt = new Date().toISOString()
+  const startedAt = schedule.pilot.startedAt ??
+    new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString()
   const [runResult, attemptResult, deadLetterResult] = await Promise.all([
     supabase.from("commercial_monitor_runs")
       .select("status,metrics")
@@ -1937,7 +2976,7 @@ async function getCommercialPilotReport(
       .eq("marketplace", MARKETPLACE)
       .eq("trigger_source", "schedule")
       .gte("started_at", startedAt)
-      .lt("started_at", expiresAt)
+      .lt("started_at", reportThroughAt)
       .order("started_at", { ascending: true })
       .limit(500),
     supabase.from("alert_delivery_attempts")
@@ -1945,7 +2984,7 @@ async function getCommercialPilotReport(
       .eq("alert_delivery_outbox.marketplace_account_key", accountKey)
       .eq("alert_delivery_outbox.marketplace", MARKETPLACE)
       .gte("attempted_at", startedAt)
-      .lt("attempted_at", expiresAt)
+      .lt("attempted_at", reportThroughAt)
       .limit(500),
     supabase.from("alert_delivery_outbox")
       .select("id", { count: "exact", head: true })
@@ -1953,7 +2992,7 @@ async function getCommercialPilotReport(
       .eq("marketplace", MARKETPLACE)
       .eq("status", "dead_letter")
       .gte("updated_at", startedAt)
-      .lt("updated_at", expiresAt),
+      .lt("updated_at", reportThroughAt),
   ])
   if (runResult.error || attemptResult.error || deadLetterResult.error) {
     throw new Error("COMMERCIAL_PILOT_REPORT_READ_FAILED")
@@ -1961,7 +3000,9 @@ async function getCommercialPilotReport(
   return {
     status: schedule.pilot.status,
     startedAt,
-    expiresAt,
+    expiresAt: null,
+    reportThroughAt,
+    monitoringMode: schedule.pilot.monitoringMode,
     ...summarizeCommercialPilotRuns({
       runs: runResult.data ?? [],
       deliveryAttempts: attemptResult.data ?? [],
@@ -1988,15 +3029,19 @@ export async function getDueCommercialMonitorLanes(
   if (error) throw new Error("COMMERCIAL_MONITOR_SCHEDULE_READ_FAILED")
   const lastByReader = new Map<string, string>()
   const lastAttemptByReader = new Map<string, string>()
+  const lastStatusByReader = new Map<string, string>()
   for (const run of data ?? []) {
     const readers = run.readers && typeof run.readers === "object"
       ? run.readers as Record<string, { status?: string }>
       : {}
-    for (const name of ["orders", "analytics", "watchers"]) {
+    for (const name of ["orders", "messages", "analytics", "watchers", "competitors"]) {
       if (
         !lastAttemptByReader.has(name) &&
         readers[name]?.status && readers[name]?.status !== "skipped"
-      ) lastAttemptByReader.set(name, run.started_at)
+      ) {
+        lastAttemptByReader.set(name, run.started_at)
+        lastStatusByReader.set(name, readers[name]?.status ?? "")
+      }
       if (!lastByReader.has(name) && ["available", "partial", "incomplete"].includes(readers[name]?.status ?? "")) {
         lastByReader.set(name, run.started_at)
       }
@@ -2012,6 +3057,7 @@ export async function getDueCommercialMonitorLanes(
   if (divergenceError) throw new Error("COMMERCIAL_ANALYTICS_DIVERGENCE_SCHEDULE_READ_FAILED")
   const lanes: CommercialMonitorLane[] = []
   if (commercialScheduleLaneDue(lastByReader.get("orders"), schedule.orderIntervalMinutes, now)) lanes.push("orders", "rules")
+  if (commercialScheduleLaneDue(lastByReader.get("messages"), schedule.messageIntervalMinutes, now)) lanes.push("messages")
   const analyticsDue = commercialScheduleLaneDue(
     lastByReader.get("analytics"),
     schedule.analyticsIntervalMinutes,
@@ -2023,6 +3069,18 @@ export async function getDueCommercialMonitorLanes(
   })
   if (analyticsDue) lanes.push("analytics", "rules")
   if (commercialScheduleLaneDue(lastByReader.get("watchers"), schedule.watchersIntervalMinutes, now)) lanes.push("watchers", "rules")
+  const competitorRegularlyDue = commercialScheduleLaneDue(
+    lastByReader.get("competitors"),
+    schedule.competitorsIntervalMinutes,
+    now,
+  )
+  const competitorPartialRetryDue = lastStatusByReader.get("competitors") === "partial" &&
+    commercialScheduleLaneDue(
+      lastAttemptByReader.get("competitors"),
+      COMPETITOR_PARTIAL_RETRY_MINUTES,
+      now,
+    )
+  if (competitorRegularlyDue || competitorPartialRetryDue) lanes.push("competitors")
   const { data: todaySummary } = await supabase
     .from("commercial_daily_summaries")
     .select("id")
@@ -2031,7 +3089,7 @@ export async function getDueCommercialMonitorLanes(
     .eq("summary_day", isoDay(now))
     .maybeSingle()
   if (!todaySummary && now.getUTCHours() >= schedule.dailySummaryHourUtc) {
-    lanes.push("orders", "analytics", "watchers", "rules", "daily_summary")
+    lanes.push("orders", "messages", "analytics", "watchers", "competitors", "rules", "daily_summary")
   }
   lanes.push("whatsapp")
   return [...new Set(lanes)]
@@ -2060,6 +3118,8 @@ export async function getEbayCommercialMonitorDashboard(
   const [
     latestRun, latestDryRun, latestPersistentRun, latestCompleted, taskRows,
     outboxRows, divergenceRows, manualEvidenceRows, identityRows,
+    schedulerAuthorizationRow, continuousAuthorizationRow, optimizationEventRows, competitorPriceEventRows,
+    supplyActionEventRows, competitorProfileRows, competitorScanRows,
   ] = await Promise.all([
     supabase.from("commercial_monitor_runs").select("*")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
@@ -2082,29 +3142,71 @@ export async function getEbayCommercialMonitorDashboard(
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
       .order("created_at", { ascending: false }).limit(100),
     supabase.from("listing_analytics_source_divergences")
-      .select("id,listing_id,sku,manual_evidence_id,classification,health_flag,status,official_source,official_metrics,official_window_start,official_window_end,official_last_updated_date,opened_at,last_checked_at,next_check_at,resolved_at,resolution_code,updated_at")
+      .select("id,listing_id,sku,manual_evidence_id,classification,health_flag,status,official_source,official_metrics,official_window_start,official_window_end,official_last_updated_date,comparison_details,opened_at,last_checked_at,next_check_at,resolved_at,resolution_code,updated_at")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
       .order("updated_at", { ascending: false }).limit(20),
     supabase.from("listing_commercial_manual_evidence")
-      .select("id,listing_id,sku,source,impressions_metric,views_metric,transactions_metric,observed_on,impressions,views,transactions,ctr,created_at")
+      .select("id,listing_id,sku,source,entity_scope,impressions_metric,views_metric,transactions_metric,ctr_metric,ctr_unit,window_start,window_end,time_zone,observed_on,impressions,views,transactions,ctr,created_at")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
       .order("observed_on", { ascending: false }).limit(20),
     supabase.from("marketplace_listing_identity_verifications")
       .select("listing_id,expected_sku,observed_listing_id,observed_sku,observed_listing_status,item_id_matches,sku_matches,active_listing_confirmed,source,error_code,observed_at")
       .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
-      .eq("listing_id", PILOT_LISTING_ID)
       .order("observed_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("commercial_monitor_scheduler_authorizations")
+      .select("authorized_at,expires_at,revoked_at,last_used_at,use_count")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .is("revoked_at", null)
+      .order("authorized_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.rpc("ebay_continuous_monitoring_authorized", {
+      p_marketplace_account_key: accountKey,
+      p_marketplace: MARKETPLACE,
+    }),
+    supabase.from("commercial_alert_events")
+      .select("id,event_type,severity,evidence,detected_at,listing_id,sku,recommended_action")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .in("event_type", [...POST_PUBLICATION_OPTIMIZATION_EVENT_TYPES])
+      .order("detected_at", { ascending: false }).limit(20),
+    supabase.from("commercial_alert_events")
+      .select("id,event_type,severity,evidence,detected_at,listing_id,sku,recommended_action")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .in("event_type", [
+        "COMPETITOR_CONFIRMED_SOLD_PRICE_RECOMMENDATION",
+        "COMPETITOR_ACTIVE_MARKET_PRICE_RECOMMENDATION",
+      ])
+      .order("detected_at", { ascending: false }).limit(20),
+    supabase.from("commercial_alert_events")
+      .select("id,event_type,severity,evidence,detected_at,listing_id,sku,recommended_action")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .in("event_type", [
+        "ACTIVE_LISTING_OUT_OF_STOCK",
+        "LUNA_COST_CHANGED",
+        "MARGIN_RISK",
+      ])
+      .order("detected_at", { ascending: false }).limit(20),
+    supabase.from("ebay_listing_competitor_watch_profiles")
+      .select("listing_id,sku,last_scanned_at,baseline_completed_at,latest_active_offer_count,latest_active_seller_count,latest_estimated_activity_seller_count,latest_confirmed_sold_seller_count,latest_median_landed_price,latest_free_shipping_ratio,latest_returns_accepted_ratio,latest_multi_image_ratio,latest_evidence_class,latest_suggestion_codes,latest_suggested_terms,research_refresh_recommended,research_refresh_reason_codes,last_research_refresh_recommended_at")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .eq("status", "ACTIVE").order("last_scanned_at", { ascending: false }).limit(100),
+    supabase.from("ebay_listing_competitor_scans")
+      .select("listing_id,observed_at,baseline_established,new_offer_count,new_seller_count,potential_seller_count,research_refresh_recommended,evidence_class,suggestion_codes")
+      .eq("marketplace_account_key", accountKey).eq("marketplace", MARKETPLACE)
+      .order("observed_at", { ascending: false }).limit(100),
   ])
   const firstError = latestRun.error ?? latestDryRun.error ?? latestPersistentRun.error ??
     latestCompleted.error ?? taskRows.error ?? outboxRows.error ?? divergenceRows.error ??
-    manualEvidenceRows.error ?? identityRows.error
+    manualEvidenceRows.error ?? identityRows.error ?? schedulerAuthorizationRow.error ??
+    continuousAuthorizationRow.error ??
+    optimizationEventRows.error ?? competitorPriceEventRows.error ??
+    supplyActionEventRows.error ??
+    competitorProfileRows.error ?? competitorScanRows.error
   if (firstError) throw new Error("COMMERCIAL_MONITOR_DASHBOARD_READ_FAILED")
   const readerLast = new Map<string, string>()
   for (const run of latestCompleted.data ?? []) {
     const readers = run.readers && typeof run.readers === "object"
       ? run.readers as Record<string, { status?: string }>
       : {}
-    for (const name of ["orders", "analytics", "watchers"]) {
+    for (const name of ["orders", "messages", "analytics", "watchers", "competitors"]) {
       if (!readerLast.has(name) && ["available", "partial", "incomplete"].includes(readers[name]?.status ?? "")) {
         readerLast.set(name, run.started_at)
       }
@@ -2137,6 +3239,9 @@ export async function getEbayCommercialMonitorDashboard(
     ? (manualEvidenceRows.data ?? []).find((row) => row.id === divergence.manual_evidence_id) ?? null
     : manualEvidenceRows.data?.[0] ?? null
   const identity = identityRows.data ?? null
+  const schedulerAuthorization = schedulerAuthorizationRow.data ?? null
+  const schedulerAuthorizationActive =
+    continuousAuthorizationRow.data === true
   const divergenceOpen = openDivergences.length > 0
   const pilot24h = await getCommercialPilotReport(
     supabase,
@@ -2148,8 +3253,80 @@ export async function getEbayCommercialMonitorDashboard(
     status: latestRun.data?.status ?? "never_run",
     accountScope: { configured: true, accountAlias: accountScope.accountAlias },
     readersConfiguration: getEbayCommercialReadersConfiguration(),
-    schedule,
+    schedule: {
+      ...schedule,
+      effectivelyEnabled: schedule.enabled && schedulerAuthorizationActive,
+    },
+    schedulerAuthorization: schedulerAuthorization ? {
+      status: schedulerAuthorizationActive ? "ACTIVE" : "EXPIRED",
+      mode: "CONTINUOUS_WHILE_ACTIVE",
+      authorizedAt: schedulerAuthorization.authorized_at,
+      expiresAt: schedulerAuthorization.expires_at,
+      lastUsedAt: schedulerAuthorization.last_used_at,
+      useCount: schedulerAuthorization.use_count,
+    } : {
+      status: "MISSING",
+      mode: "CONTINUOUS_WHILE_ACTIVE",
+      authorizedAt: null,
+      expiresAt: null,
+      lastUsedAt: null,
+      useCount: 0,
+    },
     pilot24h,
+    competitorWatch: {
+      status: (competitorProfileRows.data ?? []).length ? "ACTIVE" : "WAITING_BASELINE",
+      profiles: competitorProfileRows.data ?? [],
+      latestScans: competitorScanRows.data ?? [],
+      priceRecommendations: (competitorPriceEventRows.data ?? []).map((row) => ({
+        id: row.id,
+        eventType: row.event_type,
+        severity: row.severity,
+        listingId: row.listing_id,
+        sku: row.sku,
+        detectedAt: row.detected_at,
+        recommendedAction: row.recommended_action,
+        priceRecommendation: jsonRecord(jsonRecord(row.evidence).priceRecommendation),
+        status: "AWAITING_HUMAN_APPROVAL",
+        changeApplied: false,
+        whatsappEnqueued: true,
+      })),
+      definitions: {
+        activeOffer: "Oferta actualmente visible; no demuestra una venta.",
+        estimatedActivity: "Señal estimada de eBay; no equivale a venta confirmada.",
+        confirmedSoldHistory: "Venta histórica confirmada por una captura oficial de Product Research.",
+      },
+      automaticActiveSellerDiscovery: true,
+      productResearchRefreshIsSelective: true,
+      automaticProductResearchImport: false,
+      humanReviewRequired: true,
+      ebayWrites: 0,
+    },
+    supplyActions: (supplyActionEventRows.data ?? []).map((row) => ({
+      id: row.id,
+      eventType: row.event_type,
+      severity: row.severity,
+      listingId: row.listing_id,
+      sku: row.sku,
+      detectedAt: row.detected_at,
+      recommendedAction: row.recommended_action,
+      evidence: row.evidence,
+      status: "AWAITING_HUMAN_APPROVAL",
+      changeApplied: false,
+      humanConfirmationRequired: true,
+    })),
+    optimizationTasks: (optimizationEventRows.data ?? []).map((row) => ({
+      id: row.id,
+      eventType: row.event_type,
+      severity: row.severity,
+      listingId: row.listing_id,
+      sku: row.sku,
+      detectedAt: row.detected_at,
+      recommendedAction: row.recommended_action,
+      evidence: row.evidence,
+      status: "AWAITING_HUMAN_APPROVAL",
+      changeApplied: false,
+      whatsappEnqueued: false,
+    })),
     latestRun: latestRun.data ?? null,
     lastDryRun,
     lastPersistentRun: persistentRun ?? null,
@@ -2164,7 +3341,7 @@ export async function getEbayCommercialMonitorDashboard(
       flags: divergenceOpen ? [ANALYTICS_SOURCE_DIVERGENCE] : [],
       analyticsRulesSuspended: divergenceOpen,
       analyticsRulesSuspendedListingIds: openDivergences.map((row) => row.listing_id),
-      continuingLanes: ["orders", "watchers", "stock", "fulfillment", "whatsapp"],
+      continuingLanes: ["orders", "messages", "watchers", "competitors", "stock", "fulfillment", "whatsapp"],
     },
     analyticsSourceDivergence: divergence ? {
       classification: divergence.classification,
@@ -2174,9 +3351,15 @@ export async function getEbayCommercialMonitorDashboard(
       sku: divergence.sku,
       manualSource: manualEvidence ? {
         source: manualEvidence.source,
+        entityScope: manualEvidence.entity_scope,
         impressionsMetric: manualEvidence.impressions_metric,
         viewsMetric: manualEvidence.views_metric,
         transactionsMetric: manualEvidence.transactions_metric,
+        ctrMetric: manualEvidence.ctr_metric,
+        ctrUnit: manualEvidence.ctr_unit,
+        windowStart: manualEvidence.window_start,
+        windowEnd: manualEvidence.window_end,
+        timeZone: manualEvidence.time_zone,
         observedOn: manualEvidence.observed_on,
         metrics: {
           impressions: numeric(manualEvidence.impressions),
@@ -2191,6 +3374,9 @@ export async function getEbayCommercialMonitorDashboard(
         viewsMetric: "LISTING_VIEWS_TOTAL",
         transactionsMetric: "TRANSACTION",
         ctrMetric: "CLICK_THROUGH_RATE",
+        ctrUnit: "PERCENT",
+        entityScope: "LISTING",
+        timeZone: "UTC",
         observedAt: divergence.last_checked_at,
         windowStart: divergence.official_window_start,
         windowEnd: divergence.official_window_end,
@@ -2202,12 +3388,13 @@ export async function getEbayCommercialMonitorDashboard(
       nextCheckAt: divergence.next_check_at,
       resolvedAt: divergence.resolved_at,
       resolutionCode: divergence.resolution_code,
+      comparison: divergence.comparison_details,
       manualEvidenceUsedAsApiMetric: false,
     } : null,
     listingIdentity: identity ? {
       listingId: identity.listing_id,
       expectedSku: identity.expected_sku,
-      supplierSku: PILOT_SUPPLIER_SKU,
+      supplierSku: null,
       observedListingId: identity.observed_listing_id,
       observedSku: identity.observed_sku,
       observedListingStatus: identity.observed_listing_status,
@@ -2219,18 +3406,22 @@ export async function getEbayCommercialMonitorDashboard(
       observedAt: identity.observed_at,
       salesProcessingBlocked: identity.active_listing_confirmed !== true,
     } : {
-      listingId: PILOT_LISTING_ID,
-      supplierSku: PILOT_SUPPLIER_SKU,
+      listingId: null,
+      supplierSku: null,
       activeListingConfirmed: false,
       salesProcessingBlocked: true,
       error: "COMMERCIAL_LISTING_IDENTITY_NOT_VERIFIED",
     },
     fulfillmentTasks: tasks,
-    nextAutomaticRunAt: [
-      nextRunAt(readerLast.get("orders") ?? null, schedule.orderIntervalMinutes),
-      nextRunAt(readerLast.get("analytics") ?? null, schedule.analyticsIntervalMinutes),
-      nextRunAt(readerLast.get("watchers") ?? null, schedule.watchersIntervalMinutes),
-    ].sort()[0],
+    nextAutomaticRunAt: schedule.enabled && schedulerAuthorizationActive
+      ? [
+          nextRunAt(readerLast.get("orders") ?? null, schedule.orderIntervalMinutes),
+          nextRunAt(readerLast.get("messages") ?? null, schedule.messageIntervalMinutes),
+          nextRunAt(readerLast.get("analytics") ?? null, schedule.analyticsIntervalMinutes),
+          nextRunAt(readerLast.get("watchers") ?? null, schedule.watchersIntervalMinutes),
+          nextRunAt(readerLast.get("competitors") ?? null, schedule.competitorsIntervalMinutes),
+        ].sort()[0]
+      : null,
     safety: {
       ebayReadOnly: true,
       productionAutomaticMonitorEnabled: false,
