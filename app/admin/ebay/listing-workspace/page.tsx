@@ -416,7 +416,17 @@ function percent(value: number | null) {
   return value === null ? "Pendiente" : `${value.toFixed(1)}%`
 }
 
+function parseRequiredItemSpecificBlocker(code: string) {
+  const prefix = "ITEM_SPECIFIC_REQUIRED:"
+  if (!code.startsWith(prefix)) return ""
+  return code.slice(prefix.length).trim()
+}
+
 function humanWorkspaceBlocker(code: string, minimumProfitablePrice?: number | null) {
+  const requiredItemSpecific = parseRequiredItemSpecificBlocker(code)
+  if (requiredItemSpecific) {
+    return `Completa el Item Specific obligatorio "${requiredItemSpecific}" antes de continuar con este paso.`
+  }
   const labels: Record<string, string> = {
     MINIMUM_NET_MARGIN_NOT_MET: minimumProfitablePrice
       ? `El precio no alcanza el margen mínimo. Prueba al menos ${money(minimumProfitablePrice)} y vuelve a guardar.`
@@ -710,6 +720,10 @@ function humanFinalPublicationError(error: unknown) {
   ]
   return messages.find(([candidate]) => code.includes(candidate))?.[1]
     ?? getMobileReviewRequestError(error, "No se pudo completar la publicación autorizada.")
+}
+
+function distinctValues(values: string[]) {
+  return Array.from(new Set(values))
 }
 
 function fromPackage(value: Record<string, unknown>): FormState {
@@ -1255,6 +1269,7 @@ function ListingWorkspacePageContent() {
   const [activeRevisionConfirmation, setActiveRevisionConfirmation] = useState("")
   const [activeRevisionApplication, setActiveRevisionApplication] = useState<Record<string, unknown> | null>(null)
   const [activeRevisionBusy, setActiveRevisionBusy] = useState(false)
+  const itemSpecificsSectionRef = useRef<HTMLElement | null>(null)
   const activeRevisionIdempotency = useRef<{ scope: string; key: string } | null>(null)
   const [activeTitleRevision, setActiveTitleRevision] = useState<Record<string, unknown> | null>(null)
   const [activeTitleConfirmation, setActiveTitleConfirmation] = useState("")
@@ -3615,17 +3630,44 @@ function ListingWorkspacePageContent() {
       const blockers = (
         requestError as Error & { blockers?: string[] }
       ).blockers ?? []
+      const missingItemSpecificAspects = blockers
+        .map(parseRequiredItemSpecificBlocker)
+        .filter(Boolean)
+      if (missingItemSpecificAspects.length) {
+        const uniqueMissingAspects = distinctValues(
+          missingItemSpecificAspects.map((name) => name),
+        )
+        setForm((current) => {
+          const nextAspects = { ...current.aspects }
+          for (const name of uniqueMissingAspects) {
+            if (!String(nextAspects[name] ?? "").trim()) {
+              nextAspects[name] = ""
+            }
+          }
+          return {
+            ...current,
+            aspects: nextAspects,
+          }
+        })
+        setMessage(
+          `Faltan Item Specifics obligatorios: ${uniqueMissingAspects.join(", ")}.`
+        )
+        itemSpecificsSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        })
+      }
+      const blockerMessages = distinctValues(blockers
+        .map((blocker) => humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice))
+      )
       setError(
         blockers.length
-          ? `${humanFinalPublicationError(requestError)} ${blockers
-            .map((blocker) => humanWorkspaceBlocker(
-              blocker,
-              form.pricing.minimumProfitablePrice,
-            ))
-            .join(" ")}`
+          ? `${humanFinalPublicationError(requestError)} ${blockerMessages.join(" ")}`
           : humanFinalPublicationError(requestError),
       )
-      setMessage("")
+      if (!missingItemSpecificAspects.length) {
+        setMessage("")
+      }
     } finally {
       setDraftBusy(false)
     }
@@ -4192,7 +4234,7 @@ function ListingWorkspacePageContent() {
             </>}
           </section>
 
-          <section className="rounded-3xl border border-violet-200/20 bg-violet-200/[0.05] p-4">
+          <section ref={itemSpecificsSectionRef} className="rounded-3xl border border-violet-200/20 bg-violet-200/[0.05] p-4">
             <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-black">Item specifics</h2><p className="mt-1 text-xs leading-5 text-white/50">eBay Taxonomy define los nombres y opciones; tú confirmas los valores reales del producto Luna.</p></div><span className="rounded-full border border-violet-200/20 px-2 py-1 text-[10px] font-black">{String(finalReviewTaxonomy.status ?? finalListingReview?.taxonomy?.status ?? draftState.taxonomy?.status ?? "SIN CONSULTAR")}</span></div>
             {!finalReviewCompleted && <button type="button" disabled={draftBusy || !/^\d{1,12}$/.test(form.categoryId)} onClick={() => void validateDraft()} className="mt-3 min-h-11 w-full rounded-xl border border-violet-200/30 px-3 text-sm font-black text-violet-50 disabled:opacity-40">Cargar requisitos oficiales del Category ID</button>}
             <div className="mt-3 space-y-2">{Object.entries(form.aspects).map(([name, value]) => {
