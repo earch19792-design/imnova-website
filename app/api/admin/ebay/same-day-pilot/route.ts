@@ -10,6 +10,8 @@ import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-a
 import { evaluateEbayProductApprovalFulfillmentBasis } from "@/lib/ebay/ebay-fulfillment-policy-compliance"
 import { getProductResearchQueryPlanStatus } from "@/lib/ebay/ebay-product-research-query-plan"
 import { isValidSameDayLunaConfirmation } from "@/lib/ebay/ebay-same-day-pilot-domain"
+import { evaluateSameDayContinuityRescue } from
+  "@/lib/ebay/ebay-same-day-continuity-rescue"
 import {
   authorizeSameDayControlledRiskOverride,
   confirmSameDayLuna,
@@ -19,6 +21,7 @@ import {
   getSameDayPilot,
   processSameDayPilotJobChain,
   resumeSameDayPilotAfterAccountPolicyProfile,
+  runSameDayPilotContinuityRescue,
   startSameDayPilot,
 } from "@/lib/ebay/ebay-same-day-pilot-service"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
@@ -262,6 +265,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ success: true, pilot: pilot ? {
       ...pilot, productResearchGuidance, imageReviewAssets,
       imageFactoryConfiguration,
+      continuityRescue: evaluateSameDayContinuityRescue(pilot),
     } : null,
       safety: { fullCatalogRescan: false, ebayWrites: 0, productionChanged: false } })
   } catch (error) {
@@ -274,6 +278,42 @@ export async function POST(req: Request) {
   if ("response" in access) return access.response
   try {
     const body = object(await req.json())
+    if (body.action === "continuity_rescue") {
+      if (body.confirmed !== true) {
+        return NextResponse.json({
+          success: false,
+          error: "SAME_DAY_CONTINUITY_RESCUE_CONFIRMATION_REQUIRED",
+        }, { status: 400 })
+      }
+      const rescue = await runSameDayPilotContinuityRescue({
+        supabase: access.supabase,
+        accountKey: access.accountKey,
+        actorId: access.auth.userId,
+      })
+      const pilot = await getSameDayPilot({
+        supabase: access.supabase,
+        accountKey: access.accountKey,
+      })
+      return NextResponse.json({
+        success: true,
+        rescue,
+        pilot: pilot ? {
+          ...pilot,
+          continuityRescue: evaluateSameDayContinuityRescue(pilot),
+        } : null,
+        safety: {
+          existingStateMachineOnly: true,
+          checkpointPreserved: true,
+          statesSkipped: false,
+          evidenceFabricated: false,
+          humanApprovalGranted: false,
+          directEbayWrite: false,
+          ebayWrites: 0,
+          productionChanged: false,
+          finalHumanAuthorizationRequired: true,
+        },
+      })
+    }
     if (body.action === "resume") {
       const pilot = await getSameDayPilot({
         supabase: access.supabase,

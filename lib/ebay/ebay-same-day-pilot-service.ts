@@ -18,6 +18,10 @@ import {
   selectSameDayQueue,
   type SameDayCandidateInput,
 } from "./ebay-same-day-pilot-domain"
+import {
+  evaluateSameDayContinuityRescue,
+  SAME_DAY_CONTINUITY_RESCUE_VERSION,
+} from "./ebay-same-day-continuity-rescue"
 import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics } from "./ebay-unit-economics"
 import {
   controlledRiskEconomicsConfig,
@@ -8310,5 +8314,121 @@ export async function processSameDayPilotJobChain(input: {
     })),
     schedulerFallback: true,
     recursiveHttp: false,
+  }
+}
+
+export async function runSameDayPilotContinuityRescue(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  actorId: string
+  now?: Date
+}) {
+  const now = input.now ?? new Date()
+  const requestId = randomUUID()
+  const before = await getSameDayPilot({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    now,
+  })
+  const assessmentBefore = evaluateSameDayContinuityRescue(before)
+  if (!before?.run?.id) {
+    return {
+      requestId,
+      actionTaken: "NO_ACTIVE_RUN",
+      assessmentBefore,
+      assessmentAfter: assessmentBefore,
+      execution: null,
+    }
+  }
+
+  const execution = assessmentBefore.canRunAutomaticRescue
+    ? await processSameDayPilotJobChain({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        workerId: `continuity-rescue:${input.actorId}:${requestId}`,
+        now,
+        maximumJobs: 30,
+        maximumDurationMs: 240_000,
+      })
+    : null
+  const after = await getSameDayPilot({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+  })
+  const assessmentAfter = evaluateSameDayContinuityRescue(after)
+  const actionTaken = execution
+    ? "EXISTING_ENGINE_RESUMED"
+    : "STOPPED_AT_SAFETY_GATE"
+  const beforeFingerprint = hash({
+    runId: assessmentBefore.runId,
+    candidateId: assessmentBefore.candidateId,
+    machineState: assessmentBefore.machineState,
+    mode: assessmentBefore.mode,
+    runUpdatedAt: before.run.updated_at,
+  })
+  const afterFingerprint = hash({
+    runId: assessmentAfter.runId,
+    candidateId: assessmentAfter.candidateId,
+    machineState: assessmentAfter.machineState,
+    mode: assessmentAfter.mode,
+    runUpdatedAt: after?.run?.updated_at ?? null,
+  })
+  const { error: eventError } = await input.supabase
+    .from("ebay_same_day_pilot_events")
+    .insert({
+      run_id: before.run.id,
+      candidate_id: assessmentBefore.candidateId,
+      event_type: "SAME_DAY_CONTINUITY_RESCUE_EXECUTED",
+      event_payload: {
+        version: SAME_DAY_CONTINUITY_RESCUE_VERSION,
+        requestId,
+        actorId: input.actorId,
+        actionTaken,
+        beforeFingerprint,
+        afterFingerprint,
+        before: {
+          mode: assessmentBefore.mode,
+          machineState: assessmentBefore.machineState,
+          reasonCode: assessmentBefore.reasonCode,
+        },
+        after: {
+          mode: assessmentAfter.mode,
+          machineState: assessmentAfter.machineState,
+          reasonCode: assessmentAfter.reasonCode,
+        },
+        execution: execution
+          ? {
+              processed: execution.processed,
+              stoppedReason: execution.stoppedReason,
+              executions: execution.executions,
+            }
+          : null,
+        safety: {
+          existingStateMachineOnly: true,
+          checkpointPreserved: true,
+          statesSkipped: false,
+          evidenceFabricated: false,
+          humanApprovalGranted: false,
+          directEbayWrite: false,
+          finalHumanAuthorizationRequired: true,
+        },
+      },
+      idempotency_key:
+        `${before.run.id}:${SAME_DAY_CONTINUITY_RESCUE_VERSION}:${requestId}`,
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    })
+  if (eventError) {
+    throw new Error("SAME_DAY_CONTINUITY_RESCUE_AUDIT_PERSIST_FAILED")
+  }
+
+  return {
+    requestId,
+    actionTaken,
+    assessmentBefore,
+    assessmentAfter,
+    execution,
   }
 }

@@ -26,6 +26,8 @@ function pilotErrorMessage(value: unknown) {
       "Confirma el valor exacto visible y marca la fuente oficial antes de continuar.",
     SAME_DAY_PILOT_FACT_EXCEPTION_SCHEMA_INVALID:
       "La tarea quedó desactualizada. Seller OS la regenerará desde la evidencia vigente.",
+    SAME_DAY_CONTINUITY_RESCUE_CONFIRMATION_REQUIRED:
+      "Confirma expresamente el auxilio seguro para reanudar desde el último checkpoint.",
   }
   return messages[code] ?? (/^[A-Z0-9_]+$/.test(code)
     ? "Seller OS no pudo aceptar esa confirmación. Revisa el dato visible e inténtalo nuevamente."
@@ -168,8 +170,12 @@ export function TodayLaunchPanel() {
     {pilot && <>
       <LivePilotMonitor monitor={liveMonitor} pilotProgress={pilotProgress}
         lastObservedAt={lastObservedAt} nextCycleAllowed={nextCycleAllowed}
+        continuityRescue={pilot.continuityRescue ?? {}}
         recoveryWorking={working}
-        onRecover={() => request({ action: "resume" })} />
+        onRecover={() => request({
+          action: "continuity_rescue",
+          confirmed: true,
+        })} />
       {liveMonitor.rejectionSummaries.length > 0 && <RejectedCandidateExplanations
         summaries={liveMonitor.rejectionSummaries} working={working}
         onAuthorize={(body) => request(body)} />}
@@ -471,11 +477,12 @@ function JourneyPhaseVisual({
 }
 
 function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
-  nextCycleAllowed, recoveryWorking, onRecover }: {
+  nextCycleAllowed, continuityRescue, recoveryWorking, onRecover }: {
   monitor: SameDayLiveMonitor
   pilotProgress: number
   lastObservedAt: string | null
   nextCycleAllowed: boolean
+  continuityRescue: Row
   recoveryWorking: boolean
   onRecover: () => Promise<void>
 }) {
@@ -493,6 +500,20 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
       hour: "2-digit", minute: "2-digit", second: "2-digit",
     })
     : "pendiente"
+  const rescueMode = String(continuityRescue.mode ?? "")
+  const rescueAvailable =
+    continuityRescue.canRunAutomaticRescue === true
+  const rescueStatus = rescueMode === "SAFE_AUTOMATIC_RESUME"
+    ? "LISTO PARA REANUDAR"
+    : rescueMode === "WAITING_HUMAN_GATE"
+      ? "ESPERANDO DECISIÓN HUMANA"
+      : rescueMode === "FINAL_AUTHORIZATION_REQUIRED"
+        ? "AUTORIZACIÓN FINAL REQUERIDA"
+        : rescueMode === "PUBLICATION_RECONCILIATION_REQUIRED"
+          ? "RECONCILIACIÓN DE PUBLICACIÓN"
+          : rescueMode === "TERMINAL"
+            ? "OBJETIVO RESUELTO"
+            : "DETENIDO CON SEGURIDAD"
   return <section aria-labelledby="system-working-heading"
     className="relative isolate mt-5 overflow-hidden rounded-3xl border border-cyan-200/20 bg-[#07141a] p-4 shadow-[0_24px_90px_rgba(34,211,238,0.08)] sm:p-5">
     <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 opacity-60 [background-image:linear-gradient(rgba(34,211,238,0.055)_1px,transparent_1px),linear-gradient(90deg,rgba(34,211,238,0.055)_1px,transparent_1px)] [background-size:28px_28px]" />
@@ -529,12 +550,39 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
             className="mt-3 rounded-2xl border border-amber-200/35 bg-amber-200/[0.08] p-3">
             <p className="text-sm font-black text-amber-50">Esta fase no está avanzando</p>
             <p className="mt-1 text-xs leading-5 text-amber-50/75">{monitor.recovery.message} El costo, las decisiones y la evidencia válida ya guardada se conservarán; solo se pedirá el dato que realmente falte.</p>
-            <button type="button" disabled={recoveryWorking}
-              onClick={() => void onRecover()}
-              className="mt-3 min-h-11 rounded-xl bg-amber-200 px-4 text-sm font-black text-black disabled:opacity-50">
-              {recoveryWorking ? "REANUDANDO…" : "REANUDAR AHORA"}
-            </button>
           </div>}
+          <div className="mt-3 rounded-2xl border border-violet-200/25 bg-violet-200/[0.06] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-100/60">
+                  Auxilio operativo sin Codex
+                </p>
+                <p className="mt-1 text-sm font-black text-violet-50">
+                  {rescueStatus}
+                </p>
+              </div>
+              <span className="rounded-full border border-violet-100/20 px-2.5 py-1 text-[10px] font-black text-violet-100">
+                MISMA LÓGICA · CHECKPOINTS INTACTOS
+              </span>
+            </div>
+            <p className="mt-2 text-xs leading-5 text-white/65">
+              {String(continuityRescue.nextAction ??
+                "El diagnóstico seguro estará disponible cuando exista un lanzamiento.")}
+            </p>
+            <p className="mt-2 text-[11px] leading-5 text-white/45">
+              Nunca salta estados, inventa evidencia, aprueba imágenes o autoriza la publicación. Si el flujo llega al preflight final, se detiene para tu autorización.
+            </p>
+            <button type="button"
+              disabled={recoveryWorking || !rescueAvailable}
+              onClick={() => void onRecover()}
+              className="mt-3 min-h-11 w-full rounded-xl bg-violet-200 px-4 text-sm font-black text-black disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto">
+              {recoveryWorking
+                ? "EJECUTANDO AUXILIO…"
+                : rescueAvailable
+                  ? "ACTIVAR AUXILIO SEGURO"
+                  : "AUXILIO DETENIDO EN COMPUERTA"}
+            </button>
+          </div>
         </div>
       </div>
       <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2">
