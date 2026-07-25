@@ -10,6 +10,13 @@ export type SameDayPilotAccountScopeResolution = {
   scopeResolutionReason: string | null
 }
 
+function isRuntimeAccountScopeRescueEnabled() {
+  const override = process.env.EBAY_SAME_DAY_PILOT_SCOPE_RECOVERY?.trim().toLowerCase()
+  if (override === "disabled") return false
+  if (override === "enabled") return true
+  return process.env.VERCEL_ENV === "preview" || process.env.NODE_ENV === "development"
+}
+
 export async function resolveSameDayPilotAccountScope(): Promise<SameDayPilotAccountScopeResolution> {
   const scope = getEbaySellerAccountScopeConfiguration()
 
@@ -31,9 +38,9 @@ export async function resolveSameDayPilotAccountScope(): Promise<SameDayPilotAcc
     }
   }
 
-  // Safety policy: if an expected fingerprint was configured but failed to match,
-  // avoid silently overriding it.
-  if (scope.identity.expectedAccountFingerprint) {
+  // Safety policy: only fallback to runtime identity when explicitly
+  // enabled for this environment. This is a Same-Day emergency lane.
+  if (!isRuntimeAccountScopeRescueEnabled() && scope.identity.expectedAccountFingerprint) {
     return {
       accountKey: null,
       source: "UNRESOLVED",
@@ -52,23 +59,29 @@ export async function resolveSameDayPilotAccountScope(): Promise<SameDayPilotAcc
   }
 
   // Recovery path: derive runtime user fingerprint from read-only identity only
-  // when no expected fingerprint is configured.
+  // when fingerprint recovery mode is enabled.
   try {
-    const probe = await probeEbayProductionIdentityReadOnly()
+    const probe = await probeEbayProductionIdentityReadOnly(undefined, {
+      allowConfiguredFingerprintMismatch: true,
+    })
+    const probeReason = reasonFromProbe(probe)
     if (probe.configuredFingerprintPresent) {
-      return {
-        accountKey: null,
-        source: "UNRESOLVED",
-        fallbackAttempted: true,
-        scopeResolutionReason: scope.reason,
-      }
+      console.warn(
+        "SAME_DAY_PILOT_SCOPE_RESCUE_RUNTIME_FALLBACK",
+        JSON.stringify({
+          accountAlias: scope.accountAlias,
+          recoveryReason: probeReason,
+          fallbackFingerprintSource: probe.identityBindingStatus,
+          fallbackAttempted: true,
+        }),
+      )
     }
     if (HEX_FINGERPRINT.test(probe.fingerprint ?? "")) {
       return {
         accountKey: `${scope.accountAlias}:${probe.fingerprint}`,
         source: "RUNTIME_FALLBACK",
         fallbackAttempted: true,
-        scopeResolutionReason: scope.reason,
+        scopeResolutionReason: scope.reason ?? probeReason,
       }
     }
   } catch {
@@ -81,4 +94,10 @@ export async function resolveSameDayPilotAccountScope(): Promise<SameDayPilotAcc
     fallbackAttempted: true,
     scopeResolutionReason: scope.reason,
   }
+}
+
+function reasonFromProbe(probe: { configuredFingerprintMatches?: boolean }) {
+  return probe.configuredFingerprintMatches === true
+    ? "ACCOUNT_SCOPE_MATCHED_RUNTIME_FINGERPRINT"
+    : "ACCOUNT_SCOPE_RUNTIME_FINGERPRINT_DERIVED"
 }
