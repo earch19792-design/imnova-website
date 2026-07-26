@@ -426,8 +426,6 @@ async function persistCompetitorAlert(input: {
   const priceRecommendation = input.analysis.priceRecommendation
   const activeMarketPriceRecommendation =
     input.analysis.activeMarketPriceRecommendation
-  const anyPriceRecommendation = priceRecommendation ??
-    activeMarketPriceRecommendation
   const marketPricePositionDetected = input.analysis.suggestionCodes.includes(
     "REVIEW_MARKET_PRICE_POSITION",
   )
@@ -461,28 +459,10 @@ async function persistCompetitorAlert(input: {
         : `Promoción recomendada 0%. ${priceRecommendation.promotionRecommendation.reason} `) +
       "Requiere revisión humana; no se modificó eBay."
     : activeMarketPriceRecommendation
-      ? [
-          "LOWER_TO_ACTIVE_MARKET_SAFE_PRICE",
-          "LOWER_TO_ACTIVE_MARKET_CONTROLLED_RISK_PRICE",
-        ].includes(activeMarketPriceRecommendation.action)
-        ? `Evaluar bajar a $${activeMarketPriceRecommendation.proposedItemPrice.toFixed(2)}. ` +
-          `Mediana activa $${activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2)}; ` +
-          `piso seguro $${activeMarketPriceRecommendation.minimumSafeLandedPrice.toFixed(2)} ` +
-          `(${activeMarketPriceRecommendation.controlledRiskTenPercent
-            ? "margen controlado mínimo 10%; promoción bloqueada"
-            : activeMarketPriceRecommendation.promotionReserveIncluded
-            ? "incluye reserva publicitaria 5%"
-            : "promoción bloqueada"}). La oferta activa no es una venta confirmada. ` +
-          "Requiere autorización humana; no se modificó eBay."
-        : activeMarketPriceRecommendation.action === "RAISE_TO_SAFE_FLOOR"
-          ? `Subir al piso seguro $${activeMarketPriceRecommendation.proposedItemPrice.toFixed(2)}; ` +
-            `el precio actual no pasa la economía. Mediana activa ` +
-            `$${activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2)}. ` +
-            "Requiere autorización humana; no se modificó eBay."
-          : `Mantener $${activeMarketPriceRecommendation.currentItemPrice.toFixed(2)}: ` +
-            `ya está en el piso seguro $${activeMarketPriceRecommendation.minimumSafeLandedPrice.toFixed(2)}. ` +
-            `La mediana activa $${activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2)} ` +
-            "queda debajo del piso; no igualar ni ejecutar una escritura innecesaria."
+      ? `MANTENER PRECIO $${activeMarketPriceRecommendation.currentItemPrice.toFixed(2)}. ` +
+        `La mediana activa de $${activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2)} ` +
+        "es contexto de oferta, no evidencia de venta. Sin ventas confirmadas: promoción 0%, " +
+        "observar mercado y actualizar Product Research."
     : marketPricePositionDetected && ownLandedPrice !== null &&
         input.analysis.medianLandedPrice !== null
       ? `Revisar posición de precio: tu total es $${ownLandedPrice.toFixed(2)} y la ` +
@@ -503,14 +483,29 @@ async function persistCompetitorAlert(input: {
     medianLandedPrice: input.analysis.medianLandedPrice,
     suggestionCodes: input.analysis.suggestionCodes,
     researchRefreshRecommended: input.analysis.researchRefreshRecommended,
-    priceRecommendation: anyPriceRecommendation,
+    priceRecommendation,
     confirmedSoldPriceRecommendation: priceRecommendation,
     activeMarketPriceRecommendation,
-    promotionRecommendation: priceRecommendation?.promotionRecommendation ?? null,
+    commercialPolicy: priceRecommendation?.commercialPolicy ??
+      activeMarketPriceRecommendation?.commercialPolicy ?? null,
+    capability: priceRecommendation?.capability ??
+      activeMarketPriceRecommendation?.capability ?? "blocked",
+    blockerCodes: priceRecommendation?.blockerCodes ??
+      activeMarketPriceRecommendation?.blockerCodes ??
+      ["CONFIRMED_SOLD_EVIDENCE_REQUIRED"],
+    policyVersion: priceRecommendation?.policyVersion ??
+      activeMarketPriceRecommendation?.policyVersion ?? null,
+    evidenceExpiresAt: priceRecommendation?.evidenceExpiresAt ??
+      activeMarketPriceRecommendation?.evidenceExpiresAt ?? null,
+    promotionRecommendation: priceRecommendation?.promotionRecommendation ??
+      activeMarketPriceRecommendation?.promotionRecommendation ?? null,
     ownLandedPrice,
     confirmedSoldPriceRecommendationReady: priceRecommendation !== null,
-    activeMarketPriceRecommendationReady:
-      activeMarketPriceRecommendation !== null,
+    activeMarketPriceRecommendationReady: false,
+    activeMarketObservationReady: activeMarketPriceRecommendation !== null,
+    priceChangeEligible: priceRecommendation?.priceChangeEligible ?? false,
+    promotionEligible: priceRecommendation?.promotionEligible ?? false,
+    observationOnly: activeMarketPriceRecommendation !== null,
     confirmedSoldPriceUsed: priceRecommendation !== null,
     currentActiveOfferPriceUsedAsSoldPrice: false,
     activeOfferIsNotConfirmedSale: true,
@@ -523,7 +518,7 @@ async function persistCompetitorAlert(input: {
     title: priceRecommendation
       ? "Recomendación de precio · competidor con venta confirmada"
       : activeMarketPriceRecommendation
-        ? "Precio seguro · competencia activa detectada"
+        ? "Observar mercado · sin ventas confirmadas"
       : marketPricePositionDetected
         ? "Acción de precio · competencia activa detectada"
       : input.analysis.researchRefreshRecommended
@@ -542,10 +537,8 @@ async function persistCompetitorAlert(input: {
         ? `Listing ${input.listing.listingId} · SKU ${input.listing.sku ?? "pendiente"}. ` +
           `Actual $${activeMarketPriceRecommendation.currentItemPrice.toFixed(2)}; ` +
           `mercado activo $${activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2)}; ` +
-          `piso seguro $${activeMarketPriceRecommendation.minimumSafeLandedPrice.toFixed(2)}. ` +
-          `${activeMarketPriceRecommendation.controlledRiskTenPercent
-            ? "Modo 10% sin promoción. " : ""}` +
-          "Oferta activa, no venta confirmada."
+          `${activeMarketPriceRecommendation.activeSellerCount} vendedor(es). ` +
+          "MANTENER PRECIO; promoción 0%. Oferta activa, no venta confirmada."
       : marketPricePositionDetected && ownLandedPrice !== null &&
           input.analysis.medianLandedPrice !== null
         ? `Listing ${input.listing.listingId} · SKU ${input.listing.sku ?? "pendiente"}. ` +
@@ -569,11 +562,9 @@ async function persistCompetitorAlert(input: {
       marketplace_account_key: input.accountKey,
       marketplace: MARKETPLACE,
       event_type: eventType,
-      severity: (priceRecommendation && priceRecommendation.action !==
-        "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND") ||
-        (activeMarketPriceRecommendation &&
-          activeMarketPriceRecommendation.action !==
-            "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR") ? "high" : "medium",
+      severity: priceRecommendation && priceRecommendation.action !==
+        "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND" ? "high"
+        : activeMarketPriceRecommendation ? "low" : "medium",
       evidence,
       threshold_config_version: EBAY_COMPETITOR_WATCH_VERSION,
       detected_at: input.observedAt,
@@ -601,14 +592,11 @@ async function persistCompetitorAlert(input: {
   if ((eventError && eventError.code !== "23505") || !eventId) {
     throw new Error("COMPETITOR_WATCH_EVENT_WRITE_FAILED")
   }
-  const improvementUrl = sellerImprovementUrl(eventId)
+  const improvementUrl = priceRecommendation ? sellerImprovementUrl(eventId) : null
   const whatsappHeadline = priceRecommendation
     ? "DECISIÓN: revisar precio con ventas confirmadas"
-    : activeMarketPriceRecommendation?.action ===
-        "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"
-      ? "DECISIÓN: mantener precio; protege tu margen"
-      : activeMarketPriceRecommendation
-        ? "DECISIÓN: evaluar precio sin romper margen"
+    : activeMarketPriceRecommendation
+      ? "DECISIÓN: mantener precio; sin ventas confirmadas"
         : marketPricePositionDetected
           ? "DECISIÓN: validar ventas antes de mover precio"
           : input.analysis.researchRefreshRecommended
@@ -621,8 +609,8 @@ async function persistCompetitorAlert(input: {
     : activeMarketPriceRecommendation
       ? `Listing ${input.listing.listingId}: mercado activo ` +
         `$${activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2)}, ` +
-        `tu precio $${activeMarketPriceRecommendation.currentItemPrice.toFixed(2)} y piso seguro ` +
-        `$${activeMarketPriceRecommendation.minimumSafeLandedPrice.toFixed(2)}. No son ventas confirmadas.`
+        `tu precio $${activeMarketPriceRecommendation.currentItemPrice.toFixed(2)}. ` +
+        "No son ventas confirmadas; mantener precio y promoción 0%."
       : marketPricePositionDetected && ownLandedPrice !== null &&
           input.analysis.medianLandedPrice !== null
         ? `Listing ${input.listing.listingId}: tu total $${ownLandedPrice.toFixed(2)} frente a ` +
@@ -635,28 +623,20 @@ async function persistCompetitorAlert(input: {
   const whatsappDecisionAction = improvementUrl
     ? `Abrir: ${improvementUrl}. ${
       priceRecommendation
-        ? "Compara la referencia vendida con tu piso de margen y autoriza sólo si mejora la posición sin destruir rentabilidad."
-        : activeMarketPriceRecommendation?.action ===
-            "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"
-          ? "Mantén el precio: igualar ese mercado rompería el piso seguro."
-          : activeMarketPriceRecommendation
-            ? "Evalúa el ajuste; nunca bajes del piso seguro ni actives promoción."
+            ? "Compara la referencia vendida con tu piso seguro de margen y autoriza sólo si mejora la posición sin destruir rentabilidad."
+        : activeMarketPriceRecommendation
+          ? "Mantén el precio, observa el mercado y actualiza Product Research."
             : "Regla: 0 ventas confirmadas = mantener; con ventas confirmadas = comparar precio total y piso de margen antes de ajustar."
     }`
     : recommendedAction
   const whatsappAction = improvementUrl
-    ? `Abrir acción en Seller OS: ${improvementUrl}. ${anyPriceRecommendation
-        ? activeMarketPriceRecommendation?.action ===
-            "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"
-          ? "Mantener el precio: el mercado activo está debajo del piso seguro."
-          : activeMarketPriceRecommendation?.controlledRiskTenPercent
-            ? "Autorizar o rechazar el precio competitivo; quedará bloqueado para promociones."
-          : "Autorizar o rechazar la propuesta de precio; eBay no cambia sin tu confirmación."
+    ? `Abrir acción en Seller OS: ${improvementUrl}. ${priceRecommendation
+        ? "Revisar la propuesta basada en ventas confirmadas; eBay no cambia sin tu confirmación y el preflight final."
         : marketPricePositionDetected
           ? "Confirmar ventas en Product Research antes de cambiar el precio."
           : input.analysis.researchRefreshRecommended
             ? "Actualizar la captura dirigida de Product Research."
-            : "Revisar y decidir la mejora sugerida."}`
+          : "Revisar la mejora sugerida."}`
     : "Abrir Seller OS y revisar la mejora sugerida; eBay no cambia sin tu confirmación."
   const { error: outboxError } = await input.supabase.from("alert_delivery_outbox").insert({
     marketplace_account_key: input.accountKey,
@@ -664,11 +644,9 @@ async function persistCompetitorAlert(input: {
     commercial_event_id: eventId,
     channel: "whatsapp",
     delivery_class: "digest",
-    severity: (priceRecommendation && priceRecommendation.action !==
-      "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND") ||
-      (activeMarketPriceRecommendation &&
-        activeMarketPriceRecommendation.action !==
-          "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR") ? "high" : "medium",
+      severity: priceRecommendation && priceRecommendation.action !==
+        "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND" ? "high"
+        : activeMarketPriceRecommendation ? "low" : "medium",
     deduplication_key: `whatsapp:${deduplicationKey}`,
     status: "pending",
     payload: {

@@ -4,10 +4,21 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import sharp from "sharp"
 
 import {
-  getEbayTradingReadOnlyAccessToken,
   tradingXmlContainer,
   tradingXmlTagValue,
 } from "./ebay-manual-listing-trading-readonly"
+import {
+  getEbayReadCredential,
+  useEbayReadCredential,
+} from "./ebay-read-credential-provider"
+import {
+  assertEbayProductionCapability,
+  type EbayProductionCapabilityGrant,
+} from "./ebay-production-capability-policy"
+import {
+  getEbayWriteCredential,
+  useEbayWriteCredential,
+} from "./ebay-write-credential-provider"
 import {
   ebayProductionAccountFingerprint,
   getEbayProductionIdentityBindingConfiguration,
@@ -15,6 +26,8 @@ import {
 
 export const ACTIVE_LISTING_IMAGE_REVISION_CONFIRMATION =
   "APLICAR 6 IMAGENES AL LISTING ACTIVO"
+export const ACTIVE_LISTING_IMAGE_REVISION_POLICY_VERSION =
+  "EBAY_ACTIVE_LISTING_IMAGE_REVISION_POLICY_V1" as const
 
 const TRADING_ENDPOINT = "https://api.ebay.com/ws/api.dll"
 const COMPATIBILITY_LEVEL = "1423"
@@ -542,6 +555,7 @@ export async function applyApprovedImageRevisionToActiveListing(input: {
   ebayItemId: string
   idempotencyKey: string
   confirmation: string
+  capabilityGrant: EbayProductionCapabilityGrant<"active_images.apply">
   fetchImpl?: FetchLike
 }) {
   const actorId = uuid(input.actorId)
@@ -555,6 +569,19 @@ export async function applyApprovedImageRevisionToActiveListing(input: {
     !/^[A-Za-z0-9._:-]{8,120}$/.test(idempotencyKey) ||
     input.confirmation !== ACTIVE_LISTING_IMAGE_REVISION_CONFIRMATION
   ) throw new Error("EBAY_ACTIVE_IMAGE_REVISION_CONFIRMATION_INVALID")
+  let capabilityGrant = assertEbayProductionCapability({
+    capability: "active_images.apply",
+    stage: "service",
+    invocation: "interactive",
+    authenticationMode: "admin_user",
+    userId: input.actorId,
+    accountKey: input.accountKey,
+    marketplace: "EBAY_US",
+    resourceKey: input.ebayItemId,
+    idempotencyKey: input.idempotencyKey,
+    policyVersion: ACTIVE_LISTING_IMAGE_REVISION_POLICY_VERSION,
+    confirmedHumanAction: true,
+  }, input.capabilityGrant)
   const fetchImpl = input.fetchImpl ?? fetch
   const idempotencyKeyHash = sha256(idempotencyKey)
   let execution = await rpcRow(
@@ -597,9 +624,16 @@ export async function applyApprovedImageRevisionToActiveListing(input: {
     }
   }
 
-  const accessToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
+  const readCredential = await getEbayReadCredential(
+    "trading.active_listing.preflight",
+    fetchImpl,
+  )
+  const readAccessToken = useEbayReadCredential(
+    readCredential,
+    "trading.active_listing.preflight",
+  )
   const officialBefore = await readOfficialListingSnapshot({
-    accessToken,
+    accessToken: readAccessToken,
     itemId: ebayItemId,
     expectedSku,
     accountKey: input.accountKey,
@@ -648,10 +682,33 @@ export async function applyApprovedImageRevisionToActiveListing(input: {
     throw new Error("EBAY_ACTIVE_IMAGE_REVISION_PICTURE_SOURCE_UNSUPPORTED")
   }
   const useEps = pictureSource === "eps" || defaultEpsSource
-  const writeImageUrls = useEps
-    ? await uploadApprovedImagesToEps({ imageUrls, accessToken, fetchImpl })
-    : imageUrls
   const writePictureSource = useEps ? "EPS" : "Vendor"
+  capabilityGrant = assertEbayProductionCapability({
+    capability: "active_images.apply",
+    stage: "effect",
+    invocation: "interactive",
+    authenticationMode: "admin_user",
+    userId: input.actorId,
+    accountKey: input.accountKey,
+    marketplace: "EBAY_US",
+    resourceKey: ebayItemId,
+    idempotencyKey,
+    policyVersion: ACTIVE_LISTING_IMAGE_REVISION_POLICY_VERSION,
+    proposalHash: text(execution.request_hash, 64),
+    confirmedHumanAction: true,
+    preflightPassed: true,
+    preflightObservedAt: officialBefore.observedAt,
+  }, capabilityGrant)
+  const writeCredential = await getEbayWriteCredential(
+    "active_images.apply",
+    capabilityGrant,
+    fetchImpl,
+  )
+  const writeAccessToken = useEbayWriteCredential(
+    writeCredential,
+    "active_images.apply",
+    input.accountKey,
+  )
 
   const claimToken = randomUUID()
   execution = await rpcRow(
@@ -676,9 +733,16 @@ export async function applyApprovedImageRevisionToActiveListing(input: {
   let writeStatus: number | null = null
   let writeXml = ""
   try {
+    const writeImageUrls = useEps
+      ? await uploadApprovedImagesToEps({
+          imageUrls,
+          accessToken: writeAccessToken,
+          fetchImpl,
+        })
+      : imageUrls
     const write = await tradingCall({
       callName: "ReviseFixedPriceItem",
-      accessToken,
+      accessToken: writeAccessToken,
         body: revisePicturesRequestXml(
           ebayItemId,
           writeImageUrls,
@@ -745,8 +809,15 @@ export async function applyApprovedImageRevisionToActiveListing(input: {
   }
 
   try {
+    const readbackCredential = await getEbayReadCredential(
+      "trading.active_listing.readback",
+      fetchImpl,
+    )
     const officialAfter = await readOfficialListingSnapshot({
-      accessToken,
+      accessToken: useEbayReadCredential(
+        readbackCredential,
+        "trading.active_listing.readback",
+      ),
       itemId: ebayItemId,
       expectedSku,
       accountKey: input.accountKey,

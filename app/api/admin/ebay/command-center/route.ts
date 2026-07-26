@@ -23,9 +23,11 @@ import {
 } from "@/lib/ebay/ebay-capability-registry"
 import {
   ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION,
+  ACTIVE_LISTING_TITLE_REVISION_POLICY_VERSION,
   applyVerifiedTitleToActiveListing,
   prepareVerifiedActiveListingTitle,
 } from "@/lib/ebay/ebay-active-listing-title-revision-service"
+import { assertEbayProductionCapability } from "@/lib/ebay/ebay-production-capability-policy"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
@@ -353,7 +355,7 @@ export async function GET(req: Request) {
     { success: false, error: validation.error ?? "admin_forbidden" },
     { status: validation.status || 403 },
   )
-  if (!validation.userId) return NextResponse.json(
+  if (!validation.userId || validation.authenticationMode !== "admin_user") return NextResponse.json(
     { success: false, error: "COMMAND_CENTER_REVIEWER_REQUIRED" },
     { status: 403 },
   )
@@ -415,7 +417,7 @@ export async function POST(req: Request) {
     { success: false, error: validation.error ?? "admin_forbidden" },
     { status: validation.status || 403 },
   )
-  if (!validation.userId) return NextResponse.json(
+  if (!validation.userId || validation.authenticationMode !== "admin_user") return NextResponse.json(
     { success: false, error: "COMMAND_CENTER_REVIEWER_REQUIRED" },
     { status: 403 },
   )
@@ -532,8 +534,22 @@ export async function POST(req: Request) {
             error: "EBAY_ACTIVE_TITLE_REVISION_CONFIRMATION_INVALID" },
           { status: 400 })
         }
+        const capabilityGrant = assertEbayProductionCapability({
+          capability: "active_title.apply",
+          stage: "route",
+          invocation: "interactive",
+          authenticationMode: validation.authenticationMode,
+          userId: reviewer,
+          accountKey,
+          marketplace: "EBAY_US",
+          resourceKey: ebayItemId,
+          idempotencyKey,
+          policyVersion: ACTIVE_LISTING_TITLE_REVISION_POLICY_VERSION,
+          confirmedHumanAction: true,
+        })
         const revision = await applyVerifiedTitleToActiveListing({ ...common,
-          confirmation: ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION })
+          confirmation: ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION,
+          capabilityGrant })
         const success = revision.phase === "applied_verified"
         return NextResponse.json({ success, revision, safety: {
           permittedMutation: "TITLE_ONLY", maxEbayWrites: 1,

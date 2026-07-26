@@ -36,8 +36,10 @@ import {
 } from "@/lib/ebay/ebay-same-day-image-revision-runtime"
 import {
   ACTIVE_LISTING_IMAGE_REVISION_CONFIRMATION,
+  ACTIVE_LISTING_IMAGE_REVISION_POLICY_VERSION,
   applyApprovedImageRevisionToActiveListing,
 } from "@/lib/ebay/ebay-active-listing-image-revision-service"
+import { assertEbayProductionCapability } from "@/lib/ebay/ebay-production-capability-policy"
 import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
@@ -412,7 +414,8 @@ async function approvedGenerationForPackage(
 
 export async function GET(req: Request) {
   const validation = await validateAdminApiRequest(req)
-  if (!validation.ok || !validation.userId) {
+  if (!validation.ok || !validation.userId ||
+    validation.authenticationMode !== "admin_user") {
     return NextResponse.json(
       { success: false, error: validation.error ?? "admin_forbidden" },
       { status: validation.status || 403 },
@@ -921,7 +924,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const validation = await validateAdminApiRequest(req)
-  if (!validation.ok || !validation.userId) {
+  if (!validation.ok || !validation.userId ||
+    validation.authenticationMode !== "admin_user") {
     return NextResponse.json(
       { success: false, error: validation.error ?? "admin_forbidden" },
       { status: validation.status || 403 },
@@ -1413,6 +1417,19 @@ export async function POST(req: Request) {
             { status: 400 },
           )
         }
+        const capabilityGrant = assertEbayProductionCapability({
+          capability: "active_images.apply",
+          stage: "route",
+          invocation: "interactive",
+          authenticationMode: validation.authenticationMode,
+          userId: actor,
+          accountKey,
+          marketplace: "EBAY_US",
+          resourceKey: ebayItemId,
+          idempotencyKey,
+          policyVersion: ACTIVE_LISTING_IMAGE_REVISION_POLICY_VERSION,
+          confirmedHumanAction: true,
+        })
         const application = await applyApprovedImageRevisionToActiveListing({
           supabase,
           accountKey,
@@ -1422,6 +1439,7 @@ export async function POST(req: Request) {
           ebayItemId,
           idempotencyKey,
           confirmation,
+          capabilityGrant,
         })
         const success = application.phase === "applied_verified"
         return NextResponse.json({

@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto"
 
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { evaluateEbayActiveListingCommercialPolicy } from "../ebay/ebay-active-listing-commercial-policy.ts"
+
 export const POST_PUBLICATION_OPTIMIZATION_RULESET_VERSION =
   "SELLER_OS_POST_PUBLICATION_DIAGNOSTICS_V1"
 export const POST_PUBLICATION_PROMOTION_POLICY_VERSION =
@@ -188,6 +191,8 @@ export type PostPublicationDiagnostic = {
     headroomPercent: number | null
     automaticExecutionAllowed: false
     humanApprovalRequired: true
+    blockerCodes?: string[]
+    commercialPolicy?: ReturnType<typeof evaluateEbayActiveListingCommercialPolicy>
   }
   evidence: Record<string, unknown>
   safety: {
@@ -273,6 +278,27 @@ export function evaluateSafePromotionRate(input: {
       policy,
     )
   }
+  if (
+    eligibility.salesClassification !== "SOLD_CONFIRMED" ||
+    !Number.isFinite(eligibility.confirmedUnitsSold) ||
+    eligibility.confirmedUnitsSold < 1
+  ) {
+    const commercialPolicy = evaluateEbayActiveListingCommercialPolicy({
+      evidenceClass: eligibility.salesClassification === "ACTIVE_ONLY"
+        ? "ACTIVE_ONLY"
+        : eligibility.salesClassification === "SOLD_ESTIMATED"
+          ? "ESTIMATED_ACTIVITY"
+          : "NO_COMPARABLE_EVIDENCE",
+      confirmedSoldQuantity: eligibility.confirmedUnitsSold,
+    })
+    return blockedPromotionEvaluation(
+      commercialPolicy.blockerCodes[0] ??
+        "CONFIRMED_SOLD_EVIDENCE_REQUIRED",
+      "ACTIVE_ONLY, actividad estimada, ventas ausentes o cero ventas confirmadas no autorizan promoción.",
+      policy,
+      eligibility,
+    )
+  }
   if (!/^[A-Z0-9_.-]{3,80}$/.test(eligibility.configurationVersion)) {
     return blockedPromotionEvaluation(
       "PROMOTION_CONFIGURATION_VERSION_REQUIRED",
@@ -298,10 +324,8 @@ export function evaluateSafePromotionRate(input: {
     )
   }
   if (
-    eligibility.salesClassification !== "SOLD_CONFIRMED" ||
     eligibility.confirmedSalesSource !==
       "EBAY_SELL_FULFILLMENT_COMPLETED_CHECKOUT_ORDERS" ||
-    !Number.isFinite(eligibility.confirmedUnitsSold) ||
     eligibility.confirmedUnitsSold < 1
   ) {
     return blockedPromotionEvaluation(
@@ -516,8 +540,6 @@ function optimizationCandidate(
     eligibility: input.promotionEligibility,
     policy,
   })
-  const promotionEligible = input.promotionAllowed !== false &&
-    safePromotion.allowed
 
   if (
     watchers !== null && watchers >= policy.minimumWatchersForSaleReview &&
@@ -594,65 +616,64 @@ function optimizationCandidate(
     evidence: { impressions, views, transactions, currentWatchers: watchers },
   }
 
-  if (impressions === 0 && views === 0 && transactions === 0) return {
-    eventType: "LISTING_ZERO_VISIBILITY_REVIEW",
-    classification: "ZERO_VISIBILITY_AFTER_COMPLETE_WINDOW",
-    severity: "high",
-    notificationTitle: "Este listing necesita una revisión de visibilidad",
-    whyItNeedsAttention: "La ventana oficial completa no registra impresiones, vistas ni transacciones. Primero debemos descartar un problema de indexación o configuración.",
-    recommendedAction: input.promotionAllowed === false
-      ? "Auditar indexación, categoría hoja y aspectos obligatorios. No hay margen para promoción: este listing está bloqueado en 0%."
-      : !promotionEligible
-        ? `Auditar indexación, categoría hoja y aspectos obligatorios. ${safePromotion.reason}`
-      : `Auditar indexación, categoría hoja y aspectos obligatorios; si están correctos, registrar para revisión humana una prueba de Promoted Listings General al ${safePromotion.ratePercent}% durante ${policy.promotionDurationDays} días.`,
-    reviewSequence: [
-      "Indexación",
-      "Categoría hoja",
-      "Aspectos obligatorios",
-      promotionEligible
-        ? `Promoción ${safePromotion.ratePercent}% por ${policy.promotionDurationDays} días`
-        : "Promoción bloqueada hasta completar evidencia E4 y economía",
-    ],
-    experiment: experiment(
-      "CATEGORY",
-      !promotionEligible
-        ? "Preparar una revisión de indexación y categoría; la promoción permanece bloqueada en 0%."
-        : `Si indexación, categoría y aspectos están correctos, proponer únicamente Promoted Listings General al ${safePromotion.ratePercent}% por ${policy.promotionDurationDays} días desde Seller OS.`,
-      "Mantener título, imagen, precio y políticas sin cambios; comparar impresiones, clics y ventas después de la reconciliación de eBay.",
-      !promotionEligible
-        ? "No hay margen para aplicar promoción."
-        : `Detener la prueba ante stock bajo, deterioro de margen o cambio de precio; nunca superar ${safePromotion.ratePercent}%.`,
-    ),
-    promotionRecommendation: !promotionEligible
-      ? noPromotionRecommendation(
+  if (impressions === 0 && views === 0 && transactions === 0) {
+    const salesClassification =
+      input.promotionEligibility?.salesClassification
+    const commercialPolicy = evaluateEbayActiveListingCommercialPolicy({
+      evidenceClass: salesClassification === "SOLD_CONFIRMED"
+        ? "CONFIRMED_SOLD_HISTORY"
+        : salesClassification === "SOLD_ESTIMATED"
+          ? "ESTIMATED_ACTIVITY"
+          : salesClassification === "ACTIVE_ONLY"
+            ? "ACTIVE_ONLY" : "NO_COMPARABLE_EVIDENCE",
+      confirmedSoldQuantity:
+        input.promotionEligibility?.confirmedUnitsSold,
+    })
+    return {
+      eventType: "LISTING_ZERO_VISIBILITY_REVIEW",
+      classification: "ZERO_VISIBILITY_AFTER_COMPLETE_WINDOW",
+      severity: "high",
+      notificationTitle: "Este listing necesita una revisión de visibilidad",
+      whyItNeedsAttention: "La ventana oficial completa no registra impresiones, vistas ni transacciones. Primero debemos descartar un problema de indexación o configuración.",
+      recommendedAction: "Auditar listing activo, indexación, categoría, aspectos obligatorios, título, imagen, precio mostrado y elegibilidad. Promoción 0% hasta completar ese diagnóstico.",
+      reviewSequence: [
+        "Listing activo e indexado",
+        "Categoría hoja",
+        "Aspectos obligatorios",
+        "Título e imagen principal",
+        "Precio mostrado y elegibilidad",
+        "Promoción bloqueada en 0%",
+      ],
+      experiment: experiment(
+        "CATEGORY",
+        "Preparar una revisión de indexación y categoría; la promoción permanece bloqueada en 0%.",
+        "Mantener título, imagen, precio y políticas sin cambios durante la comprobación técnica.",
+        "No comprar visibilidad para compensar un listing no indexado, incompleto o sin evidencia suficiente.",
+      ),
+      promotionRecommendation: {
+        ...noPromotionRecommendation(
           input.promotionAllowed === false
-            ? "No hay margen para aplicar promoción: listing bajo excepción de margen 10%."
-            : safePromotion.reason,
+            ? "No hay margen disponible para promoción; primero protege la economía del listing."
+            : safePromotion.allowed
+              ? "Cero visibilidad exige diagnóstico técnico y de descubrimiento antes de evaluar promoción."
+              : safePromotion.reason,
           input.promotionAllowed === false,
           policy,
           safePromotion,
-        )
-      : {
-          status: "READY_FOR_HUMAN_APPROVAL" as const,
-          recommendedRatePercent: safePromotion.ratePercent,
-          durationDays: policy.promotionDurationDays,
-          trigger: "ZERO_VISIBILITY_AFTER_COMPLETE_ORGANIC_WINDOW",
-          reason: safePromotion.reason,
-          applyFromSellerOs: true,
-          policyVersion: safePromotion.policyVersion,
-          configurationVersion: safePromotion.configurationVersion,
-          headroomPercent: safePromotion.headroomPercent,
-          automaticExecutionAllowed: false as const,
-          humanApprovalRequired: true as const,
-        },
-    evidence: {
-      impressions,
-      views,
-      transactions,
-      currentWatchers: watchers,
-      promotionEligibility: input.promotionEligibility ?? null,
-      safePromotionEvaluation: safePromotion,
-    },
+        ),
+        blockerCodes: commercialPolicy.blockerCodes,
+        commercialPolicy,
+      },
+      evidence: {
+        impressions,
+        views,
+        transactions,
+        currentWatchers: watchers,
+        promotionEligibility: input.promotionEligibility ?? null,
+        safePromotionEvaluation: safePromotion,
+        commercialPolicy,
+      },
+    }
   }
 
   return null

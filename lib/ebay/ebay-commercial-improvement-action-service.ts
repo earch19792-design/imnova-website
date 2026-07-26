@@ -9,15 +9,27 @@ import {
   type PostPublicationPromotionEligibility,
 } from "../marketplace/post-publication-optimization-domain"
 import {
-  getEbayTradingReadOnlyAccessToken,
   readManualListingFromTradingApi,
   tradingXmlTagValue,
 } from "./ebay-manual-listing-trading-readonly"
 import {
+  EBAY_ACTIVE_LISTING_COMMERCIAL_POLICY_VERSION,
+  evaluateEbayActiveListingCommercialPolicy,
+  type EbayActiveListingCommercialPolicyResult,
+} from "./ebay-active-listing-commercial-policy"
+import {
+  assertEbayProductionCapability,
+  type EbayProductionCapabilityGrant,
+  type EbayWriteCapability,
+} from "./ebay-production-capability-policy"
+import {
+  getEbayWriteCredential,
+  useEbayWriteCredential,
+} from "./ebay-write-credential-provider"
+import {
   calculateEbayMinimumOperatorPrice,
   calculateEbayUnitEconomics,
 } from "./ebay-unit-economics"
-import { controlledRiskEconomicsConfig } from "./ebay-controlled-risk-manual-override"
 import {
   COMMERCIAL_IMPROVEMENT_CONFIRMATION,
   endActiveListingOutOfStockRequestXml,
@@ -31,10 +43,22 @@ export { COMMERCIAL_IMPROVEMENT_CONFIRMATION,
 const MARKETPLACE = "EBAY_US"
 const TRADING_ENDPOINT = "https://api.ebay.com/ws/api.dll"
 const MARKETING_ENDPOINT = "https://api.ebay.com/sell/marketing/v1"
-const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
-const BASE_SCOPE = "https://api.ebay.com/oauth/api_scope"
-const MARKETING_SCOPE = "https://api.ebay.com/oauth/api_scope/sell.marketing"
-const RULE_VERSION = "SELLER_OS_COMMERCIAL_IMPROVEMENT_ACTION_V2"
+const RULE_VERSION =
+  `SELLER_OS_COMMERCIAL_IMPROVEMENT_ACTION_V3:${EBAY_ACTIVE_LISTING_COMMERCIAL_POLICY_VERSION}`
+
+type CommercialImprovementApplyCapability =
+  | "confirmed_sold_price.apply"
+  | "promotion.apply"
+  | "out_of_stock.end"
+
+type CommercialImprovementApplyGrant =
+  EbayProductionCapabilityGrant<CommercialImprovementApplyCapability>
+
+type CommercialProposal = {
+  actionType: "PRICE" | "PROMOTED_LISTINGS_GENERAL" | "END_LISTING"
+  targetValue: JsonRecord
+  commercialPolicy: EbayActiveListingCommercialPolicyResult
+}
 
 type JsonRecord = Record<string, unknown>
 type FetchLike = typeof fetch
@@ -68,6 +92,114 @@ function sha256(value: string) {
 
 function money(value: number) {
   return Math.round(value * 100) / 100
+}
+
+function exactNumericZero(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value === 0
+}
+
+function freshTimestamp(value: unknown, maximumAgeMs: number) {
+  const observedAt = Date.parse(text(value, 80))
+  const now = Date.now()
+  return Number.isFinite(observedAt) && observedAt <= now &&
+    now - observedAt <= maximumAgeMs
+}
+
+const PREPARE_ONLY_BLOCKERS = new Set([
+  "OFFICIAL_CURRENT_PRICE_REVALIDATION_REQUIRED",
+  "HUMAN_CONFIRMATION_REQUIRED",
+  "IDEMPOTENCY_REQUIRED",
+  "READBACK_REQUIRED",
+])
+
+function policyBlockerForPreparation(
+  policy: EbayActiveListingCommercialPolicyResult,
+) {
+  return policy.blockerCodes.find((code) => !PREPARE_ONLY_BLOCKERS.has(code)) ??
+    null
+}
+
+function confirmedSoldPolicyFromEvent(input: {
+  event: JsonRecord
+  execution?: {
+    supplierEvidenceFresh: boolean
+    supplierAvailable: boolean
+    economicsApproved: boolean
+    proposedPriceAtOrAboveFloor: boolean
+    officialCurrentPriceUnchanged: boolean
+    promotionEvidenceApproved?: boolean
+    humanConfirmation: boolean
+    idempotencyReady: boolean
+    readbackReady: boolean
+  }
+}) {
+  const evidence = record(input.event.evidence)
+  const price = record(
+    evidence.priceRecommendation ?? evidence.confirmedSoldPriceRecommendation,
+  )
+  const eventType = text(input.event.event_type, 100)
+  if (eventType === "COMPETITOR_ACTIVE_MARKET_PRICE_RECOMMENDATION") {
+    return evaluateEbayActiveListingCommercialPolicy({
+      evidenceClass: "ACTIVE_ONLY",
+      evidenceObservedAt: text(input.event.detected_at, 80) || null,
+      confirmedSoldQuantity: 0,
+    })
+  }
+  const comparisonBasis = text(price.comparisonBasis, 100)
+  const exactSoldBasis =
+    comparisonBasis === "PRODUCT_RESEARCH_CONFIRMED_SOLD_LANDED_PRICE"
+  const confirmedSoldQuantity = numeric(price.confirmedSoldQuantity)
+  const confirmedSoldOfferCount = numeric(price.confirmedSoldOfferCount)
+  const confirmedSoldSellerCount = numeric(price.confirmedSoldSellerCount)
+  const ownPackQuantity = numeric(price.ownPackQuantity)
+  const eventFresh = freshTimestamp(input.event.detected_at, 24 * 60 * 60_000)
+  const execution = input.execution
+  return evaluateEbayActiveListingCommercialPolicy({
+    evidenceClass: eventType ===
+        "COMPETITOR_CONFIRMED_SOLD_PRICE_RECOMMENDATION" &&
+        text(price.evidenceClass, 80) === "CONFIRMED_SOLD_HISTORY"
+      ? "CONFIRMED_SOLD_HISTORY"
+      : text(evidence.evidenceClass, 80),
+    evidenceObservedAt: text(
+      price.newestConfirmedSoldAt ?? price.evidenceObservedAt,
+      80,
+    ) || null,
+    confirmedSoldQuantity,
+    confirmedSoldSource: exactSoldBasis
+      ? "EBAY_PRODUCT_RESEARCH_CONFIRMED_SOLD"
+      : text(price.confirmedSoldSource, 120) || null,
+    identityExact: exactSoldBasis &&
+      (confirmedSoldOfferCount ?? 0) > 0 &&
+      (confirmedSoldSellerCount ?? 0) > 0,
+    samePresentation: exactSoldBasis,
+    sameCondition: exactSoldBasis,
+    samePack: exactSoldBasis && (ownPackQuantity ?? 0) > 0,
+    landedPriceComplete:
+      (numeric(price.confirmedSoldBenchmarkLandedPrice) ?? 0) > 0 &&
+      (numeric(price.currentLandedPrice) ?? 0) > 0 &&
+      (numeric(price.proposedLandedPrice) ?? 0) > 0,
+    supplierEvidenceFresh: execution?.supplierEvidenceFresh ??
+      (eventFresh && numeric(price.supplierUnitCost) !== null),
+    supplierAvailable: execution?.supplierAvailable ??
+      (numeric(price.supplierUnitCost) !== null),
+    proposalCurrent: eventFresh,
+    economicsApproved: execution?.economicsApproved ??
+      price.proposedPassesProfitGate === true,
+    proposedPriceAtOrAboveFloor: execution?.proposedPriceAtOrAboveFloor ??
+      (
+        numeric(price.proposedLandedPrice) !== null &&
+        numeric(price.minimumSafeLandedPrice) !== null &&
+        (numeric(price.proposedLandedPrice) as number) >=
+          (numeric(price.minimumSafeLandedPrice) as number)
+      ),
+    officialCurrentPriceUnchanged:
+      execution?.officialCurrentPriceUnchanged === true,
+    promotionEvidenceApproved:
+      execution?.promotionEvidenceApproved === true,
+    humanConfirmation: execution?.humanConfirmation === true,
+    idempotencyReady: execution?.idempotencyReady === true,
+    readbackReady: execution?.readbackReady === true,
+  })
 }
 
 function promotionEligibility(value: unknown): PostPublicationPromotionEligibility {
@@ -213,17 +345,22 @@ async function assertPromotionConfigurationCurrent(input: {
   }
 }
 
-function proposalFromEvent(event: JsonRecord) {
+function proposalFromEvent(event: JsonRecord): CommercialProposal {
   const evidence = record(event.evidence)
   const price = record(evidence.priceRecommendation)
   const proposedPrice = numeric(price.proposedItemPrice)
   const currentPrice = numeric(price.currentItemPrice)
   const proposedLandedPrice = numeric(price.proposedLandedPrice)
-  const activeMarketAction = text(price.action)
-  const controlledRiskTenPercent = activeMarketAction ===
-    "LOWER_TO_ACTIVE_MARKET_CONTROLLED_RISK_PRICE"
+  if (text(event.event_type) ===
+    "COMPETITOR_ACTIVE_MARKET_PRICE_RECOMMENDATION") {
+    throw new Error("CONFIRMED_SOLD_EVIDENCE_REQUIRED")
+  }
+  const commercialPolicy = confirmedSoldPolicyFromEvent({ event })
+  const policyBlocker = policyBlockerForPreparation(commercialPolicy)
   if (
     text(event.event_type) === "COMPETITOR_CONFIRMED_SOLD_PRICE_RECOMMENDATION" &&
+    commercialPolicy.decision === "EVALUATE_CONFIRMED_SOLD_PRICE" &&
+    policyBlocker === null &&
     proposedPrice !== null && proposedPrice > 0 && currentPrice !== null &&
     proposedLandedPrice !== null && text(price.action) !==
       "KEEP_PRICE_IN_CONFIRMED_SOLD_BAND"
@@ -238,83 +375,12 @@ function proposalFromEvent(event: JsonRecord) {
       confidence: text(price.confidence, 20),
       evidenceClass: "CONFIRMED_SOLD_EXACT_PRESENTATION",
     },
-  }
-  if (
-    text(event.event_type) === "COMPETITOR_ACTIVE_MARKET_PRICE_RECOMMENDATION" &&
-    text(price.comparisonBasis) ===
-      "EBAY_ACTIVE_MULTI_SELLER_MEDIAN_NOT_CONFIRMED_SOLD" &&
-    [
-      "LOWER_TO_ACTIVE_MARKET_SAFE_PRICE",
-      "LOWER_TO_ACTIVE_MARKET_CONTROLLED_RISK_PRICE",
-      "RAISE_TO_SAFE_FLOOR",
-    ].includes(activeMarketAction) &&
-    proposedPrice !== null && proposedPrice > 0 && currentPrice !== null &&
-    proposedLandedPrice !== null &&
-    Math.abs(proposedPrice - currentPrice) >= 0.01 &&
-    price.proposedPassesProfitGate === true &&
-    (!controlledRiskTenPercent || (
-      price.controlledRiskTenPercent === true &&
-      (numeric(price.activeSellerCount) ?? 0) >= 2 &&
-      price.promotionReserveIncluded === false
-    ))
-  ) return {
-    actionType: "PRICE" as const,
-    targetValue: {
-      currentPrice: money(currentPrice),
-      proposedPrice: money(proposedPrice),
-      proposedLandedPrice: money(proposedLandedPrice),
-      expectedMarginPercent: numeric(price.proposedEstimatedMarginPercent),
-      expectedNetProfit: numeric(price.proposedEstimatedNetProfit),
-      confidence: text(price.confidence, 20),
-      evidenceClass: "ACTIVE_MARKET_MULTI_SELLER_NOT_CONFIRMED_SOLD",
-      activeMarketMedianLandedPrice:
-        numeric(price.activeMarketMedianLandedPrice),
-      activeSellerCount: numeric(price.activeSellerCount),
-      minimumSafeLandedPrice: numeric(price.minimumSafeLandedPrice),
-      activeMarketNotConfirmedSale: true,
-      controlledRiskTenPercent,
-      promotionAllowed: controlledRiskTenPercent ? false : null,
-    },
+    commercialPolicy,
   }
   if (text(event.event_type) === "LISTING_ZERO_VISIBILITY_REVIEW") {
-    const promotion = record(evidence.promotionRecommendation)
-    const eligibility = promotionEligibility(evidence.promotionEligibility)
-    const evaluation = evaluateSafePromotionRate({ eligibility })
-    const storedRate = numeric(promotion.recommendedRatePercent)
-    const storedHeadroom = numeric(promotion.headroomPercent)
-    if (
-      text(promotion.status) !== "READY_FOR_HUMAN_APPROVAL" ||
-      !evaluation.allowed ||
-      storedRate === null ||
-      Math.abs(storedRate - evaluation.ratePercent) > 0.001 ||
-      numeric(promotion.durationDays) !==
-        DEFAULT_POST_PUBLICATION_OPTIMIZATION_POLICY.promotionDurationDays ||
-      text(promotion.policyVersion, 80) !== evaluation.policyVersion ||
-      text(promotion.configurationVersion, 80) !==
-        evaluation.configurationVersion ||
-      storedHeadroom === null ||
-      evaluation.headroomPercent === null ||
-      Math.abs(storedHeadroom - evaluation.headroomPercent) > 0.001
-    ) {
-      throw new Error("COMMERCIAL_IMPROVEMENT_PROMOTION_SAFETY_CONTRACT_REQUIRED")
-    }
-    return {
-      actionType: "PROMOTED_LISTINGS_GENERAL" as const,
-      targetValue: {
-        ratePercent: evaluation.ratePercent,
-        durationDays:
-          DEFAULT_POST_PUBLICATION_OPTIMIZATION_POLICY.promotionDurationDays,
-        fundingModel: "COST_PER_SALE",
-        adRateStrategy: "FIXED",
-        experimentVariableCount: 1,
-        evidenceClass: "ZERO_VISIBILITY_AFTER_COMPLETE_ORGANIC_WINDOW_E4",
-        promotionEligibility: eligibility,
-        policyVersion: evaluation.policyVersion,
-        configurationVersion: evaluation.configurationVersion,
-        headroomPercent: evaluation.headroomPercent,
-      },
-    }
+    throw new Error("CONFIRMED_SOLD_EVIDENCE_REQUIRED")
   }
+  if (policyBlocker) throw new Error(policyBlocker)
   throw new Error("COMMERCIAL_IMPROVEMENT_NOT_ACTIONABLE")
 }
 
@@ -354,25 +420,34 @@ async function lunaChangeProposal(input: {
   supabase: SupabaseClient
   event: JsonRecord
   listing: JsonRecord
-}) {
+}): Promise<CommercialProposal | null> {
   const eventType = text(input.event.event_type)
   if (!["ACTIVE_LISTING_OUT_OF_STOCK", "LUNA_COST_CHANGED", "MARGIN_RISK"]
     .includes(eventType)) return null
   const luna = await freshExactLunaVariant(input)
   if (eventType === "ACTIVE_LISTING_OUT_OF_STOCK") {
-    if (luna.available !== false && numeric(luna.inventory_quantity) !== 0) {
+    if (!exactNumericZero(luna.inventory_quantity)) {
       throw new Error("COMMERCIAL_IMPROVEMENT_LUNA_OUT_OF_STOCK_REQUIRED")
     }
+    const commercialPolicy = evaluateEbayActiveListingCommercialPolicy({
+      evidenceClass: "LUNA_OUT_OF_STOCK",
+      evidenceObservedAt: luna.captured_at,
+      protectiveEvidenceVerified: true,
+      exactLunaIdentity: true,
+      supplierEvidenceFresh: true,
+      exactLunaStock: luna.inventory_quantity,
+    })
     return {
       actionType: "END_LISTING" as const,
       targetValue: {
         endingReason: "NotAvailable",
         supplierAvailable: false,
-        supplierInventoryQuantity: numeric(luna.inventory_quantity),
+        supplierInventoryQuantity: luna.inventory_quantity,
         lunaObservedAt: luna.captured_at,
         lunaProductUrl: luna.product_url,
         evidenceClass: "FRESH_EXACT_LUNA_OUT_OF_STOCK",
       },
+      commercialPolicy,
     }
   }
   if (luna.available !== true) {
@@ -406,6 +481,16 @@ async function lunaChangeProposal(input: {
   if (!economics.ready || !economics.passesProfitGate) {
     throw new Error("COMMERCIAL_IMPROVEMENT_ECONOMICS_GATE_FAILED")
   }
+  const commercialPolicy = evaluateEbayActiveListingCommercialPolicy({
+    evidenceClass: eventType === "MARGIN_RISK" ? "MARGIN_RISK" : "LUNA_COST_CHANGED",
+    evidenceObservedAt: luna.captured_at,
+    protectiveEvidenceVerified: true,
+    exactLunaIdentity: true,
+    supplierEvidenceFresh: true,
+    supplierAvailable: true,
+    economicsApproved: true,
+    proposedPriceAtOrAboveFloor: true,
+  })
   return {
     actionType: "PRICE" as const,
     targetValue: {
@@ -420,21 +505,35 @@ async function lunaChangeProposal(input: {
       lunaProductUrl: luna.product_url,
       packCount,
     },
+    commercialPolicy,
   }
 }
 
 function publicExecution(row: JsonRecord) {
+  const targetValue = record(row.target_value)
+  const commercialPolicy = record(targetValue.commercialPolicy)
   return {
     executionId: text(row.id, 40),
     eventId: text(row.commercial_event_id, 40),
     listingId: text(row.listing_id, 20),
     sku: text(row.sku, 80) || null,
     actionType: text(row.action_type, 80),
-    targetValue: record(row.target_value),
+    targetValue,
     phase: text(row.phase, 80),
     ebayWriteAttemptCount: numeric(row.ebay_write_attempt_count) ?? 0,
     appliedVerified: row.phase === "applied_verified",
     errorCode: text(row.last_error_code, 160) || null,
+    capability: text(commercialPolicy.capability, 40) || "blocked",
+    blockerCodes: Array.isArray(commercialPolicy.blockerCodes)
+      ? commercialPolicy.blockerCodes
+        .map((code) => text(code, 120))
+        .filter(Boolean)
+      : ["CONFIRMED_SOLD_EVIDENCE_REQUIRED"],
+    policyVersion: text(commercialPolicy.policyVersion, 120) ||
+      EBAY_ACTIVE_LISTING_COMMERCIAL_POLICY_VERSION,
+    evidenceExpiresAt:
+      text(commercialPolicy.evidenceExpiresAt, 80) || null,
+    requestHash: text(row.request_hash, 64) || null,
     confirmationRequired: COMMERCIAL_IMPROVEMENT_CONFIRMATION,
   }
 }
@@ -445,6 +544,8 @@ export async function prepareEbayCommercialImprovement(input: {
   actorId: string
   eventId: string
   idempotencyKey: string
+  capabilityGrant:
+    EbayProductionCapabilityGrant<"commercial_improvement.prepare">
 }) {
   const actorId = uuid(input.actorId)
   const eventId = uuid(input.eventId)
@@ -452,6 +553,18 @@ export async function prepareEbayCommercialImprovement(input: {
   if (!actorId || !eventId || !/^[A-Za-z0-9._:-]{8,120}$/.test(idempotencyKey)) {
     throw new Error("COMMERCIAL_IMPROVEMENT_PREPARE_INVALID")
   }
+  assertEbayProductionCapability({
+    capability: "commercial_improvement.prepare",
+    stage: "service",
+    invocation: "interactive",
+    authenticationMode: "admin_user",
+    userId: actorId,
+    accountKey: input.accountKey,
+    marketplace: MARKETPLACE,
+    resourceKey: eventId,
+    idempotencyKey,
+    policyVersion: EBAY_ACTIVE_LISTING_COMMERCIAL_POLICY_VERSION,
+  }, input.capabilityGrant)
   const { event, listing } = await loadEventAndListing({ ...input, eventId })
   const proposal = await lunaChangeProposal({
     supabase: input.supabase,
@@ -473,14 +586,19 @@ export async function prepareEbayCommercialImprovement(input: {
     accountKey: input.accountKey,
     listingId: String(event.listing_id),
   })) throw new Error("COMMERCIAL_IMPROVEMENT_PROMOTION_BLOCKED_TEN_PERCENT_MARGIN")
+  const targetValue = {
+    ...proposal.targetValue,
+    commercialPolicy: proposal.commercialPolicy,
+  }
   const requestHash = sha256(JSON.stringify({
     version: RULE_VERSION,
+    commercialPolicyVersion: EBAY_ACTIVE_LISTING_COMMERCIAL_POLICY_VERSION,
     accountKey: input.accountKey,
     eventId,
     listingId: event.listing_id,
     activeListingId: listing.id,
     actionType: proposal.actionType,
-    targetValue: proposal.targetValue,
+    targetValue,
   }))
   const idempotencyKeyHash = sha256(idempotencyKey)
   const { data: existing, error: existingError } = await input.supabase
@@ -505,7 +623,7 @@ export async function prepareEbayCommercialImprovement(input: {
       listing_id: event.listing_id,
       sku: event.sku,
       action_type: proposal.actionType,
-      target_value: proposal.targetValue,
+      target_value: targetValue,
       request_hash: requestHash,
       idempotency_key_hash: idempotencyKeyHash,
     })
@@ -519,7 +637,6 @@ async function freshEconomics(input: {
   supabase: SupabaseClient
   listing: JsonRecord
   salePrice: number
-  controlledRiskTenPercent?: boolean
   observedAt?: Date
 }) {
   const data = await freshExactLunaVariant(input)
@@ -534,88 +651,19 @@ async function freshEconomics(input: {
   const economics = calculateEbayUnitEconomics({
     salePrice: input.salePrice,
     supplierCost: unitCost * packCount,
-  }, input.controlledRiskTenPercent ? controlledRiskEconomicsConfig() : {})
+  })
   if (!economics.ready || !economics.passesProfitGate) {
     throw new Error("COMMERCIAL_IMPROVEMENT_ECONOMICS_GATE_FAILED")
   }
+  const floor = calculateEbayMinimumOperatorPrice({
+    supplierCost: unitCost * packCount,
+  })
   return {
     economics,
     lunaObservedAt: data.captured_at,
     packCount,
     stockAvailable: numeric(data.inventory_quantity),
-  }
-}
-
-async function setControlledRiskPromotionBlock(input: {
-  supabase: SupabaseClient
-  accountKey: string
-  listingId: string
-  eventId: string
-  activeMarketMedianLandedPrice: number | null
-  activeSellerCount: number | null
-  status: "PENDING_PRICE_APPLY" | "ACTIVE"
-}) {
-  const controlledRiskPolicy = {
-    version: "ACTIVE_MARKET_CONTROLLED_RISK_10_PERCENT_V1",
-    status: input.status,
-    source: "EBAY_ACTIVE_MULTI_SELLER_MEDIAN_NOT_CONFIRMED_SOLD",
-    commercialEventId: input.eventId,
-    minimumNetMarginPercent: 10,
-    promotion: "DO_NOT_PROMOTE",
-    activeMarketNotConfirmedSale: true,
-    activeMarketMedianLandedPrice: input.activeMarketMedianLandedPrice,
-    activeSellerCount: input.activeSellerCount,
-    finalHumanAuthorizationRequired: true,
-    updatedAt: new Date().toISOString(),
-  }
-  const { data: activeListing, error: activeListingError } = await input.supabase
-    .from("ebay_active_listings")
-    .update({
-      controlled_risk_policy: controlledRiskPolicy,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("account_key", input.accountKey)
-    .eq("ebay_item_id", input.listingId)
-    .select("id")
-    .maybeSingle()
-  if (activeListingError || !activeListing?.id) {
-    throw new Error("COMMERCIAL_IMPROVEMENT_CONTROLLED_RISK_BLOCK_FAILED")
-  }
-  const { data: publication, error: publicationError } = await input.supabase
-    .from("ebay_authorized_listing_publications")
-    .select("listing_package_id")
-    .eq("marketplace_account_key", input.accountKey)
-    .eq("listing_id", input.listingId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  if (publicationError) throw new Error(
-    "COMMERCIAL_IMPROVEMENT_CONTROLLED_RISK_BLOCK_FAILED",
-  )
-  if (!publication?.listing_package_id) return
-  const { data: listingPackage, error: packageError } = await input.supabase
-    .from("ebay_listing_packages")
-    .select("package_data")
-    .eq("id", publication.listing_package_id)
-    .eq("account_key", input.accountKey)
-    .maybeSingle()
-  if (packageError || !listingPackage) {
-    throw new Error("COMMERCIAL_IMPROVEMENT_CONTROLLED_RISK_PACKAGE_REQUIRED")
-  }
-  const packageData = record(listingPackage.package_data)
-  const { error: updateError } = await input.supabase
-    .from("ebay_listing_packages")
-    .update({
-      package_data: {
-        ...packageData,
-        controlledRiskPolicy,
-      },
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", publication.listing_package_id)
-    .eq("account_key", input.accountKey)
-  if (updateError) {
-    throw new Error("COMMERCIAL_IMPROVEMENT_CONTROLLED_RISK_BLOCK_FAILED")
+    minimumOperatorPrice: floor.ready ? floor.minimumOperatorPrice : null,
   }
 }
 
@@ -675,33 +723,6 @@ async function endListingOutOfStock(input: {
       ? `COMMERCIAL_IMPROVEMENT_EBAY_END_REJECTED_${code}`
       : "COMMERCIAL_IMPROVEMENT_EBAY_END_REJECTED")
   }
-}
-
-async function marketingAccessToken(fetchImpl: FetchLike) {
-  const clientId = process.env.EBAY_CLIENT_ID?.trim() ?? ""
-  const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim() ?? ""
-  const refreshToken = process.env.EBAY_SELLER_REFRESH_TOKEN?.trim() ?? ""
-  if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error("EBAY_MARKETING_OAUTH_NOT_CONFIGURED")
-  }
-  const response = await fetchImpl(TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-      scope: `${BASE_SCOPE} ${MARKETING_SCOPE}`,
-    }),
-    cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
-  })
-  const payload = record(await response.json().catch(() => ({})))
-  const token = text(payload.access_token, 8_000)
-  if (!response.ok || !token) throw new Error("EBAY_MARKETING_OAUTH_SCOPE_REQUIRED")
-  return token
 }
 
 function campaignIdFromLocation(location: string | null) {
@@ -823,6 +844,32 @@ async function verifyCampaignAd(input: {
     Math.abs((numeric(ad.bidPercentage) ?? 0) - input.ratePercent) < 0.01)
 }
 
+export function requiredEbayCommercialImprovementApplyCapability(input: {
+  actionType: unknown
+  targetValue: unknown
+}): CommercialImprovementApplyCapability {
+  const actionType = text(input.actionType, 80)
+  const target = record(input.targetValue)
+  if (actionType === "END_LISTING" &&
+    text(target.evidenceClass, 100) === "FRESH_EXACT_LUNA_OUT_OF_STOCK") {
+    return "out_of_stock.end"
+  }
+  if (actionType === "PROMOTED_LISTINGS_GENERAL") return "promotion.apply"
+  if (actionType === "PRICE" &&
+    text(target.evidenceClass, 100) ===
+      "CONFIRMED_SOLD_EXACT_PRESENTATION") {
+    return "confirmed_sold_price.apply"
+  }
+  if (actionType === "PRICE" &&
+    text(target.evidenceClass, 100) ===
+      "FRESH_EXACT_LUNA_COST_RECALCULATION") {
+    throw new Error(
+      "COMMERCIAL_IMPROVEMENT_PROTECTIVE_PRICE_APPLY_NOT_ENABLED",
+    )
+  }
+  throw new Error("COMMERCIAL_IMPROVEMENT_CAPABILITY_NOT_ALLOWED")
+}
+
 export async function applyEbayCommercialImprovement(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -830,22 +877,126 @@ export async function applyEbayCommercialImprovement(input: {
   eventId: string
   idempotencyKey: string
   confirmation: string
+  prepareCapabilityGrant:
+    EbayProductionCapabilityGrant<"commercial_improvement.prepare">
+  capabilityGrant: CommercialImprovementApplyGrant
   fetchImpl?: FetchLike
 }) {
   if (input.confirmation !== COMMERCIAL_IMPROVEMENT_CONFIRMATION) {
     throw new Error("COMMERCIAL_IMPROVEMENT_CONFIRMATION_REQUIRED")
   }
-  const preview = await prepareEbayCommercialImprovement(input)
-  if (["applied_verified", "terminal_failure"].includes(preview.phase)) return preview
+  const preview = await prepareEbayCommercialImprovement({
+    ...input,
+    capabilityGrant: input.prepareCapabilityGrant,
+  })
+  if (["applied_verified", "terminal_failure"].includes(preview.phase)) {
+    return preview
+  }
+  const capability = requiredEbayCommercialImprovementApplyCapability(preview)
+  let capabilityGrant = assertEbayProductionCapability({
+    capability,
+    stage: "service",
+    invocation: "interactive",
+    authenticationMode: "admin_user",
+    userId: input.actorId,
+    accountKey: input.accountKey,
+    marketplace: MARKETPLACE,
+    resourceKey: preview.listingId,
+    idempotencyKey: input.idempotencyKey,
+    policyVersion: EBAY_ACTIVE_LISTING_COMMERCIAL_POLICY_VERSION,
+    confirmedHumanAction: true,
+  }, input.capabilityGrant)
   const { event, listing } = await loadEventAndListing(input)
   const fetchImpl = input.fetchImpl ?? fetch
   const target = record(preview.targetValue)
-  const officialBefore = await readManualListingFromTradingApi(String(event.listing_id), fetchImpl)
-  if (officialBefore.ownership !== "verified" ||
-    (event.sku && ![officialBefore.ebaySku, listing.supplier_sku].includes(event.sku))) {
+  const officialBefore = await readManualListingFromTradingApi(
+    String(event.listing_id),
+    fetchImpl,
+  )
+  const endingListing = preview.actionType === "END_LISTING"
+  const priorOutcome = [
+    "write_in_flight",
+    "write_acknowledged",
+    "outcome_unknown",
+  ].includes(preview.phase)
+  const identityMatches = !event.sku ||
+    [officialBefore.ebaySku, listing.supplier_sku].includes(event.sku)
+  if ((!priorOutcome || !endingListing) &&
+      officialBefore.ownership !== "verified" ||
+    !identityMatches) {
     throw new Error("COMMERCIAL_IMPROVEMENT_OFFICIAL_IDENTITY_MISMATCH")
   }
-  const endingListing = preview.actionType === "END_LISTING"
+
+  if (priorOutcome) {
+    const proposedPrice = numeric(target.proposedPrice)
+    const reconciled = endingListing
+      ? officialBefore.ownership === "inactive" &&
+        officialBefore.listingStatus?.toLowerCase() !== "active"
+      : preview.actionType === "PRICE" && proposedPrice !== null &&
+        officialBefore.price !== null &&
+        Math.abs(officialBefore.price - proposedPrice) <= 0.01
+    if (reconciled) {
+      const reconciledAt = new Date().toISOString()
+      if (endingListing) {
+        const { error: registryError } = await input.supabase
+          .from("ebay_active_listings")
+          .update({ listing_status: "ended", updated_at: reconciledAt })
+          .eq("id", listing.id)
+          .eq("account_key", input.accountKey)
+          .eq("listing_status", "active")
+        if (registryError) {
+          throw new Error(
+            "COMMERCIAL_IMPROVEMENT_ACTIVE_REGISTRY_UPDATE_FAILED",
+          )
+        }
+      }
+      const { data, error } = await input.supabase
+        .from("ebay_commercial_improvement_executions")
+        .update({
+          phase: "applied_verified",
+          postflight_snapshot: {
+            source: "EBAY_TRADING_GET_ITEM_RECONCILIATION",
+            price: officialBefore.price,
+            listingStatus: officialBefore.listingStatus,
+            ownership: officialBefore.ownership,
+            observedAt: officialBefore.observedAt,
+            reconciled: true,
+          },
+          applied_verified_at: reconciledAt,
+          last_error_code: null,
+          updated_at: reconciledAt,
+        })
+        .eq("id", preview.executionId)
+        .in("phase", [
+          "write_in_flight",
+          "write_acknowledged",
+          "outcome_unknown",
+        ])
+        .select("*")
+        .maybeSingle()
+      if (error || !data) {
+        throw new Error("COMMERCIAL_IMPROVEMENT_RECONCILIATION_FAILED")
+      }
+      return publicExecution(record(data))
+    }
+    const { data } = await input.supabase
+      .from("ebay_commercial_improvement_executions")
+      .update({
+        phase: "outcome_unknown",
+        last_error_code: "COMMERCIAL_IMPROVEMENT_READBACK_RECONCILIATION_PENDING",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", preview.executionId)
+      .in("phase", [
+        "write_in_flight",
+        "write_acknowledged",
+        "outcome_unknown",
+      ])
+      .select("*")
+      .maybeSingle()
+    return data ? publicExecution(record(data)) : preview
+  }
+
   const salePrice = preview.actionType === "PRICE"
     ? numeric(target.proposedLandedPrice)
     : numeric(officialBefore.price)
@@ -855,19 +1006,17 @@ export async function applyEbayCommercialImprovement(input: {
         listing: record(listing),
       })
     : null
-  if (endingListing && lunaState?.available !== false &&
-    numeric(lunaState?.inventory_quantity) !== 0) {
+  if (endingListing && !exactNumericZero(lunaState?.inventory_quantity)) {
     throw new Error("COMMERCIAL_IMPROVEMENT_LUNA_OUT_OF_STOCK_REQUIRED")
   }
   if (!endingListing && (salePrice === null || salePrice <= 0)) {
     throw new Error("COMMERCIAL_IMPROVEMENT_PRICE_REQUIRED")
   }
   const economics = endingListing ? null : await freshEconomics({
-      supabase: input.supabase,
-      listing: record(listing),
-      salePrice: salePrice as number,
-      controlledRiskTenPercent: target.controlledRiskTenPercent === true,
-    })
+    supabase: input.supabase,
+    listing: record(listing),
+    salePrice: salePrice as number,
+  })
   let promotionEvaluation = null
   if (preview.actionType === "PROMOTED_LISTINGS_GENERAL") {
     const storedEligibility = promotionEligibility(target.promotionEligibility)
@@ -897,8 +1046,7 @@ export async function applyEbayCommercialImprovement(input: {
             ? null
             : economics.economics.estimatedNetMarginPercent +
               reservedPromotionPercent,
-        minimumMarginPercent:
-          storedEligibility.minimumMarginPercent,
+        minimumMarginPercent: storedEligibility.minimumMarginPercent,
         expectedRoiPercent:
           economics?.economics.estimatedRoiPercent ?? null,
         minimumRoiPercent:
@@ -910,34 +1058,110 @@ export async function applyEbayCommercialImprovement(input: {
       },
     })
     const requestedRate = numeric(target.ratePercent)
-    if (
-      !promotionEvaluation.allowed ||
-      requestedRate === null ||
+    if (!promotionEvaluation.allowed || requestedRate === null ||
       Math.abs(requestedRate - promotionEvaluation.ratePercent) > 0.001 ||
       text(target.policyVersion, 80) !== promotionEvaluation.policyVersion ||
       text(target.configurationVersion, 80) !==
-        promotionEvaluation.configurationVersion
-    ) {
+        promotionEvaluation.configurationVersion) {
       throw new Error(
         "COMMERCIAL_IMPROVEMENT_PROMOTION_ECONOMICS_CHANGED_REVIEW_REQUIRED",
       )
     }
   }
-  if (preview.actionType === "PROMOTED_LISTINGS_GENERAL" && await promotionBlocked({
-    supabase: input.supabase,
-    accountKey: input.accountKey,
-    listingId: String(event.listing_id),
-  })) throw new Error("COMMERCIAL_IMPROVEMENT_PROMOTION_BLOCKED_TEN_PERCENT_MARGIN")
-  if (preview.actionType === "PRICE" && target.controlledRiskTenPercent === true) {
-    await setControlledRiskPromotionBlock({
+  if (preview.actionType === "PROMOTED_LISTINGS_GENERAL" &&
+    await promotionBlocked({
       supabase: input.supabase,
       accountKey: input.accountKey,
       listingId: String(event.listing_id),
-      eventId: String(event.id),
-      activeMarketMedianLandedPrice:
-        numeric(target.activeMarketMedianLandedPrice),
-      activeSellerCount: numeric(target.activeSellerCount),
-      status: "PENDING_PRICE_APPLY",
+    })) {
+    throw new Error(
+      "COMMERCIAL_IMPROVEMENT_PROMOTION_BLOCKED_TEN_PERCENT_MARGIN",
+    )
+  }
+
+  const proposedPrice = numeric(target.proposedPrice)
+  const currentPrice = numeric(target.currentPrice)
+  const commercialPolicy = endingListing
+    ? evaluateEbayActiveListingCommercialPolicy({
+        evidenceClass: "LUNA_OUT_OF_STOCK",
+        evidenceObservedAt: lunaState?.captured_at,
+        protectiveEvidenceVerified: true,
+        exactLunaIdentity: true,
+        supplierEvidenceFresh: true,
+        exactLunaStock: lunaState?.inventory_quantity,
+        humanConfirmation: true,
+        idempotencyReady: true,
+        readbackReady: true,
+      })
+    : confirmedSoldPolicyFromEvent({
+        event: record(event),
+        execution: {
+          supplierEvidenceFresh: true,
+          supplierAvailable: true,
+          economicsApproved: economics?.economics.passesProfitGate === true,
+          proposedPriceAtOrAboveFloor:
+            salePrice !== null &&
+            economics?.minimumOperatorPrice !== null &&
+            economics?.minimumOperatorPrice !== undefined &&
+            salePrice >= economics.minimumOperatorPrice,
+          officialCurrentPriceUnchanged:
+            currentPrice !== null && officialBefore.price !== null &&
+            Math.abs(officialBefore.price - currentPrice) <= 0.01,
+          promotionEvidenceApproved: promotionEvaluation?.allowed === true,
+          humanConfirmation: true,
+          idempotencyReady: true,
+          readbackReady: true,
+        },
+      })
+  const policyAllowsAction = endingListing
+    ? commercialPolicy.canEndForOutOfStock
+    : preview.actionType === "PROMOTED_LISTINGS_GENERAL"
+      ? commercialPolicy.canPreparePromotion
+      : commercialPolicy.canPreparePriceDecrease
+  if (!policyAllowsAction) {
+    throw new Error(
+      commercialPolicy.blockerCodes[0] ??
+      "CONFIRMED_SOLD_EVIDENCE_REQUIRED",
+    )
+  }
+  if (preview.actionType === "PRICE" &&
+    (proposedPrice === null || currentPrice === null ||
+      officialBefore.price === null ||
+      Math.abs(officialBefore.price - currentPrice) > 0.01)) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_PRICE_CHANGED_REVIEW_REQUIRED")
+  }
+
+  capabilityGrant = assertEbayProductionCapability({
+    capability,
+    stage: "effect",
+    invocation: "interactive",
+    authenticationMode: "admin_user",
+    userId: input.actorId,
+    accountKey: input.accountKey,
+    marketplace: MARKETPLACE,
+    resourceKey: preview.listingId,
+    idempotencyKey: input.idempotencyKey,
+    policyVersion: EBAY_ACTIVE_LISTING_COMMERCIAL_POLICY_VERSION,
+    proposalHash: preview.requestHash,
+    confirmedHumanAction: true,
+    preflightPassed: true,
+    preflightObservedAt: officialBefore.observedAt,
+  }, capabilityGrant)
+  const writeCredential = await getEbayWriteCredential(
+    capability as EbayWriteCapability,
+    capabilityGrant,
+    fetchImpl,
+  )
+  const writeAccessToken = useEbayWriteCredential(
+    writeCredential,
+    capability as EbayWriteCapability,
+    input.accountKey,
+  )
+  if (preview.actionType === "PROMOTED_LISTINGS_GENERAL") {
+    await assertListingNotAlreadyPromoted({
+      accessToken: writeAccessToken,
+      listingId: String(event.listing_id),
+      fetchImpl,
     })
   }
 
@@ -945,6 +1169,8 @@ export async function applyEbayCommercialImprovement(input: {
     .from("ebay_commercial_improvement_executions")
     .update({
       phase: "write_in_flight",
+      ebay_write_attempt_count: 1,
+      ebay_write_dispatched: true,
       preflight_snapshot: {
         source: "EBAY_TRADING_GET_ITEM_AND_FRESH_LUNA",
         observedPrice: officialBefore.price,
@@ -956,6 +1182,9 @@ export async function applyEbayCommercialImprovement(input: {
         supplierInventoryQuantity: lunaState?.inventory_quantity ?? null,
         economics: economics?.economics ?? null,
         promotionEvaluation,
+        commercialPolicy,
+        capability,
+        requestHash: preview.requestHash,
       },
       last_error_code: null,
       updated_at: new Date().toISOString(),
@@ -963,30 +1192,38 @@ export async function applyEbayCommercialImprovement(input: {
     .eq("id", preview.executionId)
     .eq("actor_user_id", input.actorId)
     .eq("phase", "preview_ready")
+    .eq("ebay_write_attempt_count", 0)
+    .eq("ebay_write_dispatched", false)
     .select("*")
     .maybeSingle()
   if (claimError) throw new Error("COMMERCIAL_IMPROVEMENT_CLAIM_FAILED")
   if (!claimed) {
-    const { data } = await input.supabase.from("ebay_commercial_improvement_executions")
-      .select("*").eq("id", preview.executionId).maybeSingle()
+    const { data } = await input.supabase
+      .from("ebay_commercial_improvement_executions")
+      .select("*")
+      .eq("id", preview.executionId)
+      .maybeSingle()
     if (!data) throw new Error("COMMERCIAL_IMPROVEMENT_LEDGER_READ_FAILED")
     return publicExecution(record(data))
   }
   let row = record(claimed)
   try {
     if (preview.actionType === "END_LISTING") {
-      const accessToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
       await endListingOutOfStock({
-        accessToken,
+        accessToken: writeAccessToken,
         listingId: String(event.listing_id),
         fetchImpl,
       })
-      row = { ...row, ebay_write_attempt_count: 1, ebay_write_dispatched: true }
       const { data: acknowledged, error } = await input.supabase
         .from("ebay_commercial_improvement_executions")
-        .update({ phase: "write_acknowledged", ebay_write_attempt_count: 1,
-          ebay_write_dispatched: true, updated_at: new Date().toISOString() })
-        .eq("id", row.id).eq("phase", "write_in_flight").select("*").single()
+        .update({
+          phase: "write_acknowledged",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", row.id)
+        .eq("phase", "write_in_flight")
+        .select("*")
+        .single()
       if (error || !acknowledged) {
         throw new Error("COMMERCIAL_IMPROVEMENT_ACK_RECORD_FAILED")
       }
@@ -1007,18 +1244,27 @@ export async function applyEbayCommercialImprovement(input: {
         .eq("account_key", input.accountKey)
         .eq("listing_status", "active")
       if (registryError) {
-        throw new Error("COMMERCIAL_IMPROVEMENT_ACTIVE_REGISTRY_UPDATE_FAILED")
+        throw new Error(
+          "COMMERCIAL_IMPROVEMENT_ACTIVE_REGISTRY_UPDATE_FAILED",
+        )
       }
       const { data: completed, error: completeError } = await input.supabase
         .from("ebay_commercial_improvement_executions")
-        .update({ phase: "applied_verified", postflight_snapshot: {
-          source: "EBAY_TRADING_GET_ITEM_READBACK",
-          listingStatus: after.listingStatus,
-          ownership: after.ownership,
-          observedAt: after.observedAt,
-          localRegistryStatus: "ended",
-        }, applied_verified_at: endedAt, updated_at: endedAt })
-        .eq("id", row.id).select("*").single()
+        .update({
+          phase: "applied_verified",
+          postflight_snapshot: {
+            source: "EBAY_TRADING_GET_ITEM_READBACK",
+            listingStatus: after.listingStatus,
+            ownership: after.ownership,
+            observedAt: after.observedAt,
+            localRegistryStatus: "ended",
+          },
+          applied_verified_at: endedAt,
+          updated_at: endedAt,
+        })
+        .eq("id", row.id)
+        .select("*")
+        .single()
       if (completeError || !completed) {
         throw new Error("COMMERCIAL_IMPROVEMENT_COMPLETE_FAILED")
       }
@@ -1026,128 +1272,154 @@ export async function applyEbayCommercialImprovement(input: {
     }
 
     if (preview.actionType === "PRICE") {
-      const proposedPrice = numeric(target.proposedPrice)
-      const currentPrice = numeric(target.currentPrice)
-      if (proposedPrice === null || currentPrice === null ||
-        officialBefore.price === null || Math.abs(officialBefore.price - currentPrice) > 0.01) {
-        throw new Error("COMMERCIAL_IMPROVEMENT_PRICE_CHANGED_REVIEW_REQUIRED")
-      }
-      const accessToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
       await revisePrice({
-        accessToken,
+        accessToken: writeAccessToken,
         listingId: String(event.listing_id),
-        price: proposedPrice,
+        price: proposedPrice as number,
         currency: officialBefore.currency ?? "USD",
         fetchImpl,
       })
-      row = { ...row, ebay_write_attempt_count: 1, ebay_write_dispatched: true }
       const { data: acknowledged, error } = await input.supabase
         .from("ebay_commercial_improvement_executions")
-        .update({ phase: "write_acknowledged", ebay_write_attempt_count: 1,
-          ebay_write_dispatched: true, updated_at: new Date().toISOString() })
-        .eq("id", row.id).eq("phase", "write_in_flight").select("*").single()
-      if (error || !acknowledged) throw new Error("COMMERCIAL_IMPROVEMENT_ACK_RECORD_FAILED")
-      row = record(acknowledged)
-      const after = await readManualListingFromTradingApi(String(event.listing_id), fetchImpl)
-      if (after.price === null || Math.abs(after.price - proposedPrice) > 0.01) {
-        throw new Error("COMMERCIAL_IMPROVEMENT_PRICE_READBACK_MISMATCH")
-      }
-      if (target.controlledRiskTenPercent === true) {
-        await setControlledRiskPromotionBlock({
-          supabase: input.supabase,
-          accountKey: input.accountKey,
-          listingId: String(event.listing_id),
-          eventId: String(event.id),
-          activeMarketMedianLandedPrice:
-            numeric(target.activeMarketMedianLandedPrice),
-          activeSellerCount: numeric(target.activeSellerCount),
-          status: "ACTIVE",
+        .update({
+          phase: "write_acknowledged",
+          updated_at: new Date().toISOString(),
         })
+        .eq("id", row.id)
+        .eq("phase", "write_in_flight")
+        .select("*")
+        .single()
+      if (error || !acknowledged) {
+        throw new Error("COMMERCIAL_IMPROVEMENT_ACK_RECORD_FAILED")
+      }
+      row = record(acknowledged)
+      const after = await readManualListingFromTradingApi(
+        String(event.listing_id),
+        fetchImpl,
+      )
+      if (after.price === null ||
+        Math.abs(after.price - (proposedPrice as number)) > 0.01) {
+        throw new Error("COMMERCIAL_IMPROVEMENT_PRICE_READBACK_MISMATCH")
       }
       const { data: completed, error: completeError } = await input.supabase
         .from("ebay_commercial_improvement_executions")
-        .update({ phase: "applied_verified", postflight_snapshot: {
-          source: "EBAY_TRADING_GET_ITEM_READBACK", price: after.price,
-          currency: after.currency, observedAt: after.observedAt,
-        }, applied_verified_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-        .eq("id", row.id).select("*").single()
-      if (completeError || !completed) throw new Error("COMMERCIAL_IMPROVEMENT_COMPLETE_FAILED")
+        .update({
+          phase: "applied_verified",
+          postflight_snapshot: {
+            source: "EBAY_TRADING_GET_ITEM_READBACK",
+            price: after.price,
+            currency: after.currency,
+            observedAt: after.observedAt,
+          },
+          applied_verified_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", row.id)
+        .select("*")
+        .single()
+      if (completeError || !completed) {
+        throw new Error("COMMERCIAL_IMPROVEMENT_COMPLETE_FAILED")
+      }
       return publicExecution(record(completed))
     }
 
-    const marketingToken = await marketingAccessToken(fetchImpl)
-    await assertListingNotAlreadyPromoted({
-      accessToken: marketingToken,
-      listingId: String(event.listing_id),
-      fetchImpl,
-    })
     const ratePercent = numeric(target.ratePercent)
     const durationDays = numeric(target.durationDays)
-    if (
-      ratePercent === null ||
-      durationDays === null ||
-      promotionEvaluation?.allowed !== true
-    ) {
+    if (ratePercent === null || durationDays === null ||
+      promotionEvaluation?.allowed !== true) {
       throw new Error("COMMERCIAL_IMPROVEMENT_PROMOTION_PREFLIGHT_REQUIRED")
     }
     const campaign = await createPromotionCampaign({
-      accessToken: marketingToken,
+      accessToken: writeAccessToken,
       listingId: String(event.listing_id),
       eventId: String(event.id),
       ratePercent,
       durationDays,
       fetchImpl,
     })
-    row = { ...row, ebay_resource_id: campaign.campaignId,
-      ebay_write_attempt_count: 1, ebay_write_dispatched: true }
     const campaignRecorded = await input.supabase
       .from("ebay_commercial_improvement_executions")
-      .update({ ebay_resource_id: campaign.campaignId, ebay_write_attempt_count: 1,
-        ebay_write_dispatched: true, updated_at: new Date().toISOString() })
-      .eq("id", row.id).eq("phase", "write_in_flight").select("*").single()
+      .update({
+        ebay_resource_id: campaign.campaignId,
+        ebay_write_attempt_count: 2,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", row.id)
+      .eq("phase", "write_in_flight")
+      .eq("ebay_write_attempt_count", 1)
+      .select("*")
+      .single()
     if (campaignRecorded.error || !campaignRecorded.data) {
       throw new Error("COMMERCIAL_IMPROVEMENT_CAMPAIGN_RECORD_FAILED")
     }
     row = record(campaignRecorded.data)
     await createPromotionAd({
-      accessToken: marketingToken,
+      accessToken: writeAccessToken,
       campaignId: campaign.campaignId,
       listingId: String(event.listing_id),
       ratePercent,
       fetchImpl,
     })
+    const acknowledged = await input.supabase
+      .from("ebay_commercial_improvement_executions")
+      .update({ phase: "write_acknowledged", updated_at: new Date().toISOString() })
+      .eq("id", row.id)
+      .eq("phase", "write_in_flight")
+      .select("*")
+      .single()
+    if (acknowledged.error || !acknowledged.data) {
+      throw new Error("COMMERCIAL_IMPROVEMENT_ACK_RECORD_FAILED")
+    }
+    row = record(acknowledged.data)
     const verified = await verifyCampaignAd({
-      accessToken: marketingToken,
+      accessToken: writeAccessToken,
       campaignId: campaign.campaignId,
       listingId: String(event.listing_id),
       ratePercent,
       fetchImpl,
     })
-    if (!verified) throw new Error("COMMERCIAL_IMPROVEMENT_PROMOTION_READBACK_MISMATCH")
+    if (!verified) {
+      throw new Error("COMMERCIAL_IMPROVEMENT_PROMOTION_READBACK_MISMATCH")
+    }
     const { data: completed, error: completeError } = await input.supabase
       .from("ebay_commercial_improvement_executions")
-      .update({ phase: "applied_verified", ebay_write_attempt_count: 2,
-        postflight_snapshot: { source: "EBAY_MARKETING_GET_ADS_READBACK",
-          campaignName: campaign.campaignName, campaignId: campaign.campaignId,
-          ratePercent, endsAt: campaign.endsAt, verified: true,
+      .update({
+        phase: "applied_verified",
+        postflight_snapshot: {
+          source: "EBAY_MARKETING_GET_ADS_READBACK",
+          campaignName: campaign.campaignName,
+          campaignId: campaign.campaignId,
+          ratePercent,
+          endsAt: campaign.endsAt,
+          verified: true,
           policyVersion: target.policyVersion,
-          configurationVersion: target.configurationVersion },
-        applied_verified_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq("id", row.id).select("*").single()
-    if (completeError || !completed) throw new Error("COMMERCIAL_IMPROVEMENT_COMPLETE_FAILED")
+          configurationVersion: target.configurationVersion,
+        },
+        applied_verified_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", row.id)
+      .select("*")
+      .single()
+    if (completeError || !completed) {
+      throw new Error("COMMERCIAL_IMPROVEMENT_COMPLETE_FAILED")
+    }
     return publicExecution(record(completed))
   } catch (error) {
     const code = error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
       ? error.message : "COMMERCIAL_IMPROVEMENT_OUTCOME_UNKNOWN"
-    const dispatched = row.ebay_write_dispatched === true ||
-      (numeric(row.ebay_write_attempt_count) ?? 0) > 0
     const { data: failed } = await input.supabase
       .from("ebay_commercial_improvement_executions")
-      .update({ phase: dispatched ? "outcome_unknown" : "preview_ready",
-        last_error_code: code, updated_at: new Date().toISOString() })
-      .eq("id", row.id).select("*").maybeSingle()
+      .update({
+        phase: "outcome_unknown",
+        last_error_code: code,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", row.id)
+      .eq("ebay_write_dispatched", true)
+      .select("*")
+      .maybeSingle()
     if (!failed) throw new Error(code)
-    if (!dispatched) throw new Error(code)
     return publicExecution(record(failed))
   }
 }

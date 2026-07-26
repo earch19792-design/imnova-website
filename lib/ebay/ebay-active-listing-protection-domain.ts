@@ -62,6 +62,20 @@ export type ActiveListingProtectionHealthRow =
     last_radar_review_at: string | null
   }
 
+export type ActiveListingCandidateProtectionRow =
+  ActiveListingProtectionIdentityRow & {
+    market_radar_product_id: string | null
+    supplier_variant_id: string | null
+    supplier_sku: string | null
+  }
+
+export type ActiveListingCandidateIdentity = {
+  accountKey: string
+  marketRadarProductId: string | null
+  supplierVariantId: string | null
+  supplierSku: string | null
+}
+
 export type ActiveListingProtectionMonitorStatus =
   | "ACTIVE"
   | "MANUAL_RECENT"
@@ -77,6 +91,10 @@ export function normalizeActiveListingProtectionSku(value: string | null) {
   if (typeof value !== "string") return null
   const normalized = value.normalize("NFKC").trim()
   return normalized || null
+}
+
+export function normalizeActiveListingSelectionSku(value: string | null) {
+  return normalizeActiveListingProtectionSku(value)?.toUpperCase() ?? null
 }
 
 /**
@@ -337,4 +355,92 @@ export function canonicalizeActiveListingProtectionRows<
       })),
     }
   })
+}
+
+export function assessActiveListingCandidateProtectionCoverage(input: {
+  accountKey: string
+  rows: ActiveListingCandidateProtectionRow[]
+}) {
+  const accountKey = normalizedRequiredIdentity(input.accountKey)
+  const activeRows = input.rows.filter((row) =>
+    normalizedRequiredIdentity(row.account_key) === accountKey &&
+    row.listing_status.toLowerCase() === "active")
+  const incompleteRegistryRowIds = activeRows
+    .filter((row) => !normalizeActiveListingSelectionSku(row.ebay_sku) &&
+      !normalizeActiveListingSelectionSku(row.supplier_sku) &&
+      !normalizeActiveListingProtectionSku(row.supplier_variant_id) &&
+      !normalizeActiveListingProtectionSku(row.market_radar_product_id))
+    .map((row) => row.id)
+  return {
+    complete: incompleteRegistryRowIds.length === 0,
+    activeRegistryRows: activeRows.length,
+    canonicalActiveListings:
+      canonicalizeActiveListingProtectionRows(activeRows).length,
+    incompleteRegistryRowIds,
+  }
+}
+
+/**
+ * Prevents an already-listed product from re-entering research or preparation.
+ *
+ * Product and variant IDs remain exact after Unicode/whitespace normalization.
+ * SKUs additionally use uppercase canonicalization so casing cannot duplicate
+ * an active seller SKU; no substring, token, or other fuzzy match is allowed.
+ */
+export function evaluateActiveListingCandidateProtection(input: {
+  candidate: ActiveListingCandidateIdentity
+  rows: ActiveListingCandidateProtectionRow[]
+}) {
+  const accountKey = normalizedRequiredIdentity(input.candidate.accountKey)
+  const productId = normalizeActiveListingProtectionSku(
+    input.candidate.marketRadarProductId,
+  )
+  const variantId = normalizeActiveListingProtectionSku(
+    input.candidate.supplierVariantId,
+  )
+  const supplierSku = normalizeActiveListingSelectionSku(
+    input.candidate.supplierSku,
+  )
+  const matchedRegistryRowIds = new Set<string>()
+  const matchedEbayItemIds = new Set<string>()
+  const matchReasons = new Set<
+    | "MARKET_RADAR_PRODUCT_ID"
+    | "SUPPLIER_VARIANT_ID"
+    | "SUPPLIER_OR_EBAY_SKU"
+  >()
+
+  for (const row of input.rows) {
+    if (
+      normalizedRequiredIdentity(row.account_key) !== accountKey ||
+      row.listing_status.toLowerCase() !== "active"
+    ) continue
+    const productMatches = Boolean(productId &&
+      productId === normalizeActiveListingProtectionSku(
+        row.market_radar_product_id,
+      ))
+    const variantMatches = Boolean(variantId &&
+      variantId === normalizeActiveListingProtectionSku(
+        row.supplier_variant_id,
+      ))
+    const skuMatches = Boolean(supplierSku && [
+      normalizeActiveListingSelectionSku(row.supplier_sku),
+      normalizeActiveListingSelectionSku(row.ebay_sku),
+    ].includes(supplierSku))
+    if (!productMatches && !variantMatches && !skuMatches) continue
+    matchedRegistryRowIds.add(row.id)
+    matchedEbayItemIds.add(normalizedRequiredIdentity(row.ebay_item_id))
+    if (productMatches) matchReasons.add("MARKET_RADAR_PRODUCT_ID")
+    if (variantMatches) matchReasons.add("SUPPLIER_VARIANT_ID")
+    if (skuMatches) matchReasons.add("SUPPLIER_OR_EBAY_SKU")
+  }
+
+  return {
+    excluded: matchedRegistryRowIds.size > 0,
+    blockerCodes: matchedRegistryRowIds.size > 0
+      ? ["ALREADY_LISTED_ACTIVE"] as const
+      : [] as const,
+    matchedRegistryRowIds: [...matchedRegistryRowIds],
+    matchedEbayItemIds: [...matchedEbayItemIds],
+    matchReasons: [...matchReasons],
+  }
 }

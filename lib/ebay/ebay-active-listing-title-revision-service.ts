@@ -3,10 +3,21 @@ import { createHash, randomUUID } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import {
-  getEbayTradingReadOnlyAccessToken,
   tradingXmlContainer,
   tradingXmlTagValue,
 } from "./ebay-manual-listing-trading-readonly"
+import {
+  getEbayReadCredential,
+  useEbayReadCredential,
+} from "./ebay-read-credential-provider"
+import {
+  assertEbayProductionCapability,
+  type EbayProductionCapabilityGrant,
+} from "./ebay-production-capability-policy"
+import {
+  getEbayWriteCredential,
+  useEbayWriteCredential,
+} from "./ebay-write-credential-provider"
 import { parseAuthoritativeFactsInputPackage } from "./ebay-product-facts-readiness"
 import {
   ebayProductionAccountFingerprint,
@@ -19,6 +30,8 @@ import {
 
 export const ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION =
   "APLICAR TITULO VERIFICADO AL LISTING ACTIVO"
+export const ACTIVE_LISTING_TITLE_REVISION_POLICY_VERSION =
+  "EBAY_ACTIVE_LISTING_TITLE_REVISION_POLICY_V1" as const
 
 const TRADING_ENDPOINT = "https://api.ebay.com/ws/api.dll"
 const COMPATIBILITY_LEVEL = "1423"
@@ -448,11 +461,25 @@ export async function applyVerifiedTitleToActiveListing(input: {
   ebayItemId: string
   idempotencyKey: string
   confirmation: string
+  capabilityGrant: EbayProductionCapabilityGrant<"active_title.apply">
   fetchImpl?: FetchLike
 }) {
   if (input.confirmation !== ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION) {
     throw new Error("EBAY_ACTIVE_TITLE_REVISION_CONFIRMATION_INVALID")
   }
+  let capabilityGrant = assertEbayProductionCapability({
+    capability: "active_title.apply",
+    stage: "service",
+    invocation: "interactive",
+    authenticationMode: "admin_user",
+    userId: input.actorId,
+    accountKey: input.accountKey,
+    marketplace: "EBAY_US",
+    resourceKey: input.ebayItemId,
+    idempotencyKey: input.idempotencyKey,
+    policyVersion: ACTIVE_LISTING_TITLE_REVISION_POLICY_VERSION,
+    confirmedHumanAction: true,
+  }, input.capabilityGrant)
   const preview = await prepareVerifiedActiveListingTitle(input)
   const actorId = uuid(input.actorId)
   let row = await ledgerRow(input.supabase, preview.executionId, actorId)
@@ -464,8 +491,15 @@ export async function applyVerifiedTitleToActiveListing(input: {
   const targetTitle = text(row.target_title, 80)
   const expectedSku = text(row.ebay_sku, 50)
   const fetchImpl = input.fetchImpl ?? fetch
-  const accessToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
-  const before = await readOfficialSnapshot({ accessToken, itemId: input.ebayItemId,
+  const readCredential = await getEbayReadCredential(
+    "trading.active_listing.preflight",
+    fetchImpl,
+  )
+  const readAccessToken = useEbayReadCredential(
+    readCredential,
+    "trading.active_listing.preflight",
+  )
+  const before = await readOfficialSnapshot({ accessToken: readAccessToken, itemId: input.ebayItemId,
     expectedSku, accountKey: input.accountKey, fetchImpl })
   const beforeRecord = snapshotRecord(before, targetTitle, text(row.account_fingerprint, 64))
   if (before.title === targetTitle) {
@@ -484,6 +518,32 @@ export async function applyVerifiedTitleToActiveListing(input: {
       code: "EBAY_ACTIVE_TITLE_REVISION_RECONCILIATION_PENDING", snapshot: beforeRecord })
     return publicResult(row, "EBAY_ACTIVE_TITLE_REVISION_OUTCOME_UNKNOWN")
   }
+  capabilityGrant = assertEbayProductionCapability({
+    capability: "active_title.apply",
+    stage: "effect",
+    invocation: "interactive",
+    authenticationMode: "admin_user",
+    userId: input.actorId,
+    accountKey: input.accountKey,
+    marketplace: "EBAY_US",
+    resourceKey: input.ebayItemId,
+    idempotencyKey: input.idempotencyKey,
+    policyVersion: ACTIVE_LISTING_TITLE_REVISION_POLICY_VERSION,
+    proposalHash: text(row.request_hash, 64),
+    confirmedHumanAction: true,
+    preflightPassed: true,
+    preflightObservedAt: before.observedAt,
+  }, capabilityGrant)
+  const writeCredential = await getEbayWriteCredential(
+    "active_title.apply",
+    capabilityGrant,
+    fetchImpl,
+  )
+  const writeAccessToken = useEbayWriteCredential(
+    writeCredential,
+    "active_title.apply",
+    input.accountKey,
+  )
   const claimToken = randomUUID()
   const now = new Date()
   const { data: claimed, error: claimError } = await input.supabase
@@ -503,7 +563,8 @@ export async function applyVerifiedTitleToActiveListing(input: {
   row = record(claimed)
   let writeStatus: number | null = null
   try {
-    const write = await tradingCall({ callName: "ReviseFixedPriceItem", accessToken,
+    const write = await tradingCall({ callName: "ReviseFixedPriceItem",
+      accessToken: writeAccessToken,
       body: reviseVerifiedTitleRequestXml(input.ebayItemId, targetTitle),
       fetchImpl, timeoutMs: WRITE_TIMEOUT_MS })
     writeStatus = write.response.status
@@ -551,7 +612,14 @@ export async function applyVerifiedTitleToActiveListing(input: {
     }
   }
   try {
-    const after = await readOfficialSnapshot({ accessToken, itemId: input.ebayItemId,
+    const readbackCredential = await getEbayReadCredential(
+      "trading.active_listing.readback",
+      fetchImpl,
+    )
+    const after = await readOfficialSnapshot({ accessToken: useEbayReadCredential(
+      readbackCredential,
+      "trading.active_listing.readback",
+    ), itemId: input.ebayItemId,
       expectedSku, accountKey: input.accountKey, fetchImpl })
     const afterRecord = snapshotRecord(after, targetTitle, text(row.account_fingerprint, 64))
     if (after.title === targetTitle) {

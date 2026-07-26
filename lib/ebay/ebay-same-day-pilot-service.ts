@@ -19,6 +19,11 @@ import {
   type SameDayCandidateInput,
 } from "./ebay-same-day-pilot-domain"
 import {
+  assessActiveListingCandidateProtectionCoverage,
+  evaluateActiveListingCandidateProtection,
+  type ActiveListingCandidateProtectionRow,
+} from "./ebay-active-listing-protection-domain"
+import {
   claimResilientCandidateForLegacyJob,
   handleResilientLegacyJobFailure,
   isResilientListingFactoryEnabled,
@@ -3427,7 +3432,7 @@ export async function previewSameDayPilot(input: {
 }) {
   const now = input.now ?? new Date()
   const [{ data: opportunities }, { data: quotas }, { data: monitor },
-    productResearchCount, existingPilotListing] = await Promise.all([
+    productResearchCount, activeListingProtectionRead] = await Promise.all([
     readSameDayPilotPreviewSource(
       "OPPORTUNITY",
       input.supabase.from("ebay_luna_opportunity_queue").select("*").in("queue_status", ["watchlist", "review", "ready"]).order("opportunity_score", { ascending: false }).limit(70),
@@ -3446,9 +3451,28 @@ export async function previewSameDayPilot(input: {
     ),
     readSameDayPilotPreviewSource(
       "ACTIVE_LISTING",
-      input.supabase.from("ebay_active_listings").select("id", { count: "exact", head: true }).eq("account_key", input.accountKey).eq("ebay_item_id", "366543596425").eq("listing_status", "active"),
+      input.supabase.from("ebay_active_listings")
+        .select("id,account_key,source,ebay_item_id,ebay_sku,listing_status,last_ebay_sync_at,market_radar_product_id,supplier_variant_id,supplier_sku", {
+          count: "exact",
+        })
+        .eq("account_key", input.accountKey)
+        .in("listing_status", ["active", "ACTIVE"])
+        .limit(1_000),
     ),
   ])
+  const activeListingRows =
+    (activeListingProtectionRead.data ?? []) as ActiveListingCandidateProtectionRow[]
+  const activeListingCoverage = assessActiveListingCandidateProtectionCoverage({
+    accountKey: input.accountKey,
+    rows: activeListingRows,
+  })
+  if (
+    activeListingProtectionRead.count === null ||
+    activeListingProtectionRead.count !== activeListingRows.length ||
+    !activeListingCoverage.complete
+  ) {
+    throw new Error("SAME_DAY_PILOT_ACTIVE_LISTING_PROTECTION_INCOMPLETE")
+  }
   const excludedOpportunityIds = new Set(
     (input.excludeOpportunityIds ?? []).map((id) => text(id)).filter(Boolean),
   )
@@ -3478,6 +3502,30 @@ export async function previewSameDayPilot(input: {
       return [text(product.id), { ...extracted.facts, source: extracted.source,
         evidenceHash: extracted.evidenceHash }] as const
     }))
+  const activeListingProtectionByOpportunity = new Map(
+    eligibleOpportunities.map((row) => {
+      const key =
+        `${text(row.market_radar_product_id)}:${text(row.supplier_variant_id)}`
+      const variant = record(variantByKey.get(key) ?? {})
+      return [text(row.id), evaluateActiveListingCandidateProtection({
+        candidate: {
+          accountKey: input.accountKey,
+          marketRadarProductId: text(row.market_radar_product_id) || null,
+          supplierVariantId:
+            text(variant.supplier_variant_id || row.supplier_variant_id) || null,
+          supplierSku: text(variant.sku || row.supplier_sku) || null,
+        },
+        rows: activeListingRows,
+      })] as const
+    }),
+  )
+  const activeListingExcludedOpportunityIds = new Set(
+    [...activeListingProtectionByOpportunity.entries()]
+      .filter(([, protection]) => protection.excluded)
+      .map(([opportunityId]) => opportunityId),
+  )
+  const selectableOpportunities = eligibleOpportunities.filter((row) =>
+    !activeListingExcludedOpportunityIds.has(text(row.id)))
   const { data: latestQueueRun, error: queueRunError } = await input.supabase
     .from("marketplace_listing_approval_queue_runs").select("id")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE)
@@ -3491,7 +3539,7 @@ export async function previewSameDayPilot(input: {
   if (queueItemError) throw new Error("SAME_DAY_PILOT_QUEUE_ITEM_READ_FAILED")
   const queueItemByVariant = new Map((queueItems ?? [])
     .map((row) => [text(row.supplier_variant_id), row.id]))
-  const candidateInputs = eligibleOpportunities.map((row) => {
+  const candidateInputs = selectableOpportunities.map((row) => {
     const key = `${text(row.market_radar_product_id)}:${text(row.supplier_variant_id)}`
     const candidate = candidateInput(record(row), variantByKey.get(key) ?? {}, now,
       descriptionIdentityByProductId.get(text(row.market_radar_product_id)) ?? {})
@@ -3521,14 +3569,20 @@ export async function previewSameDayPilot(input: {
     counts: {
       opportunitiesRead: opportunities?.length ?? 0,
       previouslyAttemptedExcluded: excludedOpportunityIds.size,
-      opportunitiesEligibleForCycle: eligibleOpportunities.length,
+      activeListingsRead: activeListingRows.length,
+      canonicalActiveListings:
+        activeListingCoverage.canonicalActiveListings,
+      activeListingCandidatesExcluded:
+        activeListingExcludedOpportunityIds.size,
+      opportunitiesEligibleForCycle: selectableOpportunities.length,
       currentLunaVariantsRead: latestVariants?.length ?? 0,
       productResearchObservationsReused: productResearchCount.count ?? 0,
       identityEnrichmentRequired: evaluatedCandidates.filter((candidate) =>
         candidate.blockers.includes("IDENTITY_QUERY_TOO_GENERIC") ||
         candidate.blockers.includes("GTIN_INVALID_OR_UNVERIFIED") ||
         candidate.blockers.includes("OFFER_PACK_IDENTITY_MISSING")).length,
-      verifiedExistingListings: (existingPilotListing.count ?? 0) > 0 ? 1 : 0,
+      verifiedExistingListings:
+        activeListingCoverage.canonicalActiveListings,
       selectedCandidates: selected.length,
       localPreparationPackages: selected.length,
     },
@@ -3536,6 +3590,18 @@ export async function previewSameDayPilot(input: {
       candidateKey: candidate.candidateKey,
       package: buildSameDayLocalPreparationPackage(candidate, now.toISOString()),
     })),
+    activeListingProtection: {
+      status: "COMPLETE" as const,
+      excluded: [...activeListingProtectionByOpportunity.entries()]
+        .filter(([, protection]) => protection.excluded)
+        .map(([opportunityId, protection]) => ({
+          opportunityId,
+          blockerCodes: protection.blockerCodes,
+          matchedRegistryRowIds: protection.matchedRegistryRowIds,
+          matchedEbayItemIds: protection.matchedEbayItemIds,
+          matchReasons: protection.matchReasons,
+        })),
+    },
     safety: {
       ebayReadCalls: 0,
       ebayWrites: 0,

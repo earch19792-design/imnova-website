@@ -1,13 +1,8 @@
 import { createHash } from "node:crypto"
 
-import {
-  MAXIMUM_SAFE_PROMOTION_RATE_PERCENT,
-  POST_PUBLICATION_PROMOTION_POLICY_VERSION,
-// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
-} from "../marketplace/post-publication-optimization-domain.ts"
 import type { SafeEbayActiveCompetitorObservation } from "./ebay-seller-keyword-demand-gateway"
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
-import { controlledRiskEconomicsConfig } from "./ebay-controlled-risk-manual-override.ts"
+import { EBAY_CONFIRMED_SOLD_EVIDENCE_MAX_AGE_DAYS, evaluateEbayActiveListingCommercialPolicy, type EbayActiveListingCommercialEvidenceClass } from "./ebay-active-listing-commercial-policy.ts"
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
 import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics } from "./ebay-unit-economics.ts"
 
@@ -15,7 +10,6 @@ export const EBAY_COMPETITOR_WATCH_VERSION =
   "EBAY_LISTING_COMPETITOR_WATCH_V2" as const
 
 const RESEARCH_RECOMMENDATION_COOLDOWN_DAYS = 7
-const CONFIRMED_SOLD_PRICE_MAX_AGE_DAYS = 90
 const MATERIAL_PRICE_ADVANTAGE_RATIO = 0.9
 const MATERIAL_PRICE_RECOMMENDATION_RATIO = 0.05
 const COMMON_PATTERN_RATIO = 0.67
@@ -96,7 +90,7 @@ function recentConfirmedSoldDate(value: string | null | undefined, observedAt: s
   const soldAt = Date.parse(value ?? "")
   const observed = Date.parse(observedAt)
   return Number.isFinite(soldAt) && Number.isFinite(observed) && soldAt <= observed &&
-    observed - soldAt <= CONFIRMED_SOLD_PRICE_MAX_AGE_DAYS * 86_400_000
+    observed - soldAt <= EBAY_CONFIRMED_SOLD_EVIDENCE_MAX_AGE_DAYS * 86_400_000
 }
 
 export function buildConfirmedSoldPriceRecommendation(input: Pick<
@@ -192,25 +186,46 @@ export function buildConfirmedSoldPriceRecommendation(input: Pick<
   const confidence = confirmedSoldSellerCount >= 3 && confirmedSoldQuantity >= 10
     ? "HIGH" : confirmedSoldSellerCount >= 2 || confirmedSoldQuantity >= 5
       ? "MEDIUM" : "LOW"
+  const newestConfirmedSoldAt = confirmedSellerOffers
+    .map((observation) => observation.confirmedSoldLastDate ?? "")
+    .filter(Boolean)
+    .sort()
+    .at(-1) ?? null
+  const commercialPolicy = evaluateEbayActiveListingCommercialPolicy({
+    evidenceClass: "CONFIRMED_SOLD_HISTORY",
+    evidenceObservedAt: newestConfirmedSoldAt,
+    evaluatedAt: input.observedAt,
+    confirmedSoldQuantity,
+    confirmedSoldSource: "EBAY_PRODUCT_RESEARCH_CONFIRMED_SOLD",
+    identityExact: confirmedSellerOffers.every((observation) =>
+      ["EXACT_IDENTIFIER", "EXACT"].includes(observation.identityMatchQuality)),
+    samePresentation: true,
+    sameCondition: true,
+    samePack: true,
+    landedPriceComplete: true,
+    supplierEvidenceFresh: input.ownListing.supplierCostFresh,
+    supplierAvailable: input.ownListing.supplierAvailable,
+    proposalCurrent: true,
+    economicsApproved: expected.passesProfitGate,
+    proposedPriceAtOrAboveFloor:
+      proposedLandedPrice >= minimumSafeLandedPrice,
+    officialCurrentPriceUnchanged: false,
+    promotionEvidenceApproved: false,
+    humanConfirmation: false,
+    idempotencyReady: false,
+    readbackReady: false,
+  })
   const reservedPromotionPercent = money(
     Number(expected.config.promotedListingsReserveRate ?? 0) * 100,
   )
-  const safePromotionRatePercent = money(Math.min(
-    MAXIMUM_SAFE_PROMOTION_RATE_PERCENT,
-    reservedPromotionPercent,
-  ))
   const promotionRecommendation = {
     status: input.ownListing.promotionAllowed === false
       ? "BLOCKED_CONTROLLED_RISK_TEN_PERCENT_MARGIN" as const
-      : expected.passesProfitGate && safePromotionRatePercent > 0
-      ? "ELIGIBLE_FOR_HUMAN_REVIEW" as const
-      : "DO_NOT_PROMOTE_ECONOMICS_INSUFFICIENT" as const,
-    recommendedRatePercent: input.ownListing.promotionAllowed === false
-      ? 0 : expected.passesProfitGate
-      ? safePromotionRatePercent : 0,
+      : "DO_NOT_PROMOTE_CONFIRMED_SOLD_PRICE_EVIDENCE_ONLY" as const,
+    recommendedRatePercent: 0,
     maximumReservedRatePercent: reservedPromotionPercent,
     headroomPercent: reservedPromotionPercent,
-    policyVersion: POST_PUBLICATION_PROMOTION_POLICY_VERSION,
+    policyVersion: commercialPolicy.policyVersion,
     configurationVersion: expected.calculationSource,
     estimatedMarginAfterRecommendedPromotionPercent:
       expected.estimatedNetMarginPercent,
@@ -218,12 +233,21 @@ export function buildConfirmedSoldPriceRecommendation(input: Pick<
     humanApprovalRequired: true,
     reason: input.ownListing.promotionAllowed === false
       ? "No hay margen para aplicar promoción: listing bajo excepción de margen 10%."
-      : expected.passesProfitGate
-        ? `La economía canónica reserva ${reservedPromotionPercent}%; la prueba queda limitada a ${safePromotionRatePercent}% y conserva el resto como seguridad.`
-        : "La economía estimada no soporta la reserva publicitaria.",
+      : "Una venta comparable confirma demanda para evaluar precio, pero no constituye evidencia E4 para promoción.",
   }
   return {
     action,
+    decision: commercialPolicy.decision,
+    capability: commercialPolicy.capability,
+    blockerCodes: commercialPolicy.blockerCodes,
+    policyVersion: commercialPolicy.policyVersion,
+    evidenceClass: commercialPolicy.evidenceClass,
+    evidenceObservedAt: commercialPolicy.evidenceObservedAt,
+    evidenceExpiresAt: commercialPolicy.evidenceExpiresAt,
+    commercialPolicy,
+    priceChangeEligible: commercialPolicy.canPreparePriceDecrease,
+    promotionEligible: commercialPolicy.canPreparePromotion,
+    observationOnly: false,
     confidence,
     currentItemPrice: money(ownItemPrice),
     currentLandedPrice,
@@ -233,11 +257,7 @@ export function buildConfirmedSoldPriceRecommendation(input: Pick<
     confirmedSoldSellerCount,
     confirmedSoldOfferCount: confirmedSellerOffers.length,
     confirmedSoldQuantity,
-    newestConfirmedSoldAt: confirmedSellerOffers
-      .map((observation) => observation.confirmedSoldLastDate ?? "")
-      .filter(Boolean)
-      .sort()
-      .at(-1) ?? null,
+    newestConfirmedSoldAt,
     ownPackQuantity,
     supplierUnitCost: money(supplierUnitCost),
     totalSupplierCost,
@@ -250,7 +270,7 @@ export function buildConfirmedSoldPriceRecommendation(input: Pick<
     proposedPassesProfitGate: expected.passesProfitGate,
     promotionRecommendation,
     comparisonBasis: "PRODUCT_RESEARCH_CONFIRMED_SOLD_LANDED_PRICE" as const,
-    soldEvidenceMaxAgeDays: CONFIRMED_SOLD_PRICE_MAX_AGE_DAYS,
+    soldEvidenceMaxAgeDays: EBAY_CONFIRMED_SOLD_EVIDENCE_MAX_AGE_DAYS,
     activeOfferPriceTreatedAsSoldPrice: false,
     automaticPriceChangeAllowed: false,
     humanApprovalRequired: true,
@@ -263,155 +283,50 @@ export function buildActiveMarketPriceRecommendation(input: Pick<
 > & {
   medianLandedPrice: number | null
   activeSellerCount: number
+  evidenceClass?: EbayActiveListingCommercialEvidenceClass
+  observedAt?: string | null
 }) {
   const ownItemPrice = finite(input.ownListing.itemPrice)
   const ownShippingCost = finite(input.ownListing.shippingCost) ?? 0
-  const ownPackQuantity = Number(input.ownListing.packQuantity)
-  const supplierUnitCost = finite(input.ownListing.supplierUnitCost)
   const activeMedian = finite(input.medianLandedPrice)
   if (ownItemPrice === null || ownItemPrice <= 0 || ownShippingCost < 0 ||
-    activeMedian === null || activeMedian <= 0 || input.activeSellerCount < 2 ||
-    !Number.isInteger(ownPackQuantity) || ownPackQuantity <= 0 ||
-    supplierUnitCost === null || supplierUnitCost < 0 ||
-    !input.ownListing.supplierCostFresh || input.ownListing.supplierAvailable !== true) {
+    activeMedian === null || activeMedian <= 0 || input.activeSellerCount < 1) {
     return null
   }
-  const totalSupplierCost = money(supplierUnitCost * ownPackQuantity)
-  const floorWithPromotionReserve = calculateEbayMinimumOperatorPrice({
-    supplierCost: totalSupplierCost,
+  const commercialPolicy = evaluateEbayActiveListingCommercialPolicy({
+    evidenceClass: input.evidenceClass,
+    evidenceObservedAt: input.observedAt,
+    evaluatedAt: input.observedAt,
+    confirmedSoldQuantity: 0,
   })
-  const floorWithoutPromotion = calculateEbayMinimumOperatorPrice({
-    supplierCost: totalSupplierCost,
-  }, { promotedListingsReserveRate: 0 })
-  const controlledRiskConfig = controlledRiskEconomicsConfig()
-  const controlledRiskFloor = calculateEbayMinimumOperatorPrice({
-    supplierCost: totalSupplierCost,
-  }, controlledRiskConfig)
-  if (!floorWithPromotionReserve.ready || !floorWithoutPromotion.ready ||
-    !controlledRiskFloor.ready ||
-    floorWithPromotionReserve.minimumOperatorPrice === null ||
-    floorWithoutPromotion.minimumOperatorPrice === null ||
-    controlledRiskFloor.minimumOperatorPrice === null) return null
-
-  const standardPromotionReserveIncluded = input.ownListing.promotionAllowed !== false
-  const standardMinimumSafeLandedPrice = standardPromotionReserveIncluded
-    ? floorWithPromotionReserve.minimumOperatorPrice
-    : floorWithoutPromotion.minimumOperatorPrice
   const currentLandedPrice = money(ownItemPrice + ownShippingCost)
-  const activeMarketControlledEconomics = calculateEbayUnitEconomics({
-    salePrice: activeMedian,
-    supplierCost: totalSupplierCost,
-  }, controlledRiskConfig)
-  const controlledRiskTenPercent = input.activeSellerCount >= 2 &&
-    activeMedian < standardMinimumSafeLandedPrice &&
-    activeMedian >= controlledRiskFloor.minimumOperatorPrice &&
-    activeMarketControlledEconomics.ready &&
-    activeMarketControlledEconomics.passesProfitGate
-  const minimumSafeLandedPrice = controlledRiskTenPercent
-    ? controlledRiskFloor.minimumOperatorPrice
-    : standardMinimumSafeLandedPrice
-  const promotionReserveIncluded = controlledRiskTenPercent
-    ? false : standardPromotionReserveIncluded
-  let action: "LOWER_TO_ACTIVE_MARKET_SAFE_PRICE" |
-    "LOWER_TO_ACTIVE_MARKET_CONTROLLED_RISK_PRICE" |
-    "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR" | "RAISE_TO_SAFE_FLOOR"
-  let proposedLandedPrice: number
-  if (currentLandedPrice < minimumSafeLandedPrice) {
-    action = "RAISE_TO_SAFE_FLOOR"
-    proposedLandedPrice = minimumSafeLandedPrice
-  } else {
-    const safeCompetitivePrice = money(Math.max(
-      minimumSafeLandedPrice,
-      activeMedian,
-    ))
-    if (safeCompetitivePrice < currentLandedPrice - 0.01) {
-      action = controlledRiskTenPercent
-        ? "LOWER_TO_ACTIVE_MARKET_CONTROLLED_RISK_PRICE"
-        : "LOWER_TO_ACTIVE_MARKET_SAFE_PRICE"
-      proposedLandedPrice = safeCompetitivePrice
-    } else {
-      action = "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"
-      proposedLandedPrice = currentLandedPrice
-    }
-  }
-  proposedLandedPrice = money(proposedLandedPrice)
-  const proposedItemPrice = money(Math.max(
-    0.01,
-    proposedLandedPrice - ownShippingCost,
-  ))
-  const economicsOverrides = controlledRiskTenPercent
-    ? controlledRiskConfig
-    : promotionReserveIncluded ? {} : { promotedListingsReserveRate: 0 }
-  const current = calculateEbayUnitEconomics({
-    salePrice: currentLandedPrice,
-    supplierCost: totalSupplierCost,
-  }, economicsOverrides)
-  const proposed = calculateEbayUnitEconomics({
-    salePrice: proposedLandedPrice,
-    supplierCost: totalSupplierCost,
-  }, economicsOverrides)
-  const activeMarketEconomics = calculateEbayUnitEconomics({
-    salePrice: activeMedian,
-    supplierCost: totalSupplierCost,
-  }, economicsOverrides)
-  const activeMarketFailedGateCodes = !activeMarketEconomics.ready ? [
-    "ECONOMICS_NOT_READY",
-  ] : [
-    (activeMarketEconomics.estimatedNetProfit ?? Number.NEGATIVE_INFINITY) <
-      activeMarketEconomics.config.minimumNetProfit
-      ? "MINIMUM_NET_PROFIT" : null,
-    (activeMarketEconomics.estimatedNetMarginPercent ?? Number.NEGATIVE_INFINITY) <
-      activeMarketEconomics.config.minimumNetMarginPercent
-      ? "MINIMUM_NET_MARGIN" : null,
-    (activeMarketEconomics.estimatedRoiPercent ?? Number.NEGATIVE_INFINITY) <
-      activeMarketEconomics.config.minimumRoiPercent
-      ? "MINIMUM_ROI" : null,
-  ].filter((code): code is string => code !== null)
   return {
-    action,
-    confidence: input.activeSellerCount >= 3 ? "MEDIUM" as const : "LOW" as const,
+    action: "HOLD_PENDING_CONFIRMED_SALES" as const,
+    decision: commercialPolicy.decision,
+    capability: commercialPolicy.capability,
+    blockerCodes: commercialPolicy.blockerCodes,
+    policyVersion: commercialPolicy.policyVersion,
+    evidenceClass: commercialPolicy.evidenceClass,
+    evidenceObservedAt: commercialPolicy.evidenceObservedAt,
+    evidenceExpiresAt: commercialPolicy.evidenceExpiresAt,
+    commercialPolicy,
+    confidence: "LOW" as const,
     currentItemPrice: money(ownItemPrice),
     currentLandedPrice,
-    proposedItemPrice,
-    proposedLandedPrice,
+    proposedItemPrice: null,
+    proposedLandedPrice: null,
     activeMarketMedianLandedPrice: money(activeMedian),
     activeSellerCount: input.activeSellerCount,
-    ownPackQuantity,
-    supplierUnitCost: money(supplierUnitCost),
-    totalSupplierCost,
-    minimumSafeLandedPrice,
-    standardMinimumSafeLandedPrice,
-    floorWithPromotionReserve: floorWithPromotionReserve.minimumOperatorPrice,
-    floorWithoutPromotion: floorWithoutPromotion.minimumOperatorPrice,
-    controlledRiskMinimumLandedPrice:
-      controlledRiskFloor.minimumOperatorPrice,
-    controlledRiskTenPercent,
-    promotionReserveIncluded,
-    canReachActiveMarketSafely: activeMedian >= minimumSafeLandedPrice,
-    currentEstimatedNetProfit: current.estimatedNetProfit,
-    currentEstimatedMarginPercent: current.estimatedNetMarginPercent,
-    proposedEstimatedNetProfit: proposed.estimatedNetProfit,
-    proposedEstimatedMarginPercent: proposed.estimatedNetMarginPercent,
-    proposedEstimatedRoiPercent: proposed.estimatedRoiPercent,
-    proposedPassesProfitGate: proposed.passesProfitGate,
-    activeMarketEconomics: {
-      estimatedNetProfit: activeMarketEconomics.estimatedNetProfit,
-      estimatedNetMarginPercent:
-        activeMarketEconomics.estimatedNetMarginPercent,
-      estimatedRoiPercent: activeMarketEconomics.estimatedRoiPercent,
-      estimatedOutboundShipping:
-        activeMarketEconomics.estimatedOutboundShipping,
-      estimatedEbayFees: activeMarketEconomics.estimatedEbayFees,
-      returnsReserve: activeMarketEconomics.returnsReserve,
-      promotedListingsReserve:
-        activeMarketEconomics.promotedListingsReserve,
-      minimumNetProfit: activeMarketEconomics.config.minimumNetProfit,
-      minimumNetMarginPercent:
-        activeMarketEconomics.config.minimumNetMarginPercent,
-      minimumRoiPercent: activeMarketEconomics.config.minimumRoiPercent,
-      passesProfitGate: activeMarketEconomics.passesProfitGate,
-      failedGateCodes: activeMarketFailedGateCodes,
-      shippingSource: "CONSERVATIVE_OUTBOUND_RESERVE" as const,
+    priceChangeEligible: false,
+    promotionEligible: false,
+    observationOnly: true,
+    promotionRecommendation: {
+      status: "NOT_RECOMMENDED" as const,
+      recommendedRatePercent: 0,
+      applyFromSellerOs: false,
+      reason: "ACTIVE_ONLY, actividad estimada o cero ventas confirmadas no autorizan promoción.",
+      blockerCodes: commercialPolicy.blockerCodes,
+      policyVersion: commercialPolicy.policyVersion,
     },
     comparisonBasis: "EBAY_ACTIVE_MULTI_SELLER_MEDIAN_NOT_CONFIRMED_SOLD" as const,
     activeMarketNotConfirmedSale: true,
@@ -541,6 +456,14 @@ export function buildCompetitorWatchAnalysis(input: CompetitorWatchAnalysisInput
     .filter((term) => term.length >= 3 && !ownTitle.includes(term))
     .slice(0, 5)
   if (suggestedTerms.length) suggestionCodes.push("REVIEW_CROSS_SELLER_TERMS")
+  const evidenceClass = input.observations.some((entry) =>
+    entry.evidenceClass === "CONFIRMED_SOLD_HISTORY")
+    ? "CONFIRMED_SOLD_HISTORY"
+    : input.observations.some((entry) => entry.evidenceClass === "ESTIMATED_ACTIVITY")
+      ? "ESTIMATED_ACTIVITY"
+      : input.observations.length
+        ? "ACTIVE_ONLY"
+        : "NO_COMPARABLE_EVIDENCE"
   const priceRecommendation = buildConfirmedSoldPriceRecommendation(input)
   const activeMarketPriceRecommendation = priceRecommendation ||
       !suggestionCodes.includes("REVIEW_MARKET_PRICE_POSITION") ? null
@@ -548,6 +471,8 @@ export function buildCompetitorWatchAnalysis(input: CompetitorWatchAnalysisInput
         ownListing: input.ownListing,
         medianLandedPrice,
         activeSellerCount: currentSellers.size,
+        evidenceClass,
+        observedAt: input.observedAt,
       })
   if (priceRecommendation) {
     suggestionCodes.push("REVIEW_CONFIRMED_SOLD_PRICE_RECOMMENDATION")
@@ -559,14 +484,6 @@ export function buildCompetitorWatchAnalysis(input: CompetitorWatchAnalysisInput
   const researchRefreshRecommended = input.baselineExists &&
     potentialWithoutConfirmedSold.length > 0 &&
     cooldownElapsed(input.lastResearchRefreshRecommendedAt, input.observedAt)
-  const evidenceClass = input.observations.some((entry) =>
-    entry.evidenceClass === "CONFIRMED_SOLD_HISTORY")
-    ? "CONFIRMED_SOLD_HISTORY"
-    : input.observations.some((entry) => entry.evidenceClass === "ESTIMATED_ACTIVITY")
-      ? "ESTIMATED_ACTIVITY"
-      : input.observations.length
-        ? "ACTIVE_ONLY"
-        : "NO_COMPARABLE_EVIDENCE"
   // A baseline suppresses false "new seller" alerts, but it must not swallow
   // an actionable market pattern. Suggestions discovered on the first scan are
   // already aggregated across sellers and should enter the operator outbox once.
@@ -592,9 +509,9 @@ export function buildCompetitorWatchAnalysis(input: CompetitorWatchAnalysisInput
         activeMarketPriceRecommendation
           ? [
               activeMarketPriceRecommendation.action,
-              activeMarketPriceRecommendation.proposedItemPrice.toFixed(2),
-              activeMarketPriceRecommendation.minimumSafeLandedPrice.toFixed(2),
               activeMarketPriceRecommendation.activeMarketMedianLandedPrice.toFixed(2),
+              activeMarketPriceRecommendation.activeSellerCount,
+              ...activeMarketPriceRecommendation.blockerCodes,
             ].join(":")
           : "NO_ACTIVE_MARKET_PRICE_RECOMMENDATION",
         researchRefreshRecommended ? "RESEARCH_REFRESH" : "OBSERVE",
@@ -643,6 +560,8 @@ export function buildCompetitorWatchAnalysis(input: CompetitorWatchAnalysisInput
       estimatedActivityTreatedAsConfirmedSale: false,
       automaticProductResearchImport: false,
       automaticEbayMutation: false,
+      activeMarketExecutablePriceProduced: false,
+      activeMarketPromotionEligible: false,
       competitorContentCopied: false,
       humanReviewRequired: true,
     },

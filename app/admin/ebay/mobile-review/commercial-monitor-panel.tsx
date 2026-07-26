@@ -89,6 +89,24 @@ type MonitorRun = Omit<CommercialMonitorRunView, "metrics"> & {
   metrics?: MonitorMetrics
 }
 
+type CommercialPolicyCapability = {
+  decision?:
+    | "HOLD_PRICE_NO_PROMOTION"
+    | "EVALUATE_CONFIRMED_SOLD_PRICE"
+    | "EVALUATE_PROTECTIVE_PRICE_INCREASE"
+    | "END_LISTING_OUT_OF_STOCK"
+  capability?: "enabled" | "blocked" | "preview_only" | "web_only"
+  canPreparePriceDecrease?: boolean
+  canPreparePromotion?: boolean
+  canPrepareProtectivePriceIncrease?: boolean
+  canEndForOutOfStock?: boolean
+  blockerCodes?: string[]
+  policyVersion?: string
+  evidenceClass?: string
+  evidenceObservedAt?: string | null
+  evidenceExpiresAt?: string | null
+}
+
 type Dashboard = {
   status?: string
   latestRun?: MonitorRun | null
@@ -235,6 +253,7 @@ type Dashboard = {
       status?: "AWAITING_HUMAN_APPROVAL"
       changeApplied?: false
       whatsappEnqueued?: true
+      commercialPolicy?: CommercialPolicyCapability
       priceRecommendation?: {
         action?: string
         confidence?: string
@@ -274,6 +293,7 @@ type Dashboard = {
         proposedEstimatedNetProfit?: number | null
         proposedEstimatedMarginPercent?: number | null
         proposedEstimatedRoiPercent?: number | null
+        commercialPolicy?: CommercialPolicyCapability
       }
     }>
     automaticActiveSellerDiscovery?: boolean
@@ -293,11 +313,13 @@ type Dashboard = {
     status?: "AWAITING_HUMAN_APPROVAL"
     changeApplied?: false
     humanConfirmationRequired?: true
+    commercialPolicy?: CommercialPolicyCapability
     evidence?: {
       previousSupplierCost?: number
       currentSupplierCost?: number
       estimatedMarginPercent?: number
       stockAvailable?: number
+      commercialPolicy?: CommercialPolicyCapability
     }
   }>
   optimizationTasks?: Array<{
@@ -317,6 +339,7 @@ type Dashboard = {
       reviewSequence?: string[]
       nextEligibleAt?: string
       rulesetVersion?: string
+      commercialPolicy?: CommercialPolicyCapability
       listingAgeEvidence?: {
         startedAt?: string
         ageHours?: number
@@ -363,6 +386,10 @@ type Payload = {
     phase?: string
     appliedVerified?: boolean
     confirmationRequired?: string
+    capability?: "enabled" | "blocked" | "preview_only" | "web_only"
+    blockerCodes?: string[]
+    policyVersion?: string
+    evidenceExpiresAt?: string | null
   }
 }
 
@@ -496,6 +523,10 @@ function OptimizationTaskCard({ task, applying, onApply }: {
   const evidence = task.evidence
   const experiment = evidence?.experiment
   const promotion = evidence?.promotionRecommendation
+  const commercialPolicy = evidence?.commercialPolicy
+  const promotionCapabilityEnabled =
+    commercialPolicy?.capability === "enabled" &&
+    commercialPolicy.canPreparePromotion === true
   const listingAgeEvidence = evidence?.listingAgeEvidence
   const officialListingStart = listingAgeEvidence?.source ===
     "EBAY_OFFICIAL_START_TIME"
@@ -534,7 +565,8 @@ function OptimizationTaskCard({ task, applying, onApply }: {
       <p className="mt-1 text-xs leading-5 text-white/60">{promotion.reason}</p>
       {promotion.status === "READY_FOR_HUMAN_APPROVAL" && <p className="mt-2 text-[11px] leading-5 text-emerald-100">Tasa limitada al menor entre 2% y el headroom real ({promotion.headroomPercent ?? 0}%). Política {promotion.policyVersion ?? "pendiente"} · configuración {promotion.configurationVersion ?? "pendiente"}.</p>}
       {promotion.status === "READY_FOR_HUMAN_APPROVAL" && <p className="mt-2 text-xs font-bold text-emerald-100">Registrar la propuesta exige revisión humana; cualquier ejecución continúa manual y vuelve a validar economía, stock y configuración.</p>}
-      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && task.id && <button type="button" disabled={applying} onClick={() => onApply(task.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{applying ? "Verificando y aplicando…" : `REVISAR Y AUTORIZAR PROMOCIÓN ${promotion.recommendedRatePercent ?? 0}%`}</button>}
+      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && !promotionCapabilityEnabled && <p className="mt-2 text-xs font-black text-amber-100">Promoción bloqueada hasta que el servidor confirme evidencia, política y capacidad vigentes.</p>}
+      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && promotionCapabilityEnabled && task.id && <button type="button" disabled={applying} onClick={() => onApply(task.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{applying ? "Verificando y aplicando…" : `REVISAR Y AUTORIZAR PROMOCIÓN ${promotion.recommendedRatePercent ?? 0}%`}</button>}
       {promotion.status === "BLOCKED_CONTROLLED_RISK" && <p className="mt-2 text-xs font-black text-amber-100">No hay margen para aplicar promoción.</p>}
     </div>}
   </article>
@@ -587,11 +619,17 @@ export function CommercialMonitorPanel() {
         return payload.improvement
       }
       const preview = await call("prepare_improvement")
+      if (preview.capability !== "enabled") {
+        throw new Error(
+          preview.blockerCodes?.[0] ??
+            "COMMERCIAL_IMPROVEMENT_SERVER_CAPABILITY_REQUIRED",
+        )
+      }
       const label = preview.actionType === "PRICE"
         ? "el nuevo precio verificado"
         : preview.actionType === "END_LISTING"
           ? "el retiro del listing porque Luna confirmó stock cero"
-          : "Promoted Listings General al 5% durante 7 días"
+          : "la promoción limitada que confirmó la política del servidor"
       if (!window.confirm(`Seller OS aplicará ${label} al listing ${preview.listingId}. Se verificará identidad, stock, costo y economía antes de escribir en eBay. ¿Deseas autorizarlo?`)) {
         setMessage("Mejora no autorizada; eBay no fue modificado.")
         return
@@ -1100,6 +1138,13 @@ export function CommercialMonitorPanel() {
           : <div className="mt-3 grid gap-3">
             {supplyActions.slice(0, 8).map((entry) => {
               const isOutOfStock = entry.eventType === "ACTIVE_LISTING_OUT_OF_STOCK"
+              const commercialPolicy =
+                entry.evidence?.commercialPolicy ?? entry.commercialPolicy
+              const actionCapabilityEnabled =
+                commercialPolicy?.capability === "enabled" &&
+                (isOutOfStock
+                  ? commercialPolicy.canEndForOutOfStock === true
+                  : commercialPolicy.canPrepareProtectivePriceIncrease === true)
               const previousCost = entry.evidence?.previousSupplierCost
               const currentCost = entry.evidence?.currentSupplierCost
               return <article
@@ -1116,7 +1161,8 @@ export function CommercialMonitorPanel() {
                     : `Margen estimado: ${typeof entry.evidence?.estimatedMarginPercent === "number" ? `${entry.evidence.estimatedMarginPercent.toFixed(2)}%` : "en riesgo"}. Seller OS recalculará el precio seguro.`}</p>
                 <p className="mt-2 text-xs font-bold text-cyan-50">{entry.recommendedAction}</p>
                 <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Esperando confirmación · ningún cambio aplicado</p>
-                {entry.id && <button type="button" disabled={Boolean(improvementBusyId)} onClick={() => void applyImprovement(entry.id!)} className={`mt-3 min-h-12 w-full rounded-xl px-3 font-black text-black disabled:opacity-40 ${isOutOfStock ? "bg-rose-200" : "bg-cyan-200"}`}>{improvementBusyId === entry.id
+                {!actionCapabilityEnabled && <p className="mt-2 text-xs font-black text-amber-100">Acción bloqueada hasta que el servidor confirme la capacidad exacta y la evidencia vigente.</p>}
+                {entry.id && actionCapabilityEnabled && <button type="button" disabled={Boolean(improvementBusyId)} onClick={() => void applyImprovement(entry.id!)} className={`mt-3 min-h-12 w-full rounded-xl px-3 font-black text-black disabled:opacity-40 ${isOutOfStock ? "bg-rose-200" : "bg-cyan-200"}`}>{improvementBusyId === entry.id
                   ? "Verificando evidencia fresca…"
                   : isOutOfStock
                     ? "VERIFICAR Y RETIRAR LISTING"
@@ -1260,6 +1306,21 @@ export function CommercialMonitorPanel() {
           <div className="mt-2 grid gap-2">
             {competitorPriceRecommendations.slice(0, 3).map((entry) => {
               const recommendation = entry.priceRecommendation ?? {}
+              const commercialPolicy =
+                recommendation.commercialPolicy ?? entry.commercialPolicy
+              const observationOnly =
+                recommendation.activeMarketNotConfirmedSale === true ||
+                commercialPolicy?.decision === "HOLD_PRICE_NO_PROMOTION"
+              const currentPrice = recommendation.currentItemPrice
+              const proposedPrice = recommendation.proposedItemPrice
+              const priceDecrease = typeof currentPrice === "number" &&
+                typeof proposedPrice === "number" &&
+                proposedPrice < currentPrice
+              const priceCapabilityEnabled =
+                commercialPolicy?.capability === "enabled" &&
+                (priceDecrease
+                  ? commercialPolicy.canPreparePriceDecrease === true
+                  : commercialPolicy.canPrepareProtectivePriceIncrease === true)
               const money = (amount: number | undefined) => typeof amount === "number"
                 ? `$${amount.toFixed(2)}` : "—"
               return <article
@@ -1269,19 +1330,21 @@ export function CommercialMonitorPanel() {
                 className={`scroll-mt-32 rounded-xl bg-black/25 p-3 text-xs outline-none ${entry.id === requestedImprovementId ? "ring-2 ring-emerald-200" : ""}`}
               >
                 <p className="font-black text-white">Listing {entry.listingId} · SKU {entry.sku ?? "pendiente"}</p>
-                <p className="mt-1 text-white/70">Actual {money(recommendation.currentItemPrice)} → propuesta {money(recommendation.proposedItemPrice)} · {recommendation.activeMarketNotConfirmedSale
-                  ? `mediana activa ${money(recommendation.activeMarketMedianLandedPrice)}`
-                  : `referencia vendida ${money(recommendation.confirmedSoldBenchmarkLandedPrice)}`}</p>
-                <p className="mt-1 text-white/55">{recommendation.activeMarketNotConfirmedSale
+                <p className="mt-1 text-white/70">{observationOnly
+                  ? `Actual ${money(recommendation.currentItemPrice)} · mediana activa ${money(recommendation.activeMarketMedianLandedPrice)} como contexto`
+                  : `Actual ${money(recommendation.currentItemPrice)} → evaluación ${money(recommendation.proposedItemPrice)} · referencia vendida ${money(recommendation.confirmedSoldBenchmarkLandedPrice)}`}</p>
+                <p className="mt-1 text-white/55">{observationOnly
                   ? `${recommendation.activeSellerCount ?? 0} vendedor(es) activos · no son ventas confirmadas`
                   : `${recommendation.confirmedSoldSellerCount ?? 0} vendedor(es) exacto(s) · ${recommendation.confirmedSoldQuantity ?? 0} venta(s)`} · piso propio {money(recommendation.minimumSafeLandedPrice)} · utilidad {money(recommendation.proposedEstimatedNetProfit ?? undefined)} · margen {typeof recommendation.proposedEstimatedMarginPercent === "number" ? `${recommendation.proposedEstimatedMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.proposedEstimatedRoiPercent === "number" ? `${recommendation.proposedEstimatedRoiPercent.toFixed(2)}%` : "—"}</p>
-                {recommendation.activeMarketNotConfirmedSale && <p className="mt-1 text-white/55">Piso con reserva publicitaria vigente: {money(recommendation.floorWithPromotionReserve)} · sin promoción: {money(recommendation.floorWithoutPromotion)} · piso controlado 10%: {money(recommendation.controlledRiskMinimumLandedPrice)} · alcanza la mediana activa: {recommendation.canReachActiveMarketSafely ? "SÍ" : "NO"}</p>}
-                {recommendation.controlledRiskTenPercent && <p className="mt-2 rounded-lg border border-amber-200/25 bg-amber-200/[0.08] p-2 font-black text-amber-50">PRECIO COMPETITIVO CON MARGEN CONTROLADO 10% · PROMOCIÓN BLOQUEADA</p>}
-                {recommendation.activeMarketNotConfirmedSale && recommendation.activeMarketEconomics && <p className="mt-1 text-white/55">A precio de mercado: utilidad {money(recommendation.activeMarketEconomics.estimatedNetProfit ?? undefined)} · margen {typeof recommendation.activeMarketEconomics.estimatedNetMarginPercent === "number" ? `${recommendation.activeMarketEconomics.estimatedNetMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.activeMarketEconomics.estimatedRoiPercent === "number" ? `${recommendation.activeMarketEconomics.estimatedRoiPercent.toFixed(2)}%` : "—"} · envío conservador {money(recommendation.activeMarketEconomics.estimatedOutboundShipping ?? undefined)}. Regla(s) que fallan: {(recommendation.activeMarketEconomics.failedGateCodes ?? []).join(", ") || "ninguna"}.</p>}
-                <p className="mt-2 font-bold text-emerald-50">{entry.recommendedAction}</p>
-                <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Esperando revisión humana · WhatsApp encolado · ningún cambio aplicado</p>
-                {entry.id && !["KEEP_PRICE_IN_CONFIRMED_SOLD_BAND", "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"].includes(recommendation.action ?? "") && recommendation.proposedPassesProfitGate !== false && <button type="button" disabled={Boolean(improvementBusyId)} onClick={() => void applyImprovement(entry.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{improvementBusyId === entry.id ? "Verificando y aplicando…" : `ACEPTAR PRECIO SEGURO ${money(recommendation.proposedItemPrice)}`}</button>}
-                {recommendation.action === "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR" && <p className="mt-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.08] p-3 text-center font-black text-amber-50">MANTENER {money(recommendation.currentItemPrice)} · YA ESTÁ EN EL PISO</p>}
+                {observationOnly && <p className="mt-2 rounded-lg border border-amber-200/25 bg-amber-200/[0.08] p-2 font-black text-amber-50">MANTENER PRECIO · SIN VENTAS CONFIRMADAS · PROMOCIÓN 0%</p>}
+                <p className="mt-2 font-bold text-emerald-50">{observationOnly
+                  ? "Observar mercado y actualizar Product Research antes de evaluar precio."
+                  : entry.recommendedAction}</p>
+                {!priceCapabilityEnabled && <p className="mt-2 text-xs font-black text-amber-100">{observationOnly
+                  ? "La actividad de vendedores no habilita una propuesta ejecutable."
+                  : `Acción bloqueada por política del servidor${commercialPolicy?.blockerCodes?.length ? `: ${commercialPolicy.blockerCodes.join(", ")}` : "."}`}</p>}
+                <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Registrado para revisión · ningún cambio aplicado</p>
+                {entry.id && priceCapabilityEnabled && !observationOnly && <button type="button" disabled={Boolean(improvementBusyId)} onClick={() => void applyImprovement(entry.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{improvementBusyId === entry.id ? "Verificando y aplicando…" : `REVISAR ACCIÓN PROTEGIDA ${money(recommendation.proposedItemPrice)}`}</button>}
               </article>
             })}
           </div>

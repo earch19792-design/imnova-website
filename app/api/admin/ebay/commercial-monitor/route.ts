@@ -22,8 +22,16 @@ import {
 import { getEbayReadonlyRateLimitMetadata } from "@/lib/ebay/ebay-readonly-rate-limit"
 import {
   applyEbayCommercialImprovement,
+  COMMERCIAL_IMPROVEMENT_CONFIRMATION,
   prepareEbayCommercialImprovement,
+  requiredEbayCommercialImprovementApplyCapability,
 } from "@/lib/ebay/ebay-commercial-improvement-action-service"
+import {
+  EBAY_ACTIVE_LISTING_COMMERCIAL_POLICY_VERSION,
+} from "@/lib/ebay/ebay-active-listing-commercial-policy"
+import {
+  assertEbayProductionCapability,
+} from "@/lib/ebay/ebay-production-capability-policy"
 import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
@@ -96,6 +104,13 @@ export async function GET(req: Request) {
     { success: false, error: validation.error ?? "admin_forbidden" },
     { status: validation.status || 403 },
   )
+  if (!validation.userId ||
+    validation.authenticationMode !== "admin_user") {
+    return NextResponse.json({
+      success: false,
+      error: "COMMERCIAL_MONITOR_ADMIN_USER_REQUIRED",
+    }, { status: 403 })
+  }
   if (productionBlocked()) return NextResponse.json({
     success: false,
     error: "COMMERCIAL_MONITOR_PREVIEW_ONLY",
@@ -117,6 +132,13 @@ export async function POST(req: Request) {
     { success: false, error: validation.error ?? "admin_forbidden" },
     { status: validation.status || 403 },
   )
+  if (!validation.userId ||
+    validation.authenticationMode !== "admin_user") {
+    return NextResponse.json({
+      success: false,
+      error: "COMMERCIAL_MONITOR_ADMIN_USER_REQUIRED",
+    }, { status: 403 })
+  }
   if (productionBlocked()) return NextResponse.json({
     success: false,
     error: "COMMERCIAL_MONITOR_PREVIEW_ONLY",
@@ -223,15 +245,61 @@ export async function POST(req: Request) {
         return NextResponse.json({ success: false,
           error: "COMMERCIAL_IMPROVEMENT_REQUEST_INVALID" }, { status: 400 })
       }
-      const common = { supabase, accountKey, actorId: validation.userId,
-        eventId, idempotencyKey }
-      const improvement = input.action === "prepare_improvement"
-        ? await prepareEbayCommercialImprovement(common)
-        : await applyEbayCommercialImprovement({
-            ...common,
-            confirmation: typeof input.confirmation === "string"
-              ? input.confirmation : "",
-          })
+      const prepareCapabilityGrant = assertEbayProductionCapability({
+        capability: "commercial_improvement.prepare",
+        stage: "route",
+        invocation: "interactive",
+        authenticationMode: "admin_user",
+        userId: validation.userId,
+        accountKey,
+        marketplace: "EBAY_US",
+        resourceKey: eventId,
+        idempotencyKey,
+        policyVersion: EBAY_ACTIVE_LISTING_COMMERCIAL_POLICY_VERSION,
+      })
+      const common = {
+        supabase,
+        accountKey,
+        actorId: validation.userId,
+        eventId,
+        idempotencyKey,
+      }
+      const preview = await prepareEbayCommercialImprovement({
+        ...common,
+        capabilityGrant: prepareCapabilityGrant,
+      })
+      let improvement = preview
+      if (input.action === "apply_improvement") {
+        const confirmation = typeof input.confirmation === "string"
+          ? input.confirmation : ""
+        if (confirmation !== COMMERCIAL_IMPROVEMENT_CONFIRMATION) {
+          return NextResponse.json({
+            success: false,
+            error: "COMMERCIAL_IMPROVEMENT_CONFIRMATION_REQUIRED",
+          }, { status: 400 })
+        }
+        const capability =
+          requiredEbayCommercialImprovementApplyCapability(preview)
+        const capabilityGrant = assertEbayProductionCapability({
+          capability,
+          stage: "route",
+          invocation: "interactive",
+          authenticationMode: "admin_user",
+          userId: validation.userId,
+          accountKey,
+          marketplace: "EBAY_US",
+          resourceKey: preview.listingId,
+          idempotencyKey,
+          policyVersion: EBAY_ACTIVE_LISTING_COMMERCIAL_POLICY_VERSION,
+          confirmedHumanAction: true,
+        })
+        improvement = await applyEbayCommercialImprovement({
+          ...common,
+          confirmation,
+          prepareCapabilityGrant,
+          capabilityGrant,
+        })
+      }
       return NextResponse.json({ success: true, action: input.action,
         improvement })
     }
