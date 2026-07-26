@@ -1,3 +1,16 @@
+// @ts-ignore Node's native TypeScript test runner requires the explicit extension.
+import { EBAY_READONLY_SCOPES } from "./ebay-capability-registry.ts"
+
+export {
+  EBAY_CAPABILITY_IMPLEMENTATION_STATES,
+  EBAY_CAPABILITY_REGISTRY,
+  EBAY_CAPABILITY_REGISTRY_VERSION,
+  EBAY_READONLY_SCOPES,
+  calculateEbayCapabilityImplementationPercentages,
+  getEbayCapabilityRegistryAdminProjection,
+// @ts-ignore Node's native TypeScript test runner requires the explicit extension.
+} from "./ebay-capability-registry.ts"
+
 export const EBAY_SELLER_READONLY_OAUTH_DATA_AUDIT_VERSION =
   "EBAY_SELLER_READONLY_OAUTH_DATA_AUDIT_RESUME_A3_V1"
 
@@ -9,12 +22,6 @@ export const EBAY_READONLY_OAUTH_APPROVAL_PHRASE =
 
 export const EBAY_READONLY_CLI_CONFIRMATION_PHRASE =
   "READ_ONLY_AUDIT_APPROVED"
-
-export const EBAY_READONLY_SCOPES = [
-  "https://api.ebay.com/oauth/api_scope",
-  "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
-  "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
-] as const
 
 const ebayReadOnlyEndpoints = [
   {

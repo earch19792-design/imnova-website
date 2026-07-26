@@ -14,6 +14,10 @@ export type CommercialThresholds = {
   lowStockMaximum: number
   marginRiskPercent: number
   marginCriticalPercent: number
+  maximumPromotionRatePercent: number
+  promotionSafetyReservePercent: number
+  promotionExperimentDays: number
+  promotionCooldownDays: number
 }
 
 export const DEFAULT_COMMERCIAL_THRESHOLDS: CommercialThresholds = {
@@ -26,6 +30,10 @@ export const DEFAULT_COMMERCIAL_THRESHOLDS: CommercialThresholds = {
   lowStockMaximum: 3,
   marginRiskPercent: 20,
   marginCriticalPercent: 10,
+  maximumPromotionRatePercent: 2,
+  promotionSafetyReservePercent: 3,
+  promotionExperimentDays: 7,
+  promotionCooldownDays: 7,
 }
 
 export type CommercialSnapshot = {

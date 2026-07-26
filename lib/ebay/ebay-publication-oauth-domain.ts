@@ -7,15 +7,12 @@ import {
   randomBytes,
 } from "node:crypto"
 
-const EBAY_AUTHORIZATION_ENDPOINT = "https://auth.ebay.com/oauth2/authorize"
+// @ts-ignore Node's native TypeScript test runner requires the explicit extension.
+import { EBAY_PUBLICATION_OAUTH_SCOPES } from "./ebay-capability-registry.ts"
 
-export const EBAY_PUBLICATION_OAUTH_SCOPES = [
-  "https://api.ebay.com/oauth/api_scope",
-  "https://api.ebay.com/oauth/api_scope/sell.inventory",
-  "https://api.ebay.com/oauth/api_scope/sell.marketing",
-  "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
-  "https://api.ebay.com/oauth/api_scope/commerce.identity.readonly",
-] as const
+export { EBAY_PUBLICATION_OAUTH_SCOPES }
+
+const EBAY_AUTHORIZATION_ENDPOINT = "https://auth.ebay.com/oauth2/authorize"
 
 export const EBAY_PUBLICATION_OAUTH_BUNDLE_VERSION =
   "EBAY_PUBLICATION_OAUTH_CREDENTIAL_BUNDLE_V1" as const

@@ -7,10 +7,10 @@ import {
   randomBytes,
 } from "node:crypto"
 
-export const EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES = [
-  "https://api.ebay.com/oauth/api_scope",
-  "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
-] as const
+// @ts-ignore Node's native TypeScript test runner requires the explicit extension.
+import { EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES } from "./ebay-capability-registry.ts"
+
+export { EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES }
 
 export const EBAY_COMMERCIAL_ORDERS_BASE_SCOPE =
   EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES[0]

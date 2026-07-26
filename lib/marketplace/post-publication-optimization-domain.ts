@@ -2,6 +2,9 @@ import { createHash } from "node:crypto"
 
 export const POST_PUBLICATION_OPTIMIZATION_RULESET_VERSION =
   "SELLER_OS_POST_PUBLICATION_DIAGNOSTICS_V1"
+export const POST_PUBLICATION_PROMOTION_POLICY_VERSION =
+  "SELLER_OS_SAFE_PROMOTION_POLICY_V1"
+export const MAXIMUM_SAFE_PROMOTION_RATE_PERCENT = 2
 
 export const POST_PUBLICATION_OPTIMIZATION_EVENT_TYPES = [
   "LISTING_ZERO_VISIBILITY_REVIEW",
@@ -37,8 +40,46 @@ export type PostPublicationExperimentVariable =
   | "SHIPPING_OFFER"
   | "LISTING_QUANTITY"
 
+export type PostPublicationPromotionEligibility = {
+  evidenceLevel: "E0" | "E1" | "E2" | "E3" | "E4" | "E5"
+  salesClassification:
+    | "SOLD_CONFIRMED"
+    | "SOLD_ESTIMATED"
+    | "ACTIVE_ONLY"
+    | "INSUFFICIENT_EVIDENCE"
+  confirmedSalesSource: string | null
+  confirmedUnitsSold: number
+  costsComplete: boolean
+  economicsPassesProfitGate: boolean
+  expectedNetProfit: number | null
+  minimumNetProfit: number
+  expectedMarginPercent: number | null
+  minimumMarginPercent: number
+  expectedRoiPercent: number | null
+  minimumRoiPercent: number
+  safetyReservePercent: number
+  configuredMaximumRatePercent: number
+  stockAvailable: number | null
+  stockEvidenceFresh: boolean
+  evidenceFresh: boolean
+  configurationVersion: string
+}
+
+export type SafePromotionEvaluation = {
+  allowed: boolean
+  ratePercent: number
+  headroomPercent: number | null
+  reasonCode: string
+  reason: string
+  policyVersion: string
+  configurationVersion: string | null
+}
+
 export type PostPublicationOptimizationPolicy = {
   version: string
+  promotionPolicyVersion: string
+  maximumPromotionRatePercent: number
+  promotionDurationDays: number
   minimumListingAgeHours: number
   minimumCompleteAnalyticsDays: number
   minimumImpressionsForEngagementReview: number
@@ -53,6 +94,9 @@ export type PostPublicationOptimizationPolicy = {
 export const DEFAULT_POST_PUBLICATION_OPTIMIZATION_POLICY:
   PostPublicationOptimizationPolicy = {
   version: POST_PUBLICATION_OPTIMIZATION_RULESET_VERSION,
+  promotionPolicyVersion: POST_PUBLICATION_PROMOTION_POLICY_VERSION,
+  maximumPromotionRatePercent: MAXIMUM_SAFE_PROMOTION_RATE_PERCENT,
+  promotionDurationDays: 7,
   minimumListingAgeHours: 7 * 24,
   minimumCompleteAnalyticsDays: 7,
   minimumImpressionsForEngagementReview: 100,
@@ -88,6 +132,7 @@ export type PostPublicationDiagnosticInput = {
   stockEvidenceFresh: boolean
   estimatedMarginPercent: number | null
   promotionAllowed?: boolean
+  promotionEligibility?: PostPublicationPromotionEligibility | null
   policy?: PostPublicationOptimizationPolicy
 }
 
@@ -133,11 +178,14 @@ export type PostPublicationDiagnostic = {
   experiment: PostPublicationExperimentProposal
   promotionRecommendation: {
     status: "READY_FOR_HUMAN_APPROVAL" | "NOT_RECOMMENDED" | "BLOCKED_CONTROLLED_RISK"
-    recommendedRatePercent: 5 | 0
-    durationDays: 7 | 0
+    recommendedRatePercent: number
+    durationDays: number
     trigger: string
     reason: string
     applyFromSellerOs: boolean
+    policyVersion: string
+    configurationVersion: string | null
+    headroomPercent: number | null
     automaticExecutionAllowed: false
     humanApprovalRequired: true
   }
@@ -188,6 +236,166 @@ function nonnegative(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : null
+}
+
+function blockedPromotionEvaluation(
+  reasonCode: string,
+  reason: string,
+  policy: PostPublicationOptimizationPolicy,
+  eligibility?: PostPublicationPromotionEligibility | null,
+  headroomPercent: number | null = null,
+): SafePromotionEvaluation {
+  return {
+    allowed: false,
+    ratePercent: 0,
+    headroomPercent,
+    reasonCode,
+    reason,
+    policyVersion: policy.promotionPolicyVersion,
+    configurationVersion: eligibility?.configurationVersion || null,
+  }
+}
+
+function roundedPromotionPercent(value: number) {
+  return Math.floor(value * 100) / 100
+}
+
+export function evaluateSafePromotionRate(input: {
+  eligibility?: PostPublicationPromotionEligibility | null
+  policy?: PostPublicationOptimizationPolicy
+}): SafePromotionEvaluation {
+  const policy = input.policy ?? DEFAULT_POST_PUBLICATION_OPTIMIZATION_POLICY
+  const eligibility = input.eligibility
+  if (!eligibility) {
+    return blockedPromotionEvaluation(
+      "PROMOTION_EVIDENCE_CONTRACT_REQUIRED",
+      "Falta el contrato de evidencia, economía, stock y configuración; promoción bloqueada.",
+      policy,
+    )
+  }
+  if (!/^[A-Z0-9_.-]{3,80}$/.test(eligibility.configurationVersion)) {
+    return blockedPromotionEvaluation(
+      "PROMOTION_CONFIGURATION_VERSION_REQUIRED",
+      "La configuración comercial no tiene una versión auditable.",
+      policy,
+      eligibility,
+    )
+  }
+  if (!eligibility.evidenceFresh) {
+    return blockedPromotionEvaluation(
+      "PROMOTION_EVIDENCE_STALE",
+      "La evidencia comercial está vencida o incompleta.",
+      policy,
+      eligibility,
+    )
+  }
+  if (!["E4", "E5"].includes(eligibility.evidenceLevel)) {
+    return blockedPromotionEvaluation(
+      "PROMOTION_E4_REQUIRED",
+      `${eligibility.evidenceLevel} no autoriza promoción; se exige evidencia E4 o superior.`,
+      policy,
+      eligibility,
+    )
+  }
+  if (
+    eligibility.salesClassification !== "SOLD_CONFIRMED" ||
+    eligibility.confirmedSalesSource !==
+      "EBAY_SELL_FULFILLMENT_COMPLETED_CHECKOUT_ORDERS" ||
+    !Number.isFinite(eligibility.confirmedUnitsSold) ||
+    eligibility.confirmedUnitsSold < 1
+  ) {
+    return blockedPromotionEvaluation(
+      "PROMOTION_CONFIRMED_SALES_REQUIRED",
+      "ACTIVE_ONLY, ventas estimadas o cero ventas confirmadas no autorizan promoción.",
+      policy,
+      eligibility,
+    )
+  }
+  const economics = [
+    eligibility.expectedNetProfit,
+    eligibility.minimumNetProfit,
+    eligibility.expectedMarginPercent,
+    eligibility.minimumMarginPercent,
+    eligibility.expectedRoiPercent,
+    eligibility.minimumRoiPercent,
+    eligibility.safetyReservePercent,
+    eligibility.configuredMaximumRatePercent,
+  ]
+  if (
+    !eligibility.costsComplete ||
+    !eligibility.economicsPassesProfitGate ||
+    economics.some((value) => typeof value !== "number" ||
+      !Number.isFinite(value) || value < 0)
+  ) {
+    return blockedPromotionEvaluation(
+      "PROMOTION_COMPLETE_ECONOMICS_REQUIRED",
+      "Faltan costos o la economía no supera contribución, margen, ROI y piso.",
+      policy,
+      eligibility,
+    )
+  }
+  if (
+    (eligibility.expectedNetProfit as number) < eligibility.minimumNetProfit ||
+    (eligibility.expectedRoiPercent as number) < eligibility.minimumRoiPercent
+  ) {
+    return blockedPromotionEvaluation(
+      "PROMOTION_ECONOMICS_GATE_FAILED",
+      "La contribución o el ROI no conservan el mínimo configurado.",
+      policy,
+      eligibility,
+    )
+  }
+  if (
+    !eligibility.stockEvidenceFresh ||
+    typeof eligibility.stockAvailable !== "number" ||
+    !Number.isFinite(eligibility.stockAvailable) ||
+    eligibility.stockAvailable <= 0
+  ) {
+    return blockedPromotionEvaluation(
+      "PROMOTION_SAFE_STOCK_REQUIRED",
+      "El stock exacto no está disponible o no está fresco.",
+      policy,
+      eligibility,
+    )
+  }
+  const headroomPercent = roundedPromotionPercent(
+    (eligibility.expectedMarginPercent as number) -
+      eligibility.minimumMarginPercent -
+      eligibility.safetyReservePercent,
+  )
+  if (headroomPercent <= 0) {
+    return blockedPromotionEvaluation(
+      "PROMOTION_HEADROOM_REQUIRED",
+      "El margen no deja headroom después del mínimo y la reserva de seguridad.",
+      policy,
+      eligibility,
+      headroomPercent,
+    )
+  }
+  const ratePercent = roundedPromotionPercent(Math.min(
+    MAXIMUM_SAFE_PROMOTION_RATE_PERCENT,
+    policy.maximumPromotionRatePercent,
+    eligibility.configuredMaximumRatePercent,
+    headroomPercent,
+  ))
+  if (ratePercent <= 0) {
+    return blockedPromotionEvaluation(
+      "PROMOTION_CONFIGURED_RATE_BLOCKED",
+      "La configuración vigente mantiene la promoción en 0%.",
+      policy,
+      eligibility,
+      headroomPercent,
+    )
+  }
+  return {
+    allowed: true,
+    ratePercent,
+    headroomPercent,
+    reasonCode: "PROMOTION_SAFE_FOR_HUMAN_REVIEW",
+    reason: `Evidencia ${eligibility.evidenceLevel}, ventas oficiales, economía completa y stock fresco; tasa limitada a ${ratePercent}% dentro de ${headroomPercent}% de headroom.`,
+    policyVersion: policy.promotionPolicyVersion,
+    configurationVersion: eligibility.configurationVersion,
+  }
 }
 
 function elapsedHours(start: string | null, end: string) {
@@ -272,7 +480,13 @@ type Candidate = Omit<PostPublicationDiagnostic,
   "deduplicationKey" | "cooldownHours" | "nextEligibleAt" |
   "listingAgeHours" | "listingAgeEvidence" | "completeAnalyticsDays" | "safety">
 
-function noPromotionRecommendation(reason: string, controlledRisk = false) {
+function noPromotionRecommendation(
+  reason: string,
+  controlledRisk = false,
+  policy: PostPublicationOptimizationPolicy =
+    DEFAULT_POST_PUBLICATION_OPTIMIZATION_POLICY,
+  evaluation?: SafePromotionEvaluation,
+) {
   return {
     status: controlledRisk
       ? "BLOCKED_CONTROLLED_RISK" as const
@@ -282,6 +496,9 @@ function noPromotionRecommendation(reason: string, controlledRisk = false) {
     trigger: "FUNNEL_DIAGNOSIS_REQUIRES_ANOTHER_ACTION",
     reason,
     applyFromSellerOs: false,
+    policyVersion: policy.promotionPolicyVersion,
+    configurationVersion: evaluation?.configurationVersion ?? null,
+    headroomPercent: evaluation?.headroomPercent ?? null,
     automaticExecutionAllowed: false as const,
     humanApprovalRequired: true as const,
   }
@@ -295,9 +512,12 @@ function optimizationCandidate(
   const views = nonnegative(input.analytics.views)
   const transactions = nonnegative(input.analytics.transactions)
   const watchers = nonnegative(input.currentWatchers)
-  const margin = nonnegative(input.estimatedMarginPercent)
-  const promotionEligible = input.promotionAllowed !== false && margin !== null &&
-    margin >= policy.marginRiskBelowPercent
+  const safePromotion = evaluateSafePromotionRate({
+    eligibility: input.promotionEligibility,
+    policy,
+  })
+  const promotionEligible = input.promotionAllowed !== false &&
+    safePromotion.allowed
 
   if (
     watchers !== null && watchers >= policy.minimumWatchersForSaleReview &&
@@ -319,6 +539,7 @@ function optimizationCandidate(
     promotionRecommendation: noPromotionRecommendation(
       "Hay interés comprobado; primero revisar oferta, precio y envío. Promocionar no corrige una barrera de conversión.",
       input.promotionAllowed === false,
+      policy,
     ),
     evidence: { impressions, views, transactions, currentWatchers: watchers },
   }
@@ -343,6 +564,7 @@ function optimizationCandidate(
     promotionRecommendation: noPromotionRecommendation(
       "Hay vistas sin ventas; primero corregir precio total, envío, devoluciones o claridad del pack.",
       input.promotionAllowed === false,
+      policy,
     ),
     evidence: { impressions, views, transactions, currentWatchers: watchers },
   }
@@ -367,6 +589,7 @@ function optimizationCandidate(
     promotionRecommendation: noPromotionRecommendation(
       "El listing ya recibe impresiones; primero mejorar imagen principal y título, no comprar más impresiones.",
       input.promotionAllowed === false,
+      policy,
     ),
     evidence: { impressions, views, transactions, currentWatchers: watchers },
   }
@@ -380,37 +603,56 @@ function optimizationCandidate(
     recommendedAction: input.promotionAllowed === false
       ? "Auditar indexación, categoría hoja y aspectos obligatorios. No hay margen para promoción: este listing está bloqueado en 0%."
       : !promotionEligible
-        ? "Auditar indexación, categoría hoja y aspectos obligatorios. La economía no confirma capacidad para publicidad; mantener promoción en 0%."
-      : "Auditar indexación, categoría hoja y aspectos obligatorios; si están correctos, autorizar desde Seller OS una prueba de Promoted Listings General al 5% durante 7 días.",
-    reviewSequence: ["Indexación", "Categoría hoja", "Aspectos obligatorios", "Promoción 5% por 7 días"],
+        ? `Auditar indexación, categoría hoja y aspectos obligatorios. ${safePromotion.reason}`
+      : `Auditar indexación, categoría hoja y aspectos obligatorios; si están correctos, registrar para revisión humana una prueba de Promoted Listings General al ${safePromotion.ratePercent}% durante ${policy.promotionDurationDays} días.`,
+    reviewSequence: [
+      "Indexación",
+      "Categoría hoja",
+      "Aspectos obligatorios",
+      promotionEligible
+        ? `Promoción ${safePromotion.ratePercent}% por ${policy.promotionDurationDays} días`
+        : "Promoción bloqueada hasta completar evidencia E4 y economía",
+    ],
     experiment: experiment(
       "CATEGORY",
       !promotionEligible
         ? "Preparar una revisión de indexación y categoría; la promoción permanece bloqueada en 0%."
-        : "Si indexación, categoría y aspectos están correctos, proponer únicamente Promoted Listings General al 5% por 7 días desde Seller OS.",
+        : `Si indexación, categoría y aspectos están correctos, proponer únicamente Promoted Listings General al ${safePromotion.ratePercent}% por ${policy.promotionDurationDays} días desde Seller OS.`,
       "Mantener título, imagen, precio y políticas sin cambios; comparar impresiones, clics y ventas después de la reconciliación de eBay.",
       !promotionEligible
         ? "No hay margen para aplicar promoción."
-        : "Detener la prueba ante una venta, stock bajo, deterioro de margen o cambio de precio; nunca superar 5%.",
+        : `Detener la prueba ante stock bajo, deterioro de margen o cambio de precio; nunca superar ${safePromotion.ratePercent}%.`,
     ),
     promotionRecommendation: !promotionEligible
       ? noPromotionRecommendation(
           input.promotionAllowed === false
             ? "No hay margen para aplicar promoción: listing bajo excepción de margen 10%."
-            : "La economía estimada no conserva el margen normal después de reservar 5% para publicidad.",
+            : safePromotion.reason,
           input.promotionAllowed === false,
+          policy,
+          safePromotion,
         )
       : {
           status: "READY_FOR_HUMAN_APPROVAL" as const,
-          recommendedRatePercent: 5 as const,
-          durationDays: 7 as const,
+          recommendedRatePercent: safePromotion.ratePercent,
+          durationDays: policy.promotionDurationDays,
           trigger: "ZERO_VISIBILITY_AFTER_COMPLETE_ORGANIC_WINDOW",
-          reason: "La ventana oficial completa no muestra impresiones, vistas ni ventas; la economía conserva la reserva normal del 5%.",
+          reason: safePromotion.reason,
           applyFromSellerOs: true,
+          policyVersion: safePromotion.policyVersion,
+          configurationVersion: safePromotion.configurationVersion,
+          headroomPercent: safePromotion.headroomPercent,
           automaticExecutionAllowed: false as const,
           humanApprovalRequired: true as const,
         },
-    evidence: { impressions, views, transactions, currentWatchers: watchers },
+    evidence: {
+      impressions,
+      views,
+      transactions,
+      currentWatchers: watchers,
+      promotionEligibility: input.promotionEligibility ?? null,
+      safePromotionEvaluation: safePromotion,
+    },
   }
 
   return null
@@ -458,6 +700,7 @@ function saleRiskCandidate(input: PostPublicationDiagnosticInput, policy: PostPu
         ? "Primero proteger fulfillment y cantidad disponible."
         : "Primero recuperar el margen; no añadir gasto publicitario.",
       input.promotionAllowed === false,
+      policy,
     ),
     evidence: {
       confirmedUnitsSold,

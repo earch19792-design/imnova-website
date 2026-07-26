@@ -19,6 +19,9 @@ import {
   resolveCommandCenterCommercialFreshness,
 } from "@/lib/ebay/ebay-command-center-commercial-freshness"
 import {
+  getEbayCapabilityRegistryAdminProjection,
+} from "@/lib/ebay/ebay-capability-registry"
+import {
   ACTIVE_LISTING_TITLE_REVISION_CONFIRMATION,
   applyVerifiedTitleToActiveListing,
   prepareVerifiedActiveListingTitle,
@@ -398,6 +401,7 @@ export async function GET(req: Request) {
       },
       selectedOpportunity,
       refreshedAt: new Date().toISOString(),
+      ebayCapabilities: getEbayCapabilityRegistryAdminProjection(),
       safety: { ebayReadOnly: true, ebayWriteUsed: false, canPublish: false },
     })
   } catch (error) {

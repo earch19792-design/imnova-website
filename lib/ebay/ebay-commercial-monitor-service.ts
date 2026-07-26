@@ -20,7 +20,9 @@ import {
   type SafeMarketplaceOrderLine,
 } from "../marketplace/commercial-monitor-domain"
 import {
+  DEFAULT_POST_PUBLICATION_OPTIMIZATION_POLICY,
   diagnosePostPublicationListing,
+  MAXIMUM_SAFE_PROMOTION_RATE_PERCENT,
   postPublicationCooldownElapsed,
   POST_PUBLICATION_OPTIMIZATION_EVENT_TYPES,
   resolvePostPublicationListingStart,
@@ -293,6 +295,34 @@ export function normalizeCommercialThresholds(value: unknown): CommercialThresho
     lowStockMaximum: thresholdNumber(source, "lowStockMaximum", 3, 0, 1_000_000),
     marginRiskPercent: thresholdNumber(source, "marginRiskPercent", 20, -1_000, 100),
     marginCriticalPercent: thresholdNumber(source, "marginCriticalPercent", 10, -1_000, 100),
+    maximumPromotionRatePercent: thresholdNumber(
+      source,
+      "maximumPromotionRatePercent",
+      MAXIMUM_SAFE_PROMOTION_RATE_PERCENT,
+      0,
+      MAXIMUM_SAFE_PROMOTION_RATE_PERCENT,
+    ),
+    promotionSafetyReservePercent: thresholdNumber(
+      source,
+      "promotionSafetyReservePercent",
+      3,
+      0,
+      100,
+    ),
+    promotionExperimentDays: thresholdNumber(
+      source,
+      "promotionExperimentDays",
+      7,
+      1,
+      30,
+    ),
+    promotionCooldownDays: thresholdNumber(
+      source,
+      "promotionCooldownDays",
+      7,
+      1,
+      90,
+    ),
   }
 }
 
@@ -306,6 +336,10 @@ function thresholdPayload(thresholds: CommercialThresholds) {
     lowStockMaximum: thresholds.lowStockMaximum,
     marginRiskPercent: thresholds.marginRiskPercent,
     marginCriticalPercent: thresholds.marginCriticalPercent,
+    maximumPromotionRatePercent: thresholds.maximumPromotionRatePercent,
+    promotionSafetyReservePercent: thresholds.promotionSafetyReservePercent,
+    promotionExperimentDays: thresholds.promotionExperimentDays,
+    promotionCooldownDays: thresholds.promotionCooldownDays,
   }
 }
 
@@ -1831,6 +1865,14 @@ async function persistSnapshotsAndRules(input: {
     }
 
     const listingAgeStart = listingAgeEvidenceStart(listing)
+    const confirmedUnitsSold = input.units24h.get(listing.ebay_item_id) ?? 0
+    const reservedPromotionPercent = economics.ready
+      ? economics.config.promotedListingsReserveRate * 100
+      : null
+    const repeatedConfirmedSales = confirmedUnitsSold >= 2
+    const promotionEvidenceFresh = supplyFresh &&
+      snapshot.completenessStatus === "complete" &&
+      input.analytics?.source === "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT"
     const postPublicationDiagnostic = diagnosePostPublicationListing({
       marketplaceAccountKey: input.accountKey,
       listingId: snapshot.listingId,
@@ -1851,11 +1893,55 @@ async function persistSnapshotsAndRules(input: {
           input.analyticsRulesSuspendedListingIds.has(listing.ebay_item_id),
       },
       currentWatchers: snapshot.currentWatchers,
-      confirmedUnitsSold: input.units24h.get(listing.ebay_item_id) ?? 0,
+      confirmedUnitsSold,
       stockAvailable: snapshot.stockAvailable,
       stockEvidenceFresh: supplyFresh,
       estimatedMarginPercent: snapshot.estimatedMarginPercent,
       promotionAllowed: !input.promotionBlockedListingIds.has(listing.ebay_item_id),
+      promotionEligibility: {
+        evidenceLevel: repeatedConfirmedSales && promotionEvidenceFresh &&
+          economics.ready && economics.passesProfitGate
+          ? "E4"
+          : confirmedUnitsSold > 0
+            ? "E3"
+            : analyticsMatched
+              ? "E2"
+              : "E1",
+        salesClassification: confirmedUnitsSold > 0
+          ? "SOLD_CONFIRMED"
+          : "INSUFFICIENT_EVIDENCE",
+        confirmedSalesSource: confirmedUnitsSold > 0
+          ? "EBAY_SELL_FULFILLMENT_COMPLETED_CHECKOUT_ORDERS"
+          : null,
+        confirmedUnitsSold,
+        costsComplete: economics.ready && totalSupplierCost !== null,
+        economicsPassesProfitGate: economics.passesProfitGate,
+        expectedNetProfit: economics.estimatedNetProfit,
+        minimumNetProfit: economics.config.minimumNetProfit,
+        expectedMarginPercent:
+          economics.estimatedNetMarginPercent === null ||
+          reservedPromotionPercent === null
+            ? null
+            : economics.estimatedNetMarginPercent + reservedPromotionPercent,
+        minimumMarginPercent: input.thresholds.marginRiskPercent,
+        expectedRoiPercent: economics.estimatedRoiPercent,
+        minimumRoiPercent: economics.config.minimumRoiPercent,
+        safetyReservePercent: input.thresholds.promotionSafetyReservePercent,
+        configuredMaximumRatePercent:
+          input.thresholds.maximumPromotionRatePercent,
+        stockAvailable: snapshot.stockAvailable,
+        stockEvidenceFresh: supplyFresh,
+        evidenceFresh: promotionEvidenceFresh,
+        configurationVersion: input.thresholds.version,
+      },
+      policy: {
+        ...DEFAULT_POST_PUBLICATION_OPTIMIZATION_POLICY,
+        maximumPromotionRatePercent:
+          input.thresholds.maximumPromotionRatePercent,
+        promotionDurationDays: input.thresholds.promotionExperimentDays,
+        optimizationCooldownHours:
+          input.thresholds.promotionCooldownDays * 24,
+      },
     })
     if (postPublicationDiagnostic) {
       const cooldownKey = `${postPublicationDiagnostic.listingId}:${postPublicationDiagnostic.sku ?? ""}`

@@ -4,6 +4,11 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { extractPackQuantity } from "../marketplace/commercial-monitor-domain"
 import {
+  DEFAULT_POST_PUBLICATION_OPTIMIZATION_POLICY,
+  evaluateSafePromotionRate,
+  type PostPublicationPromotionEligibility,
+} from "../marketplace/post-publication-optimization-domain"
+import {
   getEbayTradingReadOnlyAccessToken,
   readManualListingFromTradingApi,
   tradingXmlTagValue,
@@ -63,6 +68,42 @@ function sha256(value: string) {
 
 function money(value: number) {
   return Math.round(value * 100) / 100
+}
+
+function promotionEligibility(value: unknown): PostPublicationPromotionEligibility {
+  const source = record(value)
+  const evidenceLevel = text(source.evidenceLevel, 2)
+  const salesClassification = text(source.salesClassification, 40)
+  return {
+    evidenceLevel: ["E0", "E1", "E2", "E3", "E4", "E5"].includes(evidenceLevel)
+      ? evidenceLevel as PostPublicationPromotionEligibility["evidenceLevel"]
+      : "E0",
+    salesClassification: [
+      "SOLD_CONFIRMED",
+      "SOLD_ESTIMATED",
+      "ACTIVE_ONLY",
+      "INSUFFICIENT_EVIDENCE",
+    ].includes(salesClassification)
+      ? salesClassification as PostPublicationPromotionEligibility["salesClassification"]
+      : "INSUFFICIENT_EVIDENCE",
+    confirmedSalesSource: text(source.confirmedSalesSource, 120) || null,
+    confirmedUnitsSold: numeric(source.confirmedUnitsSold) ?? Number.NaN,
+    costsComplete: source.costsComplete === true,
+    economicsPassesProfitGate: source.economicsPassesProfitGate === true,
+    expectedNetProfit: numeric(source.expectedNetProfit),
+    minimumNetProfit: numeric(source.minimumNetProfit) ?? Number.NaN,
+    expectedMarginPercent: numeric(source.expectedMarginPercent),
+    minimumMarginPercent: numeric(source.minimumMarginPercent) ?? Number.NaN,
+    expectedRoiPercent: numeric(source.expectedRoiPercent),
+    minimumRoiPercent: numeric(source.minimumRoiPercent) ?? Number.NaN,
+    safetyReservePercent: numeric(source.safetyReservePercent) ?? Number.NaN,
+    configuredMaximumRatePercent:
+      numeric(source.configuredMaximumRatePercent) ?? Number.NaN,
+    stockAvailable: numeric(source.stockAvailable),
+    stockEvidenceFresh: source.stockEvidenceFresh === true,
+    evidenceFresh: source.evidenceFresh === true,
+    configurationVersion: text(source.configurationVersion, 80),
+  }
 }
 
 function isExactLunaUrl(value: unknown) {
@@ -152,6 +193,26 @@ async function promotionBlocked(input: {
     numeric(policy.minimumNetMarginPercent) === 10
 }
 
+async function assertPromotionConfigurationCurrent(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  configurationVersion: string
+}) {
+  const { data, error } = await input.supabase
+    .from("commercial_threshold_configs")
+    .select("version")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", MARKETPLACE)
+    .eq("active", true)
+    .maybeSingle()
+  if (error || !data?.version) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_PROMOTION_CONFIG_REQUIRED")
+  }
+  if (data.version !== input.configurationVersion) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_PROMOTION_CONFIG_CHANGED_REVIEW_REQUIRED")
+  }
+}
+
 function proposalFromEvent(event: JsonRecord) {
   const evidence = record(event.evidence)
   const price = record(evidence.priceRecommendation)
@@ -215,22 +276,44 @@ function proposalFromEvent(event: JsonRecord) {
       promotionAllowed: controlledRiskTenPercent ? false : null,
     },
   }
-  const promotion = record(evidence.promotionRecommendation)
-  if (
-    text(event.event_type) === "LISTING_ZERO_VISIBILITY_REVIEW" &&
-    text(promotion.status) === "READY_FOR_HUMAN_APPROVAL" &&
-    numeric(promotion.recommendedRatePercent) === 5 &&
-    numeric(promotion.durationDays) === 7
-  ) return {
-    actionType: "PROMOTED_LISTINGS_GENERAL" as const,
-    targetValue: {
-      ratePercent: 5,
-      durationDays: 7,
-      fundingModel: "COST_PER_SALE",
-      adRateStrategy: "FIXED",
-      experimentVariableCount: 1,
-      evidenceClass: "ZERO_VISIBILITY_AFTER_COMPLETE_ORGANIC_WINDOW",
-    },
+  if (text(event.event_type) === "LISTING_ZERO_VISIBILITY_REVIEW") {
+    const promotion = record(evidence.promotionRecommendation)
+    const eligibility = promotionEligibility(evidence.promotionEligibility)
+    const evaluation = evaluateSafePromotionRate({ eligibility })
+    const storedRate = numeric(promotion.recommendedRatePercent)
+    const storedHeadroom = numeric(promotion.headroomPercent)
+    if (
+      text(promotion.status) !== "READY_FOR_HUMAN_APPROVAL" ||
+      !evaluation.allowed ||
+      storedRate === null ||
+      Math.abs(storedRate - evaluation.ratePercent) > 0.001 ||
+      numeric(promotion.durationDays) !==
+        DEFAULT_POST_PUBLICATION_OPTIMIZATION_POLICY.promotionDurationDays ||
+      text(promotion.policyVersion, 80) !== evaluation.policyVersion ||
+      text(promotion.configurationVersion, 80) !==
+        evaluation.configurationVersion ||
+      storedHeadroom === null ||
+      evaluation.headroomPercent === null ||
+      Math.abs(storedHeadroom - evaluation.headroomPercent) > 0.001
+    ) {
+      throw new Error("COMMERCIAL_IMPROVEMENT_PROMOTION_SAFETY_CONTRACT_REQUIRED")
+    }
+    return {
+      actionType: "PROMOTED_LISTINGS_GENERAL" as const,
+      targetValue: {
+        ratePercent: evaluation.ratePercent,
+        durationDays:
+          DEFAULT_POST_PUBLICATION_OPTIMIZATION_POLICY.promotionDurationDays,
+        fundingModel: "COST_PER_SALE",
+        adRateStrategy: "FIXED",
+        experimentVariableCount: 1,
+        evidenceClass: "ZERO_VISIBILITY_AFTER_COMPLETE_ORGANIC_WINDOW_E4",
+        promotionEligibility: eligibility,
+        policyVersion: evaluation.policyVersion,
+        configurationVersion: evaluation.configurationVersion,
+        headroomPercent: evaluation.headroomPercent,
+      },
+    }
   }
   throw new Error("COMMERCIAL_IMPROVEMENT_NOT_ACTIONABLE")
 }
@@ -375,6 +458,16 @@ export async function prepareEbayCommercialImprovement(input: {
     event: record(event),
     listing: record(listing),
   }) ?? proposalFromEvent(event)
+  if (proposal.actionType === "PROMOTED_LISTINGS_GENERAL") {
+    await assertPromotionConfigurationCurrent({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      configurationVersion: text(
+        record(proposal.targetValue).configurationVersion,
+        80,
+      ),
+    })
+  }
   if (proposal.actionType === "PROMOTED_LISTINGS_GENERAL" && await promotionBlocked({
     supabase: input.supabase,
     accountKey: input.accountKey,
@@ -445,7 +538,12 @@ async function freshEconomics(input: {
   if (!economics.ready || !economics.passesProfitGate) {
     throw new Error("COMMERCIAL_IMPROVEMENT_ECONOMICS_GATE_FAILED")
   }
-  return { economics, lunaObservedAt: data.captured_at, packCount }
+  return {
+    economics,
+    lunaObservedAt: data.captured_at,
+    packCount,
+    stockAvailable: numeric(data.inventory_quantity),
+  }
 }
 
 async function setControlledRiskPromotionBlock(input: {
@@ -611,15 +709,21 @@ function campaignIdFromLocation(location: string | null) {
   return /^[A-Za-z0-9_-]{1,100}$/.test(value) ? value : ""
 }
 
-async function createFivePercentCampaign(input: {
+async function createPromotionCampaign(input: {
   accessToken: string
   listingId: string
   eventId: string
+  ratePercent: number
+  durationDays: number
   fetchImpl: FetchLike
 }) {
   const start = new Date()
-  const end = new Date(start.getTime() + 7 * 24 * 60 * 60_000)
-  const campaignName = `SellerOS-5pct-${input.listingId}-${input.eventId.slice(0, 8)}`
+  const end = new Date(
+    start.getTime() + input.durationDays * 24 * 60 * 60_000,
+  )
+  const rateKey = input.ratePercent.toFixed(2).replace(".", "p")
+  const campaignName =
+    `SellerOS-safe-${rateKey}pct-${input.listingId}-${input.eventId.slice(0, 8)}`
   const response = await input.fetchImpl(`${MARKETING_ENDPOINT}/ad_campaign`, {
     method: "POST",
     headers: {
@@ -633,7 +737,7 @@ async function createFivePercentCampaign(input: {
       fundingStrategy: {
         fundingModel: "COST_PER_SALE",
         adRateStrategy: "FIXED",
-        bidPercentage: "5.0",
+        bidPercentage: input.ratePercent.toFixed(2),
       },
       startDate: start.toISOString().replace(/\.\d{3}Z$/, "Z"),
       endDate: end.toISOString().replace(/\.\d{3}Z$/, "Z"),
@@ -670,10 +774,11 @@ async function assertListingNotAlreadyPromoted(input: {
   }
 }
 
-async function createFivePercentAd(input: {
+async function createPromotionAd(input: {
   accessToken: string
   campaignId: string
   listingId: string
+  ratePercent: number
   fetchImpl: FetchLike
 }) {
   const response = await input.fetchImpl(
@@ -685,7 +790,10 @@ async function createFivePercentAd(input: {
         "Content-Type": "application/json",
         "Content-Language": "en-US",
       },
-      body: JSON.stringify({ listingId: input.listingId, bidPercentage: "5.0" }),
+      body: JSON.stringify({
+        listingId: input.listingId,
+        bidPercentage: input.ratePercent.toFixed(2),
+      }),
       cache: "no-store",
       signal: AbortSignal.timeout(25_000),
     },
@@ -697,6 +805,7 @@ async function verifyCampaignAd(input: {
   accessToken: string
   campaignId: string
   listingId: string
+  ratePercent: number
   fetchImpl: FetchLike
 }) {
   const response = await input.fetchImpl(
@@ -711,7 +820,7 @@ async function verifyCampaignAd(input: {
   const ads = Array.isArray(payload.ads) ? payload.ads.map(record) : []
   return response.ok && ads.some((ad) =>
     text(ad.listingId, 20) === input.listingId &&
-    Math.abs((numeric(ad.bidPercentage) ?? 0) - 5) < 0.01)
+    Math.abs((numeric(ad.bidPercentage) ?? 0) - input.ratePercent) < 0.01)
 }
 
 export async function applyEbayCommercialImprovement(input: {
@@ -759,6 +868,61 @@ export async function applyEbayCommercialImprovement(input: {
       salePrice: salePrice as number,
       controlledRiskTenPercent: target.controlledRiskTenPercent === true,
     })
+  let promotionEvaluation = null
+  if (preview.actionType === "PROMOTED_LISTINGS_GENERAL") {
+    const storedEligibility = promotionEligibility(target.promotionEligibility)
+    await assertPromotionConfigurationCurrent({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      configurationVersion: storedEligibility.configurationVersion,
+    })
+    const reservedPromotionPercent = economics?.economics.ready
+      ? economics.economics.config.promotedListingsReserveRate * 100
+      : null
+    promotionEvaluation = evaluateSafePromotionRate({
+      eligibility: {
+        ...storedEligibility,
+        costsComplete: economics?.economics.ready === true,
+        economicsPassesProfitGate:
+          economics?.economics.passesProfitGate === true,
+        expectedNetProfit:
+          economics?.economics.estimatedNetProfit ?? null,
+        minimumNetProfit:
+          economics?.economics.config.minimumNetProfit ??
+          storedEligibility.minimumNetProfit,
+        expectedMarginPercent:
+          economics?.economics.estimatedNetMarginPercent === null ||
+          economics?.economics.estimatedNetMarginPercent === undefined ||
+          reservedPromotionPercent === null
+            ? null
+            : economics.economics.estimatedNetMarginPercent +
+              reservedPromotionPercent,
+        minimumMarginPercent:
+          storedEligibility.minimumMarginPercent,
+        expectedRoiPercent:
+          economics?.economics.estimatedRoiPercent ?? null,
+        minimumRoiPercent:
+          economics?.economics.config.minimumRoiPercent ??
+          storedEligibility.minimumRoiPercent,
+        stockAvailable: economics?.stockAvailable ?? null,
+        stockEvidenceFresh: true,
+        evidenceFresh: true,
+      },
+    })
+    const requestedRate = numeric(target.ratePercent)
+    if (
+      !promotionEvaluation.allowed ||
+      requestedRate === null ||
+      Math.abs(requestedRate - promotionEvaluation.ratePercent) > 0.001 ||
+      text(target.policyVersion, 80) !== promotionEvaluation.policyVersion ||
+      text(target.configurationVersion, 80) !==
+        promotionEvaluation.configurationVersion
+    ) {
+      throw new Error(
+        "COMMERCIAL_IMPROVEMENT_PROMOTION_ECONOMICS_CHANGED_REVIEW_REQUIRED",
+      )
+    }
+  }
   if (preview.actionType === "PROMOTED_LISTINGS_GENERAL" && await promotionBlocked({
     supabase: input.supabase,
     accountKey: input.accountKey,
@@ -791,6 +955,7 @@ export async function applyEbayCommercialImprovement(input: {
         supplierAvailable: lunaState?.available ?? true,
         supplierInventoryQuantity: lunaState?.inventory_quantity ?? null,
         economics: economics?.economics ?? null,
+        promotionEvaluation,
       },
       last_error_code: null,
       updated_at: new Date().toISOString(),
@@ -916,10 +1081,21 @@ export async function applyEbayCommercialImprovement(input: {
       listingId: String(event.listing_id),
       fetchImpl,
     })
-    const campaign = await createFivePercentCampaign({
+    const ratePercent = numeric(target.ratePercent)
+    const durationDays = numeric(target.durationDays)
+    if (
+      ratePercent === null ||
+      durationDays === null ||
+      promotionEvaluation?.allowed !== true
+    ) {
+      throw new Error("COMMERCIAL_IMPROVEMENT_PROMOTION_PREFLIGHT_REQUIRED")
+    }
+    const campaign = await createPromotionCampaign({
       accessToken: marketingToken,
       listingId: String(event.listing_id),
       eventId: String(event.id),
+      ratePercent,
+      durationDays,
       fetchImpl,
     })
     row = { ...row, ebay_resource_id: campaign.campaignId,
@@ -933,16 +1109,18 @@ export async function applyEbayCommercialImprovement(input: {
       throw new Error("COMMERCIAL_IMPROVEMENT_CAMPAIGN_RECORD_FAILED")
     }
     row = record(campaignRecorded.data)
-    await createFivePercentAd({
+    await createPromotionAd({
       accessToken: marketingToken,
       campaignId: campaign.campaignId,
       listingId: String(event.listing_id),
+      ratePercent,
       fetchImpl,
     })
     const verified = await verifyCampaignAd({
       accessToken: marketingToken,
       campaignId: campaign.campaignId,
       listingId: String(event.listing_id),
+      ratePercent,
       fetchImpl,
     })
     if (!verified) throw new Error("COMMERCIAL_IMPROVEMENT_PROMOTION_READBACK_MISMATCH")
@@ -951,7 +1129,9 @@ export async function applyEbayCommercialImprovement(input: {
       .update({ phase: "applied_verified", ebay_write_attempt_count: 2,
         postflight_snapshot: { source: "EBAY_MARKETING_GET_ADS_READBACK",
           campaignName: campaign.campaignName, campaignId: campaign.campaignId,
-          ratePercent: 5, endsAt: campaign.endsAt, verified: true },
+          ratePercent, endsAt: campaign.endsAt, verified: true,
+          policyVersion: target.policyVersion,
+          configurationVersion: target.configurationVersion },
         applied_verified_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq("id", row.id).select("*").single()
     if (completeError || !completed) throw new Error("COMMERCIAL_IMPROVEMENT_COMPLETE_FAILED")

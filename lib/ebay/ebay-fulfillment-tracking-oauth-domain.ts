@@ -2,10 +2,18 @@
 import * as commercialOAuthDomain from "./ebay-commercial-orders-oauth-domain.ts"
 // @ts-ignore Node's native TypeScript test runner requires the explicit extension.
 import { EBAY_FULFILLMENT_TRACKING_CALLBACK_PATH, EBAY_FULFILLMENT_TRACKING_CALLBACK_URL, EBAY_FULFILLMENT_TRACKING_PREVIEW_BRANCH_HOST } from "./ebay-fulfillment-tracking-public.ts"
+// @ts-ignore Node's native TypeScript test runner requires the explicit extension.
+import {
+  EBAY_FULFILLMENT_TRACKING_OAUTH_SCOPES,
+  EBAY_FULFILLMENT_WRITE_SCOPE,
+  EBAY_OAUTH_BASE_SCOPE,
+// @ts-ignore Node's native TypeScript test runner requires the explicit extension.
+} from "./ebay-capability-registry.ts"
 
 export {
   EBAY_FULFILLMENT_TRACKING_CALLBACK_PATH,
   EBAY_FULFILLMENT_TRACKING_CALLBACK_URL,
+  EBAY_FULFILLMENT_TRACKING_OAUTH_SCOPES,
   EBAY_FULFILLMENT_TRACKING_PREVIEW_BRANCH_HOST,
 }
 
@@ -19,13 +27,9 @@ const {
 } = commercialOAuthDomain
 
 export const EBAY_FULFILLMENT_TRACKING_BASE_SCOPE =
-  "https://api.ebay.com/oauth/api_scope"
+  EBAY_OAUTH_BASE_SCOPE
 export const EBAY_FULFILLMENT_TRACKING_WRITE_SCOPE =
-  "https://api.ebay.com/oauth/api_scope/sell.fulfillment"
-export const EBAY_FULFILLMENT_TRACKING_OAUTH_SCOPES = [
-  EBAY_FULFILLMENT_TRACKING_BASE_SCOPE,
-  EBAY_FULFILLMENT_TRACKING_WRITE_SCOPE,
-] as const
+  EBAY_FULFILLMENT_WRITE_SCOPE
 
 export const EBAY_FULFILLMENT_TRACKING_CONNECTION_STATES = [
   "NOT_CONFIGURED",

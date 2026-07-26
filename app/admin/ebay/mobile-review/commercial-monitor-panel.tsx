@@ -341,6 +341,9 @@ type Dashboard = {
         durationDays?: number
         reason?: string
         applyFromSellerOs?: boolean
+        policyVersion?: string
+        configurationVersion?: string | null
+        headroomPercent?: number | null
       }
     }
   }>
@@ -529,8 +532,9 @@ function OptimizationTaskCard({ task, applying, onApply }: {
       <p className="text-xs font-black uppercase tracking-widest text-white/60">Promoción</p>
       <p className="mt-1 text-sm font-black text-white">{promotion.recommendedRatePercent ?? 0}%{promotion.durationDays ? ` · ${promotion.durationDays} días` : " · no recomendada"}</p>
       <p className="mt-1 text-xs leading-5 text-white/60">{promotion.reason}</p>
-      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && <p className="mt-2 text-xs font-bold text-emerald-100">Disponible para autorización desde Seller OS; nunca se activa sólo por la alerta.</p>}
-      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && task.id && <button type="button" disabled={applying} onClick={() => onApply(task.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{applying ? "Verificando y aplicando…" : "REVISAR Y AUTORIZAR PROMOCIÓN 5%"}</button>}
+      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && <p className="mt-2 text-[11px] leading-5 text-emerald-100">Tasa limitada al menor entre 2% y el headroom real ({promotion.headroomPercent ?? 0}%). Política {promotion.policyVersion ?? "pendiente"} · configuración {promotion.configurationVersion ?? "pendiente"}.</p>}
+      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && <p className="mt-2 text-xs font-bold text-emerald-100">Registrar la propuesta exige revisión humana; cualquier ejecución continúa manual y vuelve a validar economía, stock y configuración.</p>}
+      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && task.id && <button type="button" disabled={applying} onClick={() => onApply(task.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{applying ? "Verificando y aplicando…" : `REVISAR Y AUTORIZAR PROMOCIÓN ${promotion.recommendedRatePercent ?? 0}%`}</button>}
       {promotion.status === "BLOCKED_CONTROLLED_RISK" && <p className="mt-2 text-xs font-black text-amber-100">No hay margen para aplicar promoción.</p>}
     </div>}
   </article>
@@ -1271,7 +1275,7 @@ export function CommercialMonitorPanel() {
                 <p className="mt-1 text-white/55">{recommendation.activeMarketNotConfirmedSale
                   ? `${recommendation.activeSellerCount ?? 0} vendedor(es) activos · no son ventas confirmadas`
                   : `${recommendation.confirmedSoldSellerCount ?? 0} vendedor(es) exacto(s) · ${recommendation.confirmedSoldQuantity ?? 0} venta(s)`} · piso propio {money(recommendation.minimumSafeLandedPrice)} · utilidad {money(recommendation.proposedEstimatedNetProfit ?? undefined)} · margen {typeof recommendation.proposedEstimatedMarginPercent === "number" ? `${recommendation.proposedEstimatedMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.proposedEstimatedRoiPercent === "number" ? `${recommendation.proposedEstimatedRoiPercent.toFixed(2)}%` : "—"}</p>
-                {recommendation.activeMarketNotConfirmedSale && <p className="mt-1 text-white/55">Piso normal con reserva publicitaria 5%: {money(recommendation.floorWithPromotionReserve)} · sin promoción: {money(recommendation.floorWithoutPromotion)} · piso controlado 10%: {money(recommendation.controlledRiskMinimumLandedPrice)} · alcanza la mediana activa: {recommendation.canReachActiveMarketSafely ? "SÍ" : "NO"}</p>}
+                {recommendation.activeMarketNotConfirmedSale && <p className="mt-1 text-white/55">Piso con reserva publicitaria vigente: {money(recommendation.floorWithPromotionReserve)} · sin promoción: {money(recommendation.floorWithoutPromotion)} · piso controlado 10%: {money(recommendation.controlledRiskMinimumLandedPrice)} · alcanza la mediana activa: {recommendation.canReachActiveMarketSafely ? "SÍ" : "NO"}</p>}
                 {recommendation.controlledRiskTenPercent && <p className="mt-2 rounded-lg border border-amber-200/25 bg-amber-200/[0.08] p-2 font-black text-amber-50">PRECIO COMPETITIVO CON MARGEN CONTROLADO 10% · PROMOCIÓN BLOQUEADA</p>}
                 {recommendation.activeMarketNotConfirmedSale && recommendation.activeMarketEconomics && <p className="mt-1 text-white/55">A precio de mercado: utilidad {money(recommendation.activeMarketEconomics.estimatedNetProfit ?? undefined)} · margen {typeof recommendation.activeMarketEconomics.estimatedNetMarginPercent === "number" ? `${recommendation.activeMarketEconomics.estimatedNetMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.activeMarketEconomics.estimatedRoiPercent === "number" ? `${recommendation.activeMarketEconomics.estimatedRoiPercent.toFixed(2)}%` : "—"} · envío conservador {money(recommendation.activeMarketEconomics.estimatedOutboundShipping ?? undefined)}. Regla(s) que fallan: {(recommendation.activeMarketEconomics.failedGateCodes ?? []).join(", ") || "ninguna"}.</p>}
                 <p className="mt-2 font-bold text-emerald-50">{entry.recommendedAction}</p>

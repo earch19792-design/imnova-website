@@ -146,6 +146,37 @@ type ActiveListingSyncStatus = {
   active_run_lease_expires_at: string | null
 }
 
+type EbayCapabilityImplementationState =
+  | "REAL"
+  | "PREFLIGHT_ONLY"
+  | "FIXTURE"
+  | "NOT_IMPLEMENTED"
+
+type EbayCapabilityRegistryProjection = {
+  registryVersion: string
+  generatedAt: string
+  totalCapabilities: number
+  percentageFormula: string
+  statusCounts: Record<EbayCapabilityImplementationState, number>
+  statusPercentages: Record<EbayCapabilityImplementationState, number>
+  capabilities: Array<{
+    id: string
+    label: string
+    implementationState: EbayCapabilityImplementationState
+    access: "READ" | "WRITE"
+    requiredScopes: string[]
+    freshnessPolicy: {
+      maxAgeMinutes: number | null
+      basis: string
+    }
+  }>
+  safety: {
+    credentialValuesIncluded: false
+    tokenValuesIncluded: false
+    secretValuesIncluded: false
+  }
+}
+
 const ACCELERATION_BATCHES = 10
 
 function label(value: string) {
@@ -217,6 +248,8 @@ export function OpportunityCommandCenter({
   const [missingRadarDetail, setMissingRadarDetail] = useState("")
   const [activeListingSyncStatus, setActiveListingSyncStatus] =
     useState<ActiveListingSyncStatus | null>(null)
+  const [capabilityRegistry, setCapabilityRegistry] =
+    useState<EbayCapabilityRegistryProjection | null>(null)
   const currentRun = dashboard?.runs.find((run) => run.status === "running") ?? dashboard?.runs[0] ?? null
 
   function showMessage(nextMessage: string) {
@@ -232,7 +265,9 @@ export function OpportunityCommandCenter({
   async function request(body?: Record<string, unknown>) {
     const { data, error: sessionError } = await supabase.auth.getSession()
     if (sessionError || !data.session) throw new Error("La sesión Admin expiró.")
-    const response = await fetch("/api/admin/ebay/luna-opportunity-queue", {
+    const response = await fetch(body
+      ? "/api/admin/ebay/luna-opportunity-queue"
+      : "/api/admin/ebay/command-center", {
       method: body ? "POST" : "GET",
       cache: "no-store",
       headers: {
@@ -254,6 +289,7 @@ export function OpportunityCommandCenter({
     try {
       const payload = await request()
       setDashboard(payload.dashboard)
+      setCapabilityRegistry(payload.ebayCapabilities ?? null)
       setRefreshedAt(new Date().toISOString())
       showMessage("")
     } catch (requestError) {
@@ -490,6 +526,12 @@ export function OpportunityCommandCenter({
       {currentRun && <div className="mt-4 rounded-2xl border border-white/10 bg-black/25 p-3"><div className="flex justify-between text-xs font-bold"><span>{currentRun.status.toUpperCase()} · {currentRun.processed_candidates}/{currentRun.total_candidates}</span><span>{progressLabel}</span></div><div className="mt-2 h-3 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-gradient-to-r from-violet-300 to-cyan-200" style={{ width: `${Math.max(progressValue > 0 ? 1 : 0, progressValue)}%` }} /></div><p className="mt-2 text-xs text-white/55">Exitosos {currentRun.successful_candidates} · Fallidos {currentRun.failed_candidates} · última ejecución {formatDate(currentRun.last_batch_at)}</p></div>}
       {dashboard?.automation && <div className="mt-3 rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.05] p-3 text-xs leading-5 text-emerald-50"><strong>Automatización:</strong> prioridad primero · {dashboard.automation.productionScheduleLabel}. El cron corre en Production; en este Preview usa “Acelerar 20 productos”.</div>}
       {dashboard?.quota && <div className={`mt-3 rounded-2xl border p-3 text-xs leading-5 ${dashboard.quota.discoveryPaused ? "border-amber-200/30 bg-amber-200/[0.08] text-amber-50" : "border-cyan-200/20 bg-cyan-200/[0.05] text-cyan-50"}`}><strong>Cuota eBay:</strong> {dashboard.quota.discoveryPaused ? `Discovery pausado hasta ${formatDate(dashboard.quota.latestPause?.resume_at ?? null)}; el checkpoint está guardado.` : "Discovery disponible."} <span className="block">Reserva del monitor comercial: {dashboard.quota.monitorBudgetProtected ? "protegida" : "pendiente de configurar"}.</span></div>}
+      {capabilityRegistry && <details className="mt-3 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.05] p-3 text-xs text-cyan-50">
+        <summary className="cursor-pointer font-black">Capacidades eBay · {capabilityRegistry.statusPercentages.REAL}% reales</summary>
+        <p className="mt-2 text-cyan-50/65">Contrato {capabilityRegistry.registryVersion} · {capabilityRegistry.totalCapabilities} capacidades. El porcentaje usa todas las capacidades registradas como denominador; fixtures no cuentan como reales.</p>
+        <div className="mt-2 grid grid-cols-4 gap-1 text-center">{(["REAL", "PREFLIGHT_ONLY", "FIXTURE", "NOT_IMPLEMENTED"] as const).map((status) => <div key={status} className="rounded-lg bg-black/20 p-2"><strong className="block">{capabilityRegistry.statusCounts[status]}</strong><span className="text-[9px] text-cyan-50/55">{label(status)} · {capabilityRegistry.statusPercentages[status]}%</span></div>)}</div>
+        <div className="mt-2 grid gap-1 sm:grid-cols-2">{capabilityRegistry.capabilities.map((capability) => <div key={capability.id} className="rounded-lg border border-white/10 p-2"><div className="flex items-center justify-between gap-2"><strong>{capability.label}</strong><span className={capability.access === "WRITE" ? "text-amber-100" : "text-emerald-100"}>{capability.access}</span></div><p className="mt-1 text-[10px] text-cyan-50/55">{label(capability.implementationState)} · {capability.requiredScopes.length} scope{capability.requiredScopes.length === 1 ? "" : "s"} · {capability.freshnessPolicy.maxAgeMinutes === null ? "preflight por efecto" : `vigencia ${capability.freshnessPolicy.maxAgeMinutes} min`}</p></div>)}</div>
+      </details>}
       {refreshedAt && <p className="mt-3 text-right text-[11px] font-bold text-white/45">Panel actualizado {formatDate(refreshedAt)}</p>}
       {message && <p aria-live="polite" className="mt-3 rounded-2xl border border-white/10 p-3 text-sm text-white/70">{message}</p>}
       {error && <p role="alert" className="mt-3 rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-sm text-rose-50">{error}</p>}

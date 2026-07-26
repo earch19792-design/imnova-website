@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto"
 
+import {
+  MAXIMUM_SAFE_PROMOTION_RATE_PERCENT,
+  POST_PUBLICATION_PROMOTION_POLICY_VERSION,
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+} from "../marketplace/post-publication-optimization-domain.ts"
 import type { SafeEbayActiveCompetitorObservation } from "./ebay-seller-keyword-demand-gateway"
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
 import { controlledRiskEconomicsConfig } from "./ebay-controlled-risk-manual-override.ts"
@@ -190,16 +195,23 @@ export function buildConfirmedSoldPriceRecommendation(input: Pick<
   const reservedPromotionPercent = money(
     Number(expected.config.promotedListingsReserveRate ?? 0) * 100,
   )
+  const safePromotionRatePercent = money(Math.min(
+    MAXIMUM_SAFE_PROMOTION_RATE_PERCENT,
+    reservedPromotionPercent,
+  ))
   const promotionRecommendation = {
     status: input.ownListing.promotionAllowed === false
       ? "BLOCKED_CONTROLLED_RISK_TEN_PERCENT_MARGIN" as const
-      : expected.passesProfitGate && reservedPromotionPercent > 0
+      : expected.passesProfitGate && safePromotionRatePercent > 0
       ? "ELIGIBLE_FOR_HUMAN_REVIEW" as const
       : "DO_NOT_PROMOTE_ECONOMICS_INSUFFICIENT" as const,
     recommendedRatePercent: input.ownListing.promotionAllowed === false
       ? 0 : expected.passesProfitGate
-      ? reservedPromotionPercent : 0,
+      ? safePromotionRatePercent : 0,
     maximumReservedRatePercent: reservedPromotionPercent,
+    headroomPercent: reservedPromotionPercent,
+    policyVersion: POST_PUBLICATION_PROMOTION_POLICY_VERSION,
+    configurationVersion: expected.calculationSource,
     estimatedMarginAfterRecommendedPromotionPercent:
       expected.estimatedNetMarginPercent,
     automaticPromotionAllowed: false,
@@ -207,7 +219,7 @@ export function buildConfirmedSoldPriceRecommendation(input: Pick<
     reason: input.ownListing.promotionAllowed === false
       ? "No hay margen para aplicar promoción: listing bajo excepción de margen 10%."
       : expected.passesProfitGate
-        ? "La reserva publicitaria configurada cabe en la economía estimada."
+        ? `La economía canónica reserva ${reservedPromotionPercent}%; la prueba queda limitada a ${safePromotionRatePercent}% y conserva el resto como seguridad.`
         : "La economía estimada no soporta la reserva publicitaria.",
   }
   return {

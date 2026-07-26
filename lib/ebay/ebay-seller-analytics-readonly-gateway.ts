@@ -7,14 +7,15 @@ import {
   getEbayProductionIdentityBindingConfiguration,
 } from "./ebay-seller-account-scope"
 import { createEbayReadonlyRateLimitError } from "./ebay-readonly-rate-limit"
+import {
+  EBAY_SELLER_ANALYTICS_READONLY_OAUTH_SCOPES,
+} from "./ebay-capability-registry"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const TRADING_ENDPOINT = "https://api.ebay.com/ws/api.dll"
 const TRADING_COMPATIBILITY_LEVEL = "1423"
-const ANALYTICS_SCOPE = [
-  "https://api.ebay.com/oauth/api_scope",
-  "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
-].join(" ")
+const ANALYTICS_SCOPE =
+  EBAY_SELLER_ANALYTICS_READONLY_OAUTH_SCOPES.join(" ")
 const EBAY_REQUEST_TIMEOUT_MS = 10_000
 
 type JsonRecord = Record<string, unknown>
