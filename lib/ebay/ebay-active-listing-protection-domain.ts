@@ -76,6 +76,35 @@ export type ActiveListingCandidateIdentity = {
   supplierSku: string | null
 }
 
+export const ACTIVE_LISTING_REANALYSIS_POLICY_VERSION =
+  "ACTIVE_LISTING_REANALYSIS_PROTECTION_V2" as const
+export const ACTIVE_LISTING_REANALYSIS_REASON_CODE =
+  "ALREADY_LISTED_AND_MONITORED" as const
+
+const ACTIVE_LISTING_REANALYSIS_MACHINE_STATES = new Set([
+  "RUN_CREATED",
+  "LOCAL_FILTERING",
+  "CANDIDATE_SELECTION",
+  "PRODUCT_RESEARCH_PLAN_READY",
+  "WAITING_PRODUCT_RESEARCH_CAPTURE",
+  "IMPORTING_SOLD_EVIDENCE",
+  "RECONCILING_IDENTITY",
+  "MATCHING_LUNA",
+  "RUNNING_LOOP_1",
+  "CALCULATING_ECONOMICS",
+  "WAITING_LUNA_CONFIRMATION",
+  "ENRICHING_PRODUCT_FACTS",
+  "VALIDATING_TAXONOMY",
+  "VALIDATING_REGULATION",
+  "BUILDING_OPENAI_INPUT",
+  "WAITING_PRODUCT_APPROVAL",
+  "GENERATING_LISTING_CONTENT",
+  "VALIDATING_LISTING_CONTENT",
+  "PREPARING_IMAGE_PACKAGE",
+  "WAITING_IMAGE_APPROVAL",
+  "BUILDING_SELLER_HUB_HANDOFF",
+])
+
 export type ActiveListingProtectionMonitorStatus =
   | "ACTIVE"
   | "MANUAL_RECENT"
@@ -442,5 +471,31 @@ export function evaluateActiveListingCandidateProtection(input: {
     matchedRegistryRowIds: [...matchedRegistryRowIds],
     matchedEbayItemIds: [...matchedEbayItemIds],
     matchReasons: [...matchReasons],
+  }
+}
+
+/**
+ * Applies the active-listing identity result to durable Same-Day work.
+ *
+ * A candidate that has not reached the manual-publication/readback lane must
+ * stop when the exact account-scoped product is already active. Publication
+ * and post-publication states are deliberately left to their reconciliation
+ * ledger so this guard cannot misclassify an expected readback as a duplicate.
+ */
+export function evaluateActiveListingCandidateReanalysisProtection(input: {
+  machineState: string
+  candidate: ActiveListingCandidateIdentity
+  rows: ActiveListingCandidateProtectionRow[]
+}) {
+  const identity = evaluateActiveListingCandidateProtection(input)
+  const blocksReanalysis = identity.excluded &&
+    ACTIVE_LISTING_REANALYSIS_MACHINE_STATES.has(input.machineState)
+  return {
+    ...identity,
+    blocksReanalysis,
+    reasonCode: blocksReanalysis
+      ? ACTIVE_LISTING_REANALYSIS_REASON_CODE
+      : null,
+    policyVersion: ACTIVE_LISTING_REANALYSIS_POLICY_VERSION,
   }
 }

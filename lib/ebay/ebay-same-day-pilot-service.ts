@@ -19,8 +19,11 @@ import {
   type SameDayCandidateInput,
 } from "./ebay-same-day-pilot-domain"
 import {
+  ACTIVE_LISTING_REANALYSIS_POLICY_VERSION,
+  ACTIVE_LISTING_REANALYSIS_REASON_CODE,
   assessActiveListingCandidateProtectionCoverage,
   evaluateActiveListingCandidateProtection,
+  evaluateActiveListingCandidateReanalysisProtection,
   type ActiveListingCandidateProtectionRow,
 } from "./ebay-active-listing-protection-domain"
 import {
@@ -1076,6 +1079,29 @@ async function currentState(
       },
     }
   })
+  const activeListingRows = await readActiveListingCandidateProtectionRows(
+    supabase,
+    accountKey,
+  )
+  const activeListingReanalysisByCandidate = new Map(
+    anchoredCandidates.map((candidate) => {
+      const product = record(
+        record(candidate.local_preparation_package).product,
+      )
+      return [text(candidate.id), evaluateActiveListingCandidateReanalysisProtection({
+        machineState: text(candidate.machine_state),
+        candidate: {
+          accountKey,
+          marketRadarProductId:
+            text(product.marketRadarProductId) || null,
+          supplierVariantId:
+            text(candidate.supplier_variant_id) || null,
+          supplierSku: text(candidate.supplier_sku) || null,
+        },
+        rows: activeListingRows,
+      })] as const
+    }),
+  )
   const rejectedQueueItemIds = [...new Set(anchoredCandidates.filter((candidate) =>
     ["REJECTED", "BLOCKED"].includes(text(candidate.machine_state)))
     .map((candidate) => text(candidate.queue_item_id)).filter(Boolean))]
@@ -1143,6 +1169,56 @@ async function currentState(
       },
     }
   })
+  const candidatesWithActiveListingProtection = explainedCandidates.map(
+    (candidate) => {
+      const protection = activeListingReanalysisByCandidate.get(
+        text(candidate.id),
+      )
+      if (!protection?.blocksReanalysis) return candidate
+      return {
+        ...candidate,
+        active_listing_reanalysis_protection: {
+          blocked: true,
+          durableStatus: "RECONCILIATION_PENDING",
+          reasonCode: protection.reasonCode,
+          blockerCodes: protection.blockerCodes,
+          policyVersion: protection.policyVersion,
+          matchedRegistryRowIds: protection.matchedRegistryRowIds,
+          matchedEbayItemIds: protection.matchedEbayItemIds,
+          matchReasons: protection.matchReasons,
+          evidenceRetained: true,
+          ebayWrites: 0,
+        },
+      }
+    },
+  )
+  const activeListingProtectedCandidateIds = new Set(
+    candidatesWithActiveListingProtection
+      .filter((candidate) =>
+        record(candidate.active_listing_reanalysis_protection).blocked === true)
+      .map((candidate) => text(candidate.id)),
+  )
+  const projectedTasks = (tasks ?? []).map((task) =>
+    task.status === "OPEN" &&
+    activeListingProtectedCandidateIds.has(text(task.candidate_id))
+      ? {
+          ...task,
+          status: "SUPERSEDED",
+          projection_only: true,
+          resolution_code: ACTIVE_LISTING_REANALYSIS_REASON_CODE,
+        }
+      : task)
+  const projectedJobs = (jobs ?? []).map((job) =>
+    ["PENDING", "WAITING_RETRY", "LEASED", "DEAD_LETTER"].includes(
+      text(job.status),
+    ) && activeListingProtectedCandidateIds.has(text(job.candidate_id))
+      ? {
+          ...job,
+          status: "CANCELLED",
+          projection_only: true,
+          last_error_code: ACTIVE_LISTING_REANALYSIS_REASON_CODE,
+        }
+      : job)
   const cycleRunRows = cycleRuns ?? []
   const cycleRunIds = cycleRunRows.map((cycleRun) => text(cycleRun.id)).filter(Boolean)
   const { data: historicalCandidates, error: historicalCandidateError } = cycleRunIds.length
@@ -1164,10 +1240,15 @@ async function currentState(
   const legacyNextCandidateCycle = canStartNextSameDayCandidateCycle({
     runStatus: text(run.status),
     cycle: number(run.cycle) ?? 1,
-    candidateMachineStates: explainedCandidates.map((candidate) =>
-      text(candidate.machine_state)),
-    openHumanTasks: (tasks ?? []).filter((task) => task.status === "OPEN").length,
-    dueOrLeasedJobs: (jobs ?? []).filter((job) =>
+    candidateMachineStates: candidatesWithActiveListingProtection.map(
+      (candidate) =>
+        activeListingProtectedCandidateIds.has(text(candidate.id))
+          ? "REJECTED"
+          : text(candidate.machine_state),
+    ),
+    openHumanTasks: projectedTasks.filter((task) =>
+      task.status === "OPEN").length,
+    dueOrLeasedJobs: projectedJobs.filter((job) =>
       ["PENDING", "WAITING_RETRY", "LEASED"].includes(text(job.status))).length,
     verifiedNewListings: number(run.verified_new_listings) ?? 0,
     targetNewListings: number(run.target_new_listings) ?? 2,
@@ -1195,14 +1276,41 @@ async function currentState(
   }
   return {
     run: projectedRun,
-    candidates: explainedCandidates,
-    tasks: tasks ?? [],
+    candidates: candidatesWithActiveListingProtection,
+    tasks: projectedTasks,
     transitions: transitions ?? [],
-    jobs: jobs ?? [],
+    jobs: projectedJobs,
     handoffs: handoffs ?? [],
     nextCandidateCycle,
     cycleHistory,
   }
+}
+
+async function readActiveListingCandidateProtectionRows(
+  supabase: SupabaseClient,
+  accountKey: string,
+) {
+  const { data, count } = await readSameDayPilotPreviewSource(
+    "ACTIVE_LISTING",
+    supabase
+      .from("ebay_active_listings")
+      .select(
+        "id,account_key,source,ebay_item_id,ebay_sku,listing_status,last_ebay_sync_at,market_radar_product_id,supplier_variant_id,supplier_sku",
+        { count: "exact" },
+      )
+      .eq("account_key", accountKey)
+      .in("listing_status", ["active", "ACTIVE"])
+      .limit(1_000),
+  )
+  const rows = (data ?? []) as ActiveListingCandidateProtectionRow[]
+  const coverage = assessActiveListingCandidateProtectionCoverage({
+    accountKey,
+    rows,
+  })
+  if (count === null || count !== rows.length || !coverage.complete) {
+    throw new Error("SAME_DAY_PILOT_ACTIVE_LISTING_PROTECTION_INCOMPLETE")
+  }
+  return rows
 }
 
 async function transition(input: {
@@ -3432,7 +3540,7 @@ export async function previewSameDayPilot(input: {
 }) {
   const now = input.now ?? new Date()
   const [{ data: opportunities }, { data: quotas }, { data: monitor },
-    productResearchCount, activeListingProtectionRead] = await Promise.all([
+    productResearchCount, activeListingRows] = await Promise.all([
     readSameDayPilotPreviewSource(
       "OPPORTUNITY",
       input.supabase.from("ebay_luna_opportunity_queue").select("*").in("queue_status", ["watchlist", "review", "ready"]).order("opportunity_score", { ascending: false }).limit(70),
@@ -3449,30 +3557,15 @@ export async function previewSameDayPilot(input: {
       "RESEARCH",
       input.supabase.from("marketplace_product_research_capture_observations").select("id", { count: "exact", head: true }).eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE),
     ),
-    readSameDayPilotPreviewSource(
-      "ACTIVE_LISTING",
-      input.supabase.from("ebay_active_listings")
-        .select("id,account_key,source,ebay_item_id,ebay_sku,listing_status,last_ebay_sync_at,market_radar_product_id,supplier_variant_id,supplier_sku", {
-          count: "exact",
-        })
-        .eq("account_key", input.accountKey)
-        .in("listing_status", ["active", "ACTIVE"])
-        .limit(1_000),
+    readActiveListingCandidateProtectionRows(
+      input.supabase,
+      input.accountKey,
     ),
   ])
-  const activeListingRows =
-    (activeListingProtectionRead.data ?? []) as ActiveListingCandidateProtectionRow[]
   const activeListingCoverage = assessActiveListingCandidateProtectionCoverage({
     accountKey: input.accountKey,
     rows: activeListingRows,
   })
-  if (
-    activeListingProtectionRead.count === null ||
-    activeListingProtectionRead.count !== activeListingRows.length ||
-    !activeListingCoverage.complete
-  ) {
-    throw new Error("SAME_DAY_PILOT_ACTIVE_LISTING_PROTECTION_INCOMPLETE")
-  }
   const excludedOpportunityIds = new Set(
     (input.excludeOpportunityIds ?? []).map((id) => text(id)).filter(Boolean),
   )
@@ -3923,6 +4016,19 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
   const date = operationDate(now)
   let existing = await currentState(input.supabase, input.accountKey, date)
   let repaired = false
+  const activeListingReconciliationPending = Boolean(existing?.candidates.some(
+    (candidate) =>
+      record(candidate.active_listing_reanalysis_protection).blocked === true,
+  ))
+  if (existing && activeListingReconciliationPending) {
+    return {
+      ...existing,
+      created: false,
+      idempotent: true,
+      repaired: false,
+      activeListingReconciliationPending: true,
+    }
+  }
   if (existing) {
     repaired = await repairSameDayPilotBootstrap(
       input.supabase, existing, input.accountKey,
@@ -4225,6 +4331,149 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
 export async function getSameDayPilot(input: { supabase: SupabaseClient; accountKey: string; now?: Date }) {
   const now = input.now ?? new Date()
   return currentState(input.supabase, input.accountKey, operationDate(now), now)
+}
+
+async function reconcileAlreadyListedSameDayCandidates(input: {
+  supabase: SupabaseClient
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>
+  now: Date
+}) {
+  const protectedCandidates = input.state.candidates
+    .filter((candidate) =>
+      record(candidate.active_listing_reanalysis_protection).blocked === true)
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+  if (!protectedCandidates.length) {
+    return { reconciled: 0, candidateIds: [] as string[], ebayWrites: 0 }
+  }
+  const reconciledCandidateIds: string[] = []
+  for (const candidate of protectedCandidates) {
+    const candidateId = text(candidate.id)
+    const runId = text(candidate.run_id || input.state.run.id)
+    const previousState = text(candidate.machine_state)
+    const protection = record(
+      candidate.active_listing_reanalysis_protection,
+    )
+    const matchedRegistryRowIds = strings(protection.matchedRegistryRowIds)
+    const matchedEbayItemIds = strings(protection.matchedEbayItemIds)
+    const matchReasons = strings(protection.matchReasons)
+    const checkpoint = {
+      policyVersion: ACTIVE_LISTING_REANALYSIS_POLICY_VERSION,
+      blockerCode: ACTIVE_LISTING_REANALYSIS_REASON_CODE,
+      matchedRegistryRowIds,
+      matchedEbayItemIds,
+      matchReasons,
+      evidenceRetained: true,
+      historyDeleted: false,
+      ebayWrites: 0,
+    }
+    await transition({
+      supabase: input.supabase,
+      runId,
+      candidateId,
+      previousState,
+      nextState: "REJECTED",
+      reasonCode: ACTIVE_LISTING_REANALYSIS_REASON_CODE,
+      triggeredBy: "SCHEDULER",
+      checkpoint,
+      nextAutomaticAction:
+        "Conservar el expediente publicado y continuar con el siguiente candidato.",
+      nextHumanAction: "Ninguna; el producto ya está listado y monitoreado.",
+    })
+    const { data: updatedCandidate, error: candidateError } =
+      await input.supabase
+        .from("ebay_same_day_pilot_candidates")
+        .update({
+          state: "REJECTED_TODAY",
+          blockers: [ACTIVE_LISTING_REANALYSIS_REASON_CODE],
+          evidence_summary: {
+            ...record(candidate.evidence_summary),
+            activeListingReconciliation: {
+              ...checkpoint,
+              reconciledAt: input.now.toISOString(),
+            },
+          },
+          updated_at: input.now.toISOString(),
+        })
+        .eq("id", candidateId)
+        .eq("run_id", runId)
+        .eq("machine_state", "REJECTED")
+        .select("id")
+    if (candidateError || (updatedCandidate ?? []).length !== 1) {
+      throw new Error(
+        "SAME_DAY_PILOT_ACTIVE_LISTING_CANDIDATE_RECONCILIATION_FAILED",
+      )
+    }
+    const { error: taskError } = await input.supabase
+      .from("ebay_same_day_pilot_human_tasks")
+      .update({
+        status: "SUPERSEDED",
+        completed_at: input.now.toISOString(),
+        updated_at: input.now.toISOString(),
+      })
+      .eq("run_id", runId)
+      .eq("candidate_id", candidateId)
+      .eq("status", "OPEN")
+    if (taskError) {
+      throw new Error(
+        "SAME_DAY_PILOT_ACTIVE_LISTING_TASK_RECONCILIATION_FAILED",
+      )
+    }
+    const { error: jobError } = await input.supabase
+      .from("ebay_same_day_pilot_jobs")
+      .update({
+        status: "CANCELLED",
+        last_error_code: ACTIVE_LISTING_REANALYSIS_REASON_CODE,
+        updated_at: input.now.toISOString(),
+      })
+      .eq("run_id", runId)
+      .eq("candidate_id", candidateId)
+      .in("status", ["PENDING", "WAITING_RETRY", "LEASED", "DEAD_LETTER"])
+    if (jobError) {
+      throw new Error(
+        "SAME_DAY_PILOT_ACTIVE_LISTING_JOB_RECONCILIATION_FAILED",
+      )
+    }
+    const evidenceHash = hash(checkpoint)
+    const { error: eventError } = await input.supabase
+      .from("ebay_same_day_pilot_events")
+      .upsert({
+        run_id: runId,
+        event_type: "ACTIVE_LISTING_REANALYSIS_SUPERSEDED",
+        event_payload: {
+          candidateId,
+          ...checkpoint,
+        },
+        idempotency_key:
+          `${runId}:${candidateId}:ACTIVE_LISTING_REANALYSIS:${evidenceHash}`,
+        ebay_read_calls: 0,
+        openai_calls: 0,
+        ebay_writes: 0,
+        production_changed: false,
+      }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+    if (eventError) {
+      throw new Error(
+        "SAME_DAY_PILOT_ACTIVE_LISTING_EVENT_RECONCILIATION_FAILED",
+      )
+    }
+    reconciledCandidateIds.push(candidateId)
+  }
+  for (const candidate of protectedCandidates) {
+    await promoteNextCandidate(
+      input.supabase,
+      text(candidate.run_id || input.state.run.id),
+      Number(candidate.ordinal),
+    )
+  }
+  await refreshRunProjection(
+    input.supabase,
+    text(input.state.run.id),
+    true,
+  )
+  return {
+    reconciled: reconciledCandidateIds.length,
+    candidateIds: reconciledCandidateIds,
+    ebayWrites: 0,
+  }
 }
 
 export async function confirmSameDayLuna(input: { supabase: SupabaseClient; accountKey: string; actorId: string; taskId: string; price: number | null; available: boolean; quantity: number | null; identityAndPackConfirmed?: boolean; nativePackCount?: number | null }) {
@@ -7377,6 +7626,21 @@ export async function processSameDayPilotJobs(input: {
     last_worker_heartbeat_at: now.toISOString(), updated_at: now.toISOString(),
   }).eq("id", state.run.id)
   if (heartbeatError) throw new Error("SAME_DAY_PILOT_WORKER_HEARTBEAT_FAILED")
+  const activeListingReconciliation =
+    await reconcileAlreadyListedSameDayCandidates({
+      supabase: input.supabase,
+      state,
+      now,
+    })
+  if (activeListingReconciliation.reconciled > 0) {
+    return {
+      processed: activeListingReconciliation.reconciled,
+      status: "COMPLETED",
+      jobType: "RECONCILE_ALREADY_LISTED_CANDIDATES",
+      activeListingReconciliation,
+      ebayWrites: 0,
+    }
+  }
   // Reconcile deployments where the versioned replacement was already
   // enqueued before its obsolete dead letter could be marked superseded.
   // This is recovery-only: no candidate, marketplace, or eBay data is written.
