@@ -2,6 +2,9 @@ import { createHash } from "node:crypto"
 
 import { z } from "zod"
 
+// @ts-expect-error Node's native TypeScript test runner needs the extension.
+import { openAiServerFetch } from "../openai/openai-server-http-transport.ts"
+
 export const OPENAI_LISTING_FACTORY_SCHEMA_VERSION =
   "OPENAI_EBAY_LISTING_FACTORY_OUTPUT_V1"
 export const OPENAI_LISTING_FACTORY_DEFAULT_PROMPT_VERSION =
@@ -550,10 +553,11 @@ export function createOpenAiListingFactoryAdapter(environment = process.env): Li
       let lastCode = "OPENAI_LISTING_REQUEST_FAILED"
       for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
         try {
-          const response = await fetch("https://api.openai.com/v1/responses", {
+          const response = await openAiServerFetch({
+            endpoint: "https://api.openai.com/v1/responses",
+            apiKey,
             method: "POST",
             headers: {
-              Authorization: `Bearer ${apiKey}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({

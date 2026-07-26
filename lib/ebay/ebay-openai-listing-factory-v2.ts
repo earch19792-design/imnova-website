@@ -2,6 +2,9 @@ import { createHash } from "node:crypto"
 
 import { z } from "zod"
 
+// @ts-expect-error Node's native TypeScript test runner needs the extension.
+import { openAiServerFetch } from "../openai/openai-server-http-transport.ts"
+
 // @ts-expect-error Node test runtime imports the TypeScript source directly.
 import { buildListingAiEvidenceDistillation, listingAiEvidenceDistillationSchema } from "./ebay-openai-listing-evidence-distillation.ts"
 // @ts-expect-error Node test runtime imports the TypeScript source directly.
@@ -1282,9 +1285,11 @@ export function createRealOpenAiListingAdapter(environment: NodeJS.ProcessEnv = 
       let lastCode = "OPENAI_LISTING_REQUEST_FAILED"
       for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
         try {
-          const response = await fetch("https://api.openai.com/v1/responses", {
+          const response = await openAiServerFetch({
+            endpoint: "https://api.openai.com/v1/responses",
+            apiKey,
             method: "POST",
-            headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               model,
               store: false,

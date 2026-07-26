@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { supabase } from "@/lib/supabase"
 
 import { Loop2Top20OpportunityPool } from "./loop2-top20-opportunity-pool"
+import { OpenAiIntelligenceShadowPanel } from "./openai-intelligence-shadow-panel"
 
 type Decision = {
   id: string
@@ -420,6 +421,8 @@ export function Loop2ListingAiPanel() {
         <div className="rounded-xl border border-emerald-200/20 p-2"><strong>C · Paquete Loop 1</strong><p className="mt-1 text-white/55">Referencia ya calculada; no inicia análisis.</p></div>
         <div className="rounded-xl border border-fuchsia-200/20 p-2"><strong>D · OpenAI</strong><p className="mt-1 text-white/55">Sólo después de aprobación humana.</p></div>
       </div>
+
+      <OpenAiIntelligenceShadowPanel />
 
       <Loop2Top20OpportunityPool />
 

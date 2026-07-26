@@ -4772,7 +4772,7 @@ export async function authorizeSameDayControlledRiskOverride(input: {
     openAiImageSpendApprovedAt: approvedAt,
     openAiImageSpendActorRecorded: Boolean(input.actorId),
     openAiImageMaximumCallsApproved: 1,
-    openAiImageQualityApproved: "low",
+    openAiImageQualityApproved: "high",
     controlledRiskOverride: {
       authorized: true,
       version: EBAY_CONTROLLED_RISK_OVERRIDE_VERSION,
@@ -4979,7 +4979,7 @@ export async function decideSameDayProduct(input: {
     openAiImageSpendApprovedAt: operatorApprovedAt,
     openAiImageSpendActorRecorded: Boolean(input.actorId),
     openAiImageMaximumCallsApproved: 1,
-    openAiImageQualityApproved: "low",
+    openAiImageQualityApproved: "high",
     controlledExploratoryTestApproved: controlledTestPriceReady,
     commercialMonitorRequired: controlledTestPriceReady || controlledRiskOperatorOverrideReady,
     controlledRiskOverride: controlledRiskOperatorOverrideReady ? {

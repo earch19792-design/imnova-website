@@ -393,6 +393,9 @@ export async function generateAndPersistSameDayImageRevision(input: {
   if (configuration.deterministicComposition !== "READY") {
     throw new Error("SAME_DAY_IMAGE_REVISION_FACTORY_BLOCKED")
   }
+  if (configuration.aiGeneration !== "READY") {
+    throw new Error("SAME_DAY_IMAGE_REVISION_OPENAI_NOT_READY")
+  }
   const capturedMarketVisualBrief = await loadEbayImageMarketBrief({
     supabase: input.supabase,
     accountKey: input.accountKey,

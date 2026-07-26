@@ -2,6 +2,9 @@ import { createHash } from "node:crypto"
 
 import { z } from "zod"
 
+// @ts-expect-error Node's native TypeScript test runner needs the extension.
+import { openAiServerFetch } from "../openai/openai-server-http-transport.ts"
+
 export const EBAY_STRATEGIC_ADVISOR_CONTRACT_VERSION =
   "SELLER_OS_STRATEGIC_ADVISOR_V1"
 export const EBAY_STRATEGIC_ADVISOR_PROMPT_VERSION =
@@ -472,7 +475,7 @@ function boundedInteger(
 
 const STRATEGIC_ADVISOR_STAGING_REF = "vsfthqydfrdzulldbfbe"
 export const EBAY_STRATEGIC_ADVISOR_PREVIEW_BRANCH =
-  "feature/centralize-ebay-mobile-command-center"
+  "feature/centralize-ebay-mobile-center"
 
 export function getEbayStrategicAdvisorConfiguration(environment = process.env) {
   let detectedRef: string | null = null
@@ -616,9 +619,11 @@ export type EbayStrategicAdvisorTransport = (request: {
 }) => Promise<{ ok: boolean; status: number; json(): Promise<Record<string, unknown>> }>
 
 const defaultTransport: EbayStrategicAdvisorTransport = async ({ url, apiKey, body }) => {
-  const response = await fetch(url, {
+  const response = await openAiServerFetch({
+    endpoint: url,
+    apiKey,
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     cache: "no-store",
     signal: AbortSignal.timeout(30_000),

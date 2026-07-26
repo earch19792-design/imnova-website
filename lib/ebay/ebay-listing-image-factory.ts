@@ -4,6 +4,9 @@ import { readFileSync } from "node:fs"
 import sharp from "sharp"
 import { z } from "zod"
 
+// @ts-expect-error Node's native TypeScript test runner needs the extension.
+import { openAiServerFetch } from "../openai/openai-server-http-transport.ts"
+
 // Node's native type stripping needs the explicit extension in direct tests.
 // @ts-expect-error Next's bundler resolves the same TypeScript source at build time.
 import { EBAY_IMAGE_OUTPUT_SIZE, optimizeAuthorizedEbayMainImage, prepareAuthorizedEbayFullFrameLayer, prepareAuthorizedEbaySecondaryForeground, type EbayAuthorizedSecondaryForeground, type EbayOptimizedImage } from "./ebay-image-optimization-service.ts"
@@ -38,7 +41,7 @@ export const EBAY_IMAGE_TEXT_RENDERER_VERSION =
   "EBAY_IMAGE_TEXT_PANGO_FONTFILE_V2_2026_07_21"
 export { EBAY_SQUARE_PRESENTATION_QA_VERSION }
 export const EBAY_OPENAI_IMAGE_PREVIEW_BRANCH =
-  "feature/centralize-ebay-mobile-command-center"
+  "feature/centralize-ebay-mobile-center"
 
 const OPENAI_IMAGE_GENERATION_ENDPOINT =
   "https://api.openai.com/v1/images/generations"
@@ -471,9 +474,12 @@ export async function requestReferenceGuidedProductGeneration(input: {
   form.append("output_format", input.plan.outputFormat)
   form.append("image[]", new Blob([input.main], { type: "image/jpeg" }), "MAIN.jpg")
   form.append("image[]", new Blob([input.side], { type: "image/jpeg" }), "SIDE.jpg")
-  const response = await (input.fetchImpl ?? fetch)(OPENAI_IMAGE_EDIT_ENDPOINT, {
-    method: "POST", headers: { Authorization: `Bearer ${input.apiKey.trim()}` },
+  const response = await openAiServerFetch({
+    endpoint: OPENAI_IMAGE_EDIT_ENDPOINT,
+    apiKey: input.apiKey,
+    method: "POST",
     body: form,
+    fetchImpl: input.fetchImpl,
   })
   if (!response.ok) throw new Error(`REFERENCE_GUIDED_PROVIDER_HTTP_${response.status}`)
   const payload = await response.json() as { id?: string; data?: Array<{ b64_json?: string }> }
@@ -1953,16 +1959,15 @@ export async function requestSafeOpenAiBackgroundPlate(input: {
     OPENAI_IMAGE_REQUEST_TIMEOUT_MS,
   )
   try {
-    const response = await (input.fetchImpl ?? fetch)(
-      OPENAI_IMAGE_GENERATION_ENDPOINT,
-      {
-        method: "POST",
-        cache: "no-store",
-        headers: {
-          Authorization: `Bearer ${input.apiKey.trim()}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+    const response = await openAiServerFetch({
+      endpoint: OPENAI_IMAGE_GENERATION_ENDPOINT,
+      apiKey: input.apiKey,
+      method: "POST",
+      cache: "no-store",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
           model: input.plan.model,
           prompt: input.plan.prompt,
           n: 1,
@@ -1972,10 +1977,10 @@ export async function requestSafeOpenAiBackgroundPlate(input: {
           output_compression: 85,
           background: "opaque",
           moderation: "auto",
-        }),
-        signal: controller.signal,
-      },
-    )
+      }),
+      signal: controller.signal,
+      fetchImpl: input.fetchImpl,
+    })
     const responseText = await readOpenAiResponseWithLimit(response)
     if (!response.ok) {
       // OpenAI may return a user-correctable stable code with a 4xx. Keep only

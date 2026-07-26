@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "test:seller-os": "node --test lib/ebay/*.test.mjs tools/ebay-*-tests.mjs",
     "audit:seller-os": "node tools/ebay-seller-os-ci-guards.mjs",
-    "market-intelligence:ebay": "node tools/ebay-market-intelligence-loop.mjs"
+    "market-intelligence:ebay": "node tools/ebay-market-intelligence-loop.mjs",
+    "openai-intelligence:shadow-dry-run": "node tools/ebay-openai-intelligence-shadow-dry-run.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
