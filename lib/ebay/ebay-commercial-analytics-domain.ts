@@ -83,6 +83,12 @@ export function reconcileEbayTrafficAnalyticsReport(input: {
   const reportStartDay = normalized.startDate?.slice(0, 10) ?? null
   const reportEndDay = normalized.endDate?.slice(0, 10) ?? null
   const updatedDay = normalized.lastUpdatedDate?.slice(0, 10) ?? null
+  const parsedLastUpdatedAt = normalized.lastUpdatedDate
+    ? Date.parse(normalized.lastUpdatedDate)
+    : Number.NaN
+  const lastUpdatedAt = Number.isFinite(parsedLastUpdatedAt)
+    ? new Date(parsedLastUpdatedAt).toISOString()
+    : null
   const requestedListingIds = [...new Set(input.listingIds
     .filter((listingId) => /^\d{9,20}$/.test(listingId)))]
   const returnedListingDimensions = normalized.rows.map((row) => row.dimension)
@@ -132,13 +138,19 @@ export function reconcileEbayTrafficAnalyticsReport(input: {
       reportStartDay,
       reportEndDay,
       lastUpdatedDay: updatedDay,
+      lastUpdatedAt,
       warnings: normalized.warnings.map(() => "EBAY_ANALYTICS_REPORT_WARNING"),
     },
     observations: normalizedRows.flatMap(({ row, listingId }) => {
       if (!listingId || !requested.has(listingId)) return []
       const impressions = metric(row, "TOTAL_IMPRESSION_TOTAL")
       const searchImpressions = metric(row, "LISTING_IMPRESSION_SEARCH_RESULTS_PAGE")
+      const storeImpressions = metric(row, "LISTING_IMPRESSION_STORE")
       const searchViews = metric(row, "LISTING_VIEWS_SOURCE_SEARCH_RESULTS_PAGE")
+      const directViews = metric(row, "LISTING_VIEWS_SOURCE_DIRECT")
+      const externalViews = metric(row, "LISTING_VIEWS_SOURCE_OFF_EBAY")
+      const otherEbayViews = metric(row, "LISTING_VIEWS_SOURCE_OTHER_EBAY")
+      const storeViews = metric(row, "LISTING_VIEWS_SOURCE_STORE")
       const views = metric(row, "LISTING_VIEWS_TOTAL")
       const transactions = metric(row, "TRANSACTION")
       const reportedCtr = metric(row, "CLICK_THROUGH_RATE")
@@ -149,7 +161,14 @@ export function reconcileEbayTrafficAnalyticsReport(input: {
         listingId,
         returnedDimension: row.dimension,
         impressions,
+        searchImpressions,
+        storeImpressions,
         views,
+        searchViews,
+        directViews,
+        externalViews,
+        otherEbayViews,
+        storeViews,
         // The UI and rule engine use percentage points. Deriving from the
         // official numerator/denominator keeps that contract stable even when
         // eBay serializes a reported rate as a ratio.
@@ -160,7 +179,17 @@ export function reconcileEbayTrafficAnalyticsReport(input: {
         revenue: null,
         applicability: {
           impressions: row.applicability.TOTAL_IMPRESSION_TOTAL === true,
+          searchImpressions:
+            row.applicability.LISTING_IMPRESSION_SEARCH_RESULTS_PAGE === true,
+          storeImpressions: row.applicability.LISTING_IMPRESSION_STORE === true,
           views: row.applicability.LISTING_VIEWS_TOTAL === true,
+          searchViews:
+            row.applicability.LISTING_VIEWS_SOURCE_SEARCH_RESULTS_PAGE === true,
+          directViews: row.applicability.LISTING_VIEWS_SOURCE_DIRECT === true,
+          externalViews: row.applicability.LISTING_VIEWS_SOURCE_OFF_EBAY === true,
+          otherEbayViews:
+            row.applicability.LISTING_VIEWS_SOURCE_OTHER_EBAY === true,
+          storeViews: row.applicability.LISTING_VIEWS_SOURCE_STORE === true,
           ctr: row.applicability.CLICK_THROUGH_RATE === true ||
             (row.applicability.LISTING_VIEWS_SOURCE_SEARCH_RESULTS_PAGE === true &&
               row.applicability.LISTING_IMPRESSION_SEARCH_RESULTS_PAGE === true),

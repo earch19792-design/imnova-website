@@ -1729,6 +1729,15 @@ async function persistSnapshotsAndRules(input: {
       analytics && input.analytics?.completenessStatus === "complete" &&
       input.analytics.matchedListingIds.includes(listing.ebay_item_id)
     )
+    const analyticsReconciliationStatus = !input.analytics
+      ? null
+      : input.analytics.queryDimension !== "LISTING"
+        ? "LISTING_DIMENSION_MISMATCH"
+        : input.analytics.matchedListingIds.includes(listing.ebay_item_id)
+          ? "MATCHED"
+          : input.analytics.unmatchedRequestedListingIds.includes(listing.ebay_item_id)
+            ? "UNMATCHED_REQUESTED_LISTING"
+            : "NOT_REQUESTED"
     const snapshot: CommercialSnapshot = {
       marketplaceAccountKey: input.accountKey,
       listingId: listing.ebay_item_id,
@@ -1763,7 +1772,14 @@ async function persistSnapshotsAndRules(input: {
         sku: snapshot.sku,
         listing_status: snapshot.listingStatus,
         impressions: snapshot.impressions,
+        search_impressions: analytics?.searchImpressions ?? null,
+        store_impressions: analytics?.storeImpressions ?? null,
         views: snapshot.views,
+        search_views: analytics?.searchViews ?? null,
+        direct_views: analytics?.directViews ?? null,
+        external_views: analytics?.externalViews ?? null,
+        other_ebay_views: analytics?.otherEbayViews ?? null,
+        store_views: analytics?.storeViews ?? null,
         ctr: snapshot.ctr,
         transactions: snapshot.transactions,
         sales_conversion_rate: snapshot.salesConversionRate,
@@ -1779,6 +1795,11 @@ async function persistSnapshotsAndRules(input: {
         observed_at: snapshot.observedAt,
         window_start: snapshot.windowStart,
         window_end: snapshot.windowEnd,
+        analytics_last_updated_at:
+          input.analytics?.reportCoverage.lastUpdatedAt ?? null,
+        analytics_timezone: input.analytics?.queryTimeZone ?? null,
+        analytics_reconciliation_status: analyticsReconciliationStatus,
+        analytics_scope: input.analytics?.queryDimension ?? null,
         source: {
           analytics: input.analytics?.source ?? null,
           ebayCustomLabel: listing.ebay_sku,

@@ -15,7 +15,7 @@ export const EBAY_CATEGORY_LEARNING_SOURCE =
   "EBAY_SELL_ANALYTICS_READONLY" as const
 
 export const EBAY_CATEGORY_LEARNING_PREVIEW_BRANCH =
-  "feature/centralize-ebay-mobile-command-center"
+  "feature/centralize-ebay-mobile-center"
 
 const EBAY_CATEGORY_LEARNING_STAGING_REF = "vsfthqydfrdzulldbfbe"
 

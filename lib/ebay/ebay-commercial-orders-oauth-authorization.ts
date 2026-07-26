@@ -24,7 +24,7 @@ import { verifyEbayCommercialOfficialAccount } from "./ebay-commercial-readers"
 import { getEbayProductionIdentityBindingConfiguration } from "./ebay-seller-account-scope"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
-const AUTHORIZED_PREVIEW_BRANCH = "feature/centralize-ebay-mobile-command-center"
+const AUTHORIZED_PREVIEW_BRANCH = "feature/centralize-ebay-mobile-center"
 const HANDOFF_TTL_MS = 30 * 60 * 1_000
 const REQUEST_TIMEOUT_MS = 12_000
 

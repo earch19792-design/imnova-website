@@ -136,9 +136,14 @@ test("route and bundle surface regress downward", () => {
   // executor -> one final Preview-only extraordinary position-6 ordinal-8
   // executor -> one authenticated, read-only final-listing-review hydration
   // route -> one authenticated V3 UNPUBLISHED authorization/preflight route
-  // -> one authenticated, read-only OpenAI Intelligence shadow status route.
+  // -> one authenticated, read-only OpenAI Intelligence shadow status route
+  // -> one admin recovery route and one Preview-only recovery-growth cron route.
   // The old product/community domain remains at zero.
-  assert.ok(countNamed("app/api", "route.ts") <= 81, "API route count regressed")
+  for (const route of [
+    "app/api/admin/ebay/listing-recovery/route.ts",
+    "app/api/cron/ebay-listing-recovery-growth/route.ts",
+  ]) assert.equal(exists(route), true, `expected isolated recovery route ${route}`)
+  assert.ok(countNamed("app/api", "route.ts") <= 83, "API route count regressed")
   assert.equal(countNamed("app/api/community", "route.ts"), 0)
   assert.equal(countNamed("app/api/store", "route.ts"), 0)
 })

@@ -26,7 +26,7 @@ const predictionEngineVersion =
   "EBAY-SELLER-COMMAND-CENTER-OPPORTUNITY-ENGINE-V3"
 const previewActivationEnvironment = {
   VERCEL_ENV: "preview",
-  VERCEL_GIT_COMMIT_REF: "feature/centralize-ebay-mobile-command-center",
+  VERCEL_GIT_COMMIT_REF: "feature/centralize-ebay-mobile-center",
   NEXT_PUBLIC_SUPABASE_URL: "https://vsfthqydfrdzulldbfbe.supabase.co",
   EBAY_CATEGORY_PERFORMANCE_LEARNING_PREVIEW_ENABLED: "true",
 }
