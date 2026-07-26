@@ -1,5 +1,5 @@
 export const EBAY_LUNA_SELECTOR_V2_POLICY_VERSION =
-  "EBAY_LUNA_SELECTOR_V2_SHADOW_2026_07_26"
+  "EBAY_LUNA_SELECTOR_V2_BOOTSTRAP_CANARY_V1_SHADOW_2026_07_26"
 
 export type EbayDemandEvidenceClass =
   | "CONFIRMED_SOLD_EXACT"
@@ -25,6 +25,8 @@ export type EbayLunaSelectorV2Policy = {
   targetBatchSize: number
   minimumConfirmedDemandPreferred: number
   maximumExploratory: number
+  bootstrapCanaryEnabled: boolean
+  maximumBootstrapCanaries: number
   maximumPerFamily: number
   maximumPerCategory: number
   minimumFreshStockQuantity: number
@@ -45,6 +47,8 @@ export const DEFAULT_EBAY_LUNA_SELECTOR_V2_POLICY: EbayLunaSelectorV2Policy = {
   targetBatchSize: 5,
   minimumConfirmedDemandPreferred: 4,
   maximumExploratory: 1,
+  bootstrapCanaryEnabled: false,
+  maximumBootstrapCanaries: 5,
   maximumPerFamily: 2,
   maximumPerCategory: 2,
   minimumFreshStockQuantity: 1,
@@ -71,6 +75,7 @@ export type EbayLunaSelectorCandidateV2 = {
   lane: SelectorLane | null
   currentOpportunityScore: number | null
   lastDeepAnalyzedAt: string | null
+  consumableResearchBoost?: number | null
   supplier: {
     productCurrent: boolean
     exactVariant: boolean
@@ -94,6 +99,7 @@ export type EbayLunaSelectorCandidateV2 = {
     soldExactSellerCount: number | null
     soldExactComparableCount: number | null
     observedAt: string | null
+    historicalMarketCheckCompleted: boolean
     score: number | null
     confidenceScore: number | null
   }
@@ -144,12 +150,28 @@ export type EbayLunaSelectorEvaluationV2 = {
   riskScore: number
   confidenceScore: number
   finalSelectionScore: number
+  researchEligibilityScore: number
   researchPriorityScore: number
+  consumableResearchBoost: number
   fairnessBoost: number
   hardGateCodes: string[]
+  nonDemandHardGateCodes: string[]
   readyToList: boolean
+  eligibleForResearch: boolean
   eligibleForExploration: boolean
+  eligibleForBootstrapCanary: boolean
   canReceivePromotion: false
+  selectionMode:
+    | "DEMAND_VALIDATED"
+    | "BOOTSTRAP_CANARY"
+    | "RESEARCH_ONLY"
+    | "BLOCKED"
+  forcedListingQuantity: 1 | null
+  promotionRatePercent: 0
+  canDecreasePrice: false
+  externalWritesAllowed: false
+  commercialMonitorRequired: boolean
+  oneVariableAtATime: boolean
   selectionReason: string
 }
 
@@ -157,7 +179,9 @@ export type EbayLunaSelectorBatchV2 = {
   policyVersion: string
   targetBatchSize: number
   ready: EbayLunaSelectorEvaluationV2[]
+  bootstrapCanaries: EbayLunaSelectorEvaluationV2[]
   exploratory: EbayLunaSelectorEvaluationV2[]
+  researchOnly: EbayLunaSelectorEvaluationV2[]
   displayed: EbayLunaSelectorEvaluationV2[]
   commerciallyEligibleCount: number
   confirmedDemandCount: number
@@ -274,6 +298,9 @@ export function evaluateEbayLunaSelectorCandidateV2(
   if (!candidate.demand.sameSize) gates.push("EXACT_SIZE_REQUIRED")
   if (!candidate.demand.sameVariant) gates.push("EXACT_VARIANT_REQUIRED")
   if (!candidate.demand.sameCondition) gates.push("EXACT_CONDITION_REQUIRED")
+  if (!candidate.demand.historicalMarketCheckCompleted) {
+    gates.push("HISTORICAL_MARKET_CHECK_REQUIRED")
+  }
   if (!exactSoldEvidence) gates.push("CONFIRMED_SOLD_EXACT_REQUIRED")
   if (!candidate.economics.landedSoldPriceComplete) {
     gates.push("LANDED_SOLD_PRICE_REQUIRED")
@@ -318,6 +345,12 @@ export function evaluateEbayLunaSelectorCandidateV2(
   if (clampScore(candidate.risk.score) > policy.maximumRiskScore) {
     gates.push("RISK_SCORE_TOO_HIGH")
   }
+  if (
+    candidate.risk.score === null ||
+    !Number.isFinite(candidate.risk.score)
+  ) {
+    gates.push("RISK_SCORE_REQUIRED")
+  }
   for (const blocker of candidate.risk.blockerCodes) {
     if (blocker && !gates.includes(blocker)) gates.push(blocker)
   }
@@ -349,7 +382,7 @@ export function evaluateEbayLunaSelectorCandidateV2(
     candidate.demand.evidenceClass === "INSUFFICIENT_EVIDENCE"
       ? 0
       : clampScore(candidate.demand.score)
-  const researchPriorityScore = Math.max(
+  const researchEligibilityScore = Math.max(
     0,
     Math.round(
       weakDemandScore * 0.3 +
@@ -360,6 +393,14 @@ export function evaluateEbayLunaSelectorCandidateV2(
       (100 - riskScore) * 0.1 +
       boost,
     ),
+  )
+  const consumableResearchBoost = Math.min(
+    5,
+    clampScore(candidate.consumableResearchBoost),
+  )
+  const researchPriorityScore = Math.min(
+    100,
+    researchEligibilityScore + consumableResearchBoost,
   )
   const readyToList =
     gates.length === 0 &&
@@ -383,9 +424,9 @@ export function evaluateEbayLunaSelectorCandidateV2(
     "COMPLIANCE_REQUIRED",
     "RISK_SCORE_TOO_HIGH",
   ])
-  const eligibleForExploration =
+  const eligibleForResearch =
     !readyToList &&
-    researchPriorityScore >= policy.explorationMinimumPotentialScore &&
+    researchEligibilityScore >= policy.explorationMinimumPotentialScore &&
     gates.every((gate) =>
       gate === "CONFIRMED_SOLD_EXACT_REQUIRED" ||
       gate === "LANDED_SOLD_PRICE_REQUIRED" ||
@@ -396,6 +437,47 @@ export function evaluateEbayLunaSelectorCandidateV2(
       gate === "LISTING_FACTS_INCOMPLETE" ||
       !explorationBlockers.has(gate)
     )
+  const deterministicEconomicsComplete =
+    positiveNumber(candidate.economics.netProfitUsd) >=
+      policy.minimumNetProfitUsd &&
+    positiveNumber(candidate.economics.marginRate) >=
+      policy.minimumMarginRate &&
+    positiveNumber(candidate.economics.roiRate) >= policy.minimumRoiRate &&
+    positiveNumber(candidate.economics.safeFloorUsd) > 0 &&
+    positiveNumber(candidate.economics.targetPriceUsd) >=
+      positiveNumber(candidate.economics.safeFloorUsd)
+  const allowedCanaryDemandGates = new Set([
+    "CONFIRMED_SOLD_EXACT_REQUIRED",
+    "EXACT_IDENTITY_REQUIRED",
+    "EXACT_PACK_REQUIRED",
+    "EXACT_SIZE_REQUIRED",
+    "EXACT_VARIANT_REQUIRED",
+    "EXACT_CONDITION_REQUIRED",
+    ...(deterministicEconomicsComplete
+      ? ["LANDED_SOLD_PRICE_REQUIRED"]
+      : []),
+  ])
+  const nonDemandHardGateCodes = gates.filter(
+    (gate) => !allowedCanaryDemandGates.has(gate),
+  )
+  const eligibleForBootstrapCanary =
+    policy.bootstrapCanaryEnabled &&
+    !readyToList &&
+    isCommercialDiscoveryLane(candidate.lane) &&
+    candidate.demand.historicalMarketCheckCompleted &&
+    deterministicEconomicsComplete &&
+    nonDemandHardGateCodes.length === 0 &&
+    researchEligibilityScore >= policy.explorationMinimumPotentialScore &&
+    confidenceScore >= policy.minimumConfidenceScore &&
+    operationalReadinessScore >= policy.minimumReadyScore &&
+    riskScore <= policy.maximumRiskScore
+  const selectionMode = readyToList
+    ? "DEMAND_VALIDATED" as const
+    : eligibleForBootstrapCanary
+      ? "BOOTSTRAP_CANARY" as const
+      : eligibleForResearch
+        ? "RESEARCH_ONLY" as const
+        : "BLOCKED" as const
 
   return {
     candidateKey: candidate.candidateKey,
@@ -419,15 +501,29 @@ export function evaluateEbayLunaSelectorCandidateV2(
     riskScore,
     confidenceScore,
     finalSelectionScore,
+    researchEligibilityScore,
     researchPriorityScore,
+    consumableResearchBoost,
     fairnessBoost: boost,
     hardGateCodes: gates,
+    nonDemandHardGateCodes,
     readyToList,
-    eligibleForExploration,
+    eligibleForResearch,
+    eligibleForExploration: eligibleForResearch,
+    eligibleForBootstrapCanary,
     canReceivePromotion: false,
+    selectionMode,
+    forcedListingQuantity: eligibleForBootstrapCanary ? 1 : null,
+    promotionRatePercent: 0,
+    canDecreasePrice: false,
+    externalWritesAllowed: false,
+    commercialMonitorRequired: eligibleForBootstrapCanary,
+    oneVariableAtATime: eligibleForBootstrapCanary,
     selectionReason: readyToList
       ? "CONFIRMED_DEMAND_AND_ALL_HARD_GATES_PASSED"
-      : eligibleForExploration
+      : eligibleForBootstrapCanary
+        ? "BOOTSTRAP_CANARY_ALL_NON_DEMAND_GATES_PASSED"
+        : eligibleForResearch
         ? "RESEARCH_ONLY_MISSING_STRONG_EVIDENCE_OR_READINESS"
         : gates[0] ?? "SELECTION_SCORE_BELOW_POLICY",
   }
@@ -484,23 +580,41 @@ export function selectEbayLunaBatchV2(
     ready.push(candidate)
   }
 
-  const exploratory: EbayLunaSelectorEvaluationV2[] = []
+  const bootstrapCanaries: EbayLunaSelectorEvaluationV2[] = []
   const remainingSlots = Math.max(0, policy.targetBatchSize - ready.length)
-  const exploratoryLimit = Math.min(policy.maximumExploratory, remainingSlots)
+  const bootstrapCanaryLimit = Math.min(
+    policy.maximumBootstrapCanaries,
+    remainingSlots,
+  )
   for (const candidate of evaluations
-    .filter((row) => row.eligibleForExploration && !row.readyToList)
+    .filter((row) => row.eligibleForBootstrapCanary && !row.readyToList)
     .sort(compareResearch)) {
-    if (exploratory.length >= exploratoryLimit) break
-    if (!withinDiversityPolicy(candidate, [...ready, ...exploratory], policy)) continue
-    exploratory.push(candidate)
+    if (bootstrapCanaries.length >= bootstrapCanaryLimit) break
+    if (
+      !withinDiversityPolicy(
+        candidate,
+        [...ready, ...bootstrapCanaries],
+        policy,
+      )
+    ) continue
+    bootstrapCanaries.push(candidate)
   }
 
-  const displayed = [...ready, ...exploratory]
+  const researchOnly = evaluations
+    .filter((row) =>
+      row.eligibleForResearch &&
+      !row.readyToList &&
+      !row.eligibleForBootstrapCanary
+    )
+    .sort(compareResearch)
+  const displayed = [...ready, ...bootstrapCanaries]
   return {
     policyVersion: policy.policyVersion,
     targetBatchSize: policy.targetBatchSize,
     ready,
-    exploratory,
+    bootstrapCanaries,
+    exploratory: bootstrapCanaries,
+    researchOnly,
     displayed,
     commerciallyEligibleCount: evaluations.filter((row) => row.readyToList).length,
     confirmedDemandCount: ready.filter(
@@ -509,6 +623,9 @@ export function selectEbayLunaBatchV2(
     unfilledSlots: Math.max(0, policy.targetBatchSize - displayed.length),
     explanation: ready.length >= policy.minimumConfirmedDemandPreferred
       ? "CONFIRMED_DEMAND_TARGET_MET"
+      : displayed.length === policy.targetBatchSize &&
+          bootstrapCanaries.length > 0
+        ? "BOOTSTRAP_CANARY_SHADOW_BATCH_FILLED"
       : "QUALIFIED_DEFICIT_CONTINUE_DISCOVERY",
   }
 }

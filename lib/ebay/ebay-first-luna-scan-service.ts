@@ -654,7 +654,12 @@ async function processClaimedCandidate(
   const assessment = scan.rankedOpportunities[0]
   if (!assessment) throw new Error("EBAY_LUNA_CANDIDATE_ASSESSMENT_EMPTY")
   const matches = matchEbayBestSellingProductsToLuna(bestSellingSignals, [candidate])
-  const queueRow = buildOpportunityQueueRow(assessment, matches)
+  const queueRow = buildOpportunityQueueRow(
+    assessment,
+    matches,
+    new Date(),
+    { lane: task.lane },
+  )
   const { data: previousData } = await supabase
     .from("ebay_luna_opportunity_queue")
     .select("id,opportunity_score,supplier_price,supplier_available,supplier_inventory_quantity,queue_status")

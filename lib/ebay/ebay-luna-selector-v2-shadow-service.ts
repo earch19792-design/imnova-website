@@ -43,12 +43,26 @@ function numberValue(...values: unknown[]) {
   return null
 }
 
+function rateValue(...values: unknown[]) {
+  const value = numberValue(...values)
+  if (value === null) return null
+  return Math.abs(value) > 1 ? value / 100 : value
+}
+
 function booleanValue(...values: unknown[]) {
   for (const value of values) {
     if (value === true || value === "true") return true
     if (value === false || value === "false") return false
   }
   return false
+}
+
+function optionalBooleanValue(...values: unknown[]) {
+  for (const value of values) {
+    if (value === true || value === "true") return true
+    if (value === false || value === "false") return false
+  }
+  return null
 }
 
 function textArray(value: unknown) {
@@ -128,6 +142,15 @@ function safePolicy(
       5,
     ),
     maximumExploratory: integer("maximumExploratory", 0, 1),
+    bootstrapCanaryEnabled: booleanValue(
+      input.bootstrapCanaryEnabled,
+      defaults.bootstrapCanaryEnabled,
+    ),
+    maximumBootstrapCanaries: integer(
+      "maximumBootstrapCanaries",
+      0,
+      5,
+    ),
     maximumPerFamily: integer("maximumPerFamily", 1, 5),
     maximumPerCategory: integer("maximumPerCategory", 1, 5),
     minimumFreshStockQuantity: integer("minimumFreshStockQuantity", 1, 100_000),
@@ -177,27 +200,47 @@ export function normalizeEbayLunaSelectorV2QueueRow(
   rowInput: unknown,
 ): EbayLunaSelectorCandidateV2 {
   const row = record(rowInput)
+  const assessment = record(row.assessment)
+  const assessmentCandidate = record(assessment.candidate)
+  const assessmentDemand = record(assessment.demand)
+  const assessmentDemandPolicy = record(assessment.demandEvidencePolicy)
+  const assessmentIdentity = record(assessment.identity)
+  const assessmentEconomics = record(assessment.economics)
+  const assessmentScores = record(assessment.scores)
+  const assessmentMarket = record(assessment.market)
+  const taxonomyVerification = record(assessment.taxonomyVerification)
+  const fulfillmentEvidence = record(assessment.fulfillmentEvidence)
+  const listingPackage = record(assessment.listingIntelligencePackage)
+  const categoryRecommendation = record(
+    listingPackage.categoryRecommendation,
+  )
+  const imagePlan = record(listingPackage.imagePlan)
   const supplier = firstRecord(
     row.supplier,
     row.luna,
     row.supplier_evidence,
     row.luna_snapshot,
+    assessmentCandidate,
   )
   const demand = firstRecord(
     row.demand,
     row.demand_evidence,
     row.sold_evidence,
     row.ebay_market,
+    assessmentDemand,
+    assessmentDemandPolicy,
   )
   const identity = firstRecord(
     row.identity,
     demand.identity,
     row.identity_evidence,
+    assessmentIdentity,
   )
   const economics = firstRecord(
     row.economics,
     row.economic_evaluation,
     row.profitability,
+    assessmentEconomics,
   )
   const operational = firstRecord(
     row.operational,
@@ -205,6 +248,13 @@ export function normalizeEbayLunaSelectorV2QueueRow(
     row.listing_readiness,
   )
   const risk = firstRecord(row.risk, row.risk_evaluation)
+  const rowHardGates = textArray(row.hard_gates)
+  const assessmentHardGates = textArray(assessment.hardGates)
+  const riskBlockerCodes = [...new Set([
+    ...textArray(risk.blockerCodes ?? risk.blocker_codes),
+    ...rowHardGates,
+    ...assessmentHardGates,
+  ])]
   const candidateKey = textValue(
     row.candidate_key,
     row.candidateKey,
@@ -228,6 +278,44 @@ export function normalizeEbayLunaSelectorV2QueueRow(
     row.evidence_class ??
     row.demand_evidence_class,
   )
+  const supplierVariantId = textValue(
+    row.supplier_variant_id,
+    supplier.supplierVariantId,
+    assessmentCandidate.supplierVariantId,
+  )
+  const embeddedSupplierVariantId = textValue(
+    assessmentCandidate.supplierVariantId,
+  )
+  const explicitExactVariant = optionalBooleanValue(
+    supplier.exactVariant,
+    supplier.exact_variant,
+    identity.exactSupplierVariant,
+    row.exact_supplier_variant,
+  )
+  const soldExactUnits = numberValue(
+    demand.soldExactUnits,
+    demand.sold_exact_units,
+    row.sold_exact_units,
+  )
+  const observedMarketPrice = numberValue(
+    assessmentMarket.conservativeTotalBuyerPrice,
+    assessmentMarket.medianTotalBuyerPrice,
+    row.median_total_buyer_price,
+  )
+  const taxonomyHardGuards = textArray(taxonomyVerification.hardGuards)
+  const restrictionGuards = textArray(assessmentCandidate.restrictionGuards)
+  const complianceFromAssessment =
+    Array.isArray(assessmentCandidate.restrictionGuards) &&
+    Array.isArray(taxonomyVerification.hardGuards) &&
+    restrictionGuards.length === 0 &&
+    taxonomyHardGuards.length === 0
+  const categoryFromAssessment =
+    taxonomyVerification.categoryConfirmed === true &&
+    Array.isArray(taxonomyVerification.missingRequiredAspects) &&
+    taxonomyVerification.missingRequiredAspects.length === 0
+  const listingFactsFromAssessment =
+    Array.isArray(row.hard_gates) &&
+    rowHardGates.length === 0
   return {
     candidateKey,
     productId,
@@ -235,10 +323,7 @@ export function normalizeEbayLunaSelectorV2QueueRow(
       row.supplier_product_id,
       supplier.supplierProductId,
     ),
-    supplierVariantId: textValue(
-      row.supplier_variant_id,
-      supplier.supplierVariantId,
-    ),
+    supplierVariantId,
     supplierSku: textValue(
       row.supplier_sku,
       row.sku,
@@ -249,6 +334,8 @@ export function normalizeEbayLunaSelectorV2QueueRow(
       row.category_id,
       row.ebay_category_id,
       operational.categoryId,
+      categoryRecommendation.categoryId,
+      assessmentCandidate.categoryId,
     ),
     lane: laneValue(row.lane),
     currentOpportunityScore: numberValue(
@@ -260,35 +347,47 @@ export function normalizeEbayLunaSelectorV2QueueRow(
       row.last_deep_analyzed_at,
       row.deep_analyzed_at,
     ),
+    consumableResearchBoost: numberValue(
+      row.consumable_research_boost,
+      assessment.consumableResearchBoost,
+    ),
     supplier: {
       productCurrent: booleanValue(
         supplier.productCurrent,
         supplier.product_current,
         row.supplier_product_current,
+        row.supplier_available,
+        assessmentCandidate.available,
       ),
-      exactVariant: booleanValue(
-        supplier.exactVariant,
-        supplier.exact_variant,
-        identity.exactSupplierVariant,
-        row.exact_supplier_variant,
-      ),
+      exactVariant: explicitExactVariant ??
+        Boolean(
+          supplierVariantId &&
+          embeddedSupplierVariantId &&
+          supplierVariantId === embeddedSupplierVariantId,
+        ),
       numericStock: numberValue(
         supplier.numericStock,
         supplier.inventoryQuantity,
         supplier.inventory_quantity,
         row.inventory_quantity,
+        row.supplier_inventory_quantity,
+        assessmentCandidate.inventoryQuantity,
       ),
       costUsd: numberValue(
         supplier.costUsd,
         supplier.cost_usd,
         row.cost_usd,
         row.supplier_cost,
+        row.supplier_price,
+        assessmentCandidate.supplierCost,
       ),
       observedAt: textValue(
         supplier.observedAt,
         supplier.observed_at,
         row.source_observed_at,
         row.snapshot_captured_at,
+        row.supplier_snapshot_at,
+        assessmentCandidate.stockCapturedAt,
       ),
       rotationClass: rotationClass(
         supplier.rotationClass ??
@@ -298,6 +397,8 @@ export function normalizeEbayLunaSelectorV2QueueRow(
       readinessScore: numberValue(
         supplier.readinessScore,
         row.supplier_readiness_score,
+        row.supply_score,
+        assessmentScores.supplyScore,
       ),
       rotationScore: numberValue(
         supplier.rotationScore,
@@ -321,6 +422,7 @@ export function normalizeEbayLunaSelectorV2QueueRow(
         identity.exact_identity,
         demand.exactIdentity,
         row.exact_identity,
+        assessmentIdentity.exactIdentityConfirmed,
       ),
       samePack: booleanValue(
         identity.samePack,
@@ -346,11 +448,7 @@ export function normalizeEbayLunaSelectorV2QueueRow(
         demand.sameCondition,
         row.same_condition,
       ),
-      soldExactUnits: numberValue(
-        demand.soldExactUnits,
-        demand.sold_exact_units,
-        row.sold_exact_units,
-      ),
+      soldExactUnits,
       soldExactSellerCount: numberValue(
         demand.soldExactSellerCount,
         demand.sold_exact_seller_count,
@@ -366,14 +464,23 @@ export function normalizeEbayLunaSelectorV2QueueRow(
         demand.observed_at,
         row.sold_evidence_observed_at,
       ),
+      historicalMarketCheckCompleted: booleanValue(
+        demand.historicalMarketCheckCompleted,
+        assessmentDemandPolicy.historicalMarketCheckCompleted,
+        assessmentDemandPolicy.evaluated,
+        Boolean(textValue(row.demand_evaluated_at)),
+      ),
       score: numberValue(
         demand.score,
         demand.demandScore,
         row.ebay_demand_score,
+        row.demand_score,
+        assessmentScores.demandScore,
       ),
       confidenceScore: numberValue(
         demand.confidenceScore,
         row.demand_confidence_score,
+        assessmentScores.demandEvidenceConfidence,
       ),
     },
     economics: {
@@ -381,36 +488,47 @@ export function normalizeEbayLunaSelectorV2QueueRow(
         economics.landedSoldPriceComplete,
         economics.landed_sold_price_complete,
         row.landed_sold_price_complete,
+        Boolean((soldExactUnits ?? 0) > 0 && observedMarketPrice !== null),
       ),
       netProfitUsd: numberValue(
         economics.netProfitUsd,
         economics.net_profit_usd,
         row.net_profit_usd,
+        row.estimated_net_profit,
+        assessmentEconomics.estimatedNetProfit,
       ),
-      marginRate: numberValue(
+      marginRate: rateValue(
         economics.marginRate,
         economics.margin_rate,
         row.margin_rate,
+        assessmentEconomics.estimatedNetMarginPercent,
       ),
-      roiRate: numberValue(
+      roiRate: rateValue(
         economics.roiRate,
         economics.roi_rate,
         row.roi_rate,
+        assessmentEconomics.estimatedRoiPercent,
       ),
       safeFloorUsd: numberValue(
         economics.safeFloorUsd,
         economics.safe_floor_usd,
         row.safe_floor_usd,
+        assessmentEconomics.minimumProfitablePrice,
+        assessmentEconomics.minimumOperatorPrice,
       ),
       targetPriceUsd: numberValue(
         economics.targetPriceUsd,
         economics.target_price_usd,
         row.target_price_usd,
+        assessmentEconomics.salePrice,
+        observedMarketPrice,
       ),
       score: numberValue(
         economics.score,
         economics.commercialViabilityScore,
         row.commercial_viability_score,
+        row.economics_score,
+        assessmentScores.economicsScore,
       ),
     },
     operational: {
@@ -418,50 +536,131 @@ export function normalizeEbayLunaSelectorV2QueueRow(
         operational.categoryValid,
         operational.category_valid,
         row.category_valid,
+        categoryFromAssessment,
       ),
       complianceResolved: booleanValue(
         operational.complianceResolved,
         operational.compliance_resolved,
         row.compliance_resolved,
+        complianceFromAssessment,
       ),
       weightResolved: booleanValue(
         operational.weightResolved,
         operational.weight_resolved,
         row.weight_resolved,
+        fulfillmentEvidence.weightConfirmed,
       ),
       dimensionsResolved: booleanValue(
         operational.dimensionsResolved,
         operational.dimensions_resolved,
         row.dimensions_resolved,
+        fulfillmentEvidence.dimensionsRequired === false ||
+          fulfillmentEvidence.dimensionsConfirmed === true,
       ),
       imagesAuthorized: booleanValue(
         operational.imagesAuthorized,
         operational.images_authorized,
         row.images_authorized,
+        imagePlan.authorizedLunaImagesAvailable,
       ),
       listingFactsComplete: booleanValue(
         operational.listingFactsComplete,
         operational.listing_facts_complete,
         row.listing_facts_complete,
+        listingFactsFromAssessment,
       ),
       score: numberValue(
         operational.score,
         operational.operationalReadinessScore,
         row.operational_readiness_score,
+        row.listing_readiness_score,
+        assessmentScores.listingReadinessScore,
       ),
     },
     risk: {
       score: numberValue(risk.score, row.risk_score),
-      blockerCodes: textArray(
-        risk.blockerCodes ??
-        risk.blocker_codes ??
-        row.blocker_codes,
-      ),
+      blockerCodes: riskBlockerCodes,
     },
     confidenceScore: numberValue(
       row.confidence_score,
       row.overall_confidence_score,
+      assessmentScores.confidenceScore,
+      row.identity_score,
     ),
+  }
+}
+
+async function loadSoldEvidenceCoverage(
+  supabase: SupabaseClient,
+  accountKey: string,
+  marketplace: string,
+) {
+  try {
+    const [
+      observations,
+      reviewed,
+      canonical,
+    ] = await Promise.all([
+      supabase
+        .from("marketplace_product_research_capture_observations")
+        .select("id", { count: "exact", head: true })
+        .eq("marketplace_account_key", accountKey)
+        .eq("marketplace", marketplace),
+      supabase
+        .from("marketplace_product_research_capture_observations")
+        .select(
+          "matched_supplier_variant_id,match_classification",
+          { count: "exact" },
+        )
+        .eq("marketplace_account_key", accountKey)
+        .eq("marketplace", marketplace)
+        .eq("evidence_reviewed", true)
+        .limit(10_000),
+      supabase
+        .from("marketplace_product_research_canonical_demand_v2")
+        .select("id", { count: "exact", head: true })
+        .eq("marketplace_account_key", accountKey)
+        .eq("marketplace", marketplace),
+    ])
+    if (observations.error || reviewed.error || canonical.error) {
+      throw new Error("SOLD_EVIDENCE_COVERAGE_READ_FAILED")
+    }
+    const reviewedRows = (reviewed.data ?? []) as JsonRecord[]
+    const matchedVariants = new Set(
+      reviewedRows
+        .map((row) => textValue(row.matched_supplier_variant_id))
+        .filter((value): value is string => Boolean(value)),
+    )
+    const exactLunaMatchCount = reviewedRows.filter(
+      (row) => row.match_classification === "EXACT_LUNA_MATCH",
+    ).length
+    const observationsCollected = observations.count ?? 0
+    const canonicalDemandRows = canonical.count ?? 0
+    return {
+      status: canonicalDemandRows > 0
+        ? "CANONICAL_SOLD_EVIDENCE_AVAILABLE"
+        : observationsCollected > 0
+          ? "SOLD_EVIDENCE_COLLECTED_IDENTITY_UNRESOLVED"
+          : "SOLD_EVIDENCE_NOT_COLLECTED",
+      observationsCollected,
+      reviewedObservations: reviewed.count ?? 0,
+      reviewedRowsSampled: reviewedRows.length,
+      matchedSupplierVariantCountSampled: matchedVariants.size,
+      exactLunaMatchCountSampled: exactLunaMatchCount,
+      canonicalDemandRows,
+      marketAbsenceClaimed: false as const,
+    }
+  } catch {
+    return {
+      status: "SOLD_EVIDENCE_COVERAGE_UNAVAILABLE" as const,
+      observationsCollected: null,
+      reviewedObservations: null,
+      reviewedRowsSampled: 0,
+      matchedSupplierVariantCountSampled: 0,
+      exactLunaMatchCountSampled: 0,
+      canonicalDemandRows: null,
+      marketAbsenceClaimed: false as const,
+    }
   }
 }
 
@@ -549,6 +748,7 @@ export async function runEbayLunaSelectorV2Shadow(input: {
       evaluated: 0,
       persisted: 0,
       ready: 0,
+      bootstrapCanaries: 0,
       exploratory: 0,
       unfilledSlots: 5,
     }
@@ -580,6 +780,7 @@ export async function runEbayLunaSelectorV2Shadow(input: {
       evaluated: 0,
       persisted: 0,
       ready: 0,
+      bootstrapCanaries: 0,
       exploratory: 0,
       unfilledSlots: DEFAULT_EBAY_LUNA_SELECTOR_V2_POLICY.targetBatchSize,
     }
@@ -607,6 +808,7 @@ export async function runEbayLunaSelectorV2Shadow(input: {
       evaluated: 0,
       persisted: 0,
       ready: 0,
+      bootstrapCanaries: 0,
       exploratory: 0,
       unfilledSlots: policy.targetBatchSize,
       queueRowsScanned: queueRead.scannedRows,
@@ -615,13 +817,49 @@ export async function runEbayLunaSelectorV2Shadow(input: {
     }
   }
   const sourceRows = queueRead.rows
-  const evaluations = sourceRows.map((row) =>
-    evaluateEbayLunaSelectorCandidateV2(
-      normalizeEbayLunaSelectorV2QueueRow(row),
-      { now: capturedAt, policy },
-    ),
+  const candidates = sourceRows.map(normalizeEbayLunaSelectorV2QueueRow)
+  const evaluations = candidates.map((candidate) =>
+    evaluateEbayLunaSelectorCandidateV2(candidate, {
+      now: capturedAt,
+      policy,
+    }),
   )
   const batch = selectEbayLunaBatchV2(evaluations, policy)
+  const soldEvidencePipeline = await loadSoldEvidenceCoverage(
+    input.supabase,
+    account.accountKey,
+    marketplace,
+  )
+  const queueDemandEvaluated = candidates.filter(
+    (candidate) => candidate.demand.historicalMarketCheckCompleted,
+  ).length
+  const freshSupplierEvidence = candidates.filter((candidate) => {
+    const observedAt = candidate.supplier.observedAt
+      ? Date.parse(candidate.supplier.observedAt)
+      : Number.NaN
+    return Number.isFinite(observedAt) &&
+      capturedAt.getTime() - observedAt <=
+        policy.maximumSupplierEvidenceAgeHours * 3_600_000
+  }).length
+  const soldEvidenceCoverage = {
+    ...soldEvidencePipeline,
+    queueCandidates: candidates.length,
+    queueDemandEvaluated,
+    queueCoverageRate: candidates.length
+      ? queueDemandEvaluated / candidates.length
+      : 0,
+  }
+  const queueFreshness = {
+    queueCandidates: candidates.length,
+    freshSupplierEvidence,
+    staleOrUnknownSupplierEvidence:
+      candidates.length - freshSupplierEvidence,
+    freshnessRate: candidates.length
+      ? freshSupplierEvidence / candidates.length
+      : 0,
+    maximumSupplierEvidenceAgeHours:
+      policy.maximumSupplierEvidenceAgeHours,
+  }
   const readyPosition = new Map(
     batch.ready.map((row, index) => [row.candidateKey, index + 1]),
   )
@@ -633,9 +871,22 @@ export async function runEbayLunaSelectorV2Shadow(input: {
     researchOrder.map((row, index) => [row.candidateKey, index + 1]),
   )
   const exploratoryKeys = new Set(
-    batch.exploratory.map((row) => row.candidateKey),
+    batch.bootstrapCanaries.map((row) => row.candidateKey),
+  )
+  const bootstrapCanaryPosition = new Map(
+    batch.bootstrapCanaries.map(
+      (row, index) => [row.candidateKey, index + 1],
+    ),
   )
   const selectedKeys = new Set(batch.ready.map((row) => row.candidateKey))
+  const batchSelectionHash = sha256({
+    policyVersion: policy.policyVersion,
+    ready: batch.ready.map((row) => row.candidateKey),
+    bootstrapCanaries: batch.bootstrapCanaries.map(
+      (row) => row.candidateKey,
+    ),
+    unfilledSlots: batch.unfilledSlots,
+  })
   const rows = evaluations.map((evaluation) => {
     const evidenceHash = sha256({
       policyVersion: evaluation.policyVersion,
@@ -647,6 +898,13 @@ export async function runEbayLunaSelectorV2Shadow(input: {
       runId: input.runId ?? null,
       candidateKey: evaluation.candidateKey,
       evidenceHash,
+      batchSelectionHash,
+      selectedForReadyBatch: selectedKeys.has(evaluation.candidateKey),
+      selectedForBootstrapCanary:
+        exploratoryKeys.has(evaluation.candidateKey),
+      readyPosition: readyPosition.get(evaluation.candidateKey) ?? null,
+      bootstrapCanaryPosition:
+        bootstrapCanaryPosition.get(evaluation.candidateKey) ?? null,
     })
     return {
       snapshot_key: snapshotKey,
@@ -673,15 +931,33 @@ export async function runEbayLunaSelectorV2Shadow(input: {
       risk_score: evaluation.riskScore,
       confidence_score: evaluation.confidenceScore,
       final_selection_score: evaluation.finalSelectionScore,
+      research_eligibility_score: evaluation.researchEligibilityScore,
       research_priority_score: evaluation.researchPriorityScore,
+      consumable_research_boost: evaluation.consumableResearchBoost,
       fairness_boost: evaluation.fairnessBoost,
       hard_gate_codes: evaluation.hardGateCodes,
       ready_to_list: evaluation.readyToList,
       eligible_for_exploration: evaluation.eligibleForExploration,
+      eligible_for_research: evaluation.eligibleForResearch,
+      eligible_for_bootstrap_canary:
+        evaluation.eligibleForBootstrapCanary,
       selected_for_ready_batch: selectedKeys.has(evaluation.candidateKey),
       selected_for_exploration: exploratoryKeys.has(evaluation.candidateKey),
+      selected_for_bootstrap_canary:
+        exploratoryKeys.has(evaluation.candidateKey),
       ready_position: readyPosition.get(evaluation.candidateKey) ?? null,
+      bootstrap_canary_position:
+        bootstrapCanaryPosition.get(evaluation.candidateKey) ?? null,
       research_position: researchPosition.get(evaluation.candidateKey) ?? null,
+      selection_mode: evaluation.selectionMode,
+      forced_listing_quantity: evaluation.forcedListingQuantity,
+      promotion_rate_percent: evaluation.promotionRatePercent,
+      price_decrease_allowed: evaluation.canDecreasePrice,
+      external_writes_allowed: evaluation.externalWritesAllowed,
+      commercial_monitor_required:
+        evaluation.commercialMonitorRequired,
+      one_variable_at_a_time: evaluation.oneVariableAtATime,
+      execution_mode: "SHADOW",
       selection_reason: evaluation.selectionReason,
       evidence_hash: evidenceHash,
       captured_at: capturedAt.toISOString(),
@@ -702,9 +978,20 @@ export async function runEbayLunaSelectorV2Shadow(input: {
     evaluated: evaluations.length,
     persisted: rows.length,
     ready: batch.ready.length,
+    bootstrapCanaries: batch.bootstrapCanaries.length,
     exploratory: batch.exploratory.length,
+    researchOnly: batch.researchOnly.length,
     unfilledSlots: batch.unfilledSlots,
     explanation: batch.explanation,
+    diagnostic: soldEvidenceCoverage.status ===
+        "SOLD_EVIDENCE_COLLECTED_IDENTITY_UNRESOLVED"
+      ? "PIPELINE_HAS_SOLD_EVIDENCE_PENDING_EXACT_IDENTITY_RECONCILIATION"
+      : soldEvidenceCoverage.queueCoverageRate < 1
+        ? "PIPELINE_COVERAGE_INCOMPLETE_NOT_MARKET_ABSENCE"
+        : batch.explanation,
+    soldEvidenceCoverage,
+    queueFreshness,
+    marketAbsenceClaimed: false,
     queueRowsScanned: queueRead.scannedRows,
     queueTruncated: false,
     queueScopeColumns: queueRead.scopeColumns,

@@ -10,6 +10,13 @@ import { detectEbayProductRestrictionGuards } from "./ebay-product-restriction-g
 
 type JsonRecord = Record<string, unknown>
 
+export type EbayLunaOpportunityQueueLane =
+  | "protection"
+  | "event"
+  | "hot"
+  | "baseline"
+  | "coverage"
+
 export type LunaLatestVariantRow = {
   product_id: string
   supplier_product_id: string | null
@@ -390,11 +397,20 @@ export function buildOpportunityQueueRow(
   assessment: EbayLunaOpportunityAssessment,
   bestSellingMatches: Array<Record<string, unknown>>,
   now = new Date(),
+  options: { lane?: EbayLunaOpportunityQueueLane | null } = {},
 ) {
   const matchScore = Math.max(
     0,
     ...bestSellingMatches.map((match) => Number(match.discoveryMatchScore ?? 0)),
   )
+  const restrictionGuards = Array.isArray(
+    assessment.candidate.restrictionGuards,
+  )
+    ? assessment.candidate.restrictionGuards
+    : null
+  const riskScore = restrictionGuards !== null
+    ? restrictionGuards.length ? 100 : 0
+    : null
   const keywordStructure = assessment.listingIntelligencePackage
     .titleStrategy ?? {}
   return {
@@ -403,6 +419,8 @@ export function buildOpportunityQueueRow(
     supplier_product_id: assessment.candidate.supplierProductId,
     supplier_variant_id: assessment.candidate.supplierVariantId,
     supplier_sku: assessment.candidate.sku,
+    lane: options.lane ?? null,
+    risk_score: riskScore,
     product_title: assessment.candidate.title,
     variant_title: assessment.candidate.variantTitle,
     gtin: assessment.candidate.gtin,
