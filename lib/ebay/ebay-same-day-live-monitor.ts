@@ -88,6 +88,10 @@ export type SameDayLiveMonitor = {
 }
 
 const TERMINAL_STATES = new Set(["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"])
+const PUBLISHED_ACQUISITION_BLOCKERS = new Set([
+  "ALREADY_LISTED_AND_MONITORED",
+  "ALREADY_PUBLISHED_AND_MONITORED",
+])
 const READY_STATES = new Set(["READY_FOR_MANUAL_PUBLICATION", "WAITING_ITEM_ID"])
 const AUTOMATIC_STATES = new Set([
   "LOCAL_FILTERING",
@@ -270,6 +274,25 @@ const CONTROLLED_RISK_BLOCKER_LABELS: Record<string, string> = {
 
 function text(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
+}
+
+function isPublishedAcquisitionHistory(candidate: Row) {
+  const blockers = Array.isArray(candidate.blockers)
+    ? candidate.blockers.map(text)
+    : []
+  const evidence = candidate.evidence_summary
+    && typeof candidate.evidence_summary === "object"
+    && !Array.isArray(candidate.evidence_summary)
+    ? candidate.evidence_summary as Row
+    : {}
+  const exclusion = evidence.publishedAcquisitionExclusion
+    && typeof evidence.publishedAcquisitionExclusion === "object"
+    && !Array.isArray(evidence.publishedAcquisitionExclusion)
+    ? evidence.publishedAcquisitionExclusion as Row
+    : {}
+  return blockers.some((blocker) =>
+    PUBLISHED_ACQUISITION_BLOCKERS.has(blocker))
+    || text(exclusion.disposition) === "SUPERSEDED_ALREADY_PUBLISHED"
 }
 
 function rows(value: unknown): Row[] {
@@ -478,16 +501,23 @@ export function deriveSameDayLiveMonitor(input: {
   const candidates = rows(input.candidates)
   const tasks = rows(input.tasks)
   const jobs = rows(input.jobs)
-  const openTasks = tasks.filter((task) => text(task.status) === "OPEN")
-  const blockedCandidates = candidates.filter((candidate) => TERMINAL_STATES.has(text(candidate.machine_state))
+  const publishedHistoryIds = new Set(candidates
+    .filter(isPublishedAcquisitionHistory)
+    .map((candidate) => text(candidate.id))
+    .filter(Boolean))
+  const operationalCandidates = candidates.filter((candidate) =>
+    !isPublishedAcquisitionHistory(candidate))
+  const openTasks = tasks.filter((task) => text(task.status) === "OPEN"
+    && !publishedHistoryIds.has(text(task.candidate_id)))
+  const blockedCandidates = operationalCandidates.filter((candidate) => TERMINAL_STATES.has(text(candidate.machine_state))
     && ["BLOCKED", "REJECTED"].includes(text(candidate.machine_state)))
-  const completedCandidates = candidates.filter((candidate) =>
+  const completedCandidates = operationalCandidates.filter((candidate) =>
     ["VERIFIED_ACTIVE", "COMPLETED"].includes(text(candidate.machine_state)))
-  const readyCandidates = candidates.filter((candidate) => READY_STATES.has(text(candidate.machine_state)))
-  const activeCandidates = candidates.filter((candidate) => !TERMINAL_STATES.has(text(candidate.machine_state))
+  const readyCandidates = operationalCandidates.filter((candidate) => READY_STATES.has(text(candidate.machine_state)))
+  const activeCandidates = operationalCandidates.filter((candidate) => !TERMINAL_STATES.has(text(candidate.machine_state))
     && !READY_STATES.has(text(candidate.machine_state)) && text(candidate.machine_state) !== "RUN_CREATED")
-  const queuedCandidates = candidates.filter((candidate) => text(candidate.machine_state) === "RUN_CREATED")
-  const currentCandidate = activeCandidates[0] ?? readyCandidates[0] ?? queuedCandidates[0] ?? candidates[0]
+  const queuedCandidates = operationalCandidates.filter((candidate) => text(candidate.machine_state) === "RUN_CREATED")
+  const currentCandidate = activeCandidates[0] ?? readyCandidates[0] ?? queuedCandidates[0]
   const currentState = text(currentCandidate?.machine_state) || text(run?.stage) || "RUN_CREATED"
   const currentOrdinal = Number(currentCandidate?.ordinal)
   const timeline = timelineForState(currentState)
@@ -525,7 +555,7 @@ export function deriveSameDayLiveMonitor(input: {
   else if (input.quotaPaused === true || jobs.some((job) => text(job.status) === "WAITING_RETRY")) status = "PAUSED_EBAY"
   else if (recoveryRequired) status = "RECOVERY_REQUIRED"
   else if (readyCandidates.length > 0 || runStatus === "READY_FOR_OPERATOR") status = "READY_TO_PUBLISH"
-  else if (runStatus === "BLOCKED" || (candidates.length > 0 && blockedCandidates.length === candidates.length)) status = "BLOCKED"
+  else if (runStatus === "BLOCKED" || (operationalCandidates.length > 0 && blockedCandidates.length === operationalCandidates.length)) status = "BLOCKED"
   else if (activeExecution) status = "WORKING"
   else if (pendingJobs.length > 0 || activeCandidates.length > 0 || queuedCandidates.length > 0) status = "QUEUED"
   else status = "QUEUED"

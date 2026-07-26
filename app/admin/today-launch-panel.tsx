@@ -12,6 +12,19 @@ import {
 } from "@/lib/ebay/ebay-same-day-live-monitor"
 
 type Row = Record<string, any>
+const PUBLISHED_ACQUISITION_BLOCKERS = new Set([
+  "ALREADY_LISTED_AND_MONITORED",
+  "ALREADY_PUBLISHED_AND_MONITORED",
+])
+
+function isPublishedAcquisitionHistory(candidate: Row | undefined) {
+  if (!candidate) return false
+  const blockers = Array.isArray(candidate.blockers) ? candidate.blockers : []
+  const exclusion = candidate.evidence_summary?.publishedAcquisitionExclusion
+  return blockers.some((blocker) =>
+    PUBLISHED_ACQUISITION_BLOCKERS.has(String(blocker)))
+    || exclusion?.disposition === "SUPERSEDED_ALREADY_PUBLISHED"
+}
 
 function pilotErrorMessage(value: unknown) {
   const code = typeof value === "string" ? value : ""
@@ -82,8 +95,19 @@ export function TodayLaunchPanel() {
     } catch (caught) { setError(caught instanceof Error ? caught.message : "No se pudo continuar.") }
     finally { setWorking(false) }
   }
-  const openTasks = useMemo(() => (pilot?.tasks ?? []).filter((task: Row) => task.status === "OPEN"), [pilot])
   const candidates = pilot?.candidates ?? []
+  const openTasks = useMemo(() => {
+    const candidateById = new Map<string, Row>(
+      (pilot?.candidates ?? []).map((candidate: Row) =>
+        [String(candidate.id), candidate] as const),
+    )
+    return (pilot?.tasks ?? []).filter((task: Row) =>
+      task.status === "OPEN"
+      && !isPublishedAcquisitionHistory(
+        candidateById.get(String(task.candidate_id)),
+      ),
+    )
+  }, [pilot])
   const productResearchTasks = openTasks.filter((task: Row) =>
     task.gate_type === "PRODUCT_RESEARCH_CAPTURE_REQUIRED")
   const decisionTasks = openTasks.filter((task: Row) =>

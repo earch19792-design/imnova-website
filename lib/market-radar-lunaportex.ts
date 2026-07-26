@@ -19,6 +19,7 @@ import {
   lunaCatalogChecksum,
   lunaRetryDelayMs,
   mergeLunaVariantSets,
+  resolveLunaCatalogRunOutcome,
   safeLunaCatalogErrorCode,
   selectLunaRoundRobinWindow,
   type LunaCatalogCollectionCoverage,
@@ -4135,31 +4136,23 @@ export async function runLunaPortexMarketRadarSync(
             ).toFixed(2)
           )
         : 0
-    const scanCompletenessPercent =
-      configuration.enabled &&
-      configuration.mode === "ENFORCED"
-        ? (
-            productFetchResult.catalogCoverage
-              .coveragePercent || 0
-          )
-        : legacyCompletenessPercent
-    const scanStatus =
-      products.length === 0 ||
-      productFetchResult.catalogCoverage.status === "FAILED"
-        ? "FAILED" as const
-        : (
-            productFetchResult.catalogCoverage.status === "TRUNCATED" ||
-            batchTelemetry.failedBatchCount > 0 ||
-            (
-              configuration.enabled &&
-              configuration.mode === "ENFORCED" &&
-              productFetchResult.catalogCoverage.status !== "COMPLETE"
-            )
-          )
-          ? "PARTIAL" as const
-          : scanCompletenessPercent === 100
-            ? "COMPLETE" as const
-            : "PARTIAL" as const
+    const {
+      scanCompletenessPercent,
+      scanStatus,
+    } =
+      resolveLunaCatalogRunOutcome({
+        coverageEnabled:
+          configuration.enabled,
+        catalogStatus:
+          productFetchResult.catalogCoverage.status,
+        coveragePercent:
+          productFetchResult.catalogCoverage.coveragePercent,
+        legacyCompletenessPercent,
+        productCount:
+          products.length,
+        failedBatchCount:
+          batchTelemetry.failedBatchCount,
+      })
 
     const finishedAt =
       new Date().toISOString()
@@ -4218,12 +4211,21 @@ export async function runLunaPortexMarketRadarSync(
 
     await supabase
       .from("market_radar_sources")
-      .update({
-        last_success_at:
-          finishedAt,
-        last_error:
-          null,
-      })
+      .update(
+        scanStatus === "COMPLETE"
+          ? {
+              last_success_at:
+                finishedAt,
+              last_error:
+                null,
+            }
+          : {
+              last_error:
+                scanStatus === "FAILED"
+                  ? "LUNA_MARKET_RADAR_SYNC_FAILED"
+                  : "LUNA_MARKET_RADAR_SYNC_PARTIAL",
+            }
+      )
       .eq(
         "id",
         source.id

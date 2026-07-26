@@ -228,14 +228,51 @@ export function evaluateLunaCatalogExecutionWindow(input: {
   }
 }
 
+export function resolveLunaCatalogRunOutcome(input: {
+  coverageEnabled: boolean
+  catalogStatus: LunaCatalogCoverageStatus
+  coveragePercent: number | null
+  legacyCompletenessPercent: number
+  productCount: number
+  failedBatchCount: number
+}) {
+  const scanCompletenessPercent =
+    input.coverageEnabled
+      ? input.coveragePercent ?? 0
+      : input.legacyCompletenessPercent
+  const scanStatus =
+    input.productCount <= 0 ||
+    input.catalogStatus === "FAILED"
+      ? "FAILED" as const
+      : input.catalogStatus === "TRUNCATED" ||
+          input.failedBatchCount > 0 ||
+          (
+            input.coverageEnabled &&
+            input.catalogStatus !== "COMPLETE"
+          )
+        ? "PARTIAL" as const
+        : scanCompletenessPercent === 100
+          ? "COMPLETE" as const
+          : "PARTIAL" as const
+  return {
+    scanCompletenessPercent,
+    scanStatus,
+  }
+}
+
 export function evaluateLunaCollectionCoverage(input: {
   collection: string
   expectedTotal?: number | null
   pages: LunaCatalogPageCheckpoint[]
 }): LunaCatalogCollectionCoverage {
   const pages = [...input.pages].sort((left, right) => left.page - right.page)
-  const expectedTotal = finiteNonNegativeInteger(input.expectedTotal)
+  const reportedExpectedTotal = finiteNonNegativeInteger(input.expectedTotal)
   const receivedProducts = pages.reduce((sum, page) => sum + page.receivedProducts, 0)
+  const expectedTotal =
+    reportedExpectedTotal === 0 &&
+    receivedProducts > 0
+      ? null
+      : reportedExpectedTotal
   const uniqueProducts = pages.reduce((sum, page) => sum + page.uniqueProducts, 0)
   const uniqueVariants = pages.reduce((sum, page) => sum + page.uniqueVariants, 0)
   const missingIdentityCount = pages.reduce((sum, page) => sum + page.missingIdentityCount, 0)
@@ -243,27 +280,56 @@ export function evaluateLunaCollectionCoverage(input: {
   const collisionCount = pages.reduce((sum, page) => sum + page.collisionCount, 0)
   const lastPage = pages.at(-1)
   const errorPage = pages.find(page => page.errorCode)
+  const pagesAreContiguous =
+    pages.length > 0 &&
+    pages.every(
+      (page, index) =>
+        page.page === index + 1,
+    )
+  const intermediatePagesAreFull =
+    pages
+      .slice(0, -1)
+      .every(
+        page =>
+          page.receivedProducts >=
+          page.pageLimit,
+      )
   const reachedHardLimitWithFullPage = Boolean(
     lastPage &&
     lastPage.page === lastPage.maxPages &&
     lastPage.receivedProducts >= lastPage.pageLimit,
   )
-  const status: LunaCatalogCoverageStatus = receivedProducts === 0
-    ? "FAILED"
-    : reachedHardLimitWithFullPage
+  const hasDemonstrableTerminalPage = Boolean(
+    lastPage &&
+    lastPage.receivedProducts < lastPage.pageLimit,
+  )
+  const traversalReconciled =
+    pagesAreContiguous &&
+    intermediatePagesAreFull &&
+    !errorPage &&
+    !reachedHardLimitWithFullPage &&
+    hasDemonstrableTerminalPage
+  const reconciledExpectedTotal =
+    traversalReconciled
+      ? uniqueProducts
+      : expectedTotal
+  const status: LunaCatalogCoverageStatus =
+    reachedHardLimitWithFullPage
       ? "TRUNCATED"
       : errorPage
-        ? "PARTIAL"
-        : expectedTotal !== null &&
-            uniqueProducts >= expectedTotal &&
-            Boolean(lastPage && lastPage.receivedProducts < lastPage.pageLimit)
+        ? receivedProducts > 0
+          ? "PARTIAL"
+          : "FAILED"
+        : traversalReconciled
           ? "COMPLETE"
-          // A short final page is useful but not an authoritative total.
-          : "PARTIAL"
+          : receivedProducts > 0
+            ? "PARTIAL"
+            : "FAILED"
   return {
     collection: input.collection,
     status,
-    expectedTotal,
+    expectedTotal:
+      reconciledExpectedTotal,
     receivedProducts,
     uniqueProducts,
     uniqueVariants,
@@ -294,7 +360,12 @@ export function buildLunaCatalogCoverageManifest(input: {
   const anyTruncated = collections.some(collection => collection.status === "TRUNCATED")
   const allComplete = collections.length > 0 &&
     collections.every(collection => collection.status === "COMPLETE")
-  const status: LunaCatalogCoverageStatus = allFailed
+  const globallyEmpty =
+    input.uniqueProducts <= 0
+  const traversalReconciled =
+    !globallyEmpty &&
+    allComplete
+  const status: LunaCatalogCoverageStatus = globallyEmpty || allFailed
     ? "FAILED"
     : anyTruncated
       ? "TRUNCATED"
@@ -302,14 +373,20 @@ export function buildLunaCatalogCoverageManifest(input: {
         ? "COMPLETE"
         : "PARTIAL"
   const expectedTotals = collections.map(collection => collection.expectedTotal)
-  const expectedProducts = expectedTotals.every(
-    (value): value is number => value !== null,
-  )
-    ? expectedTotals.reduce((sum, value) => sum + value, 0)
-    : null
-  const coveragePercent = expectedProducts && expectedProducts > 0
-    ? Number(Math.min(100, (input.uniqueProducts / expectedProducts) * 100).toFixed(2))
-    : null
+  const expectedProducts =
+    traversalReconciled
+      ? input.uniqueProducts
+      : expectedTotals.every(
+          (value): value is number => value !== null,
+        )
+        ? expectedTotals.reduce((sum, value) => sum + value, 0)
+        : null
+  const coveragePercent =
+    traversalReconciled
+      ? 100
+      : expectedProducts && expectedProducts > 0
+        ? Number(Math.min(100, (input.uniqueProducts / expectedProducts) * 100).toFixed(2))
+        : null
   return {
     manifestVersion: LUNA_CATALOG_COVERAGE_MANIFEST_VERSION,
     status,
