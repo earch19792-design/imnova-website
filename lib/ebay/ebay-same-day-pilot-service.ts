@@ -4643,7 +4643,9 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
       p_cycle: cycle,
       p_run_key: runKey,
       p_target_new_listings: targetNewListings,
-      p_verified_existing_listings: verifiedExistingListings || preview.counts.verifiedExistingListings,
+      // Cycle progress is distinct from the total canonical active listings.
+      // Zero is valid and must not fall back to the account-wide count.
+      p_verified_existing_listings: verifiedExistingListings,
       p_created_by: input.actorId,
       p_expected_previous_run_id: startNextCycle ? existing!.run.id : null,
       p_now: now.toISOString(),
