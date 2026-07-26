@@ -27,6 +27,7 @@ const candidate = {
   gtin: "123456789012",
   color: "Black",
   size: "20 Pack",
+  condition: "NEW",
   packQuantity: 20,
   productType: "Cable Management",
   supplierCost: 3,
@@ -49,6 +50,11 @@ const exact = (overrides = {}) => ({
   gtin: candidate.gtin,
   brand: candidate.brand,
   mpn: candidate.mpn,
+  lotSize: candidate.packQuantity,
+  color: candidate.color,
+  size: candidate.size,
+  condition: candidate.condition,
+  evidenceReviewed: true,
   source: "EBAY_BROWSE_ESTIMATED_SALES",
   estimatedSoldQuantity: 10,
   ...overrides,
@@ -62,10 +68,19 @@ function report(comparables, overrides = {}) {
       gtin: candidate.gtin,
       brand: candidate.brand,
       mpn: candidate.mpn,
+      color: candidate.color,
+      size: candidate.size,
+      condition: candidate.condition,
+      packQuantity: candidate.packQuantity,
     },
     comparables,
     asOf: now,
     insightsAvailability: "AVAILABLE",
+    demandEvidencePolicyRuntime: {
+      enabled: true,
+      shadowMode: false,
+      now,
+    },
     ...overrides,
   })
 }
@@ -101,7 +116,7 @@ test("multi-seller evidence requires distinct normalized sellers", () => {
   ])
   assert.equal(demand.verifiedSoldSellerCount, 1)
   assert.equal(demand.demandValidationPassed, false)
-  assert.equal(demand.demandValidationBasis, "INSUFFICIENT_EVIDENCE")
+  assert.equal(demand.demandValidationBasis, "INSUFFICIENT_CONFIRMED_SOLD_EXACT")
 })
 
 test("stale official sold history is visible but cannot validate current demand", () => {

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 export const PRODUCT_RESEARCH_QUERY_PLAN_VERSION =
-  "PRODUCT_RESEARCH_QUERY_PLAN_V1_2026_07_17"
+  "PRODUCT_RESEARCH_QUERY_PLAN_V2_2026_07_26"
 
 type JsonRecord = Record<string, unknown>
 
@@ -23,6 +23,7 @@ export type ProductResearchPlannedQuery = {
   categoryId: string | null
   candidateCount: number
   candidateVariantHashes: string[]
+  priorityScore: number
 }
 
 const STOP_WORDS = new Set([
@@ -167,7 +168,12 @@ function queryForCandidate(candidate: ProductResearchQueryCandidate) {
 
 export function buildProductResearchQueryPlan(
   candidates: ProductResearchQueryCandidate[],
-): { inputHash: string; candidateCount: number; queries: ProductResearchPlannedQuery[] } {
+): {
+  inputHash: string
+  candidateCount: number
+  queries: ProductResearchPlannedQuery[]
+  deferredQueries: ProductResearchPlannedQuery[]
+} {
   const unique = [...new Map(candidates.filter((candidate) =>
     text(candidate.supplierVariantId) && text(candidate.productName))
     .map((candidate) => [candidate.supplierVariantId, candidate] as const)).values()]
@@ -188,10 +194,10 @@ export function buildProductResearchQueryPlan(
     group.score = Math.max(group.score, Number(candidate.priorityScore ?? 0))
     groups.set(clusterKey, group)
   }
-  const selected = [...groups.entries()].sort(([, left], [, right]) =>
+  const ordered = [...groups.entries()].sort(([, left], [, right]) =>
     right.score - left.score || right.candidates.length - left.candidates.length ||
-    left.query.localeCompare(right.query)).slice(0, 15)
-  const queries = selected.map(([clusterKey, group], index): ProductResearchPlannedQuery => ({
+    left.query.localeCompare(right.query))
+  const planned = ordered.map(([clusterKey, group], index): ProductResearchPlannedQuery => ({
     ordinal: index + 1,
     searchQuery: group.query,
     queryHash: queryHash(group.query),
@@ -200,9 +206,8 @@ export function buildProductResearchQueryPlan(
     candidateCount: group.candidates.length,
     candidateVariantHashes: group.candidates.map((candidate) =>
       sha256(text(candidate.supplierVariantId))).sort(),
+    priorityScore: group.score,
   }))
-  const coveredCandidateCount = new Set(selected.flatMap(([, group]) =>
-    group.candidates.map((candidate) => text(candidate.supplierVariantId)))).size
   return {
     inputHash: sha256({ version: PRODUCT_RESEARCH_QUERY_PLAN_VERSION,
       candidates: unique.map((candidate) => ({
@@ -212,8 +217,9 @@ export function buildProductResearchQueryPlan(
         categoryId: text(candidate.categoryId) || null,
         priorityScore: Number(candidate.priorityScore ?? 0),
       })).sort((left, right) => left.supplierVariantId.localeCompare(right.supplierVariantId)) }),
-    candidateCount: coveredCandidateCount,
-    queries,
+    candidateCount: unique.length,
+    queries: planned.slice(0, 15),
+    deferredQueries: planned.slice(15),
   }
 }
 
@@ -264,16 +270,23 @@ export async function prepareProductResearchQueryPlan(input: {
 }) {
   const candidates = await candidateRows(input)
   const plan = buildProductResearchQueryPlan(candidates)
-  if (!plan.queries.length) return null
+  const allQueries = [...plan.queries, ...plan.deferredQueries]
+  if (!allQueries.length) return null
   const planId = randomUUID()
-  const { data, error } = await input.supabase.rpc("create_product_research_query_plan_v1", {
+  const planningDay = new Date().toISOString().slice(0, 10)
+  const durableInputHash = sha256({
+    sourceInputHash: plan.inputHash,
+    planningDay,
+    version: PRODUCT_RESEARCH_QUERY_PLAN_VERSION,
+  })
+  const { data, error } = await input.supabase.rpc("create_product_research_query_plan_v3", {
     p_plan_id: planId,
     p_marketplace_account_key: input.accountKey,
     p_run_id: input.runId,
     p_plan_version: PRODUCT_RESEARCH_QUERY_PLAN_VERSION,
-    p_input_hash: plan.inputHash,
+    p_input_hash: durableInputHash,
     p_candidate_count: plan.candidateCount,
-    p_queries: plan.queries.map((query) => ({
+    p_queries: allQueries.map((query) => ({
       ordinal: query.ordinal,
       search_query: query.searchQuery,
       query_hash: query.queryHash,
@@ -281,6 +294,7 @@ export async function prepareProductResearchQueryPlan(input: {
       category_id: query.categoryId,
       candidate_count: query.candidateCount,
       candidate_variant_hashes: query.candidateVariantHashes,
+      priority_score: query.priorityScore,
     })),
   })
   if (error || !data) throw new Error("PRODUCT_RESEARCH_QUERY_PLAN_PERSIST_FAILED")
@@ -309,6 +323,16 @@ export async function getProductResearchQueryPlanStatus(input: {
     .eq("plan_id", plan.id).eq("marketplace_account_key", input.accountKey)
     .eq("marketplace", "EBAY_US").order("ordinal", { ascending: true })
   if (taskError) throw new Error("PRODUCT_RESEARCH_QUERY_TASK_STATUS_READ_FAILED")
+  const { data: deferred, error: deferredError } = await input.supabase
+    .from("marketplace_product_research_deferred_query_groups_v2")
+    .select("query_hash,next_eligible_at,deferral_count,status")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US")
+    .eq("status", "DEFERRED")
+    .order("next_eligible_at", { ascending: true })
+  if (deferredError) {
+    throw new Error("PRODUCT_RESEARCH_DEFERRED_QUERY_STATUS_READ_FAILED")
+  }
   const preferredQueryHash = text(input.preferredSearchQuery, 100)
     ? productResearchPlannedQueryHash(input.preferredSearchQuery)
     : null
@@ -333,6 +357,8 @@ export async function getProductResearchQueryPlanStatus(input: {
     skippedCount: taskCounts.skippedCount,
     settledCount: taskCounts.settledCount,
     pendingCount: Math.max(0, plan.query_count - taskCounts.settledCount),
+    deferredCount: deferred?.length ?? 0,
+    nextDeferredEligibleAt: deferred?.[0]?.next_eligible_at ?? null,
     nextQuery: pending ? {
       ordinal: pending.ordinal,
       searchQuery: productResearchDisplayQuery(pending.search_query),

@@ -6,6 +6,8 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { buildProductIdentityFingerprint, normalizeProductIdentity } from "./ebay-winner-evidence-v2.ts"
 import type { ProductIdentityInput } from "./ebay-winner-evidence-v2"
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { EBAY_DEMAND_EVIDENCE_POLICY_VERSION } from "./ebay-demand-evidence-policy.ts"
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { detectProductResearchOfferFacts, targetFromCatalogRow, targetFromVerifiedActiveListingLink, type ProductResearchCaptureTarget } from "./ebay-product-research-browser-capture.ts"
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
 import { extractLunaOfficialDescriptionIdentity } from "./luna-official-description-identity.ts"
@@ -20,6 +22,8 @@ import { selectCatalogIdentityMatches, type CatalogIdentityProduct } from "./eba
 
 export const PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_VERSION =
   "PRODUCT_RESEARCH_IDENTITY_RECONCILIATION_V2_2026_07_18"
+export const PRODUCT_RESEARCH_CANONICAL_RECOMPUTE_VERSION =
+  "PRODUCT_RESEARCH_CANONICAL_RECOMPUTE_V2_2026_07_26"
 
 export type ProductIdentityReconciliationClassification =
   | "EXACT_LUNA_MATCH"
@@ -54,6 +58,7 @@ type Observation = {
   id: string
   capture_batch_id: string
   source_listing_id: string | null
+  seller_reference_fingerprint: string | null
   normalized_identity: JsonRecord
   detected_offer_pack_count: number | null
   detected_unit_count: number | null
@@ -640,10 +645,48 @@ export function productIdentityReconciliationBoundary(environment: NodeJS.Proces
   return {
     preview: environment.VERCEL_ENV === "preview",
     staging: supabaseUrl.includes("vsfthqydfrdzulldbfbe"),
-    branchMatch: branch === "feature/centralize-ebay-mobile-command-center",
+    branchMatch: branch === "feature/centralize-ebay-mobile-center",
     productionBlocked: true as const,
     openAiCalls: 0 as const,
     ebayWrites: 0 as const,
+  }
+}
+
+export async function recomputeProductResearchCanonicalDemandV2(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  supplierVariantIds: string[]
+  now?: Date
+}) {
+  const supplierVariantIds = normalizeProductResearchTargetVariantScope(
+    input.supplierVariantIds,
+  ) ?? []
+  if (!supplierVariantIds.length) {
+    return {
+      version: PRODUCT_RESEARCH_CANONICAL_RECOMPUTE_VERSION,
+      policyVersion: EBAY_DEMAND_EVIDENCE_POLICY_VERSION,
+      variantsEvaluated: 0,
+      queueRowsUpdated: 0,
+      skipped: true,
+    }
+  }
+  const { data, error } = await input.supabase.rpc(
+    "recompute_product_research_selector_v2",
+    {
+      p_marketplace_account_key: input.accountKey,
+      p_supplier_variant_ids: supplierVariantIds,
+      p_policy_version: EBAY_DEMAND_EVIDENCE_POLICY_VERSION,
+      p_timepoint: (input.now ?? new Date()).toISOString(),
+    },
+  )
+  if (error) {
+    throw new Error("PRODUCT_RESEARCH_CANONICAL_RECOMPUTE_FAILED")
+  }
+  return {
+    version: PRODUCT_RESEARCH_CANONICAL_RECOMPUTE_VERSION,
+    policyVersion: EBAY_DEMAND_EVIDENCE_POLICY_VERSION,
+    ...record(data),
+    skipped: false,
   }
 }
 
@@ -728,7 +771,7 @@ export async function reconcileProductResearchObservations(input: {
   }
   const now = input.now ?? new Date()
   let query = input.supabase.from("marketplace_product_research_capture_observations")
-    .select("id,capture_batch_id,source_listing_id,normalized_identity,detected_offer_pack_count,detected_unit_count,detected_size,detected_variant,keyword_signals,match_classification,matched_supplier_variant_id,confirmed_sold_quantity,last_sold_date")
+    .select("id,capture_batch_id,source_listing_id,seller_reference_fingerprint,normalized_identity,detected_offer_pack_count,detected_unit_count,detected_size,detected_variant,keyword_signals,match_classification,matched_supplier_variant_id,confirmed_sold_quantity,last_sold_date")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
     .eq("evidence_reviewed", true).eq("quality_status", "VALID")
     .order("created_at", { ascending: true }).limit(200)
@@ -968,7 +1011,14 @@ export async function reconcileProductResearchObservations(input: {
     supabase: input.supabase, accountKey: input.accountKey,
     supplierVariantIds: [...affectedVariants], soldEvidenceVersion: version, now,
   })
+  const canonicalRecompute = await recomputeProductResearchCanonicalDemandV2({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    supplierVariantIds: [...affectedVariants],
+    now,
+  })
   return { observationsProcessed: observations.length, results, reanalysis,
+    canonicalRecompute,
     aggregates: aggregateProductIdentityReconciliation(results),
     officialCallBudget: { ...officialCallBudget,
       total: Object.values(officialCallBudget).reduce((sum, value) => sum + value, 0),

@@ -432,10 +432,10 @@ function buildMarketMetrics(
   const demandToCompetitionRatio = activeExactComparables > 0
     ? round(totalEstimatedWeeklyVelocity / activeExactComparables)
     : null
-  const rotationEvidenceStatus = positiveRotations.length >= 2 && sellersWithPositiveMovement >= 2
-    ? "MULTI_SELLER_OBSERVED_ESTIMATED_ROTATION"
-    : verifiedRecentSoldHistory
-      ? "MULTI_SELLER_VERIFIED_RECENT_SOLD_HISTORY"
+  const rotationEvidenceStatus = verifiedRecentSoldHistory
+    ? "MULTI_SELLER_VERIFIED_RECENT_SOLD_HISTORY"
+    : positiveRotations.length >= 2 && sellersWithPositiveMovement >= 2
+      ? "MULTI_SELLER_OBSERVED_ESTIMATED_ROTATION"
     : positiveRotations.length
       ? "CONCENTRATED_OR_SINGLE_SELLER_OBSERVED_ROTATION"
       : "ROTATION_BASELINE_REQUIRED"
@@ -446,6 +446,9 @@ function buildMarketMetrics(
     identifierExactRecentSoldComparables: recentSoldEvidence.identifierExactRecentSoldCount,
     identifierExactRecentSoldSellers: recentSoldEvidence.identifierExactRecentSoldSellerCount,
     identifierExactRecentSoldQuantity: recentSoldEvidence.identifierExactRecentSoldQuantity,
+    soldExactComparableCount: recentSoldEvidence.identifierExactRecentSoldCount,
+    soldExactSellerCount: recentSoldEvidence.identifierExactRecentSoldSellerCount,
+    soldExactUnits: recentSoldEvidence.identifierExactRecentSoldQuantity,
     activeExactComparables,
     totalEstimatedWeeklyVelocity,
     estimatedSoldDelta7d,
@@ -463,10 +466,10 @@ function buildMarketMetrics(
       : null,
     rotationEvidenceStatus,
     verifiedRecentSoldHistoryCanReplaceBrowseBaseline: verifiedRecentSoldHistory,
-    demandEvidenceRoute: rotationEvidenceStatus === "MULTI_SELLER_OBSERVED_ESTIMATED_ROTATION"
-      ? "EXACT_BROWSE_SNAPSHOT_DELTAS"
-      : verifiedRecentSoldHistory
-        ? "OFFICIAL_RECENT_EXACT_SOLD_HISTORY"
+    demandEvidenceRoute: verifiedRecentSoldHistory
+      ? "OFFICIAL_RECENT_EXACT_SOLD_HISTORY"
+      : rotationEvidenceStatus === "MULTI_SELLER_OBSERVED_ESTIMATED_ROTATION"
+        ? "EXACT_BROWSE_SNAPSHOT_DELTAS_RESEARCH_ONLY"
         : "INSUFFICIENT_EXACT_MULTI_SELLER_EVIDENCE",
     observationWindowDays: Math.max(0, ...rotations.map((entry) => entry.observationDays)),
     marketplaceInsightsStatus: input.demandReport.marketplaceInsightsStatus,
@@ -913,6 +916,8 @@ export function buildEbayLunaOpportunityAssessment(
       ? "HIGH_SELLER_CONCENTRATION" : "",
     market.demandEvidenceRoute === "INSUFFICIENT_EXACT_MULTI_SELLER_EVIDENCE"
       ? "NEED_MULTI_SELLER_DEMAND_EVIDENCE" : "",
+    !input.demandReport.demandEvidencePolicy.demandValidated
+      ? "NEED_CONFIRMED_SOLD_EXACT" : "",
   ].filter(Boolean)
   const listingPackage = buildListingIntelligencePackage(
     candidate,
@@ -933,7 +938,9 @@ export function buildEbayLunaOpportunityAssessment(
     sellerPriorityScore: categoryLearning.adjustedSellerPriorityScore,
     categoryLearning: categoryLearning.audit,
   }
-  const canProceedToListingPackage = hardGates.length === 0 &&
+  const canProceedToListingPackage =
+    input.demandReport.demandEvidencePolicy.demandValidated &&
+    hardGates.length === 0 &&
     evidenceGuards.length === 0 && scores.potentialScore >= 70 &&
     scores.confidenceScore >= 70
   const decision = candidate.available === false || hardGates.includes("UNIT_ECONOMICS_BELOW_MINIMUM")
@@ -957,6 +964,7 @@ export function buildEbayLunaOpportunityAssessment(
       matchingPriority: ["GTIN", "BRAND_MPN", "EPID", "ATTRIBUTES", "TITLE_HUMAN_REVIEW"],
     },
     market,
+    demandEvidencePolicy: input.demandReport.demandEvidencePolicy,
     taxonomyVerification,
     fulfillmentEvidence: {
       weightConfirmed,

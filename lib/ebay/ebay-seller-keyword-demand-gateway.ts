@@ -370,7 +370,17 @@ async function getEbayJson(
   throw new Error("EBAY_READONLY_GET_FAILED")
 }
 
-function mapComparable(
+function officialCondition(item: JsonRecord) {
+  const condition = record(item.condition)
+  return text(item.condition) || text(
+    condition.conditionDisplayName ??
+    condition.conditionName ??
+    condition.displayName ??
+    condition.value
+  )
+}
+
+export function mapOfficialEbayDemandComparable(
   value: unknown,
   source: EbaySellerComparableInput["source"]
 ): EbaySellerComparableInput {
@@ -383,6 +393,13 @@ function mapComparable(
   const shippingOption = firstShippingOption(item.shippingOptions)
   const shippingCost = record(shippingOption.shippingCost)
   const returnTerms = record(item.returnTerms)
+  const totalSoldQuantity = numberOrNull(item.totalSoldQuantity)
+  const lastSoldDate = text(item.lastSoldDate)
+  const evidenceReviewed =
+    source === "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY" &&
+    Boolean(text(item.itemId)) &&
+    Boolean(lastSoldDate) &&
+    (totalSoldQuantity ?? 0) > 0
   return {
     itemId: text(item.itemId),
     epid: text(item.epid),
@@ -398,9 +415,9 @@ function mapComparable(
     sellerUsername: text(seller.username ?? seller.userId),
     sellerFeedbackScore: numberOrNull(seller.feedbackScore),
     sellerFeedbackPercentage: numberOrNull(seller.feedbackPercentage),
-    totalSoldQuantity: numberOrNull(item.totalSoldQuantity),
+    totalSoldQuantity,
     estimatedSoldQuantity: numberOrNull(availability.estimatedSoldQuantity),
-    lastSoldDate: text(item.lastSoldDate),
+    lastSoldDate,
     gtin: normalizedGtin(item.gtin) || null,
     brand: text(item.brand),
     mpn: text(item.mpn),
@@ -408,6 +425,10 @@ function mapComparable(
     lotSize: numberOrNull(item.lotSize),
     color: text(item.color),
     size: text(item.size),
+    condition: officialCondition(item) || null,
+    // Never trust a payload-provided review flag. Only the official sold
+    // endpoint with a complete minimum sale record can establish review.
+    evidenceReviewed,
     shortDescription: text(item.shortDescription),
     localizedAspects: normalizeAspects(item.localizedAspects),
     shippingCost: numberOrNull(shippingCost.value),
@@ -591,12 +612,15 @@ async function mappedActiveComparable(value: unknown, token: string) {
   const summary = record(value)
   const itemId = text(summary.itemId)
   // V2 invalidates rows that selected a parent from the category breadcrumb.
-  const key = itemId ? `item-v2:${itemId}` : ""
+  const key = itemId ? `item-v3:${itemId}` : ""
   const cached = key
     ? await readPersistentReadonlyCache<EbaySellerComparableInput>("BROWSE_ITEM_DETAIL", key)
     : null
   if (cached) return cached
-  const mapped = mapComparable(await enrichActiveListing(summary, token), "EBAY_BROWSE_ACTIVE_LISTING")
+  const mapped = mapOfficialEbayDemandComparable(
+    await enrichActiveListing(summary, token),
+    "EBAY_BROWSE_ACTIVE_LISTING",
+  )
   if (key) {
     await writePersistentReadonlyCache("BROWSE_ITEM_DETAIL", key, {
       ...mapped,
@@ -688,7 +712,10 @@ export async function runEbaySellerKeywordDemandValidation(
         insightsToken = await getApplicationToken(MARKETPLACE_INSIGHTS_SCOPE)
         const soldItems = await searchSoldHistory(query, categoryId, insightsToken)
         soldComparables = soldItems.map((item) =>
-          mapComparable(item, "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY")
+          mapOfficialEbayDemandComparable(
+            item,
+            "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY",
+          )
         )
         insightsAvailability = "AVAILABLE"
       } catch (error) {
@@ -803,7 +830,11 @@ export async function observeEbayActiveCompetitors(input: {
       (item) => mappedActiveComparable(item, token),
     )
     const comparables = activeSearch.items.map((item, index) => {
-      const mapped = enriched[index] ?? mapComparable(item, "EBAY_BROWSE_ACTIVE_LISTING")
+      const mapped = enriched[index] ??
+        mapOfficialEbayDemandComparable(
+          item,
+          "EBAY_BROWSE_ACTIVE_LISTING",
+        )
       return mapped.estimatedSoldQuantity && mapped.estimatedSoldQuantity > 0
         ? { ...mapped, source: "EBAY_BROWSE_ESTIMATED_SALES" as const }
         : mapped

@@ -16,6 +16,12 @@ const fixture = JSON.parse(
   )
 )
 
+const enforcedDemandPolicy = {
+  enabled: true,
+  shadowMode: false,
+  now: "2026-07-12T12:00:00.000Z",
+}
+
 test("builds a product-specific search query instead of a fixed keyword vocabulary", () => {
   const query = buildEbaySellerKeywordSearchQuery(fixture.candidate)
   assert.match(query, /mega/i)
@@ -30,6 +36,8 @@ test("ranks equivalent sold listings and rejects a conflicting size", () => {
     candidate: fixture.candidate,
     comparables: fixture.comparables,
     insightsAvailability: "AVAILABLE",
+    asOf: enforcedDemandPolicy.now,
+    demandEvidencePolicyRuntime: enforcedDemandPolicy,
   })
   assert.equal(report.evidenceLevel, "VERIFIED_SOLD_HISTORY")
   assert.equal(report.topSellingListings[0].comparableId, "v1|100000000001|0")
@@ -44,6 +52,8 @@ test("weights keywords by real seller sales evidence", () => {
     candidate: fixture.candidate,
     comparables: fixture.comparables,
     insightsAvailability: "AVAILABLE",
+    asOf: enforcedDemandPolicy.now,
+    demandEvidencePolicyRuntime: enforcedDemandPolicy,
   })
   const hairSpray = report.keywordsBringingSales.find((keyword) => keyword.term === "hair spray")
   assert.ok(hairSpray)
@@ -90,7 +100,11 @@ test("accepts eBay estimated sold quantity but labels it separately", () => {
   assert.equal(report.evidenceLevel, "ACTIVE_LISTING_ESTIMATED_SALES")
   assert.equal(report.totalVerifiedSoldQuantity, 0)
   assert.equal(report.totalEstimatedSoldQuantity, 16)
-  assert.equal(report.demandValidationPassed, true)
+  assert.equal(report.demandValidationPassed, false)
+  assert.equal(
+    report.demandEvidencePolicy.evidenceClass,
+    "OBSERVED_ESTIMATED_ROTATION",
+  )
   assert.match(report.evidenceDisclaimer, /estimada/i)
 })
 

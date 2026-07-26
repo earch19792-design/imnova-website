@@ -85,7 +85,7 @@ test("counter decrease is treated as reset or relist review", () => {
   assert.ok(rotations.every((entry) => entry.estimatedSoldDelta === null))
 })
 
-test("exact GTIN, distributed movement, fresh stock and healthy economics can reach listing package review", () => {
+test("exact GTIN and estimated distributed movement remain research-only without confirmed sales", () => {
   const assessment = buildEbayLunaOpportunityAssessment(buildInput(), {
     now: fixture.now,
     estimatedOutboundShipping: 4,
@@ -96,8 +96,12 @@ test("exact GTIN, distributed movement, fresh stock and healthy economics can re
   assert.equal(assessment.market.sellersWithPositiveMovement, 2)
   assert.equal(assessment.market.totalEstimatedWeeklyVelocity, 21)
   assert.equal(assessment.economics.passesProfitGate, true)
-  assert.ok(assessment.scores.opportunityScore >= 70)
-  assert.equal(assessment.canProceedToListingPackage, true)
+  assert.equal(
+    assessment.market.demandEvidenceRoute,
+    "EXACT_BROWSE_SNAPSHOT_DELTAS_RESEARCH_ONLY",
+  )
+  assert.ok(assessment.evidenceGuards.includes("NEED_CONFIRMED_SOLD_EXACT"))
+  assert.equal(assessment.canProceedToListingPackage, false)
   assert.equal(assessment.canProceedToControlledDraftPreflight, false)
   assert.equal(assessment.canPublish, false)
 })

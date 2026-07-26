@@ -3,7 +3,10 @@ export const maxDuration = 60
 
 import { NextResponse } from "next/server"
 
-import { runLunaPortexMarketRadarSync } from "@/lib/market-radar-lunaportex"
+import {
+  getLunaCatalogCoverageRuntimeConfiguration,
+  runLunaPortexMarketRadarSync,
+} from "@/lib/market-radar-lunaportex"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 import {
   buildSellerWorkerId,
@@ -40,7 +43,11 @@ export async function GET(req: Request) {
     })
     const protection = await reconcileActiveListingProtectionRisks(supabase)
     const whatsappConfiguration = getSellerWhatsAppGatewayConfiguration()
-    const whatsapp = whatsappConfiguration.deliveryAttemptAllowed
+    const notificationDispatchEnabled =
+      process.env.LUNA_MARKET_RADAR_NOTIFICATION_DISPATCH_ENABLED === "true"
+    const whatsapp =
+      notificationDispatchEnabled &&
+      whatsappConfiguration.deliveryAttemptAllowed
       ? await deliverSellerWhatsAppAlerts(supabase, {
           workerId: buildSellerWorkerId("seller-whatsapp-protection"),
           limit: 20,
@@ -50,13 +57,19 @@ export async function GET(req: Request) {
     const metrics = {
       syncStatus: sync.scanStatus,
       scanCompletenessPercent: sync.scanCompletenessPercent,
+      catalogCoverage:
+        getLunaCatalogCoverageRuntimeConfiguration(),
       taskReconciliation,
       protection,
       whatsapp,
       elapsedMs: Date.now() - startedAt,
     }
     await finishSellerAutomationRun(supabase, automationRunId, {
-      status: sync.scanStatus === "COMPLETE" ? "completed" : "partial",
+      status: sync.scanStatus === "COMPLETE"
+        ? "completed"
+        : sync.scanStatus === "FAILED"
+          ? "failed"
+          : "partial",
       metrics,
     })
     return NextResponse.json({
@@ -68,6 +81,9 @@ export async function GET(req: Request) {
       automation: {
         stage: "LUNA_MARKET_RADAR_REFRESH",
         nextStage: "EBAY_LUNA_PRIORITY_SCAN",
+        notificationDispatchEnabled,
+        catalogCoverage:
+          getLunaCatalogCoverageRuntimeConfiguration(),
         elapsedMs: Date.now() - startedAt,
       },
     })

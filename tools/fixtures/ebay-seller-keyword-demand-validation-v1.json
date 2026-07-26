@@ -3,6 +3,10 @@
     "productName": "IT Mega Frizz Hair Spray Bonus, 10 oz.",
     "productTitle": "IT Mega Frizz Hair Spray Bonus, 10 oz.",
     "variantTitle": "10 oz",
+    "gtin": "00012345600012",
+    "size": "10 oz",
+    "condition": "NEW",
+    "packQuantity": 1,
     "supplierSku": "LUNA-IT-MEGA-10",
     "categoryId": "11860"
   },
@@ -17,6 +21,11 @@
       "categoryId": "11860",
       "sellerUsername": "seller-alpha",
       "sellerFeedbackScore": 5200,
+      "gtin": "00012345600012",
+      "lotSize": 1,
+      "size": "10 oz",
+      "condition": "NEW",
+      "evidenceReviewed": true,
       "totalSoldQuantity": 37,
       "lastSoldDate": "2026-07-10T12:00:00.000Z",
       "source": "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
@@ -31,6 +40,11 @@
       "categoryId": "11860",
       "sellerUsername": "seller-beta",
       "sellerFeedbackScore": 2100,
+      "gtin": "00012345600012",
+      "lotSize": 1,
+      "size": "10 oz",
+      "condition": "NEW",
+      "evidenceReviewed": true,
       "totalSoldQuantity": 22,
       "lastSoldDate": "2026-07-09T12:00:00.000Z",
       "source": "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
@@ -45,6 +59,11 @@
       "categoryId": "11860",
       "sellerUsername": "seller-gamma",
       "sellerFeedbackScore": 9999,
+      "gtin": "00012345600012",
+      "lotSize": 1,
+      "size": "8 oz",
+      "condition": "NEW",
+      "evidenceReviewed": true,
       "totalSoldQuantity": 100,
       "lastSoldDate": "2026-07-11T12:00:00.000Z",
       "source": "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
@@ -59,6 +78,10 @@
       "categoryId": "11860",
       "sellerUsername": "seller-delta",
       "sellerFeedbackScore": 850,
+      "gtin": "00012345600012",
+      "lotSize": 1,
+      "size": "10 oz",
+      "condition": "NEW",
       "estimatedSoldQuantity": 12,
       "source": "EBAY_BROWSE_ESTIMATED_SALES"
     }

@@ -37,7 +37,12 @@ test("classifies estimated multi-seller keywords without calling them verified s
   assert.equal(crackFiller.safeToCallVerifiedSalesKeyword, false)
   assert.equal(report.keywordsBringingSales.length, 0)
   assert.match(report.keywordEvidenceHeading, /estimada/i)
-  assert.equal(report.demandValidationBasis, "ESTIMATED_MULTI_SELLER_SIGNAL")
+  assert.equal(report.demandValidationBasis, "INSUFFICIENT_CONFIRMED_SOLD_EXACT")
+  assert.equal(report.demandValidationPassed, false)
+  assert.equal(
+    report.demandEvidencePolicy.evidenceClass,
+    "OBSERVED_ESTIMATED_ROTATION",
+  )
 })
 
 test("keeps one-seller terms exploratory and never winning", () => {

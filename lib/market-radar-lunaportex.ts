@@ -5,6 +5,22 @@ import {
   type MarketRadarEventType,
   type MarketRadarSyncResult,
 } from "@/lib/market-radar-types"
+import {
+  buildLunaCatalogResumeState,
+  buildLunaCatalogCoverageManifest,
+  evaluateLunaCollectionCoverage,
+  isRetryableLunaStatus,
+  LUNA_CATALOG_COVERAGE_MANIFEST_VERSION,
+  LUNA_CATALOG_HYDRATION_CURSOR_VERSION,
+  lunaCatalogChecksum,
+  lunaRetryDelayMs,
+  mergeLunaVariantSets,
+  safeLunaCatalogErrorCode,
+  selectLunaRoundRobinWindow,
+  type LunaCatalogCollectionCoverage,
+  type LunaCatalogPageCheckpoint,
+  type LunaCatalogPersistedPage,
+} from "@/lib/market-radar/luna-catalog-coverage-domain"
 
 const LUNAPORTEX_SOURCE_KEY =
   "lunaportex"
@@ -28,6 +44,7 @@ const SHOPIFY_MAX_PAGES = 30
 const SHOPIFY_PAGE_DELAY_MS = 250
 const SHOPIFY_AUTH_PRODUCT_CONCURRENCY = 6
 const SHOPIFY_AUTH_PRODUCT_LIMIT = 300
+const LUNA_CATALOG_HTTP_MAX_ATTEMPTS = 3
 const POSTGREST_FILTER_CHUNK_SIZE = 100
 const PRODUCT_WRITE_BATCH_SIZE = 25
 const SNAPSHOT_WRITE_BATCH_SIZE = 50
@@ -164,6 +181,8 @@ type ShopifyProductResponse =
 
 type AggregatedProduct = ShopifyProduct & {
   collections: Set<string>
+  sourceObservedAt: string
+  fetchedAt: string
 }
 
 type MarketRadarSourceRecord = {
@@ -205,6 +224,10 @@ type SnapshotInsert = {
   discount_percent: number | null
   raw: Record<string, unknown>
   captured_at: string
+  catalog_scan_run_id?: string
+  source_observed_at?: string
+  fetched_at?: string
+  snapshot_fingerprint?: string
 }
 
 type EventInsert = {
@@ -240,11 +263,32 @@ type InventoryHydrationMetrics = {
     | "not_configured"
   authMessage: string
   authCheckedHandle: string | null
+  startCursor: number
+  nextCursor: number
+  catalogFingerprint: string | null
 }
 
 type LunaPortexProductFetchResult = {
   products: AggregatedProduct[]
   inventoryHydration: InventoryHydrationMetrics
+  catalogCoverage: ReturnType<typeof buildLunaCatalogCoverageManifest>
+  catalogScanRunId: string | null
+}
+
+export function getLunaCatalogCoverageRuntimeConfiguration() {
+  const enabled =
+    process.env.LUNA_CATALOG_COVERAGE_V1_ENABLED?.trim().toLowerCase() === "true"
+  return {
+    enabled,
+    mode:
+      process.env.LUNA_CATALOG_COVERAGE_V1_MODE?.trim().toUpperCase() === "ENFORCED"
+        ? "ENFORCED" as const
+        : "SHADOW" as const,
+    manifestVersion:
+      LUNA_CATALOG_COVERAGE_MANIFEST_VERSION,
+    hydrationPolicyVersion:
+      LUNA_CATALOG_HYDRATION_CURSOR_VERSION,
+  }
 }
 
 function wait(
@@ -883,41 +927,201 @@ function createEvent(
   }
 }
 
-async function fetchCollectionProducts(
-  collection: string
+type LunaCollectionFetchResult = {
+  products: ShopifyProduct[]
+  coverage: LunaCatalogCollectionCoverage
+  sourceObservedAt: string
+  fetchedAt: string
+}
+
+type LunaCollectionFetchOptions = {
+  startPage?: number
+  resumedProducts?: ShopifyProduct[]
+  resumedPages?: LunaCatalogPageCheckpoint[]
+  expectedTotal?: number | null
+  onPageCheckpoint?: (input: {
+    checkpoint: LunaCatalogPageCheckpoint
+    products: ShopifyProduct[]
+    expectedTotal: number | null
+  }) => Promise<void>
+}
+
+function sourceObservedAtFromResponse(
+  response: Response,
+  fetchedAt: string
 ) {
-  const products: ShopifyProduct[] = []
+  const sourceDate =
+    response.headers.get("date")
+  return sourceDate &&
+    Number.isFinite(Date.parse(sourceDate))
+    ? new Date(sourceDate).toISOString()
+    : fetchedAt
+}
+
+async function fetchCollectionProducts(
+  collection: string,
+  options: LunaCollectionFetchOptions = {}
+): Promise<LunaCollectionFetchResult> {
+  const products: ShopifyProduct[] = [
+    ...(options.resumedProducts || []),
+  ]
+  const pages: LunaCatalogPageCheckpoint[] = [
+    ...(options.resumedPages || []),
+  ]
+  let expectedTotal: number | null =
+    options.expectedTotal ?? null
 
   for (
-    let page = 1;
+    let page = Math.max(
+      1,
+      options.startPage || 1
+    );
     page <= SHOPIFY_MAX_PAGES;
     page += 1
   ) {
     const url =
       `${LUNAPORTEX_BASE_URL}/collections/${collection}/products.json?limit=${SHOPIFY_PAGE_LIMIT}&page=${page}`
 
-    const response =
-      await fetch(
-        url,
-        {
-          headers:
-            getLunaPortexRequestHeaders(),
-          cache:
-            "no-store",
-        }
-      )
+    let response: Response | null = null
+    let payload: ShopifyProductsResponse = {}
+    let attempts = 0
+    let errorCode: string | null = null
+    let fetchedAt = new Date().toISOString()
+    let sourceObservedAt = fetchedAt
 
-    if (!response.ok) {
-      throw new Error(
-        `Luna Portex ${collection} fetch failed: ${response.status}`
-      )
+    while (attempts < LUNA_CATALOG_HTTP_MAX_ATTEMPTS) {
+      attempts += 1
+      try {
+        response = await fetch(
+          url,
+          {
+            headers:
+              getLunaPortexRequestHeaders(),
+            cache:
+              "no-store",
+          }
+        )
+        fetchedAt = new Date().toISOString()
+        sourceObservedAt =
+          sourceObservedAtFromResponse(
+            response,
+            fetchedAt
+          )
+        if (response.ok) {
+          payload =
+            await response.json() as ShopifyProductsResponse
+          errorCode = null
+          break
+        }
+        errorCode =
+          `LUNA_CATALOG_HTTP_${response.status}`
+        if (
+          !isRetryableLunaStatus(response.status) ||
+          attempts >= LUNA_CATALOG_HTTP_MAX_ATTEMPTS
+        ) {
+          break
+        }
+        await wait(
+          lunaRetryDelayMs({
+            attempt:
+              attempts - 1,
+            retryAfter:
+              response.headers.get("retry-after"),
+          })
+        )
+      } catch (error) {
+        errorCode =
+          safeLunaCatalogErrorCode(error)
+        if (
+          attempts >=
+          LUNA_CATALOG_HTTP_MAX_ATTEMPTS
+        ) {
+          break
+        }
+        await wait(
+          lunaRetryDelayMs({
+            attempt:
+              attempts - 1,
+          })
+        )
+      }
     }
 
-    const payload =
-      await response.json() as ShopifyProductsResponse
-
     const pageProducts =
-      payload.products || []
+      errorCode
+        ? []
+        : payload.products || []
+    const identityKeys =
+      pageProducts.map(product =>
+        `${String(product.id || "")}:${getString(product.handle)}`
+      )
+    const uniqueIdentityKeys =
+      new Set(
+        identityKeys.filter(key =>
+          !key.startsWith(":") &&
+          !key.endsWith(":")
+        )
+      )
+    const headerExpectedTotal =
+      response
+        ? getInteger(
+            response.headers.get("x-total-count")
+          )
+        : null
+    if (headerExpectedTotal !== null) {
+      expectedTotal =
+        headerExpectedTotal
+    }
+    const checkpoint: LunaCatalogPageCheckpoint = {
+      collection,
+      page,
+      pageLimit:
+        SHOPIFY_PAGE_LIMIT,
+      maxPages:
+        SHOPIFY_MAX_PAGES,
+      receivedProducts:
+        pageProducts.length,
+      uniqueProducts:
+        uniqueIdentityKeys.size,
+      uniqueVariants:
+        pageProducts.reduce(
+          (sum, product) =>
+            sum + (product.variants?.length || 0),
+          0
+        ),
+      missingIdentityCount:
+        identityKeys.length -
+        uniqueIdentityKeys.size,
+      duplicateProductCount:
+        Math.max(
+          0,
+          pageProducts.length -
+          uniqueIdentityKeys.size
+        ),
+      collisionCount:
+        0,
+      attempts,
+      sourceObservedAt,
+      fetchedAt,
+      checksum:
+        lunaCatalogChecksum(
+          identityKeys.sort()
+        ),
+      etag:
+        response?.headers.get("etag") || null,
+      errorCode,
+    }
+    pages.push(checkpoint)
+    await options.onPageCheckpoint?.({
+      checkpoint,
+      products:
+        pageProducts,
+      expectedTotal,
+    })
+
+    if (errorCode) {
+      break
+    }
 
     if (pageProducts.length === 0) {
       break
@@ -939,7 +1143,20 @@ async function fetchCollectionProducts(
     )
   }
 
-  return products
+  const coverage =
+    evaluateLunaCollectionCoverage({
+      collection,
+      expectedTotal,
+      pages,
+    })
+  return {
+    products,
+    coverage,
+    sourceObservedAt:
+      coverage.sourceObservedAt,
+    fetchedAt:
+      coverage.fetchedAt,
+  }
 }
 
 async function fetchAuthenticatedProductInventory(
@@ -1124,11 +1341,28 @@ async function getLunaPortexAuthState(
 }
 
 async function hydrateAuthenticatedInventoryQuantities(
-  products: AggregatedProduct[]
+  products: AggregatedProduct[],
+  startCursor = 0
 ): Promise<LunaPortexProductFetchResult> {
+  const emptyCoverage =
+    buildLunaCatalogCoverageManifest({
+      collections: [],
+      uniqueProducts:
+        products.length,
+      uniqueVariants:
+        products.reduce(
+          (sum, product) =>
+            sum + (product.variants?.length || 0),
+          0
+        ),
+    })
   if (!LUNAPORTEX_AUTH_COOKIE) {
     return {
       products,
+      catalogCoverage:
+        emptyCoverage,
+      catalogScanRunId:
+        null,
       inventoryHydration: {
         enabled:
           false,
@@ -1150,17 +1384,39 @@ async function hydrateAuthenticatedInventoryQuantities(
           "Cookie Luna no configurada. Actualizar LUNAPORTEX_AUTH_COOKIE para ver inventario autenticado.",
         authCheckedHandle:
           null,
+        startCursor:
+          0,
+        nextCursor:
+          0,
+        catalogFingerprint:
+          null,
       },
     }
   }
 
-  const productsToHydrate =
+  const hydrationCandidates =
     products
       .filter(shouldHydrateProductInventory)
-      .slice(
-        0,
-        SHOPIFY_AUTH_PRODUCT_LIMIT
-      )
+  const catalogFingerprint =
+    lunaCatalogChecksum(
+      hydrationCandidates.map(product =>
+        `${String(product.id || "")}:${getString(product.handle)}`
+      ).sort()
+    )
+  const hydrationWindow =
+    selectLunaRoundRobinWindow({
+      candidates:
+        hydrationCandidates,
+      cursor:
+        startCursor,
+      limit:
+        SHOPIFY_AUTH_PRODUCT_LIMIT,
+      key:
+        product =>
+          `${String(product.id || "")}:${getString(product.handle)}`,
+    })
+  const productsToHydrate =
+    hydrationWindow.selected
 
   const authState =
     await getLunaPortexAuthState(
@@ -1290,6 +1546,10 @@ async function hydrateAuthenticatedInventoryQuantities(
 
   return {
     products,
+    catalogCoverage:
+      emptyCoverage,
+    catalogScanRunId:
+      null,
     inventoryHydration: {
       enabled:
         true,
@@ -1307,17 +1567,537 @@ async function hydrateAuthenticatedInventoryQuantities(
         authState.authMessage,
       authCheckedHandle:
         authState.authCheckedHandle,
+      startCursor:
+        hydrationWindow.startCursor,
+      nextCursor:
+        hydrationWindow.nextCursor,
+      catalogFingerprint,
     },
   }
 }
 
-async function fetchLunaPortexProducts(): Promise<LunaPortexProductFetchResult> {
+async function createCatalogCoverageRun(
+  supabase: SupabaseClient,
+  sourceId: string,
+  startedAt: string
+) {
+  const configuration =
+    getLunaCatalogCoverageRuntimeConfiguration()
+  if (!configuration.enabled) {
+    return null
+  }
+  const {
+    data: resumableRun,
+    error: resumableRunError,
+  } =
+    await supabase
+      .from("market_radar_catalog_scan_runs")
+      .select("id")
+      .eq(
+        "source_id",
+        sourceId
+      )
+      .eq(
+        "manifest_version",
+        configuration.manifestVersion
+      )
+      .eq(
+        "status",
+        "RUNNING"
+      )
+      .is(
+        "finished_at",
+        null
+      )
+      .order(
+        "started_at",
+        {
+          ascending:
+            false,
+        }
+      )
+      .limit(1)
+      .maybeSingle()
+  if (resumableRun?.id) {
+    return String(resumableRun.id)
+  }
+  if (
+    resumableRunError &&
+    configuration.mode === "ENFORCED"
+  ) {
+    throw new Error(
+      "LUNA_CATALOG_RESUME_LOOKUP_FAILED"
+    )
+  }
+  const { data, error } =
+    await supabase
+      .from("market_radar_catalog_scan_runs")
+      .insert({
+        source_id:
+          sourceId,
+        manifest_version:
+          configuration.manifestVersion,
+        execution_mode:
+          configuration.mode,
+        status:
+          "RUNNING",
+        started_at:
+          startedAt,
+      })
+      .select("id")
+      .single()
+  if (error || !data?.id) {
+    if (configuration.mode === "ENFORCED") {
+      throw new Error(
+        "LUNA_CATALOG_MANIFEST_RUN_CREATE_FAILED"
+      )
+    }
+    console.warn(
+      "LUNA CATALOG COVERAGE SHADOW UNAVAILABLE:",
+      "LUNA_CATALOG_MANIFEST_RUN_CREATE_FAILED"
+    )
+    return null
+  }
+  return String(data.id)
+}
+
+function catalogPageCheckpointRow(
+  catalogScanRunId: string,
+  page: LunaCatalogPageCheckpoint,
+  expectedTotal: number | null,
+  pageProducts?: ShopifyProduct[]
+) {
+  const row = {
+    scan_run_id:
+      catalogScanRunId,
+    collection_key:
+      page.collection,
+    page_number:
+      page.page,
+    resume_token:
+      `${page.collection}:page:${page.page + 1}`,
+    status:
+      page.errorCode
+        ? "FAILED"
+        : (
+            page.page === page.maxPages &&
+            page.receivedProducts >= page.pageLimit
+          )
+          ? "TRUNCATED"
+          : "COMPLETE",
+    page_limit:
+      page.pageLimit,
+    max_pages:
+      page.maxPages,
+    expected_total:
+      expectedTotal,
+    received_products:
+      page.receivedProducts,
+    unique_products:
+      page.uniqueProducts,
+    unique_variants:
+      page.uniqueVariants,
+    missing_identity_count:
+      page.missingIdentityCount,
+    duplicate_product_count:
+      page.duplicateProductCount,
+    collision_count:
+      page.collisionCount,
+    attempts:
+      page.attempts,
+    checksum:
+      page.checksum,
+    etag:
+      page.etag,
+    source_observed_at:
+      page.sourceObservedAt,
+    fetched_at:
+      page.fetchedAt,
+    error_code:
+      page.errorCode,
+    updated_at:
+      new Date().toISOString(),
+  }
+  return pageProducts
+    ? {
+        ...row,
+        product_payload:
+          pageProducts,
+      }
+    : row
+}
+
+async function persistCatalogPageCheckpoint(
+  supabase: SupabaseClient,
+  catalogScanRunId: string | null,
+  input: {
+    checkpoint: LunaCatalogPageCheckpoint
+    products: ShopifyProduct[]
+    expectedTotal: number | null
+  }
+) {
+  if (!catalogScanRunId) {
+    return
+  }
+  const { error } =
+    await supabase
+      .from("market_radar_catalog_scan_segments")
+      .upsert(
+        catalogPageCheckpointRow(
+          catalogScanRunId,
+          input.checkpoint,
+          input.expectedTotal,
+          input.products
+        ),
+        {
+          onConflict:
+            "scan_run_id,collection_key,page_number",
+        }
+      )
+  if (error) {
+    const configuration =
+      getLunaCatalogCoverageRuntimeConfiguration()
+    if (configuration.mode === "ENFORCED") {
+      throw new Error(
+        "LUNA_CATALOG_PAGE_CHECKPOINT_FAILED"
+      )
+    }
+    console.warn(
+      "LUNA CATALOG PAGE SHADOW CHECKPOINT UNAVAILABLE:",
+      "LUNA_CATALOG_PAGE_CHECKPOINT_FAILED"
+    )
+  }
+}
+
+async function loadCatalogCollectionResumeState(
+  supabase: SupabaseClient,
+  catalogScanRunId: string | null,
+  collection: string
+) {
+  const empty =
+    buildLunaCatalogResumeState<ShopifyProduct>(
+      []
+    )
+  if (!catalogScanRunId) {
+    return {
+      ...empty,
+      expectedTotal:
+        null,
+    }
+  }
+  const { data, error } =
+    await supabase
+      .from("market_radar_catalog_scan_segments")
+      .select(
+        "collection_key,page_number,status,page_limit,max_pages,expected_total,received_products,unique_products,unique_variants,missing_identity_count,duplicate_product_count,collision_count,attempts,checksum,etag,source_observed_at,fetched_at,error_code,product_payload"
+      )
+      .eq(
+        "scan_run_id",
+        catalogScanRunId
+      )
+      .eq(
+        "collection_key",
+        collection
+      )
+      .order(
+        "page_number",
+        {
+          ascending:
+            true,
+        }
+      )
+  if (error) {
+    const configuration =
+      getLunaCatalogCoverageRuntimeConfiguration()
+    if (configuration.mode === "ENFORCED") {
+      throw new Error(
+        "LUNA_CATALOG_RESUME_LOAD_FAILED"
+      )
+    }
+    console.warn(
+      "LUNA CATALOG RESUME SHADOW UNAVAILABLE:",
+      "LUNA_CATALOG_RESUME_LOAD_FAILED"
+    )
+    return {
+      ...empty,
+      expectedTotal:
+        null,
+    }
+  }
+  const persistedPages: LunaCatalogPersistedPage<ShopifyProduct>[] =
+    (data || []).map(row => ({
+      checkpoint: {
+        collection:
+          String(row.collection_key),
+        page:
+          getInteger(row.page_number) || 1,
+        pageLimit:
+          getInteger(row.page_limit) || SHOPIFY_PAGE_LIMIT,
+        maxPages:
+          getInteger(row.max_pages) || SHOPIFY_MAX_PAGES,
+        receivedProducts:
+          getInteger(row.received_products) || 0,
+        uniqueProducts:
+          getInteger(row.unique_products) || 0,
+        uniqueVariants:
+          getInteger(row.unique_variants) || 0,
+        missingIdentityCount:
+          getInteger(row.missing_identity_count) || 0,
+        duplicateProductCount:
+          getInteger(row.duplicate_product_count) || 0,
+        collisionCount:
+          getInteger(row.collision_count) || 0,
+        attempts:
+          getInteger(row.attempts) || 1,
+        sourceObservedAt:
+          String(row.source_observed_at),
+        fetchedAt:
+          String(row.fetched_at),
+        checksum:
+          String(row.checksum),
+        etag:
+          getString(row.etag) || null,
+        errorCode:
+          getString(row.error_code) || null,
+      },
+      products:
+        Array.isArray(row.product_payload)
+          ? row.product_payload as ShopifyProduct[]
+          : [],
+    }))
+  const resume =
+    buildLunaCatalogResumeState(
+      persistedPages
+    )
+  const expectedTotal =
+    [...(data || [])]
+      .reverse()
+      .map(row =>
+        getInteger(row.expected_total)
+      )
+      .find(value => value !== null) ??
+      null
+  return {
+    ...resume,
+    expectedTotal,
+  }
+}
+
+async function persistCatalogCollectionCoverage(
+  supabase: SupabaseClient,
+  catalogScanRunId: string | null,
+  coverage: LunaCatalogCollectionCoverage
+) {
+  if (!catalogScanRunId || !coverage.pages.length) {
+    return
+  }
+  const rows =
+    coverage.pages.map(page =>
+      catalogPageCheckpointRow(
+        catalogScanRunId,
+        page,
+        coverage.expectedTotal
+      )
+    )
+  const { error } =
+    await supabase
+      .from("market_radar_catalog_scan_segments")
+      .upsert(
+        rows,
+        {
+          onConflict:
+            "scan_run_id,collection_key,page_number",
+        }
+      )
+  if (error) {
+    const configuration =
+      getLunaCatalogCoverageRuntimeConfiguration()
+    if (configuration.mode === "ENFORCED") {
+      throw new Error(
+        "LUNA_CATALOG_SEGMENT_CHECKPOINT_FAILED"
+      )
+    }
+    console.warn(
+      "LUNA CATALOG SEGMENT SHADOW CHECKPOINT UNAVAILABLE:",
+      "LUNA_CATALOG_SEGMENT_CHECKPOINT_FAILED"
+    )
+  }
+}
+
+async function claimInventoryHydrationCursor(
+  supabase: SupabaseClient,
+  sourceId: string,
+  products: AggregatedProduct[]
+) {
+  const configuration =
+    getLunaCatalogCoverageRuntimeConfiguration()
+  if (!configuration.enabled) {
+    return {
+      startCursor:
+        0,
+      workerId:
+        null,
+      claimed:
+        false,
+    }
+  }
+  const candidates =
+    products.filter(
+      shouldHydrateProductInventory
+    )
+  const catalogFingerprint =
+    lunaCatalogChecksum(
+      candidates.map(product =>
+        `${String(product.id || "")}:${getString(product.handle)}`
+      ).sort()
+    )
+  const workerId =
+    `luna-sync:${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2, 10)}`
+  const { data, error } =
+    await supabase.rpc(
+      "claim_market_radar_luna_hydration_window_v1",
+      {
+        p_source_id:
+          sourceId,
+        p_policy_version:
+          configuration.hydrationPolicyVersion,
+        p_catalog_fingerprint:
+          catalogFingerprint,
+        p_candidate_count:
+          candidates.length,
+        p_limit:
+          SHOPIFY_AUTH_PRODUCT_LIMIT,
+        p_worker_id:
+          workerId,
+        p_lease_seconds:
+          300,
+      }
+    )
+  if (error) {
+    if (configuration.mode === "ENFORCED") {
+      throw new Error(
+        "LUNA_HYDRATION_CURSOR_CLAIM_FAILED"
+      )
+    }
+    console.warn(
+      "LUNA HYDRATION ROUND ROBIN SHADOW UNAVAILABLE:",
+      "LUNA_HYDRATION_CURSOR_CLAIM_FAILED"
+    )
+    return {
+      startCursor:
+        0,
+      workerId:
+        null,
+      claimed:
+        false,
+    }
+  }
+  const row =
+    Array.isArray(data)
+      ? data[0]
+      : data
+  return {
+    startCursor:
+      getInteger(
+        row?.start_offset
+      ) || 0,
+    workerId,
+    claimed:
+      true,
+  }
+}
+
+async function releaseInventoryHydrationCursor(
+  supabase: SupabaseClient,
+  sourceId: string,
+  lease: {
+    workerId: string | null
+    claimed: boolean
+  },
+  outcome: "SUCCESS" | "SAFE_FAILURE",
+  strict: boolean
+) {
+  if (!lease.claimed || !lease.workerId) {
+    return
+  }
+  const { error } =
+    await supabase.rpc(
+      "release_market_radar_luna_hydration_window_v1",
+      {
+        p_source_id:
+          sourceId,
+        p_worker_id:
+          lease.workerId,
+        p_outcome:
+          outcome,
+      }
+    )
+  if (error) {
+    const configuration =
+      getLunaCatalogCoverageRuntimeConfiguration()
+    if (
+      strict &&
+      configuration.mode === "ENFORCED"
+    ) {
+      throw new Error(
+        "LUNA_HYDRATION_CURSOR_RELEASE_FAILED"
+      )
+    }
+    console.warn(
+      "LUNA HYDRATION CURSOR RELEASE UNAVAILABLE:",
+      "LUNA_HYDRATION_CURSOR_RELEASE_FAILED"
+    )
+  }
+}
+
+async function fetchLunaPortexProducts(
+  supabase: SupabaseClient,
+  sourceId: string,
+  catalogScanRunId: string | null
+): Promise<LunaPortexProductFetchResult> {
   const productMap =
     new Map<string, AggregatedProduct>()
+  const collectionCoverages: LunaCatalogCollectionCoverage[] =
+    []
 
   for (const collection of LUNAPORTEX_COLLECTIONS) {
+    const resume =
+      await loadCatalogCollectionResumeState(
+        supabase,
+        catalogScanRunId,
+        collection
+      )
+    const collectionResult =
+      await fetchCollectionProducts(
+        collection,
+        {
+          startPage:
+            resume.nextPage,
+          resumedProducts:
+            resume.products,
+          resumedPages:
+            resume.pages,
+          expectedTotal:
+            resume.expectedTotal,
+          onPageCheckpoint:
+            checkpoint =>
+              persistCatalogPageCheckpoint(
+                supabase,
+                catalogScanRunId,
+                checkpoint
+              ),
+        }
+      )
     const products =
-      await fetchCollectionProducts(collection)
+      collectionResult.products
+    collectionCoverages.push(
+      collectionResult.coverage
+    )
+    await persistCatalogCollectionCoverage(
+      supabase,
+      catalogScanRunId,
+      collectionResult.coverage
+    )
 
     products.forEach(product => {
       const supplierProductId =
@@ -1342,6 +2122,27 @@ async function fetchLunaPortexProducts(): Promise<LunaPortexProductFetchResult> 
         existingProduct.collections.add(
           collection
         )
+        existingProduct.variants =
+          mergeLunaVariantSets(
+            existingProduct.variants || [],
+            product.variants || [],
+            (variant, index) =>
+              String(variant.id || "") ||
+              getString(variant.sku) ||
+              `unidentified:${index}`
+          )
+        existingProduct.sourceObservedAt =
+          [
+            existingProduct.sourceObservedAt,
+            collectionResult.sourceObservedAt,
+          ].sort().at(-1) ||
+          collectionResult.sourceObservedAt
+        existingProduct.fetchedAt =
+          [
+            existingProduct.fetchedAt,
+            collectionResult.fetchedAt,
+          ].sort().at(-1) ||
+          collectionResult.fetchedAt
 
         return
       }
@@ -1352,6 +2153,10 @@ async function fetchLunaPortexProducts(): Promise<LunaPortexProductFetchResult> 
           ...product,
           collections:
             new Set([collection]),
+          sourceObservedAt:
+            collectionResult.sourceObservedAt,
+          fetchedAt:
+            collectionResult.fetchedAt,
         }
       )
     })
@@ -1361,11 +2166,57 @@ async function fetchLunaPortexProducts(): Promise<LunaPortexProductFetchResult> 
     )
   }
 
-  return hydrateAuthenticatedInventoryQuantities(
+  const products =
     Array.from(
       productMap.values()
     )
-  )
+  const catalogCoverage =
+    buildLunaCatalogCoverageManifest({
+      collections:
+        collectionCoverages,
+      uniqueProducts:
+        products.length,
+      uniqueVariants:
+        products.reduce(
+          (sum, product) =>
+            sum + (product.variants?.length || 0),
+          0
+        ),
+    })
+  const hydrationLease =
+    await claimInventoryHydrationCursor(
+      supabase,
+      sourceId,
+      products
+    )
+  try {
+    const hydrated =
+      await hydrateAuthenticatedInventoryQuantities(
+        products,
+        hydrationLease.startCursor
+      )
+    await releaseInventoryHydrationCursor(
+      supabase,
+      sourceId,
+      hydrationLease,
+      "SUCCESS",
+      true
+    )
+    return {
+      ...hydrated,
+      catalogCoverage,
+      catalogScanRunId,
+    }
+  } catch (error) {
+    await releaseInventoryHydrationCursor(
+      supabase,
+      sourceId,
+      hydrationLease,
+      "SAFE_FAILURE",
+      false
+    )
+    throw error
+  }
 }
 
 async function ensureLunaPortexSource(
@@ -1595,7 +2446,8 @@ function buildSnapshotsAndEvents(
   products: AggregatedProduct[],
   savedProducts: MarketRadarProductRecord[],
   latestSnapshots: Map<string, LatestSnapshotRecord>,
-  capturedAt: string
+  capturedAt: string,
+  catalogScanRunId: string | null
 ) {
   const productIdBySupplierId =
     new Map(
@@ -1720,6 +2572,28 @@ function buildSnapshotsAndEvents(
           },
         captured_at:
           capturedAt,
+        ...(catalogScanRunId
+          ? {
+              catalog_scan_run_id:
+                catalogScanRunId,
+              source_observed_at:
+                product.sourceObservedAt,
+              fetched_at:
+                product.fetchedAt,
+              snapshot_fingerprint:
+                lunaCatalogChecksum({
+                  productId,
+                  supplierVariantId,
+                  price,
+                  compareAtPrice,
+                  available,
+                  inventoryQuantity,
+                  collections,
+                  sourceObservedAt:
+                    product.sourceObservedAt,
+                }),
+            }
+          : {}),
       }
 
       snapshotRows.push(
@@ -2337,6 +3211,8 @@ export async function runLunaPortexMarketRadarSync(
     failedBatchCount: 0,
     smallestSuccessfulBatchSize: null,
   }
+  let catalogScanRunId: string | null =
+    null
 
   await supabase
     .from("market_radar_sources")
@@ -2352,8 +3228,18 @@ export async function runLunaPortexMarketRadarSync(
     )
 
   try {
+    catalogScanRunId =
+      await createCatalogCoverageRun(
+        supabase,
+        source.id,
+        startedAt
+      )
     const productFetchResult =
-      await fetchLunaPortexProducts()
+      await fetchLunaPortexProducts(
+        supabase,
+        source.id,
+        catalogScanRunId
+      )
 
     const products =
       productFetchResult.products
@@ -2387,7 +3273,8 @@ export async function runLunaPortexMarketRadarSync(
         products,
         savedProducts,
         latestSnapshots,
-        startedAt
+        startedAt,
+        productFetchResult.catalogScanRunId
       )
 
     const snapshotsInserted =
@@ -2461,18 +3348,98 @@ export async function runLunaPortexMarketRadarSync(
       scoredProducts
     )
 
-    const scanCompletenessPercent = products.length > 0
-      ? Number(((completedProducts / products.length) * 100).toFixed(2))
-      : 100
-
+    const configuration =
+      getLunaCatalogCoverageRuntimeConfiguration()
+    const legacyCompletenessPercent =
+      products.length > 0
+        ? Number(
+            (
+              completedProducts /
+              products.length *
+              100
+            ).toFixed(2)
+          )
+        : 0
+    const scanCompletenessPercent =
+      configuration.enabled &&
+      configuration.mode === "ENFORCED"
+        ? (
+            productFetchResult.catalogCoverage
+              .coveragePercent || 0
+          )
+        : legacyCompletenessPercent
     const scanStatus =
-      scanCompletenessPercent === 100 &&
-      batchTelemetry.failedBatchCount === 0
-        ? "COMPLETE" as const
-        : "PARTIAL" as const
+      products.length === 0 ||
+      productFetchResult.catalogCoverage.status === "FAILED"
+        ? "FAILED" as const
+        : (
+            productFetchResult.catalogCoverage.status === "TRUNCATED" ||
+            batchTelemetry.failedBatchCount > 0 ||
+            (
+              configuration.enabled &&
+              configuration.mode === "ENFORCED" &&
+              productFetchResult.catalogCoverage.status !== "COMPLETE"
+            )
+          )
+          ? "PARTIAL" as const
+          : scanCompletenessPercent === 100
+            ? "COMPLETE" as const
+            : "PARTIAL" as const
 
     const finishedAt =
       new Date().toISOString()
+
+    if (productFetchResult.catalogScanRunId) {
+      const manifest =
+        productFetchResult.catalogCoverage
+      const { error: manifestError } =
+        await supabase
+          .from("market_radar_catalog_scan_runs")
+          .update({
+            status:
+              manifest.status,
+            expected_products:
+              manifest.expectedProducts,
+            received_products:
+              manifest.receivedProducts,
+            unique_products:
+              manifest.uniqueProducts,
+            unique_variants:
+              manifest.uniqueVariants,
+            missing_identity_count:
+              manifest.missingIdentityCount,
+            duplicate_product_count:
+              manifest.duplicateProductCount,
+            collision_count:
+              manifest.collisionCount,
+            coverage_percent:
+              manifest.coveragePercent,
+            catalog_checksum:
+              manifest.checksum,
+            source_observed_at:
+              manifest.sourceObservedAt,
+            fetched_at:
+              manifest.fetchedAt,
+            finished_at:
+              finishedAt,
+            error_code:
+              manifest.status === "COMPLETE"
+                ? null
+                : `LUNA_CATALOG_${manifest.status}`,
+          })
+          .eq(
+            "id",
+            productFetchResult.catalogScanRunId
+          )
+      if (
+        manifestError &&
+        configuration.mode === "ENFORCED"
+      ) {
+        throw new Error(
+          "LUNA_CATALOG_MANIFEST_FINALIZE_FAILED"
+        )
+      }
+    }
 
     await supabase
       .from("market_radar_sources")
@@ -2544,6 +3511,23 @@ export async function runLunaPortexMarketRadarSync(
 
     const detailedMessage =
       `${message} | adaptive_retries=${batchTelemetry.adaptiveRetryCount} | failed_batches=${batchTelemetry.failedBatchCount}`
+
+    if (catalogScanRunId) {
+      await supabase
+        .from("market_radar_catalog_scan_runs")
+        .update({
+          status:
+            "FAILED",
+          error_code:
+            safeLunaCatalogErrorCode(error),
+          finished_at:
+            new Date().toISOString(),
+        })
+        .eq(
+          "id",
+          catalogScanRunId
+        )
+    }
 
     await supabase
       .from("market_radar_sources")

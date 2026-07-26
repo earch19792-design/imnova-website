@@ -112,6 +112,14 @@ async function getLunaPortexTestInternals() {
     fs.readFileSync(
       sourcePath,
       "utf8"
+    ).replace(
+      '"@/lib/market-radar/luna-catalog-coverage-domain"',
+      JSON.stringify(
+        new URL(
+          "../lib/market-radar/luna-catalog-coverage-domain.ts",
+          import.meta.url
+        ).href
+      )
     )
 
   const testSource = `${source}

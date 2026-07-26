@@ -4,7 +4,7 @@ const MARKETPLACE_INSIGHTS_ENDPOINT =
 const MARKETPLACE_INSIGHTS_SCOPE =
   "https://api.ebay.com/oauth/api_scope/buy.marketplace.insights"
 const STAGING_REF = "vsfthqydfrdzulldbfbe"
-const PREVIEW_BRANCH = "feature/centralize-ebay-mobile-command-center"
+const PREVIEW_BRANCH = "feature/centralize-ebay-mobile-center"
 const REQUEST_TIMEOUT_MS = 8_000
 
 type PreflightEnvironment = Record<string, string | undefined>

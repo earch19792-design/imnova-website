@@ -1,5 +1,7 @@
-// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+// @ts-ignore Node's native TypeScript runner requires explicit extensions.
 import { validateGtinChecksum } from "./ebay-winner-evidence-v2.ts"
+// @ts-ignore Node's native TypeScript runner requires explicit extensions.
+import { evaluateEbayDemandEvidencePolicy, getEbayDemandEvidencePolicyRuntime, type EbayDemandEvidencePolicyRuntime } from "./ebay-demand-evidence-policy.ts"
 
 export const EBAY_SELLER_KEYWORD_DEMAND_VALIDATION_VERSION =
   "EBAY-PROFESSIONAL-KEYWORD-CLASSIFICATION-V4"
@@ -32,6 +34,8 @@ export type EbaySellerComparableInput = {
   lotSize?: number | null
   color?: string | null
   size?: string | null
+  condition?: string | null
+  evidenceReviewed?: boolean | null
   shortDescription?: string | null
   localizedAspects?: Array<{
     name?: string | null
@@ -80,6 +84,7 @@ export type EbaySellerKeywordCandidate = {
   model?: string | null
   color?: string | null
   size?: string | null
+  condition?: string | null
   packQuantity?: number | null
   productType?: string | null
   description?: string | null
@@ -88,6 +93,7 @@ export type EbaySellerKeywordCandidate = {
 export type EbaySellerKeywordDemandInput = {
   candidate: EbaySellerKeywordCandidate
   comparables?: EbaySellerComparableInput[] | null
+  demandEvidencePolicyRuntime?: Partial<EbayDemandEvidencePolicyRuntime> | null
   candidateFoundCount?: number | null
   returnedCandidateCount?: number | null
   enrichedSampleCount?: number | null
@@ -478,6 +484,7 @@ export function buildEbaySellerKeywordDemandValidation(
   const candidatePack = numberOrNull(input.candidate.packQuantity)
   const candidateSize = normalizedIdentifier(input.candidate.size)
   const candidateColor = normalizedIdentifier(input.candidate.color)
+  const candidateCondition = normalizedIdentifier(input.candidate.condition)
   const comparables = (input.comparables ?? []).map((entry, index) => {
     const title = cleanText(entry.title)
     const identity = buildIdentityAssessment(candidateText, title)
@@ -494,6 +501,8 @@ export function buildEbaySellerKeywordDemandValidation(
       normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["size", "capacity", "volume"]))
     const listingColor = normalizedIdentifier(entry.color) ||
       normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["color", "colour"]))
+    const listingCondition = normalizedIdentifier(entry.condition) ||
+      normalizedIdentifier(comparableAspectValue(entry.localizedAspects, ["condition"]))
     const exactGtin = Boolean(candidateGtin && listingGtin && candidateGtin === listingGtin)
     const exactEpid = Boolean(candidateEpid && listingEpid && candidateEpid === listingEpid)
     const exactBrandMpn = Boolean(
@@ -509,6 +518,13 @@ export function buildEbaySellerKeywordDemandValidation(
     const mpnConflict = Boolean(candidateMpn && listingMpn && candidateMpn !== listingMpn)
     const sizeConflict = Boolean(candidateSize && listingSize && candidateSize !== listingSize)
     const colorConflict = Boolean(candidateColor && listingColor && candidateColor !== listingColor)
+    const sameVariant = Boolean(
+      (!candidateSize || (listingSize && candidateSize === listingSize)) &&
+      (!candidateColor || (listingColor && candidateColor === listingColor))
+    )
+    const sameCondition = Boolean(
+      candidateCondition && listingCondition && candidateCondition === listingCondition
+    )
     const epidStructuredConflict = exactEpid &&
       (brandConflict || mpnConflict || sizeConflict || colorConflict)
     const softBrandConflict = Boolean(
@@ -581,6 +597,8 @@ export function buildEbaySellerKeywordDemandValidation(
       lotSize: listingPack,
       color: cleanText(entry.color) || null,
       size: cleanText(entry.size) || null,
+      condition: cleanText(entry.condition) || null,
+      evidenceReviewed: entry.evidenceReviewed === true,
       shortDescription: cleanText(entry.shortDescription) || null,
       localizedAspects: Array.isArray(entry.localizedAspects)
         ? entry.localizedAspects
@@ -634,6 +652,8 @@ export function buildEbaySellerKeywordDemandValidation(
       identifierExact,
       baseIdentifierExact,
       offerPackResolved: candidatePackKnown && listingPackKnown && !packConflict,
+      sameVariant,
+      sameCondition,
       softIdentityConflicts: softBrandConflict ? ["BRAND_CONFLICT_OVERRIDDEN_BY_EXACT_GTIN"] : [],
       identityConflicts: [
         ...identity.conflicts,
@@ -649,7 +669,14 @@ export function buildEbaySellerKeywordDemandValidation(
   })
 
   const eligible = comparables.filter((entry) => entry.eligibleComparable)
-  const soldEvidence = eligible.filter((entry) => entry.verifiedSoldRecent)
+  const soldEvidence = eligible.filter((entry) =>
+    entry.verifiedSoldRecent &&
+    entry.identifierExact &&
+    entry.offerPackResolved &&
+    entry.sameVariant &&
+    entry.sameCondition &&
+    entry.evidenceReviewed
+  )
   const staleSoldEvidence = eligible.filter((entry) =>
     entry.verifiedSoldQuantity > 0 && !entry.verifiedSoldRecent
   )
@@ -862,14 +889,57 @@ export function buildEbaySellerKeywordDemandValidation(
   const estimatedSoldSellerCount = new Set(
     estimatedEvidence.map((entry) => normalizedSeller(entry.sellerUsername))
   ).size
-  const demandValidationPassed =
-    (verifiedSoldSellerCount >= 2 && totalVerifiedSoldQuantity >= 3) ||
-    (estimatedSoldSellerCount >= 2 && totalEstimatedSoldQuantity >= 3)
-  const demandValidationBasis = verifiedSoldSellerCount >= 2 && totalVerifiedSoldQuantity >= 3
-    ? "VERIFIED_HISTORICAL_MULTI_SELLER"
-    : estimatedSoldSellerCount >= 2 && totalEstimatedSoldQuantity >= 3
-      ? "ESTIMATED_MULTI_SELLER_SIGNAL"
-      : "INSUFFICIENT_EVIDENCE"
+  const soldExactComparableCount = soldEvidence.length
+  const soldEvidenceInstants = soldEvidence
+    .map((entry) => entry.lastSoldDate ?? entry.itemEndDate)
+    .filter((value): value is string => Boolean(value))
+    .map((value) => new Date(value).getTime())
+    .filter(Number.isFinite)
+  const freshestSoldEvidenceInstant = soldEvidenceInstants.length
+    ? Math.max(...soldEvidenceInstants)
+    : null
+  const earliestSoldEvidenceExpiryInstant = soldEvidenceInstants.length
+    ? Math.min(
+        ...soldEvidenceInstants.map(
+          (instant) => instant + soldRecencyDays * 24 * 60 * 60 * 1_000
+        )
+      )
+    : null
+  const demandEvidencePolicy = evaluateEbayDemandEvidencePolicy(
+    {
+      evidenceClass: soldExactComparableCount > 0
+        ? "CONFIRMED_SOLD_EXACT"
+        : estimatedEvidence.length > 0
+          ? "OBSERVED_ESTIMATED_ROTATION"
+          : eligible.length > 0
+            ? "ACTIVE_ONLY"
+            : "UNKNOWN",
+      officialEbaySource: soldExactComparableCount > 0,
+      reviewed: soldExactComparableCount > 0,
+      exactIdentity: soldEvidence.every((entry) => entry.identifierExact),
+      samePack: soldEvidence.length > 0 &&
+        soldEvidence.every((entry) => entry.offerPackResolved),
+      sameVariant: soldEvidence.length > 0 &&
+        soldEvidence.every((entry) => entry.sameVariant),
+      sameCondition: soldEvidence.length > 0 &&
+        soldEvidence.every((entry) => entry.sameCondition),
+      observedAt: freshestSoldEvidenceInstant === null
+        ? null
+        : new Date(freshestSoldEvidenceInstant).toISOString(),
+      expiresAt: earliestSoldEvidenceExpiryInstant === null
+        ? null
+        : new Date(earliestSoldEvidenceExpiryInstant).toISOString(),
+      soldExactUnits: totalVerifiedSoldQuantity,
+      soldExactSellerCount: verifiedSoldSellerCount,
+      soldExactComparableCount,
+    },
+    input.demandEvidencePolicyRuntime ??
+      getEbayDemandEvidencePolicyRuntime(undefined, asOf),
+  )
+  const demandValidationPassed = demandEvidencePolicy.demandValidated
+  const demandValidationBasis = demandValidationPassed
+    ? "CONFIRMED_SOLD_EXACT_POLICY_V2"
+    : "INSUFFICIENT_CONFIRMED_SOLD_EXACT"
   const pendingGuards = [
     !eligible.length ? "NEED_EBAY_COMPARABLE_LISTINGS" : "",
     !demandValidationPassed ? "NEED_EBAY_SALES_EVIDENCE" : "",
@@ -912,6 +982,10 @@ export function buildEbaySellerKeywordDemandValidation(
     totalEstimatedSoldQuantity,
     verifiedSoldSellerCount,
     estimatedSoldSellerCount,
+    soldExactUnits: demandEvidencePolicy.soldExactUnits,
+    soldExactSellerCount: demandEvidencePolicy.soldExactSellerCount,
+    soldExactComparableCount: demandEvidencePolicy.soldExactComparableCount,
+    demandEvidencePolicy,
     staleVerifiedSoldListingCount: staleSoldEvidence.length,
     freshestVerifiedSoldAt: soldEvidence
       .map((entry) => entry.lastSoldDate ?? entry.itemEndDate)

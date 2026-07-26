@@ -4,6 +4,7 @@ export const maxDuration = 60
 import { NextResponse } from "next/server"
 
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
+import { runEbayLunaSelectorV2Shadow } from "@/lib/ebay/ebay-luna-selector-v2-shadow-service"
 import {
   EBAY_LUNA_SCAN_STRATEGY,
   processNextEbayFirstLunaBatch,
@@ -109,11 +110,21 @@ export async function GET(req: Request) {
         if (batch.completed) break
       }
     }
+    const selectorV2Shadow = runId
+      ? await runEbayLunaSelectorV2Shadow({ supabase, runId }).catch(() => ({
+          status: "failed" as const,
+          code: "SELECTOR_V2_SHADOW_FAILED_SCAN_CONTINUES",
+        }))
+      : {
+          status: "skipped" as const,
+          code: "SELECTOR_V2_SHADOW_NO_RUN",
+        }
     return NextResponse.json({
       success: true,
       runId,
       batches,
       automation: {
+        selectorV2Shadow,
         strategy: EBAY_LUNA_SCAN_STRATEGY,
         workerId,
         reconciliation,

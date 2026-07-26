@@ -27,6 +27,14 @@ import {
   type ActiveListingCandidateProtectionRow,
 } from "./ebay-active-listing-protection-domain"
 import {
+  EBAY_PUBLISHED_ACQUISITION_BLOCKER_CODE,
+  EBAY_PUBLISHED_ACQUISITION_POLICY_VERSION,
+  evaluateEbayPublishedAcquisitionPolicy,
+  resolveEbayPublishedAcquisitionPolicyMode,
+  type EbayPublishedAcquisitionAuthorization,
+  type EbayPublishedAcquisitionIdentity,
+} from "./ebay-published-acquisition-policy"
+import {
   claimResilientCandidateForLegacyJob,
   handleResilientLegacyJobFailure,
   isResilientListingFactoryEnabled,
@@ -221,6 +229,83 @@ type PilotJobSpec = {
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {}
+}
+
+type ActiveListingCandidateProtectionSourceRow =
+  ActiveListingCandidateProtectionRow & { raw_payload?: unknown }
+
+type PublishedAcquisitionRegistry = {
+  identities: EbayPublishedAcquisitionIdentity[]
+  authorizations: EbayPublishedAcquisitionAuthorization[]
+  available: boolean
+  mode: ReturnType<typeof resolveEbayPublishedAcquisitionPolicyMode>
+}
+
+function activeListingPublishedIdentityRows(
+  rows: ActiveListingCandidateProtectionSourceRow[],
+): EbayPublishedAcquisitionIdentity[] {
+  return rows.map((row) => {
+    const rawPayload = record(row.raw_payload)
+    return {
+      id: text(row.id),
+      accountKey: text(row.account_key),
+      marketplace: text(rawPayload.marketplaceId) || MARKETPLACE,
+      identityStatus: text(row.listing_status),
+      marketRadarProductId: text(row.market_radar_product_id) || null,
+      supplierVariantId: text(row.supplier_variant_id) || null,
+      supplierSku: text(row.supplier_sku) || null,
+      ebaySku: text(row.ebay_sku) || null,
+      offerId: text(rawPayload.offerId || rawPayload.offer_id) || null,
+      ebayItemId: text(row.ebay_item_id) || null,
+      commercialGeneration:
+        number(rawPayload.commercialGeneration) ?? 1,
+      observedAt: text(row.last_ebay_sync_at) || null,
+      source: "EBAY_ACTIVE_LISTING",
+    }
+  })
+}
+
+function sameDayPublishedAcquisitionCandidate(
+  accountKey: string,
+  candidate: JsonRecord,
+  marketRadarProductId?: string | null,
+) {
+  const localProduct = record(
+    record(candidate.local_preparation_package).product,
+  )
+  const evidence = record(candidate.evidence_summary)
+  const publishedIdentity = record(evidence.publishedAcquisitionIdentity)
+  const handoff = record(candidate.manual_handoff_package)
+  return {
+    accountKey,
+    marketplace: MARKETPLACE,
+    marketRadarProductId:
+      text(marketRadarProductId || localProduct.marketRadarProductId) || null,
+    supplierVariantId: text(candidate.supplier_variant_id) || null,
+    supplierSku: text(candidate.supplier_sku) || null,
+    ebaySku: text(
+      publishedIdentity.ebaySku || handoff.ebaySku || handoff.sku,
+    ) || null,
+    offerId: text(
+      publishedIdentity.offerId || handoff.offerId,
+    ) || null,
+    ebayItemId: text(
+      publishedIdentity.ebayItemId ||
+      publishedIdentity.itemId ||
+      handoff.ebayItemId ||
+      handoff.itemId,
+    ) || null,
+    acquisitionIntent:
+      text(publishedIdentity.acquisitionIntent) === "EXPLICIT_RELIST"
+        ? "EXPLICIT_RELIST" as const
+        : text(publishedIdentity.acquisitionIntent) === "NEW_GENERATION"
+          ? "NEW_GENERATION" as const
+          : "NEW_ACQUISITION" as const,
+    commercialGeneration:
+      number(publishedIdentity.commercialGeneration) ?? 1,
+    authorizationId:
+      text(publishedIdentity.authorizationId) || null,
+  }
 }
 function text(value: unknown, limit = 500) {
   return typeof value === "string" ? value.trim().slice(0, limit) : ""
@@ -1083,12 +1168,19 @@ async function currentState(
     supabase,
     accountKey,
   )
+  const publishedAcquisitionRegistry =
+    await readPublishedAcquisitionRegistry(supabase, accountKey)
+  const publishedAcquisitionIdentities = [
+    ...activeListingPublishedIdentityRows(activeListingRows),
+    ...publishedAcquisitionRegistry.identities,
+  ]
   const activeListingReanalysisByCandidate = new Map(
     anchoredCandidates.map((candidate) => {
       const product = record(
         record(candidate.local_preparation_package).product,
       )
-      return [text(candidate.id), evaluateActiveListingCandidateReanalysisProtection({
+      const activeListingProtection =
+        evaluateActiveListingCandidateReanalysisProtection({
         machineState: text(candidate.machine_state),
         candidate: {
           accountKey,
@@ -1099,7 +1191,53 @@ async function currentState(
           supplierSku: text(candidate.supplier_sku) || null,
         },
         rows: activeListingRows,
-      })] as const
+      })
+      const publishedAcquisitionPolicy =
+        evaluateEbayPublishedAcquisitionPolicy({
+          candidate: sameDayPublishedAcquisitionCandidate(
+            accountKey,
+            record(candidate),
+            text(product.marketRadarProductId) || null,
+          ),
+          identities: publishedAcquisitionIdentities,
+          authorizations: publishedAcquisitionRegistry.authorizations,
+          machineState: text(candidate.machine_state),
+          mode: publishedAcquisitionRegistry.mode,
+          now,
+        })
+      return [text(candidate.id), {
+        ...activeListingProtection,
+        blocksReanalysis:
+          activeListingProtection.blocksReanalysis ||
+          publishedAcquisitionPolicy.enforced,
+        reasonCode: activeListingProtection.reasonCode ||
+          (publishedAcquisitionPolicy.enforced
+            ? EBAY_PUBLISHED_ACQUISITION_BLOCKER_CODE
+            : null),
+        blockerCodes: [...new Set([
+          ...activeListingProtection.blockerCodes,
+          ...publishedAcquisitionPolicy.blockerCodes,
+        ])],
+        matchedRegistryRowIds: [...new Set([
+          ...activeListingProtection.matchedRegistryRowIds,
+          ...publishedAcquisitionPolicy.matchedRegistryRowIds,
+        ])],
+        matchedEbayItemIds: [...new Set([
+          ...activeListingProtection.matchedEbayItemIds,
+          ...publishedAcquisitionPolicy.matchedEbayItemIds,
+        ])],
+        matchReasons: [...new Set([
+          ...activeListingProtection.matchReasons,
+          ...publishedAcquisitionPolicy.matchReasons,
+        ])],
+        policyVersion: publishedAcquisitionPolicy.enforced
+          ? EBAY_PUBLISHED_ACQUISITION_POLICY_VERSION
+          : activeListingProtection.policyVersion,
+        publishedAcquisitionPolicy: {
+          ...publishedAcquisitionPolicy,
+          registryAvailable: publishedAcquisitionRegistry.available,
+        },
+      }] as const
     }),
   )
   const rejectedQueueItemIds = [...new Set(anchoredCandidates.filter((candidate) =>
@@ -1174,9 +1312,29 @@ async function currentState(
       const protection = activeListingReanalysisByCandidate.get(
         text(candidate.id),
       )
-      if (!protection?.blocksReanalysis) return candidate
+      if (!protection) return candidate
+      const publishedAcquisitionPolicy =
+        protection.publishedAcquisitionPolicy
+      if (!protection.blocksReanalysis) {
+        return publishedAcquisitionPolicy.wouldBlock
+          ? {
+              ...candidate,
+              published_acquisition_policy: publishedAcquisitionPolicy,
+            }
+          : candidate
+      }
       return {
         ...candidate,
+        durable_machine_state: candidate.machine_state,
+        durable_state: candidate.state,
+        machine_state: "REJECTED",
+        state: "REJECTED_TODAY",
+        blockers: [...new Set([
+          ...strings(candidate.blockers),
+          ...protection.blockerCodes,
+        ])],
+        projection_only: true,
+        published_acquisition_policy: publishedAcquisitionPolicy,
         active_listing_reanalysis_protection: {
           blocked: true,
           durableStatus: "RECONCILIATION_PENDING",
@@ -1295,14 +1453,14 @@ async function readActiveListingCandidateProtectionRows(
     supabase
       .from("ebay_active_listings")
       .select(
-        "id,account_key,source,ebay_item_id,ebay_sku,listing_status,last_ebay_sync_at,market_radar_product_id,supplier_variant_id,supplier_sku",
+        "id,account_key,source,ebay_item_id,ebay_sku,listing_status,last_ebay_sync_at,market_radar_product_id,supplier_variant_id,supplier_sku,raw_payload",
         { count: "exact" },
       )
       .eq("account_key", accountKey)
       .in("listing_status", ["active", "ACTIVE"])
       .limit(1_000),
   )
-  const rows = (data ?? []) as ActiveListingCandidateProtectionRow[]
+  const rows = (data ?? []) as ActiveListingCandidateProtectionSourceRow[]
   const coverage = assessActiveListingCandidateProtectionCoverage({
     accountKey,
     rows,
@@ -1311,6 +1469,91 @@ async function readActiveListingCandidateProtectionRows(
     throw new Error("SAME_DAY_PILOT_ACTIVE_LISTING_PROTECTION_INCOMPLETE")
   }
   return rows
+}
+
+async function readPublishedAcquisitionRegistry(
+  supabase: SupabaseClient,
+  accountKey: string,
+): Promise<PublishedAcquisitionRegistry> {
+  const mode = resolveEbayPublishedAcquisitionPolicyMode()
+  const [identityResult, authorizationResult] = await Promise.all([
+    supabase
+      .from("ebay_published_acquisition_identities")
+      .select(
+        "id,account_key,marketplace,identity_status,market_radar_product_id,supplier_variant_id,supplier_sku,ebay_sku,offer_id,ebay_item_id,commercial_generation,observed_at,source",
+        { count: "exact" },
+      )
+      .eq("account_key", accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .in("identity_status", [
+        "ACTIVE",
+        "PUBLISHED_PENDING_VERIFICATION",
+        "MONITOR_REGISTERED",
+        "PUBLISHED_VERIFIED",
+      ])
+      .limit(1_000),
+    supabase
+      .from("ebay_published_acquisition_authorizations")
+      .select(
+        "id,account_key,marketplace,identity_id,action,commercial_generation,status,expires_at",
+        { count: "exact" },
+      )
+      .eq("account_key", accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("status", "APPROVED")
+      .gt("expires_at", new Date().toISOString())
+      .limit(100),
+  ])
+  if (identityResult.error || authorizationResult.error) {
+    if (mode === "ENFORCE") {
+      throw new Error("SAME_DAY_PILOT_PUBLISHED_IDENTITY_REGISTRY_REQUIRED")
+    }
+    return {
+      identities: [],
+      authorizations: [],
+      available: false,
+      mode,
+    }
+  }
+  if (
+    identityResult.count === null ||
+    identityResult.count !== (identityResult.data ?? []).length ||
+    authorizationResult.count === null ||
+    authorizationResult.count !== (authorizationResult.data ?? []).length
+  ) {
+    throw new Error("SAME_DAY_PILOT_PUBLISHED_IDENTITY_REGISTRY_INCOMPLETE")
+  }
+  return {
+    identities: (identityResult.data ?? []).map((row) => ({
+      id: text(row.id),
+      accountKey: text(row.account_key),
+      marketplace: text(row.marketplace),
+      identityStatus: text(row.identity_status),
+      marketRadarProductId: text(row.market_radar_product_id) || null,
+      supplierVariantId: text(row.supplier_variant_id) || null,
+      supplierSku: text(row.supplier_sku) || null,
+      ebaySku: text(row.ebay_sku) || null,
+      offerId: text(row.offer_id) || null,
+      ebayItemId: text(row.ebay_item_id) || null,
+      commercialGeneration: number(row.commercial_generation) ?? 1,
+      observedAt: text(row.observed_at) || null,
+      source: text(row.source),
+    })),
+    authorizations: (authorizationResult.data ?? []).map((row) => ({
+      id: text(row.id),
+      accountKey: text(row.account_key),
+      marketplace: text(row.marketplace),
+      identityId: text(row.identity_id),
+      action: text(row.action) === "EXPLICIT_RELIST"
+        ? "EXPLICIT_RELIST" as const
+        : "NEW_GENERATION" as const,
+      commercialGeneration: number(row.commercial_generation) ?? 1,
+      status: "APPROVED" as const,
+      expiresAt: text(row.expires_at),
+    })),
+    available: true,
+    mode,
+  }
 }
 
 async function transition(input: {
@@ -2990,22 +3233,165 @@ async function repairStaleControlledLunaConfirmationRejection(
   return 1
 }
 
+async function supersedePublishedAcquisitionCandidate(input: {
+  supabase: SupabaseClient
+  candidate: JsonRecord
+  policyVersion: string
+  matchedIdentityIds: string[]
+  matchedRegistryRowIds: string[]
+  matchedEbayItemIds: string[]
+  matchedOfferIds?: string[]
+  matchReasons: string[]
+  now: Date
+}) {
+  const candidateId = text(input.candidate.id)
+  const previousState = text(
+    input.candidate.durable_machine_state ||
+    input.candidate.machine_state,
+  )
+  if (!candidateId || !previousState) {
+    throw new Error("SAME_DAY_PILOT_PUBLISHED_CANDIDATE_IDENTITY_INVALID")
+  }
+  const matchSnapshot = {
+    policyVersion: input.policyVersion,
+    blockerCode: EBAY_PUBLISHED_ACQUISITION_BLOCKER_CODE,
+    matchedIdentityIds: input.matchedIdentityIds,
+    matchedRegistryRowIds: input.matchedRegistryRowIds,
+    matchedEbayItemIds: input.matchedEbayItemIds,
+    matchedOfferIds: input.matchedOfferIds ?? [],
+    matchReasons: input.matchReasons,
+    evidenceRetained: true,
+    historyDeleted: false,
+    ebayWrites: 0,
+  }
+  const idempotencyKey = hash({
+    candidateId,
+    policyVersion: input.policyVersion,
+    matchedIdentityIds: [...input.matchedIdentityIds].sort(),
+    blockerCode: EBAY_PUBLISHED_ACQUISITION_BLOCKER_CODE,
+  })
+  const { data, error } = await input.supabase.rpc(
+    "supersede_published_acquisition_candidate_v1",
+    {
+      p_candidate_id: candidateId,
+      p_expected_machine_state: previousState,
+      p_policy_version: input.policyVersion,
+      p_blocker_code: EBAY_PUBLISHED_ACQUISITION_BLOCKER_CODE,
+      p_match_snapshot: matchSnapshot,
+      p_idempotency_key: idempotencyKey,
+      p_now: input.now.toISOString(),
+    },
+  )
+  if (error) {
+    throw new Error(
+      "SAME_DAY_PILOT_PUBLISHED_ACQUISITION_SUPERSEDE_FAILED",
+    )
+  }
+  return record(data)
+}
+
 async function promoteNextCandidate(supabase: SupabaseClient, runId: string, ordinal: number) {
   const serialized = await serializeOpenHumanTasksForRun(supabase, runId)
   if (serialized.primaryOpenTask) return false
-  const { data, error } = await supabase.from("ebay_same_day_pilot_candidates").select("*")
+  const [{ data: run, error: runError }, { data, error }] = await Promise.all([
+    supabase.from("ebay_same_day_pilot_runs")
+      .select("marketplace_account_key,marketplace")
+      .eq("id", runId)
+      .single(),
+    supabase.from("ebay_same_day_pilot_candidates").select("*")
     .eq("run_id", runId).gt("ordinal", ordinal)
     .in("machine_state", ["RUN_CREATED", "WAITING_PRODUCT_RESEARCH_CAPTURE"])
-    .order("ordinal").limit(1).maybeSingle()
-  if (error) throw new Error("SAME_DAY_PILOT_REPLACEMENT_READ_FAILED")
+    .order("ordinal").limit(SAME_DAY_QUEUE_LIMIT),
+  ])
+  if (runError || error || !run) {
+    throw new Error("SAME_DAY_PILOT_REPLACEMENT_READ_FAILED")
+  }
+  const candidates = (data ?? []).map((candidate) => record(candidate))
+  const opportunityIds = [...new Set(candidates
+    .map((candidate) => text(candidate.opportunity_id))
+    .filter(Boolean))]
+  const { data: opportunityRows, error: opportunityError } =
+    opportunityIds.length
+      ? await supabase.from("ebay_luna_opportunity_queue")
+        .select("id,market_radar_product_id")
+        .in("id", opportunityIds)
+      : { data: [], error: null }
+  if (opportunityError) {
+    throw new Error("SAME_DAY_PILOT_REPLACEMENT_IDENTITY_READ_FAILED")
+  }
+  const opportunityById = new Map((opportunityRows ?? []).map((row) => [
+    text(row.id),
+    text(row.market_radar_product_id) || null,
+  ]))
+  const accountKey = text(run.marketplace_account_key)
+  const activeListingRows = await readActiveListingCandidateProtectionRows(
+    supabase,
+    accountKey,
+  )
+  const publishedAcquisitionRegistry =
+    await readPublishedAcquisitionRegistry(supabase, accountKey)
+  const identities = [
+    ...activeListingPublishedIdentityRows(activeListingRows),
+    ...publishedAcquisitionRegistry.identities,
+  ]
   // Older runs may already have advanced several candidates to the Product
   // Research gate before global inbox serialization superseded their extra
   // OPEN tasks. Re-bootstrap only the first eligible successor: RUN_CREATED
   // advances normally, while WAITING_PRODUCT_RESEARCH_CAPTURE recreates its
   // durable gate. Terminal and in-flight states are never reactivated, and
   // createHumanTask performs a second serialization check against races.
-  if (data) await bootstrapCandidate(supabase, runId, record(data))
-  return Boolean(data)
+  for (const candidate of candidates) {
+    const productId = opportunityById.get(text(candidate.opportunity_id)) ?? null
+    const activeProtection = evaluateActiveListingCandidateReanalysisProtection({
+      machineState: text(candidate.machine_state),
+      candidate: {
+        accountKey,
+        marketRadarProductId: productId,
+        supplierVariantId: text(candidate.supplier_variant_id) || null,
+        supplierSku: text(candidate.supplier_sku) || null,
+      },
+      rows: activeListingRows,
+    })
+    const publishedPolicy = evaluateEbayPublishedAcquisitionPolicy({
+      candidate: sameDayPublishedAcquisitionCandidate(
+        accountKey,
+        candidate,
+        productId,
+      ),
+      identities,
+      authorizations: publishedAcquisitionRegistry.authorizations,
+      machineState: text(candidate.machine_state),
+      mode: publishedAcquisitionRegistry.mode,
+    })
+    if (activeProtection.blocksReanalysis || publishedPolicy.enforced) {
+      await supersedePublishedAcquisitionCandidate({
+        supabase,
+        candidate,
+        policyVersion: publishedPolicy.enforced
+          ? publishedPolicy.policyVersion
+          : ACTIVE_LISTING_REANALYSIS_POLICY_VERSION,
+        matchedIdentityIds: publishedPolicy.matchedIdentityIds,
+        matchedRegistryRowIds: [...new Set([
+          ...activeProtection.matchedRegistryRowIds,
+          ...publishedPolicy.matchedRegistryRowIds,
+        ])],
+        matchedEbayItemIds: [...new Set([
+          ...activeProtection.matchedEbayItemIds,
+          ...publishedPolicy.matchedEbayItemIds,
+        ])],
+        matchedOfferIds: publishedPolicy.matchedOfferIds,
+        matchReasons: [...new Set([
+          ...activeProtection.matchReasons,
+          ...publishedPolicy.matchReasons,
+        ])],
+        now: new Date(),
+      })
+      continue
+    }
+    await bootstrapCandidate(supabase, runId, candidate)
+    return true
+  }
+  return false
 }
 
 async function promoteImmediateSuccessorDuringQuotaPause(
@@ -3566,6 +3952,12 @@ export async function previewSameDayPilot(input: {
     accountKey: input.accountKey,
     rows: activeListingRows,
   })
+  const publishedAcquisitionRegistry =
+    await readPublishedAcquisitionRegistry(input.supabase, input.accountKey)
+  const publishedAcquisitionIdentities = [
+    ...activeListingPublishedIdentityRows(activeListingRows),
+    ...publishedAcquisitionRegistry.identities,
+  ]
   const excludedOpportunityIds = new Set(
     (input.excludeOpportunityIds ?? []).map((id) => text(id)).filter(Boolean),
   )
@@ -3600,7 +3992,8 @@ export async function previewSameDayPilot(input: {
       const key =
         `${text(row.market_radar_product_id)}:${text(row.supplier_variant_id)}`
       const variant = record(variantByKey.get(key) ?? {})
-      return [text(row.id), evaluateActiveListingCandidateProtection({
+      const activeListingProtection =
+        evaluateActiveListingCandidateProtection({
         candidate: {
           accountKey: input.accountKey,
           marketRadarProductId: text(row.market_radar_product_id) || null,
@@ -3609,7 +4002,39 @@ export async function previewSameDayPilot(input: {
           supplierSku: text(variant.sku || row.supplier_sku) || null,
         },
         rows: activeListingRows,
-      })] as const
+      })
+      const publishedAcquisitionPolicy =
+        evaluateEbayPublishedAcquisitionPolicy({
+          candidate: {
+            accountKey: input.accountKey,
+            marketplace: MARKETPLACE,
+            marketRadarProductId:
+              text(row.market_radar_product_id) || null,
+            supplierVariantId:
+              text(variant.supplier_variant_id || row.supplier_variant_id) ||
+              null,
+            supplierSku:
+              text(variant.sku || row.supplier_sku) || null,
+            ebaySku: null,
+            offerId: null,
+            ebayItemId: null,
+            acquisitionIntent: "NEW_ACQUISITION",
+            commercialGeneration: 1,
+            authorizationId: null,
+          },
+          identities: publishedAcquisitionIdentities,
+          authorizations: publishedAcquisitionRegistry.authorizations,
+          machineState: "CANDIDATE_SELECTION",
+          mode: publishedAcquisitionRegistry.mode,
+          now,
+        })
+      return [text(row.id), {
+        ...activeListingProtection,
+        excluded:
+          activeListingProtection.excluded ||
+          publishedAcquisitionPolicy.enforced,
+        publishedAcquisitionPolicy,
+      }] as const
     }),
   )
   const activeListingExcludedOpportunityIds = new Set(
@@ -4349,7 +4774,9 @@ async function reconcileAlreadyListedSameDayCandidates(input: {
   for (const candidate of protectedCandidates) {
     const candidateId = text(candidate.id)
     const runId = text(candidate.run_id || input.state.run.id)
-    const previousState = text(candidate.machine_state)
+    const previousState = text(
+      candidate.durable_machine_state || candidate.machine_state,
+    )
     const protection = record(
       candidate.active_listing_reanalysis_protection,
     )
@@ -4357,8 +4784,13 @@ async function reconcileAlreadyListedSameDayCandidates(input: {
     const matchedEbayItemIds = strings(protection.matchedEbayItemIds)
     const matchReasons = strings(protection.matchReasons)
     const checkpoint = {
-      policyVersion: ACTIVE_LISTING_REANALYSIS_POLICY_VERSION,
-      blockerCode: ACTIVE_LISTING_REANALYSIS_REASON_CODE,
+      policyVersion: text(protection.policyVersion) ||
+        ACTIVE_LISTING_REANALYSIS_POLICY_VERSION,
+      blockerCode: text(protection.reasonCode) ||
+        EBAY_PUBLISHED_ACQUISITION_BLOCKER_CODE,
+      matchedIdentityIds: strings(
+        record(candidate.published_acquisition_policy).matchedIdentityIds,
+      ),
       matchedRegistryRowIds,
       matchedEbayItemIds,
       matchReasons,
@@ -4372,7 +4804,7 @@ async function reconcileAlreadyListedSameDayCandidates(input: {
       candidateId,
       previousState,
       nextState: "REJECTED",
-      reasonCode: ACTIVE_LISTING_REANALYSIS_REASON_CODE,
+      reasonCode: text(checkpoint.blockerCode),
       triggeredBy: "SCHEDULER",
       checkpoint,
       nextAutomaticAction:
@@ -4384,7 +4816,7 @@ async function reconcileAlreadyListedSameDayCandidates(input: {
         .from("ebay_same_day_pilot_candidates")
         .update({
           state: "REJECTED_TODAY",
-          blockers: [ACTIVE_LISTING_REANALYSIS_REASON_CODE],
+          blockers: [text(checkpoint.blockerCode)],
           evidence_summary: {
             ...record(candidate.evidence_summary),
             activeListingReconciliation: {
@@ -4422,7 +4854,7 @@ async function reconcileAlreadyListedSameDayCandidates(input: {
       .from("ebay_same_day_pilot_jobs")
       .update({
         status: "CANCELLED",
-        last_error_code: ACTIVE_LISTING_REANALYSIS_REASON_CODE,
+        last_error_code: text(checkpoint.blockerCode),
         updated_at: input.now.toISOString(),
       })
       .eq("run_id", runId)
@@ -5414,6 +5846,20 @@ export async function decideSameDayImages(input: {
 export async function resumeSameDayPilotAfterProductResearchCapture(input: { supabase: SupabaseClient; accountKey: string; searchQuery: string; batchId: string; capturedAt?: string | null; exactLunaMatches?: number }) {
   const state = await getSameDayPilot(input)
   if (!state) return { resumed: 0, familyEnriched: 0 }
+  const publishedAcquisitionReconciliation =
+    await reconcileAlreadyListedSameDayCandidates({
+      supabase: input.supabase,
+      state,
+      now: new Date(),
+    })
+  if (publishedAcquisitionReconciliation.reconciled > 0) {
+    return {
+      resumed: 0,
+      familyEnriched: 0,
+      publishedAcquisitionReconciliation,
+      ebayWrites: 0,
+    }
+  }
   const [{ count: captureObservationCount, error: captureObservationError },
     { data: captureBatch, error: captureBatchError }] = await Promise.all([
     input.supabase
@@ -5439,6 +5885,7 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
   const capturedQueryHash = productResearchPlannedQueryHash(input.searchQuery)
   const familyCandidates = state.candidates.filter((candidate) =>
     !["REJECTED", "BLOCKED", "VERIFIED_ACTIVE", "COMPLETED"].includes(text(candidate.machine_state)) &&
+    record(candidate.active_listing_reanalysis_protection).blocked !== true &&
     (productResearchPlannedQueryHash(record(candidate.product_research_query_plan).query) ===
       capturedQueryHash || productResearchQueriesMatch(
         record(candidate.product_research_query_plan).query,

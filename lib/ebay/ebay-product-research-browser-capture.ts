@@ -89,6 +89,7 @@ export type ProductResearchBrowserCapture = {
 type NormalizedCaptureRow = {
   sourceListingId: string | null
   sourceListingReferenceHash: string
+  sellerReferenceFingerprint: string | null
   titleFingerprint: string
   identityHash: string
   productFamilyFingerprint: string
@@ -362,6 +363,11 @@ function normalizeCaptureRow(
   const row = record(value)
   const transientTitle = normalizedText(row.temporaryTitle)
   const sourceListingId = normalizedText(row.listingId, 30)
+  const sellerReference = normalizedText(row.sellerReference, 120)
+    ?.toLocaleLowerCase("en-US") ?? null
+  const sellerReferenceFingerprint = sellerReference
+    ? sha256(`ebay-seller:${sellerReference}`)
+    : null
   const averageSoldPrice = finiteNonNegative(row.averageSoldPrice)
   const averageShipping = row.averageShipping === null || row.averageShipping === undefined
     ? null : finiteNonNegative(row.averageShipping)
@@ -404,7 +410,10 @@ function normalizeCaptureRow(
     : null
   return {
     sourceListingId,
-    sourceListingReferenceHash: sha256(sourceListingId ?? identityHash),
+    sourceListingReferenceHash: sha256(
+      sourceListingId ?? { identityHash, sellerReferenceFingerprint },
+    ),
+    sellerReferenceFingerprint,
     titleFingerprint: sha256(transientTitle.toLocaleLowerCase("en-US")),
     identityHash,
     productFamilyFingerprint,
@@ -635,6 +644,7 @@ export function productResearchCapturePersistenceRows(rows: ClassifiedProductRes
     return ({
     source_listing_id: row.sourceListingId,
     source_listing_reference_hash: row.sourceListingReferenceHash,
+    seller_reference_fingerprint: row.sellerReferenceFingerprint,
     title_fingerprint: row.titleFingerprint,
     identity_hash: row.identityHash,
     evidence_deduplication_key: row.deduplicationKey,
