@@ -54,8 +54,8 @@ const LUNA_CATALOG_DEFAULT_PAGE_BUDGET = 4
 const LUNA_CATALOG_MINIMUM_REMAINING_MS = 5_000
 const LUNA_CATALOG_REQUEST_TIMEOUT_MS = 8_000
 const POSTGREST_FILTER_CHUNK_SIZE = 100
-const PRODUCT_WRITE_BATCH_SIZE = 25
-const SNAPSHOT_WRITE_BATCH_SIZE = 50
+const PRODUCT_WRITE_BATCH_SIZE = 100
+const SNAPSHOT_WRITE_BATCH_SIZE = 100
 const EVENT_WRITE_BATCH_SIZE = 50
 const SCORE_WRITE_BATCH_SIZE = 50
 const MINIMUM_ADAPTIVE_BATCH_SIZE = 5
@@ -1328,6 +1328,10 @@ async function fetchAuthenticatedProductInventory(
           getLunaPortexRequestHeaders(),
         cache:
           "no-store",
+        signal:
+          AbortSignal.timeout(
+            LUNA_CATALOG_REQUEST_TIMEOUT_MS
+          ),
       }
     )
 
@@ -1372,6 +1376,10 @@ async function fetchAuthenticatedProductHtml(
         headers,
         cache:
           "no-store",
+        signal:
+          AbortSignal.timeout(
+            LUNA_CATALOG_REQUEST_TIMEOUT_MS
+          ),
       }
     )
 
@@ -1430,6 +1438,10 @@ async function getLunaPortexAuthState(
           headers,
           cache:
             "no-store",
+          signal:
+            AbortSignal.timeout(
+              LUNA_CATALOG_REQUEST_TIMEOUT_MS
+            ),
         }
       )
 
@@ -2596,11 +2608,11 @@ async function upsertProducts(
 
 async function getLatestSnapshots(
   supabase: SupabaseClient,
-  productIds: string[],
-  currentCatalogScanRunId: string | null
+  productIds: string[]
 ) {
   const snapshots =
     new Map<string, LatestSnapshotRecord>()
+  const snapshotIds: string[] = []
 
   for (
     const productIdChunk of chunkArray(
@@ -2608,14 +2620,57 @@ async function getLatestSnapshots(
       POSTGREST_FILTER_CHUNK_SIZE
     )
   ) {
-    const historyLimit =
-      Math.min(
-        Math.max(productIdChunk.length * 8, 100),
-        1000
+    const pageSize = 500
+    for (
+      let offset = 0;
+      ;
+      offset += pageSize
+    ) {
+      const { data, error } =
+        await supabase
+          .from(
+            "market_radar_current_variant_snapshots"
+          )
+          .select("snapshot_id")
+          .in(
+            "product_id",
+            productIdChunk
+          )
+          .order(
+            "snapshot_id",
+            {
+              ascending:
+                true,
+            }
+          )
+          .range(
+            offset,
+            offset + pageSize - 1
+          )
+      if (error) {
+        throw new Error(
+          `SNAPSHOT_BASELINE_POINTER_LOOKUP_FAILED: ${error.message}`
+        )
+      }
+      snapshotIds.push(
+        ...(data || []).map(row =>
+          String(row.snapshot_id)
+        )
       )
+      if ((data || []).length < pageSize) {
+        break
+      }
+    }
+  }
 
-    let query =
-      supabase
+  for (
+    const snapshotIdChunk of chunkArray(
+      snapshotIds,
+      POSTGREST_FILTER_CHUNK_SIZE
+    )
+  ) {
+    const { data, error } =
+      await supabase
         .from("market_radar_snapshots")
         .select(`
           product_id,
@@ -2628,56 +2683,15 @@ async function getLatestSnapshots(
           captured_at
         `)
         .in(
-          "product_id",
-          productIdChunk
+          "id",
+          snapshotIdChunk
         )
-
-    if (currentCatalogScanRunId) {
-      query =
-        query.or(
-          `catalog_scan_run_id.is.null,catalog_scan_run_id.neq.${currentCatalogScanRunId}`
-        )
-    }
-
-    const {
-      data,
-      error,
-    } =
-      await query
-        .order(
-          "captured_at",
-          {
-            ascending:
-              false,
-            nullsFirst:
-              false,
-          }
-        )
-        .limit(
-          historyLimit
-        )
-
     if (error) {
-      if (
-        isStatementTimeoutError(
-          error
-        )
-      ) {
-        console.warn(
-          "MARKET RADAR SNAPSHOT HISTORY LOOKUP TIMEOUT; CONTINUING WITHOUT PREVIOUS SNAPSHOTS FOR CHUNK:",
-          error.message
-        )
-        continue
-      }
-
       throw new Error(
-        error.message
+        `SNAPSHOT_BASELINE_READ_FAILED: ${error.message}`
       )
     }
-
-    ;(
-      data || []
-    ).forEach(snapshot => {
+    ;(data || []).forEach(snapshot => {
       const typedSnapshot =
         snapshot as LatestSnapshotRecord
       const snapshotKey =
@@ -3950,8 +3964,7 @@ export async function runLunaPortexMarketRadarSync(
     const latestSnapshots =
       await getLatestSnapshots(
         supabase,
-        productIds,
-        productFetchResult.catalogScanRunId
+        productIds
       )
 
     const {

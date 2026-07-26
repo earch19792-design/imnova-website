@@ -22423,7 +22423,7 @@ test("lunaportex inventory: html autenticado requiere sesion approved", () => {
   )
 })
 
-test("lunaportex sync: latest snapshots usa historial acotado para evitar timeout", () => {
+test("lunaportex sync: latest snapshots usa puntero indexado sin escanear historial", () => {
   const source =
     fs.readFileSync(
       path.resolve(
@@ -22434,21 +22434,21 @@ test("lunaportex sync: latest snapshots usa historial acotado para evitar timeou
 
   assert.match(
     source,
-    /function getLatestSnapshots[\s\S]*\.from\("market_radar_snapshots"\)/
+    /function getLatestSnapshots[\s\S]*market_radar_current_variant_snapshots/
   )
   assert.match(
     source,
-    /function getLatestSnapshots[\s\S]*historyLimit[\s\S]*\.limit\(\s*historyLimit\s*\)/
+    /function getLatestSnapshots[\s\S]*\.from\("market_radar_snapshots"\)[\s\S]*\.in\(\s*"id"/
   )
   assert.doesNotMatch(
     source,
-    /function getLatestSnapshots[\s\S]*\.from\("market_radar_latest_snapshots"\)/
+    /function getLatestSnapshots[\s\S]*historyLimit/
   )
   assert.match(
     source,
     /function isStatementTimeoutError[\s\S]*57014[\s\S]*canceling statement due to statement timeout/
   )
-  assert.match(
+  assert.doesNotMatch(
     source,
     /MARKET RADAR SNAPSHOT HISTORY LOOKUP TIMEOUT; CONTINUING WITHOUT PREVIOUS SNAPSHOTS FOR CHUNK/
   )
