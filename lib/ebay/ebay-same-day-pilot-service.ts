@@ -3915,6 +3915,62 @@ async function readSameDayPilotPreviewSource<T extends { error: unknown }>(
   }
 }
 
+type SameDayEligibleOpportunityRow = JsonRecord & {
+  id: string
+  candidate_key: string
+  market_radar_product_id: string | null
+  supplier_variant_id: string | null
+  supplier_sku: string | null
+}
+
+function sameDayEligibleOpportunityRow(
+  value: unknown,
+): SameDayEligibleOpportunityRow | null {
+  const row = record(value)
+  const id = text(row.id)
+  const candidateKey = text(row.candidate_key)
+  if (!id || !candidateKey) return null
+  return {
+    ...row,
+    id,
+    candidate_key: candidateKey,
+    market_radar_product_id:
+      text(row.market_radar_product_id) || null,
+    supplier_variant_id: text(row.supplier_variant_id) || null,
+    supplier_sku: text(row.supplier_sku) || null,
+  }
+}
+
+async function readEligibleSameDayOpportunities(input: {
+  supabase: SupabaseClient
+  accountKey: string
+}) {
+  try {
+    const result: { data: unknown; error: unknown } =
+      await input.supabase.rpc(
+        "read_eligible_ebay_luna_opportunities_v2",
+        {
+          p_account_key: input.accountKey,
+          p_marketplace: MARKETPLACE,
+          p_limit: 70,
+          p_offset: 0,
+        },
+      )
+    if (result.error) throw new Error("SOURCE_READ_REJECTED")
+    const rawRows = result.data == null ? [] : result.data
+    if (!Array.isArray(rawRows)) throw new Error("SOURCE_SHAPE_REJECTED")
+    const data: SameDayEligibleOpportunityRow[] = []
+    for (const value of rawRows) {
+      const row = sameDayEligibleOpportunityRow(value)
+      if (!row) throw new Error("SOURCE_ROW_SHAPE_REJECTED")
+      data.push(row)
+    }
+    return { data, error: null }
+  } catch {
+    throw new Error("SAME_DAY_PILOT_SOURCE_READ_FAILED:OPPORTUNITY")
+  }
+}
+
 export async function previewSameDayPilot(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -3927,10 +3983,10 @@ export async function previewSameDayPilot(input: {
   const now = input.now ?? new Date()
   const [{ data: opportunities }, { data: quotas }, { data: monitor },
     productResearchCount, activeListingRows] = await Promise.all([
-    readSameDayPilotPreviewSource(
-      "OPPORTUNITY",
-      input.supabase.from("ebay_luna_opportunity_queue").select("*").in("queue_status", ["watchlist", "review", "ready"]).order("opportunity_score", { ascending: false }).limit(70),
-    ),
+    readEligibleSameDayOpportunities({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+    }),
     readSameDayPilotPreviewSource(
       "QUOTA",
       input.supabase.from("ebay_api_quota_states").select("api_family,operation,status,remaining,reserved_budget,available_budget,reset_at,owner_lane"),
@@ -3987,8 +4043,16 @@ export async function previewSameDayPilot(input: {
       return [text(product.id), { ...extracted.facts, source: extracted.source,
         evidenceHash: extracted.evidenceHash }] as const
     }))
-  const activeListingProtectionByOpportunity = new Map(
-    eligibleOpportunities.map((row) => {
+  type SameDayOpportunityProtection =
+    ReturnType<typeof evaluateActiveListingCandidateProtection> & {
+      excluded: boolean
+      publishedAcquisitionPolicy:
+        ReturnType<typeof evaluateEbayPublishedAcquisitionPolicy>
+    }
+  const activeListingProtectionByOpportunity =
+    new Map<string, SameDayOpportunityProtection>(
+    eligibleOpportunities.map(
+      (row): [string, SameDayOpportunityProtection] => {
       const key =
         `${text(row.market_radar_product_id)}:${text(row.supplier_variant_id)}`
       const variant = record(variantByKey.get(key) ?? {})
@@ -4034,7 +4098,7 @@ export async function previewSameDayPilot(input: {
           activeListingProtection.excluded ||
           publishedAcquisitionPolicy.enforced,
         publishedAcquisitionPolicy,
-      }] as const
+      }]
     }),
   )
   const activeListingExcludedOpportunityIds = new Set(

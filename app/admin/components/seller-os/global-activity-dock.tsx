@@ -29,6 +29,26 @@ function consultedLabel(value: string | null) {
   }).format(new Date(value))
 }
 
+function emptyActivityTitle(
+  state: SellerOsOperationReadModel["operationalState"],
+) {
+  if (state === "ACCOUNT_SCOPE_MISMATCH") return "Cuenta fuera del alcance"
+  if (state === "SOURCE_UNAVAILABLE") return "Actividad no disponible"
+  return "Sin lote operativo"
+}
+
+function emptyActivityMessage(
+  state: SellerOsOperationReadModel["operationalState"],
+) {
+  if (state === "ACCOUNT_SCOPE_MISMATCH") {
+    return "Revisa la cuenta de eBay configurada. No se mezclaron datos de otra cuenta."
+  }
+  if (state === "SOURCE_UNAVAILABLE") {
+    return "No fue posible confirmar el lote durable. No se mostraron ceros ni progreso supuesto."
+  }
+  return "La consulta confirmó que no existe un lote operativo para esta cuenta."
+}
+
 export function GlobalActivityDock({
   className = "",
   journeyHref = "/admin#today-launch",
@@ -118,7 +138,7 @@ export function GlobalActivityDock({
             Actividad de Seller OS
           </p>
           <h2 className="mt-1 text-base font-black">
-            {batch ? "Último lote observado" : "Sin lote observado"}
+            {batch ? "Último lote observado" : emptyActivityTitle(activity.operationalState)}
           </h2>
         </div>
         {batch
@@ -194,8 +214,12 @@ export function GlobalActivityDock({
       )}
 
       {activity.availability !== "LOADING" && !batch && (
-        <p className="mt-3 text-sm leading-6 text-white/60">
-          La consulta no confirmó un lote. No se mostraron ceros ni progreso simulado.
+        <p
+          className="mt-3 text-sm leading-6 text-white/60"
+          role="status"
+          aria-live="polite"
+        >
+          {emptyActivityMessage(activity.operationalState)}
         </p>
       )}
 

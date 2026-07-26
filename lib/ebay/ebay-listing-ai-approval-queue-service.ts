@@ -1006,20 +1006,80 @@ async function loadTop20TargetCatalog(supabase: SupabaseClient) {
   return rows
 }
 
-async function loadPriorIntelligenceProductIds(supabase: SupabaseClient) {
-  const ids: string[] = []
+function acquisitionIdentityKeys(value: unknown) {
+  const row = record(value)
+  const productId = text(row.market_radar_product_id ?? row.productId)
+  const supplierVariantId = text(
+    row.supplier_variant_id ?? row.supplierVariantId,
+  )
+  const supplierSku = text(row.supplier_sku ?? row.supplierSku)
+  return [
+    productId && supplierVariantId
+      ? `PRODUCT_VARIANT:${productId}:${supplierVariantId}`
+      : null,
+    supplierSku ? `SUPPLIER_SKU:${supplierSku.toUpperCase()}` : null,
+  ].filter((entry): entry is string => Boolean(entry))
+}
+
+export function filterApprovalQueueCatalogByAcquisitionEligibility(input: {
+  catalog: Top20TargetCandidate[]
+  queuedRows: unknown[]
+  eligibleRows: unknown[]
+}) {
+  const eligibleIds = new Set(input.eligibleRows
+    .map((row) => text(record(row).id))
+    .filter((value): value is string => Boolean(value)))
+  const blockedIdentityKeys = new Set(input.queuedRows
+    .filter((row) => {
+      const id = text(record(row).id)
+      return Boolean(id && !eligibleIds.has(id))
+    })
+    .flatMap(acquisitionIdentityKeys))
+  return input.catalog.filter((candidate) =>
+    acquisitionIdentityKeys(candidate).every((key) =>
+      !blockedIdentityKeys.has(key)))
+}
+
+async function loadPriorIntelligenceScope(
+  supabase: SupabaseClient,
+  accountKey: string,
+) {
+  const queuedRows: JsonRecord[] = []
+  const eligibleRows: JsonRecord[] = []
   for (let offset = 0; ; offset += TARGET_CATALOG_PAGE_SIZE) {
     const { data, error } = await supabase.from("ebay_luna_opportunity_queue")
-      .select("market_radar_product_id,opportunity_score")
+      .select("id,candidate_key,market_radar_product_id,supplier_variant_id,supplier_sku,opportunity_score,queue_status")
+      .in("queue_status", ["watchlist", "review", "ready"])
       .order("opportunity_score", { ascending: false, nullsFirst: false })
       .range(offset, offset + TARGET_CATALOG_PAGE_SIZE - 1)
     if (error) throw new Error("TOP20_PRIOR_INTELLIGENCE_READ_FAILED")
-    ids.push(...(data ?? []).map((row) => text(row.market_radar_product_id)).filter(
-      (value): value is string => Boolean(value),
-    ))
+    queuedRows.push(...(data ?? []).map(record))
     if ((data ?? []).length < TARGET_CATALOG_PAGE_SIZE) break
   }
-  return ids
+  let offset = 0
+  for (;;) {
+    const { data, error } = await supabase.rpc(
+      "read_eligible_ebay_luna_opportunities_v2",
+      {
+        p_account_key: accountKey,
+        p_marketplace: MARKETPLACE,
+        p_limit: TARGET_CATALOG_PAGE_SIZE,
+        p_offset: offset,
+      },
+    )
+    if (error) throw new Error("TOP20_ELIGIBLE_PRIOR_INTELLIGENCE_READ_FAILED")
+    const page = (data ?? []).map(record)
+    eligibleRows.push(...page)
+    if (page.length < TARGET_CATALOG_PAGE_SIZE) break
+    offset += page.length
+  }
+  return {
+    queuedRows,
+    eligibleRows,
+    productIds: eligibleRows
+      .map((row) => text(row.market_radar_product_id))
+      .filter((value): value is string => Boolean(value)),
+  }
 }
 
 async function ensureTop20RunTargets(
@@ -1034,24 +1094,29 @@ async function ensureTop20RunTargets(
   if (countError) throw new Error("TOP20_TARGET_COUNT_FAILED")
   if ((count ?? 0) > 0) return count ?? 0
 
-  const [catalogRows, priorIds] = await Promise.all([
+  const [catalogRows, priorScope] = await Promise.all([
     loadTop20TargetCatalog(supabase),
-    loadPriorIntelligenceProductIds(supabase),
+    loadPriorIntelligenceScope(supabase, accountKey),
   ])
-  const catalog: Top20TargetCandidate[] = catalogRows.map((row) => ({
+  const unfilteredCatalog: Top20TargetCandidate[] = catalogRows.map((row) => ({
     productId: text(row.product_id) ?? "",
     supplierProductId: text(row.supplier_product_id),
     supplierVariantId: text(row.supplier_variant_id),
     supplierSku: text(row.sku),
     priorityScore: number(row.seller_scan_priority_score) ?? 0,
   })).filter((row) => row.productId)
+  const catalog = filterApprovalQueueCatalogByAcquisitionEligibility({
+    catalog: unfilteredCatalog,
+    queuedRows: priorScope.queuedRows,
+    eligibleRows: priorScope.eligibleRows,
+  })
   const radarProductIds = [...catalog]
     .sort((left, right) => right.priorityScore - left.priorityScore || left.productId.localeCompare(right.productId))
     .slice(0, 5).map((row) => row.productId)
   const manifest = buildTop20TargetManifest({
     catalog,
     radarProductIds,
-    priorIntelligenceProductIds: priorIds,
+    priorIntelligenceProductIds: priorScope.productIds,
   })
   for (let offset = 0; offset < manifest.length; offset += TARGET_INSERT_PAGE_SIZE) {
     const page = manifest.slice(offset, offset + TARGET_INSERT_PAGE_SIZE).map((target) => ({

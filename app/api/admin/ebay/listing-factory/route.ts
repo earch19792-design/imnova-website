@@ -16,6 +16,7 @@ import {
   sha256Hex,
   type FactorySimulationCandidate,
 } from "@/lib/ebay/ebay-resilient-listing-factory-domain"
+import { getSameDayPilot } from "@/lib/ebay/ebay-same-day-pilot-service"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
 function response(payload: unknown, status = 200) {
@@ -32,6 +33,79 @@ function record(value: unknown): Record<string, unknown> {
 
 function string(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
+}
+
+function nonnegativeNumber(value: unknown) {
+  if (typeof value !== "number" && typeof value !== "string") return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+function sameDayOperationalActivity(
+  pilot: Awaited<ReturnType<typeof getSameDayPilot>>,
+  observedAt: string,
+) {
+  if (!pilot) {
+    return {
+      status: "NO_RUN",
+      source: "ebay_same_day_pilot_runs",
+      observedAt,
+      run: null,
+    }
+  }
+  const run = record(pilot.run)
+  const runId = string(run.id)
+  if (!runId) {
+    return {
+      status: "SOURCE_UNAVAILABLE",
+      source: "ebay_same_day_pilot_runs",
+      observedAt,
+      error: "SAME_DAY_ACTIVITY_RUN_ID_MISSING",
+      run: null,
+    }
+  }
+  const candidates = Array.isArray(pilot.candidates)
+    ? pilot.candidates.map(record)
+    : null
+  const tasks = Array.isArray(pilot.tasks) ? pilot.tasks.map(record) : null
+  const cycleHistory = record(pilot.cycleHistory)
+  const verifiedPilotProgress = nonnegativeNumber(
+    cycleHistory.verifiedPilotProgress,
+  )
+  const verifiedExisting = nonnegativeNumber(run.verified_existing_listings)
+  const verifiedNew = nonnegativeNumber(run.verified_new_listings)
+  const confirmedCompleted = verifiedPilotProgress ??
+    (verifiedExisting !== null && verifiedNew !== null
+      ? verifiedExisting + verifiedNew
+      : null)
+  const quarantined = candidates
+    ? candidates.filter((candidate) => [
+        "QUARANTINED_UNKNOWN_ERROR",
+        "QUARANTINED_OPTIMIZATION_ERROR",
+      ].includes(string(candidate.machine_state).toUpperCase())).length
+    : null
+  const pendingHumanDecisions = tasks
+    ? tasks.filter((task) => string(task.status).toUpperCase() === "OPEN").length
+    : null
+
+  return {
+    status: "AVAILABLE",
+    source: "ebay_same_day_pilot_runs",
+    observedAt,
+    run: {
+      run_id: runId,
+      operation_date: string(run.operation_date) || null,
+      status: string(run.status) || "UNKNOWN",
+      products_selected: candidates?.length ?? null,
+      products_completed: confirmedCompleted,
+      products_on_hold: null,
+      products_quarantined: quarantined,
+      pending_human_decisions: pendingHumanDecisions,
+      last_confirmed_success_at:
+        string(run.factory_last_success_at || run.completed_at) || null,
+      observed_at: observedAt,
+    },
+  }
 }
 
 function safeCode(error: unknown) {
@@ -94,13 +168,44 @@ export async function GET(req: Request) {
   if (auth.error) return auth.error
   const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
   const supabase = getSupabaseAdminClient()
-  const runResult = accountKey
-    ? await supabase.from("ebay_listing_factory_run_metrics_v1")
-      .select("*")
-      .eq("marketplace_account_key", accountKey)
-      .order("operation_date", { ascending: false })
-      .limit(20)
-    : { data: [], error: null }
+  const observedAt = new Date().toISOString()
+  const [runResult, sameDayRead] = await Promise.all([
+    accountKey
+      ? supabase.from("ebay_listing_factory_run_metrics_v1")
+        .select("*")
+        .eq("marketplace_account_key", accountKey)
+        .order("operation_date", { ascending: false })
+        .limit(20)
+      : Promise.resolve({ data: [], error: null }),
+    accountKey
+      ? getSameDayPilot({ supabase, accountKey })
+        .then((pilot) => ({ pilot, error: null as string | null }))
+        .catch(() => ({
+          pilot: null,
+          error: "SAME_DAY_ACTIVITY_SOURCE_UNAVAILABLE",
+        }))
+      : Promise.resolve({
+          pilot: null,
+          error: "ACCOUNT_SCOPE_MISMATCH",
+        }),
+  ])
+  const operationalActivity = !accountKey
+    ? {
+        status: "ACCOUNT_SCOPE_MISMATCH",
+        source: "ebay_same_day_pilot_runs",
+        observedAt,
+        error: "SAME_DAY_PILOT_ACCOUNT_SCOPE_REQUIRED",
+        run: null,
+      }
+    : sameDayRead.error
+      ? {
+          status: "SOURCE_UNAVAILABLE",
+          source: "ebay_same_day_pilot_runs",
+          observedAt,
+          error: sameDayRead.error,
+          run: null,
+        }
+      : sameDayOperationalActivity(sameDayRead.pilot, observedAt)
   const runIds = (runResult.data ?? []).map((run) => String(run.run_id))
   const [quarantineResult, circuitResult] = await Promise.all([
     runIds.length
@@ -130,6 +235,7 @@ export async function GET(req: Request) {
       ebayWrites: 0,
       canPublish: false,
     },
+    operationalActivity,
     resilientFactory: {
       migrationReady: !resilientError,
       error: resilientError ? "LISTING_FACTORY_MIGRATION_NOT_READY" : null,

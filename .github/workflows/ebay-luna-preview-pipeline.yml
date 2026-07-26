@@ -1,0 +1,66 @@
+name: eBay Luna Preview discovery pipeline
+
+on:
+  # GitHub only evaluates scheduled workflows from the default branch.
+  # workflow_dispatch remains available for an explicitly selected revision.
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ebay-luna-preview-discovery-pipeline
+  cancel-in-progress: false
+
+jobs:
+  refresh-and-scan:
+    # Preview/staging only. The two server routes remain independently
+    # authenticated and all notification/eBay mutation flags stay fail-closed.
+    if: >-
+      vars.EBAY_LUNA_PREVIEW_PIPELINE_ENABLED == 'true' &&
+      vars.LUNA_MARKET_RADAR_NOTIFICATION_DISPATCH_ENABLED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PREVIEW_URL: ${{ secrets.EBAY_COMMERCIAL_PREVIEW_URL }}
+      CRON_SECRET: ${{ secrets.EBAY_COMMERCIAL_CRON_SECRET }}
+      VERCEL_BYPASS_SECRET: ${{ secrets.EBAY_COMMERCIAL_VERCEL_BYPASS_SECRET }}
+    steps:
+      - name: Validate Preview authorization contract
+        shell: bash
+        run: |
+          test -n "$PREVIEW_URL"
+          test -n "$CRON_SECRET"
+          case "${PREVIEW_URL%/}" in
+            https://imnova-ebay-mobile-preprod.vercel.app) ;;
+            *)
+              echo "PREVIEW_URL must target the authorized preproduction alias" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Refresh Luna catalog and inventory evidence
+        shell: bash
+        run: |
+          args=(--fail --silent --show-error --max-time 55
+            --output /dev/null
+            --write-out 'Luna sync HTTP %{http_code}\n'
+            -H "Authorization: Bearer $CRON_SECRET")
+          if [ -n "$VERCEL_BYPASS_SECRET" ]; then
+            args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
+          fi
+          curl "${args[@]}" "${PREVIEW_URL%/}/api/cron/market-radar-luna-sync"
+
+      - name: Scan refreshed Luna opportunities against eBay read models
+        shell: bash
+        run: |
+          args=(--fail --silent --show-error --max-time 55
+            --output /dev/null
+            --write-out 'Opportunity scan HTTP %{http_code}\n'
+            -H "Authorization: Bearer $CRON_SECRET")
+          if [ -n "$VERCEL_BYPASS_SECRET" ]; then
+            args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
+          fi
+          curl "${args[@]}" "${PREVIEW_URL%/}/api/cron/ebay-luna-opportunity-scan"

@@ -473,71 +473,36 @@ type QueueScopeColumns = {
   marketplace: "marketplace" | "marketplace_id" | null
 }
 
-async function detectQueueScopeColumns(
-  supabase: SupabaseClient,
-): Promise<QueueScopeColumns> {
-  const { data, error } = await supabase
-    .from("ebay_luna_opportunity_queue")
-    .select("*")
-    .order("candidate_key", { ascending: true })
-    .order("id", { ascending: true })
-    .limit(1)
-  if (error) throw new Error("EBAY_LUNA_SELECTOR_V2_QUEUE_READ_FAILED")
-  const sample = record((data ?? [])[0])
-  return {
-    account: Object.hasOwn(sample, "marketplace_account_key")
-      ? "marketplace_account_key"
-      : Object.hasOwn(sample, "account_key")
-        ? "account_key"
-        : null,
-    marketplace: Object.hasOwn(sample, "marketplace")
-      ? "marketplace"
-      : Object.hasOwn(sample, "marketplace_id")
-        ? "marketplace_id"
-        : null,
-  }
-}
-
 export async function loadEbayLunaSelectorV2QueueRows(input: {
   supabase: SupabaseClient
   accountKey: string
   marketplace: string
 }) {
-  const scopeColumns = await detectQueueScopeColumns(input.supabase)
+  const scopeColumns: QueueScopeColumns = {
+    account: "marketplace_account_key",
+    marketplace: "marketplace",
+  }
   const rows: JsonRecord[] = []
-  let afterCandidateKey: string | null = null
+  let offset = 0
   while (rows.length <= EBAY_LUNA_SELECTOR_V2_MAX_QUEUE_ROWS) {
     const requestedRows = Math.min(
       EBAY_LUNA_SELECTOR_V2_QUEUE_PAGE_SIZE,
       EBAY_LUNA_SELECTOR_V2_MAX_QUEUE_ROWS + 1 - rows.length,
     )
-    let query = input.supabase
-      .from("ebay_luna_opportunity_queue")
-      .select("*")
-      .order("candidate_key", { ascending: true })
-      .order("id", { ascending: true })
-      .limit(requestedRows)
-    if (scopeColumns.account) {
-      query = query.eq(scopeColumns.account, input.accountKey)
-    }
-    if (scopeColumns.marketplace) {
-      query = query.eq(scopeColumns.marketplace, input.marketplace)
-    }
-    if (afterCandidateKey) {
-      query = query.gt("candidate_key", afterCandidateKey)
-    }
-    const { data, error } = await query
+    const { data, error } = await input.supabase.rpc(
+      "read_eligible_ebay_luna_opportunities_v2",
+      {
+        p_account_key: input.accountKey,
+        p_marketplace: input.marketplace,
+        p_limit: requestedRows,
+        p_offset: offset,
+      },
+    )
     if (error) throw new Error("EBAY_LUNA_SELECTOR_V2_QUEUE_READ_FAILED")
     const page = (data ?? []) as JsonRecord[]
     rows.push(...page)
     if (page.length < requestedRows) break
-    const nextCandidateKey = textValue(
-      record(page[page.length - 1]).candidate_key,
-    )
-    if (!nextCandidateKey || nextCandidateKey === afterCandidateKey) {
-      throw new Error("EBAY_LUNA_SELECTOR_V2_QUEUE_CURSOR_INVALID")
-    }
-    afterCandidateKey = nextCandidateKey
+    offset += page.length
   }
   const truncated = rows.length > EBAY_LUNA_SELECTOR_V2_MAX_QUEUE_ROWS
   return {
