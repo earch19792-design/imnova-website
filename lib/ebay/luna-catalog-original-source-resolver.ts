@@ -90,6 +90,7 @@ export type AuthorizedCatalogSourcePack = {
 
 type DiscoveredImage = {
   url: string
+  catalogIdentityUrl: string
   hint: string
   order: number
 }
@@ -161,7 +162,28 @@ function addCandidate(
 ) {
   const url = originalShopifyCatalogImageUrl(value, base)
   if (!url) return
-  values.push({ url, hint: text(hint, 500), order: values.length })
+  values.push({
+    url,
+    catalogIdentityUrl: url,
+    hint: text(hint, 500),
+    order: values.length,
+  })
+}
+
+function addCatalogSnapshotCandidate(
+  values: DiscoveredImage[],
+  value: unknown,
+  base: string,
+) {
+  const exact = allowedCatalogUrl(value, base)
+  const catalogIdentityUrl = originalShopifyCatalogImageUrl(value, base)
+  if (!exact || !catalogIdentityUrl) return
+  values.push({
+    url: exact.toString(),
+    catalogIdentityUrl,
+    hint: "catalog-snapshot",
+    order: values.length,
+  })
 }
 
 function imageValuesFromRecord(
@@ -396,7 +418,11 @@ export async function resolveLunaCatalogOriginalSourcePack(input: {
   const fetchImpl = input.fetchImpl ?? fetch
   const discovered: DiscoveredImage[] = []
   for (const value of input.knownCatalogImageUrls ?? []) {
-    addCandidate(discovered, value, "catalog-snapshot", parsed.canonicalUrl)
+    // The durable Luna snapshot is itself authorized catalog evidence. Keep
+    // its exact crop/transform for foreground preflight, but bind it to the
+    // canonical original URL so two transforms of one photograph can never
+    // satisfy source diversity.
+    addCatalogSnapshotCandidate(discovered, value, parsed.canonicalUrl)
   }
   let payload: JsonRecord | null = null
   try {
@@ -458,14 +484,17 @@ export async function resolveLunaCatalogOriginalSourcePack(input: {
   }
   const candidateMap = new Map<string, DiscoveredImage>()
   for (const entry of discovered) {
-    const existing = candidateMap.get(entry.url)
+    const existing = candidateMap.get(entry.catalogIdentityUrl)
     if (!existing) {
-      candidateMap.set(entry.url, entry)
+      candidateMap.set(entry.catalogIdentityUrl, entry)
     } else if (discoveredHintPriority(entry.hint) >
       discoveredHintPriority(existing.hint)) {
-      // Keep the original insertion position while retaining the richer
-      // product-JSON/gallery evidence for view classification.
-      candidateMap.set(entry.url, { ...entry, order: existing.order })
+      // Keep the exact durable snapshot bytes and original insertion position,
+      // while retaining richer product-JSON/gallery classification evidence.
+      candidateMap.set(entry.catalogIdentityUrl, {
+        ...existing,
+        hint: entry.hint,
+      })
     }
   }
   const candidates = [...candidateMap.values()].slice(0, MAX_CATALOG_ASSETS)

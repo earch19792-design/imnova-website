@@ -1,3 +1,8 @@
+import { createHash } from "node:crypto"
+
+import { EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION } from
+  "./ebay-listing-image-factory"
+
 export const SAME_DAY_IMAGE_JOB_LINEAGE_VERSION =
   "VISUAL_V3_FACT_RUN_BOUND_V1_2026_07_23"
 export const SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION =
@@ -31,6 +36,7 @@ export type SameDayImageGenerationJobSpec = {
       typeof SAME_DAY_IMAGE_PROFESSIONAL_MARKET_FALLBACK_RECOVERY_VERSION
     sourceReuseRecoveryVersion?:
       typeof SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION
+    preGenerationHash?: string
     authorizedCatalogCompletionRecoveryVersion?:
       typeof SAME_DAY_IMAGE_AUTHORIZED_CATALOG_COMPLETION_RECOVERY_VERSION
     maximumOpenAiCalls: 1
@@ -48,9 +54,53 @@ function text(value: unknown, maximum = 500) {
   return typeof value === "string" ? value.trim().slice(0, maximum) : ""
 }
 
-export function buildSameDayImageGenerationJobSpec(input: {
+export function buildSameDaySourceReusePreGenerationHash(input: {
+  accountKey: unknown
+  actorId: unknown
   runId: unknown
   candidateId: unknown
+  listingPackageId: unknown
+  factRunId: unknown
+  packageHash: unknown
+  sourceReuseRecoveryVersion: unknown
+}) {
+  const accountKey = text(input.accountKey)
+  const actorId = text(input.actorId)
+  const runId = text(input.runId)
+  const candidateId = text(input.candidateId)
+  const listingPackageId = text(input.listingPackageId)
+  const factRunId = text(input.factRunId)
+  const packageHash = text(input.packageHash)
+  if (
+    !accountKey ||
+    !UUID_PATTERN.test(actorId) ||
+    !UUID_PATTERN.test(runId) ||
+    !UUID_PATTERN.test(candidateId) ||
+    !UUID_PATTERN.test(listingPackageId) ||
+    !UUID_PATTERN.test(factRunId) ||
+    !/^[0-9a-f]{64}$/i.test(packageHash) ||
+    text(input.sourceReuseRecoveryVersion) !==
+      SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION
+  ) return null
+  return createHash("sha256").update([
+    accountKey,
+    actorId,
+    runId,
+    candidateId,
+    listingPackageId,
+    factRunId,
+    packageHash,
+    "deterministic",
+    EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
+  ].join(":")).digest("hex")
+}
+
+export function buildSameDayImageGenerationJobSpec(input: {
+  accountKey?: unknown
+  actorId?: unknown
+  runId: unknown
+  candidateId: unknown
+  listingPackageId?: unknown
   productResearchCaptureBatchId: unknown
   factRunId: unknown
   packageHash: unknown
@@ -78,6 +128,20 @@ export function buildSameDayImageGenerationJobSpec(input: {
     // it cannot turn that photograph into six truthful commercial views.
     input.deterministicFallbackRecovery === true
   ) return null
+  const sourceReusePreGenerationHash = input.sourceReuseRecovery
+    ? buildSameDaySourceReusePreGenerationHash({
+      accountKey: input.accountKey,
+      actorId: input.actorId,
+      runId,
+      candidateId,
+      listingPackageId: input.listingPackageId,
+      factRunId,
+      packageHash,
+      sourceReuseRecoveryVersion:
+        SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION,
+    })
+    : null
+  if (input.sourceReuseRecovery && !sourceReusePreGenerationHash) return null
 
   const recoverySegments = [
     ...(input.orphanRecovery
@@ -106,6 +170,9 @@ export function buildSameDayImageGenerationJobSpec(input: {
       productResearchCaptureBatchId,
       factRunId,
       packageHash,
+      ...(sourceReusePreGenerationHash
+        ? [sourceReusePreGenerationHash]
+        : []),
     ].join(":") + (recoverySegments.length
       ? `:${recoverySegments.join(":")}`
       : ""),
@@ -133,6 +200,7 @@ export function buildSameDayImageGenerationJobSpec(input: {
         ? {
             sourceReuseRecoveryVersion:
               SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION,
+            preGenerationHash: sourceReusePreGenerationHash!,
           }
         : {}),
       ...(input.authorizedCatalogCompletionRecovery

@@ -3826,6 +3826,34 @@ async function blockImageCorrectionAndPromote(input: {
     .eq("id", input.candidate.id)
     .eq("run_id", input.runId)
   if (error) throw new Error("SAME_DAY_PILOT_IMAGE_CORRECTION_BLOCK_FAILED")
+  await createHumanTask({
+    supabase: input.supabase,
+    runId: input.runId,
+    candidateId: text(input.candidate.id),
+    expectedState: "BLOCKED",
+    gateType: "IMAGE_SOURCE_OR_QUALITY_CORRECTION_REQUIRED",
+    title: "Aporta al menos dos vistas autorizadas",
+    why:
+      "El paquete visual necesita dos fuentes autorizadas genuinas antes de generar seis secundarios profesionales.",
+    seconds: 120,
+    impact:
+      "Seller OS conservará el paquete ligado y reanudará sólo cuando pueda repartir las vistas sin clones.",
+    evidence: {
+      failureCode: input.reasonCode,
+      deterministicCloneRecoveryRetired: true,
+      minimumAuthorizedSourceCount: 2,
+      allocatorMaximumUsesPerSource: 3,
+      historyDeleted: false,
+      ebayWrites: 0,
+    },
+    actionSchema: {
+      type: "AUTHORIZED_IMAGE_SOURCE_CORRECTION",
+      actions: ["ADD_AUTHORIZED_SOURCES"],
+      minimumAuthorizedSourceCount: 2,
+      allocatorMaximumUsesPerSource: 3,
+    },
+    continuationJobType: "GENERATE_SIX_IMAGE_PACKAGE",
+  })
   await promoteNextCandidate(
     input.supabase,
     input.runId,
@@ -7983,8 +8011,11 @@ async function repairRejectedSingleUnitVisualStrategy(
     if (!failureTransitionPresent && !priorFailurePresent) continue
 
     const imageJob = buildSameDayImageGenerationJobSpec({
+      accountKey,
+      actorId: state.run.created_by,
       runId: state.run.id,
       candidateId: candidate.id,
+      listingPackageId: sourcePack.listing_package_id,
       productResearchCaptureBatchId:
         candidate.product_research_capture_batch_id,
       factRunId: factsSummary.factRunId,
@@ -8203,12 +8234,19 @@ async function repairBlockedAuthorizedCatalogImagePackage(
     .filter((candidate) => {
       const imageSummary = record(candidate.image_package_summary)
       const handoffSummary = record(candidate.manual_handoff_package)
-      const blockers = strings(candidate.blockers)
+      const causalTransition = [...state.transitions].reverse()
+        .find((entry) =>
+          text(entry.candidate_id) === text(candidate.id) &&
+          text(entry.previous_state) === "PREPARING_IMAGE_PACKAGE" &&
+          text(entry.next_state) === "BLOCKED" &&
+          text(entry.reason_code) ===
+            "IMAGE_SOURCE_OR_QUALITY_CORRECTION_REQUIRED")
+      const previousBlocker = strings(
+        record(causalTransition?.checkpoint).blockers,
+      )[0]
       return text(candidate.machine_state) === "BLOCKED" &&
-        text(candidate.state) === "NEEDS_IMAGE_CORRECTION" &&
-        blockers.length === 1 &&
-        imageCorrectionRequired(blockers[0]) &&
-        [1, 4, 6].includes(Number(imageSummary.count)) &&
+        imageCorrectionRequired(previousBlocker) &&
+        [1, 4, 6, 7].includes(Number(imageSummary.count)) &&
         text(imageSummary.source) === "LUNA_AUTHORIZED_CATALOG" &&
         Number(imageSummary.generatedImages) === 0 &&
         text(handoffSummary.status) === "AWAITING_IMAGE_APPROVAL" &&
@@ -8230,7 +8268,16 @@ async function repairBlockedAuthorizedCatalogImagePackage(
     const factsPackage = record(factsSummary.authoritativeFactsPackage)
     const factPackageHash = text(factsPackage.factPackageHash)
     const imageCount = Number(imageSummary.count)
-    const previousBlocker = strings(candidate.blockers)[0]
+    const causalTransition = [...state.transitions].reverse()
+      .find((entry) =>
+        text(entry.candidate_id) === text(candidate.id) &&
+        text(entry.previous_state) === "PREPARING_IMAGE_PACKAGE" &&
+        text(entry.next_state) === "BLOCKED" &&
+        text(entry.reason_code) ===
+          "IMAGE_SOURCE_OR_QUALITY_CORRECTION_REQUIRED")
+    const previousBlocker = strings(
+      record(causalTransition?.checkpoint).blockers,
+    )[0]
     if (!/^(?:sha256:)?[0-9a-f]{64}$/i.test(factPackageHash)) continue
 
     const { data: listingPackage, error: listingPackageError } =
@@ -8291,7 +8338,13 @@ async function repairBlockedAuthorizedCatalogImagePackage(
       .map((asset) => text(asset.sha256))
       .filter((value) => /^[0-9a-f]{64}$/i.test(value)))
 
-    if (imageCount === 1 || authorizedSecondarySourceHashes.size < 2) {
+    const freshCatalogRecovery =
+      imageCount === 7 &&
+      previousBlocker ===
+        "NEEDS_ADDITIONAL_SOURCE_IMAGE:COMMERCIAL_DIVERSITY" &&
+      !sourcePack
+    if (imageCount === 1 ||
+      (authorizedSecondarySourceHashes.size < 2 && !freshCatalogRecovery)) {
       await createHumanTask({
         supabase,
         runId: state.run.id,
@@ -8329,7 +8382,7 @@ async function repairBlockedAuthorizedCatalogImagePackage(
       })
       continue
     }
-    if (![4, 6].includes(imageCount) || !sourcePack) continue
+    if (![4, 6].includes(imageCount) && !freshCatalogRecovery) continue
 
     const { data: publications, error: publicationError } = await supabase
       .from("ebay_authorized_listing_publications")
@@ -8352,7 +8405,7 @@ async function repairBlockedAuthorizedCatalogImagePackage(
 
     const { data: imageJobs, error: imageJobsError } = await supabase
       .from("ebay_same_day_pilot_jobs")
-      .select("id,status,last_error_code")
+      .select("id,status,last_error_code,checkpoint")
       .eq("run_id", state.run.id)
       .eq("candidate_id", candidate.id)
       .eq("job_type", "GENERATE_SIX_IMAGE_PACKAGE")
@@ -8366,9 +8419,18 @@ async function repairBlockedAuthorizedCatalogImagePackage(
       ["PENDING", "WAITING_RETRY", "LEASED"].includes(text(job.status)))) {
       continue
     }
+    if ((imageJobs ?? []).some((job) =>
+      text(record(job.checkpoint)
+        .authorizedCatalogCompletionRecoveryVersion) ===
+          SAME_DAY_IMAGE_AUTHORIZED_CATALOG_COMPLETION_RECOVERY_VERSION)) {
+      continue
+    }
     const causalJobPresent = (imageJobs ?? []).some((job) =>
       ["COMPLETED", "DEAD_LETTER", "CANCELLED"].includes(text(job.status)) &&
-      text(job.last_error_code) === previousBlocker)
+      (text(job.last_error_code) === previousBlocker ||
+        (freshCatalogRecovery &&
+          text(record(job.checkpoint).orphanRecoveryVersion) ===
+            SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION)))
     const causalTransitionPresent = state.transitions.some((entry) =>
       text(entry.candidate_id) === text(candidate.id) &&
       text(entry.previous_state) === "PREPARING_IMAGE_PACKAGE" &&
@@ -8401,8 +8463,8 @@ async function repairBlockedAuthorizedCatalogImagePackage(
           SAME_DAY_IMAGE_AUTHORIZED_CATALOG_COMPLETION_RECOVERY_VERSION,
         previousBlocker,
         previousImageCount: imageCount,
-        sourcePackId: sourcePack.id,
-        sourcePackHash: sourcePack.source_pack_hash,
+        sourcePackId: sourcePack?.id ?? null,
+        sourcePackHash: sourcePack?.source_pack_hash ?? null,
         authorizedSecondarySourceCount:
           authorizedSecondarySourceHashes.size,
         allocatorMaximumUsesPerSource: 3,
@@ -8486,8 +8548,8 @@ async function repairBlockedAuthorizedCatalogImagePackage(
             SAME_DAY_IMAGE_AUTHORIZED_CATALOG_COMPLETION_RECOVERY_VERSION,
           previousBlocker,
           previousImageCount: imageCount,
-          sourcePackId: sourcePack.id,
-          sourcePackHash: sourcePack.source_pack_hash,
+          sourcePackId: sourcePack?.id ?? null,
+          sourcePackHash: sourcePack?.source_pack_hash ?? null,
           authorizedSecondarySourceCount:
             authorizedSecondarySourceHashes.size,
           allocatorMaximumUsesPerSource: 3,
@@ -8526,7 +8588,10 @@ async function repairRejectedImageSourceReuse(
       return text(entry.machine_state) === "REJECTED" &&
         text(entry.state) === "REJECTED_TODAY" &&
         blockers.length === 1 &&
-        blockers[0] === SAME_DAY_IMAGE_SOURCE_REUSE_ERROR
+        [
+          SAME_DAY_IMAGE_SOURCE_REUSE_ERROR,
+          "SAME_DAY_IMAGE_PREGENERATION_HASH_INVALID",
+        ].includes(blockers[0])
     })
   if (!candidates.length) return 0
 
@@ -8655,17 +8720,23 @@ async function repairRejectedImageSourceReuse(
       text(job.last_error_code)).filter(Boolean)
     if (!priorErrors.length || priorErrors.some((errorCode) =>
       errorCode !== SAME_DAY_IMAGE_SOURCE_REUSE_ERROR &&
-      errorCode !== "EFFECT_ALREADY_APPLIED_RECOVERED")) continue
+      errorCode !== "EFFECT_ALREADY_APPLIED_RECOVERED" &&
+      errorCode !== "SAME_DAY_IMAGE_PREGENERATION_HASH_INVALID")) continue
     const causalFailures = imageJobs.filter((job) =>
       (["DEAD_LETTER", "CANCELLED"].includes(text(job.status)) &&
         text(job.last_error_code) === SAME_DAY_IMAGE_SOURCE_REUSE_ERROR) ||
       (text(job.status) === "COMPLETED" &&
-        text(job.last_error_code) === "EFFECT_ALREADY_APPLIED_RECOVERED"))
+        text(job.last_error_code) === "EFFECT_ALREADY_APPLIED_RECOVERED") ||
+      (["DEAD_LETTER", "CANCELLED"].includes(text(job.status)) &&
+        text(job.last_error_code) ===
+          "SAME_DAY_IMAGE_PREGENERATION_HASH_INVALID" &&
+        text(record(job.checkpoint).sourceReuseRecoveryVersion) ===
+          SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION))
     const causalTransitionPresent = state.transitions.some((entry) =>
       text(entry.candidate_id) === text(candidate.id) &&
       text(entry.previous_state) === "PREPARING_IMAGE_PACKAGE" &&
       text(entry.next_state) === "REJECTED" &&
-      text(entry.reason_code) === SAME_DAY_IMAGE_SOURCE_REUSE_ERROR)
+      text(entry.reason_code) === strings(candidate.blockers)[0])
     if (!causalFailures.length || !causalTransitionPresent) continue
 
     const imageJob = buildSameDayImageGenerationJobSpec({
@@ -8713,7 +8784,7 @@ async function repairRejectedImageSourceReuse(
       triggeredBy: "RETRY",
       checkpoint: {
         recoveryVersion: SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION,
-        previousBlocker: SAME_DAY_IMAGE_SOURCE_REUSE_ERROR,
+        previousBlocker: strings(candidate.blockers)[0],
         sourcePackId: sourcePack.id,
         sourcePackHash: sourcePack.source_pack_hash,
         authorizedSecondarySourceCount: secondarySourceHashes.size,
@@ -8778,7 +8849,7 @@ async function repairRejectedImageSourceReuse(
         event_type: "SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERED",
         event_payload: {
           recoveryVersion: SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION,
-          previousBlocker: SAME_DAY_IMAGE_SOURCE_REUSE_ERROR,
+          previousBlocker: strings(candidate.blockers)[0],
           sourcePackId: sourcePack.id,
           sourcePackHash: sourcePack.source_pack_hash,
           authorizedSecondarySourceCount: secondarySourceHashes.size,
@@ -10143,6 +10214,10 @@ export async function processSameDayPilotJobs(input: {
         actorId: text(state.run.created_by),
         runId: state.run.id,
         candidate: record(candidate),
+        expectedPackageHash: record(leased.checkpoint).packageHash,
+        preGenerationHash: record(leased.checkpoint).preGenerationHash,
+        sourceReuseRecoveryVersion:
+          record(leased.checkpoint).sourceReuseRecoveryVersion,
         forceDeterministicImageFallback:
           record(leased.checkpoint).forceDeterministicImageFallback === true,
       })

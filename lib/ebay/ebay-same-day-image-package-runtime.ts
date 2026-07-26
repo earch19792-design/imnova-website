@@ -43,6 +43,10 @@ import {
   selectForegroundSafeLunaCatalogGenerationSources,
 } from "./luna-catalog-original-source-resolver"
 import { persistAuthorizedCatalogSourcePack } from "./luna-catalog-source-pack-persistence"
+import {
+  buildSameDaySourceReusePreGenerationHash,
+  SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION,
+} from "./ebay-same-day-image-job-lineage"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
 const MAX_OUTPUT_BYTES = 12 * 1024 * 1024
@@ -451,6 +455,9 @@ export async function generateAndPersistSameDayImagePackage(input: {
   runId: string
   candidate: JsonRecord
   forceDeterministicImageFallback?: boolean
+  expectedPackageHash?: unknown
+  preGenerationHash?: unknown
+  sourceReuseRecoveryVersion?: unknown
 }) {
   const runId = uuid(input.runId)
   const candidateId = uuid(input.candidate.id)
@@ -459,6 +466,15 @@ export async function generateAndPersistSameDayImagePackage(input: {
     throw new Error("SAME_DAY_IMAGE_RUNTIME_SCOPE_INVALID")
   }
   const { handoffPackage, packageHash } = currentHandoffPackage(input.candidate)
+  const sourceReuseRecoveryVersion = text(input.sourceReuseRecoveryVersion)
+  if (
+    sourceReuseRecoveryVersion &&
+    (sourceReuseRecoveryVersion !==
+        SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION ||
+      text(input.expectedPackageHash) !== packageHash)
+  ) {
+    throw new Error("SAME_DAY_IMAGE_PREGENERATION_HASH_INVALID")
+  }
   const facts = currentFactsBinding(input.candidate)
   const rightsReference = authorizationReference(input.candidate)
   const listingPackage = await exactListingPackage({
@@ -659,12 +675,35 @@ export async function generateAndPersistSameDayImagePackage(input: {
     ? "OPENAI_CONTEXT_PLATE"
     : "DETERMINISTIC_ONLY"
   const requestHash = plan.backgroundPlatePlan?.requestHash ?? "deterministic"
-  const idempotencyKeyHash = sha256([
-    input.accountKey, actorId, runId, candidateId, listingPackageId,
-    facts.factRunId, packageHash, requestHash,
-    EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
-    EBAY_SQUARE_PRESENTATION_QA_VERSION,
-  ].join(":"))
+  const frozenPreGenerationHash = text(input.preGenerationHash)
+  const expectedSourceReusePreGenerationHash = sourceReuseRecoveryVersion
+    ? buildSameDaySourceReusePreGenerationHash({
+      accountKey: input.accountKey,
+      actorId,
+      runId,
+      candidateId,
+      listingPackageId,
+      factRunId: facts.factRunId,
+      packageHash,
+      sourceReuseRecoveryVersion,
+    })
+    : null
+  if (
+    sourceReuseRecoveryVersion &&
+    (generationMode !== "DETERMINISTIC_ONLY" ||
+      !expectedSourceReusePreGenerationHash ||
+      frozenPreGenerationHash !== expectedSourceReusePreGenerationHash)
+  ) {
+    disposeAuthorizedCatalogSourcePack(catalogPack)
+    throw new Error("SAME_DAY_IMAGE_PREGENERATION_HASH_INVALID")
+  }
+  const idempotencyKeyHash = expectedSourceReusePreGenerationHash ??
+    sha256([
+      input.accountKey, actorId, runId, candidateId, listingPackageId,
+      facts.factRunId, packageHash, requestHash,
+      EBAY_IMAGE_COMPOSITOR_CONTRACT_VERSION,
+      EBAY_SQUARE_PRESENTATION_QA_VERSION,
+    ].join(":"))
   const leaseToken = randomUUID()
   const claimInput = {
     p_account_key: input.accountKey,
