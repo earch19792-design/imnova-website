@@ -183,6 +183,34 @@ export function lunaRetryDelayMs(input: {
   )
 }
 
+export function evaluateLunaCatalogExecutionWindow(input: {
+  nowMs: number
+  deadlineAtMs: number
+  pagesProcessed: number
+  maxPages: number
+  minimumRemainingMs: number
+}) {
+  const remainingMs = Math.max(
+    0,
+    Math.trunc(input.deadlineAtMs - input.nowMs),
+  )
+  const pageBudgetReached =
+    input.pagesProcessed >= Math.max(1, Math.trunc(input.maxPages))
+  const deadlineReached =
+    remainingMs <= Math.max(0, Math.trunc(input.minimumRemainingMs))
+  return {
+    canStartNextPage:
+      !pageBudgetReached && !deadlineReached,
+    remainingMs,
+    reason:
+      pageBudgetReached
+        ? "PAGE_LIMIT" as const
+        : deadlineReached
+          ? "DEADLINE" as const
+          : null,
+  }
+}
+
 export function evaluateLunaCollectionCoverage(input: {
   collection: string
   expectedTotal?: number | null

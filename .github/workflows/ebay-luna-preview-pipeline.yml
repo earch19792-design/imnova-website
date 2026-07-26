@@ -22,11 +22,12 @@ jobs:
       vars.EBAY_LUNA_PREVIEW_PIPELINE_ENABLED == 'true' &&
       vars.LUNA_MARKET_RADAR_NOTIFICATION_DISPATCH_ENABLED != 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     env:
       PREVIEW_URL: ${{ secrets.EBAY_COMMERCIAL_PREVIEW_URL }}
       CRON_SECRET: ${{ secrets.EBAY_COMMERCIAL_CRON_SECRET }}
       VERCEL_BYPASS_SECRET: ${{ secrets.EBAY_COMMERCIAL_VERCEL_BYPASS_SECRET }}
+      MAX_WINDOWS_CONFIG: ${{ vars.EBAY_LUNA_PREVIEW_MAX_WINDOWS }}
     steps:
       - name: Validate Preview authorization contract
         shell: bash
@@ -42,18 +43,61 @@ jobs:
           esac
 
       - name: Refresh Luna catalog and inventory evidence
+        id: luna
         shell: bash
         run: |
-          args=(--fail --silent --show-error --max-time 55
-            --output /dev/null
-            --write-out 'Luna sync HTTP %{http_code}\n'
+          args=(--fail --silent --show-error --max-time 50
             -H "Authorization: Bearer $CRON_SECRET")
           if [ -n "$VERCEL_BYPASS_SECRET" ]; then
             args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
           fi
-          curl "${args[@]}" "${PREVIEW_URL%/}/api/cron/market-radar-luna-sync"
+          max_windows="${MAX_WINDOWS_CONFIG:-8}"
+          if ! [[ "$max_windows" =~ ^[0-9]+$ ]]; then
+            max_windows=8
+          fi
+          if (( max_windows < 1 )); then
+            max_windows=1
+          elif (( max_windows > 12 )); then
+            max_windows=12
+          fi
+          # Reserve enough of the bounded job timeout for the eBay read-only
+          # scan when, and only when, Luna reaches COMPLETE.
+          luna_deadline_seconds=$((SECONDS + 570))
+          complete=false
+          final_status=PARTIAL
+          for ((window = 1; window <= max_windows; window += 1)); do
+            if (( luna_deadline_seconds - SECONDS < 55 )); then
+              echo "Luna workflow budget reached; checkpoint will resume next execution."
+              break
+            fi
+            response_file="$(mktemp)"
+            http_code="$(
+              curl "${args[@]}" \
+                --output "$response_file" \
+                --write-out '%{http_code}' \
+                "${PREVIEW_URL%/}/api/cron/market-radar-luna-sync?mode=readonly"
+            )"
+            scan_status="$(jq -r '.sync.scanStatus // "UNKNOWN"' "$response_file")"
+            continuation="$(jq -r '.sync.continuationRequired // false' "$response_file")"
+            rm -f "$response_file"
+            echo "Luna window ${window}: HTTP ${http_code}, status ${scan_status}"
+            final_status="$scan_status"
+            if [ "$scan_status" = "COMPLETE" ]; then
+              complete=true
+              break
+            fi
+            if [ "$continuation" != "true" ]; then
+              break
+            fi
+            sleep 2
+          done
+          echo "complete=$complete" >> "$GITHUB_OUTPUT"
+          if [ "$complete" != "true" ]; then
+            echo "Luna status ${final_status}: safely resumable; opportunity scan deferred."
+          fi
 
       - name: Scan refreshed Luna opportunities against eBay read models
+        if: steps.luna.outputs.complete == 'true'
         shell: bash
         run: |
           args=(--fail --silent --show-error --max-time 55

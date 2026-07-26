@@ -8,6 +8,7 @@ import {
 import {
   buildLunaCatalogResumeState,
   buildLunaCatalogCoverageManifest,
+  evaluateLunaCatalogExecutionWindow,
   evaluateLunaCollectionCoverage,
   isRetryableLunaStatus,
   LUNA_CATALOG_COVERAGE_MANIFEST_VERSION,
@@ -43,8 +44,12 @@ const SHOPIFY_PAGE_LIMIT = 250
 const SHOPIFY_MAX_PAGES = 30
 const SHOPIFY_PAGE_DELAY_MS = 250
 const SHOPIFY_AUTH_PRODUCT_CONCURRENCY = 6
-const SHOPIFY_AUTH_PRODUCT_LIMIT = 300
+const SHOPIFY_AUTH_PRODUCT_LIMIT = 24
 const LUNA_CATALOG_HTTP_MAX_ATTEMPTS = 3
+const LUNA_CATALOG_DEFAULT_TIME_BUDGET_MS = 42_000
+const LUNA_CATALOG_DEFAULT_PAGE_BUDGET = 4
+const LUNA_CATALOG_MINIMUM_REMAINING_MS = 5_000
+const LUNA_CATALOG_REQUEST_TIMEOUT_MS = 8_000
 const POSTGREST_FILTER_CHUNK_SIZE = 100
 const PRODUCT_WRITE_BATCH_SIZE = 25
 const SNAPSHOT_WRITE_BATCH_SIZE = 50
@@ -273,6 +278,19 @@ type LunaPortexProductFetchResult = {
   inventoryHydration: InventoryHydrationMetrics
   catalogCoverage: ReturnType<typeof buildLunaCatalogCoverageManifest>
   catalogScanRunId: string | null
+  catalogContinuationRequired: boolean
+  catalogPagesProcessed: number
+  catalogPauseReason:
+    | "PAGE_LIMIT"
+    | "DEADLINE"
+    | "FETCH_RETRY_REQUIRED"
+    | null
+}
+
+type LunaCatalogExecutionWindow = {
+  deadlineAtMs: number
+  maxPages: number
+  pagesProcessed: number
 }
 
 export function getLunaCatalogCoverageRuntimeConfiguration() {
@@ -932,6 +950,12 @@ type LunaCollectionFetchResult = {
   coverage: LunaCatalogCollectionCoverage
   sourceObservedAt: string
   fetchedAt: string
+  traversalComplete: boolean
+  pauseReason:
+    | "PAGE_LIMIT"
+    | "DEADLINE"
+    | "FETCH_RETRY_REQUIRED"
+    | null
 }
 
 type LunaCollectionFetchOptions = {
@@ -939,6 +963,8 @@ type LunaCollectionFetchOptions = {
   resumedProducts?: ShopifyProduct[]
   resumedPages?: LunaCatalogPageCheckpoint[]
   expectedTotal?: number | null
+  resumeTerminal?: boolean
+  executionWindow?: LunaCatalogExecutionWindow
   onPageCheckpoint?: (input: {
     checkpoint: LunaCatalogPageCheckpoint
     products: ShopifyProduct[]
@@ -970,6 +996,14 @@ async function fetchCollectionProducts(
   ]
   let expectedTotal: number | null =
     options.expectedTotal ?? null
+  let traversalComplete =
+    options.resumeTerminal === true
+  let pauseReason:
+    | "PAGE_LIMIT"
+    | "DEADLINE"
+    | "FETCH_RETRY_REQUIRED"
+    | null =
+      null
 
   for (
     let page = Math.max(
@@ -979,6 +1013,26 @@ async function fetchCollectionProducts(
     page <= SHOPIFY_MAX_PAGES;
     page += 1
   ) {
+    if (options.executionWindow) {
+      const executionDecision =
+        evaluateLunaCatalogExecutionWindow({
+          nowMs:
+            Date.now(),
+          deadlineAtMs:
+            options.executionWindow.deadlineAtMs,
+          pagesProcessed:
+            options.executionWindow.pagesProcessed,
+          maxPages:
+            options.executionWindow.maxPages,
+          minimumRemainingMs:
+            LUNA_CATALOG_MINIMUM_REMAINING_MS,
+        })
+      if (!executionDecision.canStartNextPage) {
+        pauseReason =
+          executionDecision.reason
+        break
+      }
+    }
     const url =
       `${LUNAPORTEX_BASE_URL}/collections/${collection}/products.json?limit=${SHOPIFY_PAGE_LIMIT}&page=${page}`
 
@@ -990,8 +1044,42 @@ async function fetchCollectionProducts(
     let sourceObservedAt = fetchedAt
 
     while (attempts < LUNA_CATALOG_HTTP_MAX_ATTEMPTS) {
+      const executionDecision =
+        options.executionWindow
+          ? evaluateLunaCatalogExecutionWindow({
+              nowMs:
+                Date.now(),
+              deadlineAtMs:
+                options.executionWindow.deadlineAtMs,
+              pagesProcessed:
+                options.executionWindow.pagesProcessed,
+              maxPages:
+                options.executionWindow.maxPages,
+              minimumRemainingMs:
+                LUNA_CATALOG_MINIMUM_REMAINING_MS,
+            })
+          : null
+      if (
+        executionDecision &&
+        !executionDecision.canStartNextPage
+      ) {
+        pauseReason =
+          executionDecision.reason
+        break
+      }
       attempts += 1
       try {
+        const requestTimeoutMs =
+          executionDecision
+            ? Math.max(
+                1,
+                Math.min(
+                  LUNA_CATALOG_REQUEST_TIMEOUT_MS,
+                  executionDecision.remainingMs -
+                    LUNA_CATALOG_MINIMUM_REMAINING_MS
+                )
+              )
+            : LUNA_CATALOG_REQUEST_TIMEOUT_MS
         response = await fetch(
           url,
           {
@@ -999,6 +1087,10 @@ async function fetchCollectionProducts(
               getLunaPortexRequestHeaders(),
             cache:
               "no-store",
+            signal:
+              AbortSignal.timeout(
+                requestTimeoutMs
+              ),
           }
         )
         fetchedAt = new Date().toISOString()
@@ -1047,6 +1139,32 @@ async function fetchCollectionProducts(
       }
     }
 
+    if (pauseReason) {
+      break
+    }
+    if (options.executionWindow) {
+      const postRequestDecision =
+        evaluateLunaCatalogExecutionWindow({
+          nowMs:
+            Date.now(),
+          deadlineAtMs:
+            options.executionWindow.deadlineAtMs,
+          pagesProcessed:
+            options.executionWindow.pagesProcessed,
+          maxPages:
+            options.executionWindow.maxPages,
+          minimumRemainingMs:
+            LUNA_CATALOG_MINIMUM_REMAINING_MS,
+        })
+      if (
+        !postRequestDecision.canStartNextPage &&
+        postRequestDecision.reason === "DEADLINE"
+      ) {
+        pauseReason =
+          postRequestDecision.reason
+        break
+      }
+    }
     const pageProducts =
       errorCode
         ? []
@@ -1118,12 +1236,19 @@ async function fetchCollectionProducts(
         pageProducts,
       expectedTotal,
     })
+    if (options.executionWindow) {
+      options.executionWindow.pagesProcessed += 1
+    }
 
     if (errorCode) {
+      pauseReason =
+        "FETCH_RETRY_REQUIRED"
       break
     }
 
     if (pageProducts.length === 0) {
+      traversalComplete =
+        true
       break
     }
 
@@ -1135,6 +1260,14 @@ async function fetchCollectionProducts(
       pageProducts.length <
       SHOPIFY_PAGE_LIMIT
     ) {
+      traversalComplete =
+        true
+      break
+    }
+
+    if (page >= SHOPIFY_MAX_PAGES) {
+      traversalComplete =
+        true
       break
     }
 
@@ -1156,6 +1289,8 @@ async function fetchCollectionProducts(
       coverage.sourceObservedAt,
     fetchedAt:
       coverage.fetchedAt,
+    traversalComplete,
+    pauseReason,
   }
 }
 
@@ -1363,6 +1498,12 @@ async function hydrateAuthenticatedInventoryQuantities(
         emptyCoverage,
       catalogScanRunId:
         null,
+      catalogContinuationRequired:
+        false,
+      catalogPagesProcessed:
+        0,
+      catalogPauseReason:
+        null,
       inventoryHydration: {
         enabled:
           false,
@@ -1549,6 +1690,12 @@ async function hydrateAuthenticatedInventoryQuantities(
     catalogCoverage:
       emptyCoverage,
     catalogScanRunId:
+      null,
+    catalogContinuationRequired:
+      false,
+    catalogPagesProcessed:
+      0,
+    catalogPauseReason:
       null,
     inventoryHydration: {
       enabled:
@@ -2053,12 +2200,21 @@ async function releaseInventoryHydrationCursor(
 async function fetchLunaPortexProducts(
   supabase: SupabaseClient,
   sourceId: string,
-  catalogScanRunId: string | null
+  catalogScanRunId: string | null,
+  executionWindow: LunaCatalogExecutionWindow
 ): Promise<LunaPortexProductFetchResult> {
   const productMap =
     new Map<string, AggregatedProduct>()
   const collectionCoverages: LunaCatalogCollectionCoverage[] =
     []
+  const collectionTraversal: boolean[] =
+    []
+  let catalogPauseReason:
+    | "PAGE_LIMIT"
+    | "DEADLINE"
+    | "FETCH_RETRY_REQUIRED"
+    | null =
+      null
 
   for (const collection of LUNAPORTEX_COLLECTIONS) {
     const resume =
@@ -2079,6 +2235,9 @@ async function fetchLunaPortexProducts(
             resume.pages,
           expectedTotal:
             resume.expectedTotal,
+          resumeTerminal:
+            resume.terminal,
+          executionWindow,
           onPageCheckpoint:
             checkpoint =>
               persistCatalogPageCheckpoint(
@@ -2093,6 +2252,12 @@ async function fetchLunaPortexProducts(
     collectionCoverages.push(
       collectionResult.coverage
     )
+    collectionTraversal.push(
+      collectionResult.traversalComplete
+    )
+    catalogPauseReason =
+      catalogPauseReason ||
+      collectionResult.pauseReason
     await persistCatalogCollectionCoverage(
       supabase,
       catalogScanRunId,
@@ -2183,6 +2348,57 @@ async function fetchLunaPortexProducts(
           0
         ),
     })
+  const catalogContinuationRequired =
+    collectionTraversal.length !==
+      LUNAPORTEX_COLLECTIONS.length ||
+    collectionTraversal.some(
+      complete =>
+        !complete
+    )
+  if (catalogContinuationRequired) {
+    return {
+      products,
+      catalogCoverage,
+      catalogScanRunId,
+      catalogContinuationRequired:
+        true,
+      catalogPagesProcessed:
+        executionWindow.pagesProcessed,
+      catalogPauseReason:
+        catalogPauseReason ||
+        "FETCH_RETRY_REQUIRED",
+      inventoryHydration: {
+        enabled:
+          false,
+        candidates:
+          0,
+        hydratedProducts:
+          0,
+        successfulFetches:
+          0,
+        failedFetches:
+          0,
+        productsWithoutNumericInventory:
+          0,
+        checkedProducts:
+          products.length,
+        authState:
+          LUNAPORTEX_AUTH_COOKIE
+            ? "unknown"
+            : "not_configured",
+        authMessage:
+          "Hidratación diferida hasta completar la cobertura del catálogo.",
+        authCheckedHandle:
+          null,
+        startCursor:
+          0,
+        nextCursor:
+          0,
+        catalogFingerprint:
+          null,
+      },
+    }
+  }
   const hydrationLease =
     await claimInventoryHydrationCursor(
       supabase,
@@ -2206,6 +2422,12 @@ async function fetchLunaPortexProducts(
       ...hydrated,
       catalogCoverage,
       catalogScanRunId,
+      catalogContinuationRequired:
+        false,
+      catalogPagesProcessed:
+        executionWindow.pagesProcessed,
+      catalogPauseReason:
+        null,
     }
   } catch (error) {
     await releaseInventoryHydrationCursor(
@@ -3196,8 +3418,37 @@ async function upsertScores(
 }
 
 export async function runLunaPortexMarketRadarSync(
-  supabase: SupabaseClient
+  supabase: SupabaseClient,
+  options: {
+    timeBudgetMs?: number
+    maxCatalogPagesPerInvocation?: number
+  } = {}
 ): Promise<MarketRadarSyncResult> {
+  const executionStartedAtMs =
+    Date.now()
+  const executionWindow: LunaCatalogExecutionWindow = {
+    deadlineAtMs:
+      executionStartedAtMs +
+      Math.max(
+        10_000,
+        Math.min(
+          45_000,
+          options.timeBudgetMs ||
+            LUNA_CATALOG_DEFAULT_TIME_BUDGET_MS
+        )
+      ),
+    maxPages:
+      Math.max(
+        1,
+        Math.min(
+          12,
+          options.maxCatalogPagesPerInvocation ||
+            LUNA_CATALOG_DEFAULT_PAGE_BUDGET
+        )
+      ),
+    pagesProcessed:
+      0,
+  }
   const startedAt =
     new Date().toISOString()
 
@@ -3238,11 +3489,126 @@ export async function runLunaPortexMarketRadarSync(
       await fetchLunaPortexProducts(
         supabase,
         source.id,
-        catalogScanRunId
+        catalogScanRunId,
+        executionWindow
       )
 
     const products =
       productFetchResult.products
+    if (
+      productFetchResult
+        .catalogContinuationRequired
+    ) {
+      const manifest =
+        productFetchResult.catalogCoverage
+      const finishedAt =
+        new Date().toISOString()
+      if (catalogScanRunId) {
+        await supabase
+          .from(
+            "market_radar_catalog_scan_runs"
+          )
+          .update({
+            status:
+              "RUNNING",
+            expected_products:
+              manifest.expectedProducts,
+            received_products:
+              manifest.receivedProducts,
+            unique_products:
+              manifest.uniqueProducts,
+            unique_variants:
+              manifest.uniqueVariants,
+            missing_identity_count:
+              manifest.missingIdentityCount,
+            duplicate_product_count:
+              manifest.duplicateProductCount,
+            collision_count:
+              manifest.collisionCount,
+            coverage_percent:
+              manifest.coveragePercent,
+            catalog_checksum:
+              manifest.checksum,
+            source_observed_at:
+              manifest.sourceObservedAt,
+            fetched_at:
+              manifest.fetchedAt,
+            finished_at:
+              null,
+            error_code:
+              `LUNA_CATALOG_WINDOW_${productFetchResult.catalogPauseReason || "PARTIAL"}`,
+          })
+          .eq(
+            "id",
+            catalogScanRunId
+          )
+      }
+      return {
+        success:
+          true,
+        sourceKey:
+          LUNAPORTEX_SOURCE_KEY,
+        fetchedProducts:
+          products.length,
+        fetchedVariants:
+          0,
+        snapshotsInserted:
+          0,
+        eventsInserted:
+          0,
+        scoredProducts:
+          0,
+        catalogProductsFetched:
+          products.length,
+        uniqueProductsFetched:
+          products.length,
+        productsUpserted:
+          0,
+        productsWithSnapshots:
+          0,
+        failedBatchCount:
+          0,
+        adaptiveRetryCount:
+          0,
+        scanCompletenessPercent:
+          manifest.coveragePercent || 0,
+        scanStatus:
+          "PARTIAL",
+        inventoryNumericVariants:
+          0,
+        inventoryAvailabilityOnlyVariants:
+          0,
+        inventoryUnknownVariants:
+          0,
+        inventoryHydrationEnabled:
+          false,
+        inventoryHydrationCandidates:
+          0,
+        inventoryHydratedProducts:
+          0,
+        inventoryHydrationSuccessfulFetches:
+          0,
+        inventoryHydrationFailedFetches:
+          0,
+        inventoryHydrationWithoutNumericInventory:
+          0,
+        lunaAuthState:
+          productFetchResult.inventoryHydration.authState,
+        lunaAuthMessage:
+          productFetchResult.inventoryHydration.authMessage,
+        lunaAuthCheckedHandle:
+          null,
+        continuationRequired:
+          true,
+        catalogScanRunId,
+        catalogPagesProcessed:
+          productFetchResult.catalogPagesProcessed,
+        catalogPauseReason:
+          productFetchResult.catalogPauseReason,
+        startedAt,
+        finishedAt,
+      }
+    }
 
     const savedProducts =
       await upsertProducts(
@@ -3500,6 +3866,14 @@ export async function runLunaPortexMarketRadarSync(
         productFetchResult.inventoryHydration.authMessage,
       lunaAuthCheckedHandle:
         productFetchResult.inventoryHydration.authCheckedHandle,
+      continuationRequired:
+        false,
+      catalogScanRunId:
+        productFetchResult.catalogScanRunId,
+      catalogPagesProcessed:
+        productFetchResult.catalogPagesProcessed,
+      catalogPauseReason:
+        null,
       startedAt,
       finishedAt,
     }

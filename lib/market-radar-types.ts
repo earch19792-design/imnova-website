@@ -262,6 +262,10 @@ export type MarketRadarSyncResult = {
   lunaAuthState?: "approved" | "restricted" | "unknown" | "not_configured"
   lunaAuthMessage?: string
   lunaAuthCheckedHandle?: string | null
+  continuationRequired?: boolean
+  catalogScanRunId?: string | null
+  catalogPagesProcessed?: number
+  catalogPauseReason?: "PAGE_LIMIT" | "DEADLINE" | "FETCH_RETRY_REQUIRED" | null
   startedAt: string
   finishedAt: string
 }
