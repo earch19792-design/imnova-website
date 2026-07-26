@@ -17,6 +17,7 @@ import {
 } from
   "@/lib/ebay/reference-guided-visual-review-access"
 import { canonicalEbayPackageSku } from "@/lib/ebay/ebay-sku"
+import ResilientListingFactoryPanel from "./resilient-factory-panel"
 
 type Opportunity = {
   id: string
@@ -4214,6 +4215,7 @@ function ListingWorkspacePageContent() {
         </>}
       </section>
 
+      <ResilientListingFactoryPanel />
       {opportunity && listingPackage && !finalReviewCompleted && <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/15 bg-[#0b1018]/95 px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 backdrop-blur"><div className="mx-auto grid max-w-xl grid-cols-2 gap-2"><button disabled={busy} onClick={() => void save(false)} className="min-h-14 rounded-2xl border border-white/20 font-black disabled:opacity-50">{busy ? "Guardando…" : "Guardar"}</button><button disabled={busy || blockers.length > 0} onClick={() => void save(true)} className="min-h-14 rounded-2xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">Listo para revisión</button></div></div>}
     </main>
   )

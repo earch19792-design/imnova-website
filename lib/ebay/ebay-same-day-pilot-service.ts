@@ -19,6 +19,17 @@ import {
   type SameDayCandidateInput,
 } from "./ebay-same-day-pilot-domain"
 import {
+  claimResilientCandidateForLegacyJob,
+  handleResilientLegacyJobFailure,
+  isResilientListingFactoryEnabled,
+  quarantineResilientBootstrapFailure,
+  recomputeResilientRunProjection,
+  registerResilientBatch5Run,
+  releaseResilientCandidateForLegacyJob,
+  syncResilientCandidateAfterLegacyJob,
+  type ResilientLegacyCandidateLease,
+} from "./ebay-resilient-listing-factory-service"
+import {
   evaluateSameDayContinuityRescue,
   SAME_DAY_CONTINUITY_RESCUE_VERSION,
 } from "./ebay-same-day-continuity-rescue"
@@ -4050,6 +4061,12 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
       }, { onConflict: "idempotency_key", ignoreDuplicates: true })
       throw new Error("SAME_DAY_PILOT_CANDIDATES_CREATE_FAILED")
     }
+    const resilientRegistration = await registerResilientBatch5Run({
+      supabase: input.supabase,
+      runId,
+      candidateCount: candidates?.length ?? 0,
+      actorId: input.actorId,
+    })
     const { error: finalizeError } = await input.supabase.from("ebay_same_day_pilot_runs")
       .update({ queue_count: selected.length, stage: "QUEUE_PREPARED", status: "ACTIVE",
         next_automated_action: "Esperar y procesar automáticamente la próxima evidencia autorizada.",
@@ -4057,8 +4074,37 @@ export async function startSameDayPilot(input: { supabase: SupabaseClient; accou
         updated_at: now.toISOString() })
       .eq("id", runId).eq("queue_count", 0)
     if (finalizeError) throw new Error("SAME_DAY_PILOT_CYCLE_FINALIZE_FAILED")
-    const first = candidates?.[0]
-    if (first) await bootstrapCandidate(input.supabase, runId, record(first))
+    if (resilientRegistration.enabled && !resilientRegistration.active) {
+      throw new Error("LISTING_FACTORY_BATCH5_REGISTRATION_REQUIRED")
+    }
+    const activeCandidateIds = new Set(
+      resilientRegistration.activeCandidateIds ?? [],
+    )
+    const bootstrapCandidates = resilientRegistration.active
+      ? (candidates ?? []).filter((candidate) =>
+        activeCandidateIds.has(text(record(candidate).id)))
+      : candidates?.slice(0, 1) ?? []
+    const bootstrapResults = await Promise.allSettled(
+      bootstrapCandidates.map((preparedCandidate) =>
+        bootstrapCandidate(input.supabase, runId, record(preparedCandidate))),
+    )
+    const quarantineResults = await Promise.all(
+      bootstrapResults.map(async (result, index) => {
+        if (result.status === "fulfilled") return null
+        const candidateId = text(record(bootstrapCandidates[index]).id)
+        return quarantineResilientBootstrapFailure({
+          supabase: input.supabase,
+          runId,
+          candidateId,
+          workerId: `bootstrap:${runId}:${candidateId}`,
+          error: result.reason,
+          now,
+        })
+      }),
+    )
+    if (quarantineResults.some((result) => result && !result.active)) {
+      throw new Error("LISTING_FACTORY_BOOTSTRAP_QUARANTINE_REQUIRED")
+    }
   }
   const eventType = startNextCycle ? "NEXT_CANDIDATE_CYCLE_STARTED"
     : claim.recovered === true ? "EMPTY_RUN_RECOVERED" : "RUN_STARTED"
@@ -5221,7 +5267,7 @@ export async function resumeSameDayPilotAfterProductResearchCapture(input: { sup
 }
 
 function retryable(code: string) {
-  return /(?:429|NETWORK|TIMEOUT|(?:^|_)5\d\d(?:$|_)|HTTP_?5\d\d|TEMPORARY|DEPENDENCY|LEASE)/.test(code)
+  return /(?:429|NETWORK|TIMEOUT|(?:^|_)5\d\d(?:$|_)|HTTP_?5\d\d|TEMPORARY|DEPENDENCY|LEASE|SYNC_REQUIRED|SETTLE_FAILED|FACTORY_CLAIM)/.test(code)
 }
 
 const SAME_DAY_MACHINE_ORDER = [
@@ -7225,6 +7271,7 @@ export async function processSameDayPilotJobs(input: {
     supabase: input.supabase, runId, workerId: input.workerId, now,
   })
   if (!runLeaseToken) return { processed: 0, status: "RUN_BUSY", expiredQuotaPausesReleased: expiredQuotaPauses.released }
+  let resilientCandidateLease: ResilientLegacyCandidateLease | null = null
   try {
   const { error: heartbeatError } = await input.supabase.from("ebay_same_day_pilot_runs").update({
     last_worker_heartbeat_at: now.toISOString(), updated_at: now.toISOString(),
@@ -7414,6 +7461,31 @@ export async function processSameDayPilotJobs(input: {
   const candidate = state.candidates.find((entry) => entry.id === leased.candidate_id)
   if (!candidate) throw new Error("SAME_DAY_PILOT_JOB_CANDIDATE_MISSING")
   if (jobEffectAlreadyApplied(text(leased.job_type), text(candidate.machine_state))) {
+    const synchronized = await syncResilientCandidateAfterLegacyJob({
+      supabase: input.supabase,
+      runId: state.run.id,
+      candidateId: text(candidate.id),
+      checkpoint: record(leased.checkpoint),
+      actorId: input.workerId,
+    })
+    if (synchronized.enabled && !synchronized.active) {
+      const availableAt = new Date(now.getTime() + 60_000).toISOString()
+      await deferPilotJob({
+        supabase: input.supabase,
+        job: record(leased),
+        workerId: input.workerId,
+        availableAt,
+        errorCode: "LISTING_FACTORY_STATE_SYNC_REQUIRED",
+        preserveAttempt: true,
+      })
+      return {
+        processed: 1,
+        status: "WAITING_RETRY",
+        jobType: leased.job_type,
+        continueBatch: true,
+        checkpointPreserved: true,
+      }
+    }
     if (text(leased.job_type) === "FINALIZE_MANUAL_HANDOFF") {
       await promoteNextCandidateAfterPreparedPackage(
         input.supabase,
@@ -7425,6 +7497,33 @@ export async function processSameDayPilotJobs(input: {
     await refreshRunProjection(input.supabase, state.run.id, true)
     return { processed: 1, status: "EFFECT_ALREADY_APPLIED", jobType: leased.job_type, replayAvoided: true }
   }
+  const factoryClaim = await claimResilientCandidateForLegacyJob({
+    supabase: input.supabase,
+    runId: state.run.id,
+    candidateId: text(candidate.id),
+    workerId: input.workerId,
+    now,
+  })
+  if (factoryClaim.enabled && (!factoryClaim.active || !factoryClaim.lease)) {
+    const availableAt = new Date(now.getTime() + 60_000).toISOString()
+    await deferPilotJob({
+      supabase: input.supabase,
+      job: record(leased),
+      workerId: input.workerId,
+      availableAt,
+      errorCode: factoryClaim.error ?? factoryClaim.status,
+      preserveAttempt: true,
+    })
+    return {
+      processed: 1,
+      status: "WAITING_RETRY",
+      jobType: leased.job_type,
+      continueBatch: true,
+      checkpointPreserved: true,
+      factoryClaim: factoryClaim.status,
+    }
+  }
+  resilientCandidateLease = factoryClaim.lease ?? null
   try {
     if (leased.api_family && leased.api_operation) {
       const lane = await assertEbayLaneAvailable(input.supabase, leased.api_family, leased.api_operation, now)
@@ -8352,8 +8451,26 @@ export async function processSameDayPilotJobs(input: {
     } else {
       throw new Error("SAME_DAY_PILOT_JOB_TYPE_UNSUPPORTED")
     }
-    await settlePilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId, status: "COMPLETED" })
+    const synchronized = await syncResilientCandidateAfterLegacyJob({
+      supabase: input.supabase,
+      runId: state.run.id,
+      candidateId: text(candidate.id),
+      checkpoint: record(leased.checkpoint),
+      actorId: input.workerId,
+      lease: resilientCandidateLease ?? undefined,
+    })
+    if (synchronized.enabled && !synchronized.active) {
+      throw new Error("LISTING_FACTORY_STATE_SYNC_REQUIRED")
+    }
+    const projection = await recomputeResilientRunProjection({
+      supabase: input.supabase,
+      runId: state.run.id,
+    })
+    if (projection.enabled && !projection.active) {
+      throw new Error("LISTING_FACTORY_PROJECTION_SYNC_REQUIRED")
+    }
     await refreshRunProjection(input.supabase, state.run.id, true)
+    await settlePilotJob({ supabase: input.supabase, job: record(leased), workerId: input.workerId, status: "COMPLETED" })
     return { processed: 1, status: "COMPLETED", jobType: leased.job_type }
   } catch (error) {
     const code = error instanceof Error && /^[A-Z0-9_:-]+$/.test(error.message) ? error.message : "SAME_DAY_PILOT_JOB_FAILED"
@@ -8492,15 +8609,55 @@ export async function processSameDayPilotJobs(input: {
         Number(candidate.ordinal),
       )
     }
-    if (!canRetry) {
+    const resilientFailure = !canRetry
+      ? await handleResilientLegacyJobFailure({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        runId: state.run.id,
+        candidateId: text(candidate.id),
+        jobId: text(leased.id),
+        errorCode: code,
+        dependency: text(leased.api_family) || "UNKNOWN",
+        checkpoint: record(leased.checkpoint),
+        actorId: input.workerId,
+        lease: resilientCandidateLease ?? undefined,
+      })
+      : {
+        enabled: isResilientListingFactoryEnabled(),
+        handled: false,
+        globalDependency: rateLimited,
+        continueBatch: isResilientListingFactoryEnabled() && !rateLimited,
+        status: canRetry ? "RETRY_SCHEDULED" : "UNHANDLED",
+      }
+    if (!canRetry && !resilientFailure.handled) {
       await rejectAndPromote({ supabase: input.supabase, runId: state.run.id, candidate: record(candidate),
         previousState: text(candidate.machine_state), reasonCode: code })
     }
     await refreshRunProjection(input.supabase, state.run.id, true)
-    return { processed: 1, status: canRetry ? "WAITING_RETRY" : "DEAD_LETTER", error: code,
-      resumeAt: rateLimited ? availableAt : null, checkpointPreserved: true }
+    await recomputeResilientRunProjection({
+      supabase: input.supabase,
+      runId: state.run.id,
+    })
+    return {
+      processed: 1,
+      status: resilientFailure.globalDependency
+        ? "PAUSED_BY_GLOBAL_DEPENDENCY"
+        : canRetry ? "WAITING_RETRY" : "DEAD_LETTER",
+      error: code,
+      resumeAt: rateLimited ? availableAt : null,
+      checkpointPreserved: true,
+      continueBatch: resilientFailure.continueBatch,
+      isolatedFailure: resilientFailure.enabled && !resilientFailure.globalDependency,
+    }
   }
   } finally {
+    if (resilientCandidateLease) {
+      await releaseResilientCandidateForLegacyJob({
+        supabase: input.supabase,
+        lease: resilientCandidateLease,
+        now: new Date(),
+      })
+    }
     await releasePilotRunLease({
       supabase: input.supabase, runId, workerId: input.workerId, leaseToken: runLeaseToken,
     })
@@ -8537,7 +8694,10 @@ export async function processSameDayPilotJobChain(input: {
       stoppedReason = result.status === "IDLE" ? "QUEUE_DRAINED" : result.status
       break
     }
-    if (!["COMPLETED", "EFFECT_ALREADY_APPLIED"].includes(result.status)) {
+    const isolatedOutcomeCanContinue = "continueBatch" in result &&
+      result.continueBatch === true
+    if (!["COMPLETED", "EFFECT_ALREADY_APPLIED"].includes(result.status) &&
+      !isolatedOutcomeCanContinue) {
       // A 429, retry, dead letter or busy lease must preserve its checkpoint
       // and return control to the durable scheduler instead of spinning.
       stoppedReason = result.status
