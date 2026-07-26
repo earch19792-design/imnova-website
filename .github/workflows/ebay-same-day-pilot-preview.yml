@@ -23,6 +23,7 @@ jobs:
           PREVIEW_URL: ${{ secrets.EBAY_SAME_DAY_PILOT_PREVIEW_URL }}
           CRON_SECRET: ${{ secrets.EBAY_SAME_DAY_PILOT_CRON_SECRET }}
           VERCEL_BYPASS_SECRET: ${{ secrets.EBAY_SAME_DAY_PILOT_VERCEL_BYPASS_SECRET }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           test -n "$PREVIEW_URL"
           test -n "$CRON_SECRET"
@@ -31,4 +32,8 @@ jobs:
           if [ -n "$VERCEL_BYPASS_SECRET" ]; then
             args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
           fi
-          curl "${args[@]}" "$PREVIEW_URL/api/cron/ebay-same-day-pilot"
+          endpoint="$PREVIEW_URL/api/cron/ebay-same-day-pilot"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            endpoint="$endpoint?mode=validate"
+          fi
+          curl "${args[@]}" "$endpoint"
