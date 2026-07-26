@@ -8,6 +8,8 @@ export const SAME_DAY_IMAGE_DETERMINISTIC_FALLBACK_RECOVERY_VERSION =
   "IMAGE_POST_AI_DETERMINISTIC_FALLBACK_V1_2026_07_24"
 export const SAME_DAY_IMAGE_PROFESSIONAL_MARKET_FALLBACK_RECOVERY_VERSION =
   "IMAGE_PROFESSIONAL_MARKET_FALLBACK_V1_2026_07_24"
+export const SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION =
+  "IMAGE_SOURCE_REUSE_CONSTRAINED_CAP3_RECOVERY_V1_2026_07_26"
 
 export type SameDayImageGenerationJobSpec = {
   jobType: "GENERATE_SIX_IMAGE_PACKAGE"
@@ -25,6 +27,8 @@ export type SameDayImageGenerationJobSpec = {
     forceDeterministicImageFallback?: true
     professionalMarketFallbackRecoveryVersion?:
       typeof SAME_DAY_IMAGE_PROFESSIONAL_MARKET_FALLBACK_RECOVERY_VERSION
+    sourceReuseRecoveryVersion?:
+      typeof SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION
     maximumOpenAiCalls: 1
     competitorImages: 0
     ebayWrites: 0
@@ -50,6 +54,7 @@ export function buildSameDayImageGenerationJobSpec(input: {
   visualStrategyRecovery?: boolean
   deterministicFallbackRecovery?: boolean
   professionalMarketFallbackRecovery?: boolean
+  sourceReuseRecovery?: boolean
 }): SameDayImageGenerationJobSpec | null {
   const runId = text(input.runId)
   const candidateId = text(input.candidateId)
@@ -78,6 +83,9 @@ export function buildSameDayImageGenerationJobSpec(input: {
       : []),
     ...(input.professionalMarketFallbackRecovery
       ? [SAME_DAY_IMAGE_PROFESSIONAL_MARKET_FALLBACK_RECOVERY_VERSION]
+      : []),
+    ...(input.sourceReuseRecovery
+      ? [SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION]
       : []),
   ]
   return {
@@ -111,6 +119,12 @@ export function buildSameDayImageGenerationJobSpec(input: {
         ? {
             professionalMarketFallbackRecoveryVersion:
               SAME_DAY_IMAGE_PROFESSIONAL_MARKET_FALLBACK_RECOVERY_VERSION,
+          }
+        : {}),
+      ...(input.sourceReuseRecovery
+        ? {
+            sourceReuseRecoveryVersion:
+              SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION,
           }
         : {}),
       maximumOpenAiCalls: 1,

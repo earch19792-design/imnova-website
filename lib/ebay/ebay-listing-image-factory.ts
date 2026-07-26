@@ -1149,6 +1149,9 @@ export function buildSellerOsEbayVisualStrategyV2(
 ): EbayVisualStrategyPosition[] {
   const facts = input.facts
   const sourceIds = input.authorizedSourceImageIds
+  if (new Set(sourceIds).size < 2) {
+    throw new Error("NEEDS_ADDITIONAL_SOURCE_IMAGE:COMMERCIAL_DIVERSITY")
+  }
   const sourceCapabilities = input.authorizedSourceCapabilities ?? sourceIds
     .map((id, index) => ({
       id,
@@ -1358,22 +1361,47 @@ export function buildSellerOsEbayVisualStrategyV2(
   if (selected.length < 6) {
     throw new Error("NEEDS_VERIFIED_PRODUCT_FACTS:VISUAL_STRATEGY")
   }
-  // A candidate can permit several authorized catalog views. Persist one
-  // exact choice per objective and balance flexible objectives across those
-  // views. Previously the compositor always read index zero, which let the
-  // MAIN photograph occupy five or six secondary positions even when SIDE or
-  // DETAIL evidence was available.
+  // Allocate constrained objectives first so a later PRIMARY, ALTERNATE or
+  // PACKAGE_CONTENTS requirement cannot turn an otherwise valid two-source
+  // package into a 4+2 reuse split. The allocator only chooses a source the
+  // objective already authorizes, preserving exact identity and offer pack.
   const sourceUseCounts = new Map(sourceIds.map((id) => [id, 0]))
-  const selectedWithBalancedSources = selected.map((candidate) => {
-    const eligible = candidate.authorizedSourceImageIds.filter((id) =>
-      sourceUseCounts.has(id))
-    if (!eligible.length) {
+  const sourceOrder = new Map(sourceIds.map((id, index) => [id, index]))
+  const assignments = new Map<number, string>()
+  const allocationOrder = selected.map((candidate, index) => ({
+    index,
+    eligible: [...new Set(candidate.authorizedSourceImageIds)].filter((id) =>
+      sourceUseCounts.has(id)),
+  })).sort((left, right) =>
+    left.eligible.length - right.eligible.length || left.index - right.index)
+  if (allocationOrder.some((entry) => !entry.eligible.length)) {
+    throw new Error("EBAY_IMAGE_VISUAL_STRATEGY_SOURCE_BINDING_INVALID")
+  }
+  const allocate = (position: number): boolean => {
+    if (position >= allocationOrder.length) return true
+    const entry = allocationOrder[position]
+    const eligible = [...entry.eligible].sort((left, right) =>
+      (sourceUseCounts.get(left) ?? 0) - (sourceUseCounts.get(right) ?? 0) ||
+      (sourceOrder.get(left) ?? 0) - (sourceOrder.get(right) ?? 0))
+    for (const sourceId of eligible) {
+      const currentUseCount = sourceUseCounts.get(sourceId) ?? 0
+      if (currentUseCount >= 3) continue
+      sourceUseCounts.set(sourceId, currentUseCount + 1)
+      assignments.set(entry.index, sourceId)
+      if (allocate(position + 1)) return true
+      assignments.delete(entry.index)
+      sourceUseCounts.set(sourceId, currentUseCount)
+    }
+    return false
+  }
+  if (!allocate(0)) {
+    throw new Error("NEEDS_ADDITIONAL_SOURCE_IMAGE:COMMERCIAL_DIVERSITY")
+  }
+  const selectedWithBalancedSources = selected.map((candidate, index) => {
+    const chosen = assignments.get(index)
+    if (!chosen) {
       throw new Error("EBAY_IMAGE_VISUAL_STRATEGY_SOURCE_BINDING_INVALID")
     }
-    const chosen = [...eligible].sort((left, right) =>
-      (sourceUseCounts.get(left) ?? 0) - (sourceUseCounts.get(right) ?? 0) ||
-      sourceIds.indexOf(left) - sourceIds.indexOf(right))[0]
-    sourceUseCounts.set(chosen, (sourceUseCounts.get(chosen) ?? 0) + 1)
     return { ...candidate, authorizedSourceImageIds: [chosen] }
   })
   const slots = EBAY_LISTING_IMAGE_SLOTS.slice(1) as Array<Exclude<

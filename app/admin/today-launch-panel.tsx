@@ -181,6 +181,7 @@ export function TodayLaunchPanel() {
     tasks: pilot?.tasks,
     jobs: pilot?.jobs,
     quotaPaused,
+    nextAutomaticAttemptAt: quotaResumeAt,
   })
   const currentBusinessState = nextCycleAllowed
     ? "ESPERANDO TU CONFIRMACIÓN"
@@ -541,6 +542,16 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
       hour: "2-digit", minute: "2-digit", second: "2-digit",
     })
     : "pendiente"
+  const automaticAttemptMs = Date.parse(monitor.nextAutomaticAttemptAt ?? "")
+  const automaticAttemptDue = Number.isFinite(automaticAttemptMs) &&
+    automaticAttemptMs <= Date.now()
+  const automaticAttemptLabel = Number.isFinite(automaticAttemptMs)
+    ? new Date(automaticAttemptMs).toLocaleString("es-NI")
+    : "No programado"
+  const workerHeartbeatMs = Date.parse(monitor.workerHeartbeatAt ?? "")
+  const workerHeartbeatLabel = Number.isFinite(workerHeartbeatMs)
+    ? new Date(workerHeartbeatMs).toLocaleString("es-NI")
+    : "Sin latido"
   const rescueMode = String(continuityRescue.mode ?? "")
   const rescueAvailable =
     continuityRescue.canRunAutomaticRescue === true
@@ -568,7 +579,9 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
           <span className={`relative h-3 w-3 rounded-full ${palette.dot} ${monitor.shouldAnimate ? "motion-safe:animate-pulse" : ""}`} />
         </div>
         <div className="min-w-0">
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-100/60">1 · Sistema trabajando</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-cyan-100/60">
+            {monitor.shouldAnimate ? "1 · Sistema trabajando" : "1 · Estado del sistema"}
+          </p>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <h3 id="system-working-heading" className="break-words text-lg font-black text-white">{nextCycleAllowed ? "El ciclo terminó; puedes autorizar el siguiente lote" : monitor.headline}</h3>
             <span aria-live="polite" className={`rounded-full border px-2.5 py-1 text-[10px] font-black tracking-wide ${nextCycleAllowed ? "border-amber-200/35 bg-amber-200/10 text-amber-100" : palette.badge}`}>{nextCycleAllowed ? "ESPERANDO TU CONFIRMACIÓN" : monitor.businessLabel}</span>
@@ -587,7 +600,9 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
             {monitor.shouldAnimate && <span aria-hidden="true"
               className="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-cyan-100/10 to-transparent motion-safe:animate-[pulse_1.4s_ease-in-out_infinite]" />}
             <p className="relative text-[10px] font-black uppercase tracking-[0.18em] text-white/45">Evaluación actual · {monitor.currentState.replaceAll("_", " ")}</p>
-            <p className="relative mt-1 text-sm font-bold leading-5 text-white/85">{monitor.currentPhase.activity}</p>
+            <p className="relative mt-1 text-sm font-bold leading-5 text-white/85">{monitor.shouldAnimate
+              ? monitor.currentPhase.activity
+              : `Checkpoint preservado en ${monitor.currentPhase.label}; no hay ejecución activa confirmada.`}</p>
           </div>}
           {monitor.recovery.required && <div role="alert"
             className="mt-3 rounded-2xl border border-amber-200/35 bg-amber-200/[0.08] p-3">
@@ -633,6 +648,8 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
         <LiveMetric label="Lote" value={`${monitor.batch.total} / 5`} />
         <LiveMetric label="En curso" value={String(monitor.batch.active)} />
         <LiveMetric label="Descartados" value={String(monitor.batch.blocked)} tone={monitor.batch.blocked ? "WARN" : "DEFAULT"} />
+        <LiveMetric label={automaticAttemptDue ? "Reintento listo desde" : "Próximo reintento"} value={automaticAttemptLabel} />
+        <LiveMetric label="Último latido worker" value={workerHeartbeatLabel} />
       </div>
     </div>
 
@@ -686,9 +703,16 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
           : "border-white/10 bg-black/20"}`}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/45">{selectedPhase.status === "DONE" ? "Resultado confirmado" : selectedPhase.status === "CURRENT" ? "Qué está haciendo ahora" : "Qué hará esta fase"}</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/45">{selectedPhase.status === "DONE"
+              ? "Resultado confirmado"
+              : selectedPhase.status === "CURRENT"
+                ? monitor.shouldAnimate ? "Qué está haciendo ahora" : "Checkpoint actual"
+                : "Qué hará esta fase"}</p>
             <h4 className="mt-1 break-words text-base font-black text-white">{selectedPhase.label}</h4>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-white/65">{selectedPhase.activity}</p>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-white/65">{selectedPhase.status === "CURRENT" &&
+              !monitor.shouldAnimate
+              ? `Checkpoint preservado en ${selectedPhase.label}; no hay ejecución activa confirmada.`
+              : selectedPhase.activity}</p>
           </div>
           <span className={`rounded-full border px-3 py-1 text-[10px] font-black ${selectedPhase.status === "DONE"
             ? "border-emerald-200/25 text-emerald-100"

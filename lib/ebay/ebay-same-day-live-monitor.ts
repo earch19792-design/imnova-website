@@ -82,6 +82,8 @@ export type SameDayLiveMonitor = {
     message: string | null
   }
   nextAutomaticAction: string
+  nextAutomaticAttemptAt: string | null
+  workerHeartbeatAt: string | null
   nextHumanAction: string
   blockerSummary: string | null
   rejectionSummaries: SameDayCandidateRejectionSummary[]
@@ -493,6 +495,7 @@ export function deriveSameDayLiveMonitor(input: {
   tasks?: unknown
   jobs?: unknown
   quotaPaused?: boolean
+  nextAutomaticAttemptAt?: string | null
   now?: Date
 }): SameDayLiveMonitor {
   const now = input.now ?? new Date()
@@ -527,7 +530,16 @@ export function deriveSameDayLiveMonitor(input: {
     step.status === "CURRENT"))
 
   const leasedJobs = jobs.filter((job) => text(job.status) === "LEASED")
+  const waitingRetryJobs = jobs.filter((job) => text(job.status) === "WAITING_RETRY")
   const pendingJobs = jobs.filter((job) => ["PENDING", "WAITING_RETRY"].includes(text(job.status)))
+  const waitingRetryAttemptMs = waitingRetryJobs
+    .map((job) => dateMs(job.rate_limit_resume_at) ?? dateMs(job.available_at))
+    .filter((value): value is number => value != null)
+    .sort((left, right) => left - right)[0] ?? null
+  const projectedAttemptMs = dateMs(input.nextAutomaticAttemptAt)
+  const nextAutomaticAttemptMs = input.quotaPaused === true && projectedAttemptMs != null
+    ? projectedAttemptMs
+    : waitingRetryAttemptMs ?? projectedAttemptMs
   const unresolvedJobStatuses = new Set(["PENDING", "WAITING_RETRY", "LEASED"])
   const orphanedAutomaticCandidate = activeCandidates.find((candidate) =>
     AUTOMATIC_STATES.has(text(candidate.machine_state)) &&
@@ -544,15 +556,14 @@ export function deriveSameDayLiveMonitor(input: {
   const freshLeasedJob = leasedJobs.some((job) => isRecent(job.updated_at, nowMs, 6 * 60_000))
   // A visual pulse is earned only by a current durable execution signal. A
   // merely PENDING job is intentionally rendered as queued, never as working.
-  const activeExecution = (freshHeartbeat && (activeWorkerLease || leasedJobs.length > 0))
-    || (activeWorkerLease && freshLeasedJob)
+  const activeExecution = freshHeartbeat && activeWorkerLease && freshLeasedJob
 
   const runStatus = text(run?.status)
   let status: SameDayLiveMonitorStatus
   if (!run) status = "NOT_STARTED"
   else if (runStatus === "COMPLETED") status = "COMPLETED"
   else if (openTasks.length > 0) status = "WAITING_OPERATOR"
-  else if (input.quotaPaused === true || jobs.some((job) => text(job.status) === "WAITING_RETRY")) status = "PAUSED_EBAY"
+  else if (input.quotaPaused === true) status = "PAUSED_EBAY"
   else if (recoveryRequired) status = "RECOVERY_REQUIRED"
   else if (readyCandidates.length > 0 || runStatus === "READY_FOR_OPERATOR") status = "READY_TO_PUBLISH"
   else if (runStatus === "BLOCKED" || (operationalCandidates.length > 0 && blockedCandidates.length === operationalCandidates.length)) status = "BLOCKED"
@@ -571,7 +582,20 @@ export function deriveSameDayLiveMonitor(input: {
     BLOCKED: { business: "BLOQUEADO", headline: "Este lote no puede avanzar de forma segura", detail: "Seller OS preservó la evidencia y no forzará una publicación." },
     COMPLETED: { business: "PUBLICADO Y VERIFICADO", headline: "El listing fue verificado y registrado", detail: "Seller OS cerró el recorrido durable de este candidato." },
   }
-  const label = labels[status]
+  const label = status === "QUEUED" && waitingRetryJobs.length > 0 &&
+    waitingRetryAttemptMs != null
+    ? waitingRetryAttemptMs > nowMs
+      ? {
+          business: "REINTENTO PROGRAMADO",
+          headline: "El trabajo esperará su próximo intento durable",
+          detail: "No hay ejecución activa confirmada antes de la hora autorizada.",
+        }
+      : {
+          business: "LISTO PARA REINTENTO",
+          headline: "El trabajo ya puede solicitar un nuevo lease",
+          detail: "El retry está habilitado, pero todavía no existe ejecución activa confirmada.",
+        }
+    : labels[status]
   const rejectionSummaries = blockedCandidates.map(explainSameDayRejectedCandidate)
   const firstBlocker = blockedCandidates.flatMap((candidate) =>
     Array.isArray(candidate.blockers) ? candidate.blockers : [])[0]
@@ -582,7 +606,17 @@ export function deriveSameDayLiveMonitor(input: {
       ? `Latido confirmado ${new Intl.DateTimeFormat("es-NI", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(heartbeatAt))}.`
       : "Job con lease vigente confirmado."
     : status === "QUEUED"
-      ? `${pendingJobs.length} trabajo(s) en cola; no se simula actividad mientras esperan.`
+      ? waitingRetryJobs.length > 0
+        ? waitingRetryAttemptMs == null
+          ? "Reintento preservado sin una hora válida; no se inventa una fecha ni se simula actividad."
+          : waitingRetryAttemptMs > nowMs
+            ? `Reintento automático programado para ${new Intl.DateTimeFormat("es-NI", {
+                dateStyle: "short", timeStyle: "medium",
+              }).format(new Date(waitingRetryAttemptMs))}; no se simula actividad mientras espera.`
+            : `Reintento automático disponible desde ${new Intl.DateTimeFormat("es-NI", {
+                dateStyle: "short", timeStyle: "medium",
+              }).format(new Date(waitingRetryAttemptMs))}; espera un lease y latido confirmados.`
+        : `${pendingJobs.length} trabajo(s) en cola; no se simula actividad mientras esperan.`
       : status === "RECOVERY_REQUIRED"
         ? `Sin job durable desde ${orphanedUpdatedAt == null
           ? "una hora no determinada"
@@ -599,7 +633,7 @@ export function deriveSameDayLiveMonitor(input: {
     headline: label.headline,
     detail: label.detail,
     activityEvidence,
-    shouldAnimate: status === "WORKING",
+    shouldAnimate: status === "WORKING" && activeExecution,
     currentState,
     journeyPositionPercent: status === "COMPLETED" ||
       currentState === "VERIFIED_ACTIVE"
@@ -635,6 +669,12 @@ export function deriveSameDayLiveMonitor(input: {
     nextAutomaticAction: recoveryRequired
       ? "Reconstruir el job durable desde el checkpoint y reanudar esta misma fase."
       : text(run?.next_automated_action) || text(currentCandidate?.next_automated_action) || "Preservar el checkpoint y esperar la siguiente señal.",
+    nextAutomaticAttemptAt: nextAutomaticAttemptMs == null
+      ? null
+      : new Date(nextAutomaticAttemptMs).toISOString(),
+    workerHeartbeatAt: heartbeatAt == null
+      ? null
+      : new Date(heartbeatAt).toISOString(),
     nextHumanAction: recoveryRequired
       ? "Pulsa “Reanudar ahora”; Seller OS conservará el checkpoint y solo pedirá la evidencia que realmente falte."
       : openTasks.length

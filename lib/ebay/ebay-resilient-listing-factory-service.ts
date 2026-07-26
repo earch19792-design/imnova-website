@@ -288,7 +288,7 @@ function text(value: unknown): string {
 function bridgeErrorCode(error: unknown): string {
   const value = record(error)
   const code = text(value.code)
-  if (["42P01", "42703", "PGRST202", "PGRST204", "PGRST205"].includes(code)) {
+  if (["42P01", "42702", "42703", "42883", "PGRST202", "PGRST204", "PGRST205"].includes(code)) {
     return "LISTING_FACTORY_MIGRATION_NOT_READY"
   }
   return "LISTING_FACTORY_LEGACY_BRIDGE_FAILED"
