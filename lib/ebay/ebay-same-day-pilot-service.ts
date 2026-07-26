@@ -117,6 +117,7 @@ import { buildCurrentSameDayImageFactoryInput } from
   "./ebay-same-day-image-factory-input"
 import {
   buildSameDayImageGenerationJobSpec,
+  SAME_DAY_IMAGE_AUTHORIZED_CATALOG_COMPLETION_RECOVERY_VERSION,
   SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION,
   isSameDayImagePreparationOrphan,
   SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION,
@@ -1611,19 +1612,23 @@ async function enqueuePilotJob(input: {
   candidateId: string
   job: PilotJobSpec
 }) {
-  const { error } = await input.supabase.from("ebay_same_day_pilot_jobs").upsert({
-    run_id: input.runId,
-    candidate_id: input.candidateId,
-    job_type: input.job.jobType,
-    idempotency_key: input.job.idempotencyKey,
-    checkpoint: input.job.checkpoint ?? {},
-    available_at: input.job.availableAt ?? new Date().toISOString(),
-    max_attempts: input.job.maxAttempts ?? 4,
-    api_family: input.job.apiFamily ?? null,
-    api_operation: input.job.apiOperation ?? null,
-    owner_lane: input.job.ownerLane ?? null,
-  }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  const { data, error } = await input.supabase
+    .from("ebay_same_day_pilot_jobs")
+    .upsert({
+      run_id: input.runId,
+      candidate_id: input.candidateId,
+      job_type: input.job.jobType,
+      idempotency_key: input.job.idempotencyKey,
+      checkpoint: input.job.checkpoint ?? {},
+      available_at: input.job.availableAt ?? new Date().toISOString(),
+      max_attempts: input.job.maxAttempts ?? 4,
+      api_family: input.job.apiFamily ?? null,
+      api_operation: input.job.apiOperation ?? null,
+      owner_lane: input.job.ownerLane ?? null,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+    .select("id")
   if (error) throw new Error("SAME_DAY_PILOT_JOB_ENQUEUE_FAILED")
+  return (data ?? []).length === 1
 }
 
 type SerializedOpenHumanTask = {
@@ -1651,9 +1656,11 @@ async function serializeOpenHumanTasksForRun(supabase: SupabaseClient, runId: st
   // may wait for one precise manual value while the rest of the batch keeps
   // moving. Decision, capture and publication gates remain serialized.
   const correctionTasks = openTasks.filter((task) =>
-    task.gate_type === "CRITICAL_EXCEPTION_REQUIRED")
+    task.gate_type === "CRITICAL_EXCEPTION_REQUIRED" ||
+    task.gate_type === "IMAGE_SOURCE_OR_QUALITY_CORRECTION_REQUIRED")
   const primaryTasks = openTasks.filter((task) =>
-    task.gate_type !== "CRITICAL_EXCEPTION_REQUIRED")
+    task.gate_type !== "CRITICAL_EXCEPTION_REQUIRED" &&
+    task.gate_type !== "IMAGE_SOURCE_OR_QUALITY_CORRECTION_REQUIRED")
   const primaryOpenTask = primaryTasks[0] ?? null
   const seenCorrectionCandidates = new Set<string>()
   const duplicateCorrectionIds: string[] = []
@@ -1684,7 +1691,8 @@ async function createHumanTask(input: {
   seconds: number; impact: string; evidence: JsonRecord; actionSchema: JsonRecord; continuationJobType: string
 }) {
   const before = await serializeOpenHumanTasksForRun(input.supabase, input.runId)
-  const correctionTask = input.gateType === "CRITICAL_EXCEPTION_REQUIRED"
+  const correctionTask = input.gateType === "CRITICAL_EXCEPTION_REQUIRED" ||
+    input.gateType === "IMAGE_SOURCE_OR_QUALITY_CORRECTION_REQUIRED"
   const existingSameTask = before.openTasks.find((task) =>
     task.candidate_id === input.candidateId && task.gate_type === input.gateType)
   if (existingSameTask) return true
@@ -8149,12 +8157,13 @@ async function repairOrphanedImagePreparation(
   })
   if (!job) return 0
 
-  await enqueuePilotJob({
+  const enqueued = await enqueuePilotJob({
     supabase,
     runId: state.run.id,
     candidateId: text(candidate.id),
     job,
   })
+  if (!enqueued) return 0
   const { error: eventError } = await supabase
     .from("ebay_same_day_pilot_events")
     .upsert({
@@ -8182,6 +8191,327 @@ async function repairOrphanedImagePreparation(
     throw new Error("SAME_DAY_PILOT_IMAGE_ORPHAN_EVENT_FAILED")
   }
   return 1
+}
+
+async function repairBlockedAuthorizedCatalogImagePackage(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const candidates = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .filter((candidate) => {
+      const imageSummary = record(candidate.image_package_summary)
+      const handoffSummary = record(candidate.manual_handoff_package)
+      const blockers = strings(candidate.blockers)
+      return text(candidate.machine_state) === "BLOCKED" &&
+        text(candidate.state) === "NEEDS_IMAGE_CORRECTION" &&
+        blockers.length === 1 &&
+        imageCorrectionRequired(blockers[0]) &&
+        [1, 4, 6].includes(Number(imageSummary.count)) &&
+        text(imageSummary.source) === "LUNA_AUTHORIZED_CATALOG" &&
+        Number(imageSummary.generatedImages) === 0 &&
+        text(handoffSummary.status) === "AWAITING_IMAGE_APPROVAL" &&
+        /^(?:sha256:)?[0-9a-f]{64}$/i.test(
+          text(handoffSummary.packageHash),
+        ) &&
+        Object.keys(record(handoffSummary.package)).length > 0
+    })
+  if (!candidates.length) return 0
+
+  const accountKey = text(state.run.marketplace_account_key)
+  const actorId = text(state.run.created_by)
+  if (!accountKey || !actorId) return 0
+
+  for (const candidate of candidates) {
+    const imageSummary = record(candidate.image_package_summary)
+    const handoffSummary = record(candidate.manual_handoff_package)
+    const factsSummary = record(candidate.product_facts_summary)
+    const factsPackage = record(factsSummary.authoritativeFactsPackage)
+    const factPackageHash = text(factsPackage.factPackageHash)
+    const imageCount = Number(imageSummary.count)
+    const previousBlocker = strings(candidate.blockers)[0]
+    if (!/^(?:sha256:)?[0-9a-f]{64}$/i.test(factPackageHash)) continue
+
+    const { data: listingPackage, error: listingPackageError } =
+      await supabase
+        .from("ebay_listing_packages")
+        .select("id,status,package_data")
+        .eq("account_key", accountKey)
+        .eq("created_by", actorId)
+        .eq("opportunity_id", candidate.opportunity_id)
+        .eq("candidate_key", candidate.candidate_key)
+        .maybeSingle()
+    if (listingPackageError) {
+      throw new Error(
+        "SAME_DAY_AUTHORIZED_CATALOG_COMPLETION_PACKAGE_READ_FAILED",
+      )
+    }
+    const listingPackageId = text(listingPackage?.id)
+    const listingPackageBinding = record(
+      record(listingPackage?.package_data).sameDayPilot,
+    )
+    if (!listingPackage ||
+      text(listingPackage.status) !== "draft" ||
+      !/^[0-9a-f-]{36}$/i.test(listingPackageId) ||
+      text(listingPackageBinding.runId) !== text(state.run.id) ||
+      text(listingPackageBinding.candidateId) !== text(candidate.id)) {
+      continue
+    }
+
+    const { data: sourcePack, error: sourcePackError } = await supabase
+      .from("luna_catalog_authorized_source_packs")
+      .select("id,listing_package_id,source_pack_hash,source_assets,product_identity_hash,authoritative_fact_package_hash")
+      .eq("marketplace_account_key", accountKey)
+      .eq("candidate_id", candidate.id)
+      .eq("listing_package_id", listingPackageId)
+      .order("verified_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (sourcePackError) {
+      throw new Error(
+        "SAME_DAY_AUTHORIZED_CATALOG_COMPLETION_SOURCE_READ_FAILED",
+      )
+    }
+    if (sourcePack &&
+      (text(sourcePack.listing_package_id) !== listingPackageId ||
+        text(sourcePack.product_identity_hash) !== factPackageHash ||
+        text(sourcePack.authoritative_fact_package_hash) !==
+          factPackageHash)) {
+      continue
+    }
+    const sourceAssets = Array.isArray(sourcePack?.source_assets)
+      ? sourcePack.source_assets.map(record)
+      : []
+    const authorizedSecondarySourceHashes = new Set(sourceAssets
+      .filter((asset) =>
+        text(asset.authorizationStatus).startsWith("AUTHORIZED_") &&
+        strings(asset.selectedForSlots).some((slot) =>
+          slot !== "MAIN_WHITE_BACKGROUND"))
+      .map((asset) => text(asset.sha256))
+      .filter((value) => /^[0-9a-f]{64}$/i.test(value)))
+
+    if (imageCount === 1 || authorizedSecondarySourceHashes.size < 2) {
+      await createHumanTask({
+        supabase,
+        runId: state.run.id,
+        candidateId: text(candidate.id),
+        expectedState: "BLOCKED",
+        gateType: "IMAGE_SOURCE_OR_QUALITY_CORRECTION_REQUIRED",
+        title: "Aporta al menos dos vistas autorizadas",
+        why:
+          "El paquete conservado no tiene dos fuentes autorizadas válidas para repartir seis secundarios sin usar una fuente más de tres veces.",
+        seconds: 120,
+        impact:
+          "Con dos fuentes válidas, Seller OS reconstruirá el paquete ligado sin repetir análisis ni escribir en eBay.",
+        evidence: {
+          previousBlocker,
+          imageCount,
+          generatedImages: 0,
+          source: "LUNA_AUTHORIZED_CATALOG",
+          authorizedSecondarySourceCount:
+            authorizedSecondarySourceHashes.size,
+          minimumAuthorizedSourceCount: 2,
+          allocatorMaximumUsesPerSource: 3,
+          listingPackageId,
+          packageHash: handoffSummary.packageHash,
+          listingPackageBindingPreserved: true,
+          historyDeleted: false,
+          ebayWrites: 0,
+        },
+        actionSchema: {
+          type: "AUTHORIZED_IMAGE_SOURCE_CORRECTION",
+          actions: ["ADD_AUTHORIZED_SOURCES"],
+          minimumAuthorizedSourceCount: 2,
+          allocatorMaximumUsesPerSource: 3,
+        },
+        continuationJobType: "GENERATE_SIX_IMAGE_PACKAGE",
+      })
+      continue
+    }
+    if (![4, 6].includes(imageCount) || !sourcePack) continue
+
+    const { data: publications, error: publicationError } = await supabase
+      .from("ebay_authorized_listing_publications")
+      .select("phase,publish_started_at,published_at,verified_active_at,listing_id,last_error_code")
+      .eq("listing_package_id", listingPackageId)
+    if (publicationError) {
+      throw new Error(
+        "SAME_DAY_AUTHORIZED_CATALOG_COMPLETION_PUBLICATION_READ_FAILED",
+      )
+    }
+    const externalOutcomeMayExist = (publications ?? []).some((publication) => {
+      if (publication.listing_id || publication.published_at ||
+        publication.verified_active_at) return true
+      const phase = text(publication.phase).toLowerCase()
+      if (phase === "cancelled") return false
+      return !(phase === "terminal_failure" &&
+        text(publication.last_error_code) === "EBAY_PUBLISH_WRITE_REJECTED")
+    })
+    if (externalOutcomeMayExist) continue
+
+    const { data: imageJobs, error: imageJobsError } = await supabase
+      .from("ebay_same_day_pilot_jobs")
+      .select("id,status,last_error_code")
+      .eq("run_id", state.run.id)
+      .eq("candidate_id", candidate.id)
+      .eq("job_type", "GENERATE_SIX_IMAGE_PACKAGE")
+      .order("created_at", { ascending: false })
+    if (imageJobsError) {
+      throw new Error(
+        "SAME_DAY_AUTHORIZED_CATALOG_COMPLETION_JOB_READ_FAILED",
+      )
+    }
+    if ((imageJobs ?? []).some((job) =>
+      ["PENDING", "WAITING_RETRY", "LEASED"].includes(text(job.status)))) {
+      continue
+    }
+    const causalJobPresent = (imageJobs ?? []).some((job) =>
+      ["COMPLETED", "DEAD_LETTER", "CANCELLED"].includes(text(job.status)) &&
+      text(job.last_error_code) === previousBlocker)
+    const causalTransitionPresent = state.transitions.some((entry) =>
+      text(entry.candidate_id) === text(candidate.id) &&
+      text(entry.previous_state) === "PREPARING_IMAGE_PACKAGE" &&
+      text(entry.next_state) === "BLOCKED" &&
+      text(entry.reason_code) ===
+        "IMAGE_SOURCE_OR_QUALITY_CORRECTION_REQUIRED")
+    if (!causalJobPresent || !causalTransitionPresent) continue
+
+    const imageJob = buildSameDayImageGenerationJobSpec({
+      runId: state.run.id,
+      candidateId: candidate.id,
+      productResearchCaptureBatchId:
+        candidate.product_research_capture_batch_id,
+      factRunId: factsSummary.factRunId,
+      packageHash: handoffSummary.packageHash,
+      authorizedCatalogCompletionRecovery: true,
+    })
+    if (!imageJob) continue
+
+    await transition({
+      supabase,
+      runId: state.run.id,
+      candidateId: text(candidate.id),
+      previousState: "BLOCKED",
+      nextState: "PREPARING_IMAGE_PACKAGE",
+      reasonCode: "AUTHORIZED_CATALOG_IMAGE_PACKAGE_COMPLETION_RECOVERED",
+      triggeredBy: "RETRY",
+      checkpoint: {
+        recoveryVersion:
+          SAME_DAY_IMAGE_AUTHORIZED_CATALOG_COMPLETION_RECOVERY_VERSION,
+        previousBlocker,
+        previousImageCount: imageCount,
+        sourcePackId: sourcePack.id,
+        sourcePackHash: sourcePack.source_pack_hash,
+        authorizedSecondarySourceCount:
+          authorizedSecondarySourceHashes.size,
+        allocatorMaximumUsesPerSource: 3,
+        factRunId: factsSummary.factRunId,
+        productResearchCaptureBatchId:
+          candidate.product_research_capture_batch_id,
+        packageHash: handoffSummary.packageHash,
+        listingPackageId,
+        listingPackageBindingPreserved: true,
+        checkpointPreserved: true,
+        commercialEvidencePreserved: true,
+        productFactsPreserved: true,
+        productApprovalPreserved: true,
+        analysisRepeated: false,
+        historyDeleted: false,
+        ebayWrites: 0,
+      },
+      nextAutomaticAction:
+        "Completar el set con reparto autorizado máximo 3 por fuente.",
+      nextHumanAction: "Ninguna hasta revisar las imágenes.",
+      job: imageJob,
+    })
+    const { data: repairedCandidate, error: candidateError } =
+      await supabase
+        .from("ebay_same_day_pilot_candidates")
+        .update({
+          state: "READY_FOR_CONTENT",
+          blockers: [],
+          image_package_summary: {
+            ...imageSummary,
+            status: "PREPARING",
+            approved: false,
+            completionRecoveryVersion:
+              SAME_DAY_IMAGE_AUTHORIZED_CATALOG_COMPLETION_RECOVERY_VERSION,
+            previousImageCount: imageCount,
+            authorizedSecondarySourceCount:
+              authorizedSecondarySourceHashes.size,
+            allocatorMaximumUsesPerSource: 3,
+            listingPackageBindingPreserved: true,
+            analysisRepeated: false,
+            ebayWrites: 0,
+          },
+          updated_at: now.toISOString(),
+        })
+        .eq("id", candidate.id)
+        .eq("run_id", state.run.id)
+        .eq("machine_state", "PREPARING_IMAGE_PACKAGE")
+        .select("id")
+        .maybeSingle()
+    if (candidateError || !repairedCandidate) {
+      throw new Error(
+        "SAME_DAY_AUTHORIZED_CATALOG_COMPLETION_CANDIDATE_FAILED",
+      )
+    }
+    const completedAt = now.toISOString()
+    const { error: taskError } = await supabase
+      .from("ebay_same_day_pilot_human_tasks")
+      .update({
+        status: "SUPERSEDED",
+        completed_at: completedAt,
+        updated_at: completedAt,
+      })
+      .eq("run_id", state.run.id)
+      .eq("candidate_id", candidate.id)
+      .eq("gate_type", "IMAGE_SOURCE_OR_QUALITY_CORRECTION_REQUIRED")
+      .eq("status", "OPEN")
+    if (taskError) {
+      throw new Error(
+        "SAME_DAY_AUTHORIZED_CATALOG_COMPLETION_TASK_CLOSE_FAILED",
+      )
+    }
+    const { error: eventError } = await supabase
+      .from("ebay_same_day_pilot_events")
+      .upsert({
+        run_id: state.run.id,
+        candidate_id: candidate.id,
+        event_type:
+          "AUTHORIZED_CATALOG_IMAGE_PACKAGE_COMPLETION_RECOVERED",
+        event_payload: {
+          recoveryVersion:
+            SAME_DAY_IMAGE_AUTHORIZED_CATALOG_COMPLETION_RECOVERY_VERSION,
+          previousBlocker,
+          previousImageCount: imageCount,
+          sourcePackId: sourcePack.id,
+          sourcePackHash: sourcePack.source_pack_hash,
+          authorizedSecondarySourceCount:
+            authorizedSecondarySourceHashes.size,
+          allocatorMaximumUsesPerSource: 3,
+          listingPackageId,
+          listingPackageBindingPreserved: true,
+          checkpointPreserved: true,
+          analysisRepeated: false,
+          historyDeleted: false,
+          ebayWrites: 0,
+        },
+        idempotency_key: `${imageJob.idempotencyKey}:EVENT`,
+        ebay_read_calls: 0,
+        openai_calls: 0,
+        ebay_writes: 0,
+        production_changed: false,
+      }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+    if (eventError) {
+      throw new Error(
+        "SAME_DAY_AUTHORIZED_CATALOG_COMPLETION_EVENT_FAILED",
+      )
+    }
+    return 1
+  }
+  return 0
 }
 
 async function repairRejectedImageSourceReuse(
@@ -8324,10 +8654,13 @@ async function repairRejectedImageSourceReuse(
     const priorErrors = imageJobs.map((job) =>
       text(job.last_error_code)).filter(Boolean)
     if (!priorErrors.length || priorErrors.some((errorCode) =>
-      errorCode !== SAME_DAY_IMAGE_SOURCE_REUSE_ERROR)) continue
+      errorCode !== SAME_DAY_IMAGE_SOURCE_REUSE_ERROR &&
+      errorCode !== "EFFECT_ALREADY_APPLIED_RECOVERED")) continue
     const causalFailures = imageJobs.filter((job) =>
-      ["DEAD_LETTER", "CANCELLED"].includes(text(job.status)) &&
-      text(job.last_error_code) === SAME_DAY_IMAGE_SOURCE_REUSE_ERROR)
+      (["DEAD_LETTER", "CANCELLED"].includes(text(job.status)) &&
+        text(job.last_error_code) === SAME_DAY_IMAGE_SOURCE_REUSE_ERROR) ||
+      (text(job.status) === "COMPLETED" &&
+        text(job.last_error_code) === "EFFECT_ALREADY_APPLIED_RECOVERED"))
     const causalTransitionPresent = state.transitions.some((entry) =>
       text(entry.candidate_id) === text(candidate.id) &&
       text(entry.previous_state) === "PREPARING_IMAGE_PACKAGE" &&
@@ -8758,6 +9091,22 @@ export async function processSameDayPilotJobs(input: {
   if (repaired) {
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
     if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
+  }
+  const authorizedCatalogCompletionRecovered =
+    await repairBlockedAuthorizedCatalogImagePackage(
+      input.supabase,
+      state,
+      now,
+    )
+  if (authorizedCatalogCompletionRecovered) {
+    await refreshRunProjection(input.supabase, state.run.id, true)
+    return {
+      processed: 1,
+      status: "COMPLETED",
+      jobType: "RECOVER_AUTHORIZED_CATALOG_IMAGE_PACKAGE",
+      authorizedCatalogCompletionRecovered,
+      ebayWrites: 0,
+    }
   }
   const imageSourceReuseRecovered =
     await repairRejectedImageSourceReuse(input.supabase, state, now)

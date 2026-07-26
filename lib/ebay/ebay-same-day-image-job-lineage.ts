@@ -1,7 +1,7 @@
 export const SAME_DAY_IMAGE_JOB_LINEAGE_VERSION =
   "VISUAL_V3_FACT_RUN_BOUND_V1_2026_07_23"
 export const SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION =
-  "IMAGE_PREPARATION_ORPHAN_RECOVERY_V1_2026_07_23"
+  "IMAGE_PREPARATION_ORPHAN_RECOVERY_V2_2026_07_26"
 export const SAME_DAY_IMAGE_VISUAL_STRATEGY_RECOVERY_VERSION =
   "IMAGE_SINGLE_UNIT_VISUAL_STRATEGY_RECOVERY_V6_2026_07_24"
 export const SAME_DAY_IMAGE_DETERMINISTIC_FALLBACK_RECOVERY_VERSION =
@@ -10,6 +10,8 @@ export const SAME_DAY_IMAGE_PROFESSIONAL_MARKET_FALLBACK_RECOVERY_VERSION =
   "IMAGE_PROFESSIONAL_MARKET_FALLBACK_V1_2026_07_24"
 export const SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION =
   "IMAGE_SOURCE_REUSE_CONSTRAINED_CAP3_RECOVERY_V1_2026_07_26"
+export const SAME_DAY_IMAGE_AUTHORIZED_CATALOG_COMPLETION_RECOVERY_VERSION =
+  "IMAGE_AUTHORIZED_CATALOG_COMPLETION_CAP3_RECOVERY_V1_2026_07_26"
 
 export type SameDayImageGenerationJobSpec = {
   jobType: "GENERATE_SIX_IMAGE_PACKAGE"
@@ -29,6 +31,8 @@ export type SameDayImageGenerationJobSpec = {
       typeof SAME_DAY_IMAGE_PROFESSIONAL_MARKET_FALLBACK_RECOVERY_VERSION
     sourceReuseRecoveryVersion?:
       typeof SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION
+    authorizedCatalogCompletionRecoveryVersion?:
+      typeof SAME_DAY_IMAGE_AUTHORIZED_CATALOG_COMPLETION_RECOVERY_VERSION
     maximumOpenAiCalls: 1
     competitorImages: 0
     ebayWrites: 0
@@ -55,6 +59,7 @@ export function buildSameDayImageGenerationJobSpec(input: {
   deterministicFallbackRecovery?: boolean
   professionalMarketFallbackRecovery?: boolean
   sourceReuseRecovery?: boolean
+  authorizedCatalogCompletionRecovery?: boolean
 }): SameDayImageGenerationJobSpec | null {
   const runId = text(input.runId)
   const candidateId = text(input.candidateId)
@@ -86,6 +91,9 @@ export function buildSameDayImageGenerationJobSpec(input: {
       : []),
     ...(input.sourceReuseRecovery
       ? [SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION]
+      : []),
+    ...(input.authorizedCatalogCompletionRecovery
+      ? [SAME_DAY_IMAGE_AUTHORIZED_CATALOG_COMPLETION_RECOVERY_VERSION]
       : []),
   ]
   return {
@@ -125,6 +133,12 @@ export function buildSameDayImageGenerationJobSpec(input: {
         ? {
             sourceReuseRecoveryVersion:
               SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION,
+          }
+        : {}),
+      ...(input.authorizedCatalogCompletionRecovery
+        ? {
+            authorizedCatalogCompletionRecoveryVersion:
+              SAME_DAY_IMAGE_AUTHORIZED_CATALOG_COMPLETION_RECOVERY_VERSION,
           }
         : {}),
       maximumOpenAiCalls: 1,
