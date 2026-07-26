@@ -142,6 +142,10 @@ async function exactListingPackage(input: {
   if (!opportunityId || !candidateKey || !uuid(input.actorId)) {
     throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_SCOPE_INVALID")
   }
+  const requestedBinding = {
+    runId: input.runId,
+    candidateId: input.candidate.id,
+  }
   const read = () => input.supabase.from("ebay_listing_packages").select("*")
     .eq("account_key", input.accountKey)
     .eq("opportunity_id", opportunityId)
@@ -149,44 +153,181 @@ async function exactListingPackage(input: {
   let { data, error } = await read()
   if (error) throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_READ_FAILED")
   if (!data) {
-    const inserted = await input.supabase.from("ebay_listing_packages").insert({
-      account_key: input.accountKey,
-      opportunity_id: opportunityId,
-      candidate_key: candidateKey,
-      status: "draft",
-      package_data: {
-        ...input.handoffPackage,
-        sameDayPilot: { runId: input.runId, candidateId: input.candidate.id },
-      },
-      readiness: 0,
-      source_observed_at: new Date().toISOString(),
-      created_by: input.actorId,
-    }).select("*").single()
-    if (inserted.error) {
-      const raced = await read()
-      if (raced.error || !raced.data) {
-        throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_CREATE_FAILED")
+    const legacy = await input.supabase.from("ebay_listing_packages")
+      .select("*")
+      .eq("opportunity_id", opportunityId)
+      .maybeSingle()
+    if (legacy.error) {
+      throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_READ_FAILED")
+    }
+    if (legacy.data) {
+      if (legacy.data.account_key !== null ||
+        uuid(legacy.data.created_by) !== input.actorId ||
+        text(legacy.data.candidate_key, 300) !== candidateKey ||
+        text(legacy.data.status) !== "draft") {
+        throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_SCOPE_CONFLICT")
       }
-      data = raced.data
-    } else data = inserted.data
+      const legacyPackageData = record(legacy.data.package_data)
+      const adopted = await input.supabase
+        .from("ebay_listing_packages")
+        .update({
+          account_key: input.accountKey,
+          package_data: {
+            ...legacyPackageData,
+            ...input.handoffPackage,
+            sameDayPilot: requestedBinding,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", legacy.data.id)
+        .is("account_key", null)
+        .eq("created_by", input.actorId)
+        .eq("updated_at", legacy.data.updated_at)
+        .select("*")
+        .maybeSingle()
+      if (adopted.error || !adopted.data) {
+        const raced = await read()
+        if (raced.error || !raced.data) {
+          throw new Error(
+            "SAME_DAY_IMAGE_LISTING_PACKAGE_SCOPE_ADOPTION_FAILED",
+          )
+        }
+        data = raced.data
+      } else {
+        data = adopted.data
+      }
+    } else {
+      const inserted = await input.supabase.from("ebay_listing_packages").insert({
+        account_key: input.accountKey,
+        opportunity_id: opportunityId,
+        candidate_key: candidateKey,
+        status: "draft",
+        package_data: {
+          ...input.handoffPackage,
+          sameDayPilot: requestedBinding,
+        },
+        readiness: 0,
+        source_observed_at: new Date().toISOString(),
+        created_by: input.actorId,
+      }).select("*").single()
+      if (inserted.error) {
+        const raced = await read()
+        if (raced.error || !raced.data) {
+          throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_CREATE_FAILED")
+        }
+        data = raced.data
+      } else {
+        data = inserted.data
+      }
+    }
   }
   if (text(data.account_key) !== input.accountKey ||
     uuid(data.created_by) !== input.actorId ||
     uuid(data.opportunity_id) !== opportunityId ||
-    text(data.candidate_key, 300) !== candidateKey || data.status === "archived") {
+    text(data.candidate_key, 300) !== candidateKey) {
     throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_OWNERSHIP_INVALID")
+  }
+  if (text(data.status) !== "draft") {
+    throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_REUSE_STATUS_BLOCKED")
   }
   const existingPackageData = record(data.package_data)
   const existingBinding = record(existingPackageData.sameDayPilot)
-  const requestedBinding = {
-    runId: input.runId,
-    candidateId: input.candidate.id,
-  }
   if (Object.keys(existingBinding).length && (
     uuid(existingBinding.runId) !== input.runId
     || uuid(existingBinding.candidateId) !== uuid(input.candidate.id)
   )) {
-    throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_BINDING_CONFLICT")
+    const priorRunId = uuid(existingBinding.runId)
+    const priorCandidateId = uuid(existingBinding.candidateId)
+    if (!priorRunId || !priorCandidateId) {
+      throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_BINDING_CONFLICT")
+    }
+    const priorCandidate = await input.supabase
+      .from("ebay_same_day_pilot_candidates")
+      .select("id,run_id,opportunity_id,candidate_key,machine_state")
+      .eq("id", priorCandidateId)
+      .eq("run_id", priorRunId)
+      .maybeSingle()
+    if (priorCandidate.error || !priorCandidate.data ||
+      uuid(priorCandidate.data.opportunity_id) !== opportunityId ||
+      text(priorCandidate.data.candidate_key, 300) !== candidateKey ||
+      !["BLOCKED", "REJECTED"].includes(
+        text(priorCandidate.data.machine_state),
+      )) {
+      throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_BINDING_CONFLICT")
+    }
+    const publications = await input.supabase
+      .from("ebay_authorized_listing_publications")
+      .select(
+        "phase,publish_started_at,published_at,verified_active_at," +
+        "listing_id,last_error_code",
+      )
+      .eq("listing_package_id", data.id)
+    if (publications.error) {
+      throw new Error(
+        "SAME_DAY_IMAGE_LISTING_PACKAGE_PUBLICATION_READ_FAILED",
+      )
+    }
+    const externalOutcomeMayExist = (publications.data ?? []).some((entry) => {
+      const publication = record(entry)
+      if (publication.listing_id || publication.published_at ||
+        publication.verified_active_at) {
+        return true
+      }
+      const phase = text(publication.phase).toLowerCase()
+      if (phase === "cancelled") return false
+      return !(phase === "terminal_failure" &&
+        text(publication.last_error_code) ===
+          "EBAY_PUBLISH_WRITE_REJECTED")
+    })
+    if (externalOutcomeMayExist) {
+      throw new Error(
+        "SAME_DAY_IMAGE_LISTING_PACKAGE_PUBLICATION_RECONCILIATION_REQUIRED",
+      )
+    }
+    const priorHistory = Array.isArray(
+      existingPackageData.sameDayPilotBindingHistory,
+    )
+      ? existingPackageData.sameDayPilotBindingHistory
+        .map(record)
+        .filter((entry) => uuid(entry.runId) && uuid(entry.candidateId))
+      : []
+    const rebound = await input.supabase
+      .from("ebay_listing_packages")
+      .update({
+        package_data: {
+          ...existingPackageData,
+          ...input.handoffPackage,
+          sameDayPilotBindingHistory: [
+            ...priorHistory,
+            {
+              runId: priorRunId,
+              candidateId: priorCandidateId,
+              supersededAt: new Date().toISOString(),
+              reason: "TERMINAL_UNPUBLISHED_RUN_REBOUND",
+            },
+          ].slice(-20),
+          sameDayPilot: requestedBinding,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", data.id)
+      .eq("account_key", input.accountKey)
+      .eq("created_by", input.actorId)
+      .eq("updated_at", data.updated_at)
+      .select("*")
+      .maybeSingle()
+    if (rebound.error || !rebound.data) {
+      const raced = await read()
+      const racedBinding = record(record(raced.data?.package_data).sameDayPilot)
+      if (raced.error || !raced.data ||
+        uuid(racedBinding.runId) !== input.runId ||
+        uuid(racedBinding.candidateId) !== uuid(input.candidate.id)) {
+        throw new Error("SAME_DAY_IMAGE_LISTING_PACKAGE_BINDING_FAILED")
+      }
+      data = raced.data
+    } else {
+      data = rebound.data
+    }
   }
   if (!Object.keys(existingBinding).length) {
     const { data: bound, error: bindingError } = await input.supabase
@@ -194,6 +335,7 @@ async function exactListingPackage(input: {
       .update({
         package_data: {
           ...existingPackageData,
+          ...input.handoffPackage,
           sameDayPilot: requestedBinding,
         },
         updated_at: new Date().toISOString(),

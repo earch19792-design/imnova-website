@@ -153,6 +153,8 @@ const LEGACY_PRODUCT_FACTS_RECOVERY_VERSION = "LEGACY_PRODUCT_FACTS_RECOVERY_V2_
 const STALE_DECISION_FACTS_RECOVERY_VERSION = "STALE_DECISION_FACTS_RECOVERY_V1_2026_07_19"
 const STALE_SUPPLY_OPENAI_INPUT_RECOVERY_VERSION =
   "STALE_SUPPLY_OPENAI_INPUT_RECOVERY_V1_2026_07_25"
+const AUTHORITATIVE_VOLUME_MAPPING_RECOVERY_VERSION =
+  "AUTHORITATIVE_VOLUME_MAPPING_RECOVERY_V1_2026_07_26"
 const PRE_FACTS_DECISION_REFRESH_VERSION = "PRE_FACTS_DECISION_REFRESH_V1_2026_07_21"
 const OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_VERSION =
   "OFFICIAL_BRAND_MARKET_PRICING_RECOVERY_V3_2026_07_21"
@@ -170,6 +172,12 @@ const V9_EXACT_SEVEN_SQL_GATE_RECOVERY_REASON =
   "V9_EXACT_SEVEN_SQL_GATE_RECOVERED"
 const VISUAL_MARKET_RECAPTURE_LIMIT_REASON =
   "MARKET_VISUAL_EVIDENCE_NOT_ACTIONABLE_AFTER_RECAPTURE"
+const LISTING_PACKAGE_BINDING_RECOVERY_VERSION =
+  "LISTING_PACKAGE_BINDING_RECOVERY_V1_2026_07_26"
+const LISTING_PACKAGE_BINDING_RECOVERABLE_ERROR_CODES = new Set([
+  "SAME_DAY_IMAGE_LISTING_PACKAGE_BINDING_CONFLICT",
+  "SAME_DAY_IMAGE_LISTING_PACKAGE_CREATE_FAILED",
+])
 const VISUAL_MARKET_RECAPTURE_ERROR_CODES = new Set([
   "MARKET_VISUAL_SIGNALS_INSUFFICIENT",
   "SAME_DAY_IMAGE_MARKET_BRIEF_REQUIRED",
@@ -2819,6 +2827,169 @@ async function repairOfficialBrandMarketPricingGap(
     .eq("machine_state", "ENRICHING_PRODUCT_FACTS")
   if (candidateError) throw new Error("SAME_DAY_OFFICIAL_BRAND_RECOVERY_FAILED")
   await refreshRunProjection(supabase, state.run.id)
+  return 1
+}
+
+function normalizedFluidOunces(value: unknown) {
+  const matched = text(value).match(/(\d+(?:\.\d+)?)\s*fl\.?\s*oz\b/i)
+  if (!matched) return ""
+  const amount = Number(matched[1])
+  if (!Number.isFinite(amount) || amount <= 0) return ""
+  return `${Number(amount.toFixed(3))} fl oz`
+}
+
+async function repairAuthoritativeVolumeMappingGap(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const selectedTask = state.tasks.find((task) => {
+    const schema = record(task.action_schema)
+    const candidate = state.candidates.find((entry) =>
+      text(entry.id) === text(task.candidate_id))
+    return task.status === "OPEN" &&
+      task.gate_type === "CRITICAL_EXCEPTION_REQUIRED" &&
+      text(schema.type) === "CONFIRM_OFFICIAL_LABEL_FACT" &&
+      text(schema.factKey).toLowerCase() === "volume" &&
+      schema.regulatoryFact !== true &&
+      text(candidate?.machine_state) === "VALIDATING_TAXONOMY" &&
+      Boolean(text(candidate?.queue_item_id))
+  })
+  if (!selectedTask) return 0
+  const candidate = state.candidates.find((entry) =>
+    text(entry.id) === text(selectedTask.candidate_id))
+  if (!candidate) return 0
+  const schema = record(selectedTask.action_schema)
+  const allowedValues = strings(schema.allowedValues)
+    .map(normalizedFluidOunces)
+    .filter(Boolean)
+  const { data: observations, error: observationError } = await supabase
+    .from("marketplace_product_fact_observations")
+    .select(
+      "id,raw_value,normalized_value,evidence_hash,source_type," +
+      "verification_status",
+    )
+    .eq("queue_item_id", candidate.queue_item_id)
+    .eq("fact_key", "netContent")
+    .eq("source_type", "LUNA_EXACT_VARIANT")
+    .eq("verification_status", "VERIFIED")
+    .order("created_at", { ascending: false })
+    .limit(10)
+  if (observationError) {
+    throw new Error(
+      "SAME_DAY_PILOT_AUTHORITATIVE_VOLUME_OBSERVATION_READ_FAILED",
+    )
+  }
+  const observation = (observations ?? []).map(record).find((entry) => {
+    const normalized = normalizedFluidOunces(
+      entry.normalized_value ?? entry.raw_value,
+    )
+    return normalized && allowedValues.includes(normalized)
+  })
+  if (!observation) return 0
+
+  const completedAt = now.toISOString()
+  const { error: taskError } = await supabase
+    .from("ebay_same_day_pilot_human_tasks")
+    .update({
+      status: "SUPERSEDED",
+      completed_at: completedAt,
+      updated_at: completedAt,
+    })
+    .eq("id", selectedTask.id)
+    .eq("status", "OPEN")
+  if (taskError) {
+    throw new Error(
+      "SAME_DAY_PILOT_AUTHORITATIVE_VOLUME_TASK_SUPERSEDE_FAILED",
+    )
+  }
+  await transition({
+    supabase,
+    runId: state.run.id,
+    candidateId: text(candidate.id),
+    previousState: "VALIDATING_TAXONOMY",
+    nextState: "ENRICHING_PRODUCT_FACTS",
+    reasonCode: "AUTHORITATIVE_VOLUME_MAPPING_RECOVERED",
+    triggeredBy: "RETRY",
+    checkpoint: {
+      recoveryVersion: AUTHORITATIVE_VOLUME_MAPPING_RECOVERY_VERSION,
+      authoritativeObservationId: observation.id,
+      authoritativeEvidenceHash: observation.evidence_hash,
+      mappedFactKey: "netContent",
+      taxonomyAspect: "Volume",
+      productResearchRepeated: false,
+      openAiCalls: 0,
+      ebayWrites: 0,
+    },
+    nextAutomaticAction:
+      "Recalcular Product Facts con el volumen oficial ya verificado.",
+    nextHumanAction: "Ninguna.",
+    job: {
+      jobType: "ENRICH_PRODUCT_FACTS",
+      idempotencyKey:
+        `${state.run.id}:${candidate.id}:ENRICH_PRODUCT_FACTS:` +
+        AUTHORITATIVE_VOLUME_MAPPING_RECOVERY_VERSION,
+      checkpoint: {
+        queueItemId: candidate.queue_item_id,
+        authoritativeVolumeMappingRecovery: true,
+      },
+      availableAt: completedAt,
+      maxAttempts: 10,
+      apiFamily: "TAXONOMY",
+      apiOperation: "GET_ITEM_ASPECTS_FOR_CATEGORY",
+      ownerLane: "P1_EXACT_VERIFICATION",
+    },
+  })
+  const { error: candidateError } = await supabase
+    .from("ebay_same_day_pilot_candidates")
+    .update({
+      state: "READY_FOR_CONTENT",
+      blockers: [],
+      evidence_summary: {
+        ...record(candidate.evidence_summary),
+        authoritativeVolumeMappingRecoveryVersion:
+          AUTHORITATIVE_VOLUME_MAPPING_RECOVERY_VERSION,
+        productResearchRepeated: false,
+      },
+      updated_at: completedAt,
+    })
+    .eq("id", candidate.id)
+    .eq("run_id", state.run.id)
+    .eq("machine_state", "ENRICHING_PRODUCT_FACTS")
+  if (candidateError) {
+    throw new Error(
+      "SAME_DAY_PILOT_AUTHORITATIVE_VOLUME_CANDIDATE_UPDATE_FAILED",
+    )
+  }
+  const { error: eventError } = await supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({
+      run_id: state.run.id,
+      candidate_id: candidate.id,
+      event_type: "AUTHORITATIVE_VOLUME_MAPPING_RECOVERED",
+      event_payload: {
+        recoveryVersion: AUTHORITATIVE_VOLUME_MAPPING_RECOVERY_VERSION,
+        authoritativeObservationId: observation.id,
+        authoritativeEvidenceHash: observation.evidence_hash,
+        sourceType: "LUNA_EXACT_VARIANT",
+        taxonomyAspect: "Volume",
+        mappedFactKey: "netContent",
+        productResearchRepeated: false,
+        historyDeleted: false,
+      },
+      idempotency_key:
+        `${state.run.id}:${candidate.id}:` +
+        AUTHORITATIVE_VOLUME_MAPPING_RECOVERY_VERSION,
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) {
+    throw new Error(
+      "SAME_DAY_PILOT_AUTHORITATIVE_VOLUME_EVENT_FAILED",
+    )
+  }
   return 1
 }
 
@@ -8010,6 +8181,117 @@ async function repairOrphanedImagePreparation(
   return 1
 }
 
+async function repairRejectedListingPackageBinding(
+  supabase: SupabaseClient,
+  state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
+  now: Date,
+) {
+  const candidate = [...state.candidates]
+    .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
+    .find((entry) => {
+      const blockers = strings(entry.blockers)
+      return text(entry.machine_state) === "REJECTED" &&
+        text(entry.state) === "REJECTED_TODAY" &&
+        blockers.length === 1 &&
+        LISTING_PACKAGE_BINDING_RECOVERABLE_ERROR_CODES.has(blockers[0])
+    })
+  if (!candidate) return 0
+
+  const handoffSummary = record(candidate.manual_handoff_package)
+  const factsSummary = record(candidate.product_facts_summary)
+  const imageJob = buildSameDayImageGenerationJobSpec({
+    runId: state.run.id,
+    candidateId: candidate.id,
+    productResearchCaptureBatchId:
+      candidate.product_research_capture_batch_id,
+    factRunId: factsSummary.factRunId,
+    packageHash: handoffSummary.packageHash,
+    orphanRecovery: true,
+  })
+  if (!imageJob) return 0
+
+  const previousBlocker = strings(candidate.blockers)[0]
+  await transition({
+    supabase,
+    runId: state.run.id,
+    candidateId: text(candidate.id),
+    previousState: "REJECTED",
+    nextState: "PREPARING_IMAGE_PACKAGE",
+    reasonCode: "LISTING_PACKAGE_BINDING_RECOVERED",
+    triggeredBy: "RETRY",
+    checkpoint: {
+      recoveryVersion: LISTING_PACKAGE_BINDING_RECOVERY_VERSION,
+      previousBlocker,
+      factRunId: factsSummary.factRunId,
+      productResearchCaptureBatchId:
+        candidate.product_research_capture_batch_id,
+      packageHash: handoffSummary.packageHash,
+      commercialEvidencePreserved: true,
+      productFactsPreserved: true,
+      productApprovalPreserved: true,
+      historyDeleted: false,
+      ebayWrites: 0,
+    },
+    nextAutomaticAction:
+      "Reanudar la preparación visual desde el paquete conservado.",
+    nextHumanAction: "Ninguna hasta revisar las imágenes.",
+    job: imageJob,
+  })
+  const { data: repairedCandidate, error: candidateError } = await supabase
+    .from("ebay_same_day_pilot_candidates")
+    .update({
+      state: "READY_FOR_CONTENT",
+      blockers: [],
+      image_package_summary: {
+        ...record(candidate.image_package_summary),
+        status: "PREPARING",
+        approved: false,
+        listingPackageBindingRecoveryVersion:
+          LISTING_PACKAGE_BINDING_RECOVERY_VERSION,
+        previousBlocker,
+        ebayWrites: 0,
+      },
+      updated_at: now.toISOString(),
+    })
+    .eq("id", candidate.id)
+    .eq("run_id", state.run.id)
+    .eq("machine_state", "PREPARING_IMAGE_PACKAGE")
+    .select("id")
+    .maybeSingle()
+  if (candidateError || !repairedCandidate) {
+    throw new Error(
+      "SAME_DAY_PILOT_LISTING_PACKAGE_BINDING_CANDIDATE_RECOVERY_FAILED",
+    )
+  }
+  const { error: eventError } = await supabase
+    .from("ebay_same_day_pilot_events")
+    .upsert({
+      run_id: state.run.id,
+      candidate_id: candidate.id,
+      event_type: "LISTING_PACKAGE_BINDING_RECOVERED",
+      event_payload: {
+        recoveryVersion: LISTING_PACKAGE_BINDING_RECOVERY_VERSION,
+        previousBlocker,
+        checkpointPreserved: true,
+        historyDeleted: false,
+        ebayWrites: 0,
+      },
+      idempotency_key:
+        `${state.run.id}:${candidate.id}:` +
+        `${LISTING_PACKAGE_BINDING_RECOVERY_VERSION}`,
+      ebay_read_calls: 0,
+      openai_calls: 0,
+      ebay_writes: 0,
+      production_changed: false,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (eventError) {
+    throw new Error(
+      "SAME_DAY_PILOT_LISTING_PACKAGE_BINDING_RECOVERY_EVENT_FAILED",
+    )
+  }
+  return 1
+}
+
 async function recoverDeadLetterCandidates(
   supabase: SupabaseClient,
   state: NonNullable<Awaited<ReturnType<typeof currentState>>>,
@@ -8163,6 +8445,16 @@ export async function processSameDayPilotJobs(input: {
       state,
       now,
     )
+  const authoritativeVolumeMappingsRecovered =
+    await repairAuthoritativeVolumeMappingGap(input.supabase, state, now)
+  if (authoritativeVolumeMappingsRecovered) {
+    state = await getSameDayPilot({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      now,
+    })
+    if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
+  }
   const officialBrandMarketPricingRecovered =
     await repairOfficialBrandMarketPricingGap(input.supabase, state, now)
   if (officialBrandMarketPricingRecovered) {
@@ -8177,6 +8469,18 @@ export async function processSameDayPilotJobs(input: {
   if (repaired) {
     state = await getSameDayPilot({ supabase: input.supabase, accountKey: input.accountKey, now })
     if (!state) return { processed: 0, status: "NO_ACTIVE_RUN" }
+  }
+  const listingPackageBindingsRecovered =
+    await repairRejectedListingPackageBinding(input.supabase, state, now)
+  if (listingPackageBindingsRecovered) {
+    await refreshRunProjection(input.supabase, state.run.id, true)
+    return {
+      processed: 1,
+      status: "COMPLETED",
+      jobType: "RECOVER_LISTING_PACKAGE_BINDING",
+      listingPackageBindingsRecovered,
+      ebayWrites: 0,
+    }
   }
   const staleVisualAutoResumeOrphansRecovered =
     await repairStaleVisualAutoResumeOrphan(input.supabase, state, now)
@@ -8594,6 +8898,26 @@ export async function processSameDayPilotJobs(input: {
             updated_at: now.toISOString(),
           }).eq("id", candidate.id).eq("run_id", state.run.id)
         if (coverageUpdateError) throw new Error("SAME_DAY_PILOT_RECONCILIATION_COVERAGE_UPDATE_FAILED")
+        if (exactSoldObservationIds.size > 0 &&
+          reconciled.reanalysis.runId &&
+          !reconciled.reanalysis.shouldSchedule) {
+          await deferPilotJob({
+            supabase: input.supabase,
+            job: record(leased),
+            workerId: input.workerId,
+            availableAt: new Date(now.getTime() + 60_000).toISOString(),
+            errorCode: "LOOP1_REANALYSIS_TARGET_BUSY",
+            preserveAttempt: true,
+          })
+          await refreshRunProjection(input.supabase, state.run.id, true)
+          return {
+            processed: 1,
+            status: "WAITING_RETRY",
+            jobType: leased.job_type,
+            waitingFor: "LOOP1_REANALYSIS_TARGET_AVAILABLE",
+            ebayWrites: 0,
+          }
+        }
         if (exactSoldObservationIds.size <= 0 || !reconciled.reanalysis.runId || !reconciled.reanalysis.shouldSchedule) {
           if (reconciled.reanalysis.runId && reconciled.reanalysis.shouldSchedule) {
             // Related pack/size evidence can refresh Loop 1 pack intelligence,

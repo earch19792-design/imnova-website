@@ -545,7 +545,8 @@ const ASPECT_MAPPING: Record<string, string[]> = {
   model: ["model"], color: ["color"],
   scent: ["scent"], flavor: ["flavor"], formulation: ["formulation", "variant"],
   "numberinpack": ["offerPackCount", "unitCount"], "unitcount": ["unitCount", "totalUnitCount"],
-  size: ["netContent", "size"], material: ["material"], condition: ["condition"],
+  size: ["netContent", "size"], volume: ["netContent", "size"],
+  material: ["material"], condition: ["condition"],
 }
 
 const SELL_SIMILAR_DESCRIPTIVE_ASPECTS = new Set([
