@@ -3394,6 +3394,28 @@ async function quarantineUnknownContinuityFailure(input: {
   }
 }
 
+type SameDayPilotPreviewSource =
+  | "OPPORTUNITY"
+  | "QUOTA"
+  | "MONITOR"
+  | "RESEARCH"
+  | "ACTIVE_LISTING"
+
+async function readSameDayPilotPreviewSource<T extends { error: unknown }>(
+  source: SameDayPilotPreviewSource,
+  query: PromiseLike<T>,
+): Promise<T> {
+  try {
+    const result = await query
+    if (result.error) {
+      throw new Error("SOURCE_READ_REJECTED")
+    }
+    return result
+  } catch {
+    throw new Error(`SAME_DAY_PILOT_SOURCE_READ_FAILED:${source}`)
+  }
+}
+
 export async function previewSameDayPilot(input: {
   supabase: SupabaseClient
   accountKey: string
@@ -3404,17 +3426,29 @@ export async function previewSameDayPilot(input: {
   excludeFamilyFingerprints?: string[]
 }) {
   const now = input.now ?? new Date()
-  const [{ data: opportunities, error: opportunityError }, { data: quotas, error: quotaError },
-    { data: monitor, error: monitorError }, productResearchCount, existingPilotListing] = await Promise.all([
-    input.supabase.from("ebay_luna_opportunity_queue").select("*").in("queue_status", ["watchlist", "review", "ready"]).order("opportunity_score", { ascending: false }).limit(70),
-    input.supabase.from("ebay_api_quota_states").select("api_family,operation,status,remaining,reserved_budget,available_budget,reset_at,owner_lane"),
-    input.supabase.from("commercial_monitor_runs").select("status,heartbeat_at,readers,errors,completed_at").eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE).order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    input.supabase.from("marketplace_product_research_capture_observations").select("id", { count: "exact", head: true }).eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE),
-    input.supabase.from("ebay_active_listings").select("id", { count: "exact", head: true }).eq("account_key", input.accountKey).eq("ebay_item_id", "366543596425").eq("listing_status", "active"),
+  const [{ data: opportunities }, { data: quotas }, { data: monitor },
+    productResearchCount, existingPilotListing] = await Promise.all([
+    readSameDayPilotPreviewSource(
+      "OPPORTUNITY",
+      input.supabase.from("ebay_luna_opportunity_queue").select("*").in("queue_status", ["watchlist", "review", "ready"]).order("opportunity_score", { ascending: false }).limit(70),
+    ),
+    readSameDayPilotPreviewSource(
+      "QUOTA",
+      input.supabase.from("ebay_api_quota_states").select("api_family,operation,status,remaining,reserved_budget,available_budget,reset_at,owner_lane"),
+    ),
+    readSameDayPilotPreviewSource(
+      "MONITOR",
+      input.supabase.from("commercial_monitor_runs").select("status,heartbeat_at,readers,errors,completed_at").eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    ),
+    readSameDayPilotPreviewSource(
+      "RESEARCH",
+      input.supabase.from("marketplace_product_research_capture_observations").select("id", { count: "exact", head: true }).eq("marketplace_account_key", input.accountKey).eq("marketplace", MARKETPLACE),
+    ),
+    readSameDayPilotPreviewSource(
+      "ACTIVE_LISTING",
+      input.supabase.from("ebay_active_listings").select("id", { count: "exact", head: true }).eq("account_key", input.accountKey).eq("ebay_item_id", "366543596425").eq("listing_status", "active"),
+    ),
   ])
-  if (opportunityError || quotaError || monitorError || productResearchCount.error || existingPilotListing.error) {
-    throw new Error("SAME_DAY_PILOT_SOURCE_READ_FAILED")
-  }
   const excludedOpportunityIds = new Set(
     (input.excludeOpportunityIds ?? []).map((id) => text(id)).filter(Boolean),
   )
