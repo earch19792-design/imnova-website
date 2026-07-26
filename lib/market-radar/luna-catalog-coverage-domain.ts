@@ -4,6 +4,23 @@ export const LUNA_CATALOG_COVERAGE_MANIFEST_VERSION =
   "LUNA_CATALOG_COVERAGE_V1_2026_07_26"
 export const LUNA_CATALOG_HYDRATION_CURSOR_VERSION =
   "LUNA_INVENTORY_ROUND_ROBIN_V1_2026_07_26"
+export const LUNA_SNAPSHOT_INGESTION_POLICY_VERSION =
+  "LUNA_SNAPSHOT_INGESTION_V1"
+
+export function buildLunaSnapshotIngestionKey(input: {
+  catalogScanRunId: string
+  productId: string
+  supplierVariantId: string
+}) {
+  return createHash("sha256")
+    .update([
+      input.catalogScanRunId,
+      input.productId,
+      input.supplierVariantId,
+      LUNA_SNAPSHOT_INGESTION_POLICY_VERSION,
+    ].join("|"))
+    .digest("hex")
+}
 
 export type LunaCatalogCoverageStatus =
   | "COMPLETE"

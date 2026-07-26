@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import {
   type SupabaseClient,
 } from "@supabase/supabase-js"
@@ -8,11 +9,13 @@ import {
 import {
   buildLunaCatalogResumeState,
   buildLunaCatalogCoverageManifest,
+  buildLunaSnapshotIngestionKey,
   evaluateLunaCatalogExecutionWindow,
   evaluateLunaCollectionCoverage,
   isRetryableLunaStatus,
   LUNA_CATALOG_COVERAGE_MANIFEST_VERSION,
   LUNA_CATALOG_HYDRATION_CURSOR_VERSION,
+  LUNA_SNAPSHOT_INGESTION_POLICY_VERSION,
   lunaCatalogChecksum,
   lunaRetryDelayMs,
   mergeLunaVariantSets,
@@ -56,6 +59,8 @@ const SNAPSHOT_WRITE_BATCH_SIZE = 50
 const EVENT_WRITE_BATCH_SIZE = 50
 const SCORE_WRITE_BATCH_SIZE = 50
 const MINIMUM_ADAPTIVE_BATCH_SIZE = 5
+const SNAPSHOT_PERSISTENCE_MINIMUM_REMAINING_MS =
+  5_000
 
 type MarketRadarSyncStage =
   | "PRODUCT_UPSERT"
@@ -233,6 +238,7 @@ type SnapshotInsert = {
   source_observed_at?: string
   fetched_at?: string
   snapshot_fingerprint?: string
+  snapshot_ingestion_key?: string
 }
 
 type EventInsert = {
@@ -307,6 +313,19 @@ export function getLunaCatalogCoverageRuntimeConfiguration() {
     hydrationPolicyVersion:
       LUNA_CATALOG_HYDRATION_CURSOR_VERSION,
   }
+}
+
+function buildLunaSnapshotBatchKey(
+  catalogScanRunId: string,
+  batchOrdinal: number
+) {
+  return createHash("sha256")
+    .update([
+      catalogScanRunId,
+      LUNA_SNAPSHOT_INGESTION_POLICY_VERSION,
+      String(batchOrdinal),
+    ].join("|"))
+    .digest("hex")
 }
 
 function wait(
@@ -1739,7 +1758,7 @@ async function createCatalogCoverageRun(
   } =
     await supabase
       .from("market_radar_catalog_scan_runs")
-      .select("id")
+      .select("id,started_at")
       .eq(
         "source_id",
         sourceId
@@ -1766,7 +1785,12 @@ async function createCatalogCoverageRun(
       .limit(1)
       .maybeSingle()
   if (resumableRun?.id) {
-    return String(resumableRun.id)
+    return {
+      id:
+        String(resumableRun.id),
+      startedAt:
+        String(resumableRun.started_at),
+    }
   }
   if (
     resumableRunError &&
@@ -1791,7 +1815,7 @@ async function createCatalogCoverageRun(
         started_at:
           startedAt,
       })
-      .select("id")
+      .select("id,started_at")
       .single()
   if (error || !data?.id) {
     if (configuration.mode === "ENFORCED") {
@@ -1805,7 +1829,12 @@ async function createCatalogCoverageRun(
     )
     return null
   }
-  return String(data.id)
+  return {
+    id:
+      String(data.id),
+    startedAt:
+      String(data.started_at),
+  }
 }
 
 function catalogPageCheckpointRow(
@@ -2532,8 +2561,6 @@ async function upsertProducts(
           null,
         last_seen_at:
           capturedAt,
-        last_snapshot_at:
-          capturedAt,
         is_active:
           true,
         metadata:
@@ -2569,7 +2596,8 @@ async function upsertProducts(
 
 async function getLatestSnapshots(
   supabase: SupabaseClient,
-  productIds: string[]
+  productIds: string[],
+  currentCatalogScanRunId: string | null
 ) {
   const snapshots =
     new Map<string, LatestSnapshotRecord>()
@@ -2586,11 +2614,8 @@ async function getLatestSnapshots(
         1000
       )
 
-    const {
-      data,
-      error,
-    } =
-      await supabase
+    let query =
+      supabase
         .from("market_radar_snapshots")
         .select(`
           product_id,
@@ -2606,6 +2631,19 @@ async function getLatestSnapshots(
           "product_id",
           productIdChunk
         )
+
+    if (currentCatalogScanRunId) {
+      query =
+        query.or(
+          `catalog_scan_run_id.is.null,catalog_scan_run_id.neq.${currentCatalogScanRunId}`
+        )
+    }
+
+    const {
+      data,
+      error,
+    } =
+      await query
         .order(
           "captured_at",
           {
@@ -2746,6 +2784,20 @@ function buildSnapshotsAndEvents(
         getNormalizedVariantInventory(
           variant
         )
+      const snapshotFingerprint =
+        catalogScanRunId
+          ? lunaCatalogChecksum({
+              productId,
+              supplierVariantId,
+              price,
+              compareAtPrice,
+              available,
+              inventoryQuantity,
+              collections,
+              sourceObservedAt:
+                product.sourceObservedAt,
+            })
+          : null
 
       const snapshotRow: SnapshotInsert = {
         source_id:
@@ -2803,16 +2855,12 @@ function buildSnapshotsAndEvents(
               fetched_at:
                 product.fetchedAt,
               snapshot_fingerprint:
-                lunaCatalogChecksum({
+                snapshotFingerprint!,
+              snapshot_ingestion_key:
+                buildLunaSnapshotIngestionKey({
+                  catalogScanRunId,
                   productId,
                   supplierVariantId,
-                  price,
-                  compareAtPrice,
-                  available,
-                  inventoryQuantity,
-                  collections,
-                  sourceObservedAt:
-                    product.sourceObservedAt,
                 }),
             }
           : {}),
@@ -3009,25 +3057,293 @@ function buildSnapshotsAndEvents(
 async function insertSnapshots(
   supabase: SupabaseClient,
   snapshotRows: SnapshotInsert[],
+  eventRows: EventInsert[],
+  catalogScanRunId: string | null,
+  deadlineAtMs: number,
   telemetry: AdaptiveBatchTelemetry
 ) {
-  let insertedCount = 0
+  if (!catalogScanRunId) {
+    let insertedCount = 0
+    await executeAdaptiveBatches({
+      rows: snapshotRows,
+      batchSize: SNAPSHOT_WRITE_BATCH_SIZE,
+      stage: "SNAPSHOT_INSERT",
+      telemetry,
+      execute: async snapshotChunk => {
+        const { error } = await supabase
+          .from("market_radar_snapshots")
+          .insert(snapshotChunk)
+        if (error) throw error
+        insertedCount += snapshotChunk.length
+      },
+    })
+    const eventsInserted =
+      await insertEvents(
+        supabase,
+        eventRows,
+        telemetry
+      )
+    return {
+      snapshotsInserted:
+        insertedCount,
+      eventsInserted,
+      processedRows:
+        snapshotRows.length,
+      complete:
+        true,
+    }
+  }
 
-  await executeAdaptiveBatches({
-    rows: snapshotRows,
-    batchSize: SNAPSHOT_WRITE_BATCH_SIZE,
-    stage: "SNAPSHOT_INSERT",
-    telemetry,
-    execute: async snapshotChunk => {
-      const { error } = await supabase
-        .from("market_radar_snapshots")
-        .insert(snapshotChunk)
-      if (error) throw error
-      insertedCount += snapshotChunk.length
-    },
+  const {
+    data: completedBatchRows,
+    error: completedBatchError,
+  } =
+    await supabase
+      .from(
+        "market_radar_snapshot_ingestion_batches"
+      )
+      .select(
+        "batch_ordinal,row_count,snapshot_inserted_count,event_inserted_count"
+      )
+      .eq(
+        "scan_run_id",
+        catalogScanRunId
+      )
+      .eq(
+        "policy_version",
+        LUNA_SNAPSHOT_INGESTION_POLICY_VERSION
+      )
+      .eq(
+        "status",
+        "COMPLETE"
+      )
+  if (completedBatchError) {
+    throw new Error(
+      `SNAPSHOT_BATCH_CHECKPOINT_LOOKUP_FAILED: ${completedBatchError.message}`
+    )
+  }
+
+  const completedBatches =
+    new Map(
+      (completedBatchRows || []).map(row => [
+        Number(row.batch_ordinal),
+        {
+          rowCount:
+            Number(row.row_count || 0),
+          snapshotsInserted:
+            Number(
+              row.snapshot_inserted_count || 0
+            ),
+          eventsInserted:
+            Number(
+              row.event_inserted_count || 0
+            ),
+        },
+      ])
+    )
+  const eventsByVariant =
+    new Map<string, EventInsert[]>()
+  eventRows.forEach(event => {
+    const key =
+      `${event.product_id}:${event.supplier_variant_id}`
+    const rows =
+      eventsByVariant.get(key) || []
+    rows.push(event)
+    eventsByVariant.set(key, rows)
   })
+  const orderedSnapshots =
+    [...snapshotRows].sort((left, right) =>
+      (
+        `${left.product_id}:${left.supplier_variant_id}`
+      ).localeCompare(
+        `${right.product_id}:${right.supplier_variant_id}`
+      )
+    )
+  const batches =
+    chunkArray(
+      orderedSnapshots,
+      SNAPSHOT_WRITE_BATCH_SIZE
+    )
+  let processedRows = 0
+  let snapshotsInserted = 0
+  let eventsInserted = 0
 
-  return insertedCount
+  for (
+    let batchOrdinal = 0;
+    batchOrdinal < batches.length;
+    batchOrdinal += 1
+  ) {
+    const snapshotChunk =
+      batches[batchOrdinal]
+    const completed =
+      completedBatches.get(batchOrdinal)
+    if (completed) {
+      if (
+        completed.rowCount !==
+        snapshotChunk.length
+      ) {
+        throw new Error(
+          "SNAPSHOT_BATCH_REPLAY_SHAPE_MISMATCH"
+        )
+      }
+      processedRows +=
+        completed.rowCount
+      snapshotsInserted +=
+        completed.snapshotsInserted
+      eventsInserted +=
+        completed.eventsInserted
+      continue
+    }
+    if (
+      Date.now() +
+        SNAPSHOT_PERSISTENCE_MINIMUM_REMAINING_MS >=
+      deadlineAtMs
+    ) {
+      return {
+        snapshotsInserted,
+        eventsInserted,
+        processedRows,
+        complete:
+          false,
+      }
+    }
+    const eventChunk =
+      snapshotChunk.flatMap(snapshot =>
+        eventsByVariant.get(
+          `${snapshot.product_id}:${snapshot.supplier_variant_id}`
+        ) || []
+      )
+    const payloadFingerprint =
+      lunaCatalogChecksum({
+        snapshotRows:
+          snapshotChunk,
+        eventRows:
+          eventChunk,
+      })
+    const { data, error } =
+      await supabase.rpc(
+        "persist_market_radar_snapshot_batch_v1",
+        {
+          p_scan_run_id:
+            catalogScanRunId,
+          p_policy_version:
+            LUNA_SNAPSHOT_INGESTION_POLICY_VERSION,
+          p_batch_ordinal:
+            batchOrdinal,
+          p_batch_key:
+            buildLunaSnapshotBatchKey(
+              catalogScanRunId,
+              batchOrdinal
+            ),
+          p_payload_fingerprint:
+            payloadFingerprint,
+          p_snapshot_rows:
+            snapshotChunk,
+          p_event_rows:
+            eventChunk,
+        }
+      )
+    if (error) {
+      throw new Error(
+        `SNAPSHOT_BATCH_PERSIST_FAILED: ${error.message}`
+      )
+    }
+    const result =
+      Array.isArray(data)
+        ? data[0]
+        : data
+    processedRows +=
+      Number(
+        result?.expected_count ||
+        snapshotChunk.length
+      )
+    snapshotsInserted +=
+      Number(
+        result?.snapshot_inserted_count || 0
+      )
+    eventsInserted +=
+      Number(
+        result?.event_inserted_count || 0
+      )
+  }
+
+  return {
+    snapshotsInserted,
+    eventsInserted,
+    processedRows,
+    complete:
+      processedRows === orderedSnapshots.length,
+  }
+}
+
+async function getCatalogRunSnapshots(
+  supabase: SupabaseClient,
+  catalogScanRunId: string
+) {
+  const rows: SnapshotInsert[] = []
+  const pageSize = 500
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } =
+      await supabase
+        .from("market_radar_snapshots")
+        .select(`
+          source_id,
+          product_id,
+          supplier_variant_id,
+          variant_title,
+          sku,
+          barcode,
+          weight,
+          weight_unit,
+          price,
+          compare_at_price,
+          available,
+          inventory_quantity,
+          collections,
+          discount_percent,
+          raw,
+          captured_at,
+          catalog_scan_run_id,
+          source_observed_at,
+          fetched_at,
+          snapshot_fingerprint,
+          snapshot_ingestion_key
+        `)
+        .eq(
+          "catalog_scan_run_id",
+          catalogScanRunId
+        )
+        .order(
+          "product_id",
+          {
+            ascending:
+              true,
+          }
+        )
+        .order(
+          "supplier_variant_id",
+          {
+            ascending:
+              true,
+          }
+        )
+        .range(
+          offset,
+          offset + pageSize - 1
+        )
+    if (error) {
+      throw new Error(
+        `SNAPSHOT_RUN_READBACK_FAILED: ${error.message}`
+      )
+    }
+    rows.push(
+      ...(data || []) as SnapshotInsert[]
+    )
+    if ((data || []).length < pageSize) {
+      break
+    }
+  }
+  return rows
 }
 
 async function insertEvents(
@@ -3464,6 +3780,8 @@ export async function runLunaPortexMarketRadarSync(
   }
   let catalogScanRunId: string | null =
     null
+  let snapshotCapturedAt =
+    startedAt
 
   await supabase
     .from("market_radar_sources")
@@ -3479,12 +3797,17 @@ export async function runLunaPortexMarketRadarSync(
     )
 
   try {
-    catalogScanRunId =
+    const catalogCoverageRun =
       await createCatalogCoverageRun(
         supabase,
         source.id,
         startedAt
       )
+    catalogScanRunId =
+      catalogCoverageRun?.id || null
+    snapshotCapturedAt =
+      catalogCoverageRun?.startedAt ||
+      startedAt
     const productFetchResult =
       await fetchLunaPortexProducts(
         supabase,
@@ -3627,7 +3950,8 @@ export async function runLunaPortexMarketRadarSync(
     const latestSnapshots =
       await getLatestSnapshots(
         supabase,
-        productIds
+        productIds,
+        productFetchResult.catalogScanRunId
       )
 
     const {
@@ -3639,19 +3963,98 @@ export async function runLunaPortexMarketRadarSync(
         products,
         savedProducts,
         latestSnapshots,
-        startedAt,
+        snapshotCapturedAt,
         productFetchResult.catalogScanRunId
       )
 
-    const snapshotsInserted =
+    const snapshotPersistence =
       await insertSnapshots(
         supabase,
         snapshotRows,
+        eventRows,
+        productFetchResult.catalogScanRunId,
+        executionWindow.deadlineAtMs,
         batchTelemetry
       )
+    if (!snapshotPersistence.complete) {
+      const finishedAt =
+        new Date().toISOString()
+      if (catalogScanRunId) {
+        await supabase
+          .from(
+            "market_radar_catalog_scan_runs"
+          )
+          .update({
+            status:
+              "RUNNING",
+            finished_at:
+              null,
+            error_code:
+              "LUNA_SNAPSHOT_PERSISTENCE_PARTIAL",
+          })
+          .eq(
+            "id",
+            catalogScanRunId
+          )
+      }
+      return {
+        success:
+          true,
+        sourceKey:
+          LUNAPORTEX_SOURCE_KEY,
+        fetchedProducts:
+          products.length,
+        fetchedVariants:
+          snapshotRows.length,
+        snapshotsInserted:
+          snapshotPersistence.snapshotsInserted,
+        eventsInserted:
+          snapshotPersistence.eventsInserted,
+        scoredProducts:
+          0,
+        catalogProductsFetched:
+          products.length,
+        uniqueProductsFetched:
+          products.length,
+        productsUpserted:
+          savedProducts.length,
+        productsWithSnapshots:
+          0,
+        failedBatchCount:
+          batchTelemetry.failedBatchCount,
+        adaptiveRetryCount:
+          batchTelemetry.adaptiveRetryCount,
+        scanCompletenessPercent:
+          productFetchResult.catalogCoverage
+            .coveragePercent || 0,
+        scanStatus:
+          "PARTIAL",
+        continuationRequired:
+          true,
+        catalogScanRunId,
+        catalogPagesProcessed:
+          productFetchResult.catalogPagesProcessed,
+        catalogPauseReason:
+          "SNAPSHOT_PERSISTENCE",
+        startedAt,
+        finishedAt,
+      }
+    }
+
+    const snapshotsInserted =
+      snapshotPersistence.snapshotsInserted
+    const eventsInserted =
+      snapshotPersistence.eventsInserted
+    const effectiveSnapshotRows =
+      productFetchResult.catalogScanRunId
+        ? await getCatalogRunSnapshots(
+            supabase,
+            productFetchResult.catalogScanRunId
+          )
+        : snapshotRows
 
     const inventoryNumericVariants =
-      snapshotRows.filter(snapshot => {
+      effectiveSnapshotRows.filter(snapshot => {
         const inventorySource =
           (
           snapshot.raw.inventory_context as {
@@ -3666,7 +4069,7 @@ export async function runLunaPortexMarketRadarSync(
       }).length
 
     const inventoryAvailabilityOnlyVariants =
-      snapshotRows.filter(snapshot =>
+      effectiveSnapshotRows.filter(snapshot =>
         snapshot.raw?.inventory_context &&
         (
           snapshot.raw.inventory_context as {
@@ -3677,7 +4080,7 @@ export async function runLunaPortexMarketRadarSync(
       ).length
 
     const inventoryUnknownVariants =
-      snapshotRows.filter(snapshot =>
+      effectiveSnapshotRows.filter(snapshot =>
         !snapshot.raw?.inventory_context ||
         (
           snapshot.raw.inventory_context as {
@@ -3686,26 +4089,19 @@ export async function runLunaPortexMarketRadarSync(
         ).inventory_source === "not_exposed"
       ).length
 
-    const eventsInserted =
-      await insertEvents(
-        supabase,
-        eventRows,
-        batchTelemetry
-      )
-
     const scoredProducts =
       await upsertScores(
         supabase,
         source.id,
         productIds,
-        snapshotRows,
-        startedAt,
+        effectiveSnapshotRows,
+        snapshotCapturedAt,
         batchTelemetry
       )
 
     const productsWithSnapshots =
       new Set(
-        snapshotRows.map(snapshot => snapshot.product_id)
+        effectiveSnapshotRows.map(snapshot => snapshot.product_id)
       ).size
 
     const completedProducts = Math.min(
@@ -3886,7 +4282,30 @@ export async function runLunaPortexMarketRadarSync(
     const detailedMessage =
       `${message} | adaptive_retries=${batchTelemetry.adaptiveRetryCount} | failed_batches=${batchTelemetry.failedBatchCount}`
 
-    if (catalogScanRunId) {
+    if (
+      catalogScanRunId &&
+      (
+        message.startsWith(
+          "SNAPSHOT_"
+        ) ||
+        isStatementTimeoutError(error)
+      )
+    ) {
+      await supabase
+        .from("market_radar_catalog_scan_runs")
+        .update({
+          status:
+            "RUNNING",
+          error_code:
+            safeLunaCatalogErrorCode(error),
+          finished_at:
+            null,
+        })
+        .eq(
+          "id",
+          catalogScanRunId
+        )
+    } else if (catalogScanRunId) {
       await supabase
         .from("market_radar_catalog_scan_runs")
         .update({

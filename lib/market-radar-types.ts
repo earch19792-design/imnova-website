@@ -265,7 +265,7 @@ export type MarketRadarSyncResult = {
   continuationRequired?: boolean
   catalogScanRunId?: string | null
   catalogPagesProcessed?: number
-  catalogPauseReason?: "PAGE_LIMIT" | "DEADLINE" | "FETCH_RETRY_REQUIRED" | null
+  catalogPauseReason?: "PAGE_LIMIT" | "DEADLINE" | "FETCH_RETRY_REQUIRED" | "SNAPSHOT_PERSISTENCE" | null
   startedAt: string
   finishedAt: string
 }
