@@ -1,6 +1,6 @@
 # Seller OS legacy-removal rollback plan
 
-Scope: staging branch `feature/centralize-ebay-mobile-command-center` only.
+Scope: staging branch `feature/centralize-ebay-mobile-center` only.
 
 1. Identify the isolation commit and revert that commit through a new reviewed commit; do not reset the branch or database.
 2. Restore only a route explicitly proven to be required by Seller OS. Do not restore the public community, store, signup, voting, Idea Lab or campaign APIs as a group.

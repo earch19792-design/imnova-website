@@ -109,9 +109,19 @@ export function TodayLaunchPanel() {
   const resumePreparedCycle = canRecoverEmptyRun
     && pilot?.run?.source_inventory?.productResearchPlanPrepared === true
   const showLaunchAction = !loading && (!pilot || canRecoverEmptyRun || nextCycleAllowed)
-  const pilotProgress = Math.max(0, Math.min(3,
-    Number(pilot?.cycleHistory?.verifiedPilotProgress
-      ?? (Number(pilot?.run?.verified_existing_listings) + Number(pilot?.run?.verified_new_listings))) || 0))
+  const optionalMetric = (value: unknown) => {
+    if (value === null || value === undefined || value === "") return null
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  const reportedPilotProgress = optionalMetric(pilot?.cycleHistory?.verifiedPilotProgress)
+  const verifiedExistingListings = optionalMetric(pilot?.run?.verified_existing_listings)
+  const verifiedNewListings = optionalMetric(pilot?.run?.verified_new_listings)
+  const pilotProgress = reportedPilotProgress !== null
+    ? Math.max(0, reportedPilotProgress)
+    : verifiedExistingListings !== null && verifiedNewListings !== null
+      ? Math.max(0, verifiedExistingListings + verifiedNewListings)
+      : null
   const quotaNow = new Date()
   const pausedJobs = (pilot?.jobs ?? []).map((job: Row) => ({
     job,
@@ -151,17 +161,20 @@ export function TodayLaunchPanel() {
   const currentBusinessState = nextCycleAllowed
     ? "ESPERANDO TU CONFIRMACIÓN"
     : liveMonitor.businessLabel
-  const imageAiReady = pilot?.imageFactoryConfiguration?.aiGeneration === "READY"
+  const imageAiStatus = typeof pilot?.imageFactoryConfiguration?.aiGeneration === "string"
+    ? pilot.imageFactoryConfiguration.aiGeneration
+    : null
+  const imageAiReady = imageAiStatus === "READY"
   return <section id="today-launch" className="mt-5 min-w-0 scroll-mt-4 overflow-hidden rounded-3xl border border-cyan-200/20 bg-gradient-to-br from-cyan-200/[0.10] to-emerald-200/[0.04] p-5 sm:p-7">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="min-w-0">
         <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-100/60">Lanzamiento de hoy</p>
-        <h2 className="mt-2 break-words text-2xl font-black">Objetivo: completar el piloto 3/3</h2>
+        <h2 className="mt-2 break-words text-2xl font-black">Operación del lote actual</h2>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-white/60">Un clic inicia el trabajo automático. Tú supervisas y Seller OS se detiene sólo cuando necesita una confirmación indispensable.</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {pilot && <span className="rounded-full border border-cyan-200/20 px-3 py-2 text-xs font-black text-cyan-100">Ciclo de revisión {currentCycle}</span>}
-        {pilot && <span className={`rounded-full border px-3 py-2 text-xs font-black ${imageAiReady ? "border-emerald-200/25 bg-emerald-200/[0.06] text-emerald-100" : "border-amber-200/25 bg-amber-200/[0.06] text-amber-100"}`}>{imageAiReady ? "IMÁGENES IA LISTAS" : "IMÁGENES: RESPALDO LOCAL"}</span>}
+        {pilot && <span className={`rounded-full border px-3 py-2 text-xs font-black ${imageAiReady ? "border-emerald-200/25 bg-emerald-200/[0.06] text-emerald-100" : "border-amber-200/25 bg-amber-200/[0.06] text-amber-100"}`}>{imageAiReady ? "IMÁGENES IA LISTAS" : imageAiStatus ? "IMÁGENES: RESPALDO LOCAL" : "IMÁGENES: ESTADO NO DISPONIBLE"}</span>}
         <span aria-live="polite" className="rounded-full border border-white/15 px-3 py-2 text-xs font-black">{loading ? "CARGANDO" : currentBusinessState}</span>
       </div>
     </div>
@@ -217,7 +230,7 @@ export function TodayLaunchPanel() {
           : "No necesitas pulsar otro botón técnico después de confirmar la tarea principal."}</p>
       </section>
       {readyCandidates.length > 0 && <div className="mt-6"><h3 className="text-lg font-black">Listos para publicar desde Seller OS</h3><p className="mt-1 text-sm text-white/60">Abre el producto exacto, revisa el preview final y autoriza allí. Seller OS publicará una sola vez, verificará ACTIVE y registrará el monitoreo.</p><div className="mt-3 grid gap-4">{readyCandidates.map((candidate: Row) => <ManualHandoffCard key={candidate.id} candidate={candidate} />)}</div></div>}
-      <details className="mt-5 rounded-2xl border border-white/10 p-4"><summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver métricas y progreso automático</summary><div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-7"><Metric label="Piloto" value={`${pilotProgress} / 3`} /><Metric label="Ciclo" value={String(currentCycle)} /><Metric label="Cola de este ciclo" value={`${candidates.length} / 5`} /><Metric label="Intentados acumulados" value={String(pilot.cycleHistory?.attemptedCandidates ?? candidates.length)} /><Metric label="Preparación local" value={String(candidates.filter((candidate: Row) => candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES").length)} /><Metric label="Listos" value={String(pilot.run.ready_for_manual_publication_count)} /><Metric label="Escrituras eBay" value="0" /></div><div className="mt-3 grid gap-2">{candidates.map((candidate: Row) => <div key={candidate.id} className="min-w-0 rounded-xl bg-black/20 p-3"><p className="break-words font-bold">{candidate.ordinal}. {candidate.product_title}</p><p className="mt-1 break-words text-xs text-white/55">{businessState(candidate.machine_state)} · SKU {candidate.supplier_sku}</p>{candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES" && <p className="mt-1 text-xs text-cyan-100/75">Paquete local seguro preparado; todavía no es publicable.</p>}<p className="mt-1 break-words text-xs text-amber-100/80">{candidate.next_human_action}</p></div>)}</div></details>
+      <details className="mt-5 rounded-2xl border border-white/10 p-4"><summary className="flex min-h-11 cursor-pointer items-center font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver métricas y progreso automático</summary><div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-6"><Metric label="Publicados/verificados" value={pilotProgress == null ? "No disponible" : String(pilotProgress)} /><Metric label="Ciclo" value={String(currentCycle)} /><Metric label="Cola de este ciclo" value={`${candidates.length} / 5`} /><Metric label="Intentados acumulados" value={String(pilot.cycleHistory?.attemptedCandidates ?? candidates.length)} /><Metric label="Preparación local" value={String(candidates.filter((candidate: Row) => candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES").length)} /><Metric label="Listos" value={String(pilot.run.ready_for_manual_publication_count)} /></div><div className="mt-3 grid gap-2">{candidates.map((candidate: Row) => <div key={candidate.id} className="min-w-0 rounded-xl bg-black/20 p-3"><p className="break-words font-bold">{candidate.ordinal}. {candidate.product_title}</p><p className="mt-1 break-words text-xs text-white/55">{businessState(candidate.machine_state)} · SKU {candidate.supplier_sku}</p>{candidate.local_preparation_status === "BLOCKED_PENDING_VERIFIED_GATES" && <p className="mt-1 text-xs text-cyan-100/75">Paquete local seguro preparado; todavía no es publicable.</p>}<p className="mt-1 break-words text-xs text-amber-100/80">{candidate.next_human_action}</p></div>)}</div></details>
     </>}
   </section>
 }
@@ -483,7 +496,7 @@ function JourneyPhaseVisual({
 function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
   nextCycleAllowed, continuityRescue, recoveryWorking, onRecover }: {
   monitor: SameDayLiveMonitor
-  pilotProgress: number
+  pilotProgress: number | null
   lastObservedAt: string | null
   nextCycleAllowed: boolean
   continuityRescue: Row
@@ -592,7 +605,7 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
         </div>
       </div>
       <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2">
-        <LiveMetric label="Piloto" value={`${pilotProgress} / 3`} />
+        <LiveMetric label="Publicados/verificados" value={pilotProgress == null ? "No disponible" : String(pilotProgress)} />
         <LiveMetric label="Lote" value={`${monitor.batch.total} / 5`} />
         <LiveMetric label="En curso" value={String(monitor.batch.active)} />
         <LiveMetric label="Descartados" value={String(monitor.batch.blocked)} tone={monitor.batch.blocked ? "WARN" : "DEFAULT"} />
@@ -602,7 +615,7 @@ function LivePilotMonitor({ monitor, pilotProgress, lastObservedAt,
     <div className="mt-5">
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
         <span className="font-black text-white/70">Recorrido completo · toca una fase para entenderla</span>
-        <span className="text-white/45">Fase {monitor.timeline.findIndex((step) => step.id === monitor.currentPhase.id) + 1} de {monitor.timeline.length} · actualización {observedLabel}</span>
+        <span className="text-white/45">Fase {monitor.timeline.findIndex((step) => step.id === monitor.currentPhase.id) + 1} de {monitor.timeline.length} · consultado {observedLabel}</span>
       </div>
       <div className="mt-2 h-2 overflow-hidden rounded-full border border-white/[0.06] bg-white/[0.06]" role="progressbar"
         aria-label="Posición dentro del recorrido completo" aria-valuemin={0} aria-valuemax={100}

@@ -11,6 +11,7 @@
     { "from": "/admin/campaigns/*", "to": "/admin", "status": 308, "decision": "REDIRECT_TO_SELLER_HOME" },
     { "from": "/admin/products/*", "to": "/admin", "status": 308, "decision": "REDIRECT_TO_SELLER_HOME" },
     { "from": "/admin/self-improvement/*", "to": "/admin", "status": 308, "decision": "REDIRECT_TO_SELLER_HOME" },
+    { "from": "/admin/marketplace-os", "to": "/admin", "status": 308, "decision": "REDIRECT_TO_SELLER_HOME" },
     { "from": "/admin/market-radar/*", "to": "/admin/ebay/mobile-review", "status": 308, "decision": "REDIRECT_TO_EBAY_OPPORTUNITIES" },
     { "from": "/admin/ebay-pro/*", "to": "/admin/ebay-seller-os", "status": 308, "decision": "REDIRECT_TO_CANONICAL_SELLER_OS" },
     { "from": "/admin/ebay-listing/*", "to": "/admin/ebay/listing-workspace", "status": 308, "decision": "REDIRECT_TO_LISTINGS" },

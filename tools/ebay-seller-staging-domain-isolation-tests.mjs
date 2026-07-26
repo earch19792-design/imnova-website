@@ -89,9 +89,12 @@ test("unauthorized admin pages redirect server-side with a safe internal return 
 test("canonical navigation has exactly five professional areas and one source", () => {
   const navigation = read("lib/seller-os/navigation.ts")
   const mobile = read("app/admin/ebay/components/seller-os-mobile-nav.tsx")
-  const ids = [...navigation.matchAll(/id: "(home|ebay-opportunities|listings|operations|health-settings)"/g)].map((match) => match[1])
-  assert.deepEqual(ids, ["home", "ebay-opportunities", "listings", "operations", "health-settings"])
+  const primary = read("app/admin/components/seller-os/primary-navigation.tsx")
+  const ids = [...navigation.matchAll(/id: "(home|opportunities|products|operations|monitoring)"/g)].map((match) => match[1])
+  assert.deepEqual(ids, ["home", "opportunities", "products", "operations", "monitoring"])
   assert.match(mobile, /SELLER_OS_NAVIGATION\.map/)
+  assert.match(mobile, /return null/)
+  assert.match(primary, /SELLER_OS_NAVIGATION\.map/)
   assert.doesNotMatch(mobile, /const destinations|Comunidad|Idea Lab|Productos IMNOVA|Product Development/)
 })
 
@@ -119,9 +122,12 @@ test("canonical links exist and navigation remains mobile accessible", () => {
     assert.equal(exists(route), true, `dead canonical link ${href}`)
   }
   const mobile = read("app/admin/ebay/components/seller-os-mobile-nav.tsx")
-  assert.match(mobile, /aria-label=/)
-  assert.match(mobile, /aria-current=/)
-  assert.match(mobile, /grid-cols-5/)
+  const primary = read("app/admin/components/seller-os/primary-navigation.tsx")
+  const styles = read("app/admin/components/seller-os/seller-os-shell.module.css")
+  assert.match(mobile, /return null/)
+  assert.match(primary, /aria-label=/)
+  assert.match(primary, /aria-current=/)
+  assert.match(styles, /grid-template-columns: repeat\(5/)
 })
 
 test("route and bundle surface regress downward", () => {

@@ -1,0 +1,30 @@
+{
+  "version": "SELLER_OS_UX_ROUTE_MIGRATION_V2",
+  "scope": "PREVIEW_STAGING_ONLY",
+  "canonicalAreas": [
+    { "area": "Inicio", "href": "/admin", "currentRoutes": ["/admin"] },
+    { "area": "Oportunidades", "href": "/admin/ebay/mobile-review", "currentRoutes": ["/admin/ebay/mobile-review", "/admin/ebay/opportunity-queue"] },
+    { "area": "Productos", "href": "/admin/ebay/listing-workspace", "currentRoutes": ["/admin/ebay/listing-workspace", "/admin/ebay/listing-optimization", "/admin/ebay/listings/register"] },
+    { "area": "Operación", "href": "/admin/ebay-seller-os#operacion", "currentRoutes": ["/admin/ebay-seller-os"] },
+    { "area": "Monitoreo", "href": "/admin/ebay/seller-performance", "currentRoutes": ["/admin/ebay/seller-performance", "/admin/ebay/mobile-review?section=commercial-monitor"] }
+  ],
+  "deepLinksPreserved": [
+    "section=commercial-monitor",
+    "improvement=<id>",
+    "#competitor-watch-heading",
+    "#listing-optimization-tasks-heading"
+  ],
+  "deferred": [
+    {
+      "route": "/admin/products",
+      "currentAction": "REDIRECT_TO_ADMIN",
+      "proposedAction": "CREATE_IN_PHASE_2_AFTER_DOMAIN_VALIDATION"
+    },
+    {
+      "route": "/admin/products/[productId]",
+      "currentAction": "REDIRECT_TO_ADMIN",
+      "proposedAction": "CREATE_IN_PHASE_2_AFTER_READ_MODEL"
+    }
+  ],
+  "removedInThisPhase": []
+}

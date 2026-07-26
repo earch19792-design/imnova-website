@@ -10,6 +10,8 @@ const api = readFileSync("app/api/admin/ebay/command-center/route.ts", "utf8")
 const hub = readFileSync("app/admin/ebay-seller-os/page.tsx", "utf8")
 const mobileNav = readFileSync("app/admin/ebay/components/seller-os-mobile-nav.tsx", "utf8")
 const canonicalNavigation = readFileSync("lib/seller-os/navigation.ts", "utf8")
+const primaryNavigation = readFileSync("app/admin/components/seller-os/primary-navigation.tsx", "utf8")
+const shellStyles = readFileSync("app/admin/components/seller-os/seller-os-shell.module.css", "utf8")
 const journeyGuide = readFileSync("app/admin/ebay/mobile-review/seller-journey-guide.tsx", "utf8")
 const registration = readFileSync("app/admin/ebay/listings/register/page.tsx", "utf8")
 const registrationApi = readFileSync("app/api/admin/ebay/listings/register/route.ts", "utf8")
@@ -31,14 +33,16 @@ const normalizeEstimateOnlyShippingMigration = readFileSync(
 )
 
 test("mobile command center centralizes the five Seller OS areas", () => {
-  for (const label of ["Inicio", "Oportunidades eBay", "Listings", "Operación", "Salud y configuración"]) {
+  for (const label of ["Inicio", "Oportunidades", "Productos", "Operación", "Monitoreo"]) {
     assert.match(canonicalNavigation, new RegExp(label))
   }
   assert.match(mobileNav, /SELLER_OS_NAVIGATION\.map/)
+  assert.match(mobileNav, /return null/)
+  assert.match(primaryNavigation, /SELLER_OS_NAVIGATION\.map/)
   assert.match(mobile, /SellerOsMobileNav/)
   assert.match(hub, /SellerOsMobileNav/)
-  assert.match(mobileNav, /env\(safe-area-inset-bottom\)/)
-  assert.match(mobileNav, /aria-current=/)
+  assert.match(shellStyles, /env\(safe-area-inset-bottom\)/)
+  assert.match(primaryNavigation, /aria-current=/)
   assert.match(mobile, /Continuar donde quedé/)
   assert.match(mobile, /save_review/)
   assert.match(mobile, /Guardado server-side/)
@@ -352,7 +356,7 @@ test("seller handoff has actionable economics and a Seller OS publication CTA", 
     mobile,
     /venta confirmada o listing activo con stock Luna exacto en cero/,
   )
-  assert.match(mobile, /resumen diario de las 18:00 Guatemala/)
+  assert.doesNotMatch(mobile, /18:00 Guatemala/)
   assert.doesNotMatch(
     mobile,
     /Inmediatas: oportunidad con evidencia suficiente/,

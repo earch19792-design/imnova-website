@@ -1,6 +1,7 @@
 {
   "version": "SELLER_OS_RETAINED_SHARED_V1",
   "retained": [
+    { "path": "product_states", "reason": "Registro comercial perteneciente al dominio legacy de Productos; Seller OS no lo consume hasta validar propiedad, RLS y compatibilidad mediante una migración separada.", "runtimeConsumerInSellerStaging": false },
     { "path": "lib/products-service.ts", "reason": "Shared source retained for another application/branch; no active Seller OS route imports it.", "runtimeConsumerInSellerStaging": false },
     { "path": "components/imnova-popup.tsx", "reason": "Shared component retained for rollback/other deployment; removed from root layout and public home runtime.", "runtimeConsumerInSellerStaging": false },
     { "path": "components/innovations-section.tsx", "reason": "Shared public-domain component retained outside active Seller OS routes.", "runtimeConsumerInSellerStaging": false },

@@ -2,7 +2,7 @@
   "version": "SELLER_STAGING_LEGACY_REMOVAL_V1",
   "generatedAt": "2026-07-18T00:00:00Z",
   "deploymentScope": "imnova-staging",
-  "branch": "feature/centralize-ebay-mobile-command-center",
+  "branch": "feature/centralize-ebay-mobile-center",
   "removed": [
     { "domain": "PUBLIC_COMMUNITY", "paths": ["app/api/community/ideas/route.ts", "app/api/community/member/route.ts", "app/api/community/register/route.ts", "app/api/community/vote/route.ts", "app/miembro/page.tsx"], "replacement": "NONE", "action": "REMOVE_FROM_SELLER_BUILD" },
     { "domain": "PUBLIC_PRODUCTS_STORE", "paths": ["app/store/page.tsx", "app/store/[slug]/page.tsx", "app/api/store/featured/route.ts"], "replacement": "SELLER_OS_PUBLIC_HOME", "action": "REMOVE_FROM_SELLER_BUILD" },

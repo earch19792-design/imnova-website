@@ -823,14 +823,16 @@ function publicationJourneyStageIndex(phase: PublicationAutomationPhase) {
 
 function PublicationLaunchVisualizer({
   phase,
-  busy,
+  animate,
+  motionAllowed,
   failed,
   elapsedSeconds,
   productImageUrl,
   status,
 }: {
   phase: PublicationAutomationPhase
-  busy: boolean
+  animate: boolean
+  motionAllowed: boolean
   failed: boolean
   elapsedSeconds: number
   productImageUrl: string
@@ -840,7 +842,7 @@ function PublicationLaunchVisualizer({
   const activeStage = PUBLICATION_JOURNEY_STAGES[activeIndex]
   const completedPath = phase === "complete"
     ? 6
-    : Math.min(6, activeIndex + (busy ? 0.38 : 0))
+    : Math.min(6, activeIndex + (animate ? 0.38 : 0))
   const elapsed = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:${String(elapsedSeconds % 60).padStart(2, "0")}`
 
   return <div
@@ -853,13 +855,13 @@ function PublicationLaunchVisualizer({
       <div aria-hidden="true" className="flex items-end gap-1">
         {[0, 1, 2, 3, 4].map((bar) => <span
           key={bar}
-          className={`w-1 rounded-full bg-cyan-200 ${busy ? "animate-pulse" : ""}`}
+          className={`w-1 rounded-full bg-cyan-200 ${animate ? "animate-pulse" : ""}`}
           style={{
             height: `${7 + (bar % 3) * 4}px`,
             animationDelay: `${bar * 120}ms`,
           }}
         />)}
-        <span className={`ml-1 h-2 w-2 rounded-full ${failed ? "bg-rose-300" : phase === "complete" ? "bg-emerald-300" : "bg-cyan-300"} ${busy ? "animate-ping" : ""}`} />
+        <span className={`ml-1 h-2 w-2 rounded-full ${failed ? "bg-rose-300" : phase === "complete" ? "bg-emerald-300" : "bg-cyan-300"} ${animate ? "animate-ping" : ""}`} />
       </div>
       <span className="font-mono text-[10px] font-black tracking-[0.24em] text-cyan-100/75">
         T+{elapsed}
@@ -902,7 +904,7 @@ function PublicationLaunchVisualizer({
 
       <rect width="420" height="540" fill="url(#publication-circuit-grid)" />
       <circle cx="210" cy="270" r="205" fill="url(#publication-core-gradient)">
-        {busy && <animate attributeName="r" values="175;215;175" dur="5s" repeatCount="indefinite" />}
+        {animate && <animate attributeName="r" values="175;215;175" dur="5s" repeatCount="indefinite" />}
       </circle>
 
       <g opacity=".32" stroke="#67e8f9" strokeWidth="1">
@@ -942,10 +944,10 @@ function PublicationLaunchVisualizer({
         strokeWidth="3"
         strokeLinecap="round"
         strokeDasharray={`${completedPath} 6`}
-        className="transition-all duration-700"
+        className="transition-all duration-700 motion-reduce:transition-none"
         filter="url(#publication-cyan-glow)"
       />
-      {busy && <>
+      {animate && <>
         <circle r="2.8" fill="#ecfeff" filter="url(#publication-cyan-glow)">
           <animateMotion dur="2.6s" repeatCount="indefinite" path={PUBLICATION_JOURNEY_PATH} />
         </circle>
@@ -980,7 +982,7 @@ function PublicationLaunchVisualizer({
             strokeDasharray={active ? "4 3" : complete ? "2 2" : "1 6"}
             filter={active ? "url(#publication-cyan-glow)" : complete ? "url(#publication-emerald-glow)" : undefined}
           >
-            {active && busy && <animateTransform
+            {active && animate && <animateTransform
               attributeName="transform"
               type="rotate"
               from="0"
@@ -990,7 +992,7 @@ function PublicationLaunchVisualizer({
             />}
           </circle>
           {active && <circle r="39" fill="none" stroke={stroke} strokeOpacity=".35">
-            {busy && <>
+            {animate && <>
               <animate attributeName="r" values="34;44;34" dur="1.8s" repeatCount="indefinite" />
               <animate attributeName="stroke-opacity" values=".7;.05;.7" dur="1.8s" repeatCount="indefinite" />
             </>}
@@ -1005,7 +1007,7 @@ function PublicationLaunchVisualizer({
             <path d="M-21 1l4-5 4 3 3-5M11 1l4-6 6 5" />
             <circle cx="0" cy="8" r="8" />
             <circle cx="0" cy="8" r="3" fill={stroke} fillOpacity=".28" />
-            {active && busy && <line x1="-27" x2="27" y1="-14" y2="-14" stroke="#fff">
+            {active && animate && <line x1="-27" x2="27" y1="-14" y2="-14" stroke="#fff">
               <animate attributeName="y1" values="-18;18;-18" dur="1.5s" repeatCount="indefinite" />
               <animate attributeName="y2" values="-18;18;-18" dur="1.5s" repeatCount="indefinite" />
             </line>}
@@ -1013,7 +1015,7 @@ function PublicationLaunchVisualizer({
 
           {stage.id === "identity" && <g fill="none" stroke={stroke} strokeLinecap="round">
             <path d="M0-21C-14-21-22-12-22 1M0-15C-10-15-16-8-16 2c0 8-3 13-6 17M0-9c-7 0-10 5-10 11 0 10-3 16-6 21M0-3c-3 0-4 2-4 6 0 9-1 15-4 21M6-14c7 3 10 9 10 17 0 9 3 14 6 18M7-7c3 3 4 7 4 12 0 8 2 13 5 17M3 3c0 10 2 16 6 21" />
-            {active && busy && <circle r="26" strokeDasharray="2 7" strokeWidth="1.4">
+            {active && animate && <circle r="26" strokeDasharray="2 7" strokeWidth="1.4">
               <animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="4s" repeatCount="indefinite" />
             </circle>}
           </g>}
@@ -1033,7 +1035,7 @@ function PublicationLaunchVisualizer({
                   stroke="none"
                 />
               })}
-              {active && busy && <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="4s" repeatCount="indefinite" />}
+              {active && animate && <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="4s" repeatCount="indefinite" />}
             </g>
           </g>}
 
@@ -1041,7 +1043,7 @@ function PublicationLaunchVisualizer({
             <path d="M0-23l18 7v13c0 13-8 21-18 27-10-6-18-14-18-27v-13z" />
             <circle cx="-3" cy="-2" r="5" />
             <path d="M2-2h14m-4 0v5m-5-5v4" />
-            {active && busy && <path d="M-25-2A25 25 0 0125-2" strokeDasharray="3 5">
+            {active && animate && <path d="M-25-2A25 25 0 0125-2" strokeDasharray="3 5">
               <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="2.6s" repeatCount="indefinite" />
             </path>}
           </g>}
@@ -1049,7 +1051,7 @@ function PublicationLaunchVisualizer({
           {stage.id === "draft" && <g fill="none" stroke={stroke} strokeWidth="1.6" strokeLinejoin="round">
             <path d="M-20-9L-2-19 16-9-2 1zM-20-9V10L-2 21V1M16-9V10L-2 21" />
             <path d="M9 4h16v12H9zM12 8h9M12 12h6" />
-            {active && busy && <path d="M-25 25h50" strokeDasharray="2 5">
+            {active && animate && <path d="M-25 25h50" strokeDasharray="2 5">
               <animate attributeName="stroke-dashoffset" values="0;-14" dur="1s" repeatCount="indefinite" />
             </path>}
           </g>}
@@ -1059,14 +1061,14 @@ function PublicationLaunchVisualizer({
             <circle cx="-13" cy="1" r="3" />
             <path d="M-2-6h14M-2 0h10M-2 6h6" />
             <path d="M-22-25v5M-27-22l4 3M-17-22l-4 3M21-22v5M16-19l4 3M26-19l-4 3">
-              {active && busy && <animate attributeName="stroke-opacity" values=".15;1;.15" dur="1.1s" repeatCount="indefinite" />}
+              {active && animate && <animate attributeName="stroke-opacity" values=".15;1;.15" dur="1.1s" repeatCount="indefinite" />}
             </path>
           </g>}
 
           {stage.id === "ebay" && <g fill="none" stroke={stroke} strokeWidth="1.7">
             <rect x="-25" y="-25" width="50" height="50" rx="13" />
             <rect x="-18" y="-18" width="36" height="36" rx="9" strokeDasharray="3 3">
-              {active && busy && <animate attributeName="rx" values="9;15;9" dur="1.8s" repeatCount="indefinite" />}
+              {active && animate && <animate attributeName="rx" values="9;15;9" dur="1.8s" repeatCount="indefinite" />}
             </rect>
             <circle cx="-11" cy="0" r="4" fill="#e53238" stroke="none" />
             <circle cx="-3.5" cy="0" r="4" fill="#0064d2" stroke="none" />
@@ -1090,19 +1092,21 @@ function PublicationLaunchVisualizer({
         strokeOpacity=".7"
         strokeWidth="1.5"
         strokeDasharray="3 4"
-        className="transition-all duration-700"
+        className="transition-all duration-700 motion-reduce:transition-none"
       >
-        {busy && <animate attributeName="stroke-dashoffset" values="0;-14" dur=".8s" repeatCount="indefinite" />}
+        {animate && <animate attributeName="stroke-dashoffset" values="0;-14" dur=".8s" repeatCount="indefinite" />}
       </line>
       <g
         data-traveling-product
         style={{
           transform: `translate(${activeStage.productX}px, ${activeStage.productY}px)`,
-          transition: "transform 850ms cubic-bezier(.2,.8,.2,1)",
+          transition: motionAllowed
+            ? "transform 850ms cubic-bezier(.2,.8,.2,1)"
+            : "none",
         }}
       >
         <circle r="33" fill="#020617" fillOpacity=".88" stroke={failed ? "#fda4af" : "#cffafe"} strokeOpacity=".7" strokeWidth="1.5" filter="url(#publication-cyan-glow)" />
-        {busy && <circle r="38" fill="none" stroke={failed ? "#fb7185" : "#67e8f9"} strokeDasharray="3 8">
+        {animate && <circle r="38" fill="none" stroke={failed ? "#fb7185" : "#67e8f9"} strokeDasharray="3 8">
           <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="2s" repeatCount="indefinite" />
         </circle>}
         <rect x="-25" y="-25" width="50" height="50" rx="14" fill="#fff" />
@@ -1119,7 +1123,7 @@ function PublicationLaunchVisualizer({
           : <g fill="none" stroke="#0f172a" strokeWidth="1.7" strokeLinejoin="round">
             <path d="M-15-7L0-15 15-7 0 1zM-15-7V9L0 17V1M15-7V9L0 17" />
           </g>}
-        {busy && <circle cx="22" cy="-22" r="3.5" fill="#67e8f9">
+        {animate && <circle cx="22" cy="-22" r="3.5" fill="#67e8f9">
           <animate attributeName="opacity" values=".25;1;.25" dur=".8s" repeatCount="indefinite" />
         </circle>}
       </g>
@@ -1140,7 +1144,7 @@ function PublicationLaunchVisualizer({
 }
 
 function ListingWorkspaceLoading() {
-  return <main className="min-h-screen bg-[#070b12] p-6 text-white"><div className="mx-auto max-w-xl animate-pulse rounded-3xl border border-white/10 bg-white/[0.04] p-6"><div className="h-6 w-2/3 rounded bg-white/10" /><div className="mt-4 h-24 rounded-2xl bg-white/5" /><p className="mt-4 text-sm text-white/50">Cargando workspace…</p></div></main>
+  return <main className="min-h-screen bg-[#070b12] p-6 text-white"><div className="mx-auto max-w-xl motion-safe:animate-pulse rounded-3xl border border-white/10 bg-white/[0.04] p-6"><div className="h-6 w-2/3 rounded bg-white/10" /><div className="mt-4 h-24 rounded-2xl bg-white/5" /><p className="mt-4 text-sm text-white/50">Cargando workspace…</p></div></main>
 }
 
 function ListingWorkspacePageContent() {
@@ -1205,6 +1209,8 @@ function ListingWorkspacePageContent() {
     useState<number | null>(null)
   const [publicationAutomationElapsed, setPublicationAutomationElapsed] =
     useState(0)
+  const [publicationMotionAllowed, setPublicationMotionAllowed] =
+    useState(false)
   const [publicationAutomationFailed, setPublicationAutomationFailed] =
     useState(false)
   const [positionSixPreviewError, setPositionSixPreviewError] = useState("")
@@ -2160,6 +2166,8 @@ function ListingWorkspacePageContent() {
     publicationReadOnlyPreflightActive
       ? "research"
       : visiblePublicationAutomationPhase
+  const durablePublicationAnimation =
+    publicationPhase === "publish_in_flight" && publicationMotionAllowed
   const publicationProductImageUrl =
     finalListingReview?.signedImages.find((asset) => asset.position === 0)
       ?.signedPreviewUrl
@@ -2189,6 +2197,22 @@ function ListingWorkspacePageContent() {
     const interval = window.setInterval(updateElapsed, 1_000)
     return () => window.clearInterval(interval)
   }, [publicationAutomationBusy, publicationAutomationStartedAt])
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)")
+    const updateMotion = () => {
+      setPublicationMotionAllowed(
+        !media.matches && document.visibilityState === "visible",
+      )
+    }
+    updateMotion()
+    media.addEventListener("change", updateMotion)
+    document.addEventListener("visibilitychange", updateMotion)
+    return () => {
+      media.removeEventListener("change", updateMotion)
+      document.removeEventListener("visibilitychange", updateMotion)
+    }
+  }, [])
 
   useEffect(() => {
     if (verifiedActiveItemId && !activeRevisionItemId) {
@@ -3159,7 +3183,6 @@ function ListingWorkspacePageContent() {
       ? null
       : draftState.execution
     let nextPublication = draftState.publication
-    const prepareVisualTimers: number[] = []
     setPublicationAutomationFailed(false)
     setPublicationAutomationStartedAt(Date.now())
     setPublicationAutomationElapsed(0)
@@ -3218,18 +3241,6 @@ function ListingWorkspacePageContent() {
           setPublicationAutomationStep(
             "1/4 · Revalidando Luna, cuenta, policies y las 7 imágenes…",
           )
-          prepareVisualTimers.splice(0).forEach((timer) =>
-            window.clearTimeout(timer))
-          prepareVisualTimers.push(
-            window.setTimeout(
-              () => setPublicationAutomationPhase("identity"),
-              900,
-            ),
-            window.setTimeout(
-              () => setPublicationAutomationPhase("visuals"),
-              1_800,
-            ),
-          )
           try {
             prepared = await requestV3UnpublishedAuthorization({
               action: "prepare",
@@ -3238,8 +3249,6 @@ function ListingWorkspacePageContent() {
             })
             break
           } catch (prepareError) {
-            prepareVisualTimers.splice(0).forEach((timer) =>
-              window.clearTimeout(timer))
             const sourceUnavailable = prepareError instanceof Error
               && (
                 prepareError.message.includes(
@@ -3280,8 +3289,6 @@ function ListingWorkspacePageContent() {
             })
           }
         }
-        prepareVisualTimers.splice(0).forEach((timer) =>
-          window.clearTimeout(timer))
         if (!prepared) {
           throw new Error("EBAY_V3_PUBLIC_LUNA_PREFLIGHT_NOT_PREPARED")
         }
@@ -3487,8 +3494,6 @@ function ListingWorkspacePageContent() {
       setMessage("")
       setUnpublishedPreflightRetry((current) => current + 1)
     } finally {
-      prepareVisualTimers.splice(0).forEach((timer) =>
-        window.clearTimeout(timer))
       setPublicationAutomationBusy(false)
       setDraftBusy(false)
     }
@@ -3843,12 +3848,13 @@ function ListingWorkspacePageContent() {
       <section data-v3-one-click-publication data-unpublished-preflight-state={unpublishedPreflightState} className="space-y-3 rounded-2xl border border-rose-200/35 bg-rose-200/[0.07] p-3">
         <div>
           <p className="text-xs font-black uppercase tracking-widest text-rose-100/70">Publicación eBay automatizada · PRODUCTION</p>
-          <h3 className="mt-1 text-lg font-black">El producto viaja; el sistema trabaja</h3>
-          <p className="mt-2 text-sm leading-6 text-rose-50/75">Un clic activa la construcción completa y conserva reanudación segura en cada cámara.</p>
+          <h3 className="mt-1 text-lg font-black">Recorrido de publicación</h3>
+          <p className="mt-2 text-sm leading-6 text-rose-50/75">Las fases cambian al recibir resultados reales. El movimiento sólo se habilita cuando el estado persistido confirma una publicación en curso.</p>
         </div>
         <PublicationLaunchVisualizer
           phase={publicationVisualizerPhase}
-          busy={publicationAutomationBusy || publicationReadOnlyPreflightActive}
+          animate={durablePublicationAnimation}
+          motionAllowed={publicationMotionAllowed}
           failed={publicationAutomationFailed || unpublishedPreflightState === "error"}
           elapsedSeconds={publicationAutomationElapsed}
           productImageUrl={publicationProductImageUrl}
@@ -3870,7 +3876,7 @@ function ListingWorkspacePageContent() {
         {publicationPhase === "monitor_registered"
           ? <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y monitoreado</strong><p className="mt-1 text-xs">Item ID {draftState.publication?.listing_id}</p><a href={`https://www.ebay.com/itm/${draftState.publication?.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-black underline">Abrir listing en eBay</a></div>
           : <button type="button" disabled={publicationButtonDisabled} onClick={() => void publishV3Automatically()} className="relative min-h-16 w-full overflow-hidden rounded-2xl bg-rose-200 px-4 text-lg font-black text-black shadow-[0_0_38px_rgba(254,205,211,0.2)] disabled:opacity-40">
-            {publicationAutomationBusy && <span aria-hidden="true" className="absolute inset-y-0 left-0 w-1/3 animate-pulse bg-gradient-to-r from-transparent via-white/45 to-transparent" />}
+            {durablePublicationAnimation && <span aria-hidden="true" className="absolute inset-y-0 left-0 w-1/3 motion-safe:animate-pulse bg-gradient-to-r from-transparent via-white/45 to-transparent" />}
             <span className="relative">{publicationAutomationBusy
               ? "Sistema en operación"
               : ["publish_in_flight", "outcome_unknown", "published_pending_verification"].includes(publicationPhase)
