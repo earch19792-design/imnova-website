@@ -28,6 +28,8 @@ function pilotErrorMessage(value: unknown) {
       "La tarea quedó desactualizada. Seller OS la regenerará desde la evidencia vigente.",
     SAME_DAY_CONTINUITY_RESCUE_CONFIRMATION_REQUIRED:
       "Confirma expresamente el auxilio seguro para reanudar desde el último checkpoint.",
+    SAME_DAY_PILOT_ACCOUNT_SCOPE_REQUIRED:
+      "La cuenta eBay de preproducción no está enlazada en este deployment. Verifica EBAY_SELLER_ACCOUNT_KEY y la identidad oficial de eBay en Preview, y vuelve a desplegar esta rama.",
   }
   return messages[code] ?? (/^[A-Z0-9_]+$/.test(code)
     ? "Seller OS no pudo aceptar esa confirmación. Revisa el dato visible e inténtalo nuevamente."
@@ -50,7 +52,9 @@ export function TodayLaunchPanel() {
     if (!accessToken) return
     const response = await fetch("/api/admin/ebay/same-day-pilot", { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" })
     const body = await response.json().catch(() => ({}))
-    if (!response.ok) throw new Error(body.error || "No se pudo consultar el lanzamiento.")
+    if (!response.ok) {
+      throw new Error(pilotErrorMessage(body.error))
+    }
     setPilot(body.pilot)
     setLastObservedAt(new Date().toISOString())
   }, [])

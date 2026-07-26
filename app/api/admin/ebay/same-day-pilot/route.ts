@@ -199,9 +199,33 @@ function safeErrorStatus(error: unknown) {
 async function authorization(req: Request) {
   const auth = await validateAdminApiRequest(req)
   if (!auth.ok || !auth.userId) return { response: NextResponse.json({ success: false, error: auth.error ?? "admin_forbidden" }, { status: auth.status || 403 }) }
-  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
-  if (!accountKey) return { response: NextResponse.json({ success: false, error: "SAME_DAY_PILOT_ACCOUNT_SCOPE_REQUIRED" }, { status: 503 }) }
-  return { auth, accountKey, supabase: getSupabaseAdminClient() }
+  const accountScope = getEbaySellerAccountScopeConfiguration()
+  if (!accountScope.accountKey) {
+    return {
+      response: NextResponse.json({
+        success: false,
+        error: "SAME_DAY_PILOT_ACCOUNT_SCOPE_REQUIRED",
+        configuration: {
+          reason: accountScope.reason,
+          accountAliasConfigured: Boolean(accountScope.accountAlias),
+          officialIdentityBound: accountScope.identity.bound,
+          officialIdentityConsistent: accountScope.identity.consistent,
+          expectedUserIdConfigured: Boolean(
+            accountScope.identity.expectedUserId,
+          ),
+          expectedFingerprintConfigured: Boolean(
+            accountScope.identity.expectedAccountFingerprint,
+          ),
+          secretsReturned: false,
+        },
+      }, { status: 503 }),
+    }
+  }
+  return {
+    auth,
+    accountKey: accountScope.accountKey,
+    supabase: getSupabaseAdminClient(),
+  }
 }
 
 function scheduleImmediateContinuation(input: {
