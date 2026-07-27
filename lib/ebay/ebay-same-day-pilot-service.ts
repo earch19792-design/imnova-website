@@ -8011,11 +8011,8 @@ async function repairRejectedSingleUnitVisualStrategy(
     if (!failureTransitionPresent && !priorFailurePresent) continue
 
     const imageJob = buildSameDayImageGenerationJobSpec({
-      accountKey,
-      actorId: state.run.created_by,
       runId: state.run.id,
       candidateId: candidate.id,
-      listingPackageId: sourcePack.listing_package_id,
       productResearchCaptureBatchId:
         candidate.product_research_capture_batch_id,
       factRunId: factsSummary.factRunId,
