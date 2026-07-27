@@ -10236,9 +10236,13 @@ export async function processSameDayPilotJobs(input: {
       if (text(candidate.machine_state) !== "PREPARING_IMAGE_PACKAGE") {
         throw new Error("SAME_DAY_PILOT_IMAGE_GENERATION_STATE_INVALID")
       }
+      const runAccountKey = text(state.run.marketplace_account_key)
+      if (!runAccountKey) {
+        throw new Error("SAME_DAY_PILOT_RUN_ACCOUNT_SCOPE_REQUIRED")
+      }
       const generated = await generateAndPersistSameDayImagePackage({
         supabase: input.supabase,
-        accountKey: input.accountKey,
+        accountKey: runAccountKey,
         actorId: text(state.run.created_by),
         runId: state.run.id,
         candidate: record(candidate),
