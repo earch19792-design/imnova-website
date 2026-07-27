@@ -8583,13 +8583,19 @@ async function repairRejectedImageSourceReuse(
     .sort((left, right) => Number(left.ordinal) - Number(right.ordinal))
     .filter((entry) => {
       const blockers = strings(entry.blockers)
-      return text(entry.machine_state) === "REJECTED" &&
+      const rejectedForSourceReuse =
+        text(entry.machine_state) === "REJECTED" &&
         text(entry.state) === "REJECTED_TODAY" &&
         blockers.length === 1 &&
         [
           SAME_DAY_IMAGE_SOURCE_REUSE_ERROR,
           "SAME_DAY_IMAGE_PREGENERATION_HASH_INVALID",
         ].includes(blockers[0])
+      const orphanedSourceReusePreparation =
+        text(entry.machine_state) === "PREPARING_IMAGE_PACKAGE" &&
+        text(entry.state) === "READY_FOR_CONTENT" &&
+        blockers.length === 0
+      return rejectedForSourceReuse || orphanedSourceReusePreparation
     })
   if (!candidates.length) return 0
 
@@ -8734,11 +8740,19 @@ async function repairRejectedImageSourceReuse(
         ].includes(
           text(record(job.checkpoint).sourceReuseRecoveryVersion),
         )))
+    const previousBlocker = strings(candidate.blockers)[0] ||
+      priorErrors.find((errorCode) =>
+        errorCode === SAME_DAY_IMAGE_SOURCE_REUSE_ERROR ||
+        errorCode === "SAME_DAY_IMAGE_PREGENERATION_HASH_INVALID") ||
+      "SAME_DAY_IMAGE_PREGENERATION_HASH_INVALID"
     const causalTransitionPresent = state.transitions.some((entry) =>
       text(entry.candidate_id) === text(candidate.id) &&
       text(entry.previous_state) === "PREPARING_IMAGE_PACKAGE" &&
       text(entry.next_state) === "REJECTED" &&
-      text(entry.reason_code) === strings(candidate.blockers)[0])
+      [
+        SAME_DAY_IMAGE_SOURCE_REUSE_ERROR,
+        "SAME_DAY_IMAGE_PREGENERATION_HASH_INVALID",
+      ].includes(text(entry.reason_code)))
     if (!causalFailures.length || !causalTransitionPresent) continue
 
     const imageJob = buildSameDayImageGenerationJobSpec({
@@ -8779,37 +8793,46 @@ async function repairRejectedImageSourceReuse(
       }
     }
 
-    await transition({
-      supabase,
-      runId: state.run.id,
-      candidateId: text(candidate.id),
-      previousState: "REJECTED",
-      nextState: "PREPARING_IMAGE_PACKAGE",
-      reasonCode: "SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERED",
-      triggeredBy: "RETRY",
-      checkpoint: {
-        recoveryVersion: SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION,
-        previousBlocker: strings(candidate.blockers)[0],
-        sourcePackId: sourcePack.id,
-        sourcePackHash: sourcePack.source_pack_hash,
-        authorizedSecondarySourceCount: secondarySourceHashes.size,
-        factRunId: factsSummary.factRunId,
-        productResearchCaptureBatchId:
-          candidate.product_research_capture_batch_id,
-        packageHash: handoffSummary.packageHash,
-        checkpointPreserved: true,
-        commercialEvidencePreserved: true,
-        productFactsPreserved: true,
-        productApprovalPreserved: true,
-        historyDeleted: false,
-        externalPublicationPossible: false,
-        ebayWrites: 0,
-      },
-      nextAutomaticAction:
-        "Regenerar el set profesional con reparto autorizado máximo 3 por fuente.",
-      nextHumanAction: "Ninguna hasta revisar las imágenes.",
-      job: imageJob,
-    })
+    if (text(candidate.machine_state) === "PREPARING_IMAGE_PACKAGE") {
+      await enqueuePilotJob({
+        supabase,
+        runId: state.run.id,
+        candidateId: candidate.id,
+        job: imageJob,
+      })
+    } else {
+      await transition({
+        supabase,
+        runId: state.run.id,
+        candidateId: text(candidate.id),
+        previousState: "REJECTED",
+        nextState: "PREPARING_IMAGE_PACKAGE",
+        reasonCode: "SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERED",
+        triggeredBy: "RETRY",
+        checkpoint: {
+          recoveryVersion: SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION,
+          previousBlocker,
+          sourcePackId: sourcePack.id,
+          sourcePackHash: sourcePack.source_pack_hash,
+          authorizedSecondarySourceCount: secondarySourceHashes.size,
+          factRunId: factsSummary.factRunId,
+          productResearchCaptureBatchId:
+            candidate.product_research_capture_batch_id,
+          packageHash: handoffSummary.packageHash,
+          checkpointPreserved: true,
+          commercialEvidencePreserved: true,
+          productFactsPreserved: true,
+          productApprovalPreserved: true,
+          historyDeleted: false,
+          externalPublicationPossible: false,
+          ebayWrites: 0,
+        },
+        nextAutomaticAction:
+          "Regenerar el set profesional con reparto autorizado máximo 3 por fuente.",
+        nextHumanAction: "Ninguna hasta revisar las imágenes.",
+        job: imageJob,
+      })
+    }
     const { data: repairedCandidate, error: candidateError } = await supabase
       .from("ebay_same_day_pilot_candidates")
       .update({
@@ -8854,7 +8877,7 @@ async function repairRejectedImageSourceReuse(
         event_type: "SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERED",
         event_payload: {
           recoveryVersion: SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION,
-          previousBlocker: strings(candidate.blockers)[0],
+          previousBlocker,
           sourcePackId: sourcePack.id,
           sourcePackHash: sourcePack.source_pack_hash,
           authorizedSecondarySourceCount: secondarySourceHashes.size,
