@@ -118,6 +118,7 @@ import { buildCurrentSameDayImageFactoryInput } from
 import {
   buildSameDayImageGenerationJobSpec,
   SAME_DAY_IMAGE_AUTHORIZED_CATALOG_COMPLETION_RECOVERY_VERSION,
+  SAME_DAY_IMAGE_SOURCE_REUSE_PREVIOUS_RECOVERY_VERSION,
   SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION,
   isSameDayImagePreparationOrphan,
   SAME_DAY_IMAGE_ORPHAN_RECOVERY_VERSION,
@@ -8727,8 +8728,12 @@ async function repairRejectedImageSourceReuse(
       (["DEAD_LETTER", "CANCELLED"].includes(text(job.status)) &&
         text(job.last_error_code) ===
           "SAME_DAY_IMAGE_PREGENERATION_HASH_INVALID" &&
-        text(record(job.checkpoint).sourceReuseRecoveryVersion) ===
-          SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION))
+        [
+          SAME_DAY_IMAGE_SOURCE_REUSE_PREVIOUS_RECOVERY_VERSION,
+          SAME_DAY_IMAGE_SOURCE_REUSE_RECOVERY_VERSION,
+        ].includes(
+          text(record(job.checkpoint).sourceReuseRecoveryVersion),
+        )))
     const causalTransitionPresent = state.transitions.some((entry) =>
       text(entry.candidate_id) === text(candidate.id) &&
       text(entry.previous_state) === "PREPARING_IMAGE_PACKAGE" &&

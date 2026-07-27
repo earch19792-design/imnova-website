@@ -506,7 +506,10 @@ export async function generateAndPersistSameDayImagePackage(input: {
   if (input.forceDeterministicImageFallback === true) {
     throw new Error("SAME_DAY_IMAGE_DETERMINISTIC_CLONE_RECOVERY_RETIRED")
   }
-  const aiEnabled = configuration.aiGeneration === "READY"
+  // Source-reuse recovery is frozen to the deterministic compositor by its
+  // pre-generation hash. Global OpenAI readiness must not change that mode.
+  const aiEnabled = configuration.aiGeneration === "READY" &&
+    !sourceReuseRecoveryVersion
   const model = process.env.OPENAI_IMAGE_MODEL?.trim() ?? ""
   const apiKey = process.env.OPENAI_API_KEY?.trim() ?? ""
   const capturedMarketVisualBrief = await loadEbayImageMarketBrief({
