@@ -8737,8 +8737,11 @@ async function repairRejectedImageSourceReuse(
     if (!causalFailures.length || !causalTransitionPresent) continue
 
     const imageJob = buildSameDayImageGenerationJobSpec({
+      accountKey,
+      actorId: state.run.created_by,
       runId: state.run.id,
       candidateId: candidate.id,
+      listingPackageId,
       productResearchCaptureBatchId:
         candidate.product_research_capture_batch_id,
       factRunId: factsSummary.factRunId,
