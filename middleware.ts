@@ -1,5 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { getBlockedEbayProResponsePayload, getEbayProRuntimeBoundary } from "@/lib/ebay/environment-boundaries"
+import {
+  evaluateSingleProductLabRequest,
+  SINGLE_PRODUCT_LAB_MODE,
+  singleProductLabBlockedPayload,
+  singleProductLabRequestRequiresBody,
+} from "@/lib/ebay/single-product-lab"
 
 const ADMIN_COOKIE = "seller_os_admin_session"
 const RETIRED_PUBLIC_PREFIXES = ["/store", "/products", "/community", "/miembro", "/about", "/contact"]
@@ -46,6 +52,32 @@ export async function middleware(request: NextRequest) {
   const legacyEntry = Object.entries(LEGACY_ADMIN_REDIRECTS).find(([route]) => startsAtRoute(pathname, route))
   if (legacyEntry) return NextResponse.redirect(new URL(legacyEntry[1], request.url), 308)
 
+  let pilotBody: Record<string, unknown> | null = null
+  if (singleProductLabRequestRequiresBody(pathname, request.method)) {
+    try {
+      const parsed: unknown = await request.clone().json()
+      pilotBody = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : null
+    } catch {
+      pilotBody = null
+    }
+  }
+  const pilotBlock = evaluateSingleProductLabRequest({
+    pathname,
+    method: request.method,
+    body: pilotBody,
+  })
+  if (pilotBlock) {
+    return NextResponse.json(singleProductLabBlockedPayload(pilotBlock), {
+      status: pilotBlock.status,
+      headers: {
+        "Cache-Control": "private, no-store, max-age=0",
+        "X-Seller-OS-Mode": SINGLE_PRODUCT_LAB_MODE,
+      },
+    })
+  }
+
   const boundary = getEbayProRuntimeBoundary({ pathname, method: request.method })
   if (boundary.blocked) {
     if (pathname.startsWith("/api/")) return NextResponse.json(getBlockedEbayProResponsePayload(pathname), { status: 403 })
@@ -67,12 +99,13 @@ export async function middleware(request: NextRequest) {
   response.headers.set("X-Frame-Options", "DENY")
   response.headers.set("Referrer-Policy", "same-origin")
   response.headers.set("X-Content-Type-Options", "nosniff")
+  response.headers.set("X-Seller-OS-Mode", SINGLE_PRODUCT_LAB_MODE)
   return response
 }
 
 export const config = {
   matcher: [
     "/admin/:path*", "/store/:path*", "/products/:path*", "/community/:path*", "/miembro/:path*", "/about/:path*", "/contact/:path*", "/privacy-policy",
-    "/api/admin/market-radar/:path*", "/api/admin/ebay-winner-pipeline/:path*", "/api/admin/active-listing-risks/:path*", "/api/admin/ebay/oauth/:path*", "/api/admin/ebay/:path*",
+    "/api/admin/market-radar/:path*", "/api/admin/ebay-winner-pipeline/:path*", "/api/admin/active-listing-risks/:path*", "/api/admin/ebay/oauth/:path*", "/api/admin/ebay/:path*", "/api/admin/marketplace/:path*", "/api/cron/:path*", "/api/queues/:path*",
   ],
 }

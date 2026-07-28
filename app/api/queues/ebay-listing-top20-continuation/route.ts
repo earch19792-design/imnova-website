@@ -10,6 +10,11 @@ import {
 } from "@/lib/ebay/ebay-listing-ai-approval-queue-service"
 import { enqueueListingAiTop20Continuation } from "@/lib/ebay/ebay-listing-ai-top20-queue"
 import { getListingAiConfiguration } from "@/lib/ebay/ebay-openai-listing-factory-v2"
+import {
+  evaluateSingleProductLabRequest,
+  SINGLE_PRODUCT_LAB_MODE,
+  singleProductLabBlockedPayload,
+} from "@/lib/ebay/single-product-lab"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
 type QueueMessage = {
@@ -35,7 +40,13 @@ function parsedMessage(value: unknown) {
   return { runId, continuationGeneration, expectedBatch }
 }
 
+const pilotBlock = evaluateSingleProductLabRequest({
+  pathname: "/api/queues/ebay-listing-top20-continuation",
+  method: "POST",
+})
+
 const queueCallback = handleCallback(async (value, metadata) => {
+  if (pilotBlock) return
   const boundary = getListingAiConfiguration()
   if (!boundary.preview || !boundary.staging) {
     throw new Error("LISTING_AI_PREVIEW_STAGING_REQUIRED")
@@ -78,5 +89,14 @@ const queueCallback = handleCallback(async (value, metadata) => {
 // Keep the public Next.js route contract narrow even though the queue SDK also
 // accepts its framework-neutral `{ request }` callback wrapper.
 export function POST(request: Request) {
+  if (pilotBlock) {
+    return Response.json(singleProductLabBlockedPayload(pilotBlock), {
+      status: pilotBlock.status,
+      headers: {
+        "Cache-Control": "private, no-store, max-age=0",
+        "X-Seller-OS-Mode": SINGLE_PRODUCT_LAB_MODE,
+      },
+    })
+  }
   return queueCallback(request)
 }

@@ -13,8 +13,29 @@ import {
 
 type Row = Record<string, any>
 
-function pilotErrorMessage(value: unknown) {
-  const code = typeof value === "string" ? value : ""
+export function pilotErrorMessage(value: unknown) {
+  const payload = value && typeof value === "object"
+    ? value as Record<string, unknown>
+    : {}
+  const code = typeof value === "string"
+    ? value
+    : typeof payload.error === "string"
+      ? payload.error
+      : ""
+  if (code === "SINGLE_PRODUCT_LAB_ACTION_BLOCKED") {
+    const reason = typeof payload.reason === "string"
+      ? payload.reason
+      : "AUTOMATION_BLOCKED"
+    const mode = typeof payload.mode === "string"
+      ? payload.mode
+      : "SINGLE_PRODUCT_LAB"
+    return [
+      "Acción bloqueada correctamente por PILOT MODE.",
+      "No se realizó ninguna automatización ni cambio externo.",
+      `Motivo: ${reason}.`,
+      `Modo: ${mode}.`,
+    ].join(" ")
+  }
   const messages: Record<string, string> = {
     SAME_DAY_PILOT_OFFER_PACK_VISIBLE_COUNT_CONFLICT:
       "La cantidad escrita no coincide con el pack visible en el título. Revisa cuántas unidades físicas contiene una compra.",
@@ -40,6 +61,38 @@ async function token() {
 }
 
 export function TodayLaunchPanel() {
+  return <SingleProductLabLaunchLock />
+}
+
+function SingleProductLabLaunchLock() {
+  return (
+    <section
+      id="today-launch"
+      className="mt-5 min-w-0 scroll-mt-4 overflow-hidden rounded-3xl border border-amber-200/30 bg-gradient-to-br from-amber-200/[0.10] to-cyan-200/[0.04] p-5 sm:p-7"
+    >
+      <p className="text-xs font-black uppercase tracking-[0.22em] text-amber-100/65">
+        Lanzamiento de hoy · Pilot Mode
+      </p>
+      <h2 className="mt-2 max-w-3xl text-2xl font-black leading-tight">
+        LANZAMIENTO AUTOMÁTICO BLOQUEADO EN PILOT MODE
+      </h2>
+      <p className="mt-3 max-w-3xl text-sm leading-6 text-white/65">
+        Strategy Lab está disponible únicamente para análisis read-only.
+      </p>
+      <p className="mt-2 max-w-3xl text-xs leading-5 text-white/50">
+        No se iniciarán ciclos, workers, scans, publicaciones, repricing ni cambios externos desde esta pantalla.
+      </p>
+      <a
+        href="/admin/ebay/strategy-lab"
+        className="mt-5 inline-flex min-h-12 items-center rounded-2xl border border-cyan-200/30 bg-cyan-200/[0.08] px-5 text-sm font-black text-cyan-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200"
+      >
+        ABRIR STRATEGY LAB READ-ONLY →
+      </a>
+    </section>
+  )
+}
+
+function AutomatedTodayLaunchPanel() {
   const [pilot, setPilot] = useState<Row | null>(null)
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState(false)
@@ -68,7 +121,7 @@ export function TodayLaunchPanel() {
       const accessToken = await token()
       const response = await fetch("/api/admin/ebay/same-day-pilot", { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify(body) })
       const payload = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(pilotErrorMessage(payload.error))
+      if (!response.ok) throw new Error(pilotErrorMessage(payload))
       setPilot(payload.pilot)
       // The API schedules the worker continuation after returning. Refresh in a
       // short burst so the operator sees the next gate without waiting for the

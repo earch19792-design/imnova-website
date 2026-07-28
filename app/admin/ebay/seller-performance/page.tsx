@@ -18,6 +18,9 @@ import {
   type EbaySellerTrafficDashboard,
   type EbaySellerTrafficRow,
 } from "@/lib/ebay/ebay-seller-traffic-report"
+import {
+  formatSingleProductLabMetric,
+} from "@/lib/ebay/single-product-lab"
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 
 type ApiPayload = {
@@ -92,7 +95,7 @@ function rate(numerator: number | null, denominator: number | null) {
 }
 
 function formatMetric(value: number | null) {
-  return value === null ? "—" : numberFormatter.format(value)
+  return formatSingleProductLabMetric(value)
 }
 
 function rowClickThroughRate(row: EbaySellerTrafficRow) {
@@ -110,7 +113,24 @@ function rowSalesConversionRate(row: EbaySellerTrafficRow) {
 }
 
 function formatPercent(value: number | null) {
-  return value === null ? "Sin base" : `${numberFormatter.format(value)}%`
+  return formatSingleProductLabMetric(value, { suffix: "%" })
+}
+
+function completeDashboardMetric(
+  dashboard: EbaySellerTrafficDashboard,
+  metricKeys: string[],
+  value: number | null,
+) {
+  return dashboard.rows.length > 0 &&
+    metricKeys.every((key) =>
+      dashboard.rows.every((row) =>
+        row.applicability[key] === true &&
+        typeof row.metrics[key] === "number" &&
+        Number.isFinite(row.metrics[key])
+      )
+    )
+    ? value
+    : null
 }
 
 function formatDateTime(value: string | null) {
@@ -366,8 +386,8 @@ export default function EbaySellerPerformancePage() {
         </section>
 
         {learning && <section className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.06] p-5 md:p-7">
-          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-[0.22em] text-emerald-100/60">Aprendizaje prudente del OS</p><h2 className="mt-2 text-2xl font-black">{learning.status === "STORED_ELIGIBLE_ADJUSTMENTS" ? "Calibración por categoría activa" : learning.status === "STORED_COLLECTING" ? "Recopilando evidencia propia" : "Sin aprendizaje almacenado todavía"}</h2></div><span className="rounded-full border border-emerald-200/25 px-3 py-1 text-xs font-black">Consulta visual · {listingSelection?.count ?? 0} listings · no entrena</span></div>
-          <p className="mt-3 max-w-4xl text-sm leading-6 text-white/65">Esta pantalla sólo lee el reporte y el estado de aprendizaje ya almacenado. La automatización recopila períodos canónicos de 14 días completos y únicamente datos posteriores a la verificación. El ajuste puede afectar el orden —máximo ±5 puntos— después de 10 listings de la misma categoría/versión y 500 impresiones; identidad, stock, margen y restricciones nunca se relajan.</p>
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-[0.22em] text-emerald-100/60">Aprendizaje almacenado · sólo lectura</p><h2 className="mt-2 text-2xl font-black">{learning.status === "STORED_ELIGIBLE_ADJUSTMENTS" ? "Calibración histórica disponible" : learning.status === "STORED_COLLECTING" ? "Evidencia histórica disponible" : "Sin aprendizaje almacenado todavía"}</h2></div><span className="rounded-full border border-emerald-200/25 px-3 py-1 text-xs font-black">Consulta visual · {formatSingleProductLabMetric(listingSelection?.count)} listings · no entrena</span></div>
+          <p className="mt-3 max-w-4xl text-sm leading-6 text-white/65">Esta pantalla sólo lee el reporte y cualquier estado histórico ya almacenado. La recopilación y el aprendizaje automáticos están bloqueados durante SINGLE_PRODUCT_LAB; nada de esta vista cambia orden, score ni estrategia.</p>
           {learning.error && <p className="mt-4 rounded-2xl border border-amber-200/20 p-3 text-sm text-amber-50">No se pudo leer el estado almacenado: {learning.error.replaceAll("_", " ")}. Esta consulta no guardó evidencia ni cambió el ranking.</p>}
           <div className="mt-4 grid gap-3 md:grid-cols-2">{(learning.categoryLearning ?? []).map((category) => <article key={category.categoryId} className="rounded-2xl border border-white/10 bg-black/20 p-4"><div className="flex items-center justify-between gap-3"><strong>Categoría {category.categoryId}</strong><span className="text-xs font-black text-emerald-100">{category.status === "ELIGIBLE_APPLIED" ? `${category.adjustmentPoints >= 0 ? "+" : ""}${category.adjustmentPoints} pts` : "0 pts"}</span></div><p className="mt-2 text-xs leading-5 text-white/55">Muestra: {category.sampleListingCount} listings · {category.minimumObservationDays} días · {numberFormatter.format(category.totalImpressions)} impresiones.</p>{category.status === "COLLECTING" && <p className="mt-2 text-xs text-amber-100">Faltan {category.remainingRequirements.linkedListings} listings, {category.remainingRequirements.observationDays} días y {numberFormatter.format(category.remainingRequirements.totalImpressions)} impresiones.</p>}</article>)}</div>
         </section>}
@@ -375,11 +395,11 @@ export default function EbaySellerPerformancePage() {
         {dashboard && (
           <>
             <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-              <SummaryCard label="Impresiones" value={numberFormatter.format(dashboard.summary.totalImpressions)} detail="Apariciones totales reportadas por eBay." />
-              <SummaryCard label="Vistas" value={numberFormatter.format(dashboard.summary.totalViews)} detail="Aperturas totales de páginas de listing." />
-              <SummaryCard label="CTR calculado" value={formatPercent(dashboard.summary.clickThroughRate)} detail="Vistas desde búsqueda ÷ impresiones en búsqueda." />
-              <SummaryCard label="Transacciones" value={numberFormatter.format(dashboard.summary.transactions)} detail="Transacciones completadas en el período." />
-              <SummaryCard label="Conversión" value={formatPercent(dashboard.summary.salesConversionRate)} detail="Transacciones ÷ vistas totales." />
+              <SummaryCard label="Impresiones" value={formatMetric(completeDashboardMetric(dashboard, ["TOTAL_IMPRESSION_TOTAL"], dashboard.summary.totalImpressions))} detail="Apariciones totales reportadas por eBay." />
+              <SummaryCard label="Vistas" value={formatMetric(completeDashboardMetric(dashboard, ["LISTING_VIEWS_TOTAL"], dashboard.summary.totalViews))} detail="Aperturas totales de páginas de listing." />
+              <SummaryCard label="CTR calculado" value={formatPercent(completeDashboardMetric(dashboard, ["LISTING_IMPRESSION_SEARCH_RESULTS_PAGE", "LISTING_VIEWS_SOURCE_SEARCH_RESULTS_PAGE"], dashboard.summary.clickThroughRate))} detail="Vistas desde búsqueda ÷ impresiones en búsqueda." />
+              <SummaryCard label="Transacciones" value={formatMetric(completeDashboardMetric(dashboard, ["TRANSACTION"], dashboard.summary.transactions))} detail="Transacciones completadas en el período." />
+              <SummaryCard label="Conversión" value={formatPercent(completeDashboardMetric(dashboard, ["TRANSACTION", "LISTING_VIEWS_TOTAL"], dashboard.summary.salesConversionRate))} detail="Transacciones ÷ vistas totales." />
             </section>
 
             <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5 md:p-7">
