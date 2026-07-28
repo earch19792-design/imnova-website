@@ -23,6 +23,12 @@ const actions = [
 
 const operationLinks = [
   {
+    href: "/admin/ebay/strategy-lab",
+    title: "Strategy Lab V1",
+    copy: "Compara tres casos dorados con un motor comercial puro: evidencia, cohorts, economía, estrategia y Shadow Mode.",
+    cta: "Abrir laboratorio →",
+  },
+  {
     href: "/admin/ebay/listing-optimization",
     title: "Optimizar listing",
     copy: "Convierte un reporte de mercado y hechos verificados en título, descripción, briefs, score e iteraciones auditables.",

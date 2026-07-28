@@ -16,7 +16,6 @@ import {
 } from "@/lib/ebay/commercial-monitor-ui"
 import {
   formatSingleProductLabMetric,
-  SINGLE_PRODUCT_LAB_BANNER,
   SINGLE_PRODUCT_LAB_UNAVAILABLE,
 } from "@/lib/ebay/single-product-lab"
 
@@ -939,9 +938,6 @@ export function CommercialMonitorPanel() {
 
   return (
     <section aria-labelledby="commercial-monitor-heading" className="min-w-0 overflow-hidden rounded-3xl border border-emerald-200/25 bg-gradient-to-br from-emerald-200/[0.10] via-cyan-200/[0.04] to-black p-4 sm:p-5">
-      <div role="status" aria-live="polite" className="fixed inset-x-3 top-3 z-[100] mx-auto max-w-4xl rounded-2xl border border-amber-200/60 bg-amber-100 px-4 py-3 text-center text-xs font-black tracking-wide text-black shadow-2xl sm:text-sm">
-        {SINGLE_PRODUCT_LAB_BANNER}
-      </div>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Monitoreo comercial · separado de Radar</p>

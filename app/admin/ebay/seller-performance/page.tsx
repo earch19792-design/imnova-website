@@ -20,7 +20,6 @@ import {
 } from "@/lib/ebay/ebay-seller-traffic-report"
 import {
   formatSingleProductLabMetric,
-  SINGLE_PRODUCT_LAB_BANNER,
 } from "@/lib/ebay/single-product-lab"
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 
@@ -286,9 +285,6 @@ export default function EbaySellerPerformancePage() {
 
   return (
     <main className="min-h-screen bg-[#05070d] px-4 pb-28 pt-8 text-white sm:px-6 md:px-10">
-      <div role="status" aria-live="polite" className="fixed inset-x-3 top-3 z-[100] mx-auto max-w-4xl rounded-2xl border border-amber-200/60 bg-amber-100 px-4 py-3 text-center text-xs font-black tracking-wide text-black shadow-2xl sm:text-sm">
-        {SINGLE_PRODUCT_LAB_BANNER}
-      </div>
       <section className="mx-auto flex max-w-7xl flex-col gap-6">
         <nav className="flex flex-wrap gap-3 text-xs font-black uppercase tracking-[0.18em]">
           <a className="rounded-full border border-white/10 px-4 py-2 text-white/65" href="/admin/ebay-seller-os">
