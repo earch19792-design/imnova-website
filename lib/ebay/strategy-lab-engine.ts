@@ -1,5 +1,5 @@
 export const STRATEGY_LAB_ENGINE_VERSION =
-  "STRATEGY_LAB_ENGINE_V1_2026_07_28" as const
+  "STRATEGY_LAB_ENGINE_V1_1_2026_07_28" as const
 
 export const EVIDENCE_CLASSES = [
   "PRODUCT_VERIFIED",
@@ -44,12 +44,26 @@ export type EvidenceClass = typeof EVIDENCE_CLASSES[number]
 export type MarketCohort = typeof MARKET_COHORTS[number]
 export type OfferScenario = typeof OFFER_SCENARIOS[number]
 export type StrategyOutput = typeof STRATEGY_OUTPUTS[number]
+export type ConfidenceLevel = "LOW" | "MEDIUM" | "HIGH"
+export type CompatibilityConfidenceLevel =
+  | "NOT_APPLICABLE"
+  | ConfidenceLevel
 
 export type EvidencePurpose =
   | "IDENTITY"
   | "COMPATIBILITY"
   | "ECONOMICS"
   | "CREATIVE"
+
+export type EconomicCostEvidence = {
+  component:
+    | "PRODUCT_UNIT_COST"
+    | "PACKAGING_COST"
+    | "OUTBOUND_SHIPPING_COST"
+  currency: "USD" | string
+  basis: "PER_UNIT" | "PER_ORDER"
+  variantKeys?: string[]
+}
 
 export type EvidenceSourceKind =
   | "PRODUCT_INSPECTION"
@@ -71,6 +85,7 @@ export type EvidenceInput = {
   observedAt: string
   conflictKey?: string | null
   requiredFor?: EvidencePurpose[]
+  economicCost?: EconomicCostEvidence | null
   humanReviewed?: boolean
 }
 
@@ -169,13 +184,16 @@ export type ScenarioCostLine = {
 export type EvidenceRequirement = {
   field: string
   blockerCode: string
+  acceptedEvidenceClasses: EvidenceClass[]
+  requiredPurpose: EvidencePurpose
+  requireProductFact: boolean
 }
 
 export type CreativeSeed = {
   positioning: string
   heroComposition: string
   proofEvidenceFields: string[]
-  requiredEvidenceFields: string[]
+  requiredEvidence: EvidenceRequirement[]
   forbiddenTerms: string[]
 }
 
@@ -186,9 +204,11 @@ export type OfferScenarioInput = {
   variantComposition: string[]
   costLines: ScenarioCostLine[]
   packagingCost: number | null
+  packagingCostEvidenceId: string | null
   itemPrice: number | null
   buyerShippingCharge: number | null
   outboundShippingCost: number | null
+  outboundShippingCostEvidenceId: string | null
   hypothesisEvidenceClass?: EvidenceClass | null
   requiredEvidence?: EvidenceRequirement[]
   requiresExactSoldEvidence?: boolean
@@ -210,6 +230,7 @@ export type StrategyLabCaseInput = {
   evidence: EvidenceInput[]
   comparables: ComparableInput[]
   scenarios: OfferScenarioInput[]
+  identityRequirements: EvidenceRequirement[]
   compatibility?: CompatibilityGate
 }
 
@@ -219,7 +240,9 @@ export type ScenarioEconomics = {
   productCost: number | null
   costEvidenceIds: string[]
   packagingCost: number | null
+  packagingCostEvidenceId: string | null
   outboundShippingCost: number | null
+  outboundShippingCostEvidenceId: string | null
   investedCost: number | null
   variableFeeAmount: number | null
   fixedOrderFee: number | null
@@ -253,6 +276,7 @@ export type ScenarioAssessment = {
   blockers: string[]
   warnings: string[]
   selectionScore: number
+  selectionReasons: string[]
 }
 
 export type StrategyRecommendation = {
@@ -290,6 +314,15 @@ export type CreativeBrief = {
   canProduceAssets: false
 }
 
+export type StrategyConfidence = {
+  identity: ConfidenceLevel
+  compatibility: CompatibilityConfidenceLevel
+  market: ConfidenceLevel
+  economics: ConfidenceLevel
+  strategy: ConfidenceLevel
+  reasons: string[]
+}
+
 export type StrategyLabEvaluation = {
   engineVersion: typeof STRATEGY_LAB_ENGINE_VERSION
   caseId: string
@@ -302,6 +335,7 @@ export type StrategyLabEvaluation = {
   scenarioAssessments: ScenarioAssessment[]
   recommendation: StrategyRecommendation
   creativeBrief: CreativeBrief
+  confidence: StrategyConfidence
   safety: {
     supabaseWrites: 0
     ebayWrites: 0
@@ -789,6 +823,11 @@ function validNonnegativeNumber(value: number | null): value is number {
   return value !== null && Number.isFinite(value) && value >= 0
 }
 
+const ACCEPTED_ECONOMICS_EVIDENCE_CLASSES: EvidenceClass[] = [
+  "PRODUCT_VERIFIED",
+  "SUPPLIER_STATED",
+]
+
 function costFromLines(input: {
   lines: ScenarioCostLine[]
   evidence: ClassifiedEvidence[]
@@ -817,9 +856,31 @@ function costFromLines(input: {
     const observation = input.evidence.find((entry) =>
       entry.id === line.evidenceId
     )
-    if (!observation || !observation.usableAsProductFact ||
-      !observation.requiredFor?.includes("ECONOMICS")) {
+    if (!observation) {
       blockers.push(`COST_EVIDENCE_MISSING:${line.variantKey}`)
+      continue
+    }
+    if (!ACCEPTED_ECONOMICS_EVIDENCE_CLASSES.includes(
+      observation.classification,
+    )) {
+      blockers.push(
+        `COST_EVIDENCE_CLASS_NOT_ACCEPTED:${line.variantKey}:${observation.classification}`,
+      )
+      continue
+    }
+    if (!observation.usableAsProductFact) {
+      blockers.push(`COST_PRODUCT_FACT_REQUIRED:${line.variantKey}`)
+      continue
+    }
+    if (!observation.requiredFor?.includes("ECONOMICS")) {
+      blockers.push(`COST_EVIDENCE_PURPOSE_MISSING:${line.variantKey}`)
+      continue
+    }
+    if (observation.economicCost?.component !== "PRODUCT_UNIT_COST" ||
+      observation.economicCost.currency !== "USD" ||
+      observation.economicCost.basis !== "PER_UNIT" ||
+      !observation.economicCost.variantKeys?.includes(line.variantKey)) {
+      blockers.push(`COST_EVIDENCE_ROLE_MISMATCH:${line.variantKey}`)
       continue
     }
     if (typeof observation.normalizedValue !== "number" ||
@@ -847,6 +908,92 @@ function costFromLines(input: {
   }
 }
 
+function evidenceBackedScenarioCost(input: {
+  component: "PACKAGING_COST" | "OUTBOUND_SHIPPING_COST"
+  value: number | null
+  evidenceId: string | null
+  evidence: ClassifiedEvidence[]
+  missingBlocker: string
+}) {
+  if (input.value === null) {
+    return {
+      value: null,
+      evidenceId: null,
+      evidenceClass: null,
+      blockers: [input.missingBlocker],
+    }
+  }
+  if (!Number.isFinite(input.value) || input.value < 0) {
+    return {
+      value: null,
+      evidenceId: null,
+      evidenceClass: null,
+      blockers: [`${input.component}_INVALID`],
+    }
+  }
+  if (!input.evidenceId?.trim()) {
+    return {
+      value: null,
+      evidenceId: null,
+      evidenceClass: null,
+      blockers: [`${input.component}_EVIDENCE_MISSING`],
+    }
+  }
+
+  const observation = input.evidence.find((entry) =>
+    entry.id === input.evidenceId
+  )
+  if (!observation) {
+    return {
+      value: null,
+      evidenceId: null,
+      evidenceClass: null,
+      blockers: [`${input.component}_EVIDENCE_MISSING`],
+    }
+  }
+
+  const blockers: string[] = []
+  if (!ACCEPTED_ECONOMICS_EVIDENCE_CLASSES.includes(
+    observation.classification,
+  )) {
+    blockers.push(
+      `${input.component}_EVIDENCE_CLASS_NOT_ACCEPTED:${observation.classification}`,
+    )
+  }
+  if (!observation.usableAsProductFact) {
+    blockers.push(`${input.component}_PRODUCT_FACT_REQUIRED`)
+  }
+  if (!observation.requiredFor?.includes("ECONOMICS")) {
+    blockers.push(`${input.component}_EVIDENCE_PURPOSE_MISSING`)
+  }
+  if (observation.economicCost?.component !== input.component ||
+    observation.economicCost.currency !== "USD" ||
+    observation.economicCost.basis !== "PER_ORDER") {
+    blockers.push(`${input.component}_EVIDENCE_ROLE_MISMATCH`)
+  }
+  if (typeof observation.normalizedValue !== "number" ||
+    !Number.isFinite(observation.normalizedValue) ||
+    observation.normalizedValue < 0 ||
+    Math.abs(observation.normalizedValue - input.value) > 0.000_001) {
+    blockers.push(`${input.component}_EVIDENCE_CONFLICTED`)
+  }
+  if (blockers.length) {
+    return {
+      value: null,
+      evidenceId: null,
+      evidenceClass: null,
+      blockers: unique(blockers),
+    }
+  }
+
+  return {
+    value: money(input.value),
+    evidenceId: observation.id,
+    evidenceClass: observation.classification,
+    blockers: [],
+  }
+}
+
 export function calculateOfferScenarioEconomics(input: {
   scenario: OfferScenarioInput
   policy: EconomicsPolicy
@@ -862,6 +1009,23 @@ export function calculateOfferScenarioEconomics(input: {
   })
   const productCost = costResult.productCost
   blockers.push(...costResult.blockers)
+  const packagingResult = evidenceBackedScenarioCost({
+    component: "PACKAGING_COST",
+    value: scenario.packagingCost,
+    evidenceId: scenario.packagingCostEvidenceId,
+    evidence: input.evidence,
+    missingBlocker: "PACKAGING_COST_MISSING",
+  })
+  const shippingResult = evidenceBackedScenarioCost({
+    component: "OUTBOUND_SHIPPING_COST",
+    value: scenario.outboundShippingCost,
+    evidenceId: scenario.outboundShippingCostEvidenceId,
+    evidence: input.evidence,
+    missingBlocker: scenario.packQuantity > 1
+      ? `CONSOLIDATED_SHIPPING_MISSING:${scenario.offerScenario}`
+      : "OUTBOUND_SHIPPING_MISSING:SINGLE",
+  })
+  blockers.push(...packagingResult.blockers, ...shippingResult.blockers)
   const policyValid = [
     policy.feeRate,
     policy.returnsReserveRate,
@@ -882,20 +1046,6 @@ export function calculateOfferScenarioEconomics(input: {
   if (productCost === null && !costResult.blockers.length) {
     blockers.push("SUPPLIER_COST_MISSING")
   }
-  if (scenario.packagingCost === null ||
-    !Number.isFinite(scenario.packagingCost) ||
-    scenario.packagingCost < 0) {
-    blockers.push("PACKAGING_COST_MISSING")
-  }
-  if (scenario.outboundShippingCost === null ||
-    !Number.isFinite(scenario.outboundShippingCost) ||
-    scenario.outboundShippingCost < 0) {
-    blockers.push(
-      scenario.packQuantity > 1
-        ? `CONSOLIDATED_SHIPPING_MISSING:${scenario.offerScenario}`
-        : "OUTBOUND_SHIPPING_MISSING:SINGLE",
-    )
-  }
   if (scenario.itemPrice === null || !Number.isFinite(scenario.itemPrice) ||
     scenario.itemPrice < 0 ||
     scenario.buyerShippingCharge === null ||
@@ -912,13 +1062,8 @@ export function calculateOfferScenarioEconomics(input: {
       !validNonnegativeNumber(scenario.buyerShippingCharge)
     ? null
     : money(scenario.itemPrice + scenario.buyerShippingCharge)
-  const packagingCost = !validNonnegativeNumber(scenario.packagingCost)
-    ? null
-    : money(scenario.packagingCost)
-  const outboundShippingCost =
-    !validNonnegativeNumber(scenario.outboundShippingCost)
-    ? null
-    : money(scenario.outboundShippingCost)
+  const packagingCost = packagingResult.value
+  const outboundShippingCost = shippingResult.value
   const investedCost = productCost === null || packagingCost === null ||
       outboundShippingCost === null
     ? null
@@ -935,7 +1080,7 @@ export function calculateOfferScenarioEconomics(input: {
   let netMarginPercent: number | null = null
   let roiPercent: number | null = null
 
-  if (policyValid && investedCost !== null && productCost !== null &&
+  if (policyValid && investedCost !== null && investedCost > 0 &&
     variableRate < 1) {
     minimumProfitPrice = moneyUp(
       (investedCost + policy.fixedOrderFee + policy.minimumProfit) /
@@ -951,7 +1096,7 @@ export function calculateOfferScenarioEconomics(input: {
     minimumRoiPrice = moneyUp(
       (
         investedCost + policy.fixedOrderFee +
-        productCost * (policy.minimumRoiPercent / 100)
+        investedCost * (policy.minimumRoiPercent / 100)
       ) / (1 - variableRate),
     )
     const floors = [
@@ -971,8 +1116,8 @@ export function calculateOfferScenarioEconomics(input: {
     netMarginPercent = buyerTotalPrice > 0
       ? money((rawEstimatedProfit / buyerTotalPrice) * 100)
       : null
-    roiPercent = productCost !== null && productCost > 0
-      ? money((rawEstimatedProfit / productCost) * 100)
+    roiPercent = investedCost > 0 && estimatedProfit !== null
+      ? money((estimatedProfit / investedCost) * 100)
       : null
   }
 
@@ -1017,9 +1162,19 @@ export function calculateOfferScenarioEconomics(input: {
     status,
     buyerTotalPrice,
     productCost,
-    costEvidenceIds: costResult.evidenceIds,
+    costEvidenceIds: sortedUnique([
+      ...costResult.evidenceIds,
+      ...(packagingResult.evidenceId
+        ? [packagingResult.evidenceId]
+        : []),
+      ...(shippingResult.evidenceId
+        ? [shippingResult.evidenceId]
+        : []),
+    ]),
     packagingCost,
+    packagingCostEvidenceId: packagingResult.evidenceId,
     outboundShippingCost,
+    outboundShippingCostEvidenceId: shippingResult.evidenceId,
     investedCost,
     variableFeeAmount,
     fixedOrderFee: Number.isFinite(policy.fixedOrderFee) &&
@@ -1052,11 +1207,93 @@ function findEvidence(
   return evidence.filter((entry) => entry.field === field)
 }
 
-function requirementSatisfied(entries: ClassifiedEvidence[]) {
-  return entries.some((entry) =>
-    entry.usableAsProductFact &&
-    !["MISSING", "CONFLICTED"].includes(entry.classification)
+function evaluateEvidenceRequirement(
+  entries: ClassifiedEvidence[],
+  requirement: EvidenceRequirement,
+) {
+  const blockers: string[] = []
+  const acceptedClasses = unique(requirement.acceptedEvidenceClasses ?? [])
+  if (!acceptedClasses.length) {
+    return {
+      satisfied: false,
+      blockers: [
+        requirement.blockerCode,
+        `EVIDENCE_POLICY_MISSING:${requirement.field}`,
+      ],
+    }
+  }
+  if (entries.some((entry) => entry.classification === "CONFLICTED")) {
+    return {
+      satisfied: false,
+      blockers: [
+        requirement.blockerCode,
+        `EVIDENCE_CONFLICT:${requirement.field}`,
+      ],
+    }
+  }
+
+  const presentEntries = entries.filter((entry) =>
+    entry.classification !== "MISSING"
   )
+  if (!presentEntries.length) {
+    return {
+      satisfied: false,
+      blockers: [requirement.blockerCode],
+    }
+  }
+
+  const classAccepted = presentEntries.filter((entry) =>
+    acceptedClasses.includes(entry.classification)
+  )
+  if (!classAccepted.length) {
+    return {
+      satisfied: false,
+      blockers: [
+        requirement.blockerCode,
+        `EVIDENCE_CLASS_NOT_ACCEPTED:${requirement.field}:${
+          sortedUnique(presentEntries.map((entry) =>
+            entry.classification
+          )).join("+")
+        }`,
+      ],
+    }
+  }
+
+  const purposeAccepted = classAccepted.filter((entry) =>
+    entry.requiredFor?.includes(requirement.requiredPurpose)
+  )
+  if (!purposeAccepted.length) {
+    blockers.push(
+      `EVIDENCE_PURPOSE_MISSING:${requirement.field}:${requirement.requiredPurpose}`,
+    )
+  }
+  const productFactAccepted = requirement.requireProductFact
+    ? purposeAccepted.filter((entry) => entry.usableAsProductFact)
+    : purposeAccepted
+  if (requirement.requireProductFact && !productFactAccepted.length) {
+    blockers.push(`PRODUCT_FACT_REQUIRED:${requirement.field}`)
+  }
+
+  if (blockers.length) {
+    return {
+      satisfied: false,
+      blockers: unique([requirement.blockerCode, ...blockers]),
+    }
+  }
+  return {
+    satisfied: true,
+    blockers: [],
+  }
+}
+
+function requirementBlockers(
+  evidence: ClassifiedEvidence[],
+  requirement: EvidenceRequirement,
+) {
+  return evaluateEvidenceRequirement(
+    findEvidence(evidence, requirement.field),
+    requirement,
+  ).blockers
 }
 
 function directionFor(
@@ -1097,9 +1334,25 @@ function scoreAssessment(input: {
     HOLD_ECONOMICS: 10,
     NO_GO: 0,
   }
-  return (gateScore[input.releaseGate] ?? 0) +
-    (input.scenario.hypothesisEvidenceClass === "HUMAN_HYPOTHESIS" ? 20 : 0) +
-    Math.min(10, input.market.soldExact.uniqueItemCount * 2)
+  const gate = gateScore[input.releaseGate] ?? 0
+  const soldEvidence = Math.min(
+    10,
+    input.market.soldExact.uniqueItemCount * 2,
+  )
+  const hypothesisPenalty =
+    input.scenario.hypothesisEvidenceClass === "HUMAN_HYPOTHESIS"
+      ? -10
+      : 0
+  return {
+    score: gate + soldEvidence + hypothesisPenalty,
+    reasons: [
+      `RELEASE_GATE_SCORE:${input.releaseGate}:${gate}`,
+      `UNIQUE_SOLD_EXACT_SCORE:${input.market.soldExact.uniqueItemCount}:${soldEvidence}`,
+      hypothesisPenalty < 0
+        ? `HUMAN_HYPOTHESIS_PENALTY:${hypothesisPenalty}`
+        : "NO_HUMAN_HYPOTHESIS_BONUS:0",
+    ],
+  }
 }
 
 function conflictWarnings(evidence: ClassifiedEvidence[]) {
@@ -1118,6 +1371,7 @@ function nextActionFor(
   const orderedRules: Array<[RegExp, string]> = [
     [/FITMENT|COMPATIBILITY|DIMENSION/, "VALIDATE_FITMENT_AND_DIMENSIONS"],
     [/SOLD_EXACT_COHORT/, "COLLECT_EXACT_SOLD_COHORT"],
+    [/OUTBOUND_SHIPPING_MISSING:SINGLE/, "CONFIRM_OUTBOUND_SHIPPING"],
     [/SHIPPING/, "CONFIRM_CONSOLIDATED_SHIPPING"],
     [/MARKET_CEILING/, "ESTABLISH_MARKET_CEILING"],
     [/VISUAL_SOURCE/, "ATTACH_REAL_PRODUCT_VISUAL_SOURCE"],
@@ -1141,24 +1395,17 @@ export function recommendStrategy(input: {
   recommendation: StrategyRecommendation
 } {
   const warnings = sortedUnique(conflictWarnings(input.evidence))
-  const identityFields = sortedUnique(input.evidence
-    .filter((entry) => entry.requiredFor?.includes("IDENTITY"))
-    .map((entry) => entry.field))
-  const identityBlockers = identityFields.flatMap((field) => {
-    const observations = findEvidence(input.evidence, field)
-    if (requirementSatisfied(observations)) return []
-    return observations.some((entry) =>
-      entry.classification === "CONFLICTED"
-    )
-      ? [`IDENTITY_CONFLICT:${field}`]
-      : [`IDENTITY_MISSING:${field}`]
-  })
-  const compatibilityBlockers = input.caseInput.compatibility?.required
-    ? input.caseInput.compatibility.requirements.flatMap((requirement) =>
-        requirementSatisfied(findEvidence(input.evidence, requirement.field))
-          ? []
-          : [requirement.blockerCode]
+  const identityBlockers = input.caseInput.identityRequirements.length
+    ? input.caseInput.identityRequirements.flatMap(
+        (requirement) => requirementBlockers(input.evidence, requirement),
       )
+    : ["IDENTITY_REQUIREMENTS_MISSING"]
+  const compatibilityBlockers = input.caseInput.compatibility?.required
+    ? input.caseInput.compatibility.requirements.length
+      ? input.caseInput.compatibility.requirements.flatMap((requirement) =>
+          requirementBlockers(input.evidence, requirement)
+        )
+      : ["COMPATIBILITY_REQUIREMENTS_MISSING"]
     : []
 
   const assessments = input.caseInput.scenarios.map((scenario) => {
@@ -1170,10 +1417,7 @@ export function recommendStrategy(input: {
       evidence: input.evidence,
     })
     const evidenceBlockers = (scenario.requiredEvidence ?? []).flatMap(
-      (requirement) =>
-        requirementSatisfied(findEvidence(input.evidence, requirement.field))
-          ? []
-          : [requirement.blockerCode],
+      (requirement) => requirementBlockers(input.evidence, requirement),
     )
     if (scenario.requiresExactSoldEvidence &&
       !marketModel.exactSoldEvidenceSufficient) {
@@ -1204,6 +1448,11 @@ export function recommendStrategy(input: {
       releaseGate = "HOLD_EVIDENCE_INCOMPLETE"
     }
 
+    const score = scoreAssessment({
+      releaseGate,
+      scenario,
+      market: marketModel,
+    })
     return {
       scenario,
       marketModel,
@@ -1212,11 +1461,8 @@ export function recommendStrategy(input: {
       releaseGate,
       blockers,
       warnings,
-      selectionScore: scoreAssessment({
-        releaseGate,
-        scenario,
-        market: marketModel,
-      }),
+      selectionScore: score.score,
+      selectionReasons: score.reasons,
     }
   })
 
@@ -1318,11 +1564,8 @@ export function generateCreativeBrief(input: {
     omittedProof.push({ field, reason })
   }
 
-  const creativeRequirementsMissing = seed.requiredEvidenceFields.flatMap(
-    (field) =>
-      requirementSatisfied(findEvidence(input.evidence, field))
-        ? []
-        : [`CREATIVE_EVIDENCE_MISSING:${field}`],
+  const creativeRequirementsMissing = seed.requiredEvidence.flatMap(
+    (requirement) => requirementBlockers(input.evidence, requirement),
   )
   const proposedCopy = [seed.positioning, seed.heroComposition]
   const copyViolations = proposedCopy.flatMap((copy) =>
@@ -1352,6 +1595,218 @@ export function generateCreativeBrief(input: {
   }
 }
 
+function evidenceUsedByRequirement(
+  evidence: ClassifiedEvidence[],
+  requirement: EvidenceRequirement,
+) {
+  return findEvidence(evidence, requirement.field).filter((entry) =>
+    requirement.acceptedEvidenceClasses.includes(entry.classification) &&
+    entry.requiredFor?.includes(requirement.requiredPurpose) &&
+    (!requirement.requireProductFact || entry.usableAsProductFact)
+  )
+}
+
+function confidenceForRequiredProductEvidence(input: {
+  dimension: "IDENTITY" | "COMPATIBILITY"
+  evidence: ClassifiedEvidence[]
+  requirements: EvidenceRequirement[]
+}) {
+  if (!input.requirements.length) {
+    return {
+      level: "LOW" as const,
+      reasons: [`${input.dimension}_LOW:REQUIREMENTS_MISSING`],
+    }
+  }
+  const allEntries = input.requirements.flatMap((requirement) =>
+    findEvidence(input.evidence, requirement.field)
+  )
+  const checks = input.requirements.map((requirement) =>
+    evaluateEvidenceRequirement(
+      findEvidence(input.evidence, requirement.field),
+      requirement,
+    )
+  )
+  const weakClassification = allEntries.find((entry) =>
+    ["MISSING", "CONFLICTED", "HUMAN_HYPOTHESIS"].includes(
+      entry.classification,
+    )
+  )
+  if (checks.some((check) => !check.satisfied) || weakClassification) {
+    return {
+      level: "LOW" as const,
+      reasons: sortedUnique([
+        `${input.dimension}_LOW:REQUIRED_EVIDENCE_INCOMPLETE`,
+        ...checks.flatMap((check) => check.blockers.map((blocker) =>
+          `${input.dimension}_REASON:${blocker}`
+        )),
+        ...(weakClassification
+          ? [
+              `${input.dimension}_REASON:${weakClassification.field}:${weakClassification.classification}`,
+            ]
+          : []),
+      ]),
+    }
+  }
+
+  const used = input.requirements.flatMap((requirement) =>
+    evidenceUsedByRequirement(input.evidence, requirement)
+  )
+  const allVerified = used.length >= input.requirements.length &&
+    used.every((entry) => entry.classification === "PRODUCT_VERIFIED")
+  return allVerified
+    ? {
+        level: "HIGH" as const,
+        reasons: [`${input.dimension}_HIGH:ALL_REQUIRED_FIELDS_PRODUCT_VERIFIED`],
+      }
+    : {
+        level: "MEDIUM" as const,
+        reasons: [
+          `${input.dimension}_MEDIUM:ALLOWED_SUPPLIER_STATED_EVIDENCE`,
+        ],
+      }
+}
+
+export function calculateStrategyConfidence(input: {
+  caseInput: StrategyLabCaseInput
+  evidence: ClassifiedEvidence[]
+  preferredAssessment: ScenarioAssessment | null
+}): StrategyConfidence {
+  const identity = confidenceForRequiredProductEvidence({
+    dimension: "IDENTITY",
+    evidence: input.evidence,
+    requirements: input.caseInput.identityRequirements,
+  })
+
+  const compatibility = input.caseInput.compatibility?.required
+    ? confidenceForRequiredProductEvidence({
+        dimension: "COMPATIBILITY",
+        evidence: input.evidence,
+        requirements: input.caseInput.compatibility.requirements,
+      })
+    : {
+        level: "NOT_APPLICABLE" as const,
+        reasons: ["COMPATIBILITY_NOT_APPLICABLE:NO_HARD_GATE"],
+      }
+
+  const marketModel = input.preferredAssessment?.marketModel
+  const completeSoldExact = marketModel
+    ? Math.min(
+        marketModel.soldExact.uniqueItemCount,
+        marketModel.soldExact.priceSampleSize,
+      )
+    : 0
+  const market = completeSoldExact >= 5 &&
+      marketModel?.marketCeiling?.basis === "SOLD_EXACT_P75"
+    ? {
+        level: "HIGH" as const,
+        reasons: [
+          `MARKET_HIGH:COMPLETE_UNIQUE_SOLD_EXACT:${completeSoldExact}`,
+        ],
+      }
+    : completeSoldExact >= 2 && completeSoldExact <= 4 &&
+        marketModel?.marketCeiling?.basis === "SOLD_EXACT_P75"
+      ? {
+          level: "MEDIUM" as const,
+          reasons: [
+            `MARKET_MEDIUM:COMPLETE_UNIQUE_SOLD_EXACT:${completeSoldExact}`,
+          ],
+        }
+      : {
+          level: "LOW" as const,
+          reasons: [
+            completeSoldExact <= 1
+              ? `MARKET_LOW:COMPLETE_UNIQUE_SOLD_EXACT:${completeSoldExact}`
+              : "MARKET_LOW:SOLD_EXACT_CEILING_MISSING",
+          ],
+        }
+
+  const economicsOutput = input.preferredAssessment?.economics
+  const economicsComplete = Boolean(
+    economicsOutput &&
+    economicsOutput.productCost !== null &&
+    economicsOutput.packagingCost !== null &&
+    economicsOutput.outboundShippingCost !== null &&
+    economicsOutput.investedCost !== null &&
+    economicsOutput.costEvidenceIds.length >= 3,
+  )
+  const economicsEvidence = economicsOutput?.costEvidenceIds.flatMap((id) => {
+    const entry = input.evidence.find((candidate) => candidate.id === id)
+    return entry ? [entry] : []
+  }) ?? []
+  const economicsComponents = new Set<EconomicCostEvidence["component"]>(
+    economicsEvidence.flatMap((entry) =>
+      entry.economicCost ? [entry.economicCost.component] : []
+    ),
+  )
+  const requiredEconomicsComponents: EconomicCostEvidence["component"][] = [
+    "PRODUCT_UNIT_COST",
+    "PACKAGING_COST",
+    "OUTBOUND_SHIPPING_COST",
+  ]
+  const economicsRolesComplete = requiredEconomicsComponents.every(
+    (component) => economicsComponents.has(component),
+  )
+  const economicsClassesAccepted = economicsEvidence.length > 0 &&
+    economicsEvidence.every((entry) =>
+      ACCEPTED_ECONOMICS_EVIDENCE_CLASSES.includes(entry.classification)
+    )
+  const economics = !economicsComplete || !economicsClassesAccepted ||
+      !economicsRolesComplete
+    ? {
+        level: "LOW" as const,
+        reasons: ["ECONOMICS_LOW:COST_EVIDENCE_INCOMPLETE_OR_INVALID"],
+      }
+    : economicsEvidence.every((entry) =>
+        entry.classification === "PRODUCT_VERIFIED"
+      )
+      ? {
+          level: "HIGH" as const,
+          reasons: [
+            "ECONOMICS_HIGH:ALL_COSTS_PRODUCT_VERIFIED_AND_CONCORDANT",
+          ],
+        }
+      : {
+          level: "MEDIUM" as const,
+          reasons: [
+            "ECONOMICS_MEDIUM:COMPLETE_VERIFIED_AND_SUPPLIER_STATED_COSTS",
+          ],
+        }
+
+  const criticalLevels: ConfidenceLevel[] = [
+    identity.level,
+    market.level,
+    economics.level,
+    ...(compatibility.level === "NOT_APPLICABLE"
+      ? []
+      : [compatibility.level]),
+  ]
+  const strategy: ConfidenceLevel = criticalLevels.includes("LOW")
+    ? "LOW"
+    : criticalLevels.every((level) => level === "HIGH")
+      ? "HIGH"
+      : "MEDIUM"
+  const strategyReason = strategy === "LOW"
+    ? "STRATEGY_LOW:AT_LEAST_ONE_CRITICAL_DIMENSION_LOW"
+    : strategy === "HIGH"
+      ? "STRATEGY_HIGH:ALL_CRITICAL_DIMENSIONS_HIGH"
+      : "STRATEGY_MEDIUM:CRITICAL_DIMENSIONS_COMPLETE_WITH_MIXED_CONFIDENCE"
+
+  return {
+    identity: identity.level,
+    compatibility: compatibility.level,
+    market: market.level,
+    economics: economics.level,
+    strategy,
+    reasons: sortedUnique([
+      ...identity.reasons,
+      ...compatibility.reasons,
+      ...market.reasons,
+      ...economics.reasons,
+      strategyReason,
+    ]),
+  }
+}
+
 export function evaluateStrategyLabCase(
   input: StrategyLabCaseInput,
 ): StrategyLabEvaluation {
@@ -1369,6 +1824,14 @@ export function evaluateStrategyLabCase(
     assessments,
     evidence,
   })
+  const preferredAssessment = assessments.find((assessment) =>
+    assessment.scenario.id === recommendation.preferredScenarioId
+  ) ?? null
+  const confidence = calculateStrategyConfidence({
+    caseInput: input,
+    evidence,
+    preferredAssessment,
+  })
 
   return {
     engineVersion: STRATEGY_LAB_ENGINE_VERSION,
@@ -1382,6 +1845,7 @@ export function evaluateStrategyLabCase(
     scenarioAssessments: assessments,
     recommendation,
     creativeBrief,
+    confidence,
     safety: {
       supabaseWrites: 0,
       ebayWrites: 0,

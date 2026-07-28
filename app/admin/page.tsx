@@ -52,7 +52,7 @@ export default function SellerOsAdminHome() {
         <section className="min-w-0">
           <header className="rounded-3xl border border-white/10 bg-gradient-to-br from-cyan-200/[0.10] via-white/[0.03] to-emerald-200/[0.06] p-5 sm:p-7">
             <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-100/60">Inicio operativo</p><h1 className="mt-2 text-2xl font-black leading-tight sm:text-3xl">Tu siguiente decisión, sin ruido</h1></div><span className={`shrink-0 rounded-full px-3 py-2 text-xs font-black ${state === "READY" ? "bg-emerald-200 text-black" : "border border-amber-200/30 text-amber-100"}`}>{state === "LOADING" ? "VALIDANDO SESIÓN" : state === "READY" ? "SESIÓN PROTEGIDA" : "REVISAR CONEXIÓN"}</span></div>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">Seller OS trabaja en segundo plano, se detiene sólo ante una decisión indispensable y te muestra qué continuará después.</p>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">Seller OS permanece en análisis read-only durante Pilot Mode. Toda automatización y cambio externo continúa bloqueado.</p>
           </header>
 
           <TodayLaunchPanel />

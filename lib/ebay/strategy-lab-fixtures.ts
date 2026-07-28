@@ -8,7 +8,12 @@ import type {
 } from "./strategy-lab-engine"
 
 export const STRATEGY_LAB_FIXTURE_VERSION =
-  "STRATEGY_LAB_GOLDEN_CASES_V1_2026_07_28" as const
+  "STRATEGY_LAB_GOLDEN_CASES_V1_1_2026_07_28" as const
+
+export const STRATEGY_LAB_FIXTURE_EVIDENCE_STATUS = [
+  "NOT_LIVE_MARKET_EVIDENCE",
+  "NOT_LINKED_TO_OWN_EBAY_LISTING",
+] as const
 
 export const STRATEGY_LAB_ECONOMICS_POLICY: EconomicsPolicy = {
   version: "STRATEGY_LAB_ECONOMICS_V1_2026_07_28",
@@ -24,6 +29,7 @@ export const STRATEGY_LAB_ECONOMICS_POLICY: EconomicsPolicy = {
 export type GoldenStrategyLabCase = {
   fixtureVersion: typeof STRATEGY_LAB_FIXTURE_VERSION
   fixtureStatus: "SANITIZED_DETERMINISTIC_GOLDEN_FIXTURE"
+  fixtureEvidenceStatus: typeof STRATEGY_LAB_FIXTURE_EVIDENCE_STATUS
   input: StrategyLabCaseInput
   expectedHumanConclusion: HumanConclusion
 }
@@ -167,6 +173,12 @@ const bottleEvidence: EvidenceInput[] = [
     sourceKind: "SUPPLIER_CATALOG",
     sourceReference: "fixture://luna/bottle/cost",
     requiredFor: ["ECONOMICS"],
+    economicCost: {
+      component: "PRODUCT_UNIT_COST",
+      currency: "USD",
+      basis: "PER_UNIT",
+      variantKeys: ["BLACK", "BLUE_PURPLE"],
+    },
   }),
 ]
 
@@ -246,20 +258,40 @@ const bottleScenarios: OfferScenarioInput[] = [
       unitCost: 8.40,
       evidenceId: "bottle-unit-cost",
     }],
-    packagingCost: 0,
+    packagingCost: null,
+    packagingCostEvidenceId: null,
     itemPrice: 18.49,
     buyerShippingCharge: 0,
-    outboundShippingCost: 6.99,
+    outboundShippingCost: null,
+    outboundShippingCostEvidenceId: null,
     requiredEvidence: [
-      { field: "supplier_unit_cost", blockerCode: "SUPPLIER_COST_MISSING" },
-      { field: "variant_black", blockerCode: "BLACK_VARIANT_MISSING" },
+      {
+        field: "supplier_unit_cost",
+        blockerCode: "SUPPLIER_COST_MISSING",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+        requiredPurpose: "ECONOMICS",
+        requireProductFact: true,
+      },
+      {
+        field: "variant_black",
+        blockerCode: "BLACK_VARIANT_MISSING",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+        requiredPurpose: "IDENTITY",
+        requireProductFact: true,
+      },
     ],
     requiresExactSoldEvidence: true,
     creativeSeed: {
       positioning: "ONE BOTTLE, ONE ROUTINE",
       heroComposition: "One real Black bottle with a simple daily routine.",
       proofEvidenceFields: ["variant_black", "capacity"],
-      requiredEvidenceFields: ["variant_black"],
+      requiredEvidence: [{
+        field: "variant_black",
+        blockerCode: "CREATIVE_EVIDENCE_MISSING:variant_black",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+        requiredPurpose: "CREATIVE",
+        requireProductFact: true,
+      }],
       forbiddenTerms: [],
     },
   },
@@ -282,17 +314,34 @@ const bottleScenarios: OfferScenarioInput[] = [
         evidenceId: "bottle-unit-cost",
       },
     ],
-    packagingCost: 0,
+    packagingCost: null,
+    packagingCostEvidenceId: null,
     itemPrice: 39.99,
     buyerShippingCharge: 0,
     outboundShippingCost: null,
+    outboundShippingCostEvidenceId: null,
     hypothesisEvidenceClass: "HUMAN_HYPOTHESIS",
     requiredEvidence: [
-      { field: "supplier_unit_cost", blockerCode: "SUPPLIER_COST_MISSING" },
-      { field: "variant_black", blockerCode: "BLACK_VARIANT_MISSING" },
+      {
+        field: "supplier_unit_cost",
+        blockerCode: "SUPPLIER_COST_MISSING",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+        requiredPurpose: "ECONOMICS",
+        requireProductFact: true,
+      },
+      {
+        field: "variant_black",
+        blockerCode: "BLACK_VARIANT_MISSING",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+        requiredPurpose: "IDENTITY",
+        requireProductFact: true,
+      },
       {
         field: "variant_blue_purple",
         blockerCode: "BLUE_PURPLE_VARIANT_MISSING",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+        requiredPurpose: "IDENTITY",
+        requireProductFact: true,
       },
     ],
     requiresExactSoldEvidence: true,
@@ -305,7 +354,22 @@ const bottleScenarios: OfferScenarioInput[] = [
         "variant_blue_purple",
         "capacity",
       ],
-      requiredEvidenceFields: ["variant_black", "variant_blue_purple"],
+      requiredEvidence: [
+        {
+          field: "variant_black",
+          blockerCode: "CREATIVE_EVIDENCE_MISSING:variant_black",
+          acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+          requiredPurpose: "CREATIVE",
+          requireProductFact: true,
+        },
+        {
+          field: "variant_blue_purple",
+          blockerCode: "CREATIVE_EVIDENCE_MISSING:variant_blue_purple",
+          acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+          requiredPurpose: "CREATIVE",
+          requireProductFact: true,
+        },
+      ],
       forbiddenTerms: [],
     },
   },
@@ -314,6 +378,7 @@ const bottleScenarios: OfferScenarioInput[] = [
 const bottleCase: GoldenStrategyLabCase = {
   fixtureVersion: STRATEGY_LAB_FIXTURE_VERSION,
   fixtureStatus: "SANITIZED_DETERMINISTIC_GOLDEN_FIXTURE",
+  fixtureEvidenceStatus: STRATEGY_LAB_FIXTURE_EVIDENCE_STATUS,
   input: {
     fixtureVersion: STRATEGY_LAB_FIXTURE_VERSION,
     caseId: "motivational-bottle",
@@ -324,6 +389,22 @@ const bottleCase: GoldenStrategyLabCase = {
     evidence: bottleEvidence,
     comparables: bottleComparables,
     scenarios: bottleScenarios,
+    identityRequirements: [
+      {
+        field: "variant_black",
+        blockerCode: "IDENTITY_MISSING:variant_black",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+        requiredPurpose: "IDENTITY",
+        requireProductFact: true,
+      },
+      {
+        field: "variant_blue_purple",
+        blockerCode: "IDENTITY_MISSING:variant_blue_purple",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+        requiredPurpose: "IDENTITY",
+        requireProductFact: true,
+      },
+    ],
   },
   expectedHumanConclusion: {
     preferredScenario: "MIXED_VARIANT_BUNDLE",
@@ -370,6 +451,12 @@ const posiEvidence: EvidenceInput[] = [
     sourceKind: "SUPPLIER_CATALOG",
     sourceReference: "fixture://luna/posi/cost",
     requiredFor: ["ECONOMICS"],
+    economicCost: {
+      component: "PRODUCT_UNIT_COST",
+      currency: "USD",
+      basis: "PER_UNIT",
+      variantKeys: ["STANDARD"],
+    },
   }),
   evidence({
     id: "posi-fitment",
@@ -475,13 +562,21 @@ const posiScenario: OfferScenarioInput = {
     unitCost: 5.75,
     evidenceId: "posi-unit-cost",
   }],
-  packagingCost: 0,
+  packagingCost: null,
+  packagingCostEvidenceId: null,
   itemPrice: 34.99,
   buyerShippingCharge: 0,
-  outboundShippingCost: 6.99,
+  outboundShippingCost: null,
+  outboundShippingCostEvidenceId: null,
   hypothesisEvidenceClass: "HUMAN_HYPOTHESIS",
   requiredEvidence: [
-    { field: "supplier_unit_cost", blockerCode: "SUPPLIER_COST_MISSING" },
+    {
+      field: "supplier_unit_cost",
+      blockerCode: "SUPPLIER_COST_MISSING",
+      acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+      requiredPurpose: "ECONOMICS",
+      requireProductFact: true,
+    },
   ],
   requiresExactSoldEvidence: true,
   creativeSeed: {
@@ -489,7 +584,22 @@ const posiScenario: OfferScenarioInput = {
     heroComposition:
       "Show two replacement cartridges, verified fitment evidence, measured dimensions, and one stored as the spare.",
     proofEvidenceFields: ["product_type", "fitment", "dimensions"],
-    requiredEvidenceFields: ["fitment", "dimensions"],
+    requiredEvidence: [
+      {
+        field: "fitment",
+        blockerCode: "CREATIVE_EVIDENCE_MISSING:fitment",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED"],
+        requiredPurpose: "CREATIVE",
+        requireProductFact: true,
+      },
+      {
+        field: "dimensions",
+        blockerCode: "CREATIVE_EVIDENCE_MISSING:dimensions",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED"],
+        requiredPurpose: "CREATIVE",
+        requireProductFact: true,
+      },
+    ],
     forbiddenTerms: ["OEM", "Genuine", "Universal"],
   },
 }
@@ -497,6 +607,7 @@ const posiScenario: OfferScenarioInput = {
 const posiCase: GoldenStrategyLabCase = {
   fixtureVersion: STRATEGY_LAB_FIXTURE_VERSION,
   fixtureStatus: "SANITIZED_DETERMINISTIC_GOLDEN_FIXTURE",
+  fixtureEvidenceStatus: STRATEGY_LAB_FIXTURE_EVIDENCE_STATUS,
   input: {
     fixtureVersion: STRATEGY_LAB_FIXTURE_VERSION,
     caseId: "posi-temp-cartridge",
@@ -507,11 +618,39 @@ const posiCase: GoldenStrategyLabCase = {
     evidence: posiEvidence,
     comparables: posiComparables,
     scenarios: [posiScenario],
+    identityRequirements: [
+      {
+        field: "luna_sku",
+        blockerCode: "IDENTITY_MISSING:luna_sku",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+        requiredPurpose: "IDENTITY",
+        requireProductFact: true,
+      },
+      {
+        field: "product_type",
+        blockerCode: "IDENTITY_MISSING:product_type",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+        requiredPurpose: "IDENTITY",
+        requireProductFact: true,
+      },
+    ],
     compatibility: {
       required: true,
       requirements: [
-        { field: "fitment", blockerCode: "FITMENT_NOT_VERIFIED" },
-        { field: "dimensions", blockerCode: "DIMENSIONS_MISSING" },
+        {
+          field: "fitment",
+          blockerCode: "FITMENT_NOT_VERIFIED",
+          acceptedEvidenceClasses: ["PRODUCT_VERIFIED"],
+          requiredPurpose: "COMPATIBILITY",
+          requireProductFact: true,
+        },
+        {
+          field: "dimensions",
+          blockerCode: "DIMENSIONS_MISSING",
+          acceptedEvidenceClasses: ["PRODUCT_VERIFIED"],
+          requiredPurpose: "COMPATIBILITY",
+          requireProductFact: true,
+        },
       ],
     },
   },
@@ -535,7 +674,7 @@ const nozzleEvidence: EvidenceInput[] = [
     scope: "PRODUCT",
     sourceKind: "PRODUCT_INSPECTION",
     sourceReference: "fixture://manual/80144/model",
-    requiredFor: ["IDENTITY"],
+    requiredFor: ["IDENTITY", "CREATIVE"],
     humanReviewed: true,
   }),
   evidence({
@@ -559,6 +698,12 @@ const nozzleEvidence: EvidenceInput[] = [
     sourceKind: "SUPPLIER_CATALOG",
     sourceReference: "fixture://luna/80144/cost",
     requiredFor: ["ECONOMICS"],
+    economicCost: {
+      component: "PRODUCT_UNIT_COST",
+      currency: "USD",
+      basis: "PER_UNIT",
+      variantKeys: ["80144"],
+    },
   }),
   evidence({
     id: "nozzle-three-pack-hypothesis",
@@ -668,20 +813,40 @@ const nozzleScenarios: OfferScenarioInput[] = [
       unitCost: 9.20,
       evidenceId: "nozzle-unit-cost",
     }],
-    packagingCost: 0,
+    packagingCost: null,
+    packagingCostEvidenceId: null,
     itemPrice: 22.47,
     buyerShippingCharge: 0,
-    outboundShippingCost: 6.99,
+    outboundShippingCost: null,
+    outboundShippingCostEvidenceId: null,
     requiredEvidence: [
-      { field: "model", blockerCode: "MODEL_MISSING" },
-      { field: "supplier_unit_cost", blockerCode: "SUPPLIER_COST_MISSING" },
+      {
+        field: "model",
+        blockerCode: "MODEL_MISSING",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED"],
+        requiredPurpose: "IDENTITY",
+        requireProductFact: true,
+      },
+      {
+        field: "supplier_unit_cost",
+        blockerCode: "SUPPLIER_COST_MISSING",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+        requiredPurpose: "ECONOMICS",
+        requireProductFact: true,
+      },
     ],
     requiresExactSoldEvidence: false,
     creativeSeed: {
       positioning: "ONE VERIFIED 80144",
       heroComposition: "Show one real, verified product without invented claims.",
       proofEvidenceFields: ["model"],
-      requiredEvidenceFields: ["model"],
+      requiredEvidence: [{
+        field: "model",
+        blockerCode: "CREATIVE_EVIDENCE_MISSING:model",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED"],
+        requiredPurpose: "CREATIVE",
+        requireProductFact: true,
+      }],
       forbiddenTerms: [],
     },
   },
@@ -696,17 +861,34 @@ const nozzleScenarios: OfferScenarioInput[] = [
       unitCost: 9.20,
       evidenceId: "nozzle-unit-cost",
     }],
-    packagingCost: 0,
+    packagingCost: null,
+    packagingCostEvidenceId: null,
     itemPrice: 49.99,
     buyerShippingCharge: 0,
     outboundShippingCost: null,
+    outboundShippingCostEvidenceId: null,
     hypothesisEvidenceClass: "HUMAN_HYPOTHESIS",
     requiredEvidence: [
-      { field: "model", blockerCode: "MODEL_MISSING" },
-      { field: "supplier_unit_cost", blockerCode: "SUPPLIER_COST_MISSING" },
+      {
+        field: "model",
+        blockerCode: "MODEL_MISSING",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED"],
+        requiredPurpose: "IDENTITY",
+        requireProductFact: true,
+      },
+      {
+        field: "supplier_unit_cost",
+        blockerCode: "SUPPLIER_COST_MISSING",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+        requiredPurpose: "ECONOMICS",
+        requireProductFact: true,
+      },
       {
         field: "real_visual_source",
         blockerCode: "REAL_VISUAL_SOURCE_MISSING",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED"],
+        requiredPurpose: "CREATIVE",
+        requireProductFact: true,
       },
     ],
     requiresExactSoldEvidence: true,
@@ -715,7 +897,13 @@ const nozzleScenarios: OfferScenarioInput[] = [
       heroComposition:
         "Only after a real source exists, show exactly three identical verified units.",
       proofEvidenceFields: ["model", "real_visual_source"],
-      requiredEvidenceFields: ["real_visual_source"],
+      requiredEvidence: [{
+        field: "real_visual_source",
+        blockerCode: "CREATIVE_EVIDENCE_MISSING:real_visual_source",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED"],
+        requiredPurpose: "CREATIVE",
+        requireProductFact: true,
+      }],
       forbiddenTerms: [],
     },
   },
@@ -724,6 +912,7 @@ const nozzleScenarios: OfferScenarioInput[] = [
 const nozzleCase: GoldenStrategyLabCase = {
   fixtureVersion: STRATEGY_LAB_FIXTURE_VERSION,
   fixtureStatus: "SANITIZED_DETERMINISTIC_GOLDEN_FIXTURE",
+  fixtureEvidenceStatus: STRATEGY_LAB_FIXTURE_EVIDENCE_STATUS,
   input: {
     fixtureVersion: STRATEGY_LAB_FIXTURE_VERSION,
     caseId: "pressure-washer-nozzle-80144",
@@ -734,6 +923,22 @@ const nozzleCase: GoldenStrategyLabCase = {
     evidence: nozzleEvidence,
     comparables: nozzleComparables,
     scenarios: nozzleScenarios,
+    identityRequirements: [
+      {
+        field: "model",
+        blockerCode: "IDENTITY_MISSING:model",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED"],
+        requiredPurpose: "IDENTITY",
+        requireProductFact: true,
+      },
+      {
+        field: "luna_sku",
+        blockerCode: "IDENTITY_MISSING:luna_sku",
+        acceptedEvidenceClasses: ["PRODUCT_VERIFIED", "SUPPLIER_STATED"],
+        requiredPurpose: "IDENTITY",
+        requireProductFact: true,
+      },
+    ],
   },
   expectedHumanConclusion: {
     preferredScenario: "THREE_PACK",

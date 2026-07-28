@@ -41,6 +41,16 @@ function tone(value: string) {
   return "border-cyan-200/25 bg-cyan-200/[0.06] text-cyan-50"
 }
 
+function confidenceTone(value: string) {
+  if (value === "HIGH") {
+    return "border-emerald-200/30 bg-emerald-200/[0.08] text-emerald-50"
+  }
+  if (value === "LOW") {
+    return "border-amber-200/30 bg-amber-200/[0.08] text-amber-50"
+  }
+  return "border-cyan-200/25 bg-cyan-200/[0.06] text-cyan-50"
+}
+
 function Distribution({
   label,
   value,
@@ -81,6 +91,9 @@ function CaseReport({
           <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-100/55">
             {fixture.fixtureStatus} · {fixture.fixtureVersion}
           </p>
+          <p className="mt-2 text-xs font-black uppercase tracking-wider text-amber-100/65">
+            {fixture.fixtureEvidenceStatus.join(" · ")}
+          </p>
           <h2 className="mt-2 text-2xl font-black sm:text-3xl">
             {fixture.input.productLabel}
           </h2>
@@ -111,6 +124,36 @@ function CaseReport({
           <p className="text-xs font-black uppercase tracking-wider text-violet-100/50">Next action</p>
           <p className="mt-2 break-words font-black">{evaluation.recommendation.nextAction}</p>
         </div>
+      </section>
+
+      <section className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4" aria-labelledby={`${fixture.input.caseId}-confidence`}>
+        <h3 id={`${fixture.input.caseId}-confidence`} className="text-xl font-black">
+          Confidence multidimensional
+        </h3>
+        <p className="mt-1 text-sm text-white/50">
+          Confidence explica la solidez de la evidencia; no autoriza acciones y no reemplaza el release gate.
+        </p>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          {([
+            ["Identity", evaluation.confidence.identity],
+            ["Compatibility", evaluation.confidence.compatibility],
+            ["Market", evaluation.confidence.market],
+            ["Economics", evaluation.confidence.economics],
+            ["Strategy", evaluation.confidence.strategy],
+          ] as const).map(([label, value]) => (
+            <div key={label} className={`rounded-2xl border p-3 ${confidenceTone(value)}`}>
+              <p className="text-[10px] font-black uppercase tracking-wider opacity-55">{label}</p>
+              <p className="mt-1 text-lg font-black">{value}</p>
+            </div>
+          ))}
+        </div>
+        <ul className="mt-3 grid gap-2 text-xs text-white/65 sm:grid-cols-2">
+          {evaluation.confidence.reasons.map((reason) => (
+            <li key={reason} className="rounded-xl border border-white/10 bg-white/[0.025] p-2">
+              <code>{reason}</code>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <details className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -202,6 +245,28 @@ function CaseReport({
                 <div><dt className="text-white/40">Profit</dt><dd className="mt-1 font-black">{money(assessment.economics.estimatedProfit)}</dd></div>
                 <div><dt className="text-white/40">Margin / ROI</dt><dd className="mt-1 font-black">{assessment.economics.netMarginPercent === null ? "MISSING" : `${assessment.economics.netMarginPercent}%`} / {assessment.economics.roiPercent === null ? "MISSING" : `${assessment.economics.roiPercent}%`}</dd></div>
               </dl>
+              <div className="mt-3 grid gap-3 rounded-2xl border border-white/10 p-3 text-xs lg:grid-cols-2">
+                <div>
+                  <p className="font-black text-white/50">Selection score · ranking only</p>
+                  <p className="mt-1 text-lg font-black">{assessment.selectionScore}</p>
+                  <ul className="mt-2 grid gap-1 text-white/60">
+                    {assessment.selectionReasons.map((reason) => (
+                      <li key={reason}><code>{reason}</code></li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <p className="font-black text-white/50">Cost evidence used</p>
+                  <p className="mt-1 break-words text-white/65">
+                    {assessment.economics.costEvidenceIds.length
+                      ? assessment.economics.costEvidenceIds.join(" · ")
+                      : "MISSING"}
+                  </p>
+                  <p className="mt-2 text-white/45">
+                    Invested cost: {money(assessment.economics.investedCost)} · ROI basis: total invested cost.
+                  </p>
+                </div>
+              </div>
               {assessment.blockers.length > 0 && <ul className="mt-3 grid gap-2 text-xs text-amber-50 sm:grid-cols-2">{assessment.blockers.map((blocker) => <li key={blocker} className="rounded-xl border border-amber-200/15 bg-amber-200/[0.04] p-2"><code>{blocker}</code></li>)}</ul>}
             </article>
           ))}
