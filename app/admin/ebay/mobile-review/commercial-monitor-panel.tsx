@@ -10,11 +10,15 @@ import {
 } from "@/lib/ebay/ebay-mobile-review-http"
 import {
   buildCommercialMonitorRunRequest,
-  formatCommercialMetricValue,
   isSatisfactoryCommercialDryRun,
   type CommercialMonitorReaderView,
   type CommercialMonitorRunView,
 } from "@/lib/ebay/commercial-monitor-ui"
+import {
+  formatSingleProductLabMetric,
+  SINGLE_PRODUCT_LAB_BANNER,
+  SINGLE_PRODUCT_LAB_UNAVAILABLE,
+} from "@/lib/ebay/single-product-lab"
 
 type MonitorMetrics = Record<string, unknown> & {
   dryRun?: boolean
@@ -392,15 +396,15 @@ type SellerHubComparison = {
   classification?: string
   explanation?: string
   sellerHubEvidence?: {
-    impressions?: number
-    views?: number
-    transactions?: number
-    ctr?: number
+    impressions?: number | null
+    views?: number | null
+    transactions?: number | null
+    ctr?: number | null
     calculatedCtr?: number | null
-  }
-  operational?: AnalyticsAudit
-  comparison?: AnalyticsAudit
-  accountDiagnostic?: AnalyticsAudit
+  } | null
+  operational?: AnalyticsAudit | null
+  comparison?: AnalyticsAudit | null
+  accountDiagnostic?: AnalyticsAudit | null
   safety?: {
     persistencePerformed?: boolean
     alertsGenerated?: number
@@ -427,7 +431,16 @@ function statusTone(status: string | undefined) {
 }
 
 function value(input: unknown) {
-  return formatCommercialMetricValue(input)
+  return formatSingleProductLabMetric(input)
+}
+
+function knownSum(values: ReadonlyArray<number | null | undefined>) {
+  return values.length > 0 &&
+    values.every((item): item is number =>
+      typeof item === "number" && Number.isFinite(item)
+    )
+    ? values.reduce((total, item) => total + item, 0)
+    : null
 }
 
 function list(value: string[] | undefined) {
@@ -451,14 +464,10 @@ function competitorSuggestionLabel(code: string) {
   return labels[code] ?? code.replaceAll("_", " ").toLocaleLowerCase("es")
 }
 
-function AnalyticsWindowAudit({ label, audit }: { label: string; audit?: AnalyticsAudit }) {
+function AnalyticsWindowAudit({ label, audit }: { label: string; audit?: AnalyticsAudit | null }) {
   const row = audit?.metrics?.[0]
   const metric = (input: number | null | undefined, suffix = "") =>
-    typeof input === "number" && Number.isFinite(input)
-      ? `${new Intl.NumberFormat("es-US", { maximumFractionDigits: 2 }).format(input)}${suffix}`
-      : audit?.dataFreshnessStatus === "REPORT_NOT_UPDATED_YET"
-        ? "Pendiente de actualización eBay"
-        : "—"
+    formatSingleProductLabMetric(input, { suffix })
   return <article className="rounded-2xl border border-white/10 bg-black/20 p-3">
     <h4 className="font-black text-cyan-50">{label}</h4>
     <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
@@ -527,10 +536,10 @@ function OptimizationTaskCard({ task, applying, onApply }: {
     </details>}
     {promotion && <div className={`mt-3 rounded-xl border p-3 ${promotion.status === "READY_FOR_HUMAN_APPROVAL" ? "border-emerald-200/30 bg-emerald-200/[0.07]" : "border-white/10 bg-black/20"}`}>
       <p className="text-xs font-black uppercase tracking-widest text-white/60">Promoción</p>
-      <p className="mt-1 text-sm font-black text-white">{promotion.recommendedRatePercent ?? 0}%{promotion.durationDays ? ` · ${promotion.durationDays} días` : " · no recomendada"}</p>
+      <p className="mt-1 text-sm font-black text-white">{formatSingleProductLabMetric(promotion.recommendedRatePercent, { suffix: "%" })}{promotion.durationDays ? ` · ${promotion.durationDays} días` : " · no recomendada"}</p>
       <p className="mt-1 text-xs leading-5 text-white/60">{promotion.reason}</p>
-      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && <p className="mt-2 text-xs font-bold text-emerald-100">Disponible para autorización desde Seller OS; nunca se activa sólo por la alerta.</p>}
-      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && task.id && <button type="button" disabled={applying} onClick={() => onApply(task.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{applying ? "Verificando y aplicando…" : "REVISAR Y AUTORIZAR PROMOCIÓN 5%"}</button>}
+      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && <p className="mt-2 text-xs font-bold text-amber-100">Recomendación visible para revisión humana; su aplicación está bloqueada durante el piloto.</p>}
+      {promotion.status === "READY_FOR_HUMAN_APPROVAL" && task.id && <button type="button" disabled onClick={() => onApply(task.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{applying ? "BLOQUEADO EN PILOT MODE" : "REVISAR Y AUTORIZAR PROMOCIÓN 5% — BLOQUEADO EN PILOT MODE"}</button>}
       {promotion.status === "BLOCKED_CONTROLLED_RISK" && <p className="mt-2 text-xs font-black text-amber-100">No hay margen para aplicar promoción.</p>}
     </div>}
   </article>
@@ -642,10 +651,29 @@ export function CommercialMonitorPanel() {
     if (busyMode) return
     setBusyMode("comparison")
     setError("")
-    setMessage("Comparando dos ventanas oficiales sin persistencia comercial…")
+    setMessage("Comparando evidencia manual explícita con ventanas oficiales read-only…")
     try {
       const { data, error: sessionError } = await supabase.auth.getSession()
       if (sessionError || !data.session) throw new Error("AUTH_REQUIRED")
+      const divergence = dashboard?.analyticsSourceDivergence
+      const manualMetrics = divergence?.manualSource?.metrics
+      const evidence =
+        typeof manualMetrics?.impressions === "number" &&
+        Number.isFinite(manualMetrics.impressions) &&
+        typeof manualMetrics.views === "number" &&
+        Number.isFinite(manualMetrics.views) &&
+        typeof manualMetrics.transactions === "number" &&
+        Number.isFinite(manualMetrics.transactions) &&
+        typeof manualMetrics.ctr === "number" &&
+        Number.isFinite(manualMetrics.ctr)
+          ? {
+              impressions: manualMetrics.impressions,
+              views: manualMetrics.views,
+              transactions: manualMetrics.transactions,
+              ctr: manualMetrics.ctr,
+              scope: "LISTING",
+            }
+          : undefined
       const response = await fetch("/api/admin/ebay/commercial-monitor", {
         method: "POST",
         cache: "no-store",
@@ -653,7 +681,12 @@ export function CommercialMonitorPanel() {
           Authorization: `Bearer ${data.session.access_token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ action: "compare_seller_hub" }),
+        body: JSON.stringify({
+          action: "compare_seller_hub",
+          listingId: divergence?.listingId ??
+            dashboard?.listingIdentity?.listingId,
+          evidence,
+        }),
       })
       const payload = await readMobileReviewJson<Payload>(
         response,
@@ -672,7 +705,7 @@ export function CommercialMonitorPanel() {
     } finally {
       setBusyMode(null)
     }
-  }, [busyMode])
+  }, [busyMode, dashboard])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -859,6 +892,9 @@ export function CommercialMonitorPanel() {
     divergence?.classification === "MANUAL_EVIDENCE_NOT_COMPARABLE"
   const listingIdentity = dashboard?.listingIdentity
   const readers: Record<string, CommercialMonitorReaderView> = run?.readers ?? {}
+  const verifiedNewSales = readers.orders?.status === "available"
+    ? metrics?.newSales
+    : null
   const displayedDryRun = dryRunResult ?? dashboard?.lastDryRun ??
     (dashboard?.latestRun?.metrics?.dryRun === true ? dashboard.latestRun : null)
   const dryRunMetrics = displayedDryRun?.metrics
@@ -870,7 +906,8 @@ export function CommercialMonitorPanel() {
   const dryRunWasSatisfactory = displayedDryRun?.satisfactory === true ||
     displayedDryRun?.dry_run_satisfactory === true || dryRunSatisfactory || Boolean(dryRunConsumedAt)
   const schedulerAuthorized = dashboard?.schedulerAuthorization?.status === "ACTIVE"
-  const dryRunValue = (input: unknown) => displayedDryRun ? value(input) : "—"
+  const dryRunValue = (input: unknown) =>
+    displayedDryRun ? value(input) : SINGLE_PRODUCT_LAB_UNAVAILABLE
   const optimizationTasks = dashboard?.optimizationTasks ?? []
   const primaryOptimizationTask = optimizationTasks[0]
   const additionalOptimizationTasks = optimizationTasks.slice(1, 5)
@@ -902,11 +939,14 @@ export function CommercialMonitorPanel() {
 
   return (
     <section aria-labelledby="commercial-monitor-heading" className="min-w-0 overflow-hidden rounded-3xl border border-emerald-200/25 bg-gradient-to-br from-emerald-200/[0.10] via-cyan-200/[0.04] to-black p-4 sm:p-5">
+      <div role="status" aria-live="polite" className="fixed inset-x-3 top-3 z-[100] mx-auto max-w-4xl rounded-2xl border border-amber-200/60 bg-amber-100 px-4 py-3 text-center text-xs font-black tracking-wide text-black shadow-2xl sm:text-sm">
+        {SINGLE_PRODUCT_LAB_BANNER}
+      </div>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-black uppercase tracking-widest text-emerald-100/65">Monitoreo comercial · separado de Radar</p>
           <h2 id="commercial-monitor-heading" className="mt-2 text-2xl font-black">Ventas y rendimiento</h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/65">Lee órdenes, mensajes pendientes de Seller Hub, Analytics, WatchCount, Luna y competidores activos. Product Research sólo se solicita para confirmar ventas cuando aparece una señal relevante. Las acciones de precio o retiro se preparan con evidencia fresca y sólo se ejecutan después de tu confirmación.</p>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-white/65">Lee Luna, listings activos, órdenes, Analytics y Watchers. Durante el piloto no ejecuta scans, persistencia comercial, WhatsApp, publicación, precio, imágenes ni otras acciones automáticas.</p>
         </div>
         <span className={`rounded-full border border-white/15 px-3 py-2 text-xs font-black uppercase ${statusTone(run?.status)}`}>
           {loading ? "cargando" : run?.status ?? dashboard?.status ?? "sin ejecutar"}
@@ -916,11 +956,11 @@ export function CommercialMonitorPanel() {
       <div className="mt-4 grid gap-2 sm:grid-cols-3">
         <button
           type="button"
-          disabled={Boolean(busyMode) || loading}
+          disabled
           onClick={() => void refreshLunaEvidence()}
           className="min-h-14 rounded-2xl border border-amber-200/35 bg-amber-200/[0.08] px-4 font-black text-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-100 disabled:opacity-50"
         >
-          {busyMode === "luna" ? "Actualizando Luna…" : "Actualizar evidencia Luna"}
+          Luna read-only · sync automático bloqueado
         </button>
         <button
           type="button"
@@ -932,20 +972,17 @@ export function CommercialMonitorPanel() {
         </button>
         <button
           type="button"
-          disabled={Boolean(busyMode) || loading || !dryRunSatisfactory}
+          disabled
           onClick={() => void updatePerformance()}
           aria-describedby="persistent-update-gate"
           className="min-h-14 rounded-2xl border border-emerald-200/35 bg-emerald-200/[0.08] px-4 font-black text-emerald-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-100 disabled:cursor-not-allowed disabled:opacity-35"
         >
-          {busyMode === "persistent" ? "Actualizando rendimiento…" : "Actualizar rendimiento"}
+          BLOQUEADO EN PILOT MODE
         </button>
       </div>
       <p id="persistent-update-gate" className="mt-2 text-xs leading-5 text-white/55">
-        {dryRunSatisfactory
-          ? "Dry run reciente y satisfactorio. La actualización persistente requiere confirmación adicional."
-          : dryRunConsumedAt
-            ? "Dry run anterior consumido. Ejecuta un dry run nuevo antes de otra actualización."
-            : "Actualizar rendimiento permanece bloqueado hasta completar un dry run satisfactorio en los últimos 30 minutos."}
+        La actualización persistente, las alertas y todas las acciones automáticas
+        permanecen bloqueadas por SINGLE_PRODUCT_LAB.
       </p>
 
       <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-3">
@@ -953,18 +990,14 @@ export function CommercialMonitorPanel() {
           <div className="min-w-0">
             <p className="text-sm font-black text-white">Automatización de Preview</p>
             <p className="mt-1 text-xs leading-5 text-white/55">
-              {dashboard?.schedule?.effectivelyEnabled
-                ? "Activa continuamente mientras existan listings ACTIVE."
-                : schedulerAuthorized
-                  ? "Autorización continua vigente; el runner de Preview aún está deshabilitado en configuración."
-                : dryRunSatisfactory
-                  ? "La prueba segura pasó. Puedes autorizar el monitoreo continuo mientras haya listings ACTIVE."
-                  : "Primero debe pasar un dry run reciente; el sistema no se activará a ciegas."}
+              {schedulerAuthorized
+                ? "Existe una autorización previa. Sólo puedes revocarla; el runner está bloqueado."
+                : "No se puede autorizar automatización durante el piloto."}
             </p>
           </div>
           <button
             type="button"
-            disabled={Boolean(busyMode) || loading || (!schedulerAuthorized && !dryRunSatisfactory)}
+            disabled={Boolean(busyMode) || loading || !schedulerAuthorized}
             onClick={() => void updateSchedulerAuthorization(
               schedulerAuthorized ? "revoke_scheduler" : "authorize_scheduler",
             )}
@@ -974,7 +1007,7 @@ export function CommercialMonitorPanel() {
               ? "Procesando…"
               : schedulerAuthorized
                 ? "Pausar monitor"
-                : "Autorizar 60 minutos"}
+                : "BLOQUEADO EN PILOT MODE"}
           </button>
         </div>
       </div>
@@ -1108,15 +1141,11 @@ export function CommercialMonitorPanel() {
                 <p className="mt-1 text-xs text-white/65">{isOutOfStock
                   ? "Luna confirmó disponibilidad cero; la acción propuesta es retirar el listing con razón NotAvailable."
                   : typeof previousCost === "number" && typeof currentCost === "number"
-                    ? `Costo Luna: $${previousCost.toFixed(2)} → $${currentCost.toFixed(2)}. Seller OS recalculará el precio seguro.`
-                    : `Margen estimado: ${typeof entry.evidence?.estimatedMarginPercent === "number" ? `${entry.evidence.estimatedMarginPercent.toFixed(2)}%` : "en riesgo"}. Seller OS recalculará el precio seguro.`}</p>
+                    ? `Costo Luna: $${previousCost.toFixed(2)} → $${currentCost.toFixed(2)}. Requiere revisión humana; el repricing está bloqueado.`
+                    : `Margen estimado: ${typeof entry.evidence?.estimatedMarginPercent === "number" ? `${entry.evidence.estimatedMarginPercent.toFixed(2)}%` : SINGLE_PRODUCT_LAB_UNAVAILABLE}. Requiere revisión humana; el repricing está bloqueado.`}</p>
                 <p className="mt-2 text-xs font-bold text-cyan-50">{entry.recommendedAction}</p>
-                <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Esperando confirmación · ningún cambio aplicado</p>
-                {entry.id && <button type="button" disabled={Boolean(improvementBusyId)} onClick={() => void applyImprovement(entry.id!)} className={`mt-3 min-h-12 w-full rounded-xl px-3 font-black text-black disabled:opacity-40 ${isOutOfStock ? "bg-rose-200" : "bg-cyan-200"}`}>{improvementBusyId === entry.id
-                  ? "Verificando evidencia fresca…"
-                  : isOutOfStock
-                    ? "VERIFICAR Y RETIRAR LISTING"
-                    : "RECALCULAR Y REVISAR PRECIO"}</button>}
+                <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Revisión humana pendiente · ningún cambio automático permitido</p>
+                {entry.id && <button type="button" disabled onClick={() => void applyImprovement(entry.id!)} className={`mt-3 min-h-12 w-full rounded-xl px-3 font-black text-black disabled:opacity-40 ${isOutOfStock ? "bg-rose-200" : "bg-cyan-200"}`}>BLOQUEADO EN PILOT MODE</button>}
               </article>
             })}
           </div>}
@@ -1147,7 +1176,7 @@ export function CommercialMonitorPanel() {
       <details data-technical-details="seller-hub-comparison" className="mt-4 rounded-2xl border border-violet-200/25 bg-violet-200/[0.05] p-3">
         <summary className="flex min-h-11 cursor-pointer items-center text-lg font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-200">Comparar con Seller Hub · diagnóstico opcional</summary>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-          <p className="max-w-2xl text-xs leading-5 text-white/55">Compara 7 días cerrados contra hasta 90 días para el listing 366543596425. No persiste snapshots, reglas, alertas ni WhatsApp.</p>
+          <p className="max-w-2xl text-xs leading-5 text-white/55">Compara evidencia Seller Hub explícita contra ventanas oficiales del listing vinculado. Si falta Item ID o evidencia manual, responde MISSING / UNAVAILABLE; no inventa valores ni persiste efectos comerciales.</p>
           <button
             type="button"
             disabled={Boolean(busyMode) || loading}
@@ -1162,7 +1191,7 @@ export function CommercialMonitorPanel() {
             <span className="text-[10px] font-black uppercase text-white/45">Clasificación</span>
             <p className="mt-1 text-lg font-black text-violet-50">{comparison.classification ?? "INSUFFICIENT_EVIDENCE"}</p>
             <p className="mt-1 text-xs leading-5 text-white/65">{comparison.explanation}</p>
-            <p className="mt-2 text-xs text-white/50">CTR Seller Hub validado: {comparison.sellerHubEvidence?.calculatedCtr === 5.56 ? "1 / 18 × 100 = 5.56% (5.6% UI)" : "—"}</p>
+            <p className="mt-2 text-xs text-white/50">CTR Seller Hub validado: {formatSingleProductLabMetric(comparison.sellerHubEvidence?.calculatedCtr, { suffix: "%" })}</p>
           </div>
           <div className="mt-3 grid gap-3 xl:grid-cols-2">
             <AnalyticsWindowAudit label="A · Ventana operativa · 7 días cerrados" audit={comparison.operational} />
@@ -1202,7 +1231,7 @@ export function CommercialMonitorPanel() {
                 <div><span className="text-white/45">Organic impressions</span><strong className="block">{value(divergence.manualSource?.metrics?.impressions)}</strong></div>
                 <div><span className="text-white/45">Organic listing views</span><strong className="block">{value(divergence.manualSource?.metrics?.views)}</strong></div>
                 <div><span className="text-white/45">Quantity sold</span><strong className="block">{value(divergence.manualSource?.metrics?.transactions)}</strong></div>
-                <div><span className="text-white/45">CTR</span><strong className="block">{typeof divergence.manualSource?.metrics?.ctr === "number" ? `${divergence.manualSource.metrics.ctr}%` : "—"}</strong></div>
+                <div><span className="text-white/45">CTR</span><strong className="block">{formatSingleProductLabMetric(divergence.manualSource?.metrics?.ctr, { suffix: "%" })}</strong></div>
               </div>
             </article>
             <article className="rounded-xl bg-black/25 p-3">
@@ -1213,21 +1242,21 @@ export function CommercialMonitorPanel() {
                 <div><span className="text-white/45">Total impressions</span><strong className="block">{value(divergence.officialSource?.metrics?.impressions)}</strong></div>
                 <div><span className="text-white/45">Listing views total</span><strong className="block">{value(divergence.officialSource?.metrics?.views)}</strong></div>
                 <div><span className="text-white/45">Transaction</span><strong className="block">{value(divergence.officialSource?.metrics?.transactions)}</strong></div>
-                <div><span className="text-white/45">CTR</span><strong className="block">{typeof divergence.officialSource?.metrics?.ctr === "number" ? `${divergence.officialSource.metrics.ctr}%` : "—"}</strong></div>
+                <div><span className="text-white/45">CTR</span><strong className="block">{formatSingleProductLabMetric(divergence.officialSource?.metrics?.ctr, { suffix: "%" })}</strong></div>
               </div>
             </article>
           </div>
           <p className={`mt-3 text-xs font-bold ${analyticsDivergenceOpen ? "text-amber-50" : "text-emerald-100"}`}>{analyticsDivergenceOpen
             ? `Reglas de impresiones, CTR y conversión: SUSPENDIDAS · Próxima reconciliación: ${formatDate(divergence.nextCheckAt)}`
             : "Reglas de impresiones, CTR y conversión: ACTIVAS con la fuente oficial completa."}</p>
-          <p className="mt-1 text-xs text-emerald-100">Orders, Watchers, stock, fulfillment y WhatsApp continúan independientes.</p>
+          <p className="mt-1 text-xs text-emerald-100">Orders, Analytics, Watchers y stock Luna continúan read-only; fulfillment y WhatsApp están bloqueados.</p>
           <p className="mt-1 text-[11px] text-white/45">Evidencia manual usada como métrica API: {divergence.manualEvidenceUsedAsApiMetric === false ? "NO" : "—"}</p>
         </>}
         <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-xs">
           <h4 className="font-black text-white">Vínculo oficial antes del scheduler</h4>
-          <p className="mt-1">Item ID esperado/observado: {listingIdentity?.listingId ?? "366543596425"} / {listingIdentity?.observedListingId ?? "—"}</p>
+          <p className="mt-1">Item ID esperado/observado: {listingIdentity?.listingId ?? "MISSING"} / {listingIdentity?.observedListingId ?? "MISSING"}</p>
           <p>Custom label eBay esperado/observado: {listingIdentity?.expectedSku ?? "—"} / {listingIdentity?.observedSku ?? "—"}</p>
-          <p>SKU Luna/Seller OS: {listingIdentity?.supplierSku ?? divergence?.sku ?? "ITEM3995"}</p>
+          <p>SKU Luna/Seller OS: {listingIdentity?.supplierSku ?? divergence?.sku ?? "MISSING"}</p>
           <p>Estado oficial: {listingIdentity?.observedListingStatus ?? "—"} · Match exacto: {listingIdentity?.activeListingConfirmed ? "SÍ" : "NO"}</p>
           <p className="mt-1 font-black">Procesamiento de ventas: {listingIdentity?.salesProcessingBlocked ? "BLOQUEADO" : "HABILITADO"}</p>
         </div>
@@ -1237,7 +1266,7 @@ export function CommercialMonitorPanel() {
       <section aria-labelledby="competitor-watch-heading" className="mt-4 rounded-2xl border border-violet-200/25 bg-violet-200/[0.06] p-3">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/60">Monitoreo automático por listing</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-violet-100/60">Monitoreo read-only por listing</p>
             <h3 id="competitor-watch-heading" className="mt-1 text-lg font-black text-violet-50">Competidores y Product Research</h3>
           </div>
           <span className="rounded-full border border-violet-100/20 px-2 py-1 text-[10px] font-black uppercase text-violet-100">
@@ -1247,9 +1276,9 @@ export function CommercialMonitorPanel() {
         <p className="mt-2 text-xs leading-5 text-white/60">Los vendedores activos se descubren desde eBay sin importar otra tabla. Una oferta activa no se cuenta como venta; la venta sólo pasa a confirmada cuando coincide con una captura oficial de Product Research.</p>
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
           <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Listings cubiertos</span><strong className="mt-1 block text-lg">{competitorProfiles.length}</strong></div>
-          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Vendedores activos</span><strong className="mt-1 block text-lg">{competitorProfiles.reduce((sum, profile) => sum + Number(profile.latest_active_seller_count ?? 0), 0)}</strong></div>
-          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Con actividad estimada</span><strong className="mt-1 block text-lg">{competitorProfiles.reduce((sum, profile) => sum + Number(profile.latest_estimated_activity_seller_count ?? 0), 0)}</strong></div>
-          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Venta confirmada</span><strong className="mt-1 block text-lg">{competitorProfiles.reduce((sum, profile) => sum + Number(profile.latest_confirmed_sold_seller_count ?? 0), 0)}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Vendedores activos</span><strong className="mt-1 block text-lg">{value(knownSum(competitorProfiles.map((profile) => profile.latest_active_seller_count)))}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Con actividad estimada</span><strong className="mt-1 block text-lg">{value(knownSum(competitorProfiles.map((profile) => profile.latest_estimated_activity_seller_count)))}</strong></div>
+          <div className="rounded-xl bg-black/25 p-2"><span className="text-white/45">Venta confirmada</span><strong className="mt-1 block text-lg">{value(knownSum(competitorProfiles.map((profile) => profile.latest_confirmed_sold_seller_count)))}</strong></div>
         </div>
         {competitorPriceRecommendations.length > 0 && <div className="mt-3 rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3">
           <p className="font-black text-emerald-50">Recomendaciones de precio con piso económico</p>
@@ -1257,7 +1286,7 @@ export function CommercialMonitorPanel() {
             {competitorPriceRecommendations.slice(0, 3).map((entry) => {
               const recommendation = entry.priceRecommendation ?? {}
               const money = (amount: number | undefined) => typeof amount === "number"
-                ? `$${amount.toFixed(2)}` : "—"
+                ? `$${amount.toFixed(2)}` : SINGLE_PRODUCT_LAB_UNAVAILABLE
               return <article
                 key={entry.id}
                 id={entry.id ? `commercial-improvement-${entry.id}` : undefined}
@@ -1269,14 +1298,14 @@ export function CommercialMonitorPanel() {
                   ? `mediana activa ${money(recommendation.activeMarketMedianLandedPrice)}`
                   : `referencia vendida ${money(recommendation.confirmedSoldBenchmarkLandedPrice)}`}</p>
                 <p className="mt-1 text-white/55">{recommendation.activeMarketNotConfirmedSale
-                  ? `${recommendation.activeSellerCount ?? 0} vendedor(es) activos · no son ventas confirmadas`
-                  : `${recommendation.confirmedSoldSellerCount ?? 0} vendedor(es) exacto(s) · ${recommendation.confirmedSoldQuantity ?? 0} venta(s)`} · piso propio {money(recommendation.minimumSafeLandedPrice)} · utilidad {money(recommendation.proposedEstimatedNetProfit ?? undefined)} · margen {typeof recommendation.proposedEstimatedMarginPercent === "number" ? `${recommendation.proposedEstimatedMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.proposedEstimatedRoiPercent === "number" ? `${recommendation.proposedEstimatedRoiPercent.toFixed(2)}%` : "—"}</p>
+                  ? `${value(recommendation.activeSellerCount)} vendedor(es) activos · no son ventas confirmadas`
+                  : `${value(recommendation.confirmedSoldSellerCount)} vendedor(es) exacto(s) · ${value(recommendation.confirmedSoldQuantity)} venta(s)`} · piso propio {money(recommendation.minimumSafeLandedPrice)} · utilidad {money(recommendation.proposedEstimatedNetProfit ?? undefined)} · margen {formatSingleProductLabMetric(recommendation.proposedEstimatedMarginPercent, { suffix: "%" })} · ROI {formatSingleProductLabMetric(recommendation.proposedEstimatedRoiPercent, { suffix: "%" })}</p>
                 {recommendation.activeMarketNotConfirmedSale && <p className="mt-1 text-white/55">Piso normal con reserva publicitaria 5%: {money(recommendation.floorWithPromotionReserve)} · sin promoción: {money(recommendation.floorWithoutPromotion)} · piso controlado 10%: {money(recommendation.controlledRiskMinimumLandedPrice)} · alcanza la mediana activa: {recommendation.canReachActiveMarketSafely ? "SÍ" : "NO"}</p>}
                 {recommendation.controlledRiskTenPercent && <p className="mt-2 rounded-lg border border-amber-200/25 bg-amber-200/[0.08] p-2 font-black text-amber-50">PRECIO COMPETITIVO CON MARGEN CONTROLADO 10% · PROMOCIÓN BLOQUEADA</p>}
-                {recommendation.activeMarketNotConfirmedSale && recommendation.activeMarketEconomics && <p className="mt-1 text-white/55">A precio de mercado: utilidad {money(recommendation.activeMarketEconomics.estimatedNetProfit ?? undefined)} · margen {typeof recommendation.activeMarketEconomics.estimatedNetMarginPercent === "number" ? `${recommendation.activeMarketEconomics.estimatedNetMarginPercent.toFixed(2)}%` : "—"} · ROI {typeof recommendation.activeMarketEconomics.estimatedRoiPercent === "number" ? `${recommendation.activeMarketEconomics.estimatedRoiPercent.toFixed(2)}%` : "—"} · envío conservador {money(recommendation.activeMarketEconomics.estimatedOutboundShipping ?? undefined)}. Regla(s) que fallan: {(recommendation.activeMarketEconomics.failedGateCodes ?? []).join(", ") || "ninguna"}.</p>}
+                {recommendation.activeMarketNotConfirmedSale && recommendation.activeMarketEconomics && <p className="mt-1 text-white/55">A precio de mercado: utilidad {money(recommendation.activeMarketEconomics.estimatedNetProfit ?? undefined)} · margen {formatSingleProductLabMetric(recommendation.activeMarketEconomics.estimatedNetMarginPercent, { suffix: "%" })} · ROI {formatSingleProductLabMetric(recommendation.activeMarketEconomics.estimatedRoiPercent, { suffix: "%" })} · envío conservador {money(recommendation.activeMarketEconomics.estimatedOutboundShipping ?? undefined)}. Regla(s) que fallan: {(recommendation.activeMarketEconomics.failedGateCodes ?? []).join(", ") || "ninguna"}.</p>}
                 <p className="mt-2 font-bold text-emerald-50">{entry.recommendedAction}</p>
-                <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Esperando revisión humana · WhatsApp encolado · ningún cambio aplicado</p>
-                {entry.id && !["KEEP_PRICE_IN_CONFIRMED_SOLD_BAND", "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"].includes(recommendation.action ?? "") && recommendation.proposedPassesProfitGate !== false && <button type="button" disabled={Boolean(improvementBusyId)} onClick={() => void applyImprovement(entry.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">{improvementBusyId === entry.id ? "Verificando y aplicando…" : `ACEPTAR PRECIO SEGURO ${money(recommendation.proposedItemPrice)}`}</button>}
+                <p className="mt-1 text-[10px] font-black uppercase text-amber-100">Esperando revisión humana · WhatsApp bloqueado · ningún cambio aplicado</p>
+                {entry.id && !["KEEP_PRICE_IN_CONFIRMED_SOLD_BAND", "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR"].includes(recommendation.action ?? "") && recommendation.proposedPassesProfitGate !== false && <button type="button" disabled onClick={() => void applyImprovement(entry.id!)} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">BLOQUEADO EN PILOT MODE</button>}
                 {recommendation.action === "HOLD_AT_SAFE_FLOOR_MARKET_BELOW_FLOOR" && <p className="mt-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.08] p-3 text-center font-black text-amber-50">MANTENER {money(recommendation.currentItemPrice)} · YA ESTÁ EN EL PISO</p>}
               </article>
             })}
@@ -1292,16 +1321,16 @@ export function CommercialMonitorPanel() {
               <div><p className="font-black text-white">Listing {profile.listing_id}</p><p className="text-[11px] text-white/45">SKU {profile.sku ?? "pendiente"} · {formatDate(profile.last_scanned_at)}</p></div>
               <span className="rounded-full border border-white/15 px-2 py-1 text-[10px] font-black uppercase text-white/65">{profile.latest_evidence_class?.replaceAll("_", " ") ?? "sin evidencia"}</span>
             </div>
-            <p className="mt-2 text-xs text-white/65">{profile.latest_active_seller_count ?? 0} vendedor(es) activo(s) · precio total mediano {typeof profile.latest_median_landed_price === "number" ? `$${profile.latest_median_landed_price.toFixed(2)}` : "—"}</p>
+            <p className="mt-2 text-xs text-white/65">{value(profile.latest_active_seller_count)} vendedor(es) activo(s) · precio total mediano {typeof profile.latest_median_landed_price === "number" ? `$${profile.latest_median_landed_price.toFixed(2)}` : SINGLE_PRODUCT_LAB_UNAVAILABLE}</p>
             {(profile.latest_suggestion_codes?.length ?? 0) > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-violet-50">{profile.latest_suggestion_codes?.map((code) => <li key={code}>{competitorSuggestionLabel(code)}</li>)}</ul>}
           </article>)}
           {competitorProfiles.length === 0 && <p className="rounded-xl border border-white/10 p-3 text-xs text-white/55">La primera ejecución segura establecerá la línea base sin generar una avalancha de alertas.</p>}
         </div>
-        <p className="mt-3 text-[11px] font-bold text-emerald-100">Descubrimiento automático: SÍ · importación automática de Research: NO · cambios automáticos en eBay: NO.</p>
+        <p className="mt-3 text-[11px] font-bold text-emerald-100">Descubrimiento automático: NO · importación automática de Research: NO · cambios automáticos en eBay: NO.</p>
       </section>
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-        <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Ventas nuevas</span><strong className="mt-1 block text-xl">{value(metrics?.newSales)}</strong></div>
+        <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Ventas nuevas</span><strong className="mt-1 block text-xl">{value(verifiedNewSales)}</strong></div>
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Impresiones</span><strong className="mt-1 block text-xl">{value(analytics?.impressions)}</strong></div>
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Vistas</span><strong className="mt-1 block text-xl">{value(analytics?.views)}</strong></div>
         <div className="rounded-2xl bg-black/30 p-3"><span className="text-white/45">Watchers</span><strong className="mt-1 block text-xl">{value(analytics?.watchers)}</strong><span className="mt-1 block text-[10px] text-white/40">señales de interés</span></div>
@@ -1344,7 +1373,7 @@ export function CommercialMonitorPanel() {
         <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
           <div><dt className="text-white/45">Estado</dt><dd className="font-black uppercase text-cyan-100">{dashboard.pilot24h.status}</dd></div>
           <div><dt className="text-white/45">Inicio</dt><dd className="font-bold">{formatDate(dashboard.pilot24h.startedAt)}</dd></div>
-          <div><dt className="text-white/45">Corte automático</dt><dd className="font-bold">NO · continúa mientras haya listings ACTIVE</dd></div>
+          <div><dt className="text-white/45">Corte automático</dt><dd className="font-bold">SÍ · runner bloqueado por SINGLE_PRODUCT_LAB</dd></div>
           <div><dt className="text-white/45">Ejecuciones</dt><dd className="font-bold">{value(dashboard.pilot24h.totalRuns)}</dd></div>
           <div><dt className="text-white/45">Completadas / parciales / fallidas</dt><dd className="font-bold">{value(dashboard.pilot24h.completedRuns)} / {value(dashboard.pilot24h.partialRuns)} / {value(dashboard.pilot24h.failedRuns)}</dd></div>
           <div><dt className="text-white/45">Órdenes leídas</dt><dd className="font-bold">{value(dashboard.pilot24h.ordersRead)}</dd></div>

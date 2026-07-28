@@ -7,13 +7,13 @@ import { randomUUID } from "node:crypto"
 import { NextResponse } from "next/server"
 
 import {
-  COMMERCIAL_MONITOR_LANES,
   getEbayCommercialMonitorDashboard,
   recordSellerHubListingEvidence,
   runEbayCommercialMonitor,
   updateCommercialThresholds,
-  type CommercialMonitorLane,
 } from "@/lib/ebay/ebay-commercial-monitor-service"
+import type { SellerHubEvidence } from
+  "@/lib/ebay/ebay-commercial-analytics-domain"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { getEbayCommercialOAuthPreflight } from "@/lib/ebay/ebay-commercial-oauth"
 import {
@@ -25,9 +25,20 @@ import {
   prepareEbayCommercialImprovement,
 } from "@/lib/ebay/ebay-commercial-improvement-action-service"
 import {
+  evaluateSingleProductLabRequest,
+  SINGLE_PRODUCT_LAB_MODE,
+  singleProductLabBlockedPayload,
+} from "@/lib/ebay/single-product-lab"
+import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
 } from "@/lib/supabase-admin"
+
+const SINGLE_PRODUCT_LAB_READ_LANES = [
+  "orders",
+  "analytics",
+  "watchers",
+] as const
 
 function safeCode(error: unknown) {
   const message = error instanceof Error ? error.message : ""
@@ -71,15 +82,6 @@ async function body(req: Request) {
   }
 }
 
-function lanes(value: unknown): CommercialMonitorLane[] {
-  return Array.isArray(value)
-    ? [...new Set(value.filter((lane): lane is CommercialMonitorLane =>
-        typeof lane === "string" &&
-        COMMERCIAL_MONITOR_LANES.includes(lane as CommercialMonitorLane)
-      ))]
-    : [...COMMERCIAL_MONITOR_LANES]
-}
-
 function productionBlocked() {
   return process.env.VERCEL_ENV === "production"
 }
@@ -88,6 +90,13 @@ function uuid(value: unknown) {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
     ? value
     : null
+}
+
+function explicitSellerHubEvidence(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined
+  }
+  return value as SellerHubEvidence
 }
 
 export async function GET(req: Request) {
@@ -127,6 +136,20 @@ export async function POST(req: Request) {
     { success: false, error: "COMMERCIAL_MONITOR_INVALID_JSON" },
     { status: 400 },
   )
+  const pilotBlock = evaluateSingleProductLabRequest({
+    pathname: new URL(req.url).pathname,
+    method: req.method,
+    body: input,
+  })
+  if (pilotBlock) {
+    return NextResponse.json(singleProductLabBlockedPayload(pilotBlock), {
+      status: pilotBlock.status,
+      headers: {
+        "Cache-Control": "private, no-store, max-age=0",
+        "X-Seller-OS-Mode": SINGLE_PRODUCT_LAB_MODE,
+      },
+    })
+  }
   try {
     const supabase = getSupabaseAdminClient()
     if (input.action === "authorize_scheduler") {
@@ -191,7 +214,10 @@ export async function POST(req: Request) {
         success: true,
         action: "compare_seller_hub",
         comparison: await compareEbayCommercialAnalyticsWithSellerHub({
-          listingId: "366543596425",
+          listingId: typeof input.listingId === "string"
+            ? input.listingId
+            : undefined,
+          evidence: explicitSellerHubEvidence(input.evidence),
         }),
       })
     }
@@ -241,23 +267,12 @@ export async function POST(req: Request) {
         { status: 400 },
       )
     }
-    const dryRunId = typeof input.dryRunId === "string" &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.dryRunId)
-      ? input.dryRunId
-      : undefined
-    if (input.dryRun !== true && !dryRunId) {
-      return NextResponse.json(
-        { success: false, error: "COMMERCIAL_DRY_RUN_GATE_REQUIRED" },
-        { status: 409 },
-      )
-    }
     const result = await runEbayCommercialMonitor(supabase, {
-      triggerSource: input.dryRun === true ? "dry_run" : "manual",
-      lanes: lanes(input.lanes),
+      triggerSource: "dry_run",
+      lanes: [...SINGLE_PRODUCT_LAB_READ_LANES],
       workerId: `commercial-manual:${validation.userId ?? "service"}:${randomUUID()}`,
-      dispatchWhatsApp: true,
-      dryRunWhatsApp: input.dryRun === true || process.env.VERCEL_ENV !== "preview",
-      authorizedDryRunId: input.dryRun === true ? undefined : dryRunId,
+      dispatchWhatsApp: false,
+      dryRunWhatsApp: true,
     })
     const dashboard = await getEbayCommercialMonitorDashboard(supabase)
     return NextResponse.json({ success: true, run: result, dashboard })
