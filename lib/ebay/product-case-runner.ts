@@ -114,6 +114,7 @@ export const PRODUCT_CASE_EVIDENCE_FIELDS = [
   "visible_stock",
   "description",
   "bullet",
+  "supplier_specification",
   "marketing_claim",
   "visual_observation",
   "source_image_url",
@@ -159,7 +160,7 @@ export type ProductCaseEvidenceClass =
   | EvidenceClass
   | "SUPPLIER_MERCHANDISING_SIGNAL"
   | "SUPPLIER_MARKETING_CLAIM"
-  | "HUMAN_VISUAL_OBSERVATION"
+  | "HUMAN_VISUAL_REVIEW"
 
 export type ProductCaseEvidenceStatus =
   | "PROPOSED"
@@ -228,6 +229,20 @@ export type ProductCaseCapture = {
   fullContentStored: false
   scriptsExecuted: false
   resourcesLoaded: false
+}
+
+export type ProductCaseSupplierSourceCapture = {
+  supplierUrl: string
+  rawVisibleSourceText: string
+  sourceAccessStatus: ProductCaseSourceAccessStatus
+  sourceCaptureMethod: "MANUAL_AUTHENTICATED_PASTE"
+  capturedAt: string
+  contentHash: `sha256:${string}`
+  extractionWarnings: string[]
+  evidenceCandidates: ProductCaseEvidence[]
+  missingFields: ProductCaseEvidenceField[]
+  fullHtmlAccepted: false
+  sensitiveContentStored: false
 }
 
 export type ProductCaseExtractionResult = {
@@ -354,7 +369,7 @@ export type ProductCaseImageObservation = {
   contradictsEvidenceIds: string[]
   confidence: "LOW" | "MEDIUM" | "HIGH"
   humanDecision:
-    | "ACCEPT_OBSERVATION"
+    | "ACCEPT_FOR_ANALYSIS"
     | "REJECT_FOR_EBAY_HANDOFF"
     | "NEEDS_MORE_EVIDENCE"
   humanReason: string
@@ -393,6 +408,7 @@ export type ProductCaseDocument = {
   sourceUrl: string
   createdAt: string
   sourceAccess: ProductCaseSourceAccess
+  supplierSourceCapture: ProductCaseSupplierSourceCapture | null
   captures: ProductCaseCapture[]
   evidence: ProductCaseEvidence[]
   marketEvidence: ProductCaseMarketEvidence
@@ -952,6 +968,7 @@ const FIELD_LABELS: Record<ProductCaseEvidenceField, string> = {
   visible_stock: "Visible stock",
   description: "Supplier description",
   bullet: "Supplier bullet",
+  supplier_specification: "Supplier-stated specification",
   marketing_claim: "Supplier marketing claim",
   visual_observation: "Human visual observation",
   source_image_url: "Original supplier image URL",
@@ -976,6 +993,7 @@ const MULTI_VALUE_FIELDS = new Set<ProductCaseEvidenceField>([
   "option_name",
   "option_value",
   "bullet",
+  "supplier_specification",
   "marketing_claim",
   "visual_observation",
   "source_image_url",
@@ -1144,6 +1162,7 @@ function normalizeFieldValue(
   ].includes(field)) {
     return numericValue(value)
   }
+  if (field === "visible_stock") return numericValue(value)
   if (["included_quantity", "pack_quantity", "listing_quantity"].includes(
     field,
   )) {
@@ -1240,6 +1259,83 @@ export async function hashProductCaseContent(content: string) {
   return `sha256:${[...new Uint8Array(digest)]
     .map((value) => value.toString(16).padStart(2, "0"))
     .join("")}`
+}
+
+const MANUAL_SOURCE_SENSITIVE_PATTERNS = [
+  /(?:^|\n)\s*(?:password|contraseña|passwd)\s*[:=]/i,
+  /(?:^|\n)\s*(?:cookie|set-cookie|session(?:id)?|csrf)\s*[:=]/i,
+  /(?:^|\n)\s*(?:authorization|access[_ -]?token|refresh[_ -]?token|bearer)\s*[:=]/i,
+  /(?:^|\n)\s*(?:credit[_ -]?card|card[_ -]?number|cvv|cvc|payment[_ -]?method)\s*[:=]/i,
+  /(?:^|\n)\s*(?:account[_ -]?email|customer[_ -]?email|account[_ -]?name)\s*[:=]/i,
+] as const
+
+export function validateManualAuthenticatedVisibleSourceText(value: unknown):
+  | { valid: true; rawVisibleSourceText: string; byteLength: number }
+  | { valid: false; error: string } {
+  if (typeof value !== "string" || !value.trim()) {
+    return { valid: false, error: "MANUAL_SOURCE_CONTENT_REQUIRED" }
+  }
+  const byteLength = utf8Length(value)
+  if (byteLength > PRODUCT_CASE_CONTENT_MAX_BYTES) {
+    return { valid: false, error: "MANUAL_SOURCE_CONTENT_TOO_LARGE" }
+  }
+  if (
+    /<!doctype\s+html|<html\b|<head\b|<body\b|<script\b|<\/html\s*>/i
+      .test(value)
+  ) {
+    return { valid: false, error: "FULL_HTML_NOT_ACCEPTED_PASTE_VISIBLE_TEXT_ONLY" }
+  }
+  if (MANUAL_SOURCE_SENSITIVE_PATTERNS.some((pattern) => pattern.test(value))) {
+    return {
+      valid: false,
+      error: "SENSITIVE_ACCOUNT_OR_CREDENTIAL_CONTENT_REJECTED",
+    }
+  }
+  return { valid: true, rawVisibleSourceText: value, byteLength }
+}
+
+export function createManualAuthenticatedSupplierSourceCapture(input: {
+  supplierUrl: string
+  rawVisibleSourceText: string
+  sourceAccessStatus: ProductCaseSourceAccessStatus
+  extraction: ProductCaseExtractionResult
+}): ProductCaseSupplierSourceCapture {
+  const validatedText = validateManualAuthenticatedVisibleSourceText(
+    input.rawVisibleSourceText,
+  )
+  if (!validatedText.valid) throw new Error(validatedText.error)
+  const validatedUrl = validateLunaProductUrl(input.supplierUrl)
+  if (!validatedUrl.valid) throw new Error(validatedUrl.error)
+  if (
+    input.sourceAccessStatus !== "AUTHENTICATED_SOURCE_REQUIRED" ||
+    input.extraction.capture.sourceType !==
+      "LUNA_AUTHENTICATED_MANUAL_CAPTURE" ||
+    input.extraction.capture.sourceUrl !== validatedUrl.canonicalUrl
+  ) {
+    throw new Error("MANUAL_AUTHENTICATED_SOURCE_CAPTURE_CONTEXT_INVALID")
+  }
+  if (
+    input.extraction.capture.byteLength !== validatedText.byteLength ||
+    !validSha256(input.extraction.capture.contentHash)
+  ) {
+    throw new Error("MANUAL_AUTHENTICATED_SOURCE_CAPTURE_HASH_INVALID")
+  }
+  const evidenceCandidates = input.extraction.evidence.filter((entry) =>
+    entry.evidenceStatus !== "MISSING"
+  )
+  return {
+    supplierUrl: validatedUrl.canonicalUrl,
+    rawVisibleSourceText: validatedText.rawVisibleSourceText,
+    sourceAccessStatus: input.sourceAccessStatus,
+    sourceCaptureMethod: "MANUAL_AUTHENTICATED_PASTE",
+    capturedAt: input.extraction.capture.capturedAt,
+    contentHash: input.extraction.capture.contentHash as `sha256:${string}`,
+    extractionWarnings: [...input.extraction.parserWarnings],
+    evidenceCandidates: structuredClone(evidenceCandidates),
+    missingFields: [...input.extraction.missingFields],
+    fullHtmlAccepted: false,
+    sensitiveContentStored: false,
+  }
 }
 
 function detectFormat(
@@ -1551,6 +1647,10 @@ const TEXT_LABELS: Array<{
   field: ProductCaseEvidenceField
   labels: string[]
 }> = [
+  {
+    field: "title",
+    labels: ["title", "product title", "product name", "nombre del producto"],
+  },
   { field: "brand", labels: ["brand", "marca"] },
   { field: "model", labels: ["model", "modelo"] },
   { field: "mpn", labels: ["mpn", "manufacturer part number"] },
@@ -1560,6 +1660,10 @@ const TEXT_LABELS: Array<{
   },
   { field: "supplier_sku", labels: ["sku", "supplier sku"] },
   { field: "variant_id", labels: ["variant id", "variation id"] },
+  {
+    field: "option_value",
+    labels: ["variants", "available variants", "declared variants"],
+  },
   { field: "color", labels: ["color", "colour"] },
   { field: "material", labels: ["material"] },
   {
@@ -1635,7 +1739,39 @@ const TEXT_LABELS: Array<{
     field: "outbound_shipping_cost",
     labels: ["outbound shipping cost", "order shipping cost"],
   },
+  {
+    field: "marketing_claim",
+    labels: [
+      "marketing claim",
+      "marketing claims",
+      "promotional claim",
+      "promotional claims",
+      "claims",
+    ],
+  },
 ]
+
+const SUPPLIER_SPECIFICATION_LABELS = new Set([
+  "charging time",
+  "charge time",
+  "runtime",
+  "autonomy",
+  "battery life",
+  "ip rating",
+  "water resistance",
+  "battery",
+  "battery capacity",
+  "power",
+  "wattage",
+  "voltage",
+  "frequency",
+])
+
+function normalizedTextLabel(value: string) {
+  return normalizeWhitespace(value)
+    .toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9 ]+/g, "")
+}
 
 function labeledTextCandidates(
   visibleText: string,
@@ -1647,11 +1783,12 @@ function labeledTextCandidates(
     .filter(Boolean)
     .slice(0, 5_000)
   for (const [lineIndex, line] of lines.entries()) {
+    let knownLabelMatched = false
     for (const definition of TEXT_LABELS) {
       for (const label of definition.labels) {
         const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
         const match = line.match(
-          new RegExp(`(?:^|\\s)${escaped}\\s*[:=\\-]\\s*(.+)$`, "i"),
+          new RegExp(`^(?:[-*•]\\s*)?${escaped}\\s*[:=\\-]\\s*(.+)$`, "i"),
         )
         if (!match?.[1]) continue
         pushCandidate(candidates, {
@@ -1660,10 +1797,32 @@ function labeledTextCandidates(
           normalizedValue: match[1],
           extractionPath: `${pathPrefix}.line[${lineIndex}].${definition.field}`,
           variantKey: null,
+          evidenceClass: definition.field === "marketing_claim"
+            ? "SUPPLIER_MARKETING_CLAIM"
+            : undefined,
         })
+        knownLabelMatched = true
         break
       }
+      if (knownLabelMatched) break
     }
+    if (knownLabelMatched) continue
+    const generic = line.match(
+      /^(?:[-*•]\s*)?([A-Za-z][A-Za-z0-9 /_-]{1,60})\s*[:=-]\s*(.+)$/,
+    )
+    const label = normalizedTextLabel(generic?.[1] ?? "")
+    if (!generic?.[2] || !SUPPLIER_SPECIFICATION_LABELS.has(label)) continue
+    pushCandidate(candidates, {
+      field: "supplier_specification",
+      rawValue: line,
+      normalizedValue: `${normalizeWhitespace(generic[1])}: ${
+        normalizeWhitespace(generic[2])
+      }`,
+      extractionPath:
+        `${pathPrefix}.line[${lineIndex}].supplier_specification.${label.replaceAll(" ", "_")}`,
+      variantKey: null,
+      evidenceClass: "SUPPLIER_STATED",
+    })
   }
   return candidates
 }
@@ -2319,7 +2478,7 @@ function runnerEvidenceToStrategy(
   if ([
     "SUPPLIER_MERCHANDISING_SIGNAL",
     "SUPPLIER_MARKETING_CLAIM",
-    "HUMAN_VISUAL_OBSERVATION",
+    "HUMAN_VISUAL_REVIEW",
   ].includes(entry.evidenceClass)) return null
   if (entry.field === "visible_stock") return null
   const sourceKind = entry.sourceType === "HUMAN_PRODUCT_INSPECTION"
@@ -2425,7 +2584,7 @@ function hasStructuredIdentityConflict(document: ProductCaseDocument) {
           entry.id,
         ) &&
         entry.sourceType === "HUMAN_VISUAL_OBSERVATION" &&
-        entry.sourceEvidenceClass === "HUMAN_VISUAL_OBSERVATION" &&
+        entry.sourceEvidenceClass === "HUMAN_VISUAL_REVIEW" &&
         entry.contentHash === observation.contentHash
       )
       return Boolean(linkedEvidence) &&
@@ -2484,7 +2643,7 @@ export function validateProductCaseImageAnalysis(
     )
     if (!evidence ||
       evidence.sourceType !== "HUMAN_VISUAL_OBSERVATION" ||
-      evidence.sourceEvidenceClass !== "HUMAN_VISUAL_OBSERVATION" ||
+      evidence.sourceEvidenceClass !== "HUMAN_VISUAL_REVIEW" ||
       evidence.contentHash !== observation.contentHash) {
       errors.push(`VISUAL_EVIDENCE_LINK_INVALID:${observation.imageId}`)
     }
@@ -2520,7 +2679,10 @@ export function validateProductCaseImageAnalysis(
 export function validateProductCaseDocumentProvenance(
   document: ProductCaseDocument,
 ) {
-  const errors = [...validateProductCaseImageAnalysis(document).errors]
+  const errors = [
+    ...validateProductCaseImageAnalysis(document).errors,
+    ...validateProductCaseSupplierSourceCapture(document).errors,
+  ]
   for (const evidence of acceptedProductCaseEvidence(document.evidence)) {
     const matchingCapture = document.captures.some((capture) =>
       capture.sourceType === evidence.sourceType &&
@@ -2548,7 +2710,7 @@ export function validateProductCaseDocumentProvenance(
       errors.push(`HUMAN_CORRECTION_POLICY_INVALID:${evidence.id}`)
     }
     if (evidence.sourceType === "HUMAN_VISUAL_OBSERVATION" &&
-      evidence.sourceEvidenceClass !== "HUMAN_VISUAL_OBSERVATION") {
+      evidence.sourceEvidenceClass !== "HUMAN_VISUAL_REVIEW") {
       errors.push(`HUMAN_VISUAL_POLICY_INVALID:${evidence.id}`)
     }
   }
@@ -2556,6 +2718,64 @@ export function validateProductCaseDocumentProvenance(
     valid: errors.length === 0,
     errors: unique(errors),
   }
+}
+
+export function validateProductCaseSupplierSourceCapture(
+  document: ProductCaseDocument,
+) {
+  const errors: string[] = []
+  const sourceCapture = document.supplierSourceCapture
+  if (!sourceCapture) return { valid: true, errors }
+  const textValidation = validateManualAuthenticatedVisibleSourceText(
+    sourceCapture.rawVisibleSourceText,
+  )
+  if (!textValidation.valid) {
+    errors.push(`SUPPLIER_SOURCE_CAPTURE_${textValidation.error}`)
+  }
+  const validatedUrl = validateLunaProductUrl(sourceCapture.supplierUrl)
+  if (
+    !validatedUrl.valid ||
+    validatedUrl.canonicalUrl !== document.sourceUrl ||
+    sourceCapture.sourceAccessStatus !==
+      "AUTHENTICATED_SOURCE_REQUIRED" ||
+    sourceCapture.sourceCaptureMethod !== "MANUAL_AUTHENTICATED_PASTE" ||
+    sourceCapture.fullHtmlAccepted !== false ||
+    sourceCapture.sensitiveContentStored !== false ||
+    !validIsoInstant(sourceCapture.capturedAt) ||
+    !validSha256(sourceCapture.contentHash)
+  ) {
+    errors.push("SUPPLIER_SOURCE_CAPTURE_CONTRACT_INVALID")
+  }
+  const matchingCapture = document.captures.find((capture) =>
+    capture.sourceType === "LUNA_AUTHENTICATED_MANUAL_CAPTURE" &&
+    capture.sourceUrl === sourceCapture.supplierUrl &&
+    capture.capturedAt === sourceCapture.capturedAt &&
+    capture.contentHash === sourceCapture.contentHash
+  )
+  if (
+    !matchingCapture ||
+    (textValidation.valid &&
+      matchingCapture.byteLength !== textValidation.byteLength)
+  ) {
+    errors.push("SUPPLIER_SOURCE_CAPTURE_PROVENANCE_MISSING")
+  }
+  const candidateIds = new Set(sourceCapture.evidenceCandidates.map((entry) =>
+    entry.id
+  ))
+  if (
+    sourceCapture.evidenceCandidates.some((entry) =>
+      entry.evidenceStatus === "MISSING" ||
+      entry.contentHash !== sourceCapture.contentHash ||
+      !document.evidence.some((candidate) =>
+        candidate.id === entry.id &&
+        candidate.contentHash === entry.contentHash
+      )
+    ) ||
+    candidateIds.size !== sourceCapture.evidenceCandidates.length
+  ) {
+    errors.push("SUPPLIER_SOURCE_EVIDENCE_CANDIDATES_INVALID")
+  }
+  return { valid: errors.length === 0, errors: unique(errors) }
 }
 
 export async function createHumanVisualReviewRecord(input: {
@@ -2584,7 +2804,7 @@ export async function createHumanVisualReviewRecord(input: {
   const contradicted = input.contradictsEvidenceIds.map((id) =>
     input.document.evidence.find((entry) => entry.id === id) ?? null
   )
-  if (!contradicted.length || contradicted.some((entry) =>
+  if (contradicted.some((entry) =>
     !entry ||
     !["title", "description", "product_type"].includes(entry.field) ||
     !["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
@@ -2616,6 +2836,9 @@ export async function createHumanVisualReviewRecord(input: {
     !normalizedRecord.humanReason) {
     throw new Error("HUMAN_VISUAL_REVIEW_REQUIRED_FIELD_MISSING")
   }
+  const conflictLinked =
+    normalizedRecord.possibleConflicts.length > 0 &&
+    normalizedRecord.contradictsEvidenceIds.length > 0
   const serialized = stableValue(normalizedRecord)
   const contentHash = await hashProductCaseContent(serialized)
   const evidenceId =
@@ -2642,14 +2865,18 @@ export async function createHumanVisualReviewRecord(input: {
     extractionMethod: "HUMAN_STRUCTURED_REVIEW",
     rawValue: normalizedRecord,
     normalizedValue: normalizedRecord,
-    evidenceClass: "HUMAN_VISUAL_OBSERVATION",
-    sourceEvidenceClass: "HUMAN_VISUAL_OBSERVATION",
+    evidenceClass: "HUMAN_VISUAL_REVIEW",
+    sourceEvidenceClass: "HUMAN_VISUAL_REVIEW",
     evidenceStatus: input.humanDecision === "REJECT_FOR_EBAY_HANDOFF"
       ? "REJECTED"
-      : "NEEDS_MORE_EVIDENCE",
+      : input.humanDecision === "ACCEPT_FOR_ANALYSIS"
+        ? "ACCEPTED"
+        : "NEEDS_MORE_EVIDENCE",
     humanVerdict: input.humanDecision === "REJECT_FOR_EBAY_HANDOFF"
       ? "REJECT"
-      : "NEEDS_MORE_EVIDENCE",
+      : input.humanDecision === "ACCEPT_FOR_ANALYSIS"
+        ? "ACCEPT"
+        : "NEEDS_MORE_EVIDENCE",
     humanReason: normalizedRecord.humanReason,
     originalValue: normalizedRecord,
     correctedValue: null,
@@ -2678,25 +2905,27 @@ export async function createHumanVisualReviewRecord(input: {
     capture,
     updatedEvidence,
     conflicts: conflictsForEvidence(updatedEvidence),
-    identityConflict: {
-      status: "CONFLICTED" as const,
-      confidence: "LOW" as const,
-      physicalProductVerified: false,
-      physicalVerificationEvidenceIds: [],
-      supplierEvidenceIds: [...normalizedRecord.contradictsEvidenceIds],
-      humanObservationEvidenceIds: [evidenceId],
-      conflictHistory: ["SUPPLIER_TEXT_VS_HUMAN_VISUAL_REVIEW"],
-      currentConflict: "SUPPLIER_TEXT_VS_HUMAN_VISUAL_REVIEW",
-      blockers: unique([
-        ...normalizedRecord.possibleConflicts,
-        "PHYSICAL_PRODUCT_AND_VARIANT_VERIFICATION_REQUIRED",
-      ]),
-      nextAction: "VERIFY_PHYSICAL_PRODUCT_AND_VARIANT",
-      conflictDetectedFrom: [
-        "SUPPLIER_TEXT",
-        "HUMAN_VISUAL_REVIEW",
-      ] as const,
-    },
+    identityConflict: conflictLinked
+      ? {
+          status: "CONFLICTED" as const,
+          confidence: "LOW" as const,
+          physicalProductVerified: false,
+          physicalVerificationEvidenceIds: [],
+          supplierEvidenceIds: [...normalizedRecord.contradictsEvidenceIds],
+          humanObservationEvidenceIds: [evidenceId],
+          conflictHistory: ["SUPPLIER_TEXT_VS_HUMAN_VISUAL_REVIEW"],
+          currentConflict: "SUPPLIER_TEXT_VS_HUMAN_VISUAL_REVIEW",
+          blockers: unique([
+            ...normalizedRecord.possibleConflicts,
+            "PHYSICAL_PRODUCT_AND_VARIANT_VERIFICATION_REQUIRED",
+          ]),
+          nextAction: "VERIFY_PHYSICAL_PRODUCT_AND_VARIANT",
+          conflictDetectedFrom: [
+            "SUPPLIER_TEXT",
+            "HUMAN_VISUAL_REVIEW",
+          ] as const,
+        }
+      : null,
     safety: PRODUCT_CASE_ZERO_EFFECTS,
   }
 }
@@ -2859,10 +3088,10 @@ export function buildStrategyLabAdapterPreview(
         reason: "SUPPLIER_MARKETING_CLAIM_NOT_PRODUCT_FACT",
       }]
     }
-    if (entry.evidenceClass === "HUMAN_VISUAL_OBSERVATION") {
+    if (entry.evidenceClass === "HUMAN_VISUAL_REVIEW") {
       return [{
         evidenceId: entry.id,
-        reason: "HUMAN_VISUAL_OBSERVATION_NOT_STRATEGY_PRODUCT_FACT",
+        reason: "HUMAN_VISUAL_REVIEW_NOT_STRATEGY_PRODUCT_FACT",
       }]
     }
     if (entry.field === "visible_stock") {
@@ -4250,6 +4479,11 @@ export function buildProductCasePhaseSnapshots(input: {
     "AUTHENTICATED_SOURCE_REQUIRED"
     ? "CAPTURE_AUTHENTICATED_SUPPLIER_EVIDENCE"
     : "PASTE_OR_REVIEW_SUPPLIER_EVIDENCE"
+  const manualAuthenticatedSourceCaptured = Boolean(
+    input.document.supplierSourceCapture &&
+    input.document.supplierSourceCapture.sourceCaptureMethod ===
+      "MANUAL_AUTHENTICATED_PASTE",
+  )
   const phaseData: Array<Omit<ProductCasePhaseSnapshot,
     "index" | "name">> = [
     {
@@ -4258,20 +4492,37 @@ export function buildProductCasePhaseSnapshots(input: {
         ? "NOT_RUN" : input.document.sourceAccess.status === "REJECTED"
           ? "BLOCKED"
           : input.document.sourceAccess.status ===
-              "AUTHENTICATED_SOURCE_REQUIRED"
+              "AUTHENTICATED_SOURCE_REQUIRED" &&
+              !manualAuthenticatedSourceCaptured
             ? "BLOCKED"
             : "COMPLETE",
       input: { sourceUrl: input.document.sourceUrl },
-      output: { sourceAccess: input.document.sourceAccess },
+      output: {
+        sourceAccess: input.document.sourceAccess,
+        supplierSourceCapture: input.document.supplierSourceCapture
+          ? {
+              sourceCaptureMethod:
+                input.document.supplierSourceCapture.sourceCaptureMethod,
+              contentHash: input.document.supplierSourceCapture.contentHash,
+              evidenceCandidateCount:
+                input.document.supplierSourceCapture.evidenceCandidates.length,
+              missingFieldCount:
+                input.document.supplierSourceCapture.missingFields.length,
+            }
+          : null,
+      },
       blockers: input.document.sourceAccess.status ===
-          "AUTHENTICATED_SOURCE_REQUIRED"
+          "AUTHENTICATED_SOURCE_REQUIRED" &&
+          !manualAuthenticatedSourceCaptured
         ? ["AUTHENTICATED_SOURCE_REQUIRED"]
         : [],
       appliedRules: [
         "HTTPS_LUNA_PRODUCT_URL_ONLY",
         "AUTHENTICATION_IS_NEVER_BYPASSED",
       ],
-      nextAction: sourceNext,
+      nextAction: manualAuthenticatedSourceCaptured
+        ? "REVIEW_PRODUCT_EVIDENCE"
+        : sourceNext,
     },
     {
       ...shared,
@@ -4547,8 +4798,12 @@ export function buildProductCaseOperationalPipeline(input: {
   const authenticatedCapture = input.document.captures.some((capture) =>
     capture.sourceType === "LUNA_AUTHENTICATED_MANUAL_CAPTURE"
   )
+  const localSupplierCaptureValid =
+    Boolean(input.document.supplierSourceCapture) &&
+    validateProductCaseSupplierSourceCapture(input.document).valid
   const supplierResolved = input.document.sourceAccess.status ===
-      "PUBLIC_ACCESSIBLE" || authenticatedCapture
+      "PUBLIC_ACCESSIBLE" ||
+    (authenticatedCapture && localSupplierCaptureValid)
   const visualConflict = hasStructuredIdentityConflict(input.document)
   const identityReady = identityReviewReady(input.document) &&
     ["title", "supplier_product_id", "variant_id"].every((field) =>
@@ -4749,7 +5004,15 @@ export function buildProductCaseOperationalPipeline(input: {
         phase: output.phase,
       },
       output: output.phase === "SUPPLIER_SOURCE"
-        ? { sourceAccess: input.document.sourceAccess }
+        ? {
+            sourceAccess: input.document.sourceAccess,
+            sourceCaptureMethod:
+              input.document.supplierSourceCapture?.sourceCaptureMethod ??
+                null,
+            evidenceCandidateCount:
+              input.document.supplierSourceCapture?.evidenceCandidates.length ??
+                0,
+          }
         : output.phase === "PRODUCT_EVIDENCE"
           ? { acceptedEvidenceCount: accepted.length }
           : output.phase === "HUMAN_VISUAL_REVIEW"

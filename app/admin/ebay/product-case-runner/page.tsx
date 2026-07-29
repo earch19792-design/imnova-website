@@ -9,6 +9,7 @@ import {
   buildProductCaseRunnerOutput,
   buildStrategyLabAdapterPreview,
   createHumanVisualReviewRecord,
+  createManualAuthenticatedSupplierSourceCapture,
   extractProductCaseEvidence,
   importProductCaseWorkspaceExport,
   mergeProductCaseEvidenceCaptures,
@@ -19,10 +20,12 @@ import {
   PRODUCT_CASE_ZERO_EFFECTS,
   reviewHumanComparableCandidate,
   serializeProductCaseWorkspaceExport,
+  validateManualAuthenticatedVisibleSourceText,
   validateLunaProductUrl,
   type ProductCaseDocument,
   type ProductCaseImageApproval,
   type ProductCaseListingOperations,
+  type ProductCaseSupplierSourceCapture,
 } from "@/lib/ebay/product-case-runner"
 import {
   EMPTY_PRODUCT_CASE_LISTING_OPERATIONS,
@@ -157,6 +160,9 @@ const pilotFixture = PRODUCT_CASE_RUNNER_FIXTURES[0] as unknown as JsonRecord
 const fixtureDocument = record(
   pilotFixture.document ?? pilotFixture.input ?? pilotFixture,
 )
+const fixtureSupplierSourceCapture =
+  (fixtureDocument.supplierSourceCapture ?? null) as
+    ProductCaseSupplierSourceCapture | null
 
 const inputClass =
   "min-h-12 w-full rounded-2xl border border-white/15 bg-black/35 px-4 text-sm text-white outline-none transition focus:border-cyan-200/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200"
@@ -441,7 +447,13 @@ export default function ProductCaseRunnerPage() {
   const [importRequiresHumanReReview, setImportRequiresHumanReReview] =
     useState(false)
   const [preflightBusy, setPreflightBusy] = useState(false)
-  const [manualContent, setManualContent] = useState("")
+  const [supplierSourceCapture, setSupplierSourceCapture] =
+    useState<ProductCaseSupplierSourceCapture | null>(() =>
+      structuredClone(fixtureSupplierSourceCapture)
+    )
+  const [manualContent, setManualContent] = useState(() =>
+    fixtureSupplierSourceCapture?.rawVisibleSourceText ?? ""
+  )
   const [evidence, setEvidence] =
     useState<ExtractedEvidence[]>(fixtureEvidence)
   const [captures, setCaptures] = useState<Capture[]>(fixtureCaptures)
@@ -580,6 +592,7 @@ export default function ProductCaseRunnerPage() {
       : sourceUrl,
     createdAt: caseCreatedAt,
     sourceAccess,
+    supplierSourceCapture,
     captures,
     evidence,
     marketEvidence,
@@ -618,6 +631,7 @@ export default function ProductCaseRunnerPage() {
     proposedRuleObservation,
     runnerTimestamp,
     sourceAccess,
+    supplierSourceCapture,
     sourceUrl,
     urlValidation,
   ])
@@ -737,6 +751,7 @@ export default function ProductCaseRunnerPage() {
     setImportRoundtrip(null)
     setImportRequiresHumanReReview(false)
     setManualContent("")
+    setSupplierSourceCapture(null)
     setEvidence([])
     setCaptures([])
     setMarketEvidence({
@@ -856,12 +871,10 @@ export default function ProductCaseRunnerPage() {
       setError(urlValidation.error)
       return
     }
-    if (!manualContent.trim()) {
-      setError("MANUAL_SOURCE_CONTENT_REQUIRED")
-      return
-    }
-    if (manualBytes > PRODUCT_CASE_CONTENT_MAX_BYTES) {
-      setError("MANUAL_SOURCE_CONTENT_TOO_LARGE")
+    const manualTextValidation =
+      validateManualAuthenticatedVisibleSourceText(manualContent)
+    if (!manualTextValidation.valid) {
+      setError(manualTextValidation.error)
       return
     }
     setExtracting(true)
@@ -870,16 +883,70 @@ export default function ProductCaseRunnerPage() {
         sourceUrl: urlValidation.canonicalUrl,
         capturedAt: new Date().toISOString(),
         content: manualContent,
-        sourceType: preflight?.accessStatus ===
+        sourceType: sourceAccess.status ===
             "AUTHENTICATED_SOURCE_REQUIRED"
           ? "LUNA_AUTHENTICATED_MANUAL_CAPTURE"
           : "LUNA_MANUAL_CAPTURE",
       })
+      const authenticatedSourceCapture =
+        sourceAccess.status === "AUTHENTICATED_SOURCE_REQUIRED"
+          ? createManualAuthenticatedSupplierSourceCapture({
+              supplierUrl: urlValidation.canonicalUrl,
+              rawVisibleSourceText:
+                manualTextValidation.rawVisibleSourceText,
+              sourceAccessStatus: "AUTHENTICATED_SOURCE_REQUIRED",
+              extraction: result,
+            })
+          : null
+      const previousCaptureHash = supplierSourceCapture?.contentHash ?? null
       setRunnerTimestamp(result.capture.capturedAt)
-      setCaptures((current) => [...current, result.capture])
-      setEvidence((current) => mergeEvidence(current, result.evidence))
+      setCaptures((current) => [
+        ...current.filter((capture) =>
+          !previousCaptureHash ||
+          record(capture).contentHash !== previousCaptureHash
+        ),
+        result.capture,
+      ])
+      setEvidence((current) => mergeEvidence(
+        current.filter((entry) =>
+          !previousCaptureHash ||
+          record(entry).contentHash !== previousCaptureHash
+        ),
+        result.evidence,
+      ))
+      setSupplierSourceCapture(authenticatedSourceCapture)
+      const proposedTitle = result.evidence.find((entry) =>
+        entry.field === "title" &&
+        entry.evidenceStatus !== "MISSING"
+      )
+      if (proposedTitle && typeof proposedTitle.normalizedValue === "string") {
+        setProductLabel(proposedTitle.normalizedValue)
+      }
+      const supplierIdentityIds = result.evidence
+        .filter((entry) =>
+          ["title", "supplier_product_id", "supplier_sku", "variant_id"]
+            .includes(entry.field) &&
+          entry.evidenceStatus !== "MISSING"
+        )
+        .map((entry) => entry.id)
+      setIdentityReviewState((current) =>
+        current.status === "CONFLICTED"
+          ? current
+          : {
+              ...current,
+              status: "NOT_REVIEWED",
+              confidence: "LOW",
+              supplierEvidenceIds: supplierIdentityIds,
+              blockers: ["HUMAN_IDENTITY_REVIEW_REQUIRED"],
+              nextAction: "REVIEW_PRODUCT_EVIDENCE",
+            }
+      )
       setNotice(
-        `Propuesta local creada: ${result.evidence.length} campos. Nada del contenido pegado se envió ni guardó en el servidor.`,
+        `Evidencia procesada localmente: ${
+          result.evidence.filter((entry) =>
+            entry.evidenceStatus !== "MISSING"
+          ).length
+        } candidatos y ${result.missingFields.length} campos MISSING. Nada se envió ni guardó en el servidor.`,
       )
       window.setTimeout(() => resultsHeadingRef.current?.focus(), 0)
     } catch (caught) {
@@ -891,6 +958,25 @@ export default function ProductCaseRunnerPage() {
     } finally {
       setExtracting(false)
     }
+  }
+
+  function clearManualContent() {
+    const capturedHash = supplierSourceCapture?.contentHash ?? null
+    setManualContent("")
+    setSupplierSourceCapture(null)
+    if (capturedHash) {
+      setCaptures((current) => current.filter((capture) =>
+        record(capture).contentHash !== capturedHash
+      ))
+      setEvidence((current) => current.filter((entry) =>
+        record(entry).contentHash !== capturedHash
+      ))
+    }
+    setGeneratedPackage(null)
+    setNotice(
+      "Contenido y extracción temporal eliminados de esta sesión del navegador.",
+    )
+    setError("")
   }
 
   function setReviewDraft(
@@ -1136,14 +1222,9 @@ export default function ProductCaseRunnerPage() {
     const draft = visualObservationDraft
     if (
       !draft.imageId.trim() ||
-      !draft.sourceReference.trim() ||
-      draft.contradictsEvidenceIds.length === 0 ||
-      splitLines(draft.possibleConflicts).length === 0 ||
       !draft.humanReason.trim()
     ) {
-      setError(
-        "VISUAL_OBSERVATION_PROVENANCE_CONFLICT_LINK_AND_REASON_REQUIRED",
-      )
+      setError("VISUAL_OBSERVATION_IMAGE_AND_OBSERVATION_REQUIRED")
       return
     }
     if (draft.sourceUrl.trim()) {
@@ -1162,7 +1243,8 @@ export default function ProductCaseRunnerPage() {
         document: productCase,
         imageId: draft.imageId.trim(),
         sourceUrl: draft.sourceUrl.trim() || null,
-        sourceReference: draft.sourceReference.trim(),
+        sourceReference: draft.sourceReference.trim() ||
+          `MANUAL_IMAGE_REFERENCE:${draft.imageId.trim()}`,
         reviewerType: draft.reviewerType,
         observedProductType: draft.observedProductType.trim() || null,
         visibleFeatures: splitLines(draft.visibleFeatures),
@@ -1190,10 +1272,9 @@ export default function ProductCaseRunnerPage() {
       setImageAnalysis((current) => ({
         ...current,
         visualEvidenceStatus: "HUMAN_REVIEWED",
-        conflictDetectedFrom: [
-          "SUPPLIER_TEXT",
-          "HUMAN_VISUAL_REVIEW",
-        ],
+        conflictDetectedFrom: visualRecord.identityConflict
+          ? ["SUPPLIER_TEXT", "HUMAN_VISUAL_REVIEW"]
+          : current.conflictDetectedFrom,
         observations: [
           ...current.observations.filter((entry) =>
             entry.evidenceId !== visualRecord.observation.evidenceId
@@ -1201,34 +1282,42 @@ export default function ProductCaseRunnerPage() {
           visualRecord.observation,
         ],
       }))
-      setIdentityReviewState((current) => ({
-        ...current,
-        status: "CONFLICTED",
-        confidence: "LOW",
-        physicalProductVerified: false,
-        conflictHistory: [
-          ...current.conflictHistory,
-          ...possibleConflicts,
-        ].filter((entry, index, all) => all.indexOf(entry) === index),
-        currentConflict: possibleConflicts.join(" · "),
-        supplierEvidenceIds: [
-          ...current.supplierEvidenceIds,
-          ...draft.contradictsEvidenceIds,
-        ].filter((entry, index, all) => all.indexOf(entry) === index),
-        humanObservationEvidenceIds: [
-          ...current.humanObservationEvidenceIds,
-          visualRecord.observation.evidenceId,
-        ].filter((entry, index, all) => all.indexOf(entry) === index),
-        blockers: [
-          ...current.blockers,
-          "PHYSICAL_PRODUCT_AND_VARIANT_VERIFICATION_REQUIRED",
-        ].filter((entry, index, all) => all.indexOf(entry) === index),
-        nextAction: "VERIFY_PHYSICAL_PRODUCT_AND_VARIANT",
-      }))
+      setIdentityReviewState((current) => visualRecord.identityConflict
+        ? {
+            ...current,
+            status: "CONFLICTED",
+            confidence: "LOW",
+            physicalProductVerified: false,
+            conflictHistory: [
+              ...current.conflictHistory,
+              ...possibleConflicts,
+            ].filter((entry, index, all) => all.indexOf(entry) === index),
+            currentConflict: possibleConflicts.join(" · "),
+            supplierEvidenceIds: [
+              ...current.supplierEvidenceIds,
+              ...draft.contradictsEvidenceIds,
+            ].filter((entry, index, all) => all.indexOf(entry) === index),
+            humanObservationEvidenceIds: [
+              ...current.humanObservationEvidenceIds,
+              visualRecord.observation.evidenceId,
+            ].filter((entry, index, all) => all.indexOf(entry) === index),
+            blockers: [
+              ...current.blockers,
+              "PHYSICAL_PRODUCT_AND_VARIANT_VERIFICATION_REQUIRED",
+            ].filter((entry, index, all) => all.indexOf(entry) === index),
+            nextAction: "VERIFY_PHYSICAL_PRODUCT_AND_VARIANT",
+          }
+        : {
+            ...current,
+            humanObservationEvidenceIds: [
+              ...current.humanObservationEvidenceIds,
+              visualRecord.observation.evidenceId,
+            ].filter((entry, index, all) => all.indexOf(entry) === index),
+          })
       setRunnerTimestamp(reviewedAt)
       setVisualObservationDraft({ ...emptyVisualObservationDraft })
       setNotice(
-        "Observación visual humana, evidencia y captura de procedencia registradas en memoria por el dominio. Seller OS no ejecutó machine vision.",
+        "Revisión visual humana agregada en memoria. Seller OS no ejecutó machine vision.",
       )
     } catch (caught) {
       setError(
@@ -1507,7 +1596,12 @@ export default function ProductCaseRunnerPage() {
           importedDocument.sourceAccess,
         ),
       )
-      setManualContent("")
+      setSupplierSourceCapture(
+        structuredClone(importedDocument.supplierSourceCapture ?? null),
+      )
+      setManualContent(
+        importedDocument.supplierSourceCapture?.rawVisibleSourceText ?? "",
+      )
       setCaptures(structuredClone(importedDocument.captures))
       setEvidence(structuredClone(importedDocument.evidence))
       setMarketEvidence(structuredClone(importedDocument.marketEvidence))
@@ -1895,6 +1989,87 @@ export default function ProductCaseRunnerPage() {
               <div><dt className="opacity-50">Next action</dt><dd className="mt-1 break-words font-black">{text(preflight?.nextAction, "CAPTURE_AUTHENTICATED_SUPPLIER_EVIDENCE")}</dd></div>
             </dl>
           </div>
+          {sourceAccess.status === "AUTHENTICATED_SOURCE_REQUIRED" && (
+            <div
+              data-testid="authenticated-supplier-paste-panel"
+              className="mt-5 rounded-3xl border border-cyan-200/30 bg-cyan-200/[0.055] p-4 sm:p-5"
+            >
+              <p className="text-xs font-black uppercase tracking-[0.16em] text-cyan-100/60">
+                MANUAL_AUTHENTICATED_PASTE · BROWSER ONLY
+              </p>
+              <p className="mt-2 break-all text-xs font-black text-white/70">
+                {text(sourceAccess.canonicalUrl, sourceUrl)}
+              </p>
+              <label
+                className="mt-4 grid gap-2 text-sm font-black"
+                htmlFor="authenticated-visible-source-text"
+              >
+                PEGAR CONTENIDO VISIBLE AUTENTICADO DE LUNA
+                <textarea
+                  id="authenticated-visible-source-text"
+                  data-testid="authenticated-visible-source-text"
+                  value={manualContent}
+                  onChange={(event) => setManualContent(event.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-describedby="authenticated-source-warning authenticated-source-size"
+                  aria-invalid={
+                    manualBytes > PRODUCT_CASE_CONTENT_MAX_BYTES
+                  }
+                  className={`${textAreaClass} min-h-64`}
+                />
+              </label>
+              <div
+                id="authenticated-source-warning"
+                role="note"
+                className="mt-3 rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-4 text-xs leading-6 text-amber-50"
+              >
+                Pega únicamente texto visible del producto. No pegues ni
+                solicites contraseñas, cookies, tokens, HTML completo, datos de
+                pago ni información personal de la cuenta. El contenido se
+                mantiene sólo en memoria del navegador y entra al Export JSON
+                únicamente después de procesarlo.
+              </div>
+              <p
+                id="authenticated-source-size"
+                className={`mt-2 text-right text-xs ${
+                  manualBytes > PRODUCT_CASE_CONTENT_MAX_BYTES
+                    ? "font-black text-rose-200"
+                    : "text-white/45"
+                }`}
+              >
+                {manualBytes.toLocaleString()} /{" "}
+                {PRODUCT_CASE_CONTENT_MAX_BYTES.toLocaleString()} bytes
+              </p>
+              <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  data-testid="process-supplier-evidence"
+                  disabled={
+                    extracting ||
+                    !manualContent.trim() ||
+                    manualBytes > PRODUCT_CASE_CONTENT_MAX_BYTES ||
+                    !urlValidation.valid
+                  }
+                  onClick={() => void analyzeManualContent()}
+                  className={`min-h-12 rounded-2xl bg-cyan-200 px-5 text-sm font-black text-black disabled:cursor-not-allowed disabled:opacity-40 ${buttonFocus}`}
+                >
+                  {extracting
+                    ? "PROCESANDO LOCALMENTE…"
+                    : "PROCESAR EVIDENCIA DEL PROVEEDOR"}
+                </button>
+                <button
+                  type="button"
+                  data-testid="clear-supplier-content"
+                  disabled={!manualContent && !supplierSourceCapture}
+                  onClick={clearManualContent}
+                  className={`min-h-12 rounded-2xl border border-white/15 px-5 text-sm font-black text-white/75 disabled:cursor-not-allowed disabled:opacity-40 ${buttonFocus}`}
+                >
+                  LIMPIAR CONTENIDO
+                </button>
+              </div>
+            </div>
+          )}
         </section>
 
         <section
@@ -1903,61 +2078,76 @@ export default function ProductCaseRunnerPage() {
           className="mt-5 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
         >
           <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/55">
-            1. RAW SUPPLIER EVIDENCE
+            2. PRODUCT_EVIDENCE
           </p>
           <h2 id="raw-evidence-heading" className="mt-2 text-2xl font-black">
-            Pegar contenido visible como texto inerte
+            Resultado de la captura local
           </h2>
           <p className="mt-2 max-w-4xl text-sm leading-6 text-white/55">
-            Acepta texto, HTML tratado sólo como caracteres, JSON o JSON-LD.
-            No ejecuta scripts, no monta recursos, no carga imágenes y no envía
-            esta captura al servidor.
+            El texto fuente, candidatos, claims excluidos y datos faltantes
+            permanecen visibles y exportables. Ningún candidato se convierte
+            automáticamente en PRODUCT_VERIFIED.
           </p>
-          <label
-            className="mt-5 grid gap-2 text-sm font-black"
-            htmlFor="manual-source-content"
+          <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-2xl border border-white/10 p-3">
+              <dt className="text-white/45">Capture method</dt>
+              <dd className="mt-1 font-black">
+                {supplierSourceCapture?.sourceCaptureMethod ?? "NOT_CAPTURED"}
+              </dd>
+            </div>
+            <div className="rounded-2xl border border-white/10 p-3">
+              <dt className="text-white/45">Evidence candidates</dt>
+              <dd className="mt-1 font-black">
+                {supplierSourceCapture?.evidenceCandidates.length ?? 0}
+              </dd>
+            </div>
+            <div className="rounded-2xl border border-white/10 p-3">
+              <dt className="text-white/45">Missing fields</dt>
+              <dd className="mt-1 font-black">
+                {supplierSourceCapture?.missingFields.length ?? "MISSING"}
+              </dd>
+            </div>
+            <div className="rounded-2xl border border-white/10 p-3">
+              <dt className="text-white/45">Warnings</dt>
+              <dd className="mt-1 font-black">
+                {supplierSourceCapture?.extractionWarnings.length ?? 0}
+              </dd>
+            </div>
+          </dl>
+          <details
+            open={Boolean(supplierSourceCapture)}
+            className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4"
           >
-            Contenido copiado desde la fuente visible
-            <textarea
-              id="manual-source-content"
-              value={manualContent}
-              onChange={(event) => setManualContent(event.target.value)}
-              spellCheck={false}
-              aria-describedby="manual-source-privacy manual-source-size"
-              aria-invalid={manualBytes > PRODUCT_CASE_CONTENT_MAX_BYTES}
-              className={`${textAreaClass} min-h-64`}
-            />
-          </label>
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <p id="manual-source-privacy" className="leading-5 text-white/45">
-              Estado temporal del navegador; se pierde al recargar salvo que
-              exportes manualmente el expediente.
-            </p>
-            <p
-              id="manual-source-size"
-              className={manualBytes > PRODUCT_CASE_CONTENT_MAX_BYTES
-                ? "font-black text-rose-200"
-                : "text-white/45"}
+            <summary className={`cursor-pointer font-black ${buttonFocus}`}>
+              Texto fuente original
+            </summary>
+            <pre
+              data-testid="raw-visible-source-text"
+              className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words text-xs leading-6 text-white/65"
             >
-              {manualBytes.toLocaleString()} /{" "}
-              {PRODUCT_CASE_CONTENT_MAX_BYTES.toLocaleString()} bytes
-            </p>
+              {supplierSourceCapture?.rawVisibleSourceText ??
+                "MISSING — procesa una captura manual autenticada."}
+            </pre>
+          </details>
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <JsonPanel
+              label="Claims excluidos de product facts"
+              value={supplierSourceCapture?.evidenceCandidates.filter(
+                (entry) =>
+                  entry.evidenceClass === "SUPPLIER_MARKETING_CLAIM"
+              ) ?? []}
+            />
+            <JsonPanel
+              label="Conflictos y campos MISSING"
+              value={{
+                conflicts: rows(runnerOutput.legacyPhaseDiagnostics)
+                  .flatMap((phase) => rows(phase.conflicts)),
+                missingFields: supplierSourceCapture?.missingFields ?? [],
+                extractionWarnings:
+                  supplierSourceCapture?.extractionWarnings ?? [],
+              }}
+            />
           </div>
-          <button
-            type="button"
-            disabled={
-              extracting ||
-              !manualContent.trim() ||
-              manualBytes > PRODUCT_CASE_CONTENT_MAX_BYTES ||
-              !urlValidation.valid
-            }
-            onClick={() => void analyzeManualContent()}
-            className={`mt-4 min-h-12 w-full rounded-2xl bg-cyan-200 px-5 text-sm font-black text-black disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto ${buttonFocus}`}
-          >
-            {extracting
-              ? "EXTRAYENDO LOCALMENTE…"
-              : "EXTRAER PROPUESTA DE EVIDENCIA"}
-          </button>
         </section>
 
         {notice && (
@@ -2113,6 +2303,122 @@ export default function ProductCaseRunnerPage() {
               )
             })}
           </div>
+        </section>
+
+        <section
+          id="human-visual-review"
+          aria-labelledby="human-visual-review-heading"
+          className="mt-5 rounded-[32px] border border-cyan-200/20 bg-cyan-200/[0.035] p-5 sm:p-7"
+        >
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/55">
+            3. HUMAN_VISUAL_REVIEW
+          </p>
+          <h2
+            id="human-visual-review-heading"
+            className="mt-2 text-2xl font-black"
+          >
+            Agregar observación visual suministrada por un humano
+          </h2>
+          <p className="mt-2 max-w-4xl text-sm leading-6 text-white/55">
+            Seller OS no observa la imagen. Registra únicamente lo descrito por
+            el revisor y conserva la referencia original. La observación queda
+            como HUMAN_VISUAL_REVIEW y nunca como machine vision o
+            PRODUCT_VERIFIED.
+          </p>
+          <div className="mt-5 grid gap-3 lg:grid-cols-2">
+            <label
+              className="grid gap-2 text-sm font-black"
+              htmlFor="phase3-visual-image-id"
+            >
+              Identificador de la imagen
+              <input
+                id="phase3-visual-image-id"
+                value={visualObservationDraft.imageId}
+                onChange={(event) =>
+                  setVisualObservationDraft((current) => ({
+                    ...current,
+                    imageId: event.target.value,
+                  }))}
+                className={inputClass}
+              />
+            </label>
+            <label
+              className="grid gap-2 text-sm font-black"
+              htmlFor="phase3-visual-decision"
+            >
+              Decisión humana
+              <select
+                id="phase3-visual-decision"
+                value={visualObservationDraft.humanDecision}
+                onChange={(event) =>
+                  setVisualObservationDraft((current) => ({
+                    ...current,
+                    humanDecision: event.target.value as
+                      VisualObservationDraft["humanDecision"],
+                  }))}
+                className={inputClass}
+              >
+                <option value="ACCEPT_FOR_ANALYSIS">
+                  ACCEPT_FOR_ANALYSIS
+                </option>
+                <option value="NEEDS_MORE_EVIDENCE">
+                  NEEDS_MORE_EVIDENCE
+                </option>
+                <option value="REJECT_FOR_EBAY_HANDOFF">
+                  REJECT_FOR_EBAY_HANDOFF
+                </option>
+              </select>
+            </label>
+            <label
+              className="grid gap-2 text-sm font-black lg:col-span-2"
+              htmlFor="phase3-visual-observations"
+            >
+              Observaciones humanas
+              <textarea
+                id="phase3-visual-observations"
+                value={visualObservationDraft.humanReason}
+                onChange={(event) =>
+                  setVisualObservationDraft((current) => ({
+                    ...current,
+                    humanReason: event.target.value,
+                    visibleFeatures: event.target.value,
+                  }))}
+                className={`${textAreaClass} min-h-32`}
+              />
+            </label>
+            <label
+              className="grid gap-2 text-sm font-black lg:col-span-2"
+              htmlFor="phase3-visual-blockers"
+            >
+              Blockers visuales · uno por línea
+              <textarea
+                id="phase3-visual-blockers"
+                value={visualObservationDraft.possibleConflicts}
+                onChange={(event) =>
+                  setVisualObservationDraft((current) => ({
+                    ...current,
+                    possibleConflicts: event.target.value,
+                  }))}
+                className={`${textAreaClass} min-h-24`}
+              />
+            </label>
+            <button
+              type="button"
+              data-testid="add-human-visual-review"
+              onClick={registerVisualObservation}
+              disabled={
+                !visualObservationDraft.imageId.trim() ||
+                !visualObservationDraft.humanReason.trim()
+              }
+              className={`min-h-12 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.08] px-4 text-sm font-black text-cyan-50 disabled:cursor-not-allowed disabled:opacity-40 lg:col-span-2 ${buttonFocus}`}
+            >
+              AGREGAR REVISIÓN HUMANA
+            </button>
+          </div>
+          <JsonPanel
+            label="Revisiones visuales humanas registradas"
+            value={imageAnalysis.observations}
+          />
         </section>
 
         <section
@@ -2826,7 +3132,7 @@ export default function ProductCaseRunnerPage() {
               </label>
               <fieldset className="rounded-2xl border border-amber-200/20 p-4 lg:col-span-2">
                 <legend className="px-2 text-xs font-black">
-                  Contradicted supplier evidence IDs · required
+                  Contradicted supplier evidence IDs · optional
                 </legend>
                 <p className="text-xs leading-5 text-white/45">
                   Selecciona únicamente la evidencia textual del proveedor que
@@ -2905,7 +3211,9 @@ export default function ProductCaseRunnerPage() {
                     }))}
                   className={inputClass}
                 >
-                  <option value="ACCEPT_OBSERVATION">ACCEPT_OBSERVATION</option>
+                  <option value="ACCEPT_FOR_ANALYSIS">
+                    ACCEPT_FOR_ANALYSIS
+                  </option>
                   <option value="REJECT_FOR_EBAY_HANDOFF">
                     REJECT_FOR_EBAY_HANDOFF
                   </option>
@@ -2932,9 +3240,6 @@ export default function ProductCaseRunnerPage() {
                 onClick={registerVisualObservation}
                 disabled={
                   !visualObservationDraft.imageId.trim() ||
-                  !visualObservationDraft.sourceReference.trim() ||
-                  visualObservationDraft.contradictsEvidenceIds.length === 0 ||
-                  splitLines(visualObservationDraft.possibleConflicts).length === 0 ||
                   !visualObservationDraft.humanReason.trim()
                 }
                 className={`min-h-12 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.08] px-4 text-sm font-black text-cyan-50 disabled:cursor-not-allowed disabled:opacity-40 lg:col-span-2 ${buttonFocus}`}

@@ -242,7 +242,7 @@ const ACCEPTED_SEEDS: EvidenceSeed[] = [
     contentHash: GOLF_SWING_TRAINER_VISUAL_REVIEW_SNAPSHOT_SHA256,
     extractionPath: "humanVisualReview.image[1]",
     extractionMethod: "HUMAN_STRUCTURED_REVIEW",
-    sourceEvidenceClass: "HUMAN_VISUAL_OBSERVATION",
+    sourceEvidenceClass: "HUMAN_VISUAL_REVIEW",
     humanVerdict: "NEEDS_MORE_EVIDENCE",
     humanReason: "SOURCE_VISUAL_PENDING_IDENTITY_CONFIRMATION",
   },
@@ -255,7 +255,7 @@ const ACCEPTED_SEEDS: EvidenceSeed[] = [
     contentHash: GOLF_SWING_TRAINER_VISUAL_REVIEW_SNAPSHOT_SHA256,
     extractionPath: "humanVisualReview.image[2]",
     extractionMethod: "HUMAN_STRUCTURED_REVIEW",
-    sourceEvidenceClass: "HUMAN_VISUAL_OBSERVATION",
+    sourceEvidenceClass: "HUMAN_VISUAL_REVIEW",
     humanVerdict: "REJECT",
     humanReason:
       "REJECT_FOR_EBAY_HANDOFF:THIRD_PARTY_TRADEMARK_VISIBLE:TITLEIST;PROMOTIONAL_COMPOSITE;PRODUCT_FUNCTION_NOT_VERIFIED",
@@ -269,7 +269,7 @@ const ACCEPTED_SEEDS: EvidenceSeed[] = [
     contentHash: GOLF_SWING_TRAINER_VISUAL_REVIEW_SNAPSHOT_SHA256,
     extractionPath: "humanVisualReview.image[3]",
     extractionMethod: "HUMAN_STRUCTURED_REVIEW",
-    sourceEvidenceClass: "HUMAN_VISUAL_OBSERVATION",
+    sourceEvidenceClass: "HUMAN_VISUAL_REVIEW",
     humanVerdict: "NEEDS_MORE_EVIDENCE",
     humanReason: "SOURCE_VISUAL_PENDING_IDENTITY_CONFIRMATION",
   },
@@ -592,6 +592,30 @@ const fixtureDocument = {
     httpStatus: null,
     redirectsFollowed: 0,
     credentialsUsed: false,
+  },
+  supplierSourceCapture: {
+    supplierUrl: GOLF_SWING_TRAINER_LUNA_URL,
+    rawVisibleSourceText: GOLF_SWING_TRAINER_AUTHENTICATED_SNAPSHOT,
+    sourceAccessStatus: "AUTHENTICATED_SOURCE_REQUIRED",
+    sourceCaptureMethod: "MANUAL_AUTHENTICATED_PASTE",
+    capturedAt: REVIEWED_AT,
+    contentHash: GOLF_SWING_TRAINER_AUTHENTICATED_SNAPSHOT_SHA256,
+    extractionWarnings: [],
+    evidenceCandidates: GOLF_SWING_TRAINER_EVIDENCE.filter((entry) =>
+      entry.contentHash ===
+        GOLF_SWING_TRAINER_AUTHENTICATED_SNAPSHOT_SHA256 &&
+      entry.evidenceStatus !== "MISSING"
+    ),
+    missingFields: PRODUCT_CASE_EVIDENCE_FIELDS.filter((field) =>
+      !GOLF_SWING_TRAINER_EVIDENCE.some((entry) =>
+        entry.contentHash ===
+          GOLF_SWING_TRAINER_AUTHENTICATED_SNAPSHOT_SHA256 &&
+        entry.field === field &&
+        entry.evidenceStatus !== "MISSING"
+      )
+    ),
+    fullHtmlAccepted: false,
+    sensitiveContentStored: false,
   },
   captures: [
     {
@@ -1035,7 +1059,7 @@ const SANITIZED_EVIDENCE: ProductCaseEvidence[] = [
     id: "san-visual-observation",
     field: "visual_observation",
     value: "Human confirmed the sanitized source image matches the reviewed variant.",
-    evidenceClass: "HUMAN_VISUAL_OBSERVATION",
+    evidenceClass: "HUMAN_VISUAL_REVIEW",
     sourceType: "HUMAN_VISUAL_OBSERVATION",
     contentHash: SANITIZED_VISUAL_HASH,
     extractionMethod: "HUMAN_STRUCTURED_REVIEW",
@@ -1080,6 +1104,7 @@ const SANITIZED_DOCUMENT = {
     redirectsFollowed: 0,
     credentialsUsed: false,
   },
+  supplierSourceCapture: null,
   captures: [
     {
       sourceType: "LUNA_AUTHENTICATED_MANUAL_CAPTURE",
@@ -1166,7 +1191,7 @@ const SANITIZED_DOCUMENT = {
       possibleConflicts: [],
       contradictsEvidenceIds: [],
       confidence: "HIGH",
-      humanDecision: "ACCEPT_OBSERVATION",
+      humanDecision: "ACCEPT_FOR_ANALYSIS",
       humanReason: "SANITIZED_IMAGE_MATCH_CONFIRMED",
       reviewedAt: SANITIZED_CAPTURED_AT,
     }],

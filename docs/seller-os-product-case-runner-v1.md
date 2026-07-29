@@ -79,10 +79,32 @@ no un error inesperado. El operador debe abrir Luna por su cuenta, autenticarse
 fuera de Seller OS y copiar únicamente el contenido visible que desee revisar.
 Seller OS no recibe contraseñas, cookies ni sesiones Luna.
 
-El texto, HTML, JSON o JSON-LD pegado permanece en memoria del navegador. Se
-analiza como texto: no se ejecutan scripts, no se inyecta HTML, no se cargan
-recursos y no se envía el contenido al servidor. El caso puede exportarse con
-un `Blob` local; no se almacena en Supabase, en el servidor ni en archivos.
+En ese estado, `SUPPLIER_SOURCE` muestra inmediatamente el textarea
+`PEGAR CONTENIDO VISIBLE AUTENTICADO DE LUNA` y las acciones
+`PROCESAR EVIDENCIA DEL PROVEEDOR` y `LIMPIAR CONTENIDO`. Son formularios
+locales permitidos por Pilot Mode: no disparan workers, persistencia ni acciones
+de marketplace.
+
+El textarea acepta únicamente texto visible del producto. Rechaza HTML
+completo y patrones de contraseñas, cookies, tokens, autorización, pagos o datos
+personales de la cuenta. El texto permanece en memoria del navegador; no se
+ejecutan scripts, no se inyecta HTML, no se cargan recursos y no se envía el
+contenido al servidor. Después del procesamiento se conserva dentro del
+Product Case local como:
+
+```text
+supplierUrl
+rawVisibleSourceText
+sourceAccessStatus
+sourceCaptureMethod: MANUAL_AUTHENTICATED_PASTE
+extractionWarnings
+evidenceCandidates
+missingFields
+```
+
+El caso puede exportarse con un `Blob` local; no se almacena en Supabase, en el
+servidor ni en archivos. El Export JSON conserva el texto original y el import
+lo restaura para la revisión de la sesión siguiente.
 
 El mismo envelope JSON puede reimportarse localmente. El importador valida
 tamaño, versión, forma e invariantes fail-closed antes de reconstruir el
@@ -119,6 +141,13 @@ El parser puede detectar candidatos evidentes como `0.12 kg`, `PVC cloth`,
 `Black`, `Grey` o `USD 8.00`, pero no afirma comprender semánticamente la
 descripción completa. Cada candidato conserva el texto raw, su normalización,
 el método de extracción y el estado de aceptación humana.
+
+La extracción textual separa `regular_price` de `sale_price`, transforma stock
+numérico únicamente en `INVENTORY_SIGNAL`, mantiene especificaciones declaradas
+como `SUPPLIER_STATED` y clasifica beneficios promocionales como
+`SUPPLIER_MARKETING_CLAIM`. Claims, merchandising y stock quedan fuera de
+product facts de estrategia. Un costo o campo ausente permanece `MISSING`, no
+cero.
 
 ## Adaptador al Strategy Lab
 
@@ -201,7 +230,12 @@ manualmente `imageId`, URL fuente, producto/variante observados, features, texto
 marcas, colores, cantidad, posibles conflictos, confianza, decisión, motivo y
 fecha. El revisor puede identificarse como `HUMAN` o
 `CHATGPT_ASSISTED_HUMAN`, pero la captura siempre usa
-`HUMAN_VISUAL_REVIEW`. La fuente queda como `SUPPLIER_IMAGE`, con
+`HUMAN_VISUAL_REVIEW`. La revisión rápida admite
+`ACCEPT_FOR_ANALYSIS`, `NEEDS_MORE_EVIDENCE` o
+`REJECT_FOR_EBAY_HANDOFF`; no exige fabricar una contradicción cuando el revisor
+solamente documenta lo visible. La evidencia queda clasificada como
+`HUMAN_VISUAL_REVIEW`, nunca como product fact. La fuente queda como
+`SUPPLIER_IMAGE`, con
 `verificationStatus: SOURCE_IMAGE_OBSERVED` y
 `physicalProductVerified: false`: describe lo visible, no verifica el producto
 físico entregado y no borra la evidencia textual.
@@ -390,6 +424,12 @@ con costos trazables, obtener una recomendación pura, pasar revisión humana e
 imagen/claims QA y producir un paquete para entrada manual en Seller Hub. No
 ejecuta ninguna acción externa. `MANUAL_LISTING_REGISTRATION` permanece
 `BLOCKED` intencionalmente porque ni el fixture ni Seller OS publican.
+
+La corrección 3A.1 añade un tercer test estructural de captura interactiva con
+un producto genérico recargable. El texto incluye stock, precio regular y de
+oferta, carga, autonomía, IP rating, batería, potencia, accesorios y claims.
+Las reglas se activan por etiquetas y estructura; el dominio no contiene
+decisiones por título, SKU, URL ni el nombre de un producto.
 
 ## Contención
 
