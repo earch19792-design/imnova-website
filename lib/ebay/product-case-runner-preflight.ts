@@ -12,6 +12,7 @@ const LUNA_PRODUCT_HOSTS = new Set([
   "lunaportex.com",
   "www.lunaportex.com",
 ])
+const LUNA_TRACKING_PARAMETERS = new Set(["_pos", "_sid", "_ss"])
 
 const ALLOWED_SOURCE_CONTENT_TYPES = new Set([
   "text/html",
@@ -64,9 +65,9 @@ function normalizeCapturedAt(value: unknown) {
 }
 
 /**
- * Accepts only a public Luna product-page identifier. Query strings, fragments,
- * encoded path escapes and alternate Shopify endpoints are deliberately
- * excluded so preflight cannot be repurposed as a general server-side fetch.
+ * Accepts only a public Luna product-page identifier. Luna navigation tracking
+ * parameters are removed locally; all other query strings, fragments, encoded
+ * path escapes and alternate Shopify endpoints remain excluded.
  */
 export function canonicalizeLunaProductSourceUrl(value: unknown) {
   if (
@@ -99,8 +100,10 @@ export function canonicalizeLunaProductSourceUrl(value: unknown) {
     parsed.password ||
     parsed.port ||
     isIP(hostname) !== 0 ||
-    parsed.search ||
     parsed.hash ||
+    [...parsed.searchParams.keys()].some((key) =>
+      !LUNA_TRACKING_PARAMETERS.has(key)
+    ) ||
     /%[0-9a-f]{2}/i.test(parsed.pathname)
   ) {
     return fail("PRODUCT_CASE_SOURCE_URL_INVALID")

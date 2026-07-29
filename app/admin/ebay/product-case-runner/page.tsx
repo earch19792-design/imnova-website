@@ -496,6 +496,8 @@ export default function ProductCaseRunnerPage() {
   )
   const [reviewDrafts, setReviewDrafts] =
     useState<Record<string, ReviewDraft>>({})
+  const [appliedReviewDecisions, setAppliedReviewDecisions] =
+    useState<Record<string, ReviewAction>>({})
   const [comparableReviewDrafts, setComparableReviewDrafts] =
     useState<Record<string, ComparableReviewDraft>>({})
   const [humanConclusion, setHumanConclusion] = useState(() =>
@@ -797,6 +799,7 @@ export default function ProductCaseRunnerPage() {
     setEconomicsPolicyJson("null")
     setScenarioDraftJson("null")
     setReviewDrafts({})
+    setAppliedReviewDecisions({})
     setComparableReviewDrafts({})
     setHumanConclusion("")
     setHumanScenario("")
@@ -906,6 +909,7 @@ export default function ProductCaseRunnerPage() {
             })
           : null
       setRunnerTimestamp(result.capture.capturedAt)
+      setAppliedReviewDecisions({})
       if (authenticatedSourceCapture) {
         const transitioned = transitionProductCaseSupplierCapture({
           document: productCase,
@@ -972,6 +976,7 @@ export default function ProductCaseRunnerPage() {
     setSupplierSourceCapture(transitioned.supplierSourceCapture)
     setCaptures(transitioned.captures)
     setEvidence(transitioned.evidence)
+    setAppliedReviewDecisions({})
     setImageAnalysis(transitioned.imageAnalysis)
     setIdentityReviewState(transitioned.identityReview)
     setGeneratedPackage(null)
@@ -1017,16 +1022,19 @@ export default function ProductCaseRunnerPage() {
       return
     }
     try {
-      setEvidence((current) =>
-        applyProductCaseEvidenceReview(current, {
-          evidenceId: id,
-          action: draft.action,
-          reason: draft.reason,
-          correctedValue: draft.action === "CORRECT"
-            ? draft.correctedValue
-            : undefined,
-        })
-      )
+      const reviewedEvidence = applyProductCaseEvidenceReview(evidence, {
+        evidenceId: id,
+        action: draft.action,
+        reason: draft.reason,
+        correctedValue: draft.action === "CORRECT"
+          ? draft.correctedValue
+          : undefined,
+      })
+      setEvidence(reviewedEvidence)
+      setAppliedReviewDecisions((current) => ({
+        ...current,
+        [id]: draft.action,
+      }))
       setNotice(
         `${id}: ${draft.action}. El valor raw/original permanece preservado.`,
       )
@@ -1624,6 +1632,7 @@ export default function ProductCaseRunnerPage() {
         JSON.stringify(importedWorkspace.scenarioDraft, null, 2),
       )
       setReviewDrafts({})
+      setAppliedReviewDecisions({})
       setComparableReviewDrafts({})
       setHumanConclusion(text(importedHumanConclusion.conclusion, ""))
       setHumanScenario(text(importedHumanConclusion.scenario, ""))
@@ -2339,6 +2348,26 @@ export default function ProductCaseRunnerPage() {
                   >
                     APLICAR REVISIÓN LOCAL
                   </button>
+                  {appliedReviewDecisions[id] && (
+                    <div
+                      data-testid={`applied-review-${id}`}
+                      className="mt-3 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.08] p-3 text-xs text-emerald-50"
+                    >
+                      <p className="font-black">
+                        DECISIÓN APLICADA: {appliedReviewDecisions[id]}
+                      </p>
+                      <p className="mt-1">
+                        Status: <span className="font-black">
+                          {text(row.evidenceStatus)}
+                        </span>
+                      </p>
+                      <p>
+                        Verdict: <span className="font-black">
+                          {text(row.humanVerdict, "NOT_REVIEWED")}
+                        </span>
+                      </p>
+                    </div>
+                  )}
                 </fieldset>
               )
             })}

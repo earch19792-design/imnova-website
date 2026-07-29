@@ -1204,14 +1204,8 @@ export function validateLunaProductUrl(value: unknown):
   if (/%[0-9a-f]{2}/i.test(value)) {
     return { valid: false, error: "LUNA_PRODUCT_URL_ENCODING_FORBIDDEN" }
   }
-  const exact = value.match(
-    /^https:\/\/(lunaportex\.com|www\.lunaportex\.com)\/products\/([a-z0-9](?:[a-z0-9-]{0,198}[a-z0-9])?)$/,
-  )
-  if (!exact) {
-    if (/^http:\/\//i.test(value)) {
-      return { valid: false, error: "LUNA_PRODUCT_URL_HTTPS_REQUIRED" }
-    }
-    return { valid: false, error: "LUNA_PRODUCT_URL_INVALID" }
+  if (/^http:\/\//i.test(value)) {
+    return { valid: false, error: "LUNA_PRODUCT_URL_HTTPS_REQUIRED" }
   }
   let url: URL
   try {
@@ -1229,7 +1223,14 @@ export function validateLunaProductUrl(value: unknown):
   if (url.port) {
     return { valid: false, error: "LUNA_PRODUCT_URL_CUSTOM_PORT_FORBIDDEN" }
   }
-  if (url.search || url.hash || url.host !== host) {
+  const lunaTrackingParameters = new Set(["_pos", "_sid", "_ss"])
+  if (
+    url.hash ||
+    url.host !== host ||
+    [...url.searchParams.keys()].some((key) =>
+      !lunaTrackingParameters.has(key)
+    )
+  ) {
     return { valid: false, error: "LUNA_PRODUCT_URL_INVALID" }
   }
   if (host !== "lunaportex.com" && host !== "www.lunaportex.com") {
@@ -1241,7 +1242,7 @@ export function validateLunaProductUrl(value: unknown):
   if (!match) {
     return { valid: false, error: "LUNA_PRODUCT_URL_PATH_NOT_ALLOWED" }
   }
-  const canonicalUrl = `https://${exact[1]}/products/${exact[2]}`
+  const canonicalUrl = `https://${host}/products/${match[1]}`
   return {
     valid: true,
     canonicalUrl,
@@ -1815,6 +1816,59 @@ function normalizedTextLabel(value: string) {
     .replace(/[^a-z0-9 ]+/g, "")
 }
 
+function visibleStockFromLine(line: string) {
+  const normalized = normalizeWhitespace(line)
+  const match = normalized.match(
+    /^(?:(\d[\d,]*)\s+units?\s+available|(\d[\d,]*)\s+available|in\s+stock\s*:\s*(\d[\d,]*)(?:\s+units?\s+available)?|stock\s*:\s*(\d[\d,]*)(?:\s+units?\s+available)?)$/i,
+  )
+  const rawQuantity = match?.slice(1).find(Boolean)
+  if (!rawQuantity) return null
+  const quantity = Number(rawQuantity.replaceAll(",", ""))
+  return Number.isSafeInteger(quantity) && quantity >= 0 ? quantity : null
+}
+
+function isNonTitleInterfaceLine(line: string) {
+  const normalized = normalizeWhitespace(line)
+  if (!normalized || visibleStockFromLine(normalized) !== null) return true
+  if (
+    /^(?:sale(?:\s+\d{1,3}%\s+off)?|add\s+to\s+cart|add\s+to\s+wishlist|pay\s+over\s+time|shop\s+now|learn\s+more|view\s+all|continue\s+shopping)$/i
+      .test(normalized)
+  ) return true
+  if (
+    /^(?:home|shop|catalog|products?|collections?|menu|search|account|cart|wishlist|about\s+us|contact\s+us|faq|track\s+(?:my\s+)?order|featured|recommended|you\s+may\s+also\s+like|related\s+products?|frequently\s+bought\s+together|recently\s+viewed|trending\s+now|bundle\s*(?:&|and)\s*save|top\s+sellers?|best\s+sellers?|new\s+arrivals?(?:\s*(?:&|and)\s*restocks?)?)$/i
+      .test(normalized)
+  ) return true
+  if (
+    /^(?:(?:regular|sale|list|offer|supplier)?\s*price|currency)\s*[:=-]/i
+      .test(normalized) ||
+    /^(?:USD|GTQ|EUR|GBP|CAD|AUD)?\s*[$€£Q]\s*\d[\d,.]*(?:\s*[A-Z]{3})?$/i
+      .test(normalized) ||
+    /^(?:USD|GTQ|EUR|GBP|CAD|AUD)\s+\d[\d,.]*$/i.test(normalized)
+  ) return true
+  if (
+    normalized.length <= 80 &&
+    /(?:[$€£Q]\s*\d|\d[\d,.]*\s*(?:USD|GTQ|EUR|GBP|CAD|AUD)\b)/i.test(
+      normalized,
+    )
+  ) return true
+  if (/^(?:[-*•]\s*)?[a-z][a-z0-9 /_-]{1,60}\s*[:=-]\s*.+$/i.test(
+    normalized,
+  )) return true
+  if (/[>›]\s*\S/.test(normalized) && normalized.length < 160) return true
+  return false
+}
+
+function isProductTitleCandidateLine(line: string) {
+  const normalized = normalizeWhitespace(line)
+  if (
+    normalized.length < 4 ||
+    normalized.length > 300 ||
+    isNonTitleInterfaceLine(normalized)
+  ) return false
+  const words = normalized.match(/[A-Za-z][A-Za-z0-9'’&+-]*/g) ?? []
+  return words.length >= 2
+}
+
 function labeledTextCandidates(
   visibleText: string,
   pathPrefix: string,
@@ -1825,6 +1879,17 @@ function labeledTextCandidates(
     .filter(Boolean)
     .slice(0, 5_000)
   for (const [lineIndex, line] of lines.entries()) {
+    const visibleStock = visibleStockFromLine(line)
+    if (visibleStock !== null) {
+      pushCandidate(candidates, {
+        field: "visible_stock",
+        rawValue: line,
+        normalizedValue: visibleStock,
+        extractionPath: `${pathPrefix}.line[${lineIndex}].visible_stock`,
+        variantKey: null,
+      })
+      continue
+    }
     let knownLabelMatched = false
     for (const definition of TEXT_LABELS) {
       for (const label of definition.labels) {
@@ -1895,18 +1960,22 @@ function htmlCandidates(
     jsonLdIndex += 1
   }
 
-  const title = content.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i)?.[1]
-  if (title) pushCandidate(candidates, {
+  const title = textFromMarkup(
+    content.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i)?.[1] ?? "",
+  )
+  if (title && isProductTitleCandidateLine(title)) pushCandidate(candidates, {
     field: "title",
-    rawValue: textFromMarkup(title),
-    normalizedValue: textFromMarkup(title),
+    rawValue: title,
+    normalizedValue: title,
     extractionPath: "html.title",
   })
-  const h1 = content.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i)?.[1]
-  if (h1) pushCandidate(candidates, {
+  const h1 = textFromMarkup(
+    content.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i)?.[1] ?? "",
+  )
+  if (h1 && isProductTitleCandidateLine(h1)) pushCandidate(candidates, {
     field: "title",
-    rawValue: textFromMarkup(h1),
-    normalizedValue: textFromMarkup(h1),
+    rawValue: h1,
+    normalizedValue: h1,
     extractionPath: "html.h1[0]",
   })
 
@@ -2012,14 +2081,14 @@ function plainTextCandidates(content: string): Candidate[] {
     normalized.join("\n"),
     "text",
   )
-  const firstLine = normalized[0]
-  if (firstLine && firstLine.length <= 300 &&
-    !/^[a-z ]{2,30}\s*[:=]/i.test(firstLine)) {
+  const titleLineIndex = normalized.findIndex(isProductTitleCandidateLine)
+  const titleLine = normalized[titleLineIndex]
+  if (titleLineIndex >= 0 && titleLine) {
     pushCandidate(candidates, {
       field: "title",
-      rawValue: firstLine,
-      normalizedValue: firstLine,
-      extractionPath: "text.line[0]",
+      rawValue: titleLine,
+      normalizedValue: titleLine,
+      extractionPath: `text.line[${titleLineIndex}]`,
     })
   }
   normalized.forEach((line, index) => {

@@ -7,6 +7,15 @@ export const GOLF_SWING_TRAINER_PRODUCT_NAME =
 export const GOLF_SWING_TRAINER_LUNA_URL =
   "https://lunaportex.com/products/smart-inflatable-golf-ball-swing-trainer-black"
 
+export const ELECTRIC_RAZOR_INVENTORY_FIRST_SANITIZED_SNAPSHOT =
+  `643 units available
+Sale
+$29.99
+Add to cart
+Add to Wishlist
+Pay over time
+Electric Razor for Men,Shavers for Men Electric Razor Wet Dry`
+
 export const GOLF_SWING_TRAINER_PUBLIC_SNAPSHOT =
   "{\"sourceType\":\"LUNA_PUBLIC_PRODUCT_CARD\",\"productName\":\"Smart Inflatable Golf Ball Swing Trainer Black\",\"supplierPrice\":{\"amount\":8,\"currency\":\"USD\"},\"placement\":\"New Arrivals & Restocks\",\"accessStatus\":\"AUTHENTICATED_SOURCE_REQUIRED\"}"
 
