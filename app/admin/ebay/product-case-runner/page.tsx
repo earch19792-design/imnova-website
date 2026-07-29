@@ -18,6 +18,7 @@ import {
   PRODUCT_CASE_RUNNER_VERSION,
   PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES,
   PRODUCT_CASE_ZERO_EFFECTS,
+  resolveLunaSourceContractGuard,
   reviewHumanComparableCandidate,
   serializeProductCaseWorkspaceExport,
   transitionProductCaseSupplierCapture,
@@ -585,6 +586,13 @@ export default function ProductCaseRunnerPage() {
     sourceUrl,
     urlValidation,
   ])
+  const sourceContractGuard = useMemo(
+    () => resolveLunaSourceContractGuard({
+      sourceAccessStatus: sourceAccess.status,
+      supplierSourceCapture,
+    }),
+    [sourceAccess.status, supplierSourceCapture],
+  )
 
   const productCase = useMemo(() => ({
     ...fixtureDocument,
@@ -2122,6 +2130,50 @@ export default function ProductCaseRunnerPage() {
             permanecen visibles y exportables. Ningún candidato se convierte
             automáticamente en PRODUCT_VERIFIED.
           </p>
+          <div
+            data-testid="luna-source-contract-guard"
+            className={`mt-4 rounded-2xl border p-4 ${
+              sourceContractGuard.parseHealth === "SOURCE_FORMAT_CHANGED"
+                ? "border-rose-200/35 bg-rose-200/[0.08] text-rose-50"
+                : "border-cyan-200/25 bg-cyan-200/[0.06] text-cyan-50"
+            }`}
+          >
+            <p className="text-xs font-black uppercase tracking-[0.18em]">
+              LUNA SOURCE CONTRACT GUARD V1
+            </p>
+            <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <dt className="opacity-55">Parse health</dt>
+                <dd data-testid="luna-parse-health" className="mt-1 font-black">
+                  {sourceContractGuard.parseHealth}
+                </dd>
+              </div>
+              <div>
+                <dt className="opacity-55">Stock state</dt>
+                <dd data-testid="luna-stock-state" className="mt-1 font-black">
+                  {sourceContractGuard.stockState}
+                </dd>
+              </div>
+              <div>
+                <dt className="opacity-55">Parser version</dt>
+                <dd className="mt-1 break-words font-mono">
+                  {sourceContractGuard.parserVersion}
+                </dd>
+              </div>
+              <div>
+                <dt className="opacity-55">Source contract</dt>
+                <dd className="mt-1 break-words font-mono">
+                  {sourceContractGuard.sourceContractVersion}
+                </dd>
+              </div>
+            </dl>
+            {sourceContractGuard.parseHealth ===
+                "SOURCE_FORMAT_CHANGED" && (
+              <p className="mt-3 font-black">
+                El formato de Luna pudo cambiar. Revisión humana obligatoria.
+              </p>
+            )}
+          </div>
           <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-6">
             <div className="rounded-2xl border border-white/10 p-3">
               <dt className="text-white/45">Capture method</dt>
@@ -2263,7 +2315,9 @@ export default function ProductCaseRunnerPage() {
                 >
                   <legend className="max-w-full px-2 text-sm font-black">
                     <span className="break-words">
-                      {text(row.field ?? row.label, id)}
+                      {row.field === "title"
+                        ? "Título original del proveedor"
+                        : text(row.label ?? row.field, id)}
                     </span>
                   </legend>
                   <div className="grid gap-3 lg:grid-cols-2">
@@ -4191,7 +4245,7 @@ function ListingOperationsEditor({
         <legend className="px-2 font-black">Contenido, categoría y condición</legend>
         <div className="grid gap-3 lg:grid-cols-2">
           <label className="grid gap-2 text-xs font-black" htmlFor="ops-title">
-            Human-reviewed title · máximo 80
+            EBAY_OPTIMIZED_TITLE_DRAFT · máximo 80
             <input
               id="ops-title"
               maxLength={80}

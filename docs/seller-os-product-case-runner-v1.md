@@ -103,6 +103,10 @@ sourceAccessStatus
 sourceCaptureMethod: MANUAL_AUTHENTICATED_PASTE
 sensitiveContentAssessment: NO_SENSITIVE_PATTERN_DETECTED
 humanVisibleProductTextConfirmed: true
+parserVersion
+sourceContractVersion: LUNA_SOURCE_CONTRACT_V1
+parseHealth
+stockState
 extractionWarnings
 evidenceCandidates
 missingFields
@@ -128,6 +132,23 @@ retira la evidencia y captura reemplazadas, elimina referencias actuales
 obsoletas, cierra el conflicto activo, conserva su etiqueta sólo en
 `conflictHistory` e invalida la revisión de identidad para exigir una nueva
 revisión humana.
+
+## Luna Source Contract Guard V1
+
+Cada extracción conserva la versión exacta del parser y
+`sourceContractVersion: LUNA_SOURCE_CONTRACT_V1`. La salud del contrato es uno
+de `PARSED_OK`, `PARTIAL_EXTRACTION`, `SOURCE_FORMAT_CHANGED` o
+`AUTHENTICATION_REQUIRED`; el inventario se representa de forma independiente
+como `IN_STOCK_SIGNAL`, `OUT_OF_STOCK_SIGNAL`, `STOCK_UNKNOWN` o
+`STOCK_CONFLICTED`.
+
+La ausencia de una señal de stock nunca equivale a cero, y un fallo del parser
+nunca equivale a `OUT_OF_STOCK_SIGNAL`. Si el texto contiene `Regular price`,
+`Sale price`, `units available`, `Out of stock` o `Sold out` pero el dato
+correspondiente no se reconoce, el guard usa `SOURCE_FORMAT_CHANGED`, exige
+revisión humana y bloquea cualquier paquete o handoff eBay. Un cambio de
+`parserVersion` invalida la captura vigente hasta que el texto original se
+reprocese.
 
 ## Evidencia y revisión humana
 

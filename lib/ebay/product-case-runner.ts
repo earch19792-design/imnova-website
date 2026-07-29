@@ -14,6 +14,10 @@ import type {
 
 export const PRODUCT_CASE_RUNNER_VERSION =
   "PRODUCT_CASE_RUNNER_V1_2026_07_28" as const
+export const PRODUCT_CASE_PARSER_VERSION =
+  "LUNA_TEXT_PARSER_V1_2026_07_29" as const
+export const LUNA_SOURCE_CONTRACT_VERSION =
+  "LUNA_SOURCE_CONTRACT_V1" as const
 
 export const PRODUCT_CASE_CONTENT_MAX_BYTES = 262_144
 
@@ -219,11 +223,27 @@ export type ProductCaseConflict = {
   status: "OPEN" | "HUMAN_RESOLVED"
 }
 
+export type LunaSourceParseHealth =
+  | "PARSED_OK"
+  | "PARTIAL_EXTRACTION"
+  | "SOURCE_FORMAT_CHANGED"
+  | "AUTHENTICATION_REQUIRED"
+
+export type LunaStockState =
+  | "IN_STOCK_SIGNAL"
+  | "OUT_OF_STOCK_SIGNAL"
+  | "STOCK_UNKNOWN"
+  | "STOCK_CONFLICTED"
+
 export type ProductCaseCapture = {
   sourceType: ProductCaseSourceType
   sourceUrl: string
   capturedAt: string
   contentHash: string
+  parserVersion: typeof PRODUCT_CASE_PARSER_VERSION | null
+  sourceContractVersion: typeof LUNA_SOURCE_CONTRACT_VERSION | null
+  parseHealth: LunaSourceParseHealth | null
+  stockState: LunaStockState | null
   format: ProductCaseContentFormat
   byteLength: number
   fullContentStored: false
@@ -238,6 +258,10 @@ export type ProductCaseSupplierSourceCapture = {
   sourceCaptureMethod: "MANUAL_AUTHENTICATED_PASTE"
   capturedAt: string
   contentHash: `sha256:${string}`
+  parserVersion: typeof PRODUCT_CASE_PARSER_VERSION
+  sourceContractVersion: typeof LUNA_SOURCE_CONTRACT_VERSION
+  parseHealth: LunaSourceParseHealth
+  stockState: LunaStockState
   extractionWarnings: string[]
   evidenceCandidates: ProductCaseEvidence[]
   missingFields: ProductCaseEvidenceField[]
@@ -248,6 +272,10 @@ export type ProductCaseSupplierSourceCapture = {
 
 export type ProductCaseExtractionResult = {
   capture: ProductCaseCapture
+  parserVersion: typeof PRODUCT_CASE_PARSER_VERSION
+  sourceContractVersion: typeof LUNA_SOURCE_CONTRACT_VERSION
+  parseHealth: LunaSourceParseHealth
+  stockState: LunaStockState
   evidence: ProductCaseEvidence[]
   conflicts: ProductCaseConflict[]
   missingFields: ProductCaseEvidenceField[]
@@ -270,6 +298,30 @@ export type ProductCaseSourceAccess = {
   httpStatus: number | null
   redirectsFollowed: number
   credentialsUsed: false
+}
+
+export function resolveLunaSourceContractGuard(input: {
+  sourceAccessStatus: ProductCaseSourceAccessStatus
+  supplierSourceCapture: ProductCaseSupplierSourceCapture | null
+}) {
+  if (input.supplierSourceCapture) {
+    return {
+      parserVersion: input.supplierSourceCapture.parserVersion,
+      sourceContractVersion:
+        input.supplierSourceCapture.sourceContractVersion,
+      parseHealth: input.supplierSourceCapture.parseHealth,
+      stockState: input.supplierSourceCapture.stockState,
+    }
+  }
+  return {
+    parserVersion: PRODUCT_CASE_PARSER_VERSION,
+    sourceContractVersion: LUNA_SOURCE_CONTRACT_VERSION,
+    parseHealth: input.sourceAccessStatus ===
+        "AUTHENTICATED_SOURCE_REQUIRED"
+      ? "AUTHENTICATION_REQUIRED" as const
+      : "PARTIAL_EXTRACTION" as const,
+    stockState: "STOCK_UNKNOWN" as const,
+  }
 }
 
 export type ProductCaseMarketEvidence = {
@@ -1372,6 +1424,10 @@ export async function createManualAuthenticatedSupplierSourceCapture(input: {
     sourceCaptureMethod: "MANUAL_AUTHENTICATED_PASTE",
     capturedAt: input.extraction.capture.capturedAt,
     contentHash: input.extraction.capture.contentHash as `sha256:${string}`,
+    parserVersion: input.extraction.parserVersion,
+    sourceContractVersion: input.extraction.sourceContractVersion,
+    parseHealth: input.extraction.parseHealth,
+    stockState: input.extraction.stockState,
     extractionWarnings: [...input.extraction.parserWarnings],
     evidenceCandidates: structuredClone(evidenceCandidates),
     missingFields: [...input.extraction.missingFields],
@@ -2160,6 +2216,60 @@ function plainTextCandidates(content: string): Candidate[] {
   return candidates
 }
 
+function lunaStockStateFromCandidates(
+  content: string,
+  candidates: Candidate[],
+): LunaStockState {
+  const quantities = [...new Set(candidates
+    .filter((candidate) => candidate.field === "visible_stock")
+    .map((candidate) =>
+      normalizeFieldValue("visible_stock", candidate.normalizedValue)
+    )
+    .filter((value): value is number =>
+      typeof value === "number" && Number.isFinite(value)
+    ))]
+  const hasPositiveQuantity = quantities.some((quantity) => quantity > 0)
+  const hasZeroQuantity = quantities.includes(0)
+  const hasExplicitOutOfStock =
+    /\bout\s+of\s+stock\b|\bsold\s+out\b/i.test(content)
+  if (
+    quantities.length > 1 ||
+    (hasPositiveQuantity && (hasZeroQuantity || hasExplicitOutOfStock))
+  ) return "STOCK_CONFLICTED"
+  if (hasPositiveQuantity) return "IN_STOCK_SIGNAL"
+  if (hasZeroQuantity || hasExplicitOutOfStock) {
+    return "OUT_OF_STOCK_SIGNAL"
+  }
+  return "STOCK_UNKNOWN"
+}
+
+function lunaSourceContractSignalFailures(
+  content: string,
+  candidates: Candidate[],
+  stockState: LunaStockState,
+) {
+  const fields = new Set(candidates.map((candidate) => candidate.field))
+  const failures: string[] = []
+  if (/\bregular\s+price\b/i.test(content) &&
+    !fields.has("regular_price")) {
+    failures.push("REGULAR_PRICE")
+  }
+  if (/\bsale\s+price\b/i.test(content) && !fields.has("sale_price")) {
+    failures.push("SALE_PRICE")
+  }
+  if (/\bunits?\s+available\b/i.test(content) &&
+    !fields.has("visible_stock")) {
+    failures.push("VISIBLE_STOCK")
+  }
+  if (
+    /\bout\s+of\s+stock\b|\bsold\s+out\b/i.test(content) &&
+    !["OUT_OF_STOCK_SIGNAL", "STOCK_CONFLICTED"].includes(stockState)
+  ) {
+    failures.push("OUT_OF_STOCK")
+  }
+  return unique(failures)
+}
+
 function candidateConflictKey(candidate: Candidate) {
   if (!CONFLICT_FIELDS.has(candidate.field)) return null
   return [
@@ -2314,6 +2424,21 @@ export async function extractProductCaseEvidence(input: {
   }
 
   const present = [...deduped.values()]
+  const stockState = lunaStockStateFromCandidates(input.content, present)
+  const sourceContractFailures = lunaSourceContractSignalFailures(
+    input.content,
+    present,
+    stockState,
+  )
+  parserWarnings.push(...sourceContractFailures.map((failure) =>
+    `LUNA_SOURCE_CONTRACT_UNEXTRACTED:${failure}`
+  ))
+  const parseHealth: LunaSourceParseHealth =
+    sourceContractFailures.length > 0
+      ? "SOURCE_FORMAT_CHANGED"
+      : parserWarnings.length > 0 || present.length === 0
+        ? "PARTIAL_EXTRACTION"
+        : "PARSED_OK"
   const evidence: ProductCaseEvidence[] = present.map((candidate, index) => {
     const sourceEvidenceClass = candidate.evidenceClass ??
       "SUPPLIER_STATED"
@@ -2393,12 +2518,20 @@ export async function extractProductCaseEvidence(input: {
       sourceUrl: validatedUrl.canonicalUrl,
       capturedAt: input.capturedAt,
       contentHash,
+      parserVersion: PRODUCT_CASE_PARSER_VERSION,
+      sourceContractVersion: LUNA_SOURCE_CONTRACT_VERSION,
+      parseHealth,
+      stockState,
       format,
       byteLength,
       fullContentStored: false,
       scriptsExecuted: false,
       resourcesLoaded: false,
     },
+    parserVersion: PRODUCT_CASE_PARSER_VERSION,
+    sourceContractVersion: LUNA_SOURCE_CONTRACT_VERSION,
+    parseHealth,
+    stockState,
     evidence: withConflicts,
     conflicts: conflictsForEvidence(withConflicts),
     missingFields: PRODUCT_CASE_EVIDENCE_FIELDS.filter((field) =>
@@ -2924,6 +3057,20 @@ export function validateProductCaseSupplierSourceCapture(
     sourceCapture.sensitiveContentAssessment !==
       "NO_SENSITIVE_PATTERN_DETECTED" ||
     sourceCapture.humanVisibleProductTextConfirmed !== true ||
+    sourceCapture.parserVersion !== PRODUCT_CASE_PARSER_VERSION ||
+    sourceCapture.sourceContractVersion !==
+      LUNA_SOURCE_CONTRACT_VERSION ||
+    !([
+      "PARSED_OK",
+      "PARTIAL_EXTRACTION",
+      "SOURCE_FORMAT_CHANGED",
+    ] as LunaSourceParseHealth[]).includes(sourceCapture.parseHealth) ||
+    !([
+      "IN_STOCK_SIGNAL",
+      "OUT_OF_STOCK_SIGNAL",
+      "STOCK_UNKNOWN",
+      "STOCK_CONFLICTED",
+    ] as LunaStockState[]).includes(sourceCapture.stockState) ||
     !validIsoInstant(sourceCapture.capturedAt) ||
     !validSha256(sourceCapture.contentHash)
   ) {
@@ -2937,6 +3084,11 @@ export function validateProductCaseSupplierSourceCapture(
   )
   if (
     !matchingCapture ||
+    matchingCapture.parserVersion !== sourceCapture.parserVersion ||
+    matchingCapture.sourceContractVersion !==
+      sourceCapture.sourceContractVersion ||
+    matchingCapture.parseHealth !== sourceCapture.parseHealth ||
+    matchingCapture.stockState !== sourceCapture.stockState ||
     (textValidation.valid &&
       matchingCapture.byteLength !== textValidation.byteLength)
   ) {
@@ -3236,6 +3388,10 @@ export async function createHumanVisualReviewRecord(input: {
     sourceUrl: input.document.sourceUrl,
     capturedAt: input.reviewedAt,
     contentHash,
+    parserVersion: null,
+    sourceContractVersion: null,
+    parseHealth: null,
+    stockState: null,
     format: "JSON",
     byteLength: utf8Length(serialized),
     fullContentStored: false,
@@ -3988,7 +4144,16 @@ export function buildManualListingPackageDraft(input: {
 }): ProductCaseManualListingPackage {
   const accepted = acceptedProductCaseEvidence(input.document.evidence)
   const acceptedIds = accepted.map((entry) => entry.id)
-  const identityHold = !identityReviewReady(input.document)
+  const sourceContractCapture = input.document.supplierSourceCapture
+  const sourceContractHold = Boolean(
+    sourceContractCapture &&
+    (
+      sourceContractCapture.parseHealth !== "PARSED_OK" ||
+      sourceContractCapture.stockState !== "IN_STOCK_SIGNAL"
+    ),
+  )
+  const identityHold = !identityReviewReady(input.document) ||
+    sourceContractHold
   const acceptedLink = (id: string) => acceptedIds.includes(id)
   const linksAccepted = (ids: string[]) =>
     ids.length > 0 && ids.every(acceptedLink)
@@ -4309,7 +4474,7 @@ export function buildManualListingPackageDraft(input: {
     listingGate(
       "IDENTITY_AND_VARIANT_READY",
       sourceResolved && captureHasRealHash && humanReviewComplete &&
-        identityReady && variantReady,
+        identityReady && variantReady && !sourceContractHold,
       [
         ...(!sourceResolved
           ? ["AUTHENTICATED_SUPPLIER_CAPTURE_REQUIRED"] : []),
@@ -4317,6 +4482,8 @@ export function buildManualListingPackageDraft(input: {
         ...(!humanReviewComplete ? ["HUMAN_FIELD_REVIEW_INCOMPLETE"] : []),
         ...(!identityReady ? ["IDENTITY_EVIDENCE_INCOMPLETE"] : []),
         ...(!variantReady ? ["VARIANT_EVIDENCE_INCOMPLETE"] : []),
+        ...(sourceContractHold
+          ? ["LUNA_SOURCE_CONTRACT_GUARD_BLOCKED"] : []),
       ],
       [...identityFields.flatMap(fieldIds), ...fieldIds("variant_id")],
     ),
@@ -4324,8 +4491,13 @@ export function buildManualListingPackageDraft(input: {
       "SUPPLIER_AVAILABILITY_READY",
       input.operations.supplierAvailabilityStatus ===
         "CONFIRMED_AVAILABLE" &&
-        supplierAvailabilityReady,
-      ["CURRENT_SUPPLIER_AVAILABILITY_CONFIRMATION_REQUIRED"],
+        supplierAvailabilityReady &&
+        !sourceContractHold,
+      [
+        "CURRENT_SUPPLIER_AVAILABILITY_CONFIRMATION_REQUIRED",
+        ...(sourceContractHold
+          ? ["LUNA_SOURCE_CONTRACT_GUARD_BLOCKED"] : []),
+      ],
       fieldIds("visible_stock"),
     ),
     listingGate(
@@ -4851,6 +5023,14 @@ export function buildProductCasePhaseSnapshots(input: {
               sourceCaptureMethod:
                 input.document.supplierSourceCapture.sourceCaptureMethod,
               contentHash: input.document.supplierSourceCapture.contentHash,
+              parserVersion:
+                input.document.supplierSourceCapture.parserVersion,
+              sourceContractVersion:
+                input.document.supplierSourceCapture.sourceContractVersion,
+              parseHealth:
+                input.document.supplierSourceCapture.parseHealth,
+              stockState:
+                input.document.supplierSourceCapture.stockState,
               evidenceCandidateCount:
                 input.document.supplierSourceCapture.evidenceCandidates.length,
               missingFieldCount:
@@ -4879,6 +5059,10 @@ export function buildProductCasePhaseSnapshots(input: {
           contentHash: capture.contentHash,
           byteLength: capture.byteLength,
           format: capture.format,
+          parserVersion: capture.parserVersion,
+          sourceContractVersion: capture.sourceContractVersion,
+          parseHealth: capture.parseHealth,
+          stockState: capture.stockState,
         })),
       },
       output: { proposedEvidenceCount: input.document.evidence.length },
