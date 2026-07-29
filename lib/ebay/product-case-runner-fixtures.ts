@@ -23,11 +23,18 @@ export const ELECTRIC_RAZOR_LUNA_CONTRACT_SANITIZED_SNAPSHOT =
   `643 units available
 Regular price$14.50 USD Sale price$11.56 USDSale
 Electric Razor for Men,Shavers for Men Electric Razor Wet Dry
+A cordless wet and dry electric razor promoted for everyday home and travel use.
 Close shave
+Floating heads are promoted as following facial contours for a close shave and a comfortable routine.
 Easy to clean
+The washable body is presented as making rinsing easier and safer after use.
 Pop-up sideburns
+The pop-up trimmer is promoted for shaping sideburns and beard edges.
 Dry and wet shaving
+The supplier says it can be used for dry shaving or with water and shaving foam.
 Fast charging and durable
+The supplier promotes fast charging and says one charge can support up to one month of typical use.
+More information
 Shave time per charge: 99 mins
 Waterproof rated: IPX6
 Rated power: 5W

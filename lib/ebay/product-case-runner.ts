@@ -15,7 +15,7 @@ import type {
 export const PRODUCT_CASE_RUNNER_VERSION =
   "PRODUCT_CASE_RUNNER_V1_2026_07_28" as const
 export const PRODUCT_CASE_PARSER_VERSION =
-  "LUNA_TEXT_PARSER_V1_2026_07_29_SOURCE_LABELS_2" as const
+  "LUNA_TEXT_PARSER_V1_2026_07_29_NARRATIVE_BLOCKS_3" as const
 export const LUNA_SOURCE_CONTRACT_VERSION =
   "LUNA_SOURCE_CONTRACT_V1" as const
 
@@ -1915,6 +1915,32 @@ function lunaMarketingSectionTitle(value: string) {
   ) ?? null
 }
 
+type LunaMarketingNarrative = {
+  sectionTitle: string
+  body: string
+}
+
+function lunaMarketingNarrative(
+  candidate: Candidate,
+): LunaMarketingNarrative | null {
+  if (
+    candidate.field !== "marketing_claim" ||
+    !candidate.normalizedValue ||
+    typeof candidate.normalizedValue !== "object"
+  ) return null
+  const value = candidate.normalizedValue as Record<string, unknown>
+  if (
+    typeof value.sectionTitle !== "string" ||
+    typeof value.body !== "string" ||
+    !value.sectionTitle ||
+    !value.body
+  ) return null
+  return {
+    sectionTitle: value.sectionTitle,
+    body: value.body,
+  }
+}
+
 function lunaPackingItem(value: string) {
   const match = normalizeWhitespace(value).match(
     /^(\d[\d,]*)\s*(?:\*|×|x)\s*(\S(?:.*\S)?)$/i,
@@ -1988,6 +2014,7 @@ function isNonTitleInterfaceLine(line: string) {
     !normalized ||
     visibleStockFromLine(normalized) !== null ||
     lunaMarketingSectionTitle(normalized) !== null ||
+    /^more\s+information\b.*:?\s*$/i.test(normalized) ||
     /^packing\s+include\s*:?\s*$/i.test(normalized) ||
     lunaPackingItem(normalized) !== null ||
     lunaTransformerExclusionWarning(normalized)
@@ -2031,11 +2058,175 @@ function isProductTitleCandidateLine(line: string) {
   return words.length >= 2
 }
 
+type SourceTextLine = {
+  rawValue: string
+  normalized: string
+  start: number
+  end: number
+}
+
+function sourceTextLines(value: string): SourceTextLine[] {
+  const lines: SourceTextLine[] = []
+  const pattern = /[^\r\n]*(?:\r\n|\n|\r|$)/g
+  for (const match of value.matchAll(pattern)) {
+    const fullLine = match[0]
+    if (!fullLine) continue
+    const rawValue = fullLine.replace(/\r\n$|\n$|\r$/, "")
+    const start = match.index ?? 0
+    lines.push({
+      rawValue,
+      normalized: normalizeWhitespace(rawValue),
+      start,
+      end: start + rawValue.length,
+    })
+    if (lines.length >= 5_000) break
+  }
+  return lines
+}
+
+function lunaExplicitSpecificationLine(value: string) {
+  const generic = normalizeWhitespace(value).match(
+    /^(?:[-*•]\s*)?([A-Za-z][A-Za-z0-9 /_-]{1,60})\s*[:=-]\s*(.*)$/,
+  )
+  return SUPPLIER_SPECIFICATION_LABELS.has(
+    normalizedTextLabel(generic?.[1] ?? ""),
+  )
+}
+
+function lunaNarrativeBoundary(value: string) {
+  const normalized = normalizeWhitespace(value)
+  return (
+    lunaMarketingSectionTitle(normalized) !== null ||
+    /^more\s+information\b.*:?\s*$/i.test(normalized) ||
+    /^packing\s+include\s*:?\s*$/i.test(normalized) ||
+    lunaExplicitSpecificationLine(normalized) ||
+    lunaTransformerExclusionWarning(normalized)
+  )
+}
+
+function normalizedNarrativeBody(lines: SourceTextLine[]) {
+  const paragraphs: string[] = []
+  let paragraphLines: string[] = []
+  const flushParagraph = () => {
+    if (!paragraphLines.length) return
+    paragraphs.push(paragraphLines.join(" "))
+    paragraphLines = []
+  }
+  for (const line of lines) {
+    if (!line.normalized) {
+      flushParagraph()
+      continue
+    }
+    paragraphLines.push(line.normalized)
+  }
+  flushParagraph()
+  return paragraphs.join("\n\n")
+}
+
+function trimBlankSourceLines(lines: SourceTextLine[]) {
+  let start = 0
+  let end = lines.length
+  while (start < end && !lines[start].normalized) start += 1
+  while (end > start && !lines[end - 1].normalized) end -= 1
+  return lines.slice(start, end)
+}
+
+function pushLunaMarketingNarrative(
+  target: Candidate[],
+  visibleText: string,
+  lines: SourceTextLine[],
+  sectionTitle: string,
+  headingLineIndex: number | null,
+  bodyStartIndex: number,
+  bodyEndIndex: number,
+  extractionPath: string,
+) {
+  const bodyLines = trimBlankSourceLines(
+    lines.slice(bodyStartIndex, bodyEndIndex),
+  )
+  const body = normalizedNarrativeBody(bodyLines)
+  if (!body || bodyLines.length === 0) return
+  const rawStart = headingLineIndex === null
+    ? bodyLines[0].start
+    : lines[headingLineIndex].start
+  const rawEnd = bodyLines.at(-1)?.end ?? rawStart
+  pushCandidate(target, {
+    field: "marketing_claim",
+    rawValue: visibleText.slice(rawStart, rawEnd),
+    normalizedValue: { sectionTitle, body },
+    extractionPath,
+    variantKey: null,
+    evidenceClass: "SUPPLIER_MARKETING_CLAIM",
+  })
+}
+
+function lunaMarketingNarrativeCandidates(
+  visibleText: string,
+  pathPrefix: string,
+) {
+  const candidates: Candidate[] = []
+  const lines = sourceTextLines(visibleText)
+  const firstNarrativeBoundaryIndex = lines.findIndex((line) =>
+    lunaNarrativeBoundary(line.normalized)
+  )
+  const firstNarrativeBoundary = firstNarrativeBoundaryIndex >= 0
+    ? firstNarrativeBoundaryIndex
+    : lines.length
+  const priceLineIndex = lines.findIndex((line) =>
+    /\b(?:regular|sale)\s+price\b/i.test(line.normalized)
+  )
+  const titleLineIndex = lines.findIndex((line, index) =>
+    index < firstNarrativeBoundary &&
+    isProductTitleCandidateLine(line.normalized)
+  )
+  const introductionStart = Math.max(priceLineIndex, titleLineIndex) + 1
+  if (
+    priceLineIndex >= 0 &&
+    titleLineIndex >= 0 &&
+    introductionStart < firstNarrativeBoundary
+  ) {
+    pushLunaMarketingNarrative(
+      candidates,
+      visibleText,
+      lines,
+      "Supplier introduction",
+      null,
+      introductionStart,
+      firstNarrativeBoundary,
+      `${pathPrefix}.marketing_claim.introduction`,
+    )
+  }
+
+  for (const [lineIndex, line] of lines.entries()) {
+    const sectionTitle = lunaMarketingSectionTitle(line.normalized)
+    if (!sectionTitle) continue
+    let bodyEndIndex = lineIndex + 1
+    while (
+      bodyEndIndex < lines.length &&
+      !lunaNarrativeBoundary(lines[bodyEndIndex].normalized)
+    ) bodyEndIndex += 1
+    pushLunaMarketingNarrative(
+      candidates,
+      visibleText,
+      lines,
+      sectionTitle,
+      lineIndex,
+      lineIndex + 1,
+      bodyEndIndex,
+      `${pathPrefix}.line[${lineIndex}].marketing_claim.section`,
+    )
+  }
+  return candidates
+}
+
 function labeledTextCandidates(
   visibleText: string,
   pathPrefix: string,
 ): Candidate[] {
-  const candidates: Candidate[] = []
+  const candidates = lunaMarketingNarrativeCandidates(
+    visibleText,
+    pathPrefix,
+  )
   const lines = visibleText.split(/\r?\n|[|•]/)
     .map((rawValue) => ({
       rawValue: rawValue.trim(),
@@ -2099,15 +2290,6 @@ function labeledTextCandidates(
     }
     const marketingSectionTitle = lunaMarketingSectionTitle(line)
     if (marketingSectionTitle) {
-      pushCandidate(candidates, {
-        field: "marketing_claim",
-        rawValue,
-        normalizedValue: marketingSectionTitle,
-        extractionPath:
-          `${pathPrefix}.line[${lineIndex}].marketing_claim.section`,
-        variantKey: null,
-        evidenceClass: "SUPPLIER_MARKETING_CLAIM",
-      })
       continue
     }
     if (lunaTransformerExclusionWarning(line)) {
@@ -2315,10 +2497,23 @@ function plainTextCandidates(content: string): Candidate[] {
     .filter(Boolean)
     .slice(0, 5_000)
   const candidates = labeledTextCandidates(
-    normalized.join("\n"),
+    content,
     "text",
   )
-  const titleLineIndex = normalized.findIndex(isProductTitleCandidateLine)
+  const marketingNarrativeLines = new Set(
+    candidates.filter((candidate) =>
+      candidate.field === "marketing_claim" &&
+      typeof candidate.rawValue === "string"
+    ).flatMap((candidate) =>
+      String(candidate.rawValue).split(/\r?\n/)
+        .map(normalizeWhitespace)
+        .filter(Boolean)
+    ),
+  )
+  const titleLineIndex = normalized.findIndex((line) =>
+    !marketingNarrativeLines.has(line) &&
+    isProductTitleCandidateLine(line)
+  )
   const titleLine = normalized[titleLineIndex]
   if (titleLineIndex >= 0 && titleLine) {
     pushCandidate(candidates, {
@@ -2470,8 +2665,8 @@ function lunaSourceContractSignalFailures(
     if (
       marketingSectionTitle &&
       !sourceCandidates.some((candidate) =>
-        candidate.field === "marketing_claim" &&
-        candidate.normalizedValue === marketingSectionTitle
+        lunaMarketingNarrative(candidate)?.sectionTitle ===
+          marketingSectionTitle
       )
     ) failures.push(
       `MARKETING_SECTION_${normalizedTextLabel(marketingSectionTitle)

@@ -155,7 +155,13 @@ waterproof, potencia, modo de uso, carga y `Packing Include`. Los ítems
 `cantidad * producto` conservan cada línea fuente y se separan entre contents
 y accessories. Los encabezados `Close shave`, `Easy to clean`,
 `Pop-up sideburns`, `Dry and wet shaving` y `Fast charging and durable` son
-`SUPPLIER_MARKETING_CLAIM`: no entran en product facts ni como título.
+`SUPPLIER_MARKETING_CLAIM`. El parser conserva el bloque promocional completo
+(encabezado, párrafos fuente, título de sección y cuerpo normalizado), además
+del párrafo introductorio posterior a los precios. Estos bloques no entran en
+product facts, Strategy Lab ni como título eBay; frases promocionales como
+`floating heads`, `close shave`, `safer` o `one month` no se convierten en
+hechos verificados. Un encabezado reconocido sin cuerpo capturado fuerza
+`SOURCE_FORMAT_CHANGED`.
 
 ## Evidencia y revisión humana
 
