@@ -150,6 +150,13 @@ revisión humana y bloquea cualquier paquete o handoff eBay. Un cambio de
 `parserVersion` invalida la captura vigente hasta que el texto original se
 reprocese.
 
+El mismo fail-closed cubre las etiquetas Luna de autonomía de afeitado,
+waterproof, potencia, modo de uso, carga y `Packing Include`. Los ítems
+`cantidad * producto` conservan cada línea fuente y se separan entre contents
+y accessories. Los encabezados `Close shave`, `Easy to clean`,
+`Pop-up sideburns`, `Dry and wet shaving` y `Fast charging and durable` son
+`SUPPLIER_MARKETING_CLAIM`: no entran en product facts ni como título.
+
 ## Evidencia y revisión humana
 
 Cada propuesta conserva:

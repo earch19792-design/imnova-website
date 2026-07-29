@@ -15,7 +15,7 @@ import type {
 export const PRODUCT_CASE_RUNNER_VERSION =
   "PRODUCT_CASE_RUNNER_V1_2026_07_28" as const
 export const PRODUCT_CASE_PARSER_VERSION =
-  "LUNA_TEXT_PARSER_V1_2026_07_29_OOS_PROVENANCE_1" as const
+  "LUNA_TEXT_PARSER_V1_2026_07_29_SOURCE_LABELS_2" as const
 export const LUNA_SOURCE_CONTRACT_VERSION =
   "LUNA_SOURCE_CONTRACT_V1" as const
 
@@ -1045,6 +1045,8 @@ const FIELD_LABELS: Record<ProductCaseEvidenceField, string> = {
 const MULTI_VALUE_FIELDS = new Set<ProductCaseEvidenceField>([
   "option_name",
   "option_value",
+  "contents",
+  "accessories",
   "bullet",
   "supplier_specification",
   "marketing_claim",
@@ -1074,9 +1076,7 @@ const CONFLICT_FIELDS = new Set<ProductCaseEvidenceField>([
   "product_dimensions",
   "package_dimensions",
   "weight",
-  "contents",
   "inflation_mechanism",
-  "accessories",
   "included_quantity",
   "pack_quantity",
   "supplier_price",
@@ -1874,23 +1874,68 @@ const TEXT_LABELS: Array<{
 const SUPPLIER_SPECIFICATION_LABELS = new Set([
   "charging time",
   "charge time",
+  "shave time per charge",
   "runtime",
   "autonomy",
   "battery life",
   "ip rating",
+  "waterproof rated",
   "water resistance",
   "battery",
   "battery capacity",
   "power",
+  "rated power",
   "wattage",
   "voltage",
   "frequency",
+  "how to use",
+  "charging",
 ])
 
 function normalizedTextLabel(value: string) {
   return normalizeWhitespace(value)
     .toLocaleLowerCase("en-US")
     .replace(/[^a-z0-9 ]+/g, "")
+}
+
+const LUNA_MARKETING_SECTION_TITLES = new Map([
+  ["close shave", "Close shave"],
+  ["easy to clean", "Easy to clean"],
+  ["popup sideburns", "Pop-up sideburns"],
+  ["dry and wet shaving", "Dry and wet shaving"],
+  ["fast charging and durable", "Fast charging and durable"],
+])
+
+function lunaMarketingSectionTitle(value: string) {
+  const withoutOrdinal = normalizeWhitespace(value)
+    .replace(/^[A-E]\s*[.)-]\s*/i, "")
+    .replace(/:\s*$/, "")
+  return LUNA_MARKETING_SECTION_TITLES.get(
+    normalizedTextLabel(withoutOrdinal),
+  ) ?? null
+}
+
+function lunaPackingItem(value: string) {
+  const match = normalizeWhitespace(value).match(
+    /^(\d[\d,]*)\s*(?:\*|×|x)\s*(\S(?:.*\S)?)$/i,
+  )
+  if (!match) return null
+  const quantity = Number(match[1].replaceAll(",", ""))
+  if (!Number.isSafeInteger(quantity) || quantity < 1) return null
+  return {
+    quantity,
+    item: normalizeWhitespace(match[2]),
+  }
+}
+
+function lunaPackingItemIsAccessory(item: string) {
+  return /\b(?:cable|brush|manual|case|comb|attachment|accessor)\b/i
+    .test(item)
+}
+
+function lunaTransformerExclusionWarning(value: string) {
+  return /^\(?\s*do\s+not\s+including\s+transformer\s*\/\s*adapter\s*\/\s*charger\s*\)?[.!]*$/i
+    .test(normalizeWhitespace(value))
 }
 
 function visibleStockFromLine(line: string) {
@@ -1939,7 +1984,14 @@ function pushCompactLabeledPriceCandidates(
 
 function isNonTitleInterfaceLine(line: string) {
   const normalized = normalizeWhitespace(line)
-  if (!normalized || visibleStockFromLine(normalized) !== null) return true
+  if (
+    !normalized ||
+    visibleStockFromLine(normalized) !== null ||
+    lunaMarketingSectionTitle(normalized) !== null ||
+    /^packing\s+include\s*:?\s*$/i.test(normalized) ||
+    lunaPackingItem(normalized) !== null ||
+    lunaTransformerExclusionWarning(normalized)
+  ) return true
   if (
     /^(?:sale(?:\s+\d{1,3}%\s+off)?|out\s+of\s+stock|sold\s+out|add\s+to\s+cart|add\s+to\s+wishlist|pay\s+over\s+time|shop\s+now|learn\s+more|view\s+all|continue\s+shopping)$/i
       .test(normalized)
@@ -1985,10 +2037,44 @@ function labeledTextCandidates(
 ): Candidate[] {
   const candidates: Candidate[] = []
   const lines = visibleText.split(/\r?\n|[|•]/)
-    .map(normalizeWhitespace)
-    .filter(Boolean)
+    .map((rawValue) => ({
+      rawValue: rawValue.trim(),
+      line: normalizeWhitespace(rawValue),
+    }))
+    .filter((entry) => Boolean(entry.line))
     .slice(0, 5_000)
-  for (const [lineIndex, line] of lines.entries()) {
+  let packingIncludeActive = false
+  for (const [lineIndex, sourceLine] of lines.entries()) {
+    const { line, rawValue } = sourceLine
+    if (/^packing\s+include\s*:?\s*$/i.test(line)) {
+      packingIncludeActive = true
+      continue
+    }
+    if (packingIncludeActive) {
+      const packingItem = lunaPackingItem(line)
+      if (packingItem) {
+        const itemPath =
+          `${pathPrefix}.line[${lineIndex}].packing_include`
+        pushCandidate(candidates, {
+          field: "contents",
+          rawValue,
+          normalizedValue: packingItem,
+          extractionPath: `${itemPath}.contents`,
+          variantKey: null,
+        })
+        if (lunaPackingItemIsAccessory(packingItem.item)) {
+          pushCandidate(candidates, {
+            field: "accessories",
+            rawValue,
+            normalizedValue: packingItem,
+            extractionPath: `${itemPath}.accessories`,
+            variantKey: null,
+          })
+        }
+        continue
+      }
+      packingIncludeActive = false
+    }
     const visibleStock = visibleStockFromLine(line)
     if (visibleStock !== null) {
       pushCandidate(candidates, {
@@ -2008,6 +2094,31 @@ function labeledTextCandidates(
         extractionPath:
           `${pathPrefix}.line[${lineIndex}].out_of_stock_signal`,
         variantKey: null,
+      })
+      continue
+    }
+    const marketingSectionTitle = lunaMarketingSectionTitle(line)
+    if (marketingSectionTitle) {
+      pushCandidate(candidates, {
+        field: "marketing_claim",
+        rawValue,
+        normalizedValue: marketingSectionTitle,
+        extractionPath:
+          `${pathPrefix}.line[${lineIndex}].marketing_claim.section`,
+        variantKey: null,
+        evidenceClass: "SUPPLIER_MARKETING_CLAIM",
+      })
+      continue
+    }
+    if (lunaTransformerExclusionWarning(line)) {
+      pushCandidate(candidates, {
+        field: "warnings",
+        rawValue,
+        normalizedValue: line,
+        extractionPath:
+          `${pathPrefix}.line[${lineIndex}].transformer_exclusion_warning`,
+        variantKey: null,
+        evidenceClass: "SUPPLIER_STATED",
       })
       continue
     }
@@ -2275,6 +2386,41 @@ function lunaStockStateFromCandidates(
   return "STOCK_UNKNOWN"
 }
 
+const LUNA_REQUIRED_SPECIFICATION_LABELS = [
+  ["SHAVE_TIME_PER_CHARGE", "shave time per charge"],
+  ["WATERPROOF_RATED", "waterproof rated"],
+  ["RATED_POWER", "rated power"],
+  ["HOW_TO_USE", "how to use"],
+  ["CHARGING", "charging"],
+] as const
+
+function lunaSourceContractLines(content: string) {
+  return content.split(/\r?\n|[|•]/)
+    .map(normalizeWhitespace)
+    .filter(Boolean)
+    .slice(0, 5_000)
+}
+
+function lineHasLunaLabel(line: string, label: string) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return new RegExp(
+    `^(?:[-*•]\\s*)?${escaped}\\s*(?::|=|-)`,
+    "i",
+  ).test(line)
+}
+
+function candidatePreservesRawLine(
+  candidates: Candidate[],
+  field: ProductCaseEvidenceField,
+  line: string,
+) {
+  return candidates.some((candidate) =>
+    candidate.field === field &&
+    typeof candidate.rawValue === "string" &&
+    normalizeWhitespace(candidate.rawValue) === line
+  )
+}
+
 function lunaSourceContractSignalFailures(
   content: string,
   presentCandidates: Candidate[],
@@ -2282,6 +2428,7 @@ function lunaSourceContractSignalFailures(
   stockState: LunaStockState,
 ) {
   const fields = new Set(presentCandidates.map((candidate) => candidate.field))
+  const lines = lunaSourceContractLines(content)
   const failures: string[] = []
   if (/\bregular\s+price\b/i.test(content) &&
     !fields.has("regular_price")) {
@@ -2302,6 +2449,53 @@ function lunaSourceContractSignalFailures(
   ) {
     failures.push("OUT_OF_STOCK")
   }
+  for (const [failureCode, label] of LUNA_REQUIRED_SPECIFICATION_LABELS) {
+    for (const line of lines.filter((entry) =>
+      lineHasLunaLabel(entry, label)
+    )) {
+      if (!candidatePreservesRawLine(
+        sourceCandidates,
+        "supplier_specification",
+        line,
+      )) failures.push(failureCode)
+    }
+  }
+  for (const line of lines) {
+    if (
+      lunaTransformerExclusionWarning(line) &&
+      !candidatePreservesRawLine(sourceCandidates, "warnings", line)
+    ) failures.push("TRANSFORMER_EXCLUSION_WARNING")
+
+    const marketingSectionTitle = lunaMarketingSectionTitle(line)
+    if (
+      marketingSectionTitle &&
+      !sourceCandidates.some((candidate) =>
+        candidate.field === "marketing_claim" &&
+        candidate.normalizedValue === marketingSectionTitle
+      )
+    ) failures.push(
+      `MARKETING_SECTION_${normalizedTextLabel(marketingSectionTitle)
+        .replaceAll(" ", "_").toLocaleUpperCase("en-US")}`,
+    )
+
+    const packingItem = lunaPackingItem(line)
+    if (
+      packingItem &&
+      !candidatePreservesRawLine(sourceCandidates, "contents", line)
+    ) failures.push("PACKING_INCLUDE_ITEM")
+    if (
+      packingItem &&
+      lunaPackingItemIsAccessory(packingItem.item) &&
+      !candidatePreservesRawLine(sourceCandidates, "accessories", line)
+    ) failures.push("PACKING_INCLUDE_ACCESSORY")
+  }
+  if (
+    lines.some((line) => /^packing\s+include\s*:?\s*$/i.test(line)) &&
+    !sourceCandidates.some((candidate) =>
+      candidate.field === "contents" &&
+      candidate.extractionPath.includes(".packing_include.")
+    )
+  ) failures.push("PACKING_INCLUDE")
   return unique(failures)
 }
 

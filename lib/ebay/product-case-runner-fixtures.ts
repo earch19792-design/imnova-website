@@ -19,6 +19,27 @@ Electric Razor for Men,Shavers for Men Electric Razor Wet Dry`
 export const LUNA_CONCATENATED_PRICES_SANITIZED_SNAPSHOT =
   "Regular price$14.50 USD Sale price$11.56 USDSale"
 
+export const ELECTRIC_RAZOR_LUNA_CONTRACT_SANITIZED_SNAPSHOT =
+  `643 units available
+Regular price$14.50 USD Sale price$11.56 USDSale
+Electric Razor for Men,Shavers for Men Electric Razor Wet Dry
+Close shave
+Easy to clean
+Pop-up sideburns
+Dry and wet shaving
+Fast charging and durable
+Shave time per charge: 99 mins
+Waterproof rated: IPX6
+Rated power: 5W
+How to use: use while charging or use cordless
+Charging: Equipped with USB data cable
+(DO NOT including transformer/adapter/charger)
+Packing Include:
+1 * men electric razor
+1 * USB charging cable(Type-C charging interface)
+1 * Clean brush
+1 * User manual`
+
 export const GOLF_SWING_TRAINER_PUBLIC_SNAPSHOT =
   "{\"sourceType\":\"LUNA_PUBLIC_PRODUCT_CARD\",\"productName\":\"Smart Inflatable Golf Ball Swing Trainer Black\",\"supplierPrice\":{\"amount\":8,\"currency\":\"USD\"},\"placement\":\"New Arrivals & Restocks\",\"accessStatus\":\"AUTHENTICATED_SOURCE_REQUIRED\"}"
 
