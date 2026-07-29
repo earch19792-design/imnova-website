@@ -1827,6 +1827,39 @@ function visibleStockFromLine(line: string) {
   return Number.isSafeInteger(quantity) && quantity >= 0 ? quantity : null
 }
 
+function pushCompactLabeledPriceCandidates(
+  target: Candidate[],
+  line: string,
+  extractionPath: string,
+) {
+  const pattern =
+    /\b(regular\s+price|sale\s+price)\s*[:=-]?\s*([$€£Q]?\s*\d[\d,]*(?:\.\d{1,2})?)\s*([A-Z]{3})(?=\s*(?:regular\s+price|sale\s+price|sale\b|$))/gi
+  let matched = false
+  for (const match of line.matchAll(pattern)) {
+    const field = /^regular/i.test(match[1])
+      ? "regular_price"
+      : "sale_price"
+    const currency = match[3].toLocaleUpperCase("en-US")
+    const rawPrice = `${normalizeWhitespace(match[2])} ${currency}`
+    pushCandidate(target, {
+      field,
+      rawValue: rawPrice,
+      normalizedValue: match[2],
+      extractionPath: `${extractionPath}.${field}`,
+      variantKey: null,
+    })
+    pushCandidate(target, {
+      field: "currency",
+      rawValue: currency,
+      normalizedValue: currency,
+      extractionPath: `${extractionPath}.${field}.currency`,
+      variantKey: null,
+    })
+    matched = true
+  }
+  return matched
+}
+
 function isNonTitleInterfaceLine(line: string) {
   const normalized = normalizeWhitespace(line)
   if (!normalized || visibleStockFromLine(normalized) !== null) return true
@@ -1890,6 +1923,11 @@ function labeledTextCandidates(
       })
       continue
     }
+    if (pushCompactLabeledPriceCandidates(
+      candidates,
+      line,
+      `${pathPrefix}.line[${lineIndex}]`,
+    )) continue
     let knownLabelMatched = false
     for (const definition of TEXT_LABELS) {
       for (const label of definition.labels) {

@@ -16,6 +16,9 @@ Add to Wishlist
 Pay over time
 Electric Razor for Men,Shavers for Men Electric Razor Wet Dry`
 
+export const LUNA_CONCATENATED_PRICES_SANITIZED_SNAPSHOT =
+  "Regular price$14.50 USD Sale price$11.56 USDSale"
+
 export const GOLF_SWING_TRAINER_PUBLIC_SNAPSHOT =
   "{\"sourceType\":\"LUNA_PUBLIC_PRODUCT_CARD\",\"productName\":\"Smart Inflatable Golf Ball Swing Trainer Black\",\"supplierPrice\":{\"amount\":8,\"currency\":\"USD\"},\"placement\":\"New Arrivals & Restocks\",\"accessStatus\":\"AUTHENTICATED_SOURCE_REQUIRED\"}"
 
