@@ -1,0 +1,5203 @@
+// @ts-expect-error Node's native TypeScript runner requires explicit extensions.
+import { evaluateStrategyLabCase } from "./strategy-lab-engine.ts"
+import type {
+  ComparableInput,
+  CreativeSeed,
+  EconomicsPolicy,
+  EvidenceClass,
+  EvidenceInput,
+  EvidencePurpose,
+  OfferScenario,
+  StrategyLabCaseInput,
+  StrategyOutput,
+} from "./strategy-lab-engine"
+
+export const PRODUCT_CASE_RUNNER_VERSION =
+  "PRODUCT_CASE_RUNNER_V1_2026_07_28" as const
+
+export const PRODUCT_CASE_CONTENT_MAX_BYTES = 262_144
+
+export const PRODUCT_CASE_CORE_PHASES = [
+  { index: 0, name: "SOURCE ACCESS" },
+  { index: 1, name: "RAW SUPPLIER EVIDENCE" },
+  { index: 2, name: "IDENTITY AND VARIANTS" },
+  { index: 3, name: "EVIDENCE CLASSIFICATION" },
+  { index: 4, name: "CONFLICTS AND MISSING DATA" },
+  { index: 5, name: "PRODUCT FACTS READINESS" },
+  { index: 6, name: "STRATEGY LAB INPUT PREVIEW" },
+  { index: 7, name: "OS CONCLUSION" },
+  { index: 8, name: "HUMAN REVIEW / SHADOW MODE" },
+] as const
+
+export const PRODUCT_CASE_PHASES = [
+  ...PRODUCT_CASE_CORE_PHASES,
+  { index: 9, name: "IMAGE REGISTRY / QA" },
+  { index: 10, name: "MANUAL LISTING PACKAGE" },
+  { index: 11, name: "MANUAL HANDOFF / REGISTRATION DRAFT" },
+  { index: 12, name: "LEARNING OBSERVATION" },
+] as const
+
+export const PRODUCT_CASE_OPERATIONAL_PHASES = [
+  "SUPPLIER_SOURCE",
+  "PRODUCT_EVIDENCE",
+  "HUMAN_VISUAL_REVIEW",
+  "IDENTITY_AND_VARIANTS",
+  "MARKET_EVIDENCE",
+  "SCENARIO_ECONOMICS",
+  "STRATEGY_RECOMMENDATION",
+  "HUMAN_SHADOW_REVIEW",
+  "IMAGE_AND_COMMERCIAL_QA",
+  "MANUAL_LISTING_PACKAGE",
+  "MANUAL_EBAY_HANDOFF",
+  "MANUAL_LISTING_REGISTRATION",
+] as const
+
+export type ProductCaseOperationalPhaseName =
+  typeof PRODUCT_CASE_OPERATIONAL_PHASES[number]
+export type ProductCaseOperationalPhaseStatus =
+  | "NOT_STARTED"
+  | "IN_PROGRESS"
+  | "HUMAN_REVIEW_REQUIRED"
+  | "BLOCKED"
+  | "COMPLETED"
+
+export const PRODUCT_CASE_LISTING_GATE_IDS = [
+  "IDENTITY_AND_VARIANT_READY",
+  "SUPPLIER_AVAILABILITY_READY",
+  "PACK_QUANTITY_READY",
+  "MARKET_EVIDENCE_READY",
+  "ECONOMICS_READY",
+  "STRATEGY_HUMAN_REVIEW_READY",
+  "TITLE_READY",
+  "CATEGORY_AND_CONDITION_READY",
+  "REQUIRED_ITEM_SPECIFICS_READY",
+  "BRAND_IP_AND_CLAIMS_REVIEW_READY",
+  "REAL_IMAGE_ORDER_READY",
+  "PRICE_AND_QUANTITY_READY",
+  "SHIPPING_RETURN_HANDLING_LOCATION_POLICIES_READY",
+  "EVIDENCE_ASSUMPTIONS_DIFFERENCES_READY",
+  "EXPLICIT_HUMAN_HANDOFF_APPROVAL_READY",
+] as const
+
+export const PRODUCT_CASE_EVIDENCE_FIELDS = [
+  "title",
+  "brand",
+  "model",
+  "mpn",
+  "supplier_product_id",
+  "supplier_sku",
+  "variant_id",
+  "option_name",
+  "option_value",
+  "color",
+  "material",
+  "product_type",
+  "available_colors",
+  "selected_variant",
+  "intended_purpose",
+  "intended_users",
+  "capacity",
+  "dimensions",
+  "product_dimensions",
+  "package_dimensions",
+  "weight",
+  "contents",
+  "inflation_mechanism",
+  "accessories",
+  "warnings",
+  "included_quantity",
+  "pack_quantity",
+  "supplier_price",
+  "regular_price",
+  "sale_price",
+  "currency",
+  "visible_stock",
+  "description",
+  "bullet",
+  "marketing_claim",
+  "visual_observation",
+  "source_image_url",
+  "product_shipping_statement",
+  "fulfillment_quote",
+  "supplier_merchandising_signal",
+  "supplier_unit_cost",
+  "packaging_cost",
+  "outbound_shipping_cost",
+  "listing_price",
+  "buyer_shipping_charge",
+  "ebay_category",
+  "ebay_condition",
+  "ebay_item_specific",
+  "listing_description",
+  "listing_quantity",
+  "listing_policy_bundle",
+  "item_location",
+] as const
+
+export type ProductCaseEvidenceField =
+  typeof PRODUCT_CASE_EVIDENCE_FIELDS[number]
+export type ProductCasePhase = typeof PRODUCT_CASE_PHASES[number]
+export type ProductCaseListingGateId =
+  typeof PRODUCT_CASE_LISTING_GATE_IDS[number]
+
+export type ProductCaseSourceType =
+  | "LUNA_PUBLIC_PREFLIGHT"
+  | "LUNA_AUTHENTICATED_MANUAL_CAPTURE"
+  | "LUNA_MANUAL_CAPTURE"
+  | "HUMAN_PRODUCT_INSPECTION"
+  | "HUMAN_VISUAL_OBSERVATION"
+  | "HUMAN_LISTING_DECISION"
+  | "HUMAN_CORRECTION"
+
+export type ProductCaseContentFormat =
+  | "TEXT"
+  | "HTML_AS_TEXT"
+  | "JSON"
+  | "JSON_LD"
+
+export type ProductCaseEvidenceClass =
+  | EvidenceClass
+  | "SUPPLIER_MERCHANDISING_SIGNAL"
+  | "SUPPLIER_MARKETING_CLAIM"
+  | "HUMAN_VISUAL_OBSERVATION"
+
+export type ProductCaseEvidenceStatus =
+  | "PROPOSED"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "CORRECTED"
+  | "NEEDS_MORE_EVIDENCE"
+  | "CONFLICTED"
+  | "MISSING"
+
+export type ProductCaseHumanVerdict =
+  | "UNREVIEWED"
+  | "ACCEPT"
+  | "REJECT"
+  | "CORRECT"
+  | "NEEDS_MORE_EVIDENCE"
+
+export type ProductCaseEvidence = {
+  id: string
+  field: ProductCaseEvidenceField
+  label: string
+  variantKey: string | null
+  sourceType: ProductCaseSourceType
+  sourceUrl: string
+  capturedAt: string
+  contentHash: string
+  extractionPath: string
+  extractionMethod:
+    | "PUBLIC_SNAPSHOT"
+    | "JSON_PATH"
+    | "HTML_META"
+    | "HTML_TEXT_PATTERN"
+    | "PLAIN_TEXT_PATTERN"
+    | "HUMAN_STRUCTURED_REVIEW"
+    | "MISSING"
+  rawValue: unknown
+  normalizedValue: unknown
+  evidenceClass: ProductCaseEvidenceClass
+  sourceEvidenceClass: ProductCaseEvidenceClass
+  evidenceStatus: ProductCaseEvidenceStatus
+  humanVerdict: ProductCaseHumanVerdict
+  humanReason: string | null
+  originalValue: unknown
+  correctedValue: unknown
+  conflictKey: string | null
+  availabilityPurpose: "INVENTORY_SIGNAL" | null
+  demandEvidence: "NONE" | null
+}
+
+export type ProductCaseConflict = {
+  conflictKey: string
+  field: ProductCaseEvidenceField
+  variantKey: string | null
+  evidenceIds: string[]
+  values: unknown[]
+  status: "OPEN" | "HUMAN_RESOLVED"
+}
+
+export type ProductCaseCapture = {
+  sourceType: ProductCaseSourceType
+  sourceUrl: string
+  capturedAt: string
+  contentHash: string
+  format: ProductCaseContentFormat
+  byteLength: number
+  fullContentStored: false
+  scriptsExecuted: false
+  resourcesLoaded: false
+}
+
+export type ProductCaseExtractionResult = {
+  capture: ProductCaseCapture
+  evidence: ProductCaseEvidence[]
+  conflicts: ProductCaseConflict[]
+  missingFields: ProductCaseEvidenceField[]
+  parserWarnings: string[]
+  safety: ProductCaseSafety
+}
+
+export type ProductCaseSourceAccessStatus =
+  | "NOT_RUN"
+  | "PUBLIC_ACCESSIBLE"
+  | "AUTHENTICATED_SOURCE_REQUIRED"
+  | "REJECTED"
+  | "UNAVAILABLE"
+
+export type ProductCaseSourceAccess = {
+  status: ProductCaseSourceAccessStatus
+  canonicalUrl: string | null
+  checkedAt: string | null
+  reason: string | null
+  httpStatus: number | null
+  redirectsFollowed: number
+  credentialsUsed: false
+}
+
+export type ProductCaseMarketEvidence = {
+  runStatus: "NOT_RUN" | "NOT_VALIDATED" | "INSUFFICIENT" | "COMPLETE"
+  soldExact: "MISSING" | "NOT_VALIDATED" | "AVAILABLE"
+  activeExact: "MISSING" | "NOT_VALIDATED" | "AVAILABLE"
+  marketCeiling: "MISSING" | "NOT_VALIDATED" | "AVAILABLE"
+  soldExactCount: number
+  referenceMedian: number | null
+  comparables: ComparableInput[]
+  humanSuppliedComparableCandidates: ProductCaseHumanComparableCandidate[]
+  observedAt: string | null
+}
+
+export type ProductCaseHumanComparableCandidate = {
+  sourceType: "HUMAN_SUPPLIED_COMPARABLE_CANDIDATE"
+  validationStatus: "NOT_VALIDATED" | "VALIDATED_ACTIVE_EXACT"
+  ebayItemId: string | null
+  ebayUrl: string | null
+  listingStatus:
+    | "ACTIVE_VISIBLE"
+    | "SOLD_AUCTION_VISIBLE"
+    | "SOLD_USED_VISIBLE"
+    | "ACTIVE_USED_VISIBLE"
+  observedTitle: string | null
+  observedPriceApprox: number | null
+  observedShippingApprox: number | null
+  currency: string | null
+  visibleSoldSignal: number | null
+  confirmedSoldQuantity: number | null
+  condition: string | null
+  endedAt: string | null
+  competitorDimensions: string | null
+  competitorWeight: string | null
+  sourceReference: string
+  observedAt: string
+  identityValidated: boolean
+  variantValidated: boolean
+  contentsValidated: boolean
+  packQuantityValidated: boolean
+  eligibleForStrategyLab: boolean
+  eligibleForSoldExact: false
+  canBecomeProductFact: false
+  provisionalCohort: "SIMILAR_NOT_EXACT" | "REJECTED" | "ACTIVE_EXACT"
+  review: {
+    decision:
+      | "KEEP_NOT_VALIDATED"
+      | "REJECT"
+      | "VALIDATE_ACTIVE_EXACT"
+    reason: string | null
+    reviewer: string | null
+    reviewedAt: string | null
+    validatedTitle: string | null
+    validatedPackQuantity: number | null
+    validatedVariantComposition: string[]
+    buyerShipping: number | null
+    reasonCodes: string[]
+  }
+  validationBlockers: string[]
+}
+
+export type ProductCaseHumanConclusion = {
+  scenario: OfferScenario | null
+  conclusion: StrategyOutput | null
+  reason: string | null
+  reviewedAt: string | null
+  reviewer: string | null
+}
+
+export type ProductCaseHumanReview = {
+  conclusion: ProductCaseHumanConclusion
+  proposedRuleObservation: string | null
+  learningStatus: "HUMAN_REVIEW_DRAFT"
+  canChangeEngineRules: false
+  canPublishAutomatically: false
+  canLinkListing: false
+}
+
+export type ProductCaseImageObservation = {
+  imageId: string
+  evidenceId: string
+  contentHash: `sha256:${string}`
+  sourceUrl: string | null
+  sourceReference?: string
+  sourceType: "SUPPLIER_IMAGE"
+  verificationStatus: "SOURCE_IMAGE_OBSERVED"
+  physicalProductVerified: false
+  captureMethod: "HUMAN_VISUAL_REVIEW"
+  reviewerType: "HUMAN" | "CHATGPT_ASSISTED_HUMAN"
+  observedProductType: string | null
+  visibleFeatures: string[]
+  visibleText: string[]
+  visibleBrands: string[]
+  visibleColors: string[]
+  visibleQuantity: number | null
+  observedVariant: string | null
+  possibleConflicts: string[]
+  contradictsEvidenceIds: string[]
+  confidence: "LOW" | "MEDIUM" | "HIGH"
+  humanDecision:
+    | "ACCEPT_OBSERVATION"
+    | "REJECT_FOR_EBAY_HANDOFF"
+    | "NEEDS_MORE_EVIDENCE"
+  humanReason: string
+  reviewedAt: string
+}
+
+export type ProductCaseImageAnalysis = {
+  imageAnalysisCapability: "HUMAN_ASSISTED_ONLY"
+  machineVisionStatus: "NOT_IMPLEMENTED"
+  openAiVisionUsed: false
+  humanReviewRequired: true
+  visualEvidenceStatus: "NOT_REVIEWED" | "HUMAN_REVIEWED"
+  conflictDetectedFrom: Array<
+    "SUPPLIER_TEXT" | "HUMAN_VISUAL_REVIEW"
+  >
+  observations: ProductCaseImageObservation[]
+}
+
+export type ProductCaseIdentityReview = {
+  status: "NOT_REVIEWED" | "CONFLICTED" | "READY"
+  confidence: "LOW" | "MEDIUM" | "HIGH"
+  physicalProductVerified: boolean
+  physicalVerificationEvidenceIds: string[]
+  conflictHistory: string[]
+  currentConflict: string | null
+  supplierEvidenceIds: string[]
+  humanObservationEvidenceIds: string[]
+  blockers: string[]
+  nextAction: string
+}
+
+export type ProductCaseDocument = {
+  version: typeof PRODUCT_CASE_RUNNER_VERSION
+  caseId: string
+  productLabel: string
+  sourceUrl: string
+  createdAt: string
+  sourceAccess: ProductCaseSourceAccess
+  captures: ProductCaseCapture[]
+  evidence: ProductCaseEvidence[]
+  marketEvidence: ProductCaseMarketEvidence
+  imageAnalysis: ProductCaseImageAnalysis
+  identityReview: ProductCaseIdentityReview
+  humanReview: ProductCaseHumanReview
+  safety: ProductCaseSafety
+}
+
+export type ProductCaseScenarioDraft = {
+  id: string
+  offerScenario: OfferScenario
+  variantComposition: string[]
+  packQuantityEvidenceId: string
+  costLines: Array<{
+    variantKey: string
+    quantity: number
+    unitCostEvidenceId: string
+  }>
+  packagingCostEvidenceId: string
+  outboundShippingCostEvidenceId: string
+  listingPriceEvidenceId: string
+  buyerShippingChargeEvidenceId: string
+  requiredIdentityFields: ProductCaseEvidenceField[]
+  requiredDimensionFields: ProductCaseEvidenceField[]
+  requiresExactSoldEvidence: boolean
+  hypothesisEvidenceClass?: EvidenceClass | null
+  creativeSeed: CreativeSeed
+}
+
+export type ProductCaseStrategyAdapterInput = {
+  document: ProductCaseDocument
+  evaluatedAt: string
+  economicsPolicy: EconomicsPolicy | null
+  scenarioDraft: ProductCaseScenarioDraft | null
+}
+
+export type ProductCaseStrategyAdapterResult = {
+  status: "READY" | "BLOCKED"
+  acceptedEvidenceInputs: EvidenceInput[]
+  acceptedRunnerEvidenceIds: string[]
+  excludedEvidence: Array<{
+    evidenceId: string
+    reason: string
+  }>
+  excludedComparableCandidates: Array<{
+    ebayItemId: string | null
+    reason:
+      "HUMAN_SUPPLIED_COMPARABLE_CANDIDATE_REQUIRES_VALIDATION"
+  }>
+  validatedComparableInputs: ComparableInput[]
+  blockers: string[]
+  strategyLabInput: StrategyLabCaseInput | null
+  osConclusion: StrategyOutput
+  nextAction: string
+  marketEvidence: ProductCaseMarketEvidence
+  currentEvidenceLeader: {
+    scenarioId: string
+    offerScenario: OfferScenario
+    label: "CURRENT EVIDENCE LEADER"
+    subtitle:
+      "Escenario actualmente mejor respaldado; no está aprobado para ejecutar."
+  } | null
+  strategicHypothesisToValidate: {
+    scenarioId: string
+    offerScenario: OfferScenario
+    evidenceClass: "HUMAN_HYPOTHESIS"
+    label: "STRATEGIC HYPOTHESIS TO VALIDATE"
+  } | null
+  safety: ProductCaseSafety
+}
+
+export type ProductCaseListingGate = {
+  id: ProductCaseListingGateId
+  status: "PASS" | "BLOCKED" | "NOT_RUN"
+  evidenceIds: string[]
+  blockers: string[]
+}
+
+export type ProductCaseImageApproval = {
+  evidenceId: string | null
+  sourceKind: "ORIGINAL_SUPPLIER" | "MANUALLY_PREPARED"
+  sourceUrl: string
+  assetHash: `sha256:${string}` | null
+  purpose: string
+  role: "MAIN" | "SECONDARY"
+  order: number
+  variantId: string | null
+  packQuantity: number | null
+  humanNotes: string | null
+  status:
+    | "SOURCE_REQUIRED"
+    | "MANUAL_IMAGE_ATTACHED"
+    | "HUMAN_REVIEW"
+    | "APPROVED"
+    | "REJECTED"
+  reviewer: string | null
+  reviewedAt: string | null
+  reason: string | null
+  qa: {
+    productAndVariantMatch: boolean
+    packQuantityMatch: boolean
+    logosAndIpReviewed: boolean
+    claimsReviewed: boolean
+    ebayRoleCoherent: boolean
+  }
+}
+
+export type ProductCaseImageRegistryEntry = {
+  registryId: string
+  evidenceId: string | null
+  sourceKind: ProductCaseImageApproval["sourceKind"]
+  sourceUrl: string
+  sourceCaptureHash: string | null
+  assetHash: `sha256:${string}` | null
+  productCaseId: string
+  packQuantity: number | null
+  variantId: string | null
+  purpose: string
+  role: "MAIN" | "SECONDARY"
+  order: number
+  approvalStatus: ProductCaseImageApproval["status"]
+  reviewer: string | null
+  reviewedAt: string | null
+  humanNotes: string | null
+  qa: ProductCaseImageApproval["qa"]
+  sourceOnly: true
+  downloaded: false
+  transformed: false
+  generated: false
+}
+
+export type ProductCaseImageRegistry = {
+  status:
+    | "SOURCE_REQUIRED"
+    | "MANUAL_IMAGE_ATTACHED"
+    | "HUMAN_REVIEW"
+    | "APPROVED"
+    | "REJECTED"
+  entries: ProductCaseImageRegistryEntry[]
+  approvedMainRegistryId: string | null
+  approvedMainEvidenceId: string | null
+  approvedMainAssetHash: `sha256:${string}` | null
+  blockers: string[]
+  safety: ProductCaseSafety
+}
+
+export type ProductCaseListingOperations = {
+  title: string | null
+  categoryId: string | null
+  categoryName: string | null
+  conditionId: string | null
+  conditionDescription: string | null
+  itemSpecifics: Record<string, string[]>
+  requiredItemSpecifics: string[]
+  description: string | null
+  listingPrice: number | null
+  quantity: number | null
+  totalInvestment: number | null
+  estimatedProfit: number | null
+  marginPercent: number | null
+  roiPercent: number | null
+  fulfillmentPolicyId: string | null
+  paymentPolicyId: string | null
+  returnPolicyId: string | null
+  shippingPolicySummary: string | null
+  returnPolicySummary: string | null
+  handlingTimeDays: number | null
+  itemLocation: {
+    country: string | null
+    postalCode: string | null
+    city: string | null
+    stateOrProvince: string | null
+  }
+  imageEvidenceOrder: string[]
+  supportingEvidenceIds: string[]
+  evidenceLinks: {
+    title: string[]
+    category: string[]
+    condition: string[]
+    itemSpecifics: Record<string, string[]>
+    description: string[]
+    listingPrice: string[]
+    quantity: string[]
+    economics: string[]
+    policies: string[]
+    itemLocation: string[]
+  }
+  assumptions: string[]
+  blockers: string[]
+  differences: string[]
+  supplierAvailabilityStatus:
+    | "CONFIRMED_AVAILABLE"
+    | "CONFIRMED_UNAVAILABLE"
+    | "NOT_CONFIRMED"
+  brandIpClaimsReview: {
+    status: "APPROVED" | "REJECTED" | "NOT_REVIEWED"
+    reviewer: string | null
+    reviewedAt: string | null
+    reason: string | null
+  }
+  explicitHumanApproval: {
+    approved: boolean
+    reviewer: string | null
+    reviewedAt: string | null
+    reason: string | null
+  }
+  humanOverride: {
+    applied: boolean
+    reviewer: string | null
+    reviewedAt: string | null
+    reason: string | null
+    overriddenBlockers: string[]
+  }
+  candidateKey: string | null
+}
+
+export type ProductCaseManualListingPackage = {
+  version: "PRODUCT_CASE_MANUAL_LISTING_PACKAGE_V1"
+  productCaseId: string
+  supplierUrl: string
+  osConclusion: StrategyOutput
+  humanConclusion: ProductCaseHumanConclusion
+  decisionDifferences: Array<{
+    field: string
+    osValue: unknown
+    humanValue: unknown
+  }>
+  packageStatus:
+    | "NOT_GENERATED_IDENTITY_HOLD"
+    | "DRAFT_EVIDENCE_ONLY"
+    | "READY_FOR_HUMAN_SELLER_HUB_ENTRY"
+  generatedAt: string
+  acceptedEvidenceIds: string[]
+  rejectedEvidenceIds: string[]
+  identity: {
+    title: string | null
+    brand: string | null
+    model: string | null
+    mpn: string | null
+    supplierProductId: string | null
+    supplierSku: string | null
+    variantId: string | null
+  }
+  packQuantity: number | null
+  supplierPrices: Array<{
+    field: "supplier_price" | "regular_price" | "sale_price"
+    value: number
+    currency: string | null
+    evidenceId: string
+  }>
+  title: string | null
+  category: {
+    id: string | null
+    name: string | null
+  }
+  condition: {
+    id: string | null
+    description: string | null
+  }
+  itemSpecifics: Record<string, string[]>
+  requiredItemSpecifics: string[]
+  description: string | null
+  listingPrice: number | null
+  quantity: number | null
+  economics: {
+    totalInvestment: number | null
+    estimatedProfit: number | null
+    marginPercent: number | null
+    roiPercent: number | null
+  }
+  policies: {
+    fulfillmentPolicyId: string | null
+    paymentPolicyId: string | null
+    returnPolicyId: string | null
+    shippingPolicySummary: string | null
+    returnPolicySummary: string | null
+    handlingTimeDays: number | null
+    itemLocation: ProductCaseListingOperations["itemLocation"]
+  }
+  itemSpecificEvidence: Array<{
+    field: ProductCaseEvidenceField
+    value: unknown
+    evidenceId: string
+  }>
+  excludedClaims: Array<{
+    evidenceId: string
+    reason: "SUPPLIER_CLAIM_NOT_PRODUCT_VERIFIED"
+  }>
+  sourceImageUrls: string[]
+  approvedImages: Array<{
+    registryId: string
+    evidenceId: string | null
+    sourceUrl: string
+    sourceCaptureHash: string | null
+    assetHash: `sha256:${string}` | null
+    approvalStatus: "APPROVED"
+    purpose: string
+    role: "MAIN" | "SECONDARY"
+    order: number
+    reviewer: string | null
+    reviewedAt: string | null
+    variantId: string | null
+    packQuantity: number | null
+    qa: ProductCaseImageApproval["qa"]
+  }>
+  imageEvidenceOrder: string[]
+  supportingEvidenceIds: string[]
+  evidenceLinks: ProductCaseListingOperations["evidenceLinks"]
+  assumptions: string[]
+  blockers: string[]
+  differences: string[]
+  humanOverride: ProductCaseListingOperations["humanOverride"]
+  gates: ProductCaseListingGate[]
+  canPublishAutomatically: false
+  manualHandoffAllowed: boolean
+  handoffStatus:
+    | "BLOCKED_EVIDENCE_INCOMPLETE"
+    | "READY_FOR_HUMAN_SELLER_HUB_ENTRY"
+  safety: ProductCaseSafety
+}
+
+export type ProductCaseRegistrationDraft = {
+  version: "MANUAL_LISTING_REGISTRATION_DRAFT_V1"
+  status: "MANUAL_LISTING_REGISTRATION_DRAFT"
+  executionStatus: "DRAFT_NOT_SUBMITTED"
+  canSubmit: false
+  productCaseId: string
+  listingPackageVersion: ProductCaseManualListingPackage["version"]
+  listingPackageStatus: ProductCaseManualListingPackage["packageStatus"]
+  postPublicationFields: {
+    ebayItemId: string | null
+    listingUrl: string | null
+    marketplaceAccountKey: string | null
+    marketplace: string | null
+    ebaySku: string | null
+    productCaseReference: string
+    listingPackageId: string | null
+    listingPackageReference: string
+    lunaProductId: string | null
+    lunaVariantId: string | null
+    variantFingerprint: string | null
+    packQuantity: number | null
+    supplierUnitCost: number | null
+    publishedPrice: number | null
+    publishedQuantity: number | null
+    categoryId: string | null
+    conditionId: string | null
+    shippingPolicyId: string | null
+    returnPolicyId: string | null
+    handlingTimeDays: number | null
+    publicationTimestamp: string | null
+  }
+  existingRouteProjection: {
+    targetRoute: "/api/admin/ebay/listings/register"
+    payload: {
+      ebayItemId: null
+      ebayUrl: null
+      opportunityId: null
+      candidateKey: string | null
+      supplierSku: null
+      supplierVariantId: null
+      safeDefaults: Record<string, never>
+    }
+  }
+  blockers: string[]
+  reuseContract: "ManualListingRegistrationInput"
+  existingRouteCompatibilityGap: string[]
+  safety: ProductCaseSafety
+}
+
+export type ProductCaseLearningObservation = {
+  osRecommendation: StrategyOutput
+  humanDecision: ProductCaseHumanConclusion
+  finalListingDecision: null
+  differences: Array<{
+    field: string
+    osValue: unknown
+    humanValue: unknown
+  }>
+  humanReasonCodes: string[]
+  evidenceAddedByHuman: string[]
+  evidenceRejectedByHuman: string[]
+  ruleCandidate: string | null
+  ruleCandidateStatus: "OBSERVATION_ONLY"
+  listingOutcomeStatus: "NOT_YET_MEASURED"
+  engineRuleChanged: false
+  learningStatus: "HUMAN_REVIEW_DRAFT"
+}
+
+export type ProductCaseFutureMeasurementStage = {
+  stage:
+    | "DAY_0_LISTING_SNAPSHOT"
+    | "DAY_7_PERFORMANCE_REVIEW"
+    | "DAY_14_PERFORMANCE_REVIEW"
+    | "DAY_30_PERFORMANCE_REVIEW"
+  status: "BLOCKED"
+  measurementStatus: "NOT_YET_MEASURED"
+  reason: "MANUAL_LISTING_NOT_PUBLISHED_AND_REGISTERED"
+  metrics: ProductCaseMeasurementMetrics
+}
+
+export type ProductCaseUnavailableMetric = {
+  value: null
+  status: "MISSING / UNAVAILABLE"
+  source: null
+  observedAt: null
+}
+
+export type ProductCaseMeasurementMetrics = {
+  impressions: ProductCaseUnavailableMetric
+  pageViews: ProductCaseUnavailableMetric
+  clicks: ProductCaseUnavailableMetric
+  ctr: ProductCaseUnavailableMetric
+  watchers: ProductCaseUnavailableMetric
+  quantitySold: ProductCaseUnavailableMetric
+  conversion: ProductCaseUnavailableMetric
+  promotedListingCost: ProductCaseUnavailableMetric
+  sellingFees: ProductCaseUnavailableMetric
+  realShipping: ProductCaseUnavailableMetric
+  refunds: ProductCaseUnavailableMetric
+  netProfit: ProductCaseUnavailableMetric
+}
+
+export type ProductCasePhaseSnapshot = {
+  index: ProductCasePhase["index"]
+  name: ProductCasePhase["name"]
+  status: "COMPLETE" | "IN_REVIEW" | "BLOCKED" | "NOT_RUN"
+  input: Record<string, unknown>
+  output: Record<string, unknown>
+  acceptedEvidenceIds: string[]
+  rejectedEvidenceIds: string[]
+  conflicts: ProductCaseConflict[]
+  missingFields: ProductCaseEvidenceField[]
+  blockers: string[]
+  confidence: "LOW" | "MEDIUM" | "HIGH"
+  appliedRules: string[]
+  nextAction: string
+}
+
+export type ProductCaseOperationalPhaseSnapshot = {
+  phase: ProductCaseOperationalPhaseName
+  status: ProductCaseOperationalPhaseStatus
+  input: Record<string, unknown>
+  output: Record<string, unknown>
+  acceptedEvidenceIds: string[]
+  rejectedEvidenceIds: string[]
+  conflicts: ProductCaseConflict[]
+  missingFields: ProductCaseEvidenceField[]
+  blockers: string[]
+  confidence: "LOW" | "MEDIUM" | "HIGH"
+  appliedRules: string[]
+  nextAction: string
+  publicationStatus: "NOT_PUBLISHED"
+  handoffArtifactGenerated: boolean
+}
+
+export type ProductCaseSafety = {
+  supabaseWrites: 0
+  ebayWrites: 0
+  openAiCalls: 0
+  whatsappCalls: 0
+  generatedImages: 0
+  transformedImages: 0
+  listingChanges: 0
+  serverFilesWritten: 0
+  canPublishAutomatically: false
+  canChangeEngineRules: false
+}
+
+export type ProductCaseRunnerOutput = {
+  version: typeof PRODUCT_CASE_RUNNER_VERSION
+  document: ProductCaseDocument
+  adapter: ProductCaseStrategyAdapterResult
+  imageRegistry: ProductCaseImageRegistry
+  listingPackage: ProductCaseManualListingPackage | null
+  listingPackageStatus: ProductCaseManualListingPackage["packageStatus"]
+  registrationDraft: ProductCaseRegistrationDraft
+  learningObservation: ProductCaseLearningObservation
+  futureMeasurementStages: ProductCaseFutureMeasurementStage[]
+  legacyPhaseDiagnostics: ProductCasePhaseSnapshot[]
+  operationalPipeline: ProductCaseOperationalPhaseSnapshot[]
+  readiness: {
+    productIdentity: "MISSING" | "PARTIAL" | "CONFLICTED" | "READY"
+    identityConfidence: "LOW" | "MEDIUM" | "HIGH"
+    productFactsReadiness: "NOT_READY" | "READY"
+    supplierEvidence: "MISSING" | "PARTIAL" | "READY"
+    marketEvidence: "NOT_RUN" | "NOT_VALIDATED" | "INSUFFICIENT" | "READY"
+    economics: "MISSING_INPUT" | "READY"
+    strategy: StrategyOutput
+  }
+  canPublishAutomatically: false
+  publicationStatus: "NOT_PUBLISHED"
+  handoffArtifactGenerated: boolean
+  manualHandoffAllowed: boolean
+  shadowMode: {
+    osConclusion: StrategyOutput
+    humanConclusion: ProductCaseHumanConclusion
+    differences: Array<{
+      field: string
+      osValue: unknown
+      humanValue: unknown
+    }>
+    proposedRuleObservation: string | null
+    learningStatus: "HUMAN_REVIEW_DRAFT"
+    canChangeEngineRules: false
+    canLinkListing: false
+  }
+  safety: ProductCaseSafety
+}
+
+export const PRODUCT_CASE_ZERO_EFFECTS: ProductCaseSafety = Object.freeze({
+  supabaseWrites: 0,
+  ebayWrites: 0,
+  openAiCalls: 0,
+  whatsappCalls: 0,
+  generatedImages: 0,
+  transformedImages: 0,
+  listingChanges: 0,
+  serverFilesWritten: 0,
+  canPublishAutomatically: false,
+  canChangeEngineRules: false,
+})
+
+const FIELD_LABELS: Record<ProductCaseEvidenceField, string> = {
+  title: "Title",
+  brand: "Brand",
+  model: "Model",
+  mpn: "MPN",
+  supplier_product_id: "Supplier product ID",
+  supplier_sku: "Supplier SKU",
+  variant_id: "Variant ID",
+  option_name: "Option name",
+  option_value: "Option value",
+  color: "Color",
+  material: "Material",
+  product_type: "Product type",
+  available_colors: "Available supplier colors",
+  selected_variant: "Human-selected variant",
+  intended_purpose: "Supplier-stated intended purpose",
+  intended_users: "Supplier-stated intended users",
+  capacity: "Capacity",
+  dimensions: "Dimensions",
+  product_dimensions: "Product dimensions",
+  package_dimensions: "Package dimensions",
+  weight: "Weight",
+  contents: "Included contents",
+  inflation_mechanism: "Inflation mechanism",
+  accessories: "Included accessories",
+  warnings: "Supplier warnings",
+  included_quantity: "Included quantity",
+  pack_quantity: "Pack quantity",
+  supplier_price: "Supplier price",
+  regular_price: "Regular supplier price",
+  sale_price: "Sale supplier price",
+  currency: "Currency",
+  visible_stock: "Visible stock",
+  description: "Supplier description",
+  bullet: "Supplier bullet",
+  marketing_claim: "Supplier marketing claim",
+  visual_observation: "Human visual observation",
+  source_image_url: "Original supplier image URL",
+  product_shipping_statement: "Product-specific shipping statement",
+  fulfillment_quote: "Real fulfillment quote",
+  supplier_merchandising_signal: "Supplier merchandising signal",
+  supplier_unit_cost: "Supplier unit cost",
+  packaging_cost: "Packaging cost",
+  outbound_shipping_cost: "Outbound shipping cost",
+  listing_price: "Proposed listing price",
+  buyer_shipping_charge: "Proposed buyer shipping charge",
+  ebay_category: "Human-reviewed eBay category",
+  ebay_condition: "Human-reviewed eBay condition",
+  ebay_item_specific: "Human-reviewed eBay item specific",
+  listing_description: "Human-reviewed listing description",
+  listing_quantity: "Human-reviewed listing quantity",
+  listing_policy_bundle: "Human-reviewed listing policy bundle",
+  item_location: "Human-reviewed item location",
+}
+
+const MULTI_VALUE_FIELDS = new Set<ProductCaseEvidenceField>([
+  "option_name",
+  "option_value",
+  "bullet",
+  "marketing_claim",
+  "visual_observation",
+  "source_image_url",
+  "warnings",
+  "ebay_item_specific",
+])
+
+const CONFLICT_FIELDS = new Set<ProductCaseEvidenceField>([
+  "title",
+  "brand",
+  "model",
+  "mpn",
+  "supplier_product_id",
+  "supplier_sku",
+  "variant_id",
+  "color",
+  "material",
+  "product_type",
+  "available_colors",
+  "selected_variant",
+  "intended_purpose",
+  "intended_users",
+  "capacity",
+  "dimensions",
+  "product_dimensions",
+  "package_dimensions",
+  "weight",
+  "contents",
+  "inflation_mechanism",
+  "accessories",
+  "included_quantity",
+  "pack_quantity",
+  "supplier_price",
+  "regular_price",
+  "sale_price",
+  "currency",
+  "visible_stock",
+  "supplier_unit_cost",
+  "packaging_cost",
+  "outbound_shipping_cost",
+  "listing_price",
+  "buyer_shipping_charge",
+  "listing_quantity",
+])
+
+type Candidate = {
+  field: ProductCaseEvidenceField
+  rawValue: unknown
+  normalizedValue: unknown
+  extractionPath: string
+  variantKey?: string | null
+  evidenceClass?: ProductCaseEvidenceClass
+}
+
+function normalizeWhitespace(value: string) {
+  return value.normalize("NFKC").replace(/\s+/g, " ").trim()
+}
+
+function nonempty(value: unknown) {
+  return value !== null && value !== undefined && value !== ""
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+}
+
+function stableValue(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableValue).join(",")}]`
+  if (value && typeof value === "object") {
+    const object = value as Record<string, unknown>
+    return `{${Object.keys(object).sort().map((key) =>
+      `${JSON.stringify(key)}:${stableValue(object[key])}`
+    ).join(",")}}`
+  }
+  return JSON.stringify(value) ?? String(value)
+}
+
+function unique(values: string[]) {
+  return [...new Set(values)]
+}
+
+function utf8Length(value: string) {
+  return new TextEncoder().encode(value).byteLength
+}
+
+function validIsoInstant(value: string) {
+  const match = value.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/,
+  )
+  if (!match) return false
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, ,
+    zone] = match
+  const year = Number(yearText)
+  const month = Number(monthText)
+  const day = Number(dayText)
+  const hour = Number(hourText)
+  const minute = Number(minuteText)
+  const second = Number(secondText)
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) {
+    return false
+  }
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate()
+  if (day < 1 || day > daysInMonth) return false
+  if (zone !== "Z") {
+    const zoneHour = Number(zone.slice(1, 3))
+    const zoneMinute = Number(zone.slice(4, 6))
+    if (zoneHour > 23 || zoneMinute > 59) return false
+  }
+  return Number.isFinite(Date.parse(value))
+}
+
+function validSha256(value: unknown): value is `sha256:${string}` {
+  return typeof value === "string" &&
+    /^sha256:[a-f0-9]{64}$/.test(value)
+}
+
+function validHttpsLunaReference(value: unknown) {
+  if (typeof value !== "string" || !value.trim() ||
+    value !== value.trim()) return false
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === "https:" &&
+      (parsed.hostname === "lunaportex.com" ||
+        parsed.hostname === "www.lunaportex.com") &&
+      !parsed.username && !parsed.password && !parsed.port
+  } catch {
+    return false
+  }
+}
+
+function numericValue(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null
+  }
+  if (typeof value !== "string") return null
+  const compact = value.replace(/,/g, "")
+  const match = compact.match(/-?\d+(?:\.\d+)?/)
+  if (!match) return null
+  const parsed = Number(match[0])
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function positiveInteger(value: unknown): number | null {
+  const parsed = numericValue(value)
+  return parsed !== null && Number.isInteger(parsed) && parsed > 0
+    ? parsed
+    : null
+}
+
+function normalizeFieldValue(
+  field: ProductCaseEvidenceField,
+  value: unknown,
+): unknown {
+  if (!nonempty(value)) return null
+  if ([
+    "supplier_price",
+    "regular_price",
+    "sale_price",
+    "supplier_unit_cost",
+    "packaging_cost",
+    "outbound_shipping_cost",
+    "listing_price",
+    "buyer_shipping_charge",
+  ].includes(field)) {
+    return numericValue(value)
+  }
+  if (["included_quantity", "pack_quantity", "listing_quantity"].includes(
+    field,
+  )) {
+    return positiveInteger(value)
+  }
+  if (field === "source_image_url") {
+    try {
+      const url = new URL(String(value))
+      return url.protocol === "https:" ? url.href : null
+    } catch {
+      return null
+    }
+  }
+  if (typeof value === "string") return normalizeWhitespace(value)
+  return value
+}
+
+function canonicalVariantKey(value: unknown) {
+  if (!nonempty(value)) return null
+  return normalizeWhitespace(String(value)).slice(0, 160) || null
+}
+
+export function validateLunaProductUrl(value: unknown):
+  | {
+      valid: true
+      canonicalUrl: string
+      host: "lunaportex.com" | "www.lunaportex.com"
+      handle: string
+    }
+  | { valid: false; error: string } {
+  if (typeof value !== "string" || !value) {
+    return { valid: false, error: "LUNA_PRODUCT_URL_REQUIRED" }
+  }
+  if (value.length > 2_048 || value !== value.trim() ||
+    /[\u0000-\u001f\u007f]/.test(value)) {
+    return { valid: false, error: "LUNA_PRODUCT_URL_INVALID" }
+  }
+  if (/%[0-9a-f]{2}/i.test(value)) {
+    return { valid: false, error: "LUNA_PRODUCT_URL_ENCODING_FORBIDDEN" }
+  }
+  const exact = value.match(
+    /^https:\/\/(lunaportex\.com|www\.lunaportex\.com)\/products\/([a-z0-9](?:[a-z0-9-]{0,198}[a-z0-9])?)$/,
+  )
+  if (!exact) {
+    if (/^http:\/\//i.test(value)) {
+      return { valid: false, error: "LUNA_PRODUCT_URL_HTTPS_REQUIRED" }
+    }
+    return { valid: false, error: "LUNA_PRODUCT_URL_INVALID" }
+  }
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return { valid: false, error: "LUNA_PRODUCT_URL_INVALID" }
+  }
+  const host = url.hostname.toLocaleLowerCase("en-US")
+  if (url.protocol !== "https:") {
+    return { valid: false, error: "LUNA_PRODUCT_URL_HTTPS_REQUIRED" }
+  }
+  if (url.username || url.password) {
+    return { valid: false, error: "LUNA_PRODUCT_URL_CREDENTIALS_FORBIDDEN" }
+  }
+  if (url.port) {
+    return { valid: false, error: "LUNA_PRODUCT_URL_CUSTOM_PORT_FORBIDDEN" }
+  }
+  if (url.search || url.hash || url.host !== host) {
+    return { valid: false, error: "LUNA_PRODUCT_URL_INVALID" }
+  }
+  if (host !== "lunaportex.com" && host !== "www.lunaportex.com") {
+    return { valid: false, error: "LUNA_PRODUCT_URL_HOST_NOT_ALLOWED" }
+  }
+  const match = url.pathname.match(
+    /^\/products\/([a-z0-9](?:[a-z0-9-]{0,198}[a-z0-9])?)$/,
+  )
+  if (!match) {
+    return { valid: false, error: "LUNA_PRODUCT_URL_PATH_NOT_ALLOWED" }
+  }
+  const canonicalUrl = `https://${exact[1]}/products/${exact[2]}`
+  return {
+    valid: true,
+    canonicalUrl,
+    host,
+    handle: match[1],
+  }
+}
+
+export async function hashProductCaseContent(content: string) {
+  const subtle = globalThis.crypto?.subtle
+  if (!subtle) throw new Error("PRODUCT_CASE_SHA256_UNAVAILABLE")
+  const digest = await subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(content),
+  )
+  return `sha256:${[...new Uint8Array(digest)]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("")}`
+}
+
+function detectFormat(
+  content: string,
+  requested?: ProductCaseContentFormat,
+): ProductCaseContentFormat {
+  if (requested) return requested
+  const trimmed = content.trim()
+  if (/^[{[]/.test(trimmed)) return "JSON"
+  if (/<(?:!doctype|html|head|body|script|meta|div|h1)\b/i.test(trimmed)) {
+    return "HTML_AS_TEXT"
+  }
+  return "TEXT"
+}
+
+function decodeHtmlEntities(value: string) {
+  const named: Record<string, string> = {
+    amp: "&",
+    apos: "'",
+    gt: ">",
+    lt: "<",
+    nbsp: " ",
+    quot: "\"",
+  }
+  return value.replace(
+    /&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|([a-z]{2,8}));/gi,
+    (match, decimal: string, hexadecimal: string, name: string) => {
+      const code = decimal
+        ? Number(decimal)
+        : hexadecimal
+          ? Number.parseInt(hexadecimal, 16)
+          : null
+      if (code !== null && Number.isInteger(code) && code >= 0 &&
+        code <= 0x10ffff && ![0xd800, 0xdfff].includes(code)) {
+        try {
+          return String.fromCodePoint(code)
+        } catch {
+          return ""
+        }
+      }
+      return named[name?.toLocaleLowerCase("en-US")] ?? match
+    },
+  )
+}
+
+function textFromMarkup(value: string) {
+  return normalizeWhitespace(decodeHtmlEntities(
+    value
+      .replace(
+        /<(script|style|noscript|template|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,
+        " ",
+      )
+      .replace(/<!--[\s\S]*?-->/g, " ")
+      .replace(/<[^>]{0,4000}>/g, " "),
+  ))
+}
+
+function attribute(tag: string, name: string) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const match = tag.match(new RegExp(
+    `\\b${escaped}\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))`,
+    "i",
+  ))
+  return decodeHtmlEntities(match?.[1] ?? match?.[2] ?? match?.[3] ?? "")
+}
+
+function safeImageUrl(value: unknown, sourceUrl: string) {
+  if (typeof value !== "string" || !value.trim()) return null
+  try {
+    const url = new URL(value.trim(), sourceUrl)
+    return url.protocol === "https:" ? url.href : null
+  } catch {
+    return null
+  }
+}
+
+function pushCandidate(
+  target: Candidate[],
+  candidate: Candidate,
+) {
+  const normalized = normalizeFieldValue(
+    candidate.field,
+    candidate.normalizedValue,
+  )
+  if (!nonempty(normalized)) return
+  const key = [
+    candidate.field,
+    candidate.variantKey ?? "",
+    stableValue(normalized),
+    candidate.extractionPath,
+  ].join("|")
+  if (target.some((entry) => [
+    entry.field,
+    entry.variantKey ?? "",
+    stableValue(normalizeFieldValue(entry.field, entry.normalizedValue)),
+    entry.extractionPath,
+  ].join("|") === key)) return
+  target.push({
+    ...candidate,
+    normalizedValue: normalized,
+    variantKey: canonicalVariantKey(candidate.variantKey),
+  })
+}
+
+function structuredCandidates(
+  input: unknown,
+  rootPath: string,
+  sourceUrl: string,
+): { candidates: Candidate[]; warnings: string[] } {
+  const candidates: Candidate[] = []
+  const warnings: string[] = []
+  const queue: Array<{
+    value: unknown
+    path: string
+    depth: number
+    variantKey: string | null
+  }> = [{ value: input, path: rootPath, depth: 0, variantKey: null }]
+  let visited = 0
+  while (queue.length) {
+    const current = queue.shift()!
+    visited += 1
+    if (visited > 5_000) {
+      warnings.push("STRUCTURED_NODE_LIMIT_REACHED")
+      break
+    }
+    if (current.depth > 24) {
+      warnings.push("STRUCTURED_DEPTH_LIMIT_REACHED")
+      continue
+    }
+    if (Array.isArray(current.value)) {
+      current.value.slice(0, 500).forEach((entry, index) => {
+        queue.push({
+          value: entry,
+          path: `${current.path}[${index}]`,
+          depth: current.depth + 1,
+          variantKey: current.variantKey,
+        })
+      })
+      continue
+    }
+    const object = record(current.value)
+    if (!Object.keys(object).length) continue
+    const lowerPath = current.path.toLocaleLowerCase("en-US")
+    const isVariant = /(?:variants?|hasvariant)\[\d+\]/.test(lowerPath)
+    const localVariantKey = isVariant
+      ? canonicalVariantKey(
+          object.variant_id ?? object.variantId ?? object.sku ??
+            object.id ?? object["@id"] ?? current.variantKey,
+        )
+      : current.variantKey
+    const type = String(object["@type"] ?? object.type ?? "")
+      .toLocaleLowerCase("en-US")
+
+    for (const [key, raw] of Object.entries(object)) {
+      const normalizedKey = key.replace(/[^a-z0-9]+/gi, "")
+        .toLocaleLowerCase("en-US")
+      const path = `${current.path}.${key}`
+      const add = (
+        field: ProductCaseEvidenceField,
+        value: unknown = raw,
+        variantKey: string | null = localVariantKey,
+      ) => pushCandidate(candidates, {
+        field,
+        rawValue: value,
+        normalizedValue: value,
+        extractionPath: path,
+        variantKey,
+      })
+
+      if (normalizedKey === "name") {
+        if (/\.brand$/i.test(current.path)) add("brand", raw, null)
+        else if (!isVariant && (current.depth === 0 || type === "product")) {
+          add("title", raw, null)
+        } else if (isVariant) add("option_value", raw)
+      } else if (normalizedKey === "brand") {
+        const brand = record(raw)
+        add("brand", brand.name ?? raw, null)
+      } else if (normalizedKey === "model") add("model")
+      else if (normalizedKey === "mpn") add("mpn")
+      else if (["productid", "productidentifier"].includes(normalizedKey)) {
+        add("supplier_product_id", raw, null)
+      } else if (normalizedKey === "sku") add("supplier_sku")
+      else if (["variantid", "variationid"].includes(normalizedKey) ||
+        (normalizedKey === "id" && isVariant)) add("variant_id")
+      else if (/^option\d*$/.test(normalizedKey)) {
+        add("option_value", raw)
+      } else if (normalizedKey === "optionname") add("option_name")
+      else if (normalizedKey === "optionvalue") add("option_value")
+      else if (normalizedKey === "color" || normalizedKey === "colour") {
+        add("color")
+      } else if (normalizedKey === "material") add("material")
+      else if (["producttype", "itemtype"].includes(normalizedKey)) {
+        add("product_type", raw, null)
+      } else if (["availablecolors", "availablecolours"].includes(
+        normalizedKey,
+      )) add("available_colors", raw, null)
+      else if (["selectedvariant", "selectedoption"].includes(normalizedKey)) {
+        add("selected_variant")
+      } else if (["intendedpurpose", "intendeduse"].includes(
+        normalizedKey,
+      )) add("intended_purpose", raw, null)
+      else if (["intendedusers", "targetusers", "audience"].includes(
+        normalizedKey,
+      )) add("intended_users", raw, null)
+      else if (["capacity", "volume"].includes(normalizedKey)) add("capacity")
+      else if (["dimensions", "size"].includes(normalizedKey)) add("dimensions")
+      else if (["productdimensions", "itemdimensions"].includes(
+        normalizedKey,
+      )) add("product_dimensions")
+      else if (["packagedimensions", "shippingdimensions"].includes(
+        normalizedKey,
+      )) add("package_dimensions")
+      else if (["weight", "shippingweight"].includes(normalizedKey)) add("weight")
+      else if (["contents", "includeditems", "packagecontents"].includes(
+        normalizedKey,
+      )) add("contents")
+      else if (["inflationmechanism", "inflationmethod"].includes(
+        normalizedKey,
+      )) add("inflation_mechanism")
+      else if (["accessories", "includedaccessories"].includes(
+        normalizedKey,
+      )) add("accessories")
+      else if (["warning", "warnings", "safetywarning"].includes(
+        normalizedKey,
+      )) add("warnings")
+      else if (["quantityincluded", "includedquantity", "unitcount"]
+        .includes(normalizedKey)) add("included_quantity")
+      else if (["packquantity", "packcount"].includes(normalizedKey)) {
+        add("pack_quantity")
+      } else if (["price", "lowprice", "highprice"].includes(normalizedKey)) {
+        add("supplier_price")
+      } else if (["compareatprice", "regularprice", "listprice"]
+        .includes(normalizedKey)) add("regular_price")
+      else if (["saleprice", "discountprice"].includes(normalizedKey)) {
+        add("sale_price")
+      } else if (["pricecurrency", "currency"].includes(normalizedKey)) {
+        add("currency", raw, null)
+      } else if (["availability", "stock", "inventoryquantity"]
+        .includes(normalizedKey)) add("visible_stock")
+      else if (normalizedKey === "description") add("description", raw, null)
+      else if (["bullet", "bullets", "feature", "features"]
+        .includes(normalizedKey)) {
+        const values = Array.isArray(raw) ? raw : [raw]
+        values.forEach((value, index) => pushCandidate(candidates, {
+          field: "bullet",
+          rawValue: value,
+          normalizedValue: value,
+          extractionPath: `${path}[${index}]`,
+          variantKey: localVariantKey,
+        }))
+      } else if (["claim", "claims", "marketingclaim", "marketingclaims"]
+        .includes(normalizedKey)) {
+        const values = Array.isArray(raw) ? raw : [raw]
+        values.forEach((value, index) => pushCandidate(candidates, {
+          field: "marketing_claim",
+          rawValue: value,
+          normalizedValue: value,
+          extractionPath: `${path}[${index}]`,
+          variantKey: localVariantKey,
+          evidenceClass: "SUPPLIER_MARKETING_CLAIM",
+        }))
+      } else if (["image", "images", "imageurl"].includes(normalizedKey)) {
+        const values = Array.isArray(raw) ? raw : [raw]
+        values.forEach((entry, index) => {
+          const value = typeof entry === "string"
+            ? entry
+            : record(entry).url ?? record(entry).contentUrl
+          const url = safeImageUrl(value, sourceUrl)
+          if (url) pushCandidate(candidates, {
+            field: "source_image_url",
+            rawValue: value,
+            normalizedValue: url,
+            extractionPath: `${path}[${index}]`,
+            variantKey: localVariantKey,
+          })
+        })
+      } else if ([
+        "shippingdetails",
+        "shippinginfo",
+        "shippinginformation",
+      ].includes(normalizedKey)) {
+        add("product_shipping_statement", raw, null)
+      } else if (["fulfillmentquote", "shippingquote"].includes(
+        normalizedKey,
+      )) {
+        add("fulfillment_quote", raw, null)
+      } else if (["unitcost", "supplierunitcost"].includes(
+        normalizedKey,
+      )) add("supplier_unit_cost")
+      else if (normalizedKey === "packagingcost") add("packaging_cost")
+      else if (["outboundshippingcost", "ordershippingcost"].includes(
+        normalizedKey,
+      )) add("outbound_shipping_cost")
+
+      if (raw && typeof raw === "object") {
+        queue.push({
+          value: raw,
+          path,
+          depth: current.depth + 1,
+          variantKey: localVariantKey,
+        })
+      }
+    }
+  }
+  return { candidates, warnings: unique(warnings) }
+}
+
+const TEXT_LABELS: Array<{
+  field: ProductCaseEvidenceField
+  labels: string[]
+}> = [
+  { field: "brand", labels: ["brand", "marca"] },
+  { field: "model", labels: ["model", "modelo"] },
+  { field: "mpn", labels: ["mpn", "manufacturer part number"] },
+  {
+    field: "supplier_product_id",
+    labels: ["product id", "supplier product id", "id de producto"],
+  },
+  { field: "supplier_sku", labels: ["sku", "supplier sku"] },
+  { field: "variant_id", labels: ["variant id", "variation id"] },
+  { field: "color", labels: ["color", "colour"] },
+  { field: "material", labels: ["material"] },
+  {
+    field: "intended_users",
+    labels: ["intended users", "target users", "audience"],
+  },
+  { field: "capacity", labels: ["capacity", "capacidad", "volume"] },
+  { field: "dimensions", labels: ["dimensions", "dimensiones", "size"] },
+  {
+    field: "product_dimensions",
+    labels: ["product dimensions", "item dimensions"],
+  },
+  {
+    field: "package_dimensions",
+    labels: ["package dimensions", "shipping dimensions"],
+  },
+  { field: "weight", labels: ["weight", "peso"] },
+  {
+    field: "contents",
+    labels: ["contents", "included items", "package contents"],
+  },
+  {
+    field: "inflation_mechanism",
+    labels: ["inflation mechanism", "inflation method"],
+  },
+  {
+    field: "accessories",
+    labels: ["accessories", "included accessories"],
+  },
+  { field: "warnings", labels: ["warnings", "safety warning"] },
+  {
+    field: "included_quantity",
+    labels: ["included quantity", "quantity included", "cantidad incluida"],
+  },
+  {
+    field: "pack_quantity",
+    labels: ["pack quantity", "pack count", "cantidad del pack"],
+  },
+  {
+    field: "regular_price",
+    labels: ["regular price", "list price", "precio normal"],
+  },
+  {
+    field: "sale_price",
+    labels: ["sale price", "offer price", "precio de oferta"],
+  },
+  {
+    field: "supplier_price",
+    labels: ["price", "precio", "supplier price"],
+  },
+  { field: "currency", labels: ["currency", "moneda"] },
+  {
+    field: "visible_stock",
+    labels: ["stock", "availability", "available quantity"],
+  },
+  {
+    field: "product_shipping_statement",
+    labels: ["product shipping", "shipping information"],
+  },
+  {
+    field: "fulfillment_quote",
+    labels: ["fulfillment quote", "shipping quote"],
+  },
+  {
+    field: "supplier_unit_cost",
+    labels: ["supplier unit cost", "unit cost", "costo unitario"],
+  },
+  {
+    field: "packaging_cost",
+    labels: ["packaging cost", "costo de empaque"],
+  },
+  {
+    field: "outbound_shipping_cost",
+    labels: ["outbound shipping cost", "order shipping cost"],
+  },
+]
+
+function labeledTextCandidates(
+  visibleText: string,
+  pathPrefix: string,
+): Candidate[] {
+  const candidates: Candidate[] = []
+  const lines = visibleText.split(/\r?\n|[|•]/)
+    .map(normalizeWhitespace)
+    .filter(Boolean)
+    .slice(0, 5_000)
+  for (const [lineIndex, line] of lines.entries()) {
+    for (const definition of TEXT_LABELS) {
+      for (const label of definition.labels) {
+        const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        const match = line.match(
+          new RegExp(`(?:^|\\s)${escaped}\\s*[:=\\-]\\s*(.+)$`, "i"),
+        )
+        if (!match?.[1]) continue
+        pushCandidate(candidates, {
+          field: definition.field,
+          rawValue: match[1],
+          normalizedValue: match[1],
+          extractionPath: `${pathPrefix}.line[${lineIndex}].${definition.field}`,
+          variantKey: null,
+        })
+        break
+      }
+    }
+  }
+  return candidates
+}
+
+function htmlCandidates(
+  content: string,
+  sourceUrl: string,
+): { candidates: Candidate[]; warnings: string[] } {
+  const candidates: Candidate[] = []
+  const warnings: string[] = []
+  const jsonLdPattern =
+    /<script\b[^>]*\btype\s*=\s*(?:"application\/ld\+json"|'application\/ld\+json'|application\/ld\+json)[^>]*>([\s\S]*?)<\/script\s*>/gi
+  let jsonLdMatch: RegExpExecArray | null
+  let jsonLdIndex = 0
+  while ((jsonLdMatch = jsonLdPattern.exec(content)) && jsonLdIndex < 20) {
+    try {
+      const parsed: unknown = JSON.parse(jsonLdMatch[1])
+      const extracted = structuredCandidates(
+        parsed,
+        `html.jsonld[${jsonLdIndex}]`,
+        sourceUrl,
+      )
+      candidates.push(...extracted.candidates)
+      warnings.push(...extracted.warnings)
+    } catch {
+      warnings.push(`JSON_LD_INVALID:${jsonLdIndex}`)
+    }
+    jsonLdIndex += 1
+  }
+
+  const title = content.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i)?.[1]
+  if (title) pushCandidate(candidates, {
+    field: "title",
+    rawValue: textFromMarkup(title),
+    normalizedValue: textFromMarkup(title),
+    extractionPath: "html.title",
+  })
+  const h1 = content.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i)?.[1]
+  if (h1) pushCandidate(candidates, {
+    field: "title",
+    rawValue: textFromMarkup(h1),
+    normalizedValue: textFromMarkup(h1),
+    extractionPath: "html.h1[0]",
+  })
+
+  const metaTags = content.match(/<meta\b[^>]{0,4000}>/gi) ?? []
+  metaTags.slice(0, 500).forEach((tag, index) => {
+    const key = (attribute(tag, "property") || attribute(tag, "name"))
+      .toLocaleLowerCase("en-US")
+    const value = attribute(tag, "content")
+    if (!value) return
+    const fields: Partial<Record<string, ProductCaseEvidenceField>> = {
+      "og:title": "title",
+      "twitter:title": "title",
+      "og:description": "description",
+      description: "description",
+      "product:price:amount": "supplier_price",
+      "product:sale_price:amount": "sale_price",
+      "product:original_price:amount": "regular_price",
+      "product:price:currency": "currency",
+      "product:availability": "visible_stock",
+      "og:image": "source_image_url",
+      "twitter:image": "source_image_url",
+    }
+    const field = fields[key]
+    if (!field) return
+    const normalized = field === "source_image_url"
+      ? safeImageUrl(value, sourceUrl)
+      : value
+    pushCandidate(candidates, {
+      field,
+      rawValue: value,
+      normalizedValue: normalized,
+      extractionPath: `html.meta[${index}].${key}`,
+    })
+  })
+
+  const imageTags = content.match(/<img\b[^>]{0,8000}>/gi) ?? []
+  imageTags.slice(0, 48).forEach((tag, index) => {
+    const raw = attribute(tag, "src") || attribute(tag, "data-src")
+    const url = safeImageUrl(raw, sourceUrl)
+    if (!url) return
+    pushCandidate(candidates, {
+      field: "source_image_url",
+      rawValue: raw,
+      normalizedValue: url,
+      extractionPath: `html.img[${index}].src`,
+    })
+  })
+
+  const listItems = content.match(/<li\b[^>]*>[\s\S]*?<\/li\s*>/gi) ?? []
+  listItems.slice(0, 100).forEach((item, index) => {
+    const text = textFromMarkup(item)
+    if (!text) return
+    pushCandidate(candidates, {
+      field: "bullet",
+      rawValue: text,
+      normalizedValue: text,
+      extractionPath: `html.li[${index}]`,
+    })
+  })
+
+  const visibleText = content
+    .replace(
+      /<(script|style|noscript|template|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi,
+      "\n",
+    )
+    .replace(/<\/(?:p|div|li|section|h[1-6]|tr|br)\s*>/gi, "\n")
+    .replace(/<[^>]{0,4000}>/g, " ")
+    .split(/\r?\n/)
+    .map((line) => normalizeWhitespace(decodeHtmlEntities(line)))
+    .filter(Boolean)
+    .join("\n")
+  candidates.push(...labeledTextCandidates(visibleText, "html.visibleText"))
+
+  if (/\btop\s+sellers?\b/i.test(visibleText)) {
+    pushCandidate(candidates, {
+      field: "supplier_merchandising_signal",
+      rawValue: "Top Sellers",
+      normalizedValue: "TOP_SELLERS",
+      extractionPath: "html.visibleText.merchandising",
+      evidenceClass: "SUPPLIER_MERCHANDISING_SIGNAL",
+    })
+  }
+  if (/\bnew\s+arrivals?\s*(?:&|and)\s*restocks?\b/i.test(
+    visibleText,
+  )) {
+    pushCandidate(candidates, {
+      field: "supplier_merchandising_signal",
+      rawValue: "New Arrivals & Restocks",
+      normalizedValue: "NEW_ARRIVALS_AND_RESTOCKS",
+      extractionPath: "html.visibleText.merchandising",
+      evidenceClass: "SUPPLIER_MERCHANDISING_SIGNAL",
+    })
+  }
+  return { candidates, warnings: unique(warnings) }
+}
+
+function plainTextCandidates(content: string): Candidate[] {
+  const normalized = content.split(/\r?\n/)
+    .map(normalizeWhitespace)
+    .filter(Boolean)
+    .slice(0, 5_000)
+  const candidates = labeledTextCandidates(
+    normalized.join("\n"),
+    "text",
+  )
+  const firstLine = normalized[0]
+  if (firstLine && firstLine.length <= 300 &&
+    !/^[a-z ]{2,30}\s*[:=]/i.test(firstLine)) {
+    pushCandidate(candidates, {
+      field: "title",
+      rawValue: firstLine,
+      normalizedValue: firstLine,
+      extractionPath: "text.line[0]",
+    })
+  }
+  normalized.forEach((line, index) => {
+    if (/^[-*•]\s+/.test(line)) {
+      pushCandidate(candidates, {
+        field: "bullet",
+        rawValue: line,
+        normalizedValue: line.replace(/^[-*•]\s+/, ""),
+        extractionPath: `text.line[${index}].bullet`,
+      })
+    }
+  })
+  if (/\btop\s+sellers?\b/i.test(content)) {
+    pushCandidate(candidates, {
+      field: "supplier_merchandising_signal",
+      rawValue: "Top Sellers",
+      normalizedValue: "TOP_SELLERS",
+      extractionPath: "text.merchandising",
+      evidenceClass: "SUPPLIER_MERCHANDISING_SIGNAL",
+    })
+  }
+  if (/\bnew\s+arrivals?\s*(?:&|and)\s*restocks?\b/i.test(content)) {
+    pushCandidate(candidates, {
+      field: "supplier_merchandising_signal",
+      rawValue: "New Arrivals & Restocks",
+      normalizedValue: "NEW_ARRIVALS_AND_RESTOCKS",
+      extractionPath: "text.merchandising",
+      evidenceClass: "SUPPLIER_MERCHANDISING_SIGNAL",
+    })
+  }
+  return candidates
+}
+
+function candidateConflictKey(candidate: Candidate) {
+  if (!CONFLICT_FIELDS.has(candidate.field)) return null
+  return [
+    candidate.field,
+    canonicalVariantKey(candidate.variantKey) ?? "PRODUCT",
+  ].join(":")
+}
+
+function conflictsForEvidence(
+  evidence: ProductCaseEvidence[],
+): ProductCaseConflict[] {
+  const groups = new Map<string, ProductCaseEvidence[]>()
+  for (const entry of evidence) {
+    if (entry.evidenceStatus === "MISSING") continue
+    const conflictKey = CONFLICT_FIELDS.has(entry.field)
+      ? `canonical:${entry.field}:${
+          canonicalVariantKey(entry.variantKey) ?? "PRODUCT"
+        }`
+      : entry.conflictKey
+    if (!conflictKey) continue
+    const group = groups.get(conflictKey) ?? []
+    group.push(entry)
+    groups.set(conflictKey, group)
+  }
+  const conflicts: ProductCaseConflict[] = []
+  for (const [conflictKey, entries] of groups.entries()) {
+    const active = entries.filter((entry) =>
+      entry.humanVerdict !== "REJECT"
+    )
+    const activeValues = new Set(active.map((entry) =>
+      stableValue(effectiveEvidenceValue(entry))
+    ))
+    const allValues = unique(entries.map((entry) =>
+      stableValue(effectiveEvidenceValue(entry))
+    ))
+    if (allValues.length < 2) continue
+    conflicts.push({
+      conflictKey,
+      field: entries[0].field,
+      variantKey: entries[0].variantKey,
+      evidenceIds: entries.map((entry) => entry.id),
+      values: entries.map(effectiveEvidenceValue),
+      status: activeValues.size <= 1 &&
+          entries.some((entry) => entry.humanVerdict === "REJECT")
+        ? "HUMAN_RESOLVED"
+        : "OPEN",
+    })
+  }
+  return conflicts.sort((left, right) =>
+    left.conflictKey.localeCompare(right.conflictKey)
+  )
+}
+
+function markConflicts(evidence: ProductCaseEvidence[]) {
+  const conflicts = conflictsForEvidence(evidence)
+  const open = new Set(
+    conflicts.filter((entry) => entry.status === "OPEN")
+      .map((entry) => entry.conflictKey),
+  )
+  return evidence.map((entry): ProductCaseEvidence => {
+    if (entry.humanVerdict === "REJECT") return entry
+    const canonicalConflictKey = CONFLICT_FIELDS.has(entry.field)
+      ? `canonical:${entry.field}:${
+          canonicalVariantKey(entry.variantKey) ?? "PRODUCT"
+        }`
+      : entry.conflictKey
+    if (canonicalConflictKey && open.has(canonicalConflictKey)) {
+      return {
+        ...entry,
+        evidenceClass: "CONFLICTED",
+        evidenceStatus: "CONFLICTED",
+      }
+    }
+    if (entry.evidenceStatus !== "CONFLICTED") return entry
+    return {
+      ...entry,
+      evidenceClass: entry.sourceEvidenceClass,
+      evidenceStatus: entry.humanVerdict === "ACCEPT"
+        ? "ACCEPTED"
+        : entry.humanVerdict === "CORRECT"
+          ? "CORRECTED"
+          : "PROPOSED",
+    }
+  })
+}
+
+export async function extractProductCaseEvidence(input: {
+  sourceUrl: string
+  capturedAt: string
+  content: string
+  format?: ProductCaseContentFormat
+  sourceType?: ProductCaseSourceType
+}): Promise<ProductCaseExtractionResult> {
+  const validatedUrl = validateLunaProductUrl(input.sourceUrl)
+  if (!validatedUrl.valid) throw new Error(validatedUrl.error)
+  if (!validIsoInstant(input.capturedAt)) {
+    throw new Error("PRODUCT_CASE_CAPTURED_AT_INVALID")
+  }
+  if (typeof input.content !== "string") {
+    throw new Error("PRODUCT_CASE_CONTENT_REQUIRED")
+  }
+  const byteLength = utf8Length(input.content)
+  if (byteLength > PRODUCT_CASE_CONTENT_MAX_BYTES) {
+    throw new Error("PRODUCT_CASE_CONTENT_TOO_LARGE")
+  }
+  if (!input.content.trim()) throw new Error("PRODUCT_CASE_CONTENT_REQUIRED")
+
+  const format = detectFormat(input.content, input.format)
+  const contentHash = await hashProductCaseContent(input.content)
+  const sourceType = input.sourceType ?? "LUNA_MANUAL_CAPTURE"
+  let candidates: Candidate[] = []
+  let parserWarnings: string[] = []
+
+  if (format === "HTML_AS_TEXT") {
+    const result = htmlCandidates(input.content, validatedUrl.canonicalUrl)
+    candidates = result.candidates
+    parserWarnings = result.warnings
+  } else if (format === "JSON" || format === "JSON_LD") {
+    try {
+      const parsed: unknown = JSON.parse(input.content)
+      const result = structuredCandidates(
+        parsed,
+        format === "JSON_LD" ? "jsonld" : "json",
+        validatedUrl.canonicalUrl,
+      )
+      candidates = result.candidates
+      parserWarnings = result.warnings
+    } catch {
+      parserWarnings.push("STRUCTURED_CONTENT_INVALID")
+      candidates = plainTextCandidates(input.content)
+    }
+  } else {
+    candidates = plainTextCandidates(input.content)
+  }
+
+  const deduped = new Map<string, Candidate>()
+  for (const candidate of candidates) {
+    const normalizedValue = normalizeFieldValue(
+      candidate.field,
+      candidate.normalizedValue,
+    )
+    if (!nonempty(normalizedValue)) continue
+    const key = [
+      candidate.field,
+      canonicalVariantKey(candidate.variantKey) ?? "",
+      stableValue(normalizedValue),
+    ].join("|")
+    if (!deduped.has(key)) deduped.set(key, {
+      ...candidate,
+      normalizedValue,
+    })
+  }
+
+  const present = [...deduped.values()]
+  const evidence: ProductCaseEvidence[] = present.map((candidate, index) => {
+    const sourceEvidenceClass = candidate.evidenceClass ??
+      "SUPPLIER_STATED"
+    return {
+      id: `pcr-${contentHash.slice(7, 19)}-${String(index + 1)
+        .padStart(3, "0")}`,
+      field: candidate.field,
+      label: FIELD_LABELS[candidate.field],
+      variantKey: canonicalVariantKey(candidate.variantKey),
+      sourceType,
+      sourceUrl: validatedUrl.canonicalUrl,
+      capturedAt: input.capturedAt,
+      contentHash,
+      extractionPath: candidate.extractionPath,
+      extractionMethod: format === "JSON" || format === "JSON_LD"
+        ? "JSON_PATH"
+        : format === "HTML_AS_TEXT"
+          ? candidate.extractionPath.startsWith("html.meta")
+            ? "HTML_META"
+            : "HTML_TEXT_PATTERN"
+          : "PLAIN_TEXT_PATTERN",
+      rawValue: candidate.rawValue,
+      normalizedValue: candidate.normalizedValue,
+      evidenceClass: sourceEvidenceClass,
+      sourceEvidenceClass,
+      evidenceStatus: "PROPOSED",
+      humanVerdict: "UNREVIEWED",
+      humanReason: null,
+      originalValue: candidate.rawValue,
+      correctedValue: null,
+      conflictKey: candidateConflictKey(candidate),
+      availabilityPurpose: candidate.field === "visible_stock"
+        ? "INVENTORY_SIGNAL"
+        : null,
+      demandEvidence: candidate.field === "visible_stock" ? "NONE" : null,
+    }
+  })
+
+  for (const field of PRODUCT_CASE_EVIDENCE_FIELDS) {
+    if (evidence.some((entry) => entry.field === field)) continue
+    const missingIndex = evidence.length + 1
+    evidence.push({
+      id: `pcr-${contentHash.slice(7, 19)}-${String(missingIndex)
+        .padStart(3, "0")}`,
+      field,
+      label: FIELD_LABELS[field],
+      variantKey: null,
+      sourceType,
+      sourceUrl: validatedUrl.canonicalUrl,
+      capturedAt: input.capturedAt,
+      contentHash,
+      extractionPath: `missing.${field}`,
+      extractionMethod: "MISSING",
+      rawValue: null,
+      normalizedValue: null,
+      evidenceClass: "MISSING",
+      sourceEvidenceClass: "MISSING",
+      evidenceStatus: "MISSING",
+      humanVerdict: "UNREVIEWED",
+      humanReason: null,
+      originalValue: null,
+      correctedValue: null,
+      conflictKey: CONFLICT_FIELDS.has(field)
+        ? `${field}:PRODUCT`
+        : null,
+      availabilityPurpose: field === "visible_stock"
+        ? "INVENTORY_SIGNAL"
+        : null,
+      demandEvidence: field === "visible_stock" ? "NONE" : null,
+    })
+  }
+
+  const withConflicts = markConflicts(evidence)
+  return {
+    capture: {
+      sourceType,
+      sourceUrl: validatedUrl.canonicalUrl,
+      capturedAt: input.capturedAt,
+      contentHash,
+      format,
+      byteLength,
+      fullContentStored: false,
+      scriptsExecuted: false,
+      resourcesLoaded: false,
+    },
+    evidence: withConflicts,
+    conflicts: conflictsForEvidence(withConflicts),
+    missingFields: PRODUCT_CASE_EVIDENCE_FIELDS.filter((field) =>
+      !withConflicts.some((entry) =>
+        entry.field === field && nonempty(effectiveEvidenceValue(entry))
+      )
+    ),
+    parserWarnings: unique(parserWarnings),
+    safety: PRODUCT_CASE_ZERO_EFFECTS,
+  }
+}
+
+export const analyzeProductCaseManualCapture = extractProductCaseEvidence
+
+export function effectiveEvidenceValue(entry: ProductCaseEvidence) {
+  return entry.humanVerdict === "CORRECT"
+    ? entry.correctedValue
+    : entry.normalizedValue
+}
+
+function reviewReason(value: unknown) {
+  return typeof value === "string"
+    ? normalizeWhitespace(value).slice(0, 1_000)
+    : ""
+}
+
+export function applyProductCaseEvidenceReview(
+  evidence: ProductCaseEvidence[],
+  input: {
+    evidenceId: string
+    action: Exclude<ProductCaseHumanVerdict, "UNREVIEWED">
+    reason?: string
+    correctedValue?: unknown
+  },
+) {
+  const index = evidence.findIndex((entry) => entry.id === input.evidenceId)
+  if (index < 0) throw new Error("PRODUCT_CASE_EVIDENCE_NOT_FOUND")
+  const reason = reviewReason(input.reason)
+  if (["REJECT", "CORRECT"].includes(input.action) && !reason) {
+    throw new Error("PRODUCT_CASE_HUMAN_REASON_REQUIRED")
+  }
+  if (input.action === "CORRECT" &&
+    (input.correctedValue === undefined || input.correctedValue === null ||
+      input.correctedValue === "")) {
+    throw new Error("PRODUCT_CASE_CORRECTED_VALUE_REQUIRED")
+  }
+  const current = evidence[index]
+  const next = [...evidence]
+  if (input.action === "ACCEPT") {
+    if (!nonempty(current.normalizedValue) ||
+      current.evidenceStatus === "MISSING") {
+      throw new Error("PRODUCT_CASE_MISSING_EVIDENCE_CANNOT_BE_ACCEPTED")
+    }
+    next[index] = {
+      ...current,
+      humanVerdict: "ACCEPT",
+      humanReason: reason || null,
+      correctedValue: null,
+      evidenceStatus: current.evidenceStatus === "CONFLICTED"
+        ? "CONFLICTED"
+        : "ACCEPTED",
+    }
+  } else if (input.action === "REJECT") {
+    next[index] = {
+      ...current,
+      humanVerdict: "REJECT",
+      humanReason: reason,
+      correctedValue: null,
+      evidenceStatus: "REJECTED",
+    }
+  } else if (input.action === "CORRECT") {
+    const normalizedCorrection = normalizeFieldValue(
+      current.field,
+      input.correctedValue,
+    )
+    if (!nonempty(normalizedCorrection)) {
+      throw new Error("PRODUCT_CASE_CORRECTED_VALUE_INVALID")
+    }
+    next[index] = {
+      ...current,
+      humanVerdict: "CORRECT",
+      humanReason: reason,
+      correctedValue: normalizedCorrection,
+      sourceType: "HUMAN_CORRECTION",
+      sourceEvidenceClass: "HUMAN_HYPOTHESIS",
+      evidenceClass: current.evidenceStatus === "CONFLICTED"
+        ? "CONFLICTED"
+        : "HUMAN_HYPOTHESIS",
+      evidenceStatus: current.evidenceStatus === "CONFLICTED"
+        ? "CONFLICTED"
+        : "CORRECTED",
+    }
+  } else {
+    next[index] = {
+      ...current,
+      humanVerdict: "NEEDS_MORE_EVIDENCE",
+      humanReason: reason || null,
+      correctedValue: null,
+      evidenceStatus: "NEEDS_MORE_EVIDENCE",
+    }
+  }
+  return markConflicts(next)
+}
+
+export const applyHumanEvidenceReview = applyProductCaseEvidenceReview
+
+export function reevaluateProductCaseEvidence(
+  evidence: ProductCaseEvidence[],
+) {
+  return markConflicts(evidence.map((entry) => ({ ...entry })))
+}
+
+export function mergeProductCaseEvidenceCaptures(
+  current: ProductCaseEvidence[],
+  added: ProductCaseEvidence[],
+) {
+  const merged = new Map<string, ProductCaseEvidence>()
+  for (const entry of [...current, ...added]) {
+    const key = [
+      entry.sourceUrl,
+      entry.contentHash,
+      entry.extractionPath,
+      entry.field,
+      entry.variantKey ?? "",
+    ].join("|")
+    const existing = merged.get(key)
+    if (!existing ||
+      (existing.humanVerdict === "UNREVIEWED" &&
+        entry.humanVerdict !== "UNREVIEWED")) {
+      merged.set(key, { ...entry })
+    }
+  }
+  return reevaluateProductCaseEvidence([...merged.values()])
+}
+
+export const mergeProductCaseEvidence = mergeProductCaseEvidenceCaptures
+
+export function acceptedProductCaseEvidence(
+  evidence: ProductCaseEvidence[],
+) {
+  return evidence.filter((entry) =>
+    ["ACCEPT", "CORRECT"].includes(entry.humanVerdict) &&
+    ["ACCEPTED", "CORRECTED"].includes(entry.evidenceStatus) &&
+    !["CONFLICTED", "MISSING"].includes(entry.evidenceClass) &&
+    nonempty(effectiveEvidenceValue(entry))
+  )
+}
+
+function evidencePurpose(field: ProductCaseEvidenceField): EvidencePurpose[] {
+  if ([
+    "supplier_unit_cost",
+    "packaging_cost",
+    "outbound_shipping_cost",
+  ].includes(field)) return ["ECONOMICS"]
+  if ([
+    "title",
+    "brand",
+    "model",
+    "mpn",
+    "supplier_product_id",
+    "supplier_sku",
+    "variant_id",
+    "option_name",
+    "option_value",
+    "color",
+    "material",
+    "capacity",
+    "pack_quantity",
+  ].includes(field)) return ["IDENTITY"]
+  if ([
+    "dimensions",
+    "product_dimensions",
+    "package_dimensions",
+    "weight",
+  ].includes(field)) {
+    return ["COMPATIBILITY", "ECONOMICS"]
+  }
+  if (["source_image_url"].includes(field)) return ["CREATIVE"]
+  return []
+}
+
+function economicCostForField(
+  field: ProductCaseEvidenceField,
+  variantKey: string | null,
+): EvidenceInput["economicCost"] {
+  if (field === "supplier_unit_cost") {
+    return {
+      component: "PRODUCT_UNIT_COST",
+      currency: "USD",
+      basis: "PER_UNIT",
+      variantKeys: variantKey ? [variantKey] : undefined,
+    }
+  }
+  if (field === "packaging_cost") {
+    return {
+      component: "PACKAGING_COST",
+      currency: "USD",
+      basis: "PER_ORDER",
+    }
+  }
+  if (field === "outbound_shipping_cost") {
+    return {
+      component: "OUTBOUND_SHIPPING_COST",
+      currency: "USD",
+      basis: "PER_ORDER",
+    }
+  }
+  return null
+}
+
+function strategyEvidenceField(field: ProductCaseEvidenceField) {
+  const mapping: Partial<Record<ProductCaseEvidenceField, string>> = {
+    supplier_product_id: "supplier_product_id",
+    supplier_sku: "supplier_sku",
+    variant_id: "variant_id",
+    supplier_unit_cost: "supplier_unit_cost",
+    packaging_cost: "packaging_cost",
+    outbound_shipping_cost: "outbound_shipping_cost",
+  }
+  return mapping[field] ?? field
+}
+
+function runnerEvidenceToStrategy(
+  entry: ProductCaseEvidence,
+): EvidenceInput | null {
+  if ([
+    "SUPPLIER_MERCHANDISING_SIGNAL",
+    "SUPPLIER_MARKETING_CLAIM",
+    "HUMAN_VISUAL_OBSERVATION",
+  ].includes(entry.evidenceClass)) return null
+  if (entry.field === "visible_stock") return null
+  const sourceKind = entry.sourceType === "HUMAN_PRODUCT_INSPECTION"
+    ? "PRODUCT_INSPECTION" as const
+    : entry.sourceType === "HUMAN_CORRECTION"
+      ? "HUMAN_REVIEW" as const
+      : "SUPPLIER_CATALOG" as const
+  return {
+    id: entry.id,
+    field: strategyEvidenceField(entry.field),
+    label: entry.label,
+    rawValue: entry.originalValue,
+    normalizedValue: effectiveEvidenceValue(entry),
+    scope: [
+      "listing_price",
+      "buyer_shipping_charge",
+      "supplier_merchandising_signal",
+    ].includes(entry.field)
+      ? "STRATEGY"
+      : "PRODUCT",
+    sourceKind,
+    sourceReference: `${entry.sourceUrl}#${entry.extractionPath}`,
+    observedAt: entry.capturedAt,
+    conflictKey: entry.conflictKey,
+    requiredFor: evidencePurpose(entry.field),
+    economicCost: economicCostForField(entry.field, entry.variantKey),
+    humanReviewed: sourceKind === "HUMAN_REVIEW" ||
+      sourceKind === "PRODUCT_INSPECTION",
+  }
+}
+
+function evidenceById(
+  entries: ProductCaseEvidence[],
+  evidenceId: string,
+) {
+  return entries.find((entry) => entry.id === evidenceId) ?? null
+}
+
+function acceptedEvidenceByField(
+  entries: ProductCaseEvidence[],
+  field: ProductCaseEvidenceField,
+) {
+  return acceptedProductCaseEvidence(entries)
+    .filter((entry) => entry.field === field)
+}
+
+function numericAcceptedEvidence(
+  entries: ProductCaseEvidence[],
+  evidenceId: string,
+  expectedField: ProductCaseEvidenceField,
+) {
+  const entry = evidenceById(entries, evidenceId)
+  if (!entry || entry.field !== expectedField ||
+    !acceptedProductCaseEvidence(entries).some((candidate) =>
+      candidate.id === entry.id
+    )) return null
+  const value = effectiveEvidenceValue(entry)
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? { entry, value }
+    : null
+}
+
+function adapterNextAction(blockers: string[]) {
+  const priorities: Array<[RegExp, string]> = [
+    [/AUTHENTICATED|RAW_CAPTURE/, "CAPTURE_AUTHENTICATED_SUPPLIER_EVIDENCE"],
+    [/IDENTITY|VARIANT/, "REVIEW_IDENTITY_AND_VARIANT_EVIDENCE"],
+    [/PACK_QUANTITY/, "CONFIRM_PACK_QUANTITY"],
+    [/PRODUCT_UNIT_COST/, "CAPTURE_SUPPLIER_UNIT_COST"],
+    [/PACKAGING/, "CAPTURE_PACKAGING_COST"],
+    [/OUTBOUND_SHIPPING/, "CAPTURE_PRODUCT_SPECIFIC_SHIPPING_COST"],
+    [/DIMENSION|WEIGHT/, "CAPTURE_FULFILLMENT_MEASUREMENTS"],
+    [/MARKET|SOLD_EXACT|CEILING/, "RUN_MARKET_EVIDENCE_REVIEW"],
+    [/LISTING_PRICE|BUYER_SHIPPING/, "DEFINE_HUMAN_REVIEWED_OFFER_PRICE"],
+  ]
+  return priorities.find(([pattern]) =>
+    blockers.some((blocker) => pattern.test(blocker))
+  )?.[1] ?? "HUMAN_REVIEW_REQUIRED"
+}
+
+function hasStructuredIdentityConflict(document: ProductCaseDocument) {
+  const supplierTextIds = new Set(document.evidence
+    .filter((entry) =>
+      ["title", "description", "product_type"].includes(entry.field) &&
+      ["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
+        entry.sourceEvidenceClass,
+      )
+    ).map((entry) => entry.id))
+  return document.identityReview.status === "CONFLICTED" &&
+    document.identityReview.supplierEvidenceIds.length > 0 &&
+    document.identityReview.supplierEvidenceIds.every((id) =>
+      supplierTextIds.has(id)
+    ) &&
+    document.identityReview.humanObservationEvidenceIds.length > 0 &&
+    document.imageAnalysis.visualEvidenceStatus === "HUMAN_REVIEWED" &&
+    document.imageAnalysis.conflictDetectedFrom.includes("SUPPLIER_TEXT") &&
+    document.imageAnalysis.conflictDetectedFrom.includes(
+      "HUMAN_VISUAL_REVIEW",
+    ) &&
+    document.imageAnalysis.observations.some((observation) => {
+      const linkedEvidence = document.evidence.find((entry) =>
+        entry.id === observation.evidenceId &&
+        document.identityReview.humanObservationEvidenceIds.includes(
+          entry.id,
+        ) &&
+        entry.sourceType === "HUMAN_VISUAL_OBSERVATION" &&
+        entry.sourceEvidenceClass === "HUMAN_VISUAL_OBSERVATION" &&
+        entry.contentHash === observation.contentHash
+      )
+      return Boolean(linkedEvidence) &&
+        /^sha256:[0-9a-f]{64}$/.test(observation.contentHash) &&
+        observation.possibleConflicts.length > 0 &&
+        observation.contradictsEvidenceIds.length > 0 &&
+        observation.contradictsEvidenceIds.every((id) =>
+          supplierTextIds.has(id)
+        )
+    })
+}
+
+function identityReviewReady(document: ProductCaseDocument) {
+  const verificationIds = document.identityReview
+    .physicalVerificationEvidenceIds
+  return document.identityReview.status === "READY" &&
+    validateProductCaseDocumentProvenance(document).valid &&
+    document.identityReview.physicalProductVerified === true &&
+    verificationIds.length > 0 &&
+    verificationIds.every((id) =>
+      document.evidence.some((entry) =>
+        entry.id === id &&
+        entry.sourceType === "HUMAN_PRODUCT_INSPECTION" &&
+        entry.evidenceClass === "PRODUCT_VERIFIED" &&
+        ["ACCEPT", "CORRECT"].includes(entry.humanVerdict) &&
+        ["ACCEPTED", "CORRECTED"].includes(entry.evidenceStatus)
+      )
+    ) &&
+    verificationIds.every((id) => {
+      const evidence = document.evidence.find((entry) => entry.id === id)!
+      return document.captures.some((capture) =>
+        capture.sourceType === "HUMAN_PRODUCT_INSPECTION" &&
+        capture.contentHash === evidence.contentHash
+      )
+    }) &&
+    conflictsForEvidence(document.evidence).every((conflict) =>
+      conflict.status === "HUMAN_RESOLVED"
+    )
+}
+
+export function validateProductCaseImageAnalysis(
+  document: ProductCaseDocument,
+) {
+  const errors: string[] = []
+  if (!document.imageAnalysis.observations.length &&
+    document.imageAnalysis.visualEvidenceStatus !== "NOT_REVIEWED") {
+    errors.push("VISUAL_STATUS_REQUIRES_STRUCTURED_OBSERVATION")
+  }
+  for (const observation of document.imageAnalysis.observations) {
+    const evidence = document.evidence.find((entry) =>
+      entry.id === observation.evidenceId
+    )
+    const capture = document.captures.find((entry) =>
+      entry.sourceType === "HUMAN_VISUAL_OBSERVATION" &&
+      entry.contentHash === observation.contentHash
+    )
+    if (!evidence ||
+      evidence.sourceType !== "HUMAN_VISUAL_OBSERVATION" ||
+      evidence.sourceEvidenceClass !== "HUMAN_VISUAL_OBSERVATION" ||
+      evidence.contentHash !== observation.contentHash) {
+      errors.push(`VISUAL_EVIDENCE_LINK_INVALID:${observation.imageId}`)
+    }
+    if (!capture) {
+      errors.push(`VISUAL_CAPTURE_PROVENANCE_MISSING:${observation.imageId}`)
+    }
+    for (const contradictedId of observation.contradictsEvidenceIds) {
+      const contradicted = document.evidence.find((entry) =>
+        entry.id === contradictedId
+      )
+      if (!contradicted ||
+        !["title", "description", "product_type"].includes(
+          contradicted.field,
+        ) ||
+        !["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
+          contradicted.sourceEvidenceClass,
+        )) {
+        errors.push(
+          `VISUAL_CONTRADICTED_SUPPLIER_EVIDENCE_INVALID:${observation.imageId}:${contradictedId}`,
+        )
+      }
+    }
+  }
+  return {
+    valid: errors.length === 0,
+    errors: unique(errors),
+    visualEvidenceStatus: document.imageAnalysis.observations.length
+      ? document.imageAnalysis.visualEvidenceStatus
+      : "NOT_REVIEWED" as const,
+  }
+}
+
+export function validateProductCaseDocumentProvenance(
+  document: ProductCaseDocument,
+) {
+  const errors = [...validateProductCaseImageAnalysis(document).errors]
+  for (const evidence of acceptedProductCaseEvidence(document.evidence)) {
+    const matchingCapture = document.captures.some((capture) =>
+      capture.sourceType === evidence.sourceType &&
+      capture.sourceUrl === evidence.sourceUrl &&
+      capture.contentHash === evidence.contentHash &&
+      capture.capturedAt === evidence.capturedAt
+    )
+    if (!matchingCapture) {
+      errors.push(`EVIDENCE_CAPTURE_PROVENANCE_MISMATCH:${evidence.id}`)
+    }
+    if (evidence.sourceType.startsWith("LUNA_") &&
+      evidence.sourceEvidenceClass === "PRODUCT_VERIFIED") {
+      errors.push(`SUPPLIER_SOURCE_CANNOT_BE_PRODUCT_VERIFIED:${evidence.id}`)
+    }
+    if (evidence.sourceType === "HUMAN_PRODUCT_INSPECTION" &&
+      (evidence.sourceEvidenceClass !== "PRODUCT_VERIFIED" ||
+        evidence.humanVerdict !== "ACCEPT")) {
+      errors.push(`PRODUCT_INSPECTION_POLICY_INVALID:${evidence.id}`)
+    }
+    if (evidence.sourceType === "HUMAN_CORRECTION" &&
+      (evidence.sourceEvidenceClass !== "HUMAN_HYPOTHESIS" ||
+        evidence.humanVerdict !== "CORRECT" ||
+        !nonempty(evidence.originalValue) ||
+        !nonempty(evidence.correctedValue))) {
+      errors.push(`HUMAN_CORRECTION_POLICY_INVALID:${evidence.id}`)
+    }
+    if (evidence.sourceType === "HUMAN_VISUAL_OBSERVATION" &&
+      evidence.sourceEvidenceClass !== "HUMAN_VISUAL_OBSERVATION") {
+      errors.push(`HUMAN_VISUAL_POLICY_INVALID:${evidence.id}`)
+    }
+  }
+  return {
+    valid: errors.length === 0,
+    errors: unique(errors),
+  }
+}
+
+export async function createHumanVisualReviewRecord(input: {
+  document: ProductCaseDocument
+  imageId: string
+  sourceUrl: string | null
+  sourceReference: string
+  reviewerType: ProductCaseImageObservation["reviewerType"]
+  observedProductType: string | null
+  visibleFeatures: string[]
+  visibleText: string[]
+  visibleBrands: string[]
+  visibleColors: string[]
+  visibleQuantity: number | null
+  observedVariant: string | null
+  possibleConflicts: string[]
+  contradictsEvidenceIds: string[]
+  confidence: ProductCaseImageObservation["confidence"]
+  humanDecision: ProductCaseImageObservation["humanDecision"]
+  humanReason: string
+  reviewedAt: string
+}) {
+  if (!validIsoInstant(input.reviewedAt)) {
+    throw new Error("HUMAN_VISUAL_REVIEW_TIMESTAMP_INVALID")
+  }
+  const contradicted = input.contradictsEvidenceIds.map((id) =>
+    input.document.evidence.find((entry) => entry.id === id) ?? null
+  )
+  if (!contradicted.length || contradicted.some((entry) =>
+    !entry ||
+    !["title", "description", "product_type"].includes(entry.field) ||
+    !["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
+      entry.sourceEvidenceClass,
+    )
+  )) {
+    throw new Error("HUMAN_VISUAL_REVIEW_SUPPLIER_LINK_INVALID")
+  }
+  const normalizedRecord = {
+    imageId: normalizeWhitespace(input.imageId),
+    sourceUrl: input.sourceUrl,
+    sourceReference: normalizeWhitespace(input.sourceReference),
+    reviewerType: input.reviewerType,
+    observedProductType: input.observedProductType,
+    visibleFeatures: input.visibleFeatures.map(normalizeWhitespace),
+    visibleText: input.visibleText.map(normalizeWhitespace),
+    visibleBrands: input.visibleBrands.map(normalizeWhitespace),
+    visibleColors: input.visibleColors.map(normalizeWhitespace),
+    visibleQuantity: input.visibleQuantity,
+    observedVariant: input.observedVariant,
+    possibleConflicts: input.possibleConflicts.map(normalizeWhitespace),
+    contradictsEvidenceIds: [...input.contradictsEvidenceIds].sort(),
+    confidence: input.confidence,
+    humanDecision: input.humanDecision,
+    humanReason: normalizeWhitespace(input.humanReason),
+    reviewedAt: input.reviewedAt,
+  }
+  if (!normalizedRecord.imageId || !normalizedRecord.sourceReference ||
+    !normalizedRecord.humanReason) {
+    throw new Error("HUMAN_VISUAL_REVIEW_REQUIRED_FIELD_MISSING")
+  }
+  const serialized = stableValue(normalizedRecord)
+  const contentHash = await hashProductCaseContent(serialized)
+  const evidenceId =
+    `visual-${contentHash.slice(7, 19)}-${normalizedRecord.imageId}`
+  const observation: ProductCaseImageObservation = {
+    ...normalizedRecord,
+    evidenceId,
+    contentHash: contentHash as `sha256:${string}`,
+    sourceType: "SUPPLIER_IMAGE",
+    verificationStatus: "SOURCE_IMAGE_OBSERVED",
+    physicalProductVerified: false,
+    captureMethod: "HUMAN_VISUAL_REVIEW",
+  }
+  const evidence: ProductCaseEvidence = {
+    id: evidenceId,
+    field: "visual_observation",
+    label: FIELD_LABELS.visual_observation,
+    variantKey: input.observedVariant,
+    sourceType: "HUMAN_VISUAL_OBSERVATION",
+    sourceUrl: input.document.sourceUrl,
+    capturedAt: input.reviewedAt,
+    contentHash,
+    extractionPath: `humanVisualReview.${normalizedRecord.imageId}`,
+    extractionMethod: "HUMAN_STRUCTURED_REVIEW",
+    rawValue: normalizedRecord,
+    normalizedValue: normalizedRecord,
+    evidenceClass: "HUMAN_VISUAL_OBSERVATION",
+    sourceEvidenceClass: "HUMAN_VISUAL_OBSERVATION",
+    evidenceStatus: input.humanDecision === "REJECT_FOR_EBAY_HANDOFF"
+      ? "REJECTED"
+      : "NEEDS_MORE_EVIDENCE",
+    humanVerdict: input.humanDecision === "REJECT_FOR_EBAY_HANDOFF"
+      ? "REJECT"
+      : "NEEDS_MORE_EVIDENCE",
+    humanReason: normalizedRecord.humanReason,
+    originalValue: normalizedRecord,
+    correctedValue: null,
+    conflictKey: null,
+    availabilityPurpose: null,
+    demandEvidence: null,
+  }
+  const capture: ProductCaseCapture = {
+    sourceType: "HUMAN_VISUAL_OBSERVATION",
+    sourceUrl: input.document.sourceUrl,
+    capturedAt: input.reviewedAt,
+    contentHash,
+    format: "JSON",
+    byteLength: utf8Length(serialized),
+    fullContentStored: false,
+    scriptsExecuted: false,
+    resourcesLoaded: false,
+  }
+  const updatedEvidence = [
+    ...input.document.evidence.map((entry) => ({ ...entry })),
+    evidence,
+  ]
+  return {
+    observation,
+    evidence,
+    capture,
+    updatedEvidence,
+    conflicts: conflictsForEvidence(updatedEvidence),
+    identityConflict: {
+      status: "CONFLICTED" as const,
+      confidence: "LOW" as const,
+      physicalProductVerified: false,
+      physicalVerificationEvidenceIds: [],
+      supplierEvidenceIds: [...normalizedRecord.contradictsEvidenceIds],
+      humanObservationEvidenceIds: [evidenceId],
+      conflictHistory: ["SUPPLIER_TEXT_VS_HUMAN_VISUAL_REVIEW"],
+      currentConflict: "SUPPLIER_TEXT_VS_HUMAN_VISUAL_REVIEW",
+      blockers: unique([
+        ...normalizedRecord.possibleConflicts,
+        "PHYSICAL_PRODUCT_AND_VARIANT_VERIFICATION_REQUIRED",
+      ]),
+      nextAction: "VERIFY_PHYSICAL_PRODUCT_AND_VARIANT",
+      conflictDetectedFrom: [
+        "SUPPLIER_TEXT",
+        "HUMAN_VISUAL_REVIEW",
+      ] as const,
+    },
+    safety: PRODUCT_CASE_ZERO_EFFECTS,
+  }
+}
+
+export function reviewHumanComparableCandidate(
+  candidate: ProductCaseHumanComparableCandidate,
+  review: {
+    decision:
+      | "KEEP_NOT_VALIDATED"
+      | "REJECT"
+      | "VALIDATE_ACTIVE_EXACT"
+    reason: string
+    reviewer: string
+    reviewedAt: string
+    identityVisualMatch: boolean
+    variantMatch: boolean
+    contentsMatch: boolean
+    packQuantityMatch: boolean
+    validatedTitle?: string | null
+    validatedPackQuantity?: number | null
+    validatedVariantComposition?: string[]
+    buyerShipping?: number | null
+    reasonCodes?: string[]
+  },
+): ProductCaseHumanComparableCandidate {
+  const reason = normalizeWhitespace(review.reason)
+  const reviewer = normalizeWhitespace(review.reviewer)
+  if (!reason || !reviewer || !validIsoInstant(review.reviewedAt)) {
+    throw new Error("COMPARABLE_HUMAN_REVIEW_PROVENANCE_REQUIRED")
+  }
+  const gatesPass = review.identityVisualMatch && review.variantMatch &&
+    review.contentsMatch && review.packQuantityMatch
+  const canValidate = review.decision === "VALIDATE_ACTIVE_EXACT" &&
+    candidate.listingStatus === "ACTIVE_VISIBLE" &&
+    Boolean(candidate.ebayItemId) &&
+    Boolean(review.validatedTitle && normalizeWhitespace(
+      review.validatedTitle,
+    )) &&
+    Number.isInteger(review.validatedPackQuantity) &&
+    Number(review.validatedPackQuantity) > 0 &&
+    typeof review.buyerShipping === "number" &&
+    Number.isFinite(review.buyerShipping) &&
+    review.buyerShipping >= 0 &&
+    gatesPass
+  if (review.decision === "VALIDATE_ACTIVE_EXACT" && !canValidate) {
+    throw new Error("COMPARABLE_ACTIVE_EXACT_VALIDATION_INCOMPLETE")
+  }
+  const rejected = review.decision === "REJECT"
+  return {
+    ...candidate,
+    validationStatus: canValidate
+      ? "VALIDATED_ACTIVE_EXACT"
+      : "NOT_VALIDATED",
+    identityValidated: canValidate,
+    variantValidated: canValidate,
+    contentsValidated: canValidate,
+    packQuantityValidated: canValidate,
+    eligibleForStrategyLab: canValidate,
+    provisionalCohort: canValidate
+      ? "ACTIVE_EXACT"
+      : rejected ? "REJECTED" : "SIMILAR_NOT_EXACT",
+    review: {
+      decision: review.decision,
+      reason,
+      reviewer,
+      reviewedAt: review.reviewedAt,
+      validatedTitle: canValidate
+        ? normalizeWhitespace(review.validatedTitle!)
+        : null,
+      validatedPackQuantity: canValidate
+        ? Number(review.validatedPackQuantity)
+        : null,
+      validatedVariantComposition: canValidate
+        ? unique((review.validatedVariantComposition ?? [])
+            .map(normalizeWhitespace).filter(Boolean))
+        : [],
+      buyerShipping: canValidate ? Number(review.buyerShipping) : null,
+      reasonCodes: unique((review.reasonCodes ?? []).map(normalizeWhitespace)
+        .filter(Boolean)),
+    },
+    validationBlockers: canValidate
+      ? []
+      : unique([
+          ...(rejected ? ["HUMAN_REJECTED"] : []),
+          ...(!review.identityVisualMatch
+            ? ["EXACT_IDENTITY_NOT_VALIDATED"] : []),
+          ...(!review.variantMatch ? ["VARIANT_NOT_VALIDATED"] : []),
+          ...(!review.contentsMatch ? ["CONTENTS_NOT_VALIDATED"] : []),
+          ...(!review.packQuantityMatch
+            ? ["PACK_QUANTITY_NOT_VALIDATED"] : []),
+          ...(!candidate.ebayItemId ? ["EBAY_ITEM_ID_MISSING"] : []),
+          ...(candidate.listingStatus !== "ACTIVE_VISIBLE"
+            ? ["ACTIVE_LISTING_REQUIRED"] : []),
+        ]),
+  }
+}
+
+export function humanComparableCandidateToStrategyComparable(
+  candidate: ProductCaseHumanComparableCandidate,
+): ComparableInput | null {
+  if (
+    candidate.validationStatus !== "VALIDATED_ACTIVE_EXACT" ||
+    candidate.review.decision !== "VALIDATE_ACTIVE_EXACT" ||
+    !candidate.eligibleForStrategyLab ||
+    !candidate.ebayItemId ||
+    !candidate.review.validatedTitle ||
+    !candidate.review.validatedPackQuantity ||
+    candidate.review.buyerShipping === null ||
+    !candidate.identityValidated ||
+    !candidate.variantValidated ||
+    !candidate.contentsValidated ||
+    !candidate.packQuantityValidated
+  ) return null
+  return {
+    itemId: candidate.ebayItemId,
+    title: candidate.review.validatedTitle,
+    sourceKind: "EBAY_ACTIVE",
+    sourceReference: candidate.sourceReference,
+    observedAt: candidate.review.reviewedAt ?? candidate.observedAt,
+    identityMatch: "EXACT",
+    identityMatchBasis: ["HUMAN_VERIFIED"],
+    offerScenario: candidate.review.validatedPackQuantity === 1
+      ? "SINGLE"
+      : candidate.review.validatedPackQuantity === 2
+        ? "TWO_PACK"
+        : candidate.review.validatedPackQuantity === 3
+          ? "THREE_PACK"
+          : candidate.review.validatedVariantComposition.length > 1
+            ? "MIXED_VARIANT_BUNDLE"
+            : "SINGLE",
+    packQuantity: candidate.review.validatedPackQuantity,
+    variantComposition: [...candidate.review.validatedVariantComposition],
+    itemPrice: candidate.observedPriceApprox,
+    buyerShipping: candidate.review.buyerShipping,
+    currency: candidate.currency ?? "USD",
+    saleConfirmed: false,
+    confirmedSoldQuantity: null,
+    estimatedSoldQuantity: candidate.visibleSoldSignal,
+  }
+}
+
+export function buildStrategyLabAdapterPreview(
+  input: ProductCaseStrategyAdapterInput,
+): ProductCaseStrategyAdapterResult {
+  const accepted = acceptedProductCaseEvidence(input.document.evidence)
+  const acceptedInputs = accepted.flatMap((entry) => {
+    const mapped = runnerEvidenceToStrategy(entry)
+    return mapped ? [mapped] : []
+  })
+  const excludedEvidence = input.document.evidence.flatMap((entry) => {
+    if (entry.evidenceClass === "SUPPLIER_MERCHANDISING_SIGNAL") {
+      return [{
+        evidenceId: entry.id,
+        reason: "MERCHANDISING_SIGNAL_NOT_STRATEGY_EVIDENCE",
+      }]
+    }
+    if (entry.evidenceClass === "SUPPLIER_MARKETING_CLAIM") {
+      return [{
+        evidenceId: entry.id,
+        reason: "SUPPLIER_MARKETING_CLAIM_NOT_PRODUCT_FACT",
+      }]
+    }
+    if (entry.evidenceClass === "HUMAN_VISUAL_OBSERVATION") {
+      return [{
+        evidenceId: entry.id,
+        reason: "HUMAN_VISUAL_OBSERVATION_NOT_STRATEGY_PRODUCT_FACT",
+      }]
+    }
+    if (entry.field === "visible_stock") {
+      return [{
+        evidenceId: entry.id,
+        reason:
+          "SUPPLIER_AVAILABILITY_IS_INVENTORY_SIGNAL_NOT_MARKET_EVIDENCE",
+      }]
+    }
+    if (!accepted.some((candidate) => candidate.id === entry.id)) {
+      return [{
+        evidenceId: entry.id,
+        reason: entry.evidenceStatus === "REJECTED"
+          ? "HUMAN_REJECTED"
+          : entry.evidenceStatus === "CONFLICTED"
+            ? "CONFLICT_NOT_RESOLVED"
+            : entry.evidenceStatus === "MISSING"
+              ? "MISSING"
+              : "HUMAN_ACCEPTANCE_REQUIRED",
+      }]
+    }
+    return []
+  })
+  const validatedComparableInputs =
+    input.document.marketEvidence.humanSuppliedComparableCandidates.flatMap(
+      (candidate) => {
+        const comparable = humanComparableCandidateToStrategyComparable(
+          candidate,
+        )
+        return comparable ? [comparable] : []
+      },
+    )
+  const excludedComparableCandidates =
+    input.document.marketEvidence.humanSuppliedComparableCandidates
+      .filter((candidate) =>
+        !validatedComparableInputs.some((comparable) =>
+          comparable.itemId === candidate.ebayItemId
+        )
+      )
+      .map((candidate) => ({
+          ebayItemId: candidate.ebayItemId,
+          reason:
+            "HUMAN_SUPPLIED_COMPARABLE_CANDIDATE_REQUIRES_VALIDATION" as const,
+        }))
+  const blockers: string[] = []
+  const draft = input.scenarioDraft
+  if (input.document.identityReview.status === "CONFLICTED" ||
+    !identityReviewReady(input.document)) {
+    const identityBlockers = unique(
+      input.document.identityReview.blockers.length
+        ? input.document.identityReview.blockers
+        : ["IDENTITY_AND_PHYSICAL_PRODUCT_VERIFICATION_REQUIRED"],
+    )
+    return {
+      status: "BLOCKED",
+      acceptedEvidenceInputs: acceptedInputs,
+      acceptedRunnerEvidenceIds: accepted.map((entry) => entry.id),
+      excludedEvidence,
+      excludedComparableCandidates,
+      validatedComparableInputs,
+      blockers: identityBlockers,
+      strategyLabInput: null,
+      osConclusion: "HOLD_IDENTITY",
+      nextAction: "VERIFY_PHYSICAL_PRODUCT_AND_VARIANT",
+      marketEvidence: input.document.marketEvidence,
+      currentEvidenceLeader: null,
+      strategicHypothesisToValidate: null,
+      safety: PRODUCT_CASE_ZERO_EFFECTS,
+    }
+  }
+  const validSupplierAvailability = accepted.some((entry) => {
+    const value = effectiveEvidenceValue(entry)
+    return entry.field === "visible_stock" &&
+      ["PRODUCT_VERIFIED", "SUPPLIER_STATED"].includes(entry.evidenceClass) &&
+      typeof value === "number" && Number.isInteger(value) && value >= 0 &&
+      entry.availabilityPurpose === "INVENTORY_SIGNAL" &&
+      entry.demandEvidence === "NONE"
+  })
+  if (!validSupplierAvailability) {
+    blockers.push("SUPPLIER_AVAILABILITY_EVIDENCE_MISSING_OR_INVALID")
+  }
+  if (!draft) blockers.push("SCENARIO_DRAFT_MISSING")
+  if (!input.economicsPolicy) blockers.push("ECONOMICS_POLICY_MISSING")
+  if (input.document.sourceAccess.status ===
+    "AUTHENTICATED_SOURCE_REQUIRED" &&
+    !input.document.captures.some((capture) =>
+      capture.sourceType === "LUNA_AUTHENTICATED_MANUAL_CAPTURE"
+    )) {
+    blockers.push("AUTHENTICATED_SUPPLIER_CAPTURE_REQUIRED")
+  }
+
+  const requiredIdentity = draft?.requiredIdentityFields.length
+    ? draft.requiredIdentityFields
+    : ["title", "supplier_product_id", "variant_id"] as
+      ProductCaseEvidenceField[]
+  for (const field of requiredIdentity) {
+    if (!acceptedEvidenceByField(input.document.evidence, field).some(
+      (entry) => ["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
+        entry.evidenceClass,
+      ),
+    )) blockers.push(`IDENTITY_EVIDENCE_MISSING:${field}`)
+  }
+  if (!acceptedEvidenceByField(input.document.evidence, "variant_id")
+    .some((entry) => ["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
+      entry.evidenceClass,
+    ))) blockers.push("VARIANT_EVIDENCE_MISSING")
+
+  const pack = draft
+    ? numericAcceptedEvidence(
+        input.document.evidence,
+        draft.packQuantityEvidenceId,
+        "pack_quantity",
+      )
+    : null
+  if (!pack || !Number.isInteger(pack.value) || pack.value <= 0 ||
+    !["PRODUCT_VERIFIED", "SUPPLIER_STATED"].includes(
+      pack.entry.evidenceClass,
+    )) {
+    blockers.push("PACK_QUANTITY_EVIDENCE_MISSING")
+  }
+
+  const costLines = draft?.costLines.map((line) => {
+    const cost = numericAcceptedEvidence(
+      input.document.evidence,
+      line.unitCostEvidenceId,
+      "supplier_unit_cost",
+    )
+    if (!cost || !["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
+      cost.entry.evidenceClass,
+    )) {
+      blockers.push(`PRODUCT_UNIT_COST_EVIDENCE_MISSING:${line.variantKey}`)
+      return null
+    }
+    return {
+      variantKey: line.variantKey,
+      quantity: line.quantity,
+      unitCost: cost.value,
+      evidenceId: cost.entry.id,
+    }
+  }) ?? []
+  if (!costLines.length) blockers.push("PRODUCT_UNIT_COST_EVIDENCE_MISSING")
+  if (costLines.some((line) => !line) ||
+    costLines.some((line) =>
+      !Number.isInteger(line?.quantity) || Number(line?.quantity) <= 0
+    ) ||
+    (pack && costLines.reduce((total, line) =>
+      total + Number(line?.quantity ?? 0), 0
+    ) !== pack.value)) {
+    blockers.push("PACK_COST_LINE_QUANTITY_CONFLICT")
+  }
+
+  const packaging = draft
+    ? numericAcceptedEvidence(
+        input.document.evidence,
+        draft.packagingCostEvidenceId,
+        "packaging_cost",
+      )
+    : null
+  if (!packaging || !["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
+    packaging.entry.evidenceClass,
+  )) blockers.push("PACKAGING_COST_EVIDENCE_MISSING")
+  const outboundShipping = draft
+    ? numericAcceptedEvidence(
+        input.document.evidence,
+        draft.outboundShippingCostEvidenceId,
+        "outbound_shipping_cost",
+      )
+    : null
+  if (!outboundShipping ||
+    !["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
+      outboundShipping.entry.evidenceClass,
+    )) blockers.push("OUTBOUND_SHIPPING_COST_EVIDENCE_MISSING")
+  const listingPrice = draft
+    ? numericAcceptedEvidence(
+        input.document.evidence,
+        draft.listingPriceEvidenceId,
+        "listing_price",
+      )
+    : null
+  if (!listingPrice) blockers.push("LISTING_PRICE_EVIDENCE_MISSING")
+  const buyerShipping = draft
+    ? numericAcceptedEvidence(
+        input.document.evidence,
+        draft.buyerShippingChargeEvidenceId,
+        "buyer_shipping_charge",
+      )
+    : null
+  if (!buyerShipping) blockers.push("BUYER_SHIPPING_CHARGE_EVIDENCE_MISSING")
+
+  for (const field of draft?.requiredDimensionFields ?? []) {
+    if (!acceptedEvidenceByField(input.document.evidence, field).some(
+      (entry) => entry.evidenceClass === "PRODUCT_VERIFIED",
+    )) blockers.push(`PRODUCT_VERIFIED_MEASUREMENT_MISSING:${field}`)
+  }
+  if (input.document.marketEvidence.runStatus !== "COMPLETE") {
+    blockers.push("MARKET_EVIDENCE_NOT_RUN")
+  }
+  if (input.document.marketEvidence.soldExact !== "AVAILABLE") {
+    blockers.push("SOLD_EXACT_MISSING")
+  }
+  if (input.document.marketEvidence.marketCeiling !== "AVAILABLE") {
+    blockers.push("MARKET_CEILING_MISSING")
+  }
+
+  const uniqueBlockers = unique(blockers).sort()
+  if (uniqueBlockers.length || !draft || !input.economicsPolicy ||
+    !pack || !packaging || !outboundShipping || !listingPrice ||
+    !buyerShipping || costLines.some((line) => !line)) {
+    return {
+      status: "BLOCKED",
+      acceptedEvidenceInputs: acceptedInputs,
+      acceptedRunnerEvidenceIds: accepted.map((entry) => entry.id),
+      excludedEvidence,
+      excludedComparableCandidates,
+      validatedComparableInputs,
+      blockers: uniqueBlockers,
+      strategyLabInput: null,
+      osConclusion: "HOLD_EVIDENCE_INCOMPLETE",
+      nextAction: adapterNextAction(uniqueBlockers),
+      marketEvidence: input.document.marketEvidence,
+      currentEvidenceLeader: draft
+        ? {
+            scenarioId: draft.id,
+            offerScenario: draft.offerScenario,
+            label: "CURRENT EVIDENCE LEADER",
+            subtitle:
+              "Escenario actualmente mejor respaldado; no está aprobado para ejecutar.",
+          }
+        : null,
+      strategicHypothesisToValidate:
+        draft?.hypothesisEvidenceClass === "HUMAN_HYPOTHESIS"
+          ? {
+              scenarioId: draft.id,
+              offerScenario: draft.offerScenario,
+              evidenceClass: "HUMAN_HYPOTHESIS",
+              label: "STRATEGIC HYPOTHESIS TO VALIDATE",
+            }
+          : null,
+      safety: PRODUCT_CASE_ZERO_EFFECTS,
+    }
+  }
+
+  const identityRequirements = requiredIdentity.map((field) => ({
+    field: strategyEvidenceField(field),
+    blockerCode: `IDENTITY_EVIDENCE_MISSING:${field}`,
+    acceptedEvidenceClasses: [
+      "PRODUCT_VERIFIED",
+      "SUPPLIER_STATED",
+    ] as EvidenceClass[],
+    requiredPurpose: "IDENTITY" as const,
+    requireProductFact: true,
+  }))
+  const scenario = {
+    id: draft.id,
+    offerScenario: draft.offerScenario,
+    packQuantity: pack.value,
+    variantComposition: [...draft.variantComposition],
+    costLines: costLines.filter(
+      (line): line is NonNullable<typeof line> => Boolean(line),
+    ),
+    packagingCost: packaging.value,
+    packagingCostEvidenceId: packaging.entry.id,
+    itemPrice: listingPrice.value,
+    buyerShippingCharge: buyerShipping.value,
+    outboundShippingCost: outboundShipping.value,
+    outboundShippingCostEvidenceId: outboundShipping.entry.id,
+    hypothesisEvidenceClass: draft.hypothesisEvidenceClass ?? null,
+    requiredEvidence: draft.requiredDimensionFields.map((field) => ({
+      field: strategyEvidenceField(field),
+      blockerCode: `PRODUCT_VERIFIED_MEASUREMENT_MISSING:${field}`,
+      acceptedEvidenceClasses: ["PRODUCT_VERIFIED"] as EvidenceClass[],
+      requiredPurpose: "COMPATIBILITY" as const,
+      requireProductFact: true,
+    })),
+    requiresExactSoldEvidence: draft.requiresExactSoldEvidence,
+    creativeSeed: draft.creativeSeed,
+  }
+  const strategyLabInput: StrategyLabCaseInput = {
+    fixtureVersion: PRODUCT_CASE_RUNNER_VERSION,
+    caseId: input.document.caseId,
+    productLabel: input.document.productLabel,
+    evaluatedAt: input.evaluatedAt,
+    currency: "USD",
+    economicsPolicy: input.economicsPolicy,
+    evidence: acceptedInputs,
+    comparables: [
+      ...input.document.marketEvidence.comparables,
+      ...validatedComparableInputs,
+    ],
+    scenarios: [scenario],
+    identityRequirements,
+    compatibility: draft.requiredDimensionFields.length
+      ? {
+          required: true,
+          requirements: scenario.requiredEvidence,
+        }
+      : { required: false, requirements: [] },
+  }
+  const evaluation = evaluateStrategyLabCase(strategyLabInput)
+  return {
+    status: "READY",
+    acceptedEvidenceInputs: acceptedInputs,
+    acceptedRunnerEvidenceIds: accepted.map((entry) => entry.id),
+    excludedEvidence,
+    excludedComparableCandidates,
+    validatedComparableInputs,
+    blockers: [],
+    strategyLabInput,
+    osConclusion: evaluation.recommendation.releaseGate,
+    nextAction: evaluation.recommendation.nextAction,
+    marketEvidence: input.document.marketEvidence,
+    currentEvidenceLeader: {
+      scenarioId: evaluation.recommendation.preferredScenarioId ?? draft.id,
+      offerScenario:
+        evaluation.recommendation.preferredScenario ?? draft.offerScenario,
+      label: "CURRENT EVIDENCE LEADER",
+      subtitle:
+        "Escenario actualmente mejor respaldado; no está aprobado para ejecutar.",
+    },
+    strategicHypothesisToValidate:
+      draft.hypothesisEvidenceClass === "HUMAN_HYPOTHESIS"
+        ? {
+            scenarioId: draft.id,
+            offerScenario: draft.offerScenario,
+            evidenceClass: "HUMAN_HYPOTHESIS",
+            label: "STRATEGIC HYPOTHESIS TO VALIDATE",
+          }
+        : null,
+    safety: PRODUCT_CASE_ZERO_EFFECTS,
+  }
+}
+
+function acceptedFirst(
+  evidence: ProductCaseEvidence[],
+  field: ProductCaseEvidenceField,
+) {
+  return acceptedProductCaseEvidence(evidence)
+    .find((entry) => entry.field === field) ?? null
+}
+
+function acceptedText(
+  evidence: ProductCaseEvidence[],
+  field: ProductCaseEvidenceField,
+) {
+  const value = effectiveEvidenceValue(acceptedFirst(evidence, field) ??
+    {} as ProductCaseEvidence)
+  return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+function acceptedNumber(
+  evidence: ProductCaseEvidence[],
+  field: ProductCaseEvidenceField,
+) {
+  const entry = acceptedFirst(evidence, field)
+  const value = entry ? effectiveEvidenceValue(entry) : null
+  return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+export function buildProductCaseImageRegistry(input: {
+  document: ProductCaseDocument
+  approvals?: ProductCaseImageApproval[]
+}): ProductCaseImageRegistry {
+  const acceptedImages = acceptedProductCaseEvidence(input.document.evidence)
+    .filter((entry) => entry.field === "source_image_url")
+  const expectedPackQuantity = acceptedNumber(
+    input.document.evidence,
+    "pack_quantity",
+  )
+  const expectedVariantId = acceptedText(
+    input.document.evidence,
+    "variant_id",
+  )
+  const blockers: string[] = []
+  const approvals = input.approvals ?? []
+  const entries: ProductCaseImageRegistryEntry[] = approvals.flatMap(
+    (approval, index) => {
+      const sourceUrl = safeImageUrl(
+        approval.sourceUrl,
+        input.document.sourceUrl,
+      )
+      if (!sourceUrl) {
+        blockers.push(`IMAGE_SOURCE_URL_INVALID:${index + 1}`)
+        return []
+      }
+      const evidence = approval.evidenceId
+        ? acceptedImages.find((entry) => entry.id === approval.evidenceId) ??
+          null
+        : null
+      if (approval.sourceKind === "ORIGINAL_SUPPLIER" &&
+        (!evidence ||
+          effectiveEvidenceValue(evidence) !== sourceUrl)) {
+        blockers.push(
+          `ORIGINAL_SUPPLIER_IMAGE_EVIDENCE_REQUIRED:${index + 1}`,
+        )
+      }
+      const assetHash = approval.assetHash &&
+          /^sha256:[0-9a-f]{64}$/.test(approval.assetHash)
+        ? approval.assetHash
+        : null
+      if (approval.assetHash && !assetHash) {
+        blockers.push(`IMAGE_ASSET_HASH_INVALID:${index + 1}`)
+      }
+      const qaPassed = Object.values(approval.qa).every(Boolean)
+      const approvalComplete = approval.status === "APPROVED" &&
+        Boolean(assetHash) &&
+        Boolean(normalizeWhitespace(approval.reviewer ?? "")) &&
+        Boolean(approval.reviewedAt) &&
+        validIsoInstant(approval.reviewedAt ?? "") &&
+        Boolean(normalizeWhitespace(approval.reason ?? "")) &&
+        Boolean(approval.humanNotes) &&
+        qaPassed
+      if (approval.status === "APPROVED" && !assetHash) {
+        blockers.push(`IMAGE_ASSET_HASH_REQUIRED:${index + 1}`)
+      }
+      if (approval.status === "APPROVED" && !qaPassed) {
+        blockers.push(`IMAGE_QA_INCOMPLETE:${index + 1}`)
+      }
+      return [{
+        registryId: `image-${String(index + 1).padStart(2, "0")}`,
+        evidenceId: evidence?.id ?? null,
+        sourceKind: approval.sourceKind,
+        sourceUrl,
+        sourceCaptureHash: evidence?.contentHash ?? null,
+        assetHash,
+        productCaseId: input.document.caseId,
+        packQuantity: approval.packQuantity,
+        variantId: approval.variantId,
+        purpose: normalizeWhitespace(approval.purpose),
+        role: approval.role,
+        order: approval.order,
+        approvalStatus: approvalComplete
+          ? "APPROVED"
+          : approval.status === "REJECTED"
+            ? "REJECTED"
+            : approval.status === "SOURCE_REQUIRED"
+              ? "SOURCE_REQUIRED"
+              : "HUMAN_REVIEW",
+        reviewer: approval.reviewer,
+        reviewedAt: approval.reviewedAt,
+        humanNotes: approval.humanNotes,
+        qa: { ...approval.qa },
+        sourceOnly: true,
+        downloaded: false,
+        transformed: false,
+        generated: false,
+      }]
+    },
+  )
+  for (const [index, evidence] of acceptedImages.entries()) {
+    if (entries.some((entry) => entry.evidenceId === evidence.id)) continue
+    const sourceUrl = effectiveEvidenceValue(evidence)
+    if (typeof sourceUrl !== "string") continue
+    entries.push({
+      registryId: `source-image-${String(index + 1).padStart(2, "0")}`,
+      evidenceId: evidence.id,
+      sourceKind: "ORIGINAL_SUPPLIER",
+      sourceUrl,
+      sourceCaptureHash: evidence.contentHash,
+      assetHash: null,
+      productCaseId: input.document.caseId,
+      packQuantity: expectedPackQuantity,
+      variantId: expectedVariantId,
+      purpose: "UNASSIGNED",
+      role: "SECONDARY",
+      order: entries.length + 1,
+      approvalStatus: "MANUAL_IMAGE_ATTACHED",
+      reviewer: null,
+      reviewedAt: null,
+      humanNotes: null,
+      qa: {
+        productAndVariantMatch: false,
+        packQuantityMatch: false,
+        logosAndIpReviewed: false,
+        claimsReviewed: false,
+        ebayRoleCoherent: false,
+      },
+      sourceOnly: true,
+      downloaded: false,
+      transformed: false,
+      generated: false,
+    })
+  }
+  const approvedMain = entries.find((entry) =>
+    entry.role === "MAIN" &&
+    entry.order === 1 &&
+    entry.approvalStatus === "APPROVED" &&
+    Boolean(entry.assetHash) &&
+    entry.variantId === expectedVariantId &&
+    entry.packQuantity === expectedPackQuantity &&
+    Object.values(entry.qa).every(Boolean)
+  )
+  if (entries.some((entry) =>
+    entry.role === "MAIN" && entry.approvalStatus === "APPROVED"
+  ) && !approvedMain) {
+    blockers.push("APPROVED_MAIN_VARIANT_PACK_HASH_OR_QA_MISMATCH")
+  }
+  if (!entries.length) blockers.push("IMAGE_SOURCE_REQUIRED")
+  if (!approvedMain) {
+    blockers.push(
+      "APPROVED_MAIN_WITH_EXPLICIT_ASSET_HASH_VARIANT_PACK_AND_QA_REQUIRED",
+    )
+  }
+  const status: ProductCaseImageRegistry["status"] = approvedMain
+    ? "APPROVED"
+    : entries.some((entry) => entry.approvalStatus === "REJECTED")
+      ? "REJECTED"
+      : entries.some((entry) => entry.approvalStatus === "HUMAN_REVIEW")
+        ? "HUMAN_REVIEW"
+        : entries.length
+          ? "MANUAL_IMAGE_ATTACHED"
+          : "SOURCE_REQUIRED"
+  return {
+    status,
+    entries: entries.sort((left, right) =>
+      left.order - right.order ||
+      left.registryId.localeCompare(right.registryId)
+    ),
+    approvedMainRegistryId: approvedMain?.registryId ?? null,
+    approvedMainEvidenceId: approvedMain?.evidenceId ?? null,
+    approvedMainAssetHash: approvedMain?.assetHash ?? null,
+    blockers: unique(blockers),
+    safety: PRODUCT_CASE_ZERO_EFFECTS,
+  }
+}
+
+function listingGate(
+  id: ProductCaseListingGateId,
+  passed: boolean,
+  blockers: string[],
+  evidenceIds: string[] = [],
+  notRun = false,
+): ProductCaseListingGate {
+  return {
+    id,
+    status: passed ? "PASS" : notRun ? "NOT_RUN" : "BLOCKED",
+    evidenceIds: unique(evidenceIds),
+    blockers: passed ? [] : unique(blockers),
+  }
+}
+
+export function buildManualListingPackageDraft(input: {
+  document: ProductCaseDocument
+  adapter: ProductCaseStrategyAdapterResult
+  imageRegistry: ProductCaseImageRegistry
+  operations: ProductCaseListingOperations
+  generatedAt: string
+}): ProductCaseManualListingPackage {
+  const accepted = acceptedProductCaseEvidence(input.document.evidence)
+  const acceptedIds = accepted.map((entry) => entry.id)
+  const identityHold = !identityReviewReady(input.document)
+  const acceptedLink = (id: string) => acceptedIds.includes(id)
+  const linksAccepted = (ids: string[]) =>
+    ids.length > 0 && ids.every(acceptedLink)
+  const linkedValueMatches = (ids: string[], value: unknown) =>
+    linksAccepted(ids) && ids.some((id) => {
+      const entry = evidenceById(input.document.evidence, id)
+      return entry && stableValue(effectiveEvidenceValue(entry)) ===
+        stableValue(value)
+    })
+  const linkedFieldValueMatches = (
+    ids: string[],
+    fields: ProductCaseEvidenceField[],
+    value: unknown,
+  ) => linksAccepted(ids) && ids.some((id) => {
+    const entry = evidenceById(input.document.evidence, id)
+    return entry && fields.includes(entry.field) &&
+      stableValue(effectiveEvidenceValue(entry)) === stableValue(value)
+  })
+  const rejectedIds = input.document.evidence
+    .filter((entry) => entry.humanVerdict === "REJECT")
+    .map((entry) => entry.id)
+  const fieldIds = (field: ProductCaseEvidenceField) =>
+    accepted.filter((entry) => entry.field === field)
+      .map((entry) => entry.id)
+  const sourceResolved = input.document.sourceAccess.status ===
+      "PUBLIC_ACCESSIBLE" ||
+    input.document.captures.some((capture) =>
+      capture.sourceType === "LUNA_AUTHENTICATED_MANUAL_CAPTURE"
+    )
+  const humanReviewComplete = input.document.evidence.every((entry) =>
+    entry.evidenceStatus === "MISSING" ||
+    entry.humanVerdict !== "UNREVIEWED"
+  ) && conflictsForEvidence(input.document.evidence)
+    .every((entry) => entry.status === "HUMAN_RESOLVED")
+  const identityFields: ProductCaseEvidenceField[] = [
+    "title",
+    "supplier_product_id",
+  ]
+  const identityReady = identityReviewReady(input.document) &&
+    identityFields.every((field) => fieldIds(field).length > 0)
+  const variantReady = fieldIds("variant_id").length > 0
+  const packReady = accepted.some((entry) => {
+    const value = effectiveEvidenceValue(entry)
+    return entry.field === "pack_quantity" &&
+      ["PRODUCT_VERIFIED", "SUPPLIER_STATED"].includes(entry.evidenceClass) &&
+      typeof value === "number" && Number.isInteger(value) && value > 0
+  })
+  const supplierAvailabilityReady = accepted.some((entry) => {
+    const value = effectiveEvidenceValue(entry)
+    return entry.field === "visible_stock" &&
+      ["PRODUCT_VERIFIED", "SUPPLIER_STATED"].includes(entry.evidenceClass) &&
+      typeof value === "number" && Number.isInteger(value) && value >= 0 &&
+      entry.availabilityPurpose === "INVENTORY_SIGNAL" &&
+      entry.demandEvidence === "NONE"
+  })
+  const productCostReady = fieldIds("supplier_unit_cost")
+    .some((id) => {
+      const entry = evidenceById(input.document.evidence, id)
+      return entry && ["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
+        entry.evidenceClass,
+      )
+    })
+  const packagingReady = fieldIds("packaging_cost").some((id) => {
+    const entry = evidenceById(input.document.evidence, id)
+    return entry && ["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
+      entry.evidenceClass,
+    )
+  })
+  const outboundReady = fieldIds("outbound_shipping_cost").some((id) => {
+    const entry = evidenceById(input.document.evidence, id)
+    return entry && ["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
+      entry.evidenceClass,
+    )
+  })
+  const measurementsReady = [
+    "product_dimensions",
+    "package_dimensions",
+    "weight",
+  ].every((field) =>
+    accepted.some((entry) =>
+      entry.field === field && entry.evidenceClass === "PRODUCT_VERIFIED"
+    )
+  )
+  const marketReady = input.document.marketEvidence.runStatus === "COMPLETE" &&
+    input.document.marketEvidence.soldExact === "AVAILABLE" &&
+    input.document.marketEvidence.marketCeiling === "AVAILABLE"
+  const humanStrategyApproved = Boolean(
+    input.document.humanReview.conclusion.conclusion &&
+    [
+      "GO_SINGLE",
+      "TEST_SINGLE",
+      "EVALUATE_TWO_PACK",
+      "EVALUATE_THREE_PACK",
+      "MIXED_VARIANT_BUNDLE",
+    ].includes(input.adapter.osConclusion) &&
+    input.document.humanReview.conclusion.conclusion ===
+      input.adapter.osConclusion &&
+    input.document.humanReview.conclusion.scenario ===
+      input.adapter.currentEvidenceLeader?.offerScenario &&
+    Boolean(input.document.humanReview.conclusion.reviewedAt) &&
+    validIsoInstant(input.document.humanReview.conclusion.reviewedAt ?? "") &&
+    Boolean(normalizeWhitespace(
+      input.document.humanReview.conclusion.reviewer ?? "",
+    )) &&
+    Boolean(normalizeWhitespace(
+      input.document.humanReview.conclusion.reason ?? "",
+    )),
+  )
+  const captureHasRealHash = input.document.captures.some((capture) =>
+    /^sha256:[0-9a-f]{64}$/.test(capture.contentHash)
+  )
+  const titleReady = Boolean(
+    input.operations.title &&
+    normalizeWhitespace(input.operations.title).length > 0 &&
+    normalizeWhitespace(input.operations.title).length <= 80 &&
+    linkedFieldValueMatches(
+      input.operations.evidenceLinks.title,
+      ["title"],
+      normalizeWhitespace(input.operations.title),
+    ),
+  )
+  const descriptionReady = Boolean(
+    input.operations.description &&
+    linkedFieldValueMatches(
+      input.operations.evidenceLinks.description,
+      ["listing_description"],
+      input.operations.description,
+    ),
+  )
+  const categoryConditionReady = Boolean(
+    input.operations.categoryId && input.operations.conditionId &&
+    linkedFieldValueMatches(
+      input.operations.evidenceLinks.category,
+      ["ebay_category"],
+      {
+        id: input.operations.categoryId,
+        name: input.operations.categoryName,
+      },
+    ) &&
+    linkedFieldValueMatches(
+      input.operations.evidenceLinks.condition,
+      ["ebay_condition"],
+      {
+        id: input.operations.conditionId,
+        description: input.operations.conditionDescription,
+      },
+    ),
+  )
+  const requiredSpecificsReady =
+    input.operations.requiredItemSpecifics.length > 0 &&
+    input.operations.requiredItemSpecifics.every((name) =>
+      Array.isArray(input.operations.itemSpecifics[name]) &&
+      input.operations.itemSpecifics[name].some((value) =>
+        Boolean(normalizeWhitespace(value))
+      ) &&
+      linkedFieldValueMatches(
+        input.operations.evidenceLinks.itemSpecifics[name] ?? [],
+        ["ebay_item_specific"],
+        {
+          name,
+          values: input.operations.itemSpecifics[name],
+        },
+      )
+    )
+  const rejectedVisualObservation =
+    input.document.imageAnalysis.observations.some((observation) =>
+      observation.humanDecision === "REJECT_FOR_EBAY_HANDOFF" ||
+      observation.visibleBrands.length > 0
+    )
+  const brandIpClaimsReady =
+    !rejectedVisualObservation &&
+    input.operations.brandIpClaimsReview.status === "APPROVED" &&
+    Boolean(normalizeWhitespace(
+      input.operations.brandIpClaimsReview.reviewer ?? "",
+    )) &&
+    Boolean(input.operations.brandIpClaimsReview.reviewedAt) &&
+    validIsoInstant(input.operations.brandIpClaimsReview.reviewedAt ?? "") &&
+    Boolean(normalizeWhitespace(
+      input.operations.brandIpClaimsReview.reason ?? "",
+    ))
+  const orderedImageIds = input.operations.imageEvidenceOrder
+  const orderedImageEntries = orderedImageIds.map((id) =>
+    input.imageRegistry.entries.find((entry) => entry.registryId === id) ??
+      null
+  )
+  const imageOrderReady = Boolean(
+    input.imageRegistry.approvedMainRegistryId &&
+    input.imageRegistry.approvedMainAssetHash &&
+    orderedImageIds.length > 0 &&
+    orderedImageIds[0] === input.imageRegistry.approvedMainRegistryId &&
+    new Set(orderedImageIds).size === orderedImageIds.length &&
+    orderedImageEntries.every((entry, index) =>
+      entry &&
+      entry.approvalStatus === "APPROVED" &&
+      entry.order === index + 1 &&
+      entry.variantId === acceptedText(
+        input.document.evidence,
+        "variant_id",
+      ) &&
+      entry.packQuantity === acceptedNumber(
+        input.document.evidence,
+        "pack_quantity",
+      ) &&
+      Object.values(entry.qa).every(Boolean)
+    ) &&
+    !rejectedVisualObservation,
+  )
+  const priceQuantityReady = Boolean(
+    typeof input.operations.listingPrice === "number" &&
+    Number.isFinite(input.operations.listingPrice) &&
+    input.operations.listingPrice > 0 &&
+    Number.isInteger(input.operations.quantity) &&
+    Number(input.operations.quantity) > 0 &&
+    linkedFieldValueMatches(
+      input.operations.evidenceLinks.listingPrice,
+      ["listing_price"],
+      input.operations.listingPrice,
+    ) &&
+    linkedFieldValueMatches(
+      input.operations.evidenceLinks.quantity,
+      ["listing_quantity"],
+      input.operations.quantity,
+    ),
+  )
+  const policyBundle = {
+    fulfillmentPolicyId: input.operations.fulfillmentPolicyId,
+    paymentPolicyId: input.operations.paymentPolicyId,
+    returnPolicyId: input.operations.returnPolicyId,
+    shippingPolicySummary: input.operations.shippingPolicySummary,
+    returnPolicySummary: input.operations.returnPolicySummary,
+    handlingTimeDays: input.operations.handlingTimeDays,
+  }
+  const policiesReady = Boolean(
+    input.operations.fulfillmentPolicyId &&
+    input.operations.paymentPolicyId &&
+    input.operations.returnPolicyId &&
+    input.operations.shippingPolicySummary &&
+    input.operations.returnPolicySummary &&
+    Number.isInteger(input.operations.handlingTimeDays) &&
+    Number(input.operations.handlingTimeDays) >= 0 &&
+    input.operations.itemLocation.country &&
+    input.operations.itemLocation.postalCode &&
+    linkedFieldValueMatches(
+      input.operations.evidenceLinks.policies,
+      ["listing_policy_bundle"],
+      policyBundle,
+    ) &&
+    linkedFieldValueMatches(
+      input.operations.evidenceLinks.itemLocation,
+      ["item_location"],
+      input.operations.itemLocation,
+    ),
+  )
+  const strategyEvaluation = evaluateAdapterStrategy(input.adapter)
+  const evaluatedScenario = strategyEvaluation?.scenarioAssessments.find(
+    (assessment) =>
+      assessment.scenario.id ===
+        input.adapter.currentEvidenceLeader?.scenarioId,
+  ) ?? strategyEvaluation?.scenarioAssessments[0] ?? null
+  const evaluatedEconomics = evaluatedScenario?.economics ?? null
+  const requiredEconomicsEvidenceIds = evaluatedScenario
+    ? unique([
+        ...evaluatedScenario.scenario.costLines.map((line) => line.evidenceId),
+        evaluatedScenario.scenario.packagingCostEvidenceId ?? "",
+        evaluatedScenario.scenario.outboundShippingCostEvidenceId ?? "",
+      ].filter(Boolean))
+    : []
+  const economicsConcordant = Boolean(
+    evaluatedEconomics &&
+    evaluatedEconomics.investedCost !== null &&
+    evaluatedEconomics.estimatedProfit !== null &&
+    evaluatedEconomics.netMarginPercent !== null &&
+    evaluatedEconomics.roiPercent !== null &&
+    input.operations.totalInvestment === evaluatedEconomics.investedCost &&
+    input.operations.estimatedProfit === evaluatedEconomics.estimatedProfit &&
+    input.operations.marginPercent === evaluatedEconomics.netMarginPercent &&
+    input.operations.roiPercent === evaluatedEconomics.roiPercent &&
+    requiredEconomicsEvidenceIds.length > 0 &&
+    requiredEconomicsEvidenceIds.every((id) =>
+      input.operations.evidenceLinks.economics.includes(id)
+    ),
+  )
+  const economicsReady = Boolean(
+    input.adapter.status === "READY" &&
+    productCostReady && packagingReady && outboundReady &&
+    measurementsReady &&
+    typeof input.operations.totalInvestment === "number" &&
+    Number.isFinite(input.operations.totalInvestment) &&
+    input.operations.totalInvestment > 0 &&
+    typeof input.operations.estimatedProfit === "number" &&
+    Number.isFinite(input.operations.estimatedProfit) &&
+    typeof input.operations.marginPercent === "number" &&
+    Number.isFinite(input.operations.marginPercent) &&
+    typeof input.operations.roiPercent === "number" &&
+    Number.isFinite(input.operations.roiPercent) &&
+    economicsConcordant &&
+    linksAccepted(input.operations.evidenceLinks.economics),
+  )
+  const evidenceAndDecisionRecordReady = Boolean(
+    input.operations.supportingEvidenceIds.length > 0 &&
+    input.operations.supportingEvidenceIds.every((id) =>
+      acceptedIds.includes(id)
+    ) &&
+    input.operations.blockers.length === 0,
+  )
+  const explicitHumanApprovalReady = Boolean(
+    input.operations.explicitHumanApproval.approved &&
+    normalizeWhitespace(
+      input.operations.explicitHumanApproval.reviewer ?? "",
+    ) &&
+    input.operations.explicitHumanApproval.reviewedAt &&
+    validIsoInstant(input.operations.explicitHumanApproval.reviewedAt ?? "") &&
+    normalizeWhitespace(
+      input.operations.explicitHumanApproval.reason ?? "",
+    ),
+  )
+  const gates: ProductCaseListingGate[] = [
+    listingGate(
+      "IDENTITY_AND_VARIANT_READY",
+      sourceResolved && captureHasRealHash && humanReviewComplete &&
+        identityReady && variantReady,
+      [
+        ...(!sourceResolved
+          ? ["AUTHENTICATED_SUPPLIER_CAPTURE_REQUIRED"] : []),
+        ...(!captureHasRealHash ? ["RAW_CAPTURE_HASH_REQUIRED"] : []),
+        ...(!humanReviewComplete ? ["HUMAN_FIELD_REVIEW_INCOMPLETE"] : []),
+        ...(!identityReady ? ["IDENTITY_EVIDENCE_INCOMPLETE"] : []),
+        ...(!variantReady ? ["VARIANT_EVIDENCE_INCOMPLETE"] : []),
+      ],
+      [...identityFields.flatMap(fieldIds), ...fieldIds("variant_id")],
+    ),
+    listingGate(
+      "SUPPLIER_AVAILABILITY_READY",
+      input.operations.supplierAvailabilityStatus ===
+        "CONFIRMED_AVAILABLE" &&
+        supplierAvailabilityReady,
+      ["CURRENT_SUPPLIER_AVAILABILITY_CONFIRMATION_REQUIRED"],
+      fieldIds("visible_stock"),
+    ),
+    listingGate(
+      "PACK_QUANTITY_READY",
+      packReady,
+      ["PACK_QUANTITY_EVIDENCE_INCOMPLETE"],
+      fieldIds("pack_quantity"),
+    ),
+    listingGate(
+      "MARKET_EVIDENCE_READY",
+      marketReady,
+      ["MARKET_EVIDENCE_NOT_RUN"],
+      [],
+      input.document.marketEvidence.runStatus !== "COMPLETE",
+    ),
+    listingGate(
+      "ECONOMICS_READY",
+      economicsReady,
+      unique([
+        ...input.adapter.blockers,
+        ...(!productCostReady
+          ? ["PRODUCT_UNIT_COST_EVIDENCE_INCOMPLETE"] : []),
+        ...(!packagingReady
+          ? ["PACKAGING_COST_EVIDENCE_INCOMPLETE"] : []),
+        ...(!outboundReady
+          ? ["OUTBOUND_SHIPPING_EVIDENCE_INCOMPLETE"] : []),
+        ...(!measurementsReady
+          ? ["PRODUCT_VERIFIED_DIMENSIONS_AND_WEIGHT_REQUIRED"] : []),
+        ...(!economicsReady
+          ? ["TOTAL_INVESTMENT_PROFIT_MARGIN_AND_ROI_REQUIRED"] : []),
+        ...(!economicsConcordant
+          ? ["LISTING_ECONOMICS_DO_NOT_MATCH_STRATEGY_SCENARIO"] : []),
+      ]),
+      input.operations.evidenceLinks.economics,
+      input.document.marketEvidence.runStatus !== "COMPLETE",
+    ),
+    listingGate(
+      "STRATEGY_HUMAN_REVIEW_READY",
+      humanStrategyApproved,
+      ["HUMAN_STRATEGY_APPROVAL_REQUIRED"],
+    ),
+    listingGate(
+      "TITLE_READY",
+      titleReady && descriptionReady,
+      [
+        "HUMAN_REVIEWED_TITLE_REQUIRED_MAX_80_CHARACTERS",
+        "EVIDENCE_LINKED_LISTING_DESCRIPTION_REQUIRED",
+      ],
+      [
+        ...input.operations.evidenceLinks.title,
+        ...input.operations.evidenceLinks.description,
+      ],
+    ),
+    listingGate(
+      "CATEGORY_AND_CONDITION_READY",
+      categoryConditionReady,
+      ["CATEGORY_AND_CONDITION_REQUIRED"],
+      [
+        ...input.operations.evidenceLinks.category,
+        ...input.operations.evidenceLinks.condition,
+      ],
+    ),
+    listingGate(
+      "REQUIRED_ITEM_SPECIFICS_READY",
+      requiredSpecificsReady,
+      ["ALL_REQUIRED_ITEM_SPECIFICS_REQUIRED"],
+      Object.values(input.operations.evidenceLinks.itemSpecifics).flat(),
+    ),
+    listingGate(
+      "BRAND_IP_AND_CLAIMS_REVIEW_READY",
+      brandIpClaimsReady,
+      ["EXPLICIT_BRAND_IP_AND_CLAIMS_REVIEW_REQUIRED"],
+      input.document.imageAnalysis.observations.map((entry) =>
+        entry.evidenceId
+      ),
+    ),
+    listingGate(
+      "REAL_IMAGE_ORDER_READY",
+      imageOrderReady,
+      ["APPROVED_REAL_MAIN_IMAGE_AND_ORDER_REQUIRED"],
+      orderedImageEntries.flatMap((entry) =>
+        entry?.evidenceId ? [entry.evidenceId] : []
+      ),
+    ),
+    listingGate(
+      "PRICE_AND_QUANTITY_READY",
+      priceQuantityReady,
+      ["HUMAN_REVIEWED_LISTING_PRICE_AND_QUANTITY_REQUIRED"],
+      [
+        ...input.operations.evidenceLinks.listingPrice,
+        ...input.operations.evidenceLinks.quantity,
+      ],
+    ),
+    listingGate(
+      "SHIPPING_RETURN_HANDLING_LOCATION_POLICIES_READY",
+      policiesReady,
+      [
+        "SHIPPING_RETURN_PAYMENT_HANDLING_AND_ITEM_LOCATION_POLICIES_REQUIRED",
+      ],
+      [
+        ...input.operations.evidenceLinks.policies,
+        ...input.operations.evidenceLinks.itemLocation,
+      ],
+    ),
+    listingGate(
+      "EVIDENCE_ASSUMPTIONS_DIFFERENCES_READY",
+      evidenceAndDecisionRecordReady,
+      ["EVIDENCE_ASSUMPTIONS_BLOCKERS_DIFFERENCES_RECORD_REQUIRED"],
+      input.operations.supportingEvidenceIds,
+    ),
+    listingGate(
+      "EXPLICIT_HUMAN_HANDOFF_APPROVAL_READY",
+      explicitHumanApprovalReady,
+      ["EXPLICIT_HUMAN_HANDOFF_APPROVAL_REQUIRED"],
+    ),
+  ]
+  const manualHandoffAllowed = !identityHold &&
+    gates.every((gate) => gate.status === "PASS")
+  const safeSpecificFields = new Set<ProductCaseEvidenceField>([
+    "brand",
+    "model",
+    "mpn",
+    "color",
+    "material",
+    "capacity",
+    "dimensions",
+    "product_dimensions",
+    "package_dimensions",
+    "weight",
+    "contents",
+    "inflation_mechanism",
+    "accessories",
+    "warnings",
+    "included_quantity",
+    "pack_quantity",
+  ])
+  const currency = acceptedText(input.document.evidence, "currency")
+  const supplierPrices = accepted.flatMap((entry) => {
+    if (!["supplier_price", "regular_price", "sale_price"].includes(
+      entry.field,
+    )) return []
+    const value = effectiveEvidenceValue(entry)
+    return typeof value === "number" && Number.isFinite(value)
+      ? [{
+          field: entry.field as
+            "supplier_price" | "regular_price" | "sale_price",
+          value,
+          currency,
+          evidenceId: entry.id,
+        }]
+      : []
+  })
+  const approvedImages = orderedImageEntries.flatMap((entry) =>
+    entry &&
+      entry.approvalStatus === "APPROVED" &&
+      Object.values(entry.qa).every(Boolean)
+      ? [{
+          registryId: entry.registryId,
+          evidenceId: entry.evidenceId,
+          sourceUrl: entry.sourceUrl,
+          sourceCaptureHash: entry.sourceCaptureHash,
+          assetHash: entry.assetHash,
+          approvalStatus: "APPROVED" as const,
+          purpose: entry.purpose,
+          role: entry.role,
+          order: entry.order,
+          reviewer: entry.reviewer,
+          reviewedAt: entry.reviewedAt,
+          variantId: entry.variantId,
+          packQuantity: entry.packQuantity,
+          qa: { ...entry.qa },
+        }]
+      : []
+  )
+  return {
+    version: "PRODUCT_CASE_MANUAL_LISTING_PACKAGE_V1",
+    productCaseId: input.document.caseId,
+    supplierUrl: input.document.sourceUrl,
+    osConclusion: input.adapter.osConclusion,
+    humanConclusion: { ...input.document.humanReview.conclusion },
+    decisionDifferences: shadowDifferences(
+      input.adapter,
+      input.document.humanReview.conclusion,
+    ),
+    packageStatus: identityHold
+      ? "NOT_GENERATED_IDENTITY_HOLD"
+      : manualHandoffAllowed
+        ? "READY_FOR_HUMAN_SELLER_HUB_ENTRY"
+        : "DRAFT_EVIDENCE_ONLY",
+    generatedAt: input.generatedAt,
+    acceptedEvidenceIds: acceptedIds,
+    rejectedEvidenceIds: rejectedIds,
+    identity: identityHold ? {
+      title: null,
+      brand: null,
+      model: null,
+      mpn: null,
+      supplierProductId: null,
+      supplierSku: null,
+      variantId: null,
+    } : {
+      title: acceptedText(input.document.evidence, "title"),
+      brand: acceptedText(input.document.evidence, "brand"),
+      model: acceptedText(input.document.evidence, "model"),
+      mpn: acceptedText(input.document.evidence, "mpn"),
+      supplierProductId: acceptedText(
+        input.document.evidence,
+        "supplier_product_id",
+      ),
+      supplierSku: acceptedText(input.document.evidence, "supplier_sku"),
+      variantId: acceptedText(input.document.evidence, "variant_id"),
+    },
+    packQuantity: identityHold ? null : acceptedNumber(
+      input.document.evidence,
+      "pack_quantity",
+    ),
+    supplierPrices: identityHold ? [] : supplierPrices,
+    title: !identityHold && titleReady
+      ? normalizeWhitespace(input.operations.title!)
+      : null,
+    category: {
+      id: identityHold ? null : input.operations.categoryId,
+      name: identityHold ? null : input.operations.categoryName,
+    },
+    condition: {
+      id: identityHold ? null : input.operations.conditionId,
+      description: identityHold ? null : input.operations.conditionDescription,
+    },
+    itemSpecifics: identityHold ? {} : Object.fromEntries(
+      Object.entries(input.operations.itemSpecifics).map(([key, values]) => [
+        key,
+        values.map(normalizeWhitespace).filter(Boolean),
+      ]),
+    ),
+    requiredItemSpecifics: identityHold
+      ? []
+      : [...input.operations.requiredItemSpecifics],
+    description: identityHold || !descriptionReady
+      ? null
+      : input.operations.description,
+    listingPrice: !identityHold && priceQuantityReady
+      ? input.operations.listingPrice : null,
+    quantity: !identityHold && priceQuantityReady
+      ? input.operations.quantity : null,
+    economics: {
+      totalInvestment: identityHold ? null : input.operations.totalInvestment,
+      estimatedProfit: identityHold ? null : input.operations.estimatedProfit,
+      marginPercent: identityHold ? null : input.operations.marginPercent,
+      roiPercent: identityHold ? null : input.operations.roiPercent,
+    },
+    policies: {
+      fulfillmentPolicyId: input.operations.fulfillmentPolicyId,
+      paymentPolicyId: input.operations.paymentPolicyId,
+      returnPolicyId: input.operations.returnPolicyId,
+      shippingPolicySummary: input.operations.shippingPolicySummary,
+      returnPolicySummary: input.operations.returnPolicySummary,
+      handlingTimeDays: input.operations.handlingTimeDays,
+      itemLocation: { ...input.operations.itemLocation },
+    },
+    itemSpecificEvidence: accepted
+      .filter((entry) => safeSpecificFields.has(entry.field))
+      .map((entry) => ({
+        field: entry.field,
+        value: effectiveEvidenceValue(entry),
+        evidenceId: entry.id,
+      })),
+    excludedClaims: accepted
+      .filter((entry) =>
+        ["description", "bullet", "marketing_claim"].includes(entry.field) &&
+        entry.evidenceClass !== "PRODUCT_VERIFIED"
+      )
+      .map((entry) => ({
+        evidenceId: entry.id,
+        reason: "SUPPLIER_CLAIM_NOT_PRODUCT_VERIFIED",
+      })),
+    sourceImageUrls: approvedImages.map((entry) => entry.sourceUrl),
+    approvedImages,
+    imageEvidenceOrder: [...input.operations.imageEvidenceOrder],
+    supportingEvidenceIds: [...input.operations.supportingEvidenceIds],
+    evidenceLinks: structuredClone(input.operations.evidenceLinks),
+    assumptions: [...input.operations.assumptions],
+    blockers: unique([
+      ...input.operations.blockers,
+      ...input.adapter.blockers,
+      ...gates.flatMap((gate) => gate.blockers),
+    ]),
+    differences: [...input.operations.differences],
+    humanOverride: {
+      ...input.operations.humanOverride,
+      overriddenBlockers: [
+        ...input.operations.humanOverride.overriddenBlockers,
+      ],
+    },
+    gates,
+    canPublishAutomatically: false,
+    manualHandoffAllowed,
+    handoffStatus: manualHandoffAllowed
+      ? "READY_FOR_HUMAN_SELLER_HUB_ENTRY"
+      : "BLOCKED_EVIDENCE_INCOMPLETE",
+    safety: PRODUCT_CASE_ZERO_EFFECTS,
+  }
+}
+
+export function buildPostPublicationRegistrationDraft(input: {
+  document: ProductCaseDocument
+  listingPackage: ProductCaseManualListingPackage
+  candidateKey?: string | null
+}): ProductCaseRegistrationDraft {
+  return {
+    version: "MANUAL_LISTING_REGISTRATION_DRAFT_V1",
+    status: "MANUAL_LISTING_REGISTRATION_DRAFT",
+    executionStatus: "DRAFT_NOT_SUBMITTED",
+    canSubmit: false,
+    productCaseId: input.document.caseId,
+    listingPackageVersion: input.listingPackage.version,
+    listingPackageStatus: input.listingPackage.packageStatus,
+    postPublicationFields: {
+      ebayItemId: null,
+      listingUrl: null,
+      marketplaceAccountKey: null,
+      marketplace: null,
+      ebaySku: null,
+      productCaseReference: input.document.caseId,
+      listingPackageId: null,
+      listingPackageReference:
+        `${input.document.caseId}:${input.listingPackage.version}`,
+      lunaProductId: acceptedText(
+        input.document.evidence,
+        "supplier_product_id",
+      ),
+      lunaVariantId: acceptedText(
+        input.document.evidence,
+        "variant_id",
+      ),
+      variantFingerprint: null,
+      packQuantity: input.listingPackage.packQuantity,
+      supplierUnitCost: acceptedNumber(
+        input.document.evidence,
+        "supplier_unit_cost",
+      ),
+      publishedPrice: input.listingPackage.listingPrice,
+      publishedQuantity: input.listingPackage.quantity,
+      categoryId: input.listingPackage.category.id,
+      conditionId: input.listingPackage.condition.id,
+      shippingPolicyId:
+        input.listingPackage.policies.fulfillmentPolicyId,
+      returnPolicyId: input.listingPackage.policies.returnPolicyId,
+      handlingTimeDays: input.listingPackage.policies.handlingTimeDays,
+      publicationTimestamp: null,
+    },
+    existingRouteProjection: {
+      targetRoute: "/api/admin/ebay/listings/register",
+      payload: {
+        ebayItemId: null,
+        ebayUrl: null,
+        opportunityId: null,
+        candidateKey: input.candidateKey ?? null,
+        supplierSku: null,
+        supplierVariantId: null,
+        safeDefaults: {},
+      },
+    },
+    blockers: unique([
+      "HUMAN_PUBLICATION_NOT_RECORDED",
+      "EBAY_ITEM_ID_REQUIRED_AFTER_MANUAL_PUBLICATION",
+      "CANONICAL_OPPORTUNITY_AND_LISTING_PACKAGE_REQUIRED",
+      ...(input.listingPackage.manualHandoffAllowed
+        ? []
+        : ["MANUAL_LISTING_PACKAGE_NOT_READY"]),
+    ]),
+    reuseContract: "ManualListingRegistrationInput",
+    existingRouteCompatibilityGap: [
+      "CURRENT_ROUTE_REQUIRES_PERSISTED_OPPORTUNITY_OR_CANDIDATE",
+      "CURRENT_ROUTE_REQUIRES_POST_PUBLICATION_EBAY_ITEM_ID",
+      "CURRENT_ROUTE_WRITES_SUPABASE_AND_IS_NOT_CALLED_IN_PRODUCT_CASE_RUNNER_V1",
+      "FULL_INSTRUMENTATION_FIELDS_ARE_NOT_ACCEPTED_BY_CURRENT_ROUTE_CONTRACT",
+    ],
+    safety: PRODUCT_CASE_ZERO_EFFECTS,
+  }
+}
+
+export function buildProductCaseLearningObservation(input: {
+  document: ProductCaseDocument
+  adapter: ProductCaseStrategyAdapterResult
+}): ProductCaseLearningObservation {
+  const reasonCodes = unique([
+    ...input.document.evidence.flatMap((entry) =>
+      entry.humanReason ? [entry.humanReason] : []
+    ),
+    ...(input.document.humanReview.conclusion.reason
+      ? [input.document.humanReview.conclusion.reason]
+      : []),
+  ]).map((reason) =>
+    normalizeWhitespace(reason).toLocaleUpperCase("en-US")
+      .replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "")
+      .slice(0, 120)
+  ).filter(Boolean)
+  return {
+    osRecommendation: input.adapter.osConclusion,
+    humanDecision: input.document.humanReview.conclusion,
+    finalListingDecision: null,
+    differences: shadowDifferences(
+      input.adapter,
+      input.document.humanReview.conclusion,
+    ),
+    humanReasonCodes: reasonCodes,
+    evidenceAddedByHuman: input.document.evidence
+      .filter((entry) =>
+        entry.humanVerdict === "CORRECT" ||
+        entry.sourceType === "HUMAN_VISUAL_OBSERVATION"
+      )
+      .map((entry) => entry.id),
+    evidenceRejectedByHuman: input.document.evidence
+      .filter((entry) => entry.humanVerdict === "REJECT")
+      .map((entry) => entry.id),
+    ruleCandidate: input.document.humanReview.proposedRuleObservation,
+    ruleCandidateStatus: "OBSERVATION_ONLY",
+    listingOutcomeStatus: "NOT_YET_MEASURED",
+    engineRuleChanged: false,
+    learningStatus: "HUMAN_REVIEW_DRAFT",
+  }
+}
+
+export function buildFutureMeasurementStages():
+  ProductCaseFutureMeasurementStage[] {
+  const unavailableMetric = (): ProductCaseUnavailableMetric => ({
+    value: null,
+    status: "MISSING / UNAVAILABLE",
+    source: null,
+    observedAt: null,
+  })
+  return ([
+    "DAY_0_LISTING_SNAPSHOT",
+    "DAY_7_PERFORMANCE_REVIEW",
+    "DAY_14_PERFORMANCE_REVIEW",
+    "DAY_30_PERFORMANCE_REVIEW",
+  ] as const)
+    .map((stage) => ({
+      stage,
+      status: "BLOCKED",
+      measurementStatus: "NOT_YET_MEASURED",
+      reason: "MANUAL_LISTING_NOT_PUBLISHED_AND_REGISTERED",
+      metrics: {
+        impressions: unavailableMetric(),
+        pageViews: unavailableMetric(),
+        clicks: unavailableMetric(),
+        ctr: unavailableMetric(),
+        watchers: unavailableMetric(),
+        quantitySold: unavailableMetric(),
+        conversion: unavailableMetric(),
+        promotedListingCost: unavailableMetric(),
+        sellingFees: unavailableMetric(),
+        realShipping: unavailableMetric(),
+        refunds: unavailableMetric(),
+        netProfit: unavailableMetric(),
+      },
+    }))
+}
+
+function confidenceFromCounts(
+  accepted: number,
+  missing: number,
+  conflicts: number,
+): "LOW" | "MEDIUM" | "HIGH" {
+  if (conflicts > 0 || missing > 0 || accepted === 0) return "LOW"
+  return accepted >= 5 ? "HIGH" : "MEDIUM"
+}
+
+export function buildProductCasePhaseSnapshots(input: {
+  document: ProductCaseDocument
+  adapter: ProductCaseStrategyAdapterResult
+  imageRegistry: ProductCaseImageRegistry
+  listingPackage: ProductCaseManualListingPackage
+  registrationDraft: ProductCaseRegistrationDraft
+  learningObservation: ProductCaseLearningObservation
+}): ProductCasePhaseSnapshot[] {
+  const accepted = acceptedProductCaseEvidence(input.document.evidence)
+  const rejected = input.document.evidence.filter((entry) =>
+    entry.humanVerdict === "REJECT"
+  )
+  const conflicts = conflictsForEvidence(input.document.evidence)
+  const openConflicts = conflicts.filter((entry) => entry.status === "OPEN")
+  const missing = PRODUCT_CASE_EVIDENCE_FIELDS.filter((field) =>
+    !accepted.some((entry) => entry.field === field)
+  )
+  const shared = {
+    acceptedEvidenceIds: accepted.map((entry) => entry.id),
+    rejectedEvidenceIds: rejected.map((entry) => entry.id),
+    conflicts,
+    missingFields: missing,
+    confidence: confidenceFromCounts(
+      accepted.length,
+      missing.length,
+      openConflicts.length,
+    ),
+  } as const
+  const sourceNext = input.document.sourceAccess.status ===
+    "AUTHENTICATED_SOURCE_REQUIRED"
+    ? "CAPTURE_AUTHENTICATED_SUPPLIER_EVIDENCE"
+    : "PASTE_OR_REVIEW_SUPPLIER_EVIDENCE"
+  const phaseData: Array<Omit<ProductCasePhaseSnapshot,
+    "index" | "name">> = [
+    {
+      ...shared,
+      status: input.document.sourceAccess.status === "NOT_RUN"
+        ? "NOT_RUN" : input.document.sourceAccess.status === "REJECTED"
+          ? "BLOCKED"
+          : input.document.sourceAccess.status ===
+              "AUTHENTICATED_SOURCE_REQUIRED"
+            ? "BLOCKED"
+            : "COMPLETE",
+      input: { sourceUrl: input.document.sourceUrl },
+      output: { sourceAccess: input.document.sourceAccess },
+      blockers: input.document.sourceAccess.status ===
+          "AUTHENTICATED_SOURCE_REQUIRED"
+        ? ["AUTHENTICATED_SOURCE_REQUIRED"]
+        : [],
+      appliedRules: [
+        "HTTPS_LUNA_PRODUCT_URL_ONLY",
+        "AUTHENTICATION_IS_NEVER_BYPASSED",
+      ],
+      nextAction: sourceNext,
+    },
+    {
+      ...shared,
+      status: input.document.captures.length ? "COMPLETE" : "BLOCKED",
+      input: {
+        captures: input.document.captures.map((capture) => ({
+          contentHash: capture.contentHash,
+          byteLength: capture.byteLength,
+          format: capture.format,
+        })),
+      },
+      output: { proposedEvidenceCount: input.document.evidence.length },
+      blockers: input.document.captures.length
+        ? [] : ["RAW_SUPPLIER_CAPTURE_REQUIRED"],
+      appliedRules: [
+        "HTML_IS_TREATED_AS_TEXT",
+        "SCRIPTS_AND_RESOURCES_ARE_NEVER_EXECUTED",
+      ],
+      nextAction: input.document.captures.length
+        ? "REVIEW_IDENTITY_AND_VARIANTS"
+        : sourceNext,
+    },
+    {
+      ...shared,
+      status: accepted.some((entry) =>
+        ["title", "variant_id"].includes(entry.field)
+      ) ? "IN_REVIEW" : "BLOCKED",
+      input: {
+        identityEvidence: input.document.evidence.filter((entry) =>
+          evidencePurpose(entry.field).includes("IDENTITY")
+        ).map((entry) => entry.id),
+      },
+      output: {
+        acceptedIdentity: accepted.filter((entry) =>
+          evidencePurpose(entry.field).includes("IDENTITY")
+        ).map((entry) => entry.id),
+      },
+      blockers: input.adapter.blockers.filter((entry) =>
+        /IDENTITY|VARIANT|PACK/.test(entry)
+      ),
+      appliedRules: [
+        "VARIANTS_REMAIN_SEPARATE",
+        "SUPPLIER_DATA_IS_NOT_PRODUCT_VERIFIED",
+      ],
+      nextAction: "REVIEW_IDENTITY_AND_VARIANT_EVIDENCE",
+    },
+    {
+      ...shared,
+      status: input.document.evidence.some((entry) =>
+        entry.humanVerdict === "UNREVIEWED"
+      ) ? "IN_REVIEW" : "COMPLETE",
+      input: { evidenceCount: input.document.evidence.length },
+      output: {
+        classes: Object.fromEntries(input.document.evidence.map((entry) =>
+          [entry.id, entry.evidenceClass]
+        )),
+      },
+      blockers: [],
+      appliedRules: [
+        "LUNA_STARTS_AS_SUPPLIER_STATED",
+        "TOP_SELLER_IS_ONLY_A_MERCHANDISING_SIGNAL",
+      ],
+      nextAction: "ACCEPT_REJECT_CORRECT_OR_REQUEST_EVIDENCE",
+    },
+    {
+      ...shared,
+      status: openConflicts.length ? "BLOCKED"
+        : missing.length ? "IN_REVIEW" : "COMPLETE",
+      input: { conflictCount: conflicts.length },
+      output: { openConflicts, missingFields: missing },
+      blockers: [
+        ...openConflicts.map((entry) =>
+          `OPEN_CONFLICT:${entry.conflictKey}`
+        ),
+        ...missing.map((field) => `MISSING:${field}`),
+      ],
+      appliedRules: [
+        "CONTRADICTIONS_ARE_NEVER_RESOLVED_SILENTLY",
+        "MISSING_IS_NEVER_ZERO",
+      ],
+      nextAction: openConflicts.length
+        ? "HUMAN_RESOLVE_CONFLICTS"
+        : "CAPTURE_MISSING_EVIDENCE",
+    },
+    {
+      ...shared,
+      status: input.adapter.status === "READY" ? "COMPLETE" : "BLOCKED",
+      input: { acceptedEvidenceIds: accepted.map((entry) => entry.id) },
+      output: {
+        usableEvidenceInputs: input.adapter.acceptedEvidenceInputs.length,
+      },
+      blockers: input.adapter.blockers,
+      appliedRules: [
+        "ONLY_HUMAN_ACCEPTED_EVIDENCE_CAN_ADVANCE",
+        "HUMAN_CORRECTIONS_REMAIN_HYPOTHESES",
+      ],
+      nextAction: input.adapter.nextAction,
+    },
+    {
+      ...shared,
+      status: input.adapter.status === "READY" ? "COMPLETE" : "BLOCKED",
+      input: { acceptedRunnerEvidenceIds: input.adapter.acceptedRunnerEvidenceIds },
+      output: {
+        adapterStatus: input.adapter.status,
+        strategyLabInput: input.adapter.strategyLabInput,
+        marketEvidence: input.adapter.marketEvidence,
+      },
+      blockers: input.adapter.blockers,
+      appliedRules: [
+        "ADAPTER_FAILS_CLOSED",
+        "SUPPLIER_PRICE_IS_NOT_MARKET_PRICE",
+      ],
+      nextAction: input.adapter.nextAction,
+    },
+    {
+      ...shared,
+      status: input.adapter.status === "READY" ? "IN_REVIEW" : "BLOCKED",
+      input: { adapterStatus: input.adapter.status },
+      output: {
+        osConclusion: input.adapter.osConclusion,
+        currentEvidenceLeader: input.adapter.currentEvidenceLeader,
+        strategicHypothesisToValidate:
+          input.adapter.strategicHypothesisToValidate,
+      },
+      blockers: input.adapter.blockers,
+      appliedRules: [
+        "HOLD_DOES_NOT_MEAN_PREFERRED",
+        "CURRENT_EVIDENCE_LEADER_IS_NOT_EXECUTION_APPROVAL",
+      ],
+      nextAction: input.adapter.nextAction,
+    },
+    {
+      ...shared,
+      status: input.document.humanReview.conclusion.reviewedAt
+        ? "COMPLETE" : "IN_REVIEW",
+      input: { osConclusion: input.adapter.osConclusion },
+      output: {
+        humanConclusion: input.document.humanReview.conclusion,
+        proposedRuleObservation:
+          input.document.humanReview.proposedRuleObservation,
+      },
+      blockers: input.document.humanReview.conclusion.reviewedAt
+        ? [] : ["HUMAN_CONCLUSION_REQUIRED"],
+      appliedRules: [
+        "OS_RUNS_BEFORE_HUMAN_COMPARISON",
+        "OBSERVATION_IS_NOT_LEARNING",
+      ],
+      nextAction: "RECORD_HUMAN_CONCLUSION",
+    },
+    {
+      ...shared,
+      status: input.imageRegistry.status === "APPROVED"
+        ? "COMPLETE" : "BLOCKED",
+      input: {
+        sourceImageEvidenceIds: fieldEvidenceIds(
+          input.document.evidence,
+          "source_image_url",
+        ),
+      },
+      output: { imageRegistry: input.imageRegistry },
+      blockers: input.imageRegistry.approvedMainRegistryId
+        ? input.imageRegistry.blockers
+        : unique([
+            "APPROVED_REAL_MAIN_IMAGE_REFERENCE_AND_ASSET_HASH_REQUIRED",
+            ...input.imageRegistry.blockers,
+          ]),
+      appliedRules: [
+        "IMAGE_URLS_ARE_REFERENCES_ONLY",
+        "NO_IMAGE_DOWNLOAD_TRANSFORM_OR_GENERATION",
+      ],
+      nextAction: "ATTACH_AND_REVIEW_REAL_MAIN_IMAGE_REFERENCE",
+    },
+    {
+      ...shared,
+      status: input.listingPackage.manualHandoffAllowed
+        ? "COMPLETE" : "BLOCKED",
+      input: {
+        acceptedEvidenceIds: input.listingPackage.acceptedEvidenceIds,
+      },
+      output: {
+        packageStatus: input.listingPackage.packageStatus,
+        gates: input.listingPackage.gates,
+      },
+      blockers: input.listingPackage.gates.flatMap((gate) => gate.blockers),
+      appliedRules: [
+        "FIFTEEN_GATES_FAIL_CLOSED",
+        "CAN_PUBLISH_AUTOMATICALLY_IS_ALWAYS_FALSE",
+      ],
+      nextAction: input.listingPackage.manualHandoffAllowed
+        ? "HUMAN_SELLER_HUB_ENTRY_ONLY"
+        : "COMPLETE_LISTING_HANDOFF_GATES",
+    },
+    {
+      ...shared,
+      status: "BLOCKED",
+      input: { handoffStatus: input.listingPackage.handoffStatus },
+      output: { registrationDraft: input.registrationDraft },
+      blockers: input.registrationDraft.blockers,
+      appliedRules: [
+        "REGISTRATION_IS_DRAFT_ONLY",
+        "NO_SUPABASE_OR_EBAY_WRITE",
+      ],
+      nextAction: "WAIT_FOR_FUTURE_MANUAL_PUBLICATION_AND_AUTHORIZATION",
+    },
+    {
+      ...shared,
+      status: "NOT_RUN",
+      input: {
+        humanObservation:
+          input.document.humanReview.proposedRuleObservation,
+      },
+      output: { learningObservation: input.learningObservation },
+      blockers: ["RESULT_NOT_YET_MEASURED"],
+      appliedRules: [
+        "OBSERVATION_ONLY",
+        "ENGINE_RULES_CANNOT_CHANGE",
+      ],
+      nextAction: "WAIT_FOR_MANUALLY_REGISTERED_OUTCOMES",
+    },
+  ]
+  return PRODUCT_CASE_PHASES.map((phase, index) => ({
+    index: phase.index,
+    name: phase.name,
+    ...phaseData[index],
+  }))
+}
+
+function fieldEvidenceIds(
+  evidence: ProductCaseEvidence[],
+  field: ProductCaseEvidenceField,
+) {
+  return evidence.filter((entry) => entry.field === field)
+    .map((entry) => entry.id)
+}
+
+function shadowDifferences(
+  adapter: ProductCaseStrategyAdapterResult,
+  human: ProductCaseHumanConclusion,
+) {
+  const checks = [
+    ["conclusion", adapter.osConclusion, human.conclusion],
+    [
+      "scenario",
+      adapter.currentEvidenceLeader?.offerScenario ?? null,
+      human.scenario,
+    ],
+  ] as const
+  return checks.flatMap(([field, osValue, humanValue]) =>
+    stableValue(osValue) === stableValue(humanValue)
+      ? []
+      : [{ field, osValue, humanValue }]
+  )
+}
+
+function evaluateAdapterStrategy(
+  adapter: ProductCaseStrategyAdapterResult,
+) {
+  if (!adapter.strategyLabInput) return null
+  try {
+    return evaluateStrategyLabCase(adapter.strategyLabInput)
+  } catch {
+    return null
+  }
+}
+
+export function buildProductCaseOperationalPipeline(input: {
+  document: ProductCaseDocument
+  adapter: ProductCaseStrategyAdapterResult
+  imageRegistry: ProductCaseImageRegistry
+  listingPackage: ProductCaseManualListingPackage
+}): ProductCaseOperationalPhaseSnapshot[] {
+  const accepted = acceptedProductCaseEvidence(input.document.evidence)
+  const authenticatedCapture = input.document.captures.some((capture) =>
+    capture.sourceType === "LUNA_AUTHENTICATED_MANUAL_CAPTURE"
+  )
+  const supplierResolved = input.document.sourceAccess.status ===
+      "PUBLIC_ACCESSIBLE" || authenticatedCapture
+  const visualConflict = hasStructuredIdentityConflict(input.document)
+  const identityReady = identityReviewReady(input.document) &&
+    ["title", "supplier_product_id", "variant_id"].every((field) =>
+      accepted.some((entry) => entry.field === field)
+    )
+  const marketReady = input.document.marketEvidence.runStatus === "COMPLETE" &&
+    input.document.marketEvidence.soldExact === "AVAILABLE" &&
+    input.document.marketEvidence.marketCeiling === "AVAILABLE"
+  const evaluation = evaluateAdapterStrategy(input.adapter)
+  const assessment = evaluation?.scenarioAssessments[0] ?? null
+  const economicsReady = input.adapter.status === "READY" &&
+    assessment?.economics.status === "VIABLE"
+  const strategyReady = Boolean(
+    evaluation &&
+    ![
+      "HOLD_IDENTITY",
+      "HOLD_COMPATIBILITY",
+      "HOLD_ECONOMICS",
+      "HOLD_EVIDENCE_INCOMPLETE",
+      "NO_GO",
+    ].includes(evaluation.recommendation.releaseGate),
+  )
+  const humanReviewed = Boolean(
+    input.document.humanReview.conclusion.reviewedAt &&
+    validIsoInstant(input.document.humanReview.conclusion.reviewedAt) &&
+    normalizeWhitespace(
+      input.document.humanReview.conclusion.reviewer ?? "",
+    ) &&
+    normalizeWhitespace(
+      input.document.humanReview.conclusion.reason ?? "",
+    ),
+  )
+  const commercialQaReady = input.imageRegistry.status === "APPROVED" &&
+    input.document.imageAnalysis.visualEvidenceStatus === "HUMAN_REVIEWED"
+  const rejectedEvidence = input.document.evidence.filter((entry) =>
+    entry.humanVerdict === "REJECT"
+  )
+  const operationalConflicts = conflictsForEvidence(input.document.evidence)
+  const operationalMissing = PRODUCT_CASE_EVIDENCE_FIELDS.filter((field) =>
+    !accepted.some((entry) => entry.field === field)
+  )
+  const operationalConfidence = confidenceFromCounts(
+    accepted.length,
+    operationalMissing.length,
+    operationalConflicts.filter((entry) => entry.status === "OPEN").length,
+  )
+  const natural: Array<Omit<
+    ProductCaseOperationalPhaseSnapshot,
+    | "input"
+    | "output"
+    | "acceptedEvidenceIds"
+    | "rejectedEvidenceIds"
+    | "conflicts"
+    | "missingFields"
+    | "confidence"
+    | "appliedRules"
+    | "publicationStatus"
+    | "handoffArtifactGenerated"
+  >> = [
+    {
+      phase: "SUPPLIER_SOURCE",
+      status: supplierResolved ? "COMPLETED" : "BLOCKED",
+      blockers: supplierResolved ? [] : ["SUPPLIER_SOURCE_NOT_RESOLVED"],
+      nextAction: supplierResolved
+        ? "REVIEW_PRODUCT_EVIDENCE"
+        : "CAPTURE_AUTHENTICATED_SUPPLIER_EVIDENCE",
+    },
+    {
+      phase: "PRODUCT_EVIDENCE",
+      status: accepted.length ? "COMPLETED" : "HUMAN_REVIEW_REQUIRED",
+      blockers: accepted.length ? [] : ["HUMAN_EVIDENCE_ACCEPTANCE_REQUIRED"],
+      nextAction: "REVIEW_HUMAN_VISUAL_EVIDENCE",
+    },
+    {
+      phase: "HUMAN_VISUAL_REVIEW",
+      status: input.document.imageAnalysis.visualEvidenceStatus ===
+          "NOT_REVIEWED"
+        ? "HUMAN_REVIEW_REQUIRED"
+        : visualConflict
+          ? "HUMAN_REVIEW_REQUIRED"
+          : "COMPLETED",
+      blockers: visualConflict
+        ? ["PHYSICAL_PRODUCT_AND_VARIANT_VERIFICATION_REQUIRED"]
+        : input.document.imageAnalysis.visualEvidenceStatus === "NOT_REVIEWED"
+          ? ["STRUCTURED_HUMAN_VISUAL_REVIEW_REQUIRED"]
+          : [],
+      nextAction: visualConflict
+        ? "VERIFY_PHYSICAL_PRODUCT_AND_VARIANT"
+        : "REVIEW_IDENTITY_AND_VARIANTS",
+    },
+    {
+      phase: "IDENTITY_AND_VARIANTS",
+      status: identityReady ? "COMPLETED" : "BLOCKED",
+      blockers: identityReady
+        ? []
+        : unique(input.document.identityReview.blockers),
+      nextAction: identityReady
+        ? "REVIEW_MARKET_EVIDENCE"
+        : input.document.identityReview.nextAction,
+    },
+    {
+      phase: "MARKET_EVIDENCE",
+      status: marketReady ? "COMPLETED" : "BLOCKED",
+      blockers: marketReady ? [] : ["SOLD_EXACT_COHORT_MISSING"],
+      nextAction: marketReady
+        ? "CALCULATE_SCENARIO_ECONOMICS"
+        : "VALIDATE_EXACT_MARKET_COHORT",
+    },
+    {
+      phase: "SCENARIO_ECONOMICS",
+      status: economicsReady ? "COMPLETED" : "BLOCKED",
+      blockers: economicsReady
+        ? []
+        : assessment?.economics.blockers ?? input.adapter.blockers,
+      nextAction: economicsReady
+        ? "REVIEW_STRATEGY_RECOMMENDATION"
+        : "COMPLETE_EVIDENCE_BACKED_ECONOMICS",
+    },
+    {
+      phase: "STRATEGY_RECOMMENDATION",
+      status: strategyReady ? "COMPLETED" : "BLOCKED",
+      blockers: strategyReady
+        ? []
+        : evaluation?.recommendation.blockers ?? input.adapter.blockers,
+      nextAction: strategyReady
+        ? "RECORD_HUMAN_SHADOW_REVIEW"
+        : input.adapter.nextAction,
+    },
+    {
+      phase: "HUMAN_SHADOW_REVIEW",
+      status: humanReviewed ? "COMPLETED" : "HUMAN_REVIEW_REQUIRED",
+      blockers: humanReviewed ? [] : ["HUMAN_CONCLUSION_REQUIRED"],
+      nextAction: humanReviewed
+        ? "COMPLETE_IMAGE_AND_COMMERCIAL_QA"
+        : "RECORD_HUMAN_CONCLUSION",
+    },
+    {
+      phase: "IMAGE_AND_COMMERCIAL_QA",
+      status: commercialQaReady ? "COMPLETED" : "HUMAN_REVIEW_REQUIRED",
+      blockers: commercialQaReady ? [] : input.imageRegistry.blockers,
+      nextAction: commercialQaReady
+        ? "BUILD_MANUAL_LISTING_PACKAGE"
+        : "COMPLETE_HUMAN_IMAGE_AND_COMMERCIAL_QA",
+    },
+    {
+      phase: "MANUAL_LISTING_PACKAGE",
+      status: input.listingPackage.packageStatus ===
+          "READY_FOR_HUMAN_SELLER_HUB_ENTRY"
+        ? "COMPLETED"
+        : "BLOCKED",
+      blockers: input.listingPackage.manualHandoffAllowed
+        ? []
+        : input.listingPackage.blockers,
+      nextAction: input.listingPackage.manualHandoffAllowed
+        ? "REQUEST_MANUAL_EBAY_HANDOFF"
+        : "COMPLETE_MANUAL_LISTING_GATES",
+    },
+    {
+      phase: "MANUAL_EBAY_HANDOFF",
+      status: input.listingPackage.manualHandoffAllowed
+        ? "COMPLETED"
+        : "BLOCKED",
+      blockers: input.listingPackage.manualHandoffAllowed
+        ? []
+        : ["MANUAL_LISTING_PACKAGE_NOT_READY"],
+      nextAction: input.listingPackage.manualHandoffAllowed
+        ? "HUMAN_MAY_ENTER_PACKAGE_IN_SELLER_HUB"
+        : "COMPLETE_MANUAL_LISTING_PACKAGE",
+    },
+    {
+      phase: "MANUAL_LISTING_REGISTRATION",
+      status: "BLOCKED",
+      blockers: ["MANUAL_LISTING_REGISTRATION_BLOCKED_UNTIL_ITEM_ID_EXISTS"],
+      nextAction:
+        "Después de publicar manualmente, registra el Item ID para iniciar el enlace y monitoreo read-only.",
+    },
+  ]
+  let upstreamStopped = false
+  return natural.map((phase) => {
+    const output = upstreamStopped && phase.status === "COMPLETED"
+      ? {
+          ...phase,
+          status: "BLOCKED" as const,
+          blockers: unique([
+            "UPSTREAM_PHASE_NOT_COMPLETED",
+            ...phase.blockers,
+          ]),
+        }
+      : phase
+    if (output.status === "BLOCKED" ||
+      output.status === "HUMAN_REVIEW_REQUIRED") {
+      upstreamStopped = true
+    }
+    return {
+      ...output,
+      input: {
+        productCaseId: input.document.caseId,
+        phase: output.phase,
+      },
+      output: output.phase === "SUPPLIER_SOURCE"
+        ? { sourceAccess: input.document.sourceAccess }
+        : output.phase === "PRODUCT_EVIDENCE"
+          ? { acceptedEvidenceCount: accepted.length }
+          : output.phase === "HUMAN_VISUAL_REVIEW"
+            ? { imageAnalysis: input.document.imageAnalysis }
+            : output.phase === "IDENTITY_AND_VARIANTS"
+              ? { identityReview: input.document.identityReview }
+              : output.phase === "MARKET_EVIDENCE"
+                ? { marketEvidence: input.document.marketEvidence }
+                : output.phase === "SCENARIO_ECONOMICS"
+                  ? { economics: assessment?.economics ?? null }
+                  : output.phase === "STRATEGY_RECOMMENDATION"
+                    ? {
+                        osConclusion: input.adapter.osConclusion,
+                        nextAction: input.adapter.nextAction,
+                      }
+                    : output.phase === "HUMAN_SHADOW_REVIEW"
+                      ? {
+                          humanConclusion:
+                            input.document.humanReview.conclusion,
+                          differences: shadowDifferences(
+                            input.adapter,
+                            input.document.humanReview.conclusion,
+                          ),
+                        }
+                      : output.phase === "IMAGE_AND_COMMERCIAL_QA"
+                        ? { imageRegistry: input.imageRegistry }
+                        : output.phase === "MANUAL_LISTING_PACKAGE"
+                          ? {
+                              packageStatus:
+                                input.listingPackage.packageStatus,
+                              gates: input.listingPackage.gates,
+                            }
+                          : output.phase === "MANUAL_EBAY_HANDOFF"
+                            ? {
+                                handoffArtifactGenerated:
+                                  input.listingPackage.manualHandoffAllowed,
+                              }
+                            : {
+                                publicationStatus: "NOT_PUBLISHED",
+                                ebayItemId: null,
+                              },
+      acceptedEvidenceIds: accepted.map((entry) => entry.id),
+      rejectedEvidenceIds: rejectedEvidence.map((entry) => entry.id),
+      conflicts: operationalConflicts,
+      missingFields: operationalMissing,
+      confidence: operationalConfidence,
+      appliedRules: [
+        `PHASE_RULE:${output.phase}`,
+        "FAIL_CLOSED",
+        "NO_AUTOMATIC_EXTERNAL_ACTIONS",
+      ],
+      publicationStatus: "NOT_PUBLISHED" as const,
+      handoffArtifactGenerated:
+        output.phase === "MANUAL_EBAY_HANDOFF" &&
+        input.listingPackage.manualHandoffAllowed,
+    }
+  })
+}
+
+export function calculateProductCaseReadiness(input: {
+  document: ProductCaseDocument
+  adapter: ProductCaseStrategyAdapterResult
+}): ProductCaseRunnerOutput["readiness"] {
+  const identityConflict = input.document.identityReview.status ===
+    "CONFLICTED"
+  const present = input.document.evidence.filter((entry) =>
+    nonempty(entry.normalizedValue) &&
+    !["MISSING", "CONFLICTED"].includes(entry.evidenceClass)
+  )
+  const accepted = acceptedProductCaseEvidence(input.document.evidence)
+  const identityReady = identityReviewReady(input.document) &&
+    ["title", "supplier_product_id", "variant_id"]
+    .every((field) => accepted.some((entry) =>
+      entry.field === field &&
+      ["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(entry.evidenceClass)
+    ))
+  const productIdentity = identityConflict
+    ? "CONFLICTED" as const
+    : identityReady
+    ? "READY" as const
+    : present.some((entry) => [
+        "title",
+        "brand",
+        "model",
+        "mpn",
+        "supplier_product_id",
+        "supplier_sku",
+        "variant_id",
+      ].includes(entry.field))
+      ? "PARTIAL" as const
+      : "MISSING" as const
+  const authenticatedCapture = input.document.captures.some((capture) =>
+    capture.sourceType === "LUNA_AUTHENTICATED_MANUAL_CAPTURE"
+  )
+  const supplierReady = authenticatedCapture &&
+    ["supplier_unit_cost", "visible_stock", "pack_quantity"].every((field) =>
+      accepted.some((entry) => entry.field === field)
+    )
+  const supplierEvidence = supplierReady
+    ? "READY" as const
+    : present.some((entry) =>
+        entry.sourceType === "LUNA_PUBLIC_PREFLIGHT" ||
+        entry.sourceType === "LUNA_AUTHENTICATED_MANUAL_CAPTURE" ||
+        entry.sourceType === "LUNA_MANUAL_CAPTURE"
+      )
+      ? "PARTIAL" as const
+      : "MISSING" as const
+  const marketEvidence = input.document.marketEvidence.runStatus === "COMPLETE"
+    ? "READY" as const
+    : input.document.marketEvidence.runStatus === "INSUFFICIENT"
+      ? "INSUFFICIENT" as const
+    : input.document.marketEvidence.runStatus === "NOT_VALIDATED"
+      ? "NOT_VALIDATED" as const
+      : "NOT_RUN" as const
+  return {
+    productIdentity,
+    identityConfidence: identityConflict
+      ? "LOW"
+      : productIdentity === "READY"
+        ? "HIGH"
+        : productIdentity === "PARTIAL"
+          ? "MEDIUM"
+          : "LOW",
+    productFactsReadiness: identityConflict || productIdentity !== "READY"
+      ? "NOT_READY"
+      : "READY",
+    supplierEvidence,
+    marketEvidence,
+    economics: input.adapter.status === "READY"
+      ? "READY"
+      : "MISSING_INPUT",
+    strategy: input.adapter.osConclusion,
+  }
+}
+
+export function buildProductCaseRunnerOutput(input: {
+  document: ProductCaseDocument
+  adapter: ProductCaseStrategyAdapterResult
+  imageApprovals?: ProductCaseImageApproval[]
+  listingOperations: ProductCaseListingOperations
+  generatedAt: string
+}): ProductCaseRunnerOutput {
+  const imageRegistry = buildProductCaseImageRegistry({
+    document: input.document,
+    approvals: input.imageApprovals,
+  })
+  const listingPackage = buildManualListingPackageDraft({
+    document: input.document,
+    adapter: input.adapter,
+    imageRegistry,
+    operations: input.listingOperations,
+    generatedAt: input.generatedAt,
+  })
+  const registrationDraft = buildPostPublicationRegistrationDraft({
+    document: input.document,
+    listingPackage,
+    candidateKey: input.listingOperations.candidateKey,
+  })
+  const learningObservation = buildProductCaseLearningObservation({
+    document: input.document,
+    adapter: input.adapter,
+  })
+  const phases = buildProductCasePhaseSnapshots({
+    document: input.document,
+    adapter: input.adapter,
+    imageRegistry,
+    listingPackage,
+    registrationDraft,
+    learningObservation,
+  })
+  const operationalPipeline = buildProductCaseOperationalPipeline({
+    document: input.document,
+    adapter: input.adapter,
+    imageRegistry,
+    listingPackage,
+  })
+  const readiness = calculateProductCaseReadiness({
+    document: input.document,
+    adapter: input.adapter,
+  })
+  const listingPackageSuppressed =
+    listingPackage.packageStatus === "NOT_GENERATED_IDENTITY_HOLD"
+  return {
+    version: PRODUCT_CASE_RUNNER_VERSION,
+    document: input.document,
+    adapter: input.adapter,
+    imageRegistry,
+    listingPackage: listingPackageSuppressed ? null : listingPackage,
+    listingPackageStatus: listingPackage.packageStatus,
+    registrationDraft,
+    learningObservation,
+    futureMeasurementStages: buildFutureMeasurementStages(),
+    legacyPhaseDiagnostics: phases,
+    operationalPipeline,
+    readiness,
+    canPublishAutomatically: false,
+    publicationStatus: "NOT_PUBLISHED",
+    handoffArtifactGenerated: listingPackage.manualHandoffAllowed,
+    manualHandoffAllowed: listingPackage.manualHandoffAllowed,
+    shadowMode: {
+      osConclusion: input.adapter.osConclusion,
+      humanConclusion: input.document.humanReview.conclusion,
+      differences: shadowDifferences(
+        input.adapter,
+        input.document.humanReview.conclusion,
+      ),
+      proposedRuleObservation:
+        input.document.humanReview.proposedRuleObservation,
+      learningStatus: "HUMAN_REVIEW_DRAFT",
+      canChangeEngineRules: false,
+      canLinkListing: false,
+    },
+    safety: PRODUCT_CASE_ZERO_EFFECTS,
+  }
+}
+
+export const PRODUCT_CASE_WORKSPACE_EXPORT_VERSION =
+  "PRODUCT_CASE_WORKSPACE_EXPORT_V1" as const
+export const PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES = 1_048_576
+
+export type ProductCaseWorkspaceState = {
+  document: ProductCaseDocument
+  economicsPolicy: EconomicsPolicy | null
+  scenarioDraft: ProductCaseScenarioDraft | null
+  listingOperations: ProductCaseListingOperations
+  imageApprovals: ProductCaseImageApproval[]
+  imageObservations: ProductCaseImageObservation[]
+  evaluatedAt: string
+  generatedAt: string
+}
+
+export type ProductCaseWorkspaceExportEnvelope = {
+  version: typeof PRODUCT_CASE_WORKSPACE_EXPORT_VERSION
+  exportedAt: string
+  workspaceState: ProductCaseWorkspaceState
+  output: ProductCaseRunnerOutput
+  safety: ProductCaseSafety
+}
+
+function assertSafeJsonTree(value: unknown) {
+  let visited = 0
+  const visit = (entry: unknown, depth: number) => {
+    visited += 1
+    if (visited > 50_000 || depth > 64) {
+      throw new Error("PRODUCT_CASE_IMPORT_STRUCTURE_LIMIT_EXCEEDED")
+    }
+    if (!entry || typeof entry !== "object") return
+    if (Array.isArray(entry)) {
+      entry.forEach((item) => visit(item, depth + 1))
+      return
+    }
+    for (const [key, child] of Object.entries(
+      entry as Record<string, unknown>,
+    )) {
+      if (["__proto__", "prototype", "constructor"].includes(key)) {
+        throw new Error("PRODUCT_CASE_IMPORT_UNSAFE_KEY")
+      }
+      visit(child, depth + 1)
+    }
+  }
+  visit(value, 0)
+}
+
+function workspaceStateFromUnknown(value: unknown): ProductCaseWorkspaceState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("PRODUCT_CASE_IMPORT_WORKSPACE_REQUIRED")
+  }
+  const state = value as Partial<ProductCaseWorkspaceState>
+  if (
+    !state.document ||
+    state.document.version !== PRODUCT_CASE_RUNNER_VERSION ||
+    !state.listingOperations ||
+    !Array.isArray(state.imageApprovals) ||
+    !Array.isArray(state.imageObservations) ||
+    typeof state.evaluatedAt !== "string" ||
+    !validIsoInstant(state.evaluatedAt) ||
+    typeof state.generatedAt !== "string" ||
+    !validIsoInstant(state.generatedAt)
+  ) {
+    throw new Error("PRODUCT_CASE_IMPORT_WORKSPACE_INVALID")
+  }
+  if (
+    state.document.safety.supabaseWrites !== 0 ||
+    state.document.safety.ebayWrites !== 0 ||
+    state.document.safety.openAiCalls !== 0 ||
+    state.document.safety.whatsappCalls !== 0 ||
+    state.document.safety.canPublishAutomatically !== false
+  ) {
+    throw new Error("PRODUCT_CASE_IMPORT_SAFETY_INVALID")
+  }
+  const cloned = structuredClone(state as ProductCaseWorkspaceState)
+  if (stableValue(cloned.imageObservations) !== stableValue(
+    cloned.document.imageAnalysis.observations,
+  )) {
+    throw new Error("PRODUCT_CASE_IMPORT_VISUAL_OBSERVATIONS_MISMATCH")
+  }
+  const provenance = validateProductCaseDocumentProvenance(cloned.document)
+  if (!provenance.valid) {
+    throw new Error(
+      `PRODUCT_CASE_IMPORT_PROVENANCE_INVALID:${provenance.errors.join(",")}`,
+    )
+  }
+  return cloned
+}
+
+export function createProductCaseWorkspaceExport(input: {
+  workspaceState: ProductCaseWorkspaceState
+  exportedAt: string
+}): ProductCaseWorkspaceExportEnvelope {
+  if (!validIsoInstant(input.exportedAt)) {
+    throw new Error("PRODUCT_CASE_EXPORT_TIMESTAMP_INVALID")
+  }
+  const workspaceState = workspaceStateFromUnknown(input.workspaceState)
+  const adapter = buildStrategyLabAdapterPreview({
+    document: workspaceState.document,
+    evaluatedAt: workspaceState.evaluatedAt,
+    economicsPolicy: workspaceState.economicsPolicy,
+    scenarioDraft: workspaceState.scenarioDraft,
+  })
+  const output = buildProductCaseRunnerOutput({
+    document: workspaceState.document,
+    adapter,
+    imageApprovals: workspaceState.imageApprovals,
+    listingOperations: workspaceState.listingOperations,
+    generatedAt: workspaceState.generatedAt,
+  })
+  return {
+    version: PRODUCT_CASE_WORKSPACE_EXPORT_VERSION,
+    exportedAt: input.exportedAt,
+    workspaceState,
+    output,
+    safety: PRODUCT_CASE_ZERO_EFFECTS,
+  }
+}
+
+export function serializeProductCaseWorkspaceExport(input: {
+  workspaceState: ProductCaseWorkspaceState
+  exportedAt: string
+}) {
+  const serialized = JSON.stringify(createProductCaseWorkspaceExport(input))
+  if (utf8Length(serialized) > PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES) {
+    throw new Error("PRODUCT_CASE_EXPORT_TOO_LARGE")
+  }
+  return serialized
+}
+
+export function importProductCaseWorkspaceExport(serialized: string) {
+  if (typeof serialized !== "string" || !serialized.trim()) {
+    throw new Error("PRODUCT_CASE_IMPORT_REQUIRED")
+  }
+  if (utf8Length(serialized) > PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES) {
+    throw new Error("PRODUCT_CASE_IMPORT_TOO_LARGE")
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(serialized)
+  } catch {
+    throw new Error("PRODUCT_CASE_IMPORT_JSON_INVALID")
+  }
+  assertSafeJsonTree(parsed)
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("PRODUCT_CASE_IMPORT_ENVELOPE_INVALID")
+  }
+  const envelope = parsed as Partial<ProductCaseWorkspaceExportEnvelope>
+  if (
+    envelope.version !== PRODUCT_CASE_WORKSPACE_EXPORT_VERSION ||
+    typeof envelope.exportedAt !== "string" ||
+    !validIsoInstant(envelope.exportedAt)
+  ) {
+    throw new Error("PRODUCT_CASE_IMPORT_VERSION_INVALID")
+  }
+  const workspaceState = workspaceStateFromUnknown(envelope.workspaceState)
+  const recomputedOriginal = createProductCaseWorkspaceExport({
+    workspaceState,
+    exportedAt: envelope.exportedAt,
+  })
+  if (!envelope.output ||
+    stableValue(envelope.output) !== stableValue(recomputedOriginal.output) ||
+    stableValue(envelope.safety) !== stableValue(PRODUCT_CASE_ZERO_EFFECTS)) {
+    throw new Error("PRODUCT_CASE_IMPORT_OUTPUT_MISMATCH")
+  }
+  const reviewRequiredState = structuredClone(workspaceState)
+  reviewRequiredState.document.identityReview = {
+    ...reviewRequiredState.document.identityReview,
+    status: "NOT_REVIEWED",
+    confidence: "LOW",
+    physicalProductVerified: false,
+    physicalVerificationEvidenceIds: [],
+    blockers: unique([
+      "IMPORTED_IDENTITY_REQUIRES_NEW_LOCAL_HUMAN_REVIEW",
+      ...reviewRequiredState.document.identityReview.blockers,
+    ]),
+    nextAction: "REVALIDATE_IMPORTED_PRODUCT_CASE_LOCALLY",
+  }
+  reviewRequiredState.document.humanReview = {
+    ...reviewRequiredState.document.humanReview,
+    conclusion: {
+      ...reviewRequiredState.document.humanReview.conclusion,
+      reviewedAt: null,
+      reviewer: null,
+    },
+  }
+  reviewRequiredState.listingOperations = {
+    ...reviewRequiredState.listingOperations,
+    brandIpClaimsReview: {
+      status: "NOT_REVIEWED",
+      reviewer: null,
+      reviewedAt: null,
+      reason: "IMPORTED_APPROVAL_IS_NOT_TRUSTED",
+    },
+    explicitHumanApproval: {
+      approved: false,
+      reviewer: null,
+      reviewedAt: null,
+      reason: "IMPORTED_APPROVAL_IS_NOT_TRUSTED",
+    },
+  }
+  reviewRequiredState.imageApprovals =
+    reviewRequiredState.imageApprovals.map((approval) => ({
+      ...approval,
+      status: "HUMAN_REVIEW",
+      reviewer: null,
+      reviewedAt: null,
+      reason: "IMPORTED_IMAGE_APPROVAL_IS_NOT_TRUSTED",
+      qa: {
+        productAndVariantMatch: false,
+        packQuantityMatch: false,
+        logosAndIpReviewed: false,
+        claimsReviewed: false,
+        ebayRoleCoherent: false,
+      },
+    }))
+  const rebuilt = createProductCaseWorkspaceExport({
+    workspaceState: reviewRequiredState,
+    exportedAt: envelope.exportedAt,
+  })
+  return {
+    importMode: "VIEW_ONLY" as const,
+    humanReviewStatus: "HUMAN_REVIEW_REQUIRED" as const,
+    importedEnvelope: structuredClone(envelope),
+    preservedWorkspaceState: workspaceState,
+    workspaceState: rebuilt.workspaceState,
+    rebuiltOutput: rebuilt.output,
+    importedManualHandoffTrusted: false as const,
+    safety: PRODUCT_CASE_ZERO_EFFECTS,
+  }
+}
+
+export function serializeProductCaseExport(output: ProductCaseRunnerOutput) {
+  return JSON.stringify(output, null, 2)
+}
