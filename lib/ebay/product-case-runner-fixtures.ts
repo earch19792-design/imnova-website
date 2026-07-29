@@ -615,7 +615,8 @@ const fixtureDocument = {
       )
     ),
     fullHtmlAccepted: false,
-    sensitiveContentStored: false,
+    sensitiveContentAssessment: "NO_SENSITIVE_PATTERN_DETECTED",
+    humanVisibleProductTextConfirmed: true,
   },
   captures: [
     {

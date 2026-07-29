@@ -85,9 +85,13 @@ En ese estado, `SUPPLIER_SOURCE` muestra inmediatamente el textarea
 locales permitidos por Pilot Mode: no disparan workers, persistencia ni acciones
 de marketplace.
 
-El textarea acepta únicamente texto visible del producto. Rechaza HTML
-completo y patrones de contraseñas, cookies, tokens, autorización, pagos o datos
-personales de la cuenta. El texto permanece en memoria del navegador; no se
+El textarea acepta únicamente texto visible del producto y exige una
+confirmación humana explícita antes de procesar. Rechaza HTML completo y
+patrones detectables de contraseñas, email, JWT, bearer/cookie aun sin `:`,
+números de tarjeta válidos por Luhn, autorización, pagos o datos personales de
+la cuenta. El resultado se registra como
+`NO_SENSITIVE_PATTERN_DETECTED`; no afirma que la ausencia de datos sensibles
+sea una certeza absoluta. El texto permanece en memoria del navegador; no se
 ejecutan scripts, no se inyecta HTML, no se cargan recursos y no se envía el
 contenido al servidor. Después del procesamiento se conserva dentro del
 Product Case local como:
@@ -97,6 +101,8 @@ supplierUrl
 rawVisibleSourceText
 sourceAccessStatus
 sourceCaptureMethod: MANUAL_AUTHENTICATED_PASTE
+sensitiveContentAssessment: NO_SENSITIVE_PATTERN_DETECTED
+humanVisibleProductTextConfirmed: true
 extractionWarnings
 evidenceCandidates
 missingFields
@@ -108,10 +114,20 @@ lo restaura para la revisión de la sesión siguiente.
 
 El mismo envelope JSON puede reimportarse localmente. El importador valida
 tamaño, versión, forma e invariantes fail-closed antes de reconstruir el
-workspace; no confía en un `manualHandoffAllowed` arbitrario. El round-trip
+workspace; recalcula SHA-256 desde `rawVisibleSourceText` y lo coteja tanto con
+`supplierSourceCapture.contentHash` como con el `ProductCaseCapture`
+correspondiente. Un texto alterado se rechaza aunque mantenga exactamente el
+mismo `byteLength`. Tampoco confía en un `manualHandoffAllowed` arbitrario. El
+round-trip
 conserva evidencia original, observaciones, correcciones, conflictos, costos,
 comparables, estrategia, operaciones de listing, razones de override y
 learning observations, sin persistencia automática.
+
+Limpiar o reprocesar una captura pasa por una transición pura. La transición
+retira la evidencia y captura reemplazadas, elimina referencias actuales
+obsoletas, cierra el conflicto activo, conserva su etiqueta sólo en
+`conflictHistory` e invalida la revisión de identidad para exigir una nueva
+revisión humana.
 
 ## Evidencia y revisión humana
 

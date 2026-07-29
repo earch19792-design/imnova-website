@@ -20,6 +20,7 @@ import {
   PRODUCT_CASE_ZERO_EFFECTS,
   reviewHumanComparableCandidate,
   serializeProductCaseWorkspaceExport,
+  transitionProductCaseSupplierCapture,
   validateManualAuthenticatedVisibleSourceText,
   validateLunaProductUrl,
   type ProductCaseDocument,
@@ -454,6 +455,10 @@ export default function ProductCaseRunnerPage() {
   const [manualContent, setManualContent] = useState(() =>
     fixtureSupplierSourceCapture?.rawVisibleSourceText ?? ""
   )
+  const [
+    humanVisibleProductTextConfirmed,
+    setHumanVisibleProductTextConfirmed,
+  ] = useState(() => Boolean(fixtureSupplierSourceCapture))
   const [evidence, setEvidence] =
     useState<ExtractedEvidence[]>(fixtureEvidence)
   const [captures, setCaptures] = useState<Capture[]>(fixtureCaptures)
@@ -751,6 +756,7 @@ export default function ProductCaseRunnerPage() {
     setImportRoundtrip(null)
     setImportRequiresHumanReReview(false)
     setManualContent("")
+    setHumanVisibleProductTextConfirmed(false)
     setSupplierSourceCapture(null)
     setEvidence([])
     setCaptures([])
@@ -890,31 +896,46 @@ export default function ProductCaseRunnerPage() {
       })
       const authenticatedSourceCapture =
         sourceAccess.status === "AUTHENTICATED_SOURCE_REQUIRED"
-          ? createManualAuthenticatedSupplierSourceCapture({
+          ? await createManualAuthenticatedSupplierSourceCapture({
               supplierUrl: urlValidation.canonicalUrl,
               rawVisibleSourceText:
                 manualTextValidation.rawVisibleSourceText,
               sourceAccessStatus: "AUTHENTICATED_SOURCE_REQUIRED",
               extraction: result,
+              humanVisibleProductTextConfirmed,
             })
           : null
-      const previousCaptureHash = supplierSourceCapture?.contentHash ?? null
       setRunnerTimestamp(result.capture.capturedAt)
-      setCaptures((current) => [
-        ...current.filter((capture) =>
-          !previousCaptureHash ||
-          record(capture).contentHash !== previousCaptureHash
-        ),
-        result.capture,
-      ])
-      setEvidence((current) => mergeEvidence(
-        current.filter((entry) =>
-          !previousCaptureHash ||
-          record(entry).contentHash !== previousCaptureHash
-        ),
-        result.evidence,
-      ))
-      setSupplierSourceCapture(authenticatedSourceCapture)
+      if (authenticatedSourceCapture) {
+        const transitioned = transitionProductCaseSupplierCapture({
+          document: productCase,
+          replacement: {
+            supplierSourceCapture: authenticatedSourceCapture,
+            extraction: result,
+          },
+        })
+        setCaptures(transitioned.captures)
+        setEvidence(transitioned.evidence)
+        setSupplierSourceCapture(transitioned.supplierSourceCapture)
+        setImageAnalysis(transitioned.imageAnalysis)
+        setIdentityReviewState(transitioned.identityReview)
+      } else {
+        setCaptures((current) => [...current, result.capture])
+        setEvidence((current) => mergeEvidence(current, result.evidence))
+        setSupplierSourceCapture(null)
+        setIdentityReviewState((current) => ({
+          ...current,
+          status: "NOT_REVIEWED",
+          confidence: "LOW",
+          physicalProductVerified: false,
+          physicalVerificationEvidenceIds: [],
+          currentConflict: null,
+          supplierEvidenceIds: [],
+          humanObservationEvidenceIds: [],
+          blockers: ["HUMAN_IDENTITY_REVIEW_REQUIRED"],
+          nextAction: "REVIEW_PRODUCT_EVIDENCE",
+        }))
+      }
       const proposedTitle = result.evidence.find((entry) =>
         entry.field === "title" &&
         entry.evidenceStatus !== "MISSING"
@@ -922,25 +943,6 @@ export default function ProductCaseRunnerPage() {
       if (proposedTitle && typeof proposedTitle.normalizedValue === "string") {
         setProductLabel(proposedTitle.normalizedValue)
       }
-      const supplierIdentityIds = result.evidence
-        .filter((entry) =>
-          ["title", "supplier_product_id", "supplier_sku", "variant_id"]
-            .includes(entry.field) &&
-          entry.evidenceStatus !== "MISSING"
-        )
-        .map((entry) => entry.id)
-      setIdentityReviewState((current) =>
-        current.status === "CONFLICTED"
-          ? current
-          : {
-              ...current,
-              status: "NOT_REVIEWED",
-              confidence: "LOW",
-              supplierEvidenceIds: supplierIdentityIds,
-              blockers: ["HUMAN_IDENTITY_REVIEW_REQUIRED"],
-              nextAction: "REVIEW_PRODUCT_EVIDENCE",
-            }
-      )
       setNotice(
         `Evidencia procesada localmente: ${
           result.evidence.filter((entry) =>
@@ -961,17 +963,17 @@ export default function ProductCaseRunnerPage() {
   }
 
   function clearManualContent() {
-    const capturedHash = supplierSourceCapture?.contentHash ?? null
+    const transitioned = transitionProductCaseSupplierCapture({
+      document: productCase,
+      replacement: null,
+    })
     setManualContent("")
-    setSupplierSourceCapture(null)
-    if (capturedHash) {
-      setCaptures((current) => current.filter((capture) =>
-        record(capture).contentHash !== capturedHash
-      ))
-      setEvidence((current) => current.filter((entry) =>
-        record(entry).contentHash !== capturedHash
-      ))
-    }
+    setHumanVisibleProductTextConfirmed(false)
+    setSupplierSourceCapture(transitioned.supplierSourceCapture)
+    setCaptures(transitioned.captures)
+    setEvidence(transitioned.evidence)
+    setImageAnalysis(transitioned.imageAnalysis)
+    setIdentityReviewState(transitioned.identityReview)
     setGeneratedPackage(null)
     setNotice(
       "Contenido y extracción temporal eliminados de esta sesión del navegador.",
@@ -1512,14 +1514,14 @@ export default function ProductCaseRunnerPage() {
     }
   }
 
-  function importProductCaseJson(
+  async function importProductCaseJson(
     rawJson: string,
     source: ProductCaseImportRoundtrip["source"],
   ) {
     setError("")
     setNotice("")
     try {
-      const importedResult = importProductCaseWorkspaceExport(rawJson)
+      const importedResult = await importProductCaseWorkspaceExport(rawJson)
       const importedEnvelope = record(importedResult.importedEnvelope)
       const importedWorkspace = importedResult.workspaceState
       const importedDocument = importedWorkspace.document
@@ -1601,6 +1603,10 @@ export default function ProductCaseRunnerPage() {
       )
       setManualContent(
         importedDocument.supplierSourceCapture?.rawVisibleSourceText ?? "",
+      )
+      setHumanVisibleProductTextConfirmed(
+        importedDocument.supplierSourceCapture
+          ?.humanVisibleProductTextConfirmed === true,
       )
       setCaptures(structuredClone(importedDocument.captures))
       setEvidence(structuredClone(importedDocument.evidence))
@@ -1689,7 +1695,7 @@ export default function ProductCaseRunnerPage() {
     }
     const rawJson = await file.text()
     setImportJson(rawJson)
-    importProductCaseJson(rawJson, "FILE")
+    await importProductCaseJson(rawJson, "FILE")
   }
 
   function exportReviewedCase() {
@@ -2009,7 +2015,10 @@ export default function ProductCaseRunnerPage() {
                   id="authenticated-visible-source-text"
                   data-testid="authenticated-visible-source-text"
                   value={manualContent}
-                  onChange={(event) => setManualContent(event.target.value)}
+                  onChange={(event) => {
+                    setManualContent(event.target.value)
+                    setHumanVisibleProductTextConfirmed(false)
+                  }}
                   autoComplete="off"
                   spellCheck={false}
                   aria-describedby="authenticated-source-warning authenticated-source-size"
@@ -2030,6 +2039,21 @@ export default function ProductCaseRunnerPage() {
                 mantiene sólo en memoria del navegador y entra al Export JSON
                 únicamente después de procesarlo.
               </div>
+              <label className="mt-3 flex min-h-11 items-start gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs leading-5 text-white/70">
+                <input
+                  type="checkbox"
+                  data-testid="confirm-visible-product-text"
+                  checked={humanVisibleProductTextConfirmed}
+                  onChange={(event) =>
+                    setHumanVisibleProductTextConfirmed(
+                      event.target.checked,
+                    )}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-cyan-200"
+                />
+                Confirmo que revisé este contenido y contiene únicamente texto
+                visible del producto, sin datos de cuenta, autenticación,
+                contacto personal ni pago.
+              </label>
               <p
                 id="authenticated-source-size"
                 className={`mt-2 text-right text-xs ${
@@ -2049,7 +2073,8 @@ export default function ProductCaseRunnerPage() {
                     extracting ||
                     !manualContent.trim() ||
                     manualBytes > PRODUCT_CASE_CONTENT_MAX_BYTES ||
-                    !urlValidation.valid
+                    !urlValidation.valid ||
+                    !humanVisibleProductTextConfirmed
                   }
                   onClick={() => void analyzeManualContent()}
                   className={`min-h-12 rounded-2xl bg-cyan-200 px-5 text-sm font-black text-black disabled:cursor-not-allowed disabled:opacity-40 ${buttonFocus}`}
@@ -2088,7 +2113,7 @@ export default function ProductCaseRunnerPage() {
             permanecen visibles y exportables. Ningún candidato se convierte
             automáticamente en PRODUCT_VERIFIED.
           </p>
-          <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+          <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-6">
             <div className="rounded-2xl border border-white/10 p-3">
               <dt className="text-white/45">Capture method</dt>
               <dd className="mt-1 font-black">
@@ -2111,6 +2136,21 @@ export default function ProductCaseRunnerPage() {
               <dt className="text-white/45">Warnings</dt>
               <dd className="mt-1 font-black">
                 {supplierSourceCapture?.extractionWarnings.length ?? 0}
+              </dd>
+            </div>
+            <div className="rounded-2xl border border-white/10 p-3">
+              <dt className="text-white/45">Sensitive assessment</dt>
+              <dd className="mt-1 break-words font-black">
+                {supplierSourceCapture?.sensitiveContentAssessment ??
+                  "NOT_ASSESSED"}
+              </dd>
+            </div>
+            <div className="rounded-2xl border border-white/10 p-3">
+              <dt className="text-white/45">Visible product text</dt>
+              <dd className="mt-1 break-words font-black">
+                {supplierSourceCapture?.humanVisibleProductTextConfirmed
+                  ? "HUMAN_CONFIRMED"
+                  : "NOT_CONFIRMED"}
               </dd>
             </div>
           </dl>

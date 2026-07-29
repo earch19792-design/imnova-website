@@ -242,7 +242,8 @@ export type ProductCaseSupplierSourceCapture = {
   evidenceCandidates: ProductCaseEvidence[]
   missingFields: ProductCaseEvidenceField[]
   fullHtmlAccepted: false
-  sensitiveContentStored: false
+  sensitiveContentAssessment: "NO_SENSITIVE_PATTERN_DETECTED"
+  humanVisibleProductTextConfirmed: true
 }
 
 export type ProductCaseExtractionResult = {
@@ -1267,7 +1268,36 @@ const MANUAL_SOURCE_SENSITIVE_PATTERNS = [
   /(?:^|\n)\s*(?:authorization|access[_ -]?token|refresh[_ -]?token|bearer)\s*[:=]/i,
   /(?:^|\n)\s*(?:credit[_ -]?card|card[_ -]?number|cvv|cvc|payment[_ -]?method)\s*[:=]/i,
   /(?:^|\n)\s*(?:account[_ -]?email|customer[_ -]?email|account[_ -]?name)\s*[:=]/i,
+  /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,63}\b/i,
+  /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/,
+  /\b(?:authorization\s+)?bearer\s+[A-Za-z0-9._~+\/=-]{8,}/i,
+  /\b(?:cookie|set-cookie)\s+[A-Za-z0-9_-]{1,64}=[^;\s]{4,}/i,
 ] as const
+
+function containsPaymentCardNumber(value: string) {
+  const candidates = value.match(/(?:^|[^\d])((?:\d[ -]?){12,18}\d)(?!\d)/g) ??
+    []
+  return candidates.some((candidate) => {
+    const digits = candidate.replace(/\D/g, "")
+    if (
+      digits.length < 13 ||
+      digits.length > 19 ||
+      /^(\d)\1+$/.test(digits)
+    ) return false
+    let sum = 0
+    let doubleDigit = false
+    for (let index = digits.length - 1; index >= 0; index -= 1) {
+      let digit = Number(digits[index])
+      if (doubleDigit) {
+        digit *= 2
+        if (digit > 9) digit -= 9
+      }
+      sum += digit
+      doubleDigit = !doubleDigit
+    }
+    return sum % 10 === 0
+  })
+}
 
 export function validateManualAuthenticatedVisibleSourceText(value: unknown):
   | { valid: true; rawVisibleSourceText: string; byteLength: number }
@@ -1285,7 +1315,10 @@ export function validateManualAuthenticatedVisibleSourceText(value: unknown):
   ) {
     return { valid: false, error: "FULL_HTML_NOT_ACCEPTED_PASTE_VISIBLE_TEXT_ONLY" }
   }
-  if (MANUAL_SOURCE_SENSITIVE_PATTERNS.some((pattern) => pattern.test(value))) {
+  if (
+    MANUAL_SOURCE_SENSITIVE_PATTERNS.some((pattern) => pattern.test(value)) ||
+    containsPaymentCardNumber(value)
+  ) {
     return {
       valid: false,
       error: "SENSITIVE_ACCOUNT_OR_CREDENTIAL_CONTENT_REJECTED",
@@ -1294,16 +1327,20 @@ export function validateManualAuthenticatedVisibleSourceText(value: unknown):
   return { valid: true, rawVisibleSourceText: value, byteLength }
 }
 
-export function createManualAuthenticatedSupplierSourceCapture(input: {
+export async function createManualAuthenticatedSupplierSourceCapture(input: {
   supplierUrl: string
   rawVisibleSourceText: string
   sourceAccessStatus: ProductCaseSourceAccessStatus
   extraction: ProductCaseExtractionResult
-}): ProductCaseSupplierSourceCapture {
+  humanVisibleProductTextConfirmed: boolean
+}): Promise<ProductCaseSupplierSourceCapture> {
   const validatedText = validateManualAuthenticatedVisibleSourceText(
     input.rawVisibleSourceText,
   )
   if (!validatedText.valid) throw new Error(validatedText.error)
+  if (input.humanVisibleProductTextConfirmed !== true) {
+    throw new Error("HUMAN_VISIBLE_PRODUCT_TEXT_CONFIRMATION_REQUIRED")
+  }
   const validatedUrl = validateLunaProductUrl(input.supplierUrl)
   if (!validatedUrl.valid) throw new Error(validatedUrl.error)
   if (
@@ -1314,9 +1351,13 @@ export function createManualAuthenticatedSupplierSourceCapture(input: {
   ) {
     throw new Error("MANUAL_AUTHENTICATED_SOURCE_CAPTURE_CONTEXT_INVALID")
   }
+  const recalculatedContentHash = await hashProductCaseContent(
+    validatedText.rawVisibleSourceText,
+  )
   if (
     input.extraction.capture.byteLength !== validatedText.byteLength ||
-    !validSha256(input.extraction.capture.contentHash)
+    !validSha256(input.extraction.capture.contentHash) ||
+    input.extraction.capture.contentHash !== recalculatedContentHash
   ) {
     throw new Error("MANUAL_AUTHENTICATED_SOURCE_CAPTURE_HASH_INVALID")
   }
@@ -1334,7 +1375,8 @@ export function createManualAuthenticatedSupplierSourceCapture(input: {
     evidenceCandidates: structuredClone(evidenceCandidates),
     missingFields: [...input.extraction.missingFields],
     fullHtmlAccepted: false,
-    sensitiveContentStored: false,
+    sensitiveContentAssessment: "NO_SENSITIVE_PATTERN_DETECTED",
+    humanVisibleProductTextConfirmed: true,
   }
 }
 
@@ -2683,6 +2725,38 @@ export function validateProductCaseDocumentProvenance(
     ...validateProductCaseImageAnalysis(document).errors,
     ...validateProductCaseSupplierSourceCapture(document).errors,
   ]
+  const evidenceIds = new Set(document.evidence.map((entry) => entry.id))
+  for (const id of document.identityReview.supplierEvidenceIds) {
+    if (!evidenceIds.has(id)) {
+      errors.push(`IDENTITY_SUPPLIER_EVIDENCE_REFERENCE_MISSING:${id}`)
+    }
+  }
+  for (const id of document.identityReview.humanObservationEvidenceIds) {
+    if (!evidenceIds.has(id)) {
+      errors.push(`IDENTITY_HUMAN_OBSERVATION_REFERENCE_MISSING:${id}`)
+    }
+  }
+  for (const id of document.identityReview.physicalVerificationEvidenceIds) {
+    if (!evidenceIds.has(id)) {
+      errors.push(`IDENTITY_PHYSICAL_EVIDENCE_REFERENCE_MISSING:${id}`)
+    }
+  }
+  if (
+    document.identityReview.currentConflict !== null &&
+    (
+      document.identityReview.status !== "CONFLICTED" ||
+      document.identityReview.supplierEvidenceIds.length === 0 ||
+      document.identityReview.humanObservationEvidenceIds.length === 0
+    )
+  ) {
+    errors.push("IDENTITY_ACTIVE_CONFLICT_REFERENCES_INVALID")
+  }
+  if (
+    document.identityReview.status !== "CONFLICTED" &&
+    document.identityReview.currentConflict !== null
+  ) {
+    errors.push("IDENTITY_CURRENT_CONFLICT_MUST_BE_HISTORICAL_ONLY")
+  }
   for (const evidence of acceptedProductCaseEvidence(document.evidence)) {
     const matchingCapture = document.captures.some((capture) =>
       capture.sourceType === evidence.sourceType &&
@@ -2740,7 +2814,9 @@ export function validateProductCaseSupplierSourceCapture(
       "AUTHENTICATED_SOURCE_REQUIRED" ||
     sourceCapture.sourceCaptureMethod !== "MANUAL_AUTHENTICATED_PASTE" ||
     sourceCapture.fullHtmlAccepted !== false ||
-    sourceCapture.sensitiveContentStored !== false ||
+    sourceCapture.sensitiveContentAssessment !==
+      "NO_SENSITIVE_PATTERN_DETECTED" ||
+    sourceCapture.humanVisibleProductTextConfirmed !== true ||
     !validIsoInstant(sourceCapture.capturedAt) ||
     !validSha256(sourceCapture.contentHash)
   ) {
@@ -2776,6 +2852,170 @@ export function validateProductCaseSupplierSourceCapture(
     errors.push("SUPPLIER_SOURCE_EVIDENCE_CANDIDATES_INVALID")
   }
   return { valid: errors.length === 0, errors: unique(errors) }
+}
+
+export async function validateProductCaseSupplierSourceCaptureIntegrity(
+  document: ProductCaseDocument,
+) {
+  const structural =
+    validateProductCaseSupplierSourceCapture(document)
+  const errors = [...structural.errors]
+  const sourceCapture = document.supplierSourceCapture
+  if (!sourceCapture) {
+    return { valid: errors.length === 0, errors: unique(errors) }
+  }
+  const recalculatedContentHash = await hashProductCaseContent(
+    sourceCapture.rawVisibleSourceText,
+  )
+  if (sourceCapture.contentHash !== recalculatedContentHash) {
+    errors.push("SUPPLIER_SOURCE_CAPTURE_CONTENT_HASH_MISMATCH")
+  }
+  const correspondingCaptures = document.captures.filter((capture) =>
+    capture.sourceType === "LUNA_AUTHENTICATED_MANUAL_CAPTURE" &&
+    capture.sourceUrl === sourceCapture.supplierUrl &&
+    capture.capturedAt === sourceCapture.capturedAt
+  )
+  if (
+    correspondingCaptures.length !== 1 ||
+    correspondingCaptures[0]?.contentHash !== recalculatedContentHash
+  ) {
+    errors.push("SUPPLIER_SOURCE_PRODUCT_CASE_CAPTURE_HASH_MISMATCH")
+  }
+  return { valid: errors.length === 0, errors: unique(errors) }
+}
+
+export async function validateProductCaseDocumentProvenanceIntegrity(
+  document: ProductCaseDocument,
+) {
+  const structural = validateProductCaseDocumentProvenance(document)
+  const supplierIntegrity =
+    await validateProductCaseSupplierSourceCaptureIntegrity(document)
+  const errors = unique([
+    ...structural.errors,
+    ...supplierIntegrity.errors,
+  ])
+  return { valid: errors.length === 0, errors }
+}
+
+const SUPPLIER_IDENTITY_FIELDS = new Set<ProductCaseEvidenceField>([
+  "title",
+  "description",
+  "product_type",
+  "supplier_product_id",
+  "supplier_sku",
+  "variant_id",
+  "option_value",
+])
+
+export function transitionProductCaseSupplierCapture(input: {
+  document: ProductCaseDocument
+  replacement: {
+    supplierSourceCapture: ProductCaseSupplierSourceCapture
+    extraction: ProductCaseExtractionResult
+  } | null
+}): ProductCaseDocument {
+  const document = structuredClone(input.document)
+  const previousCapture = document.supplierSourceCapture
+  const removedEvidenceIds = new Set(
+    previousCapture
+      ? document.evidence
+          .filter((entry) =>
+            entry.sourceType.startsWith("LUNA_") &&
+            entry.sourceUrl === previousCapture.supplierUrl &&
+            entry.contentHash === previousCapture.contentHash
+          )
+          .map((entry) => entry.id)
+      : [],
+  )
+  let evidence = document.evidence.filter((entry) =>
+    !removedEvidenceIds.has(entry.id)
+  )
+  let captures = document.captures.filter((capture) =>
+    !previousCapture ||
+    !(
+      capture.sourceType === "LUNA_AUTHENTICATED_MANUAL_CAPTURE" &&
+      capture.sourceUrl === previousCapture.supplierUrl &&
+      capture.capturedAt === previousCapture.capturedAt &&
+      capture.contentHash === previousCapture.contentHash
+    )
+  )
+  if (input.replacement) {
+    const replacementEvidenceIds = new Set(
+      input.replacement.extraction.evidence.map((entry) => entry.id),
+    )
+    evidence = [
+      ...evidence.filter((entry) => !replacementEvidenceIds.has(entry.id)),
+      ...structuredClone(input.replacement.extraction.evidence),
+    ]
+    const replacementCapture =
+      structuredClone(input.replacement.extraction.capture)
+    captures = [
+      ...captures.filter((capture) =>
+        !(
+          capture.sourceType === replacementCapture.sourceType &&
+          capture.sourceUrl === replacementCapture.sourceUrl &&
+          capture.capturedAt === replacementCapture.capturedAt &&
+          capture.contentHash === replacementCapture.contentHash
+        )
+      ),
+      replacementCapture,
+    ]
+  }
+  const observations = document.imageAnalysis.observations.map(
+    (observation) => ({
+      ...observation,
+      contradictsEvidenceIds: observation.contradictsEvidenceIds.filter(
+        (id) => !removedEvidenceIds.has(id),
+      ),
+    }),
+  )
+  const supplierEvidenceIds = input.replacement
+    ? input.replacement.extraction.evidence
+        .filter((entry) =>
+          entry.evidenceStatus !== "MISSING" &&
+          SUPPLIER_IDENTITY_FIELDS.has(entry.field)
+        )
+        .map((entry) => entry.id)
+    : []
+  const conflictHistory = unique([
+    ...document.identityReview.conflictHistory,
+    ...(document.identityReview.currentConflict
+      ? [document.identityReview.currentConflict]
+      : []),
+  ])
+  return {
+    ...document,
+    supplierSourceCapture: input.replacement
+      ? structuredClone(input.replacement.supplierSourceCapture)
+      : null,
+    captures,
+    evidence,
+    imageAnalysis: {
+      ...document.imageAnalysis,
+      conflictDetectedFrom: [],
+      observations,
+    },
+    identityReview: {
+      ...document.identityReview,
+      status: "NOT_REVIEWED",
+      confidence: "LOW",
+      physicalProductVerified: false,
+      physicalVerificationEvidenceIds: [],
+      conflictHistory,
+      currentConflict: null,
+      supplierEvidenceIds,
+      humanObservationEvidenceIds: [],
+      blockers: input.replacement
+        ? ["HUMAN_IDENTITY_REVIEW_REQUIRED"]
+        : [
+            "AUTHENTICATED_SUPPLIER_CAPTURE_REQUIRED",
+            "HUMAN_IDENTITY_REVIEW_REQUIRED",
+          ],
+      nextAction: input.replacement
+        ? "REVIEW_PRODUCT_EVIDENCE"
+        : "CAPTURE_AUTHENTICATED_SUPPLIER_EVIDENCE",
+    },
+  }
 }
 
 export async function createHumanVisualReviewRecord(input: {
@@ -5359,7 +5599,7 @@ export function serializeProductCaseWorkspaceExport(input: {
   return serialized
 }
 
-export function importProductCaseWorkspaceExport(serialized: string) {
+export async function importProductCaseWorkspaceExport(serialized: string) {
   if (typeof serialized !== "string" || !serialized.trim()) {
     throw new Error("PRODUCT_CASE_IMPORT_REQUIRED")
   }
@@ -5385,6 +5625,17 @@ export function importProductCaseWorkspaceExport(serialized: string) {
     throw new Error("PRODUCT_CASE_IMPORT_VERSION_INVALID")
   }
   const workspaceState = workspaceStateFromUnknown(envelope.workspaceState)
+  const cryptographicProvenance =
+    await validateProductCaseDocumentProvenanceIntegrity(
+      workspaceState.document,
+    )
+  if (!cryptographicProvenance.valid) {
+    throw new Error(
+      `PRODUCT_CASE_IMPORT_CRYPTOGRAPHIC_PROVENANCE_INVALID:${
+        cryptographicProvenance.errors.join(",")
+      }`,
+    )
+  }
   const recomputedOriginal = createProductCaseWorkspaceExport({
     workspaceState,
     exportedAt: envelope.exportedAt,
