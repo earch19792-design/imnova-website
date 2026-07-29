@@ -15,7 +15,7 @@ import type {
 export const PRODUCT_CASE_RUNNER_VERSION =
   "PRODUCT_CASE_RUNNER_V1_2026_07_28" as const
 export const PRODUCT_CASE_PARSER_VERSION =
-  "LUNA_TEXT_PARSER_V1_2026_07_29" as const
+  "LUNA_TEXT_PARSER_V1_2026_07_29_OOS_PROVENANCE_1" as const
 export const LUNA_SOURCE_CONTRACT_VERSION =
   "LUNA_SOURCE_CONTRACT_V1" as const
 
@@ -1099,10 +1099,24 @@ type Candidate = {
   extractionPath: string
   variantKey?: string | null
   evidenceClass?: ProductCaseEvidenceClass
+  stockSignal?: "OUT_OF_STOCK"
 }
 
 function normalizeWhitespace(value: string) {
   return value.normalize("NFKC").replace(/\s+/g, " ").trim()
+}
+
+function explicitOutOfStockSignal(value: unknown) {
+  if (typeof value !== "string") return false
+  const compact = normalizeWhitespace(value)
+  const token = /^https?:\/\/(?:www\.)?schema\.org\//i.test(compact)
+    ? compact.replace(/[?#].*$/, "").split(/[\/#]/).at(-1) ?? ""
+    : compact
+  const normalized = token
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .toLocaleLowerCase("en-US")
+  return normalized === "out of stock" || normalized === "sold out"
 }
 
 function nonempty(value: unknown) {
@@ -1519,23 +1533,30 @@ function pushCandidate(
     candidate.field,
     candidate.normalizedValue,
   )
-  if (!nonempty(normalized)) return
+  const stockSignal = candidate.field === "visible_stock" &&
+      explicitOutOfStockSignal(candidate.normalizedValue)
+    ? "OUT_OF_STOCK" as const
+    : candidate.stockSignal
+  if (!nonempty(normalized) && !stockSignal) return
   const key = [
     candidate.field,
     candidate.variantKey ?? "",
     stableValue(normalized),
+    stockSignal ?? "",
     candidate.extractionPath,
   ].join("|")
   if (target.some((entry) => [
     entry.field,
     entry.variantKey ?? "",
     stableValue(normalizeFieldValue(entry.field, entry.normalizedValue)),
+    entry.stockSignal ?? "",
     entry.extractionPath,
   ].join("|") === key)) return
   target.push({
     ...candidate,
     normalizedValue: normalized,
     variantKey: canonicalVariantKey(candidate.variantKey),
+    stockSignal,
   })
 }
 
@@ -1920,7 +1941,7 @@ function isNonTitleInterfaceLine(line: string) {
   const normalized = normalizeWhitespace(line)
   if (!normalized || visibleStockFromLine(normalized) !== null) return true
   if (
-    /^(?:sale(?:\s+\d{1,3}%\s+off)?|add\s+to\s+cart|add\s+to\s+wishlist|pay\s+over\s+time|shop\s+now|learn\s+more|view\s+all|continue\s+shopping)$/i
+    /^(?:sale(?:\s+\d{1,3}%\s+off)?|out\s+of\s+stock|sold\s+out|add\s+to\s+cart|add\s+to\s+wishlist|pay\s+over\s+time|shop\s+now|learn\s+more|view\s+all|continue\s+shopping)$/i
       .test(normalized)
   ) return true
   if (
@@ -1975,6 +1996,17 @@ function labeledTextCandidates(
         rawValue: line,
         normalizedValue: visibleStock,
         extractionPath: `${pathPrefix}.line[${lineIndex}].visible_stock`,
+        variantKey: null,
+      })
+      continue
+    }
+    if (explicitOutOfStockSignal(line)) {
+      pushCandidate(candidates, {
+        field: "visible_stock",
+        rawValue: line,
+        normalizedValue: line,
+        extractionPath:
+          `${pathPrefix}.line[${lineIndex}].out_of_stock_signal`,
         variantKey: null,
       })
       continue
@@ -2217,7 +2249,6 @@ function plainTextCandidates(content: string): Candidate[] {
 }
 
 function lunaStockStateFromCandidates(
-  content: string,
   candidates: Candidate[],
 ): LunaStockState {
   const quantities = [...new Set(candidates
@@ -2230,8 +2261,9 @@ function lunaStockStateFromCandidates(
     ))]
   const hasPositiveQuantity = quantities.some((quantity) => quantity > 0)
   const hasZeroQuantity = quantities.includes(0)
-  const hasExplicitOutOfStock =
-    /\bout\s+of\s+stock\b|\bsold\s+out\b/i.test(content)
+  const hasExplicitOutOfStock = candidates.some((candidate) =>
+    candidate.stockSignal === "OUT_OF_STOCK"
+  )
   if (
     quantities.length > 1 ||
     (hasPositiveQuantity && (hasZeroQuantity || hasExplicitOutOfStock))
@@ -2245,10 +2277,11 @@ function lunaStockStateFromCandidates(
 
 function lunaSourceContractSignalFailures(
   content: string,
-  candidates: Candidate[],
+  presentCandidates: Candidate[],
+  sourceCandidates: Candidate[],
   stockState: LunaStockState,
 ) {
-  const fields = new Set(candidates.map((candidate) => candidate.field))
+  const fields = new Set(presentCandidates.map((candidate) => candidate.field))
   const failures: string[] = []
   if (/\bregular\s+price\b/i.test(content) &&
     !fields.has("regular_price")) {
@@ -2262,7 +2295,9 @@ function lunaSourceContractSignalFailures(
     failures.push("VISIBLE_STOCK")
   }
   if (
-    /\bout\s+of\s+stock\b|\bsold\s+out\b/i.test(content) &&
+    sourceCandidates.some((candidate) =>
+      candidate.stockSignal === "OUT_OF_STOCK"
+    ) &&
     !["OUT_OF_STOCK_SIGNAL", "STOCK_CONFLICTED"].includes(stockState)
   ) {
     failures.push("OUT_OF_STOCK")
@@ -2405,6 +2440,7 @@ export async function extractProductCaseEvidence(input: {
     candidates = plainTextCandidates(input.content)
   }
 
+  const stockState = lunaStockStateFromCandidates(candidates)
   const deduped = new Map<string, Candidate>()
   for (const candidate of candidates) {
     const normalizedValue = normalizeFieldValue(
@@ -2424,10 +2460,10 @@ export async function extractProductCaseEvidence(input: {
   }
 
   const present = [...deduped.values()]
-  const stockState = lunaStockStateFromCandidates(input.content, present)
   const sourceContractFailures = lunaSourceContractSignalFailures(
     input.content,
     present,
+    candidates,
     stockState,
   )
   parserWarnings.push(...sourceContractFailures.map((failure) =>
