@@ -457,6 +457,7 @@ export type ProductCaseImageAnalysis = {
   conflictDetectedFrom: Array<
     "SUPPLIER_TEXT" | "HUMAN_VISUAL_REVIEW"
   >
+  contractIssues?: string[]
   observations: ProductCaseImageObservation[]
 }
 
@@ -3327,6 +3328,8 @@ function identityReviewReady(document: ProductCaseDocument) {
   const verificationIds = document.identityReview
     .physicalVerificationEvidenceIds
   return document.identityReview.status === "READY" &&
+    visualContractIssuesForDocument(document).length === 0 &&
+    (document.imageAnalysis.contractIssues ?? []).length === 0 &&
     validateProductCaseDocumentProvenance(document).valid &&
     document.identityReview.physicalProductVerified === true &&
     verificationIds.length > 0 &&
@@ -3380,13 +3383,24 @@ export function validateProductCaseImageAnalysis(
       const contradicted = document.evidence.find((entry) =>
         entry.id === contradictedId
       )
-      if (!contradicted ||
+      const staleIssue =
+        `HUMAN_VISUAL_REVIEW_STALE_SUPPLIER_REFERENCE:${observation.imageId}:${contradictedId}`
+      if (!contradicted) {
+        if (!(document.imageAnalysis.contractIssues ?? []).includes(
+          staleIssue,
+        )) {
+          errors.push(
+            `VISUAL_CONTRADICTED_SUPPLIER_EVIDENCE_INVALID:${observation.imageId}:${contradictedId}`,
+          )
+        }
+      } else if (
         !["title", "description", "product_type"].includes(
           contradicted.field,
         ) ||
         !["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
           contradicted.sourceEvidenceClass,
-        )) {
+        )
+      ) {
         errors.push(
           `VISUAL_CONTRADICTED_SUPPLIER_EVIDENCE_INVALID:${observation.imageId}:${contradictedId}`,
         )
@@ -3587,15 +3601,159 @@ export async function validateProductCaseSupplierSourceCaptureIntegrity(
   return { valid: errors.length === 0, errors: unique(errors) }
 }
 
+function canonicalHumanVisualReviewRecord(
+  observation: ProductCaseImageObservation,
+) {
+  return {
+    contractVersion: observation.contractVersion,
+    imageId: observation.imageId,
+    sourceUrl: observation.sourceUrl,
+    sourceReference: observation.sourceReference,
+    reviewerType: observation.reviewerType,
+    observedProductType: observation.observedProductType,
+    visibleFeatures: observation.visibleFeatures,
+    visibleText: observation.visibleText,
+    visibleBrands: observation.visibleBrands,
+    visibleColors: observation.visibleColors,
+    visibleQuantity: observation.visibleQuantity,
+    observedVariant: observation.observedVariant,
+    possibleConflicts: observation.possibleConflicts,
+    contradictsEvidenceIds: observation.contradictsEvidenceIds,
+    confidence: observation.confidence,
+    humanDecision: observation.humanDecision,
+    humanReason: observation.humanReason,
+    reviewedAt: observation.reviewedAt,
+    rawHumanInput: observation.rawHumanInput,
+  }
+}
+
+function visualEvidenceId(contentHash: string, imageId: string) {
+  return `visual-${contentHash.slice(7, 19)}-${imageId}`
+}
+
+function visualContractIssuesForDocument(document: ProductCaseDocument) {
+  const issues = humanVisualReviewContractIssues(
+    document.imageAnalysis.observations,
+  )
+  const evidenceIds = new Set(document.evidence.map((entry) => entry.id))
+  for (const observation of document.imageAnalysis.observations) {
+    for (const id of observation.contradictsEvidenceIds) {
+      if (!evidenceIds.has(id)) {
+        issues.push(
+          `HUMAN_VISUAL_REVIEW_STALE_SUPPLIER_REFERENCE:${observation.imageId}:${id}`,
+        )
+      }
+    }
+  }
+  return unique(issues)
+}
+
+function visualContractIssueMatchesImage(issue: string, imageId: string) {
+  return [
+    "HUMAN_VISUAL_REVIEW_IMAGE_ID_DUPLICATE_OR_MISSING",
+    "HUMAN_VISUAL_REVIEW_HUMAN_CORRECTION_REQUIRED",
+    "HUMAN_VISUAL_REVIEW_BRAND_PLACEHOLDER_INVALID",
+  ].some((prefix) => issue === `${prefix}:${imageId}`) ||
+    issue.startsWith(
+      `HUMAN_VISUAL_REVIEW_STALE_SUPPLIER_REFERENCE:${imageId}:`,
+    )
+}
+
+export async function validateHumanVisualReviewIntegrity(
+  document: ProductCaseDocument,
+) {
+  const errors: string[] = []
+  const observations = document.imageAnalysis.observations
+  const persistedIssues = unique(
+    document.imageAnalysis.contractIssues ?? [],
+  )
+  const derivedIssues = visualContractIssuesForDocument(document)
+  if (
+    Array.isArray(document.imageAnalysis.contractIssues) &&
+    derivedIssues.some((issue) => !persistedIssues.includes(issue))
+  ) {
+    errors.push("HUMAN_VISUAL_REVIEW_CONTRACT_ISSUES_MISMATCH")
+  }
+  for (const observation of observations) {
+    const legacy = observation.contractVersion !==
+        HUMAN_VISUAL_REVIEW_CONTRACT_VERSION ||
+      !observation.rawHumanInput
+    if (legacy) continue
+    const canonical = canonicalHumanVisualReviewRecord(observation)
+    const serialized = stableValue(canonical)
+    const contentHash = await hashProductCaseContent(serialized)
+    const evidenceId = visualEvidenceId(contentHash, observation.imageId)
+    if (observation.contentHash !== contentHash) {
+      errors.push(
+        `HUMAN_VISUAL_REVIEW_CONTENT_HASH_MISMATCH:${observation.imageId}`,
+      )
+    }
+    if (observation.evidenceId !== evidenceId) {
+      errors.push(
+        `HUMAN_VISUAL_REVIEW_EVIDENCE_ID_MISMATCH:${observation.imageId}`,
+      )
+    }
+    const evidence = document.evidence.filter((entry) =>
+      entry.id === observation.evidenceId &&
+      entry.field === "visual_observation" &&
+      entry.sourceType === "HUMAN_VISUAL_OBSERVATION"
+    )
+    if (
+      evidence.length !== 1 ||
+      evidence[0]?.contentHash !== contentHash ||
+      evidence[0]?.capturedAt !== observation.reviewedAt ||
+      evidence[0]?.sourceUrl !== document.sourceUrl ||
+      evidence[0]?.extractionPath !==
+        `humanVisualReview.${observation.imageId}` ||
+      evidence[0]?.evidenceClass !== "HUMAN_VISUAL_REVIEW" ||
+      evidence[0]?.sourceEvidenceClass !== "HUMAN_VISUAL_REVIEW" ||
+      evidence[0]?.humanReason !== observation.humanReason ||
+      stableValue(evidence[0]?.rawValue) !== stableValue(canonical) ||
+      stableValue(evidence[0]?.normalizedValue) !== stableValue(canonical) ||
+      stableValue(evidence[0]?.originalValue) !== stableValue(canonical) ||
+      evidence[0]?.correctedValue !== null
+    ) {
+      errors.push(
+        `HUMAN_VISUAL_REVIEW_EVIDENCE_MISMATCH:${observation.imageId}`,
+      )
+    }
+    const captures = document.captures.filter((capture) =>
+      capture.sourceType === "HUMAN_VISUAL_OBSERVATION" &&
+      capture.contentHash === contentHash &&
+      capture.capturedAt === observation.reviewedAt
+    )
+    if (
+      captures.length !== 1 ||
+      captures[0]?.sourceUrl !== document.sourceUrl ||
+      captures[0]?.format !== "JSON" ||
+      captures[0]?.byteLength !== utf8Length(serialized)
+    ) {
+      errors.push(
+        `HUMAN_VISUAL_REVIEW_CAPTURE_MISMATCH:${observation.imageId}`,
+      )
+    }
+  }
+  const observationEvidenceIds = observations.map((entry) => entry.evidenceId)
+  if (
+    stableValue([...document.identityReview.humanObservationEvidenceIds].sort()) !==
+      stableValue([...observationEvidenceIds].sort())
+  ) {
+    errors.push("HUMAN_VISUAL_REVIEW_IDENTITY_REFERENCES_MISMATCH")
+  }
+  return { valid: errors.length === 0, errors: unique(errors) }
+}
+
 export async function validateProductCaseDocumentProvenanceIntegrity(
   document: ProductCaseDocument,
 ) {
   const structural = validateProductCaseDocumentProvenance(document)
   const supplierIntegrity =
     await validateProductCaseSupplierSourceCaptureIntegrity(document)
+  const visualIntegrity = await validateHumanVisualReviewIntegrity(document)
   const errors = unique([
     ...structural.errors,
     ...supplierIntegrity.errors,
+    ...visualIntegrity.errors,
   ])
   return { valid: errors.length === 0, errors }
 }
@@ -3664,14 +3822,26 @@ export function transitionProductCaseSupplierCapture(input: {
       replacementCapture,
     ]
   }
-  const observations = document.imageAnalysis.observations.map(
-    (observation) => ({
-      ...observation,
-      contradictsEvidenceIds: observation.contradictsEvidenceIds.filter(
-        (id) => !removedEvidenceIds.has(id),
-      ),
-    }),
+  const observations = document.imageAnalysis.observations
+  const invalidatedVisualReferences = observations.flatMap((observation) =>
+    observation.contradictsEvidenceIds
+      .filter((id) => removedEvidenceIds.has(id))
+      .map((id) =>
+        `HUMAN_VISUAL_REVIEW_STALE_SUPPLIER_REFERENCE:${observation.imageId}:${id}`
+      )
   )
+  const contractIssues = unique([
+    ...(document.imageAnalysis.contractIssues ?? []),
+    ...invalidatedVisualReferences,
+    ...visualContractIssuesForDocument({
+      ...document,
+      evidence,
+      imageAnalysis: {
+        ...document.imageAnalysis,
+        observations,
+      },
+    }),
+  ])
   const supplierEvidenceIds = input.replacement
     ? input.replacement.extraction.evidence
         .filter((entry) =>
@@ -3696,6 +3866,7 @@ export function transitionProductCaseSupplierCapture(input: {
     imageAnalysis: {
       ...document.imageAnalysis,
       conflictDetectedFrom: [],
+      contractIssues,
       observations,
     },
     identityReview: {
@@ -3707,12 +3878,18 @@ export function transitionProductCaseSupplierCapture(input: {
       conflictHistory,
       currentConflict: null,
       supplierEvidenceIds,
-      humanObservationEvidenceIds: [],
+      humanObservationEvidenceIds: observations.map((entry) =>
+        entry.evidenceId
+      ),
       blockers: input.replacement
-        ? ["HUMAN_IDENTITY_REVIEW_REQUIRED"]
+        ? unique([
+            "HUMAN_IDENTITY_REVIEW_REQUIRED",
+            ...contractIssues,
+          ])
         : [
             "AUTHENTICATED_SUPPLIER_CAPTURE_REQUIRED",
             "HUMAN_IDENTITY_REVIEW_REQUIRED",
+            ...contractIssues,
           ],
       nextAction: input.replacement
         ? "REVIEW_PRODUCT_EVIDENCE"
@@ -3723,6 +3900,7 @@ export function transitionProductCaseSupplierCapture(input: {
 
 export async function createHumanVisualReviewRecord(input: {
   document: ProductCaseDocument
+  replaceEvidenceId?: string | null
   imageId: string
   sourceUrl: string | null
   sourceReference: string
@@ -3791,13 +3969,28 @@ export async function createHumanVisualReviewRecord(input: {
     !normalizedRecord.humanReason) {
     throw new Error("HUMAN_VISUAL_REVIEW_REQUIRED_FIELD_MISSING")
   }
+  const selectedObservation = input.replaceEvidenceId
+    ? input.document.imageAnalysis.observations.find((entry) =>
+        entry.evidenceId === input.replaceEvidenceId
+      ) ?? null
+    : null
+  if (input.replaceEvidenceId && !selectedObservation) {
+    throw new Error("HUMAN_VISUAL_REVIEW_EDIT_TARGET_STALE")
+  }
+  const collidingObservation =
+    input.document.imageAnalysis.observations.find((entry) =>
+      normalizeWhitespace(entry.imageId) === normalizedRecord.imageId &&
+      entry.evidenceId !== selectedObservation?.evidenceId
+    ) ?? null
+  if (input.replaceEvidenceId && collidingObservation) {
+    throw new Error("HUMAN_VISUAL_REVIEW_IMAGE_ID_COLLISION")
+  }
   const conflictLinked =
     normalizedRecord.possibleConflicts.length > 0 &&
     normalizedRecord.contradictsEvidenceIds.length > 0
   const serialized = stableValue(normalizedRecord)
   const contentHash = await hashProductCaseContent(serialized)
-  const evidenceId =
-    `visual-${contentHash.slice(7, 19)}-${normalizedRecord.imageId}`
+  const evidenceId = visualEvidenceId(contentHash, normalizedRecord.imageId)
   const observation: ProductCaseImageObservation = {
     ...normalizedRecord,
     evidenceId,
@@ -3855,7 +4048,9 @@ export async function createHumanVisualReviewRecord(input: {
     resourcesLoaded: false,
   }
   const replacedObservations = input.document.imageAnalysis.observations.filter(
-    (entry) => normalizeWhitespace(entry.imageId) === normalizedRecord.imageId,
+    (entry) => selectedObservation
+      ? entry.evidenceId === selectedObservation.evidenceId
+      : normalizeWhitespace(entry.imageId) === normalizedRecord.imageId,
   )
   const replacedEvidenceIds = new Set(
     replacedObservations.map((entry) => entry.evidenceId),
@@ -3864,7 +4059,7 @@ export async function createHumanVisualReviewRecord(input: {
     replacedObservations.map((entry) => entry.contentHash),
   )
   const retainedObservations = input.document.imageAnalysis.observations.filter(
-    (entry) => normalizeWhitespace(entry.imageId) !== normalizedRecord.imageId,
+    (entry) => !replacedEvidenceIds.has(entry.evidenceId),
   )
   const updatedEvidence = [
     ...input.document.evidence
@@ -3873,6 +4068,27 @@ export async function createHumanVisualReviewRecord(input: {
     evidence,
   ]
   const observations = [...retainedObservations, observation]
+  const replacedImageIds = new Set([
+    ...replacedObservations.map((entry) => entry.imageId),
+    normalizedRecord.imageId,
+  ])
+  const retainedContractIssues =
+    (input.document.imageAnalysis.contractIssues ?? []).filter((issue) =>
+      ![...replacedImageIds].some((imageId) =>
+        visualContractIssueMatchesImage(issue, imageId)
+      )
+    )
+  const nextContractIssues = unique([
+    ...retainedContractIssues,
+    ...visualContractIssuesForDocument({
+      ...input.document,
+      evidence: updatedEvidence,
+      imageAnalysis: {
+        ...input.document.imageAnalysis,
+        observations,
+      },
+    }),
+  ])
   const captures = [
     ...input.document.captures.filter((entry) =>
       entry.sourceType !== "HUMAN_VISUAL_OBSERVATION" ||
@@ -3891,6 +4107,7 @@ export async function createHumanVisualReviewRecord(input: {
     imageAnalysis: {
       ...input.document.imageAnalysis,
       visualEvidenceStatus: "HUMAN_REVIEWED",
+      contractIssues: nextContractIssues,
       conflictDetectedFrom: observations.some((entry) =>
           entry.possibleConflicts.length > 0 &&
           entry.contradictsEvidenceIds.length > 0
@@ -3918,6 +4135,7 @@ export async function createHumanVisualReviewRecord(input: {
       ),
       blockers: unique([
         "HUMAN_IDENTITY_REVIEW_REQUIRED_AFTER_VISUAL_EVIDENCE_CHANGE",
+        ...nextContractIssues,
         ...currentVisualConflicts,
       ]),
       nextAction: "REVIEW_PRODUCT_EVIDENCE",
@@ -3971,12 +4189,28 @@ export function deleteHumanVisualReviewRecord(input: {
   const observations = input.document.imageAnalysis.observations.filter(
     (entry) => normalizeWhitespace(entry.imageId) !== imageId,
   )
+  const retainedEvidence = input.document.evidence.filter((entry) =>
+    !removedEvidenceIds.has(entry.id)
+  )
+  const retainedContractIssues =
+    (input.document.imageAnalysis.contractIssues ?? []).filter((issue) =>
+      !visualContractIssueMatchesImage(issue, imageId)
+    )
+  const nextContractIssues = unique([
+    ...retainedContractIssues,
+    ...visualContractIssuesForDocument({
+      ...input.document,
+      evidence: retainedEvidence,
+      imageAnalysis: {
+        ...input.document.imageAnalysis,
+        observations,
+      },
+    }),
+  ])
   const conflicts = observations.flatMap((entry) => entry.possibleConflicts)
   return {
     ...input.document,
-    evidence: input.document.evidence.filter((entry) =>
-      !removedEvidenceIds.has(entry.id)
-    ),
+    evidence: retainedEvidence,
     captures: input.document.captures.filter((entry) =>
       entry.sourceType !== "HUMAN_VISUAL_OBSERVATION" ||
       !removedHashes.has(entry.contentHash)
@@ -3986,6 +4220,7 @@ export function deleteHumanVisualReviewRecord(input: {
       visualEvidenceStatus: observations.length > 0
         ? "HUMAN_REVIEWED"
         : "NOT_REVIEWED",
+      contractIssues: nextContractIssues,
       conflictDetectedFrom: observations.some((entry) =>
           entry.possibleConflicts.length > 0 &&
           entry.contradictsEvidenceIds.length > 0
@@ -4013,6 +4248,7 @@ export function deleteHumanVisualReviewRecord(input: {
       ),
       blockers: unique([
         "HUMAN_IDENTITY_REVIEW_REQUIRED_AFTER_VISUAL_EVIDENCE_CHANGE",
+        ...nextContractIssues,
         ...conflicts,
       ]),
       nextAction: "REVIEW_PRODUCT_EVIDENCE",
@@ -4739,8 +4975,13 @@ export function buildManualListingPackageDraft(input: {
       sourceContractCapture.stockState !== "IN_STOCK_SIGNAL"
     ),
   )
+  const visualContractIssues = unique([
+    ...(input.document.imageAnalysis.contractIssues ?? []),
+    ...visualContractIssuesForDocument(input.document),
+  ])
   const identityHold = !identityReviewReady(input.document) ||
-    sourceContractHold
+    sourceContractHold ||
+    visualContractIssues.length > 0
   const acceptedLink = (id: string) => acceptedIds.includes(id)
   const linksAccepted = (ids: string[]) =>
     ids.length > 0 && ids.every(acceptedLink)
@@ -5071,6 +5312,7 @@ export function buildManualListingPackageDraft(input: {
         ...(!variantReady ? ["VARIANT_EVIDENCE_INCOMPLETE"] : []),
         ...(sourceContractHold
           ? ["LUNA_SOURCE_CONTRACT_GUARD_BLOCKED"] : []),
+        ...visualContractIssues,
       ],
       [...identityFields.flatMap(fieldIds), ...fieldIds("variant_id")],
     ),
@@ -6533,8 +6775,10 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     throw new Error("PRODUCT_CASE_IMPORT_VERSION_INVALID")
   }
   const workspaceState = workspaceStateFromUnknown(envelope.workspaceState)
-  const visualReviewContractIssues =
-    humanVisualReviewContractIssues(workspaceState.imageObservations)
+  const visualReviewContractIssues = unique([
+    ...(workspaceState.document.imageAnalysis.contractIssues ?? []),
+    ...visualContractIssuesForDocument(workspaceState.document),
+  ])
   const cryptographicProvenance =
     await validateProductCaseDocumentProvenanceIntegrity(
       workspaceState.document,
@@ -6556,6 +6800,8 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     throw new Error("PRODUCT_CASE_IMPORT_OUTPUT_MISMATCH")
   }
   const reviewRequiredState = structuredClone(workspaceState)
+  reviewRequiredState.document.imageAnalysis.contractIssues =
+    visualReviewContractIssues
   reviewRequiredState.document.identityReview = {
     ...reviewRequiredState.document.identityReview,
     status: "NOT_REVIEWED",
@@ -6564,6 +6810,7 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     physicalVerificationEvidenceIds: [],
     blockers: unique([
       "IMPORTED_IDENTITY_REQUIRES_NEW_LOCAL_HUMAN_REVIEW",
+      ...visualReviewContractIssues,
       ...reviewRequiredState.document.identityReview.blockers,
     ]),
     nextAction: "REVALIDATE_IMPORTED_PRODUCT_CASE_LOCALLY",

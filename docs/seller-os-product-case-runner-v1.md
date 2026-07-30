@@ -305,12 +305,30 @@ agregar de nuevo o editar reemplaza atómicamente la revisión, su captura,
 evidence ID, content hash y referencias anteriores. `No brand visible` se
 estructura como `visibleBrands: []`, nunca como una marca.
 
+La edición usa el `evidenceId` original como clave estable. Un cambio de
+`imageId` sólo se aplica si el destino no existe; una colisión falla sin
+modificar tarjetas. Toda adición, edición, eliminación o nueva captura Luna
+invalida el paquete local copiable.
+
 Todo cambio o eliminación invalida identity/readiness, mantiene
 `physicalProductVerified:false` y elimina referencias visuales vigentes
 obsoletas; el historial sigue siendo sólo historial. Una importación legacy
 sin versión o raw humano se conserva sin corrección silenciosa y exige
 corrección humana. El workspace preservado puede reexportarse de forma
 idempotente.
+
+Clear/reprocess de Luna no reescribe `contradictsEvidenceIds` dentro de una
+observación ya hasheada. La observación, su evidencia y captura permanecen
+intactas y se registra
+`HUMAN_VISUAL_REVIEW_STALE_SUPPLIER_REFERENCE` como gate persistente hasta que
+un humano edite/reemplace o elimine la tarjeta.
+
+El import recalcula el hash canónico de cada revisión visual versionada y
+verifica `evidenceId`, evidencia paralela, captura, byte length y referencias
+de identidad. Cambios de igual longitud y envelopes externamente recalculados
+se rechazan. Issues legacy, IDs duplicados y raw/version faltantes se guardan
+en `imageAnalysis.contractIssues` y bloquean identity, listing package y
+manual handoff.
 
 Sin una observación humana estructurada, `visualEvidenceStatus` es
 `NOT_REVIEWED` y el motor no puede abrir un conflicto visual. Tampoco infiere

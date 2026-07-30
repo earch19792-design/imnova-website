@@ -1012,9 +1012,46 @@ const SANITIZED_CAPTURED_AT = "2026-07-28T20:00:00.000Z"
 const SANITIZED_CAPTURE_HASH =
   "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 const SANITIZED_VISUAL_HASH =
-  "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  "sha256:339bc5b8564f1259db8ef3f1e2d0a5f4a3367d6fb5749c31d16145268b4bb170"
+const SANITIZED_VISUAL_EVIDENCE_ID =
+  "visual-339bc5b8564f-sanitized-main"
 const SANITIZED_IMAGE_URL =
   "https://lunaportex.com/cdn/sanitized-deterministic-main.jpg"
+const SANITIZED_VISUAL_RAW = fixtureVisualRaw({
+  imageId: "sanitized-main",
+  sourceUrl: SANITIZED_IMAGE_URL,
+  sourceReference: "sanitized deterministic source image",
+  observedProductType: "SANITIZED_PRODUCT",
+  visibleFeatures: ["sanitized feature"],
+  visibleColors: ["BLACK"],
+  visibleQuantity: 1,
+  observedVariant: "SANITIZED-VARIANT-BLACK",
+  possibleConflicts: [],
+  confidence: "HIGH",
+  humanDecision: "ACCEPT_FOR_ANALYSIS",
+  humanReason: "SANITIZED_IMAGE_MATCH_CONFIRMED",
+})
+const SANITIZED_VISUAL_RECORD = {
+  contractVersion: HUMAN_VISUAL_REVIEW_CONTRACT_VERSION,
+  imageId: "sanitized-main",
+  sourceUrl: SANITIZED_IMAGE_URL,
+  sourceReference: "sanitized deterministic source image",
+  reviewerType: "HUMAN" as const,
+  observedProductType: "SANITIZED_PRODUCT",
+  visibleFeatures: ["sanitized feature"],
+  visibleText: [],
+  visibleBrands: [],
+  visibleColors: ["BLACK"],
+  visibleQuantity: 1,
+  observedVariant: "SANITIZED-VARIANT-BLACK",
+  possibleConflicts: [],
+  contradictsEvidenceIds: [],
+  confidence: "HIGH" as const,
+  humanDecision: "ACCEPT_FOR_ANALYSIS" as const,
+  humanReason: "SANITIZED_IMAGE_MATCH_CONFIRMED",
+  reviewedAt: SANITIZED_CAPTURED_AT,
+  rawHumanInput: SANITIZED_VISUAL_RAW,
+}
 
 function sanitizedEvidence(input: {
   id: string
@@ -1024,6 +1061,8 @@ function sanitizedEvidence(input: {
   sourceType?: ProductCaseEvidence["sourceType"]
   contentHash?: string
   extractionMethod?: ProductCaseEvidence["extractionMethod"]
+  extractionPath?: string
+  humanReason?: string | null
 }): ProductCaseEvidence {
   const evidenceClass = input.evidenceClass ?? "PRODUCT_VERIFIED"
   const human = input.sourceType === "HUMAN_CORRECTION"
@@ -1042,7 +1081,7 @@ function sanitizedEvidence(input: {
     sourceUrl: SANITIZED_SOURCE_URL,
     capturedAt: SANITIZED_CAPTURED_AT,
     contentHash: input.contentHash ?? SANITIZED_CAPTURE_HASH,
-    extractionPath: `sanitized.${input.field}`,
+    extractionPath: input.extractionPath ?? `sanitized.${input.field}`,
     extractionMethod: input.extractionMethod ??
       (sourceType === "HUMAN_PRODUCT_INSPECTION"
         ? "HUMAN_STRUCTURED_REVIEW"
@@ -1053,7 +1092,8 @@ function sanitizedEvidence(input: {
     sourceEvidenceClass: evidenceClass,
     evidenceStatus: human ? "CORRECTED" : "ACCEPTED",
     humanVerdict: human ? "CORRECT" : "ACCEPT",
-    humanReason: human ? "SANITIZED_HUMAN_REVIEW" : null,
+    humanReason: input.humanReason ??
+      (human ? "SANITIZED_HUMAN_REVIEW" : null),
     originalValue: input.value,
     correctedValue: human ? input.value : null,
     conflictKey: null,
@@ -1190,13 +1230,15 @@ const SANITIZED_EVIDENCE: ProductCaseEvidence[] = [
     sourceType: "HUMAN_CORRECTION",
   }),
   sanitizedEvidence({
-    id: "san-visual-observation",
+    id: SANITIZED_VISUAL_EVIDENCE_ID,
     field: "visual_observation",
-    value: "Human confirmed the sanitized source image matches the reviewed variant.",
+    value: SANITIZED_VISUAL_RECORD,
     evidenceClass: "HUMAN_VISUAL_REVIEW",
     sourceType: "HUMAN_VISUAL_OBSERVATION",
     contentHash: SANITIZED_VISUAL_HASH,
     extractionMethod: "HUMAN_STRUCTURED_REVIEW",
+    extractionPath: "humanVisualReview.sanitized-main",
+    humanReason: "SANITIZED_IMAGE_MATCH_CONFIRMED",
   }),
 ]
 
@@ -1295,7 +1337,7 @@ const SANITIZED_DOCUMENT = {
       parseHealth: null,
       stockState: null,
       format: "JSON",
-      byteLength: 256,
+      byteLength: 1150,
       fullContentStored: false,
       scriptsExecuted: false,
       resourcesLoaded: false,
@@ -1323,7 +1365,7 @@ const SANITIZED_DOCUMENT = {
     observations: [{
       contractVersion: HUMAN_VISUAL_REVIEW_CONTRACT_VERSION,
       imageId: "sanitized-main",
-      evidenceId: "san-visual-observation",
+      evidenceId: SANITIZED_VISUAL_EVIDENCE_ID,
       contentHash: SANITIZED_VISUAL_HASH,
       sourceUrl: SANITIZED_IMAGE_URL,
       sourceReference: "sanitized deterministic source image",
@@ -1345,20 +1387,7 @@ const SANITIZED_DOCUMENT = {
       humanDecision: "ACCEPT_FOR_ANALYSIS",
       humanReason: "SANITIZED_IMAGE_MATCH_CONFIRMED",
       reviewedAt: SANITIZED_CAPTURED_AT,
-      rawHumanInput: fixtureVisualRaw({
-        imageId: "sanitized-main",
-        sourceUrl: SANITIZED_IMAGE_URL,
-        sourceReference: "sanitized deterministic source image",
-        observedProductType: "SANITIZED_PRODUCT",
-        visibleFeatures: ["sanitized feature"],
-        visibleColors: ["BLACK"],
-        visibleQuantity: 1,
-        observedVariant: "SANITIZED-VARIANT-BLACK",
-        possibleConflicts: [],
-        confidence: "HIGH",
-        humanDecision: "ACCEPT_FOR_ANALYSIS",
-        humanReason: "SANITIZED_IMAGE_MATCH_CONFIRMED",
-      }),
+      rawHumanInput: SANITIZED_VISUAL_RAW,
     }],
   },
   identityReview: {
@@ -1373,7 +1402,7 @@ const SANITIZED_DOCUMENT = {
     conflictHistory: [],
     currentConflict: null,
     supplierEvidenceIds: [],
-    humanObservationEvidenceIds: ["san-visual-observation"],
+    humanObservationEvidenceIds: [SANITIZED_VISUAL_EVIDENCE_ID],
     blockers: [],
     nextAction: "REVIEW_MARKET_EVIDENCE",
   },

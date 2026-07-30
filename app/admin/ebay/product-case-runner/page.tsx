@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 import { supabase } from "@/lib/supabase"
@@ -1000,6 +1000,7 @@ export default function ProductCaseRunnerPage() {
       if (proposedTitle && typeof proposedTitle.normalizedValue === "string") {
         setProductLabel(proposedTitle.normalizedValue)
       }
+      setGeneratedPackage(null)
       setNotice(
         `Evidencia procesada localmente: ${
           result.evidence.filter((entry) =>
@@ -1309,6 +1310,7 @@ export default function ProductCaseRunnerPage() {
         : null
       const visualRecord = await createHumanVisualReviewRecord({
         document: productCase,
+        replaceEvidenceId: editingVisualObservationEvidenceId,
         imageId: draft.imageId.trim(),
         sourceUrl: draft.sourceUrl.trim() || null,
         sourceReference: draft.sourceReference.trim() ||
@@ -1348,6 +1350,7 @@ export default function ProductCaseRunnerPage() {
       setCaptures(visualRecord.updatedDocument.captures)
       setImageAnalysis(visualRecord.updatedDocument.imageAnalysis)
       setIdentityReviewState(visualRecord.updatedDocument.identityReview)
+      setGeneratedPackage(null)
       setRunnerTimestamp(reviewedAt)
       setVisualObservationDraft({ ...emptyVisualObservationDraft })
       setEditingVisualObservationEvidenceId(null)
@@ -1371,10 +1374,23 @@ export default function ProductCaseRunnerPage() {
   function editVisualObservation(
     observation: ProductCaseImageObservation,
   ) {
+    const currentEvidenceIds = new Set(evidence.map((entry) => entry.id))
+    const draft = visualObservationDraftFrom(observation)
     setError("")
-    setNotice("Editando revisión visual humana en memoria.")
+    setNotice(
+      observation.contradictsEvidenceIds.some((id) =>
+          !currentEvidenceIds.has(id)
+        )
+        ? "Editando revisión visual: existen referencias Luna stale. Revise y guarde o elimine humanamente la tarjeta."
+        : "Editando revisión visual humana en memoria.",
+    )
     setEditingVisualObservationEvidenceId(observation.evidenceId)
-    setVisualObservationDraft(visualObservationDraftFrom(observation))
+    setVisualObservationDraft({
+      ...draft,
+      contradictsEvidenceIds: draft.contradictsEvidenceIds.filter((id) =>
+        currentEvidenceIds.has(id)
+      ),
+    })
   }
 
   function cancelVisualObservationEdit() {
@@ -1394,6 +1410,7 @@ export default function ProductCaseRunnerPage() {
     setCaptures(updatedDocument.captures)
     setImageAnalysis(updatedDocument.imageAnalysis)
     setIdentityReviewState(updatedDocument.identityReview)
+    setGeneratedPackage(null)
     if (
       editingVisualObservationEvidenceId === observation.evidenceId
     ) {
@@ -2517,6 +2534,18 @@ export default function ProductCaseRunnerPage() {
             captureMethod:HUMAN_VISUAL_REVIEW · machineVisionStatus:NOT_IMPLEMENTED
             · openAiVisionUsed:false
           </p>
+          {(imageAnalysis.contractIssues ?? []).length > 0 && (
+            <div className="mt-3 rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-3 text-xs text-amber-50">
+              <p className="font-black">
+                HUMAN_VISUAL_REVIEW bloqueado · corrección humana obligatoria
+              </p>
+              <ul className="mt-2 grid gap-1 font-mono">
+                {(imageAnalysis.contractIssues ?? []).map((issue) => (
+                  <li key={issue}>{issue}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="mt-5 grid gap-3 lg:grid-cols-2">
             <label
               className="grid gap-2 text-sm font-black"
@@ -4501,6 +4530,16 @@ function ListingOperationsEditor({
     () => JSON.stringify(value.evidenceLinks, null, 2),
   )
   const [evidenceLinksError, setEvidenceLinksError] = useState("")
+
+  useEffect(() => {
+    setItemSpecificsJson(JSON.stringify(value.itemSpecifics, null, 2))
+    setItemSpecificsError("")
+  }, [value.itemSpecifics])
+
+  useEffect(() => {
+    setEvidenceLinksJson(JSON.stringify(value.evidenceLinks, null, 2))
+    setEvidenceLinksError("")
+  }, [value.evidenceLinks])
 
   function update<K extends keyof ProductCaseListingOperations>(
     key: K,
