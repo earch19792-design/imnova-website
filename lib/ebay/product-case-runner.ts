@@ -6593,6 +6593,50 @@ export const PRODUCT_CASE_WORKSPACE_EXPORT_VERSION =
   "PRODUCT_CASE_WORKSPACE_EXPORT_V1" as const
 export const PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES = 1_048_576
 
+export type ProductCaseImportFileMetadata = {
+  name: string
+  size: number
+  type: string
+}
+
+export function validateProductCaseImportFileMetadata(
+  file: ProductCaseImportFileMetadata,
+) {
+  if (!file.name.trim()) {
+    return "PRODUCT_CASE_IMPORT_FILE_NAME_REQUIRED"
+  }
+  if (
+    file.type &&
+    file.type !== "application/json" &&
+    file.type !== "text/json" &&
+    file.type !== "text/plain"
+  ) {
+    return "PRODUCT_CASE_IMPORT_CONTENT_TYPE_INVALID"
+  }
+  if (file.size > PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES) {
+    return "PRODUCT_CASE_IMPORT_SIZE_LIMIT_EXCEEDED"
+  }
+  if (file.size === 0) {
+    return "PRODUCT_CASE_IMPORT_FILE_EMPTY"
+  }
+  return null
+}
+
+export function validateProductCaseImportJsonCandidate(serialized: string) {
+  if (typeof serialized !== "string" || !serialized.trim()) {
+    return "PRODUCT_CASE_IMPORT_REQUIRED"
+  }
+  if (utf8Length(serialized) > PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES) {
+    return "PRODUCT_CASE_IMPORT_SIZE_LIMIT_EXCEEDED"
+  }
+  try {
+    JSON.parse(serialized)
+  } catch {
+    return "PRODUCT_CASE_IMPORT_JSON_INVALID"
+  }
+  return null
+}
+
 export type ProductCaseWorkspaceState = {
   document: ProductCaseDocument
   economicsPolicy: EconomicsPolicy | null

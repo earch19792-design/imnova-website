@@ -24,6 +24,8 @@ import {
   reviewHumanComparableCandidate,
   serializeProductCaseWorkspaceExport,
   transitionProductCaseSupplierCapture,
+  validateProductCaseImportFileMetadata,
+  validateProductCaseImportJsonCandidate,
   validateManualAuthenticatedVisibleSourceText,
   validateLunaProductUrl,
   type ProductCaseDocument,
@@ -481,6 +483,16 @@ export default function ProductCaseRunnerPage() {
   const [importedSourceAccess, setImportedSourceAccess] =
     useState<ProductCaseDocument["sourceAccess"] | null>(null)
   const [importJson, setImportJson] = useState("")
+  const [selectedImportFile, setSelectedImportFile] = useState<File | null>(
+    null,
+  )
+  const [importInputSource, setImportInputSource] =
+    useState<ProductCaseImportRoundtrip["source"]>("TEXTAREA")
+  const [importReadStatus, setImportReadStatus] =
+    useState<"IDLE" | "READING" | "READY" | "ERROR">("IDLE")
+  const [importInlineError, setImportInlineError] = useState("")
+  const importReadGenerationRef = useRef(0)
+  const importFileInputRef = useRef<HTMLInputElement>(null)
   const [importRoundtrip, setImportRoundtrip] =
     useState<ProductCaseImportRoundtrip | null>(null)
   const [importRequiresHumanReReview, setImportRequiresHumanReReview] =
@@ -798,6 +810,7 @@ export default function ProductCaseRunnerPage() {
 
   function changeSourceUrl(nextUrl: string) {
     const changedAt = new Date().toISOString()
+    importReadGenerationRef.current += 1
     setSourceUrl(nextUrl)
     setFixtureActive(false)
     setCaseId("product-case-browser-draft")
@@ -807,6 +820,11 @@ export default function ProductCaseRunnerPage() {
     setPreflight(null)
     setImportedSourceAccess(null)
     setImportJson("")
+    setSelectedImportFile(null)
+    setImportInputSource("TEXTAREA")
+    setImportReadStatus("IDLE")
+    setImportInlineError("")
+    if (importFileInputRef.current) importFileInputRef.current.value = ""
     setImportRoundtrip(null)
     setImportRequiresHumanReReview(false)
     setManualContent("")
@@ -1612,10 +1630,13 @@ export default function ProductCaseRunnerPage() {
     rawJson: string,
     source: ProductCaseImportRoundtrip["source"],
   ) {
+    const importGeneration = importReadGenerationRef.current
     setError("")
+    setImportInlineError("")
     setNotice("")
     try {
       const importedResult = await importProductCaseWorkspaceExport(rawJson)
+      if (importReadGenerationRef.current !== importGeneration) return
       const importedEnvelope = record(importedResult.importedEnvelope)
       const importedWorkspace = importedResult.workspaceState
       const importedDocument = importedWorkspace.document
@@ -1766,35 +1787,68 @@ export default function ProductCaseRunnerPage() {
           : "PRODUCT CASE JSON importado, validado por el dominio y conservado sólo en memoria del navegador.",
       )
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "PRODUCT_CASE_IMPORT_INVALID",
-      )
+      if (importReadGenerationRef.current !== importGeneration) return
+      const importError = caught instanceof Error
+        ? caught.message
+        : "PRODUCT_CASE_IMPORT_INVALID"
+      setImportInlineError(importError)
+      setError(importError)
     }
   }
 
   async function importProductCaseFile(
     file: File | null,
   ) {
-    if (!file) return
-    if (
-      file.type &&
-      file.type !== "application/json" &&
-      file.type !== "text/json" &&
-      file.type !== "text/plain"
-    ) {
-      setError("PRODUCT_CASE_IMPORT_CONTENT_TYPE_INVALID")
+    const readGeneration = ++importReadGenerationRef.current
+    if (!file) {
+      setSelectedImportFile(null)
+      setImportReadStatus("IDLE")
       return
     }
-    if (file.size > PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES) {
-      setError("PRODUCT_CASE_IMPORT_SIZE_LIMIT_EXCEEDED")
+    setSelectedImportFile(file)
+    setImportInputSource("FILE")
+    setImportReadStatus("READING")
+    setImportInlineError("")
+    setError("")
+    setNotice("")
+    setImportRoundtrip(null)
+    const metadataError = validateProductCaseImportFileMetadata(file)
+    if (metadataError) {
+      setImportReadStatus("ERROR")
+      setImportInlineError(metadataError)
+      setError(metadataError)
       return
     }
-    const rawJson = await file.text()
-    setImportJson(rawJson)
-    await importProductCaseJson(rawJson, "FILE")
+    try {
+      const rawJson = await file.text()
+      if (importReadGenerationRef.current !== readGeneration) return
+      const candidateError = validateProductCaseImportJsonCandidate(rawJson)
+      if (candidateError) {
+        setImportReadStatus("ERROR")
+        setImportInlineError(candidateError)
+        setError(candidateError)
+        return
+      }
+      setImportJson(rawJson)
+      setImportReadStatus("READY")
+      setNotice(
+        `Archivo listo para validar: ${file.name} (${file.size.toLocaleString()} bytes).`,
+      )
+    } catch {
+      if (importReadGenerationRef.current !== readGeneration) return
+      const readError = "PRODUCT_CASE_IMPORT_FILE_READ_FAILED"
+      setImportReadStatus("ERROR")
+      setImportInlineError(readError)
+      setError(readError)
+    }
   }
+
+  const importJsonCandidateError = useMemo(
+    () => validateProductCaseImportJsonCandidate(importJson),
+    [importJson],
+  )
+  const importReady = importReadStatus === "READY" &&
+    importJsonCandidateError === null
 
   function exportReviewedCase() {
     const serialized = serializeProductCaseWorkspaceExport({
@@ -1905,6 +1959,7 @@ export default function ProductCaseRunnerPage() {
             <label className="grid content-start gap-2 text-xs font-black" htmlFor="product-case-import-file">
               Archivo JSON
               <input
+                ref={importFileInputRef}
                 id="product-case-import-file"
                 type="file"
                 accept=".json,application/json,text/json,text/plain"
@@ -1912,20 +1967,67 @@ export default function ProductCaseRunnerPage() {
                   void importProductCaseFile(
                     event.currentTarget.files?.[0] ?? null,
                   )
-                  event.currentTarget.value = ""
                 }}
                 className={`${inputClass} py-3 file:mr-3 file:rounded-lg file:border-0 file:bg-violet-100 file:px-3 file:py-2 file:text-xs file:font-black file:text-black`}
               />
               <span className="font-normal text-white/40">
                 Máximo {PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES.toLocaleString()} bytes.
               </span>
+              <output
+                htmlFor="product-case-import-file"
+                data-testid="product-case-import-file-selection"
+                className="rounded-xl border border-white/10 bg-black/20 p-3 font-normal text-white/70"
+                aria-live="polite"
+              >
+                {selectedImportFile
+                  ? `${selectedImportFile.name} · ${selectedImportFile.size.toLocaleString()} bytes · ${importReadStatus}`
+                  : "Ningún archivo seleccionado"}
+              </output>
+              {selectedImportFile &&
+              (importReadStatus === "ERROR" ||
+                importInputSource === "TEXTAREA") ? (
+                <button
+                  type="button"
+                  data-testid="product-case-import-file-retry"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    void importProductCaseFile(selectedImportFile)
+                  }}
+                  className={`min-h-11 rounded-xl border border-amber-200/30 bg-amber-200/[0.08] px-4 text-xs font-black text-amber-50 ${buttonFocus}`}
+                >
+                  {importInputSource === "TEXTAREA"
+                    ? "VOLVER A CARGAR EL ARCHIVO SELECCIONADO"
+                    : "REINTENTAR LECTURA DEL ARCHIVO"}
+                </button>
+              ) : null}
             </label>
             <label className="grid gap-2 text-xs font-black" htmlFor="product-case-import-json">
               JSON como texto
               <textarea
                 id="product-case-import-json"
                 value={importJson}
-                onChange={(event) => setImportJson(event.target.value)}
+                onChange={(event) => {
+                  importReadGenerationRef.current += 1
+                  const nextJson = event.target.value
+                  const candidateError =
+                    validateProductCaseImportJsonCandidate(nextJson)
+                  const visibleCandidateError =
+                    candidateError === "PRODUCT_CASE_IMPORT_REQUIRED"
+                      ? ""
+                      : candidateError ?? ""
+                  setImportJson(nextJson)
+                  setImportInputSource("TEXTAREA")
+                  setImportReadStatus(
+                    nextJson.trim()
+                      ? candidateError === null ? "READY" : "ERROR"
+                      : "IDLE",
+                  )
+                  setImportInlineError(visibleCandidateError)
+                  setError(visibleCandidateError)
+                  setNotice("")
+                  setImportRoundtrip(null)
+                }}
                 spellCheck={false}
                 className={`${textAreaClass} min-h-44`}
               />
@@ -1933,12 +2035,23 @@ export default function ProductCaseRunnerPage() {
           </div>
           <button
             type="button"
-            onClick={() => importProductCaseJson(importJson, "TEXTAREA")}
-            disabled={!importJson.trim()}
+            onClick={() =>
+              importProductCaseJson(importJson, importInputSource)}
+            disabled={!importReady}
+            data-testid="product-case-import-submit"
             className={`mt-4 min-h-12 rounded-2xl border border-violet-200/30 bg-violet-200/[0.08] px-5 text-sm font-black text-violet-50 disabled:cursor-not-allowed disabled:opacity-40 ${buttonFocus}`}
           >
             VALIDAR E IMPORTAR EN ESTE NAVEGADOR
           </button>
+          {importInlineError && (
+            <p
+              role="alert"
+              data-testid="product-case-import-error"
+              className="mt-4 rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm font-bold text-rose-50"
+            >
+              {importInlineError}
+            </p>
+          )}
           {importRoundtrip && (
             <>
               <dl className="mt-4 grid gap-3 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.05] p-4 text-xs sm:grid-cols-2 lg:grid-cols-4">

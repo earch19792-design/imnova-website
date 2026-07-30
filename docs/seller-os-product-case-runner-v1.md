@@ -127,6 +127,25 @@ conserva evidencia original, observaciones, correcciones, conflictos, costos,
 comparables, estrategia, operaciones de listing, razones de override y
 learning observations, sin persistencia automática.
 
+El selector de archivo conserva el objeto `File` durante los rerenders y no
+resetea el input después de `change`. La tarjeta muestra inmediatamente nombre,
+tamaño y estado de lectura; después sincroniza el contenido con el editor JSON.
+Cada lectura usa una generación activa: una resolución o rechazo tardío de un
+archivo anterior no puede sobrescribir otra selección ni un JSON pegado después.
+Un archivo inválido o ilegible tampoco borra el JSON existente: conserva el
+editor, marca el estado `ERROR` y deshabilita la importación hasta una nueva
+selección válida o una edición explícita del textarea.
+Seleccionar sólo prepara el archivo: la validación e importación de dominio
+requiere pulsar el botón explícito. Ese botón se habilita para JSON
+sintácticamente válido leído desde archivo o pegado en el textarea. Tipo
+inválido, archivo vacío, lectura fallida, JSON inválido y tamaño superior a
+1 MiB producen errores visibles y específicos dentro de la tarjeta. Un export
+legacy válido se importa con su gate persistente de corrección humana, sin
+descarte ni corrección silenciosa.
+Cambiar explícitamente la URL fuente sí inicia otro expediente: en esa
+transición se limpian de forma conjunta JSON, `File`, nombre, estado, error e
+input nativo para permitir seleccionar de nuevo el mismo archivo.
+
 Limpiar o reprocesar una captura pasa por una transición pura. La transición
 retira la evidencia y captura reemplazadas, elimina referencias actuales
 obsoletas, cierra el conflicto activo, conserva su etiqueta sólo en
