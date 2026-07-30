@@ -1,8 +1,42 @@
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
-import { LUNA_SOURCE_CONTRACT_VERSION, PRODUCT_CASE_EVIDENCE_FIELDS, PRODUCT_CASE_PARSER_VERSION, PRODUCT_CASE_RUNNER_VERSION, PRODUCT_CASE_ZERO_EFFECTS, buildProductCaseRunnerOutput, buildStrategyLabAdapterPreview, type ProductCaseDocument, type ProductCaseEvidence, type ProductCaseEvidenceField, type ProductCaseHumanComparableCandidate, type ProductCaseImageApproval, type ProductCaseListingOperations, type ProductCaseScenarioDraft, type ProductCaseWorkspaceState } from "./product-case-runner.ts"
+import { HUMAN_VISUAL_REVIEW_CONTRACT_VERSION, LUNA_SOURCE_CONTRACT_VERSION, PRODUCT_CASE_EVIDENCE_FIELDS, PRODUCT_CASE_PARSER_VERSION, PRODUCT_CASE_RUNNER_VERSION, PRODUCT_CASE_ZERO_EFFECTS, buildProductCaseRunnerOutput, buildStrategyLabAdapterPreview, type ProductCaseDocument, type ProductCaseEvidence, type ProductCaseEvidenceField, type ProductCaseHumanComparableCandidate, type ProductCaseImageApproval, type ProductCaseListingOperations, type ProductCaseScenarioDraft, type ProductCaseWorkspaceState } from "./product-case-runner.ts"
 
 export const GOLF_SWING_TRAINER_PRODUCT_NAME =
   "Smart Inflatable Golf Ball Swing Trainer — Black"
+
+function fixtureVisualRaw(input: {
+  imageId: string
+  sourceReference: string
+  observedProductType?: string
+  visibleFeatures: string[]
+  visibleText?: string[]
+  visibleBrands?: string[]
+  visibleColors: string[]
+  visibleQuantity: number
+  observedVariant?: string
+  possibleConflicts: string[]
+  confidence: string
+  humanDecision: string
+  humanReason: string
+  sourceUrl?: string
+}) {
+  return {
+    imageId: input.imageId,
+    sourceUrl: input.sourceUrl ?? "",
+    sourceReference: input.sourceReference,
+    observedProductType: input.observedProductType ?? "",
+    visibleFeatures: input.visibleFeatures.join("\n"),
+    visibleText: (input.visibleText ?? []).join("\n"),
+    visibleBrands: (input.visibleBrands ?? []).join("\n"),
+    visibleColors: input.visibleColors.join("\n"),
+    visibleQuantity: String(input.visibleQuantity),
+    observedVariant: input.observedVariant ?? "",
+    possibleConflicts: input.possibleConflicts.join("\n"),
+    confidence: input.confidence,
+    humanDecision: input.humanDecision,
+    humanReason: input.humanReason,
+  }
+}
 
 export const GOLF_SWING_TRAINER_LUNA_URL =
   "https://lunaportex.com/products/smart-inflatable-golf-ball-swing-trainer-black"
@@ -734,6 +768,7 @@ const fixtureDocument = {
     ],
     observations: [
       {
+        contractVersion: HUMAN_VISUAL_REVIEW_CONTRACT_VERSION,
         imageId: "supplier-image-1",
         evidenceId: "golf-evidence-22-visual_observation",
         contentHash: GOLF_SWING_TRAINER_VISUAL_REVIEW_SNAPSHOT_SHA256,
@@ -743,7 +778,7 @@ const fixtureDocument = {
         verificationStatus: "SOURCE_IMAGE_OBSERVED",
         physicalProductVerified: false,
         captureMethod: "HUMAN_VISUAL_REVIEW",
-        reviewerType: "CHATGPT_ASSISTED_HUMAN",
+        reviewerType: "HUMAN",
         observedProductType: null,
         visibleFeatures: ["round black object", "lanyard", "hooks"],
         visibleText: [],
@@ -761,8 +796,20 @@ const fixtureDocument = {
         humanDecision: "NEEDS_MORE_EVIDENCE",
         humanReason: "SOURCE_VISUAL_PENDING_IDENTITY_CONFIRMATION",
         reviewedAt: REVIEWED_AT,
+        rawHumanInput: fixtureVisualRaw({
+          imageId: "supplier-image-1",
+          sourceReference: "human review of supplier image 1",
+          visibleFeatures: ["round black object", "lanyard", "hooks"],
+          visibleColors: ["BLACK"],
+          visibleQuantity: 1,
+          possibleConflicts: ["PROMOTIONAL_IMAGE_PRODUCT_FUNCTION_CONFLICT"],
+          confidence: "LOW",
+          humanDecision: "NEEDS_MORE_EVIDENCE",
+          humanReason: "SOURCE_VISUAL_PENDING_IDENTITY_CONFIRMATION",
+        }),
       },
       {
+        contractVersion: HUMAN_VISUAL_REVIEW_CONTRACT_VERSION,
         imageId: "supplier-image-2",
         evidenceId: "golf-evidence-23-visual_observation",
         contentHash: GOLF_SWING_TRAINER_VISUAL_REVIEW_SNAPSHOT_SHA256,
@@ -772,7 +819,7 @@ const fixtureDocument = {
         verificationStatus: "SOURCE_IMAGE_OBSERVED",
         physicalProductVerified: false,
         captureMethod: "HUMAN_VISUAL_REVIEW",
-        reviewerType: "CHATGPT_ASSISTED_HUMAN",
+        reviewerType: "HUMAN",
         observedProductType: "POUCH_OR_STORAGE_ACCESSORY",
         visibleFeatures: ["pouch", "storage compartments", "zippers"],
         visibleText: ["Titleist"],
@@ -794,8 +841,27 @@ const fixtureDocument = {
         humanReason:
           "THIRD_PARTY_TRADEMARK_VISIBLE:TITLEIST; PROMOTIONAL_COMPOSITE; PRODUCT_FUNCTION_NOT_VERIFIED",
         reviewedAt: REVIEWED_AT,
+        rawHumanInput: fixtureVisualRaw({
+          imageId: "supplier-image-2",
+          sourceReference: "human review of supplier image 2",
+          observedProductType: "POUCH_OR_STORAGE_ACCESSORY",
+          visibleFeatures: ["pouch", "storage compartments", "zippers"],
+          visibleText: ["Titleist"],
+          visibleBrands: ["Titleist"],
+          visibleColors: ["BLACK"],
+          visibleQuantity: 1,
+          possibleConflicts: [
+            "PROMOTIONAL_IMAGE_PRODUCT_FUNCTION_CONFLICT",
+            "VISIBLE_THIRD_PARTY_BRAND_IP",
+          ],
+          confidence: "HIGH",
+          humanDecision: "REJECT_FOR_EBAY_HANDOFF",
+          humanReason:
+            "THIRD_PARTY_TRADEMARK_VISIBLE:TITLEIST; PROMOTIONAL_COMPOSITE; PRODUCT_FUNCTION_NOT_VERIFIED",
+        }),
       },
       {
+        contractVersion: HUMAN_VISUAL_REVIEW_CONTRACT_VERSION,
         imageId: "supplier-image-3",
         evidenceId: "golf-evidence-24-visual_observation",
         contentHash: GOLF_SWING_TRAINER_VISUAL_REVIEW_SNAPSHOT_SHA256,
@@ -805,7 +871,7 @@ const fixtureDocument = {
         verificationStatus: "SOURCE_IMAGE_OBSERVED",
         physicalProductVerified: false,
         captureMethod: "HUMAN_VISUAL_REVIEW",
-        reviewerType: "CHATGPT_ASSISTED_HUMAN",
+        reviewerType: "HUMAN",
         observedProductType: null,
         visibleFeatures: ["round black object", "lanyard", "hooks"],
         visibleText: [],
@@ -823,6 +889,17 @@ const fixtureDocument = {
         humanDecision: "NEEDS_MORE_EVIDENCE",
         humanReason: "SOURCE_VISUAL_PENDING_IDENTITY_CONFIRMATION",
         reviewedAt: REVIEWED_AT,
+        rawHumanInput: fixtureVisualRaw({
+          imageId: "supplier-image-3",
+          sourceReference: "human review of supplier image 3",
+          visibleFeatures: ["round black object", "lanyard", "hooks"],
+          visibleColors: ["BLACK"],
+          visibleQuantity: 1,
+          possibleConflicts: ["PROMOTIONAL_IMAGE_PRODUCT_FUNCTION_CONFLICT"],
+          confidence: "LOW",
+          humanDecision: "NEEDS_MORE_EVIDENCE",
+          humanReason: "SOURCE_VISUAL_PENDING_IDENTITY_CONFIRMATION",
+        }),
       },
     ],
   },
@@ -1244,6 +1321,7 @@ const SANITIZED_DOCUMENT = {
     visualEvidenceStatus: "HUMAN_REVIEWED",
     conflictDetectedFrom: [],
     observations: [{
+      contractVersion: HUMAN_VISUAL_REVIEW_CONTRACT_VERSION,
       imageId: "sanitized-main",
       evidenceId: "san-visual-observation",
       contentHash: SANITIZED_VISUAL_HASH,
@@ -1267,6 +1345,20 @@ const SANITIZED_DOCUMENT = {
       humanDecision: "ACCEPT_FOR_ANALYSIS",
       humanReason: "SANITIZED_IMAGE_MATCH_CONFIRMED",
       reviewedAt: SANITIZED_CAPTURED_AT,
+      rawHumanInput: fixtureVisualRaw({
+        imageId: "sanitized-main",
+        sourceUrl: SANITIZED_IMAGE_URL,
+        sourceReference: "sanitized deterministic source image",
+        observedProductType: "SANITIZED_PRODUCT",
+        visibleFeatures: ["sanitized feature"],
+        visibleColors: ["BLACK"],
+        visibleQuantity: 1,
+        observedVariant: "SANITIZED-VARIANT-BLACK",
+        possibleConflicts: [],
+        confidence: "HIGH",
+        humanDecision: "ACCEPT_FOR_ANALYSIS",
+        humanReason: "SANITIZED_IMAGE_MATCH_CONFIRMED",
+      }),
     }],
   },
   identityReview: {

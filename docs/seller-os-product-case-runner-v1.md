@@ -278,8 +278,7 @@ humanReviewRequired: true
 Una observación visual se crea exclusivamente cuando un revisor registra
 manualmente `imageId`, URL fuente, producto/variante observados, features, texto,
 marcas, colores, cantidad, posibles conflictos, confianza, decisión, motivo y
-fecha. El revisor puede identificarse como `HUMAN` o
-`CHATGPT_ASSISTED_HUMAN`, pero la captura siempre usa
+fecha. El revisor se identifica como `HUMAN`, y la captura siempre usa
 `HUMAN_VISUAL_REVIEW`. La revisión rápida admite
 `ACCEPT_FOR_ANALYSIS`, `NEEDS_MORE_EVIDENCE` o
 `REJECT_FOR_EBAY_HANDOFF`; no exige fabricar una contradicción cuando el revisor
@@ -289,6 +288,29 @@ solamente documenta lo visible. La evidencia queda clasificada como
 `verificationStatus: SOURCE_IMAGE_OBSERVED` y
 `physicalProductVerified: false`: describe lo visible, no verifica el producto
 físico entregado y no borra la evidencia textual.
+
+El formulario de `HUMAN_VISUAL_REVIEW` mantiene separados
+`observedProductType`, `visibleFeatures`, `visibleText`, `visibleBrands`,
+`visibleColors`, `visibleQuantity`, `observedVariant` y
+`possibleConflicts`. No deriva `visibleText` del motivo ni de otras
+observaciones. Las listas y blockers se separan únicamente por salto de línea:
+una coma permanece dentro del mismo valor observado. Cada revisión se presenta
+como tarjeta legible y puede editarse o eliminarse sólo del estado actual en
+memoria. Editar o eliminar actualiza su evidencia, captura y referencias
+derivadas; export/import conserva el estado vigente sin persistencia externa.
+Cada registro nuevo declara
+`contractVersion: HUMAN_VISUAL_REVIEW_CONTRACT_V1` y conserva por separado
+`rawHumanInput` y los valores estructurados. `imageId` es la clave única:
+agregar de nuevo o editar reemplaza atómicamente la revisión, su captura,
+evidence ID, content hash y referencias anteriores. `No brand visible` se
+estructura como `visibleBrands: []`, nunca como una marca.
+
+Todo cambio o eliminación invalida identity/readiness, mantiene
+`physicalProductVerified:false` y elimina referencias visuales vigentes
+obsoletas; el historial sigue siendo sólo historial. Una importación legacy
+sin versión o raw humano se conserva sin corrección silenciosa y exige
+corrección humana. El workspace preservado puede reexportarse de forma
+idempotente.
 
 Sin una observación humana estructurada, `visualEvidenceStatus` es
 `NOT_REVIEWED` y el motor no puede abrir un conflicto visual. Tampoco infiere

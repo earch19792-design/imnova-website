@@ -18,6 +18,8 @@ export const PRODUCT_CASE_PARSER_VERSION =
   "LUNA_TEXT_PARSER_V1_2026_07_29_NARRATIVE_BLOCKS_3" as const
 export const LUNA_SOURCE_CONTRACT_VERSION =
   "LUNA_SOURCE_CONTRACT_V1" as const
+export const HUMAN_VISUAL_REVIEW_CONTRACT_VERSION =
+  "HUMAN_VISUAL_REVIEW_CONTRACT_V1" as const
 
 export const PRODUCT_CASE_CONTENT_MAX_BYTES = 262_144
 
@@ -401,6 +403,7 @@ export type ProductCaseHumanReview = {
 }
 
 export type ProductCaseImageObservation = {
+  contractVersion: typeof HUMAN_VISUAL_REVIEW_CONTRACT_VERSION
   imageId: string
   evidenceId: string
   contentHash: `sha256:${string}`
@@ -410,7 +413,7 @@ export type ProductCaseImageObservation = {
   verificationStatus: "SOURCE_IMAGE_OBSERVED"
   physicalProductVerified: false
   captureMethod: "HUMAN_VISUAL_REVIEW"
-  reviewerType: "HUMAN" | "CHATGPT_ASSISTED_HUMAN"
+  reviewerType: "HUMAN"
   observedProductType: string | null
   visibleFeatures: string[]
   visibleText: string[]
@@ -427,6 +430,22 @@ export type ProductCaseImageObservation = {
     | "NEEDS_MORE_EVIDENCE"
   humanReason: string
   reviewedAt: string
+  rawHumanInput: {
+    imageId: string
+    sourceUrl: string
+    sourceReference: string
+    observedProductType: string
+    visibleFeatures: string
+    visibleText: string
+    visibleBrands: string
+    visibleColors: string
+    visibleQuantity: string
+    observedVariant: string
+    possibleConflicts: string
+    confidence: string
+    humanDecision: string
+    humanReason: string
+  }
 }
 
 export type ProductCaseImageAnalysis = {
@@ -3721,6 +3740,7 @@ export async function createHumanVisualReviewRecord(input: {
   humanDecision: ProductCaseImageObservation["humanDecision"]
   humanReason: string
   reviewedAt: string
+  rawHumanInput: ProductCaseImageObservation["rawHumanInput"]
 }) {
   if (!validIsoInstant(input.reviewedAt)) {
     throw new Error("HUMAN_VISUAL_REVIEW_TIMESTAMP_INVALID")
@@ -3737,24 +3757,35 @@ export async function createHumanVisualReviewRecord(input: {
   )) {
     throw new Error("HUMAN_VISUAL_REVIEW_SUPPLIER_LINK_INVALID")
   }
+  const normalizeList = (values: string[]) =>
+    values.map(normalizeWhitespace).filter(Boolean)
+  const visibleBrands = normalizeList(input.visibleBrands).filter((brand) =>
+    !/^no brand visible$/i.test(brand)
+  )
   const normalizedRecord = {
+    contractVersion: HUMAN_VISUAL_REVIEW_CONTRACT_VERSION,
     imageId: normalizeWhitespace(input.imageId),
     sourceUrl: input.sourceUrl,
     sourceReference: normalizeWhitespace(input.sourceReference),
-    reviewerType: input.reviewerType,
-    observedProductType: input.observedProductType,
-    visibleFeatures: input.visibleFeatures.map(normalizeWhitespace),
-    visibleText: input.visibleText.map(normalizeWhitespace),
-    visibleBrands: input.visibleBrands.map(normalizeWhitespace),
-    visibleColors: input.visibleColors.map(normalizeWhitespace),
+    reviewerType: "HUMAN" as const,
+    observedProductType: input.observedProductType
+      ? normalizeWhitespace(input.observedProductType)
+      : null,
+    visibleFeatures: normalizeList(input.visibleFeatures),
+    visibleText: normalizeList(input.visibleText),
+    visibleBrands,
+    visibleColors: normalizeList(input.visibleColors),
     visibleQuantity: input.visibleQuantity,
-    observedVariant: input.observedVariant,
-    possibleConflicts: input.possibleConflicts.map(normalizeWhitespace),
+    observedVariant: input.observedVariant
+      ? normalizeWhitespace(input.observedVariant)
+      : null,
+    possibleConflicts: normalizeList(input.possibleConflicts),
     contradictsEvidenceIds: [...input.contradictsEvidenceIds].sort(),
     confidence: input.confidence,
     humanDecision: input.humanDecision,
     humanReason: normalizeWhitespace(input.humanReason),
     reviewedAt: input.reviewedAt,
+    rawHumanInput: structuredClone(input.rawHumanInput),
   }
   if (!normalizedRecord.imageId || !normalizedRecord.sourceReference ||
     !normalizedRecord.humanReason) {
@@ -3823,15 +3854,81 @@ export async function createHumanVisualReviewRecord(input: {
     scriptsExecuted: false,
     resourcesLoaded: false,
   }
+  const replacedObservations = input.document.imageAnalysis.observations.filter(
+    (entry) => normalizeWhitespace(entry.imageId) === normalizedRecord.imageId,
+  )
+  const replacedEvidenceIds = new Set(
+    replacedObservations.map((entry) => entry.evidenceId),
+  )
+  const replacedHashes = new Set<string>(
+    replacedObservations.map((entry) => entry.contentHash),
+  )
+  const retainedObservations = input.document.imageAnalysis.observations.filter(
+    (entry) => normalizeWhitespace(entry.imageId) !== normalizedRecord.imageId,
+  )
   const updatedEvidence = [
-    ...input.document.evidence.map((entry) => ({ ...entry })),
+    ...input.document.evidence
+      .filter((entry) => !replacedEvidenceIds.has(entry.id))
+      .map((entry) => ({ ...entry })),
     evidence,
   ]
+  const observations = [...retainedObservations, observation]
+  const captures = [
+    ...input.document.captures.filter((entry) =>
+      entry.sourceType !== "HUMAN_VISUAL_OBSERVATION" ||
+      !replacedHashes.has(entry.contentHash)
+    ),
+    capture,
+  ]
+  const priorConflictHistory = input.document.identityReview.conflictHistory
+  const currentVisualConflicts = observations.flatMap((entry) =>
+    entry.possibleConflicts
+  )
+  const updatedDocument: ProductCaseDocument = {
+    ...input.document,
+    evidence: updatedEvidence,
+    captures,
+    imageAnalysis: {
+      ...input.document.imageAnalysis,
+      visualEvidenceStatus: "HUMAN_REVIEWED",
+      conflictDetectedFrom: observations.some((entry) =>
+          entry.possibleConflicts.length > 0 &&
+          entry.contradictsEvidenceIds.length > 0
+        )
+        ? ["SUPPLIER_TEXT", "HUMAN_VISUAL_REVIEW"]
+        : [],
+      observations,
+    },
+    identityReview: {
+      ...input.document.identityReview,
+      status: "NOT_REVIEWED",
+      confidence: "LOW",
+      physicalProductVerified: false,
+      physicalVerificationEvidenceIds: [],
+      conflictHistory: unique([
+        ...priorConflictHistory,
+        ...currentVisualConflicts,
+      ]),
+      currentConflict: null,
+      supplierEvidenceIds: unique(
+        observations.flatMap((entry) => entry.contradictsEvidenceIds),
+      ),
+      humanObservationEvidenceIds: observations.map((entry) =>
+        entry.evidenceId
+      ),
+      blockers: unique([
+        "HUMAN_IDENTITY_REVIEW_REQUIRED_AFTER_VISUAL_EVIDENCE_CHANGE",
+        ...currentVisualConflicts,
+      ]),
+      nextAction: "REVIEW_PRODUCT_EVIDENCE",
+    },
+  }
   return {
     observation,
     evidence,
     capture,
     updatedEvidence,
+    updatedDocument,
     conflicts: conflictsForEvidence(updatedEvidence),
     identityConflict: conflictLinked
       ? {
@@ -3855,6 +3952,71 @@ export async function createHumanVisualReviewRecord(input: {
         }
       : null,
     safety: PRODUCT_CASE_ZERO_EFFECTS,
+  }
+}
+
+export function deleteHumanVisualReviewRecord(input: {
+  document: ProductCaseDocument
+  imageId: string
+}): ProductCaseDocument {
+  const imageId = normalizeWhitespace(input.imageId)
+  const removed = input.document.imageAnalysis.observations.filter((entry) =>
+    normalizeWhitespace(entry.imageId) === imageId
+  )
+  if (removed.length === 0) return structuredClone(input.document)
+  const removedEvidenceIds = new Set(removed.map((entry) => entry.evidenceId))
+  const removedHashes = new Set<string>(
+    removed.map((entry) => entry.contentHash),
+  )
+  const observations = input.document.imageAnalysis.observations.filter(
+    (entry) => normalizeWhitespace(entry.imageId) !== imageId,
+  )
+  const conflicts = observations.flatMap((entry) => entry.possibleConflicts)
+  return {
+    ...input.document,
+    evidence: input.document.evidence.filter((entry) =>
+      !removedEvidenceIds.has(entry.id)
+    ),
+    captures: input.document.captures.filter((entry) =>
+      entry.sourceType !== "HUMAN_VISUAL_OBSERVATION" ||
+      !removedHashes.has(entry.contentHash)
+    ),
+    imageAnalysis: {
+      ...input.document.imageAnalysis,
+      visualEvidenceStatus: observations.length > 0
+        ? "HUMAN_REVIEWED"
+        : "NOT_REVIEWED",
+      conflictDetectedFrom: observations.some((entry) =>
+          entry.possibleConflicts.length > 0 &&
+          entry.contradictsEvidenceIds.length > 0
+        )
+        ? ["SUPPLIER_TEXT", "HUMAN_VISUAL_REVIEW"]
+        : [],
+      observations,
+    },
+    identityReview: {
+      ...input.document.identityReview,
+      status: "NOT_REVIEWED",
+      confidence: "LOW",
+      physicalProductVerified: false,
+      physicalVerificationEvidenceIds: [],
+      conflictHistory: unique([
+        ...input.document.identityReview.conflictHistory,
+        ...removed.flatMap((entry) => entry.possibleConflicts),
+      ]),
+      currentConflict: null,
+      supplierEvidenceIds: unique(
+        observations.flatMap((entry) => entry.contradictsEvidenceIds),
+      ),
+      humanObservationEvidenceIds: observations.map((entry) =>
+        entry.evidenceId
+      ),
+      blockers: unique([
+        "HUMAN_IDENTITY_REVIEW_REQUIRED_AFTER_VISUAL_EVIDENCE_CHANGE",
+        ...conflicts,
+      ]),
+      nextAction: "REVIEW_PRODUCT_EVIDENCE",
+    },
   }
 }
 
@@ -6208,6 +6370,36 @@ export type ProductCaseWorkspaceExportEnvelope = {
   safety: ProductCaseSafety
 }
 
+export function humanVisualReviewContractIssues(
+  observations: ProductCaseImageObservation[],
+) {
+  const issues: string[] = []
+  const imageIds = new Set<string>()
+  for (const observation of observations) {
+    const imageId = normalizeWhitespace(observation.imageId)
+    if (!imageId || imageIds.has(imageId)) {
+      issues.push(`HUMAN_VISUAL_REVIEW_IMAGE_ID_DUPLICATE_OR_MISSING:${imageId}`)
+    }
+    imageIds.add(imageId)
+    if (
+      observation.contractVersion !==
+        HUMAN_VISUAL_REVIEW_CONTRACT_VERSION ||
+      !observation.rawHumanInput
+    ) {
+      issues.push(`HUMAN_VISUAL_REVIEW_HUMAN_CORRECTION_REQUIRED:${imageId}`)
+    }
+    const visibleBrands = Array.isArray(observation.visibleBrands)
+      ? observation.visibleBrands
+      : []
+    if (visibleBrands.some((brand) =>
+      /^no brand visible$/i.test(normalizeWhitespace(brand))
+    )) {
+      issues.push(`HUMAN_VISUAL_REVIEW_BRAND_PLACEHOLDER_INVALID:${imageId}`)
+    }
+  }
+  return unique(issues)
+}
+
 function assertSafeJsonTree(value: unknown) {
   let visited = 0
   const visit = (entry: unknown, depth: number) => {
@@ -6341,6 +6533,8 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     throw new Error("PRODUCT_CASE_IMPORT_VERSION_INVALID")
   }
   const workspaceState = workspaceStateFromUnknown(envelope.workspaceState)
+  const visualReviewContractIssues =
+    humanVisualReviewContractIssues(workspaceState.imageObservations)
   const cryptographicProvenance =
     await validateProductCaseDocumentProvenanceIntegrity(
       workspaceState.document,
@@ -6424,6 +6618,8 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     workspaceState: rebuilt.workspaceState,
     rebuiltOutput: rebuilt.output,
     importedManualHandoffTrusted: false as const,
+    visualReviewContractIssues,
+    visualReviewCorrectionRequired: visualReviewContractIssues.length > 0,
     safety: PRODUCT_CASE_ZERO_EFFECTS,
   }
 }
