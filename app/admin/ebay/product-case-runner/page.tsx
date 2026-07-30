@@ -1,6 +1,12 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import {
+  type MouseEvent as ReactMouseEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 import { supabase } from "@/lib/supabase"
@@ -48,6 +54,11 @@ type ReviewAction =
   | "REJECT"
   | "CORRECT"
   | "NEEDS_MORE_EVIDENCE"
+type VisualReviewFilter = "ALL" | "PENDING" | "CORRECTED"
+type VisualReviewReturnTarget = {
+  observationEvidenceId: string
+  anchorId: string
+}
 type ExtractedEvidence = Awaited<
   ReturnType<typeof extractProductCaseEvidence>
 >["evidence"][number]
@@ -189,6 +200,58 @@ const textAreaClass =
 const buttonFocus =
   "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200"
 
+const PRODUCT_CASE_PHASE_NAVIGATION_TARGETS = [
+  { anchorId: "source-access", focusId: "source-access-heading" },
+  {
+    anchorId: "phase-2-evidence-review",
+    focusId: "evidence-review-heading",
+  },
+  {
+    anchorId: "phase-3-human-visual-review",
+    focusId: "human-visual-review-heading",
+  },
+  {
+    anchorId: "phase-2-evidence-review",
+    focusId: "evidence-review-heading",
+  },
+  {
+    anchorId: "strategy-input-preview",
+    focusId: "strategy-preview-heading",
+  },
+  {
+    anchorId: "strategy-input-preview",
+    focusId: "strategy-preview-heading",
+  },
+  {
+    anchorId: "strategy-input-preview",
+    focusId: "strategy-preview-heading",
+  },
+  { anchorId: "human-shadow-review", focusId: "shadow-heading" },
+  {
+    anchorId: "manual-image-registry",
+    focusId: "image-registry-heading",
+  },
+  {
+    anchorId: "manual-listing-handoff",
+    focusId: "manual-package-heading",
+  },
+  {
+    anchorId: "manual-listing-handoff",
+    focusId: "manual-package-heading",
+  },
+  {
+    anchorId: "manual-listing-registration",
+    focusId: "manual-registration-heading",
+  },
+] as const
+
+const VISUAL_REVIEW_ISSUE_PREFIXES = [
+  "HUMAN_VISUAL_REVIEW_IMAGE_ID_DUPLICATE_OR_MISSING",
+  "HUMAN_VISUAL_REVIEW_HUMAN_CORRECTION_REQUIRED",
+  "HUMAN_VISUAL_REVIEW_BRAND_PLACEHOLDER_INVALID",
+  "HUMAN_VISUAL_REVIEW_LEGACY_EVIDENCE_UNVERIFIABLE",
+] as const
+
 const emptyImageApprovalDraft: ImageApprovalDraft = {
   sourceKind: "ORIGINAL_SUPPLIER",
   sourceUrl: "",
@@ -260,6 +323,60 @@ function visualObservationDraftFrom(
     humanDecision: observation.humanDecision,
     humanReason: observation.humanReason,
   }
+}
+
+function canonicalVisualReviewImageId(value: string) {
+  return value.normalize("NFKC").replace(/\s+/g, " ").trim()
+}
+
+function stableDomIdSegment(value: string) {
+  const normalized =
+    canonicalVisualReviewImageId(value).toLocaleLowerCase("en-US")
+  if (/^[a-z0-9_-]+$/.test(normalized)) return normalized
+  let hash = 2_166_136_261
+  for (const character of normalized) {
+    hash ^= character.codePointAt(0) ?? 0
+    hash = Math.imul(hash, 16_777_619)
+  }
+  const readable = normalized
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "item"
+  return `${readable}-${(hash >>> 0).toString(36)}`
+}
+
+function visualReviewCardAnchor(
+  imageId: string,
+  disambiguator?: string,
+) {
+  const baseAnchor =
+    `visual-review-card-${stableDomIdSegment(imageId)}`
+  return disambiguator
+    ? `${baseAnchor}--${stableDomIdSegment(disambiguator)}`
+    : baseAnchor
+}
+
+function visualReviewIssueAnchor(
+  imageId: string,
+  disambiguator?: string,
+) {
+  const baseAnchor =
+    `visual-review-legacy-issue-${stableDomIdSegment(imageId)}`
+  return disambiguator
+    ? `${baseAnchor}--${stableDomIdSegment(disambiguator)}`
+    : baseAnchor
+}
+
+function visualIssueMatchesObservation(
+  issue: string,
+  observation: ProductCaseImageObservation,
+) {
+  const imageId = canonicalVisualReviewImageId(observation.imageId)
+  return VISUAL_REVIEW_ISSUE_PREFIXES.some((prefix) =>
+    issue === `${prefix}:${imageId}`
+  ) ||
+    issue.startsWith(
+      `HUMAN_VISUAL_REVIEW_STALE_SUPPLIER_REFERENCE:${imageId}:`,
+    )
 }
 
 const emptyComparableReviewDraft: ComparableReviewDraft = {
@@ -605,10 +722,31 @@ export default function ProductCaseRunnerPage() {
     editingVisualObservationEvidenceId,
     setEditingVisualObservationEvidenceId,
   ] = useState<string | null>(null)
+  const [visualReviewFilter, setVisualReviewFilter] =
+    useState<VisualReviewFilter>("ALL")
+  const [visualReviewQuery, setVisualReviewQuery] = useState("")
+  const [
+    highlightedVisualReviewEvidenceId,
+    setHighlightedVisualReviewEvidenceId,
+  ] = useState<string | null>(null)
+  const [
+    visualReviewReturnTarget,
+    setVisualReviewReturnTarget,
+  ] = useState<VisualReviewReturnTarget | null>(null)
+  const [activePhaseIndex, setActivePhaseIndex] =
+    useState<number | null>(null)
+  const visualReviewHighlightTimeoutRef =
+    useRef<ReturnType<typeof setTimeout> | null>(null)
   const [runnerTimestamp, setRunnerTimestamp] = useState(() =>
     text(fixtureDocument.createdAt, new Date().toISOString())
   )
   const resultsHeadingRef = useRef<HTMLHeadingElement>(null)
+
+  useEffect(() => () => {
+    if (visualReviewHighlightTimeoutRef.current) {
+      clearTimeout(visualReviewHighlightTimeoutRef.current)
+    }
+  }, [])
 
   const urlValidation = useMemo(
     () => validateLunaProductUrl(sourceUrl),
@@ -811,6 +949,76 @@ export default function ProductCaseRunnerPage() {
       text(row.sourceEvidenceClass, ""),
     )
   })
+  const visualReviewContractIssues = imageAnalysis.contractIssues ?? []
+  const visualReviewImageAnchorCounts =
+    imageAnalysis.observations.reduce<Map<string, number>>(
+      (counts, observation) => {
+        const segment = stableDomIdSegment(observation.imageId)
+        counts.set(segment, (counts.get(segment) ?? 0) + 1)
+        return counts
+      },
+      new Map(),
+    )
+  function visualReviewAnchorDisambiguator(
+    observation: ProductCaseImageObservation,
+  ) {
+    const segment = stableDomIdSegment(observation.imageId)
+    const needsDisambiguation =
+      !observation.imageId.trim() ||
+      (visualReviewImageAnchorCounts.get(segment) ?? 0) > 1
+    if (!needsDisambiguation) return undefined
+    const observationIndex =
+      imageAnalysis.observations.indexOf(observation)
+    return `${observation.evidenceId}-${observationIndex + 1}`
+  }
+  function visualReviewCardAnchorFor(
+    observation: ProductCaseImageObservation,
+  ) {
+    return visualReviewCardAnchor(
+      observation.imageId,
+      visualReviewAnchorDisambiguator(observation),
+    )
+  }
+  function visualReviewIssueAnchorFor(
+    observation: ProductCaseImageObservation,
+  ) {
+    return visualReviewIssueAnchor(
+      observation.imageId,
+      visualReviewAnchorDisambiguator(observation),
+    )
+  }
+  const isVisualReviewPending = (
+    observation: ProductCaseImageObservation,
+  ) =>
+    observation.contractVersion !== HUMAN_VISUAL_REVIEW_CONTRACT_VERSION ||
+    !observation.rawHumanInput ||
+    visualReviewContractIssues.some((issue) =>
+      visualIssueMatchesObservation(issue, observation)
+    )
+  const pendingVisualObservations = imageAnalysis.observations.filter(
+    isVisualReviewPending,
+  )
+  const normalizedVisualReviewQuery =
+    visualReviewQuery.trim().toLocaleLowerCase("en-US")
+  const filteredVisualObservations = imageAnalysis.observations.filter(
+    (observation) => {
+      const pending = isVisualReviewPending(observation)
+      if (visualReviewFilter === "PENDING" && !pending) return false
+      if (visualReviewFilter === "CORRECTED" && pending) return false
+      if (!normalizedVisualReviewQuery) return true
+      const searchable = [
+        observation.imageId,
+        observation.evidenceId,
+        pending
+          ? "LEGACY REQUIRES CORRECTION PENDING"
+          : "CORRECTED HUMAN VISUAL REVIEW",
+        ...visualReviewContractIssues.filter((issue) =>
+          visualIssueMatchesObservation(issue, observation)
+        ),
+      ].join("\n").toLocaleLowerCase("en-US")
+      return searchable.includes(normalizedVisualReviewQuery)
+    },
+  )
   const stockEvidence = record(evidence.find((entry) =>
     record(entry).field === "visible_stock" &&
     record(entry).normalizedValue !== null
@@ -823,6 +1031,80 @@ export default function ProductCaseRunnerPage() {
     record(strategyPreview.strategicHypothesisToValidate).offerScenario,
     "NOT_YET_DEFINED",
   )
+
+  function focusProductCaseTarget(
+    anchorId: string,
+    focusId = anchorId,
+  ) {
+    const target = document.getElementById(anchorId)
+    const focusTarget = document.getElementById(focusId)
+    if (!target) return
+    const reducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches
+    window.history.replaceState(null, "", `#${anchorId}`)
+    target.scrollIntoView({
+      behavior: reducedMotion ? "auto" : "smooth",
+      block: "start",
+    })
+    window.requestAnimationFrame(() => {
+      ;(focusTarget ?? target).focus({ preventScroll: true })
+    })
+  }
+
+  function focusVisualReviewCard(
+    observation: ProductCaseImageObservation,
+    returnAnchorId: string,
+  ) {
+    setVisualReviewFilter("ALL")
+    setVisualReviewQuery("")
+    setVisualReviewReturnTarget({
+      observationEvidenceId: observation.evidenceId,
+      anchorId: returnAnchorId,
+    })
+    setHighlightedVisualReviewEvidenceId(observation.evidenceId)
+    if (visualReviewHighlightTimeoutRef.current) {
+      clearTimeout(visualReviewHighlightTimeoutRef.current)
+    }
+    visualReviewHighlightTimeoutRef.current = setTimeout(() => {
+      setHighlightedVisualReviewEvidenceId((current) =>
+        current === observation.evidenceId ? null : current
+      )
+      visualReviewHighlightTimeoutRef.current = null
+    }, 3_000)
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const cardId = visualReviewCardAnchorFor(observation)
+        focusProductCaseTarget(cardId)
+      })
+    })
+  }
+
+  function focusFirstPendingVisualReview(returnAnchorId: string) {
+    const firstPending = pendingVisualObservations[0]
+    if (!firstPending) return
+    focusVisualReviewCard(firstPending, returnAnchorId)
+  }
+
+  function returnToVisualReviewBlocker() {
+    if (
+      !visualReviewReturnTarget ||
+      visualReviewReturnTarget.observationEvidenceId !==
+        editingVisualObservationEvidenceId
+    ) return
+    focusProductCaseTarget(visualReviewReturnTarget.anchorId)
+  }
+
+  function navigateToProductCasePhase(
+    event: ReactMouseEvent<HTMLAnchorElement>,
+    index: number,
+  ) {
+    const target = PRODUCT_CASE_PHASE_NAVIGATION_TARGETS[index]
+    if (!target) return
+    event.preventDefault()
+    setActivePhaseIndex(index)
+    focusProductCaseTarget(target.anchorId, target.focusId)
+  }
 
   function changeSourceUrl(nextUrl: string) {
     const changedAt = new Date().toISOString()
@@ -901,6 +1183,15 @@ export default function ProductCaseRunnerPage() {
     setNewImageDraft({ ...emptyImageApprovalDraft })
     setVisualObservationDraft({ ...emptyVisualObservationDraft })
     setEditingVisualObservationEvidenceId(null)
+    setVisualReviewFilter("ALL")
+    setVisualReviewQuery("")
+    setHighlightedVisualReviewEvidenceId(null)
+    setVisualReviewReturnTarget(null)
+    setActivePhaseIndex(null)
+    if (visualReviewHighlightTimeoutRef.current) {
+      clearTimeout(visualReviewHighlightTimeoutRef.current)
+      visualReviewHighlightTimeoutRef.current = null
+    }
     setListingOperations(emptyBrowserListingOperations())
     setGeneratedPackage(null)
     setNotice(
@@ -1391,6 +1682,15 @@ export default function ProductCaseRunnerPage() {
       setRunnerTimestamp(reviewedAt)
       setVisualObservationDraft({ ...emptyVisualObservationDraft })
       setEditingVisualObservationEvidenceId(null)
+      setVisualReviewFilter("ALL")
+      setVisualReviewQuery("")
+      setHighlightedVisualReviewEvidenceId(null)
+      setVisualReviewReturnTarget(null)
+      setActivePhaseIndex(null)
+      if (visualReviewHighlightTimeoutRef.current) {
+        clearTimeout(visualReviewHighlightTimeoutRef.current)
+        visualReviewHighlightTimeoutRef.current = null
+      }
       setNotice(
         editingObservation ||
           imageAnalysis.observations.some((entry) =>
@@ -1422,17 +1722,40 @@ export default function ProductCaseRunnerPage() {
         : "Editando revisión visual humana en memoria.",
     )
     setEditingVisualObservationEvidenceId(observation.evidenceId)
+    setVisualReviewReturnTarget((current) =>
+      current?.observationEvidenceId === observation.evidenceId
+        ? current
+        : {
+            observationEvidenceId: observation.evidenceId,
+            anchorId: isVisualReviewPending(observation)
+              ? visualReviewIssueAnchorFor(observation)
+              : visualReviewCardAnchorFor(observation),
+          }
+    )
     setVisualObservationDraft({
       ...draft,
       contradictsEvidenceIds: draft.contradictsEvidenceIds.filter((id) =>
         currentEvidenceIds.has(id)
       ),
     })
+    window.requestAnimationFrame(() => {
+      const firstField = document.getElementById("phase3-visual-image-id")
+      firstField?.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+        block: "center",
+      })
+      window.requestAnimationFrame(() => {
+        firstField?.focus({ preventScroll: true })
+      })
+    })
   }
 
   function cancelVisualObservationEdit() {
     setEditingVisualObservationEvidenceId(null)
     setVisualObservationDraft({ ...emptyVisualObservationDraft })
+    setVisualReviewReturnTarget(null)
     setNotice("Edición visual cancelada; no se modificó la revisión.")
   }
 
@@ -1453,6 +1776,12 @@ export default function ProductCaseRunnerPage() {
     ) {
       setEditingVisualObservationEvidenceId(null)
       setVisualObservationDraft({ ...emptyVisualObservationDraft })
+      setVisualReviewReturnTarget(null)
+    } else if (
+      visualReviewReturnTarget?.observationEvidenceId ===
+        observation.evidenceId
+    ) {
+      setVisualReviewReturnTarget(null)
     }
     const changedAt = new Date().toISOString()
     setRunnerTimestamp(changedAt)
@@ -1782,6 +2111,15 @@ export default function ProductCaseRunnerPage() {
       setNewImageDraft({ ...emptyImageApprovalDraft })
       setVisualObservationDraft({ ...emptyVisualObservationDraft })
       setEditingVisualObservationEvidenceId(null)
+      setVisualReviewFilter("ALL")
+      setVisualReviewQuery("")
+      setHighlightedVisualReviewEvidenceId(null)
+      setVisualReviewReturnTarget(null)
+      setActivePhaseIndex(null)
+      if (visualReviewHighlightTimeoutRef.current) {
+        clearTimeout(visualReviewHighlightTimeoutRef.current)
+        visualReviewHighlightTimeoutRef.current = null
+      }
       setListingOperations(
         structuredClone(importedWorkspace.listingOperations),
       )
@@ -1970,7 +2308,7 @@ export default function ProductCaseRunnerPage() {
   }
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-[#05070d] px-4 pb-28 pt-6 text-white sm:px-6">
+    <main className="min-h-screen overflow-x-hidden bg-[#05070d] px-4 pb-40 pt-6 text-white sm:px-6">
       <div className="mx-auto max-w-7xl">
         <header className="rounded-[32px] border border-cyan-200/20 bg-gradient-to-br from-cyan-200/[0.11] via-violet-200/[0.04] to-black p-5 sm:p-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2168,6 +2506,47 @@ export default function ProductCaseRunnerPage() {
                     {importRoundtrip.sourceWorkspaceExportVersion} →{" "}
                     {importRoundtrip.currentOutputContractVersion}
                   </p>
+                  <div
+                    id="product-case-legacy-summary"
+                    data-testid="visual-review-legacy-summary"
+                    tabIndex={-1}
+                    className="mt-3 scroll-mt-28 rounded-2xl border border-amber-100/25 bg-black/20 p-3 outline-none focus-visible:ring-2 focus-visible:ring-amber-100"
+                  >
+                    <p
+                      aria-live="polite"
+                      className="text-sm font-black"
+                    >
+                      {pendingVisualObservations.length === 1
+                        ? "1 revisión visual requiere corrección"
+                        : `${pendingVisualObservations.length} revisiones visuales requieren corrección`}
+                    </p>
+                    {pendingVisualObservations.length > 0 && (
+                      <>
+                        <ul className="mt-2 grid gap-1 font-mono text-xs">
+                          {pendingVisualObservations.map((observation) => (
+                            <li
+                              key={visualReviewCardAnchorFor(observation)}
+                            >
+                              {observation.imageId}
+                            </li>
+                          ))}
+                        </ul>
+                        <a
+                          href="#visual-review-legacy-queue"
+                          data-testid="visual-review-review-now"
+                          onClick={(event) => {
+                            event.preventDefault()
+                            focusFirstPendingVisualReview(
+                              "product-case-legacy-summary",
+                            )
+                          }}
+                          className={`mt-3 inline-flex min-h-11 items-center rounded-xl border border-amber-100/35 bg-amber-100/10 px-4 text-xs font-black ${buttonFocus}`}
+                        >
+                          REVISAR AHORA
+                        </a>
+                      </>
+                    )}
+                  </div>
                   <details className="mt-3">
                     <summary className={`min-h-11 cursor-pointer text-xs font-black ${buttonFocus}`}>
                       RUTAS DEL OUTPUT HISTÓRICO QUE CAMBIARON ·{" "}
@@ -2250,11 +2629,17 @@ export default function ProductCaseRunnerPage() {
                 candidate.phase === phase
               )
               const status = text(snapshot?.status, "NOT_STARTED")
+              const navigationTarget =
+                PRODUCT_CASE_PHASE_NAVIGATION_TARGETS[index]
               return (
                 <li key={phase}>
                   <a
-                    href={`#product-case-phase-${index}`}
-                    aria-current={index === 0 ? "step" : undefined}
+                    href={`#${navigationTarget.anchorId}`}
+                    onClick={(event) =>
+                      navigateToProductCasePhase(event, index)}
+                    aria-current={
+                      activePhaseIndex === index ? "location" : undefined
+                    }
                     className={`flex min-h-14 w-48 items-center gap-3 rounded-2xl border px-3 text-left text-xs font-black ${tone(status)} ${buttonFocus}`}
                   >
                     <span
@@ -2279,12 +2664,16 @@ export default function ProductCaseRunnerPage() {
         <section
           id="source-access"
           aria-labelledby="source-access-heading"
-          className="mt-5 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
+          className="mt-5 scroll-mt-28 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
         >
           <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/55">
             1. SUPPLIER_SOURCE
           </p>
-          <h2 id="source-access-heading" className="mt-2 text-2xl font-black">
+          <h2
+            id="source-access-heading"
+            tabIndex={-1}
+            className="mt-2 scroll-mt-28 text-2xl font-black outline-none"
+          >
             Validar origen permitido
           </h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
@@ -2604,16 +2993,21 @@ export default function ProductCaseRunnerPage() {
         <section
           id="evidence-review"
           aria-labelledby="evidence-review-heading"
-          className="mt-5 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
+          className="mt-5 scroll-mt-28 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
         >
+          <span
+            id="phase-2-evidence-review"
+            className="block scroll-mt-28"
+            aria-hidden="true"
+          />
           <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/55">
-            2–5. IDENTITY · CLASSIFICATION · CONFLICTS · READINESS
+            PHASE_2_EVIDENCE_REVIEW · IDENTITY · CLASSIFICATION · CONFLICTS
           </p>
           <h2
             id="evidence-review-heading"
             ref={resultsHeadingRef}
             tabIndex={-1}
-            className="mt-2 text-2xl font-black outline-none"
+            className="mt-2 scroll-mt-28 text-2xl font-black outline-none"
           >
             Revisión humana campo por campo
           </h2>
@@ -2640,18 +3034,46 @@ export default function ProductCaseRunnerPage() {
               const reasonRequired =
                 selectedAction === "REJECT" ||
                 selectedAction === "CORRECT"
+              const supplierMarketingClaim =
+                text(row.evidenceClass, "") ===
+                  "SUPPLIER_MARKETING_CLAIM" ||
+                text(row.sourceEvidenceClass, "") ===
+                  "SUPPLIER_MARKETING_CLAIM"
+              const supplierStatedFact =
+                !supplierMarketingClaim &&
+                (
+                  text(row.evidenceClass, "") === "SUPPLIER_STATED" ||
+                  text(row.sourceEvidenceClass, "") === "SUPPLIER_STATED"
+                )
+              const evidenceKindLabel = supplierMarketingClaim
+                ? "SUPPLIER MARKETING CLAIM"
+                : supplierStatedFact
+                  ? "SUPPLIER-STATED FACT"
+                  : "REVIEWABLE EVIDENCE"
+              const evidenceCardTone = supplierMarketingClaim
+                ? "border-violet-200/30 bg-violet-200/[0.06]"
+                : supplierStatedFact
+                  ? "border-cyan-200/25 bg-cyan-200/[0.04]"
+                  : "border-white/10 bg-black/20"
               return (
                 <fieldset
                   key={id}
-                  className="min-w-0 rounded-3xl border border-white/10 bg-black/20 p-4 sm:p-5"
+                  id={`evidence-card-${stableDomIdSegment(id)}`}
+                  className={`min-w-0 scroll-mt-28 rounded-3xl border p-4 sm:p-5 ${evidenceCardTone}`}
                 >
                   <legend className="max-w-full px-2 text-sm font-black">
-                    <span className="break-words">
+                    <span className="block break-all font-mono text-[10px] uppercase tracking-wider text-white/45">
+                      EVIDENCE_CARD:{id}
+                    </span>
+                    <span className="mt-1 block break-words">
                       {row.field === "title"
                         ? "Título original del proveedor"
                         : text(row.label ?? row.field, id)}
                     </span>
                   </legend>
+                  <p className="mb-4 inline-flex min-h-8 items-center rounded-full border border-white/20 px-3 text-[10px] font-black tracking-wider">
+                    {evidenceKindLabel}
+                  </p>
                   <div className="grid gap-3 lg:grid-cols-2">
                     <dl className="grid min-w-0 gap-3 rounded-2xl border border-white/10 p-3 text-xs">
                       <div>
@@ -2763,14 +3185,20 @@ export default function ProductCaseRunnerPage() {
         <section
           id="human-visual-review"
           aria-labelledby="human-visual-review-heading"
-          className="mt-5 rounded-[32px] border border-cyan-200/20 bg-cyan-200/[0.035] p-5 sm:p-7"
+          className="mt-5 scroll-mt-28 rounded-[32px] border border-cyan-200/20 bg-cyan-200/[0.035] p-5 sm:p-7"
         >
+          <span
+            id="phase-3-human-visual-review"
+            className="block scroll-mt-28"
+            aria-hidden="true"
+          />
           <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/55">
-            3. HUMAN_VISUAL_REVIEW
+            PHASE_3_HUMAN_VISUAL_REVIEW
           </p>
           <h2
             id="human-visual-review-heading"
-            className="mt-2 text-2xl font-black"
+            tabIndex={-1}
+            className="mt-2 scroll-mt-28 text-2xl font-black outline-none"
           >
             Agregar observación visual suministrada por un humano
           </h2>
@@ -2785,24 +3213,104 @@ export default function ProductCaseRunnerPage() {
             captureMethod:HUMAN_VISUAL_REVIEW · machineVisionStatus:NOT_IMPLEMENTED
             · openAiVisionUsed:false
           </p>
-          {(imageAnalysis.contractIssues ?? []).length > 0 && (
-            <div className="mt-3 rounded-2xl border border-amber-200/25 bg-amber-200/[0.06] p-3 text-xs text-amber-50">
-              <p className="font-black">
-                HUMAN_VISUAL_REVIEW bloqueado · corrección humana obligatoria
-              </p>
-              <ul className="mt-2 grid gap-1 font-mono">
-                {(imageAnalysis.contractIssues ?? []).map((issue) => (
-                  <li key={issue}>{issue}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+          <section
+            id="visual-review-legacy-queue"
+            data-testid="visual-review-legacy-queue"
+            tabIndex={-1}
+            aria-labelledby="visual-review-legacy-queue-heading"
+            className="mt-4 scroll-mt-28 rounded-2xl border border-amber-200/30 bg-amber-200/[0.07] p-4 text-amber-50 outline-none focus-visible:ring-2 focus-visible:ring-amber-100"
+          >
+            <p className="font-mono text-[10px] font-black tracking-wider">
+              VISUAL_REVIEW_LEGACY_QUEUE
+            </p>
+            <h3
+              id="visual-review-legacy-queue-heading"
+              className="mt-1 font-black"
+            >
+              {pendingVisualObservations.length === 1
+                ? "1 revisión visual requiere corrección"
+                : `${pendingVisualObservations.length} revisiones visuales requieren corrección`}
+            </h3>
+            {pendingVisualObservations.length > 0
+              ? (
+                <ul className="mt-3 grid gap-3">
+                  {pendingVisualObservations.map((observation) => {
+                    const observationIssues =
+                      visualReviewContractIssues.filter((issue) =>
+                        visualIssueMatchesObservation(issue, observation)
+                      )
+                    const displayedIssues = observationIssues.length > 0
+                      ? observationIssues
+                      : [
+                          `HUMAN_VISUAL_REVIEW_HUMAN_CORRECTION_REQUIRED:${observation.imageId}`,
+                        ]
+                    const issueAnchor =
+                      visualReviewIssueAnchorFor(observation)
+                    const cardAnchor =
+                      visualReviewCardAnchorFor(observation)
+                    return (
+                      <li
+                        key={issueAnchor}
+                        id={issueAnchor}
+                        tabIndex={-1}
+                        className="scroll-mt-28 rounded-xl border border-amber-100/20 bg-black/20 p-3 outline-none focus-visible:ring-2 focus-visible:ring-amber-100"
+                      >
+                        <p className="break-all text-xs font-black">
+                          VISUAL_REVIEW_CARD:{observation.imageId}
+                        </p>
+                        <ul className="mt-2 grid gap-1 font-mono text-[11px] leading-5">
+                          {displayedIssues.map((issue) => (
+                            <li key={issue}>{issue}</li>
+                          ))}
+                        </ul>
+                        <a
+                          href={`#${cardAnchor}`}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            focusVisualReviewCard(
+                              observation,
+                              issueAnchor,
+                            )
+                          }}
+                          className={`mt-3 inline-flex min-h-11 items-center rounded-xl border border-amber-100/35 bg-amber-100/10 px-4 text-xs font-black ${buttonFocus}`}
+                        >
+                          IR A CORREGIR
+                        </a>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )
+              : (
+                <p className="mt-2 text-xs font-black text-emerald-100">
+                  Sin revisiones visuales legacy pendientes.
+                </p>
+              )}
+            {visualReviewContractIssues.some((issue) =>
+              !imageAnalysis.observations.some((observation) =>
+                visualIssueMatchesObservation(issue, observation)
+              )
+            ) && (
+              <div className="mt-3 rounded-xl border border-amber-100/20 p-3">
+                <p className="text-xs font-black">
+                  Otros bloqueos visuales sin tarjeta navegable
+                </p>
+                <ul className="mt-2 grid gap-1 font-mono text-[11px]">
+                  {visualReviewContractIssues.filter((issue) =>
+                    !imageAnalysis.observations.some((observation) =>
+                      visualIssueMatchesObservation(issue, observation)
+                    )
+                  ).map((issue) => <li key={issue}>{issue}</li>)}
+                </ul>
+              </div>
+            )}
+          </section>
           <div className="mt-5 grid gap-3 lg:grid-cols-2">
             <label
               className="grid gap-2 text-sm font-black"
               htmlFor="phase3-visual-image-id"
             >
-              Identificador de la imagen
+              ID de imagen — imageId
               <input
                 id="phase3-visual-image-id"
                 value={visualObservationDraft.imageId}
@@ -2818,7 +3326,7 @@ export default function ProductCaseRunnerPage() {
               className="grid gap-2 text-sm font-black"
               htmlFor="phase3-observed-product-type"
             >
-              observedProductType
+              Tipo de producto observado — observedProductType
               <input
                 id="phase3-observed-product-type"
                 value={visualObservationDraft.observedProductType}
@@ -2834,7 +3342,7 @@ export default function ProductCaseRunnerPage() {
               className="grid gap-2 text-sm font-black"
               htmlFor="phase3-visual-source-reference"
             >
-              sourceReference
+              Referencia de origen — sourceReference
               <input
                 id="phase3-visual-source-reference"
                 value={visualObservationDraft.sourceReference}
@@ -2850,7 +3358,7 @@ export default function ProductCaseRunnerPage() {
               className="grid gap-2 text-sm font-black"
               htmlFor="phase3-visual-source-url"
             >
-              sourceUrl · HTTPS opcional
+              URL de origen — sourceUrl · HTTPS opcional
               <input
                 id="phase3-visual-source-url"
                 type="url"
@@ -2864,10 +3372,22 @@ export default function ProductCaseRunnerPage() {
               />
             </label>
             {([
-              ["visibleFeatures", "visibleFeatures · uno por línea"],
-              ["visibleText", "visibleText · uno por línea"],
-              ["visibleBrands", "visibleBrands · uno por línea"],
-              ["visibleColors", "visibleColors · uno por línea"],
+              [
+                "visibleFeatures",
+                "Características visibles — visibleFeatures · una por línea",
+              ],
+              [
+                "visibleText",
+                "Texto visible en la imagen — visibleText · uno por línea",
+              ],
+              [
+                "visibleBrands",
+                "Marcas visibles — visibleBrands · una por línea",
+              ],
+              [
+                "visibleColors",
+                "Colores visibles — visibleColors · uno por línea",
+              ],
             ] as const).map(([field, label]) => (
               <label
                 key={field}
@@ -2891,7 +3411,7 @@ export default function ProductCaseRunnerPage() {
               className="grid gap-2 text-sm font-black"
               htmlFor="phase3-visible-quantity"
             >
-              visibleQuantity
+              Cantidad visible — visibleQuantity
               <input
                 id="phase3-visible-quantity"
                 type="number"
@@ -2910,7 +3430,7 @@ export default function ProductCaseRunnerPage() {
               className="grid gap-2 text-sm font-black"
               htmlFor="phase3-observed-variant"
             >
-              observedVariant
+              Variante observada — observedVariant
               <input
                 id="phase3-observed-variant"
                 value={visualObservationDraft.observedVariant}
@@ -2926,7 +3446,7 @@ export default function ProductCaseRunnerPage() {
               className="grid gap-2 text-sm font-black"
               htmlFor="phase3-visual-decision"
             >
-              Decisión humana
+              Decisión humana — humanDecision
               <select
                 id="phase3-visual-decision"
                 value={visualObservationDraft.humanDecision}
@@ -2953,7 +3473,7 @@ export default function ProductCaseRunnerPage() {
               className="grid gap-2 text-sm font-black"
               htmlFor="phase3-visual-confidence"
             >
-              Confidence
+              Confianza — confidence
               <select
                 id="phase3-visual-confidence"
                 value={visualObservationDraft.confidence}
@@ -2974,7 +3494,7 @@ export default function ProductCaseRunnerPage() {
               className="grid gap-2 text-sm font-black lg:col-span-2"
               htmlFor="phase3-visual-blockers"
             >
-              Blockers visuales · uno por línea
+              Bloqueos visuales — possibleConflicts · uno por línea
               <textarea
                 id="phase3-visual-blockers"
                 value={visualObservationDraft.possibleConflicts}
@@ -3030,7 +3550,7 @@ export default function ProductCaseRunnerPage() {
               className="grid gap-2 text-sm font-black lg:col-span-2"
               htmlFor="phase3-visual-reason"
             >
-              Motivo humano · requerido
+              Motivo humano — humanReason · requerido
               <textarea
                 id="phase3-visual-reason"
                 value={visualObservationDraft.humanReason}
@@ -3057,145 +3577,360 @@ export default function ProductCaseRunnerPage() {
                 : "AGREGAR REVISIÓN HUMANA"}
             </button>
             {editingVisualObservationEvidenceId && (
+              <>
+                <button
+                  type="button"
+                  onClick={returnToVisualReviewBlocker}
+                  disabled={
+                    !visualReviewReturnTarget ||
+                    visualReviewReturnTarget.observationEvidenceId !==
+                      editingVisualObservationEvidenceId
+                  }
+                  className={`min-h-11 rounded-2xl border border-amber-200/30 bg-amber-200/[0.07] px-4 text-sm font-black text-amber-50 disabled:opacity-40 ${buttonFocus}`}
+                >
+                  VOLVER AL BLOQUEO
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelVisualObservationEdit}
+                  className={`min-h-11 rounded-2xl border border-white/15 px-4 text-sm font-black text-white/70 ${buttonFocus}`}
+                >
+                  CANCELAR EDICIÓN
+                </button>
+              </>
+            )}
+          </div>
+          <section
+            aria-labelledby="registered-visual-reviews-heading"
+            className="mt-7 rounded-3xl border border-cyan-200/20 bg-black/20 p-4 sm:p-5"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-100/55">
+                  HUMAN VISUAL REVIEW
+                </p>
+                <h3
+                  id="registered-visual-reviews-heading"
+                  className="mt-1 text-xl font-black"
+                >
+                  REVISIONES VISUALES REGISTRADAS
+                </h3>
+              </div>
+              <dl
+                aria-live="polite"
+                className="grid grid-cols-2 gap-2 text-xs"
+              >
+                <div className="rounded-xl border border-white/10 px-3 py-2">
+                  <dt className="text-white/45">Total:</dt>
+                  <dd
+                    data-testid="visual-review-total-count"
+                    className="mt-1 text-lg font-black"
+                  >
+                    {imageAnalysis.observations.length}
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-amber-200/25 px-3 py-2">
+                  <dt className="text-amber-100/65">Pendientes:</dt>
+                  <dd
+                    data-testid="visual-review-pending-count"
+                    className="mt-1 text-lg font-black text-amber-50"
+                  >
+                    {pendingVisualObservations.length}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+            <div
+              role="group"
+              aria-label="Filtrar revisiones visuales por estado"
+              className="mt-4 grid grid-cols-3 gap-2"
+            >
+              {([
+                ["ALL", "TODAS"],
+                ["PENDING", "PENDIENTES"],
+                ["CORRECTED", "CORREGIDAS"],
+              ] as const).map(([filter, label]) => (
+                <button
+                  key={filter}
+                  type="button"
+                  aria-pressed={visualReviewFilter === filter}
+                  onClick={() => setVisualReviewFilter(filter)}
+                  className={`min-h-11 rounded-xl border px-2 text-[11px] font-black ${
+                    visualReviewFilter === filter
+                      ? "border-cyan-100 bg-cyan-100 text-black"
+                      : "border-white/15 text-white/65"
+                  } ${buttonFocus}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
+              <label
+                className="grid gap-2 text-xs font-black"
+                htmlFor="visual-review-search"
+              >
+                Buscar revisión visual — imageId, evidenceId o estado
+                <input
+                  id="visual-review-search"
+                  type="search"
+                  value={visualReviewQuery}
+                  onChange={(event) =>
+                    setVisualReviewQuery(event.target.value)}
+                  className={inputClass}
+                />
+              </label>
               <button
                 type="button"
-                onClick={cancelVisualObservationEdit}
-                className={`min-h-11 rounded-2xl border border-white/15 px-4 text-sm font-black text-white/70 lg:col-span-2 ${buttonFocus}`}
+                onClick={() => setVisualReviewQuery("")}
+                disabled={!visualReviewQuery}
+                className={`min-h-11 self-end rounded-xl border border-white/15 px-4 text-xs font-black disabled:opacity-40 ${buttonFocus}`}
               >
-                CANCELAR EDICIÓN
+                LIMPIAR BÚSQUEDA
               </button>
-            )}
-          </div>
-          <div className="mt-5 grid gap-3">
-            {imageAnalysis.observations.map((observation) => (
-              <article
-                key={observation.evidenceId}
-                data-testid={`human-visual-review-card-${observation.evidenceId}`}
-                className="rounded-3xl border border-cyan-200/15 bg-black/25 p-4"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="font-black">{observation.imageId}</h3>
-                    <p className="mt-1 text-xs text-white/45">
-                      {observation.reviewerType} · {observation.confidence} ·{" "}
-                      {observation.humanDecision}
-                    </p>
-                    <p className="mt-1 text-[10px] font-black text-cyan-100/50">
-                      {observation.contractVersion ??
-                        "LEGACY_UNVERSIONED · CORRECCIÓN HUMANA REQUERIDA"}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => editVisualObservation(observation)}
-                      className={`min-h-10 rounded-xl border border-cyan-200/25 px-3 text-xs font-black ${buttonFocus}`}
-                    >
-                      EDITAR
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => deleteVisualObservation(observation)}
-                      className={`min-h-10 rounded-xl border border-rose-200/25 px-3 text-xs font-black text-rose-100 ${buttonFocus}`}
-                    >
-                      ELIMINAR
-                    </button>
-                  </div>
-                </div>
-                <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
-                  {([
-                    ["sourceReference", observation.sourceReference],
-                    ["sourceUrl", observation.sourceUrl],
-                    ["observedProductType", observation.observedProductType],
-                    ["visibleFeatures", observation.visibleFeatures],
-                    ["visibleText", observation.visibleText],
-                    ["visibleBrands", observation.visibleBrands],
-                    ["visibleColors", observation.visibleColors],
-                    ["visibleQuantity", observation.visibleQuantity],
-                    ["observedVariant", observation.observedVariant],
-                    ["possibleConflicts", observation.possibleConflicts],
-                  ] as const).map(([label, value]) => {
-                    const values = Array.isArray(value) ? value : [value]
-                    const present = values.filter((entry) =>
-                      entry !== null && entry !== undefined && entry !== ""
-                    )
-                    return (
-                      <div key={label} className="min-w-0 rounded-xl border border-white/10 p-3">
-                        <dt className="font-black text-white/45">{label}</dt>
-                        <dd className="mt-2 break-words">
-                          {present.length > 0
-                            ? (
-                              <ul className="grid gap-1">
-                                {present.map((entry, index) => (
-                                  <li key={`${label}-${index}`}>
-                                    {String(entry)}
-                                  </li>
-                                ))}
-                              </ul>
-                            )
-                            : "MISSING"}
+            </div>
+            <p className="mt-3 text-xs text-white/45">
+              Mostrando {filteredVisualObservations.length} de{" "}
+              {imageAnalysis.observations.length}
+            </p>
+            <div className="mt-4 grid gap-3">
+              {filteredVisualObservations.map((observation) => {
+                const pending = isVisualReviewPending(observation)
+                const highlighted =
+                  highlightedVisualReviewEvidenceId ===
+                    observation.evidenceId
+                const cardAnchor =
+                  visualReviewCardAnchorFor(observation)
+                return (
+                  <article
+                    key={cardAnchor}
+                    id={cardAnchor}
+                    tabIndex={-1}
+                    aria-labelledby={`${cardAnchor}-heading`}
+                    data-testid={`human-visual-review-card-${observation.evidenceId}`}
+                    data-visual-review-status={
+                      pending ? "PENDING" : "CORRECTED"
+                    }
+                    className={`scroll-mt-28 scroll-mb-32 rounded-3xl border p-4 outline-none transition ${
+                      pending
+                        ? "border-amber-200/40 bg-amber-200/[0.07]"
+                        : "border-cyan-200/20 bg-cyan-200/[0.035]"
+                    } ${
+                      highlighted
+                        ? "ring-4 ring-amber-200 ring-offset-4 ring-offset-[#05070d]"
+                        : "focus-visible:ring-2 focus-visible:ring-cyan-100"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h4
+                          id={`${cardAnchor}-heading`}
+                          className="break-all font-mono text-base font-black"
+                        >
+                          VISUAL_REVIEW_CARD:{observation.imageId}
+                        </h4>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <span className="rounded-full border border-cyan-100/25 bg-cyan-100/[0.07] px-3 py-1 text-[10px] font-black">
+                            HUMAN VISUAL REVIEW
+                          </span>
+                          <span
+                            className={`rounded-full border px-3 py-1 text-[10px] font-black ${
+                              pending
+                                ? "border-amber-100/35 bg-amber-100/10 text-amber-50"
+                                : "border-emerald-100/30 bg-emerald-100/[0.08] text-emerald-50"
+                            }`}
+                          >
+                            {pending
+                              ? "LEGACY REQUIRES CORRECTION"
+                              : "CORRECTED VISUAL REVIEW"}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs text-white/55">
+                          {observation.reviewerType} ·{" "}
+                          {observation.confidence} ·{" "}
+                          {observation.humanDecision}
+                        </p>
+                        <p className="mt-1 break-all text-[10px] font-black text-cyan-100/50">
+                          {observation.contractVersion ??
+                            "LEGACY_UNVERSIONED · CORRECCIÓN HUMANA REQUERIDA"}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => editVisualObservation(observation)}
+                          className={`min-h-10 rounded-xl border border-cyan-200/25 px-3 text-xs font-black ${buttonFocus}`}
+                        >
+                          EDITAR
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteVisualObservation(observation)}
+                          className={`min-h-10 rounded-xl border border-rose-200/25 px-3 text-xs font-black text-rose-100 ${buttonFocus}`}
+                        >
+                          ELIMINAR
+                        </button>
+                      </div>
+                    </div>
+                    <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                      {([
+                        [
+                          "ID de imagen — imageId",
+                          observation.imageId,
+                        ],
+                        [
+                          "Referencia de origen — sourceReference",
+                          observation.sourceReference,
+                        ],
+                        [
+                          "URL de origen — sourceUrl",
+                          observation.sourceUrl,
+                        ],
+                        [
+                          "Tipo de producto observado — observedProductType",
+                          observation.observedProductType,
+                        ],
+                        [
+                          "Características visibles — visibleFeatures",
+                          observation.visibleFeatures,
+                        ],
+                        [
+                          "Texto visible en la imagen — visibleText",
+                          observation.visibleText,
+                        ],
+                        [
+                          "Marcas visibles — visibleBrands",
+                          observation.visibleBrands,
+                        ],
+                        [
+                          "Colores visibles — visibleColors",
+                          observation.visibleColors,
+                        ],
+                        [
+                          "Cantidad visible — visibleQuantity",
+                          observation.visibleQuantity,
+                        ],
+                        [
+                          "Variante observada — observedVariant",
+                          observation.observedVariant,
+                        ],
+                        [
+                          "Bloqueos visuales — possibleConflicts",
+                          observation.possibleConflicts,
+                        ],
+                        [
+                          "Confianza — confidence",
+                          observation.confidence,
+                        ],
+                        [
+                          "Decisión humana — humanDecision",
+                          observation.humanDecision,
+                        ],
+                      ] as const).map(([label, value]) => {
+                        const values = Array.isArray(value) ? value : [value]
+                        const present = values.filter((entry) =>
+                          entry !== null && entry !== undefined && entry !== ""
+                        )
+                        return (
+                          <div
+                            key={label}
+                            className="min-w-0 rounded-xl border border-white/10 p-3"
+                          >
+                            <dt className="font-black text-white/55">
+                              {label}
+                            </dt>
+                            <dd className="mt-2 break-words">
+                              {present.length > 0
+                                ? (
+                                  <ul className="grid gap-1">
+                                    {present.map((entry, index) => (
+                                      <li key={`${label}-${index}`}>
+                                        {String(entry)}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )
+                                : "MISSING"}
+                            </dd>
+                          </div>
+                        )
+                      })}
+                      <div className="rounded-xl border border-white/10 p-3 sm:col-span-2">
+                        <dt className="font-black text-white/55">
+                          Motivo humano — humanReason
+                        </dt>
+                        <dd className="mt-2 whitespace-pre-wrap break-words">
+                          {observation.humanReason}
                         </dd>
                       </div>
-                    )
-                  })}
-                  <div className="rounded-xl border border-white/10 p-3 sm:col-span-2">
-                    <dt className="font-black text-white/45">Human reason</dt>
-                    <dd className="mt-2 whitespace-pre-wrap break-words">
-                      {observation.humanReason}
-                    </dd>
-                  </div>
-                  <div className="rounded-xl border border-white/10 p-3 sm:col-span-2">
-                    <dt className="font-black text-white/45">Evidence ID</dt>
-                    <dd className="mt-2 break-all font-mono">
-                      {observation.evidenceId}
-                    </dd>
-                  </div>
-                </dl>
-                {observation.rawHumanInput
-                  ? (
-                    <details className="mt-3 rounded-xl border border-white/10 p-3 text-xs">
-                      <summary className="cursor-pointer font-black">
-                        Texto humano original preservado
-                      </summary>
-                      <dl className="mt-3 grid gap-2 sm:grid-cols-2">
-                        {Object.entries(observation.rawHumanInput).map(
-                          ([field, value]) => (
-                            <div key={field}>
-                              <dt className="text-white/45">{field}</dt>
-                              <dd className="whitespace-pre-wrap break-words">
-                                {value || "MISSING"}
-                              </dd>
-                            </div>
-                          ),
-                        )}
-                      </dl>
-                    </details>
-                  )
-                  : (
-                    <p className="mt-3 rounded-xl border border-amber-200/20 p-3 text-xs font-black text-amber-100">
-                      Datos visuales legacy: corrección humana obligatoria; no
-                      se normalizaron silenciosamente.
-                    </p>
-                  )}
-              </article>
-            ))}
-            {imageAnalysis.observations.length === 0 && (
-              <p className="rounded-2xl border border-dashed border-white/10 p-4 text-sm font-black text-white/45">
-                VISUAL OBSERVATIONS: NOT_REVIEWED
-              </p>
-            )}
-          </div>
+                      <div className="rounded-xl border border-white/10 p-3 sm:col-span-2">
+                        <dt className="font-black text-white/55">
+                          Evidencia visual — evidenceId
+                        </dt>
+                        <dd className="mt-2 break-all font-mono">
+                          {observation.evidenceId}
+                        </dd>
+                      </div>
+                    </dl>
+                    {observation.rawHumanInput
+                      ? (
+                        <details className="mt-3 rounded-xl border border-white/10 p-3 text-xs">
+                          <summary className={`cursor-pointer font-black ${buttonFocus}`}>
+                            Texto humano original preservado
+                          </summary>
+                          <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                            {Object.entries(observation.rawHumanInput).map(
+                              ([field, value]) => (
+                                <div key={field}>
+                                  <dt className="text-white/45">{field}</dt>
+                                  <dd className="whitespace-pre-wrap break-words">
+                                    {value || "MISSING"}
+                                  </dd>
+                                </div>
+                              ),
+                            )}
+                          </dl>
+                        </details>
+                      )
+                      : (
+                        <p className="mt-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.06] p-3 text-xs font-black text-amber-100">
+                          LEGACY REQUIRES CORRECTION · Datos visuales legacy:
+                          corrección humana obligatoria; no se normalizaron
+                          silenciosamente.
+                        </p>
+                      )}
+                  </article>
+                )
+              })}
+              {imageAnalysis.observations.length === 0 && (
+                <p className="rounded-2xl border border-dashed border-white/10 p-4 text-sm font-black text-white/45">
+                  VISUAL OBSERVATIONS: NOT_REVIEWED
+                </p>
+              )}
+              {imageAnalysis.observations.length > 0 &&
+                filteredVisualObservations.length === 0 && (
+                <p className="rounded-2xl border border-dashed border-white/10 p-4 text-sm font-black text-white/55">
+                  Sin revisiones visuales que coincidan con el filtro y la
+                  búsqueda.
+                </p>
+              )}
+            </div>
+          </section>
         </section>
 
         <section
           id="strategy-input-preview"
           aria-labelledby="strategy-preview-heading"
-          className="mt-5 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
+          className="mt-5 scroll-mt-28 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
         >
           <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/55">
             6–7. STRATEGY LAB INPUT PREVIEW · OS CONCLUSION
           </p>
-          <h2 id="strategy-preview-heading" className="mt-2 text-2xl font-black">
+          <h2
+            id="strategy-preview-heading"
+            tabIndex={-1}
+            className="mt-2 scroll-mt-28 text-2xl font-black outline-none"
+          >
             Evidencia aceptada, sin anticipar estrategia
           </h2>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -3517,12 +4252,16 @@ export default function ProductCaseRunnerPage() {
         <section
           id="human-shadow-review"
           aria-labelledby="shadow-heading"
-          className="mt-5 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
+          className="mt-5 scroll-mt-28 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
         >
           <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/55">
             8. HUMAN REVIEW / SHADOW MODE
           </p>
-          <h2 id="shadow-heading" className="mt-2 text-2xl font-black">
+          <h2
+            id="shadow-heading"
+            tabIndex={-1}
+            className="mt-2 scroll-mt-28 text-2xl font-black outline-none"
+          >
             Conclusión humana separada del OS
           </h2>
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -3632,12 +4371,16 @@ export default function ProductCaseRunnerPage() {
         <section
           id="manual-image-registry"
           aria-labelledby="image-registry-heading"
-          className="mt-5 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
+          className="mt-5 scroll-mt-28 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
         >
           <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/55">
             9. IMAGE REGISTRY / QA
           </p>
-          <h2 id="image-registry-heading" className="mt-2 text-2xl font-black">
+          <h2
+            id="image-registry-heading"
+            tabIndex={-1}
+            className="mt-2 scroll-mt-28 text-2xl font-black outline-none"
+          >
             Registro textual y aprobación manual
           </h2>
           <p className="mt-2 max-w-4xl text-sm leading-6 text-white/55">
@@ -4418,12 +5161,16 @@ export default function ProductCaseRunnerPage() {
         <section
           id="manual-listing-handoff"
           aria-labelledby="manual-package-heading"
-          className="mt-5 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
+          className="mt-5 scroll-mt-28 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
         >
           <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/55">
             10. MANUAL_LISTING_PACKAGE · 11. MANUAL_EBAY_HANDOFF
           </p>
-          <h2 id="manual-package-heading" className="mt-2 text-2xl font-black">
+          <h2
+            id="manual-package-heading"
+            tabIndex={-1}
+            className="mt-2 scroll-mt-28 text-2xl font-black outline-none"
+          >
             Paquete local o blockers explícitos
           </h2>
           {importRequiresHumanReReview && (
@@ -4555,12 +5302,16 @@ export default function ProductCaseRunnerPage() {
         <section
           id="manual-listing-registration"
           aria-labelledby="manual-registration-heading"
-          className="mt-5 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
+          className="mt-5 scroll-mt-28 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
         >
           <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/55">
             12. MANUAL_LISTING_REGISTRATION
           </p>
-          <h2 id="manual-registration-heading" className="mt-2 text-2xl font-black">
+          <h2
+            id="manual-registration-heading"
+            tabIndex={-1}
+            className="mt-2 scroll-mt-28 text-2xl font-black outline-none"
+          >
             Registro posterior a la publicación manual
           </h2>
           <p className="mt-3 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.04] p-4 text-sm font-black leading-6 text-cyan-50">
@@ -4733,7 +5484,8 @@ function PhaseReport({
   return (
     <article
       id={`product-case-phase-${index}`}
-      className="scroll-mt-24 rounded-3xl border border-white/10 bg-black/20 p-4 sm:p-5"
+      tabIndex={-1}
+      className="scroll-mt-28 scroll-mb-32 rounded-3xl border border-white/10 bg-black/20 p-4 outline-none focus-visible:ring-2 focus-visible:ring-cyan-100 sm:p-5"
     >
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
