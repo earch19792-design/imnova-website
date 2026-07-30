@@ -1,5 +1,5 @@
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
-import { HUMAN_VISUAL_REVIEW_CONTRACT_VERSION, LUNA_SOURCE_CONTRACT_VERSION, PRODUCT_CASE_EVIDENCE_FIELDS, PRODUCT_CASE_PARSER_VERSION, PRODUCT_CASE_RUNNER_VERSION, PRODUCT_CASE_ZERO_EFFECTS, buildProductCaseRunnerOutput, buildStrategyLabAdapterPreview, type ProductCaseDocument, type ProductCaseEvidence, type ProductCaseEvidenceField, type ProductCaseHumanComparableCandidate, type ProductCaseImageApproval, type ProductCaseListingOperations, type ProductCaseScenarioDraft, type ProductCaseWorkspaceState } from "./product-case-runner.ts"
+import { HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION, HUMAN_VISUAL_REVIEW_CONTRACT_VERSION, LUNA_SOURCE_CONTRACT_VERSION, PRODUCT_CASE_EVIDENCE_FIELDS, PRODUCT_CASE_PARSER_VERSION, PRODUCT_CASE_RUNNER_VERSION, PRODUCT_CASE_ZERO_EFFECTS, buildProductCaseRunnerOutput, buildStrategyLabAdapterPreview, type ProductCaseDocument, type ProductCaseEvidence, type ProductCaseEvidenceField, type ProductCaseHumanComparableCandidate, type ProductCaseHumanIdentityReview, type ProductCaseImageApproval, type ProductCaseListingOperations, type ProductCaseScenarioDraft, type ProductCaseWorkspaceState } from "./product-case-runner.ts"
 
 export const GOLF_SWING_TRAINER_PRODUCT_NAME =
   "Smart Inflatable Golf Ball Swing Trainer — Black"
@@ -1052,6 +1052,96 @@ const SANITIZED_VISUAL_RECORD = {
   reviewedAt: SANITIZED_CAPTURED_AT,
   rawHumanInput: SANITIZED_VISUAL_RAW,
 }
+const SANITIZED_IDENTITY_EVIDENCE_IDS:
+  ProductCaseHumanIdentityReview["evidenceIds"] = [
+  "san-brand",
+  "san-color",
+  "san-model",
+  "san-mpn",
+  "san-pack",
+  "san-product-id",
+  "san-product-type",
+  "san-sku",
+  "san-title",
+  "san-variant-id",
+  SANITIZED_VISUAL_EVIDENCE_ID,
+]
+const SANITIZED_PHYSICAL_IDENTITY_EVIDENCE_IDS:
+  ProductCaseHumanIdentityReview["physicalVerificationEvidenceIds"] = [
+  "san-brand",
+  "san-color",
+  "san-model",
+  "san-mpn",
+  "san-pack",
+  "san-product-id",
+  "san-product-type",
+  "san-sku",
+  "san-title",
+  "san-variant-id",
+]
+const SANITIZED_IDENTITY_RAW_INPUT = {
+  reviewer: "SANITIZED_IDENTITY_REVIEWER",
+  decision: "IDENTITY_CONFIRMED",
+  confidence: "HIGH",
+  humanReason:
+    "Independent sanitized physical evidence confirms the exact identity.",
+  evidenceIds: SANITIZED_IDENTITY_EVIDENCE_IDS,
+  sameGeneralProductTypeConfirmed: true,
+  exactIdentityConfirmed: true,
+  brandConfirmed: true,
+  brand: "SANITIZED BRAND",
+  model: "SAN-MODEL-001",
+  mpn: "SAN-MPN-001",
+  supplierProductId: "SANITIZED-PRODUCT-001",
+  supplierSku: "SAN-SKU-001",
+  variantId: "SANITIZED-VARIANT-BLACK",
+  color: "BLACK",
+  packQuantity: "1",
+  physicalProductVerified: true,
+  physicalVerificationEvidenceIds:
+    SANITIZED_PHYSICAL_IDENTITY_EVIDENCE_IDS,
+}
+const SANITIZED_IDENTITY_HASH =
+  "sha256:d740ed61738fa94d4f4c1d92f32493a315cfb4867465eaeb6f066e2c76d40df4"
+const SANITIZED_IDENTITY_REVIEW = {
+  contractVersion: HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION,
+  reviewId: "identity-review-d740ed61738fa94d",
+  contentHash: SANITIZED_IDENTITY_HASH,
+  reviewer: "SANITIZED_IDENTITY_REVIEWER",
+  reviewedAt: SANITIZED_CAPTURED_AT,
+  decision: "IDENTITY_CONFIRMED",
+  status: "READY",
+  confidence: "HIGH",
+  humanReason:
+    "Independent sanitized physical evidence confirms the exact identity.",
+  evidenceIds: SANITIZED_IDENTITY_EVIDENCE_IDS,
+  sameGeneralProductTypeConfirmed: true,
+  exactIdentityConfirmed: true,
+  brandConfirmed: true,
+  brand: "SANITIZED BRAND",
+  model: "SAN-MODEL-001",
+  mpn: "SAN-MPN-001",
+  supplierProductId: "SANITIZED-PRODUCT-001",
+  supplierSku: "SAN-SKU-001",
+  variantId: "SANITIZED-VARIANT-BLACK",
+  color: "BLACK",
+  packQuantity: 1,
+  availableFields: [
+    "brand",
+    "model",
+    "mpn",
+    "supplier_product_id",
+    "supplier_sku",
+    "variant_id",
+    "color",
+    "pack_quantity",
+  ],
+  missingFields: [],
+  physicalProductVerified: true,
+  physicalVerificationEvidenceIds:
+    SANITIZED_PHYSICAL_IDENTITY_EVIDENCE_IDS,
+  rawHumanInput: SANITIZED_IDENTITY_RAW_INPUT,
+} satisfies ProductCaseHumanIdentityReview
 
 function sanitizedEvidence(input: {
   id: string
@@ -1111,9 +1201,41 @@ const SANITIZED_EVIDENCE: ProductCaseEvidence[] = [
     value: "Sanitized Deterministic Product",
   }),
   sanitizedEvidence({
+    id: "san-ebay-title",
+    field: "ebay_optimized_title",
+    value: "Sanitized Deterministic Product",
+    evidenceClass: "HUMAN_HYPOTHESIS",
+    sourceType: "HUMAN_CORRECTION",
+  }),
+  sanitizedEvidence({
+    id: "san-product-type",
+    field: "product_type",
+    value: "SANITIZED_PRODUCT",
+  }),
+  sanitizedEvidence({
+    id: "san-brand",
+    field: "brand",
+    value: "SANITIZED BRAND",
+  }),
+  sanitizedEvidence({
+    id: "san-model",
+    field: "model",
+    value: "SAN-MODEL-001",
+  }),
+  sanitizedEvidence({
+    id: "san-mpn",
+    field: "mpn",
+    value: "SAN-MPN-001",
+  }),
+  sanitizedEvidence({
     id: "san-product-id",
     field: "supplier_product_id",
     value: "SANITIZED-PRODUCT-001",
+  }),
+  sanitizedEvidence({
+    id: "san-sku",
+    field: "supplier_sku",
+    value: "SAN-SKU-001",
   }),
   sanitizedEvidence({
     id: "san-variant-id",
@@ -1394,17 +1516,15 @@ const SANITIZED_DOCUMENT = {
     status: "READY",
     confidence: "HIGH",
     physicalProductVerified: true,
-    physicalVerificationEvidenceIds: [
-      "san-title",
-      "san-product-id",
-      "san-variant-id",
-    ],
+    physicalVerificationEvidenceIds:
+      SANITIZED_PHYSICAL_IDENTITY_EVIDENCE_IDS,
     conflictHistory: [],
     currentConflict: null,
     supplierEvidenceIds: [],
     humanObservationEvidenceIds: [SANITIZED_VISUAL_EVIDENCE_ID],
     blockers: [],
     nextAction: "REVIEW_MARKET_EVIDENCE",
+    humanReview: SANITIZED_IDENTITY_REVIEW,
   },
   humanReview: {
     conclusion: {
@@ -1498,7 +1618,7 @@ const SANITIZED_LISTING_OPERATIONS = {
   imageEvidenceOrder: ["image-01"],
   supportingEvidenceIds: SANITIZED_EVIDENCE.map((entry) => entry.id),
   evidenceLinks: {
-    title: ["san-title"],
+    title: ["san-ebay-title"],
     category: ["san-category"],
     condition: ["san-condition"],
     itemSpecifics: { Color: ["san-specific-color"] },

@@ -20,6 +20,8 @@ export const LUNA_SOURCE_CONTRACT_VERSION =
   "LUNA_SOURCE_CONTRACT_V1" as const
 export const HUMAN_VISUAL_REVIEW_CONTRACT_VERSION =
   "HUMAN_VISUAL_REVIEW_CONTRACT_V1" as const
+export const HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION =
+  "HUMAN_IDENTITY_REVIEW_CONTRACT_V1" as const
 
 export const PRODUCT_CASE_CONTENT_MAX_BYTES = 262_144
 
@@ -135,6 +137,7 @@ export const PRODUCT_CASE_EVIDENCE_FIELDS = [
   "ebay_category",
   "ebay_condition",
   "ebay_item_specific",
+  "ebay_optimized_title",
   "listing_description",
   "listing_quantity",
   "listing_policy_bundle",
@@ -461,8 +464,73 @@ export type ProductCaseImageAnalysis = {
   observations: ProductCaseImageObservation[]
 }
 
+export const PRODUCT_CASE_HUMAN_IDENTITY_FIELDS = [
+  "brand",
+  "model",
+  "mpn",
+  "supplier_product_id",
+  "supplier_sku",
+  "variant_id",
+  "color",
+  "pack_quantity",
+] as const
+
+export type ProductCaseHumanIdentityField =
+  typeof PRODUCT_CASE_HUMAN_IDENTITY_FIELDS[number]
+
+export type ProductCaseHumanIdentityReview = {
+  contractVersion: typeof HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION
+  reviewId: string
+  contentHash: `sha256:${string}`
+  reviewer: string
+  reviewedAt: string
+  decision:
+    | "NEEDS_MORE_EVIDENCE"
+    | "CONFLICT_CONFIRMED"
+    | "IDENTITY_CONFIRMED"
+  status: "PARTIAL" | "CONFLICTED" | "READY"
+  confidence: "LOW" | "MEDIUM" | "HIGH"
+  humanReason: string
+  evidenceIds: string[]
+  sameGeneralProductTypeConfirmed: boolean
+  exactIdentityConfirmed: boolean
+  brandConfirmed: boolean
+  brand: string | null
+  model: string | null
+  mpn: string | null
+  supplierProductId: string | null
+  supplierSku: string | null
+  variantId: string | null
+  color: string | null
+  packQuantity: number | null
+  availableFields: ProductCaseHumanIdentityField[]
+  missingFields: ProductCaseHumanIdentityField[]
+  physicalProductVerified: boolean
+  physicalVerificationEvidenceIds: string[]
+  rawHumanInput: {
+    reviewer: string
+    decision: string
+    confidence: string
+    humanReason: string
+    evidenceIds: string[]
+    sameGeneralProductTypeConfirmed: boolean
+    exactIdentityConfirmed: boolean
+    brandConfirmed: boolean
+    brand: string
+    model: string
+    mpn: string
+    supplierProductId: string
+    supplierSku: string
+    variantId: string
+    color: string
+    packQuantity: string
+    physicalProductVerified: boolean
+    physicalVerificationEvidenceIds: string[]
+  }
+}
+
 export type ProductCaseIdentityReview = {
-  status: "NOT_REVIEWED" | "CONFLICTED" | "READY"
+  status: "NOT_REVIEWED" | "PARTIAL" | "CONFLICTED" | "READY"
   confidence: "LOW" | "MEDIUM" | "HIGH"
   physicalProductVerified: boolean
   physicalVerificationEvidenceIds: string[]
@@ -472,6 +540,7 @@ export type ProductCaseIdentityReview = {
   humanObservationEvidenceIds: string[]
   blockers: string[]
   nextAction: string
+  humanReview?: ProductCaseHumanIdentityReview | null
 }
 
 export type ProductCaseDocument = {
@@ -1056,6 +1125,7 @@ const FIELD_LABELS: Record<ProductCaseEvidenceField, string> = {
   ebay_category: "Human-reviewed eBay category",
   ebay_condition: "Human-reviewed eBay condition",
   ebay_item_specific: "Human-reviewed eBay item specific",
+  ebay_optimized_title: "Human-reviewed eBay optimized title",
   listing_description: "Human-reviewed listing description",
   listing_quantity: "Human-reviewed listing quantity",
   listing_policy_bundle: "Human-reviewed listing policy bundle",
@@ -3327,7 +3397,21 @@ function hasStructuredIdentityConflict(document: ProductCaseDocument) {
 function identityReviewReady(document: ProductCaseDocument) {
   const verificationIds = document.identityReview
     .physicalVerificationEvidenceIds
+  const humanIdentityReview = document.identityReview.humanReview
+  const canonicalHumanReviewReady = Boolean(
+    humanIdentityReview &&
+    humanIdentityReview.contractVersion ===
+      HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION &&
+    humanIdentityReview.decision === "IDENTITY_CONFIRMED" &&
+    humanIdentityReview.status === "READY" &&
+    humanIdentityReview.confidence === "HIGH" &&
+    humanIdentityReview.exactIdentityConfirmed === true &&
+    validateHumanIdentityReview(document).valid,
+  )
   return document.identityReview.status === "READY" &&
+    canonicalHumanReviewReady &&
+    document.identityReview.confidence === "HIGH" &&
+    document.identityReview.blockers.length === 0 &&
     visualContractIssuesForDocument(document).length === 0 &&
     (document.imageAnalysis.contractIssues ?? []).length === 0 &&
     validateProductCaseDocumentProvenance(document).valid &&
@@ -3422,6 +3506,7 @@ export function validateProductCaseDocumentProvenance(
   const errors = [
     ...validateProductCaseImageAnalysis(document).errors,
     ...validateProductCaseSupplierSourceCapture(document).errors,
+    ...validateHumanIdentityReview(document).errors,
   ]
   const evidenceIds = new Set(document.evidence.map((entry) => entry.id))
   for (const id of document.identityReview.supplierEvidenceIds) {
@@ -3484,6 +3569,17 @@ export function validateProductCaseDocumentProvenance(
     if (evidence.sourceType === "HUMAN_VISUAL_OBSERVATION" &&
       evidence.sourceEvidenceClass !== "HUMAN_VISUAL_REVIEW") {
       errors.push(`HUMAN_VISUAL_POLICY_INVALID:${evidence.id}`)
+    }
+    if (
+      evidence.field === "ebay_optimized_title" &&
+      (
+        !["HUMAN_LISTING_DECISION", "HUMAN_CORRECTION"].includes(
+          evidence.sourceType,
+        ) ||
+        evidence.sourceEvidenceClass !== "HUMAN_HYPOTHESIS"
+      )
+    ) {
+      errors.push(`EBAY_OPTIMIZED_TITLE_POLICY_INVALID:${evidence.id}`)
     }
   }
   return {
@@ -3847,6 +3943,620 @@ export async function validateHumanVisualReviewIntegrity(
   return { valid: errors.length === 0, errors: unique(errors) }
 }
 
+function canonicalHumanIdentityReviewRecord(
+  review: ProductCaseHumanIdentityReview,
+) {
+  return {
+    contractVersion: review.contractVersion,
+    reviewer: review.reviewer,
+    reviewedAt: review.reviewedAt,
+    decision: review.decision,
+    status: review.status,
+    confidence: review.confidence,
+    humanReason: review.humanReason,
+    evidenceIds: review.evidenceIds,
+    sameGeneralProductTypeConfirmed:
+      review.sameGeneralProductTypeConfirmed,
+    exactIdentityConfirmed: review.exactIdentityConfirmed,
+    brandConfirmed: review.brandConfirmed,
+    brand: review.brand,
+    model: review.model,
+    mpn: review.mpn,
+    supplierProductId: review.supplierProductId,
+    supplierSku: review.supplierSku,
+    variantId: review.variantId,
+    color: review.color,
+    packQuantity: review.packQuantity,
+    availableFields: review.availableFields,
+    missingFields: review.missingFields,
+    physicalProductVerified: review.physicalProductVerified,
+    physicalVerificationEvidenceIds:
+      review.physicalVerificationEvidenceIds,
+    rawHumanInput: review.rawHumanInput,
+  }
+}
+
+function humanIdentityReviewId(contentHash: string) {
+  return `identity-review-${contentHash.slice(7, 23)}`
+}
+
+function identityFieldValue(
+  review: Pick<
+    ProductCaseHumanIdentityReview,
+    | "brand"
+    | "model"
+    | "mpn"
+    | "supplierProductId"
+    | "supplierSku"
+    | "variantId"
+    | "color"
+    | "packQuantity"
+  >,
+  field: ProductCaseHumanIdentityField,
+) {
+  if (field === "supplier_product_id") return review.supplierProductId
+  if (field === "supplier_sku") return review.supplierSku
+  if (field === "variant_id") return review.variantId
+  if (field === "pack_quantity") return review.packQuantity
+  return review[field]
+}
+
+function availableHumanIdentityFields(
+  review: Pick<
+    ProductCaseHumanIdentityReview,
+    | "brand"
+    | "model"
+    | "mpn"
+    | "supplierProductId"
+    | "supplierSku"
+    | "variantId"
+    | "color"
+    | "packQuantity"
+  >,
+) {
+  return PRODUCT_CASE_HUMAN_IDENTITY_FIELDS.filter((field) =>
+    nonempty(identityFieldValue(review, field))
+  )
+}
+
+function hasIndependentPhysicalVerification(
+  document: ProductCaseDocument,
+  evidenceIds: string[],
+) {
+  return evidenceIds.length > 0 &&
+    evidenceIds.every((id) => {
+      const evidence = document.evidence.find((entry) =>
+        entry.id === id &&
+        entry.sourceType === "HUMAN_PRODUCT_INSPECTION" &&
+        entry.evidenceClass === "PRODUCT_VERIFIED" &&
+        entry.sourceEvidenceClass === "PRODUCT_VERIFIED" &&
+        ["ACCEPT", "CORRECT"].includes(entry.humanVerdict) &&
+        ["ACCEPTED", "CORRECTED"].includes(entry.evidenceStatus)
+      )
+      return Boolean(evidence) &&
+        document.captures.some((capture) =>
+          capture.sourceType === "HUMAN_PRODUCT_INSPECTION" &&
+          capture.sourceUrl === evidence?.sourceUrl &&
+          capture.capturedAt === evidence?.capturedAt &&
+          capture.contentHash === evidence?.contentHash
+        )
+    })
+}
+
+const HUMAN_IDENTITY_REVIEW_SELECTABLE_FIELDS =
+  new Set<ProductCaseEvidenceField>([
+    "title",
+    "brand",
+    "model",
+    "mpn",
+    "supplier_product_id",
+    "supplier_sku",
+    "variant_id",
+    "option_name",
+    "option_value",
+    "color",
+    "product_type",
+    "selected_variant",
+    "pack_quantity",
+    "visual_observation",
+  ])
+
+function currentAcceptedHumanIdentityEvidence(
+  document: ProductCaseDocument,
+  evidenceId: string,
+) {
+  const matching = document.evidence.filter((entry) =>
+    entry.id === evidenceId
+  )
+  if (matching.length !== 1) return null
+  const evidence = matching[0]
+  const visualObservation =
+    evidence.sourceType === "HUMAN_VISUAL_OBSERVATION"
+      ? document.imageAnalysis.observations.find((observation) =>
+          observation.evidenceId === evidence.id &&
+          observation.contentHash === evidence.contentHash
+        ) ?? null
+      : null
+  const accepted = ["ACCEPT", "CORRECT"].includes(evidence.humanVerdict) &&
+    ["ACCEPTED", "CORRECTED"].includes(evidence.evidenceStatus)
+  const canonicalProposedVisual = Boolean(
+    visualObservation &&
+    evidence.humanVerdict === "UNREVIEWED" &&
+    evidence.evidenceStatus === "PROPOSED" &&
+    evidence.evidenceClass === "HUMAN_VISUAL_REVIEW" &&
+    evidence.sourceEvidenceClass === "HUMAN_VISUAL_REVIEW" &&
+    visualObservation.contractVersion ===
+      HUMAN_VISUAL_REVIEW_CONTRACT_VERSION &&
+    visualObservation.humanDecision === "ACCEPT_FOR_ANALYSIS" &&
+    !(document.imageAnalysis.contractIssues ?? []).some((issue) =>
+      visualContractIssueMatchesImage(issue, visualObservation.imageId)
+    ),
+  )
+  if (
+    !HUMAN_IDENTITY_REVIEW_SELECTABLE_FIELDS.has(evidence.field) ||
+    (!accepted && !canonicalProposedVisual) ||
+    ["CONFLICTED", "MISSING"].includes(evidence.evidenceClass) ||
+    !nonempty(effectiveEvidenceValue(evidence))
+  ) {
+    return null
+  }
+  const matchingCapture = document.captures.some((capture) =>
+    capture.sourceType === evidence.sourceType &&
+    capture.sourceUrl === evidence.sourceUrl &&
+    capture.capturedAt === evidence.capturedAt &&
+    capture.contentHash === evidence.contentHash
+  )
+  if (!matchingCapture) return null
+  if (
+    evidence.sourceType === "HUMAN_VISUAL_OBSERVATION" &&
+    !visualObservation
+  ) {
+    return null
+  }
+  return evidence
+}
+
+function selectedEvidenceSupportsIdentityField(
+  document: ProductCaseDocument,
+  selectedIds: Set<string>,
+  field: ProductCaseHumanIdentityField,
+  expectedValue: unknown,
+) {
+  return [...selectedIds].some((id) => {
+    const entry = currentAcceptedHumanIdentityEvidence(document, id)
+    if (!entry) return false
+    const exactSourceAllowed = (
+      (
+        entry.sourceEvidenceClass === "SUPPLIER_STATED" &&
+        entry.sourceType.startsWith("LUNA_")
+      ) ||
+      (
+        entry.sourceEvidenceClass === "PRODUCT_VERIFIED" &&
+        entry.sourceType === "HUMAN_PRODUCT_INSPECTION"
+      )
+    )
+    return exactSourceAllowed &&
+      entry.field === field &&
+      stableValue(effectiveEvidenceValue(entry)) ===
+        stableValue(expectedValue)
+  })
+}
+
+function selectedEvidenceSupportsGeneralProductType(
+  document: ProductCaseDocument,
+  selectedIds: Set<string>,
+) {
+  const nonVisualContext = [...selectedIds].some((id) => {
+    const evidence = currentAcceptedHumanIdentityEvidence(document, id)
+    return Boolean(
+      evidence &&
+      evidence.sourceType !== "HUMAN_VISUAL_OBSERVATION" &&
+      ["title", "product_type"].includes(evidence.field) &&
+      (
+        (
+          evidence.sourceEvidenceClass === "SUPPLIER_STATED" &&
+          evidence.sourceType.startsWith("LUNA_")
+        ) ||
+        (
+          evidence.sourceEvidenceClass === "PRODUCT_VERIFIED" &&
+          evidence.sourceType === "HUMAN_PRODUCT_INSPECTION"
+        )
+      ),
+    )
+  })
+  const visualContext = document.imageAnalysis.observations.some(
+    (observation) =>
+      selectedIds.has(observation.evidenceId) &&
+      Boolean(normalizeWhitespace(observation.observedProductType ?? "")) &&
+      Boolean(currentAcceptedHumanIdentityEvidence(
+        document,
+        observation.evidenceId,
+      )),
+  )
+  return nonVisualContext && visualContext
+}
+
+function canonicalHumanIdentitySupplierEvidenceIds(
+  document: ProductCaseDocument,
+  selectedEvidenceIds: string[],
+) {
+  const selectedSupplierIds = selectedEvidenceIds.filter((id) => {
+    const evidence = currentAcceptedHumanIdentityEvidence(document, id)
+    return Boolean(evidence?.sourceType.startsWith("LUNA_"))
+  })
+  const contradictedSupplierIds =
+    document.imageAnalysis.observations.flatMap((observation) =>
+      observation.contradictsEvidenceIds.filter((id) => {
+        const evidence = document.evidence.find((entry) => entry.id === id)
+        return Boolean(
+          evidence?.sourceType.startsWith("LUNA_") &&
+          ["SUPPLIER_STATED", "PRODUCT_VERIFIED"].includes(
+            evidence.sourceEvidenceClass,
+          ),
+        )
+      })
+    )
+  return unique([
+    ...selectedSupplierIds,
+    ...contradictedSupplierIds,
+  ]).sort()
+}
+
+const HUMAN_IDENTITY_REVIEW_RESOLVABLE_BLOCKERS = new Set([
+  "HUMAN_IDENTITY_REVIEW_REQUIRED",
+  "HUMAN_IDENTITY_REVIEW_REQUIRED_AFTER_VISUAL_EVIDENCE_CHANGE",
+  "IMPORTED_IDENTITY_REQUIRES_NEW_LOCAL_HUMAN_REVIEW",
+  "GENERAL_PRODUCT_TYPE_NOT_CONFIRMED",
+  "EXACT_IDENTITY_NOT_CONFIRMED",
+  "PHYSICAL_PRODUCT_NOT_VERIFIED",
+])
+
+function humanIdentityReviewBlockerIsResolvable(blocker: string) {
+  return HUMAN_IDENTITY_REVIEW_RESOLVABLE_BLOCKERS.has(blocker) ||
+    blocker.startsWith("HUMAN_IDENTITY_REVIEW_REQUIRED:") ||
+    blocker.startsWith("IDENTITY_EVIDENCE_MISSING:") ||
+    blocker.startsWith("HUMAN_IDENTITY_REVIEW_CONFLICT:")
+}
+
+function persistentHumanIdentityBlockers(blockers: string[]) {
+  return unique(
+    blockers.filter((blocker) =>
+      !humanIdentityReviewBlockerIsResolvable(blocker)
+    ),
+  )
+}
+
+export function validateHumanIdentityReview(
+  document: ProductCaseDocument,
+) {
+  const errors: string[] = []
+  const review = document.identityReview.humanReview
+  if (!review) {
+    if (document.identityReview.status === "PARTIAL") {
+      errors.push("HUMAN_IDENTITY_REVIEW_PARTIAL_CONTRACT_REQUIRED")
+    }
+    return { valid: errors.length === 0, errors }
+  }
+  const evidenceIds = Array.isArray(review.evidenceIds)
+    ? review.evidenceIds
+    : []
+  const physicalIds = Array.isArray(
+      review.physicalVerificationEvidenceIds,
+    )
+    ? review.physicalVerificationEvidenceIds
+    : []
+  const availableFields = Array.isArray(review.availableFields)
+    ? review.availableFields
+    : []
+  const missingFields = Array.isArray(review.missingFields)
+    ? review.missingFields
+    : []
+  const raw = review.rawHumanInput
+  if (
+    review.contractVersion !==
+      HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION ||
+    !validSha256(review.contentHash) ||
+    typeof review.reviewId !== "string" ||
+    !review.reviewId ||
+    !normalizeWhitespace(review.reviewer) ||
+    !validIsoInstant(review.reviewedAt) ||
+    !([
+      "NEEDS_MORE_EVIDENCE",
+      "CONFLICT_CONFIRMED",
+      "IDENTITY_CONFIRMED",
+    ] as const).includes(review.decision) ||
+    !(["PARTIAL", "CONFLICTED", "READY"] as const)
+      .includes(review.status) ||
+    !(["LOW", "MEDIUM", "HIGH"] as const).includes(review.confidence) ||
+    !normalizeWhitespace(review.humanReason) ||
+    !Array.isArray(review.evidenceIds) ||
+    !Array.isArray(review.availableFields) ||
+    !Array.isArray(review.missingFields) ||
+    !Array.isArray(review.physicalVerificationEvidenceIds) ||
+    !raw ||
+    typeof raw !== "object" ||
+    Array.isArray(raw) ||
+    typeof raw.reviewer !== "string" ||
+    typeof raw.decision !== "string" ||
+    typeof raw.confidence !== "string" ||
+    typeof raw.humanReason !== "string" ||
+    !Array.isArray(raw.evidenceIds) ||
+    typeof raw.sameGeneralProductTypeConfirmed !== "boolean" ||
+    typeof raw.exactIdentityConfirmed !== "boolean" ||
+    typeof raw.brandConfirmed !== "boolean" ||
+    typeof raw.brand !== "string" ||
+    typeof raw.model !== "string" ||
+    typeof raw.mpn !== "string" ||
+    typeof raw.supplierProductId !== "string" ||
+    typeof raw.supplierSku !== "string" ||
+    typeof raw.variantId !== "string" ||
+    typeof raw.color !== "string" ||
+    typeof raw.packQuantity !== "string" ||
+    typeof raw.physicalProductVerified !== "boolean" ||
+    !Array.isArray(raw.physicalVerificationEvidenceIds)
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_CONTRACT_INVALID")
+    return { valid: false, errors: unique(errors) }
+  }
+  if (
+    evidenceIds.length !== new Set(evidenceIds).size ||
+    physicalIds.length !== new Set(physicalIds).size
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_EVIDENCE_ID_DUPLICATE")
+  }
+  if (review.reviewId !== humanIdentityReviewId(review.contentHash)) {
+    errors.push("HUMAN_IDENTITY_REVIEW_ID_MISMATCH")
+  }
+  if (
+    stableValue(evidenceIds) !==
+      stableValue([...evidenceIds].sort()) ||
+    stableValue(physicalIds) !==
+      stableValue([...physicalIds].sort())
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_EVIDENCE_IDS_NOT_CANONICAL")
+  }
+  const evidenceById = new Map(
+    document.evidence.map((entry) => [entry.id, entry]),
+  )
+  for (const id of evidenceIds) {
+    const evidence = currentAcceptedHumanIdentityEvidence(document, id)
+    if (!evidence) {
+      errors.push(
+        evidenceById.has(id)
+          ? `HUMAN_IDENTITY_REVIEW_EVIDENCE_NOT_CURRENT_OR_ACCEPTED:${id}`
+          : `HUMAN_IDENTITY_REVIEW_EVIDENCE_REFERENCE_MISSING:${id}`,
+      )
+      continue
+    }
+    if (
+      evidence.field === "title" &&
+      evidence.sourceType.startsWith("LUNA_") &&
+      evidence.sourceEvidenceClass !== "SUPPLIER_STATED"
+    ) {
+      errors.push(
+        `HUMAN_IDENTITY_REVIEW_SUPPLIER_TITLE_POLICY_INVALID:${id}`,
+      )
+    }
+  }
+  for (const id of physicalIds) {
+    if (!evidenceIds.includes(id)) {
+      errors.push(
+        `HUMAN_IDENTITY_REVIEW_PHYSICAL_REFERENCE_NOT_SELECTED:${id}`,
+      )
+    }
+  }
+  const expectedAvailable = availableHumanIdentityFields(review)
+  const expectedMissing = PRODUCT_CASE_HUMAN_IDENTITY_FIELDS.filter(
+    (field) => !expectedAvailable.includes(field),
+  )
+  if (
+    stableValue(availableFields) !== stableValue(expectedAvailable) ||
+    stableValue(missingFields) !== stableValue(expectedMissing)
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_FIELD_STATUS_MISMATCH")
+  }
+  const expectedStatus = review.decision === "NEEDS_MORE_EVIDENCE"
+    ? "PARTIAL"
+    : review.decision === "CONFLICT_CONFIRMED"
+      ? "CONFLICTED"
+      : "READY"
+  if (
+    review.status !== expectedStatus ||
+    document.identityReview.status !== review.status ||
+    document.identityReview.confidence !== review.confidence
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_STATUS_MISMATCH")
+  }
+  if (
+    review.decision === "IDENTITY_CONFIRMED" &&
+    review.confidence !== "HIGH"
+  ) {
+    errors.push(
+      "HUMAN_IDENTITY_REVIEW_READY_CONFIDENCE_INSUFFICIENT",
+    )
+  }
+  const physicalVerified = hasIndependentPhysicalVerification(
+    document,
+    physicalIds,
+  )
+  if (
+    review.physicalProductVerified !== physicalVerified ||
+    document.identityReview.physicalProductVerified !== physicalVerified ||
+    stableValue(document.identityReview.physicalVerificationEvidenceIds) !==
+      stableValue(physicalIds)
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_PHYSICAL_VERIFICATION_MISMATCH")
+  }
+  const selectedIds = new Set(evidenceIds)
+  if (
+    review.sameGeneralProductTypeConfirmed &&
+    !selectedEvidenceSupportsGeneralProductType(document, selectedIds)
+  ) {
+    errors.push(
+      "HUMAN_IDENTITY_REVIEW_GENERAL_PRODUCT_TYPE_UNSUPPORTED",
+    )
+  }
+  for (const field of expectedAvailable) {
+    if (!selectedEvidenceSupportsIdentityField(
+      document,
+      selectedIds,
+      field,
+      identityFieldValue(review, field),
+    )) {
+      errors.push(
+        `HUMAN_IDENTITY_REVIEW_FIELD_EVIDENCE_UNSUPPORTED:${field}`,
+      )
+    }
+  }
+  if (
+    review.brandConfirmed &&
+    (
+      !review.brand ||
+      !selectedEvidenceSupportsIdentityField(
+        document,
+        selectedIds,
+        "brand",
+        review.brand,
+      )
+    )
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_BRAND_CONFIRMATION_UNSUPPORTED")
+  }
+  const exactIdentityFields = [
+    "brand",
+    "model",
+    "mpn",
+    "supplier_product_id",
+    "supplier_sku",
+    "variant_id",
+  ] as const
+  const exactIdentitySupported = exactIdentityFields.every((field) => {
+    const value = identityFieldValue(review, field)
+    return nonempty(value) &&
+      selectedEvidenceSupportsIdentityField(
+        document,
+        selectedIds,
+        field,
+        value,
+      )
+  })
+  if (
+    review.exactIdentityConfirmed &&
+    (
+      !review.sameGeneralProductTypeConfirmed ||
+      !review.brandConfirmed ||
+      !physicalVerified ||
+      !exactIdentitySupported
+    )
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_EXACT_IDENTITY_UNSUPPORTED")
+  }
+  if (
+    review.decision === "IDENTITY_CONFIRMED" &&
+    !review.exactIdentityConfirmed
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_READY_WITHOUT_EXACT_IDENTITY")
+  }
+  const rawEvidenceIds = Array.isArray(raw.evidenceIds)
+    ? raw.evidenceIds.map((id) =>
+        typeof id === "string" ? normalizeWhitespace(id) : ""
+      )
+    : []
+  const rawPhysicalIds = Array.isArray(
+      raw.physicalVerificationEvidenceIds,
+    )
+    ? raw.physicalVerificationEvidenceIds.map((id) =>
+        typeof id === "string" ? normalizeWhitespace(id) : ""
+      )
+    : []
+  const rawNullable = (value: unknown) => {
+    if (typeof value !== "string") return null
+    return normalizeWhitespace(value) || null
+  }
+  const rawPackQuantity = typeof raw.packQuantity === "string" &&
+      raw.packQuantity.trim()
+    ? Number(raw.packQuantity)
+    : null
+  if (
+    normalizeWhitespace(
+      typeof raw.reviewer === "string" ? raw.reviewer : "",
+    ) !== review.reviewer ||
+    raw.decision !== review.decision ||
+    raw.confidence !== review.confidence ||
+    normalizeWhitespace(
+      typeof raw.humanReason === "string" ? raw.humanReason : "",
+    ) !== review.humanReason ||
+    stableValue([...rawEvidenceIds].sort()) !==
+      stableValue(evidenceIds) ||
+    raw.sameGeneralProductTypeConfirmed !==
+      review.sameGeneralProductTypeConfirmed ||
+    raw.exactIdentityConfirmed !== review.exactIdentityConfirmed ||
+    raw.brandConfirmed !== review.brandConfirmed ||
+    rawNullable(raw.brand) !== review.brand ||
+    rawNullable(raw.model) !== review.model ||
+    rawNullable(raw.mpn) !== review.mpn ||
+    rawNullable(raw.supplierProductId) !== review.supplierProductId ||
+    rawNullable(raw.supplierSku) !== review.supplierSku ||
+    rawNullable(raw.variantId) !== review.variantId ||
+    rawNullable(raw.color) !== review.color ||
+    rawPackQuantity !== review.packQuantity ||
+    raw.physicalProductVerified !== review.physicalProductVerified ||
+    stableValue([...rawPhysicalIds].sort()) !==
+      stableValue(physicalIds)
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_INTEGRITY_MISMATCH:RAW_INPUT")
+  }
+  const selectedSupplierIds = evidenceIds.filter((id) =>
+    evidenceById.get(id)?.sourceType.startsWith("LUNA_")
+  )
+  const selectedVisualIds = evidenceIds.filter((id) =>
+    evidenceById.get(id)?.sourceType === "HUMAN_VISUAL_OBSERVATION"
+  )
+  const supportedConflict = document.imageAnalysis.observations.some(
+    (observation) =>
+      selectedVisualIds.includes(observation.evidenceId) &&
+      observation.possibleConflicts.length > 0 &&
+      observation.contradictsEvidenceIds.some((id) =>
+        selectedSupplierIds.includes(id)
+      ),
+  )
+  if (
+    review.decision === "CONFLICT_CONFIRMED" &&
+    !supportedConflict
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_CONFLICT_UNSUPPORTED")
+  }
+  const expectedSupplierEvidenceIds =
+    canonicalHumanIdentitySupplierEvidenceIds(document, evidenceIds)
+  if (
+    stableValue([...document.identityReview.supplierEvidenceIds].sort()) !==
+      stableValue(expectedSupplierEvidenceIds)
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_SUPPLIER_REFERENCES_MISMATCH")
+  }
+  return { valid: errors.length === 0, errors: unique(errors) }
+}
+
+export async function validateHumanIdentityReviewIntegrity(
+  document: ProductCaseDocument,
+) {
+  const structural = validateHumanIdentityReview(document)
+  const errors = [...structural.errors]
+  const review = document.identityReview.humanReview
+  if (!review || !structural.valid) {
+    return { valid: errors.length === 0, errors: unique(errors) }
+  }
+  const serialized = stableValue(canonicalHumanIdentityReviewRecord(review))
+  const contentHash = await hashProductCaseContent(serialized)
+  if (review.contentHash !== contentHash) {
+    errors.push("HUMAN_IDENTITY_REVIEW_CONTENT_HASH_MISMATCH")
+  }
+  if (review.reviewId !== humanIdentityReviewId(contentHash)) {
+    errors.push("HUMAN_IDENTITY_REVIEW_ID_MISMATCH")
+  }
+  return { valid: errors.length === 0, errors: unique(errors) }
+}
+
 export async function validateProductCaseDocumentProvenanceIntegrity(
   document: ProductCaseDocument,
 ) {
@@ -3854,10 +4564,13 @@ export async function validateProductCaseDocumentProvenanceIntegrity(
   const supplierIntegrity =
     await validateProductCaseSupplierSourceCaptureIntegrity(document)
   const visualIntegrity = await validateHumanVisualReviewIntegrity(document)
+  const identityIntegrity =
+    await validateHumanIdentityReviewIntegrity(document)
   const errors = unique([
     ...structural.errors,
     ...supplierIntegrity.errors,
     ...visualIntegrity.errors,
+    ...identityIntegrity.errors,
   ])
   return { valid: errors.length === 0, errors }
 }
@@ -3872,6 +4585,385 @@ const SUPPLIER_IDENTITY_FIELDS = new Set<ProductCaseEvidenceField>([
   "option_value",
 ])
 
+export async function saveHumanIdentityReviewRecord(input: {
+  document: ProductCaseDocument
+  reviewer: string
+  reviewedAt: string
+  decision: ProductCaseHumanIdentityReview["decision"]
+  confidence: ProductCaseHumanIdentityReview["confidence"]
+  humanReason: string
+  evidenceIds: string[]
+  sameGeneralProductTypeConfirmed: boolean
+  exactIdentityConfirmed: boolean
+  brandConfirmed: boolean
+  brand: string | null
+  model: string | null
+  mpn: string | null
+  supplierProductId: string | null
+  supplierSku: string | null
+  variantId: string | null
+  color: string | null
+  packQuantity: number | null
+  physicalProductVerified?: boolean
+  physicalVerificationEvidenceIds?: string[]
+  rawHumanInput: ProductCaseHumanIdentityReview["rawHumanInput"]
+}) {
+  const reviewer = normalizeWhitespace(input.reviewer)
+  const humanReason = normalizeWhitespace(input.humanReason)
+  if (!reviewer || !humanReason) {
+    throw new Error("HUMAN_IDENTITY_REVIEW_REQUIRED_FIELD_MISSING")
+  }
+  if (!validIsoInstant(input.reviewedAt)) {
+    throw new Error("HUMAN_IDENTITY_REVIEW_TIMESTAMP_INVALID")
+  }
+  const visualIntegrity = await validateHumanVisualReviewIntegrity(
+    input.document,
+  )
+  if (!visualIntegrity.valid) {
+    throw new Error(
+      `HUMAN_IDENTITY_REVIEW_VISUAL_EVIDENCE_INTEGRITY_INVALID:${
+        visualIntegrity.errors.join(",")
+      }`,
+    )
+  }
+  const normalizeNullable = (value: string | null) => {
+    if (value === null) return null
+    const normalized = normalizeWhitespace(value)
+    return normalized || null
+  }
+  if (
+    input.packQuantity !== null &&
+    (
+      !Number.isInteger(input.packQuantity) ||
+      input.packQuantity <= 0
+    )
+  ) {
+    throw new Error("HUMAN_IDENTITY_REVIEW_PACK_QUANTITY_INVALID")
+  }
+  const evidenceIds = input.evidenceIds.map(normalizeWhitespace)
+  const physicalVerificationEvidenceIds =
+    (input.physicalVerificationEvidenceIds ?? []).map(normalizeWhitespace)
+  if (
+    evidenceIds.some((id) => !id) ||
+    physicalVerificationEvidenceIds.some((id) => !id) ||
+    evidenceIds.length !== new Set(evidenceIds).size ||
+    physicalVerificationEvidenceIds.length !==
+      new Set(physicalVerificationEvidenceIds).size
+  ) {
+    throw new Error("HUMAN_IDENTITY_REVIEW_EVIDENCE_ID_DUPLICATE")
+  }
+  const evidenceById = new Map(
+    input.document.evidence.map((entry) => [entry.id, entry]),
+  )
+  for (const id of evidenceIds) {
+    const evidence = currentAcceptedHumanIdentityEvidence(input.document, id)
+    if (!evidence) {
+      throw new Error(
+        evidenceById.has(id)
+          ? `HUMAN_IDENTITY_REVIEW_EVIDENCE_NOT_CURRENT_OR_ACCEPTED:${id}`
+          : `HUMAN_IDENTITY_REVIEW_EVIDENCE_REFERENCE_MISSING:${id}`,
+      )
+    }
+    if (
+      evidence.field === "title" &&
+      evidence.sourceType.startsWith("LUNA_") &&
+      evidence.sourceEvidenceClass !== "SUPPLIER_STATED"
+    ) {
+      throw new Error(
+        `HUMAN_IDENTITY_REVIEW_SUPPLIER_TITLE_POLICY_INVALID:${id}`,
+      )
+    }
+  }
+  for (const id of physicalVerificationEvidenceIds) {
+    if (!evidenceIds.includes(id)) {
+      throw new Error(
+        `HUMAN_IDENTITY_REVIEW_PHYSICAL_REFERENCE_NOT_SELECTED:${id}`,
+      )
+    }
+  }
+  const physicalProductVerified = hasIndependentPhysicalVerification(
+    input.document,
+    physicalVerificationEvidenceIds,
+  )
+  if (
+    (input.physicalProductVerified === true ||
+      input.rawHumanInput.physicalProductVerified === true) &&
+    !physicalProductVerified
+  ) {
+    throw new Error(
+      "HUMAN_IDENTITY_REVIEW_PHYSICAL_VERIFICATION_UNSUPPORTED",
+    )
+  }
+  const normalizedValues = {
+    brand: normalizeNullable(input.brand),
+    model: normalizeNullable(input.model),
+    mpn: normalizeNullable(input.mpn),
+    supplierProductId: normalizeNullable(input.supplierProductId),
+    supplierSku: normalizeNullable(input.supplierSku),
+    variantId: normalizeNullable(input.variantId),
+    color: normalizeNullable(input.color),
+    packQuantity: input.packQuantity,
+  }
+  const availableFields = availableHumanIdentityFields(normalizedValues)
+  const missingFields = PRODUCT_CASE_HUMAN_IDENTITY_FIELDS.filter(
+    (field) => !availableFields.includes(field),
+  )
+  const selectedIds = new Set(evidenceIds)
+  if (
+    input.sameGeneralProductTypeConfirmed &&
+    !selectedEvidenceSupportsGeneralProductType(
+      input.document,
+      selectedIds,
+    )
+  ) {
+    throw new Error(
+      "HUMAN_IDENTITY_REVIEW_GENERAL_PRODUCT_TYPE_UNSUPPORTED",
+    )
+  }
+  for (const field of availableFields) {
+    if (!selectedEvidenceSupportsIdentityField(
+      input.document,
+      selectedIds,
+      field,
+      identityFieldValue(normalizedValues, field),
+    )) {
+      throw new Error(
+        `HUMAN_IDENTITY_REVIEW_FIELD_EVIDENCE_UNSUPPORTED:${field}`,
+      )
+    }
+  }
+  if (
+    input.brandConfirmed &&
+    (
+      !normalizedValues.brand ||
+      !selectedEvidenceSupportsIdentityField(
+        input.document,
+        selectedIds,
+        "brand",
+        normalizedValues.brand,
+      )
+    )
+  ) {
+    throw new Error(
+      "HUMAN_IDENTITY_REVIEW_BRAND_CONFIRMATION_UNSUPPORTED",
+    )
+  }
+  const exactIdentityFields = [
+    "brand",
+    "model",
+    "mpn",
+    "supplier_product_id",
+    "supplier_sku",
+    "variant_id",
+  ] as const
+  const exactIdentitySupported = exactIdentityFields.every((field) => {
+    const value = identityFieldValue(normalizedValues, field)
+    return nonempty(value) &&
+      selectedEvidenceSupportsIdentityField(
+        input.document,
+        selectedIds,
+        field,
+        value,
+      )
+  })
+  if (
+    input.exactIdentityConfirmed &&
+    (
+      !input.sameGeneralProductTypeConfirmed ||
+      !input.brandConfirmed ||
+      !physicalProductVerified ||
+      !exactIdentitySupported
+    )
+  ) {
+    throw new Error("HUMAN_IDENTITY_REVIEW_EXACT_IDENTITY_UNSUPPORTED")
+  }
+  if (
+    input.decision === "IDENTITY_CONFIRMED" &&
+    !input.exactIdentityConfirmed
+  ) {
+    throw new Error("HUMAN_IDENTITY_REVIEW_READY_WITHOUT_EXACT_IDENTITY")
+  }
+  if (
+    input.decision === "IDENTITY_CONFIRMED" &&
+    input.confidence !== "HIGH"
+  ) {
+    throw new Error(
+      "HUMAN_IDENTITY_REVIEW_READY_CONFIDENCE_INSUFFICIENT",
+    )
+  }
+  const selectedSupplierIds = evidenceIds.filter((id) =>
+    evidenceById.get(id)?.sourceType.startsWith("LUNA_")
+  )
+  const selectedVisualIds = evidenceIds.filter((id) =>
+    evidenceById.get(id)?.sourceType === "HUMAN_VISUAL_OBSERVATION"
+  )
+  const selectedConflict = input.document.imageAnalysis.observations.find(
+    (observation) =>
+      selectedVisualIds.includes(observation.evidenceId) &&
+      observation.possibleConflicts.length > 0 &&
+      observation.contradictsEvidenceIds.some((id) =>
+        selectedSupplierIds.includes(id)
+      ),
+  )
+  if (
+    input.decision === "CONFLICT_CONFIRMED" &&
+    !selectedConflict
+  ) {
+    throw new Error("HUMAN_IDENTITY_REVIEW_CONFLICT_UNSUPPORTED")
+  }
+  const status: ProductCaseHumanIdentityReview["status"] =
+    input.decision === "NEEDS_MORE_EVIDENCE"
+      ? "PARTIAL"
+      : input.decision === "CONFLICT_CONFIRMED"
+        ? "CONFLICTED"
+        : "READY"
+  const canonical = {
+    contractVersion: HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION,
+    reviewer,
+    reviewedAt: input.reviewedAt,
+    decision: input.decision,
+    status,
+    confidence: input.confidence,
+    humanReason,
+    evidenceIds: [...evidenceIds].sort(),
+    sameGeneralProductTypeConfirmed:
+      input.sameGeneralProductTypeConfirmed,
+    exactIdentityConfirmed: input.exactIdentityConfirmed,
+    brandConfirmed: input.brandConfirmed,
+    ...normalizedValues,
+    availableFields,
+    missingFields,
+    physicalProductVerified,
+    physicalVerificationEvidenceIds:
+      [...physicalVerificationEvidenceIds].sort(),
+    rawHumanInput: structuredClone(input.rawHumanInput),
+  }
+  const contentHash = await hashProductCaseContent(stableValue(canonical))
+  const review: ProductCaseHumanIdentityReview = {
+    ...canonical,
+    reviewId: humanIdentityReviewId(contentHash),
+    contentHash: contentHash as `sha256:${string}`,
+  }
+  const missingBlockers = missingFields.map((field) =>
+    `IDENTITY_EVIDENCE_MISSING:${field}`
+  )
+  const persistentBlockers = persistentHumanIdentityBlockers(
+    input.document.identityReview.blockers,
+  )
+  const reviewSpecificBlockers = status === "READY"
+    ? []
+    : [
+        ...(!input.sameGeneralProductTypeConfirmed
+          ? ["GENERAL_PRODUCT_TYPE_NOT_CONFIRMED"] : []),
+        ...(!input.exactIdentityConfirmed
+          ? ["EXACT_IDENTITY_NOT_CONFIRMED"] : []),
+        ...(!physicalProductVerified
+          ? ["PHYSICAL_PRODUCT_NOT_VERIFIED"] : []),
+        ...missingBlockers,
+        ...(selectedConflict?.possibleConflicts.map((conflict) =>
+          `HUMAN_IDENTITY_REVIEW_CONFLICT:${conflict}`
+        ) ?? []),
+      ]
+  const blockers = unique([
+    ...persistentBlockers,
+    ...visualContractIssuesForDocument(input.document),
+    ...reviewSpecificBlockers,
+  ])
+  const supplierEvidenceIds = canonicalHumanIdentitySupplierEvidenceIds(
+    input.document,
+    evidenceIds,
+  )
+  const currentConflict = status === "CONFLICTED"
+    ? "SUPPLIER_TEXT_VS_HUMAN_VISUAL_REVIEW"
+    : null
+  const updatedDocument: ProductCaseDocument = {
+    ...input.document,
+    identityReview: {
+      ...input.document.identityReview,
+      status,
+      confidence: input.confidence,
+      physicalProductVerified,
+      physicalVerificationEvidenceIds:
+        [...physicalVerificationEvidenceIds].sort(),
+      conflictHistory: unique([
+        ...input.document.identityReview.conflictHistory,
+        ...(currentConflict ? [currentConflict] : []),
+      ]),
+      currentConflict,
+      supplierEvidenceIds,
+      humanObservationEvidenceIds:
+        input.document.imageAnalysis.observations.map((observation) =>
+          observation.evidenceId
+        ),
+      blockers,
+      nextAction: persistentBlockers.length > 0 &&
+          normalizeWhitespace(input.document.identityReview.nextAction)
+        ? input.document.identityReview.nextAction
+        : status === "PARTIAL"
+          ? "CAPTURE_MISSING_IDENTITY_EVIDENCE"
+          : status === "CONFLICTED"
+            ? "RESOLVE_IDENTITY_CONFLICT"
+            : "REVIEW_MARKET_EVIDENCE",
+      humanReview: review,
+    },
+  }
+  const integrity = await validateHumanIdentityReviewIntegrity(
+    updatedDocument,
+  )
+  if (!integrity.valid) {
+    throw new Error(
+      `HUMAN_IDENTITY_REVIEW_INTEGRITY_INVALID:${integrity.errors.join(",")}`,
+    )
+  }
+  return {
+    review,
+    updatedDocument,
+    safety: PRODUCT_CASE_ZERO_EFFECTS,
+  }
+}
+
+export function deleteHumanIdentityReviewRecord(input: {
+  document: ProductCaseDocument
+}): ProductCaseDocument {
+  const persistentBlockers = persistentHumanIdentityBlockers(
+    input.document.identityReview.blockers,
+  )
+  return {
+    ...input.document,
+    identityReview: {
+      ...input.document.identityReview,
+      status: "NOT_REVIEWED",
+      confidence: "LOW",
+      physicalProductVerified: false,
+      physicalVerificationEvidenceIds: [],
+      currentConflict: null,
+      supplierEvidenceIds: unique(
+        input.document.evidence
+          .filter((entry) =>
+            entry.sourceType.startsWith("LUNA_") &&
+            entry.evidenceStatus !== "MISSING" &&
+            SUPPLIER_IDENTITY_FIELDS.has(entry.field)
+          )
+          .map((entry) => entry.id),
+      ),
+      humanObservationEvidenceIds:
+        input.document.imageAnalysis.observations.map((entry) =>
+          entry.evidenceId
+        ),
+      blockers: unique([
+        ...persistentBlockers,
+        "HUMAN_IDENTITY_REVIEW_REQUIRED",
+        ...visualContractIssuesForDocument(input.document),
+      ]),
+      nextAction: persistentBlockers.length > 0 &&
+          normalizeWhitespace(input.document.identityReview.nextAction)
+        ? input.document.identityReview.nextAction
+        : "REVIEW_IDENTITY_AND_VARIANTS",
+      humanReview: null,
+    },
+  }
+}
+
 export function transitionProductCaseSupplierCapture(input: {
   document: ProductCaseDocument
   replacement: {
@@ -3881,14 +4973,37 @@ export function transitionProductCaseSupplierCapture(input: {
 }): ProductCaseDocument {
   const document = structuredClone(input.document)
   const previousCapture = document.supplierSourceCapture
+  const previousCandidateById = new Map(
+    (previousCapture?.evidenceCandidates ?? []).map((entry) => [
+      entry.id,
+      entry,
+    ]),
+  )
   const removedEvidenceIds = new Set(
     previousCapture
       ? document.evidence
-          .filter((entry) =>
-            entry.sourceType.startsWith("LUNA_") &&
-            entry.sourceUrl === previousCapture.supplierUrl &&
-            entry.contentHash === previousCapture.contentHash
-          )
+          .filter((entry) => {
+            const directSupplierEvidence =
+              entry.sourceType.startsWith("LUNA_") &&
+              entry.sourceUrl === previousCapture.supplierUrl &&
+              entry.contentHash === previousCapture.contentHash
+            const originalCandidate = previousCandidateById.get(entry.id)
+            const derivedHumanCorrection =
+              entry.sourceType === "HUMAN_CORRECTION" &&
+              entry.sourceUrl === previousCapture.supplierUrl &&
+              entry.contentHash === previousCapture.contentHash &&
+              entry.capturedAt === previousCapture.capturedAt &&
+              Boolean(
+                originalCandidate &&
+                originalCandidate.sourceUrl === entry.sourceUrl &&
+                originalCandidate.contentHash === entry.contentHash &&
+                originalCandidate.capturedAt === entry.capturedAt &&
+                originalCandidate.field === entry.field &&
+                originalCandidate.variantKey === entry.variantKey &&
+                originalCandidate.extractionPath === entry.extractionPath,
+              )
+            return directSupplierEvidence || derivedHumanCorrection
+          })
           .map((entry) => entry.id)
       : [],
   )
@@ -3998,6 +5113,7 @@ export function transitionProductCaseSupplierCapture(input: {
       nextAction: input.replacement
         ? "REVIEW_PRODUCT_EVIDENCE"
         : "CAPTURE_AUTHENTICATED_SUPPLIER_EVIDENCE",
+      humanReview: null,
     },
   }
 }
@@ -4243,6 +5359,7 @@ export async function createHumanVisualReviewRecord(input: {
         ...currentVisualConflicts,
       ]),
       nextAction: "REVIEW_PRODUCT_EVIDENCE",
+      humanReview: null,
     },
   }
   return {
@@ -4356,6 +5473,7 @@ export function deleteHumanVisualReviewRecord(input: {
         ...conflicts,
       ]),
       nextAction: "REVIEW_PRODUCT_EVIDENCE",
+      humanReview: null,
     },
   }
 }
@@ -4585,7 +5703,8 @@ export function buildStrategyLabAdapterPreview(
       blockers: identityBlockers,
       strategyLabInput: null,
       osConclusion: "HOLD_IDENTITY",
-      nextAction: "VERIFY_PHYSICAL_PRODUCT_AND_VARIANT",
+      nextAction: input.document.identityReview.nextAction ||
+        "VERIFY_PHYSICAL_PRODUCT_AND_VARIANT",
       marketEvidence: input.document.marketEvidence,
       currentEvidenceLeader: null,
       strategicHypothesisToValidate: null,
@@ -5197,15 +6316,26 @@ export function buildManualListingPackageDraft(input: {
   const captureHasRealHash = input.document.captures.some((capture) =>
     /^sha256:[0-9a-f]{64}$/.test(capture.contentHash)
   )
+  const optimizedTitleEvidenceReady =
+    input.operations.evidenceLinks.title.length > 0 &&
+    input.operations.evidenceLinks.title.every((id) => {
+      const entry = evidenceById(input.document.evidence, id)
+      return entry &&
+        acceptedIds.includes(id) &&
+        entry.field === "ebay_optimized_title" &&
+        ["HUMAN_LISTING_DECISION", "HUMAN_CORRECTION"].includes(
+          entry.sourceType,
+        ) &&
+        entry.sourceEvidenceClass === "HUMAN_HYPOTHESIS" &&
+        stableValue(effectiveEvidenceValue(entry)) === stableValue(
+          normalizeWhitespace(input.operations.title ?? ""),
+        )
+    })
   const titleReady = Boolean(
     input.operations.title &&
     normalizeWhitespace(input.operations.title).length > 0 &&
     normalizeWhitespace(input.operations.title).length <= 80 &&
-    linkedFieldValueMatches(
-      input.operations.evidenceLinks.title,
-      ["title"],
-      normalizeWhitespace(input.operations.title),
-    ),
+    optimizedTitleEvidenceReady,
   )
   const descriptionReady = Boolean(
     input.operations.description &&
@@ -5477,6 +6607,7 @@ export function buildManualListingPackageDraft(input: {
       titleReady && descriptionReady,
       [
         "HUMAN_REVIEWED_TITLE_REQUIRED_MAX_80_CHARACTERS",
+        "EBAY_OPTIMIZED_TITLE_EVIDENCE_REQUIRED",
         "EVIDENCE_LINKED_LISTING_DESCRIPTION_REQUIRED",
       ],
       [
@@ -6360,7 +7491,11 @@ export function buildProductCaseOperationalPipeline(input: {
     },
     {
       phase: "IDENTITY_AND_VARIANTS",
-      status: identityReady ? "COMPLETED" : "BLOCKED",
+      status: identityReady
+        ? "COMPLETED"
+        : input.document.identityReview.status === "PARTIAL"
+          ? "HUMAN_REVIEW_REQUIRED"
+          : "BLOCKED",
       blockers: identityReady
         ? []
         : unique(input.document.identityReview.blockers),
@@ -6596,9 +7731,13 @@ export function calculateProductCaseReadiness(input: {
     identityConfidence: identityConflict
       ? "LOW"
       : productIdentity === "READY"
-        ? "HIGH"
+        ? input.document.identityReview.confidence
         : productIdentity === "PARTIAL"
-          ? "MEDIUM"
+          ? input.document.identityReview.humanReview ||
+              input.document.identityReview.status === "PARTIAL" ||
+              input.document.identityReview.status === "READY"
+            ? input.document.identityReview.confidence
+            : "MEDIUM"
           : "LOW",
     productFactsReadiness: identityConflict || productIdentity !== "READY"
       ? "NOT_READY"
@@ -6697,8 +7836,12 @@ export const PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION =
   "PRODUCT_CASE_WORKSPACE_EXPORT_V1" as const
 export const PRODUCT_CASE_WORKSPACE_EXPORT_VERSION =
   "PRODUCT_CASE_WORKSPACE_EXPORT_V2" as const
-export const PRODUCT_CASE_OUTPUT_CONTRACT_VERSION =
+export const PRODUCT_CASE_PRE_IDENTITY_OUTPUT_CONTRACT_VERSION =
   "PRODUCT_CASE_OUTPUT_CONTRACT_V1" as const
+export const PRODUCT_CASE_OUTPUT_CONTRACT_VERSION =
+  "PRODUCT_CASE_OUTPUT_CONTRACT_V2" as const
+export const PRODUCT_CASE_PRE_IDENTITY_OUTPUT_WARNING =
+  "PRE_IDENTITY_CONTRACT_OUTPUT_REBUILT_WITH_CURRENT_DOMAIN" as const
 export const PRODUCT_CASE_LEGACY_OUTPUT_PROFILE =
   "PRE_PERSISTENT_HUMAN_VISUAL_CONTRACT_GATE_V1" as const
 export const PRODUCT_CASE_LEGACY_OUTPUT_WARNING =
@@ -7686,19 +8829,25 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     envelopeVersion === PRODUCT_CASE_WORKSPACE_EXPORT_VERSION
   const legacyExport =
     envelopeVersion === PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION
+  const envelopeOutputContractVersion =
+    (parsed as Record<string, unknown>).outputContractVersion
   if (!currentExport && !legacyExport) {
     throw new Error("PRODUCT_CASE_IMPORT_VERSION_INVALID")
   }
-  if (
+  const currentOutputContract =
     currentExport &&
-    envelope.outputContractVersion !==
-      PRODUCT_CASE_OUTPUT_CONTRACT_VERSION
-  ) {
+    envelopeOutputContractVersion === PRODUCT_CASE_OUTPUT_CONTRACT_VERSION
+  const preIdentityOutputContract =
+    currentExport &&
+    envelopeOutputContractVersion ===
+      PRODUCT_CASE_PRE_IDENTITY_OUTPUT_CONTRACT_VERSION
+  if (currentExport && !currentOutputContract &&
+    !preIdentityOutputContract) {
     throw new Error("PRODUCT_CASE_IMPORT_OUTPUT_CONTRACT_VERSION_INVALID")
   }
   if (
     legacyExport &&
-    envelope.outputContractVersion !== undefined
+    envelopeOutputContractVersion !== undefined
   ) {
     throw new Error("PRODUCT_CASE_IMPORT_LEGACY_OUTPUT_CONTRACT_INVALID")
   }
@@ -7786,19 +8935,48 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
   let historicalOutputAudit: ProductCaseLegacyImportAudit | null = null
   let legacyHistoricalOutput: ProductCaseRunnerOutput | null = null
   let legacyOutputRebuilt = false
-  if (currentExport && outputMismatchDiagnostic.pathCount > 0) {
+  let preIdentityOutputRebuilt = false
+  if (currentOutputContract && outputMismatchDiagnostic.pathCount > 0) {
     throw new Error(
       `PRODUCT_CASE_IMPORT_OUTPUT_MISMATCH:${
         outputMismatchErrorDetails(outputMismatchDiagnostic)
       }`,
     )
   }
-  if (currentExport) {
+  if (preIdentityOutputContract) {
+    if (
+      workspaceState.document.identityReview.humanReview ||
+      !envelope.output
+    ) {
+      throw new Error(
+        "PRODUCT_CASE_IMPORT_PRE_IDENTITY_OUTPUT_PROFILE_INVALID",
+      )
+    }
+    validateHistoricalOutputStructure(envelope.output, workspaceState)
+    if (
+      outputMismatchDiagnostic.pathCount > 0 &&
+      !outputMismatchDiagnostic.allVersionedLegacyDerivedPaths
+    ) {
+      throw new Error(
+        `PRODUCT_CASE_IMPORT_OUTPUT_MISMATCH:${
+          outputMismatchErrorDetails(outputMismatchDiagnostic)
+        }`,
+      )
+    }
+    preIdentityOutputRebuilt = true
+    legacyOutputRebuilt = true
+  }
+  if (currentOutputContract) {
     await validateLegacyImportAuditIntegrity(
       workspaceState.legacyImportAudit,
       {
         currentOutput: recomputedOriginal.output,
       },
+    )
+  } else if (preIdentityOutputContract &&
+    workspaceState.legacyImportAudit) {
+    await validateLegacyImportAuditSnapshotIntegrity(
+      workspaceState.legacyImportAudit,
     )
   }
   if (legacyExport) {
@@ -7844,22 +9022,41 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
   )
   reviewRequiredState.document.imageAnalysis.contractIssues =
     visualReviewContractIssues
-  reviewRequiredState.document.identityReview = {
-    ...reviewRequiredState.document.identityReview,
-    status: "NOT_REVIEWED",
-    confidence: "LOW",
-    physicalProductVerified: false,
-    physicalVerificationEvidenceIds: [],
-    blockers: unique([
-      "IMPORTED_IDENTITY_REQUIRES_NEW_LOCAL_HUMAN_REVIEW",
-      ...(legacyAuditPresent
-        ? [PRODUCT_CASE_LEGACY_OUTPUT_WARNING]
-        : []),
-      ...visualReviewContractIssues,
-      ...reviewRequiredState.document.identityReview.blockers,
-    ]),
-    nextAction: "REVALIDATE_IMPORTED_PRODUCT_CASE_LOCALLY",
-  }
+  const canonicalHumanIdentityReview =
+    currentExport &&
+    reviewRequiredState.document.identityReview.humanReview
+      ?.contractVersion === HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION
+  reviewRequiredState.document.identityReview =
+    canonicalHumanIdentityReview
+      ? {
+          ...reviewRequiredState.document.identityReview,
+          blockers: unique([
+            ...(legacyAuditPresent
+              ? [PRODUCT_CASE_LEGACY_OUTPUT_WARNING]
+              : []),
+            ...visualReviewContractIssues,
+            ...reviewRequiredState.document.identityReview.blockers,
+          ]),
+        }
+      : {
+          ...reviewRequiredState.document.identityReview,
+          status: "NOT_REVIEWED",
+          confidence: "LOW",
+          physicalProductVerified: false,
+          physicalVerificationEvidenceIds: [],
+          blockers: unique([
+            "IMPORTED_IDENTITY_REQUIRES_NEW_LOCAL_HUMAN_REVIEW",
+            ...(preIdentityOutputRebuilt
+              ? [PRODUCT_CASE_PRE_IDENTITY_OUTPUT_WARNING]
+              : []),
+            ...(legacyAuditPresent
+              ? [PRODUCT_CASE_LEGACY_OUTPUT_WARNING]
+              : []),
+            ...visualReviewContractIssues,
+            ...reviewRequiredState.document.identityReview.blockers,
+          ]),
+          nextAction: "REVALIDATE_IMPORTED_PRODUCT_CASE_LOCALLY",
+        }
   reviewRequiredState.document.humanReview = {
     ...reviewRequiredState.document.humanReview,
     conclusion: {
@@ -7995,6 +9192,11 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     historicalOutputAudit ??
     rebuilt.workspaceState.legacyImportAudit ??
     null
+  const preIdentityOutputWarningPresent =
+    preIdentityOutputRebuilt ||
+    rebuilt.workspaceState.document.identityReview.blockers.includes(
+      PRODUCT_CASE_PRE_IDENTITY_OUTPUT_WARNING,
+    )
   return {
     importMode: "VIEW_ONLY" as const,
     humanReviewStatus: "HUMAN_REVIEW_REQUIRED" as const,
@@ -8006,9 +9208,13 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     visualReviewContractIssues,
     visualReviewCorrectionRequired: visualReviewContractIssues.length > 0,
     legacyOutputRebuilt,
-    importWarnings: effectiveHistoricalOutputAudit
-      ? [PRODUCT_CASE_LEGACY_OUTPUT_WARNING] as const
-      : [],
+    preIdentityOutputRebuilt,
+    importWarnings: [
+      ...(effectiveHistoricalOutputAudit
+        ? [PRODUCT_CASE_LEGACY_OUTPUT_WARNING] : []),
+      ...(preIdentityOutputWarningPresent
+        ? [PRODUCT_CASE_PRE_IDENTITY_OUTPUT_WARNING] : []),
+    ],
     outputMismatchPaths,
     historicalOutputAudit: effectiveHistoricalOutputAudit,
     sourceWorkspaceExportVersion: envelopeVersion as

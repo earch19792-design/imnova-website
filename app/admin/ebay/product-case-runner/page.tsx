@@ -11,25 +11,30 @@ import {
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 import { supabase } from "@/lib/supabase"
 import {
+  acceptedProductCaseEvidence,
   applyProductCaseEvidenceReview,
   buildProductCaseRunnerOutput,
   buildStrategyLabAdapterPreview,
   createProductCaseWorkspaceExport,
   createHumanVisualReviewRecord,
   createManualAuthenticatedSupplierSourceCapture,
+  deleteHumanIdentityReviewRecord,
   deleteHumanVisualReviewRecord,
   extractProductCaseEvidence,
   importProductCaseWorkspaceExport,
   mergeProductCaseEvidenceCaptures,
   PRODUCT_CASE_CONTENT_MAX_BYTES,
   HUMAN_VISUAL_REVIEW_CONTRACT_VERSION,
+  HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION,
   PRODUCT_CASE_OPERATIONAL_PHASES,
+  PRODUCT_CASE_HUMAN_IDENTITY_FIELDS as HUMAN_IDENTITY_FIELDS,
   PRODUCT_CASE_RUNNER_VERSION,
   PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES,
   PRODUCT_CASE_ZERO_EFFECTS,
   refreshProductCaseLegacyImportAuditForExport,
   resolveLunaSourceContractGuard,
   reviewHumanComparableCandidate,
+  saveHumanIdentityReviewRecord,
   serializeProductCaseWorkspaceExport,
   transitionProductCaseSupplierCapture,
   validateProductCaseImportFileMetadata,
@@ -37,6 +42,7 @@ import {
   validateManualAuthenticatedVisibleSourceText,
   validateLunaProductUrl,
   type ProductCaseDocument,
+  type ProductCaseHumanIdentityReview,
   type ProductCaseImageApproval,
   type ProductCaseImageObservation,
   type ProductCaseLegacyImportAudit,
@@ -109,6 +115,30 @@ type VisualObservationDraft = {
   confidence: ProductCaseDocument["imageAnalysis"]["observations"][number]["confidence"]
   humanDecision: ProductCaseDocument["imageAnalysis"]["observations"][number]["humanDecision"]
   humanReason: string
+}
+
+type HumanIdentityReviewDraft = {
+  reviewer: string
+  decision:
+    | "NEEDS_MORE_EVIDENCE"
+    | "CONFLICT_CONFIRMED"
+    | "IDENTITY_CONFIRMED"
+  confidence: "LOW" | "MEDIUM" | "HIGH"
+  humanReason: string
+  evidenceIds: string[]
+  sameGeneralProductTypeConfirmed: boolean
+  exactIdentityConfirmed: boolean
+  brandConfirmed: boolean
+  brand: string
+  model: string
+  mpn: string
+  supplierProductId: string
+  supplierSku: string
+  variantId: string
+  color: string
+  packQuantity: string
+  physicalProductVerified: boolean
+  physicalVerificationEvidenceIds: string[]
 }
 
 type ComparableReviewDraft = {
@@ -211,8 +241,8 @@ const PRODUCT_CASE_PHASE_NAVIGATION_TARGETS = [
     focusId: "human-visual-review-heading",
   },
   {
-    anchorId: "phase-2-evidence-review",
-    focusId: "evidence-review-heading",
+    anchorId: "phase-4-identity-and-variants",
+    focusId: "identity-review-heading",
   },
   {
     anchorId: "strategy-input-preview",
@@ -289,6 +319,27 @@ const emptyVisualObservationDraft: VisualObservationDraft = {
   confidence: "LOW",
   humanDecision: "NEEDS_MORE_EVIDENCE",
   humanReason: "",
+}
+
+const emptyHumanIdentityReviewDraft: HumanIdentityReviewDraft = {
+  reviewer: "",
+  decision: "NEEDS_MORE_EVIDENCE",
+  confidence: "LOW",
+  humanReason: "",
+  evidenceIds: [],
+  sameGeneralProductTypeConfirmed: false,
+  exactIdentityConfirmed: false,
+  brandConfirmed: false,
+  brand: "",
+  model: "",
+  mpn: "",
+  supplierProductId: "",
+  supplierSku: "",
+  variantId: "",
+  color: "",
+  packQuantity: "",
+  physicalProductVerified: false,
+  physicalVerificationEvidenceIds: [],
 }
 
 function visualObservationDraftFrom(
@@ -433,6 +484,7 @@ const physicalInspectionFields = [
 ] as const
 
 const humanListingDecisionFields = [
+  "ebay_optimized_title",
   "ebay_category",
   "ebay_condition",
   "ebay_item_specific",
@@ -476,6 +528,128 @@ function display(value: unknown) {
 function evidenceId(value: unknown) {
   const entry = record(value)
   return text(entry.evidenceId ?? entry.id, "EVIDENCE_ID_MISSING")
+}
+
+function humanIdentityReviewDraftFrom(
+  identityReview: ProductCaseDocument["identityReview"],
+): HumanIdentityReviewDraft {
+  const review = record(record(identityReview).humanReview)
+  if (Object.keys(review).length === 0) {
+    return { ...emptyHumanIdentityReviewDraft }
+  }
+  const rawHumanInput = record(review.rawHumanInput)
+  const decisionValue = text(review.decision, "NEEDS_MORE_EVIDENCE")
+  const decision: HumanIdentityReviewDraft["decision"] = [
+    "NEEDS_MORE_EVIDENCE",
+    "CONFLICT_CONFIRMED",
+    "IDENTITY_CONFIRMED",
+  ].includes(decisionValue)
+    ? decisionValue as HumanIdentityReviewDraft["decision"]
+    : "NEEDS_MORE_EVIDENCE"
+  const confidenceValue = text(review.confidence, "LOW")
+  const confidence: HumanIdentityReviewDraft["confidence"] = [
+    "LOW",
+    "MEDIUM",
+    "HIGH",
+  ].includes(confidenceValue)
+    ? confidenceValue as HumanIdentityReviewDraft["confidence"]
+    : "LOW"
+  const rawOrReview = (field: string) => {
+    const rawValue = rawHumanInput[field]
+    if (typeof rawValue === "string") return rawValue
+    const reviewValue = review[field]
+    if (typeof reviewValue === "string") return reviewValue
+    if (typeof reviewValue === "number") return String(reviewValue)
+    return ""
+  }
+  const booleanValue = (field: string) =>
+    review[field] === true ||
+    (review[field] === undefined && rawHumanInput[field] === true)
+  const rawEvidenceIds = Array.isArray(rawHumanInput.evidenceIds)
+    ? rawHumanInput.evidenceIds.map(String)
+    : strings(review.evidenceIds)
+  const rawPhysicalEvidenceIds = Array.isArray(
+      rawHumanInput.physicalVerificationEvidenceIds,
+    )
+    ? rawHumanInput.physicalVerificationEvidenceIds.map(String)
+    : strings(review.physicalVerificationEvidenceIds)
+  return {
+    reviewer: rawOrReview("reviewer"),
+    decision,
+    confidence,
+    humanReason: rawOrReview("humanReason"),
+    evidenceIds: rawEvidenceIds,
+    sameGeneralProductTypeConfirmed: booleanValue(
+      "sameGeneralProductTypeConfirmed",
+    ),
+    exactIdentityConfirmed: booleanValue("exactIdentityConfirmed"),
+    brandConfirmed: booleanValue("brandConfirmed"),
+    brand: rawOrReview("brand"),
+    model: rawOrReview("model"),
+    mpn: rawOrReview("mpn"),
+    supplierProductId: rawOrReview("supplierProductId"),
+    supplierSku: rawOrReview("supplierSku"),
+    variantId: rawOrReview("variantId"),
+    color: rawOrReview("color"),
+    packQuantity: rawOrReview("packQuantity"),
+    physicalProductVerified: booleanValue("physicalProductVerified"),
+    physicalVerificationEvidenceIds: rawPhysicalEvidenceIds,
+  }
+}
+
+function cloneHumanIdentityReviewDraft(
+  draft: HumanIdentityReviewDraft,
+): HumanIdentityReviewDraft {
+  return {
+    ...draft,
+    evidenceIds: [...draft.evidenceIds],
+    physicalVerificationEvidenceIds:
+      [...draft.physicalVerificationEvidenceIds],
+  }
+}
+
+function humanIdentityRawInputFrom(
+  identityReview: ProductCaseDocument["identityReview"],
+): ProductCaseHumanIdentityReview["rawHumanInput"] | null {
+  return identityReview.humanReview?.rawHumanInput
+    ? structuredClone(identityReview.humanReview.rawHumanInput)
+    : null
+}
+
+function humanIdentityRawInputForSave(
+  draft: HumanIdentityReviewDraft,
+  baseline: HumanIdentityReviewDraft,
+  original:
+    ProductCaseHumanIdentityReview["rawHumanInput"] | null,
+): ProductCaseHumanIdentityReview["rawHumanInput"] {
+  if (
+    original &&
+    JSON.stringify(draft) === JSON.stringify(baseline)
+  ) {
+    return structuredClone(original)
+  }
+  return {
+    reviewer: draft.reviewer,
+    decision: draft.decision,
+    confidence: draft.confidence,
+    humanReason: draft.humanReason,
+    evidenceIds: [...draft.evidenceIds],
+    sameGeneralProductTypeConfirmed:
+      draft.sameGeneralProductTypeConfirmed,
+    exactIdentityConfirmed: draft.exactIdentityConfirmed,
+    brandConfirmed: draft.brandConfirmed,
+    brand: draft.brand,
+    model: draft.model,
+    mpn: draft.mpn,
+    supplierProductId: draft.supplierProductId,
+    supplierSku: draft.supplierSku,
+    variantId: draft.variantId,
+    color: draft.color,
+    packQuantity: draft.packQuantity,
+    physicalProductVerified: draft.physicalProductVerified,
+    physicalVerificationEvidenceIds:
+      [...draft.physicalVerificationEvidenceIds],
+  }
 }
 
 function mergeEvidence(
@@ -662,6 +836,40 @@ export default function ProductCaseRunnerPage() {
         fixtureDocument.identityReview,
       ) as ProductCaseDocument["identityReview"]
     )
+  const [humanIdentityReviewDraft, setHumanIdentityReviewDraft] =
+    useState<HumanIdentityReviewDraft>(() =>
+      humanIdentityReviewDraftFrom(
+        fixtureDocument.identityReview as
+          ProductCaseDocument["identityReview"],
+        )
+    )
+  const [
+    humanIdentityReviewDraftBaseline,
+    setHumanIdentityReviewDraftBaseline,
+  ] = useState<HumanIdentityReviewDraft>(() =>
+    cloneHumanIdentityReviewDraft(
+      humanIdentityReviewDraftFrom(
+        fixtureDocument.identityReview as
+          ProductCaseDocument["identityReview"],
+      ),
+    )
+  )
+  const [
+    humanIdentityRawInputSnapshot,
+    setHumanIdentityRawInputSnapshot,
+  ] = useState<ProductCaseHumanIdentityReview["rawHumanInput"] | null>(
+    () =>
+      humanIdentityRawInputFrom(
+        fixtureDocument.identityReview as
+          ProductCaseDocument["identityReview"],
+      ),
+  )
+  const [editingHumanIdentityReview, setEditingHumanIdentityReview] =
+    useState(() =>
+      Object.keys(
+        record(record(fixtureDocument.identityReview).humanReview),
+      ).length === 0
+    )
   const [economicsPolicy, setEconomicsPolicy] = useState<
     Parameters<typeof buildStrategyLabAdapterPreview>[0]["economicsPolicy"]
   >(() => (fixtureDocument.economicsPolicy ?? null) as
@@ -705,6 +913,10 @@ export default function ProductCaseRunnerPage() {
   )
   const [notice, setNotice] = useState("")
   const [error, setError] = useState("")
+  const [
+    humanIdentityReviewError,
+    setHumanIdentityReviewError,
+  ] = useState("")
   const [workspaceExportError, setWorkspaceExportError] = useState("")
   const [extracting, setExtracting] = useState(false)
   const [generatedPackage, setGeneratedPackage] =
@@ -741,12 +953,27 @@ export default function ProductCaseRunnerPage() {
     text(fixtureDocument.createdAt, new Date().toISOString())
   )
   const resultsHeadingRef = useRef<HTMLHeadingElement>(null)
+  const humanIdentityReviewErrorRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => () => {
     if (visualReviewHighlightTimeoutRef.current) {
       clearTimeout(visualReviewHighlightTimeoutRef.current)
     }
   }, [])
+
+  useEffect(() => {
+    const savedReview = record(record(identityReviewState).humanReview)
+    const nextDraft = humanIdentityReviewDraftFrom(identityReviewState)
+    setHumanIdentityReviewDraft(nextDraft)
+    setHumanIdentityReviewDraftBaseline(
+      cloneHumanIdentityReviewDraft(nextDraft),
+    )
+    setHumanIdentityRawInputSnapshot(
+      humanIdentityRawInputFrom(identityReviewState),
+    )
+    setHumanIdentityReviewError("")
+    setEditingHumanIdentityReview(Object.keys(savedReview).length === 0)
+  }, [identityReviewState])
 
   const urlValidation = useMemo(
     () => validateLunaProductUrl(sourceUrl),
@@ -906,6 +1133,91 @@ export default function ProductCaseRunnerPage() {
   const outputDocument = record(output.document)
   const visualAnalysis = record(outputDocument.imageAnalysis)
   const identityReview = record(outputDocument.identityReview)
+  const savedHumanIdentityReview = record(identityReview.humanReview)
+  const supplierIdentityEvidenceIds = strings(
+    identityReview.supplierEvidenceIds,
+  )
+  const humanObservationIdentityEvidenceIds = strings(
+    identityReview.humanObservationEvidenceIds,
+  )
+  const acceptedIdentityEvidenceIds = new Set(
+    acceptedProductCaseEvidence(evidence).map((entry) => entry.id),
+  )
+  const admissibleIdentityEvidence = evidence.filter((entry) => {
+    const row = record(entry)
+    const id = evidenceId(entry)
+    const status = text(row.evidenceStatus, "")
+    const evidenceClass = text(row.evidenceClass, "")
+    if (
+      ["REJECTED", "NEEDS_MORE_EVIDENCE", "MISSING", "CONFLICTED"]
+        .includes(status) ||
+      ["MISSING", "CONFLICTED"].includes(evidenceClass)
+    ) return false
+    if (acceptedIdentityEvidenceIds.has(id)) return true
+    const observation = imageAnalysis.observations.find((candidate) =>
+      candidate.evidenceId === id
+    )
+    return Boolean(
+      observation &&
+      observation.contractVersion ===
+        HUMAN_VISUAL_REVIEW_CONTRACT_VERSION &&
+      observation.rawHumanInput &&
+      observation.humanDecision === "ACCEPT_FOR_ANALYSIS" &&
+      observation.contentHash === text(row.contentHash, "") &&
+      text(row.sourceType, "") === "HUMAN_VISUAL_OBSERVATION" &&
+      text(row.sourceEvidenceClass, "") === "HUMAN_VISUAL_REVIEW" &&
+      captures.some((capture) =>
+        capture.sourceType === "HUMAN_VISUAL_OBSERVATION" &&
+        capture.contentHash === observation.contentHash
+      )
+    )
+  })
+  const identityEvidenceCandidates =
+    admissibleIdentityEvidence.filter((entry) => {
+    const row = record(entry)
+    const field = text(row.field, "")
+    return (
+      [
+        "title",
+        "product_type",
+        "visual_observation",
+        ...HUMAN_IDENTITY_FIELDS,
+      ].includes(field) &&
+      text(row.sourceEvidenceClass, "") !== "SUPPLIER_MARKETING_CLAIM"
+    )
+  })
+  const availableIdentityFieldRows = [
+    "product_type",
+    ...HUMAN_IDENTITY_FIELDS,
+  ].map((field) => {
+    const entry = admissibleIdentityEvidence.find((candidate) => {
+      const row = record(candidate)
+      return text(row.field, "") === field
+    })
+    const row = record(entry)
+    return {
+      field,
+      evidenceId: entry ? evidenceId(entry) : null,
+      value: entry
+        ? row.correctedValue ?? row.normalizedValue ?? row.rawValue
+        : null,
+      sourceEvidenceClass: entry
+        ? text(row.sourceEvidenceClass, "")
+        : null,
+    }
+  })
+  const missingIdentityFields = availableIdentityFieldRows
+    .filter((row) => row.field !== "product_type" && row.value === null)
+    .map((row) => row.field)
+  const activeIdentityConflicts = [
+    text(identityReview.currentConflict, ""),
+    ...imageAnalysis.observations.flatMap((observation) =>
+      observation.possibleConflicts
+    ),
+  ].filter((entry, index, all) =>
+    Boolean(entry) && all.indexOf(entry) === index
+  )
+  const identityBlockers = strings(identityReview.blockers)
   const imageRegistryEntries = rows(imageRegistry.entries)
   const phaseSnapshots = rows(output.operationalPipeline)
   const blockedPhaseSnapshots = phaseSnapshots.filter((phase) =>
@@ -1103,7 +1415,11 @@ export default function ProductCaseRunnerPage() {
     if (!target) return
     event.preventDefault()
     setActivePhaseIndex(index)
-    focusProductCaseTarget(target.anchorId, target.focusId)
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        focusProductCaseTarget(target.anchorId, target.focusId)
+      })
+    })
   }
 
   function changeSourceUrl(nextUrl: string) {
@@ -1164,6 +1480,7 @@ export default function ProductCaseRunnerPage() {
       humanObservationEvidenceIds: [],
       blockers: [],
       nextAction: "CAPTURE_AUTHENTICATED_SUPPLIER_EVIDENCE",
+      humanReview: null,
     })
     setEconomicsPolicy(null)
     setScenarioDraft(null)
@@ -1319,6 +1636,7 @@ export default function ProductCaseRunnerPage() {
           humanObservationEvidenceIds: [],
           blockers: ["HUMAN_IDENTITY_REVIEW_REQUIRED"],
           nextAction: "REVIEW_PRODUCT_EVIDENCE",
+          humanReview: null,
         }))
       }
       const proposedTitle = result.evidence.find((entry) =>
@@ -1412,13 +1730,31 @@ export default function ProductCaseRunnerPage() {
           ? draft.correctedValue
           : undefined,
       })
+      const sourceType = text(record(entry).sourceType, "")
+      const invalidatesIdentity =
+        sourceType.startsWith("LUNA_") ||
+        sourceType === "HUMAN_VISUAL_OBSERVATION"
       setEvidence(reviewedEvidence)
+      if (invalidatesIdentity) {
+        const invalidatedDocument = deleteHumanIdentityReviewRecord({
+          document: {
+            ...productCase,
+            evidence: reviewedEvidence,
+          },
+        })
+        setIdentityReviewState(invalidatedDocument.identityReview)
+      }
+      setGeneratedPackage(null)
       setAppliedReviewDecisions((current) => ({
         ...current,
         [id]: draft.action,
       }))
       setNotice(
-        `${id}: ${draft.action}. El valor raw/original permanece preservado.`,
+        `${id}: ${draft.action}. El valor raw/original permanece preservado.${
+          invalidatesIdentity
+            ? " La revisión de identidad y los artefactos derivados fueron invalidados."
+            : ""
+        }`,
       )
     } catch (caught) {
       setError(
@@ -1787,6 +2123,130 @@ export default function ProductCaseRunnerPage() {
     setRunnerTimestamp(changedAt)
     setNotice(
       "Revisión visual humana eliminada de la memoria actual; export/import conserva únicamente el estado vigente.",
+    )
+  }
+
+  function toggleHumanIdentityEvidenceId(
+    selectedEvidenceId: string,
+    selected: boolean,
+  ) {
+    setHumanIdentityReviewDraft((current) => ({
+      ...current,
+      evidenceIds: selected
+        ? [...new Set([...current.evidenceIds, selectedEvidenceId])]
+        : current.evidenceIds.filter((id) => id !== selectedEvidenceId),
+    }))
+  }
+
+  function showHumanIdentityReviewError(message: string) {
+    setHumanIdentityReviewError(message)
+    window.requestAnimationFrame(() => {
+      humanIdentityReviewErrorRef.current?.focus()
+    })
+  }
+
+  async function saveHumanIdentityReview() {
+    setHumanIdentityReviewError("")
+    setNotice("")
+    const draft = humanIdentityReviewDraft
+    if (!draft.reviewer.trim() || !draft.humanReason.trim()) {
+      showHumanIdentityReviewError(
+        "HUMAN_IDENTITY_REVIEW_REVIEWER_AND_REASON_REQUIRED",
+      )
+      return
+    }
+    if (draft.evidenceIds.length === 0) {
+      showHumanIdentityReviewError(
+        "HUMAN_IDENTITY_REVIEW_EVIDENCE_REQUIRED",
+      )
+      return
+    }
+    const reviewedAt = new Date().toISOString()
+    const rawHumanInput = humanIdentityRawInputForSave(
+      draft,
+      humanIdentityReviewDraftBaseline,
+      humanIdentityRawInputSnapshot,
+    )
+    try {
+      const result = await saveHumanIdentityReviewRecord({
+        document: productCase,
+        reviewer: draft.reviewer.trim(),
+        reviewedAt,
+        decision: draft.decision,
+        confidence: draft.confidence,
+        humanReason: draft.humanReason.trim(),
+        evidenceIds: [...draft.evidenceIds],
+        sameGeneralProductTypeConfirmed:
+          draft.sameGeneralProductTypeConfirmed,
+        exactIdentityConfirmed: draft.exactIdentityConfirmed,
+        brandConfirmed: draft.brandConfirmed,
+        brand: draft.brand.trim() || null,
+        model: draft.model.trim() || null,
+        mpn: draft.mpn.trim() || null,
+        supplierProductId: draft.supplierProductId.trim() || null,
+        supplierSku: draft.supplierSku.trim() || null,
+        variantId: draft.variantId.trim() || null,
+        color: draft.color.trim() || null,
+        packQuantity: nullableInteger(draft.packQuantity),
+        physicalProductVerified: draft.physicalProductVerified,
+        physicalVerificationEvidenceIds:
+          [...draft.physicalVerificationEvidenceIds],
+        rawHumanInput,
+      })
+      setIdentityReviewState(result.updatedDocument.identityReview)
+      setGeneratedPackage(null)
+      setRunnerTimestamp(reviewedAt)
+      setEditingHumanIdentityReview(false)
+      setNotice(
+        "Revisión humana de identidad guardada localmente. Identidad, readiness y handoff continúan fail-closed.",
+      )
+    } catch (caught) {
+      showHumanIdentityReviewError(
+        caught instanceof Error
+          ? caught.message
+          : "HUMAN_IDENTITY_REVIEW_INVALID",
+      )
+    }
+  }
+
+  function editHumanIdentityReview() {
+    const nextDraft = humanIdentityReviewDraftFrom(identityReviewState)
+    setHumanIdentityReviewDraft(nextDraft)
+    setHumanIdentityReviewDraftBaseline(
+      cloneHumanIdentityReviewDraft(nextDraft),
+    )
+    setHumanIdentityRawInputSnapshot(
+      humanIdentityRawInputFrom(identityReviewState),
+    )
+    setHumanIdentityReviewError("")
+    setEditingHumanIdentityReview(true)
+    setNotice("Editando revisión humana de identidad en memoria.")
+    window.requestAnimationFrame(() => {
+      focusProductCaseTarget(
+        "phase-4-identity-and-variants",
+        "phase4-identity-reviewer",
+      )
+    })
+  }
+
+  function deleteHumanIdentityReview() {
+    setHumanIdentityReviewError("")
+    const updatedDocument = deleteHumanIdentityReviewRecord({
+      document: productCase,
+    })
+    setIdentityReviewState(updatedDocument.identityReview)
+    setGeneratedPackage(null)
+    setRunnerTimestamp(new Date().toISOString())
+    setNotice(
+      "Revisión humana de identidad eliminada localmente; readiness, paquete y handoff permanecen bloqueados.",
+    )
+  }
+
+  function reviewMissingIdentityEvidence() {
+    setActivePhaseIndex(1)
+    focusProductCaseTarget(
+      "phase-2-evidence-review",
+      "evidence-review-heading",
     )
   }
 
@@ -2161,9 +2621,14 @@ export default function ProductCaseRunnerPage() {
         phaseContract:
           "PRODUCT_CASE_OPERATIONAL_PIPELINE_12_PHASES_5_STATUSES",
       })
+      const preIdentityOutputRebuilt = importedResult.importWarnings.includes(
+        "PRE_IDENTITY_CONTRACT_OUTPUT_REBUILT_WITH_CURRENT_DOMAIN",
+      )
       setNotice(
         importedResult.historicalOutputAudit
           ? `${importedResult.importWarnings.join(" · ")}. El output histórico se conserva sólo para auditoría; identidad, readiness, paquete y handoff permanecen bloqueados.`
+          : preIdentityOutputRebuilt
+          ? "PRE_IDENTITY_CONTRACT_OUTPUT_REBUILT_WITH_CURRENT_DOMAIN. El output anterior no se reutilizó: el dominio actual lo reconstruyó completamente en modo fail-closed; identidad, readiness, paquete y handoff permanecen bloqueados."
           : importedResult.visualReviewCorrectionRequired
           ? `PRODUCT CASE importado sin corregir datos legacy. Corrección humana obligatoria: ${importedResult.visualReviewContractIssues.join(" · ")}`
           : "PRODUCT CASE JSON importado, validado por el dominio y conservado sólo en memoria del navegador.",
@@ -2489,6 +2954,38 @@ export default function ProductCaseRunnerPage() {
           )}
           {importRoundtrip && (
             <>
+              {!importRoundtrip.historicalOutputAudit &&
+                importRoundtrip.importWarnings.includes(
+                  "PRE_IDENTITY_CONTRACT_OUTPUT_REBUILT_WITH_CURRENT_DOMAIN",
+                ) && (
+                <div
+                  role="status"
+                  data-testid="product-case-pre-identity-output-warning"
+                  className="mt-4 rounded-2xl border border-amber-200/30 bg-amber-200/[0.08] p-4 text-amber-50"
+                >
+                  <p className="text-sm font-black">
+                    PRE_IDENTITY_CONTRACT_OUTPUT_REBUILT_WITH_CURRENT_DOMAIN
+                  </p>
+                  <p className="mt-2 text-xs leading-5 opacity-75">
+                    Este export es anterior al contrato canónico de identidad.
+                    El output anterior no se reutilizó: fue reconstruido
+                    completamente con el dominio actual en modo fail-closed.
+                    Identidad, readiness, paquete y handoff permanecen
+                    bloqueados hasta una nueva revisión humana.
+                  </p>
+                  <p className="mt-3 text-xs font-black">
+                    {importRoundtrip.sourceWorkspaceExportVersion} →{" "}
+                    {importRoundtrip.currentOutputContractVersion}
+                  </p>
+                  {importRoundtrip.importWarnings.length > 1 && (
+                    <ul className="mt-3 grid gap-1 font-mono text-[11px]">
+                      {importRoundtrip.importWarnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
               {importRoundtrip.historicalOutputAudit && (
                 <div
                   data-testid="product-case-legacy-output-warning"
@@ -3919,6 +4416,602 @@ export default function ProductCaseRunnerPage() {
         </section>
 
         <section
+          id="phase-4-identity-and-variants"
+          aria-labelledby="identity-review-heading"
+          className="mt-5 scroll-mt-28 rounded-[32px] border border-violet-200/20 bg-violet-200/[0.035] p-5 sm:p-7"
+        >
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-violet-100/65">
+            OPERATIONAL PHASE 4 · IDENTITY_AND_VARIANTS
+          </p>
+          <h2
+            id="identity-review-heading"
+            tabIndex={-1}
+            className="mt-2 scroll-mt-28 text-2xl font-black outline-none"
+          >
+            Revisión humana de identidad y variante
+          </h2>
+          <p className="mt-2 max-w-4xl text-sm leading-6 text-white/55">
+            Determina si la evidencia describe el mismo tipo general de
+            producto sin convertir esa coincidencia aparente en identidad
+            exacta. El título original de Luna permanece SUPPLIER_STATED:
+            nunca demuestra marca, modelo o variante y no es un título eBay
+            optimizado.
+          </p>
+          <p className="mt-3 rounded-2xl border border-violet-200/20 bg-violet-200/[0.04] p-3 text-xs font-black">
+            {HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION} · HUMAN REVIEW ·
+            physicalProductVerified:
+            {String(Boolean(identityReview.physicalProductVerified))} ·
+            canPublishAutomatically:false ·
+            manualHandoffAllowed efectivo:
+            {String(manualHandoffAllowed)}
+          </p>
+          {humanIdentityReviewError && (
+            <div
+              ref={humanIdentityReviewErrorRef}
+              id="phase4-identity-review-error"
+              role="alert"
+              tabIndex={-1}
+              className="mt-4 scroll-mt-28 rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm font-black text-rose-50 outline-none focus-visible:ring-2 focus-visible:ring-rose-100"
+            >
+              {humanIdentityReviewError}
+            </div>
+          )}
+
+          <div className="mt-5 grid gap-4 xl:grid-cols-2">
+            <section
+              aria-labelledby="identity-evidence-links-heading"
+              className="rounded-3xl border border-cyan-200/20 bg-black/20 p-4"
+            >
+              <h3
+                id="identity-evidence-links-heading"
+                className="font-black"
+              >
+                Evidencia enlazada por procedencia
+              </h3>
+              <dl className="mt-3 grid gap-3 text-xs">
+                <div className="rounded-xl border border-cyan-200/15 p-3">
+                  <dt className="font-black text-cyan-100">
+                    Evidencia declarada por proveedor — supplierEvidenceIds
+                  </dt>
+                  <dd className="mt-2">
+                    {supplierIdentityEvidenceIds.length > 0
+                      ? (
+                        <ul className="grid gap-1 font-mono">
+                          {supplierIdentityEvidenceIds.map((id) => (
+                            <li key={id} className="break-all">{id}</li>
+                          ))}
+                        </ul>
+                      )
+                      : "MISSING"}
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-violet-200/20 p-3">
+                  <dt className="font-black text-violet-100">
+                    Observaciones humanas — humanObservationEvidenceIds
+                  </dt>
+                  <dd className="mt-2">
+                    {humanObservationIdentityEvidenceIds.length > 0
+                      ? (
+                        <ul className="grid gap-1 font-mono">
+                          {humanObservationIdentityEvidenceIds.map((id) => (
+                            <li key={id} className="break-all">{id}</li>
+                          ))}
+                        </ul>
+                      )
+                      : "MISSING"}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+
+            <section
+              aria-labelledby="identity-current-state-heading"
+              className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.04] p-4"
+            >
+              <h3 id="identity-current-state-heading" className="font-black">
+                Estado y bloqueos vigentes
+              </h3>
+              <dl className="mt-3 grid gap-3 text-xs sm:grid-cols-2">
+                <div>
+                  <dt className="text-white/45">Status</dt>
+                  <dd className="mt-1 font-black">
+                    {display(identityReview.status)}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-white/45">Confidence</dt>
+                  <dd className="mt-1 font-black">
+                    {display(identityReview.confidence)}
+                  </dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-white/45">Conflictos activos</dt>
+                  <dd className="mt-1">
+                    {activeIdentityConflicts.length > 0
+                      ? (
+                        <ul className="grid gap-1 font-mono">
+                          {activeIdentityConflicts.map((conflict) => (
+                            <li key={conflict}>{conflict}</li>
+                          ))}
+                        </ul>
+                      )
+                      : "NONE"}
+                  </dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-white/45">Bloqueos — blockers</dt>
+                  <dd className="mt-1">
+                    {identityBlockers.length > 0
+                      ? (
+                        <ul className="grid gap-1 font-mono">
+                          {identityBlockers.map((blocker) => (
+                            <li key={blocker}>{blocker}</li>
+                          ))}
+                        </ul>
+                      )
+                      : "NONE"}
+                  </dd>
+                </div>
+                <div className="sm:col-span-2">
+                  <dt className="text-white/45">Siguiente acción</dt>
+                  <dd className="mt-1 font-black">
+                    {display(identityReview.nextAction)}
+                  </dd>
+                </div>
+              </dl>
+              <button
+                type="button"
+                onClick={reviewMissingIdentityEvidence}
+                className={`mt-4 min-h-11 rounded-xl border border-amber-100/30 bg-amber-100/[0.07] px-4 text-xs font-black ${buttonFocus}`}
+              >
+                REVISAR EVIDENCIA FALTANTE
+              </button>
+            </section>
+          </div>
+
+          <section
+            aria-labelledby="identity-fields-heading"
+            className="mt-4 rounded-3xl border border-white/10 bg-black/20 p-4"
+          >
+            <h3 id="identity-fields-heading" className="font-black">
+              Campos de identidad disponibles · Campos MISSING
+            </h3>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {availableIdentityFieldRows.map((row) => (
+                <article
+                  key={row.field}
+                  className={`rounded-xl border p-3 text-xs ${
+                    row.value === null
+                      ? "border-amber-200/25 bg-amber-200/[0.04]"
+                      : "border-cyan-200/20 bg-cyan-200/[0.035]"
+                  }`}
+                >
+                  <p className="font-mono font-black">{row.field}</p>
+                  <p className="mt-2 break-words font-black">
+                    {row.value === null ? "MISSING" : display(row.value)}
+                  </p>
+                  {row.evidenceId && (
+                    <p className="mt-2 break-all font-mono text-[10px] text-white/45">
+                      {row.evidenceId}
+                    </p>
+                  )}
+                  {row.sourceEvidenceClass && (
+                    <p className="mt-1 text-[10px] text-white/45">
+                      {row.sourceEvidenceClass}
+                    </p>
+                  )}
+                </article>
+              ))}
+            </div>
+            <p className="mt-3 text-xs font-black text-amber-100">
+              MISSING:{" "}
+              {missingIdentityFields.length > 0
+                ? missingIdentityFields.join(" · ")
+                : "NONE"}
+            </p>
+          </section>
+
+          {Object.keys(savedHumanIdentityReview).length > 0 &&
+            !editingHumanIdentityReview && (
+            <article
+              data-testid="human-identity-review-card"
+              className="mt-4 rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.045] p-4 sm:p-5"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="font-mono text-[10px] font-black tracking-wider text-emerald-100/65">
+                    HUMAN_IDENTITY_REVIEW_CONTRACT_V1
+                  </p>
+                  <h3 className="mt-1 text-lg font-black">
+                    REVISIÓN DE IDENTIDAD REGISTRADA
+                  </h3>
+                </div>
+                <span className="rounded-full border border-emerald-100/30 px-3 py-1 text-xs font-black">
+                  {display(savedHumanIdentityReview.status)}
+                </span>
+              </div>
+              <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2 xl:grid-cols-3">
+                {([
+                  ["contractVersion", "Versión — contractVersion"],
+                  ["contentHash", "Hash canónico — contentHash"],
+                  ["reviewer", "Revisor — reviewer"],
+                  ["reviewedAt", "Fecha automática — reviewedAt"],
+                  ["decision", "Decisión humana — decision"],
+                  ["confidence", "Confianza — confidence"],
+                  [
+                    "sameGeneralProductTypeConfirmed",
+                    "Mismo tipo general aparente",
+                  ],
+                  [
+                    "exactIdentityConfirmed",
+                    "Identidad exacta confirmada",
+                  ],
+                  ["brandConfirmed", "Marca confirmada independientemente"],
+                  ["brand", "Marca — brand"],
+                  ["model", "Modelo — model"],
+                  ["mpn", "MPN — mpn"],
+                  [
+                    "supplierProductId",
+                    "ID del producto del proveedor — supplierProductId",
+                  ],
+                  ["supplierSku", "SKU del proveedor — supplierSku"],
+                  ["variantId", "Variante — variantId"],
+                  ["color", "Color — color"],
+                  ["packQuantity", "Cantidad del pack — packQuantity"],
+                  [
+                    "physicalProductVerified",
+                    "Producto físico verificado — physicalProductVerified",
+                  ],
+                  [
+                    "physicalVerificationEvidenceIds",
+                    "Evidencia física — physicalVerificationEvidenceIds",
+                  ],
+                ] as const).map(([field, label]) => (
+                  <div
+                    key={field}
+                    className="rounded-xl border border-white/10 p-3"
+                  >
+                    <dt className="text-white/45">{label}</dt>
+                    <dd className="mt-1 break-words font-black">
+                      {display(savedHumanIdentityReview[field])}
+                    </dd>
+                  </div>
+                ))}
+                <div className="rounded-xl border border-white/10 p-3 sm:col-span-2 xl:col-span-3">
+                  <dt className="text-white/45">Motivo humano — humanReason</dt>
+                  <dd className="mt-1 whitespace-pre-wrap break-words font-black">
+                    {display(savedHumanIdentityReview.humanReason)}
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-white/10 p-3 sm:col-span-2 xl:col-span-3">
+                  <dt className="text-white/45">Evidencias — evidenceIds</dt>
+                  <dd className="mt-1 whitespace-pre-wrap break-all font-mono">
+                    {display(savedHumanIdentityReview.evidenceIds)}
+                  </dd>
+                </div>
+              </dl>
+              <details className="mt-3 rounded-xl border border-white/10 p-3 text-xs">
+                <summary className={`cursor-pointer font-black ${buttonFocus}`}>
+                  Texto humano original preservado — rawHumanInput
+                </summary>
+                <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-white/60">
+                  {display(savedHumanIdentityReview.rawHumanInput)}
+                </pre>
+              </details>
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={editHumanIdentityReview}
+                  className={`min-h-11 rounded-xl border border-cyan-200/30 bg-cyan-200/[0.07] px-4 text-xs font-black ${buttonFocus}`}
+                >
+                  EDITAR REVISIÓN
+                </button>
+                <button
+                  type="button"
+                  onClick={deleteHumanIdentityReview}
+                  className={`min-h-11 rounded-xl border border-rose-200/25 bg-rose-200/[0.06] px-4 text-xs font-black text-rose-50 ${buttonFocus}`}
+                >
+                  ELIMINAR REVISIÓN
+                </button>
+              </div>
+            </article>
+          )}
+
+          {(editingHumanIdentityReview ||
+            Object.keys(savedHumanIdentityReview).length === 0) && (
+            <fieldset className="mt-4 rounded-3xl border border-violet-200/25 bg-black/20 p-4 sm:p-5">
+              <legend className="px-2 font-black">
+                Formulario canónico de revisión humana
+              </legend>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <label
+                  className="grid gap-2 text-xs font-black"
+                  htmlFor="phase4-identity-reviewer"
+                >
+                  Revisor — reviewer · requerido
+                  <input
+                    id="phase4-identity-reviewer"
+                    value={humanIdentityReviewDraft.reviewer}
+                    onChange={(event) =>
+                      setHumanIdentityReviewDraft((current) => ({
+                        ...current,
+                        reviewer: event.target.value,
+                      }))}
+                    className={inputClass}
+                  />
+                  <span className="font-normal text-white/45">
+                    reviewedAt se registra automáticamente al guardar.
+                  </span>
+                </label>
+                <label
+                  className="grid gap-2 text-xs font-black"
+                  htmlFor="phase4-identity-decision"
+                >
+                  Decisión — decision
+                  <select
+                    id="phase4-identity-decision"
+                    value={humanIdentityReviewDraft.decision}
+                    onChange={(event) =>
+                      setHumanIdentityReviewDraft((current) => ({
+                        ...current,
+                        decision: event.target.value as
+                          HumanIdentityReviewDraft["decision"],
+                      }))}
+                    className={inputClass}
+                  >
+                    <option value="NEEDS_MORE_EVIDENCE">
+                      NEEDS_MORE_EVIDENCE
+                    </option>
+                    <option value="CONFLICT_CONFIRMED">
+                      CONFLICT_CONFIRMED
+                    </option>
+                    <option value="IDENTITY_CONFIRMED">
+                      IDENTITY_CONFIRMED
+                    </option>
+                  </select>
+                </label>
+                <label
+                  className="grid gap-2 text-xs font-black"
+                  htmlFor="phase4-identity-confidence"
+                >
+                  Confianza — confidence
+                  <select
+                    id="phase4-identity-confidence"
+                    value={humanIdentityReviewDraft.confidence}
+                    onChange={(event) =>
+                      setHumanIdentityReviewDraft((current) => ({
+                        ...current,
+                        confidence: event.target.value as
+                          HumanIdentityReviewDraft["confidence"],
+                      }))}
+                    className={inputClass}
+                  >
+                    <option value="LOW">LOW</option>
+                    <option value="MEDIUM">MEDIUM</option>
+                    <option value="HIGH">HIGH</option>
+                  </select>
+                </label>
+                <div className="rounded-xl border border-amber-200/25 bg-amber-200/[0.05] p-3 text-xs">
+                  <p className="font-black">
+                    Producto físico verificado — physicalProductVerified
+                  </p>
+                  <p className="mt-1 font-mono">
+                    {String(
+                      humanIdentityReviewDraft.physicalProductVerified,
+                    )}
+                  </p>
+                  <p className="mt-2 text-white/50">
+                    {humanIdentityReviewDraft.physicalProductVerified
+                      ? "Verificación física válida importada: se preserva al editar y no puede recrearse desde esta UI."
+                      : "Esta UI no puede afirmar una inspección física independiente."}
+                  </p>
+                  {humanIdentityReviewDraft
+                    .physicalVerificationEvidenceIds.length > 0 && (
+                    <ul className="mt-2 grid gap-1 font-mono text-[10px]">
+                      {humanIdentityReviewDraft
+                        .physicalVerificationEvidenceIds.map((id) => (
+                          <li key={id} className="break-all">
+                            {id}
+                          </li>
+                        ))}
+                    </ul>
+                  )}
+                </div>
+                <label className="flex min-h-12 items-center gap-3 rounded-xl border border-white/10 p-3 text-xs font-black">
+                  <input
+                    type="checkbox"
+                    checked={
+                      humanIdentityReviewDraft.sameGeneralProductTypeConfirmed
+                    }
+                    onChange={(event) =>
+                      setHumanIdentityReviewDraft((current) => ({
+                        ...current,
+                        sameGeneralProductTypeConfirmed:
+                          event.target.checked,
+                      }))}
+                    className="size-4"
+                  />
+                  Mismo tipo general aparente — sameGeneralProductTypeConfirmed
+                </label>
+                <label className="flex min-h-12 items-center gap-3 rounded-xl border border-white/10 p-3 text-xs font-black">
+                  <input
+                    type="checkbox"
+                    checked={
+                      humanIdentityReviewDraft.exactIdentityConfirmed
+                    }
+                    onChange={(event) =>
+                      setHumanIdentityReviewDraft((current) => ({
+                        ...current,
+                        exactIdentityConfirmed: event.target.checked,
+                      }))}
+                    className="size-4"
+                  />
+                  Identidad exacta confirmada — exactIdentityConfirmed
+                </label>
+                <label className="flex min-h-12 items-center gap-3 rounded-xl border border-white/10 p-3 text-xs font-black lg:col-span-2">
+                  <input
+                    type="checkbox"
+                    checked={humanIdentityReviewDraft.brandConfirmed}
+                    onChange={(event) =>
+                      setHumanIdentityReviewDraft((current) => ({
+                        ...current,
+                        brandConfirmed: event.target.checked,
+                      }))}
+                    className="size-4"
+                  />
+                  Marca confirmada por evidencia independiente —
+                  brandConfirmed
+                </label>
+                {([
+                  ["brand", "Marca — brand"],
+                  ["model", "Modelo — model"],
+                  ["mpn", "MPN — mpn"],
+                  [
+                    "supplierProductId",
+                    "ID del producto del proveedor — supplierProductId",
+                  ],
+                  ["supplierSku", "SKU del proveedor — supplierSku"],
+                  ["variantId", "Variante — variantId"],
+                  ["color", "Color — color"],
+                  ["packQuantity", "Cantidad del pack — packQuantity"],
+                ] as const).map(([field, label]) => (
+                  <label
+                    key={field}
+                    className="grid gap-2 text-xs font-black"
+                    htmlFor={`phase4-${field}`}
+                  >
+                    {label}
+                    <input
+                      id={`phase4-${field}`}
+                      type={field === "packQuantity" ? "number" : "text"}
+                      min={field === "packQuantity" ? "1" : undefined}
+                      step={field === "packQuantity" ? "1" : undefined}
+                      value={humanIdentityReviewDraft[field]}
+                      placeholder="MISSING"
+                      onChange={(event) =>
+                        setHumanIdentityReviewDraft((current) => ({
+                          ...current,
+                          [field]: event.target.value,
+                        }))}
+                      className={inputClass}
+                    />
+                  </label>
+                ))}
+                <fieldset className="rounded-2xl border border-white/10 p-4 lg:col-span-2">
+                  <legend className="px-2 text-xs font-black">
+                    Evidencias seleccionadas — evidenceIds
+                  </legend>
+                  <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                    {identityEvidenceCandidates.map((entry) => {
+                      const row = record(entry)
+                      const id = evidenceId(entry)
+                      const checked =
+                        humanIdentityReviewDraft.evidenceIds.includes(id)
+                      const preservedPhysicalReference =
+                        humanIdentityReviewDraft
+                          .physicalVerificationEvidenceIds.includes(id)
+                      return (
+                        <label
+                          key={id}
+                          className="flex min-h-12 items-start gap-3 rounded-xl border border-white/10 p-3 text-xs"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={preservedPhysicalReference}
+                            onChange={(event) =>
+                              toggleHumanIdentityEvidenceId(
+                                id,
+                                event.target.checked,
+                              )}
+                            className="mt-0.5 size-4"
+                          />
+                          <span className="min-w-0">
+                            <span className="block break-all font-mono font-black">
+                              {id}
+                            </span>
+                            <span className="mt-1 block text-white/45">
+                              {display(row.field)} ·{" "}
+                              {display(row.sourceEvidenceClass)}
+                            </span>
+                            {row.field === "title" && (
+                              <span className="mt-1 block font-black text-amber-100">
+                                SUPPLIER_STATED CONTEXT ONLY · no prueba
+                                marca/modelo/variante
+                              </span>
+                            )}
+                            {preservedPhysicalReference && (
+                              <span className="mt-1 block font-black text-emerald-100">
+                                REFERENCIA FÍSICA IMPORTADA PRESERVADA
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      )
+                    })}
+                    {identityEvidenceCandidates.length === 0 && (
+                      <p className="text-xs font-black text-amber-100">
+                        MISSING — no hay evidencia de identidad seleccionable.
+                      </p>
+                    )}
+                  </div>
+                </fieldset>
+                <label
+                  className="grid gap-2 text-xs font-black lg:col-span-2"
+                  htmlFor="phase4-identity-human-reason"
+                >
+                  Motivo humano — humanReason · requerido
+                  <textarea
+                    id="phase4-identity-human-reason"
+                    value={humanIdentityReviewDraft.humanReason}
+                    onChange={(event) =>
+                      setHumanIdentityReviewDraft((current) => ({
+                        ...current,
+                        humanReason: event.target.value,
+                      }))}
+                    className={`${textAreaClass} min-h-24`}
+                  />
+                </label>
+                <button
+                  type="button"
+                  data-testid="save-human-identity-review"
+                  disabled={
+                    !humanIdentityReviewDraft.reviewer.trim() ||
+                    !humanIdentityReviewDraft.humanReason.trim() ||
+                    humanIdentityReviewDraft.evidenceIds.length === 0
+                  }
+                  onClick={() => void saveHumanIdentityReview()}
+                  className={`min-h-12 rounded-2xl border border-violet-100/30 bg-violet-100/[0.08] px-4 text-sm font-black disabled:cursor-not-allowed disabled:opacity-40 lg:col-span-2 ${buttonFocus}`}
+                >
+                  GUARDAR REVISIÓN DE IDENTIDAD
+                </button>
+                {Object.keys(savedHumanIdentityReview).length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingHumanIdentityReview(false)
+                      const nextDraft =
+                        humanIdentityReviewDraftFrom(identityReviewState)
+                      setHumanIdentityReviewDraft(nextDraft)
+                      setHumanIdentityReviewDraftBaseline(
+                        cloneHumanIdentityReviewDraft(nextDraft),
+                      )
+                      setHumanIdentityRawInputSnapshot(
+                        humanIdentityRawInputFrom(identityReviewState),
+                      )
+                      setHumanIdentityReviewError("")
+                    }}
+                    className={`min-h-11 rounded-xl border border-white/15 px-4 text-xs font-black lg:col-span-2 ${buttonFocus}`}
+                  >
+                    CANCELAR EDICIÓN
+                  </button>
+                )}
+              </div>
+            </fieldset>
+          )}
+        </section>
+
+        <section
           id="strategy-input-preview"
           aria-labelledby="strategy-preview-heading"
           className="mt-5 scroll-mt-28 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
@@ -3951,6 +5044,20 @@ export default function ProductCaseRunnerPage() {
               <div className="sm:col-span-3"><dt className="text-white/45">Verification evidence IDs</dt><dd className="mt-1 whitespace-pre-wrap font-mono">{display(identityReview.physicalVerificationEvidenceIds)}</dd></div>
               <div className="sm:col-span-3"><dt className="text-white/45">Conflicts / blockers</dt><dd className="mt-1 whitespace-pre-wrap font-mono">{display(identityReview.currentConflict ?? identityReview.blockers)}</dd></div>
             </dl>
+            <a
+              href="#phase-4-identity-and-variants"
+              onClick={(event) => {
+                event.preventDefault()
+                setActivePhaseIndex(3)
+                focusProductCaseTarget(
+                  "phase-4-identity-and-variants",
+                  "identity-review-heading",
+                )
+              }}
+              className={`mt-4 inline-flex min-h-11 items-center rounded-xl border border-rose-100/30 bg-rose-100/[0.07] px-4 text-xs font-black ${buttonFocus}`}
+            >
+              IR A REVISIÓN HUMANA DE IDENTIDAD
+            </a>
           </div>
           <fieldset className="mt-4 rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.035] p-4 sm:p-5">
             <legend className="px-2 font-black">
