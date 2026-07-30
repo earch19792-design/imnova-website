@@ -3627,6 +3627,30 @@ function canonicalHumanVisualReviewRecord(
   }
 }
 
+function legacyHumanVisualReviewRecord(
+  observation: ProductCaseImageObservation,
+) {
+  return {
+    imageId: observation.imageId,
+    sourceUrl: observation.sourceUrl,
+    sourceReference: observation.sourceReference,
+    reviewerType: observation.reviewerType,
+    observedProductType: observation.observedProductType,
+    visibleFeatures: observation.visibleFeatures,
+    visibleText: observation.visibleText,
+    visibleBrands: observation.visibleBrands,
+    visibleColors: observation.visibleColors,
+    visibleQuantity: observation.visibleQuantity,
+    observedVariant: observation.observedVariant,
+    possibleConflicts: observation.possibleConflicts,
+    contradictsEvidenceIds: observation.contradictsEvidenceIds,
+    confidence: observation.confidence,
+    humanDecision: observation.humanDecision,
+    humanReason: observation.humanReason,
+    reviewedAt: observation.reviewedAt,
+  }
+}
+
 function visualEvidenceId(contentHash: string, imageId: string) {
   return `visual-${contentHash.slice(7, 19)}-${imageId}`
 }
@@ -3653,6 +3677,7 @@ function visualContractIssueMatchesImage(issue: string, imageId: string) {
     "HUMAN_VISUAL_REVIEW_IMAGE_ID_DUPLICATE_OR_MISSING",
     "HUMAN_VISUAL_REVIEW_HUMAN_CORRECTION_REQUIRED",
     "HUMAN_VISUAL_REVIEW_BRAND_PLACEHOLDER_INVALID",
+    "HUMAN_VISUAL_REVIEW_LEGACY_EVIDENCE_UNVERIFIABLE",
   ].some((prefix) => issue === `${prefix}:${imageId}`) ||
     issue.startsWith(
       `HUMAN_VISUAL_REVIEW_STALE_SUPPLIER_REFERENCE:${imageId}:`,
@@ -3678,7 +3703,86 @@ export async function validateHumanVisualReviewIntegrity(
     const legacy = observation.contractVersion !==
         HUMAN_VISUAL_REVIEW_CONTRACT_VERSION ||
       !observation.rawHumanInput
-    if (legacy) continue
+    if (legacy) {
+      const canonical = legacyHumanVisualReviewRecord(observation)
+      const evidence = document.evidence.find((entry) =>
+        entry.id === observation.evidenceId &&
+        entry.field === "visual_observation" &&
+        entry.sourceType === "HUMAN_VISUAL_OBSERVATION"
+      )
+      const evidenceRaw = record(evidence?.rawValue)
+      const legacyShapeVerifiable = Object.keys(canonical).every((key) =>
+        Object.hasOwn(evidenceRaw, key)
+      )
+      if (!legacyShapeVerifiable) {
+        const legacyCaptures = document.captures.filter((capture) =>
+          capture.sourceType === "HUMAN_VISUAL_OBSERVATION" &&
+          capture.contentHash === observation.contentHash &&
+          capture.capturedAt === observation.reviewedAt
+        )
+        const legacyText = evidence?.rawValue
+        const coherentUnverifiableLegacyRecord =
+          Boolean(evidence) &&
+          typeof legacyText === "string" &&
+          legacyText.trim().length > 0 &&
+          evidence?.id === observation.evidenceId &&
+          evidence?.contentHash === observation.contentHash &&
+          evidence?.capturedAt === observation.reviewedAt &&
+          evidence?.sourceUrl === document.sourceUrl &&
+          evidence?.extractionMethod === "HUMAN_STRUCTURED_REVIEW" &&
+          evidence?.evidenceClass === "HUMAN_VISUAL_REVIEW" &&
+          evidence?.sourceEvidenceClass === "HUMAN_VISUAL_REVIEW" &&
+          evidence?.normalizedValue === legacyText &&
+          evidence?.originalValue === legacyText &&
+          evidence?.correctedValue === null &&
+          validSha256(observation.contentHash) &&
+          legacyCaptures.length === 1 &&
+          legacyCaptures[0]?.sourceUrl === document.sourceUrl &&
+          legacyCaptures[0]?.format === "JSON" &&
+          Number.isInteger(legacyCaptures[0]?.byteLength) &&
+          Number(legacyCaptures[0]?.byteLength) > 0
+        errors.push(
+          coherentUnverifiableLegacyRecord
+            ? `HUMAN_VISUAL_REVIEW_LEGACY_EVIDENCE_UNVERIFIABLE:${observation.imageId}`
+            : `HUMAN_VISUAL_REVIEW_LEGACY_INTEGRITY_MISMATCH:${observation.imageId}`,
+        )
+        continue
+      }
+      const serialized = stableValue(canonical)
+      const contentHash = await hashProductCaseContent(serialized)
+      const evidenceId = visualEvidenceId(contentHash, observation.imageId)
+      const captures = document.captures.filter((capture) =>
+        capture.sourceType === "HUMAN_VISUAL_OBSERVATION" &&
+        capture.contentHash === contentHash &&
+        capture.capturedAt === observation.reviewedAt
+      )
+      if (
+        observation.contentHash !== contentHash ||
+        observation.evidenceId !== evidenceId ||
+        !evidence ||
+        evidence.contentHash !== contentHash ||
+        evidence.capturedAt !== observation.reviewedAt ||
+        evidence.sourceUrl !== document.sourceUrl ||
+        evidence.extractionPath !==
+          `humanVisualReview.${observation.imageId}` ||
+        evidence.evidenceClass !== "HUMAN_VISUAL_REVIEW" ||
+        evidence.sourceEvidenceClass !== "HUMAN_VISUAL_REVIEW" ||
+        evidence.humanReason !== observation.humanReason ||
+        stableValue(evidence.rawValue) !== stableValue(canonical) ||
+        stableValue(evidence.normalizedValue) !== stableValue(canonical) ||
+        stableValue(evidence.originalValue) !== stableValue(canonical) ||
+        evidence.correctedValue !== null ||
+        captures.length !== 1 ||
+        captures[0]?.sourceUrl !== document.sourceUrl ||
+        captures[0]?.format !== "JSON" ||
+        captures[0]?.byteLength !== utf8Length(serialized)
+      ) {
+        errors.push(
+          `HUMAN_VISUAL_REVIEW_LEGACY_INTEGRITY_MISMATCH:${observation.imageId}`,
+        )
+      }
+      continue
+    }
     const canonical = canonicalHumanVisualReviewRecord(observation)
     const serialized = stableValue(canonical)
     const contentHash = await hashProductCaseContent(serialized)
@@ -6589,8 +6693,16 @@ export function buildProductCaseRunnerOutput(input: {
   }
 }
 
-export const PRODUCT_CASE_WORKSPACE_EXPORT_VERSION =
+export const PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION =
   "PRODUCT_CASE_WORKSPACE_EXPORT_V1" as const
+export const PRODUCT_CASE_WORKSPACE_EXPORT_VERSION =
+  "PRODUCT_CASE_WORKSPACE_EXPORT_V2" as const
+export const PRODUCT_CASE_OUTPUT_CONTRACT_VERSION =
+  "PRODUCT_CASE_OUTPUT_CONTRACT_V1" as const
+export const PRODUCT_CASE_LEGACY_OUTPUT_PROFILE =
+  "PRE_PERSISTENT_HUMAN_VISUAL_CONTRACT_GATE_V1" as const
+export const PRODUCT_CASE_LEGACY_OUTPUT_WARNING =
+  "LEGACY_OUTPUT_REBUILT_WITH_CURRENT_DOMAIN" as const
 export const PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES = 1_048_576
 
 export type ProductCaseImportFileMetadata = {
@@ -6637,6 +6749,26 @@ export function validateProductCaseImportJsonCandidate(serialized: string) {
   return null
 }
 
+export type ProductCaseLegacyImportAudit = {
+  warning: typeof PRODUCT_CASE_LEGACY_OUTPUT_WARNING
+  legacyProfile: typeof PRODUCT_CASE_LEGACY_OUTPUT_PROFILE
+  sourceWorkspaceExportVersion:
+    typeof PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION
+  sourceOutputContractVersion: "UNVERSIONED"
+  validationMode: "CURRENT_DOMAIN_GATED_REBUILD"
+  historicalOutput: ProductCaseRunnerOutput
+  historicalOutputContentHash: `sha256:${string}`
+  outputMismatchPaths: string[]
+  outputMismatchPathCount: number
+  outputMismatchPathsTruncated: boolean
+  quarantinedLegacyVisualObservationIds: string[]
+  historicalOutputTrusted: false
+  historicalPackageTrusted: false
+  historicalHandoffTrusted: false
+  activeOutputRebuiltWithCurrentDomain: true
+  auditOnly: true
+}
+
 export type ProductCaseWorkspaceState = {
   document: ProductCaseDocument
   economicsPolicy: EconomicsPolicy | null
@@ -6646,10 +6778,12 @@ export type ProductCaseWorkspaceState = {
   imageObservations: ProductCaseImageObservation[]
   evaluatedAt: string
   generatedAt: string
+  legacyImportAudit?: ProductCaseLegacyImportAudit
 }
 
 export type ProductCaseWorkspaceExportEnvelope = {
   version: typeof PRODUCT_CASE_WORKSPACE_EXPORT_VERSION
+  outputContractVersion: typeof PRODUCT_CASE_OUTPUT_CONTRACT_VERSION
   exportedAt: string
   workspaceState: ProductCaseWorkspaceState
   output: ProductCaseRunnerOutput
@@ -6710,6 +6844,634 @@ function assertSafeJsonTree(value: unknown) {
   visit(value, 0)
 }
 
+function safeDiagnosticPath(parent: string, key: string) {
+  return /^[A-Za-z][A-Za-z0-9_]*$/.test(key)
+    ? `${parent}.${key}`
+    : `${parent}.[REDACTED_KEY]`
+}
+
+const PRODUCT_CASE_OUTPUT_MISMATCH_DIAGNOSTIC_PATH_LIMIT = 256
+
+function inspectProductCaseOutputMismatches(
+  historicalOutput: unknown,
+  currentOutput: unknown,
+) {
+  const paths: string[] = []
+  const collectedPaths = new Set<string>()
+  let pathCount = 0
+  let allVersionedLegacyDerivedPaths = true
+  const registerMismatch = (path: string) => {
+    pathCount += 1
+    if (!isVersionedLegacyDerivedPath(path)) {
+      allVersionedLegacyDerivedPaths = false
+    }
+    if (
+      paths.length < PRODUCT_CASE_OUTPUT_MISMATCH_DIAGNOSTIC_PATH_LIMIT &&
+      !collectedPaths.has(path)
+    ) {
+      collectedPaths.add(path)
+      paths.push(path)
+    }
+  }
+  const visit = (historical: unknown, current: unknown, path: string) => {
+    if (stableValue(historical) === stableValue(current)) return
+    if (Array.isArray(historical) && Array.isArray(current)) {
+      const length = Math.max(historical.length, current.length)
+      for (let index = 0; index < length; index += 1) {
+        visit(historical[index], current[index], `${path}[${index}]`)
+      }
+      return
+    }
+    if (
+      historical && current &&
+      typeof historical === "object" &&
+      typeof current === "object" &&
+      !Array.isArray(historical) &&
+      !Array.isArray(current)
+    ) {
+      const keys = unique([
+        ...Object.keys(historical as Record<string, unknown>),
+        ...Object.keys(current as Record<string, unknown>),
+      ]).sort()
+      for (const key of keys) {
+        visit(
+          (historical as Record<string, unknown>)[key],
+          (current as Record<string, unknown>)[key],
+          safeDiagnosticPath(path, key),
+        )
+      }
+      return
+    }
+    registerMismatch(path)
+  }
+  visit(historicalOutput, currentOutput, "output")
+  return {
+    paths,
+    pathCount,
+    truncated: pathCount > paths.length,
+    allVersionedLegacyDerivedPaths,
+  }
+}
+
+export function productCaseOutputMismatchPaths(
+  historicalOutput: unknown,
+  currentOutput: unknown,
+) {
+  return inspectProductCaseOutputMismatches(
+    historicalOutput,
+    currentOutput,
+  ).paths
+}
+
+function outputMismatchErrorDetails(input: {
+  paths: string[]
+  pathCount: number
+  truncated: boolean
+}) {
+  const visiblePaths = input.paths.length > 0
+    ? input.paths.join(" · ")
+    : "output"
+  return input.truncated
+    ? `${visiblePaths} · [DIAGNOSTIC_TRUNCATED:${
+        input.pathCount - input.paths.length
+      }_ADDITIONAL_PATHS]`
+    : visiblePaths
+}
+
+const LEGACY_DERIVED_OUTPUT_PATHS = [
+  "output.adapter",
+  "output.handoffArtifactGenerated",
+  "output.learningObservation",
+  "output.legacyPhaseDiagnostics",
+  "output.listingPackage",
+  "output.listingPackageStatus",
+  "output.manualHandoffAllowed",
+  "output.operationalPipeline",
+  "output.readiness",
+  "output.registrationDraft",
+  "output.shadowMode",
+] as const
+
+function isVersionedLegacyDerivedPath(path: string) {
+  if (path.includes("[REDACTED_KEY]")) return false
+  return LEGACY_DERIVED_OUTPUT_PATHS.some((prefix) =>
+    path === prefix ||
+    path.startsWith(`${prefix}.`) ||
+    path.startsWith(`${prefix}[`)
+  )
+}
+
+function safetySurfaceViolations(
+  value: unknown,
+  path: string,
+) {
+  const violations: string[] = []
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [path]
+  }
+  const safety = value as Record<string, unknown>
+  const expected = PRODUCT_CASE_ZERO_EFFECTS as unknown as
+    Record<string, unknown>
+  for (const [key, expectedValue] of Object.entries(expected)) {
+    if (safety[key] !== expectedValue) {
+      violations.push(safeDiagnosticPath(path, key))
+    }
+  }
+  for (const key of Object.keys(safety)) {
+    if (!(key in expected)) {
+      violations.push(safeDiagnosticPath(path, key))
+    }
+  }
+  return violations
+}
+
+function objectSurface(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function falseFlagViolation(
+  value: Record<string, unknown> | null,
+  key: string,
+  path: string,
+) {
+  return value && value[key] !== false
+    ? [safeDiagnosticPath(path, key)]
+    : []
+}
+
+function literalFlagViolation(
+  value: Record<string, unknown> | null,
+  key: string,
+  expected: unknown,
+  path: string,
+) {
+  return value && value[key] !== expected
+    ? [safeDiagnosticPath(path, key)]
+    : []
+}
+
+function humanReviewEffectViolations(
+  value: unknown,
+  path: string,
+) {
+  const humanReview = objectSurface(value)
+  if (!humanReview) return [path]
+  return [
+    ...falseFlagViolation(humanReview, "canPublishAutomatically", path),
+    ...falseFlagViolation(humanReview, "canChangeEngineRules", path),
+    ...falseFlagViolation(humanReview, "canLinkListing", path),
+  ]
+}
+
+function imageRegistryEffectViolations(
+  value: unknown,
+  path: string,
+) {
+  const registry = objectSurface(value)
+  if (!registry) return []
+  const violations = safetySurfaceViolations(
+    registry.safety,
+    `${path}.safety`,
+  )
+  if (Array.isArray(registry.entries)) {
+    registry.entries.forEach((entry, index) => {
+      const image = objectSurface(entry)
+      if (!image) return
+      const imagePath = `${path}.entries[${index}]`
+      violations.push(
+        ...falseFlagViolation(image, "downloaded", imagePath),
+        ...falseFlagViolation(image, "transformed", imagePath),
+        ...falseFlagViolation(image, "generated", imagePath),
+      )
+    })
+  }
+  return violations
+}
+
+function registrationDraftEffectViolations(
+  value: unknown,
+  path: string,
+) {
+  const registration = objectSurface(value)
+  if (!registration) return []
+  return [
+    ...safetySurfaceViolations(
+      registration.safety,
+      `${path}.safety`,
+    ),
+    ...falseFlagViolation(registration, "canSubmit", path),
+    ...literalFlagViolation(
+      registration,
+      "executionStatus",
+      "DRAFT_NOT_SUBMITTED",
+      path,
+    ),
+  ]
+}
+
+function runnerOutputEffectViolations(
+  value: unknown,
+  path: string,
+) {
+  const output = objectSurface(value)
+  if (!output) return []
+  const document = objectSurface(output.document)
+  const adapter = objectSurface(output.adapter)
+  const listingPackage = objectSurface(output.listingPackage)
+  const shadowMode = objectSurface(output.shadowMode)
+  const learningObservation = objectSurface(output.learningObservation)
+  const violations = [
+    ...safetySurfaceViolations(output.safety, `${path}.safety`),
+    ...safetySurfaceViolations(
+      document?.safety,
+      `${path}.document.safety`,
+    ),
+    ...humanReviewEffectViolations(
+      document?.humanReview,
+      `${path}.document.humanReview`,
+    ),
+    ...safetySurfaceViolations(
+      adapter?.safety,
+      `${path}.adapter.safety`,
+    ),
+    ...imageRegistryEffectViolations(
+      output.imageRegistry,
+      `${path}.imageRegistry`,
+    ),
+    ...registrationDraftEffectViolations(
+      output.registrationDraft,
+      `${path}.registrationDraft`,
+    ),
+    ...falseFlagViolation(output, "canPublishAutomatically", path),
+    ...literalFlagViolation(
+      output,
+      "publicationStatus",
+      "NOT_PUBLISHED",
+      path,
+    ),
+    ...falseFlagViolation(
+      shadowMode,
+      "canChangeEngineRules",
+      `${path}.shadowMode`,
+    ),
+    ...falseFlagViolation(
+      shadowMode,
+      "canLinkListing",
+      `${path}.shadowMode`,
+    ),
+    ...literalFlagViolation(
+      learningObservation,
+      "engineRuleChanged",
+      false,
+      `${path}.learningObservation`,
+    ),
+  ]
+  if (listingPackage) {
+    violations.push(
+      ...safetySurfaceViolations(
+        listingPackage.safety,
+        `${path}.listingPackage.safety`,
+      ),
+      ...falseFlagViolation(
+        listingPackage,
+        "canPublishAutomatically",
+        `${path}.listingPackage`,
+      ),
+    )
+  }
+  if (Array.isArray(output.operationalPipeline)) {
+    output.operationalPipeline.forEach((entry, index) => {
+      const phase = objectSurface(entry)
+      if (!phase) return
+      const phasePath = `${path}.operationalPipeline[${index}]`
+      violations.push(
+        ...literalFlagViolation(
+          phase,
+          "publicationStatus",
+          "NOT_PUBLISHED",
+          phasePath,
+        ),
+      )
+      if (phase.phase === "IMAGE_AND_COMMERCIAL_QA") {
+        violations.push(
+          ...imageRegistryEffectViolations(
+            objectSurface(phase.output)?.imageRegistry,
+            `${phasePath}.output.imageRegistry`,
+          ),
+        )
+      }
+      if (phase.phase === "MANUAL_LISTING_REGISTRATION") {
+        violations.push(
+          ...literalFlagViolation(
+            objectSurface(phase.output),
+            "publicationStatus",
+            "NOT_PUBLISHED",
+            `${phasePath}.output`,
+          ),
+        )
+      }
+    })
+  }
+  if (Array.isArray(output.legacyPhaseDiagnostics)) {
+    output.legacyPhaseDiagnostics.forEach((entry, index) => {
+      const phase = objectSurface(entry)
+      const phaseOutput = objectSurface(phase?.output)
+      if (!phase || !phaseOutput) return
+      const phasePath = `${path}.legacyPhaseDiagnostics[${index}].output`
+      if (phase.name === "IMAGE REGISTRY / QA") {
+        violations.push(
+          ...imageRegistryEffectViolations(
+            phaseOutput.imageRegistry,
+            `${phasePath}.imageRegistry`,
+          ),
+        )
+      }
+      if (phase.name === "MANUAL HANDOFF / REGISTRATION DRAFT") {
+        violations.push(
+          ...registrationDraftEffectViolations(
+            phaseOutput.registrationDraft,
+            `${phasePath}.registrationDraft`,
+          ),
+        )
+      }
+    })
+  }
+  return violations
+}
+
+function externalEffectViolations(value: unknown) {
+  const envelope = objectSurface(value)
+  if (!envelope) return ["envelope"]
+  const workspaceState = objectSurface(envelope.workspaceState)
+  const document = objectSurface(workspaceState?.document)
+  const legacyImportAudit = objectSurface(workspaceState?.legacyImportAudit)
+  const violations = [
+    ...safetySurfaceViolations(envelope.safety, "envelope.safety"),
+    ...safetySurfaceViolations(
+      document?.safety,
+      "envelope.workspaceState.document.safety",
+    ),
+    ...humanReviewEffectViolations(
+      document?.humanReview,
+      "envelope.workspaceState.document.humanReview",
+    ),
+    ...runnerOutputEffectViolations(envelope.output, "envelope.output"),
+  ]
+  if (legacyImportAudit?.historicalOutput) {
+    violations.push(
+      ...runnerOutputEffectViolations(
+        legacyImportAudit.historicalOutput,
+        "envelope.workspaceState.legacyImportAudit.historicalOutput",
+      ),
+    )
+  }
+  return unique(violations).slice(0, 100)
+}
+
+function legacyRawHumanInputAuditProjection(
+  observation: ProductCaseImageObservation,
+) {
+  return {
+    imageId: observation.imageId,
+    sourceUrl: observation.sourceUrl,
+    sourceReference: observation.sourceReference,
+    observedProductType: observation.observedProductType ?? "",
+    visibleFeatures: observation.visibleFeatures.join("\n"),
+    visibleText: observation.visibleText.join("\n"),
+    visibleBrands: observation.visibleBrands.join("\n"),
+    visibleColors: observation.visibleColors.join("\n"),
+    visibleQuantity: observation.visibleQuantity === null
+      ? ""
+      : String(observation.visibleQuantity),
+    observedVariant: observation.observedVariant ?? "",
+    possibleConflicts: observation.possibleConflicts.join("\n"),
+    confidence: observation.confidence,
+    humanDecision: observation.humanDecision,
+    humanReason: observation.humanReason,
+  }
+}
+
+function hasPreContractVisualObservation(
+  workspaceState: ProductCaseWorkspaceState,
+) {
+  return workspaceState.imageObservations.some((observation) =>
+    observation.contractVersion !== HUMAN_VISUAL_REVIEW_CONTRACT_VERSION ||
+    !observation.rawHumanInput
+  )
+}
+
+function buildLegacyHistoricalOutputAuditProjection(input: {
+  workspaceState: ProductCaseWorkspaceState
+  exportedAt: string
+}) {
+  const projectedState = structuredClone(input.workspaceState)
+  const missingFields = projectedState.imageObservations.map(
+    (observation) => ({
+      contractVersion:
+        observation.contractVersion !== HUMAN_VISUAL_REVIEW_CONTRACT_VERSION,
+      rawHumanInput: !observation.rawHumanInput,
+    }),
+  )
+  const projectObservation = (
+    observation: ProductCaseImageObservation,
+  ): ProductCaseImageObservation => ({
+    ...observation,
+    contractVersion: HUMAN_VISUAL_REVIEW_CONTRACT_VERSION,
+    rawHumanInput: observation.rawHumanInput ??
+      legacyRawHumanInputAuditProjection(observation),
+  })
+  projectedState.imageObservations =
+    projectedState.imageObservations.map(projectObservation)
+  projectedState.document.imageAnalysis.observations =
+    projectedState.document.imageAnalysis.observations.map(projectObservation)
+  const projectedOutput = structuredClone(createProductCaseWorkspaceExport({
+    workspaceState: projectedState,
+    exportedAt: input.exportedAt,
+  }).output)
+  projectedOutput.document.imageAnalysis.observations.forEach(
+    (observation, index) => {
+      const mutable = observation as unknown as Record<string, unknown>
+      if (missingFields[index]?.contractVersion) {
+        delete mutable.contractVersion
+      }
+      if (missingFields[index]?.rawHumanInput) {
+        delete mutable.rawHumanInput
+      }
+    },
+  )
+  return projectedOutput
+}
+
+function legacyImportAuditHashPayload(
+  audit: Omit<ProductCaseLegacyImportAudit, "historicalOutputContentHash">,
+) {
+  return stableValue(audit)
+}
+
+const LEGACY_VISUAL_QUARANTINE_ISSUE_PREFIX =
+  "HUMAN_VISUAL_REVIEW_LEGACY_EVIDENCE_UNVERIFIABLE:"
+
+function legacyVisualQuarantineIdsFromIssues(issues: string[]) {
+  return unique(issues.flatMap((issue) =>
+    issue.startsWith(LEGACY_VISUAL_QUARANTINE_ISSUE_PREFIX)
+      ? [issue.slice(LEGACY_VISUAL_QUARANTINE_ISSUE_PREFIX.length)]
+      : []
+  )).sort()
+}
+
+function canonicalLegacyVisualQuarantineIds(imageIds: string[]) {
+  return [...imageIds].sort()
+}
+
+function validateLegacyHistoricalAuditOutputStructure(
+  output: unknown,
+) {
+  const historical = record(output)
+  const historicalDocument = objectSurface(historical.document)
+  const pipeline = Array.isArray(historical.operationalPipeline)
+    ? historical.operationalPipeline as Array<Record<string, unknown>>
+    : []
+  if (
+    historical.version !== PRODUCT_CASE_RUNNER_VERSION ||
+    !historicalDocument ||
+    historicalDocument.version !== PRODUCT_CASE_RUNNER_VERSION ||
+    stableValue(historical.safety) !==
+      stableValue(PRODUCT_CASE_ZERO_EFFECTS) ||
+    historical.canPublishAutomatically !== false ||
+    historical.publicationStatus !== "NOT_PUBLISHED" ||
+    pipeline.length !== PRODUCT_CASE_OPERATIONAL_PHASES.length ||
+    pipeline.some((phase, index) =>
+      phase.phase !== PRODUCT_CASE_OPERATIONAL_PHASES[index]
+    ) ||
+    runnerOutputEffectViolations(
+      output,
+      "legacyImportAudit.historicalOutput",
+    ).length > 0
+  ) {
+    throw new Error("PRODUCT_CASE_IMPORT_LEGACY_AUDIT_OUTPUT_INVALID")
+  }
+}
+
+async function validateLegacyImportAuditSnapshotIntegrity(
+  audit: ProductCaseLegacyImportAudit,
+) {
+  const {
+    historicalOutputContentHash,
+    ...hashPayload
+  } = audit
+  if (
+    audit.warning !== PRODUCT_CASE_LEGACY_OUTPUT_WARNING ||
+    audit.legacyProfile !== PRODUCT_CASE_LEGACY_OUTPUT_PROFILE ||
+    audit.sourceWorkspaceExportVersion !==
+      PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION ||
+    audit.sourceOutputContractVersion !== "UNVERSIONED" ||
+    audit.validationMode !== "CURRENT_DOMAIN_GATED_REBUILD" ||
+    audit.historicalOutputTrusted !== false ||
+    audit.historicalPackageTrusted !== false ||
+    audit.historicalHandoffTrusted !== false ||
+    audit.activeOutputRebuiltWithCurrentDomain !== true ||
+    audit.auditOnly !== true ||
+    !Array.isArray(audit.outputMismatchPaths) ||
+    !Number.isInteger(audit.outputMismatchPathCount) ||
+    audit.outputMismatchPathCount < audit.outputMismatchPaths.length ||
+    audit.outputMismatchPaths.length >
+      PRODUCT_CASE_OUTPUT_MISMATCH_DIAGNOSTIC_PATH_LIMIT ||
+    audit.outputMismatchPathsTruncated !==
+      (audit.outputMismatchPathCount > audit.outputMismatchPaths.length) ||
+    !Array.isArray(audit.quarantinedLegacyVisualObservationIds) ||
+    audit.quarantinedLegacyVisualObservationIds.some((imageId) =>
+      typeof imageId !== "string" || !normalizeWhitespace(imageId)
+    ) ||
+    new Set(audit.quarantinedLegacyVisualObservationIds).size !==
+      audit.quarantinedLegacyVisualObservationIds.length ||
+    audit.outputMismatchPaths.some((path) =>
+      typeof path !== "string" ||
+      !path.startsWith("output")
+    ) ||
+    !validSha256(historicalOutputContentHash)
+  ) {
+    throw new Error("PRODUCT_CASE_IMPORT_LEGACY_AUDIT_INVALID")
+  }
+  const recalculatedHash = await hashProductCaseContent(
+    legacyImportAuditHashPayload(hashPayload),
+  )
+  if (recalculatedHash !== historicalOutputContentHash) {
+    throw new Error("PRODUCT_CASE_IMPORT_LEGACY_AUDIT_HASH_MISMATCH")
+  }
+  validateLegacyHistoricalAuditOutputStructure(
+    audit.historicalOutput,
+  )
+  const historicalDocumentIntegrity =
+    await validateProductCaseDocumentProvenanceIntegrity(
+      audit.historicalOutput.document,
+    )
+  const historicalQuarantineIds = legacyVisualQuarantineIdsFromIssues(
+    historicalDocumentIntegrity.errors,
+  )
+  if (
+    historicalDocumentIntegrity.errors.length !==
+      historicalQuarantineIds.length ||
+    stableValue(historicalQuarantineIds) !== stableValue(
+      canonicalLegacyVisualQuarantineIds(
+        audit.quarantinedLegacyVisualObservationIds,
+      ),
+    )
+  ) {
+    throw new Error(
+      "PRODUCT_CASE_IMPORT_LEGACY_AUDIT_PROVENANCE_INVALID",
+    )
+  }
+}
+
+async function validateLegacyImportAuditIntegrity(
+  audit: ProductCaseLegacyImportAudit | undefined,
+  input: {
+    currentOutput: ProductCaseRunnerOutput
+  },
+) {
+  if (!audit) return
+  await validateLegacyImportAuditSnapshotIntegrity(audit)
+  const expectedMismatch = inspectProductCaseOutputMismatches(
+    audit.historicalOutput,
+    input.currentOutput,
+  )
+  if (
+    stableValue(audit.outputMismatchPaths) !==
+      stableValue(expectedMismatch.paths) ||
+    audit.outputMismatchPathCount !== expectedMismatch.pathCount ||
+    audit.outputMismatchPathsTruncated !== expectedMismatch.truncated
+  ) {
+    throw new Error("PRODUCT_CASE_IMPORT_LEGACY_AUDIT_SEMANTICS_INVALID")
+  }
+}
+
+function validateHistoricalOutputStructure(
+  output: unknown,
+  workspaceState: ProductCaseWorkspaceState,
+) {
+  const historical = record(output)
+  const pipeline = Array.isArray(historical.operationalPipeline)
+    ? historical.operationalPipeline as Array<Record<string, unknown>>
+    : []
+  if (
+    historical.version !== PRODUCT_CASE_RUNNER_VERSION ||
+    stableValue(historical.document) !==
+      stableValue(workspaceState.document) ||
+    stableValue(historical.safety) !==
+      stableValue(PRODUCT_CASE_ZERO_EFFECTS) ||
+    historical.canPublishAutomatically !== false ||
+    historical.publicationStatus !== "NOT_PUBLISHED" ||
+    pipeline.length !== PRODUCT_CASE_OPERATIONAL_PHASES.length ||
+    pipeline.some((phase, index) =>
+      phase.phase !== PRODUCT_CASE_OPERATIONAL_PHASES[index]
+    )
+  ) {
+    throw new Error("PRODUCT_CASE_IMPORT_LEGACY_OUTPUT_STRUCTURE_INVALID")
+  }
+}
+
 function workspaceStateFromUnknown(value: unknown): ProductCaseWorkspaceState {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("PRODUCT_CASE_IMPORT_WORKSPACE_REQUIRED")
@@ -6729,11 +7491,10 @@ function workspaceStateFromUnknown(value: unknown): ProductCaseWorkspaceState {
     throw new Error("PRODUCT_CASE_IMPORT_WORKSPACE_INVALID")
   }
   if (
-    state.document.safety.supabaseWrites !== 0 ||
-    state.document.safety.ebayWrites !== 0 ||
-    state.document.safety.openAiCalls !== 0 ||
-    state.document.safety.whatsappCalls !== 0 ||
-    state.document.safety.canPublishAutomatically !== false
+    safetySurfaceViolations(
+      state.document.safety,
+      "workspaceState.document.safety",
+    ).length > 0
   ) {
     throw new Error("PRODUCT_CASE_IMPORT_SAFETY_INVALID")
   }
@@ -6775,6 +7536,7 @@ export function createProductCaseWorkspaceExport(input: {
   })
   return {
     version: PRODUCT_CASE_WORKSPACE_EXPORT_VERSION,
+    outputContractVersion: PRODUCT_CASE_OUTPUT_CONTRACT_VERSION,
     exportedAt: input.exportedAt,
     workspaceState,
     output,
@@ -6782,11 +7544,113 @@ export function createProductCaseWorkspaceExport(input: {
   }
 }
 
+function legacyImportAuditMatchesCurrentOutput(
+  audit: ProductCaseLegacyImportAudit,
+  currentOutput: ProductCaseRunnerOutput,
+) {
+  const mismatch = inspectProductCaseOutputMismatches(
+    audit.historicalOutput,
+    currentOutput,
+  )
+  return stableValue(audit.outputMismatchPaths) ===
+      stableValue(mismatch.paths) &&
+    audit.outputMismatchPathCount === mismatch.pathCount &&
+    audit.outputMismatchPathsTruncated === mismatch.truncated
+}
+
+export async function refreshProductCaseLegacyImportAuditForExport(input: {
+  workspaceState: ProductCaseWorkspaceState
+  exportedAt: string
+}): Promise<ProductCaseWorkspaceState> {
+  const current = createProductCaseWorkspaceExport(input)
+  const audit = current.workspaceState.legacyImportAudit
+  if (!audit) return current.workspaceState
+
+  await validateLegacyImportAuditSnapshotIntegrity(audit)
+
+  const activeProvenance =
+    await validateProductCaseDocumentProvenanceIntegrity(
+      current.workspaceState.document,
+    )
+  const activeQuarantineIssues = activeProvenance.errors.filter((error) =>
+    error.startsWith(LEGACY_VISUAL_QUARANTINE_ISSUE_PREFIX)
+  )
+  const activeQuarantineIds = legacyVisualQuarantineIdsFromIssues(
+    activeQuarantineIssues,
+  )
+  const activeQuarantineAllowed =
+    activeQuarantineIssues.length === activeProvenance.errors.length &&
+    activeQuarantineIds.every((imageId) =>
+      audit.quarantinedLegacyVisualObservationIds.includes(imageId) &&
+      (current.workspaceState.document.imageAnalysis.contractIssues ?? [])
+        .includes(`${LEGACY_VISUAL_QUARANTINE_ISSUE_PREFIX}${imageId}`)
+    )
+  if (
+    !activeProvenance.valid &&
+    !activeQuarantineAllowed
+  ) {
+    throw new Error(
+      `PRODUCT_CASE_EXPORT_CRYPTOGRAPHIC_PROVENANCE_INVALID:${
+        activeProvenance.errors.join(",")
+      }`,
+    )
+  }
+
+  const mismatch = inspectProductCaseOutputMismatches(
+    audit.historicalOutput,
+    current.output,
+  )
+  const {
+    historicalOutputContentHash: _staleHash,
+    ...existingWithoutHash
+  } = audit
+  const refreshedWithoutHash:
+    Omit<ProductCaseLegacyImportAudit, "historicalOutputContentHash"> = {
+      ...existingWithoutHash,
+      validationMode: "CURRENT_DOMAIN_GATED_REBUILD",
+      historicalOutput: audit.historicalOutput,
+      outputMismatchPaths: mismatch.paths,
+      outputMismatchPathCount: mismatch.pathCount,
+      outputMismatchPathsTruncated: mismatch.truncated,
+      quarantinedLegacyVisualObservationIds:
+        canonicalLegacyVisualQuarantineIds(
+          audit.quarantinedLegacyVisualObservationIds,
+        ),
+    }
+  const refreshedAudit: ProductCaseLegacyImportAudit = {
+    ...refreshedWithoutHash,
+    historicalOutputContentHash: await hashProductCaseContent(
+      legacyImportAuditHashPayload(refreshedWithoutHash),
+    ) as `sha256:${string}`,
+  }
+  const refreshedWorkspaceState = structuredClone(current.workspaceState)
+  refreshedWorkspaceState.legacyImportAudit = refreshedAudit
+  const refreshed = createProductCaseWorkspaceExport({
+    workspaceState: refreshedWorkspaceState,
+    exportedAt: input.exportedAt,
+  })
+  await validateLegacyImportAuditIntegrity(
+    refreshed.workspaceState.legacyImportAudit,
+    { currentOutput: refreshed.output },
+  )
+  return refreshed.workspaceState
+}
+
 export function serializeProductCaseWorkspaceExport(input: {
   workspaceState: ProductCaseWorkspaceState
   exportedAt: string
 }) {
-  const serialized = JSON.stringify(createProductCaseWorkspaceExport(input))
+  const envelope = createProductCaseWorkspaceExport(input)
+  const audit = envelope.workspaceState.legacyImportAudit
+  if (
+    audit &&
+    !legacyImportAuditMatchesCurrentOutput(audit, envelope.output)
+  ) {
+    throw new Error(
+      "PRODUCT_CASE_EXPORT_LEGACY_AUDIT_REFRESH_REQUIRED",
+    )
+  }
+  const serialized = JSON.stringify(envelope)
   if (utf8Length(serialized) > PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES) {
     throw new Error("PRODUCT_CASE_EXPORT_TOO_LARGE")
   }
@@ -6811,15 +7675,56 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     throw new Error("PRODUCT_CASE_IMPORT_ENVELOPE_INVALID")
   }
   const envelope = parsed as Partial<ProductCaseWorkspaceExportEnvelope>
+  const envelopeVersion = (parsed as Record<string, unknown>).version
   if (
-    envelope.version !== PRODUCT_CASE_WORKSPACE_EXPORT_VERSION ||
     typeof envelope.exportedAt !== "string" ||
     !validIsoInstant(envelope.exportedAt)
   ) {
     throw new Error("PRODUCT_CASE_IMPORT_VERSION_INVALID")
   }
+  const currentExport =
+    envelopeVersion === PRODUCT_CASE_WORKSPACE_EXPORT_VERSION
+  const legacyExport =
+    envelopeVersion === PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION
+  if (!currentExport && !legacyExport) {
+    throw new Error("PRODUCT_CASE_IMPORT_VERSION_INVALID")
+  }
+  if (
+    currentExport &&
+    envelope.outputContractVersion !==
+      PRODUCT_CASE_OUTPUT_CONTRACT_VERSION
+  ) {
+    throw new Error("PRODUCT_CASE_IMPORT_OUTPUT_CONTRACT_VERSION_INVALID")
+  }
+  if (
+    legacyExport &&
+    envelope.outputContractVersion !== undefined
+  ) {
+    throw new Error("PRODUCT_CASE_IMPORT_LEGACY_OUTPUT_CONTRACT_INVALID")
+  }
+  const effectViolations = externalEffectViolations(parsed)
+  if (
+    effectViolations.length > 0 ||
+    stableValue(envelope.safety) !==
+      stableValue(PRODUCT_CASE_ZERO_EFFECTS)
+  ) {
+    throw new Error(
+      `PRODUCT_CASE_IMPORT_SAFETY_INVALID:${
+        effectViolations.join(",") || "envelope.safety"
+      }`,
+    )
+  }
   const workspaceState = workspaceStateFromUnknown(envelope.workspaceState)
-  const visualReviewContractIssues = unique([
+  if (
+    currentExport &&
+    workspaceState.document.identityReview.blockers.includes(
+      PRODUCT_CASE_LEGACY_OUTPUT_WARNING,
+    ) &&
+    !workspaceState.legacyImportAudit
+  ) {
+    throw new Error("PRODUCT_CASE_IMPORT_LEGACY_AUDIT_REQUIRED")
+  }
+  let visualReviewContractIssues = unique([
     ...(workspaceState.document.imageAnalysis.contractIssues ?? []),
     ...visualContractIssuesForDocument(workspaceState.document),
   ])
@@ -6827,23 +7732,116 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     await validateProductCaseDocumentProvenanceIntegrity(
       workspaceState.document,
     )
-  if (!cryptographicProvenance.valid) {
+  const legacyVisualQuarantineIssues =
+    cryptographicProvenance.errors.filter((error) =>
+      error.startsWith(LEGACY_VISUAL_QUARANTINE_ISSUE_PREFIX)
+    )
+  const quarantinedLegacyVisualObservationIds =
+    legacyVisualQuarantineIdsFromIssues(legacyVisualQuarantineIssues)
+  const onlyQuarantinableLegacyVisualErrors =
+    legacyVisualQuarantineIssues.length > 0 &&
+    legacyVisualQuarantineIssues.length ===
+      cryptographicProvenance.errors.length
+  const auditQuarantineIds =
+    workspaceState.legacyImportAudit
+      ?.quarantinedLegacyVisualObservationIds ?? []
+  const currentAuditQuarantineMatches =
+    currentExport &&
+    Boolean(workspaceState.legacyImportAudit) &&
+    quarantinedLegacyVisualObservationIds.every((imageId) =>
+      auditQuarantineIds.includes(imageId) &&
+      (workspaceState.document.imageAnalysis.contractIssues ?? [])
+        .includes(
+          `HUMAN_VISUAL_REVIEW_LEGACY_EVIDENCE_UNVERIFIABLE:${imageId}`,
+        )
+    )
+  const legacyVisualQuarantineAllowed =
+    onlyQuarantinableLegacyVisualErrors &&
+    (
+      legacyExport ||
+      currentAuditQuarantineMatches
+    )
+  if (!cryptographicProvenance.valid && !legacyVisualQuarantineAllowed) {
     throw new Error(
       `PRODUCT_CASE_IMPORT_CRYPTOGRAPHIC_PROVENANCE_INVALID:${
         cryptographicProvenance.errors.join(",")
       }`,
     )
   }
+  if (legacyVisualQuarantineAllowed) {
+    visualReviewContractIssues = unique([
+      ...visualReviewContractIssues,
+      ...legacyVisualQuarantineIssues,
+    ])
+  }
   const recomputedOriginal = createProductCaseWorkspaceExport({
     workspaceState,
     exportedAt: envelope.exportedAt,
   })
-  if (!envelope.output ||
-    stableValue(envelope.output) !== stableValue(recomputedOriginal.output) ||
-    stableValue(envelope.safety) !== stableValue(PRODUCT_CASE_ZERO_EFFECTS)) {
-    throw new Error("PRODUCT_CASE_IMPORT_OUTPUT_MISMATCH")
+  const outputMismatchDiagnostic = inspectProductCaseOutputMismatches(
+    envelope.output,
+    recomputedOriginal.output,
+  )
+  let outputMismatchPaths = outputMismatchDiagnostic.paths
+  let historicalOutputAudit: ProductCaseLegacyImportAudit | null = null
+  let legacyHistoricalOutput: ProductCaseRunnerOutput | null = null
+  let legacyOutputRebuilt = false
+  if (currentExport && outputMismatchDiagnostic.pathCount > 0) {
+    throw new Error(
+      `PRODUCT_CASE_IMPORT_OUTPUT_MISMATCH:${
+        outputMismatchErrorDetails(outputMismatchDiagnostic)
+      }`,
+    )
+  }
+  if (currentExport) {
+    await validateLegacyImportAuditIntegrity(
+      workspaceState.legacyImportAudit,
+      {
+        currentOutput: recomputedOriginal.output,
+      },
+    )
+  }
+  if (legacyExport) {
+    if (
+      !envelope.output ||
+      workspaceState.legacyImportAudit ||
+      !hasPreContractVisualObservation(workspaceState)
+    ) {
+      throw new Error("PRODUCT_CASE_IMPORT_LEGACY_PROFILE_INVALID")
+    }
+    validateHistoricalOutputStructure(envelope.output, workspaceState)
+    const historicalProjection =
+      buildLegacyHistoricalOutputAuditProjection({
+        workspaceState,
+        exportedAt: envelope.exportedAt,
+      })
+    const projectionMatches =
+      stableValue(envelope.output) === stableValue(historicalProjection)
+    const expectedDerivedPathsOnly =
+      outputMismatchDiagnostic.pathCount > 0 &&
+      outputMismatchDiagnostic.allVersionedLegacyDerivedPaths
+    const currentDomainMatches = outputMismatchDiagnostic.pathCount === 0
+    if (
+      !currentDomainMatches &&
+      !projectionMatches &&
+      !(
+        expectedDerivedPathsOnly &&
+        quarantinedLegacyVisualObservationIds.length === 0
+      )
+    ) {
+      throw new Error(
+        `PRODUCT_CASE_IMPORT_OUTPUT_MISMATCH:${
+          outputMismatchErrorDetails(outputMismatchDiagnostic)
+        }`,
+      )
+    }
+    legacyHistoricalOutput = structuredClone(envelope.output)
+    legacyOutputRebuilt = true
   }
   const reviewRequiredState = structuredClone(workspaceState)
+  const legacyAuditPresent = Boolean(
+    legacyHistoricalOutput || workspaceState.legacyImportAudit,
+  )
   reviewRequiredState.document.imageAnalysis.contractIssues =
     visualReviewContractIssues
   reviewRequiredState.document.identityReview = {
@@ -6854,6 +7852,9 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     physicalVerificationEvidenceIds: [],
     blockers: unique([
       "IMPORTED_IDENTITY_REQUIRES_NEW_LOCAL_HUMAN_REVIEW",
+      ...(legacyAuditPresent
+        ? [PRODUCT_CASE_LEGACY_OUTPUT_WARNING]
+        : []),
       ...visualReviewContractIssues,
       ...reviewRequiredState.document.identityReview.blockers,
     ]),
@@ -6897,10 +7898,103 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
         ebayRoleCoherent: false,
       },
     }))
-  const rebuilt = createProductCaseWorkspaceExport({
+  let rebuilt = createProductCaseWorkspaceExport({
     workspaceState: reviewRequiredState,
     exportedAt: envelope.exportedAt,
   })
+  if (legacyHistoricalOutput) {
+    const activeMismatch = inspectProductCaseOutputMismatches(
+      legacyHistoricalOutput,
+      rebuilt.output,
+    )
+    outputMismatchPaths = activeMismatch.paths
+    const auditWithoutHash:
+      Omit<ProductCaseLegacyImportAudit, "historicalOutputContentHash"> = {
+        warning: PRODUCT_CASE_LEGACY_OUTPUT_WARNING,
+        legacyProfile: PRODUCT_CASE_LEGACY_OUTPUT_PROFILE,
+        sourceWorkspaceExportVersion:
+          PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION,
+        sourceOutputContractVersion: "UNVERSIONED",
+        validationMode: "CURRENT_DOMAIN_GATED_REBUILD",
+        historicalOutput: legacyHistoricalOutput,
+        outputMismatchPaths: activeMismatch.paths,
+        outputMismatchPathCount: activeMismatch.pathCount,
+        outputMismatchPathsTruncated: activeMismatch.truncated,
+        quarantinedLegacyVisualObservationIds:
+          canonicalLegacyVisualQuarantineIds(
+            quarantinedLegacyVisualObservationIds,
+          ),
+        historicalOutputTrusted: false,
+        historicalPackageTrusted: false,
+        historicalHandoffTrusted: false,
+        activeOutputRebuiltWithCurrentDomain: true,
+        auditOnly: true,
+      }
+    historicalOutputAudit = {
+      ...auditWithoutHash,
+      historicalOutputContentHash: await hashProductCaseContent(
+        legacyImportAuditHashPayload(auditWithoutHash),
+      ) as `sha256:${string}`,
+    }
+    reviewRequiredState.legacyImportAudit =
+      structuredClone(historicalOutputAudit)
+    rebuilt = createProductCaseWorkspaceExport({
+      workspaceState: reviewRequiredState,
+      exportedAt: envelope.exportedAt,
+    })
+    const auditOutputStability = inspectProductCaseOutputMismatches(
+      legacyHistoricalOutput,
+      rebuilt.output,
+    )
+    if (
+      stableValue(auditOutputStability.paths) !==
+        stableValue(historicalOutputAudit.outputMismatchPaths) ||
+      auditOutputStability.pathCount !==
+        historicalOutputAudit.outputMismatchPathCount ||
+      auditOutputStability.truncated !==
+        historicalOutputAudit.outputMismatchPathsTruncated
+    ) {
+      throw new Error(
+        "PRODUCT_CASE_IMPORT_LEGACY_AUDIT_REBUILD_UNSTABLE",
+      )
+    }
+    await validateLegacyImportAuditIntegrity(
+      historicalOutputAudit,
+      {
+        currentOutput: rebuilt.output,
+      },
+    )
+  }
+  if (
+    currentExport &&
+    rebuilt.workspaceState.legacyImportAudit
+  ) {
+    const refreshedWorkspaceState =
+      await refreshProductCaseLegacyImportAuditForExport({
+        workspaceState: rebuilt.workspaceState,
+        exportedAt: envelope.exportedAt,
+      })
+    rebuilt = createProductCaseWorkspaceExport({
+      workspaceState: refreshedWorkspaceState,
+      exportedAt: envelope.exportedAt,
+    })
+  }
+  if (
+    legacyOutputRebuilt &&
+    (
+      rebuilt.output.listingPackage !== null ||
+      rebuilt.output.listingPackageStatus ===
+        "READY_FOR_HUMAN_SELLER_HUB_ENTRY" ||
+      rebuilt.output.manualHandoffAllowed !== false ||
+      rebuilt.output.handoffArtifactGenerated !== false
+    )
+  ) {
+    throw new Error("PRODUCT_CASE_IMPORT_LEGACY_REBUILD_NOT_BLOCKED")
+  }
+  const effectiveHistoricalOutputAudit =
+    historicalOutputAudit ??
+    rebuilt.workspaceState.legacyImportAudit ??
+    null
   return {
     importMode: "VIEW_ONLY" as const,
     humanReviewStatus: "HUMAN_REVIEW_REQUIRED" as const,
@@ -6911,6 +8005,16 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     importedManualHandoffTrusted: false as const,
     visualReviewContractIssues,
     visualReviewCorrectionRequired: visualReviewContractIssues.length > 0,
+    legacyOutputRebuilt,
+    importWarnings: effectiveHistoricalOutputAudit
+      ? [PRODUCT_CASE_LEGACY_OUTPUT_WARNING] as const
+      : [],
+    outputMismatchPaths,
+    historicalOutputAudit: effectiveHistoricalOutputAudit,
+    sourceWorkspaceExportVersion: envelopeVersion as
+      | typeof PRODUCT_CASE_WORKSPACE_EXPORT_VERSION
+      | typeof PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION,
+    currentOutputContractVersion: PRODUCT_CASE_OUTPUT_CONTRACT_VERSION,
     safety: PRODUCT_CASE_ZERO_EFFECTS,
   }
 }

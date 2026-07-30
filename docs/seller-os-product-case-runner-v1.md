@@ -127,6 +127,34 @@ conserva evidencia original, observaciones, correcciones, conflictos, costos,
 comparables, estrategia, operaciones de listing, razones de override y
 learning observations, sin persistencia automática.
 
+Los exports nuevos usan `PRODUCT_CASE_WORKSPACE_EXPORT_V2` y
+`outputContractVersion: PRODUCT_CASE_OUTPUT_CONTRACT_V1`. Para este contrato,
+cualquier diferencia entre el output exportado y el reconstruido continúa
+produciendo `PRODUCT_CASE_IMPORT_OUTPUT_MISMATCH`; el error muestra únicamente
+rutas JSON saneadas, nunca valores.
+
+Un V1 sin `outputContractVersion` sólo puede entrar por el perfil explícito
+`PRE_PERSISTENT_HUMAN_VISUAL_CONTRACT_GATE_V1`. La migración valida estructura,
+efectos externos en cero, hash/captura Luna, evidencia y procedencia visual
+verificable. Después coteja el output histórico contra una proyección de
+auditoría del contrato antiguo y rechaza cualquier diferencia fuera de los
+subárboles derivados versionados. El output, package y handoff históricos se
+guardan hasheados como `legacyImportAudit`, con `auditOnly:true` y todos sus
+flags de confianza en `false`; nunca se activan. El dominio actual reconstruye
+un output nuevo, bloquea identidad/readiness/package/handoff y muestra
+`LEGACY_OUTPUT_REBUILT_WITH_CURRENT_DOMAIN`. Reexportar produce V2 y reimportar
+ese V2 es idempotente.
+
+Las observaciones V0 con registro canónico completo se recalculan y verifican.
+Una observación V0 antigua cuyo string de evidencia sea internamente coherente,
+pero no permita reconstruir criptográficamente el contrato actual, se conserva
+sin confiar en ella dentro de
+`legacyImportAudit.quarantinedLegacyVisualObservationIds` y abre el gate
+persistente `HUMAN_VISUAL_REVIEW_LEGACY_EVIDENCE_UNVERIFIABLE`. Sólo una edición,
+reemplazo o eliminación humana puede resolverlo. Si sus copias, IDs, captura o
+evidencia no son coherentes entre sí, el import se rechaza; la cuarentena no
+cubre tampering.
+
 El selector de archivo conserva el objeto `File` durante los rerenders y no
 resetea el input después de `change`. La tarjeta muestra inmediatamente nombre,
 tamaño y estado de lectura; después sincroniza el contenido con el editor JSON.

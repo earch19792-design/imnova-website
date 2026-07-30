@@ -8,6 +8,7 @@ import {
   applyProductCaseEvidenceReview,
   buildProductCaseRunnerOutput,
   buildStrategyLabAdapterPreview,
+  createProductCaseWorkspaceExport,
   createHumanVisualReviewRecord,
   createManualAuthenticatedSupplierSourceCapture,
   deleteHumanVisualReviewRecord,
@@ -20,6 +21,7 @@ import {
   PRODUCT_CASE_RUNNER_VERSION,
   PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES,
   PRODUCT_CASE_ZERO_EFFECTS,
+  refreshProductCaseLegacyImportAuditForExport,
   resolveLunaSourceContractGuard,
   reviewHumanComparableCandidate,
   serializeProductCaseWorkspaceExport,
@@ -31,6 +33,7 @@ import {
   type ProductCaseDocument,
   type ProductCaseImageApproval,
   type ProductCaseImageObservation,
+  type ProductCaseLegacyImportAudit,
   type ProductCaseListingOperations,
   type ProductCaseSupplierSourceCapture,
 } from "@/lib/ebay/product-case-runner"
@@ -155,11 +158,19 @@ type ProductCaseImportRoundtrip = {
   source: "FILE" | "TEXTAREA"
   imported: JsonRecord
   rebuilt: JsonRecord
+  historicalOutputAudit: JsonRecord | null
   canonicalJson: string
+  canonicalJsonBytes: number
+  canonicalJsonWithinExportLimit: boolean
   domainValidated: true
   workspaceDeepEquivalent: boolean
   outputDeepEquivalent: boolean
   importedManualHandoffTrusted: false
+  legacyOutputRebuilt: boolean
+  importWarnings: string[]
+  outputMismatchPaths: string[]
+  sourceWorkspaceExportVersion: string
+  currentOutputContractVersion: string
   phaseContract: "PRODUCT_CASE_OPERATIONAL_PIPELINE_12_PHASES_5_STATUSES"
 }
 
@@ -491,12 +502,16 @@ export default function ProductCaseRunnerPage() {
   const [importReadStatus, setImportReadStatus] =
     useState<"IDLE" | "READING" | "READY" | "ERROR">("IDLE")
   const [importInlineError, setImportInlineError] = useState("")
+  const [importMismatchPaths, setImportMismatchPaths] =
+    useState<string[]>([])
   const importReadGenerationRef = useRef(0)
   const importFileInputRef = useRef<HTMLInputElement>(null)
   const [importRoundtrip, setImportRoundtrip] =
     useState<ProductCaseImportRoundtrip | null>(null)
   const [importRequiresHumanReReview, setImportRequiresHumanReReview] =
     useState(false)
+  const [legacyImportAudit, setLegacyImportAudit] =
+    useState<ProductCaseLegacyImportAudit | null>(null)
   const [preflightBusy, setPreflightBusy] = useState(false)
   const [supplierSourceCapture, setSupplierSourceCapture] =
     useState<ProductCaseSupplierSourceCapture | null>(() =>
@@ -573,6 +588,7 @@ export default function ProductCaseRunnerPage() {
   )
   const [notice, setNotice] = useState("")
   const [error, setError] = useState("")
+  const [workspaceExportError, setWorkspaceExportError] = useState("")
   const [extracting, setExtracting] = useState(false)
   const [generatedPackage, setGeneratedPackage] =
     useState<JsonRecord | null>(null)
@@ -824,9 +840,12 @@ export default function ProductCaseRunnerPage() {
     setImportInputSource("TEXTAREA")
     setImportReadStatus("IDLE")
     setImportInlineError("")
+    setImportMismatchPaths([])
     if (importFileInputRef.current) importFileInputRef.current.value = ""
     setImportRoundtrip(null)
     setImportRequiresHumanReReview(false)
+    setLegacyImportAudit(null)
+    setWorkspaceExportError("")
     setManualContent("")
     setHumanVisibleProductTextConfirmed(false)
     setSupplierSourceCapture(null)
@@ -1633,7 +1652,9 @@ export default function ProductCaseRunnerPage() {
     const importGeneration = importReadGenerationRef.current
     setError("")
     setImportInlineError("")
+    setImportMismatchPaths([])
     setNotice("")
+    setWorkspaceExportError("")
     try {
       const importedResult = await importProductCaseWorkspaceExport(rawJson)
       if (importReadGenerationRef.current !== importGeneration) return
@@ -1655,9 +1676,6 @@ export default function ProductCaseRunnerPage() {
       }
       const importedOutput = record(importedEnvelope.output)
       const rebuiltOutput = importedResult.rebuiltOutput
-      const importedOperationalPipeline = rows(
-        importedOutput.operationalPipeline,
-      )
       const rebuiltOperationalPipeline = rows(
         rebuiltOutput.operationalPipeline,
       )
@@ -1671,17 +1689,12 @@ export default function ProductCaseRunnerPage() {
       for (
         const [position, phase] of
           PRODUCT_CASE_OPERATIONAL_PHASES.entries()
-      ) {
-        const importedPhase = importedOperationalPipeline[position]
+        ) {
         const rebuiltPhase = rebuiltOperationalPipeline[position]
         if (
-          importedOperationalPipeline.length !==
-            PRODUCT_CASE_OPERATIONAL_PHASES.length ||
           rebuiltOperationalPipeline.length !==
             PRODUCT_CASE_OPERATIONAL_PHASES.length ||
-          importedPhase?.phase !== phase ||
           rebuiltPhase?.phase !== phase ||
-          !validStatuses.has(text(importedPhase?.status, "")) ||
           !validStatuses.has(text(rebuiltPhase?.status, ""))
         ) {
           throw new Error(
@@ -1694,7 +1707,20 @@ export default function ProductCaseRunnerPage() {
           JSON.stringify(importedWorkspace)
       const outputDeepEquivalent =
         JSON.stringify(importedOutput) === JSON.stringify(rebuiltOutput)
-      const canonicalJson = JSON.stringify(importedEnvelope, null, 2)
+      const canonicalJson = JSON.stringify(
+        createProductCaseWorkspaceExport({
+          workspaceState: importedWorkspace,
+          exportedAt: text(
+            importedEnvelope.exportedAt,
+            new Date().toISOString(),
+          ),
+        }),
+        null,
+        2,
+      )
+      const canonicalJsonBytes = byteLength(canonicalJson)
+      const canonicalJsonWithinExportLimit =
+        canonicalJsonBytes <= PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES
       const importedHumanReview = record(
         importedDocumentRecord.humanReview,
       )
@@ -1756,33 +1782,51 @@ export default function ProductCaseRunnerPage() {
       setNewImageDraft({ ...emptyImageApprovalDraft })
       setVisualObservationDraft({ ...emptyVisualObservationDraft })
       setEditingVisualObservationEvidenceId(null)
-      setListingOperations({
-        ...structuredClone(importedWorkspace.listingOperations),
-        explicitHumanApproval: {
-          approved: false,
-          reviewer: null,
-          reviewedAt: null,
-          reason: null,
-        },
-      })
+      setListingOperations(
+        structuredClone(importedWorkspace.listingOperations),
+      )
       setGeneratedPackage(null)
       setImportRequiresHumanReReview(true)
+      setLegacyImportAudit(
+        importedWorkspace.legacyImportAudit
+          ? structuredClone(importedWorkspace.legacyImportAudit)
+          : null,
+      )
       setImportJson(canonicalJson)
       setImportRoundtrip({
         source,
         imported: importedEnvelope,
         rebuilt: record(rebuiltOutput),
+        historicalOutputAudit: importedResult.historicalOutputAudit
+          ? record(importedResult.historicalOutputAudit)
+          : null,
         canonicalJson,
+        canonicalJsonBytes,
+        canonicalJsonWithinExportLimit,
         domainValidated: true,
         workspaceDeepEquivalent,
         outputDeepEquivalent,
         importedManualHandoffTrusted:
           importedResult.importedManualHandoffTrusted,
+        legacyOutputRebuilt: importedResult.legacyOutputRebuilt,
+        importWarnings: [...importedResult.importWarnings],
+        outputMismatchPaths: importedResult.outputMismatchPaths.length > 0
+          ? [...importedResult.outputMismatchPaths]
+          : [
+              ...(importedResult.historicalOutputAudit
+                ?.outputMismatchPaths ?? []),
+            ],
+        sourceWorkspaceExportVersion:
+          importedResult.sourceWorkspaceExportVersion ?? "UNKNOWN",
+        currentOutputContractVersion:
+          importedResult.currentOutputContractVersion,
         phaseContract:
           "PRODUCT_CASE_OPERATIONAL_PIPELINE_12_PHASES_5_STATUSES",
       })
       setNotice(
-        importedResult.visualReviewCorrectionRequired
+        importedResult.historicalOutputAudit
+          ? `${importedResult.importWarnings.join(" · ")}. El output histórico se conserva sólo para auditoría; identidad, readiness, paquete y handoff permanecen bloqueados.`
+          : importedResult.visualReviewCorrectionRequired
           ? `PRODUCT CASE importado sin corregir datos legacy. Corrección humana obligatoria: ${importedResult.visualReviewContractIssues.join(" · ")}`
           : "PRODUCT CASE JSON importado, validado por el dominio y conservado sólo en memoria del navegador.",
       )
@@ -1791,7 +1835,16 @@ export default function ProductCaseRunnerPage() {
       const importError = caught instanceof Error
         ? caught.message
         : "PRODUCT_CASE_IMPORT_INVALID"
-      setImportInlineError(importError)
+      const [errorCode, ...errorDetail] = importError.split(":")
+      const diagnosticPaths =
+        errorCode === "PRODUCT_CASE_IMPORT_OUTPUT_MISMATCH"
+          ? errorDetail.join(":").split(" · ").filter((path) =>
+              /^output(?:\.|\[|$)/.test(path) &&
+              !path.includes("REDACTED_KEY")
+            )
+          : []
+      setImportMismatchPaths(diagnosticPaths)
+      setImportInlineError(errorCode)
       setError(importError)
     }
   }
@@ -1809,9 +1862,11 @@ export default function ProductCaseRunnerPage() {
     setImportInputSource("FILE")
     setImportReadStatus("READING")
     setImportInlineError("")
+    setImportMismatchPaths([])
     setError("")
     setNotice("")
     setImportRoundtrip(null)
+    setWorkspaceExportError("")
     const metadataError = validateProductCaseImportFileMetadata(file)
     if (metadataError) {
       setImportReadStatus("ERROR")
@@ -1850,24 +1905,50 @@ export default function ProductCaseRunnerPage() {
   const importReady = importReadStatus === "READY" &&
     importJsonCandidateError === null
 
-  function exportReviewedCase() {
-    const serialized = serializeProductCaseWorkspaceExport({
-      workspaceState: {
-        document: productCase,
-        evaluatedAt: runnerTimestamp,
-        generatedAt: runnerTimestamp,
-        economicsPolicy,
-        scenarioDraft,
-        imageApprovals,
-        imageObservations: imageAnalysis.observations,
-        listingOperations,
-      },
-      exportedAt: new Date().toISOString(),
-    })
-    downloadJson(
-      `${text(productCase.caseId, "product-case")}.json`,
-      serialized,
-    )
+  async function exportReviewedCase() {
+    setWorkspaceExportError("")
+    try {
+      const exportedAt = new Date().toISOString()
+      const refreshedWorkspaceState =
+        await refreshProductCaseLegacyImportAuditForExport({
+          workspaceState: {
+            document: productCase,
+            evaluatedAt: runnerTimestamp,
+            generatedAt: runnerTimestamp,
+            economicsPolicy,
+            scenarioDraft,
+            imageApprovals,
+            imageObservations: imageAnalysis.observations,
+            listingOperations,
+            ...(legacyImportAudit
+              ? { legacyImportAudit: structuredClone(legacyImportAudit) }
+              : {}),
+          },
+          exportedAt,
+        })
+      setLegacyImportAudit(
+        refreshedWorkspaceState.legacyImportAudit
+          ? structuredClone(refreshedWorkspaceState.legacyImportAudit)
+          : null,
+      )
+      const serialized = serializeProductCaseWorkspaceExport({
+        workspaceState: refreshedWorkspaceState,
+        exportedAt,
+      })
+      downloadJson(
+        `${text(productCase.caseId, "product-case")}.json`,
+        serialized,
+      )
+    } catch (caught) {
+      const exportError = caught instanceof Error
+        ? caught.message
+        : "PRODUCT_CASE_EXPORT_FAILED"
+      setWorkspaceExportError(
+        exportError === "PRODUCT_CASE_EXPORT_TOO_LARGE"
+          ? `${exportError}: la representación V2 auditada supera el límite de ${PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES.toLocaleString()} bytes. El workspace reconstruido y su audit histórico permanecen intactos en memoria; no se generó ni descargó una copia incompleta.`
+          : exportError,
+      )
+    }
   }
 
   function exportRegistrationDraft() {
@@ -2024,6 +2105,7 @@ export default function ProductCaseRunnerPage() {
                       : "IDLE",
                   )
                   setImportInlineError(visibleCandidateError)
+                  setImportMismatchPaths([])
                   setError(visibleCandidateError)
                   setNotice("")
                   setImportRoundtrip(null)
@@ -2044,16 +2126,61 @@ export default function ProductCaseRunnerPage() {
             VALIDAR E IMPORTAR EN ESTE NAVEGADOR
           </button>
           {importInlineError && (
-            <p
+            <div
               role="alert"
               data-testid="product-case-import-error"
               className="mt-4 rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm font-bold text-rose-50"
             >
-              {importInlineError}
-            </p>
+              <p>{importInlineError}</p>
+              {importMismatchPaths.length > 0 && (
+                <div
+                  data-testid="product-case-import-mismatch-paths"
+                  className="mt-3"
+                >
+                  <p className="text-xs uppercase tracking-wider opacity-65">
+                    Rutas distintas · sólo diagnóstico, sin valores
+                  </p>
+                  <ol className="mt-2 max-h-56 list-decimal overflow-auto pl-5 font-mono text-[11px] leading-5">
+                    {importMismatchPaths.map((path) => (
+                      <li key={path}>{path}</li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+            </div>
           )}
           {importRoundtrip && (
             <>
+              {importRoundtrip.historicalOutputAudit && (
+                <div
+                  data-testid="product-case-legacy-output-warning"
+                  className="mt-4 rounded-2xl border border-amber-200/30 bg-amber-200/[0.08] p-4 text-amber-50"
+                >
+                  <p className="text-sm font-black">
+                    LEGACY_OUTPUT_REBUILT_WITH_CURRENT_DOMAIN
+                  </p>
+                  <p className="mt-2 text-xs leading-5 opacity-75">
+                    El output, paquete y handoff históricos no están activos ni
+                    son confiables. El dominio actual reconstruyó el expediente
+                    en modo fail-closed y exige corrección/revisión humana.
+                  </p>
+                  <p className="mt-3 text-xs font-black">
+                    {importRoundtrip.sourceWorkspaceExportVersion} →{" "}
+                    {importRoundtrip.currentOutputContractVersion}
+                  </p>
+                  <details className="mt-3">
+                    <summary className={`min-h-11 cursor-pointer text-xs font-black ${buttonFocus}`}>
+                      RUTAS DEL OUTPUT HISTÓRICO QUE CAMBIARON ·{" "}
+                      {importRoundtrip.outputMismatchPaths.length}
+                    </summary>
+                    <ol className="mt-2 max-h-64 list-decimal overflow-auto pl-5 font-mono text-[11px] leading-5">
+                      {importRoundtrip.outputMismatchPaths.map((path) => (
+                        <li key={path}>{path}</li>
+                      ))}
+                    </ol>
+                  </details>
+                </div>
+              )}
               <dl className="mt-4 grid gap-3 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.05] p-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
                 <div>
                   <dt className="text-white/45">Source</dt>
@@ -2084,19 +2211,30 @@ export default function ProductCaseRunnerPage() {
                   <dd className="mt-1 font-black">
                     importedManualHandoffTrusted = false ·{" "}
                     {importRoundtrip.phaseContract} ·{" "}
-                    {byteLength(importRoundtrip.canonicalJson).toLocaleString()} bytes preserved
+                    {importRoundtrip.canonicalJsonBytes.toLocaleString()} bytes
+                    {" · "}
+                    {importRoundtrip.canonicalJsonWithinExportLimit
+                      ? "V2_EXPORTABLE"
+                      : "V2_ACTIVE_IN_MEMORY_OVER_EXPORT_LIMIT"}
                   </dd>
                 </div>
               </dl>
               <div className="mt-4 grid gap-4 lg:grid-cols-2">
                 <JsonPanel
-                  label="Imported envelope · preserved for review"
+                  label="Historical envelope · audit only · never active"
                   value={importRoundtrip.imported}
                 />
                 <JsonPanel
                   label="Domain rebuilt output"
                   value={importRoundtrip.rebuilt}
                 />
+                {importRoundtrip.historicalOutputAudit && (
+                  <JsonPanel
+                    label="Legacy output audit reference · untrusted"
+                    value={importRoundtrip.historicalOutputAudit}
+                    className="lg:col-span-2"
+                  />
+                )}
               </div>
             </>
           )}
@@ -4403,6 +4541,15 @@ export default function ProductCaseRunnerPage() {
               EXPORTAR REGISTRATION DRAFT JSON
             </button>
           </div>
+          {workspaceExportError && (
+            <p
+              role="alert"
+              data-testid="product-case-workspace-export-error"
+              className="mt-3 rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm font-bold text-rose-50"
+            >
+              {workspaceExportError}
+            </p>
+          )}
         </section>
 
         <section
