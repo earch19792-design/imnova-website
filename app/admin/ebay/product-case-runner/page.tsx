@@ -43,6 +43,7 @@ import {
   validateLunaProductUrl,
   type ProductCaseDocument,
   type ProductCaseHumanIdentityReview,
+  type ProductCaseHistoricalHumanIdentityReviewAudit,
   type ProductCaseImageApproval,
   type ProductCaseImageObservation,
   type ProductCaseLegacyImportAudit,
@@ -127,6 +128,7 @@ type HumanIdentityReviewDraft = {
   humanReason: string
   evidenceIds: string[]
   sameGeneralProductTypeConfirmed: boolean
+  productType: string
   exactIdentityConfirmed: boolean
   brandConfirmed: boolean
   brand: string
@@ -328,6 +330,7 @@ const emptyHumanIdentityReviewDraft: HumanIdentityReviewDraft = {
   humanReason: "",
   evidenceIds: [],
   sameGeneralProductTypeConfirmed: false,
+  productType: "",
   exactIdentityConfirmed: false,
   brandConfirmed: false,
   brand: "",
@@ -582,6 +585,7 @@ function humanIdentityReviewDraftFrom(
     sameGeneralProductTypeConfirmed: booleanValue(
       "sameGeneralProductTypeConfirmed",
     ),
+    productType: rawOrReview("productType"),
     exactIdentityConfirmed: booleanValue("exactIdentityConfirmed"),
     brandConfirmed: booleanValue("brandConfirmed"),
     brand: rawOrReview("brand"),
@@ -636,6 +640,7 @@ function humanIdentityRawInputForSave(
     evidenceIds: [...draft.evidenceIds],
     sameGeneralProductTypeConfirmed:
       draft.sameGeneralProductTypeConfirmed,
+    productType: draft.productType,
     exactIdentityConfirmed: draft.exactIdentityConfirmed,
     brandConfirmed: draft.brandConfirmed,
     brand: draft.brand,
@@ -803,6 +808,9 @@ export default function ProductCaseRunnerPage() {
     useState(false)
   const [legacyImportAudit, setLegacyImportAudit] =
     useState<ProductCaseLegacyImportAudit | null>(null)
+  const [historicalHumanIdentityReviewAudit,
+    setHistoricalHumanIdentityReviewAudit] =
+    useState<ProductCaseHistoricalHumanIdentityReviewAudit | null>(null)
   const [preflightBusy, setPreflightBusy] = useState(false)
   const [supplierSourceCapture, setSupplierSourceCapture] =
     useState<ProductCaseSupplierSourceCapture | null>(() =>
@@ -1174,40 +1182,79 @@ export default function ProductCaseRunnerPage() {
   })
   const identityEvidenceCandidates =
     admissibleIdentityEvidence.filter((entry) => {
-    const row = record(entry)
-    const field = text(row.field, "")
-    return (
-      [
-        "title",
-        "product_type",
-        "visual_observation",
-        ...HUMAN_IDENTITY_FIELDS,
-      ].includes(field) &&
-      text(row.sourceEvidenceClass, "") !== "SUPPLIER_MARKETING_CLAIM"
-    )
-  })
-  const availableIdentityFieldRows = [
-    "product_type",
-    ...HUMAN_IDENTITY_FIELDS,
-  ].map((field) => {
+      const row = record(entry)
+      const field = text(row.field, "")
+      return (
+        new Set([
+          "title",
+          "contents",
+          "visual_observation",
+          ...HUMAN_IDENTITY_FIELDS,
+        ]).has(field) &&
+        text(row.sourceEvidenceClass, "") !== "SUPPLIER_MARKETING_CLAIM"
+      )
+    })
+  const humanReviewFieldNames: Record<string, string> = {
+    product_type: "productType",
+    brand: "brand",
+    model: "model",
+    mpn: "mpn",
+    supplier_product_id: "supplierProductId",
+    supplier_sku: "supplierSku",
+    variant_id: "variantId",
+    color: "color",
+    pack_quantity: "packQuantity",
+  }
+  const savedIdentityProvenance = record(
+    savedHumanIdentityReview.provenance,
+  )
+  const savedIdentityReviewEvidenceIds = new Set(
+    strings(savedHumanIdentityReview.evidenceIds),
+  )
+  const availableIdentityFieldRows = HUMAN_IDENTITY_FIELDS.map((field) => {
+    const reviewField = humanReviewFieldNames[field]
+    const canonicalReviewValue = savedHumanIdentityReview[reviewField]
+    const hasCanonicalReviewValue = canonicalReviewValue !== null &&
+      canonicalReviewValue !== undefined && canonicalReviewValue !== ""
+    const fieldProvenance = field === "product_type"
+      ? rows(savedIdentityProvenance.productType)
+      : field === "pack_quantity"
+        ? rows(savedIdentityProvenance.packQuantity)
+        : []
     const entry = admissibleIdentityEvidence.find((candidate) => {
       const row = record(candidate)
-      return text(row.field, "") === field
+      if (text(row.field, "") !== field) return false
+      if (!hasCanonicalReviewValue) return true
+      const candidateValue = row.correctedValue ??
+        row.normalizedValue ?? row.rawValue
+      return savedIdentityReviewEvidenceIds.has(evidenceId(candidate)) &&
+        JSON.stringify(candidateValue) === JSON.stringify(canonicalReviewValue)
     })
     const row = record(entry)
+    const provenanceEvidenceIds = fieldProvenance.map((reference) =>
+      text(reference.evidenceId, "")
+    ).filter(Boolean)
+    const provenanceClasses = fieldProvenance.map((reference) =>
+      text(reference.sourceEvidenceClass, "")
+    ).filter(Boolean)
+    const hasFieldProvenance = provenanceEvidenceIds.length > 0
     return {
       field,
-      evidenceId: entry ? evidenceId(entry) : null,
-      value: entry
-        ? row.correctedValue ?? row.normalizedValue ?? row.rawValue
-        : null,
-      sourceEvidenceClass: entry
-        ? text(row.sourceEvidenceClass, "")
-        : null,
+      evidenceIds: hasCanonicalReviewValue && hasFieldProvenance
+        ? provenanceEvidenceIds
+        : entry ? [evidenceId(entry)] : [],
+      value: hasCanonicalReviewValue
+        ? canonicalReviewValue
+        : entry
+          ? row.correctedValue ?? row.normalizedValue ?? row.rawValue
+          : null,
+      sourceEvidenceClasses: hasCanonicalReviewValue && hasFieldProvenance
+        ? provenanceClasses
+        : entry ? [text(row.sourceEvidenceClass, "")] : [],
     }
   })
   const missingIdentityFields = availableIdentityFieldRows
-    .filter((row) => row.field !== "product_type" && row.value === null)
+    .filter((row) => row.value === null)
     .map((row) => row.field)
   const activeIdentityConflicts = [
     text(identityReview.currentConflict, ""),
@@ -1443,6 +1490,7 @@ export default function ProductCaseRunnerPage() {
     setImportRoundtrip(null)
     setImportRequiresHumanReReview(false)
     setLegacyImportAudit(null)
+    setHistoricalHumanIdentityReviewAudit(null)
     setWorkspaceExportError("")
     setManualContent("")
     setHumanVisibleProductTextConfirmed(false)
@@ -2178,6 +2226,7 @@ export default function ProductCaseRunnerPage() {
         evidenceIds: [...draft.evidenceIds],
         sameGeneralProductTypeConfirmed:
           draft.sameGeneralProductTypeConfirmed,
+        productType: draft.productType.trim() || null,
         exactIdentityConfirmed: draft.exactIdentityConfirmed,
         brandConfirmed: draft.brandConfirmed,
         brand: draft.brand.trim() || null,
@@ -2590,6 +2639,13 @@ export default function ProductCaseRunnerPage() {
           ? structuredClone(importedWorkspace.legacyImportAudit)
           : null,
       )
+      setHistoricalHumanIdentityReviewAudit(
+        importedWorkspace.historicalHumanIdentityReviewAudit
+          ? structuredClone(
+              importedWorkspace.historicalHumanIdentityReviewAudit,
+            )
+          : null,
+      )
       setImportJson(canonicalJson)
       setImportRoundtrip({
         source,
@@ -2725,6 +2781,13 @@ export default function ProductCaseRunnerPage() {
             listingOperations,
             ...(legacyImportAudit
               ? { legacyImportAudit: structuredClone(legacyImportAudit) }
+              : {}),
+            ...(historicalHumanIdentityReviewAudit
+              ? {
+                  historicalHumanIdentityReviewAudit: structuredClone(
+                    historicalHumanIdentityReviewAudit,
+                  ),
+                }
               : {}),
           },
           exportedAt,
@@ -4590,14 +4653,14 @@ export default function ProductCaseRunnerPage() {
                   <p className="mt-2 break-words font-black">
                     {row.value === null ? "MISSING" : display(row.value)}
                   </p>
-                  {row.evidenceId && (
-                    <p className="mt-2 break-all font-mono text-[10px] text-white/45">
-                      {row.evidenceId}
+                  {row.evidenceIds.length > 0 && (
+                    <p className="mt-2 whitespace-pre-wrap break-all font-mono text-[10px] text-white/45">
+                      {row.evidenceIds.join("\n")}
                     </p>
                   )}
-                  {row.sourceEvidenceClass && (
+                  {row.sourceEvidenceClasses.length > 0 && (
                     <p className="mt-1 text-[10px] text-white/45">
-                      {row.sourceEvidenceClass}
+                      {row.sourceEvidenceClasses.join(" · ")}
                     </p>
                   )}
                 </article>
@@ -4620,7 +4683,7 @@ export default function ProductCaseRunnerPage() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="font-mono text-[10px] font-black tracking-wider text-emerald-100/65">
-                    HUMAN_IDENTITY_REVIEW_CONTRACT_V1
+                    {HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION}
                   </p>
                   <h3 className="mt-1 text-lg font-black">
                     REVISIÓN DE IDENTIDAD REGISTRADA
@@ -4642,6 +4705,7 @@ export default function ProductCaseRunnerPage() {
                     "sameGeneralProductTypeConfirmed",
                     "Mismo tipo general aparente",
                   ],
+                  ["productType", "Tipo general de producto — productType"],
                   [
                     "exactIdentityConfirmed",
                     "Identidad exacta confirmada",
@@ -4662,10 +4726,6 @@ export default function ProductCaseRunnerPage() {
                     "physicalProductVerified",
                     "Producto físico verificado — physicalProductVerified",
                   ],
-                  [
-                    "physicalVerificationEvidenceIds",
-                    "Evidencia física — physicalVerificationEvidenceIds",
-                  ],
                 ] as const).map(([field, label]) => (
                   <div
                     key={field}
@@ -4684,9 +4744,30 @@ export default function ProductCaseRunnerPage() {
                   </dd>
                 </div>
                 <div className="rounded-xl border border-white/10 p-3 sm:col-span-2 xl:col-span-3">
-                  <dt className="text-white/45">Evidencias — evidenceIds</dt>
+                  <dt className="text-white/45">
+                    Evidencias usadas en la revisión de identidad — evidenceIds
+                  </dt>
                   <dd className="mt-1 whitespace-pre-wrap break-all font-mono">
                     {display(savedHumanIdentityReview.evidenceIds)}
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-white/10 p-3 sm:col-span-2 xl:col-span-3">
+                  <dt className="text-white/45">
+                    Evidencias de verificación física — physicalVerificationEvidenceIds
+                  </dt>
+                  <dd className="mt-1 whitespace-pre-wrap break-all font-mono">
+                    {display(
+                      savedHumanIdentityReview
+                        .physicalVerificationEvidenceIds,
+                    )}
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-white/10 p-3 sm:col-span-2 xl:col-span-3">
+                  <dt className="text-white/45">
+                    Procedencia canónica — provenance
+                  </dt>
+                  <dd className="mt-1 whitespace-pre-wrap break-all font-mono">
+                    {display(savedHumanIdentityReview.provenance)}
                   </dd>
                 </div>
               </dl>
@@ -4828,6 +4909,9 @@ export default function ProductCaseRunnerPage() {
                         ...current,
                         sameGeneralProductTypeConfirmed:
                           event.target.checked,
+                        productType: event.target.checked
+                          ? current.productType
+                          : "",
                       }))}
                     className="size-4"
                   />
@@ -4863,6 +4947,10 @@ export default function ProductCaseRunnerPage() {
                   brandConfirmed
                 </label>
                 {([
+                  [
+                    "productType",
+                    "Tipo general de producto — productType",
+                  ],
                   ["brand", "Marca — brand"],
                   ["model", "Modelo — model"],
                   ["mpn", "MPN — mpn"],
@@ -4886,6 +4974,9 @@ export default function ProductCaseRunnerPage() {
                       type={field === "packQuantity" ? "number" : "text"}
                       min={field === "packQuantity" ? "1" : undefined}
                       step={field === "packQuantity" ? "1" : undefined}
+                      disabled={field === "productType" &&
+                        !humanIdentityReviewDraft
+                          .sameGeneralProductTypeConfirmed}
                       value={humanIdentityReviewDraft[field]}
                       placeholder="MISSING"
                       onChange={(event) =>
@@ -4930,10 +5021,43 @@ export default function ProductCaseRunnerPage() {
                             <span className="block break-all font-mono font-black">
                               {id}
                             </span>
-                            <span className="mt-1 block text-white/45">
-                              {display(row.field)} ·{" "}
-                              {display(row.sourceEvidenceClass)}
-                            </span>
+                            <dl className="mt-2 grid gap-1 text-[10px] text-white/55">
+                              <div>
+                                <dt className="inline font-black">Field: </dt>
+                                <dd className="inline">{display(row.field)}</dd>
+                              </div>
+                              <div>
+                                <dt className="inline font-black">Raw value: </dt>
+                                <dd className="inline whitespace-pre-wrap break-words">
+                                  {display(row.rawValue)}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt className="inline font-black">
+                                  Normalized value:{" "}
+                                </dt>
+                                <dd className="inline whitespace-pre-wrap break-words">
+                                  {display(row.normalizedValue)}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt className="inline font-black">
+                                  Evidence class:{" "}
+                                </dt>
+                                <dd className="inline">
+                                  {display(row.evidenceClass)}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt className="inline font-black">
+                                  Procedencia:{" "}
+                                </dt>
+                                <dd className="inline">
+                                  {display(row.sourceEvidenceClass)} ·{" "}
+                                  {display(row.sourceType)}
+                                </dd>
+                              </div>
+                            </dl>
                             {row.field === "title" && (
                               <span className="mt-1 block font-black text-amber-100">
                                 SUPPLIER_STATED CONTEXT ONLY · no prueba
@@ -5041,7 +5165,8 @@ export default function ProductCaseRunnerPage() {
               <div><dt className="text-white/45">Status</dt><dd className="mt-1 font-black">{display(identityReview.status)}</dd></div>
               <div><dt className="text-white/45">Confidence</dt><dd className="mt-1 font-black">{display(identityReview.confidence)}</dd></div>
               <div><dt className="text-white/45">Physical verification</dt><dd className="mt-1 font-black">{display(identityReview.physicalProductVerified)}</dd></div>
-              <div className="sm:col-span-3"><dt className="text-white/45">Verification evidence IDs</dt><dd className="mt-1 whitespace-pre-wrap font-mono">{display(identityReview.physicalVerificationEvidenceIds)}</dd></div>
+              <div className="sm:col-span-3"><dt className="text-white/45">Evidencias usadas en la revisión de identidad — evidenceIds</dt><dd className="mt-1 whitespace-pre-wrap font-mono">{display(savedHumanIdentityReview.evidenceIds ?? [])}</dd></div>
+              <div className="sm:col-span-3"><dt className="text-white/45">Evidencias de verificación física — physicalVerificationEvidenceIds</dt><dd className="mt-1 whitespace-pre-wrap font-mono">{display(identityReview.physicalVerificationEvidenceIds)}</dd></div>
               <div className="sm:col-span-3"><dt className="text-white/45">Conflicts / blockers</dt><dd className="mt-1 whitespace-pre-wrap font-mono">{display(identityReview.currentConflict ?? identityReview.blockers)}</dd></div>
             </dl>
             <a

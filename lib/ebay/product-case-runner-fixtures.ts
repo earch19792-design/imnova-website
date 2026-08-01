@@ -1074,9 +1074,7 @@ const SANITIZED_PHYSICAL_IDENTITY_EVIDENCE_IDS:
   "san-mpn",
   "san-pack",
   "san-product-id",
-  "san-product-type",
   "san-sku",
-  "san-title",
   "san-variant-id",
 ]
 const SANITIZED_IDENTITY_RAW_INPUT = {
@@ -1087,6 +1085,7 @@ const SANITIZED_IDENTITY_RAW_INPUT = {
     "Independent sanitized physical evidence confirms the exact identity.",
   evidenceIds: SANITIZED_IDENTITY_EVIDENCE_IDS,
   sameGeneralProductTypeConfirmed: true,
+  productType: "SANITIZED_PRODUCT",
   exactIdentityConfirmed: true,
   brandConfirmed: true,
   brand: "SANITIZED BRAND",
@@ -1101,11 +1100,65 @@ const SANITIZED_IDENTITY_RAW_INPUT = {
   physicalVerificationEvidenceIds:
     SANITIZED_PHYSICAL_IDENTITY_EVIDENCE_IDS,
 }
+
+function sanitizedIdentityProvenanceReference(input: {
+  evidenceId: string
+  field: ProductCaseEvidenceField
+  sourceType?: ProductCaseEvidence["sourceType"]
+  evidenceClass?: ProductCaseEvidence["evidenceClass"]
+  contentHash?: `sha256:${string}`
+  variantKey?: string | null
+}) {
+  const evidenceClass = input.evidenceClass ?? "PRODUCT_VERIFIED"
+  return {
+    evidenceId: input.evidenceId,
+    field: input.field,
+    sourceType: input.sourceType ?? "HUMAN_PRODUCT_INSPECTION",
+    evidenceClass,
+    sourceEvidenceClass: evidenceClass,
+    contentHash: input.contentHash ?? SANITIZED_CAPTURE_HASH,
+    variantKey: input.variantKey ?? null,
+  }
+}
+
+const SANITIZED_SELECTED_IDENTITY_PROVENANCE = [
+  sanitizedIdentityProvenanceReference({ evidenceId: "san-brand", field: "brand" }),
+  sanitizedIdentityProvenanceReference({ evidenceId: "san-color", field: "color" }),
+  sanitizedIdentityProvenanceReference({ evidenceId: "san-model", field: "model" }),
+  sanitizedIdentityProvenanceReference({ evidenceId: "san-mpn", field: "mpn" }),
+  sanitizedIdentityProvenanceReference({ evidenceId: "san-pack", field: "pack_quantity" }),
+  sanitizedIdentityProvenanceReference({ evidenceId: "san-product-id", field: "supplier_product_id" }),
+  sanitizedIdentityProvenanceReference({
+    evidenceId: "san-product-type",
+    field: "product_type",
+    sourceType: "LUNA_AUTHENTICATED_MANUAL_CAPTURE",
+    evidenceClass: "SUPPLIER_STATED",
+  }),
+  sanitizedIdentityProvenanceReference({ evidenceId: "san-sku", field: "supplier_sku" }),
+  sanitizedIdentityProvenanceReference({
+    evidenceId: "san-title",
+    field: "title",
+    sourceType: "LUNA_AUTHENTICATED_MANUAL_CAPTURE",
+    evidenceClass: "SUPPLIER_STATED",
+  }),
+  sanitizedIdentityProvenanceReference({
+    evidenceId: "san-variant-id",
+    field: "variant_id",
+    variantKey: "BLACK",
+  }),
+  sanitizedIdentityProvenanceReference({
+    evidenceId: SANITIZED_VISUAL_EVIDENCE_ID,
+    field: "visual_observation",
+    sourceType: "HUMAN_VISUAL_OBSERVATION",
+    evidenceClass: "HUMAN_VISUAL_REVIEW",
+    contentHash: SANITIZED_VISUAL_HASH,
+  }),
+]
 const SANITIZED_IDENTITY_HASH =
-  "sha256:d740ed61738fa94d4f4c1d92f32493a315cfb4867465eaeb6f066e2c76d40df4"
+  "sha256:0995fb19118c99f8261db9b17a86b8176d9a938d807e9ffd2a7966d25cd3c360"
 const SANITIZED_IDENTITY_REVIEW = {
   contractVersion: HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION,
-  reviewId: "identity-review-d740ed61738fa94d",
+  reviewId: "identity-review-0995fb19118c99f8",
   contentHash: SANITIZED_IDENTITY_HASH,
   reviewer: "SANITIZED_IDENTITY_REVIEWER",
   reviewedAt: SANITIZED_CAPTURED_AT,
@@ -1116,6 +1169,7 @@ const SANITIZED_IDENTITY_REVIEW = {
     "Independent sanitized physical evidence confirms the exact identity.",
   evidenceIds: SANITIZED_IDENTITY_EVIDENCE_IDS,
   sameGeneralProductTypeConfirmed: true,
+  productType: "SANITIZED_PRODUCT",
   exactIdentityConfirmed: true,
   brandConfirmed: true,
   brand: "SANITIZED BRAND",
@@ -1126,7 +1180,36 @@ const SANITIZED_IDENTITY_REVIEW = {
   variantId: "SANITIZED-VARIANT-BLACK",
   color: "BLACK",
   packQuantity: 1,
+  provenance: {
+    selectedEvidence: SANITIZED_SELECTED_IDENTITY_PROVENANCE,
+    productType: [
+      sanitizedIdentityProvenanceReference({
+        evidenceId: "san-product-type",
+        field: "product_type",
+        sourceType: "LUNA_AUTHENTICATED_MANUAL_CAPTURE",
+        evidenceClass: "SUPPLIER_STATED",
+      }),
+      sanitizedIdentityProvenanceReference({
+        evidenceId: "san-title",
+        field: "title",
+        sourceType: "LUNA_AUTHENTICATED_MANUAL_CAPTURE",
+        evidenceClass: "SUPPLIER_STATED",
+      }),
+      sanitizedIdentityProvenanceReference({
+        evidenceId: SANITIZED_VISUAL_EVIDENCE_ID,
+        field: "visual_observation",
+        sourceType: "HUMAN_VISUAL_OBSERVATION",
+        evidenceClass: "HUMAN_VISUAL_REVIEW",
+        contentHash: SANITIZED_VISUAL_HASH,
+      }),
+    ],
+    packQuantity: [sanitizedIdentityProvenanceReference({
+      evidenceId: "san-pack",
+      field: "pack_quantity",
+    })],
+  },
   availableFields: [
+    "product_type",
     "brand",
     "model",
     "mpn",
@@ -1199,6 +1282,8 @@ const SANITIZED_EVIDENCE: ProductCaseEvidence[] = [
     id: "san-title",
     field: "title",
     value: "Sanitized Deterministic Product",
+    evidenceClass: "SUPPLIER_STATED",
+    sourceType: "LUNA_AUTHENTICATED_MANUAL_CAPTURE",
   }),
   sanitizedEvidence({
     id: "san-ebay-title",
@@ -1211,6 +1296,8 @@ const SANITIZED_EVIDENCE: ProductCaseEvidence[] = [
     id: "san-product-type",
     field: "product_type",
     value: "SANITIZED_PRODUCT",
+    evidenceClass: "SUPPLIER_STATED",
+    sourceType: "LUNA_AUTHENTICATED_MANUAL_CAPTURE",
   }),
   sanitizedEvidence({
     id: "san-brand",
@@ -1520,7 +1607,7 @@ const SANITIZED_DOCUMENT = {
       SANITIZED_PHYSICAL_IDENTITY_EVIDENCE_IDS,
     conflictHistory: [],
     currentConflict: null,
-    supplierEvidenceIds: [],
+    supplierEvidenceIds: ["san-product-type", "san-title"],
     humanObservationEvidenceIds: [SANITIZED_VISUAL_EVIDENCE_ID],
     blockers: [],
     nextAction: "REVIEW_MARKET_EVIDENCE",

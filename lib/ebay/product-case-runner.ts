@@ -20,8 +20,10 @@ export const LUNA_SOURCE_CONTRACT_VERSION =
   "LUNA_SOURCE_CONTRACT_V1" as const
 export const HUMAN_VISUAL_REVIEW_CONTRACT_VERSION =
   "HUMAN_VISUAL_REVIEW_CONTRACT_V1" as const
-export const HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION =
+export const HUMAN_IDENTITY_REVIEW_CONTRACT_V1 =
   "HUMAN_IDENTITY_REVIEW_CONTRACT_V1" as const
+export const HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION =
+  "HUMAN_IDENTITY_REVIEW_CONTRACT_V2" as const
 
 export const PRODUCT_CASE_CONTENT_MAX_BYTES = 262_144
 
@@ -465,6 +467,18 @@ export type ProductCaseImageAnalysis = {
 }
 
 export const PRODUCT_CASE_HUMAN_IDENTITY_FIELDS = [
+  "product_type",
+  "brand",
+  "model",
+  "mpn",
+  "supplier_product_id",
+  "supplier_sku",
+  "variant_id",
+  "color",
+  "pack_quantity",
+] as const
+
+const PRODUCT_CASE_HUMAN_IDENTITY_FIELDS_V1 = [
   "brand",
   "model",
   "mpn",
@@ -477,6 +491,22 @@ export const PRODUCT_CASE_HUMAN_IDENTITY_FIELDS = [
 
 export type ProductCaseHumanIdentityField =
   typeof PRODUCT_CASE_HUMAN_IDENTITY_FIELDS[number]
+
+export type ProductCaseHumanIdentityProvenanceReference = {
+  evidenceId: string
+  field: ProductCaseEvidenceField
+  sourceType: ProductCaseSourceType
+  evidenceClass: ProductCaseEvidenceClass
+  sourceEvidenceClass: ProductCaseEvidenceClass
+  contentHash: string
+  variantKey: string | null
+}
+
+export type ProductCaseHumanIdentityReviewProvenance = {
+  selectedEvidence: ProductCaseHumanIdentityProvenanceReference[]
+  productType: ProductCaseHumanIdentityProvenanceReference[]
+  packQuantity: ProductCaseHumanIdentityProvenanceReference[]
+}
 
 export type ProductCaseHumanIdentityReview = {
   contractVersion: typeof HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION
@@ -493,6 +523,7 @@ export type ProductCaseHumanIdentityReview = {
   humanReason: string
   evidenceIds: string[]
   sameGeneralProductTypeConfirmed: boolean
+  productType: string | null
   exactIdentityConfirmed: boolean
   brandConfirmed: boolean
   brand: string | null
@@ -503,6 +534,7 @@ export type ProductCaseHumanIdentityReview = {
   variantId: string | null
   color: string | null
   packQuantity: number | null
+  provenance: ProductCaseHumanIdentityReviewProvenance
   availableFields: ProductCaseHumanIdentityField[]
   missingFields: ProductCaseHumanIdentityField[]
   physicalProductVerified: boolean
@@ -514,6 +546,7 @@ export type ProductCaseHumanIdentityReview = {
     humanReason: string
     evidenceIds: string[]
     sameGeneralProductTypeConfirmed: boolean
+    productType: string
     exactIdentityConfirmed: boolean
     brandConfirmed: boolean
     brand: string
@@ -3338,6 +3371,45 @@ function numericAcceptedEvidence(
     : null
 }
 
+function reviewedPackQuantityEvidence(
+  document: ProductCaseDocument,
+  evidenceId?: string,
+) {
+  const review = document.identityReview.humanReview
+  if (
+    !review ||
+    review.contractVersion !== HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION ||
+    !identityReviewReady(document) ||
+    !Number.isSafeInteger(review.packQuantity) ||
+    Number(review.packQuantity) <= 0
+  ) return null
+  const references = review.provenance.packQuantity.filter((reference) =>
+    !evidenceId || reference.evidenceId === evidenceId
+  )
+  for (const reference of references) {
+    const entry = currentAcceptedHumanIdentityEvidence(
+      document,
+      reference.evidenceId,
+    )
+    if (
+      entry &&
+      entry.contentHash === reference.contentHash &&
+      canonicalVariantKey(entry.variantKey) ===
+        canonicalVariantKey(reference.variantKey)
+    ) {
+      return { entry, value: Number(review.packQuantity) }
+    }
+  }
+  return null
+}
+
+function downstreamPackQuantityEvidence(
+  document: ProductCaseDocument,
+  evidenceId?: string,
+) {
+  return reviewedPackQuantityEvidence(document, evidenceId)
+}
+
 function adapterNextAction(blockers: string[]) {
   const priorities: Array<[RegExp, string]> = [
     [/AUTHENTICATED|RAW_CAPTURE/, "CAPTURE_AUTHENTICATED_SUPPLIER_EVIDENCE"],
@@ -3946,7 +4018,7 @@ export async function validateHumanVisualReviewIntegrity(
 function canonicalHumanIdentityReviewRecord(
   review: ProductCaseHumanIdentityReview,
 ) {
-  return {
+  const v1Record = {
     contractVersion: review.contractVersion,
     reviewer: review.reviewer,
     reviewedAt: review.reviewedAt,
@@ -3974,6 +4046,100 @@ function canonicalHumanIdentityReviewRecord(
       review.physicalVerificationEvidenceIds,
     rawHumanInput: review.rawHumanInput,
   }
+  if (
+    String(review.contractVersion) ===
+      HUMAN_IDENTITY_REVIEW_CONTRACT_V1
+  ) {
+    return v1Record
+  }
+  return {
+    ...v1Record,
+    productType: review.productType,
+    provenance: review.provenance,
+  }
+}
+
+function canonicalHumanIdentityReviewV1RawInput(rawValue: unknown) {
+  const raw = record(rawValue)
+  return {
+    reviewer: raw.reviewer,
+    decision: raw.decision,
+    confidence: raw.confidence,
+    humanReason: raw.humanReason,
+    evidenceIds: raw.evidenceIds,
+    sameGeneralProductTypeConfirmed:
+      raw.sameGeneralProductTypeConfirmed,
+    exactIdentityConfirmed: raw.exactIdentityConfirmed,
+    brandConfirmed: raw.brandConfirmed,
+    brand: raw.brand,
+    model: raw.model,
+    mpn: raw.mpn,
+    supplierProductId: raw.supplierProductId,
+    supplierSku: raw.supplierSku,
+    variantId: raw.variantId,
+    color: raw.color,
+    packQuantity: raw.packQuantity,
+    physicalProductVerified: raw.physicalProductVerified,
+    physicalVerificationEvidenceIds:
+      raw.physicalVerificationEvidenceIds,
+  }
+}
+
+function canonicalHumanIdentityReviewV2RawInput(rawValue: unknown) {
+  const raw = record(rawValue)
+  return {
+    reviewer: raw.reviewer,
+    decision: raw.decision,
+    confidence: raw.confidence,
+    humanReason: raw.humanReason,
+    evidenceIds: raw.evidenceIds,
+    sameGeneralProductTypeConfirmed:
+      raw.sameGeneralProductTypeConfirmed,
+    productType: raw.productType,
+    exactIdentityConfirmed: raw.exactIdentityConfirmed,
+    brandConfirmed: raw.brandConfirmed,
+    brand: raw.brand,
+    model: raw.model,
+    mpn: raw.mpn,
+    supplierProductId: raw.supplierProductId,
+    supplierSku: raw.supplierSku,
+    variantId: raw.variantId,
+    color: raw.color,
+    packQuantity: raw.packQuantity,
+    physicalProductVerified: raw.physicalProductVerified,
+    physicalVerificationEvidenceIds:
+      raw.physicalVerificationEvidenceIds,
+  }
+}
+
+function exactStoredHumanIdentityReviewV1Surface(reviewValue: unknown) {
+  const review = record(reviewValue)
+  const canonical = canonicalHumanIdentityReviewRecord(
+    review as unknown as ProductCaseHumanIdentityReview,
+  )
+  return {
+    ...canonical,
+    rawHumanInput: canonicalHumanIdentityReviewV1RawInput(
+      review.rawHumanInput,
+    ),
+    reviewId: review.reviewId,
+    contentHash: review.contentHash,
+  }
+}
+
+function exactStoredHumanIdentityReviewV2Surface(reviewValue: unknown) {
+  const review = record(reviewValue)
+  const canonical = canonicalHumanIdentityReviewRecord(
+    review as unknown as ProductCaseHumanIdentityReview,
+  )
+  return {
+    ...canonical,
+    rawHumanInput: canonicalHumanIdentityReviewV2RawInput(
+      review.rawHumanInput,
+    ),
+    reviewId: review.reviewId,
+    contentHash: review.contentHash,
+  }
 }
 
 function humanIdentityReviewId(contentHash: string) {
@@ -3983,6 +4149,7 @@ function humanIdentityReviewId(contentHash: string) {
 function identityFieldValue(
   review: Pick<
     ProductCaseHumanIdentityReview,
+    | "productType"
     | "brand"
     | "model"
     | "mpn"
@@ -3994,6 +4161,7 @@ function identityFieldValue(
   >,
   field: ProductCaseHumanIdentityField,
 ) {
+  if (field === "product_type") return review.productType
   if (field === "supplier_product_id") return review.supplierProductId
   if (field === "supplier_sku") return review.supplierSku
   if (field === "variant_id") return review.variantId
@@ -4004,6 +4172,7 @@ function identityFieldValue(
 function availableHumanIdentityFields(
   review: Pick<
     ProductCaseHumanIdentityReview,
+    | "productType"
     | "brand"
     | "model"
     | "mpn"
@@ -4013,8 +4182,10 @@ function availableHumanIdentityFields(
     | "color"
     | "packQuantity"
   >,
+  fields: readonly ProductCaseHumanIdentityField[] =
+    PRODUCT_CASE_HUMAN_IDENTITY_FIELDS,
 ) {
-  return PRODUCT_CASE_HUMAN_IDENTITY_FIELDS.filter((field) =>
+  return fields.filter((field) =>
     nonempty(identityFieldValue(review, field))
   )
 }
@@ -4056,6 +4227,7 @@ const HUMAN_IDENTITY_REVIEW_SELECTABLE_FIELDS =
     "option_value",
     "color",
     "product_type",
+    "contents",
     "selected_variant",
     "pack_quantity",
     "visual_observation",
@@ -4064,18 +4236,16 @@ const HUMAN_IDENTITY_REVIEW_SELECTABLE_FIELDS =
 function currentAcceptedHumanIdentityEvidence(
   document: ProductCaseDocument,
   evidenceId: string,
+  lookup = buildHumanIdentityEvidenceLookup(document),
 ) {
-  const matching = document.evidence.filter((entry) =>
-    entry.id === evidenceId
-  )
-  if (matching.length !== 1) return null
-  const evidence = matching[0]
+  const evidence = lookup.evidenceById.get(evidenceId)
+  if (!evidence) return null
   const visualObservation =
     evidence.sourceType === "HUMAN_VISUAL_OBSERVATION"
-      ? document.imageAnalysis.observations.find((observation) =>
-          observation.evidenceId === evidence.id &&
-          observation.contentHash === evidence.contentHash
-        ) ?? null
+      ? lookup.visualObservationByEvidenceAndHash.get(stableValue([
+          evidence.id,
+          evidence.contentHash,
+        ])) ?? null
       : null
   const accepted = ["ACCEPT", "CORRECT"].includes(evidence.humanVerdict) &&
     ["ACCEPTED", "CORRECTED"].includes(evidence.evidenceStatus)
@@ -4100,12 +4270,12 @@ function currentAcceptedHumanIdentityEvidence(
   ) {
     return null
   }
-  const matchingCapture = document.captures.some((capture) =>
-    capture.sourceType === evidence.sourceType &&
-    capture.sourceUrl === evidence.sourceUrl &&
-    capture.capturedAt === evidence.capturedAt &&
-    capture.contentHash === evidence.contentHash
-  )
+  const matchingCapture = lookup.captureReferences.has(stableValue([
+    evidence.sourceType,
+    evidence.sourceUrl,
+    evidence.capturedAt,
+    evidence.contentHash,
+  ]))
   if (!matchingCapture) return null
   if (
     evidence.sourceType === "HUMAN_VISUAL_OBSERVATION" &&
@@ -4114,6 +4284,659 @@ function currentAcceptedHumanIdentityEvidence(
     return null
   }
   return evidence
+}
+
+function buildHumanIdentityEvidenceLookup(document: ProductCaseDocument) {
+  const evidenceById = new Map<string, ProductCaseEvidence | null>()
+  for (const evidence of document.evidence) {
+    evidenceById.set(
+      evidence.id,
+      evidenceById.has(evidence.id) ? null : evidence,
+    )
+  }
+  const visualObservationByEvidenceAndHash = new Map<
+    string,
+    ProductCaseImageObservation
+  >()
+  for (const observation of document.imageAnalysis.observations) {
+    const key = stableValue([
+      observation.evidenceId,
+      observation.contentHash,
+    ])
+    if (!visualObservationByEvidenceAndHash.has(key)) {
+      visualObservationByEvidenceAndHash.set(key, observation)
+    }
+  }
+  return {
+    evidenceById,
+    visualObservationByEvidenceAndHash,
+    captureReferences: new Set(document.captures.map((capture) =>
+      stableValue([
+        capture.sourceType,
+        capture.sourceUrl,
+        capture.capturedAt,
+        capture.contentHash,
+      ])
+    )),
+  }
+}
+
+const HUMAN_IDENTITY_LANGUAGE_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "con",
+  "de",
+  "del",
+  "el",
+  "for",
+  "la",
+  "las",
+  "los",
+  "of",
+  "para",
+  "the",
+  "with",
+  "y",
+])
+
+const HUMAN_IDENTITY_SINGULAR_TOKEN_ALIASES = new Map([
+  ["cordless", "cordless"],
+  ["series", "series"],
+  ["accessories", "accessory"],
+  ["attachments", "attachment"],
+  ["batteries", "battery"],
+  ["blades", "blade"],
+  ["brushes", "brush"],
+  ["cables", "cable"],
+  ["cases", "case"],
+  ["chargers", "charger"],
+  ["combs", "comb"],
+  ["filters", "filter"],
+  ["heads", "head"],
+  ["pouches", "pouch"],
+  ["refills", "refill"],
+  ["replacements", "replacement"],
+  ["accesorios", "accesorio"],
+  ["acoples", "acople"],
+  ["baterias", "bateria"],
+  ["bolsas", "bolsa"],
+  ["cabezales", "cabezal"],
+  ["cargadores", "cargador"],
+  ["cepillos", "cepillo"],
+  ["cuchillas", "cuchilla"],
+  ["estuches", "estuche"],
+  ["filtros", "filtro"],
+  ["peines", "peine"],
+  ["reemplazos", "reemplazo"],
+  ["repuestos", "repuesto"],
+  ["wireless", "wireless"],
+])
+
+function humanIdentityLanguageTokens(value: unknown) {
+  if (typeof value !== "string") return []
+  return unique(normalizeWhitespace(value)
+    .toLocaleLowerCase("en-US")
+    .normalize("NFD")
+    .replace(/\p{M}+/gu, "")
+    .replace(/[’']/g, "")
+    .replace(/\bcepillos?\s+de\s+dientes?\b/g, "toothbrush")
+    .replace(/\bmaquinas?\s+de\s+afeitar\b/g, "shaver")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((token) => {
+      const singularAlias = HUMAN_IDENTITY_SINGULAR_TOKEN_ALIASES.get(token)
+      const singular = singularAlias ?? (token.length > 4 && token.endsWith("ies")
+        ? `${token.slice(0, -3)}y`
+        : token.length > 4 && token.endsWith("es") &&
+            /(?:s|x|z|ch|sh)$/.test(token.slice(0, -2))
+          ? token.slice(0, -2)
+          : token.length > 3 && token.endsWith("s")
+            ? token.slice(0, -1)
+            : token)
+      if (["razor", "shaver"].includes(singular)) return "shaver"
+      if (["afeitador", "afeitadora", "rasurador", "rasuradora"]
+        .includes(singular)) return "shaver"
+      if (["electrica", "electrico"].includes(singular)) return "electric"
+      return singular
+    })
+    .filter((token) => !HUMAN_IDENTITY_LANGUAGE_STOP_WORDS.has(token)))
+}
+
+function supplierPrimaryProductContext(evidence: ProductCaseEvidence) {
+  const value = effectiveEvidenceValue(evidence)
+  if (typeof value !== "string") return value
+  return evidence.field === "title"
+    ? value.split(
+        /\b(?:with|includes?|including|con|incluye|incluidos?|incluidas?|incluyendo)\b/i,
+        1,
+      )[0]
+    : value
+}
+
+const HUMAN_IDENTITY_GENERIC_DESCRIPTOR_TOKENS = new Set([
+  "adult",
+  "appliance",
+  "baby",
+  "boy",
+  "child",
+  "cordless",
+  "device",
+  "dry",
+  "electric",
+  "girl",
+  "hombre",
+  "item",
+  "kid",
+  "male",
+  "man",
+  "men",
+  "mujer",
+  "nino",
+  "nina",
+  "portable",
+  "product",
+  "professional",
+  "rechargeable",
+  "unisex",
+  "wet",
+  "wireless",
+  "woman",
+  "women",
+])
+
+const HUMAN_IDENTITY_CATEGORY_HEAD_IGNORED_TOKENS = new Set(
+  [...HUMAN_IDENTITY_GENERIC_DESCRIPTOR_TOKENS].filter((token) =>
+    !["appliance", "device", "item", "product"].includes(token)
+  ).concat([
+    "beige",
+    "black",
+    "blanco",
+    "blue",
+    "brown",
+    "dorado",
+    "gold",
+    "gray",
+    "green",
+    "grey",
+    "gris",
+    "negro",
+    "orange",
+    "pink",
+    "plata",
+    "purple",
+    "red",
+    "silver",
+    "white",
+    "yellow",
+    "model",
+    "series",
+  ]),
+)
+
+function mainProductHeadToken(tokens: string[]) {
+  return tokens.findLast((token) =>
+    !HUMAN_IDENTITY_CATEGORY_HEAD_IGNORED_TOKENS.has(token) &&
+    !/^(?=.*\d)[a-z\d-]+$/i.test(token)
+  ) ?? null
+}
+
+function describesSameGeneralProduct(
+  candidate: unknown,
+  context: unknown,
+) {
+  const candidateTokens = humanIdentityLanguageTokens(candidate)
+  const contextTokens = new Set(humanIdentityLanguageTokens(context))
+  if (candidateTokens.length === 0 || contextTokens.size === 0) return false
+  const overlap = candidateTokens.filter((token) =>
+    contextTokens.has(token)
+  ).length
+  const candidateHead = mainProductHeadToken(candidateTokens)
+  const contextHead = mainProductHeadToken([...contextTokens])
+  return candidateHead !== null &&
+    contextHead !== null &&
+    candidateHead === contextHead &&
+    overlap >= Math.min(2, candidateTokens.length, contextTokens.size)
+}
+
+const PACK_QUANTITY_ACCESSORY_QUALIFIERS = new Set([
+  "accessory",
+  "accesorio",
+  "acople",
+  "attachment",
+  "battery",
+  "bateria",
+  "bit",
+  "blade",
+  "bolsa",
+  "broca",
+  "brush",
+  "cable",
+  "cabezal",
+  "case",
+  "cargador",
+  "charger",
+  "cepillo",
+  "cuchilla",
+  "comb",
+  "estuche",
+  "filter",
+  "filtro",
+  "head",
+  "peine",
+  "pouch",
+  "refill",
+  "reemplazo",
+  "repuesto",
+  "replacement",
+  "station",
+  "dock",
+  "holder",
+  "stand",
+])
+
+function contentsItemNamesComponentForProduct(
+  item: string,
+  mainProductContext: string,
+) {
+  const relationship = item.match(
+    /^(.+?)\b(?:for|para|compatible\s+(?:with|con))\b(.+)$/i,
+  )
+  if (!relationship) return false
+  const componentTokens = humanIdentityLanguageTokens(relationship[1])
+  const productTokens = humanIdentityLanguageTokens(relationship[2])
+  const componentHead = mainProductHeadToken(componentTokens)
+  const productHead = mainProductHeadToken(productTokens)
+  return componentHead !== null &&
+    productHead !== null &&
+    componentHead !== productHead &&
+    describesSameGeneralProduct(relationship[2], mainProductContext)
+}
+
+function contentsItemDescribesMainProduct(
+  item: string,
+  context: string,
+) {
+  if (contentsItemNamesComponentForProduct(item, context)) return false
+  if (!describesSameGeneralProduct(item, context)) return false
+  const itemTokens = humanIdentityLanguageTokens(item)
+  const contextTokensList = humanIdentityLanguageTokens(context)
+  if (
+    mainProductHeadToken(itemTokens) !==
+      mainProductHeadToken(contextTokensList)
+  ) return false
+  const itemQualifiers = itemTokens.filter((token) =>
+    PACK_QUANTITY_ACCESSORY_QUALIFIERS.has(token)
+  )
+  if (itemQualifiers.length === 0) return true
+  const contextTokens = new Set(contextTokensList)
+  return itemQualifiers.every((token) => contextTokens.has(token))
+}
+
+function addsAccessoryQualifier(candidate: unknown, reviewedType: unknown) {
+  const reviewedTokens = new Set(humanIdentityLanguageTokens(reviewedType))
+  return humanIdentityLanguageTokens(candidate).some((token) =>
+    PACK_QUANTITY_ACCESSORY_QUALIFIERS.has(token) &&
+    !reviewedTokens.has(token)
+  )
+}
+
+function productTypeSupportingEvidence(
+  document: ProductCaseDocument,
+  selectedIds: Set<string>,
+  productType: string,
+) {
+  return [...selectedIds].flatMap((id) => {
+    const evidence = currentAcceptedHumanIdentityEvidence(document, id)
+    if (!evidence) return []
+    if (
+      evidence.sourceType.startsWith("LUNA_") &&
+      evidence.sourceEvidenceClass === "SUPPLIER_STATED" &&
+      ["title", "product_type"].includes(evidence.field) &&
+      !contentsItemNamesComponentForProduct(
+        String(supplierPrimaryProductContext(evidence)),
+        productType,
+      ) &&
+      !addsAccessoryQualifier(
+        supplierPrimaryProductContext(evidence),
+        productType,
+      ) &&
+      !addsAccessoryQualifier(
+        productType,
+        supplierPrimaryProductContext(evidence),
+      ) &&
+      describesSameGeneralProduct(
+        productType,
+        supplierPrimaryProductContext(evidence),
+      )
+    ) {
+      return [evidence]
+    }
+    if (
+      evidence.sourceType === "HUMAN_VISUAL_OBSERVATION" &&
+      evidence.sourceEvidenceClass === "HUMAN_VISUAL_REVIEW" &&
+      evidence.field === "visual_observation"
+    ) {
+      const observation = document.imageAnalysis.observations.find((entry) =>
+        entry.evidenceId === evidence.id &&
+        entry.contentHash === evidence.contentHash
+      )
+      return observation?.observedProductType &&
+          !contentsItemNamesComponentForProduct(
+            observation.observedProductType,
+            productType,
+          ) &&
+          !addsAccessoryQualifier(
+            observation.observedProductType,
+            productType,
+          ) &&
+          !addsAccessoryQualifier(
+            productType,
+            observation.observedProductType,
+          ) &&
+          describesSameGeneralProduct(
+            productType,
+            observation.observedProductType,
+          )
+        ? [evidence]
+        : []
+    }
+    return []
+  })
+}
+
+function selectedEvidenceSupportsHumanProductType(
+  document: ProductCaseDocument,
+  selectedIds: Set<string>,
+  productType: string,
+) {
+  const supporting = productTypeSupportingEvidence(
+    document,
+    selectedIds,
+    productType,
+  )
+  const supplierSupporting = supporting.filter((entry) =>
+    entry.sourceType.startsWith("LUNA_")
+  )
+  const visualSupporting = supporting.filter((entry) =>
+    entry.sourceType === "HUMAN_VISUAL_OBSERVATION"
+  )
+  return supplierSupporting.some((supplier) =>
+    visualSupporting.some((visual) => {
+      const observation = document.imageAnalysis.observations.find((entry) =>
+        entry.evidenceId === visual.id &&
+        entry.contentHash === visual.contentHash
+      )
+      return Boolean(
+        observation?.observedProductType &&
+        describesSameGeneralProduct(
+          supplierPrimaryProductContext(supplier),
+          observation.observedProductType,
+        ),
+      )
+    })
+  )
+}
+
+function reviewedHumanIdentityVariantKeys(
+  document: ProductCaseDocument,
+  selectedIds: Set<string>,
+  variantId: string | null,
+  lookup = buildHumanIdentityEvidenceLookup(document),
+) {
+  if (!variantId) return new Set<string>()
+  return new Set([...selectedIds].flatMap((id) => {
+    const evidence = currentAcceptedHumanIdentityEvidence(
+      document,
+      id,
+      lookup,
+    )
+    const variantKey = canonicalVariantKey(evidence?.variantKey)
+    return evidence?.field === "variant_id" &&
+        stableValue(effectiveEvidenceValue(evidence)) ===
+          stableValue(variantId) &&
+        variantKey
+      ? [variantKey]
+      : []
+  }))
+}
+
+function packQuantityMainProductContexts(
+  selectedEvidence: ProductCaseEvidence[],
+  productType: string | null,
+) {
+  if (productType) return [productType]
+  return unique(selectedEvidence.flatMap((entry) =>
+    entry.sourceType.startsWith("LUNA_") &&
+      entry.sourceEvidenceClass === "SUPPLIER_STATED" &&
+      ["title", "product_type"].includes(entry.field) &&
+      typeof effectiveEvidenceValue(entry) === "string"
+      ? [String(supplierPrimaryProductContext(entry))]
+      : []
+  ))
+}
+
+function evidenceSupportsPackQuantity(
+  entry: ProductCaseEvidence,
+  packQuantity: number,
+  mainProductContexts: string[],
+  reviewedVariantKeys: Set<string>,
+) {
+  const evidenceVariantKey = canonicalVariantKey(entry.variantKey)
+  if (
+    evidenceVariantKey &&
+    !reviewedVariantKeys.has(evidenceVariantKey)
+  ) return false
+  const value = effectiveEvidenceValue(entry)
+  if (
+    entry.field === "pack_quantity" &&
+    (
+      (
+        entry.sourceType.startsWith("LUNA_") &&
+        entry.sourceEvidenceClass === "SUPPLIER_STATED"
+      ) ||
+      (
+        entry.sourceType === "HUMAN_PRODUCT_INSPECTION" &&
+        entry.sourceEvidenceClass === "PRODUCT_VERIFIED"
+      )
+    )
+  ) {
+    return value === packQuantity
+  }
+  if (
+    entry.field !== "contents" ||
+    !entry.sourceType.startsWith("LUNA_") ||
+    entry.sourceEvidenceClass !== "SUPPLIER_STATED"
+  ) return false
+  const contents = record(value)
+  const quantity = contents.quantity
+  const item = typeof contents.item === "string"
+    ? normalizeWhitespace(contents.item)
+    : ""
+  if (
+    quantity !== packQuantity ||
+    !Number.isSafeInteger(quantity) ||
+    Number(quantity) <= 0 ||
+    !item
+  ) return false
+  return mainProductContexts.some((context) =>
+    contentsItemDescribesMainProduct(item, context)
+  )
+}
+
+function packQuantitySupportingEvidence(
+  document: ProductCaseDocument,
+  selectedIds: Set<string>,
+  packQuantity: number,
+  productType: string | null,
+  variantId: string | null,
+) {
+  const lookup = buildHumanIdentityEvidenceLookup(document)
+  const selectedEvidence = [...selectedIds].flatMap((id) => {
+    const evidence = currentAcceptedHumanIdentityEvidence(
+      document,
+      id,
+      lookup,
+    )
+    return evidence ? [evidence] : []
+  })
+  const mainProductContexts = packQuantityMainProductContexts(
+    selectedEvidence,
+    productType,
+  )
+  const reviewedVariantKeys = reviewedHumanIdentityVariantKeys(
+    document,
+    selectedIds,
+    variantId,
+    lookup,
+  )
+  return selectedEvidence.filter((entry) => evidenceSupportsPackQuantity(
+    entry,
+    packQuantity,
+    mainProductContexts,
+    reviewedVariantKeys,
+  ))
+}
+
+function selectedPackQuantityEvidenceValues(
+  document: ProductCaseDocument,
+  selectedIds: Set<string>,
+  productType: string | null,
+  variantId: string | null,
+) {
+  const lookup = buildHumanIdentityEvidenceLookup(document)
+  const reviewedVariantKeys = reviewedHumanIdentityVariantKeys(
+    document,
+    selectedIds,
+    variantId,
+    lookup,
+  )
+  const selectedEvidence = [...selectedIds].flatMap((id) => {
+    const evidence = currentAcceptedHumanIdentityEvidence(
+      document,
+      id,
+      lookup,
+    )
+    return evidence ? [evidence] : []
+  })
+  const mainProductContexts = packQuantityMainProductContexts(
+    selectedEvidence,
+    productType,
+  )
+  const candidateEvidence = [...new Map([
+    ...selectedEvidence,
+    ...document.evidence.filter((entry) =>
+      ["contents", "pack_quantity"].includes(entry.field) &&
+      (
+        canonicalVariantKey(entry.variantKey) === null ||
+        reviewedVariantKeys.has(canonicalVariantKey(entry.variantKey)!)
+      ) &&
+      Boolean(currentAcceptedHumanIdentityEvidence(
+        document,
+        entry.id,
+        lookup,
+      ))
+    ),
+  ].map((entry) => [entry.id, entry])).values()]
+  return [...new Set(candidateEvidence.flatMap((evidence) => {
+    const value = effectiveEvidenceValue(evidence)
+    const candidate = evidence.field === "contents"
+      ? record(value).quantity
+      : evidence.field === "pack_quantity"
+        ? value
+        : null
+    if (!Number.isSafeInteger(candidate) || Number(candidate) <= 0) return []
+    return evidenceSupportsPackQuantity(
+        evidence,
+        Number(candidate),
+        mainProductContexts,
+        reviewedVariantKeys,
+      )
+      ? [Number(candidate)]
+      : []
+  }))]
+}
+
+function humanIdentityProvenanceReference(
+  evidence: ProductCaseEvidence,
+): ProductCaseHumanIdentityProvenanceReference {
+  return {
+    evidenceId: evidence.id,
+    field: evidence.field,
+    sourceType: evidence.sourceType,
+    evidenceClass: evidence.evidenceClass,
+    sourceEvidenceClass: evidence.sourceEvidenceClass,
+    contentHash: evidence.contentHash,
+    variantKey: canonicalVariantKey(evidence.variantKey),
+  }
+}
+
+function canonicalHumanIdentityProvenanceReferences(
+  evidence: ProductCaseEvidence[],
+) {
+  return [...new Map(evidence.map((entry) => [entry.id, entry])).values()]
+    .sort((left, right) =>
+      left.id < right.id ? -1 : left.id > right.id ? 1 : 0
+    )
+    .map(humanIdentityProvenanceReference)
+}
+
+function expectedHumanIdentityReviewProvenance(input: {
+  document: ProductCaseDocument
+  selectedIds: Set<string>
+  productType: string | null
+  packQuantity: number | null
+  variantId: string | null
+}): ProductCaseHumanIdentityReviewProvenance {
+  const lookup = buildHumanIdentityEvidenceLookup(input.document)
+  return {
+    selectedEvidence: canonicalHumanIdentityProvenanceReferences(
+      [...input.selectedIds].flatMap((id) => {
+        const evidence = currentAcceptedHumanIdentityEvidence(
+          input.document,
+          id,
+          lookup,
+        )
+        return evidence ? [evidence] : []
+      }),
+    ),
+    productType: input.productType
+      ? canonicalHumanIdentityProvenanceReferences(
+          productTypeSupportingEvidence(
+            input.document,
+            input.selectedIds,
+            input.productType,
+          ),
+        )
+      : [],
+    packQuantity: input.packQuantity === null
+      ? []
+      : canonicalHumanIdentityProvenanceReferences(
+          packQuantitySupportingEvidence(
+            input.document,
+            input.selectedIds,
+            input.packQuantity,
+            input.productType,
+            input.variantId,
+          ),
+        ),
+  }
+}
+
+function parsePositiveIntegerRawHumanInput(value: unknown) {
+  if (typeof value !== "string") {
+    return { valid: false as const, value: null }
+  }
+  const compact = value.trim()
+  if (!compact) return { valid: true as const, value: null }
+  if (!/^[1-9]\d*$/.test(compact)) {
+    return { valid: false as const, value: null }
+  }
+  const parsed = Number(compact)
+  return Number.isSafeInteger(parsed) && parsed > 0
+    ? { valid: true as const, value: parsed }
+    : { valid: false as const, value: null }
 }
 
 function selectedEvidenceSupportsIdentityField(
@@ -4143,6 +4966,54 @@ function selectedEvidenceSupportsIdentityField(
 }
 
 function selectedEvidenceSupportsGeneralProductType(
+  document: ProductCaseDocument,
+  selectedIds: Set<string>,
+) {
+  const nonVisualContexts = [...selectedIds].flatMap((id) => {
+    const evidence = currentAcceptedHumanIdentityEvidence(document, id)
+    return (
+      evidence &&
+      evidence.sourceType !== "HUMAN_VISUAL_OBSERVATION" &&
+      ["title", "product_type"].includes(evidence.field) &&
+      (
+        (
+          evidence.sourceEvidenceClass === "SUPPLIER_STATED" &&
+          evidence.sourceType.startsWith("LUNA_")
+        ) ||
+        (
+          evidence.sourceEvidenceClass === "PRODUCT_VERIFIED" &&
+          evidence.sourceType === "HUMAN_PRODUCT_INSPECTION"
+        )
+      )
+    )
+      ? [String(supplierPrimaryProductContext(evidence))]
+      : []
+  })
+  const visualContexts = document.imageAnalysis.observations.flatMap(
+    (observation) => {
+      const observedProductType = normalizeWhitespace(
+        observation.observedProductType ?? "",
+      )
+      return selectedIds.has(observation.evidenceId) &&
+          observedProductType &&
+          currentAcceptedHumanIdentityEvidence(
+            document,
+            observation.evidenceId,
+          )
+        ? [observedProductType]
+        : []
+    },
+  )
+  return nonVisualContexts.some((nonVisualContext) =>
+    visualContexts.some((visualContext) =>
+      !addsAccessoryQualifier(nonVisualContext, visualContext) &&
+      !addsAccessoryQualifier(visualContext, nonVisualContext) &&
+      describesSameGeneralProduct(nonVisualContext, visualContext)
+    )
+  )
+}
+
+function selectedEvidenceSupportsGeneralProductTypeV1(
   document: ProductCaseDocument,
   selectedIds: Set<string>,
 ) {
@@ -4205,7 +5076,9 @@ function canonicalHumanIdentitySupplierEvidenceIds(
 const HUMAN_IDENTITY_REVIEW_RESOLVABLE_BLOCKERS = new Set([
   "HUMAN_IDENTITY_REVIEW_REQUIRED",
   "HUMAN_IDENTITY_REVIEW_REQUIRED_AFTER_VISUAL_EVIDENCE_CHANGE",
+  "HUMAN_IDENTITY_REVIEW_STALE_AFTER_SUPPLIER_REPROCESS",
   "IMPORTED_IDENTITY_REQUIRES_NEW_LOCAL_HUMAN_REVIEW",
+  "HUMAN_IDENTITY_REVIEW_CONTRACT_V1_REQUIRES_V2_HUMAN_REVIEW",
   "GENERAL_PRODUCT_TYPE_NOT_CONFIRMED",
   "EXACT_IDENTITY_NOT_CONFIRMED",
   "PHYSICAL_PRODUCT_NOT_VERIFIED",
@@ -4237,6 +5110,13 @@ export function validateHumanIdentityReview(
     }
     return { valid: errors.length === 0, errors }
   }
+  const contractVersion = String(review.contractVersion)
+  const legacyV1 = contractVersion === HUMAN_IDENTITY_REVIEW_CONTRACT_V1
+  const currentV2 = contractVersion ===
+    HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION
+  const contractFields: readonly ProductCaseHumanIdentityField[] = legacyV1
+    ? PRODUCT_CASE_HUMAN_IDENTITY_FIELDS_V1
+    : PRODUCT_CASE_HUMAN_IDENTITY_FIELDS
   const evidenceIds = Array.isArray(review.evidenceIds)
     ? review.evidenceIds
     : []
@@ -4252,9 +5132,9 @@ export function validateHumanIdentityReview(
     ? review.missingFields
     : []
   const raw = review.rawHumanInput
+  const provenance = record(review.provenance)
   if (
-    review.contractVersion !==
-      HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION ||
+    (!legacyV1 && !currentV2) ||
     !validSha256(review.contentHash) ||
     typeof review.reviewId !== "string" ||
     !review.reviewId ||
@@ -4282,6 +5162,7 @@ export function validateHumanIdentityReview(
     typeof raw.humanReason !== "string" ||
     !Array.isArray(raw.evidenceIds) ||
     typeof raw.sameGeneralProductTypeConfirmed !== "boolean" ||
+    (currentV2 && typeof raw.productType !== "string") ||
     typeof raw.exactIdentityConfirmed !== "boolean" ||
     typeof raw.brandConfirmed !== "boolean" ||
     typeof raw.brand !== "string" ||
@@ -4293,10 +5174,34 @@ export function validateHumanIdentityReview(
     typeof raw.color !== "string" ||
     typeof raw.packQuantity !== "string" ||
     typeof raw.physicalProductVerified !== "boolean" ||
-    !Array.isArray(raw.physicalVerificationEvidenceIds)
+    !Array.isArray(raw.physicalVerificationEvidenceIds) ||
+    (currentV2 && (
+      (
+        typeof review.productType !== "string" &&
+        review.productType !== null
+      ) ||
+      !Array.isArray(provenance.productType) ||
+      !Array.isArray(provenance.packQuantity)
+    ))
   ) {
     errors.push("HUMAN_IDENTITY_REVIEW_CONTRACT_INVALID")
     return { valid: false, errors: unique(errors) }
+  }
+  if (
+    legacyV1 &&
+    stableValue(review) !== stableValue(
+      exactStoredHumanIdentityReviewV1Surface(review),
+    )
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_CONTRACT_V1_SURFACE_INVALID")
+  }
+  if (
+    currentV2 &&
+    stableValue(review) !== stableValue(
+      exactStoredHumanIdentityReviewV2Surface(review),
+    )
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_CONTRACT_V2_SURFACE_INVALID")
   }
   if (
     evidenceIds.length !== new Set(evidenceIds).size ||
@@ -4320,7 +5225,7 @@ export function validateHumanIdentityReview(
   )
   for (const id of evidenceIds) {
     const evidence = currentAcceptedHumanIdentityEvidence(document, id)
-    if (!evidence) {
+    if (!evidence || (legacyV1 && evidence.field === "contents")) {
       errors.push(
         evidenceById.has(id)
           ? `HUMAN_IDENTITY_REVIEW_EVIDENCE_NOT_CURRENT_OR_ACCEPTED:${id}`
@@ -4345,8 +5250,11 @@ export function validateHumanIdentityReview(
       )
     }
   }
-  const expectedAvailable = availableHumanIdentityFields(review)
-  const expectedMissing = PRODUCT_CASE_HUMAN_IDENTITY_FIELDS.filter(
+  const expectedAvailable = availableHumanIdentityFields(
+    review,
+    contractFields,
+  )
+  const expectedMissing = contractFields.filter(
     (field) => !expectedAvailable.includes(field),
   )
   if (
@@ -4390,13 +5298,41 @@ export function validateHumanIdentityReview(
   const selectedIds = new Set(evidenceIds)
   if (
     review.sameGeneralProductTypeConfirmed &&
-    !selectedEvidenceSupportsGeneralProductType(document, selectedIds)
+    !(
+      legacyV1
+        ? selectedEvidenceSupportsGeneralProductTypeV1(document, selectedIds)
+        : selectedEvidenceSupportsGeneralProductType(document, selectedIds)
+    )
   ) {
     errors.push(
       "HUMAN_IDENTITY_REVIEW_GENERAL_PRODUCT_TYPE_UNSUPPORTED",
     )
   }
+  if (
+    currentV2 && review.productType &&
+    !review.sameGeneralProductTypeConfirmed
+  ) {
+    errors.push(
+      "HUMAN_IDENTITY_REVIEW_PRODUCT_TYPE_REQUIRES_GENERAL_CONFIRMATION",
+    )
+  }
+  if (
+    currentV2 && review.productType &&
+    !selectedEvidenceSupportsHumanProductType(
+      document,
+      selectedIds,
+      review.productType,
+    )
+  ) {
+    errors.push(
+      "HUMAN_IDENTITY_REVIEW_PRODUCT_TYPE_EVIDENCE_UNSUPPORTED",
+    )
+  }
   for (const field of expectedAvailable) {
+    if (currentV2 &&
+      (field === "product_type" || field === "pack_quantity")) {
+      continue
+    }
     if (!selectedEvidenceSupportsIdentityField(
       document,
       selectedIds,
@@ -4406,6 +5342,43 @@ export function validateHumanIdentityReview(
       errors.push(
         `HUMAN_IDENTITY_REVIEW_FIELD_EVIDENCE_UNSUPPORTED:${field}`,
       )
+    }
+  }
+  if (
+    currentV2 && review.packQuantity !== null &&
+    packQuantitySupportingEvidence(
+        document,
+        selectedIds,
+        review.packQuantity,
+        review.productType,
+        review.variantId,
+      ).length === 0
+  ) {
+    errors.push(
+      "HUMAN_IDENTITY_REVIEW_PACK_QUANTITY_EVIDENCE_UNSUPPORTED",
+    )
+  }
+  if (
+    currentV2 && review.packQuantity !== null &&
+    selectedPackQuantityEvidenceValues(
+      document,
+      selectedIds,
+      review.productType,
+      review.variantId,
+    ).length > 1
+  ) {
+    errors.push("HUMAN_IDENTITY_REVIEW_PACK_QUANTITY_EVIDENCE_CONFLICT")
+  }
+  if (currentV2) {
+    const expectedProvenance = expectedHumanIdentityReviewProvenance({
+      document,
+      selectedIds,
+      productType: review.productType,
+      packQuantity: review.packQuantity,
+      variantId: review.variantId,
+    })
+    if (stableValue(review.provenance) !== stableValue(expectedProvenance)) {
+      errors.push("HUMAN_IDENTITY_REVIEW_PROVENANCE_MISMATCH")
     }
   }
   if (
@@ -4444,6 +5417,7 @@ export function validateHumanIdentityReview(
     review.exactIdentityConfirmed &&
     (
       !review.sameGeneralProductTypeConfirmed ||
+      (currentV2 && !review.productType) ||
       !review.brandConfirmed ||
       !physicalVerified ||
       !exactIdentitySupported
@@ -4473,10 +5447,18 @@ export function validateHumanIdentityReview(
     if (typeof value !== "string") return null
     return normalizeWhitespace(value) || null
   }
-  const rawPackQuantity = typeof raw.packQuantity === "string" &&
-      raw.packQuantity.trim()
-    ? Number(raw.packQuantity)
-    : null
+  const parsedRawPackQuantity = currentV2
+    ? parsePositiveIntegerRawHumanInput(raw.packQuantity)
+    : {
+        valid: true,
+        value: typeof raw.packQuantity === "string" &&
+            raw.packQuantity.trim()
+          ? Number(raw.packQuantity)
+          : null,
+      }
+  if (!parsedRawPackQuantity.valid) {
+    errors.push("HUMAN_IDENTITY_REVIEW_PACK_QUANTITY_INVALID")
+  }
   if (
     normalizeWhitespace(
       typeof raw.reviewer === "string" ? raw.reviewer : "",
@@ -4490,6 +5472,7 @@ export function validateHumanIdentityReview(
       stableValue(evidenceIds) ||
     raw.sameGeneralProductTypeConfirmed !==
       review.sameGeneralProductTypeConfirmed ||
+    (currentV2 && rawNullable(raw.productType) !== review.productType) ||
     raw.exactIdentityConfirmed !== review.exactIdentityConfirmed ||
     raw.brandConfirmed !== review.brandConfirmed ||
     rawNullable(raw.brand) !== review.brand ||
@@ -4499,7 +5482,7 @@ export function validateHumanIdentityReview(
     rawNullable(raw.supplierSku) !== review.supplierSku ||
     rawNullable(raw.variantId) !== review.variantId ||
     rawNullable(raw.color) !== review.color ||
-    rawPackQuantity !== review.packQuantity ||
+    parsedRawPackQuantity.value !== review.packQuantity ||
     raw.physicalProductVerified !== review.physicalProductVerified ||
     stableValue([...rawPhysicalIds].sort()) !==
       stableValue(physicalIds)
@@ -4594,6 +5577,7 @@ export async function saveHumanIdentityReviewRecord(input: {
   humanReason: string
   evidenceIds: string[]
   sameGeneralProductTypeConfirmed: boolean
+  productType: string | null
   exactIdentityConfirmed: boolean
   brandConfirmed: boolean
   brand: string | null
@@ -4634,10 +5618,16 @@ export async function saveHumanIdentityReviewRecord(input: {
   if (
     input.packQuantity !== null &&
     (
-      !Number.isInteger(input.packQuantity) ||
+      !Number.isSafeInteger(input.packQuantity) ||
       input.packQuantity <= 0
     )
   ) {
+    throw new Error("HUMAN_IDENTITY_REVIEW_PACK_QUANTITY_INVALID")
+  }
+  const rawPackQuantity = parsePositiveIntegerRawHumanInput(
+    input.rawHumanInput.packQuantity,
+  )
+  if (!rawPackQuantity.valid) {
     throw new Error("HUMAN_IDENTITY_REVIEW_PACK_QUANTITY_INVALID")
   }
   const evidenceIds = input.evidenceIds.map(normalizeWhitespace)
@@ -4695,6 +5685,7 @@ export async function saveHumanIdentityReviewRecord(input: {
     )
   }
   const normalizedValues = {
+    productType: normalizeNullable(input.productType),
     brand: normalizeNullable(input.brand),
     model: normalizeNullable(input.model),
     mpn: normalizeNullable(input.mpn),
@@ -4720,7 +5711,28 @@ export async function saveHumanIdentityReviewRecord(input: {
       "HUMAN_IDENTITY_REVIEW_GENERAL_PRODUCT_TYPE_UNSUPPORTED",
     )
   }
+  if (
+    normalizedValues.productType &&
+    !input.sameGeneralProductTypeConfirmed
+  ) {
+    throw new Error(
+      "HUMAN_IDENTITY_REVIEW_PRODUCT_TYPE_REQUIRES_GENERAL_CONFIRMATION",
+    )
+  }
+  if (
+    normalizedValues.productType &&
+    !selectedEvidenceSupportsHumanProductType(
+      input.document,
+      selectedIds,
+      normalizedValues.productType,
+    )
+  ) {
+    throw new Error(
+      "HUMAN_IDENTITY_REVIEW_PRODUCT_TYPE_EVIDENCE_UNSUPPORTED",
+    )
+  }
   for (const field of availableFields) {
+    if (field === "product_type" || field === "pack_quantity") continue
     if (!selectedEvidenceSupportsIdentityField(
       input.document,
       selectedIds,
@@ -4731,6 +5743,33 @@ export async function saveHumanIdentityReviewRecord(input: {
         `HUMAN_IDENTITY_REVIEW_FIELD_EVIDENCE_UNSUPPORTED:${field}`,
       )
     }
+  }
+  if (
+    normalizedValues.packQuantity !== null &&
+    packQuantitySupportingEvidence(
+        input.document,
+        selectedIds,
+        normalizedValues.packQuantity,
+        normalizedValues.productType,
+        normalizedValues.variantId,
+      ).length === 0
+  ) {
+    throw new Error(
+      "HUMAN_IDENTITY_REVIEW_PACK_QUANTITY_EVIDENCE_UNSUPPORTED",
+    )
+  }
+  if (
+    normalizedValues.packQuantity !== null &&
+    selectedPackQuantityEvidenceValues(
+      input.document,
+      selectedIds,
+      normalizedValues.productType,
+      normalizedValues.variantId,
+    ).length > 1
+  ) {
+    throw new Error(
+      "HUMAN_IDENTITY_REVIEW_PACK_QUANTITY_EVIDENCE_CONFLICT",
+    )
   }
   if (
     input.brandConfirmed &&
@@ -4770,6 +5809,7 @@ export async function saveHumanIdentityReviewRecord(input: {
     input.exactIdentityConfirmed &&
     (
       !input.sameGeneralProductTypeConfirmed ||
+      !normalizedValues.productType ||
       !input.brandConfirmed ||
       !physicalProductVerified ||
       !exactIdentitySupported
@@ -4817,6 +5857,20 @@ export async function saveHumanIdentityReviewRecord(input: {
       : input.decision === "CONFLICT_CONFIRMED"
         ? "CONFLICTED"
         : "READY"
+  if (
+    rawPackQuantity.value !== normalizedValues.packQuantity ||
+    normalizeNullable(input.rawHumanInput.productType) !==
+      normalizedValues.productType
+  ) {
+    throw new Error("HUMAN_IDENTITY_REVIEW_INTEGRITY_MISMATCH:RAW_INPUT")
+  }
+  const provenance = expectedHumanIdentityReviewProvenance({
+    document: input.document,
+    selectedIds,
+    productType: normalizedValues.productType,
+    packQuantity: normalizedValues.packQuantity,
+    variantId: normalizedValues.variantId,
+  })
   const canonical = {
     contractVersion: HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION,
     reviewer,
@@ -4831,6 +5885,7 @@ export async function saveHumanIdentityReviewRecord(input: {
     exactIdentityConfirmed: input.exactIdentityConfirmed,
     brandConfirmed: input.brandConfirmed,
     ...normalizedValues,
+    provenance,
     availableFields,
     missingFields,
     physicalProductVerified,
@@ -4972,6 +6027,9 @@ export function transitionProductCaseSupplierCapture(input: {
   } | null
 }): ProductCaseDocument {
   const document = structuredClone(input.document)
+  const previousHumanIdentityReviewPresent = Boolean(
+    document.identityReview.humanReview,
+  )
   const previousCapture = document.supplierSourceCapture
   const previousCandidateById = new Map(
     (previousCapture?.evidenceCandidates ?? []).map((entry) => [
@@ -5103,6 +6161,11 @@ export function transitionProductCaseSupplierCapture(input: {
       blockers: input.replacement
         ? unique([
             "HUMAN_IDENTITY_REVIEW_REQUIRED",
+            ...(previousHumanIdentityReviewPresent
+              ? [
+                  "HUMAN_IDENTITY_REVIEW_STALE_AFTER_SUPPLIER_REPROCESS",
+                ]
+              : []),
             ...contractIssues,
           ])
         : [
@@ -5749,10 +6812,9 @@ export function buildStrategyLabAdapterPreview(
     ))) blockers.push("VARIANT_EVIDENCE_MISSING")
 
   const pack = draft
-    ? numericAcceptedEvidence(
-        input.document.evidence,
+    ? downstreamPackQuantityEvidence(
+        input.document,
         draft.packQuantityEvidenceId,
-        "pack_quantity",
       )
     : null
   if (!pack || !Number.isInteger(pack.value) || pack.value <= 0 ||
@@ -6005,10 +7067,9 @@ export function buildProductCaseImageRegistry(input: {
 }): ProductCaseImageRegistry {
   const acceptedImages = acceptedProductCaseEvidence(input.document.evidence)
     .filter((entry) => entry.field === "source_image_url")
-  const expectedPackQuantity = acceptedNumber(
-    input.document.evidence,
-    "pack_quantity",
-  )
+  const expectedPackQuantity =
+    downstreamPackQuantityEvidence(input.document)?.value ??
+    acceptedNumber(input.document.evidence, "pack_quantity")
   const expectedVariantId = acceptedText(
     input.document.evidence,
     "variant_id",
@@ -6246,12 +7307,17 @@ export function buildManualListingPackageDraft(input: {
   const identityReady = identityReviewReady(input.document) &&
     identityFields.every((field) => fieldIds(field).length > 0)
   const variantReady = fieldIds("variant_id").length > 0
-  const packReady = accepted.some((entry) => {
-    const value = effectiveEvidenceValue(entry)
-    return entry.field === "pack_quantity" &&
-      ["PRODUCT_VERIFIED", "SUPPLIER_STATED"].includes(entry.evidenceClass) &&
-      typeof value === "number" && Number.isInteger(value) && value > 0
-  })
+  const downstreamPack = downstreamPackQuantityEvidence(input.document)
+  const packReady = Boolean(
+    downstreamPack &&
+    ["PRODUCT_VERIFIED", "SUPPLIER_STATED"].includes(
+      downstreamPack.entry.evidenceClass,
+    ),
+  )
+  const packEvidenceIds = downstreamPack
+    ? input.document.identityReview.humanReview?.provenance.packQuantity
+        .map((reference) => reference.evidenceId) ?? [downstreamPack.entry.id]
+    : []
   const supplierAvailabilityReady = accepted.some((entry) => {
     const value = effectiveEvidenceValue(entry)
     return entry.field === "visible_stock" &&
@@ -6415,10 +7481,7 @@ export function buildManualListingPackageDraft(input: {
         input.document.evidence,
         "variant_id",
       ) &&
-      entry.packQuantity === acceptedNumber(
-        input.document.evidence,
-        "pack_quantity",
-      ) &&
+      entry.packQuantity === downstreamPack?.value &&
       Object.values(entry.qa).every(Boolean)
     ) &&
     !rejectedVisualObservation,
@@ -6567,7 +7630,7 @@ export function buildManualListingPackageDraft(input: {
       "PACK_QUANTITY_READY",
       packReady,
       ["PACK_QUANTITY_EVIDENCE_INCOMPLETE"],
-      fieldIds("pack_quantity"),
+      packEvidenceIds,
     ),
     listingGate(
       "MARKET_EVIDENCE_READY",
@@ -6774,10 +7837,7 @@ export function buildManualListingPackageDraft(input: {
       supplierSku: acceptedText(input.document.evidence, "supplier_sku"),
       variantId: acceptedText(input.document.evidence, "variant_id"),
     },
-    packQuantity: identityHold ? null : acceptedNumber(
-      input.document.evidence,
-      "pack_quantity",
-    ),
+    packQuantity: identityHold ? null : downstreamPack?.value ?? null,
     supplierPrices: identityHold ? [] : supplierPrices,
     title: !identityHold && titleReady
       ? normalizeWhitespace(input.operations.title!)
@@ -7437,8 +8497,17 @@ export function buildProductCaseOperationalPipeline(input: {
     entry.humanVerdict === "REJECT"
   )
   const operationalConflicts = conflictsForEvidence(input.document.evidence)
+  const activeHumanIdentityReview = input.document.identityReview.humanReview
+  const humanReviewedIdentityFields = new Set<ProductCaseEvidenceField>(
+    activeHumanIdentityReview?.contractVersion ===
+        HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION &&
+        validateHumanIdentityReview(input.document).valid
+      ? activeHumanIdentityReview.availableFields
+      : [],
+  )
   const operationalMissing = PRODUCT_CASE_EVIDENCE_FIELDS.filter((field) =>
-    !accepted.some((entry) => entry.field === field)
+    !accepted.some((entry) => entry.field === field) &&
+    !humanReviewedIdentityFields.has(field)
   )
   const operationalConfidence = confidenceFromCounts(
     accepted.length,
@@ -7707,9 +8776,9 @@ export function calculateProductCaseReadiness(input: {
     capture.sourceType === "LUNA_AUTHENTICATED_MANUAL_CAPTURE"
   )
   const supplierReady = authenticatedCapture &&
-    ["supplier_unit_cost", "visible_stock", "pack_quantity"].every((field) =>
+    ["supplier_unit_cost", "visible_stock"].every((field) =>
       accepted.some((entry) => entry.field === field)
-    )
+    ) && Boolean(downstreamPackQuantityEvidence(input.document))
   const supplierEvidence = supplierReady
     ? "READY" as const
     : present.some((entry) =>
@@ -7842,6 +8911,8 @@ export const PRODUCT_CASE_OUTPUT_CONTRACT_VERSION =
   "PRODUCT_CASE_OUTPUT_CONTRACT_V2" as const
 export const PRODUCT_CASE_PRE_IDENTITY_OUTPUT_WARNING =
   "PRE_IDENTITY_CONTRACT_OUTPUT_REBUILT_WITH_CURRENT_DOMAIN" as const
+export const HUMAN_IDENTITY_REVIEW_V1_IMPORT_WARNING =
+  "HUMAN_IDENTITY_REVIEW_CONTRACT_V1_REQUIRES_V2_HUMAN_REVIEW" as const
 export const PRODUCT_CASE_LEGACY_OUTPUT_PROFILE =
   "PRE_PERSISTENT_HUMAN_VISUAL_CONTRACT_GATE_V1" as const
 export const PRODUCT_CASE_LEGACY_OUTPUT_WARNING =
@@ -7912,6 +8983,13 @@ export type ProductCaseLegacyImportAudit = {
   auditOnly: true
 }
 
+export type ProductCaseHistoricalHumanIdentityReviewAudit = {
+  contractVersion: typeof HUMAN_IDENTITY_REVIEW_CONTRACT_V1
+  review: Record<string, unknown>
+  trustedForActiveIdentity: false
+  auditOnly: true
+}
+
 export type ProductCaseWorkspaceState = {
   document: ProductCaseDocument
   economicsPolicy: EconomicsPolicy | null
@@ -7922,6 +9000,8 @@ export type ProductCaseWorkspaceState = {
   evaluatedAt: string
   generatedAt: string
   legacyImportAudit?: ProductCaseLegacyImportAudit
+  historicalHumanIdentityReviewAudit?:
+    ProductCaseHistoricalHumanIdentityReviewAudit
 }
 
 export type ProductCaseWorkspaceExportEnvelope = {
@@ -8800,6 +9880,150 @@ export function serializeProductCaseWorkspaceExport(input: {
   return serialized
 }
 
+async function validateHistoricalHumanIdentityReviewAudit(
+  audit: unknown,
+) {
+  if (audit === undefined) return
+  if (!audit || typeof audit !== "object" || Array.isArray(audit)) {
+    throw new Error(
+      "PRODUCT_CASE_IMPORT_HISTORICAL_IDENTITY_AUDIT_INVALID",
+    )
+  }
+  const candidate = audit as ProductCaseHistoricalHumanIdentityReviewAudit
+  const review = record(candidate.review)
+  if (
+    candidate.contractVersion !== HUMAN_IDENTITY_REVIEW_CONTRACT_V1 ||
+    candidate.trustedForActiveIdentity !== false ||
+    candidate.auditOnly !== true ||
+    review.contractVersion !== HUMAN_IDENTITY_REVIEW_CONTRACT_V1 ||
+    !validSha256(review.contentHash) ||
+    typeof review.reviewId !== "string"
+  ) {
+    throw new Error(
+      "PRODUCT_CASE_IMPORT_HISTORICAL_IDENTITY_AUDIT_INVALID",
+    )
+  }
+  const serialized = stableValue(canonicalHumanIdentityReviewRecord(
+    review as unknown as ProductCaseHumanIdentityReview,
+  ))
+  const exactStoredReview = exactStoredHumanIdentityReviewV1Surface(review)
+  if (stableValue(review) !== stableValue(exactStoredReview)) {
+    throw new Error(
+      "PRODUCT_CASE_IMPORT_HISTORICAL_IDENTITY_AUDIT_INVALID",
+    )
+  }
+  const typedReview = review as unknown as ProductCaseHumanIdentityReview
+  const raw = record(typedReview.rawHumanInput)
+  const evidenceIds = Array.isArray(typedReview.evidenceIds)
+    ? typedReview.evidenceIds : []
+  const physicalIds = Array.isArray(
+    typedReview.physicalVerificationEvidenceIds,
+  ) ? typedReview.physicalVerificationEvidenceIds : []
+  const expectedStatus = typedReview.decision === "NEEDS_MORE_EVIDENCE"
+    ? "PARTIAL"
+    : typedReview.decision === "CONFLICT_CONFIRMED"
+      ? "CONFLICTED"
+      : typedReview.decision === "IDENTITY_CONFIRMED"
+        ? "READY"
+        : null
+  const nullableFields = [
+    "brand",
+    "model",
+    "mpn",
+    "supplierProductId",
+    "supplierSku",
+    "variantId",
+    "color",
+  ] as const
+  const expectedAvailable = availableHumanIdentityFields(
+    typedReview,
+    PRODUCT_CASE_HUMAN_IDENTITY_FIELDS_V1,
+  )
+  const expectedMissing = PRODUCT_CASE_HUMAN_IDENTITY_FIELDS_V1.filter(
+    (field) => !expectedAvailable.includes(field),
+  )
+  const rawNullable = (value: unknown) =>
+    typeof value === "string" ? normalizeWhitespace(value) || null : null
+  const rawPackQuantity = typeof raw.packQuantity === "string" &&
+      raw.packQuantity.trim()
+    ? Number(raw.packQuantity)
+    : null
+  const semanticValid =
+    normalizeWhitespace(typedReview.reviewer) !== "" &&
+    validIsoInstant(typedReview.reviewedAt) &&
+    expectedStatus !== null &&
+    typedReview.status === expectedStatus &&
+    (["LOW", "MEDIUM", "HIGH"] as const).includes(
+      typedReview.confidence,
+    ) &&
+    normalizeWhitespace(typedReview.humanReason) !== "" &&
+    typeof typedReview.sameGeneralProductTypeConfirmed === "boolean" &&
+    typeof typedReview.exactIdentityConfirmed === "boolean" &&
+    typeof typedReview.brandConfirmed === "boolean" &&
+    typeof typedReview.physicalProductVerified === "boolean" &&
+    nullableFields.every((field) =>
+      typeof typedReview[field] === "string" || typedReview[field] === null
+    ) &&
+    (
+      typedReview.packQuantity === null ||
+      (
+        Number.isSafeInteger(typedReview.packQuantity) &&
+        Number(typedReview.packQuantity) > 0
+      )
+    ) &&
+    evidenceIds.every((id) => typeof id === "string" && Boolean(id)) &&
+    physicalIds.every((id) => typeof id === "string" && Boolean(id)) &&
+    evidenceIds.length === new Set(evidenceIds).size &&
+    physicalIds.length === new Set(physicalIds).size &&
+    physicalIds.every((id) => evidenceIds.includes(id)) &&
+    stableValue(evidenceIds) === stableValue([...evidenceIds].sort()) &&
+    stableValue(physicalIds) === stableValue([...physicalIds].sort()) &&
+    stableValue(typedReview.availableFields) ===
+      stableValue(expectedAvailable) &&
+    stableValue(typedReview.missingFields) === stableValue(expectedMissing) &&
+    typeof raw.reviewer === "string" &&
+    normalizeWhitespace(raw.reviewer) === typedReview.reviewer &&
+    raw.decision === typedReview.decision &&
+    raw.confidence === typedReview.confidence &&
+    typeof raw.humanReason === "string" &&
+    normalizeWhitespace(raw.humanReason) === typedReview.humanReason &&
+    stableValue(Array.isArray(raw.evidenceIds)
+      ? [...raw.evidenceIds].sort() : []) === stableValue(evidenceIds) &&
+    raw.sameGeneralProductTypeConfirmed ===
+      typedReview.sameGeneralProductTypeConfirmed &&
+    raw.exactIdentityConfirmed === typedReview.exactIdentityConfirmed &&
+    raw.brandConfirmed === typedReview.brandConfirmed &&
+    nullableFields.every((field) =>
+      rawNullable(raw[field]) === typedReview[field]
+    ) &&
+    rawPackQuantity === typedReview.packQuantity &&
+    raw.physicalProductVerified === typedReview.physicalProductVerified &&
+    stableValue(Array.isArray(raw.physicalVerificationEvidenceIds)
+      ? [...raw.physicalVerificationEvidenceIds].sort() : []) ===
+      stableValue(physicalIds) &&
+    (
+      typedReview.decision !== "IDENTITY_CONFIRMED" ||
+      (
+        typedReview.confidence === "HIGH" &&
+        typedReview.exactIdentityConfirmed
+      )
+    )
+  if (!semanticValid) {
+    throw new Error(
+      "PRODUCT_CASE_IMPORT_HISTORICAL_IDENTITY_AUDIT_INVALID",
+    )
+  }
+  const contentHash = await hashProductCaseContent(serialized)
+  if (
+    review.contentHash !== contentHash ||
+    review.reviewId !== humanIdentityReviewId(contentHash)
+  ) {
+    throw new Error(
+      "PRODUCT_CASE_IMPORT_HISTORICAL_IDENTITY_AUDIT_HASH_MISMATCH",
+    )
+  }
+}
+
 export async function importProductCaseWorkspaceExport(serialized: string) {
   if (typeof serialized !== "string" || !serialized.trim()) {
     throw new Error("PRODUCT_CASE_IMPORT_REQUIRED")
@@ -8864,6 +10088,34 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     )
   }
   const workspaceState = workspaceStateFromUnknown(envelope.workspaceState)
+  const importedHumanIdentityReviewV1 =
+    (currentExport || preIdentityOutputContract) &&
+    String(
+      workspaceState.document.identityReview.humanReview?.contractVersion ??
+        "",
+    ) === HUMAN_IDENTITY_REVIEW_CONTRACT_V1
+  const persistedHistoricalHumanIdentityReviewAudit =
+    workspaceState.historicalHumanIdentityReviewAudit
+  await validateHistoricalHumanIdentityReviewAudit(
+    persistedHistoricalHumanIdentityReviewAudit,
+  )
+  const synthesizedHistoricalHumanIdentityReviewAudit =
+    importedHumanIdentityReviewV1
+      ? {
+        contractVersion: HUMAN_IDENTITY_REVIEW_CONTRACT_V1,
+        review: structuredClone(
+          workspaceState.document.identityReview.humanReview,
+        ) as unknown as Record<string, unknown>,
+        trustedForActiveIdentity: false as const,
+        auditOnly: true as const,
+      }
+      : undefined
+  await validateHistoricalHumanIdentityReviewAudit(
+    synthesizedHistoricalHumanIdentityReviewAudit,
+  )
+  const historicalHumanIdentityReviewAudit =
+    synthesizedHistoricalHumanIdentityReviewAudit ??
+    persistedHistoricalHumanIdentityReviewAudit ?? null
   if (
     currentExport &&
     workspaceState.document.identityReview.blockers.includes(
@@ -8934,9 +10186,15 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
   let outputMismatchPaths = outputMismatchDiagnostic.paths
   let historicalOutputAudit: ProductCaseLegacyImportAudit | null = null
   let legacyHistoricalOutput: ProductCaseRunnerOutput | null = null
-  let legacyOutputRebuilt = false
+  let legacyOutputRebuilt = importedHumanIdentityReviewV1
   let preIdentityOutputRebuilt = false
-  if (currentOutputContract && outputMismatchDiagnostic.pathCount > 0) {
+  if (
+    currentOutputContract && outputMismatchDiagnostic.pathCount > 0 &&
+    !(
+      importedHumanIdentityReviewV1 &&
+      outputMismatchDiagnostic.allVersionedLegacyDerivedPaths
+    )
+  ) {
     throw new Error(
       `PRODUCT_CASE_IMPORT_OUTPUT_MISMATCH:${
         outputMismatchErrorDetails(outputMismatchDiagnostic)
@@ -8945,7 +10203,10 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
   }
   if (preIdentityOutputContract) {
     if (
-      workspaceState.document.identityReview.humanReview ||
+      (
+        workspaceState.document.identityReview.humanReview &&
+        !importedHumanIdentityReviewV1
+      ) ||
       !envelope.output
     ) {
       throw new Error(
@@ -9017,6 +10278,10 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     legacyOutputRebuilt = true
   }
   const reviewRequiredState = structuredClone(workspaceState)
+  if (historicalHumanIdentityReviewAudit) {
+    reviewRequiredState.historicalHumanIdentityReviewAudit =
+      structuredClone(historicalHumanIdentityReviewAudit)
+  }
   const legacyAuditPresent = Boolean(
     legacyHistoricalOutput || workspaceState.legacyImportAudit,
   )
@@ -9026,6 +10291,9 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     currentExport &&
     reviewRequiredState.document.identityReview.humanReview
       ?.contractVersion === HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION
+  const v1ReviewRequiresV2 = Boolean(
+    historicalHumanIdentityReviewAudit && !canonicalHumanIdentityReview,
+  )
   reviewRequiredState.document.identityReview =
     canonicalHumanIdentityReview
       ? {
@@ -9046,6 +10314,9 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
           physicalVerificationEvidenceIds: [],
           blockers: unique([
             "IMPORTED_IDENTITY_REQUIRES_NEW_LOCAL_HUMAN_REVIEW",
+            ...(v1ReviewRequiresV2
+              ? [HUMAN_IDENTITY_REVIEW_V1_IMPORT_WARNING]
+              : []),
             ...(preIdentityOutputRebuilt
               ? [PRODUCT_CASE_PRE_IDENTITY_OUTPUT_WARNING]
               : []),
@@ -9056,6 +10327,7 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
             ...reviewRequiredState.document.identityReview.blockers,
           ]),
           nextAction: "REVALIDATE_IMPORTED_PRODUCT_CASE_LOCALLY",
+          humanReview: null,
         }
   reviewRequiredState.document.humanReview = {
     ...reviewRequiredState.document.humanReview,
@@ -9210,6 +10482,8 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     legacyOutputRebuilt,
     preIdentityOutputRebuilt,
     importWarnings: [
+      ...(v1ReviewRequiresV2
+        ? [HUMAN_IDENTITY_REVIEW_V1_IMPORT_WARNING] : []),
       ...(effectiveHistoricalOutputAudit
         ? [PRODUCT_CASE_LEGACY_OUTPUT_WARNING] : []),
       ...(preIdentityOutputWarningPresent
@@ -9217,6 +10491,10 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     ],
     outputMismatchPaths,
     historicalOutputAudit: effectiveHistoricalOutputAudit,
+    historicalHumanIdentityReviewAudit:
+      historicalHumanIdentityReviewAudit
+        ? structuredClone(historicalHumanIdentityReviewAudit)
+        : null,
     sourceWorkspaceExportVersion: envelopeVersion as
       | typeof PRODUCT_CASE_WORKSPACE_EXPORT_VERSION
       | typeof PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION,
