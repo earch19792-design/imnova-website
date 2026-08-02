@@ -16,10 +16,12 @@ import {
   buildProductCaseRunnerOutput,
   buildStrategyLabAdapterPreview,
   createProductCaseWorkspaceExport,
+  createGeneralProductComparableCandidate,
   createHumanVisualReviewRecord,
   createManualAuthenticatedSupplierSourceCapture,
   deleteHumanIdentityReviewRecord,
   deleteHumanVisualReviewRecord,
+  deleteSupplierCatalogLimitationRecord,
   extractProductCaseEvidence,
   importProductCaseWorkspaceExport,
   mergeProductCaseEvidenceCaptures,
@@ -35,6 +37,8 @@ import {
   resolveLunaSourceContractGuard,
   reviewHumanComparableCandidate,
   saveHumanIdentityReviewRecord,
+  saveSupplierCatalogLimitationRecord,
+  SUPPLIER_CATALOG_LIMITATION_CONTRACT_VERSION,
   serializeProductCaseWorkspaceExport,
   transitionProductCaseSupplierCapture,
   validateProductCaseImportFileMetadata,
@@ -49,6 +53,8 @@ import {
   type ProductCaseLegacyImportAudit,
   type ProductCaseListingOperations,
   type ProductCaseSupplierSourceCapture,
+  type ProductCaseSupplierCatalogLimitation,
+  type ProductCaseSupplierCatalogLimitationState,
 } from "@/lib/ebay/product-case-runner"
 import {
   EMPTY_PRODUCT_CASE_LISTING_OPERATIONS,
@@ -143,6 +149,12 @@ type HumanIdentityReviewDraft = {
   physicalVerificationEvidenceIds: string[]
 }
 
+type SupplierCatalogLimitationDraft = {
+  reviewer: string
+  humanReason: string
+  catalogExhaustionConfirmed: boolean
+}
+
 type ComparableReviewDraft = {
   decision: "KEEP_NOT_VALIDATED" | "REJECT" | "VALIDATE_ACTIVE_EXACT"
   reason: string
@@ -156,6 +168,17 @@ type ComparableReviewDraft = {
   validatedVariantComposition: string
   buyerShipping: string
   reasonCodes: string
+}
+
+type GeneralComparableDraft = {
+  sourceReference: string
+  ebayUrl: string
+  observedTitle: string
+  observedPriceApprox: string
+  observedShippingApprox: string
+  currency: string
+  condition: string
+  listingStatus: ProductCaseDocument["marketEvidence"]["humanSuppliedComparableCandidates"][number]["listingStatus"]
 }
 
 type ProvenanceDecisionDraft = {
@@ -247,8 +270,8 @@ const PRODUCT_CASE_PHASE_NAVIGATION_TARGETS = [
     focusId: "identity-review-heading",
   },
   {
-    anchorId: "strategy-input-preview",
-    focusId: "strategy-preview-heading",
+    anchorId: "phase-5-market-evidence",
+    focusId: "phase-5-market-evidence-heading",
   },
   {
     anchorId: "strategy-input-preview",
@@ -344,6 +367,13 @@ const emptyHumanIdentityReviewDraft: HumanIdentityReviewDraft = {
   physicalProductVerified: false,
   physicalVerificationEvidenceIds: [],
 }
+
+const emptySupplierCatalogLimitationDraft:
+  SupplierCatalogLimitationDraft = {
+    reviewer: "",
+    humanReason: "",
+    catalogExhaustionConfirmed: false,
+  }
 
 function visualObservationDraftFrom(
   observation: ProductCaseImageObservation,
@@ -446,6 +476,17 @@ const emptyComparableReviewDraft: ComparableReviewDraft = {
   validatedVariantComposition: "",
   buyerShipping: "",
   reasonCodes: "",
+}
+
+const emptyGeneralComparableDraft: GeneralComparableDraft = {
+  sourceReference: "",
+  ebayUrl: "",
+  observedTitle: "",
+  observedPriceApprox: "",
+  observedShippingApprox: "",
+  currency: "USD",
+  condition: "New",
+  listingStatus: "ACTIVE_VISIBLE",
 }
 
 const emptyPhysicalInspectionDraft: ProvenanceDecisionDraft = {
@@ -832,6 +873,8 @@ export default function ProductCaseRunnerPage() {
         fixtureDocument.marketEvidence,
       ) as ProductCaseDocument["marketEvidence"]
     )
+  const [generalComparableDraft, setGeneralComparableDraft] =
+    useState<GeneralComparableDraft>(emptyGeneralComparableDraft)
   const [imageAnalysis, setImageAnalysis] =
     useState<ProductCaseDocument["imageAnalysis"]>(() =>
       structuredClone(
@@ -844,6 +887,18 @@ export default function ProductCaseRunnerPage() {
         fixtureDocument.identityReview,
       ) as ProductCaseDocument["identityReview"]
     )
+  const [supplierCatalogLimitation, setSupplierCatalogLimitation] =
+    useState<ProductCaseSupplierCatalogLimitationState>(() =>
+      structuredClone(fixtureDocument.supplierCatalogLimitation) as
+        ProductCaseSupplierCatalogLimitationState
+    )
+  const [supplierCatalogLimitationDraft,
+    setSupplierCatalogLimitationDraft] =
+    useState<SupplierCatalogLimitationDraft>(
+      emptySupplierCatalogLimitationDraft,
+    )
+  const [supplierCatalogLimitationError,
+    setSupplierCatalogLimitationError] = useState("")
   const [humanIdentityReviewDraft, setHumanIdentityReviewDraft] =
     useState<HumanIdentityReviewDraft>(() =>
       humanIdentityReviewDraftFrom(
@@ -1055,6 +1110,7 @@ export default function ProductCaseRunnerPage() {
     marketEvidence,
     imageAnalysis,
     identityReview: identityReviewState,
+    supplierCatalogLimitation,
     humanReview: {
       ...record(fixtureDocument.humanReview),
       conclusion: {
@@ -1089,6 +1145,7 @@ export default function ProductCaseRunnerPage() {
     runnerTimestamp,
     sourceAccess,
     supplierSourceCapture,
+    supplierCatalogLimitation,
     sourceUrl,
     urlValidation,
   ])
@@ -1142,6 +1199,9 @@ export default function ProductCaseRunnerPage() {
   const visualAnalysis = record(outputDocument.imageAnalysis)
   const identityReview = record(outputDocument.identityReview)
   const savedHumanIdentityReview = record(identityReview.humanReview)
+  const activeSupplierCatalogAttestation = record(
+    supplierCatalogLimitation.activeAttestation,
+  )
   const supplierIdentityEvidenceIds = strings(
     identityReview.supplierEvidenceIds,
   )
@@ -1530,6 +1590,14 @@ export default function ProductCaseRunnerPage() {
       nextAction: "CAPTURE_AUTHENTICATED_SUPPLIER_EVIDENCE",
       humanReview: null,
     })
+    setSupplierCatalogLimitation({
+      activeAttestation: null,
+      historicalAttestations: [],
+    })
+    setSupplierCatalogLimitationDraft(
+      emptySupplierCatalogLimitationDraft,
+    )
+    setSupplierCatalogLimitationError("")
     setEconomicsPolicy(null)
     setScenarioDraft(null)
     setEconomicsPolicyJson("null")
@@ -1537,6 +1605,7 @@ export default function ProductCaseRunnerPage() {
     setReviewDrafts({})
     setAppliedReviewDecisions({})
     setComparableReviewDrafts({})
+    setGeneralComparableDraft(emptyGeneralComparableDraft)
     setHumanConclusion("")
     setHumanScenario("")
     setHumanReason("")
@@ -1669,23 +1738,27 @@ export default function ProductCaseRunnerPage() {
         setSupplierSourceCapture(transitioned.supplierSourceCapture)
         setImageAnalysis(transitioned.imageAnalysis)
         setIdentityReviewState(transitioned.identityReview)
+        setSupplierCatalogLimitation(
+          transitioned.supplierCatalogLimitation,
+        )
+        setMarketEvidence(transitioned.marketEvidence)
       } else {
-        setCaptures((current) => [...current, result.capture])
-        setEvidence((current) => mergeEvidence(current, result.evidence))
-        setSupplierSourceCapture(null)
-        setIdentityReviewState((current) => ({
-          ...current,
-          status: "NOT_REVIEWED",
-          confidence: "LOW",
-          physicalProductVerified: false,
-          physicalVerificationEvidenceIds: [],
-          currentConflict: null,
-          supplierEvidenceIds: [],
-          humanObservationEvidenceIds: [],
-          blockers: ["HUMAN_IDENTITY_REVIEW_REQUIRED"],
-          nextAction: "REVIEW_PRODUCT_EVIDENCE",
-          humanReview: null,
-        }))
+        const transitioned = transitionProductCaseSupplierCapture({
+          document: productCase,
+          replacement: {
+            supplierSourceCapture: null,
+            extraction: result,
+          },
+        })
+        setCaptures(transitioned.captures)
+        setEvidence(transitioned.evidence)
+        setSupplierSourceCapture(transitioned.supplierSourceCapture)
+        setImageAnalysis(transitioned.imageAnalysis)
+        setIdentityReviewState(transitioned.identityReview)
+        setSupplierCatalogLimitation(
+          transitioned.supplierCatalogLimitation,
+        )
+        setMarketEvidence(transitioned.marketEvidence)
       }
       const proposedTitle = result.evidence.find((entry) =>
         entry.field === "title" &&
@@ -1727,6 +1800,8 @@ export default function ProductCaseRunnerPage() {
     setAppliedReviewDecisions({})
     setImageAnalysis(transitioned.imageAnalysis)
     setIdentityReviewState(transitioned.identityReview)
+    setSupplierCatalogLimitation(transitioned.supplierCatalogLimitation)
+    setMarketEvidence(transitioned.marketEvidence)
     setGeneratedPackage(null)
     setNotice(
       "Contenido y extracción temporal eliminados de esta sesión del navegador.",
@@ -1791,6 +1866,10 @@ export default function ProductCaseRunnerPage() {
           },
         })
         setIdentityReviewState(invalidatedDocument.identityReview)
+        setSupplierCatalogLimitation(
+          invalidatedDocument.supplierCatalogLimitation,
+        )
+        setMarketEvidence(invalidatedDocument.marketEvidence)
       }
       setGeneratedPackage(null)
       setAppliedReviewDecisions((current) => ({
@@ -2062,6 +2141,10 @@ export default function ProductCaseRunnerPage() {
       setCaptures(visualRecord.updatedDocument.captures)
       setImageAnalysis(visualRecord.updatedDocument.imageAnalysis)
       setIdentityReviewState(visualRecord.updatedDocument.identityReview)
+      setSupplierCatalogLimitation(
+        visualRecord.updatedDocument.supplierCatalogLimitation,
+      )
+      setMarketEvidence(visualRecord.updatedDocument.marketEvidence)
       setGeneratedPackage(null)
       setRunnerTimestamp(reviewedAt)
       setVisualObservationDraft({ ...emptyVisualObservationDraft })
@@ -2154,6 +2237,10 @@ export default function ProductCaseRunnerPage() {
     setCaptures(updatedDocument.captures)
     setImageAnalysis(updatedDocument.imageAnalysis)
     setIdentityReviewState(updatedDocument.identityReview)
+    setSupplierCatalogLimitation(
+      updatedDocument.supplierCatalogLimitation,
+    )
+    setMarketEvidence(updatedDocument.marketEvidence)
     setGeneratedPackage(null)
     if (
       editingVisualObservationEvidenceId === observation.evidenceId
@@ -2243,6 +2330,10 @@ export default function ProductCaseRunnerPage() {
         rawHumanInput,
       })
       setIdentityReviewState(result.updatedDocument.identityReview)
+      setSupplierCatalogLimitation(
+        result.updatedDocument.supplierCatalogLimitation,
+      )
+      setMarketEvidence(result.updatedDocument.marketEvidence)
       setGeneratedPackage(null)
       setRunnerTimestamp(reviewedAt)
       setEditingHumanIdentityReview(false)
@@ -2284,10 +2375,78 @@ export default function ProductCaseRunnerPage() {
       document: productCase,
     })
     setIdentityReviewState(updatedDocument.identityReview)
+    setSupplierCatalogLimitation(
+      updatedDocument.supplierCatalogLimitation,
+    )
+    setMarketEvidence(updatedDocument.marketEvidence)
     setGeneratedPackage(null)
     setRunnerTimestamp(new Date().toISOString())
     setNotice(
       "Revisión humana de identidad eliminada localmente; readiness, paquete y handoff permanecen bloqueados.",
+    )
+  }
+
+  async function saveSupplierCatalogLimitation() {
+    setSupplierCatalogLimitationError("")
+    setNotice("")
+    const draft = supplierCatalogLimitationDraft
+    const identityEvidenceIds = strings(
+      savedHumanIdentityReview.evidenceIds,
+    )
+    const reviewedAt = new Date().toISOString()
+    try {
+      const result = await saveSupplierCatalogLimitationRecord({
+        document: productCase,
+        reviewer: draft.reviewer,
+        reviewedAt,
+        humanReason: draft.humanReason,
+        catalogExhaustionConfirmed:
+          draft.catalogExhaustionConfirmed,
+        evidenceIds: identityEvidenceIds,
+        rawHumanInput: {
+          reviewer: draft.reviewer,
+          humanReason: draft.humanReason,
+          catalogExhaustionConfirmed:
+            draft.catalogExhaustionConfirmed,
+          evidenceIds: [...identityEvidenceIds].sort(),
+        },
+      })
+      setSupplierCatalogLimitation(
+        result.updatedDocument.supplierCatalogLimitation,
+      )
+      setMarketEvidence(result.updatedDocument.marketEvidence)
+      setSupplierCatalogLimitationDraft(
+        emptySupplierCatalogLimitationDraft,
+      )
+      setRunnerTimestamp(reviewedAt)
+      setGeneratedPackage(null)
+      setNotice(
+        "Declaración guardada localmente. Se habilita sólo investigación manual de comparables generales; identidad exacta, estrategia, package, publicación y handoff continúan bloqueados.",
+      )
+    } catch (caught) {
+      const message = caught instanceof Error
+        ? caught.message
+        : "SUPPLIER_CATALOG_LIMITATION_INVALID"
+      setSupplierCatalogLimitationError(message)
+      window.requestAnimationFrame(() => {
+        document.getElementById("supplier-catalog-limitation-error")
+          ?.focus()
+      })
+    }
+  }
+
+  function deleteSupplierCatalogLimitation() {
+    const updatedDocument = deleteSupplierCatalogLimitationRecord({
+      document: productCase,
+    })
+    setSupplierCatalogLimitation(
+      updatedDocument.supplierCatalogLimitation,
+    )
+    setMarketEvidence(updatedDocument.marketEvidence)
+    setGeneratedPackage(null)
+    setRunnerTimestamp(new Date().toISOString())
+    setNotice(
+      "Declaración eliminada del estado activo y conservada sólo para auditoría; Fase 5 vuelve a quedar bloqueada.",
     )
   }
 
@@ -2297,6 +2456,60 @@ export default function ProductCaseRunnerPage() {
       "phase-2-evidence-review",
       "evidence-review-heading",
     )
+  }
+
+  function captureGeneralComparable() {
+    setError("")
+    setNotice("")
+    try {
+      if (readiness.researchEligibility !== "ALLOWED_WITH_LIMITATIONS") {
+        throw new Error("LIMITED_MARKET_RESEARCH_NOT_ELIGIBLE")
+      }
+      const optionalMoney = (raw: string) => {
+        if (!raw.trim()) return null
+        const value = Number(raw)
+        if (!Number.isFinite(value) || value < 0) {
+          throw new Error("GENERAL_PRODUCT_COMPARABLE_MONEY_INVALID")
+        }
+        return value
+      }
+      const observedAt = new Date().toISOString()
+      const candidate = createGeneralProductComparableCandidate({
+        sourceReference: generalComparableDraft.sourceReference,
+        ebayUrl: generalComparableDraft.ebayUrl || null,
+        observedTitle: generalComparableDraft.observedTitle,
+        observedPriceApprox: optionalMoney(
+          generalComparableDraft.observedPriceApprox,
+        ),
+        observedShippingApprox: optionalMoney(
+          generalComparableDraft.observedShippingApprox,
+        ),
+        currency: generalComparableDraft.currency,
+        condition: generalComparableDraft.condition,
+        listingStatus: generalComparableDraft.listingStatus,
+        observedAt,
+      })
+      setMarketEvidence((current) => ({
+        ...current,
+        runStatus: "NOT_VALIDATED",
+        humanSuppliedComparableCandidates: [
+          ...current.humanSuppliedComparableCandidates,
+          candidate,
+        ],
+        observedAt,
+      }))
+      setGeneralComparableDraft(emptyGeneralComparableDraft)
+      setRunnerTimestamp(observedAt)
+      setNotice(
+        "Comparable general capturado sólo en memoria local; no se consultó eBay ni se afirmó coincidencia exacta.",
+      )
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "GENERAL_PRODUCT_COMPARABLE_CAPTURE_INVALID",
+      )
+    }
   }
 
   function recordHumanConclusion() {
@@ -2323,6 +2536,15 @@ export default function ProductCaseRunnerPage() {
     const draft = comparableReviewDrafts[key] ??
       emptyComparableReviewDraft
     try {
+      if (
+        readiness.comparisonMode ===
+          "GENERAL_PRODUCT_COMPARABLES_ONLY" &&
+        draft.decision === "VALIDATE_ACTIVE_EXACT"
+      ) {
+        throw new Error(
+          "GENERAL_PRODUCT_COMPARABLE_CANNOT_BECOME_EXACT_MATCH",
+        )
+      }
       const reviewedAt = new Date().toISOString()
       const reviewed = reviewHumanComparableCandidate(candidate, {
         decision: draft.decision,
@@ -2347,13 +2569,16 @@ export default function ProductCaseRunnerPage() {
             (entry, candidateIndex) =>
               candidateIndex === index ? reviewed : entry,
           )
+        const exactCandidates = candidates.filter((entry) =>
+          entry.comparisonClass === "EXACT_PRODUCT_MATCH"
+        )
         return {
           ...current,
-          activeExact: candidates.some((entry) =>
+          activeExact: exactCandidates.some((entry) =>
               entry.validationStatus === "VALIDATED_ACTIVE_EXACT"
             )
             ? "AVAILABLE"
-            : candidates.length
+            : exactCandidates.length
               ? "NOT_VALIDATED"
               : "MISSING",
           humanSuppliedComparableCandidates: candidates,
@@ -2594,6 +2819,13 @@ export default function ProductCaseRunnerPage() {
       setIdentityReviewState(
         structuredClone(importedDocument.identityReview),
       )
+      setSupplierCatalogLimitation(
+        structuredClone(importedDocument.supplierCatalogLimitation),
+      )
+      setSupplierCatalogLimitationDraft(
+        emptySupplierCatalogLimitationDraft,
+      )
+      setSupplierCatalogLimitationError("")
       setEconomicsPolicy(importedWorkspace.economicsPolicy)
       setScenarioDraft(importedWorkspace.scenarioDraft)
       setEconomicsPolicyJson(
@@ -2605,6 +2837,7 @@ export default function ProductCaseRunnerPage() {
       setReviewDrafts({})
       setAppliedReviewDecisions({})
       setComparableReviewDrafts({})
+      setGeneralComparableDraft(emptyGeneralComparableDraft)
       setHumanConclusion(text(importedHumanConclusion.conclusion, ""))
       setHumanScenario(text(importedHumanConclusion.scenario, ""))
       setHumanReason(text(importedHumanConclusion.reason, ""))
@@ -2811,7 +3044,7 @@ export default function ProductCaseRunnerPage() {
         : "PRODUCT_CASE_EXPORT_FAILED"
       setWorkspaceExportError(
         exportError === "PRODUCT_CASE_EXPORT_TOO_LARGE"
-          ? `${exportError}: la representación V2 auditada supera el límite de ${PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES.toLocaleString()} bytes. El workspace reconstruido y su audit histórico permanecen intactos en memoria; no se generó ni descargó una copia incompleta.`
+          ? `${exportError}: la representación V3 auditada supera el límite de ${PRODUCT_CASE_WORKSPACE_EXPORT_MAX_BYTES.toLocaleString()} bytes. El workspace reconstruido y su audit histórico permanecen intactos en memoria; no se generó ni descargó una copia incompleta.`
           : exportError,
       )
     }
@@ -3153,8 +3386,8 @@ export default function ProductCaseRunnerPage() {
                     {importRoundtrip.canonicalJsonBytes.toLocaleString()} bytes
                     {" · "}
                     {importRoundtrip.canonicalJsonWithinExportLimit
-                      ? "V2_EXPORTABLE"
-                      : "V2_ACTIVE_IN_MEMORY_OVER_EXPORT_LIMIT"}
+                      ? "V3_EXPORTABLE"
+                      : "V3_ACTIVE_IN_MEMORY_OVER_EXPORT_LIMIT"}
                   </dd>
                 </div>
               </dl>
@@ -4508,6 +4741,20 @@ export default function ProductCaseRunnerPage() {
             manualHandoffAllowed efectivo:
             {String(manualHandoffAllowed)}
           </p>
+          {Object.keys(savedHumanIdentityReview).length > 0 &&
+            Object.keys(activeSupplierCatalogAttestation).length === 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                focusProductCaseTarget(
+                  "supplier-catalog-limitation",
+                  "supplier-catalog-limitation-heading",
+                )}
+              className={`mt-3 min-h-11 rounded-xl border border-amber-200/30 bg-amber-200/[0.06] px-4 text-xs font-black ${buttonFocus}`}
+            >
+              REVISAR BLOQUEO: PROVEEDOR SIN IDENTIFICADORES ADICIONALES
+            </button>
+          )}
           {humanIdentityReviewError && (
             <div
               ref={humanIdentityReviewErrorRef}
@@ -5133,6 +5380,143 @@ export default function ProductCaseRunnerPage() {
               </div>
             </fieldset>
           )}
+
+          <section
+            id="supplier-catalog-limitation"
+            aria-labelledby="supplier-catalog-limitation-heading"
+            className="mt-6 scroll-mt-28 rounded-3xl border border-amber-200/25 bg-amber-200/[0.045] p-4 sm:p-5"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-100/65">
+                  {SUPPLIER_CATALOG_LIMITATION_CONTRACT_VERSION}
+                </p>
+                <h3
+                  id="supplier-catalog-limitation-heading"
+                  tabIndex={-1}
+                  className="mt-2 scroll-mt-28 text-xl font-black outline-none"
+                >
+                  Proveedor sin identificadores adicionales
+                </h3>
+              </div>
+              {Object.keys(activeSupplierCatalogAttestation).length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full border border-emerald-200/30 bg-emerald-200/[0.08] px-3 py-2 text-[10px] font-black text-emerald-50">
+                    CATALOG INFORMATION EXHAUSTED
+                  </span>
+                  <span className="rounded-full border border-amber-200/30 bg-amber-200/[0.08] px-3 py-2 text-[10px] font-black text-amber-50">
+                    RESEARCH ONLY — NOT EXACT IDENTITY
+                  </span>
+                </div>
+              )}
+            </div>
+            <p className="mt-3 max-w-4xl text-sm leading-6 text-white/65">
+              El proveedor no ofrece más identificadores. Se permite investigar
+              productos comparables, pero no se confirma que sean el mismo
+              producto ni se permite publicar.
+            </p>
+            <p className="mt-3 rounded-2xl border border-rose-200/25 bg-rose-200/[0.06] p-3 text-xs font-black text-rose-50">
+              Esta declaración no verifica físicamente el producto, no confirma
+              identidad exacta y no libera Strategy Lab, package, publicación
+              ni handoff.
+            </p>
+            {supplierCatalogLimitationError && (
+              <div
+                id="supplier-catalog-limitation-error"
+                role="alert"
+                tabIndex={-1}
+                className="mt-4 scroll-mt-28 rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-4 text-sm font-black outline-none focus-visible:ring-2 focus-visible:ring-rose-100"
+              >
+                {supplierCatalogLimitationError}
+              </div>
+            )}
+            <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2 xl:grid-cols-4">
+              <div><dt className="text-white/45">URL canónica de Luna</dt><dd className="mt-1 break-all font-mono">{display(supplierSourceCapture?.supplierUrl ?? sourceAccess.canonicalUrl)}</dd></div>
+              <div><dt className="text-white/45">Hash de captura</dt><dd className="mt-1 break-all font-mono">{display(supplierSourceCapture?.contentHash)}</dd></div>
+              <div><dt className="text-white/45">Parser version</dt><dd className="mt-1 break-all font-mono">{display(supplierSourceCapture?.parserVersion)}</dd></div>
+              <div><dt className="text-white/45">Source contract</dt><dd className="mt-1 break-all font-mono">{display(supplierSourceCapture?.sourceContractVersion)}</dd></div>
+              <div className="sm:col-span-2"><dt className="text-white/45">Campos que continuarán MISSING</dt><dd className="mt-1 font-mono">{display(savedHumanIdentityReview.missingFields ?? [])}</dd></div>
+              <div className="sm:col-span-2"><dt className="text-white/45">Evidencias utilizadas</dt><dd className="mt-1 break-all font-mono">{display(savedHumanIdentityReview.evidenceIds ?? [])}</dd></div>
+            </dl>
+            {Object.keys(activeSupplierCatalogAttestation).length > 0
+              ? (
+                <div className="mt-4 grid gap-3">
+                  <JsonPanel
+                    label="Declaración activa · resumen verificable"
+                    value={activeSupplierCatalogAttestation}
+                  />
+                  <button
+                    type="button"
+                    onClick={deleteSupplierCatalogLimitation}
+                    className={`min-h-11 rounded-xl border border-rose-200/25 px-4 text-xs font-black text-rose-100 ${buttonFocus}`}
+                  >
+                    ELIMINAR DECLARACIÓN ACTIVA
+                  </button>
+                </div>
+              )
+              : (
+                <fieldset className="mt-4 grid gap-4 rounded-2xl border border-white/10 p-4 lg:grid-cols-2">
+                  <legend className="px-2 text-xs font-black">
+                    Declaración humana explícita
+                  </legend>
+                  <label className="grid gap-2 text-xs font-black" htmlFor="supplier-catalog-limitation-reviewer">
+                    Revisor — reviewer · requerido
+                    <input
+                      id="supplier-catalog-limitation-reviewer"
+                      value={supplierCatalogLimitationDraft.reviewer}
+                      onChange={(event) =>
+                        setSupplierCatalogLimitationDraft((current) => ({
+                          ...current,
+                          reviewer: event.target.value,
+                        }))}
+                      className={inputClass}
+                    />
+                  </label>
+                  <label className="grid gap-2 text-xs font-black" htmlFor="supplier-catalog-limitation-reason">
+                    Motivo humano — humanReason · requerido
+                    <textarea
+                      id="supplier-catalog-limitation-reason"
+                      value={supplierCatalogLimitationDraft.humanReason}
+                      onChange={(event) =>
+                        setSupplierCatalogLimitationDraft((current) => ({
+                          ...current,
+                          humanReason: event.target.value,
+                        }))}
+                      className={`${textAreaClass} min-h-24`}
+                    />
+                  </label>
+                  <label className="flex min-h-14 items-start gap-3 rounded-xl border border-amber-200/20 p-3 text-xs font-black lg:col-span-2">
+                    <input
+                      type="checkbox"
+                      checked={supplierCatalogLimitationDraft.catalogExhaustionConfirmed}
+                      onChange={(event) =>
+                        setSupplierCatalogLimitationDraft((current) => ({
+                          ...current,
+                          catalogExhaustionConfirmed: event.target.checked,
+                        }))}
+                      className="mt-0.5 size-4"
+                    />
+                    Confirmo que revisé toda la información disponible del
+                    catálogo del proveedor y que el proveedor no ofrece
+                    identificadores adicionales para este producto.
+                  </label>
+                  <button
+                    type="button"
+                    data-testid="save-supplier-catalog-limitation"
+                    disabled={
+                      !supplierCatalogLimitationDraft.reviewer.trim() ||
+                      !supplierCatalogLimitationDraft.humanReason.trim() ||
+                      !supplierCatalogLimitationDraft.catalogExhaustionConfirmed ||
+                      Object.keys(savedHumanIdentityReview).length === 0
+                    }
+                    onClick={() => void saveSupplierCatalogLimitation()}
+                    className={`min-h-12 rounded-2xl border border-amber-100/30 bg-amber-100/[0.08] px-4 text-sm font-black disabled:cursor-not-allowed disabled:opacity-40 lg:col-span-2 ${buttonFocus}`}
+                  >
+                    DECLARAR CATÁLOGO AGOTADO Y HABILITAR INVESTIGACIÓN LIMITADA
+                  </button>
+                </fieldset>
+              )}
+          </section>
         </section>
 
         <section
@@ -5141,15 +5525,119 @@ export default function ProductCaseRunnerPage() {
           className="mt-5 scroll-mt-28 rounded-[32px] border border-white/10 bg-white/[0.035] p-5 sm:p-7"
         >
           <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100/55">
-            6–7. STRATEGY LAB INPUT PREVIEW · OS CONCLUSION
+            5. MARKET EVIDENCE · 6–7. STRATEGY LAB INPUT PREVIEW
           </p>
           <h2
             id="strategy-preview-heading"
             tabIndex={-1}
             className="mt-2 scroll-mt-28 text-2xl font-black outline-none"
           >
-            Evidencia aceptada, sin anticipar estrategia
+            {readiness.researchEligibility === "ALLOWED_WITH_LIMITATIONS"
+              ? "Investigación limitada y estrategia aún bloqueada"
+              : "Market Evidence y Strategy Lab"}
           </h2>
+          <section
+            id="phase-5-market-evidence"
+            aria-labelledby="phase-5-market-evidence-heading"
+            className="mt-4 scroll-mt-28 rounded-3xl border border-amber-200/25 bg-amber-200/[0.045] p-4 sm:p-5"
+          >
+            <h3
+              id="phase-5-market-evidence-heading"
+              tabIndex={-1}
+              className="scroll-mt-28 text-xl font-black outline-none"
+            >
+              {readiness.researchEligibility === "ALLOWED_WITH_LIMITATIONS"
+                ? "Fase 5 · captura manual local de comparables generales"
+                : "Fase 5 · evidencia de mercado"}
+            </h3>
+            {readiness.researchEligibility === "ALLOWED_WITH_LIMITATIONS" ? (
+              <>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="rounded-full border border-emerald-200/25 px-3 py-2 text-[10px] font-black">
+                {display(readiness.supplierCatalogCompleteness)}
+              </span>
+              <span className="rounded-full border border-amber-200/25 px-3 py-2 text-[10px] font-black">
+                {display(readiness.researchEligibility)}
+              </span>
+              <span className="rounded-full border border-amber-200/25 px-3 py-2 text-[10px] font-black">
+                {display(readiness.comparisonMode)}
+              </span>
+            </div>
+            <p className="mt-3 text-sm leading-6 text-white/60">
+              Sólo puede usarse el productType confirmado, la cantidad del pack
+              y especificaciones SUPPLIER_STATED claramente etiquetadas. No se
+              permiten claims de marketing como hechos, marca/modelo inventados,
+              coincidencias exactas, inferencias de demanda por stock ni
+              observaciones visuales como PRODUCT_VERIFIED.
+            </p>
+            <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
+              <div className="rounded-xl border border-emerald-200/20 p-3">
+                <dt className="font-black text-emerald-100">Bloqueo para investigación</dt>
+                <dd className="mt-2 font-mono">{readiness.researchEligibility === "ALLOWED_WITH_LIMITATIONS" ? "NONE — CAPTURE_GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE" : "SUPPLIER_CATALOG_LIMITATION_ATTESTATION_REQUIRED"}</dd>
+              </div>
+              <div className="rounded-xl border border-rose-200/20 p-3">
+                <dt className="font-black text-rose-100">Bloqueos para estrategia/publicación</dt>
+                <dd className="mt-2 font-mono">EXACT_IDENTITY_REQUIRED · REAL_COSTS_REQUIRED · BRAND_IP_REVIEW_REQUIRED · IMAGE_RIGHTS_REQUIRED · PACKAGE_AND_HANDOFF_BLOCKED</dd>
+              </div>
+            </dl>
+            <p className="mt-3 rounded-xl border border-white/10 p-3 text-xs font-black">
+              Interfaz local únicamente · runStatus:{display(marketEvidence.runStatus)} · external requests:0 · mutating requests:0 · exactMarketplaceMatchAllowed:false · canTreatComparableAsSameProduct:false
+            </p>
+            <div
+              id="general-product-comparable-capture"
+              className="mt-4 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.035] p-4"
+            >
+              <h4 className="font-black">Capturar comparable general — GENERAL_PRODUCT_COMPARABLE</h4>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="text-xs font-black">
+                  Referencia visible — sourceReference
+                  <input id="general-comparable-source-reference" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.sourceReference} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, sourceReference: event.target.value }))} />
+                </label>
+                <label className="text-xs font-black">
+                  URL copiada manualmente — ebayUrl
+                  <input id="general-comparable-ebay-url" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.ebayUrl} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, ebayUrl: event.target.value }))} />
+                </label>
+                <label className="text-xs font-black sm:col-span-2">
+                  Título observado — observedTitle
+                  <input id="general-comparable-observed-title" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.observedTitle} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, observedTitle: event.target.value }))} />
+                </label>
+                <label className="text-xs font-black">
+                  Precio observado — observedPriceApprox
+                  <input id="general-comparable-price" inputMode="decimal" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.observedPriceApprox} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, observedPriceApprox: event.target.value }))} />
+                </label>
+                <label className="text-xs font-black">
+                  Envío observado — observedShippingApprox
+                  <input id="general-comparable-shipping" inputMode="decimal" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.observedShippingApprox} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, observedShippingApprox: event.target.value }))} />
+                </label>
+                <label className="text-xs font-black">
+                  Moneda — currency
+                  <input id="general-comparable-currency" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.currency} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, currency: event.target.value }))} />
+                </label>
+                <label className="text-xs font-black">
+                  Condición — condition
+                  <input id="general-comparable-condition" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.condition} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, condition: event.target.value }))} />
+                </label>
+                <label className="text-xs font-black sm:col-span-2">
+                  Estado observado — listingStatus
+                  <select id="general-comparable-listing-status" className="mt-1 w-full rounded-xl border border-white/10 bg-[#111722] px-3 py-2 font-normal" value={generalComparableDraft.listingStatus} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, listingStatus: event.target.value as GeneralComparableDraft["listingStatus"] }))}>
+                    <option value="ACTIVE_VISIBLE">ACTIVE_VISIBLE</option>
+                    <option value="SOLD_AUCTION_VISIBLE">SOLD_AUCTION_VISIBLE</option>
+                    <option value="SOLD_USED_VISIBLE">SOLD_USED_VISIBLE</option>
+                    <option value="ACTIVE_USED_VISIBLE">ACTIVE_USED_VISIBLE</option>
+                  </select>
+                </label>
+              </div>
+              <button type="button" className="mt-3 rounded-xl border border-cyan-200/25 px-4 py-2 text-xs font-black" onClick={captureGeneralComparable}>
+                Guardar comparable general local
+              </button>
+            </div>
+              </>
+            ) : (
+              <p className="mt-3 text-sm leading-6 text-white/60">
+                La ruta de identidad exacta conserva sus gates normales de evidencia de mercado; la declaración de catálogo agotado no está activa.
+              </p>
+            )}
+          </section>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StatusCard label="Identity" value={readiness.productIdentity} />
             <StatusCard label="Identity confidence" value={readiness.identityConfidence} />
@@ -5263,7 +5751,9 @@ export default function ProductCaseRunnerPage() {
               <div><dt className="text-white/45">Reference median</dt><dd className="mt-1 font-black">{display(marketEvidence.referenceMedian)}</dd></div>
             </dl>
             <p className="mt-3 text-xs leading-5 text-white/50">
-              Todo candidato empieza NOT_VALIDATED. Sólo una revisión humana
+              Todo candidato empieza NOT_VALIDATED. En la ruta limitada debe
+              etiquetarse GENERAL_PRODUCT_COMPARABLE y nunca puede convertirse
+              en coincidencia exacta. Fuera de esa ruta, sólo una revisión humana
               con identidad, variante, contenido, pack, Item ID activo, título
               y buyer shipping completos puede validarlo como ACTIVE_EXACT.
               Nunca se convierte en SOLD_EXACT ni en product fact.
@@ -5308,7 +5798,7 @@ export default function ProductCaseRunnerPage() {
                       </p>
                     </div>
                     <span className="rounded-full border border-rose-200/25 px-3 py-1 text-xs font-black text-rose-100">
-                      {candidate.validationStatus}
+                      {candidate.comparisonClass} · {candidate.validationStatus}
                     </span>
                   </div>
                   <p className="mt-3 text-xs leading-5 text-white/55">
@@ -5318,6 +5808,32 @@ export default function ProductCaseRunnerPage() {
                     eligibleForSoldExact = {String(candidate.eligibleForSoldExact)}
                     {" · "}canBecomeProductFact = {String(candidate.canBecomeProductFact)}
                   </p>
+                  <dl className="mt-3 grid gap-3 rounded-xl border border-white/10 p-3 text-xs sm:grid-cols-2 lg:grid-cols-3">
+                    <div>
+                      <dt className="text-white/45">Source reference</dt>
+                      <dd className="mt-1 break-words font-black">{candidate.sourceReference}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-white/45">Observed title</dt>
+                      <dd className="mt-1 break-words font-black">{display(candidate.observedTitle)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-white/45">Copied URL</dt>
+                      <dd className="mt-1 break-all font-mono">{display(candidate.ebayUrl)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-white/45">Observed price</dt>
+                      <dd className="mt-1 font-black">{display(candidate.observedPriceApprox)} {display(candidate.currency)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-white/45">Observed shipping</dt>
+                      <dd className="mt-1 font-black">{display(candidate.observedShippingApprox)} {display(candidate.currency)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-white/45">Condition · listing status</dt>
+                      <dd className="mt-1 font-black">{display(candidate.condition)} · {candidate.listingStatus}</dd>
+                    </div>
+                  </dl>
                   <fieldset className="mt-4 rounded-2xl border border-white/10 p-4">
                     <legend className="px-2 text-xs font-black">
                       Human comparable review · no eBay fetch
@@ -5338,7 +5854,13 @@ export default function ProductCaseRunnerPage() {
                             KEEP_NOT_VALIDATED
                           </option>
                           <option value="REJECT">REJECT</option>
-                          <option value="VALIDATE_ACTIVE_EXACT">
+                          <option
+                            value="VALIDATE_ACTIVE_EXACT"
+                            disabled={readiness.comparisonMode ===
+                              "GENERAL_PRODUCT_COMPARABLES_ONLY" ||
+                              candidate.comparisonClass ===
+                                "GENERAL_PRODUCT_COMPARABLE"}
+                          >
                             VALIDATE_ACTIVE_EXACT
                           </option>
                         </select>

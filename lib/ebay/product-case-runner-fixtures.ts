@@ -394,6 +394,7 @@ function comparableCandidate(input: {
 }): ProductCaseHumanComparableCandidate {
   return {
     sourceType: "HUMAN_SUPPLIED_COMPARABLE_CANDIDATE",
+    comparisonClass: "EXACT_PRODUCT_MATCH",
     validationStatus: "NOT_VALIDATED",
     ebayItemId: input.ebayItemId ?? null,
     ebayUrl: input.ebayUrl ?? null,
@@ -922,6 +923,10 @@ const fixtureDocument = {
     ],
     blockers: [...GOLF_SWING_TRAINER_EXACT_BLOCKERS],
     nextAction: "VERIFY_PHYSICAL_PRODUCT_AND_VARIANT",
+  },
+  supplierCatalogLimitation: {
+    activeAttestation: null,
+    historicalAttestations: [],
   },
   humanReview: {
     conclusion: {
@@ -1612,6 +1617,10 @@ const SANITIZED_DOCUMENT = {
     blockers: [],
     nextAction: "REVIEW_MARKET_EVIDENCE",
     humanReview: SANITIZED_IDENTITY_REVIEW,
+  },
+  supplierCatalogLimitation: {
+    activeAttestation: null,
+    historicalAttestations: [],
   },
   humanReview: {
     conclusion: {

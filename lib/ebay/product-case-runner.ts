@@ -24,6 +24,8 @@ export const HUMAN_IDENTITY_REVIEW_CONTRACT_V1 =
   "HUMAN_IDENTITY_REVIEW_CONTRACT_V1" as const
 export const HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION =
   "HUMAN_IDENTITY_REVIEW_CONTRACT_V2" as const
+export const SUPPLIER_CATALOG_LIMITATION_CONTRACT_VERSION =
+  "SUPPLIER_CATALOG_LIMITATION_CONTRACT_V1" as const
 
 export const PRODUCT_CASE_CONTENT_MAX_BYTES = 262_144
 
@@ -345,6 +347,7 @@ export type ProductCaseMarketEvidence = {
 
 export type ProductCaseHumanComparableCandidate = {
   sourceType: "HUMAN_SUPPLIED_COMPARABLE_CANDIDATE"
+  comparisonClass: "GENERAL_PRODUCT_COMPARABLE" | "EXACT_PRODUCT_MATCH"
   validationStatus: "NOT_VALIDATED" | "VALIDATED_ACTIVE_EXACT"
   ebayItemId: string | null
   ebayUrl: string | null
@@ -562,6 +565,52 @@ export type ProductCaseHumanIdentityReview = {
   }
 }
 
+export const PRODUCT_CASE_UNRESOLVED_SUPPLIER_IDENTITY_FIELDS = [
+  "brand",
+  "model",
+  "mpn",
+  "supplier_product_id",
+  "supplier_sku",
+  "variant_id",
+  "color",
+] as const
+
+export type ProductCaseUnresolvedSupplierIdentityField =
+  typeof PRODUCT_CASE_UNRESOLVED_SUPPLIER_IDENTITY_FIELDS[number]
+
+export type ProductCaseSupplierCatalogLimitation = {
+  contractVersion: typeof SUPPLIER_CATALOG_LIMITATION_CONTRACT_VERSION
+  reviewId: string
+  contentHash: `sha256:${string}`
+  reviewer: string
+  reviewedAt: string
+  decision: "SUPPLIER_CATALOG_INFORMATION_EXHAUSTED"
+  humanReason: string
+  canonicalSupplierUrl: string
+  supplierSourceContentHash: `sha256:${string}`
+  sourceContractVersion: string
+  parserVersion: string
+  identityReviewId: string
+  identityReviewContentHash: `sha256:${string}`
+  evidenceIds: string[]
+  unresolvedIdentityFields: ProductCaseUnresolvedSupplierIdentityField[]
+  additionalSupplierInformationAvailable: false
+  exactIdentityConfirmed: false
+  physicalProductVerified: false
+  brandIpSignalStatus: "NO_SIGNAL"
+  rawHumanInput: {
+    reviewer: string
+    humanReason: string
+    catalogExhaustionConfirmed: boolean
+    evidenceIds: string[]
+  }
+}
+
+export type ProductCaseSupplierCatalogLimitationState = {
+  activeAttestation: ProductCaseSupplierCatalogLimitation | null
+  historicalAttestations: ProductCaseSupplierCatalogLimitation[]
+}
+
 export type ProductCaseIdentityReview = {
   status: "NOT_REVIEWED" | "PARTIAL" | "CONFLICTED" | "READY"
   confidence: "LOW" | "MEDIUM" | "HIGH"
@@ -589,6 +638,7 @@ export type ProductCaseDocument = {
   marketEvidence: ProductCaseMarketEvidence
   imageAnalysis: ProductCaseImageAnalysis
   identityReview: ProductCaseIdentityReview
+  supplierCatalogLimitation: ProductCaseSupplierCatalogLimitationState
   humanReview: ProductCaseHumanReview
   safety: ProductCaseSafety
 }
@@ -1074,6 +1124,24 @@ export type ProductCaseRunnerOutput = {
     marketEvidence: "NOT_RUN" | "NOT_VALIDATED" | "INSUFFICIENT" | "READY"
     economics: "MISSING_INPUT" | "READY"
     strategy: StrategyOutput
+    identityBasis:
+      | "UNRESOLVED"
+      | "SUPPLIER_CATALOG_OFFER"
+      | "EXACT_PRODUCT_IDENTITY"
+    supplierCatalogCompleteness:
+      | "NOT_ATTESTED"
+      | "EXHAUSTED_BY_HUMAN_ATTESTATION"
+      | "NOT_REQUIRED_EXACT_IDENTITY"
+    researchEligibility:
+      | "BLOCKED"
+      | "ALLOWED_WITH_LIMITATIONS"
+      | "ALLOWED"
+    comparisonMode:
+      | "EXACT_IDENTITY_REQUIRED"
+      | "GENERAL_PRODUCT_COMPARABLES_ONLY"
+      | "EXACT_PRODUCT_MATCH_ALLOWED"
+    exactMarketplaceMatchAllowed: boolean
+    canTreatComparableAsSameProduct: boolean
   }
   canPublishAutomatically: false
   publicationStatus: "NOT_PUBLISHED"
@@ -1450,6 +1518,89 @@ export async function hashProductCaseContent(content: string) {
   return `sha256:${[...new Uint8Array(digest)]
     .map((value) => value.toString(16).padStart(2, "0"))
     .join("")}`
+}
+
+function hashProductCaseContentSync(content: string) {
+  const constants = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+    0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+    0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+    0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ]
+  const bytes = new TextEncoder().encode(content)
+  const paddedLength = Math.ceil((bytes.length + 9) / 64) * 64
+  const padded = new Uint8Array(paddedLength)
+  padded.set(bytes)
+  padded[bytes.length] = 0x80
+  const view = new DataView(padded.buffer)
+  const bitLength = bytes.length * 8
+  view.setUint32(paddedLength - 8, Math.floor(bitLength / 0x1_0000_0000))
+  view.setUint32(paddedLength - 4, bitLength >>> 0)
+  const hash = new Uint32Array([
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+  ])
+  const words = new Uint32Array(64)
+  const rotateRight = (value: number, amount: number) =>
+    (value >>> amount) | (value << (32 - amount))
+  for (let offset = 0; offset < paddedLength; offset += 64) {
+    for (let index = 0; index < 16; index += 1) {
+      words[index] = view.getUint32(offset + index * 4)
+    }
+    for (let index = 16; index < 64; index += 1) {
+      const before15 = words[index - 15]
+      const before2 = words[index - 2]
+      const sigma0 = rotateRight(before15, 7) ^
+        rotateRight(before15, 18) ^ (before15 >>> 3)
+      const sigma1 = rotateRight(before2, 17) ^
+        rotateRight(before2, 19) ^ (before2 >>> 10)
+      words[index] = (words[index - 16] + sigma0 + words[index - 7] +
+        sigma1) >>> 0
+    }
+    let [a, b, c, d, e, f, g, h] = hash
+    for (let index = 0; index < 64; index += 1) {
+      const sum1 = rotateRight(e, 6) ^ rotateRight(e, 11) ^
+        rotateRight(e, 25)
+      const choice = (e & f) ^ (~e & g)
+      const temporary1 = (h + sum1 + choice + constants[index] +
+        words[index]) >>> 0
+      const sum0 = rotateRight(a, 2) ^ rotateRight(a, 13) ^
+        rotateRight(a, 22)
+      const majority = (a & b) ^ (a & c) ^ (b & c)
+      const temporary2 = (sum0 + majority) >>> 0
+      h = g
+      g = f
+      f = e
+      e = (d + temporary1) >>> 0
+      d = c
+      c = b
+      b = a
+      a = (temporary1 + temporary2) >>> 0
+    }
+    hash[0] = (hash[0] + a) >>> 0
+    hash[1] = (hash[1] + b) >>> 0
+    hash[2] = (hash[2] + c) >>> 0
+    hash[3] = (hash[3] + d) >>> 0
+    hash[4] = (hash[4] + e) >>> 0
+    hash[5] = (hash[5] + f) >>> 0
+    hash[6] = (hash[6] + g) >>> 0
+    hash[7] = (hash[7] + h) >>> 0
+  }
+  return `sha256:${[...hash].map((value) =>
+    value.toString(16).padStart(8, "0")
+  ).join("")}`
 }
 
 const MANUAL_SOURCE_SENSITIVE_PATTERNS = [
@@ -3579,6 +3730,7 @@ export function validateProductCaseDocumentProvenance(
     ...validateProductCaseImageAnalysis(document).errors,
     ...validateProductCaseSupplierSourceCapture(document).errors,
     ...validateHumanIdentityReview(document).errors,
+    ...validateSupplierCatalogLimitation(document).errors,
   ]
   const evidenceIds = new Set(document.evidence.map((entry) => entry.id))
   for (const id of document.identityReview.supplierEvidenceIds) {
@@ -5540,6 +5692,546 @@ export async function validateHumanIdentityReviewIntegrity(
   return { valid: errors.length === 0, errors: unique(errors) }
 }
 
+function canonicalSupplierCatalogLimitationRecord(
+  review: ProductCaseSupplierCatalogLimitation,
+) {
+  return {
+    contractVersion: review.contractVersion,
+    reviewer: review.reviewer,
+    reviewedAt: review.reviewedAt,
+    decision: review.decision,
+    humanReason: review.humanReason,
+    canonicalSupplierUrl: review.canonicalSupplierUrl,
+    supplierSourceContentHash: review.supplierSourceContentHash,
+    sourceContractVersion: review.sourceContractVersion,
+    parserVersion: review.parserVersion,
+    identityReviewId: review.identityReviewId,
+    identityReviewContentHash: review.identityReviewContentHash,
+    evidenceIds: review.evidenceIds,
+    unresolvedIdentityFields: review.unresolvedIdentityFields,
+    additionalSupplierInformationAvailable:
+      review.additionalSupplierInformationAvailable,
+    exactIdentityConfirmed: review.exactIdentityConfirmed,
+    physicalProductVerified: review.physicalProductVerified,
+    brandIpSignalStatus: review.brandIpSignalStatus,
+    rawHumanInput: review.rawHumanInput,
+  }
+}
+
+function supplierCatalogLimitationReviewId(contentHash: string) {
+  return `supplier-catalog-limitation-${contentHash.slice(7, 23)}`
+}
+
+function supplierCatalogBrandIpSignals(document: ProductCaseDocument) {
+  const signalPattern = /(?:brand|logo|trademark|trade mark|\bip\b|intellectual property|regulated model)/i
+  const explicitSupplierTextSignalPattern =
+    /(?:\b(?:brand|logo|model|regulated model)\s*[:#-]|\b(?:trademark|trade mark|intellectual property)\b)/i
+  return unique([
+    ...document.evidence.flatMap((entry) =>
+      entry.sourceType.startsWith("LUNA_") &&
+        entry.evidenceStatus !== "MISSING" &&
+        ["brand", "model"].includes(entry.field) &&
+        nonempty(effectiveEvidenceValue(entry))
+        ? [`IDENTITY_FIELD_SIGNAL:${entry.field}:${entry.id}`]
+        : entry.sourceType.startsWith("LUNA_") &&
+            entry.evidenceStatus !== "MISSING" &&
+            ["title", "description"].includes(entry.field) &&
+            explicitSupplierTextSignalPattern.test(stableValue([
+              entry.rawValue,
+              entry.normalizedValue,
+            ]))
+          ? [`SUPPLIER_TEXT_BRAND_IP_SIGNAL:${entry.field}:${entry.id}`]
+          : []
+    ),
+    ...document.imageAnalysis.observations.flatMap((observation) => [
+      ...observation.visibleBrands.map((brand) =>
+        `VISIBLE_BRAND_SIGNAL:${observation.evidenceId}:${brand}`
+      ),
+      ...observation.possibleConflicts.filter((conflict) =>
+        signalPattern.test(conflict)
+      ).map((conflict) =>
+        `VISUAL_BRAND_IP_SIGNAL:${observation.evidenceId}:${conflict}`
+      ),
+    ]),
+  ])
+}
+
+function currentAcceptedCatalogLimitationEvidence(
+  document: ProductCaseDocument,
+  evidenceId: string,
+) {
+  return currentAcceptedHumanIdentityEvidence(document, evidenceId)
+}
+
+const SUPPLIER_CATALOG_LIMITATION_SURFACE = [
+  "additionalSupplierInformationAvailable",
+  "brandIpSignalStatus",
+  "canonicalSupplierUrl",
+  "contentHash",
+  "contractVersion",
+  "decision",
+  "evidenceIds",
+  "exactIdentityConfirmed",
+  "humanReason",
+  "identityReviewContentHash",
+  "identityReviewId",
+  "parserVersion",
+  "physicalProductVerified",
+  "rawHumanInput",
+  "reviewId",
+  "reviewedAt",
+  "reviewer",
+  "sourceContractVersion",
+  "supplierSourceContentHash",
+  "unresolvedIdentityFields",
+] as const
+
+const SUPPLIER_CATALOG_LIMITATION_RAW_SURFACE = [
+  "catalogExhaustionConfirmed",
+  "evidenceIds",
+  "humanReason",
+  "reviewer",
+] as const
+
+function supplierCatalogLimitationSurfaceValid(review: unknown) {
+  if (!review || typeof review !== "object" || Array.isArray(review)) {
+    return false
+  }
+  const candidate = review as Record<string, unknown>
+  const raw = candidate.rawHumanInput
+  return stableValue(Object.keys(candidate).sort()) === stableValue(
+    [...SUPPLIER_CATALOG_LIMITATION_SURFACE].sort(),
+  ) && Boolean(raw) && typeof raw === "object" && !Array.isArray(raw) &&
+    stableValue(Object.keys(raw as Record<string, unknown>).sort()) ===
+      stableValue([...SUPPLIER_CATALOG_LIMITATION_RAW_SURFACE].sort())
+}
+
+function supplierCatalogLimitationRecordContractValid(
+  review: unknown,
+): review is ProductCaseSupplierCatalogLimitation {
+  if (!supplierCatalogLimitationSurfaceValid(review)) return false
+  const candidate = review as Record<string, unknown>
+  const raw = candidate.rawHumanInput as Record<string, unknown>
+  const evidenceIds = candidate.evidenceIds
+  const unresolvedIdentityFields = candidate.unresolvedIdentityFields
+  const rawEvidenceIds = raw.evidenceIds
+  if (
+    typeof candidate.reviewer !== "string" ||
+    typeof candidate.humanReason !== "string" ||
+    typeof candidate.reviewedAt !== "string" ||
+    typeof candidate.canonicalSupplierUrl !== "string" ||
+    typeof candidate.supplierSourceContentHash !== "string" ||
+    typeof candidate.identityReviewId !== "string" ||
+    typeof candidate.identityReviewContentHash !== "string" ||
+    typeof candidate.contentHash !== "string" ||
+    typeof candidate.reviewId !== "string" ||
+    typeof raw.reviewer !== "string" ||
+    typeof raw.humanReason !== "string" ||
+    !Array.isArray(evidenceIds) ||
+    !evidenceIds.every((id) => typeof id === "string" && Boolean(id.trim())) ||
+    !Array.isArray(rawEvidenceIds) ||
+    !rawEvidenceIds.every((id) =>
+      typeof id === "string" && Boolean(id.trim())
+    ) ||
+    !Array.isArray(unresolvedIdentityFields) ||
+    !unresolvedIdentityFields.every((field) => typeof field === "string")
+  ) {
+    return false
+  }
+  return candidate.contractVersion ===
+      SUPPLIER_CATALOG_LIMITATION_CONTRACT_VERSION &&
+    candidate.decision === "SUPPLIER_CATALOG_INFORMATION_EXHAUSTED" &&
+    Boolean(normalizeWhitespace(candidate.reviewer)) &&
+    Boolean(normalizeWhitespace(candidate.humanReason)) &&
+    validIsoInstant(candidate.reviewedAt) &&
+    validHttpsLunaReference(candidate.canonicalSupplierUrl) &&
+    validSha256(candidate.contentHash) &&
+    validSha256(candidate.supplierSourceContentHash) &&
+    validSha256(candidate.identityReviewContentHash) &&
+    candidate.identityReviewId === humanIdentityReviewId(
+      candidate.identityReviewContentHash,
+    ) &&
+    candidate.sourceContractVersion === LUNA_SOURCE_CONTRACT_VERSION &&
+    candidate.parserVersion === PRODUCT_CASE_PARSER_VERSION &&
+    candidate.additionalSupplierInformationAvailable === false &&
+    candidate.exactIdentityConfirmed === false &&
+    candidate.physicalProductVerified === false &&
+    candidate.brandIpSignalStatus === "NO_SIGNAL" &&
+    raw.catalogExhaustionConfirmed === true &&
+    normalizeWhitespace(raw.reviewer) === candidate.reviewer &&
+    normalizeWhitespace(raw.humanReason) === candidate.humanReason &&
+    evidenceIds.length > 0 &&
+    evidenceIds.length === new Set(evidenceIds).size &&
+    stableValue(evidenceIds) === stableValue([...evidenceIds].sort()) &&
+    stableValue(rawEvidenceIds.map(normalizeWhitespace).sort()) ===
+      stableValue(evidenceIds) &&
+    stableValue(unresolvedIdentityFields) === stableValue(
+      PRODUCT_CASE_UNRESOLVED_SUPPLIER_IDENTITY_FIELDS,
+    ) &&
+    candidate.reviewId === supplierCatalogLimitationReviewId(
+      candidate.contentHash,
+    )
+}
+
+export function validateSupplierCatalogLimitation(
+  document: ProductCaseDocument,
+) {
+  const errors: string[] = []
+  const state = document.supplierCatalogLimitation
+  if (
+    !state ||
+    !Array.isArray(state.historicalAttestations) ||
+    !("activeAttestation" in state)
+  ) {
+    return {
+      valid: false,
+      errors: ["SUPPLIER_CATALOG_LIMITATION_STATE_INVALID"],
+    }
+  }
+  const active = state.activeAttestation
+  if (active === null) return { valid: true, errors }
+  const identity = document.identityReview.humanReview
+  const capture = document.supplierSourceCapture
+  if (!supplierCatalogLimitationRecordContractValid(active)) {
+    errors.push("SUPPLIER_CATALOG_LIMITATION_CONTRACT_INVALID")
+    return { valid: false, errors: unique(errors) }
+  }
+  if (
+    active.contentHash !== hashProductCaseContentSync(stableValue(
+      canonicalSupplierCatalogLimitationRecord(active),
+    ))
+  ) {
+    errors.push("SUPPLIER_CATALOG_LIMITATION_CONTENT_HASH_MISMATCH")
+    return { valid: false, errors: unique(errors) }
+  }
+  if (
+    active.evidenceIds.length !== new Set(active.evidenceIds).size ||
+    stableValue(active.evidenceIds) !==
+      stableValue([...active.evidenceIds].sort()) ||
+    stableValue(active.rawHumanInput.evidenceIds
+      .map(normalizeWhitespace).sort()) !== stableValue(active.evidenceIds)
+  ) {
+    errors.push("SUPPLIER_CATALOG_LIMITATION_EVIDENCE_IDS_INVALID")
+  }
+  if (
+    !identity ||
+    identity.contractVersion !== HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION ||
+    !validateHumanIdentityReview(document).valid ||
+    identity.reviewId !== active.identityReviewId ||
+    identity.contentHash !== active.identityReviewContentHash ||
+    identity.sameGeneralProductTypeConfirmed !== true ||
+    !normalizeWhitespace(identity.productType ?? "") ||
+    !Number.isSafeInteger(identity.packQuantity) ||
+    Number(identity.packQuantity) <= 0 ||
+    identity.exactIdentityConfirmed !== false ||
+    identity.physicalProductVerified !== false ||
+    document.identityReview.physicalProductVerified !== false
+  ) {
+    errors.push("SUPPLIER_CATALOG_LIMITATION_IDENTITY_REVIEW_INVALID")
+  }
+  if (
+    !capture ||
+    !validateProductCaseSupplierSourceCapture(document).valid ||
+    capture.supplierUrl !== active.canonicalSupplierUrl ||
+    capture.contentHash !== active.supplierSourceContentHash ||
+    capture.sourceContractVersion !== active.sourceContractVersion ||
+    capture.parserVersion !== active.parserVersion ||
+    document.sourceUrl !== active.canonicalSupplierUrl ||
+    !validHttpsLunaReference(active.canonicalSupplierUrl)
+  ) {
+    errors.push("SUPPLIER_CATALOG_LIMITATION_SOURCE_INVALID")
+  }
+  const supplierProvidedIdentityFields = new Set(
+    document.evidence
+      .filter((entry) =>
+        entry.sourceType.startsWith("LUNA_") &&
+        entry.evidenceStatus !== "MISSING" &&
+        PRODUCT_CASE_UNRESOLVED_SUPPLIER_IDENTITY_FIELDS.includes(
+          entry.field as typeof PRODUCT_CASE_UNRESOLVED_SUPPLIER_IDENTITY_FIELDS[number],
+        ) &&
+        nonempty(effectiveEvidenceValue(entry))
+      ).map((entry) => entry.field),
+  )
+  const expectedUnresolved = PRODUCT_CASE_UNRESOLVED_SUPPLIER_IDENTITY_FIELDS
+    .filter((field) =>
+      (identity?.missingFields.includes(field) ?? true) &&
+      !supplierProvidedIdentityFields.has(field)
+    )
+  if (
+    stableValue(active.unresolvedIdentityFields) !==
+      stableValue(expectedUnresolved) ||
+    expectedUnresolved.length !==
+      PRODUCT_CASE_UNRESOLVED_SUPPLIER_IDENTITY_FIELDS.length
+  ) {
+    errors.push("SUPPLIER_CATALOG_LIMITATION_UNRESOLVED_FIELDS_INVALID")
+  }
+  if (
+    identity && stableValue(active.evidenceIds) !==
+      stableValue(identity.evidenceIds)
+  ) {
+    errors.push("SUPPLIER_CATALOG_LIMITATION_IDENTITY_EVIDENCE_MISMATCH")
+  }
+  for (const id of active.evidenceIds) {
+    if (!currentAcceptedCatalogLimitationEvidence(document, id)) {
+      errors.push(`SUPPLIER_CATALOG_LIMITATION_EVIDENCE_INVALID:${id}`)
+    }
+  }
+  const titlePresent = active.evidenceIds.some((id) => {
+    const entry = currentAcceptedCatalogLimitationEvidence(document, id)
+    return entry?.field === "title" &&
+      entry.sourceType.startsWith("LUNA_") &&
+      entry.sourceEvidenceClass === "SUPPLIER_STATED"
+  })
+  const acceptedVisualIds = new Set(
+    document.imageAnalysis.observations
+      .filter((observation) =>
+        observation.humanDecision === "ACCEPT_FOR_ANALYSIS"
+      ).map((observation) => observation.evidenceId),
+  )
+  const visualPresent = active.evidenceIds.some((id) =>
+    acceptedVisualIds.has(id)
+  )
+  const packEvidencePresent = Boolean(identity &&
+    active.evidenceIds.some((id) =>
+      identity.provenance.packQuantity.some((reference) =>
+        reference.evidenceId === id &&
+        currentAcceptedCatalogLimitationEvidence(document, id)
+          ?.contentHash === reference.contentHash
+      )
+    ))
+  if (!titlePresent) {
+    errors.push("SUPPLIER_CATALOG_LIMITATION_SUPPLIER_TITLE_REQUIRED")
+  }
+  if (!visualPresent) {
+    errors.push("SUPPLIER_CATALOG_LIMITATION_VISUAL_OBSERVATION_REQUIRED")
+  }
+  if (!packEvidencePresent) {
+    errors.push("SUPPLIER_CATALOG_LIMITATION_PACK_EVIDENCE_REQUIRED")
+  }
+  if (supplierCatalogBrandIpSignals(document).length > 0) {
+    errors.push("SUPPLIER_CATALOG_LIMITATION_BRAND_IP_REVIEW_REQUIRED")
+  }
+  if (active.reviewId !== supplierCatalogLimitationReviewId(
+    active.contentHash,
+  )) {
+    errors.push("SUPPLIER_CATALOG_LIMITATION_REVIEW_ID_MISMATCH")
+  }
+  return { valid: errors.length === 0, errors: unique(errors) }
+}
+
+export async function validateSupplierCatalogLimitationIntegrity(
+  document: ProductCaseDocument,
+) {
+  const structural = validateSupplierCatalogLimitation(document)
+  const errors = [...structural.errors]
+  const active = document.supplierCatalogLimitation?.activeAttestation
+  const historical =
+    document.supplierCatalogLimitation?.historicalAttestations ?? []
+  if (!structural.valid) {
+    return { valid: false, errors: unique(errors) }
+  }
+  for (const [index, review] of [
+    ...(active ? [active] : []),
+    ...historical,
+  ].entries()) {
+    if (
+      !supplierCatalogLimitationRecordContractValid(review)
+    ) {
+      errors.push(`SUPPLIER_CATALOG_LIMITATION_AUDIT_INVALID:${index}`)
+      continue
+    }
+    const contentHash = await hashProductCaseContent(stableValue(
+      canonicalSupplierCatalogLimitationRecord(review),
+    ))
+    if (review.contentHash !== contentHash) {
+      errors.push(`SUPPLIER_CATALOG_LIMITATION_CONTENT_HASH_MISMATCH:${index}`)
+    }
+    if (review.reviewId !== supplierCatalogLimitationReviewId(contentHash)) {
+      errors.push(`SUPPLIER_CATALOG_LIMITATION_REVIEW_ID_MISMATCH:${index}`)
+    }
+  }
+  if (
+    historical.length !== uniqueByStableValue(historical).length ||
+    (active && historical.some((review) =>
+      review.reviewId === active.reviewId
+    ))
+  ) {
+    errors.push("SUPPLIER_CATALOG_LIMITATION_AUDIT_DUPLICATE")
+  }
+  return { valid: errors.length === 0, errors: unique(errors) }
+}
+
+export async function saveSupplierCatalogLimitationRecord(input: {
+  document: ProductCaseDocument
+  reviewer: string
+  reviewedAt: string
+  humanReason: string
+  catalogExhaustionConfirmed: boolean
+  evidenceIds: string[]
+  rawHumanInput: ProductCaseSupplierCatalogLimitation["rawHumanInput"]
+}) {
+  const reviewer = normalizeWhitespace(input.reviewer)
+  const humanReason = normalizeWhitespace(input.humanReason)
+  if (!reviewer || !humanReason) {
+    throw new Error("SUPPLIER_CATALOG_LIMITATION_REQUIRED_FIELD_MISSING")
+  }
+  if (!validIsoInstant(input.reviewedAt)) {
+    throw new Error("SUPPLIER_CATALOG_LIMITATION_TIMESTAMP_INVALID")
+  }
+  if (
+    input.catalogExhaustionConfirmed !== true ||
+    input.rawHumanInput.catalogExhaustionConfirmed !== true
+  ) {
+    throw new Error("SUPPLIER_CATALOG_LIMITATION_CONFIRMATION_REQUIRED")
+  }
+  if (
+    normalizeWhitespace(input.rawHumanInput.reviewer) !== reviewer ||
+    normalizeWhitespace(input.rawHumanInput.humanReason) !== humanReason
+  ) {
+    throw new Error("SUPPLIER_CATALOG_LIMITATION_RAW_INPUT_MISMATCH")
+  }
+  const sourceIntegrity =
+    await validateProductCaseSupplierSourceCaptureIntegrity(input.document)
+  const identityIntegrity =
+    await validateHumanIdentityReviewIntegrity(input.document)
+  const visualIntegrity =
+    await validateHumanVisualReviewIntegrity(input.document)
+  if (!sourceIntegrity.valid) {
+    throw new Error(`SUPPLIER_CATALOG_LIMITATION_SOURCE_INVALID:${
+      sourceIntegrity.errors.join(",")
+    }`)
+  }
+  if (!identityIntegrity.valid) {
+    throw new Error(`SUPPLIER_CATALOG_LIMITATION_IDENTITY_REVIEW_INVALID:${
+      identityIntegrity.errors.join(",")
+    }`)
+  }
+  if (!visualIntegrity.valid) {
+    throw new Error(`SUPPLIER_CATALOG_LIMITATION_VISUAL_REVIEW_INVALID:${
+      visualIntegrity.errors.join(",")
+    }`)
+  }
+  const identity = input.document.identityReview.humanReview
+  const capture = input.document.supplierSourceCapture
+  if (!identity || !capture) {
+    throw new Error("SUPPLIER_CATALOG_LIMITATION_PRECONDITION_MISSING")
+  }
+  const evidenceIds = input.evidenceIds.map(normalizeWhitespace).sort()
+  const rawEvidenceIds = input.rawHumanInput.evidenceIds
+    .map(normalizeWhitespace).sort()
+  if (
+    evidenceIds.some((id) => !id) ||
+    evidenceIds.length !== new Set(evidenceIds).size ||
+    stableValue(evidenceIds) !== stableValue(rawEvidenceIds)
+  ) {
+    throw new Error("SUPPLIER_CATALOG_LIMITATION_EVIDENCE_IDS_INVALID")
+  }
+  const canonical = {
+    contractVersion: SUPPLIER_CATALOG_LIMITATION_CONTRACT_VERSION,
+    reviewer,
+    reviewedAt: input.reviewedAt,
+    decision: "SUPPLIER_CATALOG_INFORMATION_EXHAUSTED" as const,
+    humanReason,
+    canonicalSupplierUrl: capture.supplierUrl,
+    supplierSourceContentHash: capture.contentHash,
+    sourceContractVersion: capture.sourceContractVersion,
+    parserVersion: capture.parserVersion,
+    identityReviewId: identity.reviewId,
+    identityReviewContentHash: identity.contentHash,
+    evidenceIds,
+    unresolvedIdentityFields:
+      [...PRODUCT_CASE_UNRESOLVED_SUPPLIER_IDENTITY_FIELDS],
+    additionalSupplierInformationAvailable: false as const,
+    exactIdentityConfirmed: false as const,
+    physicalProductVerified: false as const,
+    brandIpSignalStatus: "NO_SIGNAL" as const,
+    rawHumanInput: structuredClone(input.rawHumanInput),
+  }
+  const contentHash = await hashProductCaseContent(stableValue(canonical))
+  const review: ProductCaseSupplierCatalogLimitation = {
+    ...canonical,
+    reviewId: supplierCatalogLimitationReviewId(contentHash),
+    contentHash: contentHash as `sha256:${string}`,
+  }
+  const previous = input.document.supplierCatalogLimitation.activeAttestation
+  if (previous?.reviewId === review.reviewId &&
+    stableValue(previous) === stableValue(review)) {
+    return {
+      review: previous,
+      updatedDocument: structuredClone(input.document),
+      safety: PRODUCT_CASE_ZERO_EFFECTS,
+    }
+  }
+  const updatedDocument: ProductCaseDocument = {
+    ...input.document,
+    marketEvidence: emptyLimitedMarketEvidence(),
+    supplierCatalogLimitation: {
+      activeAttestation: review,
+      historicalAttestations: uniqueByStableValue([
+        ...input.document.supplierCatalogLimitation.historicalAttestations,
+        ...(previous ? [previous] : []),
+      ]),
+    },
+  }
+  const integrity = await validateSupplierCatalogLimitationIntegrity(
+    updatedDocument,
+  )
+  if (!integrity.valid) {
+    throw new Error(`SUPPLIER_CATALOG_LIMITATION_INVALID:${
+      integrity.errors.join(",")
+    }`)
+  }
+  return { review, updatedDocument, safety: PRODUCT_CASE_ZERO_EFFECTS }
+}
+
+function uniqueByStableValue<T>(values: T[]) {
+  const seen = new Set<string>()
+  return values.filter((value) => {
+    const key = stableValue(value)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+export function invalidateSupplierCatalogLimitation(
+  document: ProductCaseDocument,
+) {
+  const active = document.supplierCatalogLimitation.activeAttestation
+  if (!active) return structuredClone(document)
+  return {
+    ...document,
+    marketEvidence: emptyLimitedMarketEvidence(),
+    supplierCatalogLimitation: {
+      activeAttestation: null,
+      historicalAttestations: uniqueByStableValue([
+        ...document.supplierCatalogLimitation.historicalAttestations,
+        active,
+      ]),
+    },
+  }
+}
+
+function emptyLimitedMarketEvidence(): ProductCaseMarketEvidence {
+  return {
+    runStatus: "NOT_RUN",
+    soldExact: "MISSING",
+    activeExact: "MISSING",
+    marketCeiling: "MISSING",
+    soldExactCount: 0,
+    referenceMedian: null,
+    comparables: [],
+    humanSuppliedComparableCandidates: [],
+    observedAt: null,
+  }
+}
+
+export function deleteSupplierCatalogLimitationRecord(input: {
+  document: ProductCaseDocument
+}) {
+  return invalidateSupplierCatalogLimitation(input.document)
+}
+
 export async function validateProductCaseDocumentProvenanceIntegrity(
   document: ProductCaseDocument,
 ) {
@@ -5549,11 +6241,14 @@ export async function validateProductCaseDocumentProvenanceIntegrity(
   const visualIntegrity = await validateHumanVisualReviewIntegrity(document)
   const identityIntegrity =
     await validateHumanIdentityReviewIntegrity(document)
+  const catalogLimitationIntegrity =
+    await validateSupplierCatalogLimitationIntegrity(document)
   const errors = unique([
     ...structural.errors,
     ...supplierIntegrity.errors,
     ...visualIntegrity.errors,
     ...identityIntegrity.errors,
+    ...catalogLimitationIntegrity.errors,
   ])
   return { valid: errors.length === 0, errors }
 }
@@ -5931,10 +6626,13 @@ export async function saveHumanIdentityReviewRecord(input: {
   const currentConflict = status === "CONFLICTED"
     ? "SUPPLIER_TEXT_VS_HUMAN_VISUAL_REVIEW"
     : null
+  const invalidatedDocument = invalidateSupplierCatalogLimitation(
+    input.document,
+  )
   const updatedDocument: ProductCaseDocument = {
-    ...input.document,
+    ...invalidatedDocument,
     identityReview: {
-      ...input.document.identityReview,
+      ...invalidatedDocument.identityReview,
       status,
       confidence: input.confidence,
       physicalProductVerified,
@@ -5983,10 +6681,13 @@ export function deleteHumanIdentityReviewRecord(input: {
   const persistentBlockers = persistentHumanIdentityBlockers(
     input.document.identityReview.blockers,
   )
+  const invalidatedDocument = invalidateSupplierCatalogLimitation(
+    input.document,
+  )
   return {
-    ...input.document,
+    ...invalidatedDocument,
     identityReview: {
-      ...input.document.identityReview,
+      ...invalidatedDocument.identityReview,
       status: "NOT_REVIEWED",
       confidence: "LOW",
       physicalProductVerified: false,
@@ -6022,7 +6723,7 @@ export function deleteHumanIdentityReviewRecord(input: {
 export function transitionProductCaseSupplierCapture(input: {
   document: ProductCaseDocument
   replacement: {
-    supplierSourceCapture: ProductCaseSupplierSourceCapture
+    supplierSourceCapture: ProductCaseSupplierSourceCapture | null
     extraction: ProductCaseExtractionResult
   } | null
 }): ProductCaseDocument {
@@ -6133,9 +6834,10 @@ export function transitionProductCaseSupplierCapture(input: {
       ? [document.identityReview.currentConflict]
       : []),
   ])
+  const invalidatedDocument = invalidateSupplierCatalogLimitation(document)
   return {
-    ...document,
-    supplierSourceCapture: input.replacement
+    ...invalidatedDocument,
+    supplierSourceCapture: input.replacement?.supplierSourceCapture
       ? structuredClone(input.replacement.supplierSourceCapture)
       : null,
     captures,
@@ -6147,7 +6849,7 @@ export function transitionProductCaseSupplierCapture(input: {
       observations,
     },
     identityReview: {
-      ...document.identityReview,
+      ...invalidatedDocument.identityReview,
       status: "NOT_REVIEWED",
       confidence: "LOW",
       physicalProductVerified: false,
@@ -6383,8 +7085,11 @@ export async function createHumanVisualReviewRecord(input: {
   const currentVisualConflicts = observations.flatMap((entry) =>
     entry.possibleConflicts
   )
+  const invalidatedDocument = invalidateSupplierCatalogLimitation(
+    input.document,
+  )
   const updatedDocument: ProductCaseDocument = {
-    ...input.document,
+    ...invalidatedDocument,
     evidence: updatedEvidence,
     captures,
     imageAnalysis: {
@@ -6400,7 +7105,7 @@ export async function createHumanVisualReviewRecord(input: {
       observations,
     },
     identityReview: {
-      ...input.document.identityReview,
+      ...invalidatedDocument.identityReview,
       status: "NOT_REVIEWED",
       confidence: "LOW",
       physicalProductVerified: false,
@@ -6492,15 +7197,18 @@ export function deleteHumanVisualReviewRecord(input: {
     }),
   ])
   const conflicts = observations.flatMap((entry) => entry.possibleConflicts)
+  const invalidatedDocument = invalidateSupplierCatalogLimitation(
+    input.document,
+  )
   return {
-    ...input.document,
+    ...invalidatedDocument,
     evidence: retainedEvidence,
     captures: input.document.captures.filter((entry) =>
       entry.sourceType !== "HUMAN_VISUAL_OBSERVATION" ||
       !removedHashes.has(entry.contentHash)
     ),
     imageAnalysis: {
-      ...input.document.imageAnalysis,
+      ...invalidatedDocument.imageAnalysis,
       visualEvidenceStatus: observations.length > 0
         ? "HUMAN_REVIEWED"
         : "NOT_REVIEWED",
@@ -6514,7 +7222,7 @@ export function deleteHumanVisualReviewRecord(input: {
       observations,
     },
     identityReview: {
-      ...input.document.identityReview,
+      ...invalidatedDocument.identityReview,
       status: "NOT_REVIEWED",
       confidence: "LOW",
       physicalProductVerified: false,
@@ -6566,6 +7274,12 @@ export function reviewHumanComparableCandidate(
   const reviewer = normalizeWhitespace(review.reviewer)
   if (!reason || !reviewer || !validIsoInstant(review.reviewedAt)) {
     throw new Error("COMPARABLE_HUMAN_REVIEW_PROVENANCE_REQUIRED")
+  }
+  if (
+    candidate.comparisonClass === "GENERAL_PRODUCT_COMPARABLE" &&
+    review.decision === "VALIDATE_ACTIVE_EXACT"
+  ) {
+    throw new Error("GENERAL_PRODUCT_COMPARABLE_CANNOT_BECOME_EXACT_MATCH")
   }
   const gatesPass = review.identityVisualMatch && review.variantMatch &&
     review.contentsMatch && review.packQuantityMatch
@@ -6634,10 +7348,81 @@ export function reviewHumanComparableCandidate(
   }
 }
 
+export function createGeneralProductComparableCandidate(input: {
+  sourceReference: string
+  observedAt: string
+  observedTitle: string
+  observedPriceApprox: number | null
+  observedShippingApprox: number | null
+  currency: string
+  condition: string
+  listingStatus: ProductCaseHumanComparableCandidate["listingStatus"]
+  ebayUrl?: string | null
+}): ProductCaseHumanComparableCandidate {
+  const sourceReference = normalizeWhitespace(input.sourceReference)
+  const observedTitle = normalizeWhitespace(input.observedTitle)
+  const currency = normalizeWhitespace(input.currency).toUpperCase()
+  const condition = normalizeWhitespace(input.condition)
+  const validMoney = (value: number | null) =>
+    value === null || (Number.isFinite(value) && value >= 0)
+  if (
+    !sourceReference || !observedTitle || !currency || !condition ||
+    !validIsoInstant(input.observedAt) ||
+    !validMoney(input.observedPriceApprox) ||
+    !validMoney(input.observedShippingApprox)
+  ) {
+    throw new Error("GENERAL_PRODUCT_COMPARABLE_CAPTURE_INVALID")
+  }
+  return {
+    sourceType: "HUMAN_SUPPLIED_COMPARABLE_CANDIDATE",
+    comparisonClass: "GENERAL_PRODUCT_COMPARABLE",
+    validationStatus: "NOT_VALIDATED",
+    ebayItemId: null,
+    ebayUrl: normalizeWhitespace(input.ebayUrl ?? "") || null,
+    listingStatus: input.listingStatus,
+    observedTitle,
+    observedPriceApprox: input.observedPriceApprox,
+    observedShippingApprox: input.observedShippingApprox,
+    currency,
+    visibleSoldSignal: null,
+    confirmedSoldQuantity: null,
+    condition,
+    endedAt: null,
+    competitorDimensions: null,
+    competitorWeight: null,
+    sourceReference,
+    observedAt: input.observedAt,
+    identityValidated: false,
+    variantValidated: false,
+    contentsValidated: false,
+    packQuantityValidated: false,
+    eligibleForStrategyLab: false,
+    eligibleForSoldExact: false,
+    canBecomeProductFact: false,
+    provisionalCohort: "SIMILAR_NOT_EXACT",
+    review: {
+      decision: "KEEP_NOT_VALIDATED",
+      reason: null,
+      reviewer: null,
+      reviewedAt: null,
+      validatedTitle: null,
+      validatedPackQuantity: null,
+      validatedVariantComposition: [],
+      buyerShipping: null,
+      reasonCodes: ["GENERAL_PRODUCT_COMPARABLE_ONLY"],
+    },
+    validationBlockers: [
+      "GENERAL_PRODUCT_COMPARABLE_NOT_EXACT_PRODUCT_MATCH",
+      "NOT_ELIGIBLE_FOR_STRATEGY_LAB",
+    ],
+  }
+}
+
 export function humanComparableCandidateToStrategyComparable(
   candidate: ProductCaseHumanComparableCandidate,
 ): ComparableInput | null {
   if (
+    candidate.comparisonClass !== "EXACT_PRODUCT_MATCH" ||
     candidate.validationStatus !== "VALIDATED_ACTIVE_EXACT" ||
     candidate.review.decision !== "VALIDATE_ACTIVE_EXACT" ||
     !candidate.eligibleForStrategyLab ||
@@ -7354,7 +8139,8 @@ export function buildManualListingPackageDraft(input: {
       entry.field === field && entry.evidenceClass === "PRODUCT_VERIFIED"
     )
   )
-  const marketReady = input.document.marketEvidence.runStatus === "COMPLETE" &&
+  const marketReady = identityReady &&
+    input.document.marketEvidence.runStatus === "COMPLETE" &&
     input.document.marketEvidence.soldExact === "AVAILABLE" &&
     input.document.marketEvidence.marketCeiling === "AVAILABLE"
   const humanStrategyApproved = Boolean(
@@ -8464,7 +9250,25 @@ export function buildProductCaseOperationalPipeline(input: {
     ["title", "supplier_product_id", "variant_id"].every((field) =>
       accepted.some((entry) => entry.field === field)
     )
-  const marketReady = input.document.marketEvidence.runStatus === "COMPLETE" &&
+  const catalogLimitationValid =
+    validateSupplierCatalogLimitation(input.document).valid &&
+    Boolean(input.document.supplierCatalogLimitation.activeAttestation)
+  const limitedComparableCandidates = input.document.marketEvidence
+    .humanSuppliedComparableCandidates
+  const limitedMarketResearchNotStarted = catalogLimitationValid &&
+    input.document.marketEvidence.runStatus === "NOT_RUN" &&
+    limitedComparableCandidates.length === 0
+  const limitedMarketResearchReviewed = catalogLimitationValid &&
+    limitedComparableCandidates.length > 0 &&
+    limitedComparableCandidates.every((candidate) =>
+      candidate.comparisonClass === "GENERAL_PRODUCT_COMPARABLE" &&
+      ["KEEP_NOT_VALIDATED", "REJECT"].includes(candidate.review.decision) &&
+      Boolean(normalizeWhitespace(candidate.review.reviewer ?? "")) &&
+      Boolean(normalizeWhitespace(candidate.review.reason ?? "")) &&
+      validIsoInstant(candidate.review.reviewedAt ?? "")
+    )
+  const marketReady = identityReady &&
+    input.document.marketEvidence.runStatus === "COMPLETE" &&
     input.document.marketEvidence.soldExact === "AVAILABLE" &&
     input.document.marketEvidence.marketCeiling === "AVAILABLE"
   const evaluation = evaluateAdapterStrategy(input.adapter)
@@ -8560,25 +9364,47 @@ export function buildProductCaseOperationalPipeline(input: {
     },
     {
       phase: "IDENTITY_AND_VARIANTS",
-      status: identityReady
+      status: identityReady || catalogLimitationValid
         ? "COMPLETED"
         : input.document.identityReview.status === "PARTIAL"
           ? "HUMAN_REVIEW_REQUIRED"
           : "BLOCKED",
-      blockers: identityReady
+      blockers: identityReady || catalogLimitationValid
         ? []
         : unique(input.document.identityReview.blockers),
       nextAction: identityReady
         ? "REVIEW_MARKET_EVIDENCE"
+        : catalogLimitationValid
+          ? "CAPTURE_GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE"
         : input.document.identityReview.nextAction,
     },
     {
       phase: "MARKET_EVIDENCE",
-      status: marketReady ? "COMPLETED" : "BLOCKED",
-      blockers: marketReady ? [] : ["SOLD_EXACT_COHORT_MISSING"],
+      status: marketReady
+        ? "COMPLETED"
+        : catalogLimitationValid
+          ? limitedMarketResearchNotStarted
+            ? "NOT_STARTED"
+            : limitedMarketResearchReviewed
+              ? "COMPLETED"
+              : "HUMAN_REVIEW_REQUIRED"
+          : "BLOCKED",
+      blockers: marketReady
+        ? []
+        : catalogLimitationValid
+          ? limitedMarketResearchNotStarted || limitedMarketResearchReviewed
+            ? []
+            : ["GENERAL_PRODUCT_COMPARABLE_REVIEW_REQUIRED"]
+          : ["SOLD_EXACT_COHORT_MISSING"],
       nextAction: marketReady
         ? "CALCULATE_SCENARIO_ECONOMICS"
-        : "VALIDATE_EXACT_MARKET_COHORT",
+        : catalogLimitationValid
+          ? limitedMarketResearchNotStarted
+            ? "CAPTURE_GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE"
+            : limitedMarketResearchReviewed
+              ? "MAINTAIN_LIMITED_RESEARCH_COMMERCIAL_BLOCKS"
+              : "REVIEW_GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE"
+          : "VALIDATE_EXACT_MARKET_COHORT",
     },
     {
       phase: "SCENARIO_ECONOMICS",
@@ -8651,7 +9477,22 @@ export function buildProductCaseOperationalPipeline(input: {
   ]
   let upstreamStopped = false
   return natural.map((phase) => {
-    const output = upstreamStopped && phase.status === "COMPLETED"
+    const catalogLimitedDownstream = catalogLimitationValid &&
+      !identityReady &&
+      PRODUCT_CASE_OPERATIONAL_PHASES.indexOf(phase.phase) >=
+        PRODUCT_CASE_OPERATIONAL_PHASES.indexOf("SCENARIO_ECONOMICS")
+    const output = catalogLimitedDownstream
+      ? {
+          ...phase,
+          status: "BLOCKED" as const,
+          blockers: unique([
+            "EXACT_IDENTITY_REQUIRED_FOR_STRATEGY_OR_PUBLICATION",
+            ...phase.blockers,
+          ]),
+          nextAction:
+            "CAPTURE_GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE",
+        }
+      : upstreamStopped && phase.status === "COMPLETED"
       ? {
           ...phase,
           status: "BLOCKED" as const,
@@ -8686,9 +9527,22 @@ export function buildProductCaseOperationalPipeline(input: {
           : output.phase === "HUMAN_VISUAL_REVIEW"
             ? { imageAnalysis: input.document.imageAnalysis }
             : output.phase === "IDENTITY_AND_VARIANTS"
-              ? { identityReview: input.document.identityReview }
+              ? {
+                  identityReview: input.document.identityReview,
+                  supplierCatalogLimitation:
+                    input.document.supplierCatalogLimitation,
+                }
               : output.phase === "MARKET_EVIDENCE"
-                ? { marketEvidence: input.document.marketEvidence }
+                ? {
+                    marketEvidence: input.document.marketEvidence,
+                    comparisonMode: identityReady
+                      ? "EXACT_PRODUCT_MATCH_ALLOWED"
+                      : catalogLimitationValid
+                        ? "GENERAL_PRODUCT_COMPARABLES_ONLY"
+                        : "EXACT_IDENTITY_REQUIRED",
+                    exactMarketplaceMatchAllowed: identityReady,
+                    canTreatComparableAsSameProduct: identityReady,
+                  }
                 : output.phase === "SCENARIO_ECONOMICS"
                   ? { economics: assessment?.economics ?? null }
                   : output.phase === "STRATEGY_RECOMMENDATION"
@@ -8746,6 +9600,9 @@ export function calculateProductCaseReadiness(input: {
 }): ProductCaseRunnerOutput["readiness"] {
   const identityConflict = input.document.identityReview.status ===
     "CONFLICTED"
+  const catalogLimitationValid =
+    validateSupplierCatalogLimitation(input.document).valid &&
+    Boolean(input.document.supplierCatalogLimitation.activeAttestation)
   const present = input.document.evidence.filter((entry) =>
     nonempty(entry.normalizedValue) &&
     !["MISSING", "CONFLICTED"].includes(entry.evidenceClass)
@@ -8788,8 +9645,14 @@ export function calculateProductCaseReadiness(input: {
       )
       ? "PARTIAL" as const
       : "MISSING" as const
-  const marketEvidence = input.document.marketEvidence.runStatus === "COMPLETE"
+  const marketEvidence = identityReady &&
+      input.document.marketEvidence.runStatus === "COMPLETE"
     ? "READY" as const
+    : catalogLimitationValid
+      ? input.document.marketEvidence.humanSuppliedComparableCandidates.length >
+          0
+        ? "NOT_VALIDATED" as const
+        : "NOT_RUN" as const
     : input.document.marketEvidence.runStatus === "INSUFFICIENT"
       ? "INSUFFICIENT" as const
     : input.document.marketEvidence.runStatus === "NOT_VALIDATED"
@@ -8817,6 +9680,28 @@ export function calculateProductCaseReadiness(input: {
       ? "READY"
       : "MISSING_INPUT",
     strategy: input.adapter.osConclusion,
+    identityBasis: identityReady
+      ? "EXACT_PRODUCT_IDENTITY"
+      : catalogLimitationValid
+        ? "SUPPLIER_CATALOG_OFFER"
+        : "UNRESOLVED",
+    supplierCatalogCompleteness: identityReady
+      ? "NOT_REQUIRED_EXACT_IDENTITY"
+      : catalogLimitationValid
+        ? "EXHAUSTED_BY_HUMAN_ATTESTATION"
+        : "NOT_ATTESTED",
+    researchEligibility: identityReady
+      ? "ALLOWED"
+      : catalogLimitationValid
+        ? "ALLOWED_WITH_LIMITATIONS"
+        : "BLOCKED",
+    comparisonMode: identityReady
+      ? "EXACT_PRODUCT_MATCH_ALLOWED"
+      : catalogLimitationValid
+        ? "GENERAL_PRODUCT_COMPARABLES_ONLY"
+        : "EXACT_IDENTITY_REQUIRED",
+    exactMarketplaceMatchAllowed: identityReady,
+    canTreatComparableAsSameProduct: identityReady,
   }
 }
 
@@ -8903,12 +9788,16 @@ export function buildProductCaseRunnerOutput(input: {
 
 export const PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION =
   "PRODUCT_CASE_WORKSPACE_EXPORT_V1" as const
-export const PRODUCT_CASE_WORKSPACE_EXPORT_VERSION =
+export const PRODUCT_CASE_PRE_CATALOG_LIMITATION_WORKSPACE_EXPORT_VERSION =
   "PRODUCT_CASE_WORKSPACE_EXPORT_V2" as const
+export const PRODUCT_CASE_WORKSPACE_EXPORT_VERSION =
+  "PRODUCT_CASE_WORKSPACE_EXPORT_V3" as const
 export const PRODUCT_CASE_PRE_IDENTITY_OUTPUT_CONTRACT_VERSION =
   "PRODUCT_CASE_OUTPUT_CONTRACT_V1" as const
-export const PRODUCT_CASE_OUTPUT_CONTRACT_VERSION =
+export const PRODUCT_CASE_PRE_CATALOG_LIMITATION_OUTPUT_CONTRACT_VERSION =
   "PRODUCT_CASE_OUTPUT_CONTRACT_V2" as const
+export const PRODUCT_CASE_OUTPUT_CONTRACT_VERSION =
+  "PRODUCT_CASE_OUTPUT_CONTRACT_V3" as const
 export const PRODUCT_CASE_PRE_IDENTITY_OUTPUT_WARNING =
   "PRE_IDENTITY_CONTRACT_OUTPUT_REBUILT_WITH_CURRENT_DOMAIN" as const
 export const HUMAN_IDENTITY_REVIEW_V1_IMPORT_WARNING =
@@ -9163,6 +10052,8 @@ function outputMismatchErrorDetails(input: {
 
 const LEGACY_DERIVED_OUTPUT_PATHS = [
   "output.adapter",
+  "output.document.marketEvidence.humanSuppliedComparableCandidates",
+  "output.document.supplierCatalogLimitation",
   "output.handoffArtifactGenerated",
   "output.learningObservation",
   "output.legacyPhaseDiagnostics",
@@ -9626,10 +10517,25 @@ async function validateLegacyImportAuditSnapshotIntegrity(
   validateLegacyHistoricalAuditOutputStructure(
     audit.historicalOutput,
   )
-  const historicalDocumentIntegrity =
-    await validateProductCaseDocumentProvenanceIntegrity(
-      audit.historicalOutput.document,
+  const historicalDocument = structuredClone(audit.historicalOutput.document)
+  if (!Object.hasOwn(
+    historicalDocument as unknown as Record<string, unknown>,
+    "supplierCatalogLimitation",
+  )) {
+    historicalDocument.supplierCatalogLimitation = {
+      activeAttestation: null,
+      historicalAttestations: [],
+    }
+  }
+  historicalDocument.marketEvidence.humanSuppliedComparableCandidates =
+    historicalDocument.marketEvidence.humanSuppliedComparableCandidates.map(
+      (candidate) => ({
+        ...candidate,
+        comparisonClass: candidate.comparisonClass ?? "EXACT_PRODUCT_MATCH",
+      }),
     )
+  const historicalDocumentIntegrity =
+    await validateProductCaseDocumentProvenanceIntegrity(historicalDocument)
   const historicalQuarantineIds = legacyVisualQuarantineIdsFromIssues(
     historicalDocumentIntegrity.errors,
   )
@@ -9695,7 +10601,36 @@ function validateHistoricalOutputStructure(
   }
 }
 
-function workspaceStateFromUnknown(value: unknown): ProductCaseWorkspaceState {
+function workspaceProjectionMatchingHistoricalOutput(
+  workspaceState: ProductCaseWorkspaceState,
+  output: ProductCaseRunnerOutput,
+) {
+  const projected = structuredClone(workspaceState)
+  const historicalDocument = output.document as unknown as
+    Record<string, unknown>
+  if (!Object.hasOwn(historicalDocument, "supplierCatalogLimitation")) {
+    delete (projected.document as unknown as Record<string, unknown>)
+      .supplierCatalogLimitation
+  }
+  const historicalCandidates = output.document.marketEvidence
+    .humanSuppliedComparableCandidates
+  for (const [index, candidate] of projected.document.marketEvidence
+    .humanSuppliedComparableCandidates.entries()) {
+    if (!historicalCandidates[index] || !Object.hasOwn(
+      historicalCandidates[index] as unknown as Record<string, unknown>,
+      "comparisonClass",
+    )) {
+      delete (candidate as unknown as Record<string, unknown>)
+        .comparisonClass
+    }
+  }
+  return projected
+}
+
+function workspaceStateFromUnknown(
+  value: unknown,
+  options: { allowMissingSupplierCatalogLimitation?: boolean } = {},
+): ProductCaseWorkspaceState {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("PRODUCT_CASE_IMPORT_WORKSPACE_REQUIRED")
   }
@@ -9721,7 +10656,39 @@ function workspaceStateFromUnknown(value: unknown): ProductCaseWorkspaceState {
   ) {
     throw new Error("PRODUCT_CASE_IMPORT_SAFETY_INVALID")
   }
+  const supplierCatalogLimitationMissing = !Object.hasOwn(
+    state.document as unknown as Record<string, unknown>,
+    "supplierCatalogLimitation",
+  )
   const cloned = structuredClone(state as ProductCaseWorkspaceState)
+  if (supplierCatalogLimitationMissing) {
+    if (!options.allowMissingSupplierCatalogLimitation) {
+      throw new Error(
+        "PRODUCT_CASE_IMPORT_SUPPLIER_CATALOG_LIMITATION_STATE_REQUIRED",
+      )
+    }
+    ;(cloned.document as unknown as Record<string, unknown>)
+      .supplierCatalogLimitation = {
+      activeAttestation: null,
+      historicalAttestations: [],
+    }
+    cloned.document.marketEvidence.humanSuppliedComparableCandidates =
+      cloned.document.marketEvidence.humanSuppliedComparableCandidates.map(
+        (candidate) => ({
+          ...candidate,
+          comparisonClass: candidate.comparisonClass ??
+            "EXACT_PRODUCT_MATCH",
+        }),
+      )
+  }
+  if (cloned.document.marketEvidence.humanSuppliedComparableCandidates.some(
+    (candidate) => ![
+      "GENERAL_PRODUCT_COMPARABLE",
+      "EXACT_PRODUCT_MATCH",
+    ].includes(candidate.comparisonClass),
+  )) {
+    throw new Error("PRODUCT_CASE_IMPORT_COMPARISON_CLASS_INVALID")
+  }
   if (stableValue(cloned.imageObservations) !== stableValue(
     cloned.document.imageAnalysis.observations,
   )) {
@@ -10051,21 +11018,33 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
   }
   const currentExport =
     envelopeVersion === PRODUCT_CASE_WORKSPACE_EXPORT_VERSION
+  const preCatalogLimitationExport =
+    envelopeVersion ===
+      PRODUCT_CASE_PRE_CATALOG_LIMITATION_WORKSPACE_EXPORT_VERSION
   const legacyExport =
     envelopeVersion === PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION
   const envelopeOutputContractVersion =
     (parsed as Record<string, unknown>).outputContractVersion
-  if (!currentExport && !legacyExport) {
+  if (!currentExport && !preCatalogLimitationExport && !legacyExport) {
     throw new Error("PRODUCT_CASE_IMPORT_VERSION_INVALID")
   }
   const currentOutputContract =
     currentExport &&
     envelopeOutputContractVersion === PRODUCT_CASE_OUTPUT_CONTRACT_VERSION
+  const preCatalogLimitationOutputContract =
+    preCatalogLimitationExport &&
+    envelopeOutputContractVersion ===
+      PRODUCT_CASE_PRE_CATALOG_LIMITATION_OUTPUT_CONTRACT_VERSION
   const preIdentityOutputContract =
-    currentExport &&
+    preCatalogLimitationExport &&
     envelopeOutputContractVersion ===
       PRODUCT_CASE_PRE_IDENTITY_OUTPUT_CONTRACT_VERSION
   if (currentExport && !currentOutputContract &&
+    !preIdentityOutputContract) {
+    throw new Error("PRODUCT_CASE_IMPORT_OUTPUT_CONTRACT_VERSION_INVALID")
+  }
+  if (preCatalogLimitationExport &&
+    !preCatalogLimitationOutputContract &&
     !preIdentityOutputContract) {
     throw new Error("PRODUCT_CASE_IMPORT_OUTPUT_CONTRACT_VERSION_INVALID")
   }
@@ -10087,9 +11066,15 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
       }`,
     )
   }
-  const workspaceState = workspaceStateFromUnknown(envelope.workspaceState)
+  const workspaceState = workspaceStateFromUnknown(
+    envelope.workspaceState,
+    {
+      allowMissingSupplierCatalogLimitation:
+        preCatalogLimitationExport || legacyExport,
+    },
+  )
   const importedHumanIdentityReviewV1 =
-    (currentExport || preIdentityOutputContract) &&
+    (currentExport || preCatalogLimitationExport) &&
     String(
       workspaceState.document.identityReview.humanReview?.contractVersion ??
         "",
@@ -10188,6 +11173,8 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
   let legacyHistoricalOutput: ProductCaseRunnerOutput | null = null
   let legacyOutputRebuilt = importedHumanIdentityReviewV1
   let preIdentityOutputRebuilt = false
+  const preCatalogLimitationOutputRebuilt =
+    preCatalogLimitationOutputContract
   if (
     currentOutputContract && outputMismatchDiagnostic.pathCount > 0 &&
     !(
@@ -10213,7 +11200,13 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
         "PRODUCT_CASE_IMPORT_PRE_IDENTITY_OUTPUT_PROFILE_INVALID",
       )
     }
-    validateHistoricalOutputStructure(envelope.output, workspaceState)
+    validateHistoricalOutputStructure(
+      envelope.output,
+      workspaceProjectionMatchingHistoricalOutput(
+        workspaceState,
+        envelope.output,
+      ),
+    )
     if (
       outputMismatchDiagnostic.pathCount > 0 &&
       !outputMismatchDiagnostic.allVersionedLegacyDerivedPaths
@@ -10227,6 +11220,30 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     preIdentityOutputRebuilt = true
     legacyOutputRebuilt = true
   }
+  if (preCatalogLimitationOutputContract) {
+    if (!envelope.output ||
+      workspaceState.document.supplierCatalogLimitation.activeAttestation) {
+      throw new Error(
+        "PRODUCT_CASE_IMPORT_PRE_CATALOG_LIMITATION_PROFILE_INVALID",
+      )
+    }
+    const historicalWorkspace = workspaceProjectionMatchingHistoricalOutput(
+      workspaceState,
+      envelope.output,
+    )
+    validateHistoricalOutputStructure(envelope.output, historicalWorkspace)
+    if (
+      outputMismatchDiagnostic.pathCount > 0 &&
+      !outputMismatchDiagnostic.allVersionedLegacyDerivedPaths
+    ) {
+      throw new Error(
+        `PRODUCT_CASE_IMPORT_OUTPUT_MISMATCH:${
+          outputMismatchErrorDetails(outputMismatchDiagnostic)
+        }`,
+      )
+    }
+    legacyOutputRebuilt = true
+  }
   if (currentOutputContract) {
     await validateLegacyImportAuditIntegrity(
       workspaceState.legacyImportAudit,
@@ -10234,7 +11251,8 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
         currentOutput: recomputedOriginal.output,
       },
     )
-  } else if (preIdentityOutputContract &&
+  } else if ((preIdentityOutputContract ||
+    preCatalogLimitationOutputContract) &&
     workspaceState.legacyImportAudit) {
     await validateLegacyImportAuditSnapshotIntegrity(
       workspaceState.legacyImportAudit,
@@ -10248,7 +11266,13 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     ) {
       throw new Error("PRODUCT_CASE_IMPORT_LEGACY_PROFILE_INVALID")
     }
-    validateHistoricalOutputStructure(envelope.output, workspaceState)
+    validateHistoricalOutputStructure(
+      envelope.output,
+      workspaceProjectionMatchingHistoricalOutput(
+        workspaceState,
+        envelope.output,
+      ),
+    )
     const historicalProjection =
       buildLegacyHistoricalOutputAuditProjection({
         workspaceState,
@@ -10288,7 +11312,7 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
   reviewRequiredState.document.imageAnalysis.contractIssues =
     visualReviewContractIssues
   const canonicalHumanIdentityReview =
-    currentExport &&
+    (currentExport || preCatalogLimitationExport) &&
     reviewRequiredState.document.identityReview.humanReview
       ?.contractVersion === HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION
   const v1ReviewRequiresV2 = Boolean(
@@ -10320,6 +11344,9 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
             ...(preIdentityOutputRebuilt
               ? [PRODUCT_CASE_PRE_IDENTITY_OUTPUT_WARNING]
               : []),
+            ...(preCatalogLimitationOutputRebuilt
+              ? ["SUPPLIER_CATALOG_LIMITATION_REQUIRES_NEW_HUMAN_ATTESTATION"]
+              : []),
             ...(legacyAuditPresent
               ? [PRODUCT_CASE_LEGACY_OUTPUT_WARNING]
               : []),
@@ -10329,6 +11356,12 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
           nextAction: "REVALIDATE_IMPORTED_PRODUCT_CASE_LOCALLY",
           humanReview: null,
         }
+  if (!currentExport) {
+    reviewRequiredState.document.supplierCatalogLimitation = {
+      activeAttestation: null,
+      historicalAttestations: [],
+    }
+  }
   reviewRequiredState.document.humanReview = {
     ...reviewRequiredState.document.humanReview,
     conclusion: {
@@ -10488,6 +11521,9 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
         ? [PRODUCT_CASE_LEGACY_OUTPUT_WARNING] : []),
       ...(preIdentityOutputWarningPresent
         ? [PRODUCT_CASE_PRE_IDENTITY_OUTPUT_WARNING] : []),
+      ...(preCatalogLimitationOutputRebuilt
+        ? ["SUPPLIER_CATALOG_LIMITATION_REQUIRES_NEW_HUMAN_ATTESTATION"]
+        : []),
     ],
     outputMismatchPaths,
     historicalOutputAudit: effectiveHistoricalOutputAudit,
@@ -10497,6 +11533,7 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
         : null,
     sourceWorkspaceExportVersion: envelopeVersion as
       | typeof PRODUCT_CASE_WORKSPACE_EXPORT_VERSION
+      | typeof PRODUCT_CASE_PRE_CATALOG_LIMITATION_WORKSPACE_EXPORT_VERSION
       | typeof PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION,
     currentOutputContractVersion: PRODUCT_CASE_OUTPUT_CONTRACT_VERSION,
     safety: PRODUCT_CASE_ZERO_EFFECTS,
