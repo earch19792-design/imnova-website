@@ -26,6 +26,13 @@ export const HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION =
   "HUMAN_IDENTITY_REVIEW_CONTRACT_V2" as const
 export const SUPPLIER_CATALOG_LIMITATION_CONTRACT_VERSION =
   "SUPPLIER_CATALOG_LIMITATION_CONTRACT_V1" as const
+export const GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE_CONTRACT_VERSION =
+  "GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE_CONTRACT_V1" as const
+export const GENERAL_PRODUCT_COMPARABLE_SUFFICIENCY_RULE_VERSION =
+  "GENERAL_PRODUCT_COMPARABLE_SUFFICIENCY_RULE_V1_MINIMUM_3" as const
+export const GENERAL_PRODUCT_COMPARABLE_MINIMUM_INCLUDED = 3 as const
+export const GENERAL_PRODUCT_COMPARABLE_SUFFICIENCY_RULE_RATIONALE =
+  "Three independently reviewed general comparables are the minimum for basic price triangulation; fewer results remain NEEDS_MORE_EVIDENCE." as const
 
 export const PRODUCT_CASE_CONTENT_MAX_BYTES = 262_144
 
@@ -342,7 +349,178 @@ export type ProductCaseMarketEvidence = {
   referenceMedian: number | null
   comparables: ComparableInput[]
   humanSuppliedComparableCandidates: ProductCaseHumanComparableCandidate[]
+  generalProductComparableResearch: ProductCaseGeneralComparableResearch
   observedAt: string | null
+}
+
+export type ProductCaseGeneralMarketPhaseStatus =
+  | "NOT_STARTED"
+  | "IN_PROGRESS"
+  | "NEEDS_MORE_EVIDENCE"
+  | "COMPLETED_WITH_LIMITATIONS"
+
+export type ProductCaseManualMarketSourceType =
+  | "EBAY_PRODUCT_RESEARCH_MANUAL"
+  | "EBAY_ACTIVE_LISTING_MANUAL"
+
+export type ProductCaseManualMarketMetric = {
+  status: "AVAILABLE" | "MISSING"
+  originalLabel: string
+  rawValue: string
+  normalizedValue: number | null
+  currency: string | null
+  provenance: "HUMAN_MANUAL_ENTRY"
+}
+
+export type ProductCaseGeneralMarketMetrics = {
+  totalSold: ProductCaseManualMarketMetric
+  sellThroughRate: ProductCaseManualMarketMetric
+  averageSoldPrice: ProductCaseManualMarketMetric
+  minimumSoldPrice: ProductCaseManualMarketMetric
+  maximumSoldPrice: ProductCaseManualMarketMetric
+  activeListingCount: ProductCaseManualMarketMetric
+  shippingIncludedInMetric: true | false | "UNKNOWN"
+}
+
+export type ProductCaseGeneralMarketIdentityContext = {
+  productIdentity: "PARTIAL"
+  identityConfidence: "LOW"
+  identityBasis: "SUPPLIER_CATALOG_OFFER"
+  supplierCatalogCompleteness: "EXHAUSTED_BY_HUMAN_ATTESTATION"
+  researchEligibility: "ALLOWED_WITH_LIMITATIONS"
+  comparisonMode: "GENERAL_PRODUCT_COMPARABLES_ONLY"
+  exactMarketplaceMatchAllowed: false
+  canTreatComparableAsSameProduct: false
+  strategy: "HOLD_IDENTITY"
+  identityReviewId: string
+  identityReviewContentHash: `sha256:${string}`
+  supplierCatalogLimitationReviewId: string
+  supplierCatalogLimitationContentHash: `sha256:${string}`
+  canonicalSupplierUrl: string
+  supplierSourceContentHash: `sha256:${string}`
+  parserVersion: string
+  sourceContractVersion: string
+  productType: string
+  packQuantity: number
+}
+
+export type ProductCaseGeneralMarketResearchSession = {
+  contractVersion:
+    typeof GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE_CONTRACT_VERSION
+  sessionId: string
+  contentHash: `sha256:${string}`
+  researcher: string
+  marketplace: "EBAY_US"
+  sourceType: ProductCaseManualMarketSourceType
+  query: string
+  researchPeriodDays: 30 | 90 | 365
+  conditionFilter: string | null
+  buyingFormatFilter: string | null
+  categoryFilter: string | null
+  priceFilter: string | null
+  itemLocationFilter: string | null
+  capturedAt: string
+  sourceReference: string | null
+  rawVisibleResearchText: string
+  humanNotes: string
+  manuallyReadConfirmed: true
+  sellOneLikeThisNotUsedConfirmed: true
+  generalComparisonOnlyConfirmed: true
+  metrics: ProductCaseGeneralMarketMetrics
+  identityContext: ProductCaseGeneralMarketIdentityContext
+  createdAt: string
+  updatedAt: string
+  rawHumanInput: {
+    researcher: string
+    marketplace: string
+    sourceType: string
+    query: string
+    researchPeriodDays: string
+    conditionFilter: string
+    buyingFormatFilter: string
+    categoryFilter: string
+    priceFilter: string
+    itemLocationFilter: string
+    sourceReference: string
+    rawVisibleResearchText: string
+    humanNotes: string
+    manuallyReadConfirmed: boolean
+    sellOneLikeThisNotUsedConfirmed: boolean
+    generalComparisonOnlyConfirmed: boolean
+    metrics: Record<keyof Omit<ProductCaseGeneralMarketMetrics,
+      "shippingIncludedInMetric">, {
+        originalLabel: string
+        rawValue: string
+        currency: string
+      }>
+    shippingIncludedInMetric: string
+  }
+}
+
+export type ProductCaseGeneralComparable = {
+  contractVersion:
+    typeof GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE_CONTRACT_VERSION
+  comparableId: string
+  researchSessionId: string
+  researchSessionContentHash: `sha256:${string}`
+  sourceType: ProductCaseManualMarketSourceType
+  ebayItemId: string | null
+  listingUrl: string | null
+  title: string
+  listingState: "SOLD" | "ACTIVE" | "UNKNOWN"
+  price: number
+  currency: string
+  shippingPrice: {
+    status: "AVAILABLE" | "MISSING"
+    rawValue: string
+    normalizedValue: number | null
+  }
+  condition: string
+  category: string
+  soldDate: string | null
+  observedAttributes: string[]
+  differencesFromSupplierProduct: string[]
+  humanDecision:
+    | "INCLUDE_AS_GENERAL_COMPARABLE"
+    | "EXCLUDE_NOT_COMPARABLE"
+    | "NEEDS_MORE_EVIDENCE"
+  humanReason: string
+  exactMatchConfirmed: false
+  reviewRequiredAfterSessionChange: boolean
+  contentHash: `sha256:${string}`
+  evidenceId: string
+  createdAt: string
+  updatedAt: string
+  rawHumanInput: {
+    comparableId: string
+    researchSessionId: string
+    sourceType: string
+    ebayItemId: string
+    listingUrl: string
+    title: string
+    listingState: string
+    price: string
+    currency: string
+    shippingPrice: string
+    condition: string
+    category: string
+    soldDate: string
+    observedAttributes: string
+    differencesFromSupplierProduct: string
+    humanDecision: string
+    humanReason: string
+    exactMatchConfirmed: boolean
+  }
+}
+
+export type ProductCaseGeneralComparableResearch = {
+  contractVersion:
+    typeof GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE_CONTRACT_VERSION
+  sufficiencyRuleVersion:
+    typeof GENERAL_PRODUCT_COMPARABLE_SUFFICIENCY_RULE_VERSION
+  minimumIncludedComparables: typeof GENERAL_PRODUCT_COMPARABLE_MINIMUM_INCLUDED
+  sessions: ProductCaseGeneralMarketResearchSession[]
+  comparables: ProductCaseGeneralComparable[]
 }
 
 export type ProductCaseHumanComparableCandidate = {
@@ -6212,6 +6390,20 @@ export function invalidateSupplierCatalogLimitation(
   }
 }
 
+export function emptyGeneralProductComparableResearch():
+  ProductCaseGeneralComparableResearch {
+  return {
+    contractVersion:
+      GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE_CONTRACT_VERSION,
+    sufficiencyRuleVersion:
+      GENERAL_PRODUCT_COMPARABLE_SUFFICIENCY_RULE_VERSION,
+    minimumIncludedComparables:
+      GENERAL_PRODUCT_COMPARABLE_MINIMUM_INCLUDED,
+    sessions: [],
+    comparables: [],
+  }
+}
+
 function emptyLimitedMarketEvidence(): ProductCaseMarketEvidence {
   return {
     runStatus: "NOT_RUN",
@@ -6222,6 +6414,8 @@ function emptyLimitedMarketEvidence(): ProductCaseMarketEvidence {
     referenceMedian: null,
     comparables: [],
     humanSuppliedComparableCandidates: [],
+    generalProductComparableResearch:
+      emptyGeneralProductComparableResearch(),
     observedAt: null,
   }
 }
@@ -6230,6 +6424,1311 @@ export function deleteSupplierCatalogLimitationRecord(input: {
   document: ProductCaseDocument
 }) {
   return invalidateSupplierCatalogLimitation(input.document)
+}
+
+type ProductCaseGeneralMarketMetricInput = {
+  originalLabel: string
+  rawValue: string
+  currency: string
+}
+
+export type ProductCaseGeneralMarketResearchSessionInput = {
+  document: ProductCaseDocument
+  replaceSessionId?: string
+  capturedAt: string
+  researcher: string
+  marketplace: string
+  sourceType: string
+  query: string
+  researchPeriodDays: number | string
+  conditionFilter: string
+  buyingFormatFilter: string
+  categoryFilter: string
+  priceFilter: string
+  itemLocationFilter: string
+  sourceReference: string
+  rawVisibleResearchText: string
+  humanNotes: string
+  manuallyReadConfirmed: boolean
+  sellOneLikeThisNotUsedConfirmed: boolean
+  generalComparisonOnlyConfirmed: boolean
+  shippingIncludedInMetric?: undefined
+  metrics: Record<
+    keyof Omit<ProductCaseGeneralMarketMetrics, "shippingIncludedInMetric">,
+    ProductCaseGeneralMarketMetricInput
+  > & { shippingIncludedInMetric: true | false | "UNKNOWN" | string }
+}
+
+export type ProductCaseGeneralMarketComparableInput = {
+  document: ProductCaseDocument
+  replaceComparableId?: string
+  comparableId: string
+  researchSessionId: string
+  sourceType: string
+  ebayItemId: string
+  listingUrl: string
+  title: string
+  listingState: string
+  price: number | string
+  currency: string
+  shippingPrice: number | string
+  condition: string
+  category: string
+  soldDate: string
+  observedAttributes: string | string[]
+  differencesFromSupplierProduct: string | string[]
+  humanDecision: string
+  humanReason: string
+  exactMatchConfirmed: boolean
+  updatedAt: string
+}
+
+const GENERAL_MARKET_METRIC_KEYS = [
+  "totalSold",
+  "sellThroughRate",
+  "averageSoldPrice",
+  "minimumSoldPrice",
+  "maximumSoldPrice",
+  "activeListingCount",
+] as const
+
+type GeneralMarketMetricKey = typeof GENERAL_MARKET_METRIC_KEYS[number]
+
+const GENERAL_MARKET_PRICE_METRIC_KEYS =
+  new Set<GeneralMarketMetricKey>([
+    "averageSoldPrice",
+    "minimumSoldPrice",
+    "maximumSoldPrice",
+  ])
+const GENERAL_MARKET_COUNT_METRIC_KEYS =
+  new Set<GeneralMarketMetricKey>(["totalSold", "activeListingCount"])
+
+function exactObjectKeys(value: unknown, keys: readonly string[]) {
+  return Boolean(value) && typeof value === "object" &&
+    !Array.isArray(value) && stableValue(
+      Object.keys(value as Record<string, unknown>).sort(),
+    ) === stableValue([...keys].sort())
+}
+
+function validManualMarketSourceType(
+  value: unknown,
+): value is ProductCaseManualMarketSourceType {
+  return value === "EBAY_PRODUCT_RESEARCH_MANUAL" ||
+    value === "EBAY_ACTIVE_LISTING_MANUAL"
+}
+
+function validOptionalHttpsReference(value: string) {
+  if (!value) return true
+  if (value !== value.trim() || value.length > 2_048 ||
+    /[\u0000-\u001f\u007f]/.test(value)) return false
+  if (!/:\/\//.test(value)) return true
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === "https:" && !parsed.username &&
+      !parsed.password && !parsed.port
+  } catch {
+    return false
+  }
+}
+
+function validOptionalHttpsUrl(value: string) {
+  if (!value) return true
+  if (value !== value.trim() || value.length > 2_048 ||
+    /[\u0000-\u001f\u007f]/.test(value)) return false
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === "https:" && !parsed.username &&
+      !parsed.password && !parsed.port
+  } catch {
+    return false
+  }
+}
+
+function marketTextSafetyError(value: string, allowEmpty: boolean) {
+  if ((!allowEmpty && !value.trim()) ||
+    utf8Length(value) > PRODUCT_CASE_CONTENT_MAX_BYTES) {
+    return !value.trim()
+      ? "GENERAL_MARKET_REQUIRED_TEXT_MISSING"
+      : "GENERAL_MARKET_TEXT_TOO_LARGE"
+  }
+  if (
+    /<!doctype\s+html|<html\b|<head\b|<body\b|<script\b|<\/html\s*>/i
+      .test(value)
+  ) return "GENERAL_MARKET_FULL_HTML_FORBIDDEN"
+  if (
+    MANUAL_SOURCE_SENSITIVE_PATTERNS.some((pattern) => pattern.test(value)) ||
+    containsPaymentCardNumber(value)
+  ) return "GENERAL_MARKET_SENSITIVE_CONTENT_FORBIDDEN"
+  return null
+}
+
+function marketHumanInputSafetyError(value: unknown) {
+  if (utf8Length(stableValue(value)) > PRODUCT_CASE_CONTENT_MAX_BYTES) {
+    return "GENERAL_MARKET_TEXT_TOO_LARGE"
+  }
+  const strings: string[] = []
+  const visit = (entry: unknown) => {
+    if (typeof entry === "string") {
+      strings.push(entry)
+      return
+    }
+    if (Array.isArray(entry)) {
+      entry.forEach(visit)
+      return
+    }
+    if (entry && typeof entry === "object") {
+      Object.values(entry as Record<string, unknown>).forEach(visit)
+    }
+  }
+  visit(value)
+  for (const text of strings) {
+    const error = marketTextSafetyError(text, true)
+    if (error) return error
+  }
+  return null
+}
+
+function normalizeOptionalMarketText(value: string) {
+  const normalized = normalizeWhitespace(value)
+  return normalized || null
+}
+
+function normalizeMarketLines(value: string) {
+  return value.split(/\r?\n/).map(normalizeWhitespace).filter(Boolean)
+}
+
+function rawMarketLines(value: string | string[]) {
+  return Array.isArray(value) ? value.join("\n") : value
+}
+
+function strictMetricNumber(value: string) {
+  const normalized = value.replace(/,/g, "")
+  const match = normalized.match(/-?\d+(?:\.\d+)?/)
+  if (!match) return null
+  const parsed = Number(match[0])
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function missingMetricRawValue(value: string) {
+  const normalized = normalizeWhitespace(value).toLocaleUpperCase("en-US")
+  return !normalized || [
+    "MISSING",
+    "UNKNOWN",
+    "N/A",
+    "NA",
+    "NOT SHOWN",
+    "NO VISIBLE VALUE",
+  ].includes(normalized)
+}
+
+function manualMarketMetricFromInput(
+  key: GeneralMarketMetricKey,
+  input: ProductCaseGeneralMarketMetricInput,
+): ProductCaseManualMarketMetric {
+  const originalLabel = normalizeWhitespace(input.originalLabel)
+  if (!originalLabel) {
+    throw new Error("GENERAL_MARKET_METRIC_LABEL_REQUIRED:" + key)
+  }
+  const rawValue = input.rawValue
+  const rawCurrency = normalizeWhitespace(input.currency)
+  const currency = rawCurrency
+    ? rawCurrency.toLocaleUpperCase("en-US")
+    : null
+  if (currency && !/^[A-Z]{3}$/.test(currency)) {
+    throw new Error("GENERAL_MARKET_METRIC_CURRENCY_INVALID:" + key)
+  }
+  if (missingMetricRawValue(rawValue)) {
+    return {
+      status: "MISSING",
+      originalLabel,
+      rawValue,
+      normalizedValue: null,
+      currency,
+      provenance: "HUMAN_MANUAL_ENTRY",
+    }
+  }
+  const normalizedValue = strictMetricNumber(rawValue)
+  if (normalizedValue === null || normalizedValue < 0) {
+    throw new Error("GENERAL_MARKET_METRIC_VALUE_INVALID:" + key)
+  }
+  if (GENERAL_MARKET_COUNT_METRIC_KEYS.has(key) &&
+    !Number.isSafeInteger(normalizedValue)) {
+    throw new Error("GENERAL_MARKET_METRIC_COUNT_INVALID:" + key)
+  }
+  if (key === "sellThroughRate" && normalizedValue > 100) {
+    throw new Error("GENERAL_MARKET_SELL_THROUGH_RATE_INVALID")
+  }
+  if (GENERAL_MARKET_PRICE_METRIC_KEYS.has(key) && !currency) {
+    throw new Error("GENERAL_MARKET_METRIC_CURRENCY_REQUIRED:" + key)
+  }
+  return {
+    status: "AVAILABLE",
+    originalLabel,
+    rawValue,
+    normalizedValue,
+    currency,
+    provenance: "HUMAN_MANUAL_ENTRY",
+  }
+}
+
+function normalizedGeneralMarketMetrics(
+  input: ProductCaseGeneralMarketResearchSessionInput["metrics"],
+): ProductCaseGeneralMarketMetrics {
+  const shipping = input.shippingIncludedInMetric === true ||
+      input.shippingIncludedInMetric === "true"
+    ? true
+    : input.shippingIncludedInMetric === false ||
+        input.shippingIncludedInMetric === "false"
+      ? false
+      : input.shippingIncludedInMetric === "UNKNOWN"
+        ? "UNKNOWN" as const
+        : null
+  if (shipping === null) {
+    throw new Error("GENERAL_MARKET_SHIPPING_METRIC_STATUS_INVALID")
+  }
+  return {
+    totalSold: manualMarketMetricFromInput("totalSold", input.totalSold),
+    sellThroughRate: manualMarketMetricFromInput(
+      "sellThroughRate",
+      input.sellThroughRate,
+    ),
+    averageSoldPrice: manualMarketMetricFromInput(
+      "averageSoldPrice",
+      input.averageSoldPrice,
+    ),
+    minimumSoldPrice: manualMarketMetricFromInput(
+      "minimumSoldPrice",
+      input.minimumSoldPrice,
+    ),
+    maximumSoldPrice: manualMarketMetricFromInput(
+      "maximumSoldPrice",
+      input.maximumSoldPrice,
+    ),
+    activeListingCount: manualMarketMetricFromInput(
+      "activeListingCount",
+      input.activeListingCount,
+    ),
+    shippingIncludedInMetric: shipping,
+  }
+}
+
+function generalMarketIdentityContext(
+  document: ProductCaseDocument,
+): ProductCaseGeneralMarketIdentityContext | null {
+  const catalog = document.supplierCatalogLimitation?.activeAttestation
+  const identity = document.identityReview.humanReview
+  const capture = document.supplierSourceCapture
+  if (
+    !catalog || !identity || !capture ||
+    !validateSupplierCatalogLimitation(document).valid ||
+    identity.contractVersion !== HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION ||
+    identity.status !== "PARTIAL" || identity.confidence !== "LOW" ||
+    identity.sameGeneralProductTypeConfirmed !== true ||
+    !normalizeWhitespace(identity.productType ?? "") ||
+    !Number.isSafeInteger(identity.packQuantity) ||
+    Number(identity.packQuantity) <= 0 ||
+    identity.exactIdentityConfirmed !== false ||
+    identity.physicalProductVerified !== false
+  ) return null
+  return {
+    productIdentity: "PARTIAL",
+    identityConfidence: "LOW",
+    identityBasis: "SUPPLIER_CATALOG_OFFER",
+    supplierCatalogCompleteness: "EXHAUSTED_BY_HUMAN_ATTESTATION",
+    researchEligibility: "ALLOWED_WITH_LIMITATIONS",
+    comparisonMode: "GENERAL_PRODUCT_COMPARABLES_ONLY",
+    exactMarketplaceMatchAllowed: false,
+    canTreatComparableAsSameProduct: false,
+    strategy: "HOLD_IDENTITY",
+    identityReviewId: identity.reviewId,
+    identityReviewContentHash: identity.contentHash,
+    supplierCatalogLimitationReviewId: catalog.reviewId,
+    supplierCatalogLimitationContentHash: catalog.contentHash,
+    canonicalSupplierUrl: capture.supplierUrl,
+    supplierSourceContentHash: capture.contentHash,
+    parserVersion: capture.parserVersion,
+    sourceContractVersion: capture.sourceContractVersion,
+    productType: normalizeWhitespace(identity.productType ?? ""),
+    packQuantity: Number(identity.packQuantity),
+  }
+}
+
+function generalMarketSessionCanonical(
+  session: ProductCaseGeneralMarketResearchSession,
+) {
+  const { contentHash: _contentHash, ...canonical } = session
+  return canonical
+}
+
+function generalMarketComparableCanonical(
+  comparable: ProductCaseGeneralComparable,
+) {
+  const {
+    contentHash: _contentHash,
+    evidenceId: _evidenceId,
+    ...canonical
+  } = comparable
+  return canonical
+}
+
+function generalMarketSessionId(seedHash: string) {
+  return "pcr-market-session-" +
+    seedHash.replace(/^sha256:/, "").slice(0, 20)
+}
+
+function generalMarketComparableEvidenceId(contentHash: string) {
+  return "pcr-general-comparable-" +
+    contentHash.replace(/^sha256:/, "").slice(0, 20)
+}
+
+function generalMarketRawMetrics(
+  metrics: ProductCaseGeneralMarketResearchSessionInput["metrics"],
+) {
+  return Object.fromEntries(GENERAL_MARKET_METRIC_KEYS.map((key) => [
+    key,
+    {
+      originalLabel: metrics[key].originalLabel,
+      rawValue: metrics[key].rawValue,
+      currency: metrics[key].currency,
+    },
+  ])) as ProductCaseGeneralMarketResearchSession["rawHumanInput"]["metrics"]
+}
+
+const GENERAL_MARKET_SESSION_SURFACE = [
+  "capturedAt", "contentHash", "contractVersion", "createdAt",
+  "generalComparisonOnlyConfirmed", "humanNotes", "identityContext",
+  "itemLocationFilter", "buyingFormatFilter", "categoryFilter",
+  "conditionFilter", "marketplace", "manuallyReadConfirmed", "metrics",
+  "priceFilter", "query", "rawHumanInput", "rawVisibleResearchText",
+  "researchPeriodDays", "researcher", "sellOneLikeThisNotUsedConfirmed",
+  "sessionId", "sourceReference", "sourceType", "updatedAt",
+] as const
+
+const GENERAL_MARKET_SESSION_RAW_SURFACE = [
+  "buyingFormatFilter", "categoryFilter", "conditionFilter",
+  "generalComparisonOnlyConfirmed", "humanNotes", "itemLocationFilter",
+  "manuallyReadConfirmed", "marketplace", "metrics", "priceFilter", "query",
+  "rawVisibleResearchText", "researchPeriodDays", "researcher",
+  "sellOneLikeThisNotUsedConfirmed", "shippingIncludedInMetric",
+  "sourceReference", "sourceType",
+] as const
+
+const GENERAL_MARKET_IDENTITY_CONTEXT_SURFACE = [
+  "canTreatComparableAsSameProduct", "canonicalSupplierUrl",
+  "comparisonMode", "exactMarketplaceMatchAllowed", "identityBasis",
+  "identityConfidence", "identityReviewContentHash", "identityReviewId",
+  "packQuantity", "parserVersion", "productIdentity", "productType",
+  "researchEligibility", "sourceContractVersion", "strategy",
+  "supplierCatalogCompleteness", "supplierCatalogLimitationContentHash",
+  "supplierCatalogLimitationReviewId", "supplierSourceContentHash",
+] as const
+
+const GENERAL_MARKET_METRIC_SURFACE = [
+  "currency", "normalizedValue", "originalLabel", "provenance", "rawValue",
+  "status",
+] as const
+
+const GENERAL_MARKET_COMPARABLE_SURFACE = [
+  "category", "comparableId", "condition", "contentHash", "contractVersion",
+  "createdAt", "currency", "differencesFromSupplierProduct", "ebayItemId",
+  "evidenceId", "exactMatchConfirmed", "humanDecision", "humanReason",
+  "listingState", "listingUrl", "observedAttributes", "price",
+  "rawHumanInput", "researchSessionContentHash", "researchSessionId",
+  "reviewRequiredAfterSessionChange", "shippingPrice", "soldDate",
+  "sourceType", "title", "updatedAt",
+] as const
+
+const GENERAL_MARKET_COMPARABLE_RAW_SURFACE = [
+  "category", "comparableId", "condition", "currency",
+  "differencesFromSupplierProduct", "ebayItemId", "exactMatchConfirmed",
+  "humanDecision", "humanReason", "listingState", "listingUrl",
+  "observedAttributes", "price", "researchSessionId", "shippingPrice",
+  "soldDate", "sourceType", "title",
+] as const
+
+function strictNonnegativeInputNumber(value: number | string) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value >= 0 ? value : null
+  }
+  if (!normalizeWhitespace(value)) return null
+  const normalized = Number(value.replace(/[$,\s]/g, ""))
+  return Number.isFinite(normalized) && normalized >= 0 ? normalized : null
+}
+
+function explicitMissingNumericInput(value: number | string) {
+  if (typeof value === "number") return false
+  const normalized = normalizeWhitespace(value).toLocaleUpperCase("en-US")
+  return !normalized || ["MISSING", "UNKNOWN", "N/A", "NA"].includes(
+    normalized,
+  )
+}
+
+function validMarketDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const [year, month, day] = value.split("-").map(Number)
+  return month >= 1 && month <= 12 && day >= 1 &&
+    day <= new Date(Date.UTC(year, month, 0)).getUTCDate()
+}
+
+function generalMarketSessionContractErrors(
+  session: ProductCaseGeneralMarketResearchSession,
+  expectedContext: ProductCaseGeneralMarketIdentityContext | null,
+) {
+  const errors: string[] = []
+  const raw = session?.rawHumanInput
+  const rawStringFields = [
+    "researcher", "marketplace", "sourceType", "query",
+    "researchPeriodDays", "conditionFilter", "buyingFormatFilter",
+    "categoryFilter", "priceFilter", "itemLocationFilter",
+    "sourceReference", "rawVisibleResearchText", "humanNotes",
+    "shippingIncludedInMetric",
+  ] as const
+  if (
+    !exactObjectKeys(session, GENERAL_MARKET_SESSION_SURFACE) ||
+    !exactObjectKeys(raw, GENERAL_MARKET_SESSION_RAW_SURFACE) ||
+    !exactObjectKeys(
+      session?.identityContext,
+      GENERAL_MARKET_IDENTITY_CONTEXT_SURFACE,
+    ) ||
+    session.contractVersion !==
+      GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE_CONTRACT_VERSION ||
+    typeof session.sessionId !== "string" ||
+    !/^pcr-market-session-[a-f0-9]{20}$/.test(session.sessionId) ||
+    !validSha256(session.contentHash) ||
+    typeof session.researcher !== "string" ||
+    !normalizeWhitespace(session.researcher) ||
+    session.marketplace !== "EBAY_US" ||
+    !validManualMarketSourceType(session.sourceType) ||
+    typeof session.query !== "string" ||
+    !normalizeWhitespace(session.query) ||
+    !([30, 90, 365] as const).includes(session.researchPeriodDays) ||
+    typeof session.capturedAt !== "string" ||
+    !validIsoInstant(session.capturedAt) ||
+    typeof session.createdAt !== "string" ||
+    !validIsoInstant(session.createdAt) ||
+    typeof session.updatedAt !== "string" ||
+    !validIsoInstant(session.updatedAt) ||
+    (session.sourceReference !== null &&
+      typeof session.sourceReference !== "string") ||
+    !validOptionalHttpsReference(session.sourceReference ?? "") ||
+    typeof session.rawVisibleResearchText !== "string" ||
+    typeof session.humanNotes !== "string" ||
+    session.manuallyReadConfirmed !== true ||
+    session.sellOneLikeThisNotUsedConfirmed !== true ||
+    session.generalComparisonOnlyConfirmed !== true ||
+    !raw || typeof raw !== "object" ||
+    rawStringFields.some((field) => typeof raw[field] !== "string") ||
+    typeof raw.manuallyReadConfirmed !== "boolean" ||
+    typeof raw.sellOneLikeThisNotUsedConfirmed !== "boolean" ||
+    typeof raw.generalComparisonOnlyConfirmed !== "boolean"
+  ) return ["GENERAL_MARKET_SESSION_CONTRACT_INVALID"]
+
+  if (
+    normalizeWhitespace(raw.researcher) !== session.researcher ||
+    raw.marketplace !== session.marketplace ||
+    raw.sourceType !== session.sourceType ||
+    normalizeWhitespace(raw.query) !== session.query ||
+    raw.researchPeriodDays !== String(session.researchPeriodDays) ||
+    normalizeOptionalMarketText(raw.conditionFilter) !==
+      session.conditionFilter ||
+    normalizeOptionalMarketText(raw.buyingFormatFilter) !==
+      session.buyingFormatFilter ||
+    normalizeOptionalMarketText(raw.categoryFilter) !== session.categoryFilter ||
+    normalizeOptionalMarketText(raw.priceFilter) !== session.priceFilter ||
+    normalizeOptionalMarketText(raw.itemLocationFilter) !==
+      session.itemLocationFilter ||
+    (raw.sourceReference || null) !== session.sourceReference ||
+    raw.rawVisibleResearchText !== session.rawVisibleResearchText ||
+    normalizeWhitespace(raw.humanNotes) !== session.humanNotes ||
+    raw.manuallyReadConfirmed !== true ||
+    raw.sellOneLikeThisNotUsedConfirmed !== true ||
+    raw.generalComparisonOnlyConfirmed !== true ||
+    raw.shippingIncludedInMetric !==
+      String(session.metrics.shippingIncludedInMetric)
+  ) errors.push("GENERAL_MARKET_SESSION_RAW_INPUT_MISMATCH")
+
+  if (!exactObjectKeys(session.metrics, [
+    ...GENERAL_MARKET_METRIC_KEYS,
+    "shippingIncludedInMetric",
+  ]) || !exactObjectKeys(raw.metrics, GENERAL_MARKET_METRIC_KEYS) ||
+    !([true, false, "UNKNOWN"] as const).includes(
+      session.metrics.shippingIncludedInMetric,
+    )) {
+    errors.push("GENERAL_MARKET_METRICS_SURFACE_INVALID")
+  } else {
+    for (const key of GENERAL_MARKET_METRIC_KEYS) {
+      const metric = session.metrics[key]
+      if (!exactObjectKeys(metric, GENERAL_MARKET_METRIC_SURFACE) ||
+        !exactObjectKeys(raw.metrics[key], [
+          "currency", "originalLabel", "rawValue",
+        ])) {
+        errors.push("GENERAL_MARKET_METRIC_SURFACE_INVALID:" + key)
+        continue
+      }
+      try {
+        const expected = manualMarketMetricFromInput(key, raw.metrics[key])
+        if (stableValue(metric) !== stableValue(expected)) {
+          errors.push("GENERAL_MARKET_METRIC_VALUE_MISMATCH:" + key)
+        }
+      } catch {
+        errors.push("GENERAL_MARKET_METRIC_VALUE_INVALID:" + key)
+      }
+    }
+  }
+  if (
+    session.sourceType !== "EBAY_PRODUCT_RESEARCH_MANUAL" &&
+    GENERAL_MARKET_METRIC_KEYS.some((key) =>
+      session.metrics[key].status === "AVAILABLE"
+    )
+  ) errors.push("GENERAL_MARKET_METRICS_REQUIRE_PRODUCT_RESEARCH_SOURCE")
+  const securityError = marketHumanInputSafetyError(raw)
+  if (securityError) errors.push(securityError)
+  if (expectedContext === null || stableValue(session.identityContext) !==
+    stableValue(expectedContext)) {
+    errors.push("GENERAL_MARKET_IDENTITY_CONTEXT_STALE_OR_INVALID")
+  }
+  if (session.contentHash !== hashProductCaseContentSync(stableValue(
+    generalMarketSessionCanonical(session),
+  ))) errors.push("GENERAL_MARKET_SESSION_CONTENT_HASH_MISMATCH")
+  return unique(errors)
+}
+
+function generalMarketComparableContractErrors(
+  comparable: ProductCaseGeneralComparable,
+  sessions: Map<string, ProductCaseGeneralMarketResearchSession>,
+) {
+  const errors: string[] = []
+  const raw = comparable?.rawHumanInput
+  const rawStringFields = [
+    "comparableId", "researchSessionId", "sourceType", "ebayItemId",
+    "listingUrl", "title", "listingState", "price", "currency",
+    "shippingPrice", "condition", "category", "soldDate",
+    "observedAttributes", "differencesFromSupplierProduct",
+    "humanDecision", "humanReason",
+  ] as const
+  if (
+    !exactObjectKeys(comparable, GENERAL_MARKET_COMPARABLE_SURFACE) ||
+    !exactObjectKeys(raw, GENERAL_MARKET_COMPARABLE_RAW_SURFACE) ||
+    comparable.contractVersion !==
+      GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE_CONTRACT_VERSION ||
+    typeof comparable.comparableId !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/.test(comparable.comparableId) ||
+    typeof comparable.researchSessionId !== "string" ||
+    !validSha256(comparable.researchSessionContentHash) ||
+    !validManualMarketSourceType(comparable.sourceType) ||
+    (comparable.ebayItemId !== null &&
+      typeof comparable.ebayItemId !== "string") ||
+    (comparable.ebayItemId !== null &&
+      !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(comparable.ebayItemId)) ||
+    (comparable.listingUrl !== null &&
+      typeof comparable.listingUrl !== "string") ||
+    !validOptionalHttpsUrl(comparable.listingUrl ?? "") ||
+    typeof comparable.title !== "string" ||
+    !normalizeWhitespace(comparable.title) ||
+    !(["SOLD", "ACTIVE", "UNKNOWN"] as const).includes(
+      comparable.listingState,
+    ) ||
+    !Number.isFinite(comparable.price) || comparable.price < 0 ||
+    !/^[A-Z]{3}$/.test(comparable.currency) ||
+    !exactObjectKeys(comparable.shippingPrice, [
+      "status", "rawValue", "normalizedValue",
+    ]) ||
+    !(comparable.shippingPrice.status === "MISSING" ||
+      comparable.shippingPrice.status === "AVAILABLE") ||
+    (comparable.soldDate !== null && !validMarketDate(comparable.soldDate)) ||
+    !Array.isArray(comparable.observedAttributes) ||
+    !Array.isArray(comparable.differencesFromSupplierProduct) ||
+    !([
+      "INCLUDE_AS_GENERAL_COMPARABLE",
+      "EXCLUDE_NOT_COMPARABLE",
+      "NEEDS_MORE_EVIDENCE",
+    ] as const).includes(comparable.humanDecision) ||
+    typeof comparable.humanReason !== "string" ||
+    !normalizeWhitespace(comparable.humanReason) ||
+    comparable.exactMatchConfirmed !== false ||
+    typeof comparable.reviewRequiredAfterSessionChange !== "boolean" ||
+    !validSha256(comparable.contentHash) ||
+    comparable.evidenceId !==
+      generalMarketComparableEvidenceId(comparable.contentHash) ||
+    typeof comparable.createdAt !== "string" ||
+    !validIsoInstant(comparable.createdAt) ||
+    typeof comparable.updatedAt !== "string" ||
+    !validIsoInstant(comparable.updatedAt) ||
+    rawStringFields.some((field) => typeof raw[field] !== "string") ||
+    typeof raw.exactMatchConfirmed !== "boolean"
+  ) return ["GENERAL_MARKET_COMPARABLE_CONTRACT_INVALID"]
+
+  const expectedPrice = strictNonnegativeInputNumber(raw.price)
+  const expectedShipping = strictNonnegativeInputNumber(raw.shippingPrice)
+  const expectedShippingSurface = expectedShipping === null
+    ? {
+        status: "MISSING",
+        rawValue: raw.shippingPrice,
+        normalizedValue: null,
+      }
+    : {
+        status: "AVAILABLE",
+        rawValue: raw.shippingPrice,
+        normalizedValue: expectedShipping,
+      }
+  if (
+    normalizeWhitespace(raw.comparableId) !== comparable.comparableId ||
+    normalizeWhitespace(raw.researchSessionId) !==
+      comparable.researchSessionId ||
+    raw.sourceType !== comparable.sourceType ||
+    (normalizeWhitespace(raw.ebayItemId) || null) !== comparable.ebayItemId ||
+    (raw.listingUrl || null) !== comparable.listingUrl ||
+    normalizeWhitespace(raw.title) !== comparable.title ||
+    raw.listingState !== comparable.listingState ||
+    expectedPrice !== comparable.price ||
+    normalizeWhitespace(raw.currency).toLocaleUpperCase("en-US") !==
+      comparable.currency ||
+    normalizeWhitespace(raw.condition) !== comparable.condition ||
+    normalizeWhitespace(raw.category) !== comparable.category ||
+    (normalizeWhitespace(raw.soldDate) || null) !== comparable.soldDate ||
+    stableValue(normalizeMarketLines(raw.observedAttributes)) !==
+      stableValue(comparable.observedAttributes) ||
+    stableValue(normalizeMarketLines(raw.differencesFromSupplierProduct)) !==
+      stableValue(comparable.differencesFromSupplierProduct) ||
+    raw.humanDecision !== comparable.humanDecision ||
+    normalizeWhitespace(raw.humanReason) !== comparable.humanReason ||
+    raw.exactMatchConfirmed !== false ||
+    stableValue(comparable.shippingPrice) !==
+      stableValue(expectedShippingSurface) ||
+    (expectedShipping === null &&
+      !explicitMissingNumericInput(raw.shippingPrice))
+  ) errors.push("GENERAL_MARKET_COMPARABLE_RAW_INPUT_MISMATCH")
+
+  const securityError = marketHumanInputSafetyError(raw)
+  if (securityError) errors.push(securityError)
+  const session = sessions.get(comparable.researchSessionId)
+  if (!session) {
+    errors.push("GENERAL_MARKET_COMPARABLE_SESSION_REFERENCE_MISSING")
+  } else if (comparable.sourceType !== session.sourceType) {
+    errors.push("GENERAL_MARKET_COMPARABLE_SESSION_SOURCE_TYPE_MISMATCH")
+  } else if (
+    comparable.researchSessionContentHash !== session.contentHash &&
+    comparable.reviewRequiredAfterSessionChange !== true
+  ) {
+    errors.push("GENERAL_MARKET_COMPARABLE_SESSION_REFERENCE_STALE")
+  } else if (
+    comparable.researchSessionContentHash === session.contentHash &&
+    comparable.reviewRequiredAfterSessionChange !== false
+  ) {
+    errors.push("GENERAL_MARKET_COMPARABLE_STALE_FLAG_INVALID")
+  }
+  if (comparable.contentHash !== hashProductCaseContentSync(stableValue(
+    generalMarketComparableCanonical(comparable),
+  ))) errors.push("GENERAL_MARKET_COMPARABLE_CONTENT_HASH_MISMATCH")
+  return unique(errors)
+}
+
+export function validateGeneralProductComparableMarketEvidence(
+  document: ProductCaseDocument,
+) {
+  const errors: string[] = []
+  const research = document.marketEvidence?.generalProductComparableResearch
+  if (
+    !research || !exactObjectKeys(research, [
+      "contractVersion", "sufficiencyRuleVersion",
+      "minimumIncludedComparables", "sessions", "comparables",
+    ]) ||
+    research.contractVersion !==
+      GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE_CONTRACT_VERSION ||
+    research.sufficiencyRuleVersion !==
+      GENERAL_PRODUCT_COMPARABLE_SUFFICIENCY_RULE_VERSION ||
+    research.minimumIncludedComparables !==
+      GENERAL_PRODUCT_COMPARABLE_MINIMUM_INCLUDED ||
+    !Array.isArray(research.sessions) ||
+    !Array.isArray(research.comparables) ||
+    research.sessions.some((session) =>
+      !session || typeof session !== "object" || Array.isArray(session)
+    ) ||
+    research.comparables.some((comparable) =>
+      !comparable || typeof comparable !== "object" ||
+      Array.isArray(comparable)
+    )
+  ) {
+    return {
+      valid: false,
+      errors: ["GENERAL_MARKET_RESEARCH_CONTRACT_INVALID"],
+    }
+  }
+  const expectedContext = generalMarketIdentityContext(document)
+  const sessionIds = research.sessions.map((session) => session.sessionId)
+  if (new Set(sessionIds).size !== sessionIds.length) {
+    errors.push("GENERAL_MARKET_SESSION_ID_COLLISION")
+  }
+  const sessionMap = new Map(
+    research.sessions.map((session) => [session.sessionId, session]),
+  )
+  research.sessions.forEach((session, index) => {
+    errors.push(...generalMarketSessionContractErrors(
+      session,
+      expectedContext,
+    ).map((error) => error + ":" + index))
+  })
+  const comparableIds = research.comparables.map(
+    (comparable) => comparable.comparableId,
+  )
+  if (new Set(comparableIds).size !== comparableIds.length) {
+    errors.push("GENERAL_MARKET_COMPARABLE_ID_COLLISION")
+  }
+  const ebayItemIds = research.comparables.flatMap((comparable) =>
+    comparable.ebayItemId ? [comparable.ebayItemId] : []
+  )
+  if (new Set(ebayItemIds).size !== ebayItemIds.length) {
+    errors.push("GENERAL_MARKET_EBAY_ITEM_ID_COLLISION")
+  }
+  const evidenceIds = research.comparables.map(
+    (comparable) => comparable.evidenceId,
+  )
+  if (new Set(evidenceIds).size !== evidenceIds.length) {
+    errors.push("GENERAL_MARKET_COMPARABLE_EVIDENCE_ID_COLLISION")
+  }
+  research.comparables.forEach((comparable, index) => {
+    errors.push(...generalMarketComparableContractErrors(
+      comparable,
+      sessionMap,
+    ).map((error) => error + ":" + index))
+  })
+  if (!expectedContext &&
+    (research.sessions.length > 0 || research.comparables.length > 0)) {
+    errors.push("GENERAL_MARKET_RESEARCH_PRECONDITION_INVALID")
+  }
+  return { valid: errors.length === 0, errors: unique(errors) }
+}
+
+export async function validateGeneralProductComparableMarketEvidenceIntegrity(
+  document: ProductCaseDocument,
+) {
+  const structural = validateGeneralProductComparableMarketEvidence(document)
+  const errors = [...structural.errors]
+  const research = document.marketEvidence?.generalProductComparableResearch
+  if (!structural.valid || !research) {
+    return { valid: false, errors: unique(errors) }
+  }
+  for (const [index, session] of research.sessions.entries()) {
+    const calculated = await hashProductCaseContent(stableValue(
+      generalMarketSessionCanonical(session),
+    ))
+    if (calculated !== session.contentHash) {
+      errors.push("GENERAL_MARKET_SESSION_CONTENT_HASH_MISMATCH:" + index)
+    }
+  }
+  for (const [index, comparable] of research.comparables.entries()) {
+    const calculated = await hashProductCaseContent(stableValue(
+      generalMarketComparableCanonical(comparable),
+    ))
+    if (calculated !== comparable.contentHash ||
+      comparable.evidenceId !== generalMarketComparableEvidenceId(calculated)) {
+      errors.push("GENERAL_MARKET_COMPARABLE_CONTENT_HASH_MISMATCH:" + index)
+    }
+  }
+  return { valid: errors.length === 0, errors: unique(errors) }
+}
+
+function generalMarketMetricsContradictory(
+  metrics: ProductCaseGeneralMarketMetrics,
+) {
+  const minimum = metrics.minimumSoldPrice.normalizedValue
+  const maximum = metrics.maximumSoldPrice.normalizedValue
+  const average = metrics.averageSoldPrice.normalizedValue
+  return minimum !== null && maximum !== null && minimum > maximum ||
+    average !== null && minimum !== null && average < minimum ||
+    average !== null && maximum !== null && average > maximum
+}
+
+export function deriveGeneralComparableMarketPhaseStatus(
+  document: ProductCaseDocument,
+): ProductCaseGeneralMarketPhaseStatus {
+  const research = document.marketEvidence?.generalProductComparableResearch
+  if (!research || research.sessions.length === 0) return "NOT_STARTED"
+  if (!validateGeneralProductComparableMarketEvidence(document).valid) {
+    return "NEEDS_MORE_EVIDENCE"
+  }
+  if (research.comparables.length === 0) return "IN_PROGRESS"
+  const included = research.comparables.filter((comparable) =>
+    comparable.humanDecision === "INCLUDE_AS_GENERAL_COMPARABLE" &&
+    !comparable.reviewRequiredAfterSessionChange
+  )
+  const pending = research.comparables.some((comparable) =>
+    comparable.humanDecision === "NEEDS_MORE_EVIDENCE" ||
+    comparable.reviewRequiredAfterSessionChange
+  )
+  const productResearchSessions = research.sessions.filter((session) =>
+    session.sourceType === "EBAY_PRODUCT_RESEARCH_MANUAL"
+  )
+  const registeredFilters = productResearchSessions.some((session) => [
+    session.conditionFilter,
+    session.buyingFormatFilter,
+    session.categoryFilter,
+    session.priceFilter,
+    session.itemLocationFilter,
+  ].every((filter) => Boolean(filter)))
+  const humanJustification = productResearchSessions.some((session) =>
+    Boolean(normalizeWhitespace(session.humanNotes))
+  )
+  const contradictory = productResearchSessions.some((session) =>
+    generalMarketMetricsContradictory(session.metrics)
+  )
+  if (
+    pending || contradictory || productResearchSessions.length === 0 ||
+    !registeredFilters || !humanJustification ||
+    included.length < research.minimumIncludedComparables
+  ) return "NEEDS_MORE_EVIDENCE"
+  return "COMPLETED_WITH_LIMITATIONS"
+}
+
+function generalMarketRunStatus(
+  status: ProductCaseGeneralMarketPhaseStatus,
+): ProductCaseMarketEvidence["runStatus"] {
+  if (status === "NOT_STARTED") return "NOT_RUN"
+  if (status === "NEEDS_MORE_EVIDENCE") return "INSUFFICIENT"
+  return "NOT_VALIDATED"
+}
+
+function documentWithGeneralMarketResearch(
+  document: ProductCaseDocument,
+  research: ProductCaseGeneralComparableResearch,
+) {
+  const draft: ProductCaseDocument = {
+    ...document,
+    marketEvidence: {
+      ...emptyLimitedMarketEvidence(),
+      generalProductComparableResearch: research,
+      runStatus: "NOT_VALIDATED",
+    },
+    humanReview: {
+      ...document.humanReview,
+      conclusion: {
+        scenario: null,
+        conclusion: null,
+        reason: null,
+        reviewedAt: null,
+        reviewer: null,
+      },
+      proposedRuleObservation: null,
+    },
+  }
+  draft.marketEvidence.runStatus = generalMarketRunStatus(
+    deriveGeneralComparableMarketPhaseStatus(draft),
+  )
+  return draft
+}
+
+async function assertGeneralMarketMutationPreconditions(
+  document: ProductCaseDocument,
+) {
+  const provenance = await validateProductCaseDocumentProvenanceIntegrity(
+    document,
+  )
+  if (!provenance.valid || !generalMarketIdentityContext(document)) {
+    throw new Error(
+      "GENERAL_MARKET_RESEARCH_PRECONDITION_INVALID:" +
+        provenance.errors.join(","),
+    )
+  }
+}
+
+export async function saveGeneralMarketResearchSession(
+  input: ProductCaseGeneralMarketResearchSessionInput,
+) {
+  await assertGeneralMarketMutationPreconditions(input.document)
+  if (!validIsoInstant(input.capturedAt)) {
+    throw new Error("GENERAL_MARKET_SESSION_TIMESTAMP_INVALID")
+  }
+  const researcher = normalizeWhitespace(input.researcher)
+  const query = normalizeWhitespace(input.query)
+  if (!researcher || !query || input.marketplace !== "EBAY_US" ||
+    !validManualMarketSourceType(input.sourceType)) {
+    throw new Error("GENERAL_MARKET_SESSION_REQUIRED_FIELD_INVALID")
+  }
+  const researchPeriodDays = Number(input.researchPeriodDays)
+  if (![30, 90, 365].includes(researchPeriodDays)) {
+    throw new Error("GENERAL_MARKET_RESEARCH_PERIOD_INVALID")
+  }
+  if (
+    input.manuallyReadConfirmed !== true ||
+    input.sellOneLikeThisNotUsedConfirmed !== true ||
+    input.generalComparisonOnlyConfirmed !== true
+  ) throw new Error("GENERAL_MARKET_HUMAN_CONFIRMATIONS_REQUIRED")
+  if (!validOptionalHttpsReference(input.sourceReference)) {
+    throw new Error("GENERAL_MARKET_SOURCE_REFERENCE_INVALID")
+  }
+  const rawSafety = marketHumanInputSafetyError({
+    researcher: input.researcher,
+    query: input.query,
+    conditionFilter: input.conditionFilter,
+    buyingFormatFilter: input.buyingFormatFilter,
+    categoryFilter: input.categoryFilter,
+    priceFilter: input.priceFilter,
+    itemLocationFilter: input.itemLocationFilter,
+    sourceReference: input.sourceReference,
+    rawVisibleResearchText: input.rawVisibleResearchText,
+    humanNotes: input.humanNotes,
+    metrics: input.metrics,
+  })
+  if (rawSafety) throw new Error(rawSafety)
+  const metrics = normalizedGeneralMarketMetrics(input.metrics)
+  if (
+    input.sourceType !== "EBAY_PRODUCT_RESEARCH_MANUAL" &&
+    GENERAL_MARKET_METRIC_KEYS.some((key) =>
+      metrics[key].status === "AVAILABLE"
+    )
+  ) {
+    throw new Error(
+      "GENERAL_MARKET_METRICS_REQUIRE_PRODUCT_RESEARCH_SOURCE",
+    )
+  }
+  const existingResearch = input.document.marketEvidence
+    .generalProductComparableResearch
+  const existing = input.replaceSessionId
+    ? existingResearch.sessions.find((session) =>
+        session.sessionId === input.replaceSessionId
+      )
+    : null
+  if (input.replaceSessionId && !existing) {
+    throw new Error("GENERAL_MARKET_SESSION_REPLACE_TARGET_MISSING")
+  }
+  const identityContext = generalMarketIdentityContext(input.document)
+  if (!identityContext) {
+    throw new Error("GENERAL_MARKET_IDENTITY_CONTEXT_INVALID")
+  }
+  const rawHumanInput:
+    ProductCaseGeneralMarketResearchSession["rawHumanInput"] = {
+      researcher: input.researcher,
+      marketplace: input.marketplace,
+      sourceType: input.sourceType,
+      query: input.query,
+      researchPeriodDays: String(input.researchPeriodDays),
+      conditionFilter: input.conditionFilter,
+      buyingFormatFilter: input.buyingFormatFilter,
+      categoryFilter: input.categoryFilter,
+      priceFilter: input.priceFilter,
+      itemLocationFilter: input.itemLocationFilter,
+      sourceReference: input.sourceReference,
+      rawVisibleResearchText: input.rawVisibleResearchText,
+      humanNotes: input.humanNotes,
+      manuallyReadConfirmed: input.manuallyReadConfirmed,
+      sellOneLikeThisNotUsedConfirmed:
+        input.sellOneLikeThisNotUsedConfirmed,
+      generalComparisonOnlyConfirmed: input.generalComparisonOnlyConfirmed,
+      metrics: generalMarketRawMetrics(input.metrics),
+      shippingIncludedInMetric:
+        String(input.metrics.shippingIncludedInMetric),
+    }
+  const withoutId: Omit<
+    ProductCaseGeneralMarketResearchSession,
+    "sessionId" | "contentHash"
+  > = {
+    contractVersion:
+      GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE_CONTRACT_VERSION,
+    researcher,
+    marketplace: "EBAY_US",
+    sourceType: input.sourceType,
+    query,
+    researchPeriodDays: researchPeriodDays as 30 | 90 | 365,
+    conditionFilter: normalizeOptionalMarketText(input.conditionFilter),
+    buyingFormatFilter: normalizeOptionalMarketText(input.buyingFormatFilter),
+    categoryFilter: normalizeOptionalMarketText(input.categoryFilter),
+    priceFilter: normalizeOptionalMarketText(input.priceFilter),
+    itemLocationFilter: normalizeOptionalMarketText(input.itemLocationFilter),
+    capturedAt: input.capturedAt,
+    sourceReference: input.sourceReference || null,
+    rawVisibleResearchText: input.rawVisibleResearchText,
+    humanNotes: normalizeWhitespace(input.humanNotes),
+    manuallyReadConfirmed: true,
+    sellOneLikeThisNotUsedConfirmed: true,
+    generalComparisonOnlyConfirmed: true,
+    metrics,
+    identityContext,
+    createdAt: existing?.createdAt ?? input.capturedAt,
+    updatedAt: input.capturedAt,
+    rawHumanInput,
+  }
+  let sessionId = existing?.sessionId
+  if (!sessionId) {
+    const seedHash = await hashProductCaseContent(stableValue(withoutId))
+    sessionId = generalMarketSessionId(seedHash)
+  }
+  const canonical = { ...withoutId, sessionId }
+  const contentHash = await hashProductCaseContent(stableValue(canonical))
+  const session: ProductCaseGeneralMarketResearchSession = {
+    ...canonical,
+    contentHash:
+      contentHash as ProductCaseGeneralMarketResearchSession["contentHash"],
+  }
+  const otherSessions = existingResearch.sessions.filter((candidate) =>
+    candidate.sessionId !== input.replaceSessionId
+  )
+  if (otherSessions.some((candidate) =>
+    candidate.sessionId === session.sessionId
+  )) throw new Error("GENERAL_MARKET_SESSION_ID_COLLISION")
+
+  const linkedComparables: ProductCaseGeneralComparable[] = []
+  for (const comparable of existingResearch.comparables) {
+    if (!existing || comparable.researchSessionId !== existing.sessionId ||
+      comparable.researchSessionContentHash === session.contentHash) {
+      linkedComparables.push(comparable)
+      continue
+    }
+    const staleCanonical = {
+      ...generalMarketComparableCanonical(comparable),
+      reviewRequiredAfterSessionChange: true,
+    }
+    const staleHash = await hashProductCaseContent(stableValue(staleCanonical))
+    linkedComparables.push({
+      ...staleCanonical,
+      contentHash:
+        staleHash as ProductCaseGeneralComparable["contentHash"],
+      evidenceId: generalMarketComparableEvidenceId(staleHash),
+    })
+  }
+  const research: ProductCaseGeneralComparableResearch = {
+    ...existingResearch,
+    sessions: [...otherSessions, session],
+    comparables: linkedComparables,
+  }
+  const updatedDocument = documentWithGeneralMarketResearch(
+    input.document,
+    research,
+  )
+  const integrity =
+    await validateGeneralProductComparableMarketEvidenceIntegrity(
+      updatedDocument,
+    )
+  if (!integrity.valid) {
+    throw new Error(
+      "GENERAL_MARKET_SESSION_INVALID:" + integrity.errors.join(","),
+    )
+  }
+  return { session, updatedDocument, safety: PRODUCT_CASE_ZERO_EFFECTS }
+}
+
+export async function deleteGeneralMarketResearchSession(input: {
+  document: ProductCaseDocument
+  sessionId: string
+}) {
+  await assertGeneralMarketMutationPreconditions(input.document)
+  const research = input.document.marketEvidence
+    .generalProductComparableResearch
+  if (!research.sessions.some((session) =>
+    session.sessionId === input.sessionId
+  )) throw new Error("GENERAL_MARKET_SESSION_DELETE_TARGET_MISSING")
+  const updatedDocument = documentWithGeneralMarketResearch(input.document, {
+    ...research,
+    sessions: research.sessions.filter((session) =>
+      session.sessionId !== input.sessionId
+    ),
+    comparables: research.comparables.filter((comparable) =>
+      comparable.researchSessionId !== input.sessionId
+    ),
+  })
+  return updatedDocument
+}
+
+export async function saveGeneralMarketComparable(
+  input: ProductCaseGeneralMarketComparableInput,
+) {
+  await assertGeneralMarketMutationPreconditions(input.document)
+  if (!validIsoInstant(input.updatedAt)) {
+    throw new Error("GENERAL_MARKET_COMPARABLE_TIMESTAMP_INVALID")
+  }
+  const research = input.document.marketEvidence
+    .generalProductComparableResearch
+  const session = research.sessions.find((candidate) =>
+    candidate.sessionId === normalizeWhitespace(input.researchSessionId)
+  )
+  if (!session) {
+    throw new Error("GENERAL_MARKET_COMPARABLE_SESSION_REFERENCE_MISSING")
+  }
+  if (input.sourceType !== session.sourceType) {
+    throw new Error("GENERAL_MARKET_COMPARABLE_SESSION_SOURCE_TYPE_MISMATCH")
+  }
+  const existing = input.replaceComparableId
+    ? research.comparables.find((comparable) =>
+        comparable.comparableId === input.replaceComparableId
+      )
+    : null
+  if (input.replaceComparableId && !existing) {
+    throw new Error("GENERAL_MARKET_COMPARABLE_REPLACE_TARGET_MISSING")
+  }
+  const comparableId = normalizeWhitespace(input.comparableId)
+  if (!/^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/.test(comparableId)) {
+    throw new Error("GENERAL_MARKET_COMPARABLE_ID_INVALID")
+  }
+  if (existing && existing.comparableId !== comparableId) {
+    throw new Error("GENERAL_MARKET_COMPARABLE_ID_IMMUTABLE")
+  }
+  if (!validManualMarketSourceType(input.sourceType) ||
+    !(["SOLD", "ACTIVE", "UNKNOWN"] as const).includes(
+      input.listingState as ProductCaseGeneralComparable["listingState"],
+    ) ||
+    !([
+      "INCLUDE_AS_GENERAL_COMPARABLE",
+      "EXCLUDE_NOT_COMPARABLE",
+      "NEEDS_MORE_EVIDENCE",
+    ] as const).includes(
+      input.humanDecision as ProductCaseGeneralComparable["humanDecision"],
+    )) throw new Error("GENERAL_MARKET_COMPARABLE_ENUM_INVALID")
+  if (input.exactMatchConfirmed !== false) {
+    throw new Error("GENERAL_MARKET_COMPARABLE_EXACT_MATCH_FORBIDDEN")
+  }
+  const ebayItemId = normalizeWhitespace(input.ebayItemId) || null
+  if (ebayItemId && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(ebayItemId)) {
+    throw new Error("GENERAL_MARKET_EBAY_ITEM_ID_INVALID")
+  }
+  if (!validOptionalHttpsUrl(input.listingUrl)) {
+    throw new Error("GENERAL_MARKET_LISTING_URL_INVALID")
+  }
+  const title = normalizeWhitespace(input.title)
+  const humanReason = normalizeWhitespace(input.humanReason)
+  const price = strictNonnegativeInputNumber(input.price)
+  const currency = normalizeWhitespace(input.currency)
+    .toLocaleUpperCase("en-US")
+  if (!title || !humanReason || price === null ||
+    !/^[A-Z]{3}$/.test(currency)) {
+    throw new Error("GENERAL_MARKET_COMPARABLE_REQUIRED_FIELD_INVALID")
+  }
+  const soldDate = normalizeWhitespace(input.soldDate) || null
+  if (soldDate && !validMarketDate(soldDate)) {
+    throw new Error("GENERAL_MARKET_COMPARABLE_SOLD_DATE_INVALID")
+  }
+  const shipping = strictNonnegativeInputNumber(input.shippingPrice)
+  if (shipping === null &&
+    !explicitMissingNumericInput(input.shippingPrice)) {
+    throw new Error("GENERAL_MARKET_COMPARABLE_SHIPPING_PRICE_INVALID")
+  }
+  const rawSafety = marketHumanInputSafetyError({
+    comparableId: input.comparableId,
+    ebayItemId: input.ebayItemId,
+    listingUrl: input.listingUrl,
+    title: input.title,
+    condition: input.condition,
+    category: input.category,
+    observedAttributes: rawMarketLines(input.observedAttributes),
+    differencesFromSupplierProduct:
+      rawMarketLines(input.differencesFromSupplierProduct),
+    humanReason: input.humanReason,
+  })
+  if (rawSafety) throw new Error(rawSafety)
+  const rawHumanInput: ProductCaseGeneralComparable["rawHumanInput"] = {
+    comparableId: input.comparableId,
+    researchSessionId: input.researchSessionId,
+    sourceType: input.sourceType,
+    ebayItemId: input.ebayItemId,
+    listingUrl: input.listingUrl,
+    title: input.title,
+    listingState: input.listingState,
+    price: String(input.price),
+    currency: input.currency,
+    shippingPrice: String(input.shippingPrice),
+    condition: input.condition,
+    category: input.category,
+    soldDate: input.soldDate,
+    observedAttributes: rawMarketLines(input.observedAttributes),
+    differencesFromSupplierProduct:
+      rawMarketLines(input.differencesFromSupplierProduct),
+    humanDecision: input.humanDecision,
+    humanReason: input.humanReason,
+    exactMatchConfirmed: input.exactMatchConfirmed,
+  }
+  const canonical: Omit<
+    ProductCaseGeneralComparable,
+    "contentHash" | "evidenceId"
+  > = {
+    contractVersion:
+      GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE_CONTRACT_VERSION,
+    comparableId,
+    researchSessionId: session.sessionId,
+    researchSessionContentHash: session.contentHash,
+    sourceType: input.sourceType,
+    ebayItemId,
+    listingUrl: input.listingUrl || null,
+    title,
+    listingState:
+      input.listingState as ProductCaseGeneralComparable["listingState"],
+    price,
+    currency,
+    shippingPrice: shipping === null
+      ? {
+          status: "MISSING",
+          rawValue: String(input.shippingPrice),
+          normalizedValue: null,
+        }
+      : {
+          status: "AVAILABLE",
+          rawValue: String(input.shippingPrice),
+          normalizedValue: shipping,
+        },
+    condition: normalizeWhitespace(input.condition),
+    category: normalizeWhitespace(input.category),
+    soldDate,
+    observedAttributes: normalizeMarketLines(
+      rawMarketLines(input.observedAttributes),
+    ),
+    differencesFromSupplierProduct:
+      normalizeMarketLines(rawMarketLines(
+        input.differencesFromSupplierProduct,
+      )),
+    humanDecision:
+      input.humanDecision as ProductCaseGeneralComparable["humanDecision"],
+    humanReason,
+    exactMatchConfirmed: false,
+    reviewRequiredAfterSessionChange: false,
+    createdAt: existing?.createdAt ?? input.updatedAt,
+    updatedAt: input.updatedAt,
+    rawHumanInput,
+  }
+  const contentHash = await hashProductCaseContent(stableValue(canonical))
+  const comparable: ProductCaseGeneralComparable = {
+    ...canonical,
+    contentHash: contentHash as ProductCaseGeneralComparable["contentHash"],
+    evidenceId: generalMarketComparableEvidenceId(contentHash),
+  }
+  const others = research.comparables.filter((candidate) =>
+    candidate.comparableId !== input.replaceComparableId
+  )
+  if (others.some((candidate) => candidate.comparableId === comparableId)) {
+    throw new Error("GENERAL_MARKET_COMPARABLE_ID_COLLISION")
+  }
+  if (ebayItemId && others.some((candidate) =>
+    candidate.ebayItemId === ebayItemId
+  )) throw new Error("GENERAL_MARKET_EBAY_ITEM_ID_COLLISION")
+  const updatedDocument = documentWithGeneralMarketResearch(input.document, {
+    ...research,
+    comparables: [...others, comparable],
+  })
+  const integrity =
+    await validateGeneralProductComparableMarketEvidenceIntegrity(
+      updatedDocument,
+    )
+  if (!integrity.valid) {
+    throw new Error(
+      "GENERAL_MARKET_COMPARABLE_INVALID:" + integrity.errors.join(","),
+    )
+  }
+  return { comparable, updatedDocument, safety: PRODUCT_CASE_ZERO_EFFECTS }
+}
+
+export async function deleteGeneralMarketComparable(input: {
+  document: ProductCaseDocument
+  comparableId: string
+}) {
+  await assertGeneralMarketMutationPreconditions(input.document)
+  const research = input.document.marketEvidence
+    .generalProductComparableResearch
+  if (!research.comparables.some((comparable) =>
+    comparable.comparableId === input.comparableId
+  )) throw new Error("GENERAL_MARKET_COMPARABLE_DELETE_TARGET_MISSING")
+  const updatedDocument = documentWithGeneralMarketResearch(input.document, {
+    ...research,
+    comparables: research.comparables.filter((comparable) =>
+      comparable.comparableId !== input.comparableId
+    ),
+  })
+  return updatedDocument
 }
 
 export async function validateProductCaseDocumentProvenanceIntegrity(
@@ -6243,12 +7742,15 @@ export async function validateProductCaseDocumentProvenanceIntegrity(
     await validateHumanIdentityReviewIntegrity(document)
   const catalogLimitationIntegrity =
     await validateSupplierCatalogLimitationIntegrity(document)
+  const generalMarketIntegrity =
+    await validateGeneralProductComparableMarketEvidenceIntegrity(document)
   const errors = unique([
     ...structural.errors,
     ...supplierIntegrity.errors,
     ...visualIntegrity.errors,
     ...identityIntegrity.errors,
     ...catalogLimitationIntegrity.errors,
+    ...generalMarketIntegrity.errors,
   ])
   return { valid: errors.length === 0, errors }
 }
@@ -9253,20 +10755,8 @@ export function buildProductCaseOperationalPipeline(input: {
   const catalogLimitationValid =
     validateSupplierCatalogLimitation(input.document).valid &&
     Boolean(input.document.supplierCatalogLimitation.activeAttestation)
-  const limitedComparableCandidates = input.document.marketEvidence
-    .humanSuppliedComparableCandidates
-  const limitedMarketResearchNotStarted = catalogLimitationValid &&
-    input.document.marketEvidence.runStatus === "NOT_RUN" &&
-    limitedComparableCandidates.length === 0
-  const limitedMarketResearchReviewed = catalogLimitationValid &&
-    limitedComparableCandidates.length > 0 &&
-    limitedComparableCandidates.every((candidate) =>
-      candidate.comparisonClass === "GENERAL_PRODUCT_COMPARABLE" &&
-      ["KEEP_NOT_VALIDATED", "REJECT"].includes(candidate.review.decision) &&
-      Boolean(normalizeWhitespace(candidate.review.reviewer ?? "")) &&
-      Boolean(normalizeWhitespace(candidate.review.reason ?? "")) &&
-      validIsoInstant(candidate.review.reviewedAt ?? "")
-    )
+  const limitedMarketPhaseStatus =
+    deriveGeneralComparableMarketPhaseStatus(input.document)
   const marketReady = identityReady &&
     input.document.marketEvidence.runStatus === "COMPLETE" &&
     input.document.marketEvidence.soldExact === "AVAILABLE" &&
@@ -9383,27 +10873,32 @@ export function buildProductCaseOperationalPipeline(input: {
       status: marketReady
         ? "COMPLETED"
         : catalogLimitationValid
-          ? limitedMarketResearchNotStarted
+          ? limitedMarketPhaseStatus === "NOT_STARTED"
             ? "NOT_STARTED"
-            : limitedMarketResearchReviewed
+            : limitedMarketPhaseStatus === "COMPLETED_WITH_LIMITATIONS"
               ? "COMPLETED"
               : "HUMAN_REVIEW_REQUIRED"
           : "BLOCKED",
       blockers: marketReady
         ? []
         : catalogLimitationValid
-          ? limitedMarketResearchNotStarted || limitedMarketResearchReviewed
+          ? limitedMarketPhaseStatus === "NOT_STARTED" ||
+              limitedMarketPhaseStatus === "COMPLETED_WITH_LIMITATIONS"
             ? []
-            : ["GENERAL_PRODUCT_COMPARABLE_REVIEW_REQUIRED"]
+            : limitedMarketPhaseStatus === "IN_PROGRESS"
+              ? ["GENERAL_PRODUCT_COMPARABLE_RESEARCH_IN_PROGRESS"]
+              : ["GENERAL_PRODUCT_COMPARABLE_EVIDENCE_INSUFFICIENT"]
           : ["SOLD_EXACT_COHORT_MISSING"],
       nextAction: marketReady
         ? "CALCULATE_SCENARIO_ECONOMICS"
         : catalogLimitationValid
-          ? limitedMarketResearchNotStarted
+          ? limitedMarketPhaseStatus === "NOT_STARTED"
             ? "CAPTURE_GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE"
-            : limitedMarketResearchReviewed
+            : limitedMarketPhaseStatus === "COMPLETED_WITH_LIMITATIONS"
               ? "MAINTAIN_LIMITED_RESEARCH_COMMERCIAL_BLOCKS"
-              : "REVIEW_GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE"
+              : limitedMarketPhaseStatus === "IN_PROGRESS"
+                ? "CONTINUE_GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE"
+                : "CAPTURE_MORE_GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE"
           : "VALIDATE_EXACT_MARKET_COHORT",
     },
     {
@@ -9535,6 +11030,9 @@ export function buildProductCaseOperationalPipeline(input: {
               : output.phase === "MARKET_EVIDENCE"
                 ? {
                     marketEvidence: input.document.marketEvidence,
+                    contractVersion:
+                      GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE_CONTRACT_VERSION,
+                    generalMarketPhaseStatus: limitedMarketPhaseStatus,
                     comparisonMode: identityReady
                       ? "EXACT_PRODUCT_MATCH_ALLOWED"
                       : catalogLimitationValid
@@ -9649,10 +11147,13 @@ export function calculateProductCaseReadiness(input: {
       input.document.marketEvidence.runStatus === "COMPLETE"
     ? "READY" as const
     : catalogLimitationValid
-      ? input.document.marketEvidence.humanSuppliedComparableCandidates.length >
-          0
-        ? "NOT_VALIDATED" as const
-        : "NOT_RUN" as const
+      ? deriveGeneralComparableMarketPhaseStatus(input.document) ===
+          "NOT_STARTED"
+        ? "NOT_RUN" as const
+        : deriveGeneralComparableMarketPhaseStatus(input.document) ===
+            "NEEDS_MORE_EVIDENCE"
+          ? "INSUFFICIENT" as const
+          : "NOT_VALIDATED" as const
     : input.document.marketEvidence.runStatus === "INSUFFICIENT"
       ? "INSUFFICIENT" as const
     : input.document.marketEvidence.runStatus === "NOT_VALIDATED"
@@ -9790,16 +11291,22 @@ export const PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION =
   "PRODUCT_CASE_WORKSPACE_EXPORT_V1" as const
 export const PRODUCT_CASE_PRE_CATALOG_LIMITATION_WORKSPACE_EXPORT_VERSION =
   "PRODUCT_CASE_WORKSPACE_EXPORT_V2" as const
-export const PRODUCT_CASE_WORKSPACE_EXPORT_VERSION =
+export const PRODUCT_CASE_PRE_MARKET_EVIDENCE_WORKSPACE_EXPORT_VERSION =
   "PRODUCT_CASE_WORKSPACE_EXPORT_V3" as const
+export const PRODUCT_CASE_WORKSPACE_EXPORT_VERSION =
+  "PRODUCT_CASE_WORKSPACE_EXPORT_V4" as const
 export const PRODUCT_CASE_PRE_IDENTITY_OUTPUT_CONTRACT_VERSION =
   "PRODUCT_CASE_OUTPUT_CONTRACT_V1" as const
 export const PRODUCT_CASE_PRE_CATALOG_LIMITATION_OUTPUT_CONTRACT_VERSION =
   "PRODUCT_CASE_OUTPUT_CONTRACT_V2" as const
-export const PRODUCT_CASE_OUTPUT_CONTRACT_VERSION =
+export const PRODUCT_CASE_PRE_MARKET_EVIDENCE_OUTPUT_CONTRACT_VERSION =
   "PRODUCT_CASE_OUTPUT_CONTRACT_V3" as const
+export const PRODUCT_CASE_OUTPUT_CONTRACT_VERSION =
+  "PRODUCT_CASE_OUTPUT_CONTRACT_V4" as const
 export const PRODUCT_CASE_PRE_IDENTITY_OUTPUT_WARNING =
   "PRE_IDENTITY_CONTRACT_OUTPUT_REBUILT_WITH_CURRENT_DOMAIN" as const
+export const PRODUCT_CASE_PRE_MARKET_EVIDENCE_OUTPUT_WARNING =
+  "GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE_REQUIRES_NEW_MANUAL_RESEARCH" as const
 export const HUMAN_IDENTITY_REVIEW_V1_IMPORT_WARNING =
   "HUMAN_IDENTITY_REVIEW_CONTRACT_V1_REQUIRES_V2_HUMAN_REVIEW" as const
 export const PRODUCT_CASE_LEGACY_OUTPUT_PROFILE =
@@ -10052,6 +11559,7 @@ function outputMismatchErrorDetails(input: {
 
 const LEGACY_DERIVED_OUTPUT_PATHS = [
   "output.adapter",
+  "output.document.marketEvidence.generalProductComparableResearch",
   "output.document.marketEvidence.humanSuppliedComparableCandidates",
   "output.document.supplierCatalogLimitation",
   "output.handoffArtifactGenerated",
@@ -10527,6 +12035,13 @@ async function validateLegacyImportAuditSnapshotIntegrity(
       historicalAttestations: [],
     }
   }
+  if (!Object.hasOwn(
+    historicalDocument.marketEvidence as unknown as Record<string, unknown>,
+    "generalProductComparableResearch",
+  )) {
+    historicalDocument.marketEvidence.generalProductComparableResearch =
+      emptyGeneralProductComparableResearch()
+  }
   historicalDocument.marketEvidence.humanSuppliedComparableCandidates =
     historicalDocument.marketEvidence.humanSuppliedComparableCandidates.map(
       (candidate) => ({
@@ -10612,6 +12127,14 @@ function workspaceProjectionMatchingHistoricalOutput(
     delete (projected.document as unknown as Record<string, unknown>)
       .supplierCatalogLimitation
   }
+  const historicalMarketEvidence = record(historicalDocument.marketEvidence)
+  if (!Object.hasOwn(
+    historicalMarketEvidence,
+    "generalProductComparableResearch",
+  )) {
+    delete (projected.document.marketEvidence as unknown as
+      Record<string, unknown>).generalProductComparableResearch
+  }
   const historicalCandidates = output.document.marketEvidence
     .humanSuppliedComparableCandidates
   for (const [index, candidate] of projected.document.marketEvidence
@@ -10629,7 +12152,10 @@ function workspaceProjectionMatchingHistoricalOutput(
 
 function workspaceStateFromUnknown(
   value: unknown,
-  options: { allowMissingSupplierCatalogLimitation?: boolean } = {},
+  options: {
+    allowMissingSupplierCatalogLimitation?: boolean
+    allowMissingGeneralMarketEvidence?: boolean
+  } = {},
 ): ProductCaseWorkspaceState {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("PRODUCT_CASE_IMPORT_WORKSPACE_REQUIRED")
@@ -10638,6 +12164,8 @@ function workspaceStateFromUnknown(
   if (
     !state.document ||
     state.document.version !== PRODUCT_CASE_RUNNER_VERSION ||
+    !state.document.marketEvidence ||
+    typeof state.document.marketEvidence !== "object" ||
     !state.listingOperations ||
     !Array.isArray(state.imageApprovals) ||
     !Array.isArray(state.imageObservations) ||
@@ -10660,6 +12188,10 @@ function workspaceStateFromUnknown(
     state.document as unknown as Record<string, unknown>,
     "supplierCatalogLimitation",
   )
+  const generalMarketEvidenceMissing = !Object.hasOwn(
+    state.document.marketEvidence as unknown as Record<string, unknown>,
+    "generalProductComparableResearch",
+  )
   const cloned = structuredClone(state as ProductCaseWorkspaceState)
   if (supplierCatalogLimitationMissing) {
     if (!options.allowMissingSupplierCatalogLimitation) {
@@ -10681,6 +12213,15 @@ function workspaceStateFromUnknown(
         }),
       )
   }
+  if (generalMarketEvidenceMissing) {
+    if (!options.allowMissingGeneralMarketEvidence) {
+      throw new Error(
+        "PRODUCT_CASE_IMPORT_GENERAL_MARKET_EVIDENCE_STATE_REQUIRED",
+      )
+    }
+    cloned.document.marketEvidence.generalProductComparableResearch =
+      emptyGeneralProductComparableResearch()
+  }
   if (cloned.document.marketEvidence.humanSuppliedComparableCandidates.some(
     (candidate) => ![
       "GENERAL_PRODUCT_COMPARABLE",
@@ -10698,6 +12239,15 @@ function workspaceStateFromUnknown(
   if (!provenance.valid) {
     throw new Error(
       `PRODUCT_CASE_IMPORT_PROVENANCE_INVALID:${provenance.errors.join(",")}`,
+    )
+  }
+  const generalMarketEvidence =
+    validateGeneralProductComparableMarketEvidence(cloned.document)
+  if (!generalMarketEvidence.valid) {
+    throw new Error(
+      `PRODUCT_CASE_IMPORT_GENERAL_MARKET_EVIDENCE_INVALID:${
+        generalMarketEvidence.errors.join(",")
+      }`,
     )
   }
   return cloned
@@ -11018,6 +12568,9 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
   }
   const currentExport =
     envelopeVersion === PRODUCT_CASE_WORKSPACE_EXPORT_VERSION
+  const preMarketEvidenceExport =
+    envelopeVersion ===
+      PRODUCT_CASE_PRE_MARKET_EVIDENCE_WORKSPACE_EXPORT_VERSION
   const preCatalogLimitationExport =
     envelopeVersion ===
       PRODUCT_CASE_PRE_CATALOG_LIMITATION_WORKSPACE_EXPORT_VERSION
@@ -11025,12 +12578,17 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     envelopeVersion === PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION
   const envelopeOutputContractVersion =
     (parsed as Record<string, unknown>).outputContractVersion
-  if (!currentExport && !preCatalogLimitationExport && !legacyExport) {
+  if (!currentExport && !preMarketEvidenceExport &&
+    !preCatalogLimitationExport && !legacyExport) {
     throw new Error("PRODUCT_CASE_IMPORT_VERSION_INVALID")
   }
   const currentOutputContract =
     currentExport &&
     envelopeOutputContractVersion === PRODUCT_CASE_OUTPUT_CONTRACT_VERSION
+  const preMarketEvidenceOutputContract =
+    preMarketEvidenceExport &&
+    envelopeOutputContractVersion ===
+      PRODUCT_CASE_PRE_MARKET_EVIDENCE_OUTPUT_CONTRACT_VERSION
   const preCatalogLimitationOutputContract =
     preCatalogLimitationExport &&
     envelopeOutputContractVersion ===
@@ -11041,6 +12599,9 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
       PRODUCT_CASE_PRE_IDENTITY_OUTPUT_CONTRACT_VERSION
   if (currentExport && !currentOutputContract &&
     !preIdentityOutputContract) {
+    throw new Error("PRODUCT_CASE_IMPORT_OUTPUT_CONTRACT_VERSION_INVALID")
+  }
+  if (preMarketEvidenceExport && !preMarketEvidenceOutputContract) {
     throw new Error("PRODUCT_CASE_IMPORT_OUTPUT_CONTRACT_VERSION_INVALID")
   }
   if (preCatalogLimitationExport &&
@@ -11066,15 +12627,32 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
       }`,
     )
   }
+  if (
+    preMarketEvidenceExport &&
+    (
+      envelope.workspaceState?.document.marketEvidence
+        .generalProductComparableResearch !== undefined ||
+      envelope.output?.document.marketEvidence
+        .generalProductComparableResearch !== undefined
+    )
+  ) {
+    throw new Error(
+      "PRODUCT_CASE_IMPORT_PRE_MARKET_EVIDENCE_PROFILE_INVALID",
+    )
+  }
   const workspaceState = workspaceStateFromUnknown(
     envelope.workspaceState,
     {
       allowMissingSupplierCatalogLimitation:
         preCatalogLimitationExport || legacyExport,
+      allowMissingGeneralMarketEvidence:
+        preMarketEvidenceExport || preCatalogLimitationExport ||
+        legacyExport,
     },
   )
   const importedHumanIdentityReviewV1 =
-    (currentExport || preCatalogLimitationExport) &&
+    (currentExport || preMarketEvidenceExport ||
+      preCatalogLimitationExport) &&
     String(
       workspaceState.document.identityReview.humanReview?.contractVersion ??
         "",
@@ -11102,7 +12680,7 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     synthesizedHistoricalHumanIdentityReviewAudit ??
     persistedHistoricalHumanIdentityReviewAudit ?? null
   if (
-    currentExport &&
+    (currentExport || preMarketEvidenceExport) &&
     workspaceState.document.identityReview.blockers.includes(
       PRODUCT_CASE_LEGACY_OUTPUT_WARNING,
     ) &&
@@ -11132,7 +12710,7 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     workspaceState.legacyImportAudit
       ?.quarantinedLegacyVisualObservationIds ?? []
   const currentAuditQuarantineMatches =
-    currentExport &&
+    (currentExport || preMarketEvidenceExport) &&
     Boolean(workspaceState.legacyImportAudit) &&
     quarantinedLegacyVisualObservationIds.every((imageId) =>
       auditQuarantineIds.includes(imageId) &&
@@ -11175,6 +12753,8 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
   let preIdentityOutputRebuilt = false
   const preCatalogLimitationOutputRebuilt =
     preCatalogLimitationOutputContract
+  const preMarketEvidenceOutputRebuilt =
+    preMarketEvidenceOutputContract
   if (
     currentOutputContract && outputMismatchDiagnostic.pathCount > 0 &&
     !(
@@ -11244,6 +12824,28 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     }
     legacyOutputRebuilt = true
   }
+  if (preMarketEvidenceOutputContract) {
+    if (!envelope.output) {
+      throw new Error(
+        "PRODUCT_CASE_IMPORT_PRE_MARKET_EVIDENCE_PROFILE_INVALID",
+      )
+    }
+    const historicalWorkspace = workspaceProjectionMatchingHistoricalOutput(
+      workspaceState,
+      envelope.output,
+    )
+    validateHistoricalOutputStructure(envelope.output, historicalWorkspace)
+    if (
+      outputMismatchDiagnostic.pathCount > 0 &&
+      !outputMismatchDiagnostic.allVersionedLegacyDerivedPaths
+    ) {
+      throw new Error(
+        "PRODUCT_CASE_IMPORT_OUTPUT_MISMATCH:" +
+          outputMismatchErrorDetails(outputMismatchDiagnostic),
+      )
+    }
+    legacyOutputRebuilt = true
+  }
   if (currentOutputContract) {
     await validateLegacyImportAuditIntegrity(
       workspaceState.legacyImportAudit,
@@ -11252,7 +12854,8 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
       },
     )
   } else if ((preIdentityOutputContract ||
-    preCatalogLimitationOutputContract) &&
+    preCatalogLimitationOutputContract ||
+    preMarketEvidenceOutputContract) &&
     workspaceState.legacyImportAudit) {
     await validateLegacyImportAuditSnapshotIntegrity(
       workspaceState.legacyImportAudit,
@@ -11312,7 +12915,8 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
   reviewRequiredState.document.imageAnalysis.contractIssues =
     visualReviewContractIssues
   const canonicalHumanIdentityReview =
-    (currentExport || preCatalogLimitationExport) &&
+    (currentExport || preMarketEvidenceExport ||
+      preCatalogLimitationExport) &&
     reviewRequiredState.document.identityReview.humanReview
       ?.contractVersion === HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION
   const v1ReviewRequiresV2 = Boolean(
@@ -11356,7 +12960,7 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
           nextAction: "REVALIDATE_IMPORTED_PRODUCT_CASE_LOCALLY",
           humanReview: null,
         }
-  if (!currentExport) {
+  if (preCatalogLimitationExport || legacyExport) {
     reviewRequiredState.document.supplierCatalogLimitation = {
       activeAttestation: null,
       historicalAttestations: [],
@@ -11468,7 +13072,7 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
     )
   }
   if (
-    currentExport &&
+    (currentExport || preMarketEvidenceExport) &&
     rebuilt.workspaceState.legacyImportAudit
   ) {
     const refreshedWorkspaceState =
@@ -11524,6 +13128,9 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
       ...(preCatalogLimitationOutputRebuilt
         ? ["SUPPLIER_CATALOG_LIMITATION_REQUIRES_NEW_HUMAN_ATTESTATION"]
         : []),
+      ...(preMarketEvidenceOutputRebuilt
+        ? [PRODUCT_CASE_PRE_MARKET_EVIDENCE_OUTPUT_WARNING]
+        : []),
     ],
     outputMismatchPaths,
     historicalOutputAudit: effectiveHistoricalOutputAudit,
@@ -11533,6 +13140,7 @@ export async function importProductCaseWorkspaceExport(serialized: string) {
         : null,
     sourceWorkspaceExportVersion: envelopeVersion as
       | typeof PRODUCT_CASE_WORKSPACE_EXPORT_VERSION
+      | typeof PRODUCT_CASE_PRE_MARKET_EVIDENCE_WORKSPACE_EXPORT_VERSION
       | typeof PRODUCT_CASE_PRE_CATALOG_LIMITATION_WORKSPACE_EXPORT_VERSION
       | typeof PRODUCT_CASE_LEGACY_WORKSPACE_EXPORT_VERSION,
     currentOutputContractVersion: PRODUCT_CASE_OUTPUT_CONTRACT_VERSION,

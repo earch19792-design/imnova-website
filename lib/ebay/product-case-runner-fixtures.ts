@@ -1,5 +1,5 @@
 // @ts-expect-error Node's native TypeScript runner requires explicit extensions.
-import { HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION, HUMAN_VISUAL_REVIEW_CONTRACT_VERSION, LUNA_SOURCE_CONTRACT_VERSION, PRODUCT_CASE_EVIDENCE_FIELDS, PRODUCT_CASE_PARSER_VERSION, PRODUCT_CASE_RUNNER_VERSION, PRODUCT_CASE_ZERO_EFFECTS, buildProductCaseRunnerOutput, buildStrategyLabAdapterPreview, type ProductCaseDocument, type ProductCaseEvidence, type ProductCaseEvidenceField, type ProductCaseHumanComparableCandidate, type ProductCaseHumanIdentityReview, type ProductCaseImageApproval, type ProductCaseListingOperations, type ProductCaseScenarioDraft, type ProductCaseWorkspaceState } from "./product-case-runner.ts"
+import { HUMAN_IDENTITY_REVIEW_CONTRACT_VERSION, HUMAN_VISUAL_REVIEW_CONTRACT_VERSION, LUNA_SOURCE_CONTRACT_VERSION, PRODUCT_CASE_EVIDENCE_FIELDS, PRODUCT_CASE_PARSER_VERSION, PRODUCT_CASE_RUNNER_VERSION, PRODUCT_CASE_ZERO_EFFECTS, buildProductCaseRunnerOutput, buildStrategyLabAdapterPreview, emptyGeneralProductComparableResearch, type ProductCaseDocument, type ProductCaseEvidence, type ProductCaseEvidenceField, type ProductCaseHumanComparableCandidate, type ProductCaseHumanIdentityReview, type ProductCaseImageApproval, type ProductCaseListingOperations, type ProductCaseScenarioDraft, type ProductCaseWorkspaceState } from "./product-case-runner.ts"
 
 export const GOLF_SWING_TRAINER_PRODUCT_NAME =
   "Smart Inflatable Golf Ball Swing Trainer — Black"
@@ -755,6 +755,8 @@ const fixtureDocument = {
     comparables: [],
     humanSuppliedComparableCandidates:
       GOLF_SWING_TRAINER_COMPARABLE_CANDIDATES,
+    generalProductComparableResearch:
+      emptyGeneralProductComparableResearch(),
     observedAt: "2026-07-17T00:00:00.000Z",
   },
   imageAnalysis: {
@@ -1567,6 +1569,8 @@ const SANITIZED_DOCUMENT = {
     referenceMedian: 42,
     comparables: SANITIZED_COMPARABLES,
     humanSuppliedComparableCandidates: [],
+    generalProductComparableResearch:
+      emptyGeneralProductComparableResearch(),
     observedAt: SANITIZED_CAPTURED_AT,
   },
   imageAnalysis: {

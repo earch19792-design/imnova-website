@@ -9,6 +9,7 @@ import {
 } from "react"
 
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
+import { Phase5MarketEvidence } from "./phase-5-market-evidence"
 import { supabase } from "@/lib/supabase"
 import {
   acceptedProductCaseEvidence,
@@ -16,12 +17,12 @@ import {
   buildProductCaseRunnerOutput,
   buildStrategyLabAdapterPreview,
   createProductCaseWorkspaceExport,
-  createGeneralProductComparableCandidate,
   createHumanVisualReviewRecord,
   createManualAuthenticatedSupplierSourceCapture,
   deleteHumanIdentityReviewRecord,
   deleteHumanVisualReviewRecord,
   deleteSupplierCatalogLimitationRecord,
+  emptyGeneralProductComparableResearch,
   extractProductCaseEvidence,
   importProductCaseWorkspaceExport,
   mergeProductCaseEvidenceCaptures,
@@ -170,17 +171,6 @@ type ComparableReviewDraft = {
   reasonCodes: string
 }
 
-type GeneralComparableDraft = {
-  sourceReference: string
-  ebayUrl: string
-  observedTitle: string
-  observedPriceApprox: string
-  observedShippingApprox: string
-  currency: string
-  condition: string
-  listingStatus: ProductCaseDocument["marketEvidence"]["humanSuppliedComparableCandidates"][number]["listingStatus"]
-}
-
 type ProvenanceDecisionDraft = {
   field: string
   valueJson: string
@@ -271,7 +261,7 @@ const PRODUCT_CASE_PHASE_NAVIGATION_TARGETS = [
   },
   {
     anchorId: "phase-5-market-evidence",
-    focusId: "phase-5-market-evidence-heading",
+    focusId: "market-research-session-form-heading",
   },
   {
     anchorId: "strategy-input-preview",
@@ -476,17 +466,6 @@ const emptyComparableReviewDraft: ComparableReviewDraft = {
   validatedVariantComposition: "",
   buyerShipping: "",
   reasonCodes: "",
-}
-
-const emptyGeneralComparableDraft: GeneralComparableDraft = {
-  sourceReference: "",
-  ebayUrl: "",
-  observedTitle: "",
-  observedPriceApprox: "",
-  observedShippingApprox: "",
-  currency: "USD",
-  condition: "New",
-  listingStatus: "ACTIVE_VISIBLE",
 }
 
 const emptyPhysicalInspectionDraft: ProvenanceDecisionDraft = {
@@ -873,8 +852,6 @@ export default function ProductCaseRunnerPage() {
         fixtureDocument.marketEvidence,
       ) as ProductCaseDocument["marketEvidence"]
     )
-  const [generalComparableDraft, setGeneralComparableDraft] =
-    useState<GeneralComparableDraft>(emptyGeneralComparableDraft)
   const [imageAnalysis, setImageAnalysis] =
     useState<ProductCaseDocument["imageAnalysis"]>(() =>
       structuredClone(
@@ -1566,6 +1543,8 @@ export default function ProductCaseRunnerPage() {
       referenceMedian: null,
       comparables: [],
       humanSuppliedComparableCandidates: [],
+      generalProductComparableResearch:
+        emptyGeneralProductComparableResearch(),
       observedAt: null,
     })
     setImageAnalysis({
@@ -1605,7 +1584,6 @@ export default function ProductCaseRunnerPage() {
     setReviewDrafts({})
     setAppliedReviewDecisions({})
     setComparableReviewDrafts({})
-    setGeneralComparableDraft(emptyGeneralComparableDraft)
     setHumanConclusion("")
     setHumanScenario("")
     setHumanReason("")
@@ -2458,60 +2436,6 @@ export default function ProductCaseRunnerPage() {
     )
   }
 
-  function captureGeneralComparable() {
-    setError("")
-    setNotice("")
-    try {
-      if (readiness.researchEligibility !== "ALLOWED_WITH_LIMITATIONS") {
-        throw new Error("LIMITED_MARKET_RESEARCH_NOT_ELIGIBLE")
-      }
-      const optionalMoney = (raw: string) => {
-        if (!raw.trim()) return null
-        const value = Number(raw)
-        if (!Number.isFinite(value) || value < 0) {
-          throw new Error("GENERAL_PRODUCT_COMPARABLE_MONEY_INVALID")
-        }
-        return value
-      }
-      const observedAt = new Date().toISOString()
-      const candidate = createGeneralProductComparableCandidate({
-        sourceReference: generalComparableDraft.sourceReference,
-        ebayUrl: generalComparableDraft.ebayUrl || null,
-        observedTitle: generalComparableDraft.observedTitle,
-        observedPriceApprox: optionalMoney(
-          generalComparableDraft.observedPriceApprox,
-        ),
-        observedShippingApprox: optionalMoney(
-          generalComparableDraft.observedShippingApprox,
-        ),
-        currency: generalComparableDraft.currency,
-        condition: generalComparableDraft.condition,
-        listingStatus: generalComparableDraft.listingStatus,
-        observedAt,
-      })
-      setMarketEvidence((current) => ({
-        ...current,
-        runStatus: "NOT_VALIDATED",
-        humanSuppliedComparableCandidates: [
-          ...current.humanSuppliedComparableCandidates,
-          candidate,
-        ],
-        observedAt,
-      }))
-      setGeneralComparableDraft(emptyGeneralComparableDraft)
-      setRunnerTimestamp(observedAt)
-      setNotice(
-        "Comparable general capturado sólo en memoria local; no se consultó eBay ni se afirmó coincidencia exacta.",
-      )
-    } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "GENERAL_PRODUCT_COMPARABLE_CAPTURE_INVALID",
-      )
-    }
-  }
-
   function recordHumanConclusion() {
     setError("")
     if (!humanConclusion || !humanReason.trim() || !humanReviewer.trim()) {
@@ -2837,7 +2761,6 @@ export default function ProductCaseRunnerPage() {
       setReviewDrafts({})
       setAppliedReviewDecisions({})
       setComparableReviewDrafts({})
-      setGeneralComparableDraft(emptyGeneralComparableDraft)
       setHumanConclusion(text(importedHumanConclusion.conclusion, ""))
       setHumanScenario(text(importedHumanConclusion.scenario, ""))
       setHumanReason(text(importedHumanConclusion.reason, ""))
@@ -5539,7 +5462,8 @@ export default function ProductCaseRunnerPage() {
           <section
             id="phase-5-market-evidence"
             aria-labelledby="phase-5-market-evidence-heading"
-            className="mt-4 scroll-mt-28 rounded-3xl border border-amber-200/25 bg-amber-200/[0.045] p-4 sm:p-5"
+            tabIndex={-1}
+            className="mt-4 scroll-mt-28 rounded-3xl border border-amber-200/25 bg-amber-200/[0.045] p-4 outline-none sm:p-5"
           >
             <h3
               id="phase-5-market-evidence-heading"
@@ -5551,87 +5475,30 @@ export default function ProductCaseRunnerPage() {
                 : "Fase 5 · evidencia de mercado"}
             </h3>
             {readiness.researchEligibility === "ALLOWED_WITH_LIMITATIONS" ? (
-              <>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <span className="rounded-full border border-emerald-200/25 px-3 py-2 text-[10px] font-black">
-                {display(readiness.supplierCatalogCompleteness)}
-              </span>
-              <span className="rounded-full border border-amber-200/25 px-3 py-2 text-[10px] font-black">
-                {display(readiness.researchEligibility)}
-              </span>
-              <span className="rounded-full border border-amber-200/25 px-3 py-2 text-[10px] font-black">
-                {display(readiness.comparisonMode)}
-              </span>
-            </div>
-            <p className="mt-3 text-sm leading-6 text-white/60">
-              Sólo puede usarse el productType confirmado, la cantidad del pack
-              y especificaciones SUPPLIER_STATED claramente etiquetadas. No se
-              permiten claims de marketing como hechos, marca/modelo inventados,
-              coincidencias exactas, inferencias de demanda por stock ni
-              observaciones visuales como PRODUCT_VERIFIED.
-            </p>
-            <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-2">
-              <div className="rounded-xl border border-emerald-200/20 p-3">
-                <dt className="font-black text-emerald-100">Bloqueo para investigación</dt>
-                <dd className="mt-2 font-mono">{readiness.researchEligibility === "ALLOWED_WITH_LIMITATIONS" ? "NONE — CAPTURE_GENERAL_PRODUCT_COMPARABLE_MARKET_EVIDENCE" : "SUPPLIER_CATALOG_LIMITATION_ATTESTATION_REQUIRED"}</dd>
-              </div>
-              <div className="rounded-xl border border-rose-200/20 p-3">
-                <dt className="font-black text-rose-100">Bloqueos para estrategia/publicación</dt>
-                <dd className="mt-2 font-mono">EXACT_IDENTITY_REQUIRED · REAL_COSTS_REQUIRED · BRAND_IP_REVIEW_REQUIRED · IMAGE_RIGHTS_REQUIRED · PACKAGE_AND_HANDOFF_BLOCKED</dd>
-              </div>
-            </dl>
-            <p className="mt-3 rounded-xl border border-white/10 p-3 text-xs font-black">
-              Interfaz local únicamente · runStatus:{display(marketEvidence.runStatus)} · external requests:0 · mutating requests:0 · exactMarketplaceMatchAllowed:false · canTreatComparableAsSameProduct:false
-            </p>
-            <div
-              id="general-product-comparable-capture"
-              className="mt-4 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.035] p-4"
-            >
-              <h4 className="font-black">Capturar comparable general — GENERAL_PRODUCT_COMPARABLE</h4>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <label className="text-xs font-black">
-                  Referencia visible — sourceReference
-                  <input id="general-comparable-source-reference" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.sourceReference} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, sourceReference: event.target.value }))} />
-                </label>
-                <label className="text-xs font-black">
-                  URL copiada manualmente — ebayUrl
-                  <input id="general-comparable-ebay-url" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.ebayUrl} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, ebayUrl: event.target.value }))} />
-                </label>
-                <label className="text-xs font-black sm:col-span-2">
-                  Título observado — observedTitle
-                  <input id="general-comparable-observed-title" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.observedTitle} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, observedTitle: event.target.value }))} />
-                </label>
-                <label className="text-xs font-black">
-                  Precio observado — observedPriceApprox
-                  <input id="general-comparable-price" inputMode="decimal" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.observedPriceApprox} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, observedPriceApprox: event.target.value }))} />
-                </label>
-                <label className="text-xs font-black">
-                  Envío observado — observedShippingApprox
-                  <input id="general-comparable-shipping" inputMode="decimal" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.observedShippingApprox} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, observedShippingApprox: event.target.value }))} />
-                </label>
-                <label className="text-xs font-black">
-                  Moneda — currency
-                  <input id="general-comparable-currency" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.currency} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, currency: event.target.value }))} />
-                </label>
-                <label className="text-xs font-black">
-                  Condición — condition
-                  <input id="general-comparable-condition" className="mt-1 w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 font-normal" value={generalComparableDraft.condition} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, condition: event.target.value }))} />
-                </label>
-                <label className="text-xs font-black sm:col-span-2">
-                  Estado observado — listingStatus
-                  <select id="general-comparable-listing-status" className="mt-1 w-full rounded-xl border border-white/10 bg-[#111722] px-3 py-2 font-normal" value={generalComparableDraft.listingStatus} onChange={(event) => setGeneralComparableDraft((current) => ({ ...current, listingStatus: event.target.value as GeneralComparableDraft["listingStatus"] }))}>
-                    <option value="ACTIVE_VISIBLE">ACTIVE_VISIBLE</option>
-                    <option value="SOLD_AUCTION_VISIBLE">SOLD_AUCTION_VISIBLE</option>
-                    <option value="SOLD_USED_VISIBLE">SOLD_USED_VISIBLE</option>
-                    <option value="ACTIVE_USED_VISIBLE">ACTIVE_USED_VISIBLE</option>
-                  </select>
-                </label>
-              </div>
-              <button type="button" className="mt-3 rounded-xl border border-cyan-200/25 px-4 py-2 text-xs font-black" onClick={captureGeneralComparable}>
-                Guardar comparable general local
-              </button>
-            </div>
-              </>
+              <Phase5MarketEvidence
+                document={productCase}
+                onUpdated={(updatedDocument, nextNotice) => {
+                  setMarketEvidence(updatedDocument.marketEvidence)
+                  setGeneratedPackage(null)
+                  setListingOperations(emptyBrowserListingOperations())
+                  setHumanConclusion("")
+                  setHumanScenario("")
+                  setHumanReason("")
+                  setHumanReviewer("")
+                  setHumanReviewedAt(null)
+                  setProposedRuleObservation("")
+                  setRunnerTimestamp(new Date().toISOString())
+                  setError("")
+                  setNotice(nextNotice)
+                }}
+                onReturnToBlocker={() => {
+                  setActivePhaseIndex(3)
+                  focusProductCaseTarget(
+                    "supplier-catalog-limitation",
+                    "supplier-catalog-limitation-heading",
+                  )
+                }}
+              />
             ) : (
               <p className="mt-3 text-sm leading-6 text-white/60">
                 La ruta de identidad exacta conserva sus gates normales de evidencia de mercado; la declaración de catálogo agotado no está activa.
@@ -5769,6 +5636,7 @@ export default function ProductCaseRunnerPage() {
               </dl>
             </div>
           )}
+          {readiness.researchEligibility !== "ALLOWED_WITH_LIMITATIONS" && (
           <div className="mt-4 grid gap-3">
             {marketEvidence.humanSuppliedComparableCandidates.map(
               (candidate, candidateIndex) => {
@@ -5978,6 +5846,7 @@ export default function ProductCaseRunnerPage() {
               },
             )}
           </div>
+          )}
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
             <JsonPanel
               label={`Accepted evidence · ${acceptedEvidence.length}`}
