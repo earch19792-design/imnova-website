@@ -41,6 +41,14 @@ const STATIC_MUTATION_BLOCKS: ReadonlyArray<{
     reason: "SAME_DAY_AUTOMATION_BLOCKED",
   },
   {
+    route: "/api/admin/ebay/product-case-runner",
+    reason: "COMMERCIAL_ACTION_BLOCKED",
+  },
+  {
+    route: "/api/admin/ebay/listings/register",
+    reason: "COMMERCIAL_ACTION_BLOCKED",
+  },
+  {
     route: "/api/admin/ebay/luna-product-import",
     reason: "THREE_SIX_TWELVE_IMPORT_BLOCKED",
   },

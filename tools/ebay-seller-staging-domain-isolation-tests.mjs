@@ -125,10 +125,11 @@ test("canonical links exist and navigation remains mobile accessible", () => {
 })
 
 test("route and bundle surface regress downward", () => {
-  // Strategy Lab V1 adds one intentional, static Seller OS page. It has no
-  // route handler, provider adapter, persistence, or public-domain surface.
+  // Strategy Lab V1 and Product Case Runner V1 add two intentional Seller OS
+  // pages. Product Case Runner adds one authenticated, GET-only Luna source
+  // preflight; it has no persistence or marketplace mutation surface.
   assert.equal(exists("app/admin/ebay/strategy-lab/page.tsx"), true)
-  assert.ok(countNamed("app", "page.tsx") <= 14, "page route count regressed")
+  assert.ok(countNamed("app", "page.tsx") <= 15, "page route count regressed")
   // 68 legacy-era routes -> 65 isolated routes -> one approval-only Seller OS
   // strategic-advisor route -> one Preview-only active-listing Luna monitor
   // -> one isolated, GET-only eBay account-policy preflight route -> two
@@ -138,11 +139,56 @@ test("route and bundle surface regress downward", () => {
   // authorization route -> one Preview-only extraordinary position-4 ordinal-7
   // executor -> one final Preview-only extraordinary position-6 ordinal-8
   // executor -> one authenticated, read-only final-listing-review hydration
-  // route -> one authenticated V3 UNPUBLISHED authorization/preflight route.
+  // route -> one authenticated V3 UNPUBLISHED authorization/preflight route
+  // -> one authenticated GET-only Product Case Runner source preflight.
   // The old product/community domain remains at zero.
-  assert.ok(countNamed("app/api", "route.ts") <= 80, "API route count regressed")
+  assert.ok(countNamed("app/api", "route.ts") <= 81, "API route count regressed")
   assert.equal(countNamed("app/api/community", "route.ts"), 0)
   assert.equal(countNamed("app/api/store", "route.ts"), 0)
+})
+
+test("Product Case Runner preflight is GET-only and stays inside Pilot containment", () => {
+  const routePath =
+    "app/api/admin/ebay/product-case-runner/preflight/route.ts"
+  const servicePath = "lib/ebay/product-case-runner-preflight.ts"
+  assert.equal(exists(routePath), true)
+  assert.equal(exists(servicePath), true)
+
+  const route = read(routePath)
+  const service = read(servicePath)
+  const pilot = read("lib/ebay/single-product-lab.ts")
+  const boundaries = read("lib/ebay/environment-boundaries.ts")
+
+  const exportedMethods = [...route.matchAll(
+    /export\s+async\s+function\s+(GET|POST|PUT|PATCH|DELETE)\b/g,
+  )].map((match) => match[1])
+  assert.deepEqual(exportedMethods, ["GET"])
+  assert.ok(
+    route.indexOf("validateAdminApiRequest(req)") <
+      route.indexOf("await preflightLunaProductSource({"),
+  )
+  assert.doesNotMatch(
+    route,
+    /getSupabaseAdminClient|\.from\(|\.rpc\(|\.insert\(|\.upsert\(|\.update\(|\.delete\(/,
+  )
+
+  assert.match(service, /redirect:\s*"manual"/)
+  assert.match(service, /credentials:\s*"omit"/)
+  assert.match(service, /AbortSignal\.timeout/)
+  assert.match(service, /PRODUCT_CASE_RUNNER_MAX_SOURCE_BYTES\s*=\s*1_000_000/)
+  assert.match(service, /lookup\(hostname,\s*\{\s*all:\s*true/)
+  assert.doesNotMatch(service, /console\.|headers:\s*\{[^}]*Authorization|Cookie:/s)
+
+  assert.match(
+    pilot,
+    /route:\s*"\/api\/admin\/ebay\/product-case-runner"[\s\S]*reason:\s*"COMMERCIAL_ACTION_BLOCKED"/,
+  )
+  assert.match(
+    pilot,
+    /route:\s*"\/api\/admin\/ebay\/listings\/register"[\s\S]*reason:\s*"COMMERCIAL_ACTION_BLOCKED"/,
+  )
+  assert.match(boundaries, /"\/admin\/ebay\/product-case-runner"/)
+  assert.match(boundaries, /"\/api\/admin\/ebay\/product-case-runner"/)
 })
 
 test("isolation manifests are valid, rollback is recoverable, and production is excluded", () => {

@@ -10,6 +10,7 @@ export const EBAY_SELLER_OS_UI_PATHS = [
   "/admin/ebay/listing-workspace",
   "/admin/ebay/listing-optimization",
   "/admin/ebay/listings/register",
+  "/admin/ebay/product-case-runner",
   "/admin/ebay-image-generator",
   "/admin/ebay/seller-performance",
   "/admin/ebay-pro",
@@ -18,6 +19,7 @@ export const EBAY_SELLER_OS_UI_PATHS = [
 export const EBAY_SELLER_OS_API_PATHS = [
   "/api/admin/ebay/images",
   "/api/admin/ebay/listings/register",
+  "/api/admin/ebay/product-case-runner",
   "/api/admin/ebay/draft-only",
   "/api/admin/ebay/account-policies",
   "/api/admin/ebay/active-listings/sync",
