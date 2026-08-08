@@ -125,7 +125,11 @@ test("canonical links exist and navigation remains mobile accessible", () => {
 })
 
 test("route and bundle surface regress downward", () => {
-  assert.ok(countNamed("app", "page.tsx") <= 13, "page route count regressed")
+  assert.equal(exists("app/admin/ebay/monitor/page.tsx"), true, "canonical read-only monitor page is missing")
+  assert.equal(exists("app/api/admin/ebay/monitor/route.ts"), true, "canonical read-only monitor API is missing")
+  // The read-only monitor adds exactly one intentional page and one GET-only API
+  // to the previously isolated Seller OS surface.
+  assert.ok(countNamed("app", "page.tsx") <= 14, "page route count regressed")
   // 68 legacy-era routes -> 65 isolated routes -> one approval-only Seller OS
   // strategic-advisor route -> one Preview-only active-listing Luna monitor
   // -> one isolated, GET-only eBay account-policy preflight route -> two
@@ -137,7 +141,7 @@ test("route and bundle surface regress downward", () => {
   // executor -> one authenticated, read-only final-listing-review hydration
   // route -> one authenticated V3 UNPUBLISHED authorization/preflight route.
   // The old product/community domain remains at zero.
-  assert.ok(countNamed("app/api", "route.ts") <= 80, "API route count regressed")
+  assert.ok(countNamed("app/api", "route.ts") <= 81, "API route count regressed")
   assert.equal(countNamed("app/api/community", "route.ts"), 0)
   assert.equal(countNamed("app/api/store", "route.ts"), 0)
 })

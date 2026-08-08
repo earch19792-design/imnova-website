@@ -1,6 +1,8 @@
 import { SellerOsMobileNav } from "../ebay/components/seller-os-mobile-nav"
 import { SellerOsDisasterRecoveryCard } from "../ebay/components/seller-os-disaster-recovery-card"
-import { CommercialMonitorPanel } from "../ebay/mobile-review/commercial-monitor-panel"
+import {
+  CommercialMonitorReadonlyEntryCard as CommercialMonitorPanel,
+} from "../ebay/monitor/commercial-monitor-readonly-entry-card"
 
 const actions = [
   {
@@ -22,6 +24,12 @@ const actions = [
 ]
 
 const operationLinks = [
+  {
+    href: "/admin/ebay/monitor",
+    title: "Commercial Monitor READ-ONLY",
+    copy: "Observa identidad, cobertura, métricas, stock, Product Case, experimentos y calidad sin ejecutar cambios.",
+    cta: "Abrir monitor →",
+  },
   {
     href: "/admin/ebay/listing-optimization",
     title: "Optimizar listing",

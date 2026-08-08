@@ -1,0 +1,333 @@
+import assert from "node:assert/strict"
+import { existsSync, readFileSync } from "node:fs"
+import { dirname, extname, join, normalize, relative, resolve } from "node:path"
+import test from "node:test"
+
+import { getEbayProRuntimeBoundary } from
+  "../lib/ebay/environment-boundaries.ts"
+
+const root = process.cwd()
+const canonicalRoute = "app/api/admin/ebay/monitor/route.ts"
+const canonicalPage = "app/admin/ebay/monitor/page.tsx"
+
+function read(path) {
+  return readFileSync(join(root, path), "utf8")
+}
+
+function resolveLocalImport(fromPath, specifier) {
+  if (!specifier.startsWith(".") && !specifier.startsWith("@/")) return null
+  const base = specifier.startsWith("@/")
+    ? join(root, specifier.slice(2))
+    : resolve(dirname(join(root, fromPath)), specifier)
+  const candidates = extname(base)
+    ? [base]
+    : [
+        `${base}.ts`,
+        `${base}.tsx`,
+        `${base}.js`,
+        `${base}.jsx`,
+        `${base}.mjs`,
+        join(base, "index.ts"),
+        join(base, "index.tsx"),
+        join(base, "index.js"),
+      ]
+  const absolute = candidates.find(existsSync)
+  return absolute ? normalize(relative(root, absolute)) : null
+}
+
+function localImports(path) {
+  const source = read(path)
+  const imports = []
+  const patterns = [
+    /\b(?:import|export)\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?["']([^"']+)["']/g,
+    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
+  ]
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      const target = resolveLocalImport(path, match[1])
+      if (target) imports.push(target)
+    }
+  }
+  return [...new Set(imports)]
+}
+
+function dependencyGraph(entries) {
+  const pending = [...entries]
+  const visited = new Set()
+  while (pending.length) {
+    const path = pending.shift()
+    if (!path || visited.has(path)) continue
+    visited.add(path)
+    pending.push(...localImports(path))
+  }
+  return [...visited].sort()
+}
+
+const routeGraph = dependencyGraph([canonicalRoute])
+const uiGraph = dependencyGraph([canonicalPage])
+const runtimeGraph = [...new Set([...routeGraph, ...uiGraph])].sort()
+
+test("la API canónica exporta GET solamente y autentica antes del cliente admin", () => {
+  const route = read(canonicalRoute)
+  const handlers = [...route.matchAll(
+    /export\s+(?:(?:async\s+)?function|(?:const|let|var))\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g,
+  )]
+    .map((match) => match[1])
+  assert.deepEqual(handlers, ["GET"])
+  assert.doesNotMatch(route, /export\s+async\s+function\s+(?:POST|PUT|PATCH|DELETE)/)
+  assert.ok(
+    route.indexOf("validateAdminApiRequest(req)") <
+      route.indexOf("getSupabaseAdminClient()"),
+    "admin validation must precede creation of the service-role client",
+  )
+  assert.match(route, /Cache-Control["']:\s*["']private, no-store, max-age=0/)
+  assert.match(route, /X-Commercial-Monitor-Mode["']:\s*["']READ_ONLY/)
+  assert.match(route, /getEbayProRuntimeBoundary/)
+  assert.match(route, /COMMERCIAL_MONITOR_PREVIEW_ONLY/)
+  assert.match(route, /\^\[A-Z0-9_\]\+\$/)
+})
+
+test("el repositorio canónico sólo contiene SELECTs y ninguna ejecución externa", () => {
+  const repository = read(
+    "lib/ebay/commercial-monitor-readonly-repository.ts",
+  )
+  assert.match(repository, /\.select\(/)
+  assert.doesNotMatch(
+    repository,
+    /\.(?:insert|update|upsert|delete|rpc)\s*\(/,
+  )
+  assert.doesNotMatch(repository, /\bfetch\s*\(/)
+  assert.doesNotMatch(repository, /alert_delivery_outbox|commercial_alert_events/)
+  const routeRuntime = routeGraph.map(read).join("\n")
+  assert.doesNotMatch(
+    routeRuntime,
+    /\.(?:insert|upsert|delete)\s*\(/,
+  )
+  assert.doesNotMatch(routeRuntime, /\bfetch\s*\(/)
+
+  const updateCalls = routeGraph.flatMap((path) => {
+    const calls = read(path).match(/\.update\s*\(/g) ?? []
+    return calls.map(() => path)
+  })
+  assert.deepEqual(updateCalls.sort(), [
+    "lib/ebay/commercial-monitor-readonly-utilities.mjs",
+    "lib/ebay/ebay-seller-account-scope.ts",
+  ])
+  assert.match(
+    read("lib/ebay/commercial-monitor-readonly-utilities.mjs"),
+    /createHash\("sha256"\)\.update\(JSON\.stringify\(parts\)\)/,
+  )
+  assert.match(
+    read("lib/ebay/ebay-seller-account-scope.ts"),
+    /createHash\("sha256"\)\s*\.update\(`PRODUCTION:\$\{userId\}`\)/,
+  )
+
+  const monitorOwnedRuntime = routeGraph
+    .filter((path) =>
+      path === canonicalRoute || path.includes("commercial-monitor-readonly"),
+    )
+    .map(read)
+    .join("\n")
+  assert.doesNotMatch(monitorOwnedRuntime, /\.rpc\s*\(/)
+
+  const adminBoundary = read("lib/supabase-admin.ts")
+  const adminRpcs = [...adminBoundary.matchAll(/\.rpc\(\s*["']([^"']+)["']/g)]
+    .map((match) => match[1])
+  assert.deepEqual(adminRpcs, ["is_admin"])
+})
+
+test("el grafo canónico excluye writers, dispatchers, WhatsApp y runners mutantes", () => {
+  const forbidden = [
+    /ebay-commercial-monitor-service/,
+    /commercial-monitor-panel/,
+    /commercial-alert-dispatcher/,
+    /commercial-improvement-action/,
+    /whatsapp/i,
+    /title-revision/,
+    /image-revision/,
+    /publication/,
+    /tracking-write/,
+    /inventory.*(?:write|update|revise)/i,
+    /(?:offer|listing).*(?:publish|revise|end)/i,
+    /fulfillment.*(?:action|write|service)/i,
+    /buyer.*message/i,
+    /targeted-active-listing-luna-monitor/,
+    /competitor-watch-service/,
+    /command-center-automation/,
+  ]
+  for (const path of runtimeGraph) {
+    for (const pattern of forbidden) {
+      assert.doesNotMatch(path, pattern, `forbidden runtime dependency: ${path}`)
+    }
+  }
+  assert.ok(routeGraph.includes(
+    "lib/ebay/commercial-monitor-readonly-repository.ts",
+  ))
+  assert.ok(routeGraph.includes(
+    "lib/ebay/commercial-monitor-readonly-service.ts",
+  ))
+})
+
+test("fixtures, tests y JSON modelado no pueden entrar como fallback runtime", () => {
+  for (const path of runtimeGraph) {
+    assert.doesNotMatch(path, /(?:^|\/)(?:fixtures?|__tests__)(?:\/|$)/i)
+    assert.doesNotMatch(path, /\.test\.[cm]?[jt]sx?$/)
+    assert.notEqual(extname(path), ".json")
+  }
+  const runtimeSource = runtimeGraph.map(read).join("\n")
+  assert.doesNotMatch(runtimeSource, /fixtureUsed|syntheticFallbackUsed:\s*true/)
+})
+
+test("el Item ID histórico y la tupla sintética no existen en el runtime canónico", () => {
+  const runtimeSource = runtimeGraph.map(read).join("\n")
+  assert.doesNotMatch(runtimeSource, /366543596425/)
+  assert.doesNotMatch(
+    runtimeSource,
+    /impressions\s*:\s*18[\s\S]{0,240}views\s*:\s*1[\s\S]{0,240}transactions\s*:\s*0[\s\S]{0,240}ctr\s*:\s*5\.6/,
+  )
+  assert.doesNotMatch(runtimeSource, /\?\?\s*0|\|\|\s*0/)
+  const reconciliation = read(
+    "lib/ebay/ebay-commercial-analytics-reconciliation.ts",
+  )
+  assert.doesNotMatch(reconciliation, /366543596425/)
+  assert.doesNotMatch(reconciliation, /impressions\s*:\s*18/)
+  assert.match(reconciliation, /INSUFFICIENT_EVIDENCE/)
+  assert.match(reconciliation, /syntheticFallbackUsed:\s*false/)
+})
+
+test("la UI contiene las secciones canónicas y sólo un control GET de actualización", () => {
+  const clientPath =
+    "app/admin/ebay/monitor/commercial-monitor-readonly-client.tsx"
+  const client = read(clientPath)
+  for (const heading of [
+    "Resumen",
+    "Listings",
+    "Kits y componentes",
+    "Stock Guard",
+    "Tráfico y conversión",
+    "Plan de acción",
+    "Experimentos",
+    "Aprendizaje",
+    "Calidad de datos",
+    "Timeline / Auditoría",
+  ]) {
+    assert.match(client, new RegExp(heading.replace("/", "\\/")))
+  }
+  assert.match(client, /READ-ONLY/)
+  assert.match(client, /Product Case/)
+  assert.match(client, /NO_TOCAR/)
+  assert.match(client, /dispatchAllowed/)
+  assert.match(client, /whatsappCalled/)
+  assert.match(client, /deliveryAttempted/)
+  assert.match(client, /String\(alert\.dispatchAllowed\)/)
+  assert.match(client, /String\(alert\.whatsappCalled\)/)
+  assert.match(client, /String\(alert\.deliveryAttempted\)/)
+  assert.match(client, /alert\.componentReference\.componentId/)
+  assert.match(client, /alert\.componentReference\.sku/)
+  assert.equal((client.match(/onClick=/g) ?? []).length, 1)
+  assert.match(client, /onClick=\{\(\) => void loadMonitor\(\)\}/)
+  assert.match(client, /fetch\("\/api\/admin\/ebay\/monitor"/)
+  assert.doesNotMatch(client, /method:\s*["']POST["']/)
+  assert.doesNotMatch(client, /<form\b/)
+  assert.doesNotMatch(uiGraph.map(read).join("\n"), /formAction=|method:\s*["'](?:POST|PUT|PATCH|DELETE)["']/)
+  assert.doesNotMatch(client, /applyImprovement|prepareImprovement|runWhatsApp|publishOffer|ReviseItem|EndItem/)
+})
+
+test("hub y mobile review montan el entry card y no el panel mutable", () => {
+  const hub = read("app/admin/ebay-seller-os/page.tsx")
+  const mobile = read("app/admin/ebay/mobile-review/page.tsx")
+  assert.match(hub, /commercial-monitor-readonly-entry-card/)
+  assert.match(mobile, /commercial-monitor-readonly-entry-card/)
+  assert.doesNotMatch(hub, /mobile-review\/commercial-monitor-panel/)
+  assert.doesNotMatch(mobile, /from\s+["']\.\/commercial-monitor-panel["']/)
+  assert.match(hub, /href:\s*["']\/admin\/ebay\/monitor["']/)
+})
+
+test("los boundaries incluyen UI y API canónicas y bloquean Production", () => {
+  const boundary = read("lib/ebay/environment-boundaries.ts")
+  assert.match(boundary, /["']\/admin\/ebay\/monitor["']/)
+  assert.match(boundary, /["']\/api\/admin\/ebay\/monitor["']/)
+  assert.match(boundary, /EBAY_PRO_BLOCKED_IN_PRODUCTION_PATHS/)
+  assert.match(boundary, /runtime\.isProductionRuntime/)
+  for (const pathname of [
+    "/admin/ebay/monitor",
+    "/api/admin/ebay/monitor",
+  ]) {
+    assert.equal(getEbayProRuntimeBoundary({
+      pathname,
+      method: "GET",
+      vercelEnv: "production",
+      nodeEnv: "production",
+      ebayProRuntime: "production_core",
+    }).blocked, true)
+    assert.equal(getEbayProRuntimeBoundary({
+      pathname,
+      method: "GET",
+      vercelEnv: "preview",
+      nodeEnv: "production",
+      ebayProRuntime: "staging",
+    }).blocked, false)
+  }
+})
+
+test("Product Case, experimentos, alertas y Assistant DTO son fail-closed", () => {
+  const contract = read(
+    "lib/ebay/commercial-monitor-readonly-contract.ts",
+  )
+  const service = read(
+    "lib/ebay/commercial-monitor-readonly-service.ts",
+  )
+  assert.match(contract, /status:\s*["']AVAILABLE["']/)
+  assert.match(contract, /status:\s*["']MISSING["']/)
+  assert.match(contract, /status:\s*["']UNPROVEN["']/)
+  assert.match(contract, /PRODUCT_CASE_LINK_MISSING/)
+  assert.match(contract, /PRODUCT_CASE_LINK_UNPROVEN/)
+  assert.match(contract, /lifecycleState === ["']RUNNING["'][\s\S]*?["']NO_TOCAR["']/)
+  assert.match(contract, /dispatchAllowed:\s*false/)
+  assert.match(contract, /whatsappCalled:\s*false/)
+  assert.match(contract, /deliveryAttempted:\s*false/)
+  assert.match(contract, /commercial_monitor\.get/)
+  assert.match(contract, /containsSensitiveAssistantMaterial/)
+  assert.match(contract, /containsPrivateBuyerData/)
+  assert.match(service, /const productCase = resolveProductCaseLink\(\)/)
+  assert.match(service, /const experiment = resolveExperiment\(\)/)
+  assert.match(service, /LISTING_PRICE_SOURCE_PROVENANCE_UNAVAILABLE/)
+  assert.match(service, /WATCH_COUNT_SOURCE_PROVENANCE_UNAVAILABLE/)
+  assert.match(service, /oldestRequiredEvidenceTimestamp/)
+  assert.doesNotMatch(service, /productCaseId:\s*["'][^"']+["']/)
+})
+
+test("capabilities externas permanecen deny-by-default", () => {
+  const contract = read(
+    "lib/ebay/commercial-monitor-readonly-contract.ts",
+  )
+  const service = read(
+    "lib/ebay/commercial-monitor-readonly-service.ts",
+  )
+  const source = `${contract}\n${service}`
+  for (const invariant of [
+    "canPublishAutomatically: false",
+    "canReviseInventoryAutomatically: false",
+    "canPauseListingAutomatically: false",
+    "canReactivateListingAutomatically: false",
+    "ebayBuyerMessageAutoSend: false",
+    "ebayTrackingWriteEnabled: false",
+    "whatsappSaleAlertEnabled: false",
+    "postSaleShadowMode: true",
+    "marketplaceWritesAllowed: false",
+    "dispatchAllowed: false",
+    "buyerMessagesAllowed: false",
+  ]) {
+    assert.match(source, new RegExp(invariant.replaceAll(" ", "\\s*")))
+  }
+  assert.match(service, /PAUSED_FOR_MONITORING_MILESTONE/)
+  assert.match(service, /resumePolicy:\s*["']RESUME_FROM_LAST_VERIFIED_GATE["']/)
+  assert.match(service, /manualGoldenPath:\s*["']PRESERVE["']/)
+  assert.match(service, /reset:\s*false/)
+})
+
+test("el grafo canónico se mantiene físicamente pequeño y auditable", () => {
+  assert.ok(routeGraph.length > 3)
+  assert.ok(uiGraph.length > 3)
+  assert.ok(runtimeGraph.length < 25, `unexpected dependency expansion: ${runtimeGraph.join(", ")}`)
+})

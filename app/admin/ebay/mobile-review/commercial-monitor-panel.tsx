@@ -1147,7 +1147,7 @@ export function CommercialMonitorPanel() {
       <details data-technical-details="seller-hub-comparison" className="mt-4 rounded-2xl border border-violet-200/25 bg-violet-200/[0.05] p-3">
         <summary className="flex min-h-11 cursor-pointer items-center text-lg font-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-200">Comparar con Seller Hub · diagnóstico opcional</summary>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-          <p className="max-w-2xl text-xs leading-5 text-white/55">Compara 7 días cerrados contra hasta 90 días para el listing 366543596425. No persiste snapshots, reglas, alertas ni WhatsApp.</p>
+          <p className="max-w-2xl text-xs leading-5 text-white/55">La comparación sólo se ejecuta con un Item ID y evidencia Seller Hub explícitos. Sin ambos devuelve INSUFFICIENT_EVIDENCE y no persiste snapshots, reglas, alertas ni WhatsApp.</p>
           <button
             type="button"
             disabled={Boolean(busyMode) || loading}
@@ -1162,7 +1162,7 @@ export function CommercialMonitorPanel() {
             <span className="text-[10px] font-black uppercase text-white/45">Clasificación</span>
             <p className="mt-1 text-lg font-black text-violet-50">{comparison.classification ?? "INSUFFICIENT_EVIDENCE"}</p>
             <p className="mt-1 text-xs leading-5 text-white/65">{comparison.explanation}</p>
-            <p className="mt-2 text-xs text-white/50">CTR Seller Hub validado: {comparison.sellerHubEvidence?.calculatedCtr === 5.56 ? "1 / 18 × 100 = 5.56% (5.6% UI)" : "—"}</p>
+            <p className="mt-2 text-xs text-white/50">CTR Seller Hub validado: {comparison.sellerHubEvidence?.calculatedCtr ?? "—"}%</p>
           </div>
           <div className="mt-3 grid gap-3 xl:grid-cols-2">
             <AnalyticsWindowAudit label="A · Ventana operativa · 7 días cerrados" audit={comparison.operational} />
@@ -1225,9 +1225,9 @@ export function CommercialMonitorPanel() {
         </>}
         <div className="mt-3 rounded-xl border border-white/10 bg-black/20 p-3 text-xs">
           <h4 className="font-black text-white">Vínculo oficial antes del scheduler</h4>
-          <p className="mt-1">Item ID esperado/observado: {listingIdentity?.listingId ?? "366543596425"} / {listingIdentity?.observedListingId ?? "—"}</p>
+          <p className="mt-1">Item ID esperado/observado: {listingIdentity?.listingId ?? "—"} / {listingIdentity?.observedListingId ?? "—"}</p>
           <p>Custom label eBay esperado/observado: {listingIdentity?.expectedSku ?? "—"} / {listingIdentity?.observedSku ?? "—"}</p>
-          <p>SKU Luna/Seller OS: {listingIdentity?.supplierSku ?? divergence?.sku ?? "ITEM3995"}</p>
+          <p>SKU Luna/Seller OS: {listingIdentity?.supplierSku ?? divergence?.sku ?? "—"}</p>
           <p>Estado oficial: {listingIdentity?.observedListingStatus ?? "—"} · Match exacto: {listingIdentity?.activeListingConfirmed ? "SÍ" : "NO"}</p>
           <p className="mt-1 font-black">Procesamiento de ventas: {listingIdentity?.salesProcessingBlocked ? "BLOQUEADO" : "HABILITADO"}</p>
         </div>

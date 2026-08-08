@@ -64,7 +64,9 @@ import { OpportunityCommandCenter, type Opportunity } from "./opportunity-comman
 import { Loop1WinnerAnalysisSummary } from "./loop1-winner-analysis-summary"
 import { Loop2ListingAiPanel } from "./loop2-listing-ai-panel"
 import { SellerJourneyGuide, type SellerJourneyStep } from "./seller-journey-guide"
-import { CommercialMonitorPanel } from "./commercial-monitor-panel"
+import {
+  CommercialMonitorReadonlyEntryCard as CommercialMonitorPanel,
+} from "../monitor/commercial-monitor-readonly-entry-card"
 
 const emptyReport = buildMobileReviewRealRadarConnector({ products: [] })
 type View = "loop1" | "loop2" | "opportunities" | "pinned" | "blocked"

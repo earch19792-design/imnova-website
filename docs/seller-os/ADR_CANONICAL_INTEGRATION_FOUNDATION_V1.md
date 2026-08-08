@@ -41,9 +41,10 @@ PR #256 and PR #257 are reviewed as sources of reusable contracts and domain
 logic. They are not merged wholesale or automatically. Reuse is performed through
 small, reviewable changes after file-level reconciliation and passing safety gates.
 
-The foundation branch created for this decision contains documentation only. It
-does not implement Product Case persistence, database schema, marketplace actions,
-notifications, or any new runtime behavior.
+The initial foundation commit created for this decision contained documentation
+only. Later work on this branch may add independently authorized, scoped runtime
+behavior, but it does not thereby authorize Product Case persistence, database
+schema, marketplace actions, or notifications.
 
 ## Role of PR #256
 

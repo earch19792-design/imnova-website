@@ -12,6 +12,7 @@ export const EBAY_SELLER_OS_UI_PATHS = [
   "/admin/ebay/listings/register",
   "/admin/ebay-image-generator",
   "/admin/ebay/seller-performance",
+  "/admin/ebay/monitor",
   "/admin/ebay-pro",
 ] as const
 
@@ -25,6 +26,7 @@ export const EBAY_SELLER_OS_API_PATHS = [
   "/api/admin/ebay/configuration",
   "/api/admin/ebay/identity/bootstrap",
   "/api/admin/ebay/seller-performance",
+  "/api/admin/ebay/monitor",
   "/api/admin/ebay/seller-keyword-demand",
   "/api/admin/ebay/seller-whatsapp-alerts",
   "/api/admin/ebay/commercial-monitor",
