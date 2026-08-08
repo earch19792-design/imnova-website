@@ -89,6 +89,27 @@ type ListingProjectionInput = {
   identityVerification: ReadonlyIdentityVerificationRow | null
   registryStatus: "REGISTERED" | "UNREGISTERED_DISCOVERY"
   duplicateIdentity: boolean
+  marketplaceCertification:
+    CommercialListingReadModel["identity"]["marketplaceCertification"]
+}
+
+const RESPONSE_LOCAL_MARKETPLACE_CERTIFICATION = Symbol(
+  "RESPONSE_LOCAL_MARKETPLACE_CERTIFICATION",
+)
+
+type ResponseLocalMarketplaceCertification = {
+  status: "US_CERTIFIED"
+  source:
+    | "EBAY_TRADING_GET_MY_EBAY_SELLING"
+    | "EBAY_TRADING_GET_ITEM"
+  observedAt: string
+  marketplaceSite: "US"
+  grain: "ITEM"
+}
+
+type ResponseLocalRegistryListingRow = ReadonlyRegistryListingRow & {
+  [RESPONSE_LOCAL_MARKETPLACE_CERTIFICATION]?:
+    ResponseLocalMarketplaceCertification
 }
 
 type TargetedLunaListingCoverage = {
@@ -1585,7 +1606,8 @@ function projectListing(input: {
     input.now,
     METRIC_MAXIMUM_AGE_SECONDS,
   )
-  if (!listing.identityVerification?.active_listing_confirmed ||
+  if (listing.marketplaceCertification.status !== "US_CERTIFIED" ||
+      !listing.identityVerification?.active_listing_confirmed ||
       verificationFreshness.status !== "FRESH") {
     issues.push(issue({
       code: "LISTING_IDENTITY_UNPROVEN",
@@ -1790,6 +1812,7 @@ function projectListing(input: {
       mpn: rawFields.mpn,
       listedQuantity,
       currency: currencyCode(row?.currency),
+      marketplaceCertification: listing.marketplaceCertification,
       source: sanitizeMonitorText(
         row?.source ?? listing.identityVerification?.source,
         100,
@@ -1887,8 +1910,18 @@ function withLiveReadonlyEvidence(input: {
   accountKey: string
 }) {
   const { stored, live } = input
-  const liveRegistryRows: ReadonlyRegistryListingRow[] = live.discovery.listings
-    .map((listing) => {
+  const liveRegistryRows: ResponseLocalRegistryListingRow[] =
+    live.discovery.listings
+    .flatMap((listing) => {
+      const marketplaceSource = listing.marketplaceCertification.source
+      const marketplaceObservedAt = validIso(
+        listing.marketplaceCertification.observedAt,
+      )
+      if (listing.marketplaceSite !== "US" ||
+          listing.marketplaceCertification.status !== "US_CERTIFIED" ||
+          (marketplaceSource !== "EBAY_TRADING_GET_MY_EBAY_SELLING" &&
+            marketplaceSource !== "EBAY_TRADING_GET_ITEM") ||
+          !marketplaceObservedAt) return []
       const itemRows = stored.registry.rows.filter((row) =>
         row.ebay_item_id === listing.itemId)
       const link = listing.identityAmbiguous
@@ -1899,7 +1932,7 @@ function withLiveReadonlyEvidence(input: {
             listing.variationKey,
           )
       const linkedRow = link.row
-      return {
+      return [{
       id: liveEvidenceId(
         "LIVE_LISTING",
         listing.itemId,
@@ -1930,13 +1963,24 @@ function withLiveReadonlyEvidence(input: {
         listingFormat: listing.listingFormat,
         startTime: listing.startTime,
         marketplaceSite: listing.marketplaceSite,
+        marketplaceCertification: {
+          ...listing.marketplaceCertification,
+          grain: "ITEM",
+        },
         identityAmbiguous: listing.identityAmbiguous,
         durableLinkageConflict: link.conflicted,
       },
       sync_generation: null,
       created_at: linkedRow?.created_at ?? listing.observedAt,
       updated_at: linkedRow?.updated_at ?? listing.observedAt,
-      }
+      [RESPONSE_LOCAL_MARKETPLACE_CERTIFICATION]: {
+        status: "US_CERTIFIED",
+        source: marketplaceSource,
+        observedAt: marketplaceObservedAt,
+        marketplaceSite: "US",
+        grain: "ITEM",
+      },
+      }]
     })
   const liveIdentityRows: ReadonlyIdentityVerificationRow[] =
     live.discovery.listings.map((listing) => ({
@@ -2168,6 +2212,49 @@ function liveReaderStatuses(
       value === "COMPLETE"
     ? "AVAILABLE"
     : value === "BLOCKED" ? "ERROR" : value === "UNPROVEN" ? "UNKNOWN" : value
+  const getItemCalls = live.calls.filter((call) =>
+    call.operation === "TRADING_GET_ITEM_MARKETPLACE")
+  const getItemSucceeded = getItemCalls.filter((call) =>
+    call.status === "SUCCEEDED").length
+  const getItemFailureCount = getItemCalls.length - getItemSucceeded
+  const marketplace = live.discovery.marketplaceCertification
+  const getItemBudgetExhausted =
+    typeof marketplace.sellerWideItemsMarketplaceBudgetExhausted ===
+      "number" &&
+    marketplace.sellerWideItemsMarketplaceBudgetExhausted > 0
+  const getItemStatus: ObservationAvailability = getItemCalls.length === 0
+    ? getItemBudgetExhausted
+      ? "PARTIAL"
+      : "UNKNOWN"
+    : getItemFailureCount === 0 && !getItemBudgetExhausted
+      ? "AVAILABLE"
+      : getItemSucceeded > 0
+        ? "PARTIAL"
+        : "ERROR"
+  const getItemLimitation = live.discovery.gapCodes.find((code) =>
+    code.startsWith("TRADING_GET_ITEM_") ||
+    code === "SELLER_WIDE_MARKETPLACE_CERTIFICATION_BUDGET_EXHAUSTED") ?? null
+  const sellerWideCalls = live.calls.filter((call) =>
+    call.operation === "TRADING_GET_MY_EBAY_SELLING")
+  const sellerWideSucceeded = sellerWideCalls.filter((call) =>
+    call.status === "SUCCEEDED").length
+  const sellerWideFailureCount = sellerWideCalls.length - sellerWideSucceeded
+  const sellerWideLimitation = live.discovery.gapCodes.find((code) => [
+    "SELLER_WIDE_DISCOVERY_PAGE_FAILED",
+    "SELLER_WIDE_PAGINATION_METADATA_CONFLICT",
+    "SELLER_WIDE_PAGINATION_UNPROVEN",
+    "SELLER_WIDE_SOURCE_IDENTITY_CONFLICT",
+    "SELLER_WIDE_ITEM_MARKETPLACE_CONFLICT",
+    "SELLER_WIDE_VARIATION_IDENTITY_AMBIGUOUS",
+    "GET_MY_EBAY_SELLING_25000_LIMIT",
+  ].includes(code)) ?? null
+  const sellerWideStatus: ObservationAvailability = sellerWideCalls.length === 0
+    ? "UNKNOWN"
+    : sellerWideSucceeded === 0
+      ? "ERROR"
+      : sellerWideFailureCount > 0 || sellerWideLimitation
+        ? "PARTIAL"
+        : "AVAILABLE"
   return [
     {
       source: "EBAY_TRADING_GET_USER",
@@ -2177,9 +2264,18 @@ function liveReaderStatuses(
     },
     {
       source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
-      status: status(live.discovery.status),
-      observedAt: live.discovery.observedAt,
-      limitationCode: live.discovery.gapCodes[0] ?? null,
+      status: sellerWideStatus,
+      observedAt: latestIso(sellerWideCalls.map((call) => call.observedAt)),
+      limitationCode: sellerWideLimitation ??
+        (sellerWideFailureCount > 0
+          ? "SELLER_WIDE_DISCOVERY_PAGE_FAILED"
+          : null),
+    },
+    {
+      source: "EBAY_TRADING_GET_ITEM",
+      status: getItemStatus,
+      observedAt: latestIso(getItemCalls.map((call) => call.observedAt)),
+      limitationCode: getItemLimitation,
     },
     {
       source: "EBAY_SELL_INVENTORY_READONLY",
@@ -2337,6 +2433,10 @@ function discoveryCoverage(
     (live.discovery.totalEntries ?? 25_000) < 25_000 &&
     stored.registry.status !== "ERROR" && liveOnly.length === 0 &&
     registryOnly.length === 0
+  const getItemEvidenceAvailable = live.calls.some((call) =>
+    call.operation === "TRADING_GET_ITEM_MARKETPLACE") ||
+    live.discovery.listings.some((listing) =>
+      listing.marketplaceCertification.source === "EBAY_TRADING_GET_ITEM")
   return createDiscoveryCoverage({
     universalCoverageProven,
     sourceCoverageAvailable: liveAvailable || (
@@ -2349,6 +2449,7 @@ function discoveryCoverage(
       ...sources.identityVerifications.rows.map((row) =>
         sanitizeMonitorText(row.source, 100) ?? "UNKNOWN"),
       ...(liveAvailable ? [live.discovery.source] : []),
+      ...(getItemEvidenceAvailable ? ["EBAY_TRADING_GET_ITEM"] : []),
     ])].sort(),
     observedAt: latestIso([observedAt, live.discovery.observedAt]),
     knownGapCodes,
@@ -2356,6 +2457,31 @@ function discoveryCoverage(
 }
 
 function listingInputs(sources: CommercialMonitorReadonlySources) {
+  const responseLocalMarketplaceKey = (input: {
+    id: string
+    itemId: string
+    sku: string | null
+    variationKey: string | null
+  }) => JSON.stringify([
+    input.id,
+    input.itemId,
+    input.sku,
+    input.variationKey,
+  ])
+  const responseLocalMarketplaceById = new Map(
+    (sources.registry.rows as ResponseLocalRegistryListingRow[]).flatMap(
+      (row) => {
+        const certification = row[RESPONSE_LOCAL_MARKETPLACE_CERTIFICATION]
+        return certification ? [[responseLocalMarketplaceKey({
+          id: row.id,
+          itemId: row.ebay_item_id,
+          sku: row.ebay_sku,
+          variationKey: row.ebay_variation_key ??
+            explicitListingFields(row).variationKey,
+        }), certification] as const] : []
+      },
+    ),
+  )
   const groups = canonicalizeActiveListingProtectionRows(
     sources.registry.rows.map((row) => ({
       ...row,
@@ -2367,6 +2493,30 @@ function listingInputs(sources: CommercialMonitorReadonlySources) {
     .filter((group) => /^\d{9,20}$/.test(group.ebayItemId))
   const identities = sources.identityVerifications.rows
   const result: ListingProjectionInput[] = groups.map((group) => {
+    const responseLocalMarketplace = group.memberListingIds.flatMap((id) => {
+      const certification = responseLocalMarketplaceById.get(
+        responseLocalMarketplaceKey({
+          id,
+          itemId: group.ebayItemId,
+          sku: group.ebaySku,
+          variationKey: group.variationKey,
+        }),
+      )
+      return certification ? [certification] : []
+    })
+    const marketplaceCertification = responseLocalMarketplace.length === 1
+      ? {
+          status: "US_CERTIFIED" as const,
+          source: responseLocalMarketplace[0].source,
+          observedAt: responseLocalMarketplace[0].observedAt,
+          grain: "ITEM" as const,
+        }
+      : {
+          status: "UNPROVEN" as const,
+          source: null,
+          observedAt: null,
+          grain: "ITEM" as const,
+        }
     const matchingVerification = identities.find((verification) =>
       verification.listing_id === group.ebayItemId &&
       (!group.ebaySku || verification.expected_sku === group.ebaySku ||
@@ -2396,6 +2546,7 @@ function listingInputs(sources: CommercialMonitorReadonlySources) {
         ? "REGISTERED" as const
         : "UNREGISTERED_DISCOVERY" as const,
       duplicateIdentity: new Set(sourcesInGroup).size !== sourcesInGroup.length,
+      marketplaceCertification,
     }
   })
   const represented = new Set(result.map((listing) => JSON.stringify([
@@ -2433,6 +2584,12 @@ function listingInputs(sources: CommercialMonitorReadonlySources) {
       identityVerification: verification,
       registryStatus: "UNREGISTERED_DISCOVERY",
       duplicateIdentity: false,
+      marketplaceCertification: {
+        status: "UNPROVEN",
+        source: null,
+        observedAt: null,
+        grain: "ITEM",
+      },
     })
   }
   return result.sort((left, right) => left.key.localeCompare(right.key))
@@ -2702,6 +2859,7 @@ function liveCertificationProjection(
       pagesRead: live.discovery.pagesRead,
       totalPages: live.discovery.totalPages,
       totalEntries: live.discovery.totalEntries,
+      ...live.discovery.marketplaceCertification,
       representedItemCount: discoveryProven
         ? new Set(live.discovery.listings.map((listing) => listing.itemId)).size
         : null,

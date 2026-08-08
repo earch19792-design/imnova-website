@@ -182,7 +182,13 @@ test("el reader live usa una allowlist cerrada y nunca persiste respuestas", () 
   )
   assert.match(reader, /assertEbayMonitorReadonlyRequest/)
   assert.equal((reader.match(/input\.fetchImpl\(/g) ?? []).length, 1)
-  assert.match(domain, /"GetUser"[\s\S]*"GetMyeBaySelling"/)
+  assert.match(
+    domain,
+    /"GetUser"[\s\S]*"GetMyeBaySelling"[\s\S]*"GetItem"/,
+  )
+  assert.match(domain, /"TRADING_GET_ITEM_MARKETPLACE"/)
+  assert.match(reader, /<OutputSelector>Item\.ItemID<\/OutputSelector>/)
+  assert.match(reader, /<OutputSelector>Item\.Site<\/OutputSelector>/)
   assert.match(domain, /tradingHeaderCallName !== expectedTradingCall/)
   assert.match(domain, /root !== `\$\{expectedTradingCall\}Request`/)
   assert.doesNotMatch(domain, /"(?:AddItem|ReviseItem|EndItem|AddFixedPriceItem|ReviseFixedPriceItem)"/)

@@ -1,8 +1,10 @@
 # eBay Live Read-Only Account + Discovery V1
 
-Status: local foundation implemented; live certification requires a valid,
-server-side account binding and OAuth context. This document does not certify a
-specific seller account or claim that any eBay request succeeded.
+Status: account binding and the base Trading reader were certified by a
+sanitized human Preview run at the `f917555` checkpoint. That run proved
+`GetUser` and a one-page `GetMyeBaySelling` result reporting 26 active Items,
+but none could be represented because `Item.Site` was absent. The item-level
+`GetItem` certification described here still requires a human Preview retest.
 
 ## Decision
 
@@ -18,6 +20,7 @@ the following dependency graph:
    → OAuth refresh grant (ephemeral access token only)
    → Trading GetUser
    → Trading GetMyeBaySelling ActiveList
+   → Trading GetItem for unresolved item-level marketplace certification
    → Inventory inventory_item + offer GETs
    → Analytics traffic_report GET
    → Fulfillment order GET
@@ -39,6 +42,7 @@ all of method, production origin, exact path and exact call name match:
 | --- | --- | --- | --- |
 | `GetUser` | POST | `/ws/api.dll` | Bind the token to the configured seller identity. |
 | `GetMyeBaySelling` | POST | `/ws/api.dll` | Enumerate the authenticated seller's ActiveList with pagination and variations. |
+| `GetItem` | POST | `/ws/api.dll` | Certify `Item.Site` for a seller-wide Item whose marketplace was omitted. |
 
 No prefix or generic `Get*` rule exists. The declared operation, exact HTTP
 header and XML request root must all agree. Mutable Trading calls are rejected
@@ -86,6 +90,12 @@ is insufficient. Fulfillment additionally requires the
 dedicated `EBAY_COMMERCIAL_ORDERS_REFRESH_TOKEN`; it never falls back to the
 general seller refresh token.
 
+For a non-2xx OAuth response, the coordinator reads the error body only in
+memory and emits one allowlisted category: `INVALID_SCOPE`, `INVALID_GRANT`,
+`INVALID_CLIENT`, `INVALID_REQUEST`, `UNSUPPORTED_GRANT_TYPE`, or
+`OAUTH_ERROR_UNCLASSIFIED`. It never returns the raw body or
+`error_description`; the sanitized call ledger retains only the HTTP status.
+
 ## Listing discovery and reconciliation
 
 The seller-wide source is `GetMyeBaySelling.ActiveList`, requested with 200
@@ -106,16 +116,34 @@ is unavailable, or a difference remains unexplained. A live listing absent
 from the registry stays visible as an unregistered discovery blocker; it is not
 silently omitted or persisted. Registry reconciliation uses the exact
 Item/SKU/variation identity; an Item-only match cannot close a variation gap.
-Listings whose returned marketplace is absent or not US remain only as an
-explicit coverage gap and are never projected under `EBAY_US`. Ambiguous
+`GetMyeBaySelling` remains the seller-wide enumeration authority. Because its
+ActiveList contract does not guarantee `Item.Site`, the coordinator preserves
+all parsed Item identities and calls allowlisted `GetItem` once per unique Item
+whose site is absent. An explicit `Item.Site=US` from the seller-wide row, or an
+exact `GetItem` Item ID match with explicit `Item.Site=US`, may enter the
+`EBAY_US` projection. Duplicate/conflicting fields and values outside the
+documented `SiteCodeType` remain unproven. Certified non-US Items are counted
+but excluded; missing Site, Ack/transport failure, Item ID mismatch, or budget
+exhaustion remain separate partial-coverage states. `GetUser.Site`
+certifies only the account registration site and is never used as an Item
+marketplace fallback. Ambiguous
 variation identities suppress durable supplier/product linkage and stock
 signals for that evidence rather than borrowing a null or shared mapping.
 
+Marketplace counters are Item-grain and keep reported, parsed, US-certified,
+non-US-certified, unresolved, error, Item-ID-mismatch, budget-exhausted and
+represented counts separate. They are nullable before seller-wide evidence exists. A zero is
+authoritative only when complete seller-wide pagination explicitly reports
+zero; `reported > 0` with `represented = 0` is never displayed as zero active
+listings.
+
 The request has a fail-closed 24-second/60-call aggregate budget inside the
-30-second route ceiling. Evidence obtained before a later page/chunk failure is
+30-second route ceiling. Item-level verification reserves downstream call/time
+capacity and never expands those limits. Evidence obtained before a later
+page/chunk failure is
 retained as `PARTIAL`; it is never discarded or promoted to complete. A US
-account certification also requires live identity binding plus marketplace
-evidence from `GetUser.Site` or returned US listing evidence.
+account certification requires live identity binding and `GetUser.Site=US`;
+listing marketplace certification remains independent and Item-grain.
 
 ## Truthful evidence behavior
 
@@ -148,19 +176,19 @@ evidence from `GetUser.Site` or returned US listing evidence.
 
 ## Canonical dashboard source matrix
 
-This matrix describes the implemented source contract and the current local
-checkpoint. Because no safe local OAuth context exists, no field is marked
-`YES` from live eBay evidence in this gate.
+This matrix describes the implemented source contract and the latest sanitized
+human runtime checkpoint. Item-level `GetItem` results remain pending until the
+new exact Preview is exercised.
 
 | Canonical dashboard field | Data source | Live available? | Grain | Window | Freshness | Completeness | Blocker |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| eBay account | Trading `GetUser` + configured fingerprint | NO | Account | Request | UNKNOWN | UNPROVEN | `LOCAL_EBAY_AUTH_CONTEXT_UNAVAILABLE` |
-| Marketplace | `GetUser.Site` or returned US listing evidence | NO | Account/Item | Request | UNKNOWN | UNPROVEN | `EBAY_US_MARKETPLACE_BINDING_UNPROVEN` |
-| Last synchronization | Per-reader call plus source observation | NO | Reader | Per call | UNKNOWN | UNPROVEN | No authenticated call |
-| Data coverage | `GetMyeBaySelling` + Inventory + Managed Registry | NO | Account | Active inventory at read time | UNKNOWN | UNPROVEN | OAuth, pagination and reconciliation unproved |
+| eBay account | Trading `GetUser` + configured fingerprint | YES | Account | Request | Observed 2026-08-08 | COMPLETE | Binding certified in the prior human Preview run |
+| Marketplace | `GetUser.Site` for registration; `GetItem.Site` per listing | PARTIAL | Account/Item | Request | Evidence timestamp | PARTIAL | Item-level Preview retest pending |
+| Last synchronization | Per-reader call plus source observation | PARTIAL | Reader | Per call | Request time | PARTIAL | Optional readers unavailable |
+| Data coverage | `GetMyeBaySelling` + `GetItem` + Inventory + Managed Registry | PARTIAL | Account | Active inventory at read time | Request time | PARTIAL | 26 reported; item marketplace retest pending |
 | eBay Analytics | Analytics `traffic_report` | NO | Item | Closed trailing 30 UTC days | UNKNOWN | UNPROVEN | Scope and live report unavailable |
 | Luna Portex | Existing latest-variant/source-health SELECTs | PARTIAL | Component | Latest stored snapshot | Stored timestamp | PARTIAL | Exact link, heartbeat, parser or freshness may block |
-| Active listings | `GetMyeBaySelling.ActiveList` | NO | Item/variation | Active at read time | UNKNOWN | UNPROVEN | Seller-wide call not executed |
+| Active listings | `GetMyeBaySelling.ActiveList` + `GetItem.Site` | PARTIAL | Item/variation | Active at read time | Request time | PARTIAL | 26 reported; zero represented at the prior checkpoint |
 | Critical actions | Pure blocker/alert projection | PARTIAL | Listing/component | Evidence episode | Evidence dependent | PARTIAL | Informational only; never dispatches |
 | Stock risk | Luna/product truth + exact registry link | PARTIAL | Listing component | Latest stored snapshot | Evidence dependent | PARTIAL | Composition/shared allocation/link may be absent |
 | Impressions | `TOTAL_IMPRESSION_TOTAL` | NO | Item | Closed 30-day UTC report | Source update time | UNPROVEN | Analytics not called |
@@ -169,10 +197,10 @@ checkpoint. Because no safe local OAuth context exists, no field is marked
 | Calculated CTR | Search views / search impressions | NO | Item | Same report window | Source update time | UNPROVEN | Compatible inputs unavailable |
 | Orders | Fulfillment `getOrders` | NO | Order/order line | Trailing 30 days | UNKNOWN | UNPROVEN | Dedicated token/scope unavailable |
 | Net profit | Seller OS economics | NO | Listing | Unavailable | UNKNOWN | UNPROVEN | Fees, shipping, costs and currency incomplete |
-| Listings by state | Seller-wide discovery | NO | Item | Active at read time | UNKNOWN | UNPROVEN | Coverage gap cannot display zero |
+| Listings by state | Seller-wide discovery | PARTIAL | Item | Active at read time | Request time | PARTIAL | Item marketplace certification pending |
 | Distribution by type | Explicit Trading fields | NO | Item/variation | Active at read time | UNKNOWN | UNPROVEN | Listing evidence unavailable; type never inferred |
-| Listing table identity/state/title/SKU | Trading + exact stored links | PARTIAL | Item/variation | Per observation | Evidence dependent | PARTIAL | Live identity unavailable; stored coverage may exist |
-| Listing table price/quantity | Explicit Trading fields | NO | Item/variation | Active at read time | UNKNOWN | UNPROVEN | Live listing call not executed |
+| Listing table identity/state/title/SKU | Trading + exact stored links | PARTIAL | Item/variation | Per observation | Evidence dependent | PARTIAL | Only US-certified Items may be represented |
+| Listing table price/quantity | Explicit Trading fields | PARTIAL | Item/variation | Active at read time | Request time | PARTIAL | Item marketplace certification pending |
 | Product Case link | Future persistent Product Case repository | NO | Listing | Versioned lookup | UNKNOWN | UNPROVEN | Persistence intentionally paused |
 | Critical alerts | Pure deterministic candidates | PARTIAL | Listing/component | Evidence episode | Evidence dependent | PARTIAL | Candidate-only; dispatch flags false |
 | Priority action plan | Informational next-action projection | PARTIAL | Listing | Current evidence | Evidence dependent | PARTIAL | Human review only |
@@ -184,12 +212,12 @@ checkpoint. Because no safe local OAuth context exists, no field is marked
 
 ## Local certification checkpoint
 
-At the time this foundation was authored, the isolated worktree had no safe
-local eBay authentication context or authenticated Admin session. No live eBay
-call was made. Account scope, token freshness and granted scopes therefore
-remain unproven until credentials are provisioned ephemerally server-side under
-a separate authorization gate. Cached metadata from excluded worktrees is not
-an authorized credential source and is never copied or loaded.
+The protected Preview runtime supplied the existing credentials without export.
+A legitimate human Supabase-admin refresh certified the seller binding,
+`GetUser`, base scope and one complete `GetMyeBaySelling` page. Inventory OAuth
+returned a sanitized HTTP 400 and Analytics was not attempted because no
+Item IDs survived the previous marketplace filter. No access token, refresh
+token, header, cookie or raw payload was returned or persisted.
 
 ## Refresh and containment
 
@@ -208,6 +236,7 @@ before merge.
 
 - [GetMyeBaySelling](https://developer.ebay.com/Devzone/XML/docs/Reference/eBay/GetMyeBaySelling.html)
 - [GetMyeBaySelling ActiveList guide](https://developer.ebay.com/api-docs/user-guides/static/trading-user-guide/my-ebay-selling.html)
+- [GetItem](https://developer.ebay.com/devzone/xml/docs/reference/ebay/getitem.html)
 - [GetSellerList](https://developer.ebay.com/devzone/XML/docs/Reference/ebay/GetSellerList.html)
 - [Inventory getInventoryItems](https://developer.ebay.com/api-docs/sell/inventory/resources/inventory_item/methods/getInventoryItems)
 - [Inventory getOffers](https://developer.ebay.com/api-docs/sell/inventory/resources/offer/methods/getOffers)

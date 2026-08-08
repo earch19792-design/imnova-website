@@ -4,6 +4,7 @@ export const EBAY_MONITOR_LIVE_READONLY_CONTRACT_VERSION =
 export const EBAY_MONITOR_TRADING_READ_OPERATIONS = [
   "GetUser",
   "GetMyeBaySelling",
+  "GetItem",
 ] as const
 
 export type EbayMonitorTradingReadOperation =
@@ -13,6 +14,7 @@ export type EbayMonitorReadonlyOperation =
   | "OAUTH_REFRESH_TRADING"
   | "TRADING_GET_USER"
   | "TRADING_GET_MY_EBAY_SELLING"
+  | "TRADING_GET_ITEM_MARKETPLACE"
   | "OAUTH_REFRESH_INVENTORY"
   | "INVENTORY_GET_ITEMS"
   | "INVENTORY_GET_OFFERS"
@@ -45,10 +47,26 @@ export type EbayLiveListing = {
   price: number | null
   currency: string | null
   marketplaceSite: string | null
+  marketplaceCertification: {
+    status: EbayItemMarketplaceCertificationStatus
+    source:
+      | "EBAY_TRADING_GET_MY_EBAY_SELLING"
+      | "EBAY_TRADING_GET_ITEM"
+      | null
+    observedAt: string | null
+  }
   identityAmbiguous: boolean
   source: "EBAY_TRADING_GET_MY_EBAY_SELLING"
   observedAt: string
 }
+
+export type EbayItemMarketplaceCertificationStatus =
+  | "US_CERTIFIED"
+  | "NON_US_CERTIFIED"
+  | "UNRESOLVED"
+  | "ERROR"
+  | "BUDGET_EXHAUSTED"
+  | "ITEM_ID_MISMATCH"
 
 export type ParsedGetMyeBaySellingPage = {
   accepted: boolean
@@ -56,6 +74,8 @@ export type ParsedGetMyeBaySellingPage = {
   totalPages: number | null
   hasMoreItems: boolean | null
   listings: EbayLiveListing[]
+  sourceIdentityConflict: boolean
+  paginationMetadataConflict: boolean
 }
 
 export type SafeLiveEbayOrder = {
@@ -93,6 +113,10 @@ const READONLY_REST_PATHS = new Map<EbayMonitorReadonlyOperation, {
     method: "POST",
     path: "/ws/api.dll",
   }],
+  ["TRADING_GET_ITEM_MARKETPLACE", {
+    method: "POST",
+    path: "/ws/api.dll",
+  }],
   ["OAUTH_REFRESH_INVENTORY", {
     method: "POST",
     path: "/identity/v1/oauth2/token",
@@ -123,6 +147,36 @@ const READONLY_REST_PATHS = new Map<EbayMonitorReadonlyOperation, {
   }],
 ])
 
+// SiteCodeType output values documented by the Trading API. CustomCode is a
+// reserved sentinel and therefore cannot establish a marketplace identity.
+const EBAY_TRADING_MARKETPLACE_SITES = new Set([
+  "AUSTRALIA",
+  "AUSTRIA",
+  "BELGIUM_DUTCH",
+  "BELGIUM_FRENCH",
+  "CANADA",
+  "CANADAFRENCH",
+  "CYPRUS",
+  "CZECHIA",
+  "EBAYMOTORS",
+  "FRANCE",
+  "GERMANY",
+  "HONGKONG",
+  "INDIA",
+  "IRELAND",
+  "ITALY",
+  "MALAYSIA",
+  "NETHERLANDS",
+  "PHILIPPINES",
+  "POLAND",
+  "RUSSIA",
+  "SINGAPORE",
+  "SPAIN",
+  "SWITZERLAND",
+  "UK",
+  "US",
+])
+
 export function assertEbayMonitorReadonlyRequest(input: {
   operation: EbayMonitorReadonlyOperation
   method: string
@@ -141,6 +195,8 @@ export function assertEbayMonitorReadonlyRequest(input: {
     ? "GetUser"
     : input.operation === "TRADING_GET_MY_EBAY_SELLING"
       ? "GetMyeBaySelling"
+      : input.operation === "TRADING_GET_ITEM_MARKETPLACE"
+        ? "GetItem"
       : null
   if (expectedTradingCall !== null &&
       (input.tradingCallName !== expectedTradingCall ||
@@ -157,6 +213,28 @@ export function assertEbayMonitorReadonlyRequest(input: {
     )?.[1] ?? null
     if (root !== `${expectedTradingCall}Request`) {
       throw new Error("EBAY_MONITOR_BLOCKED_TRADING_OPERATION")
+    }
+    if (expectedTradingCall === "GetItem") {
+      const itemId = ebayTradingXmlValue(body, "ItemID")
+      const selectors = ebayTradingXmlContainers(body, "OutputSelector")
+        .map((entry) => decodeXml(entry.replace(/<[^>]*>/g, " "))
+          .replace(/\s+/g, " ").trim())
+        .sort()
+      if (!itemId || !/^\d{9,20}$/.test(itemId) ||
+          selectors.length !== 2 ||
+          selectors[0] !== "Item.ItemID" ||
+          selectors[1] !== "Item.Site") {
+        throw new Error("EBAY_MONITOR_BLOCKED_TRADING_OPERATION")
+      }
+      const elementNames = [...body.matchAll(
+        /<\/?(?:[A-Za-z0-9_-]+:)?([A-Za-z][A-Za-z0-9_-]*)\b[^>]*>/g,
+      )].map((match) => match[1])
+      if (elementNames.some((name) =>
+        name !== "GetItemRequest" &&
+        name !== "ItemID" &&
+        name !== "OutputSelector")) {
+        throw new Error("EBAY_MONITOR_BLOCKED_TRADING_OPERATION")
+      }
     }
   }
   if (expectedTradingCall === null && input.tradingCallName) {
@@ -195,6 +273,49 @@ export function ebayTradingXmlValue(xml: string, tag: string) {
   return normalized || null
 }
 
+function ebayTradingXmlDirectChildContainers(xml: string, tag: string) {
+  const results: string[] = []
+  const tokens = /<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\/?(?:[A-Za-z0-9_-]+:)?[A-Za-z_][A-Za-z0-9_.-]*(?:\s[^<>]*?)?\/?>/g
+  let depth = 0
+  let targetStart: number | null = null
+  for (const match of xml.matchAll(tokens)) {
+    const token = match[0]
+    const tokenIndex = match.index
+    if (tokenIndex === undefined) continue
+    if (token.startsWith("<?") || token.startsWith("<!--") ||
+        token.startsWith("<![CDATA[")) continue
+    const name = token.match(
+      /^<\/?(?:[A-Za-z0-9_-]+:)?([A-Za-z_][A-Za-z0-9_.-]*)/,
+    )?.[1]
+    if (!name) continue
+    const closing = token.startsWith("</")
+    const selfClosing = token.endsWith("/>")
+    if (closing) {
+      depth = Math.max(0, depth - 1)
+      if (depth === 0 && name === tag && targetStart !== null) {
+        results.push(xml.slice(targetStart, tokenIndex))
+        targetStart = null
+      }
+      continue
+    }
+    if (depth === 0 && name === tag) {
+      if (selfClosing) results.push("")
+      else targetStart = tokenIndex + token.length
+    }
+    if (!selfClosing) depth += 1
+  }
+  return results
+}
+
+function ebayTradingXmlDirectChildValue(xml: string, tag: string) {
+  const value = ebayTradingXmlDirectChildContainers(xml, tag)[0]
+  if (value === undefined) return null
+  const normalized = decodeXml(value.replace(/<[^>]*>/g, " "))
+    .replace(/\s+/g, " ")
+    .trim()
+  return normalized || null
+}
+
 function ebayTradingXmlAttribute(xml: string, tag: string, attribute: string) {
   const escaped = escapedTag(tag)
   const escapedAttribute = escapedTag(attribute)
@@ -223,6 +344,13 @@ function safeIdentifier(value: string | null, maximum = 120) {
 
 function safeLabel(value: string | null, maximum = 120) {
   return safeText(value, maximum)
+}
+
+function ebayTradingMarketplaceSite(value: string | null) {
+  const normalized = safeLabel(value, 30)?.toUpperCase() ?? null
+  return normalized && EBAY_TRADING_MARKETPLACE_SITES.has(normalized)
+    ? normalized
+    : null
 }
 
 function safeIso(value: string | null) {
@@ -272,7 +400,10 @@ function variationIdentity(container: string) {
 }
 
 function itemListings(item: string, observedAt: string): EbayLiveListing[] {
-  const itemId = ebayTradingXmlValue(item, "ItemID")
+  const itemIds = ebayTradingXmlDirectChildContainers(item, "ItemID")
+  const itemId = itemIds.length === 1
+    ? ebayTradingXmlDirectChildValue(item, "ItemID")
+    : null
   if (!itemId || !/^\d{9,20}$/.test(itemId)) return []
   const selling = ebayTradingXmlContainers(item, "SellingStatus")[0] ?? ""
   const details = ebayTradingXmlContainers(item, "ListingDetails")[0] ?? ""
@@ -307,6 +438,12 @@ function itemListings(item: string, observedAt: string): EbayLiveListing[] {
     const sku = safeLabel(
       ebayTradingXmlValue(variation ?? item, "SKU"),
     )
+    const sites = ebayTradingXmlDirectChildContainers(item, "Site")
+    const marketplaceSite = sites.length === 1
+      ? ebayTradingMarketplaceSite(
+          ebayTradingXmlDirectChildValue(item, "Site"),
+        )
+      : null
     return {
       itemId,
       sku,
@@ -329,10 +466,24 @@ function itemListings(item: string, observedAt: string): EbayLiveListing[] {
             3,
           )?.toUpperCase() ?? null
         : itemCurrency,
-      marketplaceSite: safeLabel(
-        ebayTradingXmlValue(item, "Site"),
-        20,
-      )?.toUpperCase() ?? null,
+      marketplaceSite,
+      marketplaceCertification: marketplaceSite === "US"
+        ? {
+            status: "US_CERTIFIED",
+            source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
+            observedAt,
+          }
+        : marketplaceSite
+          ? {
+              status: "NON_US_CERTIFIED",
+              source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
+              observedAt,
+            }
+          : {
+              status: "UNRESOLVED",
+              source: null,
+              observedAt: null,
+            },
       identityAmbiguous: false,
       source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
       observedAt,
@@ -360,15 +511,85 @@ function itemListings(item: string, observedAt: string): EbayLiveListing[] {
 }
 
 export function parseEbayTradingGetUser(xml: string) {
-  const ack = ebayTradingXmlValue(xml, "Ack")?.toUpperCase() ?? null
-  const userContainer = ebayTradingXmlContainers(xml, "User")[0] ?? ""
-  const userId = safeText(ebayTradingXmlValue(userContainer, "UserID"), 200)
-  const site = safeLabel(ebayTradingXmlValue(userContainer, "Site"), 20)
-    ?.toUpperCase() ?? null
+  const responses = ebayTradingXmlContainers(xml, "GetUserResponse")
+  const response = responses.length === 1 ? responses[0] : ""
+  const acknowledgements = ebayTradingXmlDirectChildContainers(response, "Ack")
+  const ack = acknowledgements.length === 1
+    ? ebayTradingXmlDirectChildValue(response, "Ack")?.toUpperCase() ?? null
+    : null
+  const users = ebayTradingXmlDirectChildContainers(response, "User")
+  const userContainer = users.length === 1 ? users[0] : ""
+  const userIds = ebayTradingXmlDirectChildContainers(userContainer, "UserID")
+  const userId = userIds.length === 1
+    ? safeText(ebayTradingXmlDirectChildValue(userContainer, "UserID"), 200)
+    : null
+  const sites = ebayTradingXmlDirectChildContainers(userContainer, "Site")
+  const site = sites.length === 1
+    ? ebayTradingMarketplaceSite(
+        ebayTradingXmlDirectChildValue(userContainer, "Site"),
+      )
+    : null
+  const siteValid = sites.length === 0 ||
+    (sites.length === 1 && site !== null)
   return {
-    accepted: ack === "SUCCESS" && Boolean(userId),
+    accepted: responses.length === 1 && ack === "SUCCESS" &&
+      users.length === 1 && Boolean(userId) && siteValid,
     userId,
     site,
+  }
+}
+
+export function parseEbayTradingGetItemMarketplace(
+  xml: string,
+  expectedItemId: string,
+) {
+  const responses = ebayTradingXmlContainers(xml, "GetItemResponse")
+  const response = responses.length === 1 ? responses[0] : ""
+  const acknowledgements = ebayTradingXmlDirectChildContainers(response, "Ack")
+  const ack = acknowledgements.length === 1
+    ? ebayTradingXmlDirectChildValue(response, "Ack")?.toUpperCase() ?? null
+    : null
+  if (responses.length !== 1 || ack !== "SUCCESS") {
+    return {
+      status: "ERROR" as const,
+      itemId: null,
+      marketplaceSite: null,
+    }
+  }
+  const items = ebayTradingXmlDirectChildContainers(response, "Item")
+  if (items.length !== 1) {
+    return {
+      status: "ERROR" as const,
+      itemId: null,
+      marketplaceSite: null,
+    }
+  }
+  const item = items[0]
+  const itemIds = ebayTradingXmlDirectChildContainers(item, "ItemID")
+  const itemId = itemIds.length === 1
+    ? ebayTradingXmlDirectChildValue(item, "ItemID")
+    : null
+  if (itemId !== expectedItemId) {
+    return {
+      status: "ITEM_ID_MISMATCH" as const,
+      itemId,
+      marketplaceSite: null,
+    }
+  }
+  const sites = ebayTradingXmlDirectChildContainers(item, "Site")
+  const marketplaceSite = sites.length === 1
+    ? ebayTradingMarketplaceSite(
+        ebayTradingXmlDirectChildValue(item, "Site"),
+      )
+    : null
+  return {
+    status: marketplaceSite === "US"
+      ? "US_CERTIFIED" as const
+      : marketplaceSite
+        ? "NON_US_CERTIFIED" as const
+        : "UNRESOLVED" as const,
+    itemId,
+    marketplaceSite,
   }
 }
 
@@ -376,34 +597,85 @@ export function parseEbayTradingGetMyeBaySellingPage(
   xml: string,
   observedAt: string,
 ): ParsedGetMyeBaySellingPage {
-  const ack = ebayTradingXmlValue(xml, "Ack")?.toUpperCase() ?? null
-  const activeList = ebayTradingXmlContainers(xml, "ActiveList")[0] ?? ""
-  const pagination = ebayTradingXmlContainers(
+  const responses = ebayTradingXmlContainers(xml, "GetMyeBaySellingResponse")
+  const response = responses.length === 1 ? responses[0] : ""
+  const acknowledgements = ebayTradingXmlDirectChildContainers(response, "Ack")
+  const ack = acknowledgements.length === 1
+    ? ebayTradingXmlDirectChildValue(response, "Ack")?.toUpperCase() ?? null
+    : null
+  const activeLists = ebayTradingXmlDirectChildContainers(
+    response,
+    "ActiveList",
+  )
+  const activeList = activeLists.length === 1 ? activeLists[0] : ""
+  const paginations = ebayTradingXmlDirectChildContainers(
     activeList,
     "PaginationResult",
-  )[0] ?? ""
-  const totalEntries = nonNegativeInteger(
-    ebayTradingXmlValue(pagination, "TotalNumberOfEntries"),
   )
-  const totalPages = nonNegativeInteger(
-    ebayTradingXmlValue(pagination, "TotalNumberOfPages"),
+  const pagination = paginations.length === 1 ? paginations[0] : ""
+  const totalEntryFields = ebayTradingXmlDirectChildContainers(
+    pagination,
+    "TotalNumberOfEntries",
   )
-  const hasMoreText = ebayTradingXmlValue(activeList, "HasMoreItems")
-    ?.toLowerCase()
+  const totalPageFields = ebayTradingXmlDirectChildContainers(
+    pagination,
+    "TotalNumberOfPages",
+  )
+  const totalEntries = totalEntryFields.length === 1
+    ? nonNegativeInteger(ebayTradingXmlDirectChildValue(
+        pagination,
+        "TotalNumberOfEntries",
+      ))
+    : null
+  const totalPages = totalPageFields.length === 1
+    ? nonNegativeInteger(ebayTradingXmlDirectChildValue(
+        pagination,
+        "TotalNumberOfPages",
+      ))
+    : null
+  const hasMoreFields = ebayTradingXmlDirectChildContainers(
+    activeList,
+    "HasMoreItems",
+  )
+  const hasMoreText = hasMoreFields.length === 1
+    ? ebayTradingXmlDirectChildValue(activeList, "HasMoreItems")?.toLowerCase()
+    : null
   const hasMoreItems = hasMoreText === "true"
     ? true
     : hasMoreText === "false"
       ? false
       : null
-  const itemArray = ebayTradingXmlContainers(activeList, "ItemArray")[0] ?? ""
-  const listings = ebayTradingXmlContainers(itemArray, "Item")
+  const itemArrays = ebayTradingXmlDirectChildContainers(activeList, "ItemArray")
+  const itemArray = itemArrays.length === 1 ? itemArrays[0] : ""
+  const items = ebayTradingXmlDirectChildContainers(itemArray, "Item")
+  const sourceIdentityConflict = itemArrays.length > 1 || items.some((item) => {
+    const itemIds = ebayTradingXmlDirectChildContainers(item, "ItemID")
+    const sites = ebayTradingXmlDirectChildContainers(item, "Site")
+    return itemIds.length !== 1 ||
+      !/^\d{9,20}$/.test(
+        ebayTradingXmlDirectChildValue(item, "ItemID") ?? "",
+      ) ||
+      sites.length > 1 ||
+      (sites.length === 1 && ebayTradingMarketplaceSite(
+        ebayTradingXmlDirectChildValue(item, "Site"),
+      ) === null)
+  })
+  const paginationMetadataConflict = responses.length !== 1 ||
+    acknowledgements.length !== 1 || activeLists.length !== 1 ||
+    paginations.length > 1 || totalEntryFields.length > 1 ||
+    totalPageFields.length > 1 || hasMoreFields.length > 1 ||
+    (hasMoreFields.length === 1 && hasMoreItems === null)
+  const listings = items
     .flatMap((item) => itemListings(item, observedAt))
   return {
-    accepted: ack === "SUCCESS",
+    accepted: responses.length === 1 && ack === "SUCCESS" &&
+      activeLists.length === 1,
     totalEntries,
     totalPages,
     hasMoreItems,
     listings,
+    sourceIdentityConflict,
+    paginationMetadataConflict,
   }
 }
 

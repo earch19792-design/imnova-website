@@ -998,6 +998,21 @@ export type CommercialListingIdentity = {
   mpn: string | null
   listedQuantity: number | null
   currency: string | null
+  marketplaceCertification:
+    | {
+        status: "US_CERTIFIED"
+        source:
+          | "EBAY_TRADING_GET_MY_EBAY_SELLING"
+          | "EBAY_TRADING_GET_ITEM"
+        observedAt: string
+        grain: "ITEM"
+      }
+    | {
+        status: "UNPROVEN"
+        source: null
+        observedAt: null
+        grain: "ITEM"
+      }
   source: string
   lastObservedAt: string | null
   freshness: EvidenceFreshness
@@ -1062,6 +1077,15 @@ export type EbayLiveCertificationReadModel = {
     pagesRead: number
     totalPages: number | null
     totalEntries: number | null
+    sellerWideItemsReported: number | null
+    sellerWideItemsParsed: number | null
+    sellerWideItemsMarketplaceCertifiedUs: number | null
+    sellerWideItemsMarketplaceCertifiedNonUs: number | null
+    sellerWideItemsMarketplaceUnresolved: number | null
+    sellerWideItemsMarketplaceError: number | null
+    sellerWideItemsMarketplaceBudgetExhausted: number | null
+    sellerWideItemsMarketplaceItemIdMismatch: number | null
+    sellerWideItemsRepresented: number | null
     representedItemCount: number | null
     variationRowCount: number | null
     gapCodes: string[]
