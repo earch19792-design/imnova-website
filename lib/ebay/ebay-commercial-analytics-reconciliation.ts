@@ -8,11 +8,10 @@ import {
   calculateSellerHubCtr,
   classifySellerHubComparison,
   closedEbayAnalyticsWindow,
+  normalizeEbayTrafficListingDimension,
   type ComparableEbayTrafficAnalytics,
   type SellerHubEvidence,
 } from "./ebay-commercial-analytics-domain"
-
-export const EBAY_COMMERCIAL_PILOT_LISTING_ID = "366543596425"
 
 function completeMetricTotal(report: EbaySellerTrafficDashboard, metric: string) {
   if (!report.rows.length) return null
@@ -114,22 +113,57 @@ function sanitizedReportAudit(report: ComparableEbayTrafficAnalytics) {
   }
 }
 
+function validSellerHubEvidence(
+  value: SellerHubEvidence | undefined,
+): value is SellerHubEvidence {
+  return Boolean(
+    value &&
+    ["LISTING", "ACCOUNT", "UNKNOWN"].includes(value.scope) &&
+    [value.impressions, value.views, value.transactions, value.ctr]
+      .every((metric) =>
+        typeof metric === "number" && Number.isFinite(metric) && metric >= 0
+      ),
+  )
+}
+
+function unavailableComparison(reason: "LISTING_ID" | "SELLER_HUB_EVIDENCE") {
+  return {
+    classification: "INSUFFICIENT_EVIDENCE" as const,
+    explanation: reason === "LISTING_ID"
+      ? "El Item ID para la comparación está MISSING / UNAVAILABLE."
+      : "La evidencia manual de Seller Hub está MISSING / UNAVAILABLE. No se sustituyó con métricas sintéticas.",
+    sellerHubEvidence: null,
+    operational: null,
+    comparison: null,
+    accountDiagnostic: null,
+    safety: {
+      persistencePerformed: false,
+      commercialRulesEvaluated: false,
+      alertsGenerated: 0,
+      fulfillmentTasksCreated: 0,
+      whatsappDelivered: 0,
+      ebayWrites: 0,
+      officialAnalyticsCalls: 0,
+      syntheticFallbackUsed: false,
+      rawPayloadReturned: false,
+      buyerPiiReturned: false,
+    },
+  }
+}
+
 export async function compareEbayCommercialAnalyticsWithSellerHub(input: {
   listingId?: string
   now?: Date
   evidence?: SellerHubEvidence
 }) {
-  const listingId = input.listingId ?? EBAY_COMMERCIAL_PILOT_LISTING_ID
-  if (listingId !== EBAY_COMMERCIAL_PILOT_LISTING_ID) {
-    throw new Error("EBAY_ANALYTICS_COMPARISON_LISTING_NOT_ALLOWED")
+  const listingId = normalizeEbayTrafficListingDimension(
+    input.listingId?.trim() ?? "",
+  )
+  if (!listingId) return unavailableComparison("LISTING_ID")
+  if (!validSellerHubEvidence(input.evidence)) {
+    return unavailableComparison("SELLER_HUB_EVIDENCE")
   }
-  const evidence = input.evidence ?? {
-    impressions: 18,
-    views: 1,
-    transactions: 0,
-    ctr: 5.6,
-    scope: "LISTING" as const,
-  }
+  const evidence = input.evidence
   const now = input.now ?? new Date()
   const operationalWindow = closedEbayAnalyticsWindow(now, 7)
   const comparisonWindow = closedEbayAnalyticsWindow(now, 90)
@@ -189,6 +223,8 @@ export async function compareEbayCommercialAnalyticsWithSellerHub(input: {
       fulfillmentTasksCreated: 0,
       whatsappDelivered: 0,
       ebayWrites: 0,
+      officialAnalyticsCalls: 3,
+      syntheticFallbackUsed: false,
       rawPayloadReturned: false,
       buyerPiiReturned: false,
     },

@@ -14,6 +14,8 @@ import {
   updateCommercialThresholds,
   type CommercialMonitorLane,
 } from "@/lib/ebay/ebay-commercial-monitor-service"
+import type { SellerHubEvidence } from
+  "@/lib/ebay/ebay-commercial-analytics-domain"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { getEbayCommercialOAuthPreflight } from "@/lib/ebay/ebay-commercial-oauth"
 import {
@@ -88,6 +90,27 @@ function uuid(value: unknown) {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
     ? value
     : null
+}
+
+function explicitSellerHubEvidence(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined
+  }
+  const candidate = value as Record<string, unknown>
+  if (!["LISTING", "ACCOUNT", "UNKNOWN"].includes(
+      typeof candidate.scope === "string" ? candidate.scope : "",
+    ) || ![candidate.impressions, candidate.views, candidate.transactions,
+      candidate.ctr].every((metric) =>
+        typeof metric === "number" && Number.isFinite(metric) && metric >= 0)) {
+    return undefined
+  }
+  return {
+    scope: candidate.scope,
+    impressions: candidate.impressions,
+    views: candidate.views,
+    transactions: candidate.transactions,
+    ctr: candidate.ctr,
+  } as SellerHubEvidence
 }
 
 export async function GET(req: Request) {
@@ -191,7 +214,10 @@ export async function POST(req: Request) {
         success: true,
         action: "compare_seller_hub",
         comparison: await compareEbayCommercialAnalyticsWithSellerHub({
-          listingId: "366543596425",
+          listingId: typeof input.listingId === "string"
+            ? input.listingId
+            : undefined,
+          evidence: explicitSellerHubEvidence(input.evidence),
         }),
       })
     }

@@ -1738,7 +1738,10 @@ async function persistSnapshotsAndRules(input: {
         previous_watchers: previous?.currentWatchers ?? null,
         delta_watchers: snapshot.currentWatchers === null
           ? null
-          : snapshot.currentWatchers - (previous?.currentWatchers ?? 0),
+          : previous?.currentWatchers === null ||
+              previous?.currentWatchers === undefined
+            ? null
+            : snapshot.currentWatchers - previous.currentWatchers,
         stock_available: snapshot.stockAvailable,
         supplier_cost: snapshot.supplierCost,
         estimated_margin_percent: snapshot.estimatedMarginPercent,
@@ -1754,6 +1757,7 @@ async function persistSnapshotsAndRules(input: {
             : null,
           analyticsRulesSuspended: input.analyticsRulesSuspendedListingIds.has(snapshot.listingId),
           watchers: watcher?.source ?? null,
+          watchersValueAvailable: watcher?.watchCountStatus === "AVAILABLE",
           stock: supplyFresh
             ? "LUNA_PORTEX_MARKET_RADAR_LATEST_VARIANT"
             : supply

@@ -341,7 +341,10 @@ async function watcherRead(
         listingStatus,
         currentPrice,
         currency,
-        currentWatchers: count === null ? 0 : Math.max(0, Math.trunc(count)),
+        currentWatchers: count === null ? null : Math.max(0, Math.trunc(count)),
+        watchCountStatus: count === null
+          ? "UNAVAILABLE" as const
+          : "AVAILABLE" as const,
         source: "EBAY_TRADING_GET_ITEM_WATCHCOUNT" as const,
         observedAt: new Date().toISOString(),
       }
