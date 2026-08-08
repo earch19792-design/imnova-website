@@ -437,6 +437,11 @@ test("environment preflight returns enums only and never values", () => {
   assert.equal(statuses.EBAY_SELLER_REFRESH_TOKEN, "SCOPE_NOT_VERIFIED")
   assert.equal(JSON.stringify(statuses).includes("super-secret-value"), false)
   assert.equal(JSON.stringify(statuses).includes("refresh-secret-value"), false)
+
+  const legacyAccountStatus = getEbaySellerOsEnvironmentPreflight({
+    EBAY_SELLER_ACCOUNT_KEY: "official:UNTRUSTED-LEGACY-SUFFIX",
+  }).EBAY_SELLER_ACCOUNT_KEY
+  assert.equal(legacyAccountStatus, "PRESENT")
 })
 
 test("WhatsApp and Production draft writes remain off by default", () => withEnvironment({

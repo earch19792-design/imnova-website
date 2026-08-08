@@ -13,6 +13,21 @@ export function ebayProductionAccountFingerprint(userId: string) {
     .digest("hex")
 }
 
+/**
+ * Older Seller OS Preview configuration stored the already-scoped value as
+ * `alias:fingerprint`. Only the alias is configuration input here; the trusted
+ * fingerprint is always recomputed from the separate official identity
+ * binding below.
+ */
+export function normalizeEbaySellerAccountAlias(
+  raw: string | undefined | null,
+) {
+  const normalized = (raw ?? "").trim()
+  if (!normalized) return ""
+  if (!normalized.includes(":")) return normalized
+  return normalized.split(":")[0]?.trim() ?? ""
+}
+
 export function getEbayProductionIdentityBindingConfiguration(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
@@ -61,7 +76,9 @@ export function getEbayProductionIdentityBindingConfiguration(
 export function getEbaySellerAccountScopeConfiguration(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
-  const accountAlias = environment.EBAY_SELLER_ACCOUNT_KEY?.trim() ?? ""
+  const accountAlias = normalizeEbaySellerAccountAlias(
+    environment.EBAY_SELLER_ACCOUNT_KEY,
+  )
   const identity = getEbayProductionIdentityBindingConfiguration(environment)
   const aliasValid = /^[A-Za-z0-9._-]{1,80}$/.test(accountAlias)
   const reason = !accountAlias

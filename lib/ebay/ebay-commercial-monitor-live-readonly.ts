@@ -18,6 +18,7 @@ import {
 import {
   ebayProductionAccountFingerprint,
   getEbayProductionIdentityBindingConfiguration,
+  normalizeEbaySellerAccountAlias,
 } from "./ebay-seller-account-scope"
 import {
   buildEbaySellerTrafficReportUrl,
@@ -1653,7 +1654,9 @@ export function getEbayCommercialMonitorLiveConfigurationState(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const credentials = generalCredentials(environment)
-  const accountAlias = environment.EBAY_SELLER_ACCOUNT_KEY?.trim() ?? ""
+  const accountAlias = normalizeEbaySellerAccountAlias(
+    environment.EBAY_SELLER_ACCOUNT_KEY,
+  )
   const accountAliasValid = /^[A-Za-z0-9._-]{1,80}$/.test(accountAlias)
   const identity = getEbayProductionIdentityBindingConfiguration(environment)
   return {

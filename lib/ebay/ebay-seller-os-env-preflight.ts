@@ -65,6 +65,13 @@ function value(environment: Environment, name: SellerOsVariableName) {
   return environment[name]?.trim() ?? ""
 }
 
+function normalizeSellerAccountAlias(valueToCheck: string) {
+  const normalized = valueToCheck.trim()
+  if (!normalized) return ""
+  if (!normalized.includes(":")) return normalized
+  return normalized.split(":")[0]?.trim() ?? ""
+}
+
 function basic(valueToCheck: string): SellerOsVariableStatus {
   if (!valueToCheck) return "MISSING"
   return /[\u0000-\u001f\u007f]/.test(valueToCheck)
@@ -140,9 +147,12 @@ export function getEbaySellerOsEnvironmentPreflight(
         ? "MISSING"
         : current.length >= 32 ? "PRESENT" : "INVALID_FORMAT"
     } else if (name === "EBAY_SELLER_ACCOUNT_KEY") {
-      statuses[name] = !current
+      const accountAlias = normalizeSellerAccountAlias(current)
+      statuses[name] = !accountAlias
         ? "MISSING"
-        : /^[A-Za-z0-9._-]{1,80}$/.test(current) ? "PRESENT" : "INVALID_FORMAT"
+        : /^[A-Za-z0-9._-]{1,80}$/.test(accountAlias)
+          ? "PRESENT"
+          : "INVALID_FORMAT"
     } else if (name === "EBAY_DRAFT_ONLY_TARGET") {
       statuses[name] = !current
         ? "MISSING"
