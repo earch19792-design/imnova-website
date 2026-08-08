@@ -30,6 +30,7 @@ import {
   type DiscoveryCoverage,
   type EvidenceFreshness,
   type EvidenceReference,
+  type EbayLiveCertificationReadModel,
   type InformationalNextAction,
   type ListingEvidenceIdentity,
   type ListingOfferType,
@@ -42,6 +43,10 @@ import {
   type SupplyEvidence,
   type TimelineEntry,
 } from "./commercial-monitor-readonly-contract"
+import {
+  hashEbayMonitorEvidenceIdentifier,
+  type EbayCommercialMonitorLiveReadonlyResult,
+} from "./ebay-commercial-monitor-live-readonly"
 import {
   readCommercialMonitorReadonlySources,
   type CommercialMonitorReadonlySources,
@@ -74,6 +79,7 @@ type ListingProjectionInput = {
   row: ReadonlyRegistryListingRow | null
   itemId: string
   ebaySku: string | null
+  variationKey: string | null
   registryObservations: Array<{
     source: string
     listingStatus: string
@@ -115,7 +121,8 @@ function object(value: unknown): Record<string, unknown> {
 }
 
 function numeric(value: unknown) {
-  if (value === null || value === undefined || value === "") return null
+  if (typeof value !== "number" && typeof value !== "string") return null
+  if (typeof value === "string" && !value.trim()) return null
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
 }
@@ -219,6 +226,7 @@ function explicitListingFields(row: ReadonlyRegistryListingRow | null) {
     : null
   return {
     variationKey,
+    durableLinkageConflict: raw.durableLinkageConflict === true,
     customLabel: firstExplicitText(
       sources,
       ["customLabel", "CustomLabel", "sellerInventoryReference"],
@@ -284,8 +292,12 @@ export function metricFromSnapshot(input: {
       limitationCode: "COMMERCIAL_SNAPSHOT_NOT_AVAILABLE",
     })
   }
+  const metadata = object(snapshot.source)
+  const metricCapturedAt = metadata.liveReadOnlyProjection === true
+    ? validIso(metadata.sourceUpdatedAt) ?? snapshot.observed_at
+    : snapshot.observed_at
   const metricFreshness = freshness(
-    snapshot.observed_at,
+    metricCapturedAt,
     input.now,
     METRIC_MAXIMUM_AGE_SECONDS,
   )
@@ -300,7 +312,6 @@ export function metricFromSnapshot(input: {
       } satisfies ReportingWindow
     : null
   const value = nonNegativeNumber(input.value)
-  const metadata = object(snapshot.source)
   const analyticsEnvelope = classifyStoredAnalyticsEvidence({
     sourceAnalytics: metadata.analytics,
     syntheticFallbackUsed: metadata.syntheticFallbackUsed,
@@ -317,7 +328,7 @@ export function metricFromSnapshot(input: {
     return unavailableObservation<number>({
       availability: "INSUFFICIENT_EVIDENCE",
       source,
-      capturedAt: snapshot.observed_at,
+      capturedAt: metricCapturedAt,
       marketplace: input.marketplace,
       identity: itemIdentity,
       grain: "ITEM",
@@ -340,7 +351,7 @@ export function metricFromSnapshot(input: {
         availability: "PARTIAL",
         completeness: "PARTIAL",
         source,
-        capturedAt: snapshot.observed_at,
+        capturedAt: metricCapturedAt,
         marketplace: input.marketplace,
         identity: itemIdentity,
         grain: "ITEM",
@@ -351,7 +362,7 @@ export function metricFromSnapshot(input: {
     }
     return unavailableObservation<number>({
       source,
-      capturedAt: snapshot.observed_at,
+      capturedAt: metricCapturedAt,
       marketplace: input.marketplace,
       identity: itemIdentity,
       grain: "ITEM",
@@ -369,14 +380,19 @@ export function metricFromSnapshot(input: {
       ? "PARTIAL"
       : state.completeness,
     source,
-    capturedAt: snapshot.observed_at,
+    capturedAt: metricCapturedAt,
     marketplace: input.marketplace,
     identity: itemIdentity,
     grain: "ITEM",
     reportingWindow,
-    unit: input.key.includes("RATE") || input.key.includes("CTR")
+    unit: input.key === "CALCULATED_CTR"
       ? "PERCENT"
-      : "COUNT",
+      : input.key.includes("RATE") || input.key.includes("CTR")
+        ? metadata.liveReadOnlyProjection === true &&
+          metadata.reportedRateUnit === "EBAY_API_RATE_RAW"
+          ? "EBAY_API_RATE_RAW"
+          : "PERCENT"
+        : "COUNT",
     freshness: metricFreshness,
     limitationCode: metadata.analyticsRulesSuspended === true
       ? "ANALYTICS_SOURCE_DIVERGENCE"
@@ -384,6 +400,141 @@ export function metricFromSnapshot(input: {
         ? "PARTIAL_REPORTING_WINDOW"
         : null,
     explicitAuthoritativeZero: value === 0,
+  })
+}
+
+function calculatedLiveCtr(input: {
+  snapshot: ReadonlyCommercialSnapshotRow | null
+  marketplace: MarketplaceContext
+  identity: ListingEvidenceIdentity
+  now: Date
+}) : Observation<number> {
+  const metadata = object(input.snapshot?.source)
+  const numerator = nonNegativeNumber(metadata.calculatedCtrNumerator)
+  const denominator = nonNegativeNumber(metadata.calculatedCtrDenominator)
+  const calculated = nonNegativeNumber(metadata.calculatedCtr)
+  const itemIdentity = {
+    itemId: input.identity.itemId,
+    variationKey: null,
+    sku: null,
+  } satisfies ListingEvidenceIdentity
+  if (!input.snapshot || metadata.liveReadOnlyProjection !== true ||
+      metadata.calculatedCtrApplicable !== true || calculated === null ||
+      numerator === null || denominator === null || denominator <= 0) {
+    return unavailableMetric({
+      key: "ctr_calculated",
+      marketplace: input.marketplace,
+      identity: itemIdentity,
+      availability: "INSUFFICIENT_EVIDENCE",
+      limitationCode: "CTR_COMPATIBLE_INPUTS_UNAVAILABLE",
+    })
+  }
+  const projected = metricFromSnapshot({
+    snapshot: input.snapshot,
+    value: calculated,
+    key: "CALCULATED_CTR",
+    marketplace: input.marketplace,
+    identity: itemIdentity,
+    now: input.now,
+  })
+  if (projected.value === null || !projected.capturedAt) return projected
+  const baseReference = `LISTING_COMMERCIAL_SNAPSHOT:${input.snapshot.id}`
+  const numeratorReference = `${baseReference}:SEARCH_RESULT_VIEWS`
+  const denominatorReference = `${baseReference}:SEARCH_RESULT_IMPRESSIONS`
+  return createCalculatedNumericObservation(projected, {
+    formula: "LISTING_VIEWS_SOURCE_SEARCH_RESULTS_PAGE / LISTING_IMPRESSION_SEARCH_RESULTS_PAGE * 100",
+    version: "EBAY_ANALYTICS_COMPATIBLE_CTR_V1",
+    inputEvidenceReferences: [numeratorReference, denominatorReference],
+    inputs: [
+      {
+        name: "search_result_views",
+        value: numerator,
+        unit: "COUNT",
+        source: observationSource(
+          "EBAY_SELL_ANALYTICS",
+          "LISTING_VIEWS_SOURCE_SEARCH_RESULTS_PAGE",
+          numeratorReference,
+        ) as ObservationSource & { evidenceReference: string },
+        capturedAt: projected.capturedAt,
+      },
+      {
+        name: "search_result_impressions",
+        value: denominator,
+        unit: "COUNT",
+        source: observationSource(
+          "EBAY_SELL_ANALYTICS",
+          "LISTING_IMPRESSION_SEARCH_RESULTS_PAGE",
+          denominatorReference,
+        ) as ObservationSource & { evidenceReference: string },
+        capturedAt: projected.capturedAt,
+      },
+    ],
+  })
+}
+
+function calculatedOnEbayViews(input: {
+  snapshot: ReadonlyCommercialSnapshotRow | null
+  marketplace: MarketplaceContext
+  identity: ListingEvidenceIdentity
+  now: Date
+}) : Observation<number> {
+  const metadata = object(input.snapshot?.source)
+  const totalViews = nonNegativeNumber(input.snapshot?.views)
+  const externalViews = nonNegativeNumber(metadata.externalViews)
+  const itemIdentity = {
+    itemId: input.identity.itemId,
+    variationKey: null,
+    sku: null,
+  } satisfies ListingEvidenceIdentity
+  if (!input.snapshot || metadata.liveReadOnlyProjection !== true ||
+      metadata.totalListingViewsApplicable !== true ||
+      metadata.externalViewsApplicable !== true || totalViews === null ||
+      externalViews === null || externalViews > totalViews) {
+    return unavailableMetric({
+      key: "ebay_views",
+      marketplace: input.marketplace,
+      identity: itemIdentity,
+      availability: "INSUFFICIENT_EVIDENCE",
+      limitationCode: "ON_EBAY_VIEW_INPUTS_UNAVAILABLE",
+    })
+  }
+  const projected = metricFromSnapshot({
+    snapshot: input.snapshot,
+    value: totalViews - externalViews,
+    key: "CALCULATED_ON_EBAY_VIEWS",
+    marketplace: input.marketplace,
+    identity: itemIdentity,
+    now: input.now,
+  })
+  if (projected.value === null || !projected.capturedAt) return projected
+  const baseReference = `LISTING_COMMERCIAL_SNAPSHOT:${input.snapshot.id}`
+  const totalReference = `${baseReference}:LISTING_VIEWS_TOTAL`
+  const externalReference = `${baseReference}:LISTING_VIEWS_SOURCE_OFF_EBAY`
+  return createCalculatedNumericObservation(projected, {
+    formula: "LISTING_VIEWS_TOTAL - LISTING_VIEWS_SOURCE_OFF_EBAY",
+    version: "EBAY_ANALYTICS_ON_EBAY_VIEWS_V1",
+    inputEvidenceReferences: [totalReference, externalReference],
+    inputs: [{
+      name: "total_listing_views",
+      value: totalViews,
+      unit: "COUNT",
+      source: observationSource(
+        "EBAY_SELL_ANALYTICS",
+        "LISTING_VIEWS_TOTAL",
+        totalReference,
+      ) as ObservationSource & { evidenceReference: string },
+      capturedAt: projected.capturedAt,
+    }, {
+      name: "external_views",
+      value: externalViews,
+      unit: "COUNT",
+      source: observationSource(
+        "EBAY_SELL_ANALYTICS",
+        "LISTING_VIEWS_SOURCE_OFF_EBAY",
+        externalReference,
+      ) as ObservationSource & { evidenceReference: string },
+      capturedAt: projected.capturedAt,
+    }],
   })
 }
 
@@ -437,6 +588,7 @@ function listingPriceMetric(input: {
   const authoritativeSource = [
     "EBAY_SELL_INVENTORY_READONLY",
     "EBAY_TRADING_GET_ITEM_READONLY",
+    "EBAY_TRADING_GET_MY_EBAY_SELLING",
   ].includes(input.row.source)
   const capturedAt = validIso(input.row.last_ebay_sync_at)
   const priceFreshness = freshness(
@@ -539,6 +691,8 @@ function watcherMetric(input: {
 export function orderProjection(input: {
   itemId: string
   sku: string | null
+  itemIdentityCount?: number
+  itemSkuIdentityCount?: number
   ordersResult: ReadonlySourceResult<ReadonlyOrderRow>
   linesResult: ReadonlySourceResult<ReadonlyOrderLineRow>
   marketplace: MarketplaceContext
@@ -565,6 +719,27 @@ export function orderProjection(input: {
         : "OPEN_ORDER_WINDOW_DOES_NOT_PROVE_ZERO",
       grain: input.sku ? "VARIATION" : "ITEM",
     })
+  if ((input.itemIdentityCount ?? 1) > 1 &&
+      (!input.sku || (input.itemSkuIdentityCount ?? 1) > 1)) {
+    const ambiguous = (key: "orders" | "units_sold" | "revenue") =>
+      unavailableMetric({
+        key,
+        marketplace: input.marketplace,
+        identity: input.identity,
+        availability: "INSUFFICIENT_EVIDENCE",
+        limitationCode: "ORDER_ITEM_GRAIN_AMBIGUOUS_ACROSS_VARIATIONS",
+        grain: "ITEM",
+      })
+    return {
+      orders: ambiguous("orders"),
+      units: ambiguous("units_sold"),
+      revenue: ambiguous("revenue"),
+      matchingPaidOrderCount: 0,
+      stalePotentialOrderCount: 0,
+      untrustedEvidenceCount: 0,
+      evidenceReferences: [],
+    }
+  }
   if (input.ordersResult.status === "ERROR" || input.linesResult.status === "ERROR") {
     return {
       orders: unavailable("orders"),
@@ -833,47 +1008,64 @@ function buildMetrics(input: {
     value: input.snapshot?.impressions,
     key: "TOTAL_IMPRESSION_TOTAL",
   })
-  metrics.ebay_views = metricFromSnapshot({
-    ...input,
-    value: input.snapshot?.views,
-    key: "LISTING_VIEWS_TOTAL",
-  })
-  metrics.ctr_reported = unavailableMetric({
-    key: "ctr_reported",
-    marketplace: input.marketplace,
-    identity: itemMetricIdentity,
-    limitationCode: "CTR_REPORTED_ORIGIN_NOT_PERSISTED",
-    availability: "INSUFFICIENT_EVIDENCE",
-  })
+  metrics.ebay_views = calculatedOnEbayViews(input)
+  const snapshotMetadata = object(input.snapshot?.source)
+  metrics.ctr_reported = snapshotMetadata.liveReadOnlyProjection === true &&
+      snapshotMetadata.reportedCtrApplicable === true
+    ? metricFromSnapshot({
+        ...input,
+        value: input.snapshot?.ctr,
+        key: "CLICK_THROUGH_RATE",
+      })
+    : unavailableMetric({
+        key: "ctr_reported",
+        marketplace: input.marketplace,
+        identity: itemMetricIdentity,
+        limitationCode: "CTR_REPORTED_ORIGIN_NOT_PERSISTED",
+        availability: "INSUFFICIENT_EVIDENCE",
+      })
   metrics.transactions = metricFromSnapshot({
     ...input,
     value: input.snapshot?.transactions,
     key: "TRANSACTION",
   })
-  metrics.conversion = unavailableMetric({
-    key: "conversion",
-    marketplace: input.marketplace,
-    identity: itemMetricIdentity,
-    limitationCode: "CONVERSION_FORMULA_INPUTS_NOT_PERSISTED",
-    availability: "INSUFFICIENT_EVIDENCE",
-  })
+  metrics.conversion = snapshotMetadata.liveReadOnlyProjection === true &&
+      snapshotMetadata.reportedConversionApplicable === true
+    ? metricFromSnapshot({
+        ...input,
+        value: input.snapshot?.sales_conversion_rate,
+        key: "SALES_CONVERSION_RATE",
+      })
+    : unavailableMetric({
+        key: "conversion",
+        marketplace: input.marketplace,
+        identity: itemMetricIdentity,
+        limitationCode: "CONVERSION_FORMULA_INPUTS_NOT_PERSISTED",
+        availability: "INSUFFICIENT_EVIDENCE",
+      })
   metrics.watchers = watcherMetric(input)
   metrics.orders = input.orderProjection.orders
   metrics.units_sold = input.orderProjection.units
   metrics.revenue = input.orderProjection.revenue
   metrics.supplier_cost = input.stock.currentSupplierCost
-  metrics.external_views = unavailableMetric({
-    key: "external_views",
+  metrics.external_views = snapshotMetadata.liveReadOnlyProjection === true &&
+      snapshotMetadata.externalViewsApplicable === true
+    ? metricFromSnapshot({
+        ...input,
+        value: snapshotMetadata.externalViews,
+        key: "LISTING_VIEWS_SOURCE_OFF_EBAY",
+      })
+    : unavailableMetric({
+        key: "external_views",
+        marketplace: input.marketplace,
+        identity: itemMetricIdentity,
+        limitationCode: "EXTERNAL_VIEWS_READER_UNAVAILABLE",
+      })
+  metrics.ctr_calculated = calculatedLiveCtr({
+    snapshot: input.snapshot,
     marketplace: input.marketplace,
-    identity: itemMetricIdentity,
-    limitationCode: "EXTERNAL_VIEWS_READER_UNAVAILABLE",
-  })
-  metrics.ctr_calculated = unavailableMetric({
-    key: "ctr_calculated",
-    marketplace: input.marketplace,
-    identity: itemMetricIdentity,
-    limitationCode: "CTR_FORMULA_INPUTS_AND_ORIGIN_NOT_PERSISTED",
-    availability: "INSUFFICIENT_EVIDENCE",
+    identity: input.identity,
+    now: input.now,
   })
   for (const key of [
     "fees",
@@ -969,6 +1161,11 @@ function latestSnapshot(
 ) {
   const rows = sources.commercialSnapshots.rows
     .filter((row) => row.listing_id === itemId)
+  const liveItemRows = rows.filter((row) =>
+    row.sku === null && object(row.source).liveReadOnlyProjection === true)
+    .sort((left, right) =>
+      Date.parse(right.observed_at) - Date.parse(left.observed_at))
+  if (liveItemRows.length) return liveItemRows[0]
   const exact = rows.find((row) => Boolean(
     row.sku && (row.sku === ebaySku || row.sku === supplierSku)
   ))
@@ -1128,7 +1325,7 @@ function listingAlerts(input: {
     }))
   }
   const impressions = listing.metrics.impressions
-  const ctr = listing.metrics.ctr_reported
+  const ctr = listing.metrics.ctr_calculated
   if (impressions.availability === "AVAILABLE" &&
       impressions.completeness === "COMPLETE" &&
       impressions.freshness.status === "FRESH" &&
@@ -1136,9 +1333,12 @@ function listingAlerts(input: {
       ctr.availability === "AVAILABLE" &&
       ctr.completeness === "COMPLETE" &&
       ctr.freshness.status === "FRESH" &&
+      ctr.unit === "PERCENT" &&
       ctr.value !== null && ctr.value < 1.5) {
     alerts.push(createAlertCandidate({
       ...common,
+      variationKey: null,
+      sku: null,
       reasonCode: "HIGH_IMPRESSIONS_LOW_CTR_CHECKPOINT",
       severity: "MEDIUM",
       supportingEvidence: listing.evidenceReferences.filter((entry) =>
@@ -1189,6 +1389,7 @@ function projectListing(input: {
   marketplace: MarketplaceContext
   discoveryCoverage: DiscoveryCoverage
   itemIdentityCount: number
+  itemSkuIdentityCount: number
   accountScopeKey: string
   generatedAt: string
   now: Date
@@ -1198,7 +1399,7 @@ function projectListing(input: {
   const rawFields = explicitListingFields(row)
   const identityEvidence: ListingEvidenceIdentity = {
     itemId: listing.itemId,
-    variationKey: rawFields.variationKey,
+    variationKey: listing.variationKey ?? rawFields.variationKey,
     sku: listing.ebaySku,
   }
   const snapshot = latestSnapshot(
@@ -1241,6 +1442,8 @@ function projectListing(input: {
   const orders = orderProjection({
     itemId: listing.itemId,
     sku: listing.ebaySku,
+    itemIdentityCount: input.itemIdentityCount,
+    itemSkuIdentityCount: input.itemSkuIdentityCount,
     ordersResult: input.sources.orders,
     linesResult: input.sources.orderLines,
     marketplace: input.marketplace,
@@ -1271,7 +1474,9 @@ function projectListing(input: {
   if (snapshot) {
     listingEvidence.push(evidence(
       `LISTING_COMMERCIAL_SNAPSHOT:${snapshot.id}`,
-      "COMMERCIAL_SNAPSHOT_REGISTRY",
+      snapshot.id.startsWith("LIVE_ANALYTICS:")
+        ? "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT"
+        : "COMMERCIAL_SNAPSHOT_REGISTRY",
       snapshot.observed_at,
     ))
   }
@@ -1295,7 +1500,7 @@ function projectListing(input: {
     ),
   }))
   const issues: DataQualityIssue[] = [
-    issue({
+    ...(input.discoveryCoverage.status !== "COMPLETE" ? [issue({
       code: "LISTING_DISCOVERY_INCOMPLETE",
       domain: "DISCOVERY",
       severity: "MEDIUM",
@@ -1303,7 +1508,7 @@ function projectListing(input: {
       source: "EBAY_ACTIVE_LISTING_REGISTRY",
       evidenceReferences: listingEvidence.map((entry) => entry.reference),
       detectedAt: input.generatedAt,
-    }),
+    })] : []),
     issue({
       code: "COMPOSITION_UNPROVEN",
       domain: "COMPOSITION",
@@ -1412,7 +1617,7 @@ function projectListing(input: {
       detectedAt: input.generatedAt,
     }))
   }
-  if (rawFields.variationKey && [
+  if (identityEvidence.variationKey && [
     metrics.impressions,
     metrics.ebay_views,
     metrics.ctr_reported,
@@ -1423,6 +1628,17 @@ function projectListing(input: {
       severity: "MEDIUM",
       blocking: true,
       source: "EBAY_SELL_ANALYTICS",
+      detectedAt: input.generatedAt,
+    }))
+  }
+  if (metrics.orders.limitationCode ===
+      "ORDER_ITEM_GRAIN_AMBIGUOUS_ACROSS_VARIATIONS") {
+    issues.push(issue({
+      code: "METRIC_GRAIN_MISMATCH",
+      domain: "METRICS",
+      severity: "HIGH",
+      blocking: true,
+      source: "EBAY_SELL_FULFILLMENT",
       detectedAt: input.generatedAt,
     }))
   }
@@ -1482,6 +1698,19 @@ function projectListing(input: {
       blocking: true,
       source: "LUNA_PORTEX_MARKET_RADAR",
       evidenceReferences: stock.evidenceReferences.map((entry) => entry.reference),
+      detectedAt: input.generatedAt,
+    }))
+  }
+  if (rawFields.durableLinkageConflict &&
+      !issues.some((entry) => entry.code === "SUPPLIER_IDENTITY_CONFLICT")) {
+    issues.push(issue({
+      code: "SUPPLIER_IDENTITY_CONFLICT",
+      domain: "STOCK",
+      severity: "HIGH",
+      blocking: true,
+      source: "MANAGED_LISTING_REGISTRY",
+      evidenceReferences: listing.registryObservations.map((entry) =>
+        entry.evidenceReference),
       detectedAt: input.generatedAt,
     }))
   }
@@ -1546,7 +1775,7 @@ function projectListing(input: {
     identity: {
       marketplace: input.marketplace,
       itemId: listing.itemId,
-      variationKey: rawFields.variationKey,
+      variationKey: identityEvidence.variationKey,
       sku: sanitizeMonitorText(listing.ebaySku, 120),
       customLabel: rawFields.customLabel,
       supplierSku: sanitizeMonitorText(row?.supplier_sku, 120),
@@ -1609,7 +1838,374 @@ function readerStatus(
   }
 }
 
-function readerStatuses(sources: CommercialMonitorReadonlySources) {
+function liveEvidenceId(prefix: string, ...parts: Array<string | null>) {
+  return `${prefix}:${hashEbayMonitorEvidenceIdentifier(JSON.stringify(parts))}`
+}
+
+function exactConsistentStoredLink(
+  rows: ReadonlyRegistryListingRow[],
+  sku: string | null,
+  variationKey: string | null,
+) {
+  const sameSkuLinked = rows.filter((row) =>
+    row.ebay_sku === sku &&
+    (row.market_radar_product_id || row.supplier_variant_id ||
+      row.supplier_sku))
+  const candidates = sameSkuLinked.filter((row) =>
+    (row.ebay_variation_key ?? explicitListingFields(row).variationKey) ===
+      variationKey)
+  const linked = candidates.filter((row) =>
+    row.market_radar_product_id || row.supplier_variant_id || row.supplier_sku)
+  const tuples = new Map<string, ReadonlyRegistryListingRow[]>()
+  for (const row of linked) {
+    const key = JSON.stringify([
+      row.market_radar_product_id,
+      row.supplier_variant_id,
+      row.supplier_sku,
+    ])
+    const values = tuples.get(key) ?? []
+    values.push(row)
+    tuples.set(key, values)
+  }
+  if (tuples.size !== 1) {
+    return {
+      row: null,
+      conflicted: tuples.size > 1 || sameSkuLinked.length > 0,
+    }
+  }
+  const rowsForLink = [...tuples.values()][0]
+  return {
+    row: [...rowsForLink].sort((left, right) =>
+      Date.parse(right.updated_at) - Date.parse(left.updated_at))[0] ?? null,
+    conflicted: false,
+  }
+}
+
+function withLiveReadonlyEvidence(input: {
+  stored: CommercialMonitorReadonlySources
+  live: EbayCommercialMonitorLiveReadonlyResult
+  accountKey: string
+}) {
+  const { stored, live } = input
+  const liveRegistryRows: ReadonlyRegistryListingRow[] = live.discovery.listings
+    .map((listing) => {
+      const itemRows = stored.registry.rows.filter((row) =>
+        row.ebay_item_id === listing.itemId)
+      const link = listing.identityAmbiguous
+        ? { row: null, conflicted: true }
+        : exactConsistentStoredLink(
+            itemRows,
+            listing.sku,
+            listing.variationKey,
+          )
+      const linkedRow = link.row
+      return {
+      id: liveEvidenceId(
+        "LIVE_LISTING",
+        listing.itemId,
+        listing.variationKey,
+        listing.sku,
+        listing.observedAt,
+      ),
+      account_key: input.accountKey,
+      source: listing.source,
+      ebay_item_id: listing.itemId,
+      ebay_sku: listing.sku,
+      ebay_variation_key: listing.variationKey,
+      listing_status: "active",
+      title: listing.title ?? "",
+      ebay_quantity: listing.availableQuantity,
+      ebay_price: listing.price,
+      currency: listing.currency,
+      market_radar_product_id: linkedRow?.market_radar_product_id ?? null,
+      supplier_variant_id: linkedRow?.supplier_variant_id ?? null,
+      supplier_sku: linkedRow?.supplier_sku ?? null,
+      supplier_cost_at_linking: linkedRow?.supplier_cost_at_linking ?? null,
+      last_ebay_sync_at: listing.observedAt,
+      raw_payload: {
+        ...object(linkedRow?.raw_payload),
+        liveReadOnlyProjection: true,
+        variationKey: listing.variationKey,
+        customLabel: listing.customLabel,
+        listingFormat: listing.listingFormat,
+        startTime: listing.startTime,
+        marketplaceSite: listing.marketplaceSite,
+        identityAmbiguous: listing.identityAmbiguous,
+        durableLinkageConflict: link.conflicted,
+      },
+      sync_generation: null,
+      created_at: linkedRow?.created_at ?? listing.observedAt,
+      updated_at: linkedRow?.updated_at ?? listing.observedAt,
+      }
+    })
+  const liveIdentityRows: ReadonlyIdentityVerificationRow[] =
+    live.discovery.listings.map((listing) => ({
+      id: liveEvidenceId(
+        "LIVE_IDENTITY",
+        listing.itemId,
+        listing.variationKey,
+        listing.sku,
+        listing.observedAt,
+      ),
+      listing_id: listing.itemId,
+      expected_sku: listing.sku ?? "",
+      observed_listing_id: listing.itemId,
+      observed_sku: listing.sku,
+      variation_key: listing.variationKey,
+      observed_listing_status: "active",
+      item_id_matches: true,
+      sku_matches: true,
+      active_listing_confirmed: true,
+      source: listing.source,
+      error_code: null,
+      observed_at: listing.observedAt,
+    }))
+  const liveSnapshots: ReadonlyCommercialSnapshotRow[] =
+    live.analytics.observations.map((observation) => ({
+      id: liveEvidenceId(
+        "LIVE_ANALYTICS",
+        observation.itemId,
+        observation.windowStart,
+        observation.windowEnd,
+        observation.observedAt,
+      ),
+      listing_id: observation.itemId,
+      sku: null,
+      listing_status: "active",
+      impressions: observation.applicable.impressions
+        ? observation.impressions
+        : null,
+      views: observation.applicable.totalListingViews
+        ? observation.totalListingViews
+        : null,
+      ctr: observation.applicable.reportedCtr
+        ? observation.reportedCtr
+        : null,
+      transactions: observation.applicable.transactions
+        ? observation.transactions
+        : null,
+      sales_conversion_rate: observation.applicable.reportedConversion
+        ? observation.reportedConversion
+        : null,
+      revenue: null,
+      current_watchers: null,
+      stock_available: null,
+      supplier_cost: null,
+      estimated_margin_percent: null,
+      observed_at: observation.observedAt,
+      window_start: observation.windowStart,
+      window_end: observation.windowEnd,
+      source: {
+        analytics: observation.source,
+        liveReadOnlyProjection: true,
+        syntheticFallbackUsed: false,
+        fixtureEvidenceUsed: false,
+        freshnessStatus: observation.freshnessStatus,
+        lastUpdatedDate: observation.lastUpdatedDate,
+        collectedAt: observation.observedAt,
+        sourceUpdatedAt: observation.sourceUpdatedAt,
+        externalViews: observation.externalViews,
+        externalViewsApplicable: observation.applicable.externalViews,
+        totalListingViewsApplicable:
+          observation.applicable.totalListingViews,
+        reportedCtrApplicable: observation.applicable.reportedCtr,
+        reportedRateUnit: "EBAY_API_RATE_RAW",
+        calculatedCtr: observation.calculatedCtr,
+        calculatedCtrNumerator: observation.calculatedCtrNumerator,
+        calculatedCtrDenominator: observation.calculatedCtrDenominator,
+        calculatedCtrApplicable: observation.applicable.calculatedCtr,
+        reportedConversionApplicable:
+          observation.applicable.reportedConversion,
+      },
+      completeness_status: observation.completeness === "COMPLETE"
+        ? "complete"
+        : "incomplete",
+    }))
+  const liveOrderRows: ReadonlyOrderRow[] = live.orders.orders.map((order) => {
+    const orderId = hashEbayMonitorEvidenceIdentifier(order.ebayOrderId)
+    return {
+      marketplace_order_id: orderId,
+      order_created_at: order.creationDate,
+      order_modified_at: order.lastModifiedDate,
+      payment_status: order.orderPaymentStatus,
+      fulfillment_status: order.orderFulfillmentStatus,
+      total_amount: order.totalAmount,
+      currency: order.currency,
+      source: "EBAY_SELL_FULFILLMENT_GET_ORDERS",
+      observed_at: live.orders.observedAt ?? order.lastModifiedDate,
+    }
+  })
+  const liveOrderLines: ReadonlyOrderLineRow[] = live.orders.orders.flatMap(
+    (order) => {
+      const orderId = hashEbayMonitorEvidenceIdentifier(order.ebayOrderId)
+      return order.lineItems.map((line) => ({
+        marketplace_order_id: orderId,
+        marketplace_line_item_id:
+          hashEbayMonitorEvidenceIdentifier(line.lineItemId),
+        listing_id: line.listingId,
+        sku: line.sku,
+        pack_quantity: null,
+        quantity: line.quantity,
+        line_item_amount: line.lineItemAmount,
+        currency: line.currency,
+        ship_by_at: line.shipByDate,
+        source: "EBAY_SELL_FULFILLMENT_GET_ORDERS",
+        first_observed_at: live.orders.observedAt ?? order.lastModifiedDate,
+        last_observed_at: live.orders.observedAt ?? order.lastModifiedDate,
+      }))
+    },
+  )
+  const liveObservedOrderKeys = new Set(
+    live.orders.observedOrderEvidenceKeys,
+  )
+  const discoveryAvailable = ["AVAILABLE", "PARTIAL"]
+    .includes(live.discovery.status)
+  const analyticsAvailable = ["CERTIFIED", "PARTIAL"]
+    .includes(live.analytics.status)
+  const ordersAvailable = ["CERTIFIED", "PARTIAL"]
+    .includes(live.orders.status)
+  const combinedStatus = (
+    storedStatus: ReadonlySourceResult<unknown>["status"],
+    liveAvailable: boolean,
+    liveComplete: boolean,
+  ) => !liveAvailable
+    ? storedStatus
+    : storedStatus === "AVAILABLE" && liveComplete
+      ? "AVAILABLE" as const
+      : "PARTIAL" as const
+  return {
+    ...stored,
+    registry: {
+      ...stored.registry,
+      status: combinedStatus(
+        stored.registry.status,
+        discoveryAvailable,
+        live.discovery.coverage === "COMPLETE",
+      ),
+      rows: [...liveRegistryRows, ...stored.registry.rows],
+      limitationCode: discoveryAvailable
+        ? live.discovery.coverage === "COMPLETE"
+          ? stored.registry.limitationCode
+          : "LIVE_DISCOVERY_RECONCILIATION_PARTIAL"
+        : stored.registry.limitationCode,
+    },
+    identityVerifications: {
+      ...stored.identityVerifications,
+      status: combinedStatus(
+        stored.identityVerifications.status,
+        discoveryAvailable,
+        live.discovery.coverage === "COMPLETE",
+      ),
+      rows: [...liveIdentityRows, ...stored.identityVerifications.rows],
+      limitationCode: discoveryAvailable
+        ? live.discovery.coverage === "COMPLETE"
+          ? null
+          : "LIVE_IDENTITY_COVERAGE_PARTIAL"
+        : stored.identityVerifications.limitationCode,
+    },
+    commercialSnapshots: {
+      ...stored.commercialSnapshots,
+      status: combinedStatus(
+        stored.commercialSnapshots.status,
+        analyticsAvailable,
+        live.analytics.status === "CERTIFIED",
+      ),
+      rows: [...liveSnapshots, ...stored.commercialSnapshots.rows],
+      limitationCode: analyticsAvailable
+        ? live.analytics.gapCodes[0] ?? null
+        : stored.commercialSnapshots.limitationCode,
+    },
+    orders: {
+      ...stored.orders,
+      status: combinedStatus(
+        stored.orders.status,
+        ordersAvailable,
+        live.orders.status === "CERTIFIED",
+      ),
+      rows: [
+        ...liveOrderRows,
+        ...(live.orders.status === "CERTIFIED"
+          ? []
+          : stored.orders.rows.filter((row) =>
+              !liveObservedOrderKeys.has(
+                hashEbayMonitorEvidenceIdentifier(row.marketplace_order_id),
+              ))),
+      ],
+      limitationCode: ordersAvailable
+        ? live.orders.gapCodes[0] ?? null
+        : stored.orders.limitationCode,
+    },
+    orderLines: {
+      ...stored.orderLines,
+      status: combinedStatus(
+        stored.orderLines.status,
+        ordersAvailable,
+        live.orders.status === "CERTIFIED",
+      ),
+      rows: [
+        ...liveOrderLines,
+        ...(live.orders.status === "CERTIFIED"
+          ? []
+          : stored.orderLines.rows.filter((row) =>
+              !liveObservedOrderKeys.has(
+                hashEbayMonitorEvidenceIdentifier(row.marketplace_order_id),
+              ))),
+      ],
+      limitationCode: ordersAvailable
+        ? live.orders.gapCodes[0] ?? null
+        : stored.orderLines.limitationCode,
+    },
+  } satisfies CommercialMonitorReadonlySources
+}
+
+function liveReaderStatuses(
+  live: EbayCommercialMonitorLiveReadonlyResult,
+): SourceReaderStatus[] {
+  const status = (
+    value: "CERTIFIED" | "AVAILABLE" | "PARTIAL" | "UNAVAILABLE" |
+      "ERROR" | "BLOCKED" | "COMPLETE" | "UNPROVEN",
+  ): ObservationAvailability => value === "CERTIFIED" || value === "AVAILABLE" ||
+      value === "COMPLETE"
+    ? "AVAILABLE"
+    : value === "BLOCKED" ? "ERROR" : value === "UNPROVEN" ? "UNKNOWN" : value
+  return [
+    {
+      source: "EBAY_TRADING_GET_USER",
+      status: status(live.account.status),
+      observedAt: live.account.observedAt,
+      limitationCode: live.account.limitationCode,
+    },
+    {
+      source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
+      status: status(live.discovery.status),
+      observedAt: live.discovery.observedAt,
+      limitationCode: live.discovery.gapCodes[0] ?? null,
+    },
+    {
+      source: "EBAY_SELL_INVENTORY_READONLY",
+      status: status(live.discovery.inventory.status),
+      observedAt: live.discovery.inventory.observedAt,
+      limitationCode: live.discovery.inventory.gapCodes[0] ?? null,
+    },
+    {
+      source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT",
+      status: status(live.analytics.status),
+      observedAt: live.analytics.observedAt,
+      limitationCode: live.analytics.gapCodes[0] ?? null,
+    },
+    {
+      source: "EBAY_SELL_FULFILLMENT_GET_ORDERS",
+      status: status(live.orders.status),
+      observedAt: live.orders.observedAt,
+      limitationCode: live.orders.gapCodes[0] ?? null,
+    },
+  ]
+}
+
+function readerStatuses(
+  sources: CommercialMonitorReadonlySources,
+  live: EbayCommercialMonitorLiveReadonlyResult,
+) {
   const statuses: SourceReaderStatus[] = [
     readerStatus(
       sources.registry as unknown as ReadonlySourceResult<Record<string, unknown>>,
@@ -1648,18 +2244,14 @@ function readerStatuses(sources: CommercialMonitorReadonlySources) {
       latestIso(sources.learning.rows.map((row) => row.computed_at)),
     ),
   ]
-  statuses.push({
-    source: "EBAY_RUNTIME_LIVE_CONNECTION",
-    status: "UNKNOWN",
-    observedAt: null,
-    limitationCode: "LIVE_CONNECTIVITY_NOT_INVOKED_BY_STORED_READ_MODEL",
-  })
-  return statuses
+  return [...statuses, ...liveReaderStatuses(live)]
 }
 
 function discoveryCoverage(
   sources: CommercialMonitorReadonlySources,
   now: Date,
+  live: EbayCommercialMonitorLiveReadonlyResult,
+  stored: CommercialMonitorReadonlySources,
 ): DiscoveryCoverage {
   const committed = sources.syncState.rows.some((row) => {
     const generation = nonNegativeInteger(row.latest_committed_generation)
@@ -1677,10 +2269,17 @@ function discoveryCoverage(
     now,
     METRIC_MAXIMUM_AGE_SECONDS,
   )
-  const knownGapCodes = [
-    "UNIVERSAL_ACCOUNT_LISTING_DISCOVERY_UNPROVEN",
-    "MANUAL_LISTINGS_REQUIRE_KNOWN_ITEM_ID",
-  ]
+  const liveAvailable = ["AVAILABLE", "PARTIAL"].includes(
+    live.discovery.status,
+  )
+  const knownGapCodes = liveAvailable
+    ? live.discovery.gapCodes.filter((code) =>
+        code !== "REGISTRY_RECONCILIATION_UNAVAILABLE" &&
+        code !== "TRADING_LISTING_NOT_IN_INVENTORY_API_EXPECTED_MODEL_GAP")
+    : [
+        "UNIVERSAL_ACCOUNT_LISTING_DISCOVERY_UNPROVEN",
+        "MANUAL_LISTINGS_REQUIRE_KNOWN_ITEM_ID",
+      ]
   if (sources.registry.truncated) knownGapCodes.push("REGISTRY_RESULT_LIMIT_REACHED")
   if (sources.registry.status === "ERROR") knownGapCodes.push("REGISTRY_SOURCE_UNAVAILABLE")
   if (sources.registry.rows.some((row) => !/^\d{9,20}$/.test(row.ebay_item_id))) {
@@ -1694,37 +2293,97 @@ function discoveryCoverage(
   if ((committed || storedEvidence) && coverageFreshness.status !== "FRESH") {
     knownGapCodes.push("DISCOVERY_EVIDENCE_STALE_OR_INVALID")
   }
+  const identityKey = (input: {
+    itemId: string
+    sku: string | null
+    variationKey: string | null
+  }) => JSON.stringify([
+    input.itemId,
+    sanitizeMonitorText(input.variationKey, 240),
+    sanitizeMonitorText(input.sku, 120),
+  ])
+  const liveIdentities = new Set(live.discovery.listings.map((row) =>
+    identityKey({
+      itemId: row.itemId,
+      sku: row.sku,
+      variationKey: row.variationKey,
+    })))
+  const registryIdentities = new Set(stored.registry.rows
+    .filter((row) => row.listing_status.toLowerCase() === "active")
+    .filter((row) => /^\d{9,20}$/.test(row.ebay_item_id))
+    .map((row) => identityKey({
+      itemId: row.ebay_item_id,
+      sku: row.ebay_sku,
+      variationKey: row.ebay_variation_key ??
+        explicitListingFields(row).variationKey,
+    })))
+  const liveOnly = [...liveIdentities].filter((identity) =>
+    !registryIdentities.has(identity))
+  const registryOnly = [...registryIdentities].filter((identity) =>
+    !liveIdentities.has(identity))
+  if (liveAvailable && stored.registry.status === "ERROR") {
+    knownGapCodes.push("REGISTRY_RECONCILIATION_UNAVAILABLE")
+  }
+  if (liveOnly.length) knownGapCodes.push("LIVE_LISTING_NOT_IN_MANAGED_REGISTRY")
+  if (registryOnly.length) {
+    knownGapCodes.push("REGISTRY_LISTING_NOT_IN_LIVE_ACTIVE_ENUMERATION")
+  }
+  const intrinsicLiveGaps = live.discovery.gapCodes.filter((code) =>
+    code !== "REGISTRY_RECONCILIATION_UNAVAILABLE" &&
+    code !== "TRADING_LISTING_NOT_IN_INVENTORY_API_EXPECTED_MODEL_GAP")
+  const universalCoverageProven = liveAvailable && intrinsicLiveGaps.length === 0 &&
+    live.discovery.totalPages !== null &&
+    live.discovery.pagesRead === live.discovery.totalPages &&
+    (live.discovery.totalEntries ?? 25_000) < 25_000 &&
+    stored.registry.status !== "ERROR" && liveOnly.length === 0 &&
+    registryOnly.length === 0
   return createDiscoveryCoverage({
-    universalCoverageProven: false,
-    sourceCoverageAvailable: sources.registry.status !== "ERROR" &&
-      (committed || storedEvidence) && coverageFreshness.status === "FRESH",
+    universalCoverageProven,
+    sourceCoverageAvailable: liveAvailable || (
+      sources.registry.status !== "ERROR" &&
+      (committed || storedEvidence) && coverageFreshness.status === "FRESH"
+    ),
     sources: [...new Set([
       ...sources.registry.rows.map((row) =>
         sanitizeMonitorText(row.source, 100) ?? "UNKNOWN"),
       ...sources.identityVerifications.rows.map((row) =>
         sanitizeMonitorText(row.source, 100) ?? "UNKNOWN"),
+      ...(liveAvailable ? [live.discovery.source] : []),
     ])].sort(),
-    observedAt,
+    observedAt: latestIso([observedAt, live.discovery.observedAt]),
     knownGapCodes,
   })
 }
 
 function listingInputs(sources: CommercialMonitorReadonlySources) {
-  const groups = canonicalizeActiveListingProtectionRows(sources.registry.rows)
+  const groups = canonicalizeActiveListingProtectionRows(
+    sources.registry.rows.map((row) => ({
+      ...row,
+      ebay_variation_key: row.ebay_variation_key ??
+        explicitListingFields(row).variationKey,
+    })),
+    { inferMissingIdentity: false },
+  )
     .filter((group) => /^\d{9,20}$/.test(group.ebayItemId))
   const identities = sources.identityVerifications.rows
   const result: ListingProjectionInput[] = groups.map((group) => {
     const matchingVerification = identities.find((verification) =>
       verification.listing_id === group.ebayItemId &&
       (!group.ebaySku || verification.expected_sku === group.ebaySku ||
-        verification.observed_sku === group.ebaySku)
+        verification.observed_sku === group.ebaySku) &&
+      (verification.variation_key ?? null) === group.variationKey
     ) ?? null
     const sourcesInGroup = group.observations.map((entry) => entry.source)
     return {
-      key: `${group.ebayItemId}:${group.ebaySku ?? "NO_SKU"}`,
+      key: JSON.stringify([
+        group.ebayItemId,
+        group.ebaySku,
+        group.variationKey,
+      ]),
       row: group.listing,
       itemId: group.ebayItemId,
       ebaySku: group.ebaySku,
+      variationKey: group.variationKey,
       registryObservations: group.observations.map((entry) => ({
         source: entry.source,
         listingStatus: entry.listingStatus,
@@ -1732,12 +2391,18 @@ function listingInputs(sources: CommercialMonitorReadonlySources) {
         evidenceReference: `EBAY_ACTIVE_LISTING:${entry.listingId}`,
       })),
       identityVerification: matchingVerification,
-      registryStatus: "REGISTERED" as const,
+      registryStatus: group.observations.some((entry) =>
+        entry.source !== "EBAY_TRADING_GET_MY_EBAY_SELLING")
+        ? "REGISTERED" as const
+        : "UNREGISTERED_DISCOVERY" as const,
       duplicateIdentity: new Set(sourcesInGroup).size !== sourcesInGroup.length,
     }
   })
-  const represented = new Set(result.map((listing) =>
-    `${listing.itemId}:${listing.ebaySku ?? "NO_SKU"}`))
+  const represented = new Set(result.map((listing) => JSON.stringify([
+    listing.itemId,
+    listing.ebaySku,
+    listing.variationKey,
+  ])))
   for (const verification of identities) {
     const observedItemId = /^\d{9,20}$/.test(
       verification.observed_listing_id ?? "",
@@ -1747,8 +2412,10 @@ function listingInputs(sources: CommercialMonitorReadonlySources) {
       : null
     const itemId = observedItemId ?? requestedItemId
     if (!itemId) continue
-    const sku = verification.observed_sku ?? verification.expected_sku ?? null
-    const key = `${itemId}:${sku ?? "NO_SKU"}`
+    const sku = sanitizeMonitorText(verification.observed_sku, 120) ??
+      sanitizeMonitorText(verification.expected_sku, 120)
+    const variationKey = sanitizeMonitorText(verification.variation_key, 240)
+    const key = JSON.stringify([itemId, sku, variationKey])
     if (represented.has(key)) continue
     represented.add(key)
     result.push({
@@ -1756,6 +2423,7 @@ function listingInputs(sources: CommercialMonitorReadonlySources) {
       row: null,
       itemId,
       ebaySku: sku,
+      variationKey,
       registryObservations: [{
         source: verification.source,
         listingStatus: verification.observed_listing_status ?? "unknown",
@@ -1991,6 +2659,87 @@ function accountCoverageAlert(input: {
   })
 }
 
+function liveCertificationProjection(
+  live: EbayCommercialMonitorLiveReadonlyResult,
+  reconciledCoverage?: DiscoveryCoverage,
+): EbayLiveCertificationReadModel {
+  const discoveryProven = ["AVAILABLE", "PARTIAL"]
+    .includes(live.discovery.status)
+  const analyticsProven = ["CERTIFIED", "PARTIAL"]
+    .includes(live.analytics.status)
+  const ordersProven = ["CERTIFIED", "PARTIAL"]
+    .includes(live.orders.status)
+  return {
+    status: live.account.status,
+    environment: live.environment,
+    marketplaceId: live.marketplaceId,
+    account: {
+      accountAlias: live.account.accountAlias,
+      bindingConfigured: live.account.bindingConfigured,
+      bindingMatched: live.account.bindingMatched,
+      observedAt: live.account.observedAt,
+      source: live.account.source,
+      limitationCode: live.account.limitationCode,
+    },
+    oauth: {
+      status: live.oauth.status,
+      tokenReceived: live.oauth.tokenReceived,
+      tokenPersisted: false,
+      tokenReturned: false,
+      expiryKnown: live.oauth.expiryKnown,
+      earliestAccessTokenExpiryAt: live.oauth.earliestAccessTokenExpiryAt,
+      scopes: live.oauth.scopes.map((scope) => ({
+        scope: scope.scope,
+        classifications: [...scope.classifications],
+        evidenceOperation: scope.evidenceOperation,
+      })),
+    },
+    discovery: {
+      status: live.discovery.status,
+      coverage: reconciledCoverage?.status ?? live.discovery.coverage,
+      observedAt: live.discovery.observedAt,
+      source: live.discovery.source,
+      pagesRead: live.discovery.pagesRead,
+      totalPages: live.discovery.totalPages,
+      totalEntries: live.discovery.totalEntries,
+      representedItemCount: discoveryProven
+        ? new Set(live.discovery.listings.map((listing) => listing.itemId)).size
+        : null,
+      variationRowCount: discoveryProven
+        ? live.discovery.listings.filter((listing) =>
+            listing.variationKey !== null).length
+        : null,
+      gapCodes: reconciledCoverage
+        ? [...new Set([
+            ...reconciledCoverage.knownGapCodes,
+            ...live.discovery.gapCodes.filter((code) =>
+              code === "TRADING_LISTING_NOT_IN_INVENTORY_API_EXPECTED_MODEL_GAP"),
+          ])]
+        : [...live.discovery.gapCodes],
+    },
+    analytics: {
+      status: live.analytics.status,
+      observedAt: live.analytics.observedAt,
+      windowStart: live.analytics.windowStart,
+      windowEnd: live.analytics.windowEnd,
+      representedItemCount: analyticsProven
+        ? live.analytics.observations.length
+        : null,
+      gapCodes: [...live.analytics.gapCodes],
+    },
+    orders: {
+      status: live.orders.status,
+      observedAt: live.orders.observedAt,
+      windowStart: live.orders.windowStart,
+      windowEnd: live.orders.windowEnd,
+      sanitizedOrderCount: ordersProven ? live.orders.orders.length : null,
+      gapCodes: [...live.orders.gapCodes],
+    },
+    calls: live.calls.map((call) => ({ ...call })),
+    safety: { ...live.safety },
+  }
+}
+
 function baseReport(input: {
   marketplace: MarketplaceContext
   generatedAt: string
@@ -2002,6 +2751,7 @@ function baseReport(input: {
   accountDataQualityIssues: DataQualityIssue[]
   learning: CommercialLearningReadModel
   timeline: TimelineEntry[]
+  liveCertification: EbayLiveCertificationReadModel
 }) : CommercialMonitorGetDto {
   return {
     contractVersion: COMMERCIAL_MONITOR_READONLY_CONTRACT_VERSION,
@@ -2013,6 +2763,7 @@ function baseReport(input: {
       status: input.connectionStatus,
       readers: input.readers,
     },
+    liveCertification: input.liveCertification,
     discoveryCoverage: input.coverage,
     listings: input.listings,
     alertCandidates: input.alertCandidates,
@@ -2050,7 +2801,11 @@ function baseReport(input: {
   }
 }
 
-function unconfiguredReport(scope: AccountScope, now: Date) {
+function unconfiguredReport(
+  scope: AccountScope,
+  live: EbayCommercialMonitorLiveReadonlyResult,
+  now: Date,
+) {
   const generatedAt = now.toISOString()
   const marketplace = {
     marketplaceId: "EBAY_US",
@@ -2103,30 +2858,45 @@ function unconfiguredReport(scope: AccountScope, now: Date) {
       limitationCode: "ACCOUNT_SCOPE_NOT_CONFIGURED",
     },
     timeline: [],
+    liveCertification: liveCertificationProjection(live),
   }))
 }
 
 export async function getCommercialMonitorReadonly(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient | null,
   scope: AccountScope,
+  live: EbayCommercialMonitorLiveReadonlyResult,
   now = new Date(),
 ) {
-  if (!scope.accountKey) return unconfiguredReport(scope, now)
+  if (!scope.accountKey) return unconfiguredReport(scope, live, now)
+  if (!supabase) throw new Error("COMMERCIAL_MONITOR_READ_CLIENT_REQUIRED")
   const generatedAt = now.toISOString()
   const marketplace = {
     marketplaceId: "EBAY_US",
     accountAlias: scope.accountAlias,
   } satisfies MarketplaceContext
-  const sources = await readCommercialMonitorReadonlySources(
+  const storedSources = await readCommercialMonitorReadonlySources(
     supabase,
     scope.accountKey,
   )
-  const coverage = discoveryCoverage(sources, now)
+  const sources = withLiveReadonlyEvidence({
+    stored: storedSources,
+    live,
+    accountKey: scope.accountKey,
+  })
+  const coverage = discoveryCoverage(sources, now, live, storedSources)
   const inputs = listingInputs(sources)
   const countByItem = new Map<string, number>()
+  const countByItemSku = new Map<string, number>()
   for (const listing of inputs) {
     const currentCount = countByItem.get(listing.itemId)
     countByItem.set(listing.itemId, currentCount === undefined ? 1 : currentCount + 1)
+    const itemSkuKey = JSON.stringify([listing.itemId, listing.ebaySku])
+    const currentSkuCount = countByItemSku.get(itemSkuKey)
+    countByItemSku.set(
+      itemSkuKey,
+      currentSkuCount === undefined ? 1 : currentSkuCount + 1,
+    )
   }
   const projected = inputs.map((listing) => projectListing({
     listing,
@@ -2134,6 +2904,10 @@ export async function getCommercialMonitorReadonly(
     marketplace,
     discoveryCoverage: coverage,
     itemIdentityCount: countByItem.get(listing.itemId) ?? 1,
+    itemSkuIdentityCount: countByItemSku.get(JSON.stringify([
+      listing.itemId,
+      listing.ebaySku,
+    ])) ?? 1,
     accountScopeKey: scope.accountKey as string,
     generatedAt,
     now,
@@ -2150,10 +2924,8 @@ export async function getCommercialMonitorReadonly(
   ]
     .map((alert) => [alert.eventKey, alert])).values()]
   const learning = learningProjection(sources.learning)
-  const readers = readerStatuses(sources)
-  const persistedReaders = readers.filter((reader) =>
-    reader.source !== "EBAY_RUNTIME_LIVE_CONNECTION")
-  const connectionStatus: ObservationAvailability = persistedReaders.every((reader) =>
+  const readers = readerStatuses(storedSources, live)
+  const connectionStatus: ObservationAvailability = readers.every((reader) =>
       reader.status === "ERROR")
     ? "ERROR"
     : readers.every((reader) => reader.status === "AVAILABLE")
@@ -2175,5 +2947,6 @@ export async function getCommercialMonitorReadonly(
     accountDataQualityIssues: accountIssues,
     learning,
     timeline: timeline(listings, learning, alertCandidates, generatedAt),
+    liveCertification: liveCertificationProjection(live, coverage),
   }))
 }

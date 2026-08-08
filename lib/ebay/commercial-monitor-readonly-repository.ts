@@ -16,6 +16,7 @@ export type ReadonlyRegistryListingRow = {
   source: string
   ebay_item_id: string
   ebay_sku: string | null
+  ebay_variation_key?: string | null
   listing_status: string
   title: string
   ebay_quantity: number | null
@@ -50,6 +51,7 @@ export type ReadonlyIdentityVerificationRow = {
   expected_sku: string
   observed_listing_id: string | null
   observed_sku: string | null
+  variation_key?: string | null
   observed_listing_status: string | null
   item_id_matches: boolean
   sku_matches: boolean
@@ -118,7 +120,7 @@ export type ReadonlyOrderLineRow = {
   marketplace_line_item_id: string
   listing_id: string
   sku: string | null
-  pack_quantity: number | string
+  pack_quantity: number | string | null
   quantity: number | string
   line_item_amount: number | string | null
   currency: string | null

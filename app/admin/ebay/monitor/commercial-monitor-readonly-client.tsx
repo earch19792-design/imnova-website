@@ -26,14 +26,14 @@ const numberFormatter = new Intl.NumberFormat("es-US", {
 const metricLabels: Record<CommercialMetricKey, string> = {
   listing_price: "Precio del listing",
   impressions: "Impresiones",
-  ebay_views: "Vistas eBay",
+  ebay_views: "Vistas eBay calculadas",
   external_views: "Vistas externas",
   ctr_reported: "CTR reportado",
   ctr_calculated: "CTR calculado",
   watchers: "Watchers",
   transactions: "Transacciones Analytics",
-  orders: "Órdenes almacenadas",
-  units_sold: "Unidades almacenadas",
+  orders: "Órdenes observadas",
+  units_sold: "Unidades observadas",
   conversion: "Conversión reportada",
   revenue: "Ingresos observados",
   fees: "Fees",
@@ -48,6 +48,7 @@ const metricLabels: Record<CommercialMetricKey, string> = {
 
 const statusTone: Record<string, string> = {
   AVAILABLE: "border-emerald-200/30 bg-emerald-200/[0.10] text-emerald-50",
+  CERTIFIED: "border-emerald-200/30 bg-emerald-200/[0.10] text-emerald-50",
   COMPLETE: "border-emerald-200/30 bg-emerald-200/[0.10] text-emerald-50",
   FRESH: "border-emerald-200/30 bg-emerald-200/[0.10] text-emerald-50",
   IN_STOCK_SIGNAL: "border-emerald-200/30 bg-emerald-200/[0.10] text-emerald-50",
@@ -60,6 +61,7 @@ const statusTone: Record<string, string> = {
   STOCK_UNKNOWN: "border-white/15 bg-white/[0.06] text-white/70",
   STALE: "border-orange-200/30 bg-orange-200/[0.10] text-orange-50",
   ERROR: "border-rose-200/30 bg-rose-200/[0.10] text-rose-50",
+  BLOCKED: "border-rose-200/30 bg-rose-200/[0.10] text-rose-50",
   OUT_OF_STOCK_SIGNAL: "border-rose-200/30 bg-rose-200/[0.10] text-rose-50",
   STOCK_CONFLICTED: "border-rose-200/30 bg-rose-200/[0.10] text-rose-50",
   SOURCE_FORMAT_CHANGED: "border-rose-200/30 bg-rose-200/[0.10] text-rose-50",
@@ -256,7 +258,7 @@ export function CommercialMonitorReadonlyClient() {
               disabled={loading}
               className="min-h-12 rounded-2xl bg-white px-5 text-sm font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200 disabled:cursor-wait disabled:opacity-60"
             >
-              {loading ? "Leyendo…" : "Actualizar lectura"}
+              {loading ? "Leyendo…" : "Actualizar datos"}
             </button>
           </div>
           <p className="mt-7 text-xs font-black uppercase tracking-[0.26em] text-cyan-100/60">Cockpit operativo y diagnóstico</p>
@@ -265,7 +267,7 @@ export function CommercialMonitorReadonlyClient() {
         </header>
 
         <div aria-live="polite">
-          {loading && !monitor && <p role="status" className="rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.06] p-6 text-cyan-50">Leyendo registros y snapshots existentes; no se están invocando collectors ni canales externos.</p>}
+          {loading && !monitor && <p role="status" className="rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.06] p-6 text-cyan-50">Consultando únicamente readers eBay allowlisted y fuentes internas SELECT-only; no se ejecutan escrituras ni dispatch.</p>}
           {error && <p role="alert" className="rounded-3xl border border-rose-200/25 bg-rose-200/[0.08] p-5 text-rose-50">{error}{monitor && refreshFailedAt ? ` La vista conserva la lectura anterior; refresh fallido ${formatTimestamp(refreshFailedAt)}.` : ""}</p>}
         </div>
 
@@ -276,7 +278,7 @@ export function CommercialMonitorReadonlyClient() {
               <p className="text-xs text-white/50">Generado <time dateTime={monitor.generatedAt}>{formatTimestamp(monitor.generatedAt)}</time></p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <HeroCard label="Listings representados" value={numberFormatter.format(monitor.listings.length)} detail="Registros reconciliados más descubrimientos visibles no registrados." />
+              <HeroCard label="Listings representados" value={monitor.discoveryCoverage.status !== "COMPLETE" && monitor.listings.length === 0 ? "—" : numberFormatter.format(monitor.listings.length)} detail={monitor.discoveryCoverage.status !== "COMPLETE" && monitor.listings.length === 0 ? "La falta o parcialidad de evidencia no demuestra cero listings." : "Registros reconciliados más descubrimientos live visibles no registrados."} />
               <HeroCard label="Cobertura" value={monitor.discoveryCoverage.status} detail={monitor.discoveryCoverage.knownGapCodes.map(shortCode).join(" · ")} />
               <HeroCard label="Blockers" value={blockerCount === undefined ? "—" : numberFormatter.format(blockerCount)} detail="Separados de cualquier recomendación comercial." />
               <HeroCard label="Alert candidates" value={numberFormatter.format(monitor.alertCandidates.length)} detail="Candidatos internos; dispatchAllowed=false." />
@@ -284,13 +286,19 @@ export function CommercialMonitorReadonlyClient() {
             <div className="grid gap-3 lg:grid-cols-[1fr_2fr]">
               <article className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
                 <p className="text-xs font-black uppercase tracking-widest text-white/45">Conexión y cuenta</p>
-                <div className="mt-3 flex flex-wrap items-center gap-2"><Status value={monitor.connection.status} /><span className="text-sm text-white/65">{monitor.marketplace.marketplaceId} · {monitor.marketplace.accountAlias ?? "Cuenta no configurada"}</span></div>
-                <p className="mt-3 text-xs leading-5 text-white/50">La conexión live se declara UNKNOWN porque esta vista sólo consulta evidencia ya almacenada.</p>
+                <div className="mt-3 flex flex-wrap items-center gap-2"><Status value={monitor.connection.status} /><Status value={monitor.liveCertification.status} /><span className="text-sm text-white/65">{monitor.marketplace.marketplaceId} · {monitor.marketplace.accountAlias ?? "Cuenta no configurada"}</span></div>
+                <p className="mt-3 text-xs leading-5 text-white/50">{monitor.liveCertification.environment} · binding {monitor.liveCertification.account.bindingMatched ? "verificado" : "no probado"} · {monitor.liveCertification.account.source} · {formatTimestamp(monitor.liveCertification.account.observedAt)}</p>
+                {monitor.liveCertification.account.limitationCode && <p className="mt-2 text-xs text-amber-100/75">{shortCode(monitor.liveCertification.account.limitationCode)}</p>}
               </article>
               <article className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
                 <h3 className="font-black">Lectores y frescura</h3>
                 <div className="mt-3 grid gap-2 md:grid-cols-2">{monitor.connection.readers.map((reader) => <div key={reader.source} className="rounded-2xl border border-white/10 bg-black/20 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-xs break-all">{reader.source}</strong><Status value={reader.status} /></div><p className="mt-2 text-[11px] text-white/50">{formatTimestamp(reader.observedAt)} · {shortCode(reader.limitationCode)}</p></div>)}</div>
               </article>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-3">
+              <article className="rounded-3xl border border-white/10 bg-white/[0.035] p-5"><p className="text-xs font-black uppercase tracking-widest text-white/45">Discovery live</p><div className="mt-3 flex flex-wrap gap-2"><Status value={monitor.liveCertification.discovery.status} /><Status value={monitor.liveCertification.discovery.coverage} /></div><p className="mt-3 text-xs leading-5 text-white/55">Páginas {monitor.liveCertification.discovery.pagesRead}/{monitor.liveCertification.discovery.totalPages ?? "?"} · Items reportados {monitor.liveCertification.discovery.totalEntries ?? "UNKNOWN"} · Items representados {monitor.liveCertification.discovery.representedItemCount ?? "UNKNOWN"} · filas de variación {monitor.liveCertification.discovery.variationRowCount ?? "UNKNOWN"}</p><p className="mt-2 text-[11px] text-white/45">{monitor.liveCertification.discovery.gapCodes.map(shortCode).join(" · ") || "Sin gaps declarados"}</p></article>
+              <article className="rounded-3xl border border-white/10 bg-white/[0.035] p-5"><p className="text-xs font-black uppercase tracking-widest text-white/45">Analytics / Órdenes</p><div className="mt-3 flex flex-wrap gap-2"><Status value={monitor.liveCertification.analytics.status} /><Status value={monitor.liveCertification.orders.status} /></div><p className="mt-3 text-xs leading-5 text-white/55">Analytics: {monitor.liveCertification.analytics.representedItemCount ?? "UNKNOWN"} Items · Orders sanitizadas: {monitor.liveCertification.orders.sanitizedOrderCount ?? "UNKNOWN"}</p><p className="mt-2 text-[11px] text-white/45">Ventana Analytics {monitor.liveCertification.analytics.windowStart ?? "UNKNOWN"} → {monitor.liveCertification.analytics.windowEnd ?? "UNKNOWN"}</p></article>
+              <article className="rounded-3xl border border-white/10 bg-white/[0.035] p-5"><p className="text-xs font-black uppercase tracking-widest text-white/45">OAuth sanitizado</p><div className="mt-3 flex flex-wrap gap-2"><Status value={monitor.liveCertification.oauth.status} /><span className="text-xs text-white/55">token recibido {String(monitor.liveCertification.oauth.tokenReceived)} · persistido false · devuelto false</span></div><p className="mt-3 text-[11px] text-white/45">Expiración efímera {formatTimestamp(monitor.liveCertification.oauth.earliestAccessTokenExpiryAt)}</p><ul className="mt-2 space-y-1 text-[10px] text-white/45">{monitor.liveCertification.oauth.scopes.map((scope) => <li key={scope.scope} className="break-all">{scope.scope} · {scope.classifications.join(" + ")}</li>)}</ul></article>
             </div>
           </section>
 

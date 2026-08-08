@@ -1026,6 +1026,87 @@ export type SourceReaderStatus = {
   limitationCode: string | null
 }
 
+export type EbayLiveCertificationReadModel = {
+  status: "CERTIFIED" | "PARTIAL" | "BLOCKED"
+  environment: "PRODUCTION"
+  marketplaceId: "EBAY_US"
+  account: {
+    accountAlias: string | null
+    bindingConfigured: boolean
+    bindingMatched: boolean
+    observedAt: string | null
+    source: string
+    limitationCode: string | null
+  }
+  oauth: {
+    status: ObservationAvailability
+    tokenReceived: boolean
+    tokenPersisted: false
+    tokenReturned: false
+    expiryKnown: boolean
+    earliestAccessTokenExpiryAt: string | null
+    scopes: Array<{
+      scope: string
+      classifications: Array<
+        "READ_REQUIRED" | "READ_AVAILABLE" |
+        "WRITE_CAPABLE_BUT_NOT_USED" | "MISSING"
+      >
+      evidenceOperation: string | null
+    }>
+  }
+  discovery: {
+    status: ObservationAvailability
+    coverage: "COMPLETE" | "PARTIAL" | "UNPROVEN"
+    observedAt: string | null
+    source: string
+    pagesRead: number
+    totalPages: number | null
+    totalEntries: number | null
+    representedItemCount: number | null
+    variationRowCount: number | null
+    gapCodes: string[]
+  }
+  analytics: {
+    status: "CERTIFIED" | "PARTIAL" | "UNAVAILABLE"
+    observedAt: string | null
+    windowStart: string | null
+    windowEnd: string | null
+    representedItemCount: number | null
+    gapCodes: string[]
+  }
+  orders: {
+    status: "CERTIFIED" | "PARTIAL" | "UNAVAILABLE"
+    observedAt: string | null
+    windowStart: string | null
+    windowEnd: string | null
+    sanitizedOrderCount: number | null
+    gapCodes: string[]
+  }
+  calls: Array<{
+    operation: string
+    method: "GET" | "POST"
+    endpoint: string
+    status: "SUCCEEDED" | "FAILED"
+    httpStatus: number | null
+    observedAt: string
+    marketplaceMutation: false
+    persisted: false
+  }>
+  safety: {
+    marketplaceWrites: 0
+    databaseWrites: 0
+    inventoryWrites: 0
+    listingRevisions: 0
+    listingEnds: 0
+    fulfillmentWrites: 0
+    buyerMessages: 0
+    whatsappCalls: 0
+    tokensReturned: false
+    rawPayloadsReturned: false
+    buyerPiiReturned: false
+  }
+}
+
 export type CommercialLearningReadModel = {
   status: ObservationAvailability
   source: string
@@ -1066,6 +1147,7 @@ export type CommercialMonitorGetDto = {
     status: ObservationAvailability
     readers: SourceReaderStatus[]
   }
+  liveCertification: EbayLiveCertificationReadModel
   discoveryCoverage: DiscoveryCoverage
   listings: CommercialListingReadModel[]
   alertCandidates: AlertCandidate[]

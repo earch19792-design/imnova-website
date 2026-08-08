@@ -9,6 +9,7 @@ export type ActiveListingProtectionIdentityRow = {
   source: string
   ebay_item_id: string
   ebay_sku: string | null
+  ebay_variation_key?: string | null
   listing_status: string
   last_ebay_sync_at: string | null
 }
@@ -18,6 +19,7 @@ export type ActiveListingProtectionObservation = {
   source: string
   listingStatus: string
   ebaySku: string | null
+  variationKey: string | null
   observedAt: string | null
 }
 
@@ -28,6 +30,7 @@ export type CanonicalActiveListingProtectionGroup<
   accountKey: string
   ebayItemId: string
   ebaySku: string | null
+  variationKey: string | null
   listing: T
   memberListingIds: string[]
   observations: ActiveListingProtectionObservation[]
@@ -251,6 +254,7 @@ function itemIdentityKey(row: ActiveListingProtectionIdentityRow) {
 }
 
 function sourcePreference(source: string) {
+  if (source === "EBAY_TRADING_GET_MY_EBAY_SELLING") return 3
   if (source === EBAY_INVENTORY_READONLY_SOURCE) return 2
   if (source === EBAY_TRADING_READONLY_SOURCE) return 1
   return 0
@@ -283,7 +287,11 @@ function compareCanonicalCandidates(
  */
 export function canonicalizeActiveListingProtectionRows<
   T extends ActiveListingProtectionIdentityRow,
->(rows: T[]): CanonicalActiveListingProtectionGroup<T>[] {
+>(
+  rows: T[],
+  options: { inferMissingIdentity?: boolean } = {},
+): CanonicalActiveListingProtectionGroup<T>[] {
+  const inferMissingIdentity = options.inferMissingIdentity !== false
   const concreteSkusByItem = new Map<string, Set<string>>()
   for (const row of rows) {
     const sku = normalizeActiveListingProtectionSku(row.ebay_sku)
@@ -298,21 +306,54 @@ export function canonicalizeActiveListingProtectionRows<
     accountKey: string
     ebayItemId: string
     ebaySku: string | null
+    variationKey: string | null
     rows: T[]
   }>()
+  const variationsByItemAndSku = new Map<string, Set<string>>()
+  for (const row of rows) {
+    const variationKey = normalizeActiveListingProtectionSku(
+      row.ebay_variation_key ?? null,
+    )
+    if (!variationKey) continue
+    const key = JSON.stringify([
+      itemIdentityKey(row),
+      normalizeActiveListingProtectionSku(row.ebay_sku),
+    ])
+    const variations = variationsByItemAndSku.get(key) ?? new Set<string>()
+    variations.add(variationKey)
+    variationsByItemAndSku.set(key, variations)
+  }
   for (const row of rows) {
     const accountKey = normalizedRequiredIdentity(row.account_key)
     const ebayItemId = normalizedRequiredIdentity(row.ebay_item_id)
     const concreteSku = normalizeActiveListingProtectionSku(row.ebay_sku)
     const itemSkus = concreteSkusByItem.get(itemIdentityKey(row))
-    const ebaySku = concreteSku ?? (itemSkus?.size === 1
+    const explicitVariation = normalizeActiveListingProtectionSku(
+      row.ebay_variation_key ?? null,
+    )
+    const ebaySku = concreteSku ?? (inferMissingIdentity &&
+        !explicitVariation && itemSkus?.size === 1
       ? [...itemSkus][0]
       : null)
-    const canonicalKey = JSON.stringify([accountKey, ebayItemId, ebaySku])
+    const variationCandidates = variationsByItemAndSku.get(JSON.stringify([
+      itemIdentityKey(row),
+      ebaySku,
+    ]))
+    const variationKey = explicitVariation ?? (inferMissingIdentity &&
+        variationCandidates?.size === 1
+      ? [...variationCandidates][0]
+      : null)
+    const canonicalKey = JSON.stringify([
+      accountKey,
+      ebayItemId,
+      ebaySku,
+      variationKey,
+    ])
     const group = groups.get(canonicalKey) ?? {
       accountKey,
       ebayItemId,
       ebaySku,
+      variationKey,
       rows: [],
     }
     group.rows.push(row)
@@ -326,6 +367,7 @@ export function canonicalizeActiveListingProtectionRows<
       accountKey: group.accountKey,
       ebayItemId: group.ebayItemId,
       ebaySku: group.ebaySku,
+      variationKey: group.variationKey,
       listing: candidates[0],
       memberListingIds: candidates.map((row) => row.id),
       observations: candidates.map((row) => ({
@@ -333,6 +375,9 @@ export function canonicalizeActiveListingProtectionRows<
         source: row.source,
         listingStatus: row.listing_status,
         ebaySku: normalizeActiveListingProtectionSku(row.ebay_sku),
+        variationKey: normalizeActiveListingProtectionSku(
+          row.ebay_variation_key ?? null,
+        ),
         observedAt: row.last_ebay_sync_at,
       })),
     }

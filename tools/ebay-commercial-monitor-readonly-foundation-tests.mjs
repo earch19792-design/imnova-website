@@ -111,6 +111,7 @@ test("el repositorio canónico sólo contiene SELECTs y ninguna ejecución exter
   })
   assert.deepEqual(updateCalls.sort(), [
     "lib/ebay/commercial-monitor-readonly-utilities.mjs",
+    "lib/ebay/ebay-commercial-monitor-live-readonly.ts",
     "lib/ebay/ebay-seller-account-scope.ts",
   ])
   assert.match(
@@ -120,6 +121,10 @@ test("el repositorio canónico sólo contiene SELECTs y ninguna ejecución exter
   assert.match(
     read("lib/ebay/ebay-seller-account-scope.ts"),
     /createHash\("sha256"\)\s*\.update\(`PRODUCTION:\$\{userId\}`\)/,
+  )
+  assert.match(
+    read("lib/ebay/ebay-commercial-monitor-live-readonly.ts"),
+    /createHash\("sha256"\)\s*\.update\(`EBAY_MONITOR_EVIDENCE:\$\{value\}`\)/,
   )
 
   const monitorOwnedRuntime = routeGraph
@@ -166,6 +171,39 @@ test("el grafo canónico excluye writers, dispatchers, WhatsApp y runners mutant
   assert.ok(routeGraph.includes(
     "lib/ebay/commercial-monitor-readonly-service.ts",
   ))
+})
+
+test("el reader live usa una allowlist cerrada y nunca persiste respuestas", () => {
+  const reader = read(
+    "lib/ebay/ebay-commercial-monitor-live-readonly.ts",
+  )
+  const domain = read(
+    "lib/ebay/ebay-commercial-monitor-live-readonly-domain.ts",
+  )
+  assert.match(reader, /assertEbayMonitorReadonlyRequest/)
+  assert.equal((reader.match(/input\.fetchImpl\(/g) ?? []).length, 1)
+  assert.match(domain, /"GetUser"[\s\S]*"GetMyeBaySelling"/)
+  assert.match(domain, /tradingHeaderCallName !== expectedTradingCall/)
+  assert.match(domain, /root !== `\$\{expectedTradingCall\}Request`/)
+  assert.doesNotMatch(domain, /"(?:AddItem|ReviseItem|EndItem|AddFixedPriceItem|ReviseFixedPriceItem)"/)
+  assert.doesNotMatch(reader, /\.(?:insert|upsert|delete|rpc)\s*\(/)
+  assert.equal((reader.match(/\.update\s*\(/g) ?? []).length, 1)
+  assert.match(reader, /createHash\("sha256"\)\s*\.update\(/)
+  assert.doesNotMatch(reader, /createShippingFulfillment|publishOffer|apply_improvement/)
+  assert.match(reader, /marketplaceWrites:\s*0/)
+  assert.match(reader, /databaseWrites:\s*0/)
+  assert.match(reader, /tokenPersisted:\s*false/)
+  assert.match(reader, /rawPayloadsReturned:\s*false/)
+  assert.match(reader, /buyerPiiReturned:\s*false/)
+  assert.match(reader, /refreshToken:\s*dedicatedRefresh/)
+  assert.doesNotMatch(
+    reader,
+    /refreshToken:\s*dedicatedRefresh\s*\|\|\s*general\.refreshToken/,
+  )
+  assert.match(reader, /REQUEST_BUDGET_MS\s*=\s*24_000/)
+  assert.match(reader, /REQUEST_MAX_CALLS\s*=\s*60/)
+  assert.match(reader, /redirect:\s*"error"/)
+  assert.match(reader, /"READ_REQUIRED"/)
 })
 
 test("fixtures, tests y JSON modelado no pueden entrar como fallback runtime", () => {
@@ -226,6 +264,7 @@ test("la UI contiene las secciones canónicas y sólo un control GET de actualiz
   assert.match(client, /alert\.componentReference\.sku/)
   assert.equal((client.match(/onClick=/g) ?? []).length, 1)
   assert.match(client, /onClick=\{\(\) => void loadMonitor\(\)\}/)
+  assert.match(client, /Actualizar datos/)
   assert.match(client, /fetch\("\/api\/admin\/ebay\/monitor"/)
   assert.doesNotMatch(client, /method:\s*["']POST["']/)
   assert.doesNotMatch(client, /<form\b/)

@@ -8,6 +8,8 @@ import { getCommercialMonitorReadonly } from
   "@/lib/ebay/commercial-monitor-readonly-service"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
+import { getEbayCommercialMonitorLiveReadonly } from
+  "@/lib/ebay/ebay-commercial-monitor-live-readonly"
 import { getEbayProRuntimeBoundary } from
   "@/lib/ebay/environment-boundaries"
 import {
@@ -55,13 +57,18 @@ export async function GET(req: Request) {
   }
   try {
     const account = getEbaySellerAccountScopeConfiguration()
+    const live = await getEbayCommercialMonitorLiveReadonly({
+      accountKey: account.accountKey,
+      accountAlias: account.accountAlias,
+    })
     const monitor = await getCommercialMonitorReadonly(
-      getSupabaseAdminClient(),
+      account.accountKey ? getSupabaseAdminClient() : null,
       {
         accountKey: account.accountKey,
         accountAlias: account.accountAlias,
         configurationReason: account.reason,
       },
+      live,
     )
     return NextResponse.json(
       { success: true, monitor },

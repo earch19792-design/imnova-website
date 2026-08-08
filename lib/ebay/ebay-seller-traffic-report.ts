@@ -2,6 +2,7 @@ export const EBAY_SELLER_TRAFFIC_METRICS = [
   "TOTAL_IMPRESSION_TOTAL",
   "LISTING_IMPRESSION_SEARCH_RESULTS_PAGE",
   "LISTING_VIEWS_SOURCE_SEARCH_RESULTS_PAGE",
+  "LISTING_VIEWS_SOURCE_OFF_EBAY",
   "LISTING_VIEWS_TOTAL",
   "CLICK_THROUGH_RATE",
   "TRANSACTION",
@@ -113,7 +114,9 @@ function numericValue(value: unknown) {
     return Number.isFinite(normalized) ? normalized : null
   }
   if (typeof normalized !== "string") return null
-  const parsed = Number(normalized.replaceAll(",", "").replace(/%$/, ""))
+  const candidate = normalized.replaceAll(",", "").replace(/%$/, "").trim()
+  if (!candidate) return null
+  const parsed = Number(candidate)
   return Number.isFinite(parsed) ? parsed : null
 }
 
@@ -135,6 +138,62 @@ function safeRate(numerator: number, denominator: number) {
   return denominator > 0
     ? Number(((numerator / denominator) * 100).toFixed(2))
     : null
+}
+
+/**
+ * Nullable, per-row projection for consumers that must not materialize an
+ * account summary. Inapplicable or missing metric cells remain null here.
+ */
+export function normalizeEbaySellerTrafficRows(
+  input: unknown,
+): Omit<EbaySellerTrafficDashboard, "summary"> {
+  const report = record(input)
+  const header = record(report.header)
+  const dimensionDefinitions = array(header.dimensionKeys).map(record)
+  const metricDefinitions = array(header.metrics).map(record)
+  const dimensionKey = text(dimensionDefinitions[0]?.key).toUpperCase()
+  const dimension = ["LISTING", "LISTING_ID"].includes(dimensionKey)
+    ? "LISTING" as const
+    : "DAY" as const
+  const dimensionLabel = text(dimensionDefinitions[0]?.localizedName) ||
+    (dimension === "LISTING" ? "Listing" : "Día")
+  const metricLabels: Record<string, string> = {}
+  const metricKeys = metricDefinitions.map((definition) => {
+    const key = text(definition.key).toUpperCase()
+    if (key) metricLabels[key] = text(definition.localizedName) || key
+    return key
+  })
+  const rows = array(report.records).map((entry): EbaySellerTrafficRow => {
+    const row = record(entry)
+    const dimensionEntry = record(array(row.dimensionValues)[0])
+    const metricValues = array(row.metricValues).map(record)
+    const metrics: Record<string, number | null> = {}
+    const applicability: Record<string, boolean> = {}
+    metricKeys.forEach((key, index) => {
+      if (!key) return
+      const value = metricValues[index] ?? {}
+      metrics[key] = numericValue(value.value)
+      applicability[key] = value.applicable === true
+    })
+    return {
+      dimension: stringValue(dimensionEntry.value),
+      metrics,
+      applicability,
+    }
+  }).filter((row) => row.dimension.length > 0)
+  return {
+    dimension,
+    dimensionLabel,
+    metricLabels,
+    rows,
+    startDate: text(report.startDate) || null,
+    endDate: text(report.endDate) || null,
+    lastUpdatedDate: text(report.lastUpdatedDate) || null,
+    warnings: array(report.warnings).map((warning) => {
+      const value = record(warning)
+      return text(value.longMessage) || text(value.message)
+    }).filter(Boolean),
+  }
 }
 
 export function normalizeEbaySellerTrafficReport(
