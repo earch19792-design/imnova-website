@@ -68,6 +68,19 @@ export type SafeEbayInventoryErrorMetadata = {
   domains: string[]
   categories: string[]
   parameterNames: string[]
+  ERROR_25709_FIELD_NAME: string
+  ERROR_25709_MESSAGE_FORM: "SUBSTITUTED_FIELD" | "LITERAL_PLACEHOLDER" |
+    "OTHER" | "NO_MESSAGE"
+  FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "YES" | "NO"
+}
+
+type EbayInventoryError25709MessageForm =
+  SafeEbayInventoryErrorMetadata["ERROR_25709_MESSAGE_FORM"]
+
+export type SafeEbayInventoryError25709Metadata = {
+  ERROR_25709_FIELD_NAME: string
+  ERROR_25709_MESSAGE_FORM: EbayInventoryError25709MessageForm
+  FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "YES" | "NO"
 }
 
 export type EbayLiveListing = {
@@ -415,6 +428,21 @@ const EBAY_INVENTORY_ERROR_KEYS = new Set([
   "subdomain",
 ])
 
+const ERROR_25709_SUBSTITUTED_FIELD_MESSAGE = /^Invalid value for ([A-Za-z][A-Za-z0-9_.-]{0,63})\.$/
+const ERROR_25709_LITERAL_PLACEHOLDER_MESSAGE = /^Invalid value for \{fieldName\}\.$/
+
+const UNPROVEN_25709_METADATA: SafeEbayInventoryErrorMetadata = {
+  status: "UNPROVEN",
+  errorObjectCount: null,
+  errorIds: [],
+  domains: [],
+  categories: [],
+  parameterNames: [],
+  ERROR_25709_FIELD_NAME: "UNPROVEN",
+  ERROR_25709_MESSAGE_FORM: "OTHER",
+  FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "NO",
+}
+
 function inventoryErrorRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -442,14 +470,69 @@ function validIgnoredStringArray(value: unknown) {
 }
 
 function unprovenInventoryErrorMetadata(): SafeEbayInventoryErrorMetadata {
-  return {
-    status: "UNPROVEN",
-    errorObjectCount: null,
-    errorIds: [],
-    domains: [],
-    categories: [],
-    parameterNames: [],
+  return { ...UNPROVEN_25709_METADATA }
+}
+
+function parseEbayInventory25709MetadataFromErrors(
+  rawErrors: unknown[],
+): SafeEbayInventoryError25709Metadata {
+  for (const rawError of rawErrors) {
+    const error = inventoryErrorRecord(rawError)
+    if (!error || !Object.hasOwn(error, "errorId") ||
+        typeof error.errorId !== "number" || !Number.isSafeInteger(error.errorId) ||
+        error.errorId !== 25709) {
+      continue
+    }
+    if (!Object.hasOwn(error, "message") || typeof error.message !== "string") {
+      return {
+        ERROR_25709_FIELD_NAME: "UNPROVEN",
+        ERROR_25709_MESSAGE_FORM: "NO_MESSAGE",
+        FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "NO",
+      }
+    }
+    if (ERROR_25709_LITERAL_PLACEHOLDER_MESSAGE.test(error.message)) {
+      return {
+        ERROR_25709_FIELD_NAME: "UNPROVEN",
+        ERROR_25709_MESSAGE_FORM: "LITERAL_PLACEHOLDER",
+        FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "NO",
+      }
+    }
+    const substituted = ERROR_25709_SUBSTITUTED_FIELD_MESSAGE.exec(error.message)
+    if (substituted) {
+      return {
+        ERROR_25709_FIELD_NAME: substituted[1] ?? "UNPROVEN",
+        ERROR_25709_MESSAGE_FORM: "SUBSTITUTED_FIELD",
+        FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "YES",
+      }
+    }
+    return {
+      ERROR_25709_FIELD_NAME: "UNPROVEN",
+      ERROR_25709_MESSAGE_FORM: "OTHER",
+      FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "NO",
+    }
   }
+  return {
+    ERROR_25709_FIELD_NAME: "UNPROVEN",
+    ERROR_25709_MESSAGE_FORM: "OTHER",
+    FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "NO",
+  }
+}
+
+function parseSafeInventoryErrors(value: unknown): unknown[] | null {
+  const root = inventoryErrorRecord(value)
+  if (!root) return null
+  const rootKeys = Object.keys(root)
+  const errors = rootKeys.length === 1 && rootKeys[0] === "errors" &&
+    Array.isArray(root.errors)
+    ? root.errors
+    : rootKeys.length > 0 && rootKeys.every((key) =>
+      EBAY_INVENTORY_ERROR_KEYS.has(key))
+        ? [root]
+        : null
+  if (!Array.isArray(errors) || errors.length < 1 || errors.length > 10) {
+    return null
+  }
+  return errors
 }
 
 /**
@@ -460,20 +543,9 @@ function unprovenInventoryErrorMetadata(): SafeEbayInventoryErrorMetadata {
 export function parseSafeEbayInventoryErrorMetadata(
   value: unknown,
 ): SafeEbayInventoryErrorMetadata {
-  const root = inventoryErrorRecord(value)
-  if (!root) return unprovenInventoryErrorMetadata()
-  const rootKeys = Object.keys(root).sort()
-  let rawErrors: unknown[]
-  if (rootKeys.length === 1 && rootKeys[0] === "errors" &&
-      Array.isArray(root.errors)) {
-    rawErrors = root.errors
-  } else if (rootKeys.length > 0 && rootKeys.every((key) =>
-    EBAY_INVENTORY_ERROR_KEYS.has(key))) {
-    rawErrors = [root]
-  } else {
-    return unprovenInventoryErrorMetadata()
-  }
-  if (rawErrors.length < 1 || rawErrors.length > 10) {
+  if (!inventoryErrorRecord(value)) return { ...UNPROVEN_25709_METADATA }
+  const rawErrors = parseSafeInventoryErrors(value)
+  if (!rawErrors) {
     return unprovenInventoryErrorMetadata()
   }
 
@@ -534,6 +606,7 @@ export function parseSafeEbayInventoryErrorMetadata(
     domains: [...new Set(domains)].sort(),
     categories: [...new Set(categories)].sort(),
     parameterNames: [...new Set(parameterNames)].sort(),
+    ...parseEbayInventory25709MetadataFromErrors(rawErrors),
   }
 }
 

@@ -224,6 +224,10 @@ type InventoryConsumerVariantEvidence = {
     domains: string[]
     categories: string[]
     parameterNames: string[]
+    ERROR_25709_FIELD_NAME: string
+    ERROR_25709_MESSAGE_FORM: "SUBSTITUTED_FIELD" | "LITERAL_PLACEHOLDER" |
+      "OTHER" | "NO_MESSAGE"
+    FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "YES" | "NO"
   }
 }
 
@@ -354,6 +358,9 @@ const INVENTORY_ERROR_METADATA_KEYS = [
   "domains",
   "errorIds",
   "errorObjectCount",
+  "ERROR_25709_FIELD_NAME",
+  "ERROR_25709_MESSAGE_FORM",
+  "FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE",
   "parameterNames",
   "status",
 ] as const
@@ -595,6 +602,14 @@ function validInventoryConsumerDiagnostic(
           /^[A-Za-z][A-Za-z0-9_.\[\]-]{0,79}$/,
           200,
         )) return false
+    if (typeof error.ERROR_25709_FIELD_NAME !== "string" ||
+        !/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(error.ERROR_25709_FIELD_NAME) &&
+        error.ERROR_25709_FIELD_NAME !== "UNPROVEN") return false
+    if (!["SUBSTITUTED_FIELD", "LITERAL_PLACEHOLDER", "OTHER",
+      "NO_MESSAGE"].includes(String(error.ERROR_25709_MESSAGE_FORM))) return false
+    if (!["YES", "NO"].includes(
+      String(error.FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE),
+    )) return false
     if (error.status === "CLASSIFIED") {
       if (typeof error.errorObjectCount !== "number" ||
           error.errorObjectCount < 1 || error.errorObjectCount > 10 ||
