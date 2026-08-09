@@ -1,3 +1,5 @@
+import type { SupabaseClient } from "@supabase/supabase-js"
+
 import { createHash } from "node:crypto"
 
 import {
@@ -22,6 +24,7 @@ import {
 } from "./ebay-commercial-monitor-live-readonly-domain"
 import {
   ebayProductionAccountFingerprint,
+  getEbaySellerAccountScopeConfiguration,
   getEbayProductionIdentityBindingConfiguration,
   normalizeEbaySellerAccountAlias,
 } from "./ebay-seller-account-scope"
@@ -30,6 +33,11 @@ import {
   EBAY_SELLER_TRAFFIC_METRICS,
   normalizeEbaySellerTrafficRows,
 } from "./ebay-seller-traffic-report"
+import {
+  readRegistry,
+  type ReadonlyRegistryListingRow,
+} from "./commercial-monitor-readonly-repository"
+import { getSupabaseAdminClient } from "../supabase-admin"
 
 const EBAY_API_ORIGIN = "https://api.ebay.com"
 const OAUTH_ENDPOINT = `${EBAY_API_ORIGIN}/identity/v1/oauth2/token`
@@ -175,6 +183,387 @@ export type EbayMonitorOAuthSafeErrorCategory =
   | "INVALID_REQUEST"
   | "UNSUPPORTED_GRANT_TYPE"
   | "OAUTH_ERROR_UNCLASSIFIED"
+
+export type EbayRegistryRuntimeReadStatus =
+  | "AVAILABLE"
+  | "MISSING"
+  | "FAILED"
+
+export type EbayRegistryRuntimeSourceStatus =
+  | "AVAILABLE"
+  | "CONFIGURATION_MISSING"
+  | "READ_FAILED"
+
+export type EbayRegistryRuntimeEnumerationStatus =
+  | "AVAILABLE"
+  | "AUTH_UNAVAILABLE"
+  | "READ_FAILED"
+
+export type EbayRegistryRuntimeCoverageCount = number | "UNPROVEN"
+
+export type EbayManualListingDiscoveryRuntimeResult =
+  | "PASS"
+  | "PARTIAL"
+  | "FAIL"
+  | "UNPROVEN"
+
+export type EbayRegistryCoverageDiagnostic = {
+  REGISTRY_RUNTIME_CONFIG: EbayRegistryRuntimeReadStatus
+  SUPABASE_URL_PRESENT: "YES" | "NO"
+  SUPABASE_SERVICE_ROLE_PRESENT: "YES" | "NO"
+  REGISTRY_SOURCE_RUNTIME_STATUS: EbayRegistryRuntimeSourceStatus
+  REGISTRY_RECORD_COUNT: EbayRegistryRuntimeCoverageCount
+  LIVE_ENUMERATION_RUNTIME_STATUS: EbayRegistryRuntimeEnumerationStatus
+  LIVE_EBAY_LISTING_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_MATCHED_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_MISSING_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_ORPHANED_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_AMBIGUOUS_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_COVERAGE_PERCENT: number | "UNPROVEN"
+  LIVE_PARTITION_VALID: "YES" | "NO"
+  REGISTRY_PARTITION_VALID: "YES" | "NO"
+  MANUAL_LISTING_RUNTIME_AUTODISCOVERY: EbayManualListingDiscoveryRuntimeResult
+}
+
+type RegistryRuntimeReadInput = {
+  environment?: NodeJS.ProcessEnv
+  fetchImpl?: FetchLike
+  clock?: Clock
+  startedAt?: number
+  supabaseClient?: Pick<SupabaseClient, "from">
+}
+
+function computeRegistryCoveragePercent(
+  matched: number,
+  liveCount: number,
+) {
+  if (liveCount <= 0) {
+    return liveCount === 0 ? 100 : 0
+  }
+  return Number(((matched / liveCount) * 100).toFixed(2))
+}
+
+function manualListingDiscoveryResult(input: {
+  sourceStatus: EbayRegistryRuntimeSourceStatus
+  liveStatus: EbayRegistryRuntimeEnumerationStatus
+}) : EbayManualListingDiscoveryRuntimeResult {
+  if (
+    input.sourceStatus === "READ_FAILED" ||
+    input.liveStatus === "READ_FAILED"
+  ) {
+    return "FAIL"
+  }
+  if (
+    input.sourceStatus === "AVAILABLE" &&
+    input.liveStatus === "AVAILABLE"
+  ) {
+    return "PASS"
+  }
+  return "PARTIAL"
+}
+
+function hasRequiredTradingCredentials(environment: NodeJS.ProcessEnv) {
+  const credentials = generalCredentials(environment)
+  const identity = getEbayProductionIdentityBindingConfiguration(environment)
+  return Boolean(
+    credentials.clientId &&
+    credentials.clientSecret &&
+    credentials.refreshToken &&
+    identity.bound,
+  )
+}
+
+export async function diagnoseRegistryCoverageRuntime(
+  input: RegistryRuntimeReadInput = {},
+): Promise<EbayRegistryCoverageDiagnostic> {
+  const environment = input.environment ?? process.env
+  const fetchImpl = input.fetchImpl ?? fetch
+  const clock = input.clock ?? (() => new Date())
+  const startedAt = input.startedAt ?? Date.now()
+  const configuration = getEbaySellerAccountScopeConfiguration(environment)
+  const supabaseUrlPresent = isPresentAndTrimmed(
+    environment.NEXT_PUBLIC_SUPABASE_URL,
+  )
+  const supabaseServiceRolePresent = isPresentAndTrimmed(
+    environment.SUPABASE_SERVICE_ROLE_KEY,
+  )
+  let runtimeConfig: EbayRegistryRuntimeReadStatus =
+    supabaseUrlPresent && supabaseServiceRolePresent
+      ? "AVAILABLE"
+      : "MISSING"
+  const result: EbayRegistryCoverageDiagnostic = {
+    REGISTRY_RUNTIME_CONFIG: runtimeConfig,
+    SUPABASE_URL_PRESENT: supabaseUrlPresent ? "YES" : "NO",
+    SUPABASE_SERVICE_ROLE_PRESENT: supabaseServiceRolePresent ? "YES" : "NO",
+    REGISTRY_SOURCE_RUNTIME_STATUS: "CONFIGURATION_MISSING",
+    REGISTRY_RECORD_COUNT: "UNPROVEN",
+    LIVE_ENUMERATION_RUNTIME_STATUS: "AUTH_UNAVAILABLE",
+    LIVE_EBAY_LISTING_COUNT: "UNPROVEN",
+    REGISTRY_MATCHED_COUNT: "UNPROVEN",
+    REGISTRY_MISSING_COUNT: "UNPROVEN",
+    REGISTRY_ORPHANED_COUNT: "UNPROVEN",
+    REGISTRY_AMBIGUOUS_COUNT: "UNPROVEN",
+    REGISTRY_COVERAGE_PERCENT: "UNPROVEN",
+    LIVE_PARTITION_VALID: "NO",
+    REGISTRY_PARTITION_VALID: "NO",
+    MANUAL_LISTING_RUNTIME_AUTODISCOVERY: "UNPROVEN",
+  }
+  const calls: EbayMonitorReadonlyCallEvidence[] = []
+  requestBudgets.set(calls, {
+    deadlineAt: clock().getTime() + REQUEST_BUDGET_MS,
+    callsRemaining: REQUEST_MAX_CALLS,
+    maximumCalls: REQUEST_MAX_CALLS,
+    callsStarted: 0,
+  })
+
+  let registryRows: ReadonlyRegistryListingRow[] = []
+  let liveListings: EbayLiveListing[] = []
+
+  let canAttemptRegistryRead = false
+  if (configuration.accountKey && supabaseUrlPresent && supabaseServiceRolePresent) {
+    canAttemptRegistryRead = true
+  }
+  if (!canAttemptRegistryRead) {
+    result.REGISTRY_SOURCE_RUNTIME_STATUS = "CONFIGURATION_MISSING"
+  } else {
+    try {
+      const supabaseClient = input.supabaseClient ?? getSupabaseAdminClient()
+      const accountKey = configuration.accountKey ?? ""
+      const reader = await readRegistry(
+        supabaseClient,
+        accountKey,
+      )
+      if (reader.status === "ERROR") {
+        result.REGISTRY_SOURCE_RUNTIME_STATUS = "READ_FAILED"
+      } else {
+        result.REGISTRY_SOURCE_RUNTIME_STATUS = "AVAILABLE"
+        registryRows = reader.rows
+        result.REGISTRY_RECORD_COUNT = reader.rows.length
+      }
+    } catch {
+      runtimeConfig = "FAILED"
+      result.REGISTRY_SOURCE_RUNTIME_STATUS = "READ_FAILED"
+    }
+  }
+  result.REGISTRY_RUNTIME_CONFIG = runtimeConfig
+
+  if (!hasRequiredTradingCredentials(environment) || !configuration.configured) {
+    result.LIVE_ENUMERATION_RUNTIME_STATUS = "AUTH_UNAVAILABLE"
+  } else {
+    try {
+      const credentials = generalCredentials(environment)
+      const minted = await accessToken({
+        operation: "OAUTH_REFRESH_TRADING",
+        credentials,
+        scopes: [BASE_SCOPE],
+        fetchImpl,
+        calls,
+        clock,
+      })
+      const identity = getEbayProductionIdentityBindingConfiguration(environment)
+      await verifyAccount({
+        token: minted.value,
+        expectedUserId: identity.expectedUserId,
+        expectedFingerprint: identity.expectedAccountFingerprint,
+        fetchImpl,
+        calls,
+        clock,
+      })
+      const sellerWide = await sellerWideDiscovery({
+        token: minted.value,
+        fetchImpl,
+        calls,
+        clock,
+      })
+      liveListings = sellerWide.listings
+      result.LIVE_ENUMERATION_RUNTIME_STATUS = "AVAILABLE"
+      result.LIVE_EBAY_LISTING_COUNT = sellerWide.listings.length
+    } catch (error) {
+      result.LIVE_ENUMERATION_RUNTIME_STATUS = "READ_FAILED"
+      const failure = safeCode(error, "UNCLASSIFIED")
+      if (failure === "UNCLASSIFIED") {
+        result.LIVE_ENUMERATION_RUNTIME_STATUS = "AUTH_UNAVAILABLE"
+      } else if (
+        failure.includes("NETWORK") ||
+        failure.includes("READ_TIMEOUT") ||
+        failure.includes("REQUEST_BUDGET_EXHAUSTED") ||
+        failure.includes("CONFIGURATION") ||
+        failure.includes("TOKEN") ||
+        failure.includes("ACCOUNT") ||
+        failure.includes("IDENTITY") ||
+        failure.includes("SCOPE") ||
+        failure.includes("UNAUTHORIZED")
+      ) {
+        result.LIVE_ENUMERATION_RUNTIME_STATUS = "AUTH_UNAVAILABLE"
+      }
+    }
+  }
+
+  if (
+    result.REGISTRY_SOURCE_RUNTIME_STATUS === "AVAILABLE" &&
+    result.LIVE_ENUMERATION_RUNTIME_STATUS === "AVAILABLE"
+  ) {
+    const reconciliation = buildReconciliationCounts({
+      liveListings,
+      registryRows,
+    })
+    result.REGISTRY_MATCHED_COUNT = reconciliation.matched
+    result.REGISTRY_MISSING_COUNT = reconciliation.missing
+    result.REGISTRY_ORPHANED_COUNT = reconciliation.orphaned
+    result.REGISTRY_AMBIGUOUS_COUNT = reconciliation.ambiguous
+    result.REGISTRY_COVERAGE_PERCENT = computeRegistryCoveragePercent(
+      reconciliation.matched,
+      reconciliation.liveCount,
+    )
+    result.LIVE_PARTITION_VALID = reconciliation.livePartitionValid
+    result.REGISTRY_PARTITION_VALID = reconciliation.registryPartitionValid
+    result.REGISTRY_RECORD_COUNT = reconciliation.registryCount
+    result.LIVE_EBAY_LISTING_COUNT = reconciliation.liveCount
+  }
+
+  result.MANUAL_LISTING_RUNTIME_AUTODISCOVERY = manualListingDiscoveryResult({
+    sourceStatus: result.REGISTRY_SOURCE_RUNTIME_STATUS,
+    liveStatus: result.LIVE_ENUMERATION_RUNTIME_STATUS,
+  })
+
+  if (
+    result.REGISTRY_SOURCE_RUNTIME_STATUS !== "AVAILABLE" ||
+    result.LIVE_ENUMERATION_RUNTIME_STATUS !== "AVAILABLE"
+  ) {
+    result.LIVE_EBAY_LISTING_COUNT = "UNPROVEN"
+    result.REGISTRY_RECORD_COUNT = "UNPROVEN"
+    result.REGISTRY_MATCHED_COUNT = "UNPROVEN"
+    result.REGISTRY_MISSING_COUNT = "UNPROVEN"
+    result.REGISTRY_ORPHANED_COUNT = "UNPROVEN"
+    result.REGISTRY_AMBIGUOUS_COUNT = "UNPROVEN"
+    result.REGISTRY_COVERAGE_PERCENT = "UNPROVEN"
+    result.LIVE_PARTITION_VALID = "NO"
+    result.REGISTRY_PARTITION_VALID = "NO"
+  }
+  return result
+}
+
+function isPresentAndTrimmed(value: unknown) {
+  return typeof value === "string" && value.trim().length > 0
+}
+
+type RegistryLiveReconciliation = {
+  liveCount: number
+  registryCount: number
+  matched: number
+  missing: number
+  orphaned: number
+  ambiguous: number
+  livePartitionValid: "YES" | "NO"
+  registryPartitionValid: "YES" | "NO"
+}
+
+function buildReconciliationCounts(input: {
+  liveListings: EbayLiveListing[]
+  registryRows: ReadonlyRegistryListingRow[]
+}) : RegistryLiveReconciliation {
+  const liveKeyCounts = new Map<string, number>()
+  let liveMissingIdentityCount = 0
+  for (const listing of input.liveListings) {
+    const itemId = itemIdSkuVariationIdentityComponent(listing.itemId, 120)
+    const sku = itemIdSkuVariationIdentityComponent(listing.sku, 120)
+    const variationKey = itemIdSkuVariationIdentityComponent(
+      listing.variationKey,
+      120,
+    )
+    if (!itemId || !sku) {
+      liveMissingIdentityCount += 1
+      continue
+    }
+    const key = itemIdSkuVariationIdentityKey({
+      itemId,
+      sku,
+      variationKey,
+    })
+    if (key === null) {
+      liveMissingIdentityCount += 1
+      continue
+    }
+    const existingLiveCount = liveKeyCounts.get(key)
+    liveKeyCounts.set(
+      key,
+      (existingLiveCount === undefined ? 0 : existingLiveCount) + 1,
+    )
+  }
+  const registryKeyCounts = new Map<string, number>()
+  let registryMissingIdentityCount = 0
+  for (const row of input.registryRows) {
+    const itemId = itemIdSkuVariationIdentityComponent(row.ebay_item_id, 120)
+    const sku = itemIdSkuVariationIdentityComponent(row.ebay_sku, 120)
+    const variationKey = itemIdSkuVariationIdentityComponent(
+      row.ebay_variation_key ?? null,
+      120,
+    )
+    if (!itemId || !sku) {
+      registryMissingIdentityCount += 1
+      continue
+    }
+    const key = itemIdSkuVariationIdentityKey({
+      itemId,
+      sku,
+      variationKey,
+    })
+    if (key === null) {
+      registryMissingIdentityCount += 1
+      continue
+    }
+    const existingRegistryCount = registryKeyCounts.get(key)
+    registryKeyCounts.set(
+      key,
+      (existingRegistryCount === undefined ? 0 : existingRegistryCount) + 1,
+    )
+  }
+  let matched = 0
+  let missing = 0
+  for (const [key, liveOccurrenceCount] of liveKeyCounts) {
+    const rawRegistryOccurrenceCount = registryKeyCounts.get(key)
+    const registryOccurrenceCount = rawRegistryOccurrenceCount === undefined
+      ? 0
+      : rawRegistryOccurrenceCount
+    const matchedOccurrenceCount = Math.min(
+      registryOccurrenceCount,
+      liveOccurrenceCount,
+    )
+    matched += matchedOccurrenceCount
+    missing += liveOccurrenceCount - matchedOccurrenceCount
+    if (registryOccurrenceCount > matchedOccurrenceCount) {
+      registryKeyCounts.set(key, registryOccurrenceCount - matchedOccurrenceCount)
+    } else {
+      registryKeyCounts.set(key, 0)
+    }
+  }
+  const duplicatedLive = [...liveKeyCounts.values()]
+    .filter((value) => value > 1)
+    .reduce((sum, value) => sum + (value - 1), 0)
+  const duplicatedRegistry = [...registryKeyCounts.values()]
+    .filter((value) => value > 1)
+    .reduce((sum, value) => sum + (value - 1), 0)
+  const registryOrphaned = [...registryKeyCounts.values()]
+    .reduce((sum, value) => sum + value, 0)
+  const liveDuplicateInvalid = duplicatedLive > 0
+  const registryDuplicateInvalid = duplicatedRegistry > 0
+  return {
+    liveCount: input.liveListings.length,
+    registryCount: input.registryRows.length,
+    matched,
+    missing: missing + liveMissingIdentityCount,
+    orphaned: registryOrphaned + registryMissingIdentityCount,
+    ambiguous: liveMissingIdentityCount + registryMissingIdentityCount +
+      duplicatedLive + duplicatedRegistry,
+    livePartitionValid: !liveMissingIdentityCount && !liveDuplicateInvalid
+      ? "YES"
+      : "NO",
+    registryPartitionValid: !registryMissingIdentityCount &&
+      !registryDuplicateInvalid
+      ? "YES"
+      : "NO",
+  }
+}
 
 export type EbayCommercialMonitorLiveReadonlyResult = {
   contractVersion: typeof EBAY_MONITOR_LIVE_READONLY_CONTRACT_VERSION
@@ -394,6 +783,27 @@ function text(value: unknown, maximum = 200) {
 }
 
 function listingIdentityComponent(value: string | null, maximum: number) {
+  if (typeof value !== "string") return null
+  const normalized = value.trim()
+  return normalized ? normalized.slice(0, maximum) : null
+}
+
+function itemIdSkuVariationIdentityKey(input: {
+  itemId: string
+  sku: string | null
+  variationKey: string | null
+}) {
+  return JSON.stringify([
+    itemIdSkuVariationIdentityComponent(input.itemId, 120),
+    itemIdSkuVariationIdentityComponent(input.sku, 120),
+    itemIdSkuVariationIdentityComponent(input.variationKey, 120),
+  ])
+}
+
+function itemIdSkuVariationIdentityComponent(
+  value: string | null,
+  maximum: number,
+) {
   if (typeof value !== "string") return null
   const normalized = value.trim()
   return normalized ? normalized.slice(0, maximum) : null

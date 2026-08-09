@@ -145,6 +145,8 @@ export type ReadonlyLearningAdjustmentRow = {
   computed_at: string
 }
 
+export type ReadonlySupabaseReader = Pick<SupabaseClient, "from">
+
 export type CommercialMonitorReadonlySources = {
   registry: ReadonlySourceResult<ReadonlyRegistryListingRow>
   syncState: ReadonlySourceResult<ReadonlySyncStateRow>
@@ -178,8 +180,8 @@ function failure<T>(source: string, code: string, rows: T[] = []) {
   }
 }
 
-async function readRegistry(
-  supabase: SupabaseClient,
+export async function readRegistry(
+  supabase: ReadonlySupabaseReader,
   accountKey: string,
 ) : Promise<ReadonlySourceResult<ReadonlyRegistryListingRow>> {
   const maximum = 500
