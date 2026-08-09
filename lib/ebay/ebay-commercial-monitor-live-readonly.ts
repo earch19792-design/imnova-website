@@ -207,6 +207,21 @@ export type EbayManualListingDiscoveryRuntimeResult =
   | "FAIL"
   | "UNPROVEN"
 
+export type EbayRegistryIdentityRootCause =
+  | "ITEM_ID_MISMATCH"
+  | "SKU_MISMATCH"
+  | "VARIATION_KEY_MISMATCH"
+  | "COMPOSITE_KEY_OVERSTRICT"
+  | "LEGACY_IDENTITY_CONTRACT"
+  | "REGISTRY_ROWS_HISTORICAL_ONLY"
+  | "MIXED_CAUSES"
+  | "UNPROVEN"
+
+export type EbaySafeBackfillWithoutDuplication =
+  | "YES"
+  | "NO"
+  | "UNPROVEN"
+
 export type EbayRegistryCoverageDiagnostic = {
   REGISTRY_RUNTIME_CONFIG: EbayRegistryRuntimeReadStatus
   SUPABASE_URL_PRESENT: "YES" | "NO"
@@ -220,6 +235,28 @@ export type EbayRegistryCoverageDiagnostic = {
   REGISTRY_ORPHANED_COUNT: EbayRegistryRuntimeCoverageCount
   REGISTRY_AMBIGUOUS_COUNT: EbayRegistryRuntimeCoverageCount
   REGISTRY_COVERAGE_PERCENT: number | "UNPROVEN"
+  LIVE_WITH_ITEM_ID_COUNT: EbayRegistryRuntimeCoverageCount
+  LIVE_WITH_SKU_COUNT: EbayRegistryRuntimeCoverageCount
+  LIVE_WITH_VARIATION_KEY_COUNT: EbayRegistryRuntimeCoverageCount
+  LIVE_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_WITH_ITEM_ID_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_WITH_SKU_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_WITH_VARIATION_KEY_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT: EbayRegistryRuntimeCoverageCount
+  ITEM_ID_EXACT_OVERLAP_COUNT: EbayRegistryRuntimeCoverageCount
+  SKU_EXACT_OVERLAP_COUNT: EbayRegistryRuntimeCoverageCount
+  VARIATION_KEY_EXACT_OVERLAP_COUNT: EbayRegistryRuntimeCoverageCount
+  ITEM_ID_PLUS_SKU_OVERLAP_COUNT: EbayRegistryRuntimeCoverageCount
+  ITEM_ID_PLUS_VARIATION_OVERLAP_COUNT: EbayRegistryRuntimeCoverageCount
+  SKU_PLUS_VARIATION_OVERLAP_COUNT: EbayRegistryRuntimeCoverageCount
+  FULL_COMPOSITE_OVERLAP_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_CURRENT_IDENTITY_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_LEGACY_IDENTITY_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_INCOMPLETE_IDENTITY_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_HISTORICAL_ONLY_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_IDENTITY_UNPROVEN_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_IDENTITY_ROOT_CAUSE: EbayRegistryIdentityRootCause
+  SAFE_BACKFILL_WITHOUT_DUPLICATION: EbaySafeBackfillWithoutDuplication
   LIVE_PARTITION_VALID: "YES" | "NO"
   REGISTRY_PARTITION_VALID: "YES" | "NO"
   MANUAL_LISTING_RUNTIME_AUTODISCOVERY: EbayManualListingDiscoveryRuntimeResult
@@ -304,6 +341,28 @@ export async function diagnoseRegistryCoverageRuntime(
     REGISTRY_ORPHANED_COUNT: "UNPROVEN",
     REGISTRY_AMBIGUOUS_COUNT: "UNPROVEN",
     REGISTRY_COVERAGE_PERCENT: "UNPROVEN",
+    LIVE_WITH_ITEM_ID_COUNT: "UNPROVEN",
+    LIVE_WITH_SKU_COUNT: "UNPROVEN",
+    LIVE_WITH_VARIATION_KEY_COUNT: "UNPROVEN",
+    LIVE_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT: "UNPROVEN",
+    REGISTRY_WITH_ITEM_ID_COUNT: "UNPROVEN",
+    REGISTRY_WITH_SKU_COUNT: "UNPROVEN",
+    REGISTRY_WITH_VARIATION_KEY_COUNT: "UNPROVEN",
+    REGISTRY_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT: "UNPROVEN",
+    ITEM_ID_EXACT_OVERLAP_COUNT: "UNPROVEN",
+    SKU_EXACT_OVERLAP_COUNT: "UNPROVEN",
+    VARIATION_KEY_EXACT_OVERLAP_COUNT: "UNPROVEN",
+    ITEM_ID_PLUS_SKU_OVERLAP_COUNT: "UNPROVEN",
+    ITEM_ID_PLUS_VARIATION_OVERLAP_COUNT: "UNPROVEN",
+    SKU_PLUS_VARIATION_OVERLAP_COUNT: "UNPROVEN",
+    FULL_COMPOSITE_OVERLAP_COUNT: "UNPROVEN",
+    REGISTRY_CURRENT_IDENTITY_COUNT: "UNPROVEN",
+    REGISTRY_LEGACY_IDENTITY_COUNT: "UNPROVEN",
+    REGISTRY_INCOMPLETE_IDENTITY_COUNT: "UNPROVEN",
+    REGISTRY_HISTORICAL_ONLY_COUNT: "UNPROVEN",
+    REGISTRY_IDENTITY_UNPROVEN_COUNT: "UNPROVEN",
+    REGISTRY_IDENTITY_ROOT_CAUSE: "UNPROVEN",
+    SAFE_BACKFILL_WITHOUT_DUPLICATION: "UNPROVEN",
     LIVE_PARTITION_VALID: "NO",
     REGISTRY_PARTITION_VALID: "NO",
     MANUAL_LISTING_RUNTIME_AUTODISCOVERY: "UNPROVEN",
@@ -411,6 +470,43 @@ export async function diagnoseRegistryCoverageRuntime(
     result.REGISTRY_MISSING_COUNT = reconciliation.missing
     result.REGISTRY_ORPHANED_COUNT = reconciliation.orphaned
     result.REGISTRY_AMBIGUOUS_COUNT = reconciliation.ambiguous
+    result.LIVE_WITH_ITEM_ID_COUNT = reconciliation.liveWithItemIdCount
+    result.LIVE_WITH_SKU_COUNT = reconciliation.liveWithSkuCount
+    result.LIVE_WITH_VARIATION_KEY_COUNT = reconciliation.liveWithVariationKeyCount
+    result.LIVE_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT =
+      reconciliation.liveWithCompleteCompositeCount
+    result.REGISTRY_WITH_ITEM_ID_COUNT = reconciliation.registryWithItemIdCount
+    result.REGISTRY_WITH_SKU_COUNT = reconciliation.registryWithSkuCount
+    result.REGISTRY_WITH_VARIATION_KEY_COUNT =
+      reconciliation.registryWithVariationKeyCount
+    result.REGISTRY_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT =
+      reconciliation.registryWithCompleteCompositeCount
+    result.ITEM_ID_EXACT_OVERLAP_COUNT = reconciliation.itemIdExactOverlapCount
+    result.SKU_EXACT_OVERLAP_COUNT = reconciliation.skuExactOverlapCount
+    result.VARIATION_KEY_EXACT_OVERLAP_COUNT =
+      reconciliation.variationKeyExactOverlapCount
+    result.ITEM_ID_PLUS_SKU_OVERLAP_COUNT =
+      reconciliation.itemIdPlusSkuOverlapCount
+    result.ITEM_ID_PLUS_VARIATION_OVERLAP_COUNT =
+      reconciliation.itemIdPlusVariationOverlapCount
+    result.SKU_PLUS_VARIATION_OVERLAP_COUNT =
+      reconciliation.skuPlusVariationOverlapCount
+    result.FULL_COMPOSITE_OVERLAP_COUNT =
+      reconciliation.fullCompositeOverlapCount
+    result.REGISTRY_CURRENT_IDENTITY_COUNT =
+      reconciliation.registryCurrentIdentityCount
+    result.REGISTRY_LEGACY_IDENTITY_COUNT =
+      reconciliation.registryLegacyIdentityCount
+    result.REGISTRY_INCOMPLETE_IDENTITY_COUNT =
+      reconciliation.registryIncompleteIdentityCount
+    result.REGISTRY_HISTORICAL_ONLY_COUNT =
+      reconciliation.registryHistoricalOnlyCount
+    result.REGISTRY_IDENTITY_UNPROVEN_COUNT =
+      reconciliation.registryIdentityUnprovenCount
+    result.REGISTRY_IDENTITY_ROOT_CAUSE =
+      reconciliation.registryIdentityRootCause
+    result.SAFE_BACKFILL_WITHOUT_DUPLICATION =
+      reconciliation.safeBackfillWithoutDuplication
     result.REGISTRY_COVERAGE_PERCENT = computeRegistryCoveragePercent(
       reconciliation.matched,
       reconciliation.liveCount,
@@ -436,6 +532,28 @@ export async function diagnoseRegistryCoverageRuntime(
     result.REGISTRY_MISSING_COUNT = "UNPROVEN"
     result.REGISTRY_ORPHANED_COUNT = "UNPROVEN"
     result.REGISTRY_AMBIGUOUS_COUNT = "UNPROVEN"
+    result.LIVE_WITH_ITEM_ID_COUNT = "UNPROVEN"
+    result.LIVE_WITH_SKU_COUNT = "UNPROVEN"
+    result.LIVE_WITH_VARIATION_KEY_COUNT = "UNPROVEN"
+    result.LIVE_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT = "UNPROVEN"
+    result.REGISTRY_WITH_ITEM_ID_COUNT = "UNPROVEN"
+    result.REGISTRY_WITH_SKU_COUNT = "UNPROVEN"
+    result.REGISTRY_WITH_VARIATION_KEY_COUNT = "UNPROVEN"
+    result.REGISTRY_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT = "UNPROVEN"
+    result.ITEM_ID_EXACT_OVERLAP_COUNT = "UNPROVEN"
+    result.SKU_EXACT_OVERLAP_COUNT = "UNPROVEN"
+    result.VARIATION_KEY_EXACT_OVERLAP_COUNT = "UNPROVEN"
+    result.ITEM_ID_PLUS_SKU_OVERLAP_COUNT = "UNPROVEN"
+    result.ITEM_ID_PLUS_VARIATION_OVERLAP_COUNT = "UNPROVEN"
+    result.SKU_PLUS_VARIATION_OVERLAP_COUNT = "UNPROVEN"
+    result.FULL_COMPOSITE_OVERLAP_COUNT = "UNPROVEN"
+    result.REGISTRY_CURRENT_IDENTITY_COUNT = "UNPROVEN"
+    result.REGISTRY_LEGACY_IDENTITY_COUNT = "UNPROVEN"
+    result.REGISTRY_INCOMPLETE_IDENTITY_COUNT = "UNPROVEN"
+    result.REGISTRY_HISTORICAL_ONLY_COUNT = "UNPROVEN"
+    result.REGISTRY_IDENTITY_UNPROVEN_COUNT = "UNPROVEN"
+    result.REGISTRY_IDENTITY_ROOT_CAUSE = "UNPROVEN"
+    result.SAFE_BACKFILL_WITHOUT_DUPLICATION = "UNPROVEN"
     result.REGISTRY_COVERAGE_PERCENT = "UNPROVEN"
     result.LIVE_PARTITION_VALID = "NO"
     result.REGISTRY_PARTITION_VALID = "NO"
@@ -454,6 +572,28 @@ type RegistryLiveReconciliation = {
   missing: number
   orphaned: number
   ambiguous: number
+  liveWithItemIdCount: number
+  liveWithSkuCount: number
+  liveWithVariationKeyCount: number
+  liveWithCompleteCompositeCount: number
+  registryWithItemIdCount: number
+  registryWithSkuCount: number
+  registryWithVariationKeyCount: number
+  registryWithCompleteCompositeCount: number
+  itemIdExactOverlapCount: number
+  skuExactOverlapCount: number
+  variationKeyExactOverlapCount: number
+  itemIdPlusSkuOverlapCount: number
+  itemIdPlusVariationOverlapCount: number
+  skuPlusVariationOverlapCount: number
+  fullCompositeOverlapCount: number
+  registryCurrentIdentityCount: number
+  registryLegacyIdentityCount: number
+  registryIncompleteIdentityCount: number
+  registryHistoricalOnlyCount: number
+  registryIdentityUnprovenCount: number
+  registryIdentityRootCause: EbayRegistryIdentityRootCause
+  safeBackfillWithoutDuplication: EbaySafeBackfillWithoutDuplication
   livePartitionValid: "YES" | "NO"
   registryPartitionValid: "YES" | "NO"
 }
@@ -462,8 +602,19 @@ function buildReconciliationCounts(input: {
   liveListings: EbayLiveListing[]
   registryRows: ReadonlyRegistryListingRow[]
 }) : RegistryLiveReconciliation {
-  const liveKeyCounts = new Map<string, number>()
-  let liveMissingIdentityCount = 0
+  const liveCompositeCounts = new Map<string, number>()
+  const liveItemCounts = new Map<string, number>()
+  const liveSkuCounts = new Map<string, number>()
+  const liveVariationCounts = new Map<string, number>()
+  const liveItemSkuCounts = new Map<string, number>()
+  const liveItemVariationCounts = new Map<string, number>()
+  const liveSkuVariationCounts = new Map<string, number>()
+  let liveWithItemIdCount = 0
+  let liveWithSkuCount = 0
+  let liveWithVariationKeyCount = 0
+  let liveWithCompleteCompositeCount = 0
+  let liveIdentityMissingCount = 0
+
   for (const listing of input.liveListings) {
     const itemId = itemIdSkuVariationIdentityComponent(listing.itemId, 120)
     const sku = itemIdSkuVariationIdentityComponent(listing.sku, 120)
@@ -471,27 +622,81 @@ function buildReconciliationCounts(input: {
       listing.variationKey,
       120,
     )
-    if (!itemId || !sku) {
-      liveMissingIdentityCount += 1
+    const hasItemId = itemId !== null
+    const hasSku = sku !== null
+    const hasVariationKey = variationKey !== null
+
+    if (hasItemId) {
+      liveWithItemIdCount += 1
+      liveItemCounts.set(
+        itemId,
+        (liveItemCounts.get(itemId) ?? 0) + 1,
+      )
+    }
+    if (hasSku) {
+      liveWithSkuCount += 1
+      liveSkuCounts.set(sku, (liveSkuCounts.get(sku) ?? 0) + 1)
+    }
+    if (hasVariationKey) {
+      liveWithVariationKeyCount += 1
+      liveVariationCounts.set(variationKey, (liveVariationCounts.get(variationKey)
+        ?? 0) + 1)
+    }
+
+    if (!hasItemId || !hasSku) {
+      liveIdentityMissingCount += 1
       continue
     }
-    const key = itemIdSkuVariationIdentityKey({
-      itemId,
-      sku,
+
+    liveWithCompleteCompositeCount += 1
+    const liveItemId = itemId
+    const liveSku = sku
+    const compositeKey = itemIdSkuVariationIdentityKey({
+      itemId: liveItemId,
+      sku: liveSku,
       variationKey,
     })
-    if (key === null) {
-      liveMissingIdentityCount += 1
-      continue
-    }
-    const existingLiveCount = liveKeyCounts.get(key)
-    liveKeyCounts.set(
-      key,
-      (existingLiveCount === undefined ? 0 : existingLiveCount) + 1,
+    liveCompositeCounts.set(
+      compositeKey,
+      (liveCompositeCounts.get(compositeKey) ?? 0) + 1,
     )
+    const itemSkuKey = itemSkuIdentityKey(liveItemId, liveSku)
+    liveItemSkuCounts.set(
+      itemSkuKey,
+      (liveItemSkuCounts.get(itemSkuKey) ?? 0) + 1,
+    )
+    if (hasVariationKey) {
+      const itemVariationKey = JSON.stringify([liveItemId, variationKey])
+      const skuVariationKey = JSON.stringify([liveSku, variationKey])
+      liveItemVariationCounts.set(
+        itemVariationKey,
+        (liveItemVariationCounts.get(itemVariationKey) ?? 0) + 1,
+      )
+      liveSkuVariationCounts.set(
+        skuVariationKey,
+        (liveSkuVariationCounts.get(skuVariationKey) ?? 0) + 1,
+      )
+    }
   }
-  const registryKeyCounts = new Map<string, number>()
+
+  const registryCompositeCounts = new Map<string, number>()
+  const registryItemCounts = new Map<string, number>()
+  const registrySkuCounts = new Map<string, number>()
+  const registryVariationCounts = new Map<string, number>()
+  const registryItemSkuCounts = new Map<string, number>()
+  const registryItemVariationCounts = new Map<string, number>()
+  const registrySkuVariationCounts = new Map<string, number>()
+  let registryWithItemIdCount = 0
+  let registryWithSkuCount = 0
+  let registryWithVariationKeyCount = 0
+  let registryWithCompleteCompositeCount = 0
+  let registryCurrentIdentityCount = 0
+  let registryLegacyIdentityCount = 0
+  let registryIncompleteIdentityCount = 0
+  let registryHistoricalOnlyCount = 0
   let registryMissingIdentityCount = 0
+  let registryIdentityUnprovenCount = 0
+
   for (const row of input.registryRows) {
     const itemId = itemIdSkuVariationIdentityComponent(row.ebay_item_id, 120)
     const sku = itemIdSkuVariationIdentityComponent(row.ebay_sku, 120)
@@ -499,69 +704,244 @@ function buildReconciliationCounts(input: {
       row.ebay_variation_key ?? null,
       120,
     )
-    if (!itemId || !sku) {
+    const hasItemId = itemId !== null
+    const hasSku = sku !== null
+    const hasVariationKey = variationKey !== null
+    const hasAnyIdentity = hasItemId || hasSku || hasVariationKey
+    const isLegacySource = row.source !== "EBAY_INVENTORY_API" &&
+      !row.source.toLowerCase().includes("inventory_api")
+
+    if (hasItemId) {
+      registryWithItemIdCount += 1
+      registryItemCounts.set(itemId, (registryItemCounts.get(itemId) ?? 0) + 1)
+    }
+    if (hasSku) {
+      registryWithSkuCount += 1
+      registrySkuCounts.set(sku, (registrySkuCounts.get(sku) ?? 0) + 1)
+    }
+    if (hasVariationKey) {
+      registryWithVariationKeyCount += 1
+      registryVariationCounts.set(
+        variationKey,
+        (registryVariationCounts.get(variationKey) ?? 0) + 1,
+      )
+    }
+
+    if (hasItemId && hasSku) {
+      registryCurrentIdentityCount += 1
+    } else if (hasAnyIdentity) {
+      registryIncompleteIdentityCount += 1
+      if (isLegacySource) registryLegacyIdentityCount += 1
+    } else if (isLegacySource) {
+      registryLegacyIdentityCount += 1
+    } else {
+      registryHistoricalOnlyCount += 1
+    }
+
+    if (!hasItemId || !hasSku) {
       registryMissingIdentityCount += 1
       continue
     }
-    const key = itemIdSkuVariationIdentityKey({
-      itemId,
-      sku,
+
+    registryWithCompleteCompositeCount += 1
+    const registryItemId = itemId
+    const registrySku = sku
+    const compositeKey = itemIdSkuVariationIdentityKey({
+      itemId: registryItemId,
+      sku: registrySku,
       variationKey,
     })
-    if (key === null) {
-      registryMissingIdentityCount += 1
-      continue
-    }
-    const existingRegistryCount = registryKeyCounts.get(key)
-    registryKeyCounts.set(
-      key,
-      (existingRegistryCount === undefined ? 0 : existingRegistryCount) + 1,
+    registryCompositeCounts.set(
+      compositeKey,
+      (registryCompositeCounts.get(compositeKey) ?? 0) + 1,
     )
+    const itemSkuKey = itemSkuIdentityKey(registryItemId, registrySku)
+    registryItemSkuCounts.set(
+      itemSkuKey,
+      (registryItemSkuCounts.get(itemSkuKey) ?? 0) + 1,
+    )
+    if (hasVariationKey) {
+      const itemVariationKey = JSON.stringify([registryItemId, variationKey])
+      const skuVariationKey = JSON.stringify([registrySku, variationKey])
+      registryItemVariationCounts.set(
+        itemVariationKey,
+        (registryItemVariationCounts.get(itemVariationKey) ?? 0) + 1,
+      )
+      registrySkuVariationCounts.set(
+        skuVariationKey,
+        (registrySkuVariationCounts.get(skuVariationKey) ?? 0) + 1,
+      )
+    }
   }
+
+  const unresolvedLegacyRows = input.registryRows.length - (
+    registryCurrentIdentityCount +
+    registryIncompleteIdentityCount +
+    registryHistoricalOnlyCount +
+    registryLegacyIdentityCount
+  )
+  if (unresolvedLegacyRows > 0) {
+    registryIdentityUnprovenCount = unresolvedLegacyRows
+  }
+
+  const liveCompositeMatchCounts = new Map(registryCompositeCounts)
   let matched = 0
-  let missing = 0
-  for (const [key, liveOccurrenceCount] of liveKeyCounts) {
-    const rawRegistryOccurrenceCount = registryKeyCounts.get(key)
-    const registryOccurrenceCount = rawRegistryOccurrenceCount === undefined
-      ? 0
-      : rawRegistryOccurrenceCount
-    const matchedOccurrenceCount = Math.min(
-      registryOccurrenceCount,
-      liveOccurrenceCount,
-    )
-    matched += matchedOccurrenceCount
-    missing += liveOccurrenceCount - matchedOccurrenceCount
-    if (registryOccurrenceCount > matchedOccurrenceCount) {
-      registryKeyCounts.set(key, registryOccurrenceCount - matchedOccurrenceCount)
-    } else {
-      registryKeyCounts.set(key, 0)
-    }
+  for (const [key, liveCount] of liveCompositeCounts) {
+    const registryCount = liveCompositeMatchCounts.get(key) ?? 0
+    const matchedOccurrence = Math.min(liveCount, registryCount)
+    matched += matchedOccurrence
+    liveCompositeMatchCounts.set(key, registryCount - matchedOccurrence)
   }
-  const duplicatedLive = [...liveKeyCounts.values()]
-    .filter((value) => value > 1)
-    .reduce((sum, value) => sum + (value - 1), 0)
-  const duplicatedRegistry = [...registryKeyCounts.values()]
-    .filter((value) => value > 1)
-    .reduce((sum, value) => sum + (value - 1), 0)
-  const registryOrphaned = [...registryKeyCounts.values()]
+  const missing = input.liveListings.length - matched - liveIdentityMissingCount
+  const fullCompositeOverlapCount = matched
+  const registryOrphaned = [...liveCompositeMatchCounts.values()]
     .reduce((sum, value) => sum + value, 0)
-  const liveDuplicateInvalid = duplicatedLive > 0
-  const registryDuplicateInvalid = duplicatedRegistry > 0
+
+  const itemIdExactOverlapCount = [...liveItemCounts.keys()].reduce(
+    (sum, candidate) => (registryItemCounts.has(candidate)
+      ? sum + (liveItemCounts.get(candidate) ?? 0)
+      : sum),
+    0,
+  )
+  const skuExactOverlapCount = [...liveSkuCounts.keys()].reduce(
+    (sum, candidate) => (registrySkuCounts.has(candidate)
+      ? sum + (liveSkuCounts.get(candidate) ?? 0)
+      : sum),
+    0,
+  )
+  const variationKeyExactOverlapCount = [...liveVariationCounts.keys()].reduce(
+    (sum, candidate) => (registryVariationCounts.has(candidate)
+      ? sum + (liveVariationCounts.get(candidate) ?? 0)
+      : sum),
+    0,
+  )
+  const itemIdPlusSkuOverlapCount = [...liveItemSkuCounts.keys()].reduce(
+    (sum, candidate) => (registryItemSkuCounts.has(candidate)
+      ? sum + (liveItemSkuCounts.get(candidate) ?? 0)
+      : sum),
+    0,
+  )
+  const itemIdPlusVariationOverlapCount = [...liveItemVariationCounts.keys()]
+    .reduce((sum, candidate) => (registryItemVariationCounts.has(candidate)
+      ? sum + (liveItemVariationCounts.get(candidate) ?? 0)
+      : sum),
+    0)
+  const skuPlusVariationOverlapCount = [...liveSkuVariationCounts.keys()].reduce(
+    (sum, candidate) => (registrySkuVariationCounts.has(candidate)
+      ? sum + (liveSkuVariationCounts.get(candidate) ?? 0)
+      : sum),
+    0,
+  )
+
+  const duplicatedLiveComposite = [...liveCompositeCounts.values()]
+    .reduce((sum, value) => sum + (value > 1 ? value - 1 : 0), 0)
+  const duplicatedRegistryComposite = [...registryCompositeCounts.values()]
+    .reduce((sum, value) => sum + (value > 1 ? value - 1 : 0), 0)
+
+  const livePartitionValid = !liveIdentityMissingCount &&
+    duplicatedLiveComposite === 0 ? "YES" : "NO"
+  const registryPartitionValid = !registryMissingIdentityCount &&
+    duplicatedRegistryComposite === 0 ? "YES" : "NO"
+
+  const overlapSignal = {
+    item: itemIdExactOverlapCount > 0,
+    sku: skuExactOverlapCount > 0,
+    variation: variationKeyExactOverlapCount > 0,
+    itemSku: itemIdPlusSkuOverlapCount > 0,
+    itemVariation: itemIdPlusVariationOverlapCount > 0,
+    skuVariation: skuPlusVariationOverlapCount > 0,
+  }
+  const overlapSignalCount = Object.values(overlapSignal).filter(Boolean).length
+  const hasAnyStableIdentifierOverlap = overlapSignalCount > 0
+
+  let registryIdentityRootCause: EbayRegistryIdentityRootCause = "UNPROVEN"
+  if (
+    registryHistoricalOnlyCount > 0 &&
+    registryCurrentIdentityCount === 0 &&
+    registryIncompleteIdentityCount === 0 &&
+    registryLegacyIdentityCount === 0
+  ) {
+    registryIdentityRootCause = "REGISTRY_ROWS_HISTORICAL_ONLY"
+  } else if (
+    registryLegacyIdentityCount > 0 &&
+    registryCurrentIdentityCount === 0 &&
+    registryIncompleteIdentityCount === 0
+  ) {
+    registryIdentityRootCause = "LEGACY_IDENTITY_CONTRACT"
+  } else if (fullCompositeOverlapCount === 0 && overlapSignal.itemSku) {
+    registryIdentityRootCause = "COMPOSITE_KEY_OVERSTRICT"
+  } else if (
+    fullCompositeOverlapCount === 0 &&
+    overlapSignal.item &&
+    !overlapSignal.sku &&
+    !overlapSignal.variation &&
+    overlapSignalCount === 1
+  ) {
+    registryIdentityRootCause = "ITEM_ID_MISMATCH"
+  } else if (
+    fullCompositeOverlapCount === 0 &&
+    overlapSignal.sku &&
+    !overlapSignal.item &&
+    !overlapSignal.variation &&
+    overlapSignalCount === 1
+  ) {
+    registryIdentityRootCause = "SKU_MISMATCH"
+  } else if (
+    fullCompositeOverlapCount === 0 &&
+    overlapSignal.variation &&
+    !overlapSignal.item &&
+    !overlapSignal.sku &&
+    overlapSignalCount === 1
+  ) {
+    registryIdentityRootCause = "VARIATION_KEY_MISMATCH"
+  } else if (fullCompositeOverlapCount === 0 && overlapSignalCount > 1) {
+    registryIdentityRootCause = "MIXED_CAUSES"
+  }
+
+  const safeBackfillWithoutDuplication =
+    fullCompositeOverlapCount > 0
+      ? "UNPROVEN"
+      : !hasAnyStableIdentifierOverlap
+      ? registryCurrentIdentityCount === 0 &&
+        registryIncompleteIdentityCount === 0 &&
+        registryLegacyIdentityCount === 0 &&
+        registryHistoricalOnlyCount === input.registryRows.length
+          ? "YES"
+          : "UNPROVEN"
+      : "NO"
+
   return {
     liveCount: input.liveListings.length,
     registryCount: input.registryRows.length,
     matched,
-    missing: missing + liveMissingIdentityCount,
+    missing,
     orphaned: registryOrphaned + registryMissingIdentityCount,
-    ambiguous: liveMissingIdentityCount + registryMissingIdentityCount +
-      duplicatedLive + duplicatedRegistry,
-    livePartitionValid: !liveMissingIdentityCount && !liveDuplicateInvalid
-      ? "YES"
-      : "NO",
-    registryPartitionValid: !registryMissingIdentityCount &&
-      !registryDuplicateInvalid
-      ? "YES"
-      : "NO",
+    ambiguous: liveIdentityMissingCount + registryMissingIdentityCount +
+      duplicatedLiveComposite + duplicatedRegistryComposite,
+    liveWithItemIdCount,
+    liveWithSkuCount,
+    liveWithVariationKeyCount,
+    liveWithCompleteCompositeCount,
+    registryWithItemIdCount,
+    registryWithSkuCount,
+    registryWithVariationKeyCount,
+    registryWithCompleteCompositeCount,
+    itemIdExactOverlapCount,
+    skuExactOverlapCount,
+    variationKeyExactOverlapCount,
+    itemIdPlusSkuOverlapCount,
+    itemIdPlusVariationOverlapCount,
+    skuPlusVariationOverlapCount,
+    fullCompositeOverlapCount,
+    registryCurrentIdentityCount,
+    registryLegacyIdentityCount,
+    registryIncompleteIdentityCount,
+    registryHistoricalOnlyCount,
+    registryIdentityUnprovenCount,
+    registryIdentityRootCause,
+    safeBackfillWithoutDuplication,
+    livePartitionValid,
+    registryPartitionValid,
   }
 }
 

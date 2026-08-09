@@ -267,6 +267,28 @@ const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
   "REGISTRY_ORPHANED_COUNT",
   "REGISTRY_AMBIGUOUS_COUNT",
   "REGISTRY_COVERAGE_PERCENT",
+  "LIVE_WITH_ITEM_ID_COUNT",
+  "LIVE_WITH_SKU_COUNT",
+  "LIVE_WITH_VARIATION_KEY_COUNT",
+  "LIVE_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT",
+  "REGISTRY_WITH_ITEM_ID_COUNT",
+  "REGISTRY_WITH_SKU_COUNT",
+  "REGISTRY_WITH_VARIATION_KEY_COUNT",
+  "REGISTRY_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT",
+  "ITEM_ID_EXACT_OVERLAP_COUNT",
+  "SKU_EXACT_OVERLAP_COUNT",
+  "VARIATION_KEY_EXACT_OVERLAP_COUNT",
+  "ITEM_ID_PLUS_SKU_OVERLAP_COUNT",
+  "ITEM_ID_PLUS_VARIATION_OVERLAP_COUNT",
+  "SKU_PLUS_VARIATION_OVERLAP_COUNT",
+  "FULL_COMPOSITE_OVERLAP_COUNT",
+  "REGISTRY_CURRENT_IDENTITY_COUNT",
+  "REGISTRY_LEGACY_IDENTITY_COUNT",
+  "REGISTRY_INCOMPLETE_IDENTITY_COUNT",
+  "REGISTRY_HISTORICAL_ONLY_COUNT",
+  "REGISTRY_IDENTITY_UNPROVEN_COUNT",
+  "REGISTRY_IDENTITY_ROOT_CAUSE",
+  "SAFE_BACKFILL_WITHOUT_DUPLICATION",
   "LIVE_PARTITION_VALID",
   "REGISTRY_PARTITION_VALID",
   "MANUAL_LISTING_RUNTIME_AUTODISCOVERY",
@@ -458,10 +480,43 @@ function validRegistryCoverageDiagnostic(
     !countLike(record.REGISTRY_MISSING_COUNT) ||
     !countLike(record.REGISTRY_ORPHANED_COUNT) ||
     !countLike(record.REGISTRY_AMBIGUOUS_COUNT) ||
+    !countLike(record.LIVE_WITH_ITEM_ID_COUNT) ||
+    !countLike(record.LIVE_WITH_SKU_COUNT) ||
+    !countLike(record.LIVE_WITH_VARIATION_KEY_COUNT) ||
+    !countLike(record.LIVE_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT) ||
+    !countLike(record.REGISTRY_WITH_ITEM_ID_COUNT) ||
+    !countLike(record.REGISTRY_WITH_SKU_COUNT) ||
+    !countLike(record.REGISTRY_WITH_VARIATION_KEY_COUNT) ||
+    !countLike(record.REGISTRY_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT) ||
+    !countLike(record.ITEM_ID_EXACT_OVERLAP_COUNT) ||
+    !countLike(record.SKU_EXACT_OVERLAP_COUNT) ||
+    !countLike(record.VARIATION_KEY_EXACT_OVERLAP_COUNT) ||
+    !countLike(record.ITEM_ID_PLUS_SKU_OVERLAP_COUNT) ||
+    !countLike(record.ITEM_ID_PLUS_VARIATION_OVERLAP_COUNT) ||
+    !countLike(record.SKU_PLUS_VARIATION_OVERLAP_COUNT) ||
+    !countLike(record.FULL_COMPOSITE_OVERLAP_COUNT) ||
+    !countLike(record.REGISTRY_CURRENT_IDENTITY_COUNT) ||
+    !countLike(record.REGISTRY_LEGACY_IDENTITY_COUNT) ||
+    !countLike(record.REGISTRY_INCOMPLETE_IDENTITY_COUNT) ||
+    !countLike(record.REGISTRY_HISTORICAL_ONLY_COUNT) ||
+    !countLike(record.REGISTRY_IDENTITY_UNPROVEN_COUNT) ||
     !percent(record.REGISTRY_COVERAGE_PERCENT) ||
     !["AVAILABLE", "AUTH_UNAVAILABLE", "READ_FAILED"].includes(
       String(record.LIVE_ENUMERATION_RUNTIME_STATUS),
     )) return false
+  if (![
+    "ITEM_ID_MISMATCH",
+    "SKU_MISMATCH",
+    "VARIATION_KEY_MISMATCH",
+    "COMPOSITE_KEY_OVERSTRICT",
+    "LEGACY_IDENTITY_CONTRACT",
+    "REGISTRY_ROWS_HISTORICAL_ONLY",
+    "MIXED_CAUSES",
+    "UNPROVEN",
+  ].includes(String(record.REGISTRY_IDENTITY_ROOT_CAUSE))) return false
+  if (!["YES", "NO", "UNPROVEN"].includes(
+    String(record.SAFE_BACKFILL_WITHOUT_DUPLICATION),
+  )) return false
   if (!["YES", "NO"].includes(String(record.LIVE_PARTITION_VALID)) ||
     !["YES", "NO"].includes(String(record.REGISTRY_PARTITION_VALID)) ||
     !["PASS", "PARTIAL", "FAIL", "UNPROVEN"].includes(
@@ -1597,6 +1652,50 @@ export default function EbaySellerOAuthReauthPage() {
                     registryCoverageDiagnostic.LIVE_ENUMERATION_RUNTIME_STATUS],
                   ["Live eBay listing count",
                     registryCoverageDiagnostic.LIVE_EBAY_LISTING_COUNT],
+                  ["Live with itemId count",
+                    registryCoverageDiagnostic.LIVE_WITH_ITEM_ID_COUNT],
+                  ["Live with sku count",
+                    registryCoverageDiagnostic.LIVE_WITH_SKU_COUNT],
+                  ["Live with variation key count",
+                    registryCoverageDiagnostic.LIVE_WITH_VARIATION_KEY_COUNT],
+                  ["Live with complete composite count",
+                    registryCoverageDiagnostic.LIVE_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT],
+                  ["Registry with itemId count",
+                    registryCoverageDiagnostic.REGISTRY_WITH_ITEM_ID_COUNT],
+                  ["Registry with sku count",
+                    registryCoverageDiagnostic.REGISTRY_WITH_SKU_COUNT],
+                  ["Registry with variation key count",
+                    registryCoverageDiagnostic.REGISTRY_WITH_VARIATION_KEY_COUNT],
+                  ["Registry with complete composite count",
+                    registryCoverageDiagnostic.REGISTRY_WITH_COMPLETE_COMPOSITE_IDENTITY_COUNT],
+                  ["Item ID exact overlap count",
+                    registryCoverageDiagnostic.ITEM_ID_EXACT_OVERLAP_COUNT],
+                  ["SKU exact overlap count",
+                    registryCoverageDiagnostic.SKU_EXACT_OVERLAP_COUNT],
+                  ["Variation key exact overlap count",
+                    registryCoverageDiagnostic.VARIATION_KEY_EXACT_OVERLAP_COUNT],
+                  ["Item+sku overlap count",
+                    registryCoverageDiagnostic.ITEM_ID_PLUS_SKU_OVERLAP_COUNT],
+                  ["Item+variation overlap count",
+                    registryCoverageDiagnostic.ITEM_ID_PLUS_VARIATION_OVERLAP_COUNT],
+                  ["Sku+variation overlap count",
+                    registryCoverageDiagnostic.SKU_PLUS_VARIATION_OVERLAP_COUNT],
+                  ["Full composite overlap count",
+                    registryCoverageDiagnostic.FULL_COMPOSITE_OVERLAP_COUNT],
+                  ["Registry current identity",
+                    registryCoverageDiagnostic.REGISTRY_CURRENT_IDENTITY_COUNT],
+                  ["Registry legacy identity",
+                    registryCoverageDiagnostic.REGISTRY_LEGACY_IDENTITY_COUNT],
+                  ["Registry incomplete identity",
+                    registryCoverageDiagnostic.REGISTRY_INCOMPLETE_IDENTITY_COUNT],
+                  ["Registry historical-only",
+                    registryCoverageDiagnostic.REGISTRY_HISTORICAL_ONLY_COUNT],
+                  ["Registry identity unproven",
+                    registryCoverageDiagnostic.REGISTRY_IDENTITY_UNPROVEN_COUNT],
+                  ["Registry identity root cause",
+                    registryCoverageDiagnostic.REGISTRY_IDENTITY_ROOT_CAUSE],
+                  ["Safe backfill without duplication",
+                    registryCoverageDiagnostic.SAFE_BACKFILL_WITHOUT_DUPLICATION],
                   ["Registry matched",
                     registryCoverageDiagnostic.REGISTRY_MATCHED_COUNT],
                   ["Registry missing",
