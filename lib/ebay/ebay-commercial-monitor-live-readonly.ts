@@ -8,6 +8,7 @@ import {
   EBAY_MONITOR_LIVE_READONLY_CONTRACT_VERSION,
   normalizeLiveDiscoveryCoverage,
   parseEbayInventoryItemsPage,
+  parseSafeEbayInventoryErrorMetadata,
   parseEbayTradingGetItemMarketplace,
   parseEbayTradingGetMyeBaySellingPage,
   parseEbayTradingGetUser,
@@ -16,6 +17,7 @@ import {
   type EbayItemMarketplaceCertificationStatus,
   type EbayMonitorReadonlyCallEvidence,
   type EbayMonitorReadonlyOperation,
+  type SafeEbayInventoryErrorMetadata,
   type SafeLiveEbayOrder,
 } from "./ebay-commercial-monitor-live-readonly-domain"
 import {
@@ -52,12 +54,15 @@ const GET_ITEM_DOWNSTREAM_CALL_RESERVE = 9
 const GET_ITEM_DOWNSTREAM_TIME_RESERVE_MS = 6_000
 const GET_ITEM_MARKETPLACE_MAX_UNIQUE_ITEMS = 32
 const GET_ITEM_MARKETPLACE_CONCURRENCY = 4
-const INVENTORY_CONSUMER_DIAGNOSTIC_MAX_CALLS = 3
+const INVENTORY_CONSUMER_DIAGNOSTIC_MAX_CALLS = 8
 const INVENTORY_CONSUMER_DIAGNOSTIC_DEADLINE_MS = 21_000
+const INVENTORY_CONSUMER_ERROR_BODY_MAX_BYTES = 16_384
 
 const BASE_SCOPE = "https://api.ebay.com/oauth/api_scope"
 const INVENTORY_READONLY_SCOPE =
   "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly"
+const ACCOUNT_READONLY_SCOPE =
+  "https://api.ebay.com/oauth/api_scope/sell.account.readonly"
 const ANALYTICS_READONLY_SCOPE =
   "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly"
 const FULFILLMENT_READONLY_SCOPE =
@@ -288,15 +293,40 @@ export type EbayInstalledInventoryConsumerDiagnostic = {
     | "UNPROVEN"
   inventoryCatalogState: "EMPTY" | "NON_EMPTY" | "UNPROVEN"
   inventoryItemsSafeErrorCategory: EbayInventoryConsumerSafeErrorCategory
+  variants: {
+    currentCanonical: EbayInventoryConsumerVariantEvidence
+    noMarketplaceHeader: EbayInventoryConsumerVariantEvidence
+    limitOnly: EbayInventoryConsumerVariantEvidence
+    noQuery: EbayInventoryConsumerVariantEvidence
+  }
+  firstAcceptedVariant: EbayInventoryConsumerVariant | null
+  minimumDocumentedAcceptedVariant: EbayInventoryConsumerVariant | null
+  requestContractRootCause:
+    | "CURRENT_CANONICAL_ACCEPTED"
+    | "MARKETPLACE_HEADER_REJECTED"
+    | "OFFSET_ZERO_REJECTED"
+    | "LIMIT_QUERY_REJECTED"
+    | "SCOPE_MINTING_DIFFERENCE"
+    | "ALL_DOCUMENTED_VARIANTS_REJECTED"
+    | "UNPROVEN"
+  scopeControl: {
+    subsetScopeRefresh: "AVAILABLE" | "FAILED"
+    fourScopeRefresh: "AVAILABLE" | "FAILED" | "NOT_RUN"
+    subsetScopeInventoryItemsStatus: number | null
+    fourScopeInventoryItemsStatus: number | null
+    scopeMintingDifferenceCauses400: "YES" | "NO" | "UNPROVEN"
+  }
   execution: {
     globalCallsBeforeInventory: number | null
     globalTimeRemainingBeforeInventoryMs: number | null
     inventoryRefreshExecuted: boolean
     inventoryGetUserExecuted: boolean
     inventoryGetItemsExecuted: boolean
+    fourScopeRefreshExecuted: boolean
+    fourScopeInventoryGetItemsExecuted: boolean
     inventoryFailureFromBudget: boolean
     externalCalls: number
-    maximumExternalCalls: 3
+    maximumExternalCalls: 8
   }
   calls: EbayMonitorReadonlyCallEvidence[]
   safety: {
@@ -315,10 +345,32 @@ export type EbayInstalledInventoryConsumerDiagnostic = {
   }
 }
 
+export type EbayInventoryConsumerVariant =
+  | "CURRENT_CANONICAL"
+  | "NO_MARKETPLACE_HEADER"
+  | "LIMIT_ONLY"
+  | "NO_QUERY"
+
+export type EbayInventoryConsumerVariantEvidence = {
+  variant: EbayInventoryConsumerVariant
+  httpStatus: number | null
+  acceptedByEndpoint: boolean
+  contentType: "application/json" | "OTHER" | null
+  responseShape:
+    | "INVENTORY_ITEMS_ARRAY"
+    | "CERTIFIED_EMPTY_OMITTED_ARRAY"
+    | "INVALID"
+    | "UNPROVEN"
+  catalogState: "EMPTY" | "NON_EMPTY" | "UNPROVEN"
+  safeErrorCategory: EbayInventoryConsumerSafeErrorCategory
+  errorMetadata: SafeEbayInventoryErrorMetadata
+}
+
 type TokenResult = {
   value: string
   expiresAt: string
   returnedScopes: string[]
+  returnedScopeEntries: string[]
   scopeListReturned: boolean
 }
 
@@ -601,6 +653,8 @@ async function allowlistedFetch(input: {
     operation: input.operation,
     method: input.method,
     url: input.url,
+    requestHeaderNames: [...tradingHeaders.keys()].map((name) =>
+      name.toLowerCase()).sort(),
     marketplaceIdHeader: tradingHeaders.get("X-EBAY-C-MARKETPLACE-ID"),
     tradingCallName: input.tradingCallName,
     tradingHeaderCallName: tradingHeaders.get("X-EBAY-API-CALL-NAME"),
@@ -715,8 +769,46 @@ function registerScopeEvidence(input: {
   return missing
 }
 
+function returnedScopeSetIsExact(
+  token: TokenResult,
+  expectedScopes: string[],
+) {
+  if (!token.scopeListReturned) return true
+  const returned = new Set(token.returnedScopeEntries)
+  return token.returnedScopeEntries.length === expectedScopes.length &&
+    returned.size === expectedScopes.length &&
+    expectedScopes.every((scope) => returned.has(scope))
+}
+
+function assertExactReadonlyRefreshScopes(input: {
+  operation: "OAUTH_REFRESH_TRADING" | "OAUTH_REFRESH_INVENTORY" |
+    "OAUTH_REFRESH_INVENTORY_FOUR_SCOPE" |
+    "OAUTH_REFRESH_ANALYTICS" | "OAUTH_REFRESH_FULFILLMENT"
+  scopes: string[]
+}) {
+  const expected = input.operation === "OAUTH_REFRESH_TRADING"
+    ? [BASE_SCOPE]
+    : input.operation === "OAUTH_REFRESH_INVENTORY"
+      ? [BASE_SCOPE, INVENTORY_READONLY_SCOPE]
+      : input.operation === "OAUTH_REFRESH_INVENTORY_FOUR_SCOPE"
+        ? [
+            BASE_SCOPE,
+            ACCOUNT_READONLY_SCOPE,
+            INVENTORY_READONLY_SCOPE,
+            ANALYTICS_READONLY_SCOPE,
+          ]
+        : input.operation === "OAUTH_REFRESH_ANALYTICS"
+          ? [BASE_SCOPE, ANALYTICS_READONLY_SCOPE]
+          : [BASE_SCOPE, FULFILLMENT_READONLY_SCOPE]
+  if (input.scopes.length !== expected.length ||
+      input.scopes.some((scope, index) => scope !== expected[index])) {
+    throw new Error("EBAY_MONITOR_BLOCKED_OAUTH_SCOPE_REQUEST")
+  }
+}
+
 async function accessToken(input: {
   operation: "OAUTH_REFRESH_TRADING" | "OAUTH_REFRESH_INVENTORY" |
+    "OAUTH_REFRESH_INVENTORY_FOUR_SCOPE" |
     "OAUTH_REFRESH_ANALYTICS" | "OAUTH_REFRESH_FULFILLMENT"
   credentials: { clientId: string; clientSecret: string; refreshToken: string }
   scopes: string[]
@@ -724,6 +816,7 @@ async function accessToken(input: {
   calls: EbayMonitorReadonlyCallEvidence[]
   clock: Clock
 }) : Promise<TokenResult> {
+  assertExactReadonlyRefreshScopes(input)
   if (!input.credentials.clientId || !input.credentials.clientSecret ||
       !input.credentials.refreshToken) {
     throw new Error("EBAY_MONITOR_OAUTH_CONFIGURATION_MISSING")
@@ -772,17 +865,26 @@ async function accessToken(input: {
     markResponseCallFailed(response)
     throw new Error("EBAY_MONITOR_OAUTH_RESPONSE_INVALID")
   }
-  const scopeText = text(payload.scope, 4_000)
-  const returnedScopes = scopeText
-    .split(/\s+/)
-    .filter((scope) => scope.startsWith("https://api.ebay.com/oauth/api_scope"))
+  const scopePresent = Object.hasOwn(payload, "scope")
+  const rawScope = payload.scope
+  if (scopePresent && (typeof rawScope !== "string" ||
+      rawScope.length > 4_000 || !rawScope.trim() ||
+      /[\u0000-\u001f\u007f]/.test(rawScope))) {
+    markResponseCallFailed(response)
+    throw new Error("EBAY_MONITOR_OAUTH_SCOPE_FORMAT_INVALID")
+  }
+  const scopeText = scopePresent ? (rawScope as string).trim() : ""
+  const returnedScopeEntries = scopeText.split(/\s+/).filter(Boolean)
+  const returnedScopes = returnedScopeEntries.filter((scope) =>
+    scope.startsWith("https://api.ebay.com/oauth/api_scope"))
   return {
     value,
     expiresAt: new Date(
       input.clock().getTime() + expiresIn * 1_000,
     ).toISOString(),
     returnedScopes,
-    scopeListReturned: scopeText.length > 0,
+    returnedScopeEntries,
+    scopeListReturned: scopePresent,
   }
 }
 
@@ -1360,7 +1462,7 @@ async function inventoryRead(input: {
             nextValid = parsedNext.origin === EBAY_API_ORIGIN &&
               parsedNext.pathname === "/sell/inventory/v1/inventory_item" &&
               nonNegativeInteger(parsedNext.searchParams.get("offset")) ===
-                offset + page.length
+                offset + 1
           } catch {
             nextValid = false
           }
@@ -1375,7 +1477,7 @@ async function inventoryRead(input: {
         if (!nextUrl && total !== null && inventoryItems.length < total) {
           gapCodes.push("INVENTORY_PAGINATION_METADATA_CONFLICT")
         }
-        offset += page.length
+        offset += 1
       } catch (error) {
         gapCodes.push(safeCode(error, "INVENTORY_PAGE_READ_FAILED"))
         break
@@ -2210,6 +2312,7 @@ function inventoryConsumerDiagnosticErrorCategory(
   if (code === "EBAY_MONITOR_INVENTORY_SCOPE_MISSING") {
     return "INVALID_SCOPE"
   }
+  if (code.endsWith("_SCOPE_SET_MISMATCH")) return "INVALID_SCOPE"
   for (const category of [
     "INVALID_SCOPE",
     "INVALID_GRANT",
@@ -2237,11 +2340,57 @@ function inventoryConsumerDiagnosticErrorCategory(
 }
 
 function inventoryConsumerHttpErrorCategory(status: number) {
+  if (status >= 200 && status < 400) {
+    return "RESPONSE_FORMAT_CHANGED" as const
+  }
   if (status === 401) return "HTTP_401" as const
   if (status === 403) return "HTTP_403" as const
   if (status === 429) return "RATE_LIMITED" as const
   if (status >= 500) return "HTTP_5XX" as const
   return "HTTP_4XX" as const
+}
+
+async function readBoundedInventoryErrorMetadata(response: Response) {
+  const unproven = () => parseSafeEbayInventoryErrorMetadata(null)
+  const declaredLength = response.headers.get("content-length")
+  if (declaredLength && (!/^\d+$/.test(declaredLength) ||
+      Number(declaredLength) > INVENTORY_CONSUMER_ERROR_BODY_MAX_BYTES)) {
+    try {
+      await response.body?.cancel()
+    } catch {
+      // Shape remains unproven; provider bytes are deliberately discarded.
+    }
+    return unproven()
+  }
+  if (!response.body) return unproven()
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let observedBytes = 0
+  try {
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      observedBytes += chunk.value.byteLength
+      if (observedBytes > INVENTORY_CONSUMER_ERROR_BODY_MAX_BYTES) {
+        await reader.cancel()
+        return unproven()
+      }
+      chunks.push(chunk.value)
+    }
+    const bytes = new Uint8Array(observedBytes)
+    let offset = 0
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset)
+      offset += chunk.byteLength
+    }
+    const body = new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+    if (!body) return unproven()
+    return parseSafeEbayInventoryErrorMetadata(JSON.parse(body) as unknown)
+  } catch {
+    return unproven()
+  } finally {
+    reader.releaseLock()
+  }
 }
 
 /**
@@ -2267,7 +2416,8 @@ export async function diagnoseInstalledEbayInventoryConsumer(input: {
     maximumCalls: INVENTORY_CONSUMER_DIAGNOSTIC_MAX_CALLS,
     callsStarted: 0,
   })
-  let token = ""
+  let subsetToken = ""
+  let fourScopeToken = ""
   let httpStatus: number | null = null
   let authorized = false
   let contentType: "application/json" | "OTHER" | null = null
@@ -2286,6 +2436,26 @@ export async function diagnoseInstalledEbayInventoryConsumer(input: {
   let safeErrorCategory: EbayInventoryConsumerSafeErrorCategory = "NONE"
   let globalCallsBeforeInventory: number | null = null
   let globalTimeRemainingBeforeInventoryMs: number | null = null
+  let subsetScopeRefresh: "AVAILABLE" | "FAILED" = "FAILED"
+  let fourScopeRefresh: "AVAILABLE" | "FAILED" | "NOT_RUN" = "NOT_RUN"
+  let fourScopeControlBudgetExhausted = false
+  const emptyVariant = (
+    variant: EbayInventoryConsumerVariant,
+  ): EbayInventoryConsumerVariantEvidence => ({
+    variant,
+    httpStatus: null,
+    acceptedByEndpoint: false,
+    contentType: null,
+    responseShape: "UNPROVEN",
+    catalogState: "UNPROVEN",
+    safeErrorCategory: "UNCLASSIFIED",
+    errorMetadata: parseSafeEbayInventoryErrorMetadata(null),
+  })
+  let currentCanonical = emptyVariant("CURRENT_CANONICAL")
+  let noMarketplaceHeader = emptyVariant("NO_MARKETPLACE_HEADER")
+  let limitOnly = emptyVariant("LIMIT_ONLY")
+  let noQuery = emptyVariant("NO_QUERY")
+  let fourScopeControl: EbayInventoryConsumerVariantEvidence | null = null
   try {
     if (!credentials.clientId || !credentials.clientSecret ||
         !credentials.refreshToken || !identity.bound || !identity.consistent) {
@@ -2300,14 +2470,19 @@ export async function diagnoseInstalledEbayInventoryConsumer(input: {
       calls,
       clock,
     })
-    token = minted.value
+    subsetScopeRefresh = "AVAILABLE"
+    subsetToken = minted.value
+    const subsetScopes = [BASE_SCOPE, INVENTORY_READONLY_SCOPE]
+    if (!returnedScopeSetIsExact(minted, subsetScopes)) {
+      throw new Error("EBAY_MONITOR_INVENTORY_SCOPE_SET_MISMATCH")
+    }
     const missingRequestedScopes = registerScopeEvidence({
       ledger: scopeGrant,
       token: minted,
-      requestedScopes: [BASE_SCOPE, INVENTORY_READONLY_SCOPE],
+      requestedScopes: subsetScopes,
     })
     const account = await verifyAccount({
-      token,
+      token: subsetToken,
       expectedUserId: identity.expectedUserId,
       expectedFingerprint: identity.expectedAccountFingerprint,
       fetchImpl,
@@ -2327,64 +2502,127 @@ export async function diagnoseInstalledEbayInventoryConsumer(input: {
     globalTimeRemainingBeforeInventoryMs = budget
       ? Math.max(0, budget.deadlineAt - Date.now())
       : null
-    const url = new URL(INVENTORY_ITEMS_ENDPOINT)
-    url.searchParams.set("limit", "50")
-    url.searchParams.set("offset", "0")
-    const response = await allowlistedFetch({
-      operation: "INVENTORY_GET_ITEMS",
-      method: "GET",
-      url,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-      },
-      fetchImpl,
-      calls,
-      clock,
-    })
-    httpStatus = response.status
-    authorized = response.ok
-    const mediaType = (response.headers.get("content-type") ?? "")
-      .split(";", 1)[0].trim().toLowerCase()
-    contentType = mediaType === "application/json"
-      ? "application/json"
-      : "OTHER"
-    if (!response.ok) {
-      safeErrorCategory = inventoryConsumerHttpErrorCategory(response.status)
-      return diagnosticResult()
-    }
-    if (contentType !== "application/json") {
-      markResponseCallFailed(response)
-      safeErrorCategory = "RESPONSE_FORMAT_CHANGED"
-      responseShape = "INVALID"
-      return diagnosticResult()
-    }
-    const rawPayload = await readJsonResponse({
-      response,
-      calls,
-      operation: "INVENTORY_GET_ITEMS",
-      errorCode: "INVENTORY_SOURCE_FORMAT_CHANGED",
-    })
-    const parsed = parseEbayInventoryItemsPage(rawPayload, {
+    const variantA = new URL(INVENTORY_ITEMS_ENDPOINT)
+    variantA.searchParams.set("limit", "50")
+    variantA.searchParams.set("offset", "0")
+    const variantB = new URL(variantA)
+    const variantC = new URL(INVENTORY_ITEMS_ENDPOINT)
+    variantC.searchParams.set("limit", "50")
+    const variantD = new URL(INVENTORY_ITEMS_ENDPOINT)
+
+    const currentResult = await probeVariant({
+      variant: "CURRENT_CANONICAL",
+      operation: "INVENTORY_GET_ITEMS_MATRIX_A",
+      token: subsetToken,
+      url: variantA,
+      marketplaceHeader: true,
       expectedLimit: 50,
       expectedOffset: 0,
     })
-    topLevelKeys = parsed.metadata.topLevelKeys
-    hasArray = parsed.metadata.hasArray
-    arrayCount = parsed.metadata.arrayCount
-    totalPresent = parsed.metadata.totalPresent
-    total = parsed.total
-    nextPresent = parsed.metadata.nextPresent
-    responseShape = parsed.responseShape
-    if (!parsed.accepted) {
-      markResponseCallFailed(response)
-      safeErrorCategory = "RESPONSE_FORMAT_CHANGED"
-      return diagnosticResult()
+    currentCanonical = currentResult.evidence
+    httpStatus = currentCanonical.httpStatus
+    authorized = currentCanonical.acceptedByEndpoint
+    contentType = currentCanonical.contentType
+    safeErrorCategory = currentCanonical.safeErrorCategory
+    responseShape = currentCanonical.responseShape
+    catalogState = currentCanonical.catalogState
+    topLevelKeys = currentResult.shapeMetadata.topLevelKeys
+    hasArray = currentResult.shapeMetadata.hasArray
+    arrayCount = currentResult.shapeMetadata.arrayCount
+    totalPresent = currentResult.shapeMetadata.totalPresent
+    total = currentResult.shapeMetadata.total
+    nextPresent = currentResult.shapeMetadata.nextPresent
+
+    noMarketplaceHeader = (await probeVariant({
+      variant: "NO_MARKETPLACE_HEADER",
+      operation: "INVENTORY_GET_ITEMS_MATRIX_B",
+      token: subsetToken,
+      url: variantB,
+      marketplaceHeader: false,
+      expectedLimit: 50,
+      expectedOffset: 0,
+    })).evidence
+    limitOnly = (await probeVariant({
+      variant: "LIMIT_ONLY",
+      operation: "INVENTORY_GET_ITEMS_MATRIX_C",
+      token: subsetToken,
+      url: variantC,
+      marketplaceHeader: false,
+      expectedLimit: 50,
+      expectedOffset: 0,
+    })).evidence
+    noQuery = (await probeVariant({
+      variant: "NO_QUERY",
+      operation: "INVENTORY_GET_ITEMS_MATRIX_D",
+      token: subsetToken,
+      url: variantD,
+      marketplaceHeader: false,
+      expectedLimit: 25,
+      expectedOffset: 0,
+    })).evidence
+
+    if ([currentCanonical, noMarketplaceHeader, limitOnly, noQuery]
+      .every((variant) => variant.httpStatus === 400)) {
+      const controlBudget = requestBudgets.get(calls)
+      if (!controlBudget || controlBudget.callsRemaining < 2 ||
+          controlBudget.deadlineAt - Date.now() < REQUEST_TIMEOUT_MS * 2) {
+        fourScopeControlBudgetExhausted = true
+      } else {
+        fourScopeRefresh = "FAILED"
+        try {
+          const fourScopeMinted = await accessToken({
+            operation: "OAUTH_REFRESH_INVENTORY_FOUR_SCOPE",
+            credentials,
+            scopes: [
+              BASE_SCOPE,
+              ACCOUNT_READONLY_SCOPE,
+              INVENTORY_READONLY_SCOPE,
+              ANALYTICS_READONLY_SCOPE,
+            ],
+            fetchImpl,
+            calls,
+            clock,
+          })
+          fourScopeToken = fourScopeMinted.value
+          const fourScopes = [
+            BASE_SCOPE,
+            ACCOUNT_READONLY_SCOPE,
+            INVENTORY_READONLY_SCOPE,
+            ANALYTICS_READONLY_SCOPE,
+          ]
+          if (!returnedScopeSetIsExact(fourScopeMinted, fourScopes)) {
+            throw new Error(
+              "EBAY_MONITOR_FOUR_SCOPE_CONTROL_SCOPE_SET_MISMATCH",
+            )
+          }
+          const fourScopeEvidence = scopeGrantEvidence()
+          const missingFourScopes = registerScopeEvidence({
+            ledger: fourScopeEvidence,
+            token: fourScopeMinted,
+            requestedScopes: fourScopes,
+          })
+          if (missingFourScopes.length > 0) {
+            throw new Error("EBAY_MONITOR_FOUR_SCOPE_CONTROL_MISSING_SCOPE")
+          }
+          fourScopeRefresh = "AVAILABLE"
+          fourScopeControl = (await probeVariant({
+            variant: "NO_QUERY",
+            operation: "INVENTORY_GET_ITEMS_FOUR_SCOPE_CONTROL",
+            token: fourScopeToken,
+            url: variantD,
+            marketplaceHeader: false,
+            expectedLimit: 25,
+            expectedOffset: 0,
+          })).evidence
+        } catch (error) {
+          fourScopeControlBudgetExhausted =
+            inventoryConsumerDiagnosticErrorCategory(error) ===
+              "BUDGET_EXHAUSTED"
+          // The fixed control is evidence-only. Its failure never falls back
+          // to, replaces, or changes any subset-token result.
+        }
+      }
     }
-    catalogState = parsed.inventoryItems.length === 0
-      ? parsed.total === 0 ? "EMPTY" : "UNPROVEN"
-      : "NON_EMPTY"
-    safeErrorCategory = "NONE"
     return diagnosticResult()
   } catch (error) {
     safeErrorCategory = inventoryConsumerDiagnosticErrorCategory(error)
@@ -2393,12 +2631,227 @@ export async function diagnoseInstalledEbayInventoryConsumer(input: {
     }
     return diagnosticResult()
   } finally {
-    token = ""
+    subsetToken = ""
+    fourScopeToken = ""
+  }
+
+  async function probeVariant(input: {
+    variant: EbayInventoryConsumerVariant
+    operation:
+      | "INVENTORY_GET_ITEMS_MATRIX_A"
+      | "INVENTORY_GET_ITEMS_MATRIX_B"
+      | "INVENTORY_GET_ITEMS_MATRIX_C"
+      | "INVENTORY_GET_ITEMS_MATRIX_D"
+      | "INVENTORY_GET_ITEMS_FOUR_SCOPE_CONTROL"
+    token: string
+    url: URL
+    marketplaceHeader: boolean
+    expectedLimit: number
+    expectedOffset: number
+  }) {
+    const emptyShapeMetadata = {
+      topLevelKeys: [] as string[],
+      hasArray: false,
+      arrayCount: null as number | null,
+      totalPresent: false,
+      total: null as number | null,
+      nextPresent: false,
+    }
+    try {
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${input.token}`,
+      }
+      if (input.marketplaceHeader) {
+        headers["X-EBAY-C-MARKETPLACE-ID"] = MARKETPLACE_ID
+      }
+      const response = await allowlistedFetch({
+        operation: input.operation,
+        method: "GET",
+        url: input.url,
+        headers,
+        fetchImpl,
+        calls,
+        clock,
+      })
+      const mediaType = (response.headers.get("content-type") ?? "")
+        .split(";", 1)[0].trim().toLowerCase()
+      const variantContentType = mediaType === "application/json"
+        ? "application/json" as const
+        : "OTHER" as const
+      if (response.status !== 200) {
+        markResponseCallFailed(response)
+        const errorMetadata = response.status >= 400 &&
+            variantContentType === "application/json"
+          ? await readBoundedInventoryErrorMetadata(response)
+          : parseSafeEbayInventoryErrorMetadata(null)
+        return {
+          evidence: {
+            variant: input.variant,
+            httpStatus: response.status,
+            acceptedByEndpoint: false,
+            contentType: variantContentType,
+            responseShape: "UNPROVEN" as const,
+            catalogState: "UNPROVEN" as const,
+            safeErrorCategory: inventoryConsumerHttpErrorCategory(
+              response.status,
+            ),
+            errorMetadata,
+          },
+          shapeMetadata: emptyShapeMetadata,
+        }
+      }
+      if (variantContentType !== "application/json") {
+        markResponseCallFailed(response)
+        return {
+          evidence: {
+            variant: input.variant,
+            httpStatus: response.status,
+            acceptedByEndpoint: true,
+            contentType: variantContentType,
+            responseShape: "INVALID" as const,
+            catalogState: "UNPROVEN" as const,
+            safeErrorCategory: "RESPONSE_FORMAT_CHANGED" as const,
+            errorMetadata: parseSafeEbayInventoryErrorMetadata(null),
+          },
+          shapeMetadata: emptyShapeMetadata,
+        }
+      }
+      let rawPayload: unknown
+      try {
+        rawPayload = await readJsonResponse({
+          response,
+          calls,
+          operation: input.operation,
+          errorCode: "INVENTORY_SOURCE_FORMAT_CHANGED",
+        })
+      } catch {
+        return {
+          evidence: {
+            variant: input.variant,
+            httpStatus: response.status,
+            acceptedByEndpoint: true,
+            contentType: variantContentType,
+            responseShape: "INVALID" as const,
+            catalogState: "UNPROVEN" as const,
+            safeErrorCategory: "RESPONSE_FORMAT_CHANGED" as const,
+            errorMetadata: parseSafeEbayInventoryErrorMetadata(null),
+          },
+          shapeMetadata: emptyShapeMetadata,
+        }
+      }
+      const parsed = parseEbayInventoryItemsPage(rawPayload, {
+        expectedLimit: input.expectedLimit,
+        expectedOffset: input.expectedOffset,
+      })
+      const shapeMetadata = {
+        topLevelKeys: parsed.metadata.topLevelKeys,
+        hasArray: parsed.metadata.hasArray,
+        arrayCount: parsed.metadata.arrayCount,
+        totalPresent: parsed.metadata.totalPresent,
+        total: parsed.total,
+        nextPresent: parsed.metadata.nextPresent,
+      }
+      if (!parsed.accepted) {
+        markResponseCallFailed(response)
+        return {
+          evidence: {
+            variant: input.variant,
+            httpStatus: response.status,
+            acceptedByEndpoint: true,
+            contentType: variantContentType,
+            responseShape: "INVALID" as const,
+            catalogState: "UNPROVEN" as const,
+            safeErrorCategory: "RESPONSE_FORMAT_CHANGED" as const,
+            errorMetadata: parseSafeEbayInventoryErrorMetadata(null),
+          },
+          shapeMetadata,
+        }
+      }
+      return {
+        evidence: {
+          variant: input.variant,
+          httpStatus: response.status,
+          acceptedByEndpoint: true,
+          contentType: variantContentType,
+          responseShape: parsed.responseShape,
+          catalogState: parsed.inventoryItems.length === 0
+            ? parsed.total === 0 ? "EMPTY" as const : "UNPROVEN" as const
+            : "NON_EMPTY" as const,
+          safeErrorCategory: "NONE" as const,
+          errorMetadata: parseSafeEbayInventoryErrorMetadata(null),
+        },
+        shapeMetadata,
+      }
+    } catch (error) {
+      return {
+        evidence: {
+          variant: input.variant,
+          httpStatus: null,
+          acceptedByEndpoint: false,
+          contentType: null,
+          responseShape: "UNPROVEN" as const,
+          catalogState: "UNPROVEN" as const,
+          safeErrorCategory: inventoryConsumerDiagnosticErrorCategory(error),
+          errorMetadata: parseSafeEbayInventoryErrorMetadata(null),
+        },
+        shapeMetadata: emptyShapeMetadata,
+      }
+    }
   }
 
   function diagnosticResult(): EbayInstalledInventoryConsumerDiagnostic {
     const budget = requestBudgets.get(calls)
-    const failureFromBudget = safeErrorCategory === "BUDGET_EXHAUSTED"
+    const subsetVariants = [
+      currentCanonical,
+      noMarketplaceHeader,
+      limitOnly,
+      noQuery,
+    ]
+    const firstAcceptedVariant = subsetVariants.find((variant) =>
+      variant.acceptedByEndpoint)?.variant ?? null
+    const minimumDocumentedAcceptedVariant = [
+      noQuery,
+      limitOnly,
+      noMarketplaceHeader,
+    ].find((variant) => variant.acceptedByEndpoint)?.variant ?? null
+    const allSubsetVariantsReturned400 = subsetVariants.every((variant) =>
+      variant.httpStatus === 400)
+    const anySubsetVariantAccepted = subsetVariants.some((variant) =>
+      variant.acceptedByEndpoint)
+    const scopeMintingDifferenceCauses400 = anySubsetVariantAccepted
+      ? "NO" as const
+      : allSubsetVariantsReturned400 && fourScopeControl?.acceptedByEndpoint
+        ? "YES" as const
+        : allSubsetVariantsReturned400 && fourScopeControl?.httpStatus === 400
+          ? "NO" as const
+          : "UNPROVEN" as const
+    const requestContractRootCause = currentCanonical.acceptedByEndpoint
+      ? "CURRENT_CANONICAL_ACCEPTED" as const
+      : currentCanonical.httpStatus === 400 &&
+          noMarketplaceHeader.acceptedByEndpoint
+        ? "MARKETPLACE_HEADER_REJECTED" as const
+        : currentCanonical.httpStatus === 400 &&
+            noMarketplaceHeader.httpStatus === 400 &&
+            limitOnly.acceptedByEndpoint
+          ? "OFFSET_ZERO_REJECTED" as const
+          : currentCanonical.httpStatus === 400 &&
+              noMarketplaceHeader.httpStatus === 400 &&
+              limitOnly.httpStatus === 400 && noQuery.acceptedByEndpoint
+            ? "LIMIT_QUERY_REJECTED" as const
+            : allSubsetVariantsReturned400 &&
+                fourScopeControl?.acceptedByEndpoint
+              ? "SCOPE_MINTING_DIFFERENCE" as const
+              : allSubsetVariantsReturned400 &&
+                  fourScopeControl?.httpStatus === 400
+                ? "ALL_DOCUMENTED_VARIANTS_REJECTED" as const
+                : "UNPROVEN" as const
+    const failureFromBudget = Boolean(
+      safeErrorCategory === "BUDGET_EXHAUSTED" ||
+      subsetVariants.some((variant) =>
+        variant.safeErrorCategory === "BUDGET_EXHAUSTED") ||
+      fourScopeControl?.safeErrorCategory === "BUDGET_EXHAUSTED" ||
+      fourScopeControlBudgetExhausted,
+    )
     return {
       credentialSource: "GENERIC_ENV_TOKEN_ONLY",
       genericEnvironmentTokenFallback: false,
@@ -2414,6 +2867,22 @@ export async function diagnoseInstalledEbayInventoryConsumer(input: {
       inventoryItemsResponseShape: responseShape,
       inventoryCatalogState: catalogState,
       inventoryItemsSafeErrorCategory: safeErrorCategory,
+      variants: {
+        currentCanonical,
+        noMarketplaceHeader,
+        limitOnly,
+        noQuery,
+      },
+      firstAcceptedVariant,
+      minimumDocumentedAcceptedVariant,
+      requestContractRootCause,
+      scopeControl: {
+        subsetScopeRefresh,
+        fourScopeRefresh,
+        subsetScopeInventoryItemsStatus: noQuery.httpStatus,
+        fourScopeInventoryItemsStatus: fourScopeControl?.httpStatus ?? null,
+        scopeMintingDifferenceCauses400,
+      },
       execution: {
         globalCallsBeforeInventory,
         globalTimeRemainingBeforeInventoryMs,
@@ -2422,10 +2891,14 @@ export async function diagnoseInstalledEbayInventoryConsumer(input: {
         inventoryGetUserExecuted: calls.some((call) =>
           call.operation === "TRADING_GET_USER"),
         inventoryGetItemsExecuted: calls.some((call) =>
-          call.operation === "INVENTORY_GET_ITEMS"),
+          call.operation.startsWith("INVENTORY_GET_ITEMS_MATRIX_")),
+        fourScopeRefreshExecuted: calls.some((call) =>
+          call.operation === "OAUTH_REFRESH_INVENTORY_FOUR_SCOPE"),
+        fourScopeInventoryGetItemsExecuted: calls.some((call) =>
+          call.operation === "INVENTORY_GET_ITEMS_FOUR_SCOPE_CONTROL"),
         inventoryFailureFromBudget: failureFromBudget,
         externalCalls: budget?.callsStarted ?? calls.length,
-        maximumExternalCalls: 3,
+        maximumExternalCalls: 8,
       },
       calls: calls.map((call) => ({ ...call })),
       safety: {

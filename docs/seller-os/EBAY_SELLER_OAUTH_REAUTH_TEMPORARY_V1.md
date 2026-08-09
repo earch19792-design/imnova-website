@@ -88,16 +88,57 @@ access token can enter the response.
 
 The same page also exposes the separate `diagnose_inventory_consumer` action.
 It retains every Preview/branch/host/same-origin/human-admin/fixed-credential
-gate, reads only the installed generic environment token, and executes at most
-three sequential calls: refresh with exactly base + Inventory readonly,
-strict bound `GetUser`, then the Commercial Monitor's exact
-`GET /sell/inventory/v1/inventory_item?limit=50&offset=0` request. It never
-calls offers, Analytics, Orders, Vault, ledger, callback, consent, or a writer.
-The response contains only HTTP/content-type classifications, sorted safe
-top-level property names, array/total/continuation presence and counts, a fixed
-catalog-state enum, sanitized call/budget counters, and zero safety counters.
-Raw JSON, SKUs, product data, URLs/query strings, credentials, headers, tokens,
-cookies, and provider descriptions are discarded and never returned.
+gate and reads only the installed generic environment token. The request body
+contains only the fixed action; callers cannot supply a token, scope, header,
+query variant, environment override, or fallback credential.
+
+The diagnostic first refreshes exactly base + Inventory readonly and verifies
+the seller with the bound `GetUser`. When eBay returns scope metadata, its set
+must equal the requested subset exactly, including base and with no extras; the
+same exact-set rule applies to the conditional four-scope control. Omitted
+scope metadata remains non-causal and requires endpoint evidence. It then runs the following fixed,
+sequential, GET-only matrix with the same ephemeral subset access token:
+
+| Variant | Exact Inventory request | Supplied application headers |
+| --- | --- | --- |
+| A `CURRENT_CANONICAL` | `/sell/inventory/v1/inventory_item?limit=50&offset=0` | `Authorization` and `X-EBAY-C-MARKETPLACE-ID: EBAY_US` |
+| B `NO_MARKETPLACE_HEADER` | `/sell/inventory/v1/inventory_item?limit=50&offset=0` | `Authorization` only |
+| C `LIMIT_ONLY` | `/sell/inventory/v1/inventory_item?limit=50` | `Authorization` only |
+| D `NO_QUERY` | `/sell/inventory/v1/inventory_item` | `Authorization` only |
+
+There is no retry, concurrency, arbitrary variant, or early substitution. Only
+when A, B, C and D each return exactly HTTP 400 may the diagnostic mint one
+additional access token using the exact four-scope union and call D once as a
+control. The control remains evidence-only: it can never replace the subset
+token, make a failed subset request available, or enter the Commercial Monitor
+reader. The complete path is bounded to eight external calls and a 21-second
+deadline measured from route entry, under the 30-second function ceiling. The
+control is not started unless two calls and their time reserve remain.
+Only the operation-documented HTTP 200 status counts as endpoint acceptance;
+other 2xx/3xx statuses remain `UNPROVEN`. Variant A is historical evidence and
+is never labeled the minimum documented request because its marketplace header
+is not declared by the Inventory operation contract.
+
+For error responses, only bounded structural metadata may be returned: HTTP
+status, error-object count, numeric error IDs, safe-token domains/categories,
+and safe parameter names. The body is capped at 16 KiB and decoded as strict
+UTF-8. Messages, long messages, reference IDs, parameter values, raw JSON,
+SKUs, product data, URLs/query strings, credentials, headers, tokens and cookies
+are discarded and never returned. Malformed, oversized, unknown or ambiguous
+error shapes remain `UNPROVEN`. The response otherwise contains only fixed
+classifications, safe collection-shape/count metadata, call/budget evidence and
+zero-valued safety counters.
+
+The official Inventory contract defines `offset` as a zero-based page number:
+the first page is `0` and the next page is `1`, not a row displacement of `50`.
+The canonical reader and continuation validator follow that contract. This
+static contract correction does not, by itself, diagnose or explain any
+first-page runtime HTTP 400; only a human-authenticated Preview run of the fixed
+matrix can provide that evidence.
+
+The action never calls offers, Analytics, Orders, Vault, ledger, callback,
+consent or a writer. It creates no state or cookie and performs no Supabase,
+Vault, Vercel, registry, Product Case or marketplace mutation.
 
 ## Global one-time claim
 

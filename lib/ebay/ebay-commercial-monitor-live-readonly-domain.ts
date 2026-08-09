@@ -16,7 +16,13 @@ export type EbayMonitorReadonlyOperation =
   | "TRADING_GET_MY_EBAY_SELLING"
   | "TRADING_GET_ITEM_MARKETPLACE"
   | "OAUTH_REFRESH_INVENTORY"
+  | "OAUTH_REFRESH_INVENTORY_FOUR_SCOPE"
   | "INVENTORY_GET_ITEMS"
+  | "INVENTORY_GET_ITEMS_MATRIX_A"
+  | "INVENTORY_GET_ITEMS_MATRIX_B"
+  | "INVENTORY_GET_ITEMS_MATRIX_C"
+  | "INVENTORY_GET_ITEMS_MATRIX_D"
+  | "INVENTORY_GET_ITEMS_FOUR_SCOPE_CONTROL"
   | "INVENTORY_GET_OFFERS"
   | "OAUTH_REFRESH_ANALYTICS"
   | "ANALYTICS_GET_TRAFFIC_REPORT"
@@ -53,6 +59,15 @@ export type ParsedEbayInventoryItemsPage = {
     totalPresent: boolean
     nextPresent: boolean
   }
+}
+
+export type SafeEbayInventoryErrorMetadata = {
+  status: "CLASSIFIED" | "UNPROVEN"
+  errorObjectCount: number | null
+  errorIds: string[]
+  domains: string[]
+  categories: string[]
+  parameterNames: string[]
 }
 
 export type EbayLiveListing = {
@@ -152,7 +167,31 @@ const READONLY_REST_PATHS = new Map<EbayMonitorReadonlyOperation, {
     method: "POST",
     path: "/identity/v1/oauth2/token",
   }],
+  ["OAUTH_REFRESH_INVENTORY_FOUR_SCOPE", {
+    method: "POST",
+    path: "/identity/v1/oauth2/token",
+  }],
   ["INVENTORY_GET_ITEMS", {
+    method: "GET",
+    path: "/sell/inventory/v1/inventory_item",
+  }],
+  ["INVENTORY_GET_ITEMS_MATRIX_A", {
+    method: "GET",
+    path: "/sell/inventory/v1/inventory_item",
+  }],
+  ["INVENTORY_GET_ITEMS_MATRIX_B", {
+    method: "GET",
+    path: "/sell/inventory/v1/inventory_item",
+  }],
+  ["INVENTORY_GET_ITEMS_MATRIX_C", {
+    method: "GET",
+    path: "/sell/inventory/v1/inventory_item",
+  }],
+  ["INVENTORY_GET_ITEMS_MATRIX_D", {
+    method: "GET",
+    path: "/sell/inventory/v1/inventory_item",
+  }],
+  ["INVENTORY_GET_ITEMS_FOUR_SCOPE_CONTROL", {
     method: "GET",
     path: "/sell/inventory/v1/inventory_item",
   }],
@@ -212,6 +251,7 @@ export function assertEbayMonitorReadonlyRequest(input: {
   operation: EbayMonitorReadonlyOperation
   method: string
   url: string | URL
+  requestHeaderNames?: string[]
   marketplaceIdHeader?: string | null
   tradingCallName?: string | null
   tradingHeaderCallName?: string | null
@@ -224,13 +264,56 @@ export function assertEbayMonitorReadonlyRequest(input: {
       Boolean(url.username) || Boolean(url.password) || Boolean(url.hash)) {
     throw new Error("EBAY_MONITOR_BLOCKED_NON_READONLY_REQUEST")
   }
+  const requestHeaderNames = [...(input.requestHeaderNames ?? [])].sort()
   if (input.operation === "INVENTORY_GET_ITEMS") {
     if ([...url.searchParams.keys()].sort().join(",") !== "limit,offset" ||
         url.searchParams.getAll("limit").length !== 1 ||
         url.searchParams.get("limit") !== "50" ||
         url.searchParams.getAll("offset").length !== 1 ||
         !/^\d+$/.test(url.searchParams.get("offset") ?? "") ||
-        input.marketplaceIdHeader !== "EBAY_US") {
+        input.marketplaceIdHeader !== "EBAY_US" ||
+        requestHeaderNames.join(",") !==
+          "authorization,x-ebay-c-marketplace-id") {
+      throw new Error("EBAY_MONITOR_BLOCKED_NON_READONLY_REQUEST")
+    }
+  }
+  if (input.operation === "INVENTORY_GET_ITEMS_MATRIX_A") {
+    if ([...url.searchParams.keys()].sort().join(",") !== "limit,offset" ||
+        url.searchParams.getAll("limit").length !== 1 ||
+        url.searchParams.get("limit") !== "50" ||
+        url.searchParams.getAll("offset").length !== 1 ||
+        url.searchParams.get("offset") !== "0" ||
+        input.marketplaceIdHeader !== "EBAY_US" ||
+        requestHeaderNames.join(",") !==
+          "authorization,x-ebay-c-marketplace-id") {
+      throw new Error("EBAY_MONITOR_BLOCKED_NON_READONLY_REQUEST")
+    }
+  }
+  if (input.operation === "INVENTORY_GET_ITEMS_MATRIX_B") {
+    if ([...url.searchParams.keys()].sort().join(",") !== "limit,offset" ||
+        url.searchParams.getAll("limit").length !== 1 ||
+        url.searchParams.get("limit") !== "50" ||
+        url.searchParams.getAll("offset").length !== 1 ||
+        url.searchParams.get("offset") !== "0" ||
+        input.marketplaceIdHeader !== null ||
+        requestHeaderNames.join(",") !== "authorization") {
+      throw new Error("EBAY_MONITOR_BLOCKED_NON_READONLY_REQUEST")
+    }
+  }
+  if (input.operation === "INVENTORY_GET_ITEMS_MATRIX_C") {
+    if ([...url.searchParams.keys()].join(",") !== "limit" ||
+        url.searchParams.getAll("limit").length !== 1 ||
+        url.searchParams.get("limit") !== "50" ||
+        input.marketplaceIdHeader !== null ||
+        requestHeaderNames.join(",") !== "authorization") {
+      throw new Error("EBAY_MONITOR_BLOCKED_NON_READONLY_REQUEST")
+    }
+  }
+  if (input.operation === "INVENTORY_GET_ITEMS_MATRIX_D" ||
+      input.operation === "INVENTORY_GET_ITEMS_FOUR_SCOPE_CONTROL") {
+    if ([...url.searchParams.keys()].length !== 0 ||
+        input.marketplaceIdHeader !== null ||
+        requestHeaderNames.join(",") !== "authorization") {
       throw new Error("EBAY_MONITOR_BLOCKED_NON_READONLY_REQUEST")
     }
   }
@@ -241,7 +324,9 @@ export function assertEbayMonitorReadonlyRequest(input: {
         url.searchParams.get("limit") !== "100" ||
         url.searchParams.getAll("sku").length !== 1 ||
         !sku || sku.length > 120 ||
-        input.marketplaceIdHeader !== "EBAY_US") {
+        input.marketplaceIdHeader !== "EBAY_US" ||
+        requestHeaderNames.join(",") !==
+          "authorization,x-ebay-c-marketplace-id") {
       throw new Error("EBAY_MONITOR_BLOCKED_NON_READONLY_REQUEST")
     }
   }
@@ -316,6 +401,140 @@ function safeInventoryTopLevelKeys(payload: Record<string, unknown>) {
   const safe = keys.length <= 16 && keys.every((key) =>
     /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key))
   return { keys: safe ? keys : [], safe }
+}
+
+const EBAY_INVENTORY_ERROR_KEYS = new Set([
+  "category",
+  "domain",
+  "errorId",
+  "inputRefIds",
+  "longMessage",
+  "message",
+  "outputRefIds",
+  "parameters",
+  "subdomain",
+])
+
+function inventoryErrorRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function safeErrorToken(value: unknown) {
+  return typeof value === "string" &&
+    /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(value)
+    ? value
+    : null
+}
+
+function safeErrorParameterName(value: unknown) {
+  return typeof value === "string" &&
+    /^[A-Za-z][A-Za-z0-9_.\[\]-]{0,79}$/.test(value)
+    ? value
+    : null
+}
+
+function validIgnoredStringArray(value: unknown) {
+  return typeof value === "undefined" ||
+    (Array.isArray(value) && value.length <= 20 && value.every((entry) =>
+      typeof entry === "string" && entry.length <= 256))
+}
+
+function unprovenInventoryErrorMetadata(): SafeEbayInventoryErrorMetadata {
+  return {
+    status: "UNPROVEN",
+    errorObjectCount: null,
+    errorIds: [],
+    domains: [],
+    categories: [],
+    parameterNames: [],
+  }
+}
+
+/**
+ * Extracts only provider-owned structural error metadata. Human-readable
+ * messages, reference IDs, and parameter values are validated for shape and
+ * then discarded; none can enter the returned object.
+ */
+export function parseSafeEbayInventoryErrorMetadata(
+  value: unknown,
+): SafeEbayInventoryErrorMetadata {
+  const root = inventoryErrorRecord(value)
+  if (!root) return unprovenInventoryErrorMetadata()
+  const rootKeys = Object.keys(root).sort()
+  let rawErrors: unknown[]
+  if (rootKeys.length === 1 && rootKeys[0] === "errors" &&
+      Array.isArray(root.errors)) {
+    rawErrors = root.errors
+  } else if (rootKeys.length > 0 && rootKeys.every((key) =>
+    EBAY_INVENTORY_ERROR_KEYS.has(key))) {
+    rawErrors = [root]
+  } else {
+    return unprovenInventoryErrorMetadata()
+  }
+  if (rawErrors.length < 1 || rawErrors.length > 10) {
+    return unprovenInventoryErrorMetadata()
+  }
+
+  const errorIds: string[] = []
+  const domains: string[] = []
+  const categories: string[] = []
+  const parameterNames: string[] = []
+  for (const rawError of rawErrors) {
+    const error = inventoryErrorRecord(rawError)
+    if (!error || Object.keys(error).length < 1 ||
+        Object.keys(error).some((key) =>
+          !EBAY_INVENTORY_ERROR_KEYS.has(key))) {
+      return unprovenInventoryErrorMetadata()
+    }
+    const errorId = error.errorId
+    const domain = safeErrorToken(error.domain)
+    const category = safeErrorToken(error.category)
+    if (typeof errorId !== "number" || !Number.isSafeInteger(errorId) ||
+        errorId < 1 || errorId > 2_147_483_647 || !domain || !category ||
+        (typeof error.message !== "undefined" &&
+          (typeof error.message !== "string" || error.message.length > 8_192)) ||
+        (typeof error.longMessage !== "undefined" &&
+          (typeof error.longMessage !== "string" ||
+            error.longMessage.length > 8_192)) ||
+        (typeof error.subdomain !== "undefined" &&
+          !safeErrorToken(error.subdomain)) ||
+        !validIgnoredStringArray(error.inputRefIds) ||
+        !validIgnoredStringArray(error.outputRefIds)) {
+      return unprovenInventoryErrorMetadata()
+    }
+    const parameters = typeof error.parameters === "undefined"
+      ? []
+      : Array.isArray(error.parameters) ? error.parameters : null
+    if (!parameters || parameters.length > 20) {
+      return unprovenInventoryErrorMetadata()
+    }
+    for (const rawParameter of parameters) {
+      const parameter = inventoryErrorRecord(rawParameter)
+      const keys = parameter ? Object.keys(parameter).sort() : []
+      const name = parameter ? safeErrorParameterName(parameter.name) : null
+      if (!parameter || keys.length < 1 ||
+          keys.some((key) => key !== "name" && key !== "value") || !name ||
+          (typeof parameter.value !== "undefined" &&
+            (typeof parameter.value !== "string" ||
+              parameter.value.length > 8_192))) {
+        return unprovenInventoryErrorMetadata()
+      }
+      parameterNames.push(name)
+    }
+    errorIds.push(String(errorId))
+    domains.push(domain)
+    categories.push(category)
+  }
+  return {
+    status: "CLASSIFIED",
+    errorObjectCount: rawErrors.length,
+    errorIds: [...new Set(errorIds)].sort(),
+    domains: [...new Set(domains)].sort(),
+    categories: [...new Set(categories)].sort(),
+    parameterNames: [...new Set(parameterNames)].sort(),
+  }
 }
 
 function exactInventoryPageLink(
@@ -457,23 +676,23 @@ export function parseEbayInventoryItemsPage(
     }
   }
 
-  const endOffset = input.expectedOffset + array.length
+  // eBay defines offset as a zero-based page number, not a row offset.
+  const observedEnd = input.expectedOffset * input.expectedLimit + array.length
   const totalCertified = !totalPresent ||
-    (total !== null && total >= endOffset)
-  const nextCertified = !nextPresent || (
-    typeof payload.next === "string" &&
-    array.length === input.expectedLimit &&
-    (total === null || total > endOffset) &&
-    exactInventoryPageLink(
-      payload.next,
-      input.expectedLimit,
-      endOffset,
-    )
-  )
-  const expectedPreviousOffset = Math.max(
-    0,
-    input.expectedOffset - input.expectedLimit,
-  )
+    (total !== null && total >= observedEnd)
+  const continuationExpected = total !== null
+    ? total > observedEnd
+    : array.length === input.expectedLimit
+  const nextCertified = nextPresent
+    ? typeof payload.next === "string" &&
+      array.length === input.expectedLimit && continuationExpected &&
+      exactInventoryPageLink(
+        payload.next,
+        input.expectedLimit,
+        input.expectedOffset + 1,
+      )
+    : !continuationExpected
+  const expectedPreviousOffset = Math.max(0, input.expectedOffset - 1)
   const prevCertified = !prevPresent || (
     input.expectedOffset > 0 &&
     typeof payload.prev === "string" &&

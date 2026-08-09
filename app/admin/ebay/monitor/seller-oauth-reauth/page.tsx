@@ -153,15 +153,38 @@ type InventoryConsumerDiagnostic = {
     | "UNPROVEN"
   inventoryCatalogState: "EMPTY" | "NON_EMPTY" | "UNPROVEN"
   inventoryItemsSafeErrorCategory: string
+  variants: Record<
+    "currentCanonical" | "noMarketplaceHeader" | "limitOnly" | "noQuery",
+    InventoryConsumerVariantEvidence
+  >
+  firstAcceptedVariant: InventoryConsumerVariant | null
+  minimumDocumentedAcceptedVariant: InventoryConsumerVariant | null
+  requestContractRootCause:
+    | "CURRENT_CANONICAL_ACCEPTED"
+    | "MARKETPLACE_HEADER_REJECTED"
+    | "OFFSET_ZERO_REJECTED"
+    | "LIMIT_QUERY_REJECTED"
+    | "SCOPE_MINTING_DIFFERENCE"
+    | "ALL_DOCUMENTED_VARIANTS_REJECTED"
+    | "UNPROVEN"
+  scopeControl: {
+    subsetScopeRefresh: "AVAILABLE" | "FAILED"
+    fourScopeRefresh: "AVAILABLE" | "FAILED" | "NOT_RUN"
+    subsetScopeInventoryItemsStatus: number | null
+    fourScopeInventoryItemsStatus: number | null
+    scopeMintingDifferenceCauses400: "YES" | "NO" | "UNPROVEN"
+  }
   execution: {
     globalCallsBeforeInventory: number | null
     globalTimeRemainingBeforeInventoryMs: number | null
     inventoryRefreshExecuted: boolean
     inventoryGetUserExecuted: boolean
     inventoryGetItemsExecuted: boolean
+    fourScopeRefreshExecuted: boolean
+    fourScopeInventoryGetItemsExecuted: boolean
     inventoryFailureFromBudget: boolean
     externalCalls: number
-    maximumExternalCalls: 3
+    maximumExternalCalls: 8
   }
   calls: Array<{
     operation: string
@@ -174,6 +197,34 @@ type InventoryConsumerDiagnostic = {
     persisted: false
   }>
   safety: Record<string, false | 0>
+}
+
+type InventoryConsumerVariant =
+  | "CURRENT_CANONICAL"
+  | "NO_MARKETPLACE_HEADER"
+  | "LIMIT_ONLY"
+  | "NO_QUERY"
+
+type InventoryConsumerVariantEvidence = {
+  variant: InventoryConsumerVariant
+  httpStatus: number | null
+  acceptedByEndpoint: boolean
+  contentType: "application/json" | "OTHER" | null
+  responseShape:
+    | "INVENTORY_ITEMS_ARRAY"
+    | "CERTIFIED_EMPTY_OMITTED_ARRAY"
+    | "INVALID"
+    | "UNPROVEN"
+  catalogState: "EMPTY" | "NON_EMPTY" | "UNPROVEN"
+  safeErrorCategory: string
+  errorMetadata: {
+    status: "CLASSIFIED" | "UNPROVEN"
+    errorObjectCount: number | null
+    errorIds: string[]
+    domains: string[]
+    categories: string[]
+    parameterNames: string[]
+  }
 }
 
 type InventoryConsumerDiagnosticPayload = {
@@ -269,10 +320,17 @@ const INVENTORY_CONSUMER_KEYS = [
   "inventoryItemsTopLevelKeys",
   "inventoryItemsTotal",
   "inventoryItemsTotalPresent",
+  "firstAcceptedVariant",
+  "minimumDocumentedAcceptedVariant",
+  "requestContractRootCause",
   "safety",
+  "scopeControl",
+  "variants",
 ] as const
 const INVENTORY_CONSUMER_EXECUTION_KEYS = [
   "externalCalls",
+  "fourScopeInventoryGetItemsExecuted",
+  "fourScopeRefreshExecuted",
   "globalCallsBeforeInventory",
   "globalTimeRemainingBeforeInventoryMs",
   "inventoryFailureFromBudget",
@@ -280,6 +338,31 @@ const INVENTORY_CONSUMER_EXECUTION_KEYS = [
   "inventoryGetUserExecuted",
   "inventoryRefreshExecuted",
   "maximumExternalCalls",
+] as const
+const INVENTORY_CONSUMER_VARIANT_KEYS = [
+  "acceptedByEndpoint",
+  "catalogState",
+  "contentType",
+  "errorMetadata",
+  "httpStatus",
+  "responseShape",
+  "safeErrorCategory",
+  "variant",
+] as const
+const INVENTORY_ERROR_METADATA_KEYS = [
+  "categories",
+  "domains",
+  "errorIds",
+  "errorObjectCount",
+  "parameterNames",
+  "status",
+] as const
+const INVENTORY_SCOPE_CONTROL_KEYS = [
+  "fourScopeInventoryItemsStatus",
+  "fourScopeRefresh",
+  "scopeMintingDifferenceCauses400",
+  "subsetScopeInventoryItemsStatus",
+  "subsetScopeRefresh",
 ] as const
 const INVENTORY_CONSUMER_SAFETY_KEYS = [
   "authorizationHeaderReturned",
@@ -420,6 +503,14 @@ function validInventoryConsumerDiagnostic(
   const nullableInteger = (candidate: unknown) => candidate === null ||
     (typeof candidate === "number" && Number.isSafeInteger(candidate) &&
       candidate >= 0)
+  const safeErrorCategories = new Set([
+    "NONE", "INVALID_SCOPE", "INVALID_GRANT", "INVALID_CLIENT",
+    "INVALID_REQUEST", "UNSUPPORTED_GRANT_TYPE",
+    "OAUTH_ERROR_UNCLASSIFIED", "HTTP_401", "HTTP_403", "HTTP_4XX",
+    "HTTP_5XX", "RATE_LIMITED", "TIMEOUT", "NETWORK",
+    "BUDGET_EXHAUSTED", "ACCOUNT_BINDING_FAILED",
+    "RESPONSE_FORMAT_CHANGED", "CONFIGURATION_MISSING", "UNCLASSIFIED",
+  ])
   if (!nullableInteger(record.inventoryItemsHttpStatus) ||
       (typeof record.inventoryItemsHttpStatus === "number" &&
         (record.inventoryItemsHttpStatus < 100 ||
@@ -436,29 +527,271 @@ function validInventoryConsumerDiagnostic(
       [...record.inventoryItemsTopLevelKeys].sort().join(",") !==
         record.inventoryItemsTopLevelKeys.join(",")) return false
 
+  if (!record.variants || typeof record.variants !== "object" ||
+      Array.isArray(record.variants)) return false
+  const variants = record.variants as Record<string, unknown>
+  const variantEntries = [
+    ["currentCanonical", "CURRENT_CANONICAL"],
+    ["noMarketplaceHeader", "NO_MARKETPLACE_HEADER"],
+    ["limitOnly", "LIMIT_ONLY"],
+    ["noQuery", "NO_QUERY"],
+  ] as const
+  if (Object.keys(variants).sort().join(",") !==
+      variantEntries.map(([key]) => key).sort().join(",")) return false
+  const validSortedUniqueStrings = (
+    candidate: unknown,
+    pattern: RegExp,
+    maximum: number,
+  ) => Array.isArray(candidate) && candidate.length <= maximum &&
+    candidate.every((entry) =>
+      typeof entry === "string" && pattern.test(entry)) &&
+    [...candidate].sort().join(",") === candidate.join(",") &&
+    new Set(candidate).size === candidate.length
+  const parsedVariants: InventoryConsumerVariantEvidence[] = []
+  for (const [key, expectedVariant] of variantEntries) {
+    const candidate = variants[key]
+    if (!candidate || typeof candidate !== "object" ||
+        Array.isArray(candidate)) return false
+    const variant = candidate as Record<string, unknown>
+    if (Object.keys(variant).sort().join(",") !==
+        [...INVENTORY_CONSUMER_VARIANT_KEYS].sort().join(",") ||
+        variant.variant !== expectedVariant ||
+        typeof variant.acceptedByEndpoint !== "boolean" ||
+        !nullableInteger(variant.httpStatus) ||
+        (typeof variant.httpStatus === "number" &&
+          (variant.httpStatus < 100 || variant.httpStatus > 599)) ||
+        !["application/json", "OTHER", null].includes(
+          variant.contentType as never,
+        ) ||
+        !["INVENTORY_ITEMS_ARRAY", "CERTIFIED_EMPTY_OMITTED_ARRAY",
+          "INVALID", "UNPROVEN"].includes(String(variant.responseShape)) ||
+        !["EMPTY", "NON_EMPTY", "UNPROVEN"].includes(
+          String(variant.catalogState),
+        ) || !safeErrorCategories.has(String(variant.safeErrorCategory)) ||
+        (variant.acceptedByEndpoint &&
+          (typeof variant.httpStatus !== "number" ||
+            variant.httpStatus < 200 || variant.httpStatus > 299))) return false
+    const errorMetadata = variant.errorMetadata
+    if (!errorMetadata || typeof errorMetadata !== "object" ||
+        Array.isArray(errorMetadata)) return false
+    const error = errorMetadata as Record<string, unknown>
+    if (Object.keys(error).sort().join(",") !==
+        [...INVENTORY_ERROR_METADATA_KEYS].sort().join(",") ||
+        !["CLASSIFIED", "UNPROVEN"].includes(String(error.status)) ||
+        !nullableInteger(error.errorObjectCount) ||
+        !validSortedUniqueStrings(error.errorIds, /^\d{1,10}$/, 10) ||
+        !validSortedUniqueStrings(
+          error.domains,
+          /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/,
+          10,
+        ) ||
+        !validSortedUniqueStrings(
+          error.categories,
+          /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/,
+          10,
+        ) ||
+        !validSortedUniqueStrings(
+          error.parameterNames,
+          /^[A-Za-z][A-Za-z0-9_.\[\]-]{0,79}$/,
+          200,
+        )) return false
+    if (error.status === "CLASSIFIED") {
+      if (typeof error.errorObjectCount !== "number" ||
+          error.errorObjectCount < 1 || error.errorObjectCount > 10 ||
+          (error.errorIds as string[]).length < 1 ||
+          (error.domains as string[]).length < 1 ||
+          (error.categories as string[]).length < 1 ||
+          variant.contentType !== "application/json" ||
+          variant.acceptedByEndpoint) return false
+    } else if (error.errorObjectCount !== null ||
+        (error.errorIds as string[]).length !== 0 ||
+        (error.domains as string[]).length !== 0 ||
+        (error.categories as string[]).length !== 0 ||
+        (error.parameterNames as string[]).length !== 0) return false
+
+    const status = variant.httpStatus as number | null
+    if (status === null) {
+      if (variant.acceptedByEndpoint || variant.contentType !== null ||
+          variant.responseShape !== "UNPROVEN" ||
+          variant.catalogState !== "UNPROVEN" ||
+          !["TIMEOUT", "NETWORK", "BUDGET_EXHAUSTED", "UNCLASSIFIED"]
+            .includes(String(variant.safeErrorCategory))) return false
+    } else if (status < 200 || status > 599) {
+      return false
+    } else if (status === 200) {
+      const shapeAccepted = variant.contentType === "application/json" &&
+        ["INVENTORY_ITEMS_ARRAY", "CERTIFIED_EMPTY_OMITTED_ARRAY"]
+          .includes(String(variant.responseShape))
+      const shapeRejected = variant.responseShape === "INVALID" &&
+        variant.catalogState === "UNPROVEN" &&
+        variant.safeErrorCategory === "RESPONSE_FORMAT_CHANGED"
+      if (!variant.acceptedByEndpoint || (!shapeAccepted && !shapeRejected) ||
+          (shapeAccepted && variant.safeErrorCategory !== "NONE") ||
+          (variant.responseShape === "CERTIFIED_EMPTY_OMITTED_ARRAY" &&
+            variant.catalogState !== "EMPTY") ||
+          error.status !== "UNPROVEN") return false
+    } else if (status < 400) {
+      if (variant.acceptedByEndpoint ||
+          variant.responseShape !== "UNPROVEN" ||
+          variant.catalogState !== "UNPROVEN" ||
+          variant.safeErrorCategory !== "RESPONSE_FORMAT_CHANGED" ||
+          error.status !== "UNPROVEN") return false
+    } else {
+      const expectedCategory = status === 401
+        ? "HTTP_401"
+        : status === 403
+          ? "HTTP_403"
+          : status === 429
+            ? "RATE_LIMITED"
+            : status >= 500
+              ? "HTTP_5XX"
+              : "HTTP_4XX"
+      if (variant.acceptedByEndpoint || variant.responseShape !== "UNPROVEN" ||
+          variant.catalogState !== "UNPROVEN" ||
+          variant.safeErrorCategory !== expectedCategory ||
+          (variant.contentType !== "application/json" &&
+            error.status !== "UNPROVEN")) return false
+    }
+    parsedVariants.push(candidate as InventoryConsumerVariantEvidence)
+  }
+  const allowedVariants = [
+    "CURRENT_CANONICAL",
+    "NO_MARKETPLACE_HEADER",
+    "LIMIT_ONLY",
+    "NO_QUERY",
+  ]
+  if (![...allowedVariants, null].includes(record.firstAcceptedVariant as never) ||
+      !["NO_MARKETPLACE_HEADER", "LIMIT_ONLY", "NO_QUERY", null].includes(
+        record.minimumDocumentedAcceptedVariant as never,
+      ) || ![
+        "CURRENT_CANONICAL_ACCEPTED",
+        "MARKETPLACE_HEADER_REJECTED",
+        "OFFSET_ZERO_REJECTED",
+        "LIMIT_QUERY_REJECTED",
+        "SCOPE_MINTING_DIFFERENCE",
+        "ALL_DOCUMENTED_VARIANTS_REJECTED",
+        "UNPROVEN",
+      ].includes(String(record.requestContractRootCause))) return false
+  const computedFirst = parsedVariants.find((variant) =>
+    variant.acceptedByEndpoint)?.variant ?? null
+  const computedMinimum = parsedVariants.slice(1).reverse().find((variant) =>
+    variant.acceptedByEndpoint)?.variant ?? null
+  if (record.firstAcceptedVariant !== computedFirst ||
+      record.minimumDocumentedAcceptedVariant !== computedMinimum) return false
+  const canonical = parsedVariants[0]
+  if (record.inventoryItemsHttpStatus !== canonical.httpStatus ||
+      record.inventoryItemsAuthorized !== canonical.acceptedByEndpoint ||
+      record.inventoryItemsContentType !== canonical.contentType ||
+      record.inventoryItemsResponseShape !== canonical.responseShape ||
+      record.inventoryCatalogState !== canonical.catalogState ||
+      (canonical.safeErrorCategory !== "UNCLASSIFIED" &&
+        record.inventoryItemsSafeErrorCategory !==
+          canonical.safeErrorCategory)) {
+    return false
+  }
+
+  if (!record.scopeControl || typeof record.scopeControl !== "object" ||
+      Array.isArray(record.scopeControl)) return false
+  const scopeControl = record.scopeControl as Record<string, unknown>
+  if (Object.keys(scopeControl).sort().join(",") !==
+      [...INVENTORY_SCOPE_CONTROL_KEYS].sort().join(",") ||
+      !["AVAILABLE", "FAILED"].includes(
+        String(scopeControl.subsetScopeRefresh),
+      ) || !["AVAILABLE", "FAILED", "NOT_RUN"].includes(
+        String(scopeControl.fourScopeRefresh),
+      ) || !nullableInteger(scopeControl.subsetScopeInventoryItemsStatus) ||
+      !nullableInteger(scopeControl.fourScopeInventoryItemsStatus) ||
+      !["YES", "NO", "UNPROVEN"].includes(
+        String(scopeControl.scopeMintingDifferenceCauses400),
+      )) return false
+  const allSubset400 = parsedVariants.every((variant) =>
+    variant.httpStatus === 400)
+  const anySubsetAccepted = parsedVariants.some((variant) =>
+    variant.acceptedByEndpoint)
+  const fourStatus = scopeControl.fourScopeInventoryItemsStatus as
+    number | null
+  const fourAccepted = fourStatus === 200
+  const expectedScopeCause = anySubsetAccepted
+    ? "NO"
+    : allSubset400 && fourAccepted
+      ? "YES"
+      : allSubset400 && fourStatus === 400
+        ? "NO"
+        : "UNPROVEN"
+  const expectedRootCause = canonical.acceptedByEndpoint
+    ? "CURRENT_CANONICAL_ACCEPTED"
+    : canonical.httpStatus === 400 && parsedVariants[1].acceptedByEndpoint
+      ? "MARKETPLACE_HEADER_REJECTED"
+      : canonical.httpStatus === 400 &&
+          parsedVariants[1].httpStatus === 400 &&
+          parsedVariants[2].acceptedByEndpoint
+        ? "OFFSET_ZERO_REJECTED"
+        : canonical.httpStatus === 400 &&
+            parsedVariants[1].httpStatus === 400 &&
+            parsedVariants[2].httpStatus === 400 &&
+            parsedVariants[3].acceptedByEndpoint
+          ? "LIMIT_QUERY_REJECTED"
+          : allSubset400 && fourAccepted
+            ? "SCOPE_MINTING_DIFFERENCE"
+            : allSubset400 && fourStatus === 400
+              ? "ALL_DOCUMENTED_VARIANTS_REJECTED"
+              : "UNPROVEN"
+  if (scopeControl.subsetScopeInventoryItemsStatus !==
+        parsedVariants[3].httpStatus ||
+      scopeControl.scopeMintingDifferenceCauses400 !== expectedScopeCause ||
+      record.requestContractRootCause !== expectedRootCause ||
+      (!allSubset400 && (scopeControl.fourScopeRefresh !== "NOT_RUN" ||
+        fourStatus !== null))) return false
+
   if (!record.execution || typeof record.execution !== "object" ||
       Array.isArray(record.execution)) return false
   const execution = record.execution as Record<string, unknown>
   if (Object.keys(execution).sort().join(",") !==
       [...INVENTORY_CONSUMER_EXECUTION_KEYS].sort().join(",") ||
-      execution.maximumExternalCalls !== 3 ||
+      execution.maximumExternalCalls !== 8 ||
       !nullableInteger(execution.externalCalls) ||
-      Number(execution.externalCalls) > 3 ||
+      Number(execution.externalCalls) > 8 ||
       !nullableInteger(execution.globalCallsBeforeInventory) ||
       !nullableInteger(execution.globalTimeRemainingBeforeInventoryMs) ||
-      ["inventoryFailureFromBudget", "inventoryGetItemsExecuted",
+      ["fourScopeInventoryGetItemsExecuted", "fourScopeRefreshExecuted",
+        "inventoryFailureFromBudget", "inventoryGetItemsExecuted",
         "inventoryGetUserExecuted", "inventoryRefreshExecuted"].some(
         (key) => typeof execution[key] !== "boolean",
       )) return false
+  if ((scopeControl.fourScopeRefresh === "NOT_RUN" &&
+        (execution.fourScopeRefreshExecuted !== false ||
+          execution.fourScopeInventoryGetItemsExecuted !== false ||
+          fourStatus !== null)) ||
+      (scopeControl.fourScopeRefresh === "AVAILABLE" &&
+        execution.fourScopeRefreshExecuted !== true) ||
+      (execution.fourScopeInventoryGetItemsExecuted === true &&
+        scopeControl.fourScopeRefresh !== "AVAILABLE") ||
+      (fourStatus !== null &&
+        execution.fourScopeInventoryGetItemsExecuted !== true)) return false
 
-  if (!Array.isArray(record.calls) || record.calls.length > 3 ||
+  if (!Array.isArray(record.calls) || record.calls.length > 8 ||
       record.calls.length !== execution.externalCalls) return false
   const operations = new Set([
     "OAUTH_REFRESH_INVENTORY",
+    "OAUTH_REFRESH_INVENTORY_FOUR_SCOPE",
     "TRADING_GET_USER",
-    "INVENTORY_GET_ITEMS",
+    "INVENTORY_GET_ITEMS_MATRIX_A",
+    "INVENTORY_GET_ITEMS_MATRIX_B",
+    "INVENTORY_GET_ITEMS_MATRIX_C",
+    "INVENTORY_GET_ITEMS_MATRIX_D",
+    "INVENTORY_GET_ITEMS_FOUR_SCOPE_CONTROL",
   ])
-  if (!record.calls.every((candidate) => {
+  const expectedCallOperations = [
+    "OAUTH_REFRESH_INVENTORY",
+    "TRADING_GET_USER",
+    "INVENTORY_GET_ITEMS_MATRIX_A",
+    "INVENTORY_GET_ITEMS_MATRIX_B",
+    "INVENTORY_GET_ITEMS_MATRIX_C",
+    "INVENTORY_GET_ITEMS_MATRIX_D",
+    "OAUTH_REFRESH_INVENTORY_FOUR_SCOPE",
+    "INVENTORY_GET_ITEMS_FOUR_SCOPE_CONTROL",
+  ]
+  if (!record.calls.every((candidate, index) => {
     if (!candidate || typeof candidate !== "object" ||
         Array.isArray(candidate)) return false
     const call = candidate as Record<string, unknown>
@@ -466,15 +799,43 @@ function validInventoryConsumerDiagnostic(
       "endpoint", "httpStatus", "marketplaceMutation", "method",
       "observedAt", "operation", "persisted", "status",
     ].sort().join(",") && operations.has(String(call.operation)) &&
+      call.operation === expectedCallOperations[index] &&
       (call.method === "GET" || call.method === "POST") &&
       typeof call.endpoint === "string" &&
       String(call.endpoint).startsWith("/") &&
+      (String(call.operation).startsWith("OAUTH_REFRESH_")
+        ? call.method === "POST" &&
+          call.endpoint === "/identity/v1/oauth2/token"
+        : call.operation === "TRADING_GET_USER"
+          ? call.method === "POST" && call.endpoint === "/ws/api.dll"
+          : call.method === "GET" &&
+            call.endpoint === "/sell/inventory/v1/inventory_item") &&
       (call.status === "SUCCEEDED" || call.status === "FAILED") &&
       nullableInteger(call.httpStatus) &&
       typeof call.observedAt === "string" &&
       Number.isFinite(Date.parse(call.observedAt)) &&
       call.marketplaceMutation === false && call.persisted === false
   })) return false
+  const calls = record.calls as Array<Record<string, unknown>>
+  const subsetRefreshSucceeded = calls[0]?.operation ===
+      "OAUTH_REFRESH_INVENTORY" && calls[0]?.status === "SUCCEEDED"
+  if ((scopeControl.subsetScopeRefresh === "AVAILABLE") !==
+        subsetRefreshSucceeded ||
+      execution.inventoryRefreshExecuted !== calls.some((call) =>
+        call.operation === "OAUTH_REFRESH_INVENTORY") ||
+      execution.inventoryGetUserExecuted !== calls.some((call) =>
+        call.operation === "TRADING_GET_USER") ||
+      execution.inventoryGetItemsExecuted !== calls.some((call) =>
+        String(call.operation).startsWith("INVENTORY_GET_ITEMS_MATRIX_")) ||
+      execution.fourScopeRefreshExecuted !== calls.some((call) =>
+        call.operation === "OAUTH_REFRESH_INVENTORY_FOUR_SCOPE") ||
+      execution.fourScopeInventoryGetItemsExecuted !== calls.some((call) =>
+        call.operation === "INVENTORY_GET_ITEMS_FOUR_SCOPE_CONTROL")) {
+    return false
+  }
+  if (execution.inventoryGetItemsExecuted === true &&
+      record.inventoryItemsSafeErrorCategory !==
+        canonical.safeErrorCategory) return false
 
   if (!record.safety || typeof record.safety !== "object" ||
       Array.isArray(record.safety)) return false
@@ -954,8 +1315,12 @@ export default function EbaySellerOAuthReauthPage() {
           <h2 className="font-black">Inventory consumer exacto · sólo metadata</h2>
           <p className="mt-3 text-sm leading-6 text-white/70">
             Usa únicamente el token genérico instalado, refresca base + Inventory readonly,
-            verifica GetUser y ejecuta exactamente inventory_item?limit=50&amp;offset=0. No
-            llama offers, no devuelve SKUs, payloads, headers ni tokens y no crea ledger/cookie.
+            verifica GetUser y ejecuta secuencialmente las cuatro formas A–D cerradas del
+            request inventory_item. Sólo si las cuatro responden exactamente 400 ejecuta el
+            control D con el union de cuatro scopes certificado. Scope metadata presente debe
+            coincidir exactamente y sólo HTTP 200 cuenta como aceptación. No llama offers, no devuelve
+            SKUs, payloads, mensajes, valores de parámetros, headers ni tokens y no crea
+            ledger/cookie.
           </p>
           <button
             className="mt-4 rounded-2xl border border-fuchsia-300/50 px-5 py-2 text-sm font-black text-fuchsia-200 disabled:opacity-40"
@@ -970,33 +1335,67 @@ export default function EbaySellerOAuthReauthPage() {
               : "Diagnosticar consumer Inventory exacto"}
           </button>
           {inventoryConsumerDiagnostic ? (
-            <dl className="mt-5 grid gap-2 text-xs text-white/75 sm:grid-cols-2">
-              {[
-                ["HTTP status", inventoryConsumerDiagnostic.inventoryItemsHttpStatus ?? "NONE"],
-                ["Authorized", inventoryConsumerDiagnostic.inventoryItemsAuthorized ? "YES" : "NO"],
-                ["Content type", inventoryConsumerDiagnostic.inventoryItemsContentType ?? "NONE"],
-                ["Top-level keys", inventoryConsumerDiagnostic.inventoryItemsTopLevelKeys.join(", ") || "NONE"],
-                ["Has array", inventoryConsumerDiagnostic.inventoryItemsHasArray ? "YES" : "NO"],
-                ["Array count", inventoryConsumerDiagnostic.inventoryItemsArrayCount ?? "NONE"],
-                ["Total present", inventoryConsumerDiagnostic.inventoryItemsTotalPresent ? "YES" : "NO"],
-                ["Total", inventoryConsumerDiagnostic.inventoryItemsTotal ?? "NONE"],
-                ["Next present", inventoryConsumerDiagnostic.inventoryItemsNextPresent ? "YES" : "NO"],
-                ["Response shape", inventoryConsumerDiagnostic.inventoryItemsResponseShape],
-                ["Catalog state", inventoryConsumerDiagnostic.inventoryCatalogState],
-                ["Safe error", inventoryConsumerDiagnostic.inventoryItemsSafeErrorCategory],
-                ["Calls before Inventory", inventoryConsumerDiagnostic.execution.globalCallsBeforeInventory ?? "NONE"],
-                ["Time remaining before Inventory (ms)", inventoryConsumerDiagnostic.execution.globalTimeRemainingBeforeInventoryMs ?? "NONE"],
-                ["Refresh / GetUser / Items", `${inventoryConsumerDiagnostic.execution.inventoryRefreshExecuted} / ${inventoryConsumerDiagnostic.execution.inventoryGetUserExecuted} / ${inventoryConsumerDiagnostic.execution.inventoryGetItemsExecuted}`],
-                ["Failure from budget", inventoryConsumerDiagnostic.execution.inventoryFailureFromBudget ? "YES" : "NO"],
-                ["External calls", inventoryConsumerDiagnostic.execution.externalCalls],
-                ["Token / payload returned", "false / false"],
-              ].map(([label, value]) => (
-                <div className="rounded-lg bg-black/20 p-3" key={String(label)}>
-                  <dt className="font-bold text-white/50">{label}</dt>
-                  <dd className="mt-1 break-all">{String(value)}</dd>
-                </div>
-              ))}
-            </dl>
+            <div className="mt-5 space-y-4 text-xs text-white/75">
+              <dl className="grid gap-2 sm:grid-cols-2">
+                {[
+                  ["A · HTTP status", inventoryConsumerDiagnostic.inventoryItemsHttpStatus ?? "NONE"],
+                  ["A · Authorized", inventoryConsumerDiagnostic.inventoryItemsAuthorized ? "YES" : "NO"],
+                  ["A · Content type", inventoryConsumerDiagnostic.inventoryItemsContentType ?? "NONE"],
+                  ["A · Top-level keys", inventoryConsumerDiagnostic.inventoryItemsTopLevelKeys.join(", ") || "NONE"],
+                  ["A · Has array", inventoryConsumerDiagnostic.inventoryItemsHasArray ? "YES" : "NO"],
+                  ["A · Array count", inventoryConsumerDiagnostic.inventoryItemsArrayCount ?? "NONE"],
+                  ["A · Total present", inventoryConsumerDiagnostic.inventoryItemsTotalPresent ? "YES" : "NO"],
+                  ["A · Total", inventoryConsumerDiagnostic.inventoryItemsTotal ?? "NONE"],
+                  ["A · Next present", inventoryConsumerDiagnostic.inventoryItemsNextPresent ? "YES" : "NO"],
+                  ["A · Response shape", inventoryConsumerDiagnostic.inventoryItemsResponseShape],
+                  ["A · Catalog state", inventoryConsumerDiagnostic.inventoryCatalogState],
+                  ["A · Safe error", inventoryConsumerDiagnostic.inventoryItemsSafeErrorCategory],
+                  ["First accepted variant", inventoryConsumerDiagnostic.firstAcceptedVariant ?? "NONE"],
+                  ["Minimum documented accepted", inventoryConsumerDiagnostic.minimumDocumentedAcceptedVariant ?? "NONE"],
+                  ["Request-contract root cause", inventoryConsumerDiagnostic.requestContractRootCause],
+                  ["Subset scope refresh", inventoryConsumerDiagnostic.scopeControl.subsetScopeRefresh],
+                  ["Subset-scope D status", inventoryConsumerDiagnostic.scopeControl.subsetScopeInventoryItemsStatus ?? "NONE"],
+                  ["Four-scope refresh", inventoryConsumerDiagnostic.scopeControl.fourScopeRefresh],
+                  ["Four-scope D status", inventoryConsumerDiagnostic.scopeControl.fourScopeInventoryItemsStatus ?? "NONE"],
+                  ["Scope minting causes 400", inventoryConsumerDiagnostic.scopeControl.scopeMintingDifferenceCauses400],
+                  ["Calls before Inventory", inventoryConsumerDiagnostic.execution.globalCallsBeforeInventory ?? "NONE"],
+                  ["Time remaining before Inventory (ms)", inventoryConsumerDiagnostic.execution.globalTimeRemainingBeforeInventoryMs ?? "NONE"],
+                  ["Refresh / GetUser / A–D", `${inventoryConsumerDiagnostic.execution.inventoryRefreshExecuted} / ${inventoryConsumerDiagnostic.execution.inventoryGetUserExecuted} / ${inventoryConsumerDiagnostic.execution.inventoryGetItemsExecuted}`],
+                  ["Four refresh / control", `${inventoryConsumerDiagnostic.execution.fourScopeRefreshExecuted} / ${inventoryConsumerDiagnostic.execution.fourScopeInventoryGetItemsExecuted}`],
+                  ["Failure from budget", inventoryConsumerDiagnostic.execution.inventoryFailureFromBudget ? "YES" : "NO"],
+                  ["External calls", `${inventoryConsumerDiagnostic.execution.externalCalls} / ${inventoryConsumerDiagnostic.execution.maximumExternalCalls}`],
+                  ["Token / payload returned", "false / false"],
+                ].map(([label, value]) => (
+                  <div className="rounded-lg bg-black/20 p-3" key={String(label)}>
+                    <dt className="font-bold text-white/50">{label}</dt>
+                    <dd className="mt-1 break-all">{String(value)}</dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="grid gap-2 lg:grid-cols-2">
+                {([
+                  ["A · CURRENT_CANONICAL", inventoryConsumerDiagnostic.variants.currentCanonical],
+                  ["B · NO_MARKETPLACE_HEADER", inventoryConsumerDiagnostic.variants.noMarketplaceHeader],
+                  ["C · LIMIT_ONLY", inventoryConsumerDiagnostic.variants.limitOnly],
+                  ["D · NO_QUERY", inventoryConsumerDiagnostic.variants.noQuery],
+                ] as const).map(([label, variant]) => (
+                  <dl className="rounded-lg bg-black/20 p-3" key={label}>
+                    <dt className="font-black text-fuchsia-100">{label}</dt>
+                    <dd className="mt-2 space-y-1 break-all">
+                      <div>Status: {variant.httpStatus ?? "NONE"}</div>
+                      <div>Accepted: {variant.acceptedByEndpoint ? "YES" : "NO"}</div>
+                      <div>Safe error: {variant.safeErrorCategory}</div>
+                      <div>Error metadata: {variant.errorMetadata.status}</div>
+                      <div>Error objects: {variant.errorMetadata.errorObjectCount ?? "NONE"}</div>
+                      <div>Error IDs: {variant.errorMetadata.errorIds.join(", ") || "NONE"}</div>
+                      <div>Domains: {variant.errorMetadata.domains.join(", ") || "NONE"}</div>
+                      <div>Categories: {variant.errorMetadata.categories.join(", ") || "NONE"}</div>
+                      <div>Parameter names: {variant.errorMetadata.parameterNames.join(", ") || "NONE"}</div>
+                    </dd>
+                  </dl>
+                ))}
+              </div>
+            </div>
           ) : null}
         </section>
 
