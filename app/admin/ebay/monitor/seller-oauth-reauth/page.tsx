@@ -224,6 +224,16 @@ type InventoryConsumerVariantEvidence = {
     domains: string[]
     categories: string[]
     parameterNames: string[]
+    ERROR_25709_SAFE_FIELD_CLASS: "LIMIT" | "OFFSET" |
+      "CONTENT_LANGUAGE" | "MARKETPLACE_HEADER" |
+      "AUTHORIZATION" | "DOCUMENTED_OTHER" |
+      "LITERAL_FIELDNAME_PLACEHOLDER" | "UNRECOGNIZED"
+    MESSAGE_PREFIX_CLASS: "EXACT_INVALID_VALUE_FOR" |
+      "INVALID_VALUE_VARIANT" | "OTHER"
+    MESSAGE_SUFFIX_CLASS: "PERIOD" | "NO_PERIOD" | "OTHER"
+    MESSAGE_LENGTH_BUCKET: "0_31" | "32_63" | "64_127" | "128_PLUS"
+    MESSAGE_CONTAINS_OFFICIAL_INVALID_VALUE_PREFIX: "YES" | "NO"
+    MESSAGE_CONTAINS_KNOWN_DOCUMENTED_FIELD_TOKEN: "YES" | "NO"
     ERROR_25709_FIELD_NAME: string
     ERROR_25709_MESSAGE_FORM: "SUBSTITUTED_FIELD" | "LITERAL_PLACEHOLDER" |
       "OTHER" | "NO_MESSAGE"
@@ -1428,6 +1438,12 @@ export default function EbaySellerOAuthReauthPage() {
                       <div>25709 field name: {variant.errorMetadata.ERROR_25709_FIELD_NAME}</div>
                       <div>25709 message form: {variant.errorMetadata.ERROR_25709_MESSAGE_FORM}</div>
                       <div>Field extracted: {variant.errorMetadata.FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE}</div>
+                      <div>Safe field class: {variant.errorMetadata.ERROR_25709_SAFE_FIELD_CLASS}</div>
+                      <div>Message prefix class: {variant.errorMetadata.MESSAGE_PREFIX_CLASS}</div>
+                      <div>Message suffix class: {variant.errorMetadata.MESSAGE_SUFFIX_CLASS}</div>
+                      <div>Message length bucket: {variant.errorMetadata.MESSAGE_LENGTH_BUCKET}</div>
+                      <div>Contains official invalid-value prefix: {variant.errorMetadata.MESSAGE_CONTAINS_OFFICIAL_INVALID_VALUE_PREFIX}</div>
+                      <div>Contains known documented field token: {variant.errorMetadata.MESSAGE_CONTAINS_KNOWN_DOCUMENTED_FIELD_TOKEN}</div>
                     </dd>
                   </dl>
                 ))}
