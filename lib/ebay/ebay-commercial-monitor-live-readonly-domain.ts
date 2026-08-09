@@ -808,22 +808,19 @@ export function normalizeLiveDiscoveryCoverage(input: {
   reachedPageLimit: boolean
   pageFailed: boolean
   paginationMetadataConflict?: boolean
-  ambiguousVariationIdentity?: boolean
-  marketplaceScopeConflict?: boolean
-  inventoryCompared: boolean
-  registryCompared: boolean
-  unexplainedDifferenceCount: number
+  sourceIdentityConflict?: boolean
+  reportedItemCountMismatch?: boolean
 }) {
   const gapCodes: string[] = []
   if (input.pageFailed) gapCodes.push("SELLER_WIDE_DISCOVERY_PAGE_FAILED")
   if (input.paginationMetadataConflict) {
     gapCodes.push("SELLER_WIDE_PAGINATION_METADATA_CONFLICT")
   }
-  if (input.ambiguousVariationIdentity) {
-    gapCodes.push("SELLER_WIDE_VARIATION_IDENTITY_AMBIGUOUS")
+  if (input.sourceIdentityConflict) {
+    gapCodes.push("SELLER_WIDE_SOURCE_IDENTITY_CONFLICT")
   }
-  if (input.marketplaceScopeConflict) {
-    gapCodes.push("SELLER_WIDE_LISTING_MARKETPLACE_UNPROVEN_OR_NON_US")
+  if (input.reportedItemCountMismatch) {
+    gapCodes.push("SELLER_WIDE_ITEM_COUNT_RECONCILIATION_FAILED")
   }
   if (input.reachedPageLimit ||
       (input.totalEntries !== null && input.totalEntries >= 25_000)) {
@@ -832,10 +829,8 @@ export function normalizeLiveDiscoveryCoverage(input: {
   if (input.totalPages === null || input.pagesRead !== input.totalPages) {
     gapCodes.push("SELLER_WIDE_PAGINATION_UNPROVEN")
   }
-  if (!input.inventoryCompared) gapCodes.push("INVENTORY_RECONCILIATION_UNAVAILABLE")
-  if (!input.registryCompared) gapCodes.push("REGISTRY_RECONCILIATION_UNAVAILABLE")
-  if (input.unexplainedDifferenceCount > 0) {
-    gapCodes.push("UNEXPLAINED_LISTING_RECONCILIATION_GAP")
+  if (input.totalEntries === null) {
+    gapCodes.push("SELLER_WIDE_TOTAL_ENTRIES_UNPROVEN")
   }
   return {
     status: gapCodes.length === 0 ? "COMPLETE" as const : "PARTIAL" as const,

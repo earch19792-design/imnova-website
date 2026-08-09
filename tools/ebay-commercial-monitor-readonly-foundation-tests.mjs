@@ -206,7 +206,7 @@ test("el reader live usa una allowlist cerrada y nunca persiste respuestas", () 
   assert.match(reader, /sellerWideEnumeration\.identities/)
   assert.doesNotMatch(
     read("lib/ebay/commercial-monitor-readonly-contract.ts"),
-    /sellerWideEnumeration|representationEligible|analyticsEligible/,
+    /sellerWideEnumeration|currentLiveListings|representationEligible|analyticsEligible/,
   )
   assert.match(reader, /refreshToken:\s*dedicatedRefresh/)
   assert.doesNotMatch(
@@ -270,6 +270,7 @@ test("la UI contiene las secciones canónicas y sólo un control GET de actualiz
   assert.match(client, /dispatchAllowed/)
   assert.match(client, /whatsappCalled/)
   assert.match(client, /deliveryAttempted/)
+  assert.match(client, /listing\.discovery\.livePresence\.status/)
   assert.match(client, /String\(alert\.dispatchAllowed\)/)
   assert.match(client, /String\(alert\.whatsappCalled\)/)
   assert.match(client, /String\(alert\.deliveryAttempted\)/)

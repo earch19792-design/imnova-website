@@ -125,6 +125,15 @@ export type EbayLiveInventoryResult = {
   gapCodes: string[]
 }
 
+export type EbayLiveInventoryRepresentation = {
+  status: "COMPLETE" | "PARTIAL" | "UNPROVEN"
+  classificationGrain: "ITEM_SKU"
+  representedCount: number | null
+  notRepresentedCount: number | null
+  identityUnresolvedCount: number | null
+  sourceUnprovenCount: number | null
+}
+
 export type EbaySellerWideEnumerationIdentity = {
   itemId: string
   sku: string | null
@@ -187,6 +196,7 @@ export type EbayCommercialMonitorLiveReadonlyResult = {
       itemSetComplete: boolean
       identitySetComplete: boolean
     }
+    currentLiveListings: EbayLiveListing[]
     listings: EbayLiveListing[]
     pagesRead: number
     totalPages: number | null
@@ -194,6 +204,7 @@ export type EbayCommercialMonitorLiveReadonlyResult = {
     marketplaceCertification: EbayMarketplaceCertificationCounters
     gapCodes: string[]
     inventory: EbayLiveInventoryResult
+    inventoryRepresentation: EbayLiveInventoryRepresentation
   }
   analytics: {
     status: "CERTIFIED" | "PARTIAL" | "UNAVAILABLE"
@@ -393,6 +404,7 @@ function unavailableResult(input: {
         itemSetComplete: false,
         identitySetComplete: false,
       },
+      currentLiveListings: [],
       listings: [],
       pagesRead: 0,
       totalPages: null,
@@ -413,6 +425,14 @@ function unavailableResult(input: {
         "COVERAGE_GAP_DOES_NOT_PROVE_ZERO_LISTINGS",
       ],
       inventory: emptyInventory(),
+      inventoryRepresentation: {
+        status: "UNPROVEN",
+        classificationGrain: "ITEM_SKU",
+        representedCount: null,
+        notRepresentedCount: null,
+        identityUnresolvedCount: null,
+        sourceUnprovenCount: null,
+      },
     },
     analytics: {
       status: "UNAVAILABLE",
@@ -1114,19 +1134,20 @@ async function certifySellerWideItemMarketplaces(input: {
   const exhausted = count("BUDGET_EXHAUSTED")
   const partitionItemCount = certifiedUs + certifiedNonUs + unresolved +
     directErrors + itemIdMismatches + exhausted
-  const certifiedListings = input.listings.flatMap((listing) => {
+  const currentLiveListings = input.listings.map((listing) => {
     const certification = certifications.get(listing.itemId)
-    if (!certification || certification.status !== "US_CERTIFIED") return []
-    return [{
+    return {
       ...listing,
-      marketplaceSite: "US",
+      marketplaceSite: certification?.marketplaceSite ?? listing.marketplaceSite,
       marketplaceCertification: {
-        status: certification.status,
-        source: certification.source,
-        observedAt: certification.observedAt,
+        status: certification?.status ?? "ERROR",
+        source: certification?.source ?? null,
+        observedAt: certification?.observedAt ?? null,
       },
-    }]
+    }
   })
+  const certifiedListings = currentLiveListings.filter((listing) =>
+    listing.marketplaceCertification.status === "US_CERTIFIED")
   const represented = new Set(certifiedListings.map((row) => row.itemId)).size
   const parsed = rowsByItem.size
   const terminal = certifiedUs + certifiedNonUs
@@ -1140,6 +1161,7 @@ async function certifySellerWideItemMarketplaces(input: {
       certification.limitationCode ? [certification.limitationCode] : []),
   ])]
   return {
+    currentLiveListings,
     listings: certifiedListings,
     marketplaceCertification: {
       sellerWideItemsReported: input.totalEntries,
@@ -2227,6 +2249,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
     const discovery = {
       ...sellerWide,
       sellerWideEnumeration,
+      currentLiveListings: marketplace.currentLiveListings,
       listings: marketplace.listings,
       marketplaceCertification: marketplace.marketplaceCertification,
       marketplaceScopeConflict: marketplace.incomplete ||
@@ -2298,13 +2321,71 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
       ? inventory.publishedOffers.filter((offer) =>
           !sellerIdentityKeys.has(itemSkuIdentityKey(offer.itemId, offer.sku)))
       : null
-    const tradingOnly = inventory.status === "AVAILABLE"
-      ? discovery.listings.filter((listing) =>
-          !inventoryIdentityKeys.has(itemSkuIdentityKey(
-            listing.itemId,
-            listing.sku,
-          )))
-      : []
+    const inventoryRepresentationSubjects = discovery.currentLiveListings.filter(
+      (listing) => listing.marketplaceCertification.status === "US_CERTIFIED",
+    )
+    const marketplaceUnprovenInventoryIdentityKeys = new Set(
+      discovery.currentLiveListings.flatMap((listing) =>
+        ["US_CERTIFIED", "NON_US_CERTIFIED"].includes(
+          listing.marketplaceCertification.status,
+        )
+          ? []
+          : [itemSkuIdentityKey(listing.itemId, listing.sku)]),
+    )
+    const sellerWideResolvableIdentityKeys = new Set(
+      inventoryRepresentationSubjects.flatMap((listing) =>
+        listingIdentityComponent(listing.sku, 120)
+          ? [itemSkuIdentityKey(listing.itemId, listing.sku)]
+          : []),
+    )
+    const sellerWideUnresolvedIdentityKeys = new Set(
+      inventoryRepresentationSubjects.flatMap((listing) =>
+        listingIdentityComponent(listing.sku, 120)
+          ? []
+          : [itemSkuIdentityKey(listing.itemId, null)]),
+    )
+    const representedInventoryIdentityKeys = new Set(
+      [...sellerWideResolvableIdentityKeys].filter((identity) =>
+        inventoryIdentityKeys.has(identity)),
+    )
+    const unmatchedInventoryIdentityKeys = [...sellerWideResolvableIdentityKeys]
+      .filter((identity) => !inventoryIdentityKeys.has(identity))
+    const inventoryRepresentation: EbayLiveInventoryRepresentation =
+      inventory.status === "AVAILABLE"
+        ? {
+            status: discovery.sellerWideEnumeration.itemSetComplete &&
+                discovery.sellerWideEnumeration.identitySetComplete &&
+                sellerWideUnresolvedIdentityKeys.size === 0 &&
+                marketplaceUnprovenInventoryIdentityKeys.size === 0 &&
+                unmatchedInventoryIdentityKeys.length === 0
+              ? "COMPLETE"
+              : "PARTIAL",
+            classificationGrain: "ITEM_SKU",
+            representedCount: representedInventoryIdentityKeys.size,
+            notRepresentedCount: unmatchedInventoryIdentityKeys.length,
+            identityUnresolvedCount: sellerWideUnresolvedIdentityKeys.size,
+            sourceUnprovenCount:
+              marketplaceUnprovenInventoryIdentityKeys.size,
+          }
+        : inventory.status === "PARTIAL"
+          ? {
+              status: "PARTIAL",
+              classificationGrain: "ITEM_SKU",
+              representedCount: representedInventoryIdentityKeys.size,
+              notRepresentedCount: null,
+              identityUnresolvedCount: sellerWideUnresolvedIdentityKeys.size,
+              sourceUnprovenCount: unmatchedInventoryIdentityKeys.length +
+                marketplaceUnprovenInventoryIdentityKeys.size,
+            }
+          : {
+              status: "UNPROVEN",
+              classificationGrain: "ITEM_SKU",
+              representedCount: null,
+              notRepresentedCount: null,
+              identityUnresolvedCount: sellerWideUnresolvedIdentityKeys.size,
+              sourceUnprovenCount: sellerWideResolvableIdentityKeys.size +
+                marketplaceUnprovenInventoryIdentityKeys.size,
+            }
     const certification = discovery.marketplaceCertification
     const certificationCounts = [
       certification.sellerWideItemsMarketplaceCertifiedUs,
@@ -2331,11 +2412,8 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
       reachedPageLimit: discovery.reachedPageLimit,
       pageFailed: discovery.pageFailed,
       paginationMetadataConflict: discovery.paginationMetadataConflict,
-      ambiguousVariationIdentity: discovery.ambiguousVariationIdentity,
-      marketplaceScopeConflict: discovery.marketplaceScopeConflict,
-      inventoryCompared: inventory.status === "AVAILABLE",
-      registryCompared: false,
-      unexplainedDifferenceCount: inventoryOnly ? inventoryOnly.length : 0,
+      sourceIdentityConflict: discovery.sourceIdentityConflict,
+      reportedItemCountMismatch: sellerWideCountMismatch,
     })
     const oauthAvailable = calls.some((entry) =>
       entry.operation.startsWith("OAUTH_REFRESH_") &&
@@ -2407,6 +2485,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
         observedAt: discovery.observedAt,
         source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
         sellerWideEnumeration: discovery.sellerWideEnumeration,
+        currentLiveListings: discovery.currentLiveListings,
         listings: discovery.listings,
         pagesRead: discovery.pagesRead,
         totalPages: discovery.totalPages,
@@ -2414,26 +2493,26 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
         marketplaceCertification: discovery.marketplaceCertification,
         gapCodes: [
           ...coverage.gapCodes,
+          ...(discovery.ambiguousVariationIdentity
+            ? ["SELLER_WIDE_VARIATION_IDENTITY_AMBIGUOUS"]
+            : []),
           ...(discovery.limitationCode ? [discovery.limitationCode] : []),
           ...discovery.marketplaceGapCodes,
+          ...(discovery.marketplaceScopeConflict
+            ? ["SELLER_WIDE_LISTING_MARKETPLACE_UNPROVEN_OR_NON_US"]
+            : []),
           ...(!marketplaceProven
             ? ["EBAY_US_MARKETPLACE_BINDING_UNPROVEN"]
             : []),
           ...(inventoryOnly && inventoryOnly.length
             ? ["INVENTORY_PUBLISHED_LISTING_NOT_IN_SELLER_WIDE_RESULT"]
             : []),
-          ...(tradingOnly.length
-            ? ["TRADING_LISTING_NOT_IN_INVENTORY_API_EXPECTED_MODEL_GAP"]
-            : []),
-          ...(sellerWideCountMismatch
-            ? ["SELLER_WIDE_ITEM_COUNT_RECONCILIATION_FAILED"]
-            : []),
           ...(marketplacePartitionMismatch
             ? ["SELLER_WIDE_MARKETPLACE_PARTITION_INVARIANT_FAILED"]
             : []),
-          ...(inventory.status === "PARTIAL" ? inventory.gapCodes : []),
         ],
         inventory,
+        inventoryRepresentation,
       },
       analytics,
       orders,

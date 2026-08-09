@@ -947,6 +947,59 @@ export type DiscoveryCoverage = {
   sources: string[]
   observedAt: string | null
   knownGapCodes: string[]
+  accountAlertReasons?: string[]
+  dimensions?: {
+    liveEnumeration: {
+      status: "COMPLETE" | "PARTIAL" | "UNPROVEN"
+      observedLiveItemCount: number | null
+      observedAt: string | null
+      source: "EBAY_TRADING_GET_MY_EBAY_SELLING"
+    }
+    marketplaceCertification: {
+      status: "COMPLETE" | "PARTIAL" | "UNPROVEN"
+      getItemRequestedCount: number | null
+      certifiedUsCount: number | null
+      certifiedNonUsCount: number | null
+      unresolvedCount: number | null
+      errorCount: number | null
+      itemIdMismatchCount: number | null
+      budgetExhaustedCount: number | null
+    }
+    inventoryCapability: {
+      status: "AVAILABLE" | "UNAVAILABLE" | "ERROR"
+      sourceReadStatus: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE" | "ERROR"
+      readErrorCount: number
+      oauthSafeErrorCategory:
+        | "INVALID_SCOPE"
+        | "INVALID_GRANT"
+        | "INVALID_CLIENT"
+        | "INVALID_REQUEST"
+        | "UNSUPPORTED_GRANT_TYPE"
+        | "OAUTH_ERROR_UNCLASSIFIED"
+        | null
+    }
+    inventoryRepresentation: {
+      status: "COMPLETE" | "PARTIAL" | "UNPROVEN"
+      representedCount: number | null
+      notRepresentedCount: number | null
+      identityUnresolvedCount: number | null
+      sourceUnprovenCount: number | null
+      classificationGrain: "ITEM_SKU"
+    }
+    registryCoverage: {
+      status: "COMPLETE" | "PARTIAL" | "UNPROVEN"
+      evidenceFreshness: EvidenceFreshnessStatus
+    }
+    historicalDiscoveryEvidence: {
+      freshness: EvidenceFreshnessStatus
+    }
+    analytics: {
+      status: "COMPLETE" | "PARTIAL" | "UNPROVEN"
+      requestedCount: number | null
+      representedCount: number | null
+      missingCount: number | null
+    }
+  }
   reconciliation?: {
     sellerWide: {
       status: "COMPLETE" | "PARTIAL" | "UNPROVEN"
@@ -965,6 +1018,10 @@ export type DiscoveryCoverage = {
       status: "COMPLETE" | "PARTIAL" | "UNPROVEN"
       publishedListingIdCount: number | null
       publishedOfferIdentityCount: number | null
+      representedCount: number | null
+      notRepresentedCount: number | null
+      identityUnresolvedCount: number | null
+      sourceUnprovenCount: number | null
       inventoryOffersNotInSellerWideEnumerationCount: number | null
       liveUsCertifiedNotInInventoryCount: number | null
       comparisonGrain: "ITEM_SKU"
@@ -989,6 +1046,8 @@ export function createDiscoveryCoverage(input: {
   sources: string[]
   observedAt: string | null
   knownGapCodes: string[]
+  accountAlertReasons?: string[]
+  dimensions?: DiscoveryCoverage["dimensions"]
   reconciliation?: DiscoveryCoverage["reconciliation"]
 }): DiscoveryCoverage {
   const knownGapCodes = [...new Set(input.knownGapCodes.filter(Boolean))]
@@ -1001,6 +1060,12 @@ export function createDiscoveryCoverage(input: {
     sources: [...new Set(input.sources.filter(Boolean))].sort(),
     observedAt: input.observedAt,
     knownGapCodes,
+    ...(input.accountAlertReasons
+      ? { accountAlertReasons: [...new Set(input.accountAlertReasons)] }
+      : {}),
+    ...(input.dimensions
+      ? { dimensions: { ...input.dimensions } }
+      : {}),
     ...(input.reconciliation
       ? { reconciliation: { ...input.reconciliation } }
       : {}),
@@ -1008,7 +1073,15 @@ export function createDiscoveryCoverage(input: {
 }
 
 export type ListingDiscovery = {
-  registryStatus: "REGISTERED" | "UNREGISTERED_DISCOVERY"
+  registryStatus: "REGISTERED" | "UNREGISTERED_DISCOVERY" | "UNPROVEN"
+  livePresence: {
+    status:
+      | "LIVE_ACTIVE"
+      | "STORED_ONLY_NOT_IN_CURRENT_LIVE_ENUMERATION"
+      | "UNPROVEN"
+    source: "EBAY_TRADING_GET_MY_EBAY_SELLING" | null
+    observedAt: string | null
+  }
   coverage: DiscoveryCoverage
   observations: Array<{
     source: string
@@ -1128,6 +1201,7 @@ export type EbayLiveCertificationReadModel = {
   }
   inventory: {
     status: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE" | "ERROR"
+    capabilityStatus: "AVAILABLE" | "UNAVAILABLE" | "ERROR"
     observedAt: string | null
     inventorySkuCount: number | null
     publishedListingCount: number | null
@@ -1139,6 +1213,14 @@ export type EbayLiveCertificationReadModel = {
       | "UNSUPPORTED_GRANT_TYPE"
       | "OAUTH_ERROR_UNCLASSIFIED"
       | null
+    representation: {
+      status: "COMPLETE" | "PARTIAL" | "UNPROVEN"
+      representedCount: number | null
+      notRepresentedCount: number | null
+      identityUnresolvedCount: number | null
+      sourceUnprovenCount: number | null
+      classificationGrain: "ITEM_SKU"
+    }
     gapCodes: string[]
   }
   analytics: {

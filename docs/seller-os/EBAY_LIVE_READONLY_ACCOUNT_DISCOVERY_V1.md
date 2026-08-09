@@ -110,15 +110,33 @@ The result is reconciled response-locally against:
 
 Inventory is not universal: eBay documents that listings created in Seller Hub
 or through Trading do not automatically appear in Inventory API. Therefore an
-Inventory zero never means the seller has zero active listings.
+Inventory zero never means the seller has zero active listings. A successful
+Inventory read and an exact missing offer are projected as
+`NOT_REPRESENTED`/an expected model gap; `SOURCE_UNAVAILABLE` is reserved for a
+reader that could not be performed. Capability, source-read completeness and
+listing representation are separate dimensions.
 
-Discovery cannot be `COMPLETE` when a page fails, pagination metadata
-contradicts itself, variation identity is ambiguous, pagination is unproven, the
-25,000-entry `GetMyeBaySelling` limit is reached, Inventory/registry comparison
-is unavailable, or a difference remains unexplained. A live listing absent
-from the registry stays visible as an unregistered discovery blocker; it is not
-silently omitted or persisted. Registry reconciliation uses the exact
-Item/SKU/variation identity; an Item-only match cannot close a variation gap.
+Fresh `GetMyeBaySelling.ActiveList` is authoritative for current live
+existence. Its `liveEnumeration` dimension cannot be `COMPLETE` when a page
+fails, pagination metadata contradicts itself, the reported/parsed Item count
+does not reconcile, pagination is unproven, or the 25,000-entry limit is
+reached. Marketplace certification, Inventory representation, registry
+coverage, historical evidence freshness and Analytics remain independent
+dimensions. The aggregate account coverage may remain `PARTIAL` while fresh
+Trading live existence is `COMPLETE`; that does not turn a current live listing
+into `NOT_LIVE` or `LISTING_DISCOVERY_INCOMPLETE`.
+The live Item cardinality is therefore labeled as an observed count. It is an
+authoritative seller-wide total only when `liveEnumeration=COMPLETE`; under
+`PARTIAL` it is a lower-bound observation, never an inferred total or zero.
+
+A live listing absent from a complete registry read stays visible as an
+unregistered discovery blocker; it is not silently omitted or persisted. If
+the registry read is unavailable, truncated, invalid, future-dated or stale,
+absence is `UNPROVEN` and only the account-level source/reconciliation issue is
+emitted. Registry reconciliation uses the exact Item/SKU/variation identity;
+an Item-only match cannot close a variation gap. Historical registry or
+identity evidence may be shown as stale, but cannot negate fresh Trading live
+existence.
 `GetMyeBaySelling` remains the seller-wide enumeration authority. Because its
 ActiveList contract does not guarantee `Item.Site`, the coordinator preserves
 all parsed Item identities and calls allowlisted `GetItem` exactly once per
@@ -142,6 +160,13 @@ non-overlapping. They are nullable before seller-wide evidence exists. A zero
 is authoritative only when complete seller-wide pagination explicitly reports
 zero; `reported > 0` with `represented = 0` is never displayed as zero active
 listings.
+
+Response-local listing alerts require fresh current Trading presence and exact
+US marketplace certification. Account-global pagination, Inventory, registry
+or historical-evidence failures produce one account-grain coverage candidate;
+they are not multiplied across every stored listing. Stored-only rows remain
+visible for diagnosis but cannot inherit current live presence or operational
+alerts from their historical source label.
 
 The request has a fail-closed 24-second/60-call aggregate budget inside the
 30-second route ceiling. Each call has a 7.5-second timeout. Item-level
@@ -188,9 +213,10 @@ remains independent and Item-grain.
 
 ## Canonical dashboard source matrix
 
-This matrix describes the implemented source contract and the latest sanitized
-human runtime checkpoint. Completion of the new bounded `GetItem` schedule
-remains pending until the new exact Preview is exercised.
+This matrix describes the implemented source contract and an archived sanitized
+2026-08-08 runtime checkpoint. Its numeric checkpoint is historical evidence,
+not current-run truth; the monitor always recomputes counters from the present
+bounded read.
 
 | Canonical dashboard field | Data source | Live available? | Grain | Window | Freshness | Completeness | Blocker |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -222,7 +248,7 @@ remains pending until the new exact Preview is exercised.
 | Data quality | Reader/coverage/semantic gates | YES | Account/listing | Current response | Request time | COMPLETE for emitted issues | Independent from recommendations |
 | Timeline/audit | Sanitized evidence references | PARTIAL | Account/listing | Available evidence | Evidence dependent | PARTIAL | No raw payloads or buyer PII |
 
-## Local certification checkpoint
+## Archived local certification checkpoint
 
 The protected Preview runtime supplied the existing credentials without export.
 A legitimate human Supabase-admin refresh certified the seller binding,

@@ -46,6 +46,7 @@ import {
 import {
   hashEbayMonitorEvidenceIdentifier,
   type EbayCommercialMonitorLiveReadonlyResult,
+  type EbayMonitorOAuthSafeErrorCategory,
 } from "./ebay-commercial-monitor-live-readonly"
 import {
   readCommercialMonitorReadonlySources,
@@ -85,9 +86,10 @@ type ListingProjectionInput = {
     listingStatus: string
     observedAt: string | null
     evidenceReference: string
+    responseLocalLive: boolean
   }>
   identityVerification: ReadonlyIdentityVerificationRow | null
-  registryStatus: "REGISTERED" | "UNREGISTERED_DISCOVERY"
+  registryStatus: "REGISTERED" | "UNREGISTERED_DISCOVERY" | "UNPROVEN"
   duplicateIdentity: boolean
   marketplaceCertification:
     CommercialListingReadModel["identity"]["marketplaceCertification"]
@@ -96,6 +98,7 @@ type ListingProjectionInput = {
 const RESPONSE_LOCAL_MARKETPLACE_CERTIFICATION = Symbol(
   "RESPONSE_LOCAL_MARKETPLACE_CERTIFICATION",
 )
+const RESPONSE_LOCAL_LIVE_PRESENCE = Symbol("RESPONSE_LOCAL_LIVE_PRESENCE")
 
 type ResponseLocalMarketplaceCertification = {
   status: "US_CERTIFIED"
@@ -108,6 +111,7 @@ type ResponseLocalMarketplaceCertification = {
 type ResponseLocalRegistryListingRow = ReadonlyRegistryListingRow & {
   [RESPONSE_LOCAL_MARKETPLACE_CERTIFICATION]?:
     ResponseLocalMarketplaceCertification
+  [RESPONSE_LOCAL_LIVE_PRESENCE]?: true
 }
 
 type TargetedLunaListingCoverage = {
@@ -1160,7 +1164,7 @@ function sourceResultIssue(
   result: ReadonlySourceResult<unknown>,
   detectedAt: string,
 ) {
-  if (result.status === "AVAILABLE") return null
+  if (result.status === "AVAILABLE" || result.status === "PARTIAL") return null
   return issue({
     code: result.status === "ERROR" ? "COLLECTOR_ERROR" : "SOURCE_UNAVAILABLE",
     domain: "COLLECTOR",
@@ -1251,6 +1255,10 @@ function listingAlerts(input: {
   listedQuantity: number | null
 }) {
   const listing = input.model
+  if (listing.discovery.livePresence.status !== "LIVE_ACTIVE" ||
+      listing.identity.marketplaceCertification.status !== "US_CERTIFIED") {
+    return []
+  }
   const common = {
     accountScopeKey: input.accountScopeKey,
     marketplace: listing.identity.marketplace,
@@ -1407,6 +1415,10 @@ function projectListing(input: {
   sources: CommercialMonitorReadonlySources
   marketplace: MarketplaceContext
   discoveryCoverage: DiscoveryCoverage
+  sellerWideItemSetComplete: boolean
+  sellerWideEnumerationObservedAt: string | null
+  sellerWideCurrentItemIds: ReadonlySet<string>
+  sellerWideCurrentIdentityObservations: ReadonlyMap<string, string>
   itemIdentityCount: number
   itemSkuIdentityCount: number
   accountScopeKey: string
@@ -1510,7 +1522,10 @@ function projectListing(input: {
     METRIC_MAXIMUM_AGE_SECONDS,
   )
   const discoveryObservations = listing.registryObservations.map((entry) => ({
-    ...entry,
+    listingStatus: entry.listingStatus,
+    observedAt: entry.observedAt,
+    evidenceReference: entry.evidenceReference,
+    responseLocalLive: entry.responseLocalLive,
     source: sanitizeMonitorText(entry.source, 100) ?? "UNKNOWN",
     freshness: freshness(
       entry.observedAt,
@@ -1518,8 +1533,50 @@ function projectListing(input: {
       METRIC_MAXIMUM_AGE_SECONDS,
     ),
   }))
+  const currentLiveObservation = discoveryObservations.find((entry) =>
+    entry.responseLocalLive &&
+    entry.source === "EBAY_TRADING_GET_MY_EBAY_SELLING" &&
+    entry.listingStatus.toLowerCase() === "active" &&
+    entry.freshness.status === "FRESH") ?? null
+  const currentSellerWideIdentityObservedAt =
+    input.sellerWideCurrentIdentityObservations.get(listing.key) ?? null
+  const currentSellerWideIdentityFresh = freshness(
+    currentSellerWideIdentityObservedAt,
+    input.now,
+    METRIC_MAXIMUM_AGE_SECONDS,
+  ).status === "FRESH"
+  const sellerWideEnumerationFresh = freshness(
+    input.sellerWideEnumerationObservedAt,
+    input.now,
+    METRIC_MAXIMUM_AGE_SECONDS,
+  ).status === "FRESH"
+  const livePresence: CommercialListingReadModel["discovery"]["livePresence"] =
+    currentLiveObservation || currentSellerWideIdentityFresh
+      ? {
+          status: "LIVE_ACTIVE",
+          source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
+          observedAt: currentLiveObservation?.observedAt ??
+            currentSellerWideIdentityObservedAt,
+        }
+      : input.sellerWideItemSetComplete && sellerWideEnumerationFresh &&
+          !input.sellerWideCurrentItemIds.has(listing.itemId)
+        ? {
+            status: "STORED_ONLY_NOT_IN_CURRENT_LIVE_ENUMERATION",
+            source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
+            observedAt: input.sellerWideEnumerationObservedAt,
+          }
+        : { status: "UNPROVEN", source: null, observedAt: null }
+  const listingDiscoveryCoverage = livePresence.status === "UNPROVEN"
+    ? input.discoveryCoverage
+    : createDiscoveryCoverage({
+        universalCoverageProven: true,
+        sourceCoverageAvailable: true,
+        sources: livePresence.source ? [livePresence.source] : [],
+        observedAt: livePresence.observedAt,
+        knownGapCodes: [],
+      })
   const issues: DataQualityIssue[] = [
-    ...(input.discoveryCoverage.status !== "COMPLETE" ? [issue({
+    ...(livePresence.status === "UNPROVEN" ? [issue({
       code: "LISTING_DISCOVERY_INCOMPLETE",
       domain: "DISCOVERY",
       severity: "MEDIUM",
@@ -1588,7 +1645,8 @@ function projectListing(input: {
       detectedAt: input.generatedAt,
     }))
   }
-  if (listing.registryStatus === "UNREGISTERED_DISCOVERY") {
+  if (livePresence.status === "LIVE_ACTIVE" &&
+      listing.registryStatus === "UNREGISTERED_DISCOVERY") {
     issues.push(issue({
       code: "REGISTRY_RECONCILIATION_FAILED",
       domain: "DISCOVERY",
@@ -1604,9 +1662,10 @@ function projectListing(input: {
     input.now,
     METRIC_MAXIMUM_AGE_SECONDS,
   )
-  if (listing.marketplaceCertification.status !== "US_CERTIFIED" ||
+  if (livePresence.status === "LIVE_ACTIVE" && (
+      listing.marketplaceCertification.status !== "US_CERTIFIED" ||
       !listing.identityVerification?.active_listing_confirmed ||
-      verificationFreshness.status !== "FRESH") {
+      verificationFreshness.status !== "FRESH")) {
     issues.push(issue({
       code: "LISTING_IDENTITY_UNPROVEN",
       domain: "IDENTITY",
@@ -1766,9 +1825,6 @@ function projectListing(input: {
     }))
   }
   for (const result of [
-    input.sources.registry,
-    input.sources.syncState,
-    input.sources.identityVerifications,
     input.sources.commercialSnapshots,
     input.sources.supplies,
     input.sources.supplySources,
@@ -1777,16 +1833,6 @@ function projectListing(input: {
   ]) {
     const sourceIssue = sourceResultIssue(result, input.generatedAt)
     if (sourceIssue) issues.push(sourceIssue)
-  }
-  if (input.sources.registry.truncated) {
-    issues.push(issue({
-      code: "REGISTRY_RESULT_LIMIT_REACHED",
-      domain: "DISCOVERY",
-      severity: "HIGH",
-      blocking: true,
-      source: "EBAY_ACTIVE_LISTING_REGISTRY",
-      detectedAt: input.generatedAt,
-    }))
   }
   const finalIssues = uniqueIssues(issues)
   const listedQuantity = nonNegativeInteger(row?.ebay_quantity)
@@ -1820,8 +1866,15 @@ function projectListing(input: {
     },
     discovery: {
       registryStatus: listing.registryStatus,
-      coverage: input.discoveryCoverage,
-      observations: discoveryObservations,
+      livePresence,
+      coverage: listingDiscoveryCoverage,
+      observations: discoveryObservations.map((entry) => ({
+        source: entry.source,
+        listingStatus: entry.listingStatus,
+        observedAt: entry.observedAt,
+        freshness: entry.freshness,
+        evidenceReference: entry.evidenceReference,
+      })),
     },
     productCase,
     composition,
@@ -1909,16 +1962,18 @@ function withLiveReadonlyEvidence(input: {
 }) {
   const { stored, live } = input
   const liveRegistryRows: ResponseLocalRegistryListingRow[] =
-    live.discovery.listings
-    .flatMap((listing) => {
+    live.discovery.currentLiveListings
+    .filter((listing) =>
+      listing.marketplaceCertification.status !== "NON_US_CERTIFIED")
+    .map((listing) => {
       const marketplaceSource = listing.marketplaceCertification.source
       const marketplaceObservedAt = validIso(
         listing.marketplaceCertification.observedAt,
       )
-      if (listing.marketplaceSite !== "US" ||
-          listing.marketplaceCertification.status !== "US_CERTIFIED" ||
-          marketplaceSource !== "EBAY_TRADING_GET_ITEM" ||
-          !marketplaceObservedAt) return []
+      const marketplaceCertifiedUs = listing.marketplaceSite === "US" &&
+        listing.marketplaceCertification.status === "US_CERTIFIED" &&
+        marketplaceSource === "EBAY_TRADING_GET_ITEM" &&
+        Boolean(marketplaceObservedAt)
       const itemRows = stored.registry.rows.filter((row) =>
         row.ebay_item_id === listing.itemId)
       const link = listing.identityAmbiguous
@@ -1929,7 +1984,7 @@ function withLiveReadonlyEvidence(input: {
             listing.variationKey,
           )
       const linkedRow = link.row
-      return [{
+      return {
       id: liveEvidenceId(
         "LIVE_LISTING",
         listing.itemId,
@@ -1970,17 +2025,26 @@ function withLiveReadonlyEvidence(input: {
       sync_generation: null,
       created_at: linkedRow?.created_at ?? listing.observedAt,
       updated_at: linkedRow?.updated_at ?? listing.observedAt,
-      [RESPONSE_LOCAL_MARKETPLACE_CERTIFICATION]: {
-        status: "US_CERTIFIED",
-        source: marketplaceSource,
-        observedAt: marketplaceObservedAt,
-        marketplaceSite: "US",
-        grain: "ITEM",
-      },
-      }]
+      [RESPONSE_LOCAL_LIVE_PRESENCE]: true,
+      ...(marketplaceCertifiedUs && marketplaceSource === "EBAY_TRADING_GET_ITEM" &&
+          marketplaceObservedAt
+        ? {
+            [RESPONSE_LOCAL_MARKETPLACE_CERTIFICATION]: {
+              status: "US_CERTIFIED" as const,
+              source: marketplaceSource,
+              observedAt: marketplaceObservedAt,
+              marketplaceSite: "US" as const,
+              grain: "ITEM" as const,
+            },
+          }
+        : {}),
+      }
     })
   const liveIdentityRows: ReadonlyIdentityVerificationRow[] =
-    live.discovery.listings.map((listing) => ({
+    live.discovery.currentLiveListings
+    .filter((listing) =>
+      listing.marketplaceCertification.status !== "NON_US_CERTIFIED")
+    .map((listing) => ({
       id: liveEvidenceId(
         "LIVE_IDENTITY",
         listing.itemId,
@@ -2240,6 +2304,7 @@ function liveReaderStatuses(
     "SELLER_WIDE_DISCOVERY_PAGE_FAILED",
     "SELLER_WIDE_PAGINATION_METADATA_CONFLICT",
     "SELLER_WIDE_PAGINATION_UNPROVEN",
+    "SELLER_WIDE_TOTAL_ENTRIES_UNPROVEN",
     "SELLER_WIDE_SOURCE_IDENTITY_CONFLICT",
     "SELLER_WIDE_ITEM_MARKETPLACE_CONFLICT",
     "SELLER_WIDE_VARIATION_IDENTITY_AMBIGUOUS",
@@ -2340,6 +2405,21 @@ function readerStatuses(
   return [...statuses, ...liveReaderStatuses(live)]
 }
 
+function inventoryOAuthSafeErrorCategory(
+  live: EbayCommercialMonitorLiveReadonlyResult,
+): EbayMonitorOAuthSafeErrorCategory | undefined {
+  return [
+    "INVALID_SCOPE",
+    "INVALID_GRANT",
+    "INVALID_CLIENT",
+    "INVALID_REQUEST",
+    "UNSUPPORTED_GRANT_TYPE",
+    "OAUTH_ERROR_UNCLASSIFIED",
+  ].find((category) => live.discovery.inventory.gapCodes.some((code) =>
+    code.endsWith(`_${category}`))) as
+      EbayMonitorOAuthSafeErrorCategory | undefined
+}
+
 function discoveryCoverage(
   sources: CommercialMonitorReadonlySources,
   now: Date,
@@ -2362,29 +2442,50 @@ function discoveryCoverage(
     now,
     METRIC_MAXIMUM_AGE_SECONDS,
   )
+  const historicalEvidenceTimestamps = [
+    ...stored.identityVerifications.rows.map((row) => row.observed_at),
+    ...stored.syncState.rows.flatMap((row) => {
+      const generation = nonNegativeInteger(row.latest_committed_generation)
+      return generation !== null && generation > 0
+        ? [row.latest_committed_at]
+        : []
+    }),
+  ]
+  const historicalEvidenceFreshnesses = historicalEvidenceTimestamps.map(
+    (timestamp) => freshness(
+        timestamp,
+        now,
+        METRIC_MAXIMUM_AGE_SECONDS,
+      ).status,
+  )
+  const historicalEvidencePresent = historicalEvidenceTimestamps.length > 0
+  const historicalEvidenceFreshness = !historicalEvidencePresent
+    ? "NOT_APPLICABLE" as const
+    : historicalEvidenceFreshnesses.every((status) => status === "FRESH")
+      ? "FRESH" as const
+      : historicalEvidenceFreshnesses.includes("STALE")
+        ? "STALE" as const
+        : "UNKNOWN" as const
   const liveAvailable = ["AVAILABLE", "PARTIAL"].includes(
     live.discovery.status,
   )
   const knownGapCodes = liveAvailable
     ? live.discovery.gapCodes.filter((code) =>
-        code !== "REGISTRY_RECONCILIATION_UNAVAILABLE" &&
-        code !== "TRADING_LISTING_NOT_IN_INVENTORY_API_EXPECTED_MODEL_GAP")
+        code !== "REGISTRY_RECONCILIATION_UNAVAILABLE")
     : [
         "UNIVERSAL_ACCOUNT_LISTING_DISCOVERY_UNPROVEN",
         "MANUAL_LISTINGS_REQUIRE_KNOWN_ITEM_ID",
       ]
   if (sources.registry.truncated) knownGapCodes.push("REGISTRY_RESULT_LIMIT_REACHED")
   if (sources.registry.status === "ERROR") knownGapCodes.push("REGISTRY_SOURCE_UNAVAILABLE")
-  if (sources.registry.rows.some((row) => !/^\d{9,20}$/.test(row.ebay_item_id))) {
-    knownGapCodes.push("INVALID_REGISTRY_ITEM_ID")
-  }
   if (sources.identityVerifications.rows.some((row) =>
       ![row.observed_listing_id, row.listing_id]
         .some((value) => typeof value === "string" && /^\d{9,20}$/.test(value)))) {
     knownGapCodes.push("INVALID_DISCOVERY_ITEM_ID")
   }
-  if ((committed || storedEvidence) && coverageFreshness.status !== "FRESH") {
-    knownGapCodes.push("DISCOVERY_EVIDENCE_STALE_OR_INVALID")
+  if (!liveAvailable && historicalEvidencePresent &&
+      historicalEvidenceFreshness !== "FRESH") {
+    knownGapCodes.push("HISTORICAL_DISCOVERY_EVIDENCE_STALE_OR_INVALID")
   }
   const identityKey = (input: {
     itemId: string
@@ -2425,6 +2526,10 @@ function discoveryCoverage(
     })))
   const allActiveRegistryRows = stored.registry.rows
     .filter((row) => row.listing_status.toLowerCase() === "active")
+  if (allActiveRegistryRows.some((row) =>
+      !/^\d{9,20}$/.test(row.ebay_item_id))) {
+    knownGapCodes.push("INVALID_REGISTRY_ITEM_ID")
+  }
   const activeRegistryRows = allActiveRegistryRows
     .filter((row) => /^\d{9,20}$/.test(row.ebay_item_id))
   const registryIdentities = new Set(activeRegistryRows.map((row) => identityKey({
@@ -2435,14 +2540,23 @@ function discoveryCoverage(
     })))
   const registryIdentitySetValid =
     activeRegistryRows.length === allActiveRegistryRows.length
-  const registryEvidenceFresh = allActiveRegistryRows.every((row) =>
+  const registryEvidenceFreshnesses = allActiveRegistryRows.map((row) =>
     freshness(
       row.last_ebay_sync_at,
       now,
       METRIC_MAXIMUM_AGE_SECONDS,
-    ).status === "FRESH")
+    ).status)
+  const registryEvidenceFresh = registryEvidenceFreshnesses.every((status) =>
+    status === "FRESH")
+  const registryEvidenceFreshness = allActiveRegistryRows.length === 0
+    ? "NOT_APPLICABLE" as const
+    : registryEvidenceFresh
+      ? "FRESH" as const
+      : registryEvidenceFreshnesses.includes("STALE")
+        ? "STALE" as const
+        : "UNKNOWN" as const
   if (allActiveRegistryRows.length && !registryEvidenceFresh) {
-    knownGapCodes.push("DISCOVERY_EVIDENCE_STALE_OR_INVALID")
+    knownGapCodes.push("REGISTRY_EVIDENCE_STALE_OR_INVALID")
   }
   const registrySourceComplete = stored.registry.status === "AVAILABLE" &&
     !stored.registry.truncated &&
@@ -2480,16 +2594,6 @@ function discoveryCoverage(
       (registryOnly !== null && registryOnly.length > 0)) {
     knownGapCodes.push("REGISTRY_LISTING_NOT_IN_LIVE_ACTIVE_ENUMERATION")
   }
-  const intrinsicLiveGaps = live.discovery.gapCodes.filter((code) =>
-    code !== "REGISTRY_RECONCILIATION_UNAVAILABLE" &&
-    code !== "TRADING_LISTING_NOT_IN_INVENTORY_API_EXPECTED_MODEL_GAP")
-  const universalCoverageProven = liveAvailable && intrinsicLiveGaps.length === 0 &&
-    live.discovery.totalPages !== null &&
-    live.discovery.pagesRead === live.discovery.totalPages &&
-    (live.discovery.totalEntries ?? 25_000) < 25_000 &&
-    registrySourceComplete && liveOnlyItemIds?.length === 0 &&
-    liveOnly?.length === 0 && registryOnlyItemIds?.length === 0 &&
-    registryOnly?.length === 0
   const getItemEvidenceAvailable = live.calls.some((call) =>
     call.operation === "TRADING_GET_ITEM_MARKETPLACE") ||
     live.discovery.listings.some((listing) =>
@@ -2541,8 +2645,138 @@ function discoveryCoverage(
     ? [...certifiedUsOfferIdentities].filter((identity) =>
         !inventoryOfferIdentities.has(identity))
     : null
+  const liveEnumerationGapCodes = liveAvailable
+    ? live.discovery.gapCodes.filter((code) =>
+        code === "SELLER_WIDE_DISCOVERY_PAGE_FAILED" ||
+        code === "SELLER_WIDE_PAGINATION_METADATA_CONFLICT" ||
+        code === "SELLER_WIDE_PAGINATION_UNPROVEN" ||
+        code === "SELLER_WIDE_TOTAL_ENTRIES_UNPROVEN" ||
+        code === "SELLER_WIDE_ITEM_COUNT_RECONCILIATION_FAILED" ||
+        code === "GET_MY_EBAY_SELLING_25000_LIMIT" ||
+        code === "SELLER_WIDE_SOURCE_IDENTITY_CONFLICT")
+    : [
+        "UNIVERSAL_ACCOUNT_LISTING_DISCOVERY_UNPROVEN",
+        "MANUAL_LISTINGS_REQUIRE_KNOWN_ITEM_ID",
+      ]
+  const liveEnumerationEvidenceFresh = freshness(
+    live.discovery.observedAt,
+    now,
+    METRIC_MAXIMUM_AGE_SECONDS,
+  ).status === "FRESH"
+  if (liveAvailable && !liveEnumerationEvidenceFresh) {
+    liveEnumerationGapCodes.push(
+      "SELLER_WIDE_DISCOVERY_EVIDENCE_STALE_OR_INVALID",
+    )
+  }
+  const liveEnumerationStatus = !liveAvailable
+    ? "UNPROVEN" as const
+    : sellerWideEnumeration.itemSetComplete &&
+        liveEnumerationEvidenceFresh &&
+        liveEnumerationGapCodes.length === 0
+      ? "COMPLETE" as const
+      : "PARTIAL" as const
+  const marketplaceCertificationStatus = parsedItemCount === null ||
+      reportedItemCount === null || partitionedItemCount === null
+    ? "UNPROVEN" as const
+    : liveEnumerationStatus === "COMPLETE" &&
+        parsedItemCount === reportedItemCount &&
+        partitionedItemCount === parsedItemCount &&
+        certification.sellerWideItemsMarketplaceUnresolved === 0 &&
+        certification.sellerWideItemsMarketplaceError === 0 &&
+        certification.sellerWideItemsMarketplaceItemIdMismatch === 0 &&
+        certification.sellerWideItemsMarketplaceBudgetExhausted === 0
+      ? "COMPLETE" as const
+      : "PARTIAL" as const
+  const inventoryCapabilityStatus = ["AVAILABLE", "PARTIAL"].includes(
+    live.discovery.inventory.status,
+  )
+    ? "AVAILABLE" as const
+    : live.discovery.inventory.status === "ERROR"
+      ? "ERROR" as const
+      : "UNAVAILABLE" as const
+  const inventoryReadErrorCount = live.calls.filter((call) =>
+    (call.operation === "INVENTORY_GET_ITEMS" ||
+      call.operation === "INVENTORY_GET_OFFERS") &&
+    call.status === "FAILED").length
+  const inventoryReconciliationStatus =
+    live.discovery.inventoryRepresentation.status === "UNPROVEN"
+      ? "UNPROVEN" as const
+      : live.discovery.inventoryRepresentation.status === "COMPLETE" &&
+          inventoryNotInEnumeration !== null &&
+          inventoryNotInEnumeration.length === 0
+        ? "COMPLETE" as const
+        : "PARTIAL" as const
+  const registryDifferencePresent = [
+    liveOnlyItemIds,
+    registryOnlyItemIds,
+    liveOnly,
+    registryOnly,
+  ].some((difference) => difference !== null && difference.length > 0)
+  const registryCoverageStatus = registrySourceComplete &&
+      sellerWideEnumeration.identitySetComplete &&
+      marketplaceCertificationStatus === "COMPLETE" &&
+      !registryDifferencePresent
+    ? "COMPLETE" as const
+    : stored.registry.status === "ERROR"
+      ? "UNPROVEN" as const
+      : "PARTIAL" as const
+  if (live.discovery.inventory.status === "PARTIAL") {
+    knownGapCodes.push("INVENTORY_SOURCE_READ_PARTIAL")
+  } else if (["UNAVAILABLE", "ERROR"].includes(
+    live.discovery.inventory.status,
+  )) {
+    knownGapCodes.push("INVENTORY_SOURCE_READ_UNAVAILABLE")
+  }
+  if (typeof live.discovery.inventoryRepresentation.notRepresentedCount ===
+      "number" &&
+      live.discovery.inventoryRepresentation.notRepresentedCount > 0) {
+    knownGapCodes.push("TRADING_LISTING_NOT_IN_INVENTORY_API_EXPECTED_MODEL_GAP")
+  }
+  if (typeof live.discovery.inventoryRepresentation.identityUnresolvedCount ===
+      "number" &&
+      live.discovery.inventoryRepresentation.identityUnresolvedCount > 0) {
+    knownGapCodes.push("INVENTORY_REPRESENTATION_IDENTITY_UNRESOLVED")
+  }
+  const dimensionReasons = [
+    ...(liveEnumerationStatus === "COMPLETE"
+      ? []
+      : [`LIVE_ENUMERATION_${liveEnumerationStatus}`]),
+    ...(marketplaceCertificationStatus === "COMPLETE"
+      ? []
+      : [`MARKETPLACE_CERTIFICATION_${marketplaceCertificationStatus}`]),
+    ...(inventoryCapabilityStatus === "AVAILABLE"
+      ? []
+      : [`INVENTORY_CAPABILITY_${inventoryCapabilityStatus}`]),
+    ...(live.discovery.inventoryRepresentation.status === "COMPLETE"
+      ? []
+      : [`INVENTORY_REPRESENTATION_${live.discovery.inventoryRepresentation.status}`]),
+    ...(inventoryReconciliationStatus === "COMPLETE"
+      ? []
+      : [`INVENTORY_RECONCILIATION_${inventoryReconciliationStatus}`]),
+    ...(registryCoverageStatus === "COMPLETE"
+      ? []
+      : [`REGISTRY_COVERAGE_${registryCoverageStatus}`]),
+    ...(registryEvidenceFreshness === "FRESH" ||
+        registryEvidenceFreshness === "NOT_APPLICABLE"
+      ? []
+      : [`REGISTRY_EVIDENCE_FRESHNESS_${registryEvidenceFreshness}`]),
+    ...(liveAvailable || historicalEvidenceFreshness === "FRESH" ||
+        historicalEvidenceFreshness === "NOT_APPLICABLE"
+      ? []
+      : [`HISTORICAL_DISCOVERY_EVIDENCE_${historicalEvidenceFreshness}`]),
+    ...(live.analytics.analyticsCoverageStatus === "COMPLETE"
+      ? []
+      : [`ANALYTICS_${live.analytics.analyticsCoverageStatus}`]),
+  ]
+  const accountCoverageComplete = liveEnumerationStatus === "COMPLETE" &&
+    marketplaceCertificationStatus === "COMPLETE" &&
+    inventoryCapabilityStatus === "AVAILABLE" &&
+    live.discovery.inventoryRepresentation.status === "COMPLETE" &&
+    inventoryReconciliationStatus === "COMPLETE" &&
+    registryCoverageStatus === "COMPLETE" &&
+    live.analytics.analyticsCoverageStatus === "COMPLETE"
   return createDiscoveryCoverage({
-    universalCoverageProven,
+    universalCoverageProven: accountCoverageComplete,
     sourceCoverageAvailable: liveAvailable || (
       sources.registry.status !== "ERROR" &&
       (committed || storedEvidence) && coverageFreshness.status === "FRESH"
@@ -2556,7 +2790,56 @@ function discoveryCoverage(
       ...(getItemEvidenceAvailable ? ["EBAY_TRADING_GET_ITEM"] : []),
     ])].sort(),
     observedAt: latestIso([observedAt, live.discovery.observedAt]),
-    knownGapCodes,
+    knownGapCodes: liveEnumerationGapCodes,
+    accountAlertReasons: [...new Set([...dimensionReasons, ...knownGapCodes])],
+    dimensions: {
+      liveEnumeration: {
+        status: liveEnumerationStatus,
+        observedLiveItemCount: liveAvailable ? sellerWideItemIds.size : null,
+        observedAt: live.discovery.observedAt,
+        source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
+      },
+      marketplaceCertification: {
+        status: marketplaceCertificationStatus,
+        getItemRequestedCount: liveAvailable
+          ? live.calls.filter((call) =>
+              call.operation === "TRADING_GET_ITEM_MARKETPLACE").length
+          : null,
+        certifiedUsCount:
+          certification.sellerWideItemsMarketplaceCertifiedUs,
+        certifiedNonUsCount:
+          certification.sellerWideItemsMarketplaceCertifiedNonUs,
+        unresolvedCount: certification.sellerWideItemsMarketplaceUnresolved,
+        errorCount: certification.sellerWideItemsMarketplaceError,
+        itemIdMismatchCount:
+          certification.sellerWideItemsMarketplaceItemIdMismatch,
+        budgetExhaustedCount:
+          certification.sellerWideItemsMarketplaceBudgetExhausted,
+      },
+      inventoryCapability: {
+        status: inventoryCapabilityStatus,
+        sourceReadStatus: live.discovery.inventory.status,
+        readErrorCount: inventoryReadErrorCount,
+        oauthSafeErrorCategory:
+          inventoryOAuthSafeErrorCategory(live) ?? null,
+      },
+      inventoryRepresentation: {
+        ...live.discovery.inventoryRepresentation,
+      },
+      registryCoverage: {
+        status: registryCoverageStatus,
+        evidenceFreshness: registryEvidenceFreshness,
+      },
+      historicalDiscoveryEvidence: {
+        freshness: historicalEvidenceFreshness,
+      },
+      analytics: {
+        status: live.analytics.analyticsCoverageStatus,
+        requestedCount: live.analytics.analyticsRequestedItemCount,
+        representedCount: live.analytics.analyticsRepresentedItemCount,
+        missingCount: live.analytics.analyticsMissingItemCount,
+      },
+    },
     reconciliation: {
       sellerWide: {
         status: sellerWideEnumeration.identitySetComplete
@@ -2586,16 +2869,21 @@ function discoveryCoverage(
         identityGrain: "ITEM_SKU_VARIATION",
       },
       inventory: {
-        status: inventoryComparisonComplete &&
-            sellerWideEnumeration.identitySetComplete
-          ? "COMPLETE"
-          : inventoryObserved ? "PARTIAL" : "UNPROVEN",
+        status: inventoryReconciliationStatus,
         publishedListingIdCount: inventoryObserved
           ? new Set(live.discovery.inventory.publishedListingIds).size
           : null,
         publishedOfferIdentityCount: inventoryObserved
           ? inventoryOfferIdentities.size
           : null,
+        representedCount:
+          live.discovery.inventoryRepresentation.representedCount,
+        notRepresentedCount:
+          live.discovery.inventoryRepresentation.notRepresentedCount,
+        identityUnresolvedCount:
+          live.discovery.inventoryRepresentation.identityUnresolvedCount,
+        sourceUnprovenCount:
+          live.discovery.inventoryRepresentation.sourceUnprovenCount,
         inventoryOffersNotInSellerWideEnumerationCount:
           inventoryNotInEnumeration?.length ?? null,
         liveUsCertifiedNotInInventoryCount:
@@ -2603,12 +2891,7 @@ function discoveryCoverage(
         comparisonGrain: "ITEM_SKU",
       },
       registry: {
-        status: registrySourceComplete &&
-            sellerWideEnumeration.identitySetComplete
-          ? "COMPLETE"
-          : stored.registry.status === "ERROR"
-            ? "UNPROVEN"
-            : "PARTIAL",
+        status: registryCoverageStatus,
         activeRegistryItemCount: registrySourceComplete
           ? registryItemIds.size
           : null,
@@ -2630,7 +2913,32 @@ function discoveryCoverage(
   })
 }
 
-function listingInputs(sources: CommercialMonitorReadonlySources) {
+function listingInputs(
+  sources: CommercialMonitorReadonlySources,
+  registryAbsenceProvable: boolean,
+) {
+  const responseLocalLiveKey = (input: {
+    id: string
+    itemId: string
+    sku: string | null
+    variationKey: string | null
+  }) => JSON.stringify([
+    input.id,
+    input.itemId,
+    input.sku,
+    input.variationKey,
+  ])
+  const responseLocalLiveKeys = new Set(
+    (sources.registry.rows as ResponseLocalRegistryListingRow[])
+      .filter((row) => row[RESPONSE_LOCAL_LIVE_PRESENCE] === true)
+      .map((row) => responseLocalLiveKey({
+        id: row.id,
+        itemId: row.ebay_item_id,
+        sku: row.ebay_sku,
+        variationKey: row.ebay_variation_key ??
+          explicitListingFields(row).variationKey,
+      })),
+  )
   const responseLocalMarketplaceKey = (input: {
     id: string
     itemId: string
@@ -2713,12 +3021,20 @@ function listingInputs(sources: CommercialMonitorReadonlySources) {
         listingStatus: entry.listingStatus,
         observedAt: entry.observedAt,
         evidenceReference: `EBAY_ACTIVE_LISTING:${entry.listingId}`,
+        responseLocalLive: responseLocalLiveKeys.has(responseLocalLiveKey({
+          id: entry.listingId,
+          itemId: group.ebayItemId,
+          sku: group.ebaySku,
+          variationKey: group.variationKey,
+        })),
       })),
       identityVerification: matchingVerification,
       registryStatus: group.observations.some((entry) =>
         entry.source !== "EBAY_TRADING_GET_MY_EBAY_SELLING")
         ? "REGISTERED" as const
-        : "UNREGISTERED_DISCOVERY" as const,
+        : registryAbsenceProvable
+          ? "UNREGISTERED_DISCOVERY" as const
+          : "UNPROVEN" as const,
       duplicateIdentity: new Set(sourcesInGroup).size !== sourcesInGroup.length,
       marketplaceCertification,
     }
@@ -2754,9 +3070,12 @@ function listingInputs(sources: CommercialMonitorReadonlySources) {
         listingStatus: verification.observed_listing_status ?? "unknown",
         observedAt: verification.observed_at,
         evidenceReference: `LISTING_IDENTITY_VERIFICATION:${verification.id}`,
+        responseLocalLive: false,
       }],
       identityVerification: verification,
-      registryStatus: "UNREGISTERED_DISCOVERY",
+      registryStatus: registryAbsenceProvable
+        ? "UNREGISTERED_DISCOVERY"
+        : "UNPROVEN",
       duplicateIdentity: false,
       marketplaceCertification: {
         status: "UNPROVEN",
@@ -2922,18 +3241,33 @@ function accountDataQualityIssues(input: {
   generatedAt: string
 }) {
   const issues: DataQualityIssue[] = []
-  if (input.coverage.status !== "COMPLETE") {
+  const liveEnumerationStatus =
+    input.coverage.dimensions?.liveEnumeration.status ?? input.coverage.status
+  if (liveEnumerationStatus !== "COMPLETE") {
     issues.push(issue({
       code: "LISTING_DISCOVERY_INCOMPLETE",
       domain: "DISCOVERY",
-      severity: input.coverage.status === "UNPROVEN" ? "HIGH" : "MEDIUM",
-      blocking: input.coverage.status === "UNPROVEN",
+      severity: liveEnumerationStatus === "UNPROVEN" ? "HIGH" : "MEDIUM",
+      blocking: liveEnumerationStatus === "UNPROVEN",
       source: "ACCOUNT_DISCOVERY_COVERAGE",
       detectedAt: input.generatedAt,
     }))
   }
+  if (input.coverage.dimensions &&
+      input.coverage.dimensions.registryCoverage.status !== "COMPLETE") {
+    issues.push(issue({
+      code: "REGISTRY_RECONCILIATION_FAILED",
+      domain: "DISCOVERY",
+      severity: input.coverage.dimensions?.registryCoverage.status === "UNPROVEN"
+        ? "HIGH"
+        : "MEDIUM",
+      blocking: false,
+      source: "EBAY_ACTIVE_LISTING_REGISTRY",
+      detectedAt: input.generatedAt,
+    }))
+  }
   for (const reader of input.readers) {
-    if (["AVAILABLE", "UNKNOWN"].includes(reader.status)) continue
+    if (["AVAILABLE", "UNKNOWN", "PARTIAL"].includes(reader.status)) continue
     issues.push(issue({
       code: reader.status === "ERROR" ? "COLLECTOR_ERROR" : "SOURCE_UNAVAILABLE",
       domain: "COLLECTOR",
@@ -2943,7 +3277,7 @@ function accountDataQualityIssues(input: {
       detectedAt: input.generatedAt,
     }))
   }
-  if (input.coverage.knownGapCodes.some((code) =>
+  if ((input.coverage.accountAlertReasons ?? []).some((code) =>
       code === "INVALID_REGISTRY_ITEM_ID" ||
       code === "INVALID_DISCOVERY_ITEM_ID")) {
     issues.push(issue({
@@ -2955,6 +3289,18 @@ function accountDataQualityIssues(input: {
       detectedAt: input.generatedAt,
     }))
   }
+  if ((input.coverage.accountAlertReasons ?? []).includes(
+    "REGISTRY_RESULT_LIMIT_REACHED",
+  )) {
+    issues.push(issue({
+      code: "REGISTRY_RESULT_LIMIT_REACHED",
+      domain: "DISCOVERY",
+      severity: "HIGH",
+      blocking: true,
+      source: "EBAY_ACTIVE_LISTING_REGISTRY",
+      detectedAt: input.generatedAt,
+    }))
+  }
   return uniqueIssues(issues)
 }
 
@@ -2963,12 +3309,21 @@ function accountCoverageAlert(input: {
   marketplace: MarketplaceContext
   coverage: DiscoveryCoverage
 }) {
-  if (input.coverage.status === "COMPLETE") return null
+  const accountReasons = input.coverage.accountAlertReasons ?? []
+  if (input.coverage.status === "COMPLETE" && accountReasons.length === 0) {
+    return null
+  }
   const coverageReference = [
     "ACCOUNT_DISCOVERY_COVERAGE",
     input.coverage.status,
-    ...input.coverage.knownGapCodes,
+    ...accountReasons,
   ].join(":")
+  const highSeverityReason = accountReasons.some((reason) =>
+    reason.includes("_ERROR") ||
+    reason.includes("_UNPROVEN") ||
+    reason.includes("SOURCE_UNAVAILABLE") ||
+    reason.startsWith("INVALID_") ||
+    reason.endsWith("_RESULT_LIMIT_REACHED"))
   return createAlertCandidate({
     accountScopeKey: input.accountScopeKey,
     marketplace: input.marketplace,
@@ -2976,7 +3331,9 @@ function accountCoverageAlert(input: {
     variationKey: null,
     sku: null,
     reasonCode: "DATA_COVERAGE_FAILURE",
-    severity: input.coverage.status === "UNPROVEN" ? "HIGH" : "MEDIUM",
+    severity: input.coverage.status === "UNPROVEN" || highSeverityReason
+      ? "HIGH"
+      : "MEDIUM",
     supportingEvidence: [evidence(
       coverageReference,
       "SELLER_OS_DISCOVERY_COVERAGE",
@@ -2994,17 +3351,7 @@ function liveCertificationProjection(
   live: EbayCommercialMonitorLiveReadonlyResult,
   reconciledCoverage?: DiscoveryCoverage,
 ): EbayLiveCertificationReadModel {
-  const inventoryOAuthSafeErrorCategory = [
-    "INVALID_SCOPE",
-    "INVALID_GRANT",
-    "INVALID_CLIENT",
-    "INVALID_REQUEST",
-    "UNSUPPORTED_GRANT_TYPE",
-    "OAUTH_ERROR_UNCLASSIFIED",
-  ].find((category) => live.discovery.inventory.gapCodes.some((code) =>
-    code.endsWith(`_${category}`))) as
-      EbayLiveCertificationReadModel["inventory"]["oauthSafeErrorCategory"] |
-      undefined
+  const inventoryOAuthCategory = inventoryOAuthSafeErrorCategory(live)
   const discoveryProven = ["AVAILABLE", "PARTIAL"]
     .includes(live.discovery.status)
   const analyticsProven = ["CERTIFIED", "PARTIAL"]
@@ -3038,7 +3385,8 @@ function liveCertificationProjection(
     },
     discovery: {
       status: live.discovery.status,
-      coverage: reconciledCoverage?.status ?? live.discovery.coverage,
+      coverage: reconciledCoverage?.dimensions?.liveEnumeration.status ??
+        live.discovery.coverage,
       observedAt: live.discovery.observedAt,
       source: live.discovery.source,
       pagesRead: live.discovery.pagesRead,
@@ -3053,15 +3401,18 @@ function liveCertificationProjection(
             listing.variationKey !== null).length
         : null,
       gapCodes: reconciledCoverage
-        ? [...new Set([
-            ...reconciledCoverage.knownGapCodes,
-            ...live.discovery.gapCodes.filter((code) =>
-              code === "TRADING_LISTING_NOT_IN_INVENTORY_API_EXPECTED_MODEL_GAP"),
-          ])]
+        ? [...reconciledCoverage.knownGapCodes]
         : [...live.discovery.gapCodes],
     },
     inventory: {
       status: live.discovery.inventory.status,
+      capabilityStatus: ["AVAILABLE", "PARTIAL"].includes(
+        live.discovery.inventory.status,
+      )
+        ? "AVAILABLE"
+        : live.discovery.inventory.status === "ERROR"
+          ? "ERROR"
+          : "UNAVAILABLE",
       observedAt: live.discovery.inventory.observedAt,
       inventorySkuCount: live.discovery.inventory.inventorySkuCount,
       publishedListingCount: ["AVAILABLE", "PARTIAL"].includes(
@@ -3069,7 +3420,8 @@ function liveCertificationProjection(
       )
         ? new Set(live.discovery.inventory.publishedListingIds).size
         : null,
-      oauthSafeErrorCategory: inventoryOAuthSafeErrorCategory ?? null,
+      oauthSafeErrorCategory: inventoryOAuthCategory ?? null,
+      representation: { ...live.discovery.inventoryRepresentation },
       gapCodes: [...live.discovery.inventory.gapCodes],
     },
     analytics: {
@@ -3246,7 +3598,11 @@ export async function getCommercialMonitorReadonly(
     accountKey: scope.accountKey,
   })
   const coverage = discoveryCoverage(sources, now, live, storedSources)
-  const inputs = listingInputs(sources)
+  const inputs = listingInputs(
+    sources,
+    coverage.reconciliation?.registry.activeRegistryItemCount !== null &&
+      coverage.reconciliation?.registry.activeRegistryItemCount !== undefined,
+  )
   const countByItem = new Map<string, number>()
   const countByItemSku = new Map<string, number>()
   for (const listing of inputs) {
@@ -3264,6 +3620,22 @@ export async function getCommercialMonitorReadonly(
     sources,
     marketplace,
     discoveryCoverage: coverage,
+    sellerWideItemSetComplete:
+      live.discovery.sellerWideEnumeration.itemSetComplete,
+    sellerWideEnumerationObservedAt: live.discovery.observedAt,
+    sellerWideCurrentItemIds: new Set(
+      live.discovery.currentLiveListings.map((listing) => listing.itemId),
+    ),
+    sellerWideCurrentIdentityObservations: new Map(
+      live.discovery.currentLiveListings.flatMap((listing) =>
+        listing.identityAmbiguous
+          ? []
+          : [[JSON.stringify([
+              listing.itemId,
+              listing.sku,
+              listing.variationKey,
+            ]), listing.observedAt] as const]),
+    ),
     itemIdentityCount: countByItem.get(listing.itemId) ?? 1,
     itemSkuIdentityCount: countByItemSku.get(JSON.stringify([
       listing.itemId,
