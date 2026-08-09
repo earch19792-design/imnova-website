@@ -17,6 +17,57 @@ binding, Client ID/Secret, and `EBAY_RuName`. It requests exactly:
 
 Fulfillment, Marketing, Inventory write, and every other scope are excluded.
 
+## Authorization-request live preflight
+
+The initial implementation serialized scope separators through
+`URLSearchParams`, which emitted `+`. The established eBay consent builders in
+this repository and eBay's documented examples use RFC 3986 `%20` separators.
+The helper now uses one explicit `encodeURIComponent` serializer for the actual
+authorization request and for its live preflight; `+`, double encoding, extra
+parameters, and `prompt` are rejected.
+
+Before any transaction state, ledger row, cookie, or browser redirect, an
+authenticated Preview admin must run a non-interactive diagnostic. It probes
+the same Production Client ID and the exact `EBAY_RuName`, without trying the
+historical Commercial Orders RuName or any fallback, in these isolated stages:
+
+1. base;
+2. base + Account readonly;
+3. base + Account readonly + Inventory readonly;
+4. the full four-scope set;
+5. the full set with a valid diagnostic state;
+6. the same request using the retired `+` separator, for exact serialization
+   isolation only.
+
+The probe sends no cookie, authorization header, Client Secret, body, login, or
+consent. It follows only the mandatory first eBay-owned routing hop from
+`auth.ebay.com` to the byte-equivalent `auth2.ebay.com/oauth2/authorize`
+request. It never follows a sign-in, consent, callback, error, or external
+target. Each logical test has one three-second deadline across at most two eBay
+GETs, tests run sequentially, and there are no retries, preserving function-
+response headroom.
+
+Only fixed classifications reach the UI. Client ID, RuName, state, full URL,
+redirect Location, response body, provider error description, and provider
+cookies are discarded. Network, timeout, unknown HTML, unrecognized redirect,
+rate limit, or any ambiguous response fails closed.
+
+The real start re-runs the complete diagnostic. It may create a PENDING state
+only when all canonical `%20` phases are accepted and eBay independently
+rejects the otherwise identical retired `+` request as `invalid_request`.
+Therefore:
+
+```text
+AUTH_REQUEST_LIVE_PREFLIGHT = PASS
+then CREATE_PENDING_STATE
+then SET_COOKIE
+then RETURN THE HUMAN REDIRECT
+```
+
+The separate diagnostic action creates zero ledger rows, sets zero cookies,
+returns no authorization URL, redirects zero humans, and performs zero token
+exchanges.
+
 ## Global one-time claim
 
 The browser transaction uses a five-minute signed, Secure, HttpOnly,

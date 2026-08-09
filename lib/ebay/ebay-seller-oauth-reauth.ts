@@ -11,8 +11,10 @@ import {
 } from "./ebay-seller-traffic-report"
 import {
   buildEbaySellerOAuthReauthAuthorizationUrl,
+  buildEbaySellerOAuthReauthDiagnosticAuthorizationUrl,
   createEbaySellerOAuthReauthCookie,
   createEbaySellerOAuthReauthState,
+  EBAY_SELLER_OAUTH_REAUTH_AUTHORIZATION_ENDPOINT,
   EBAY_SELLER_OAUTH_REAUTH_EXTERNAL_DEADLINE_MS,
   EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION,
   EBAY_SELLER_OAUTH_REAUTH_LEDGER_TIMEOUT_MS,
@@ -24,6 +26,8 @@ import {
   hashEbaySellerOAuthReauthState,
   type EbaySellerOAuthCallbackInput,
   type EbaySellerOAuthReauthConfiguration,
+  type EbaySellerOAuthReauthPreflightPhase,
+  type EbaySellerOAuthReauthScopeEncoding,
 } from "./ebay-seller-oauth-reauth-domain"
 import type {
   EbaySellerOAuthReauthStateLedger,
@@ -40,6 +44,11 @@ const EBAY_MARKETPLACE_ID = "EBAY_US"
 const TRADING_COMPATIBILITY_LEVEL = "1423"
 const SEQUENTIAL_REQUEST_TIMEOUT_MS = 5_000
 const PARALLEL_PROBE_TIMEOUT_MS = 6_000
+const AUTHORIZATION_PREFLIGHT_TIMEOUT_MS = 3_000
+const AUTHORIZATION_PREFLIGHT_BODY_LIMIT = 16_384
+const AUTHORIZATION_PREFLIGHT_CONCURRENCY = 1
+const AUTHORIZATION_PREFLIGHT_MAX_TESTS = 6
+const AUTHORIZATION_PREFLIGHT_MAX_NETWORK_CALLS = 12
 
 const GET_USER_BODY = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
   "<GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
@@ -100,6 +109,57 @@ type CandidateVerificationResult = {
 
 type JsonRecord = Record<string, unknown>
 
+export type EbaySellerOAuthReauthAuthorizationPreflightResult = {
+  acceptedByAuthEndpoint: "YES" | "NO"
+  safeErrorCategory:
+    | "NONE"
+    | "INVALID_REQUEST"
+    | "AUTH_ENDPOINT_REJECTED"
+    | "AUTH_ENDPOINT_UNAVAILABLE"
+    | "AUTH_ENDPOINT_RESPONSE_UNPROVEN"
+}
+
+export type EbaySellerOAuthReauthAuthorizationDiagnosis = {
+  rootCause:
+    | "CLIENT_ID_RUNAME_BINDING"
+    | "SCOPE_ACCOUNT_REJECTED"
+    | "SCOPE_INVENTORY_REJECTED"
+    | "SCOPE_ANALYTICS_REJECTED"
+    | "URL_SERIALIZATION"
+    | "STATE_PARAMETER"
+    | "STILL_UNPROVEN"
+  testBase: EbaySellerOAuthReauthAuthorizationPreflightResult
+  testBaseAccount: EbaySellerOAuthReauthAuthorizationPreflightResult
+  testBaseAccountInventory: EbaySellerOAuthReauthAuthorizationPreflightResult
+  testFullFourScopes: EbaySellerOAuthReauthAuthorizationPreflightResult
+  canonicalWithState: EbaySellerOAuthReauthAuthorizationPreflightResult
+  previousPlusEncodingWithState:
+    EbaySellerOAuthReauthAuthorizationPreflightResult
+  runameSource: "EBAY_RuName"
+  runameAppBinding: "PASS" | "FAIL" | "UNPROVEN"
+  currentScopeEncoding: "RFC3986_PERCENT20"
+  previousScopeEncoding: "FORM_URLENCODED_PLUS"
+  encodingCausesInvalidRequest: "YES" | "NO" | "UNPROVEN"
+  stateCausesInvalidRequest: "YES" | "NO" | "UNPROVEN"
+  stateFormatValid: true
+  scopeCount: 4
+  parameterNames: readonly [
+    "client_id",
+    "response_type",
+    "redirect_uri",
+    "scope",
+    "state",
+  ]
+  externalCalls: number
+  ledgerRowsCreated: 0
+  cookiesSet: 0
+  humanRedirects: 0
+  oauthConsentLaunched: false
+  authorizationCodeExchangeCalls: 0
+  secretsReturned: false
+  startAllowed: boolean
+}
+
 async function boundedLedgerOperation<T>(
   operation: Promise<T>,
   timeoutMs = EBAY_SELLER_OAUTH_REAUTH_LEDGER_TIMEOUT_MS,
@@ -131,6 +191,409 @@ function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as JsonRecord
     : {}
+}
+
+async function boundedAuthorizationPreflightBody(response: Response) {
+  if (!response.body) return ""
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let total = 0
+  let text = ""
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > AUTHORIZATION_PREFLIGHT_BODY_LIMIT) {
+        await reader.cancel().catch(() => undefined)
+        throw new EbaySellerOAuthReauthError(
+          "EBAY_SELLER_OAUTH_REAUTH_PREFLIGHT_RESPONSE_UNPROVEN",
+        )
+      }
+      text += decoder.decode(value, { stream: true })
+    }
+    text += decoder.decode()
+    return text
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+function authorizationPreflightUrlAllowed(url: URL, stateExpected: boolean) {
+  const expectedKeys = stateExpected
+    ? "client_id,redirect_uri,response_type,scope,state"
+    : "client_id,redirect_uri,response_type,scope"
+  const keys = [...url.searchParams.keys()]
+  return url.origin === "https://auth.ebay.com" &&
+    url.pathname === "/oauth2/authorize" &&
+    url.port === "" && !url.username && !url.password && !url.hash &&
+    keys.length === new Set(keys).size &&
+    keys.sort().join(",") === expectedKeys &&
+    url.searchParams.get("response_type") === "code" &&
+    Boolean(credential(url.searchParams.get("client_id"), 512)) &&
+    Boolean(credential(url.searchParams.get("redirect_uri"), 512)) &&
+    Boolean(url.searchParams.get("scope")) &&
+    (!stateExpected || /^[A-Za-z0-9_-]{43}$/.test(
+      url.searchParams.get("state") ?? "",
+    ))
+}
+
+function authorizationRedirectResult(
+  response: Response,
+  source: URL,
+): EbaySellerOAuthReauthAuthorizationPreflightResult | null {
+  if (![302, 303].includes(response.status)) return null
+  const location = response.headers.get("location") ?? ""
+  if (!location || location.length > 4_096 ||
+      /[\u0000-\u001f\u007f]/.test(location)) {
+    return {
+      acceptedByAuthEndpoint: "NO",
+      safeErrorCategory: "AUTH_ENDPOINT_RESPONSE_UNPROVEN",
+    }
+  }
+  let target: URL
+  try {
+    target = new URL(location, source)
+  } catch {
+    return {
+      acceptedByAuthEndpoint: "NO",
+      safeErrorCategory: "AUTH_ENDPOINT_RESPONSE_UNPROVEN",
+    }
+  }
+  const parameterNames = new Set(
+    [...target.searchParams.keys()].map((key) => key.toLowerCase()),
+  )
+  const errorMarker = [
+    target.pathname,
+    target.searchParams.get("error") ?? "",
+    target.searchParams.get("error_id") ?? "",
+    target.searchParams.get("errorId") ?? "",
+  ].join(" ").toLowerCase()
+  const trustedErrorOrigin = [
+    "https://auth.ebay.com",
+    "https://auth2.ebay.com",
+  ].includes(target.origin) && !target.port && !target.username &&
+    !target.password && !target.hash
+  if (trustedErrorOrigin &&
+      (errorMarker.includes("invalid_request") ||
+        target.pathname.toLowerCase() === "/oauth2/erroroauth")) {
+    return {
+      acceptedByAuthEndpoint: "NO",
+      safeErrorCategory: "INVALID_REQUEST",
+    }
+  }
+  if (target.protocol !== "https:" || target.port || target.username ||
+      target.password || target.hash || parameterNames.has("code") ||
+      parameterNames.has("error") || parameterNames.has("error_description") ||
+      parameterNames.has("error_id") || parameterNames.has("errorid")) {
+    return {
+      acceptedByAuthEndpoint: "NO",
+      safeErrorCategory: "AUTH_ENDPOINT_REJECTED",
+    }
+  }
+  const interactiveSignin = target.origin === "https://signin.ebay.com" &&
+    (target.pathname === "/ws/eBayISAPI.dll" ||
+      target.pathname.toLowerCase().startsWith("/signin"))
+  const interactiveAuthorization = target.origin === "https://auth2.ebay.com" &&
+    target.pathname.replace(/\/$/, "") === "/oauth2/consents"
+  return interactiveSignin || interactiveAuthorization
+    ? { acceptedByAuthEndpoint: "YES", safeErrorCategory: "NONE" }
+    : {
+        acceptedByAuthEndpoint: "NO",
+        safeErrorCategory: "AUTH_ENDPOINT_RESPONSE_UNPROVEN",
+      }
+}
+
+function exactAuth2AuthorizationHop(response: Response, source: URL) {
+  if (![302, 303].includes(response.status)) return null
+  const location = response.headers.get("location") ?? ""
+  if (!location || location.length > 4_096 ||
+      /[\u0000-\u001f\u007f]/.test(location)) return null
+  let target: URL
+  try {
+    target = new URL(location, source)
+  } catch {
+    return null
+  }
+  const sourceKeys = [...source.searchParams.keys()].sort()
+  const targetKeys = [...target.searchParams.keys()].sort()
+  const exactParameters = sourceKeys.length === targetKeys.length &&
+    target.search === source.search &&
+    sourceKeys.every((key, index) => key === targetKeys[index] &&
+      source.searchParams.getAll(key).length === 1 &&
+      target.searchParams.getAll(key).length === 1 &&
+      source.searchParams.get(key) === target.searchParams.get(key))
+  return target.origin === "https://auth2.ebay.com" &&
+    target.pathname.replace(/\/$/, "") === "/oauth2/authorize" &&
+    !target.port && !target.username && !target.password && !target.hash &&
+    exactParameters
+    ? target
+    : null
+}
+
+export async function preflightEbaySellerOAuthReauthAuthorizationRequest(input: {
+  authorizationUrl: string
+  stateExpected: boolean
+  fetchImpl: FetchLike
+}): Promise<EbaySellerOAuthReauthAuthorizationPreflightResult> {
+  let url: URL
+  try {
+    url = new URL(input.authorizationUrl)
+  } catch {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_AUTHORIZATION_SERIALIZATION_INVALID",
+    )
+  }
+  if (!authorizationPreflightUrlAllowed(url, input.stateExpected)) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_AUTHORIZATION_SERIALIZATION_INVALID",
+    )
+  }
+  const startedAt = Date.now()
+  const request = async (target: URL) => {
+    const remaining = AUTHORIZATION_PREFLIGHT_TIMEOUT_MS -
+      (Date.now() - startedAt)
+    if (remaining < 250) {
+      throw new EbaySellerOAuthReauthError(
+        "EBAY_SELLER_OAUTH_REAUTH_PREFLIGHT_ENDPOINT_UNAVAILABLE",
+      )
+    }
+    return input.fetchImpl(target, {
+      method: "GET",
+      headers: { Accept: "text/html,application/json" },
+      cache: "no-store",
+      credentials: "omit",
+      redirect: "manual",
+      referrerPolicy: "no-referrer",
+      signal: AbortSignal.timeout(remaining),
+    })
+  }
+  let response: Response
+  let responseSource = url
+  try {
+    response = await request(url)
+    const auth2Hop = exactAuth2AuthorizationHop(response, url)
+    if (auth2Hop) {
+      responseSource = auth2Hop
+      response = await request(auth2Hop)
+    }
+  } catch {
+    return {
+      acceptedByAuthEndpoint: "NO",
+      safeErrorCategory: "AUTH_ENDPOINT_UNAVAILABLE",
+    }
+  }
+  const redirectResult = authorizationRedirectResult(response, responseSource)
+  if (redirectResult) return redirectResult
+  if (response.status !== 200) {
+    let explicitInvalidRequest = false
+    if (response.status === 400) {
+      try {
+        const body = await boundedAuthorizationPreflightBody(response)
+        const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
+        if (contentType.includes("json")) {
+          const payload = record(JSON.parse(body))
+          explicitInvalidRequest = [
+            payload.error,
+            payload.error_id,
+            payload.errorId,
+          ].some((value) => typeof value === "string" &&
+            value.trim().toLowerCase() === "invalid_request")
+        } else {
+          const normalized = body.toLowerCase()
+          explicitInvalidRequest = normalized.includes("invalid_request") ||
+            normalized.includes("/oauth2/erroroauth")
+        }
+      } catch {
+        explicitInvalidRequest = false
+      }
+    }
+    return {
+      acceptedByAuthEndpoint: "NO",
+      safeErrorCategory: explicitInvalidRequest
+        ? "INVALID_REQUEST"
+        : "AUTH_ENDPOINT_REJECTED",
+    }
+  }
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
+  if (!contentType.includes("text/html")) {
+    return {
+      acceptedByAuthEndpoint: "NO",
+      safeErrorCategory: "AUTH_ENDPOINT_RESPONSE_UNPROVEN",
+    }
+  }
+  let body = ""
+  try {
+    body = (await boundedAuthorizationPreflightBody(response)).toLowerCase()
+  } catch {
+    return {
+      acceptedByAuthEndpoint: "NO",
+      safeErrorCategory: "AUTH_ENDPOINT_RESPONSE_UNPROVEN",
+    }
+  }
+  const invalidRequest = body.includes("invalid_request") ||
+    body.includes("/oauth2/erroroauth")
+  body = ""
+  return invalidRequest
+    ? { acceptedByAuthEndpoint: "NO", safeErrorCategory: "INVALID_REQUEST" }
+    : {
+        acceptedByAuthEndpoint: "NO",
+        safeErrorCategory: "AUTH_ENDPOINT_RESPONSE_UNPROVEN",
+      }
+}
+
+function deniedPreflight() : EbaySellerOAuthReauthAuthorizationPreflightResult {
+  return {
+    acceptedByAuthEndpoint: "NO",
+    safeErrorCategory: "AUTH_ENDPOINT_RESPONSE_UNPROVEN",
+  }
+}
+
+export async function diagnoseEbaySellerOAuthReauthAuthorization(input: {
+  configuration: EbaySellerOAuthReauthConfiguration
+  fetchImpl?: FetchLike
+  stateFactory?: () => string
+}): Promise<EbaySellerOAuthReauthAuthorizationDiagnosis> {
+  if (!input.configuration.ready) {
+    throw new EbaySellerOAuthReauthError(
+      input.configuration.reason ?? "EBAY_SELLER_OAUTH_REAUTH_CONFIGURATION_INVALID",
+    )
+  }
+  const fetchImpl = input.fetchImpl ?? fetch
+  let state = (input.stateFactory ?? createEbaySellerOAuthReauthState)()
+  const cases: Array<{
+    key:
+      | "testBase"
+      | "testBaseAccount"
+      | "testBaseAccountInventory"
+      | "testFullFourScopes"
+      | "canonicalWithState"
+      | "previousPlusEncodingWithState"
+    phase: EbaySellerOAuthReauthPreflightPhase
+    state?: string
+    encoding: EbaySellerOAuthReauthScopeEncoding
+  }> = [
+    { key: "testBase", phase: "BASE", encoding: "RFC3986_PERCENT20" },
+    { key: "testBaseAccount", phase: "BASE_ACCOUNT", encoding: "RFC3986_PERCENT20" },
+    { key: "testBaseAccountInventory", phase: "BASE_ACCOUNT_INVENTORY", encoding: "RFC3986_PERCENT20" },
+    { key: "testFullFourScopes", phase: "FULL_FOUR_SCOPES", encoding: "RFC3986_PERCENT20" },
+    { key: "canonicalWithState", phase: "FULL_FOUR_SCOPES", state, encoding: "RFC3986_PERCENT20" },
+    { key: "previousPlusEncodingWithState", phase: "FULL_FOUR_SCOPES", state, encoding: "FORM_URLENCODED_PLUS" },
+  ]
+  const results: Partial<Record<typeof cases[number]["key"],
+    EbaySellerOAuthReauthAuthorizationPreflightResult>> = {}
+  let externalCalls = 0
+  for (let index = 0; index < cases.length;
+       index += AUTHORIZATION_PREFLIGHT_CONCURRENCY) {
+    const batch = cases.slice(index, index + AUTHORIZATION_PREFLIGHT_CONCURRENCY)
+    await Promise.all(batch.map(async (candidate) => {
+      if (externalCalls >= AUTHORIZATION_PREFLIGHT_MAX_NETWORK_CALLS) return
+      const authorizationUrl =
+        buildEbaySellerOAuthReauthDiagnosticAuthorizationUrl({
+          clientId: input.configuration.clientId,
+          runame: input.configuration.runame,
+          phase: candidate.phase,
+          state: candidate.state,
+          encoding: candidate.encoding,
+        })
+      results[candidate.key] =
+        await preflightEbaySellerOAuthReauthAuthorizationRequest({
+          authorizationUrl,
+          stateExpected: candidate.state !== undefined,
+          fetchImpl: async (...arguments_) => {
+            if (externalCalls >= AUTHORIZATION_PREFLIGHT_MAX_NETWORK_CALLS) {
+              throw new EbaySellerOAuthReauthError(
+                "EBAY_SELLER_OAUTH_REAUTH_PREFLIGHT_CALL_BUDGET_EXHAUSTED",
+              )
+            }
+            externalCalls += 1
+            return fetchImpl(...arguments_)
+          },
+        })
+    }))
+  }
+  if (cases.length !== AUTHORIZATION_PREFLIGHT_MAX_TESTS) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_PREFLIGHT_CALL_BUDGET_EXHAUSTED",
+    )
+  }
+  state = ""
+  const testBase = results.testBase ?? deniedPreflight()
+  const testBaseAccount = results.testBaseAccount ?? deniedPreflight()
+  const testBaseAccountInventory =
+    results.testBaseAccountInventory ?? deniedPreflight()
+  const testFullFourScopes = results.testFullFourScopes ?? deniedPreflight()
+  const canonicalWithState = results.canonicalWithState ?? deniedPreflight()
+  const previousPlusEncodingWithState =
+    results.previousPlusEncodingWithState ?? deniedPreflight()
+  const accepted = (result: EbaySellerOAuthReauthAuthorizationPreflightResult) =>
+    result.acceptedByAuthEndpoint === "YES"
+  const invalid = (result: EbaySellerOAuthReauthAuthorizationPreflightResult) =>
+    result.safeErrorCategory === "INVALID_REQUEST"
+  const rootCause = invalid(testBase)
+    ? "CLIENT_ID_RUNAME_BINDING" as const
+    : accepted(testBase) && invalid(testBaseAccount)
+      ? "SCOPE_ACCOUNT_REJECTED" as const
+      : accepted(testBaseAccount) && invalid(testBaseAccountInventory)
+        ? "SCOPE_INVENTORY_REJECTED" as const
+        : accepted(testBaseAccountInventory) && invalid(testFullFourScopes)
+          ? "SCOPE_ANALYTICS_REJECTED" as const
+          : accepted(testFullFourScopes) && invalid(canonicalWithState)
+            ? "STATE_PARAMETER" as const
+            : accepted(canonicalWithState) &&
+                invalid(previousPlusEncodingWithState)
+              ? "URL_SERIALIZATION" as const
+              : "STILL_UNPROVEN" as const
+  const canonicalAccepted = accepted(testBase) && accepted(testBaseAccount) &&
+    accepted(testBaseAccountInventory) && accepted(testFullFourScopes) &&
+    accepted(canonicalWithState)
+  return {
+    rootCause,
+    testBase,
+    testBaseAccount,
+    testBaseAccountInventory,
+    testFullFourScopes,
+    canonicalWithState,
+    previousPlusEncodingWithState,
+    runameSource: "EBAY_RuName",
+    runameAppBinding: accepted(testBase)
+      ? "PASS"
+      : invalid(testBase)
+        ? "FAIL"
+        : "UNPROVEN",
+    currentScopeEncoding: "RFC3986_PERCENT20",
+    previousScopeEncoding: "FORM_URLENCODED_PLUS",
+    encodingCausesInvalidRequest: accepted(canonicalWithState) &&
+        invalid(previousPlusEncodingWithState)
+      ? "YES"
+      : accepted(canonicalWithState) &&
+          accepted(previousPlusEncodingWithState)
+        ? "NO"
+        : "UNPROVEN",
+    stateCausesInvalidRequest: accepted(testFullFourScopes) &&
+        invalid(canonicalWithState)
+      ? "YES"
+      : accepted(testFullFourScopes) && accepted(canonicalWithState)
+        ? "NO"
+        : "UNPROVEN",
+    stateFormatValid: true,
+    scopeCount: EBAY_SELLER_OAUTH_REAUTH_SCOPES.length,
+    parameterNames: [
+      "client_id",
+      "response_type",
+      "redirect_uri",
+      "scope",
+      "state",
+    ],
+    externalCalls,
+    ledgerRowsCreated: 0,
+    cookiesSet: 0,
+    humanRedirects: 0,
+    oauthConsentLaunched: false,
+    authorizationCodeExchangeCalls: 0,
+    secretsReturned: false,
+    startAllowed: canonicalAccepted && rootCause === "URL_SERIALIZATION",
+  }
 }
 
 function credential(value: unknown, maximum = 8_192) {
@@ -389,11 +852,24 @@ export async function prepareEbaySellerOAuthReauthStart(input: {
   ledger: EbaySellerOAuthReauthStateLedger
   clock?: Clock
   stateFactory?: () => string
+  diagnosticStateFactory?: () => string
+  fetchImpl?: FetchLike
   ledgerTimeoutMs?: number
 }) {
   if (!input.configuration.ready) {
     throw new EbaySellerOAuthReauthError(
       input.configuration.reason ?? "EBAY_SELLER_OAUTH_REAUTH_CONFIGURATION_INVALID",
+    )
+  }
+  const authorizationDiagnosis =
+    await diagnoseEbaySellerOAuthReauthAuthorization({
+      configuration: input.configuration,
+      fetchImpl: input.fetchImpl,
+      stateFactory: input.diagnosticStateFactory,
+    })
+  if (!authorizationDiagnosis.startAllowed) {
+    throw new EbaySellerOAuthReauthError(
+      `EBAY_SELLER_OAUTH_REAUTH_PREFLIGHT_${authorizationDiagnosis.rootCause}`,
     )
   }
   const clock = input.clock ?? Date.now
@@ -430,6 +906,12 @@ export async function prepareEbaySellerOAuthReauthStart(input: {
     stateHashPersisted: true as const,
     rawStatePersisted: false as const,
     tokenGenerated: false as const,
+    authorizationPreflight: {
+      rootCause: authorizationDiagnosis.rootCause,
+      liveAccepted: true as const,
+      scopeEncoding: authorizationDiagnosis.currentScopeEncoding,
+      stateAccepted: authorizationDiagnosis.stateCausesInvalidRequest === "NO",
+    },
   }
 }
 

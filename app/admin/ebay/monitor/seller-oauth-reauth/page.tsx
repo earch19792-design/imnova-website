@@ -20,6 +20,49 @@ type StartPayload = {
   callbackPath?: string
   scopeCount?: number
   error?: string
+  authorizationPreflight?: {
+    rootCause?: string
+    liveAccepted?: boolean
+    scopeEncoding?: string
+    stateAccepted?: boolean
+  }
+}
+
+type PreflightState = {
+  acceptedByAuthEndpoint?: "YES" | "NO"
+  safeErrorCategory?: string
+}
+
+type Diagnosis = {
+  rootCause?: string
+  testBase?: PreflightState
+  testBaseAccount?: PreflightState
+  testBaseAccountInventory?: PreflightState
+  testFullFourScopes?: PreflightState
+  canonicalWithState?: PreflightState
+  previousPlusEncodingWithState?: PreflightState
+  runameSource?: string
+  runameAppBinding?: string
+  currentScopeEncoding?: string
+  previousScopeEncoding?: string
+  encodingCausesInvalidRequest?: string
+  stateCausesInvalidRequest?: string
+  stateFormatValid?: boolean
+  scopeCount?: number
+  externalCalls?: number
+  ledgerRowsCreated?: number
+  cookiesSet?: number
+  humanRedirects?: number
+  oauthConsentLaunched?: boolean
+  authorizationCodeExchangeCalls?: number
+  secretsReturned?: boolean
+  startAllowed?: boolean
+}
+
+type DiagnosisPayload = {
+  success?: boolean
+  diagnosis?: Diagnosis
+  error?: string
 }
 
 function validAuthorizationUrl(value: string) {
@@ -32,7 +75,9 @@ function validAuthorizationUrl(value: string) {
       scopes.every((scope) => REQUIRED_SCOPES.includes(
         scope as typeof REQUIRED_SCOPES[number],
       ))
-    return url.origin === "https://auth.ebay.com" &&
+    return !value.includes("+") && !value.includes("%252F") &&
+      /scope=[^&]+%20https%3A/.test(value) &&
+      url.origin === "https://auth.ebay.com" &&
       url.pathname === "/oauth2/authorize" &&
       url.searchParams.get("response_type") === "code" &&
       Boolean(url.searchParams.get("client_id")) &&
@@ -50,32 +95,76 @@ export default function EbaySellerOAuthReauthPage() {
   const [callbackUrl, setCallbackUrl] = useState("")
   const [confirmed, setConfirmed] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [diagnosing, setDiagnosing] = useState(false)
+  const [diagnosis, setDiagnosis] = useState<Diagnosis | null>(null)
   const [error, setError] = useState("")
 
   useEffect(() => {
     setCallbackUrl(`${window.location.origin}${CALLBACK_PATH}`)
   }, [])
 
-  async function begin() {
-    setLoading(true)
+  async function adminBearer() {
+    const { data, error: sessionError } = await supabase.auth.getSession()
+    if (sessionError || !data.session) throw new Error("ADMIN_SESSION_REQUIRED")
+    return data.session.access_token
+  }
+
+  async function diagnose() {
+    setDiagnosing(true)
+    setDiagnosis(null)
     setError("")
     try {
-      const { data, error: sessionError } = await supabase.auth.getSession()
-      if (sessionError || !data.session) throw new Error("ADMIN_SESSION_REQUIRED")
+      const bearer = await adminBearer()
       const response = await fetch(START_PATH, {
         method: "POST",
         cache: "no-store",
         credentials: "same-origin",
         headers: {
-          Authorization: `Bearer ${data.session.access_token}`,
+          Authorization: `Bearer ${bearer}`,
           "Content-Type": "application/json",
         },
-        body: "{}",
+        body: JSON.stringify({ action: "diagnose" }),
+      })
+      const payload = await response.json() as DiagnosisPayload
+      if (!response.ok || !payload.success || !payload.diagnosis) {
+        throw new Error(payload.error || "OAUTH_DIAGNOSTIC_REJECTED")
+      }
+      setDiagnosis(payload.diagnosis)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "OAUTH_DIAGNOSTIC_REJECTED")
+    } finally {
+      setDiagnosing(false)
+    }
+  }
+
+  async function begin() {
+    setLoading(true)
+    setError("")
+    try {
+      if (!diagnosis?.startAllowed ||
+          diagnosis.rootCause !== "URL_SERIALIZATION") {
+        throw new Error("AUTH_REQUEST_LIVE_PREFLIGHT_REQUIRED")
+      }
+      const bearer = await adminBearer()
+      const response = await fetch(START_PATH, {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "start" }),
       })
       const payload = await response.json() as StartPayload
       if (!response.ok || !payload.success || !payload.authorizationUrl ||
           payload.callbackPath !== CALLBACK_PATH ||
           payload.scopeCount !== REQUIRED_SCOPES.length ||
+          payload.authorizationPreflight?.rootCause !== "URL_SERIALIZATION" ||
+          payload.authorizationPreflight?.liveAccepted !== true ||
+          payload.authorizationPreflight?.scopeEncoding !==
+            "RFC3986_PERCENT20" ||
+          payload.authorizationPreflight?.stateAccepted !== true ||
           !validAuthorizationUrl(payload.authorizationUrl)) {
         throw new Error(payload.error || "OAUTH_START_REJECTED")
       }
@@ -136,6 +225,46 @@ export default function EbaySellerOAuthReauthPage() {
           Reload o Back nunca rearman el estado.
         </section>
 
+        <section className="rounded-3xl border border-cyan-300/25 bg-cyan-300/[0.06] p-6">
+          <h2 className="font-black">Preflight no interactivo</h2>
+          <p className="mt-3 text-sm leading-6 text-white/70">
+            Comprueba Client ID/RuName, scopes, state y serialización directamente contra el
+            endpoint de autorización. No inicia sesión, no crea ledger/cookie, no redirige y no
+            intercambia códigos.
+          </p>
+          <button
+            className="mt-4 rounded-2xl border border-cyan-300/50 px-5 py-2 text-sm font-black text-cyan-200 disabled:opacity-40"
+            type="button"
+            disabled={diagnosing || loading}
+            onClick={diagnose}
+          >
+            {diagnosing ? "Diagnosticando…" : "Diagnosticar sin iniciar OAuth"}
+          </button>
+          {diagnosis ? (
+            <dl className="mt-5 grid gap-2 text-xs text-white/75 sm:grid-cols-2">
+              {[
+                ["Root cause", diagnosis.rootCause],
+                ["Base", `${diagnosis.testBase?.acceptedByAuthEndpoint ?? "NO"} · ${diagnosis.testBase?.safeErrorCategory ?? "UNKNOWN"}`],
+                ["Base + Account", `${diagnosis.testBaseAccount?.acceptedByAuthEndpoint ?? "NO"} · ${diagnosis.testBaseAccount?.safeErrorCategory ?? "UNKNOWN"}`],
+                ["Base + Account + Inventory", `${diagnosis.testBaseAccountInventory?.acceptedByAuthEndpoint ?? "NO"} · ${diagnosis.testBaseAccountInventory?.safeErrorCategory ?? "UNKNOWN"}`],
+                ["Four scopes", `${diagnosis.testFullFourScopes?.acceptedByAuthEndpoint ?? "NO"} · ${diagnosis.testFullFourScopes?.safeErrorCategory ?? "UNKNOWN"}`],
+                ["State", diagnosis.stateCausesInvalidRequest],
+                ["Encoding +", diagnosis.previousPlusEncodingWithState?.safeErrorCategory],
+                ["Encoding cause", diagnosis.encodingCausesInvalidRequest],
+                ["RuName source", diagnosis.runameSource],
+                ["RuName/app binding", diagnosis.runameAppBinding],
+                ["Ledger rows", diagnosis.ledgerRowsCreated],
+                ["Human redirects", diagnosis.humanRedirects],
+              ].map(([label, value]) => (
+                <div className="rounded-lg bg-black/20 p-3" key={String(label)}>
+                  <dt className="font-bold text-white/50">{label}</dt>
+                  <dd className="mt-1 break-all">{String(value ?? "UNPROVEN")}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+        </section>
+
         <label className="flex items-start gap-3 rounded-2xl border border-white/10 p-4 text-sm">
           <input
             className="mt-1"
@@ -156,7 +285,10 @@ export default function EbaySellerOAuthReauthPage() {
         <button
           className="rounded-2xl bg-cyan-300 px-6 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
           type="button"
-          disabled={!confirmed || loading || !callbackUrl}
+          disabled={!confirmed || loading || !callbackUrl ||
+            !diagnosis?.startAllowed || diagnosis.rootCause !== "URL_SERIALIZATION"}
+          aria-disabled={!diagnosis?.startAllowed ||
+            diagnosis.rootCause !== "URL_SERIALIZATION"}
           onClick={begin}
         >
           {loading ? "Preparando…" : "Iniciar consentimiento eBay una vez"}

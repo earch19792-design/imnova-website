@@ -32,12 +32,25 @@ export const EBAY_SELLER_OAUTH_REAUTH_LEDGER_TIMEOUT_MS = 1_500
 
 export const EBAY_SELLER_OAUTH_REAUTH_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
+  "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
   "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
   "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
-  "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
 ] as const
 
-const AUTHORIZATION_ENDPOINT = "https://auth.ebay.com/oauth2/authorize"
+export const EBAY_SELLER_OAUTH_REAUTH_AUTHORIZATION_ENDPOINT =
+  "https://auth.ebay.com/oauth2/authorize" as const
+export const EBAY_SELLER_OAUTH_REAUTH_PREFLIGHT_PHASES = [
+  "BASE",
+  "BASE_ACCOUNT",
+  "BASE_ACCOUNT_INVENTORY",
+  "FULL_FOUR_SCOPES",
+] as const
+export type EbaySellerOAuthReauthPreflightPhase =
+  typeof EBAY_SELLER_OAUTH_REAUTH_PREFLIGHT_PHASES[number]
+export type EbaySellerOAuthReauthScopeEncoding =
+  | "RFC3986_PERCENT20"
+  | "FORM_URLENCODED_PLUS"
+
 const STATE_COOKIE_VERSION = 1
 const STATE_COOKIE_SALT = "IMNOVA_EBAY_SELLER_REAUTH_STATE_SALT_V1"
 const STATE_COOKIE_INFO = "IMNOVA_EBAY_SELLER_REAUTH_STATE_HMAC_V1"
@@ -232,27 +245,86 @@ export function buildEbaySellerOAuthReauthAuthorizationUrl(input: {
   runame: string
   state: string
 }) {
+  return buildEbaySellerOAuthReauthDiagnosticAuthorizationUrl({
+    ...input,
+    phase: "FULL_FOUR_SCOPES",
+    encoding: "RFC3986_PERCENT20",
+  })
+}
+
+function scopesForPreflightPhase(phase: EbaySellerOAuthReauthPreflightPhase) {
+  const count = phase === "BASE"
+    ? 1
+    : phase === "BASE_ACCOUNT"
+      ? 2
+      : phase === "BASE_ACCOUNT_INVENTORY"
+        ? 3
+        : phase === "FULL_FOUR_SCOPES"
+          ? 4
+          : 0
+  if (!count) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_PREFLIGHT_PHASE_INVALID",
+    )
+  }
+  return EBAY_SELLER_OAUTH_REAUTH_SCOPES.slice(0, count)
+}
+
+export function buildEbaySellerOAuthReauthDiagnosticAuthorizationUrl(input: {
+  clientId: string
+  runame: string
+  phase: EbaySellerOAuthReauthPreflightPhase
+  state?: string
+  encoding?: EbaySellerOAuthReauthScopeEncoding
+}) {
   if (!boundedCredential(input.clientId, 512) ||
       !boundedCredential(input.runame, 512) ||
-      !isValidEbaySellerOAuthReauthState(input.state)) {
+      (input.state !== undefined &&
+        !isValidEbaySellerOAuthReauthState(input.state))) {
     throw new EbaySellerOAuthReauthError(
       "EBAY_SELLER_OAUTH_REAUTH_START_INVALID",
     )
   }
-  const url = new URL(AUTHORIZATION_ENDPOINT)
-  url.searchParams.set("client_id", input.clientId)
-  url.searchParams.set("response_type", "code")
-  url.searchParams.set("redirect_uri", input.runame)
-  url.searchParams.set("scope", EBAY_SELLER_OAUTH_REAUTH_SCOPES.join(" "))
-  url.searchParams.set("state", input.state)
+  const scopes = scopesForPreflightPhase(input.phase)
+  const parameters = [
+    ["client_id", input.clientId],
+    ["response_type", "code"],
+    ["redirect_uri", input.runame],
+    ["scope", scopes.join(" ")],
+    ...(input.state === undefined ? [] : [["state", input.state]]),
+  ]
+  const encoding = input.encoding ?? "RFC3986_PERCENT20"
+  const query = encoding === "RFC3986_PERCENT20"
+    ? parameters.map(([key, value]) =>
+      `${encodeURIComponent(key)}=${encodeURIComponent(value)}`,
+    ).join("&")
+    : new URLSearchParams(parameters).toString()
+  const serialized =
+    `${EBAY_SELLER_OAUTH_REAUTH_AUTHORIZATION_ENDPOINT}?${query}`
+  const url = new URL(serialized)
   if (!exactScopeSet(
     url.searchParams.get("scope")?.split(/\s+/).filter(Boolean) ?? [],
-  )) {
+  ) && input.phase === "FULL_FOUR_SCOPES") {
     throw new EbaySellerOAuthReauthError(
       "EBAY_SELLER_OAUTH_REAUTH_SCOPE_CONTRACT_INVALID",
     )
   }
-  return url.toString()
+  const expectedKeys = input.state === undefined
+    ? "client_id,redirect_uri,response_type,scope"
+    : "client_id,redirect_uri,response_type,scope,state"
+  if ([...url.searchParams.keys()].sort().join(",") !== expectedKeys ||
+      url.origin !== "https://auth.ebay.com" ||
+      url.pathname !== "/oauth2/authorize" ||
+      url.hash ||
+      url.username ||
+      url.password ||
+      (encoding === "RFC3986_PERCENT20" &&
+        (serialized.includes("+") || serialized.includes("%252F")))) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_AUTHORIZATION_SERIALIZATION_INVALID",
+    )
+  }
+  return serialized
 }
 
 export function createEbaySellerOAuthReauthCookie(input: {

@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 import {
   claimAndVerifyEbaySellerOAuthReauth,
+  diagnoseEbaySellerOAuthReauthAuthorization,
   prepareEbaySellerOAuthReauthStart,
   verifyEbaySellerOAuthReauthCandidate,
 } from "@/lib/ebay/ebay-seller-oauth-reauth"
@@ -99,6 +100,38 @@ export async function POST(request: NextRequest) {
         configuration.reason ?? "EBAY_SELLER_OAUTH_REAUTH_CONFIGURATION_INVALID",
       )
     }
+    let payload: unknown
+    try {
+      payload = await request.json()
+    } catch {
+      throw new EbaySellerOAuthReauthError(
+        "EBAY_SELLER_OAUTH_REAUTH_ACTION_INVALID",
+      )
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
+        Object.keys(payload).sort().join(",") !== "action") {
+      throw new EbaySellerOAuthReauthError(
+        "EBAY_SELLER_OAUTH_REAUTH_ACTION_INVALID",
+      )
+    }
+    const action = (payload as { action?: unknown }).action
+    if (action === "diagnose") {
+      const diagnosis = await diagnoseEbaySellerOAuthReauthAuthorization({
+        configuration,
+      })
+      return NextResponse.json({
+        success: true,
+        diagnosis,
+      }, {
+        status: 200,
+        headers: { "Cache-Control": "private, no-store, max-age=0" },
+      })
+    }
+    if (action !== "start") {
+      throw new EbaySellerOAuthReauthError(
+        "EBAY_SELLER_OAUTH_REAUTH_ACTION_INVALID",
+      )
+    }
     const ledger = createSupabaseEbaySellerOAuthReauthStateLedger(
       getSupabaseAdminClient(),
     )
@@ -116,6 +149,7 @@ export async function POST(request: NextRequest) {
       stateHashPersisted: true,
       rawStatePersisted: false,
       tokenGenerated: false,
+      authorizationPreflight: prepared.authorizationPreflight,
     }, {
       status: 200,
       headers: { "Cache-Control": "private, no-store, max-age=0" },
