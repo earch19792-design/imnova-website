@@ -99,9 +99,7 @@ const RESPONSE_LOCAL_MARKETPLACE_CERTIFICATION = Symbol(
 
 type ResponseLocalMarketplaceCertification = {
   status: "US_CERTIFIED"
-  source:
-    | "EBAY_TRADING_GET_MY_EBAY_SELLING"
-    | "EBAY_TRADING_GET_ITEM"
+  source: "EBAY_TRADING_GET_ITEM"
   observedAt: string
   marketplaceSite: "US"
   grain: "ITEM"
@@ -1919,8 +1917,7 @@ function withLiveReadonlyEvidence(input: {
       )
       if (listing.marketplaceSite !== "US" ||
           listing.marketplaceCertification.status !== "US_CERTIFIED" ||
-          (marketplaceSource !== "EBAY_TRADING_GET_MY_EBAY_SELLING" &&
-            marketplaceSource !== "EBAY_TRADING_GET_ITEM") ||
+          marketplaceSource !== "EBAY_TRADING_GET_ITEM" ||
           !marketplaceObservedAt) return []
       const itemRows = stored.registry.rows.filter((row) =>
         row.ebay_item_id === listing.itemId)
@@ -2880,8 +2877,14 @@ function liveCertificationProjection(
       observedAt: live.analytics.observedAt,
       windowStart: live.analytics.windowStart,
       windowEnd: live.analytics.windowEnd,
+      analyticsRequestedItemCount:
+        live.analytics.analyticsRequestedItemCount,
+      analyticsRepresentedItemCount:
+        live.analytics.analyticsRepresentedItemCount,
+      analyticsMissingItemCount: live.analytics.analyticsMissingItemCount,
+      analyticsCoverageStatus: live.analytics.analyticsCoverageStatus,
       representedItemCount: analyticsProven
-        ? live.analytics.observations.length
+        ? live.analytics.analyticsRepresentedItemCount
         : null,
       gapCodes: [...live.analytics.gapCodes],
     },

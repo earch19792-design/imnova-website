@@ -1,10 +1,13 @@
 # eBay Live Read-Only Account + Discovery V1
 
-Status: account binding and the base Trading reader were certified by a
-sanitized human Preview run at the `f917555` checkpoint. That run proved
-`GetUser` and a one-page `GetMyeBaySelling` result reporting 26 active Items,
-but none could be represented because `Item.Site` was absent. The item-level
-`GetItem` certification described here still requires a human Preview retest.
+Status: account binding and the base Trading reader were certified by
+sanitized human Preview runs. At the `b52fb32` checkpoint, `GetUser` and a
+one-page `GetMyeBaySelling` read reported and parsed 26 active Items;
+item-level `GetItem` certified 11 as `EBAY_US` and the temporal reserve left 15
+as `BUDGET_EXHAUSTED`. Analytics read the 11 certified IDs, Inventory OAuth
+returned the safe category `INVALID_SCOPE`, and every write counter remained
+zero. The bounded scheduling correction described here still requires one
+human Preview retest on its exact commit.
 
 ## Decision
 
@@ -20,7 +23,7 @@ the following dependency graph:
    → OAuth refresh grant (ephemeral access token only)
    → Trading GetUser
    → Trading GetMyeBaySelling ActiveList
-   → Trading GetItem for unresolved item-level marketplace certification
+   → Trading GetItem for item-level marketplace certification
    → Inventory inventory_item + offer GETs
    → Analytics traffic_report GET
    → Fulfillment order GET
@@ -42,7 +45,7 @@ all of method, production origin, exact path and exact call name match:
 | --- | --- | --- | --- |
 | `GetUser` | POST | `/ws/api.dll` | Bind the token to the configured seller identity. |
 | `GetMyeBaySelling` | POST | `/ws/api.dll` | Enumerate the authenticated seller's ActiveList with pagination and variations. |
-| `GetItem` | POST | `/ws/api.dll` | Certify `Item.Site` for a seller-wide Item whose marketplace was omitted. |
+| `GetItem` | POST | `/ws/api.dll` | Certify `Item.Site` for each unique seller-wide Item. |
 
 No prefix or generic `Get*` rule exists. The declared operation, exact HTTP
 header and XML request root must all agree. Mutable Trading calls are rejected
@@ -118,10 +121,11 @@ silently omitted or persisted. Registry reconciliation uses the exact
 Item/SKU/variation identity; an Item-only match cannot close a variation gap.
 `GetMyeBaySelling` remains the seller-wide enumeration authority. Because its
 ActiveList contract does not guarantee `Item.Site`, the coordinator preserves
-all parsed Item identities and calls allowlisted `GetItem` once per unique Item
-whose site is absent. An explicit `Item.Site=US` from the seller-wide row, or an
-exact `GetItem` Item ID match with explicit `Item.Site=US`, may enter the
-`EBAY_US` projection. Duplicate/conflicting fields and values outside the
+all parsed Item identities and calls allowlisted `GetItem` exactly once per
+unique Item scheduled in the pass. Only an exact `GetItem` Item ID match with
+one explicit recognized `Item.Site=US` may enter the `EBAY_US` projection. A
+seller-wide `Item.Site`, when present, is only a conflict cross-check; it never
+substitutes for `GetItem`. Duplicate/conflicting fields and values outside the
 documented `SiteCodeType` remain unproven. Certified non-US Items are counted
 but excluded; missing Site, Ack/transport failure, Item ID mismatch, or budget
 exhaustion remain separate partial-coverage states. `GetUser.Site`
@@ -132,18 +136,23 @@ signals for that evidence rather than borrowing a null or shared mapping.
 
 Marketplace counters are Item-grain and keep reported, parsed, US-certified,
 non-US-certified, unresolved, error, Item-ID-mismatch, budget-exhausted and
-represented counts separate. They are nullable before seller-wide evidence exists. A zero is
-authoritative only when complete seller-wide pagination explicitly reports
+represented counts separate. Every parsed unique Item belongs to exactly one
+of the six terminal certification buckets, so the partition is conserved and
+non-overlapping. They are nullable before seller-wide evidence exists. A zero
+is authoritative only when complete seller-wide pagination explicitly reports
 zero; `reported > 0` with `represented = 0` is never displayed as zero active
 listings.
 
 The request has a fail-closed 24-second/60-call aggregate budget inside the
-30-second route ceiling. Item-level verification reserves downstream call/time
-capacity and never expands those limits. Evidence obtained before a later
-page/chunk failure is
-retained as `PARTIAL`; it is never discarded or promoted to complete. A US
-account certification requires live identity binding and `GetUser.Site=US`;
-listing marketplace certification remains independent and Item-grain.
+30-second route ceiling. Each call has a 7.5-second timeout. Item-level
+verification uses deterministic batches of at most four concurrent unique
+Item IDs, a hard 32-Item cap, and reserves nine calls plus six seconds for
+downstream readers. These limits are not expanded. IDs above the hard cap or a
+batch that cannot preserve the reserve remain `BUDGET_EXHAUSTED`. Evidence
+obtained before a later page/chunk failure is retained as `PARTIAL`; it is never
+discarded or promoted to complete. A US account certification requires live
+identity binding and `GetUser.Site=US`; listing marketplace certification
+remains independent and Item-grain.
 
 ## Truthful evidence behavior
 
@@ -151,6 +160,9 @@ listing marketplace certification remains independent and Item-grain.
 - Analytics certification requires every requested metric column and one
   explicit, parseable metric cell per column plus one unambiguous row per
   returned Item grain.
+- Analytics exposes requested, represented and missing Item counts plus an
+  explicit `COMPLETE | PARTIAL | UNPROVEN` coverage status. Marketplace-partial
+  discovery forces seller-wide Analytics coverage to remain `PARTIAL`.
 - Missing, `applicable=false` or applicability-unknown Analytics cells remain
   unavailable; they never become zero.
 - Reported CTR/conversion retain the raw eBay API rate unit; calculated CTR is
@@ -177,30 +189,30 @@ listing marketplace certification remains independent and Item-grain.
 ## Canonical dashboard source matrix
 
 This matrix describes the implemented source contract and the latest sanitized
-human runtime checkpoint. Item-level `GetItem` results remain pending until the
-new exact Preview is exercised.
+human runtime checkpoint. Completion of the new bounded `GetItem` schedule
+remains pending until the new exact Preview is exercised.
 
 | Canonical dashboard field | Data source | Live available? | Grain | Window | Freshness | Completeness | Blocker |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | eBay account | Trading `GetUser` + configured fingerprint | YES | Account | Request | Observed 2026-08-08 | COMPLETE | Binding certified in the prior human Preview run |
-| Marketplace | `GetUser.Site` for registration; `GetItem.Site` per listing | PARTIAL | Account/Item | Request | Evidence timestamp | PARTIAL | Item-level Preview retest pending |
+| Marketplace | `GetUser.Site` for registration; `GetItem.Site` per listing | PARTIAL | Account/Item | Request | Evidence timestamp | PARTIAL | 11 certified, 15 budget-exhausted at latest human checkpoint |
 | Last synchronization | Per-reader call plus source observation | PARTIAL | Reader | Per call | Request time | PARTIAL | Optional readers unavailable |
-| Data coverage | `GetMyeBaySelling` + `GetItem` + Inventory + Managed Registry | PARTIAL | Account | Active inventory at read time | Request time | PARTIAL | 26 reported; item marketplace retest pending |
-| eBay Analytics | Analytics `traffic_report` | NO | Item | Closed trailing 30 UTC days | UNKNOWN | UNPROVEN | Scope and live report unavailable |
+| Data coverage | `GetMyeBaySelling` + `GetItem` + Inventory + Managed Registry | PARTIAL | Account | Active inventory at read time | Request time | PARTIAL | 26 reported; 11 live US-certified; 15 budget-exhausted |
+| eBay Analytics | Analytics `traffic_report` | PARTIAL | Item | Closed trailing 30 UTC days | Source update time | PARTIAL | 11 certified Item IDs represented; seller-wide marketplace coverage partial |
 | Luna Portex | Existing latest-variant/source-health SELECTs | PARTIAL | Component | Latest stored snapshot | Stored timestamp | PARTIAL | Exact link, heartbeat, parser or freshness may block |
-| Active listings | `GetMyeBaySelling.ActiveList` + `GetItem.Site` | PARTIAL | Item/variation | Active at read time | Request time | PARTIAL | 26 reported; zero represented at the prior checkpoint |
+| Active listings | `GetMyeBaySelling.ActiveList` + `GetItem.Site` | PARTIAL | Item/variation | Active at read time | Request time | PARTIAL | 26 reported; 11 live US-certified; 15 budget-exhausted |
 | Critical actions | Pure blocker/alert projection | PARTIAL | Listing/component | Evidence episode | Evidence dependent | PARTIAL | Informational only; never dispatches |
 | Stock risk | Luna/product truth + exact registry link | PARTIAL | Listing component | Latest stored snapshot | Evidence dependent | PARTIAL | Composition/shared allocation/link may be absent |
-| Impressions | `TOTAL_IMPRESSION_TOTAL` | NO | Item | Closed 30-day UTC report | Source update time | UNPROVEN | Analytics not called |
-| eBay views | `LISTING_VIEWS_TOTAL - LISTING_VIEWS_SOURCE_OFF_EBAY` | NO | Item | Closed 30-day UTC report | Source update time | UNPROVEN | Both compatible inputs required; total is never mislabeled as eBay-only |
-| Average/report CTR | `CLICK_THROUGH_RATE` raw | NO | Item | Same report window | Source update time | UNPROVEN | Unit and live row unavailable |
-| Calculated CTR | Search views / search impressions | NO | Item | Same report window | Source update time | UNPROVEN | Compatible inputs unavailable |
+| Impressions | `TOTAL_IMPRESSION_TOTAL` | PARTIAL | Item | Closed 30-day UTC report | Source update time | PARTIAL | 11 live certified Item IDs at latest checkpoint |
+| Total listing views | `LISTING_VIEWS_TOTAL` | PARTIAL | Item | Closed 30-day UTC report | Source update time | PARTIAL | 11 live certified Item IDs; includes the total metric reported by eBay |
+| Average/report CTR | `CLICK_THROUGH_RATE` raw | PARTIAL | Item | Same report window | Source update time | PARTIAL | Only the certified live subset was requested |
+| Calculated CTR | Search views / search impressions | PARTIAL | Item | Same report window | Source update time | PARTIAL | Compatible inputs required per Item/window |
 | Orders | Fulfillment `getOrders` | NO | Order/order line | Trailing 30 days | UNKNOWN | UNPROVEN | Dedicated token/scope unavailable |
 | Net profit | Seller OS economics | NO | Listing | Unavailable | UNKNOWN | UNPROVEN | Fees, shipping, costs and currency incomplete |
-| Listings by state | Seller-wide discovery | PARTIAL | Item | Active at read time | Request time | PARTIAL | Item marketplace certification pending |
-| Distribution by type | Explicit Trading fields | NO | Item/variation | Active at read time | UNKNOWN | UNPROVEN | Listing evidence unavailable; type never inferred |
+| Listings by state | Seller-wide discovery | PARTIAL | Item | Active at read time | Request time | PARTIAL | 15 marketplace certifications budget-exhausted |
+| Distribution by type | Explicit Trading fields | PARTIAL | Item/variation | Active at read time | Request time | PARTIAL | Only the live US-certified subset; type is never inferred |
 | Listing table identity/state/title/SKU | Trading + exact stored links | PARTIAL | Item/variation | Per observation | Evidence dependent | PARTIAL | Only US-certified Items may be represented |
-| Listing table price/quantity | Explicit Trading fields | PARTIAL | Item/variation | Active at read time | Request time | PARTIAL | Item marketplace certification pending |
+| Listing table price/quantity | Explicit Trading fields | PARTIAL | Item/variation | Active at read time | Request time | PARTIAL | Only the 11 live US-certified Items were response-local |
 | Product Case link | Future persistent Product Case repository | NO | Listing | Versioned lookup | UNKNOWN | UNPROVEN | Persistence intentionally paused |
 | Critical alerts | Pure deterministic candidates | PARTIAL | Listing/component | Evidence episode | Evidence dependent | PARTIAL | Candidate-only; dispatch flags false |
 | Priority action plan | Informational next-action projection | PARTIAL | Listing | Current evidence | Evidence dependent | PARTIAL | Human review only |
@@ -214,10 +226,28 @@ new exact Preview is exercised.
 
 The protected Preview runtime supplied the existing credentials without export.
 A legitimate human Supabase-admin refresh certified the seller binding,
-`GetUser`, base scope and one complete `GetMyeBaySelling` page. Inventory OAuth
-returned a sanitized HTTP 400 and Analytics was not attempted because no
-Item IDs survived the previous marketplace filter. No access token, refresh
-token, header, cookie or raw payload was returned or persisted.
+`GetUser`, base scope and one complete `GetMyeBaySelling` page. Of 26 reported
+and parsed Items, 11 were response-local US-certified and 15 remained
+`BUDGET_EXHAUSTED`. Analytics read the 11 certified IDs and remained `PARTIAL`.
+Inventory OAuth returned sanitized `INVALID_SCOPE`; Orders remained unavailable
+without the dedicated credential. No access token, refresh token, header,
+cookie or raw payload was returned or persisted.
+
+## Inventory OAuth reauthorization readiness
+
+The existing Production app is reusable; the monitor refresh path uses
+`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` and `EBAY_SELLER_REFRESH_TOKEN`. The
+existing account-policy OAuth helper and its historical centralized copy use
+the same generic app, but are not directly reusable for this monitor: their
+branch guard targets another Preview, their refresh-token sink is Supabase
+Vault rather than the monitor environment variable, and their scope bundle
+omits `sell.analytics.readonly`. The Commercial Monitor minimum for a future
+separately authorized human consent is the base, `sell.inventory.readonly` and
+`sell.analytics.readonly` scope set. Because `EBAY_SELLER_REFRESH_TOKEN` is
+shared as an account-policy fallback, replacing it must also preserve the
+existing `sell.account.readonly` capability or first introduce an explicitly
+approved separate-token contract. Fulfillment must not be added. This document
+does not authorize launching consent, persisting a token, or changing Vercel.
 
 ## Refresh and containment
 

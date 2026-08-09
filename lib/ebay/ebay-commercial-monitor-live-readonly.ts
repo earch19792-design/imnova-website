@@ -49,6 +49,8 @@ const ANALYTICS_MAX_LISTINGS = 400
 const FULFILLMENT_MAX_PAGES = 10
 const GET_ITEM_DOWNSTREAM_CALL_RESERVE = 9
 const GET_ITEM_DOWNSTREAM_TIME_RESERVE_MS = 6_000
+const GET_ITEM_MARKETPLACE_MAX_UNIQUE_ITEMS = 32
+const GET_ITEM_MARKETPLACE_CONCURRENCY = 4
 
 const BASE_SCOPE = "https://api.ebay.com/oauth/api_scope"
 const INVENTORY_READONLY_SCOPE =
@@ -184,6 +186,10 @@ export type EbayCommercialMonitorLiveReadonlyResult = {
     observedAt: string | null
     windowStart: string | null
     windowEnd: string | null
+    analyticsRequestedItemCount: number | null
+    analyticsRepresentedItemCount: number | null
+    analyticsMissingItemCount: number | null
+    analyticsCoverageStatus: "COMPLETE" | "PARTIAL" | "UNPROVEN"
     observations: EbayLiveAnalyticsObservation[]
     gapCodes: string[]
   }
@@ -381,6 +387,10 @@ function unavailableResult(input: {
       observedAt: null,
       windowStart: null,
       windowEnd: null,
+      analyticsRequestedItemCount: null,
+      analyticsRepresentedItemCount: null,
+      analyticsMissingItemCount: null,
+      analyticsCoverageStatus: "UNPROVEN",
       observations: [],
       gapCodes: [input.limitationCode, "NO_EVIDENCE_DOES_NOT_PROVE_ZERO"],
     },
@@ -869,12 +879,107 @@ type ItemMarketplaceCertification = {
 
 function marketplaceVerificationBudgetAvailable(
   calls: EbayMonitorReadonlyCallEvidence[],
+  batchSize: number,
 ) {
   const budget = requestBudgets.get(calls)
   if (!budget) return true
-  return budget.callsRemaining > GET_ITEM_DOWNSTREAM_CALL_RESERVE &&
+  return batchSize > 0 &&
+    budget.callsRemaining - batchSize >= GET_ITEM_DOWNSTREAM_CALL_RESERVE &&
     budget.deadlineAt - Date.now() >=
       GET_ITEM_DOWNSTREAM_TIME_RESERVE_MS + REQUEST_TIMEOUT_MS
+}
+
+function exhaustedMarketplaceCertification(): ItemMarketplaceCertification {
+  return {
+    status: "BUDGET_EXHAUSTED",
+    marketplaceSite: null,
+    source: null,
+    observedAt: null,
+    limitationCode:
+      "SELLER_WIDE_MARKETPLACE_CERTIFICATION_BUDGET_EXHAUSTED",
+  }
+}
+
+async function getItemMarketplaceCertification(input: {
+  token: string
+  itemId: string
+  sellerWideMarketplaceSite: string | null
+  fetchImpl: FetchLike
+  calls: EbayMonitorReadonlyCallEvidence[]
+  clock: Clock
+}): Promise<ItemMarketplaceCertification> {
+  let response: Response | null = null
+  try {
+    response = await allowlistedFetch({
+      operation: "TRADING_GET_ITEM_MARKETPLACE",
+      method: "POST",
+      url: TRADING_ENDPOINT,
+      tradingCallName: "GetItem",
+      headers: tradingHeaders(input.token, "GetItem"),
+      body: getItemMarketplaceBody(input.itemId),
+      fetchImpl: input.fetchImpl,
+      calls: input.calls,
+      clock: input.clock,
+    })
+    const observedAt = input.clock().toISOString()
+    if (!response.ok) {
+      return {
+        status: "ERROR",
+        marketplaceSite: null,
+        source: "EBAY_TRADING_GET_ITEM",
+        observedAt,
+        limitationCode: "TRADING_GET_ITEM_MARKETPLACE_HTTP_FAILED",
+      }
+    }
+    const parsed = parseEbayTradingGetItemMarketplace(
+      await readTextResponse(
+        response,
+        "TRADING_GET_ITEM_MARKETPLACE_RESPONSE_INVALID",
+      ),
+      input.itemId,
+    )
+    if (parsed.status !== "US_CERTIFIED" &&
+        parsed.status !== "NON_US_CERTIFIED") {
+      markResponseCallFailed(response)
+    }
+    if ((parsed.status === "US_CERTIFIED" ||
+        parsed.status === "NON_US_CERTIFIED") &&
+        input.sellerWideMarketplaceSite !== null &&
+        parsed.marketplaceSite !== input.sellerWideMarketplaceSite) {
+      markResponseCallFailed(response)
+      return {
+        status: "ERROR",
+        marketplaceSite: null,
+        source: "EBAY_TRADING_GET_ITEM",
+        observedAt,
+        limitationCode: "SELLER_WIDE_ITEM_MARKETPLACE_CONFLICT",
+      }
+    }
+    return {
+      status: parsed.status,
+      marketplaceSite: parsed.marketplaceSite,
+      source: "EBAY_TRADING_GET_ITEM",
+      observedAt,
+      limitationCode: parsed.status === "ITEM_ID_MISMATCH"
+        ? "TRADING_GET_ITEM_IDENTITY_MISMATCH"
+        : parsed.status === "UNRESOLVED" || parsed.status === "ERROR"
+          ? "TRADING_GET_ITEM_MARKETPLACE_RESPONSE_INVALID"
+          : null,
+    }
+  } catch (error) {
+    if (response) markResponseCallFailed(response)
+    const code = safeCode(error, "TRADING_GET_ITEM_MARKETPLACE_READ_FAILED")
+    if (code === "EBAY_MONITOR_REQUEST_BUDGET_EXHAUSTED") {
+      return exhaustedMarketplaceCertification()
+    }
+    return {
+      status: "ERROR",
+      marketplaceSite: null,
+      source: "EBAY_TRADING_GET_ITEM",
+      observedAt: input.clock().toISOString(),
+      limitationCode: "TRADING_GET_ITEM_MARKETPLACE_READ_FAILED",
+    }
+  }
 }
 
 async function certifySellerWideItemMarketplaces(input: {
@@ -892,25 +997,15 @@ async function certifySellerWideItemMarketplaces(input: {
     rowsByItem.set(listing.itemId, rows)
   }
   const certifications = new Map<string, ItemMarketplaceCertification>()
-  let budgetExhausted = false
+  const pending: Array<{
+    itemId: string
+    sellerWideMarketplaceSite: string | null
+  }> = []
   for (const itemId of [...rowsByItem.keys()].sort()) {
     const rows = rowsByItem.get(itemId) ?? []
     const explicitSites = new Set(rows
       .map((row) => row.marketplaceSite)
       .filter((site): site is string => Boolean(site)))
-    if (explicitSites.size === 1) {
-      const marketplaceSite = [...explicitSites][0]
-      certifications.set(itemId, {
-        status: marketplaceSite === "US"
-          ? "US_CERTIFIED"
-          : "NON_US_CERTIFIED",
-        marketplaceSite,
-        source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
-        observedAt: rows.map((row) => row.observedAt).sort().at(-1) ?? null,
-        limitationCode: null,
-      })
-      continue
-    }
     if (explicitSites.size > 1) {
       certifications.set(itemId, {
         status: "ERROR",
@@ -921,88 +1016,60 @@ async function certifySellerWideItemMarketplaces(input: {
       })
       continue
     }
-    if (budgetExhausted ||
-        !marketplaceVerificationBudgetAvailable(input.calls)) {
-      budgetExhausted = true
-      certifications.set(itemId, {
-        status: "BUDGET_EXHAUSTED",
-        marketplaceSite: null,
-        source: null,
-        observedAt: null,
-        limitationCode:
-          "SELLER_WIDE_MARKETPLACE_CERTIFICATION_BUDGET_EXHAUSTED",
-      })
-      continue
+    pending.push({
+      itemId,
+      sellerWideMarketplaceSite: explicitSites.size === 1
+        ? [...explicitSites][0]
+        : null,
+    })
+  }
+  const scheduled = pending.slice(0, GET_ITEM_MARKETPLACE_MAX_UNIQUE_ITEMS)
+  for (const entry of pending.slice(GET_ITEM_MARKETPLACE_MAX_UNIQUE_ITEMS)) {
+    certifications.set(entry.itemId, exhaustedMarketplaceCertification())
+  }
+  for (let offset = 0; offset < scheduled.length;
+      offset += GET_ITEM_MARKETPLACE_CONCURRENCY) {
+    const batch = scheduled.slice(
+      offset,
+      offset + GET_ITEM_MARKETPLACE_CONCURRENCY,
+    )
+    if (!marketplaceVerificationBudgetAvailable(input.calls, batch.length)) {
+      for (const entry of scheduled.slice(offset)) {
+        certifications.set(entry.itemId, exhaustedMarketplaceCertification())
+      }
+      break
     }
-    let response: Response | null = null
-    try {
-      response = await allowlistedFetch({
-        operation: "TRADING_GET_ITEM_MARKETPLACE",
-        method: "POST",
-        url: TRADING_ENDPOINT,
-        tradingCallName: "GetItem",
-        headers: tradingHeaders(input.token, "GetItem"),
-        body: getItemMarketplaceBody(itemId),
+    const results = await Promise.all(batch.map(async (entry) => ({
+      itemId: entry.itemId,
+      certification: await getItemMarketplaceCertification({
+        token: input.token,
+        itemId: entry.itemId,
+        sellerWideMarketplaceSite: entry.sellerWideMarketplaceSite,
         fetchImpl: input.fetchImpl,
         calls: input.calls,
         clock: input.clock,
-      })
-      const observedAt = input.clock().toISOString()
-      if (!response.ok) {
-        certifications.set(itemId, {
-          status: "ERROR",
-          marketplaceSite: null,
-          source: "EBAY_TRADING_GET_ITEM",
-          observedAt,
-          limitationCode: "TRADING_GET_ITEM_MARKETPLACE_HTTP_FAILED",
-        })
-        continue
-      }
-      const parsed = parseEbayTradingGetItemMarketplace(
-        await readTextResponse(
-          response,
-          "TRADING_GET_ITEM_MARKETPLACE_RESPONSE_INVALID",
-        ),
-        itemId,
-      )
-      if (parsed.status !== "US_CERTIFIED" &&
-          parsed.status !== "NON_US_CERTIFIED") {
-        markResponseCallFailed(response)
-      }
-      certifications.set(itemId, {
-        status: parsed.status,
-        marketplaceSite: parsed.marketplaceSite,
-        source: "EBAY_TRADING_GET_ITEM",
-        observedAt,
-        limitationCode: parsed.status === "ITEM_ID_MISMATCH"
-          ? "TRADING_GET_ITEM_IDENTITY_MISMATCH"
-          : parsed.status === "UNRESOLVED" || parsed.status === "ERROR"
-            ? "TRADING_GET_ITEM_MARKETPLACE_RESPONSE_INVALID"
-            : null,
-      })
-    } catch (error) {
-      if (response) markResponseCallFailed(response)
-      const code = safeCode(error, "TRADING_GET_ITEM_MARKETPLACE_READ_FAILED")
-      if (code === "EBAY_MONITOR_REQUEST_BUDGET_EXHAUSTED") {
-        budgetExhausted = true
-        certifications.set(itemId, {
-          status: "BUDGET_EXHAUSTED",
-          marketplaceSite: null,
-          source: null,
-          observedAt: null,
-          limitationCode:
-            "SELLER_WIDE_MARKETPLACE_CERTIFICATION_BUDGET_EXHAUSTED",
-        })
-      } else {
-        certifications.set(itemId, {
-          status: "ERROR",
-          marketplaceSite: null,
-          source: "EBAY_TRADING_GET_ITEM",
-          observedAt: input.clock().toISOString(),
-          limitationCode: "TRADING_GET_ITEM_MARKETPLACE_READ_FAILED",
-        })
-      }
+      }),
+    })))
+    for (const result of results) {
+      certifications.set(result.itemId, result.certification)
     }
+    if (results.some((result) =>
+        result.certification.status === "BUDGET_EXHAUSTED")) {
+      for (const entry of scheduled.slice(offset + batch.length)) {
+        certifications.set(entry.itemId, exhaustedMarketplaceCertification())
+      }
+      break
+    }
+  }
+  for (const itemId of rowsByItem.keys()) {
+    if (certifications.has(itemId)) continue
+    certifications.set(itemId, {
+      status: "ERROR",
+      marketplaceSite: null,
+      source: null,
+      observedAt: null,
+      limitationCode: "SELLER_WIDE_MARKETPLACE_PARTITION_INVARIANT_FAILED",
+    })
   }
   const count = (status: EbayItemMarketplaceCertificationStatus) =>
     [...certifications.values()].filter((entry) => entry.status === status)
@@ -1013,6 +1080,8 @@ async function certifySellerWideItemMarketplaces(input: {
   const directErrors = count("ERROR")
   const itemIdMismatches = count("ITEM_ID_MISMATCH")
   const exhausted = count("BUDGET_EXHAUSTED")
+  const partitionItemCount = certifiedUs + certifiedNonUs + unresolved +
+    directErrors + itemIdMismatches + exhausted
   const certifiedListings = input.listings.flatMap((listing) => {
     const certification = certifications.get(listing.itemId)
     if (!certification || certification.status !== "US_CERTIFIED") return []
@@ -1031,7 +1100,8 @@ async function certifySellerWideItemMarketplaces(input: {
   const terminal = certifiedUs + certifiedNonUs
   const incomplete = unresolved > 0 || directErrors > 0 ||
     itemIdMismatches > 0 || exhausted > 0 ||
-    input.totalEntries === null || terminal !== input.totalEntries
+    partitionItemCount !== parsed || input.totalEntries === null ||
+    terminal !== input.totalEntries
   const gapCodes = [...new Set([
     ...(unresolved > 0 ? ["SELLER_WIDE_ITEM_MARKETPLACE_UNRESOLVED"] : []),
     ...[...certifications.values()].flatMap((certification) =>
@@ -1329,12 +1399,18 @@ async function analyticsRead(input: {
   expiries: string[]
   scopeGrant: ScopeGrantEvidence
 }) : Promise<EbayCommercialMonitorLiveReadonlyResult["analytics"]> {
+  const ids = [...new Set(input.listingIds)]
+  const selected = ids.slice(0, ANALYTICS_MAX_LISTINGS)
   if (!input.listingIds.length) {
     return {
       status: "UNAVAILABLE",
       observedAt: null,
       windowStart: null,
       windowEnd: null,
+      analyticsRequestedItemCount: 0,
+      analyticsRepresentedItemCount: null,
+      analyticsMissingItemCount: null,
+      analyticsCoverageStatus: "UNPROVEN",
       observations: [],
       gapCodes: ["NO_DISCOVERED_LISTING_IDS_NO_ZERO_INFERENCE"],
     }
@@ -1369,8 +1445,6 @@ async function analyticsRead(input: {
     if (missingRequestedScopes.includes(ANALYTICS_READONLY_SCOPE)) {
       throw new Error("EBAY_MONITOR_ANALYTICS_SCOPE_MISSING")
     }
-    const ids = [...new Set(input.listingIds)]
-    const selected = ids.slice(0, ANALYTICS_MAX_LISTINGS)
     const observations: EbayLiveAnalyticsObservation[] = []
     const gapCodes = ids.length > selected.length
       ? ["ANALYTICS_LISTING_LIMIT_REACHED"]
@@ -1411,7 +1485,13 @@ async function analyticsRead(input: {
           markResponseCallFailed(response)
           throw new Error("ANALYTICS_SOURCE_FORMAT_CHANGED")
         }
-        const header = record(record(payload).header)
+        const payloadRecord = record(payload)
+        const rawWarnings = payloadRecord.warnings
+        if (Object.prototype.hasOwnProperty.call(payloadRecord, "warnings") &&
+            (!Array.isArray(rawWarnings) || rawWarnings.length > 0)) {
+          gapCodes.push("ANALYTICS_SOURCE_WARNING_REPORTED")
+        }
+        const header = record(payloadRecord.header)
         const rawDimensionDefinitions = array(header.dimensionKeys)
         const rawDimensionKeys = rawDimensionDefinitions.map((definition) =>
           text(record(definition).key, 100).toUpperCase())
@@ -1583,19 +1663,32 @@ async function analyticsRead(input: {
         observedAt: null,
         windowStart: null,
         windowEnd: null,
+        analyticsRequestedItemCount: selected.length,
+        analyticsRepresentedItemCount: null,
+        analyticsMissingItemCount: null,
+        analyticsCoverageStatus: "UNPROVEN",
         observations: [],
         gapCodes: [...new Set(gapCodes.length
           ? gapCodes
           : ["ANALYTICS_READ_FAILED"])],
       }
     }
-    const partial = gapCodes.length > 0 ||
-      observations.length < selected.length
+    const representedItemCount = new Set(observations.map((row) => row.itemId))
+      .size
+    const missingItemCount = Math.max(
+      0,
+      selected.length - representedItemCount,
+    )
+    const partial = gapCodes.length > 0 || missingItemCount > 0
     return {
       status: partial ? "PARTIAL" : "CERTIFIED",
       observedAt,
       windowStart: actualWindowStart,
       windowEnd: actualWindowEnd,
+      analyticsRequestedItemCount: selected.length,
+      analyticsRepresentedItemCount: representedItemCount,
+      analyticsMissingItemCount: missingItemCount,
+      analyticsCoverageStatus: partial ? "PARTIAL" : "COMPLETE",
       observations,
       gapCodes: [...new Set(gapCodes)],
     }
@@ -1605,6 +1698,10 @@ async function analyticsRead(input: {
       observedAt: null,
       windowStart: null,
       windowEnd: null,
+      analyticsRequestedItemCount: selected.length,
+      analyticsRepresentedItemCount: null,
+      analyticsMissingItemCount: null,
+      analyticsCoverageStatus: "UNPROVEN",
       observations: [],
       gapCodes: [safeCode(error, "ANALYTICS_READ_FAILED")],
     }
@@ -2125,6 +2222,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
       ? {
           ...analyticsReadResult,
           status: "PARTIAL" as const,
+          analyticsCoverageStatus: "PARTIAL" as const,
           gapCodes: [...new Set([
             ...analyticsReadResult.gapCodes,
             "ANALYTICS_LISTING_SCOPE_PARTIAL_DUE_TO_MARKETPLACE_UNPROVEN",

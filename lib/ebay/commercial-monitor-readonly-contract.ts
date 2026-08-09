@@ -1001,9 +1001,7 @@ export type CommercialListingIdentity = {
   marketplaceCertification:
     | {
         status: "US_CERTIFIED"
-        source:
-          | "EBAY_TRADING_GET_MY_EBAY_SELLING"
-          | "EBAY_TRADING_GET_ITEM"
+        source: "EBAY_TRADING_GET_ITEM"
         observedAt: string
         grain: "ITEM"
       }
@@ -1095,6 +1093,10 @@ export type EbayLiveCertificationReadModel = {
     observedAt: string | null
     windowStart: string | null
     windowEnd: string | null
+    analyticsRequestedItemCount: number | null
+    analyticsRepresentedItemCount: number | null
+    analyticsMissingItemCount: number | null
+    analyticsCoverageStatus: "COMPLETE" | "PARTIAL" | "UNPROVEN"
     representedItemCount: number | null
     gapCodes: string[]
   }

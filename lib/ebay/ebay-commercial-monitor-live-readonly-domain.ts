@@ -215,12 +215,20 @@ export function assertEbayMonitorReadonlyRequest(input: {
       throw new Error("EBAY_MONITOR_BLOCKED_TRADING_OPERATION")
     }
     if (expectedTradingCall === "GetItem") {
-      const itemId = ebayTradingXmlValue(body, "ItemID")
-      const selectors = ebayTradingXmlContainers(body, "OutputSelector")
+      const requests = ebayTradingXmlContainers(body, "GetItemRequest")
+      const request = requests.length === 1 ? requests[0] : ""
+      const itemIds = ebayTradingXmlDirectChildContainers(request, "ItemID")
+      const itemId = itemIds.length === 1
+        ? ebayTradingXmlDirectChildValue(request, "ItemID")
+        : null
+      const selectors = ebayTradingXmlDirectChildContainers(
+        request,
+        "OutputSelector",
+      )
         .map((entry) => decodeXml(entry.replace(/<[^>]*>/g, " "))
           .replace(/\s+/g, " ").trim())
         .sort()
-      if (!itemId || !/^\d{9,20}$/.test(itemId) ||
+      if (requests.length !== 1 || !itemId || !/^\d{9,20}$/.test(itemId) ||
           selectors.length !== 2 ||
           selectors[0] !== "Item.ItemID" ||
           selectors[1] !== "Item.Site") {
@@ -467,23 +475,11 @@ function itemListings(item: string, observedAt: string): EbayLiveListing[] {
           )?.toUpperCase() ?? null
         : itemCurrency,
       marketplaceSite,
-      marketplaceCertification: marketplaceSite === "US"
-        ? {
-            status: "US_CERTIFIED",
-            source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
-            observedAt,
-          }
-        : marketplaceSite
-          ? {
-              status: "NON_US_CERTIFIED",
-              source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
-              observedAt,
-            }
-          : {
-              status: "UNRESOLVED",
-              source: null,
-              observedAt: null,
-            },
+      marketplaceCertification: {
+        status: "UNRESOLVED",
+        source: null,
+        observedAt: null,
+      },
       identityAmbiguous: false,
       source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
       observedAt,
