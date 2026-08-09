@@ -5,6 +5,7 @@ export const maxDuration = 30
 import { NextRequest, NextResponse } from "next/server"
 
 import {
+  certifyInstalledEbaySellerOAuthRuntime,
   claimAndVerifyEbaySellerOAuthReauth,
   diagnoseEbaySellerOAuthReauthAuthorization,
   prepareEbaySellerOAuthReauthStart,
@@ -84,6 +85,7 @@ function runtimeAllowed(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const requestStartedAt = Date.now()
   try {
     if (!runtimeAllowed(request)) {
       return NextResponse.json(
@@ -141,7 +143,8 @@ export async function POST(request: NextRequest) {
         configuration.reason ?? "EBAY_SELLER_OAUTH_REAUTH_CONFIGURATION_INVALID",
       )
     }
-    if (action !== "diagnose" && action !== "start") {
+    if (action !== "diagnose" && action !== "start" &&
+        action !== "certify_installed_runtime") {
       throw new EbaySellerOAuthReauthError(
         "EBAY_SELLER_OAUTH_REAUTH_ACTION_INVALID",
       )
@@ -151,6 +154,24 @@ export async function POST(request: NextRequest) {
     assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
       runtimeCredentialMatch,
     )
+    if (action === "certify_installed_runtime") {
+      const certification = await certifyInstalledEbaySellerOAuthRuntime({
+        configuration,
+        startedAt: requestStartedAt,
+      })
+      return NextResponse.json({
+        success: true,
+        certification,
+      }, {
+        status: 200,
+        headers: {
+          "Cache-Control": "private, no-store, max-age=0",
+          Pragma: "no-cache",
+          "Referrer-Policy": "no-referrer",
+          "X-Content-Type-Options": "nosniff",
+        },
+      })
+    }
     if (action === "diagnose") {
       const diagnosis = await diagnoseEbaySellerOAuthReauthAuthorization({
         configuration,

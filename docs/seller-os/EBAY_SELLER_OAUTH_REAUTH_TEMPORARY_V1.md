@@ -53,9 +53,12 @@ cookies are discarded. Network, timeout, unknown HTML, unrecognized redirect,
 rate limit, or any ambiguous response fails closed.
 
 The real start re-runs the complete diagnostic. It may create a PENDING state
-only when all canonical `%20` phases are accepted and eBay independently
-rejects the otherwise identical retired `+` request as `invalid_request`.
-Therefore:
+only when every canonical `%20` scope phase and the canonical state request are
+accepted, the RuName/app binding passes, the fixed runtime credential
+fingerprints match, and all preflight safety counters remain zero. The retired
+`+` request and `ROOT_CAUSE` are diagnostic only: an accepted `+` request or
+`STILL_UNPROVEN` causal label cannot override or weaken the exact positive
+conjunction. Therefore:
 
 ```text
 AUTH_REQUEST_LIVE_PREFLIGHT = PASS
@@ -67,6 +70,21 @@ then RETURN THE HUMAN REDIRECT
 The separate diagnostic action creates zero ledger rows, sets zero cookies,
 returns no authorization URL, redirects zero humans, and performs zero token
 exchanges.
+
+## Installed-runtime certification
+
+After the human installs the replacement credential, the protected page has a
+separate `certify_installed_runtime` action. It reads only the server-side
+`EBAY_SELLER_REFRESH_TOKEN`; the request cannot supply a token or environment
+override, and there is no Vault, candidate, Orders, or legacy fallback.
+
+Successful certification performs exactly five bounded read-only eBay calls:
+four-scope refresh, strict bound `GetUser`, Inventory locations, Analytics
+traffic, and Account privilege. It creates no OAuth state, cookie, ledger row,
+authorization URL, consent, code exchange, handoff, Supabase/Vault/Vercel
+mutation, or marketplace write. Its JSON contains only fixed classifications,
+sanitized call evidence, and zero-valued safety counters; neither refresh nor
+access token can enter the response.
 
 ## Global one-time claim
 
@@ -136,7 +154,9 @@ feature/seller-os-canonical-integration-foundation-v1
 ```
 
 The existing shared Preview value is not edited. Rollback deletes only that
-branch override and redeploys.
+branch override and redeploys. Before relying on isolation, Vercel metadata must
+show the exact branch on that entry; `target=preview` with no branch is a shared
+Preview variable and does not satisfy this rollback contract.
 
 ## Deployment and retirement
 

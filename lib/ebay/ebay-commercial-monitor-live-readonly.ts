@@ -125,6 +125,15 @@ export type EbayLiveInventoryResult = {
   gapCodes: string[]
 }
 
+export type EbaySellerWideEnumerationIdentity = {
+  itemId: string
+  sku: string | null
+  variationKey: string | null
+  identityAmbiguous: boolean
+  representationEligible: false
+  analyticsEligible: false
+}
+
 export type EbayMarketplaceCertificationCounters = {
   sellerWideItemsReported: number | null
   sellerWideItemsParsed: number | null
@@ -173,6 +182,11 @@ export type EbayCommercialMonitorLiveReadonlyResult = {
     coverage: "COMPLETE" | "PARTIAL" | "UNPROVEN"
     observedAt: string | null
     source: "EBAY_TRADING_GET_MY_EBAY_SELLING"
+    sellerWideEnumeration: {
+      identities: EbaySellerWideEnumerationIdentity[]
+      itemSetComplete: boolean
+      identitySetComplete: boolean
+    }
     listings: EbayLiveListing[]
     pagesRead: number
     totalPages: number | null
@@ -244,6 +258,19 @@ function text(value: unknown, maximum = 200) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, maximum)
+}
+
+function listingIdentityComponent(value: string | null, maximum: number) {
+  if (typeof value !== "string") return null
+  const normalized = value.trim()
+  return normalized ? normalized.slice(0, maximum) : null
+}
+
+function itemSkuIdentityKey(itemId: string, sku: string | null) {
+  return JSON.stringify([
+    itemId,
+    listingIdentityComponent(sku, 120),
+  ])
 }
 
 function number(value: unknown) {
@@ -361,6 +388,11 @@ function unavailableResult(input: {
       coverage: "UNPROVEN",
       observedAt: null,
       source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
+      sellerWideEnumeration: {
+        identities: [],
+        itemSetComplete: false,
+        identitySetComplete: false,
+      },
       listings: [],
       pagesRead: 0,
       totalPages: null,
@@ -2166,8 +2198,35 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
       calls,
       clock,
     })
+    const parsedSellerWideItemCount =
+      marketplace.marketplaceCertification.sellerWideItemsParsed
+    const sellerWideItemSetComplete =
+      parsedSellerWideItemCount !== null &&
+      sellerWide.totalEntries !== null &&
+      parsedSellerWideItemCount === sellerWide.totalEntries &&
+      sellerWide.totalEntries < 25_000 &&
+      sellerWide.totalPages !== null &&
+      sellerWide.pagesRead === sellerWide.totalPages &&
+      !sellerWide.reachedPageLimit &&
+      !sellerWide.pageFailed &&
+      !sellerWide.paginationMetadataConflict &&
+      !sellerWide.sourceIdentityConflict
+    const sellerWideEnumeration = {
+      identities: sellerWide.listings.map((listing) => ({
+        itemId: listing.itemId,
+        sku: listing.sku,
+        variationKey: listing.variationKey,
+        identityAmbiguous: listing.identityAmbiguous,
+        representationEligible: false as const,
+        analyticsEligible: false as const,
+      })),
+      itemSetComplete: sellerWideItemSetComplete,
+      identitySetComplete: sellerWideItemSetComplete &&
+        !sellerWide.ambiguousVariationIdentity,
+    }
     const discovery = {
       ...sellerWide,
+      sellerWideEnumeration,
       listings: marketplace.listings,
       marketplaceCertification: marketplace.marketplaceCertification,
       marketplaceScopeConflict: marketplace.incomplete ||
@@ -2229,21 +2288,42 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
           ])],
         }
       : analyticsReadResult
-    const sellerIdentityKeys = new Set(discovery.listings.map((listing) =>
-      JSON.stringify([listing.itemId, listing.sku])))
+    const sellerIdentityKeys = new Set(
+      discovery.sellerWideEnumeration.identities.map((listing) =>
+        itemSkuIdentityKey(listing.itemId, listing.sku)))
     const inventoryIdentityKeys = new Set(inventory.publishedOffers.map(
-      (offer) => JSON.stringify([offer.itemId, offer.sku])))
-    const inventoryOnly = inventory.publishedOffers.filter((offer) =>
-      !sellerIdentityKeys.has(JSON.stringify([offer.itemId, offer.sku])))
+      (offer) => itemSkuIdentityKey(offer.itemId, offer.sku)))
+    const inventoryOnly = discovery.sellerWideEnumeration.identitySetComplete &&
+        inventory.status === "AVAILABLE"
+      ? inventory.publishedOffers.filter((offer) =>
+          !sellerIdentityKeys.has(itemSkuIdentityKey(offer.itemId, offer.sku)))
+      : null
     const tradingOnly = inventory.status === "AVAILABLE"
       ? discovery.listings.filter((listing) =>
-          !inventoryIdentityKeys.has(JSON.stringify([
+          !inventoryIdentityKeys.has(itemSkuIdentityKey(
             listing.itemId,
             listing.sku,
-          ])))
+          )))
       : []
+    const certification = discovery.marketplaceCertification
+    const certificationCounts = [
+      certification.sellerWideItemsMarketplaceCertifiedUs,
+      certification.sellerWideItemsMarketplaceCertifiedNonUs,
+      certification.sellerWideItemsMarketplaceUnresolved,
+      certification.sellerWideItemsMarketplaceError,
+      certification.sellerWideItemsMarketplaceItemIdMismatch,
+      certification.sellerWideItemsMarketplaceBudgetExhausted,
+    ]
+    const certificationPartitionItemCount = certificationCounts.every(
+        (value) => typeof value === "number")
+      ? certificationCounts.reduce((total, value) => total + Number(value), 0)
+      : null
     const sellerWideCountMismatch = discovery.totalEntries !== null &&
-      discovery.marketplaceTerminalItemCount !== discovery.totalEntries
+      certification.sellerWideItemsParsed !== discovery.totalEntries
+    const marketplacePartitionMismatch =
+      certification.sellerWideItemsParsed !== null &&
+      (certificationPartitionItemCount === null ||
+        certificationPartitionItemCount !== certification.sellerWideItemsParsed)
     const coverage = normalizeLiveDiscoveryCoverage({
       pagesRead: discovery.pagesRead,
       totalPages: discovery.totalPages,
@@ -2255,8 +2335,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
       marketplaceScopeConflict: discovery.marketplaceScopeConflict,
       inventoryCompared: inventory.status === "AVAILABLE",
       registryCompared: false,
-      unexplainedDifferenceCount: inventoryOnly.length +
-        (sellerWideCountMismatch ? 1 : 0),
+      unexplainedDifferenceCount: inventoryOnly ? inventoryOnly.length : 0,
     })
     const oauthAvailable = calls.some((entry) =>
       entry.operation.startsWith("OAUTH_REFRESH_") &&
@@ -2327,6 +2406,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
         coverage: coverage.status,
         observedAt: discovery.observedAt,
         source: "EBAY_TRADING_GET_MY_EBAY_SELLING",
+        sellerWideEnumeration: discovery.sellerWideEnumeration,
         listings: discovery.listings,
         pagesRead: discovery.pagesRead,
         totalPages: discovery.totalPages,
@@ -2339,7 +2419,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
           ...(!marketplaceProven
             ? ["EBAY_US_MARKETPLACE_BINDING_UNPROVEN"]
             : []),
-          ...(inventoryOnly.length
+          ...(inventoryOnly && inventoryOnly.length
             ? ["INVENTORY_PUBLISHED_LISTING_NOT_IN_SELLER_WIDE_RESULT"]
             : []),
           ...(tradingOnly.length
@@ -2347,6 +2427,9 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
             : []),
           ...(sellerWideCountMismatch
             ? ["SELLER_WIDE_ITEM_COUNT_RECONCILIATION_FAILED"]
+            : []),
+          ...(marketplacePartitionMismatch
+            ? ["SELLER_WIDE_MARKETPLACE_PARTITION_INVARIANT_FAILED"]
             : []),
           ...(inventory.status === "PARTIAL" ? inventory.gapCodes : []),
         ],

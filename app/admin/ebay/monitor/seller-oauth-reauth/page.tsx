@@ -105,6 +105,35 @@ type RuntimeCredentialMatchPayload = {
   error?: string
 }
 
+type InstalledRuntimeCertification = {
+  credentialSource: "GENERIC_ENV_TOKEN_ONLY"
+  genericEnvironmentTokenFallback: false
+  refreshTokenPresent: true
+  oauthRefreshExchange: "AVAILABLE"
+  capabilities: {
+    tradingBase: "AVAILABLE"
+    inventoryReadonly: "AVAILABLE"
+    analyticsReadonly: "AVAILABLE"
+    accountReadonly: "AVAILABLE"
+  }
+  calls: Array<{
+    operation: string
+    method: "GET" | "POST"
+    endpoint: string
+    status: "SUCCEEDED" | "FAILED"
+    httpStatus: number | null
+    marketplaceMutation: false
+    persisted: false
+  }>
+  safety: Record<string, false | 0>
+}
+
+type InstalledRuntimeCertificationPayload = {
+  success?: boolean
+  certification?: unknown
+  error?: string
+}
+
 const RUNTIME_CREDENTIAL_MATCH_KEYS = [
   "RUNTIME_EBAY_CLIENT_ID_PRESENT",
   "RUNTIME_EBAY_CLIENT_ID_LENGTH_MATCH",
@@ -151,6 +180,31 @@ const EXPECTED_PARAMETER_NAMES = [
   "state",
 ] as const
 
+const INSTALLED_CAPABILITY_KEYS = [
+  "tradingBase",
+  "inventoryReadonly",
+  "analyticsReadonly",
+  "accountReadonly",
+] as const
+const INSTALLED_SAFETY_KEYS = [
+  "tokenPersisted",
+  "tokenReturned",
+  "authorizationCodeExchanged",
+  "ledgerMutations",
+  "ebayWrites",
+  "inventoryWrites",
+  "listingWrites",
+  "promotionWrites",
+  "fulfillmentWrites",
+  "buyerMessageWrites",
+  "whatsappDispatches",
+  "businessDataMutations",
+  "productCaseMutations",
+  "registryMutations",
+  "vaultMutations",
+  "vercelMutations",
+] as const
+
 function validRuntimeCredentialMatch(
   value: unknown,
 ): value is RuntimeCredentialMatch {
@@ -177,6 +231,70 @@ function runtimeCredentialMatchAllowsStart(
     RUNTIME_CREDENTIAL_MATCH_KEYS.slice(0, -1).every(
       (key) => value[key] === true,
     ) && value.FINAL_BINDING_DIAGNOSIS === "BOTH_MATCH"
+}
+
+function validInstalledRuntimeCertification(
+  value: unknown,
+): value is InstalledRuntimeCertification {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).sort().join(",") !== [
+    "calls",
+    "capabilities",
+    "credentialSource",
+    "genericEnvironmentTokenFallback",
+    "oauthRefreshExchange",
+    "refreshTokenPresent",
+    "safety",
+  ].sort().join(",") ||
+      record.credentialSource !== "GENERIC_ENV_TOKEN_ONLY" ||
+      record.genericEnvironmentTokenFallback !== false ||
+      record.refreshTokenPresent !== true ||
+      record.oauthRefreshExchange !== "AVAILABLE") return false
+  if (!record.capabilities || typeof record.capabilities !== "object" ||
+      Array.isArray(record.capabilities)) return false
+  const capabilities = record.capabilities as Record<string, unknown>
+  if (Object.keys(capabilities).sort().join(",") !==
+      [...INSTALLED_CAPABILITY_KEYS].sort().join(",") ||
+      INSTALLED_CAPABILITY_KEYS.some((key) =>
+        capabilities[key] !== "AVAILABLE")) return false
+  if (!record.safety || typeof record.safety !== "object" ||
+      Array.isArray(record.safety)) return false
+  const safety = record.safety as Record<string, unknown>
+  if (Object.keys(safety).sort().join(",") !==
+      [...INSTALLED_SAFETY_KEYS].sort().join(",") ||
+      INSTALLED_SAFETY_KEYS.some((key) =>
+        safety[key] !== (key.endsWith("Mutations") ||
+            key.endsWith("Writes") || key === "ledgerMutations" ||
+            key === "whatsappDispatches" ? 0 : false))) return false
+  if (!Array.isArray(record.calls) || record.calls.length !== 5) return false
+  const operations = new Set([
+    "OAUTH_EXACT_UNION_REFRESH",
+    "TRADING_GET_USER",
+    "INVENTORY_GET_LOCATIONS_SCOPE_PROBE",
+    "ANALYTICS_TRAFFIC_REPORT_SCOPE_PROBE",
+    "ACCOUNT_PRIVILEGE_SCOPE_PROBE",
+  ])
+  return record.calls.every((candidate) => {
+    if (!candidate || typeof candidate !== "object" ||
+        Array.isArray(candidate)) return false
+    const call = candidate as Record<string, unknown>
+    return Object.keys(call).sort().join(",") === [
+      "endpoint",
+      "httpStatus",
+      "marketplaceMutation",
+      "method",
+      "operation",
+      "persisted",
+      "status",
+    ].join(",") && operations.has(String(call.operation)) &&
+      (call.method === "GET" || call.method === "POST") &&
+      typeof call.endpoint === "string" &&
+      String(call.endpoint).startsWith("/") &&
+      call.status === "SUCCEEDED" &&
+      typeof call.httpStatus === "number" &&
+      call.marketplaceMutation === false && call.persisted === false
+  })
 }
 
 function validPreflightState(value: unknown): value is PreflightState {
@@ -303,6 +421,10 @@ export default function EbaySellerOAuthReauthPage() {
   const [matchingCredentials, setMatchingCredentials] = useState(false)
   const [credentialMatch, setCredentialMatch] =
     useState<RuntimeCredentialMatch | null>(null)
+  const [certifyingInstalledRuntime, setCertifyingInstalledRuntime] =
+    useState(false)
+  const [installedRuntimeCertification, setInstalledRuntimeCertification] =
+    useState<InstalledRuntimeCertification | null>(null)
   const [error, setError] = useState("")
 
   useEffect(() => {
@@ -351,6 +473,7 @@ export default function EbaySellerOAuthReauthPage() {
     setMatchingCredentials(true)
     setCredentialMatch(null)
     setDiagnosis(null)
+    setInstalledRuntimeCertification(null)
     setError("")
     try {
       const bearer = await adminBearer()
@@ -376,6 +499,42 @@ export default function EbaySellerOAuthReauthPage() {
         : "RUNTIME_CREDENTIAL_MATCH_REJECTED")
     } finally {
       setMatchingCredentials(false)
+    }
+  }
+
+  async function certifyInstalledRuntime() {
+    setCertifyingInstalledRuntime(true)
+    setInstalledRuntimeCertification(null)
+    setError("")
+    try {
+      if (!runtimeCredentialMatchAllowsStart(credentialMatch)) {
+        throw new Error("RUNTIME_CREDENTIAL_MATCH_REQUIRED")
+      }
+      const bearer = await adminBearer()
+      const response = await fetch(START_PATH, {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "certify_installed_runtime" }),
+      })
+      const payload = await response.json() as
+        InstalledRuntimeCertificationPayload
+      if (!response.ok || payload.success !== true ||
+          !validInstalledRuntimeCertification(payload.certification)) {
+        throw new Error(payload.error ||
+          "INSTALLED_RUNTIME_CERTIFICATION_REJECTED")
+      }
+      setInstalledRuntimeCertification(payload.certification)
+    } catch (cause) {
+      setError(cause instanceof Error
+        ? cause.message
+        : "INSTALLED_RUNTIME_CERTIFICATION_REJECTED")
+    } finally {
+      setCertifyingInstalledRuntime(false)
     }
   }
 
@@ -480,7 +639,8 @@ export default function EbaySellerOAuthReauthPage() {
           <button
             className="mt-4 rounded-2xl border border-emerald-300/50 px-5 py-2 text-sm font-black text-emerald-200 disabled:opacity-40"
             type="button"
-            disabled={matchingCredentials || diagnosing || loading}
+            disabled={matchingCredentials || diagnosing || loading ||
+              certifyingInstalledRuntime}
             onClick={compareRuntimeCredentials}
           >
             {matchingCredentials
@@ -503,6 +663,46 @@ export default function EbaySellerOAuthReauthPage() {
           ) : null}
         </section>
 
+        <section className="rounded-3xl border border-violet-300/25 bg-violet-300/[0.06] p-6">
+          <h2 className="font-black">Credencial instalada · sólo lectura</h2>
+          <p className="mt-3 text-sm leading-6 text-white/70">
+            Certifica directamente EBAY_SELLER_REFRESH_TOKEN del Preview con el union exacto:
+            GetUser, Inventory locations, Analytics traffic y Account privilege. No usa fallback,
+            no crea ledger/cookie y no devuelve ni persiste tokens.
+          </p>
+          <button
+            className="mt-4 rounded-2xl border border-violet-300/50 px-5 py-2 text-sm font-black text-violet-200 disabled:opacity-40"
+            type="button"
+            disabled={certifyingInstalledRuntime || matchingCredentials ||
+              diagnosing || loading ||
+              !runtimeCredentialMatchAllowsStart(credentialMatch)}
+            onClick={certifyInstalledRuntime}
+          >
+            {certifyingInstalledRuntime
+              ? "Certificando…"
+              : "Certificar token instalado sin consentimiento"}
+          </button>
+          {installedRuntimeCertification ? (
+            <dl className="mt-5 grid gap-2 text-xs text-white/75 sm:grid-cols-2">
+              {[
+                ["Credential source", installedRuntimeCertification.credentialSource],
+                ["OAuth refresh", installedRuntimeCertification.oauthRefreshExchange],
+                ["Trading / binding", installedRuntimeCertification.capabilities.tradingBase],
+                ["Inventory readonly", installedRuntimeCertification.capabilities.inventoryReadonly],
+                ["Analytics readonly", installedRuntimeCertification.capabilities.analyticsReadonly],
+                ["Account readonly", installedRuntimeCertification.capabilities.accountReadonly],
+                ["External calls", installedRuntimeCertification.calls.length],
+                ["Token persisted / returned", "false / false"],
+              ].map(([label, value]) => (
+                <div className="rounded-lg bg-black/20 p-3" key={String(label)}>
+                  <dt className="font-bold text-white/50">{label}</dt>
+                  <dd className="mt-1 break-all">{String(value)}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+        </section>
+
         <section className="rounded-3xl border border-cyan-300/25 bg-cyan-300/[0.06] p-6">
           <h2 className="font-black">Preflight no interactivo</h2>
           <p className="mt-3 text-sm leading-6 text-white/70">
@@ -514,6 +714,7 @@ export default function EbaySellerOAuthReauthPage() {
             className="mt-4 rounded-2xl border border-cyan-300/50 px-5 py-2 text-sm font-black text-cyan-200 disabled:opacity-40"
             type="button"
             disabled={diagnosing || loading || matchingCredentials ||
+              certifyingInstalledRuntime ||
               !runtimeCredentialMatchAllowsStart(credentialMatch)}
             onClick={diagnose}
           >
@@ -565,6 +766,7 @@ export default function EbaySellerOAuthReauthPage() {
           className="rounded-2xl bg-cyan-300 px-6 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
           type="button"
           disabled={!confirmed || loading || diagnosing || matchingCredentials ||
+            certifyingInstalledRuntime ||
             !callbackUrl ||
             !runtimeCredentialMatchAllowsStart(credentialMatch) ||
             !diagnosisAllowsStart(diagnosis)}

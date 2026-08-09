@@ -947,6 +947,40 @@ export type DiscoveryCoverage = {
   sources: string[]
   observedAt: string | null
   knownGapCodes: string[]
+  reconciliation?: {
+    sellerWide: {
+      status: "COMPLETE" | "PARTIAL" | "UNPROVEN"
+      reportedItemCount: number | null
+      parsedItemCount: number | null
+      partitionedItemCount: number | null
+      unambiguousEnumeratedIdentityCount: number | null
+      representedUsItemCount: number | null
+      ambiguousIdentityCount: number | null
+      reportedParsedInvariant: "PASS" | "FAIL" | "UNPROVEN"
+      partitionInvariant: "PASS" | "FAIL" | "UNPROVEN"
+      itemGrain: "ITEM_ID"
+      identityGrain: "ITEM_SKU_VARIATION"
+    }
+    inventory: {
+      status: "COMPLETE" | "PARTIAL" | "UNPROVEN"
+      publishedListingIdCount: number | null
+      publishedOfferIdentityCount: number | null
+      inventoryOffersNotInSellerWideEnumerationCount: number | null
+      liveUsCertifiedNotInInventoryCount: number | null
+      comparisonGrain: "ITEM_SKU"
+    }
+    registry: {
+      status: "COMPLETE" | "PARTIAL" | "UNPROVEN"
+      activeRegistryItemCount: number | null
+      activeRegistryIdentityCount: number | null
+      activeRegistryItemsNotInSellerWideEnumerationCount: number | null
+      liveUsCertifiedItemsNotInRegistryCount: number | null
+      activeRegistryIdentitiesNotInSellerWideEnumerationCount: number | null
+      liveUsCertifiedIdentitiesNotInRegistryCount: number | null
+      itemGrain: "ITEM_ID"
+      identityGrain: "ITEM_SKU_VARIATION"
+    }
+  }
 }
 
 export function createDiscoveryCoverage(input: {
@@ -955,6 +989,7 @@ export function createDiscoveryCoverage(input: {
   sources: string[]
   observedAt: string | null
   knownGapCodes: string[]
+  reconciliation?: DiscoveryCoverage["reconciliation"]
 }): DiscoveryCoverage {
   const knownGapCodes = [...new Set(input.knownGapCodes.filter(Boolean))]
   return {
@@ -966,6 +1001,9 @@ export function createDiscoveryCoverage(input: {
     sources: [...new Set(input.sources.filter(Boolean))].sort(),
     observedAt: input.observedAt,
     knownGapCodes,
+    ...(input.reconciliation
+      ? { reconciliation: { ...input.reconciliation } }
+      : {}),
   }
 }
 
@@ -1086,6 +1124,21 @@ export type EbayLiveCertificationReadModel = {
     sellerWideItemsRepresented: number | null
     representedItemCount: number | null
     variationRowCount: number | null
+    gapCodes: string[]
+  }
+  inventory: {
+    status: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE" | "ERROR"
+    observedAt: string | null
+    inventorySkuCount: number | null
+    publishedListingCount: number | null
+    oauthSafeErrorCategory:
+      | "INVALID_SCOPE"
+      | "INVALID_GRANT"
+      | "INVALID_CLIENT"
+      | "INVALID_REQUEST"
+      | "UNSUPPORTED_GRANT_TYPE"
+      | "OAUTH_ERROR_UNCLASSIFIED"
+      | null
     gapCodes: string[]
   }
   analytics: {

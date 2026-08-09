@@ -115,6 +115,43 @@ type CandidateVerificationResult = {
   }
 }
 
+export type EbaySellerInstalledRuntimeCertificationResult = {
+  credentialSource: "GENERIC_ENV_TOKEN_ONLY"
+  genericEnvironmentTokenFallback: false
+  refreshTokenPresent: true
+  oauthRefreshExchange: "AVAILABLE"
+  capabilities: {
+    tradingBase: "AVAILABLE"
+    inventoryReadonly: "AVAILABLE"
+    analyticsReadonly: "AVAILABLE"
+    accountReadonly: "AVAILABLE"
+  }
+  calls: EbaySellerOAuthReauthCallEvidence[]
+  safety: {
+    tokenPersisted: false
+    tokenReturned: false
+    authorizationCodeExchanged: false
+    ledgerMutations: 0
+    ebayWrites: 0
+    inventoryWrites: 0
+    listingWrites: 0
+    promotionWrites: 0
+    fulfillmentWrites: 0
+    buyerMessageWrites: 0
+    whatsappDispatches: 0
+    businessDataMutations: 0
+    productCaseMutations: 0
+    registryMutations: 0
+    vaultMutations: 0
+    vercelMutations: 0
+  }
+}
+
+type RefreshTokenCapabilityVerification = {
+  capabilities: CandidateVerificationResult["capabilities"]
+  calls: EbaySellerOAuthReauthCallEvidence[]
+}
+
 type JsonRecord = Record<string, unknown>
 
 export type EbaySellerOAuthReauthAuthorizationPreflightResult = {
@@ -899,6 +936,164 @@ async function requireJsonSuccess(response: Response, code: string) {
   }
 }
 
+async function verifyRefreshTokenCapabilities(input: {
+  refreshToken: string
+  configuration: EbaySellerOAuthReauthConfiguration
+  externalDeadlineAt: number
+  expectedTotalCalls: number
+  calls: EbaySellerOAuthReauthCallEvidence[]
+  fetchImpl: FetchLike
+  clock: Clock
+}): Promise<RefreshTokenCapabilityVerification> {
+  let accessToken = ""
+  try {
+    const basic = Buffer.from(
+      `${input.configuration.clientId}:${input.configuration.clientSecret}`,
+      "utf8",
+    ).toString("base64")
+    const refreshBody = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: input.refreshToken,
+      scope: EBAY_SELLER_OAUTH_REAUTH_SCOPES.join(" "),
+    })
+    const refreshResponse = await boundedFetch({
+      operation: "OAUTH_EXACT_UNION_REFRESH",
+      method: "POST",
+      url: new URL(EBAY_TOKEN_ENDPOINT),
+      body: refreshBody,
+      headers: {
+        Authorization: `Basic ${basic}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      fetchImpl: input.fetchImpl,
+      calls: input.calls,
+      clock: input.clock,
+      externalDeadlineAt: input.externalDeadlineAt,
+      requestedTimeoutMs: SEQUENTIAL_REQUEST_TIMEOUT_MS,
+    })
+    const refreshed = await tokenResponse({
+      response: refreshResponse,
+      operation: "OAUTH_EXACT_UNION_REFRESH",
+      requireRefreshToken: false,
+    })
+    accessToken = refreshed.accessToken
+
+    assertEbayMonitorReadonlyRequest({
+      operation: "TRADING_GET_USER",
+      method: "POST",
+      url: EBAY_TRADING_ENDPOINT,
+      tradingCallName: "GetUser",
+      tradingHeaderCallName: "GetUser",
+      tradingBody: GET_USER_BODY,
+    })
+    const getUserResponse = await boundedFetch({
+      operation: "TRADING_GET_USER",
+      method: "POST",
+      url: new URL(EBAY_TRADING_ENDPOINT),
+      body: GET_USER_BODY,
+      headers: {
+        "Content-Type": "text/xml",
+        "X-EBAY-API-CALL-NAME": "GetUser",
+        "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_COMPATIBILITY_LEVEL,
+        "X-EBAY-API-SITEID": "0",
+        "X-EBAY-API-IAF-TOKEN": accessToken,
+      },
+      fetchImpl: input.fetchImpl,
+      calls: input.calls,
+      clock: input.clock,
+      externalDeadlineAt: input.externalDeadlineAt,
+      requestedTimeoutMs: SEQUENTIAL_REQUEST_TIMEOUT_MS,
+    })
+    let getUserXml = ""
+    try {
+      getUserXml = await getUserResponse.text()
+    } catch {
+      throw new EbaySellerOAuthReauthError(
+        "EBAY_SELLER_OAUTH_REAUTH_GET_USER_FAILED",
+      )
+    }
+    const account = parseEbayTradingGetUser(getUserXml)
+    getUserXml = ""
+    const fingerprintMatch = account.userId
+      ? ebayProductionAccountFingerprint(account.userId) ===
+        input.configuration.expectedAccountFingerprint
+      : false
+    const expectedUserMatch = !input.configuration.expectedUserId ||
+      account.userId?.toLocaleLowerCase("en-US") ===
+        input.configuration.expectedUserId.toLocaleLowerCase("en-US")
+    if (!getUserResponse.ok || !account.accepted || !account.userId ||
+        account.site !== "US" || !fingerprintMatch || !expectedUserMatch) {
+      throw new EbaySellerOAuthReauthError(
+        "EBAY_SELLER_OAUTH_REAUTH_ACCOUNT_BINDING_MISMATCH",
+      )
+    }
+
+    const probeDate = previousCompleteUtcDate(input.clock())
+    const analyticsUrl = buildEbaySellerTrafficReportUrl({
+      dateFrom: probeDate,
+      dateTo: probeDate,
+      timeZone: "UTC",
+    }).url
+    const probeInputs = [
+      {
+        operation: "INVENTORY_GET_LOCATIONS_SCOPE_PROBE" as const,
+        url: new URL(EBAY_INVENTORY_LOCATION_ENDPOINT),
+        failure: "EBAY_SELLER_OAUTH_REAUTH_INVENTORY_SCOPE_UNAVAILABLE",
+      },
+      {
+        operation: "ANALYTICS_TRAFFIC_REPORT_SCOPE_PROBE" as const,
+        url: analyticsUrl,
+        failure: "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_SCOPE_UNAVAILABLE",
+      },
+      {
+        operation: "ACCOUNT_PRIVILEGE_SCOPE_PROBE" as const,
+        url: new URL(EBAY_ACCOUNT_PRIVILEGE_ENDPOINT),
+        failure: "EBAY_SELLER_OAUTH_REAUTH_ACCOUNT_SCOPE_UNAVAILABLE",
+      },
+    ]
+    if (input.externalDeadlineAt - input.clock() < 500) {
+      throw new EbaySellerOAuthReauthError(
+        "EBAY_SELLER_OAUTH_REAUTH_TIME_BUDGET_EXHAUSTED",
+      )
+    }
+    const settled = await Promise.allSettled(probeInputs.map(async (probe) => {
+      const response = await boundedFetch({
+        operation: probe.operation,
+        method: "GET",
+        url: probe.url,
+        headers: bearerHeaders(accessToken),
+        fetchImpl: input.fetchImpl,
+        calls: input.calls,
+        clock: input.clock,
+        externalDeadlineAt: input.externalDeadlineAt,
+        requestedTimeoutMs: PARALLEL_PROBE_TIMEOUT_MS,
+      })
+      await requireJsonSuccess(response, probe.failure)
+    }))
+    const rejected = settled.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    )
+    if (rejected) throw rejected.reason
+    if (input.calls.length !== input.expectedTotalCalls ||
+        input.clock() > input.externalDeadlineAt) {
+      throw new EbaySellerOAuthReauthError(
+        "EBAY_SELLER_OAUTH_REAUTH_VERIFICATION_INCOMPLETE",
+      )
+    }
+    return {
+      capabilities: {
+        tradingBase: "AVAILABLE",
+        inventoryReadonly: "AVAILABLE",
+        analyticsReadonly: "AVAILABLE",
+        accountReadonly: "AVAILABLE",
+      },
+      calls: input.calls,
+    }
+  } finally {
+    accessToken = ""
+  }
+}
+
 export async function prepareEbaySellerOAuthReauthStart(input: {
   configuration: EbaySellerOAuthReauthConfiguration
   actorUserId: string
@@ -992,7 +1187,6 @@ export async function verifyEbaySellerOAuthReauthCandidate(input: {
     EBAY_SELLER_OAUTH_REAUTH_EXTERNAL_DEADLINE_MS
   const calls: EbaySellerOAuthReauthCallEvidence[] = []
   let candidateRefreshToken = ""
-  let candidateAccessToken = ""
   let initialAccessToken = ""
   try {
     const basic = Buffer.from(
@@ -1027,149 +1221,22 @@ export async function verifyEbaySellerOAuthReauthCandidate(input: {
     initialAccessToken = exchanged.accessToken
     candidateRefreshToken = exchanged.refreshToken
     initialAccessToken = ""
-
-    const refreshBody = new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: candidateRefreshToken,
-      scope: EBAY_SELLER_OAUTH_REAUTH_SCOPES.join(" "),
-    })
-    const refreshResponse = await boundedFetch({
-      operation: "OAUTH_EXACT_UNION_REFRESH",
-      method: "POST",
-      url: new URL(EBAY_TOKEN_ENDPOINT),
-      body: refreshBody,
-      headers: {
-        Authorization: `Basic ${basic}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      fetchImpl,
-      calls,
-      clock,
+    const verified = await verifyRefreshTokenCapabilities({
+      refreshToken: candidateRefreshToken,
+      configuration: input.configuration,
       externalDeadlineAt,
-      requestedTimeoutMs: SEQUENTIAL_REQUEST_TIMEOUT_MS,
-    })
-    const refreshed = await tokenResponse({
-      response: refreshResponse,
-      operation: "OAUTH_EXACT_UNION_REFRESH",
-      requireRefreshToken: false,
-    })
-    candidateAccessToken = refreshed.accessToken
-
-    assertEbayMonitorReadonlyRequest({
-      operation: "TRADING_GET_USER",
-      method: "POST",
-      url: EBAY_TRADING_ENDPOINT,
-      tradingCallName: "GetUser",
-      tradingHeaderCallName: "GetUser",
-      tradingBody: GET_USER_BODY,
-    })
-    const getUserResponse = await boundedFetch({
-      operation: "TRADING_GET_USER",
-      method: "POST",
-      url: new URL(EBAY_TRADING_ENDPOINT),
-      body: GET_USER_BODY,
-      headers: {
-        "Content-Type": "text/xml",
-        "X-EBAY-API-CALL-NAME": "GetUser",
-        "X-EBAY-API-COMPATIBILITY-LEVEL": TRADING_COMPATIBILITY_LEVEL,
-        "X-EBAY-API-SITEID": "0",
-        "X-EBAY-API-IAF-TOKEN": candidateAccessToken,
-      },
-      fetchImpl,
+      expectedTotalCalls: EBAY_SELLER_OAUTH_REAUTH_MAX_EXTERNAL_READ_CALLS,
       calls,
+      fetchImpl,
       clock,
-      externalDeadlineAt,
-      requestedTimeoutMs: SEQUENTIAL_REQUEST_TIMEOUT_MS,
     })
-    let getUserXml = ""
-    try {
-      getUserXml = await getUserResponse.text()
-    } catch {
-      throw new EbaySellerOAuthReauthError(
-        "EBAY_SELLER_OAUTH_REAUTH_GET_USER_FAILED",
-      )
-    }
-    const account = parseEbayTradingGetUser(getUserXml)
-    getUserXml = ""
-    const fingerprintMatch = account.userId
-      ? ebayProductionAccountFingerprint(account.userId) ===
-        input.configuration.expectedAccountFingerprint
-      : false
-    const expectedUserMatch = !input.configuration.expectedUserId ||
-      account.userId?.toLocaleLowerCase("en-US") ===
-        input.configuration.expectedUserId.toLocaleLowerCase("en-US")
-    if (!getUserResponse.ok || !account.accepted || !account.userId ||
-        account.site !== "US" || !fingerprintMatch || !expectedUserMatch) {
-      throw new EbaySellerOAuthReauthError(
-        "EBAY_SELLER_OAUTH_REAUTH_ACCOUNT_BINDING_MISMATCH",
-      )
-    }
-
-    const probeDate = previousCompleteUtcDate(clock())
-    const analyticsUrl = buildEbaySellerTrafficReportUrl({
-      dateFrom: probeDate,
-      dateTo: probeDate,
-      timeZone: "UTC",
-    }).url
-    const probeInputs = [
-      {
-        operation: "INVENTORY_GET_LOCATIONS_SCOPE_PROBE" as const,
-        url: new URL(EBAY_INVENTORY_LOCATION_ENDPOINT),
-        failure: "EBAY_SELLER_OAUTH_REAUTH_INVENTORY_SCOPE_UNAVAILABLE",
-      },
-      {
-        operation: "ANALYTICS_TRAFFIC_REPORT_SCOPE_PROBE" as const,
-        url: analyticsUrl,
-        failure: "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_SCOPE_UNAVAILABLE",
-      },
-      {
-        operation: "ACCOUNT_PRIVILEGE_SCOPE_PROBE" as const,
-        url: new URL(EBAY_ACCOUNT_PRIVILEGE_ENDPOINT),
-        failure: "EBAY_SELLER_OAUTH_REAUTH_ACCOUNT_SCOPE_UNAVAILABLE",
-      },
-    ]
-    const remaining = externalDeadlineAt - clock()
-    if (remaining < 500) {
-      throw new EbaySellerOAuthReauthError(
-        "EBAY_SELLER_OAUTH_REAUTH_TIME_BUDGET_EXHAUSTED",
-      )
-    }
-    const settled = await Promise.allSettled(probeInputs.map(async (probe) => {
-      const response = await boundedFetch({
-        operation: probe.operation,
-        method: "GET",
-        url: probe.url,
-        headers: bearerHeaders(candidateAccessToken),
-        fetchImpl,
-        calls,
-        clock,
-        externalDeadlineAt,
-        requestedTimeoutMs: PARALLEL_PROBE_TIMEOUT_MS,
-      })
-      await requireJsonSuccess(response, probe.failure)
-    }))
-    const rejected = settled.find(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
-    )
-    if (rejected) throw rejected.reason
-    if (calls.length !== EBAY_SELLER_OAUTH_REAUTH_MAX_EXTERNAL_READ_CALLS ||
-        clock() > externalDeadlineAt) {
-      throw new EbaySellerOAuthReauthError(
-        "EBAY_SELLER_OAUTH_REAUTH_VERIFICATION_INCOMPLETE",
-      )
-    }
 
     const result: CandidateVerificationResult = {
       refreshToken: candidateRefreshToken,
       credentialSource: "NEW_OAUTH_CANDIDATE_ONLY",
       genericEnvironmentTokenFallback: false,
-      capabilities: {
-        tradingBase: "AVAILABLE",
-        inventoryReadonly: "AVAILABLE",
-        analyticsReadonly: "AVAILABLE",
-        accountReadonly: "AVAILABLE",
-      },
-      calls,
+      capabilities: verified.capabilities,
+      calls: verified.calls,
       safety: {
         tokenPersisted: false,
         oauthCodePersisted: false,
@@ -1189,12 +1256,77 @@ export async function verifyEbaySellerOAuthReauthCandidate(input: {
       },
     }
     candidateRefreshToken = ""
-    candidateAccessToken = ""
     return result
   } finally {
     candidateRefreshToken = ""
-    candidateAccessToken = ""
     initialAccessToken = ""
+  }
+}
+
+export async function certifyInstalledEbaySellerOAuthRuntime(input: {
+  configuration: EbaySellerOAuthReauthConfiguration
+  startedAt?: number
+  fetchImpl?: FetchLike
+  clock?: Clock
+}): Promise<EbaySellerInstalledRuntimeCertificationResult> {
+  if (!input.configuration.ready) {
+    throw new EbaySellerOAuthReauthError(
+      input.configuration.reason ??
+        "EBAY_SELLER_OAUTH_REAUTH_CONFIGURATION_INVALID",
+    )
+  }
+  assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
+    getEbaySellerOAuthReauthRuntimeCredentialMatch(input.configuration),
+  )
+  let refreshToken = credential(process.env.EBAY_SELLER_REFRESH_TOKEN)
+  if (!refreshToken) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_INSTALLED_REFRESH_TOKEN_MISSING",
+    )
+  }
+  const fetchImpl = input.fetchImpl ?? fetch
+  const clock = input.clock ?? Date.now
+  const startedAt = input.startedAt ?? clock()
+  const calls: EbaySellerOAuthReauthCallEvidence[] = []
+  try {
+    const verified = await verifyRefreshTokenCapabilities({
+      refreshToken,
+      configuration: input.configuration,
+      externalDeadlineAt: startedAt +
+        EBAY_SELLER_OAUTH_REAUTH_EXTERNAL_DEADLINE_MS,
+      expectedTotalCalls: 5,
+      calls,
+      fetchImpl,
+      clock,
+    })
+    return {
+      credentialSource: "GENERIC_ENV_TOKEN_ONLY",
+      genericEnvironmentTokenFallback: false,
+      refreshTokenPresent: true,
+      oauthRefreshExchange: "AVAILABLE",
+      capabilities: verified.capabilities,
+      calls: verified.calls,
+      safety: {
+        tokenPersisted: false,
+        tokenReturned: false,
+        authorizationCodeExchanged: false,
+        ledgerMutations: 0,
+        ebayWrites: 0,
+        inventoryWrites: 0,
+        listingWrites: 0,
+        promotionWrites: 0,
+        fulfillmentWrites: 0,
+        buyerMessageWrites: 0,
+        whatsappDispatches: 0,
+        businessDataMutations: 0,
+        productCaseMutations: 0,
+        registryMutations: 0,
+        vaultMutations: 0,
+        vercelMutations: 0,
+      },
+    }
+  } finally {
+    refreshToken = ""
   }
 }
 

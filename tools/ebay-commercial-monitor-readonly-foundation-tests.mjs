@@ -201,6 +201,13 @@ test("el reader live usa una allowlist cerrada y nunca persiste respuestas", () 
   assert.match(reader, /tokenPersisted:\s*false/)
   assert.match(reader, /rawPayloadsReturned:\s*false/)
   assert.match(reader, /buyerPiiReturned:\s*false/)
+  assert.match(reader, /representationEligible:\s*false as const/)
+  assert.match(reader, /analyticsEligible:\s*false as const/)
+  assert.match(reader, /sellerWideEnumeration\.identities/)
+  assert.doesNotMatch(
+    read("lib/ebay/commercial-monitor-readonly-contract.ts"),
+    /sellerWideEnumeration|representationEligible|analyticsEligible/,
+  )
   assert.match(reader, /refreshToken:\s*dedicatedRefresh/)
   assert.doesNotMatch(
     reader,
