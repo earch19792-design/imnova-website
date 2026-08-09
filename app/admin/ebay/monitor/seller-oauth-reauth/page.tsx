@@ -360,7 +360,13 @@ const INVENTORY_ERROR_METADATA_KEYS = [
   "errorObjectCount",
   "ERROR_25709_FIELD_NAME",
   "ERROR_25709_MESSAGE_FORM",
+  "ERROR_25709_SAFE_FIELD_CLASS",
   "FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE",
+  "MESSAGE_PREFIX_CLASS",
+  "MESSAGE_SUFFIX_CLASS",
+  "MESSAGE_LENGTH_BUCKET",
+  "MESSAGE_CONTAINS_OFFICIAL_INVALID_VALUE_PREFIX",
+  "MESSAGE_CONTAINS_KNOWN_DOCUMENTED_FIELD_TOKEN",
   "parameterNames",
   "status",
 ] as const
@@ -607,6 +613,19 @@ function validInventoryConsumerDiagnostic(
         error.ERROR_25709_FIELD_NAME !== "UNPROVEN") return false
     if (!["SUBSTITUTED_FIELD", "LITERAL_PLACEHOLDER", "OTHER",
       "NO_MESSAGE"].includes(String(error.ERROR_25709_MESSAGE_FORM))) return false
+    if (!["LIMIT", "OFFSET", "CONTENT_LANGUAGE", "MARKETPLACE_HEADER",
+      "AUTHORIZATION", "DOCUMENTED_OTHER", "LITERAL_FIELDNAME_PLACEHOLDER",
+      "UNRECOGNIZED"].includes(String(error.ERROR_25709_SAFE_FIELD_CLASS))) return false
+    if (!["EXACT_INVALID_VALUE_FOR", "INVALID_VALUE_VARIANT", "OTHER"].includes(
+      String(error.MESSAGE_PREFIX_CLASS))) return false
+    if (!["PERIOD", "NO_PERIOD", "OTHER"].includes(
+      String(error.MESSAGE_SUFFIX_CLASS))) return false
+    if (!["0_31", "32_63", "64_127", "128_PLUS"].includes(
+      String(error.MESSAGE_LENGTH_BUCKET))) return false
+    if (!["YES", "NO"].includes(
+      String(error.MESSAGE_CONTAINS_OFFICIAL_INVALID_VALUE_PREFIX))) return false
+    if (!["YES", "NO"].includes(
+      String(error.MESSAGE_CONTAINS_KNOWN_DOCUMENTED_FIELD_TOKEN))) return false
     if (!["YES", "NO"].includes(
       String(error.FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE),
     )) return false

@@ -72,15 +72,55 @@ export type SafeEbayInventoryErrorMetadata = {
   ERROR_25709_MESSAGE_FORM: "SUBSTITUTED_FIELD" | "LITERAL_PLACEHOLDER" |
     "OTHER" | "NO_MESSAGE"
   FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "YES" | "NO"
+  ERROR_25709_SAFE_FIELD_CLASS:
+    | "LIMIT"
+    | "OFFSET"
+    | "CONTENT_LANGUAGE"
+    | "MARKETPLACE_HEADER"
+    | "AUTHORIZATION"
+    | "DOCUMENTED_OTHER"
+    | "LITERAL_FIELDNAME_PLACEHOLDER"
+    | "UNRECOGNIZED"
+  MESSAGE_PREFIX_CLASS:
+    | "EXACT_INVALID_VALUE_FOR"
+    | "INVALID_VALUE_VARIANT"
+    | "OTHER"
+  MESSAGE_SUFFIX_CLASS: "PERIOD" | "NO_PERIOD" | "OTHER"
+  MESSAGE_LENGTH_BUCKET:
+    | "0_31"
+    | "32_63"
+    | "64_127"
+    | "128_PLUS"
+  MESSAGE_CONTAINS_OFFICIAL_INVALID_VALUE_PREFIX: "YES" | "NO"
+  MESSAGE_CONTAINS_KNOWN_DOCUMENTED_FIELD_TOKEN: "YES" | "NO"
 }
 
 type EbayInventoryError25709MessageForm =
   SafeEbayInventoryErrorMetadata["ERROR_25709_MESSAGE_FORM"]
 
+type EbayInventoryError25709SafeClass =
+  SafeEbayInventoryErrorMetadata["ERROR_25709_SAFE_FIELD_CLASS"]
+type EbayInventoryError25709PrefixClass =
+  SafeEbayInventoryErrorMetadata["MESSAGE_PREFIX_CLASS"]
+type EbayInventoryError25709SuffixClass =
+  SafeEbayInventoryErrorMetadata["MESSAGE_SUFFIX_CLASS"]
+type EbayInventoryError25709LengthBucket =
+  SafeEbayInventoryErrorMetadata["MESSAGE_LENGTH_BUCKET"]
+type EbayInventoryError25709TokenPresence =
+  SafeEbayInventoryErrorMetadata["MESSAGE_CONTAINS_OFFICIAL_INVALID_VALUE_PREFIX"]
+type EbayInventoryError25709KnownTokenPresence =
+  SafeEbayInventoryErrorMetadata["MESSAGE_CONTAINS_KNOWN_DOCUMENTED_FIELD_TOKEN"]
+
 export type SafeEbayInventoryError25709Metadata = {
   ERROR_25709_FIELD_NAME: string
   ERROR_25709_MESSAGE_FORM: EbayInventoryError25709MessageForm
   FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "YES" | "NO"
+  ERROR_25709_SAFE_FIELD_CLASS: EbayInventoryError25709SafeClass
+  MESSAGE_PREFIX_CLASS: EbayInventoryError25709PrefixClass
+  MESSAGE_SUFFIX_CLASS: EbayInventoryError25709SuffixClass
+  MESSAGE_LENGTH_BUCKET: EbayInventoryError25709LengthBucket
+  MESSAGE_CONTAINS_OFFICIAL_INVALID_VALUE_PREFIX: EbayInventoryError25709TokenPresence
+  MESSAGE_CONTAINS_KNOWN_DOCUMENTED_FIELD_TOKEN: EbayInventoryError25709KnownTokenPresence
 }
 
 export type EbayLiveListing = {
@@ -430,6 +470,32 @@ const EBAY_INVENTORY_ERROR_KEYS = new Set([
 
 const ERROR_25709_SUBSTITUTED_FIELD_MESSAGE = /^Invalid value for ([A-Za-z][A-Za-z0-9_.-]{0,63})\.$/
 const ERROR_25709_LITERAL_PLACEHOLDER_MESSAGE = /^Invalid value for \{fieldName\}\.$/
+const ERROR_25709_DOCUMENTED_QUERY_PARAMETERS = new Set(["limit", "offset"])
+const ERROR_25709_DOCUMENTED_REQUIRED_HEADERS = new Set(["authorization"])
+const ERROR_25709_DOCUMENTED_OPTIONAL_HEADERS = new Set<string>([])
+const ERROR_25709_KNOWN_DOCUMENTED_FIELDS = new Set([
+  ...ERROR_25709_DOCUMENTED_QUERY_PARAMETERS,
+  ...ERROR_25709_DOCUMENTED_REQUIRED_HEADERS,
+  ...ERROR_25709_DOCUMENTED_OPTIONAL_HEADERS,
+])
+const ERROR_25709_KNOWN_MESSAGE_FIELD_TOKENS = new Set([
+  ...ERROR_25709_DOCUMENTED_QUERY_PARAMETERS,
+  ...ERROR_25709_DOCUMENTED_REQUIRED_HEADERS,
+  "authorization",
+  "content-language",
+  "x-ebay-c-marketplace-id",
+  "marketplaceid",
+  "marketplace-id",
+])
+
+const EBAY_25709_CONTENT_LANGUAGE_TOKEN = "content-language"
+const EBAY_25709_MARKETPLACE_HEADER_TOKENS = new Set([
+  "x-ebay-c-marketplace-id",
+  "marketplaceid",
+  "marketplace-id",
+])
+const EBAY_25709_AUTHORIZATION_HEADER_TOKENS = new Set(["authorization"])
+const EBAY_25709_LIMIT_OFFSET_TOKENS = new Set(["limit", "offset"])
 
 const UNPROVEN_25709_METADATA: SafeEbayInventoryErrorMetadata = {
   status: "UNPROVEN",
@@ -441,6 +507,116 @@ const UNPROVEN_25709_METADATA: SafeEbayInventoryErrorMetadata = {
   ERROR_25709_FIELD_NAME: "UNPROVEN",
   ERROR_25709_MESSAGE_FORM: "OTHER",
   FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "NO",
+  ERROR_25709_SAFE_FIELD_CLASS: "UNRECOGNIZED",
+  MESSAGE_PREFIX_CLASS: "OTHER",
+  MESSAGE_SUFFIX_CLASS: "OTHER",
+  MESSAGE_LENGTH_BUCKET: "0_31",
+  MESSAGE_CONTAINS_OFFICIAL_INVALID_VALUE_PREFIX: "NO",
+  MESSAGE_CONTAINS_KNOWN_DOCUMENTED_FIELD_TOKEN: "NO",
+}
+
+function classify25709FieldToken(fieldName: string): EbayInventoryError25709SafeClass {
+  const normalizedFieldName = fieldName.toLowerCase()
+  if (EBAY_25709_LIMIT_OFFSET_TOKENS.has(normalizedFieldName)) {
+    return normalizedFieldName === "limit" ? "LIMIT" : "OFFSET"
+  }
+  if (normalizedFieldName === EBAY_25709_CONTENT_LANGUAGE_TOKEN) {
+    return "CONTENT_LANGUAGE"
+  }
+  if (EBAY_25709_AUTHORIZATION_HEADER_TOKENS.has(normalizedFieldName)) {
+    return "AUTHORIZATION"
+  }
+  if (EBAY_25709_MARKETPLACE_HEADER_TOKENS.has(normalizedFieldName)) {
+    return "MARKETPLACE_HEADER"
+  }
+  if (ERROR_25709_KNOWN_DOCUMENTED_FIELDS.has(normalizedFieldName)) {
+    return "DOCUMENTED_OTHER"
+  }
+  return "UNRECOGNIZED"
+}
+
+function safeMessagePrefix(message: string): EbayInventoryError25709PrefixClass {
+  return message.startsWith("Invalid value for ")
+    ? "EXACT_INVALID_VALUE_FOR"
+    : message.includes("Invalid value for ")
+      ? "INVALID_VALUE_VARIANT"
+      : "OTHER"
+}
+
+function safeMessageSuffix(message: string): EbayInventoryError25709SuffixClass {
+  return message.endsWith(".") ? "PERIOD" : "NO_PERIOD"
+}
+
+function safeMessageLengthBucket(message: string): EbayInventoryError25709LengthBucket {
+  const messageLength = message.length
+  if (messageLength <= 31) return "0_31"
+  if (messageLength <= 63) return "32_63"
+  if (messageLength <= 127) return "64_127"
+  return "128_PLUS"
+}
+
+function safeContainsKnownDocumentedFieldToken(message: string): "YES" | "NO" {
+  const normalizedMessage = message.toLowerCase()
+  for (const token of ERROR_25709_KNOWN_MESSAGE_FIELD_TOKENS) {
+    if (normalizedMessage.includes(token.toLowerCase())) return "YES"
+  }
+  return "NO"
+}
+
+function parse25709MessageMetadata(message: string): SafeEbayInventoryError25709Metadata {
+  const prefixClass = safeMessagePrefix(message)
+  const suffixClass = safeMessageSuffix(message)
+  const lengthBucket = safeMessageLengthBucket(message)
+  const containsPrefix = prefixClass === "OTHER" ? "NO" : "YES"
+  const containsKnownDocumentedFieldToken = safeContainsKnownDocumentedFieldToken(
+    message,
+  )
+  if (ERROR_25709_LITERAL_PLACEHOLDER_MESSAGE.test(message)) {
+    return {
+      ERROR_25709_FIELD_NAME: "UNPROVEN",
+      ERROR_25709_MESSAGE_FORM: "LITERAL_PLACEHOLDER",
+      FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "NO",
+      ERROR_25709_SAFE_FIELD_CLASS: "LITERAL_FIELDNAME_PLACEHOLDER",
+      MESSAGE_PREFIX_CLASS: prefixClass,
+      MESSAGE_SUFFIX_CLASS: suffixClass,
+      MESSAGE_LENGTH_BUCKET: lengthBucket,
+      MESSAGE_CONTAINS_OFFICIAL_INVALID_VALUE_PREFIX: containsPrefix,
+      MESSAGE_CONTAINS_KNOWN_DOCUMENTED_FIELD_TOKEN:
+        containsKnownDocumentedFieldToken,
+    }
+  }
+  const substituted = ERROR_25709_SUBSTITUTED_FIELD_MESSAGE.exec(message)
+  if (substituted) {
+    const fieldName = substituted[1] ?? "UNPROVEN"
+    const safeFieldClass = classify25709FieldToken(fieldName)
+    return {
+      ERROR_25709_FIELD_NAME: safeFieldClass === "UNRECOGNIZED"
+        ? "UNPROVEN"
+        : fieldName,
+      ERROR_25709_MESSAGE_FORM: "SUBSTITUTED_FIELD",
+      FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "YES",
+      ERROR_25709_SAFE_FIELD_CLASS:
+        safeFieldClass,
+      MESSAGE_PREFIX_CLASS: prefixClass,
+      MESSAGE_SUFFIX_CLASS: suffixClass,
+      MESSAGE_LENGTH_BUCKET: lengthBucket,
+      MESSAGE_CONTAINS_OFFICIAL_INVALID_VALUE_PREFIX: containsPrefix,
+      MESSAGE_CONTAINS_KNOWN_DOCUMENTED_FIELD_TOKEN:
+        containsKnownDocumentedFieldToken,
+    }
+  }
+  return {
+    ERROR_25709_FIELD_NAME: "UNPROVEN",
+    ERROR_25709_MESSAGE_FORM: "OTHER",
+    FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "NO",
+    ERROR_25709_SAFE_FIELD_CLASS: "UNRECOGNIZED",
+    MESSAGE_PREFIX_CLASS: prefixClass,
+    MESSAGE_SUFFIX_CLASS: suffixClass,
+    MESSAGE_LENGTH_BUCKET: lengthBucket,
+    MESSAGE_CONTAINS_OFFICIAL_INVALID_VALUE_PREFIX: containsPrefix,
+    MESSAGE_CONTAINS_KNOWN_DOCUMENTED_FIELD_TOKEN:
+      containsKnownDocumentedFieldToken,
+  }
 }
 
 function inventoryErrorRecord(value: unknown): Record<string, unknown> | null {
@@ -488,33 +664,26 @@ function parseEbayInventory25709MetadataFromErrors(
         ERROR_25709_FIELD_NAME: "UNPROVEN",
         ERROR_25709_MESSAGE_FORM: "NO_MESSAGE",
         FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "NO",
+        ERROR_25709_SAFE_FIELD_CLASS: "UNRECOGNIZED",
+        MESSAGE_PREFIX_CLASS: "OTHER",
+        MESSAGE_SUFFIX_CLASS: "OTHER",
+        MESSAGE_LENGTH_BUCKET: "0_31",
+        MESSAGE_CONTAINS_OFFICIAL_INVALID_VALUE_PREFIX: "NO",
+        MESSAGE_CONTAINS_KNOWN_DOCUMENTED_FIELD_TOKEN: "NO",
       }
     }
-    if (ERROR_25709_LITERAL_PLACEHOLDER_MESSAGE.test(error.message)) {
-      return {
-        ERROR_25709_FIELD_NAME: "UNPROVEN",
-        ERROR_25709_MESSAGE_FORM: "LITERAL_PLACEHOLDER",
-        FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "NO",
-      }
-    }
-    const substituted = ERROR_25709_SUBSTITUTED_FIELD_MESSAGE.exec(error.message)
-    if (substituted) {
-      return {
-        ERROR_25709_FIELD_NAME: substituted[1] ?? "UNPROVEN",
-        ERROR_25709_MESSAGE_FORM: "SUBSTITUTED_FIELD",
-        FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "YES",
-      }
-    }
-    return {
-      ERROR_25709_FIELD_NAME: "UNPROVEN",
-      ERROR_25709_MESSAGE_FORM: "OTHER",
-      FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "NO",
-    }
+    return parse25709MessageMetadata(error.message)
   }
   return {
     ERROR_25709_FIELD_NAME: "UNPROVEN",
     ERROR_25709_MESSAGE_FORM: "OTHER",
     FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE: "NO",
+    ERROR_25709_SAFE_FIELD_CLASS: "UNRECOGNIZED",
+    MESSAGE_PREFIX_CLASS: "OTHER",
+    MESSAGE_SUFFIX_CLASS: "OTHER",
+    MESSAGE_LENGTH_BUCKET: "0_31",
+    MESSAGE_CONTAINS_OFFICIAL_INVALID_VALUE_PREFIX: "NO",
+    MESSAGE_CONTAINS_KNOWN_DOCUMENTED_FIELD_TOKEN: "NO",
   }
 }
 
