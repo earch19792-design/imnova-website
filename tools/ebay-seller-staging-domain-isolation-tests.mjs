@@ -127,9 +127,24 @@ test("canonical links exist and navigation remains mobile accessible", () => {
 test("route and bundle surface regress downward", () => {
   assert.equal(exists("app/admin/ebay/monitor/page.tsx"), true, "canonical read-only monitor page is missing")
   assert.equal(exists("app/api/admin/ebay/monitor/route.ts"), true, "canonical read-only monitor API is missing")
+  const temporarySellerOauthPage = exists(
+    "app/admin/ebay/monitor/seller-oauth-reauth/page.tsx",
+  )
+  const temporarySellerOauthApi = exists(
+    "app/api/admin/ebay/monitor/seller-oauth-reauth/route.ts",
+  )
+  assert.equal(
+    temporarySellerOauthPage,
+    temporarySellerOauthApi,
+    "temporary seller OAuth UI/API must be added and retired together",
+  )
   // The read-only monitor adds exactly one intentional page and one GET-only API
-  // to the previously isolated Seller OS surface.
-  assert.ok(countNamed("app", "page.tsx") <= 14, "page route count regressed")
+  // to the previously isolated Seller OS surface. The explicitly temporary
+  // seller reauthorization gate may add one paired page/API while present.
+  assert.ok(
+    countNamed("app", "page.tsx") <= 14 + Number(temporarySellerOauthPage),
+    "page route count regressed",
+  )
   // 68 legacy-era routes -> 65 isolated routes -> one approval-only Seller OS
   // strategic-advisor route -> one Preview-only active-listing Luna monitor
   // -> one isolated, GET-only eBay account-policy preflight route -> two
@@ -141,7 +156,10 @@ test("route and bundle surface regress downward", () => {
   // executor -> one authenticated, read-only final-listing-review hydration
   // route -> one authenticated V3 UNPUBLISHED authorization/preflight route.
   // The old product/community domain remains at zero.
-  assert.ok(countNamed("app/api", "route.ts") <= 81, "API route count regressed")
+  assert.ok(
+    countNamed("app/api", "route.ts") <= 81 + Number(temporarySellerOauthApi),
+    "API route count regressed",
+  )
   assert.equal(countNamed("app/api/community", "route.ts"), 0)
   assert.equal(countNamed("app/api/store", "route.ts"), 0)
 })
