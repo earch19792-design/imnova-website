@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useEffect, useState } from "react"
 
 import { supabase } from "@/lib/supabase"
+import type { EbayRegistryCoverageDiagnostic } from "@/lib/ebay/ebay-commercial-monitor-live-readonly"
 
 const START_PATH = "/api/admin/ebay/monitor/seller-oauth-reauth"
 const CALLBACK_PATH = "/api/admin/ebay/monitor/seller-oauth-reauth"
@@ -247,6 +248,30 @@ type InventoryConsumerDiagnosticPayload = {
   error?: string
 }
 
+type RegistryCoverageDiagnosticPayload = {
+  success?: boolean
+  registryCoverageDiagnostic?: unknown
+  error?: string
+}
+
+const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
+  "REGISTRY_RUNTIME_CONFIG",
+  "SUPABASE_URL_PRESENT",
+  "SUPABASE_SERVICE_ROLE_PRESENT",
+  "REGISTRY_SOURCE_RUNTIME_STATUS",
+  "REGISTRY_RECORD_COUNT",
+  "LIVE_ENUMERATION_RUNTIME_STATUS",
+  "LIVE_EBAY_LISTING_COUNT",
+  "REGISTRY_MATCHED_COUNT",
+  "REGISTRY_MISSING_COUNT",
+  "REGISTRY_ORPHANED_COUNT",
+  "REGISTRY_AMBIGUOUS_COUNT",
+  "REGISTRY_COVERAGE_PERCENT",
+  "LIVE_PARTITION_VALID",
+  "REGISTRY_PARTITION_VALID",
+  "MANUAL_LISTING_RUNTIME_AUTODISCOVERY",
+] as const
+
 const RUNTIME_CREDENTIAL_MATCH_KEYS = [
   "RUNTIME_EBAY_CLIENT_ID_PRESENT",
   "RUNTIME_EBAY_CLIENT_ID_LENGTH_MATCH",
@@ -401,6 +426,49 @@ const INVENTORY_CONSUMER_SAFETY_KEYS = [
   "vaultMutations",
   "vercelMutations",
 ] as const
+
+function validRegistryCoverageDiagnostic(
+  value: unknown,
+): value is EbayRegistryCoverageDiagnostic {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).sort().join(",") !==
+      [...REGISTRY_COVERAGE_DIAGNOSTIC_KEYS].sort().join(",")) return false
+  const countLike = (candidate: unknown) =>
+    candidate === "UNPROVEN" ||
+    (typeof candidate === "number" && Number.isSafeInteger(candidate) &&
+      candidate >= 0)
+  const percent = (candidate: unknown) =>
+    candidate === "UNPROVEN" ||
+    (typeof candidate === "number" && Number.isFinite(candidate) &&
+      candidate >= 0 && candidate <= 100)
+  if (!["AVAILABLE", "MISSING", "FAILED"].includes(
+    String(record.REGISTRY_RUNTIME_CONFIG),
+  )) return false
+  if (!["YES", "NO"].includes(String(record.SUPABASE_URL_PRESENT))) return false
+  if (!["YES", "NO"].includes(
+    String(record.SUPABASE_SERVICE_ROLE_PRESENT),
+  )) return false
+  if (!["AVAILABLE", "CONFIGURATION_MISSING", "READ_FAILED"].includes(
+    String(record.REGISTRY_SOURCE_RUNTIME_STATUS),
+  )) return false
+  if (!countLike(record.REGISTRY_RECORD_COUNT) ||
+    !countLike(record.LIVE_EBAY_LISTING_COUNT) ||
+    !countLike(record.REGISTRY_MATCHED_COUNT) ||
+    !countLike(record.REGISTRY_MISSING_COUNT) ||
+    !countLike(record.REGISTRY_ORPHANED_COUNT) ||
+    !countLike(record.REGISTRY_AMBIGUOUS_COUNT) ||
+    !percent(record.REGISTRY_COVERAGE_PERCENT) ||
+    !["AVAILABLE", "AUTH_UNAVAILABLE", "READ_FAILED"].includes(
+      String(record.LIVE_ENUMERATION_RUNTIME_STATUS),
+    )) return false
+  if (!["YES", "NO"].includes(String(record.LIVE_PARTITION_VALID)) ||
+    !["YES", "NO"].includes(String(record.REGISTRY_PARTITION_VALID)) ||
+    !["PASS", "PARTIAL", "FAIL", "UNPROVEN"].includes(
+      String(record.MANUAL_LISTING_RUNTIME_AUTODISCOVERY),
+    )) return false
+  return true
+}
 
 function validRuntimeCredentialMatch(
   value: unknown,
@@ -1040,6 +1108,9 @@ export default function EbaySellerOAuthReauthPage() {
     useState(false)
   const [inventoryConsumerDiagnostic, setInventoryConsumerDiagnostic] =
     useState<InventoryConsumerDiagnostic | null>(null)
+  const [diagnosingRegistryCoverage, setDiagnosingRegistryCoverage] = useState(false)
+  const [registryCoverageDiagnostic, setRegistryCoverageDiagnostic] =
+    useState<EbayRegistryCoverageDiagnostic | null>(null)
   const [error, setError] = useState("")
 
   useEffect(() => {
@@ -1190,6 +1261,42 @@ export default function EbaySellerOAuthReauthPage() {
     }
   }
 
+  async function diagnoseRegistryCoverageRuntime() {
+    setDiagnosingRegistryCoverage(true)
+    setRegistryCoverageDiagnostic(null)
+    setError("")
+    try {
+      if (!runtimeCredentialMatchAllowsStart(credentialMatch)) {
+        throw new Error("RUNTIME_CREDENTIAL_MATCH_REQUIRED")
+      }
+      const bearer = await adminBearer()
+      const response = await fetch(START_PATH, {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "diagnose_registry_coverage_runtime" }),
+      })
+      const payload = await response.json() as
+        RegistryCoverageDiagnosticPayload
+      if (!response.ok || payload.success !== true ||
+          !validRegistryCoverageDiagnostic(payload.registryCoverageDiagnostic)) {
+        throw new Error(payload.error ||
+          "REGISTRY_COVERAGE_DIAGNOSTIC_REJECTED")
+      }
+      setRegistryCoverageDiagnostic(payload.registryCoverageDiagnostic)
+    } catch (cause) {
+      setError(cause instanceof Error
+        ? cause.message
+        : "REGISTRY_COVERAGE_DIAGNOSTIC_REJECTED")
+    } finally {
+      setDiagnosingRegistryCoverage(false)
+    }
+  }
+
   async function begin() {
     setLoading(true)
     setError("")
@@ -1292,7 +1399,8 @@ export default function EbaySellerOAuthReauthPage() {
             className="mt-4 rounded-2xl border border-emerald-300/50 px-5 py-2 text-sm font-black text-emerald-200 disabled:opacity-40"
             type="button"
             disabled={matchingCredentials || diagnosing || loading ||
-              certifyingInstalledRuntime || diagnosingInventoryConsumer}
+              certifyingInstalledRuntime || diagnosingInventoryConsumer ||
+              diagnosingRegistryCoverage}
             onClick={compareRuntimeCredentials}
           >
             {matchingCredentials
@@ -1326,7 +1434,8 @@ export default function EbaySellerOAuthReauthPage() {
             className="mt-4 rounded-2xl border border-violet-300/50 px-5 py-2 text-sm font-black text-violet-200 disabled:opacity-40"
             type="button"
             disabled={certifyingInstalledRuntime || matchingCredentials ||
-              diagnosing || diagnosingInventoryConsumer || loading ||
+              diagnosing || diagnosingInventoryConsumer || diagnosingRegistryCoverage ||
+              loading ||
               !runtimeCredentialMatchAllowsStart(credentialMatch)}
             onClick={certifyInstalledRuntime}
           >
@@ -1370,7 +1479,8 @@ export default function EbaySellerOAuthReauthPage() {
             className="mt-4 rounded-2xl border border-fuchsia-300/50 px-5 py-2 text-sm font-black text-fuchsia-200 disabled:opacity-40"
             type="button"
             disabled={diagnosingInventoryConsumer || certifyingInstalledRuntime ||
-              matchingCredentials || diagnosing || loading ||
+              matchingCredentials || diagnosing || diagnosingRegistryCoverage ||
+              loading ||
               !runtimeCredentialMatchAllowsStart(credentialMatch)}
             onClick={diagnoseInventoryConsumer}
           >
@@ -1452,6 +1562,68 @@ export default function EbaySellerOAuthReauthPage() {
           ) : null}
         </section>
 
+        <section className="rounded-3xl border border-orange-300/25 bg-orange-300/[0.06] p-6">
+          <h2 className="font-black">Registry coverage runtime</h2>
+          <p className="mt-3 text-sm leading-6 text-white/70">
+            Ejecuta una comprobación protegida y de solo lectura contra la source de cobertura
+            Registry y la enumeración Trading viva para medir partición y brechas. No devuelve
+            tokens, URLs, headers ni filas brutas.
+          </p>
+          <button
+            className="mt-4 rounded-2xl border border-orange-300/50 px-5 py-2 text-sm font-black text-orange-200 disabled:opacity-40"
+            type="button"
+            disabled={diagnosingRegistryCoverage || certifyingInstalledRuntime ||
+              matchingCredentials || diagnosing || diagnosingInventoryConsumer ||
+              loading || !runtimeCredentialMatchAllowsStart(credentialMatch)}
+            onClick={diagnoseRegistryCoverageRuntime}
+          >
+            Diagnosticar cobertura Registry
+          </button>
+          {registryCoverageDiagnostic ? (
+            <div className="mt-5 space-y-2 text-xs text-white/75">
+              <dl className="grid gap-2 text-xs text-white/75 sm:grid-cols-2">
+                {[
+                  ["Runtime config",
+                    registryCoverageDiagnostic.REGISTRY_RUNTIME_CONFIG],
+                  ["Supabase URL present",
+                    registryCoverageDiagnostic.SUPABASE_URL_PRESENT],
+                  ["Supabase service role present",
+                    registryCoverageDiagnostic.SUPABASE_SERVICE_ROLE_PRESENT],
+                  ["Registry source status",
+                    registryCoverageDiagnostic.REGISTRY_SOURCE_RUNTIME_STATUS],
+                  ["Registry record count",
+                    registryCoverageDiagnostic.REGISTRY_RECORD_COUNT],
+                  ["Live enumeration status",
+                    registryCoverageDiagnostic.LIVE_ENUMERATION_RUNTIME_STATUS],
+                  ["Live eBay listing count",
+                    registryCoverageDiagnostic.LIVE_EBAY_LISTING_COUNT],
+                  ["Registry matched",
+                    registryCoverageDiagnostic.REGISTRY_MATCHED_COUNT],
+                  ["Registry missing",
+                    registryCoverageDiagnostic.REGISTRY_MISSING_COUNT],
+                  ["Registry orphaned",
+                    registryCoverageDiagnostic.REGISTRY_ORPHANED_COUNT],
+                  ["Registry ambiguous",
+                    registryCoverageDiagnostic.REGISTRY_AMBIGUOUS_COUNT],
+                  ["Registry coverage %",
+                    registryCoverageDiagnostic.REGISTRY_COVERAGE_PERCENT],
+                  ["Live partition valid",
+                    registryCoverageDiagnostic.LIVE_PARTITION_VALID],
+                  ["Registry partition valid",
+                    registryCoverageDiagnostic.REGISTRY_PARTITION_VALID],
+                  ["Manual listing runtime autodiscovery",
+                    registryCoverageDiagnostic.MANUAL_LISTING_RUNTIME_AUTODISCOVERY],
+                ].map(([label, value]) => (
+                  <div className="rounded-lg bg-black/20 p-3" key={String(label)}>
+                    <dt className="break-all font-bold text-white/50">{label}</dt>
+                    <dd className="mt-1 break-all">{String(value)}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ) : null}
+        </section>
+
         <section className="rounded-3xl border border-cyan-300/25 bg-cyan-300/[0.06] p-6">
           <h2 className="font-black">Preflight no interactivo</h2>
           <p className="mt-3 text-sm leading-6 text-white/70">
@@ -1464,6 +1636,7 @@ export default function EbaySellerOAuthReauthPage() {
             type="button"
             disabled={diagnosing || loading || matchingCredentials ||
               certifyingInstalledRuntime || diagnosingInventoryConsumer ||
+              diagnosingRegistryCoverage ||
               !runtimeCredentialMatchAllowsStart(credentialMatch)}
             onClick={diagnose}
           >
@@ -1516,6 +1689,7 @@ export default function EbaySellerOAuthReauthPage() {
           type="button"
           disabled={!confirmed || loading || diagnosing || matchingCredentials ||
             certifyingInstalledRuntime || diagnosingInventoryConsumer ||
+            diagnosingRegistryCoverage ||
             !callbackUrl ||
             !runtimeCredentialMatchAllowsStart(credentialMatch) ||
             !diagnosisAllowsStart(diagnosis)}
