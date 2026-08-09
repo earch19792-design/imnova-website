@@ -1406,6 +1406,9 @@ export default function EbaySellerOAuthReauthPage() {
                       <div>Domains: {variant.errorMetadata.domains.join(", ") || "NONE"}</div>
                       <div>Categories: {variant.errorMetadata.categories.join(", ") || "NONE"}</div>
                       <div>Parameter names: {variant.errorMetadata.parameterNames.join(", ") || "NONE"}</div>
+                      <div>25709 field name: {variant.errorMetadata.ERROR_25709_FIELD_NAME}</div>
+                      <div>25709 message form: {variant.errorMetadata.ERROR_25709_MESSAGE_FORM}</div>
+                      <div>Field extracted: {variant.errorMetadata.FIELD_NAME_EXTRACTED_FROM_CERTIFIED_TEMPLATE}</div>
                     </dd>
                   </dl>
                 ))}
