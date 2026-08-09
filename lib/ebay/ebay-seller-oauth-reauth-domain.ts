@@ -51,6 +51,35 @@ export type EbaySellerOAuthReauthScopeEncoding =
   | "RFC3986_PERCENT20"
   | "FORM_URLENCODED_PLUS"
 
+const EXPECTED_PRODUCTION_APP_ID_UTF8_LENGTH = 40
+const EXPECTED_PRODUCTION_APP_ID_SHA256 =
+  "0b4ce6cd893c14bded86394680568cf3cbb632d897176467ffe3ba91b2670869"
+const EXPECTED_PRODUCTION_RUNAME_UTF8_LENGTH = 37
+const EXPECTED_PRODUCTION_RUNAME_SHA256 =
+  "a7a5c2d3b7c4449643153f5bc942406f1e9fb2982e45ff226f3818f492f40459"
+
+export type EbaySellerOAuthReauthCredentialFingerprintExpectation = {
+  utf8Length: number
+  sha256: string
+}
+
+export type EbaySellerOAuthReauthRuntimeCredentialMatch = {
+  RUNTIME_EBAY_CLIENT_ID_PRESENT: boolean
+  RUNTIME_EBAY_CLIENT_ID_LENGTH_MATCH: boolean
+  RUNTIME_EBAY_CLIENT_ID_SHA256_MATCH: boolean
+  RUNTIME_EBAY_RUNAME_PRESENT: boolean
+  RUNTIME_EBAY_RUNAME_LENGTH_MATCH: boolean
+  RUNTIME_EBAY_RUNAME_SHA256_MATCH: boolean
+  APP_ID_PORTAL_RUNTIME_MATCH: boolean
+  RUNAME_PORTAL_RUNTIME_MATCH: boolean
+  FINAL_BINDING_DIAGNOSIS:
+    | "BOTH_MATCH"
+    | "APP_ID_MATCH_RUNAME_MISMATCH"
+    | "APP_ID_MISMATCH_RUNAME_MATCH"
+    | "BOTH_MISMATCH"
+    | "RUNTIME_CONFIGURATION_MISSING"
+}
+
 const STATE_COOKIE_VERSION = 1
 const STATE_COOKIE_SALT = "IMNOVA_EBAY_SELLER_REAUTH_STATE_SALT_V1"
 const STATE_COOKIE_INFO = "IMNOVA_EBAY_SELLER_REAUTH_STATE_HMAC_V1"
@@ -137,6 +166,81 @@ function constantTimeEqual(left: string, right: string) {
   const rightBuffer = Buffer.from(right, "utf8")
   return leftBuffer.length === rightBuffer.length &&
     timingSafeEqual(leftBuffer, rightBuffer)
+}
+
+export function compareEbaySellerOAuthReauthCredentialFingerprint(
+  value: string,
+  expectation: EbaySellerOAuthReauthCredentialFingerprintExpectation,
+) {
+  if (!Number.isSafeInteger(expectation.utf8Length) ||
+      expectation.utf8Length < 1 || expectation.utf8Length > 512 ||
+      !/^[a-f0-9]{64}$/.test(expectation.sha256)) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_FINGERPRINT_CONTRACT_INVALID",
+    )
+  }
+  const present = Boolean(value)
+  const lengthMatch = present &&
+    Buffer.byteLength(value, "utf8") === expectation.utf8Length
+  let actualSha256 = present ? sha256(value) : ""
+  const sha256Match = present &&
+    constantTimeEqual(actualSha256, expectation.sha256)
+  actualSha256 = ""
+  return { present, lengthMatch, sha256Match }
+}
+
+export function compareEbaySellerOAuthReauthRuntimeCredentials(
+  configuration: Pick<EbaySellerOAuthReauthConfiguration, "clientId" | "runame">,
+  expectations: {
+    clientId: EbaySellerOAuthReauthCredentialFingerprintExpectation
+    runame: EbaySellerOAuthReauthCredentialFingerprintExpectation
+  },
+): EbaySellerOAuthReauthRuntimeCredentialMatch {
+  const clientId = compareEbaySellerOAuthReauthCredentialFingerprint(
+    configuration.clientId,
+    expectations.clientId,
+  )
+  const runame = compareEbaySellerOAuthReauthCredentialFingerprint(
+    configuration.runame,
+    expectations.runame,
+  )
+  const appMatches = clientId.lengthMatch && clientId.sha256Match
+  const runameMatches = runame.lengthMatch && runame.sha256Match
+  const finalBindingDiagnosis = !clientId.present || !runame.present
+    ? "RUNTIME_CONFIGURATION_MISSING" as const
+    : appMatches && runameMatches
+      ? "BOTH_MATCH" as const
+      : appMatches
+        ? "APP_ID_MATCH_RUNAME_MISMATCH" as const
+        : runameMatches
+          ? "APP_ID_MISMATCH_RUNAME_MATCH" as const
+          : "BOTH_MISMATCH" as const
+  return {
+    RUNTIME_EBAY_CLIENT_ID_PRESENT: clientId.present,
+    RUNTIME_EBAY_CLIENT_ID_LENGTH_MATCH: clientId.lengthMatch,
+    RUNTIME_EBAY_CLIENT_ID_SHA256_MATCH: clientId.sha256Match,
+    RUNTIME_EBAY_RUNAME_PRESENT: runame.present,
+    RUNTIME_EBAY_RUNAME_LENGTH_MATCH: runame.lengthMatch,
+    RUNTIME_EBAY_RUNAME_SHA256_MATCH: runame.sha256Match,
+    APP_ID_PORTAL_RUNTIME_MATCH: appMatches,
+    RUNAME_PORTAL_RUNTIME_MATCH: runameMatches,
+    FINAL_BINDING_DIAGNOSIS: finalBindingDiagnosis,
+  }
+}
+
+export function getEbaySellerOAuthReauthRuntimeCredentialMatch(
+  configuration: Pick<EbaySellerOAuthReauthConfiguration, "clientId" | "runame">,
+) {
+  return compareEbaySellerOAuthReauthRuntimeCredentials(configuration, {
+    clientId: {
+      utf8Length: EXPECTED_PRODUCTION_APP_ID_UTF8_LENGTH,
+      sha256: EXPECTED_PRODUCTION_APP_ID_SHA256,
+    },
+    runame: {
+      utf8Length: EXPECTED_PRODUCTION_RUNAME_UTF8_LENGTH,
+      sha256: EXPECTED_PRODUCTION_RUNAME_SHA256,
+    },
+  })
 }
 
 function exactScopeSet(scopes: string[]) {

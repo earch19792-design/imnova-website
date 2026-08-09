@@ -65,6 +65,60 @@ type DiagnosisPayload = {
   error?: string
 }
 
+type RuntimeCredentialMatch = {
+  RUNTIME_EBAY_CLIENT_ID_PRESENT?: boolean
+  RUNTIME_EBAY_CLIENT_ID_LENGTH_MATCH?: boolean
+  RUNTIME_EBAY_CLIENT_ID_SHA256_MATCH?: boolean
+  RUNTIME_EBAY_RUNAME_PRESENT?: boolean
+  RUNTIME_EBAY_RUNAME_LENGTH_MATCH?: boolean
+  RUNTIME_EBAY_RUNAME_SHA256_MATCH?: boolean
+  APP_ID_PORTAL_RUNTIME_MATCH?: boolean
+  RUNAME_PORTAL_RUNTIME_MATCH?: boolean
+  FINAL_BINDING_DIAGNOSIS?:
+    | "BOTH_MATCH"
+    | "APP_ID_MATCH_RUNAME_MISMATCH"
+    | "APP_ID_MISMATCH_RUNAME_MATCH"
+    | "BOTH_MISMATCH"
+    | "RUNTIME_CONFIGURATION_MISSING"
+}
+
+type RuntimeCredentialMatchPayload = {
+  success?: boolean
+  credentialMatch?: unknown
+  error?: string
+}
+
+const RUNTIME_CREDENTIAL_MATCH_KEYS = [
+  "RUNTIME_EBAY_CLIENT_ID_PRESENT",
+  "RUNTIME_EBAY_CLIENT_ID_LENGTH_MATCH",
+  "RUNTIME_EBAY_CLIENT_ID_SHA256_MATCH",
+  "RUNTIME_EBAY_RUNAME_PRESENT",
+  "RUNTIME_EBAY_RUNAME_LENGTH_MATCH",
+  "RUNTIME_EBAY_RUNAME_SHA256_MATCH",
+  "APP_ID_PORTAL_RUNTIME_MATCH",
+  "RUNAME_PORTAL_RUNTIME_MATCH",
+  "FINAL_BINDING_DIAGNOSIS",
+] as const
+
+function validRuntimeCredentialMatch(
+  value: unknown,
+): value is RuntimeCredentialMatch {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).sort().join(",") !==
+      [...RUNTIME_CREDENTIAL_MATCH_KEYS].sort().join(",")) return false
+  if (RUNTIME_CREDENTIAL_MATCH_KEYS.slice(0, -1).some(
+    (key) => typeof record[key] !== "boolean",
+  )) return false
+  return [
+    "BOTH_MATCH",
+    "APP_ID_MATCH_RUNAME_MISMATCH",
+    "APP_ID_MISMATCH_RUNAME_MATCH",
+    "BOTH_MISMATCH",
+    "RUNTIME_CONFIGURATION_MISSING",
+  ].includes(String(record.FINAL_BINDING_DIAGNOSIS))
+}
+
 function validAuthorizationUrl(value: string) {
   try {
     const url = new URL(value)
@@ -97,6 +151,9 @@ export default function EbaySellerOAuthReauthPage() {
   const [loading, setLoading] = useState(false)
   const [diagnosing, setDiagnosing] = useState(false)
   const [diagnosis, setDiagnosis] = useState<Diagnosis | null>(null)
+  const [matchingCredentials, setMatchingCredentials] = useState(false)
+  const [credentialMatch, setCredentialMatch] =
+    useState<RuntimeCredentialMatch | null>(null)
   const [error, setError] = useState("")
 
   useEffect(() => {
@@ -134,6 +191,37 @@ export default function EbaySellerOAuthReauthPage() {
       setError(cause instanceof Error ? cause.message : "OAUTH_DIAGNOSTIC_REJECTED")
     } finally {
       setDiagnosing(false)
+    }
+  }
+
+  async function compareRuntimeCredentials() {
+    setMatchingCredentials(true)
+    setCredentialMatch(null)
+    setError("")
+    try {
+      const bearer = await adminBearer()
+      const response = await fetch(START_PATH, {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "compare_runtime_credentials" }),
+      })
+      const payload = await response.json() as RuntimeCredentialMatchPayload
+      if (!response.ok || payload.success !== true ||
+          !validRuntimeCredentialMatch(payload.credentialMatch)) {
+        throw new Error(payload.error || "RUNTIME_CREDENTIAL_MATCH_REJECTED")
+      }
+      setCredentialMatch(payload.credentialMatch)
+    } catch (cause) {
+      setError(cause instanceof Error
+        ? cause.message
+        : "RUNTIME_CREDENTIAL_MATCH_REJECTED")
+    } finally {
+      setMatchingCredentials(false)
     }
   }
 
@@ -223,6 +311,39 @@ export default function EbaySellerOAuthReauthPage() {
           <strong>Entrega no recuperable:</strong> el estado se reclama atómicamente antes del
           exchange. Si la respuesta se pierde, debe iniciar una ceremonia completamente nueva.
           Reload o Back nunca rearman el estado.
+        </section>
+
+        <section className="rounded-3xl border border-emerald-300/25 bg-emerald-300/[0.06] p-6">
+          <h2 className="font-black">Portal Production ↔ runtime protegido</h2>
+          <p className="mt-3 text-sm leading-6 text-white/70">
+            Compara localmente SHA-256 completo y longitud UTF-8 contra la evidencia humana
+            certificada. No devuelve fingerprints ni valores y no contacta eBay, Supabase ledger
+            o Vercel.
+          </p>
+          <button
+            className="mt-4 rounded-2xl border border-emerald-300/50 px-5 py-2 text-sm font-black text-emerald-200 disabled:opacity-40"
+            type="button"
+            disabled={matchingCredentials || diagnosing || loading}
+            onClick={compareRuntimeCredentials}
+          >
+            {matchingCredentials
+              ? "Comparando…"
+              : "Comparar credenciales protegidas"}
+          </button>
+          {credentialMatch ? (
+            <dl className="mt-5 grid gap-2 text-xs text-white/75 sm:grid-cols-2">
+              {RUNTIME_CREDENTIAL_MATCH_KEYS.map((label) => (
+                <div className="rounded-lg bg-black/20 p-3" key={label}>
+                  <dt className="break-all font-bold text-white/50">{label}</dt>
+                  <dd className="mt-1 break-all">
+                    {typeof credentialMatch[label] === "boolean"
+                      ? credentialMatch[label] ? "YES" : "NO"
+                      : String(credentialMatch[label] ?? "UNPROVEN")}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
         </section>
 
         <section className="rounded-3xl border border-cyan-300/25 bg-cyan-300/[0.06] p-6">

@@ -21,6 +21,7 @@ import {
   EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS,
   EbaySellerOAuthReauthError,
   getEbaySellerOAuthReauthConfiguration,
+  getEbaySellerOAuthReauthRuntimeCredentialMatch,
   parseEbaySellerOAuthReauthCallbackUrl,
   renderEbaySellerOAuthReauthFailureHtml,
   renderEbaySellerOAuthReauthSuccessHtml,
@@ -95,11 +96,6 @@ export async function POST(request: NextRequest) {
     const configuration = getEbaySellerOAuthReauthConfiguration({
       requestHost: request.nextUrl.host,
     })
-    if (!configuration.ready) {
-      throw new EbaySellerOAuthReauthError(
-        configuration.reason ?? "EBAY_SELLER_OAUTH_REAUTH_CONFIGURATION_INVALID",
-      )
-    }
     let payload: unknown
     try {
       payload = await request.json()
@@ -115,6 +111,35 @@ export async function POST(request: NextRequest) {
       )
     }
     const action = (payload as { action?: unknown }).action
+    if (action === "compare_runtime_credentials") {
+      if ([
+        "EBAY_SELLER_OAUTH_REAUTH_PREVIEW_REQUIRED",
+        "EBAY_SELLER_OAUTH_REAUTH_BRANCH_DENIED",
+        "EBAY_SELLER_OAUTH_REAUTH_HOST_DENIED",
+      ].includes(configuration.reason ?? "")) {
+        throw new EbaySellerOAuthReauthError(
+          configuration.reason ?? "EBAY_SELLER_OAUTH_REAUTH_RUNTIME_DENIED",
+        )
+      }
+      return NextResponse.json({
+        success: true,
+        credentialMatch:
+          getEbaySellerOAuthReauthRuntimeCredentialMatch(configuration),
+      }, {
+        status: 200,
+        headers: {
+          "Cache-Control": "private, no-store, max-age=0",
+          Pragma: "no-cache",
+          "Referrer-Policy": "no-referrer",
+          "X-Content-Type-Options": "nosniff",
+        },
+      })
+    }
+    if (!configuration.ready) {
+      throw new EbaySellerOAuthReauthError(
+        configuration.reason ?? "EBAY_SELLER_OAUTH_REAUTH_CONFIGURATION_INVALID",
+      )
+    }
     if (action === "diagnose") {
       const diagnosis = await diagnoseEbaySellerOAuthReauthAuthorization({
         configuration,
