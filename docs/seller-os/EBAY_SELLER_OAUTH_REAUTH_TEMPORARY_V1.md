@@ -86,6 +86,19 @@ mutation, or marketplace write. Its JSON contains only fixed classifications,
 sanitized call evidence, and zero-valued safety counters; neither refresh nor
 access token can enter the response.
 
+The same page also exposes the separate `diagnose_inventory_consumer` action.
+It retains every Preview/branch/host/same-origin/human-admin/fixed-credential
+gate, reads only the installed generic environment token, and executes at most
+three sequential calls: refresh with exactly base + Inventory readonly,
+strict bound `GetUser`, then the Commercial Monitor's exact
+`GET /sell/inventory/v1/inventory_item?limit=50&offset=0` request. It never
+calls offers, Analytics, Orders, Vault, ledger, callback, consent, or a writer.
+The response contains only HTTP/content-type classifications, sorted safe
+top-level property names, array/total/continuation presence and counts, a fixed
+catalog-state enum, sanitized call/budget counters, and zero safety counters.
+Raw JSON, SKUs, product data, URLs/query strings, credentials, headers, tokens,
+cookies, and provider descriptions are discarded and never returned.
+
 ## Global one-time claim
 
 The browser transaction uses a five-minute signed, Secure, HttpOnly,

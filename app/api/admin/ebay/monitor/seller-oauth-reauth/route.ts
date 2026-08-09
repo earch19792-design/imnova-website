@@ -5,6 +5,9 @@ export const maxDuration = 30
 import { NextRequest, NextResponse } from "next/server"
 
 import {
+  diagnoseInstalledEbayInventoryConsumer,
+} from "@/lib/ebay/ebay-commercial-monitor-live-readonly"
+import {
   certifyInstalledEbaySellerOAuthRuntime,
   claimAndVerifyEbaySellerOAuthReauth,
   diagnoseEbaySellerOAuthReauthAuthorization,
@@ -144,7 +147,8 @@ export async function POST(request: NextRequest) {
       )
     }
     if (action !== "diagnose" && action !== "start" &&
-        action !== "certify_installed_runtime") {
+        action !== "certify_installed_runtime" &&
+        action !== "diagnose_inventory_consumer") {
       throw new EbaySellerOAuthReauthError(
         "EBAY_SELLER_OAUTH_REAUTH_ACTION_INVALID",
       )
@@ -154,6 +158,23 @@ export async function POST(request: NextRequest) {
     assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
       runtimeCredentialMatch,
     )
+    if (action === "diagnose_inventory_consumer") {
+      const inventoryConsumer = await diagnoseInstalledEbayInventoryConsumer({
+        startedAt: requestStartedAt,
+      })
+      return NextResponse.json({
+        success: true,
+        inventoryConsumer,
+      }, {
+        status: 200,
+        headers: {
+          "Cache-Control": "private, no-store, max-age=0",
+          Pragma: "no-cache",
+          "Referrer-Policy": "no-referrer",
+          "X-Content-Type-Options": "nosniff",
+        },
+      })
+    }
     if (action === "certify_installed_runtime") {
       const certification = await certifyInstalledEbaySellerOAuthRuntime({
         configuration,

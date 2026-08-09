@@ -2774,7 +2774,8 @@ function discoveryCoverage(
     live.discovery.inventoryRepresentation.status === "COMPLETE" &&
     inventoryReconciliationStatus === "COMPLETE" &&
     registryCoverageStatus === "COMPLETE" &&
-    live.analytics.analyticsCoverageStatus === "COMPLETE"
+    live.analytics.analyticsCoverageStatus === "COMPLETE" &&
+    knownGapCodes.length === 0
   return createDiscoveryCoverage({
     universalCoverageProven: accountCoverageComplete,
     sourceCoverageAvailable: liveAvailable || (

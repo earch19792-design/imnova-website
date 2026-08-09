@@ -134,6 +134,54 @@ type InstalledRuntimeCertificationPayload = {
   error?: string
 }
 
+type InventoryConsumerDiagnostic = {
+  credentialSource: "GENERIC_ENV_TOKEN_ONLY"
+  genericEnvironmentTokenFallback: false
+  inventoryItemsHttpStatus: number | null
+  inventoryItemsAuthorized: boolean
+  inventoryItemsContentType: "application/json" | "OTHER" | null
+  inventoryItemsTopLevelKeys: string[]
+  inventoryItemsHasArray: boolean
+  inventoryItemsArrayCount: number | null
+  inventoryItemsTotalPresent: boolean
+  inventoryItemsTotal: number | null
+  inventoryItemsNextPresent: boolean
+  inventoryItemsResponseShape:
+    | "INVENTORY_ITEMS_ARRAY"
+    | "CERTIFIED_EMPTY_OMITTED_ARRAY"
+    | "INVALID"
+    | "UNPROVEN"
+  inventoryCatalogState: "EMPTY" | "NON_EMPTY" | "UNPROVEN"
+  inventoryItemsSafeErrorCategory: string
+  execution: {
+    globalCallsBeforeInventory: number | null
+    globalTimeRemainingBeforeInventoryMs: number | null
+    inventoryRefreshExecuted: boolean
+    inventoryGetUserExecuted: boolean
+    inventoryGetItemsExecuted: boolean
+    inventoryFailureFromBudget: boolean
+    externalCalls: number
+    maximumExternalCalls: 3
+  }
+  calls: Array<{
+    operation: string
+    method: "GET" | "POST"
+    endpoint: string
+    status: "SUCCEEDED" | "FAILED"
+    httpStatus: number | null
+    observedAt: string
+    marketplaceMutation: false
+    persisted: false
+  }>
+  safety: Record<string, false | 0>
+}
+
+type InventoryConsumerDiagnosticPayload = {
+  success?: boolean
+  inventoryConsumer?: unknown
+  error?: string
+}
+
 const RUNTIME_CREDENTIAL_MATCH_KEYS = [
   "RUNTIME_EBAY_CLIENT_ID_PRESENT",
   "RUNTIME_EBAY_CLIENT_ID_LENGTH_MATCH",
@@ -201,6 +249,49 @@ const INSTALLED_SAFETY_KEYS = [
   "businessDataMutations",
   "productCaseMutations",
   "registryMutations",
+  "vaultMutations",
+  "vercelMutations",
+] as const
+const INVENTORY_CONSUMER_KEYS = [
+  "calls",
+  "credentialSource",
+  "execution",
+  "genericEnvironmentTokenFallback",
+  "inventoryCatalogState",
+  "inventoryItemsArrayCount",
+  "inventoryItemsAuthorized",
+  "inventoryItemsContentType",
+  "inventoryItemsHasArray",
+  "inventoryItemsHttpStatus",
+  "inventoryItemsNextPresent",
+  "inventoryItemsResponseShape",
+  "inventoryItemsSafeErrorCategory",
+  "inventoryItemsTopLevelKeys",
+  "inventoryItemsTotal",
+  "inventoryItemsTotalPresent",
+  "safety",
+] as const
+const INVENTORY_CONSUMER_EXECUTION_KEYS = [
+  "externalCalls",
+  "globalCallsBeforeInventory",
+  "globalTimeRemainingBeforeInventoryMs",
+  "inventoryFailureFromBudget",
+  "inventoryGetItemsExecuted",
+  "inventoryGetUserExecuted",
+  "inventoryRefreshExecuted",
+  "maximumExternalCalls",
+] as const
+const INVENTORY_CONSUMER_SAFETY_KEYS = [
+  "authorizationHeaderReturned",
+  "businessDataMutations",
+  "ebayWrites",
+  "inventoryWrites",
+  "ledgerMutations",
+  "productCaseMutations",
+  "rawPayloadReturned",
+  "registryMutations",
+  "tokenPersisted",
+  "tokenReturned",
   "vaultMutations",
   "vercelMutations",
 ] as const
@@ -295,6 +386,121 @@ function validInstalledRuntimeCertification(
       typeof call.httpStatus === "number" &&
       call.marketplaceMutation === false && call.persisted === false
   })
+}
+
+function validInventoryConsumerDiagnostic(
+  value: unknown,
+): value is InventoryConsumerDiagnostic {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).sort().join(",") !==
+      [...INVENTORY_CONSUMER_KEYS].sort().join(",") ||
+      record.credentialSource !== "GENERIC_ENV_TOKEN_ONLY" ||
+      record.genericEnvironmentTokenFallback !== false ||
+      typeof record.inventoryItemsAuthorized !== "boolean" ||
+      !["application/json", "OTHER", null].includes(
+        record.inventoryItemsContentType as never,
+      ) ||
+      !["INVENTORY_ITEMS_ARRAY", "CERTIFIED_EMPTY_OMITTED_ARRAY",
+        "INVALID", "UNPROVEN"].includes(
+        String(record.inventoryItemsResponseShape),
+      ) ||
+      !["EMPTY", "NON_EMPTY", "UNPROVEN"].includes(
+        String(record.inventoryCatalogState),
+      ) ||
+      !["NONE", "INVALID_SCOPE", "INVALID_GRANT", "INVALID_CLIENT",
+        "INVALID_REQUEST", "UNSUPPORTED_GRANT_TYPE",
+        "OAUTH_ERROR_UNCLASSIFIED", "HTTP_401", "HTTP_403", "HTTP_4XX",
+        "HTTP_5XX", "RATE_LIMITED", "TIMEOUT", "NETWORK",
+        "BUDGET_EXHAUSTED", "ACCOUNT_BINDING_FAILED",
+        "RESPONSE_FORMAT_CHANGED", "CONFIGURATION_MISSING",
+        "UNCLASSIFIED"].includes(String(
+        record.inventoryItemsSafeErrorCategory,
+      ))) return false
+  const nullableInteger = (candidate: unknown) => candidate === null ||
+    (typeof candidate === "number" && Number.isSafeInteger(candidate) &&
+      candidate >= 0)
+  if (!nullableInteger(record.inventoryItemsHttpStatus) ||
+      (typeof record.inventoryItemsHttpStatus === "number" &&
+        (record.inventoryItemsHttpStatus < 100 ||
+          record.inventoryItemsHttpStatus > 599)) ||
+      !nullableInteger(record.inventoryItemsArrayCount) ||
+      !nullableInteger(record.inventoryItemsTotal) ||
+      typeof record.inventoryItemsHasArray !== "boolean" ||
+      typeof record.inventoryItemsTotalPresent !== "boolean" ||
+      typeof record.inventoryItemsNextPresent !== "boolean" ||
+      !Array.isArray(record.inventoryItemsTopLevelKeys) ||
+      record.inventoryItemsTopLevelKeys.length > 16 ||
+      record.inventoryItemsTopLevelKeys.some((key) =>
+        typeof key !== "string" || !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key)) ||
+      [...record.inventoryItemsTopLevelKeys].sort().join(",") !==
+        record.inventoryItemsTopLevelKeys.join(",")) return false
+
+  if (!record.execution || typeof record.execution !== "object" ||
+      Array.isArray(record.execution)) return false
+  const execution = record.execution as Record<string, unknown>
+  if (Object.keys(execution).sort().join(",") !==
+      [...INVENTORY_CONSUMER_EXECUTION_KEYS].sort().join(",") ||
+      execution.maximumExternalCalls !== 3 ||
+      !nullableInteger(execution.externalCalls) ||
+      Number(execution.externalCalls) > 3 ||
+      !nullableInteger(execution.globalCallsBeforeInventory) ||
+      !nullableInteger(execution.globalTimeRemainingBeforeInventoryMs) ||
+      ["inventoryFailureFromBudget", "inventoryGetItemsExecuted",
+        "inventoryGetUserExecuted", "inventoryRefreshExecuted"].some(
+        (key) => typeof execution[key] !== "boolean",
+      )) return false
+
+  if (!Array.isArray(record.calls) || record.calls.length > 3 ||
+      record.calls.length !== execution.externalCalls) return false
+  const operations = new Set([
+    "OAUTH_REFRESH_INVENTORY",
+    "TRADING_GET_USER",
+    "INVENTORY_GET_ITEMS",
+  ])
+  if (!record.calls.every((candidate) => {
+    if (!candidate || typeof candidate !== "object" ||
+        Array.isArray(candidate)) return false
+    const call = candidate as Record<string, unknown>
+    return Object.keys(call).sort().join(",") === [
+      "endpoint", "httpStatus", "marketplaceMutation", "method",
+      "observedAt", "operation", "persisted", "status",
+    ].sort().join(",") && operations.has(String(call.operation)) &&
+      (call.method === "GET" || call.method === "POST") &&
+      typeof call.endpoint === "string" &&
+      String(call.endpoint).startsWith("/") &&
+      (call.status === "SUCCEEDED" || call.status === "FAILED") &&
+      nullableInteger(call.httpStatus) &&
+      typeof call.observedAt === "string" &&
+      Number.isFinite(Date.parse(call.observedAt)) &&
+      call.marketplaceMutation === false && call.persisted === false
+  })) return false
+
+  if (!record.safety || typeof record.safety !== "object" ||
+      Array.isArray(record.safety)) return false
+  const safety = record.safety as Record<string, unknown>
+  if (Object.keys(safety).sort().join(",") !==
+      [...INVENTORY_CONSUMER_SAFETY_KEYS].sort().join(",") ||
+      INVENTORY_CONSUMER_SAFETY_KEYS.some((key) =>
+        safety[key] !== (key.endsWith("Mutations") || key.endsWith("Writes") ||
+            key === "ledgerMutations" ? 0 : false))) return false
+
+  if (record.inventoryCatalogState === "EMPTY") {
+    return record.inventoryItemsAuthorized === true &&
+      record.inventoryItemsContentType === "application/json" &&
+      record.inventoryItemsSafeErrorCategory === "NONE" &&
+      record.inventoryItemsTotalPresent === true &&
+      record.inventoryItemsTotal === 0 &&
+      record.inventoryItemsNextPresent === false &&
+      (record.inventoryItemsResponseShape === "INVENTORY_ITEMS_ARRAY"
+        ? record.inventoryItemsHasArray === true &&
+          record.inventoryItemsArrayCount === 0
+        : record.inventoryItemsResponseShape ===
+            "CERTIFIED_EMPTY_OMITTED_ARRAY" &&
+          record.inventoryItemsHasArray === false &&
+          record.inventoryItemsArrayCount === null)
+  }
+  return true
 }
 
 function validPreflightState(value: unknown): value is PreflightState {
@@ -425,6 +631,10 @@ export default function EbaySellerOAuthReauthPage() {
     useState(false)
   const [installedRuntimeCertification, setInstalledRuntimeCertification] =
     useState<InstalledRuntimeCertification | null>(null)
+  const [diagnosingInventoryConsumer, setDiagnosingInventoryConsumer] =
+    useState(false)
+  const [inventoryConsumerDiagnostic, setInventoryConsumerDiagnostic] =
+    useState<InventoryConsumerDiagnostic | null>(null)
   const [error, setError] = useState("")
 
   useEffect(() => {
@@ -474,6 +684,7 @@ export default function EbaySellerOAuthReauthPage() {
     setCredentialMatch(null)
     setDiagnosis(null)
     setInstalledRuntimeCertification(null)
+    setInventoryConsumerDiagnostic(null)
     setError("")
     try {
       const bearer = await adminBearer()
@@ -535,6 +746,42 @@ export default function EbaySellerOAuthReauthPage() {
         : "INSTALLED_RUNTIME_CERTIFICATION_REJECTED")
     } finally {
       setCertifyingInstalledRuntime(false)
+    }
+  }
+
+  async function diagnoseInventoryConsumer() {
+    setDiagnosingInventoryConsumer(true)
+    setInventoryConsumerDiagnostic(null)
+    setError("")
+    try {
+      if (!runtimeCredentialMatchAllowsStart(credentialMatch)) {
+        throw new Error("RUNTIME_CREDENTIAL_MATCH_REQUIRED")
+      }
+      const bearer = await adminBearer()
+      const response = await fetch(START_PATH, {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "diagnose_inventory_consumer" }),
+      })
+      const payload = await response.json() as
+        InventoryConsumerDiagnosticPayload
+      if (!response.ok || payload.success !== true ||
+          !validInventoryConsumerDiagnostic(payload.inventoryConsumer)) {
+        throw new Error(payload.error ||
+          "INVENTORY_CONSUMER_DIAGNOSTIC_REJECTED")
+      }
+      setInventoryConsumerDiagnostic(payload.inventoryConsumer)
+    } catch (cause) {
+      setError(cause instanceof Error
+        ? cause.message
+        : "INVENTORY_CONSUMER_DIAGNOSTIC_REJECTED")
+    } finally {
+      setDiagnosingInventoryConsumer(false)
     }
   }
 
@@ -640,7 +887,7 @@ export default function EbaySellerOAuthReauthPage() {
             className="mt-4 rounded-2xl border border-emerald-300/50 px-5 py-2 text-sm font-black text-emerald-200 disabled:opacity-40"
             type="button"
             disabled={matchingCredentials || diagnosing || loading ||
-              certifyingInstalledRuntime}
+              certifyingInstalledRuntime || diagnosingInventoryConsumer}
             onClick={compareRuntimeCredentials}
           >
             {matchingCredentials
@@ -674,7 +921,7 @@ export default function EbaySellerOAuthReauthPage() {
             className="mt-4 rounded-2xl border border-violet-300/50 px-5 py-2 text-sm font-black text-violet-200 disabled:opacity-40"
             type="button"
             disabled={certifyingInstalledRuntime || matchingCredentials ||
-              diagnosing || loading ||
+              diagnosing || diagnosingInventoryConsumer || loading ||
               !runtimeCredentialMatchAllowsStart(credentialMatch)}
             onClick={certifyInstalledRuntime}
           >
@@ -703,6 +950,56 @@ export default function EbaySellerOAuthReauthPage() {
           ) : null}
         </section>
 
+        <section className="rounded-3xl border border-fuchsia-300/25 bg-fuchsia-300/[0.06] p-6">
+          <h2 className="font-black">Inventory consumer exacto · sólo metadata</h2>
+          <p className="mt-3 text-sm leading-6 text-white/70">
+            Usa únicamente el token genérico instalado, refresca base + Inventory readonly,
+            verifica GetUser y ejecuta exactamente inventory_item?limit=50&amp;offset=0. No
+            llama offers, no devuelve SKUs, payloads, headers ni tokens y no crea ledger/cookie.
+          </p>
+          <button
+            className="mt-4 rounded-2xl border border-fuchsia-300/50 px-5 py-2 text-sm font-black text-fuchsia-200 disabled:opacity-40"
+            type="button"
+            disabled={diagnosingInventoryConsumer || certifyingInstalledRuntime ||
+              matchingCredentials || diagnosing || loading ||
+              !runtimeCredentialMatchAllowsStart(credentialMatch)}
+            onClick={diagnoseInventoryConsumer}
+          >
+            {diagnosingInventoryConsumer
+              ? "Inspeccionando forma…"
+              : "Diagnosticar consumer Inventory exacto"}
+          </button>
+          {inventoryConsumerDiagnostic ? (
+            <dl className="mt-5 grid gap-2 text-xs text-white/75 sm:grid-cols-2">
+              {[
+                ["HTTP status", inventoryConsumerDiagnostic.inventoryItemsHttpStatus ?? "NONE"],
+                ["Authorized", inventoryConsumerDiagnostic.inventoryItemsAuthorized ? "YES" : "NO"],
+                ["Content type", inventoryConsumerDiagnostic.inventoryItemsContentType ?? "NONE"],
+                ["Top-level keys", inventoryConsumerDiagnostic.inventoryItemsTopLevelKeys.join(", ") || "NONE"],
+                ["Has array", inventoryConsumerDiagnostic.inventoryItemsHasArray ? "YES" : "NO"],
+                ["Array count", inventoryConsumerDiagnostic.inventoryItemsArrayCount ?? "NONE"],
+                ["Total present", inventoryConsumerDiagnostic.inventoryItemsTotalPresent ? "YES" : "NO"],
+                ["Total", inventoryConsumerDiagnostic.inventoryItemsTotal ?? "NONE"],
+                ["Next present", inventoryConsumerDiagnostic.inventoryItemsNextPresent ? "YES" : "NO"],
+                ["Response shape", inventoryConsumerDiagnostic.inventoryItemsResponseShape],
+                ["Catalog state", inventoryConsumerDiagnostic.inventoryCatalogState],
+                ["Safe error", inventoryConsumerDiagnostic.inventoryItemsSafeErrorCategory],
+                ["Calls before Inventory", inventoryConsumerDiagnostic.execution.globalCallsBeforeInventory ?? "NONE"],
+                ["Time remaining before Inventory (ms)", inventoryConsumerDiagnostic.execution.globalTimeRemainingBeforeInventoryMs ?? "NONE"],
+                ["Refresh / GetUser / Items", `${inventoryConsumerDiagnostic.execution.inventoryRefreshExecuted} / ${inventoryConsumerDiagnostic.execution.inventoryGetUserExecuted} / ${inventoryConsumerDiagnostic.execution.inventoryGetItemsExecuted}`],
+                ["Failure from budget", inventoryConsumerDiagnostic.execution.inventoryFailureFromBudget ? "YES" : "NO"],
+                ["External calls", inventoryConsumerDiagnostic.execution.externalCalls],
+                ["Token / payload returned", "false / false"],
+              ].map(([label, value]) => (
+                <div className="rounded-lg bg-black/20 p-3" key={String(label)}>
+                  <dt className="font-bold text-white/50">{label}</dt>
+                  <dd className="mt-1 break-all">{String(value)}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+        </section>
+
         <section className="rounded-3xl border border-cyan-300/25 bg-cyan-300/[0.06] p-6">
           <h2 className="font-black">Preflight no interactivo</h2>
           <p className="mt-3 text-sm leading-6 text-white/70">
@@ -714,7 +1011,7 @@ export default function EbaySellerOAuthReauthPage() {
             className="mt-4 rounded-2xl border border-cyan-300/50 px-5 py-2 text-sm font-black text-cyan-200 disabled:opacity-40"
             type="button"
             disabled={diagnosing || loading || matchingCredentials ||
-              certifyingInstalledRuntime ||
+              certifyingInstalledRuntime || diagnosingInventoryConsumer ||
               !runtimeCredentialMatchAllowsStart(credentialMatch)}
             onClick={diagnose}
           >
@@ -766,7 +1063,7 @@ export default function EbaySellerOAuthReauthPage() {
           className="rounded-2xl bg-cyan-300 px-6 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
           type="button"
           disabled={!confirmed || loading || diagnosing || matchingCredentials ||
-            certifyingInstalledRuntime ||
+            certifyingInstalledRuntime || diagnosingInventoryConsumer ||
             !callbackUrl ||
             !runtimeCredentialMatchAllowsStart(credentialMatch) ||
             !diagnosisAllowsStart(diagnosis)}

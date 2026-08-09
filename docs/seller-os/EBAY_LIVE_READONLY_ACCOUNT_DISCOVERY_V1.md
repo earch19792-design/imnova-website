@@ -116,6 +116,24 @@ Inventory read and an exact missing offer are projected as
 reader that could not be performed. Capability, source-read completeness and
 listing representation are separate dimensions.
 
+The `getInventoryItems` response follows eBay Inventory OpenAPI 1.18.5. Its
+`InventoryItems` schema has no required property, while `inventoryItems`, when
+present, is an array of one or more records. The canonical parser therefore
+supports both an explicit empty array and the narrowly certified omitted-array
+zero envelope. Omission is authoritative only when `total` is the JSON number
+`0`, optional `size` is absent or `0`, optional `limit` agrees with the exact
+request, `next`/`prev` are absent, and optional `href` resolves to the same
+Production path with the exact `limit=50&offset=0` query. `{}`, bare `size=0`,
+string/null/boolean totals, present non-array collections, unknown fields, and
+contradictory pagination remain format failures. A certified empty catalog
+skips all offer calls and completes the representation classification: each
+eligible live Trading identity is explicitly `NOT_REPRESENTED`, never
+`NOT_LIVE`, `SOURCE_UNAVAILABLE`, or inferred Inventory data.
+Non-empty pages keep the same fail-closed grammar: any present `size`, `limit`,
+`href`, `next`, or `prev` must agree with the exact current page and bounded
+continuation. Malformed or terminally contradictory metadata cannot be
+normalized to absence or certify an `AVAILABLE` Inventory read.
+
 Fresh `GetMyeBaySelling.ActiveList` is authoritative for current live
 existence. Its `liveEnumeration` dimension cannot be `COMPLETE` when a page
 fails, pagination metadata contradicts itself, the reported/parsed Item count

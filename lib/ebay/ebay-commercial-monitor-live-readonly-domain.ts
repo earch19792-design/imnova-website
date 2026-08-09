@@ -34,6 +34,27 @@ export type EbayMonitorReadonlyCallEvidence = {
   persisted: false
 }
 
+export type EbayInventoryItemsPageShape =
+  | "INVENTORY_ITEMS_ARRAY"
+  | "CERTIFIED_EMPTY_OMITTED_ARRAY"
+  | "INVALID"
+
+export type ParsedEbayInventoryItemsPage = {
+  accepted: boolean
+  inventoryItems: unknown[]
+  total: number | null
+  next: string | null
+  responseShape: EbayInventoryItemsPageShape
+  metadata: {
+    topLevelKeys: string[]
+    topLevelKeysSafe: boolean
+    hasArray: boolean
+    arrayCount: number | null
+    totalPresent: boolean
+    nextPresent: boolean
+  }
+}
+
 export type EbayLiveListing = {
   itemId: string
   sku: string | null
@@ -100,6 +121,16 @@ export type SafeLiveEbayOrder = {
 }
 
 const EBAY_PRODUCTION_ORIGIN = "https://api.ebay.com"
+const EBAY_INVENTORY_ITEMS_PATH = "/sell/inventory/v1/inventory_item"
+const EBAY_INVENTORY_ITEMS_RESPONSE_KEYS = new Set([
+  "href",
+  "inventoryItems",
+  "limit",
+  "next",
+  "prev",
+  "size",
+  "total",
+])
 const READONLY_REST_PATHS = new Map<EbayMonitorReadonlyOperation, {
   method: "GET" | "POST"
   path: string
@@ -181,6 +212,7 @@ export function assertEbayMonitorReadonlyRequest(input: {
   operation: EbayMonitorReadonlyOperation
   method: string
   url: string | URL
+  marketplaceIdHeader?: string | null
   tradingCallName?: string | null
   tradingHeaderCallName?: string | null
   tradingBody?: string | null
@@ -188,8 +220,30 @@ export function assertEbayMonitorReadonlyRequest(input: {
   const rule = READONLY_REST_PATHS.get(input.operation)
   const url = new URL(input.url)
   if (!rule || input.method !== rule.method ||
-      url.origin !== EBAY_PRODUCTION_ORIGIN || url.pathname !== rule.path) {
+      url.origin !== EBAY_PRODUCTION_ORIGIN || url.pathname !== rule.path ||
+      Boolean(url.username) || Boolean(url.password) || Boolean(url.hash)) {
     throw new Error("EBAY_MONITOR_BLOCKED_NON_READONLY_REQUEST")
+  }
+  if (input.operation === "INVENTORY_GET_ITEMS") {
+    if ([...url.searchParams.keys()].sort().join(",") !== "limit,offset" ||
+        url.searchParams.getAll("limit").length !== 1 ||
+        url.searchParams.get("limit") !== "50" ||
+        url.searchParams.getAll("offset").length !== 1 ||
+        !/^\d+$/.test(url.searchParams.get("offset") ?? "") ||
+        input.marketplaceIdHeader !== "EBAY_US") {
+      throw new Error("EBAY_MONITOR_BLOCKED_NON_READONLY_REQUEST")
+    }
+  }
+  if (input.operation === "INVENTORY_GET_OFFERS") {
+    const sku = url.searchParams.get("sku") ?? ""
+    if ([...url.searchParams.keys()].sort().join(",") !== "limit,sku" ||
+        url.searchParams.getAll("limit").length !== 1 ||
+        url.searchParams.get("limit") !== "100" ||
+        url.searchParams.getAll("sku").length !== 1 ||
+        !sku || sku.length > 120 ||
+        input.marketplaceIdHeader !== "EBAY_US") {
+      throw new Error("EBAY_MONITOR_BLOCKED_NON_READONLY_REQUEST")
+    }
   }
   const expectedTradingCall = input.operation === "TRADING_GET_USER"
     ? "GetUser"
@@ -249,6 +303,206 @@ export function assertEbayMonitorReadonlyRequest(input: {
     throw new Error("EBAY_MONITOR_BLOCKED_TRADING_OPERATION")
   }
   return true
+}
+
+function exactNonNegativeJsonInteger(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null
+}
+
+function safeInventoryTopLevelKeys(payload: Record<string, unknown>) {
+  const keys = Object.keys(payload).sort()
+  const safe = keys.length <= 16 && keys.every((key) =>
+    /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key))
+  return { keys: safe ? keys : [], safe }
+}
+
+function exactInventoryPageLink(
+  value: string,
+  expectedLimit: number,
+  expectedOffset: number,
+) {
+  if (!value || value.length > 2_000) return false
+  try {
+    const url = new URL(value, EBAY_PRODUCTION_ORIGIN)
+    return url.origin === EBAY_PRODUCTION_ORIGIN &&
+      url.pathname === EBAY_INVENTORY_ITEMS_PATH &&
+      !url.username && !url.password && !url.hash &&
+      [...url.searchParams.keys()].sort().join(",") === "limit,offset" &&
+      url.searchParams.getAll("limit").length === 1 &&
+      url.searchParams.get("limit") === String(expectedLimit) &&
+      url.searchParams.getAll("offset").length === 1 &&
+      url.searchParams.get("offset") === String(expectedOffset)
+  } catch {
+    return false
+  }
+}
+
+function exactOptionalInventoryHref(
+  value: unknown,
+  expectedLimit: number,
+  expectedOffset: number,
+) {
+  return typeof value === "undefined" ||
+    (typeof value === "string" && exactInventoryPageLink(
+      value,
+      expectedLimit,
+      expectedOffset,
+    ))
+}
+
+/**
+ * Parses the exact getInventoryItems page contract used by Commercial Monitor.
+ *
+ * eBay's OpenAPI InventoryItems schema does not require inventoryItems. An
+ * omitted collection is therefore accepted only when the same payload proves
+ * an authoritative zero catalog. The narrow exception is intentionally not a
+ * generic nullish-to-empty conversion.
+ */
+export function parseEbayInventoryItemsPage(
+  value: unknown,
+  input: { expectedLimit: number; expectedOffset: number } = {
+    expectedLimit: 50,
+    expectedOffset: 0,
+  },
+): ParsedEbayInventoryItemsPage {
+  const invalid = (
+    payload: Record<string, unknown> | null,
+  ): ParsedEbayInventoryItemsPage => {
+    const topLevel = payload
+      ? safeInventoryTopLevelKeys(payload)
+      : { keys: [] as string[], safe: false }
+    const actualArray = payload && Array.isArray(payload.inventoryItems)
+      ? payload.inventoryItems
+      : null
+    return {
+      accepted: false,
+      inventoryItems: [],
+      total: payload ? exactNonNegativeJsonInteger(payload.total) : null,
+      next: null,
+      responseShape: "INVALID",
+      metadata: {
+        topLevelKeys: topLevel.keys,
+        topLevelKeysSafe: topLevel.safe,
+        hasArray: actualArray !== null,
+        arrayCount: actualArray?.length ?? null,
+        totalPresent: payload ? Object.hasOwn(payload, "total") : false,
+        nextPresent: payload ? Object.hasOwn(payload, "next") : false,
+      },
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return invalid(null)
+  }
+  const payload = value as Record<string, unknown>
+  const topLevel = safeInventoryTopLevelKeys(payload)
+  if (!topLevel.safe) return invalid(payload)
+
+  const hasArrayProperty = Object.hasOwn(payload, "inventoryItems")
+  const array = hasArrayProperty && Array.isArray(payload.inventoryItems)
+    ? payload.inventoryItems
+    : null
+  if (hasArrayProperty && array === null) return invalid(payload)
+
+  const totalPresent = Object.hasOwn(payload, "total")
+  const total = exactNonNegativeJsonInteger(payload.total)
+  const nextPresent = Object.hasOwn(payload, "next")
+  const next = typeof payload.next === "string" && payload.next.length > 0
+    ? payload.next.slice(0, 2_000)
+    : null
+  const prevPresent = Object.hasOwn(payload, "prev")
+  const keysCertified = topLevel.keys.every((key) =>
+    EBAY_INVENTORY_ITEMS_RESPONSE_KEYS.has(key))
+  const size = Object.hasOwn(payload, "size")
+    ? exactNonNegativeJsonInteger(payload.size)
+    : null
+  const observedArraySize = array === null ? 0 : array.length
+  const sizeCertified = !Object.hasOwn(payload, "size") ||
+    size === observedArraySize
+  const limitCertified = !Object.hasOwn(payload, "limit") ||
+    exactNonNegativeJsonInteger(payload.limit) === input.expectedLimit
+  const hrefCertified = exactOptionalInventoryHref(
+    payload.href,
+    input.expectedLimit,
+    input.expectedOffset,
+  )
+
+  const emptyCandidate = array === null || array.length === 0
+  if (emptyCandidate) {
+    const paginationCertified = !nextPresent && !prevPresent && hrefCertified
+    const emptyCatalogCertified = total === 0
+    const legacyArrayWithoutTotal = array !== null && !totalPresent
+    if (!keysCertified ||
+        (!emptyCatalogCertified && !legacyArrayWithoutTotal) || !sizeCertified ||
+        !limitCertified || !paginationCertified) {
+      return invalid(payload)
+    }
+    return {
+      accepted: true,
+      inventoryItems: [],
+      total: emptyCatalogCertified ? 0 : null,
+      next: null,
+      responseShape: array === null
+        ? "CERTIFIED_EMPTY_OMITTED_ARRAY"
+        : "INVENTORY_ITEMS_ARRAY",
+      metadata: {
+        topLevelKeys: topLevel.keys,
+        topLevelKeysSafe: true,
+        hasArray: array !== null,
+        arrayCount: array?.length ?? null,
+        totalPresent,
+        nextPresent,
+      },
+    }
+  }
+
+  const endOffset = input.expectedOffset + array.length
+  const totalCertified = !totalPresent ||
+    (total !== null && total >= endOffset)
+  const nextCertified = !nextPresent || (
+    typeof payload.next === "string" &&
+    array.length === input.expectedLimit &&
+    (total === null || total > endOffset) &&
+    exactInventoryPageLink(
+      payload.next,
+      input.expectedLimit,
+      endOffset,
+    )
+  )
+  const expectedPreviousOffset = Math.max(
+    0,
+    input.expectedOffset - input.expectedLimit,
+  )
+  const prevCertified = !prevPresent || (
+    input.expectedOffset > 0 &&
+    typeof payload.prev === "string" &&
+    exactInventoryPageLink(
+      payload.prev,
+      input.expectedLimit,
+      expectedPreviousOffset,
+    )
+  )
+  if (!keysCertified || !sizeCertified || !limitCertified || !hrefCertified ||
+      !totalCertified || !nextCertified || !prevCertified) {
+    return invalid(payload)
+  }
+
+  return {
+    accepted: true,
+    inventoryItems: array,
+    total,
+    next,
+    responseShape: "INVENTORY_ITEMS_ARRAY",
+    metadata: {
+      topLevelKeys: topLevel.keys,
+      topLevelKeysSafe: true,
+      hasArray: true,
+      arrayCount: array.length,
+      totalPresent,
+      nextPresent,
+    },
+  }
 }
 
 function decodeXml(value: string) {
