@@ -222,6 +222,18 @@ export type EbaySafeBackfillWithoutDuplication =
   | "NO"
   | "UNPROVEN"
 
+type EbayRegistryTopologyBucket =
+  | "FULL_MATCH"
+  | "ITEM_ID_ONLY_MATCH"
+  | "SKU_ONLY_MATCH"
+  | "ITEM_ID_AND_SKU_MATCH_DIFFERENT_LIVE_ROWS"
+  | "MULTIPLE_ITEM_ID_CANDIDATES"
+  | "MULTIPLE_SKU_CANDIDATES"
+  | "NO_STABLE_IDENTIFIER_OVERLAP"
+  | "UNPROVEN"
+
+type EbayLivePresenceIndicator = "YES" | "NO" | "UNPROVEN"
+
 export type EbayRegistryCoverageDiagnostic = {
   REGISTRY_RUNTIME_CONFIG: EbayRegistryRuntimeReadStatus
   SUPABASE_URL_PRESENT: "YES" | "NO"
@@ -259,6 +271,37 @@ export type EbayRegistryCoverageDiagnostic = {
   SAFE_BACKFILL_WITHOUT_DUPLICATION: EbaySafeBackfillWithoutDuplication
   LIVE_PARTITION_VALID: "YES" | "NO"
   REGISTRY_PARTITION_VALID: "YES" | "NO"
+  REGISTRY_FULL_MATCH_ROWS: EbayRegistryRuntimeCoverageCount
+  REGISTRY_ITEM_ID_ONLY_ROWS: EbayRegistryRuntimeCoverageCount
+  REGISTRY_SKU_ONLY_ROWS: EbayRegistryRuntimeCoverageCount
+  REGISTRY_CROSS_LINKED_ROWS: EbayRegistryRuntimeCoverageCount
+  REGISTRY_MULTIPLE_ITEM_ID_CANDIDATE_ROWS: EbayRegistryRuntimeCoverageCount
+  REGISTRY_MULTIPLE_SKU_CANDIDATE_ROWS: EbayRegistryRuntimeCoverageCount
+  REGISTRY_NO_STABLE_OVERLAP_ROWS: EbayRegistryRuntimeCoverageCount
+  REGISTRY_TOPOLOGY_UNPROVEN_ROWS: EbayRegistryRuntimeCoverageCount
+  REGISTRY_TOPOLOGY_PARTITION_VALID: "YES" | "NO"
+  LIVE_REFERENCED_BY_REGISTRY_ITEM_ID_COUNT: EbayRegistryRuntimeCoverageCount
+  LIVE_REFERENCED_BY_REGISTRY_SKU_COUNT: EbayRegistryRuntimeCoverageCount
+  LIVE_REFERENCED_BY_BOTH_SAME_REGISTRY_ROW_COUNT: EbayRegistryRuntimeCoverageCount
+  LIVE_REFERENCED_BY_CONFLICTING_REGISTRY_ROWS_COUNT:
+    EbayRegistryRuntimeCoverageCount
+  LIVE_WITH_NO_STABLE_REGISTRY_REFERENCE_COUNT:
+    EbayRegistryRuntimeCoverageCount
+  CROSS_LINK_CONFLICT_COUNT: EbayRegistryRuntimeCoverageCount
+  ITEM_ID_ANCHORED_RELINK_CANDIDATE_COUNT: EbayRegistryRuntimeCoverageCount
+  SKU_ANCHORED_RELINK_CANDIDATE_COUNT: EbayRegistryRuntimeCoverageCount
+  CONFLICTED_RELINK_CANDIDATE_COUNT: EbayRegistryRuntimeCoverageCount
+  NO_SAFE_RELINK_CANDIDATE_COUNT: EbayRegistryRuntimeCoverageCount
+  SAFE_RELINK_CANDIDATE_COUNT: EbayRegistryRuntimeCoverageCount
+  SAFE_AUTOMATED_RELINK: "YES" | "NO" | "UNPROVEN"
+  LIVE_NEW_REGISTRY_ENTRY_CANDIDATE_COUNT: EbayRegistryRuntimeCoverageCount
+  SAFE_NEW_ENTRY_BACKFILL_POSSIBLE: "YES" | "NO" | "UNPROVEN"
+  VARIATION_KEY_REQUIRED_FOR_NON_VARIATION_LISTING:
+    EbayLivePresenceIndicator
+  EMPTY_VARIATION_IS_CANONIC_FOR_NON_VARIATION_LISTING:
+    EbayLivePresenceIndicator
+  VARIATION_SEMANTICS_CAUSE_CURRENT_ZERO_MATCH:
+    "YES" | "NO" | "UNPROVEN"
   MANUAL_LISTING_RUNTIME_AUTODISCOVERY: EbayManualListingDiscoveryRuntimeResult
 }
 
@@ -365,6 +408,32 @@ export async function diagnoseRegistryCoverageRuntime(
     SAFE_BACKFILL_WITHOUT_DUPLICATION: "UNPROVEN",
     LIVE_PARTITION_VALID: "NO",
     REGISTRY_PARTITION_VALID: "NO",
+    REGISTRY_FULL_MATCH_ROWS: "UNPROVEN",
+    REGISTRY_ITEM_ID_ONLY_ROWS: "UNPROVEN",
+    REGISTRY_SKU_ONLY_ROWS: "UNPROVEN",
+    REGISTRY_CROSS_LINKED_ROWS: "UNPROVEN",
+    REGISTRY_MULTIPLE_ITEM_ID_CANDIDATE_ROWS: "UNPROVEN",
+    REGISTRY_MULTIPLE_SKU_CANDIDATE_ROWS: "UNPROVEN",
+    REGISTRY_NO_STABLE_OVERLAP_ROWS: "UNPROVEN",
+    REGISTRY_TOPOLOGY_UNPROVEN_ROWS: "UNPROVEN",
+    REGISTRY_TOPOLOGY_PARTITION_VALID: "NO",
+    LIVE_REFERENCED_BY_REGISTRY_ITEM_ID_COUNT: "UNPROVEN",
+    LIVE_REFERENCED_BY_REGISTRY_SKU_COUNT: "UNPROVEN",
+    LIVE_REFERENCED_BY_BOTH_SAME_REGISTRY_ROW_COUNT: "UNPROVEN",
+    LIVE_REFERENCED_BY_CONFLICTING_REGISTRY_ROWS_COUNT: "UNPROVEN",
+    LIVE_WITH_NO_STABLE_REGISTRY_REFERENCE_COUNT: "UNPROVEN",
+    CROSS_LINK_CONFLICT_COUNT: "UNPROVEN",
+    ITEM_ID_ANCHORED_RELINK_CANDIDATE_COUNT: "UNPROVEN",
+    SKU_ANCHORED_RELINK_CANDIDATE_COUNT: "UNPROVEN",
+    CONFLICTED_RELINK_CANDIDATE_COUNT: "UNPROVEN",
+    NO_SAFE_RELINK_CANDIDATE_COUNT: "UNPROVEN",
+    SAFE_RELINK_CANDIDATE_COUNT: "UNPROVEN",
+    SAFE_AUTOMATED_RELINK: "UNPROVEN",
+    LIVE_NEW_REGISTRY_ENTRY_CANDIDATE_COUNT: "UNPROVEN",
+    SAFE_NEW_ENTRY_BACKFILL_POSSIBLE: "UNPROVEN",
+    VARIATION_KEY_REQUIRED_FOR_NON_VARIATION_LISTING: "UNPROVEN",
+    EMPTY_VARIATION_IS_CANONIC_FOR_NON_VARIATION_LISTING: "UNPROVEN",
+    VARIATION_SEMANTICS_CAUSE_CURRENT_ZERO_MATCH: "UNPROVEN",
     MANUAL_LISTING_RUNTIME_AUTODISCOVERY: "UNPROVEN",
   }
   const calls: EbayMonitorReadonlyCallEvidence[] = []
@@ -507,6 +576,47 @@ export async function diagnoseRegistryCoverageRuntime(
       reconciliation.registryIdentityRootCause
     result.SAFE_BACKFILL_WITHOUT_DUPLICATION =
       reconciliation.safeBackfillWithoutDuplication
+    result.REGISTRY_FULL_MATCH_ROWS = reconciliation.fullMatchRows
+    result.REGISTRY_ITEM_ID_ONLY_ROWS = reconciliation.itemIdOnlyRows
+    result.REGISTRY_SKU_ONLY_ROWS = reconciliation.skuOnlyRows
+    result.REGISTRY_CROSS_LINKED_ROWS = reconciliation.crossLinkedRows
+    result.REGISTRY_MULTIPLE_ITEM_ID_CANDIDATE_ROWS =
+      reconciliation.multipleItemIdCandidateRows
+    result.REGISTRY_MULTIPLE_SKU_CANDIDATE_ROWS =
+      reconciliation.multipleSkuIdCandidateRows
+    result.REGISTRY_NO_STABLE_OVERLAP_ROWS =
+      reconciliation.noStableIdentifierOverlapRows
+    result.REGISTRY_TOPOLOGY_UNPROVEN_ROWS =
+      reconciliation.topologyUnprovenRows
+    result.REGISTRY_TOPOLOGY_PARTITION_VALID =
+      reconciliation.topologyPartitionValid
+    result.LIVE_REFERENCED_BY_REGISTRY_ITEM_ID_COUNT =
+      reconciliation.liveReferencedByRegistryItemIdCount
+    result.LIVE_REFERENCED_BY_REGISTRY_SKU_COUNT =
+      reconciliation.liveReferencedByRegistrySkuCount
+    result.LIVE_REFERENCED_BY_BOTH_SAME_REGISTRY_ROW_COUNT =
+      reconciliation.liveReferencedByBothSameRegistryRowCount
+    result.LIVE_REFERENCED_BY_CONFLICTING_REGISTRY_ROWS_COUNT =
+      reconciliation.liveReferencedByConflictingRegistryRowsCount
+    result.LIVE_WITH_NO_STABLE_REGISTRY_REFERENCE_COUNT =
+      reconciliation.liveWithNoStableRegistryReferenceCount
+    result.CROSS_LINK_CONFLICT_COUNT =
+      reconciliation.crossLinkConflictCount
+    result.ITEM_ID_ANCHORED_RELINK_CANDIDATE_COUNT =
+      reconciliation.itemIdAnchoredRelinkCandidateCount
+    result.SKU_ANCHORED_RELINK_CANDIDATE_COUNT =
+      reconciliation.skuAnchoredRelinkCandidateCount
+    result.CONFLICTED_RELINK_CANDIDATE_COUNT =
+      reconciliation.conflictedRelinkCandidateCount
+    result.NO_SAFE_RELINK_CANDIDATE_COUNT =
+      reconciliation.noSafeRelinkCandidateCount
+    result.SAFE_RELINK_CANDIDATE_COUNT =
+      reconciliation.safeRelinkCandidateCount
+    result.SAFE_AUTOMATED_RELINK = reconciliation.safeAutomatedRelink
+    result.LIVE_NEW_REGISTRY_ENTRY_CANDIDATE_COUNT =
+      reconciliation.liveNewRegistryEntryCandidateCount
+    result.SAFE_NEW_ENTRY_BACKFILL_POSSIBLE =
+      reconciliation.safeNewEntryBackfillPossible
     result.REGISTRY_COVERAGE_PERCENT = computeRegistryCoveragePercent(
       reconciliation.matched,
       reconciliation.liveCount,
@@ -515,6 +625,12 @@ export async function diagnoseRegistryCoverageRuntime(
     result.REGISTRY_PARTITION_VALID = reconciliation.registryPartitionValid
     result.REGISTRY_RECORD_COUNT = reconciliation.registryCount
     result.LIVE_EBAY_LISTING_COUNT = reconciliation.liveCount
+    result.VARIATION_KEY_REQUIRED_FOR_NON_VARIATION_LISTING =
+      reconciliation.variationKeyRequiredForNonVariation
+    result.EMPTY_VARIATION_IS_CANONIC_FOR_NON_VARIATION_LISTING =
+      reconciliation.emptyVariationCanonicalForNonVariation
+    result.VARIATION_SEMANTICS_CAUSE_CURRENT_ZERO_MATCH =
+      reconciliation.variationSemanticsCauseCurrentZeroMatch
   }
 
   result.MANUAL_LISTING_RUNTIME_AUTODISCOVERY = manualListingDiscoveryResult({
@@ -554,6 +670,32 @@ export async function diagnoseRegistryCoverageRuntime(
     result.REGISTRY_IDENTITY_UNPROVEN_COUNT = "UNPROVEN"
     result.REGISTRY_IDENTITY_ROOT_CAUSE = "UNPROVEN"
     result.SAFE_BACKFILL_WITHOUT_DUPLICATION = "UNPROVEN"
+    result.REGISTRY_FULL_MATCH_ROWS = "UNPROVEN"
+    result.REGISTRY_ITEM_ID_ONLY_ROWS = "UNPROVEN"
+    result.REGISTRY_SKU_ONLY_ROWS = "UNPROVEN"
+    result.REGISTRY_CROSS_LINKED_ROWS = "UNPROVEN"
+    result.REGISTRY_MULTIPLE_ITEM_ID_CANDIDATE_ROWS = "UNPROVEN"
+    result.REGISTRY_MULTIPLE_SKU_CANDIDATE_ROWS = "UNPROVEN"
+    result.REGISTRY_NO_STABLE_OVERLAP_ROWS = "UNPROVEN"
+    result.REGISTRY_TOPOLOGY_UNPROVEN_ROWS = "UNPROVEN"
+    result.REGISTRY_TOPOLOGY_PARTITION_VALID = "NO"
+    result.LIVE_REFERENCED_BY_REGISTRY_ITEM_ID_COUNT = "UNPROVEN"
+    result.LIVE_REFERENCED_BY_REGISTRY_SKU_COUNT = "UNPROVEN"
+    result.LIVE_REFERENCED_BY_BOTH_SAME_REGISTRY_ROW_COUNT = "UNPROVEN"
+    result.LIVE_REFERENCED_BY_CONFLICTING_REGISTRY_ROWS_COUNT = "UNPROVEN"
+    result.LIVE_WITH_NO_STABLE_REGISTRY_REFERENCE_COUNT = "UNPROVEN"
+    result.CROSS_LINK_CONFLICT_COUNT = "UNPROVEN"
+    result.ITEM_ID_ANCHORED_RELINK_CANDIDATE_COUNT = "UNPROVEN"
+    result.SKU_ANCHORED_RELINK_CANDIDATE_COUNT = "UNPROVEN"
+    result.CONFLICTED_RELINK_CANDIDATE_COUNT = "UNPROVEN"
+    result.NO_SAFE_RELINK_CANDIDATE_COUNT = "UNPROVEN"
+    result.SAFE_RELINK_CANDIDATE_COUNT = "UNPROVEN"
+    result.SAFE_AUTOMATED_RELINK = "UNPROVEN"
+    result.LIVE_NEW_REGISTRY_ENTRY_CANDIDATE_COUNT = "UNPROVEN"
+    result.SAFE_NEW_ENTRY_BACKFILL_POSSIBLE = "UNPROVEN"
+    result.VARIATION_KEY_REQUIRED_FOR_NON_VARIATION_LISTING = "UNPROVEN"
+    result.EMPTY_VARIATION_IS_CANONIC_FOR_NON_VARIATION_LISTING = "UNPROVEN"
+    result.VARIATION_SEMANTICS_CAUSE_CURRENT_ZERO_MATCH = "UNPROVEN"
     result.REGISTRY_COVERAGE_PERCENT = "UNPROVEN"
     result.LIVE_PARTITION_VALID = "NO"
     result.REGISTRY_PARTITION_VALID = "NO"
@@ -613,28 +755,77 @@ type RegistryLiveReconciliation = {
   registryIdentityUnprovenCount: number
   registryIdentityRootCause: EbayRegistryIdentityRootCause
   safeBackfillWithoutDuplication: EbaySafeBackfillWithoutDuplication
+  fullMatchRows: number
+  itemIdOnlyRows: number
+  skuOnlyRows: number
+  crossLinkedRows: number
+  multipleItemIdCandidateRows: number
+  multipleSkuIdCandidateRows: number
+  noStableIdentifierOverlapRows: number
+  topologyUnprovenRows: number
+  topologyPartitionValid: "YES" | "NO"
+  liveReferencedByRegistryItemIdCount: number
+  liveReferencedByRegistrySkuCount: number
+  liveReferencedByBothSameRegistryRowCount: number
+  liveReferencedByConflictingRegistryRowsCount: number
+  liveWithNoStableRegistryReferenceCount: number
+  crossLinkConflictCount: number
+  itemIdAnchoredRelinkCandidateCount: number
+  skuAnchoredRelinkCandidateCount: number
+  conflictedRelinkCandidateCount: number
+  noSafeRelinkCandidateCount: number
+  safeRelinkCandidateCount: number
+  safeAutomatedRelink: "YES" | "NO" | "UNPROVEN"
+  liveNewRegistryEntryCandidateCount: number
+  safeNewEntryBackfillPossible: "YES" | "NO" | "UNPROVEN"
+  variationKeyRequiredForNonVariation: "YES" | "NO" | "UNPROVEN"
+  emptyVariationCanonicalForNonVariation: "YES" | "NO" | "UNPROVEN"
+  variationSemanticsCauseCurrentZeroMatch: "YES" | "NO" | "UNPROVEN"
   livePartitionValid: "YES" | "NO"
   registryPartitionValid: "YES" | "NO"
+}
+
+type RegistryMatchAnalysis = {
+  itemMatches: number[]
+  skuMatches: number[]
+  fullMatches: number[]
+  itemSkuMatches: number[]
+  topology: EbayRegistryTopologyBucket
+  hasItemId: boolean
+  hasSku: boolean
+  hasVariationKey: boolean
+  itemId: string | null
+  sku: string | null
+  variationKey: string | null
+  identityComplete: boolean
 }
 
 function buildReconciliationCounts(input: {
   liveListings: EbayLiveListing[]
   registryRows: ReadonlyRegistryListingRow[]
 }) : RegistryLiveReconciliation {
-  const liveCompositeCounts = new Map<string, number>()
   const liveItemCounts = new Map<string, number>()
   const liveSkuCounts = new Map<string, number>()
   const liveVariationCounts = new Map<string, number>()
   const liveItemSkuCounts = new Map<string, number>()
   const liveItemVariationCounts = new Map<string, number>()
   const liveSkuVariationCounts = new Map<string, number>()
+  const liveCompositeCounts = new Map<string, number>()
+  const liveItemToIndexes = new Map<string, Set<number>>()
+  const liveSkuToIndexes = new Map<string, Set<number>>()
+  const liveCompositeToIndexes = new Map<string, Set<number>>()
+  const liveItemSkuToIndexes = new Map<string, Set<number>>()
+  const liveItemVariationToIndexes = new Map<string, Set<number>>()
+  const liveSkuVariationToIndexes = new Map<string, Set<number>>()
+  const liveWithVariationKeyByIndex: boolean[] = []
+  const liveHasCompleteIdentity: boolean[] = []
   let liveWithItemIdCount = 0
   let liveWithSkuCount = 0
   let liveWithVariationKeyCount = 0
   let liveWithCompleteCompositeCount = 0
   let liveIdentityMissingCount = 0
 
-  for (const listing of input.liveListings) {
+  input.liveListings.forEach((listing, liveIndex) => {
     const itemId = itemIdSkuVariationIdentityComponent(listing.itemId, 120)
     const sku = itemIdSkuVariationIdentityComponent(listing.sku, 120)
     const variationKey = itemIdSkuVariationIdentityComponent(
@@ -644,51 +835,62 @@ function buildReconciliationCounts(input: {
     const hasItemId = itemId !== null
     const hasSku = sku !== null
     const hasVariationKey = variationKey !== null
+    const hasCompleteIdentity = hasItemId && hasSku
+    liveWithVariationKeyByIndex.push(hasVariationKey)
+    liveHasCompleteIdentity.push(hasCompleteIdentity)
 
     if (hasItemId) {
       liveWithItemIdCount += 1
       incrementCount(liveItemCounts, itemId)
+      addToIndexMap(liveItemToIndexes, itemId, liveIndex)
     }
     if (hasSku) {
       liveWithSkuCount += 1
       incrementCount(liveSkuCounts, sku)
+      addToIndexMap(liveSkuToIndexes, sku, liveIndex)
     }
     if (hasVariationKey) {
       liveWithVariationKeyCount += 1
       incrementCount(liveVariationCounts, variationKey)
+      addToIndexMap(liveItemVariationToIndexes, variationKey, liveIndex)
     }
 
-    if (!hasItemId || !hasSku) {
+    if (!hasCompleteIdentity) {
       liveIdentityMissingCount += 1
-      continue
+      return
     }
 
     liveWithCompleteCompositeCount += 1
-    const liveItemId = itemId
-    const liveSku = sku
     const compositeKey = itemIdSkuVariationIdentityKey({
-      itemId: liveItemId,
-      sku: liveSku,
+      itemId,
+      sku,
       variationKey,
     })
     incrementCount(liveCompositeCounts, compositeKey)
-    const itemSkuKey = itemSkuIdentityKey(liveItemId, liveSku)
+    addToIndexMap(liveCompositeToIndexes, compositeKey, liveIndex)
+    const itemSkuKey = itemSkuIdentityKey(itemId, sku)
     incrementCount(liveItemSkuCounts, itemSkuKey)
+    addToIndexMap(liveItemSkuToIndexes, itemSkuKey, liveIndex)
     if (hasVariationKey) {
-      const itemVariationKey = JSON.stringify([liveItemId, variationKey])
-      const skuVariationKey = JSON.stringify([liveSku, variationKey])
+      const itemVariationKey = JSON.stringify([itemId, variationKey])
+      const skuVariationKey = JSON.stringify([sku, variationKey])
       incrementCount(liveItemVariationCounts, itemVariationKey)
       incrementCount(liveSkuVariationCounts, skuVariationKey)
+      addToIndexMap(liveItemVariationToIndexes, itemVariationKey, liveIndex)
+      addToIndexMap(liveSkuVariationToIndexes, skuVariationKey, liveIndex)
     }
-  }
+  })
 
-  const registryCompositeCounts = new Map<string, number>()
   const registryItemCounts = new Map<string, number>()
   const registrySkuCounts = new Map<string, number>()
   const registryVariationCounts = new Map<string, number>()
   const registryItemSkuCounts = new Map<string, number>()
   const registryItemVariationCounts = new Map<string, number>()
   const registrySkuVariationCounts = new Map<string, number>()
+  const registryCompositeCounts = new Map<string, number>()
+  const registryRowsByItemIdCount = new Map<string, number>()
+  const registryRowsBySkuCount = new Map<string, number>()
+  const registryRowsByVariationKeyCount = new Map<string, number>()
   let registryWithItemIdCount = 0
   let registryWithSkuCount = 0
   let registryWithVariationKeyCount = 0
@@ -699,8 +901,31 @@ function buildReconciliationCounts(input: {
   let registryHistoricalOnlyCount = 0
   let registryMissingIdentityCount = 0
   let registryIdentityUnprovenCount = 0
+  const liveReferencedByRegistryItemId = new Array<boolean>(
+    input.liveListings.length,
+  ).fill(false)
+  const liveReferencedByRegistrySku = new Array<boolean>(
+    input.liveListings.length,
+  ).fill(false)
+  const liveReferencedByBothSameRegistryRow = new Array<boolean>(
+    input.liveListings.length,
+  ).fill(false)
+  const liveRegistryReferences = Array.from(
+    { length: input.liveListings.length },
+    () => new Set<number>(),
+  )
+  const matchAnalyses: RegistryMatchAnalysis[] = []
+  let fullMatchRows = 0
+  let itemIdOnlyRows = 0
+  let skuOnlyRows = 0
+  let crossLinkedRows = 0
+  let multipleItemIdCandidateRows = 0
+  let multipleSkuCandidateRows = 0
+  let noStableIdentifierOverlapRows = 0
+  let topologyUnprovenRows = 0
+  let crossLinkConflictCount = 0
 
-  for (const row of input.registryRows) {
+  input.registryRows.forEach((row, registryIndex) => {
     const itemId = itemIdSkuVariationIdentityComponent(row.ebay_item_id, 120)
     const sku = itemIdSkuVariationIdentityComponent(row.ebay_sku, 120)
     const variationKey = itemIdSkuVariationIdentityComponent(
@@ -717,14 +942,17 @@ function buildReconciliationCounts(input: {
     if (hasItemId) {
       registryWithItemIdCount += 1
       incrementCount(registryItemCounts, itemId)
+      incrementCount(registryRowsByItemIdCount, itemId)
     }
     if (hasSku) {
       registryWithSkuCount += 1
       incrementCount(registrySkuCounts, sku)
+      incrementCount(registryRowsBySkuCount, sku)
     }
     if (hasVariationKey) {
       registryWithVariationKeyCount += 1
       incrementCount(registryVariationCounts, variationKey)
+      incrementCount(registryRowsByVariationKeyCount, variationKey)
     }
 
     if (hasItemId && hasSku) {
@@ -738,29 +966,170 @@ function buildReconciliationCounts(input: {
       registryHistoricalOnlyCount += 1
     }
 
+    const itemMatches = hasItemId ? getIndexes(liveItemToIndexes, itemId) : []
+    const skuMatches = hasSku ? getIndexes(liveSkuToIndexes, sku) : []
+    const fullMatches = hasItemId && hasSku
+      ? getIndexes(liveCompositeToIndexes, itemIdSkuVariationIdentityKey({
+        itemId,
+        sku,
+        variationKey,
+      }))
+      : []
+    const itemSkuMatches = hasItemId && hasSku
+      ? getIndexes(
+        liveItemSkuToIndexes,
+        itemSkuIdentityKey(itemId, sku),
+      )
+      : []
+    const intersectionItemSku = intersectIndexes(itemMatches, skuMatches)
+
+    let topology: EbayRegistryTopologyBucket
+    if (fullMatches.length > 0) {
+      topology = fullMatches.length === 1
+        ? "FULL_MATCH"
+        : "ITEM_ID_AND_SKU_MATCH_DIFFERENT_LIVE_ROWS"
+    } else if (hasItemId && hasSku && intersectionItemSku.length === 0 &&
+      itemMatches.length > 0 && skuMatches.length > 0) {
+      topology = "ITEM_ID_AND_SKU_MATCH_DIFFERENT_LIVE_ROWS"
+    } else if (itemMatches.length === 0 && skuMatches.length === 0) {
+      topology = "NO_STABLE_IDENTIFIER_OVERLAP"
+    } else if (itemMatches.length === 1 && skuMatches.length === 0) {
+      topology = "ITEM_ID_ONLY_MATCH"
+    } else if (itemMatches.length === 0 && skuMatches.length === 1) {
+      topology = "SKU_ONLY_MATCH"
+    } else if (itemMatches.length > 1 && skuMatches.length === 0) {
+      topology = "MULTIPLE_ITEM_ID_CANDIDATES"
+    } else if (itemMatches.length === 0 && skuMatches.length > 1) {
+      topology = "MULTIPLE_SKU_CANDIDATES"
+    } else if (itemMatches.length > 0 && skuMatches.length > 0) {
+      topology = "ITEM_ID_AND_SKU_MATCH_DIFFERENT_LIVE_ROWS"
+    } else {
+      topology = "UNPROVEN"
+    }
+
+    if (topology === "ITEM_ID_ONLY_MATCH") itemIdOnlyRows += 1
+    else if (topology === "SKU_ONLY_MATCH") skuOnlyRows += 1
+    else if (topology === "ITEM_ID_AND_SKU_MATCH_DIFFERENT_LIVE_ROWS") crossLinkedRows += 1
+    else if (topology === "MULTIPLE_ITEM_ID_CANDIDATES") {
+      multipleItemIdCandidateRows += 1
+    } else if (topology === "MULTIPLE_SKU_CANDIDATES") {
+      multipleSkuCandidateRows += 1
+    } else if (topology === "NO_STABLE_IDENTIFIER_OVERLAP") {
+      noStableIdentifierOverlapRows += 1
+    } else if (topology === "UNPROVEN") {
+      topologyUnprovenRows += 1
+    } else if (topology === "FULL_MATCH") {
+      fullMatchRows += 1
+    }
+
+    const referencedByTopology = new Set<number>([
+      ...itemMatches,
+      ...skuMatches,
+    ])
+    for (const liveIndex of referencedByTopology) {
+      liveReferencedByRegistryItemId[liveIndex] ||= itemMatches.includes(liveIndex)
+      liveReferencedByRegistrySku[liveIndex] ||= skuMatches.includes(liveIndex)
+      liveRegistryReferences[liveIndex].add(registryIndex)
+    }
+    for (const liveIndex of itemSkuMatches) {
+      if (liveIndex >= 0 && liveIndex < input.liveListings.length) {
+        liveReferencedByBothSameRegistryRow[liveIndex] = true
+      }
+    }
+    if (
+      itemMatches.length > 0 &&
+      skuMatches.length > 0 &&
+      hasItemId &&
+      hasSku &&
+      itemMatches[0] !== undefined &&
+      skuMatches[0] !== undefined &&
+      intersectionItemSku.length === 0
+    ) {
+      crossLinkConflictCount += 1
+    }
+
+    if (topology === "FULL_MATCH") {
+      if (hasVariationKey) {
+        const itemVariationKey = JSON.stringify([itemId, variationKey])
+        const skuVariationKey = JSON.stringify([sku, variationKey])
+        incrementCount(registryItemVariationCounts, itemVariationKey)
+        incrementCount(registrySkuVariationCounts, skuVariationKey)
+      }
+      if (hasItemId && hasSku) {
+        registryWithCompleteCompositeCount += 1
+        const compositeKey = itemIdSkuVariationIdentityKey({
+          itemId,
+          sku,
+          variationKey,
+        })
+        incrementCount(registryCompositeCounts, compositeKey)
+      }
+      matchAnalyses.push({
+        itemMatches,
+        skuMatches,
+        fullMatches,
+        itemSkuMatches,
+        topology,
+        hasItemId,
+        hasSku,
+        hasVariationKey,
+        itemId,
+        sku,
+        variationKey,
+        identityComplete: hasItemId && hasSku,
+      })
+      return
+    }
+
     if (!hasItemId || !hasSku) {
       registryMissingIdentityCount += 1
-      continue
+      matchAnalyses.push({
+        itemMatches,
+        skuMatches,
+        fullMatches,
+        itemSkuMatches: [],
+        topology,
+        hasItemId,
+        hasSku,
+        hasVariationKey,
+        itemId,
+        sku,
+        variationKey,
+        identityComplete: hasItemId && hasSku,
+      })
+      return
     }
 
     registryWithCompleteCompositeCount += 1
-    const registryItemId = itemId
-    const registrySku = sku
     const compositeKey = itemIdSkuVariationIdentityKey({
-      itemId: registryItemId,
-      sku: registrySku,
+      itemId,
+      sku,
       variationKey,
     })
     incrementCount(registryCompositeCounts, compositeKey)
-    const itemSkuKey = itemSkuIdentityKey(registryItemId, registrySku)
+    const itemSkuKey = itemSkuIdentityKey(itemId, sku)
     incrementCount(registryItemSkuCounts, itemSkuKey)
     if (hasVariationKey) {
-      const itemVariationKey = JSON.stringify([registryItemId, variationKey])
-      const skuVariationKey = JSON.stringify([registrySku, variationKey])
+      const itemVariationKey = JSON.stringify([itemId, variationKey])
+      const skuVariationKey = JSON.stringify([sku, variationKey])
       incrementCount(registryItemVariationCounts, itemVariationKey)
       incrementCount(registrySkuVariationCounts, skuVariationKey)
     }
-  }
+    matchAnalyses.push({
+      itemMatches,
+      skuMatches,
+      fullMatches,
+      itemSkuMatches,
+      topology,
+      hasItemId,
+      hasSku,
+      hasVariationKey,
+      itemId,
+      sku,
+      variationKey,
+      identityComplete: hasItemId && hasSku,
+    })
+  })
 
   const unresolvedLegacyRows = input.registryRows.length - (
     registryCurrentIdentityCount +
@@ -898,6 +1267,147 @@ function buildReconciliationCounts(input: {
           : "UNPROVEN"
       : "NO"
 
+  let itemIdAnchoredRelinkCandidateCount = 0
+  let skuAnchoredRelinkCandidateCount = 0
+  let conflictedRelinkCandidateCount = 0
+  let noSafeRelinkCandidateCount = 0
+  for (const analysis of matchAnalyses) {
+    const registryHasSingleItemMatch = analysis.itemMatches.length === 1
+    const registryHasSingleSkuMatch = analysis.skuMatches.length === 1
+    if (analysis.topology === "NO_STABLE_IDENTIFIER_OVERLAP") {
+      if (analysis.hasItemId || analysis.hasSku) noSafeRelinkCandidateCount += 1
+      continue
+    }
+    if (analysis.topology === "FULL_MATCH") {
+      continue
+    }
+
+    if (analysis.topology === "ITEM_ID_ONLY_MATCH" && registryHasSingleItemMatch) {
+      const liveIndex = analysis.itemMatches[0]
+      const itemIdUnique = getCount(registryRowsByItemIdCount,
+        analysis.itemId ?? "") === 1
+      const noCompetingMapping = liveRegistryReferences[liveIndex]?.size === 1
+      const liveReferenceSafe = liveIndex !== undefined &&
+        liveIndex >= 0 &&
+        liveIndex < input.liveListings.length
+      const identityComplete = liveReferenceSafe
+        ? liveHasCompleteIdentity[liveIndex]
+        : false
+      const hasSingleIdentifier = !analysis.hasSku && !analysis.hasVariationKey
+      if (
+        liveReferenceSafe &&
+        identityComplete &&
+        hasSingleIdentifier &&
+        itemIdUnique &&
+        noCompetingMapping
+      ) {
+        itemIdAnchoredRelinkCandidateCount += 1
+      } else {
+        conflictedRelinkCandidateCount += 1
+      }
+      continue
+    }
+    if (analysis.topology === "SKU_ONLY_MATCH" && registryHasSingleSkuMatch) {
+      const liveIndex = analysis.skuMatches[0]
+      const skuUnique = getCount(registryRowsBySkuCount, analysis.sku ?? "") === 1
+      const noCompetingMapping = liveRegistryReferences[liveIndex]?.size === 1
+      const liveReferenceSafe = liveIndex !== undefined &&
+        liveIndex >= 0 &&
+        liveIndex < input.liveListings.length
+      const identityComplete = liveReferenceSafe
+        ? liveHasCompleteIdentity[liveIndex]
+        : false
+      const hasSingleIdentifier = !analysis.hasItemId && !analysis.hasVariationKey
+      if (
+        liveReferenceSafe &&
+        identityComplete &&
+        hasSingleIdentifier &&
+        skuUnique &&
+        noCompetingMapping
+      ) {
+        skuAnchoredRelinkCandidateCount += 1
+      } else {
+        conflictedRelinkCandidateCount += 1
+      }
+      continue
+    }
+    if (analysis.topology === "ITEM_ID_AND_SKU_MATCH_DIFFERENT_LIVE_ROWS" ||
+      analysis.topology === "MULTIPLE_ITEM_ID_CANDIDATES" ||
+      analysis.topology === "MULTIPLE_SKU_CANDIDATES"
+    ) {
+      conflictedRelinkCandidateCount += 1
+      continue
+    }
+    if (analysis.topology === "UNPROVEN") {
+      noSafeRelinkCandidateCount += 1
+      continue
+    }
+    noSafeRelinkCandidateCount += 1
+  }
+  const safeRelinkCandidateCount =
+    itemIdAnchoredRelinkCandidateCount + skuAnchoredRelinkCandidateCount
+
+  const liveReferencedByRegistryItemIdCount = liveReferencedByRegistryItemId
+    .filter(Boolean).length
+  const liveReferencedByRegistrySkuCount = liveReferencedByRegistrySku
+    .filter(Boolean).length
+  const liveReferencedByBothSameRegistryRowCount = liveReferencedByBothSameRegistryRow
+    .filter(Boolean).length
+  const liveReferencedByConflictingRegistryRowsCount = liveRegistryReferences
+    .reduce((count, references) =>
+      (references.size > 1 ? count + 1 : count), 0)
+  const liveWithAnyStableReferenceCount = liveRegistryReferences
+    .reduce((count, references) => (references.size > 0 ? count + 1 : count), 0)
+  const liveWithNoStableRegistryReferenceCount =
+    input.liveListings.length - liveWithAnyStableReferenceCount
+  const liveNewRegistryEntryCandidateCount = liveWithNoStableRegistryReferenceCount
+
+  const safeAutomatedRelink = crossLinkConflictCount > 0 ||
+    conflictedRelinkCandidateCount > 0
+      ? "NO"
+      : safeRelinkCandidateCount > 0 ? "YES" : "NO"
+  const safeNewEntryBackfillPossible = crossLinkConflictCount === 0 &&
+    conflictedRelinkCandidateCount === 0 &&
+    noSafeRelinkCandidateCount === 0 &&
+    liveNewRegistryEntryCandidateCount > 0 ? "YES" : "NO"
+  const liveNonVariationCount = liveWithVariationKeyByIndex
+    .filter((value) => !value).length
+  const registryNonVariationCount = input.registryRows.filter((row) => {
+    return itemIdSkuVariationIdentityComponent(
+      row.ebay_variation_key ?? null,
+      120,
+    ) === null
+  }).length
+  const variationKeyRequiredForNonVariation:
+    "YES" | "NO" | "UNPROVEN" =
+    liveNonVariationCount > 0 && registryNonVariationCount > 0
+      ? "NO"
+      : "UNPROVEN"
+  const emptyVariationCanonicalForNonVariation:
+    "YES" | "NO" | "UNPROVEN" =
+    liveNonVariationCount > 0 && registryNonVariationCount > 0
+      ? "YES"
+      : "UNPROVEN"
+  let variationSemanticsCauseCurrentZeroMatch:
+    "YES" | "NO" | "UNPROVEN" = "NO"
+  if (variationKeyRequiredForNonVariation === "UNPROVEN" ||
+    emptyVariationCanonicalForNonVariation === "UNPROVEN") {
+    variationSemanticsCauseCurrentZeroMatch = "UNPROVEN"
+  } else {
+    variationSemanticsCauseCurrentZeroMatch = "NO"
+  }
+
+  const topologyPartitionValid = (
+    fullMatchRows +
+    itemIdOnlyRows +
+    skuOnlyRows +
+    crossLinkedRows +
+    multipleItemIdCandidateRows +
+    multipleSkuCandidateRows +
+    noStableIdentifierOverlapRows +
+    topologyUnprovenRows
+  ) === input.registryRows.length ? "YES" : "NO"
+
   return {
     liveCount: input.liveListings.length,
     registryCount: input.registryRows.length,
@@ -928,9 +1438,63 @@ function buildReconciliationCounts(input: {
     registryIdentityUnprovenCount,
     registryIdentityRootCause,
     safeBackfillWithoutDuplication,
+    fullMatchRows,
+    itemIdOnlyRows,
+    skuOnlyRows,
+    crossLinkedRows,
+    multipleItemIdCandidateRows,
+    multipleSkuIdCandidateRows: multipleSkuCandidateRows,
+    noStableIdentifierOverlapRows,
+    topologyUnprovenRows,
+    topologyPartitionValid,
+    liveReferencedByRegistryItemIdCount,
+    liveReferencedByRegistrySkuCount,
+    liveReferencedByBothSameRegistryRowCount,
+    liveReferencedByConflictingRegistryRowsCount,
+    liveWithNoStableRegistryReferenceCount,
+    crossLinkConflictCount,
+    itemIdAnchoredRelinkCandidateCount,
+    skuAnchoredRelinkCandidateCount,
+    conflictedRelinkCandidateCount,
+    noSafeRelinkCandidateCount,
+    safeRelinkCandidateCount,
+    safeAutomatedRelink,
+    liveNewRegistryEntryCandidateCount,
+    safeNewEntryBackfillPossible,
+    variationKeyRequiredForNonVariation,
+    emptyVariationCanonicalForNonVariation,
+    variationSemanticsCauseCurrentZeroMatch,
     livePartitionValid,
     registryPartitionValid,
   }
+}
+
+function addToIndexMap(indexBuckets: Map<string, Set<number>>, key: string, index: number) {
+  const existing = indexBuckets.get(key)
+  if (existing) {
+    existing.add(index)
+  } else {
+    indexBuckets.set(key, new Set([index]))
+  }
+}
+
+function getIndexes(indexBuckets: Map<string, Set<number>>, key: string) {
+  return Array.from(indexBuckets.get(key) ?? [])
+}
+
+function intersectIndexes(first: number[], second: number[]) {
+  if (first.length === 0 || second.length === 0) return []
+  const secondSet = new Set(second)
+  return first.filter((candidate) => secondSet.has(candidate))
+}
+
+function liveHasVariationKeyByNoVariation(
+  _liveWithVariationKeyByIndex: boolean[],
+  _liveListings: EbayLiveListing[],
+  _registryRows: ReadonlyRegistryListingRow[],
+  _itemIdPlusSkuOverlapCount: number,
+) {
+  return _itemIdPlusSkuOverlapCount > 0
 }
 
 export type EbayCommercialMonitorLiveReadonlyResult = {

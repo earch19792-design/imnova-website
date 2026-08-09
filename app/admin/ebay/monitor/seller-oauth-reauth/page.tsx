@@ -291,6 +291,32 @@ const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
   "SAFE_BACKFILL_WITHOUT_DUPLICATION",
   "LIVE_PARTITION_VALID",
   "REGISTRY_PARTITION_VALID",
+  "REGISTRY_FULL_MATCH_ROWS",
+  "REGISTRY_ITEM_ID_ONLY_ROWS",
+  "REGISTRY_SKU_ONLY_ROWS",
+  "REGISTRY_CROSS_LINKED_ROWS",
+  "REGISTRY_MULTIPLE_ITEM_ID_CANDIDATE_ROWS",
+  "REGISTRY_MULTIPLE_SKU_CANDIDATE_ROWS",
+  "REGISTRY_NO_STABLE_OVERLAP_ROWS",
+  "REGISTRY_TOPOLOGY_UNPROVEN_ROWS",
+  "REGISTRY_TOPOLOGY_PARTITION_VALID",
+  "LIVE_REFERENCED_BY_REGISTRY_ITEM_ID_COUNT",
+  "LIVE_REFERENCED_BY_REGISTRY_SKU_COUNT",
+  "LIVE_REFERENCED_BY_BOTH_SAME_REGISTRY_ROW_COUNT",
+  "LIVE_REFERENCED_BY_CONFLICTING_REGISTRY_ROWS_COUNT",
+  "LIVE_WITH_NO_STABLE_REGISTRY_REFERENCE_COUNT",
+  "CROSS_LINK_CONFLICT_COUNT",
+  "ITEM_ID_ANCHORED_RELINK_CANDIDATE_COUNT",
+  "SKU_ANCHORED_RELINK_CANDIDATE_COUNT",
+  "CONFLICTED_RELINK_CANDIDATE_COUNT",
+  "NO_SAFE_RELINK_CANDIDATE_COUNT",
+  "SAFE_RELINK_CANDIDATE_COUNT",
+  "SAFE_AUTOMATED_RELINK",
+  "LIVE_NEW_REGISTRY_ENTRY_CANDIDATE_COUNT",
+  "SAFE_NEW_ENTRY_BACKFILL_POSSIBLE",
+  "VARIATION_KEY_REQUIRED_FOR_NON_VARIATION_LISTING",
+  "EMPTY_VARIATION_IS_CANONIC_FOR_NON_VARIATION_LISTING",
+  "VARIATION_SEMANTICS_CAUSE_CURRENT_ZERO_MATCH",
   "MANUAL_LISTING_RUNTIME_AUTODISCOVERY",
 ] as const
 
@@ -500,6 +526,26 @@ function validRegistryCoverageDiagnostic(
     !countLike(record.REGISTRY_INCOMPLETE_IDENTITY_COUNT) ||
     !countLike(record.REGISTRY_HISTORICAL_ONLY_COUNT) ||
     !countLike(record.REGISTRY_IDENTITY_UNPROVEN_COUNT) ||
+    !countLike(record.REGISTRY_FULL_MATCH_ROWS) ||
+    !countLike(record.REGISTRY_ITEM_ID_ONLY_ROWS) ||
+    !countLike(record.REGISTRY_SKU_ONLY_ROWS) ||
+    !countLike(record.REGISTRY_CROSS_LINKED_ROWS) ||
+    !countLike(record.REGISTRY_MULTIPLE_ITEM_ID_CANDIDATE_ROWS) ||
+    !countLike(record.REGISTRY_MULTIPLE_SKU_CANDIDATE_ROWS) ||
+    !countLike(record.REGISTRY_NO_STABLE_OVERLAP_ROWS) ||
+    !countLike(record.REGISTRY_TOPOLOGY_UNPROVEN_ROWS) ||
+    !countLike(record.LIVE_REFERENCED_BY_REGISTRY_ITEM_ID_COUNT) ||
+    !countLike(record.LIVE_REFERENCED_BY_REGISTRY_SKU_COUNT) ||
+    !countLike(record.LIVE_REFERENCED_BY_BOTH_SAME_REGISTRY_ROW_COUNT) ||
+    !countLike(record.LIVE_REFERENCED_BY_CONFLICTING_REGISTRY_ROWS_COUNT) ||
+    !countLike(record.LIVE_WITH_NO_STABLE_REGISTRY_REFERENCE_COUNT) ||
+    !countLike(record.CROSS_LINK_CONFLICT_COUNT) ||
+    !countLike(record.ITEM_ID_ANCHORED_RELINK_CANDIDATE_COUNT) ||
+    !countLike(record.SKU_ANCHORED_RELINK_CANDIDATE_COUNT) ||
+    !countLike(record.CONFLICTED_RELINK_CANDIDATE_COUNT) ||
+    !countLike(record.NO_SAFE_RELINK_CANDIDATE_COUNT) ||
+    !countLike(record.SAFE_RELINK_CANDIDATE_COUNT) ||
+    !countLike(record.REGISTRY_IDENTITY_UNPROVEN_COUNT) ||
     !percent(record.REGISTRY_COVERAGE_PERCENT) ||
     !["AVAILABLE", "AUTH_UNAVAILABLE", "READ_FAILED"].includes(
       String(record.LIVE_ENUMERATION_RUNTIME_STATUS),
@@ -519,8 +565,26 @@ function validRegistryCoverageDiagnostic(
   )) return false
   if (!["YES", "NO"].includes(String(record.LIVE_PARTITION_VALID)) ||
     !["YES", "NO"].includes(String(record.REGISTRY_PARTITION_VALID)) ||
+    !["YES", "NO"].includes(
+      String(record.REGISTRY_TOPOLOGY_PARTITION_VALID),
+    ) ||
     !["PASS", "PARTIAL", "FAIL", "UNPROVEN"].includes(
       String(record.MANUAL_LISTING_RUNTIME_AUTODISCOVERY),
+    ) ||
+    !["YES", "NO", "UNPROVEN"].includes(
+      String(record.SAFE_AUTOMATED_RELINK),
+    ) ||
+    !["YES", "NO", "UNPROVEN"].includes(
+      String(record.SAFE_NEW_ENTRY_BACKFILL_POSSIBLE),
+    ) ||
+    !["YES", "NO", "UNPROVEN"].includes(
+      String(record.VARIATION_KEY_REQUIRED_FOR_NON_VARIATION_LISTING),
+    ) ||
+    !["YES", "NO", "UNPROVEN"].includes(
+      String(record.EMPTY_VARIATION_IS_CANONIC_FOR_NON_VARIATION_LISTING),
+    ) ||
+    !["YES", "NO", "UNPROVEN"].includes(
+      String(record.VARIATION_SEMANTICS_CAUSE_CURRENT_ZERO_MATCH),
     )) return false
   return true
 }
@@ -1696,6 +1760,58 @@ export default function EbaySellerOAuthReauthPage() {
                     registryCoverageDiagnostic.REGISTRY_IDENTITY_ROOT_CAUSE],
                   ["Safe backfill without duplication",
                     registryCoverageDiagnostic.SAFE_BACKFILL_WITHOUT_DUPLICATION],
+                  ["Registry full-match rows",
+                    registryCoverageDiagnostic.REGISTRY_FULL_MATCH_ROWS],
+                  ["Registry item-id-only rows",
+                    registryCoverageDiagnostic.REGISTRY_ITEM_ID_ONLY_ROWS],
+                  ["Registry sku-only rows",
+                    registryCoverageDiagnostic.REGISTRY_SKU_ONLY_ROWS],
+                  ["Registry cross-linked rows",
+                    registryCoverageDiagnostic.REGISTRY_CROSS_LINKED_ROWS],
+                  ["Registry multiple item-id candidates rows",
+                    registryCoverageDiagnostic.REGISTRY_MULTIPLE_ITEM_ID_CANDIDATE_ROWS],
+                  ["Registry multiple sku candidates rows",
+                    registryCoverageDiagnostic.REGISTRY_MULTIPLE_SKU_CANDIDATE_ROWS],
+                  ["Registry no stable overlap rows",
+                    registryCoverageDiagnostic.REGISTRY_NO_STABLE_OVERLAP_ROWS],
+                  ["Registry topology unproven rows",
+                    registryCoverageDiagnostic.REGISTRY_TOPOLOGY_UNPROVEN_ROWS],
+                  ["Registry topology partition valid",
+                    registryCoverageDiagnostic.REGISTRY_TOPOLOGY_PARTITION_VALID],
+                  ["Live referenced by registry item-id count",
+                    registryCoverageDiagnostic.LIVE_REFERENCED_BY_REGISTRY_ITEM_ID_COUNT],
+                  ["Live referenced by registry sku count",
+                    registryCoverageDiagnostic.LIVE_REFERENCED_BY_REGISTRY_SKU_COUNT],
+                  ["Live referenced by both same registry row count",
+                    registryCoverageDiagnostic.LIVE_REFERENCED_BY_BOTH_SAME_REGISTRY_ROW_COUNT],
+                  ["Live referenced by conflicting registry rows count",
+                    registryCoverageDiagnostic.LIVE_REFERENCED_BY_CONFLICTING_REGISTRY_ROWS_COUNT],
+                  ["Live with no stable registry reference count",
+                    registryCoverageDiagnostic.LIVE_WITH_NO_STABLE_REGISTRY_REFERENCE_COUNT],
+                  ["Cross-link conflict count",
+                    registryCoverageDiagnostic.CROSS_LINK_CONFLICT_COUNT],
+                  ["Item-id anchored relink candidates",
+                    registryCoverageDiagnostic.ITEM_ID_ANCHORED_RELINK_CANDIDATE_COUNT],
+                  ["Sku anchored relink candidates",
+                    registryCoverageDiagnostic.SKU_ANCHORED_RELINK_CANDIDATE_COUNT],
+                  ["Conflicted relink candidates",
+                    registryCoverageDiagnostic.CONFLICTED_RELINK_CANDIDATE_COUNT],
+                  ["No safe relink candidates",
+                    registryCoverageDiagnostic.NO_SAFE_RELINK_CANDIDATE_COUNT],
+                  ["Safe relink candidates",
+                    registryCoverageDiagnostic.SAFE_RELINK_CANDIDATE_COUNT],
+                  ["Safe automated relink",
+                    registryCoverageDiagnostic.SAFE_AUTOMATED_RELINK],
+                  ["Live new registry entry candidates",
+                    registryCoverageDiagnostic.LIVE_NEW_REGISTRY_ENTRY_CANDIDATE_COUNT],
+                  ["Safe new entry backfill possible",
+                    registryCoverageDiagnostic.SAFE_NEW_ENTRY_BACKFILL_POSSIBLE],
+                  ["Variation key required for non-variation listing",
+                    registryCoverageDiagnostic.VARIATION_KEY_REQUIRED_FOR_NON_VARIATION_LISTING],
+                  ["Empty variation is canonical for non-variation listing",
+                    registryCoverageDiagnostic.EMPTY_VARIATION_IS_CANONIC_FOR_NON_VARIATION_LISTING],
+                  ["Variation semantics cause current zero match",
+                    registryCoverageDiagnostic.VARIATION_SEMANTICS_CAUSE_CURRENT_ZERO_MATCH],
                   ["Registry matched",
                     registryCoverageDiagnostic.REGISTRY_MATCHED_COUNT],
                   ["Registry missing",
