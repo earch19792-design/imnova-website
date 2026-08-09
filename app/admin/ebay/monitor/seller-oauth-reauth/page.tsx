@@ -259,14 +259,20 @@ const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
   "SUPABASE_URL_PRESENT",
   "SUPABASE_SERVICE_ROLE_PRESENT",
   "REGISTRY_SOURCE_RUNTIME_STATUS",
-  "REGISTRY_RECORD_COUNT",
   "LIVE_ENUMERATION_RUNTIME_STATUS",
+  "REGISTRY_RECORD_COUNT",
   "LIVE_EBAY_LISTING_COUNT",
   "REGISTRY_MATCHED_COUNT",
   "REGISTRY_MISSING_COUNT",
   "REGISTRY_ORPHANED_COUNT",
   "REGISTRY_AMBIGUOUS_COUNT",
   "REGISTRY_COVERAGE_PERCENT",
+  "REGISTRY_LIFECYCLE_FIELDS",
+  "REGISTRY_PROVENANCE_FIELDS",
+  "REGISTRY_HAS_ACTIVE_STATE",
+  "REGISTRY_HAS_LAST_SEEN_SIGNAL",
+  "REGISTRY_HAS_PRODUCT_CASE_LINK",
+  "REGISTRY_HAS_SOURCE_ORIGIN",
   "LIVE_WITH_ITEM_ID_COUNT",
   "LIVE_WITH_SKU_COUNT",
   "LIVE_WITH_VARIATION_KEY_COUNT",
@@ -293,6 +299,7 @@ const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
   "REGISTRY_PARTITION_VALID",
   "REGISTRY_FULL_MATCH_ROWS",
   "REGISTRY_ITEM_ID_ONLY_ROWS",
+  "ITEM_ID_ONLY_ROW_COUNT",
   "REGISTRY_SKU_ONLY_ROWS",
   "REGISTRY_CROSS_LINKED_ROWS",
   "REGISTRY_MULTIPLE_ITEM_ID_CANDIDATE_ROWS",
@@ -306,14 +313,46 @@ const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
   "LIVE_REFERENCED_BY_CONFLICTING_REGISTRY_ROWS_COUNT",
   "LIVE_WITH_NO_STABLE_REGISTRY_REFERENCE_COUNT",
   "CROSS_LINK_CONFLICT_COUNT",
+  "ITEM_ID_ONLY_ITEM_ID_UNIQUE_BOTH_SIDES",
+  "ITEM_ID_ONLY_REGISTRY_SKU_MATCHES_ANY_OTHER_LIVE_LISTING",
+  "ITEM_ID_ONLY_LIVE_SKU_MATCHES_ANY_OTHER_REGISTRY_ROW",
+  "ITEM_ID_ONLY_ACCOUNT_MARKETPLACE_COMPATIBLE",
+  "ITEM_ID_ONLY_LIFECYCLE_CLASS",
+  "ITEM_ID_ONLY_DETERMINISTIC_RELINK_POSSIBLE",
   "ITEM_ID_ANCHORED_RELINK_CANDIDATE_COUNT",
   "SKU_ANCHORED_RELINK_CANDIDATE_COUNT",
+  "SKU_ONLY_REGISTRY_ITEM_ID_NOT_LIVE_COUNT",
+  "SKU_ONLY_UNIQUE_SKU_BOTH_SIDES_COUNT",
+  "SKU_ONLY_NO_COMPETING_REGISTRY_RELATION_COUNT",
+  "SKU_ONLY_RELIST_CANDIDATE_COUNT",
+  "SKU_ONLY_STALE_REGISTRY_ITEM_ID_COUNT",
+  "SKU_ONLY_SKU_REUSE_RISK_COUNT",
+  "SKU_ONLY_CONFLICTED_IDENTITY_COUNT",
+  "SKU_ONLY_UNPROVEN_COUNT",
+  "SKU_ONLY_DETERMINISTIC_RELINK_CANDIDATE_COUNT",
   "CONFLICTED_RELINK_CANDIDATE_COUNT",
   "NO_SAFE_RELINK_CANDIDATE_COUNT",
   "SAFE_RELINK_CANDIDATE_COUNT",
   "SAFE_AUTOMATED_RELINK",
+  "NO_OVERLAP_HISTORICAL_OR_STALE_COUNT",
+  "NO_OVERLAP_CURRENT_IDENTITY_DRIFT_COUNT",
+  "NO_OVERLAP_UNRELATED_COUNT",
+  "NO_OVERLAP_UNPROVEN_COUNT",
+  "REGISTRY_STALE_ACTIVE_ROWS_PRESENT",
   "LIVE_NEW_REGISTRY_ENTRY_CANDIDATE_COUNT",
   "SAFE_NEW_ENTRY_BACKFILL_POSSIBLE",
+  "CERTIFIED_EXISTING_RELATIONSHIP_COUNT",
+  "CERTIFIED_RELINK_CANDIDATE_COUNT",
+  "UNRESOLVED_RELATIONSHIP_COUNT",
+  "TRUE_NEW_ENTRY_CANDIDATE_COUNT",
+  "PLAN_RELINK_EXISTING_COUNT",
+  "PLAN_CREATE_NEW_COUNT",
+  "PLAN_MARK_STALE_OR_HISTORICAL_COUNT",
+  "PLAN_REQUIRE_HUMAN_REVIEW_COUNT",
+  "REGISTRY_REPAIR_PLAN_CERTIFIED",
+  "AUTOMATED_MUTATION_SAFE",
+  "IS_EBAY_ITEM_ID_AUTHORITATIVE_FOR_LISTING_IDENTITY",
+  "IS_SKU_ALLOWED_AS_RELIST_CONTINUITY_SIGNAL",
   "VARIATION_KEY_REQUIRED_FOR_NON_VARIATION_LISTING",
   "EMPTY_VARIATION_IS_CANONIC_FOR_NON_VARIATION_LISTING",
   "VARIATION_SEMANTICS_CAUSE_CURRENT_ZERO_MATCH",
@@ -486,10 +525,22 @@ function validRegistryCoverageDiagnostic(
     candidate === "UNPROVEN" ||
     (typeof candidate === "number" && Number.isSafeInteger(candidate) &&
       candidate >= 0)
+  const nonEmptyText = (candidate: unknown) => typeof candidate === "string"
   const percent = (candidate: unknown) =>
     candidate === "UNPROVEN" ||
     (typeof candidate === "number" && Number.isFinite(candidate) &&
       candidate >= 0 && candidate <= 100)
+  const yesNo = (candidate: unknown) => ["YES", "NO"].includes(String(candidate))
+  const yesNoUnproven = (candidate: unknown) =>
+    ["YES", "NO", "UNPROVEN"].includes(String(candidate))
+  const itemIdMismatchClass = (candidate: unknown) =>
+    ["CURRENT_LISTING_STALE_REGISTRY_SKU", "CONFLICTED_IDENTITY",
+      "HISTORICAL_RELATION", "UNPROVEN"].includes(String(candidate))
+  const lifecycleCause = (candidate: unknown) =>
+    ["ITEM_ID_MISMATCH", "SKU_MISMATCH", "VARIATION_KEY_MISMATCH",
+      "COMPOSITE_KEY_OVERSTRICT", "LEGACY_IDENTITY_CONTRACT",
+      "REGISTRY_ROWS_HISTORICAL_ONLY", "MIXED_CAUSES", "UNPROVEN"
+    ].includes(String(candidate))
   if (!["AVAILABLE", "MISSING", "FAILED"].includes(
     String(record.REGISTRY_RUNTIME_CONFIG),
   )) return false
@@ -521,6 +572,12 @@ function validRegistryCoverageDiagnostic(
     !countLike(record.ITEM_ID_PLUS_VARIATION_OVERLAP_COUNT) ||
     !countLike(record.SKU_PLUS_VARIATION_OVERLAP_COUNT) ||
     !countLike(record.FULL_COMPOSITE_OVERLAP_COUNT) ||
+    !nonEmptyText(record.REGISTRY_LIFECYCLE_FIELDS) ||
+    !nonEmptyText(record.REGISTRY_PROVENANCE_FIELDS) ||
+    !yesNo(record.REGISTRY_HAS_ACTIVE_STATE) ||
+    !yesNo(record.REGISTRY_HAS_LAST_SEEN_SIGNAL) ||
+    !yesNo(record.REGISTRY_HAS_PRODUCT_CASE_LINK) ||
+    !yesNo(record.REGISTRY_HAS_SOURCE_ORIGIN) ||
     !countLike(record.REGISTRY_CURRENT_IDENTITY_COUNT) ||
     !countLike(record.REGISTRY_LEGACY_IDENTITY_COUNT) ||
     !countLike(record.REGISTRY_INCOMPLETE_IDENTITY_COUNT) ||
@@ -528,6 +585,7 @@ function validRegistryCoverageDiagnostic(
     !countLike(record.REGISTRY_IDENTITY_UNPROVEN_COUNT) ||
     !countLike(record.REGISTRY_FULL_MATCH_ROWS) ||
     !countLike(record.REGISTRY_ITEM_ID_ONLY_ROWS) ||
+    !countLike(record.ITEM_ID_ONLY_ROW_COUNT) ||
     !countLike(record.REGISTRY_SKU_ONLY_ROWS) ||
     !countLike(record.REGISTRY_CROSS_LINKED_ROWS) ||
     !countLike(record.REGISTRY_MULTIPLE_ITEM_ID_CANDIDATE_ROWS) ||
@@ -540,26 +598,49 @@ function validRegistryCoverageDiagnostic(
     !countLike(record.LIVE_REFERENCED_BY_CONFLICTING_REGISTRY_ROWS_COUNT) ||
     !countLike(record.LIVE_WITH_NO_STABLE_REGISTRY_REFERENCE_COUNT) ||
     !countLike(record.CROSS_LINK_CONFLICT_COUNT) ||
+    !yesNoUnproven(record.ITEM_ID_ONLY_ITEM_ID_UNIQUE_BOTH_SIDES) ||
+    !yesNoUnproven(record.ITEM_ID_ONLY_REGISTRY_SKU_MATCHES_ANY_OTHER_LIVE_LISTING) ||
+    !yesNoUnproven(record.ITEM_ID_ONLY_LIVE_SKU_MATCHES_ANY_OTHER_REGISTRY_ROW) ||
+    !yesNoUnproven(record.ITEM_ID_ONLY_ACCOUNT_MARKETPLACE_COMPATIBLE) ||
+    !itemIdMismatchClass(record.ITEM_ID_ONLY_LIFECYCLE_CLASS) ||
+    !yesNoUnproven(record.ITEM_ID_ONLY_DETERMINISTIC_RELINK_POSSIBLE) ||
     !countLike(record.ITEM_ID_ANCHORED_RELINK_CANDIDATE_COUNT) ||
     !countLike(record.SKU_ANCHORED_RELINK_CANDIDATE_COUNT) ||
+    !countLike(record.SKU_ONLY_REGISTRY_ITEM_ID_NOT_LIVE_COUNT) ||
+    !countLike(record.SKU_ONLY_UNIQUE_SKU_BOTH_SIDES_COUNT) ||
+    !countLike(record.SKU_ONLY_NO_COMPETING_REGISTRY_RELATION_COUNT) ||
+    !countLike(record.SKU_ONLY_RELIST_CANDIDATE_COUNT) ||
+    !countLike(record.SKU_ONLY_STALE_REGISTRY_ITEM_ID_COUNT) ||
+    !countLike(record.SKU_ONLY_SKU_REUSE_RISK_COUNT) ||
+    !countLike(record.SKU_ONLY_CONFLICTED_IDENTITY_COUNT) ||
+    !countLike(record.SKU_ONLY_UNPROVEN_COUNT) ||
+    !countLike(record.SKU_ONLY_DETERMINISTIC_RELINK_CANDIDATE_COUNT) ||
     !countLike(record.CONFLICTED_RELINK_CANDIDATE_COUNT) ||
     !countLike(record.NO_SAFE_RELINK_CANDIDATE_COUNT) ||
     !countLike(record.SAFE_RELINK_CANDIDATE_COUNT) ||
     !countLike(record.REGISTRY_IDENTITY_UNPROVEN_COUNT) ||
+    !countLike(record.NO_OVERLAP_HISTORICAL_OR_STALE_COUNT) ||
+    !countLike(record.NO_OVERLAP_CURRENT_IDENTITY_DRIFT_COUNT) ||
+    !countLike(record.NO_OVERLAP_UNRELATED_COUNT) ||
+    !countLike(record.NO_OVERLAP_UNPROVEN_COUNT) ||
+    !yesNo(record.REGISTRY_STALE_ACTIVE_ROWS_PRESENT) ||
+    !countLike(record.CERTIFIED_EXISTING_RELATIONSHIP_COUNT) ||
+    !countLike(record.CERTIFIED_RELINK_CANDIDATE_COUNT) ||
+    !countLike(record.UNRESOLVED_RELATIONSHIP_COUNT) ||
+    !countLike(record.TRUE_NEW_ENTRY_CANDIDATE_COUNT) ||
+    !countLike(record.PLAN_RELINK_EXISTING_COUNT) ||
+    !countLike(record.PLAN_CREATE_NEW_COUNT) ||
+    !countLike(record.PLAN_MARK_STALE_OR_HISTORICAL_COUNT) ||
+    !countLike(record.PLAN_REQUIRE_HUMAN_REVIEW_COUNT) ||
+    !yesNoUnproven(record.REGISTRY_REPAIR_PLAN_CERTIFIED) ||
+    !yesNoUnproven(record.AUTOMATED_MUTATION_SAFE) ||
+    !yesNoUnproven(record.IS_EBAY_ITEM_ID_AUTHORITATIVE_FOR_LISTING_IDENTITY) ||
+    !yesNoUnproven(record.IS_SKU_ALLOWED_AS_RELIST_CONTINUITY_SIGNAL) ||
     !percent(record.REGISTRY_COVERAGE_PERCENT) ||
     !["AVAILABLE", "AUTH_UNAVAILABLE", "READ_FAILED"].includes(
       String(record.LIVE_ENUMERATION_RUNTIME_STATUS),
     )) return false
-  if (![
-    "ITEM_ID_MISMATCH",
-    "SKU_MISMATCH",
-    "VARIATION_KEY_MISMATCH",
-    "COMPOSITE_KEY_OVERSTRICT",
-    "LEGACY_IDENTITY_CONTRACT",
-    "REGISTRY_ROWS_HISTORICAL_ONLY",
-    "MIXED_CAUSES",
-    "UNPROVEN",
-  ].includes(String(record.REGISTRY_IDENTITY_ROOT_CAUSE))) return false
+  if (!lifecycleCause(record.REGISTRY_IDENTITY_ROOT_CAUSE)) return false
   if (!["YES", "NO", "UNPROVEN"].includes(
     String(record.SAFE_BACKFILL_WITHOUT_DUPLICATION),
   )) return false
@@ -1822,12 +1903,90 @@ export default function EbaySellerOAuthReauthPage() {
                     registryCoverageDiagnostic.REGISTRY_AMBIGUOUS_COUNT],
                   ["Registry coverage %",
                     registryCoverageDiagnostic.REGISTRY_COVERAGE_PERCENT],
+                  ["Registry lifecycle fields",
+                    registryCoverageDiagnostic.REGISTRY_LIFECYCLE_FIELDS],
+                  ["Registry provenance fields",
+                    registryCoverageDiagnostic.REGISTRY_PROVENANCE_FIELDS],
+                  ["Registry has active-state concept",
+                    registryCoverageDiagnostic.REGISTRY_HAS_ACTIVE_STATE],
+                  ["Registry has last-seen signal",
+                    registryCoverageDiagnostic.REGISTRY_HAS_LAST_SEEN_SIGNAL],
+                  ["Registry has Product Case link",
+                    registryCoverageDiagnostic.REGISTRY_HAS_PRODUCT_CASE_LINK],
+                  ["Registry has source/origin",
+                    registryCoverageDiagnostic.REGISTRY_HAS_SOURCE_ORIGIN],
                   ["Live partition valid",
                     registryCoverageDiagnostic.LIVE_PARTITION_VALID],
                   ["Registry partition valid",
                     registryCoverageDiagnostic.REGISTRY_PARTITION_VALID],
+                  ["Item-id-only row count",
+                    registryCoverageDiagnostic.ITEM_ID_ONLY_ROW_COUNT],
+                  ["Item-id-only row itemId unique both sides",
+                    registryCoverageDiagnostic.ITEM_ID_ONLY_ITEM_ID_UNIQUE_BOTH_SIDES],
+                  ["Item-id-only row registry SKU matches any other live",
+                    registryCoverageDiagnostic.ITEM_ID_ONLY_REGISTRY_SKU_MATCHES_ANY_OTHER_LIVE_LISTING],
+                  ["Item-id-only row live SKU matches any other Registry row",
+                    registryCoverageDiagnostic.ITEM_ID_ONLY_LIVE_SKU_MATCHES_ANY_OTHER_REGISTRY_ROW],
+                  ["Item-id-only marketplace/account compatible",
+                    registryCoverageDiagnostic.ITEM_ID_ONLY_ACCOUNT_MARKETPLACE_COMPATIBLE],
+                  ["Item-id-only lifecycle class",
+                    registryCoverageDiagnostic.ITEM_ID_ONLY_LIFECYCLE_CLASS],
+                  ["Item-id-only deterministic relink possible",
+                    registryCoverageDiagnostic.ITEM_ID_ONLY_DETERMINISTIC_RELINK_POSSIBLE],
                   ["Manual listing runtime autodiscovery",
                     registryCoverageDiagnostic.MANUAL_LISTING_RUNTIME_AUTODISCOVERY],
+                  ["SKU-only registry itemId not live",
+                    registryCoverageDiagnostic.SKU_ONLY_REGISTRY_ITEM_ID_NOT_LIVE_COUNT],
+                  ["SKU-only unique sku both sides",
+                    registryCoverageDiagnostic.SKU_ONLY_UNIQUE_SKU_BOTH_SIDES_COUNT],
+                  ["SKU-only no competing registry relation",
+                    registryCoverageDiagnostic.SKU_ONLY_NO_COMPETING_REGISTRY_RELATION_COUNT],
+                  ["SKU-only relist candidates",
+                    registryCoverageDiagnostic.SKU_ONLY_RELIST_CANDIDATE_COUNT],
+                  ["SKU-only stale registry itemId",
+                    registryCoverageDiagnostic.SKU_ONLY_STALE_REGISTRY_ITEM_ID_COUNT],
+                  ["SKU-only SKU reuse risk",
+                    registryCoverageDiagnostic.SKU_ONLY_SKU_REUSE_RISK_COUNT],
+                  ["SKU-only conflicted identity",
+                    registryCoverageDiagnostic.SKU_ONLY_CONFLICTED_IDENTITY_COUNT],
+                  ["SKU-only unproven count",
+                    registryCoverageDiagnostic.SKU_ONLY_UNPROVEN_COUNT],
+                  ["SKU-only deterministic relink candidates",
+                    registryCoverageDiagnostic.SKU_ONLY_DETERMINISTIC_RELINK_CANDIDATE_COUNT],
+                  ["No-overlap historical/stale",
+                    registryCoverageDiagnostic.NO_OVERLAP_HISTORICAL_OR_STALE_COUNT],
+                  ["No-overlap identity drift",
+                    registryCoverageDiagnostic.NO_OVERLAP_CURRENT_IDENTITY_DRIFT_COUNT],
+                  ["No-overlap unrelated",
+                    registryCoverageDiagnostic.NO_OVERLAP_UNRELATED_COUNT],
+                  ["No-overlap unproven",
+                    registryCoverageDiagnostic.NO_OVERLAP_UNPROVEN_COUNT],
+                  ["Registry stale active rows present",
+                    registryCoverageDiagnostic.REGISTRY_STALE_ACTIVE_ROWS_PRESENT],
+                  ["Certified existing relationship count",
+                    registryCoverageDiagnostic.CERTIFIED_EXISTING_RELATIONSHIP_COUNT],
+                  ["Certified relink candidate count",
+                    registryCoverageDiagnostic.CERTIFIED_RELINK_CANDIDATE_COUNT],
+                  ["Unresolved relationship count",
+                    registryCoverageDiagnostic.UNRESOLVED_RELATIONSHIP_COUNT],
+                  ["True new entry candidate count",
+                    registryCoverageDiagnostic.TRUE_NEW_ENTRY_CANDIDATE_COUNT],
+                  ["Plan relink existing count",
+                    registryCoverageDiagnostic.PLAN_RELINK_EXISTING_COUNT],
+                  ["Plan create new count",
+                    registryCoverageDiagnostic.PLAN_CREATE_NEW_COUNT],
+                  ["Plan mark stale or historical",
+                    registryCoverageDiagnostic.PLAN_MARK_STALE_OR_HISTORICAL_COUNT],
+                  ["Plan require human review",
+                    registryCoverageDiagnostic.PLAN_REQUIRE_HUMAN_REVIEW_COUNT],
+                  ["Registry repair plan certified",
+                    registryCoverageDiagnostic.REGISTRY_REPAIR_PLAN_CERTIFIED],
+                  ["Automated mutation safe",
+                    registryCoverageDiagnostic.AUTOMATED_MUTATION_SAFE],
+                  ["eBay Item ID authoritative for identity",
+                    registryCoverageDiagnostic.IS_EBAY_ITEM_ID_AUTHORITATIVE_FOR_LISTING_IDENTITY],
+                  ["SKU allowed as relist continuity signal",
+                    registryCoverageDiagnostic.IS_SKU_ALLOWED_AS_RELIST_CONTINUITY_SIGNAL],
                 ].map(([label, value]) => (
                   <div className="rounded-lg bg-black/20 p-3" key={String(label)}>
                     <dt className="break-all font-bold text-white/50">{label}</dt>

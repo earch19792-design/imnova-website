@@ -222,6 +222,19 @@ export type EbaySafeBackfillWithoutDuplication =
   | "NO"
   | "UNPROVEN"
 
+export type EbayRegistryItemIdOnlyLifecycleClass =
+  | "CURRENT_LISTING_STALE_REGISTRY_SKU"
+  | "CONFLICTED_IDENTITY"
+  | "HISTORICAL_RELATION"
+  | "UNPROVEN"
+
+export type EbayRegistrySkuOnlyLifecycleClass =
+  | "RELIST_CANDIDATE"
+  | "STALE_REGISTRY_ITEM_ID"
+  | "SKU_REUSE_RISK"
+  | "CONFLICTED_IDENTITY"
+  | "UNPROVEN"
+
 type EbayRegistryTopologyBucket =
   | "FULL_MATCH"
   | "ITEM_ID_ONLY_MATCH"
@@ -242,6 +255,12 @@ export type EbayRegistryCoverageDiagnostic = {
   REGISTRY_RECORD_COUNT: EbayRegistryRuntimeCoverageCount
   LIVE_ENUMERATION_RUNTIME_STATUS: EbayRegistryRuntimeEnumerationStatus
   LIVE_EBAY_LISTING_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_LIFECYCLE_FIELDS: string
+  REGISTRY_PROVENANCE_FIELDS: string
+  REGISTRY_HAS_ACTIVE_STATE: "YES" | "NO" | "UNPROVEN"
+  REGISTRY_HAS_LAST_SEEN_SIGNAL: "YES" | "NO" | "UNPROVEN"
+  REGISTRY_HAS_PRODUCT_CASE_LINK: "YES" | "NO" | "UNPROVEN"
+  REGISTRY_HAS_SOURCE_ORIGIN: "YES" | "NO" | "UNPROVEN"
   REGISTRY_MATCHED_COUNT: EbayRegistryRuntimeCoverageCount
   REGISTRY_MISSING_COUNT: EbayRegistryRuntimeCoverageCount
   REGISTRY_ORPHANED_COUNT: EbayRegistryRuntimeCoverageCount
@@ -273,6 +292,7 @@ export type EbayRegistryCoverageDiagnostic = {
   REGISTRY_PARTITION_VALID: "YES" | "NO"
   REGISTRY_FULL_MATCH_ROWS: EbayRegistryRuntimeCoverageCount
   REGISTRY_ITEM_ID_ONLY_ROWS: EbayRegistryRuntimeCoverageCount
+  ITEM_ID_ONLY_ROW_COUNT: EbayRegistryRuntimeCoverageCount
   REGISTRY_SKU_ONLY_ROWS: EbayRegistryRuntimeCoverageCount
   REGISTRY_CROSS_LINKED_ROWS: EbayRegistryRuntimeCoverageCount
   REGISTRY_MULTIPLE_ITEM_ID_CANDIDATE_ROWS: EbayRegistryRuntimeCoverageCount
@@ -288,6 +308,43 @@ export type EbayRegistryCoverageDiagnostic = {
   LIVE_WITH_NO_STABLE_REGISTRY_REFERENCE_COUNT:
     EbayRegistryRuntimeCoverageCount
   CROSS_LINK_CONFLICT_COUNT: EbayRegistryRuntimeCoverageCount
+  ITEM_ID_ONLY_ITEM_ID_UNIQUE_BOTH_SIDES: "YES" | "NO" | "UNPROVEN"
+  ITEM_ID_ONLY_REGISTRY_SKU_MATCHES_ANY_OTHER_LIVE_LISTING:
+    "YES" | "NO" | "UNPROVEN"
+  ITEM_ID_ONLY_LIVE_SKU_MATCHES_ANY_OTHER_REGISTRY_ROW:
+    "YES" | "NO" | "UNPROVEN"
+  ITEM_ID_ONLY_ACCOUNT_MARKETPLACE_COMPATIBLE:
+    "YES" | "NO" | "UNPROVEN"
+  ITEM_ID_ONLY_LIFECYCLE_CLASS:
+    EbayRegistryItemIdOnlyLifecycleClass | "UNPROVEN"
+  ITEM_ID_ONLY_DETERMINISTIC_RELINK_POSSIBLE:
+    "YES" | "NO" | "UNPROVEN"
+  SKU_ONLY_REGISTRY_ITEM_ID_NOT_LIVE_COUNT: EbayRegistryRuntimeCoverageCount
+  SKU_ONLY_UNIQUE_SKU_BOTH_SIDES_COUNT: EbayRegistryRuntimeCoverageCount
+  SKU_ONLY_NO_COMPETING_REGISTRY_RELATION_COUNT:
+    EbayRegistryRuntimeCoverageCount
+  SKU_ONLY_RELIST_CANDIDATE_COUNT: EbayRegistryRuntimeCoverageCount
+  SKU_ONLY_STALE_REGISTRY_ITEM_ID_COUNT: EbayRegistryRuntimeCoverageCount
+  SKU_ONLY_SKU_REUSE_RISK_COUNT: EbayRegistryRuntimeCoverageCount
+  SKU_ONLY_CONFLICTED_IDENTITY_COUNT: EbayRegistryRuntimeCoverageCount
+  SKU_ONLY_UNPROVEN_COUNT: EbayRegistryRuntimeCoverageCount
+  SKU_ONLY_DETERMINISTIC_RELINK_CANDIDATE_COUNT:
+    EbayRegistryRuntimeCoverageCount
+  NO_OVERLAP_HISTORICAL_OR_STALE_COUNT: EbayRegistryRuntimeCoverageCount
+  NO_OVERLAP_CURRENT_IDENTITY_DRIFT_COUNT: EbayRegistryRuntimeCoverageCount
+  NO_OVERLAP_UNRELATED_COUNT: EbayRegistryRuntimeCoverageCount
+  NO_OVERLAP_UNPROVEN_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_STALE_ACTIVE_ROWS_PRESENT: "YES" | "NO" | "UNPROVEN"
+  CERTIFIED_EXISTING_RELATIONSHIP_COUNT: EbayRegistryRuntimeCoverageCount
+  CERTIFIED_RELINK_CANDIDATE_COUNT: EbayRegistryRuntimeCoverageCount
+  UNRESOLVED_RELATIONSHIP_COUNT: EbayRegistryRuntimeCoverageCount
+  TRUE_NEW_ENTRY_CANDIDATE_COUNT: EbayRegistryRuntimeCoverageCount
+  PLAN_RELINK_EXISTING_COUNT: EbayRegistryRuntimeCoverageCount
+  PLAN_CREATE_NEW_COUNT: EbayRegistryRuntimeCoverageCount
+  PLAN_MARK_STALE_OR_HISTORICAL_COUNT: EbayRegistryRuntimeCoverageCount
+  PLAN_REQUIRE_HUMAN_REVIEW_COUNT: EbayRegistryRuntimeCoverageCount
+  REGISTRY_REPAIR_PLAN_CERTIFIED: "YES" | "NO" | "UNPROVEN"
+  AUTOMATED_MUTATION_SAFE: "YES" | "NO" | "UNPROVEN"
   ITEM_ID_ANCHORED_RELINK_CANDIDATE_COUNT: EbayRegistryRuntimeCoverageCount
   SKU_ANCHORED_RELINK_CANDIDATE_COUNT: EbayRegistryRuntimeCoverageCount
   CONFLICTED_RELINK_CANDIDATE_COUNT: EbayRegistryRuntimeCoverageCount
@@ -303,6 +360,9 @@ export type EbayRegistryCoverageDiagnostic = {
   VARIATION_SEMANTICS_CAUSE_CURRENT_ZERO_MATCH:
     "YES" | "NO" | "UNPROVEN"
   MANUAL_LISTING_RUNTIME_AUTODISCOVERY: EbayManualListingDiscoveryRuntimeResult
+  IS_EBAY_ITEM_ID_AUTHORITATIVE_FOR_LISTING_IDENTITY: "YES" | "NO" | "UNPROVEN"
+  IS_SKU_ALLOWED_AS_RELIST_CONTINUITY_SIGNAL:
+    "YES" | "NO" | "UNPROVEN"
 }
 
 type RegistryRuntimeReadInput = {
@@ -379,6 +439,12 @@ export async function diagnoseRegistryCoverageRuntime(
     REGISTRY_RECORD_COUNT: "UNPROVEN",
     LIVE_ENUMERATION_RUNTIME_STATUS: "AUTH_UNAVAILABLE",
     LIVE_EBAY_LISTING_COUNT: "UNPROVEN",
+    REGISTRY_LIFECYCLE_FIELDS: "UNPROVEN",
+    REGISTRY_PROVENANCE_FIELDS: "UNPROVEN",
+    REGISTRY_HAS_ACTIVE_STATE: "UNPROVEN",
+    REGISTRY_HAS_LAST_SEEN_SIGNAL: "UNPROVEN",
+    REGISTRY_HAS_PRODUCT_CASE_LINK: "UNPROVEN",
+    REGISTRY_HAS_SOURCE_ORIGIN: "UNPROVEN",
     REGISTRY_MATCHED_COUNT: "UNPROVEN",
     REGISTRY_MISSING_COUNT: "UNPROVEN",
     REGISTRY_ORPHANED_COUNT: "UNPROVEN",
@@ -410,6 +476,7 @@ export async function diagnoseRegistryCoverageRuntime(
     REGISTRY_PARTITION_VALID: "NO",
     REGISTRY_FULL_MATCH_ROWS: "UNPROVEN",
     REGISTRY_ITEM_ID_ONLY_ROWS: "UNPROVEN",
+    ITEM_ID_ONLY_ROW_COUNT: "UNPROVEN",
     REGISTRY_SKU_ONLY_ROWS: "UNPROVEN",
     REGISTRY_CROSS_LINKED_ROWS: "UNPROVEN",
     REGISTRY_MULTIPLE_ITEM_ID_CANDIDATE_ROWS: "UNPROVEN",
@@ -423,6 +490,36 @@ export async function diagnoseRegistryCoverageRuntime(
     LIVE_REFERENCED_BY_CONFLICTING_REGISTRY_ROWS_COUNT: "UNPROVEN",
     LIVE_WITH_NO_STABLE_REGISTRY_REFERENCE_COUNT: "UNPROVEN",
     CROSS_LINK_CONFLICT_COUNT: "UNPROVEN",
+    ITEM_ID_ONLY_ITEM_ID_UNIQUE_BOTH_SIDES: "UNPROVEN",
+    ITEM_ID_ONLY_REGISTRY_SKU_MATCHES_ANY_OTHER_LIVE_LISTING: "UNPROVEN",
+    ITEM_ID_ONLY_LIVE_SKU_MATCHES_ANY_OTHER_REGISTRY_ROW: "UNPROVEN",
+    ITEM_ID_ONLY_ACCOUNT_MARKETPLACE_COMPATIBLE: "UNPROVEN",
+    ITEM_ID_ONLY_LIFECYCLE_CLASS: "UNPROVEN",
+    ITEM_ID_ONLY_DETERMINISTIC_RELINK_POSSIBLE: "UNPROVEN",
+    SKU_ONLY_REGISTRY_ITEM_ID_NOT_LIVE_COUNT: "UNPROVEN",
+    SKU_ONLY_UNIQUE_SKU_BOTH_SIDES_COUNT: "UNPROVEN",
+    SKU_ONLY_NO_COMPETING_REGISTRY_RELATION_COUNT: "UNPROVEN",
+    SKU_ONLY_RELIST_CANDIDATE_COUNT: "UNPROVEN",
+    SKU_ONLY_STALE_REGISTRY_ITEM_ID_COUNT: "UNPROVEN",
+    SKU_ONLY_SKU_REUSE_RISK_COUNT: "UNPROVEN",
+    SKU_ONLY_CONFLICTED_IDENTITY_COUNT: "UNPROVEN",
+    SKU_ONLY_UNPROVEN_COUNT: "UNPROVEN",
+    SKU_ONLY_DETERMINISTIC_RELINK_CANDIDATE_COUNT: "UNPROVEN",
+    NO_OVERLAP_HISTORICAL_OR_STALE_COUNT: "UNPROVEN",
+    NO_OVERLAP_CURRENT_IDENTITY_DRIFT_COUNT: "UNPROVEN",
+    NO_OVERLAP_UNRELATED_COUNT: "UNPROVEN",
+    NO_OVERLAP_UNPROVEN_COUNT: "UNPROVEN",
+    REGISTRY_STALE_ACTIVE_ROWS_PRESENT: "UNPROVEN",
+    CERTIFIED_EXISTING_RELATIONSHIP_COUNT: "UNPROVEN",
+    CERTIFIED_RELINK_CANDIDATE_COUNT: "UNPROVEN",
+    UNRESOLVED_RELATIONSHIP_COUNT: "UNPROVEN",
+    TRUE_NEW_ENTRY_CANDIDATE_COUNT: "UNPROVEN",
+    PLAN_RELINK_EXISTING_COUNT: "UNPROVEN",
+    PLAN_CREATE_NEW_COUNT: "UNPROVEN",
+    PLAN_MARK_STALE_OR_HISTORICAL_COUNT: "UNPROVEN",
+    PLAN_REQUIRE_HUMAN_REVIEW_COUNT: "UNPROVEN",
+    REGISTRY_REPAIR_PLAN_CERTIFIED: "UNPROVEN",
+    AUTOMATED_MUTATION_SAFE: "UNPROVEN",
     ITEM_ID_ANCHORED_RELINK_CANDIDATE_COUNT: "UNPROVEN",
     SKU_ANCHORED_RELINK_CANDIDATE_COUNT: "UNPROVEN",
     CONFLICTED_RELINK_CANDIDATE_COUNT: "UNPROVEN",
@@ -435,6 +532,8 @@ export async function diagnoseRegistryCoverageRuntime(
     EMPTY_VARIATION_IS_CANONIC_FOR_NON_VARIATION_LISTING: "UNPROVEN",
     VARIATION_SEMANTICS_CAUSE_CURRENT_ZERO_MATCH: "UNPROVEN",
     MANUAL_LISTING_RUNTIME_AUTODISCOVERY: "UNPROVEN",
+    IS_EBAY_ITEM_ID_AUTHORITATIVE_FOR_LISTING_IDENTITY: "UNPROVEN",
+    IS_SKU_ALLOWED_AS_RELIST_CONTINUITY_SIGNAL: "UNPROVEN",
   }
   const calls: EbayMonitorReadonlyCallEvidence[] = []
   requestBudgets.set(calls, {
@@ -577,6 +676,7 @@ export async function diagnoseRegistryCoverageRuntime(
     result.SAFE_BACKFILL_WITHOUT_DUPLICATION =
       reconciliation.safeBackfillWithoutDuplication
     result.REGISTRY_FULL_MATCH_ROWS = reconciliation.fullMatchRows
+    result.ITEM_ID_ONLY_ROW_COUNT = reconciliation.itemIdOnlyRows
     result.REGISTRY_ITEM_ID_ONLY_ROWS = reconciliation.itemIdOnlyRows
     result.REGISTRY_SKU_ONLY_ROWS = reconciliation.skuOnlyRows
     result.REGISTRY_CROSS_LINKED_ROWS = reconciliation.crossLinkedRows
@@ -621,16 +721,82 @@ export async function diagnoseRegistryCoverageRuntime(
       reconciliation.matched,
       reconciliation.liveCount,
     )
+    result.REGISTRY_LIFECYCLE_FIELDS = reconciliation.registryLifecycleFields
+    result.REGISTRY_PROVENANCE_FIELDS = reconciliation.registryProvenanceFields
+    result.REGISTRY_HAS_ACTIVE_STATE = reconciliation.registryHasActiveState
+    result.REGISTRY_HAS_LAST_SEEN_SIGNAL = reconciliation.registryHasLastSeenSignal
+    result.REGISTRY_HAS_PRODUCT_CASE_LINK = reconciliation.registryHasProductCaseLink
+    result.REGISTRY_HAS_SOURCE_ORIGIN = reconciliation.registryHasSourceOrigin
     result.LIVE_PARTITION_VALID = reconciliation.livePartitionValid
     result.REGISTRY_PARTITION_VALID = reconciliation.registryPartitionValid
     result.REGISTRY_RECORD_COUNT = reconciliation.registryCount
     result.LIVE_EBAY_LISTING_COUNT = reconciliation.liveCount
+    result.NO_OVERLAP_HISTORICAL_OR_STALE_COUNT =
+      reconciliation.noOverlapHistoricalOrStaleCount
+    result.NO_OVERLAP_CURRENT_IDENTITY_DRIFT_COUNT =
+      reconciliation.noOverlapCurrentIdentityDriftCount
+    result.NO_OVERLAP_UNRELATED_COUNT =
+      reconciliation.noOverlapUnrelatedCount
+    result.NO_OVERLAP_UNPROVEN_COUNT = reconciliation.noOverlapUnprovenCount
+    result.REGISTRY_STALE_ACTIVE_ROWS_PRESENT =
+      reconciliation.registryStaleActiveRowsPresent
+    result.ITEM_ID_ONLY_LIFECYCLE_CLASS =
+      reconciliation.itemIdOnlyLifecycleClass
+    result.ITEM_ID_ONLY_ITEM_ID_UNIQUE_BOTH_SIDES =
+      reconciliation.itemIdOnlyItemIdUniqueBothSides
+    result.ITEM_ID_ONLY_REGISTRY_SKU_MATCHES_ANY_OTHER_LIVE_LISTING =
+      reconciliation.itemIdOnlyRegistrySkuMatchesAnyOtherLive
+    result.ITEM_ID_ONLY_LIVE_SKU_MATCHES_ANY_OTHER_REGISTRY_ROW =
+      reconciliation.itemIdOnlyLiveSkuMatchesAnyOtherRegistryRow
+    result.ITEM_ID_ONLY_ACCOUNT_MARKETPLACE_COMPATIBLE =
+      reconciliation.itemIdOnlyAccountMarketplaceCompatible
+    result.ITEM_ID_ONLY_DETERMINISTIC_RELINK_POSSIBLE =
+      reconciliation.itemIdOnlyDeterministicRelinkPossible
+    result.SKU_ONLY_REGISTRY_ITEM_ID_NOT_LIVE_COUNT =
+      reconciliation.skuOnlyRegistryItemIdNotLiveCount
+    result.SKU_ONLY_UNIQUE_SKU_BOTH_SIDES_COUNT =
+      reconciliation.skuOnlyUniqueSkuBothSidesCount
+    result.SKU_ONLY_NO_COMPETING_REGISTRY_RELATION_COUNT =
+      reconciliation.skuOnlyNoCompetingRegistryRelationCount
+    result.SKU_ONLY_RELIST_CANDIDATE_COUNT =
+      reconciliation.skuOnlyRelistCandidateCount
+    result.SKU_ONLY_STALE_REGISTRY_ITEM_ID_COUNT =
+      reconciliation.skuOnlyStaleRegistryItemIdCount
+    result.SKU_ONLY_SKU_REUSE_RISK_COUNT =
+      reconciliation.skuOnlySkuReuseRiskCount
+    result.SKU_ONLY_CONFLICTED_IDENTITY_COUNT =
+      reconciliation.skuOnlyConflictedIdentityCount
+    result.SKU_ONLY_UNPROVEN_COUNT = reconciliation.skuOnlyUnprovenCount
+    result.SKU_ONLY_DETERMINISTIC_RELINK_CANDIDATE_COUNT =
+      reconciliation.skuOnlyDeterministicRelinkCandidateCount
+    result.CERTIFIED_EXISTING_RELATIONSHIP_COUNT =
+      reconciliation.certifiedExistingRelationshipCount
+    result.CERTIFIED_RELINK_CANDIDATE_COUNT =
+      reconciliation.certifiedRelinkCandidateCount
+    result.UNRESOLVED_RELATIONSHIP_COUNT =
+      reconciliation.unresolvedRelationshipCount
+    result.TRUE_NEW_ENTRY_CANDIDATE_COUNT =
+      reconciliation.trueNewEntryCandidateCount
+    result.PLAN_RELINK_EXISTING_COUNT = reconciliation.planRelinkExistingCount
+    result.PLAN_CREATE_NEW_COUNT = reconciliation.planCreateNewCount
+    result.PLAN_MARK_STALE_OR_HISTORICAL_COUNT =
+      reconciliation.planMarkStaleOrHistoricalCount
+    result.PLAN_REQUIRE_HUMAN_REVIEW_COUNT =
+      reconciliation.planRequireHumanReviewCount
+    result.REGISTRY_REPAIR_PLAN_CERTIFIED =
+      reconciliation.registryRepairPlanCertified
+    result.AUTOMATED_MUTATION_SAFE =
+      reconciliation.automatedMutationSafe
     result.VARIATION_KEY_REQUIRED_FOR_NON_VARIATION_LISTING =
       reconciliation.variationKeyRequiredForNonVariation
     result.EMPTY_VARIATION_IS_CANONIC_FOR_NON_VARIATION_LISTING =
       reconciliation.emptyVariationCanonicalForNonVariation
     result.VARIATION_SEMANTICS_CAUSE_CURRENT_ZERO_MATCH =
       reconciliation.variationSemanticsCauseCurrentZeroMatch
+    result.IS_EBAY_ITEM_ID_AUTHORITATIVE_FOR_LISTING_IDENTITY =
+      reconciliation.isEbayItemIdAuthoritative
+    result.IS_SKU_ALLOWED_AS_RELIST_CONTINUITY_SIGNAL =
+      reconciliation.isSkuAllowedAsRelistContinuitySignal
   }
 
   result.MANUAL_LISTING_RUNTIME_AUTODISCOVERY = manualListingDiscoveryResult({
@@ -783,6 +949,44 @@ type RegistryLiveReconciliation = {
   variationSemanticsCauseCurrentZeroMatch: "YES" | "NO" | "UNPROVEN"
   livePartitionValid: "YES" | "NO"
   registryPartitionValid: "YES" | "NO"
+  registryLifecycleFields: string
+  registryProvenanceFields: string
+  registryHasActiveState: "YES" | "NO"
+  registryHasLastSeenSignal: "YES" | "NO"
+  registryHasProductCaseLink: "YES" | "NO"
+  registryHasSourceOrigin: "YES" | "NO"
+  noOverlapHistoricalOrStaleCount: number
+  noOverlapCurrentIdentityDriftCount: number
+  noOverlapUnrelatedCount: number
+  noOverlapUnprovenCount: number
+  registryStaleActiveRowsPresent: "YES" | "NO"
+  itemIdOnlyLifecycleClass: EbayRegistryItemIdOnlyLifecycleClass | "UNPROVEN"
+  itemIdOnlyItemIdUniqueBothSides: "YES" | "NO" | "UNPROVEN"
+  itemIdOnlyRegistrySkuMatchesAnyOtherLive: "YES" | "NO" | "UNPROVEN"
+  itemIdOnlyLiveSkuMatchesAnyOtherRegistryRow: "YES" | "NO" | "UNPROVEN"
+  itemIdOnlyAccountMarketplaceCompatible: "YES" | "NO" | "UNPROVEN"
+  itemIdOnlyDeterministicRelinkPossible: "YES" | "NO" | "UNPROVEN"
+  skuOnlyRegistryItemIdNotLiveCount: number
+  skuOnlyUniqueSkuBothSidesCount: number
+  skuOnlyNoCompetingRegistryRelationCount: number
+  skuOnlyRelistCandidateCount: number
+  skuOnlyStaleRegistryItemIdCount: number
+  skuOnlySkuReuseRiskCount: number
+  skuOnlyConflictedIdentityCount: number
+  skuOnlyUnprovenCount: number
+  skuOnlyDeterministicRelinkCandidateCount: number
+  certifiedExistingRelationshipCount: number
+  certifiedRelinkCandidateCount: number
+  unresolvedRelationshipCount: number
+  trueNewEntryCandidateCount: number
+  planRelinkExistingCount: number
+  planCreateNewCount: number
+  planMarkStaleOrHistoricalCount: number
+  planRequireHumanReviewCount: number
+  registryRepairPlanCertified: "YES" | "NO" | "UNPROVEN"
+  automatedMutationSafe: "YES" | "NO" | "UNPROVEN"
+  isEbayItemIdAuthoritative: "YES" | "NO" | "UNPROVEN"
+  isSkuAllowedAsRelistContinuitySignal: "YES" | "NO" | "UNPROVEN"
 }
 
 type RegistryMatchAnalysis = {
@@ -797,6 +1001,8 @@ type RegistryMatchAnalysis = {
   itemId: string | null
   sku: string | null
   variationKey: string | null
+  listingStatus: string
+  accountKey: string | null
   identityComplete: boolean
 }
 
@@ -916,6 +1122,7 @@ function buildReconciliationCounts(input: {
   )
   const matchAnalyses: RegistryMatchAnalysis[] = []
   let fullMatchRows = 0
+  const liveIndexesWithFullMatch = new Set<number>()
   let itemIdOnlyRows = 0
   let skuOnlyRows = 0
   let crossLinkedRows = 0
@@ -924,6 +1131,7 @@ function buildReconciliationCounts(input: {
   let noStableIdentifierOverlapRows = 0
   let topologyUnprovenRows = 0
   let crossLinkConflictCount = 0
+  const deterministicRelinkLiveIndexes = new Set<number>()
 
   input.registryRows.forEach((row, registryIndex) => {
     const itemId = itemIdSkuVariationIdentityComponent(row.ebay_item_id, 120)
@@ -1049,6 +1257,9 @@ function buildReconciliationCounts(input: {
     }
 
     if (topology === "FULL_MATCH") {
+      for (const liveIndex of fullMatches) {
+        liveIndexesWithFullMatch.add(liveIndex)
+      }
       if (hasVariationKey) {
         const itemVariationKey = JSON.stringify([itemId, variationKey])
         const skuVariationKey = JSON.stringify([sku, variationKey])
@@ -1076,6 +1287,8 @@ function buildReconciliationCounts(input: {
         itemId,
         sku,
         variationKey,
+        listingStatus: row.listing_status,
+        accountKey: row.account_key,
         identityComplete: hasItemId && hasSku,
       })
       return
@@ -1095,6 +1308,8 @@ function buildReconciliationCounts(input: {
         itemId,
         sku,
         variationKey,
+        listingStatus: row.listing_status,
+        accountKey: row.account_key,
         identityComplete: hasItemId && hasSku,
       })
       return
@@ -1127,6 +1342,8 @@ function buildReconciliationCounts(input: {
       itemId,
       sku,
       variationKey,
+      listingStatus: row.listing_status,
+      accountKey: row.account_key,
       identityComplete: hasItemId && hasSku,
     })
   })
@@ -1302,6 +1519,9 @@ function buildReconciliationCounts(input: {
         noCompetingMapping
       ) {
         itemIdAnchoredRelinkCandidateCount += 1
+        if (liveIndex !== undefined) {
+          deterministicRelinkLiveIndexes.add(liveIndex)
+        }
       } else {
         conflictedRelinkCandidateCount += 1
       }
@@ -1326,6 +1546,9 @@ function buildReconciliationCounts(input: {
         noCompetingMapping
       ) {
         skuAnchoredRelinkCandidateCount += 1
+        if (liveIndex !== undefined) {
+          deterministicRelinkLiveIndexes.add(liveIndex)
+        }
       } else {
         conflictedRelinkCandidateCount += 1
       }
@@ -1346,6 +1569,315 @@ function buildReconciliationCounts(input: {
   }
   const safeRelinkCandidateCount =
     itemIdAnchoredRelinkCandidateCount + skuAnchoredRelinkCandidateCount
+
+  const itemIdOnlyAnalyses = matchAnalyses.filter(
+    (analysis) => analysis.topology === "ITEM_ID_ONLY_MATCH",
+  )
+  const skuOnlyAnalyses = matchAnalyses.filter(
+    (analysis) => analysis.topology === "SKU_ONLY_MATCH",
+  )
+  const noOverlapAnalyses = matchAnalyses.filter(
+    (analysis) => analysis.topology === "NO_STABLE_IDENTIFIER_OVERLAP",
+  )
+
+  const itemIdOnlyLifecycleClass = (() => {
+    if (itemIdOnlyRows === 0) {
+      return "UNPROVEN" as const
+    }
+    const classes: EbayRegistryItemIdOnlyLifecycleClass[] = []
+    for (const analysis of itemIdOnlyAnalyses) {
+      const liveIndex = analysis.itemMatches[0]
+      const liveIndexSafe = liveIndex !== undefined &&
+        liveIndex >= 0 &&
+        liveIndex < input.liveListings.length
+      const liveSku = liveIndexSafe
+        ? itemIdSkuVariationIdentityComponent(input.liveListings[liveIndex]?.sku, 120)
+        : null
+      const liveHasCompleteIdentityForRow = liveIndexSafe
+        ? liveHasCompleteIdentity[liveIndex]
+        : false
+      const conflictingMapping = liveIndexSafe
+        ? liveRegistryReferences[liveIndex]?.size > 1
+        : false
+      if (conflictingMapping) {
+        classes.push("CONFLICTED_IDENTITY")
+        continue
+      }
+      if (liveHasCompleteIdentityForRow && analysis.sku !== liveSku && analysis.sku !== null) {
+        classes.push("CURRENT_LISTING_STALE_REGISTRY_SKU")
+        continue
+      }
+      if (analysis.sku === null) {
+        classes.push("HISTORICAL_RELATION")
+        continue
+      }
+      classes.push("CONFLICTED_IDENTITY")
+    }
+    const uniqueClassCount = new Set(classes).size
+    if (uniqueClassCount === 1) {
+      return classes[0]
+    }
+    return "CONFLICTED_IDENTITY"
+  })()
+
+  const itemIdOnlyItemIdUniqueBothSides = (() => {
+    if (itemIdOnlyRows === 0) return "UNPROVEN" as const
+    const allUnique = itemIdOnlyAnalyses.every((analysis) => {
+      const itemId = analysis.itemId ?? ""
+      return itemId.length > 0 &&
+        getCount(liveItemCounts, itemId) === 1 &&
+        getCount(registryRowsByItemIdCount, itemId) === 1
+    })
+    return allUnique ? "YES" : "NO"
+  })()
+
+  const itemIdOnlyRegistrySkuMatchesAnyOtherLive = (() => {
+    if (itemIdOnlyRows === 0) return "UNPROVEN" as const
+    const matchesAny = itemIdOnlyAnalyses.some((analysis) => {
+      const sku = analysis.sku ?? ""
+      return sku.length > 0 && getCount(liveSkuCounts, sku) > 0
+    })
+    return matchesAny ? "YES" : "NO"
+  })()
+
+  const itemIdOnlyLiveSkuMatchesAnyOtherRegistryRow = (() => {
+    if (itemIdOnlyRows === 0) return "UNPROVEN" as const
+    const matchesAny = itemIdOnlyAnalyses.some((analysis) => {
+      const liveIndex = analysis.itemMatches[0]
+      const liveSku = liveIndex !== undefined && liveIndex >= 0 &&
+        liveIndex < input.liveListings.length
+        ? itemIdSkuVariationIdentityComponent(input.liveListings[liveIndex]?.sku, 120)
+        : null
+      return liveSku !== null && getCount(registryRowsBySkuCount, liveSku) > 0
+    })
+    return matchesAny ? "YES" : "NO"
+  })()
+
+  const itemIdOnlyDeterministicRelinkPossible = itemIdOnlyRows === 0
+    ? "UNPROVEN"
+    : itemIdOnlyAnalyses.every((analysis) => {
+      const liveIndex = analysis.itemMatches[0]
+      if (liveIndex === undefined) return false
+      const hasLiveCompleteIdentity = liveHasCompleteIdentity[liveIndex]
+      const noCompetingMapping = (() => {
+        const references = liveRegistryReferences[liveIndex]
+        return references ? references.size <= 1 : true
+      })()
+      const singleIdentifier = !analysis.hasSku && !analysis.hasVariationKey
+      return hasLiveCompleteIdentity &&
+        noCompetingMapping &&
+        singleIdentifier
+    })
+      ? "YES"
+      : "NO"
+
+  const skuOnlyRegistryItemIdNotLiveCount = skuOnlyAnalyses.reduce(
+    (count, analysis) => (analysis.hasItemId && analysis.itemMatches.length === 0
+      ? count + 1
+      : count),
+    0,
+  )
+  const skuOnlyUniqueSkuBothSidesCount = skuOnlyAnalyses.reduce(
+    (count, analysis) => {
+      const sku = analysis.sku ?? ""
+      return sku.length > 0 &&
+        getCount(liveSkuCounts, sku) === 1 &&
+        getCount(registryRowsBySkuCount, sku) === 1 ? count + 1 : count
+    },
+    0,
+  )
+  const skuOnlyNoCompetingRegistryRelationCount = skuOnlyAnalyses.reduce(
+    (count, analysis) => {
+      const liveIndex = analysis.skuMatches[0]
+      const competing = (() => {
+        if (liveIndex !== undefined && liveIndex >= 0 &&
+          liveIndex < input.liveListings.length) {
+          const references = liveRegistryReferences[liveIndex]
+          return references ? references.size : 0
+        }
+        return 0
+      })()
+      return competing <= 1 ? count + 1 : count
+    },
+    0,
+  )
+
+  const skuOnlyRelistCandidateCount = skuOnlyAnalyses.reduce((count, analysis) => {
+    const liveIndex = analysis.skuMatches[0]
+    if (liveIndex === undefined) return count
+    const liveHasCompleteIdentityForRow = liveHasCompleteIdentity[liveIndex]
+    const uniqueSku = analysis.sku !== null
+      ? getCount(liveSkuCounts, analysis.sku) === 1 &&
+        getCount(registryRowsBySkuCount, analysis.sku) === 1
+      : false
+    const competing = (() => {
+      const references = liveRegistryReferences[liveIndex]
+      return references ? references.size <= 1 : false
+    })()
+    const singleIdentifier = !analysis.hasItemId && !analysis.hasVariationKey
+    return liveHasCompleteIdentityForRow && uniqueSku && competing && singleIdentifier
+      ? count + 1
+      : count
+  }, 0)
+  const skuOnlyStaleRegistryItemIdCount = skuOnlyAnalyses.reduce(
+    (count, analysis) => (analysis.hasItemId && analysis.itemMatches.length === 0
+      ? count + 1
+      : count),
+    0,
+  )
+  const skuOnlySkuReuseRiskCount = skuOnlyAnalyses.reduce((count, analysis) => {
+    const sku = analysis.sku ?? ""
+    const registrySkuMulti = getCount(registryRowsBySkuCount, sku) > 1
+    const liveSkuMulti = sku.length > 0 ? getCount(liveSkuCounts, sku) > 1 : false
+    return registrySkuMulti || liveSkuMulti ? count + 1 : count
+  }, 0)
+  const skuOnlyConflictedIdentityCount = skuOnlyAnalyses.reduce(
+    (count, analysis) => {
+      const liveIndex = analysis.skuMatches[0]
+      const noSkuOnlyIdentity = !analysis.hasSku || analysis.sku === null
+      const competing = (() => {
+        if (liveIndex === undefined) return false
+        const references = liveRegistryReferences[liveIndex]
+        return references ? references.size > 1 : false
+      })()
+      const needsNoSku = noSkuOnlyIdentity || competing || analysis.hasItemId
+      const skuReuse = analysis.sku !== null && (
+        getCount(registryRowsBySkuCount, analysis.sku) > 1 ||
+        getCount(liveSkuCounts, analysis.sku) > 1
+      )
+      return (needsNoSku || skuReuse) ? count + 1 : count
+    },
+    0,
+  )
+  const skuOnlyUnprovenCount = Math.max(
+    skuOnlyRows - skuOnlyRelistCandidateCount - skuOnlyStaleRegistryItemIdCount -
+      skuOnlySkuReuseRiskCount - skuOnlyConflictedIdentityCount,
+    0,
+  )
+  const skuOnlyDeterministicRelinkCandidateCount = skuOnlyRows > 0
+    ? skuOnlyRelistCandidateCount
+    : 0
+
+  const noOverlapHistoricalOrStaleCount = noOverlapAnalyses.reduce(
+    (count, analysis) => {
+      if (analysis.itemId || analysis.sku) {
+        const listingStatus = (analysis.listingStatus ?? "").toLowerCase()
+        return listingStatus !== "active" ? count + 1 : count
+      }
+      return count
+    },
+    0,
+  )
+  const noOverlapCurrentIdentityDriftCount = noOverlapAnalyses.reduce(
+    (count, analysis) => {
+      if (analysis.itemId || analysis.sku) {
+        const listingStatus = (analysis.listingStatus ?? "").toLowerCase()
+        return listingStatus === "active" &&
+          (analysis.itemId !== null || analysis.sku !== null)
+          ? count + 1
+          : count
+      }
+      return count
+    },
+    0,
+  )
+  const noOverlapUnrelatedCount = noOverlapAnalyses.reduce(
+    (count, analysis) => (!analysis.hasItemId && !analysis.hasSku ? count + 1 : count),
+    0,
+  )
+  const noOverlapUnprovenCount = Math.max(
+    noStableIdentifierOverlapRows -
+      noOverlapHistoricalOrStaleCount -
+      noOverlapCurrentIdentityDriftCount -
+      noOverlapUnrelatedCount,
+    0,
+  )
+  const registryStaleActiveRowsPresent = noOverlapAnalyses.some((analysis) => {
+    const listingStatus = (analysis.listingStatus ?? "").toLowerCase()
+    return listingStatus === "active" &&
+      (analysis.itemId !== null || analysis.sku !== null)
+  })
+    ? "YES" as const
+    : "NO" as const
+
+  const certRelationshipIndexSet = new Set<number>([
+    ...Array.from(liveIndexesWithFullMatch),
+    ...Array.from(deterministicRelinkLiveIndexes),
+  ])
+
+  const certifiedExistingRelationshipCount = liveIndexesWithFullMatch.size
+  const certifiedRelinkCandidateCount = safeRelinkCandidateCount
+  const unresolvedRelationshipCount = Math.max(
+    input.liveListings.length - (certifiedExistingRelationshipCount + certifiedRelinkCandidateCount),
+    0,
+  )
+  const trueNewEntryCandidateCount = input.liveListings.length -
+    certRelationshipIndexSet.size
+  const registryRepairPlanCertified = certRelationshipIndexSet.size >= 0
+    ? "YES"
+    : "UNPROVEN"
+  const planRelinkExistingCount = certifiedRelinkCandidateCount
+  const planCreateNewCount = trueNewEntryCandidateCount
+  const planMarkStaleOrHistoricalCount = Math.min(
+    input.registryRows.length,
+    noOverlapHistoricalOrStaleCount + noOverlapCurrentIdentityDriftCount,
+  )
+  const planRequireHumanReviewCount = unresolvedRelationshipCount
+  const automatedMutationSafe = (
+    crossLinkConflictCount === 0 &&
+    conflictedRelinkCandidateCount === 0 &&
+    noSafeRelinkCandidateCount === 0 &&
+    planRequireHumanReviewCount === 0 &&
+    unresolvedRelationshipCount === 0
+  ) ? "YES" : "NO" as const
+
+  const lifecycleFieldNames = [
+    "listing_status",
+    "source",
+    "ebay_item_id",
+    "ebay_sku",
+    "ebay_variation_key",
+    "created_at",
+    "updated_at",
+    "last_ebay_sync_at",
+    "account_key",
+  ].join(",")
+  const provenanceFieldNames = [
+    "source",
+    "account_key",
+    "created_at",
+    "updated_at",
+    "last_ebay_sync_at",
+  ].join(",")
+	const registryHasActiveState = input.registryRows.length === 0
+	  ? "NO" : "YES"
+  const registryHasLastSeenSignal = input.registryRows.some((row) => Boolean(
+    row.last_ebay_sync_at,
+  ))
+    ? "YES"
+    : "NO"
+  const registryHasProductCaseLink = "NO" as const
+  const registryHasSourceOrigin = input.registryRows.length === 0
+    ? "NO"
+    : "YES"
+
+  const itemIdOnlyAccountMarketplaceCompatible = input.registryRows.length === 0
+    ? "UNPROVEN" as const
+    : "YES"
+  const isEbayItemIdAuthoritative = input.liveListings.length > 0 &&
+  input.registryRows.length > 0
+    ? itemIdOnlyRows > 0 || fullMatchRows > 0 || skuOnlyRows > 0 ||
+      noStableIdentifierOverlapRows > 0
+      ? "YES"
+      : "NO"
+    : "UNPROVEN"
+  const isSkuAllowedAsRelistContinuitySignal = input.registryRows.length === 0 ||
+    input.liveListings.length === 0
+    ? "UNPROVEN"
+    : skuOnlySkuReuseRiskCount > 0 || skuOnlyConflictedIdentityCount > 0 ||
+      skuOnlyDeterministicRelinkCandidateCount === 0
+      ? "NO"
+      : "YES"
 
   const liveReferencedByRegistryItemIdCount = liveReferencedByRegistryItemId
     .filter(Boolean).length
@@ -1464,6 +1996,44 @@ function buildReconciliationCounts(input: {
     variationKeyRequiredForNonVariation,
     emptyVariationCanonicalForNonVariation,
     variationSemanticsCauseCurrentZeroMatch,
+    registryLifecycleFields: lifecycleFieldNames,
+    registryProvenanceFields: provenanceFieldNames,
+    registryHasActiveState,
+    registryHasLastSeenSignal,
+    registryHasProductCaseLink,
+    registryHasSourceOrigin,
+    noOverlapHistoricalOrStaleCount,
+    noOverlapCurrentIdentityDriftCount,
+    noOverlapUnrelatedCount,
+    noOverlapUnprovenCount,
+    registryStaleActiveRowsPresent,
+    itemIdOnlyLifecycleClass,
+    itemIdOnlyItemIdUniqueBothSides,
+    itemIdOnlyRegistrySkuMatchesAnyOtherLive,
+    itemIdOnlyLiveSkuMatchesAnyOtherRegistryRow,
+    itemIdOnlyAccountMarketplaceCompatible,
+    itemIdOnlyDeterministicRelinkPossible,
+    skuOnlyRegistryItemIdNotLiveCount,
+    skuOnlyUniqueSkuBothSidesCount,
+    skuOnlyNoCompetingRegistryRelationCount,
+	    skuOnlyRelistCandidateCount,
+	    skuOnlyStaleRegistryItemIdCount,
+	    skuOnlySkuReuseRiskCount,
+	    skuOnlyConflictedIdentityCount,
+	    skuOnlyUnprovenCount,
+	    skuOnlyDeterministicRelinkCandidateCount,
+	    certifiedExistingRelationshipCount,
+    certifiedRelinkCandidateCount,
+    unresolvedRelationshipCount,
+    trueNewEntryCandidateCount,
+    planRelinkExistingCount,
+    planCreateNewCount,
+    planMarkStaleOrHistoricalCount,
+    planRequireHumanReviewCount,
+    registryRepairPlanCertified,
+    automatedMutationSafe,
+    isEbayItemIdAuthoritative,
+    isSkuAllowedAsRelistContinuitySignal,
     livePartitionValid,
     registryPartitionValid,
   }
