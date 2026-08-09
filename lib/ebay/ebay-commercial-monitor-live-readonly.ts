@@ -565,6 +565,25 @@ function isPresentAndTrimmed(value: unknown) {
   return typeof value === "string" && value.trim().length > 0
 }
 
+function incrementCount(
+  counts: Map<string, number>,
+  key: string,
+) {
+  const previousCount = counts.get(key)
+  counts.set(
+    key,
+    previousCount === undefined ? 1 : previousCount + 1,
+  )
+}
+
+function getCount(
+  counts: Map<string, number>,
+  key: string,
+) {
+  const value = counts.get(key)
+  return value === undefined ? 0 : value
+}
+
 type RegistryLiveReconciliation = {
   liveCount: number
   registryCount: number
@@ -628,19 +647,15 @@ function buildReconciliationCounts(input: {
 
     if (hasItemId) {
       liveWithItemIdCount += 1
-      liveItemCounts.set(
-        itemId,
-        (liveItemCounts.get(itemId) ?? 0) + 1,
-      )
+      incrementCount(liveItemCounts, itemId)
     }
     if (hasSku) {
       liveWithSkuCount += 1
-      liveSkuCounts.set(sku, (liveSkuCounts.get(sku) ?? 0) + 1)
+      incrementCount(liveSkuCounts, sku)
     }
     if (hasVariationKey) {
       liveWithVariationKeyCount += 1
-      liveVariationCounts.set(variationKey, (liveVariationCounts.get(variationKey)
-        ?? 0) + 1)
+      incrementCount(liveVariationCounts, variationKey)
     }
 
     if (!hasItemId || !hasSku) {
@@ -656,26 +671,14 @@ function buildReconciliationCounts(input: {
       sku: liveSku,
       variationKey,
     })
-    liveCompositeCounts.set(
-      compositeKey,
-      (liveCompositeCounts.get(compositeKey) ?? 0) + 1,
-    )
+    incrementCount(liveCompositeCounts, compositeKey)
     const itemSkuKey = itemSkuIdentityKey(liveItemId, liveSku)
-    liveItemSkuCounts.set(
-      itemSkuKey,
-      (liveItemSkuCounts.get(itemSkuKey) ?? 0) + 1,
-    )
+    incrementCount(liveItemSkuCounts, itemSkuKey)
     if (hasVariationKey) {
       const itemVariationKey = JSON.stringify([liveItemId, variationKey])
       const skuVariationKey = JSON.stringify([liveSku, variationKey])
-      liveItemVariationCounts.set(
-        itemVariationKey,
-        (liveItemVariationCounts.get(itemVariationKey) ?? 0) + 1,
-      )
-      liveSkuVariationCounts.set(
-        skuVariationKey,
-        (liveSkuVariationCounts.get(skuVariationKey) ?? 0) + 1,
-      )
+      incrementCount(liveItemVariationCounts, itemVariationKey)
+      incrementCount(liveSkuVariationCounts, skuVariationKey)
     }
   }
 
@@ -713,18 +716,15 @@ function buildReconciliationCounts(input: {
 
     if (hasItemId) {
       registryWithItemIdCount += 1
-      registryItemCounts.set(itemId, (registryItemCounts.get(itemId) ?? 0) + 1)
+      incrementCount(registryItemCounts, itemId)
     }
     if (hasSku) {
       registryWithSkuCount += 1
-      registrySkuCounts.set(sku, (registrySkuCounts.get(sku) ?? 0) + 1)
+      incrementCount(registrySkuCounts, sku)
     }
     if (hasVariationKey) {
       registryWithVariationKeyCount += 1
-      registryVariationCounts.set(
-        variationKey,
-        (registryVariationCounts.get(variationKey) ?? 0) + 1,
-      )
+      incrementCount(registryVariationCounts, variationKey)
     }
 
     if (hasItemId && hasSku) {
@@ -751,26 +751,14 @@ function buildReconciliationCounts(input: {
       sku: registrySku,
       variationKey,
     })
-    registryCompositeCounts.set(
-      compositeKey,
-      (registryCompositeCounts.get(compositeKey) ?? 0) + 1,
-    )
+    incrementCount(registryCompositeCounts, compositeKey)
     const itemSkuKey = itemSkuIdentityKey(registryItemId, registrySku)
-    registryItemSkuCounts.set(
-      itemSkuKey,
-      (registryItemSkuCounts.get(itemSkuKey) ?? 0) + 1,
-    )
+    incrementCount(registryItemSkuCounts, itemSkuKey)
     if (hasVariationKey) {
       const itemVariationKey = JSON.stringify([registryItemId, variationKey])
       const skuVariationKey = JSON.stringify([registrySku, variationKey])
-      registryItemVariationCounts.set(
-        itemVariationKey,
-        (registryItemVariationCounts.get(itemVariationKey) ?? 0) + 1,
-      )
-      registrySkuVariationCounts.set(
-        skuVariationKey,
-        (registrySkuVariationCounts.get(skuVariationKey) ?? 0) + 1,
-      )
+      incrementCount(registryItemVariationCounts, itemVariationKey)
+      incrementCount(registrySkuVariationCounts, skuVariationKey)
     }
   }
 
@@ -787,7 +775,7 @@ function buildReconciliationCounts(input: {
   const liveCompositeMatchCounts = new Map(registryCompositeCounts)
   let matched = 0
   for (const [key, liveCount] of liveCompositeCounts) {
-    const registryCount = liveCompositeMatchCounts.get(key) ?? 0
+    const registryCount = getCount(liveCompositeMatchCounts, key)
     const matchedOccurrence = Math.min(liveCount, registryCount)
     matched += matchedOccurrence
     liveCompositeMatchCounts.set(key, registryCount - matchedOccurrence)
@@ -799,36 +787,36 @@ function buildReconciliationCounts(input: {
 
   const itemIdExactOverlapCount = [...liveItemCounts.keys()].reduce(
     (sum, candidate) => (registryItemCounts.has(candidate)
-      ? sum + (liveItemCounts.get(candidate) ?? 0)
+      ? sum + getCount(liveItemCounts, candidate)
       : sum),
     0,
   )
   const skuExactOverlapCount = [...liveSkuCounts.keys()].reduce(
     (sum, candidate) => (registrySkuCounts.has(candidate)
-      ? sum + (liveSkuCounts.get(candidate) ?? 0)
+      ? sum + getCount(liveSkuCounts, candidate)
       : sum),
     0,
   )
   const variationKeyExactOverlapCount = [...liveVariationCounts.keys()].reduce(
     (sum, candidate) => (registryVariationCounts.has(candidate)
-      ? sum + (liveVariationCounts.get(candidate) ?? 0)
+      ? sum + getCount(liveVariationCounts, candidate)
       : sum),
     0,
   )
   const itemIdPlusSkuOverlapCount = [...liveItemSkuCounts.keys()].reduce(
     (sum, candidate) => (registryItemSkuCounts.has(candidate)
-      ? sum + (liveItemSkuCounts.get(candidate) ?? 0)
+      ? sum + getCount(liveItemSkuCounts, candidate)
       : sum),
     0,
   )
   const itemIdPlusVariationOverlapCount = [...liveItemVariationCounts.keys()]
     .reduce((sum, candidate) => (registryItemVariationCounts.has(candidate)
-      ? sum + (liveItemVariationCounts.get(candidate) ?? 0)
+      ? sum + getCount(liveItemVariationCounts, candidate)
       : sum),
     0)
   const skuPlusVariationOverlapCount = [...liveSkuVariationCounts.keys()].reduce(
     (sum, candidate) => (registrySkuVariationCounts.has(candidate)
-      ? sum + (liveSkuVariationCounts.get(candidate) ?? 0)
+      ? sum + getCount(liveSkuVariationCounts, candidate)
       : sum),
     0,
   )
