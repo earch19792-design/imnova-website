@@ -223,6 +223,7 @@ export async function GET(request: NextRequest) {
     assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
       getEbaySellerOAuthReauthRuntimeCredentialMatch(configuration),
     )
+    const callback = parseEbaySellerOAuthReauthCallbackUrl(request.url)
     const cookies = request.cookies.getAll(EBAY_SELLER_OAUTH_REAUTH_COOKIE)
     if (cookies.length !== 1) {
       return callbackHtml(
@@ -230,7 +231,6 @@ export async function GET(request: NextRequest) {
         400,
       )
     }
-    const callback = parseEbaySellerOAuthReauthCallbackUrl(request.url)
     const transaction = verifyEbaySellerOAuthReauthCookie({
       cookie: cookies[0]?.value ?? "",
       state: callback.state,

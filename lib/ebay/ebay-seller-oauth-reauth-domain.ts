@@ -575,6 +575,8 @@ export type EbaySellerOAuthCallbackInput =
   | { kind: "CODE"; state: string; code: string }
   | { kind: "DENIED"; state: string }
 
+const EBAY_AUTHORIZATION_CODE_EXPIRES_IN_MAX_SECONDS = 3_600
+
 export function parseEbaySellerOAuthReauthCallbackUrl(
   requestUrl: string,
 ): EbaySellerOAuthCallbackInput {
@@ -584,7 +586,13 @@ export function parseEbaySellerOAuthReauthCallbackUrl(
     )
   }
   const url = new URL(requestUrl)
-  const allowed = new Set(["state", "code", "error", "error_description"])
+  const allowed = new Set([
+    "state",
+    "code",
+    "expires_in",
+    "error",
+    "error_description",
+  ])
   if ([...url.searchParams.keys()].some((key) => !allowed.has(key))) {
     throw new EbaySellerOAuthReauthError(
       "EBAY_SELLER_OAUTH_REAUTH_CALLBACK_INVALID",
@@ -603,9 +611,17 @@ export function parseEbaySellerOAuthReauthCallbackUrl(
   const code = url.searchParams.get("code")
   const providerError = url.searchParams.get("error")
   const providerErrorDescription = url.searchParams.get("error_description")
+  const expiresIn = url.searchParams.get("expires_in")
+  const expiresInSeconds = Number(expiresIn)
   if (!isValidEbaySellerOAuthReauthState(state) ||
       hasCode === hasProviderError ||
-      (providerErrorDescription !== null && !providerError)) {
+      (providerErrorDescription !== null && !providerError) ||
+      (hasProviderError && expiresIn !== null) ||
+      (expiresIn !== null &&
+        (!/^[1-9]\d{0,3}$/.test(expiresIn) ||
+          !Number.isSafeInteger(expiresInSeconds) ||
+          expiresInSeconds >
+            EBAY_AUTHORIZATION_CODE_EXPIRES_IN_MAX_SECONDS))) {
     throw new EbaySellerOAuthReauthError(
       "EBAY_SELLER_OAUTH_REAUTH_CALLBACK_INVALID",
     )
