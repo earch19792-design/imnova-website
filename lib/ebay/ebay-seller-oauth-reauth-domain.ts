@@ -243,6 +243,30 @@ export function getEbaySellerOAuthReauthRuntimeCredentialMatch(
   })
 }
 
+export function isEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
+  match: EbaySellerOAuthReauthRuntimeCredentialMatch,
+) {
+  return match.RUNTIME_EBAY_CLIENT_ID_PRESENT === true &&
+    match.RUNTIME_EBAY_CLIENT_ID_LENGTH_MATCH === true &&
+    match.RUNTIME_EBAY_CLIENT_ID_SHA256_MATCH === true &&
+    match.RUNTIME_EBAY_RUNAME_PRESENT === true &&
+    match.RUNTIME_EBAY_RUNAME_LENGTH_MATCH === true &&
+    match.RUNTIME_EBAY_RUNAME_SHA256_MATCH === true &&
+    match.APP_ID_PORTAL_RUNTIME_MATCH === true &&
+    match.RUNAME_PORTAL_RUNTIME_MATCH === true &&
+    match.FINAL_BINDING_DIAGNOSIS === "BOTH_MATCH"
+}
+
+export function assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
+  match: EbaySellerOAuthReauthRuntimeCredentialMatch,
+) {
+  if (!isEbaySellerOAuthReauthRuntimeCredentialMatchCertified(match)) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_RUNTIME_CREDENTIAL_MISMATCH",
+    )
+  }
+}
+
 function exactScopeSet(scopes: string[]) {
   const normalized = [...new Set(scopes.map((scope) => scope.trim())
     .filter(Boolean))].sort()

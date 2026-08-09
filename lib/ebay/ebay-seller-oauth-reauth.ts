@@ -10,6 +10,7 @@ import {
   EBAY_SELLER_TRAFFIC_METRICS,
 } from "./ebay-seller-traffic-report"
 import {
+  assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified,
   buildEbaySellerOAuthReauthAuthorizationUrl,
   buildEbaySellerOAuthReauthDiagnosticAuthorizationUrl,
   createEbaySellerOAuthReauthCookie,
@@ -23,6 +24,7 @@ import {
   EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS,
   EbaySellerOAuthReauthError,
   exactEbaySellerOAuthReauthReturnedScopes,
+  getEbaySellerOAuthReauthRuntimeCredentialMatch,
   hashEbaySellerOAuthReauthState,
   type EbaySellerOAuthCallbackInput,
   type EbaySellerOAuthReauthConfiguration,
@@ -49,6 +51,12 @@ const AUTHORIZATION_PREFLIGHT_BODY_LIMIT = 16_384
 const AUTHORIZATION_PREFLIGHT_CONCURRENCY = 1
 const AUTHORIZATION_PREFLIGHT_MAX_TESTS = 6
 const AUTHORIZATION_PREFLIGHT_MAX_NETWORK_CALLS = 12
+const EXACT_REAUTHORIZATION_SCOPE_UNION = [
+  "https://api.ebay.com/oauth/api_scope",
+  "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
+  "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
+  "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
+] as const
 
 const GET_USER_BODY = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
   "<GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
@@ -143,6 +151,7 @@ export type EbaySellerOAuthReauthAuthorizationDiagnosis = {
   stateCausesInvalidRequest: "YES" | "NO" | "UNPROVEN"
   stateFormatValid: true
   scopeCount: 4
+  scopeContractExact: boolean
   parameterNames: readonly [
     "client_id",
     "response_type",
@@ -449,6 +458,49 @@ function deniedPreflight() : EbaySellerOAuthReauthAuthorizationPreflightResult {
   }
 }
 
+function exactReauthorizationScopeContract() {
+  return EBAY_SELLER_OAUTH_REAUTH_SCOPES.length ===
+      EXACT_REAUTHORIZATION_SCOPE_UNION.length &&
+    EBAY_SELLER_OAUTH_REAUTH_SCOPES.every(
+      (scope, index) => scope === EXACT_REAUTHORIZATION_SCOPE_UNION[index],
+    )
+}
+
+function positiveAuthorizationPreflight(
+  result: EbaySellerOAuthReauthAuthorizationPreflightResult,
+) {
+  return result.acceptedByAuthEndpoint === "YES" &&
+    result.safeErrorCategory === "NONE"
+}
+
+export function isEbaySellerOAuthReauthAuthorizationStartAllowed(
+  diagnosis: EbaySellerOAuthReauthAuthorizationDiagnosis,
+) {
+  return positiveAuthorizationPreflight(diagnosis.testBase) &&
+    positiveAuthorizationPreflight(diagnosis.testBaseAccount) &&
+    positiveAuthorizationPreflight(diagnosis.testBaseAccountInventory) &&
+    positiveAuthorizationPreflight(diagnosis.testFullFourScopes) &&
+    positiveAuthorizationPreflight(diagnosis.canonicalWithState) &&
+    diagnosis.runameSource === "EBAY_RuName" &&
+    diagnosis.runameAppBinding === "PASS" &&
+    diagnosis.currentScopeEncoding === "RFC3986_PERCENT20" &&
+    diagnosis.stateCausesInvalidRequest === "NO" &&
+    diagnosis.stateFormatValid === true &&
+    diagnosis.scopeCount === EXACT_REAUTHORIZATION_SCOPE_UNION.length &&
+    diagnosis.scopeContractExact === true &&
+    diagnosis.parameterNames.join(",") ===
+      "client_id,response_type,redirect_uri,scope,state" &&
+    Number.isSafeInteger(diagnosis.externalCalls) &&
+    diagnosis.externalCalls >= AUTHORIZATION_PREFLIGHT_MAX_TESTS &&
+    diagnosis.externalCalls <= AUTHORIZATION_PREFLIGHT_MAX_NETWORK_CALLS &&
+    diagnosis.ledgerRowsCreated === 0 &&
+    diagnosis.cookiesSet === 0 &&
+    diagnosis.humanRedirects === 0 &&
+    diagnosis.oauthConsentLaunched === false &&
+    diagnosis.authorizationCodeExchangeCalls === 0 &&
+    diagnosis.secretsReturned === false
+}
+
 export async function diagnoseEbaySellerOAuthReauthAuthorization(input: {
   configuration: EbaySellerOAuthReauthConfiguration
   fetchImpl?: FetchLike
@@ -544,10 +596,7 @@ export async function diagnoseEbaySellerOAuthReauthAuthorization(input: {
                 invalid(previousPlusEncodingWithState)
               ? "URL_SERIALIZATION" as const
               : "STILL_UNPROVEN" as const
-  const canonicalAccepted = accepted(testBase) && accepted(testBaseAccount) &&
-    accepted(testBaseAccountInventory) && accepted(testFullFourScopes) &&
-    accepted(canonicalWithState)
-  return {
+  const diagnosis: EbaySellerOAuthReauthAuthorizationDiagnosis = {
     rootCause,
     testBase,
     testBaseAccount,
@@ -578,6 +627,7 @@ export async function diagnoseEbaySellerOAuthReauthAuthorization(input: {
         : "UNPROVEN",
     stateFormatValid: true,
     scopeCount: EBAY_SELLER_OAUTH_REAUTH_SCOPES.length,
+    scopeContractExact: exactReauthorizationScopeContract(),
     parameterNames: [
       "client_id",
       "response_type",
@@ -592,8 +642,11 @@ export async function diagnoseEbaySellerOAuthReauthAuthorization(input: {
     oauthConsentLaunched: false,
     authorizationCodeExchangeCalls: 0,
     secretsReturned: false,
-    startAllowed: canonicalAccepted && rootCause === "URL_SERIALIZATION",
+    startAllowed: false,
   }
+  diagnosis.startAllowed =
+    isEbaySellerOAuthReauthAuthorizationStartAllowed(diagnosis)
+  return diagnosis
 }
 
 function credential(value: unknown, maximum = 8_192) {
@@ -861,6 +914,9 @@ export async function prepareEbaySellerOAuthReauthStart(input: {
       input.configuration.reason ?? "EBAY_SELLER_OAUTH_REAUTH_CONFIGURATION_INVALID",
     )
   }
+  assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
+    getEbaySellerOAuthReauthRuntimeCredentialMatch(input.configuration),
+  )
   const authorizationDiagnosis =
     await diagnoseEbaySellerOAuthReauthAuthorization({
       configuration: input.configuration,
@@ -911,6 +967,9 @@ export async function prepareEbaySellerOAuthReauthStart(input: {
       liveAccepted: true as const,
       scopeEncoding: authorizationDiagnosis.currentScopeEncoding,
       stateAccepted: authorizationDiagnosis.stateCausesInvalidRequest === "NO",
+      scopeContractExact: authorizationDiagnosis.scopeContractExact,
+      positiveInvariantsPassed: authorizationDiagnosis.startAllowed,
+      runtimeCredentialMatch: true as const,
     },
   }
 }

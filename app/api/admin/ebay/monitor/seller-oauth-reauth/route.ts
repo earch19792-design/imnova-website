@@ -11,6 +11,7 @@ import {
   verifyEbaySellerOAuthReauthCandidate,
 } from "@/lib/ebay/ebay-seller-oauth-reauth"
 import {
+  assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified,
   assertEbaySellerOAuthReauthAdmin,
   assertEbaySellerOAuthReauthSameOrigin,
   ebaySellerOAuthReauthCookieOptions,
@@ -140,6 +141,16 @@ export async function POST(request: NextRequest) {
         configuration.reason ?? "EBAY_SELLER_OAUTH_REAUTH_CONFIGURATION_INVALID",
       )
     }
+    if (action !== "diagnose" && action !== "start") {
+      throw new EbaySellerOAuthReauthError(
+        "EBAY_SELLER_OAUTH_REAUTH_ACTION_INVALID",
+      )
+    }
+    const runtimeCredentialMatch =
+      getEbaySellerOAuthReauthRuntimeCredentialMatch(configuration)
+    assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
+      runtimeCredentialMatch,
+    )
     if (action === "diagnose") {
       const diagnosis = await diagnoseEbaySellerOAuthReauthAuthorization({
         configuration,
@@ -151,11 +162,6 @@ export async function POST(request: NextRequest) {
         status: 200,
         headers: { "Cache-Control": "private, no-store, max-age=0" },
       })
-    }
-    if (action !== "start") {
-      throw new EbaySellerOAuthReauthError(
-        "EBAY_SELLER_OAUTH_REAUTH_ACTION_INVALID",
-      )
     }
     const ledger = createSupabaseEbaySellerOAuthReauthStateLedger(
       getSupabaseAdminClient(),
@@ -214,6 +220,9 @@ export async function GET(request: NextRequest) {
         403,
       )
     }
+    assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
+      getEbaySellerOAuthReauthRuntimeCredentialMatch(configuration),
+    )
     const cookies = request.cookies.getAll(EBAY_SELLER_OAUTH_REAUTH_COOKIE)
     if (cookies.length !== 1) {
       return callbackHtml(

@@ -25,38 +25,55 @@ type StartPayload = {
     liveAccepted?: boolean
     scopeEncoding?: string
     stateAccepted?: boolean
+    scopeContractExact?: boolean
+    positiveInvariantsPassed?: boolean
+    runtimeCredentialMatch?: boolean
   }
 }
 
 type PreflightState = {
-  acceptedByAuthEndpoint?: "YES" | "NO"
-  safeErrorCategory?: string
+  acceptedByAuthEndpoint: "YES" | "NO"
+  safeErrorCategory:
+    | "NONE"
+    | "INVALID_REQUEST"
+    | "AUTH_ENDPOINT_REJECTED"
+    | "AUTH_ENDPOINT_UNAVAILABLE"
+    | "AUTH_ENDPOINT_RESPONSE_UNPROVEN"
 }
 
 type Diagnosis = {
-  rootCause?: string
-  testBase?: PreflightState
-  testBaseAccount?: PreflightState
-  testBaseAccountInventory?: PreflightState
-  testFullFourScopes?: PreflightState
-  canonicalWithState?: PreflightState
-  previousPlusEncodingWithState?: PreflightState
-  runameSource?: string
-  runameAppBinding?: string
-  currentScopeEncoding?: string
-  previousScopeEncoding?: string
-  encodingCausesInvalidRequest?: string
-  stateCausesInvalidRequest?: string
-  stateFormatValid?: boolean
-  scopeCount?: number
-  externalCalls?: number
-  ledgerRowsCreated?: number
-  cookiesSet?: number
-  humanRedirects?: number
-  oauthConsentLaunched?: boolean
-  authorizationCodeExchangeCalls?: number
-  secretsReturned?: boolean
-  startAllowed?: boolean
+  rootCause:
+    | "CLIENT_ID_RUNAME_BINDING"
+    | "SCOPE_ACCOUNT_REJECTED"
+    | "SCOPE_INVENTORY_REJECTED"
+    | "SCOPE_ANALYTICS_REJECTED"
+    | "URL_SERIALIZATION"
+    | "STATE_PARAMETER"
+    | "STILL_UNPROVEN"
+  testBase: PreflightState
+  testBaseAccount: PreflightState
+  testBaseAccountInventory: PreflightState
+  testFullFourScopes: PreflightState
+  canonicalWithState: PreflightState
+  previousPlusEncodingWithState: PreflightState
+  runameSource: "EBAY_RuName"
+  runameAppBinding: "PASS" | "FAIL" | "UNPROVEN"
+  currentScopeEncoding: "RFC3986_PERCENT20"
+  previousScopeEncoding: "FORM_URLENCODED_PLUS"
+  encodingCausesInvalidRequest: "YES" | "NO" | "UNPROVEN"
+  stateCausesInvalidRequest: "YES" | "NO" | "UNPROVEN"
+  stateFormatValid: boolean
+  scopeCount: number
+  scopeContractExact: boolean
+  parameterNames: string[]
+  externalCalls: number
+  ledgerRowsCreated: number
+  cookiesSet: number
+  humanRedirects: number
+  oauthConsentLaunched: boolean
+  authorizationCodeExchangeCalls: number
+  secretsReturned: boolean
+  startAllowed: boolean
 }
 
 type DiagnosisPayload = {
@@ -66,15 +83,15 @@ type DiagnosisPayload = {
 }
 
 type RuntimeCredentialMatch = {
-  RUNTIME_EBAY_CLIENT_ID_PRESENT?: boolean
-  RUNTIME_EBAY_CLIENT_ID_LENGTH_MATCH?: boolean
-  RUNTIME_EBAY_CLIENT_ID_SHA256_MATCH?: boolean
-  RUNTIME_EBAY_RUNAME_PRESENT?: boolean
-  RUNTIME_EBAY_RUNAME_LENGTH_MATCH?: boolean
-  RUNTIME_EBAY_RUNAME_SHA256_MATCH?: boolean
-  APP_ID_PORTAL_RUNTIME_MATCH?: boolean
-  RUNAME_PORTAL_RUNTIME_MATCH?: boolean
-  FINAL_BINDING_DIAGNOSIS?:
+  RUNTIME_EBAY_CLIENT_ID_PRESENT: boolean
+  RUNTIME_EBAY_CLIENT_ID_LENGTH_MATCH: boolean
+  RUNTIME_EBAY_CLIENT_ID_SHA256_MATCH: boolean
+  RUNTIME_EBAY_RUNAME_PRESENT: boolean
+  RUNTIME_EBAY_RUNAME_LENGTH_MATCH: boolean
+  RUNTIME_EBAY_RUNAME_SHA256_MATCH: boolean
+  APP_ID_PORTAL_RUNTIME_MATCH: boolean
+  RUNAME_PORTAL_RUNTIME_MATCH: boolean
+  FINAL_BINDING_DIAGNOSIS:
     | "BOTH_MATCH"
     | "APP_ID_MATCH_RUNAME_MISMATCH"
     | "APP_ID_MISMATCH_RUNAME_MATCH"
@@ -99,6 +116,40 @@ const RUNTIME_CREDENTIAL_MATCH_KEYS = [
   "RUNAME_PORTAL_RUNTIME_MATCH",
   "FINAL_BINDING_DIAGNOSIS",
 ] as const
+const DIAGNOSIS_KEYS = [
+  "rootCause",
+  "testBase",
+  "testBaseAccount",
+  "testBaseAccountInventory",
+  "testFullFourScopes",
+  "canonicalWithState",
+  "previousPlusEncodingWithState",
+  "runameSource",
+  "runameAppBinding",
+  "currentScopeEncoding",
+  "previousScopeEncoding",
+  "encodingCausesInvalidRequest",
+  "stateCausesInvalidRequest",
+  "stateFormatValid",
+  "scopeCount",
+  "scopeContractExact",
+  "parameterNames",
+  "externalCalls",
+  "ledgerRowsCreated",
+  "cookiesSet",
+  "humanRedirects",
+  "oauthConsentLaunched",
+  "authorizationCodeExchangeCalls",
+  "secretsReturned",
+  "startAllowed",
+] as const
+const EXPECTED_PARAMETER_NAMES = [
+  "client_id",
+  "response_type",
+  "redirect_uri",
+  "scope",
+  "state",
+] as const
 
 function validRuntimeCredentialMatch(
   value: unknown,
@@ -117,6 +168,104 @@ function validRuntimeCredentialMatch(
     "BOTH_MISMATCH",
     "RUNTIME_CONFIGURATION_MISSING",
   ].includes(String(record.FINAL_BINDING_DIAGNOSIS))
+}
+
+function runtimeCredentialMatchAllowsStart(
+  value: RuntimeCredentialMatch | null,
+) {
+  return validRuntimeCredentialMatch(value) &&
+    RUNTIME_CREDENTIAL_MATCH_KEYS.slice(0, -1).every(
+      (key) => value[key] === true,
+    ) && value.FINAL_BINDING_DIAGNOSIS === "BOTH_MATCH"
+}
+
+function validPreflightState(value: unknown): value is PreflightState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return Object.keys(record).sort().join(",") ===
+      "acceptedByAuthEndpoint,safeErrorCategory" &&
+    (record.acceptedByAuthEndpoint === "YES" ||
+      record.acceptedByAuthEndpoint === "NO") && [
+      "NONE",
+      "INVALID_REQUEST",
+      "AUTH_ENDPOINT_REJECTED",
+      "AUTH_ENDPOINT_UNAVAILABLE",
+      "AUTH_ENDPOINT_RESPONSE_UNPROVEN",
+    ].includes(String(record.safeErrorCategory))
+}
+
+function validDiagnosis(value: unknown): value is Diagnosis {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).sort().join(",") !==
+      [...DIAGNOSIS_KEYS].sort().join(",")) return false
+  if (![
+    "CLIENT_ID_RUNAME_BINDING",
+    "SCOPE_ACCOUNT_REJECTED",
+    "SCOPE_INVENTORY_REJECTED",
+    "SCOPE_ANALYTICS_REJECTED",
+    "URL_SERIALIZATION",
+    "STATE_PARAMETER",
+    "STILL_UNPROVEN",
+  ].includes(String(record.rootCause))) return false
+  if ([
+    record.testBase,
+    record.testBaseAccount,
+    record.testBaseAccountInventory,
+    record.testFullFourScopes,
+    record.canonicalWithState,
+    record.previousPlusEncodingWithState,
+  ].some((candidate) => !validPreflightState(candidate))) return false
+  return record.runameSource === "EBAY_RuName" &&
+    ["PASS", "FAIL", "UNPROVEN"].includes(String(record.runameAppBinding)) &&
+    record.currentScopeEncoding === "RFC3986_PERCENT20" &&
+    record.previousScopeEncoding === "FORM_URLENCODED_PLUS" &&
+    ["YES", "NO", "UNPROVEN"].includes(
+      String(record.encodingCausesInvalidRequest),
+    ) && ["YES", "NO", "UNPROVEN"].includes(
+      String(record.stateCausesInvalidRequest),
+    ) && typeof record.stateFormatValid === "boolean" &&
+    typeof record.scopeCount === "number" &&
+    Number.isSafeInteger(record.scopeCount) &&
+    typeof record.scopeContractExact === "boolean" &&
+    Array.isArray(record.parameterNames) &&
+    record.parameterNames.join(",") === EXPECTED_PARAMETER_NAMES.join(",") &&
+    typeof record.externalCalls === "number" &&
+    Number.isSafeInteger(record.externalCalls) &&
+    record.externalCalls >= 0 && record.externalCalls <= 12 &&
+    typeof record.ledgerRowsCreated === "number" &&
+    Number.isSafeInteger(record.ledgerRowsCreated) &&
+    typeof record.cookiesSet === "number" &&
+    Number.isSafeInteger(record.cookiesSet) &&
+    typeof record.humanRedirects === "number" &&
+    Number.isSafeInteger(record.humanRedirects) &&
+    typeof record.oauthConsentLaunched === "boolean" &&
+    typeof record.authorizationCodeExchangeCalls === "number" &&
+    Number.isSafeInteger(record.authorizationCodeExchangeCalls) &&
+    typeof record.secretsReturned === "boolean" &&
+    typeof record.startAllowed === "boolean"
+}
+
+function diagnosisAllowsStart(value: Diagnosis | null) {
+  if (!value || !validDiagnosis(value)) return false
+  const accepted = (result: PreflightState) =>
+    result.acceptedByAuthEndpoint === "YES" &&
+    result.safeErrorCategory === "NONE"
+  return value.startAllowed === true &&
+    accepted(value.testBase) && accepted(value.testBaseAccount) &&
+    accepted(value.testBaseAccountInventory) &&
+    accepted(value.testFullFourScopes) &&
+    accepted(value.canonicalWithState) &&
+    value.runameAppBinding === "PASS" &&
+    value.stateCausesInvalidRequest === "NO" &&
+    value.currentScopeEncoding === "RFC3986_PERCENT20" &&
+    value.scopeCount === REQUIRED_SCOPES.length &&
+    value.scopeContractExact === true && value.stateFormatValid === true &&
+    value.externalCalls >= 6 && value.externalCalls <= 12 &&
+    value.ledgerRowsCreated === 0 && value.cookiesSet === 0 &&
+    value.humanRedirects === 0 && value.oauthConsentLaunched === false &&
+    value.authorizationCodeExchangeCalls === 0 &&
+    value.secretsReturned === false
 }
 
 function validAuthorizationUrl(value: string) {
@@ -171,6 +320,9 @@ export default function EbaySellerOAuthReauthPage() {
     setDiagnosis(null)
     setError("")
     try {
+      if (!runtimeCredentialMatchAllowsStart(credentialMatch)) {
+        throw new Error("RUNTIME_CREDENTIAL_MATCH_REQUIRED")
+      }
       const bearer = await adminBearer()
       const response = await fetch(START_PATH, {
         method: "POST",
@@ -183,7 +335,8 @@ export default function EbaySellerOAuthReauthPage() {
         body: JSON.stringify({ action: "diagnose" }),
       })
       const payload = await response.json() as DiagnosisPayload
-      if (!response.ok || !payload.success || !payload.diagnosis) {
+      if (!response.ok || payload.success !== true ||
+          !validDiagnosis(payload.diagnosis)) {
         throw new Error(payload.error || "OAUTH_DIAGNOSTIC_REJECTED")
       }
       setDiagnosis(payload.diagnosis)
@@ -197,6 +350,7 @@ export default function EbaySellerOAuthReauthPage() {
   async function compareRuntimeCredentials() {
     setMatchingCredentials(true)
     setCredentialMatch(null)
+    setDiagnosis(null)
     setError("")
     try {
       const bearer = await adminBearer()
@@ -229,8 +383,8 @@ export default function EbaySellerOAuthReauthPage() {
     setLoading(true)
     setError("")
     try {
-      if (!diagnosis?.startAllowed ||
-          diagnosis.rootCause !== "URL_SERIALIZATION") {
+      if (!runtimeCredentialMatchAllowsStart(credentialMatch) ||
+          !diagnosisAllowsStart(diagnosis)) {
         throw new Error("AUTH_REQUEST_LIVE_PREFLIGHT_REQUIRED")
       }
       const bearer = await adminBearer()
@@ -245,14 +399,17 @@ export default function EbaySellerOAuthReauthPage() {
         body: JSON.stringify({ action: "start" }),
       })
       const payload = await response.json() as StartPayload
-      if (!response.ok || !payload.success || !payload.authorizationUrl ||
+      if (!response.ok || payload.success !== true ||
+          !payload.authorizationUrl ||
           payload.callbackPath !== CALLBACK_PATH ||
           payload.scopeCount !== REQUIRED_SCOPES.length ||
-          payload.authorizationPreflight?.rootCause !== "URL_SERIALIZATION" ||
           payload.authorizationPreflight?.liveAccepted !== true ||
           payload.authorizationPreflight?.scopeEncoding !==
             "RFC3986_PERCENT20" ||
           payload.authorizationPreflight?.stateAccepted !== true ||
+          payload.authorizationPreflight?.scopeContractExact !== true ||
+          payload.authorizationPreflight?.positiveInvariantsPassed !== true ||
+          payload.authorizationPreflight?.runtimeCredentialMatch !== true ||
           !validAuthorizationUrl(payload.authorizationUrl)) {
         throw new Error(payload.error || "OAUTH_START_REJECTED")
       }
@@ -356,7 +513,8 @@ export default function EbaySellerOAuthReauthPage() {
           <button
             className="mt-4 rounded-2xl border border-cyan-300/50 px-5 py-2 text-sm font-black text-cyan-200 disabled:opacity-40"
             type="button"
-            disabled={diagnosing || loading}
+            disabled={diagnosing || loading || matchingCredentials ||
+              !runtimeCredentialMatchAllowsStart(credentialMatch)}
             onClick={diagnose}
           >
             {diagnosing ? "Diagnosticando…" : "Diagnosticar sin iniciar OAuth"}
@@ -406,10 +564,12 @@ export default function EbaySellerOAuthReauthPage() {
         <button
           className="rounded-2xl bg-cyan-300 px-6 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
           type="button"
-          disabled={!confirmed || loading || !callbackUrl ||
-            !diagnosis?.startAllowed || diagnosis.rootCause !== "URL_SERIALIZATION"}
-          aria-disabled={!diagnosis?.startAllowed ||
-            diagnosis.rootCause !== "URL_SERIALIZATION"}
+          disabled={!confirmed || loading || diagnosing || matchingCredentials ||
+            !callbackUrl ||
+            !runtimeCredentialMatchAllowsStart(credentialMatch) ||
+            !diagnosisAllowsStart(diagnosis)}
+          aria-disabled={!runtimeCredentialMatchAllowsStart(credentialMatch) ||
+            !diagnosisAllowsStart(diagnosis)}
           onClick={begin}
         >
           {loading ? "Preparando…" : "Iniciar consentimiento eBay una vez"}
