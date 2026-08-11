@@ -115,6 +115,15 @@ export type EbayRegistryRepairLifecycleFailureCause =
   | "REGISTRY_LISTING_STATUS_UNAVAILABLE"
   | "MULTIPLE_FAILURES"
   | "UNPROVEN"
+export type EbayRegistryRepairRowStatusClass =
+  | "ACTIVE"
+  | "STALE"
+  | "ENDED"
+  | "HISTORICAL"
+  | "INACTIVE"
+  | "UNKNOWN"
+  | "OTHER"
+  | "UNPROVEN"
 export type EbayRegistryRepairFutureWriteRejectionReason =
   | "NONE"
   | "EVIDENCE_UNAVAILABLE"
@@ -231,6 +240,18 @@ export type EbayRegistryRepairDryRun = {
   LIFECYCLE_REQUIRED_SIGNAL: EbayRegistryRepairLifecycleRequiredSignal
   LIFECYCLE_SIGNAL_AVAILABLE: YesNoUnproven
   LIFECYCLE_FAILURE_CAUSE: EbayRegistryRepairLifecycleFailureCause
+  REPAIR_ROW_CURRENT_STATUS_CLASS: EbayRegistryRepairRowStatusClass
+  REPAIR_ROW_STATUS_RAW_VALUE_RECOGNIZED: YesNoUnproven
+  REPAIR_ROW_ACCOUNT_SCOPE_MATCH: YesNoUnproven
+  REPAIR_ROW_AUTHORITATIVE_ITEM_ID_STILL_LIVE: YesNoUnproven
+  REPAIR_ROW_ITEM_ID_UNIQUE_BOTH_SIDES: YesNoUnproven
+  REPAIR_ROW_COMPETING_RELATIONSHIP: YesNoUnproven
+  REGISTRY_LIFECYCLE_SUPPORTS_REACTIVATION: YesNoUnproven
+  REACTIVATION_ALLOWED_FROM_STALE: YesNoUnproven
+  REACTIVATION_ALLOWED_FROM_ENDED: YesNoUnproven
+  REACTIVATION_ALLOWED_FROM_HISTORICAL: YesNoUnproven
+  REACTIVATION_ALLOWED_FROM_UNKNOWN: YesNoUnproven
+  REACTIVATION_CAS_SUPPORTED: YesNoUnproven
   FINAL_IDENTITY_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
   FINAL_PRECONDITION_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
   FINAL_REJECTION_REASON: EbayRegistryRepairDryRunRejectionReason | null
@@ -335,6 +356,77 @@ const CREATE_FIELDS = [
   "raw_payload",
   "updated_at",
 ]
+
+type NormalizedRegistryLifecycleStatus =
+  | "active"
+  | "paused"
+  | "ended"
+  | "draft"
+  | "unknown"
+  | "stale"
+  | "historical"
+  | "inactive"
+  | "other"
+
+function normalizedRegistryLifecycleStatus(
+  value: unknown,
+): NormalizedRegistryLifecycleStatus {
+  const status = normalizedIdentity(value)?.toLowerCase()
+  if (status === "active" || status === "paused" || status === "ended" ||
+      status === "draft" || status === "unknown" || status === "stale" ||
+      status === "historical" || status === "inactive") {
+    return status
+  }
+  return "other"
+}
+
+function registryRepairStatusEvidence(value: unknown): {
+  status: NormalizedRegistryLifecycleStatus
+  statusClass: Exclude<EbayRegistryRepairRowStatusClass, "UNPROVEN">
+  rawValueRecognized: "YES" | "NO"
+} {
+  const status = normalizedRegistryLifecycleStatus(value)
+  if (status === "active") {
+    return { status, statusClass: "ACTIVE", rawValueRecognized: "YES" }
+  }
+  if (status === "paused" || status === "draft") {
+    return { status, statusClass: "INACTIVE", rawValueRecognized: "YES" }
+  }
+  if (status === "ended") {
+    return { status, statusClass: "ENDED", rawValueRecognized: "YES" }
+  }
+  if (status === "unknown") {
+    return { status, statusClass: "UNKNOWN", rawValueRecognized: "YES" }
+  }
+  if (status === "stale") {
+    return { status, statusClass: "STALE", rawValueRecognized: "NO" }
+  }
+  if (status === "historical") {
+    return { status, statusClass: "HISTORICAL", rawValueRecognized: "NO" }
+  }
+  if (status === "inactive") {
+    return { status, statusClass: "INACTIVE", rawValueRecognized: "NO" }
+  }
+  return { status, statusClass: "OTHER", rawValueRecognized: "NO" }
+}
+
+function protectedRepairReactivationSupported(input: {
+  status: NormalizedRegistryLifecycleStatus
+  source: unknown
+  syncKey: unknown
+  accountKey: string
+}) {
+  if (input.status !== "paused" && input.status !== "draft" &&
+      input.status !== "ended") {
+    return false
+  }
+  const source = normalizedIdentity(input.source)
+  const syncKey = normalizedIdentity(input.syncKey)
+  const scopedPrefix = `${CREATE_SOURCE}:${input.accountKey}:`
+  return source === CREATE_SOURCE && Boolean(
+    syncKey?.startsWith(scopedPrefix) && syncKey.length > scopedPrefix.length,
+  )
+}
 
 function normalizedIdentity(value: unknown) {
   if (typeof value !== "string") return null
@@ -617,6 +709,18 @@ EbayRegistryRepairDryRun {
     LIFECYCLE_REQUIRED_SIGNAL: "UNPROVEN",
     LIFECYCLE_SIGNAL_AVAILABLE: "UNPROVEN",
     LIFECYCLE_FAILURE_CAUSE: "UNPROVEN",
+    REPAIR_ROW_CURRENT_STATUS_CLASS: "UNPROVEN",
+    REPAIR_ROW_STATUS_RAW_VALUE_RECOGNIZED: "UNPROVEN",
+    REPAIR_ROW_ACCOUNT_SCOPE_MATCH: "UNPROVEN",
+    REPAIR_ROW_AUTHORITATIVE_ITEM_ID_STILL_LIVE: "UNPROVEN",
+    REPAIR_ROW_ITEM_ID_UNIQUE_BOTH_SIDES: "UNPROVEN",
+    REPAIR_ROW_COMPETING_RELATIONSHIP: "UNPROVEN",
+    REGISTRY_LIFECYCLE_SUPPORTS_REACTIVATION: "UNPROVEN",
+    REACTIVATION_ALLOWED_FROM_STALE: "UNPROVEN",
+    REACTIVATION_ALLOWED_FROM_ENDED: "UNPROVEN",
+    REACTIVATION_ALLOWED_FROM_HISTORICAL: "UNPROVEN",
+    REACTIVATION_ALLOWED_FROM_UNKNOWN: "UNPROVEN",
+    REACTIVATION_CAS_SUPPORTED: "UNPROVEN",
     FINAL_IDENTITY_UNPROVEN_COUNT: "UNPROVEN",
     FINAL_PRECONDITION_UNPROVEN_COUNT: "UNPROVEN",
     FINAL_REJECTION_REASON: "UNPROVEN",
@@ -846,6 +950,16 @@ export function buildEbayRegistryRepairDryRun(
   }
   const keepHandles: string[] = []
   const repairHandles: string[] = []
+  const repairFieldsToChange = new Set<string>(REPAIR_FIELDS)
+  const repairRowDiagnostics: Array<{
+    statusClass: Exclude<EbayRegistryRepairRowStatusClass, "UNPROVEN">
+    rawValueRecognized: "YES" | "NO"
+    accountScopeMatch: boolean
+    authoritativeItemIdStillLive: boolean
+    itemIdUniqueBothSides: boolean
+    competingRelationship: boolean
+    reactivationCasSupported: boolean
+  }> = []
   const staleHandles: string[] = []
   const humanCandidates: EbayRegistryRepairHumanReviewCandidate[] = []
   let registryKeepCurrent = 0
@@ -897,8 +1011,11 @@ export function buildEbayRegistryRepairDryRun(
       !itemAndSkuReferenceSameLive
     const rowAccountCorrect = registry.row.account_key === accountKey
     const rowListingStatus = normalizedIdentity(registry.row.listing_status)
+    const rowStatusEvidence = registryRepairStatusEvidence(
+      registry.row.listing_status,
+    )
     const rowLifecycleSignalAvailable = rowListingStatus !== null
-    const rowActive = rowListingStatus?.toLowerCase() === "active"
+    const rowActive = rowStatusEvidence.status === "active"
 
     if (fullMatches.length === 1 && itemMatches.length === 1 &&
         skuMatches.length === 1) {
@@ -946,6 +1063,29 @@ export function buildEbayRegistryRepairDryRun(
 
     if (itemMatches.length === 1 && skuMatches.length === 0) {
       const live = liveFacts[itemMatches[0]]
+      const itemIdUniqueBothSides = Boolean(registry.itemId &&
+        evidenceCount(liveItemCounts, registry.itemId) === 1 &&
+        evidenceCount(registryItemCounts, registry.itemId) === 1)
+      const competingRelationship = live
+        ? liveRegistryReferences[live.index]?.size !== 1
+        : true
+      const reactivationSupported = protectedRepairReactivationSupported({
+        status: rowStatusEvidence.status,
+        source: registry.row.source,
+        syncKey: registry.row.sync_key,
+        accountKey,
+      })
+      repairRowDiagnostics.push({
+        statusClass: rowStatusEvidence.statusClass,
+        rawValueRecognized: rowStatusEvidence.rawValueRecognized,
+        accountScopeMatch: rowAccountCorrect,
+        authoritativeItemIdStillLive: Boolean(live &&
+          livePreconditionsProven(live.listing)),
+        itemIdUniqueBothSides,
+        competingRelationship,
+        reactivationCasSupported: Boolean(registry.guard &&
+          (rowActive || reactivationSupported)),
+      })
       const identitySafe = Boolean(live && registry.itemId &&
         registry.sku && live.sku && registry.sku !== live.sku &&
         registry.variationKey === live.variationKey && rowAccountCorrect &&
@@ -957,20 +1097,28 @@ export function buildEbayRegistryRepairDryRun(
       if (identitySafe && live) {
         registryRepairExisting += 1
         liveRepair.add(live.index)
-        if (!rowActive) {
+        if (!registry.guard) {
+          repairUnproven += 1
+        } else if (!rowActive && !reactivationSupported) {
           repairUnproven += 1
           recordLifecycleUnproven(
             "REPAIR_EXISTING",
             rowLifecycleSignalAvailable,
           )
-        } else if (registry.guard) {
-          repairHandles.push(opaqueHandle("repair", [
-            registry.guard,
-            live.sku,
-            live.variationKey,
-          ]))
         } else {
-          repairUnproven += 1
+          const candidateRepairFields = [...REPAIR_FIELDS]
+          if (!rowActive) {
+            candidateRepairFields.push("listing_status")
+            repairFieldsToChange.add("listing_status")
+          }
+          repairHandles.push(opaqueHandle("repair", {
+            evidenceFingerprint,
+            existingRowCas: registry.guard,
+            expectedStatus: rowStatusEvidence.status,
+            fieldsToChange: candidateRepairFields,
+            nextSku: live.sku,
+            variationKey: live.variationKey,
+          }))
         }
       } else {
         registryUnproven += 1
@@ -1506,6 +1654,9 @@ export function buildEbayRegistryRepairDryRun(
         : createAbsenceCasUnprovenCount > 0
           ? "ABSENCE_OR_UNIQUENESS_GUARD"
           : "NONE"
+  const repairRowDiagnostic = repairRowDiagnostics.length === 1
+    ? repairRowDiagnostics[0]
+    : null
 
   return {
     DRY_RUN_LABEL: "DRY RUN — NO CHANGES WILL BE APPLIED",
@@ -1628,6 +1779,40 @@ export function buildEbayRegistryRepairDryRun(
       "REGISTRY_LISTING_STATUS_UNAVAILABLE",
     ) ? "NO" : "YES",
     LIFECYCLE_FAILURE_CAUSE: lifecycleFailureCause,
+    REPAIR_ROW_CURRENT_STATUS_CLASS:
+      repairRowDiagnostic?.statusClass ?? "UNPROVEN",
+    REPAIR_ROW_STATUS_RAW_VALUE_RECOGNIZED:
+      repairRowDiagnostic?.rawValueRecognized ?? "UNPROVEN",
+    REPAIR_ROW_ACCOUNT_SCOPE_MATCH: repairRowDiagnostic
+      ? repairRowDiagnostic.accountScopeMatch ? "YES" : "NO"
+      : "UNPROVEN",
+    REPAIR_ROW_AUTHORITATIVE_ITEM_ID_STILL_LIVE: repairRowDiagnostic
+      ? repairRowDiagnostic.authoritativeItemIdStillLive ? "YES" : "NO"
+      : "UNPROVEN",
+    REPAIR_ROW_ITEM_ID_UNIQUE_BOTH_SIDES: repairRowDiagnostic
+      ? repairRowDiagnostic.itemIdUniqueBothSides ? "YES" : "NO"
+      : "UNPROVEN",
+    REPAIR_ROW_COMPETING_RELATIONSHIP: repairRowDiagnostic
+      ? repairRowDiagnostic.competingRelationship ? "YES" : "NO"
+      : "UNPROVEN",
+    REGISTRY_LIFECYCLE_SUPPORTS_REACTIVATION: repairRowDiagnostic
+      ? "YES"
+      : "UNPROVEN",
+    REACTIVATION_ALLOWED_FROM_STALE: repairRowDiagnostic
+      ? "NO"
+      : "UNPROVEN",
+    REACTIVATION_ALLOWED_FROM_ENDED: repairRowDiagnostic
+      ? "YES"
+      : "UNPROVEN",
+    REACTIVATION_ALLOWED_FROM_HISTORICAL: repairRowDiagnostic
+      ? "NO"
+      : "UNPROVEN",
+    REACTIVATION_ALLOWED_FROM_UNKNOWN: repairRowDiagnostic
+      ? "NO"
+      : "UNPROVEN",
+    REACTIVATION_CAS_SUPPORTED: repairRowDiagnostic
+      ? repairRowDiagnostic.reactivationCasSupported ? "YES" : "NO"
+      : "UNPROVEN",
     FINAL_IDENTITY_UNPROVEN_COUNT: identityPartitionUnprovenCount,
     FINAL_PRECONDITION_UNPROVEN_COUNT: finalPreconditionUnprovenCount,
     FINAL_REJECTION_REASON: rejectionReason,
@@ -1638,7 +1823,7 @@ export function buildEbayRegistryRepairDryRun(
     APPROVAL_INVALIDATES_ON_REGISTRY_STATE_CHANGE: "YES",
     REPAIR_EXISTING_COUNT: registryRepairExisting,
     REPAIR_PRECONDITION_STATUS: repairStatus,
-    REPAIR_FIELDS_TO_CHANGE: [...REPAIR_FIELDS],
+    REPAIR_FIELDS_TO_CHANGE: [...repairFieldsToChange],
     CREATE_NEW_COUNT: liveCreate.size,
     CREATE_PRECONDITION_STATUS: createStatus,
     CREATE_FIELDS_TO_POPULATE: [...CREATE_FIELDS],

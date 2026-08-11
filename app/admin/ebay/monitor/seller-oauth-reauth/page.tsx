@@ -16,6 +16,7 @@ import type {
   EbayRegistryRepairLifecycleFailureCause,
   EbayRegistryRepairLifecycleRequiredSignal,
   EbayRegistryRepairLifecycleStage,
+  EbayRegistryRepairRowStatusClass,
   EbayRegistryRepairUnprovenComponent,
   EbayRegistryRepairUnprovenPrimaryReason,
   EbayRegistryRepairUnprovenSource,
@@ -314,6 +315,18 @@ type RegistryRepairDryRunPayload = {
   LIFECYCLE_REQUIRED_SIGNAL?: unknown
   LIFECYCLE_SIGNAL_AVAILABLE?: unknown
   LIFECYCLE_FAILURE_CAUSE?: unknown
+  REPAIR_ROW_CURRENT_STATUS_CLASS?: unknown
+  REPAIR_ROW_STATUS_RAW_VALUE_RECOGNIZED?: unknown
+  REPAIR_ROW_ACCOUNT_SCOPE_MATCH?: unknown
+  REPAIR_ROW_AUTHORITATIVE_ITEM_ID_STILL_LIVE?: unknown
+  REPAIR_ROW_ITEM_ID_UNIQUE_BOTH_SIDES?: unknown
+  REPAIR_ROW_COMPETING_RELATIONSHIP?: unknown
+  REGISTRY_LIFECYCLE_SUPPORTS_REACTIVATION?: unknown
+  REACTIVATION_ALLOWED_FROM_STALE?: unknown
+  REACTIVATION_ALLOWED_FROM_ENDED?: unknown
+  REACTIVATION_ALLOWED_FROM_HISTORICAL?: unknown
+  REACTIVATION_ALLOWED_FROM_UNKNOWN?: unknown
+  REACTIVATION_CAS_SUPPORTED?: unknown
   FINAL_IDENTITY_UNPROVEN_COUNT?: unknown
   FINAL_PRECONDITION_UNPROVEN_COUNT?: unknown
   FINAL_REJECTION_REASON?: unknown
@@ -510,6 +523,18 @@ const REGISTRY_REPAIR_DRY_RUN_KEYS = [
   "LIFECYCLE_REQUIRED_SIGNAL",
   "LIFECYCLE_SIGNAL_AVAILABLE",
   "LIFECYCLE_FAILURE_CAUSE",
+  "REPAIR_ROW_CURRENT_STATUS_CLASS",
+  "REPAIR_ROW_STATUS_RAW_VALUE_RECOGNIZED",
+  "REPAIR_ROW_ACCOUNT_SCOPE_MATCH",
+  "REPAIR_ROW_AUTHORITATIVE_ITEM_ID_STILL_LIVE",
+  "REPAIR_ROW_ITEM_ID_UNIQUE_BOTH_SIDES",
+  "REPAIR_ROW_COMPETING_RELATIONSHIP",
+  "REGISTRY_LIFECYCLE_SUPPORTS_REACTIVATION",
+  "REACTIVATION_ALLOWED_FROM_STALE",
+  "REACTIVATION_ALLOWED_FROM_ENDED",
+  "REACTIVATION_ALLOWED_FROM_HISTORICAL",
+  "REACTIVATION_ALLOWED_FROM_UNKNOWN",
+  "REACTIVATION_CAS_SUPPORTED",
   "FINAL_IDENTITY_UNPROVEN_COUNT",
   "FINAL_PRECONDITION_UNPROVEN_COUNT",
   "FINAL_REJECTION_REASON",
@@ -742,6 +767,32 @@ const REGISTRY_REPAIR_LIFECYCLE_FAILURE_CAUSES = [
   "MULTIPLE_FAILURES",
   "UNPROVEN",
 ] as const
+
+const REGISTRY_REPAIR_ROW_STATUS_CLASSES = [
+  "ACTIVE",
+  "STALE",
+  "ENDED",
+  "HISTORICAL",
+  "INACTIVE",
+  "UNKNOWN",
+  "OTHER",
+  "UNPROVEN",
+] as const
+
+type RegistryRepairRowDiagnostic = {
+  statusClass: EbayRegistryRepairRowStatusClass
+  statusRawValueRecognized: "YES" | "NO" | "UNPROVEN"
+  accountScopeMatch: "YES" | "NO" | "UNPROVEN"
+  authoritativeItemIdStillLive: "YES" | "NO" | "UNPROVEN"
+  itemIdUniqueBothSides: "YES" | "NO" | "UNPROVEN"
+  competingRelationship: "YES" | "NO" | "UNPROVEN"
+  lifecycleSupportsReactivation: "YES" | "NO" | "UNPROVEN"
+  reactivationAllowedFromStale: "YES" | "NO" | "UNPROVEN"
+  reactivationAllowedFromEnded: "YES" | "NO" | "UNPROVEN"
+  reactivationAllowedFromHistorical: "YES" | "NO" | "UNPROVEN"
+  reactivationAllowedFromUnknown: "YES" | "NO" | "UNPROVEN"
+  reactivationCasSupported: "YES" | "NO" | "UNPROVEN"
+}
 
 type RegistryRepairAbsenceProofCauseCounts = Record<
   typeof REGISTRY_REPAIR_ABSENCE_PROOF_CAUSE_COUNT_KEYS[number],
@@ -1943,6 +1994,69 @@ function validAuthorizationUrl(value: string) {
   }
 }
 
+function parseRegistryRepairRowDiagnostic(
+  value: unknown,
+): RegistryRepairRowDiagnostic | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const statusClass = record.REPAIR_ROW_CURRENT_STATUS_CLASS
+  const flags = [
+    record.REPAIR_ROW_STATUS_RAW_VALUE_RECOGNIZED,
+    record.REPAIR_ROW_ACCOUNT_SCOPE_MATCH,
+    record.REPAIR_ROW_AUTHORITATIVE_ITEM_ID_STILL_LIVE,
+    record.REPAIR_ROW_ITEM_ID_UNIQUE_BOTH_SIDES,
+    record.REPAIR_ROW_COMPETING_RELATIONSHIP,
+    record.REGISTRY_LIFECYCLE_SUPPORTS_REACTIVATION,
+    record.REACTIVATION_ALLOWED_FROM_STALE,
+    record.REACTIVATION_ALLOWED_FROM_ENDED,
+    record.REACTIVATION_ALLOWED_FROM_HISTORICAL,
+    record.REACTIVATION_ALLOWED_FROM_UNKNOWN,
+    record.REACTIVATION_CAS_SUPPORTED,
+  ]
+  const flag = (candidate: unknown) =>
+    candidate === "YES" || candidate === "NO" || candidate === "UNPROVEN"
+  if (!REGISTRY_REPAIR_ROW_STATUS_CLASSES.some((entry) => entry === statusClass) ||
+      !flags.every(flag)) return null
+
+  const allUnproven = statusClass === "UNPROVEN" &&
+    flags.every((candidate) => candidate === "UNPROVEN")
+  const anyUnproven = statusClass === "UNPROVEN" ||
+    flags.some((candidate) => candidate === "UNPROVEN")
+  if (anyUnproven !== allUnproven) return null
+  if (!allUnproven &&
+      (record.REGISTRY_LIFECYCLE_SUPPORTS_REACTIVATION !== "YES" ||
+        record.REACTIVATION_ALLOWED_FROM_STALE !== "NO" ||
+        record.REACTIVATION_ALLOWED_FROM_ENDED !== "YES" ||
+        record.REACTIVATION_ALLOWED_FROM_HISTORICAL !== "NO" ||
+        record.REACTIVATION_ALLOWED_FROM_UNKNOWN !== "NO")) return null
+
+  return {
+    statusClass: statusClass as EbayRegistryRepairRowStatusClass,
+    statusRawValueRecognized:
+      record.REPAIR_ROW_STATUS_RAW_VALUE_RECOGNIZED as "YES" | "NO" | "UNPROVEN",
+    accountScopeMatch:
+      record.REPAIR_ROW_ACCOUNT_SCOPE_MATCH as "YES" | "NO" | "UNPROVEN",
+    authoritativeItemIdStillLive:
+      record.REPAIR_ROW_AUTHORITATIVE_ITEM_ID_STILL_LIVE as "YES" | "NO" | "UNPROVEN",
+    itemIdUniqueBothSides:
+      record.REPAIR_ROW_ITEM_ID_UNIQUE_BOTH_SIDES as "YES" | "NO" | "UNPROVEN",
+    competingRelationship:
+      record.REPAIR_ROW_COMPETING_RELATIONSHIP as "YES" | "NO" | "UNPROVEN",
+    lifecycleSupportsReactivation:
+      record.REGISTRY_LIFECYCLE_SUPPORTS_REACTIVATION as "YES" | "NO" | "UNPROVEN",
+    reactivationAllowedFromStale:
+      record.REACTIVATION_ALLOWED_FROM_STALE as "YES" | "NO" | "UNPROVEN",
+    reactivationAllowedFromEnded:
+      record.REACTIVATION_ALLOWED_FROM_ENDED as "YES" | "NO" | "UNPROVEN",
+    reactivationAllowedFromHistorical:
+      record.REACTIVATION_ALLOWED_FROM_HISTORICAL as "YES" | "NO" | "UNPROVEN",
+    reactivationAllowedFromUnknown:
+      record.REACTIVATION_ALLOWED_FROM_UNKNOWN as "YES" | "NO" | "UNPROVEN",
+    reactivationCasSupported:
+      record.REACTIVATION_CAS_SUPPORTED as "YES" | "NO" | "UNPROVEN",
+  }
+}
+
 function validRegistryRepairDryRun(
   value: unknown,
 ): value is EbayRegistryRepairDryRun {
@@ -2096,6 +2210,7 @@ function validRegistryRepairDryRun(
       ) ||
       !parseRegistryRepairAbsenceProofCauseCounts(record) ||
       !parseRegistryRepairLifecycleDiagnostic(record) ||
+      !parseRegistryRepairRowDiagnostic(record) ||
       !parseRegistryRepairFinalDiagnostic(record) ||
       !precondition(record.REPAIR_PRECONDITION_STATUS) ||
       !precondition(record.CREATE_PRECONDITION_STATUS) ||
@@ -3709,6 +3824,25 @@ export default function EbaySellerOAuthReauthPage() {
                 </dl>
               </section>
               <section aria-label="Registry repair dry-run groups" className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-lg border border-slate-200 bg-white p-4">
+                  <p className="text-sm font-semibold text-slate-900">
+                    Repair-row lifecycle diagnostic
+                  </p>
+                  <dl className="mt-3 space-y-1 text-xs text-slate-700">
+                    <div>Status class: {registryRepairDryRun.REPAIR_ROW_CURRENT_STATUS_CLASS}</div>
+                    <div>Raw status recognized: {registryRepairDryRun.REPAIR_ROW_STATUS_RAW_VALUE_RECOGNIZED}</div>
+                    <div>Account scope match: {registryRepairDryRun.REPAIR_ROW_ACCOUNT_SCOPE_MATCH}</div>
+                    <div>Authoritative Item ID still live: {registryRepairDryRun.REPAIR_ROW_AUTHORITATIVE_ITEM_ID_STILL_LIVE}</div>
+                    <div>Item ID unique both sides: {registryRepairDryRun.REPAIR_ROW_ITEM_ID_UNIQUE_BOTH_SIDES}</div>
+                    <div>Competing relationship: {registryRepairDryRun.REPAIR_ROW_COMPETING_RELATIONSHIP}</div>
+                    <div>Registry lifecycle supports reactivation: {registryRepairDryRun.REGISTRY_LIFECYCLE_SUPPORTS_REACTIVATION}</div>
+                    <div>Reactivation allowed from STALE: {registryRepairDryRun.REACTIVATION_ALLOWED_FROM_STALE}</div>
+                    <div>Reactivation allowed from ENDED: {registryRepairDryRun.REACTIVATION_ALLOWED_FROM_ENDED}</div>
+                    <div>Reactivation allowed from HISTORICAL: {registryRepairDryRun.REACTIVATION_ALLOWED_FROM_HISTORICAL}</div>
+                    <div>Reactivation allowed from UNKNOWN: {registryRepairDryRun.REACTIVATION_ALLOWED_FROM_UNKNOWN}</div>
+                    <div>Reactivation CAS supported: {registryRepairDryRun.REACTIVATION_CAS_SUPPORTED}</div>
+                  </dl>
+                </div>
                 {[
                   {
                     title: "REPAIR EXISTING",
