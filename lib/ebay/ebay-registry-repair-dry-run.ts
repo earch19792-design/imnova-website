@@ -36,6 +36,7 @@ export type EbayRegistryRepairUnprovenComponent =
   | "NONE"
   | "REPAIR_EXISTING_MUTATION_GUARD"
   | "MARK_STALE_MUTATION_GUARD"
+  | "CREATE_NEW_MATERIALIZATION"
   | "CREATE_NEW_ABSENCE_OR_UNIQUENESS_GUARD"
   | "HUMAN_REVIEW_EVIDENCE"
   | "IDENTITY_PARTITION"
@@ -45,6 +46,7 @@ export type EbayRegistryRepairUnprovenComponent =
 export type EbayRegistryRepairUnprovenSource =
   | "NONE"
   | "EXISTING_ROW_CAS"
+  | "CREATE_MATERIALIZATION"
   | "ABSENCE_OR_UNIQUENESS_GUARD"
   | "REVIEW_EVIDENCE"
   | "IDENTITY_EVIDENCE"
@@ -71,6 +73,13 @@ export type EbayRegistryRepairUnprovenPrimaryReason =
   | "PARTITION_OVERLAP"
   | "SOURCE_EVIDENCE"
   | "OTHER"
+export type EbayRegistryRepairOtherUnprovenSubtype =
+  | "LISTING_IDENTITY_SHAPE"
+  | "CREATE_PAYLOAD_REQUIREMENT"
+  | "REGISTRY_ABSENCE_PROOF"
+  | "LIFECYCLE_REQUIREMENT"
+  | "NORMALIZATION_FAILURE"
+  | "UNEXPECTED_CLASSIFIER_BRANCH"
 export type EbayRegistryRepairFutureWriteRejectionReason =
   | "NONE"
   | "EVIDENCE_UNAVAILABLE"
@@ -144,6 +153,30 @@ export type EbayRegistryRepairDryRun = {
   UNPROVEN_REASON_SOURCE_EVIDENCE: EbayRegistryRepairDryRunCount
   UNPROVEN_REASON_OTHER: EbayRegistryRepairDryRunCount
   UNPROVEN_PRIMARY_REASON: EbayRegistryRepairUnprovenPrimaryReason
+  OTHER_SUBTYPE_COUNTS: Record<
+    EbayRegistryRepairOtherUnprovenSubtype,
+    EbayRegistryRepairDryRunCount
+  >
+  OTHER_SUBTYPE_LISTING_IDENTITY_SHAPE_COUNT:
+    EbayRegistryRepairDryRunCount
+  OTHER_SUBTYPE_CREATE_PAYLOAD_REQUIREMENT_COUNT:
+    EbayRegistryRepairDryRunCount
+  OTHER_SUBTYPE_REGISTRY_ABSENCE_PROOF_COUNT:
+    EbayRegistryRepairDryRunCount
+  OTHER_SUBTYPE_LIFECYCLE_REQUIREMENT_COUNT:
+    EbayRegistryRepairDryRunCount
+  OTHER_SUBTYPE_NORMALIZATION_FAILURE_COUNT:
+    EbayRegistryRepairDryRunCount
+  OTHER_SUBTYPE_UNEXPECTED_CLASSIFIER_BRANCH_COUNT:
+    EbayRegistryRepairDryRunCount
+  RAW_CREATE_IDENTITY_CANDIDATE_COUNT: EbayRegistryRepairDryRunCount
+  CREATE_IDENTITY_DETERMINISTIC_COUNT: EbayRegistryRepairDryRunCount
+  CREATE_IDENTITY_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  CREATE_MATERIALIZATION_PASS_COUNT: EbayRegistryRepairDryRunCount
+  CREATE_MATERIALIZATION_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  CREATE_ABSENCE_CAS_PASS_COUNT: EbayRegistryRepairDryRunCount
+  CREATE_ABSENCE_CAS_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  CREATE_MATERIALIZATION_STATUS: EbayRegistryRepairPreconditionStatus
   DRY_RUN_STALE_LABEL:
     | "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE"
     | "DRY RUN STALE — REFRESH REQUIRED"
@@ -460,6 +493,28 @@ EbayRegistryRepairDryRun {
     UNPROVEN_REASON_SOURCE_EVIDENCE: "UNPROVEN",
     UNPROVEN_REASON_OTHER: "UNPROVEN",
     UNPROVEN_PRIMARY_REASON: "SOURCE_EVIDENCE",
+    OTHER_SUBTYPE_COUNTS: {
+      LISTING_IDENTITY_SHAPE: "UNPROVEN",
+      CREATE_PAYLOAD_REQUIREMENT: "UNPROVEN",
+      REGISTRY_ABSENCE_PROOF: "UNPROVEN",
+      LIFECYCLE_REQUIREMENT: "UNPROVEN",
+      NORMALIZATION_FAILURE: "UNPROVEN",
+      UNEXPECTED_CLASSIFIER_BRANCH: "UNPROVEN",
+    },
+    OTHER_SUBTYPE_LISTING_IDENTITY_SHAPE_COUNT: "UNPROVEN",
+    OTHER_SUBTYPE_CREATE_PAYLOAD_REQUIREMENT_COUNT: "UNPROVEN",
+    OTHER_SUBTYPE_REGISTRY_ABSENCE_PROOF_COUNT: "UNPROVEN",
+    OTHER_SUBTYPE_LIFECYCLE_REQUIREMENT_COUNT: "UNPROVEN",
+    OTHER_SUBTYPE_NORMALIZATION_FAILURE_COUNT: "UNPROVEN",
+    OTHER_SUBTYPE_UNEXPECTED_CLASSIFIER_BRANCH_COUNT: "UNPROVEN",
+    RAW_CREATE_IDENTITY_CANDIDATE_COUNT: "UNPROVEN",
+    CREATE_IDENTITY_DETERMINISTIC_COUNT: "UNPROVEN",
+    CREATE_IDENTITY_UNPROVEN_COUNT: "UNPROVEN",
+    CREATE_MATERIALIZATION_PASS_COUNT: "UNPROVEN",
+    CREATE_MATERIALIZATION_UNPROVEN_COUNT: "UNPROVEN",
+    CREATE_ABSENCE_CAS_PASS_COUNT: "UNPROVEN",
+    CREATE_ABSENCE_CAS_UNPROVEN_COUNT: "UNPROVEN",
+    CREATE_MATERIALIZATION_STATUS: "UNPROVEN",
     DRY_RUN_STALE_LABEL: "UNPROVEN",
     DRY_RUN_STATE_BOUND: "UNPROVEN",
     DRY_RUN_STATE_FINGERPRINT_PRESENT: "UNPROVEN",
@@ -588,6 +643,11 @@ export function buildEbayRegistryRepairDryRun(
     number,
     Exclude<EbayRegistryRepairUnprovenPrimaryReason, "NONE">
   >()
+  const liveOtherUnprovenSubtypes = new Map<
+    number,
+    EbayRegistryRepairOtherUnprovenSubtype
+  >()
+  const actionOtherUnprovenSubtypeCounts = new Map<string, number>()
   const reasonPriority: Array<
     Exclude<EbayRegistryRepairUnprovenPrimaryReason, "NONE">
   > = [
@@ -603,11 +663,18 @@ export function buildEbayRegistryRepairDryRun(
   const markLiveUnproven = (
     liveIndex: number,
     reason: Exclude<EbayRegistryRepairUnprovenPrimaryReason, "NONE">,
+    otherSubtype?: EbayRegistryRepairOtherUnprovenSubtype,
   ) => {
     const previous = liveUnprovenReasons.get(liveIndex)
     if (!previous || reasonPriority.indexOf(reason) <
         reasonPriority.indexOf(previous)) {
       liveUnprovenReasons.set(liveIndex, reason)
+      if (reason === "OTHER" && otherSubtype) {
+        liveOtherUnprovenSubtypes.set(liveIndex, otherSubtype)
+      }
+    } else if (reason === "OTHER" && previous === "OTHER" &&
+        otherSubtype && !liveOtherUnprovenSubtypes.has(liveIndex)) {
+      liveOtherUnprovenSubtypes.set(liveIndex, otherSubtype)
     }
     liveUnproven.add(liveIndex)
   }
@@ -630,6 +697,33 @@ export function buildEbayRegistryRepairDryRun(
       return "SOURCE_EVIDENCE"
     }
     return "OTHER"
+  }
+  const liveGateOtherSubtype = (
+    live: (typeof liveFacts)[number],
+    rowActive: boolean,
+    variationCompatible = true,
+  ): EbayRegistryRepairOtherUnprovenSubtype => {
+    if (!rowActive) return "LIFECYCLE_REQUIREMENT"
+    if (live.listing.identityAmbiguous || !live.sku) {
+      return "LISTING_IDENTITY_SHAPE"
+    }
+    if (!variationCompatible) return "NORMALIZATION_FAILURE"
+    return "UNEXPECTED_CLASSIFIER_BRANCH"
+  }
+  const markLiveGateUnproven = (
+    live: (typeof liveFacts)[number],
+    rowAccountCorrect: boolean,
+    rowActive: boolean,
+    variationCompatible = true,
+  ) => {
+    const reason = liveGateReason(live, rowAccountCorrect)
+    markLiveUnproven(
+      live.index,
+      reason,
+      reason === "OTHER"
+        ? liveGateOtherSubtype(live, rowActive, variationCompatible)
+        : undefined,
+    )
   }
   const keepHandles: string[] = []
   const repairHandles: string[] = []
@@ -694,9 +788,10 @@ export function buildEbayRegistryRepairDryRun(
       } else {
         registryUnproven += 1
         identityPartitionUnproven += 1
-        if (live) markLiveUnproven(
-          live.index,
-          liveGateReason(live, rowAccountCorrect),
+        if (live) markLiveGateUnproven(
+          live,
+          rowAccountCorrect,
+          rowActive,
         )
       }
       continue
@@ -727,9 +822,11 @@ export function buildEbayRegistryRepairDryRun(
       } else {
         registryUnproven += 1
         identityPartitionUnproven += 1
-        if (live) markLiveUnproven(
-          live.index,
-          liveGateReason(live, rowAccountCorrect),
+        if (live) markLiveGateUnproven(
+          live,
+          rowAccountCorrect,
+          rowActive,
+          registry.variationKey === live.variationKey,
         )
       }
       continue
@@ -743,9 +840,10 @@ export function buildEbayRegistryRepairDryRun(
       if (!reviewEvidenceSafe || !live || !registry.sku) {
         registryUnproven += 1
         humanReviewUnproven += 1
-        if (live) markLiveUnproven(
-          live.index,
-          liveGateReason(live, rowAccountCorrect),
+        if (live) markLiveGateUnproven(
+          live,
+          rowAccountCorrect,
+          rowActive,
         )
         humanReviewEvidenceSafe = false
         continue
@@ -810,7 +908,13 @@ export function buildEbayRegistryRepairDryRun(
         ? "MULTIPLE_REGISTRY_CANDIDATES" as const
         : "OTHER" as const
     for (const liveIndex of new Set([...itemMatches, ...skuMatches])) {
-      markLiveUnproven(liveIndex, rowConflictReason)
+      markLiveUnproven(
+        liveIndex,
+        rowConflictReason,
+        rowConflictReason === "OTHER"
+          ? "NORMALIZATION_FAILURE"
+          : undefined,
+      )
     }
   }
 
@@ -841,7 +945,15 @@ export function buildEbayRegistryRepairDryRun(
   ))
 
   const liveCreate = new Set<number>()
+  const rawLiveCreateIdentity = new Set<number>()
   const createHandles: string[] = []
+  let rawCreateIdentityCandidateCount = 0
+  let createIdentityDeterministicCount = 0
+  let createIdentityUnprovenCount = 0
+  let createMaterializationPassCount = 0
+  let createMaterializationUnprovenCount = 0
+  let createAbsenceCasPassCount = 0
+  let createAbsenceCasUnprovenCount = 0
   for (const live of liveFacts) {
     if (resolvedLiveMatched.has(live.index) ||
         resolvedLiveRepair.has(live.index) ||
@@ -849,20 +961,55 @@ export function buildEbayRegistryRepairDryRun(
         liveUnproven.has(live.index)) {
       continue
     }
-    const identityEvidenceSafe = Boolean(live.itemId && live.sku &&
-      livePreconditionsProven(live.listing))
+    rawCreateIdentityCandidateCount += 1
+    const createItemId = live.itemId
+    const identityEvidenceSafe = Boolean(createItemId &&
+      livePreconditionsProven(live.listing) &&
+      evidenceCount(liveItemCounts, createItemId) === 1)
+    if (!identityEvidenceSafe || !createItemId) {
+      createIdentityUnprovenCount += 1
+      identityPartitionUnproven += 1
+      const createIdentityFailureReason = !createItemId
+        ? "MISSING_AUTHORITATIVE_ITEM_ID" as const
+        : evidenceCount(liveItemCounts, createItemId) > 1
+          ? "DUPLICATE_ITEM_ID" as const
+          : live.listing.marketplaceCertification.status !==
+                "US_CERTIFIED" || live.listing.listingState !== "ACTIVE"
+            ? "SOURCE_EVIDENCE" as const
+            : "OTHER" as const
+      markLiveUnproven(
+        live.index,
+        createIdentityFailureReason,
+        createIdentityFailureReason === "OTHER"
+          ? "LISTING_IDENTITY_SHAPE"
+          : undefined,
+      )
+      continue
+    }
+    createIdentityDeterministicCount += 1
+    rawLiveCreateIdentity.add(live.index)
+
+    const createSku = live.sku
+    if (!createSku) {
+      createMaterializationUnprovenCount += 1
+      createUnproven += 1
+      increment(actionOtherUnprovenSubtypeCounts,
+        "CREATE_PAYLOAD_REQUIREMENT")
+      continue
+    }
+    createMaterializationPassCount += 1
+
     const noRegistryReference = liveRegistryReferences[live.index]?.size === 0
-    const absenceAndUniquenessSafe = Boolean(live.itemId && live.sku &&
-      noRegistryReference &&
-      evidenceCount(liveItemCounts, live.itemId) === 1 &&
-      evidenceCount(liveSkuCounts, live.sku) === 1 &&
-      evidenceCount(registryItemCounts, live.itemId) === 0 &&
-      evidenceCount(registrySkuCounts, live.sku) === 0)
-    if (identityEvidenceSafe && absenceAndUniquenessSafe) {
+    const absenceAndUniquenessSafe = Boolean(noRegistryReference &&
+      evidenceCount(liveSkuCounts, createSku) === 1 &&
+      evidenceCount(registryItemCounts, createItemId) === 0 &&
+      evidenceCount(registrySkuCounts, createSku) === 0)
+    if (absenceAndUniquenessSafe) {
+      createAbsenceCasPassCount += 1
       liveCreate.add(live.index)
       createHandles.push(opaqueHandle("create", [
-        live.itemId,
-        live.sku,
+        createItemId,
+        createSku,
         live.variationKey,
         live.listing.title,
         live.listing.availableQuantity,
@@ -870,37 +1017,29 @@ export function buildEbayRegistryRepairDryRun(
         live.listing.currency,
       ]))
     } else {
+      createAbsenceCasUnprovenCount += 1
+      createUnproven += 1
       const registryReferenceCount =
         liveRegistryReferences[live.index]?.size
-      const createFailureReason = !live.itemId
-        ? "MISSING_AUTHORITATIVE_ITEM_ID" as const
-        : evidenceCount(liveItemCounts, live.itemId) > 1
-          ? "DUPLICATE_ITEM_ID" as const
-          : registryReferenceCount !== undefined &&
-              registryReferenceCount > 1
-            ? "PARTITION_OVERLAP" as const
-            : (registryReferenceCount !== undefined &&
-                registryReferenceCount > 0) ||
-                evidenceCount(registryItemCounts, live.itemId) > 0 ||
-                (live.sku
-                  ? evidenceCount(registrySkuCounts, live.sku) > 0
-                  : false)
-              ? "MULTIPLE_REGISTRY_CANDIDATES" as const
-              : live.listing.marketplaceCertification.status !==
-                    "US_CERTIFIED" || live.listing.listingState !== "ACTIVE"
-                ? "SOURCE_EVIDENCE" as const
-                : "OTHER" as const
-      markLiveUnproven(live.index, createFailureReason)
-      if (identityEvidenceSafe) {
-        createUnproven += 1
-      } else {
-        identityPartitionUnproven += 1
+      const createFailureReason = registryReferenceCount !== undefined &&
+          registryReferenceCount > 1
+        ? "PARTITION_OVERLAP" as const
+        : (registryReferenceCount !== undefined &&
+            registryReferenceCount > 0) ||
+            evidenceCount(registryItemCounts, createItemId) > 0 ||
+            evidenceCount(registrySkuCounts, createSku) > 0
+          ? "MULTIPLE_REGISTRY_CANDIDATES" as const
+          : "OTHER" as const
+      if (createFailureReason === "OTHER") {
+        increment(actionOtherUnprovenSubtypeCounts,
+          "REGISTRY_ABSENCE_PROOF")
       }
     }
   }
 
   const livePartitionSum = resolvedLiveMatched.size + resolvedLiveRepair.size +
-    liveCreate.size + resolvedLiveHumanReview.size + liveUnproven.size
+    rawLiveCreateIdentity.size + resolvedLiveHumanReview.size +
+    liveUnproven.size
   const registryPartitionSum = registryKeepCurrent + registryRepairExisting +
     registryMarkStale + registryMarkHistorical + registryHumanReview +
     registryUnproven
@@ -913,6 +1052,13 @@ export function buildEbayRegistryRepairDryRun(
   for (const liveIndex of liveUnproven) {
     if (!liveUnprovenReasons.has(liveIndex)) {
       liveUnprovenReasons.set(liveIndex, "OTHER")
+    }
+    if (liveUnprovenReasons.get(liveIndex) === "OTHER" &&
+        !liveOtherUnprovenSubtypes.has(liveIndex)) {
+      liveOtherUnprovenSubtypes.set(
+        liveIndex,
+        "UNEXPECTED_CLASSIFIER_BRANCH",
+      )
     }
   }
   const unprovenReasonCount = (
@@ -936,6 +1082,30 @@ export function buildEbayRegistryRepairDryRun(
   )
   const sourceEvidenceReasonCount = unprovenReasonCount("SOURCE_EVIDENCE")
   const otherReasonCount = unprovenReasonCount("OTHER")
+  const otherSubtypeCount = (
+    subtype: EbayRegistryRepairOtherUnprovenSubtype,
+  ) => [...liveUnprovenReasons.entries()].filter(([liveIndex, reason]) =>
+    reason === "OTHER" &&
+    liveOtherUnprovenSubtypes.get(liveIndex) === subtype
+  ).length + evidenceCount(actionOtherUnprovenSubtypeCounts, subtype)
+  const listingIdentityShapeOtherCount = otherSubtypeCount(
+    "LISTING_IDENTITY_SHAPE",
+  )
+  const createPayloadRequirementOtherCount = otherSubtypeCount(
+    "CREATE_PAYLOAD_REQUIREMENT",
+  )
+  const registryAbsenceProofOtherCount = otherSubtypeCount(
+    "REGISTRY_ABSENCE_PROOF",
+  )
+  const lifecycleRequirementOtherCount = otherSubtypeCount(
+    "LIFECYCLE_REQUIREMENT",
+  )
+  const normalizationFailureOtherCount = otherSubtypeCount(
+    "NORMALIZATION_FAILURE",
+  )
+  const unexpectedClassifierBranchOtherCount = otherSubtypeCount(
+    "UNEXPECTED_CLASSIFIER_BRANCH",
+  )
   let unprovenPrimaryReason: EbayRegistryRepairUnprovenPrimaryReason = "NONE"
   let unprovenPrimaryReasonCount = 0
   for (const reason of reasonPriority) {
@@ -951,6 +1121,9 @@ export function buildEbayRegistryRepairDryRun(
   const createStatus = !sameRequestEvidenceCoherent
     ? "UNPROVEN" as const
     : preconditionStatus(createUnproven)
+  const createMaterializationStatus = !sameRequestEvidenceCoherent
+    ? "UNPROVEN" as const
+    : preconditionStatus(createMaterializationUnprovenCount)
   const staleStatus = !sameRequestEvidenceCoherent
     ? "UNPROVEN" as const
     : preconditionStatus(staleUnproven)
@@ -1009,7 +1182,10 @@ export function buildEbayRegistryRepairDryRun(
   if (staleUnproven > 0) {
     unprovenComponents.push("MARK_STALE_MUTATION_GUARD")
   }
-  if (createUnproven > 0) {
+  if (createMaterializationUnprovenCount > 0) {
+    unprovenComponents.push("CREATE_NEW_MATERIALIZATION")
+  }
+  if (createAbsenceCasUnprovenCount > 0) {
     unprovenComponents.push("CREATE_NEW_ABSENCE_OR_UNIQUENESS_GUARD")
   }
   if (humanReviewUnproven > 0) {
@@ -1071,6 +1247,15 @@ export function buildEbayRegistryRepairDryRun(
     stale: staleHandles.sort(),
     review: humanCandidates.map((candidate) => candidate.CANDIDATE_HANDLE).sort(),
   })
+  const createUnprovenSource: EbayRegistryRepairUnprovenSource =
+    createMaterializationUnprovenCount > 0 &&
+        createAbsenceCasUnprovenCount > 0
+      ? "MULTIPLE"
+      : createMaterializationUnprovenCount > 0
+        ? "CREATE_MATERIALIZATION"
+        : createAbsenceCasUnprovenCount > 0
+          ? "ABSENCE_OR_UNIQUENESS_GUARD"
+          : "NONE"
 
   return {
     DRY_RUN_LABEL: "DRY RUN — NO CHANGES WILL BE APPLIED",
@@ -1093,9 +1278,7 @@ export function buildEbayRegistryRepairDryRun(
       ? "EXISTING_ROW_CAS"
       : "NONE",
     CREATE_NEW_UNPROVEN_COUNT: createUnproven,
-    CREATE_NEW_UNPROVEN_SOURCE: createUnproven > 0
-      ? "ABSENCE_OR_UNIQUENESS_GUARD"
-      : "NONE",
+    CREATE_NEW_UNPROVEN_SOURCE: createUnprovenSource,
     HUMAN_REVIEW_UNPROVEN_COUNT: humanReviewUnproven,
     HUMAN_REVIEW_UNPROVEN_SOURCE: humanReviewUnproven > 0
       ? "REVIEW_EVIDENCE"
@@ -1118,7 +1301,7 @@ export function buildEbayRegistryRepairDryRun(
     BLOCKING_UNPROVEN_SECONDARY_SOURCES: secondaryUnprovenSources,
     RAW_ALREADY_MATCHED_COUNT: resolvedLiveMatched.size,
     RAW_REPAIR_EXISTING_COUNT: resolvedLiveRepair.size,
-    RAW_CREATE_NEW_COUNT: liveCreate.size,
+    RAW_CREATE_NEW_COUNT: rawLiveCreateIdentity.size,
     RAW_HUMAN_REVIEW_COUNT: resolvedLiveHumanReview.size,
     RAW_UNPROVEN_COUNT: liveUnproven.size,
     LIVE_RAW_PARTITION_VALID: livePartitionValid,
@@ -1140,6 +1323,35 @@ export function buildEbayRegistryRepairDryRun(
     UNPROVEN_REASON_SOURCE_EVIDENCE: sourceEvidenceReasonCount,
     UNPROVEN_REASON_OTHER: otherReasonCount,
     UNPROVEN_PRIMARY_REASON: unprovenPrimaryReason,
+    OTHER_SUBTYPE_COUNTS: {
+      LISTING_IDENTITY_SHAPE: listingIdentityShapeOtherCount,
+      CREATE_PAYLOAD_REQUIREMENT: createPayloadRequirementOtherCount,
+      REGISTRY_ABSENCE_PROOF: registryAbsenceProofOtherCount,
+      LIFECYCLE_REQUIREMENT: lifecycleRequirementOtherCount,
+      NORMALIZATION_FAILURE: normalizationFailureOtherCount,
+      UNEXPECTED_CLASSIFIER_BRANCH: unexpectedClassifierBranchOtherCount,
+    },
+    OTHER_SUBTYPE_LISTING_IDENTITY_SHAPE_COUNT:
+      listingIdentityShapeOtherCount,
+    OTHER_SUBTYPE_CREATE_PAYLOAD_REQUIREMENT_COUNT:
+      createPayloadRequirementOtherCount,
+    OTHER_SUBTYPE_REGISTRY_ABSENCE_PROOF_COUNT:
+      registryAbsenceProofOtherCount,
+    OTHER_SUBTYPE_LIFECYCLE_REQUIREMENT_COUNT:
+      lifecycleRequirementOtherCount,
+    OTHER_SUBTYPE_NORMALIZATION_FAILURE_COUNT:
+      normalizationFailureOtherCount,
+    OTHER_SUBTYPE_UNEXPECTED_CLASSIFIER_BRANCH_COUNT:
+      unexpectedClassifierBranchOtherCount,
+    RAW_CREATE_IDENTITY_CANDIDATE_COUNT: rawCreateIdentityCandidateCount,
+    CREATE_IDENTITY_DETERMINISTIC_COUNT: createIdentityDeterministicCount,
+    CREATE_IDENTITY_UNPROVEN_COUNT: createIdentityUnprovenCount,
+    CREATE_MATERIALIZATION_PASS_COUNT: createMaterializationPassCount,
+    CREATE_MATERIALIZATION_UNPROVEN_COUNT:
+      createMaterializationUnprovenCount,
+    CREATE_ABSENCE_CAS_PASS_COUNT: createAbsenceCasPassCount,
+    CREATE_ABSENCE_CAS_UNPROVEN_COUNT: createAbsenceCasUnprovenCount,
+    CREATE_MATERIALIZATION_STATUS: createMaterializationStatus,
     DRY_RUN_STALE_LABEL: staleLabel,
     DRY_RUN_STATE_BOUND: sameRequestEvidenceCoherent ? "YES" : "NO",
     DRY_RUN_STATE_FINGERPRINT_PRESENT: "YES",
@@ -1158,7 +1370,7 @@ export function buildEbayRegistryRepairDryRun(
     HUMAN_REVIEW_CANDIDATES: humanCandidates,
     LIVE_ALREADY_MATCHED_COUNT: resolvedLiveMatched.size,
     LIVE_REPAIR_EXISTING_COUNT: resolvedLiveRepair.size,
-    LIVE_CREATE_NEW_COUNT: liveCreate.size,
+    LIVE_CREATE_NEW_COUNT: rawLiveCreateIdentity.size,
     LIVE_HUMAN_REVIEW_COUNT: resolvedLiveHumanReview.size,
     LIVE_UNPROVEN_COUNT: liveUnproven.size,
     REGISTRY_KEEP_CURRENT_COUNT: registryKeepCurrent,

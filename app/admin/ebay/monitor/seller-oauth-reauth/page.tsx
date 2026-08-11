@@ -10,6 +10,7 @@ import type {
   EbayRegistryRepairBlockingUnprovenSource,
   EbayRegistryRepairDryRun,
   EbayRegistryRepairDryRunRejectionReason,
+  EbayRegistryRepairOtherUnprovenSubtype,
   EbayRegistryRepairUnprovenComponent,
   EbayRegistryRepairUnprovenPrimaryReason,
   EbayRegistryRepairUnprovenSource,
@@ -284,6 +285,15 @@ type RegistryRepairDryRunPayload = {
   UNPROVEN_REASON_PARTITION_OVERLAP?: unknown
   UNPROVEN_REASON_SOURCE_EVIDENCE?: unknown
   UNPROVEN_REASON_OTHER?: unknown
+  OTHER_SUBTYPE_COUNTS?: unknown
+  RAW_CREATE_IDENTITY_CANDIDATE_COUNT?: unknown
+  CREATE_IDENTITY_DETERMINISTIC_COUNT?: unknown
+  CREATE_IDENTITY_UNPROVEN_COUNT?: unknown
+  CREATE_MATERIALIZATION_PASS_COUNT?: unknown
+  CREATE_MATERIALIZATION_UNPROVEN_COUNT?: unknown
+  CREATE_ABSENCE_CAS_PASS_COUNT?: unknown
+  CREATE_ABSENCE_CAS_UNPROVEN_COUNT?: unknown
+  CREATE_MATERIALIZATION_STATUS?: unknown
 }
 
 const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
@@ -447,6 +457,21 @@ const REGISTRY_REPAIR_DRY_RUN_KEYS = [
   "UNPROVEN_REASON_SOURCE_EVIDENCE",
   "UNPROVEN_REASON_OTHER",
   "UNPROVEN_PRIMARY_REASON",
+  "OTHER_SUBTYPE_COUNTS",
+  "OTHER_SUBTYPE_LISTING_IDENTITY_SHAPE_COUNT",
+  "OTHER_SUBTYPE_CREATE_PAYLOAD_REQUIREMENT_COUNT",
+  "OTHER_SUBTYPE_REGISTRY_ABSENCE_PROOF_COUNT",
+  "OTHER_SUBTYPE_LIFECYCLE_REQUIREMENT_COUNT",
+  "OTHER_SUBTYPE_NORMALIZATION_FAILURE_COUNT",
+  "OTHER_SUBTYPE_UNEXPECTED_CLASSIFIER_BRANCH_COUNT",
+  "RAW_CREATE_IDENTITY_CANDIDATE_COUNT",
+  "CREATE_IDENTITY_DETERMINISTIC_COUNT",
+  "CREATE_IDENTITY_UNPROVEN_COUNT",
+  "CREATE_MATERIALIZATION_PASS_COUNT",
+  "CREATE_MATERIALIZATION_UNPROVEN_COUNT",
+  "CREATE_ABSENCE_CAS_PASS_COUNT",
+  "CREATE_ABSENCE_CAS_UNPROVEN_COUNT",
+  "CREATE_MATERIALIZATION_STATUS",
   "DRY_RUN_STATE_BOUND",
   "DRY_RUN_STATE_FINGERPRINT_PRESENT",
   "APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE",
@@ -532,6 +557,7 @@ const REGISTRY_REPAIR_UNPROVEN_COMPONENTS = [
   "REPAIR_EXISTING_MUTATION_GUARD",
   "MARK_STALE_MUTATION_GUARD",
   "CREATE_NEW_ABSENCE_OR_UNIQUENESS_GUARD",
+  "CREATE_NEW_MATERIALIZATION",
   "HUMAN_REVIEW_EVIDENCE",
   "IDENTITY_PARTITION",
   "SAME_REQUEST_STATE",
@@ -543,6 +569,7 @@ const REGISTRY_REPAIR_UNPROVEN_SOURCES = [
   "NONE",
   "EXISTING_ROW_CAS",
   "ABSENCE_OR_UNIQUENESS_GUARD",
+  "CREATE_MATERIALIZATION",
   "REVIEW_EVIDENCE",
   "IDENTITY_EVIDENCE",
   "SAME_REQUEST_STATE",
@@ -587,6 +614,35 @@ const REGISTRY_REPAIR_UNPROVEN_REASON_COUNT_KEYS = [
 
 type RegistryRepairUnprovenReasonCounts = Record<
   typeof REGISTRY_REPAIR_UNPROVEN_REASON_COUNT_KEYS[number],
+  number | "UNPROVEN"
+>
+
+const REGISTRY_REPAIR_OTHER_UNPROVEN_SUBTYPES = [
+  "LISTING_IDENTITY_SHAPE",
+  "CREATE_PAYLOAD_REQUIREMENT",
+  "REGISTRY_ABSENCE_PROOF",
+  "LIFECYCLE_REQUIREMENT",
+  "NORMALIZATION_FAILURE",
+  "UNEXPECTED_CLASSIFIER_BRANCH",
+] as const
+
+const REGISTRY_REPAIR_CREATE_STAGE_COUNT_KEYS = [
+  "RAW_CREATE_IDENTITY_CANDIDATE_COUNT",
+  "CREATE_IDENTITY_DETERMINISTIC_COUNT",
+  "CREATE_IDENTITY_UNPROVEN_COUNT",
+  "CREATE_MATERIALIZATION_PASS_COUNT",
+  "CREATE_MATERIALIZATION_UNPROVEN_COUNT",
+  "CREATE_ABSENCE_CAS_PASS_COUNT",
+  "CREATE_ABSENCE_CAS_UNPROVEN_COUNT",
+] as const
+
+type RegistryRepairOtherSubtypeCounts = Record<
+  EbayRegistryRepairOtherUnprovenSubtype,
+  number | "UNPROVEN"
+>
+
+type RegistryRepairCreateStageCounts = Record<
+  typeof REGISTRY_REPAIR_CREATE_STAGE_COUNT_KEYS[number],
   number | "UNPROVEN"
 >
 
@@ -679,6 +735,59 @@ RegistryRepairUnprovenReasonCounts {
     UNPROVEN_REASON_PARTITION_OVERLAP: "UNPROVEN",
     UNPROVEN_REASON_SOURCE_EVIDENCE: "UNPROVEN",
     UNPROVEN_REASON_OTHER: "UNPROVEN",
+  }
+}
+
+function parseRegistryRepairOtherSubtypeCounts(
+  value: unknown,
+): RegistryRepairOtherSubtypeCounts | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).sort().join(",") !==
+      [...REGISTRY_REPAIR_OTHER_UNPROVEN_SUBTYPES].sort().join(",") ||
+      !REGISTRY_REPAIR_OTHER_UNPROVEN_SUBTYPES.every((key) =>
+        validRegistryRepairUnprovenCount(record[key])
+      )) return null
+  return Object.fromEntries(
+    REGISTRY_REPAIR_OTHER_UNPROVEN_SUBTYPES.map((key) => [key, record[key]]),
+  ) as RegistryRepairOtherSubtypeCounts
+}
+
+function unavailableRegistryRepairOtherSubtypeCounts():
+RegistryRepairOtherSubtypeCounts {
+  return {
+    LISTING_IDENTITY_SHAPE: "UNPROVEN",
+    CREATE_PAYLOAD_REQUIREMENT: "UNPROVEN",
+    REGISTRY_ABSENCE_PROOF: "UNPROVEN",
+    LIFECYCLE_REQUIREMENT: "UNPROVEN",
+    NORMALIZATION_FAILURE: "UNPROVEN",
+    UNEXPECTED_CLASSIFIER_BRANCH: "UNPROVEN",
+  }
+}
+
+function parseRegistryRepairCreateStageCounts(
+  value: unknown,
+): RegistryRepairCreateStageCounts | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (!REGISTRY_REPAIR_CREATE_STAGE_COUNT_KEYS.every((key) =>
+    validRegistryRepairUnprovenCount(record[key])
+  )) return null
+  return Object.fromEntries(
+    REGISTRY_REPAIR_CREATE_STAGE_COUNT_KEYS.map((key) => [key, record[key]]),
+  ) as RegistryRepairCreateStageCounts
+}
+
+function unavailableRegistryRepairCreateStageCounts():
+RegistryRepairCreateStageCounts {
+  return {
+    RAW_CREATE_IDENTITY_CANDIDATE_COUNT: "UNPROVEN",
+    CREATE_IDENTITY_DETERMINISTIC_COUNT: "UNPROVEN",
+    CREATE_IDENTITY_UNPROVEN_COUNT: "UNPROVEN",
+    CREATE_MATERIALIZATION_PASS_COUNT: "UNPROVEN",
+    CREATE_MATERIALIZATION_UNPROVEN_COUNT: "UNPROVEN",
+    CREATE_ABSENCE_CAS_PASS_COUNT: "UNPROVEN",
+    CREATE_ABSENCE_CAS_UNPROVEN_COUNT: "UNPROVEN",
   }
 }
 
@@ -1672,6 +1781,13 @@ function validRegistryRepairDryRun(
     "RAW_HUMAN_REVIEW_REGISTRY_COUNT",
     "RAW_UNPROVEN_REGISTRY_COUNT",
     ...REGISTRY_REPAIR_UNPROVEN_REASON_COUNT_KEYS,
+    "OTHER_SUBTYPE_LISTING_IDENTITY_SHAPE_COUNT",
+    "OTHER_SUBTYPE_CREATE_PAYLOAD_REQUIREMENT_COUNT",
+    "OTHER_SUBTYPE_REGISTRY_ABSENCE_PROOF_COUNT",
+    "OTHER_SUBTYPE_LIFECYCLE_REQUIREMENT_COUNT",
+    "OTHER_SUBTYPE_NORMALIZATION_FAILURE_COUNT",
+    "OTHER_SUBTYPE_UNEXPECTED_CLASSIFIER_BRANCH_COUNT",
+    ...REGISTRY_REPAIR_CREATE_STAGE_COUNT_KEYS,
     "REPAIR_EXISTING_COUNT",
     "CREATE_NEW_COUNT",
     "MARK_STALE_COUNT",
@@ -1746,6 +1862,11 @@ function validRegistryRepairDryRun(
       !parseRegistryRepairUnprovenReasonCounts(record) ||
       !yesNo(record.LIVE_RAW_PARTITION_VALID) ||
       !yesNo(record.REGISTRY_RAW_PARTITION_VALID) ||
+      !parseRegistryRepairOtherSubtypeCounts(record.OTHER_SUBTYPE_COUNTS) ||
+      !parseRegistryRepairCreateStageCounts(record) ||
+      !["PASS", "FAIL", "UNPROVEN"].includes(
+        String(record.CREATE_MATERIALIZATION_STATUS),
+      ) ||
       !precondition(record.REPAIR_PRECONDITION_STATUS) ||
       !precondition(record.CREATE_PRECONDITION_STATUS) ||
       !precondition(record.STALE_PRECONDITION_STATUS) ||
@@ -1839,6 +1960,36 @@ function validRegistryRepairDryRun(
     ? reasonCountValues.reduce<number>((sum, value) =>
       sum + (value as number), 0)
     : null
+  const otherSubtypeCounts = parseRegistryRepairOtherSubtypeCounts(
+    record.OTHER_SUBTYPE_COUNTS,
+  )
+  const createStageCounts = parseRegistryRepairCreateStageCounts(record)
+  if (!otherSubtypeCounts || !createStageCounts) return false
+  const otherSubtypeValues = Object.values(otherSubtypeCounts)
+  const createIdentityPartitionConsistent = [
+    createStageCounts.RAW_CREATE_IDENTITY_CANDIDATE_COUNT,
+    createStageCounts.CREATE_IDENTITY_DETERMINISTIC_COUNT,
+    createStageCounts.CREATE_IDENTITY_UNPROVEN_COUNT,
+  ].some((value) => value === "UNPROVEN") ||
+    createStageCounts.RAW_CREATE_IDENTITY_CANDIDATE_COUNT ===
+      Number(createStageCounts.CREATE_IDENTITY_DETERMINISTIC_COUNT) +
+      Number(createStageCounts.CREATE_IDENTITY_UNPROVEN_COUNT)
+  const createMaterializationPartitionConsistent = [
+    createStageCounts.CREATE_IDENTITY_DETERMINISTIC_COUNT,
+    createStageCounts.CREATE_MATERIALIZATION_PASS_COUNT,
+    createStageCounts.CREATE_MATERIALIZATION_UNPROVEN_COUNT,
+  ].some((value) => value === "UNPROVEN") ||
+    createStageCounts.CREATE_IDENTITY_DETERMINISTIC_COUNT ===
+      Number(createStageCounts.CREATE_MATERIALIZATION_PASS_COUNT) +
+      Number(createStageCounts.CREATE_MATERIALIZATION_UNPROVEN_COUNT)
+  const createAbsenceCasPartitionConsistent = [
+    createStageCounts.CREATE_MATERIALIZATION_PASS_COUNT,
+    createStageCounts.CREATE_ABSENCE_CAS_PASS_COUNT,
+    createStageCounts.CREATE_ABSENCE_CAS_UNPROVEN_COUNT,
+  ].some((value) => value === "UNPROVEN") ||
+    createStageCounts.CREATE_MATERIALIZATION_PASS_COUNT ===
+      Number(createStageCounts.CREATE_ABSENCE_CAS_PASS_COUNT) +
+      Number(createStageCounts.CREATE_ABSENCE_CAS_UNPROVEN_COUNT)
   if ((unprovenComponent === "NONE" && unprovenCount !== 0) ||
       (record.DRY_RUN_READY_FOR_APPROVAL === "YES" &&
         (unprovenComponent !== "NONE" || unprovenCount !== 0 ||
@@ -1888,7 +2039,32 @@ function validRegistryRepairDryRun(
           reasonCountValues.some((value) => value !== "UNPROVEN") ||
           record.LIVE_RAW_PARTITION_VALID !== "NO" ||
           record.REGISTRY_RAW_PARTITION_VALID !== "NO" ||
-          record.UNPROVEN_PRIMARY_REASON !== "SOURCE_EVIDENCE"))) return false
+          record.UNPROVEN_PRIMARY_REASON !== "SOURCE_EVIDENCE")) ||
+      !createIdentityPartitionConsistent ||
+      !createMaterializationPartitionConsistent ||
+      !createAbsenceCasPartitionConsistent ||
+      (record.OTHER_SUBTYPE_LISTING_IDENTITY_SHAPE_COUNT !==
+        otherSubtypeCounts.LISTING_IDENTITY_SHAPE) ||
+      (record.OTHER_SUBTYPE_CREATE_PAYLOAD_REQUIREMENT_COUNT !==
+        otherSubtypeCounts.CREATE_PAYLOAD_REQUIREMENT) ||
+      (record.OTHER_SUBTYPE_REGISTRY_ABSENCE_PROOF_COUNT !==
+        otherSubtypeCounts.REGISTRY_ABSENCE_PROOF) ||
+      (record.OTHER_SUBTYPE_LIFECYCLE_REQUIREMENT_COUNT !==
+        otherSubtypeCounts.LIFECYCLE_REQUIREMENT) ||
+      (record.OTHER_SUBTYPE_NORMALIZATION_FAILURE_COUNT !==
+        otherSubtypeCounts.NORMALIZATION_FAILURE) ||
+      (record.OTHER_SUBTYPE_UNEXPECTED_CLASSIFIER_BRANCH_COUNT !==
+        otherSubtypeCounts.UNEXPECTED_CLASSIFIER_BRANCH) ||
+      (record.DRY_RUN_READY_FOR_APPROVAL === "YES" &&
+        (createStageCounts.CREATE_IDENTITY_UNPROVEN_COUNT !== 0 ||
+          createStageCounts.CREATE_MATERIALIZATION_UNPROVEN_COUNT !== 0 ||
+          createStageCounts.CREATE_ABSENCE_CAS_UNPROVEN_COUNT !== 0 ||
+          otherSubtypeValues.some((value) => value !== 0) ||
+          record.CREATE_MATERIALIZATION_STATUS !== "PASS")) ||
+      (unprovenComponent === "EVIDENCE_UNAVAILABLE" &&
+        (Object.values(createStageCounts).some((value) => value !== "UNPROVEN") ||
+          otherSubtypeValues.some((value) => value !== "UNPROVEN") ||
+          record.CREATE_MATERIALIZATION_STATUS !== "UNPROVEN"))) return false
 
   const candidates = record.HUMAN_REVIEW_CANDIDATES
   if (!candidates.every((candidate) => {
@@ -1960,6 +2136,15 @@ export default function EbaySellerOAuthReauthPage() {
   const [registryRepairUnprovenReasonCounts,
     setRegistryRepairUnprovenReasonCounts] =
     useState<RegistryRepairUnprovenReasonCounts | null>(null)
+  const [registryRepairOtherSubtypeCounts,
+    setRegistryRepairOtherSubtypeCounts] =
+    useState<RegistryRepairOtherSubtypeCounts | null>(null)
+  const [registryRepairCreateStageCounts,
+    setRegistryRepairCreateStageCounts] =
+    useState<RegistryRepairCreateStageCounts | null>(null)
+  const [registryRepairCreateMaterializationStatus,
+    setRegistryRepairCreateMaterializationStatus] =
+    useState<"PASS" | "FAIL" | "UNPROVEN" | null>(null)
   const [error, setError] = useState("")
 
   useEffect(() => {
@@ -2159,6 +2344,9 @@ export default function EbaySellerOAuthReauthPage() {
     setRegistryRepairRawUnprovenCount(null)
     setRegistryRepairUnprovenPrimaryReason(null)
     setRegistryRepairUnprovenReasonCounts(null)
+    setRegistryRepairOtherSubtypeCounts(null)
+    setRegistryRepairCreateStageCounts(null)
+    setRegistryRepairCreateMaterializationStatus(null)
     setError("")
     try {
       if (!runtimeCredentialMatchAllowsStart(credentialMatch)) {
@@ -2235,6 +2423,22 @@ export default function EbaySellerOAuthReauthPage() {
           parseRegistryRepairUnprovenReasonCounts(payload) ??
             unavailableRegistryRepairUnprovenReasonCounts(),
         )
+        setRegistryRepairOtherSubtypeCounts(
+          parseRegistryRepairOtherSubtypeCounts(payload.OTHER_SUBTYPE_COUNTS) ??
+            unavailableRegistryRepairOtherSubtypeCounts(),
+        )
+        setRegistryRepairCreateStageCounts(
+          parseRegistryRepairCreateStageCounts(payload) ??
+            unavailableRegistryRepairCreateStageCounts(),
+        )
+        setRegistryRepairCreateMaterializationStatus(
+          ["PASS", "FAIL", "UNPROVEN"].includes(
+            String(payload.CREATE_MATERIALIZATION_STATUS),
+          )
+            ? payload.CREATE_MATERIALIZATION_STATUS as
+              "PASS" | "FAIL" | "UNPROVEN"
+            : "UNPROVEN",
+        )
         return
       }
       if (!validRegistryRepairDryRun(payload.registryRepairDryRun)) {
@@ -2253,6 +2457,13 @@ export default function EbaySellerOAuthReauthPage() {
         setRegistryRepairUnprovenReasonCounts(
           unavailableRegistryRepairUnprovenReasonCounts(),
         )
+        setRegistryRepairOtherSubtypeCounts(
+          unavailableRegistryRepairOtherSubtypeCounts(),
+        )
+        setRegistryRepairCreateStageCounts(
+          unavailableRegistryRepairCreateStageCounts(),
+        )
+        setRegistryRepairCreateMaterializationStatus("UNPROVEN")
         return
       }
       if (payload.registryRepairDryRun.DRY_RUN_REJECTION_REASON !== null) {
@@ -2287,6 +2498,17 @@ export default function EbaySellerOAuthReauthPage() {
         setRegistryRepairUnprovenReasonCounts(
           parseRegistryRepairUnprovenReasonCounts(payload.registryRepairDryRun),
         )
+        setRegistryRepairOtherSubtypeCounts(
+          parseRegistryRepairOtherSubtypeCounts(
+            payload.registryRepairDryRun.OTHER_SUBTYPE_COUNTS,
+          ),
+        )
+        setRegistryRepairCreateStageCounts(
+          parseRegistryRepairCreateStageCounts(payload.registryRepairDryRun),
+        )
+        setRegistryRepairCreateMaterializationStatus(
+          payload.registryRepairDryRun.CREATE_MATERIALIZATION_STATUS,
+        )
         return
       }
       setRegistryRepairDryRunAmbiguityClass(
@@ -2314,6 +2536,17 @@ export default function EbaySellerOAuthReauthPage() {
       setRegistryRepairUnprovenReasonCounts(
         parseRegistryRepairUnprovenReasonCounts(payload.registryRepairDryRun),
       )
+      setRegistryRepairOtherSubtypeCounts(
+        parseRegistryRepairOtherSubtypeCounts(
+          payload.registryRepairDryRun.OTHER_SUBTYPE_COUNTS,
+        ),
+      )
+      setRegistryRepairCreateStageCounts(
+        parseRegistryRepairCreateStageCounts(payload.registryRepairDryRun),
+      )
+      setRegistryRepairCreateMaterializationStatus(
+        payload.registryRepairDryRun.CREATE_MATERIALIZATION_STATUS,
+      )
       setRegistryRepairDryRun(payload.registryRepairDryRun)
     } catch {
       setError("REGISTRY_REPAIR_DRY_RUN_REJECTED")
@@ -2329,6 +2562,13 @@ export default function EbaySellerOAuthReauthPage() {
       setRegistryRepairUnprovenReasonCounts(
         unavailableRegistryRepairUnprovenReasonCounts(),
       )
+      setRegistryRepairOtherSubtypeCounts(
+        unavailableRegistryRepairOtherSubtypeCounts(),
+      )
+      setRegistryRepairCreateStageCounts(
+        unavailableRegistryRepairCreateStageCounts(),
+      )
+      setRegistryRepairCreateMaterializationStatus("UNPROVEN")
     } finally {
       setPreviewingRegistryRepair(false)
     }
@@ -2669,6 +2909,38 @@ export default function EbaySellerOAuthReauthPage() {
                   <div className="flex justify-between gap-3" key={key}>
                     <dt>{key.replace("UNPROVEN_REASON_", "").replaceAll("_", " ")}</dt>
                     <dd>{String(registryRepairUnprovenReasonCounts[key])}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
+          {registryRepairCreateStageCounts &&
+              registryRepairCreateMaterializationStatus ? (
+            <section className="mt-3 rounded-xl border border-lime-300/20 bg-lime-300/[0.04] p-3 text-xs text-lime-50/80">
+              <h3 className="font-black">
+                Create identity → materialization → absence-CAS gates
+              </h3>
+              <p className="mt-2 font-bold">
+                Materialization status: {registryRepairCreateMaterializationStatus}
+              </p>
+              <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                {REGISTRY_REPAIR_CREATE_STAGE_COUNT_KEYS.map((key) => (
+                  <div className="flex justify-between gap-3" key={key}>
+                    <dt>{key.replaceAll("_", " ")}</dt>
+                    <dd>{String(registryRepairCreateStageCounts[key])}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
+          {registryRepairOtherSubtypeCounts ? (
+            <section className="mt-3 rounded-xl border border-lime-300/20 bg-lime-300/[0.04] p-3 text-xs text-lime-50/80">
+              <h3 className="font-black">OTHER unproven subtype counts</h3>
+              <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                {REGISTRY_REPAIR_OTHER_UNPROVEN_SUBTYPES.map((subtype) => (
+                  <div className="flex justify-between gap-3" key={subtype}>
+                    <dt>{subtype.replaceAll("_", " ")}</dt>
+                    <dd>{String(registryRepairOtherSubtypeCounts[subtype])}</dd>
                   </div>
                 ))}
               </dl>
