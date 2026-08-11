@@ -624,6 +624,32 @@ const REGISTRY_REPAIR_DRY_RUN_REJECTION_REASONS = [
   "UNPROVEN",
 ] as const
 
+const REGISTRY_REPAIR_VALIDATOR_FAILURE_CODES = [
+  "TOP_LEVEL_SHAPE_INVALID",
+  "COUNT_TYPE_INVALID",
+  "EVIDENCE_STATUS_INVALID",
+  "LIVE_PARTITION_INVALID",
+  "REGISTRY_PARTITION_INVALID",
+  "AUTOMATIC_TRANCHE_INVALID",
+  "HUMAN_REVIEW_COUNT_INVALID",
+  "HUMAN_REVIEW_WRITE_POLICY_INVALID",
+  "LIFECYCLE_REVIEW_INVARIANT_INVALID",
+  "LIFECYCLE_DIAGNOSTIC_INCOMPATIBLE",
+  "CREATE_GATE_INVARIANT_INVALID",
+  "REPAIR_GATE_INVARIANT_INVALID",
+  "STALE_GATE_INVARIANT_INVALID",
+  "STATE_FINGERPRINT_INVALID",
+  "READY_FOR_APPROVAL_INVARIANT_INVALID",
+  "OTHER_VALIDATOR_INVARIANT",
+] as const
+
+type RegistryRepairValidatorFailureCode =
+  typeof REGISTRY_REPAIR_VALIDATOR_FAILURE_CODES[number]
+
+type RegistryRepairDryRunValidation =
+  | { valid: true; failureCode: null }
+  | { valid: false; failureCode: RegistryRepairValidatorFailureCode }
+
 const REGISTRY_REPAIR_AMBIGUITY_CLASSES = [
   "REVIEWABLE_ONLY",
   "BLOCKING_MULTIPLE_CANDIDATES",
@@ -2086,13 +2112,19 @@ function parseRegistryRepairRowDiagnostic(
   }
 }
 
-function validRegistryRepairDryRun(
+function validateRegistryRepairDryRun(
   value: unknown,
-): value is EbayRegistryRepairDryRun {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+): RegistryRepairDryRunValidation {
+  const invalid = (failureCode: RegistryRepairValidatorFailureCode):
+    RegistryRepairDryRunValidation => ({ valid: false, failureCode })
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return invalid("TOP_LEVEL_SHAPE_INVALID")
+  }
   const record = value as Record<string, unknown>
   if (Object.keys(record).sort().join(",") !==
-      [...REGISTRY_REPAIR_DRY_RUN_KEYS].sort().join(",")) return false
+      [...REGISTRY_REPAIR_DRY_RUN_KEYS].sort().join(",")) {
+    return invalid("TOP_LEVEL_SHAPE_INVALID")
+  }
 
   const count = (candidate: unknown) =>
     candidate === "UNPROVEN" ||
@@ -2187,11 +2219,13 @@ function validRegistryRepairDryRun(
     "VERCEL_ENV_CHANGES",
   ] as const
   if (!countKeys.every((key) => count(record[key])) ||
-      !percent(record.EXPECTED_COVERAGE_PERCENT) ||
-      record.DRY_RUN_LABEL !== "DRY RUN — NO CHANGES WILL BE APPLIED" ||
-      !["CURRENT", "CHANGED", "UNPROVEN"].includes(
-        String(record.EVIDENCE_STATUS),
-      ) ||
+      !percent(record.EXPECTED_COVERAGE_PERCENT)) {
+    return invalid("COUNT_TYPE_INVALID")
+  }
+  if (!["AVAILABLE", "UNPROVEN"].includes(String(record.EVIDENCE_STATUS))) {
+    return invalid("EVIDENCE_STATUS_INVALID")
+  }
+  if (record.DRY_RUN_LABEL !== "DRY RUN — NO CHANGES WILL BE APPLIED" ||
       typeof record.DRY_RUN_PACKAGE_HANDLE !== "string" ||
       !/^[A-Za-z0-9._:-]{1,200}$/.test(record.DRY_RUN_PACKAGE_HANDLE) ||
       !(record.CURRENT_EVIDENCE_FINGERPRINT === "UNPROVEN" ||
@@ -2260,10 +2294,14 @@ function validRegistryRepairDryRun(
       !controlledText(record.PARTIAL_FAILURE_POLICY) ||
       !controlledText(record.ROLLBACK_STRATEGY) ||
       !yesNoUnproven(record.AUTOMATIC_TRANCHE_PRECONDITIONS_PASS) ||
-      !(record.HUMAN_REVIEW_WRITE_ALLOWED === "NO" ||
-        record.HUMAN_REVIEW_WRITE_ALLOWED === "UNPROVEN") ||
       !yesNoUnproven(record.DRY_RUN_READY_FOR_APPROVAL) ||
-      !Array.isArray(record.HUMAN_REVIEW_CANDIDATES)) return false
+      !Array.isArray(record.HUMAN_REVIEW_CANDIDATES)) {
+    return invalid("TOP_LEVEL_SHAPE_INVALID")
+  }
+  if (!(record.HUMAN_REVIEW_WRITE_ALLOWED === "NO" ||
+        record.HUMAN_REVIEW_WRITE_ALLOWED === "UNPROVEN")) {
+    return invalid("HUMAN_REVIEW_WRITE_POLICY_INVALID")
+  }
 
   if ((record.DRY_RUN_FRESHNESS_STATUS === "CURRENT" &&
         record.DRY_RUN_STALE_LABEL !==
@@ -2271,13 +2309,15 @@ function validRegistryRepairDryRun(
       (record.DRY_RUN_FRESHNESS_STATUS === "STALE" &&
         record.DRY_RUN_STALE_LABEL !== "DRY RUN STALE — REFRESH REQUIRED") ||
       (record.DRY_RUN_FRESHNESS_STATUS === "UNPROVEN" &&
-        record.DRY_RUN_STALE_LABEL !== "UNPROVEN")) return false
+        record.DRY_RUN_STALE_LABEL !== "UNPROVEN")) {
+    return invalid("STATE_FINGERPRINT_INVALID")
+  }
 
   if (!yesNoUnproven(record.DRY_RUN_STATE_BOUND) ||
       !yesNoUnproven(record.DRY_RUN_STATE_FINGERPRINT_PRESENT) ||
       !yesNoUnproven(record.APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE) ||
       !yesNoUnproven(record.APPROVAL_INVALIDATES_ON_REGISTRY_STATE_CHANGE)) {
-    return false
+    return invalid("STATE_FINGERPRINT_INVALID")
   }
 
   const ambiguityClass = record.AMBIGUITY_CLASS
@@ -2296,7 +2336,9 @@ function validRegistryRepairDryRun(
         !blockingReasons.includes(String(record.DRY_RUN_REJECTION_REASON))) ||
       (ambiguityClass === "REVIEWABLE_ONLY" &&
         record.DRY_RUN_REJECTION_REASON !== null &&
-        record.DRY_RUN_REJECTION_REASON !== "PRECONDITION_UNPROVEN")) return false
+        record.DRY_RUN_REJECTION_REASON !== "PRECONDITION_UNPROVEN")) {
+    return invalid("READY_FOR_APPROVAL_INVARIANT_INVALID")
+  }
 
   const unprovenComponent = record.UNPROVEN_COMPONENT
   const unprovenCount = record.UNPROVEN_COUNT
@@ -2321,7 +2363,7 @@ function validRegistryRepairDryRun(
     record.UNPROVEN_OTHER_COUNT,
   ]
   const reasonCounts = parseRegistryRepairUnprovenReasonCounts(record)
-  if (!reasonCounts) return false
+  if (!reasonCounts) return invalid("COUNT_TYPE_INVALID")
   const reasonCountValues = Object.values(reasonCounts)
   const rawUnavailableCounts = [
     record.RAW_ALREADY_MATCHED_COUNT,
@@ -2351,7 +2393,9 @@ function validRegistryRepairDryRun(
   const lifecycleDiagnostic = parseRegistryRepairLifecycleDiagnostic(record)
   const finalDiagnostic = parseRegistryRepairFinalDiagnostic(record)
   if (!otherSubtypeCounts || !createStageCounts || !absenceProofCauseCounts ||
-      !lifecycleDiagnostic || !finalDiagnostic) return false
+      !lifecycleDiagnostic || !finalDiagnostic) {
+    return invalid("OTHER_VALIDATOR_INVARIANT")
+  }
   const lifecycleReviewIsolated =
     record.HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT === 1 &&
     record.AUTOMATIC_PRECONDITION_UNPROVEN_COUNT === 0 &&
@@ -2421,7 +2465,7 @@ function validRegistryRepairDryRun(
       (typeof record.UNPROVEN_TOTAL_COUNT === "number" &&
         record.UNPROVEN_TOTAL_COUNT > 0 && blockingPrimarySource === "NONE") ||
       blockingSecondarySources.includes(String(blockingPrimarySource))) {
-    return false
+    return invalid("AUTOMATIC_TRANCHE_INVALID")
   }
   if ((numericReasonCountSum !== null &&
         typeof record.RAW_UNPROVEN_COUNT === "number" &&
@@ -2499,7 +2543,9 @@ function validRegistryRepairDryRun(
           lifecycleDiagnostic.failureCause !== "UNPROVEN" ||
           finalDiagnostic.identityUnprovenCount !== "UNPROVEN" ||
           finalDiagnostic.preconditionUnprovenCount !== "UNPROVEN" ||
-          finalDiagnostic.rejectionReason !== "UNPROVEN"))) return false
+          finalDiagnostic.rejectionReason !== "UNPROVEN"))) {
+    return invalid("READY_FOR_APPROVAL_INVARIANT_INVALID")
+  }
 
   const candidates = record.HUMAN_REVIEW_CANDIDATES
   if (!candidates.every((candidate) => {
@@ -2517,7 +2563,7 @@ function validRegistryRepairDryRun(
       yesNoUnproven(candidateRecord.SKU_UNIQUE_BOTH_SIDES) &&
       yesNoUnproven(candidateRecord.COMPETING_REGISTRY_RELATION) &&
       candidateRecord.RECOMMENDED_ACTION === "REVIEW_REQUIRED"
-  })) return false
+  })) return invalid("HUMAN_REVIEW_COUNT_INVALID")
   const lifecycleReviewCount = candidates.filter((candidate) =>
     (candidate as Record<string, unknown>).RELATIONSHIP_TYPE ===
       "ITEM_ID_ONLY_LIFECYCLE"
@@ -2536,19 +2582,38 @@ function validRegistryRepairDryRun(
     record.AUTOMATIC_TRANCHE_PRECONDITIONS_PASS !== "UNPROVEN" &&
     record.HUMAN_REVIEW_WRITE_ALLOWED === "NO" &&
     record.HUMAN_REVIEW_MUTATION_COUNT === 0
-  if (!aggregateUnavailable && !aggregateAvailable) return false
+  if (!aggregateUnavailable && !aggregateAvailable) {
+    return invalid("HUMAN_REVIEW_WRITE_POLICY_INVALID")
+  }
   if (aggregateUnavailable) {
     return record.HUMAN_REVIEW_COUNT === "UNPROVEN" && candidates.length === 0
+      ? { valid: true, failureCode: null }
+      : invalid("HUMAN_REVIEW_COUNT_INVALID")
   }
-  return record.HUMAN_REVIEW_COUNT === candidates.length &&
-    record.HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT ===
-      lifecycleReviewCount &&
-    record.REPAIR_EXISTING_AUTOMATIC_COUNT === record.REPAIR_EXISTING_COUNT &&
-    record.IDENTITY_UNPROVEN_COUNT === record.FINAL_IDENTITY_UNPROVEN_COUNT &&
-    record.AUTOMATIC_PRECONDITION_UNPROVEN_COUNT ===
-      record.FINAL_PRECONDITION_UNPROVEN_COUNT &&
-    record.AUTOMATIC_TRANCHE_PRECONDITIONS_PASS ===
-      (record.AUTOMATIC_PRECONDITION_UNPROVEN_COUNT === 0 ? "YES" : "NO")
+  if (record.HUMAN_REVIEW_COUNT !== candidates.length ||
+      record.HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT !==
+        lifecycleReviewCount) {
+    return invalid("HUMAN_REVIEW_COUNT_INVALID")
+  }
+  if (record.REPAIR_EXISTING_AUTOMATIC_COUNT !== record.REPAIR_EXISTING_COUNT) {
+    return invalid("REPAIR_GATE_INVARIANT_INVALID")
+  }
+  if (record.IDENTITY_UNPROVEN_COUNT !== record.FINAL_IDENTITY_UNPROVEN_COUNT ||
+      record.AUTOMATIC_PRECONDITION_UNPROVEN_COUNT !==
+        record.FINAL_PRECONDITION_UNPROVEN_COUNT ||
+      record.AUTOMATIC_TRANCHE_PRECONDITIONS_PASS !==
+        (record.AUTOMATIC_PRECONDITION_UNPROVEN_COUNT === 0 ? "YES" : "NO")) {
+    return invalid("AUTOMATIC_TRANCHE_INVALID")
+  }
+  return { valid: true, failureCode: null }
+}
+
+function validRegistryRepairDryRun(
+  value: unknown,
+  validation: RegistryRepairDryRunValidation =
+    validateRegistryRepairDryRun(value),
+): value is EbayRegistryRepairDryRun {
+  return validation.valid
 }
 
 export default function EbaySellerOAuthReauthPage() {
@@ -2577,6 +2642,9 @@ export default function EbaySellerOAuthReauthPage() {
   const [registryRepairDryRunRejectionReason,
     setRegistryRepairDryRunRejectionReason] =
     useState<EbayRegistryRepairDryRunRejectionReason | null>(null)
+  const [registryRepairValidatorFailureCode,
+    setRegistryRepairValidatorFailureCode] =
+    useState<RegistryRepairValidatorFailureCode | null>(null)
   const [registryRepairDryRunAmbiguityClass,
     setRegistryRepairDryRunAmbiguityClass] =
     useState<EbayRegistryRepairAmbiguityClass | null>(null)
@@ -2814,6 +2882,7 @@ export default function EbaySellerOAuthReauthPage() {
     setPreviewingRegistryRepair(true)
     setRegistryRepairDryRun(null)
     setRegistryRepairDryRunRejectionReason(null)
+    setRegistryRepairValidatorFailureCode(null)
     setRegistryRepairDryRunAmbiguityClass(null)
     setRegistryRepairUnprovenComponent(null)
     setRegistryRepairUnprovenCount(null)
@@ -2949,11 +3018,18 @@ export default function EbaySellerOAuthReauthPage() {
         )
         return
       }
-      if (!validRegistryRepairDryRun(payload.registryRepairDryRun)) {
+      const responseValidation = validateRegistryRepairDryRun(
+        payload.registryRepairDryRun,
+      )
+      if (!validRegistryRepairDryRun(
+        payload.registryRepairDryRun,
+        responseValidation,
+      )) {
         setError("REGISTRY_REPAIR_DRY_RUN_REJECTED")
         setRegistryRepairDryRunRejectionReason(
           "RESPONSE_CONTRACT_INVALID",
         )
+        setRegistryRepairValidatorFailureCode(responseValidation.failureCode)
         setRegistryRepairDryRunAmbiguityClass("BLOCKING_UNPROVEN")
         setRegistryRepairUnprovenComponent("EVIDENCE_UNAVAILABLE")
         setRegistryRepairUnprovenCount("UNPROVEN")
@@ -3438,6 +3514,11 @@ export default function EbaySellerOAuthReauthPage() {
           {registryRepairDryRunRejectionReason ? (
             <p aria-live="polite" className="mt-3 rounded-xl border border-red-300/30 bg-red-300/[0.06] p-3 text-sm font-black text-red-100">
               Rejection reason: {registryRepairDryRunRejectionReason}
+            </p>
+          ) : null}
+          {registryRepairValidatorFailureCode ? (
+            <p aria-live="polite" className="mt-3 rounded-xl border border-red-300/30 bg-red-300/[0.06] p-3 text-sm font-black text-red-100">
+              Validator failure code: {registryRepairValidatorFailureCode}
             </p>
           ) : null}
           {registryRepairDryRunAmbiguityClass ? (
