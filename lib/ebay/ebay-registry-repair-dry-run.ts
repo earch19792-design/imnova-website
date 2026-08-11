@@ -32,6 +32,35 @@ export type EbayRegistryRepairAmbiguityClass =
   | "BLOCKING_PARTITION_CONFLICT"
   | "BLOCKING_UNPROVEN"
   | "NONE"
+export type EbayRegistryRepairUnprovenComponent =
+  | "NONE"
+  | "REPAIR_EXISTING_MUTATION_GUARD"
+  | "MARK_STALE_MUTATION_GUARD"
+  | "CREATE_NEW_ABSENCE_OR_UNIQUENESS_GUARD"
+  | "HUMAN_REVIEW_EVIDENCE"
+  | "IDENTITY_PARTITION"
+  | "SAME_REQUEST_STATE"
+  | "MULTIPLE_COMPONENTS"
+  | "EVIDENCE_UNAVAILABLE"
+export type EbayRegistryRepairUnprovenSource =
+  | "NONE"
+  | "EXISTING_ROW_CAS"
+  | "ABSENCE_OR_UNIQUENESS_GUARD"
+  | "REVIEW_EVIDENCE"
+  | "IDENTITY_EVIDENCE"
+  | "SAME_REQUEST_STATE"
+  | "MULTIPLE"
+  | "EVIDENCE_UNAVAILABLE"
+export type EbayRegistryRepairBlockingUnprovenSource =
+  | "NONE"
+  | "SOURCE_READ"
+  | "STATE_GUARD"
+  | "IDENTITY_PARTITION"
+  | "REPAIR_EXISTING"
+  | "MARK_STALE"
+  | "CREATE_NEW"
+  | "HUMAN_REVIEW"
+  | "OTHER"
 export type EbayRegistryRepairFutureWriteRejectionReason =
   | "NONE"
   | "EVIDENCE_UNAVAILABLE"
@@ -56,6 +85,31 @@ export type EbayRegistryRepairDryRun = {
   DRY_RUN_FRESHNESS_STATUS: EbayRegistryRepairDryRunFreshnessStatus
   DRY_RUN_REJECTION_REASON: EbayRegistryRepairDryRunRejectionReason | null
   AMBIGUITY_CLASS: EbayRegistryRepairAmbiguityClass
+  UNPROVEN_COMPONENT: EbayRegistryRepairUnprovenComponent
+  UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  REPAIR_EXISTING_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  REPAIR_EXISTING_UNPROVEN_SOURCE: EbayRegistryRepairUnprovenSource
+  MARK_STALE_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  MARK_STALE_UNPROVEN_SOURCE: EbayRegistryRepairUnprovenSource
+  CREATE_NEW_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  CREATE_NEW_UNPROVEN_SOURCE: EbayRegistryRepairUnprovenSource
+  HUMAN_REVIEW_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  HUMAN_REVIEW_UNPROVEN_SOURCE: EbayRegistryRepairUnprovenSource
+  IDENTITY_PARTITION_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  IDENTITY_PARTITION_UNPROVEN_SOURCE: EbayRegistryRepairUnprovenSource
+  UNPROVEN_REPAIR_EXISTING_COUNT: EbayRegistryRepairDryRunCount
+  UNPROVEN_MARK_STALE_COUNT: EbayRegistryRepairDryRunCount
+  UNPROVEN_CREATE_NEW_COUNT: EbayRegistryRepairDryRunCount
+  UNPROVEN_HUMAN_REVIEW_COUNT: EbayRegistryRepairDryRunCount
+  UNPROVEN_IDENTITY_PARTITION_COUNT: EbayRegistryRepairDryRunCount
+  UNPROVEN_TOTAL_COUNT: EbayRegistryRepairDryRunCount
+  UNPROVEN_STATE_GUARD_COUNT: EbayRegistryRepairDryRunCount
+  UNPROVEN_SOURCE_READ_COUNT: EbayRegistryRepairDryRunCount
+  UNPROVEN_OTHER_COUNT: EbayRegistryRepairDryRunCount
+  BLOCKING_UNPROVEN_PRIMARY_SOURCE:
+    EbayRegistryRepairBlockingUnprovenSource
+  BLOCKING_UNPROVEN_SECONDARY_SOURCES:
+    EbayRegistryRepairBlockingUnprovenSource[]
   DRY_RUN_STALE_LABEL:
     | "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE"
     | "DRY RUN STALE — REFRESH REQUIRED"
@@ -327,6 +381,29 @@ EbayRegistryRepairDryRun {
     DRY_RUN_FRESHNESS_STATUS: "UNPROVEN",
     DRY_RUN_REJECTION_REASON: "UNPROVEN",
     AMBIGUITY_CLASS: "BLOCKING_UNPROVEN",
+    UNPROVEN_COMPONENT: "EVIDENCE_UNAVAILABLE",
+    UNPROVEN_COUNT: "UNPROVEN",
+    REPAIR_EXISTING_UNPROVEN_COUNT: "UNPROVEN",
+    REPAIR_EXISTING_UNPROVEN_SOURCE: "EVIDENCE_UNAVAILABLE",
+    MARK_STALE_UNPROVEN_COUNT: "UNPROVEN",
+    MARK_STALE_UNPROVEN_SOURCE: "EVIDENCE_UNAVAILABLE",
+    CREATE_NEW_UNPROVEN_COUNT: "UNPROVEN",
+    CREATE_NEW_UNPROVEN_SOURCE: "EVIDENCE_UNAVAILABLE",
+    HUMAN_REVIEW_UNPROVEN_COUNT: "UNPROVEN",
+    HUMAN_REVIEW_UNPROVEN_SOURCE: "EVIDENCE_UNAVAILABLE",
+    IDENTITY_PARTITION_UNPROVEN_COUNT: "UNPROVEN",
+    IDENTITY_PARTITION_UNPROVEN_SOURCE: "EVIDENCE_UNAVAILABLE",
+    UNPROVEN_REPAIR_EXISTING_COUNT: "UNPROVEN",
+    UNPROVEN_MARK_STALE_COUNT: "UNPROVEN",
+    UNPROVEN_CREATE_NEW_COUNT: "UNPROVEN",
+    UNPROVEN_HUMAN_REVIEW_COUNT: "UNPROVEN",
+    UNPROVEN_IDENTITY_PARTITION_COUNT: "UNPROVEN",
+    UNPROVEN_TOTAL_COUNT: "UNPROVEN",
+    UNPROVEN_STATE_GUARD_COUNT: "UNPROVEN",
+    UNPROVEN_SOURCE_READ_COUNT: "UNPROVEN",
+    UNPROVEN_OTHER_COUNT: "UNPROVEN",
+    BLOCKING_UNPROVEN_PRIMARY_SOURCE: "SOURCE_READ",
+    BLOCKING_UNPROVEN_SECONDARY_SOURCES: [],
     DRY_RUN_STALE_LABEL: "UNPROVEN",
     DRY_RUN_STATE_BOUND: "UNPROVEN",
     DRY_RUN_STATE_FINGERPRINT_PRESENT: "UNPROVEN",
@@ -463,6 +540,9 @@ export function buildEbayRegistryRepairDryRun(
   let registryUnproven = 0
   let repairUnproven = 0
   let staleUnproven = 0
+  let createUnproven = 0
+  let humanReviewUnproven = 0
+  let identityPartitionUnproven = 0
   let humanReviewEvidenceSafe = true
   let hasMultipleCandidates = false
   let hasCrossLink = false
@@ -488,7 +568,7 @@ export function buildEbayRegistryRepairDryRun(
     if (fullMatches.length === 1 && itemMatches.length === 1 &&
         skuMatches.length === 1) {
       const live = liveFacts[fullMatches[0]]
-      const safe = Boolean(live && registry.guard && rowAccountCorrect &&
+      const identitySafe = Boolean(live && rowAccountCorrect &&
         rowActive && livePreconditionsProven(live.listing) &&
         registry.itemId && registry.sku &&
         evidenceCount(liveItemCounts, registry.itemId) === 1 &&
@@ -496,12 +576,21 @@ export function buildEbayRegistryRepairDryRun(
         evidenceCount(liveSkuCounts, registry.sku) === 1 &&
         evidenceCount(registrySkuCounts, registry.sku) === 1 &&
         liveRegistryReferences[live.index]?.size === 1)
-      if (safe && live && registry.guard) {
+      if (identitySafe && live) {
         registryKeepCurrent += 1
         liveMatched.add(live.index)
-        keepHandles.push(opaqueHandle("keep", registry.guard))
+        keepHandles.push(opaqueHandle("keep", [
+          accountKey,
+          registry.itemId,
+          registry.sku,
+          registry.variationKey,
+          live.itemId,
+          live.sku,
+          live.variationKey,
+        ]))
       } else {
         registryUnproven += 1
+        identityPartitionUnproven += 1
         if (live) liveUnproven.add(live.index)
       }
       continue
@@ -509,7 +598,7 @@ export function buildEbayRegistryRepairDryRun(
 
     if (itemMatches.length === 1 && skuMatches.length === 0) {
       const live = liveFacts[itemMatches[0]]
-      const safe = Boolean(live && registry.guard && registry.itemId &&
+      const identitySafe = Boolean(live && registry.itemId &&
         registry.sku && live.sku && registry.sku !== live.sku &&
         registry.variationKey === live.variationKey && rowAccountCorrect &&
         rowActive && livePreconditionsProven(live.listing) &&
@@ -517,17 +606,21 @@ export function buildEbayRegistryRepairDryRun(
         evidenceCount(registryItemCounts, registry.itemId) === 1 &&
         evidenceCount(registrySkuCounts, live.sku) === 0 &&
         liveRegistryReferences[live.index]?.size === 1)
-      if (safe && live && registry.guard) {
+      if (identitySafe && live) {
         registryRepairExisting += 1
         liveRepair.add(live.index)
-        repairHandles.push(opaqueHandle("repair", [
-          registry.guard,
-          live.sku,
-          live.variationKey,
-        ]))
+        if (registry.guard) {
+          repairHandles.push(opaqueHandle("repair", [
+            registry.guard,
+            live.sku,
+            live.variationKey,
+          ]))
+        } else {
+          repairUnproven += 1
+        }
       } else {
         registryUnproven += 1
-        repairUnproven += 1
+        identityPartitionUnproven += 1
         if (live) liveUnproven.add(live.index)
       }
       continue
@@ -540,6 +633,7 @@ export function buildEbayRegistryRepairDryRun(
         livePreconditionsProven(live.listing))
       if (!reviewEvidenceSafe || !live || !registry.sku) {
         registryUnproven += 1
+        humanReviewUnproven += 1
         if (live) liveUnproven.add(live.index)
         humanReviewEvidenceSafe = false
         continue
@@ -550,6 +644,7 @@ export function buildEbayRegistryRepairDryRun(
       const competing = liveReferences ? liveReferences.size > 1 : true
       if (!skuUnique || competing) {
         registryUnproven += 1
+        identityPartitionUnproven += 1
         liveUnproven.add(live.index)
         humanReviewEvidenceSafe = false
         continue
@@ -578,19 +673,24 @@ export function buildEbayRegistryRepairDryRun(
     }
 
     if (itemMatches.length === 0 && skuMatches.length === 0) {
-      const safe = Boolean(registry.guard && rowAccountCorrect && rowActive &&
+      const identitySafe = Boolean(rowAccountCorrect && rowActive &&
         (registry.itemId || registry.sku))
-      if (safe && registry.guard) {
+      if (identitySafe) {
         registryMarkStale += 1
-        staleHandles.push(opaqueHandle("stale", registry.guard))
+        if (registry.guard) {
+          staleHandles.push(opaqueHandle("stale", registry.guard))
+        } else {
+          staleUnproven += 1
+        }
       } else {
         registryUnproven += 1
-        staleUnproven += 1
+        identityPartitionUnproven += 1
       }
       continue
     }
 
     registryUnproven += 1
+    identityPartitionUnproven += 1
     for (const liveIndex of new Set([...itemMatches, ...skuMatches])) {
       liveUnproven.add(liveIndex)
     }
@@ -600,6 +700,9 @@ export function buildEbayRegistryRepairDryRun(
     const actionMemberships = [liveMatched, liveRepair, liveHumanReview]
       .filter((group) => group.has(live.index))
     if (liveUnproven.has(live.index) || actionMemberships.length > 1) {
+      if (!liveUnproven.has(live.index) && actionMemberships.length > 1) {
+        identityPartitionUnproven += 1
+      }
       liveUnproven.add(live.index)
       hasActionPartitionConflict ||= actionMemberships.length > 1
     }
@@ -617,7 +720,6 @@ export function buildEbayRegistryRepairDryRun(
 
   const liveCreate = new Set<number>()
   const createHandles: string[] = []
-  let createUnproven = 0
   for (const live of liveFacts) {
     if (resolvedLiveMatched.has(live.index) ||
         resolvedLiveRepair.has(live.index) ||
@@ -625,14 +727,16 @@ export function buildEbayRegistryRepairDryRun(
         liveUnproven.has(live.index)) {
       continue
     }
+    const identityEvidenceSafe = Boolean(live.itemId && live.sku &&
+      livePreconditionsProven(live.listing))
     const noRegistryReference = liveRegistryReferences[live.index]?.size === 0
-    const safe = Boolean(live.itemId && live.sku && noRegistryReference &&
-      livePreconditionsProven(live.listing) &&
+    const absenceAndUniquenessSafe = Boolean(live.itemId && live.sku &&
+      noRegistryReference &&
       evidenceCount(liveItemCounts, live.itemId) === 1 &&
       evidenceCount(liveSkuCounts, live.sku) === 1 &&
       evidenceCount(registryItemCounts, live.itemId) === 0 &&
       evidenceCount(registrySkuCounts, live.sku) === 0)
-    if (safe) {
+    if (identityEvidenceSafe && absenceAndUniquenessSafe) {
       liveCreate.add(live.index)
       createHandles.push(opaqueHandle("create", [
         live.itemId,
@@ -645,7 +749,11 @@ export function buildEbayRegistryRepairDryRun(
       ]))
     } else {
       liveUnproven.add(live.index)
-      createUnproven += 1
+      if (identityEvidenceSafe) {
+        createUnproven += 1
+      } else {
+        identityPartitionUnproven += 1
+      }
     }
   }
 
@@ -700,14 +808,69 @@ export function buildEbayRegistryRepairDryRun(
                 livePartitionValid !== "YES" ||
                 registryPartitionValid !== "YES"
               ? "BLOCKING_PARTITION_CONFLICT"
-              : liveUnproven.size > 0 || registryUnproven > 0 ||
-                  !humanReviewEvidenceSafe
+              : identityPartitionUnproven > 0 ||
+                  humanReviewUnproven > 0 || !humanReviewEvidenceSafe
                 ? "BLOCKING_UNPROVEN"
                 : humanCandidates.length > 0
                   ? "REVIEWABLE_ONLY"
                   : "NONE"
   const blockingAmbiguity = ambiguityClass !== "NONE" &&
     ambiguityClass !== "REVIEWABLE_ONLY"
+  const provenIdentityBlocking = ambiguityClass ===
+      "BLOCKING_MULTIPLE_CANDIDATES" ||
+    ambiguityClass === "BLOCKING_CROSS_LINK" ||
+    ambiguityClass === "BLOCKING_DUPLICATE_AUTHORITY" ||
+    ambiguityClass === "BLOCKING_PARTITION_CONFLICT"
+  const identityPartitionUnprovenCount = Math.max(
+    identityPartitionUnproven,
+    provenIdentityBlocking ? 1 : 0,
+  )
+  const unprovenComponents: EbayRegistryRepairUnprovenComponent[] = []
+  if (repairUnproven > 0) {
+    unprovenComponents.push("REPAIR_EXISTING_MUTATION_GUARD")
+  }
+  if (staleUnproven > 0) {
+    unprovenComponents.push("MARK_STALE_MUTATION_GUARD")
+  }
+  if (createUnproven > 0) {
+    unprovenComponents.push("CREATE_NEW_ABSENCE_OR_UNIQUENESS_GUARD")
+  }
+  if (humanReviewUnproven > 0) {
+    unprovenComponents.push("HUMAN_REVIEW_EVIDENCE")
+  }
+  if (identityPartitionUnprovenCount > 0) {
+    unprovenComponents.push("IDENTITY_PARTITION")
+  }
+  const unprovenComponent: EbayRegistryRepairUnprovenComponent =
+    !sameRequestEvidenceCoherent
+      ? "SAME_REQUEST_STATE"
+      : unprovenComponents.length === 0
+        ? "NONE"
+        : unprovenComponents.length === 1
+          ? unprovenComponents[0]
+          : "MULTIPLE_COMPONENTS"
+  const unprovenCount = !sameRequestEvidenceCoherent
+    ? 1
+    : repairUnproven + staleUnproven + createUnproven +
+      humanReviewUnproven + identityPartitionUnprovenCount
+  const unprovenStateGuardCount = sameRequestEvidenceCoherent ? 0 : 1
+  const unprovenSourceReadCount = 0
+  const unprovenOtherCount = 0
+  const activeUnprovenSources = ([
+    ["SOURCE_READ", unprovenSourceReadCount],
+    ["STATE_GUARD", unprovenStateGuardCount],
+    ["IDENTITY_PARTITION", identityPartitionUnprovenCount],
+    ["REPAIR_EXISTING", repairUnproven],
+    ["MARK_STALE", staleUnproven],
+    ["CREATE_NEW", createUnproven],
+    ["HUMAN_REVIEW", humanReviewUnproven],
+    ["OTHER", unprovenOtherCount],
+  ] as const).filter(([, count]) => count > 0)
+  const primaryUnprovenSource: EbayRegistryRepairBlockingUnprovenSource =
+    activeUnprovenSources[0]?.[0] ?? "NONE"
+  const secondaryUnprovenSources = activeUnprovenSources.slice(1).map(
+    ([source]) => source,
+  )
   const rejectionReason: EbayRegistryRepairDryRunRejectionReason | null =
     !sameRequestEvidenceCoherent
       ? "STATE_CHANGED_DURING_SAME_REQUEST"
@@ -742,6 +905,40 @@ export function buildEbayRegistryRepairDryRun(
     DRY_RUN_FRESHNESS_STATUS: freshnessStatus,
     DRY_RUN_REJECTION_REASON: rejectionReason,
     AMBIGUITY_CLASS: ambiguityClass,
+    UNPROVEN_COMPONENT: unprovenComponent,
+    UNPROVEN_COUNT: unprovenCount,
+    REPAIR_EXISTING_UNPROVEN_COUNT: repairUnproven,
+    REPAIR_EXISTING_UNPROVEN_SOURCE: repairUnproven > 0
+      ? "EXISTING_ROW_CAS"
+      : "NONE",
+    MARK_STALE_UNPROVEN_COUNT: staleUnproven,
+    MARK_STALE_UNPROVEN_SOURCE: staleUnproven > 0
+      ? "EXISTING_ROW_CAS"
+      : "NONE",
+    CREATE_NEW_UNPROVEN_COUNT: createUnproven,
+    CREATE_NEW_UNPROVEN_SOURCE: createUnproven > 0
+      ? "ABSENCE_OR_UNIQUENESS_GUARD"
+      : "NONE",
+    HUMAN_REVIEW_UNPROVEN_COUNT: humanReviewUnproven,
+    HUMAN_REVIEW_UNPROVEN_SOURCE: humanReviewUnproven > 0
+      ? "REVIEW_EVIDENCE"
+      : "NONE",
+    IDENTITY_PARTITION_UNPROVEN_COUNT: identityPartitionUnprovenCount,
+    IDENTITY_PARTITION_UNPROVEN_SOURCE:
+      identityPartitionUnprovenCount > 0
+        ? "IDENTITY_EVIDENCE"
+        : "NONE",
+    UNPROVEN_REPAIR_EXISTING_COUNT: repairUnproven,
+    UNPROVEN_MARK_STALE_COUNT: staleUnproven,
+    UNPROVEN_CREATE_NEW_COUNT: createUnproven,
+    UNPROVEN_HUMAN_REVIEW_COUNT: humanReviewUnproven,
+    UNPROVEN_IDENTITY_PARTITION_COUNT: identityPartitionUnprovenCount,
+    UNPROVEN_TOTAL_COUNT: unprovenCount,
+    UNPROVEN_STATE_GUARD_COUNT: unprovenStateGuardCount,
+    UNPROVEN_SOURCE_READ_COUNT: unprovenSourceReadCount,
+    UNPROVEN_OTHER_COUNT: unprovenOtherCount,
+    BLOCKING_UNPROVEN_PRIMARY_SOURCE: primaryUnprovenSource,
+    BLOCKING_UNPROVEN_SECONDARY_SOURCES: secondaryUnprovenSources,
     DRY_RUN_STALE_LABEL: staleLabel,
     DRY_RUN_STATE_BOUND: sameRequestEvidenceCoherent ? "YES" : "NO",
     DRY_RUN_STATE_FINGERPRINT_PRESENT: "YES",

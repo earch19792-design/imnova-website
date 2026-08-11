@@ -229,6 +229,13 @@ export async function POST(request: NextRequest) {
           error: "REGISTRY_REPAIR_DRY_RUN_REJECTED",
           REJECTION_REASON: registryRepairDryRun.DRY_RUN_REJECTION_REASON,
           AMBIGUITY_CLASS: registryRepairDryRun.AMBIGUITY_CLASS,
+          UNPROVEN_COMPONENT: registryRepairDryRun.UNPROVEN_COMPONENT,
+          UNPROVEN_COUNT: registryRepairDryRun.UNPROVEN_COUNT,
+          UNPROVEN_TOTAL_COUNT: registryRepairDryRun.UNPROVEN_TOTAL_COUNT,
+          BLOCKING_UNPROVEN_PRIMARY_SOURCE:
+            registryRepairDryRun.BLOCKING_UNPROVEN_PRIMARY_SOURCE,
+          BLOCKING_UNPROVEN_SECONDARY_SOURCES:
+            registryRepairDryRun.BLOCKING_UNPROVEN_SECONDARY_SOURCES,
         }, {
           status: 409,
           headers: { "Cache-Control": "private, no-store, max-age=0" },
@@ -314,6 +321,11 @@ export async function POST(request: NextRequest) {
         error: "REGISTRY_REPAIR_DRY_RUN_REJECTED",
         REJECTION_REASON: "UNPROVEN",
         AMBIGUITY_CLASS: "BLOCKING_UNPROVEN",
+        UNPROVEN_COMPONENT: "EVIDENCE_UNAVAILABLE",
+        UNPROVEN_COUNT: "UNPROVEN",
+        UNPROVEN_TOTAL_COUNT: "UNPROVEN",
+        BLOCKING_UNPROVEN_PRIMARY_SOURCE: "SOURCE_READ",
+        BLOCKING_UNPROVEN_SECONDARY_SOURCES: [],
       }, {
         status: 403,
         headers: { "Cache-Control": "private, no-store, max-age=0" },
