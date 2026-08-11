@@ -2352,6 +2352,14 @@ function validRegistryRepairDryRun(
   const finalDiagnostic = parseRegistryRepairFinalDiagnostic(record)
   if (!otherSubtypeCounts || !createStageCounts || !absenceProofCauseCounts ||
       !lifecycleDiagnostic || !finalDiagnostic) return false
+  const lifecycleReviewIsolated =
+    record.HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT === 1 &&
+    record.AUTOMATIC_PRECONDITION_UNPROVEN_COUNT === 0 &&
+    lifecycleDiagnostic.action === "NONE" &&
+    lifecycleDiagnostic.stage === "NONE" &&
+    lifecycleDiagnostic.requiredSignal === "NONE" &&
+    lifecycleDiagnostic.signalAvailable === "YES" &&
+    lifecycleDiagnostic.failureCause === "REACTIVATION_NOT_ALLOWED"
   const otherSubtypeValues = Object.values(otherSubtypeCounts)
   const createIdentityPartitionConsistent = [
     createStageCounts.RAW_CREATE_IDENTITY_CANDIDATE_COUNT,
@@ -2472,11 +2480,12 @@ function validRegistryRepairDryRun(
         (record.ABSENCE_PROOF_UNPROVEN_COUNT !== 0 ||
           absenceProofCauseValues.some((value) => value !== 0) ||
           record.ABSENCE_PROOF_PRIMARY_CAUSE !== "NONE" ||
-          lifecycleDiagnostic.action !== "NONE" ||
-          lifecycleDiagnostic.stage !== "NONE" ||
-          lifecycleDiagnostic.requiredSignal !== "NONE" ||
-          lifecycleDiagnostic.signalAvailable !== "YES" ||
-          lifecycleDiagnostic.failureCause !== "NONE" ||
+          (!lifecycleReviewIsolated &&
+            (lifecycleDiagnostic.action !== "NONE" ||
+              lifecycleDiagnostic.stage !== "NONE" ||
+              lifecycleDiagnostic.requiredSignal !== "NONE" ||
+              lifecycleDiagnostic.signalAvailable !== "YES" ||
+              lifecycleDiagnostic.failureCause !== "NONE")) ||
           finalDiagnostic.identityUnprovenCount !== 0 ||
           finalDiagnostic.preconditionUnprovenCount !== 0)) ||
       (unprovenComponent === "EVIDENCE_UNAVAILABLE" &&
