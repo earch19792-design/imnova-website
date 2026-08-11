@@ -391,6 +391,9 @@ type RegistryRuntimeReadInput = {
   captureRegistryRepairEvidence?: (
     evidence: RegistryRepairRuntimeEvidence,
   ) => void
+  captureRegistryRepairExecutionPlan?: NonNullable<
+    Parameters<typeof buildEbayRegistryRepairDryRun>[1]
+  >
   readRegistryRepairEvidenceSnapshot?: () => Promise<
     RegistryRepairRuntimeEvidence | undefined
   >
@@ -951,6 +954,7 @@ export async function previewEbayRegistryRepairRuntime(
   const {
     readRegistryRepairEvidenceSnapshot,
     captureRegistryRepairEvidence,
+    captureRegistryRepairExecutionPlan,
     ...runtimeInput
   } = input
   const requestStartedAt = input.startedAt ?? Date.now()
@@ -1005,7 +1009,7 @@ export async function previewEbayRegistryRepairRuntime(
     syncKeyLookupStatus: currentEvidence.syncKeyLookupStatus,
     existingRegistrySyncKeys: currentEvidence.existingRegistrySyncKeys,
     capturedEvidenceFingerprint: firstEvidenceFingerprint,
-  })
+  }, captureRegistryRepairExecutionPlan)
 }
 
 function isPresentAndTrimmed(value: unknown) {

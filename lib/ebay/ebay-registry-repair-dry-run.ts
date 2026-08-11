@@ -329,6 +329,70 @@ export type EbayRegistryRepairDryRunInput = {
   capturedEvidenceFingerprint: string
 }
 
+export type EbayRegistryRepairCreateRpcCandidateV1 = {
+  source: "EBAY_TRADING_GET_MY_EBAY_SELLING"
+  account_key: string
+  sync_key: string
+  ebay_item_id: string
+  title: string
+  ebay_sku: string | null
+  ebay_quantity: number | null
+  ebay_price: number | null
+  currency: string
+  last_ebay_sync_at: string
+  raw_payload: {
+    source: "EBAY_TRADING_GET_MY_EBAY_SELLING"
+    marketplaceId: "EBAY_US"
+    listingState: "ACTIVE"
+    variationKey: string
+    observedAt: string
+  }
+}
+
+export type EbayRegistryRepairStaleRpcCandidateV1 = {
+  id: string
+  account_key: string
+  expected_source: string
+  expected_sync_key: string | null
+  expected_listing_status: "active"
+  expected_ebay_item_id: string
+  expected_ebay_sku: string | null
+  expected_sync_generation: number | string
+  expected_updated_at: string
+}
+
+type EbayRegistryRepairExecutionMembership<T> = {
+  membershipHandle: string
+  rpcInput: T
+}
+
+export type EbayRegistryRepairExecutionPlanV1 = {
+  version: "EBAY_REGISTRY_REPAIR_EXECUTION_PLAN_V1"
+  accountKey: string
+  evidenceFingerprint: string
+  packageHandle: string
+  createCandidates: ReadonlyArray<
+    EbayRegistryRepairExecutionMembership<EbayRegistryRepairCreateRpcCandidateV1>
+  >
+  staleCandidates: ReadonlyArray<
+    EbayRegistryRepairExecutionMembership<EbayRegistryRepairStaleRpcCandidateV1>
+  >
+  repairCandidates: ReadonlyArray<{ membershipHandle: string }>
+  humanReviewCandidates: ReadonlyArray<{
+    candidateHandle: string
+    relationshipType: "SKU_ONLY" | "ITEM_ID_ONLY_LIFECYCLE"
+  }>
+}
+
+export type EbayRegistryRepairPlanningResult = {
+  dryRun: EbayRegistryRepairDryRun
+  executionPlan: EbayRegistryRepairExecutionPlanV1 | null
+}
+
+export type EbayRegistryRepairExecutionPlanCapture = (
+  plan: EbayRegistryRepairExecutionPlanV1,
+) => void
+
 export type EbayRegistryRepairEvidenceFingerprintInput = Pick<
   EbayRegistryRepairDryRunInput,
   "accountKey" | "marketplaceId" | "liveListings" | "registryRows" |
@@ -349,7 +413,7 @@ export type EbayRegistryRepairFutureWriteFreshness = {
 
 const REPAIR_FIELDS = ["ebay_sku"]
 const STALE_FIELDS = ["listing_status"]
-const CREATE_SOURCE = "EBAY_SELL_INVENTORY_READONLY"
+const CREATE_SOURCE = "EBAY_TRADING_GET_MY_EBAY_SELLING"
 const CREATE_FIELDS = [
   "source",
   "account_key",
@@ -445,7 +509,100 @@ export function buildEbayRegistryRepairCreateSyncKey(input: {
   const itemId = normalizedIdentity(input.itemId)
   const sku = normalizedIdentity(input.sku)
   if (!accountKey || !itemId || !sku) return "UNPROVEN"
-  return `${CREATE_SOURCE}:${accountKey}:${itemId}:${sku}`
+  return `${CREATE_SOURCE}:${accountKey}:${itemId}`
+}
+
+const RPC_TIMESTAMP =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)$/
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/
+
+function materializeCreateRpcCandidateV1(input: {
+  accountKey: string
+  listing: EbayLiveListing
+  itemId: string
+  sku: string
+}): (EbayRegistryRepairCreateRpcCandidateV1 & { ebay_sku: string }) | null {
+  const title = normalizedIdentity(input.listing.title)
+  const currency = normalizedIdentity(input.listing.currency)?.toUpperCase()
+  const observedAt = normalizedIdentity(input.listing.observedAt)
+  const syncKey = buildEbayRegistryRepairCreateSyncKey({
+    accountKey: input.accountKey,
+    itemId: input.itemId,
+    sku: input.sku,
+  })
+  const quantity = input.listing.availableQuantity
+  const price = input.listing.price
+  if (!/^\d{9,20}$/.test(input.itemId) ||
+      !title || title.length > 1000 || CONTROL_CHARACTER.test(title) ||
+      input.sku.length > 80 || CONTROL_CHARACTER.test(input.sku) ||
+      !currency || !/^[A-Z]{3}$/.test(currency) ||
+      !observedAt || !RPC_TIMESTAMP.test(observedAt) ||
+      syncKey === "UNPROVEN" || syncKey.length > 500 ||
+      (quantity !== null &&
+        (!Number.isSafeInteger(quantity) || quantity < 0)) ||
+      (price !== null &&
+        (!Number.isFinite(price) || price < 0 ||
+          !/^\d+(?:\.\d{1,2})?$/.test(String(price))))) {
+    return null
+  }
+  return {
+    source: input.listing.source,
+    account_key: input.accountKey,
+    sync_key: syncKey,
+    ebay_item_id: input.itemId,
+    title,
+    ebay_sku: input.sku,
+    ebay_quantity: quantity,
+    ebay_price: price,
+    currency,
+    last_ebay_sync_at: observedAt,
+    raw_payload: {
+      source: input.listing.source,
+      marketplaceId: "EBAY_US",
+      listingState: input.listing.listingState,
+      variationKey: normalizedIdentity(input.listing.variationKey) ?? "",
+      observedAt,
+    },
+  }
+}
+
+function materializeStaleRpcCandidateV1(input: {
+  accountKey: string
+  row: ReadonlyRegistryListingRow
+}): EbayRegistryRepairStaleRpcCandidateV1 | null {
+  const id = normalizedIdentity(input.row.id)
+  const source = normalizedIdentity(input.row.source)
+  const itemId = normalizedIdentity(input.row.ebay_item_id)
+  const sku = normalizedIdentity(input.row.ebay_sku)
+  const syncKey = normalizedIdentity(input.row.sync_key)
+  const updatedAt = normalizedIdentity(input.row.updated_at)
+  const generation = input.row.sync_generation
+  const generationSafe = typeof generation === "number"
+    ? Number.isSafeInteger(generation) && generation >= 0
+    : typeof generation === "string" && /^\d+$/.test(generation)
+  if (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id) ||
+      input.row.account_key !== input.accountKey ||
+      !source || !/^[A-Za-z0-9._:-]{1,100}$/.test(source) ||
+      (syncKey !== null && (syncKey.length > 500 ||
+        CONTROL_CHARACTER.test(syncKey))) ||
+      input.row.listing_status !== "active" ||
+      !itemId || !/^\d{9,20}$/.test(itemId) ||
+      (sku !== null && (sku.length > 80 || CONTROL_CHARACTER.test(sku))) ||
+      !generationSafe || generation === null ||
+      !updatedAt || !RPC_TIMESTAMP.test(updatedAt)) {
+    return null
+  }
+  return {
+    id,
+    account_key: input.accountKey,
+    expected_source: source,
+    expected_sync_key: syncKey,
+    expected_listing_status: "active",
+    expected_ebay_item_id: itemId,
+    expected_ebay_sku: sku,
+    expected_sync_generation: generation,
+    expected_updated_at: updatedAt,
+  }
 }
 
 function increment(values: Map<string, number>, key: string) {
@@ -775,6 +932,7 @@ EbayRegistryRepairDryRun {
 
 export function buildEbayRegistryRepairDryRun(
   input: EbayRegistryRepairDryRunInput,
+  captureExecutionPlan?: EbayRegistryRepairExecutionPlanCapture,
 ): EbayRegistryRepairDryRun {
   const accountKey = normalizedIdentity(input.accountKey)
   const observedAt = normalizedIdentity(input.observedAt)
@@ -972,6 +1130,9 @@ export function buildEbayRegistryRepairDryRun(
     reactivationCasSupported: boolean
   }> = []
   const staleHandles: string[] = []
+  const staleExecutionCandidates: Array<
+    EbayRegistryRepairExecutionMembership<EbayRegistryRepairStaleRpcCandidateV1>
+  > = []
   const humanCandidates: EbayRegistryRepairHumanReviewCandidate[] = []
   let registryKeepCurrent = 0
   let registryRepairExisting = 0
@@ -1221,8 +1382,21 @@ export function buildEbayRegistryRepairDryRun(
         (registry.itemId || registry.sku))
       if (identitySafe) {
         registryMarkStale += 1
+        const staleCandidate = registry.guard
+          ? materializeStaleRpcCandidateV1({
+              accountKey,
+              row: registry.row,
+            })
+          : null
         if (registry.guard) {
-          staleHandles.push(opaqueHandle("stale", registry.guard))
+          const membershipHandle = opaqueHandle("stale", registry.guard)
+          staleHandles.push(membershipHandle)
+          if (staleCandidate) {
+            staleExecutionCandidates.push({
+              membershipHandle,
+              rpcInput: staleCandidate,
+            })
+          }
         } else {
           staleUnproven += 1
         }
@@ -1281,6 +1455,9 @@ export function buildEbayRegistryRepairDryRun(
   const liveCreate = new Set<number>()
   const rawLiveCreateIdentity = new Set<number>()
   const createHandles: string[] = []
+  const createExecutionCandidates: Array<
+    EbayRegistryRepairExecutionMembership<EbayRegistryRepairCreateRpcCandidateV1>
+  > = []
   let rawCreateIdentityCandidateCount = 0
   let createIdentityDeterministicCount = 0
   let createIdentityUnprovenCount = 0
@@ -1332,7 +1509,15 @@ export function buildEbayRegistryRepairDryRun(
     rawLiveCreateIdentity.add(live.index)
 
     const createSku = live.sku
-    if (!createSku) {
+    const createCandidate = createSku
+      ? materializeCreateRpcCandidateV1({
+          accountKey,
+          listing: live.listing,
+          itemId: createItemId,
+          sku: createSku,
+        })
+      : null
+    if (!createSku || !createCandidate) {
       createMaterializationUnprovenCount += 1
       createUnproven += 1
       increment(actionOtherUnprovenSubtypeCounts,
@@ -1342,12 +1527,8 @@ export function buildEbayRegistryRepairDryRun(
     createMaterializationPassCount += 1
 
     const noRegistryReference = liveRegistryReferences[live.index]?.size === 0
-    const plannedCreateSyncKey = buildEbayRegistryRepairCreateSyncKey({
-      accountKey,
-      itemId: createItemId,
-      sku: createSku,
-    })
-    const plannedSyncKeyProven = plannedCreateSyncKey !== "UNPROVEN"
+    const plannedCreateSyncKey = createCandidate.sync_key
+    const plannedSyncKeyProven = true
     const plannedSyncKeyCollision = plannedSyncKeyProven && (
       existingRegistrySyncKeys.has(plannedCreateSyncKey) ||
       registrySyncKeys.has(plannedCreateSyncKey) ||
@@ -1363,7 +1544,7 @@ export function buildEbayRegistryRepairDryRun(
       plannedCreateSyncKeys.add(plannedCreateSyncKey as string)
       createAbsenceCasPassCount += 1
       liveCreate.add(live.index)
-      createHandles.push(opaqueHandle("create", [
+      const membershipHandle = opaqueHandle("create", [
         createItemId,
         createSku,
         live.variationKey,
@@ -1371,7 +1552,12 @@ export function buildEbayRegistryRepairDryRun(
         live.listing.availableQuantity,
         live.listing.price,
         live.listing.currency,
-      ]))
+      ])
+      createHandles.push(membershipHandle)
+      createExecutionCandidates.push({
+        membershipHandle,
+        rpcInput: createCandidate,
+      })
     } else {
       createAbsenceCasUnprovenCount += 1
       createUnproven += 1
@@ -1695,7 +1881,7 @@ export function buildEbayRegistryRepairDryRun(
     ? repairRowDiagnostics[0]
     : null
 
-  return {
+  const dryRun: EbayRegistryRepairDryRun = {
     DRY_RUN_LABEL: "DRY RUN — NO CHANGES WILL BE APPLIED",
     EVIDENCE_STATUS: "AVAILABLE",
     DRY_RUN_PACKAGE_HANDLE: packageHandle,
@@ -1903,4 +2089,34 @@ export function buildEbayRegistryRepairDryRun(
     DRY_RUN_READY_FOR_APPROVAL: ready,
     ...safetyContract(),
   }
+  captureExecutionPlan?.({
+    version: "EBAY_REGISTRY_REPAIR_EXECUTION_PLAN_V1",
+    accountKey,
+    evidenceFingerprint,
+    packageHandle,
+    createCandidates: [...createExecutionCandidates].sort((left, right) =>
+      left.membershipHandle.localeCompare(right.membershipHandle)),
+    staleCandidates: [...staleExecutionCandidates].sort((left, right) =>
+      left.membershipHandle.localeCompare(right.membershipHandle)),
+    repairCandidates: [...repairHandles].sort().map((membershipHandle) => ({
+      membershipHandle,
+    })),
+    humanReviewCandidates: humanCandidates.map((candidate) => ({
+      candidateHandle: candidate.CANDIDATE_HANDLE,
+      relationshipType: candidate.RELATIONSHIP_TYPE,
+    })).sort((left, right) =>
+      left.candidateHandle.localeCompare(right.candidateHandle)),
+  })
+  return dryRun
+}
+
+/** @internal Server-only callers must never serialize executionPlan. */
+export function buildEbayRegistryRepairPlanningResult(
+  input: EbayRegistryRepairDryRunInput,
+): EbayRegistryRepairPlanningResult {
+  let executionPlan: EbayRegistryRepairExecutionPlanV1 | null = null
+  const dryRun = buildEbayRegistryRepairDryRun(input, (captured) => {
+    executionPlan = captured
+  })
+  return { dryRun, executionPlan }
 }
