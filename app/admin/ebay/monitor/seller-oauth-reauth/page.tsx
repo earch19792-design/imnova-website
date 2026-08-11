@@ -317,6 +317,7 @@ type RegistryRepairDryRunPayload = {
   LIFECYCLE_FAILURE_CAUSE?: unknown
   REPAIR_ROW_CURRENT_STATUS_CLASS?: unknown
   REPAIR_ROW_STATUS_RAW_VALUE_RECOGNIZED?: unknown
+  REPAIR_ROW_STATUS_REACTIVATABLE?: unknown
   REPAIR_ROW_ACCOUNT_SCOPE_MATCH?: unknown
   REPAIR_ROW_AUTHORITATIVE_ITEM_ID_STILL_LIVE?: unknown
   REPAIR_ROW_ITEM_ID_UNIQUE_BOTH_SIDES?: unknown
@@ -525,6 +526,7 @@ const REGISTRY_REPAIR_DRY_RUN_KEYS = [
   "LIFECYCLE_FAILURE_CAUSE",
   "REPAIR_ROW_CURRENT_STATUS_CLASS",
   "REPAIR_ROW_STATUS_RAW_VALUE_RECOGNIZED",
+  "REPAIR_ROW_STATUS_REACTIVATABLE",
   "REPAIR_ROW_ACCOUNT_SCOPE_MATCH",
   "REPAIR_ROW_AUTHORITATIVE_ITEM_ID_STILL_LIVE",
   "REPAIR_ROW_ITEM_ID_UNIQUE_BOTH_SIDES",
@@ -764,16 +766,18 @@ const REGISTRY_REPAIR_LIFECYCLE_FAILURE_CAUSES = [
   "NONE",
   "REGISTRY_ROW_NOT_ACTIVE",
   "REGISTRY_LISTING_STATUS_UNAVAILABLE",
+  "REACTIVATION_NOT_ALLOWED",
   "MULTIPLE_FAILURES",
   "UNPROVEN",
 ] as const
 
 const REGISTRY_REPAIR_ROW_STATUS_CLASSES = [
   "ACTIVE",
+  "PAUSED",
+  "DRAFT",
   "STALE",
   "ENDED",
   "HISTORICAL",
-  "INACTIVE",
   "UNKNOWN",
   "OTHER",
   "UNPROVEN",
@@ -782,6 +786,7 @@ const REGISTRY_REPAIR_ROW_STATUS_CLASSES = [
 type RegistryRepairRowDiagnostic = {
   statusClass: EbayRegistryRepairRowStatusClass
   statusRawValueRecognized: "YES" | "NO" | "UNPROVEN"
+  statusReactivatable: "YES" | "NO" | "UNPROVEN"
   accountScopeMatch: "YES" | "NO" | "UNPROVEN"
   authoritativeItemIdStillLive: "YES" | "NO" | "UNPROVEN"
   itemIdUniqueBothSides: "YES" | "NO" | "UNPROVEN"
@@ -2002,6 +2007,7 @@ function parseRegistryRepairRowDiagnostic(
   const statusClass = record.REPAIR_ROW_CURRENT_STATUS_CLASS
   const flags = [
     record.REPAIR_ROW_STATUS_RAW_VALUE_RECOGNIZED,
+    record.REPAIR_ROW_STATUS_REACTIVATABLE,
     record.REPAIR_ROW_ACCOUNT_SCOPE_MATCH,
     record.REPAIR_ROW_AUTHORITATIVE_ITEM_ID_STILL_LIVE,
     record.REPAIR_ROW_ITEM_ID_UNIQUE_BOTH_SIDES,
@@ -2029,11 +2035,20 @@ function parseRegistryRepairRowDiagnostic(
         record.REACTIVATION_ALLOWED_FROM_ENDED !== "YES" ||
         record.REACTIVATION_ALLOWED_FROM_HISTORICAL !== "NO" ||
         record.REACTIVATION_ALLOWED_FROM_UNKNOWN !== "NO")) return null
+  if (!allUnproven) {
+    const expectedReactivatable =
+      statusClass === "PAUSED" || statusClass === "DRAFT" || statusClass === "ENDED"
+        ? "YES"
+        : "NO"
+    if (record.REPAIR_ROW_STATUS_REACTIVATABLE !== expectedReactivatable) return null
+  }
 
   return {
     statusClass: statusClass as EbayRegistryRepairRowStatusClass,
     statusRawValueRecognized:
       record.REPAIR_ROW_STATUS_RAW_VALUE_RECOGNIZED as "YES" | "NO" | "UNPROVEN",
+    statusReactivatable:
+      record.REPAIR_ROW_STATUS_REACTIVATABLE as "YES" | "NO" | "UNPROVEN",
     accountScopeMatch:
       record.REPAIR_ROW_ACCOUNT_SCOPE_MATCH as "YES" | "NO" | "UNPROVEN",
     authoritativeItemIdStillLive:
@@ -3831,6 +3846,7 @@ export default function EbaySellerOAuthReauthPage() {
                   <dl className="mt-3 space-y-1 text-xs text-slate-700">
                     <div>Status class: {registryRepairDryRun.REPAIR_ROW_CURRENT_STATUS_CLASS}</div>
                     <div>Raw status recognized: {registryRepairDryRun.REPAIR_ROW_STATUS_RAW_VALUE_RECOGNIZED}</div>
+                    <div>Status reactivatable: {registryRepairDryRun.REPAIR_ROW_STATUS_REACTIVATABLE}</div>
                     <div>Account scope match: {registryRepairDryRun.REPAIR_ROW_ACCOUNT_SCOPE_MATCH}</div>
                     <div>Authoritative Item ID still live: {registryRepairDryRun.REPAIR_ROW_AUTHORITATIVE_ITEM_ID_STILL_LIVE}</div>
                     <div>Item ID unique both sides: {registryRepairDryRun.REPAIR_ROW_ITEM_ID_UNIQUE_BOTH_SIDES}</div>
