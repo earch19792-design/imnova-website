@@ -6,6 +6,7 @@ import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
 import type { EbayRegistryCoverageDiagnostic } from "@/lib/ebay/ebay-commercial-monitor-live-readonly"
 import type {
+  EbayRegistryRepairAmbiguityClass,
   EbayRegistryRepairDryRun,
   EbayRegistryRepairDryRunRejectionReason,
 } from "@/lib/ebay/ebay-registry-repair-dry-run"
@@ -263,6 +264,7 @@ type RegistryRepairDryRunPayload = {
   registryRepairDryRun?: unknown
   error?: unknown
   REJECTION_REASON?: unknown
+  AMBIGUITY_CLASS?: unknown
 }
 
 const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
@@ -380,6 +382,7 @@ const REGISTRY_REPAIR_DRY_RUN_KEYS = [
   "DRY_RUN_FRESHNESS_STATUS",
   "DRY_RUN_STALE_LABEL",
   "DRY_RUN_REJECTION_REASON",
+  "AMBIGUITY_CLASS",
   "DRY_RUN_STATE_BOUND",
   "DRY_RUN_STATE_FINGERPRINT_PRESENT",
   "APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE",
@@ -450,11 +453,29 @@ const REGISTRY_REPAIR_DRY_RUN_REJECTION_REASONS = [
   "UNPROVEN",
 ] as const
 
+const REGISTRY_REPAIR_AMBIGUITY_CLASSES = [
+  "REVIEWABLE_ONLY",
+  "BLOCKING_MULTIPLE_CANDIDATES",
+  "BLOCKING_CROSS_LINK",
+  "BLOCKING_DUPLICATE_AUTHORITY",
+  "BLOCKING_PARTITION_CONFLICT",
+  "BLOCKING_UNPROVEN",
+  "NONE",
+] as const
+
 function validRegistryRepairDryRunRejectionReason(
   value: unknown,
 ): value is EbayRegistryRepairDryRunRejectionReason {
   return REGISTRY_REPAIR_DRY_RUN_REJECTION_REASONS.some((reason) =>
     reason === value
+  )
+}
+
+function validRegistryRepairAmbiguityClass(
+  value: unknown,
+): value is EbayRegistryRepairAmbiguityClass {
+  return REGISTRY_REPAIR_AMBIGUITY_CLASSES.some((ambiguityClass) =>
+    ambiguityClass === value
   )
 }
 
@@ -1470,6 +1491,7 @@ function validRegistryRepairDryRun(
         validRegistryRepairDryRunRejectionReason(
           record.DRY_RUN_REJECTION_REASON,
         )) ||
+      !validRegistryRepairAmbiguityClass(record.AMBIGUITY_CLASS) ||
       !precondition(record.REPAIR_PRECONDITION_STATUS) ||
       !precondition(record.CREATE_PRECONDITION_STATUS) ||
       !precondition(record.STALE_PRECONDITION_STATUS) ||
@@ -1500,6 +1522,14 @@ function validRegistryRepairDryRun(
       !yesNoUnproven(record.APPROVAL_INVALIDATES_ON_REGISTRY_STATE_CHANGE)) {
     return false
   }
+
+  const ambiguityClass = record.AMBIGUITY_CLASS
+  const blockingAmbiguity = typeof ambiguityClass === "string" &&
+    ambiguityClass.startsWith("BLOCKING_")
+  if ((blockingAmbiguity &&
+        record.DRY_RUN_REJECTION_REASON !== "AMBIGUOUS_IDENTITY") ||
+      (ambiguityClass === "REVIEWABLE_ONLY" &&
+        record.DRY_RUN_REJECTION_REASON !== null)) return false
 
   const candidates = record.HUMAN_REVIEW_CANDIDATES
   if (!candidates.every((candidate) => {
@@ -1547,6 +1577,9 @@ export default function EbaySellerOAuthReauthPage() {
   const [registryRepairDryRunRejectionReason,
     setRegistryRepairDryRunRejectionReason] =
     useState<EbayRegistryRepairDryRunRejectionReason | null>(null)
+  const [registryRepairDryRunAmbiguityClass,
+    setRegistryRepairDryRunAmbiguityClass] =
+    useState<EbayRegistryRepairAmbiguityClass | null>(null)
   const [error, setError] = useState("")
 
   useEffect(() => {
@@ -1737,6 +1770,7 @@ export default function EbaySellerOAuthReauthPage() {
     setPreviewingRegistryRepair(true)
     setRegistryRepairDryRun(null)
     setRegistryRepairDryRunRejectionReason(null)
+    setRegistryRepairDryRunAmbiguityClass(null)
     setError("")
     try {
       if (!runtimeCredentialMatchAllowsStart(credentialMatch)) {
@@ -1763,6 +1797,11 @@ export default function EbaySellerOAuthReauthPage() {
             ? payload.REJECTION_REASON
             : "UNPROVEN",
         )
+        setRegistryRepairDryRunAmbiguityClass(
+          validRegistryRepairAmbiguityClass(payload.AMBIGUITY_CLASS)
+            ? payload.AMBIGUITY_CLASS
+            : "BLOCKING_UNPROVEN",
+        )
         return
       }
       if (!validRegistryRepairDryRun(payload.registryRepairDryRun)) {
@@ -1770,6 +1809,7 @@ export default function EbaySellerOAuthReauthPage() {
         setRegistryRepairDryRunRejectionReason(
           "RESPONSE_CONTRACT_INVALID",
         )
+        setRegistryRepairDryRunAmbiguityClass("BLOCKING_UNPROVEN")
         return
       }
       if (payload.registryRepairDryRun.DRY_RUN_REJECTION_REASON !== null) {
@@ -1777,12 +1817,19 @@ export default function EbaySellerOAuthReauthPage() {
         setRegistryRepairDryRunRejectionReason(
           payload.registryRepairDryRun.DRY_RUN_REJECTION_REASON,
         )
+        setRegistryRepairDryRunAmbiguityClass(
+          payload.registryRepairDryRun.AMBIGUITY_CLASS,
+        )
         return
       }
+      setRegistryRepairDryRunAmbiguityClass(
+        payload.registryRepairDryRun.AMBIGUITY_CLASS,
+      )
       setRegistryRepairDryRun(payload.registryRepairDryRun)
     } catch {
       setError("REGISTRY_REPAIR_DRY_RUN_REJECTED")
       setRegistryRepairDryRunRejectionReason("UNPROVEN")
+      setRegistryRepairDryRunAmbiguityClass("BLOCKING_UNPROVEN")
     } finally {
       setPreviewingRegistryRepair(false)
     }
@@ -2092,6 +2139,11 @@ export default function EbaySellerOAuthReauthPage() {
               Rejection reason: {registryRepairDryRunRejectionReason}
             </p>
           ) : null}
+          {registryRepairDryRunAmbiguityClass ? (
+            <p aria-live="polite" className="mt-3 rounded-xl border border-amber-300/30 bg-amber-300/[0.06] p-3 text-sm font-black text-amber-100">
+              Ambiguity class: {registryRepairDryRunAmbiguityClass}
+            </p>
+          ) : null}
           {registryCoverageDiagnostic ? (
             <div className="mt-5 space-y-2 text-xs text-white/75">
               <dl className="grid gap-2 text-xs text-white/75 sm:grid-cols-2">
@@ -2324,6 +2376,7 @@ export default function EbaySellerOAuthReauthPage() {
                   {[
                     ["Evidence status", registryRepairDryRun.EVIDENCE_STATUS],
                     ["Dry-run freshness", registryRepairDryRun.DRY_RUN_FRESHNESS_STATUS],
+                    ["Ambiguity class", registryRepairDryRun.AMBIGUITY_CLASS],
                     ["Current live count", registryRepairDryRun.CURRENT_LIVE_COUNT],
                     ["Current Registry count", registryRepairDryRun.CURRENT_REGISTRY_COUNT],
                     ["Current evidence fingerprint", registryRepairDryRun.CURRENT_EVIDENCE_FINGERPRINT],

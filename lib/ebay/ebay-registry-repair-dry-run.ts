@@ -24,6 +24,14 @@ export type EbayRegistryRepairDryRunRejectionReason =
   | "RESPONSE_CONTRACT_INVALID"
   | "BUDGET_EXHAUSTED"
   | "UNPROVEN"
+export type EbayRegistryRepairAmbiguityClass =
+  | "REVIEWABLE_ONLY"
+  | "BLOCKING_MULTIPLE_CANDIDATES"
+  | "BLOCKING_CROSS_LINK"
+  | "BLOCKING_DUPLICATE_AUTHORITY"
+  | "BLOCKING_PARTITION_CONFLICT"
+  | "BLOCKING_UNPROVEN"
+  | "NONE"
 export type EbayRegistryRepairFutureWriteRejectionReason =
   | "NONE"
   | "EVIDENCE_UNAVAILABLE"
@@ -47,6 +55,7 @@ export type EbayRegistryRepairDryRun = {
   CURRENT_EVIDENCE_FINGERPRINT: string | "UNPROVEN"
   DRY_RUN_FRESHNESS_STATUS: EbayRegistryRepairDryRunFreshnessStatus
   DRY_RUN_REJECTION_REASON: EbayRegistryRepairDryRunRejectionReason | null
+  AMBIGUITY_CLASS: EbayRegistryRepairAmbiguityClass
   DRY_RUN_STALE_LABEL:
     | "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE"
     | "DRY RUN STALE — REFRESH REQUIRED"
@@ -317,6 +326,7 @@ EbayRegistryRepairDryRun {
     CURRENT_EVIDENCE_FINGERPRINT: "UNPROVEN",
     DRY_RUN_FRESHNESS_STATUS: "UNPROVEN",
     DRY_RUN_REJECTION_REASON: "UNPROVEN",
+    AMBIGUITY_CLASS: "BLOCKING_UNPROVEN",
     DRY_RUN_STALE_LABEL: "UNPROVEN",
     DRY_RUN_STATE_BOUND: "UNPROVEN",
     DRY_RUN_STATE_FINGERPRINT_PRESENT: "UNPROVEN",
@@ -395,6 +405,9 @@ export function buildEbayRegistryRepairDryRun(
     if (registry.itemId) increment(registryItemCounts, registry.itemId)
     if (registry.sku) increment(registrySkuCounts, registry.sku)
   }
+  const hasDuplicateAuthority =
+    [...liveItemCounts.values()].some((count) => count > 1) ||
+    [...registryItemCounts.values()].some((count) => count > 1)
 
   const evidenceFingerprint = buildEbayRegistryRepairEvidenceFingerprint(input)
   if (evidenceFingerprint === "UNPROVEN") {
@@ -430,6 +443,9 @@ export function buildEbayRegistryRepairDryRun(
       liveRegistryReferences[liveIndex]?.add(registry.index)
     }
   }
+  const hasRegistryReferencePartitionConflict = liveRegistryReferences.some(
+    (references) => references.size > 1,
+  )
 
   const liveMatched = new Set<number>()
   const liveRepair = new Set<number>()
@@ -448,6 +464,9 @@ export function buildEbayRegistryRepairDryRun(
   let repairUnproven = 0
   let staleUnproven = 0
   let humanReviewEvidenceSafe = true
+  let hasMultipleCandidates = false
+  let hasCrossLink = false
+  let hasActionPartitionConflict = false
 
   for (const registry of registryFacts) {
     const itemMatches = itemMatchesFor(registry.itemId)
@@ -457,6 +476,12 @@ export function buildEbayRegistryRepairDryRun(
       return Boolean(live && live.sku === registry.sku &&
         live.variationKey === registry.variationKey)
     })
+    const itemAndSkuReferenceSameLive = itemMatches.some(
+      (liveIndex) => skuMatches.includes(liveIndex),
+    )
+    hasMultipleCandidates ||= itemMatches.length > 1 || skuMatches.length > 1
+    hasCrossLink ||= itemMatches.length > 0 && skuMatches.length > 0 &&
+      !itemAndSkuReferenceSameLive
     const rowAccountCorrect = registry.row.account_key === accountKey
     const rowActive = registry.row.listing_status.toLowerCase() === "active"
 
@@ -510,10 +535,10 @@ export function buildEbayRegistryRepairDryRun(
 
     if (itemMatches.length === 0 && skuMatches.length === 1) {
       const live = liveFacts[skuMatches[0]]
-      const baseSafe = Boolean(live && registry.guard && registry.itemId &&
-        registry.sku && rowAccountCorrect && rowActive &&
+      const reviewEvidenceSafe = Boolean(live && registry.sku &&
+        rowAccountCorrect && rowActive &&
         livePreconditionsProven(live.listing))
-      if (!baseSafe || !live || !registry.guard || !registry.sku) {
+      if (!reviewEvidenceSafe || !live || !registry.sku) {
         registryUnproven += 1
         if (live) liveUnproven.add(live.index)
         humanReviewEvidenceSafe = false
@@ -523,14 +548,23 @@ export function buildEbayRegistryRepairDryRun(
         evidenceCount(registrySkuCounts, registry.sku) === 1
       const liveReferences = liveRegistryReferences[live.index]
       const competing = liveReferences ? liveReferences.size > 1 : true
+      if (!skuUnique || competing) {
+        registryUnproven += 1
+        liveUnproven.add(live.index)
+        humanReviewEvidenceSafe = false
+        continue
+      }
       registryHumanReview += 1
       liveHumanReview.add(live.index)
-      humanReviewEvidenceSafe &&= skuUnique && !competing
       humanCandidates.push({
         CANDIDATE_HANDLE: opaqueHandle("review", [
-          registry.guard,
+          accountKey,
+          registry.itemId,
+          registry.sku,
+          registry.variationKey,
           live.itemId,
           live.sku,
+          live.variationKey,
         ]),
         RELATIONSHIP_TYPE: "SKU_ONLY",
         REGISTRY_ITEM_ID_CURRENTLY_LIVE: registry.itemId
@@ -567,6 +601,7 @@ export function buildEbayRegistryRepairDryRun(
       .filter((group) => group.has(live.index))
     if (liveUnproven.has(live.index) || actionMemberships.length > 1) {
       liveUnproven.add(live.index)
+      hasActionPartitionConflict ||= actionMemberships.length > 1
     }
   }
 
@@ -651,6 +686,28 @@ export function buildEbayRegistryRepairDryRun(
     repairStatus === "PASS" &&
     createStatus === "PASS" && staleStatus === "PASS" &&
     stateGuardsSupported === "YES"
+  const ambiguityClass: EbayRegistryRepairAmbiguityClass =
+    !sameRequestEvidenceCoherent
+      ? "BLOCKING_UNPROVEN"
+      : hasMultipleCandidates
+        ? "BLOCKING_MULTIPLE_CANDIDATES"
+        : hasCrossLink
+          ? "BLOCKING_CROSS_LINK"
+          : hasDuplicateAuthority
+            ? "BLOCKING_DUPLICATE_AUTHORITY"
+            : hasRegistryReferencePartitionConflict ||
+                hasActionPartitionConflict ||
+                livePartitionValid !== "YES" ||
+                registryPartitionValid !== "YES"
+              ? "BLOCKING_PARTITION_CONFLICT"
+              : liveUnproven.size > 0 || registryUnproven > 0 ||
+                  !humanReviewEvidenceSafe
+                ? "BLOCKING_UNPROVEN"
+                : humanCandidates.length > 0
+                  ? "REVIEWABLE_ONLY"
+                  : "NONE"
+  const blockingAmbiguity = ambiguityClass !== "NONE" &&
+    ambiguityClass !== "REVIEWABLE_ONLY"
   const rejectionReason: EbayRegistryRepairDryRunRejectionReason | null =
     !sameRequestEvidenceCoherent
       ? "STATE_CHANGED_DURING_SAME_REQUEST"
@@ -658,10 +715,10 @@ export function buildEbayRegistryRepairDryRun(
         ? "IDENTITY_PARTITION_INVALID"
         : registryPartitionValid !== "YES"
           ? "REGISTRY_PARTITION_INVALID"
+        : blockingAmbiguity
+          ? "AMBIGUOUS_IDENTITY"
         : !basePreconditionsPass
-          ? liveUnproven.size > 0 || registryUnproven > 0
-            ? "AMBIGUOUS_IDENTITY"
-            : "PRECONDITION_UNPROVEN"
+          ? "PRECONDITION_UNPROVEN"
           : null
   const ready = rejectionReason === null
       ? "YES" as const
@@ -684,6 +741,7 @@ export function buildEbayRegistryRepairDryRun(
     CURRENT_EVIDENCE_FINGERPRINT: evidenceFingerprint,
     DRY_RUN_FRESHNESS_STATUS: freshnessStatus,
     DRY_RUN_REJECTION_REASON: rejectionReason,
+    AMBIGUITY_CLASS: ambiguityClass,
     DRY_RUN_STALE_LABEL: staleLabel,
     DRY_RUN_STATE_BOUND: sameRequestEvidenceCoherent ? "YES" : "NO",
     DRY_RUN_STATE_FINGERPRINT_PRESENT: "YES",

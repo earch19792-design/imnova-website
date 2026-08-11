@@ -228,6 +228,7 @@ export async function POST(request: NextRequest) {
           success: false,
           error: "REGISTRY_REPAIR_DRY_RUN_REJECTED",
           REJECTION_REASON: registryRepairDryRun.DRY_RUN_REJECTION_REASON,
+          AMBIGUITY_CLASS: registryRepairDryRun.AMBIGUITY_CLASS,
         }, {
           status: 409,
           headers: { "Cache-Control": "private, no-store, max-age=0" },
@@ -312,6 +313,7 @@ export async function POST(request: NextRequest) {
         success: false,
         error: "REGISTRY_REPAIR_DRY_RUN_REJECTED",
         REJECTION_REASON: "UNPROVEN",
+        AMBIGUITY_CLASS: "BLOCKING_UNPROVEN",
       }, {
         status: 403,
         headers: { "Cache-Control": "private, no-store, max-age=0" },
