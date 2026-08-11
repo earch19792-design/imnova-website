@@ -92,6 +92,7 @@ function runtimeAllowed(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const requestStartedAt = Date.now()
   const fetchImpl = fetch
+  let requestedAction: unknown = null
   try {
     if (!runtimeAllowed(request)) {
       return NextResponse.json(
@@ -123,6 +124,7 @@ export async function POST(request: NextRequest) {
       reviewedEvidenceFingerprint?: unknown
     }
     const action = actionPayload.action
+    requestedAction = action
     const payloadKeys = Object.keys(payload).sort().join(",")
     const reviewedEvidenceFingerprint =
       actionPayload.reviewedEvidenceFingerprint
@@ -220,10 +222,17 @@ export async function POST(request: NextRequest) {
       const registryRepairDryRun = await previewEbayRegistryRepairRuntime({
         startedAt: requestStartedAt,
         fetchImpl,
-        reviewedEvidenceFingerprint: typeof reviewedEvidenceFingerprint === "string"
-          ? reviewedEvidenceFingerprint
-          : null,
       })
+      if (registryRepairDryRun.DRY_RUN_REJECTION_REASON !== null) {
+        return NextResponse.json({
+          success: false,
+          error: "REGISTRY_REPAIR_DRY_RUN_REJECTED",
+          REJECTION_REASON: registryRepairDryRun.DRY_RUN_REJECTION_REASON,
+        }, {
+          status: 409,
+          headers: { "Cache-Control": "private, no-store, max-age=0" },
+        })
+      }
       return NextResponse.json({
         success: true,
         registryRepairDryRun,
@@ -298,6 +307,16 @@ export async function POST(request: NextRequest) {
     )
     return response
   } catch (cause) {
+    if (requestedAction === "preview_registry_repair") {
+      return NextResponse.json({
+        success: false,
+        error: "REGISTRY_REPAIR_DRY_RUN_REJECTED",
+        REJECTION_REASON: "UNPROVEN",
+      }, {
+        status: 403,
+        headers: { "Cache-Control": "private, no-store, max-age=0" },
+      })
+    }
     return NextResponse.json({
       success: false,
       error: safeEbaySellerOAuthReauthError(cause),

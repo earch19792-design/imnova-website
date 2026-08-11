@@ -5,7 +5,10 @@ import { useEffect, useState } from "react"
 
 import { supabase } from "@/lib/supabase"
 import type { EbayRegistryCoverageDiagnostic } from "@/lib/ebay/ebay-commercial-monitor-live-readonly"
-import type { EbayRegistryRepairDryRun } from "@/lib/ebay/ebay-registry-repair-dry-run"
+import type {
+  EbayRegistryRepairDryRun,
+  EbayRegistryRepairDryRunRejectionReason,
+} from "@/lib/ebay/ebay-registry-repair-dry-run"
 
 const START_PATH = "/api/admin/ebay/monitor/seller-oauth-reauth"
 const CALLBACK_PATH = "/api/admin/ebay/monitor/seller-oauth-reauth"
@@ -258,7 +261,8 @@ type RegistryCoverageDiagnosticPayload = {
 type RegistryRepairDryRunPayload = {
   success?: boolean
   registryRepairDryRun?: unknown
-  error?: string
+  error?: unknown
+  REJECTION_REASON?: unknown
 }
 
 const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
@@ -375,6 +379,7 @@ const REGISTRY_REPAIR_DRY_RUN_KEYS = [
   "CURRENT_EVIDENCE_FINGERPRINT",
   "DRY_RUN_FRESHNESS_STATUS",
   "DRY_RUN_STALE_LABEL",
+  "DRY_RUN_REJECTION_REASON",
   "DRY_RUN_STATE_BOUND",
   "DRY_RUN_STATE_FINGERPRINT_PRESENT",
   "APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE",
@@ -430,6 +435,28 @@ const REGISTRY_REPAIR_HUMAN_CANDIDATE_KEYS = [
   "COMPETING_REGISTRY_RELATION",
   "RECOMMENDED_ACTION",
 ] as const
+
+const REGISTRY_REPAIR_DRY_RUN_REJECTION_REASONS = [
+  "REGISTRY_SOURCE_UNAVAILABLE",
+  "LIVE_ENUMERATION_UNAVAILABLE",
+  "ACCOUNT_BINDING_FAILED",
+  "IDENTITY_PARTITION_INVALID",
+  "REGISTRY_PARTITION_INVALID",
+  "AMBIGUOUS_IDENTITY",
+  "PRECONDITION_UNPROVEN",
+  "STATE_CHANGED_DURING_SAME_REQUEST",
+  "RESPONSE_CONTRACT_INVALID",
+  "BUDGET_EXHAUSTED",
+  "UNPROVEN",
+] as const
+
+function validRegistryRepairDryRunRejectionReason(
+  value: unknown,
+): value is EbayRegistryRepairDryRunRejectionReason {
+  return REGISTRY_REPAIR_DRY_RUN_REJECTION_REASONS.some((reason) =>
+    reason === value
+  )
+}
 
 const RUNTIME_CREDENTIAL_MATCH_KEYS = [
   "RUNTIME_EBAY_CLIENT_ID_PRESENT",
@@ -1439,6 +1466,10 @@ function validRegistryRepairDryRun(
         "DRY RUN STALE — REFRESH REQUIRED",
         "UNPROVEN",
       ].includes(String(record.DRY_RUN_STALE_LABEL)) ||
+      !(record.DRY_RUN_REJECTION_REASON === null ||
+        validRegistryRepairDryRunRejectionReason(
+          record.DRY_RUN_REJECTION_REASON,
+        )) ||
       !precondition(record.REPAIR_PRECONDITION_STATUS) ||
       !precondition(record.CREATE_PRECONDITION_STATUS) ||
       !precondition(record.STALE_PRECONDITION_STATUS) ||
@@ -1513,6 +1544,9 @@ export default function EbaySellerOAuthReauthPage() {
   const [previewingRegistryRepair, setPreviewingRegistryRepair] = useState(false)
   const [registryRepairDryRun, setRegistryRepairDryRun] =
     useState<EbayRegistryRepairDryRun | null>(null)
+  const [registryRepairDryRunRejectionReason,
+    setRegistryRepairDryRunRejectionReason] =
+    useState<EbayRegistryRepairDryRunRejectionReason | null>(null)
   const [error, setError] = useState("")
 
   useEffect(() => {
@@ -1700,10 +1734,9 @@ export default function EbaySellerOAuthReauthPage() {
   }
 
   async function previewRegistryRepair() {
-    const reviewedEvidenceFingerprint =
-      registryRepairDryRun?.CURRENT_EVIDENCE_FINGERPRINT
     setPreviewingRegistryRepair(true)
     setRegistryRepairDryRun(null)
+    setRegistryRepairDryRunRejectionReason(null)
     setError("")
     try {
       if (!runtimeCredentialMatchAllowsStart(credentialMatch)) {
@@ -1718,24 +1751,38 @@ export default function EbaySellerOAuthReauthPage() {
           Authorization: `Bearer ${bearer}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          action: "preview_registry_repair",
-          ...(reviewedEvidenceFingerprint &&
-              reviewedEvidenceFingerprint !== "UNPROVEN"
-            ? { reviewedEvidenceFingerprint }
-            : {}),
-        }),
+        body: JSON.stringify({ action: "preview_registry_repair" }),
       })
       const payload = await response.json() as RegistryRepairDryRunPayload
-      if (!response.ok || payload.success !== true ||
-          !validRegistryRepairDryRun(payload.registryRepairDryRun)) {
-        throw new Error(payload.error || "REGISTRY_REPAIR_DRY_RUN_REJECTED")
+      if (!response.ok || payload.success !== true) {
+        setError("REGISTRY_REPAIR_DRY_RUN_REJECTED")
+        setRegistryRepairDryRunRejectionReason(
+          validRegistryRepairDryRunRejectionReason(
+            payload.REJECTION_REASON,
+          )
+            ? payload.REJECTION_REASON
+            : "UNPROVEN",
+        )
+        return
+      }
+      if (!validRegistryRepairDryRun(payload.registryRepairDryRun)) {
+        setError("REGISTRY_REPAIR_DRY_RUN_REJECTED")
+        setRegistryRepairDryRunRejectionReason(
+          "RESPONSE_CONTRACT_INVALID",
+        )
+        return
+      }
+      if (payload.registryRepairDryRun.DRY_RUN_REJECTION_REASON !== null) {
+        setError("REGISTRY_REPAIR_DRY_RUN_REJECTED")
+        setRegistryRepairDryRunRejectionReason(
+          payload.registryRepairDryRun.DRY_RUN_REJECTION_REASON,
+        )
+        return
       }
       setRegistryRepairDryRun(payload.registryRepairDryRun)
-    } catch (cause) {
-      setError(cause instanceof Error
-        ? cause.message
-        : "REGISTRY_REPAIR_DRY_RUN_REJECTED")
+    } catch {
+      setError("REGISTRY_REPAIR_DRY_RUN_REJECTED")
+      setRegistryRepairDryRunRejectionReason("UNPROVEN")
     } finally {
       setPreviewingRegistryRepair(false)
     }
@@ -2040,6 +2087,11 @@ export default function EbaySellerOAuthReauthPage() {
               ? "Preparing Registry repair preview…"
               : "Preview Registry repair"}
           </button>
+          {registryRepairDryRunRejectionReason ? (
+            <p aria-live="polite" className="mt-3 rounded-xl border border-red-300/30 bg-red-300/[0.06] p-3 text-sm font-black text-red-100">
+              Rejection reason: {registryRepairDryRunRejectionReason}
+            </p>
+          ) : null}
           {registryCoverageDiagnostic ? (
             <div className="mt-5 space-y-2 text-xs text-white/75">
               <dl className="grid gap-2 text-xs text-white/75 sm:grid-cols-2">

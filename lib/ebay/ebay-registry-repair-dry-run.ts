@@ -12,6 +12,22 @@ export type EbayRegistryRepairDryRunFreshnessStatus =
   | "CURRENT"
   | "STALE"
   | "UNPROVEN"
+export type EbayRegistryRepairDryRunRejectionReason =
+  | "REGISTRY_SOURCE_UNAVAILABLE"
+  | "LIVE_ENUMERATION_UNAVAILABLE"
+  | "ACCOUNT_BINDING_FAILED"
+  | "IDENTITY_PARTITION_INVALID"
+  | "REGISTRY_PARTITION_INVALID"
+  | "AMBIGUOUS_IDENTITY"
+  | "PRECONDITION_UNPROVEN"
+  | "STATE_CHANGED_DURING_SAME_REQUEST"
+  | "RESPONSE_CONTRACT_INVALID"
+  | "BUDGET_EXHAUSTED"
+  | "UNPROVEN"
+export type EbayRegistryRepairFutureWriteRejectionReason =
+  | "NONE"
+  | "EVIDENCE_UNAVAILABLE"
+  | "FUTURE_WRITE_EVIDENCE_STALE"
 
 export type EbayRegistryRepairHumanReviewCandidate = {
   CANDIDATE_HANDLE: string
@@ -30,6 +46,7 @@ export type EbayRegistryRepairDryRun = {
   CURRENT_REGISTRY_COUNT: EbayRegistryRepairDryRunCount
   CURRENT_EVIDENCE_FINGERPRINT: string | "UNPROVEN"
   DRY_RUN_FRESHNESS_STATUS: EbayRegistryRepairDryRunFreshnessStatus
+  DRY_RUN_REJECTION_REASON: EbayRegistryRepairDryRunRejectionReason | null
   DRY_RUN_STALE_LABEL:
     | "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE"
     | "DRY RUN STALE — REFRESH REQUIRED"
@@ -88,7 +105,24 @@ export type EbayRegistryRepairDryRunInput = {
   observedAt: string
   liveListings: readonly EbayLiveListing[]
   registryRows: readonly ReadonlyRegistryListingRow[]
-  reviewedEvidenceFingerprint?: string | null
+  capturedEvidenceFingerprint: string
+}
+
+export type EbayRegistryRepairEvidenceFingerprintInput = Pick<
+  EbayRegistryRepairDryRunInput,
+  "accountKey" | "marketplaceId" | "liveListings" | "registryRows"
+>
+
+export type EbayRegistryRepairFutureWriteFreshness = {
+  WRITE_STATE_STATUS: EbayRegistryRepairDryRunFreshnessStatus
+  WRITE_ALLOWED: "YES" | "NO"
+  REFRESH_REQUIRED: "YES" | "NO"
+  DRY_RUN_FRESHNESS_STATUS: EbayRegistryRepairDryRunFreshnessStatus
+  DRY_RUN_STALE_LABEL:
+    | "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE"
+    | "DRY RUN STALE — REFRESH REQUIRED"
+    | "UNPROVEN"
+  FUTURE_WRITE_REJECTION_REASON: EbayRegistryRepairFutureWriteRejectionReason
 }
 
 const REPAIR_FIELDS = ["ebay_sku"]
@@ -167,6 +201,80 @@ function exactStateGuard(row: ReadonlyRegistryListingRow) {
   ]
 }
 
+export function buildEbayRegistryRepairEvidenceFingerprint(
+  input: EbayRegistryRepairEvidenceFingerprintInput,
+): string | "UNPROVEN" {
+  const accountKey = normalizedIdentity(input.accountKey)
+  if (!accountKey || input.marketplaceId !== "EBAY_US") return "UNPROVEN"
+  return opaqueHandle("evidence", {
+    version: "EBAY_REGISTRY_REPAIR_EVIDENCE_V1",
+    accountKey,
+    marketplaceId: input.marketplaceId,
+    live: input.liveListings.map((listing) => JSON.stringify([
+      normalizedIdentity(listing.itemId),
+      normalizedIdentity(listing.sku),
+      normalizedIdentity(listing.variationKey),
+      normalizedIdentity(listing.customLabel),
+      listing.listingState,
+      listing.identityAmbiguous,
+      normalizedIdentity(listing.marketplaceSite),
+      listing.marketplaceCertification.status,
+      listing.marketplaceCertification.source,
+      listing.source,
+    ])).sort(),
+    registry: input.registryRows.map((row) => JSON.stringify([
+      normalizedIdentity(row.id),
+      normalizedIdentity(row.account_key),
+      normalizedIdentity(row.source),
+      normalizedIdentity(row.listing_status),
+      normalizedIdentity(row.ebay_item_id),
+      normalizedIdentity(row.ebay_sku),
+      normalizedIdentity(row.ebay_variation_key),
+      row.sync_generation,
+      normalizedIdentity(row.updated_at),
+    ])).sort(),
+  })
+}
+
+export function evaluateEbayRegistryRepairFutureWriteFreshness(input: {
+  reviewedEvidenceFingerprint: string | "UNPROVEN" | null | undefined
+  currentEvidenceFingerprint: string | "UNPROVEN" | null | undefined
+}): EbayRegistryRepairFutureWriteFreshness {
+  const reviewed = normalizedIdentity(input.reviewedEvidenceFingerprint)
+  const current = normalizedIdentity(input.currentEvidenceFingerprint)
+  const safeFingerprint = /^rr_evidence_[a-f0-9]{24}$/
+  if (!reviewed || !current || !safeFingerprint.test(reviewed) ||
+      !safeFingerprint.test(current)) {
+    return {
+      WRITE_STATE_STATUS: "UNPROVEN",
+      WRITE_ALLOWED: "NO",
+      REFRESH_REQUIRED: "YES",
+      DRY_RUN_FRESHNESS_STATUS: "UNPROVEN",
+      DRY_RUN_STALE_LABEL: "UNPROVEN",
+      FUTURE_WRITE_REJECTION_REASON: "EVIDENCE_UNAVAILABLE",
+    }
+  }
+  if (reviewed !== current) {
+    return {
+      WRITE_STATE_STATUS: "STALE",
+      WRITE_ALLOWED: "NO",
+      REFRESH_REQUIRED: "YES",
+      DRY_RUN_FRESHNESS_STATUS: "STALE",
+      DRY_RUN_STALE_LABEL: "DRY RUN STALE — REFRESH REQUIRED",
+      FUTURE_WRITE_REJECTION_REASON: "FUTURE_WRITE_EVIDENCE_STALE",
+    }
+  }
+  return {
+    WRITE_STATE_STATUS: "CURRENT",
+    WRITE_ALLOWED: "YES",
+    REFRESH_REQUIRED: "NO",
+    DRY_RUN_FRESHNESS_STATUS: "CURRENT",
+    DRY_RUN_STALE_LABEL:
+      "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE",
+    FUTURE_WRITE_REJECTION_REASON: "NONE",
+  }
+}
+
 function livePreconditionsProven(listing: EbayLiveListing) {
   return listing.listingState === "ACTIVE" &&
     listing.identityAmbiguous === false &&
@@ -208,6 +316,7 @@ EbayRegistryRepairDryRun {
     CURRENT_REGISTRY_COUNT: "UNPROVEN",
     CURRENT_EVIDENCE_FINGERPRINT: "UNPROVEN",
     DRY_RUN_FRESHNESS_STATUS: "UNPROVEN",
+    DRY_RUN_REJECTION_REASON: "UNPROVEN",
     DRY_RUN_STALE_LABEL: "UNPROVEN",
     DRY_RUN_STATE_BOUND: "UNPROVEN",
     DRY_RUN_STATE_FINGERPRINT_PRESENT: "UNPROVEN",
@@ -287,44 +396,20 @@ export function buildEbayRegistryRepairDryRun(
     if (registry.sku) increment(registrySkuCounts, registry.sku)
   }
 
-  const evidenceFingerprint = opaqueHandle("evidence", {
-    version: "EBAY_REGISTRY_REPAIR_EVIDENCE_V1",
-    accountKey,
-    marketplaceId: input.marketplaceId,
-    live: liveFacts.map((live) => JSON.stringify([
-      live.itemId,
-      live.sku,
-      live.variationKey,
-      normalizedIdentity(live.listing.customLabel),
-      live.listing.listingState,
-      live.listing.identityAmbiguous,
-      normalizedIdentity(live.listing.marketplaceSite),
-      live.listing.marketplaceCertification.status,
-      live.listing.marketplaceCertification.source,
-      live.listing.source,
-    ])).sort(),
-    registry: registryFacts.map((registry) => JSON.stringify([
-      normalizedIdentity(registry.row.id),
-      normalizedIdentity(registry.row.account_key),
-      normalizedIdentity(registry.row.source),
-      normalizedIdentity(registry.row.listing_status),
-      registry.itemId,
-      registry.sku,
-      registry.variationKey,
-      registry.row.sync_generation,
-      normalizedIdentity(registry.row.updated_at),
-    ])).sort(),
-  })
-  const reviewedEvidenceFingerprint = normalizedIdentity(
-    input.reviewedEvidenceFingerprint,
+  const evidenceFingerprint = buildEbayRegistryRepairEvidenceFingerprint(input)
+  if (evidenceFingerprint === "UNPROVEN") {
+    return buildUnprovenEbayRegistryRepairDryRun()
+  }
+  const capturedEvidenceFingerprint = normalizedIdentity(
+    input.capturedEvidenceFingerprint,
   )
+  const sameRequestEvidenceCoherent =
+    capturedEvidenceFingerprint === evidenceFingerprint
   const freshnessStatus: EbayRegistryRepairDryRunFreshnessStatus =
-    reviewedEvidenceFingerprint && reviewedEvidenceFingerprint !== evidenceFingerprint
-      ? "STALE"
-      : "CURRENT"
-  const staleLabel = freshnessStatus === "STALE"
-    ? "DRY RUN STALE — REFRESH REQUIRED" as const
-    : "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE" as const
+    sameRequestEvidenceCoherent ? "CURRENT" : "UNPROVEN"
+  const staleLabel = sameRequestEvidenceCoherent
+    ? "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE" as const
+    : "UNPROVEN" as const
 
   const itemMatchesFor = (itemId: string | null) => itemId
     ? liveFacts.filter((live) => live.itemId === itemId).map((live) => live.index)
@@ -540,14 +625,14 @@ export function buildEbayRegistryRepairDryRun(
   const registryPartitionValid = registryPartitionSum === registryFacts.length
     ? "YES" as const
     : "NO" as const
-  const repairStatus = freshnessStatus === "STALE"
-    ? "FAIL" as const
+  const repairStatus = !sameRequestEvidenceCoherent
+    ? "UNPROVEN" as const
     : preconditionStatus(repairUnproven)
-  const createStatus = freshnessStatus === "STALE"
-    ? "FAIL" as const
+  const createStatus = !sameRequestEvidenceCoherent
+    ? "UNPROVEN" as const
     : preconditionStatus(createUnproven)
-  const staleStatus = freshnessStatus === "STALE"
-    ? "FAIL" as const
+  const staleStatus = !sameRequestEvidenceCoherent
+    ? "UNPROVEN" as const
     : preconditionStatus(staleUnproven)
   const stateGuardsSupported = repairHandles.length === registryRepairExisting &&
     staleHandles.length === registryMarkStale
@@ -558,14 +643,27 @@ export function buildEbayRegistryRepairDryRun(
   const expectedCoveragePercent = liveFacts.length > 0
     ? Number(((expectedMatchedAfterSafeTranche / liveFacts.length) * 100).toFixed(2))
     : "UNPROVEN" as const
-  const ready = liveUnproven.size === 0 && registryUnproven === 0 &&
+  const basePreconditionsPass = liveUnproven.size === 0 &&
+    registryUnproven === 0 &&
     registryMarkHistorical === 0 &&
     humanCandidates.length === registryHumanReview &&
-    humanReviewEvidenceSafe && freshnessStatus === "CURRENT" &&
-    expectedCoveragePercent !== "UNPROVEN" && livePartitionValid === "YES" &&
-    registryPartitionValid === "YES" && repairStatus === "PASS" &&
+    humanReviewEvidenceSafe && expectedCoveragePercent !== "UNPROVEN" &&
+    repairStatus === "PASS" &&
     createStatus === "PASS" && staleStatus === "PASS" &&
     stateGuardsSupported === "YES"
+  const rejectionReason: EbayRegistryRepairDryRunRejectionReason | null =
+    !sameRequestEvidenceCoherent
+      ? "STATE_CHANGED_DURING_SAME_REQUEST"
+      : livePartitionValid !== "YES"
+        ? "IDENTITY_PARTITION_INVALID"
+        : registryPartitionValid !== "YES"
+          ? "REGISTRY_PARTITION_INVALID"
+        : !basePreconditionsPass
+          ? liveUnproven.size > 0 || registryUnproven > 0
+            ? "AMBIGUOUS_IDENTITY"
+            : "PRECONDITION_UNPROVEN"
+          : null
+  const ready = rejectionReason === null
       ? "YES" as const
       : "NO" as const
   const packageHandle = opaqueHandle("package", {
@@ -585,8 +683,9 @@ export function buildEbayRegistryRepairDryRun(
     CURRENT_REGISTRY_COUNT: registryFacts.length,
     CURRENT_EVIDENCE_FINGERPRINT: evidenceFingerprint,
     DRY_RUN_FRESHNESS_STATUS: freshnessStatus,
+    DRY_RUN_REJECTION_REASON: rejectionReason,
     DRY_RUN_STALE_LABEL: staleLabel,
-    DRY_RUN_STATE_BOUND: "YES",
+    DRY_RUN_STATE_BOUND: sameRequestEvidenceCoherent ? "YES" : "NO",
     DRY_RUN_STATE_FINGERPRINT_PRESENT: "YES",
     APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE: "YES",
     APPROVAL_INVALIDATES_ON_REGISTRY_STATE_CHANGE: "YES",

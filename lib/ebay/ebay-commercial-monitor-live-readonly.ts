@@ -38,6 +38,7 @@ import {
   type ReadonlyRegistryListingRow,
 } from "./commercial-monitor-readonly-repository"
 import {
+  buildEbayRegistryRepairEvidenceFingerprint,
   buildEbayRegistryRepairDryRun,
   buildUnprovenEbayRegistryRepairDryRun,
   type EbayRegistryRepairDryRun,
@@ -386,6 +387,9 @@ type RegistryRuntimeReadInput = {
   captureRegistryRepairEvidence?: (
     evidence: RegistryRepairRuntimeEvidence,
   ) => void
+  readRegistryRepairEvidenceSnapshot?: () => Promise<
+    RegistryRepairRuntimeEvidence | undefined
+  >
 }
 
 function computeRegistryCoveragePercent(
@@ -894,29 +898,59 @@ export async function diagnoseRegistryCoverageRuntime(
 }
 
 export async function previewEbayRegistryRepairRuntime(
-  input: RegistryRuntimeReadInput & {
-    reviewedEvidenceFingerprint?: string | null
-  } = {},
+  input: RegistryRuntimeReadInput = {},
 ): Promise<EbayRegistryRepairDryRun> {
-  const { reviewedEvidenceFingerprint, ...runtimeInput } = input
-  let evidence: RegistryRepairRuntimeEvidence | undefined
-  await diagnoseRegistryCoverageRuntime({
-    ...runtimeInput,
-    captureRegistryRepairEvidence: (captured) => {
-      evidence = captured
-    },
-  })
-  if (!evidence) {
+  const {
+    readRegistryRepairEvidenceSnapshot,
+    captureRegistryRepairEvidence,
+    ...runtimeInput
+  } = input
+  const requestStartedAt = input.startedAt ?? Date.now()
+  const readCanonicalSnapshot = async () => {
+    let evidence: RegistryRepairRuntimeEvidence | undefined
+    await diagnoseRegistryCoverageRuntime({
+      ...runtimeInput,
+      startedAt: requestStartedAt,
+      captureRegistryRepairEvidence: (captured) => {
+        evidence = captured
+        captureRegistryRepairEvidence?.(captured)
+      },
+    })
+    return evidence
+  }
+  const readSnapshot = readRegistryRepairEvidenceSnapshot ??
+    readCanonicalSnapshot
+  const firstEvidence = await readSnapshot()
+  const currentEvidence = await readSnapshot()
+  if (!firstEvidence || !currentEvidence) {
+    return buildUnprovenEbayRegistryRepairDryRun()
+  }
+  const firstEvidenceFingerprint =
+    buildEbayRegistryRepairEvidenceFingerprint({
+      accountKey: firstEvidence.accountKey,
+      marketplaceId: "EBAY_US",
+      liveListings: firstEvidence.liveListings,
+      registryRows: firstEvidence.registryRows,
+    })
+  const currentEvidenceFingerprint =
+    buildEbayRegistryRepairEvidenceFingerprint({
+      accountKey: currentEvidence.accountKey,
+      marketplaceId: "EBAY_US",
+      liveListings: currentEvidence.liveListings,
+      registryRows: currentEvidence.registryRows,
+    })
+  if (firstEvidenceFingerprint === "UNPROVEN" ||
+      currentEvidenceFingerprint === "UNPROVEN") {
     return buildUnprovenEbayRegistryRepairDryRun()
   }
   return buildEbayRegistryRepairDryRun({
-    accountKey: evidence.accountKey,
+    accountKey: currentEvidence.accountKey,
     accountVerified: "YES",
     marketplaceId: "EBAY_US",
-    observedAt: evidence.observedAt,
-    liveListings: evidence.liveListings,
-    registryRows: evidence.registryRows,
-    reviewedEvidenceFingerprint,
+    observedAt: currentEvidence.observedAt,
+    liveListings: currentEvidence.liveListings,
+    registryRows: currentEvidence.registryRows,
+    capturedEvidenceFingerprint: firstEvidenceFingerprint,
   })
 }
 
