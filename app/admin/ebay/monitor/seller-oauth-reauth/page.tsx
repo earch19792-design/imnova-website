@@ -370,6 +370,15 @@ const REGISTRY_REPAIR_DRY_RUN_KEYS = [
   "DRY_RUN_LABEL",
   "EVIDENCE_STATUS",
   "DRY_RUN_PACKAGE_HANDLE",
+  "CURRENT_LIVE_COUNT",
+  "CURRENT_REGISTRY_COUNT",
+  "CURRENT_EVIDENCE_FINGERPRINT",
+  "DRY_RUN_FRESHNESS_STATUS",
+  "DRY_RUN_STALE_LABEL",
+  "DRY_RUN_STATE_BOUND",
+  "DRY_RUN_STATE_FINGERPRINT_PRESENT",
+  "APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE",
+  "APPROVAL_INVALIDATES_ON_REGISTRY_STATE_CHANGE",
   "REPAIR_EXISTING_COUNT",
   "REPAIR_PRECONDITION_STATUS",
   "REPAIR_FIELDS_TO_CHANGE",
@@ -1381,6 +1390,8 @@ function validRegistryRepairDryRun(
       typeof field === "string" && /^[a-z][a-z0-9_]*$/.test(field)
     )
   const countKeys = [
+    "CURRENT_LIVE_COUNT",
+    "CURRENT_REGISTRY_COUNT",
     "REPAIR_EXISTING_COUNT",
     "CREATE_NEW_COUNT",
     "MARK_STALE_COUNT",
@@ -1415,6 +1426,19 @@ function validRegistryRepairDryRun(
       ) ||
       typeof record.DRY_RUN_PACKAGE_HANDLE !== "string" ||
       !/^[A-Za-z0-9._:-]{1,200}$/.test(record.DRY_RUN_PACKAGE_HANDLE) ||
+      !(record.CURRENT_EVIDENCE_FINGERPRINT === "UNPROVEN" ||
+        (typeof record.CURRENT_EVIDENCE_FINGERPRINT === "string" &&
+          /^rr_evidence_[a-f0-9]{24}$/.test(
+            record.CURRENT_EVIDENCE_FINGERPRINT,
+          ))) ||
+      !["CURRENT", "STALE", "UNPROVEN"].includes(
+        String(record.DRY_RUN_FRESHNESS_STATUS),
+      ) ||
+      ![
+        "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE",
+        "DRY RUN STALE — REFRESH REQUIRED",
+        "UNPROVEN",
+      ].includes(String(record.DRY_RUN_STALE_LABEL)) ||
       !precondition(record.REPAIR_PRECONDITION_STATUS) ||
       !precondition(record.CREATE_PRECONDITION_STATUS) ||
       !precondition(record.STALE_PRECONDITION_STATUS) ||
@@ -1430,6 +1454,21 @@ function validRegistryRepairDryRun(
       !controlledText(record.ROLLBACK_STRATEGY) ||
       !yesNoUnproven(record.DRY_RUN_READY_FOR_APPROVAL) ||
       !Array.isArray(record.HUMAN_REVIEW_CANDIDATES)) return false
+
+  if ((record.DRY_RUN_FRESHNESS_STATUS === "CURRENT" &&
+        record.DRY_RUN_STALE_LABEL !==
+          "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE") ||
+      (record.DRY_RUN_FRESHNESS_STATUS === "STALE" &&
+        record.DRY_RUN_STALE_LABEL !== "DRY RUN STALE — REFRESH REQUIRED") ||
+      (record.DRY_RUN_FRESHNESS_STATUS === "UNPROVEN" &&
+        record.DRY_RUN_STALE_LABEL !== "UNPROVEN")) return false
+
+  if (!yesNoUnproven(record.DRY_RUN_STATE_BOUND) ||
+      !yesNoUnproven(record.DRY_RUN_STATE_FINGERPRINT_PRESENT) ||
+      !yesNoUnproven(record.APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE) ||
+      !yesNoUnproven(record.APPROVAL_INVALIDATES_ON_REGISTRY_STATE_CHANGE)) {
+    return false
+  }
 
   const candidates = record.HUMAN_REVIEW_CANDIDATES
   if (!candidates.every((candidate) => {
@@ -1661,6 +1700,8 @@ export default function EbaySellerOAuthReauthPage() {
   }
 
   async function previewRegistryRepair() {
+    const reviewedEvidenceFingerprint =
+      registryRepairDryRun?.CURRENT_EVIDENCE_FINGERPRINT
     setPreviewingRegistryRepair(true)
     setRegistryRepairDryRun(null)
     setError("")
@@ -1677,7 +1718,13 @@ export default function EbaySellerOAuthReauthPage() {
           Authorization: `Bearer ${bearer}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ action: "preview_registry_repair" }),
+        body: JSON.stringify({
+          action: "preview_registry_repair",
+          ...(reviewedEvidenceFingerprint &&
+              reviewedEvidenceFingerprint !== "UNPROVEN"
+            ? { reviewedEvidenceFingerprint }
+            : {}),
+        }),
       })
       const payload = await response.json() as RegistryRepairDryRunPayload
       if (!response.ok || payload.success !== true ||
@@ -2214,9 +2261,24 @@ export default function EbaySellerOAuthReauthPage() {
             <div className="mt-6 space-y-5 text-xs text-white/75">
               <section className="rounded-2xl border border-amber-200/25 bg-black/20 p-4">
                 <p className="font-black text-amber-100">{registryRepairDryRun.DRY_RUN_LABEL}</p>
+                <p className={`mt-3 rounded-xl border p-3 font-black ${
+                  registryRepairDryRun.DRY_RUN_FRESHNESS_STATUS === "STALE"
+                    ? "border-red-300/40 bg-red-300/[0.08] text-red-100"
+                    : "border-cyan-200/25 bg-cyan-200/[0.06] text-cyan-50"
+                }`}>
+                  {registryRepairDryRun.DRY_RUN_STALE_LABEL}
+                </p>
                 <dl className="mt-3 grid gap-2 sm:grid-cols-2">
                   {[
                     ["Evidence status", registryRepairDryRun.EVIDENCE_STATUS],
+                    ["Dry-run freshness", registryRepairDryRun.DRY_RUN_FRESHNESS_STATUS],
+                    ["Current live count", registryRepairDryRun.CURRENT_LIVE_COUNT],
+                    ["Current Registry count", registryRepairDryRun.CURRENT_REGISTRY_COUNT],
+                    ["Current evidence fingerprint", registryRepairDryRun.CURRENT_EVIDENCE_FINGERPRINT],
+                    ["Dry run state bound", registryRepairDryRun.DRY_RUN_STATE_BOUND],
+                    ["State fingerprint present", registryRepairDryRun.DRY_RUN_STATE_FINGERPRINT_PRESENT],
+                    ["Invalidates on eBay state change", registryRepairDryRun.APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE],
+                    ["Invalidates on Registry state change", registryRepairDryRun.APPROVAL_INVALIDATES_ON_REGISTRY_STATE_CHANGE],
                     ["Dry-run package handle", registryRepairDryRun.DRY_RUN_PACKAGE_HANDLE],
                     ["Ready for human approval", registryRepairDryRun.DRY_RUN_READY_FOR_APPROVAL],
                   ].map(([label, value]) => (
@@ -2228,6 +2290,9 @@ export default function EbaySellerOAuthReauthPage() {
                 </dl>
               </section>
 
+              <p className="font-black text-white">
+                Current action groups from this live recheck
+              </p>
               <section aria-label="Registry repair dry-run groups" className="grid gap-3 md:grid-cols-3">
                 {[
                   {

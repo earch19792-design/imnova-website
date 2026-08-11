@@ -113,13 +113,31 @@ export async function POST(request: NextRequest) {
         "EBAY_SELLER_OAUTH_REAUTH_ACTION_INVALID",
       )
     }
-    if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
-        Object.keys(payload).sort().join(",") !== "action") {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
       throw new EbaySellerOAuthReauthError(
         "EBAY_SELLER_OAUTH_REAUTH_ACTION_INVALID",
       )
     }
-    const action = (payload as { action?: unknown }).action
+    const actionPayload = payload as {
+      action?: unknown
+      reviewedEvidenceFingerprint?: unknown
+    }
+    const action = actionPayload.action
+    const payloadKeys = Object.keys(payload).sort().join(",")
+    const reviewedEvidenceFingerprint =
+      actionPayload.reviewedEvidenceFingerprint
+    const registryRepairPreviewAction = "preview_registry_repair"
+    const payloadShapeValid = payloadKeys === "action" || (
+      action === registryRepairPreviewAction &&
+      payloadKeys === "action,reviewedEvidenceFingerprint" &&
+      typeof reviewedEvidenceFingerprint === "string" &&
+      /^rr_evidence_[a-f0-9]{24}$/.test(reviewedEvidenceFingerprint)
+    )
+    if (!payloadShapeValid) {
+      throw new EbaySellerOAuthReauthError(
+        "EBAY_SELLER_OAUTH_REAUTH_ACTION_INVALID",
+      )
+    }
     if (action === "compare_runtime_credentials") {
       if ([
         "EBAY_SELLER_OAUTH_REAUTH_PREVIEW_REQUIRED",
@@ -202,6 +220,9 @@ export async function POST(request: NextRequest) {
       const registryRepairDryRun = await previewEbayRegistryRepairRuntime({
         startedAt: requestStartedAt,
         fetchImpl,
+        reviewedEvidenceFingerprint: typeof reviewedEvidenceFingerprint === "string"
+          ? reviewedEvidenceFingerprint
+          : null,
       })
       return NextResponse.json({
         success: true,

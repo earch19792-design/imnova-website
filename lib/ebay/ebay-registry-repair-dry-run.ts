@@ -8,6 +8,10 @@ export type EbayRegistryRepairPreconditionStatus =
   | "FAIL"
   | "UNPROVEN"
 type YesNoUnproven = "YES" | "NO" | "UNPROVEN"
+export type EbayRegistryRepairDryRunFreshnessStatus =
+  | "CURRENT"
+  | "STALE"
+  | "UNPROVEN"
 
 export type EbayRegistryRepairHumanReviewCandidate = {
   CANDIDATE_HANDLE: string
@@ -22,6 +26,18 @@ export type EbayRegistryRepairDryRun = {
   DRY_RUN_LABEL: "DRY RUN — NO CHANGES WILL BE APPLIED"
   EVIDENCE_STATUS: "AVAILABLE" | "UNPROVEN"
   DRY_RUN_PACKAGE_HANDLE: string | "UNPROVEN"
+  CURRENT_LIVE_COUNT: EbayRegistryRepairDryRunCount
+  CURRENT_REGISTRY_COUNT: EbayRegistryRepairDryRunCount
+  CURRENT_EVIDENCE_FINGERPRINT: string | "UNPROVEN"
+  DRY_RUN_FRESHNESS_STATUS: EbayRegistryRepairDryRunFreshnessStatus
+  DRY_RUN_STALE_LABEL:
+    | "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE"
+    | "DRY RUN STALE — REFRESH REQUIRED"
+    | "UNPROVEN"
+  DRY_RUN_STATE_BOUND: YesNoUnproven
+  DRY_RUN_STATE_FINGERPRINT_PRESENT: YesNoUnproven
+  APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE: YesNoUnproven
+  APPROVAL_INVALIDATES_ON_REGISTRY_STATE_CHANGE: YesNoUnproven
   REPAIR_EXISTING_COUNT: EbayRegistryRepairDryRunCount
   REPAIR_PRECONDITION_STATUS: EbayRegistryRepairPreconditionStatus
   REPAIR_FIELDS_TO_CHANGE: string[]
@@ -51,10 +67,10 @@ export type EbayRegistryRepairDryRun = {
   LIVE_RECHECK_REQUIRED_BEFORE_WRITE: "YES"
   PARTIAL_FAILURE_POLICY: "ABORT_BEFORE_WRITE_OR_ROLL_BACK_ENTIRE_ACCOUNT_TRANCHE"
   ROLLBACK_STRATEGY: "SINGLE_ACCOUNT_SCOPED_DATABASE_TRANSACTION"
-  EXPECTED_MATCHED_AFTER_SAFE_TRANCHE: 24
-  EXPECTED_LIVE_COUNT: 26
-  EXPECTED_PENDING_HUMAN_REVIEW: 2
-  EXPECTED_COVERAGE_PERCENT: 92.31
+  EXPECTED_MATCHED_AFTER_SAFE_TRANCHE: EbayRegistryRepairDryRunCount
+  EXPECTED_LIVE_COUNT: EbayRegistryRepairDryRunCount
+  EXPECTED_PENDING_HUMAN_REVIEW: EbayRegistryRepairDryRunCount
+  EXPECTED_COVERAGE_PERCENT: number | "UNPROVEN"
   DRY_RUN_READY_FOR_APPROVAL: "YES" | "NO"
   REGISTRY_MUTATIONS: 0
   EBAY_WRITES: 0
@@ -72,6 +88,7 @@ export type EbayRegistryRepairDryRunInput = {
   observedAt: string
   liveListings: readonly EbayLiveListing[]
   registryRows: readonly ReadonlyRegistryListingRow[]
+  reviewedEvidenceFingerprint?: string | null
 }
 
 const REPAIR_FIELDS = ["ebay_sku"]
@@ -157,12 +174,10 @@ function livePreconditionsProven(listing: EbayLiveListing) {
 }
 
 function preconditionStatus(
-  count: number,
-  expectedCount: number,
   unprovenCount: number,
 ): EbayRegistryRepairPreconditionStatus {
   if (unprovenCount > 0) return "UNPROVEN"
-  return count === expectedCount ? "PASS" : "FAIL"
+  return "PASS"
 }
 
 function safetyContract() {
@@ -173,10 +188,6 @@ function safetyContract() {
       "ABORT_BEFORE_WRITE_OR_ROLL_BACK_ENTIRE_ACCOUNT_TRANCHE" as const,
     ROLLBACK_STRATEGY:
       "SINGLE_ACCOUNT_SCOPED_DATABASE_TRANSACTION" as const,
-    EXPECTED_MATCHED_AFTER_SAFE_TRANCHE: 24 as const,
-    EXPECTED_LIVE_COUNT: 26 as const,
-    EXPECTED_PENDING_HUMAN_REVIEW: 2 as const,
-    EXPECTED_COVERAGE_PERCENT: 92.31 as const,
     REGISTRY_MUTATIONS: 0 as const,
     EBAY_WRITES: 0 as const,
     PRODUCT_CASE_MUTATIONS: 0 as const,
@@ -193,6 +204,15 @@ EbayRegistryRepairDryRun {
     DRY_RUN_LABEL: "DRY RUN — NO CHANGES WILL BE APPLIED",
     EVIDENCE_STATUS: "UNPROVEN",
     DRY_RUN_PACKAGE_HANDLE: "UNPROVEN",
+    CURRENT_LIVE_COUNT: "UNPROVEN",
+    CURRENT_REGISTRY_COUNT: "UNPROVEN",
+    CURRENT_EVIDENCE_FINGERPRINT: "UNPROVEN",
+    DRY_RUN_FRESHNESS_STATUS: "UNPROVEN",
+    DRY_RUN_STALE_LABEL: "UNPROVEN",
+    DRY_RUN_STATE_BOUND: "UNPROVEN",
+    DRY_RUN_STATE_FINGERPRINT_PRESENT: "UNPROVEN",
+    APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE: "YES",
+    APPROVAL_INVALIDATES_ON_REGISTRY_STATE_CHANGE: "YES",
     REPAIR_EXISTING_COUNT: "UNPROVEN",
     REPAIR_PRECONDITION_STATUS: "UNPROVEN",
     REPAIR_FIELDS_TO_CHANGE: [...REPAIR_FIELDS],
@@ -218,6 +238,10 @@ EbayRegistryRepairDryRun {
     LIVE_DRY_RUN_PARTITION_VALID: "NO",
     REGISTRY_DRY_RUN_PARTITION_VALID: "NO",
     STALE_STATE_GUARD_SUPPORTED: "UNPROVEN",
+    EXPECTED_MATCHED_AFTER_SAFE_TRANCHE: "UNPROVEN",
+    EXPECTED_LIVE_COUNT: "UNPROVEN",
+    EXPECTED_PENDING_HUMAN_REVIEW: "UNPROVEN",
+    EXPECTED_COVERAGE_PERCENT: "UNPROVEN",
     DRY_RUN_READY_FOR_APPROVAL: "NO",
     ...safetyContract(),
   }
@@ -228,7 +252,8 @@ export function buildEbayRegistryRepairDryRun(
 ): EbayRegistryRepairDryRun {
   const accountKey = normalizedIdentity(input.accountKey)
   const observedAt = normalizedIdentity(input.observedAt)
-  if (!accountKey || !observedAt || input.accountVerified !== "YES" ||
+  if (!accountKey || !observedAt || !Number.isFinite(Date.parse(observedAt)) ||
+      input.accountVerified !== "YES" ||
       input.marketplaceId !== "EBAY_US") {
     return buildUnprovenEbayRegistryRepairDryRun()
   }
@@ -261,6 +286,45 @@ export function buildEbayRegistryRepairDryRun(
     if (registry.itemId) increment(registryItemCounts, registry.itemId)
     if (registry.sku) increment(registrySkuCounts, registry.sku)
   }
+
+  const evidenceFingerprint = opaqueHandle("evidence", {
+    version: "EBAY_REGISTRY_REPAIR_EVIDENCE_V1",
+    accountKey,
+    marketplaceId: input.marketplaceId,
+    live: liveFacts.map((live) => JSON.stringify([
+      live.itemId,
+      live.sku,
+      live.variationKey,
+      normalizedIdentity(live.listing.customLabel),
+      live.listing.listingState,
+      live.listing.identityAmbiguous,
+      normalizedIdentity(live.listing.marketplaceSite),
+      live.listing.marketplaceCertification.status,
+      live.listing.marketplaceCertification.source,
+      live.listing.source,
+    ])).sort(),
+    registry: registryFacts.map((registry) => JSON.stringify([
+      normalizedIdentity(registry.row.id),
+      normalizedIdentity(registry.row.account_key),
+      normalizedIdentity(registry.row.source),
+      normalizedIdentity(registry.row.listing_status),
+      registry.itemId,
+      registry.sku,
+      registry.variationKey,
+      registry.row.sync_generation,
+      normalizedIdentity(registry.row.updated_at),
+    ])).sort(),
+  })
+  const reviewedEvidenceFingerprint = normalizedIdentity(
+    input.reviewedEvidenceFingerprint,
+  )
+  const freshnessStatus: EbayRegistryRepairDryRunFreshnessStatus =
+    reviewedEvidenceFingerprint && reviewedEvidenceFingerprint !== evidenceFingerprint
+      ? "STALE"
+      : "CURRENT"
+  const staleLabel = freshnessStatus === "STALE"
+    ? "DRY RUN STALE — REFRESH REQUIRED" as const
+    : "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE" as const
 
   const itemMatchesFor = (itemId: string | null) => itemId
     ? liveFacts.filter((live) => live.itemId === itemId).map((live) => live.index)
@@ -476,40 +540,36 @@ export function buildEbayRegistryRepairDryRun(
   const registryPartitionValid = registryPartitionSum === registryFacts.length
     ? "YES" as const
     : "NO" as const
-  const repairStatus = preconditionStatus(
-    registryRepairExisting,
-    1,
-    repairUnproven,
-  )
-  const createStatus = preconditionStatus(
-    liveCreate.size,
-    23,
-    createUnproven,
-  )
-  const staleStatus = preconditionStatus(
-    registryMarkStale,
-    4,
-    staleUnproven,
-  )
+  const repairStatus = freshnessStatus === "STALE"
+    ? "FAIL" as const
+    : preconditionStatus(repairUnproven)
+  const createStatus = freshnessStatus === "STALE"
+    ? "FAIL" as const
+    : preconditionStatus(createUnproven)
+  const staleStatus = freshnessStatus === "STALE"
+    ? "FAIL" as const
+    : preconditionStatus(staleUnproven)
   const stateGuardsSupported = repairHandles.length === registryRepairExisting &&
-    staleHandles.length === registryMarkStale &&
-    registryRepairExisting > 0 && registryMarkStale > 0
+    staleHandles.length === registryMarkStale
       ? "YES" as const
       : "UNPROVEN" as const
-  const ready = resolvedLiveMatched.size === 0 &&
-    resolvedLiveRepair.size === 1 && liveCreate.size === 23 &&
-    resolvedLiveHumanReview.size === 2 &&
-    liveUnproven.size === 0 && registryKeepCurrent === 0 &&
-    registryRepairExisting === 1 && registryMarkStale === 4 &&
-    registryMarkHistorical === 0 && registryHumanReview === 2 &&
-    registryUnproven === 0 && humanCandidates.length === 2 &&
-    humanReviewEvidenceSafe && livePartitionValid === "YES" &&
+  const expectedMatchedAfterSafeTranche = resolvedLiveMatched.size +
+    resolvedLiveRepair.size + liveCreate.size
+  const expectedCoveragePercent = liveFacts.length > 0
+    ? Number(((expectedMatchedAfterSafeTranche / liveFacts.length) * 100).toFixed(2))
+    : "UNPROVEN" as const
+  const ready = liveUnproven.size === 0 && registryUnproven === 0 &&
+    registryMarkHistorical === 0 &&
+    humanCandidates.length === registryHumanReview &&
+    humanReviewEvidenceSafe && freshnessStatus === "CURRENT" &&
+    expectedCoveragePercent !== "UNPROVEN" && livePartitionValid === "YES" &&
     registryPartitionValid === "YES" && repairStatus === "PASS" &&
     createStatus === "PASS" && staleStatus === "PASS" &&
     stateGuardsSupported === "YES"
       ? "YES" as const
       : "NO" as const
   const packageHandle = opaqueHandle("package", {
+    evidenceFingerprint,
     keep: keepHandles.sort(),
     repair: repairHandles.sort(),
     create: createHandles.sort(),
@@ -521,6 +581,15 @@ export function buildEbayRegistryRepairDryRun(
     DRY_RUN_LABEL: "DRY RUN — NO CHANGES WILL BE APPLIED",
     EVIDENCE_STATUS: "AVAILABLE",
     DRY_RUN_PACKAGE_HANDLE: packageHandle,
+    CURRENT_LIVE_COUNT: liveFacts.length,
+    CURRENT_REGISTRY_COUNT: registryFacts.length,
+    CURRENT_EVIDENCE_FINGERPRINT: evidenceFingerprint,
+    DRY_RUN_FRESHNESS_STATUS: freshnessStatus,
+    DRY_RUN_STALE_LABEL: staleLabel,
+    DRY_RUN_STATE_BOUND: "YES",
+    DRY_RUN_STATE_FINGERPRINT_PRESENT: "YES",
+    APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE: "YES",
+    APPROVAL_INVALIDATES_ON_REGISTRY_STATE_CHANGE: "YES",
     REPAIR_EXISTING_COUNT: registryRepairExisting,
     REPAIR_PRECONDITION_STATUS: repairStatus,
     REPAIR_FIELDS_TO_CHANGE: [...REPAIR_FIELDS],
@@ -546,6 +615,10 @@ export function buildEbayRegistryRepairDryRun(
     LIVE_DRY_RUN_PARTITION_VALID: livePartitionValid,
     REGISTRY_DRY_RUN_PARTITION_VALID: registryPartitionValid,
     STALE_STATE_GUARD_SUPPORTED: stateGuardsSupported,
+    EXPECTED_MATCHED_AFTER_SAFE_TRANCHE: expectedMatchedAfterSafeTranche,
+    EXPECTED_LIVE_COUNT: liveFacts.length,
+    EXPECTED_PENDING_HUMAN_REVIEW: resolvedLiveHumanReview.size,
+    EXPECTED_COVERAGE_PERCENT: expectedCoveragePercent,
     DRY_RUN_READY_FOR_APPROVAL: ready,
     ...safetyContract(),
   }

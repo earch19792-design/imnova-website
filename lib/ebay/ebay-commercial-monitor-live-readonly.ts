@@ -894,11 +894,14 @@ export async function diagnoseRegistryCoverageRuntime(
 }
 
 export async function previewEbayRegistryRepairRuntime(
-  input: RegistryRuntimeReadInput = {},
+  input: RegistryRuntimeReadInput & {
+    reviewedEvidenceFingerprint?: string | null
+  } = {},
 ): Promise<EbayRegistryRepairDryRun> {
+  const { reviewedEvidenceFingerprint, ...runtimeInput } = input
   let evidence: RegistryRepairRuntimeEvidence | undefined
   await diagnoseRegistryCoverageRuntime({
-    ...input,
+    ...runtimeInput,
     captureRegistryRepairEvidence: (captured) => {
       evidence = captured
     },
@@ -913,6 +916,7 @@ export async function previewEbayRegistryRepairRuntime(
     observedAt: evidence.observedAt,
     liveListings: evidence.liveListings,
     registryRows: evidence.registryRows,
+    reviewedEvidenceFingerprint,
   })
 }
 
