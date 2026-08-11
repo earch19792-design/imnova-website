@@ -340,6 +340,131 @@ type RegistryRepairDryRunPayload = {
   HUMAN_REVIEW_MUTATION_COUNT?: unknown
 }
 
+const APPROVED_REGISTRY_REPAIR_PACKAGE_HANDLE =
+  "rr_package_a907ead2fdbfcdff6a3d5b2e"
+const APPROVED_REGISTRY_REPAIR_EVIDENCE_FINGERPRINT =
+  "rr_evidence_11fe6081ddbfca09673f5e3d"
+
+const REGISTRY_REPAIR_EXECUTOR_FAILURE_CODES = [
+  "APPROVAL_BINDING_INVALID",
+  "CURRENT_PLAN_UNAVAILABLE",
+  "CURRENT_STATE_NOT_APPROVABLE",
+  "PRIVATE_PLAN_BINDING_MISMATCH",
+  "ACTION_COUNT_MISMATCH",
+  "REPAIR_OPERATION_NOT_SUPPORTED",
+  "HUMAN_REVIEW_EXCLUSION_FAILED",
+  "CREATE_PAYLOAD_UNSAFE",
+  "STALE_CAS_PAYLOAD_INVALID",
+  "RPC_FAILED",
+  "RPC_RESULT_INVALID",
+] as const
+
+type RegistryRepairExecutorFailureCode =
+  typeof REGISTRY_REPAIR_EXECUTOR_FAILURE_CODES[number]
+
+type RegistryRepairExecutionResult = {
+  EXECUTION_STATUS: "APPLIED"
+  RPC_INVOCATION_COUNT: 1
+  CREATE_COMMITTED: number
+  STALE_COMMITTED: number
+  REPAIR_COMMITTED: 0
+  HUMAN_REVIEW_MUTATED: 0
+  TRANSACTION_STATUS: "COMMITTED"
+  ROLLBACK_OCCURRED: "NO"
+  DATABASE_COMMIT_STATUS: "COMMITTED"
+  WRITE_EXECUTED: "YES"
+  POST_WRITE_VERIFICATION_STATUS: "PASS" | "FAILED" | "UNPROVEN"
+  POST_WRITE_LIVE_COUNT: number | "UNPROVEN"
+  POST_WRITE_REGISTRY_RECORD_COUNT: number | "UNPROVEN"
+  POST_WRITE_MATCHED_COUNT: number | "UNPROVEN"
+  POST_WRITE_MISSING_COUNT: number | "UNPROVEN"
+  POST_WRITE_ORPHANED_COUNT: number | "UNPROVEN"
+  POST_WRITE_AMBIGUOUS_COUNT: number | "UNPROVEN"
+  POST_WRITE_COVERAGE_PERCENT: number | "UNPROVEN"
+  POST_WRITE_HUMAN_REVIEW_COUNT: number | "UNPROVEN"
+  POST_WRITE_CREATE_RELATIONS_PRESENT: number | "UNPROVEN"
+  POST_WRITE_ENDED_ROWS_CONFIRMED: number | "UNPROVEN"
+  POST_WRITE_DUPLICATE_ITEM_ID_RELATIONS: number | "UNPROVEN"
+  POST_WRITE_PARTITION_VALID: "YES" | "NO" | "UNPROVEN"
+  HUMAN_REVIEW_ROWS_MUTATED: 0
+  HUMAN_REVIEW_RELATIONSHIPS_PRESERVED: "YES" | "NO" | "UNPROVEN"
+}
+
+type RegistryRepairExecutionPayload = {
+  success?: boolean
+  registryRepairExecutionResult?: unknown
+  error?: unknown
+  EXECUTOR_FAILURE_CODE?: unknown
+  RPC_INVOCATION_COUNT?: unknown
+  PREWRITE_ASSESSMENT?: unknown
+}
+
+const REGISTRY_REPAIR_EXECUTION_RESULT_KEYS = [
+  "CREATE_COMMITTED",
+  "DATABASE_COMMIT_STATUS",
+  "EXECUTION_STATUS",
+  "HUMAN_REVIEW_MUTATED",
+  "HUMAN_REVIEW_RELATIONSHIPS_PRESERVED",
+  "HUMAN_REVIEW_ROWS_MUTATED",
+  "POST_WRITE_AMBIGUOUS_COUNT",
+  "POST_WRITE_COVERAGE_PERCENT",
+  "POST_WRITE_CREATE_RELATIONS_PRESENT",
+  "POST_WRITE_DUPLICATE_ITEM_ID_RELATIONS",
+  "POST_WRITE_ENDED_ROWS_CONFIRMED",
+  "POST_WRITE_HUMAN_REVIEW_COUNT",
+  "POST_WRITE_LIVE_COUNT",
+  "POST_WRITE_MATCHED_COUNT",
+  "POST_WRITE_MISSING_COUNT",
+  "POST_WRITE_ORPHANED_COUNT",
+  "POST_WRITE_PARTITION_VALID",
+  "POST_WRITE_REGISTRY_RECORD_COUNT",
+  "POST_WRITE_VERIFICATION_STATUS",
+  "REPAIR_COMMITTED",
+  "ROLLBACK_OCCURRED",
+  "RPC_INVOCATION_COUNT",
+  "STALE_COMMITTED",
+  "TRANSACTION_STATUS",
+  "WRITE_EXECUTED",
+] as const
+
+function validRegistryRepairExecutionResult(
+  value: unknown,
+): value is RegistryRepairExecutionResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  const count = (candidate: unknown) => candidate === "UNPROVEN" ||
+    (Number.isSafeInteger(candidate) && Number(candidate) >= 0)
+  return Object.keys(record).sort().join(",") ===
+      [...REGISTRY_REPAIR_EXECUTION_RESULT_KEYS].sort().join(",") &&
+    record.EXECUTION_STATUS === "APPLIED" &&
+    record.RPC_INVOCATION_COUNT === 1 && count(record.CREATE_COMMITTED) &&
+    count(record.STALE_COMMITTED) && record.REPAIR_COMMITTED === 0 &&
+    record.HUMAN_REVIEW_MUTATED === 0 &&
+    record.TRANSACTION_STATUS === "COMMITTED" &&
+    record.ROLLBACK_OCCURRED === "NO" &&
+    record.DATABASE_COMMIT_STATUS === "COMMITTED" &&
+    record.WRITE_EXECUTED === "YES" &&
+    ["PASS", "FAILED", "UNPROVEN"].includes(
+      String(record.POST_WRITE_VERIFICATION_STATUS),
+    ) && count(record.POST_WRITE_LIVE_COUNT) &&
+    count(record.POST_WRITE_REGISTRY_RECORD_COUNT) &&
+    count(record.POST_WRITE_MATCHED_COUNT) &&
+    count(record.POST_WRITE_MISSING_COUNT) &&
+    count(record.POST_WRITE_ORPHANED_COUNT) &&
+    count(record.POST_WRITE_AMBIGUOUS_COUNT) &&
+    count(record.POST_WRITE_COVERAGE_PERCENT) &&
+    count(record.POST_WRITE_HUMAN_REVIEW_COUNT) &&
+    count(record.POST_WRITE_CREATE_RELATIONS_PRESENT) &&
+    count(record.POST_WRITE_ENDED_ROWS_CONFIRMED) &&
+    count(record.POST_WRITE_DUPLICATE_ITEM_ID_RELATIONS) &&
+    ["YES", "NO", "UNPROVEN"].includes(
+      String(record.POST_WRITE_PARTITION_VALID),
+    ) && record.HUMAN_REVIEW_ROWS_MUTATED === 0 &&
+    ["YES", "NO", "UNPROVEN"].includes(
+      String(record.HUMAN_REVIEW_RELATIONSHIPS_PRESERVED),
+    )
+}
+
 const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
   "REGISTRY_RUNTIME_CONFIG",
   "SUPABASE_URL_PRESENT",
@@ -2692,7 +2817,37 @@ export default function EbaySellerOAuthReauthPage() {
     useState<RegistryRepairLifecycleDiagnostic | null>(null)
   const [registryRepairFinalDiagnostic, setRegistryRepairFinalDiagnostic] =
     useState<RegistryRepairFinalDiagnostic | null>(null)
+  const [executingRegistryRepair, setExecutingRegistryRepair] = useState(false)
+  const [registryRepairExecutionAttempted,
+    setRegistryRepairExecutionAttempted] = useState(false)
+  const [registryRepairExecutionResult, setRegistryRepairExecutionResult] =
+    useState<RegistryRepairExecutionResult | null>(null)
+  const [registryRepairExecutionFailureCode,
+    setRegistryRepairExecutionFailureCode] =
+    useState<RegistryRepairExecutorFailureCode | null>(null)
   const [error, setError] = useState("")
+
+  const registryRepairExecutionReady = registryRepairDryRun !== null &&
+    registryRepairDryRun.EVIDENCE_STATUS === "AVAILABLE" &&
+    registryRepairDryRun.DRY_RUN_FRESHNESS_STATUS === "CURRENT" &&
+    registryRepairDryRun.DRY_RUN_STATE_BOUND === "YES" &&
+    registryRepairDryRun.DRY_RUN_REJECTION_REASON === null &&
+    registryRepairDryRun.DRY_RUN_READY_FOR_APPROVAL === "YES" &&
+    registryRepairDryRun.DRY_RUN_PACKAGE_HANDLE ===
+      APPROVED_REGISTRY_REPAIR_PACKAGE_HANDLE &&
+    registryRepairDryRun.CURRENT_EVIDENCE_FINGERPRINT ===
+      APPROVED_REGISTRY_REPAIR_EVIDENCE_FINGERPRINT &&
+    registryRepairDryRun.CREATE_NEW_COUNT === 24 &&
+    registryRepairDryRun.MARK_STALE_COUNT === 4 &&
+    registryRepairDryRun.REPAIR_EXISTING_AUTOMATIC_COUNT === 0 &&
+    registryRepairDryRun.HUMAN_REVIEW_COUNT === 3 &&
+    registryRepairDryRun.IDENTITY_UNPROVEN_COUNT === 0 &&
+    registryRepairDryRun.AUTOMATIC_PRECONDITION_UNPROVEN_COUNT === 0 &&
+    registryRepairDryRun.LIVE_DRY_RUN_PARTITION_VALID === "YES" &&
+    registryRepairDryRun.REGISTRY_DRY_RUN_PARTITION_VALID === "YES" &&
+    registryRepairDryRun.AUTOMATIC_TRANCHE_PRECONDITIONS_PASS === "YES" &&
+    registryRepairDryRun.HUMAN_REVIEW_WRITE_ALLOWED === "NO" &&
+    registryRepairDryRun.HUMAN_REVIEW_MUTATION_COUNT === 0
 
   useEffect(() => {
     setCallbackUrl(`${window.location.origin}${CALLBACK_PATH}`)
@@ -3212,6 +3367,53 @@ export default function EbaySellerOAuthReauthPage() {
     }
   }
 
+  async function executeApprovedRegistryRepair() {
+    if (!registryRepairExecutionReady || registryRepairExecutionAttempted) {
+      setError("REGISTRY_REPAIR_EXECUTION_NOT_AUTHORIZED")
+      return
+    }
+    setRegistryRepairExecutionAttempted(true)
+    setExecutingRegistryRepair(true)
+    setRegistryRepairExecutionResult(null)
+    setRegistryRepairExecutionFailureCode(null)
+    setError("")
+    try {
+      const bearer = await adminBearer()
+      const response = await fetch(START_PATH, {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "execute_approved_registry_repair",
+          approvedPackageHandle: registryRepairDryRun.DRY_RUN_PACKAGE_HANDLE,
+          approvedEvidenceFingerprint:
+            registryRepairDryRun.CURRENT_EVIDENCE_FINGERPRINT,
+        }),
+      })
+      const payload = await response.json() as RegistryRepairExecutionPayload
+      if (!response.ok || payload.success !== true ||
+          !validRegistryRepairExecutionResult(
+            payload.registryRepairExecutionResult,
+          )) {
+        const failureCode = REGISTRY_REPAIR_EXECUTOR_FAILURE_CODES.find(
+          (candidate) => candidate === payload.EXECUTOR_FAILURE_CODE,
+        ) ?? null
+        setRegistryRepairExecutionFailureCode(failureCode)
+        setError("REGISTRY_REPAIR_EXECUTION_REJECTED")
+        return
+      }
+      setRegistryRepairExecutionResult(payload.registryRepairExecutionResult)
+    } catch {
+      setError("REGISTRY_REPAIR_EXECUTION_REJECTED")
+    } finally {
+      setExecutingRegistryRepair(false)
+    }
+  }
+
   async function begin() {
     setLoading(true)
     setError("")
@@ -3511,6 +3713,57 @@ export default function EbaySellerOAuthReauthPage() {
               ? "Preparing Registry repair preview…"
               : "Preview Registry repair"}
           </button>
+          <section className="mt-4 rounded-2xl border border-red-300/30 bg-red-300/[0.06] p-4 text-sm text-red-50">
+            <h3 className="font-black">Approved atomic Registry tranche</h3>
+            <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+              {[
+                ["CREATE", registryRepairDryRun?.CREATE_NEW_COUNT ?? "UNPROVEN"],
+                ["MARK ENDED", registryRepairDryRun?.MARK_STALE_COUNT ?? "UNPROVEN"],
+                ["REPAIR", registryRepairDryRun?.REPAIR_EXISTING_AUTOMATIC_COUNT ?? "UNPROVEN"],
+                ["HUMAN REVIEW", registryRepairDryRun?.HUMAN_REVIEW_COUNT ?? "UNPROVEN"],
+              ].map(([label, value]) => (
+                <div className="flex justify-between gap-3" key={String(label)}>
+                  <dt className="font-bold text-white/60">{label}</dt>
+                  <dd>{String(value)}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="mt-3 font-black text-amber-200">
+              HUMAN REVIEW ITEMS WILL NOT BE MODIFIED
+            </p>
+            <p className="mt-2 break-all text-xs text-white/55">
+              Approved package: {registryRepairDryRun?.DRY_RUN_PACKAGE_HANDLE ?? "UNPROVEN"}
+            </p>
+            <button
+              className="mt-4 rounded-2xl border border-red-200/60 bg-red-200/10 px-5 py-2 text-sm font-black text-red-50 disabled:opacity-40"
+              type="button"
+              disabled={!registryRepairExecutionReady || executingRegistryRepair ||
+                registryRepairExecutionAttempted || previewingRegistryRepair}
+              onClick={executeApprovedRegistryRepair}
+            >
+              {executingRegistryRepair
+                ? "Executing approved Registry repair…"
+                : "Execute approved Registry repair"}
+            </button>
+          </section>
+          {registryRepairExecutionFailureCode ? (
+            <p aria-live="polite" className="mt-3 rounded-xl border border-red-300/30 bg-red-300/[0.06] p-3 text-sm font-black text-red-100">
+              Registry execution rejected: {registryRepairExecutionFailureCode}
+            </p>
+          ) : null}
+          {registryRepairExecutionResult ? (
+            <section aria-live="polite" className="mt-4 rounded-2xl border border-emerald-300/30 bg-emerald-300/[0.07] p-4 text-sm text-emerald-50">
+              <h3 className="font-black">Observed atomic Registry result</h3>
+              <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                {Object.entries(registryRepairExecutionResult).map(([label, value]) => (
+                  <div className="flex justify-between gap-3" key={label}>
+                    <dt className="font-bold text-white/55">{label.replaceAll("_", " ")}</dt>
+                    <dd>{String(value)}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
           {registryRepairDryRunRejectionReason ? (
             <p aria-live="polite" className="mt-3 rounded-xl border border-red-300/30 bg-red-300/[0.06] p-3 text-sm font-black text-red-100">
               Rejection reason: {registryRepairDryRunRejectionReason}

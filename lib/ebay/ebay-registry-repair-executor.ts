@@ -60,15 +60,18 @@ export type EbayRegistryRepairPrewriteAssessmentV1 = {
 export class EbayRegistryRepairExecutorError extends Error {
   readonly code: EbayRegistryRepairExecutorFailureCode
   readonly prewriteAssessment: EbayRegistryRepairPrewriteAssessmentV1 | null
+  readonly rpcInvocationCount: 0 | 1
 
   constructor(
     code: EbayRegistryRepairExecutorFailureCode,
     prewriteAssessment: EbayRegistryRepairPrewriteAssessmentV1 | null = null,
+    rpcInvocationCount: 0 | 1 = 0,
   ) {
     super(code)
     this.name = "EbayRegistryRepairExecutorError"
     this.code = code
     this.prewriteAssessment = prewriteAssessment
+    this.rpcInvocationCount = rpcInvocationCount
   }
 }
 
@@ -99,14 +102,36 @@ export type EbayRegistryRepairRpcResultV1 = {
   human_review_mutated: 0
 }
 
-export type EbayRegistryRepairExecutionResultV1 = {
+export type EbayRegistryRepairPostWriteVerificationV1 = {
+  POST_WRITE_VERIFICATION_STATUS: "PASS" | "FAILED" | "UNPROVEN"
+  POST_WRITE_LIVE_COUNT: number | "UNPROVEN"
+  POST_WRITE_REGISTRY_RECORD_COUNT: number | "UNPROVEN"
+  POST_WRITE_MATCHED_COUNT: number | "UNPROVEN"
+  POST_WRITE_MISSING_COUNT: number | "UNPROVEN"
+  POST_WRITE_ORPHANED_COUNT: number | "UNPROVEN"
+  POST_WRITE_AMBIGUOUS_COUNT: number | "UNPROVEN"
+  POST_WRITE_COVERAGE_PERCENT: number | "UNPROVEN"
+  POST_WRITE_HUMAN_REVIEW_COUNT: number | "UNPROVEN"
+  POST_WRITE_CREATE_RELATIONS_PRESENT: number | "UNPROVEN"
+  POST_WRITE_ENDED_ROWS_CONFIRMED: number | "UNPROVEN"
+  POST_WRITE_DUPLICATE_ITEM_ID_RELATIONS: number | "UNPROVEN"
+  POST_WRITE_PARTITION_VALID: "YES" | "NO" | "UNPROVEN"
+  HUMAN_REVIEW_ROWS_MUTATED: 0
+  HUMAN_REVIEW_RELATIONSHIPS_PRESERVED: "YES" | "NO" | "UNPROVEN"
+}
+
+export type EbayRegistryRepairExecutionResultV1 =
+  EbayRegistryRepairPostWriteVerificationV1 & {
   EXECUTION_STATUS: "APPLIED"
   RPC_INVOCATION_COUNT: 1
   CREATE_COMMITTED: number
   STALE_COMMITTED: number
   REPAIR_COMMITTED: 0
   HUMAN_REVIEW_MUTATED: 0
-  POST_WRITE_VERIFICATION_STATUS: "COMPLETED" | "UNPROVEN"
+  TRANSACTION_STATUS: "COMMITTED"
+  ROLLBACK_OCCURRED: "NO"
+  DATABASE_COMMIT_STATUS: "COMMITTED"
+  WRITE_EXECUTED: "YES"
 }
 
 export type EbayRegistryRepairExecutorDependencies = {
@@ -114,7 +139,10 @@ export type EbayRegistryRepairExecutorDependencies = {
   invokeRpc: (
     arguments_: EbayRegistryRepairRpcArgumentsV1,
   ) => Promise<EbayRegistryRepairRpcResultV1>
-  postWriteVerify: () => Promise<unknown>
+  postWriteVerify: (input: {
+    prewritePlanningResult: EbayRegistryRepairPlanningResult
+    rpcArguments: EbayRegistryRepairRpcArgumentsV1
+  }) => Promise<EbayRegistryRepairPostWriteVerificationV1>
   now?: () => Date
 }
 
@@ -139,8 +167,33 @@ const RAW_PAYLOAD_KEYS = new Set([
 function fail(
   code: EbayRegistryRepairExecutorFailureCode,
   prewriteAssessment: EbayRegistryRepairPrewriteAssessmentV1 | null = null,
+  rpcInvocationCount: 0 | 1 = 0,
 ): never {
-  throw new EbayRegistryRepairExecutorError(code, prewriteAssessment)
+  throw new EbayRegistryRepairExecutorError(
+    code,
+    prewriteAssessment,
+    rpcInvocationCount,
+  )
+}
+
+function unprovenPostWriteVerification(): EbayRegistryRepairPostWriteVerificationV1 {
+  return {
+    POST_WRITE_VERIFICATION_STATUS: "UNPROVEN",
+    POST_WRITE_LIVE_COUNT: "UNPROVEN",
+    POST_WRITE_REGISTRY_RECORD_COUNT: "UNPROVEN",
+    POST_WRITE_MATCHED_COUNT: "UNPROVEN",
+    POST_WRITE_MISSING_COUNT: "UNPROVEN",
+    POST_WRITE_ORPHANED_COUNT: "UNPROVEN",
+    POST_WRITE_AMBIGUOUS_COUNT: "UNPROVEN",
+    POST_WRITE_COVERAGE_PERCENT: "UNPROVEN",
+    POST_WRITE_HUMAN_REVIEW_COUNT: "UNPROVEN",
+    POST_WRITE_CREATE_RELATIONS_PRESENT: "UNPROVEN",
+    POST_WRITE_ENDED_ROWS_CONFIRMED: "UNPROVEN",
+    POST_WRITE_DUPLICATE_ITEM_ID_RELATIONS: "UNPROVEN",
+    POST_WRITE_PARTITION_VALID: "UNPROVEN",
+    HUMAN_REVIEW_ROWS_MUTATED: 0,
+    HUMAN_REVIEW_RELATIONSHIPS_PRESERVED: "UNPROVEN",
+  }
 }
 
 function integerCount(value: unknown) {
@@ -476,20 +529,21 @@ export async function executeApprovedRegistryRepairV1WithDependencies(
   try {
     rpcResult = await dependencies.invokeRpc(arguments_)
   } catch {
-    fail("RPC_FAILED")
+    fail("RPC_FAILED", prewriteAssessment, 1)
   }
   if (rpcResult.result_status !== "APPLIED" ||
       rpcResult.create_inserted !== approved.approvedCreateCount ||
       rpcResult.stale_updated !== approved.approvedStaleCount ||
       rpcResult.repair_updated !== 0 || rpcResult.human_review_mutated !== 0) {
-    fail("RPC_RESULT_INVALID")
+    fail("RPC_RESULT_INVALID", prewriteAssessment, 1)
   }
-  let postWriteVerificationStatus: "COMPLETED" | "UNPROVEN" = "COMPLETED"
+  let postWriteVerification = unprovenPostWriteVerification()
   try {
-    await dependencies.postWriteVerify()
-  } catch {
-    postWriteVerificationStatus = "UNPROVEN"
-  }
+    postWriteVerification = await dependencies.postWriteVerify({
+      prewritePlanningResult: current,
+      rpcArguments: arguments_,
+    })
+  } catch {}
   return {
     EXECUTION_STATUS: "APPLIED",
     RPC_INVOCATION_COUNT: 1,
@@ -497,7 +551,133 @@ export async function executeApprovedRegistryRepairV1WithDependencies(
     STALE_COMMITTED: rpcResult.stale_updated,
     REPAIR_COMMITTED: 0,
     HUMAN_REVIEW_MUTATED: 0,
-    POST_WRITE_VERIFICATION_STATUS: postWriteVerificationStatus,
+    TRANSACTION_STATUS: "COMMITTED",
+    ROLLBACK_OCCURRED: "NO",
+    DATABASE_COMMIT_STATUS: "COMMITTED",
+    WRITE_EXECUTED: "YES",
+    ...postWriteVerification,
+  }
+}
+
+function observedNumber(value: unknown): number | "UNPROVEN" {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : "UNPROVEN"
+}
+
+async function verifyAppliedRegistryRepairV1(input: {
+  prewritePlanningResult: EbayRegistryRepairPlanningResult
+  client?: SupabaseClient
+}): Promise<EbayRegistryRepairPostWriteVerificationV1> {
+  const prewritePlan = input.prewritePlanningResult.executionPlan
+  if (!prewritePlan) return unprovenPostWriteVerification()
+  const coverage = await diagnoseRegistryCoverageRuntime() as unknown as
+    Record<string, unknown>
+  const postWritePlanCapture: {
+    value: EbayRegistryRepairExecutionPlanV1 | null
+  } = { value: null }
+  const postWriteDryRun = await previewEbayRegistryRepairRuntime({
+    captureRegistryRepairExecutionPlan: (captured) => {
+      postWritePlanCapture.value = captured
+    },
+  })
+  const client = input.client ?? getSupabaseAdminClient()
+  const { data, error } = await client
+    .from("ebay_active_listings")
+    .select("id,account_key,listing_status,ebay_item_id")
+    .eq("account_key", prewritePlan.accountKey)
+  if (error || !Array.isArray(data)) throw new Error("POST_WRITE_REGISTRY_READ_FAILED")
+  const rows = data as Array<{
+    id?: unknown
+    account_key?: unknown
+    listing_status?: unknown
+    ebay_item_id?: unknown
+  }>
+  const normalizedRows = rows.map((row) => ({
+    id: typeof row.id === "string" ? row.id.trim() : "",
+    accountKey: typeof row.account_key === "string"
+      ? row.account_key.trim()
+      : "",
+    status: typeof row.listing_status === "string"
+      ? row.listing_status.trim().toLowerCase()
+      : "",
+    itemId: typeof row.ebay_item_id === "string"
+      ? row.ebay_item_id.trim()
+      : "",
+  }))
+  const createRelationsPresent = prewritePlan.createCandidates.filter(
+    (candidate) => normalizedRows.filter((row) =>
+      row.accountKey === prewritePlan.accountKey && row.status === "active" &&
+      row.itemId === candidate.rpcInput.ebay_item_id).length === 1,
+  ).length
+  const endedRowsConfirmed = prewritePlan.staleCandidates.filter(
+    (candidate) => normalizedRows.some((row) =>
+      row.id === candidate.rpcInput.id &&
+      row.accountKey === prewritePlan.accountKey && row.status === "ended" &&
+      row.itemId === candidate.rpcInput.expected_ebay_item_id),
+  ).length
+  const itemIdCounts = new Map<string, number>()
+  for (const row of normalizedRows) {
+    if (!row.itemId) continue
+    itemIdCounts.set(row.itemId, (itemIdCounts.get(row.itemId) ?? 0) + 1)
+  }
+  const duplicateItemIdRelations = [...itemIdCounts.values()].filter(
+    (count) => count > 1,
+  ).length
+  const postWriteHumanReviewCount = observedNumber(
+    postWriteDryRun.HUMAN_REVIEW_COUNT,
+  )
+  const expectedReviewTypes = prewritePlan.humanReviewCandidates.map(
+    (candidate) => candidate.relationshipType,
+  ).sort()
+  const postReviewTypes = postWritePlanCapture.value?.humanReviewCandidates.map(
+    (candidate) => candidate.relationshipType,
+  ).sort() ?? []
+  const humanReviewRelationshipsPreserved =
+    postWriteHumanReviewCount === expectedReviewTypes.length &&
+    JSON.stringify(postReviewTypes) === JSON.stringify(expectedReviewTypes)
+      ? "YES" as const
+      : "NO" as const
+  const postWritePartitionValid =
+    postWriteDryRun.LIVE_DRY_RUN_PARTITION_VALID === "YES" &&
+      postWriteDryRun.REGISTRY_DRY_RUN_PARTITION_VALID === "YES"
+      ? "YES" as const
+      : "NO" as const
+  const verification = {
+    POST_WRITE_LIVE_COUNT: observedNumber(coverage.LIVE_EBAY_LISTING_COUNT),
+    POST_WRITE_REGISTRY_RECORD_COUNT: rows.length,
+    POST_WRITE_MATCHED_COUNT: observedNumber(coverage.REGISTRY_MATCHED_COUNT),
+    POST_WRITE_MISSING_COUNT: observedNumber(coverage.REGISTRY_MISSING_COUNT),
+    POST_WRITE_ORPHANED_COUNT: observedNumber(coverage.REGISTRY_ORPHANED_COUNT),
+    POST_WRITE_AMBIGUOUS_COUNT: observedNumber(coverage.REGISTRY_AMBIGUOUS_COUNT),
+    POST_WRITE_COVERAGE_PERCENT: observedNumber(coverage.REGISTRY_COVERAGE_PERCENT),
+    POST_WRITE_HUMAN_REVIEW_COUNT: postWriteHumanReviewCount,
+    POST_WRITE_CREATE_RELATIONS_PRESENT: createRelationsPresent,
+    POST_WRITE_ENDED_ROWS_CONFIRMED: endedRowsConfirmed,
+    POST_WRITE_DUPLICATE_ITEM_ID_RELATIONS: duplicateItemIdRelations,
+    POST_WRITE_PARTITION_VALID: postWritePartitionValid,
+    HUMAN_REVIEW_ROWS_MUTATED: 0 as const,
+    HUMAN_REVIEW_RELATIONSHIPS_PRESERVED: humanReviewRelationshipsPreserved,
+  }
+  const observationsAvailable = [
+    verification.POST_WRITE_LIVE_COUNT,
+    verification.POST_WRITE_MATCHED_COUNT,
+    verification.POST_WRITE_MISSING_COUNT,
+    verification.POST_WRITE_ORPHANED_COUNT,
+    verification.POST_WRITE_AMBIGUOUS_COUNT,
+    verification.POST_WRITE_COVERAGE_PERCENT,
+    verification.POST_WRITE_HUMAN_REVIEW_COUNT,
+  ].every((value) => value !== "UNPROVEN")
+  const invariantsPass =
+    createRelationsPresent === prewritePlan.createCandidates.length &&
+    endedRowsConfirmed === prewritePlan.staleCandidates.length &&
+    duplicateItemIdRelations === 0 && postWritePartitionValid === "YES" &&
+    humanReviewRelationshipsPreserved === "YES"
+  return {
+    POST_WRITE_VERIFICATION_STATUS: !observationsAvailable
+      ? "UNPROVEN"
+      : invariantsPass ? "PASS" : "FAILED",
+    ...verification,
   }
 }
 
@@ -531,6 +711,7 @@ export async function executeApprovedRegistryRepairV1(
   return executeApprovedRegistryRepairV1WithDependencies(approved, {
     readCurrentPlanningResult,
     invokeRpc: invokeAtomicRegistryRepairRpc,
-    postWriteVerify: async () => diagnoseRegistryCoverageRuntime(),
+    postWriteVerify: async ({ prewritePlanningResult }) =>
+      verifyAppliedRegistryRepairV1({ prewritePlanningResult }),
   })
 }

@@ -1,6 +1,6 @@
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-export const maxDuration = 30
+export const maxDuration = 300
 
 import { NextRequest, NextResponse } from "next/server"
 
@@ -38,11 +38,22 @@ import {
 import {
   createSupabaseEbaySellerOAuthReauthStateLedger,
 } from "@/lib/ebay/ebay-seller-oauth-reauth-ledger"
+import {
+  EbayRegistryRepairExecutorError,
+  executeApprovedRegistryRepairV1,
+} from "@/lib/ebay/ebay-registry-repair-executor"
 import { getEbayProRuntimeBoundary } from "@/lib/ebay/environment-boundaries"
 import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
 } from "@/lib/supabase-admin"
+
+const APPROVED_REGISTRY_REPAIR_PACKAGE_HANDLE =
+  "rr_package_a907ead2fdbfcdff6a3d5b2e"
+const APPROVED_REGISTRY_REPAIR_EVIDENCE_FINGERPRINT =
+  "rr_evidence_11fe6081ddbfca09673f5e3d"
+const EXECUTE_APPROVED_REGISTRY_REPAIR_ACTION =
+  "execute_approved_registry_repair"
 
 function callbackHtml(code: string, status: number) {
   const response = new NextResponse(
@@ -122,6 +133,8 @@ export async function POST(request: NextRequest) {
     const actionPayload = payload as {
       action?: unknown
       reviewedEvidenceFingerprint?: unknown
+      approvedPackageHandle?: unknown
+      approvedEvidenceFingerprint?: unknown
     }
     const action = actionPayload.action
     requestedAction = action
@@ -129,7 +142,16 @@ export async function POST(request: NextRequest) {
     const reviewedEvidenceFingerprint =
       actionPayload.reviewedEvidenceFingerprint
     const registryRepairPreviewAction = "preview_registry_repair"
-    const payloadShapeValid = payloadKeys === "action" || (
+    const registryRepairExecutionPayloadValid =
+      action === EXECUTE_APPROVED_REGISTRY_REPAIR_ACTION &&
+      payloadKeys ===
+        "action,approvedEvidenceFingerprint,approvedPackageHandle" &&
+      actionPayload.approvedPackageHandle ===
+        APPROVED_REGISTRY_REPAIR_PACKAGE_HANDLE &&
+      actionPayload.approvedEvidenceFingerprint ===
+        APPROVED_REGISTRY_REPAIR_EVIDENCE_FINGERPRINT
+    const payloadShapeValid = payloadKeys === "action" ||
+      registryRepairExecutionPayloadValid || (
       action === registryRepairPreviewAction &&
       payloadKeys === "action,reviewedEvidenceFingerprint" &&
       typeof reviewedEvidenceFingerprint === "string" &&
@@ -173,7 +195,8 @@ export async function POST(request: NextRequest) {
         action !== "certify_installed_runtime" &&
         action !== "diagnose_inventory_consumer" &&
         action !== "diagnose_registry_coverage_runtime" &&
-        action !== "preview_registry_repair") {
+        action !== "preview_registry_repair" &&
+        action !== EXECUTE_APPROVED_REGISTRY_REPAIR_ACTION) {
       throw new EbaySellerOAuthReauthError(
         "EBAY_SELLER_OAUTH_REAUTH_ACTION_INVALID",
       )
@@ -364,6 +387,29 @@ export async function POST(request: NextRequest) {
         },
       })
     }
+    if (action === EXECUTE_APPROVED_REGISTRY_REPAIR_ACTION) {
+      const registryRepairExecutionResult =
+        await executeApprovedRegistryRepairV1({
+          approvedPackageHandle: APPROVED_REGISTRY_REPAIR_PACKAGE_HANDLE,
+          approvedEvidenceFingerprint:
+            APPROVED_REGISTRY_REPAIR_EVIDENCE_FINGERPRINT,
+          approvedCreateCount: 24,
+          approvedStaleCount: 4,
+          approvedHumanReviewCount: 3,
+        })
+      return NextResponse.json({
+        success: true,
+        registryRepairExecutionResult,
+      }, {
+        status: 200,
+        headers: {
+          "Cache-Control": "private, no-store, max-age=0",
+          Pragma: "no-cache",
+          "Referrer-Policy": "no-referrer",
+          "X-Content-Type-Options": "nosniff",
+        },
+      })
+    }
     if (action === "certify_installed_runtime") {
       const certification = await certifyInstalledEbaySellerOAuthRuntime({
         configuration,
@@ -425,6 +471,19 @@ export async function POST(request: NextRequest) {
     )
     return response
   } catch (cause) {
+    if (requestedAction === EXECUTE_APPROVED_REGISTRY_REPAIR_ACTION &&
+        cause instanceof EbayRegistryRepairExecutorError) {
+      return NextResponse.json({
+        success: false,
+        error: "REGISTRY_REPAIR_EXECUTION_REJECTED",
+        EXECUTOR_FAILURE_CODE: cause.code,
+        RPC_INVOCATION_COUNT: cause.rpcInvocationCount,
+        PREWRITE_ASSESSMENT: cause.prewriteAssessment,
+      }, {
+        status: 409,
+        headers: { "Cache-Control": "private, no-store, max-age=0" },
+      })
+    }
     if (requestedAction === "preview_registry_repair") {
       return NextResponse.json({
         success: false,
