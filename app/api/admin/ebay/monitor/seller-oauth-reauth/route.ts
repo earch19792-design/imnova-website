@@ -332,6 +332,20 @@ export async function POST(request: NextRequest) {
           FINAL_PRECONDITION_UNPROVEN_COUNT:
             registryRepairDryRun.FINAL_PRECONDITION_UNPROVEN_COUNT,
           FINAL_REJECTION_REASON: registryRepairDryRun.FINAL_REJECTION_REASON,
+          REPAIR_EXISTING_AUTOMATIC_COUNT:
+            registryRepairDryRun.REPAIR_EXISTING_AUTOMATIC_COUNT,
+          HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT:
+            registryRepairDryRun.HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT,
+          IDENTITY_UNPROVEN_COUNT:
+            registryRepairDryRun.IDENTITY_UNPROVEN_COUNT,
+          AUTOMATIC_PRECONDITION_UNPROVEN_COUNT:
+            registryRepairDryRun.AUTOMATIC_PRECONDITION_UNPROVEN_COUNT,
+          AUTOMATIC_TRANCHE_PRECONDITIONS_PASS:
+            registryRepairDryRun.AUTOMATIC_TRANCHE_PRECONDITIONS_PASS,
+          HUMAN_REVIEW_WRITE_ALLOWED:
+            registryRepairDryRun.HUMAN_REVIEW_WRITE_ALLOWED,
+          HUMAN_REVIEW_MUTATION_COUNT:
+            registryRepairDryRun.HUMAN_REVIEW_MUTATION_COUNT,
         }, {
           status: 409,
           headers: { "Cache-Control": "private, no-store, max-age=0" },
@@ -479,6 +493,13 @@ export async function POST(request: NextRequest) {
         FINAL_IDENTITY_UNPROVEN_COUNT: "UNPROVEN",
         FINAL_PRECONDITION_UNPROVEN_COUNT: "UNPROVEN",
         FINAL_REJECTION_REASON: "UNPROVEN",
+        REPAIR_EXISTING_AUTOMATIC_COUNT: "UNPROVEN",
+        HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT: "UNPROVEN",
+        IDENTITY_UNPROVEN_COUNT: "UNPROVEN",
+        AUTOMATIC_PRECONDITION_UNPROVEN_COUNT: "UNPROVEN",
+        AUTOMATIC_TRANCHE_PRECONDITIONS_PASS: "UNPROVEN",
+        HUMAN_REVIEW_WRITE_ALLOWED: "UNPROVEN",
+        HUMAN_REVIEW_MUTATION_COUNT: "UNPROVEN",
       }, {
         status: 403,
         headers: { "Cache-Control": "private, no-store, max-age=0" },

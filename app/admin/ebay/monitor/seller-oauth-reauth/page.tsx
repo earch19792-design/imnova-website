@@ -331,6 +331,13 @@ type RegistryRepairDryRunPayload = {
   FINAL_IDENTITY_UNPROVEN_COUNT?: unknown
   FINAL_PRECONDITION_UNPROVEN_COUNT?: unknown
   FINAL_REJECTION_REASON?: unknown
+  REPAIR_EXISTING_AUTOMATIC_COUNT?: unknown
+  HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT?: unknown
+  IDENTITY_UNPROVEN_COUNT?: unknown
+  AUTOMATIC_PRECONDITION_UNPROVEN_COUNT?: unknown
+  AUTOMATIC_TRANCHE_PRECONDITIONS_PASS?: unknown
+  HUMAN_REVIEW_WRITE_ALLOWED?: unknown
+  HUMAN_REVIEW_MUTATION_COUNT?: unknown
 }
 
 const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
@@ -540,6 +547,13 @@ const REGISTRY_REPAIR_DRY_RUN_KEYS = [
   "FINAL_IDENTITY_UNPROVEN_COUNT",
   "FINAL_PRECONDITION_UNPROVEN_COUNT",
   "FINAL_REJECTION_REASON",
+  "REPAIR_EXISTING_AUTOMATIC_COUNT",
+  "HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT",
+  "IDENTITY_UNPROVEN_COUNT",
+  "AUTOMATIC_PRECONDITION_UNPROVEN_COUNT",
+  "AUTOMATIC_TRANCHE_PRECONDITIONS_PASS",
+  "HUMAN_REVIEW_WRITE_ALLOWED",
+  "HUMAN_REVIEW_MUTATION_COUNT",
   "DRY_RUN_STATE_BOUND",
   "DRY_RUN_STATE_FINGERPRINT_PRESENT",
   "APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE",
@@ -2141,6 +2155,11 @@ function validRegistryRepairDryRun(
     ...REGISTRY_REPAIR_ABSENCE_PROOF_CAUSE_COUNT_KEYS,
     "FINAL_IDENTITY_UNPROVEN_COUNT",
     "FINAL_PRECONDITION_UNPROVEN_COUNT",
+    "REPAIR_EXISTING_AUTOMATIC_COUNT",
+    "HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT",
+    "IDENTITY_UNPROVEN_COUNT",
+    "AUTOMATIC_PRECONDITION_UNPROVEN_COUNT",
+    "HUMAN_REVIEW_MUTATION_COUNT",
     "REPAIR_EXISTING_COUNT",
     "CREATE_NEW_COUNT",
     "MARK_STALE_COUNT",
@@ -2240,6 +2259,9 @@ function validRegistryRepairDryRun(
       !yesNoUnproven(record.LIVE_RECHECK_REQUIRED_BEFORE_WRITE) ||
       !controlledText(record.PARTIAL_FAILURE_POLICY) ||
       !controlledText(record.ROLLBACK_STRATEGY) ||
+      !yesNoUnproven(record.AUTOMATIC_TRANCHE_PRECONDITIONS_PASS) ||
+      !(record.HUMAN_REVIEW_WRITE_ALLOWED === "NO" ||
+        record.HUMAN_REVIEW_WRITE_ALLOWED === "UNPROVEN") ||
       !yesNoUnproven(record.DRY_RUN_READY_FOR_APPROVAL) ||
       !Array.isArray(record.HUMAN_REVIEW_CANDIDATES)) return false
 
@@ -2480,14 +2502,44 @@ function validRegistryRepairDryRun(
         [...REGISTRY_REPAIR_HUMAN_CANDIDATE_KEYS].sort().join(",") &&
       typeof candidateRecord.CANDIDATE_HANDLE === "string" &&
       /^[A-Za-z0-9._:-]{1,200}$/.test(candidateRecord.CANDIDATE_HANDLE) &&
-      candidateRecord.RELATIONSHIP_TYPE === "SKU_ONLY" &&
+      (candidateRecord.RELATIONSHIP_TYPE === "SKU_ONLY" ||
+        candidateRecord.RELATIONSHIP_TYPE === "ITEM_ID_ONLY_LIFECYCLE") &&
       yesNoUnproven(candidateRecord.REGISTRY_ITEM_ID_CURRENTLY_LIVE) &&
       yesNoUnproven(candidateRecord.SKU_UNIQUE_BOTH_SIDES) &&
       yesNoUnproven(candidateRecord.COMPETING_REGISTRY_RELATION) &&
       candidateRecord.RECOMMENDED_ACTION === "REVIEW_REQUIRED"
   })) return false
-  return record.HUMAN_REVIEW_COUNT === "UNPROVEN" ||
-    record.HUMAN_REVIEW_COUNT === candidates.length
+  const lifecycleReviewCount = candidates.filter((candidate) =>
+    (candidate as Record<string, unknown>).RELATIONSHIP_TYPE ===
+      "ITEM_ID_ONLY_LIFECYCLE"
+  ).length
+  const aggregateCounts = [
+    record.REPAIR_EXISTING_AUTOMATIC_COUNT,
+    record.HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT,
+    record.IDENTITY_UNPROVEN_COUNT,
+    record.AUTOMATIC_PRECONDITION_UNPROVEN_COUNT,
+    record.HUMAN_REVIEW_MUTATION_COUNT,
+  ]
+  const aggregateUnavailable = aggregateCounts.every((value) => value === "UNPROVEN") &&
+    record.AUTOMATIC_TRANCHE_PRECONDITIONS_PASS === "UNPROVEN" &&
+    record.HUMAN_REVIEW_WRITE_ALLOWED === "UNPROVEN"
+  const aggregateAvailable = aggregateCounts.every((value) => typeof value === "number") &&
+    record.AUTOMATIC_TRANCHE_PRECONDITIONS_PASS !== "UNPROVEN" &&
+    record.HUMAN_REVIEW_WRITE_ALLOWED === "NO" &&
+    record.HUMAN_REVIEW_MUTATION_COUNT === 0
+  if (!aggregateUnavailable && !aggregateAvailable) return false
+  if (aggregateUnavailable) {
+    return record.HUMAN_REVIEW_COUNT === "UNPROVEN" && candidates.length === 0
+  }
+  return record.HUMAN_REVIEW_COUNT === candidates.length &&
+    record.HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT ===
+      lifecycleReviewCount &&
+    record.REPAIR_EXISTING_AUTOMATIC_COUNT === record.REPAIR_EXISTING_COUNT &&
+    record.IDENTITY_UNPROVEN_COUNT === record.FINAL_IDENTITY_UNPROVEN_COUNT &&
+    record.AUTOMATIC_PRECONDITION_UNPROVEN_COUNT ===
+      record.FINAL_PRECONDITION_UNPROVEN_COUNT &&
+    record.AUTOMATIC_TRANCHE_PRECONDITIONS_PASS ===
+      (record.AUTOMATIC_PRECONDITION_UNPROVEN_COUNT === 0 ? "YES" : "NO")
 }
 
 export default function EbaySellerOAuthReauthPage() {
@@ -3899,6 +3951,25 @@ export default function EbaySellerOAuthReauthPage() {
                 <p className="mt-2 text-white/55">
                   SKU equality alone does not authorize relinking. Candidate handles are opaque.
                 </p>
+                <p className="mt-3 font-black text-amber-200">
+                  HUMAN REVIEW ITEMS WILL NOT BE MODIFIED
+                </p>
+                <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+                  {[
+                    ["Automatic repair existing", registryRepairDryRun.REPAIR_EXISTING_AUTOMATIC_COUNT],
+                    ["Review reason: reactivation not allowed", registryRepairDryRun.HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT],
+                    ["Identity unproven", registryRepairDryRun.IDENTITY_UNPROVEN_COUNT],
+                    ["Automatic precondition unproven", registryRepairDryRun.AUTOMATIC_PRECONDITION_UNPROVEN_COUNT],
+                    ["Automatic tranche preconditions pass", registryRepairDryRun.AUTOMATIC_TRANCHE_PRECONDITIONS_PASS],
+                    ["Human review write allowed", registryRepairDryRun.HUMAN_REVIEW_WRITE_ALLOWED],
+                    ["Human review mutation count", registryRepairDryRun.HUMAN_REVIEW_MUTATION_COUNT],
+                  ].map(([label, value]) => (
+                    <div className="flex justify-between gap-3 rounded-lg bg-black/20 p-3" key={String(label)}>
+                      <dt className="font-bold text-white/50">{label}</dt>
+                      <dd>{String(value)}</dd>
+                    </div>
+                  ))}
+                </dl>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   {registryRepairDryRun.HUMAN_REVIEW_CANDIDATES.map((candidate) => (
                     <article className="rounded-xl border border-white/10 p-3" key={candidate.CANDIDATE_HANDLE}>

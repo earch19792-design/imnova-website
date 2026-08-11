@@ -133,7 +133,7 @@ export type EbayRegistryRepairFutureWriteRejectionReason =
 
 export type EbayRegistryRepairHumanReviewCandidate = {
   CANDIDATE_HANDLE: string
-  RELATIONSHIP_TYPE: "SKU_ONLY"
+  RELATIONSHIP_TYPE: "SKU_ONLY" | "ITEM_ID_ONLY_LIFECYCLE"
   REGISTRY_ITEM_ID_CURRENTLY_LIVE: YesNoUnproven
   SKU_UNIQUE_BOTH_SIDES: YesNoUnproven
   COMPETING_REGISTRY_RELATION: YesNoUnproven
@@ -255,6 +255,14 @@ export type EbayRegistryRepairDryRun = {
   REACTIVATION_ALLOWED_FROM_HISTORICAL: YesNoUnproven
   REACTIVATION_ALLOWED_FROM_UNKNOWN: YesNoUnproven
   REACTIVATION_CAS_SUPPORTED: YesNoUnproven
+  REPAIR_EXISTING_AUTOMATIC_COUNT: EbayRegistryRepairDryRunCount
+  HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT:
+    EbayRegistryRepairDryRunCount
+  IDENTITY_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  AUTOMATIC_PRECONDITION_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  AUTOMATIC_TRANCHE_PRECONDITIONS_PASS: YesNoUnproven
+  HUMAN_REVIEW_WRITE_ALLOWED: "NO" | "UNPROVEN"
+  HUMAN_REVIEW_MUTATION_COUNT: 0 | "UNPROVEN"
   FINAL_IDENTITY_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
   FINAL_PRECONDITION_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
   FINAL_REJECTION_REASON: EbayRegistryRepairDryRunRejectionReason | null
@@ -716,6 +724,13 @@ EbayRegistryRepairDryRun {
     REACTIVATION_ALLOWED_FROM_HISTORICAL: "UNPROVEN",
     REACTIVATION_ALLOWED_FROM_UNKNOWN: "UNPROVEN",
     REACTIVATION_CAS_SUPPORTED: "UNPROVEN",
+    REPAIR_EXISTING_AUTOMATIC_COUNT: "UNPROVEN",
+    HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT: "UNPROVEN",
+    IDENTITY_UNPROVEN_COUNT: "UNPROVEN",
+    AUTOMATIC_PRECONDITION_UNPROVEN_COUNT: "UNPROVEN",
+    AUTOMATIC_TRANCHE_PRECONDITIONS_PASS: "UNPROVEN",
+    HUMAN_REVIEW_WRITE_ALLOWED: "UNPROVEN",
+    HUMAN_REVIEW_MUTATION_COUNT: "UNPROVEN",
     FINAL_IDENTITY_UNPROVEN_COUNT: "UNPROVEN",
     FINAL_PRECONDITION_UNPROVEN_COUNT: "UNPROVEN",
     FINAL_REJECTION_REASON: "UNPROVEN",
@@ -975,6 +990,7 @@ export function buildEbayRegistryRepairDryRun(
   let hasActionPartitionConflict = false
   let lifecycleUnprovenCount = 0
   let registryPartitionLifecycleUnprovenCount = 0
+  let lifecycleHumanReviewCount = 0
   const lifecycleActions = new Set<EbayRegistryRepairLifecycleAction>()
   const lifecycleFailureCauses =
     new Set<EbayRegistryRepairLifecycleFailureCause>()
@@ -1091,33 +1107,44 @@ export function buildEbayRegistryRepairDryRun(
         evidenceCount(registrySkuCounts, live.sku) === 0 &&
         liveRegistryReferences[live.index]?.size === 1)
       if (identitySafe && live) {
-        registryRepairExisting += 1
-        liveRepair.add(live.index)
-        if (!registry.guard) {
-          repairUnproven += 1
-        } else if (!rowActive && !reactivationSupported) {
-          repairUnproven += 1
-          recordLifecycleUnproven(
-            "REPAIR_EXISTING",
-            rowLifecycleSignalAvailable,
-            rowLifecycleSignalAvailable
-              ? "REACTIVATION_NOT_ALLOWED"
-              : undefined,
-          )
+        if (registry.guard && !rowActive && !reactivationSupported) {
+          lifecycleHumanReviewCount += 1
+          registryHumanReview += 1
+          liveHumanReview.add(live.index)
+          lifecycleFailureCauses.add("REACTIVATION_NOT_ALLOWED")
+          humanCandidates.push({
+            CANDIDATE_HANDLE: opaqueHandle("review", {
+              relationshipType: "ITEM_ID_ONLY_LIFECYCLE",
+              evidenceFingerprint,
+              existingRowCas: registry.guard,
+              statusClass: rowStatusEvidence.statusClass,
+            }),
+            RELATIONSHIP_TYPE: "ITEM_ID_ONLY_LIFECYCLE",
+            REGISTRY_ITEM_ID_CURRENTLY_LIVE: "YES",
+            SKU_UNIQUE_BOTH_SIDES: "NO",
+            COMPETING_REGISTRY_RELATION: "NO",
+            RECOMMENDED_ACTION: "REVIEW_REQUIRED",
+          })
         } else {
-          const candidateRepairFields = [...REPAIR_FIELDS]
-          if (!rowActive) {
-            candidateRepairFields.push("listing_status")
-            repairFieldsToChange.add("listing_status")
+          registryRepairExisting += 1
+          liveRepair.add(live.index)
+          if (!registry.guard) {
+            repairUnproven += 1
+          } else {
+            const candidateRepairFields = [...REPAIR_FIELDS]
+            if (!rowActive) {
+              candidateRepairFields.push("listing_status")
+              repairFieldsToChange.add("listing_status")
+            }
+            repairHandles.push(opaqueHandle("repair", {
+              evidenceFingerprint,
+              existingRowCas: registry.guard,
+              expectedStatus: rowStatusEvidence.status,
+              fieldsToChange: candidateRepairFields,
+              nextSku: live.sku,
+              variationKey: live.variationKey,
+            }))
           }
-          repairHandles.push(opaqueHandle("repair", {
-            evidenceFingerprint,
-            existingRowCas: registry.guard,
-            expectedStatus: rowStatusEvidence.status,
-            fieldsToChange: candidateRepairFields,
-            nextSku: live.sku,
-            variationKey: live.variationKey,
-          }))
         }
       } else {
         registryUnproven += 1
@@ -1509,7 +1536,7 @@ export function buildEbayRegistryRepairDryRun(
       ? "YES" as const
       : "UNPROVEN" as const
   const expectedMatchedAfterSafeTranche = resolvedLiveMatched.size +
-    resolvedLiveRepair.size + liveCreate.size
+    repairHandles.length + liveCreate.size
   const expectedCoveragePercent = liveFacts.length > 0
     ? Number(((expectedMatchedAfterSafeTranche / liveFacts.length) * 100).toFixed(2))
     : "UNPROVEN" as const
@@ -1587,6 +1614,17 @@ export function buildEbayRegistryRepairDryRun(
   const finalPreconditionUnprovenCount = repairUnproven + staleUnproven +
     createUnproven + humanReviewUnproven +
     registryPartitionLifecycleUnprovenCount + unprovenStateGuardCount
+  const automaticPreconditionUnprovenCount = repairUnproven +
+    staleUnproven + createUnproven + registryPartitionLifecycleUnprovenCount +
+    unprovenStateGuardCount
+  const automaticTranchePreconditionsPass = !sameRequestEvidenceCoherent
+    ? "UNPROVEN" as const
+    : identityPartitionUnprovenCount === 0 &&
+        automaticPreconditionUnprovenCount === 0 &&
+        livePartitionValid === "YES" && registryPartitionValid === "YES" &&
+        stateGuardsSupported === "YES"
+      ? "YES" as const
+      : "NO" as const
   const unprovenCount = !sameRequestEvidenceCoherent
     ? 1
     : repairUnproven + staleUnproven + createUnproven +
@@ -1815,6 +1853,16 @@ export function buildEbayRegistryRepairDryRun(
     REACTIVATION_CAS_SUPPORTED: repairRowDiagnostic
       ? repairRowDiagnostic.reactivationCasSupported ? "YES" : "NO"
       : "UNPROVEN",
+    REPAIR_EXISTING_AUTOMATIC_COUNT: repairHandles.length,
+    HUMAN_REVIEW_REASON_REACTIVATION_NOT_ALLOWED_COUNT:
+      lifecycleHumanReviewCount,
+    IDENTITY_UNPROVEN_COUNT: identityPartitionUnprovenCount,
+    AUTOMATIC_PRECONDITION_UNPROVEN_COUNT:
+      automaticPreconditionUnprovenCount,
+    AUTOMATIC_TRANCHE_PRECONDITIONS_PASS:
+      automaticTranchePreconditionsPass,
+    HUMAN_REVIEW_WRITE_ALLOWED: "NO",
+    HUMAN_REVIEW_MUTATION_COUNT: 0,
     FINAL_IDENTITY_UNPROVEN_COUNT: identityPartitionUnprovenCount,
     FINAL_PRECONDITION_UNPROVEN_COUNT: finalPreconditionUnprovenCount,
     FINAL_REJECTION_REASON: rejectionReason,
