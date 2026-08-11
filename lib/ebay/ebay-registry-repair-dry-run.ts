@@ -38,6 +38,7 @@ export type EbayRegistryRepairUnprovenComponent =
   | "MARK_STALE_MUTATION_GUARD"
   | "CREATE_NEW_MATERIALIZATION"
   | "CREATE_NEW_ABSENCE_OR_UNIQUENESS_GUARD"
+  | "LIFECYCLE_PRECONDITION"
   | "HUMAN_REVIEW_EVIDENCE"
   | "IDENTITY_PARTITION"
   | "SAME_REQUEST_STATE"
@@ -80,6 +81,40 @@ export type EbayRegistryRepairOtherUnprovenSubtype =
   | "LIFECYCLE_REQUIREMENT"
   | "NORMALIZATION_FAILURE"
   | "UNEXPECTED_CLASSIFIER_BRANCH"
+export type EbayRegistryRepairAbsenceProofCause =
+  | "NONE"
+  | "ITEM_ID_ALREADY_PRESENT"
+  | "ITEM_ID_LOOKUP_UNPROVEN"
+  | "SKU_RELATION"
+  | "SYNC_KEY_COLLISION"
+  | "ACCOUNT_SCOPE"
+  | "MULTIPLE_REGISTRY_ROWS"
+  | "SECOND_READ_INCONSISTENCY"
+  | "OTHER"
+  | "UNPROVEN"
+export type EbayRegistryRepairLifecycleAction =
+  | "NONE"
+  | "REPAIR_EXISTING"
+  | "CREATE_NEW"
+  | "MARK_STALE"
+  | "HUMAN_REVIEW"
+  | "REGISTRY_PARTITION"
+  | "OTHER"
+  | "UNPROVEN"
+export type EbayRegistryRepairLifecycleStage =
+  | "NONE"
+  | "EXISTING_REGISTRY_ROW_ACTIVE_GUARD"
+  | "UNPROVEN"
+export type EbayRegistryRepairLifecycleRequiredSignal =
+  | "NONE"
+  | "LISTING_STATUS_ACTIVE"
+  | "UNPROVEN"
+export type EbayRegistryRepairLifecycleFailureCause =
+  | "NONE"
+  | "REGISTRY_ROW_NOT_ACTIVE"
+  | "REGISTRY_LISTING_STATUS_UNAVAILABLE"
+  | "MULTIPLE_FAILURES"
+  | "UNPROVEN"
 export type EbayRegistryRepairFutureWriteRejectionReason =
   | "NONE"
   | "EVIDENCE_UNAVAILABLE"
@@ -177,6 +212,28 @@ export type EbayRegistryRepairDryRun = {
   CREATE_ABSENCE_CAS_PASS_COUNT: EbayRegistryRepairDryRunCount
   CREATE_ABSENCE_CAS_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
   CREATE_MATERIALIZATION_STATUS: EbayRegistryRepairPreconditionStatus
+  ABSENCE_PROOF_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  ABSENCE_PROOF_CAUSE_ITEM_ID_ALREADY_PRESENT:
+    EbayRegistryRepairDryRunCount
+  ABSENCE_PROOF_CAUSE_ITEM_ID_LOOKUP_UNPROVEN:
+    EbayRegistryRepairDryRunCount
+  ABSENCE_PROOF_CAUSE_SKU_RELATION: EbayRegistryRepairDryRunCount
+  ABSENCE_PROOF_CAUSE_SYNC_KEY_COLLISION: EbayRegistryRepairDryRunCount
+  ABSENCE_PROOF_CAUSE_ACCOUNT_SCOPE: EbayRegistryRepairDryRunCount
+  ABSENCE_PROOF_CAUSE_MULTIPLE_REGISTRY_ROWS:
+    EbayRegistryRepairDryRunCount
+  ABSENCE_PROOF_CAUSE_SECOND_READ_INCONSISTENCY:
+    EbayRegistryRepairDryRunCount
+  ABSENCE_PROOF_CAUSE_OTHER: EbayRegistryRepairDryRunCount
+  ABSENCE_PROOF_PRIMARY_CAUSE: EbayRegistryRepairAbsenceProofCause
+  LIFECYCLE_UNPROVEN_ACTION: EbayRegistryRepairLifecycleAction
+  LIFECYCLE_UNPROVEN_STAGE: EbayRegistryRepairLifecycleStage
+  LIFECYCLE_REQUIRED_SIGNAL: EbayRegistryRepairLifecycleRequiredSignal
+  LIFECYCLE_SIGNAL_AVAILABLE: YesNoUnproven
+  LIFECYCLE_FAILURE_CAUSE: EbayRegistryRepairLifecycleFailureCause
+  FINAL_IDENTITY_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  FINAL_PRECONDITION_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  FINAL_REJECTION_REASON: EbayRegistryRepairDryRunRejectionReason | null
   DRY_RUN_STALE_LABEL:
     | "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE"
     | "DRY RUN STALE — REFRESH REQUIRED"
@@ -235,12 +292,15 @@ export type EbayRegistryRepairDryRunInput = {
   observedAt: string
   liveListings: readonly EbayLiveListing[]
   registryRows: readonly ReadonlyRegistryListingRow[]
+  syncKeyLookupStatus: "AVAILABLE"
+  existingRegistrySyncKeys: readonly string[]
   capturedEvidenceFingerprint: string
 }
 
 export type EbayRegistryRepairEvidenceFingerprintInput = Pick<
   EbayRegistryRepairDryRunInput,
-  "accountKey" | "marketplaceId" | "liveListings" | "registryRows"
+  "accountKey" | "marketplaceId" | "liveListings" | "registryRows" |
+    "syncKeyLookupStatus" | "existingRegistrySyncKeys"
 >
 
 export type EbayRegistryRepairFutureWriteFreshness = {
@@ -257,6 +317,7 @@ export type EbayRegistryRepairFutureWriteFreshness = {
 
 const REPAIR_FIELDS = ["ebay_sku"]
 const STALE_FIELDS = ["listing_status"]
+const CREATE_SOURCE = "EBAY_SELL_INVENTORY_READONLY"
 const CREATE_FIELDS = [
   "source",
   "account_key",
@@ -279,6 +340,18 @@ function normalizedIdentity(value: unknown) {
   if (typeof value !== "string") return null
   const normalized = value.trim()
   return normalized.length > 0 ? normalized : null
+}
+
+export function buildEbayRegistryRepairCreateSyncKey(input: {
+  accountKey: string
+  itemId: string | null
+  sku: string | null
+}): string | "UNPROVEN" {
+  const accountKey = normalizedIdentity(input.accountKey)
+  const itemId = normalizedIdentity(input.itemId)
+  const sku = normalizedIdentity(input.sku)
+  if (!accountKey || !itemId || !sku) return "UNPROVEN"
+  return `${CREATE_SOURCE}:${accountKey}:${itemId}:${sku}`
 }
 
 function increment(values: Map<string, number>, key: string) {
@@ -305,6 +378,7 @@ function exactStateGuard(row: ReadonlyRegistryListingRow) {
   const id = normalizedIdentity(row.id)
   const accountKey = normalizedIdentity(row.account_key)
   const source = normalizedIdentity(row.source)
+  const syncKey = normalizedIdentity(row.sync_key)
   const listingStatus = normalizedIdentity(row.listing_status)
   const updatedAt = normalizedIdentity(row.updated_at)
   const itemId = normalizedIdentity(row.ebay_item_id)
@@ -323,6 +397,7 @@ function exactStateGuard(row: ReadonlyRegistryListingRow) {
     id,
     accountKey,
     source,
+    syncKey,
     listingStatus,
     itemId,
     sku,
@@ -335,11 +410,22 @@ export function buildEbayRegistryRepairEvidenceFingerprint(
   input: EbayRegistryRepairEvidenceFingerprintInput,
 ): string | "UNPROVEN" {
   const accountKey = normalizedIdentity(input.accountKey)
-  if (!accountKey || input.marketplaceId !== "EBAY_US") return "UNPROVEN"
+  if (input.syncKeyLookupStatus !== "AVAILABLE" ||
+      !Array.isArray(input.existingRegistrySyncKeys)) {
+    return "UNPROVEN"
+  }
+  const existingRegistrySyncKeys = input.existingRegistrySyncKeys.map(
+    normalizedIdentity,
+  )
+  if (!accountKey || input.marketplaceId !== "EBAY_US" ||
+      existingRegistrySyncKeys.some((syncKey) => syncKey === null)) {
+    return "UNPROVEN"
+  }
   return opaqueHandle("evidence", {
     version: "EBAY_REGISTRY_REPAIR_EVIDENCE_V1",
     accountKey,
     marketplaceId: input.marketplaceId,
+    existingRegistrySyncKeys: existingRegistrySyncKeys.sort(),
     live: input.liveListings.map((listing) => JSON.stringify([
       normalizedIdentity(listing.itemId),
       normalizedIdentity(listing.sku),
@@ -356,6 +442,7 @@ export function buildEbayRegistryRepairEvidenceFingerprint(
       normalizedIdentity(row.id),
       normalizedIdentity(row.account_key),
       normalizedIdentity(row.source),
+      normalizedIdentity(row.sync_key),
       normalizedIdentity(row.listing_status),
       normalizedIdentity(row.ebay_item_id),
       normalizedIdentity(row.ebay_sku),
@@ -515,6 +602,24 @@ EbayRegistryRepairDryRun {
     CREATE_ABSENCE_CAS_PASS_COUNT: "UNPROVEN",
     CREATE_ABSENCE_CAS_UNPROVEN_COUNT: "UNPROVEN",
     CREATE_MATERIALIZATION_STATUS: "UNPROVEN",
+    ABSENCE_PROOF_UNPROVEN_COUNT: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_ITEM_ID_ALREADY_PRESENT: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_ITEM_ID_LOOKUP_UNPROVEN: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_SKU_RELATION: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_SYNC_KEY_COLLISION: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_ACCOUNT_SCOPE: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_MULTIPLE_REGISTRY_ROWS: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_SECOND_READ_INCONSISTENCY: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_OTHER: "UNPROVEN",
+    ABSENCE_PROOF_PRIMARY_CAUSE: "UNPROVEN",
+    LIFECYCLE_UNPROVEN_ACTION: "UNPROVEN",
+    LIFECYCLE_UNPROVEN_STAGE: "UNPROVEN",
+    LIFECYCLE_REQUIRED_SIGNAL: "UNPROVEN",
+    LIFECYCLE_SIGNAL_AVAILABLE: "UNPROVEN",
+    LIFECYCLE_FAILURE_CAUSE: "UNPROVEN",
+    FINAL_IDENTITY_UNPROVEN_COUNT: "UNPROVEN",
+    FINAL_PRECONDITION_UNPROVEN_COUNT: "UNPROVEN",
+    FINAL_REJECTION_REASON: "UNPROVEN",
     DRY_RUN_STALE_LABEL: "UNPROVEN",
     DRY_RUN_STATE_BOUND: "UNPROVEN",
     DRY_RUN_STATE_FINGERPRINT_PRESENT: "UNPROVEN",
@@ -561,7 +666,8 @@ export function buildEbayRegistryRepairDryRun(
   const observedAt = normalizedIdentity(input.observedAt)
   if (!accountKey || !observedAt || !Number.isFinite(Date.parse(observedAt)) ||
       input.accountVerified !== "YES" ||
-      input.marketplaceId !== "EBAY_US") {
+      input.marketplaceId !== "EBAY_US" ||
+      input.syncKeyLookupStatus !== "AVAILABLE") {
     return buildUnprovenEbayRegistryRepairDryRun()
   }
 
@@ -575,6 +681,7 @@ export function buildEbayRegistryRepairDryRun(
   const registryFacts = input.registryRows.map((row, index) => ({
     index,
     row,
+    syncKey: normalizedIdentity(row.sync_key),
     itemId: normalizedIdentity(row.ebay_item_id),
     sku: normalizedIdentity(row.ebay_sku),
     variationKey: normalizedIdentity(row.ebay_variation_key),
@@ -585,6 +692,8 @@ export function buildEbayRegistryRepairDryRun(
   const liveSkuCounts = new Map<string, number>()
   const registryItemCounts = new Map<string, number>()
   const registrySkuCounts = new Map<string, number>()
+  const registrySyncKeys = new Set<string>()
+  let registrySyncKeyEvidenceComplete = true
   for (const live of liveFacts) {
     if (live.itemId) increment(liveItemCounts, live.itemId)
     if (live.sku) increment(liveSkuCounts, live.sku)
@@ -592,6 +701,16 @@ export function buildEbayRegistryRepairDryRun(
   for (const registry of registryFacts) {
     if (registry.itemId) increment(registryItemCounts, registry.itemId)
     if (registry.sku) increment(registrySkuCounts, registry.sku)
+    if (registry.syncKey) registrySyncKeys.add(registry.syncKey)
+  }
+  const existingRegistrySyncKeys = new Set<string>()
+  for (const candidate of input.existingRegistrySyncKeys) {
+    const syncKey = normalizedIdentity(candidate)
+    if (!syncKey) {
+      registrySyncKeyEvidenceComplete = false
+      continue
+    }
+    existingRegistrySyncKeys.add(syncKey)
   }
   const hasDuplicateAuthority =
     [...liveItemCounts.values()].some((count) => count > 1) ||
@@ -744,6 +863,23 @@ export function buildEbayRegistryRepairDryRun(
   let hasMultipleCandidates = false
   let hasCrossLink = false
   let hasActionPartitionConflict = false
+  let lifecycleUnprovenCount = 0
+  let registryPartitionLifecycleUnprovenCount = 0
+  const lifecycleActions = new Set<EbayRegistryRepairLifecycleAction>()
+  const lifecycleFailureCauses =
+    new Set<EbayRegistryRepairLifecycleFailureCause>()
+  const recordLifecycleUnproven = (
+    action: Exclude<EbayRegistryRepairLifecycleAction,
+      "NONE" | "UNPROVEN">,
+    signalAvailable: boolean,
+  ) => {
+    lifecycleUnprovenCount += 1
+    lifecycleActions.add(action)
+    lifecycleFailureCauses.add(signalAvailable
+      ? "REGISTRY_ROW_NOT_ACTIVE"
+      : "REGISTRY_LISTING_STATUS_UNAVAILABLE")
+    increment(actionOtherUnprovenSubtypeCounts, "LIFECYCLE_REQUIREMENT")
+  }
 
   for (const registry of registryFacts) {
     const itemMatches = itemMatchesFor(registry.itemId)
@@ -760,13 +896,15 @@ export function buildEbayRegistryRepairDryRun(
     hasCrossLink ||= itemMatches.length > 0 && skuMatches.length > 0 &&
       !itemAndSkuReferenceSameLive
     const rowAccountCorrect = registry.row.account_key === accountKey
-    const rowActive = registry.row.listing_status.toLowerCase() === "active"
+    const rowListingStatus = normalizedIdentity(registry.row.listing_status)
+    const rowLifecycleSignalAvailable = rowListingStatus !== null
+    const rowActive = rowListingStatus?.toLowerCase() === "active"
 
     if (fullMatches.length === 1 && itemMatches.length === 1 &&
         skuMatches.length === 1) {
       const live = liveFacts[fullMatches[0]]
       const identitySafe = Boolean(live && rowAccountCorrect &&
-        rowActive && livePreconditionsProven(live.listing) &&
+        livePreconditionsProven(live.listing) &&
         registry.itemId && registry.sku &&
         evidenceCount(liveItemCounts, registry.itemId) === 1 &&
         evidenceCount(registryItemCounts, registry.itemId) === 1 &&
@@ -774,17 +912,26 @@ export function buildEbayRegistryRepairDryRun(
         evidenceCount(registrySkuCounts, registry.sku) === 1 &&
         liveRegistryReferences[live.index]?.size === 1)
       if (identitySafe && live) {
-        registryKeepCurrent += 1
         liveMatched.add(live.index)
-        keepHandles.push(opaqueHandle("keep", [
-          accountKey,
-          registry.itemId,
-          registry.sku,
-          registry.variationKey,
-          live.itemId,
-          live.sku,
-          live.variationKey,
-        ]))
+        if (rowActive) {
+          registryKeepCurrent += 1
+          keepHandles.push(opaqueHandle("keep", [
+            accountKey,
+            registry.itemId,
+            registry.sku,
+            registry.variationKey,
+            live.itemId,
+            live.sku,
+            live.variationKey,
+          ]))
+        } else {
+          registryUnproven += 1
+          registryPartitionLifecycleUnprovenCount += 1
+          recordLifecycleUnproven(
+            "REGISTRY_PARTITION",
+            rowLifecycleSignalAvailable,
+          )
+        }
       } else {
         registryUnproven += 1
         identityPartitionUnproven += 1
@@ -802,7 +949,7 @@ export function buildEbayRegistryRepairDryRun(
       const identitySafe = Boolean(live && registry.itemId &&
         registry.sku && live.sku && registry.sku !== live.sku &&
         registry.variationKey === live.variationKey && rowAccountCorrect &&
-        rowActive && livePreconditionsProven(live.listing) &&
+        livePreconditionsProven(live.listing) &&
         evidenceCount(liveItemCounts, registry.itemId) === 1 &&
         evidenceCount(registryItemCounts, registry.itemId) === 1 &&
         evidenceCount(registrySkuCounts, live.sku) === 0 &&
@@ -810,7 +957,13 @@ export function buildEbayRegistryRepairDryRun(
       if (identitySafe && live) {
         registryRepairExisting += 1
         liveRepair.add(live.index)
-        if (registry.guard) {
+        if (!rowActive) {
+          repairUnproven += 1
+          recordLifecycleUnproven(
+            "REPAIR_EXISTING",
+            rowLifecycleSignalAvailable,
+          )
+        } else if (registry.guard) {
           repairHandles.push(opaqueHandle("repair", [
             registry.guard,
             live.sku,
@@ -835,7 +988,7 @@ export function buildEbayRegistryRepairDryRun(
     if (itemMatches.length === 0 && skuMatches.length === 1) {
       const live = liveFacts[skuMatches[0]]
       const reviewEvidenceSafe = Boolean(live && registry.sku &&
-        rowAccountCorrect && rowActive &&
+        rowAccountCorrect &&
         livePreconditionsProven(live.listing))
       if (!reviewEvidenceSafe || !live || !registry.sku) {
         registryUnproven += 1
@@ -861,6 +1014,13 @@ export function buildEbayRegistryRepairDryRun(
       }
       registryHumanReview += 1
       liveHumanReview.add(live.index)
+      if (!rowActive) {
+        humanReviewUnproven += 1
+        recordLifecycleUnproven(
+          "HUMAN_REVIEW",
+          rowLifecycleSignalAvailable,
+        )
+      }
       humanCandidates.push({
         CANDIDATE_HANDLE: opaqueHandle("review", [
           accountKey,
@@ -954,6 +1114,14 @@ export function buildEbayRegistryRepairDryRun(
   let createMaterializationUnprovenCount = 0
   let createAbsenceCasPassCount = 0
   let createAbsenceCasUnprovenCount = 0
+  let absenceItemIdAlreadyPresentCount = 0
+  let absenceItemIdLookupUnprovenCount = 0
+  let absenceSkuRelationCount = 0
+  let absenceSyncKeyCollisionCount = 0
+  let absenceAccountScopeCount = 0
+  let absenceMultipleRegistryRowsCount = 0
+  let absenceOtherCount = 0
+  const plannedCreateSyncKeys = new Set<string>()
   for (const live of liveFacts) {
     if (resolvedLiveMatched.has(live.index) ||
         resolvedLiveRepair.has(live.index) ||
@@ -1000,11 +1168,25 @@ export function buildEbayRegistryRepairDryRun(
     createMaterializationPassCount += 1
 
     const noRegistryReference = liveRegistryReferences[live.index]?.size === 0
+    const plannedCreateSyncKey = buildEbayRegistryRepairCreateSyncKey({
+      accountKey,
+      itemId: createItemId,
+      sku: createSku,
+    })
+    const plannedSyncKeyProven = plannedCreateSyncKey !== "UNPROVEN"
+    const plannedSyncKeyCollision = plannedSyncKeyProven && (
+      existingRegistrySyncKeys.has(plannedCreateSyncKey) ||
+      registrySyncKeys.has(plannedCreateSyncKey) ||
+      plannedCreateSyncKeys.has(plannedCreateSyncKey)
+    )
     const absenceAndUniquenessSafe = Boolean(noRegistryReference &&
-      evidenceCount(liveSkuCounts, createSku) === 1 &&
       evidenceCount(registryItemCounts, createItemId) === 0 &&
-      evidenceCount(registrySkuCounts, createSku) === 0)
+      evidenceCount(registrySkuCounts, createSku) === 0 &&
+      registrySyncKeyEvidenceComplete &&
+      plannedSyncKeyProven &&
+      !plannedSyncKeyCollision)
     if (absenceAndUniquenessSafe) {
+      plannedCreateSyncKeys.add(plannedCreateSyncKey as string)
       createAbsenceCasPassCount += 1
       liveCreate.add(live.index)
       createHandles.push(opaqueHandle("create", [
@@ -1021,16 +1203,40 @@ export function buildEbayRegistryRepairDryRun(
       createUnproven += 1
       const registryReferenceCount =
         liveRegistryReferences[live.index]?.size
-      const createFailureReason = registryReferenceCount !== undefined &&
-          registryReferenceCount > 1
-        ? "PARTITION_OVERLAP" as const
-        : (registryReferenceCount !== undefined &&
-            registryReferenceCount > 0) ||
-            evidenceCount(registryItemCounts, createItemId) > 0 ||
-            evidenceCount(registrySkuCounts, createSku) > 0
-          ? "MULTIPLE_REGISTRY_CANDIDATES" as const
-          : "OTHER" as const
-      if (createFailureReason === "OTHER") {
+      const registryReferenceEvidenceAvailable =
+        registryReferenceCount !== undefined
+      const registryItemCount = evidenceCount(
+        registryItemCounts,
+        createItemId,
+      )
+      const registrySkuCount = evidenceCount(registrySkuCounts, createSku)
+      const referencedRows = [...(liveRegistryReferences[live.index] ?? [])]
+        .map((registryIndex) => registryFacts[registryIndex])
+        .filter((candidate) => candidate !== undefined)
+      const multipleRegistryRows =
+        (registryReferenceCount !== undefined && registryReferenceCount > 1) ||
+        registryItemCount > 1 ||
+        registrySkuCount > 1
+      const accountScopeConflict = referencedRows.some(
+        (candidate) => candidate.row.account_key !== accountKey,
+      )
+      if (!registryReferenceEvidenceAvailable ||
+          !registrySyncKeyEvidenceComplete || !plannedSyncKeyProven) {
+        absenceItemIdLookupUnprovenCount += 1
+      } else if (multipleRegistryRows) {
+        absenceMultipleRegistryRowsCount += 1
+      } else if (accountScopeConflict) {
+        absenceAccountScopeCount += 1
+      } else if (registryItemCount > 0) {
+        absenceItemIdAlreadyPresentCount += 1
+      } else if (registrySkuCount > 0 ||
+          (registryReferenceCount !== undefined &&
+            registryReferenceCount > 0)) {
+        absenceSkuRelationCount += 1
+      } else if (plannedSyncKeyCollision) {
+        absenceSyncKeyCollisionCount += 1
+      } else {
+        absenceOtherCount += 1
         increment(actionOtherUnprovenSubtypeCounts,
           "REGISTRY_ABSENCE_PROOF")
       }
@@ -1124,6 +1330,30 @@ export function buildEbayRegistryRepairDryRun(
   const createMaterializationStatus = !sameRequestEvidenceCoherent
     ? "UNPROVEN" as const
     : preconditionStatus(createMaterializationUnprovenCount)
+  const absenceSecondReadInconsistencyCount = sameRequestEvidenceCoherent
+    ? 0
+    : 1
+  const absenceProofUnprovenCount = absenceItemIdAlreadyPresentCount +
+    absenceItemIdLookupUnprovenCount + absenceSkuRelationCount +
+    absenceSyncKeyCollisionCount + absenceAccountScopeCount +
+    absenceMultipleRegistryRowsCount +
+    absenceSecondReadInconsistencyCount + absenceOtherCount
+  const absenceCauseEntries: Array<[
+    EbayRegistryRepairAbsenceProofCause,
+    number,
+  ]> = [
+    ["SECOND_READ_INCONSISTENCY", absenceSecondReadInconsistencyCount],
+    ["MULTIPLE_REGISTRY_ROWS", absenceMultipleRegistryRowsCount],
+    ["ACCOUNT_SCOPE", absenceAccountScopeCount],
+    ["ITEM_ID_ALREADY_PRESENT", absenceItemIdAlreadyPresentCount],
+    ["ITEM_ID_LOOKUP_UNPROVEN", absenceItemIdLookupUnprovenCount],
+    ["SKU_RELATION", absenceSkuRelationCount],
+    ["SYNC_KEY_COLLISION", absenceSyncKeyCollisionCount],
+    ["OTHER", absenceOtherCount],
+  ]
+  const absenceProofPrimaryCause = absenceCauseEntries.find(
+    ([, count]) => count > 0,
+  )?.[0] ?? "NONE"
   const staleStatus = !sameRequestEvidenceCoherent
     ? "UNPROVEN" as const
     : preconditionStatus(staleUnproven)
@@ -1140,7 +1370,8 @@ export function buildEbayRegistryRepairDryRun(
     registryUnproven === 0 &&
     registryMarkHistorical === 0 &&
     humanCandidates.length === registryHumanReview &&
-    humanReviewEvidenceSafe && expectedCoveragePercent !== "UNPROVEN" &&
+    humanReviewEvidenceSafe && lifecycleUnprovenCount === 0 &&
+    expectedCoveragePercent !== "UNPROVEN" &&
     repairStatus === "PASS" &&
     createStatus === "PASS" && staleStatus === "PASS" &&
     stateGuardsSupported === "YES"
@@ -1158,8 +1389,8 @@ export function buildEbayRegistryRepairDryRun(
                 livePartitionValid !== "YES" ||
                 registryPartitionValid !== "YES"
               ? "BLOCKING_PARTITION_CONFLICT"
-              : identityPartitionUnproven > 0 ||
-                  humanReviewUnproven > 0 || !humanReviewEvidenceSafe
+              : identityPartitionUnproven > 0 || liveUnproven.size > 0 ||
+                  !humanReviewEvidenceSafe
                 ? "BLOCKING_UNPROVEN"
                 : humanCandidates.length > 0
                   ? "REVIEWABLE_ONLY"
@@ -1194,6 +1425,9 @@ export function buildEbayRegistryRepairDryRun(
   if (identityPartitionUnprovenCount > 0) {
     unprovenComponents.push("IDENTITY_PARTITION")
   }
+  if (registryPartitionLifecycleUnprovenCount > 0) {
+    unprovenComponents.push("LIFECYCLE_PRECONDITION")
+  }
   const unprovenComponent: EbayRegistryRepairUnprovenComponent =
     !sameRequestEvidenceCoherent
       ? "SAME_REQUEST_STATE"
@@ -1202,13 +1436,17 @@ export function buildEbayRegistryRepairDryRun(
         : unprovenComponents.length === 1
           ? unprovenComponents[0]
           : "MULTIPLE_COMPONENTS"
+  const unprovenStateGuardCount = sameRequestEvidenceCoherent ? 0 : 1
+  const finalPreconditionUnprovenCount = repairUnproven + staleUnproven +
+    createUnproven + humanReviewUnproven +
+    registryPartitionLifecycleUnprovenCount + unprovenStateGuardCount
   const unprovenCount = !sameRequestEvidenceCoherent
     ? 1
     : repairUnproven + staleUnproven + createUnproven +
-      humanReviewUnproven + identityPartitionUnprovenCount
-  const unprovenStateGuardCount = sameRequestEvidenceCoherent ? 0 : 1
+      humanReviewUnproven + registryPartitionLifecycleUnprovenCount +
+      identityPartitionUnprovenCount
   const unprovenSourceReadCount = 0
-  const unprovenOtherCount = 0
+  const unprovenOtherCount = registryPartitionLifecycleUnprovenCount
   const activeUnprovenSources = ([
     ["SOURCE_READ", unprovenSourceReadCount],
     ["STATE_GUARD", unprovenStateGuardCount],
@@ -1236,6 +1474,18 @@ export function buildEbayRegistryRepairDryRun(
         : !basePreconditionsPass
           ? "PRECONDITION_UNPROVEN"
           : null
+  const lifecycleAction: EbayRegistryRepairLifecycleAction =
+    lifecycleActions.size === 0
+      ? "NONE"
+      : lifecycleActions.size === 1
+        ? [...lifecycleActions][0]
+        : "OTHER"
+  const lifecycleFailureCause: EbayRegistryRepairLifecycleFailureCause =
+    lifecycleFailureCauses.size === 0
+      ? "NONE"
+      : lifecycleFailureCauses.size === 1
+        ? [...lifecycleFailureCauses][0]
+        : "MULTIPLE_FAILURES"
   const ready = rejectionReason === null
       ? "YES" as const
       : "NO" as const
@@ -1352,6 +1602,35 @@ export function buildEbayRegistryRepairDryRun(
     CREATE_ABSENCE_CAS_PASS_COUNT: createAbsenceCasPassCount,
     CREATE_ABSENCE_CAS_UNPROVEN_COUNT: createAbsenceCasUnprovenCount,
     CREATE_MATERIALIZATION_STATUS: createMaterializationStatus,
+    ABSENCE_PROOF_UNPROVEN_COUNT: absenceProofUnprovenCount,
+    ABSENCE_PROOF_CAUSE_ITEM_ID_ALREADY_PRESENT:
+      absenceItemIdAlreadyPresentCount,
+    ABSENCE_PROOF_CAUSE_ITEM_ID_LOOKUP_UNPROVEN:
+      absenceItemIdLookupUnprovenCount,
+    ABSENCE_PROOF_CAUSE_SKU_RELATION: absenceSkuRelationCount,
+    ABSENCE_PROOF_CAUSE_SYNC_KEY_COLLISION:
+      absenceSyncKeyCollisionCount,
+    ABSENCE_PROOF_CAUSE_ACCOUNT_SCOPE: absenceAccountScopeCount,
+    ABSENCE_PROOF_CAUSE_MULTIPLE_REGISTRY_ROWS:
+      absenceMultipleRegistryRowsCount,
+    ABSENCE_PROOF_CAUSE_SECOND_READ_INCONSISTENCY:
+      absenceSecondReadInconsistencyCount,
+    ABSENCE_PROOF_CAUSE_OTHER: absenceOtherCount,
+    ABSENCE_PROOF_PRIMARY_CAUSE: absenceProofPrimaryCause,
+    LIFECYCLE_UNPROVEN_ACTION: lifecycleAction,
+    LIFECYCLE_UNPROVEN_STAGE: lifecycleUnprovenCount > 0
+      ? "EXISTING_REGISTRY_ROW_ACTIVE_GUARD"
+      : "NONE",
+    LIFECYCLE_REQUIRED_SIGNAL: lifecycleUnprovenCount > 0
+      ? "LISTING_STATUS_ACTIVE"
+      : "NONE",
+    LIFECYCLE_SIGNAL_AVAILABLE: lifecycleFailureCauses.has(
+      "REGISTRY_LISTING_STATUS_UNAVAILABLE",
+    ) ? "NO" : "YES",
+    LIFECYCLE_FAILURE_CAUSE: lifecycleFailureCause,
+    FINAL_IDENTITY_UNPROVEN_COUNT: identityPartitionUnprovenCount,
+    FINAL_PRECONDITION_UNPROVEN_COUNT: finalPreconditionUnprovenCount,
+    FINAL_REJECTION_REASON: rejectionReason,
     DRY_RUN_STALE_LABEL: staleLabel,
     DRY_RUN_STATE_BOUND: sameRequestEvidenceCoherent ? "YES" : "NO",
     DRY_RUN_STATE_FINGERPRINT_PRESENT: "YES",

@@ -7,10 +7,15 @@ import { supabase } from "@/lib/supabase"
 import type { EbayRegistryCoverageDiagnostic } from "@/lib/ebay/ebay-commercial-monitor-live-readonly"
 import type {
   EbayRegistryRepairAmbiguityClass,
+  EbayRegistryRepairAbsenceProofCause,
   EbayRegistryRepairBlockingUnprovenSource,
   EbayRegistryRepairDryRun,
   EbayRegistryRepairDryRunRejectionReason,
   EbayRegistryRepairOtherUnprovenSubtype,
+  EbayRegistryRepairLifecycleAction,
+  EbayRegistryRepairLifecycleFailureCause,
+  EbayRegistryRepairLifecycleRequiredSignal,
+  EbayRegistryRepairLifecycleStage,
   EbayRegistryRepairUnprovenComponent,
   EbayRegistryRepairUnprovenPrimaryReason,
   EbayRegistryRepairUnprovenSource,
@@ -294,6 +299,24 @@ type RegistryRepairDryRunPayload = {
   CREATE_ABSENCE_CAS_PASS_COUNT?: unknown
   CREATE_ABSENCE_CAS_UNPROVEN_COUNT?: unknown
   CREATE_MATERIALIZATION_STATUS?: unknown
+  ABSENCE_PROOF_UNPROVEN_COUNT?: unknown
+  ABSENCE_PROOF_CAUSE_ITEM_ID_ALREADY_PRESENT?: unknown
+  ABSENCE_PROOF_CAUSE_ITEM_ID_LOOKUP_UNPROVEN?: unknown
+  ABSENCE_PROOF_CAUSE_SKU_RELATION?: unknown
+  ABSENCE_PROOF_CAUSE_SYNC_KEY_COLLISION?: unknown
+  ABSENCE_PROOF_CAUSE_ACCOUNT_SCOPE?: unknown
+  ABSENCE_PROOF_CAUSE_MULTIPLE_REGISTRY_ROWS?: unknown
+  ABSENCE_PROOF_CAUSE_SECOND_READ_INCONSISTENCY?: unknown
+  ABSENCE_PROOF_CAUSE_OTHER?: unknown
+  ABSENCE_PROOF_PRIMARY_CAUSE?: unknown
+  LIFECYCLE_UNPROVEN_ACTION?: unknown
+  LIFECYCLE_UNPROVEN_STAGE?: unknown
+  LIFECYCLE_REQUIRED_SIGNAL?: unknown
+  LIFECYCLE_SIGNAL_AVAILABLE?: unknown
+  LIFECYCLE_FAILURE_CAUSE?: unknown
+  FINAL_IDENTITY_UNPROVEN_COUNT?: unknown
+  FINAL_PRECONDITION_UNPROVEN_COUNT?: unknown
+  FINAL_REJECTION_REASON?: unknown
 }
 
 const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
@@ -472,6 +495,24 @@ const REGISTRY_REPAIR_DRY_RUN_KEYS = [
   "CREATE_ABSENCE_CAS_PASS_COUNT",
   "CREATE_ABSENCE_CAS_UNPROVEN_COUNT",
   "CREATE_MATERIALIZATION_STATUS",
+  "ABSENCE_PROOF_UNPROVEN_COUNT",
+  "ABSENCE_PROOF_CAUSE_ITEM_ID_ALREADY_PRESENT",
+  "ABSENCE_PROOF_CAUSE_ITEM_ID_LOOKUP_UNPROVEN",
+  "ABSENCE_PROOF_CAUSE_SKU_RELATION",
+  "ABSENCE_PROOF_CAUSE_SYNC_KEY_COLLISION",
+  "ABSENCE_PROOF_CAUSE_ACCOUNT_SCOPE",
+  "ABSENCE_PROOF_CAUSE_MULTIPLE_REGISTRY_ROWS",
+  "ABSENCE_PROOF_CAUSE_SECOND_READ_INCONSISTENCY",
+  "ABSENCE_PROOF_CAUSE_OTHER",
+  "ABSENCE_PROOF_PRIMARY_CAUSE",
+  "LIFECYCLE_UNPROVEN_ACTION",
+  "LIFECYCLE_UNPROVEN_STAGE",
+  "LIFECYCLE_REQUIRED_SIGNAL",
+  "LIFECYCLE_SIGNAL_AVAILABLE",
+  "LIFECYCLE_FAILURE_CAUSE",
+  "FINAL_IDENTITY_UNPROVEN_COUNT",
+  "FINAL_PRECONDITION_UNPROVEN_COUNT",
+  "FINAL_REJECTION_REASON",
   "DRY_RUN_STATE_BOUND",
   "DRY_RUN_STATE_FINGERPRINT_PRESENT",
   "APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE",
@@ -558,6 +599,7 @@ const REGISTRY_REPAIR_UNPROVEN_COMPONENTS = [
   "MARK_STALE_MUTATION_GUARD",
   "CREATE_NEW_ABSENCE_OR_UNIQUENESS_GUARD",
   "CREATE_NEW_MATERIALIZATION",
+  "LIFECYCLE_PRECONDITION",
   "HUMAN_REVIEW_EVIDENCE",
   "IDENTITY_PARTITION",
   "SAME_REQUEST_STATE",
@@ -645,6 +687,80 @@ type RegistryRepairCreateStageCounts = Record<
   typeof REGISTRY_REPAIR_CREATE_STAGE_COUNT_KEYS[number],
   number | "UNPROVEN"
 >
+
+const REGISTRY_REPAIR_ABSENCE_PROOF_CAUSES = [
+  "NONE",
+  "ITEM_ID_ALREADY_PRESENT",
+  "ITEM_ID_LOOKUP_UNPROVEN",
+  "SKU_RELATION",
+  "SYNC_KEY_COLLISION",
+  "ACCOUNT_SCOPE",
+  "MULTIPLE_REGISTRY_ROWS",
+  "SECOND_READ_INCONSISTENCY",
+  "OTHER",
+  "UNPROVEN",
+] as const
+
+const REGISTRY_REPAIR_ABSENCE_PROOF_CAUSE_COUNT_KEYS = [
+  "ABSENCE_PROOF_CAUSE_ITEM_ID_ALREADY_PRESENT",
+  "ABSENCE_PROOF_CAUSE_ITEM_ID_LOOKUP_UNPROVEN",
+  "ABSENCE_PROOF_CAUSE_SKU_RELATION",
+  "ABSENCE_PROOF_CAUSE_SYNC_KEY_COLLISION",
+  "ABSENCE_PROOF_CAUSE_ACCOUNT_SCOPE",
+  "ABSENCE_PROOF_CAUSE_MULTIPLE_REGISTRY_ROWS",
+  "ABSENCE_PROOF_CAUSE_SECOND_READ_INCONSISTENCY",
+  "ABSENCE_PROOF_CAUSE_OTHER",
+] as const
+
+const REGISTRY_REPAIR_LIFECYCLE_ACTIONS = [
+  "NONE",
+  "REPAIR_EXISTING",
+  "CREATE_NEW",
+  "MARK_STALE",
+  "HUMAN_REVIEW",
+  "REGISTRY_PARTITION",
+  "OTHER",
+  "UNPROVEN",
+] as const
+
+const REGISTRY_REPAIR_LIFECYCLE_STAGES = [
+  "NONE",
+  "EXISTING_REGISTRY_ROW_ACTIVE_GUARD",
+  "UNPROVEN",
+] as const
+
+const REGISTRY_REPAIR_LIFECYCLE_REQUIRED_SIGNALS = [
+  "NONE",
+  "LISTING_STATUS_ACTIVE",
+  "UNPROVEN",
+] as const
+
+const REGISTRY_REPAIR_LIFECYCLE_FAILURE_CAUSES = [
+  "NONE",
+  "REGISTRY_ROW_NOT_ACTIVE",
+  "REGISTRY_LISTING_STATUS_UNAVAILABLE",
+  "MULTIPLE_FAILURES",
+  "UNPROVEN",
+] as const
+
+type RegistryRepairAbsenceProofCauseCounts = Record<
+  typeof REGISTRY_REPAIR_ABSENCE_PROOF_CAUSE_COUNT_KEYS[number],
+  number | "UNPROVEN"
+>
+
+type RegistryRepairLifecycleDiagnostic = {
+  action: EbayRegistryRepairLifecycleAction
+  stage: EbayRegistryRepairLifecycleStage
+  requiredSignal: EbayRegistryRepairLifecycleRequiredSignal
+  signalAvailable: "YES" | "NO" | "UNPROVEN"
+  failureCause: EbayRegistryRepairLifecycleFailureCause
+}
+
+type RegistryRepairFinalDiagnostic = {
+  identityUnprovenCount: number | "UNPROVEN"
+  preconditionUnprovenCount: number | "UNPROVEN"
+  rejectionReason: EbayRegistryRepairDryRunRejectionReason | null
+}
 
 function validRegistryRepairDryRunRejectionReason(
   value: unknown,
@@ -788,6 +904,110 @@ RegistryRepairCreateStageCounts {
     CREATE_MATERIALIZATION_UNPROVEN_COUNT: "UNPROVEN",
     CREATE_ABSENCE_CAS_PASS_COUNT: "UNPROVEN",
     CREATE_ABSENCE_CAS_UNPROVEN_COUNT: "UNPROVEN",
+  }
+}
+
+function validRegistryRepairAbsenceProofCause(
+  value: unknown,
+): value is EbayRegistryRepairAbsenceProofCause {
+  return REGISTRY_REPAIR_ABSENCE_PROOF_CAUSES.some((cause) => cause === value)
+}
+
+function parseRegistryRepairAbsenceProofCauseCounts(
+  value: unknown,
+): RegistryRepairAbsenceProofCauseCounts | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (!REGISTRY_REPAIR_ABSENCE_PROOF_CAUSE_COUNT_KEYS.every((key) =>
+    validRegistryRepairUnprovenCount(record[key])
+  )) return null
+  return Object.fromEntries(
+    REGISTRY_REPAIR_ABSENCE_PROOF_CAUSE_COUNT_KEYS.map((key) =>
+      [key, record[key]]
+    ),
+  ) as RegistryRepairAbsenceProofCauseCounts
+}
+
+function unavailableRegistryRepairAbsenceProofCauseCounts():
+RegistryRepairAbsenceProofCauseCounts {
+  return {
+    ABSENCE_PROOF_CAUSE_ITEM_ID_ALREADY_PRESENT: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_ITEM_ID_LOOKUP_UNPROVEN: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_SKU_RELATION: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_SYNC_KEY_COLLISION: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_ACCOUNT_SCOPE: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_MULTIPLE_REGISTRY_ROWS: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_SECOND_READ_INCONSISTENCY: "UNPROVEN",
+    ABSENCE_PROOF_CAUSE_OTHER: "UNPROVEN",
+  }
+}
+
+function parseRegistryRepairLifecycleDiagnostic(
+  value: unknown,
+): RegistryRepairLifecycleDiagnostic | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const action = record.LIFECYCLE_UNPROVEN_ACTION
+  const stage = record.LIFECYCLE_UNPROVEN_STAGE
+  const requiredSignal = record.LIFECYCLE_REQUIRED_SIGNAL
+  const signalAvailable = record.LIFECYCLE_SIGNAL_AVAILABLE
+  const failureCause = record.LIFECYCLE_FAILURE_CAUSE
+  if (!REGISTRY_REPAIR_LIFECYCLE_ACTIONS.some((entry) => entry === action) ||
+      !REGISTRY_REPAIR_LIFECYCLE_STAGES.some((entry) => entry === stage) ||
+      !REGISTRY_REPAIR_LIFECYCLE_REQUIRED_SIGNALS.some((entry) =>
+        entry === requiredSignal
+      ) ||
+      !["YES", "NO", "UNPROVEN"].includes(String(signalAvailable)) ||
+      !REGISTRY_REPAIR_LIFECYCLE_FAILURE_CAUSES.some((entry) =>
+        entry === failureCause
+      )) return null
+  return {
+    action: action as EbayRegistryRepairLifecycleAction,
+    stage: stage as EbayRegistryRepairLifecycleStage,
+    requiredSignal: requiredSignal as EbayRegistryRepairLifecycleRequiredSignal,
+    signalAvailable: signalAvailable as "YES" | "NO" | "UNPROVEN",
+    failureCause: failureCause as EbayRegistryRepairLifecycleFailureCause,
+  }
+}
+
+function unavailableRegistryRepairLifecycleDiagnostic():
+RegistryRepairLifecycleDiagnostic {
+  return {
+    action: "UNPROVEN",
+    stage: "UNPROVEN",
+    requiredSignal: "UNPROVEN",
+    signalAvailable: "UNPROVEN",
+    failureCause: "UNPROVEN",
+  }
+}
+
+function parseRegistryRepairFinalDiagnostic(
+  value: unknown,
+): RegistryRepairFinalDiagnostic | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const rejectionReason = record.FINAL_REJECTION_REASON
+  if (!validRegistryRepairUnprovenCount(record.FINAL_IDENTITY_UNPROVEN_COUNT) ||
+      !validRegistryRepairUnprovenCount(
+        record.FINAL_PRECONDITION_UNPROVEN_COUNT,
+      ) ||
+      !(rejectionReason === null ||
+        validRegistryRepairDryRunRejectionReason(rejectionReason))) return null
+  return {
+    identityUnprovenCount: record.FINAL_IDENTITY_UNPROVEN_COUNT as
+      number | "UNPROVEN",
+    preconditionUnprovenCount: record.FINAL_PRECONDITION_UNPROVEN_COUNT as
+      number | "UNPROVEN",
+    rejectionReason,
+  }
+}
+
+function unavailableRegistryRepairFinalDiagnostic():
+RegistryRepairFinalDiagnostic {
+  return {
+    identityUnprovenCount: "UNPROVEN",
+    preconditionUnprovenCount: "UNPROVEN",
+    rejectionReason: "UNPROVEN",
   }
 }
 
@@ -1788,6 +2008,10 @@ function validRegistryRepairDryRun(
     "OTHER_SUBTYPE_NORMALIZATION_FAILURE_COUNT",
     "OTHER_SUBTYPE_UNEXPECTED_CLASSIFIER_BRANCH_COUNT",
     ...REGISTRY_REPAIR_CREATE_STAGE_COUNT_KEYS,
+    "ABSENCE_PROOF_UNPROVEN_COUNT",
+    ...REGISTRY_REPAIR_ABSENCE_PROOF_CAUSE_COUNT_KEYS,
+    "FINAL_IDENTITY_UNPROVEN_COUNT",
+    "FINAL_PRECONDITION_UNPROVEN_COUNT",
     "REPAIR_EXISTING_COUNT",
     "CREATE_NEW_COUNT",
     "MARK_STALE_COUNT",
@@ -1867,6 +2091,12 @@ function validRegistryRepairDryRun(
       !["PASS", "FAIL", "UNPROVEN"].includes(
         String(record.CREATE_MATERIALIZATION_STATUS),
       ) ||
+      !validRegistryRepairAbsenceProofCause(
+        record.ABSENCE_PROOF_PRIMARY_CAUSE,
+      ) ||
+      !parseRegistryRepairAbsenceProofCauseCounts(record) ||
+      !parseRegistryRepairLifecycleDiagnostic(record) ||
+      !parseRegistryRepairFinalDiagnostic(record) ||
       !precondition(record.REPAIR_PRECONDITION_STATUS) ||
       !precondition(record.CREATE_PRECONDITION_STATUS) ||
       !precondition(record.STALE_PRECONDITION_STATUS) ||
@@ -1964,7 +2194,12 @@ function validRegistryRepairDryRun(
     record.OTHER_SUBTYPE_COUNTS,
   )
   const createStageCounts = parseRegistryRepairCreateStageCounts(record)
-  if (!otherSubtypeCounts || !createStageCounts) return false
+  const absenceProofCauseCounts =
+    parseRegistryRepairAbsenceProofCauseCounts(record)
+  const lifecycleDiagnostic = parseRegistryRepairLifecycleDiagnostic(record)
+  const finalDiagnostic = parseRegistryRepairFinalDiagnostic(record)
+  if (!otherSubtypeCounts || !createStageCounts || !absenceProofCauseCounts ||
+      !lifecycleDiagnostic || !finalDiagnostic) return false
   const otherSubtypeValues = Object.values(otherSubtypeCounts)
   const createIdentityPartitionConsistent = [
     createStageCounts.RAW_CREATE_IDENTITY_CANDIDATE_COUNT,
@@ -1990,6 +2225,13 @@ function validRegistryRepairDryRun(
     createStageCounts.CREATE_MATERIALIZATION_PASS_COUNT ===
       Number(createStageCounts.CREATE_ABSENCE_CAS_PASS_COUNT) +
       Number(createStageCounts.CREATE_ABSENCE_CAS_UNPROVEN_COUNT)
+  const absenceProofCauseValues = Object.values(absenceProofCauseCounts)
+  const numericAbsenceProofCauseSum = absenceProofCauseValues.every((value) =>
+    typeof value === "number"
+  )
+    ? absenceProofCauseValues.reduce<number>((sum, value) =>
+      sum + (value as number), 0)
+    : null
   if ((unprovenComponent === "NONE" && unprovenCount !== 0) ||
       (record.DRY_RUN_READY_FOR_APPROVAL === "YES" &&
         (unprovenComponent !== "NONE" || unprovenCount !== 0 ||
@@ -2064,7 +2306,39 @@ function validRegistryRepairDryRun(
       (unprovenComponent === "EVIDENCE_UNAVAILABLE" &&
         (Object.values(createStageCounts).some((value) => value !== "UNPROVEN") ||
           otherSubtypeValues.some((value) => value !== "UNPROVEN") ||
-          record.CREATE_MATERIALIZATION_STATUS !== "UNPROVEN"))) return false
+          record.CREATE_MATERIALIZATION_STATUS !== "UNPROVEN")) ||
+      (numericAbsenceProofCauseSum !== null &&
+        typeof record.ABSENCE_PROOF_UNPROVEN_COUNT === "number" &&
+        numericAbsenceProofCauseSum !== record.ABSENCE_PROOF_UNPROVEN_COUNT) ||
+      (record.ABSENCE_PROOF_UNPROVEN_COUNT === 0 &&
+        record.ABSENCE_PROOF_PRIMARY_CAUSE !== "NONE") ||
+      (typeof record.ABSENCE_PROOF_UNPROVEN_COUNT === "number" &&
+        record.ABSENCE_PROOF_UNPROVEN_COUNT > 0 &&
+        record.ABSENCE_PROOF_PRIMARY_CAUSE === "NONE") ||
+      finalDiagnostic.rejectionReason !== record.DRY_RUN_REJECTION_REASON ||
+      (record.DRY_RUN_READY_FOR_APPROVAL === "YES" &&
+        (record.ABSENCE_PROOF_UNPROVEN_COUNT !== 0 ||
+          absenceProofCauseValues.some((value) => value !== 0) ||
+          record.ABSENCE_PROOF_PRIMARY_CAUSE !== "NONE" ||
+          lifecycleDiagnostic.action !== "NONE" ||
+          lifecycleDiagnostic.stage !== "NONE" ||
+          lifecycleDiagnostic.requiredSignal !== "NONE" ||
+          lifecycleDiagnostic.signalAvailable !== "YES" ||
+          lifecycleDiagnostic.failureCause !== "NONE" ||
+          finalDiagnostic.identityUnprovenCount !== 0 ||
+          finalDiagnostic.preconditionUnprovenCount !== 0)) ||
+      (unprovenComponent === "EVIDENCE_UNAVAILABLE" &&
+        (record.ABSENCE_PROOF_UNPROVEN_COUNT !== "UNPROVEN" ||
+          absenceProofCauseValues.some((value) => value !== "UNPROVEN") ||
+          record.ABSENCE_PROOF_PRIMARY_CAUSE !== "UNPROVEN" ||
+          lifecycleDiagnostic.action !== "UNPROVEN" ||
+          lifecycleDiagnostic.stage !== "UNPROVEN" ||
+          lifecycleDiagnostic.requiredSignal !== "UNPROVEN" ||
+          lifecycleDiagnostic.signalAvailable !== "UNPROVEN" ||
+          lifecycleDiagnostic.failureCause !== "UNPROVEN" ||
+          finalDiagnostic.identityUnprovenCount !== "UNPROVEN" ||
+          finalDiagnostic.preconditionUnprovenCount !== "UNPROVEN" ||
+          finalDiagnostic.rejectionReason !== "UNPROVEN"))) return false
 
   const candidates = record.HUMAN_REVIEW_CANDIDATES
   if (!candidates.every((candidate) => {
@@ -2145,6 +2419,20 @@ export default function EbaySellerOAuthReauthPage() {
   const [registryRepairCreateMaterializationStatus,
     setRegistryRepairCreateMaterializationStatus] =
     useState<"PASS" | "FAIL" | "UNPROVEN" | null>(null)
+  const [registryRepairAbsenceProofUnprovenCount,
+    setRegistryRepairAbsenceProofUnprovenCount] =
+    useState<number | "UNPROVEN" | null>(null)
+  const [registryRepairAbsenceProofPrimaryCause,
+    setRegistryRepairAbsenceProofPrimaryCause] =
+    useState<EbayRegistryRepairAbsenceProofCause | null>(null)
+  const [registryRepairAbsenceProofCauseCounts,
+    setRegistryRepairAbsenceProofCauseCounts] =
+    useState<RegistryRepairAbsenceProofCauseCounts | null>(null)
+  const [registryRepairLifecycleDiagnostic,
+    setRegistryRepairLifecycleDiagnostic] =
+    useState<RegistryRepairLifecycleDiagnostic | null>(null)
+  const [registryRepairFinalDiagnostic, setRegistryRepairFinalDiagnostic] =
+    useState<RegistryRepairFinalDiagnostic | null>(null)
   const [error, setError] = useState("")
 
   useEffect(() => {
@@ -2347,6 +2635,11 @@ export default function EbaySellerOAuthReauthPage() {
     setRegistryRepairOtherSubtypeCounts(null)
     setRegistryRepairCreateStageCounts(null)
     setRegistryRepairCreateMaterializationStatus(null)
+    setRegistryRepairAbsenceProofUnprovenCount(null)
+    setRegistryRepairAbsenceProofPrimaryCause(null)
+    setRegistryRepairAbsenceProofCauseCounts(null)
+    setRegistryRepairLifecycleDiagnostic(null)
+    setRegistryRepairFinalDiagnostic(null)
     setError("")
     try {
       if (!runtimeCredentialMatchAllowsStart(credentialMatch)) {
@@ -2439,6 +2732,30 @@ export default function EbaySellerOAuthReauthPage() {
               "PASS" | "FAIL" | "UNPROVEN"
             : "UNPROVEN",
         )
+        setRegistryRepairAbsenceProofUnprovenCount(
+          validRegistryRepairUnprovenCount(payload.ABSENCE_PROOF_UNPROVEN_COUNT)
+            ? payload.ABSENCE_PROOF_UNPROVEN_COUNT
+            : "UNPROVEN",
+        )
+        setRegistryRepairAbsenceProofPrimaryCause(
+          validRegistryRepairAbsenceProofCause(
+            payload.ABSENCE_PROOF_PRIMARY_CAUSE,
+          )
+            ? payload.ABSENCE_PROOF_PRIMARY_CAUSE
+            : "UNPROVEN",
+        )
+        setRegistryRepairAbsenceProofCauseCounts(
+          parseRegistryRepairAbsenceProofCauseCounts(payload) ??
+            unavailableRegistryRepairAbsenceProofCauseCounts(),
+        )
+        setRegistryRepairLifecycleDiagnostic(
+          parseRegistryRepairLifecycleDiagnostic(payload) ??
+            unavailableRegistryRepairLifecycleDiagnostic(),
+        )
+        setRegistryRepairFinalDiagnostic(
+          parseRegistryRepairFinalDiagnostic(payload) ??
+            unavailableRegistryRepairFinalDiagnostic(),
+        )
         return
       }
       if (!validRegistryRepairDryRun(payload.registryRepairDryRun)) {
@@ -2464,6 +2781,17 @@ export default function EbaySellerOAuthReauthPage() {
           unavailableRegistryRepairCreateStageCounts(),
         )
         setRegistryRepairCreateMaterializationStatus("UNPROVEN")
+        setRegistryRepairAbsenceProofUnprovenCount("UNPROVEN")
+        setRegistryRepairAbsenceProofPrimaryCause("UNPROVEN")
+        setRegistryRepairAbsenceProofCauseCounts(
+          unavailableRegistryRepairAbsenceProofCauseCounts(),
+        )
+        setRegistryRepairLifecycleDiagnostic(
+          unavailableRegistryRepairLifecycleDiagnostic(),
+        )
+        setRegistryRepairFinalDiagnostic(
+          unavailableRegistryRepairFinalDiagnostic(),
+        )
         return
       }
       if (payload.registryRepairDryRun.DRY_RUN_REJECTION_REASON !== null) {
@@ -2509,6 +2837,23 @@ export default function EbaySellerOAuthReauthPage() {
         setRegistryRepairCreateMaterializationStatus(
           payload.registryRepairDryRun.CREATE_MATERIALIZATION_STATUS,
         )
+        setRegistryRepairAbsenceProofUnprovenCount(
+          payload.registryRepairDryRun.ABSENCE_PROOF_UNPROVEN_COUNT,
+        )
+        setRegistryRepairAbsenceProofPrimaryCause(
+          payload.registryRepairDryRun.ABSENCE_PROOF_PRIMARY_CAUSE,
+        )
+        setRegistryRepairAbsenceProofCauseCounts(
+          parseRegistryRepairAbsenceProofCauseCounts(
+            payload.registryRepairDryRun,
+          ),
+        )
+        setRegistryRepairLifecycleDiagnostic(
+          parseRegistryRepairLifecycleDiagnostic(payload.registryRepairDryRun),
+        )
+        setRegistryRepairFinalDiagnostic(
+          parseRegistryRepairFinalDiagnostic(payload.registryRepairDryRun),
+        )
         return
       }
       setRegistryRepairDryRunAmbiguityClass(
@@ -2547,6 +2892,21 @@ export default function EbaySellerOAuthReauthPage() {
       setRegistryRepairCreateMaterializationStatus(
         payload.registryRepairDryRun.CREATE_MATERIALIZATION_STATUS,
       )
+      setRegistryRepairAbsenceProofUnprovenCount(
+        payload.registryRepairDryRun.ABSENCE_PROOF_UNPROVEN_COUNT,
+      )
+      setRegistryRepairAbsenceProofPrimaryCause(
+        payload.registryRepairDryRun.ABSENCE_PROOF_PRIMARY_CAUSE,
+      )
+      setRegistryRepairAbsenceProofCauseCounts(
+        parseRegistryRepairAbsenceProofCauseCounts(payload.registryRepairDryRun),
+      )
+      setRegistryRepairLifecycleDiagnostic(
+        parseRegistryRepairLifecycleDiagnostic(payload.registryRepairDryRun),
+      )
+      setRegistryRepairFinalDiagnostic(
+        parseRegistryRepairFinalDiagnostic(payload.registryRepairDryRun),
+      )
       setRegistryRepairDryRun(payload.registryRepairDryRun)
     } catch {
       setError("REGISTRY_REPAIR_DRY_RUN_REJECTED")
@@ -2569,6 +2929,17 @@ export default function EbaySellerOAuthReauthPage() {
         unavailableRegistryRepairCreateStageCounts(),
       )
       setRegistryRepairCreateMaterializationStatus("UNPROVEN")
+      setRegistryRepairAbsenceProofUnprovenCount("UNPROVEN")
+      setRegistryRepairAbsenceProofPrimaryCause("UNPROVEN")
+      setRegistryRepairAbsenceProofCauseCounts(
+        unavailableRegistryRepairAbsenceProofCauseCounts(),
+      )
+      setRegistryRepairLifecycleDiagnostic(
+        unavailableRegistryRepairLifecycleDiagnostic(),
+      )
+      setRegistryRepairFinalDiagnostic(
+        unavailableRegistryRepairFinalDiagnostic(),
+      )
     } finally {
       setPreviewingRegistryRepair(false)
     }
@@ -2943,6 +3314,52 @@ export default function EbaySellerOAuthReauthPage() {
                     <dd>{String(registryRepairOtherSubtypeCounts[subtype])}</dd>
                   </div>
                 ))}
+              </dl>
+            </section>
+          ) : null}
+          {registryRepairAbsenceProofCauseCounts &&
+              registryRepairAbsenceProofPrimaryCause &&
+              registryRepairAbsenceProofUnprovenCount !== null ? (
+            <section className="mt-3 rounded-xl border border-lime-300/20 bg-lime-300/[0.04] p-3 text-xs text-lime-50/80">
+              <h3 className="font-black">Absence-proof cause counts</h3>
+              <p className="mt-2 font-bold">
+                Unproven: {String(registryRepairAbsenceProofUnprovenCount)} · Primary cause: {registryRepairAbsenceProofPrimaryCause}
+              </p>
+              <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                {REGISTRY_REPAIR_ABSENCE_PROOF_CAUSE_COUNT_KEYS.map((key) => (
+                  <div className="flex justify-between gap-3" key={key}>
+                    <dt>{key.replace("ABSENCE_PROOF_CAUSE_", "").replaceAll("_", " ")}</dt>
+                    <dd>{String(registryRepairAbsenceProofCauseCounts[key])}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
+          {registryRepairLifecycleDiagnostic ? (
+            <section className="mt-3 rounded-xl border border-lime-300/20 bg-lime-300/[0.04] p-3 text-xs text-lime-50/80">
+              <h3 className="font-black">Lifecycle precondition diagnostic</h3>
+              <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                {[
+                  ["Action", registryRepairLifecycleDiagnostic.action],
+                  ["Stage", registryRepairLifecycleDiagnostic.stage],
+                  ["Required signal", registryRepairLifecycleDiagnostic.requiredSignal],
+                  ["Signal available", registryRepairLifecycleDiagnostic.signalAvailable],
+                  ["Failure cause", registryRepairLifecycleDiagnostic.failureCause],
+                ].map(([label, value]) => (
+                  <div className="flex justify-between gap-3" key={String(label)}>
+                    <dt>{label}</dt><dd>{String(value)}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
+          {registryRepairFinalDiagnostic ? (
+            <section className="mt-3 rounded-xl border border-lime-300/20 bg-lime-300/[0.04] p-3 text-xs text-lime-50/80">
+              <h3 className="font-black">Final identity vs precondition taxonomy</h3>
+              <dl className="mt-2 grid gap-2 sm:grid-cols-3">
+                <div><dt>Identity unproven</dt><dd>{String(registryRepairFinalDiagnostic.identityUnprovenCount)}</dd></div>
+                <div><dt>Precondition unproven</dt><dd>{String(registryRepairFinalDiagnostic.preconditionUnprovenCount)}</dd></div>
+                <div><dt>Final rejection reason</dt><dd>{String(registryRepairFinalDiagnostic.rejectionReason)}</dd></div>
               </dl>
             </section>
           ) : null}

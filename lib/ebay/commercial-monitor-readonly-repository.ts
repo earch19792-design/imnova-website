@@ -14,6 +14,7 @@ export type ReadonlyRegistryListingRow = {
   id: string
   account_key: string
   source: string
+  sync_key?: string | null
   ebay_item_id: string
   ebay_sku: string | null
   ebay_variation_key?: string | null
@@ -31,6 +32,10 @@ export type ReadonlyRegistryListingRow = {
   sync_generation: number | string | null
   created_at: string
   updated_at: string
+}
+
+export type ReadonlyRegistrySyncKeyRow = {
+  sync_key: string | null
 }
 
 export type ReadonlySyncStateRow = {
@@ -187,7 +192,7 @@ export async function readRegistry(
   const maximum = 500
   const { data, error } = await supabase
     .from("ebay_active_listings")
-    .select("id,account_key,source,ebay_item_id,ebay_sku,listing_status,title,ebay_quantity,ebay_price,currency,market_radar_product_id,supplier_variant_id,supplier_sku,supplier_cost_at_linking,last_ebay_sync_at,raw_payload,sync_generation,created_at,updated_at")
+    .select("id,account_key,source,sync_key,ebay_item_id,ebay_sku,listing_status,title,ebay_quantity,ebay_price,currency,market_radar_product_id,supplier_variant_id,supplier_sku,supplier_cost_at_linking,last_ebay_sync_at,raw_payload,sync_generation,created_at,updated_at")
     .eq("account_key", accountKey)
     .in("listing_status", ["active", "paused", "unknown", "draft"])
     .order("updated_at", { ascending: false })
@@ -198,6 +203,39 @@ export async function readRegistry(
   return success(
     "EBAY_ACTIVE_LISTING_REGISTRY",
     (data ?? []) as ReadonlyRegistryListingRow[],
+    maximum,
+  )
+}
+
+export async function readRegistrySyncKeyCollisions(
+  supabase: ReadonlySupabaseReader,
+  syncKeys: string[],
+): Promise<ReadonlySourceResult<ReadonlyRegistrySyncKeyRow>> {
+  const maximum = 500
+  const uniqueSyncKeys = [...new Set(syncKeys)]
+  if (uniqueSyncKeys.length === 0) {
+    return success("EBAY_ACTIVE_LISTING_SYNC_KEY_DOMAIN", [], maximum)
+  }
+  if (uniqueSyncKeys.length > maximum) {
+    return failure(
+      "EBAY_ACTIVE_LISTING_SYNC_KEY_DOMAIN",
+      "EBAY_ACTIVE_LISTING_SYNC_KEY_LOOKUP_LIMIT_EXCEEDED",
+    )
+  }
+  const { data, error } = await supabase
+    .from("ebay_active_listings")
+    .select("sync_key")
+    .in("sync_key", uniqueSyncKeys)
+    .limit(maximum + 1)
+  if (error) {
+    return failure(
+      "EBAY_ACTIVE_LISTING_SYNC_KEY_DOMAIN",
+      "EBAY_ACTIVE_LISTING_SYNC_KEY_LOOKUP_FAILED",
+    )
+  }
+  return success(
+    "EBAY_ACTIVE_LISTING_SYNC_KEY_DOMAIN",
+    (data ?? []) as ReadonlyRegistrySyncKeyRow[],
     maximum,
   )
 }

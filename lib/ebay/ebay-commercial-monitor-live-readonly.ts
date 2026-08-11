@@ -35,9 +35,11 @@ import {
 } from "./ebay-seller-traffic-report"
 import {
   readRegistry,
+  readRegistrySyncKeyCollisions,
   type ReadonlyRegistryListingRow,
 } from "./commercial-monitor-readonly-repository"
 import {
+  buildEbayRegistryRepairCreateSyncKey,
   buildEbayRegistryRepairEvidenceFingerprint,
   buildEbayRegistryRepairDryRun,
   buildUnprovenEbayRegistryRepairDryRun,
@@ -376,6 +378,8 @@ type RegistryRepairRuntimeEvidence = {
   observedAt: string
   liveListings: EbayLiveListing[]
   registryRows: ReadonlyRegistryListingRow[]
+  syncKeyLookupStatus: "AVAILABLE"
+  existingRegistrySyncKeys: string[]
 }
 
 type RegistryRuntimeReadInput = {
@@ -564,6 +568,7 @@ export async function diagnoseRegistryCoverageRuntime(
 
   let registryRows: ReadonlyRegistryListingRow[] = []
   let liveListings: EbayLiveListing[] = []
+  let registryReaderClient: Pick<SupabaseClient, "from"> | undefined
 
   let canAttemptRegistryRead = false
   if (configuration.accountKey && supabaseUrlPresent && supabaseServiceRolePresent) {
@@ -574,6 +579,7 @@ export async function diagnoseRegistryCoverageRuntime(
   } else {
     try {
       const supabaseClient = input.supabaseClient ?? getSupabaseAdminClient()
+      registryReaderClient = supabaseClient
       const accountKey = configuration.accountKey ?? ""
       const reader = await readRegistry(
         supabaseClient,
@@ -667,12 +673,38 @@ export async function diagnoseRegistryCoverageRuntime(
   ) {
     const accountKey = configuration.accountKey
     if (accountKey) {
-      input.captureRegistryRepairEvidence?.({
-        accountKey,
-        observedAt: clock().toISOString(),
-        liveListings,
-        registryRows,
-      })
+      if (input.captureRegistryRepairEvidence && registryReaderClient) {
+        const plannedSyncKeys = liveListings.flatMap((listing) => {
+          const syncKey = buildEbayRegistryRepairCreateSyncKey({
+            accountKey,
+            itemId: listing.itemId,
+            sku: listing.sku,
+          })
+          return syncKey === "UNPROVEN" ? [] : [syncKey]
+        })
+        const syncKeyLookup = await readRegistrySyncKeyCollisions(
+          registryReaderClient,
+          plannedSyncKeys,
+        )
+        const plannedSyncKeySet = new Set(plannedSyncKeys)
+        const existingRegistrySyncKeys = syncKeyLookup.rows.map((row) =>
+          typeof row.sync_key === "string" && row.sync_key.trim()
+            ? row.sync_key.trim()
+            : null)
+        const syncKeyLookupValid = existingRegistrySyncKeys.every(
+          (syncKey) => syncKey !== null && plannedSyncKeySet.has(syncKey),
+        )
+        if (syncKeyLookup.status === "AVAILABLE" && syncKeyLookupValid) {
+          input.captureRegistryRepairEvidence({
+            accountKey,
+            observedAt: clock().toISOString(),
+            liveListings,
+            registryRows,
+            syncKeyLookupStatus: "AVAILABLE",
+            existingRegistrySyncKeys: existingRegistrySyncKeys as string[],
+          })
+        }
+      }
     }
     const reconciliation = buildReconciliationCounts({
       liveListings,
@@ -947,6 +979,8 @@ export async function previewEbayRegistryRepairRuntime(
       marketplaceId: "EBAY_US",
       liveListings: firstEvidence.liveListings,
       registryRows: firstEvidence.registryRows,
+      syncKeyLookupStatus: firstEvidence.syncKeyLookupStatus,
+      existingRegistrySyncKeys: firstEvidence.existingRegistrySyncKeys,
     })
   const currentEvidenceFingerprint =
     buildEbayRegistryRepairEvidenceFingerprint({
@@ -954,6 +988,8 @@ export async function previewEbayRegistryRepairRuntime(
       marketplaceId: "EBAY_US",
       liveListings: currentEvidence.liveListings,
       registryRows: currentEvidence.registryRows,
+      syncKeyLookupStatus: currentEvidence.syncKeyLookupStatus,
+      existingRegistrySyncKeys: currentEvidence.existingRegistrySyncKeys,
     })
   if (firstEvidenceFingerprint === "UNPROVEN" ||
       currentEvidenceFingerprint === "UNPROVEN") {
@@ -966,6 +1002,8 @@ export async function previewEbayRegistryRepairRuntime(
     observedAt: currentEvidence.observedAt,
     liveListings: currentEvidence.liveListings,
     registryRows: currentEvidence.registryRows,
+    syncKeyLookupStatus: currentEvidence.syncKeyLookupStatus,
+    existingRegistrySyncKeys: currentEvidence.existingRegistrySyncKeys,
     capturedEvidenceFingerprint: firstEvidenceFingerprint,
   })
 }
