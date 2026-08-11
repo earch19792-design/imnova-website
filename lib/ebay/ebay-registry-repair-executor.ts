@@ -28,13 +28,47 @@ export type EbayRegistryRepairExecutorFailureCode =
   | "RPC_FAILED"
   | "RPC_RESULT_INVALID"
 
+export type EbayRegistryRepairPrewriteStaleReason =
+  | "NONE"
+  | "SOURCE_EVIDENCE_UNAVAILABLE"
+  | "SEMANTIC_EVIDENCE_CHANGED"
+  | "ACTION_PARTITION_CHANGED"
+  | "HUMAN_REVIEW_CHANGED"
+  | "PACKAGE_CANONICALIZATION_DRIFT"
+  | "MULTIPLE_SEMANTIC_CHANGES"
+  | "APPROVAL_READINESS_CHANGED"
+
+export type EbayRegistryRepairPrewriteAssessmentV1 = {
+  PREWRITE_STATE_STATUS: "CURRENT" | "STALE" | "UNPROVEN"
+  STALE_REASON: EbayRegistryRepairPrewriteStaleReason
+  CURRENT_LIVE_COUNT: number | "UNPROVEN"
+  CURRENT_REGISTRY_COUNT: number | "UNPROVEN"
+  CURRENT_CREATE_COUNT: number | "UNPROVEN"
+  CURRENT_STALE_COUNT: number | "UNPROVEN"
+  CURRENT_REPAIR_COUNT: number | "UNPROVEN"
+  CURRENT_HUMAN_REVIEW_COUNT: number | "UNPROVEN"
+  CURRENT_IDENTITY_UNPROVEN_COUNT: number | "UNPROVEN"
+  CURRENT_PRECONDITION_UNPROVEN_COUNT: number | "UNPROVEN"
+  CURRENT_EVIDENCE_FINGERPRINT: string | "UNPROVEN"
+  CURRENT_PACKAGE_HANDLE: string | "UNPROVEN"
+  APPROVED_EVIDENCE_FINGERPRINT_MATCH: "YES" | "NO" | "UNPROVEN"
+  APPROVED_PACKAGE_HANDLE_MATCH: "YES" | "NO" | "UNPROVEN"
+  APPROVED_ACTION_COUNTS_MATCH: "YES" | "NO" | "UNPROVEN"
+  WRITE_ALLOWED: "YES" | "NO"
+}
+
 export class EbayRegistryRepairExecutorError extends Error {
   readonly code: EbayRegistryRepairExecutorFailureCode
+  readonly prewriteAssessment: EbayRegistryRepairPrewriteAssessmentV1 | null
 
-  constructor(code: EbayRegistryRepairExecutorFailureCode) {
+  constructor(
+    code: EbayRegistryRepairExecutorFailureCode,
+    prewriteAssessment: EbayRegistryRepairPrewriteAssessmentV1 | null = null,
+  ) {
     super(code)
     this.name = "EbayRegistryRepairExecutorError"
     this.code = code
+    this.prewriteAssessment = prewriteAssessment
   }
 }
 
@@ -102,12 +136,27 @@ const RAW_PAYLOAD_KEYS = new Set([
   "observedAt",
 ])
 
-function fail(code: EbayRegistryRepairExecutorFailureCode): never {
-  throw new EbayRegistryRepairExecutorError(code)
+function fail(
+  code: EbayRegistryRepairExecutorFailureCode,
+  prewriteAssessment: EbayRegistryRepairPrewriteAssessmentV1 | null = null,
+): never {
+  throw new EbayRegistryRepairExecutorError(code, prewriteAssessment)
 }
 
 function integerCount(value: unknown) {
   return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 5000
+}
+
+function safeCurrentCount(value: unknown): number | "UNPROVEN" {
+  return integerCount(value) ? Number(value) : "UNPROVEN"
+}
+
+function approvalBindingValid(approved: ApprovedEbayRegistryRepairV1) {
+  return PACKAGE_HANDLE.test(approved.approvedPackageHandle) &&
+    EVIDENCE_FINGERPRINT.test(approved.approvedEvidenceFingerprint) &&
+    integerCount(approved.approvedCreateCount) &&
+    integerCount(approved.approvedStaleCount) &&
+    integerCount(approved.approvedHumanReviewCount)
 }
 
 function validTimestamp(value: string) {
@@ -201,6 +250,117 @@ function publicPlanReady(
     dryRun.HUMAN_REVIEW_MUTATION_COUNT === 0
 }
 
+export function assessApprovedRegistryRepairPlanningResultV1(
+  approved: ApprovedEbayRegistryRepairV1,
+  current: EbayRegistryRepairPlanningResult,
+): EbayRegistryRepairPrewriteAssessmentV1 {
+  const dryRun = current.dryRun
+  const liveCount = safeCurrentCount(dryRun.CURRENT_LIVE_COUNT)
+  const registryCount = safeCurrentCount(dryRun.CURRENT_REGISTRY_COUNT)
+  const createCount = safeCurrentCount(dryRun.CREATE_NEW_COUNT)
+  const staleCount = safeCurrentCount(dryRun.MARK_STALE_COUNT)
+  const repairCount = safeCurrentCount(
+    dryRun.REPAIR_EXISTING_AUTOMATIC_COUNT,
+  )
+  const humanReviewCount = safeCurrentCount(dryRun.HUMAN_REVIEW_COUNT)
+  const identityUnprovenCount = safeCurrentCount(
+    dryRun.IDENTITY_UNPROVEN_COUNT,
+  )
+  const preconditionUnprovenCount = safeCurrentCount(
+    dryRun.AUTOMATIC_PRECONDITION_UNPROVEN_COUNT,
+  )
+  const evidenceFingerprint = EVIDENCE_FINGERPRINT.test(
+    String(dryRun.CURRENT_EVIDENCE_FINGERPRINT),
+  )
+    ? dryRun.CURRENT_EVIDENCE_FINGERPRINT
+    : "UNPROVEN"
+  const packageHandle = PACKAGE_HANDLE.test(String(dryRun.DRY_RUN_PACKAGE_HANDLE))
+    ? dryRun.DRY_RUN_PACKAGE_HANDLE
+    : "UNPROVEN"
+  const evidenceAvailable = dryRun.EVIDENCE_STATUS === "AVAILABLE" &&
+    current.executionPlan !== null && evidenceFingerprint !== "UNPROVEN" &&
+    packageHandle !== "UNPROVEN" && liveCount !== "UNPROVEN" &&
+    registryCount !== "UNPROVEN" && createCount !== "UNPROVEN" &&
+    staleCount !== "UNPROVEN" && repairCount !== "UNPROVEN" &&
+    humanReviewCount !== "UNPROVEN" && identityUnprovenCount !== "UNPROVEN" &&
+    preconditionUnprovenCount !== "UNPROVEN"
+  const base = {
+    CURRENT_LIVE_COUNT: liveCount,
+    CURRENT_REGISTRY_COUNT: registryCount,
+    CURRENT_CREATE_COUNT: createCount,
+    CURRENT_STALE_COUNT: staleCount,
+    CURRENT_REPAIR_COUNT: repairCount,
+    CURRENT_HUMAN_REVIEW_COUNT: humanReviewCount,
+    CURRENT_IDENTITY_UNPROVEN_COUNT: identityUnprovenCount,
+    CURRENT_PRECONDITION_UNPROVEN_COUNT: preconditionUnprovenCount,
+    CURRENT_EVIDENCE_FINGERPRINT: evidenceFingerprint,
+    CURRENT_PACKAGE_HANDLE: packageHandle,
+  }
+  if (!evidenceAvailable) {
+    return {
+      PREWRITE_STATE_STATUS: "UNPROVEN",
+      STALE_REASON: "SOURCE_EVIDENCE_UNAVAILABLE",
+      ...base,
+      APPROVED_EVIDENCE_FINGERPRINT_MATCH: "UNPROVEN",
+      APPROVED_PACKAGE_HANDLE_MATCH: "UNPROVEN",
+      APPROVED_ACTION_COUNTS_MATCH: "UNPROVEN",
+      WRITE_ALLOWED: "NO",
+    }
+  }
+
+  const fingerprintMatches = evidenceFingerprint ===
+    approved.approvedEvidenceFingerprint
+  const packageMatches = packageHandle === approved.approvedPackageHandle
+  const automaticActionCountsMatch =
+    createCount === approved.approvedCreateCount &&
+    staleCount === approved.approvedStaleCount && repairCount === 0
+  const humanReviewCountMatches = humanReviewCount ===
+    approved.approvedHumanReviewCount
+  const actionCountsMatch = automaticActionCountsMatch &&
+    humanReviewCountMatches
+  if (!fingerprintMatches || !packageMatches || !actionCountsMatch) {
+    const changedGroups = [
+      ...(!automaticActionCountsMatch ? ["ACTION_PARTITION_CHANGED" as const] : []),
+      ...(!humanReviewCountMatches ? ["HUMAN_REVIEW_CHANGED" as const] : []),
+    ]
+    const staleReason: EbayRegistryRepairPrewriteStaleReason =
+      changedGroups.length > 1
+        ? "MULTIPLE_SEMANTIC_CHANGES"
+        : changedGroups[0] ?? (!fingerprintMatches
+          ? "SEMANTIC_EVIDENCE_CHANGED"
+          : "PACKAGE_CANONICALIZATION_DRIFT")
+    return {
+      PREWRITE_STATE_STATUS: "STALE",
+      STALE_REASON: staleReason,
+      ...base,
+      APPROVED_EVIDENCE_FINGERPRINT_MATCH: fingerprintMatches ? "YES" : "NO",
+      APPROVED_PACKAGE_HANDLE_MATCH: packageMatches ? "YES" : "NO",
+      APPROVED_ACTION_COUNTS_MATCH: actionCountsMatch ? "YES" : "NO",
+      WRITE_ALLOWED: "NO",
+    }
+  }
+  if (!publicPlanReady(dryRun, approved)) {
+    return {
+      PREWRITE_STATE_STATUS: "STALE",
+      STALE_REASON: "APPROVAL_READINESS_CHANGED",
+      ...base,
+      APPROVED_EVIDENCE_FINGERPRINT_MATCH: "YES",
+      APPROVED_PACKAGE_HANDLE_MATCH: "YES",
+      APPROVED_ACTION_COUNTS_MATCH: "YES",
+      WRITE_ALLOWED: "NO",
+    }
+  }
+  return {
+    PREWRITE_STATE_STATUS: "CURRENT",
+    STALE_REASON: "NONE",
+    ...base,
+    APPROVED_EVIDENCE_FINGERPRINT_MATCH: "YES",
+    APPROVED_PACKAGE_HANDLE_MATCH: "YES",
+    APPROVED_ACTION_COUNTS_MATCH: "YES",
+    WRITE_ALLOWED: "YES",
+  }
+}
+
 function validatePrivatePlan(
   dryRun: EbayRegistryRepairDryRun,
   plan: EbayRegistryRepairExecutionPlanV1,
@@ -277,18 +437,21 @@ export async function executeApprovedRegistryRepairV1WithDependencies(
   approved: ApprovedEbayRegistryRepairV1,
   dependencies: EbayRegistryRepairExecutorDependencies,
 ): Promise<EbayRegistryRepairExecutionResultV1> {
-  if (!PACKAGE_HANDLE.test(approved.approvedPackageHandle) ||
-      !EVIDENCE_FINGERPRINT.test(approved.approvedEvidenceFingerprint) ||
-      !integerCount(approved.approvedCreateCount) ||
-      !integerCount(approved.approvedStaleCount) ||
-      !integerCount(approved.approvedHumanReviewCount)) {
+  if (!approvalBindingValid(approved)) {
     fail("APPROVAL_BINDING_INVALID")
   }
   const current = await dependencies.readCurrentPlanningResult()
-  if (!current.executionPlan) fail("CURRENT_PLAN_UNAVAILABLE")
-  if (!publicPlanReady(current.dryRun, approved)) {
-    fail("CURRENT_STATE_NOT_APPROVABLE")
+  const prewriteAssessment = assessApprovedRegistryRepairPlanningResultV1(
+    approved,
+    current,
+  )
+  if (prewriteAssessment.PREWRITE_STATE_STATUS === "UNPROVEN") {
+    fail("CURRENT_PLAN_UNAVAILABLE", prewriteAssessment)
   }
+  if (prewriteAssessment.WRITE_ALLOWED !== "YES") {
+    fail("CURRENT_STATE_NOT_APPROVABLE", prewriteAssessment)
+  }
+  if (!current.executionPlan) fail("CURRENT_PLAN_UNAVAILABLE", prewriteAssessment)
   validatePrivatePlan(
     current.dryRun,
     current.executionPlan,
