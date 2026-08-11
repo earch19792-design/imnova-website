@@ -61,6 +61,16 @@ export type EbayRegistryRepairBlockingUnprovenSource =
   | "CREATE_NEW"
   | "HUMAN_REVIEW"
   | "OTHER"
+export type EbayRegistryRepairUnprovenPrimaryReason =
+  | "NONE"
+  | "MISSING_AUTHORITATIVE_ITEM_ID"
+  | "DUPLICATE_ITEM_ID"
+  | "MULTIPLE_REGISTRY_CANDIDATES"
+  | "CROSS_LINK_CONFLICT"
+  | "ACCOUNT_SCOPE"
+  | "PARTITION_OVERLAP"
+  | "SOURCE_EVIDENCE"
+  | "OTHER"
 export type EbayRegistryRepairFutureWriteRejectionReason =
   | "NONE"
   | "EVIDENCE_UNAVAILABLE"
@@ -110,6 +120,30 @@ export type EbayRegistryRepairDryRun = {
     EbayRegistryRepairBlockingUnprovenSource
   BLOCKING_UNPROVEN_SECONDARY_SOURCES:
     EbayRegistryRepairBlockingUnprovenSource[]
+  RAW_ALREADY_MATCHED_COUNT: EbayRegistryRepairDryRunCount
+  RAW_REPAIR_EXISTING_COUNT: EbayRegistryRepairDryRunCount
+  RAW_CREATE_NEW_COUNT: EbayRegistryRepairDryRunCount
+  RAW_HUMAN_REVIEW_COUNT: EbayRegistryRepairDryRunCount
+  RAW_UNPROVEN_COUNT: EbayRegistryRepairDryRunCount
+  LIVE_RAW_PARTITION_VALID: "YES" | "NO"
+  RAW_KEEP_CURRENT_COUNT: EbayRegistryRepairDryRunCount
+  RAW_REPAIR_EXISTING_REGISTRY_COUNT: EbayRegistryRepairDryRunCount
+  RAW_MARK_STALE_COUNT: EbayRegistryRepairDryRunCount
+  RAW_MARK_HISTORICAL_COUNT: EbayRegistryRepairDryRunCount
+  RAW_HUMAN_REVIEW_REGISTRY_COUNT: EbayRegistryRepairDryRunCount
+  RAW_UNPROVEN_REGISTRY_COUNT: EbayRegistryRepairDryRunCount
+  REGISTRY_RAW_PARTITION_VALID: "YES" | "NO"
+  UNPROVEN_REASON_MISSING_AUTHORITATIVE_ITEM_ID:
+    EbayRegistryRepairDryRunCount
+  UNPROVEN_REASON_DUPLICATE_ITEM_ID: EbayRegistryRepairDryRunCount
+  UNPROVEN_REASON_MULTIPLE_REGISTRY_CANDIDATES:
+    EbayRegistryRepairDryRunCount
+  UNPROVEN_REASON_CROSS_LINK_CONFLICT: EbayRegistryRepairDryRunCount
+  UNPROVEN_REASON_ACCOUNT_SCOPE: EbayRegistryRepairDryRunCount
+  UNPROVEN_REASON_PARTITION_OVERLAP: EbayRegistryRepairDryRunCount
+  UNPROVEN_REASON_SOURCE_EVIDENCE: EbayRegistryRepairDryRunCount
+  UNPROVEN_REASON_OTHER: EbayRegistryRepairDryRunCount
+  UNPROVEN_PRIMARY_REASON: EbayRegistryRepairUnprovenPrimaryReason
   DRY_RUN_STALE_LABEL:
     | "DRY RUN CURRENT — LIVE RECHECK REQUIRED BEFORE WRITE"
     | "DRY RUN STALE — REFRESH REQUIRED"
@@ -404,6 +438,28 @@ EbayRegistryRepairDryRun {
     UNPROVEN_OTHER_COUNT: "UNPROVEN",
     BLOCKING_UNPROVEN_PRIMARY_SOURCE: "SOURCE_READ",
     BLOCKING_UNPROVEN_SECONDARY_SOURCES: [],
+    RAW_ALREADY_MATCHED_COUNT: "UNPROVEN",
+    RAW_REPAIR_EXISTING_COUNT: "UNPROVEN",
+    RAW_CREATE_NEW_COUNT: "UNPROVEN",
+    RAW_HUMAN_REVIEW_COUNT: "UNPROVEN",
+    RAW_UNPROVEN_COUNT: "UNPROVEN",
+    LIVE_RAW_PARTITION_VALID: "NO",
+    RAW_KEEP_CURRENT_COUNT: "UNPROVEN",
+    RAW_REPAIR_EXISTING_REGISTRY_COUNT: "UNPROVEN",
+    RAW_MARK_STALE_COUNT: "UNPROVEN",
+    RAW_MARK_HISTORICAL_COUNT: "UNPROVEN",
+    RAW_HUMAN_REVIEW_REGISTRY_COUNT: "UNPROVEN",
+    RAW_UNPROVEN_REGISTRY_COUNT: "UNPROVEN",
+    REGISTRY_RAW_PARTITION_VALID: "NO",
+    UNPROVEN_REASON_MISSING_AUTHORITATIVE_ITEM_ID: "UNPROVEN",
+    UNPROVEN_REASON_DUPLICATE_ITEM_ID: "UNPROVEN",
+    UNPROVEN_REASON_MULTIPLE_REGISTRY_CANDIDATES: "UNPROVEN",
+    UNPROVEN_REASON_CROSS_LINK_CONFLICT: "UNPROVEN",
+    UNPROVEN_REASON_ACCOUNT_SCOPE: "UNPROVEN",
+    UNPROVEN_REASON_PARTITION_OVERLAP: "UNPROVEN",
+    UNPROVEN_REASON_SOURCE_EVIDENCE: "UNPROVEN",
+    UNPROVEN_REASON_OTHER: "UNPROVEN",
+    UNPROVEN_PRIMARY_REASON: "SOURCE_EVIDENCE",
     DRY_RUN_STALE_LABEL: "UNPROVEN",
     DRY_RUN_STATE_BOUND: "UNPROVEN",
     DRY_RUN_STATE_FINGERPRINT_PRESENT: "UNPROVEN",
@@ -528,6 +584,53 @@ export function buildEbayRegistryRepairDryRun(
   const liveRepair = new Set<number>()
   const liveHumanReview = new Set<number>()
   const liveUnproven = new Set<number>()
+  const liveUnprovenReasons = new Map<
+    number,
+    Exclude<EbayRegistryRepairUnprovenPrimaryReason, "NONE">
+  >()
+  const reasonPriority: Array<
+    Exclude<EbayRegistryRepairUnprovenPrimaryReason, "NONE">
+  > = [
+    "CROSS_LINK_CONFLICT",
+    "DUPLICATE_ITEM_ID",
+    "MULTIPLE_REGISTRY_CANDIDATES",
+    "PARTITION_OVERLAP",
+    "MISSING_AUTHORITATIVE_ITEM_ID",
+    "ACCOUNT_SCOPE",
+    "SOURCE_EVIDENCE",
+    "OTHER",
+  ]
+  const markLiveUnproven = (
+    liveIndex: number,
+    reason: Exclude<EbayRegistryRepairUnprovenPrimaryReason, "NONE">,
+  ) => {
+    const previous = liveUnprovenReasons.get(liveIndex)
+    if (!previous || reasonPriority.indexOf(reason) <
+        reasonPriority.indexOf(previous)) {
+      liveUnprovenReasons.set(liveIndex, reason)
+    }
+    liveUnproven.add(liveIndex)
+  }
+  const liveGateReason = (
+    live: (typeof liveFacts)[number],
+    rowAccountCorrect = true,
+  ): Exclude<EbayRegistryRepairUnprovenPrimaryReason, "NONE"> => {
+    if (!live.itemId) return "MISSING_AUTHORITATIVE_ITEM_ID"
+    if (evidenceCount(liveItemCounts, live.itemId) > 1 ||
+        evidenceCount(registryItemCounts, live.itemId) > 1) {
+      return "DUPLICATE_ITEM_ID"
+    }
+    if (!rowAccountCorrect) return "ACCOUNT_SCOPE"
+    const registryReferences = liveRegistryReferences[live.index]
+    if (registryReferences && registryReferences.size > 1) {
+      return "PARTITION_OVERLAP"
+    }
+    if (live.listing.marketplaceCertification.status !== "US_CERTIFIED" ||
+        live.listing.listingState !== "ACTIVE") {
+      return "SOURCE_EVIDENCE"
+    }
+    return "OTHER"
+  }
   const keepHandles: string[] = []
   const repairHandles: string[] = []
   const staleHandles: string[] = []
@@ -591,7 +694,10 @@ export function buildEbayRegistryRepairDryRun(
       } else {
         registryUnproven += 1
         identityPartitionUnproven += 1
-        if (live) liveUnproven.add(live.index)
+        if (live) markLiveUnproven(
+          live.index,
+          liveGateReason(live, rowAccountCorrect),
+        )
       }
       continue
     }
@@ -621,7 +727,10 @@ export function buildEbayRegistryRepairDryRun(
       } else {
         registryUnproven += 1
         identityPartitionUnproven += 1
-        if (live) liveUnproven.add(live.index)
+        if (live) markLiveUnproven(
+          live.index,
+          liveGateReason(live, rowAccountCorrect),
+        )
       }
       continue
     }
@@ -634,7 +743,10 @@ export function buildEbayRegistryRepairDryRun(
       if (!reviewEvidenceSafe || !live || !registry.sku) {
         registryUnproven += 1
         humanReviewUnproven += 1
-        if (live) liveUnproven.add(live.index)
+        if (live) markLiveUnproven(
+          live.index,
+          liveGateReason(live, rowAccountCorrect),
+        )
         humanReviewEvidenceSafe = false
         continue
       }
@@ -645,7 +757,7 @@ export function buildEbayRegistryRepairDryRun(
       if (!skuUnique || competing) {
         registryUnproven += 1
         identityPartitionUnproven += 1
-        liveUnproven.add(live.index)
+        markLiveUnproven(live.index, "PARTITION_OVERLAP")
         humanReviewEvidenceSafe = false
         continue
       }
@@ -691,8 +803,14 @@ export function buildEbayRegistryRepairDryRun(
 
     registryUnproven += 1
     identityPartitionUnproven += 1
+    const rowConflictReason = itemMatches.length > 0 &&
+        skuMatches.length > 0 && !itemAndSkuReferenceSameLive
+      ? "CROSS_LINK_CONFLICT" as const
+      : itemMatches.length > 1 || skuMatches.length > 1
+        ? "MULTIPLE_REGISTRY_CANDIDATES" as const
+        : "OTHER" as const
     for (const liveIndex of new Set([...itemMatches, ...skuMatches])) {
-      liveUnproven.add(liveIndex)
+      markLiveUnproven(liveIndex, rowConflictReason)
     }
   }
 
@@ -703,7 +821,11 @@ export function buildEbayRegistryRepairDryRun(
       if (!liveUnproven.has(live.index) && actionMemberships.length > 1) {
         identityPartitionUnproven += 1
       }
-      liveUnproven.add(live.index)
+      markLiveUnproven(
+        live.index,
+        actionMemberships.length > 1 ? "PARTITION_OVERLAP" :
+          liveUnprovenReasons.get(live.index) ?? "OTHER",
+      )
       hasActionPartitionConflict ||= actionMemberships.length > 1
     }
   }
@@ -748,7 +870,27 @@ export function buildEbayRegistryRepairDryRun(
         live.listing.currency,
       ]))
     } else {
-      liveUnproven.add(live.index)
+      const registryReferenceCount =
+        liveRegistryReferences[live.index]?.size
+      const createFailureReason = !live.itemId
+        ? "MISSING_AUTHORITATIVE_ITEM_ID" as const
+        : evidenceCount(liveItemCounts, live.itemId) > 1
+          ? "DUPLICATE_ITEM_ID" as const
+          : registryReferenceCount !== undefined &&
+              registryReferenceCount > 1
+            ? "PARTITION_OVERLAP" as const
+            : (registryReferenceCount !== undefined &&
+                registryReferenceCount > 0) ||
+                evidenceCount(registryItemCounts, live.itemId) > 0 ||
+                (live.sku
+                  ? evidenceCount(registrySkuCounts, live.sku) > 0
+                  : false)
+              ? "MULTIPLE_REGISTRY_CANDIDATES" as const
+              : live.listing.marketplaceCertification.status !==
+                    "US_CERTIFIED" || live.listing.listingState !== "ACTIVE"
+                ? "SOURCE_EVIDENCE" as const
+                : "OTHER" as const
+      markLiveUnproven(live.index, createFailureReason)
       if (identityEvidenceSafe) {
         createUnproven += 1
       } else {
@@ -768,6 +910,41 @@ export function buildEbayRegistryRepairDryRun(
   const registryPartitionValid = registryPartitionSum === registryFacts.length
     ? "YES" as const
     : "NO" as const
+  for (const liveIndex of liveUnproven) {
+    if (!liveUnprovenReasons.has(liveIndex)) {
+      liveUnprovenReasons.set(liveIndex, "OTHER")
+    }
+  }
+  const unprovenReasonCount = (
+    reason: Exclude<EbayRegistryRepairUnprovenPrimaryReason, "NONE">,
+  ) => [...liveUnprovenReasons.values()].filter(
+    (candidateReason) => candidateReason === reason,
+  ).length
+  const missingAuthoritativeItemIdReasonCount = unprovenReasonCount(
+    "MISSING_AUTHORITATIVE_ITEM_ID",
+  )
+  const duplicateItemIdReasonCount = unprovenReasonCount("DUPLICATE_ITEM_ID")
+  const multipleRegistryCandidatesReasonCount = unprovenReasonCount(
+    "MULTIPLE_REGISTRY_CANDIDATES",
+  )
+  const crossLinkConflictReasonCount = unprovenReasonCount(
+    "CROSS_LINK_CONFLICT",
+  )
+  const accountScopeReasonCount = unprovenReasonCount("ACCOUNT_SCOPE")
+  const partitionOverlapReasonCount = unprovenReasonCount(
+    "PARTITION_OVERLAP",
+  )
+  const sourceEvidenceReasonCount = unprovenReasonCount("SOURCE_EVIDENCE")
+  const otherReasonCount = unprovenReasonCount("OTHER")
+  let unprovenPrimaryReason: EbayRegistryRepairUnprovenPrimaryReason = "NONE"
+  let unprovenPrimaryReasonCount = 0
+  for (const reason of reasonPriority) {
+    const count = unprovenReasonCount(reason)
+    if (count > unprovenPrimaryReasonCount) {
+      unprovenPrimaryReason = reason
+      unprovenPrimaryReasonCount = count
+    }
+  }
   const repairStatus = !sameRequestEvidenceCoherent
     ? "UNPROVEN" as const
     : preconditionStatus(repairUnproven)
@@ -939,6 +1116,30 @@ export function buildEbayRegistryRepairDryRun(
     UNPROVEN_OTHER_COUNT: unprovenOtherCount,
     BLOCKING_UNPROVEN_PRIMARY_SOURCE: primaryUnprovenSource,
     BLOCKING_UNPROVEN_SECONDARY_SOURCES: secondaryUnprovenSources,
+    RAW_ALREADY_MATCHED_COUNT: resolvedLiveMatched.size,
+    RAW_REPAIR_EXISTING_COUNT: resolvedLiveRepair.size,
+    RAW_CREATE_NEW_COUNT: liveCreate.size,
+    RAW_HUMAN_REVIEW_COUNT: resolvedLiveHumanReview.size,
+    RAW_UNPROVEN_COUNT: liveUnproven.size,
+    LIVE_RAW_PARTITION_VALID: livePartitionValid,
+    RAW_KEEP_CURRENT_COUNT: registryKeepCurrent,
+    RAW_REPAIR_EXISTING_REGISTRY_COUNT: registryRepairExisting,
+    RAW_MARK_STALE_COUNT: registryMarkStale,
+    RAW_MARK_HISTORICAL_COUNT: registryMarkHistorical,
+    RAW_HUMAN_REVIEW_REGISTRY_COUNT: registryHumanReview,
+    RAW_UNPROVEN_REGISTRY_COUNT: registryUnproven,
+    REGISTRY_RAW_PARTITION_VALID: registryPartitionValid,
+    UNPROVEN_REASON_MISSING_AUTHORITATIVE_ITEM_ID:
+      missingAuthoritativeItemIdReasonCount,
+    UNPROVEN_REASON_DUPLICATE_ITEM_ID: duplicateItemIdReasonCount,
+    UNPROVEN_REASON_MULTIPLE_REGISTRY_CANDIDATES:
+      multipleRegistryCandidatesReasonCount,
+    UNPROVEN_REASON_CROSS_LINK_CONFLICT: crossLinkConflictReasonCount,
+    UNPROVEN_REASON_ACCOUNT_SCOPE: accountScopeReasonCount,
+    UNPROVEN_REASON_PARTITION_OVERLAP: partitionOverlapReasonCount,
+    UNPROVEN_REASON_SOURCE_EVIDENCE: sourceEvidenceReasonCount,
+    UNPROVEN_REASON_OTHER: otherReasonCount,
+    UNPROVEN_PRIMARY_REASON: unprovenPrimaryReason,
     DRY_RUN_STALE_LABEL: staleLabel,
     DRY_RUN_STATE_BOUND: sameRequestEvidenceCoherent ? "YES" : "NO",
     DRY_RUN_STATE_FINGERPRINT_PRESENT: "YES",

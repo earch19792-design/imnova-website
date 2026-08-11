@@ -11,6 +11,7 @@ import type {
   EbayRegistryRepairDryRun,
   EbayRegistryRepairDryRunRejectionReason,
   EbayRegistryRepairUnprovenComponent,
+  EbayRegistryRepairUnprovenPrimaryReason,
   EbayRegistryRepairUnprovenSource,
 } from "@/lib/ebay/ebay-registry-repair-dry-run"
 
@@ -273,6 +274,16 @@ type RegistryRepairDryRunPayload = {
   UNPROVEN_TOTAL_COUNT?: unknown
   BLOCKING_UNPROVEN_PRIMARY_SOURCE?: unknown
   BLOCKING_UNPROVEN_SECONDARY_SOURCES?: unknown
+  RAW_UNPROVEN_COUNT?: unknown
+  UNPROVEN_PRIMARY_REASON?: unknown
+  UNPROVEN_REASON_MISSING_AUTHORITATIVE_ITEM_ID?: unknown
+  UNPROVEN_REASON_DUPLICATE_ITEM_ID?: unknown
+  UNPROVEN_REASON_MULTIPLE_REGISTRY_CANDIDATES?: unknown
+  UNPROVEN_REASON_CROSS_LINK_CONFLICT?: unknown
+  UNPROVEN_REASON_ACCOUNT_SCOPE?: unknown
+  UNPROVEN_REASON_PARTITION_OVERLAP?: unknown
+  UNPROVEN_REASON_SOURCE_EVIDENCE?: unknown
+  UNPROVEN_REASON_OTHER?: unknown
 }
 
 const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
@@ -414,6 +425,28 @@ const REGISTRY_REPAIR_DRY_RUN_KEYS = [
   "UNPROVEN_OTHER_COUNT",
   "BLOCKING_UNPROVEN_PRIMARY_SOURCE",
   "BLOCKING_UNPROVEN_SECONDARY_SOURCES",
+  "RAW_ALREADY_MATCHED_COUNT",
+  "RAW_REPAIR_EXISTING_COUNT",
+  "RAW_CREATE_NEW_COUNT",
+  "RAW_HUMAN_REVIEW_COUNT",
+  "RAW_UNPROVEN_COUNT",
+  "LIVE_RAW_PARTITION_VALID",
+  "RAW_KEEP_CURRENT_COUNT",
+  "RAW_REPAIR_EXISTING_REGISTRY_COUNT",
+  "RAW_MARK_STALE_COUNT",
+  "RAW_MARK_HISTORICAL_COUNT",
+  "RAW_HUMAN_REVIEW_REGISTRY_COUNT",
+  "RAW_UNPROVEN_REGISTRY_COUNT",
+  "REGISTRY_RAW_PARTITION_VALID",
+  "UNPROVEN_REASON_MISSING_AUTHORITATIVE_ITEM_ID",
+  "UNPROVEN_REASON_DUPLICATE_ITEM_ID",
+  "UNPROVEN_REASON_MULTIPLE_REGISTRY_CANDIDATES",
+  "UNPROVEN_REASON_CROSS_LINK_CONFLICT",
+  "UNPROVEN_REASON_ACCOUNT_SCOPE",
+  "UNPROVEN_REASON_PARTITION_OVERLAP",
+  "UNPROVEN_REASON_SOURCE_EVIDENCE",
+  "UNPROVEN_REASON_OTHER",
+  "UNPROVEN_PRIMARY_REASON",
   "DRY_RUN_STATE_BOUND",
   "DRY_RUN_STATE_FINGERPRINT_PRESENT",
   "APPROVAL_INVALIDATES_ON_EBAY_STATE_CHANGE",
@@ -529,6 +562,34 @@ const REGISTRY_REPAIR_BLOCKING_UNPROVEN_SOURCES = [
   "OTHER",
 ] as const
 
+const REGISTRY_REPAIR_UNPROVEN_PRIMARY_REASONS = [
+  "NONE",
+  "MISSING_AUTHORITATIVE_ITEM_ID",
+  "DUPLICATE_ITEM_ID",
+  "MULTIPLE_REGISTRY_CANDIDATES",
+  "CROSS_LINK_CONFLICT",
+  "ACCOUNT_SCOPE",
+  "PARTITION_OVERLAP",
+  "SOURCE_EVIDENCE",
+  "OTHER",
+] as const
+
+const REGISTRY_REPAIR_UNPROVEN_REASON_COUNT_KEYS = [
+  "UNPROVEN_REASON_MISSING_AUTHORITATIVE_ITEM_ID",
+  "UNPROVEN_REASON_DUPLICATE_ITEM_ID",
+  "UNPROVEN_REASON_MULTIPLE_REGISTRY_CANDIDATES",
+  "UNPROVEN_REASON_CROSS_LINK_CONFLICT",
+  "UNPROVEN_REASON_ACCOUNT_SCOPE",
+  "UNPROVEN_REASON_PARTITION_OVERLAP",
+  "UNPROVEN_REASON_SOURCE_EVIDENCE",
+  "UNPROVEN_REASON_OTHER",
+] as const
+
+type RegistryRepairUnprovenReasonCounts = Record<
+  typeof REGISTRY_REPAIR_UNPROVEN_REASON_COUNT_KEYS[number],
+  number | "UNPROVEN"
+>
+
 function validRegistryRepairDryRunRejectionReason(
   value: unknown,
 ): value is EbayRegistryRepairDryRunRejectionReason {
@@ -584,6 +645,41 @@ function validRegistryRepairBlockingUnprovenSecondarySources(
   )
   return !value.includes("NONE") && new Set(value).size === value.length &&
     indexes.every((index, position) => position === 0 || index > indexes[position - 1])
+}
+
+function validRegistryRepairUnprovenPrimaryReason(
+  value: unknown,
+): value is EbayRegistryRepairUnprovenPrimaryReason {
+  return REGISTRY_REPAIR_UNPROVEN_PRIMARY_REASONS.some((reason) =>
+    reason === value
+  )
+}
+
+function parseRegistryRepairUnprovenReasonCounts(
+  value: unknown,
+): RegistryRepairUnprovenReasonCounts | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (!REGISTRY_REPAIR_UNPROVEN_REASON_COUNT_KEYS.every((key) =>
+    validRegistryRepairUnprovenCount(record[key])
+  )) return null
+  return Object.fromEntries(
+    REGISTRY_REPAIR_UNPROVEN_REASON_COUNT_KEYS.map((key) => [key, record[key]]),
+  ) as RegistryRepairUnprovenReasonCounts
+}
+
+function unavailableRegistryRepairUnprovenReasonCounts():
+RegistryRepairUnprovenReasonCounts {
+  return {
+    UNPROVEN_REASON_MISSING_AUTHORITATIVE_ITEM_ID: "UNPROVEN",
+    UNPROVEN_REASON_DUPLICATE_ITEM_ID: "UNPROVEN",
+    UNPROVEN_REASON_MULTIPLE_REGISTRY_CANDIDATES: "UNPROVEN",
+    UNPROVEN_REASON_CROSS_LINK_CONFLICT: "UNPROVEN",
+    UNPROVEN_REASON_ACCOUNT_SCOPE: "UNPROVEN",
+    UNPROVEN_REASON_PARTITION_OVERLAP: "UNPROVEN",
+    UNPROVEN_REASON_SOURCE_EVIDENCE: "UNPROVEN",
+    UNPROVEN_REASON_OTHER: "UNPROVEN",
+  }
 }
 
 const RUNTIME_CREDENTIAL_MATCH_KEYS = [
@@ -1536,6 +1632,8 @@ function validRegistryRepairDryRun(
       candidate >= 0 && candidate <= 100)
   const yesNoUnproven = (candidate: unknown) =>
     candidate === "YES" || candidate === "NO" || candidate === "UNPROVEN"
+  const yesNo = (candidate: unknown) =>
+    candidate === "YES" || candidate === "NO"
   const precondition = (candidate: unknown) =>
     candidate === "PASS" || candidate === "FAIL" || candidate === "UNPROVEN"
   const controlledText = (candidate: unknown) =>
@@ -1562,6 +1660,18 @@ function validRegistryRepairDryRun(
     "UNPROVEN_STATE_GUARD_COUNT",
     "UNPROVEN_SOURCE_READ_COUNT",
     "UNPROVEN_OTHER_COUNT",
+    "RAW_ALREADY_MATCHED_COUNT",
+    "RAW_REPAIR_EXISTING_COUNT",
+    "RAW_CREATE_NEW_COUNT",
+    "RAW_HUMAN_REVIEW_COUNT",
+    "RAW_UNPROVEN_COUNT",
+    "RAW_KEEP_CURRENT_COUNT",
+    "RAW_REPAIR_EXISTING_REGISTRY_COUNT",
+    "RAW_MARK_STALE_COUNT",
+    "RAW_MARK_HISTORICAL_COUNT",
+    "RAW_HUMAN_REVIEW_REGISTRY_COUNT",
+    "RAW_UNPROVEN_REGISTRY_COUNT",
+    ...REGISTRY_REPAIR_UNPROVEN_REASON_COUNT_KEYS,
     "REPAIR_EXISTING_COUNT",
     "CREATE_NEW_COUNT",
     "MARK_STALE_COUNT",
@@ -1630,6 +1740,12 @@ function validRegistryRepairDryRun(
       !validRegistryRepairBlockingUnprovenSecondarySources(
         record.BLOCKING_UNPROVEN_SECONDARY_SOURCES,
       ) ||
+      !validRegistryRepairUnprovenPrimaryReason(
+        record.UNPROVEN_PRIMARY_REASON,
+      ) ||
+      !parseRegistryRepairUnprovenReasonCounts(record) ||
+      !yesNo(record.LIVE_RAW_PARTITION_VALID) ||
+      !yesNo(record.REGISTRY_RAW_PARTITION_VALID) ||
       !precondition(record.REPAIR_PRECONDITION_STATUS) ||
       !precondition(record.CREATE_PRECONDITION_STATUS) ||
       !precondition(record.STALE_PRECONDITION_STATUS) ||
@@ -1701,6 +1817,28 @@ function validRegistryRepairDryRun(
     record.UNPROVEN_SOURCE_READ_COUNT,
     record.UNPROVEN_OTHER_COUNT,
   ]
+  const reasonCounts = parseRegistryRepairUnprovenReasonCounts(record)
+  if (!reasonCounts) return false
+  const reasonCountValues = Object.values(reasonCounts)
+  const rawUnavailableCounts = [
+    record.RAW_ALREADY_MATCHED_COUNT,
+    record.RAW_REPAIR_EXISTING_COUNT,
+    record.RAW_CREATE_NEW_COUNT,
+    record.RAW_HUMAN_REVIEW_COUNT,
+    record.RAW_UNPROVEN_COUNT,
+    record.RAW_KEEP_CURRENT_COUNT,
+    record.RAW_REPAIR_EXISTING_REGISTRY_COUNT,
+    record.RAW_MARK_STALE_COUNT,
+    record.RAW_MARK_HISTORICAL_COUNT,
+    record.RAW_HUMAN_REVIEW_REGISTRY_COUNT,
+    record.RAW_UNPROVEN_REGISTRY_COUNT,
+  ]
+  const numericReasonCountSum = reasonCountValues.every((value) =>
+    typeof value === "number"
+  )
+    ? reasonCountValues.reduce<number>((sum, value) =>
+      sum + (value as number), 0)
+    : null
   if ((unprovenComponent === "NONE" && unprovenCount !== 0) ||
       (record.DRY_RUN_READY_FOR_APPROVAL === "YES" &&
         (unprovenComponent !== "NONE" || unprovenCount !== 0 ||
@@ -1732,6 +1870,25 @@ function validRegistryRepairDryRun(
       blockingSecondarySources.includes(String(blockingPrimarySource))) {
     return false
   }
+  if ((numericReasonCountSum !== null &&
+        typeof record.RAW_UNPROVEN_COUNT === "number" &&
+        numericReasonCountSum !== record.RAW_UNPROVEN_COUNT) ||
+      (record.RAW_UNPROVEN_COUNT === 0 &&
+        record.UNPROVEN_PRIMARY_REASON !== "NONE") ||
+      (typeof record.RAW_UNPROVEN_COUNT === "number" &&
+        record.RAW_UNPROVEN_COUNT > 0 &&
+        record.UNPROVEN_PRIMARY_REASON === "NONE") ||
+      (record.DRY_RUN_READY_FOR_APPROVAL === "YES" &&
+        (record.RAW_UNPROVEN_COUNT !== 0 ||
+          record.RAW_UNPROVEN_REGISTRY_COUNT !== 0 ||
+          reasonCountValues.some((value) => value !== 0) ||
+          record.UNPROVEN_PRIMARY_REASON !== "NONE")) ||
+      (unprovenComponent === "EVIDENCE_UNAVAILABLE" &&
+        (rawUnavailableCounts.some((value) => value !== "UNPROVEN") ||
+          reasonCountValues.some((value) => value !== "UNPROVEN") ||
+          record.LIVE_RAW_PARTITION_VALID !== "NO" ||
+          record.REGISTRY_RAW_PARTITION_VALID !== "NO" ||
+          record.UNPROVEN_PRIMARY_REASON !== "SOURCE_EVIDENCE"))) return false
 
   const candidates = record.HUMAN_REVIEW_CANDIDATES
   if (!candidates.every((candidate) => {
@@ -1795,6 +1952,14 @@ export default function EbaySellerOAuthReauthPage() {
   const [registryRepairBlockingUnprovenSecondarySources,
     setRegistryRepairBlockingUnprovenSecondarySources] =
     useState<EbayRegistryRepairBlockingUnprovenSource[]>([])
+  const [registryRepairRawUnprovenCount, setRegistryRepairRawUnprovenCount] =
+    useState<number | "UNPROVEN" | null>(null)
+  const [registryRepairUnprovenPrimaryReason,
+    setRegistryRepairUnprovenPrimaryReason] =
+    useState<EbayRegistryRepairUnprovenPrimaryReason | null>(null)
+  const [registryRepairUnprovenReasonCounts,
+    setRegistryRepairUnprovenReasonCounts] =
+    useState<RegistryRepairUnprovenReasonCounts | null>(null)
   const [error, setError] = useState("")
 
   useEffect(() => {
@@ -1991,6 +2156,9 @@ export default function EbaySellerOAuthReauthPage() {
     setRegistryRepairUnprovenTotalCount(null)
     setRegistryRepairBlockingUnprovenPrimarySource(null)
     setRegistryRepairBlockingUnprovenSecondarySources([])
+    setRegistryRepairRawUnprovenCount(null)
+    setRegistryRepairUnprovenPrimaryReason(null)
+    setRegistryRepairUnprovenReasonCounts(null)
     setError("")
     try {
       if (!runtimeCredentialMatchAllowsStart(credentialMatch)) {
@@ -2051,6 +2219,22 @@ export default function EbaySellerOAuthReauthPage() {
             ? payload.BLOCKING_UNPROVEN_SECONDARY_SOURCES
             : [],
         )
+        setRegistryRepairRawUnprovenCount(
+          validRegistryRepairUnprovenCount(payload.RAW_UNPROVEN_COUNT)
+            ? payload.RAW_UNPROVEN_COUNT
+            : "UNPROVEN",
+        )
+        setRegistryRepairUnprovenPrimaryReason(
+          validRegistryRepairUnprovenPrimaryReason(
+            payload.UNPROVEN_PRIMARY_REASON,
+          )
+            ? payload.UNPROVEN_PRIMARY_REASON
+            : "SOURCE_EVIDENCE",
+        )
+        setRegistryRepairUnprovenReasonCounts(
+          parseRegistryRepairUnprovenReasonCounts(payload) ??
+            unavailableRegistryRepairUnprovenReasonCounts(),
+        )
         return
       }
       if (!validRegistryRepairDryRun(payload.registryRepairDryRun)) {
@@ -2064,6 +2248,11 @@ export default function EbaySellerOAuthReauthPage() {
         setRegistryRepairUnprovenTotalCount("UNPROVEN")
         setRegistryRepairBlockingUnprovenPrimarySource("SOURCE_READ")
         setRegistryRepairBlockingUnprovenSecondarySources([])
+        setRegistryRepairRawUnprovenCount("UNPROVEN")
+        setRegistryRepairUnprovenPrimaryReason("SOURCE_EVIDENCE")
+        setRegistryRepairUnprovenReasonCounts(
+          unavailableRegistryRepairUnprovenReasonCounts(),
+        )
         return
       }
       if (payload.registryRepairDryRun.DRY_RUN_REJECTION_REASON !== null) {
@@ -2089,6 +2278,15 @@ export default function EbaySellerOAuthReauthPage() {
         setRegistryRepairBlockingUnprovenSecondarySources(
           payload.registryRepairDryRun.BLOCKING_UNPROVEN_SECONDARY_SOURCES,
         )
+        setRegistryRepairRawUnprovenCount(
+          payload.registryRepairDryRun.RAW_UNPROVEN_COUNT,
+        )
+        setRegistryRepairUnprovenPrimaryReason(
+          payload.registryRepairDryRun.UNPROVEN_PRIMARY_REASON,
+        )
+        setRegistryRepairUnprovenReasonCounts(
+          parseRegistryRepairUnprovenReasonCounts(payload.registryRepairDryRun),
+        )
         return
       }
       setRegistryRepairDryRunAmbiguityClass(
@@ -2107,6 +2305,15 @@ export default function EbaySellerOAuthReauthPage() {
       setRegistryRepairBlockingUnprovenSecondarySources(
         payload.registryRepairDryRun.BLOCKING_UNPROVEN_SECONDARY_SOURCES,
       )
+      setRegistryRepairRawUnprovenCount(
+        payload.registryRepairDryRun.RAW_UNPROVEN_COUNT,
+      )
+      setRegistryRepairUnprovenPrimaryReason(
+        payload.registryRepairDryRun.UNPROVEN_PRIMARY_REASON,
+      )
+      setRegistryRepairUnprovenReasonCounts(
+        parseRegistryRepairUnprovenReasonCounts(payload.registryRepairDryRun),
+      )
       setRegistryRepairDryRun(payload.registryRepairDryRun)
     } catch {
       setError("REGISTRY_REPAIR_DRY_RUN_REJECTED")
@@ -2117,6 +2324,11 @@ export default function EbaySellerOAuthReauthPage() {
       setRegistryRepairUnprovenTotalCount("UNPROVEN")
       setRegistryRepairBlockingUnprovenPrimarySource("SOURCE_READ")
       setRegistryRepairBlockingUnprovenSecondarySources([])
+      setRegistryRepairRawUnprovenCount("UNPROVEN")
+      setRegistryRepairUnprovenPrimaryReason("SOURCE_EVIDENCE")
+      setRegistryRepairUnprovenReasonCounts(
+        unavailableRegistryRepairUnprovenReasonCounts(),
+      )
     } finally {
       setPreviewingRegistryRepair(false)
     }
@@ -2443,6 +2655,25 @@ export default function EbaySellerOAuthReauthPage() {
               Unproven total: {String(registryRepairUnprovenTotalCount)} · Primary source: {registryRepairBlockingUnprovenPrimarySource} · Secondary sources: {registryRepairBlockingUnprovenSecondarySources.join(", ") || "NONE"}
             </p>
           ) : null}
+          {registryRepairUnprovenPrimaryReason &&
+              registryRepairRawUnprovenCount !== null ? (
+            <p aria-live="polite" className="mt-3 rounded-xl border border-orange-300/30 bg-orange-300/[0.06] p-3 text-sm font-black text-orange-100">
+              Raw pre-gate unproven count: {String(registryRepairRawUnprovenCount)} · Primary reason: {registryRepairUnprovenPrimaryReason}
+            </p>
+          ) : null}
+          {registryRepairUnprovenReasonCounts ? (
+            <section className="mt-3 rounded-xl border border-orange-300/20 bg-orange-300/[0.04] p-3 text-xs text-orange-50/80">
+              <h3 className="font-black">Raw pre-gate unproven reason counts</h3>
+              <dl className="mt-2 grid gap-2 sm:grid-cols-2">
+                {REGISTRY_REPAIR_UNPROVEN_REASON_COUNT_KEYS.map((key) => (
+                  <div className="flex justify-between gap-3" key={key}>
+                    <dt>{key.replace("UNPROVEN_REASON_", "").replaceAll("_", " ")}</dt>
+                    <dd>{String(registryRepairUnprovenReasonCounts[key])}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
           {registryCoverageDiagnostic ? (
             <div className="mt-5 space-y-2 text-xs text-white/75">
               <dl className="grid gap-2 text-xs text-white/75 sm:grid-cols-2">
@@ -2681,6 +2912,8 @@ export default function EbaySellerOAuthReauthPage() {
                     ["Unproven total count", registryRepairDryRun.UNPROVEN_TOTAL_COUNT],
                     ["Blocking unproven primary source", registryRepairDryRun.BLOCKING_UNPROVEN_PRIMARY_SOURCE],
                     ["Blocking unproven secondary sources", registryRepairDryRun.BLOCKING_UNPROVEN_SECONDARY_SOURCES.join(", ") || "NONE"],
+                    ["Raw pre-gate unproven count", registryRepairDryRun.RAW_UNPROVEN_COUNT],
+                    ["Unproven primary reason", registryRepairDryRun.UNPROVEN_PRIMARY_REASON],
                     ["Current live count", registryRepairDryRun.CURRENT_LIVE_COUNT],
                     ["Current Registry count", registryRepairDryRun.CURRENT_REGISTRY_COUNT],
                     ["Current evidence fingerprint", registryRepairDryRun.CURRENT_EVIDENCE_FINGERPRINT],
@@ -2722,6 +2955,47 @@ export default function EbaySellerOAuthReauthPage() {
                     </div>
                   ))}
                 </dl>
+              </section>
+              <section className="rounded-2xl border border-sky-200/20 bg-sky-200/[0.04] p-4">
+                <h3 className="font-black text-sky-50">
+                  Raw pre-gate partitions · diagnostic only
+                </h3>
+                <p className="mt-2 text-white/50">
+                  These raw counts do not replace certified action counts.
+                </p>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <dl className="space-y-2 rounded-xl bg-black/20 p-3">
+                    {[
+                      ["Already matched", registryRepairDryRun.RAW_ALREADY_MATCHED_COUNT],
+                      ["Repair existing", registryRepairDryRun.RAW_REPAIR_EXISTING_COUNT],
+                      ["Create new", registryRepairDryRun.RAW_CREATE_NEW_COUNT],
+                      ["Human review", registryRepairDryRun.RAW_HUMAN_REVIEW_COUNT],
+                      ["Unproven", registryRepairDryRun.RAW_UNPROVEN_COUNT],
+                      ["Live raw partition valid", registryRepairDryRun.LIVE_RAW_PARTITION_VALID],
+                    ].map(([label, value]) => (
+                      <div className="flex justify-between gap-3" key={String(label)}>
+                        <dt className="font-bold text-white/50">{label}</dt>
+                        <dd>{String(value)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <dl className="space-y-2 rounded-xl bg-black/20 p-3">
+                    {[
+                      ["Keep current", registryRepairDryRun.RAW_KEEP_CURRENT_COUNT],
+                      ["Repair existing", registryRepairDryRun.RAW_REPAIR_EXISTING_REGISTRY_COUNT],
+                      ["Mark stale", registryRepairDryRun.RAW_MARK_STALE_COUNT],
+                      ["Mark historical", registryRepairDryRun.RAW_MARK_HISTORICAL_COUNT],
+                      ["Human review", registryRepairDryRun.RAW_HUMAN_REVIEW_REGISTRY_COUNT],
+                      ["Unproven", registryRepairDryRun.RAW_UNPROVEN_REGISTRY_COUNT],
+                      ["Registry raw partition valid", registryRepairDryRun.REGISTRY_RAW_PARTITION_VALID],
+                    ].map(([label, value]) => (
+                      <div className="flex justify-between gap-3" key={String(label)}>
+                        <dt className="font-bold text-white/50">{label}</dt>
+                        <dd>{String(value)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
               </section>
               <section className="rounded-2xl border border-orange-200/20 bg-orange-200/[0.04] p-4">
                 <h3 className="font-black text-orange-50">

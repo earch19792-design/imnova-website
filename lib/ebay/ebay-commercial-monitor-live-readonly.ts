@@ -621,9 +621,25 @@ export async function diagnoseRegistryCoverageRuntime(
         calls,
         clock,
       })
-      liveListings = sellerWide.listings
+      const marketplace = await certifySellerWideItemMarketplaces({
+        token: minted.value,
+        listings: sellerWide.listings,
+        totalEntries: sellerWide.totalEntries,
+        fetchImpl,
+        calls,
+        clock,
+      })
+      const marketplaceEvidenceComplete = !marketplace.incomplete &&
+        marketplace.currentLiveListings.length === sellerWide.listings.length &&
+        marketplace.listings.length === sellerWide.listings.length
+      if (!marketplaceEvidenceComplete) {
+        throw new Error(
+          "EBAY_REGISTRY_REPAIR_MARKETPLACE_EVIDENCE_UNPROVEN",
+        )
+      }
+      liveListings = marketplace.listings
       result.LIVE_ENUMERATION_RUNTIME_STATUS = "AVAILABLE"
-      result.LIVE_EBAY_LISTING_COUNT = sellerWide.listings.length
+      result.LIVE_EBAY_LISTING_COUNT = liveListings.length
     } catch (error) {
       result.LIVE_ENUMERATION_RUNTIME_STATUS = "READ_FAILED"
       const failure = safeCode(error, "UNCLASSIFIED")
