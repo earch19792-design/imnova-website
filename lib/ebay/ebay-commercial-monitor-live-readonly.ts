@@ -37,6 +37,11 @@ import {
   readRegistry,
   type ReadonlyRegistryListingRow,
 } from "./commercial-monitor-readonly-repository"
+import {
+  buildEbayRegistryRepairDryRun,
+  buildUnprovenEbayRegistryRepairDryRun,
+  type EbayRegistryRepairDryRun,
+} from "./ebay-registry-repair-dry-run"
 import { getSupabaseAdminClient } from "../supabase-admin"
 
 const EBAY_API_ORIGIN = "https://api.ebay.com"
@@ -365,12 +370,22 @@ export type EbayRegistryCoverageDiagnostic = {
     "YES" | "NO" | "UNPROVEN"
 }
 
+type RegistryRepairRuntimeEvidence = {
+  accountKey: string
+  observedAt: string
+  liveListings: EbayLiveListing[]
+  registryRows: ReadonlyRegistryListingRow[]
+}
+
 type RegistryRuntimeReadInput = {
   environment?: NodeJS.ProcessEnv
   fetchImpl?: FetchLike
   clock?: Clock
   startedAt?: number
   supabaseClient?: Pick<SupabaseClient, "from">
+  captureRegistryRepairEvidence?: (
+    evidence: RegistryRepairRuntimeEvidence,
+  ) => void
 }
 
 function computeRegistryCoveragePercent(
@@ -630,6 +645,15 @@ export async function diagnoseRegistryCoverageRuntime(
     result.REGISTRY_SOURCE_RUNTIME_STATUS === "AVAILABLE" &&
     result.LIVE_ENUMERATION_RUNTIME_STATUS === "AVAILABLE"
   ) {
+    const accountKey = configuration.accountKey
+    if (accountKey) {
+      input.captureRegistryRepairEvidence?.({
+        accountKey,
+        observedAt: clock().toISOString(),
+        liveListings,
+        registryRows,
+      })
+    }
     const reconciliation = buildReconciliationCounts({
       liveListings,
       registryRows,
@@ -867,6 +891,29 @@ export async function diagnoseRegistryCoverageRuntime(
     result.REGISTRY_PARTITION_VALID = "NO"
   }
   return result
+}
+
+export async function previewEbayRegistryRepairRuntime(
+  input: RegistryRuntimeReadInput = {},
+): Promise<EbayRegistryRepairDryRun> {
+  let evidence: RegistryRepairRuntimeEvidence | undefined
+  await diagnoseRegistryCoverageRuntime({
+    ...input,
+    captureRegistryRepairEvidence: (captured) => {
+      evidence = captured
+    },
+  })
+  if (!evidence) {
+    return buildUnprovenEbayRegistryRepairDryRun()
+  }
+  return buildEbayRegistryRepairDryRun({
+    accountKey: evidence.accountKey,
+    accountVerified: "YES",
+    marketplaceId: "EBAY_US",
+    observedAt: evidence.observedAt,
+    liveListings: evidence.liveListings,
+    registryRows: evidence.registryRows,
+  })
 }
 
 function isPresentAndTrimmed(value: unknown) {

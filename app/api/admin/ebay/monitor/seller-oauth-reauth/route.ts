@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server"
 import {
   diagnoseInstalledEbayInventoryConsumer,
   diagnoseRegistryCoverageRuntime,
+  previewEbayRegistryRepairRuntime,
 } from "@/lib/ebay/ebay-commercial-monitor-live-readonly"
 import {
   certifyInstalledEbaySellerOAuthRuntime,
@@ -151,7 +152,8 @@ export async function POST(request: NextRequest) {
     if (action !== "diagnose" && action !== "start" &&
         action !== "certify_installed_runtime" &&
         action !== "diagnose_inventory_consumer" &&
-        action !== "diagnose_registry_coverage_runtime") {
+        action !== "diagnose_registry_coverage_runtime" &&
+        action !== "preview_registry_repair") {
       throw new EbaySellerOAuthReauthError(
         "EBAY_SELLER_OAUTH_REAUTH_ACTION_INVALID",
       )
@@ -186,6 +188,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         registryCoverageDiagnostic: registryCoverage,
+      }, {
+        status: 200,
+        headers: {
+          "Cache-Control": "private, no-store, max-age=0",
+          Pragma: "no-cache",
+          "Referrer-Policy": "no-referrer",
+          "X-Content-Type-Options": "nosniff",
+        },
+      })
+    }
+    if (action === "preview_registry_repair") {
+      const registryRepairDryRun = await previewEbayRegistryRepairRuntime({
+        startedAt: requestStartedAt,
+        fetchImpl,
+      })
+      return NextResponse.json({
+        success: true,
+        registryRepairDryRun,
       }, {
         status: 200,
         headers: {

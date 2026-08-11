@@ -5,6 +5,7 @@ import { useEffect, useState } from "react"
 
 import { supabase } from "@/lib/supabase"
 import type { EbayRegistryCoverageDiagnostic } from "@/lib/ebay/ebay-commercial-monitor-live-readonly"
+import type { EbayRegistryRepairDryRun } from "@/lib/ebay/ebay-registry-repair-dry-run"
 
 const START_PATH = "/api/admin/ebay/monitor/seller-oauth-reauth"
 const CALLBACK_PATH = "/api/admin/ebay/monitor/seller-oauth-reauth"
@@ -254,6 +255,12 @@ type RegistryCoverageDiagnosticPayload = {
   error?: string
 }
 
+type RegistryRepairDryRunPayload = {
+  success?: boolean
+  registryRepairDryRun?: unknown
+  error?: string
+}
+
 const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
   "REGISTRY_RUNTIME_CONFIG",
   "SUPABASE_URL_PRESENT",
@@ -357,6 +364,62 @@ const REGISTRY_COVERAGE_DIAGNOSTIC_KEYS = [
   "EMPTY_VARIATION_IS_CANONIC_FOR_NON_VARIATION_LISTING",
   "VARIATION_SEMANTICS_CAUSE_CURRENT_ZERO_MATCH",
   "MANUAL_LISTING_RUNTIME_AUTODISCOVERY",
+] as const
+
+const REGISTRY_REPAIR_DRY_RUN_KEYS = [
+  "DRY_RUN_LABEL",
+  "EVIDENCE_STATUS",
+  "DRY_RUN_PACKAGE_HANDLE",
+  "REPAIR_EXISTING_COUNT",
+  "REPAIR_PRECONDITION_STATUS",
+  "REPAIR_FIELDS_TO_CHANGE",
+  "CREATE_NEW_COUNT",
+  "CREATE_PRECONDITION_STATUS",
+  "CREATE_FIELDS_TO_POPULATE",
+  "MARK_STALE_COUNT",
+  "STALE_PRECONDITION_STATUS",
+  "STALE_FIELDS_TO_CHANGE",
+  "HUMAN_REVIEW_COUNT",
+  "HUMAN_REVIEW_CANDIDATES",
+  "LIVE_ALREADY_MATCHED_COUNT",
+  "LIVE_REPAIR_EXISTING_COUNT",
+  "LIVE_CREATE_NEW_COUNT",
+  "LIVE_HUMAN_REVIEW_COUNT",
+  "LIVE_UNPROVEN_COUNT",
+  "REGISTRY_KEEP_CURRENT_COUNT",
+  "REGISTRY_REPAIR_EXISTING_COUNT",
+  "REGISTRY_MARK_STALE_COUNT",
+  "REGISTRY_MARK_HISTORICAL_COUNT",
+  "REGISTRY_HUMAN_REVIEW_COUNT",
+  "REGISTRY_UNPROVEN_COUNT",
+  "LIVE_DRY_RUN_PARTITION_VALID",
+  "REGISTRY_DRY_RUN_PARTITION_VALID",
+  "WRITE_OPERATION_IDEMPOTENT",
+  "STALE_STATE_GUARD_SUPPORTED",
+  "LIVE_RECHECK_REQUIRED_BEFORE_WRITE",
+  "PARTIAL_FAILURE_POLICY",
+  "ROLLBACK_STRATEGY",
+  "EXPECTED_MATCHED_AFTER_SAFE_TRANCHE",
+  "EXPECTED_LIVE_COUNT",
+  "EXPECTED_PENDING_HUMAN_REVIEW",
+  "EXPECTED_COVERAGE_PERCENT",
+  "DRY_RUN_READY_FOR_APPROVAL",
+  "REGISTRY_MUTATIONS",
+  "EBAY_WRITES",
+  "PRODUCT_CASE_MUTATIONS",
+  "INVENTORY_WRITES",
+  "FULFILLMENT_WRITES",
+  "OAUTH_CHANGES",
+  "VERCEL_ENV_CHANGES",
+] as const
+
+const REGISTRY_REPAIR_HUMAN_CANDIDATE_KEYS = [
+  "CANDIDATE_HANDLE",
+  "RELATIONSHIP_TYPE",
+  "REGISTRY_ITEM_ID_CURRENTLY_LIVE",
+  "SKU_UNIQUE_BOTH_SIDES",
+  "COMPETING_REGISTRY_RELATION",
+  "RECOMMENDED_ACTION",
 ] as const
 
 const RUNTIME_CREDENTIAL_MATCH_KEYS = [
@@ -1291,6 +1354,103 @@ function validAuthorizationUrl(value: string) {
   }
 }
 
+function validRegistryRepairDryRun(
+  value: unknown,
+): value is EbayRegistryRepairDryRun {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  if (Object.keys(record).sort().join(",") !==
+      [...REGISTRY_REPAIR_DRY_RUN_KEYS].sort().join(",")) return false
+
+  const count = (candidate: unknown) =>
+    candidate === "UNPROVEN" ||
+    (typeof candidate === "number" && Number.isSafeInteger(candidate) &&
+      candidate >= 0)
+  const percent = (candidate: unknown) =>
+    candidate === "UNPROVEN" ||
+    (typeof candidate === "number" && Number.isFinite(candidate) &&
+      candidate >= 0 && candidate <= 100)
+  const yesNoUnproven = (candidate: unknown) =>
+    candidate === "YES" || candidate === "NO" || candidate === "UNPROVEN"
+  const precondition = (candidate: unknown) =>
+    candidate === "PASS" || candidate === "FAIL" || candidate === "UNPROVEN"
+  const controlledText = (candidate: unknown) =>
+    typeof candidate === "string" && candidate.length > 0 && candidate.length <= 500
+  const fieldNames = (candidate: unknown) =>
+    Array.isArray(candidate) && candidate.every((field) =>
+      typeof field === "string" && /^[a-z][a-z0-9_]*$/.test(field)
+    )
+  const countKeys = [
+    "REPAIR_EXISTING_COUNT",
+    "CREATE_NEW_COUNT",
+    "MARK_STALE_COUNT",
+    "HUMAN_REVIEW_COUNT",
+    "LIVE_ALREADY_MATCHED_COUNT",
+    "LIVE_REPAIR_EXISTING_COUNT",
+    "LIVE_CREATE_NEW_COUNT",
+    "LIVE_HUMAN_REVIEW_COUNT",
+    "LIVE_UNPROVEN_COUNT",
+    "REGISTRY_KEEP_CURRENT_COUNT",
+    "REGISTRY_REPAIR_EXISTING_COUNT",
+    "REGISTRY_MARK_STALE_COUNT",
+    "REGISTRY_MARK_HISTORICAL_COUNT",
+    "REGISTRY_HUMAN_REVIEW_COUNT",
+    "REGISTRY_UNPROVEN_COUNT",
+    "EXPECTED_MATCHED_AFTER_SAFE_TRANCHE",
+    "EXPECTED_LIVE_COUNT",
+    "EXPECTED_PENDING_HUMAN_REVIEW",
+    "REGISTRY_MUTATIONS",
+    "EBAY_WRITES",
+    "PRODUCT_CASE_MUTATIONS",
+    "INVENTORY_WRITES",
+    "FULFILLMENT_WRITES",
+    "OAUTH_CHANGES",
+    "VERCEL_ENV_CHANGES",
+  ] as const
+  if (!countKeys.every((key) => count(record[key])) ||
+      !percent(record.EXPECTED_COVERAGE_PERCENT) ||
+      record.DRY_RUN_LABEL !== "DRY RUN — NO CHANGES WILL BE APPLIED" ||
+      !["CURRENT", "CHANGED", "UNPROVEN"].includes(
+        String(record.EVIDENCE_STATUS),
+      ) ||
+      typeof record.DRY_RUN_PACKAGE_HANDLE !== "string" ||
+      !/^[A-Za-z0-9._:-]{1,200}$/.test(record.DRY_RUN_PACKAGE_HANDLE) ||
+      !precondition(record.REPAIR_PRECONDITION_STATUS) ||
+      !precondition(record.CREATE_PRECONDITION_STATUS) ||
+      !precondition(record.STALE_PRECONDITION_STATUS) ||
+      !fieldNames(record.REPAIR_FIELDS_TO_CHANGE) ||
+      !fieldNames(record.CREATE_FIELDS_TO_POPULATE) ||
+      !fieldNames(record.STALE_FIELDS_TO_CHANGE) ||
+      !yesNoUnproven(record.LIVE_DRY_RUN_PARTITION_VALID) ||
+      !yesNoUnproven(record.REGISTRY_DRY_RUN_PARTITION_VALID) ||
+      !yesNoUnproven(record.WRITE_OPERATION_IDEMPOTENT) ||
+      !yesNoUnproven(record.STALE_STATE_GUARD_SUPPORTED) ||
+      !yesNoUnproven(record.LIVE_RECHECK_REQUIRED_BEFORE_WRITE) ||
+      !controlledText(record.PARTIAL_FAILURE_POLICY) ||
+      !controlledText(record.ROLLBACK_STRATEGY) ||
+      !yesNoUnproven(record.DRY_RUN_READY_FOR_APPROVAL) ||
+      !Array.isArray(record.HUMAN_REVIEW_CANDIDATES)) return false
+
+  const candidates = record.HUMAN_REVIEW_CANDIDATES
+  if (!candidates.every((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      return false
+    }
+    const candidateRecord = candidate as Record<string, unknown>
+    return Object.keys(candidateRecord).sort().join(",") ===
+        [...REGISTRY_REPAIR_HUMAN_CANDIDATE_KEYS].sort().join(",") &&
+      typeof candidateRecord.CANDIDATE_HANDLE === "string" &&
+      /^[A-Za-z0-9._:-]{1,200}$/.test(candidateRecord.CANDIDATE_HANDLE) &&
+      candidateRecord.RELATIONSHIP_TYPE === "SKU_ONLY" &&
+      yesNoUnproven(candidateRecord.REGISTRY_ITEM_ID_CURRENTLY_LIVE) &&
+      yesNoUnproven(candidateRecord.SKU_UNIQUE_BOTH_SIDES) &&
+      yesNoUnproven(candidateRecord.COMPETING_REGISTRY_RELATION) &&
+      candidateRecord.RECOMMENDED_ACTION === "REVIEW_REQUIRED"
+  })) return false
+  return record.HUMAN_REVIEW_COUNT === "UNPROVEN" ||
+    record.HUMAN_REVIEW_COUNT === candidates.length
+}
+
 export default function EbaySellerOAuthReauthPage() {
   const [callbackUrl, setCallbackUrl] = useState("")
   const [confirmed, setConfirmed] = useState(false)
@@ -1311,6 +1471,9 @@ export default function EbaySellerOAuthReauthPage() {
   const [diagnosingRegistryCoverage, setDiagnosingRegistryCoverage] = useState(false)
   const [registryCoverageDiagnostic, setRegistryCoverageDiagnostic] =
     useState<EbayRegistryCoverageDiagnostic | null>(null)
+  const [previewingRegistryRepair, setPreviewingRegistryRepair] = useState(false)
+  const [registryRepairDryRun, setRegistryRepairDryRun] =
+    useState<EbayRegistryRepairDryRun | null>(null)
   const [error, setError] = useState("")
 
   useEffect(() => {
@@ -1497,6 +1660,40 @@ export default function EbaySellerOAuthReauthPage() {
     }
   }
 
+  async function previewRegistryRepair() {
+    setPreviewingRegistryRepair(true)
+    setRegistryRepairDryRun(null)
+    setError("")
+    try {
+      if (!runtimeCredentialMatchAllowsStart(credentialMatch)) {
+        throw new Error("RUNTIME_CREDENTIAL_MATCH_REQUIRED")
+      }
+      const bearer = await adminBearer()
+      const response = await fetch(START_PATH, {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "preview_registry_repair" }),
+      })
+      const payload = await response.json() as RegistryRepairDryRunPayload
+      if (!response.ok || payload.success !== true ||
+          !validRegistryRepairDryRun(payload.registryRepairDryRun)) {
+        throw new Error(payload.error || "REGISTRY_REPAIR_DRY_RUN_REJECTED")
+      }
+      setRegistryRepairDryRun(payload.registryRepairDryRun)
+    } catch (cause) {
+      setError(cause instanceof Error
+        ? cause.message
+        : "REGISTRY_REPAIR_DRY_RUN_REJECTED")
+    } finally {
+      setPreviewingRegistryRepair(false)
+    }
+  }
+
   async function begin() {
     setLoading(true)
     setError("")
@@ -1600,7 +1797,7 @@ export default function EbaySellerOAuthReauthPage() {
             type="button"
             disabled={matchingCredentials || diagnosing || loading ||
               certifyingInstalledRuntime || diagnosingInventoryConsumer ||
-              diagnosingRegistryCoverage}
+              diagnosingRegistryCoverage || previewingRegistryRepair}
             onClick={compareRuntimeCredentials}
           >
             {matchingCredentials
@@ -1635,7 +1832,7 @@ export default function EbaySellerOAuthReauthPage() {
             type="button"
             disabled={certifyingInstalledRuntime || matchingCredentials ||
               diagnosing || diagnosingInventoryConsumer || diagnosingRegistryCoverage ||
-              loading ||
+              previewingRegistryRepair || loading ||
               !runtimeCredentialMatchAllowsStart(credentialMatch)}
             onClick={certifyInstalledRuntime}
           >
@@ -1680,7 +1877,7 @@ export default function EbaySellerOAuthReauthPage() {
             type="button"
             disabled={diagnosingInventoryConsumer || certifyingInstalledRuntime ||
               matchingCredentials || diagnosing || diagnosingRegistryCoverage ||
-              loading ||
+              previewingRegistryRepair || loading ||
               !runtimeCredentialMatchAllowsStart(credentialMatch)}
             onClick={diagnoseInventoryConsumer}
           >
@@ -1774,10 +1971,27 @@ export default function EbaySellerOAuthReauthPage() {
             type="button"
             disabled={diagnosingRegistryCoverage || certifyingInstalledRuntime ||
               matchingCredentials || diagnosing || diagnosingInventoryConsumer ||
-              loading || !runtimeCredentialMatchAllowsStart(credentialMatch)}
+              previewingRegistryRepair || loading ||
+              !runtimeCredentialMatchAllowsStart(credentialMatch)}
             onClick={diagnoseRegistryCoverageRuntime}
           >
             Diagnosticar cobertura Registry
+          </button>
+          <p className="mt-5 rounded-2xl border border-amber-200/35 bg-amber-200/[0.08] p-4 text-sm font-black text-amber-100">
+            DRY RUN — NO CHANGES WILL BE APPLIED
+          </p>
+          <button
+            className="mt-3 rounded-2xl border border-amber-200/50 px-5 py-2 text-sm font-black text-amber-100 disabled:opacity-40"
+            type="button"
+            disabled={previewingRegistryRepair || diagnosingRegistryCoverage ||
+              certifyingInstalledRuntime || matchingCredentials || diagnosing ||
+              diagnosingInventoryConsumer || loading ||
+              !runtimeCredentialMatchAllowsStart(credentialMatch)}
+            onClick={previewRegistryRepair}
+          >
+            {previewingRegistryRepair
+              ? "Preparing Registry repair preview…"
+              : "Preview Registry repair"}
           </button>
           {registryCoverageDiagnostic ? (
             <div className="mt-5 space-y-2 text-xs text-white/75">
@@ -1996,6 +2210,184 @@ export default function EbaySellerOAuthReauthPage() {
               </dl>
             </div>
           ) : null}
+          {registryRepairDryRun ? (
+            <div className="mt-6 space-y-5 text-xs text-white/75">
+              <section className="rounded-2xl border border-amber-200/25 bg-black/20 p-4">
+                <p className="font-black text-amber-100">{registryRepairDryRun.DRY_RUN_LABEL}</p>
+                <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {[
+                    ["Evidence status", registryRepairDryRun.EVIDENCE_STATUS],
+                    ["Dry-run package handle", registryRepairDryRun.DRY_RUN_PACKAGE_HANDLE],
+                    ["Ready for human approval", registryRepairDryRun.DRY_RUN_READY_FOR_APPROVAL],
+                  ].map(([label, value]) => (
+                    <div className="rounded-lg bg-black/25 p-3" key={String(label)}>
+                      <dt className="font-bold text-white/50">{label}</dt>
+                      <dd className="mt-1 break-all">{String(value)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+
+              <section aria-label="Registry repair dry-run groups" className="grid gap-3 md:grid-cols-3">
+                {[
+                  {
+                    title: "REPAIR EXISTING",
+                    count: registryRepairDryRun.REPAIR_EXISTING_COUNT,
+                    status: registryRepairDryRun.REPAIR_PRECONDITION_STATUS,
+                    fields: registryRepairDryRun.REPAIR_FIELDS_TO_CHANGE,
+                    fieldsLabel: "Fields to change",
+                  },
+                  {
+                    title: "CREATE NEW",
+                    count: registryRepairDryRun.CREATE_NEW_COUNT,
+                    status: registryRepairDryRun.CREATE_PRECONDITION_STATUS,
+                    fields: registryRepairDryRun.CREATE_FIELDS_TO_POPULATE,
+                    fieldsLabel: "Fields to populate",
+                  },
+                  {
+                    title: "MARK STALE",
+                    count: registryRepairDryRun.MARK_STALE_COUNT,
+                    status: registryRepairDryRun.STALE_PRECONDITION_STATUS,
+                    fields: registryRepairDryRun.STALE_FIELDS_TO_CHANGE,
+                    fieldsLabel: "Fields to change",
+                  },
+                ].map((group) => (
+                  <article className="rounded-2xl border border-white/10 bg-black/20 p-4" key={group.title}>
+                    <h3 className="font-black text-white">{group.title}</h3>
+                    <p className="mt-2">Count: {String(group.count)}</p>
+                    <p>Preconditions: {String(group.status)}</p>
+                    <p className="mt-2 text-white/50">{group.fieldsLabel}</p>
+                    <p className="mt-1 break-all">{group.fields.join(", ") || "NONE"}</p>
+                  </article>
+                ))}
+              </section>
+
+              <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <h3 className="font-black text-white">
+                  HUMAN REVIEW · {String(registryRepairDryRun.HUMAN_REVIEW_COUNT)}
+                </h3>
+                <p className="mt-2 text-white/55">
+                  SKU equality alone does not authorize relinking. Candidate handles are opaque.
+                </p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {registryRepairDryRun.HUMAN_REVIEW_CANDIDATES.map((candidate) => (
+                    <article className="rounded-xl border border-white/10 p-3" key={candidate.CANDIDATE_HANDLE}>
+                      <dl className="space-y-2">
+                        {[
+                          ["Candidate handle", candidate.CANDIDATE_HANDLE],
+                          ["Relationship type", candidate.RELATIONSHIP_TYPE],
+                          ["Registry Item ID currently live", candidate.REGISTRY_ITEM_ID_CURRENTLY_LIVE],
+                          ["SKU unique both sides", candidate.SKU_UNIQUE_BOTH_SIDES],
+                          ["Competing Registry relation", candidate.COMPETING_REGISTRY_RELATION],
+                          ["Recommended action", candidate.RECOMMENDED_ACTION],
+                        ].map(([label, value]) => (
+                          <div key={String(label)}>
+                            <dt className="font-bold text-white/50">{label}</dt>
+                            <dd className="mt-1 break-all">{String(value)}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </article>
+                  ))}
+                </div>
+              </section>
+
+              <section className="grid gap-3 md:grid-cols-2">
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <h3 className="font-black text-white">Live listing partition</h3>
+                  <dl className="mt-3 space-y-2">
+                    {[
+                      ["Already matched", registryRepairDryRun.LIVE_ALREADY_MATCHED_COUNT],
+                      ["Repair existing", registryRepairDryRun.LIVE_REPAIR_EXISTING_COUNT],
+                      ["Create new", registryRepairDryRun.LIVE_CREATE_NEW_COUNT],
+                      ["Human review", registryRepairDryRun.LIVE_HUMAN_REVIEW_COUNT],
+                      ["Unproven", registryRepairDryRun.LIVE_UNPROVEN_COUNT],
+                      ["Partition valid", registryRepairDryRun.LIVE_DRY_RUN_PARTITION_VALID],
+                    ].map(([label, value]) => (
+                      <div className="flex justify-between gap-3" key={String(label)}>
+                        <dt className="font-bold text-white/50">{label}</dt>
+                        <dd>{String(value)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </article>
+                <article className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <h3 className="font-black text-white">Registry row partition</h3>
+                  <dl className="mt-3 space-y-2">
+                    {[
+                      ["Keep current", registryRepairDryRun.REGISTRY_KEEP_CURRENT_COUNT],
+                      ["Repair existing", registryRepairDryRun.REGISTRY_REPAIR_EXISTING_COUNT],
+                      ["Mark stale", registryRepairDryRun.REGISTRY_MARK_STALE_COUNT],
+                      ["Mark historical", registryRepairDryRun.REGISTRY_MARK_HISTORICAL_COUNT],
+                      ["Human review", registryRepairDryRun.REGISTRY_HUMAN_REVIEW_COUNT],
+                      ["Unproven", registryRepairDryRun.REGISTRY_UNPROVEN_COUNT],
+                      ["Partition valid", registryRepairDryRun.REGISTRY_DRY_RUN_PARTITION_VALID],
+                    ].map(([label, value]) => (
+                      <div className="flex justify-between gap-3" key={String(label)}>
+                        <dt className="font-bold text-white/50">{label}</dt>
+                        <dd>{String(value)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </article>
+              </section>
+
+              <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                <h3 className="font-black text-white">Future write design · not executable here</h3>
+                <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {[
+                    ["Write operation idempotent", registryRepairDryRun.WRITE_OPERATION_IDEMPOTENT],
+                    ["Stale-state guard supported", registryRepairDryRun.STALE_STATE_GUARD_SUPPORTED],
+                    ["Live recheck required before write", registryRepairDryRun.LIVE_RECHECK_REQUIRED_BEFORE_WRITE],
+                    ["Partial-failure policy", registryRepairDryRun.PARTIAL_FAILURE_POLICY],
+                    ["Rollback strategy", registryRepairDryRun.ROLLBACK_STRATEGY],
+                  ].map(([label, value]) => (
+                    <div className="rounded-lg bg-black/25 p-3" key={String(label)}>
+                      <dt className="font-bold text-white/50">{label}</dt>
+                      <dd className="mt-1 break-all">{String(value)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+
+              <section className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.05] p-4">
+                <h3 className="font-black text-cyan-50">EXPECTATION ONLY · NOT OBSERVED RUNTIME STATE</h3>
+                <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {[
+                    ["Expected matched after safe tranche", registryRepairDryRun.EXPECTED_MATCHED_AFTER_SAFE_TRANCHE],
+                    ["Expected live count", registryRepairDryRun.EXPECTED_LIVE_COUNT],
+                    ["Expected pending human review", registryRepairDryRun.EXPECTED_PENDING_HUMAN_REVIEW],
+                    ["Expected coverage percent", registryRepairDryRun.EXPECTED_COVERAGE_PERCENT],
+                  ].map(([label, value]) => (
+                    <div className="rounded-lg bg-black/20 p-3" key={String(label)}>
+                      <dt className="font-bold text-white/50">{label}</dt>
+                      <dd className="mt-1">{String(value)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+
+              <section className="rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.05] p-4">
+                <h3 className="font-black text-emerald-50">Zero-write safety counters</h3>
+                <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {[
+                    ["Registry mutations", registryRepairDryRun.REGISTRY_MUTATIONS],
+                    ["eBay writes", registryRepairDryRun.EBAY_WRITES],
+                    ["Product Case mutations", registryRepairDryRun.PRODUCT_CASE_MUTATIONS],
+                    ["Inventory writes", registryRepairDryRun.INVENTORY_WRITES],
+                    ["Fulfillment writes", registryRepairDryRun.FULFILLMENT_WRITES],
+                    ["OAuth changes", registryRepairDryRun.OAUTH_CHANGES],
+                    ["Vercel env changes", registryRepairDryRun.VERCEL_ENV_CHANGES],
+                  ].map(([label, value]) => (
+                    <div className="flex justify-between gap-3 rounded-lg bg-black/20 p-3" key={String(label)}>
+                      <dt className="font-bold text-white/50">{label}</dt>
+                      <dd>{String(value)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            </div>
+          ) : null}
         </section>
 
         <section className="rounded-3xl border border-cyan-300/25 bg-cyan-300/[0.06] p-6">
@@ -2010,7 +2402,7 @@ export default function EbaySellerOAuthReauthPage() {
             type="button"
             disabled={diagnosing || loading || matchingCredentials ||
               certifyingInstalledRuntime || diagnosingInventoryConsumer ||
-              diagnosingRegistryCoverage ||
+              diagnosingRegistryCoverage || previewingRegistryRepair ||
               !runtimeCredentialMatchAllowsStart(credentialMatch)}
             onClick={diagnose}
           >
@@ -2063,7 +2455,7 @@ export default function EbaySellerOAuthReauthPage() {
           type="button"
           disabled={!confirmed || loading || diagnosing || matchingCredentials ||
             certifyingInstalledRuntime || diagnosingInventoryConsumer ||
-            diagnosingRegistryCoverage ||
+            diagnosingRegistryCoverage || previewingRegistryRepair ||
             !callbackUrl ||
             !runtimeCredentialMatchAllowsStart(credentialMatch) ||
             !diagnosisAllowsStart(diagnosis)}
