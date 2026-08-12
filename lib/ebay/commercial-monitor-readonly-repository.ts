@@ -150,6 +150,32 @@ export type ReadonlyLearningAdjustmentRow = {
   computed_at: string
 }
 
+export type ReadonlyExperimentRow = {
+  experiment_id: string
+  account_key: string
+  marketplace: string
+  ebay_item_id: string
+  ebay_sku: string | null
+  hypothesis: string
+  diagnosis_class: string
+  experiment_type: string
+  variable_changed: string
+  changed_at: string
+  baseline_evidence_ref: unknown
+  lifecycle_status: string
+  frozen_variables: string[]
+  minimum_observation_duration_hours: number | string
+  minimum_evidence_metric: string
+  minimum_evidence_value: number | string
+  current_evidence_value: number | string | null
+  next_review_condition: string | null
+  next_review_at: string | null
+  outcome: unknown
+  learning_reference: string | null
+  created_at: string
+  updated_at: string
+}
+
 export type ReadonlySupabaseReader = Pick<SupabaseClient, "from">
 
 export type CommercialMonitorReadonlySources = {
@@ -162,6 +188,7 @@ export type CommercialMonitorReadonlySources = {
   orders: ReadonlySourceResult<ReadonlyOrderRow>
   orderLines: ReadonlySourceResult<ReadonlyOrderLineRow>
   learning: ReadonlySourceResult<ReadonlyLearningAdjustmentRow>
+  experiments: ReadonlySourceResult<ReadonlyExperimentRow>
 }
 
 function success<T>(source: string, rows: T[], maximum: number) {
@@ -475,6 +502,31 @@ async function readLearning(
   )
 }
 
+async function readExperiments(
+  supabase: SupabaseClient,
+  accountKey: string,
+): Promise<ReadonlySourceResult<ReadonlyExperimentRow>> {
+  const maximum = 500
+  const { data, error } = await supabase
+    .from("ebay_listing_experiments_v1")
+    .select("experiment_id,account_key,marketplace,ebay_item_id,ebay_sku,hypothesis,diagnosis_class,experiment_type,variable_changed,changed_at,baseline_evidence_ref,lifecycle_status,frozen_variables,minimum_observation_duration_hours,minimum_evidence_metric,minimum_evidence_value,current_evidence_value,next_review_condition,next_review_at,outcome,learning_reference,created_at,updated_at")
+    .eq("account_key", accountKey)
+    .eq("marketplace", "EBAY_US")
+    .order("updated_at", { ascending: false })
+    .limit(maximum + 1)
+  if (error) {
+    return failure(
+      "EBAY_EXPERIMENT_REGISTRY_V1",
+      "EXPERIMENT_REGISTRY_REMOTE_DDL_REQUIRED",
+    )
+  }
+  return success(
+    "EBAY_EXPERIMENT_REGISTRY_V1",
+    (data ?? []) as ReadonlyExperimentRow[],
+    maximum,
+  )
+}
+
 export async function readCommercialMonitorReadonlySources(
   supabase: SupabaseClient,
   accountKey: string,
@@ -499,6 +551,7 @@ export async function readCommercialMonitorReadonlySources(
     orders,
     orderLines,
     learning,
+    experiments,
   ] = await Promise.all([
     readSyncState(supabase, accountKey),
     readCommercialSnapshots(supabase, accountKey),
@@ -507,6 +560,7 @@ export async function readCommercialMonitorReadonlySources(
     readOrders(supabase, accountKey),
     readOrderLines(supabase, accountKey, itemIds),
     readLearning(supabase, accountKey),
+    readExperiments(supabase, accountKey),
   ])
   return {
     registry,
@@ -518,5 +572,6 @@ export async function readCommercialMonitorReadonlySources(
     orders,
     orderLines,
     learning,
+    experiments,
   }
 }

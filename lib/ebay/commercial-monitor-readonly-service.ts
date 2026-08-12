@@ -19,6 +19,7 @@ import {
   unavailableObservation,
   unprovenComposition,
   type AlertCandidate,
+  type AuthoritativeExperimentLookup,
   type CalculatedNumericObservation,
   type CommercialListingReadModel,
   type CommercialLearningReadModel,
@@ -61,6 +62,7 @@ import {
   readCommercialMonitorReadonlySources,
   type CommercialMonitorReadonlySources,
   type ReadonlyCommercialSnapshotRow,
+  type ReadonlyExperimentRow,
   type ReadonlyIdentityVerificationRow,
   type ReadonlyLearningAdjustmentRow,
   type ReadonlyOrderLineRow,
@@ -1428,6 +1430,82 @@ function listingAlerts(input: {
   return [...new Map(alerts.map((alert) => [alert.eventKey, alert])).values()]
 }
 
+function authoritativeExperimentLookup(input: {
+  sources: CommercialMonitorReadonlySources
+  itemId: string
+  checkedAt: string
+}): AuthoritativeExperimentLookup {
+  if (input.sources.experiments.status === "ERROR") return { completed: false }
+  const activeStates = new Set([
+    "READY",
+    "RUNNING",
+    "WAITING_FOR_EVIDENCE",
+    "READY_TO_EVALUATE",
+    "PAUSED_FOR_EXTERNAL_SIGNAL",
+  ])
+  const rows = input.sources.experiments.rows.filter((row) =>
+    row.ebay_item_id === input.itemId && activeStates.has(row.lifecycle_status))
+  if (rows.length > 1) return { completed: false }
+  const row: ReadonlyExperimentRow | undefined = rows[0]
+  if (!row) {
+    return {
+      completed: true,
+      found: false,
+      checkedAt: input.checkedAt,
+      evidence: evidence(
+        `EXPERIMENT_REGISTRY_V1:NO_ACTIVE:${input.itemId}`,
+        "EBAY_EXPERIMENT_REGISTRY_V1",
+        input.checkedAt,
+      ),
+    }
+  }
+  const finite = (value: number | string | null) => {
+    if (value === null || value === "") return null
+    const parsed = Number(value)
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+  }
+  const minimumDuration = finite(row.minimum_observation_duration_hours)
+  const minimumEvidence = finite(row.minimum_evidence_value)
+  if (minimumDuration === null || minimumEvidence === null) {
+    return { completed: false }
+  }
+  return {
+    completed: true,
+    found: true,
+    experimentId: row.experiment_id,
+    accountKey: row.account_key,
+    marketplace: "EBAY_US",
+    ebayItemId: row.ebay_item_id,
+    sku: row.ebay_sku,
+    lifecycleState: row.lifecycle_status,
+    testedVariable: row.variable_changed,
+    hypothesis: row.hypothesis,
+    diagnosisClass: row.diagnosis_class,
+    experimentType: row.experiment_type,
+    t0: row.changed_at,
+    postChangeT0: row.changed_at,
+    frozenVariables: Array.isArray(row.frozen_variables)
+      ? row.frozen_variables.filter((value) => typeof value === "string")
+      : [],
+    checkpointGate: row.next_review_condition,
+    minimumObservationDurationHours: minimumDuration,
+    minimumEvidenceMetric: row.minimum_evidence_metric,
+    minimumEvidenceValue: minimumEvidence,
+    currentEvidenceValue: finite(row.current_evidence_value),
+    nextReviewAt: row.next_review_at,
+    externalSignalCodes: [],
+    evidenceTimestamp: row.updated_at,
+    dataQualityStatus: input.sources.experiments.status === "AVAILABLE"
+      ? "AVAILABLE"
+      : "PARTIAL",
+    evidence: evidence(
+      `EXPERIMENT_REGISTRY_V1:${row.experiment_id}`,
+      "EBAY_EXPERIMENT_REGISTRY_V1",
+      row.updated_at,
+    ),
+  }
+}
+
 function projectListing(input: {
   listing: ListingProjectionInput
   sources: CommercialMonitorReadonlySources
@@ -1487,7 +1565,11 @@ function projectListing(input: {
     listingType: rawFields.listingType,
   })
   const productCase = resolveProductCaseLink()
-  const experiment = resolveExperiment()
+  const experiment = resolveExperiment(authoritativeExperimentLookup({
+    sources: input.sources,
+    itemId: listing.itemId,
+    checkedAt: input.generatedAt,
+  }))
   const orders = orderProjection({
     itemId: listing.itemId,
     sku: listing.ebaySku,
@@ -2423,6 +2505,10 @@ function readerStatuses(
     readerStatus(
       sources.learning as unknown as ReadonlySourceResult<Record<string, unknown>>,
       latestIso(sources.learning.rows.map((row) => row.computed_at)),
+    ),
+    readerStatus(
+      sources.experiments as unknown as ReadonlySourceResult<Record<string, unknown>>,
+      latestIso(sources.experiments.rows.map((row) => row.updated_at)),
     ),
   ]
   return [...statuses, ...liveReaderStatuses(live)]
@@ -3491,6 +3577,8 @@ function baseReport(input: {
   liveCertification: EbayLiveCertificationReadModel
   registryCertification?: CommercialMonitorRegistryCertificationV1 | null
   orderFacts?: CommercialMonitorOrderFactsV1 | null
+  liveAnalytics?: EbayCommercialMonitorLiveReadonlyResult["analytics"] | null
+  historicalSnapshots?: ReadonlyCommercialSnapshotRow[]
 }) : CommercialMonitorGetDto {
   return {
     contractVersion: COMMERCIAL_MONITOR_READONLY_CONTRACT_VERSION,
@@ -3515,6 +3603,23 @@ function baseReport(input: {
       alertCandidates: input.alertCandidates,
       registry: input.registryCertification,
       orders: input.orderFacts,
+      accountTraffic: input.liveAnalytics?.accountTraffic,
+      currentLiveWindowStart: input.liveAnalytics?.windowStart,
+      currentLiveWindowEnd: input.liveAnalytics?.windowEnd,
+      currentLiveObservedAt: input.liveAnalytics?.observedAt,
+      historicalSnapshots: (input.historicalSnapshots ?? []).map((row) => ({
+        id: row.id,
+        listingId: row.listing_id,
+        impressions: row.impressions,
+        views: row.views,
+        transactions: row.transactions,
+        ctr: row.ctr,
+        observedAt: row.observed_at,
+        windowStart: row.window_start,
+        windowEnd: row.window_end,
+        source: row.source,
+        completenessStatus: row.completeness_status,
+      })),
     }),
     productCaseOperatingState: {
       status: "PAUSED_FOR_MONITORING_MILESTONE",
@@ -3833,5 +3938,7 @@ export async function getCommercialMonitorReadonly(
     liveCertification: liveCertificationProjection(live, coverage),
     registryCertification,
     orderFacts: orderFactsProjection(live),
+    liveAnalytics: live.analytics,
+    historicalSnapshots: sources.commercialSnapshots.rows,
   }))
 }

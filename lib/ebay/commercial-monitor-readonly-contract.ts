@@ -3,6 +3,10 @@ import {
   selectExactReadonlySupply,
   stableReadonlyCommercialKey,
 } from "./commercial-monitor-readonly-utilities.mjs"
+import type {
+  AccountTrafficEvidenceV1,
+  CanonicalCommercialTimeSeriesPointV1,
+} from "./ebay-commercial-monitor-traffic-scope-v1"
 
 export const COMMERCIAL_MONITOR_READONLY_CONTRACT_VERSION =
   "COMMERCIAL_MONITOR_READONLY_FOUNDATION_V1" as const
@@ -322,12 +326,25 @@ export type ExperimentReadModel =
   | {
       status: "AVAILABLE"
       experimentId: string
+      accountKey?: string
+      marketplace?: "EBAY_US"
+      ebayItemId?: string
+      sku?: string | null
       lifecycleState: string
       testedVariable: string
+      hypothesis?: string
+      diagnosisClass?: string
+      experimentType?: string
       t0: string
       postChangeT0: string | null
       frozenVariables: string[]
       checkpointGate: string | null
+      minimumObservationDurationHours?: number
+      minimumEvidenceMetric?: string
+      minimumEvidenceValue?: number
+      currentEvidenceValue?: number | null
+      nextReviewAt?: string | null
+      externalSignalCodes?: string[]
       evidenceTimestamp: string
       dataQualityStatus: ObservationAvailability
       commercialAction: "NO_TOCAR" | "HUMAN_REVIEW_ONLY"
@@ -352,12 +369,25 @@ export type AuthoritativeExperimentLookup =
       completed: true
       found: true
       experimentId: string
+      accountKey?: string
+      marketplace?: "EBAY_US"
+      ebayItemId?: string
+      sku?: string | null
       lifecycleState: string
       testedVariable: string
+      hypothesis?: string
+      diagnosisClass?: string
+      experimentType?: string
       t0: string
       postChangeT0?: string | null
       frozenVariables: string[]
       checkpointGate?: string | null
+      minimumObservationDurationHours?: number
+      minimumEvidenceMetric?: string
+      minimumEvidenceValue?: number
+      currentEvidenceValue?: number | null
+      nextReviewAt?: string | null
+      externalSignalCodes?: string[]
       evidenceTimestamp: string
       dataQualityStatus: ObservationAvailability
       evidence: EvidenceReference
@@ -393,12 +423,25 @@ export function resolveExperiment(
   return {
     status: "AVAILABLE",
     experimentId: lookup.experimentId,
+    accountKey: lookup.accountKey,
+    marketplace: lookup.marketplace,
+    ebayItemId: lookup.ebayItemId,
+    sku: lookup.sku ?? null,
     lifecycleState: lookup.lifecycleState,
     testedVariable: lookup.testedVariable,
+    hypothesis: lookup.hypothesis,
+    diagnosisClass: lookup.diagnosisClass,
+    experimentType: lookup.experimentType,
     t0: lookup.t0,
     postChangeT0: lookup.postChangeT0 ?? null,
     frozenVariables: [...lookup.frozenVariables],
     checkpointGate: lookup.checkpointGate ?? null,
+    minimumObservationDurationHours: lookup.minimumObservationDurationHours,
+    minimumEvidenceMetric: lookup.minimumEvidenceMetric,
+    minimumEvidenceValue: lookup.minimumEvidenceValue,
+    currentEvidenceValue: lookup.currentEvidenceValue ?? null,
+    nextReviewAt: lookup.nextReviewAt ?? null,
+    externalSignalCodes: [...(lookup.externalSignalCodes ?? [])],
     evidenceTimestamp: lookup.evidenceTimestamp,
     dataQualityStatus: lookup.dataQualityStatus,
     commercialAction: lookup.lifecycleState === "RUNNING"
@@ -1339,6 +1382,12 @@ export type CommercialDecisionReason =
   | "INSUFFICIENT_ANALYTICS_EVIDENCE"
   | "BLOCKING_DATA_QUALITY_ISSUE"
   | "ACTIVE_EXPERIMENT_PROTECTS_VARIABLE"
+  | "WAIT_ACTIVE_EXPERIMENT"
+  | "WAIT_MINIMUM_TIME"
+  | "WAIT_MINIMUM_EVIDENCE"
+  | "REVIEW_EXPERIMENT_RESULT"
+  | "EXTERNAL_SIGNAL_REVIEW"
+  | "HARD_OVERRIDE_REQUIRES_HUMAN_REVIEW"
   | "HEALTHY_EVIDENCE_WAIT_FOR_NEXT_REVIEW"
 
 export type EbayGuidanceComparisonReason =
@@ -1375,6 +1424,17 @@ export type CommercialListingDecisionV1 = {
   actionBlockedByInsufficientEvidence: boolean
   experimentRunning: boolean
   variableFrozen: boolean
+  protectionState: "DO_NOT_TOUCH" | "NONE" | "UNPROVEN"
+  experimentOperationalState:
+    | "RUNNING"
+    | "WAITING_FOR_EVIDENCE"
+    | "READY_TO_EVALUATE"
+    | "PAUSED_FOR_EXTERNAL_SIGNAL"
+    | "INACTIVE"
+    | "UNPROVEN"
+  frozenVariables: string[]
+  nextReviewEvidenceRemaining: number | null
+  externalSignalCount: number | null
   nextReviewCondition: string | null
   nextReviewAt: string | null
   actionExecutionAllowed: false
@@ -1424,7 +1484,28 @@ export type CommercialMonitorBackendV1 = {
     impressions: { status: CommercialMonitorCapabilityStatus; value: number | null }
     ebayViews: { status: CommercialMonitorCapabilityStatus; value: number | null }
     averageCtr: { status: CommercialMonitorCapabilityStatus; value: number | null }
+    quantitySold: { status: CommercialMonitorCapabilityStatus; value: number | null }
     orders: { status: CommercialMonitorCapabilityStatus; value: number | null }
+  }
+  trafficScopes: {
+    reconciliation: "EXPLICIT_SCOPE_SEPARATION"
+    sellerHubEquivalence: "CONDITIONAL_ON_WINDOW_TIMEZONE_SCOPE_AND_REPORTING_LAG"
+    accountTraffic: AccountTrafficEvidenceV1
+    currentLivePortfolio: {
+      scope: "CURRENT_LIVE_PORTFOLIO"
+      grain: "LISTING_WINDOW_AGGREGATE"
+      source: "EBAY_TRADING_PLUS_SELL_ANALYTICS"
+      windowStart: string | null
+      windowEnd: string | null
+      timeZone: "UTC"
+      observedAt: string | null
+      completeness: CommercialMonitorCapabilityStatus
+      activeListings: number | null
+      impressions: number | null
+      listingViews: number | null
+      quantitySold: number | null
+      ctr: number | null
+    }
   }
   orders: {
     status: CommercialMonitorCapabilityStatus
@@ -1449,6 +1530,9 @@ export type CommercialMonitorBackendV1 = {
   operationalHealth: {
     needIntervention: { status: CommercialMonitorCapabilityStatus; count: number | null }
     runningExperiments: { status: CommercialMonitorCapabilityStatus; count: number | null }
+    doNotTouch: { status: CommercialMonitorCapabilityStatus; count: number | null }
+    readyToEvaluate: { status: CommercialMonitorCapabilityStatus; count: number | null }
+    externalSignalReview: { status: CommercialMonitorCapabilityStatus; count: number | null }
     stockRisk: { status: CommercialMonitorCapabilityStatus; count: number | null }
     stockUnknown: { status: CommercialMonitorCapabilityStatus; count: number | null }
     dataQuality: { status: CommercialMonitorCapabilityStatus; count: number | null }
@@ -1467,9 +1551,9 @@ export type CommercialMonitorBackendV1 = {
       reviewAt: string | null
     }>
     performanceSeries: {
-      status: "MISSING"
-      points: []
-      limitationCode: "NO_CANONICAL_TIME_SERIES"
+      status: "AVAILABLE" | "PARTIAL" | "MISSING"
+      points: CanonicalCommercialTimeSeriesPointV1[]
+      limitationCode: string | null
     }
     statusDistribution: Array<{ classification: CommercialDecisionClass; count: number }>
     categoryBenchmarks: Array<{

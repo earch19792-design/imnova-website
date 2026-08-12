@@ -11,6 +11,21 @@ import type {
   EbayListingQualityRecommendation,
   EbayLiveCertificationReadModel,
 } from "./commercial-monitor-readonly-contract"
+import {
+  assessExperimentGuardianV1,
+  EXPERIMENT_REGISTRY_CONTRACT_VERSION,
+  type ExperimentEvidenceMetricV1,
+  type ExperimentGuardianAssessmentV1,
+  type ExperimentLifecycleStateV1,
+  type ExperimentRegistryRecordV1,
+  type ExternalEbaySignalV1,
+} from "./ebay-commercial-monitor-experiment-v1"
+import {
+  buildCanonicalCommercialTimeSeriesV1,
+  unavailableAccountTrafficV1,
+  type AccountTrafficEvidenceV1,
+  type CommercialSeriesSnapshotV1,
+} from "./ebay-commercial-monitor-traffic-scope-v1"
 
 export const EBAY_LISTING_QUALITY_REPORT_SOURCE =
   "EBAY_LISTING_QUALITY_REPORT" as const
@@ -188,6 +203,98 @@ function metricValue(
   return null
 }
 
+const EXPERIMENT_EVIDENCE_METRICS = new Set<ExperimentEvidenceMetricV1>([
+  "IMPRESSIONS",
+  "LISTING_VIEWS",
+  "QUANTITY_SOLD",
+  "DATA_QUALITY_RESOLUTION",
+])
+
+const EXPERIMENT_LIFECYCLE_STATES = new Set<ExperimentLifecycleStateV1>([
+  "DRAFT",
+  "READY",
+  "RUNNING",
+  "WAITING_FOR_EVIDENCE",
+  "READY_TO_EVALUATE",
+  "PAUSED_FOR_EXTERNAL_SIGNAL",
+  "COMPLETED",
+  "INCONCLUSIVE",
+  "CANCELLED",
+])
+
+function experimentGuardian(
+  listing: CommercialListingReadModel,
+): ExperimentGuardianAssessmentV1 | null {
+  if (listing.experiment.status !== "AVAILABLE") return null
+  const experiment = listing.experiment
+  const metric = EXPERIMENT_EVIDENCE_METRICS.has(
+      experiment.minimumEvidenceMetric as ExperimentEvidenceMetricV1,
+    )
+    ? experiment.minimumEvidenceMetric as ExperimentEvidenceMetricV1
+    : "DATA_QUALITY_RESOLUTION"
+  const currentEvidenceValue = experiment.currentEvidenceValue ??
+    (metric === "IMPRESSIONS"
+      ? metricValue(listing, ["impressions"])
+      : metric === "LISTING_VIEWS"
+        ? metricValue(listing, ["ebay_views"])
+        : metric === "QUANTITY_SOLD"
+          ? metricValue(listing, ["transactions"])
+          : null)
+  const lifecycleState = EXPERIMENT_LIFECYCLE_STATES.has(
+      experiment.lifecycleState as ExperimentLifecycleStateV1,
+    )
+    ? experiment.lifecycleState as ExperimentLifecycleStateV1
+    : "DRAFT"
+  const diagnosisClass = ["VISIBILITY", "CTR", "CONVERSION", "DATA_QUALITY"]
+    .includes(experiment.diagnosisClass ?? "")
+    ? experiment.diagnosisClass as ExperimentRegistryRecordV1["diagnosisClass"]
+    : "DATA_QUALITY"
+  const record: ExperimentRegistryRecordV1 = {
+    contractVersion: EXPERIMENT_REGISTRY_CONTRACT_VERSION,
+    experimentId: experiment.experimentId,
+    accountKey: experiment.accountKey ?? "SERVER_SCOPE_UNPROVEN",
+    marketplace: experiment.marketplace ?? "EBAY_US",
+    ebayItemId: experiment.ebayItemId ?? listing.identity.itemId,
+    sku: experiment.sku ?? listing.identity.sku,
+    hypothesis: experiment.hypothesis ?? "HYPOTHESIS_NOT_RECORDED",
+    diagnosisClass,
+    experimentType: experiment.experimentType ?? "UNPROVEN",
+    variableChanged: experiment.testedVariable,
+    changedAt: experiment.t0,
+    baselineEvidenceRef: null,
+    baselineMetric: metric,
+    baselineValue: null,
+    lifecycleState,
+    frozenVariables: experiment.frozenVariables,
+    minimumObservationDurationHours:
+      experiment.minimumObservationDurationHours ?? Number.MAX_SAFE_INTEGER,
+    minimumEvidenceMetric: metric,
+    minimumEvidenceValue:
+      experiment.minimumEvidenceValue ?? Number.MAX_SAFE_INTEGER,
+    currentEvidenceValue,
+    nextReviewAt: experiment.nextReviewAt ?? null,
+    createdAt: experiment.t0,
+    updatedAt: experiment.evidenceTimestamp,
+  }
+  const signalCodes = [...(experiment.externalSignalCodes ?? [])]
+  if (listing.stock?.state === "OUT_OF_STOCK_SIGNAL") {
+    signalCodes.push("OUT_OF_STOCK")
+  }
+  const signals: ExternalEbaySignalV1[] = [...new Set(signalCodes)].map(
+    (code) => ({
+      code,
+      observedAt: experiment.evidenceTimestamp,
+      source: "COMMERCIAL_MONITOR_CANONICAL_EVIDENCE",
+    }),
+  )
+  return assessExperimentGuardianV1({
+    experiment: record,
+    observedAt: experiment.evidenceTimestamp,
+    currentEvidenceValue,
+    externalSignals: signals,
+  })
+}
+
 export function classifyCommercialListingV1(
   listing: CommercialListingReadModel,
 ): CommercialListingDecisionV1 {
@@ -196,8 +303,8 @@ export function classifyCommercialListingV1(
   const views = metricValue(listing, ["ebay_views"])
   const orders = metricValue(listing, ["orders", "transactions"])
   const conversion = metricValue(listing, ["conversion"])
-  const experimentRunning = listing.experiment.status === "AVAILABLE" &&
-    listing.experiment.lifecycleState === "RUNNING"
+  const guardian = experimentGuardian(listing)
+  const experimentRunning = guardian?.active === true
   const variableFrozen = listing.experiment.status === "AVAILABLE" &&
     listing.experiment.frozenVariables.length > 0
   let classification: CommercialDecisionClass
@@ -246,9 +353,28 @@ export function classifyCommercialListingV1(
     priority = "LOW"
     reasons.push("HEALTHY_EVIDENCE_WAIT_FOR_NEXT_REVIEW")
   }
-  if (experimentRunning) {
-    action = "WAIT"
-    reasons.push("ACTIVE_EXPERIMENT_PROTECTS_VARIABLE")
+  if (guardian?.active) {
+    if (guardian.operationalAction === "HARD_OVERRIDE_REQUIRED") {
+      action = "HUMAN_REVIEW"
+      priority = "CRITICAL"
+      reasons.push(
+        "ACTIVE_EXPERIMENT_PROTECTS_VARIABLE",
+        "HARD_OVERRIDE_REQUIRES_HUMAN_REVIEW",
+        "EXTERNAL_SIGNAL_REVIEW",
+      )
+    } else {
+      action = "WAIT"
+      reasons.push("ACTIVE_EXPERIMENT_PROTECTS_VARIABLE")
+      if (guardian.readyToEvaluate) reasons.push("REVIEW_EXPERIMENT_RESULT")
+      else {
+        reasons.push("WAIT_ACTIVE_EXPERIMENT")
+        if (!guardian.timeGateSatisfied) reasons.push("WAIT_MINIMUM_TIME")
+        if (!guardian.evidenceGateSatisfied) reasons.push("WAIT_MINIMUM_EVIDENCE")
+        if (guardian.externalSignalClassification === "SOFT_SIGNAL") {
+          reasons.push("EXTERNAL_SIGNAL_REVIEW")
+        }
+      }
+    }
   }
   return {
     listingKey: listing.key,
@@ -260,12 +386,32 @@ export function classifyCommercialListingV1(
     actionBlockedByInsufficientEvidence: evidenceStatus === "UNPROVEN",
     experimentRunning,
     variableFrozen,
-    nextReviewCondition: listing.experiment.status === "AVAILABLE"
-      ? listing.experiment.checkpointGate ?? "EXPERIMENT_CHECKPOINT"
+    protectionState: guardian?.protectionState === "DO_NOT_TOUCH"
+      ? "DO_NOT_TOUCH"
+      : guardian ? "NONE" : "UNPROVEN",
+    experimentOperationalState: guardian?.protectionState ===
+        "PAUSE_FOR_HUMAN_REVIEW"
+      ? "PAUSED_FOR_EXTERNAL_SIGNAL"
+      : guardian?.readyToEvaluate
+        ? "READY_TO_EVALUATE"
+        : guardian?.active
+          ? guardian.evidenceGateSatisfied
+            ? "RUNNING"
+            : "WAITING_FOR_EVIDENCE"
+          : listing.experiment.status === "MISSING"
+            ? "INACTIVE"
+            : "UNPROVEN",
+    frozenVariables: guardian?.frozenVariables ?? [],
+    nextReviewEvidenceRemaining: guardian?.nextReviewEvidenceRemaining ?? null,
+    externalSignalCount: guardian?.externalSignalCount ?? null,
+    nextReviewCondition: guardian
+      ? guardian.nextReviewReason.replaceAll("_", " ")
+      : listing.experiment.status === "AVAILABLE"
+        ? listing.experiment.checkpointGate ?? "EXPERIMENT CHECKPOINT"
       : evidenceStatus === "PARTIAL"
         ? "MINIMUM_TRAFFIC_THRESHOLD"
         : null,
-    nextReviewAt: null,
+    nextReviewAt: guardian?.nextReviewAt ?? null,
     actionExecutionAllowed: false,
   }
 }
@@ -447,6 +593,11 @@ export function buildCommercialMonitorBackendV1(input: {
   alertCandidates: AlertCandidate[]
   registry?: CommercialMonitorRegistryCertificationV1 | null
   orders?: CommercialMonitorOrderFactsV1 | null
+  accountTraffic?: AccountTrafficEvidenceV1 | null
+  historicalSnapshots?: CommercialSeriesSnapshotV1[]
+  currentLiveWindowStart?: string | null
+  currentLiveWindowEnd?: string | null
+  currentLiveObservedAt?: string | null
   listingQualityReportArtifact?: unknown
 }): CommercialMonitorBackendV1 {
   const primaryListings = canonicalPrimaryLiveListings(input.listings)
@@ -472,6 +623,21 @@ export function buildCommercialMonitorBackendV1(input: {
     fulfillmentStatuses: [],
     trackingAvailability: "UNPROVEN" as const,
   }
+  const accountTraffic = input.accountTraffic ?? unavailableAccountTrafficV1(
+    "ACCOUNT_TRAFFIC_NOT_COLLECTED",
+  )
+  const currentLiveImpressions = aggregateMetric(primaryListings, ["impressions"])
+  const currentLiveViews = aggregateMetric(primaryListings, ["ebay_views"])
+  const currentLiveCtr = aggregateMetric(
+    primaryListings,
+    ["ctr_calculated", "ctr_reported"],
+    true,
+  )
+  const currentLiveQuantitySold = aggregateMetric(primaryListings, ["transactions"])
+  const performanceSeries = buildCanonicalCommercialTimeSeriesV1({
+    snapshots: input.historicalSnapshots ?? [],
+    currentLiveItemIds: primaryListings.map((listing) => listing.identity.itemId),
+  })
   const activeListingsProven = input.liveCertification.discovery.coverage ===
     "COMPLETE"
   const tradingDiscoveryStatus = input.liveCertification.discovery.status
@@ -542,16 +708,37 @@ export function buildCommercialMonitorBackendV1(input: {
         status: activeListingsProven ? "AVAILABLE" : "UNPROVEN",
         value: activeListingsProven ? primaryListings.length : null,
       },
-      impressions: aggregateMetric(primaryListings, ["impressions"]),
-      ebayViews: aggregateMetric(primaryListings, ["ebay_views"]),
-      averageCtr: aggregateMetric(
-        primaryListings,
-        ["ctr_calculated", "ctr_reported"],
-        true,
-      ),
+      impressions: currentLiveImpressions,
+      ebayViews: currentLiveViews,
+      averageCtr: currentLiveCtr,
+      quantitySold: currentLiveQuantitySold,
       orders: {
         status: orders.status,
         value: orders.orderCount,
+      },
+    },
+    trafficScopes: {
+      reconciliation: "EXPLICIT_SCOPE_SEPARATION",
+      sellerHubEquivalence:
+        "CONDITIONAL_ON_WINDOW_TIMEZONE_SCOPE_AND_REPORTING_LAG",
+      accountTraffic,
+      currentLivePortfolio: {
+        scope: "CURRENT_LIVE_PORTFOLIO",
+        grain: "LISTING_WINDOW_AGGREGATE",
+        source: "EBAY_TRADING_PLUS_SELL_ANALYTICS",
+        windowStart: input.currentLiveWindowStart ?? null,
+        windowEnd: input.currentLiveWindowEnd ?? null,
+        timeZone: "UTC",
+        observedAt: input.currentLiveObservedAt ?? null,
+        completeness: activeListingsProven &&
+            currentLiveImpressions.value !== null
+          ? currentLiveImpressions.status
+          : "UNPROVEN",
+        activeListings: activeListingsProven ? primaryListings.length : null,
+        impressions: currentLiveImpressions.value,
+        listingViews: currentLiveViews.value,
+        quantitySold: currentLiveQuantitySold.value,
+        ctr: currentLiveCtr.value,
       },
     },
     orders: {
@@ -573,6 +760,27 @@ export function buildCommercialMonitorBackendV1(input: {
         status: countStatus,
         count: decisions.length
           ? decisions.filter((row) => row.experimentRunning).length
+          : null,
+      },
+      doNotTouch: {
+        status: countStatus,
+        count: decisions.length
+          ? decisions.filter((row) => row.protectionState === "DO_NOT_TOUCH").length
+          : null,
+      },
+      readyToEvaluate: {
+        status: countStatus,
+        count: decisions.length
+          ? decisions.filter((row) =>
+              row.experimentOperationalState === "READY_TO_EVALUATE").length
+          : null,
+      },
+      externalSignalReview: {
+        status: countStatus,
+        count: decisions.length
+          ? decisions.filter((row) => row.reasonCodes.includes(
+              "EXTERNAL_SIGNAL_REVIEW",
+            )).length
           : null,
       },
       stockRisk: {
@@ -620,11 +828,7 @@ export function buildCommercialMonitorBackendV1(input: {
             reviewAt: row.nextReviewAt,
           }]
         : []),
-      performanceSeries: {
-        status: "MISSING",
-        points: [],
-        limitationCode: "NO_CANONICAL_TIME_SERIES",
-      },
+      performanceSeries,
       statusDistribution: [...statusCounts.entries()].map(
         ([classification, count]) => ({ classification, count })),
       categoryBenchmarks: quality.recommendations.flatMap((row) =>

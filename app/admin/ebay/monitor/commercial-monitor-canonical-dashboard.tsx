@@ -5,7 +5,6 @@ import {
   Bell,
   CalendarRange,
   CheckCircle2,
-  ChevronRight,
   CircleGauge,
   Database,
   Eye,
@@ -18,13 +17,11 @@ import {
   ListChecks,
   LockKeyhole,
   Package,
-  Settings,
   ShieldCheck,
   ShoppingBag,
   Sparkles,
   TrendingUp,
   UsersRound,
-  WalletCards,
   Wrench,
 } from "lucide-react"
 import type { ReactNode } from "react"
@@ -94,6 +91,12 @@ const reasonLabels: Record<string, string> = {
   INSUFFICIENT_ANALYTICS_EVIDENCE: "Evidencia de Analytics insuficiente",
   BLOCKING_DATA_QUALITY_ISSUE: "Hay un bloqueo de calidad de datos",
   ACTIVE_EXPERIMENT_PROTECTS_VARIABLE: "Experimento activo protege variables",
+  WAIT_ACTIVE_EXPERIMENT: "Esperar: experimento activo",
+  WAIT_MINIMUM_TIME: "Aún no cumple el tiempo mínimo",
+  WAIT_MINIMUM_EVIDENCE: "Aún no cumple la evidencia mínima",
+  REVIEW_EXPERIMENT_RESULT: "Resultado listo para revisión",
+  EXTERNAL_SIGNAL_REVIEW: "Nueva señal eBay pendiente de revisión",
+  HARD_OVERRIDE_REQUIRES_HUMAN_REVIEW: "Señal crítica requiere revisión humana",
   HEALTHY_EVIDENCE_WAIT_FOR_NEXT_REVIEW: "Esperar el siguiente punto de revisión",
   LIVE_ANALYTICS_CONTRADICTS_GUIDANCE: "Analytics live contradice la guía",
   GUIDANCE_SUPPORTED_BY_DATA_QUALITY_GAP: "La guía coincide con un gap de datos",
@@ -104,8 +107,9 @@ const reasonLabels: Record<string, string> = {
 }
 
 function StatusChip({ status }: { status: CommercialMonitorCapabilityStatus }) {
+  const quiet = status === "AVAILABLE" || status === "COMPLETE"
   return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] ${capabilityTone[status]}`}>
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold ${quiet ? "border border-transparent bg-transparent text-slate-500" : `border ${capabilityTone[status]}`}`}>
       {status.replaceAll("_", " ")}
     </span>
   )
@@ -156,13 +160,13 @@ function KpiCard({
   suffix?: string
 }) {
   return (
-    <article className="min-w-0 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+    <article className="min-w-0 border-b border-slate-100 bg-white p-3 last:border-b-0 sm:border-r xl:border-b-0">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">{label}</p>
           <p className="mt-2 text-2xl font-black tracking-tight text-slate-950">{formatValue(value)}{value === null || !suffix ? "" : suffix}</p>
         </div>
-        <span className="rounded-lg bg-cyan-50 p-2 text-cyan-700">{icon}</span>
+        <span className="rounded-md bg-slate-50 p-1.5 text-cyan-700">{icon}</span>
       </div>
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
         <StatusChip status={status} />
@@ -186,13 +190,13 @@ function HealthCard({
   accent: string
 }) {
   return (
-    <article className="min-w-0 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+    <article className="min-w-0 border-b border-slate-100 bg-white p-2.5 last:border-b-0 sm:border-r xl:border-b-0">
       <div className="flex items-center justify-between gap-3">
-        <span className={`rounded-lg p-2 ${accent}`}>{icon}</span>
+        <span className={`rounded-md p-1.5 ${accent}`}>{icon}</span>
         <StatusChip status={status} />
       </div>
-      <p className="mt-3 text-xl font-black text-slate-950">{formatValue(count)}</p>
-      <p className="mt-1 text-[9px] font-black uppercase tracking-[0.12em] text-slate-500">{label}</p>
+      <p className="mt-2 text-xl font-black text-slate-950">{formatValue(count)}</p>
+      <p className="mt-0.5 text-[10px] font-semibold text-slate-500">{label}</p>
     </article>
   )
 }
@@ -225,24 +229,12 @@ export function CommercialMonitorCanonicalDashboard({
     0,
   )
   const hasPerformanceSeries = backend.operationalHealth.performanceSeries.points.length > 0
-  const navigation = [
-    ["Dashboard", "#commercial-dashboard", LayoutDashboard],
-    ["eBay Integración", "#control-bar", ShieldCheck],
-    ["Oportunidades", "#priority-action-plan", Sparkles],
-    ["Productos", "#guidance-table", FileText],
-    ["eBay Monitor", "#commercial-dashboard", LineChart],
-  ] as const
-  const monitorNavigation = [
-    ["Resumen", "#commercial-dashboard"],
-    ["Listings", "#guidance-table"],
-    ["Kits y Componentes", "#advanced-diagnostics"],
-    ["Stock Guard", "#inventory-status"],
-    ["Tráfico y Conversión", "#performance"],
-    ["Plan de Acción", "#priority-action-plan"],
-    ["Experimentos", "#upcoming-reviews"],
-    ["Aprendizaje", "#guidance-table"],
-    ["Calidad de Datos", "#category-benchmark"],
-    ["Timeline / Auditoría", "#advanced-diagnostics"],
+  const navigationGroups = [
+    ["Overview", [["Monitor", "#commercial-dashboard", LayoutDashboard]]],
+    ["Commerce", [["Listings", "#guidance-table", FileText], ["Opportunities", "#priority-action-plan", Sparkles]]],
+    ["Intelligence", [["Decisions", "#guidance-table", LineChart], ["Experiments", "#upcoming-reviews", FlaskConical], ["Learning", "#performance", CircleGauge]]],
+    ["Operations", [["Stock", "#inventory-status", Package], ["Orders", "#upcoming-reviews", ShoppingBag], ["Inventory", "#inventory-status", Database]]],
+    ["System", [["Data Quality", "#category-benchmark", ShieldCheck], ["Audit", "#advanced-diagnostics", FileText]]],
   ] as const
   const actionTypeDistribution = [...new Map(actionPlan.map((decision) =>
     [decision.recommendedAction, actionPlan.filter((row) =>
@@ -253,9 +245,7 @@ export function CommercialMonitorCanonicalDashboard({
     <div id="commercial-dashboard" className="min-h-screen bg-[#eef2f6] text-slate-950 xl:pl-[200px]">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[200px] flex-col border-r border-white/10 bg-[#101b2c] px-3 py-4 text-slate-100 xl:flex">
         <div className="flex items-center gap-3 px-2"><span className="grid h-9 w-9 place-items-center rounded-xl bg-cyan-300 text-[#101b2c]"><LineChart size={19} /></span><div><p className="text-sm font-black tracking-tight">IMNOVA</p><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyan-200">Seller OS</p></div></div>
-        <nav aria-label="Navegación principal" className="mt-5 space-y-0.5">{navigation.map(([label, href, Icon]) => <a key={label} href={href} className={`flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${label === "eBay Monitor" ? "bg-cyan-300 text-[#102033] shadow-lg shadow-cyan-500/10" : "text-slate-300 hover:bg-white/[0.06] hover:text-white"}`}><Icon size={15} />{label}</a>)}</nav>
-        <div className="mt-4 border-t border-white/10 pt-3"><p className="px-2.5 text-[9px] font-black uppercase tracking-[0.16em] text-slate-500">eBay Monitor</p><nav aria-label="Módulos del Monitor" className="mt-1.5 space-y-0">{monitorNavigation.map(([label, href]) => <a key={label} href={href} className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium text-slate-400 transition hover:bg-white/[0.06] hover:text-white"><ChevronRight size={11} className="text-cyan-300/75" />{label}</a>)}</nav></div>
-        <nav aria-label="Operación" className="mt-3 space-y-0.5 border-t border-white/10 pt-3 text-xs font-semibold text-slate-300"><a href="#upcoming-reviews" className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 hover:bg-white/[0.06]"><ShoppingBag size={15} />Órdenes</a><a href="#inventory-status" className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 hover:bg-white/[0.06]"><Package size={15} />Inventario</a><a href="#category-benchmark" className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 hover:bg-white/[0.06]"><WalletCards size={15} />Finanzas</a><a href="#advanced-diagnostics" className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 hover:bg-white/[0.06]"><FileText size={15} />Reportes</a><a href="#advanced-diagnostics" className="flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 hover:bg-white/[0.06]"><Settings size={15} />Configuración</a></nav>
+        <nav aria-label="Navegación principal" className="mt-5 space-y-3 overflow-y-auto">{navigationGroups.map(([group, entries]) => <div key={group}><p className="px-2.5 text-[8px] font-semibold uppercase tracking-[0.14em] text-slate-500">{group}</p><div className="mt-1 space-y-0.5">{entries.map(([label, href, Icon]) => <a key={label} href={href} className={`flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[11px] font-medium transition ${label === "Monitor" ? "bg-cyan-300 text-[#102033]" : "text-slate-300 hover:bg-white/[0.06] hover:text-white"}`}><Icon size={14} />{label}</a>)}</div></div>)}</nav>
         <div className="mt-auto flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.05] p-3"><span className="grid h-8 w-8 place-items-center rounded-full bg-slate-700"><UsersRound size={15} /></span><div><p className="text-xs font-bold">Administrador</p><p className="text-[10px] text-slate-400">Acceso protegido</p></div></div>
       </aside>
 
@@ -277,17 +267,20 @@ export function CommercialMonitorCanonicalDashboard({
 
         <section aria-label="Estado de eBay Guidance" className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2.5 text-xs text-slate-600"><strong className="text-[10px] tracking-[0.14em] text-cyan-800">EBAY GUIDANCE</strong><StatusChip status={backend.listingQualityReport.status} /><span>Último reporte: {qualityUnavailable ? "No current report" : "Disponible"}</span><span>Ventana: {qualityUnavailable ? "No disponible" : "según reporte"}</span><span>Fuente: eBay Listing Quality Report</span><a href="#guidance-table" className="ml-auto font-bold text-cyan-800">Ver detalle</a></section>
 
-        <section aria-label="Indicadores principales" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <KpiCard label="Listings Activos" value={backend.kpis.activeListings.value} status={backend.kpis.activeListings.status} detail="Trading live" icon={<Package size={18} />} />
-          <KpiCard label="Impresiones" value={backend.kpis.impressions.value} status={backend.kpis.impressions.status} detail="eBay Analytics" icon={<BarChart3 size={18} />} />
-          <KpiCard label="eBay Views" value={backend.kpis.ebayViews.value} status={backend.kpis.ebayViews.status} detail="eBay Analytics" icon={<Eye size={18} />} />
-          <KpiCard label="CTR Promedio" value={backend.kpis.averageCtr.value} status={backend.kpis.averageCtr.status} detail="Puntos porcentuales" icon={<TrendingUp size={18} />} suffix="%" />
+        <section aria-label="Ámbitos de tráfico" className="grid gap-px overflow-hidden rounded-xl border border-slate-200 bg-slate-200 text-[10px] sm:grid-cols-2"><div className="bg-white px-3 py-2"><strong className="text-slate-700">Account traffic</strong><span className="ml-2 text-slate-500">Seller Hub-compatible only when window, timezone, scope and reporting lag match.</span><span className="ml-2 font-semibold text-cyan-700">{backend.trafficScopes.accountTraffic.status.replaceAll("_", " ")}</span></div><div className="bg-white px-3 py-2"><strong className="text-slate-700">Current live portfolio</strong><span className="ml-2 text-slate-500">Unique Trading Item IDs · listing-window aggregate · UTC.</span></div></section>
+
+        <section aria-label="Indicadores principales" className="grid overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm sm:grid-cols-2 xl:grid-cols-6">
+          <KpiCard label="Listings Activos" value={backend.kpis.activeListings.value} status={backend.kpis.activeListings.status} detail="Current live portfolio" icon={<Package size={18} />} />
+          <KpiCard label="Impresiones" value={backend.kpis.impressions.value} status={backend.kpis.impressions.status} detail="Current live portfolio" icon={<BarChart3 size={18} />} />
+          <KpiCard label="Listing Views" value={backend.kpis.ebayViews.value} status={backend.kpis.ebayViews.status} detail="Current live portfolio" icon={<Eye size={18} />} />
+          <KpiCard label="CTR Promedio" value={backend.kpis.averageCtr.value} status={backend.kpis.averageCtr.status} detail="Average listing CTR · %" icon={<TrendingUp size={18} />} suffix="%" />
+          <KpiCard label="Cantidad vendida" value={backend.kpis.quantitySold.value} status={backend.kpis.quantitySold.status} detail="Analytics TRANSACTION · not orders" icon={<Activity size={18} />} />
           <KpiCard label="Órdenes" value={backend.kpis.orders.value} status={backend.kpis.orders.status} detail={backend.kpis.orders.value === null ? "Auth pendiente" : "Fulfillment readonly"} icon={<ShoppingBag size={18} />} />
         </section>
 
         <section aria-labelledby="operational-health-heading" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
           <div className="flex items-center justify-between"><div><p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-400">Decision & operational health</p><h2 id="operational-health-heading" className="mt-0.5 text-sm font-black">Estado operativo</h2></div><p className="text-[10px] text-slate-500">Decision Engine V1 · Stock unknown {formatValue(backend.operationalHealth.stockUnknown.count)}</p></div>
-          <div className="mt-2.5 grid gap-2 sm:grid-cols-2 xl:grid-cols-6"><HealthCard label="Necesitan intervención" count={backend.operationalHealth.needIntervention.count} status={backend.operationalHealth.needIntervention.status} icon={<AlertTriangle size={16} />} accent="bg-rose-100 text-rose-700" /><HealthCard label="Experimentos RUNNING" count={backend.operationalHealth.runningExperiments.count} status={backend.operationalHealth.runningExperiments.status} icon={<FlaskConical size={16} />} accent="bg-violet-100 text-violet-700" /><HealthCard label="Riesgo de stock" count={backend.operationalHealth.stockRisk.count} status={backend.operationalHealth.stockRisk.status} icon={<Package size={16} />} accent="bg-orange-100 text-orange-700" /><HealthCard label="Data Quality" count={backend.operationalHealth.dataQuality.count} status={backend.operationalHealth.dataQuality.status} icon={<Database size={16} />} accent="bg-amber-100 text-amber-700" /><HealthCard label="eBay Recomendaciones" count={backend.operationalHealth.ebayRecommendations.count} status={backend.operationalHealth.ebayRecommendations.status} icon={<Sparkles size={16} />} accent="bg-cyan-100 text-cyan-700" /><HealthCard label="Waiting / Healthy" count={backend.operationalHealth.waitingHealthy.count} status={backend.operationalHealth.waitingHealthy.status} icon={<CheckCircle2 size={16} />} accent="bg-emerald-100 text-emerald-700" /></div>
+          <div className="mt-2.5 grid overflow-hidden rounded-lg border border-slate-100 sm:grid-cols-2 xl:grid-cols-6"><HealthCard label="Necesitan intervención" count={backend.operationalHealth.needIntervention.count} status={backend.operationalHealth.needIntervention.status} icon={<AlertTriangle size={16} />} accent="bg-rose-100 text-rose-700" /><HealthCard label="Experimentos RUNNING" count={backend.operationalHealth.runningExperiments.count} status={backend.operationalHealth.runningExperiments.status} icon={<FlaskConical size={16} />} accent="bg-violet-100 text-violet-700" /><HealthCard label="Riesgo de stock" count={backend.operationalHealth.stockRisk.count} status={backend.operationalHealth.stockRisk.status} icon={<Package size={16} />} accent="bg-orange-100 text-orange-700" /><HealthCard label="Data Quality" count={backend.operationalHealth.dataQuality.count} status={backend.operationalHealth.dataQuality.status} icon={<Database size={16} />} accent="bg-amber-100 text-amber-700" /><HealthCard label="eBay Recomendaciones" count={backend.operationalHealth.ebayRecommendations.count} status={backend.operationalHealth.ebayRecommendations.status} icon={<Sparkles size={16} />} accent="bg-cyan-100 text-cyan-700" /><HealthCard label="Waiting / Healthy" count={backend.operationalHealth.waitingHealthy.count} status={backend.operationalHealth.waitingHealthy.status} icon={<CheckCircle2 size={16} />} accent="bg-emerald-100 text-emerald-700" /></div>
         </section>
 
         <section className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_288px]">
@@ -303,7 +296,7 @@ export function CommercialMonitorCanonicalDashboard({
                     <td className="px-2 py-2 font-semibold text-slate-700">{decisionLabels[decision.classification]}</td>
                     <td className="px-2 py-2 text-slate-500">{qualityUnavailable ? <><span className="font-bold text-slate-400">—</span><span className="block text-[9px]">No current report</span></> : guidance?.ebayGuidanceStatus.replaceAll("_", " ") ?? "—"}</td>
                     <td className="px-2 py-2 text-slate-500">{qualityUnavailable ? "—" : guidance?.reasonCodes.map(humanReason).join(" · ") || "—"}</td>
-                    <td className="px-2 py-2 font-semibold text-slate-700">{actionLabels[decision.recommendedAction]}</td>
+                    <td className="px-2 py-2 font-semibold text-slate-700">{actionLabels[decision.recommendedAction]}{decision.experimentRunning && <span className="mt-1 block rounded bg-violet-50 px-1.5 py-1 text-[8px] font-bold text-violet-700">RUNNING · {decision.protectionState === "DO_NOT_TOUCH" ? "DO NOT TOUCH" : "REVIEW"}{decision.frozenVariables.length ? ` · Frozen: ${decision.frozenVariables.slice(0, 2).join(", ")}` : ""}{decision.nextReviewEvidenceRemaining !== null ? ` · ${formatValue(decision.nextReviewEvidenceRemaining)} evidence remaining` : ""}</span>}</td>
                     <td className="px-2 py-2"><PriorityChip priority={decision.priority} /></td>
                   </tr>
                 })}</tbody>
@@ -319,7 +312,7 @@ export function CommercialMonitorCanonicalDashboard({
         </section>
 
         <section id="performance" className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1.3fr_.7fr_.7fr_1fr]">
-          <article className="min-h-[190px] rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm"><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Rendimiento general</p><h2 className="mt-1 text-sm font-black">Performance trend</h2>{hasPerformanceSeries ? <div className="mt-4 grid h-24 place-items-center rounded-lg bg-slate-50 text-xs text-slate-500">Serie canónica disponible.</div> : <div className="mt-4 grid h-24 place-items-center rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 text-center"><Activity className="text-slate-300" size={18} /><p className="mt-1 text-xs font-bold">Sin serie temporal canónica</p><p className="text-[10px] text-slate-500">No se generan puntos sintéticos.</p></div>}</article>
+          <article className="min-h-[190px] rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm"><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Rendimiento general</p><h2 className="mt-1 text-sm font-black">Performance trend</h2>{hasPerformanceSeries ? <div className="mt-3 space-y-1.5">{backend.operationalHealth.performanceSeries.points.slice(-5).map((point) => <div key={`${point.windowStart}:${point.observedAt}`} className="grid grid-cols-[1fr_auto_auto] gap-2 rounded bg-slate-50 px-2 py-1.5 text-[9px]"><span>{new Date(point.windowEnd).toLocaleDateString("es")}</span><span>{formatValue(point.impressions)} imp.</span><span>{formatValue(point.listingViews)} views</span></div>)}<p className="text-[9px] text-slate-400">{backend.operationalHealth.performanceSeries.status} · comparable Analytics snapshots only</p></div> : <div className="mt-4 grid h-24 place-items-center rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 text-center"><Activity className="text-slate-300" size={18} /><p className="mt-1 text-xs font-bold">Sin serie temporal canónica</p><p className="text-[10px] text-slate-500">No se generan puntos sintéticos.</p></div>}</article>
           <article className="min-h-[190px] rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm"><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Distribución por estado</p><div className="mt-4 flex items-center gap-3"><div className="grid h-20 w-20 shrink-0 place-items-center rounded-full border-[11px] border-cyan-400"><strong>{numberFormatter.format(distributionTotal)}</strong></div><div className="min-w-0 space-y-1.5">{backend.operationalHealth.statusDistribution.map((row) => <div key={row.classification} className="flex justify-between gap-2 text-[10px]"><span className="truncate text-slate-500">{decisionLabels[row.classification]}</span><strong>{numberFormatter.format(row.count)}</strong></div>)}</div></div></article>
           <article className="min-h-[190px] rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm"><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Distribución por tipo</p><div className="mt-4 flex items-center gap-3"><div className="grid h-20 w-20 shrink-0 place-items-center rounded-full border-[11px] border-violet-400"><strong>{numberFormatter.format(actionTypeTotal)}</strong></div><div className="min-w-0 space-y-1.5">{actionTypeDistribution.slice(0, 4).map(([action, count]) => <div key={action} className="flex justify-between gap-2 text-[10px]"><span className="truncate text-slate-500">{actionLabels[action]}</span><strong>{numberFormatter.format(count)}</strong></div>)}{actionTypeDistribution.length === 0 && <p className="text-xs text-slate-500">Sin tipos representables.</p>}</div></div></article>
           <article id="category-benchmark" className="min-h-[190px] rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm"><div className="flex items-center justify-between"><div><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Benchmark categoría</p><h2 className="mt-1 text-sm font-black">Listing Quality</h2></div><CircleGauge size={18} className="text-slate-400" /></div>{backend.operationalHealth.categoryBenchmarks.length > 0 ? <div className="mt-3 space-y-2">{backend.operationalHealth.categoryBenchmarks.map((benchmark) => <div key={benchmark.recommendationCategory} className="flex items-center justify-between border-b border-slate-100 pb-2 text-xs"><span>{benchmark.recommendationCategory}</span><strong>{numberFormatter.format(benchmark.benchmark)}</strong></div>)}</div> : <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3 text-[10px] text-slate-500">No current Listing Quality Report loaded. No se inventan benchmarks Top-10%.</div>}</article>

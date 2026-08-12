@@ -17,6 +17,7 @@ test("canonical dashboard consumes backend DTO states without synthetic KPI fall
     "backend.kpis.impressions.value",
     "backend.kpis.ebayViews.value",
     "backend.kpis.averageCtr.value",
+    "backend.kpis.quantitySold.value",
     "backend.kpis.orders.value",
     "UNAVAILABLE_AUTH_PENDING",
     "UNAVAILABLE_NO_CURRENT_REPORT",
@@ -31,6 +32,8 @@ test("canonical dashboard consumes backend DTO states without synthetic KPI fall
   assert.match(dashboard, /No se generan puntos sintéticos/)
   assert.match(dashboard, /No se inventan benchmarks Top-10%/)
   assert.match(dashboard, /suffix="%"/)
+  assert.match(dashboard, /TRANSACTION · not orders/)
+  assert.match(dashboard, /backend\.trafficScopes\.accountTraffic/)
 })
 
 test("canonical dashboard surfaces decisions and review-only Registry state without write controls", () => {
@@ -44,6 +47,8 @@ test("canonical dashboard surfaces decisions and review-only Registry state with
     "Priority action plan",
     "Upcoming reviews",
     "Human Review",
+    "DO NOT TOUCH",
+    "Experiments",
     "0 marketplace writes · 0 Registry writes",
   ]) {
     assert.match(dashboard, new RegExp(expression))
@@ -74,6 +79,8 @@ test("canonical dashboard preserves the dense desktop cockpit composition", () =
     "Distribución por estado",
     "Distribución por tipo",
     "Benchmark categoría",
+    "Account traffic",
+    "Current live portfolio",
   ]) {
     assert.match(dashboard, new RegExp(expression))
   }
@@ -98,4 +105,6 @@ test("live Trading rows remain visible when Quality Report is unavailable", () =
   assert.match(dashboard, /No current report/)
   assert.match(dashboard, /ImageOff/)
   assert.match(dashboard, /key=\{listing\.identity\.itemId\}/)
+  assert.match(dashboard, /decision\.experimentRunning/)
+  assert.match(dashboard, /decision\.frozenVariables/)
 })

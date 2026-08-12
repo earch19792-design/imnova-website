@@ -34,6 +34,11 @@ import {
   normalizeEbaySellerTrafficRows,
 } from "./ebay-seller-traffic-report"
 import {
+  summarizeAccountTrafficV1,
+  unavailableAccountTrafficV1,
+  type AccountTrafficEvidenceV1,
+} from "./ebay-commercial-monitor-traffic-scope-v1"
+import {
   readRegistry,
   readRegistrySyncKeyCollisions,
   type ReadonlyRegistryListingRow,
@@ -2262,6 +2267,7 @@ export type EbayCommercialMonitorLiveReadonlyResult = {
     analyticsRepresentedItemCount: number | null
     analyticsMissingItemCount: number | null
     analyticsCoverageStatus: "COMPLETE" | "PARTIAL" | "UNPROVEN"
+    accountTraffic: AccountTrafficEvidenceV1
     observations: EbayLiveAnalyticsObservation[]
     gapCodes: string[]
   }
@@ -2620,6 +2626,9 @@ function unavailableResult(input: {
       analyticsRepresentedItemCount: null,
       analyticsMissingItemCount: null,
       analyticsCoverageStatus: "UNPROVEN",
+      accountTraffic: unavailableAccountTrafficV1(
+        "ANALYTICS_READ_NOT_AVAILABLE",
+      ),
       observations: [],
       gapCodes: [input.limitationCode, "NO_EVIDENCE_DOES_NOT_PROVE_ZERO"],
     },
@@ -3696,6 +3705,9 @@ async function analyticsRead(input: {
 }) : Promise<EbayCommercialMonitorLiveReadonlyResult["analytics"]> {
   const ids = [...new Set(input.listingIds)]
   const selected = ids.slice(0, ANALYTICS_MAX_LISTINGS)
+  let accountTraffic = unavailableAccountTrafficV1(
+    "ACCOUNT_TRAFFIC_READ_NOT_COMPLETED",
+  )
   if (!input.listingIds.length) {
     return {
       status: "UNAVAILABLE",
@@ -3706,6 +3718,7 @@ async function analyticsRead(input: {
       analyticsRepresentedItemCount: null,
       analyticsMissingItemCount: null,
       analyticsCoverageStatus: "UNPROVEN",
+      accountTraffic,
       observations: [],
       gapCodes: ["NO_DISCOVERED_LISTING_IDS_NO_ZERO_INFERENCE"],
     }
@@ -3739,6 +3752,60 @@ async function analyticsRead(input: {
     input.scopeGrant.bindingVerified = true
     if (missingRequestedScopes.includes(ANALYTICS_READONLY_SCOPE)) {
       throw new Error("EBAY_MONITOR_ANALYTICS_SCOPE_MISSING")
+    }
+    try {
+      const { url } = buildEbaySellerTrafficReportUrl({
+        dateFrom: window.start,
+        dateTo: window.end,
+        timeZone: "UTC",
+      })
+      const response = await allowlistedFetch({
+        operation: "ANALYTICS_GET_TRAFFIC_REPORT",
+        method: "GET",
+        url,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+        },
+        fetchImpl: input.fetchImpl,
+        calls: input.calls,
+        clock: input.clock,
+      })
+      if (!response.ok) {
+        throw new Error(`EBAY_MONITOR_ACCOUNT_TRAFFIC_${response.status}`)
+      }
+      const payload = await readJsonResponse({
+        response,
+        calls: input.calls,
+        operation: "ANALYTICS_GET_TRAFFIC_REPORT",
+        errorCode: "ACCOUNT_TRAFFIC_SOURCE_FORMAT_CHANGED",
+      })
+      const normalized = normalizeEbaySellerTrafficRows(payload)
+      if (normalized.dimension !== "DAY") {
+        markResponseCallFailed(response)
+        throw new Error("ACCOUNT_TRAFFIC_GRAIN_MISMATCH")
+      }
+      const startDay = analyticsCalendarDay(normalized.startDate)
+      const endDay = analyticsCalendarDay(normalized.endDate)
+      const updatedDay = analyticsCalendarDay(normalized.lastUpdatedDate)
+      if (!startDay || !endDay || !updatedDay || startDay > endDay) {
+        markResponseCallFailed(response)
+        throw new Error("ACCOUNT_TRAFFIC_DATE_METADATA_INVALID")
+      }
+      accountTraffic = summarizeAccountTrafficV1({
+        rows: normalized.rows,
+        windowStart: `${startDay}T00:00:00.000Z`,
+        windowEnd: `${endDay}T23:59:59.999Z`,
+        requestedWindowStart: window.start,
+        requestedWindowEnd: window.end,
+        observedAt: input.clock().toISOString(),
+        sourceUpdatedAt: `${updatedDay}T00:00:00.000Z`,
+        warnings: normalized.warnings,
+      })
+    } catch (error) {
+      accountTraffic = unavailableAccountTrafficV1(
+        safeCode(error, "ACCOUNT_TRAFFIC_READ_FAILED"),
+      )
     }
     const observations: EbayLiveAnalyticsObservation[] = []
     const gapCodes = ids.length > selected.length
@@ -3962,6 +4029,7 @@ async function analyticsRead(input: {
         analyticsRepresentedItemCount: null,
         analyticsMissingItemCount: null,
         analyticsCoverageStatus: "UNPROVEN",
+        accountTraffic,
         observations: [],
         gapCodes: [...new Set(gapCodes.length
           ? gapCodes
@@ -3984,6 +4052,7 @@ async function analyticsRead(input: {
       analyticsRepresentedItemCount: representedItemCount,
       analyticsMissingItemCount: missingItemCount,
       analyticsCoverageStatus: partial ? "PARTIAL" : "COMPLETE",
+      accountTraffic,
       observations,
       gapCodes: [...new Set(gapCodes)],
     }
@@ -3997,6 +4066,7 @@ async function analyticsRead(input: {
       analyticsRepresentedItemCount: null,
       analyticsMissingItemCount: null,
       analyticsCoverageStatus: "UNPROVEN",
+      accountTraffic,
       observations: [],
       gapCodes: [safeCode(error, "ANALYTICS_READ_FAILED")],
     }

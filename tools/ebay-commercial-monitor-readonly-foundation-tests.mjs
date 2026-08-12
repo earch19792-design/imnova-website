@@ -334,6 +334,9 @@ test("Product Case, experimentos, alertas y Assistant DTO son fail-closed", () =
   const service = read(
     "lib/ebay/commercial-monitor-readonly-service.ts",
   )
+  const repository = read(
+    "lib/ebay/commercial-monitor-readonly-repository.ts",
+  )
   assert.match(contract, /status:\s*["']AVAILABLE["']/)
   assert.match(contract, /status:\s*["']MISSING["']/)
   assert.match(contract, /status:\s*["']UNPROVEN["']/)
@@ -347,7 +350,9 @@ test("Product Case, experimentos, alertas y Assistant DTO son fail-closed", () =
   assert.match(contract, /containsSensitiveAssistantMaterial/)
   assert.match(contract, /containsPrivateBuyerData/)
   assert.match(service, /const productCase = resolveProductCaseLink\(\)/)
-  assert.match(service, /const experiment = resolveExperiment\(\)/)
+  assert.match(service, /resolveExperiment\(authoritativeExperimentLookup\(/)
+  assert.match(repository, /EXPERIMENT_REGISTRY_REMOTE_DDL_REQUIRED/)
+  assert.match(service, /if \(input\.sources\.experiments\.status === ["']ERROR["']\) return \{ completed: false \}/)
   assert.match(service, /LISTING_PRICE_SOURCE_PROVENANCE_UNAVAILABLE/)
   assert.match(service, /WATCH_COUNT_SOURCE_PROVENANCE_UNAVAILABLE/)
   assert.match(service, /oldestRequiredEvidenceTimestamp/)
