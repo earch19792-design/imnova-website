@@ -12,6 +12,7 @@ import type {
 } from "@/lib/ebay/commercial-monitor-readonly-contract"
 import { supabase } from "@/lib/supabase"
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
+import { CommercialMonitorCanonicalDashboard } from "./commercial-monitor-canonical-dashboard"
 
 type ApiPayload = {
   success?: boolean
@@ -272,6 +273,10 @@ export function CommercialMonitorReadonlyClient() {
         </div>
 
         {monitor && <>
+          <CommercialMonitorCanonicalDashboard monitor={monitor} />
+          <details id="advanced-diagnostics" className="rounded-3xl border border-white/10 bg-white/[0.025] p-5 md:p-7">
+            <summary className="cursor-pointer list-none text-sm font-black text-white/80 marker:hidden">Diagnóstico técnico avanzado <span className="ml-2 text-xs font-normal text-white/45">Readers, evidencia, detalles de composición y auditoría</span></summary>
+            <div className="mt-6 space-y-6">
           <section id="summary" aria-labelledby="summary-heading" className="scroll-mt-4 space-y-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div><p className="text-xs font-black uppercase tracking-widest text-cyan-100/60">Resumen</p><h2 id="summary-heading" className="mt-1 text-2xl font-black">Cobertura antes que optimismo</h2></div>
@@ -388,6 +393,8 @@ export function CommercialMonitorReadonlyClient() {
           <aside className="rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.06] p-5 text-sm leading-6 text-cyan-50/80">
             <strong className="text-white">Assistant Tool Gateway contract preparado:</strong> operación <code>commercial_monitor.get</code>, DTO sanitizado y capacidades deny-by-default. Marketplace writes, buyer messages y dispatch externo permanecen en false.
           </aside>
+            </div>
+          </details>
         </>}
       </div>
       <SellerOsMobileNav active="operations" />
