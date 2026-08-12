@@ -1,44 +1,84 @@
 import { createHash } from "node:crypto"
+import { unzipSync } from "fflate"
 
 export const EBAY_LISTING_QUALITY_REPORT_IMPORT_VERSION =
-  "EBAY_LISTING_QUALITY_REPORT_IMPORT_V1_2026_08_11"
+  "EBAY_LISTING_QUALITY_REPORT_IMPORT_V1_2026_08_12"
 export const EBAY_LISTING_QUALITY_REPORT_SOURCE = "EBAY_LISTING_QUALITY_REPORT" as const
 
 type Row = Record<string, unknown>
-type QualityFormat = "CSV" | "JSON"
+type QualityFormat = "CSV" | "JSON" | "XLSX"
+type ValidationReason = "UNSUPPORTED_FILE_TYPE" | "WORKBOOK_UNREADABLE" |
+  "NO_DATA_SHEET_FOUND" | "HEADER_ROW_NOT_FOUND" | "ITEM_ID_COLUMN_NOT_FOUND" |
+  "LISTING_IDENTITY_UNPROVEN" | "RECOMMENDATION_COLUMNS_NOT_FOUND" |
+  "BENCHMARK_COLUMNS_NOT_FOUND" | "MULTIPLE_CANDIDATE_SHEETS" |
+  "MALFORMED_WORKBOOK" | "FILE_TOO_LARGE" | "OTHER"
+
+// Base64 transport stays below the Vercel request-body ceiling. OOXML expansion is bounded separately.
+const MAX_FILE_BYTES = 3_000_000
+const MAX_UNCOMPRESSED_BYTES = 24_000_000
+const MAX_WORKSHEETS = 20
+const MAX_ROWS = 25_000
+const MAX_COLUMNS = 250
+const MAX_HEADER_SCAN_ROWS = 80
 
 const ALIASES = {
-  itemId: ["item id", "itemid", "listing id", "listingid"],
-  sku: ["sku", "custom label", "customlabel"],
-  recommendationCategory: ["recommendation category", "category", "recommendationcategory"],
+  itemId: ["item id", "itemid", "listing id", "listingid", "ebay item id", "ebayitemid"],
+  sku: ["sku", "custom label", "customlabel", "custom sku"],
+  recommendationCategory: ["recommendation category", "recommendation category name", "category", "recommendationcategory"],
   recommendationType: ["recommendation type", "type", "recommendationtype"],
-  recommendationText: ["recommendation", "recommendation text", "guidance", "suggestion"],
+  recommendationText: ["recommendation", "recommendation text", "guidance", "suggestion", "recommended action"],
   reportedBenchmark: ["benchmark", "reported benchmark", "category benchmark"],
-  topCategoryBenchmark: ["top 10 benchmark", "top 10% benchmark", "top category benchmark"],
-  qualityIssue: ["quality issue", "data issue", "issue"],
+  topCategoryBenchmark: ["top 10 benchmark", "top 10% benchmark", "top category benchmark", "top 10 percent benchmark"],
+  qualityIssue: ["quality issue", "data issue", "issue", "quality recommendation"],
+  category: ["ebay category", "category name", "leaf category"],
   reportDate: ["report date", "date"],
   reportWindowStart: ["window start", "report start", "start date"],
   reportWindowEnd: ["window end", "report end", "end date"],
   marketplace: ["marketplace", "site"],
 } as const
 
+const IDENTITY_ALIASES = [...ALIASES.itemId, ...ALIASES.sku]
+const RECOMMENDATION_ALIASES = [...ALIASES.recommendationCategory,
+  ...ALIASES.recommendationType, ...ALIASES.recommendationText, ...ALIASES.qualityIssue]
+const BENCHMARK_ALIASES = [...ALIASES.reportedBenchmark, ...ALIASES.topCategoryBenchmark]
 const PII_HEADERS = /buyer|customer|email|phone|address|payment|recipient/i
 const SECRET_TEXT = /authorization|bearer\s+|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|service[_ -]?role|cookie/i
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i
+const FORBIDDEN_XLSX_PATH = /(^|\/)(vbaProject\.bin|externalLinks\/|embeddings\/|activeX\/|customXml\/)/i
+const XML_DECODER = new TextDecoder("utf-8", { fatal: false })
+
+export class QualityReportValidationError extends Error {
+  reason: ValidationReason
+  diagnosis: Record<string, unknown>
+  constructor(reason: ValidationReason, diagnosis: Record<string, unknown> = {}) {
+    super(reason)
+    this.name = "QualityReportValidationError"
+    this.reason = reason
+    this.diagnosis = diagnosis
+  }
+}
 
 function safeText(value: unknown, maximum = 500) {
   return typeof value === "string"
     ? value.normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g, " ")
       .replace(/\s+/g, " ").trim().slice(0, maximum) || null
-    : typeof value === "number" && Number.isFinite(value) ? String(value) : null
+    : typeof value === "number" && Number.isFinite(value) ? String(value)
+      : value instanceof Date && Number.isFinite(value.getTime()) ? value.toISOString() : null
 }
 
 function normalizedHeader(value: unknown) {
-  return (safeText(value, 120) ?? "").toLowerCase().replace(/[^a-z0-9%]+/g, " ").trim()
+  return (safeText(value, 160) ?? "").toLowerCase().replace(/[^a-z0-9%]+/g, " ").trim()
 }
 
-function sha(value: string) {
+function sha(value: string | Uint8Array) {
   return createHash("sha256").update(value).digest("hex")
+}
+
+function decodeXml(value: string) {
+  return value.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'").replace(/&amp;/g, "&").replace(/&#(\d+);/g,
+      (_, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(parseInt(code, 16)))
 }
 
 function parseCsv(content: string) {
@@ -62,21 +102,159 @@ function parseCsv(content: string) {
   }
   row.push(cell)
   if (row.some((value) => value.trim())) rows.push(row)
-  if (rows.length < 2) throw new Error("QUALITY_REPORT_CSV_ROWS_REQUIRED")
-  const headers = rows[0].map((value) => value.replace(/^\uFEFF/, "").trim())
-  return rows.slice(1).map((values) => Object.fromEntries(headers.map((header, index) =>
-    [header, values[index] ?? ""])))
+  if (rows.length < 2) throw new QualityReportValidationError("HEADER_ROW_NOT_FOUND")
+  const headers = rows[0].slice(0, MAX_COLUMNS).map((value) => value.replace(/^\uFEFF/, "").trim())
+  return { rows: rows.slice(1, MAX_ROWS + 1).map((values) =>
+    Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""]))),
+  metadata: { format: "CSV" as const, worksheetNames: [], selectedWorksheet: null,
+    headerRowNumber: 1, formulaCellCount: 0, externalLinksRejected: false } }
 }
 
-function parseRows(format: QualityFormat, content: string): Row[] {
-  if (format === "CSV") return parseCsv(content)
-  const parsed: unknown = JSON.parse(content)
+function parseJson(content: string) {
+  let parsed: unknown
+  try { parsed = JSON.parse(content) } catch { throw new QualityReportValidationError("OTHER") }
   const rows = Array.isArray(parsed) ? parsed
     : parsed && typeof parsed === "object" && Array.isArray((parsed as Row).rows)
       ? (parsed as Row).rows as unknown[] : null
-  if (!rows) throw new Error("QUALITY_REPORT_JSON_ROWS_REQUIRED")
-  return rows.map((value) => value && typeof value === "object" && !Array.isArray(value)
-    ? value as Row : {})
+  if (!rows) throw new QualityReportValidationError("HEADER_ROW_NOT_FOUND")
+  return { rows: rows.slice(0, MAX_ROWS).map((value) =>
+    value && typeof value === "object" && !Array.isArray(value) ? value as Row : {}),
+  metadata: { format: "JSON" as const, worksheetNames: [], selectedWorksheet: null,
+    headerRowNumber: 1, formulaCellCount: 0, externalLinksRejected: false } }
+}
+
+function xlsxColumnIndex(reference: string) {
+  const letters = reference.match(/^[A-Z]+/i)?.[0]?.toUpperCase() ?? ""
+  return [...letters].reduce((total, character) => total * 26 + character.charCodeAt(0) - 64, 0) - 1
+}
+
+function workbookSheets(xml: string) {
+  return [...xml.matchAll(/<sheet\b[^>]*\bname="([^"]+)"[^>]*\br:id="([^"]+)"[^>]*\/?\s*>/g)]
+    .map((match) => ({ name: decodeXml(match[1]).slice(0, 120), relationshipId: match[2] }))
+}
+
+function workbookRelationships(xml: string) {
+  return new Map([...xml.matchAll(/<Relationship\b[^>]*\bId="([^"]+)"[^>]*\bTarget="([^"]+)"[^>]*\/?\s*>/g)]
+    .map((match) => [match[1], match[2].replace(/^\/?/, "")]))
+}
+
+function sharedStrings(xml: string | null) {
+  if (!xml) return []
+  return [...xml.matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)].map((match) =>
+    decodeXml([...match[1].matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)]
+      .map((text) => text[1]).join("")))
+}
+
+function worksheetGrid(xml: string, strings: string[]) {
+  let formulaCellCount = 0
+  const rows: Array<{ rowNumber: number; cells: string[] }> = []
+  for (const rowMatch of xml.matchAll(/<row\b([^>]*)>([\s\S]*?)<\/row>/g)) {
+    if (rows.length >= MAX_ROWS + MAX_HEADER_SCAN_ROWS) break
+    const rowNumber = Number(rowMatch[1].match(/\br="(\d+)"/)?.[1] ?? rows.length + 1)
+    const cells: string[] = []
+    for (const cellMatch of rowMatch[2].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+      const column = xlsxColumnIndex(cellMatch[1].match(/\br="([A-Z]+\d+)"/i)?.[1] ?? "")
+      if (column < 0 || column >= MAX_COLUMNS) continue
+      const type = cellMatch[1].match(/\bt="([^"]+)"/)?.[1] ?? "n"
+      const body = cellMatch[2]
+      if (/<f\b/i.test(body)) formulaCellCount += 1
+      const inline = body.match(/<is\b[^>]*>([\s\S]*?)<\/is>/)?.[1]
+      const raw = body.match(/<v\b[^>]*>([\s\S]*?)<\/v>/)?.[1] ?? null
+      const value = inline ? [...inline.matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)]
+        .map((match) => decodeXml(match[1])).join("")
+        : type === "s" && raw !== null ? strings[Number(raw)] ?? ""
+          : raw === null ? "" : decodeXml(raw)
+      cells[column] = value
+    }
+    if (cells.some((cell) => safeText(cell) !== null)) rows.push({ rowNumber, cells })
+  }
+  return { rows, formulaCellCount }
+}
+
+function headerScore(cells: string[]) {
+  const normalized = new Set(cells.map(normalizedHeader).filter(Boolean))
+  const identity = IDENTITY_ALIASES.some((alias) => normalized.has(alias))
+  const recommendation = RECOMMENDATION_ALIASES.some((alias) => normalized.has(alias))
+  const benchmark = BENCHMARK_ALIASES.some((alias) => normalized.has(alias))
+  return { score: Number(identity) * 5 + Number(recommendation) * 4 + Number(benchmark) * 2,
+    identity, recommendation, benchmark }
+}
+
+function parseXlsx(contentBase64: string) {
+  let bytes: Uint8Array
+  try { bytes = Buffer.from(contentBase64, "base64") } catch {
+    throw new QualityReportValidationError("WORKBOOK_UNREADABLE")
+  }
+  if (!bytes.length || bytes.length > MAX_FILE_BYTES || bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
+    throw new QualityReportValidationError(bytes.length > MAX_FILE_BYTES ? "FILE_TOO_LARGE" : "WORKBOOK_UNREADABLE")
+  }
+  let archive: Record<string, Uint8Array>
+  try {
+    archive = unzipSync(bytes, { filter: (file) => {
+      if (FORBIDDEN_XLSX_PATH.test(file.name)) {
+        throw new QualityReportValidationError("MALFORMED_WORKBOOK", { forbiddenPart: true })
+      }
+      if (file.originalSize > MAX_UNCOMPRESSED_BYTES) {
+        throw new QualityReportValidationError("FILE_TOO_LARGE")
+      }
+      return /^(\[Content_Types\]\.xml|_rels\/\.rels|xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|worksheets\/[^/]+\.xml))$/i.test(file.name)
+    } })
+  } catch (error) {
+    if (error instanceof QualityReportValidationError) throw error
+    throw new QualityReportValidationError("WORKBOOK_UNREADABLE")
+  }
+  if (Object.values(archive).reduce((total, value) => total + value.length, 0) >
+      MAX_UNCOMPRESSED_BYTES) throw new QualityReportValidationError("FILE_TOO_LARGE")
+  const workbook = archive["xl/workbook.xml"]
+  const relationships = archive["xl/_rels/workbook.xml.rels"]
+  if (!workbook || !relationships) throw new QualityReportValidationError("MALFORMED_WORKBOOK")
+  const sheetDefinitions = workbookSheets(XML_DECODER.decode(workbook))
+  if (!sheetDefinitions.length) throw new QualityReportValidationError("NO_DATA_SHEET_FOUND")
+  if (sheetDefinitions.length > MAX_WORKSHEETS) throw new QualityReportValidationError("FILE_TOO_LARGE")
+  const relationshipMap = workbookRelationships(XML_DECODER.decode(relationships))
+  const strings = sharedStrings(archive["xl/sharedStrings.xml"]
+    ? XML_DECODER.decode(archive["xl/sharedStrings.xml"]) : null)
+  const candidates = sheetDefinitions.flatMap((definition) => {
+    const target = relationshipMap.get(definition.relationshipId)
+    if (!target) return []
+    const path = target.startsWith("xl/") ? target : `xl/${target.replace(/^\.\//, "")}`
+    const file = archive[path]
+    if (!file) return []
+    const grid = worksheetGrid(XML_DECODER.decode(file), strings)
+    const headers = grid.rows.slice(0, MAX_HEADER_SCAN_ROWS).map((row) =>
+      ({ ...row, ...headerScore(row.cells) })).filter((row) => row.score > 0)
+      .sort((left, right) => right.score - left.score || left.rowNumber - right.rowNumber)
+    return headers[0] ? [{ definition, grid, header: headers[0] }] : []
+  }).sort((left, right) => right.header.score - left.header.score)
+  if (!candidates.length) throw new QualityReportValidationError("HEADER_ROW_NOT_FOUND", {
+    recognizedFileType: "EBAY_LISTING_QUALITY_REPORT_XLSX", worksheetNames: sheetDefinitions.map((row) => row.name) })
+  if (candidates.length > 1 && candidates[0].header.score === candidates[1].header.score) {
+    throw new QualityReportValidationError("MULTIPLE_CANDIDATE_SHEETS", {
+      recognizedFileType: "EBAY_LISTING_QUALITY_REPORT_XLSX",
+      candidateSheetCount: candidates.filter((row) => row.header.score === candidates[0].header.score).length })
+  }
+  const candidate = candidates[0]
+  const score = candidate.header
+  const diagnosis = { recognizedFileType: "EBAY_LISTING_QUALITY_REPORT_XLSX",
+    worksheetNames: sheetDefinitions.map((row) => row.name), selectedWorksheet: candidate.definition.name,
+    headerRowNumber: score.rowNumber, itemIdColumnFound: candidate.header.cells
+      .some((cell) => (ALIASES.itemId as readonly string[]).includes(normalizedHeader(cell))),
+    skuColumnFound: candidate.header.cells.some((cell) =>
+      (ALIASES.sku as readonly string[]).includes(normalizedHeader(cell))),
+    recommendationColumnsFound: score.recommendation, benchmarkColumnsFound: score.benchmark }
+  if (!score.identity) throw new QualityReportValidationError("ITEM_ID_COLUMN_NOT_FOUND", diagnosis)
+  if (!score.recommendation && !score.benchmark) {
+    throw new QualityReportValidationError("RECOMMENDATION_COLUMNS_NOT_FOUND", diagnosis)
+  }
+  const headers = candidate.header.cells.map((cell, index) => safeText(cell, 160) ?? `Column ${index + 1}`)
+  const rows = candidate.grid.rows.filter((row) => row.rowNumber > candidate.header.rowNumber)
+    .slice(0, MAX_ROWS).map((row) => Object.fromEntries(headers.map((header, index) =>
+      [header, row.cells[index] ?? ""]))).filter((row) => Object.values(row).some((value) => safeText(value)))
+  if (!rows.length) throw new QualityReportValidationError("NO_DATA_SHEET_FOUND", diagnosis)
+  return { rows, metadata: { format: "XLSX" as const,
+    worksheetNames: sheetDefinitions.map((row) => row.name), selectedWorksheet: candidate.definition.name,
+    headerRowNumber: candidate.header.rowNumber, formulaCellCount: candidate.grid.formulaCellCount,
+    externalLinksRejected: true, diagnosis } }
 }
 
 function field(row: Row, aliases: readonly string[]) {
@@ -90,6 +268,12 @@ function numberValue(value: unknown) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
+function parseRows(format: QualityFormat, content: string) {
+  if (format === "CSV") return parseCsv(content)
+  if (format === "JSON") return parseJson(content)
+  return parseXlsx(content)
+}
+
 export function parseEbayListingQualityReportV1(input: {
   format: QualityFormat
   fileName: string
@@ -97,65 +281,77 @@ export function parseEbayListingQualityReportV1(input: {
   importedAt?: string
 }) {
   const importedAt = new Date(input.importedAt ?? new Date().toISOString())
-  if (!Number.isFinite(importedAt.getTime())) throw new Error("QUALITY_REPORT_IMPORT_TIME_INVALID")
-  if (!input.content.trim() || input.content.length > 5_000_000) {
-    throw new Error("QUALITY_REPORT_FILE_INVALID")
+  if (!Number.isFinite(importedAt.getTime())) throw new QualityReportValidationError("OTHER")
+  const extension = input.fileName.toLowerCase().split(".").pop()
+  if (!(["CSV", "JSON", "XLSX"] as QualityFormat[]).includes(input.format) ||
+      !["csv", "json", "xlsx"].includes(extension ?? "")) {
+    throw new QualityReportValidationError("UNSUPPORTED_FILE_TYPE")
   }
-  if (SECRET_TEXT.test(input.content) || EMAIL.test(input.content)) {
+  if (!input.content.trim() || input.content.length > MAX_FILE_BYTES * 1.4) {
+    throw new QualityReportValidationError("FILE_TOO_LARGE")
+  }
+  if (input.format !== "XLSX" && (SECRET_TEXT.test(input.content) || EMAIL.test(input.content))) {
     throw new Error("QUALITY_REPORT_SECRET_OR_PII_REJECTED")
   }
-  const rawRows = parseRows(input.format, input.content)
-  const headers = [...new Set(rawRows.flatMap((row) => Object.keys(row)))]
+  const parsed = parseRows(input.format, input.content)
+  const rawRows = parsed.rows
+  const headers = [...new Set(rawRows.flatMap((row) => Object.keys(row)))].slice(0, MAX_COLUMNS)
   if (headers.some((header) => PII_HEADERS.test(header))) {
     throw new Error("QUALITY_REPORT_BUYER_PII_HEADER_REJECTED")
   }
   const knownAliases = new Set<string>(Object.values(ALIASES).flat())
   const unknownHeaders = headers.filter((header) => !knownAliases.has(normalizedHeader(header)))
-  const rows = rawRows.map((row, index) => {
+  const warnings: string[] = []
+  const rows = rawRows.flatMap((row, index) => {
     const itemId = safeText(field(row, ALIASES.itemId), 30)
     const sku = safeText(field(row, ALIASES.sku), 120)
     const recommendationText = safeText(field(row, ALIASES.recommendationText))
     const recommendationCategory = safeText(field(row, ALIASES.recommendationCategory), 120)
     const recommendationType = safeText(field(row, ALIASES.recommendationType), 120)
     const qualityIssue = safeText(field(row, ALIASES.qualityIssue), 240)
-    if ((!itemId && !sku) || (!recommendationText && !recommendationCategory &&
-        !recommendationType && !qualityIssue)) {
-      throw new Error("QUALITY_REPORT_REQUIRED_STRUCTURE_MISSING")
+    const reportedBenchmark = numberValue(field(row, ALIASES.reportedBenchmark))
+    const topCategoryBenchmark = numberValue(field(row, ALIASES.topCategoryBenchmark))
+    if (!itemId && !sku) { warnings.push("ROW_WITHOUT_LISTING_IDENTITY_SKIPPED"); return [] }
+    if (!recommendationText && !recommendationCategory && !recommendationType && !qualityIssue &&
+        reportedBenchmark === null && topCategoryBenchmark === null) {
+      warnings.push("ROW_WITHOUT_GUIDANCE_SKIPPED"); return []
     }
-    if (itemId && !/^\d{9,19}$/.test(itemId)) throw new Error("QUALITY_REPORT_ITEM_ID_INVALID")
+    if (itemId && !/^\d{9,19}$/.test(itemId)) {
+      warnings.push("ROW_WITH_INVALID_ITEM_ID_SKIPPED"); return []
+    }
     const unknownFields = Object.fromEntries(unknownHeaders.map((header) =>
       [header.slice(0, 120), safeText(row[header], 240)]).filter(([, value]) => value !== null))
-    return {
-      sourceRowNumber: index + 2,
+    return [{
+      sourceRowNumber: index + (parsed.metadata.headerRowNumber ?? 1) + 1,
       sourceRowFingerprint: `qlr_row_${sha(JSON.stringify({ itemId, sku, recommendationText,
         recommendationCategory, recommendationType, qualityIssue })).slice(0, 24)}`,
-      itemId,
-      sku,
-      recommendationCategory,
-      recommendationType,
-      recommendationText,
-      reportedBenchmark: numberValue(field(row, ALIASES.reportedBenchmark)),
-      topCategoryBenchmark: numberValue(field(row, ALIASES.topCategoryBenchmark)),
-      qualityIssue,
+      itemId, sku, recommendationCategory, recommendationType, recommendationText,
+      reportedBenchmark, topCategoryBenchmark, qualityIssue,
+      category: safeText(field(row, ALIASES.category), 160),
       reportDate: safeText(field(row, ALIASES.reportDate), 40),
       reportWindowStart: safeText(field(row, ALIASES.reportWindowStart), 40),
       reportWindowEnd: safeText(field(row, ALIASES.reportWindowEnd), 40),
-      marketplace: safeText(field(row, ALIASES.marketplace), 30),
-      unknownFields,
-    }
+      marketplace: safeText(field(row, ALIASES.marketplace), 30), unknownFields,
+    }]
   })
+  if (!rows.length) throw new QualityReportValidationError("LISTING_IDENTITY_UNPROVEN", {
+    ...("diagnosis" in parsed.metadata ? parsed.metadata.diagnosis : {}),
+    detectedRows: rawRows.length })
+  const categories = [...new Set(rows.map((row) => row.recommendationCategory).filter(Boolean))]
   return {
     source: EBAY_LISTING_QUALITY_REPORT_SOURCE,
     parserVersion: EBAY_LISTING_QUALITY_REPORT_IMPORT_VERSION,
-    parserStatus: "READY_FOR_REAL_SAMPLE" as const,
+    parserStatus: "VALIDATED_READY_FOR_IMPORT" as const,
     fileName: safeText(input.fileName, 180) ?? "quality-report",
     sourceFileFingerprint: `qlr_file_${sha(input.content).slice(0, 32)}`,
-    importedAt: importedAt.toISOString(),
-    rowCount: rows.length,
-    unknownHeaders,
-    rows,
-    rawFileStored: false as const,
-    buyerPiiStored: false as const,
+    importedAt: importedAt.toISOString(), rowCount: rows.length, unknownHeaders, rows,
+    workbook: parsed.metadata,
+    preview: { recognizedReport: true, rowsDetected: rawRows.length,
+      normalizedRows: rows.length, recommendationCategories: categories.slice(0, 20),
+      benchmarkAvailable: rows.some((row) => row.reportedBenchmark !== null),
+      topTenBenchmarkAvailable: rows.some((row) => row.topCategoryBenchmark !== null),
+      warnings: [...new Set(warnings)].slice(0, 20), readyForImport: true as const },
+    rawFileStored: false as const, buyerPiiStored: false as const,
   }
 }
 
@@ -180,24 +376,30 @@ export function associateEbayListingQualityReportV1(input: {
   })
 }
 
+export function summarizeEbayListingQualityAssociationsV1(
+  rows: ReturnType<typeof associateEbayListingQualityReportV1>,
+) {
+  const count = (status: string) => rows.filter((row) => row.associationStatus === status).length
+  const matchedItemId = count("MATCHED_ITEM_ID")
+  const matchedUniqueSku = count("MATCHED_UNIQUE_SKU")
+  const unresolved = count("UNRESOLVED")
+  const ambiguous = count("AMBIGUOUS")
+  return { reportRows: rows.length, matchedItemId, matchedUniqueSku, unresolved, ambiguous,
+    partitionValid: matchedItemId + matchedUniqueSku + unresolved + ambiguous === rows.length }
+}
+
 export function toCommercialMonitorQualityArtifactV1(
   snapshot: ReturnType<typeof parseEbayListingQualityReportV1>,
 ) {
   return {
-    source: EBAY_LISTING_QUALITY_REPORT_SOURCE,
-    sourceVersion: snapshot.parserVersion,
+    source: EBAY_LISTING_QUALITY_REPORT_SOURCE, sourceVersion: snapshot.parserVersion,
     observedAt: snapshot.rows.map((row) => row.reportDate).find(Boolean) ?? snapshot.importedAt,
-    importedAt: snapshot.importedAt,
-    sourceFileFingerprint: snapshot.sourceFileFingerprint,
-    rows: snapshot.rows.map((row) => ({
-      itemId: row.itemId,
-      sku: row.sku,
+    importedAt: snapshot.importedAt, sourceFileFingerprint: snapshot.sourceFileFingerprint,
+    rows: snapshot.rows.map((row) => ({ itemId: row.itemId, sku: row.sku,
       recommendationCategory: row.recommendationCategory,
       recommendationType: row.recommendationType,
       recommendationText: row.recommendationText ?? row.qualityIssue,
-      reportedBenchmark: row.reportedBenchmark,
-      topCategoryBenchmark: row.topCategoryBenchmark,
-      sourceRowFingerprint: row.sourceRowFingerprint,
-    })),
+      reportedBenchmark: row.reportedBenchmark, topCategoryBenchmark: row.topCategoryBenchmark,
+      sourceRowFingerprint: row.sourceRowFingerprint })),
   }
 }

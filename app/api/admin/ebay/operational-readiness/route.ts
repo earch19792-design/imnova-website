@@ -10,12 +10,21 @@ import {
   captureLunaProductVariantV1,
   linkSupplierToEbayIdentityV1,
 } from "@/lib/ebay/ebay-commercial-operational-readiness-v1"
-import { parseEbayListingQualityReportV1 } from
+import { parseEbayListingQualityReportV1, QualityReportValidationError } from
   "@/lib/ebay/ebay-listing-quality-report-import-v1"
+import { associateEbayListingQualityReportV1,
+  summarizeEbayListingQualityAssociationsV1 } from
+  "@/lib/ebay/ebay-listing-quality-report-import-v1"
+import { getCommercialMonitorReadonly } from
+  "@/lib/ebay/commercial-monitor-readonly-service"
+import { getEbayCommercialMonitorLiveReadonly } from
+  "@/lib/ebay/ebay-commercial-monitor-live-readonly"
+import { getEbaySellerAccountScopeConfiguration } from
+  "@/lib/ebay/ebay-seller-account-scope"
 import { renderCommercialWhatsAppAlertDryRunV1,
   WHATSAPP_TEMPLATE_DEFINITIONS_V1 } from
   "@/lib/ebay/ebay-commercial-whatsapp-alert-engine-v1"
-import { validateAdminApiRequest } from "@/lib/supabase-admin"
+import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -23,6 +32,7 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function safeError(error: unknown) {
+  if (error instanceof QualityReportValidationError) return error.reason
   const message = error instanceof Error ? error.message : "OPERATIONAL_READINESS_FAILED"
   return /^[A-Z0-9_]+$/.test(message) ? message : "OPERATIONAL_READINESS_FAILED"
 }
@@ -34,7 +44,7 @@ function capabilities() {
   return {
     marketResearch: "AVAILABLE",
     qualityReport: "READY_FOR_REAL_SAMPLE",
-    qualityReportAcquisition: "HUMAN_ASSISTED_CSV_JSON",
+    qualityReportAcquisition: "HUMAN_ASSISTED_CSV_JSON_XLSX",
     orders: ordersConfigured ? "READY_FOR_READONLY_RUNTIME" : "AUTH_PENDING",
     lunaCapture: "READY_BUT_NOT_ACTIVATED",
     supplierIdentity: "EVIDENCE_GATED",
@@ -75,11 +85,33 @@ export async function POST(req: Request) {
     const input = record(body.input)
     let result: unknown
     if (body.action === "IMPORT_QUALITY_REPORT") {
-      result = parseEbayListingQualityReportV1({
-        format: input.format === "JSON" ? "JSON" : "CSV",
+      const snapshot = parseEbayListingQualityReportV1({
+        format: input.format === "XLSX" ? "XLSX" : input.format === "JSON" ? "JSON" : "CSV",
         fileName: typeof input.fileName === "string" ? input.fileName : "quality-report",
         content: typeof input.content === "string" ? input.content : "",
       })
+      const account = getEbaySellerAccountScopeConfiguration()
+      const live = await getEbayCommercialMonitorLiveReadonly({ accountKey: account.accountKey,
+        accountAlias: account.accountAlias })
+      const monitor = await getCommercialMonitorReadonly(
+        account.accountKey ? getSupabaseAdminClient() : null,
+        { accountKey: account.accountKey, accountAlias: account.accountAlias,
+          configurationReason: account.reason }, live)
+      const associated = associateEbayListingQualityReportV1({ snapshot,
+        listings: monitor.listings.map((listing) => ({ listingKey: listing.key,
+          itemId: listing.identity.itemId, sku: listing.identity.sku })) })
+      result = { source: snapshot.source, parserVersion: snapshot.parserVersion,
+        parserStatus: snapshot.parserStatus, fileName: snapshot.fileName,
+        sourceFileFingerprint: snapshot.sourceFileFingerprint, importedAt: snapshot.importedAt,
+        rowCount: snapshot.rowCount, unknownHeaders: snapshot.unknownHeaders,
+        workbook: snapshot.workbook, preview: snapshot.preview,
+        association: summarizeEbayListingQualityAssociationsV1(associated),
+        previewRows: associated.slice(0, 20).map((row) => ({ sourceRowNumber: row.sourceRowNumber,
+          associationStatus: row.associationStatus, recommendationCategory: row.recommendationCategory,
+          recommendationType: row.recommendationType, benchmarkAvailable:
+            row.reportedBenchmark !== null, topTenBenchmarkAvailable:
+            row.topCategoryBenchmark !== null })), rawFileStored: false, remotePersistence: false,
+        buyerPiiStored: false }
     } else if (body.action === "CAPTURE_LUNA") {
       result = captureLunaProductVariantV1(input as never)
     } else if (body.action === "LINK_SUPPLIER_IDENTITY") {
@@ -95,6 +127,8 @@ export async function POST(req: Request) {
       marketplaceWrites: 0, registryBusinessDataMutations: 0, whatsappSends: 0,
       productCaseMutations: 0 })
   } catch (error) {
-    return NextResponse.json({ success: false, error: safeError(error) }, { status: 400 })
+    return NextResponse.json({ success: false, error: safeError(error),
+      ...(error instanceof QualityReportValidationError ? { diagnosis: error.diagnosis } : {}) },
+    { status: 400 })
   }
 }

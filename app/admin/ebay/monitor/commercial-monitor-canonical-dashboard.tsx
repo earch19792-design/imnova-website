@@ -33,6 +33,8 @@ import type {
   CommercialMonitorCapabilityStatus,
   CommercialMonitorGetDto,
 } from "@/lib/ebay/commercial-monitor-readonly-contract"
+import { presentCommercialMonitorRegistryV1 } from
+  "@/lib/ebay/ebay-commercial-monitor-registry-presentation-v1"
 
 type CommercialMonitorCanonicalDashboardProps = {
   monitor: CommercialMonitorGetDto
@@ -235,6 +237,7 @@ export function CommercialMonitorCanonicalDashboard({
         detail: "Current live portfolio · unique Trading Item IDs",
       }
   const registry = backend.capabilities.registry
+  const registryPresentation = presentCommercialMonitorRegistryV1(registry)
   const qualityUnavailable = backend.listingQualityReport.status === "UNAVAILABLE_NO_CURRENT_REPORT"
   const decisionsByKey = new Map(backend.decisions.map((decision) =>
     [decision.listingKey, decision] as const))
@@ -260,7 +263,7 @@ export function CommercialMonitorCanonicalDashboard({
     ["Overview", [["Monitor", "#commercial-dashboard", LayoutDashboard]]],
     ["Commerce", [["Listings", "#guidance-table", FileText], ["Opportunities", "/admin/ebay/opportunity-queue/research", Sparkles]]],
     ["Intelligence", [["Decisions", "#guidance-table", LineChart], ["Experiments", "#upcoming-reviews", FlaskConical], ["Learning", "#performance", CircleGauge]]],
-    ["Operations", [["Readiness", "/admin/ebay/operational-readiness", Wrench], ["Stock", "#inventory-status", Package], ["Orders", "#upcoming-reviews", ShoppingBag], ["Inventory", "#inventory-status", Database]]],
+    ["Operations", [["Readiness", "/admin/ebay/operational-readiness", Wrench], ["Stock", "/admin/ebay/stock-guard", Package], ["Orders", "#upcoming-reviews", ShoppingBag], ["Inventory", "#inventory-status", Database]]],
     ["System", [["Data Quality", "#category-benchmark", ShieldCheck], ["Audit", "#advanced-diagnostics", FileText]]],
   ] as const
   const actionTypeDistribution = [...new Map(actionPlan.map((decision) =>
@@ -286,7 +289,7 @@ export function CommercialMonitorCanonicalDashboard({
           <div className="border-b border-slate-100 px-4 py-3 xl:border-b-0 xl:border-r"><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">Cuenta eBay</p><p className="mt-1 truncate text-sm font-bold">{monitor.marketplace.accountAlias ?? "Cuenta no configurada"}</p></div>
           <div className="border-b border-slate-100 px-4 py-3 xl:border-b-0 xl:border-r"><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">Marketplace</p><p className="mt-1 text-sm font-bold">{monitor.marketplace.marketplaceId}</p></div>
           <div className="border-b border-slate-100 px-4 py-3 xl:border-b-0 xl:border-r"><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">Última sincronización</p><time dateTime={monitor.generatedAt} className="mt-1 block truncate text-xs font-bold">{formatTimestamp(monitor.generatedAt)}</time></div>
-          <div className="border-b border-slate-100 px-4 py-3 xl:border-b-0 xl:border-r"><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">Cobertura de datos</p><p className="mt-1 text-sm font-black">{formatValue(registry.coveragePercent)}{registry.coveragePercent === null ? "" : "%"}</p></div>
+          <div className="border-b border-slate-100 px-4 py-3 xl:border-b-0 xl:border-r"><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">Cobertura de datos</p><p className="mt-1 text-sm font-black">{registryPresentation.coveragePercent === null ? "—" : `${formatValue(registryPresentation.coveragePercent)}%`}</p></div>
           <div className="border-b border-slate-100 px-4 py-3 xl:border-b-0 xl:border-r"><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">eBay Analytics</p><div className="mt-1"><StatusChip status={backend.capabilities.analytics} /></div></div>
           <div className="border-b border-slate-100 px-4 py-3 xl:border-b-0 xl:border-r"><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">Luna Portex</p><div className="mt-1"><StatusChip status={backend.capabilities.inventory.status} /></div></div>
           <button type="button" onClick={onRefresh} disabled={refreshing} className="m-2 inline-flex items-center justify-center gap-2 rounded-lg bg-[#102033] px-3 py-2 text-xs font-black text-white transition hover:bg-[#1c324c] disabled:cursor-wait disabled:opacity-60"><CalendarRange size={15} />{refreshing ? "Leyendo…" : "Actualizar datos"}</button>
@@ -362,7 +365,7 @@ export function CommercialMonitorCanonicalDashboard({
           <article id="category-benchmark" className="min-h-[190px] rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm"><div className="flex items-center justify-between"><div><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-500">Benchmark categoría</p><h2 className="mt-1 text-sm font-black">Listing Quality</h2></div><CircleGauge size={18} className="text-slate-400" /></div>{backend.operationalHealth.categoryBenchmarks.length > 0 ? <div className="mt-3 space-y-2">{backend.operationalHealth.categoryBenchmarks.map((benchmark) => <div key={benchmark.recommendationCategory} className="flex items-center justify-between border-b border-slate-100 pb-2 text-xs"><span>{benchmark.recommendationCategory}</span><strong>{numberFormatter.format(benchmark.benchmark)}</strong></div>)}</div> : <div className="mt-4 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3 text-[10px] text-slate-500">No current Listing Quality Report loaded. No se inventan benchmarks Top-10%.</div>}</article>
         </section>
 
-        <section id="inventory-status" className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 text-xs md:grid-cols-4"><div><p className="font-black">Registry</p><p className="mt-1 text-slate-500">{formatValue(registry.matchedCount)} matched · {formatValue(registry.humanReviewCount)} review · {formatValue(registry.coveragePercent)}%</p></div><div><p className="font-black">Inventory</p><p className="mt-1 text-slate-500">{backend.capabilities.inventory.inventoryItemsResource.replaceAll("_", " ")}</p></div><div><p className="font-black">Marketplace</p><p className="mt-1 text-slate-500">{monitor.liveCertification.account.bindingMatched ? "Binding certificado" : "Binding no probado"}</p></div><div className="md:text-right"><p className="font-black">Estado operativo</p><p className="mt-1 text-slate-500">Versión read-only · sin acciones de marketplace</p></div></section>
+        <section id="inventory-status" className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 text-xs md:grid-cols-4"><div><p className="font-black">Registry</p><p className="mt-1 text-slate-500">{registryPresentation.summary}</p></div><div><p className="font-black">Inventory</p><p className="mt-1 text-slate-500">{backend.capabilities.inventory.inventoryItemsResource.replaceAll("_", " ")}</p></div><div><p className="font-black">Marketplace</p><p className="mt-1 text-slate-500">{monitor.liveCertification.account.bindingMatched ? "Binding certificado" : "Binding no probado"}</p></div><div className="md:text-right"><p className="font-black">Estado operativo</p><p className="mt-1 text-slate-500">Versión read-only · sin acciones de marketplace</p></div></section>
       </main>
     </div>
   )
