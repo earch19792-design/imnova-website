@@ -6,6 +6,8 @@ import { z } from "zod"
 import { executeSellerOsAssistantToolV1, SELLER_OS_ASSISTANT_TOOLS_V1 } from
   "./ebay-seller-os-assistant-gateway-v1"
 import { loadSellerOsAssistantMonitorV1 } from "./ebay-seller-os-assistant-runtime"
+import { authenticateSellerOsMcpRequestV1, loadSellerOsMcpOAuthConfigurationV1 } from
+  "./ebay-seller-os-mcp-oauth-v1"
 import { getEbayProRuntimeBoundary } from "./environment-boundaries"
 import { validateAdminApiRequest } from "../supabase-admin"
 
@@ -21,10 +23,12 @@ export const SELLER_OS_CHATGPT_CONNECTION_STATE = Object.freeze({
 export function getSellerOsChatGptConnectionStateV1(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
+  const oauth = loadSellerOsMcpOAuthConfigurationV1(environment)
   return { ...SELLER_OS_CHATGPT_CONNECTION_STATE,
     deployment: environment.VERCEL_ENV === "preview"
       ? "DEPLOYED" as const : "NOT_DEPLOYED_OR_UNPROVEN" as const,
-    readyForHumanConnection: environment.VERCEL_ENV === "preview",
+    oauthResourceServerConfigured: oauth.ok,
+    readyForHumanConnection: environment.VERCEL_ENV === "preview" && oauth.ok,
   }
 }
 
@@ -142,14 +146,14 @@ export function createSellerOsMcpServerV1() {
 }
 
 export async function handleSellerOsMcpRequestV1(req: Request) {
-  const validation = await validateAdminApiRequest(req)
-  if (!validation.ok) return safeErrorResponse(validation.status || 401, -32001,
-    "SELLER_OS_ASSISTANT_AUTH_REQUIRED")
   const pathname = new URL(req.url).pathname
-  if (pathname.startsWith("/api/seller-os/") &&
-      validation.authenticationMode === "service_role") {
-    return safeErrorResponse(403, -32002,
-      "SELLER_OS_ASSISTANT_USER_SCOPED_AUTH_REQUIRED")
+  if (pathname.startsWith("/api/seller-os/")) {
+    const oauth = await authenticateSellerOsMcpRequestV1(req)
+    if (!oauth.ok) return oauth.response
+  } else {
+    const validation = await validateAdminApiRequest(req)
+    if (!validation.ok) return safeErrorResponse(validation.status || 401, -32001,
+      "SELLER_OS_ASSISTANT_AUTH_REQUIRED")
   }
   const boundary = getEbayProRuntimeBoundary({ pathname,
     method: req.method })
