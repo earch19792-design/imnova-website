@@ -56,6 +56,29 @@ test("canonical dashboard surfaces decisions and review-only Registry state with
   assert.match(dashboard, /priorityActionPlan/)
 })
 
+test("canonical dashboard preserves the dense desktop cockpit composition", () => {
+  for (const expression of [
+    "w-\\[248px\\]",
+    "eBay Commercial Monitor",
+    "Cockpit operativo, diagnóstico y decisiones basadas en datos",
+    "EBAY GUIDANCE",
+    "Listings Activos",
+    "Experimentos RUNNING",
+    "grid-cols-\\[minmax\\(0,1fr\\)_320px\\]",
+    "Alertas críticas",
+    "Plan de acción prioritario",
+    "System 100% read-only",
+    "Rendimiento general",
+    "Distribución por estado",
+    "Distribución por tipo",
+    "Benchmark categoría",
+  ]) {
+    assert.match(dashboard, new RegExp(expression))
+  }
+  assert.match(dashboard, /qualityUnavailable \? <tr>/)
+  assert.match(dashboard, /No se generan puntos sintéticos/)
+})
+
 test("legacy technical diagnostics remain secondary to the canonical dashboard", () => {
   assert.match(client, /CommercialMonitorCanonicalDashboard/)
   assert.match(client, /<details id="advanced-diagnostics"/)
