@@ -64,7 +64,7 @@ export const listingDraftSchema = z.object({
   price: z.number().finite().positive(),
   quantity: z.number().int().positive(),
   category: z.string().trim().max(200),
-  itemSpecifics: z.record(z.string()).default({}),
+  itemSpecifics: z.record(z.string(), z.string()).default({}),
   description: z.string().max(100_000),
   shippingPolicy: z.string().max(2_000),
   returnPolicy: z.string().max(2_000),

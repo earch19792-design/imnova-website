@@ -13,6 +13,8 @@ export const EBAY_SELLER_OS_UI_PATHS = [
   "/admin/ebay-image-generator",
   "/admin/ebay/seller-performance",
   "/admin/ebay/monitor",
+  "/admin/ebay/copilot",
+  "/admin/ebay/strategic-review",
   "/admin/ebay-pro",
 ] as const
 
@@ -27,6 +29,11 @@ export const EBAY_SELLER_OS_API_PATHS = [
   "/api/admin/ebay/identity/bootstrap",
   "/api/admin/ebay/seller-performance",
   "/api/admin/ebay/monitor",
+  "/api/admin/ebay/intelligence",
+  "/api/admin/ebay/assistant/mcp",
+  "/api/admin/ebay/copilot",
+  "/api/admin/ebay/strategic-review",
+  "/api/seller-os/assistant/mcp",
   "/api/admin/ebay/seller-keyword-demand",
   "/api/admin/ebay/seller-whatsapp-alerts",
   "/api/admin/ebay/commercial-monitor",

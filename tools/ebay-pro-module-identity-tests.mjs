@@ -277,7 +277,7 @@ test("canonical Seller OS hub is lightweight and does not read data", () => {
     true,
   );
   assert.equal(
-    content.includes("OpenAI: apagado"),
+    content.includes("OpenAI estratégico: lectura y razonamiento acotado"),
     true,
   );
 

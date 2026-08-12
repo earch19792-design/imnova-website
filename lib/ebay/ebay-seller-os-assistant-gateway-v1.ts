@@ -1,10 +1,10 @@
 import type { CommercialMonitorGetDto } from "./commercial-monitor-readonly-contract"
-import { buildAutomationHealthMetricsV1, buildPortfolioIntelligenceV1,
-  buildProactiveExceptionQueueV1, evaluateReplaceKillIntelligenceV1,
-  selectMaterialPrioritiesV2 } from
-  "./ebay-seller-os-portfolio-intelligence-v1"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { buildAutomationHealthMetricsV1, buildPortfolioIntelligenceV1, buildProactiveExceptionQueueV1, evaluateReplaceKillIntelligenceV1, selectMaterialPrioritiesV2 } from "./ebay-seller-os-portfolio-intelligence-v1.ts"
 import type { CanonicalOpportunityResultV2 } from
   "./ebay-commercial-intelligence-upgrade-v1"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { buildStrategicReviewQueueV1, buildSystemReviewBundleV1 } from "./ebay-seller-os-ai-strategic-intelligence-v1.ts"
 
 export const SELLER_OS_ASSISTANT_GATEWAY_VERSION = "SELLER_OS_ASSISTANT_GATEWAY_V1_2026_08_12"
 export const SELLER_OS_ASSISTANT_MAX_ITEMS = 100
@@ -30,6 +30,12 @@ export const SELLER_OS_ASSISTANT_TOOLS_V1 = Object.freeze([
     "Use this when the user asks what Seller OS learned and how safely that learning may transfer."],
   ["seller_os_get_operational_readiness", "Get operational readiness",
     "Use this when the user asks which Commercial Operations capabilities are ready, blocked, or evidence-gated."],
+  ["seller_os_get_system_review_bundle", "Get system review bundle",
+    "Use this first for a bounded strategic review of Seller OS portfolio evidence, operational issues, opportunities, blockers, automation candidates, and AI budget status."],
+  ["seller_os_get_recent_system_changes", "Get recent system changes",
+    "Use this when the user asks what recently changed in Seller OS. Absence of a durable change ledger is returned as unproven, never invented."],
+  ["seller_os_get_strategic_review_queue", "Get strategic review queue",
+    "Use this when the user asks what Seller OS or its commercial intelligence should improve, distinct from operator-facing commercial exceptions."],
 ].map(([name, title, description]) => ({ name, title, description,
   annotations: { readOnlyHint: true as const, destructiveHint: false as const,
     openWorldHint: false as const, idempotentHint: true as const },
@@ -277,6 +283,20 @@ export function executeSellerOsAssistantToolV1(input: {
       totalEntityCount: input.monitor.listings.length }),
       portfolio: buildPortfolioIntelligenceV1({ monitor: input.monitor }),
       productCaseState: input.monitor.productCaseOperatingState, marketplaceWrites: 0 }
+  }
+  if (input.toolName === "seller_os_get_system_review_bundle") {
+    return buildSystemReviewBundleV1({ monitor: input.monitor,
+      canonicalOpportunities: input.canonicalOpportunities })
+  }
+  if (input.toolName === "seller_os_get_recent_system_changes") {
+    return { status: "UNPROVEN_NO_DURABLE_CHANGE_LEDGER", entries: [],
+      bounded: true, maximumEntries: Math.min(maximum, 20), inferredChanges: false,
+      marketplaceWrites: 0 }
+  }
+  if (input.toolName === "seller_os_get_strategic_review_queue") {
+    return buildStrategicReviewQueueV1({ monitor: input.monitor,
+      canonicalOpportunities: input.canonicalOpportunities,
+      maximumSignals: Math.min(maximum, 20) })
   }
   throw new Error("ASSISTANT_TOOL_NOT_ALLOWLISTED")
 }

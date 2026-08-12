@@ -195,7 +195,7 @@ export default function MarketResearchPage() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2"><span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${statusTone(canonical.commercialRecommendation.finalDecision)}`}>
                   {canonical.commercialRecommendation.finalDecision}
-                </span>{canonical.sourceItemId ? <Link href={`/admin/ebay/decisions?opportunityItemId=${canonical.sourceItemId}`} className="rounded-full border border-cyan-300/20 px-3 py-1.5 text-xs font-semibold text-cyan-200">View synced decision</Link> : null}</div>
+                </span>{canonical.sourceItemId ? <><Link href={`/admin/ebay/decisions?opportunityItemId=${canonical.sourceItemId}`} className="rounded-full border border-cyan-300/20 px-3 py-1.5 text-xs font-semibold text-cyan-200">View synced decision</Link><Link href={`/admin/ebay/copilot?surface=OPPORTUNITY&itemId=${canonical.sourceItemId}`} className="rounded-full border border-violet-300/20 px-3 py-1.5 text-xs font-semibold text-violet-200">Ask Copilot</Link></> : null}</div>
               </div>
               <details className="mt-3 text-[10px] text-slate-500"><summary className="cursor-pointer">Authoritative versions</summary><p className="mt-2 leading-5">{Object.entries(canonical.versions).map(([name, version]) => `${name}: ${version}`).join(" · ")}</p></details>
               <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

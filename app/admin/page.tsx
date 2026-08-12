@@ -10,7 +10,7 @@ import { TodayLaunchPanel } from "./today-launch-panel"
 type HomeState = "LOADING" | "READY" | "UNAVAILABLE"
 
 const cards = [
-  ["Estado del sistema", "Protecciones activas", "OpenAI y publicaciones continúan apagados."],
+  ["Estado del sistema", "Protecciones activas", "Copilot estratégico sólo lectura; publicaciones continúan apagadas."],
   ["Piloto 1/3", "Loop 2 activo", "Ficha técnica en pausa durante el aislamiento del dominio."],
   ["Acción requerida", "Validar aislamiento", "Revisar portada, acceso, menú y llamadas de red en staging."],
   ["Oportunidades activas", "Top 20 protegido", "Discovery y Product Research conservan su evidencia."],
