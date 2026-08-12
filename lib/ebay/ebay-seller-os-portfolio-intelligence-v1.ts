@@ -2,13 +2,24 @@ import { createHash } from "node:crypto"
 
 import type { CommercialMonitorGetDto, CommercialListingDecisionV1,
   CommercialListingReadModel } from "./commercial-monitor-readonly-contract"
+import type { CanonicalOpportunityDecisionV2 } from
+  "./ebay-commercial-intelligence-upgrade-v1"
 
 export const SELLER_OS_PORTFOLIO_INTELLIGENCE_VERSION =
   "SELLER_OS_PORTFOLIO_INTELLIGENCE_V1_2026_08_12"
+export const CANONICAL_OPPORTUNITY_PRECEDENCE_V2 = Object.freeze([
+  "CRITICAL_OPERATIONAL_OR_POLICY_COMPLIANCE_HARD_OVERRIDE",
+  "EXPERIMENT_GUARDIAN_DO_NOT_TOUCH",
+  "IDENTITY_OR_PRODUCT_TRUTH_CONFLICT",
+  "PROVEN_DATA_QUALITY_BLOCK",
+  "CANONICAL_OPPORTUNITY_RESULT_V2",
+  "GENERIC_UNPROVEN_EVIDENCE_BLOCKER",
+] as const)
 
-export type ExceptionClassV1 = "CRITICAL_OPERATIONAL" | "COMMERCIAL_INTERVENTION" |
-  "HUMAN_REVIEW" | "EXPERIMENT_REVIEW" | "DO_NOT_TOUCH" | "STALE_EVIDENCE" |
-  "REPLACEMENT_CANDIDATE" | "NEW_OPPORTUNITY" | "WAIT_HEALTHY"
+export type DecisionTaxonomyV2 = "CRITICAL_OPERATIONAL" | "ACTIONABLE_COMMERCIAL" |
+  "RESEARCH_OR_EVIDENCE" | "CAPABILITY_BLOCKED" | "HUMAN_REVIEW" |
+  "DO_NOT_TOUCH" | "WAIT" | "HEALTHY" | "REPLACEMENT_CANDIDATE"
+export type ExceptionClassV1 = DecisionTaxonomyV2
 
 export type OpportunityRadarStateV1 = "NEW_CANDIDATE" | "STRENGTHENING" | "STABLE" |
   "WEAKENING" | "INSUFFICIENT_EVIDENCE" | "RESEARCH_REQUIRED"
@@ -44,10 +55,6 @@ function fingerprint(values: unknown[]) {
   return createHash("sha256").update(JSON.stringify(values)).digest("hex").slice(0, 24)
 }
 
-function listingDecision(monitor: CommercialMonitorGetDto, listingKey: string) {
-  return monitor.backend.decisions.find((decision) => decision.listingKey === listingKey) ?? null
-}
-
 function recommendationFor(decision: CommercialListingDecisionV1) {
   if (decision.protectionState === "DO_NOT_TOUCH") return "WAIT_ACTIVE_EXPERIMENT"
   if (decision.reasonCodes.includes("REVIEW_EXPERIMENT_RESULT")) return "REVIEW_EXPERIMENT_RESULT"
@@ -64,39 +71,200 @@ function recommendationFor(decision: CommercialListingDecisionV1) {
 export function buildProactiveExceptionQueueV1(input: {
   monitor: CommercialMonitorGetDto
   opportunities?: OpportunityCandidateV1[]
+  canonicalOpportunities?: CanonicalOpportunityDecisionV2[]
   maximumEntries?: number
 }) {
   const maximumEntries = Math.min(250, Math.max(1, input.maximumEntries ?? 100))
-  const entries: Array<Record<string, unknown> & { entityKey: string; classification: ExceptionClassV1;
-    severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"; dedupeIdentity: string }> = []
+  const entries: DecisionQueueEntryV2[] = []
+  const canonicalByItemId = new Map((input.canonicalOpportunities ?? [])
+    .filter((row) => row.sourceItemId).map((row) => [row.sourceItemId as string, row]))
+  const decisionByListingKey = new Map(input.monitor.backend.decisions.map((decision) =>
+    [decision.listingKey, decision]))
+  const capabilityGroups = new Map<string, { reasonCodes: Set<string>;
+    affectedItemIds: string[]; affectedListingCount: number; sources: Set<string>;
+    observedAt: string | null }>()
+  const evidenceGroups = new Map<string, { reasonCodes: Set<string>;
+    affectedItemIds: string[]; affectedListingCount: number; observedAt: string | null }>()
   for (const listing of input.monitor.listings) {
-    const decision = listingDecision(input.monitor, listing.key)
+    const decision = decisionByListingKey.get(listing.key) ?? null
     if (!decision) continue
     const reasonCodes = [...new Set(decision.reasonCodes)].sort()
-    const hardOverride = reasonCodes.includes("HARD_OVERRIDE_REQUIRES_HUMAN_REVIEW") ||
-      listing.stock.state === "OUT_OF_STOCK_SIGNAL"
-    const classification: ExceptionClassV1 = hardOverride ? "CRITICAL_OPERATIONAL"
-      : decision.protectionState === "DO_NOT_TOUCH" ? "DO_NOT_TOUCH"
-        : decision.reasonCodes.includes("REVIEW_EXPERIMENT_RESULT") ? "EXPERIMENT_REVIEW"
-          : listing.stock.freshness.status === "STALE" ? "STALE_EVIDENCE"
-            : decision.recommendedAction === "HUMAN_REVIEW" ? "HUMAN_REVIEW"
-              : decision.recommendedAction === "WAIT" ? "WAIT_HEALTHY"
-                : "COMMERCIAL_INTERVENTION"
-    const severity = hardOverride ? "CRITICAL" as const : classification === "DO_NOT_TOUCH" ||
-      classification === "EXPERIMENT_REVIEW" ? "HIGH" as const : decision.priority
+    const blockerCodes = new Set(listing.blockers.map((row) => row.code))
+    const hardOverride = reasonCodes.includes("HARD_OVERRIDE_REQUIRES_HUMAN_REVIEW")
+    const policyOrComplianceBlock = reasonCodes.some((reason) =>
+      /POLICY|COMPLIANCE/.test(reason))
+    const identityConflict = ["REGISTRY_RECONCILIATION_FAILED", "LISTING_IDENTITY_UNPROVEN",
+      "DUPLICATE_LISTING_IDENTITY", "SUPPLIER_IDENTITY_CONFLICT"].some((code) =>
+      blockerCodes.has(code as typeof listing.blockers[number]["code"]))
+    const provenDataQualityBlock = ["METRIC_GRAIN_MISMATCH"].some((code) =>
+      blockerCodes.has(code as typeof listing.blockers[number]["code"]))
+    const opportunity = canonicalByItemId.get(listing.identity.itemId) ?? null
+    let classification: ExceptionClassV1
+    let recommendedAction: string
+    let effectiveReasons: string[] = reasonCodes
+    let effectivePriority: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" = decision.priority
+    let effectiveConfidence: string = decision.evidenceStatus
+    let nextReviewCondition = decision.nextReviewCondition
+    let groupGenericEvidence = false
+    let observedEvidence: Record<string, unknown> = {
+      analyticsStatus: listing.metrics.impressions.availability,
+      stockState: listing.stock.state,
+      stockFreshness: listing.stock.freshness.status,
+    }
+    if (hardOverride || policyOrComplianceBlock) {
+      classification = "CRITICAL_OPERATIONAL"
+      recommendedAction = "HUMAN_REVIEW"
+      effectivePriority = "CRITICAL"
+    } else if (decision.protectionState === "DO_NOT_TOUCH") {
+      classification = "DO_NOT_TOUCH"
+      recommendedAction = "WAIT_ACTIVE_EXPERIMENT"
+      effectivePriority = "HIGH"
+    } else if (identityConflict || decision.recommendedAction === "HUMAN_REVIEW") {
+      classification = "HUMAN_REVIEW"
+      recommendedAction = "HUMAN_REVIEW"
+      effectivePriority = "HIGH"
+    } else if (provenDataQualityBlock) {
+      classification = "ACTIONABLE_COMMERCIAL"
+      recommendedAction = "FIX_PROVEN_DATA_QUALITY_ISSUE"
+      effectiveReasons = [...new Set([...reasonCodes, "PROVEN_DATA_QUALITY_BLOCK"])]
+    } else if (opportunity) {
+      classification = opportunity.classification
+      recommendedAction = opportunity.nextBestAction
+      effectiveReasons = opportunity.reasonCodes
+      effectivePriority = opportunity.priority
+      effectiveConfidence = opportunity.confidence
+      nextReviewCondition = opportunity.nextReviewCondition
+      observedEvidence = { ...observedEvidence, ...opportunity.observedEvidence,
+        canonicalFamily: opportunity.canonicalFamily,
+        canonicalFamilyConfidence: opportunity.canonicalFamilyConfidence,
+        canonicalResultVersion: opportunity.contractVersion }
+    } else if (listing.stock.freshness.status === "STALE") {
+      classification = "RESEARCH_OR_EVIDENCE"
+      recommendedAction = "REFRESH_SUPPLIER_EVIDENCE"
+      effectiveReasons = [...new Set([...reasonCodes, "STALE_SUPPLIER_EVIDENCE"])]
+    } else if (decision.actionBlockedByInsufficientEvidence ||
+        decision.evidenceStatus === "UNPROVEN") {
+      classification = listing.blockers.length ? "CAPABILITY_BLOCKED" : "RESEARCH_OR_EVIDENCE"
+      recommendedAction = listing.blockers.length
+        ? "RESTORE_REQUIRED_EVIDENCE_CAPABILITY" : "COLLECT_REQUIRED_EVIDENCE"
+      groupGenericEvidence = listing.blockers.length === 0
+    } else if (decision.reasonCodes.includes("REVIEW_EXPERIMENT_RESULT")) {
+      classification = "ACTIONABLE_COMMERCIAL"
+      recommendedAction = "REVIEW_EXPERIMENT_RESULT"
+    } else if (decision.recommendedAction === "WAIT") {
+      const affirmativeHealthy = decision.evidenceStatus === "AVAILABLE" &&
+        reasonCodes.includes("HEALTHY_EVIDENCE_WAIT_FOR_NEXT_REVIEW")
+      classification = affirmativeHealthy ? "HEALTHY" : "WAIT"
+      recommendedAction = "NO_ACTION"
+    } else {
+      classification = "ACTIONABLE_COMMERCIAL"
+      recommendedAction = recommendationFor(decision)
+    }
+    const severity = classification === "CRITICAL_OPERATIONAL" ? "CRITICAL" as const
+      : classification === "DO_NOT_TOUCH" || classification === "HUMAN_REVIEW"
+        ? "HIGH" as const : effectivePriority
+    if (classification === "CAPABILITY_BLOCKED") {
+      const root = [...listing.blockers].sort((left, right) =>
+        `${left.code}:${left.domain}:${left.source}`.localeCompare(
+          `${right.code}:${right.domain}:${right.source}`,
+        ))[0]
+      const rootKey = root ? `${root.code}:${root.domain}:${root.source}`
+        : "GENERIC_EVIDENCE_CAPABILITY"
+      const group = capabilityGroups.get(rootKey) ?? { reasonCodes: new Set<string>(),
+        affectedItemIds: [], affectedListingCount: 0, sources: new Set<string>(), observedAt: null }
+      effectiveReasons.forEach((reason) => group.reasonCodes.add(reason))
+      if (root) {
+        group.reasonCodes.add(root.code)
+        group.sources.add(root.source)
+      }
+      group.affectedListingCount += 1
+      if (group.affectedItemIds.length < 20) group.affectedItemIds.push(listing.identity.itemId)
+      group.observedAt = group.observedAt && listing.identity.lastObservedAt
+        ? [group.observedAt, listing.identity.lastObservedAt].sort().at(-1) ?? group.observedAt
+        : group.observedAt ?? listing.identity.lastObservedAt
+      capabilityGroups.set(rootKey, group)
+      continue
+    }
+    if (groupGenericEvidence) {
+      const rootReason = effectiveReasons.find((reason) =>
+        /INSUFFICIENT|UNPROVEN|EVIDENCE|DATA_QUALITY/.test(reason)) ?? "EVIDENCE_UNPROVEN"
+      const group = evidenceGroups.get(rootReason) ?? { reasonCodes: new Set<string>(),
+        affectedItemIds: [], affectedListingCount: 0, observedAt: null }
+      effectiveReasons.forEach((reason) => group.reasonCodes.add(reason))
+      group.affectedListingCount += 1
+      if (group.affectedItemIds.length < 20) group.affectedItemIds.push(listing.identity.itemId)
+      group.observedAt = group.observedAt && listing.identity.lastObservedAt
+        ? [group.observedAt, listing.identity.lastObservedAt].sort().at(-1) ?? group.observedAt
+        : group.observedAt ?? listing.identity.lastObservedAt
+      evidenceGroups.set(rootReason, group)
+      continue
+    }
     const dedupeIdentity = `exception_${fingerprint([listing.identity.itemId, classification,
-      reasonCodes, decision.recommendedAction])}`
+      effectiveReasons, recommendedAction])}`
     entries.push({ entityKey: listing.identity.itemId, listingKey: listing.key,
       entityType: "EBAY_LIVE_LISTING", title: listing.identity.title,
-      classification, priority: decision.priority, severity, confidence: decision.evidenceStatus,
-      reasonCodes, observedEvidence: {
-        analyticsStatus: listing.metrics.impressions.availability,
-        stockState: listing.stock.state, stockFreshness: listing.stock.freshness.status },
+      classification, priority: effectivePriority, severity, confidence: effectiveConfidence,
+      reasonCodes: effectiveReasons, observedEvidence,
       lastObservationTime: listing.identity.lastObservedAt,
-      recommendedAction: hardOverride ? "HUMAN_REVIEW" : recommendationFor(decision),
+      recommendedAction,
       humanApprovalRequired: true, actionBlockedByEvidence: decision.actionBlockedByInsufficientEvidence,
       experimentProtectionExists: decision.protectionState === "DO_NOT_TOUCH",
-      nextReviewCondition: decision.nextReviewCondition, dedupeIdentity })
+      nextReviewCondition, dedupeIdentity,
+      precedenceApplied: opportunity ? hardOverride || policyOrComplianceBlock
+        ? "CRITICAL_OPERATIONAL_OVERRIDES_OPPORTUNITY"
+        : decision.protectionState === "DO_NOT_TOUCH" ? "EXPERIMENT_GUARDIAN_OVERRIDES_OPPORTUNITY"
+          : identityConflict ? "IDENTITY_CONFLICT_OVERRIDES_OPPORTUNITY"
+            : provenDataQualityBlock ? "PROVEN_DATA_QUALITY_OVERRIDES_OPPORTUNITY"
+              : "CANONICAL_OPPORTUNITY_OVERRIDES_GENERIC_EVIDENCE_BLOCKER" : "MONITOR_EVIDENCE_POLICY",
+      material: !["WAIT", "HEALTHY", "DO_NOT_TOUCH"].includes(classification) })
+  }
+  for (const [rootKey, group] of capabilityGroups) {
+    const reasonCodes = [...group.reasonCodes].sort()
+    entries.push({ entityKey: `CAPABILITY:${rootKey}`, listingKey: null,
+      entityType: "PORTFOLIO_CAPABILITY", title: rootKey.replaceAll(":", " · "),
+      classification: "CAPABILITY_BLOCKED", priority: "MEDIUM", severity: "MEDIUM",
+      confidence: "UNPROVEN", reasonCodes,
+      observedEvidence: { affectedListingCount: group.affectedListingCount,
+        affectedItemIdSample: group.affectedItemIds, sources: [...group.sources].sort(),
+        sampleTruncated: group.affectedListingCount > group.affectedItemIds.length },
+      lastObservationTime: group.observedAt,
+      recommendedAction: "RESTORE_REQUIRED_EVIDENCE_CAPABILITY",
+      humanApprovalRequired: false, actionBlockedByEvidence: true,
+      experimentProtectionExists: false,
+      nextReviewCondition: "CAPABILITY_EVIDENCE_AVAILABLE",
+      dedupeIdentity: `exception_${fingerprint(["CAPABILITY", rootKey])}`,
+      precedenceApplied: "PORTFOLIO_ROOT_CAUSE_GROUPING", material: true })
+  }
+  for (const [rootReason, group] of evidenceGroups) {
+    const reasonCodes = [...group.reasonCodes].sort()
+    entries.push({ entityKey: `EVIDENCE:${rootReason}`, listingKey: null,
+      entityType: "PORTFOLIO_EVIDENCE_GAP", title: "Shared listing evidence gap",
+      classification: "RESEARCH_OR_EVIDENCE", priority: "MEDIUM", severity: "MEDIUM",
+      confidence: "UNPROVEN", reasonCodes,
+      observedEvidence: { affectedListingCount: group.affectedListingCount,
+        affectedItemIdSample: group.affectedItemIds,
+        sampleTruncated: group.affectedListingCount > group.affectedItemIds.length,
+        noListingDefectProven: true }, lastObservationTime: group.observedAt,
+      recommendedAction: "COLLECT_SHARED_REQUIRED_EVIDENCE", humanApprovalRequired: false,
+      actionBlockedByEvidence: true, experimentProtectionExists: false,
+      nextReviewCondition: "SHARED_EVIDENCE_AVAILABLE",
+      dedupeIdentity: `exception_${fingerprint(["EVIDENCE", rootReason])}`,
+      precedenceApplied: "PORTFOLIO_ROOT_CAUSE_GROUPING", material: true })
+  }
+  if (!["AVAILABLE", "COMPLETE"].includes(input.monitor.backend.listingQualityReport.status)) {
+    const reason = input.monitor.backend.listingQualityReport.limitationCode ??
+      "QUALITY_REPORT_UNAVAILABLE"
+    entries.push({ entityKey: "CAPABILITY:QUALITY_REPORT", listingKey: null,
+      entityType: "PORTFOLIO_CAPABILITY", title: "Listing Quality Report unavailable",
+      classification: "CAPABILITY_BLOCKED", priority: "MEDIUM", severity: "MEDIUM",
+      confidence: "UNPROVEN", reasonCodes: [reason, "NO_PROVEN_LISTING_DEFECT"],
+      observedEvidence: { affectedListingCount: input.monitor.listings.length,
+        groupedPortfolioIssue: true }, lastObservationTime: input.monitor.generatedAt,
+      recommendedAction: "IMPORT_CURRENT_QUALITY_REPORT", humanApprovalRequired: false,
+      actionBlockedByEvidence: true, experimentProtectionExists: false,
+      nextReviewCondition: "CURRENT_QUALITY_REPORT_AVAILABLE",
+      dedupeIdentity: `exception_${fingerprint(["CAPABILITY", "QUALITY_REPORT", reason])}`,
+      precedenceApplied: "PORTFOLIO_ROOT_CAUSE_GROUPING", material: true })
   }
   if ((input.monitor.backend.capabilities.registry.humanReviewCount ?? 0) > 0) {
     const registry = input.monitor.backend.capabilities.registry
@@ -109,25 +277,66 @@ export function buildProactiveExceptionQueueV1(input: {
       actionBlockedByEvidence: false, experimentProtectionExists: false,
       nextReviewCondition: "Review unresolved authoritative relationships",
       dedupeIdentity: `exception_${fingerprint(["REGISTRY", registry.humanReviewCount,
-        registry.coveragePercent])}` })
+        registry.coveragePercent])}`, precedenceApplied: "AUTHORITATIVE_IDENTITY_HUMAN_REVIEW",
+      material: true })
   }
   for (const opportunity of (input.opportunities ?? []).filter((row) => row.decision === "ADVANCE")) {
     entries.push({ entityKey: opportunity.opportunityId, entityType: "MARKET_OPPORTUNITY",
-      listingKey: null, title: opportunity.familyLabel, classification: "NEW_OPPORTUNITY",
+      listingKey: null, title: opportunity.familyLabel, classification: "RESEARCH_OR_EVIDENCE",
       priority: opportunity.confidence === "HIGH" ? "HIGH" : "MEDIUM",
       severity: opportunity.confidence === "HIGH" ? "HIGH" : "MEDIUM",
       confidence: opportunity.confidence, reasonCodes: ["OPPORTUNITY_ADVANCE_EVIDENCE"],
       observedEvidence: { opportunityScore: opportunity.score,
         activeCompetitionCount: opportunity.activeCompetitionCount },
-      lastObservationTime: opportunity.observedAt, recommendedAction: "ADVANCE_OPPORTUNITY",
+      lastObservationTime: opportunity.observedAt, recommendedAction: "ADVANCE_OPPORTUNITY_RESEARCH",
       humanApprovalRequired: true, actionBlockedByEvidence: opportunity.score === null,
       experimentProtectionExists: false, nextReviewCondition: "Supplier match required",
       dedupeIdentity: `exception_${fingerprint([opportunity.opportunityId, opportunity.score,
-        opportunity.observedAt])}` })
+        opportunity.observedAt])}`, precedenceApplied: "OPPORTUNITY_RADAR_EVIDENCE",
+      material: true })
   }
   const unique = [...new Map(entries.map((entry) => [entry.dedupeIdentity, entry])).values()]
   return unique.sort((left, right) => severityRank[right.severity] - severityRank[left.severity] ||
+    priorityScoreV2(right) - priorityScoreV2(left) ||
     String(left.entityKey).localeCompare(String(right.entityKey))).slice(0, maximumEntries)
+}
+
+export type DecisionQueueEntryV2 = Record<string, unknown> & {
+  entityKey: string
+  listingKey?: string | null
+  classification: DecisionTaxonomyV2
+  priority: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
+  confidence: string
+  reasonCodes: string[]
+  dedupeIdentity: string
+  material?: boolean
+}
+
+function priorityScoreV2(entry: DecisionQueueEntryV2) {
+  const classScore: Record<DecisionTaxonomyV2, number> = {
+    CRITICAL_OPERATIONAL: 100, ACTIONABLE_COMMERCIAL: 85,
+    RESEARCH_OR_EVIDENCE: 70, HUMAN_REVIEW: 68, CAPABILITY_BLOCKED: 55,
+    REPLACEMENT_CANDIDATE: 75, DO_NOT_TOUCH: 20, WAIT: 10, HEALTHY: 0,
+  }
+  const confidence = entry.confidence === "HIGH" || entry.confidence === "AVAILABLE" ? 10
+    : entry.confidence === "MEDIUM" || entry.confidence === "PARTIAL" ? 5 : 0
+  return classScore[entry.classification] + severityRank[entry.severity] * 5 + confidence
+}
+
+export function selectMaterialPrioritiesV2(
+  entries: DecisionQueueEntryV2[],
+  maximum = 20,
+) {
+  const materialClasses = new Set<DecisionTaxonomyV2>([
+    "CRITICAL_OPERATIONAL", "ACTIONABLE_COMMERCIAL", "RESEARCH_OR_EVIDENCE",
+    "CAPABILITY_BLOCKED", "HUMAN_REVIEW", "REPLACEMENT_CANDIDATE",
+  ])
+  return [...entries].filter((entry) => entry.material !== false &&
+    materialClasses.has(entry.classification))
+    .sort((left, right) => priorityScoreV2(right) - priorityScoreV2(left) ||
+      left.dedupeIdentity.localeCompare(right.dedupeIdentity))
+    .slice(0, Math.min(100, Math.max(1, maximum)))
 }
 
 export function evaluateReplaceKillIntelligenceV1(input: {

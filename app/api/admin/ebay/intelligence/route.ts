@@ -9,7 +9,8 @@ import { getEbayCommercialMonitorLiveReadonly } from
   "@/lib/ebay/ebay-commercial-monitor-live-readonly"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
-import { buildProactiveExceptionQueueV1, evaluateReplaceKillIntelligenceV1 } from
+import { buildProactiveExceptionQueueV1, evaluateReplaceKillIntelligenceV1,
+  selectMaterialPrioritiesV2 } from
   "@/lib/ebay/ebay-seller-os-portfolio-intelligence-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
@@ -50,14 +51,21 @@ export async function GET(req: Request) {
     : [])
   return NextResponse.json({ success: true, generatedAt: monitor.generatedAt,
     decisions: {
-      todaysPriorities: queue.filter((row) => row.classification !== "WAIT_HEALTHY").slice(0, 20),
-      exceptionQueue: queue, commercialInterventions: queue.filter((row) =>
-        row.classification === "COMMERCIAL_INTERVENTION"),
+      taxonomyVersion: "DECISION_TAXONOMY_V2_2026_08_12",
+      todaysPriorities: selectMaterialPrioritiesV2(queue, 20),
+      exceptionQueue: queue,
+      criticalNow: queue.filter((row) => row.classification === "CRITICAL_OPERATIONAL"),
+      actionable: queue.filter((row) => row.classification === "ACTIONABLE_COMMERCIAL"),
+      researchOrEvidence: queue.filter((row) => row.classification === "RESEARCH_OR_EVIDENCE"),
+      capabilityBlockers: queue.filter((row) => row.classification === "CAPABILITY_BLOCKED"),
+      commercialInterventions: queue.filter((row) =>
+        row.classification === "ACTIONABLE_COMMERCIAL"),
       humanReview: queue.filter((row) => row.classification === "HUMAN_REVIEW"),
       doNotTouch: queue.filter((row) => row.classification === "DO_NOT_TOUCH"),
       replacementCandidates: decisionRows.filter((row) => row.replacement &&
         ["REPLACE_CANDIDATE", "KILL_REVIEW"].includes(row.replacement.status)),
-      waitingHealthy: queue.filter((row) => row.classification === "WAIT_HEALTHY"),
+      waiting: queue.filter((row) => row.classification === "WAIT"),
+      healthy: queue.filter((row) => row.classification === "HEALTHY"),
       rows: decisionRows,
     },
     experiments: {
@@ -69,7 +77,11 @@ export async function GET(req: Request) {
       hardOverrides: experimentRows.filter((row) => row.hardOverride), rows: experimentRows,
     },
     learning: {
-      status: monitor.learning.status, source: monitor.learning.source,
+      status: monitor.learning.status,
+      storedLearningStatus: monitor.learning.categoryAdjustments.length ? "AVAILABLE" : "NONE",
+      observedSource: monitor.learning.categoryAdjustments.length ? monitor.learning.source : null,
+      eligibleSources: ["EXPERIMENT_OUTCOME", "LISTING_OUTCOME", "FAMILY_OUTCOME",
+        "CATEGORY_OUTCOME"],
       evidenceTimestamp: monitor.learning.evidenceTimestamp,
       listingLevelLearnings: [], familyCandidates: [],
       categoryCandidates: monitor.learning.categoryAdjustments,

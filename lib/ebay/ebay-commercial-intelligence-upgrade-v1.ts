@@ -5,6 +5,10 @@ import type { MarketEvidenceV1, MarketResearchRequestV1 } from
 
 export const EBAY_COMMERCIAL_INTELLIGENCE_UPGRADE_VERSION =
   "EBAY_COMMERCIAL_INTELLIGENCE_UPGRADE_V1_2026_08_12"
+export const CANONICAL_OPPORTUNITY_RESULT_VERSION_V2 =
+  "CANONICAL_OPPORTUNITY_RESULT_V2_2026_08_12"
+export const CANONICAL_OPPORTUNITY_DECISION_VERSION_V2 =
+  "CANONICAL_OPPORTUNITY_DECISION_V2_2026_08_12"
 export const OPPORTUNITY_BATCH_MAX_CONCURRENCY = 4
 export const OPPORTUNITY_BATCH_CHUNK_SIZE = 25
 export const OPPORTUNITY_QUERY_MAX_PER_CANDIDATE = 2
@@ -41,6 +45,14 @@ export type KeywordRoleV2 =
   | "GENERIC"
   | "REJECT"
 
+export type PriceRepresentativenessStateV2 =
+  | "PRICE_CORE_CLUSTER"
+  | "PRICE_PREMIUM"
+  | "PRICE_LOW_OUTLIER"
+  | "PRICE_HIGH_OUTLIER"
+  | "PRICE_OUTLIER_UNPROVEN"
+  | "PRICE_REPRESENTATIVE_UNKNOWN"
+
 type EconomicsEvidenceV1 = {
   supplierCost?: number | null
   shippingCost?: number | null
@@ -72,6 +84,9 @@ const GENERIC_WORDS = new Set([
 const PRODUCT_HEADS = new Set([
   "fan", "conditioner", "holder", "organizer", "adapter", "charger", "case", "bottle",
   "sprayer", "cleaner", "lamp", "light", "pump", "filter", "brush", "rack", "cover",
+])
+const PROMOTIONAL_CONTAMINANTS = new Set([
+  "best", "deal", "free", "hot", "new", "sale", "shipping",
 ])
 
 const FAMILY_PATTERNS = [
@@ -450,21 +465,91 @@ function phraseNgrams(value: string) {
   return phrases
 }
 
-function classifyKeywordRole(phrase: string, canonicalFamily: string | null): KeywordRoleV2 {
+export function normalizeCommercialKeywordPhraseV2(
+  value: string,
+  canonicalFamily: string | null = null,
+) {
+  const original = normalize(value)
+  const rawTokens = original.split(/\s+/).filter(Boolean)
+  const contaminants = unique(rawTokens.filter((token) =>
+    PROMOTIONAL_CONTAMINANTS.has(token)))
+  if (contaminants.length) return {
+    status: "REJECT" as const,
+    phrase: original,
+    originalPhrase: original,
+    reasonCodes: ["REJECT_PROMOTIONAL_CONTAMINATION"],
+    contaminants,
+  }
+  const tokens = words(value)
+  const heads = unique(tokens.filter((token) => PRODUCT_HEADS.has(token)))
+  if (heads.length > 1) return {
+    status: "REJECT" as const,
+    phrase: original,
+    originalPhrase: original,
+    reasonCodes: ["REJECT_CONFLICTING_PRODUCT_HEADS"],
+    contaminants: [],
+  }
+  if (!tokens.length) return {
+    status: "REJECT" as const,
+    phrase: original,
+    originalPhrase: original,
+    reasonCodes: ["REJECT_EMPTY_COMMERCIAL_PHRASE"],
+    contaminants: [],
+  }
+  let ordered = [...tokens]
+  if (tokens.includes("fan")) {
+    const hasNeck = tokens.includes("neck") || tokens.includes("neckband")
+    const qualifiers = tokens.filter((token) =>
+      !["fan", "fans", "neck", "neckband"].includes(token))
+    const portable = qualifiers.filter((token) => token === "portable")
+    const remaining = qualifiers.filter((token) => token !== "portable")
+    ordered = [...portable, ...remaining, ...(hasNeck ? ["neck"] : []), "fan"]
+  }
+  const phrase = unique(ordered).join(" ")
+  const changed = phrase !== original
+  const family = words(canonicalFamily)
+  const missingCoreQualifier = family.includes("neck") && phrase.includes("fan") &&
+    !phrase.split(" ").includes("neck")
+  return {
+    status: "NORMALIZED" as const,
+    phrase,
+    originalPhrase: original,
+    reasonCodes: unique([
+      ...(changed ? ["CANONICAL_COMMERCIAL_WORD_ORDER"] : ["NATURAL_WORD_ORDER_OBSERVED"]),
+      ...(missingCoreQualifier ? ["CANONICAL_FAMILY_QUALIFIER_MISSING"] : []),
+    ]),
+    contaminants: [],
+  }
+}
+
+function classifyKeywordRole(
+  phrase: string,
+  canonicalFamily: string | null,
+  rejectionReason: string | null = null,
+): KeywordRoleV2 {
   const normalized = normalize(phrase)
   const phraseWords = words(phrase)
   const familyWords = words(canonicalFamily)
   const hasProductHead = phraseWords.some((word) => PRODUCT_HEADS.has(word))
   const isCapacity = /\b\d{3,6}\s*(?:m\s*)?ah\b/i.test(phrase)
   const nonsense = /\b(?:rechargeable\s+speed\s+portable|speed\s+portable\s+neck|fan\s+rechargeable\s+speed|black\s+personal|conditioner\s+\d+\s+mah\s+neck)\b/i.test(normalized)
-  if (nonsense || (!hasProductHead && phraseWords.length > 1 &&
+  if (rejectionReason || nonsense || (!hasProductHead && phraseWords.length > 1 &&
       phraseWords.every((word) => ATTRIBUTE_WORDS.has(word) || /^\d+$/.test(word)))) return "REJECT"
   if (phraseWords.length === 1 && GENERIC_WORDS.has(phraseWords[0])) return "GENERIC"
   if (isCapacity || phraseWords.every((word) => COLOR_WORDS.has(word) || /^\d+$/.test(word))) {
     return "ATTRIBUTE"
   }
+  if (!hasProductHead && phraseWords.length === 1 &&
+      ["rechargeable", "usb", "usb-c"].includes(phraseWords[0])) return "POWER"
   if (normalized === normalize(canonicalFamily)) return "CORE_PRODUCT"
+  if (familyWords.includes("neck") && phraseWords.includes("fan") &&
+      !phraseWords.includes("neck")) return phraseWords.length > 2 ? "REJECT" : "GENERIC"
+  if (hasProductHead && phraseWords.some((word) => /^(?:\d+-?)?speeds?$/.test(word))) {
+    return "FEATURE"
+  }
+  if (hasProductHead && phraseWords.includes("cooling")) return "BENEFIT"
   if (hasProductHead && phraseWords.includes("rechargeable")) return "POWER"
+  if (normalized === "neck fan" && familyWords.includes("neck")) return "CORE_PRODUCT"
   if (hasProductHead && phraseWords.some((word) => ["wearable", "neck", "neckband", "handheld"].includes(word))) {
     if (normalized !== "neck fan") return "FORM_FACTOR"
   }
@@ -491,7 +576,7 @@ export function buildKeywordIntelligenceV2(input: {
   const allowedEvidence = new Set(input.comparables.filter((row) =>
     ["STRICT_COMPARABLE", "FAMILY_COMPARABLE"].includes(row.classification)).map((row) => row.evidenceId))
   const evidence = input.evidence.filter((row) => allowedEvidence.has(row.evidenceId))
-  const candidates = unique([
+  const rawCandidates = unique([
     ...(canonicalFamily ? [normalize(canonicalFamily)] : []),
     ...input.canonical.fingerprint.coreProduct ? [input.canonical.fingerprint.coreProduct] : [],
     ...input.canonical.fingerprint.formFactor?.includes("wearable") &&
@@ -501,20 +586,47 @@ export function buildKeywordIntelligenceV2(input: {
       ? [`rechargeable ${input.canonical.fingerprint.coreProduct}`] : [],
     ...input.canonical.attributes,
     ...evidence.flatMap((row) => phraseNgrams(row.title ?? "")),
-  ]).slice(0, 160)
-  const entries = candidates.map((phrase) => {
-    const role = classifyKeywordRole(phrase, canonicalFamily)
+  ]).slice(0, 200)
+  const candidateMap = new Map<string, { phrase: string; sourcePhrases: string[];
+    normalizationReasonCodes: string[]; rejectionReason: string | null }>()
+  for (const rawPhrase of rawCandidates) {
+    const normalizedPhrase = normalizeCommercialKeywordPhraseV2(rawPhrase, canonicalFamily)
+    if (!normalizedPhrase.phrase) continue
+    const current = candidateMap.get(normalizedPhrase.phrase)
+    candidateMap.set(normalizedPhrase.phrase, {
+      phrase: normalizedPhrase.phrase,
+      sourcePhrases: unique([...(current?.sourcePhrases ?? []), normalize(rawPhrase)]),
+      normalizationReasonCodes: unique([...(current?.normalizationReasonCodes ?? []),
+        ...normalizedPhrase.reasonCodes]),
+      rejectionReason: current?.rejectionReason ??
+        (normalizedPhrase.status === "REJECT" ? normalizedPhrase.reasonCodes[0] : null),
+    })
+  }
+  const entries = [...candidateMap.values()].map((candidate) => {
+    const phrase = candidate.phrase
+    const role = classifyKeywordRole(phrase, canonicalFamily, candidate.rejectionReason)
     const phraseWords = words(phrase)
     const familyWords = words(canonicalFamily)
-    const supportingRows = evidence.filter((row) => normalize(row.title).includes(normalize(phrase)))
+    const supportingRows = evidence.filter((row) => {
+      const titleWords = new Set(words(row.title))
+      return phraseWords.every((word) => titleWords.has(word))
+    })
     const sellers = new Set(supportingRows.map((row) => row.sellerReferenceHash).filter(Boolean)).size
     const productHeadCorrectness = phraseWords.some((word) => PRODUCT_HEADS.has(word)) ? 100 : 0
-    const familyIdentity = familyWords.length ? overlap(phraseWords, familyWords) * 100 : 0
-    const naturalPhrase = role === "REJECT" ? 0 : phraseWords.length >= 2 && phraseWords.length <= 4 ? 90
-      : phraseWords.length === 1 ? 35 : 45
-    const contaminationPenalty = role === "REJECT" ? 70 : role === "ATTRIBUTE" ? 35 : 0
-    const genericPenalty = role === "GENERIC" ? 55 : 0
-    const relevance = score(familyIdentity * .42 + productHeadCorrectness * .28 + naturalPhrase * .30 -
+    const familySet = new Set(familyWords)
+    const familyIdentity = familyWords.length
+      ? phraseWords.filter((word) => familySet.has(word)).length / familyWords.length * 100 : 0
+    const naturalOrderObserved = candidate.sourcePhrases.some((source) => source === phrase)
+    const naturalPhrase = role === "REJECT" ? 0
+      : naturalOrderObserved && phraseWords.length >= 2 && phraseWords.length <= 4 ? 95
+        : phraseWords.length >= 2 && phraseWords.length <= 4 ? 55
+          : phraseWords.length === 1 ? 30 : 40
+    const productIntent = productHeadCorrectness && familyIdentity >= 60 ? 100
+      : productHeadCorrectness ? 45 : 0
+    const contaminationPenalty = role === "REJECT" ? 85 : role === "ATTRIBUTE" ? 40 : 0
+    const genericPenalty = role === "GENERIC" ? 65 : 0
+    const relevance = score(familyIdentity * .42 + productHeadCorrectness * .25 +
+      naturalPhrase * .20 + productIntent * .13 -
       contaminationPenalty - genericPenalty)
     const categoryConsistency = supportingRows.filter((row) => row.categoryId).length
       / Math.max(1, supportingRows.length)
@@ -533,21 +645,30 @@ export function buildKeywordIntelligenceV2(input: {
       opportunityScore: opportunity,
       independentComparableSupport: supportingRows.length,
       sellerDiversity: sellers,
+      normalizedFrom: candidate.sourcePhrases,
       searchVolume: { status: "UNPROVEN" as const, value: null, source: null },
       reasonCodes: unique([
-        role === "REJECT" ? "UNNATURAL_OR_PRODUCT_HEAD_MISSING" : "SEMANTIC_ROLE_ASSIGNED",
+        ...(candidate.rejectionReason ? [candidate.rejectionReason] : []),
+        ...candidate.normalizationReasonCodes,
+        role === "REJECT" && !candidate.rejectionReason
+          ? "UNNATURAL_OR_PRODUCT_HEAD_MISSING" : "SEMANTIC_ROLE_ASSIGNED",
         ...(role === "GENERIC" ? ["GENERIC_FRAGMENT_PENALTY"] : []),
         ...(role === "ATTRIBUTE" ? ["ATTRIBUTE_NOT_CORE_FAMILY"] : []),
+        ...(!naturalOrderObserved ? ["NATURAL_COMMERCIAL_PHRASE_PENALTY"] : []),
         ...(supportingRows.length ? ["OBSERVED_COMPARABLE_SUPPORT"] : ["NO_INDEPENDENT_SUPPORT"]),
       ]),
     }
   }).sort((left, right) => right.opportunityScore - left.opportunityScore ||
     right.relevanceScore - left.relevanceScore || left.phrase.localeCompare(right.phrase))
   const accepted = entries.filter((row) => !["REJECT", "GENERIC", "ATTRIBUTE"].includes(row.role) &&
-    row.relevanceScore >= 60 && row.independentComparableSupport > 0)
-  const primary = accepted.find((row) => row.role === "CORE_PRODUCT") ?? null
+    row.relevanceScore >= 60 && row.independentComparableSupport > 0 &&
+    words(row.phrase).some((word) => PRODUCT_HEADS.has(word)))
+  const primary = accepted.find((row) => row.role === "CORE_PRODUCT" &&
+    !/^\d/.test(row.phrase)) ?? null
   const secondary = accepted.filter((row) => row.phrase !== primary?.phrase).slice(0, 5)
-  const attributeTerms = entries.filter((row) => row.role === "ATTRIBUTE" && row.relevanceScore > 0)
+  const attributeTerms = entries.filter((row) => (row.role === "ATTRIBUTE" ||
+    (row.role === "POWER" && !words(row.phrase).some((word) => PRODUCT_HEADS.has(word)))) &&
+    row.relevanceScore > 0)
   const rejected = entries.filter((row) => row.role === "REJECT" || row.relevanceScore < 35)
   return {
     engineVersion: "KEYWORD_INTELLIGENCE_V2",
@@ -565,7 +686,10 @@ export function buildKeywordIntelligenceV2(input: {
       ATTRIBUTE_TERMS: attributeTerms.map((row) => row.phrase),
       REJECTED_TERMS: rejected.slice(0, 30).map((row) => row.phrase),
       REJECTION_REASON: rejected.slice(0, 30).map((row) => ({ term: row.phrase,
-        reason: row.reasonCodes[0] })), requiresProductTruth: true,
+        reason: row.reasonCodes[0] })),
+      REJECTION_REASONS: rejected.slice(0, 30).map((row) => ({ term: row.phrase,
+        reason: row.reasonCodes[0] })),
+      requiresProductTruth: true,
       absurdConcatenationsAllowed: false },
   }
 }
@@ -599,6 +723,88 @@ function economics(input?: EconomicsEvidenceV1) {
     promotedFeeRate: promoted, missingCostsAssumedZero: false as const }
 }
 
+function buildPriceRepresentativenessV2(
+  strict: MarketEvidenceV1[],
+  currency: string | null,
+) {
+  const priced = strict.filter((row): row is MarketEvidenceV1 & { price: number } =>
+    typeof row.price === "number" && Number.isFinite(row.price))
+  const prices = priced.map((row) => row.price)
+  const p25 = percentile(prices, .25)
+  const p75 = percentile(prices, .75)
+  const sampleSufficientForSignal = prices.length >= 4 && p25 !== null && p75 !== null &&
+    currency !== null
+  const iqr = sampleSufficientForSignal && p25 !== null && p75 !== null
+    ? p75 - p25 : null
+  const lowerFence = iqr === null || p25 === null ? null : p25 - iqr * 1.5
+  const upperFence = iqr === null || p75 === null ? null : p75 + iqr * 1.5
+  const assessments = priced.map((row) => {
+    let state: PriceRepresentativenessStateV2 = "PRICE_OUTLIER_UNPROVEN"
+    if (sampleSufficientForSignal && lowerFence !== null && row.price < lowerFence) {
+      state = "PRICE_LOW_OUTLIER"
+    } else if (sampleSufficientForSignal && upperFence !== null && row.price > upperFence) {
+      state = "PRICE_HIGH_OUTLIER"
+    } else if (sampleSufficientForSignal && p75 !== null && row.price > p75) {
+      state = "PRICE_PREMIUM"
+    } else if (sampleSufficientForSignal) {
+      state = "PRICE_CORE_CLUSTER"
+    }
+    const possibleOutlier = ["PRICE_LOW_OUTLIER", "PRICE_HIGH_OUTLIER"].includes(state)
+    return {
+      evidenceId: row.evidenceId,
+      itemId: row.itemId,
+      title: row.title,
+      price: row.price,
+      currency: row.currency,
+      physicalComparableClassification: "STRICT_COMPARABLE" as const,
+      priceRepresentativeness: state,
+      outlierAssessment: possibleOutlier
+        ? "POSSIBLE_PRICE_OUTLIER" as const : "NO_OUTLIER_SIGNAL" as const,
+      reasonCode: !sampleSufficientForSignal ? "TINY_SAMPLE_OUTLIER_UNPROVEN" as const
+        : state === "PRICE_LOW_OUTLIER" ? "BELOW_IQR_LOWER_FENCE" as const
+          : state === "PRICE_HIGH_OUTLIER" ? "ABOVE_IQR_UPPER_FENCE" as const
+            : state === "PRICE_PREMIUM" ? "ABOVE_CORE_INTERQUARTILE_BAND" as const
+              : "WITHIN_CORE_INTERQUARTILE_BAND" as const,
+      removedFromPhysicalComparables: false as const,
+    }
+  })
+  const outliers = assessments.filter((row) =>
+    ["PRICE_LOW_OUTLIER", "PRICE_HIGH_OUTLIER"].includes(row.priceRepresentativeness))
+  const coreEvidenceIds = new Set(assessments.filter((row) =>
+    !outliers.some((outlier) => outlier.evidenceId === row.evidenceId)).map((row) => row.evidenceId))
+  const corePrices = priced.filter((row) => coreEvidenceIds.has(row.evidenceId)).map((row) => row.price)
+  const robustPrices = corePrices.length >= 3 ? corePrices : prices
+  const robustCorePriceBand = sampleSufficientForSignal && robustPrices.length >= 3 ? {
+    p25: percentile(robustPrices, .25),
+    median: percentile(robustPrices, .5),
+    p75: percentile(robustPrices, .75),
+    range: { minimum: percentile(robustPrices, 0), maximum: percentile(robustPrices, 1) },
+    currency,
+    possibleOutliersExcludedFromRobustBandOnly: outliers.length,
+  } : null
+  return {
+    engineVersion: "PRICE_REPRESENTATIVENESS_V2" as const,
+    sampleSize: prices.length,
+    tinySampleConservative: prices.length < 8,
+    physicalComparabilityPreserved: true as const,
+    assessments,
+    ROBUST_CORE_PRICE_BAND: robustCorePriceBand,
+    PRICE_OUTLIER_COUNT: outliers.length,
+    PRICE_OUTLIER_LIST: outliers,
+    PRICE_OUTLIER_REASON: !sampleSufficientForSignal
+      ? "TINY_SAMPLE_OUTLIER_UNPROVEN" as const
+      : outliers.length ? "POSSIBLE_IQR_OUTLIER_TINY_SAMPLE" as const
+        : "NO_IQR_OUTLIER_SIGNAL" as const,
+    robustCorePriceBand,
+    priceOutlierCount: outliers.length,
+    priceOutlierList: outliers,
+    priceOutlierReason: !sampleSufficientForSignal
+      ? "TINY_SAMPLE_OUTLIER_UNPROVEN" as const
+      : outliers.length ? "POSSIBLE_IQR_OUTLIER_TINY_SAMPLE" as const
+        : "NO_IQR_OUTLIER_SIGNAL" as const,
+  }
+}
+
 export function buildPriceOpportunityV2(input: {
   evidence: MarketEvidenceV1[]
   comparables: Array<{ evidenceId: string; classification: ComparableFingerprintStateV2 }>
@@ -610,6 +816,10 @@ export function buildPriceOpportunityV2(input: {
     typeof row.price === "number")
   const prices = strict.map((row) => row.price as number)
   const currencies = unique(strict.map((row) => row.currency).filter((value): value is string => Boolean(value)))
+  const representativeness = buildPriceRepresentativenessV2(
+    strict,
+    currencies.length === 1 ? currencies[0] : null,
+  )
   const cost = economics(input.economics)
   const median = percentile(prices, .5)
   const completeMarketAndEconomics = prices.length >= 3 && currencies.length === 1 &&
@@ -630,6 +840,11 @@ export function buildPriceOpportunityV2(input: {
     priceBand: prices.length ? { p25: percentile(prices, .25), median, p75: percentile(prices, .75),
       range: { minimum: percentile(prices, 0), maximum: percentile(prices, 1) },
       currency: currencies.length === 1 ? currencies[0] : null } : null,
+    priceRepresentativeness: representativeness,
+    ROBUST_CORE_PRICE_BAND: representativeness.ROBUST_CORE_PRICE_BAND,
+    PRICE_OUTLIER_COUNT: representativeness.PRICE_OUTLIER_COUNT,
+    PRICE_OUTLIER_LIST: representativeness.PRICE_OUTLIER_LIST,
+    PRICE_OUTLIER_REASON: representativeness.PRICE_OUTLIER_REASON,
     economics: { ...cost, contribution,
       margin: contribution !== null && median !== null && median > 0
         ? Math.round(contribution / median * 10_000) / 100 : null },
@@ -650,7 +865,7 @@ export function buildReferenceStrategyV1(input: {
     confidence: number; riskCodes: string[] }>
 }) {
   const byId = new Map(input.evidence.map((row) => [row.evidenceId, row]))
-  const candidates = input.comparables.map((assessment) => {
+  const ranked = input.comparables.map((assessment) => {
     const row = byId.get(assessment.evidenceId)
     const risks = unique([
       ...assessment.riskCodes,
@@ -669,17 +884,33 @@ export function buildReferenceStrategyV1(input: {
     const decision = !eligible || risks.some((risk) =>
       /(?:PACK_COUNT|FORM_FACTOR|VARIANT|CATEGORY)_CONFLICT/.test(risk))
       ? "REJECT" as const : quality >= 80 ? "USE_AS_REFERENCE" as const : "CANDIDATE" as const
+    const tieBreak = {
+      strictComparability: assessment.classification === "STRICT_COMPARABLE" ? 2
+        : assessment.classification === "FAMILY_COMPARABLE" ? 1 : 0,
+      categoryMatch: risks.includes("CATEGORY_CONFLICT") ? 0 : row?.categoryId ? 1 : 0,
+      packMatch: risks.some((risk) => /PACK|BUNDLE/.test(risk)) ? 0 : 1,
+      formFactorMatch: risks.includes("FORM_FACTOR_CONFLICT") ? 0 : 1,
+      variantCompatibility: risks.some((risk) => /VARIANT/.test(risk)) ? 0 : 1,
+      identityContaminationRisk: assessment.riskCodes.filter((risk) =>
+        /BRAND_CONTAMINATION|MODEL_VARIANT|IDENTITY_CONFLICT/.test(risk)).length,
+      aspectStructureCompleteness: Math.min(40, Object.keys(row?.itemSpecifics ?? {}).length),
+      marketEvidenceQuality: assessment.confidence,
+    }
     return {
       evidenceId: assessment.evidenceId,
       itemId: row?.itemId ?? null,
       title: row?.title ?? null,
       categoryId: row?.categoryId ?? null,
       REFERENCE_QUALITY_SCORE: quality,
+      REFERENCE_STRUCTURE_QUALITY_SCORE: quality,
       REFERENCE_RISK_CODES: risks,
       REFERENCE_DECISION: decision,
       referenceQualityScore: quality,
+      referenceStructureQualityScore: quality,
+      scoreMeaning: "SELL_ONE_LIKE_THIS_STRUCTURAL_SUITABILITY_NOT_OVERALL_LISTING_QUALITY" as const,
       referenceRiskCodes: risks,
       referenceDecision: decision,
+      tieBreak,
       handoff: decision === "REJECT" ? null : {
         mode: "SELL_ONE_LIKE_THIS_READ_ONLY_HANDOFF" as const,
         referenceItemId: row?.itemId ?? null,
@@ -699,10 +930,34 @@ export function buildReferenceStrategyV1(input: {
         ebayWrites: 0 as const,
       },
     }
-  }).sort((left, right) => right.referenceQualityScore - left.referenceQualityScore ||
+  }).sort((left, right) => right.referenceStructureQualityScore - left.referenceStructureQualityScore ||
+    right.tieBreak.strictComparability - left.tieBreak.strictComparability ||
+    right.tieBreak.categoryMatch - left.tieBreak.categoryMatch ||
+    right.tieBreak.packMatch - left.tieBreak.packMatch ||
+    right.tieBreak.formFactorMatch - left.tieBreak.formFactorMatch ||
+    right.tieBreak.variantCompatibility - left.tieBreak.variantCompatibility ||
+    left.tieBreak.identityContaminationRisk - right.tieBreak.identityContaminationRisk ||
+    right.tieBreak.aspectStructureCompleteness - left.tieBreak.aspectStructureCompleteness ||
+    right.tieBreak.marketEvidenceQuality - left.tieBreak.marketEvidenceQuality ||
+    String(left.itemId ?? left.evidenceId).localeCompare(String(right.itemId ?? right.evidenceId)) ||
     left.evidenceId.localeCompare(right.evidenceId))
-  return { candidates, selected: candidates.find((row) => row.referenceDecision === "USE_AS_REFERENCE") ??
-    candidates.find((row) => row.referenceDecision === "CANDIDATE") ?? null,
+  const eligible = ranked.filter((row) => row.referenceDecision !== "REJECT")
+  const primaryId = eligible[0]?.evidenceId ?? null
+  const runnerUpId = eligible[1]?.evidenceId ?? null
+  const candidates = ranked.map((row, index) => ({ ...row,
+    referenceRank: index + 1,
+    referenceRole: row.evidenceId === primaryId ? "PRIMARY_REFERENCE" as const
+      : row.evidenceId === runnerUpId ? "RUNNER_UP_REFERENCE" as const
+        : row.referenceDecision === "REJECT" ? "REJECTED_REFERENCE" as const
+          : "REFERENCE_CANDIDATE" as const }))
+  return { engineVersion: "REFERENCE_STRATEGY_V1_TIEBREAK_V2" as const,
+    candidates,
+    selected: candidates.find((row) => row.referenceRole === "PRIMARY_REFERENCE") ?? null,
+    primaryReference: candidates.find((row) => row.referenceRole === "PRIMARY_REFERENCE") ?? null,
+    runnerUpReference: candidates.find((row) => row.referenceRole === "RUNNER_UP_REFERENCE") ?? null,
+    tieBreakPolicy: ["STRICT_COMPARABILITY", "CATEGORY_MATCH", "PACK_MATCH",
+      "FORM_FACTOR_MATCH", "VARIANT_COMPATIBILITY", "IDENTITY_CONTAMINATION_RISK",
+      "ASPECT_STRUCTURE_COMPLETENESS", "MARKET_EVIDENCE_QUALITY", "STABLE_ITEM_ID"],
   competitorContentCopied: false as const, ebayWrites: 0 as const }
 }
 
@@ -835,9 +1090,148 @@ export function buildCommercialIntelligenceUpgradeV1(input: {
     finalDecision = "ADVANCE_TO_PRODUCT_CASE_READINESS"
     nextBestAction = reference.selected ? "REVIEW_READ_ONLY_REFERENCE_HANDOFF" : "NEED_REFERENCE_REVIEW"
   }
+  const researchPriority = attractivenessScore >= 70 ? "HIGH" as const
+    : attractivenessScore >= 45 ? "MEDIUM" as const : "LOW" as const
+  const commercialRecommendation = {
+    productFamily: canonical.canonicalFamily,
+    canonicalFamilyConfidence: canonical.confidence,
+    primaryKeyword: keyword.primaryKeyword,
+    secondaryKeywords: keyword.secondaryKeywords,
+    keywordOpportunity: keyword.keywordOpportunity,
+    searchVolume: "UNPROVEN" as const,
+    strictComparables: strict.length,
+    observedActiveMarket: input.observedResultCount ?? active.length,
+    marketCompetitionTotal: "UNPROVEN" as const,
+    priceBand: price.priceBand,
+    robustCorePriceBand: price.ROBUST_CORE_PRICE_BAND,
+    median: price.priceBand?.median ?? null,
+    recommendedEntryPrice: price.recommendedEntryPrice,
+    activeMarketAttractiveness: activeEvidenceSufficient
+      ? band(attractivenessScore) : "UNPROVEN" as const,
+    activeMarketAttractivenessScore: activeEvidenceSufficient ? attractivenessScore : null,
+    demandValidation: demandValidation.status,
+    supplierMatch: input.supplier?.identityStatus ?? "UNPROVEN",
+    stock: input.supplier?.stockStatus ?? "UNKNOWN",
+    economics: price.economics.status,
+    referenceListing: reference.selected?.itemId ?? null,
+    referenceStructureQuality: reference.selected?.referenceStructureQualityScore ?? null,
+    referenceQuality: reference.selected?.referenceStructureQualityScore ?? null,
+    useAsReference: reference.selected?.referenceDecision ?? "UNPROVEN",
+    finalDecision,
+    nextBestAction,
+    reasonCodes: unique([finalDecision, nextBestAction, ...nextEvidence.slice(0, 3)]),
+  }
+  const versions = {
+    analysisVersion: "ONE_BUTTON_OPPORTUNITY_ANALYSIS_V2" as const,
+    canonicalResultVersion: CANONICAL_OPPORTUNITY_RESULT_VERSION_V2,
+    seedResolutionVersion: "MULTI_SEED_CONSENSUS_V1" as const,
+    comparableVersion: "STRICT_COMPARABLE_V2" as const,
+    keywordVersion: "KEYWORD_INTELLIGENCE_V2_NORMALIZED" as const,
+    priceVersion: "PRICE_OPPORTUNITY_V2_REPRESENTATIVENESS" as const,
+    referenceVersion: "REFERENCE_STRATEGY_V1_TIEBREAK_V2" as const,
+    decisionVersion: CANONICAL_OPPORTUNITY_DECISION_VERSION_V2,
+  }
+  const decisionClassification = identityConflict ? "HUMAN_REVIEW" as const
+    : ["ADVANCE_TO_SUPPLIER_VALIDATION", "ADVANCE_TO_ECONOMICS", "RESEARCH_REQUIRED"]
+        .includes(finalDecision) ? "RESEARCH_OR_EVIDENCE" as const
+      : finalDecision === "ADVANCE_TO_PRODUCT_CASE_READINESS"
+        ? "ACTIONABLE_COMMERCIAL" as const : "WAIT" as const
+  const decisionIntegration = {
+    contractVersion: CANONICAL_OPPORTUNITY_DECISION_VERSION_V2,
+    sourceItemId: input.sourceItemId ?? null,
+    entityKey: input.sourceItemId ??
+      `opportunity:${hash(`${canonical.canonicalFamily ?? "unproven"}:${input.request.seedValue}`).slice(0, 24)}`,
+    canonicalFamily: canonical.canonicalFamily,
+    canonicalFamilyConfidence: canonical.confidence,
+    classification: decisionClassification,
+    finalDecision,
+    nextBestAction,
+    priority: researchPriority,
+    severity: identityConflict ? "HIGH" as const
+      : researchPriority === "HIGH" ? "HIGH" as const : "MEDIUM" as const,
+    confidence: canonical.confidence >= 85 ? "HIGH" as const
+      : canonical.confidence >= 70 ? "MEDIUM" as const : "LOW" as const,
+    reasonCodes: unique([
+      "CANONICAL_OPPORTUNITY_RESULT_V2",
+      ...(nextBestAction === "NEED_EXACT_SUPPLIER_MATCH"
+        ? ["SUPPLIER_VALIDATION_REQUIRED"] : []),
+      ...(researchPriority === "HIGH" ? ["HIGH_RESEARCH_PRIORITY"] : []),
+      finalDecision,
+      nextBestAction,
+    ]),
+    observedEvidence: {
+      activeMarketAttractiveness: activeEvidenceSufficient ? attractivenessScore : null,
+      keywordOpportunity: keyword.keywordOpportunity,
+      strictComparableCount: strict.length,
+      observedActiveMarket: input.observedResultCount ?? active.length,
+      supplierMatch: input.supplier?.identityStatus ?? "UNPROVEN",
+      stock: input.supplier?.stockStatus ?? "UNKNOWN",
+      economics: price.economics.status,
+    },
+    nextReviewCondition: nextBestAction,
+    precedencePolicy: "CRITICAL_OR_IDENTITY_OR_PROVEN_QUALITY_BEFORE_CANONICAL_OPPORTUNITY" as const,
+    legacyEvidenceBlockerMayOverride: false as const,
+    actionExecutionAllowed: false as const,
+  }
+  const canonicalOpportunityCase = {
+    contractVersion: "CANONICAL_OPPORTUNITY_CASE_V2" as const,
+    authoritativeResultVersion: CANONICAL_OPPORTUNITY_RESULT_VERSION_V2,
+    canonicalFamily: canonical.canonicalFamily,
+    canonicalFamilyConfidence: canonical.confidence,
+    commercialRecommendation,
+    comparableClassifications: comparableDtos,
+    keywordIntelligence: keyword,
+    priceIntelligence: price,
+    referenceStrategy: reference,
+    nextBestEvidence: { priority: nextEvidence[0] ?? null, ordered: nextEvidence },
+    productCaseCreated: false as const,
+  }
+  const canonicalResult = {
+    authoritative: true as const,
+    label: "Commercial Recommendation V2" as const,
+    versions,
+    sourceItemId: input.sourceItemId ?? null,
+    canonicalFamily: canonical,
+    consensus,
+    commercialRecommendation,
+    comparables: comparableDtos,
+    competition: {
+      OBSERVED_ACTIVE_RESULTS: input.observedResultCount ?? active.length,
+      STRICT_COMPARABLE_COUNT: strict.length,
+      FAMILY_COMPARABLE_COUNT: family.length,
+      NEAR_DUPLICATE_RESULTS_EXCLUDED: marketEvidence.length - deduped.length,
+      SEARCH_RESULT_COVERAGE:
+        `BOUNDED:${input.observedResultCount ?? active.length}/${input.searchResultCap ?? 50}`,
+      SEARCH_RESULT_CAP: input.searchResultCap ?? 50,
+      MARKETPLACE_COMPETITION_TOTAL: { status: "UNPROVEN" as const, value: null },
+      sampleSizeIsMarketplaceTotal: false as const,
+    },
+    keywordIntelligence: keyword,
+    priceOpportunity: price,
+    referenceStrategy: reference,
+    activeMarketAttractiveness: { status: activeEvidenceSufficient
+      ? "CALCULATED_FROM_ACTIVE_MARKET" as const : "UNPROVEN" as const,
+      score: activeEvidenceSufficient ? attractivenessScore : null,
+      band: activeEvidenceSufficient ? band(attractivenessScore) : "UNPROVEN" as const,
+      components, salesProbability: { status: "NOT_CALCULATED" as const, value: null },
+      isSalesProbability: false as const },
+    demandValidation,
+    salesProbability: { status: "NOT_CALCULATED" as const, value: null },
+    researchPriority,
+    nextBestEvidence: { priority: nextEvidence[0] ?? null, ordered: nextEvidence,
+      deterministicResearchCanContinue: !identityConflict && nextEvidence.length > 0 },
+    opportunityCase: canonicalOpportunityCase,
+    decisionIntegration,
+    legacyDiagnosticsPolicy: { allowedAsProvenance: true as const,
+      authoritative: false as const, mayOverrideCanonicalResult: false as const,
+      primarySurfaceVisible: false as const },
+  }
   return {
     contractVersion: EBAY_COMMERCIAL_INTELLIGENCE_UPGRADE_VERSION,
+    analysisVersion: versions.analysisVersion,
+    canonicalResultVersion: versions.canonicalResultVersion,
     workflow: "ONE_BUTTON_OPPORTUNITY_ANALYSIS" as const,
+    canonicalResult,
     canonicalFamily: canonical,
     consensus,
     comparables: comparableDtos,
@@ -863,36 +1257,10 @@ export function buildCommercialIntelligenceUpgradeV1(input: {
       isSalesProbability: false as const },
     demandValidation,
     salesProbability: { status: "NOT_CALCULATED" as const, value: null },
-    researchPriority: attractivenessScore >= 70 ? "HIGH" as const
-      : attractivenessScore >= 45 ? "MEDIUM" as const : "LOW" as const,
+    researchPriority,
     nextBestEvidence: { priority: nextEvidence[0] ?? null, ordered: nextEvidence,
       deterministicResearchCanContinue: !identityConflict && nextEvidence.length > 0 },
-    commercialRecommendation: {
-      productFamily: canonical.canonicalFamily,
-      canonicalFamilyConfidence: canonical.confidence,
-      primaryKeyword: keyword.primaryKeyword,
-      secondaryKeywords: keyword.secondaryKeywords,
-      keywordOpportunity: keyword.keywordOpportunity,
-      searchVolume: "UNPROVEN" as const,
-      strictComparables: strict.length,
-      observedActiveMarket: input.observedResultCount ?? active.length,
-      marketCompetitionTotal: "UNPROVEN" as const,
-      priceBand: price.priceBand,
-      median: price.priceBand?.median ?? null,
-      recommendedEntryPrice: price.recommendedEntryPrice,
-      activeMarketAttractiveness: activeEvidenceSufficient
-        ? band(attractivenessScore) : "UNPROVEN" as const,
-      demandValidation: demandValidation.status,
-      supplierMatch: input.supplier?.identityStatus ?? "UNPROVEN",
-      stock: input.supplier?.stockStatus ?? "UNKNOWN",
-      economics: price.economics.status,
-      referenceListing: reference.selected?.itemId ?? null,
-      referenceQuality: reference.selected?.referenceQualityScore ?? null,
-      useAsReference: reference.selected?.referenceDecision ?? "UNPROVEN",
-      finalDecision,
-      nextBestAction,
-      reasonCodes: unique([finalDecision, nextBestAction, ...nextEvidence.slice(0, 3)]),
-    },
+    commercialRecommendation,
     decisionPolicy: {
       sufficientEvidence: "DECIDE",
       partialEvidence: "PRIORITIZE_NEXT_RESEARCH",
@@ -979,6 +1347,10 @@ export function commercialIntelligenceFingerprintV1(value: unknown) {
 export type CommercialIntelligenceUpgradeV1 = ReturnType<
   typeof buildCommercialIntelligenceUpgradeV1
 >
+export type CanonicalOpportunityResultV2 =
+  CommercialIntelligenceUpgradeV1["canonicalResult"]
+export type CanonicalOpportunityDecisionV2 =
+  CanonicalOpportunityResultV2["decisionIntegration"]
 export type ItemIdCanonicalFamilyBridgeV1 = ReturnType<
   typeof deriveItemIdCanonicalFamilyBridgeV1
 >
