@@ -12,6 +12,7 @@ import {
   parseEbayInventoryItemsPage,
   parseSafeEbayInventoryErrorMetadata,
   parseEbayTradingGetItemMarketplace,
+  parseEbayTradingGetItemPrimaryImage,
   parseEbayTradingGetMyeBaySellingPage,
   parseEbayTradingGetUser,
   sanitizeLiveEbayOrders,
@@ -3028,6 +3029,8 @@ function getItemMarketplaceBody(itemId: string) {
     `<ItemID>${escapedXml(itemId)}</ItemID>` +
     "<OutputSelector>Item.ItemID</OutputSelector>" +
     "<OutputSelector>Item.Site</OutputSelector>" +
+    "<OutputSelector>Item.GalleryURL</OutputSelector>" +
+    "<OutputSelector>Item.PictureDetails.PictureURL</OutputSelector>" +
     "</GetItemRequest>"
 }
 
@@ -3167,6 +3170,7 @@ type ItemMarketplaceCertification = {
     | null
   observedAt: string | null
   limitationCode: string | null
+  primaryImageUrl?: string | null
 }
 
 function marketplaceVerificationBudgetAvailable(
@@ -3223,13 +3227,12 @@ async function getItemMarketplaceCertification(input: {
         limitationCode: "TRADING_GET_ITEM_MARKETPLACE_HTTP_FAILED",
       }
     }
-    const parsed = parseEbayTradingGetItemMarketplace(
-      await readTextResponse(
-        response,
-        "TRADING_GET_ITEM_MARKETPLACE_RESPONSE_INVALID",
-      ),
-      input.itemId,
+    const responseXml = await readTextResponse(
+      response,
+      "TRADING_GET_ITEM_MARKETPLACE_RESPONSE_INVALID",
     )
+    const parsed = parseEbayTradingGetItemMarketplace(responseXml, input.itemId)
+    const image = parseEbayTradingGetItemPrimaryImage(responseXml, input.itemId)
     if (parsed.status !== "US_CERTIFIED" &&
         parsed.status !== "NON_US_CERTIFIED") {
       markResponseCallFailed(response)
@@ -3252,6 +3255,9 @@ async function getItemMarketplaceCertification(input: {
       marketplaceSite: parsed.marketplaceSite,
       source: "EBAY_TRADING_GET_ITEM",
       observedAt,
+      primaryImageUrl: image.status === "AVAILABLE"
+        ? image.primaryImageUrl
+        : null,
       limitationCode: parsed.status === "ITEM_ID_MISMATCH"
         ? "TRADING_GET_ITEM_IDENTITY_MISMATCH"
         : parsed.status === "UNRESOLVED" || parsed.status === "ERROR"
@@ -3376,8 +3382,12 @@ async function certifySellerWideItemMarketplaces(input: {
     directErrors + itemIdMismatches + exhausted
   const currentLiveListings = input.listings.map((listing) => {
     const certification = certifications.get(listing.itemId)
+    const fallbackImageUrl = certification?.primaryImageUrl ?? null
     return {
       ...listing,
+      primaryImageUrl: listing.primaryImageUrl ?? fallbackImageUrl,
+      primaryImageSource: listing.primaryImageSource ??
+        (fallbackImageUrl ? "EBAY_TRADING_GET_ITEM" : null),
       marketplaceSite: certification?.marketplaceSite ?? listing.marketplaceSite,
       marketplaceCertification: {
         status: certification?.status ?? "ERROR",

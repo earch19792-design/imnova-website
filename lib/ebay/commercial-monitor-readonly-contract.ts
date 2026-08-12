@@ -1144,7 +1144,10 @@ export type CommercialListingIdentity = {
   supplierSku: string | null
   title: string | null
   primaryImageUrl: string | null
-  primaryImageSource: "EBAY_TRADING_GET_MY_EBAY_SELLING" | null
+  primaryImageSource:
+    | "EBAY_TRADING_GET_MY_EBAY_SELLING"
+    | "EBAY_TRADING_GET_ITEM"
+    | null
   listingState: string
   listingType: ListingOfferType
   listingFormat: string | null

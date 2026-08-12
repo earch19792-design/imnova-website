@@ -1,3 +1,5 @@
+"use client"
+
 import {
   Activity,
   AlertTriangle,
@@ -24,7 +26,7 @@ import {
   UsersRound,
   Wrench,
 } from "lucide-react"
-import type { ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 
 import type {
   CommercialListingDecisionV1,
@@ -206,7 +208,32 @@ export function CommercialMonitorCanonicalDashboard({
   onRefresh,
   refreshing,
 }: CommercialMonitorCanonicalDashboardProps) {
+  const [trafficScope, setTrafficScope] = useState<
+    "ACCOUNT_TRAFFIC" | "CURRENT_LIVE_PORTFOLIO"
+  >("CURRENT_LIVE_PORTFOLIO")
   const backend = monitor.backend
+  const accountTraffic = backend.trafficScopes.accountTraffic
+  const currentLiveTraffic = backend.trafficScopes.currentLivePortfolio
+  const accountTrafficSelected = trafficScope === "ACCOUNT_TRAFFIC"
+  const selectedTraffic = accountTrafficSelected
+    ? {
+        status: accountTraffic.status as CommercialMonitorCapabilityStatus,
+        impressions: accountTraffic.impressions,
+        listingViews: accountTraffic.listingViews,
+        quantitySold: accountTraffic.quantitySold,
+        ctr: accountTraffic.ctr,
+        detail: accountTraffic.status === "AVAILABLE"
+          ? `Account traffic · ${accountTraffic.timeZone}`
+          : "Account traffic unavailable · no portfolio fallback",
+      }
+    : {
+        status: currentLiveTraffic.completeness,
+        impressions: currentLiveTraffic.impressions,
+        listingViews: currentLiveTraffic.listingViews,
+        quantitySold: currentLiveTraffic.quantitySold,
+        ctr: currentLiveTraffic.ctr,
+        detail: "Current live portfolio · unique Trading Item IDs",
+      }
   const registry = backend.capabilities.registry
   const qualityUnavailable = backend.listingQualityReport.status === "UNAVAILABLE_NO_CURRENT_REPORT"
   const decisionsByKey = new Map(backend.decisions.map((decision) =>
@@ -231,7 +258,7 @@ export function CommercialMonitorCanonicalDashboard({
   const hasPerformanceSeries = backend.operationalHealth.performanceSeries.points.length > 0
   const navigationGroups = [
     ["Overview", [["Monitor", "#commercial-dashboard", LayoutDashboard]]],
-    ["Commerce", [["Listings", "#guidance-table", FileText], ["Opportunities", "#priority-action-plan", Sparkles]]],
+    ["Commerce", [["Listings", "#guidance-table", FileText], ["Opportunities", "/admin/ebay/opportunity-queue/research", Sparkles]]],
     ["Intelligence", [["Decisions", "#guidance-table", LineChart], ["Experiments", "#upcoming-reviews", FlaskConical], ["Learning", "#performance", CircleGauge]]],
     ["Operations", [["Stock", "#inventory-status", Package], ["Orders", "#upcoming-reviews", ShoppingBag], ["Inventory", "#inventory-status", Database]]],
     ["System", [["Data Quality", "#category-benchmark", ShieldCheck], ["Audit", "#advanced-diagnostics", FileText]]],
@@ -267,14 +294,21 @@ export function CommercialMonitorCanonicalDashboard({
 
         <section aria-label="Estado de eBay Guidance" className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2.5 text-xs text-slate-600"><strong className="text-[10px] tracking-[0.14em] text-cyan-800">EBAY GUIDANCE</strong><StatusChip status={backend.listingQualityReport.status} /><span>Último reporte: {qualityUnavailable ? "No current report" : "Disponible"}</span><span>Ventana: {qualityUnavailable ? "No disponible" : "según reporte"}</span><span>Fuente: eBay Listing Quality Report</span><a href="#guidance-table" className="ml-auto font-bold text-cyan-800">Ver detalle</a></section>
 
-        <section aria-label="Ámbitos de tráfico" className="grid gap-px overflow-hidden rounded-xl border border-slate-200 bg-slate-200 text-[10px] sm:grid-cols-2"><div className="bg-white px-3 py-2"><strong className="text-slate-700">Account traffic</strong><span className="ml-2 text-slate-500">Seller Hub-compatible only when window, timezone, scope and reporting lag match.</span><span className="ml-2 font-semibold text-cyan-700">{backend.trafficScopes.accountTraffic.status.replaceAll("_", " ")}</span></div><div className="bg-white px-3 py-2"><strong className="text-slate-700">Current live portfolio</strong><span className="ml-2 text-slate-500">Unique Trading Item IDs · listing-window aggregate · UTC.</span></div></section>
+        <section aria-label="Ámbitos de tráfico" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px]">
+          <div><strong className="text-slate-700">Ámbito KPI</strong><span className="ml-2 text-slate-500">No se mezclan ventanas, poblaciones ni granos.</span></div>
+          <div className="inline-flex rounded-lg bg-slate-100 p-0.5" role="group" aria-label="Seleccionar ámbito de tráfico">
+            <button type="button" aria-pressed={accountTrafficSelected} onClick={() => setTrafficScope("ACCOUNT_TRAFFIC")} className={`rounded-md px-3 py-1.5 font-bold ${accountTrafficSelected ? "bg-white text-cyan-800 shadow-sm" : "text-slate-500"}`}>Account Traffic</button>
+            <button type="button" aria-pressed={!accountTrafficSelected} onClick={() => setTrafficScope("CURRENT_LIVE_PORTFOLIO")} className={`rounded-md px-3 py-1.5 font-bold ${!accountTrafficSelected ? "bg-white text-cyan-800 shadow-sm" : "text-slate-500"}`}>Current Live Portfolio</button>
+          </div>
+          <span className="font-semibold text-cyan-700">{accountTrafficSelected ? accountTraffic.status.replaceAll("_", " ") : currentLiveTraffic.completeness.replaceAll("_", " ")}</span>
+        </section>
 
         <section aria-label="Indicadores principales" className="grid overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm sm:grid-cols-2 xl:grid-cols-6">
           <KpiCard label="Listings Activos" value={backend.kpis.activeListings.value} status={backend.kpis.activeListings.status} detail="Current live portfolio" icon={<Package size={18} />} />
-          <KpiCard label="Impresiones" value={backend.kpis.impressions.value} status={backend.kpis.impressions.status} detail="Current live portfolio" icon={<BarChart3 size={18} />} />
-          <KpiCard label="Listing Views" value={backend.kpis.ebayViews.value} status={backend.kpis.ebayViews.status} detail="Current live portfolio" icon={<Eye size={18} />} />
-          <KpiCard label="CTR Promedio" value={backend.kpis.averageCtr.value} status={backend.kpis.averageCtr.status} detail="Average listing CTR · %" icon={<TrendingUp size={18} />} suffix="%" />
-          <KpiCard label="Cantidad vendida" value={backend.kpis.quantitySold.value} status={backend.kpis.quantitySold.status} detail="Analytics TRANSACTION · not orders" icon={<Activity size={18} />} />
+          <KpiCard label="Impresiones" value={selectedTraffic.impressions} status={selectedTraffic.status} detail={selectedTraffic.detail} icon={<BarChart3 size={18} />} />
+          <KpiCard label="Listing Views" value={selectedTraffic.listingViews} status={selectedTraffic.status} detail={selectedTraffic.detail} icon={<Eye size={18} />} />
+          <KpiCard label="CTR" value={selectedTraffic.ctr} status={selectedTraffic.status} detail={`${selectedTraffic.detail} · %`} icon={<TrendingUp size={18} />} suffix="%" />
+          <KpiCard label="Cantidad vendida" value={selectedTraffic.quantitySold} status={selectedTraffic.status} detail="Analytics TRANSACTION · not orders" icon={<Activity size={18} />} />
           <KpiCard label="Órdenes" value={backend.kpis.orders.value} status={backend.kpis.orders.status} detail={backend.kpis.orders.value === null ? "Auth pendiente" : "Fulfillment readonly"} icon={<ShoppingBag size={18} />} />
         </section>
 

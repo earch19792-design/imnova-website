@@ -12,12 +12,13 @@ const client = readFileSync(
 )
 
 test("canonical dashboard consumes backend DTO states without synthetic KPI fallbacks", () => {
+  assert.ok(dashboard.startsWith('"use client"'))
   for (const expression of [
     "backend.kpis.activeListings.value",
-    "backend.kpis.impressions.value",
-    "backend.kpis.ebayViews.value",
-    "backend.kpis.averageCtr.value",
-    "backend.kpis.quantitySold.value",
+    "selectedTraffic.impressions",
+    "selectedTraffic.listingViews",
+    "selectedTraffic.ctr",
+    "selectedTraffic.quantitySold",
     "backend.kpis.orders.value",
     "UNAVAILABLE_AUTH_PENDING",
     "UNAVAILABLE_NO_CURRENT_REPORT",
@@ -57,8 +58,11 @@ test("canonical dashboard surfaces decisions and review-only Registry state with
     dashboard,
     /fetch\(|method:\s*["'](?:POST|PUT|PATCH|DELETE)["']|ReviseItem|EndItem|publishOffer/,
   )
-  assert.equal((dashboard.match(/onClick=/g) ?? []).length, 1)
+  assert.equal((dashboard.match(/onClick=/g) ?? []).length, 3)
   assert.match(dashboard, /onClick=\{onRefresh\}/)
+  assert.match(dashboard, /ACCOUNT_TRAFFIC/)
+  assert.match(dashboard, /CURRENT_LIVE_PORTFOLIO/)
+  assert.match(dashboard, /no portfolio fallback/i)
   assert.match(dashboard, /renderedCriticalAlerts\.length/)
   assert.match(dashboard, /priorityActionPlan/)
 })

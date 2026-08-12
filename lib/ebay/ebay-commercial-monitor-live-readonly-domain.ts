@@ -130,6 +130,10 @@ export type EbayLiveListing = {
   variationKey: string | null
   title: string | null
   primaryImageUrl: string | null
+  primaryImageSource?:
+    | "EBAY_TRADING_GET_MY_EBAY_SELLING"
+    | "EBAY_TRADING_GET_ITEM"
+    | null
   listingState: "ACTIVE"
   listingFormat: string | null
   startTime: string | null
@@ -422,9 +426,11 @@ export function assertEbayMonitorReadonlyRequest(input: {
           .replace(/\s+/g, " ").trim())
         .sort()
       if (requests.length !== 1 || !itemId || !/^\d{9,20}$/.test(itemId) ||
-          selectors.length !== 2 ||
-          selectors[0] !== "Item.ItemID" ||
-          selectors[1] !== "Item.Site") {
+          selectors.length !== 4 ||
+          selectors[0] !== "Item.GalleryURL" ||
+          selectors[1] !== "Item.ItemID" ||
+          selectors[2] !== "Item.PictureDetails.PictureURL" ||
+          selectors[3] !== "Item.Site") {
         throw new Error("EBAY_MONITOR_BLOCKED_TRADING_OPERATION")
       }
       const elementNames = [...body.matchAll(
@@ -1139,6 +1145,7 @@ function itemListings(item: string, observedAt: string): EbayLiveListing[] {
   const pictureDetails = ebayTradingXmlContainers(item, "PictureDetails")[0] ?? ""
   const primaryImageCandidate = safeText(
     ebayTradingXmlDirectChildValue(item, "GalleryURL") ??
+      ebayTradingXmlDirectChildValue(pictureDetails, "GalleryURL") ??
       ebayTradingXmlValue(pictureDetails, "PictureURL"),
     2_000,
   )
@@ -1184,6 +1191,9 @@ function itemListings(item: string, observedAt: string): EbayLiveListing[] {
       variationKey: variation ? variationIdentity(variation) : null,
       title,
       primaryImageUrl,
+      primaryImageSource: primaryImageUrl
+        ? "EBAY_TRADING_GET_MY_EBAY_SELLING"
+        : null,
       listingState: "ACTIVE",
       listingFormat,
       startTime,
@@ -1313,6 +1323,41 @@ export function parseEbayTradingGetItemMarketplace(
     itemId,
     marketplaceSite,
   }
+}
+
+export function parseEbayTradingGetItemPrimaryImage(
+  xml: string,
+  expectedItemId: string,
+): {
+  status: "AVAILABLE" | "MISSING" | "ITEM_ID_MISMATCH" | "ERROR"
+  primaryImageUrl: string | null
+} {
+  const marketplace = parseEbayTradingGetItemMarketplace(xml, expectedItemId)
+  if (marketplace.status === "ITEM_ID_MISMATCH") {
+    return { status: "ITEM_ID_MISMATCH", primaryImageUrl: null }
+  }
+  if (marketplace.status !== "US_CERTIFIED" &&
+      marketplace.status !== "NON_US_CERTIFIED") {
+    return { status: "ERROR", primaryImageUrl: null }
+  }
+  const items = ebayTradingXmlContainers(xml, "Item")
+  if (items.length !== 1 ||
+      ebayTradingXmlDirectChildValue(items[0], "ItemID") !== expectedItemId) {
+    return { status: "ITEM_ID_MISMATCH", primaryImageUrl: null }
+  }
+  const pictureDetails = ebayTradingXmlDirectChildContainers(
+    items[0],
+    "PictureDetails",
+  )[0] ?? ""
+  const candidate = ebayTradingXmlDirectChildValue(items[0], "GalleryURL") ??
+    ebayTradingXmlDirectChildValue(pictureDetails, "GalleryURL") ??
+    ebayTradingXmlValue(pictureDetails, "PictureURL")
+  const primaryImageUrl = candidate?.startsWith("https://")
+    ? candidate.slice(0, 2_000)
+    : null
+  return primaryImageUrl
+    ? { status: "AVAILABLE", primaryImageUrl }
+    : { status: "MISSING", primaryImageUrl: null }
 }
 
 export function parseEbayTradingGetMyeBaySellingPage(

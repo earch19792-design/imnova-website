@@ -138,11 +138,12 @@ test("route and bundle surface regress downward", () => {
     temporarySellerOauthApi,
     "temporary seller OAuth UI/API must be added and retired together",
   )
-  // The read-only monitor adds exactly one intentional page and one GET-only API
+  // The read-only monitor and read-only Market Research workspace add two
+  // intentional pages and two authenticated read-only APIs
   // to the previously isolated Seller OS surface. The explicitly temporary
   // seller reauthorization gate may add one paired page/API while present.
   assert.ok(
-    countNamed("app", "page.tsx") <= 14 + Number(temporarySellerOauthPage),
+    countNamed("app", "page.tsx") <= 15 + Number(temporarySellerOauthPage),
     "page route count regressed",
   )
   // 68 legacy-era routes -> 65 isolated routes -> one approval-only Seller OS
@@ -154,10 +155,11 @@ test("route and bundle surface regress downward", () => {
   // authorization route -> one Preview-only extraordinary position-4 ordinal-7
   // executor -> one final Preview-only extraordinary position-6 ordinal-8
   // executor -> one authenticated, read-only final-listing-review hydration
-  // route -> one authenticated V3 UNPUBLISHED authorization/preflight route.
+  // route -> one authenticated V3 UNPUBLISHED authorization/preflight route
+  // -> one authenticated read-only Market Research route.
   // The old product/community domain remains at zero.
   assert.ok(
-    countNamed("app/api", "route.ts") <= 81 + Number(temporarySellerOauthApi),
+    countNamed("app/api", "route.ts") <= 82 + Number(temporarySellerOauthApi),
     "API route count regressed",
   )
   assert.equal(countNamed("app/api/community", "route.ts"), 0)

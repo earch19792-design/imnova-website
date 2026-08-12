@@ -239,6 +239,18 @@ function explicitListingFields(row: ReadonlyRegistryListingRow | null) {
   const primaryImageUrl = primaryImageCandidate?.startsWith("https://")
     ? primaryImageCandidate
     : null
+  const primaryImageSourceCandidate = firstExplicitText(
+    sources,
+    ["primaryImageSource"],
+    80,
+  )
+  const primaryImageSource = primaryImageSourceCandidate === "EBAY_TRADING_GET_ITEM"
+    ? "EBAY_TRADING_GET_ITEM" as const
+    : primaryImageSourceCandidate === "EBAY_TRADING_GET_MY_EBAY_SELLING"
+      ? "EBAY_TRADING_GET_MY_EBAY_SELLING" as const
+      : primaryImageUrl
+        ? "EBAY_TRADING_GET_MY_EBAY_SELLING" as const
+        : null
   const variationKey = firstExplicitText(
     sources,
     ["variationId", "variationID", "variationKey"],
@@ -269,6 +281,7 @@ function explicitListingFields(row: ReadonlyRegistryListingRow | null) {
   return {
     variationKey,
     primaryImageUrl,
+    primaryImageSource,
     durableLinkageConflict: raw.durableLinkageConflict === true,
     customLabel: firstExplicitText(
       sources,
@@ -1947,9 +1960,7 @@ function projectListing(input: {
       supplierSku: sanitizeMonitorText(row?.supplier_sku, 120),
       title: trustedTitle(row),
       primaryImageUrl: rawFields.primaryImageUrl,
-      primaryImageSource: rawFields.primaryImageUrl
-        ? "EBAY_TRADING_GET_MY_EBAY_SELLING"
-        : null,
+      primaryImageSource: rawFields.primaryImageSource,
       listingState: row?.listing_status ??
         listing.identityVerification?.observed_listing_status ?? "unknown",
       listingType: rawFields.listingType,
@@ -2117,6 +2128,7 @@ function withLiveReadonlyEvidence(input: {
         variationKey: listing.variationKey,
         customLabel: listing.customLabel,
         primaryImageUrl: listing.primaryImageUrl,
+        primaryImageSource: listing.primaryImageSource,
         listingFormat: listing.listingFormat,
         startTime: listing.startTime,
         marketplaceSite: listing.marketplaceSite,
