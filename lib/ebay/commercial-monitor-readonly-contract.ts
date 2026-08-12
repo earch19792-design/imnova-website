@@ -1298,6 +1298,194 @@ export type TimelineEntry = {
   sanitizedReasonCode: string | null
 }
 
+export type CommercialMonitorCapabilityStatus =
+  | "AVAILABLE"
+  | "COMPLETE"
+  | "PARTIAL"
+  | "PARTIAL_CERTIFIED"
+  | "DEGRADED"
+  | "UNAVAILABLE"
+  | "UNAVAILABLE_AUTH_PENDING"
+  | "UNAVAILABLE_NO_CURRENT_REPORT"
+  | "AUTH_PENDING"
+  | "MISSING"
+  | "UNPROVEN"
+  | "ERROR"
+
+export type CommercialDecisionClass =
+  | "VISIBILITY"
+  | "CTR"
+  | "CONVERSION"
+  | "DATA_QUALITY"
+  | "HEALTHY_WAIT"
+
+export type CommercialDecisionAction =
+  | "WAIT"
+  | "IMPROVE_VISIBILITY"
+  | "IMPROVE_CTR"
+  | "IMPROVE_CONVERSION"
+  | "FIX_DATA_QUALITY"
+  | "REVIEW_EBAY_GUIDANCE"
+  | "START_CONTROLLED_EXPERIMENT"
+  | "HUMAN_REVIEW"
+
+export type CommercialDecisionReason =
+  | "AUTHORITATIVE_ZERO_IMPRESSIONS"
+  | "LOW_CTR_WITH_SUFFICIENT_IMPRESSIONS"
+  | "TRAFFIC_WITHOUT_CONVERSION"
+  | "INSUFFICIENT_TRAFFIC"
+  | "INSUFFICIENT_ANALYTICS_EVIDENCE"
+  | "BLOCKING_DATA_QUALITY_ISSUE"
+  | "ACTIVE_EXPERIMENT_PROTECTS_VARIABLE"
+  | "HEALTHY_EVIDENCE_WAIT_FOR_NEXT_REVIEW"
+
+export type EbayGuidanceComparisonReason =
+  | "LIVE_ANALYTICS_CONTRADICTS_GUIDANCE"
+  | "GUIDANCE_SUPPORTED_BY_DATA_QUALITY_GAP"
+  | "ACTIVE_EXPERIMENT_PROTECTS_VARIABLE"
+  | "INSUFFICIENT_TRAFFIC"
+  | "INSUFFICIENT_CONVERSION_EVIDENCE"
+  | "BENCHMARK_SUPPORTS_GUIDANCE"
+  | "BENCHMARK_NOT_AVAILABLE"
+  | "GUIDANCE_NOT_AVAILABLE"
+
+export type EbayListingQualityRecommendation = {
+  source: "EBAY_LISTING_QUALITY_REPORT"
+  sourceVersion: string
+  listingKey: string | null
+  associationStatus: "ITEM_ID_CERTIFIED" | "SKU_UNIQUE" | "UNPROVEN"
+  recommendationCategory: string
+  recommendationType: string
+  recommendationText: string | null
+  reportedBenchmark: number | null
+  topCategoryBenchmark: number | null
+  observedAt: string
+  importedAt: string
+}
+
+export type CommercialListingDecisionV1 = {
+  listingKey: string
+  classification: CommercialDecisionClass
+  priority: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
+  evidenceStatus: "AVAILABLE" | "PARTIAL" | "UNPROVEN"
+  reasonCodes: CommercialDecisionReason[]
+  recommendedAction: CommercialDecisionAction
+  actionBlockedByInsufficientEvidence: boolean
+  experimentRunning: boolean
+  variableFrozen: boolean
+  nextReviewCondition: string | null
+  nextReviewAt: string | null
+  actionExecutionAllowed: false
+}
+
+export type EbayGuidanceComparisonV1 = {
+  listingKey: string
+  ebayGuidanceStatus: "AVAILABLE" | "MISSING" | "UNPROVEN"
+  sellerOsDiagnosisStatus: "AVAILABLE" | "UNPROVEN"
+  conclusion:
+    | "AGREE"
+    | "PARTIALLY_AGREE"
+    | "DISAGREE"
+    | "INSUFFICIENT_EVIDENCE"
+  reasonCodes: EbayGuidanceComparisonReason[]
+  automaticExecutionAllowed: false
+}
+
+export type CommercialMonitorBackendV1 = {
+  contractVersion: "COMMERCIAL_MONITOR_BACKEND_V1"
+  mode: "READ_ONLY"
+  capabilities: {
+    sellerAccountBinding: CommercialMonitorCapabilityStatus
+    tradingDiscovery: CommercialMonitorCapabilityStatus
+    marketplaceCertification: CommercialMonitorCapabilityStatus
+    analytics: CommercialMonitorCapabilityStatus
+    registry: {
+      status: CommercialMonitorCapabilityStatus
+      currentLiveCount: number | null
+      matchedCount: number | null
+      humanReviewCount: number | null
+      coveragePercent: number | null
+      limitationCodes: string[]
+    }
+    ordersFulfillment: CommercialMonitorCapabilityStatus
+    listingQualityReport: CommercialMonitorCapabilityStatus
+    inventory: {
+      status: "DEGRADED"
+      oauthCapability: "AVAILABLE"
+      locationsCapability: "AVAILABLE"
+      inventoryItemsResource: "EBAY_REJECTED_25709_UNRESOLVED"
+      representation: "UNPROVEN"
+    }
+  }
+  kpis: {
+    activeListings: { status: CommercialMonitorCapabilityStatus; value: number | null }
+    impressions: { status: CommercialMonitorCapabilityStatus; value: number | null }
+    ebayViews: { status: CommercialMonitorCapabilityStatus; value: number | null }
+    averageCtr: { status: CommercialMonitorCapabilityStatus; value: number | null }
+    orders: { status: CommercialMonitorCapabilityStatus; value: number | null }
+  }
+  orders: {
+    status: CommercialMonitorCapabilityStatus
+    orderCount: number | null
+    lineItemCount: number | null
+    quantitySold: number | null
+    latestOrderCreationAt: string | null
+    orderStatuses: string[]
+    fulfillmentStatuses: string[]
+    trackingAvailability: "AVAILABLE" | "MISSING" | "UNPROVEN"
+    buyerPiiIncluded: false
+  }
+  listingQualityReport: {
+    status: CommercialMonitorCapabilityStatus
+    source: "EBAY_LISTING_QUALITY_REPORT"
+    persistenceStatus: "IN_MEMORY_READ_ONLY" | "NEW_DDL_REQUIRED"
+    limitationCode: string | null
+    recommendations: EbayListingQualityRecommendation[]
+  }
+  decisions: CommercialListingDecisionV1[]
+  guidanceVsSellerOs: EbayGuidanceComparisonV1[]
+  operationalHealth: {
+    needIntervention: { status: CommercialMonitorCapabilityStatus; count: number | null }
+    runningExperiments: { status: CommercialMonitorCapabilityStatus; count: number | null }
+    stockRisk: { status: CommercialMonitorCapabilityStatus; count: number | null }
+    dataQuality: { status: CommercialMonitorCapabilityStatus; count: number | null }
+    ebayRecommendations: { status: CommercialMonitorCapabilityStatus; count: number | null }
+    waitingHealthy: { status: CommercialMonitorCapabilityStatus; count: number | null }
+    criticalAlerts: { status: CommercialMonitorCapabilityStatus; count: number | null }
+    priorityActionPlan: Array<{
+      listingKey: string
+      classification: CommercialDecisionClass
+      priority: CommercialListingDecisionV1["priority"]
+      recommendedAction: CommercialDecisionAction
+    }>
+    upcomingReviews: Array<{
+      listingKey: string
+      condition: string
+      reviewAt: string | null
+    }>
+    performanceSeries: {
+      status: "MISSING"
+      points: []
+      limitationCode: "NO_CANONICAL_TIME_SERIES"
+    }
+    statusDistribution: Array<{ classification: CommercialDecisionClass; count: number }>
+    categoryBenchmarks: Array<{
+      recommendationCategory: string
+      benchmark: number
+      source: "EBAY_LISTING_QUALITY_REPORT"
+    }>
+  }
+  safety: {
+    marketplaceWrites: 0
+    registryWrites: 0
+    fulfillmentWrites: 0
+    buyerMessages: 0
+    guidanceAutoExecution: false
+    decisionExecution: false
+    syntheticChartData: false
+  }
+}
+
 export type CommercialMonitorGetDto = {
   contractVersion: typeof COMMERCIAL_MONITOR_READONLY_CONTRACT_VERSION
   operation: typeof COMMERCIAL_MONITOR_ASSISTANT_OPERATION
@@ -1315,6 +1503,7 @@ export type CommercialMonitorGetDto = {
   accountDataQualityIssues: DataQualityIssue[]
   learning: CommercialLearningReadModel
   timeline: TimelineEntry[]
+  backend: CommercialMonitorBackendV1
   productCaseOperatingState: {
     status: "PAUSED_FOR_MONITORING_MILESTONE"
     reset: false

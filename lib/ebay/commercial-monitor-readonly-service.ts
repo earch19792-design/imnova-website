@@ -49,6 +49,15 @@ import {
   type EbayMonitorOAuthSafeErrorCategory,
 } from "./ebay-commercial-monitor-live-readonly"
 import {
+  buildEbayRegistryRepairEvidenceFingerprint,
+  buildEbayRegistryRepairPlanningResult,
+} from "./ebay-registry-repair-dry-run"
+import {
+  buildCommercialMonitorBackendV1,
+  type CommercialMonitorOrderFactsV1,
+  type CommercialMonitorRegistryCertificationV1,
+} from "./ebay-commercial-monitor-intelligence-v1"
+import {
   readCommercialMonitorReadonlySources,
   type CommercialMonitorReadonlySources,
   type ReadonlyCommercialSnapshotRow,
@@ -3466,6 +3475,8 @@ function baseReport(input: {
   learning: CommercialLearningReadModel
   timeline: TimelineEntry[]
   liveCertification: EbayLiveCertificationReadModel
+  registryCertification?: CommercialMonitorRegistryCertificationV1 | null
+  orderFacts?: CommercialMonitorOrderFactsV1 | null
 }) : CommercialMonitorGetDto {
   return {
     contractVersion: COMMERCIAL_MONITOR_READONLY_CONTRACT_VERSION,
@@ -3484,6 +3495,13 @@ function baseReport(input: {
     accountDataQualityIssues: input.accountDataQualityIssues,
     learning: input.learning,
     timeline: input.timeline,
+    backend: buildCommercialMonitorBackendV1({
+      liveCertification: input.liveCertification,
+      listings: input.listings,
+      alertCandidates: input.alertCandidates,
+      registry: input.registryCertification,
+      orders: input.orderFacts,
+    }),
     productCaseOperatingState: {
       status: "PAUSED_FOR_MONITORING_MILESTONE",
       reset: false,
@@ -3512,6 +3530,115 @@ function baseReport(input: {
       containsCookies: false,
       buyerPiiIncluded: false,
     },
+  }
+}
+
+function orderFactsProjection(
+  live: EbayCommercialMonitorLiveReadonlyResult,
+): CommercialMonitorOrderFactsV1 {
+  if (live.orders.status === "UNAVAILABLE") {
+    const authPending = live.orders.gapCodes.some((code) =>
+      code === "FULFILLMENT_DEDICATED_CLIENT_PAIR_INCOMPLETE" ||
+      code === "FULFILLMENT_DEDICATED_REFRESH_TOKEN_MISSING" ||
+      code === "EBAY_MONITOR_FULFILLMENT_SCOPE_MISSING")
+    return {
+      status: authPending ? "UNAVAILABLE_AUTH_PENDING" : "UNAVAILABLE",
+      orderCount: null,
+      lineItemCount: null,
+      quantitySold: null,
+      latestOrderCreationAt: null,
+      orderStatuses: [],
+      fulfillmentStatuses: [],
+      trackingAvailability: "UNPROVEN",
+    }
+  }
+  const lineItems = live.orders.orders.flatMap((order) => order.lineItems)
+  const creationTimes = live.orders.orders.map((order) => order.creationDate)
+    .filter((value) => Number.isFinite(Date.parse(value)))
+    .sort()
+  return {
+    status: live.orders.status === "CERTIFIED" ? "AVAILABLE" : "PARTIAL",
+    orderCount: live.orders.orders.length,
+    lineItemCount: lineItems.length,
+    quantitySold: lineItems.reduce((sum, line) => sum + line.quantity, 0),
+    latestOrderCreationAt: creationTimes.at(-1) ?? null,
+    orderStatuses: [...new Set(live.orders.orders.map((order) =>
+      order.orderPaymentStatus))].sort(),
+    fulfillmentStatuses: [...new Set(live.orders.orders.map((order) =>
+      order.orderFulfillmentStatus))].sort(),
+    trackingAvailability: "UNPROVEN",
+  }
+}
+
+function registryCertificationProjection(input: {
+  accountKey: string
+  live: EbayCommercialMonitorLiveReadonlyResult
+  registryRows: ReadonlyRegistryListingRow[]
+  registrySourceAvailable: boolean
+  observedAt: string
+}): CommercialMonitorRegistryCertificationV1 {
+  if (!input.registrySourceAvailable ||
+      !["AVAILABLE", "PARTIAL"].includes(input.live.discovery.status) ||
+      !input.live.account.bindingMatched) {
+    return {
+      status: "UNPROVEN",
+      currentLiveCount: null,
+      matchedCount: null,
+      humanReviewCount: null,
+      coveragePercent: null,
+      limitationCodes: ["REGISTRY_CANONICAL_EVIDENCE_UNAVAILABLE"],
+    }
+  }
+  const fingerprintInput = {
+    accountKey: input.accountKey,
+    marketplaceId: "EBAY_US" as const,
+    liveListings: input.live.discovery.currentLiveListings,
+    registryRows: input.registryRows,
+    syncKeyLookupStatus: "AVAILABLE" as const,
+    existingRegistrySyncKeys: input.registryRows.flatMap((row) =>
+      row.sync_key ? [row.sync_key] : []),
+  }
+  const planning = buildEbayRegistryRepairPlanningResult({
+    ...fingerprintInput,
+    accountVerified: "YES",
+    observedAt: input.observedAt,
+    capturedEvidenceFingerprint:
+      buildEbayRegistryRepairEvidenceFingerprint(fingerprintInput),
+  }).dryRun
+  const currentLiveCount = typeof planning.CURRENT_LIVE_COUNT === "number"
+    ? planning.CURRENT_LIVE_COUNT
+    : null
+  const matchedCount = typeof planning.RAW_ALREADY_MATCHED_COUNT === "number"
+    ? planning.RAW_ALREADY_MATCHED_COUNT
+    : null
+  const humanReviewCount = typeof planning.RAW_HUMAN_REVIEW_COUNT === "number"
+    ? planning.RAW_HUMAN_REVIEW_COUNT
+    : null
+  const certified = currentLiveCount !== null && matchedCount !== null &&
+    humanReviewCount !== null && planning.RAW_UNPROVEN_COUNT === 0 &&
+    planning.LIVE_DRY_RUN_PARTITION_VALID === "YES" &&
+    planning.REGISTRY_DRY_RUN_PARTITION_VALID === "YES"
+  if (!certified) {
+    return {
+      status: "UNPROVEN",
+      currentLiveCount,
+      matchedCount,
+      humanReviewCount,
+      coveragePercent: null,
+      limitationCodes: ["REGISTRY_IDENTITY_PARTITION_UNPROVEN"],
+    }
+  }
+  return {
+    status: humanReviewCount === 0 ? "COMPLETE" : "PARTIAL_CERTIFIED",
+    currentLiveCount,
+    matchedCount,
+    humanReviewCount,
+    coveragePercent: currentLiveCount === 0
+      ? 100
+      : Math.round((matchedCount / currentLiveCount) * 10_000) / 100,
+    limitationCodes: humanReviewCount === 0
+      ? []
+      : ["REGISTRY_HUMAN_REVIEW_RELATIONSHIPS_PRESENT"],
   }
 }
 
@@ -3573,6 +3700,7 @@ function unconfiguredReport(
     },
     timeline: [],
     liveCertification: liveCertificationProjection(live),
+    orderFacts: orderFactsProjection(live),
   }))
 }
 
@@ -3670,6 +3798,13 @@ export async function getCommercialMonitorReadonly(
     coverage,
     generatedAt,
   })
+  const registryCertification = registryCertificationProjection({
+    accountKey: scope.accountKey,
+    live,
+    registryRows: storedSources.registry.rows,
+    registrySourceAvailable: storedSources.registry.status !== "ERROR",
+    observedAt: live.discovery.observedAt ?? generatedAt,
+  })
   return assertCommercialMonitorAssistantDtoSafe(baseReport({
     marketplace,
     generatedAt,
@@ -3682,5 +3817,7 @@ export async function getCommercialMonitorReadonly(
     learning,
     timeline: timeline(listings, learning, alertCandidates, generatedAt),
     liveCertification: liveCertificationProjection(live, coverage),
+    registryCertification,
+    orderFacts: orderFactsProjection(live),
   }))
 }

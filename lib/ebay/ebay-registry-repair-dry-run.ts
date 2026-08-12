@@ -1022,8 +1022,32 @@ export function buildEbayRegistryRepairDryRun(
       liveRegistryReferences[liveIndex]?.add(registry.index)
     }
   }
+  const registryRowHasUniqueAuthoritativeFullMatch = (registryIndex: number) => {
+    const registry = registryFacts[registryIndex]
+    if (!registry?.itemId || !registry.sku) return false
+
+    const liveMatches = itemMatchesFor(registry.itemId)
+    if (
+      liveMatches.length !== 1 ||
+      evidenceCount(liveItemCounts, registry.itemId) !== 1 ||
+      evidenceCount(registryItemCounts, registry.itemId) !== 1
+    ) {
+      return false
+    }
+
+    const live = liveFacts[liveMatches[0]]
+    return Boolean(
+      live &&
+        live.itemId === registry.itemId &&
+        live.sku === registry.sku &&
+        live.variationKey === registry.variationKey,
+    )
+  }
+
   const hasRegistryReferencePartitionConflict = liveRegistryReferences.some(
-    (references) => references.size > 1,
+    (references) =>
+      references.size > 1 &&
+      ![...references].every(registryRowHasUniqueAuthoritativeFullMatch),
   )
 
   const liveMatched = new Set<number>()
@@ -1181,7 +1205,13 @@ export function buildEbayRegistryRepairDryRun(
     const itemAndSkuReferenceSameLive = itemMatches.some(
       (liveIndex) => skuMatches.includes(liveIndex),
     )
-    hasMultipleCandidates ||= itemMatches.length > 1 || skuMatches.length > 1
+    const registryItemId = registry.itemId
+    const uniqueItemIdAnchoredFullMatch = fullMatches.length === 1 &&
+      itemMatches.length === 1 && registryItemId !== null &&
+      evidenceCount(liveItemCounts, registryItemId) === 1 &&
+      evidenceCount(registryItemCounts, registryItemId) === 1
+    hasMultipleCandidates ||= itemMatches.length > 1 ||
+      (skuMatches.length > 1 && !uniqueItemIdAnchoredFullMatch)
     hasCrossLink ||= itemMatches.length > 0 && skuMatches.length > 0 &&
       !itemAndSkuReferenceSameLive
     const rowAccountCorrect = registry.row.account_key === accountKey
@@ -1192,17 +1222,15 @@ export function buildEbayRegistryRepairDryRun(
     const rowLifecycleSignalAvailable = rowListingStatus !== null
     const rowActive = rowStatusEvidence.status === "active"
 
-    if (fullMatches.length === 1 && itemMatches.length === 1 &&
-        skuMatches.length === 1) {
+    if (uniqueItemIdAnchoredFullMatch) {
       const live = liveFacts[fullMatches[0]]
       const identitySafe = Boolean(live && rowAccountCorrect &&
         livePreconditionsProven(live.listing) &&
         registry.itemId && registry.sku &&
         evidenceCount(liveItemCounts, registry.itemId) === 1 &&
         evidenceCount(registryItemCounts, registry.itemId) === 1 &&
-        evidenceCount(liveSkuCounts, registry.sku) === 1 &&
-        evidenceCount(registrySkuCounts, registry.sku) === 1 &&
-        liveRegistryReferences[live.index]?.size === 1)
+        live.itemId === registry.itemId && live.sku === registry.sku &&
+        live.variationKey === registry.variationKey)
       if (identitySafe && live) {
         liveMatched.add(live.index)
         if (rowActive) {
