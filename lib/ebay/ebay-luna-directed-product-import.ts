@@ -16,6 +16,8 @@ export type DirectedLunaVariant = {
   available: boolean
   weight: number | null
   weightUnit: string | null
+  sourceInventoryQuantity?: number | null
+  sourceInventoryQuantityExplicit?: boolean
 }
 
 export type DirectedLunaProduct = {
@@ -27,6 +29,11 @@ export type DirectedLunaProduct = {
   canonicalUrl: string
   imageUrls: string[]
   variants: DirectedLunaVariant[]
+  sourceMode?: "PUBLIC_READ_ONLY_PRODUCT_PAGE" | "AUTHENTICATED_SERVER_HTTP"
+  sourceSessionHealth?: "SESSION_OK"
+  sourceParserVersion?: string
+  sourceEvidenceFingerprint?: string
+  sourceCurrency?: string | null
 }
 
 function record(value: unknown): JsonRecord {

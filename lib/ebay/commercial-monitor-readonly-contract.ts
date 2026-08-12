@@ -578,6 +578,7 @@ export function resolveStockEvidence(input: {
   productId: string | null
   supplierVariantId: string | null
   supplierSku: string | null
+  identityLimitationCode?: string | null
   supplies: SupplyEvidence[]
   marketplace: MarketplaceContext
   identity: ListingEvidenceIdentity
@@ -617,7 +618,8 @@ export function resolveStockEvidence(input: {
   })
 
   if (!input.productId || !input.supplierVariantId || !input.supplierSku) {
-    return unknownQuantity("SUPPLIER_IDENTITY_INCOMPLETE", "STOCK_UNKNOWN")
+    return unknownQuantity(input.identityLimitationCode ??
+      "SUPPLIER_IDENTITY_INCOMPLETE", "STOCK_UNKNOWN")
   }
   const exact = input.supplies.filter((row) =>
     row.productId === input.productId &&

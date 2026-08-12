@@ -62,12 +62,21 @@ export function captureLunaProductVariantV1(input: LunaCaptureInputV1, options?:
   const now = options?.now ?? new Date().toISOString()
   const staleAfterHours = options?.staleAfterHours ?? 48
   let host: string | null = null
-  try { host = new URL(input.sourceUrl).hostname.toLowerCase() } catch { host = null }
+  let exactProductUrl = false
+  try {
+    const parsed = new URL(input.sourceUrl)
+    host = parsed.hostname.toLowerCase()
+    exactProductUrl = parsed.protocol === "https:" &&
+      ["lunaportex.com", "www.lunaportex.com"].includes(host) &&
+      /^\/products\/[^/]+\/?$/.test(parsed.pathname) && !parsed.username &&
+      !parsed.password && !parsed.port && !parsed.search && !parsed.hash
+  } catch { host = null }
   const identityValid = Boolean(safeText(input.productId, 100) &&
-    safeText(input.variantId, 100) && safeText(input.supplierTitle, 240))
+    safeText(input.variantId, 100) && safeText(input.supplierSku, 120) &&
+    safeText(input.supplierTitle, 240))
   const timestampValid = Number.isFinite(Date.parse(input.observedAt)) && Number.isFinite(Date.parse(now))
   const sourceChanged = input.sourceContractVersion !== LUNA_SOURCE_CONTRACT_VERSION
-  const parseError = !host || !(host === "lunaportex.com" || host.endsWith(".lunaportex.com")) ||
+  const parseError = !host || !exactProductUrl ||
     !identityValid || !timestampValid
   const explicitOut = input.availability === false ||
     /\b(out of stock|sold out|unavailable)\b/i.test(input.stockTextEvidence ?? "") ||
@@ -137,7 +146,9 @@ export function linkSupplierToEbayIdentityV1(input: {
   provenance: string
 }) {
   const identityComplete = /^\d{9,19}$/.test(input.ebayItemId) &&
-    Boolean(safeText(input.supplierProductId, 100) && safeText(input.supplierVariantId, 100))
+    Boolean(safeText(input.supplierProductId, 100) && safeText(input.supplierVariantId, 100) &&
+      safeText(input.supplierSku, 120) && safeText(input.accountKey, 120) &&
+      safeText(input.provenance, 160) && Number.isFinite(Date.parse(input.observedAt)))
   const classification = input.evidenceType === "CONFLICTING_MAPPING" ? "CONFLICT" as const
     : input.evidenceType === "EXPLICIT_APPROVED_MAPPING" && identityComplete
       ? "EXACT_PROVEN" as const

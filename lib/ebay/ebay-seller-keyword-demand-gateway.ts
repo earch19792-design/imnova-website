@@ -607,6 +607,44 @@ async function mappedActiveComparable(value: unknown, token: string) {
   return mapped
 }
 
+/**
+ * Resolves an authoritative legacy listing ID through the official Browse
+ * compatibility endpoint. This is an identity read, never a keyword guess.
+ */
+export async function getEbayListingIdentityByLegacyItemId(
+  legacyItemId: string,
+): Promise<EbaySellerComparableInput | null> {
+  if (!/^\d{9,19}$/.test(legacyItemId)) throw new Error("EBAY_LEGACY_ITEM_ID_INVALID")
+  const key = `legacy-item-v1:${legacyItemId}`
+  const cached = await readPersistentReadonlyCache<EbaySellerComparableInput>(
+    "BROWSE_ITEM_DETAIL", key,
+  )
+  if (cached) return cached
+  let token = ""
+  try {
+    await enforceBrowseQuota(1)
+    token = await getApplicationToken(BROWSE_SCOPE)
+    const url = new URL(`${BROWSE_ITEM_ENDPOINT}/get_item_by_legacy_id`)
+    url.searchParams.set("legacy_item_id", legacyItemId)
+    url.searchParams.set("fieldgroups", "PRODUCT")
+    const mapped = mapComparable(await getEbayJson(url, token), "EBAY_BROWSE_ACTIVE_LISTING")
+    if (!mapped.itemId) return null
+    await writePersistentReadonlyCache("BROWSE_ITEM_DETAIL", key, {
+      ...mapped,
+      imageUrl: null,
+      itemWebUrl: null,
+    }, 48 * 60 * 60_000)
+    return mapped
+  } catch (error) {
+    throwIfRateLimited(error)
+    const code = safeErrorCode(error)
+    if (/(?:READONLY_GET_404|NO_MATCH)/.test(code)) return null
+    throw error
+  } finally {
+    token = ""
+  }
+}
+
 function inferCategoryId(
   candidate: EbaySellerKeywordCandidate,
   searchPayload: JsonRecord,

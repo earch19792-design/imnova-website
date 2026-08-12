@@ -24,6 +24,18 @@ import { getEbaySellerAccountScopeConfiguration } from
 import { renderCommercialWhatsAppAlertDryRunV1,
   WHATSAPP_TEMPLATE_DEFINITIONS_V1 } from
   "@/lib/ebay/ebay-commercial-whatsapp-alert-engine-v1"
+import {
+  buildLunaWatcherApprovalPersistenceContractV1,
+  buildLunaWatcherAutomaticResponseV1,
+  evaluateLunaAuthenticatedBrowserCaptureV1,
+  resolveLunaWatcherSourcePriorityV1,
+  scheduleLunaWatcherObservationV1,
+  type LunaExactApprovedLinkV1,
+} from "@/lib/ebay/ebay-luna-supplier-stock-watcher-v1"
+import {
+  auditLunaProtectedSessionConfigurationV1,
+  captureLunaAuthenticatedHttpV1,
+} from "@/lib/ebay/ebay-luna-authenticated-http-watcher-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
 function record(value: unknown): Record<string, unknown> {
@@ -41,12 +53,21 @@ function capabilities() {
   const ordersConfigured = Boolean(process.env.EBAY_COMMERCIAL_ORDERS_CLIENT_ID &&
     process.env.EBAY_COMMERCIAL_ORDERS_CLIENT_SECRET &&
     process.env.EBAY_COMMERCIAL_ORDERS_REFRESH_TOKEN)
+  const lunaSession = auditLunaProtectedSessionConfigurationV1()
   return {
     marketResearch: "AVAILABLE",
     qualityReport: "READY_FOR_REAL_SAMPLE",
     qualityReportAcquisition: "HUMAN_ASSISTED_CSV_JSON_XLSX",
     orders: ordersConfigured ? "READY_FOR_READONLY_RUNTIME" : "AUTH_PENDING",
-    lunaCapture: "READY_BUT_NOT_ACTIVATED",
+    lunaCapture: lunaSession.lunaCookiePresent
+      ? "AUTHENTICATED_SERVER_HTTP_READY_NOT_RUNTIME_ACCEPTED"
+      : "AUTHENTICATED_SERVER_HTTP_REAUTH_REQUIRED",
+    lunaSourceMode: "AUTHENTICATED_SERVER_HTTP",
+    lunaPersistentProfile: "NOT_EVALUATED_SERVER_HTTP_FIRST",
+    lunaRuntimeRecapture: "PENDING_REAL_SCHEDULED_OBSERVATION",
+    lunaCookiePresent: lunaSession.lunaCookiePresent,
+    lunaCookieServerOnly: lunaSession.lunaCookieServerOnly,
+    lunaCookieClientExposed: lunaSession.lunaCookieClientExposed,
     supplierIdentity: "EVIDENCE_GATED",
     stockGuard: "READY_BUT_NOT_ACTIVATED",
     economics: "EVIDENCE_GATED",
@@ -89,6 +110,8 @@ export async function POST(req: Request) {
         format: input.format === "XLSX" ? "XLSX" : input.format === "JSON" ? "JSON" : "CSV",
         fileName: typeof input.fileName === "string" ? input.fileName : "quality-report",
         content: typeof input.content === "string" ? input.content : "",
+        selectedWorksheet: typeof input.selectedWorksheet === "string"
+          ? input.selectedWorksheet : null,
       })
       const account = getEbaySellerAccountScopeConfiguration()
       const live = await getEbayCommercialMonitorLiveReadonly({ accountKey: account.accountKey,
@@ -116,6 +139,52 @@ export async function POST(req: Request) {
       result = captureLunaProductVariantV1(input as never)
     } else if (body.action === "LINK_SUPPLIER_IDENTITY") {
       result = linkSupplierToEbayIdentityV1(input as never)
+    } else if (body.action === "PREPARE_LUNA_WATCHER") {
+      const link = record(input.link) as LunaExactApprovedLinkV1
+      const sessionAudit = auditLunaProtectedSessionConfigurationV1()
+      result = {
+        source: resolveLunaWatcherSourcePriorityV1({
+          protectedServerSessionPresent: sessionAudit.lunaCookiePresent,
+        }),
+        scheduleState: "READY_PENDING_DURABLE_EXACT_LINK",
+        browserFallbackStatus: "NOT_EVALUATED_SERVER_HTTP_FIRST",
+        exactLinkPersistence: "REQUIRES_SEPARATE_REGISTRY_MUTATION_AUTHORIZATION",
+        approvalPersistenceContract:
+          buildLunaWatcherApprovalPersistenceContractV1(link),
+        registryBusinessDataMutations: 0,
+      }
+    } else if (body.action === "RUN_LUNA_AUTHENTICATED_CAPTURE") {
+      const link = record(input.link) as LunaExactApprovedLinkV1
+      const currentCapture = await captureLunaAuthenticatedHttpV1(link)
+      const observation = evaluateLunaAuthenticatedBrowserCaptureV1({
+        link, capture: currentCapture, previous: null,
+      })
+      const sessionAudit = auditLunaProtectedSessionConfigurationV1()
+      result = {
+        watcherVersion: observation.contractVersion,
+        source: resolveLunaWatcherSourcePriorityV1({
+          protectedServerSessionPresent: sessionAudit.lunaCookiePresent,
+        }),
+        capture: currentCapture,
+        observation,
+        scheduler: scheduleLunaWatcherObservationV1({ observation,
+          commercialExposureScore: Number.isFinite(Number(input.commercialExposureScore))
+            ? Number(input.commercialExposureScore) : null }),
+        automaticResponse: buildLunaWatcherAutomaticResponseV1({
+          link, observation,
+          publishedQuantity: Number.isInteger(Number(input.publishedQuantity))
+            ? Number(input.publishedQuantity) : null,
+        }),
+        scheduleActivation: observation.sourceStatus === "SESSION_OK"
+          ? "READY_PENDING_DURABLE_EXACT_LINK"
+          : "BLOCKED_PENDING_AUTHENTICATED_IDENTITY_CAPTURE",
+        browserFallbackRecommended: ["SOURCE_CHANGED", "VARIANT_UNPROVEN"]
+          .includes(observation.sourceStatus),
+        capturePersistedToBusinessTables: false,
+        priorObservationAcceptedFromClient: false,
+        confirmationHistorySource: "SERVER_SIDE_SCHEDULED_EVIDENCE_ONLY",
+        rawSessionMaterialReceivedByClient: false,
+      }
     } else if (body.action === "ASSESS_STOCK_GUARD") {
       result = assessStockGuardV2(input as never)
     } else if (body.action === "CALCULATE_ECONOMICS") {

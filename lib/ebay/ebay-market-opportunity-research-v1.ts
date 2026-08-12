@@ -4,6 +4,8 @@ import { createHash } from "node:crypto"
 import { parseOfficialSoldEvidenceImport, type OfficialSoldEvidenceExport, type OfficialSoldEvidenceFormat } from "./ebay-official-sold-evidence-import.ts"
 import type { EbaySellerKeywordDemandReport } from
   "./ebay-seller-keyword-demand-validation.ts"
+// @ts-expect-error Node's strip-types test runner requires the explicit extension.
+import { resolveCanonicalProductFamilyV1 } from "./ebay-commercial-intelligence-upgrade-v1.ts"
 
 export const MARKET_OPPORTUNITY_RESEARCH_VERSION =
   "EBAY_MARKET_OPPORTUNITY_RESEARCH_V1_2026_08_11"
@@ -13,7 +15,7 @@ export const MARKET_RESEARCH_RESULT_LIMIT = 50
 export type MarketResearchCapabilityStatus =
   | "AVAILABLE" | "PARTIAL" | "RESTRICTED" | "UNAVAILABLE" | "UNPROVEN"
 export type MarketResearchSeedType =
-  | "SEED_QUERY" | "SEED_ITEM_ID" | "SEED_PRODUCT_TITLE"
+  | "SEED_AUTO" | "SEED_QUERY" | "SEED_ITEM_ID" | "SEED_PRODUCT_TITLE"
   | "SEED_PRODUCT_FAMILY" | "PRODUCT_CASE_CANDIDATE"
 export type MarketResearchEvidenceSource =
   | "EBAY_BROWSE_ACTIVE_LISTING"
@@ -184,7 +186,7 @@ export function normalizeMarketResearchRequestV1(value: unknown): MarketResearch
     throw new Error("MARKET_RESEARCH_INPUT_FIELD_NOT_ALLOWED")
   }
   const seedTypes: MarketResearchSeedType[] = [
-    "SEED_QUERY", "SEED_ITEM_ID", "SEED_PRODUCT_TITLE", "SEED_PRODUCT_FAMILY",
+    "SEED_AUTO", "SEED_QUERY", "SEED_ITEM_ID", "SEED_PRODUCT_TITLE", "SEED_PRODUCT_FAMILY",
     "PRODUCT_CASE_CANDIDATE",
   ]
   const seedType = seedTypes.includes(input.seedType as MarketResearchSeedType)
@@ -312,6 +314,16 @@ function canonicalProductFamilyLabel(
   request: MarketResearchRequestV1,
   rows: Array<{ evidence: MarketEvidenceV1 }>,
 ) {
+  const representative = rows[0]?.evidence
+  const resolved = resolveCanonicalProductFamilyV1({ seedValue: request.seedValue,
+    title: request.seedType === "SEED_PRODUCT_TITLE" ? request.seedValue : representative?.title,
+    categoryId: representative?.categoryId ?? request.seedIdentity.categoryId,
+    categoryName: representative?.categoryName ?? request.seedIdentity.categoryName,
+    itemSpecifics: representative?.itemSpecifics,
+    packCount: representative?.packCount ?? request.seedIdentity.packCount,
+    brand: representative?.brand ?? request.seedIdentity.brand,
+    model: representative?.model ?? request.seedIdentity.model })
+  if (resolved.canonicalFamily) return resolved.canonicalFamily
   const seedTerms = tokens(request.seedValue)
   if (request.seedType !== "SEED_ITEM_ID" && seedTerms.length >= 2 && seedTerms.length <= 7) {
     return text(request.seedValue, 160) as string
@@ -412,7 +424,9 @@ export function marketEvidenceFromKeywordDemandReportV1(
     const identity = [row.comparableId, row.evidenceSource, row.title].join(":")
     return {
       evidenceId: `market_${stableHash(identity).slice(0, 24)}`,
-      itemId: /^\d{9,19}$/.test(row.comparableId) ? row.comparableId : null,
+      // Browse returns RESTful IDs (for example v1|366581876813|0), while
+      // Seller OS canonical identity uses the legacy numeric listing ID.
+      itemId: row.comparableId.match(/(?:^|\|)(\d{9,19})(?:\||$)/)?.[1] ?? null,
       title: text(row.title),
       categoryId: text(row.categoryId, 40),
       categoryName: text(row.categoryName, 160),

@@ -11,6 +11,8 @@ import {
 } from "@/lib/ebay/ebay-seller-command-center-automation"
 import { commercialPreviewCronAuthorized } from "@/lib/ebay/ebay-commercial-preview-pilot"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import { fetchLunaAuthenticatedDirectedProductV1 } from
+  "@/lib/ebay/ebay-luna-authenticated-http-watcher-v1"
 import { runTargetedActiveListingLunaMonitor } from "@/lib/ebay/ebay-targeted-active-listing-luna-monitor"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
@@ -49,7 +51,7 @@ function configuration() {
       process.env.EBAY_TARGETED_LUNA_ACTIVE_MONITOR_CONCURRENCY,
       4,
       1,
-      8,
+      4,
     ),
   }
 }
@@ -66,7 +68,7 @@ export async function GET(req: Request) {
       configuration: config,
       safety: {
         previewOnly: true,
-        publicLunaReads: 0,
+        authenticatedLunaReads: 0,
         ebayApiWrites: 0,
         openAiCalls: 0,
         productionChanged: false,
@@ -123,7 +125,7 @@ export async function GET(req: Request) {
         resumeAt: claim.active_run_lease_expires_at ?? null,
         safety: {
           previewOnly: true,
-          publicLunaReads: 0,
+          authenticatedLunaReads: 0,
           ebayApiWrites: 0,
           openAiCalls: 0,
           productionChanged: false,
@@ -132,22 +134,20 @@ export async function GET(req: Request) {
     }
     leaseOwned = true
 
-    // Preflight is intentionally not a monitor heartbeat. It only resolves a
-    // unique exact Luna SKU + variant link (and evaluates the last known
-    // snapshot) so an unlinked but provable active listing can enter the
-    // targeted public read below. Without this order, the monitor and the
-    // exact auto-link would wait on each other forever.
-    const preflightProtection = await reconcileActiveListingProtectionRisks(
-      supabase,
-      {
-        limit: config.limit,
-        timeBudgetMs: 10_000,
-      },
-    )
+    // The authenticated watcher never invokes the legacy automatic supplier
+    // linker. Existing listings enter the bounded human-approval queue; only
+    // the versioned Item-ID-bound approval contract can authorize a Luna read.
+    const preflightProtection = {
+      status: "skipped_human_approved_exact_link_required" as const,
+      automaticSupplierLinksCreated: 0 as const,
+      registryBusinessDataMutations: 0 as const,
+    }
     const monitor = await runTargetedActiveListingLunaMonitor(supabase, {
       accountKey,
       limit: config.limit,
       concurrency: config.concurrency,
+      productFetcher: (target) =>
+        fetchLunaAuthenticatedDirectedProductV1(target.productUrl),
     })
 
     // Global reconciliation is safe only after every selected active listing

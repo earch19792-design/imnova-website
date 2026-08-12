@@ -262,7 +262,7 @@ export function CommercialMonitorCanonicalDashboard({
   const navigationGroups = [
     ["Overview", [["Monitor", "#commercial-dashboard", LayoutDashboard]]],
     ["Commerce", [["Listings", "#guidance-table", FileText], ["Opportunities", "/admin/ebay/opportunity-queue/research", Sparkles]]],
-    ["Intelligence", [["Decisions", "#guidance-table", LineChart], ["Experiments", "#upcoming-reviews", FlaskConical], ["Learning", "#performance", CircleGauge]]],
+    ["Intelligence", [["Decisions", "/admin/ebay/decisions", LineChart], ["Experiments", "/admin/ebay/experiments", FlaskConical], ["Learning", "/admin/ebay/learning", CircleGauge]]],
     ["Operations", [["Readiness", "/admin/ebay/operational-readiness", Wrench], ["Stock", "/admin/ebay/stock-guard", Package], ["Orders", "#upcoming-reviews", ShoppingBag], ["Inventory", "#inventory-status", Database]]],
     ["System", [["Data Quality", "#category-benchmark", ShieldCheck], ["Audit", "#advanced-diagnostics", FileText]]],
   ] as const

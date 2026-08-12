@@ -49,6 +49,10 @@ const EXAMPLE_VALUES: Record<WhatsAppAlertFamilyV1, Record<string, string>> = {
     dataBlockers: "2", deepLink: "/admin/ebay/monitor" },
 }
 
+const LOW_STOCK_REVIEW_EXAMPLE = { subject: "Listing de ejemplo",
+  evidenceState: "LOW_STOCK_CONFIRMED", evidenceDetail: "2 unidades confirmadas; 1 publicada",
+  observedAt: "fecha de evidencia", deepLink: "/admin/ebay/stock-guard" }
+
 export const WHATSAPP_TEMPLATE_DEFINITIONS_V1 = Object.freeze(TEMPLATE_ROWS.map(
   ([internalTemplateKey, intendedMetaTemplateName, categorySuggestion, humanTitle, variableSchema]) => ({
     internalTemplateKey: internalTemplateKey as WhatsAppAlertFamilyV1,
@@ -56,6 +60,12 @@ export const WHATSAPP_TEMPLATE_DEFINITIONS_V1 = Object.freeze(TEMPLATE_ROWS.map(
     variableSchema: [...variableSchema],
     examplePayload: { classification: "NON_OPERATIONAL_TEMPLATE_EXAMPLE" as const,
       values: EXAMPLE_VALUES[internalTemplateKey] },
+    humanReviewStates: internalTemplateKey === "LOW_STOCK_OR_STALE_EVIDENCE" ? [
+      { state: "LOW_STOCK_CONFIRMED" as const, classification:
+        "NON_OPERATIONAL_TEMPLATE_EXAMPLE" as const, values: LOW_STOCK_REVIEW_EXAMPLE },
+      { state: "STALE_EVIDENCE" as const, classification:
+        "NON_OPERATIONAL_TEMPLATE_EXAMPLE" as const, values: EXAMPLE_VALUES[internalTemplateKey] },
+    ] : [],
     maximumSafeContentLength: 900,
     fallbackText: "Seller OS detectó evidencia que requiere revisión protegida.",
     deepLinkVariable: "deepLink", piiClassification: "NO_BUYER_PII" as const,
@@ -74,7 +84,8 @@ type AlertInput = {
   experiment?: { experimentId: string; transition: "READY_TO_EVALUATE" | "COMPLETED" | "OTHER";
     evidenceSufficient: boolean; outcome?: string | null } | null
   stock?: { riskClass: string; exactIdentity: boolean; publishedQuantity?: number | null;
-    safeCapacity?: number | null; limitingComponent?: string | null } | null
+    safeCapacity?: number | null; supplierQuantity?: number | null;
+    limitingComponent?: string | null } | null
   analytics?: { impressions: number | null; ctr: number | null; evidenceSufficient: boolean } | null
   compositionEvidenceAuthoritative?: boolean
   dailySummary?: Array<{ eventKey: string; meaningful: boolean }> | null
@@ -116,7 +127,8 @@ function qualifies(input: AlertInput) {
     Boolean(input.order.safeReference) && ["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK"]
       .includes(input.stock?.riskClass ?? "")
   if (input.family === "LOW_STOCK_OR_STALE_EVIDENCE") {
-    return ["LOW_STOCK_CONFIRMED", "STALE_EVIDENCE"].includes(input.stock?.riskClass ?? "")
+    return input.stock?.exactIdentity === true &&
+      ["LOW_STOCK_CONFIRMED", "STALE_EVIDENCE"].includes(input.stock?.riskClass ?? "")
   }
   if (input.family === "PACK_IMAGE_COMPOSITION_INCONSISTENCY") {
     return input.compositionEvidenceAuthoritative === true
@@ -147,8 +159,19 @@ function humanMessage(input: AlertInput, title: string, deepLink: string, eligib
   if (input.family === "LOW_STOCK_OR_STALE_EVIDENCE") return {
     title: "Stock bajo confirmado", subject: title,
     problem: "La variante exacta tiene evidencia autoritativa de stock bajo.",
-    evidence: `Estado: LOW_STOCK_CONFIRMED · observación ${input.observedAt}`,
-    recommendedAction: "Revisar exposición publicada y capacidad segura.",
+    evidence: ["Estado: LOW_STOCK_CONFIRMED",
+      input.stock?.supplierQuantity !== null && input.stock?.supplierQuantity !== undefined
+        ? `stock proveedor ${input.stock.supplierQuantity}` : null,
+      input.stock?.publishedQuantity !== null && input.stock?.publishedQuantity !== undefined
+        ? `cantidad publicada ${input.stock.publishedQuantity}` : null,
+      input.stock?.safeCapacity !== null && input.stock?.safeCapacity !== undefined
+        ? `capacidad segura ${input.stock.safeCapacity}` : null,
+      `observación ${input.observedAt}`].filter(Boolean).join(" · "),
+    recommendedAction: input.stock?.publishedQuantity !== null &&
+      input.stock?.publishedQuantity !== undefined && input.stock?.safeCapacity !== null &&
+      input.stock?.safeCapacity !== undefined && input.stock.publishedQuantity > input.stock.safeCapacity
+      ? "La exposición supera la capacidad segura; revisar cantidad publicada sin ejecutar cambios automáticos."
+      : "Revisar exposición publicada y capacidad segura.",
     observedAt: input.observedAt, deepLinkLabel: "Abrir Stock Guard", deepLink }
   const labels: Record<WhatsAppAlertFamilyV1, [string, string, string]> = {
     COMPONENT_OUT_OF_STOCK: ["Componente sin stock confirmado", "Un componente exacto limita listings activos.", "Revisar listings afectados y capacidad segura."],

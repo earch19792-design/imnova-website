@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { unzipSync } from "fflate"
 
 export const EBAY_LISTING_QUALITY_REPORT_IMPORT_VERSION =
-  "EBAY_LISTING_QUALITY_REPORT_IMPORT_V1_2026_08_12"
+  "EBAY_LISTING_QUALITY_REPORT_IMPORT_V1_2026_08_12_SMART_SHEET_V2"
 export const EBAY_LISTING_QUALITY_REPORT_SOURCE = "EBAY_LISTING_QUALITY_REPORT" as const
 
 type Row = Record<string, unknown>
@@ -11,6 +11,7 @@ type ValidationReason = "UNSUPPORTED_FILE_TYPE" | "WORKBOOK_UNREADABLE" |
   "NO_DATA_SHEET_FOUND" | "HEADER_ROW_NOT_FOUND" | "ITEM_ID_COLUMN_NOT_FOUND" |
   "LISTING_IDENTITY_UNPROVEN" | "RECOMMENDATION_COLUMNS_NOT_FOUND" |
   "BENCHMARK_COLUMNS_NOT_FOUND" | "MULTIPLE_CANDIDATE_SHEETS" |
+  "HUMAN_SELECTION_REQUIRED" | "NO_VALID_SHEET" |
   "MALFORMED_WORKBOOK" | "FILE_TOO_LARGE" | "OTHER"
 
 // Base64 transport stays below the Vercel request-body ceiling. OOXML expansion is bounded separately.
@@ -176,11 +177,82 @@ function headerScore(cells: string[]) {
   const identity = IDENTITY_ALIASES.some((alias) => normalized.has(alias))
   const recommendation = RECOMMENDATION_ALIASES.some((alias) => normalized.has(alias))
   const benchmark = BENCHMARK_ALIASES.some((alias) => normalized.has(alias))
+  const itemId = ALIASES.itemId.some((alias) => normalized.has(alias))
+  const sku = ALIASES.sku.some((alias) => normalized.has(alias))
+  const category = ALIASES.category.some((alias) => normalized.has(alias))
+  const recognizableHeaders = Object.values(ALIASES).filter((aliases) =>
+    aliases.some((alias) => normalized.has(alias))).length
   return { score: Number(identity) * 5 + Number(recommendation) * 4 + Number(benchmark) * 2,
-    identity, recommendation, benchmark }
+    identity, itemId, sku, recommendation, benchmark, category, recognizableHeaders }
 }
 
-function parseXlsx(contentBase64: string) {
+function candidateSheetEvidence(input: {
+  definition: { name: string; relationshipId: string }
+  grid: ReturnType<typeof worksheetGrid>
+  header: ReturnType<typeof headerScore> & { rowNumber: number; cells: string[] }
+}) {
+  const normalizedHeaders = input.header.cells.map(normalizedHeader)
+  const columnFor = (aliases: readonly string[]) => normalizedHeaders.findIndex((header) =>
+    aliases.includes(header))
+  const itemIdColumn = columnFor(ALIASES.itemId)
+  const skuColumn = columnFor(ALIASES.sku)
+  const guidanceColumns = [
+    columnFor(ALIASES.recommendationCategory), columnFor(ALIASES.recommendationType),
+    columnFor(ALIASES.recommendationText), columnFor(ALIASES.qualityIssue),
+    columnFor(ALIASES.reportedBenchmark), columnFor(ALIASES.topCategoryBenchmark),
+  ].filter((column) => column >= 0)
+  const dataRows = input.grid.rows.filter((row) => row.rowNumber > input.header.rowNumber)
+    .slice(0, MAX_ROWS)
+  const nonEmptyRows = dataRows.filter((row) => row.cells.some((cell) => safeText(cell) !== null))
+  const validIdentity = (row: typeof dataRows[number]) => {
+    const itemId = itemIdColumn >= 0 ? safeText(row.cells[itemIdColumn], 30) : null
+    const sku = skuColumn >= 0 ? safeText(row.cells[skuColumn], 120) : null
+    return Boolean(itemId && /^\d{9,19}$/.test(itemId) || sku)
+  }
+  const validGuidance = (row: typeof dataRows[number]) => guidanceColumns.some((column) =>
+    safeText(row.cells[column]) !== null)
+  const recognizedRows = nonEmptyRows.filter((row) => validIdentity(row) && validGuidance(row))
+  const duplicateHeaderNoiseRows = nonEmptyRows.filter((row) => row.cells.filter((cell) =>
+    normalizedHeaders.includes(normalizedHeader(cell)) && normalizedHeader(cell)).length >= 2).length
+  const metadataText = input.grid.rows.filter((row) => row.rowNumber < input.header.rowNumber)
+    .flatMap((row) => row.cells).map(normalizedHeader).join(" ")
+  const reportMetadataConsistency = ["ebay", "listing", "quality", "report"]
+    .filter((token) => metadataText.includes(token)).length
+  const rowDensity = nonEmptyRows.length ? recognizedRows.length / nonEmptyRows.length : 0
+  const confidence = Math.round(Math.max(0, Math.min(100,
+    Number(input.header.itemId) * 18 + Number(input.header.sku) * 7 +
+    Number(input.header.recommendation) * 16 + Number(input.header.benchmark) * 10 +
+    Number(input.header.category) * 5 + Math.min(12, input.header.recognizableHeaders * 2) +
+    Math.min(12, recognizedRows.length * 2) + rowDensity * 14 +
+    Math.min(6, reportMetadataConsistency * 1.5) -
+    Math.min(20, duplicateHeaderNoiseRows * 5))))
+  const recognizedKeyColumns = [
+    ...(input.header.itemId ? ["ITEM_ID"] : []),
+    ...(input.header.sku ? ["UNIQUE_SKU"] : []),
+    ...(input.header.recommendation ? ["RECOMMENDATION"] : []),
+    ...(input.header.benchmark ? ["BENCHMARK"] : []),
+    ...(input.header.category ? ["CATEGORY"] : []),
+  ]
+  const reasonCodes = [
+    ...(input.header.itemId ? ["ITEM_ID_COLUMN_PRESENT"] : []),
+    ...(input.header.sku ? ["UNIQUE_SKU_COLUMN_PRESENT"] : []),
+    ...(input.header.recommendation ? ["RECOMMENDATION_FIELDS_PRESENT"] : []),
+    ...(input.header.benchmark ? ["BENCHMARK_FIELDS_PRESENT"] : []),
+    ...(input.header.category ? ["CATEGORY_FIELDS_PRESENT"] : []),
+    ...(recognizedRows.length ? ["VALID_LISTING_ROWS_PRESENT"] : ["NO_VALID_LISTING_ROWS"]),
+    ...(reportMetadataConsistency >= 2 ? ["EBAY_REPORT_METADATA_CONSISTENT"] : []),
+    ...(duplicateHeaderNoiseRows ? ["DUPLICATE_HEADER_NOISE_PENALTY"] : []),
+  ]
+  return { ...input, confidence, recognizedRowCount: recognizedRows.length,
+    nonEmptyDataRowCount: nonEmptyRows.length,
+    validListingRowDensity: Math.round(rowDensity * 10_000) / 100,
+    duplicateHeaderNoiseRows, reportMetadataConsistency, recognizedKeyColumns, reasonCodes }
+}
+
+function parseXlsx(contentBase64: string, requestedWorksheet?: string | null) {
+  if (contentBase64.length > Math.ceil(MAX_FILE_BYTES * 4 / 3) + 8) {
+    throw new QualityReportValidationError("FILE_TOO_LARGE")
+  }
   let bytes: Uint8Array
   try { bytes = Buffer.from(contentBase64, "base64") } catch {
     throw new QualityReportValidationError("WORKBOOK_UNREADABLE")
@@ -190,11 +262,14 @@ function parseXlsx(contentBase64: string) {
   }
   let archive: Record<string, Uint8Array>
   try {
+    let declaredUncompressedBytes = 0
     archive = unzipSync(bytes, { filter: (file) => {
       if (FORBIDDEN_XLSX_PATH.test(file.name)) {
         throw new QualityReportValidationError("MALFORMED_WORKBOOK", { forbiddenPart: true })
       }
-      if (file.originalSize > MAX_UNCOMPRESSED_BYTES) {
+      declaredUncompressedBytes += file.originalSize
+      if (file.originalSize > MAX_UNCOMPRESSED_BYTES ||
+          declaredUncompressedBytes > MAX_UNCOMPRESSED_BYTES) {
         throw new QualityReportValidationError("FILE_TOO_LARGE")
       }
       return /^(\[Content_Types\]\.xml|_rels\/\.rels|xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|worksheets\/[^/]+\.xml))$/i.test(file.name)
@@ -221,21 +296,59 @@ function parseXlsx(contentBase64: string) {
     const file = archive[path]
     if (!file) return []
     const grid = worksheetGrid(XML_DECODER.decode(file), strings)
+    for (const cell of grid.rows.flatMap((row) => row.cells)) {
+      const candidate = safeText(cell, 1_000)
+      if (candidate && (SECRET_TEXT.test(candidate) || EMAIL.test(candidate))) {
+        throw new Error("QUALITY_REPORT_SECRET_OR_PII_REJECTED")
+      }
+    }
     const headers = grid.rows.slice(0, MAX_HEADER_SCAN_ROWS).map((row) =>
       ({ ...row, ...headerScore(row.cells) })).filter((row) => row.score > 0)
       .sort((left, right) => right.score - left.score || left.rowNumber - right.rowNumber)
-    return headers[0] ? [{ definition, grid, header: headers[0] }] : []
-  }).sort((left, right) => right.header.score - left.header.score)
-  if (!candidates.length) throw new QualityReportValidationError("HEADER_ROW_NOT_FOUND", {
-    recognizedFileType: "EBAY_LISTING_QUALITY_REPORT_XLSX", worksheetNames: sheetDefinitions.map((row) => row.name) })
-  if (candidates.length > 1 && candidates[0].header.score === candidates[1].header.score) {
-    throw new QualityReportValidationError("MULTIPLE_CANDIDATE_SHEETS", {
-      recognizedFileType: "EBAY_LISTING_QUALITY_REPORT_XLSX",
-      candidateSheetCount: candidates.filter((row) => row.header.score === candidates[0].header.score).length })
+    return headers[0] ? [candidateSheetEvidence({ definition, grid, header: headers[0] })] : []
+  }).filter((candidate) => candidate.recognizedRowCount > 0 && candidate.header.identity &&
+    (candidate.header.recommendation || candidate.header.benchmark))
+    .sort((left, right) => right.confidence - left.confidence ||
+      right.recognizedRowCount - left.recognizedRowCount ||
+      left.definition.name.localeCompare(right.definition.name))
+  const publicCandidates = candidates.slice(0, MAX_WORKSHEETS).map((candidate) => ({
+    sheetName: candidate.definition.name, headerRowNumber: candidate.header.rowNumber,
+    recognizedRowCount: candidate.recognizedRowCount,
+    nonEmptyDataRowCount: candidate.nonEmptyDataRowCount,
+    recognizedKeyColumns: candidate.recognizedKeyColumns,
+    confidence: candidate.confidence, reasonCodes: candidate.reasonCodes,
+    validListingRowDensity: candidate.validListingRowDensity,
+    recognizableHeaderCount: candidate.header.recognizableHeaders,
+    reportMetadataConsistency: candidate.reportMetadataConsistency,
+    duplicateHeaderNoiseRows: candidate.duplicateHeaderNoiseRows,
+  }))
+  const baseDiagnosis = { recognizedFileType: "EBAY_LISTING_QUALITY_REPORT_XLSX",
+    worksheetNames: sheetDefinitions.map((row) => row.name), candidateSheetCount: candidates.length,
+    candidateSheets: publicCandidates }
+  if (!candidates.length) throw new QualityReportValidationError("NO_VALID_SHEET", {
+    ...baseDiagnosis, sheetResolutionState: "NO_VALID_SHEET" })
+  const requested = safeText(requestedWorksheet, 120)
+  const explicitlySelected = requested
+    ? candidates.find((candidate) => candidate.definition.name === requested) ?? null : null
+  if (requested && !explicitlySelected) throw new QualityReportValidationError("NO_VALID_SHEET", {
+    ...baseDiagnosis, sheetResolutionState: "NO_VALID_SHEET", requestedWorksheet: requested })
+  const top = candidates[0]
+  const second = candidates[1] ?? null
+  const materiallyDominant = top.confidence >= 72 && (!second ||
+    top.confidence - second.confidence >= 12 ||
+    top.recognizedRowCount >= Math.max(3, second.recognizedRowCount * 2) &&
+      top.confidence - second.confidence >= 5)
+  if (!explicitlySelected && !materiallyDominant) {
+    throw new QualityReportValidationError("HUMAN_SELECTION_REQUIRED", {
+      ...baseDiagnosis, sheetResolutionState: "HUMAN_SELECTION_REQUIRED",
+      reason: "NO_MATERIALLY_DOMINANT_HIGH_CONFIDENCE_SHEET" })
   }
-  const candidate = candidates[0]
+  const candidate = explicitlySelected ?? top
   const score = candidate.header
-  const diagnosis = { recognizedFileType: "EBAY_LISTING_QUALITY_REPORT_XLSX",
+  const diagnosis = { ...baseDiagnosis,
+    sheetResolutionState: materiallyDominant && !explicitlySelected
+      ? "AUTO_SELECTED" : "HUMAN_SELECTION_REQUIRED",
+    selectionMethod: explicitlySelected ? "HUMAN_SELECTED" : "AUTO_SELECTED",
     worksheetNames: sheetDefinitions.map((row) => row.name), selectedWorksheet: candidate.definition.name,
     headerRowNumber: score.rowNumber, itemIdColumnFound: candidate.header.cells
       .some((cell) => (ALIASES.itemId as readonly string[]).includes(normalizedHeader(cell))),
@@ -254,7 +367,8 @@ function parseXlsx(contentBase64: string) {
   return { rows, metadata: { format: "XLSX" as const,
     worksheetNames: sheetDefinitions.map((row) => row.name), selectedWorksheet: candidate.definition.name,
     headerRowNumber: candidate.header.rowNumber, formulaCellCount: candidate.grid.formulaCellCount,
-    externalLinksRejected: true, diagnosis } }
+    externalLinksRejected: true, sheetResolutionState: diagnosis.sheetResolutionState,
+    selectionMethod: diagnosis.selectionMethod, candidateSheets: publicCandidates, diagnosis } }
 }
 
 function field(row: Row, aliases: readonly string[]) {
@@ -268,10 +382,10 @@ function numberValue(value: unknown) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
-function parseRows(format: QualityFormat, content: string) {
+function parseRows(format: QualityFormat, content: string, selectedWorksheet?: string | null) {
   if (format === "CSV") return parseCsv(content)
   if (format === "JSON") return parseJson(content)
-  return parseXlsx(content)
+  return parseXlsx(content, selectedWorksheet)
 }
 
 export function parseEbayListingQualityReportV1(input: {
@@ -279,6 +393,7 @@ export function parseEbayListingQualityReportV1(input: {
   fileName: string
   content: string
   importedAt?: string
+  selectedWorksheet?: string | null
 }) {
   const importedAt = new Date(input.importedAt ?? new Date().toISOString())
   if (!Number.isFinite(importedAt.getTime())) throw new QualityReportValidationError("OTHER")
@@ -293,8 +408,16 @@ export function parseEbayListingQualityReportV1(input: {
   if (input.format !== "XLSX" && (SECRET_TEXT.test(input.content) || EMAIL.test(input.content))) {
     throw new Error("QUALITY_REPORT_SECRET_OR_PII_REJECTED")
   }
-  const parsed = parseRows(input.format, input.content)
+  const parsed = parseRows(input.format, input.content, input.selectedWorksheet)
   const rawRows = parsed.rows
+  for (const row of rawRows) {
+    for (const value of Object.values(row)) {
+      const candidate = safeText(value, 1_000)
+      if (candidate && (SECRET_TEXT.test(candidate) || EMAIL.test(candidate))) {
+        throw new Error("QUALITY_REPORT_SECRET_OR_PII_REJECTED")
+      }
+    }
+  }
   const headers = [...new Set(rawRows.flatMap((row) => Object.keys(row)))].slice(0, MAX_COLUMNS)
   if (headers.some((header) => PII_HEADERS.test(header))) {
     throw new Error("QUALITY_REPORT_BUYER_PII_HEADER_REJECTED")

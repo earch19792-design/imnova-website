@@ -8,6 +8,13 @@ import {
   parseDirectedLunaProductUrl,
 // @ts-ignore -- Node's native TypeScript test runner requires the explicit extension.
 } from "./ebay-luna-directed-product-import.ts"
+import {
+  canonicalLunaProductUrlV1,
+  classifyPublicLunaOutOfStockConfirmationV1,
+  readLunaWatcherHumanApprovalContractV1,
+  type LunaWatcherStoredHumanApprovalV1,
+// @ts-ignore -- Node's native TypeScript test runner requires the explicit extension.
+} from "./ebay-luna-supplier-stock-watcher-v1.ts"
 
 export const TARGETED_ACTIVE_LISTING_LUNA_MONITOR_VERSION =
   "EBAY_TARGETED_ACTIVE_LISTING_LUNA_MONITOR_V1" as const
@@ -22,9 +29,11 @@ type JsonRecord = Record<string, unknown>
 
 type ActiveListingRow = {
   id: string
+  ebay_item_id: string
   market_radar_product_id: string | null
   supplier_variant_id: string | null
   supplier_sku: string | null
+  raw_payload: JsonRecord | null
 }
 
 type CurrentVariantRow = {
@@ -87,7 +96,7 @@ export type TargetedLunaSnapshotInsert = {
   barcode: string | null
   price: number
   compare_at_price: number | null
-  available: boolean
+  available: boolean | null
   inventory_quantity: number | null
   collections: string[]
   discount_percent: number | null
@@ -111,15 +120,21 @@ export type TargetedLunaEventInsert = {
 
 export type TargetedLunaUnavailableReason =
   | "ACTIVE_LISTING_EXACT_LUNA_IDENTITY_REQUIRED"
+  | "ACTIVE_LISTING_HUMAN_APPROVED_LUNA_LINK_REQUIRED"
+  | "HUMAN_APPROVED_LUNA_LINK_CURRENT_IDENTITY_CONFLICT"
   | "CURRENT_LUNA_IDENTITY_MISMATCH"
   | "LUNA_PUBLIC_PRODUCT_NETWORK_UNAVAILABLE"
   | "LUNA_PUBLIC_PRODUCT_AUTH_UNAVAILABLE"
   | "LUNA_PUBLIC_PRODUCT_IDENTITY_MISMATCH"
+  | "LUNA_AUTHENTICATED_SESSION_UNAVAILABLE"
+  | "LUNA_AUTHENTICATED_SOURCE_CHANGED"
+  | "LUNA_AUTHENTICATED_SOURCE_UNAVAILABLE"
   | "TARGET_LIMIT_REACHED"
 
 type UnavailableObservation = {
   status: "unavailable"
   reason: TargetedLunaUnavailableReason
+  ebayItemId: string | null
   marketRadarProductId: string | null
   supplierVariantId: string | null
   supplierSku: string | null
@@ -353,7 +368,28 @@ export function buildExactTargetedLunaObservation(input: {
   const compareAtPrice = variant.sourceCompareAtPrice === null
     ? null
     : Number(variant.sourceCompareAtPrice.toFixed(2))
-  const inventoryQuantity = variant.available ? null : 0
+  const availability = classifyPublicLunaOutOfStockConfirmationV1({
+    observedAvailable: variant.available,
+    previousAvailable: previous.available,
+    previousRaw: previous.raw,
+  })
+  const authenticatedSource = product.sourceMode === "AUTHENTICATED_SERVER_HTTP" &&
+    product.sourceSessionHealth === "SESSION_OK"
+  const explicitQuantity = variant.sourceInventoryQuantityExplicit === true &&
+    Number.isInteger(variant.sourceInventoryQuantity) &&
+    (variant.sourceInventoryQuantity ?? -1) >= 0
+    ? variant.sourceInventoryQuantity as number
+    : null
+  // The authenticated Luna catalog is web evidence, not an authoritative
+  // supplier API/feed. Numeric zero remains a signal until a later consistent
+  // observation confirms it.
+  const resolvedAvailability = availability
+  if (authenticatedSource && explicitQuantity !== null &&
+      variant.available !== (explicitQuantity > 0)) {
+    throw new Error("TARGETED_LUNA_AUTHENTICATED_STOCK_CONFLICT")
+  }
+  const inventoryQuantity = authenticatedSource && variant.available &&
+    explicitQuantity !== null ? explicitQuantity : resolvedAvailability.persistedQuantity
   const retainedWeightUnit = variant.weightUnit === null &&
     previous.weight_unit !== null &&
     sameNumeric(previous.weight, variant.weight)
@@ -372,7 +408,11 @@ export function buildExactTargetedLunaObservation(input: {
     barcode: variant.sourceUnitBarcode,
     price,
     compare_at_price: compareAtPrice,
-    available: variant.available,
+    // One non-numeric unavailable observation is intentionally persisted as
+    // null. Downstream consumers therefore cannot mistake a signal for a
+    // confirmed stock loss. A second consistent exact observation advances
+    // this field to false without requiring a schema change.
+    available: resolvedAvailability.persistedAvailable,
     inventory_quantity: inventoryQuantity,
     collections,
     discount_percent: discountPercent(price, compareAtPrice),
@@ -400,18 +440,33 @@ export function buildExactTargetedLunaObservation(input: {
       },
       inventory_context: {
         inventory_quantity: inventoryQuantity,
-        inventory_status: variant.available ? "in_stock" : "out_of_stock",
-        inventory_source: "luna_public_product_json",
-        inventory_confidence: "medium",
-        inventory_scope: "availability_only",
+        observed_inventory_quantity: explicitQuantity,
+        inventory_status: resolvedAvailability.stockState.toLowerCase(),
+        inventory_source: authenticatedSource
+          ? "luna_authenticated_server_http" : "luna_public_product_json",
+        inventory_confidence: authenticatedSource ? "high" : "medium",
+        inventory_scope: explicitQuantity !== null
+          ? "explicit_variant_quantity" : "availability_only",
       },
       targeted_active_listing_monitor: {
         version: TARGETED_ACTIVE_LISTING_LUNA_MONITOR_VERSION,
         observation_status: "available",
-        public_data_only: true,
+        public_data_only: !authenticatedSource,
         login_automation_used: false,
-        credentials_used: false,
+        credentials_used: authenticatedSource,
+        protected_server_session_used: authenticatedSource,
+        credential_value_exposed: false,
+        credential_value_persisted: false,
         exact_identity_verified: true,
+        observed_available: variant.available,
+        stock_state: resolvedAvailability.stockState,
+        public_out_of_stock_confirmation_count: resolvedAvailability.confirmationCount,
+        public_out_of_stock_confirmation_required: 2,
+        source_mode: product.sourceMode ?? "PUBLIC_READ_ONLY_PRODUCT_PAGE",
+        source_session_health: product.sourceSessionHealth ?? null,
+        source_parser_version: product.sourceParserVersion ?? null,
+        source_evidence_fingerprint: product.sourceEvidenceFingerprint ?? null,
+        source_currency: product.sourceCurrency ?? null,
         previous_snapshot_id: previous.id,
         listing_count: target.listingCount,
         weight_unit_retained_from_previous_exact_snapshot:
@@ -427,19 +482,39 @@ export function buildExactTargetedLunaObservation(input: {
     : previous.inventory_quantity === 0
       ? false
       : null
-  if (previousAvailable !== null && previousAvailable !== snapshot.available) {
+  if (resolvedAvailability.newlyConfirmed) {
     events.push(buildEvent({
       target,
-      type: snapshot.available ? "restocked" : "out_of_stock",
+      type: "out_of_stock",
       oldValue: {
         available: previousAvailable,
         inventory_quantity: previous.inventory_quantity,
         snapshot_id: previous.id,
+        public_confirmation_count: resolvedAvailability.previousConfirmationCount,
       },
       newValue: {
-        available: snapshot.available,
+        available: false,
         inventory_quantity: snapshot.inventory_quantity,
-        observation_source: "luna_public_product_json",
+        observation_source: authenticatedSource
+          ? "luna_authenticated_server_http" : "luna_public_product_json",
+        public_confirmation_count: resolvedAvailability.confirmationCount,
+      },
+      observedAt,
+    }))
+  } else if (previousAvailable === false && snapshot.available === true) {
+    events.push(buildEvent({
+      target,
+      type: "restocked",
+      oldValue: {
+        available: false,
+        inventory_quantity: previous.inventory_quantity,
+        snapshot_id: previous.id,
+      },
+      newValue: {
+        available: true,
+        inventory_quantity: snapshot.inventory_quantity,
+        observation_source: authenticatedSource
+          ? "luna_authenticated_server_http" : "luna_public_product_json",
       },
       observedAt,
     }))
@@ -452,7 +527,8 @@ export function buildExactTargetedLunaObservation(input: {
       oldValue: { price: previousPrice, snapshot_id: previous.id },
       newValue: {
         price: snapshot.price,
-        observation_source: "luna_public_product_json",
+        observation_source: authenticatedSource
+          ? "luna_authenticated_server_http" : "luna_public_product_json",
       },
       observedAt,
     }))
@@ -467,6 +543,7 @@ export function buildExactTargetedLunaObservation(input: {
 function unavailable(
   reason: TargetedLunaUnavailableReason,
   input: {
+    ebayItemId?: string | null
     marketRadarProductId?: string | null
     supplierVariantId?: string | null
     supplierSku?: string | null
@@ -476,6 +553,7 @@ function unavailable(
   return {
     status: "unavailable",
     reason,
+    ebayItemId: input.ebayItemId ?? null,
     marketRadarProductId: input.marketRadarProductId ?? null,
     supplierVariantId: input.supplierVariantId ?? null,
     supplierSku: input.supplierSku ?? null,
@@ -500,6 +578,18 @@ function classifyPublicFailure(error: unknown): TargetedLunaUnavailableReason {
     return "LUNA_PUBLIC_PRODUCT_IDENTITY_MISMATCH"
   }
   return "LUNA_PUBLIC_PRODUCT_NETWORK_UNAVAILABLE"
+}
+
+function classifyAuthenticatedFailure(error: unknown): TargetedLunaUnavailableReason {
+  const code = error instanceof Error ? error.message : ""
+  if (["LUNA_REAUTH_REQUIRED", "LUNA_MFA_REQUIRED", "LUNA_CAPTCHA_BLOCKED",
+    "LUNA_AUTHORIZATION_DENIED"].includes(code)) {
+    return "LUNA_AUTHENTICATED_SESSION_UNAVAILABLE"
+  }
+  if (["LUNA_SOURCE_CHANGED", "TARGETED_LUNA_IDENTITY_MISMATCH"].includes(code)) {
+    return "LUNA_AUTHENTICATED_SOURCE_CHANGED"
+  }
+  return "LUNA_AUTHENTICATED_SOURCE_UNAVAILABLE"
 }
 
 async function mapConcurrent<T, R>(
@@ -531,6 +621,8 @@ export async function runTargetedActiveListingLunaMonitor(
     concurrency?: number
     timeoutMs?: number
     fetchImpl?: typeof fetch
+    productFetcher?: (target: ExactTargetedLunaMonitorTarget) =>
+      Promise<DirectedLunaProduct>
     now?: Date
   },
 ) {
@@ -540,11 +632,11 @@ export async function runTargetedActiveListingLunaMonitor(
     throw new Error("TARGETED_ACTIVE_LISTING_ACCOUNT_SCOPE_REQUIRED")
   }
   const limit = boundedInteger(input.limit, DEFAULT_LIMIT, 1, MAX_LIMIT)
-  const concurrency = boundedInteger(input.concurrency, DEFAULT_CONCURRENCY, 1, 8)
+  const concurrency = boundedInteger(input.concurrency, DEFAULT_CONCURRENCY, 1, 4)
   const observedAt = (input.now ?? new Date()).toISOString()
   const listingRead = await supabase
     .from("ebay_active_listings")
-    .select("id,market_radar_product_id,supplier_variant_id,supplier_sku", { count: "exact" })
+    .select("id,ebay_item_id,market_radar_product_id,supplier_variant_id,supplier_sku,raw_payload", { count: "exact" })
     .eq("account_key", accountKey)
     .eq("listing_status", "active")
     .order("last_radar_review_at", { ascending: true, nullsFirst: true })
@@ -555,47 +647,21 @@ export async function runTargetedActiveListingLunaMonitor(
   }
   const listings = (listingRead.data ?? []) as ActiveListingRow[]
   const totalActiveListingRows = listingRead.count ?? listings.length
-  if (totalActiveListingRows > listings.length) {
-    return {
-      version: TARGETED_ACTIVE_LISTING_LUNA_MONITOR_VERSION,
-      status: "unavailable" as const,
-      observedAt,
-      accountScoped: true,
-      totalActiveListingRows,
-      activeListingRowsSelected: listings.length,
-      exactTargetsSelected: 0,
-      exactTargetsObserved: 0,
-      monitoredListingRows: 0,
-      publicProductsFetched: 0,
-      snapshotsInserted: 0,
-      unchangedTargetsObserved: 0,
-      eventsDetected: 0,
-      eventsInserted: 0,
-      eventWriteStatus: "not_required" as const,
-      unavailable: [unavailable("TARGET_LIMIT_REACHED", {
-        listingCount: totalActiveListingRows - listings.length,
-      })],
-      safety: {
-        previewOnly: true,
-        publicLunaReadsOnly: true,
-        loginAutomationUsed: false,
-        cookiesOrCredentialsUsed: false,
-        fullCatalogScanUsed: false,
-        activeListingRegistryReadsUsed: true,
-        ebayApiReadsUsed: false,
-        ebayApiWritesUsed: false,
-        openAiCalls: 0,
-        productionChanged: false,
-      },
-    }
-  }
   const unavailableObservations: UnavailableObservation[] = []
+  if (totalActiveListingRows > listings.length) {
+    // Process the bounded page and report the remaining portfolio instead of
+    // refusing all progress when the active portfolio exceeds one batch.
+    unavailableObservations.push(unavailable("TARGET_LIMIT_REACHED", {
+      listingCount: totalActiveListingRows - listings.length,
+    }))
+  }
 
   const grouped = new Map<string, {
     marketRadarProductId: string
     supplierVariantId: string
     supplierSku: string
     listingCount: number
+    humanApproval: LunaWatcherStoredHumanApprovalV1 | null
   }>()
   for (const listing of listings) {
     const productId = text(listing.market_radar_product_id)
@@ -605,6 +671,7 @@ export async function runTargetedActiveListingLunaMonitor(
       unavailableObservations.push(unavailable(
         "ACTIVE_LISTING_EXACT_LUNA_IDENTITY_REQUIRED",
         {
+          ebayItemId: listing.ebay_item_id,
           marketRadarProductId: productId,
           supplierVariantId: variantId,
           supplierSku: sku,
@@ -612,7 +679,30 @@ export async function runTargetedActiveListingLunaMonitor(
       ))
       continue
     }
-    const key = identityKey(productId, variantId, sku)
+    const approval = input.productFetcher
+      ? readLunaWatcherHumanApprovalContractV1({
+          rawPayload: listing.raw_payload,
+          ebayItemId: listing.ebay_item_id,
+          supplierVariantId: listing.supplier_variant_id,
+          supplierSku: listing.supplier_sku,
+        })
+      : null
+    if (input.productFetcher && !approval) {
+      unavailableObservations.push(unavailable(
+        "ACTIVE_LISTING_HUMAN_APPROVED_LUNA_LINK_REQUIRED",
+        {
+          ebayItemId: listing.ebay_item_id,
+          marketRadarProductId: productId,
+          supplierVariantId: variantId,
+          supplierSku: sku,
+        },
+      ))
+      continue
+    }
+    const key = input.productFetcher
+      ? JSON.stringify([productId, variantId, sku, approval?.supplierProductId,
+          approval?.canonicalSourceUrl])
+      : identityKey(productId, variantId, sku)
     const current = grouped.get(key)
     if (current) current.listingCount += 1
     else grouped.set(key, {
@@ -620,6 +710,7 @@ export async function runTargetedActiveListingLunaMonitor(
       supplierVariantId: variantId,
       supplierSku: sku,
       listingCount: 1,
+      humanApproval: approval,
     })
   }
   const seeds = [...grouped.values()]
@@ -661,6 +752,17 @@ export async function runTargetedActiveListingLunaMonitor(
       unavailableObservations.push(unavailable("CURRENT_LUNA_IDENTITY_MISMATCH", {
         ...seed,
       }))
+      continue
+    }
+    const approval = seed.humanApproval
+    if (approval && (
+      approval.supplierProductId !== rows[0].supplier_product_id ||
+      approval.canonicalSourceUrl !== canonicalLunaProductUrlV1(rows[0].product_url)
+    )) {
+      unavailableObservations.push(unavailable(
+        "HUMAN_APPROVED_LUNA_LINK_CURRENT_IDENTITY_CONFLICT",
+        { ...seed },
+      ))
       continue
     }
     exactCurrentRows.push({ seed, current: rows[0] })
@@ -712,10 +814,12 @@ export async function runTargetedActiveListingLunaMonitor(
     try {
       let productFetch = fetchCache.get(target.productUrl)
       if (!productFetch) {
-        productFetch = fetchPublicLunaProductForActiveListingMonitor(target.productUrl, {
-          fetchImpl: input.fetchImpl,
-          timeoutMs: input.timeoutMs,
-        })
+        productFetch = input.productFetcher
+          ? input.productFetcher(target)
+          : fetchPublicLunaProductForActiveListingMonitor(target.productUrl, {
+              fetchImpl: input.fetchImpl,
+              timeoutMs: input.timeoutMs,
+            })
         fetchCache.set(target.productUrl, productFetch)
       }
       const product = await productFetch
@@ -727,7 +831,9 @@ export async function runTargetedActiveListingLunaMonitor(
     } catch (error) {
       return {
         status: "unavailable" as const,
-        observation: unavailable(classifyPublicFailure(error), {
+        observation: unavailable(input.productFetcher
+          ? classifyAuthenticatedFailure(error)
+          : classifyPublicFailure(error), {
           marketRadarProductId: target.marketRadarProductId,
           supplierVariantId: target.supplierVariantId,
           supplierSku: target.supplierSku,
@@ -801,7 +907,11 @@ export async function runTargetedActiveListingLunaMonitor(
     exactTargetsSelected: seeds.length,
     exactTargetsObserved: availableObservations.length,
     monitoredListingRows,
-    publicProductsFetched: fetchCache.size,
+    publicProductsFetched: input.productFetcher ? 0 : fetchCache.size,
+    supplierProductsFetched: fetchCache.size,
+    sourceMode: input.productFetcher
+      ? "AUTHENTICATED_SERVER_HTTP" as const
+      : "LEGACY_PUBLIC_AVAILABILITY_ONLY" as const,
     snapshotsInserted,
     unchangedTargetsObserved: availableObservations.length - changedObservations.length,
     eventsDetected: eventRows.length,
@@ -810,9 +920,12 @@ export async function runTargetedActiveListingLunaMonitor(
     unavailable: unavailableObservations,
     safety: {
       previewOnly: true,
-      publicLunaReadsOnly: true,
+      publicLunaReadsOnly: !input.productFetcher,
+      authenticatedServerReadsUsed: Boolean(input.productFetcher),
       loginAutomationUsed: false,
-      cookiesOrCredentialsUsed: false,
+      protectedServerSessionUsed: Boolean(input.productFetcher),
+      credentialValueExposed: false,
+      credentialValuePersisted: false,
       fullCatalogScanUsed: false,
       activeListingRegistryReadsUsed: true,
       ebayApiReadsUsed: false,

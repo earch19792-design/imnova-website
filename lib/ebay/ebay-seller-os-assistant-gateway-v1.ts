@@ -2,6 +2,7 @@ import type { CommercialMonitorGetDto } from "./commercial-monitor-readonly-cont
 import { buildAutomationHealthMetricsV1, buildPortfolioIntelligenceV1,
   buildProactiveExceptionQueueV1, evaluateReplaceKillIntelligenceV1 } from
   "./ebay-seller-os-portfolio-intelligence-v1"
+import { resolveCanonicalProductFamilyV1 } from "./ebay-commercial-intelligence-upgrade-v1"
 
 export const SELLER_OS_ASSISTANT_GATEWAY_VERSION = "SELLER_OS_ASSISTANT_GATEWAY_V1_2026_08_12"
 export const SELLER_OS_ASSISTANT_MAX_ITEMS = 100
@@ -42,6 +43,9 @@ function safeListing(monitor: CommercialMonitorGetDto, itemId: string) {
   if (!listing) return null
   const decision = monitor.backend.decisions.find((row) => row.listingKey === listing.key) ?? null
   const guidance = monitor.backend.guidanceVsSellerOs.find((row) => row.listingKey === listing.key) ?? null
+  const family = resolveCanonicalProductFamilyV1({ title: listing.identity.title })
+  const exception = buildProactiveExceptionQueueV1({ monitor, maximumEntries: 100 })
+    .find((row) => row.entityKey === itemId) ?? null
   return { identity: { itemId: listing.identity.itemId, title: listing.identity.title,
       sku: listing.identity.sku, thumbnail: listing.identity.primaryImageUrl,
       liveStatus: listing.discovery.livePresence.status },
@@ -65,7 +69,23 @@ function safeListing(monitor: CommercialMonitorGetDto, itemId: string) {
       safeCapacity: listing.composition.bundleCapacity, hardOverride:
         decision?.reasonCodes.includes("HARD_OVERRIDE_REQUIRES_HUMAN_REVIEW") ?? false },
     economics: { status: "UNPROVEN", reason: "COMPLETE_PROVEN_COST_INPUTS_REQUIRED" },
-    marketOpportunity: { status: "UNPROVEN", reason: "NO_LISTING_BOUND_OPPORTUNITY_CASE" },
+    marketOpportunity: { status: family.canonicalFamily ? "RESEARCH_READY" : "UNPROVEN",
+      canonicalFamily: family.canonicalFamily, canonicalFamilyConfidence: family.confidence,
+      attributeSet: family.attributes,
+      commercialRecommendation: { finalDecision: family.conflicts.length
+        ? "HUMAN_REVIEW" : "RESEARCH_REQUIRED",
+      nextBestAction: family.confidence >= 70 ? "NEED_STRICT_COMPARABLE_BREADTH"
+        : "NEED_PRODUCT_TRUTH" },
+      keywordRecommendation: { primaryKeyword: family.canonicalFamily?.toLocaleLowerCase("en-US") ?? null,
+        status: family.canonicalFamily ? "CANDIDATE_REQUIRES_MARKET_SUPPORT" : "UNPROVEN" },
+      keywordOpportunity: { status: "UNPROVEN", searchVolume: "UNPROVEN" },
+      priceOpportunity: { status: "UNPROVEN", reason: "STRICT_ACTIVE_COMPARABLES_REQUIRED" },
+      referenceCandidate: { status: "UNPROVEN", reason: "REFERENCE_RANKING_REQUIRED" },
+      useAsReferenceReadiness: "RESEARCH_REQUIRED",
+      nextBestEvidence: family.confidence >= 70 ? "NEED_STRICT_COMPARABLE_BREADTH"
+        : "NEED_PRODUCT_TRUTH",
+      exceptionPriority: exception?.priority ?? null,
+      reason: "NO_PERSISTED_LISTING_BOUND_OPPORTUNITY_CASE" },
     learningHistory: { status: monitor.learning.status, limitationCode: monitor.learning.limitationCode },
     currentAlertState: cap(monitor.alertCandidates.filter((row) =>
       row.listingReference.itemId === itemId), 20), noFalseZeros: true as const }
@@ -101,7 +121,16 @@ export function buildAssistantCommercialContextV1(monitor: CommercialMonitorGetD
       monitor.backend.listingQualityReport.limitationCode,
       ...monitor.backend.orders.fulfillmentStatuses.filter((value) => value !== "AVAILABLE"),
       monitor.backend.capabilities.inventory.inventoryItemsResource,
-    ].filter(Boolean), bounded: true as const, buyerPiiIncluded: false as const,
+    ].filter(Boolean),
+    commercialIntelligence: {
+      status: "READ_ONLY_ON_DEMAND" as const,
+      supportedFields: ["commercialRecommendation", "canonicalFamily", "keywordRecommendation",
+        "keywordOpportunity", "priceOpportunity", "referenceCandidate",
+        "useAsReferenceReadiness", "nextBestEvidence", "exceptionPriority"],
+      batchPolicy: { bounded: true as const, maximumReturnedItems: SELLER_OS_ASSISTANT_MAX_ITEMS,
+        persistenceRequiredForHistoricalOpportunityCases: true as const },
+    },
+    bounded: true as const, buyerPiiIncluded: false as const,
     credentialsIncluded: false as const, marketplaceWrites: 0 as const }
 }
 
@@ -125,13 +154,21 @@ export function executeSellerOsAssistantToolV1(input: {
   }
   if (input.toolName === "seller_os_get_opportunity_radar") {
     return { status: "UNPROVEN", entries: [],
-      reason: "PERSISTED_MARKET_OBSERVATION_SERIES_UNAVAILABLE", soldMomentumClaimed: false }
+      reason: "PERSISTED_MARKET_OBSERVATION_SERIES_UNAVAILABLE", soldMomentumClaimed: false,
+      commercialRecommendation: null, canonicalFamily: null, keywordRecommendation: null,
+      keywordOpportunity: null, priceOpportunity: null, referenceCandidate: null,
+      useAsReferenceReadiness: "UNPROVEN", nextBestEvidence: "NEED_ACTIVE_MARKET_OBSERVATION_SERIES",
+      exceptionPriority: null, readOnly: true, marketplaceWrites: 0 }
   }
   if (input.toolName === "seller_os_get_opportunity_case") {
     const id = typeof input.arguments.opportunityCaseId === "string"
       ? input.arguments.opportunityCaseId.slice(0, 120) : null
     return { status: id ? "UNPROVEN" : "ID_REQUIRED", opportunityCaseId: id,
-      reason: "OPPORTUNITY_CASE_PERSISTENCE_NOT_ACTIVATED", productCaseMutations: 0 }
+      reason: "OPPORTUNITY_CASE_PERSISTENCE_NOT_ACTIVATED",
+      commercialRecommendation: null, canonicalFamily: null, keywordRecommendation: null,
+      keywordOpportunity: null, priceOpportunity: null, referenceCandidate: null,
+      useAsReferenceReadiness: "UNPROVEN", nextBestEvidence: "NEED_PERSISTED_OPPORTUNITY_CASE",
+      exceptionPriority: null, productCaseMutations: 0, marketplaceWrites: 0 }
   }
   if (input.toolName === "seller_os_get_experiments") {
     return { entries: cap(input.monitor.backend.decisions.filter((row) =>

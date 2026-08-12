@@ -78,6 +78,7 @@ import {
   classifyTargetedLunaSnapshotContract,
   isAuthoritativeReadonlyOrderSource,
   oldestRequiredEvidenceTimestamp,
+  readLunaWatcherHumanApprovalContractV1,
 } from "./commercial-monitor-readonly-utilities.mjs"
 
 type AccountScope = {
@@ -1549,6 +1550,18 @@ function projectListing(input: {
     row?.supplier_sku ?? null,
     input.itemIdentityCount,
   )
+  const humanApprovedLunaLink = readLunaWatcherHumanApprovalContractV1({
+    rawPayload: row?.raw_payload,
+    ebayItemId: listing.itemId,
+    supplierVariantId: row?.supplier_variant_id ?? null,
+    supplierSku: row?.supplier_sku ?? null,
+  })
+  const approvedProductId = humanApprovedLunaLink
+    ? row?.market_radar_product_id ?? null : null
+  const approvedVariantId = humanApprovedLunaLink
+    ? row?.supplier_variant_id ?? null : null
+  const approvedSupplierSku = humanApprovedLunaLink
+    ? row?.supplier_sku ?? null : null
   const supplies = supplyEvidence(
     input.sources.supplies.rows,
     input.sources.supplySources,
@@ -1557,15 +1570,17 @@ function projectListing(input: {
     {
       listingStatus: row?.listing_status ?? null,
       listingUpdatedAt: row?.updated_at ?? null,
-      productId: row?.market_radar_product_id ?? null,
-      supplierVariantId: row?.supplier_variant_id ?? null,
-      supplierSku: row?.supplier_sku ?? null,
+      productId: approvedProductId,
+      supplierVariantId: approvedVariantId,
+      supplierSku: approvedSupplierSku,
     },
   )
   const stock = resolveStockEvidence({
-    productId: row?.market_radar_product_id ?? null,
-    supplierVariantId: row?.supplier_variant_id ?? null,
-    supplierSku: row?.supplier_sku ?? null,
+    productId: approvedProductId,
+    supplierVariantId: approvedVariantId,
+    supplierSku: approvedSupplierSku,
+    identityLimitationCode: humanApprovedLunaLink
+      ? null : "LUNA_HUMAN_APPROVED_LINK_REQUIRED",
     supplies,
     marketplace: input.marketplace,
     identity: identityEvidence,
