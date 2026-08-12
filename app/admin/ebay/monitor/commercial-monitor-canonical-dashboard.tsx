@@ -260,7 +260,7 @@ export function CommercialMonitorCanonicalDashboard({
     ["Overview", [["Monitor", "#commercial-dashboard", LayoutDashboard]]],
     ["Commerce", [["Listings", "#guidance-table", FileText], ["Opportunities", "/admin/ebay/opportunity-queue/research", Sparkles]]],
     ["Intelligence", [["Decisions", "#guidance-table", LineChart], ["Experiments", "#upcoming-reviews", FlaskConical], ["Learning", "#performance", CircleGauge]]],
-    ["Operations", [["Stock", "#inventory-status", Package], ["Orders", "#upcoming-reviews", ShoppingBag], ["Inventory", "#inventory-status", Database]]],
+    ["Operations", [["Readiness", "/admin/ebay/operational-readiness", Wrench], ["Stock", "#inventory-status", Package], ["Orders", "#upcoming-reviews", ShoppingBag], ["Inventory", "#inventory-status", Database]]],
     ["System", [["Data Quality", "#category-benchmark", ShieldCheck], ["Audit", "#advanced-diagnostics", FileText]]],
   ] as const
   const actionTypeDistribution = [...new Map(actionPlan.map((decision) =>
@@ -293,6 +293,16 @@ export function CommercialMonitorCanonicalDashboard({
         </section>
 
         <section aria-label="Estado de eBay Guidance" className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2.5 text-xs text-slate-600"><strong className="text-[10px] tracking-[0.14em] text-cyan-800">EBAY GUIDANCE</strong><StatusChip status={backend.listingQualityReport.status} /><span>Último reporte: {qualityUnavailable ? "No current report" : "Disponible"}</span><span>Ventana: {qualityUnavailable ? "No disponible" : "según reporte"}</span><span>Fuente: eBay Listing Quality Report</span><a href="#guidance-table" className="ml-auto font-bold text-cyan-800">Ver detalle</a></section>
+
+        <section aria-label="Commercial operational readiness" className="grid overflow-hidden rounded-xl border border-slate-200 bg-white text-[10px] shadow-sm sm:grid-cols-3 xl:grid-cols-7">
+          <div className="border-b border-slate-100 px-3 py-2 sm:border-r xl:border-b-0"><strong>Quality Report</strong><p className="mt-0.5 text-slate-500">{qualityUnavailable ? "READY FOR REAL SAMPLE" : backend.listingQualityReport.status.replaceAll("_", " ")}</p></div>
+          <div className="border-b border-slate-100 px-3 py-2 sm:border-r xl:border-b-0"><strong>Orders</strong><p className="mt-0.5 text-slate-500">{backend.kpis.orders.status.replaceAll("_", " ")}</p></div>
+          <div className="border-b border-slate-100 px-3 py-2 sm:border-r xl:border-b-0"><strong>Luna Capture</strong><p className="mt-0.5 text-slate-500">READY · evidence gated</p></div>
+          <div className="border-b border-slate-100 px-3 py-2 sm:border-r xl:border-b-0"><strong>Stock Guard V2</strong><p className="mt-0.5 text-slate-500">READY · unknown ≠ risk</p></div>
+          <div className="border-b border-slate-100 px-3 py-2 sm:border-r xl:border-b-0"><strong>Economics</strong><p className="mt-0.5 text-slate-500">EVIDENCE GATED</p></div>
+          <div className="border-b border-slate-100 px-3 py-2 sm:border-r xl:border-b-0"><strong>WhatsApp</strong><p className="mt-0.5 text-slate-500">DRY RUN ONLY</p></div>
+          <a href="/admin/ebay/operational-readiness" className="flex items-center justify-center gap-2 px-3 py-2 font-black text-cyan-700"><Wrench size={13} />Open readiness</a>
+        </section>
 
         <section aria-label="Ámbitos de tráfico" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px]">
           <div><strong className="text-slate-700">Ámbito KPI</strong><span className="ml-2 text-slate-500">No se mezclan ventanas, poblaciones ni granos.</span></div>
@@ -330,7 +340,7 @@ export function CommercialMonitorCanonicalDashboard({
                     <td className="px-2 py-2 font-semibold text-slate-700">{decisionLabels[decision.classification]}</td>
                     <td className="px-2 py-2 text-slate-500">{qualityUnavailable ? <><span className="font-bold text-slate-400">—</span><span className="block text-[9px]">No current report</span></> : guidance?.ebayGuidanceStatus.replaceAll("_", " ") ?? "—"}</td>
                     <td className="px-2 py-2 text-slate-500">{qualityUnavailable ? "—" : guidance?.reasonCodes.map(humanReason).join(" · ") || "—"}</td>
-                    <td className="px-2 py-2 font-semibold text-slate-700">{actionLabels[decision.recommendedAction]}{decision.experimentRunning && <span className="mt-1 block rounded bg-violet-50 px-1.5 py-1 text-[8px] font-bold text-violet-700">RUNNING · {decision.protectionState === "DO_NOT_TOUCH" ? "DO NOT TOUCH" : "REVIEW"}{decision.frozenVariables.length ? ` · Frozen: ${decision.frozenVariables.slice(0, 2).join(", ")}` : ""}{decision.nextReviewEvidenceRemaining !== null ? ` · ${formatValue(decision.nextReviewEvidenceRemaining)} evidence remaining` : ""}</span>}</td>
+                    <td className="px-2 py-2 font-semibold text-slate-700">{actionLabels[decision.recommendedAction]}{decision.experimentRunning && <span className="mt-1 block rounded bg-violet-50 px-1.5 py-1 text-[8px] font-bold text-violet-700">RUNNING · {decision.protectionState === "DO_NOT_TOUCH" ? "DO NOT TOUCH" : "REVIEW"}{decision.frozenVariables.length ? ` · Frozen: ${decision.frozenVariables.slice(0, 2).join(", ")}` : ""}{decision.nextReviewEvidenceRemaining !== null ? ` · ${formatValue(decision.nextReviewEvidenceRemaining)} evidence remaining` : ""}</span>}<details className="mt-1 text-[8px] font-normal text-slate-400"><summary className="cursor-pointer font-bold text-cyan-700">Operational detail</summary><p className="mt-1">Supplier identity UNPROVEN · Stock UNKNOWN · Economics UNPROVEN · WhatsApp DRY RUN</p><p>{guidance?.ebayGuidanceStatus ?? "Guidance missing"} · Next review {decision.nextReviewCondition ?? "unproven"}</p></details></td>
                     <td className="px-2 py-2"><PriorityChip priority={decision.priority} /></td>
                   </tr>
                 })}</tbody>

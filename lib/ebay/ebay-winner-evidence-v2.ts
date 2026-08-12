@@ -34,7 +34,7 @@ export type WinnerEvidenceCohort =
 export type WinnerComparableSource =
   | "EBAY_BROWSE_ACTIVE_LISTING"
   | "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
-  | "EBAY_BROWSE_ESTIMATED_SALES"
+  | "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
   | "EBAY_OFFICIAL_CSV_IMPORT"
   | "EBAY_OFFICIAL_JSON_IMPORT"
   | "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE"
@@ -570,7 +570,7 @@ function comparableCohort(source: WinnerComparableSource): WinnerEvidenceCohort 
     "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
     "HUMAN_REVIEWED_IMPORT",
   ].includes(source)) return "SOLD_OR_COMPLETED_EXACT_MATCHES"
-  if (source === "EBAY_BROWSE_ESTIMATED_SALES") return "ESTIMATED_DEMAND_SIGNALS"
+  if (source === "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE") return "ESTIMATED_DEMAND_SIGNALS"
   return null
 }
 
@@ -1047,10 +1047,10 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
           ? null
           : roundMoney(landedPrice / totalUnits),
       },
-      confirmedSoldQuantity: comparable.source === "EBAY_BROWSE_ESTIMATED_SALES"
+      confirmedSoldQuantity: comparable.source === "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
         ? null
         : confirmedSoldQuantity,
-      estimatedSoldQuantity: comparable.source === "EBAY_BROWSE_ESTIMATED_SALES"
+      estimatedSoldQuantity: comparable.source === "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
         ? finiteNonNegative(comparable.estimatedSoldQuantity)
         : null,
       keywords: normalizedKeywords(comparable.keywords),

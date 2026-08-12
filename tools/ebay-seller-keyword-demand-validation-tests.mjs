@@ -78,7 +78,7 @@ test("accepts eBay estimated sold quantity but labels it separately", () => {
     .filter((item) => item.itemId !== "v1|100000000003|0")
     .map((item, index) => ({
       ...item,
-      source: "EBAY_BROWSE_ESTIMATED_SALES",
+      source: "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE",
       totalSoldQuantity: null,
       estimatedSoldQuantity: index === 0 ? 8 : 4,
     }))

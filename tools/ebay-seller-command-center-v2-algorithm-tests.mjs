@@ -49,7 +49,7 @@ const exact = (overrides = {}) => ({
   gtin: candidate.gtin,
   brand: candidate.brand,
   mpn: candidate.mpn,
-  source: "EBAY_BROWSE_ESTIMATED_SALES",
+  source: "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE",
   estimatedSoldQuantity: 10,
   ...overrides,
 })
@@ -198,7 +198,7 @@ test("estimated velocity counts identifier-exact listings only", () => {
         shippingCost: 0,
         identityMatchScore: 100,
         identityMatchType: "EXACT_GTIN",
-        evidenceSource: "EBAY_BROWSE_ESTIMATED_SALES",
+        evidenceSource: "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE",
       },
       {
         candidateKey: candidate.candidateKey,
@@ -210,7 +210,7 @@ test("estimated velocity counts identifier-exact listings only", () => {
         shippingCost: 0,
         identityMatchScore: 80,
         identityMatchType: "STRONG_ATTRIBUTE_MATCH",
-        evidenceSource: "EBAY_BROWSE_ESTIMATED_SALES",
+        evidenceSource: "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE",
       },
     ],
     taxonomyIntelligence: taxonomy(),

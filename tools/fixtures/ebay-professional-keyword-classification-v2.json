@@ -18,7 +18,7 @@
       "sellerUsername": "daverco_us",
       "sellerFeedbackScore": 5000,
       "estimatedSoldQuantity": 192,
-      "source": "EBAY_BROWSE_ESTIMATED_SALES"
+      "source": "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
     },
     {
       "itemId": "v1|200000000002|0",
@@ -31,7 +31,7 @@
       "sellerUsername": "bjmc9057",
       "sellerFeedbackScore": 1200,
       "estimatedSoldQuantity": 8,
-      "source": "EBAY_BROWSE_ESTIMATED_SALES"
+      "source": "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
     },
     {
       "itemId": "v1|200000000003|0",

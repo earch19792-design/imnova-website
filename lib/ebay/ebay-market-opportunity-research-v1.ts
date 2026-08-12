@@ -17,7 +17,7 @@ export type MarketResearchSeedType =
   | "SEED_PRODUCT_FAMILY" | "PRODUCT_CASE_CANDIDATE"
 export type MarketResearchEvidenceSource =
   | "EBAY_BROWSE_ACTIVE_LISTING"
-  | "EBAY_BROWSE_ESTIMATED_SALES"
+  | "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
   | "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
   | "MANUAL_MARKET_EVIDENCE"
 
@@ -299,13 +299,94 @@ function evidencePhrases(row: MarketEvidenceV1) {
 
 function keywordFamilyType(phrase: string, seedValue: string) {
   const values = tokens(phrase)
+  if (values.length >= 2 && overlap(values, tokens(seedValue)) >= .65) return "CORE"
   if (values.some((token) => PACK_TERMS.has(token)) || /\b\d+\b/.test(phrase)) return "PACK_FORMAT"
   if (values.some((token) => AUDIENCE_TERMS.has(token))) return "AUDIENCE"
   if (values.some((token) => USE_TERMS.has(token))) return "USE_CASE"
   if (values.some((token) => BENEFIT_TERMS.has(token))) return "BENEFIT"
   if (values.some((token) => FORM_TERMS.has(token))) return "FORM_FACTOR"
-  if (overlap(values, tokens(seedValue)) >= .5) return "CORE"
   return values.length >= 2 ? "FEATURE" : "ATTRIBUTE"
+}
+
+function canonicalProductFamilyLabel(
+  request: MarketResearchRequestV1,
+  rows: Array<{ evidence: MarketEvidenceV1 }>,
+) {
+  const seedTerms = tokens(request.seedValue)
+  if (request.seedType !== "SEED_ITEM_ID" && seedTerms.length >= 2 && seedTerms.length <= 7) {
+    return text(request.seedValue, 160) as string
+  }
+  const support = new Map<string, Set<string>>()
+  for (const row of rows) {
+    for (const phrase of evidencePhrases(row.evidence).filter((value) => {
+      const size = tokens(value).length
+      return size >= 2 && size <= 4
+    })) {
+      const ids = support.get(phrase) ?? new Set<string>()
+      ids.add(row.evidence.evidenceId)
+      support.set(phrase, ids)
+    }
+  }
+  return [...support.entries()].sort((left, right) =>
+    right[1].size - left[1].size ||
+    tokens(right[0]).length - tokens(left[0]).length ||
+    left[0].localeCompare(right[0]))[0]?.[0] ??
+    text(request.seedIdentity.categoryName, 160) ?? "Unproven product family"
+}
+
+function keywordPhraseQuality(input: {
+  phrase: string
+  support: number
+  seedValue: string
+  allPhrases: Map<string, { evidenceIds: Set<string> }>
+}) {
+  const phraseTokens = tokens(input.phrase)
+  const longerSupportedPhrase = [...input.allPhrases.entries()].some(([candidate, values]) => {
+    const candidateTokens = tokens(candidate)
+    return candidate !== input.phrase && candidateTokens.length > phraseTokens.length &&
+      phraseTokens.every((token) => candidateTokens.includes(token)) &&
+      values.evidenceIds.size >= input.support
+  })
+  const seedRelevance = overlap(phraseTokens, tokens(input.seedValue))
+  const ambiguityPenalty = phraseTokens.length === 1 && longerSupportedPhrase ? 38
+    : phraseTokens.length === 2 && longerSupportedPhrase ? 12 : 0
+  const specificity = phraseTokens.length >= 3 ? 34 : phraseTokens.length === 2 ? 24 : 8
+  const qualityScore = boundedScore(
+    specificity + Math.min(30, input.support * 8) + seedRelevance * 32 - ambiguityPenalty,
+  )
+  return {
+    qualityScore,
+    reasonCodes: [
+      ...(phraseTokens.length >= 2 ? ["COMMERCIAL_MULTI_TOKEN_PHRASE"] : []),
+      ...(seedRelevance >= .5 ? ["PRODUCT_FAMILY_RELEVANT"] : []),
+      ...(longerSupportedPhrase ? ["SUBSUMED_BY_STRONGER_PHRASE_PENALTY"] : []),
+    ],
+  }
+}
+
+function selectKeywordSpine<T extends {
+  canonicalPhrase: string
+  familyType: string
+  qualityScore: number
+}>(families: T[]) {
+  const selected: string[] = []
+  const ranked = [...families].sort((left, right) =>
+    right.qualityScore - left.qualityScore ||
+    tokens(right.canonicalPhrase).length - tokens(left.canonicalPhrase).length ||
+    left.canonicalPhrase.localeCompare(right.canonicalPhrase))
+  for (const familyType of ["CORE", "FORM_FACTOR", "FEATURE", "USE_CASE", "BENEFIT"]) {
+    const candidate = ranked.find((row) => row.familyType === familyType &&
+      (tokens(row.canonicalPhrase).length >= 2 || row.qualityScore >= 75) &&
+      !selected.some((current) => {
+        const currentTokens = tokens(current)
+        const candidateTokens = tokens(row.canonicalPhrase)
+        return currentTokens.every((token) => candidateTokens.includes(token)) ||
+          candidateTokens.every((token) => currentTokens.includes(token))
+      }))
+    if (candidate) selected.push(candidate.canonicalPhrase)
+    if (selected.length === 4) break
+  }
+  return selected
 }
 
 function freshness(observedAt: string, asOf: Date) {
@@ -357,7 +438,9 @@ export function marketEvidenceFromKeywordDemandReportV1(
       saleObservedAt: sold ? row.lastSoldDate ?? row.itemEndDate : null,
       observedAt: sold ? row.lastSoldDate ?? row.itemEndDate ?? report.evidenceAsOf
         : report.evidenceAsOf,
-      source: row.evidenceSource,
+      source: sold
+        ? "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
+        : "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE",
       sourceVersion: report.validationVersion,
       evidenceCompleteness: row.identifierExact ? "COMPLETE" : "PARTIAL",
       sellerReferenceHash: row.sellerUsername
@@ -448,16 +531,19 @@ export function buildMarketOpportunityResearchV1(input: {
   }
   if (!categoryGroups.size) categoryGroups.set("core", [])
   const productFamilies = [...categoryGroups.entries()].map(([key, rows], index) => {
-    const label = rows.map((row) => row.evidence.categoryName).find(Boolean) ??
-      input.request.seedIdentity.categoryName ?? input.request.seedValue
+    const categoryLabel = rows.map((row) => row.evidence.categoryName).find(Boolean) ??
+      input.request.seedIdentity.categoryName ?? null
+    const categoryId = rows.map((row) => row.evidence.categoryId).find(Boolean) ?? null
+    const label = canonicalProductFamilyLabel(input.request, rows)
     const activeRows = rows.filter((row) => row.evidence.activeListing)
     const soldRows = rows.filter((row) => row.evidence.confirmedSold)
     return {
       familyId: `family_${stableHash(`${key}:${normalize(label)}`).slice(0, 20)}`,
-      familyType: index === 0 ? "CORE_PRODUCT_FAMILY" as const : "ATTRIBUTE_FAMILY" as const,
+      familyType: index === 0 ? "CORE_PRODUCT_FAMILY" as const : "ADJACENT_PRODUCT_FAMILY" as const,
       canonicalLabel: label,
+      category: { categoryId, canonicalLabel: categoryLabel },
       normalizedTerms: unique(rows.flatMap((row) => tokens(row.evidence.title))).slice(0, 15),
-      categoryEvidence: rows.map((row) => row.evidence.categoryId).find(Boolean) ?? null,
+      categoryEvidence: categoryId,
       representativeItems: rows.slice(0, 3).map((row) => row.evidence.evidenceId),
       supportingListingCount: rows.length,
       soldEvidenceCount: soldRows.length,
@@ -468,7 +554,9 @@ export function buildMarketOpportunityResearchV1(input: {
       },
       confidence: rows.length ? boundedScore(35 + rows.length * 10) : 15,
       sourceCompleteness: rows.length ? "PARTIAL" as const : "UNPROVEN" as const,
-      reasonCodes: rows.length ? ["CATEGORY_AND_COMPARABLE_EVIDENCE"] : ["NO_COMPARABLE_EVIDENCE"],
+      reasonCodes: rows.length
+        ? ["PRODUCT_PHRASE_AND_CATEGORY_EVIDENCE", "CATEGORY_IS_NOT_PRODUCT_FAMILY"]
+        : ["NO_COMPARABLE_EVIDENCE"],
     }
   }).sort((left, right) => right.supportingListingCount - left.supportingListingCount ||
     left.familyId.localeCompare(right.familyId))
@@ -502,6 +590,12 @@ export function buildMarketOpportunityResearchV1(input: {
       input.soldHistoryStatus === "PARTIAL"
     const recentDays = values.dates.map((date) => ageDays(date, asOf))
       .filter((value): value is number => value !== null)
+    const quality = keywordPhraseQuality({
+      phrase,
+      support: values.evidenceIds.size,
+      seedValue: input.request.seedValue,
+      allPhrases: phraseMap,
+    })
     return {
       keywordFamilyId: `keyword_${stableHash(phrase).slice(0, 20)}`,
       canonicalPhrase: phrase,
@@ -515,19 +609,28 @@ export function buildMarketOpportunityResearchV1(input: {
       medianActivePrice: percentile(values.activePrices, .5),
       recency: recentDays.length ? Math.min(...recentDays) : null,
       momentum: "INSUFFICIENT_EVIDENCE" as const,
-      confidence: boundedScore(values.evidenceIds.size * 18 + values.soldIds.size * 20),
+      qualityScore: quality.qualityScore,
+      marketEvidenceOnly: true as const,
+      confidence: boundedScore(
+        (values.evidenceIds.size * 18 + values.soldIds.size * 20) * .65 +
+        quality.qualityScore * .35,
+      ),
       evidenceStatus: soldEvidenceAvailable && values.soldIds.size
         ? "SOLD_EVIDENCE_AVAILABLE" as const
         : values.activeIds.size ? "ACTIVE_LISTING_EVIDENCE_ONLY" as const
           : "UNPROVEN" as const,
-      reasonCodes: values.soldIds.size
-        ? ["REPEATED_IN_CONFIRMED_SOLD_COMPARABLES"]
-        : ["NO_AUTHORIZED_SOLD_KEYWORD_EVIDENCE"],
+      reasonCodes: [
+        ...(values.soldIds.size
+          ? ["REPEATED_IN_CONFIRMED_SOLD_COMPARABLES"]
+          : ["NO_AUTHORIZED_SOLD_KEYWORD_EVIDENCE"]),
+        ...quality.reasonCodes,
+      ],
     }
   }).filter((row) => row.comparableListingsObserved >= 2 ||
     overlap(tokens(row.canonicalPhrase), tokens(input.request.seedValue)) >= .5)
     .sort((left, right) =>
       (right.soldQuantityObserved ?? -1) - (left.soldQuantityObserved ?? -1) ||
+      right.qualityScore - left.qualityScore ||
       right.comparableListingsObserved - left.comparableListingsObserved ||
       right.canonicalPhrase.split(" ").length - left.canonicalPhrase.split(" ").length ||
       left.canonicalPhrase.localeCompare(right.canonicalPhrase))
@@ -587,6 +690,14 @@ export function buildMarketOpportunityResearchV1(input: {
   const competition = {
     activeComparableCount: active.filter((row) =>
       row.assessment.classification === "EXACT_OR_STRONG_COMPARABLE").length,
+    strongComparableCount: active.filter((row) =>
+      row.assessment.classification === "EXACT_OR_STRONG_COMPARABLE").length,
+    familyComparableCount: active.filter((row) =>
+      row.assessment.classification === "PRODUCT_FAMILY_COMPARABLE").length,
+    weakComparableCount: comparables.filter((row) => row.evidence.activeListing &&
+      row.assessment.classification === "WEAK_COMPARABLE").length,
+    activeMarketResultCount: evidence.filter((row) => row.activeListing).length,
+    competitionCount: active.length,
     activeFamilyCount: active.length,
     distinctSellerCount: new Set(active.map((row) => row.evidence.sellerReferenceHash)
       .filter(Boolean)).size,
@@ -630,13 +741,7 @@ export function buildMarketOpportunityResearchV1(input: {
   const decision = opportunityScore === null ? "HUMAN_REVIEW" as const
     : opportunityScore >= 70 && completeness >= 75 ? "ADVANCE" as const
       : opportunityScore < 35 && sold.length >= 3 ? "REJECT" as const : "HOLD" as const
-  const coreTerm = keywordFamilies.find((row) => row.familyType === "CORE")
-  const spineTerms = unique([
-    coreTerm?.canonicalPhrase,
-    keywordFamilies.find((row) => row.familyType === "FORM_FACTOR")?.canonicalPhrase,
-    keywordFamilies.find((row) => row.familyType === "FEATURE")?.canonicalPhrase,
-    keywordFamilies.find((row) => ["USE_CASE", "BENEFIT"].includes(row.familyType))?.canonicalPhrase,
-  ].filter((value): value is string => Boolean(value))).slice(0, 4)
+  const spineTerms = selectKeywordSpine(keywordFamilies)
   const generatedQueries = unique(keywordFamilies.slice(0, input.request.queryBudget)
     .map((row) => row.canonicalPhrase)
     .filter((phrase) => normalize(phrase) !== normalize(input.request.seedValue)))
@@ -683,6 +788,7 @@ export function buildMarketOpportunityResearchV1(input: {
       terms: spineTerms,
       isAutomaticTitle: false as const,
       requiresPhysicalProductTruthValidation: true as const,
+      evidenceRole: "MARKET_EVIDENCE_ONLY" as const,
       source: "OBSERVED_COMPARABLE_PHRASES" as const,
     },
     demand,
@@ -704,7 +810,7 @@ export function buildMarketOpportunityResearchV1(input: {
         seed: { type: input.request.seedType, value: input.request.seedValue },
         marketplace: input.request.marketplace,
         productFamily: productFamilies[0]?.canonicalLabel ?? null,
-        category: productFamilies[0]?.categoryEvidence ?? null,
+        category: productFamilies[0]?.category ?? null,
         researchWindowDays: input.request.requestedWindowDays,
         observationTimestamp: asOf.toISOString(),
       },

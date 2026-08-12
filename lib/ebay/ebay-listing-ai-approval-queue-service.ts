@@ -306,7 +306,7 @@ function comparableObservations(report: unknown) {
   const root = record(report)
   return records(root.comparableEvidence).map((entry): EbayComparableIdentityObservation | null => {
     const listingId = text(entry.comparableId)
-    if (!listingId || !["EBAY_BROWSE_ACTIVE_LISTING", "EBAY_BROWSE_ESTIMATED_SALES"]
+    if (!listingId || !["EBAY_BROWSE_ACTIVE_LISTING", "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"]
       .includes(text(entry.evidenceSource) ?? "")) return null
     const aspects = records(entry.localizedAspects).map((aspect) => ({
       name: text(aspect.name) ?? "", value: text(aspect.value) ?? "",
@@ -499,7 +499,7 @@ function sanitizedMarketPatterns(input: {
   const activeSellerCount = sellerCounts.size
   const verifiedSoldSellerCount = new Set(sold.map(({ raw }) => sellerKey(raw)).filter(Boolean)).size
   const estimated = active.filter(({ comparable }) =>
-    comparable.source === "EBAY_BROWSE_ESTIMATED_SALES")
+    comparable.source === "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE")
   const estimatedSoldSellerCount = new Set(estimated.map(({ raw }) => sellerKey(raw)).filter(Boolean)).size
   const totalVerifiedSoldQuantity = sold.reduce((sum, { comparable }) =>
     sum + (comparable.confirmedSoldQuantity ?? 0), 0)
@@ -694,7 +694,7 @@ function comparableInputFromPackage(payload: JsonRecord): WinnerComparableInput[
 
 function separateActiveAndEstimatedComparables(report: unknown) {
   return winnerComparablesFromKeywordReport(report).flatMap((entry) =>
-    entry.source === "EBAY_BROWSE_ESTIMATED_SALES"
+    entry.source === "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
       ? [{ ...entry, source: "EBAY_BROWSE_ACTIVE_LISTING" as const,
         estimatedSoldQuantity: null }, entry]
       : [entry])

@@ -92,7 +92,7 @@ export function winnerComparablesFromKeywordReport(report: unknown): WinnerCompa
     if (!source || ![
       "EBAY_BROWSE_ACTIVE_LISTING",
       "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY",
-      "EBAY_BROWSE_ESTIMATED_SALES",
+      "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE",
     ].includes(source)) return null
     return {
       source: source as WinnerComparableInput["source"],

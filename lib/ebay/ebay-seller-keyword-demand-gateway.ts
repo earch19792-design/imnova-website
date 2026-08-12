@@ -666,7 +666,7 @@ export async function runEbaySellerKeywordDemandValidation(
       (item) => mappedActiveComparable(item, browseToken)
     )).map((mapped) => {
       return mapped.estimatedSoldQuantity && mapped.estimatedSoldQuantity > 0
-        ? { ...mapped, source: "EBAY_BROWSE_ESTIMATED_SALES" as const }
+        ? { ...mapped, source: "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE" as const }
         : mapped
     })
 
@@ -805,7 +805,7 @@ export async function observeEbayActiveCompetitors(input: {
     const comparables = activeSearch.items.map((item, index) => {
       const mapped = enriched[index] ?? mapComparable(item, "EBAY_BROWSE_ACTIVE_LISTING")
       return mapped.estimatedSoldQuantity && mapped.estimatedSoldQuantity > 0
-        ? { ...mapped, source: "EBAY_BROWSE_ESTIMATED_SALES" as const }
+        ? { ...mapped, source: "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE" as const }
         : mapped
     })
     const report = buildEbaySellerKeywordDemandValidation({

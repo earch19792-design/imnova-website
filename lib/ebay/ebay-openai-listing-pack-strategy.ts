@@ -330,7 +330,7 @@ function confidence(active: number, sold: number) {
 
 function sourceCohort(source: string | null) {
   if (source === "EBAY_BROWSE_ACTIVE_LISTING") return "ACTIVE"
-  if (source === "EBAY_BROWSE_ESTIMATED_SALES") return "ESTIMATED"
+  if (source === "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE") return "ESTIMATED"
   if (["EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY", "EBAY_OFFICIAL_CSV_IMPORT",
     "EBAY_OFFICIAL_JSON_IMPORT", "HUMAN_REVIEWED_IMPORT"].includes(source ?? "")) return "SOLD"
   return "INVALID"

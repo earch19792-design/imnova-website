@@ -6,7 +6,7 @@ export const EBAY_SELLER_KEYWORD_DEMAND_VALIDATION_VERSION =
 
 export type EbaySalesEvidenceSource =
   | "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
-  | "EBAY_BROWSE_ESTIMATED_SALES"
+  | "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
   | "EBAY_BROWSE_ACTIVE_LISTING"
 
 export type EbaySellerComparableInput = {
@@ -532,7 +532,7 @@ export function buildEbaySellerKeywordDemandValidation(
       soldRecencyDays,
     )
     const estimatedSoldQuantity =
-      entry.source === "EBAY_BROWSE_ESTIMATED_SALES"
+      entry.source === "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
         ? numberOrZero(entry.estimatedSoldQuantity)
         : 0
     const salesQuantity = (verifiedSoldRecent ? verifiedSoldQuantity : 0) || estimatedSoldQuantity

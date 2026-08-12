@@ -62,7 +62,7 @@
         { "name": "Color", "value": "Gray" }
       ],
       "returnsAccepted": true,
-      "source": "EBAY_BROWSE_ESTIMATED_SALES"
+      "source": "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
     },
     {
       "itemId": "v1|100000000002|0",
@@ -90,7 +90,7 @@
         { "name": "Size", "value": "3 lb" }
       ],
       "returnsAccepted": true,
-      "source": "EBAY_BROWSE_ESTIMATED_SALES"
+      "source": "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
     }
   ],
   "observationHistory": [
@@ -104,7 +104,7 @@
       "shippingCost": 0,
       "identityMatchScore": 100,
       "identityMatchType": "EXACT_GTIN",
-      "evidenceSource": "EBAY_BROWSE_ESTIMATED_SALES"
+      "evidenceSource": "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
     },
     {
       "candidateKey": "luna-portex:concrete-crack-filler-gray-3lb",
@@ -116,7 +116,7 @@
       "shippingCost": 0,
       "identityMatchScore": 100,
       "identityMatchType": "EXACT_GTIN",
-      "evidenceSource": "EBAY_BROWSE_ESTIMATED_SALES"
+      "evidenceSource": "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
     }
   ]
 }

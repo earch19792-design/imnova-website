@@ -16,7 +16,7 @@ de Luna Portex y ordena listings y keywords por evidencia de ventas.
    - Marketplace Insights es una API de acceso limitado; el módulo sólo la
      intenta cuando `EBAY_MARKETPLACE_INSIGHTS_ENABLED=true` y la aplicación
      tiene el scope autorizado.
-2. `EBAY_BROWSE_ESTIMATED_SALES`
+2. `EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE`
    - Se obtiene mediante Browse search + getItem.
    - Usa `estimatedSoldQuantity` expuesto por eBay para el listing activo.
    - Se etiqueta expresamente como estimación, no como historial completo.

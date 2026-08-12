@@ -60,7 +60,7 @@
       "sellerUsername": "seller-delta",
       "sellerFeedbackScore": 850,
       "estimatedSoldQuantity": 12,
-      "source": "EBAY_BROWSE_ESTIMATED_SALES"
+      "source": "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
     }
   ]
 }
