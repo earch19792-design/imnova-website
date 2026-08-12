@@ -238,43 +238,20 @@ export function CommercialMonitorReadonlyClient() {
     : undefined
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-[#05070d] px-4 pb-28 pt-5 text-white sm:px-6 md:px-10">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <nav aria-label="Commercial Monitor" className="flex flex-wrap gap-2 text-xs font-black uppercase tracking-[0.16em]">
-          <a href="/admin/ebay-seller-os" className="inline-flex min-h-11 items-center rounded-full border border-white/15 px-4 text-white/65 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Seller OS</a>
-          <a href="#listings" className="inline-flex min-h-11 items-center rounded-full border border-white/15 px-4 text-white/65 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Listings</a>
-          <a href="#traffic" className="inline-flex min-h-11 items-center rounded-full border border-white/15 px-4 text-white/65 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Métricas</a>
-          <a href="#data-quality" className="inline-flex min-h-11 items-center rounded-full border border-white/15 px-4 text-white/65 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Calidad</a>
-        </nav>
+    <main className="min-h-screen overflow-x-hidden bg-[#eef2f6]">
+      <div aria-live="polite" className="fixed right-4 top-4 z-50 max-w-lg">
+        {loading && !monitor && <p role="status" className="rounded-xl border border-cyan-200 bg-white p-4 text-sm text-slate-700 shadow-xl">Consultando readers allowlisted; no se ejecutan escrituras.</p>}
+        {error && <p role="alert" className="rounded-xl border border-rose-200 bg-white p-4 text-sm text-rose-800 shadow-xl">{error}{monitor && refreshFailedAt ? ` La vista conserva la lectura anterior; refresh fallido ${formatTimestamp(refreshFailedAt)}.` : ""}</p>}
+      </div>
 
-        <header className="overflow-hidden rounded-[32px] border border-cyan-200/15 bg-gradient-to-br from-cyan-200/[0.12] via-white/[0.035] to-emerald-200/[0.08] p-6 md:p-9">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-cyan-100/35 bg-cyan-100 px-3 py-1.5 text-[11px] font-black text-black">READ-ONLY</span>
-              <span className="rounded-full border border-white/15 px-3 py-1.5 text-[11px] font-black text-white/70">COMMERCIAL MONITOR V1</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => void loadMonitor()}
-              disabled={loading}
-              className="min-h-12 rounded-2xl bg-white px-5 text-sm font-black text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200 disabled:cursor-wait disabled:opacity-60"
-            >
-              {loading ? "Leyendo…" : "Actualizar datos"}
-            </button>
-          </div>
-          <p className="mt-7 text-xs font-black uppercase tracking-[0.26em] text-cyan-100/60">Cockpit operativo y diagnóstico</p>
-          <h1 className="mt-3 max-w-4xl text-4xl font-black tracking-tight md:text-6xl">Estado comercial verificable, sin ejecutar cambios</h1>
-          <p className="mt-5 max-w-4xl text-sm leading-7 text-white/65 md:text-base">Cada valor conserva fuente, timestamp, grano, ventana y estado. UNKNOWN, UNAVAILABLE, ERROR, PARTIAL y MISSING nunca se presentan como cero.</p>
-        </header>
-
-        <div aria-live="polite">
-          {loading && !monitor && <p role="status" className="rounded-3xl border border-cyan-200/20 bg-cyan-200/[0.06] p-6 text-cyan-50">Consultando únicamente readers eBay allowlisted y fuentes internas SELECT-only; no se ejecutan escrituras ni dispatch.</p>}
-          {error && <p role="alert" className="rounded-3xl border border-rose-200/25 bg-rose-200/[0.08] p-5 text-rose-50">{error}{monitor && refreshFailedAt ? ` La vista conserva la lectura anterior; refresh fallido ${formatTimestamp(refreshFailedAt)}.` : ""}</p>}
-        </div>
-
-        {monitor && <>
-          <CommercialMonitorCanonicalDashboard monitor={monitor} />
-          <details id="advanced-diagnostics" className="rounded-3xl border border-white/10 bg-white/[0.025] p-5 md:p-7">
+      {monitor && <>
+        <CommercialMonitorCanonicalDashboard
+          monitor={monitor}
+          onRefresh={() => void loadMonitor()}
+          refreshing={loading}
+        />
+        <div className="bg-[#05070d] px-4 py-6 text-white sm:px-6 xl:pl-[216px]">
+          <details id="advanced-diagnostics" className="mx-auto max-w-[1680px] rounded-2xl border border-white/10 bg-white/[0.025] p-5 md:p-7">
             <summary className="cursor-pointer list-none text-sm font-black text-white/80 marker:hidden">Diagnóstico técnico avanzado <span className="ml-2 text-xs font-normal text-white/45">Readers, evidencia, detalles de composición y auditoría</span></summary>
             <div className="mt-6 space-y-6">
           <section id="summary" aria-labelledby="summary-heading" className="scroll-mt-4 space-y-4">
@@ -395,9 +372,9 @@ export function CommercialMonitorReadonlyClient() {
           </aside>
             </div>
           </details>
-        </>}
-      </div>
-      <SellerOsMobileNav active="operations" />
+        </div>
+      </>}
+      <SellerOsMobileNav active="operations" hideOnDesktop />
     </main>
   )
 }

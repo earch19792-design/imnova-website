@@ -565,7 +565,8 @@ export function buildCommercialMonitorBackendV1(input: {
       needIntervention: {
         status: countStatus,
         count: decisions.length
-          ? decisions.filter((row) => row.recommendedAction !== "WAIT").length
+          ? decisions.filter((row) => row.recommendedAction !== "WAIT" &&
+              !row.actionBlockedByInsufficientEvidence).length
           : null,
       },
       runningExperiments: {
@@ -577,8 +578,15 @@ export function buildCommercialMonitorBackendV1(input: {
       stockRisk: {
         status: countStatus,
         count: decisions.length
-          ? primaryListings.filter((listing) => listing.dataQualityIssues.some(
-              (issue) => issue.domain === "STOCK")).length
+          ? primaryListings.filter((listing) =>
+              listing.stock?.state === "OUT_OF_STOCK_SIGNAL").length
+          : null,
+      },
+      stockUnknown: {
+        status: countStatus,
+        count: decisions.length
+          ? primaryListings.filter((listing) =>
+              listing.stock?.state === "STOCK_UNKNOWN").length
           : null,
       },
       dataQuality: {

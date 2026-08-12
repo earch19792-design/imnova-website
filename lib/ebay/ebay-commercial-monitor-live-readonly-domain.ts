@@ -129,6 +129,7 @@ export type EbayLiveListing = {
   customLabel: string | null
   variationKey: string | null
   title: string | null
+  primaryImageUrl: string | null
   listingState: "ACTIVE"
   listingFormat: string | null
   startTime: string | null
@@ -1135,6 +1136,15 @@ function itemListings(item: string, observedAt: string): EbayLiveListing[] {
     "Variation",
   )
   const title = safeText(ebayTradingXmlValue(item, "Title"), 300)
+  const pictureDetails = ebayTradingXmlContainers(item, "PictureDetails")[0] ?? ""
+  const primaryImageCandidate = safeText(
+    ebayTradingXmlDirectChildValue(item, "GalleryURL") ??
+      ebayTradingXmlValue(pictureDetails, "PictureURL"),
+    2_000,
+  )
+  const primaryImageUrl = primaryImageCandidate?.startsWith("https://")
+    ? primaryImageCandidate
+    : null
   const listingFormat = safeLabel(
     ebayTradingXmlValue(item, "ListingType"),
     60,
@@ -1173,6 +1183,7 @@ function itemListings(item: string, observedAt: string): EbayLiveListing[] {
       customLabel: sku,
       variationKey: variation ? variationIdentity(variation) : null,
       title,
+      primaryImageUrl,
       listingState: "ACTIVE",
       listingFormat,
       startTime,

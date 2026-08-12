@@ -27,7 +27,7 @@ test("canonical dashboard consumes backend DTO states without synthetic KPI fall
     assert.match(dashboard, new RegExp(expression))
   }
   assert.match(dashboard, /value === null \? "—"/)
-  assert.match(dashboard, /No current Listing Quality Report available\./)
+  assert.match(dashboard, /No current report/)
   assert.match(dashboard, /No se generan puntos sintéticos/)
   assert.match(dashboard, /No se inventan benchmarks Top-10%/)
   assert.match(dashboard, /suffix="%"/)
@@ -50,21 +50,23 @@ test("canonical dashboard surfaces decisions and review-only Registry state with
   }
   assert.doesNotMatch(
     dashboard,
-    /onClick=|fetch\(|method:\s*["'](?:POST|PUT|PATCH|DELETE)["']|ReviseItem|EndItem|publishOffer/,
+    /fetch\(|method:\s*["'](?:POST|PUT|PATCH|DELETE)["']|ReviseItem|EndItem|publishOffer/,
   )
+  assert.equal((dashboard.match(/onClick=/g) ?? []).length, 1)
+  assert.match(dashboard, /onClick=\{onRefresh\}/)
   assert.match(dashboard, /renderedCriticalAlerts\.length/)
   assert.match(dashboard, /priorityActionPlan/)
 })
 
 test("canonical dashboard preserves the dense desktop cockpit composition", () => {
   for (const expression of [
-    "w-\\[248px\\]",
+    "w-\\[200px\\]",
     "eBay Commercial Monitor",
     "Cockpit operativo, diagnóstico y decisiones basadas en datos",
     "EBAY GUIDANCE",
     "Listings Activos",
     "Experimentos RUNNING",
-    "grid-cols-\\[minmax\\(0,1fr\\)_320px\\]",
+    "grid-cols-\\[minmax\\(0,1fr\\)_288px\\]",
     "Alertas críticas",
     "Plan de acción prioritario",
     "System 100% read-only",
@@ -75,7 +77,10 @@ test("canonical dashboard preserves the dense desktop cockpit composition", () =
   ]) {
     assert.match(dashboard, new RegExp(expression))
   }
-  assert.match(dashboard, /qualityUnavailable \? <tr>/)
+  assert.match(dashboard, /liveRows\.map/)
+  assert.match(dashboard, /table-fixed/)
+  assert.match(dashboard, /identity\.primaryImageUrl/)
+  assert.doesNotMatch(dashboard, /min-w-\[820px\]|overflow-x-auto/)
   assert.match(dashboard, /No se generan puntos sintéticos/)
 })
 
@@ -83,4 +88,14 @@ test("legacy technical diagnostics remain secondary to the canonical dashboard",
   assert.match(client, /CommercialMonitorCanonicalDashboard/)
   assert.match(client, /<details id="advanced-diagnostics"/)
   assert.match(client, /Diagnóstico técnico avanzado/)
+  assert.doesNotMatch(client, /Estado comercial verificable, sin ejecutar cambios/)
+  assert.match(client, /SellerOsMobileNav active="operations" hideOnDesktop/)
+})
+
+test("live Trading rows remain visible when Quality Report is unavailable", () => {
+  assert.match(dashboard, /const liveRows = backend\.decisions\.flatMap/)
+  assert.match(dashboard, /qualityUnavailable \? <>/)
+  assert.match(dashboard, /No current report/)
+  assert.match(dashboard, /ImageOff/)
+  assert.match(dashboard, /key=\{listing\.identity\.itemId\}/)
 })

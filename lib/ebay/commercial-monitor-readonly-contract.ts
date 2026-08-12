@@ -1100,6 +1100,8 @@ export type CommercialListingIdentity = {
   customLabel: string | null
   supplierSku: string | null
   title: string | null
+  primaryImageUrl: string | null
+  primaryImageSource: "EBAY_TRADING_GET_MY_EBAY_SELLING" | null
   listingState: string
   listingType: ListingOfferType
   listingFormat: string | null
@@ -1448,6 +1450,7 @@ export type CommercialMonitorBackendV1 = {
     needIntervention: { status: CommercialMonitorCapabilityStatus; count: number | null }
     runningExperiments: { status: CommercialMonitorCapabilityStatus; count: number | null }
     stockRisk: { status: CommercialMonitorCapabilityStatus; count: number | null }
+    stockUnknown: { status: CommercialMonitorCapabilityStatus; count: number | null }
     dataQuality: { status: CommercialMonitorCapabilityStatus; count: number | null }
     ebayRecommendations: { status: CommercialMonitorCapabilityStatus; count: number | null }
     waitingHealthy: { status: CommercialMonitorCapabilityStatus; count: number | null }

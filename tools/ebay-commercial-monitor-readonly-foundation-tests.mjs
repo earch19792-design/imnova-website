@@ -250,6 +250,10 @@ test("la UI contiene las secciones canónicas y sólo un control GET de actualiz
   const clientPath =
     "app/admin/ebay/monitor/commercial-monitor-readonly-client.tsx"
   const client = read(clientPath)
+  const canonicalDashboard = read(
+    "app/admin/ebay/monitor/commercial-monitor-canonical-dashboard.tsx",
+  )
+  const canonicalUi = `${client}\n${canonicalDashboard}`
   for (const heading of [
     "Resumen",
     "Listings",
@@ -264,7 +268,7 @@ test("la UI contiene las secciones canónicas y sólo un control GET de actualiz
   ]) {
     assert.match(client, new RegExp(heading.replace("/", "\\/")))
   }
-  assert.match(client, /READ-ONLY/)
+  assert.match(canonicalDashboard, /READ-ONLY/)
   assert.match(client, /Product Case/)
   assert.match(client, /NO_TOCAR/)
   assert.match(client, /dispatchAllowed/)
@@ -276,9 +280,9 @@ test("la UI contiene las secciones canónicas y sólo un control GET de actualiz
   assert.match(client, /String\(alert\.deliveryAttempted\)/)
   assert.match(client, /alert\.componentReference\.componentId/)
   assert.match(client, /alert\.componentReference\.sku/)
-  assert.equal((client.match(/onClick=/g) ?? []).length, 1)
-  assert.match(client, /onClick=\{\(\) => void loadMonitor\(\)\}/)
-  assert.match(client, /Actualizar datos/)
+  assert.equal((canonicalUi.match(/onClick=/g) ?? []).length, 1)
+  assert.match(canonicalDashboard, /onClick=\{onRefresh\}/)
+  assert.match(canonicalDashboard, /Actualizar datos/)
   assert.match(client, /fetch\("\/api\/admin\/ebay\/monitor"/)
   assert.doesNotMatch(client, /method:\s*["']POST["']/)
   assert.doesNotMatch(client, /<form\b/)
