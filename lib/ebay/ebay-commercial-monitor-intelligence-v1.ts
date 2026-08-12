@@ -378,6 +378,69 @@ function capabilityFromLiveStatus(
   return value === "CERTIFIED" ? "AVAILABLE" : value
 }
 
+function uniqueBy<T>(values: T[], keyOf: (value: T) => string) {
+  const seen = new Set<string>()
+  return values.filter((value) => {
+    const key = keyOf(value)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function primaryListingEvidenceScore(listing: CommercialListingReadModel) {
+  const metricCoverage = Object.values(listing.metrics).filter((metric) =>
+    (metric.availability === "AVAILABLE" || metric.availability === "PARTIAL") &&
+    typeof metric.value === "number" && Number.isFinite(metric.value)).length
+  const evidenceReferenceCount = Array.isArray(listing.evidenceReferences)
+    ? listing.evidenceReferences.length
+    : 0
+  return metricCoverage * 100 + evidenceReferenceCount
+}
+
+function canonicalPrimaryLiveListings(
+  listings: CommercialListingReadModel[],
+): CommercialListingReadModel[] {
+  const byItemId = new Map<string, CommercialListingReadModel[]>()
+  for (const listing of listings) {
+    const itemId = listing.identity.itemId.trim()
+    if (!itemId || listing.discovery.livePresence.status !== "LIVE_ACTIVE") continue
+    const current = byItemId.get(itemId)
+    if (current) current.push(listing)
+    else byItemId.set(itemId, [listing])
+  }
+
+  return [...byItemId.entries()].map(([itemId, members]) => {
+    const primary = [...members].sort((left, right) => {
+      const scoreDifference = primaryListingEvidenceScore(right) -
+        primaryListingEvidenceScore(left)
+      return scoreDifference || left.key.localeCompare(right.key)
+    })[0]
+    const runningExperiment = members.find((listing) =>
+      listing.experiment.status === "AVAILABLE" &&
+      listing.experiment.lifecycleState === "RUNNING")
+    return {
+      ...primary,
+      identity: { ...primary.identity, itemId },
+      experiment: runningExperiment?.experiment ?? primary.experiment,
+      dataQualityIssues: uniqueBy(
+        members.flatMap((listing) => listing.dataQualityIssues ?? []),
+        (issue) => `${issue.code}:${issue.source}:${issue.domain}`,
+      ),
+      blockers: uniqueBy(
+        members.flatMap((listing) => listing.blockers ?? []),
+        (issue) => `${issue.code}:${issue.source}:${issue.domain}`,
+      ),
+      evidenceReferences: uniqueBy(
+        members.flatMap((listing) => listing.evidenceReferences ?? []),
+        (evidence) => evidence.reference,
+      ),
+      alertCandidateKeys: [...new Set(members.flatMap((listing) =>
+        listing.alertCandidateKeys ?? []))],
+    }
+  }).sort((left, right) => left.identity.itemId.localeCompare(right.identity.itemId))
+}
+
 export function buildCommercialMonitorBackendV1(input: {
   liveCertification: EbayLiveCertificationReadModel
   listings: CommercialListingReadModel[]
@@ -386,11 +449,12 @@ export function buildCommercialMonitorBackendV1(input: {
   orders?: CommercialMonitorOrderFactsV1 | null
   listingQualityReportArtifact?: unknown
 }): CommercialMonitorBackendV1 {
+  const primaryListings = canonicalPrimaryLiveListings(input.listings)
   const quality = normalizeEbayListingQualityReport({
     artifact: input.listingQualityReportArtifact,
-    listings: input.listings,
+    listings: primaryListings,
   })
-  const decisions = input.listings.map(classifyCommercialListingV1)
+  const decisions = primaryListings.map(classifyCommercialListingV1)
   const guidanceByListing = new Map(quality.recommendations.flatMap((row) =>
     row.listingKey ? [[row.listingKey, row] as const] : []))
   const guidanceVsSellerOs = decisions.map((decision) =>
@@ -408,8 +472,8 @@ export function buildCommercialMonitorBackendV1(input: {
     fulfillmentStatuses: [],
     trackingAvailability: "UNPROVEN" as const,
   }
-  const activeListingsProven = ["AVAILABLE", "PARTIAL"]
-    .includes(input.liveCertification.discovery.status)
+  const activeListingsProven = input.liveCertification.discovery.coverage ===
+    "COMPLETE"
   const tradingDiscoveryStatus = input.liveCertification.discovery.status
   const statusCounts = new Map<CommercialDecisionClass, number>()
   for (const decision of decisions) {
@@ -422,6 +486,20 @@ export function buildCommercialMonitorBackendV1(input: {
   const countStatus: CommercialMonitorCapabilityStatus = decisions.length
     ? "AVAILABLE"
     : "UNPROVEN"
+  const priorityRank = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 }
+  const priorityActionPlan = decisions.filter((row) =>
+    row.recommendedAction !== "WAIT" &&
+    !row.actionBlockedByInsufficientEvidence)
+    .sort((left, right) => priorityRank[left.priority] - priorityRank[right.priority])
+    .slice(0, 12)
+    .map((row) => ({
+      listingKey: row.listingKey,
+      classification: row.classification,
+      priority: row.priority,
+      recommendedAction: row.recommendedAction,
+    }))
+  const renderedCriticalAlertCount = priorityActionPlan.filter((row) =>
+    row.priority === "CRITICAL" || row.priority === "HIGH").slice(0, 4).length
   return {
     contractVersion: "COMMERCIAL_MONITOR_BACKEND_V1",
     mode: "READ_ONLY",
@@ -462,12 +540,12 @@ export function buildCommercialMonitorBackendV1(input: {
     kpis: {
       activeListings: {
         status: activeListingsProven ? "AVAILABLE" : "UNPROVEN",
-        value: activeListingsProven ? input.listings.length : null,
+        value: activeListingsProven ? primaryListings.length : null,
       },
-      impressions: aggregateMetric(input.listings, ["impressions"]),
-      ebayViews: aggregateMetric(input.listings, ["ebay_views"]),
+      impressions: aggregateMetric(primaryListings, ["impressions"]),
+      ebayViews: aggregateMetric(primaryListings, ["ebay_views"]),
       averageCtr: aggregateMetric(
-        input.listings,
+        primaryListings,
         ["ctr_calculated", "ctr_reported"],
         true,
       ),
@@ -499,7 +577,7 @@ export function buildCommercialMonitorBackendV1(input: {
       stockRisk: {
         status: countStatus,
         count: decisions.length
-          ? input.listings.filter((listing) => listing.dataQualityIssues.some(
+          ? primaryListings.filter((listing) => listing.dataQualityIssues.some(
               (issue) => issue.domain === "STOCK")).length
           : null,
       },
@@ -524,20 +602,9 @@ export function buildCommercialMonitorBackendV1(input: {
       },
       criticalAlerts: {
         status: "AVAILABLE",
-        count: input.alertCandidates.filter((alert) =>
-          alert.severity === "CRITICAL").length,
+        count: renderedCriticalAlertCount,
       },
-      priorityActionPlan: decisions.filter((row) =>
-        row.recommendedAction !== "WAIT" &&
-        !row.actionBlockedByInsufficientEvidence)
-        .sort((a, b) => ({ CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 }[a.priority] -
-          { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 }[b.priority]))
-        .map((row) => ({
-          listingKey: row.listingKey,
-          classification: row.classification,
-          priority: row.priority,
-          recommendedAction: row.recommendedAction,
-        })),
+      priorityActionPlan,
       upcomingReviews: decisions.flatMap((row) => row.nextReviewCondition
         ? [{
             listingKey: row.listingKey,

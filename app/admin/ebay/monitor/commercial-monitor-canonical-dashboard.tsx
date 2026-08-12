@@ -133,19 +133,21 @@ function KpiCard({
   status,
   detail,
   icon,
+  suffix,
 }: {
   label: string
   value: number | null
   status: CommercialMonitorCapabilityStatus
   detail: string
   icon: ReactNode
+  suffix?: string
 }) {
   return (
     <article className="min-w-0 rounded-2xl border border-white/10 bg-[#0d1320]/90 p-4 shadow-[0_16px_44px_rgba(0,0,0,0.16)]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/45">{label}</p>
-          <p className="mt-3 text-3xl font-black tracking-tight text-white">{formatValue(value)}</p>
+          <p className="mt-3 text-3xl font-black tracking-tight text-white">{formatValue(value)}{value === null || !suffix ? "" : suffix}</p>
         </div>
         <span className="rounded-xl border border-white/10 bg-white/[0.045] p-2.5 text-cyan-100">{icon}</span>
       </div>
@@ -210,9 +212,14 @@ export function CommercialMonitorCanonicalDashboard({
   const backend = monitor.backend
   const registry = backend.capabilities.registry
   const qualityUnavailable = backend.listingQualityReport.status === "UNAVAILABLE_NO_CURRENT_REPORT"
-  const actionPlan = backend.decisions.filter((decision) => decision.recommendedAction !== "WAIT")
-  const priorityDecisions = backend.decisions.filter((decision) =>
-    decision.priority === "CRITICAL" || decision.priority === "HIGH")
+  const decisionsByKey = new Map(backend.decisions.map((decision) =>
+    [decision.listingKey, decision] as const))
+  const actionPlan = backend.operationalHealth.priorityActionPlan.flatMap((row) => {
+    const decision = decisionsByKey.get(row.listingKey)
+    return decision ? [decision] : []
+  })
+  const renderedCriticalAlerts = actionPlan.filter((decision) =>
+    decision.priority === "CRITICAL" || decision.priority === "HIGH").slice(0, 4)
   const guidanceRows = backend.guidanceVsSellerOs.filter((row) =>
     row.ebayGuidanceStatus === "AVAILABLE")
   const distributionTotal = backend.operationalHealth.statusDistribution.reduce(
@@ -283,7 +290,7 @@ export function CommercialMonitorCanonicalDashboard({
         <KpiCard label="Active listings" value={backend.kpis.activeListings.value} status={backend.kpis.activeListings.status} detail="Trading live" icon={<Package size={19} />} />
         <KpiCard label="Impressions" value={backend.kpis.impressions.value} status={backend.kpis.impressions.status} detail="Analytics" icon={<BarChart3 size={19} />} />
         <KpiCard label="eBay views" value={backend.kpis.ebayViews.value} status={backend.kpis.ebayViews.status} detail="Analytics" icon={<Eye size={19} />} />
-        <KpiCard label="Avg CTR" value={backend.kpis.averageCtr.value} status={backend.kpis.averageCtr.status} detail="Analytics" icon={<TrendingUp size={19} />} />
+        <KpiCard label="Avg CTR" value={backend.kpis.averageCtr.value} status={backend.kpis.averageCtr.status} detail="Analytics · puntos porcentuales" icon={<TrendingUp size={19} />} suffix="%" />
         <KpiCard label="Orders" value={backend.kpis.orders.value} status={backend.kpis.orders.status} detail={backend.kpis.orders.value === null ? "No disponible · auth pendiente" : "Fulfillment readonly"} icon={<ShoppingBag size={19} />} />
       </section>
 
@@ -329,12 +336,10 @@ export function CommercialMonitorCanonicalDashboard({
 
       <section className="grid gap-4 xl:grid-cols-[.86fr_1.14fr]">
         <article aria-labelledby="alerts-heading" className="rounded-[26px] border border-rose-300/15 bg-rose-300/[0.045] p-5 md:p-6">
-          <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-rose-100/65">Critical alerts</p><h2 id="alerts-heading" className="mt-2 text-2xl font-black">Señales que requieren atención</h2></div><span className="text-3xl font-black">{formatValue(backend.operationalHealth.criticalAlerts.count)}</span></div>
+          <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-black uppercase tracking-[0.18em] text-rose-100/65">Critical alerts</p><h2 id="alerts-heading" className="mt-2 text-2xl font-black">Señales que requieren atención</h2></div><span className="text-3xl font-black">{numberFormatter.format(renderedCriticalAlerts.length)}</span></div>
           <div className="mt-5 space-y-3">
-            {priorityDecisions.slice(0, 4).map((decision) => <div key={decision.listingKey} className="rounded-2xl border border-white/10 bg-black/20 p-3"><div className="flex items-center justify-between gap-3"><strong className="text-sm">{listingLabel(monitor, decision.listingKey)}</strong><PriorityChip priority={decision.priority} /></div><p className="mt-2 text-xs text-white/60">{decisionLabels[decision.classification]} · {decision.reasonCodes.map(humanReason).join(" · ")}</p></div>)}
-            {registry.humanReviewCount !== null && registry.humanReviewCount > 0 && <div className="rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.07] p-3"><p className="text-sm font-bold">Registry Human Review</p><p className="mt-1 text-xs leading-5 text-white/60">{formatValue(registry.humanReviewCount)} relaciones aisladas. Registry permanece PARTIAL CERTIFIED; no se propone reparación automática.</p></div>}
-            {backend.capabilities.ordersFulfillment === "UNAVAILABLE_AUTH_PENDING" && <div className="rounded-2xl border border-violet-300/15 bg-violet-300/[0.07] p-3"><p className="text-sm font-bold">Orders auth pending</p><p className="mt-1 text-xs leading-5 text-white/60">La ausencia de credenciales dedicadas no se muestra como cero órdenes.</p></div>}
-            {priorityDecisions.length === 0 && <p className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/55">No hay alertas comerciales de prioridad crítica o alta en la evidencia disponible.</p>}
+            {renderedCriticalAlerts.map((decision) => <div key={decision.listingKey} className="rounded-2xl border border-white/10 bg-black/20 p-3"><div className="flex items-center justify-between gap-3"><strong className="text-sm">{listingLabel(monitor, decision.listingKey)}</strong><PriorityChip priority={decision.priority} /></div><p className="mt-2 text-xs text-white/60">{decisionLabels[decision.classification]} · {decision.reasonCodes.map(humanReason).join(" · ")}</p></div>)}
+            {renderedCriticalAlerts.length === 0 && <p className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/55">No hay alertas comerciales de prioridad crítica o alta en la evidencia disponible.</p>}
           </div>
         </article>
 

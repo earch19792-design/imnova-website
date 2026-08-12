@@ -30,6 +30,7 @@ test("canonical dashboard consumes backend DTO states without synthetic KPI fall
   assert.match(dashboard, /No current Listing Quality Report available\./)
   assert.match(dashboard, /No se generan puntos sintéticos/)
   assert.match(dashboard, /No se inventan benchmarks Top-10%/)
+  assert.match(dashboard, /suffix="%"/)
 })
 
 test("canonical dashboard surfaces decisions and review-only Registry state without write controls", () => {
@@ -51,6 +52,8 @@ test("canonical dashboard surfaces decisions and review-only Registry state with
     dashboard,
     /onClick=|fetch\(|method:\s*["'](?:POST|PUT|PATCH|DELETE)["']|ReviseItem|EndItem|publishOffer/,
   )
+  assert.match(dashboard, /renderedCriticalAlerts\.length/)
+  assert.match(dashboard, /priorityActionPlan/)
 })
 
 test("legacy technical diagnostics remain secondary to the canonical dashboard", () => {
