@@ -6,6 +6,9 @@ import { z } from "zod"
 import { executeSellerOsAssistantToolV1, SELLER_OS_ASSISTANT_TOOLS_V1 } from
   "./ebay-seller-os-assistant-gateway-v1"
 import { loadSellerOsAssistantMonitorV1 } from "./ebay-seller-os-assistant-runtime"
+import { createSellerOsCloudReadRelayExecutorV1,
+  type SellerOsAssistantToolExecutorV1 } from
+  "./ebay-seller-os-cloud-read-relay-v1"
 import { authenticateSellerOsMcpRequestV1, loadSellerOsMcpOAuthConfigurationV1 } from
   "./ebay-seller-os-mcp-oauth-v1"
 import { SELLER_OS_DEDICATED_MCP_MODE, getSellerOsDedicatedMcpDeploymentStateV1 } from
@@ -64,9 +67,18 @@ function safeErrorResponse(status: number, code: number, message: string) {
     { status, headers: READ_ONLY_HEADERS })
 }
 
+export function getSellerOsMcpToolExecutionSourceV1(
+  applicationAuthMode: SellerOsMcpApplicationAuthModeV1,
+) {
+  return applicationAuthMode === "TUNNEL_TRANSPORT_ONLY"
+    ? "CLOUD_READ_RELAY" as const
+    : "CANONICAL_RUNTIME_READ_LAYER" as const
+}
+
 export function createSellerOsMcpServerV1(options: {
   monitorLoader?: SellerOsAssistantMonitorLoaderV1
   applicationAuthMode?: SellerOsMcpApplicationAuthModeV1
+  toolExecutor?: SellerOsAssistantToolExecutorV1
 } = {}) {
   const applicationAuthMode = options.applicationAuthMode ??
     "OAUTH_SELLER_OS_READ"
@@ -86,6 +98,14 @@ export function createSellerOsMcpServerV1(options: {
   let monitorPromise: ReturnType<typeof loadSellerOsAssistantMonitorV1> | null = null
   const monitorLoader = options.monitorLoader ?? loadSellerOsAssistantMonitorV1
   const monitor = () => (monitorPromise ??= monitorLoader())
+  const localToolExecutor: SellerOsAssistantToolExecutorV1 = async (input) =>
+    executeSellerOsAssistantToolV1({ toolName: input.toolName,
+      arguments: input.arguments, monitor: await monitor() })
+  const toolExecutor = options.toolExecutor ?? (
+    getSellerOsMcpToolExecutionSourceV1(applicationAuthMode) ===
+      "CLOUD_READ_RELAY"
+    ? createSellerOsCloudReadRelayExecutorV1()
+    : localToolExecutor)
   for (const descriptor of SELLER_OS_ASSISTANT_TOOLS_V1) {
     const needsItem = descriptor.name === "seller_os_get_listing_intelligence"
     const needsCase = descriptor.name === "seller_os_get_opportunity_case"
@@ -99,8 +119,8 @@ export function createSellerOsMcpServerV1(options: {
     }
     server.registerTool(descriptor.name, config, async (args) => {
       try {
-        const result = executeSellerOsAssistantToolV1({ toolName: descriptor.name,
-          arguments: args as Record<string, unknown>, monitor: await monitor() })
+        const result = await toolExecutor({ toolName: descriptor.name,
+          arguments: args as Record<string, unknown> })
         return { structuredContent: { result }, content: [{ type: "text" as const,
           text: `Seller OS returned bounded read-only evidence for ${descriptor.title}.` }] }
       } catch {
@@ -156,8 +176,8 @@ export function createSellerOsMcpServerV1(options: {
       ? "seller_os_get_listing_intelligence" : descriptor!.name)
     let result: unknown
     try {
-      result = executeSellerOsAssistantToolV1({ toolName,
-        arguments: listingMatch ? { itemId: listingMatch[1] } : {}, monitor: await monitor() })
+      result = await toolExecutor({ toolName,
+        arguments: listingMatch ? { itemId: listingMatch[1] } : {} })
     } catch {
       result = { status: "SELLER_OS_EVIDENCE_READ_FAILED_CLOSED",
         credentialsIncluded: false, buyerPiiIncluded: false, marketplaceWrites: 0 }

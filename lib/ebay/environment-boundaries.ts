@@ -34,6 +34,7 @@ export const EBAY_SELLER_OS_API_PATHS = [
   "/api/admin/ebay/copilot",
   "/api/admin/ebay/strategic-review",
   "/api/seller-os/assistant/mcp",
+  "/api/seller-os/assistant/cloud-read-relay",
   "/api/admin/ebay/seller-keyword-demand",
   "/api/admin/ebay/seller-whatsapp-alerts",
   "/api/admin/ebay/commercial-monitor",
