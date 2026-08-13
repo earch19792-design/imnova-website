@@ -35,7 +35,7 @@ export const EBAY_LISTING_QUALITY_REPORT_SOURCE =
   "EBAY_LISTING_QUALITY_REPORT" as const
 
 export type CommercialMonitorRegistryCertificationV1 = {
-  status: "PARTIAL_CERTIFIED" | "COMPLETE" | "UNPROVEN"
+  status: "PARTIAL_CERTIFIED" | "COMPLETE" | "UNPROVEN" | "UNAVAILABLE"
   currentLiveCount: number | null
   matchedCount: number | null
   humanReviewCount: number | null

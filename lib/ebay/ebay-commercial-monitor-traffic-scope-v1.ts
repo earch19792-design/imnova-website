@@ -49,6 +49,11 @@ export type AccountTrafficEvidenceV1 = {
   cacheHitCount: number
   retryCount: number
   retryPolicy: "ONE_RETRY_ON_DATE_METADATA_INVALID" | "NO_RETRY"
+  snapshotReuseStatus: "ACQUIRED" | "REUSED" | "UNAVAILABLE"
+  snapshotReuseReasonCode:
+    | "CACHE_MISS_ACQUIRED"
+    | "FRESH_MATCHING_ACCOUNT_WINDOW"
+    | "SOURCE_UNAVAILABLE"
   gapCodes: string[]
 }
 
@@ -75,7 +80,8 @@ export function unavailableAccountTrafficV1(
     "scopeId" | "scopeCount" | "accountTrafficSnapshotId" | "auditSpanId" |
     "metadataValidationStatus" | "metadataValidationReasonCode" |
     "cumulativeAcquisitionCount" | "cacheHitCount" | "retryCount" |
-    "retryPolicy">> = {},
+    "retryPolicy" | "snapshotReuseStatus" |
+    "snapshotReuseReasonCode">> = {},
 ): AccountTrafficEvidenceV1 {
   return {
     status: "UNAVAILABLE",
@@ -111,6 +117,9 @@ export function unavailableAccountTrafficV1(
       ? telemetry.retryCount
       : 0,
     retryPolicy: telemetry.retryPolicy ?? "NO_RETRY",
+    snapshotReuseStatus: telemetry.snapshotReuseStatus ?? "UNAVAILABLE",
+    snapshotReuseReasonCode:
+      telemetry.snapshotReuseReasonCode ?? "SOURCE_UNAVAILABLE",
     gapCodes: [gapCode],
   }
 }
@@ -131,6 +140,9 @@ export function summarizeAccountTrafficV1(input: {
   retryCount?: number
   retryPolicy?: AccountTrafficEvidenceV1["retryPolicy"]
   upstreamSnapshotAcquisitionCount?: number
+  snapshotReuseStatus?: AccountTrafficEvidenceV1["snapshotReuseStatus"]
+  snapshotReuseReasonCode?: AccountTrafficEvidenceV1[
+    "snapshotReuseReasonCode"]
 }): AccountTrafficEvidenceV1 {
   const impressions = completeTotal(input.rows, "TOTAL_IMPRESSION_TOTAL")
   const listingViews = completeTotal(input.rows, "LISTING_VIEWS_TOTAL")
@@ -196,6 +208,9 @@ export function summarizeAccountTrafficV1(input: {
       ? input.retryCount
       : 0,
     retryPolicy: input.retryPolicy ?? "NO_RETRY",
+    snapshotReuseStatus: input.snapshotReuseStatus ?? "ACQUIRED",
+    snapshotReuseReasonCode:
+      input.snapshotReuseReasonCode ?? "CACHE_MISS_ACQUIRED",
     gapCodes: [...new Set(gapCodes)],
   }
 }

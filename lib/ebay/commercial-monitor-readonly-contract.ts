@@ -1483,6 +1483,8 @@ export type DeterministicIntegrityGuardCode =
   | "STOCK_EVIDENCE_DEDUPLICATION_GUARD"
   | "CURRENT_LIVE_COHORT_RECONCILIATION"
   | "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD"
+  | "ACCOUNT_TRAFFIC_SNAPSHOT_REUSE_GUARD"
+  | "REVIEW_BURDEN_AUTHORITY_MISMATCH_GUARD"
 
 export type LivePortfolioInvariantFindingV1 = {
   invariantCode: LivePortfolioInvariantCode
@@ -1507,6 +1509,7 @@ export type LivePortfolioInvariantFindingV1 = {
   evidenceRefs: string[]
   deterministic: true
   humanApprovalRequired: boolean
+  autoMutationAllowed: false
   recommendedAction: string
   blockingImpact: string
   observedAt: string | null
@@ -1527,6 +1530,7 @@ export type CanonicalCurrentLiveCohortV1 = {
 
 export type CrossModuleLivePortfolioIntegrityV1 = {
   contractVersion: "CROSS_MODULE_LIVE_PORTFOLIO_INTEGRITY_V1_2026_08_13"
+  hardeningVersion: "CROSS_MODULE_INTEGRITY_HARDENING_V2_2026_08_13"
   canonicalCohort: CanonicalCurrentLiveCohortV1
   stockCohort: {
     scopeId: string
@@ -1543,6 +1547,19 @@ export type CrossModuleLivePortfolioIntegrityV1 = {
     duplicateItemIds: Array<{
       itemId: string
       rowCount: number
+      evidenceRows: Array<{
+        evidenceRowId: string
+        evidenceFingerprint: string
+        title: string | null
+        sku: string | null
+        customLabel: string | null
+        source: string
+        capturedAt: string | null
+        evidenceReference: string
+        cohortClassification: "CURRENT_LIVE" | "HISTORICAL_OR_NONLIVE"
+        representationHash: string
+      }>
+      evidenceRowsTruncated: boolean
       titleRepresentations: string[]
       skuRepresentations: string[]
       identityRepresentationConflict: boolean
@@ -1567,13 +1584,16 @@ export type CrossModuleLivePortfolioIntegrityV1 = {
   findings: LivePortfolioInvariantFindingV1[]
   deterministicGuards: Array<{
     guardCode: DeterministicIntegrityGuardCode
-    status: "PASS" | "TRIGGERED" | "MITIGATED" | "UNPROVEN"
+    status: "PASS" | "TRIGGERED" | "MITIGATED" | "UNPROVEN" |
+      "DEGRADED" | "FAIL"
     scopeId: string
     scopeType: LivePortfolioScopeType | "ACCOUNT_TRAFFIC_SCOPE"
     scopeCount: number | null
     observedAt: string | null
     grain: string
     evidenceCount: number
+    reasonCode: string
+    guardAlwaysOn: true
     independentOfAutomationThreshold: true
     autoMutationAllowed: false
   }>

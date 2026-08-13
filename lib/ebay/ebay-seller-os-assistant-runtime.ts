@@ -8,7 +8,7 @@ import { getEbaySellerAccountScopeConfiguration } from
   "./ebay-seller-account-scope"
 import { getSupabaseAdminClient } from "../supabase-admin"
 
-export const SELLER_OS_ASSISTANT_MONITOR_SNAPSHOT_TTL_MS = 30_000
+export const SELLER_OS_ASSISTANT_MONITOR_SNAPSHOT_TTL_MS = 5 * 60_000
 
 function withAccountTrafficCacheTelemetryV1<T>(value: T, cacheHitCount: number): T {
   if (!value || typeof value !== "object") return value
@@ -19,6 +19,9 @@ function withAccountTrafficCacheTelemetryV1<T>(value: T, cacheHitCount: number):
   if (!trafficScopes || typeof trafficScopes !== "object") return value
   const accountTraffic = (trafficScopes as Record<string, unknown>).accountTraffic
   if (!accountTraffic || typeof accountTraffic !== "object") return value
+  const previousCacheHitCount = typeof (accountTraffic as Record<string,
+    unknown>).cacheHitCount === "number"
+    ? (accountTraffic as Record<string, number>).cacheHitCount : 0
   return {
     ...monitor,
     backend: {
@@ -27,7 +30,7 @@ function withAccountTrafficCacheTelemetryV1<T>(value: T, cacheHitCount: number):
         ...trafficScopes as Record<string, unknown>,
         accountTraffic: {
           ...accountTraffic as Record<string, unknown>,
-          cacheHitCount,
+          cacheHitCount: previousCacheHitCount + cacheHitCount,
         },
       },
     },
@@ -52,7 +55,7 @@ export function createSellerOsAssistantMonitorSnapshotLoaderV1(input: {
 } = {}) {
   const loader = input.loader ?? loadSellerOsAssistantMonitorV1
   const now = input.now ?? Date.now
-  const maximumAgeMs = Math.min(60_000, Math.max(1_000,
+  const maximumAgeMs = Math.min(10 * 60_000, Math.max(1_000,
     input.maximumAgeMs ?? SELLER_OS_ASSISTANT_MONITOR_SNAPSHOT_TTL_MS))
   let snapshot: {
     expiresAt: number

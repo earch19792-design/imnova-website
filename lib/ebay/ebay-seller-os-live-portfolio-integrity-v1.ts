@@ -17,6 +17,8 @@ export const CROSS_MODULE_LIVE_PORTFOLIO_INTEGRITY_VERSION =
   "CROSS_MODULE_LIVE_PORTFOLIO_INTEGRITY_V1_2026_08_13" as const
 export const CANONICAL_CURRENT_LIVE_COHORT_VERSION =
   "CANONICAL_CURRENT_LIVE_COHORT_V1_2026_08_13" as const
+export const CROSS_MODULE_INTEGRITY_HARDENING_VERSION =
+  "CROSS_MODULE_INTEGRITY_HARDENING_V2_2026_08_13" as const
 
 type RegistryCertification = {
   status: string
@@ -64,6 +66,55 @@ function uniqueBy<T>(values: T[], keyOf: (value: T) => string) {
     if (seen.has(key)) return false
     seen.add(key)
     return true
+  })
+}
+
+function stableStockEvidenceRowV2(
+  row: CommercialListingReadModel,
+  cohortClassification: "CURRENT_LIVE" | "HISTORICAL_OR_NONLIVE",
+) {
+  const itemId = normalized(row.identity.itemId)
+  const title = normalized(row.identity.title) || null
+  const sku = normalized(row.identity.sku) || null
+  const customLabel = normalized(row.identity.customLabel) || null
+  const references = [...(row.evidenceReferences ?? [])].sort((left, right) =>
+    JSON.stringify([left.reference, left.source, left.capturedAt]).localeCompare(
+      JSON.stringify([right.reference, right.source, right.capturedAt]),
+    ))
+  const source = normalized(row.identity.source) ||
+    normalized(references[0]?.source) || "UNPROVEN"
+  const capturedAt = normalized(row.identity.lastObservedAt) ||
+    normalized(references[0]?.capturedAt) || null
+  const evidenceReference = normalized(references[0]?.reference) || row.key
+  const representationHash = stableReadonlyCommercialKey(
+    "STOCK_EVIDENCE_IDENTITY_REPRESENTATION_V2",
+    itemId,
+    title,
+    sku,
+    customLabel,
+    source,
+  )
+  const evidenceFingerprint = stableReadonlyCommercialKey(
+    "STOCK_EVIDENCE_ROW_V2",
+    row.key,
+    itemId,
+    representationHash,
+    capturedAt,
+    evidenceReference,
+    cohortClassification,
+  )
+  return Object.freeze({
+    evidenceRowId: `stock-evidence-row:${evidenceFingerprint.split(":").at(-1)
+      ?.slice(0, 24) ?? "unproven"}`,
+    evidenceFingerprint,
+    title,
+    sku,
+    customLabel,
+    source,
+    capturedAt,
+    evidenceReference,
+    cohortClassification,
+    representationHash,
   })
 }
 
@@ -140,7 +191,7 @@ function identityStatus(
 
 function finding(input: Omit<LivePortfolioInvariantFindingV1,
   "deterministic" | "lifecycle" | "strategicClassification" | "guardCode" |
-  "guardAlwaysOn"> & Partial<Pick<LivePortfolioInvariantFindingV1,
+  "guardAlwaysOn" | "autoMutationAllowed"> & Partial<Pick<LivePortfolioInvariantFindingV1,
     "lifecycle" | "strategicClassification" | "guardCode" |
     "guardAlwaysOn">>): LivePortfolioInvariantFindingV1 {
   return Object.freeze({
@@ -151,6 +202,7 @@ function finding(input: Omit<LivePortfolioInvariantFindingV1,
     ...input,
     entityRefs: unique(input.entityRefs).slice(0, 25),
     evidenceRefs: unique(input.evidenceRefs).slice(0, 25),
+    autoMutationAllowed: false as const,
     deterministic: true as const })
 }
 
@@ -239,13 +291,24 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
   const duplicateItemIds = [...evidenceByItemId.entries()]
     .filter(([itemId, rows]) => liveSet.has(itemId) && rows.length > 1)
     .map(([itemId, rows]) => {
-      const titleRepresentations = unique(rows.map((row) =>
-        normalized(row.identity.title)))
-      const skuRepresentations = unique(rows.map((row) =>
-        normalized(row.identity.sku)))
+      const canonicalEvidenceRows = rows.map((row) => stableStockEvidenceRowV2(
+        row,
+        liveSet.has(itemId) ? "CURRENT_LIVE" : "HISTORICAL_OR_NONLIVE",
+      )).sort((left, right) => left.evidenceRowId.localeCompare(
+        right.evidenceRowId))
+      const evidenceRows = canonicalEvidenceRows.slice(0, 50)
+      const titleRepresentations = unique(canonicalEvidenceRows.flatMap((row) =>
+        row.title ? [row.title] : []))
+      const skuRepresentations = unique(canonicalEvidenceRows.flatMap((row) => [
+        ...(row.sku ? [row.sku] : []),
+        ...(row.customLabel ? [row.customLabel] : []),
+      ]))
       return {
         itemId,
         rowCount: rows.length,
+        evidenceRows,
+        evidenceRowsTruncated: canonicalEvidenceRows.length >
+          evidenceRows.length,
         titleRepresentations,
         skuRepresentations,
         identityRepresentationConflict: titleRepresentations.length > 1 ||
@@ -272,15 +335,18 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
   const accountTrafficAcquisitionCount = typeof input.accountTraffic
     ?.upstreamSnapshotAcquisitionCount === "number"
     ? input.accountTraffic.upstreamSnapshotAcquisitionCount : 0
+  const accountTrafficSnapshotReuseStatus = input.accountTraffic
+    ?.snapshotReuseStatus ?? (["AVAILABLE", "PARTIAL"].includes(
+      input.accountTraffic?.status ?? "") && accountTrafficAcquisitionCount > 0
+      ? "ACQUIRED" : "UNAVAILABLE")
   const findings: LivePortfolioInvariantFindingV1[] = []
   for (const duplicate of duplicateItemIds) {
     findings.push(finding({
       invariantCode: "DUPLICATE_ITEM_ID",
       lifecycle: resolveInvariantLifecycleV1({
-        activeViolation: duplicate.identityRepresentationConflict,
+        activeViolation: true,
       }),
-      strategicClassification: duplicate.identityRepresentationConflict
-        ? "ACTIVE_VIOLATION" : "DETECTED_RISK",
+      strategicClassification: "ACTIVE_VIOLATION",
       guardCode: "STOCK_EVIDENCE_DEDUPLICATION_GUARD",
       guardAlwaysOn: true,
       severity: "HIGH",
@@ -291,9 +357,9 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
       observedDenominator: 1,
       scopeId,
       scopeType: "CURRENT_LIVE_COHORT_SCOPE",
-      evidenceRefs: evidenceByItemId.get(duplicate.itemId)?.map((row) =>
-        row.key) ?? [],
-      humanApprovalRequired: duplicate.identityRepresentationConflict,
+      evidenceRefs: duplicate.evidenceRows.map((row) =>
+        row.evidenceReference),
+      humanApprovalRequired: true,
       recommendedAction: "RECONCILE_DUPLICATE_STOCK_EVIDENCE_IDENTITY",
       blockingImpact: duplicate.identityRepresentationConflict
         ? "IDENTITY_REPRESENTATION_CONFLICT"
@@ -454,6 +520,7 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
   }
   const integrity: CrossModuleLivePortfolioIntegrityV1 = Object.freeze({
     contractVersion: CROSS_MODULE_LIVE_PORTFOLIO_INTEGRITY_VERSION,
+    hardeningVersion: CROSS_MODULE_INTEGRITY_HARDENING_VERSION,
     canonicalCohort,
     stockCohort: {
       scopeId,
@@ -493,6 +560,9 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
         scopeCount: itemIds.length,
         grain: "LIVE_CUSTOM_LABEL_SKU",
         evidenceCount: collisions.length,
+        reasonCode: collisions.length
+          ? "LIVE_SKU_COLLISION_REQUIRES_HUMAN_REVIEW"
+          : "NO_LIVE_SKU_COLLISION_DETECTED",
       },
       {
         guardCode: "FALSE_ZERO_REPRESENTATION_GUARD",
@@ -503,6 +573,10 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
         grain: "CAPABILITY_COUNT",
         evidenceCount: findings.filter((row) => row.invariantCode ===
           "FALSE_ZERO_FROM_UNPROVEN_CAPABILITY").length,
+        reasonCode: findings.some((row) => row.invariantCode ===
+          "FALSE_ZERO_FROM_UNPROVEN_CAPABILITY")
+          ? "UNPROVEN_CAPABILITY_RENDERED_AS_ZERO"
+          : "UNPROVEN_CAPABILITY_COUNTS_REMAIN_NULL",
       },
       {
         guardCode: "STOCK_EVIDENCE_DEDUPLICATION_GUARD",
@@ -511,6 +585,9 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
         scopeCount: itemIds.length,
         grain: "STOCK_EVIDENCE_ROW",
         evidenceCount: duplicateItemIds.length,
+        reasonCode: duplicateItemIds.length
+          ? "DUPLICATE_STOCK_EVIDENCE_REQUIRES_HUMAN_RECONCILIATION"
+          : "NO_DUPLICATE_STOCK_EVIDENCE_DETECTED",
       },
       {
         guardCode: "CURRENT_LIVE_COHORT_RECONCILIATION",
@@ -521,6 +598,13 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
         grain: "EBAY_ITEM_ID",
         evidenceCount: denominatorNonLiveItemIds.length +
           missingCurrentLiveItemIds.length + nonLiveEvidence.length,
+        reasonCode: denominatorNonLiveItemIds.length
+          ? "NONLIVE_ENTITY_PRESENT_IN_CURRENT_LIVE_DENOMINATOR"
+          : missingCurrentLiveItemIds.length
+            ? "CURRENT_LIVE_STOCK_COHORT_INCOMPLETE"
+            : nonLiveEvidence.length
+              ? "NONLIVE_EVIDENCE_EXCLUDED_BY_CANONICAL_POLICY"
+              : "CURRENT_LIVE_COHORT_RECONCILED",
       },
       {
         guardCode: "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD",
@@ -531,19 +615,57 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
         scopeCount: input.accountTraffic?.scopeCount ?? null,
         grain: "ACCOUNT_DAY_AGGREGATE",
         evidenceCount: accountTrafficAcquisitionCount,
+        reasonCode: input.accountTraffic?.metadataValidationReasonCode ??
+          (input.accountTraffic?.metadataValidationStatus === "VALID"
+            ? "ACCOUNT_TRAFFIC_METADATA_VALID"
+            : "ACCOUNT_TRAFFIC_METADATA_UNPROVEN"),
+      },
+      {
+        guardCode: "ACCOUNT_TRAFFIC_SNAPSHOT_REUSE_GUARD",
+        status: !input.accountTraffic ||
+            !["AVAILABLE", "PARTIAL"].includes(input.accountTraffic.status)
+          ? "DEGRADED"
+          : accountTrafficSnapshotReuseStatus === "REUSED" &&
+              accountTrafficAcquisitionCount === 0
+            ? "PASS"
+            : accountTrafficSnapshotReuseStatus === "ACQUIRED" &&
+                accountTrafficAcquisitionCount >= 1 &&
+                accountTrafficAcquisitionCount <=
+                  (input.accountTraffic.retryCount === 1 ? 2 : 1)
+              ? "PASS" : "FAIL",
+        scopeType: "ACCOUNT_TRAFFIC_SCOPE",
+        scopeCount: input.accountTraffic?.scopeCount ?? null,
+        grain: "ACCOUNT_DAY_AGGREGATE",
+        evidenceCount: accountTrafficAcquisitionCount,
+        reasonCode: input.accountTraffic?.snapshotReuseReasonCode ??
+          (accountTrafficSnapshotReuseStatus === "ACQUIRED"
+            ? "CACHE_MISS_ACQUIRED"
+            : "ACCOUNT_TRAFFIC_SNAPSHOT_UNAVAILABLE"),
+      },
+      {
+        guardCode: "REVIEW_BURDEN_AUTHORITY_MISMATCH_GUARD",
+        status: "PASS",
+        scopeType: "CURRENT_LIVE_COHORT_SCOPE",
+        scopeCount: itemIds.length,
+        grain: "BURDEN_AUTHORITY_AND_GRAIN_CONTRACT",
+        evidenceCount: 2,
+        reasonCode: "DISTINCT_AUTHORITY_AND_GRAIN_COMPARISON_GATED",
       },
     ] satisfies Array<{
       guardCode: DeterministicIntegrityGuardCode
-      status: "PASS" | "TRIGGERED" | "MITIGATED" | "UNPROVEN"
+      status: "PASS" | "TRIGGERED" | "MITIGATED" | "UNPROVEN" |
+        "DEGRADED" | "FAIL"
       scopeType: "CURRENT_LIVE_COHORT_SCOPE" | "ACCOUNT_TRAFFIC_SCOPE"
       scopeCount: number | null
       grain: string
       evidenceCount: number
+      reasonCode: string
     }>).map((guard) => ({ ...guard, scopeId: guard.scopeType ===
       "ACCOUNT_TRAFFIC_SCOPE" ? input.accountTraffic?.scopeId ??
         "account-traffic:unproven" : scopeId, observedAt: guard.scopeType ===
           "ACCOUNT_TRAFFIC_SCOPE" ? input.accountTraffic?.observedAt ?? null
           : input.observedAt, independentOfAutomationThreshold: true as const,
+      guardAlwaysOn: true as const,
       autoMutationAllowed: false as const })),
     lifecyclePolicy: {
       statuses: ["DETECTED_RISK", "ACTIVE_VIOLATION", "MITIGATED_BY_POLICY",

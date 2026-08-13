@@ -467,31 +467,38 @@ export function buildStrategicReviewQueueV1(input: {
     })
   }
   for (const guard of integrity.deterministicGuards.filter((candidate) =>
-    candidate.status === "TRIGGERED" && !integrity.findings.some((finding) =>
+    ["TRIGGERED", "FAIL"].includes(candidate.status) &&
+      !integrity.findings.some((finding) =>
       finding.guardCode === candidate.guardCode))) {
+    const accountTrafficGuard = [
+      "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD",
+      "ACCOUNT_TRAFFIC_SNAPSHOT_REUSE_GUARD",
+    ].includes(guard.guardCode)
     add({
       signalType: guard.guardCode,
-      severity: guard.guardCode === "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD"
-        ? "HIGH" : "MEDIUM",
-      module: guard.guardCode === "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD"
-        ? "ACCOUNT_TRAFFIC" : "CROSS_MODULE_INTEGRITY",
+      severity: accountTrafficGuard ? "HIGH" : "MEDIUM",
+      module: accountTrafficGuard ? "ACCOUNT_TRAFFIC"
+        : "CROSS_MODULE_INTEGRITY",
       entityRefs: [guard.scopeId],
       evidenceRefs: guard.guardCode ===
           "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD"
         ? [input.monitor.backend.trafficScopes.accountTraffic
           .metadataValidationReasonCode ?? "ACCOUNT_TRAFFIC_METADATA_INVALID"]
-        : [`${guard.guardCode}:${guard.status}`],
+        : [guard.reasonCode],
       evidenceCount: Math.max(1, guard.evidenceCount),
       summary: `${guard.guardCode.replaceAll("_", " ")} triggered at ${guard.grain}.`,
       nextAction: guard.guardCode ===
           "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD"
         ? "RETRY_ONCE_THEN_PRESERVE_UNAVAILABLE_WITH_NULL_METRICS"
+        : guard.guardCode === "ACCOUNT_TRAFFIC_SNAPSHOT_REUSE_GUARD"
+          ? "REUSE_MATCHING_FRESH_ACCOUNT_TRAFFIC_SNAPSHOT"
         : "RECONCILE_DETERMINISTIC_INTEGRITY_GUARD",
       confidence: "HIGH",
       materiality: guard.guardCode ===
-          "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD" ? 88 : 70,
-      strategicClassification: guard.guardCode ===
-          "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD"
+          "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD" ? 88
+        : guard.guardCode === "ACCOUNT_TRAFFIC_SNAPSHOT_REUSE_GUARD"
+          ? 84 : 70,
+      strategicClassification: accountTrafficGuard
         ? "CAPABILITY_BLOCKER" : "ACTIVE_VIOLATION",
       guardCode: guard.guardCode,
       guardAlwaysOn: true,
@@ -652,6 +659,9 @@ export function detectAutomationCandidatesV1(input: {
       proposedAutomationBoundary: "DETECTION_ANALYSIS_PRIORITIZATION_OR_PREPARATION_ONLY" as const,
       requiredHumanGate: "HUMAN_APPROVAL_BEFORE_ENABLEMENT" as const,
       autoEnableAllowed: false as const,
+      evidenceStatus: "AVAILABLE" as const,
+      unavailableEvidencePolicy:
+        "PRESERVE_AS_UNPROVEN_WHEN_DURABLE_EVIDENCE_EXISTS" as const,
     }))
   return { contractVersion: "AUTOMATION_CANDIDATE_DETECTION_V1_2026_08_12",
     entries: cap(candidates, 20), repeatedEvidenceRequired: threshold,
@@ -720,6 +730,28 @@ export function buildSystemReviewBundleV1(input: {
         ? integrity.canonicalCohort.listingCount : null,
     },
     dataParity,
+    capabilityFaultIsolation: {
+      contractVersion:
+        "SELLER_OS_CAPABILITY_FAULT_ISOLATION_V1_2026_08_13",
+      registry: {
+        status: dataParity.registry.status,
+        faultScope: "REGISTRY_DEPENDENT_FIELDS_ONLY" as const,
+        cachedCertifiedFallbackUsed: false as const,
+        fallbackPolicy:
+          "ONLY_EXPLICIT_STALE_OR_CACHED_CERTIFIED_SNAPSHOT_MAY_BE_REUSED" as const,
+        unavailableCountsRemainNull: true as const,
+      },
+      independentlyPreserved: {
+        canonicalCurrentLiveIdentity: dataParity.livePortfolio.status,
+        listingAnalytics: dataParity.trafficKpis.status,
+        decisions: dataParity.decisions.status,
+        commercialMateriality:
+          dataParity.trafficKpis.status === "AVAILABLE" ||
+          dataParity.trafficKpis.status === "PARTIAL"
+            ? "AVAILABLE" as const : "UNPROVEN" as const,
+      },
+      registryFailureMaySuppressIndependentEvidence: false as const,
+    },
     crossModuleIntegrity: {
       contractVersion: integrity.contractVersion,
       canonicalCohort: {
@@ -782,6 +814,13 @@ export function buildSystemReviewBundleV1(input: {
         cacheHitCount:
           input.monitor.backend.trafficScopes.accountTraffic.cacheHitCount,
         retryCount: input.monitor.backend.trafficScopes.accountTraffic.retryCount,
+        retryPolicy:
+          input.monitor.backend.trafficScopes.accountTraffic.retryPolicy,
+        snapshotReuseStatus:
+          input.monitor.backend.trafficScopes.accountTraffic.snapshotReuseStatus,
+        snapshotReuseReasonCode:
+          input.monitor.backend.trafficScopes.accountTraffic
+            .snapshotReuseReasonCode,
         impressions: input.monitor.backend.trafficScopes.accountTraffic.impressions,
         listingViews:
           input.monitor.backend.trafficScopes.accountTraffic.listingViews,
@@ -1000,6 +1039,26 @@ export function buildSystemReviewBundleV1(input: {
         grain: "REGISTRY_RELATIONSHIP" as const,
         entityType: "REGISTRY_RELATIONSHIP" as const,
         authority: "CERTIFIED_REGISTRY_PRESENTATION" as const,
+      },
+      authorityComparison: {
+        guardCode: "REVIEW_BURDEN_AUTHORITY_MISMATCH_GUARD" as const,
+        status: "PASS" as const,
+        rawDecisionBurden: {
+          status: portfolioState.humanReviewBurden.status,
+          authority: portfolioState.humanReviewBurden.authority,
+          grain: portfolioState.humanReviewBurden.grain,
+          scopeId: portfolioState.humanReviewBurden.scopeId,
+        },
+        operationalBurden: {
+          status: portfolioCountsProven
+            ? "AVAILABLE" as const : "UNPROVEN" as const,
+          authority: "DECISION_TAXONOMY_V2" as const,
+          grain: "EBAY_LIVE_LISTING" as const,
+          scopeId: integrity.canonicalCohort.scopeId,
+        },
+        comparisonRequiresMatchingAuthorityAndGrain: true as const,
+        directEqualityAllowed: false as const,
+        registryAvailabilityMayOverwriteEitherBurden: false as const,
       },
       falseInterventionCount: decisionQueue.filter((row) =>
         row.classification === "ACTIONABLE_COMMERCIAL" && row.confidence === "UNPROVEN").length,

@@ -109,6 +109,26 @@ const callEvidenceByResponse = new WeakMap<
   EbayMonitorReadonlyCallEvidence
 >()
 let cumulativeAccountTrafficSnapshotAcquisitionCount = 0
+export const ACCOUNT_TRAFFIC_SNAPSHOT_REUSE_MAX_AGE_MS = 5 * 60 * 1_000
+
+type CachedAccountTrafficSnapshotV1 = {
+  expiresAt: number
+  evidence: AccountTrafficEvidenceV1
+}
+
+// The cache is partitioned by the injected fetch boundary so test/runtime
+// identities cannot contaminate one another. The inner key binds the snapshot
+// to the certified seller identity, marketplace and reporting window.
+const accountTrafficSnapshotsByFetch = new WeakMap<FetchLike,
+  Map<string, CachedAccountTrafficSnapshotV1>>()
+
+function accountTrafficSnapshotCacheV1(fetchImpl: FetchLike) {
+  const existing = accountTrafficSnapshotsByFetch.get(fetchImpl)
+  if (existing) return existing
+  const created = new Map<string, CachedAccountTrafficSnapshotV1>()
+  accountTrafficSnapshotsByFetch.set(fetchImpl, created)
+  return created
+}
 
 export type EbayMonitorScopeClassification =
   | "READ_REQUIRED"
@@ -3763,6 +3783,13 @@ async function analyticsRead(input: {
     `audit:${window.start}:${window.end}:${auditStartedAt}:${input.calls.length}`,
   ).slice(0, 20)}`
   const accountScopeId = `account-traffic:UTC:${window.start}:${window.end}`
+  const accountTrafficCacheKey = hashEbayMonitorEvidenceIdentifier([
+    MARKETPLACE_ID,
+    input.expectedFingerprint,
+    window.start,
+    window.end,
+    "ACCOUNT_DAY_AGGREGATE",
+  ].join(":"))
   let metadataValidationStatus: AccountTrafficEvidenceV1[
     "metadataValidationStatus"] = "NOT_ATTEMPTED"
   let metadataValidationReasonCode: string | null = null
@@ -3796,98 +3823,133 @@ async function analyticsRead(input: {
     if (missingRequestedScopes.includes(ANALYTICS_READONLY_SCOPE)) {
       throw new Error("EBAY_MONITOR_ANALYTICS_SCOPE_MISSING")
     }
-    try {
-      const { url } = buildEbaySellerTrafficReportUrl({
-        dateFrom: window.start,
-        dateTo: window.end,
-        timeZone: "UTC",
-      })
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        accountTrafficUpstreamCallCount += 1
-        cumulativeAccountTrafficSnapshotAcquisitionCount += 1
-        const response = await allowlistedFetch({
-          operation: "ANALYTICS_GET_TRAFFIC_REPORT",
-          method: "GET",
-          url,
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-          },
-          fetchImpl: input.fetchImpl,
-          calls: input.calls,
-          clock: input.clock,
-        })
-        if (!response.ok) {
-          throw new Error(`EBAY_MONITOR_ACCOUNT_TRAFFIC_${response.status}`)
-        }
-        const payload = await readJsonResponse({
-          response,
-          calls: input.calls,
-          operation: "ANALYTICS_GET_TRAFFIC_REPORT",
-          errorCode: "ACCOUNT_TRAFFIC_SOURCE_FORMAT_CHANGED",
-        })
-        const normalized = normalizeEbaySellerTrafficRows(payload)
-        if (normalized.dimension !== "DAY") {
-          markResponseCallFailed(response)
-          throw new Error("ACCOUNT_TRAFFIC_GRAIN_MISMATCH")
-        }
-        const metadata = validateAccountTrafficDateMetadataV1({
-          startDate: normalized.startDate,
-          endDate: normalized.endDate,
-          lastUpdatedDate: normalized.lastUpdatedDate,
-        })
-        metadataValidationStatus = metadata.status
-        metadataValidationReasonCode = metadata.reasonCode
-        if (metadata.status === "INVALID") {
-          markResponseCallFailed(response)
-          if (attempt === 0) {
-            accountTrafficRetryCount = 1
-            continue
-          }
-          throw new Error("ACCOUNT_TRAFFIC_DATE_METADATA_INVALID")
-        }
-        const observedAt = input.clock().toISOString()
-        accountTrafficSnapshotId = `account-traffic-snapshot:${
-          hashEbayMonitorEvidenceIdentifier(
-            `snapshot:${metadata.startDay}:${metadata.endDay}:${metadata.updatedDay}:${observedAt}`,
-          ).slice(0, 20)}`
-        accountTraffic = summarizeAccountTrafficV1({
-          rows: normalized.rows,
-          windowStart: `${metadata.startDay}T00:00:00.000Z`,
-          windowEnd: `${metadata.endDay}T23:59:59.999Z`,
-          requestedWindowStart: window.start,
-          requestedWindowEnd: window.end,
-          observedAt,
-          sourceUpdatedAt: `${metadata.updatedDay}T00:00:00.000Z`,
-          warnings: normalized.warnings,
-          accountTrafficSnapshotId,
-          auditSpanId,
-          upstreamSnapshotAcquisitionCount: accountTrafficUpstreamCallCount,
-          cumulativeAcquisitionCount:
-            cumulativeAccountTrafficSnapshotAcquisitionCount,
-          cacheHitCount: 0,
-          retryCount: accountTrafficRetryCount,
-          retryPolicy: "ONE_RETRY_ON_DATE_METADATA_INVALID",
-        })
-        break
+    const snapshotCache = accountTrafficSnapshotCacheV1(input.fetchImpl)
+    const cacheNow = input.clock().getTime()
+    // Serverless processes are ephemeral, but keep the process-local cache
+    // bounded even across many account/window partitions.
+    if (snapshotCache.size > 128) snapshotCache.clear()
+    const cachedSnapshot = snapshotCache.get(accountTrafficCacheKey)
+    if (cachedSnapshot && cachedSnapshot.expiresAt > cacheNow &&
+        cachedSnapshot.evidence.metadataValidationStatus === "VALID" &&
+        ["AVAILABLE", "PARTIAL"].includes(cachedSnapshot.evidence.status)) {
+      const cacheHitCount = cachedSnapshot.evidence.cacheHitCount + 1
+      accountTraffic = {
+        ...cachedSnapshot.evidence,
+        auditSpanId,
+        upstreamSnapshotAcquisitionCount: 0,
+        cumulativeAcquisitionCount:
+          cumulativeAccountTrafficSnapshotAcquisitionCount,
+        cacheHitCount,
+        snapshotReuseStatus: "REUSED",
+        snapshotReuseReasonCode: "FRESH_MATCHING_ACCOUNT_WINDOW",
       }
-    } catch (error) {
-      accountTraffic = unavailableAccountTrafficV1(
-        safeCode(error, "ACCOUNT_TRAFFIC_READ_FAILED"),
-        accountTrafficUpstreamCallCount,
-        {
-          scopeId: accountScopeId,
-          accountTrafficSnapshotId,
-          auditSpanId,
-          metadataValidationStatus,
-          metadataValidationReasonCode,
-          cumulativeAcquisitionCount:
-            cumulativeAccountTrafficSnapshotAcquisitionCount,
-          cacheHitCount: 0,
-          retryCount: accountTrafficRetryCount,
-          retryPolicy: "ONE_RETRY_ON_DATE_METADATA_INVALID",
-        },
-      )
+      snapshotCache.set(accountTrafficCacheKey, {
+        expiresAt: cachedSnapshot.expiresAt,
+        evidence: accountTraffic,
+      })
+    } else {
+      try {
+        const { url } = buildEbaySellerTrafficReportUrl({
+          dateFrom: window.start,
+          dateTo: window.end,
+          timeZone: "UTC",
+        })
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          accountTrafficUpstreamCallCount += 1
+          cumulativeAccountTrafficSnapshotAcquisitionCount += 1
+          const response = await allowlistedFetch({
+            operation: "ANALYTICS_GET_TRAFFIC_REPORT",
+            method: "GET",
+            url,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+            },
+            fetchImpl: input.fetchImpl,
+            calls: input.calls,
+            clock: input.clock,
+          })
+          if (!response.ok) {
+            throw new Error(`EBAY_MONITOR_ACCOUNT_TRAFFIC_${response.status}`)
+          }
+          const payload = await readJsonResponse({
+            response,
+            calls: input.calls,
+            operation: "ANALYTICS_GET_TRAFFIC_REPORT",
+            errorCode: "ACCOUNT_TRAFFIC_SOURCE_FORMAT_CHANGED",
+          })
+          const normalized = normalizeEbaySellerTrafficRows(payload)
+          if (normalized.dimension !== "DAY") {
+            markResponseCallFailed(response)
+            throw new Error("ACCOUNT_TRAFFIC_GRAIN_MISMATCH")
+          }
+          const metadata = validateAccountTrafficDateMetadataV1({
+            startDate: normalized.startDate,
+            endDate: normalized.endDate,
+            lastUpdatedDate: normalized.lastUpdatedDate,
+          })
+          metadataValidationStatus = metadata.status
+          metadataValidationReasonCode = metadata.reasonCode
+          if (metadata.status === "INVALID") {
+            markResponseCallFailed(response)
+            if (attempt === 0) {
+              accountTrafficRetryCount = 1
+              continue
+            }
+            throw new Error("ACCOUNT_TRAFFIC_DATE_METADATA_INVALID")
+          }
+          const observedAt = input.clock().toISOString()
+          accountTrafficSnapshotId = `account-traffic-snapshot:${
+            hashEbayMonitorEvidenceIdentifier(
+              `snapshot:${metadata.startDay}:${metadata.endDay}:${metadata.updatedDay}:${observedAt}`,
+            ).slice(0, 20)}`
+          accountTraffic = summarizeAccountTrafficV1({
+            rows: normalized.rows,
+            windowStart: `${metadata.startDay}T00:00:00.000Z`,
+            windowEnd: `${metadata.endDay}T23:59:59.999Z`,
+            requestedWindowStart: window.start,
+            requestedWindowEnd: window.end,
+            observedAt,
+            sourceUpdatedAt: `${metadata.updatedDay}T00:00:00.000Z`,
+            warnings: normalized.warnings,
+            accountTrafficSnapshotId,
+            auditSpanId,
+            upstreamSnapshotAcquisitionCount: accountTrafficUpstreamCallCount,
+            cumulativeAcquisitionCount:
+              cumulativeAccountTrafficSnapshotAcquisitionCount,
+            cacheHitCount: 0,
+            retryCount: accountTrafficRetryCount,
+            retryPolicy: "ONE_RETRY_ON_DATE_METADATA_INVALID",
+            snapshotReuseStatus: "ACQUIRED",
+            snapshotReuseReasonCode: "CACHE_MISS_ACQUIRED",
+          })
+          snapshotCache.set(accountTrafficCacheKey, {
+            expiresAt: input.clock().getTime() +
+              ACCOUNT_TRAFFIC_SNAPSHOT_REUSE_MAX_AGE_MS,
+            evidence: accountTraffic,
+          })
+          break
+        }
+      } catch (error) {
+        accountTraffic = unavailableAccountTrafficV1(
+          safeCode(error, "ACCOUNT_TRAFFIC_READ_FAILED"),
+          accountTrafficUpstreamCallCount,
+          {
+            scopeId: accountScopeId,
+            accountTrafficSnapshotId,
+            auditSpanId,
+            metadataValidationStatus,
+            metadataValidationReasonCode,
+            cumulativeAcquisitionCount:
+              cumulativeAccountTrafficSnapshotAcquisitionCount,
+            cacheHitCount: 0,
+            retryCount: accountTrafficRetryCount,
+            retryPolicy: "ONE_RETRY_ON_DATE_METADATA_INVALID",
+            snapshotReuseStatus: "UNAVAILABLE",
+            snapshotReuseReasonCode: "SOURCE_UNAVAILABLE",
+          },
+        )
+      }
     }
     const observations: EbayLiveAnalyticsObservation[] = []
     const gapCodes = ids.length > selected.length

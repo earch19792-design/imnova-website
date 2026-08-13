@@ -3721,11 +3721,22 @@ function registryCertificationProjection(input: {
   accountKey: string
   live: EbayCommercialMonitorLiveReadonlyResult
   registryRows: ReadonlyRegistryListingRow[]
-  registrySourceAvailable: boolean
+  registrySourceStatus: "AVAILABLE" | "PARTIAL" | "ERROR"
+  registrySourceLimitationCode: string | null
   observedAt: string
 }): CommercialMonitorRegistryCertificationV1 {
-  if (!input.registrySourceAvailable ||
-      !["AVAILABLE", "PARTIAL"].includes(input.live.discovery.status) ||
+  if (input.registrySourceStatus === "ERROR") {
+    return {
+      status: "UNAVAILABLE",
+      currentLiveCount: null,
+      matchedCount: null,
+      humanReviewCount: null,
+      coveragePercent: null,
+      limitationCodes: [input.registrySourceLimitationCode ??
+        "COMMERCIAL_REGISTRY_READ_FAILED"],
+    }
+  }
+  if (!["AVAILABLE", "PARTIAL"].includes(input.live.discovery.status) ||
       !input.live.account.bindingMatched) {
     return {
       status: "UNPROVEN",
@@ -3949,7 +3960,8 @@ export async function getCommercialMonitorReadonly(
     accountKey: scope.accountKey,
     live,
     registryRows: storedSources.registry.rows,
-    registrySourceAvailable: storedSources.registry.status !== "ERROR",
+    registrySourceStatus: storedSources.registry.status,
+    registrySourceLimitationCode: storedSources.registry.limitationCode,
     observedAt: live.discovery.observedAt ?? generatedAt,
   })
   return assertCommercialMonitorAssistantDtoSafe(baseReport({

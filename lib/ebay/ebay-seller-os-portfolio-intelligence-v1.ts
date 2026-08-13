@@ -279,7 +279,10 @@ export function buildProactiveExceptionQueueV1(input: {
       dedupeIdentity: `exception_${fingerprint(["CAPABILITY", "QUALITY_REPORT", reason])}`,
       precedenceApplied: "PORTFOLIO_ROOT_CAUSE_GROUPING", material: true })
   }
-  if ((input.monitor.backend.capabilities.registry.humanReviewCount ?? 0) > 0) {
+  const registryHumanReviewCount =
+    input.monitor.backend.capabilities.registry.humanReviewCount
+  if (typeof registryHumanReviewCount === "number" &&
+      registryHumanReviewCount > 0) {
     const registry = input.monitor.backend.capabilities.registry
     entries.push({ entityKey: "REGISTRY_HUMAN_REVIEW", entityType: "REGISTRY_PARTITION",
       classification: "HUMAN_REVIEW", priority: "HIGH", severity: "HIGH",
