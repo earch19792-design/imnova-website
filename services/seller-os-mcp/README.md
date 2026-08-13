@@ -81,7 +81,9 @@ bind host as `127.0.0.1`, and passes `-H 127.0.0.1` to the Next.js development
 server. The local MCP target remains
 `http://127.0.0.1:3000/api/seller-os/assistant/mcp`. In this mode only, tools
 advertise application-level `noauth`; access still depends on the private
-OpenAI Secure MCP Tunnel transport. The runtime rejects Production, every
+OpenAI Secure MCP Tunnel transport. Protected-resource metadata is absent with
+HTTP 404 in this mode so discovery does not contradict the `noauth` tool
+contract. The runtime rejects Production, every
 Vercel context, missing or unknown modes, non-loopback hosts, and any non-zero
 assistant write-tool count. No tunnel credential is stored by this command.
 

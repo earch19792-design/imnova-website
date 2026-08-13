@@ -425,8 +425,10 @@ export function buildSellerOsMcpProtectedResourceMetadataV1(
   })
 }
 
-export function handleSellerOsMcpProtectedResourceMetadataV1() {
-  const loaded = loadSellerOsMcpOAuthConfigurationV1()
+export function handleSellerOsMcpProtectedResourceMetadataForEnvironmentV1(
+  environment: NodeJS.ProcessEnv,
+) {
+  const loaded = loadSellerOsMcpOAuthConfigurationV1(environment)
   if (!loaded.ok) return Response.json({
     error: "temporarily_unavailable",
     error_description: "Seller OS MCP OAuth activation is not configured.",
@@ -439,4 +441,10 @@ export function handleSellerOsMcpProtectedResourceMetadataV1() {
       "X-Seller-OS-MCP-OAuth-Version": SELLER_OS_MCP_OAUTH_VERSION,
     },
   })
+}
+
+export function handleSellerOsMcpProtectedResourceMetadataV1() {
+  return handleSellerOsMcpProtectedResourceMetadataForEnvironmentV1(
+    process.env,
+  )
 }
