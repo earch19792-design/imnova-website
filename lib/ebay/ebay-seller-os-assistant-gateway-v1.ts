@@ -163,6 +163,7 @@ export function buildAssistantCommercialContextV1(
         collisionCount: integrity.liveSkuUniqueness.collisionCount,
         collisions: cap(integrity.liveSkuUniqueness.collisions, 20) },
       findings: cap(integrity.findings, 20),
+      deterministicGuards: integrity.deterministicGuards,
       bounded: true as const },
     todaysPriorities: cap(selectMaterialPrioritiesV2(queue, 10), 10),
     activeExperiments: cap(decisions.filter((row) => row.experimentRunning), 20),
@@ -173,8 +174,18 @@ export function buildAssistantCommercialContextV1(
       row.reasonCodes.some((reason) => /STOCK|SUPPLIER/.test(reason))), 20),
     qualityGuidance: { status: monitor.backend.listingQualityReport.status,
       recommendations: cap(monitor.backend.listingQualityReport.recommendations, 20) },
-    newOpportunities: { status: "UNPROVEN", entries: [] },
-    replacementCandidates: { status: "UNPROVEN", entries: [] },
+    newOpportunities: { status: "UNPROVEN", resultCount: null, entries: [],
+      scopeId: integrity.canonicalCohort.scopeId,
+      scopeType: integrity.canonicalCohort.scopeType,
+      scopeCount: integrity.canonicalCohort.listingCount,
+      observedAt: integrity.canonicalCohort.observedAt,
+      grain: "CANONICAL_OPPORTUNITY_RESULT" as const },
+    replacementCandidates: { status: "UNPROVEN", resultCount: null,
+      entries: [], scopeId: integrity.canonicalCohort.scopeId,
+      scopeType: integrity.canonicalCohort.scopeType,
+      scopeCount: integrity.canonicalCohort.listingCount,
+      observedAt: integrity.canonicalCohort.observedAt,
+      grain: "REPLACEMENT_CANDIDATE" as const },
     supplierReadiness: { status: livePortfolioProven
       ? "AVAILABLE" as const : "UNPROVEN" as const,
       exactLinkedListings: livePortfolioProven ? liveListings.filter((row) =>
@@ -248,7 +259,8 @@ export function executeSellerOsAssistantToolV1(input: {
       decisionTaxonomy: row.decisionIntegration,
       legacyDiagnostics: { authoritative: false, mayOverrideCanonicalResult: false },
     })), maximum)
-    return { status: entries.length ? "CANONICAL_V2_AVAILABLE" : "UNPROVEN", entries,
+    return { status: entries.length ? "CANONICAL_V2_AVAILABLE" : "UNPROVEN",
+      resultCount: entries.length ? entries.length : null, entries,
       reason: entries.length ? null : "PERSISTED_MARKET_OBSERVATION_SERIES_UNAVAILABLE",
       soldMomentumClaimed: false, readOnly: true, marketplaceWrites: 0 }
   }
@@ -278,19 +290,26 @@ export function executeSellerOsAssistantToolV1(input: {
       exceptionPriority: null, productCaseMutations: 0, marketplaceWrites: 0 }
   }
   if (input.toolName === "seller_os_get_experiments") {
-    return { entries: cap(input.monitor.backend.decisions.filter((row) =>
-      row.experimentOperationalState !== "INACTIVE"), maximum), authoritativeStatus:
-      input.monitor.backend.operationalHealth.runningExperiments.status, marketplaceWrites: 0 }
+    const entries = cap(input.monitor.backend.decisions.filter((row) =>
+      row.experimentOperationalState !== "INACTIVE"), maximum)
+    const authoritativeStatus =
+      input.monitor.backend.operationalHealth.runningExperiments.status
+    return { entries, resultCount: ["AVAILABLE", "PARTIAL"].includes(
+      authoritativeStatus) ? entries.length : null, authoritativeStatus,
+    marketplaceWrites: 0 }
   }
   if (input.toolName === "seller_os_get_stock_status") {
     const integrity = resolveCrossModuleLivePortfolioIntegrityV1(input.monitor)
     const liveListings = currentLiveListingsForMonitorV1(input.monitor)
-    return { scope: integrity.canonicalCohort,
-      entries: cap(liveListings.map((row) => ({ itemId: row.identity.itemId,
+    const entries = cap(liveListings.map((row) => ({ itemId: row.identity.itemId,
       title: row.identity.title, supplierLinkage: row.stock.supplierProductId &&
         row.stock.supplierVariantId ? "EXACT_PROVEN" : "UNPROVEN", state: row.stock.state,
       freshness: row.stock.freshness, quantity: row.stock.quantity.value,
-      safeCapacity: row.composition.bundleCapacity.value, limitationCode: row.stock.limitationCode })), maximum),
+      safeCapacity: row.composition.bundleCapacity.value,
+      limitationCode: row.stock.limitationCode })), maximum)
+    return { scope: integrity.canonicalCohort, entries,
+      resultCount: integrity.canonicalCohort.identityStatus === "UNPROVEN"
+        ? null : entries.length,
       historicalOrNonliveEvidence: {
         count: integrity.stockCohort.nonLiveEvidenceRowCount,
         itemIds: cap(integrity.stockCohort.nonLiveItemIds, maximum),
@@ -299,12 +318,18 @@ export function executeSellerOsAssistantToolV1(input: {
       stockUnknownIsRisk: false, marketplaceWrites: 0 }
   }
   if (input.toolName === "seller_os_get_quality_guidance") {
+    const proven = ["AVAILABLE", "PARTIAL"].includes(
+      input.monitor.backend.listingQualityReport.status)
     return { status: input.monitor.backend.listingQualityReport.status,
+      resultCount: proven
+        ? input.monitor.backend.listingQualityReport.recommendations.length : null,
       recommendations: cap(input.monitor.backend.listingQualityReport.recommendations, maximum),
       comparisons: cap(input.monitor.backend.guidanceVsSellerOs, maximum), autoExecutionAllowed: false }
   }
   if (input.toolName === "seller_os_get_learning_signals") {
+    const proven = ["AVAILABLE", "PARTIAL"].includes(input.monitor.learning.status)
     return { status: input.monitor.learning.status,
+      resultCount: proven ? input.monitor.learning.categoryAdjustments.length : null,
       categoryAdjustments: cap(input.monitor.learning.categoryAdjustments, maximum),
       limitationCode: input.monitor.learning.limitationCode, universalRuleAllowed: false }
   }
@@ -323,7 +348,8 @@ export function executeSellerOsAssistantToolV1(input: {
       portfolio: buildPortfolioIntelligenceV1({ monitor: input.monitor }),
       livePortfolioIntegrity: { scopeId: integrity.canonicalCohort.scopeId,
         scopeCount: integrity.canonicalCohort.listingCount,
-        findingCount: integrity.findings.length },
+        findingCount: integrity.findings.length,
+        deterministicGuards: integrity.deterministicGuards },
       productCaseState: input.monitor.productCaseOperatingState, marketplaceWrites: 0 }
   }
   if (input.toolName === "seller_os_get_system_review_bundle") {
@@ -331,7 +357,8 @@ export function executeSellerOsAssistantToolV1(input: {
       canonicalOpportunities: input.canonicalOpportunities })
   }
   if (input.toolName === "seller_os_get_recent_system_changes") {
-    return { status: "UNPROVEN_NO_DURABLE_CHANGE_LEDGER", entries: [],
+    return { status: "UNPROVEN_NO_DURABLE_CHANGE_LEDGER", resultCount: null,
+      entries: [],
       bounded: true, maximumEntries: Math.min(maximum, 20), inferredChanges: false,
       marketplaceWrites: 0 }
   }

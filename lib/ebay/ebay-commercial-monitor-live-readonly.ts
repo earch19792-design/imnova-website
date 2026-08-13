@@ -108,6 +108,7 @@ const callEvidenceByResponse = new WeakMap<
   Response,
   EbayMonitorReadonlyCallEvidence
 >()
+let cumulativeAccountTrafficSnapshotAcquisitionCount = 0
 
 export type EbayMonitorScopeClassification =
   | "READ_REQUIRED"
@@ -3697,6 +3698,27 @@ function analyticsCalendarDay(value: string | null) {
     : null
 }
 
+export function validateAccountTrafficDateMetadataV1(input: {
+  startDate: string | null
+  endDate: string | null
+  lastUpdatedDate: string | null
+}) {
+  const startDay = analyticsCalendarDay(input.startDate)
+  const endDay = analyticsCalendarDay(input.endDate)
+  const updatedDay = analyticsCalendarDay(input.lastUpdatedDate)
+  const reasonCode = !startDay ? "ACCOUNT_TRAFFIC_START_DATE_INVALID"
+    : !endDay ? "ACCOUNT_TRAFFIC_END_DATE_INVALID"
+      : !updatedDay ? "ACCOUNT_TRAFFIC_LAST_UPDATED_DATE_INVALID"
+        : startDay > endDay ? "ACCOUNT_TRAFFIC_DATE_RANGE_INVALID" : null
+  return Object.freeze({
+    status: reasonCode ? "INVALID" as const : "VALID" as const,
+    reasonCode,
+    startDay,
+    endDay,
+    updatedDay,
+  })
+}
+
 function analyticsItemId(value: string) {
   if (/^\d{9,20}$/.test(value)) return value
   return value.match(/^v1\|(\d{9,20})\|0$/i)?.[1] ?? null
@@ -3736,6 +3758,16 @@ async function analyticsRead(input: {
   }
   let token = ""
   const window = analyticsDayWindow(input.clock())
+  const auditStartedAt = input.clock().toISOString()
+  const auditSpanId = `account-traffic-audit:${hashEbayMonitorEvidenceIdentifier(
+    `audit:${window.start}:${window.end}:${auditStartedAt}:${input.calls.length}`,
+  ).slice(0, 20)}`
+  const accountScopeId = `account-traffic:UTC:${window.start}:${window.end}`
+  let metadataValidationStatus: AccountTrafficEvidenceV1[
+    "metadataValidationStatus"] = "NOT_ATTEMPTED"
+  let metadataValidationReasonCode: string | null = null
+  let accountTrafficSnapshotId: string | null = null
+  let accountTrafficRetryCount = 0
   try {
     const minted = await accessToken({
       operation: "OAUTH_REFRESH_ANALYTICS",
@@ -3770,55 +3802,91 @@ async function analyticsRead(input: {
         dateTo: window.end,
         timeZone: "UTC",
       })
-      accountTrafficUpstreamCallCount += 1
-      const response = await allowlistedFetch({
-        operation: "ANALYTICS_GET_TRAFFIC_REPORT",
-        method: "GET",
-        url,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-        },
-        fetchImpl: input.fetchImpl,
-        calls: input.calls,
-        clock: input.clock,
-      })
-      if (!response.ok) {
-        throw new Error(`EBAY_MONITOR_ACCOUNT_TRAFFIC_${response.status}`)
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        accountTrafficUpstreamCallCount += 1
+        cumulativeAccountTrafficSnapshotAcquisitionCount += 1
+        const response = await allowlistedFetch({
+          operation: "ANALYTICS_GET_TRAFFIC_REPORT",
+          method: "GET",
+          url,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+          },
+          fetchImpl: input.fetchImpl,
+          calls: input.calls,
+          clock: input.clock,
+        })
+        if (!response.ok) {
+          throw new Error(`EBAY_MONITOR_ACCOUNT_TRAFFIC_${response.status}`)
+        }
+        const payload = await readJsonResponse({
+          response,
+          calls: input.calls,
+          operation: "ANALYTICS_GET_TRAFFIC_REPORT",
+          errorCode: "ACCOUNT_TRAFFIC_SOURCE_FORMAT_CHANGED",
+        })
+        const normalized = normalizeEbaySellerTrafficRows(payload)
+        if (normalized.dimension !== "DAY") {
+          markResponseCallFailed(response)
+          throw new Error("ACCOUNT_TRAFFIC_GRAIN_MISMATCH")
+        }
+        const metadata = validateAccountTrafficDateMetadataV1({
+          startDate: normalized.startDate,
+          endDate: normalized.endDate,
+          lastUpdatedDate: normalized.lastUpdatedDate,
+        })
+        metadataValidationStatus = metadata.status
+        metadataValidationReasonCode = metadata.reasonCode
+        if (metadata.status === "INVALID") {
+          markResponseCallFailed(response)
+          if (attempt === 0) {
+            accountTrafficRetryCount = 1
+            continue
+          }
+          throw new Error("ACCOUNT_TRAFFIC_DATE_METADATA_INVALID")
+        }
+        const observedAt = input.clock().toISOString()
+        accountTrafficSnapshotId = `account-traffic-snapshot:${
+          hashEbayMonitorEvidenceIdentifier(
+            `snapshot:${metadata.startDay}:${metadata.endDay}:${metadata.updatedDay}:${observedAt}`,
+          ).slice(0, 20)}`
+        accountTraffic = summarizeAccountTrafficV1({
+          rows: normalized.rows,
+          windowStart: `${metadata.startDay}T00:00:00.000Z`,
+          windowEnd: `${metadata.endDay}T23:59:59.999Z`,
+          requestedWindowStart: window.start,
+          requestedWindowEnd: window.end,
+          observedAt,
+          sourceUpdatedAt: `${metadata.updatedDay}T00:00:00.000Z`,
+          warnings: normalized.warnings,
+          accountTrafficSnapshotId,
+          auditSpanId,
+          upstreamSnapshotAcquisitionCount: accountTrafficUpstreamCallCount,
+          cumulativeAcquisitionCount:
+            cumulativeAccountTrafficSnapshotAcquisitionCount,
+          cacheHitCount: 0,
+          retryCount: accountTrafficRetryCount,
+          retryPolicy: "ONE_RETRY_ON_DATE_METADATA_INVALID",
+        })
+        break
       }
-      const payload = await readJsonResponse({
-        response,
-        calls: input.calls,
-        operation: "ANALYTICS_GET_TRAFFIC_REPORT",
-        errorCode: "ACCOUNT_TRAFFIC_SOURCE_FORMAT_CHANGED",
-      })
-      const normalized = normalizeEbaySellerTrafficRows(payload)
-      if (normalized.dimension !== "DAY") {
-        markResponseCallFailed(response)
-        throw new Error("ACCOUNT_TRAFFIC_GRAIN_MISMATCH")
-      }
-      const startDay = analyticsCalendarDay(normalized.startDate)
-      const endDay = analyticsCalendarDay(normalized.endDate)
-      const updatedDay = analyticsCalendarDay(normalized.lastUpdatedDate)
-      if (!startDay || !endDay || !updatedDay || startDay > endDay) {
-        markResponseCallFailed(response)
-        throw new Error("ACCOUNT_TRAFFIC_DATE_METADATA_INVALID")
-      }
-      accountTraffic = summarizeAccountTrafficV1({
-        rows: normalized.rows,
-        windowStart: `${startDay}T00:00:00.000Z`,
-        windowEnd: `${endDay}T23:59:59.999Z`,
-        requestedWindowStart: window.start,
-        requestedWindowEnd: window.end,
-        observedAt: input.clock().toISOString(),
-        sourceUpdatedAt: `${updatedDay}T00:00:00.000Z`,
-        warnings: normalized.warnings,
-        upstreamSnapshotAcquisitionCount: accountTrafficUpstreamCallCount,
-      })
     } catch (error) {
       accountTraffic = unavailableAccountTrafficV1(
         safeCode(error, "ACCOUNT_TRAFFIC_READ_FAILED"),
         accountTrafficUpstreamCallCount,
+        {
+          scopeId: accountScopeId,
+          accountTrafficSnapshotId,
+          auditSpanId,
+          metadataValidationStatus,
+          metadataValidationReasonCode,
+          cumulativeAcquisitionCount:
+            cumulativeAccountTrafficSnapshotAcquisitionCount,
+          cacheHitCount: 0,
+          retryCount: accountTrafficRetryCount,
+          retryPolicy: "ONE_RETRY_ON_DATE_METADATA_INVALID",
+        },
       )
     }
     const observations: EbayLiveAnalyticsObservation[] = []

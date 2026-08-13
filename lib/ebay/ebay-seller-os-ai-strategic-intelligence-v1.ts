@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 
-import type { CommercialMonitorGetDto, LivePortfolioInvariantCode } from
+import type { CommercialMonitorGetDto, DeterministicIntegrityGuardCode,
+  LivePortfolioInvariantCode, LivePortfolioInvariantLifecycle } from
   "./commercial-monitor-readonly-contract"
 import type { CanonicalOpportunityResultV2 } from
   "./ebay-commercial-intelligence-upgrade-v1"
@@ -44,7 +45,8 @@ export type StrategicSignalType = "DECISION_CONFLICT" | "CANONICAL_TRUTH_CONFLIC
   "KEYWORD_QUALITY_ANOMALY" | "PRICE_DISTRIBUTION_ANOMALY" |
   "PORTFOLIO_CONCENTRATION_RISK" | "CAPABILITY_BLOCKER" | "AUTOMATION_FAILURE" |
   "SCHEDULER_LATENCY" | "AI_COST_ANOMALY" | "MODEL_FALLBACK_SPIKE" |
-  "HIGH_HUMAN_OVERRIDE_RATE" | LivePortfolioInvariantCode
+  "HIGH_HUMAN_OVERRIDE_RATE" | LivePortfolioInvariantCode |
+  DeterministicIntegrityGuardCode
 export type FindingStatus = "PROPOSED" | "HUMAN_ACCEPTED" | "HUMAN_REJECTED" |
   "IMPLEMENTED" | "MEASURED"
 
@@ -77,6 +79,12 @@ export type StrategicSignalV1 = {
   nextAction: string
   confidence: "HIGH" | "MEDIUM" | "LOW" | "UNPROVEN"
   materiality: number
+  invariantLifecycle: LivePortfolioInvariantLifecycle | null
+  strategicClassification: "ACTIVE_VIOLATION" | "MITIGATED_CONDITION" |
+    "UNRESOLVED_HUMAN_IDENTITY" | "CAPABILITY_BLOCKER" | "DETECTED_RISK" |
+    "COMMERCIAL_OR_SYSTEM_SIGNAL"
+  guardCode: DeterministicIntegrityGuardCode | null
+  guardAlwaysOn: boolean
   observedAt: string
   deterministic: true
 }
@@ -420,17 +428,26 @@ export function buildStrategicReviewQueueV1(input: {
     canonicalOpportunities: canonical.map((row) => row.decisionIntegration),
     maximumEntries: 250 })
   const signals: StrategicSignalV1[] = []
-  const add = (signal: Omit<StrategicSignalV1, "signalId" | "deterministic" | "observedAt">) => {
+  const add = (signal: Omit<StrategicSignalV1, "signalId" | "deterministic" |
+    "observedAt" | "invariantLifecycle" | "strategicClassification" |
+    "guardCode" | "guardAlwaysOn"> & Partial<Pick<StrategicSignalV1,
+      "invariantLifecycle" | "strategicClassification" | "guardCode" |
+      "guardAlwaysOn">>) => {
     const entityRefs = [...new Set(signal.entityRefs)].sort().slice(0, 25)
     const evidenceRefs = [...new Set(signal.evidenceRefs)].sort().slice(0, 25)
-    signals.push({ ...signal, entityRefs, evidenceRefs,
+    signals.push({ invariantLifecycle: null,
+      strategicClassification: "COMMERCIAL_OR_SYSTEM_SIGNAL",
+      guardCode: null, guardAlwaysOn: false, ...signal, entityRefs, evidenceRefs,
       signalId: stableId("strategic-signal-v1", [signal.signalType, signal.module,
-        entityRefs, evidenceRefs]), observedAt, deterministic: true })
+        entityRefs, evidenceRefs, signal.invariantLifecycle ?? null]), observedAt,
+      deterministic: true })
   }
   for (const invariant of integrity.findings) {
-    const materiality = invariant.severity === "CRITICAL" ? 100
+    const baseMateriality = invariant.severity === "CRITICAL" ? 100
       : invariant.severity === "HIGH" ? 92
         : invariant.severity === "MEDIUM" ? 72 : 45
+    const materiality = invariant.lifecycle === "MITIGATED_BY_POLICY"
+      ? Math.min(28, baseMateriality) : baseMateriality
     add({
       signalType: invariant.invariantCode,
       severity: invariant.severity,
@@ -439,10 +456,45 @@ export function buildStrategicReviewQueueV1(input: {
       evidenceRefs: invariant.evidenceRefs,
       evidenceCount: Math.max(1, invariant.observedNumerator ??
         invariant.entityRefs.length),
-      summary: `${invariant.invariantCode.replaceAll("_", " ")} · ${invariant.blockingImpact.replaceAll("_", " ")}`,
+      summary: `${invariant.invariantCode.replaceAll("_", " ")} · ${invariant.lifecycle.replaceAll("_", " ")} · ${invariant.blockingImpact.replaceAll("_", " ")}`,
       nextAction: invariant.recommendedAction,
       confidence: "HIGH",
       materiality,
+      invariantLifecycle: invariant.lifecycle,
+      strategicClassification: invariant.strategicClassification,
+      guardCode: invariant.guardCode,
+      guardAlwaysOn: invariant.guardAlwaysOn,
+    })
+  }
+  for (const guard of integrity.deterministicGuards.filter((candidate) =>
+    candidate.status === "TRIGGERED" && !integrity.findings.some((finding) =>
+      finding.guardCode === candidate.guardCode))) {
+    add({
+      signalType: guard.guardCode,
+      severity: guard.guardCode === "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD"
+        ? "HIGH" : "MEDIUM",
+      module: guard.guardCode === "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD"
+        ? "ACCOUNT_TRAFFIC" : "CROSS_MODULE_INTEGRITY",
+      entityRefs: [guard.scopeId],
+      evidenceRefs: guard.guardCode ===
+          "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD"
+        ? [input.monitor.backend.trafficScopes.accountTraffic
+          .metadataValidationReasonCode ?? "ACCOUNT_TRAFFIC_METADATA_INVALID"]
+        : [`${guard.guardCode}:${guard.status}`],
+      evidenceCount: Math.max(1, guard.evidenceCount),
+      summary: `${guard.guardCode.replaceAll("_", " ")} triggered at ${guard.grain}.`,
+      nextAction: guard.guardCode ===
+          "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD"
+        ? "RETRY_ONCE_THEN_PRESERVE_UNAVAILABLE_WITH_NULL_METRICS"
+        : "RECONCILE_DETERMINISTIC_INTEGRITY_GUARD",
+      confidence: "HIGH",
+      materiality: guard.guardCode ===
+          "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD" ? 88 : 70,
+      strategicClassification: guard.guardCode ===
+          "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD"
+        ? "CAPABILITY_BLOCKER" : "ACTIVE_VIOLATION",
+      guardCode: guard.guardCode,
+      guardAlwaysOn: true,
     })
   }
   const capability = decisionQueue.filter((row) => row.classification === "CAPABILITY_BLOCKED")
@@ -463,7 +515,8 @@ export function buildStrategicReviewQueueV1(input: {
     evidenceRefs: capability.map((row) => row.dedupeIdentity), evidenceCount: capabilityAffected,
     summary: `${capability.length} grouped capability blocker(s) limit current evidence.`,
     nextAction: "RESTORE_HIGHEST_IMPACT_EVIDENCE_CAPABILITY", confidence: "HIGH",
-    materiality: Math.min(85, 45 + capability.length * 4) })
+    materiality: Math.min(85, 45 + capability.length * 4),
+    strategicClassification: "CAPABILITY_BLOCKER" })
   const stale = liveListings.filter((row) =>
     row.stock.freshness.status === "STALE")
   if (stale.length && (stale.length >= 3 || stale.length / Math.max(1,
@@ -554,11 +607,22 @@ export function buildStrategicReviewQueueV1(input: {
     nextAction: "REVIEW_MODEL_AND_PROVIDER_HEALTH", confidence: "HIGH", materiality: 60 })
   const maximum = Math.min(SELLER_OS_AI_MAX_MODEL_SIGNALS,
     Math.max(1, input.maximumSignals ?? SELLER_OS_AI_MAX_MODEL_SIGNALS))
-  const deduped = [...new Map(signals.map((row) => [row.signalId, row])).values()]
+  const allDeduped = [...new Map(signals.map((row) => [row.signalId, row])).values()]
     .sort((left, right) => right.materiality - left.materiality ||
-      left.signalId.localeCompare(right.signalId)).slice(0, maximum)
+      left.signalId.localeCompare(right.signalId))
+  const deduped = allDeduped.slice(0, maximum)
   return { contractVersion: STRATEGIC_REVIEW_QUEUE_VERSION, observedAt,
     entries: deduped, totalMaterialSignals: deduped.length,
+    activeViolationCount: allDeduped.filter((row) =>
+      row.invariantLifecycle === "ACTIVE_VIOLATION").length,
+    mitigatedFindingCount: allDeduped.filter((row) =>
+      row.invariantLifecycle === "MITIGATED_BY_POLICY").length,
+    mitigatedFindings: cap(allDeduped.filter((row) =>
+      row.invariantLifecycle === "MITIGATED_BY_POLICY"), 10),
+    unresolvedHumanIdentityCount: allDeduped.filter((row) =>
+      row.strategicClassification === "UNRESOLVED_HUMAN_IDENTITY").length,
+    capabilityBlockerCount: allDeduped.filter((row) =>
+      row.strategicClassification === "CAPABILITY_BLOCKER").length,
     deterministicEvidenceOnly: true as const, generatedByModel: false as const,
     dedupeApplied: true as const, bounded: true as const, maximumSignals: maximum,
     marketplaceWrites: 0 as const }
@@ -570,6 +634,7 @@ export function detectAutomationCandidatesV1(input: {
 }) {
   const threshold = Math.max(3, input.minimumRepeatedEvidence ?? 3)
   const candidates = input.signals.filter((signal) => signal.evidenceCount >= threshold &&
+    signal.invariantLifecycle !== "MITIGATED_BY_POLICY" &&
     ["HIGH_MANUAL_REVIEW_RATE", "DUPLICATE_EXCEPTION_SPIKE", "STALE_EVIDENCE_SPIKE",
       "CAPABILITY_BLOCKER", "KEYWORD_QUALITY_ANOMALY", "DUPLICATE_ITEM_ID",
       "DUPLICATE_LIVE_SKU", "NON_LIVE_ENTITY_IN_LIVE_DENOMINATOR",
@@ -674,18 +739,55 @@ export function buildSystemReviewBundleV1(input: {
         collisions: cap(integrity.liveSkuUniqueness.collisions, 20),
       },
       findings: cap(integrity.findings, 20),
+      deterministicGuards: integrity.deterministicGuards,
       denominatorPolicy: integrity.denominatorPolicy,
       readOnly: true as const,
     },
+    deterministicIntegrityGuards: {
+      contractVersion: "SELLER_OS_ALWAYS_ON_DETERMINISTIC_GUARDS_V1_2026_08_13",
+      entries: integrity.deterministicGuards,
+      alwaysOn: true as const,
+      repeatedEvidenceRequired: false as const,
+      automationPromotionRequired: false as const,
+      autoMutationAllowed: false as const,
+    },
     trafficScopeIntegrity: {
       accountTraffic: {
+        status: input.monitor.backend.trafficScopes.accountTraffic.status,
+        completeness:
+          input.monitor.backend.trafficScopes.accountTraffic.completeness,
+        scopeId: input.monitor.backend.trafficScopes.accountTraffic.scopeId,
         scopeType: input.monitor.backend.trafficScopes.accountTraffic.scopeType,
+        scopeCount: input.monitor.backend.trafficScopes.accountTraffic.scopeCount,
+        grain: input.monitor.backend.trafficScopes.accountTraffic.grain,
         observedAt: input.monitor.backend.trafficScopes.accountTraffic.observedAt,
         freshnessSourceUpdatedAt:
           input.monitor.backend.trafficScopes.accountTraffic.sourceUpdatedAt,
         upstreamSnapshotAcquisitionCount:
           input.monitor.backend.trafficScopes.accountTraffic
             .upstreamSnapshotAcquisitionCount,
+        accountTrafficSnapshotId:
+          input.monitor.backend.trafficScopes.accountTraffic
+            .accountTrafficSnapshotId,
+        auditSpanId: input.monitor.backend.trafficScopes.accountTraffic.auditSpanId,
+        metadataValidationStatus:
+          input.monitor.backend.trafficScopes.accountTraffic
+            .metadataValidationStatus,
+        metadataValidationReasonCode:
+          input.monitor.backend.trafficScopes.accountTraffic
+            .metadataValidationReasonCode,
+        cumulativeAcquisitionCount:
+          input.monitor.backend.trafficScopes.accountTraffic
+            .cumulativeAcquisitionCount,
+        cacheHitCount:
+          input.monitor.backend.trafficScopes.accountTraffic.cacheHitCount,
+        retryCount: input.monitor.backend.trafficScopes.accountTraffic.retryCount,
+        impressions: input.monitor.backend.trafficScopes.accountTraffic.impressions,
+        listingViews:
+          input.monitor.backend.trafficScopes.accountTraffic.listingViews,
+        quantitySold:
+          input.monitor.backend.trafficScopes.accountTraffic.quantitySold,
+        ctr: input.monitor.backend.trafficScopes.accountTraffic.ctr,
       },
       currentLive: {
         scopeId: integrity.canonicalCohort.scopeId,
@@ -727,9 +829,23 @@ export function buildSystemReviewBundleV1(input: {
       hardOverrides: cap(experiments.filter((row) =>
         row.reasonCodes.includes("HARD_OVERRIDE_REQUIRES_HUMAN_REVIEW")), 10),
       authoritative: dataParity.experiments.zeroIsAuthoritative,
+      resultCount: dataParity.experiments.zeroIsAuthoritative
+        ? experiments.length : null,
+      resultStatus: dataParity.experiments.zeroIsAuthoritative
+        ? "AVAILABLE" as const : "UNPROVEN" as const,
+      scopeId: integrity.canonicalCohort.scopeId,
+      scopeType: integrity.canonicalCohort.scopeType,
+      scopeCount: integrity.canonicalCohort.listingCount,
+      observedAt: integrity.canonicalCohort.observedAt,
+      grain: "CANONICAL_EXPERIMENT_REGISTRY_ENTRY" as const,
       sourceStatus: dataParity.experiments,
     },
     supplierAndStock: {
+      scopeId: integrity.canonicalCohort.scopeId,
+      scopeType: integrity.canonicalCohort.scopeType,
+      scopeCount: integrity.canonicalCohort.listingCount,
+      observedAt: integrity.stockCohort.observedAt,
+      grain: integrity.stockCohort.grain,
       exactSupplierLinked: portfolioCountsProven ? exactSupplierLinked : null,
       totalListings: portfolioCountsProven
         ? integrity.canonicalCohort.listingCount : null,
@@ -757,6 +873,8 @@ export function buildSystemReviewBundleV1(input: {
       limitationCode: input.monitor.backend.listingQualityReport.limitationCode,
       recommendationCount: dataParity.qualityReport.zeroIsAuthoritative
         ? input.monitor.backend.listingQualityReport.recommendations.length : null,
+      resultStatus: dataParity.qualityReport.zeroIsAuthoritative
+        ? "AVAILABLE" as const : "UNPROVEN" as const,
     },
     commercialAnomalies: {
       keyword: strategicQueue.entries.filter((row) =>
@@ -790,6 +908,13 @@ export function buildSystemReviewBundleV1(input: {
       status: input.monitor.learning.status,
       storedLearningCount: dataParity.learning.zeroIsAuthoritative
         ? input.monitor.learning.categoryAdjustments.length : null,
+      resultStatus: dataParity.learning.zeroIsAuthoritative
+        ? "AVAILABLE" as const : "UNPROVEN" as const,
+      scopeId: `${integrity.canonicalCohort.scopeId}:learning`,
+      scopeType: integrity.canonicalCohort.scopeType,
+      scopeCount: integrity.canonicalCohort.listingCount,
+      observedAt: input.monitor.learning.evidenceTimestamp,
+      grain: "CATEGORY_LEARNING_OUTCOME" as const,
       limitationCode: input.monitor.learning.limitationCode,
       syntheticLearning: false as const,
       universalRuleAllowed: false as const,
@@ -799,10 +924,36 @@ export function buildSystemReviewBundleV1(input: {
         totalEntityCount: integrity.canonicalCohort.listingCount }
       : {}),
     operationalBurden: {
-      manualReviewCount: portfolioCountsProven ? liveHumanReviewIds.size : null,
-      manualReviewRate: portfolioCountsProven
-        ? roundedRatio(liveHumanReviewIds.size,
-          integrity.canonicalCohort.listingCount) : null,
+      manualReviewCount: {
+        status: portfolioCountsProven ? "AVAILABLE" as const : "UNPROVEN" as const,
+        value: portfolioCountsProven ? liveHumanReviewIds.size : null,
+        authority: "DECISION_TAXONOMY_V2" as const,
+        scopeId: integrity.canonicalCohort.scopeId,
+        scopeType: integrity.canonicalCohort.scopeType,
+        scopeCount: integrity.canonicalCohort.listingCount,
+        observedAt: integrity.canonicalCohort.observedAt,
+        grain: "EBAY_LIVE_LISTING" as const,
+        entityType: "EBAY_LIVE_LISTING" as const,
+        numerator: portfolioCountsProven ? liveHumanReviewIds.size : null,
+        denominator: portfolioCountsProven
+          ? integrity.canonicalCohort.listingCount : null,
+      },
+      manualReviewRate: {
+        status: portfolioCountsProven ? "AVAILABLE" as const : "UNPROVEN" as const,
+        value: portfolioCountsProven
+          ? roundedRatio(liveHumanReviewIds.size,
+            integrity.canonicalCohort.listingCount) : null,
+        authority: "DECISION_TAXONOMY_V2" as const,
+        scopeId: integrity.canonicalCohort.scopeId,
+        scopeType: integrity.canonicalCohort.scopeType,
+        scopeCount: integrity.canonicalCohort.listingCount,
+        observedAt: integrity.canonicalCohort.observedAt,
+        grain: "EBAY_LIVE_LISTING" as const,
+        entityType: "EBAY_LIVE_LISTING" as const,
+        numerator: portfolioCountsProven ? liveHumanReviewIds.size : null,
+        denominator: portfolioCountsProven
+          ? integrity.canonicalCohort.listingCount : null,
+      },
       liveListingHumanReviewRate: {
         status: portfolioCountsProven ? "AVAILABLE" as const : "UNPROVEN" as const,
         numerator: portfolioCountsProven ? liveHumanReviewIds.size : null,
@@ -811,8 +962,12 @@ export function buildSystemReviewBundleV1(input: {
         rate: portfolioCountsProven ? roundedRatio(liveHumanReviewIds.size,
           integrity.canonicalCohort.listingCount) : null,
         scopeType: integrity.canonicalCohort.scopeType,
+        scopeId: integrity.canonicalCohort.scopeId,
         scopeCount: integrity.canonicalCohort.listingCount,
         scopeObservedAt: integrity.canonicalCohort.observedAt,
+        grain: "EBAY_LIVE_LISTING" as const,
+        entityType: "EBAY_LIVE_LISTING" as const,
+        authority: "DECISION_TAXONOMY_V2" as const,
       },
       evidenceEntityReviewRate: {
         status: input.monitor.listings.length ? "AVAILABLE" as const : "UNPROVEN" as const,
@@ -823,8 +978,12 @@ export function buildSystemReviewBundleV1(input: {
           ? roundedRatio(evidenceEntityHumanReviewCount,
             input.monitor.listings.length) : null,
         scopeType: "EVIDENCE_ENTITY_SCOPE" as const,
+        scopeId: `${integrity.canonicalCohort.scopeId}:stock-evidence`,
         scopeCount: input.monitor.listings.length,
         scopeObservedAt: input.monitor.generatedAt,
+        grain: "STOCK_EVIDENCE_ROW" as const,
+        entityType: "STOCK_EVIDENCE_ROW" as const,
+        authority: "ASSISTANT_GATEWAY_EVIDENCE_ENTITY_RECONCILIATION" as const,
         registryPartitionsIncluded: false as const,
       },
       registryPartitionReviewRate: {
@@ -835,8 +994,12 @@ export function buildSystemReviewBundleV1(input: {
         rate: registryReviewRateProven
           ? roundedRatio(registryReviewNumerator, registryReviewDenominator) : null,
         scopeType: "REGISTRY_PARTITION_SCOPE" as const,
+        scopeId: `${integrity.canonicalCohort.scopeId}:registry-partition`,
         scopeCount: registryReviewRateProven ? registryReviewDenominator : null,
         scopeObservedAt: input.monitor.generatedAt,
+        grain: "REGISTRY_RELATIONSHIP" as const,
+        entityType: "REGISTRY_RELATIONSHIP" as const,
+        authority: "CERTIFIED_REGISTRY_PRESENTATION" as const,
       },
       falseInterventionCount: decisionQueue.filter((row) =>
         row.classification === "ACTIONABLE_COMMERCIAL" && row.confidence === "UNPROVEN").length,

@@ -3,8 +3,10 @@ import type {
   CommercialListingReadModel,
   CommercialMonitorGetDto,
   CrossModuleLivePortfolioIntegrityV1,
+  DeterministicIntegrityGuardCode,
   EbayLiveCertificationReadModel,
   LivePortfolioInvariantFindingV1,
+  LivePortfolioInvariantLifecycle,
 } from "./commercial-monitor-readonly-contract"
 import { stableReadonlyCommercialKey } from
   "./commercial-monitor-readonly-utilities.mjs"
@@ -65,6 +67,22 @@ function uniqueBy<T>(values: T[], keyOf: (value: T) => string) {
   })
 }
 
+export function resolveInvariantLifecycleV1(input: {
+  activeViolation: boolean
+  mitigatedByPolicy?: boolean
+  authoritativeReconciliationEvidence?: boolean
+  humanAcceptedException?: boolean
+}) : LivePortfolioInvariantLifecycle {
+  if (!input.activeViolation && input.authoritativeReconciliationEvidence) {
+    return "RECONCILED"
+  }
+  if (input.activeViolation && input.humanAcceptedException) {
+    return "ACCEPTED_EXCEPTION"
+  }
+  if (input.mitigatedByPolicy) return "MITIGATED_BY_POLICY"
+  return input.activeViolation ? "ACTIVE_VIOLATION" : "DETECTED_RISK"
+}
+
 export function selectCanonicalCurrentLiveListingsV1(
   listings: CommercialListingReadModel[],
 ) {
@@ -121,8 +139,16 @@ function identityStatus(
 }
 
 function finding(input: Omit<LivePortfolioInvariantFindingV1,
-  "deterministic">): LivePortfolioInvariantFindingV1 {
-  return Object.freeze({ ...input,
+  "deterministic" | "lifecycle" | "strategicClassification" | "guardCode" |
+  "guardAlwaysOn"> & Partial<Pick<LivePortfolioInvariantFindingV1,
+    "lifecycle" | "strategicClassification" | "guardCode" |
+    "guardAlwaysOn">>): LivePortfolioInvariantFindingV1 {
+  return Object.freeze({
+    lifecycle: "DETECTED_RISK" as LivePortfolioInvariantLifecycle,
+    strategicClassification: "DETECTED_RISK" as const,
+    guardCode: null,
+    guardAlwaysOn: false,
+    ...input,
     entityRefs: unique(input.entityRefs).slice(0, 25),
     evidenceRefs: unique(input.evidenceRefs).slice(0, 25),
     deterministic: true as const })
@@ -140,6 +166,10 @@ export function buildFalseZeroInvariantFindingV1(input: {
       input.count !== 0) return null
   return finding({
     invariantCode: "FALSE_ZERO_FROM_UNPROVEN_CAPABILITY",
+    lifecycle: "ACTIVE_VIOLATION",
+    strategicClassification: "ACTIVE_VIOLATION",
+    guardCode: "FALSE_ZERO_REPRESENTATION_GUARD",
+    guardAlwaysOn: true,
     severity: "HIGH",
     module: input.module,
     entityType: "CAPABILITY",
@@ -162,6 +192,7 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
   registry?: RegistryCertification | null
   accountTraffic?: AccountTrafficEvidenceV1 | null
   currentLiveQuantitySold?: number | null
+  currentLiveDenominatorItemIds?: string[]
   observedAt: string | null
 }) {
   const canonicalListings = selectCanonicalCurrentLiveListingsV1(input.listings)
@@ -197,6 +228,12 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
     liveSet.has(normalized(listing.identity.itemId)))
   const nonLiveEvidence = input.listings.filter((listing) =>
     !liveSet.has(normalized(listing.identity.itemId)))
+  const effectiveLiveDenominatorItemIds = unique(
+    input.currentLiveDenominatorItemIds ?? itemIds,
+  )
+  const denominatorNonLiveItemIds = effectiveLiveDenominatorItemIds.filter(
+    (itemId) => !liveSet.has(itemId),
+  )
   const currentLiveEvidenceIds = unique(currentLiveEvidence.map((listing) =>
     normalized(listing.identity.itemId)))
   const duplicateItemIds = [...evidenceByItemId.entries()]
@@ -232,10 +269,20 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
       humanApprovalRequired: true as const,
     }] : []
   }).sort((left, right) => left.sku.localeCompare(right.sku))
+  const accountTrafficAcquisitionCount = typeof input.accountTraffic
+    ?.upstreamSnapshotAcquisitionCount === "number"
+    ? input.accountTraffic.upstreamSnapshotAcquisitionCount : 0
   const findings: LivePortfolioInvariantFindingV1[] = []
   for (const duplicate of duplicateItemIds) {
     findings.push(finding({
       invariantCode: "DUPLICATE_ITEM_ID",
+      lifecycle: resolveInvariantLifecycleV1({
+        activeViolation: duplicate.identityRepresentationConflict,
+      }),
+      strategicClassification: duplicate.identityRepresentationConflict
+        ? "ACTIVE_VIOLATION" : "DETECTED_RISK",
+      guardCode: "STOCK_EVIDENCE_DEDUPLICATION_GUARD",
+      guardAlwaysOn: true,
       severity: "HIGH",
       module: "STOCK_LUNA",
       entityType: "EBAY_ITEM_ID",
@@ -257,6 +304,10 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
   for (const collision of collisions) {
     findings.push(finding({
       invariantCode: "DUPLICATE_LIVE_SKU",
+      lifecycle: "ACTIVE_VIOLATION",
+      strategicClassification: "UNRESOLVED_HUMAN_IDENTITY",
+      guardCode: "LIVE_SKU_UNIQUENESS_CHECK",
+      guardAlwaysOn: true,
       severity: "CRITICAL",
       module: "LIVE_LISTING_IDENTITY",
       entityType: "LIVE_CUSTOM_LABEL_SKU",
@@ -275,20 +326,37 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
   const nonLiveItemIds = unique(nonLiveEvidence.map((listing) =>
     normalized(listing.identity.itemId)))
   if (nonLiveEvidence.length > 0) {
+    const denominatorContaminated = denominatorNonLiveItemIds.length > 0
     findings.push(finding({
-      invariantCode: "NON_LIVE_ENTITY_IN_LIVE_DENOMINATOR",
-      severity: "HIGH",
+      invariantCode: denominatorContaminated
+        ? "NON_LIVE_ENTITY_IN_LIVE_DENOMINATOR"
+        : "NON_LIVE_EVIDENCE_PRESENT_EXCLUDED",
+      lifecycle: resolveInvariantLifecycleV1({
+        activeViolation: denominatorContaminated,
+        mitigatedByPolicy: !denominatorContaminated,
+      }),
+      strategicClassification: denominatorContaminated
+        ? "ACTIVE_VIOLATION" : "MITIGATED_CONDITION",
+      guardCode: "CURRENT_LIVE_COHORT_RECONCILIATION",
+      guardAlwaysOn: true,
+      severity: denominatorContaminated ? "HIGH" : "LOW",
       module: "CROSS_MODULE_SCOPE",
       entityType: "HISTORICAL_OR_NONLIVE_STOCK_EVIDENCE",
-      entityRefs: nonLiveItemIds,
+      entityRefs: denominatorContaminated
+        ? denominatorNonLiveItemIds : nonLiveItemIds,
       observedNumerator: nonLiveEvidence.length,
-      observedDenominator: input.listings.length,
+      observedDenominator: denominatorContaminated
+        ? effectiveLiveDenominatorItemIds.length : input.listings.length,
       scopeId,
       scopeType: "EVIDENCE_ENTITY_SCOPE",
       evidenceRefs: nonLiveEvidence.map((listing) => listing.key),
       humanApprovalRequired: false,
-      recommendedAction: "EXCLUDE_NONLIVE_EVIDENCE_FROM_CURRENT_LIVE_RATES",
-      blockingImpact: "LIVE_PORTFOLIO_DENOMINATOR_CONTAMINATION",
+      recommendedAction: denominatorContaminated
+        ? "EXCLUDE_NONLIVE_EVIDENCE_FROM_CURRENT_LIVE_RATES"
+        : "PRESERVE_SCOPE_EXCLUSION_AND_RECONCILE_EVIDENCE_SEPARATELY",
+      blockingImpact: denominatorContaminated
+        ? "LIVE_PORTFOLIO_DENOMINATOR_CONTAMINATION"
+        : "NONE_CURRENT_LIVE_DENOMINATOR_PROTECTED",
       observedAt: input.observedAt,
     }))
   }
@@ -297,6 +365,10 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
   if (currentLiveEvidenceIds.length !== itemIds.length) {
     findings.push(finding({
       invariantCode: "COUNT_PARITY_FAILURE",
+      lifecycle: "ACTIVE_VIOLATION",
+      strategicClassification: "ACTIVE_VIOLATION",
+      guardCode: "CURRENT_LIVE_COHORT_RECONCILIATION",
+      guardAlwaysOn: true,
       severity: "HIGH",
       module: "STOCK_LUNA",
       entityType: "CURRENT_LIVE_STOCK_COHORT",
@@ -317,6 +389,10 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
       input.registry.currentLiveCount !== itemIds.length) {
     findings.push(finding({
       invariantCode: "COUNT_PARITY_FAILURE",
+      lifecycle: "ACTIVE_VIOLATION",
+      strategicClassification: "ACTIVE_VIOLATION",
+      guardCode: "CURRENT_LIVE_COHORT_RECONCILIATION",
+      guardAlwaysOn: true,
       severity: "HIGH",
       module: "REGISTRY",
       entityType: "REGISTRY_CURRENT_LIVE_PARTITION",
@@ -336,6 +412,8 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
       input.registry.humanReviewCount > 0) {
     findings.push(finding({
       invariantCode: "MISSING_REGISTRY_RELATIONSHIP",
+      lifecycle: "ACTIVE_VIOLATION",
+      strategicClassification: "UNRESOLVED_HUMAN_IDENTITY",
       severity: "HIGH",
       module: "REGISTRY",
       entityType: "REGISTRY_HUMAN_REVIEW_PARTITION",
@@ -380,6 +458,9 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
     stockCohort: {
       scopeId,
       scopeType: "CURRENT_LIVE_COHORT_SCOPE" as const,
+      scopeCount: itemIds.length,
+      observedAt: input.observedAt,
+      grain: "STOCK_EVIDENCE_ROW" as const,
       evidenceRowCount: input.listings.length,
       currentLiveItemCount: currentLiveEvidenceIds.length,
       currentLiveEvidenceRowCount: currentLiveEvidence.length,
@@ -395,9 +476,82 @@ export function buildCrossModuleLivePortfolioIntegrityV1(input: {
         : collisions.length ? "FAIL" as const : "PASS" as const,
       collisionCount: canonicalCohort.identityStatus === "UNPROVEN"
         ? null : collisions.length,
+      scopeId,
+      scopeType: "CURRENT_LIVE_COHORT_SCOPE" as const,
+      scopeCount: itemIds.length,
+      observedAt: input.observedAt,
+      grain: "LIVE_CUSTOM_LABEL_SKU" as const,
       collisions,
     },
     findings,
+    deterministicGuards: ([
+      {
+        guardCode: "LIVE_SKU_UNIQUENESS_CHECK",
+        status: canonicalCohort.identityStatus === "UNPROVEN" ? "UNPROVEN"
+          : collisions.length ? "TRIGGERED" : "PASS",
+        scopeType: "CURRENT_LIVE_COHORT_SCOPE",
+        scopeCount: itemIds.length,
+        grain: "LIVE_CUSTOM_LABEL_SKU",
+        evidenceCount: collisions.length,
+      },
+      {
+        guardCode: "FALSE_ZERO_REPRESENTATION_GUARD",
+        status: findings.some((row) => row.invariantCode ===
+          "FALSE_ZERO_FROM_UNPROVEN_CAPABILITY") ? "TRIGGERED" : "PASS",
+        scopeType: "CURRENT_LIVE_COHORT_SCOPE",
+        scopeCount: itemIds.length,
+        grain: "CAPABILITY_COUNT",
+        evidenceCount: findings.filter((row) => row.invariantCode ===
+          "FALSE_ZERO_FROM_UNPROVEN_CAPABILITY").length,
+      },
+      {
+        guardCode: "STOCK_EVIDENCE_DEDUPLICATION_GUARD",
+        status: duplicateItemIds.length ? "TRIGGERED" : "PASS",
+        scopeType: "CURRENT_LIVE_COHORT_SCOPE",
+        scopeCount: itemIds.length,
+        grain: "STOCK_EVIDENCE_ROW",
+        evidenceCount: duplicateItemIds.length,
+      },
+      {
+        guardCode: "CURRENT_LIVE_COHORT_RECONCILIATION",
+        status: denominatorNonLiveItemIds.length || missingCurrentLiveItemIds.length
+          ? "TRIGGERED" : nonLiveEvidence.length ? "MITIGATED" : "PASS",
+        scopeType: "CURRENT_LIVE_COHORT_SCOPE",
+        scopeCount: itemIds.length,
+        grain: "EBAY_ITEM_ID",
+        evidenceCount: denominatorNonLiveItemIds.length +
+          missingCurrentLiveItemIds.length + nonLiveEvidence.length,
+      },
+      {
+        guardCode: "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD",
+        status: input.accountTraffic?.metadataValidationStatus === "VALID"
+          ? "PASS" : input.accountTraffic?.metadataValidationStatus === "INVALID"
+            ? "TRIGGERED" : "UNPROVEN",
+        scopeType: "ACCOUNT_TRAFFIC_SCOPE",
+        scopeCount: input.accountTraffic?.scopeCount ?? null,
+        grain: "ACCOUNT_DAY_AGGREGATE",
+        evidenceCount: accountTrafficAcquisitionCount,
+      },
+    ] satisfies Array<{
+      guardCode: DeterministicIntegrityGuardCode
+      status: "PASS" | "TRIGGERED" | "MITIGATED" | "UNPROVEN"
+      scopeType: "CURRENT_LIVE_COHORT_SCOPE" | "ACCOUNT_TRAFFIC_SCOPE"
+      scopeCount: number | null
+      grain: string
+      evidenceCount: number
+    }>).map((guard) => ({ ...guard, scopeId: guard.scopeType ===
+      "ACCOUNT_TRAFFIC_SCOPE" ? input.accountTraffic?.scopeId ??
+        "account-traffic:unproven" : scopeId, observedAt: guard.scopeType ===
+          "ACCOUNT_TRAFFIC_SCOPE" ? input.accountTraffic?.observedAt ?? null
+          : input.observedAt, independentOfAutomationThreshold: true as const,
+      autoMutationAllowed: false as const })),
+    lifecyclePolicy: {
+      statuses: ["DETECTED_RISK", "ACTIVE_VIOLATION", "MITIGATED_BY_POLICY",
+        "RECONCILED", "ACCEPTED_EXCEPTION"] as LivePortfolioInvariantLifecycle[],
+      reconciliationRequiresAuthoritativeEvidence: true as const,
+      acceptedExceptionRequiresHumanApproval: true as const,
+      automaticLifecycleMutationAllowed: false as const,
+    },
     denominatorPolicy: {
       currentLiveRatesUseCanonicalItemIds: true as const,
       nonLiveEvidenceExcludedFromLiveRates: true as const,

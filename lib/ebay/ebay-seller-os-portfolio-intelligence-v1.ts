@@ -494,6 +494,14 @@ export function buildPortfolioIntelligenceV1(input: {
   const liveListingKeys = new Set(liveListings.map((listing) => listing.key))
   const decisions = input.monitor.backend.decisions.filter((decision) =>
     liveListingKeys.has(decision.listingKey))
+  const decisionHumanReviewCount = decisions.filter((row) =>
+    row.recommendedAction === "HUMAN_REVIEW").length
+  const registryHumanReviewCount =
+    input.monitor.backend.capabilities.registry.humanReviewCount
+  const registryCurrentLiveCount =
+    input.monitor.backend.capabilities.registry.currentLiveCount
+  const registryBurdenProven = typeof registryHumanReviewCount === "number" &&
+    typeof registryCurrentLiveCount === "number"
   return { contractVersion: "PORTFOLIO_INTELLIGENCE_V1",
     currentLiveListingCount: livePortfolioProven
       ? integrity.canonicalCohort.listingCount : null,
@@ -517,11 +525,40 @@ export function buildPortfolioIntelligenceV1(input: {
     interventionBurden: livePortfolioProven
       ? decisions.filter((row) => row.recommendedAction !== "WAIT" &&
         !row.actionBlockedByInsufficientEvidence).length : null,
-    humanReviewBurden: livePortfolioProven
-      ? decisions.filter((row) => row.recommendedAction === "HUMAN_REVIEW").length
-      : null,
-    registryHumanReviewBurden:
-      input.monitor.backend.capabilities.registry.humanReviewCount,
+    humanReviewBurden: {
+      status: livePortfolioProven ? "AVAILABLE" as const : "UNPROVEN" as const,
+      value: livePortfolioProven ? decisionHumanReviewCount : null,
+      numerator: livePortfolioProven ? decisionHumanReviewCount : null,
+      denominator: livePortfolioProven
+        ? integrity.canonicalCohort.listingCount : null,
+      scopeId: integrity.canonicalCohort.scopeId,
+      scopeType: integrity.canonicalCohort.scopeType,
+      scopeCount: integrity.canonicalCohort.listingCount,
+      observedAt: integrity.canonicalCohort.observedAt,
+      grain: "CANONICAL_COMMERCIAL_DECISION" as const,
+      entityType: "EBAY_LIVE_LISTING" as const,
+      authority: "RAW_CANONICAL_COMMERCIAL_DECISION_V1" as const,
+      semantics: "RAW_DECISION_RECOMMENDED_ACTION_HUMAN_REVIEW" as const,
+    },
+    registryHumanReviewBurden: {
+      status: registryBurdenProven ? "AVAILABLE" as const : "UNPROVEN" as const,
+      value: registryBurdenProven ? registryHumanReviewCount : null,
+      numerator: registryBurdenProven ? registryHumanReviewCount : null,
+      denominator: registryBurdenProven ? registryCurrentLiveCount : null,
+      scopeId: `${integrity.canonicalCohort.scopeId}:registry-partition`,
+      scopeType: "REGISTRY_PARTITION_SCOPE" as const,
+      scopeCount: registryBurdenProven ? registryCurrentLiveCount : null,
+      observedAt: input.monitor.generatedAt,
+      grain: "REGISTRY_RELATIONSHIP" as const,
+      entityType: "REGISTRY_RELATIONSHIP" as const,
+      authority: "CERTIFIED_REGISTRY_PRESENTATION" as const,
+      semantics: "REGISTRY_RELATIONSHIP_REQUIRING_HUMAN_REVIEW" as const,
+    },
+    burdenSemanticPolicy: {
+      rawDecisionBurdenMayDifferFromOperationalTaxonomy: true as const,
+      equalityRequired: false as const,
+      comparisonRequiresMatchingAuthorityAndGrain: true as const,
+    },
     automaticPortfolioMutationAllowed: false as const }
 }
 

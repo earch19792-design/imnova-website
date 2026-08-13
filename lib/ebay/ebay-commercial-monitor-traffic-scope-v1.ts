@@ -24,8 +24,11 @@ export const SELLER_HUB_TRAFFIC_MAPPING_V1 = Object.freeze({
 export type AccountTrafficEvidenceV1 = {
   status: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE"
   scope: "ACCOUNT_TRAFFIC"
+  scopeId: string
   scopeType: "ACCOUNT_TRAFFIC_SCOPE"
+  scopeCount: number | null
   grain: "ACCOUNT_DAY_AGGREGATE"
+  entityType: "ACCOUNT_TRAFFIC_DAY_BUCKET"
   source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT"
   windowStart: string | null
   windowEnd: string | null
@@ -37,7 +40,15 @@ export type AccountTrafficEvidenceV1 = {
   listingViews: number | null
   quantitySold: number | null
   ctr: number | null
+  accountTrafficSnapshotId: string | null
+  auditSpanId: string
+  metadataValidationStatus: "VALID" | "INVALID" | "NOT_ATTEMPTED"
+  metadataValidationReasonCode: string | null
   upstreamSnapshotAcquisitionCount: number
+  cumulativeAcquisitionCount: number
+  cacheHitCount: number
+  retryCount: number
+  retryPolicy: "ONE_RETRY_ON_DATE_METADATA_INVALID" | "NO_RETRY"
   gapCodes: string[]
 }
 
@@ -60,12 +71,20 @@ function completeTotal(rows: AccountTrafficMetricRowV1[], key: string) {
 export function unavailableAccountTrafficV1(
   gapCode: string,
   upstreamSnapshotAcquisitionCount = 0,
+  telemetry: Partial<Pick<AccountTrafficEvidenceV1,
+    "scopeId" | "scopeCount" | "accountTrafficSnapshotId" | "auditSpanId" |
+    "metadataValidationStatus" | "metadataValidationReasonCode" |
+    "cumulativeAcquisitionCount" | "cacheHitCount" | "retryCount" |
+    "retryPolicy">> = {},
 ): AccountTrafficEvidenceV1 {
   return {
     status: "UNAVAILABLE",
     scope: "ACCOUNT_TRAFFIC",
+    scopeId: telemetry.scopeId ?? "account-traffic:unproven",
     scopeType: "ACCOUNT_TRAFFIC_SCOPE",
+    scopeCount: telemetry.scopeCount ?? null,
     grain: "ACCOUNT_DAY_AGGREGATE",
+    entityType: "ACCOUNT_TRAFFIC_DAY_BUCKET",
     source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT",
     windowStart: null,
     windowEnd: null,
@@ -77,7 +96,21 @@ export function unavailableAccountTrafficV1(
     listingViews: null,
     quantitySold: null,
     ctr: null,
+    accountTrafficSnapshotId: telemetry.accountTrafficSnapshotId ?? null,
+    auditSpanId: telemetry.auditSpanId ?? "account-traffic-audit:not-attempted",
+    metadataValidationStatus: telemetry.metadataValidationStatus ?? "NOT_ATTEMPTED",
+    metadataValidationReasonCode:
+      telemetry.metadataValidationReasonCode ?? null,
     upstreamSnapshotAcquisitionCount,
+    cumulativeAcquisitionCount: telemetry.cumulativeAcquisitionCount ??
+      upstreamSnapshotAcquisitionCount,
+    cacheHitCount: typeof telemetry.cacheHitCount === "number"
+      ? telemetry.cacheHitCount
+      : 0,
+    retryCount: typeof telemetry.retryCount === "number"
+      ? telemetry.retryCount
+      : 0,
+    retryPolicy: telemetry.retryPolicy ?? "NO_RETRY",
     gapCodes: [gapCode],
   }
 }
@@ -91,6 +124,12 @@ export function summarizeAccountTrafficV1(input: {
   observedAt: string
   sourceUpdatedAt: string | null
   warnings: string[]
+  accountTrafficSnapshotId: string
+  auditSpanId: string
+  cumulativeAcquisitionCount?: number
+  cacheHitCount?: number
+  retryCount?: number
+  retryPolicy?: AccountTrafficEvidenceV1["retryPolicy"]
   upstreamSnapshotAcquisitionCount?: number
 }): AccountTrafficEvidenceV1 {
   const impressions = completeTotal(input.rows, "TOTAL_IMPRESSION_TOTAL")
@@ -126,8 +165,11 @@ export function summarizeAccountTrafficV1(input: {
   return {
     status: complete ? "AVAILABLE" : input.rows.length ? "PARTIAL" : "UNAVAILABLE",
     scope: "ACCOUNT_TRAFFIC",
+    scopeId: `account-traffic:UTC:${input.requestedWindowStart}:${input.requestedWindowEnd}`,
     scopeType: "ACCOUNT_TRAFFIC_SCOPE",
+    scopeCount: input.rows.length,
     grain: "ACCOUNT_DAY_AGGREGATE",
+    entityType: "ACCOUNT_TRAFFIC_DAY_BUCKET",
     source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT",
     windowStart: input.windowStart,
     windowEnd: input.windowEnd,
@@ -139,8 +181,21 @@ export function summarizeAccountTrafficV1(input: {
     listingViews,
     quantitySold,
     ctr,
+    accountTrafficSnapshotId: input.accountTrafficSnapshotId,
+    auditSpanId: input.auditSpanId,
+    metadataValidationStatus: "VALID",
+    metadataValidationReasonCode: null,
     upstreamSnapshotAcquisitionCount:
       input.upstreamSnapshotAcquisitionCount ?? 1,
+    cumulativeAcquisitionCount: input.cumulativeAcquisitionCount ??
+      input.upstreamSnapshotAcquisitionCount ?? 1,
+    cacheHitCount: typeof input.cacheHitCount === "number"
+      ? input.cacheHitCount
+      : 0,
+    retryCount: typeof input.retryCount === "number"
+      ? input.retryCount
+      : 0,
+    retryPolicy: input.retryPolicy ?? "NO_RETRY",
     gapCodes: [...new Set(gapCodes)],
   }
 }

@@ -1464,13 +1464,37 @@ export type LivePortfolioInvariantCode =
   | "DUPLICATE_ITEM_ID"
   | "DUPLICATE_LIVE_SKU"
   | "NON_LIVE_ENTITY_IN_LIVE_DENOMINATOR"
+  | "NON_LIVE_EVIDENCE_PRESENT_EXCLUDED"
   | "MISSING_REGISTRY_RELATIONSHIP"
   | "COUNT_PARITY_FAILURE"
   | "FALSE_ZERO_FROM_UNPROVEN_CAPABILITY"
   | "HISTORICAL_OR_NONLIVE_SALES_ATTRIBUTION_REQUIRED"
 
+export type LivePortfolioInvariantLifecycle =
+  | "DETECTED_RISK"
+  | "ACTIVE_VIOLATION"
+  | "MITIGATED_BY_POLICY"
+  | "RECONCILED"
+  | "ACCEPTED_EXCEPTION"
+
+export type DeterministicIntegrityGuardCode =
+  | "LIVE_SKU_UNIQUENESS_CHECK"
+  | "FALSE_ZERO_REPRESENTATION_GUARD"
+  | "STOCK_EVIDENCE_DEDUPLICATION_GUARD"
+  | "CURRENT_LIVE_COHORT_RECONCILIATION"
+  | "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD"
+
 export type LivePortfolioInvariantFindingV1 = {
   invariantCode: LivePortfolioInvariantCode
+  lifecycle: LivePortfolioInvariantLifecycle
+  strategicClassification:
+    | "ACTIVE_VIOLATION"
+    | "MITIGATED_CONDITION"
+    | "UNRESOLVED_HUMAN_IDENTITY"
+    | "CAPABILITY_BLOCKER"
+    | "DETECTED_RISK"
+  guardCode: DeterministicIntegrityGuardCode | null
+  guardAlwaysOn: boolean
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
   module: string
   entityType: string
@@ -1507,6 +1531,9 @@ export type CrossModuleLivePortfolioIntegrityV1 = {
   stockCohort: {
     scopeId: string
     scopeType: LivePortfolioScopeType
+    scopeCount: number
+    observedAt: string | null
+    grain: "STOCK_EVIDENCE_ROW"
     evidenceRowCount: number
     currentLiveItemCount: number
     currentLiveEvidenceRowCount: number
@@ -1524,6 +1551,11 @@ export type CrossModuleLivePortfolioIntegrityV1 = {
   }
   liveSkuUniqueness: {
     status: "PASS" | "FAIL" | "UNPROVEN"
+    scopeId: string
+    scopeType: LivePortfolioScopeType
+    scopeCount: number
+    observedAt: string | null
+    grain: "LIVE_CUSTOM_LABEL_SKU"
     collisionCount: number | null
     collisions: Array<{
       sku: string
@@ -1533,6 +1565,24 @@ export type CrossModuleLivePortfolioIntegrityV1 = {
     }>
   }
   findings: LivePortfolioInvariantFindingV1[]
+  deterministicGuards: Array<{
+    guardCode: DeterministicIntegrityGuardCode
+    status: "PASS" | "TRIGGERED" | "MITIGATED" | "UNPROVEN"
+    scopeId: string
+    scopeType: LivePortfolioScopeType | "ACCOUNT_TRAFFIC_SCOPE"
+    scopeCount: number | null
+    observedAt: string | null
+    grain: string
+    evidenceCount: number
+    independentOfAutomationThreshold: true
+    autoMutationAllowed: false
+  }>
+  lifecyclePolicy: {
+    statuses: LivePortfolioInvariantLifecycle[]
+    reconciliationRequiresAuthoritativeEvidence: true
+    acceptedExceptionRequiresHumanApproval: true
+    automaticLifecycleMutationAllowed: false
+  }
   denominatorPolicy: {
     currentLiveRatesUseCanonicalItemIds: true
     nonLiveEvidenceExcludedFromLiveRates: true

@@ -240,7 +240,11 @@ export function CommercialMonitorCanonicalDashboard({
   const registryPresentation = presentCommercialMonitorRegistryV1(registry)
   const livePortfolioIntegrity = backend.livePortfolioIntegrity
   const materialIntegrityFindings = livePortfolioIntegrity.findings.filter(
-    (finding) => finding.severity === "CRITICAL" || finding.severity === "HIGH",
+    (finding) => finding.lifecycle !== "MITIGATED_BY_POLICY" &&
+      (finding.severity === "CRITICAL" || finding.severity === "HIGH"),
+  )
+  const mitigatedIntegrityFindings = livePortfolioIntegrity.findings.filter(
+    (finding) => finding.lifecycle === "MITIGATED_BY_POLICY",
   )
   const qualityUnavailable = backend.listingQualityReport.status === "UNAVAILABLE_NO_CURRENT_REPORT"
   const decisionsByKey = new Map(backend.decisions.map((decision) =>
@@ -313,7 +317,8 @@ export function CommercialMonitorCanonicalDashboard({
             <div className="rounded-lg bg-slate-50 p-2.5"><p className="text-slate-500">Item IDs duplicados</p><strong className="mt-1 block text-sm">{formatValue(livePortfolioIntegrity.stockCohort.duplicateItemIds.length)}</strong></div>
             <div className="rounded-lg bg-slate-50 p-2.5"><p className="text-slate-500">Colisiones SKU live</p><strong className="mt-1 block text-sm">{livePortfolioIntegrity.liveSkuUniqueness.collisionCount === null ? "UNPROVEN" : formatValue(livePortfolioIntegrity.liveSkuUniqueness.collisionCount)}</strong></div>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-[9px] text-slate-500"><span>Denominador live = Item IDs canónicos únicos</span><span>·</span><span>particiones Registry y evidencia no-live excluidas</span>{materialIntegrityFindings.slice(0, 3).map((finding) => <span key={`${finding.invariantCode}:${finding.entityRefs.join(":")}`} className="rounded border border-amber-200 bg-amber-50 px-1.5 py-1 font-bold text-amber-800">{finding.invariantCode}</span>)}</div>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[9px] text-slate-500"><span>Denominador live = Item IDs canónicos únicos</span><span>·</span><span>particiones Registry y evidencia no-live excluidas</span>{materialIntegrityFindings.slice(0, 3).map((finding) => <span key={`${finding.invariantCode}:${finding.entityRefs.join(":")}`} className="rounded border border-amber-200 bg-amber-50 px-1.5 py-1 font-bold text-amber-800">{finding.invariantCode} · {finding.lifecycle}</span>)}{mitigatedIntegrityFindings.slice(0, 2).map((finding) => <span key={`${finding.invariantCode}:${finding.entityRefs.join(":")}`} className="rounded border border-emerald-200 bg-emerald-50 px-1.5 py-1 font-bold text-emerald-800">{finding.invariantCode} · MITIGATED</span>)}</div>
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[9px]">{livePortfolioIntegrity.deterministicGuards.map((guard) => <span key={guard.guardCode} className={`rounded border px-1.5 py-1 font-bold ${guard.status === "TRIGGERED" ? "border-rose-200 bg-rose-50 text-rose-800" : guard.status === "MITIGATED" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-slate-50 text-slate-600"}`}>{guard.guardCode} · {guard.status}</span>)}</div>
         </section>
 
         <section aria-label="Commercial operational readiness" className="grid overflow-hidden rounded-xl border border-slate-200 bg-white text-[10px] shadow-sm sm:grid-cols-3 xl:grid-cols-7">
