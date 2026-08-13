@@ -1,0 +1,435 @@
+import type {
+  CanonicalCurrentLiveCohortV1,
+  CommercialListingReadModel,
+  CommercialMonitorGetDto,
+  CrossModuleLivePortfolioIntegrityV1,
+  EbayLiveCertificationReadModel,
+  LivePortfolioInvariantFindingV1,
+} from "./commercial-monitor-readonly-contract"
+import { stableReadonlyCommercialKey } from
+  "./commercial-monitor-readonly-utilities.mjs"
+import type { AccountTrafficEvidenceV1 } from
+  "./ebay-commercial-monitor-traffic-scope-v1"
+
+export const CROSS_MODULE_LIVE_PORTFOLIO_INTEGRITY_VERSION =
+  "CROSS_MODULE_LIVE_PORTFOLIO_INTEGRITY_V1_2026_08_13" as const
+export const CANONICAL_CURRENT_LIVE_COHORT_VERSION =
+  "CANONICAL_CURRENT_LIVE_COHORT_V1_2026_08_13" as const
+
+type RegistryCertification = {
+  status: string
+  currentLiveCount: number | null
+  matchedCount: number | null
+  humanReviewCount: number | null
+  coveragePercent: number | null
+  limitationCodes: string[]
+}
+
+function normalized(value: string | null | undefined) {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function unique(values: string[]) {
+  return [...new Set(values.filter(Boolean))].sort()
+}
+
+function stableScopeId(
+  itemIds: string[],
+  marketplaceId = "EBAY_US",
+  accountAlias: string | null = null,
+) {
+  const digest = stableReadonlyCommercialKey(marketplaceId,
+    normalized(accountAlias) || "UNPROVEN_ACCOUNT_SCOPE",
+    ...[...itemIds].sort()).split(":").at(-1)?.slice(0, 20) ?? "UNPROVEN"
+  return `current-live:${marketplaceId}:${digest}`
+}
+
+function listingEvidenceScore(listing: CommercialListingReadModel) {
+  const metricCoverage = Object.values(listing.metrics).filter((metric) =>
+    (metric.availability === "AVAILABLE" || metric.availability === "PARTIAL") &&
+    typeof metric.value === "number" && Number.isFinite(metric.value)).length
+  const evidenceCount = Array.isArray(listing.evidenceReferences)
+    ? listing.evidenceReferences.length : 0
+  const certified = listing.identity.marketplaceCertification?.status ===
+    "US_CERTIFIED" ? 1 : 0
+  return certified * 10_000 + metricCoverage * 100 + evidenceCount
+}
+
+function uniqueBy<T>(values: T[], keyOf: (value: T) => string) {
+  const seen = new Set<string>()
+  return values.filter((value) => {
+    const key = keyOf(value)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+export function selectCanonicalCurrentLiveListingsV1(
+  listings: CommercialListingReadModel[],
+) {
+  const byItemId = new Map<string, CommercialListingReadModel[]>()
+  for (const listing of listings) {
+    const itemId = normalized(listing.identity.itemId)
+    if (!itemId || listing.discovery.livePresence.status !== "LIVE_ACTIVE") {
+      continue
+    }
+    const current = byItemId.get(itemId) ?? []
+    current.push(listing)
+    byItemId.set(itemId, current)
+  }
+  return [...byItemId.entries()].map(([itemId, members]) => {
+    const primary = [...members].sort((left, right) =>
+      listingEvidenceScore(right) - listingEvidenceScore(left) ||
+      left.key.localeCompare(right.key))[0]
+    const runningExperiment = members.find((listing) =>
+      listing.experiment.status === "AVAILABLE" &&
+      listing.experiment.lifecycleState === "RUNNING")
+    return {
+      ...primary,
+      identity: { ...primary.identity, itemId },
+      experiment: runningExperiment?.experiment ?? primary.experiment,
+      dataQualityIssues: uniqueBy(
+        members.flatMap((listing) => listing.dataQualityIssues ?? []),
+        (issue) => `${issue.code}:${issue.source}:${issue.domain}`,
+      ),
+      blockers: uniqueBy(
+        members.flatMap((listing) => listing.blockers ?? []),
+        (issue) => `${issue.code}:${issue.source}:${issue.domain}`,
+      ),
+      evidenceReferences: uniqueBy(
+        members.flatMap((listing) => listing.evidenceReferences ?? []),
+        (evidence) => evidence.reference,
+      ),
+      alertCandidateKeys: [...new Set(members.flatMap((listing) =>
+        listing.alertCandidateKeys ?? []))],
+    }
+  }).sort((left, right) =>
+    left.identity.itemId.localeCompare(right.identity.itemId))
+}
+
+function identityStatus(
+  certification: EbayLiveCertificationReadModel | null | undefined,
+): CanonicalCurrentLiveCohortV1["identityStatus"] {
+  if (certification?.status === "CERTIFIED" &&
+      certification.discovery.coverage === "COMPLETE" &&
+      certification.discovery.status === "AVAILABLE") return "CERTIFIED"
+  if (certification?.status === "PARTIAL" ||
+      certification?.discovery.status === "PARTIAL" ||
+      certification?.discovery.coverage === "PARTIAL") return "PARTIAL"
+  return "UNPROVEN"
+}
+
+function finding(input: Omit<LivePortfolioInvariantFindingV1,
+  "deterministic">): LivePortfolioInvariantFindingV1 {
+  return Object.freeze({ ...input,
+    entityRefs: unique(input.entityRefs).slice(0, 25),
+    evidenceRefs: unique(input.evidenceRefs).slice(0, 25),
+    deterministic: true as const })
+}
+
+export function buildFalseZeroInvariantFindingV1(input: {
+  status: "AVAILABLE" | "PARTIAL" | "UNPROVEN" | "UNAVAILABLE"
+  count: number | null
+  module: string
+  capability: string
+  scopeId: string
+  observedAt: string | null
+}) {
+  if ((input.status === "AVAILABLE" || input.status === "PARTIAL") ||
+      input.count !== 0) return null
+  return finding({
+    invariantCode: "FALSE_ZERO_FROM_UNPROVEN_CAPABILITY",
+    severity: "HIGH",
+    module: input.module,
+    entityType: "CAPABILITY",
+    entityRefs: [input.capability],
+    observedNumerator: 0,
+    observedDenominator: null,
+    scopeId: input.scopeId,
+    scopeType: "CURRENT_LIVE_COHORT_SCOPE",
+    evidenceRefs: [`${input.capability}:${input.status}`],
+    humanApprovalRequired: false,
+    recommendedAction: "REPRESENT_UNPROVEN_COUNT_AS_NULL",
+    blockingImpact: "AUTHORITATIVE_ABSENCE_CANNOT_BE_INFERRED",
+    observedAt: input.observedAt,
+  })
+}
+
+export function buildCrossModuleLivePortfolioIntegrityV1(input: {
+  listings: CommercialListingReadModel[]
+  liveCertification?: EbayLiveCertificationReadModel | null
+  registry?: RegistryCertification | null
+  accountTraffic?: AccountTrafficEvidenceV1 | null
+  currentLiveQuantitySold?: number | null
+  observedAt: string | null
+}) {
+  const canonicalListings = selectCanonicalCurrentLiveListingsV1(input.listings)
+  const itemIds = canonicalListings.map((listing) => listing.identity.itemId)
+  const scopeId = stableScopeId(itemIds,
+    input.liveCertification?.marketplaceId ?? "EBAY_US",
+    input.liveCertification?.account?.accountAlias ?? null)
+  const rawLiveRows = input.listings.filter((listing) =>
+    listing.discovery.livePresence.status === "LIVE_ACTIVE" &&
+    normalized(listing.identity.itemId))
+  const canonicalCohort: CanonicalCurrentLiveCohortV1 = Object.freeze({
+    contractVersion: CANONICAL_CURRENT_LIVE_COHORT_VERSION,
+    scopeId,
+    scopeType: "CURRENT_LIVE_COHORT_SCOPE",
+    observedAt: input.observedAt,
+    authoritativeSource:
+      "EBAY_TRADING_GET_MY_EBAY_SELLING_PLUS_GET_ITEM_CERTIFICATION",
+    listingCount: itemIds.length,
+    itemIds,
+    dedupeApplied: rawLiveRows.length !== itemIds.length,
+    identityStatus: identityStatus(input.liveCertification),
+  })
+  const liveSet = new Set(itemIds)
+  const evidenceByItemId = new Map<string, CommercialListingReadModel[]>()
+  for (const listing of input.listings) {
+    const itemId = normalized(listing.identity.itemId)
+    if (!itemId) continue
+    const rows = evidenceByItemId.get(itemId) ?? []
+    rows.push(listing)
+    evidenceByItemId.set(itemId, rows)
+  }
+  const currentLiveEvidence = input.listings.filter((listing) =>
+    liveSet.has(normalized(listing.identity.itemId)))
+  const nonLiveEvidence = input.listings.filter((listing) =>
+    !liveSet.has(normalized(listing.identity.itemId)))
+  const currentLiveEvidenceIds = unique(currentLiveEvidence.map((listing) =>
+    normalized(listing.identity.itemId)))
+  const duplicateItemIds = [...evidenceByItemId.entries()]
+    .filter(([itemId, rows]) => liveSet.has(itemId) && rows.length > 1)
+    .map(([itemId, rows]) => {
+      const titleRepresentations = unique(rows.map((row) =>
+        normalized(row.identity.title)))
+      const skuRepresentations = unique(rows.map((row) =>
+        normalized(row.identity.sku)))
+      return {
+        itemId,
+        rowCount: rows.length,
+        titleRepresentations,
+        skuRepresentations,
+        identityRepresentationConflict: titleRepresentations.length > 1 ||
+          skuRepresentations.length > 1,
+      }
+    }).sort((left, right) => left.itemId.localeCompare(right.itemId))
+  const skuGroups = new Map<string, CommercialListingReadModel[]>()
+  for (const listing of canonicalListings) {
+    const sku = normalized(listing.identity.sku).toUpperCase()
+    if (!sku) continue
+    const rows = skuGroups.get(sku) ?? []
+    rows.push(listing)
+    skuGroups.set(sku, rows)
+  }
+  const collisions = [...skuGroups.entries()].flatMap(([sku, listings]) => {
+    const distinctIds = unique(listings.map((listing) => listing.identity.itemId))
+    return distinctIds.length > 1 ? [{
+      sku,
+      itemIds: distinctIds,
+      titles: unique(listings.map((listing) => normalized(listing.identity.title))),
+      humanApprovalRequired: true as const,
+    }] : []
+  }).sort((left, right) => left.sku.localeCompare(right.sku))
+  const findings: LivePortfolioInvariantFindingV1[] = []
+  for (const duplicate of duplicateItemIds) {
+    findings.push(finding({
+      invariantCode: "DUPLICATE_ITEM_ID",
+      severity: "HIGH",
+      module: "STOCK_LUNA",
+      entityType: "EBAY_ITEM_ID",
+      entityRefs: [duplicate.itemId],
+      observedNumerator: duplicate.rowCount,
+      observedDenominator: 1,
+      scopeId,
+      scopeType: "CURRENT_LIVE_COHORT_SCOPE",
+      evidenceRefs: evidenceByItemId.get(duplicate.itemId)?.map((row) =>
+        row.key) ?? [],
+      humanApprovalRequired: duplicate.identityRepresentationConflict,
+      recommendedAction: "RECONCILE_DUPLICATE_STOCK_EVIDENCE_IDENTITY",
+      blockingImpact: duplicate.identityRepresentationConflict
+        ? "IDENTITY_REPRESENTATION_CONFLICT"
+        : "DUPLICATE_EVIDENCE_GRAIN",
+      observedAt: input.observedAt,
+    }))
+  }
+  for (const collision of collisions) {
+    findings.push(finding({
+      invariantCode: "DUPLICATE_LIVE_SKU",
+      severity: "CRITICAL",
+      module: "LIVE_LISTING_IDENTITY",
+      entityType: "LIVE_CUSTOM_LABEL_SKU",
+      entityRefs: [collision.sku, ...collision.itemIds],
+      observedNumerator: collision.itemIds.length,
+      observedDenominator: 1,
+      scopeId,
+      scopeType: "CURRENT_LIVE_COHORT_SCOPE",
+      evidenceRefs: collision.itemIds.map((itemId) => `${itemId}:${collision.sku}`),
+      humanApprovalRequired: true,
+      recommendedAction: "HUMAN_REVIEW_LIVE_SKU_COLLISION_NO_MARKETPLACE_WRITE",
+      blockingImpact: "AUTHORITATIVE_LIVE_IDENTITY_COLLISION",
+      observedAt: input.observedAt,
+    }))
+  }
+  const nonLiveItemIds = unique(nonLiveEvidence.map((listing) =>
+    normalized(listing.identity.itemId)))
+  if (nonLiveEvidence.length > 0) {
+    findings.push(finding({
+      invariantCode: "NON_LIVE_ENTITY_IN_LIVE_DENOMINATOR",
+      severity: "HIGH",
+      module: "CROSS_MODULE_SCOPE",
+      entityType: "HISTORICAL_OR_NONLIVE_STOCK_EVIDENCE",
+      entityRefs: nonLiveItemIds,
+      observedNumerator: nonLiveEvidence.length,
+      observedDenominator: input.listings.length,
+      scopeId,
+      scopeType: "EVIDENCE_ENTITY_SCOPE",
+      evidenceRefs: nonLiveEvidence.map((listing) => listing.key),
+      humanApprovalRequired: false,
+      recommendedAction: "EXCLUDE_NONLIVE_EVIDENCE_FROM_CURRENT_LIVE_RATES",
+      blockingImpact: "LIVE_PORTFOLIO_DENOMINATOR_CONTAMINATION",
+      observedAt: input.observedAt,
+    }))
+  }
+  const missingCurrentLiveItemIds = itemIds.filter((itemId) =>
+    !currentLiveEvidenceIds.includes(itemId))
+  if (currentLiveEvidenceIds.length !== itemIds.length) {
+    findings.push(finding({
+      invariantCode: "COUNT_PARITY_FAILURE",
+      severity: "HIGH",
+      module: "STOCK_LUNA",
+      entityType: "CURRENT_LIVE_STOCK_COHORT",
+      entityRefs: missingCurrentLiveItemIds,
+      observedNumerator: currentLiveEvidenceIds.length,
+      observedDenominator: itemIds.length,
+      scopeId,
+      scopeType: "CURRENT_LIVE_COHORT_SCOPE",
+      evidenceRefs: ["STOCK_CURRENT_LIVE_ITEM_COUNT", "CANONICAL_LIVE_ITEM_COUNT"],
+      humanApprovalRequired: false,
+      recommendedAction: "RECONCILE_MISSING_CURRENT_LIVE_STOCK_EVIDENCE",
+      blockingImpact: "STOCK_COHORT_INCOMPLETE",
+      observedAt: input.observedAt,
+    }))
+  }
+  if (input.registry?.currentLiveCount !== null &&
+      input.registry?.currentLiveCount !== undefined &&
+      input.registry.currentLiveCount !== itemIds.length) {
+    findings.push(finding({
+      invariantCode: "COUNT_PARITY_FAILURE",
+      severity: "HIGH",
+      module: "REGISTRY",
+      entityType: "REGISTRY_CURRENT_LIVE_PARTITION",
+      entityRefs: ["REGISTRY_CURRENT_LIVE"],
+      observedNumerator: input.registry.currentLiveCount,
+      observedDenominator: itemIds.length,
+      scopeId,
+      scopeType: "REGISTRY_PARTITION_SCOPE",
+      evidenceRefs: input.registry.limitationCodes,
+      humanApprovalRequired: true,
+      recommendedAction: "REVIEW_REGISTRY_CURRENT_LIVE_COUNT_PARITY",
+      blockingImpact: "REGISTRY_COHORT_PARITY_UNPROVEN",
+      observedAt: input.observedAt,
+    }))
+  }
+  if (typeof input.registry?.humanReviewCount === "number" &&
+      input.registry.humanReviewCount > 0) {
+    findings.push(finding({
+      invariantCode: "MISSING_REGISTRY_RELATIONSHIP",
+      severity: "HIGH",
+      module: "REGISTRY",
+      entityType: "REGISTRY_HUMAN_REVIEW_PARTITION",
+      entityRefs: ["REGISTRY_HUMAN_REVIEW"],
+      observedNumerator: input.registry?.humanReviewCount ?? null,
+      observedDenominator: input.registry?.currentLiveCount ?? itemIds.length,
+      scopeId,
+      scopeType: "REGISTRY_PARTITION_SCOPE",
+      evidenceRefs: input.registry?.limitationCodes ?? [],
+      humanApprovalRequired: true,
+      recommendedAction: "REVIEW_UNRESOLVED_REGISTRY_RELATIONSHIPS",
+      blockingImpact: "REGISTRY_RELATIONSHIP_REMAINS_PARTIAL_CERTIFIED",
+      observedAt: input.observedAt,
+    }))
+  }
+  const accountSold = input.accountTraffic?.status === "AVAILABLE" ||
+      input.accountTraffic?.status === "PARTIAL"
+    ? input.accountTraffic.quantitySold : null
+  const currentLiveSold = input.currentLiveQuantitySold
+  if (typeof accountSold === "number" && typeof currentLiveSold === "number" &&
+      accountSold > currentLiveSold) {
+    findings.push(finding({
+      invariantCode: "HISTORICAL_OR_NONLIVE_SALES_ATTRIBUTION_REQUIRED",
+      severity: "MEDIUM",
+      module: "ACCOUNT_TRAFFIC",
+      entityType: "UNATTRIBUTED_ACCOUNT_SALES",
+      entityRefs: ["ACCOUNT_TRAFFIC_SCOPE", scopeId],
+      observedNumerator: accountSold - currentLiveSold,
+      observedDenominator: accountSold,
+      scopeId,
+      scopeType: "ACCOUNT_TRAFFIC_SCOPE",
+      evidenceRefs: [input.accountTraffic?.source ?? "ACCOUNT_TRAFFIC"],
+      humanApprovalRequired: false,
+      recommendedAction: "RESEARCH_HISTORICAL_OR_NONLIVE_SALES_ITEM_IDS",
+      blockingImpact: "SALE_ATTRIBUTION_UNPROVEN_NO_LISTING_ACTION",
+      observedAt: input.observedAt,
+    }))
+  }
+  const integrity: CrossModuleLivePortfolioIntegrityV1 = Object.freeze({
+    contractVersion: CROSS_MODULE_LIVE_PORTFOLIO_INTEGRITY_VERSION,
+    canonicalCohort,
+    stockCohort: {
+      scopeId,
+      scopeType: "CURRENT_LIVE_COHORT_SCOPE" as const,
+      evidenceRowCount: input.listings.length,
+      currentLiveItemCount: currentLiveEvidenceIds.length,
+      currentLiveEvidenceRowCount: currentLiveEvidence.length,
+      nonLiveEvidenceRowCount: nonLiveEvidence.length,
+      nonLiveItemIds,
+      missingCurrentLiveItemIds,
+      duplicateItemIds,
+      dedupeApplied: duplicateItemIds.length > 0,
+    },
+    liveSkuUniqueness: {
+      status: canonicalCohort.identityStatus === "UNPROVEN"
+        ? "UNPROVEN" as const
+        : collisions.length ? "FAIL" as const : "PASS" as const,
+      collisionCount: canonicalCohort.identityStatus === "UNPROVEN"
+        ? null : collisions.length,
+      collisions,
+    },
+    findings,
+    denominatorPolicy: {
+      currentLiveRatesUseCanonicalItemIds: true as const,
+      nonLiveEvidenceExcludedFromLiveRates: true as const,
+      registryPartitionsExcludedFromListingRates: true as const,
+    },
+    readOnly: true,
+  })
+  return { canonicalListings, integrity }
+}
+
+export function resolveCrossModuleLivePortfolioIntegrityV1(
+  monitor: CommercialMonitorGetDto,
+) {
+  if (monitor.backend.livePortfolioIntegrity) {
+    return monitor.backend.livePortfolioIntegrity
+  }
+  return buildCrossModuleLivePortfolioIntegrityV1({
+    listings: monitor.listings,
+    liveCertification: monitor.liveCertification ?? null,
+    registry: monitor.backend.capabilities.registry,
+    accountTraffic: monitor.backend.trafficScopes.accountTraffic,
+    currentLiveQuantitySold: monitor.backend.kpis.quantitySold.value,
+    observedAt: monitor.generatedAt,
+  }).integrity
+}
+
+export function currentLiveListingsForMonitorV1(
+  monitor: CommercialMonitorGetDto,
+) {
+  const scope = resolveCrossModuleLivePortfolioIntegrityV1(monitor)
+    .canonicalCohort
+  const liveSet = new Set(scope.itemIds)
+  return selectCanonicalCurrentLiveListingsV1(monitor.listings).filter((listing) =>
+    liveSet.has(listing.identity.itemId))
+}

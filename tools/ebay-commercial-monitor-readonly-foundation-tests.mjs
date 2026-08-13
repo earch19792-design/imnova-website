@@ -393,5 +393,5 @@ test("capabilities externas permanecen deny-by-default", () => {
 test("el grafo canónico se mantiene físicamente pequeño y auditable", () => {
   assert.ok(routeGraph.length > 3)
   assert.ok(uiGraph.length > 3)
-  assert.ok(runtimeGraph.length < 25, `unexpected dependency expansion: ${runtimeGraph.join(", ")}`)
+  assert.ok(runtimeGraph.length < 26, `unexpected dependency expansion: ${runtimeGraph.join(", ")}`)
 })

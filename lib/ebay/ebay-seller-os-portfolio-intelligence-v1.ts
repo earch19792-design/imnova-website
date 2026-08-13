@@ -4,6 +4,8 @@ import type { CommercialMonitorGetDto, CommercialListingDecisionV1,
   CommercialListingReadModel } from "./commercial-monitor-readonly-contract"
 import type { CanonicalOpportunityDecisionV2 } from
   "./ebay-commercial-intelligence-upgrade-v1"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { currentLiveListingsForMonitorV1, resolveCrossModuleLivePortfolioIntegrityV1 } from "./ebay-seller-os-live-portfolio-integrity-v1.ts"
 
 export const SELLER_OS_PORTFOLIO_INTELLIGENCE_VERSION =
   "SELLER_OS_PORTFOLIO_INTELLIGENCE_V1_2026_08_12"
@@ -85,7 +87,7 @@ export function buildProactiveExceptionQueueV1(input: {
     observedAt: string | null }>()
   const evidenceGroups = new Map<string, { reasonCodes: Set<string>;
     affectedItemIds: string[]; affectedListingCount: number; observedAt: string | null }>()
-  for (const listing of input.monitor.listings) {
+  for (const listing of currentLiveListingsForMonitorV1(input.monitor)) {
     const decision = decisionByListingKey.get(listing.key) ?? null
     if (!decision) continue
     const reasonCodes = [...new Set(decision.reasonCodes)].sort()
@@ -108,6 +110,14 @@ export function buildProactiveExceptionQueueV1(input: {
     let groupGenericEvidence = false
     let observedEvidence: Record<string, unknown> = {
       analyticsStatus: listing.metrics.impressions.availability,
+      commercialMateriality: {
+        impressions: listing.metrics.impressions.value,
+        ebayViews: listing.metrics.ebay_views.value,
+        ctr: listing.metrics.ctr_calculated.value ??
+          listing.metrics.ctr_reported.value,
+        quantitySold: listing.metrics.transactions.value,
+        independentlyRepresentedFromDataQuality: true,
+      },
       stockState: listing.stock.state,
       stockFreshness: listing.stock.freshness.status,
     }
@@ -254,11 +264,14 @@ export function buildProactiveExceptionQueueV1(input: {
   if (!["AVAILABLE", "COMPLETE"].includes(input.monitor.backend.listingQualityReport.status)) {
     const reason = input.monitor.backend.listingQualityReport.limitationCode ??
       "QUALITY_REPORT_UNAVAILABLE"
+    const liveScope = resolveCrossModuleLivePortfolioIntegrityV1(input.monitor)
+      .canonicalCohort
     entries.push({ entityKey: "CAPABILITY:QUALITY_REPORT", listingKey: null,
       entityType: "PORTFOLIO_CAPABILITY", title: "Listing Quality Report unavailable",
       classification: "CAPABILITY_BLOCKED", priority: "MEDIUM", severity: "MEDIUM",
       confidence: "UNPROVEN", reasonCodes: [reason, "NO_PROVEN_LISTING_DEFECT"],
-      observedEvidence: { affectedListingCount: input.monitor.listings.length,
+      observedEvidence: { affectedListingCount: liveScope.listingCount,
+        scopeId: liveScope.scopeId, scopeType: liveScope.scopeType,
         groupedPortfolioIssue: true }, lastObservationTime: input.monitor.generatedAt,
       recommendedAction: "IMPORT_CURRENT_QUALITY_REPORT", humanApprovalRequired: false,
       actionBlockedByEvidence: true, experimentProtectionExists: false,
@@ -468,26 +481,47 @@ export function buildPortfolioIntelligenceV1(input: {
   monitor: CommercialMonitorGetDto
   familyByItemId?: Record<string, string | null>
 }) {
+  const integrity = resolveCrossModuleLivePortfolioIntegrityV1(input.monitor)
+  const liveListings = currentLiveListingsForMonitorV1(input.monitor)
+  const livePortfolioProven = ["AVAILABLE", "PARTIAL"].includes(
+    input.monitor.backend.kpis.activeListings.status) &&
+    typeof input.monitor.backend.kpis.activeListings.value === "number"
   const familyCounts = new Map<string, number>()
-  for (const listing of input.monitor.listings) {
+  for (const listing of liveListings) {
     const family = input.familyByItemId?.[listing.identity.itemId]
     if (family) familyCounts.set(family, (familyCounts.get(family) ?? 0) + 1)
   }
-  const decisions = input.monitor.backend.decisions
+  const liveListingKeys = new Set(liveListings.map((listing) => listing.key))
+  const decisions = input.monitor.backend.decisions.filter((decision) =>
+    liveListingKeys.has(decision.listingKey))
   return { contractVersion: "PORTFOLIO_INTELLIGENCE_V1",
-    currentLiveListingCount: input.monitor.backend.kpis.activeListings.value,
+    currentLiveListingCount: livePortfolioProven
+      ? integrity.canonicalCohort.listingCount : null,
+    currentLiveListingCountStatus: livePortfolioProven
+      ? "AVAILABLE" as const : "UNPROVEN" as const,
+    currentLiveScopeId: integrity.canonicalCohort.scopeId,
+    currentLiveScopeType: integrity.canonicalCohort.scopeType,
     familyConcentration: [...familyCounts].map(([family, count]) => ({ family, count }))
       .sort((left, right) => right.count - left.count || left.family.localeCompare(right.family)),
+    familyConcentrationStatus: livePortfolioProven
+      ? "AVAILABLE" as const : "UNPROVEN" as const,
     opportunityConcentration: { status: "UNPROVEN", reason: "PERSISTED_OPPORTUNITY_PORTFOLIO_UNAVAILABLE" },
     nearDuplicateExposure: { status: "UNPROVEN", count: null,
       reason: "AUTHORITATIVE_PRODUCT_FAMILY_IDENTITY_REQUIRED" },
-    replacementCandidateCount: decisions.filter((row) => row.priority === "CRITICAL" &&
-      !row.experimentRunning && row.evidenceStatus === "AVAILABLE").length,
-    healthyWaitingCount: decisions.filter((row) => row.recommendedAction === "WAIT").length,
-    interventionBurden: decisions.filter((row) => row.recommendedAction !== "WAIT" &&
-      !row.actionBlockedByInsufficientEvidence).length,
-    humanReviewBurden: (input.monitor.backend.capabilities.registry.humanReviewCount ?? 0) +
-      decisions.filter((row) => row.recommendedAction === "HUMAN_REVIEW").length,
+    replacementCandidateStatus: "UNPROVEN" as const,
+    replacementCandidateCount: null,
+    replacementCandidateLimitationCode:
+      "AUTHORITATIVE_REPLACEMENT_CANDIDATE_CAPABILITY_UNPROVEN" as const,
+    healthyWaitingCount: livePortfolioProven
+      ? decisions.filter((row) => row.recommendedAction === "WAIT").length : null,
+    interventionBurden: livePortfolioProven
+      ? decisions.filter((row) => row.recommendedAction !== "WAIT" &&
+        !row.actionBlockedByInsufficientEvidence).length : null,
+    humanReviewBurden: livePortfolioProven
+      ? decisions.filter((row) => row.recommendedAction === "HUMAN_REVIEW").length
+      : null,
+    registryHumanReviewBurden:
+      input.monitor.backend.capabilities.registry.humanReviewCount,
     automaticPortfolioMutationAllowed: false as const }
 }
 

@@ -67,6 +67,24 @@ test("canonical dashboard surfaces decisions and review-only Registry state with
   assert.match(dashboard, /priorityActionPlan/)
 })
 
+test("canonical dashboard exposes scope integrity without implying unknown stock is safe", () => {
+  for (const expression of [
+    "backend.livePortfolioIntegrity",
+    "Current Live Cohort",
+    "Listings canónicos",
+    "Evidencia stock no-live",
+    "Item IDs duplicados",
+    "Colisiones SKU live",
+    "Riesgos de stock probados",
+    "Stock UNKNOWN no se clasifica como riesgo ni como seguro",
+  ]) {
+    assert.match(dashboard, new RegExp(expression))
+  }
+  assert.match(dashboard, /canonicalCohort\.scopeType/)
+  assert.match(dashboard, /stockCohort\.nonLiveEvidenceRowCount/)
+  assert.match(dashboard, /liveSkuUniqueness\.collisionCount/)
+})
+
 test("canonical dashboard preserves the dense desktop cockpit composition", () => {
   for (const expression of [
     "w-\\[200px\\]",

@@ -361,7 +361,7 @@ export async function handleSellerOsCloudReadRelayRequestV1(
   try {
     const monitorLoader = options.monitorLoader ?? (async () => {
       const runtime = await import("./ebay-seller-os-assistant-runtime")
-      return runtime.loadSellerOsAssistantMonitorV1()
+      return runtime.loadSellerOsAssistantMonitorSnapshotV1()
     })
     const monitor = await monitorLoader()
     const result = executeSellerOsAssistantToolV1({

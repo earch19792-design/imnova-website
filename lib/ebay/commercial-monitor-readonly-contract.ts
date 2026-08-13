@@ -1458,6 +1458,89 @@ export type EbayGuidanceComparisonV1 = {
   automaticExecutionAllowed: false
 }
 
+export type LivePortfolioScopeType = "CURRENT_LIVE_COHORT_SCOPE"
+
+export type LivePortfolioInvariantCode =
+  | "DUPLICATE_ITEM_ID"
+  | "DUPLICATE_LIVE_SKU"
+  | "NON_LIVE_ENTITY_IN_LIVE_DENOMINATOR"
+  | "MISSING_REGISTRY_RELATIONSHIP"
+  | "COUNT_PARITY_FAILURE"
+  | "FALSE_ZERO_FROM_UNPROVEN_CAPABILITY"
+  | "HISTORICAL_OR_NONLIVE_SALES_ATTRIBUTION_REQUIRED"
+
+export type LivePortfolioInvariantFindingV1 = {
+  invariantCode: LivePortfolioInvariantCode
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
+  module: string
+  entityType: string
+  entityRefs: string[]
+  observedNumerator: number | null
+  observedDenominator: number | null
+  scopeId: string
+  scopeType: LivePortfolioScopeType | "ACCOUNT_TRAFFIC_SCOPE" |
+    "EVIDENCE_ENTITY_SCOPE" | "REGISTRY_PARTITION_SCOPE"
+  evidenceRefs: string[]
+  deterministic: true
+  humanApprovalRequired: boolean
+  recommendedAction: string
+  blockingImpact: string
+  observedAt: string | null
+}
+
+export type CanonicalCurrentLiveCohortV1 = {
+  contractVersion: "CANONICAL_CURRENT_LIVE_COHORT_V1_2026_08_13"
+  scopeId: string
+  scopeType: LivePortfolioScopeType
+  observedAt: string | null
+  authoritativeSource:
+    "EBAY_TRADING_GET_MY_EBAY_SELLING_PLUS_GET_ITEM_CERTIFICATION"
+  listingCount: number
+  itemIds: string[]
+  dedupeApplied: boolean
+  identityStatus: "CERTIFIED" | "PARTIAL" | "UNPROVEN"
+}
+
+export type CrossModuleLivePortfolioIntegrityV1 = {
+  contractVersion: "CROSS_MODULE_LIVE_PORTFOLIO_INTEGRITY_V1_2026_08_13"
+  canonicalCohort: CanonicalCurrentLiveCohortV1
+  stockCohort: {
+    scopeId: string
+    scopeType: LivePortfolioScopeType
+    evidenceRowCount: number
+    currentLiveItemCount: number
+    currentLiveEvidenceRowCount: number
+    nonLiveEvidenceRowCount: number
+    nonLiveItemIds: string[]
+    missingCurrentLiveItemIds: string[]
+    duplicateItemIds: Array<{
+      itemId: string
+      rowCount: number
+      titleRepresentations: string[]
+      skuRepresentations: string[]
+      identityRepresentationConflict: boolean
+    }>
+    dedupeApplied: boolean
+  }
+  liveSkuUniqueness: {
+    status: "PASS" | "FAIL" | "UNPROVEN"
+    collisionCount: number | null
+    collisions: Array<{
+      sku: string
+      itemIds: string[]
+      titles: string[]
+      humanApprovalRequired: true
+    }>
+  }
+  findings: LivePortfolioInvariantFindingV1[]
+  denominatorPolicy: {
+    currentLiveRatesUseCanonicalItemIds: true
+    nonLiveEvidenceExcludedFromLiveRates: true
+    registryPartitionsExcludedFromListingRates: true
+  }
+  readOnly: true
+}
+
 export type CommercialMonitorBackendV1 = {
   contractVersion: "COMMERCIAL_MONITOR_BACKEND_V1"
   mode: "READ_ONLY"
@@ -1498,6 +1581,10 @@ export type CommercialMonitorBackendV1 = {
     accountTraffic: AccountTrafficEvidenceV1
     currentLivePortfolio: {
       scope: "CURRENT_LIVE_PORTFOLIO"
+      scopeId: string
+      scopeType: LivePortfolioScopeType
+      scopeCount: number
+      scopeObservedAt: string | null
       grain: "LISTING_WINDOW_AGGREGATE"
       source: "EBAY_TRADING_PLUS_SELL_ANALYTICS"
       windowStart: string | null
@@ -1512,6 +1599,7 @@ export type CommercialMonitorBackendV1 = {
       ctr: number | null
     }
   }
+  livePortfolioIntegrity: CrossModuleLivePortfolioIntegrityV1
   orders: {
     status: CommercialMonitorCapabilityStatus
     orderCount: number | null

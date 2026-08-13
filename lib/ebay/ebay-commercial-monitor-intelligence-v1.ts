@@ -26,6 +26,10 @@ import {
   type AccountTrafficEvidenceV1,
   type CommercialSeriesSnapshotV1,
 } from "./ebay-commercial-monitor-traffic-scope-v1"
+import {
+  buildCrossModuleLivePortfolioIntegrityV1,
+  selectCanonicalCurrentLiveListingsV1,
+} from "./ebay-seller-os-live-portfolio-integrity-v1"
 
 export const EBAY_LISTING_QUALITY_REPORT_SOURCE =
   "EBAY_LISTING_QUALITY_REPORT" as const
@@ -524,69 +528,6 @@ function capabilityFromLiveStatus(
   return value === "CERTIFIED" ? "AVAILABLE" : value
 }
 
-function uniqueBy<T>(values: T[], keyOf: (value: T) => string) {
-  const seen = new Set<string>()
-  return values.filter((value) => {
-    const key = keyOf(value)
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
-
-function primaryListingEvidenceScore(listing: CommercialListingReadModel) {
-  const metricCoverage = Object.values(listing.metrics).filter((metric) =>
-    (metric.availability === "AVAILABLE" || metric.availability === "PARTIAL") &&
-    typeof metric.value === "number" && Number.isFinite(metric.value)).length
-  const evidenceReferenceCount = Array.isArray(listing.evidenceReferences)
-    ? listing.evidenceReferences.length
-    : 0
-  return metricCoverage * 100 + evidenceReferenceCount
-}
-
-function canonicalPrimaryLiveListings(
-  listings: CommercialListingReadModel[],
-): CommercialListingReadModel[] {
-  const byItemId = new Map<string, CommercialListingReadModel[]>()
-  for (const listing of listings) {
-    const itemId = listing.identity.itemId.trim()
-    if (!itemId || listing.discovery.livePresence.status !== "LIVE_ACTIVE") continue
-    const current = byItemId.get(itemId)
-    if (current) current.push(listing)
-    else byItemId.set(itemId, [listing])
-  }
-
-  return [...byItemId.entries()].map(([itemId, members]) => {
-    const primary = [...members].sort((left, right) => {
-      const scoreDifference = primaryListingEvidenceScore(right) -
-        primaryListingEvidenceScore(left)
-      return scoreDifference || left.key.localeCompare(right.key)
-    })[0]
-    const runningExperiment = members.find((listing) =>
-      listing.experiment.status === "AVAILABLE" &&
-      listing.experiment.lifecycleState === "RUNNING")
-    return {
-      ...primary,
-      identity: { ...primary.identity, itemId },
-      experiment: runningExperiment?.experiment ?? primary.experiment,
-      dataQualityIssues: uniqueBy(
-        members.flatMap((listing) => listing.dataQualityIssues ?? []),
-        (issue) => `${issue.code}:${issue.source}:${issue.domain}`,
-      ),
-      blockers: uniqueBy(
-        members.flatMap((listing) => listing.blockers ?? []),
-        (issue) => `${issue.code}:${issue.source}:${issue.domain}`,
-      ),
-      evidenceReferences: uniqueBy(
-        members.flatMap((listing) => listing.evidenceReferences ?? []),
-        (evidence) => evidence.reference,
-      ),
-      alertCandidateKeys: [...new Set(members.flatMap((listing) =>
-        listing.alertCandidateKeys ?? []))],
-    }
-  }).sort((left, right) => left.identity.itemId.localeCompare(right.identity.itemId))
-}
-
 export function buildCommercialMonitorBackendV1(input: {
   liveCertification: EbayLiveCertificationReadModel
   listings: CommercialListingReadModel[]
@@ -598,9 +539,10 @@ export function buildCommercialMonitorBackendV1(input: {
   currentLiveWindowStart?: string | null
   currentLiveWindowEnd?: string | null
   currentLiveObservedAt?: string | null
+  reportObservedAt?: string | null
   listingQualityReportArtifact?: unknown
 }): CommercialMonitorBackendV1 {
-  const primaryListings = canonicalPrimaryLiveListings(input.listings)
+  const primaryListings = selectCanonicalCurrentLiveListingsV1(input.listings)
   const quality = normalizeEbayListingQualityReport({
     artifact: input.listingQualityReportArtifact,
     listings: primaryListings,
@@ -634,6 +576,15 @@ export function buildCommercialMonitorBackendV1(input: {
     true,
   )
   const currentLiveQuantitySold = aggregateMetric(primaryListings, ["transactions"])
+  const livePortfolioIntegrity = buildCrossModuleLivePortfolioIntegrityV1({
+    listings: input.listings,
+    liveCertification: input.liveCertification,
+    registry: input.registry,
+    accountTraffic,
+    currentLiveQuantitySold: currentLiveQuantitySold.value,
+    observedAt: input.liveCertification.discovery.observedAt ??
+      input.currentLiveObservedAt ?? input.reportObservedAt ?? null,
+  }).integrity
   const performanceSeries = buildCanonicalCommercialTimeSeriesV1({
     snapshots: input.historicalSnapshots ?? [],
     currentLiveItemIds: primaryListings.map((listing) => listing.identity.itemId),
@@ -724,6 +675,10 @@ export function buildCommercialMonitorBackendV1(input: {
       accountTraffic,
       currentLivePortfolio: {
         scope: "CURRENT_LIVE_PORTFOLIO",
+        scopeId: livePortfolioIntegrity.canonicalCohort.scopeId,
+        scopeType: livePortfolioIntegrity.canonicalCohort.scopeType,
+        scopeCount: livePortfolioIntegrity.canonicalCohort.listingCount,
+        scopeObservedAt: livePortfolioIntegrity.canonicalCohort.observedAt,
         grain: "LISTING_WINDOW_AGGREGATE",
         source: "EBAY_TRADING_PLUS_SELL_ANALYTICS",
         windowStart: input.currentLiveWindowStart ?? null,
@@ -741,6 +696,7 @@ export function buildCommercialMonitorBackendV1(input: {
         ctr: currentLiveCtr.value,
       },
     },
+    livePortfolioIntegrity,
     orders: {
       ...orders,
       buyerPiiIncluded: false,

@@ -3634,6 +3634,7 @@ function baseReport(input: {
       currentLiveWindowStart: input.liveAnalytics?.windowStart,
       currentLiveWindowEnd: input.liveAnalytics?.windowEnd,
       currentLiveObservedAt: input.liveAnalytics?.observedAt,
+      reportObservedAt: input.generatedAt,
       historicalSnapshots: (input.historicalSnapshots ?? []).map((row) => ({
         id: row.id,
         listingId: row.listing_id,

@@ -3718,6 +3718,7 @@ async function analyticsRead(input: {
   let accountTraffic = unavailableAccountTrafficV1(
     "ACCOUNT_TRAFFIC_READ_NOT_COMPLETED",
   )
+  let accountTrafficUpstreamCallCount = 0
   if (!input.listingIds.length) {
     return {
       status: "UNAVAILABLE",
@@ -3769,6 +3770,7 @@ async function analyticsRead(input: {
         dateTo: window.end,
         timeZone: "UTC",
       })
+      accountTrafficUpstreamCallCount += 1
       const response = await allowlistedFetch({
         operation: "ANALYTICS_GET_TRAFFIC_REPORT",
         method: "GET",
@@ -3811,10 +3813,12 @@ async function analyticsRead(input: {
         observedAt: input.clock().toISOString(),
         sourceUpdatedAt: `${updatedDay}T00:00:00.000Z`,
         warnings: normalized.warnings,
+        upstreamSnapshotAcquisitionCount: accountTrafficUpstreamCallCount,
       })
     } catch (error) {
       accountTraffic = unavailableAccountTrafficV1(
         safeCode(error, "ACCOUNT_TRAFFIC_READ_FAILED"),
+        accountTrafficUpstreamCallCount,
       )
     }
     const observations: EbayLiveAnalyticsObservation[] = []

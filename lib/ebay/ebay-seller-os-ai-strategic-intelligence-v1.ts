@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto"
 
-import type { CommercialMonitorGetDto } from "./commercial-monitor-readonly-contract"
+import type { CommercialMonitorGetDto, LivePortfolioInvariantCode } from
+  "./commercial-monitor-readonly-contract"
 import type { CanonicalOpportunityResultV2 } from
   "./ebay-commercial-intelligence-upgrade-v1"
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
 import { buildAutomationHealthMetricsV1, buildPortfolioIntelligenceV1, buildProactiveExceptionQueueV1, selectMaterialPrioritiesV2 } from "./ebay-seller-os-portfolio-intelligence-v1.ts"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { currentLiveListingsForMonitorV1, resolveCrossModuleLivePortfolioIntegrityV1 } from "./ebay-seller-os-live-portfolio-integrity-v1.ts"
 
 export const SELLER_OS_AI_STRATEGIC_INTELLIGENCE_VERSION =
   "SELLER_OS_AI_STRATEGIC_INTELLIGENCE_V1_2026_08_12"
@@ -41,7 +44,7 @@ export type StrategicSignalType = "DECISION_CONFLICT" | "CANONICAL_TRUTH_CONFLIC
   "KEYWORD_QUALITY_ANOMALY" | "PRICE_DISTRIBUTION_ANOMALY" |
   "PORTFOLIO_CONCENTRATION_RISK" | "CAPABILITY_BLOCKER" | "AUTOMATION_FAILURE" |
   "SCHEDULER_LATENCY" | "AI_COST_ANOMALY" | "MODEL_FALLBACK_SPIKE" |
-  "HIGH_HUMAN_OVERRIDE_RATE"
+  "HIGH_HUMAN_OVERRIDE_RATE" | LivePortfolioInvariantCode
 export type FindingStatus = "PROPOSED" | "HUMAN_ACCEPTED" | "HUMAN_REJECTED" |
   "IMPLEMENTED" | "MEASURED"
 
@@ -410,6 +413,9 @@ export function buildStrategicReviewQueueV1(input: {
 }) {
   const observedAt = input.monitor.generatedAt
   const canonical = Object.values(input.canonicalOpportunities ?? {})
+  const integrity = resolveCrossModuleLivePortfolioIntegrityV1(input.monitor)
+  const liveListings = currentLiveListingsForMonitorV1(input.monitor)
+  const liveItemIds = new Set(integrity.canonicalCohort.itemIds)
   const decisionQueue = input.decisionQueue ?? buildProactiveExceptionQueueV1({ monitor: input.monitor,
     canonicalOpportunities: canonical.map((row) => row.decisionIntegration),
     maximumEntries: 250 })
@@ -420,6 +426,24 @@ export function buildStrategicReviewQueueV1(input: {
     signals.push({ ...signal, entityRefs, evidenceRefs,
       signalId: stableId("strategic-signal-v1", [signal.signalType, signal.module,
         entityRefs, evidenceRefs]), observedAt, deterministic: true })
+  }
+  for (const invariant of integrity.findings) {
+    const materiality = invariant.severity === "CRITICAL" ? 100
+      : invariant.severity === "HIGH" ? 92
+        : invariant.severity === "MEDIUM" ? 72 : 45
+    add({
+      signalType: invariant.invariantCode,
+      severity: invariant.severity,
+      module: invariant.module,
+      entityRefs: invariant.entityRefs,
+      evidenceRefs: invariant.evidenceRefs,
+      evidenceCount: Math.max(1, invariant.observedNumerator ??
+        invariant.entityRefs.length),
+      summary: `${invariant.invariantCode.replaceAll("_", " ")} · ${invariant.blockingImpact.replaceAll("_", " ")}`,
+      nextAction: invariant.recommendedAction,
+      confidence: "HIGH",
+      materiality,
+    })
   }
   const capability = decisionQueue.filter((row) => row.classification === "CAPABILITY_BLOCKED")
   const capabilityAffected = capability.reduce((sum, row) => {
@@ -440,9 +464,10 @@ export function buildStrategicReviewQueueV1(input: {
     summary: `${capability.length} grouped capability blocker(s) limit current evidence.`,
     nextAction: "RESTORE_HIGHEST_IMPACT_EVIDENCE_CAPABILITY", confidence: "HIGH",
     materiality: Math.min(85, 45 + capability.length * 4) })
-  const stale = input.monitor.listings.filter((row) => row.stock.freshness.status === "STALE")
+  const stale = liveListings.filter((row) =>
+    row.stock.freshness.status === "STALE")
   if (stale.length && (stale.length >= 3 || stale.length / Math.max(1,
-    input.monitor.listings.length) >= 0.2)) add({ signalType: "STALE_EVIDENCE_SPIKE",
+    integrity.canonicalCohort.listingCount) >= 0.2)) add({ signalType: "STALE_EVIDENCE_SPIKE",
     severity: "HIGH", module: "STOCK_GUARD", entityRefs: stale.map((row) => row.identity.itemId),
     evidenceRefs: stale.map((row) => `${row.identity.itemId}:STALE`), evidenceCount: stale.length,
     summary: `${stale.length} listing(s) have stale supplier evidence.`,
@@ -462,13 +487,18 @@ export function buildStrategicReviewQueueV1(input: {
     evidenceCount: readyExperiments.length,
     summary: `${readyExperiments.length} experiment(s) are ready for evidence-backed evaluation.`,
     nextAction: "EVALUATE_WITHOUT_CHANGING_FROZEN_VARIABLES", confidence: "HIGH", materiality: 86 })
-  const manualCount = decisionQueue.filter((row) => row.classification === "HUMAN_REVIEW").length
-  const manualRate = roundedRatio(manualCount, Math.max(1, input.monitor.listings.length))
+  const liveManualReview = decisionQueue.filter((row) =>
+    row.classification === "HUMAN_REVIEW" &&
+    row.entityType === "EBAY_LIVE_LISTING" && liveItemIds.has(row.entityKey))
+  const manualCount = new Set(liveManualReview.map((row) => row.entityKey)).size
+  const manualRate = roundedRatio(manualCount,
+    integrity.canonicalCohort.listingCount)
   if (manualCount >= 5 && (manualRate ?? 0) >= 20) add({ signalType: "HIGH_MANUAL_REVIEW_RATE",
-    severity: "MEDIUM", module: "DECISIONS", entityRefs: decisionQueue.filter((row) =>
-      row.classification === "HUMAN_REVIEW").map((row) => row.entityKey),
-    evidenceRefs: [`human-review-rate:${manualRate}`], evidenceCount: manualCount,
-    summary: `${manualRate}% of the live portfolio currently requires human review.`,
+    severity: "MEDIUM", module: "DECISIONS",
+    entityRefs: liveManualReview.map((row) => row.entityKey),
+    evidenceRefs: [`${integrity.canonicalCohort.scopeId}:human-review-rate:${manualRate}`],
+    evidenceCount: manualCount,
+    summary: `${manualRate}% of canonical current-live Item IDs require human review.`,
     nextAction: "IDENTIFY_REPEATABLE_LOW_RISK_RESOLUTION_PATTERNS", confidence: "HIGH",
     materiality: 72 })
   const nonProvenActionable = decisionQueue.filter((row) =>
@@ -541,7 +571,10 @@ export function detectAutomationCandidatesV1(input: {
   const threshold = Math.max(3, input.minimumRepeatedEvidence ?? 3)
   const candidates = input.signals.filter((signal) => signal.evidenceCount >= threshold &&
     ["HIGH_MANUAL_REVIEW_RATE", "DUPLICATE_EXCEPTION_SPIKE", "STALE_EVIDENCE_SPIKE",
-      "CAPABILITY_BLOCKER", "KEYWORD_QUALITY_ANOMALY"].includes(signal.signalType))
+      "CAPABILITY_BLOCKER", "KEYWORD_QUALITY_ANOMALY", "DUPLICATE_ITEM_ID",
+      "DUPLICATE_LIVE_SKU", "NON_LIVE_ENTITY_IN_LIVE_DENOMINATOR",
+      "COUNT_PARITY_FAILURE", "FALSE_ZERO_FROM_UNPROVEN_CAPABILITY"].includes(
+      signal.signalType))
     .map((signal) => ({
       candidateId: stableId("automation-candidate-v1", [signal.signalId, signal.nextAction]),
       manualOperation: signal.nextAction,
@@ -569,6 +602,9 @@ export function buildSystemReviewBundleV1(input: {
   authoritativeSpendUsd?: number | null
 }) {
   const canonical = Object.values(input.canonicalOpportunities ?? {})
+  const integrity = resolveCrossModuleLivePortfolioIntegrityV1(input.monitor)
+  const liveListings = currentLiveListingsForMonitorV1(input.monitor)
+  const liveItemIds = new Set(integrity.canonicalCohort.itemIds)
   const decisionQueue = buildProactiveExceptionQueueV1({ monitor: input.monitor,
     canonicalOpportunities: canonical.map((row) => row.decisionIntegration),
     maximumEntries: 250 })
@@ -576,9 +612,9 @@ export function buildSystemReviewBundleV1(input: {
   const automationCandidates = detectAutomationCandidatesV1({ signals: strategicQueue.entries })
   const aiBudget = evaluateAiBudgetPolicyV1({ monthlyBudgetUsd: input.monthlyBudgetUsd,
     authoritativeSpendUsd: input.authoritativeSpendUsd, now: input.monitor.generatedAt })
-  const staleCount = input.monitor.listings.filter((row) =>
+  const staleCount = liveListings.filter((row) =>
     row.stock.freshness.status === "STALE").length
-  const exactSupplierLinked = input.monitor.listings.filter((row) =>
+  const exactSupplierLinked = liveListings.filter((row) =>
     row.stock.supplierProductId && row.stock.supplierVariantId && row.stock.supplierSku).length
   const dataParity = buildSystemReviewSourceParityV1({ monitor: input.monitor,
     canonicalOpportunityCount: canonical.length })
@@ -590,16 +626,86 @@ export function buildSystemReviewBundleV1(input: {
   const usage = cap(input.aiUsage ?? [], 20)
   const actualCosts = usage.filter((row) => row.costEvidence === "AUTHORITATIVE" &&
     row.actualCostUsd !== null).map((row) => row.actualCostUsd!)
+  const portfolioState = buildPortfolioIntelligenceV1({ monitor: input.monitor })
+  const liveHumanReviewIds = new Set(decisionQueue.filter((row) =>
+    row.classification === "HUMAN_REVIEW" &&
+    row.entityType === "EBAY_LIVE_LISTING" && liveItemIds.has(row.entityKey))
+    .map((row) => row.entityKey))
+  const evidenceEntityHumanReviewCount = input.monitor.listings.filter((row) =>
+    liveHumanReviewIds.has(row.identity.itemId)).length
+  const registry = input.monitor.backend.capabilities.registry
+  const registryReviewNumerator = registry.humanReviewCount
+  const registryReviewDenominator = registry.currentLiveCount
+  const registryReviewRateProven = typeof registryReviewNumerator === "number" &&
+    typeof registryReviewDenominator === "number"
+  const provenStockRiskCount = decisionQueue.filter((row) =>
+    row.entityType === "EBAY_LIVE_LISTING" && liveItemIds.has(row.entityKey) &&
+    row.classification === "CRITICAL_OPERATIONAL" &&
+    row.reasonCodes.some((reason) => /STOCK|OVERSELL/.test(reason))).length
+  const stockUnknownCount = liveListings.filter((row) =>
+    row.stock.state === "STOCK_UNKNOWN").length
   return {
     contractVersion: SYSTEM_REVIEW_BUNDLE_VERSION,
     generatedAt: input.monitor.generatedAt,
     evidenceSource: input.monitor.contractVersion,
     portfolio: {
-      state: buildPortfolioIntelligenceV1({ monitor: input.monitor }),
+      state: portfolioState,
       kpis: input.monitor.backend.kpis,
-      liveListingCount: input.monitor.backend.kpis.activeListings.value,
+      liveListingCount: portfolioCountsProven
+        ? integrity.canonicalCohort.listingCount : null,
     },
     dataParity,
+    crossModuleIntegrity: {
+      contractVersion: integrity.contractVersion,
+      canonicalCohort: {
+        ...integrity.canonicalCohort,
+        itemIds: cap(integrity.canonicalCohort.itemIds, 25),
+        itemIdSampleTruncated: integrity.canonicalCohort.itemIds.length > 25,
+      },
+      stockCohort: {
+        ...integrity.stockCohort,
+        nonLiveItemIds: cap(integrity.stockCohort.nonLiveItemIds, 25),
+        duplicateItemIds: cap(integrity.stockCohort.duplicateItemIds, 25),
+        missingCurrentLiveItemIds: cap(
+          integrity.stockCohort.missingCurrentLiveItemIds, 25),
+      },
+      liveSkuUniqueness: {
+        ...integrity.liveSkuUniqueness,
+        collisions: cap(integrity.liveSkuUniqueness.collisions, 20),
+      },
+      findings: cap(integrity.findings, 20),
+      denominatorPolicy: integrity.denominatorPolicy,
+      readOnly: true as const,
+    },
+    trafficScopeIntegrity: {
+      accountTraffic: {
+        scopeType: input.monitor.backend.trafficScopes.accountTraffic.scopeType,
+        observedAt: input.monitor.backend.trafficScopes.accountTraffic.observedAt,
+        freshnessSourceUpdatedAt:
+          input.monitor.backend.trafficScopes.accountTraffic.sourceUpdatedAt,
+        upstreamSnapshotAcquisitionCount:
+          input.monitor.backend.trafficScopes.accountTraffic
+            .upstreamSnapshotAcquisitionCount,
+      },
+      currentLive: {
+        scopeId: integrity.canonicalCohort.scopeId,
+        scopeType: integrity.canonicalCohort.scopeType,
+        scopeCount: integrity.canonicalCohort.listingCount,
+        scopeObservedAt: integrity.canonicalCohort.observedAt,
+      },
+      scopesAreNumericallyIndependent: true as const,
+    },
+    registryIntegrity: {
+      status: registry.status,
+      currentLiveCount: registry.currentLiveCount,
+      matchedCount: registry.matchedCount,
+      humanReviewCount: registry.humanReviewCount,
+      coveragePercent: registry.coveragePercent,
+      reviewReasonCodes: cap(registry.limitationCodes, 20),
+      unresolvedRelationshipItemIds: null,
+      unresolvedRelationshipMappingStatus: "UNPROVEN" as const,
+      businessDataMutations: 0 as const,
+    },
     decisions: {
       todaysCommercialPriorities: cap(selectMaterialPrioritiesV2(decisionQueue, 10), 10),
       criticalOperational: grouped("CRITICAL_OPERATIONAL"),
@@ -626,23 +732,31 @@ export function buildSystemReviewBundleV1(input: {
     supplierAndStock: {
       exactSupplierLinked: portfolioCountsProven ? exactSupplierLinked : null,
       totalListings: portfolioCountsProven
-        ? input.monitor.backend.kpis.activeListings.value : null,
-      stockRisks: portfolioCountsProven
-        ? decisionQueue.filter((row) => row.classification === "CRITICAL_OPERATIONAL" &&
-          row.reasonCodes.some((reason) => /STOCK|OVERSELL/.test(reason))).length
-        : null,
+        ? integrity.canonicalCohort.listingCount : null,
+      liveWithoutProvenSupplierLink: portfolioCountsProven
+        ? integrity.canonicalCohort.listingCount - exactSupplierLinked : null,
+      provenSupplierLinkCoverage: {
+        status: portfolioCountsProven ? "AVAILABLE" as const : "UNPROVEN" as const,
+        numerator: portfolioCountsProven ? exactSupplierLinked : null,
+        denominator: portfolioCountsProven
+          ? integrity.canonicalCohort.listingCount : null,
+        scopeId: integrity.canonicalCohort.scopeId,
+      },
+      stockRisks: portfolioCountsProven ? provenStockRiskCount : null,
+      stockRiskStatus: portfolioCountsProven ? "AVAILABLE" as const : "UNPROVEN" as const,
+      stockRiskSemantics: "PROVEN_STOCK_RISKS_ONLY" as const,
       staleEvidence: portfolioCountsProven ? staleCount : null,
-      stockUnknown: portfolioCountsProven
-        ? input.monitor.listings.filter((row) => row.stock.state === "STOCK_UNKNOWN").length
-        : null,
+      stockUnknown: portfolioCountsProven ? stockUnknownCount : null,
       stockUnknownIsRisk: false as const,
+      stockSafeInferenceAllowed: false as const,
       watcherSessionHealth: "UNPROVEN" as const,
       sourceStatus: dataParity.stock,
     },
     qualityReport: {
       status: input.monitor.backend.listingQualityReport.status,
       limitationCode: input.monitor.backend.listingQualityReport.limitationCode,
-      recommendationCount: input.monitor.backend.listingQualityReport.recommendations.length,
+      recommendationCount: dataParity.qualityReport.zeroIsAuthoritative
+        ? input.monitor.backend.listingQualityReport.recommendations.length : null,
     },
     commercialAnomalies: {
       keyword: strategicQueue.entries.filter((row) =>
@@ -651,28 +765,79 @@ export function buildSystemReviewBundleV1(input: {
         row.signalType === "PRICE_DISTRIBUTION_ANOMALY"),
       referenceCandidates: cap(canonical.flatMap((row) =>
         row.referenceStrategy.primaryReference ? [row.referenceStrategy.primaryReference] : []), 10),
-      sellOneLikeThisReady: canonical.filter((row) =>
-        row.commercialRecommendation.useAsReference === "USE_AS_REFERENCE").length,
+      referenceCandidateStatus: dataParity.opportunities.zeroIsAuthoritative
+        ? "AVAILABLE" as const : "UNPROVEN" as const,
+      referenceCandidateCount: dataParity.opportunities.zeroIsAuthoritative
+        ? canonical.filter((row) => row.referenceStrategy.primaryReference).length
+        : null,
+      sellOneLikeThisReady: dataParity.opportunities.zeroIsAuthoritative
+        ? canonical.filter((row) =>
+          row.commercialRecommendation.useAsReference === "USE_AS_REFERENCE").length
+        : null,
     },
     economicsCompleteness: {
-      proven: canonical.filter((row) => row.commercialRecommendation.economics !== "UNPROVEN").length,
-      unproven: canonical.filter((row) => row.commercialRecommendation.economics === "UNPROVEN").length,
+      proven: canonical.length
+        ? canonical.filter((row) =>
+          row.commercialRecommendation.economics !== "UNPROVEN").length
+        : null,
+      unproven: canonical.length
+        ? canonical.filter((row) =>
+          row.commercialRecommendation.economics === "UNPROVEN").length
+        : null,
       status: canonical.length ? "BOUNDED_CANONICAL_RESULTS" : "UNPROVEN",
     },
     learning: {
       status: input.monitor.learning.status,
-      storedLearningCount: input.monitor.learning.categoryAdjustments.length,
+      storedLearningCount: dataParity.learning.zeroIsAuthoritative
+        ? input.monitor.learning.categoryAdjustments.length : null,
       limitationCode: input.monitor.learning.limitationCode,
       syntheticLearning: false as const,
       universalRuleAllowed: false as const,
     },
-    automationHealth: buildAutomationHealthMetricsV1({ staleEntityCount: staleCount,
-      totalEntityCount: input.monitor.listings.length }),
+    automationHealth: buildAutomationHealthMetricsV1(portfolioCountsProven
+      ? { staleEntityCount: staleCount,
+        totalEntityCount: integrity.canonicalCohort.listingCount }
+      : {}),
     operationalBurden: {
-      manualReviewCount: decisionQueue.filter((row) =>
-        row.classification === "HUMAN_REVIEW").length,
-      manualReviewRate: roundedRatio(decisionQueue.filter((row) =>
-        row.classification === "HUMAN_REVIEW").length, input.monitor.listings.length),
+      manualReviewCount: portfolioCountsProven ? liveHumanReviewIds.size : null,
+      manualReviewRate: portfolioCountsProven
+        ? roundedRatio(liveHumanReviewIds.size,
+          integrity.canonicalCohort.listingCount) : null,
+      liveListingHumanReviewRate: {
+        status: portfolioCountsProven ? "AVAILABLE" as const : "UNPROVEN" as const,
+        numerator: portfolioCountsProven ? liveHumanReviewIds.size : null,
+        denominator: portfolioCountsProven
+          ? integrity.canonicalCohort.listingCount : null,
+        rate: portfolioCountsProven ? roundedRatio(liveHumanReviewIds.size,
+          integrity.canonicalCohort.listingCount) : null,
+        scopeType: integrity.canonicalCohort.scopeType,
+        scopeCount: integrity.canonicalCohort.listingCount,
+        scopeObservedAt: integrity.canonicalCohort.observedAt,
+      },
+      evidenceEntityReviewRate: {
+        status: input.monitor.listings.length ? "AVAILABLE" as const : "UNPROVEN" as const,
+        numerator: input.monitor.listings.length
+          ? evidenceEntityHumanReviewCount : null,
+        denominator: input.monitor.listings.length || null,
+        rate: input.monitor.listings.length
+          ? roundedRatio(evidenceEntityHumanReviewCount,
+            input.monitor.listings.length) : null,
+        scopeType: "EVIDENCE_ENTITY_SCOPE" as const,
+        scopeCount: input.monitor.listings.length,
+        scopeObservedAt: input.monitor.generatedAt,
+        registryPartitionsIncluded: false as const,
+      },
+      registryPartitionReviewRate: {
+        status: registryReviewRateProven
+          ? "AVAILABLE" as const : "UNPROVEN" as const,
+        numerator: registryReviewRateProven ? registryReviewNumerator : null,
+        denominator: registryReviewRateProven ? registryReviewDenominator : null,
+        rate: registryReviewRateProven
+          ? roundedRatio(registryReviewNumerator, registryReviewDenominator) : null,
+        scopeType: "REGISTRY_PARTITION_SCOPE" as const,
+        scopeCount: registryReviewRateProven ? registryReviewDenominator : null,
+        scopeObservedAt: input.monitor.generatedAt,
+      },
       falseInterventionCount: decisionQueue.filter((row) =>
         row.classification === "ACTIONABLE_COMMERCIAL" && row.confidence === "UNPROVEN").length,
       duplicateExceptionCount: decisionQueue.length -

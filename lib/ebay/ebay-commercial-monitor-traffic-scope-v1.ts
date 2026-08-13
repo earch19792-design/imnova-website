@@ -24,6 +24,7 @@ export const SELLER_HUB_TRAFFIC_MAPPING_V1 = Object.freeze({
 export type AccountTrafficEvidenceV1 = {
   status: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE"
   scope: "ACCOUNT_TRAFFIC"
+  scopeType: "ACCOUNT_TRAFFIC_SCOPE"
   grain: "ACCOUNT_DAY_AGGREGATE"
   source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT"
   windowStart: string | null
@@ -36,6 +37,7 @@ export type AccountTrafficEvidenceV1 = {
   listingViews: number | null
   quantitySold: number | null
   ctr: number | null
+  upstreamSnapshotAcquisitionCount: number
   gapCodes: string[]
 }
 
@@ -57,10 +59,12 @@ function completeTotal(rows: AccountTrafficMetricRowV1[], key: string) {
 
 export function unavailableAccountTrafficV1(
   gapCode: string,
+  upstreamSnapshotAcquisitionCount = 0,
 ): AccountTrafficEvidenceV1 {
   return {
     status: "UNAVAILABLE",
     scope: "ACCOUNT_TRAFFIC",
+    scopeType: "ACCOUNT_TRAFFIC_SCOPE",
     grain: "ACCOUNT_DAY_AGGREGATE",
     source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT",
     windowStart: null,
@@ -73,6 +77,7 @@ export function unavailableAccountTrafficV1(
     listingViews: null,
     quantitySold: null,
     ctr: null,
+    upstreamSnapshotAcquisitionCount,
     gapCodes: [gapCode],
   }
 }
@@ -86,6 +91,7 @@ export function summarizeAccountTrafficV1(input: {
   observedAt: string
   sourceUpdatedAt: string | null
   warnings: string[]
+  upstreamSnapshotAcquisitionCount?: number
 }): AccountTrafficEvidenceV1 {
   const impressions = completeTotal(input.rows, "TOTAL_IMPRESSION_TOTAL")
   const listingViews = completeTotal(input.rows, "LISTING_VIEWS_TOTAL")
@@ -120,6 +126,7 @@ export function summarizeAccountTrafficV1(input: {
   return {
     status: complete ? "AVAILABLE" : input.rows.length ? "PARTIAL" : "UNAVAILABLE",
     scope: "ACCOUNT_TRAFFIC",
+    scopeType: "ACCOUNT_TRAFFIC_SCOPE",
     grain: "ACCOUNT_DAY_AGGREGATE",
     source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT",
     windowStart: input.windowStart,
@@ -132,6 +139,8 @@ export function summarizeAccountTrafficV1(input: {
     listingViews,
     quantitySold,
     ctr,
+    upstreamSnapshotAcquisitionCount:
+      input.upstreamSnapshotAcquisitionCount ?? 1,
     gapCodes: [...new Set(gapCodes)],
   }
 }

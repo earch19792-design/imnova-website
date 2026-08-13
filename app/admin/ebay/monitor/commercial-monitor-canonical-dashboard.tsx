@@ -238,6 +238,10 @@ export function CommercialMonitorCanonicalDashboard({
       }
   const registry = backend.capabilities.registry
   const registryPresentation = presentCommercialMonitorRegistryV1(registry)
+  const livePortfolioIntegrity = backend.livePortfolioIntegrity
+  const materialIntegrityFindings = livePortfolioIntegrity.findings.filter(
+    (finding) => finding.severity === "CRITICAL" || finding.severity === "HIGH",
+  )
   const qualityUnavailable = backend.listingQualityReport.status === "UNAVAILABLE_NO_CURRENT_REPORT"
   const decisionsByKey = new Map(backend.decisions.map((decision) =>
     [decision.listingKey, decision] as const))
@@ -297,6 +301,21 @@ export function CommercialMonitorCanonicalDashboard({
 
         <section aria-label="Estado de eBay Guidance" className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2.5 text-xs text-slate-600"><strong className="text-[10px] tracking-[0.14em] text-cyan-800">EBAY GUIDANCE</strong><StatusChip status={backend.listingQualityReport.status} /><span>Último reporte: {qualityUnavailable ? "No current report" : "Disponible"}</span><span>Ventana: {qualityUnavailable ? "No disponible" : "según reporte"}</span><span>Fuente: eBay Listing Quality Report</span><a href="#guidance-table" className="ml-auto font-bold text-cyan-800">Ver detalle</a></section>
 
+        <section aria-label="Integridad del portafolio actual" className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div><p className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-400">Cross-module integrity</p><h2 className="mt-0.5 text-sm font-black">Current Live Cohort</h2></div>
+            <span className="rounded-md border border-cyan-200 bg-cyan-50 px-2 py-1 text-[9px] font-black text-cyan-800">{livePortfolioIntegrity.canonicalCohort.identityStatus} · {livePortfolioIntegrity.canonicalCohort.scopeType.replaceAll("_", " ")}</span>
+          </div>
+          <div className="mt-3 grid gap-2 text-[10px] sm:grid-cols-2 xl:grid-cols-5">
+            <div className="rounded-lg bg-slate-50 p-2.5"><p className="text-slate-500">Listings canónicos</p><strong className="mt-1 block text-sm">{formatValue(livePortfolioIntegrity.canonicalCohort.listingCount)}</strong></div>
+            <div className="rounded-lg bg-slate-50 p-2.5"><p className="text-slate-500">Stock · Item IDs live</p><strong className="mt-1 block text-sm">{formatValue(livePortfolioIntegrity.stockCohort.currentLiveItemCount)} / {formatValue(livePortfolioIntegrity.canonicalCohort.listingCount)}</strong></div>
+            <div className="rounded-lg bg-slate-50 p-2.5"><p className="text-slate-500">Evidencia stock no-live</p><strong className="mt-1 block text-sm">{formatValue(livePortfolioIntegrity.stockCohort.nonLiveEvidenceRowCount)}</strong></div>
+            <div className="rounded-lg bg-slate-50 p-2.5"><p className="text-slate-500">Item IDs duplicados</p><strong className="mt-1 block text-sm">{formatValue(livePortfolioIntegrity.stockCohort.duplicateItemIds.length)}</strong></div>
+            <div className="rounded-lg bg-slate-50 p-2.5"><p className="text-slate-500">Colisiones SKU live</p><strong className="mt-1 block text-sm">{livePortfolioIntegrity.liveSkuUniqueness.collisionCount === null ? "UNPROVEN" : formatValue(livePortfolioIntegrity.liveSkuUniqueness.collisionCount)}</strong></div>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[9px] text-slate-500"><span>Denominador live = Item IDs canónicos únicos</span><span>·</span><span>particiones Registry y evidencia no-live excluidas</span>{materialIntegrityFindings.slice(0, 3).map((finding) => <span key={`${finding.invariantCode}:${finding.entityRefs.join(":")}`} className="rounded border border-amber-200 bg-amber-50 px-1.5 py-1 font-bold text-amber-800">{finding.invariantCode}</span>)}</div>
+        </section>
+
         <section aria-label="Commercial operational readiness" className="grid overflow-hidden rounded-xl border border-slate-200 bg-white text-[10px] shadow-sm sm:grid-cols-3 xl:grid-cols-7">
           <div className="border-b border-slate-100 px-3 py-2 sm:border-r xl:border-b-0"><strong>Quality Report</strong><p className="mt-0.5 text-slate-500">{qualityUnavailable ? "READY FOR REAL SAMPLE" : backend.listingQualityReport.status.replaceAll("_", " ")}</p></div>
           <div className="border-b border-slate-100 px-3 py-2 sm:border-r xl:border-b-0"><strong>Orders</strong><p className="mt-0.5 text-slate-500">{backend.kpis.orders.status.replaceAll("_", " ")}</p></div>
@@ -327,7 +346,8 @@ export function CommercialMonitorCanonicalDashboard({
 
         <section aria-labelledby="operational-health-heading" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
           <div className="flex items-center justify-between"><div><p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-400">Decision & operational health</p><h2 id="operational-health-heading" className="mt-0.5 text-sm font-black">Estado operativo</h2></div><p className="text-[10px] text-slate-500">Decision Engine V1 · Stock unknown {formatValue(backend.operationalHealth.stockUnknown.count)}</p></div>
-          <div className="mt-2.5 grid overflow-hidden rounded-lg border border-slate-100 sm:grid-cols-2 xl:grid-cols-6"><HealthCard label="Necesitan intervención" count={backend.operationalHealth.needIntervention.count} status={backend.operationalHealth.needIntervention.status} icon={<AlertTriangle size={16} />} accent="bg-rose-100 text-rose-700" /><HealthCard label="Experimentos RUNNING" count={backend.operationalHealth.runningExperiments.count} status={backend.operationalHealth.runningExperiments.status} icon={<FlaskConical size={16} />} accent="bg-violet-100 text-violet-700" /><HealthCard label="Riesgo de stock" count={backend.operationalHealth.stockRisk.count} status={backend.operationalHealth.stockRisk.status} icon={<Package size={16} />} accent="bg-orange-100 text-orange-700" /><HealthCard label="Data Quality" count={backend.operationalHealth.dataQuality.count} status={backend.operationalHealth.dataQuality.status} icon={<Database size={16} />} accent="bg-amber-100 text-amber-700" /><HealthCard label="eBay Recomendaciones" count={backend.operationalHealth.ebayRecommendations.count} status={backend.operationalHealth.ebayRecommendations.status} icon={<Sparkles size={16} />} accent="bg-cyan-100 text-cyan-700" /><HealthCard label="Waiting / Healthy" count={backend.operationalHealth.waitingHealthy.count} status={backend.operationalHealth.waitingHealthy.status} icon={<CheckCircle2 size={16} />} accent="bg-emerald-100 text-emerald-700" /></div>
+          <div className="mt-2.5 grid overflow-hidden rounded-lg border border-slate-100 sm:grid-cols-2 xl:grid-cols-6"><HealthCard label="Necesitan intervención" count={backend.operationalHealth.needIntervention.count} status={backend.operationalHealth.needIntervention.status} icon={<AlertTriangle size={16} />} accent="bg-rose-100 text-rose-700" /><HealthCard label="Experimentos RUNNING" count={backend.operationalHealth.runningExperiments.count} status={backend.operationalHealth.runningExperiments.status} icon={<FlaskConical size={16} />} accent="bg-violet-100 text-violet-700" /><HealthCard label="Riesgos de stock probados" count={backend.operationalHealth.stockRisk.count} status={backend.operationalHealth.stockRisk.status} icon={<Package size={16} />} accent="bg-orange-100 text-orange-700" /><HealthCard label="Data Quality" count={backend.operationalHealth.dataQuality.count} status={backend.operationalHealth.dataQuality.status} icon={<Database size={16} />} accent="bg-amber-100 text-amber-700" /><HealthCard label="eBay Recomendaciones" count={backend.operationalHealth.ebayRecommendations.count} status={backend.operationalHealth.ebayRecommendations.status} icon={<Sparkles size={16} />} accent="bg-cyan-100 text-cyan-700" /><HealthCard label="Waiting / Healthy" count={backend.operationalHealth.waitingHealthy.count} status={backend.operationalHealth.waitingHealthy.status} icon={<CheckCircle2 size={16} />} accent="bg-emerald-100 text-emerald-700" /></div>
+          <p className="mt-2 text-[9px] text-slate-500">Stock UNKNOWN no se clasifica como riesgo ni como seguro. La cobertura de proveedor se evalúa por separado.</p>
         </section>
 
         <section className="grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_288px]">

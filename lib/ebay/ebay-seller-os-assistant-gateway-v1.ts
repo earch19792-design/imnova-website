@@ -5,6 +5,8 @@ import type { CanonicalOpportunityResultV2 } from
   "./ebay-commercial-intelligence-upgrade-v1"
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
 import { buildStrategicReviewQueueV1, buildSystemReviewBundleV1 } from "./ebay-seller-os-ai-strategic-intelligence-v1.ts"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { currentLiveListingsForMonitorV1, resolveCrossModuleLivePortfolioIntegrityV1 } from "./ebay-seller-os-live-portfolio-integrity-v1.ts"
 
 export const SELLER_OS_ASSISTANT_GATEWAY_VERSION = "SELLER_OS_ASSISTANT_GATEWAY_V1_2026_08_12"
 export const SELLER_OS_ASSISTANT_MAX_ITEMS = 100
@@ -51,7 +53,8 @@ function safeListing(
   itemId: string,
   canonicalOpportunity?: CanonicalOpportunityResultV2 | null,
 ) {
-  const listing = monitor.listings.find((row) => row.identity.itemId === itemId)
+  const listing = currentLiveListingsForMonitorV1(monitor).find((row) =>
+    row.identity.itemId === itemId)
   if (!listing) return null
   const decision = monitor.backend.decisions.find((row) => row.listingKey === listing.key) ?? null
   const guidance = monitor.backend.guidanceVsSellerOs.find((row) => row.listingKey === listing.key) ?? null
@@ -140,10 +143,27 @@ export function buildAssistantCommercialContextV1(
     canonicalOpportunities: canonicalResults.map((row) => row.decisionIntegration),
     maximumEntries: 100 })
   const decisions = monitor.backend.decisions
+  const integrity = resolveCrossModuleLivePortfolioIntegrityV1(monitor)
+  const liveListings = currentLiveListingsForMonitorV1(monitor)
+  const livePortfolioProven = ["AVAILABLE", "PARTIAL"].includes(
+    monitor.backend.kpis.activeListings.status) &&
+    typeof monitor.backend.kpis.activeListings.value === "number"
   return { contractVersion: SELLER_OS_ASSISTANT_GATEWAY_VERSION,
     generatedFrom: monitor.contractVersion, observedAt: monitor.generatedAt,
     accountTraffic: monitor.backend.trafficScopes.accountTraffic,
     currentLivePortfolio: monitor.backend.trafficScopes.currentLivePortfolio,
+    livePortfolioIntegrity: {
+      canonicalCohort: { ...integrity.canonicalCohort,
+        itemIds: cap(integrity.canonicalCohort.itemIds, 25),
+        itemIdSampleTruncated: integrity.canonicalCohort.itemIds.length > 25 },
+      stockCohort: { currentLiveItemCount: integrity.stockCohort.currentLiveItemCount,
+        nonLiveEvidenceRowCount: integrity.stockCohort.nonLiveEvidenceRowCount,
+        duplicateItemIds: cap(integrity.stockCohort.duplicateItemIds, 20) },
+      liveSkuUniqueness: { status: integrity.liveSkuUniqueness.status,
+        collisionCount: integrity.liveSkuUniqueness.collisionCount,
+        collisions: cap(integrity.liveSkuUniqueness.collisions, 20) },
+      findings: cap(integrity.findings, 20),
+      bounded: true as const },
     todaysPriorities: cap(selectMaterialPrioritiesV2(queue, 10), 10),
     activeExperiments: cap(decisions.filter((row) => row.experimentRunning), 20),
     doNotTouch: cap(decisions.filter((row) => row.protectionState === "DO_NOT_TOUCH"), 20),
@@ -155,9 +175,13 @@ export function buildAssistantCommercialContextV1(
       recommendations: cap(monitor.backend.listingQualityReport.recommendations, 20) },
     newOpportunities: { status: "UNPROVEN", entries: [] },
     replacementCandidates: { status: "UNPROVEN", entries: [] },
-    supplierReadiness: { exactLinkedListings: monitor.listings.filter((row) =>
-      row.stock.supplierProductId && row.stock.supplierVariantId).length,
-      totalLiveListings: monitor.backend.kpis.activeListings.value },
+    supplierReadiness: { status: livePortfolioProven
+      ? "AVAILABLE" as const : "UNPROVEN" as const,
+      exactLinkedListings: livePortfolioProven ? liveListings.filter((row) =>
+        row.stock.supplierProductId && row.stock.supplierVariantId).length : null,
+      totalLiveListings: livePortfolioProven
+        ? integrity.canonicalCohort.listingCount : null,
+      currentLiveScopeId: integrity.canonicalCohort.scopeId },
     economicsCompleteness: { status: "UNPROVEN", reason: "PROVEN_COST_INPUTS_REQUIRED" },
     learningSignals: { status: monitor.learning.status,
       categoryAdjustments: cap(monitor.learning.categoryAdjustments, 20),
@@ -259,11 +283,19 @@ export function executeSellerOsAssistantToolV1(input: {
       input.monitor.backend.operationalHealth.runningExperiments.status, marketplaceWrites: 0 }
   }
   if (input.toolName === "seller_os_get_stock_status") {
-    return { entries: cap(input.monitor.listings.map((row) => ({ itemId: row.identity.itemId,
+    const integrity = resolveCrossModuleLivePortfolioIntegrityV1(input.monitor)
+    const liveListings = currentLiveListingsForMonitorV1(input.monitor)
+    return { scope: integrity.canonicalCohort,
+      entries: cap(liveListings.map((row) => ({ itemId: row.identity.itemId,
       title: row.identity.title, supplierLinkage: row.stock.supplierProductId &&
         row.stock.supplierVariantId ? "EXACT_PROVEN" : "UNPROVEN", state: row.stock.state,
       freshness: row.stock.freshness, quantity: row.stock.quantity.value,
       safeCapacity: row.composition.bundleCapacity.value, limitationCode: row.stock.limitationCode })), maximum),
+      historicalOrNonliveEvidence: {
+        count: integrity.stockCohort.nonLiveEvidenceRowCount,
+        itemIds: cap(integrity.stockCohort.nonLiveItemIds, maximum),
+      },
+      duplicateItemIds: cap(integrity.stockCohort.duplicateItemIds, maximum),
       stockUnknownIsRisk: false, marketplaceWrites: 0 }
   }
   if (input.toolName === "seller_os_get_quality_guidance") {
@@ -277,11 +309,21 @@ export function executeSellerOsAssistantToolV1(input: {
       limitationCode: input.monitor.learning.limitationCode, universalRuleAllowed: false }
   }
   if (input.toolName === "seller_os_get_operational_readiness") {
+    const integrity = resolveCrossModuleLivePortfolioIntegrityV1(input.monitor)
+    const liveListings = currentLiveListingsForMonitorV1(input.monitor)
+    const livePortfolioProven = ["AVAILABLE", "PARTIAL"].includes(
+      input.monitor.backend.kpis.activeListings.status) &&
+      typeof input.monitor.backend.kpis.activeListings.value === "number"
     return { capabilities: input.monitor.backend.capabilities,
-      automationHealth: buildAutomationHealthMetricsV1({ staleEntityCount:
-        input.monitor.listings.filter((row) => row.stock.freshness.status === "STALE").length,
-      totalEntityCount: input.monitor.listings.length }),
+      automationHealth: buildAutomationHealthMetricsV1(livePortfolioProven
+        ? { staleEntityCount: liveListings.filter((row) =>
+          row.stock.freshness.status === "STALE").length,
+        totalEntityCount: integrity.canonicalCohort.listingCount }
+        : {}),
       portfolio: buildPortfolioIntelligenceV1({ monitor: input.monitor }),
+      livePortfolioIntegrity: { scopeId: integrity.canonicalCohort.scopeId,
+        scopeCount: integrity.canonicalCohort.listingCount,
+        findingCount: integrity.findings.length },
       productCaseState: input.monitor.productCaseOperatingState, marketplaceWrites: 0 }
   }
   if (input.toolName === "seller_os_get_system_review_bundle") {
@@ -302,7 +344,8 @@ export function executeSellerOsAssistantToolV1(input: {
 }
 
 export function buildReplacementAssessmentForItemV1(monitor: CommercialMonitorGetDto, itemId: string) {
-  const listing = monitor.listings.find((row) => row.identity.itemId === itemId)
+  const listing = currentLiveListingsForMonitorV1(monitor).find((row) =>
+    row.identity.itemId === itemId)
   if (!listing) return null
   return evaluateReplaceKillIntelligenceV1({ listing,
     decision: monitor.backend.decisions.find((row) => row.listingKey === listing.key) ?? null })
