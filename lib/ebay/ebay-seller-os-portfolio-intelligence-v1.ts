@@ -5,6 +5,8 @@ import type { CommercialMonitorGetDto, CommercialListingDecisionV1,
 import type { CanonicalOpportunityDecisionV2 } from
   "./ebay-commercial-intelligence-upgrade-v1"
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { classifyRegistryIndependentCommercialEvidenceV1 } from "./ebay-commercial-monitor-intelligence-v1.ts"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
 import { currentLiveListingsForMonitorV1, resolveCrossModuleLivePortfolioIntegrityV1 } from "./ebay-seller-os-live-portfolio-integrity-v1.ts"
 
 export const SELLER_OS_PORTFOLIO_INTELLIGENCE_VERSION =
@@ -82,6 +84,10 @@ export function buildProactiveExceptionQueueV1(input: {
     .filter((row) => row.sourceItemId).map((row) => [row.sourceItemId as string, row]))
   const decisionByListingKey = new Map(input.monitor.backend.decisions.map((decision) =>
     [decision.listingKey, decision]))
+  const registryAvailable = ["AVAILABLE", "COMPLETE", "PARTIAL",
+    "PARTIAL_CERTIFIED"].includes(
+    input.monitor.backend.capabilities.registry.status,
+  )
   const capabilityGroups = new Map<string, { reasonCodes: Set<string>;
     affectedItemIds: string[]; affectedListingCount: number; sources: Set<string>;
     observedAt: string | null }>()
@@ -90,14 +96,17 @@ export function buildProactiveExceptionQueueV1(input: {
   for (const listing of currentLiveListingsForMonitorV1(input.monitor)) {
     const decision = decisionByListingKey.get(listing.key) ?? null
     if (!decision) continue
+    const independentCommercial =
+      classifyRegistryIndependentCommercialEvidenceV1(listing)
     const reasonCodes = [...new Set(decision.reasonCodes)].sort()
     const blockerCodes = new Set(listing.blockers.map((row) => row.code))
     const hardOverride = reasonCodes.includes("HARD_OVERRIDE_REQUIRES_HUMAN_REVIEW")
     const policyOrComplianceBlock = reasonCodes.some((reason) =>
       /POLICY|COMPLIANCE/.test(reason))
-    const identityConflict = ["REGISTRY_RECONCILIATION_FAILED", "LISTING_IDENTITY_UNPROVEN",
+    const identityConflict = ["LISTING_IDENTITY_UNPROVEN",
       "DUPLICATE_LISTING_IDENTITY", "SUPPLIER_IDENTITY_CONFLICT"].some((code) =>
-      blockerCodes.has(code as typeof listing.blockers[number]["code"]))
+      blockerCodes.has(code as typeof listing.blockers[number]["code"])) ||
+      (registryAvailable && blockerCodes.has("REGISTRY_RECONCILIATION_FAILED"))
     const provenDataQualityBlock = ["METRIC_GRAIN_MISMATCH"].some((code) =>
       blockerCodes.has(code as typeof listing.blockers[number]["code"]))
     const opportunity = canonicalByItemId.get(listing.identity.itemId) ?? null
@@ -108,6 +117,7 @@ export function buildProactiveExceptionQueueV1(input: {
     let effectiveConfidence: string = decision.evidenceStatus
     let nextReviewCondition = decision.nextReviewCondition
     let groupGenericEvidence = false
+    let independentCommercialPriorityPreserved = false
     let observedEvidence: Record<string, unknown> = {
       analyticsStatus: listing.metrics.impressions.availability,
       commercialMateriality: {
@@ -170,9 +180,6 @@ export function buildProactiveExceptionQueueV1(input: {
       classification = "ACTIONABLE_COMMERCIAL"
       recommendedAction = recommendationFor(decision)
     }
-    const severity = classification === "CRITICAL_OPERATIONAL" ? "CRITICAL" as const
-      : classification === "DO_NOT_TOUCH" || classification === "HUMAN_REVIEW"
-        ? "HIGH" as const : effectivePriority
     if (classification === "CAPABILITY_BLOCKED") {
       const root = [...listing.blockers].sort((left, right) =>
         `${left.code}:${left.domain}:${left.source}`.localeCompare(
@@ -193,7 +200,25 @@ export function buildProactiveExceptionQueueV1(input: {
         ? [group.observedAt, listing.identity.lastObservedAt].sort().at(-1) ?? group.observedAt
         : group.observedAt ?? listing.identity.lastObservedAt
       capabilityGroups.set(rootKey, group)
-      continue
+      const independentlyActionable = independentCommercial.evidenceStatus === "AVAILABLE" &&
+        ["VISIBILITY", "CTR", "CONVERSION"].includes(
+          independentCommercial.classification,
+        )
+      if (!independentlyActionable) continue
+      classification = "ACTIONABLE_COMMERCIAL"
+      recommendedAction = independentCommercial.recommendedAction
+      effectiveReasons = [...independentCommercial.reasonCodes,
+        "INDEPENDENT_COMMERCIAL_EVIDENCE_PRESERVED"]
+      effectivePriority = independentCommercial.priority
+      effectiveConfidence = independentCommercial.evidenceStatus
+      nextReviewCondition = decision.nextReviewCondition ??
+        "REVIEW_INDEPENDENT_COMMERCIAL_SIGNAL_WITH_CAPABILITY_CONTEXT"
+      observedEvidence = { ...observedEvidence,
+        registryIndependentCommercialClassification:
+          independentCommercial.classification,
+        capabilityBlockerCoexists: true,
+        commercialMaterialityPreserved: true }
+      independentCommercialPriorityPreserved = true
     }
     if (groupGenericEvidence) {
       const rootReason = effectiveReasons.find((reason) =>
@@ -209,6 +234,9 @@ export function buildProactiveExceptionQueueV1(input: {
       evidenceGroups.set(rootReason, group)
       continue
     }
+    const severity = classification === "CRITICAL_OPERATIONAL" ? "CRITICAL" as const
+      : classification === "DO_NOT_TOUCH" || classification === "HUMAN_REVIEW"
+        ? "HIGH" as const : effectivePriority
     const dedupeIdentity = `exception_${fingerprint([listing.identity.itemId, classification,
       effectiveReasons, recommendedAction])}`
     entries.push({ entityKey: listing.identity.itemId, listingKey: listing.key,
@@ -220,7 +248,9 @@ export function buildProactiveExceptionQueueV1(input: {
       humanApprovalRequired: true, actionBlockedByEvidence: decision.actionBlockedByInsufficientEvidence,
       experimentProtectionExists: decision.protectionState === "DO_NOT_TOUCH",
       nextReviewCondition, dedupeIdentity,
-      precedenceApplied: opportunity ? hardOverride || policyOrComplianceBlock
+      precedenceApplied: independentCommercialPriorityPreserved
+        ? "INDEPENDENT_COMMERCIAL_EVIDENCE_COEXISTS_WITH_CAPABILITY_BLOCKER"
+        : opportunity ? hardOverride || policyOrComplianceBlock
         ? "CRITICAL_OPERATIONAL_OVERRIDES_OPPORTUNITY"
         : decision.protectionState === "DO_NOT_TOUCH" ? "EXPERIMENT_GUARDIAN_OVERRIDES_OPPORTUNITY"
           : identityConflict ? "IDENTITY_CONFLICT_OVERRIDES_OPPORTUNITY"
@@ -497,6 +527,10 @@ export function buildPortfolioIntelligenceV1(input: {
   const liveListingKeys = new Set(liveListings.map((listing) => listing.key))
   const decisions = input.monitor.backend.decisions.filter((decision) =>
     liveListingKeys.has(decision.listingKey))
+  const rawDecisionBurdenProven = livePortfolioProven &&
+    decisions.length === liveListings.length &&
+    new Set(decisions.map((decision) => decision.listingKey)).size ===
+      liveListingKeys.size
   const decisionHumanReviewCount = decisions.filter((row) =>
     row.recommendedAction === "HUMAN_REVIEW").length
   const registryHumanReviewCount =
@@ -529,10 +563,10 @@ export function buildPortfolioIntelligenceV1(input: {
       ? decisions.filter((row) => row.recommendedAction !== "WAIT" &&
         !row.actionBlockedByInsufficientEvidence).length : null,
     humanReviewBurden: {
-      status: livePortfolioProven ? "AVAILABLE" as const : "UNPROVEN" as const,
-      value: livePortfolioProven ? decisionHumanReviewCount : null,
-      numerator: livePortfolioProven ? decisionHumanReviewCount : null,
-      denominator: livePortfolioProven
+      status: rawDecisionBurdenProven ? "AVAILABLE" as const : "UNPROVEN" as const,
+      value: rawDecisionBurdenProven ? decisionHumanReviewCount : null,
+      numerator: rawDecisionBurdenProven ? decisionHumanReviewCount : null,
+      denominator: rawDecisionBurdenProven
         ? integrity.canonicalCohort.listingCount : null,
       scopeId: integrity.canonicalCohort.scopeId,
       scopeType: integrity.canonicalCohort.scopeType,

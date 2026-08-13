@@ -104,6 +104,7 @@ const HUMAN_LABELS: Readonly<Record<string, string>> = Object.freeze({
   ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD: "Metadatos de tráfico",
   ACCOUNT_TRAFFIC_SNAPSHOT_REUSE_GUARD: "Reutilización del snapshot de tráfico",
   REVIEW_BURDEN_AUTHORITY_MISMATCH_GUARD: "Coherencia de revisión humana",
+  OPERATIONAL_REVIEW_FALSE_ZERO_GUARD: "Protección del conteo de revisión humana",
 })
 
 const CAPABILITY_LABELS: Readonly<Record<string, string>> = Object.freeze({

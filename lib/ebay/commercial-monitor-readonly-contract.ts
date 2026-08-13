@@ -1485,6 +1485,7 @@ export type DeterministicIntegrityGuardCode =
   | "ACCOUNT_TRAFFIC_METADATA_VALIDATION_GUARD"
   | "ACCOUNT_TRAFFIC_SNAPSHOT_REUSE_GUARD"
   | "REVIEW_BURDEN_AUTHORITY_MISMATCH_GUARD"
+  | "OPERATIONAL_REVIEW_FALSE_ZERO_GUARD"
 
 export type LivePortfolioInvariantFindingV1 = {
   invariantCode: LivePortfolioInvariantCode
@@ -1611,6 +1612,52 @@ export type CrossModuleLivePortfolioIntegrityV1 = {
   readOnly: true
 }
 
+export type OperationalReviewBurdenV2 = {
+  contractVersion: "OPERATIONAL_REVIEW_BURDEN_V2_2026_08_13"
+  status: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE" | "UNPROVEN"
+  value: number | null
+  numerator: number | null
+  denominator: number | null
+  authority: "DECISION_TAXONOMY_V2"
+  scopeId: string
+  scopeType: LivePortfolioScopeType
+  scopeCount: number
+  observedAt: string | null
+  grain: "EBAY_LIVE_LISTING"
+  entityType: "EBAY_LIVE_LISTING"
+  zeroIsAuthoritative: boolean
+  reasonCode:
+    | "OPERATIONAL_REVIEW_AUTHORITATIVE_COUNT"
+    | "OPERATIONAL_REVIEW_AUTHORITATIVE_ZERO"
+    | "OPERATIONAL_REVIEW_DECISION_COVERAGE_INCOMPLETE"
+    | "OPERATIONAL_REVIEW_DEPENDENCY_UNAVAILABLE"
+    | "CURRENT_LIVE_COHORT_PARTIAL"
+    | "CURRENT_LIVE_COHORT_UNPROVEN"
+  dependencyStatus: {
+    currentLiveIdentity: "AVAILABLE" | "PARTIAL" | "UNPROVEN"
+    decisions: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE" | "UNPROVEN"
+    registry: CommercialMonitorCapabilityStatus
+    unresolvedListingCount: number
+    registryUnavailableMayBecomeZero: false
+  }
+  falseZeroGuard: {
+    guardCode: "OPERATIONAL_REVIEW_FALSE_ZERO_GUARD"
+    status: "PASS" | "TRIGGERED"
+    authority: "DECISION_TAXONOMY_V2"
+    scopeType: LivePortfolioScopeType
+    scopeCount: number
+    reasonCode:
+      | "AUTHORITATIVE_OPERATIONAL_ZERO"
+      | "AUTHORITATIVE_OPERATIONAL_REVIEW_COUNT"
+      | "UNPROVEN_OPERATIONAL_REVIEW_REMAINS_NULL"
+      | "UNAVAILABLE_DEPENDENCY_WOULD_CREATE_FALSE_ZERO"
+    zeroIsAuthoritative: boolean
+    dependencyStatus: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE" | "UNPROVEN"
+    observedAt: string | null
+    autoMutationAllowed: false
+  }
+}
+
 export type CommercialMonitorBackendV1 = {
   contractVersion: "COMMERCIAL_MONITOR_BACKEND_V1"
   mode: "READ_ONLY"
@@ -1691,6 +1738,7 @@ export type CommercialMonitorBackendV1 = {
   decisions: CommercialListingDecisionV1[]
   guidanceVsSellerOs: EbayGuidanceComparisonV1[]
   operationalHealth: {
+    manualReview: OperationalReviewBurdenV2
     needIntervention: { status: CommercialMonitorCapabilityStatus; count: number | null }
     runningExperiments: { status: CommercialMonitorCapabilityStatus; count: number | null }
     doNotTouch: { status: CommercialMonitorCapabilityStatus; count: number | null }

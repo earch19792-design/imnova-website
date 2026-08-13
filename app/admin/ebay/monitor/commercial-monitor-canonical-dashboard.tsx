@@ -312,12 +312,11 @@ export function CommercialMonitorCanonicalDashboard({
     : systemStatusCounts.UNAVAILABLE > 0 || systemStatusCounts.LIMITED > 0
       ? "Operativo con limitaciones"
       : "Operativo"
-  const decisionHumanReviewCount =
-    backend.kpis.activeListings.value !== null &&
-    backend.decisions.length === backend.kpis.activeListings.value
-      ? backend.decisions.filter((decision) =>
-          decision.recommendedAction === "HUMAN_REVIEW").length
-      : null
+  const operationalManualReview = backend.operationalHealth.manualReview
+  const operationalManualReviewCount = operationalManualReview.status === "AVAILABLE"
+    ? operationalManualReview.value : null
+  const operationalManualReviewUnavailable =
+    operationalManualReview.status === "UNAVAILABLE"
   const registryHumanReviewAvailable = registry.humanReviewCount !== null
   const systemCapabilitySummary = presentSellerOsCapabilitySummary(systemStatusCounts)
 
@@ -418,14 +417,16 @@ export function CommercialMonitorCanonicalDashboard({
             <article className="rounded-2xl border border-cyan-200 bg-white p-5 shadow-sm">
               <p className={`${type.cardLabel} text-cyan-800`}>Revisión humana</p>
               <div className={`${type.helper} mt-2 space-y-1 text-slate-600`}>
-                {decisionHumanReviewCount !== null && (
-                  <p><strong>{formatValue(decisionHumanReviewCount)}</strong> publicaciones requieren revisión humana</p>
+                {operationalManualReviewCount !== null ? (
+                  <p><strong>{formatValue(operationalManualReviewCount)}</strong> publicaciones requieren revisión humana</p>
+                ) : (
+                  <p>Publicaciones: {operationalManualReviewUnavailable
+                    ? "no disponibles temporalmente" : "no comprobado"}</p>
                 )}
-                {registryHumanReviewAvailable && (
+                {registryHumanReviewAvailable ? (
                   <p><strong>{formatValue(registry.humanReviewCount)}</strong> relaciones del registro requieren revisión humana</p>
-                )}
-                {decisionHumanReviewCount === null && !registryHumanReviewAvailable && (
-                  <p>El conteo de revisión humana todavía no está comprobado.</p>
+                ) : (
+                  <p>Relaciones del registro: no comprobadas</p>
                 )}
               </div>
             </article>

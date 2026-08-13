@@ -8,6 +8,8 @@ import type { CanonicalOpportunityResultV2 } from
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
 import { buildAutomationHealthMetricsV1, buildPortfolioIntelligenceV1, buildProactiveExceptionQueueV1, selectMaterialPrioritiesV2 } from "./ebay-seller-os-portfolio-intelligence-v1.ts"
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { buildOperationalReviewBurdenV2, resolveOperationalReviewTaxonomyV2 } from "./ebay-commercial-monitor-intelligence-v1.ts"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
 import { currentLiveListingsForMonitorV1, resolveCrossModuleLivePortfolioIntegrityV1 } from "./ebay-seller-os-live-portfolio-integrity-v1.ts"
 
 export const SELLER_OS_AI_STRATEGIC_INTELLIGENCE_VERSION =
@@ -330,9 +332,24 @@ function buildSystemReviewSourceParityV1(input: {
     : unavailableAfterAccount("EBAY_SELL_ANALYTICS_TRAFFIC_REPORT",
         trafficReader, "TRAFFIC_KPI_EVIDENCE_UNPROVEN")
 
+  const liveDecisionKeys = new Set(currentLiveListingsForMonitorV1(input.monitor)
+    .map((listing) => listing.key))
+  const coveredDecisionKeys = new Set(input.monitor.backend.decisions
+    .filter((decision) => liveDecisionKeys.has(decision.listingKey))
+    .map((decision) => decision.listingKey))
+  const decisionCoverageComplete = liveDecisionKeys.size ===
+    coveredDecisionKeys.size
   const decisions = portfolio.status === "AVAILABLE" || portfolio.status === "PARTIAL"
-    ? source(portfolio.status, null,
-      "COMMERCIAL_MONITOR_CANONICAL_DECISIONS_V2", null, true)
+    ? decisionCoverageComplete
+      ? source(portfolio.status, null,
+        "COMMERCIAL_MONITOR_CANONICAL_DECISIONS_V2", null, true)
+      : coveredDecisionKeys.size
+        ? source("PARTIAL", "SOURCE_NOT_AVAILABLE",
+          "COMMERCIAL_MONITOR_CANONICAL_DECISIONS_V2",
+          "DECISION_TAXONOMY_LIVE_COVERAGE_INCOMPLETE", false)
+        : source("UNAVAILABLE", "SOURCE_NOT_AVAILABLE",
+          "COMMERCIAL_MONITOR_CANONICAL_DECISIONS_V2",
+          "DECISION_TAXONOMY_LIVE_COVERAGE_UNAVAILABLE", false)
     : source("UNAVAILABLE", portfolio.classification,
       "COMMERCIAL_MONITOR_CANONICAL_DECISIONS_V2",
       portfolio.limitationCode, false)
@@ -547,15 +564,24 @@ export function buildStrategicReviewQueueV1(input: {
     evidenceCount: readyExperiments.length,
     summary: `${readyExperiments.length} experiment(s) are ready for evidence-backed evaluation.`,
     nextAction: "EVALUATE_WITHOUT_CHANGING_FROZEN_VARIABLES", confidence: "HIGH", materiality: 86 })
-  const liveManualReview = decisionQueue.filter((row) =>
-    row.classification === "HUMAN_REVIEW" &&
-    row.entityType === "EBAY_LIVE_LISTING" && liveItemIds.has(row.entityKey))
-  const manualCount = new Set(liveManualReview.map((row) => row.entityKey)).size
-  const manualRate = roundedRatio(manualCount,
+  const operationalReviewAssessment = resolveOperationalReviewTaxonomyV2({
+    listings: liveListings,
+    decisions: input.monitor.backend.decisions,
+    registryStatus: input.monitor.backend.capabilities.registry.status,
+    activeListingStatus: input.monitor.backend.kpis.activeListings.status,
+    activeListingCount: input.monitor.backend.kpis.activeListings.value,
+    scopeId: integrity.canonicalCohort.scopeId,
+    scopeCount: integrity.canonicalCohort.listingCount,
+    scopeObservedAt: integrity.canonicalCohort.observedAt,
+    identityStatus: integrity.canonicalCohort.identityStatus,
+  })
+  const manualCount = operationalReviewAssessment.status === "AVAILABLE"
+    ? operationalReviewAssessment.value : null
+  const manualRate = manualCount === null ? null : roundedRatio(manualCount,
     integrity.canonicalCohort.listingCount)
-  if (manualCount >= 5 && (manualRate ?? 0) >= 20) add({ signalType: "HIGH_MANUAL_REVIEW_RATE",
+  if (manualCount !== null && manualCount >= 5 && (manualRate ?? 0) >= 20) add({ signalType: "HIGH_MANUAL_REVIEW_RATE",
     severity: "MEDIUM", module: "DECISIONS",
-    entityRefs: liveManualReview.map((row) => row.entityKey),
+    entityRefs: operationalReviewAssessment.humanReviewItemIds,
     evidenceRefs: [`${integrity.canonicalCohort.scopeId}:human-review-rate:${manualRate}`],
     evidenceCount: manualCount,
     summary: `${manualRate}% of canonical current-live Item IDs require human review.`,
@@ -702,12 +728,27 @@ export function buildSystemReviewBundleV1(input: {
   const actualCosts = usage.filter((row) => row.costEvidence === "AUTHORITATIVE" &&
     row.actualCostUsd !== null).map((row) => row.actualCostUsd!)
   const portfolioState = buildPortfolioIntelligenceV1({ monitor: input.monitor })
-  const liveHumanReviewIds = new Set(decisionQueue.filter((row) =>
-    row.classification === "HUMAN_REVIEW" &&
-    row.entityType === "EBAY_LIVE_LISTING" && liveItemIds.has(row.entityKey))
-    .map((row) => row.entityKey))
+  const operationalReviewInput = {
+    listings: liveListings,
+    decisions: input.monitor.backend.decisions,
+    registryStatus: input.monitor.backend.capabilities.registry.status,
+    activeListingStatus: input.monitor.backend.kpis.activeListings.status,
+    activeListingCount: input.monitor.backend.kpis.activeListings.value,
+    scopeId: integrity.canonicalCohort.scopeId,
+    scopeCount: integrity.canonicalCohort.listingCount,
+    scopeObservedAt: integrity.canonicalCohort.observedAt,
+    identityStatus: integrity.canonicalCohort.identityStatus,
+  }
+  const operationalReviewAssessment = resolveOperationalReviewTaxonomyV2(
+    operationalReviewInput,
+  )
+  const operationalReview = input.monitor.backend.operationalHealth.manualReview ??
+    buildOperationalReviewBurdenV2(operationalReviewInput)
+  const liveHumanReviewIds = new Set(operationalReviewAssessment.humanReviewItemIds)
   const evidenceEntityHumanReviewCount = input.monitor.listings.filter((row) =>
     liveHumanReviewIds.has(row.identity.itemId)).length
+  const operationalReviewProven = operationalReview.status === "AVAILABLE" &&
+    operationalReview.value !== null
   const registry = input.monitor.backend.capabilities.registry
   const registryReviewNumerator = registry.humanReviewCount
   const registryReviewDenominator = registry.currentLiveCount
@@ -719,6 +760,25 @@ export function buildSystemReviewBundleV1(input: {
     row.reasonCodes.some((reason) => /STOCK|OVERSELL/.test(reason))).length
   const stockUnknownCount = liveListings.filter((row) =>
     row.stock.state === "STOCK_UNKNOWN").length
+  const operationalReviewGuard = {
+    guardCode: "OPERATIONAL_REVIEW_FALSE_ZERO_GUARD" as const,
+    status: operationalReview.falseZeroGuard.status,
+    scopeId: operationalReview.scopeId,
+    scopeType: operationalReview.scopeType,
+    scopeCount: operationalReview.scopeCount,
+    observedAt: operationalReview.observedAt,
+    grain: "EBAY_LIVE_LISTING_OPERATIONAL_REVIEW_COUNT",
+    evidenceCount: operationalReview.value ?? 0,
+    reasonCode: operationalReview.falseZeroGuard.reasonCode,
+    guardAlwaysOn: true as const,
+    independentOfAutomationThreshold: true as const,
+    autoMutationAllowed: false as const,
+  }
+  const deterministicIntegrityGuards = [
+    ...integrity.deterministicGuards.filter((guard) =>
+      guard.guardCode !== "OPERATIONAL_REVIEW_FALSE_ZERO_GUARD"),
+    operationalReviewGuard,
+  ]
   return {
     contractVersion: SYSTEM_REVIEW_BUNDLE_VERSION,
     generatedAt: input.monitor.generatedAt,
@@ -733,6 +793,8 @@ export function buildSystemReviewBundleV1(input: {
     capabilityFaultIsolation: {
       contractVersion:
         "SELLER_OS_CAPABILITY_FAULT_ISOLATION_V1_2026_08_13",
+      registryDecisionPolicy:
+        "REGISTRY_UNAVAILABLE_MUST_NOT_ERASE_INDEPENDENT_DECISION_EVIDENCE_V1" as const,
       registry: {
         status: dataParity.registry.status,
         faultScope: "REGISTRY_DEPENDENT_FIELDS_ONLY" as const,
@@ -772,13 +834,13 @@ export function buildSystemReviewBundleV1(input: {
         collisions: cap(integrity.liveSkuUniqueness.collisions, 20),
       },
       findings: cap(integrity.findings, 20),
-      deterministicGuards: integrity.deterministicGuards,
+      deterministicGuards: deterministicIntegrityGuards,
       denominatorPolicy: integrity.denominatorPolicy,
       readOnly: true as const,
     },
     deterministicIntegrityGuards: {
       contractVersion: "SELLER_OS_ALWAYS_ON_DETERMINISTIC_GUARDS_V1_2026_08_13",
-      entries: integrity.deterministicGuards,
+      entries: deterministicIntegrityGuards,
       alwaysOn: true as const,
       repeatedEvidenceRequired: false as const,
       automationPromotionRequired: false as const,
@@ -964,24 +1026,11 @@ export function buildSystemReviewBundleV1(input: {
         totalEntityCount: integrity.canonicalCohort.listingCount }
       : {}),
     operationalBurden: {
-      manualReviewCount: {
-        status: portfolioCountsProven ? "AVAILABLE" as const : "UNPROVEN" as const,
-        value: portfolioCountsProven ? liveHumanReviewIds.size : null,
-        authority: "DECISION_TAXONOMY_V2" as const,
-        scopeId: integrity.canonicalCohort.scopeId,
-        scopeType: integrity.canonicalCohort.scopeType,
-        scopeCount: integrity.canonicalCohort.listingCount,
-        observedAt: integrity.canonicalCohort.observedAt,
-        grain: "EBAY_LIVE_LISTING" as const,
-        entityType: "EBAY_LIVE_LISTING" as const,
-        numerator: portfolioCountsProven ? liveHumanReviewIds.size : null,
-        denominator: portfolioCountsProven
-          ? integrity.canonicalCohort.listingCount : null,
-      },
+      manualReviewCount: operationalReview,
       manualReviewRate: {
-        status: portfolioCountsProven ? "AVAILABLE" as const : "UNPROVEN" as const,
-        value: portfolioCountsProven
-          ? roundedRatio(liveHumanReviewIds.size,
+        status: operationalReview.status,
+        value: operationalReviewProven
+          ? roundedRatio(operationalReview.value!,
             integrity.canonicalCohort.listingCount) : null,
         authority: "DECISION_TAXONOMY_V2" as const,
         scopeId: integrity.canonicalCohort.scopeId,
@@ -990,16 +1039,18 @@ export function buildSystemReviewBundleV1(input: {
         observedAt: integrity.canonicalCohort.observedAt,
         grain: "EBAY_LIVE_LISTING" as const,
         entityType: "EBAY_LIVE_LISTING" as const,
-        numerator: portfolioCountsProven ? liveHumanReviewIds.size : null,
-        denominator: portfolioCountsProven
+        numerator: operationalReviewProven ? operationalReview.value : null,
+        denominator: operationalReviewProven
           ? integrity.canonicalCohort.listingCount : null,
+        zeroIsAuthoritative: operationalReview.zeroIsAuthoritative,
+        reasonCode: operationalReview.reasonCode,
       },
       liveListingHumanReviewRate: {
-        status: portfolioCountsProven ? "AVAILABLE" as const : "UNPROVEN" as const,
-        numerator: portfolioCountsProven ? liveHumanReviewIds.size : null,
-        denominator: portfolioCountsProven
+        status: operationalReview.status,
+        numerator: operationalReviewProven ? operationalReview.value : null,
+        denominator: operationalReviewProven
           ? integrity.canonicalCohort.listingCount : null,
-        rate: portfolioCountsProven ? roundedRatio(liveHumanReviewIds.size,
+        rate: operationalReviewProven ? roundedRatio(operationalReview.value!,
           integrity.canonicalCohort.listingCount) : null,
         scopeType: integrity.canonicalCohort.scopeType,
         scopeId: integrity.canonicalCohort.scopeId,
@@ -1010,11 +1061,13 @@ export function buildSystemReviewBundleV1(input: {
         authority: "DECISION_TAXONOMY_V2" as const,
       },
       evidenceEntityReviewRate: {
-        status: input.monitor.listings.length ? "AVAILABLE" as const : "UNPROVEN" as const,
-        numerator: input.monitor.listings.length
+        status: operationalReviewProven && input.monitor.listings.length
+          ? "AVAILABLE" as const : operationalReview.status,
+        numerator: operationalReviewProven && input.monitor.listings.length
           ? evidenceEntityHumanReviewCount : null,
-        denominator: input.monitor.listings.length || null,
-        rate: input.monitor.listings.length
+        denominator: operationalReviewProven
+          ? input.monitor.listings.length || null : null,
+        rate: operationalReviewProven && input.monitor.listings.length
           ? roundedRatio(evidenceEntityHumanReviewCount,
             input.monitor.listings.length) : null,
         scopeType: "EVIDENCE_ENTITY_SCOPE" as const,
@@ -1051,8 +1104,7 @@ export function buildSystemReviewBundleV1(input: {
           scopeId: portfolioState.humanReviewBurden.scopeId,
         },
         operationalBurden: {
-          status: portfolioCountsProven
-            ? "AVAILABLE" as const : "UNPROVEN" as const,
+          status: operationalReview.status,
           authority: "DECISION_TAXONOMY_V2" as const,
           grain: "EBAY_LIVE_LISTING" as const,
           scopeId: integrity.canonicalCohort.scopeId,
@@ -1061,6 +1113,7 @@ export function buildSystemReviewBundleV1(input: {
         directEqualityAllowed: false as const,
         registryAvailabilityMayOverwriteEitherBurden: false as const,
       },
+      falseZeroGuard: operationalReview.falseZeroGuard,
       falseInterventionCount: decisionQueue.filter((row) =>
         row.classification === "ACTIONABLE_COMMERCIAL" && row.confidence === "UNPROVEN").length,
       duplicateExceptionCount: decisionQueue.length -

@@ -10,26 +10,14 @@ import type {
   EbayGuidanceComparisonV1,
   EbayListingQualityRecommendation,
   EbayLiveCertificationReadModel,
+  OperationalReviewBurdenV2,
 } from "./commercial-monitor-readonly-contract"
-import {
-  assessExperimentGuardianV1,
-  EXPERIMENT_REGISTRY_CONTRACT_VERSION,
-  type ExperimentEvidenceMetricV1,
-  type ExperimentGuardianAssessmentV1,
-  type ExperimentLifecycleStateV1,
-  type ExperimentRegistryRecordV1,
-  type ExternalEbaySignalV1,
-} from "./ebay-commercial-monitor-experiment-v1"
-import {
-  buildCanonicalCommercialTimeSeriesV1,
-  unavailableAccountTrafficV1,
-  type AccountTrafficEvidenceV1,
-  type CommercialSeriesSnapshotV1,
-} from "./ebay-commercial-monitor-traffic-scope-v1"
-import {
-  buildCrossModuleLivePortfolioIntegrityV1,
-  selectCanonicalCurrentLiveListingsV1,
-} from "./ebay-seller-os-live-portfolio-integrity-v1"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { assessExperimentGuardianV1, EXPERIMENT_REGISTRY_CONTRACT_VERSION, type ExperimentEvidenceMetricV1, type ExperimentGuardianAssessmentV1, type ExperimentLifecycleStateV1, type ExperimentRegistryRecordV1, type ExternalEbaySignalV1 } from "./ebay-commercial-monitor-experiment-v1.ts"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { buildCanonicalCommercialTimeSeriesV1, unavailableAccountTrafficV1, type AccountTrafficEvidenceV1, type CommercialSeriesSnapshotV1 } from "./ebay-commercial-monitor-traffic-scope-v1.ts"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { buildCrossModuleLivePortfolioIntegrityV1, selectCanonicalCurrentLiveListingsV1 } from "./ebay-seller-os-live-portfolio-integrity-v1.ts"
 
 export const EBAY_LISTING_QUALITY_REPORT_SOURCE =
   "EBAY_LISTING_QUALITY_REPORT" as const
@@ -198,6 +186,7 @@ function metricValue(
 ) {
   for (const key of keys) {
     const metric = listing.metrics[key]
+    if (!metric) continue
     if ((metric.availability === "AVAILABLE" ||
         metric.availability === "PARTIAL") &&
         typeof metric.value === "number" && Number.isFinite(metric.value)) {
@@ -205,6 +194,216 @@ function metricValue(
     }
   }
   return null
+}
+
+export function classifyRegistryIndependentCommercialEvidenceV1(
+  listing: CommercialListingReadModel,
+) {
+  const impressions = metricValue(listing, ["impressions"])
+  const ctr = metricValue(listing, ["ctr_calculated", "ctr_reported"])
+  const views = metricValue(listing, ["ebay_views"])
+  const orders = metricValue(listing, ["orders", "transactions"])
+  const conversion = metricValue(listing, ["conversion"])
+  if (impressions === null) {
+    return { classification: "DATA_QUALITY" as const,
+      recommendedAction: "FIX_DATA_QUALITY" as const, priority: "MEDIUM" as const,
+      evidenceStatus: "UNPROVEN" as const,
+      reasonCodes: ["INSUFFICIENT_ANALYTICS_EVIDENCE"] as const }
+  }
+  if (impressions === 0) {
+    return { classification: "VISIBILITY" as const,
+      recommendedAction: "IMPROVE_VISIBILITY" as const, priority: "HIGH" as const,
+      evidenceStatus: "AVAILABLE" as const,
+      reasonCodes: ["AUTHORITATIVE_ZERO_IMPRESSIONS"] as const }
+  }
+  if (impressions < 100) {
+    return { classification: "HEALTHY_WAIT" as const,
+      recommendedAction: "WAIT" as const, priority: "LOW" as const,
+      evidenceStatus: "PARTIAL" as const,
+      reasonCodes: ["INSUFFICIENT_TRAFFIC"] as const }
+  }
+  if (ctr !== null && ctr < 1) {
+    return { classification: "CTR" as const,
+      recommendedAction: "IMPROVE_CTR" as const, priority: "HIGH" as const,
+      evidenceStatus: "AVAILABLE" as const,
+      reasonCodes: ["LOW_CTR_WITH_SUFFICIENT_IMPRESSIONS"] as const }
+  }
+  if (views !== null && views >= 20 && (orders === 0 || conversion === 0)) {
+    return { classification: "CONVERSION" as const,
+      recommendedAction: "IMPROVE_CONVERSION" as const, priority: "HIGH" as const,
+      evidenceStatus: "AVAILABLE" as const,
+      reasonCodes: ["TRAFFIC_WITHOUT_CONVERSION"] as const }
+  }
+  return { classification: "HEALTHY_WAIT" as const,
+    recommendedAction: "WAIT" as const, priority: "LOW" as const,
+    evidenceStatus: "AVAILABLE" as const,
+    reasonCodes: ["HEALTHY_EVIDENCE_WAIT_FOR_NEXT_REVIEW"] as const }
+}
+
+const REGISTRY_AVAILABLE_STATUSES = new Set<CommercialMonitorCapabilityStatus>([
+  "AVAILABLE", "COMPLETE", "PARTIAL", "PARTIAL_CERTIFIED",
+])
+
+function operationalReviewDispositionV2(input: {
+  listing: CommercialListingReadModel
+  decision: CommercialListingDecisionV1
+  registryStatus: CommercialMonitorCapabilityStatus
+}) {
+  const reasons = new Set(input.decision.reasonCodes)
+  const blockers = new Set(input.listing.blockers.map((row) => row.code))
+  const hardOverride = reasons.has("HARD_OVERRIDE_REQUIRES_HUMAN_REVIEW")
+  const policyOrComplianceBlock = [...reasons].some((reason) =>
+    /POLICY|COMPLIANCE/.test(reason))
+  if (hardOverride || policyOrComplianceBlock ||
+      input.decision.protectionState === "DO_NOT_TOUCH") {
+    return { status: "RESOLVED" as const, humanReview: false,
+      registryDependent: false }
+  }
+  const nonRegistryIdentityConflict = ["LISTING_IDENTITY_UNPROVEN",
+    "DUPLICATE_LISTING_IDENTITY", "SUPPLIER_IDENTITY_CONFLICT"].some((code) =>
+    blockers.has(code as typeof input.listing.blockers[number]["code"]))
+  if (nonRegistryIdentityConflict) {
+    return { status: "RESOLVED" as const, humanReview: true,
+      registryDependent: false }
+  }
+  const registryReconciliationConflict = blockers.has(
+    "REGISTRY_RECONCILIATION_FAILED",
+  )
+  if (registryReconciliationConflict &&
+      !REGISTRY_AVAILABLE_STATUSES.has(input.registryStatus)) {
+    return { status: "UNPROVEN" as const, humanReview: null,
+      registryDependent: true }
+  }
+  if (registryReconciliationConflict ||
+      input.decision.recommendedAction === "HUMAN_REVIEW") {
+    return { status: "RESOLVED" as const, humanReview: true,
+      registryDependent: registryReconciliationConflict }
+  }
+  if (input.decision.actionBlockedByInsufficientEvidence ||
+      input.decision.evidenceStatus === "UNPROVEN") {
+    return { status: "UNPROVEN" as const, humanReview: null,
+      registryDependent: !REGISTRY_AVAILABLE_STATUSES.has(input.registryStatus) }
+  }
+  return { status: "RESOLVED" as const, humanReview: false,
+    registryDependent: false }
+}
+
+export function resolveOperationalReviewTaxonomyV2(input: {
+  listings: CommercialListingReadModel[]
+  decisions: CommercialListingDecisionV1[]
+  registryStatus: CommercialMonitorCapabilityStatus
+  activeListingStatus: CommercialMonitorCapabilityStatus
+  activeListingCount: number | null
+  scopeId: string
+  scopeCount: number
+  scopeObservedAt: string | null
+  identityStatus: "CERTIFIED" | "PARTIAL" | "UNPROVEN"
+}) {
+  const canonicalListings = selectCanonicalCurrentLiveListingsV1(input.listings)
+  const decisionGroups = new Map<string, CommercialListingDecisionV1[]>()
+  for (const decision of input.decisions) {
+    const group = decisionGroups.get(decision.listingKey) ?? []
+    group.push(decision)
+    decisionGroups.set(decision.listingKey, group)
+  }
+  const cohortAligned = typeof input.activeListingCount === "number" &&
+    input.activeListingCount === input.scopeCount &&
+    canonicalListings.length === input.scopeCount
+  const cohortProven = cohortAligned &&
+    ["AVAILABLE", "COMPLETE"].includes(input.activeListingStatus) &&
+    input.identityStatus === "CERTIFIED"
+  const cohortPartial = cohortAligned && !cohortProven &&
+    (["PARTIAL", "PARTIAL_CERTIFIED"].includes(input.activeListingStatus) ||
+      input.identityStatus === "PARTIAL")
+  const assessments = canonicalListings.map((listing) => {
+    const group = decisionGroups.get(listing.key) ?? []
+    if (group.length !== 1) {
+      return { itemId: listing.identity.itemId, listingKey: listing.key,
+        status: "UNPROVEN" as const,
+        humanReview: null, registryDependent: false }
+    }
+    return { itemId: listing.identity.itemId, listingKey: listing.key,
+      ...operationalReviewDispositionV2({ listing, decision: group[0],
+        registryStatus: input.registryStatus }) }
+  })
+  const decisionCoverageComplete = assessments.length === input.scopeCount &&
+    assessments.every((row) => decisionGroups.get(row.listingKey)?.length === 1)
+  const unresolvedListingCount = assessments.filter((row) =>
+    row.status === "UNPROVEN").length
+  const humanReviewItemIds = assessments.filter((row) =>
+    row.status === "RESOLVED" && row.humanReview === true).map((row) => row.itemId)
+  const status = !cohortProven ? cohortPartial ? "PARTIAL" as const : "UNPROVEN" as const
+    : !decisionCoverageComplete ? assessments.length ? "PARTIAL" as const : "UNPROVEN" as const
+      : unresolvedListingCount > 0 ? "PARTIAL" as const : "AVAILABLE" as const
+  const value = status === "AVAILABLE" ? humanReviewItemIds.length : null
+  const reasonCode: OperationalReviewBurdenV2["reasonCode"] = !cohortProven
+    ? cohortPartial ? "CURRENT_LIVE_COHORT_PARTIAL"
+      : "CURRENT_LIVE_COHORT_UNPROVEN"
+    : !decisionCoverageComplete
+      ? "OPERATIONAL_REVIEW_DECISION_COVERAGE_INCOMPLETE"
+      : unresolvedListingCount > 0
+        ? "OPERATIONAL_REVIEW_DEPENDENCY_UNAVAILABLE"
+        : value === 0 ? "OPERATIONAL_REVIEW_AUTHORITATIVE_ZERO"
+          : "OPERATIONAL_REVIEW_AUTHORITATIVE_COUNT"
+  return { status, value, reasonCode, cohortProven, cohortPartial,
+    decisionCoverageComplete,
+    unresolvedListingCount, humanReviewItemIds,
+    decisionDependencyStatus: !cohortProven ? "UNPROVEN" as const
+      : !decisionCoverageComplete || unresolvedListingCount > 0
+        ? "PARTIAL" as const : "AVAILABLE" as const }
+}
+
+export function evaluateOperationalReviewFalseZeroGuardV1(input: Pick<
+  OperationalReviewBurdenV2,
+  "status" | "value" | "authority" | "scopeType" | "scopeCount" |
+  "zeroIsAuthoritative" | "dependencyStatus" | "observedAt"
+>): OperationalReviewBurdenV2["falseZeroGuard"] {
+  const triggered = input.value === 0 && (!input.zeroIsAuthoritative ||
+    input.status !== "AVAILABLE")
+  return { guardCode: "OPERATIONAL_REVIEW_FALSE_ZERO_GUARD",
+    status: triggered ? "TRIGGERED" : "PASS", authority: input.authority,
+    scopeType: input.scopeType, scopeCount: input.scopeCount,
+    reasonCode: triggered ? "UNAVAILABLE_DEPENDENCY_WOULD_CREATE_FALSE_ZERO"
+      : input.value === 0 ? "AUTHORITATIVE_OPERATIONAL_ZERO"
+        : typeof input.value === "number" ? "AUTHORITATIVE_OPERATIONAL_REVIEW_COUNT"
+          : "UNPROVEN_OPERATIONAL_REVIEW_REMAINS_NULL",
+    zeroIsAuthoritative: input.zeroIsAuthoritative,
+    dependencyStatus: input.dependencyStatus.decisions,
+    observedAt: input.observedAt, autoMutationAllowed: false }
+}
+
+export function buildOperationalReviewBurdenV2(input: Parameters<
+  typeof resolveOperationalReviewTaxonomyV2
+>[0]): OperationalReviewBurdenV2 {
+  const assessment = resolveOperationalReviewTaxonomyV2(input)
+  const provisional = {
+    contractVersion: "OPERATIONAL_REVIEW_BURDEN_V2_2026_08_13" as const,
+    status: assessment.status,
+    value: assessment.value,
+    numerator: assessment.value,
+    denominator: assessment.status === "AVAILABLE" ? input.scopeCount : null,
+    authority: "DECISION_TAXONOMY_V2" as const,
+    scopeId: input.scopeId,
+    scopeType: "CURRENT_LIVE_COHORT_SCOPE" as const,
+    scopeCount: input.scopeCount,
+    observedAt: input.scopeObservedAt,
+    grain: "EBAY_LIVE_LISTING" as const,
+    entityType: "EBAY_LIVE_LISTING" as const,
+    zeroIsAuthoritative: assessment.status === "AVAILABLE" &&
+      assessment.value === 0,
+    reasonCode: assessment.reasonCode,
+    dependencyStatus: {
+      currentLiveIdentity: assessment.cohortProven
+        ? "AVAILABLE" as const : assessment.cohortPartial
+          ? "PARTIAL" as const : "UNPROVEN" as const,
+      decisions: assessment.decisionDependencyStatus,
+      registry: input.registryStatus,
+      unresolvedListingCount: assessment.unresolvedListingCount,
+      registryUnavailableMayBecomeZero: false as const,
+    },
+  }
+  return { ...provisional,
+    falseZeroGuard: evaluateOperationalReviewFalseZeroGuardV1(provisional) }
 }
 
 const EXPERIMENT_EVIDENCE_METRICS = new Set<ExperimentEvidenceMetricV1>([
@@ -302,19 +501,16 @@ function experimentGuardian(
 export function classifyCommercialListingV1(
   listing: CommercialListingReadModel,
 ): CommercialListingDecisionV1 {
-  const impressions = metricValue(listing, ["impressions"])
-  const ctr = metricValue(listing, ["ctr_calculated", "ctr_reported"])
-  const views = metricValue(listing, ["ebay_views"])
-  const orders = metricValue(listing, ["orders", "transactions"])
-  const conversion = metricValue(listing, ["conversion"])
+  const independent = classifyRegistryIndependentCommercialEvidenceV1(listing)
   const guardian = experimentGuardian(listing)
   const experimentRunning = guardian?.active === true
   const variableFrozen = listing.experiment.status === "AVAILABLE" &&
     listing.experiment.frozenVariables.length > 0
-  let classification: CommercialDecisionClass
-  let action: CommercialDecisionAction
-  let priority: CommercialListingDecisionV1["priority"]
-  let evidenceStatus: CommercialListingDecisionV1["evidenceStatus"] = "AVAILABLE"
+  let classification: CommercialDecisionClass = independent.classification
+  let action: CommercialDecisionAction = independent.recommendedAction
+  let priority: CommercialListingDecisionV1["priority"] = independent.priority
+  let evidenceStatus: CommercialListingDecisionV1["evidenceStatus"] =
+    independent.evidenceStatus
   const reasons: CommercialListingDecisionV1["reasonCodes"] = []
 
   if (listing.blockers.length > 0) {
@@ -323,39 +519,8 @@ export function classifyCommercialListingV1(
     priority = "HIGH"
     evidenceStatus = "UNPROVEN"
     reasons.push("BLOCKING_DATA_QUALITY_ISSUE")
-  } else if (impressions === null) {
-    classification = "DATA_QUALITY"
-    action = "FIX_DATA_QUALITY"
-    priority = "MEDIUM"
-    evidenceStatus = "UNPROVEN"
-    reasons.push("INSUFFICIENT_ANALYTICS_EVIDENCE")
-  } else if (impressions === 0) {
-    classification = "VISIBILITY"
-    action = "IMPROVE_VISIBILITY"
-    priority = "HIGH"
-    reasons.push("AUTHORITATIVE_ZERO_IMPRESSIONS")
-  } else if (impressions < 100) {
-    classification = "HEALTHY_WAIT"
-    action = "WAIT"
-    priority = "LOW"
-    evidenceStatus = "PARTIAL"
-    reasons.push("INSUFFICIENT_TRAFFIC")
-  } else if (ctr !== null && ctr < 1) {
-    classification = "CTR"
-    action = "IMPROVE_CTR"
-    priority = "HIGH"
-    reasons.push("LOW_CTR_WITH_SUFFICIENT_IMPRESSIONS")
-  } else if (views !== null && views >= 20 &&
-    (orders === 0 || conversion === 0)) {
-    classification = "CONVERSION"
-    action = "IMPROVE_CONVERSION"
-    priority = "HIGH"
-    reasons.push("TRAFFIC_WITHOUT_CONVERSION")
   } else {
-    classification = "HEALTHY_WAIT"
-    action = "WAIT"
-    priority = "LOW"
-    reasons.push("HEALTHY_EVIDENCE_WAIT_FOR_NEXT_REVIEW")
+    reasons.push(...independent.reasonCodes)
   }
   if (guardian?.active) {
     if (guardian.operationalAction === "HARD_OVERRIDE_REQUIRED") {
@@ -591,6 +756,39 @@ export function buildCommercialMonitorBackendV1(input: {
   })
   const activeListingsProven = input.liveCertification.discovery.coverage ===
     "COMPLETE"
+  const operationalReview = buildOperationalReviewBurdenV2({
+    listings: primaryListings,
+    decisions,
+    registryStatus: input.registry?.status ?? "UNPROVEN",
+    activeListingStatus: activeListingsProven ? "AVAILABLE" : "UNPROVEN",
+    activeListingCount: activeListingsProven ? primaryListings.length : null,
+    scopeId: livePortfolioIntegrity.canonicalCohort.scopeId,
+    scopeCount: livePortfolioIntegrity.canonicalCohort.listingCount,
+    scopeObservedAt: livePortfolioIntegrity.canonicalCohort.observedAt,
+    identityStatus: livePortfolioIntegrity.canonicalCohort.identityStatus,
+  })
+  const operationalReviewGuard = {
+    guardCode: "OPERATIONAL_REVIEW_FALSE_ZERO_GUARD" as const,
+    status: operationalReview.falseZeroGuard.status,
+    scopeId: operationalReview.scopeId,
+    scopeType: operationalReview.scopeType,
+    scopeCount: operationalReview.scopeCount,
+    observedAt: operationalReview.observedAt,
+    grain: "EBAY_LIVE_LISTING_OPERATIONAL_REVIEW_COUNT",
+    evidenceCount: operationalReview.scopeCount,
+    reasonCode: operationalReview.falseZeroGuard.reasonCode,
+    guardAlwaysOn: true as const,
+    independentOfAutomationThreshold: true as const,
+    autoMutationAllowed: false as const,
+  }
+  const livePortfolioIntegrityWithOperationalReview = {
+    ...livePortfolioIntegrity,
+    deterministicGuards: [
+      ...livePortfolioIntegrity.deterministicGuards.filter((guard) =>
+        guard.guardCode !== "OPERATIONAL_REVIEW_FALSE_ZERO_GUARD"),
+      operationalReviewGuard,
+    ],
+  }
   const tradingDiscoveryStatus = input.liveCertification.discovery.status
   const statusCounts = new Map<CommercialDecisionClass, number>()
   for (const decision of decisions) {
@@ -696,7 +894,7 @@ export function buildCommercialMonitorBackendV1(input: {
         ctr: currentLiveCtr.value,
       },
     },
-    livePortfolioIntegrity,
+    livePortfolioIntegrity: livePortfolioIntegrityWithOperationalReview,
     orders: {
       ...orders,
       buyerPiiIncluded: false,
@@ -705,6 +903,7 @@ export function buildCommercialMonitorBackendV1(input: {
     decisions,
     guidanceVsSellerOs,
     operationalHealth: {
+      manualReview: operationalReview,
       needIntervention: {
         status: countStatus,
         count: decisions.length

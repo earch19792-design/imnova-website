@@ -139,13 +139,14 @@ test("commercial and system alerts remain visually and semantically distinct", (
 })
 
 test("human review, incomplete evidence, and Registry review keep distinct authorities", () => {
-  assert.match(dashboard, /const decisionHumanReviewCount =/)
-  assert.match(dashboard, /backend\.decisions\.filter/)
-  assert.match(dashboard, /decision\.recommendedAction === "HUMAN_REVIEW"/)
   assert.match(dashboard,
-    /backend\.decisions\.length === backend\.kpis\.activeListings\.value/)
+    /const operationalManualReview = backend\.operationalHealth\.manualReview/)
+  assert.match(dashboard, /operationalManualReview\.status === "AVAILABLE"/)
+  assert.doesNotMatch(dashboard, /const decisionHumanReviewCount =/)
   assert.match(dashboard, /publicaciones requieren revisión humana/)
   assert.match(dashboard, /relaciones del registro requieren revisión humana/)
+  assert.match(dashboard, /Publicaciones:.*no comprobado/s)
+  assert.match(dashboard, /Relaciones del registro: no comprobadas/)
   assert.match(dashboard, /publicaciones presentan evidencia incompleta/)
   assert.match(dashboard, />Evidencia</)
   assert.doesNotMatch(dashboard,
