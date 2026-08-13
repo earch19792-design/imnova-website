@@ -138,6 +138,40 @@ test("commercial and system alerts remain visually and semantically distinct", (
   assert.match(dashboard, /Cero riesgos de stock comprobados no significa/)
 })
 
+test("human review, incomplete evidence, and Registry review keep distinct authorities", () => {
+  assert.match(dashboard, /const decisionHumanReviewCount =/)
+  assert.match(dashboard, /backend\.decisions\.filter/)
+  assert.match(dashboard, /decision\.recommendedAction === "HUMAN_REVIEW"/)
+  assert.match(dashboard,
+    /backend\.decisions\.length === backend\.kpis\.activeListings\.value/)
+  assert.match(dashboard, /publicaciones requieren revisión humana/)
+  assert.match(dashboard, /relaciones del registro requieren revisión humana/)
+  assert.match(dashboard, /publicaciones presentan evidencia incompleta/)
+  assert.match(dashboard, />Evidencia</)
+  assert.doesNotMatch(dashboard,
+    /<p><strong>\{formatValue\(backend\.operationalHealth\.dataQuality\.count\)\}<\/strong> publicaciones con evidencia por revisar<\/p>/)
+})
+
+test("final UX hardening keeps operational language human and empty states compact", () => {
+  assert.match(dashboard, />Estado operativo</)
+  assert.doesNotMatch(dashboard, /Semánticas específicas, sin falsos ceros/)
+  assert.match(dashboard, /data-compact-empty-state="true"/)
+  assert.match(dashboard, /Tendencia no disponible todavía/)
+  assert.match(dashboard, /Carga un informe vigente para habilitar benchmarks/)
+  assert.match(dashboard, /presentSellerOsCapabilitySummary/)
+})
+
+test("technical evidence is preserved behind collapsed-by-default disclosure", () => {
+  assert.ok((dashboard.match(/data-default-collapsed="true"/g) ?? []).length >= 4)
+  assert.match(client,
+    /<details id="advanced-diagnostics" data-default-collapsed="true"/)
+  assert.match(dashboard,
+    /<details id="inventory-status" data-default-collapsed="true"/)
+  assert.doesNotMatch(dashboard, /<details[^>]*\sopen(?:=|\s|>)/)
+  assert.doesNotMatch(client, /<details[^>]*\sopen(?:=|\s|>)/)
+  assert.match(dashboard, /FALSE_ZERO_REPRESENTATION_GUARD|deterministicGuards/)
+})
+
 test("legacy technical diagnostics remain secondary to the canonical dashboard", () => {
   assert.match(client, /CommercialMonitorCanonicalDashboard/)
   assert.match(client, /<details id="advanced-diagnostics"/)

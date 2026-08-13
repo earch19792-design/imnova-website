@@ -252,7 +252,7 @@ export function CommercialMonitorReadonlyClient() {
           refreshing={loading}
         />
         <div className="bg-[#05070d] px-4 py-6 text-white sm:px-6">
-          <details id="advanced-diagnostics" className="mx-auto max-w-[1680px] rounded-2xl border border-white/10 bg-white/[0.025] p-5 md:p-7">
+          <details id="advanced-diagnostics" data-default-collapsed="true" className="mx-auto max-w-[1680px] rounded-2xl border border-white/10 bg-white/[0.025] p-5 md:p-7">
             <summary className="cursor-pointer list-none text-sm font-black text-white/80 marker:hidden">Diagnóstico técnico avanzado <span className="ml-2 text-xs font-normal text-white/45">Readers, evidencia, detalles de composición y auditoría</span></summary>
             <div className="mt-6 space-y-6">
           <section id="summary" aria-labelledby="summary-heading" className="scroll-mt-4 space-y-4">

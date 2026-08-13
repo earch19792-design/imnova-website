@@ -35,6 +35,7 @@ import { presentCommercialMonitorRegistryV1 } from
   "@/lib/ebay/ebay-commercial-monitor-registry-presentation-v1"
 import {
   presentSellerOsCode,
+  presentSellerOsCapabilitySummary,
   presentSellerOsStatus,
   sellerOsCapabilityBucket,
   sellerOsStatusTone,
@@ -220,9 +221,9 @@ function ListingIdentity({ listing }: { listing: CommercialListingReadModel }) {
 
 function EmptyState({ title, detail }: { title: string; detail: string }) {
   return (
-    <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4">
-      <p className={`${type.cardTitle} text-slate-700`}>{title}</p>
-      <p className={`${type.helper} mt-1 text-slate-500`}>{detail}</p>
+    <div data-compact-empty-state="true" className="mt-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-2.5">
+      <p className={`${type.body} font-bold leading-5 text-slate-700`}>{title}</p>
+      <p className={`${type.tableSecondary} mt-0.5 text-slate-500`}>{detail}</p>
     </div>
   )
 }
@@ -311,6 +312,14 @@ export function CommercialMonitorCanonicalDashboard({
     : systemStatusCounts.UNAVAILABLE > 0 || systemStatusCounts.LIMITED > 0
       ? "Operativo con limitaciones"
       : "Operativo"
+  const decisionHumanReviewCount =
+    backend.kpis.activeListings.value !== null &&
+    backend.decisions.length === backend.kpis.activeListings.value
+      ? backend.decisions.filter((decision) =>
+          decision.recommendedAction === "HUMAN_REVIEW").length
+      : null
+  const registryHumanReviewAvailable = registry.humanReviewCount !== null
+  const systemCapabilitySummary = presentSellerOsCapabilitySummary(systemStatusCounts)
 
   return (
     <div id="commercial-dashboard" className="min-h-screen bg-[#eef2f6] text-base text-slate-950">
@@ -389,7 +398,7 @@ export function CommercialMonitorCanonicalDashboard({
             <p className={`${type.sectionEyebrow} text-cyan-800`}>Prioridades</p>
             <h2 id="attention-heading" className={type.sectionTitle}>Requiere atención</h2>
           </div>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             <article className="rounded-2xl border border-rose-200 bg-white p-5 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div><p className={`${type.cardLabel} text-rose-700`}>Alertas comerciales</p><p className={`${type.helper} mt-1 text-slate-500`}>Prioridades críticas o altas respaldadas por la decisión actual.</p></div>
@@ -409,15 +418,30 @@ export function CommercialMonitorCanonicalDashboard({
             <article className="rounded-2xl border border-cyan-200 bg-white p-5 shadow-sm">
               <p className={`${type.cardLabel} text-cyan-800`}>Revisión humana</p>
               <div className={`${type.helper} mt-2 space-y-1 text-slate-600`}>
-                <p><strong>{formatValue(backend.operationalHealth.needIntervention.count)}</strong> acciones comerciales ejecutables</p>
-                <p><strong>{formatValue(backend.operationalHealth.dataQuality.count)}</strong> publicaciones con evidencia por revisar</p>
-                <p><strong>{formatValue(registry.humanReviewCount)}</strong> relaciones del registro requieren revisión humana</p>
+                {decisionHumanReviewCount !== null && (
+                  <p><strong>{formatValue(decisionHumanReviewCount)}</strong> publicaciones requieren revisión humana</p>
+                )}
+                {registryHumanReviewAvailable && (
+                  <p><strong>{formatValue(registry.humanReviewCount)}</strong> relaciones del registro requieren revisión humana</p>
+                )}
+                {decisionHumanReviewCount === null && !registryHumanReviewAvailable && (
+                  <p>El conteo de revisión humana todavía no está comprobado.</p>
+                )}
               </div>
+            </article>
+
+            <article className="rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
+              <p className={`${type.cardLabel} text-amber-800`}>Evidencia</p>
+              {backend.operationalHealth.dataQuality.count !== null ? (
+                <p className={`${type.helper} mt-2 text-slate-600`}><strong>{formatValue(backend.operationalHealth.dataQuality.count)}</strong> publicaciones presentan evidencia incompleta</p>
+              ) : (
+                <p className={`${type.helper} mt-2 text-slate-500`}>La cobertura de evidencia todavía no está comprobada.</p>
+              )}
             </article>
 
             <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <p className={`${type.cardLabel} text-slate-700`}>Estado del sistema</p>
-              <p className={`${type.helper} mt-1 text-slate-500`}>{systemStatusCounts.AVAILABLE} disponibles · {systemStatusCounts.LIMITED} limitados · {systemStatusCounts.UNAVAILABLE} no disponibles</p>
+              <p className={`${type.helper} mt-1 text-slate-500`}>{systemCapabilitySummary}</p>
               <a href="#system-status" className={`${type.button} mt-3 inline-flex items-center gap-1 text-cyan-800`}>Ver detalle <ChevronRight size={16} /></a>
             </article>
           </div>
@@ -471,7 +495,7 @@ export function CommercialMonitorCanonicalDashboard({
                             Experimento en curso · variables protegidas
                           </span>
                         )}
-                        <details className={`${type.tableSecondary} mt-2 font-normal text-slate-500`}>
+                        <details data-default-collapsed="true" className={`${type.tableSecondary} mt-2 font-normal text-slate-500`}>
                           <summary className="cursor-pointer font-bold text-cyan-800">Ver detalle técnico</summary>
                           <p className="mt-1 break-words">{decision.reasonCodes.join(" · ") || "NO_REASON_CODE"}</p>
                           <p className="mt-1 break-words">{decision.protectionState} · variables: {decision.frozenVariables.join(", ") || "NONE"}</p>
@@ -547,7 +571,7 @@ export function CommercialMonitorCanonicalDashboard({
         </section>
 
         <section className="grid gap-4 lg:grid-cols-2">
-          <details id="system-integrity" className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <details id="system-integrity" data-default-collapsed="true" className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
               <div><p className={`${type.sectionEyebrow} text-amber-800`}>Integridad del sistema</p><h2 className={type.cardTitle}>{activeIntegrityFindings.length} incidencias activas · {mitigatedIntegrityFindings.length} mitigadas · {passingIntegrityGuards} controles correctos</h2></div>
               <span className={`${type.button} inline-flex items-center gap-1 text-cyan-800`}>Ver detalle técnico <ChevronRight className="transition group-open:rotate-90" size={17} /></span>
@@ -580,9 +604,9 @@ export function CommercialMonitorCanonicalDashboard({
             </div>
           </details>
 
-          <details id="system-status" className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <details id="system-status" data-default-collapsed="true" className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-              <div><p className={`${type.sectionEyebrow} text-cyan-800`}>Estado del sistema</p><h2 className={type.cardTitle}>{systemStatusCounts.AVAILABLE} disponibles · {systemStatusCounts.LIMITED} limitados · {systemStatusCounts.UNAVAILABLE} no disponibles</h2></div>
+              <div><p className={`${type.sectionEyebrow} text-cyan-800`}>Estado del sistema</p><h2 className={type.cardTitle}>{systemCapabilitySummary}</h2></div>
               <span className={`${type.button} inline-flex items-center gap-1 text-cyan-800`}>Ver detalle <ChevronRight className="transition group-open:rotate-90" size={17} /></span>
             </summary>
             <div className="mt-5 divide-y divide-slate-100 border-t border-slate-100">
@@ -595,7 +619,7 @@ export function CommercialMonitorCanonicalDashboard({
         </section>
 
         <section aria-labelledby="operational-health-heading" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-wrap items-end justify-between gap-3"><div><p className={`${type.sectionEyebrow} text-slate-500`}>Decisiones y estado operativo</p><h2 id="operational-health-heading" className={type.sectionTitle}>Semánticas específicas, sin falsos ceros</h2></div><p className={`${type.helper} text-slate-500`}>Stock desconocido: {formatValue(backend.operationalHealth.stockUnknown.count)}</p></div>
+          <div className="flex flex-wrap items-end justify-between gap-3"><div><p className={`${type.sectionEyebrow} text-slate-500`}>Decisiones y estado operativo</p><h2 id="operational-health-heading" className={type.sectionTitle}>Estado operativo</h2></div><p className={`${type.helper} text-slate-500`}>Stock desconocido: {formatValue(backend.operationalHealth.stockUnknown.count)}</p></div>
           <div className="mt-4 grid overflow-hidden rounded-xl border border-slate-100 sm:grid-cols-2 xl:grid-cols-6">
             <HealthCard label="Acciones comerciales ejecutables" count={backend.operationalHealth.needIntervention.count} status={backend.operationalHealth.needIntervention.status} icon={AlertTriangle} accent="bg-rose-100 text-rose-700" />
             <HealthCard label="Experimentos en curso" count={backend.operationalHealth.runningExperiments.count} status={backend.operationalHealth.runningExperiments.status} icon={FlaskConical} accent="bg-violet-100 text-violet-700" />
@@ -612,7 +636,7 @@ export function CommercialMonitorCanonicalDashboard({
             <p className={`${type.sectionEyebrow} text-slate-500`}>Rendimiento general</p><h2 className={type.cardTitle}>Tendencia de rendimiento</h2>
             {hasComparablePerformanceSeries ? (
               <div className="mt-4 space-y-2">{backend.operationalHealth.performanceSeries.points.slice(-5).map((point) => <div key={`${point.windowStart}:${point.observedAt}`} className={`grid grid-cols-[1fr_auto_auto] gap-2 rounded-lg bg-slate-50 px-3 py-2 ${type.tableSecondary}`}><span>{new Date(point.windowEnd).toLocaleDateString("es")}</span><span>{formatValue(point.impressions)} imp.</span><span>{formatValue(point.listingViews)} vistas</span></div>)}</div>
-            ) : <EmptyState title="Tendencia todavía no disponible" detail="Se necesitan al menos dos snapshots comparables. No se generan puntos sintéticos." />}
+            ) : <EmptyState title="Tendencia no disponible todavía" detail="Se necesitan al menos dos snapshots comparables. No se generan puntos sintéticos." />}
           </article>
 
           <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -627,11 +651,11 @@ export function CommercialMonitorCanonicalDashboard({
 
           <article id="category-benchmark" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-start justify-between gap-3"><div><p className={`${type.sectionEyebrow} text-slate-500`}>Benchmark de categoría</p><h2 className={type.cardTitle}>Calidad de publicaciones</h2></div><CircleGauge size={20} className="text-slate-400" /></div>
-            {backend.operationalHealth.categoryBenchmarks.length > 0 ? <div className="mt-4 space-y-2">{backend.operationalHealth.categoryBenchmarks.map((benchmark) => <div key={benchmark.recommendationCategory} className={`flex items-center justify-between border-b border-slate-100 pb-2 ${type.tableSecondary}`}><span>{benchmark.recommendationCategory}</span><strong>{formatValue(benchmark.benchmark)}</strong></div>)}</div> : <EmptyState title="Informe de calidad no disponible" detail="Carga un informe vigente para ver benchmarks. No se inventan valores del Top 10 %." />}
+            {backend.operationalHealth.categoryBenchmarks.length > 0 ? <div className="mt-4 space-y-2">{backend.operationalHealth.categoryBenchmarks.map((benchmark) => <div key={benchmark.recommendationCategory} className={`flex items-center justify-between border-b border-slate-100 pb-2 ${type.tableSecondary}`}><span>{benchmark.recommendationCategory}</span><strong>{formatValue(benchmark.benchmark)}</strong></div>)}</div> : <EmptyState title="Informe de calidad no disponible" detail="Carga un informe vigente para habilitar benchmarks. No se inventan valores del Top 10 %." />}
           </article>
         </section>
 
-        <details id="inventory-status" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <details id="inventory-status" data-default-collapsed="true" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <summary className={`${type.button} cursor-pointer text-slate-700`}>Ver procedencia y estado técnico de las fuentes</summary>
           <div className={`mt-4 grid gap-4 border-t border-slate-100 pt-4 ${type.helper} md:grid-cols-4`}>
             <div><p className="font-black">Registro</p><p className="mt-1 text-slate-500">{registryPresentation.summary}</p></div>

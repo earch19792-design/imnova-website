@@ -160,3 +160,18 @@ export function sellerOsCapabilityBucket(value: string) {
   }
   return "LIMITED" as const
 }
+
+export function presentSellerOsCapabilitySummary(counts: {
+  AVAILABLE: number
+  LIMITED: number
+  UNAVAILABLE: number
+}) {
+  const availableLabel = counts.AVAILABLE === 1
+    ? "capacidad disponible"
+    : "capacidades disponibles"
+  const limitedLabel = counts.LIMITED === 1 ? "limitada" : "limitadas"
+  const unavailableLabel = counts.UNAVAILABLE === 1
+    ? "no disponible"
+    : "no disponibles"
+  return `${counts.AVAILABLE} ${availableLabel} · ${counts.LIMITED} ${limitedLabel} · ${counts.UNAVAILABLE} ${unavailableLabel}`
+}
