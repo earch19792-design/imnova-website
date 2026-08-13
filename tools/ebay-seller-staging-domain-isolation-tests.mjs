@@ -162,10 +162,11 @@ test("route and bundle surface regress downward", () => {
   // -> one authenticated read-only Market Research route -> one authenticated
   // operational-readiness contract/dry-run route with all dispatch disabled
   // -> one authenticated read-only Intelligence route shared by Decisions,
-  // Experiments, and Learning.
+  // Experiments, and Learning -> one Preview-only authenticated cloud read
+  // relay for the loopback Secure MCP Tunnel runtime.
   // The old product/community domain remains at zero.
   assert.ok(
-    countNamed("app/api", "route.ts") <= 88 + Number(temporarySellerOauthApi),
+    countNamed("app/api", "route.ts") <= 89 + Number(temporarySellerOauthApi),
     "API route count regressed",
   )
   assert.equal(countNamed("app/api/community", "route.ts"), 0)
