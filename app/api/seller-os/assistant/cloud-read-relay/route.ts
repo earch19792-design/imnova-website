@@ -7,4 +7,6 @@ import { handleSellerOsCloudReadRelayRequestV1 } from
 
 // Preview-only, HMAC-authenticated and allowlisted. Vercel Deployment
 // Protection remains an independent outer transport boundary.
-export const POST = handleSellerOsCloudReadRelayRequestV1
+export async function POST(request: Request) {
+  return handleSellerOsCloudReadRelayRequestV1(request)
+}

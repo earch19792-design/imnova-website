@@ -1,8 +1,7 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto"
 
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
-import { executeSellerOsAssistantToolV1, SELLER_OS_ASSISTANT_TOOLS_V1 } from
-  "./ebay-seller-os-assistant-gateway-v1.ts"
+import { executeSellerOsAssistantToolV1, SELLER_OS_ASSISTANT_TOOLS_V1 } from "./ebay-seller-os-assistant-gateway-v1.ts"
 import type { CommercialMonitorGetDto } from
   "./commercial-monitor-readonly-contract"
 
