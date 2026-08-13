@@ -91,6 +91,22 @@ export type AiUsageObservationV1 = {
   costEvidence: "AUTHORITATIVE" | "UNPROVEN"
 }
 
+export type SellerOsSourceGapClassificationV1 =
+  | "RUNTIME_CONFIGURATION_GAP"
+  | "SOURCE_NOT_AVAILABLE"
+  | "PERSISTENCE_NOT_IMPLEMENTED"
+  | "EXPECTED_UNAVAILABLE"
+  | "REAL_EXTERNAL_BLOCKER"
+  | "CODE_WIRING_DEFECT"
+
+type SellerOsSourceParityV1 = Readonly<{
+  status: "AVAILABLE" | "PARTIAL" | "UNPROVEN" | "UNAVAILABLE"
+  classification: SellerOsSourceGapClassificationV1 | null
+  source: string
+  limitationCode: string | null
+  zeroIsAuthoritative: boolean
+}>
+
 function stableId(prefix: string, values: unknown[]) {
   const digest = createHash("sha256").update(JSON.stringify(values)).digest("hex").slice(0, 24)
   return `${prefix}:${digest}`
@@ -228,6 +244,161 @@ function opportunitySummary(row: CanonicalOpportunityResultV2) {
     authoritative: true as const,
     legacyDiagnosticsMayOverride: false as const,
   }
+}
+
+function buildSystemReviewSourceParityV1(input: {
+  monitor: CommercialMonitorGetDto
+  canonicalOpportunityCount: number
+}) {
+  const readers = input.monitor.connection?.readers ?? []
+  const reader = (source: string) => readers.find((row) =>
+    row.source === source) ?? null
+  const accountReader = reader("SELLER_ACCOUNT_SCOPE")
+  const activeListings = input.monitor.backend.kpis.activeListings
+  const accountConfigured = accountReader
+    ? accountReader.status === "AVAILABLE"
+    : input.monitor.liveCertification?.account.bindingConfigured === true ||
+      (activeListings.status === "AVAILABLE" &&
+        typeof activeListings.value === "number")
+  const runtimeGap = !accountConfigured
+  const source = (
+    status: SellerOsSourceParityV1["status"],
+    classification: SellerOsSourceGapClassificationV1 | null,
+    sourceName: string,
+    limitationCode: string | null,
+    zeroIsAuthoritative = false,
+  ): SellerOsSourceParityV1 => Object.freeze({ status, classification,
+    source: sourceName, limitationCode, zeroIsAuthoritative })
+  const unavailableAfterAccount = (
+    sourceName: string,
+    sourceReader: ReturnType<typeof reader>,
+    fallbackLimitation: string,
+  ) => runtimeGap
+    ? source("UNAVAILABLE", "RUNTIME_CONFIGURATION_GAP", sourceName,
+        accountReader?.limitationCode ?? "ACCOUNT_SCOPE_NOT_CONFIGURED")
+    : source("UNAVAILABLE",
+        sourceReader?.status === "ERROR"
+          ? "REAL_EXTERNAL_BLOCKER"
+          : "SOURCE_NOT_AVAILABLE",
+        sourceName,
+        sourceReader?.limitationCode ?? fallbackLimitation)
+
+  const portfolioReader = reader("EBAY_TRADING_GET_MY_EBAY_SELLING")
+  const portfolio = activeListings.status === "AVAILABLE" &&
+      typeof activeListings.value === "number"
+    ? source("AVAILABLE", null, "EBAY_TRADING_GET_MY_EBAY_SELLING",
+        null, true)
+    : unavailableAfterAccount("EBAY_TRADING_GET_MY_EBAY_SELLING",
+        portfolioReader, "LIVE_PORTFOLIO_UNPROVEN")
+
+  const registryCapability = input.monitor.backend.capabilities.registry
+  const registryReader = reader("EBAY_ACTIVE_LISTING_REGISTRY")
+  const registry = ["COMPLETE", "PARTIAL_CERTIFIED", "AVAILABLE", "PARTIAL"]
+    .includes(registryCapability.status)
+    ? source(registryCapability.status === "COMPLETE" ||
+        registryCapability.status === "AVAILABLE" ? "AVAILABLE" : "PARTIAL",
+      null, "EBAY_ACTIVE_LISTING_REGISTRY",
+      registryCapability.limitationCodes[0] ?? registryReader?.limitationCode ?? null,
+      true)
+    : unavailableAfterAccount("EBAY_ACTIVE_LISTING_REGISTRY", registryReader,
+        registryCapability.limitationCodes[0] ?? "REGISTRY_EVIDENCE_UNPROVEN")
+
+  const trafficReader = reader("EBAY_SELL_ANALYTICS_TRAFFIC_REPORT")
+  const trafficKpis = [input.monitor.backend.kpis.impressions,
+    input.monitor.backend.kpis.ebayViews,
+    input.monitor.backend.kpis.averageCtr,
+    input.monitor.backend.kpis.quantitySold]
+  const trafficAvailable = trafficKpis.some((metric) =>
+    (metric.status === "AVAILABLE" || metric.status === "PARTIAL") &&
+    typeof metric.value === "number")
+  const traffic = trafficAvailable
+    ? source(trafficKpis.every((metric) => metric.status === "AVAILABLE")
+        ? "AVAILABLE" : "PARTIAL", null,
+      "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT", trafficReader?.limitationCode ?? null,
+      true)
+    : unavailableAfterAccount("EBAY_SELL_ANALYTICS_TRAFFIC_REPORT",
+        trafficReader, "TRAFFIC_KPI_EVIDENCE_UNPROVEN")
+
+  const decisions = portfolio.status === "AVAILABLE" || portfolio.status === "PARTIAL"
+    ? source(portfolio.status, null,
+      "COMMERCIAL_MONITOR_CANONICAL_DECISIONS_V2", null, true)
+    : source("UNAVAILABLE", portfolio.classification,
+      "COMMERCIAL_MONITOR_CANONICAL_DECISIONS_V2",
+      portfolio.limitationCode, false)
+
+  const opportunity = input.canonicalOpportunityCount > 0
+    ? source("AVAILABLE", null, "CANONICAL_OPPORTUNITY_RESULT_V2", null, true)
+    : source("UNAVAILABLE", "PERSISTENCE_NOT_IMPLEMENTED",
+      "CANONICAL_OPPORTUNITY_RESULT_V2",
+      "UNPROVEN_NO_DURABLE_CANONICAL_RESULT_STORE", false)
+
+  const experimentReader = reader("EBAY_EXPERIMENT_REGISTRY_V1")
+  const experimentReadProven = experimentReader?.status === "AVAILABLE" ||
+    experimentReader?.status === "PARTIAL" ||
+    input.monitor.backend.operationalHealth.runningExperiments.status === "AVAILABLE"
+  const experiments = experimentReadProven
+    ? source(experimentReader?.status === "PARTIAL" ? "PARTIAL" : "AVAILABLE",
+      null, "EBAY_EXPERIMENT_REGISTRY_V1",
+      experimentReader?.limitationCode ?? null, true)
+    : unavailableAfterAccount("EBAY_EXPERIMENT_REGISTRY_V1", experimentReader,
+        "EXPERIMENT_REGISTRY_EVIDENCE_UNPROVEN")
+
+  const supplyReader = reader("LUNA_PORTEX_MARKET_RADAR")
+  const stock = portfolio.status === "AVAILABLE" || portfolio.status === "PARTIAL"
+    ? source(supplyReader?.status === "ERROR" ? "PARTIAL" : portfolio.status,
+      supplyReader?.status === "ERROR" ? "SOURCE_NOT_AVAILABLE" : null,
+      "STOCK_GUARD_CANONICAL_LISTING_EVIDENCE",
+      supplyReader?.limitationCode ?? null, true)
+    : source("UNAVAILABLE", portfolio.classification,
+      "STOCK_GUARD_CANONICAL_LISTING_EVIDENCE",
+      portfolio.limitationCode, false)
+
+  const learningReader = reader("EBAY_CATEGORY_LEARNING")
+  const learning = runtimeGap
+    ? source("UNAVAILABLE", "RUNTIME_CONFIGURATION_GAP",
+      "EBAY_CATEGORY_LEARNING",
+      accountReader?.limitationCode ?? "ACCOUNT_SCOPE_NOT_CONFIGURED")
+    : input.monitor.learning.limitationCode === "NO_STORED_CATEGORY_LEARNING"
+      ? source("UNAVAILABLE", "EXPECTED_UNAVAILABLE", "EBAY_CATEGORY_LEARNING",
+        input.monitor.learning.limitationCode, true)
+      : input.monitor.learning.status === "AVAILABLE" ||
+          input.monitor.learning.status === "PARTIAL"
+        ? source(input.monitor.learning.status, null, "EBAY_CATEGORY_LEARNING",
+          input.monitor.learning.limitationCode, true)
+        : source("UNAVAILABLE",
+          learningReader?.status === "ERROR"
+            ? "SOURCE_NOT_AVAILABLE" : "EXPECTED_UNAVAILABLE",
+          "EBAY_CATEGORY_LEARNING",
+          input.monitor.learning.limitationCode ??
+            learningReader?.limitationCode ?? null,
+          learningReader?.status === "AVAILABLE")
+
+  const qualityStatus = input.monitor.backend.listingQualityReport.status
+  const qualityReport = qualityStatus === "AVAILABLE" || qualityStatus === "PARTIAL"
+    ? source(qualityStatus, null, "EBAY_LISTING_QUALITY_REPORT",
+      input.monitor.backend.listingQualityReport.limitationCode, true)
+    : source("UNAVAILABLE", "PERSISTENCE_NOT_IMPLEMENTED",
+      "EBAY_LISTING_QUALITY_REPORT",
+      input.monitor.backend.listingQualityReport.limitationCode ??
+        "LISTING_QUALITY_REPORT_NOT_BOUND_TO_MONITOR", false)
+
+  return Object.freeze({
+    contractVersion: "SELLER_OS_SYSTEM_REVIEW_SOURCE_PARITY_V1_2026_08_12",
+    accountScope: accountConfigured
+      ? source("AVAILABLE", null, "SELLER_ACCOUNT_SCOPE", null, true)
+      : source("UNAVAILABLE", "RUNTIME_CONFIGURATION_GAP",
+        "SELLER_ACCOUNT_SCOPE",
+        accountReader?.limitationCode ?? "ACCOUNT_SCOPE_NOT_CONFIGURED"),
+    livePortfolio: portfolio,
+    registry,
+    trafficKpis: traffic,
+    decisions,
+    opportunities: opportunity,
+    experiments,
+    stock,
+    learning,
+    qualityReport,
+  })
 }
 
 export function buildStrategicReviewQueueV1(input: {
@@ -409,6 +580,9 @@ export function buildSystemReviewBundleV1(input: {
     row.stock.freshness.status === "STALE").length
   const exactSupplierLinked = input.monitor.listings.filter((row) =>
     row.stock.supplierProductId && row.stock.supplierVariantId && row.stock.supplierSku).length
+  const dataParity = buildSystemReviewSourceParityV1({ monitor: input.monitor,
+    canonicalOpportunityCount: canonical.length })
+  const portfolioCountsProven = dataParity.livePortfolio.zeroIsAuthoritative
   const grouped = (classification: typeof decisionQueue[number]["classification"]) =>
     cap(decisionQueue.filter((row) => row.classification === classification), 10)
   const experiments = input.monitor.backend.decisions.filter((row) =>
@@ -425,6 +599,7 @@ export function buildSystemReviewBundleV1(input: {
       kpis: input.monitor.backend.kpis,
       liveListingCount: input.monitor.backend.kpis.activeListings.value,
     },
+    dataParity,
     decisions: {
       todaysCommercialPriorities: cap(selectMaterialPrioritiesV2(decisionQueue, 10), 10),
       criticalOperational: grouped("CRITICAL_OPERATIONAL"),
@@ -445,17 +620,24 @@ export function buildSystemReviewBundleV1(input: {
         row.experimentOperationalState === "READY_TO_EVALUATE"), 10),
       hardOverrides: cap(experiments.filter((row) =>
         row.reasonCodes.includes("HARD_OVERRIDE_REQUIRES_HUMAN_REVIEW")), 10),
-      authoritative: true as const,
+      authoritative: dataParity.experiments.zeroIsAuthoritative,
+      sourceStatus: dataParity.experiments,
     },
     supplierAndStock: {
-      exactSupplierLinked,
-      totalListings: input.monitor.listings.length,
-      stockRisks: decisionQueue.filter((row) => row.classification === "CRITICAL_OPERATIONAL" &&
-        row.reasonCodes.some((reason) => /STOCK|OVERSELL/.test(reason))).length,
-      staleEvidence: staleCount,
-      stockUnknown: input.monitor.listings.filter((row) => row.stock.state === "STOCK_UNKNOWN").length,
+      exactSupplierLinked: portfolioCountsProven ? exactSupplierLinked : null,
+      totalListings: portfolioCountsProven
+        ? input.monitor.backend.kpis.activeListings.value : null,
+      stockRisks: portfolioCountsProven
+        ? decisionQueue.filter((row) => row.classification === "CRITICAL_OPERATIONAL" &&
+          row.reasonCodes.some((reason) => /STOCK|OVERSELL/.test(reason))).length
+        : null,
+      staleEvidence: portfolioCountsProven ? staleCount : null,
+      stockUnknown: portfolioCountsProven
+        ? input.monitor.listings.filter((row) => row.stock.state === "STOCK_UNKNOWN").length
+        : null,
       stockUnknownIsRisk: false as const,
       watcherSessionHealth: "UNPROVEN" as const,
+      sourceStatus: dataParity.stock,
     },
     qualityReport: {
       status: input.monitor.backend.listingQualityReport.status,
