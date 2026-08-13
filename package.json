@@ -2,9 +2,13 @@
   "name": "my-project",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "services/*"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build --webpack",
+    "build:seller-os-mcp": "npm run build --workspace @imnova/seller-os-mcp",
     "start": "next start",
     "lint": "eslint .",
     "test:seller-os": "node --test lib/ebay/*.test.mjs tools/ebay-*-tests.mjs",

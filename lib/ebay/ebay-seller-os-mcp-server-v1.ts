@@ -8,6 +8,8 @@ import { executeSellerOsAssistantToolV1, SELLER_OS_ASSISTANT_TOOLS_V1 } from
 import { loadSellerOsAssistantMonitorV1 } from "./ebay-seller-os-assistant-runtime"
 import { authenticateSellerOsMcpRequestV1, loadSellerOsMcpOAuthConfigurationV1 } from
   "./ebay-seller-os-mcp-oauth-v1"
+import { getSellerOsDedicatedMcpDeploymentStateV1 } from
+  "./ebay-seller-os-mcp-deployment-v1"
 import { getEbayProRuntimeBoundary } from "./environment-boundaries"
 import { validateAdminApiRequest } from "../supabase-admin"
 
@@ -24,17 +26,24 @@ export function getSellerOsChatGptConnectionStateV1(
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const oauth = loadSellerOsMcpOAuthConfigurationV1(environment)
+  const dedicated = getSellerOsDedicatedMcpDeploymentStateV1(environment)
+  const deployed = environment.VERCEL_ENV === "preview" ||
+    (environment.VERCEL_ENV === "production" && dedicated.ready)
   return { ...SELLER_OS_CHATGPT_CONNECTION_STATE,
-    deployment: environment.VERCEL_ENV === "preview"
+    deployment: deployed
       ? "DEPLOYED" as const : "NOT_DEPLOYED_OR_UNPROVEN" as const,
     oauthResourceServerConfigured: oauth.ok,
-    readyForHumanConnection: environment.VERCEL_ENV === "preview" && oauth.ok,
+    deploymentTopology: dedicated.ready
+      ? dedicated.topology : "SELLER_OS_ADMIN_APPLICATION" as const,
+    readyForHumanConnection: deployed && oauth.ok,
   }
 }
 
 const READ_ONLY_HEADERS = { "Cache-Control": "private, no-store, max-age=0",
   "X-Seller-OS-Assistant-Mode": "READ_ONLY",
   "X-Seller-OS-MCP-Version": SELLER_OS_MCP_ENDPOINT_VERSION } as const
+
+type SellerOsAssistantMonitorLoaderV1 = typeof loadSellerOsAssistantMonitorV1
 
 const STANDARD_RESOURCES = [
   { id: "seller-os://system-review", title: "Seller OS system review bundle",
@@ -50,13 +59,16 @@ function safeErrorResponse(status: number, code: number, message: string) {
     { status, headers: READ_ONLY_HEADERS })
 }
 
-export function createSellerOsMcpServerV1() {
+export function createSellerOsMcpServerV1(options: {
+  monitorLoader?: SellerOsAssistantMonitorLoaderV1
+} = {}) {
   const server = new McpServer({ name: "seller-os-private-readonly",
     version: SELLER_OS_MCP_ENDPOINT_VERSION }, {
     instructions: "Private Seller OS canonical read-only evidence. Preserve unavailable and unproven states. Never claim or perform marketplace, inventory, supplier, Registry, Product Case, buyer-message, WhatsApp, OAuth, environment, SQL, or arbitrary URL mutations.",
   })
   let monitorPromise: ReturnType<typeof loadSellerOsAssistantMonitorV1> | null = null
-  const monitor = () => (monitorPromise ??= loadSellerOsAssistantMonitorV1())
+  const monitorLoader = options.monitorLoader ?? loadSellerOsAssistantMonitorV1
+  const monitor = () => (monitorPromise ??= monitorLoader())
   for (const descriptor of SELLER_OS_ASSISTANT_TOOLS_V1) {
     const needsItem = descriptor.name === "seller_os_get_listing_intelligence"
     const needsCase = descriptor.name === "seller_os_get_opportunity_case"
@@ -145,6 +157,18 @@ export function createSellerOsMcpServerV1() {
   return server
 }
 
+async function serveAuthenticatedSellerOsMcpRequestV1(req: Request) {
+  const server = createSellerOsMcpServerV1()
+  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined,
+    enableJsonResponse: true })
+  await server.connect(transport)
+  const response = await transport.handleRequest(req)
+  const headers = new Headers(response.headers)
+  Object.entries(READ_ONLY_HEADERS).forEach(([key, value]) => headers.set(key, value))
+  return new Response(response.body, { status: response.status,
+    statusText: response.statusText, headers })
+}
+
 export async function handleSellerOsMcpRequestV1(req: Request) {
   const pathname = new URL(req.url).pathname
   if (pathname.startsWith("/api/seller-os/")) {
@@ -159,13 +183,31 @@ export async function handleSellerOsMcpRequestV1(req: Request) {
     method: req.method })
   if (boundary.blocked) return safeErrorResponse(403, -32003,
     "SELLER_OS_ASSISTANT_PREVIEW_ONLY")
-  const server = createSellerOsMcpServerV1()
-  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined,
-    enableJsonResponse: true })
-  await server.connect(transport)
-  const response = await transport.handleRequest(req)
+  return serveAuthenticatedSellerOsMcpRequestV1(req)
+}
+
+/**
+ * Entry point for the route-only dedicated HTTPS service. It deliberately does
+ * not inherit the admin application's Preview-only boundary: the separate app
+ * contains only the OAuth-protected MCP route and RFC 9728 metadata routes.
+ * Activation still fails closed until the exact dedicated mode and canonical
+ * HTTPS resource URI are configured server-side.
+ */
+export async function handleDedicatedSellerOsMcpRequestV1(req: Request) {
+  const pathname = new URL(req.url).pathname
+  const deployment = getSellerOsDedicatedMcpDeploymentStateV1()
+  if (!deployment.ready || pathname !== deployment.mcpPath) {
+    return Response.json({ error: "temporarily_unavailable",
+      error_description: "The dedicated Seller OS MCP resource is not activated." }, {
+      status: 503,
+      headers: READ_ONLY_HEADERS,
+    })
+  }
+  const oauth = await authenticateSellerOsMcpRequestV1(req)
+  if (!oauth.ok) return oauth.response
+  const response = await serveAuthenticatedSellerOsMcpRequestV1(req)
   const headers = new Headers(response.headers)
-  Object.entries(READ_ONLY_HEADERS).forEach(([key, value]) => headers.set(key, value))
+  headers.set("X-Seller-OS-MCP-Deployment", deployment.deploymentMode)
   return new Response(response.body, { status: response.status,
     statusText: response.statusText, headers })
 }
