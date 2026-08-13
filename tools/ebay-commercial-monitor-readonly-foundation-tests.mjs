@@ -268,7 +268,7 @@ test("la UI contiene las secciones canónicas y sólo un control GET de actualiz
   ]) {
     assert.match(client, new RegExp(heading.replace("/", "\\/")))
   }
-  assert.match(canonicalDashboard, /READ-ONLY/)
+  assert.match(canonicalDashboard, /Solo lectura/)
   assert.match(client, /Product Case/)
   assert.match(client, /NO_TOCAR/)
   assert.match(client, /dispatchAllowed/)
@@ -393,5 +393,6 @@ test("capabilities externas permanecen deny-by-default", () => {
 test("el grafo canónico se mantiene físicamente pequeño y auditable", () => {
   assert.ok(routeGraph.length > 3)
   assert.ok(uiGraph.length > 3)
-  assert.ok(runtimeGraph.length < 26, `unexpected dependency expansion: ${runtimeGraph.join(", ")}`)
+  assert.ok(runtimeGraph.includes("lib/seller-os/presentation.ts"))
+  assert.ok(runtimeGraph.length < 27, `unexpected dependency expansion: ${runtimeGraph.join(", ")}`)
 })

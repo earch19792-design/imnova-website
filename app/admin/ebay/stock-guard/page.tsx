@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 
 import type { CommercialListingReadModel, CommercialMonitorGetDto } from
   "@/lib/ebay/commercial-monitor-readonly-contract"
+import { presentSellerOsStatus } from "@/lib/seller-os/presentation"
 import { supabase } from "@/lib/supabase"
 
 type Payload = { success?: boolean; monitor?: CommercialMonitorGetDto; error?: string }
@@ -15,8 +16,8 @@ type PortfolioFilter = "ALL" | "NEEDS_SUPPLIER_LINK" | "EXACT_PROVEN" |
   "STOCK_RISK" | "STALE" | "UNKNOWN" | "ACTIONABLE"
 
 function shown(value: string | number | boolean | null | undefined) {
-  if (value === null || value === undefined || value === "") return "Unproven"
-  if (typeof value === "boolean") return value ? "Available" : "Not available"
+  if (value === null || value === undefined || value === "") return "No comprobado"
+  if (typeof value === "boolean") return value ? "Disponible" : "No disponible"
   return String(value)
 }
 
@@ -46,12 +47,12 @@ function stockRisk(listing: CommercialListingReadModel) {
 }
 
 function recommendedAction(risk: string) {
-  if (["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK"].includes(risk)) return "Human review required"
-  if (risk === "LOW_STOCK_CONFIRMED") return "Review published exposure and recapture priority"
-  if (["STALE_EVIDENCE", "SOURCE_CHANGED"].includes(risk)) return "Refresh Luna evidence"
-  if (risk === "IDENTITY_UNPROVEN") return "Capture and approve an exact supplier link"
-  if (risk === "STOCK_UNKNOWN") return "Complete supplier availability evidence"
-  return "Monitor"
+  if (["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK"].includes(risk)) return "Revisión humana requerida"
+  if (risk === "LOW_STOCK_CONFIRMED") return "Revisar exposición publicada y prioridad de recaptura"
+  if (["STALE_EVIDENCE", "SOURCE_CHANGED"].includes(risk)) return "Actualizar evidencia de Luna"
+  if (risk === "IDENTITY_UNPROVEN") return "Capturar y aprobar un vínculo exacto del proveedor"
+  if (risk === "STOCK_UNKNOWN") return "Completar evidencia de disponibilidad del proveedor"
+  return "Supervisar"
 }
 
 export default function StockGuardPage() {
@@ -97,25 +98,77 @@ export default function StockGuardPage() {
     filter === "UNKNOWN" && row.listing.stock.state === "STOCK_UNKNOWN" ||
     filter === "ACTIONABLE" && row.risk !== "NO_PROVEN_RISK" && row.risk !== "STOCK_UNKNOWN")
   const filters: Array<[PortfolioFilter, string, number]> = [
-    ["ALL", "All", rows.length], ["NEEDS_SUPPLIER_LINK", "Needs supplier link", needsLinkCount],
-    ["EXACT_PROVEN", "Exact proven", exactCount], ["STOCK_RISK", "Stock risk", stockRiskCount],
-    ["STALE", "Stale", staleCount], ["UNKNOWN", "Unknown", unknownCount],
-    ["ACTIONABLE", "Actionable", actionableCount],
+    ["ALL", "Todo", rows.length], ["NEEDS_SUPPLIER_LINK", "Necesita vínculo", needsLinkCount],
+    ["EXACT_PROVEN", "Exacto comprobado", exactCount], ["STOCK_RISK", "Riesgo de stock", stockRiskCount],
+    ["STALE", "Evidencia vencida", staleCount], ["UNKNOWN", "Desconocido", unknownCount],
+    ["ACTIONABLE", "Accionable", actionableCount],
   ]
 
   return <main className="min-h-screen bg-[#eef2f6] p-4 text-slate-950 md:p-7">
     <div className="mx-auto max-w-[1500px] space-y-4">
       <header className="flex flex-wrap items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5">
-        <div><Link href="/admin/ebay/monitor" className="inline-flex items-center gap-2 text-xs font-bold text-cyan-700"><ArrowLeft size={14} />Commercial Monitor</Link><h1 className="mt-3 text-2xl font-black">Stock Guard V2</h1><p className="mt-1 text-sm text-slate-500">Exact supplier evidence joined onto authoritative live Item IDs. Unknown is not risk.</p></div>
-        <div className="flex items-center gap-2"><Link href="/admin/ebay/copilot?surface=STOCK" className="rounded-lg border border-violet-200 px-3 py-2 text-xs font-black text-violet-700">Ask Copilot</Link><span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700"><ShieldCheck size={15} />READ-ONLY</span><button onClick={() => void load()} disabled={loading} className="rounded-lg border border-slate-200 p-2 text-slate-600 disabled:opacity-40" aria-label="Refresh Stock Guard"><RefreshCw size={16} /></button></div>
+        <div><Link href="/admin/ebay/monitor" className="inline-flex items-center gap-2 text-sm font-bold text-cyan-700"><ArrowLeft size={14} />Monitor comercial</Link><h1 className="mt-3 text-[28px] font-black md:text-[32px]">Inventario y Stock Guard</h1><p className="mt-1 text-base text-slate-500">Evidencia exacta del proveedor vinculada a Item IDs activos autoritativos. Desconocido no equivale a riesgo.</p></div>
+        <div className="flex items-center gap-2"><Link href="/admin/ebay/copilot?surface=STOCK" className="rounded-lg border border-violet-200 px-3 py-2 text-sm font-black text-violet-700">Preguntar al Copilot</Link><span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-sm font-bold text-emerald-700"><ShieldCheck size={15} />Solo lectura</span><button onClick={() => void load()} disabled={loading} className="rounded-lg border border-slate-200 p-2 text-slate-600 disabled:opacity-40" aria-label="Actualizar Stock Guard"><RefreshCw size={16} /></button></div>
       </header>
-      {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">Read stopped safely: {error}</div>}
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8"><article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[10px] font-black uppercase text-slate-400">Stock Guard engine</p><p className="mt-2 font-black text-emerald-700">READY</p></article><article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[10px] font-black uppercase text-slate-400">Live listings</p><p className="mt-2 text-xl font-black">{monitor ? rows.length : "—"}</p></article><article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[10px] font-black uppercase text-slate-400">Exact supplier-linked</p><p className="mt-2 text-xl font-black">{monitor ? exactCount : "—"}</p></article><article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[10px] font-black uppercase text-slate-400">Awaiting evidence</p><p className="mt-2 text-xl font-black">{monitor ? needsLinkCount : "—"}</p><p className="mt-1 text-[9px] font-bold text-amber-700">{monitor && exactCount === 0 ? "LUNA READY BUT NOT ACTIVATED" : "LUNA LINK COVERAGE"}</p></article><article className="rounded-xl border border-rose-200 bg-white p-4"><p className="text-[10px] font-black uppercase text-rose-600">Stock risks</p><p className="mt-2 text-xl font-black">{monitor ? stockRiskCount : "—"}</p></article><article className="rounded-xl border border-amber-200 bg-white p-4"><p className="text-[10px] font-black uppercase text-amber-700">Stale evidence</p><p className="mt-2 text-xl font-black">{monitor ? staleCount : "—"}</p></article><article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[10px] font-black uppercase text-slate-400">Stock unknown</p><p className="mt-2 text-xl font-black">{monitor ? unknownCount : "—"}</p><p className="mt-1 text-[9px] font-bold text-slate-400">NOT A RISK</p></article><article className="rounded-xl border border-cyan-200 bg-white p-4"><p className="text-[10px] font-black uppercase text-cyan-700">Actionable</p><p className="mt-2 text-xl font-black">{monitor ? actionableCount : "—"}</p></article></section>
-      {monitor && exactCount === 0 && <section className="rounded-2xl border border-cyan-200 bg-cyan-50 p-5"><div className="flex gap-3"><Link2 className="shrink-0 text-cyan-700" /><div><h2 className="font-black">Supplier activation required</h2><p className="mt-1 text-sm text-cyan-950">Stock states remain unavailable until Luna evidence identifies the exact supplier product, variant and SKU and a human approves the Item-ID relationship.</p><p className="mt-3 text-xs font-bold">Next safe action: capture one exact Luna variant, review the evidence, then approve the deterministic link. No fuzzy or automatic linkage is performed.</p></div></div></section>}
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="border-b border-slate-200 px-4 py-3"><div className="flex items-center justify-between"><div><h2 className="font-black">Current live portfolio</h2><p className="text-xs text-slate-500">One row per authoritative Trading Item ID</p></div><span className="text-xs font-bold text-slate-500">{loading ? "Reading…" : `${visibleRows.length} of ${rows.length} listings`}</span></div><div className="mt-3 flex flex-wrap gap-2" aria-label="Stock Guard portfolio filters">{filters.map(([value, label, count]) => <button type="button" key={value} onClick={() => setFilter(value)} aria-pressed={filter === value} className={`rounded-full border px-3 py-1.5 text-[10px] font-black ${filter === value ? "border-cyan-600 bg-cyan-50 text-cyan-800" : "border-slate-200 text-slate-500"}`}>{label} · {count}</button>)}</div></div>
-        <div className="divide-y divide-slate-100">{visibleRows.map(({ listing, risk }) => { const hardOverride = listing.experiment.status === "AVAILABLE" && listing.experiment.lifecycleState === "RUNNING" && ["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK"].includes(risk); return <article key={listing.identity.itemId} className="grid gap-3 p-4 lg:grid-cols-[minmax(260px,1.4fr)_repeat(4,minmax(130px,1fr))]"><div className="flex min-w-0 gap-3">{listing.identity.primaryImageUrl ? <Image src={listing.identity.primaryImageUrl} alt="" width={54} height={54} unoptimized className="h-14 w-14 shrink-0 rounded-lg border border-slate-200 object-cover" /> : <span className="grid h-14 w-14 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-400"><ImageOff size={18} /></span>}<div className="min-w-0"><h3 className="truncate text-sm font-black">{listing.identity.title ?? `Item ${listing.identity.itemId}`}</h3><p className="mt-1 text-[11px] text-slate-500">Item {listing.identity.itemId} · SKU {shown(listing.identity.sku)}</p><p className="mt-1 text-[10px] font-bold text-cyan-700">{listing.identity.primaryImageSource ?? "IMAGE UNPROVEN"}</p></div></div><div><p className="text-[9px] font-black uppercase text-slate-400">Supplier link</p><p className="mt-1 text-xs font-bold">{exactSupplierEvidence(listing) ? "EXACT EVIDENCE" : "UNPROVEN"}</p><p className="mt-1 text-[11px] text-slate-500">Product {shown(listing.stock.supplierProductId)} · Variant {shown(listing.stock.supplierVariantId)} · SKU {shown(listing.stock.supplierSku)}</p></div><div><p className="text-[9px] font-black uppercase text-slate-400">Stock evidence</p><p className="mt-1 text-xs font-bold">{listing.stock.state.replaceAll("_", " ")}</p><p className="mt-1 text-[11px] text-slate-500">Supplier {shown(listing.stock.quantity.value)} · Published {shown(listing.identity.listedQuantity)} · Safe capacity {shown(listing.composition.bundleCapacity.value)}</p></div><div><p className="text-[9px] font-black uppercase text-slate-400">Freshness</p><p className="mt-1 text-xs font-bold">{listing.stock.freshness.status}</p><p className="mt-1 text-[11px] text-slate-500">Age {shown(listing.stock.freshness.ageSeconds)} sec · source {listing.stock.sourceContractStatus}</p></div><div><p className="text-[9px] font-black uppercase text-slate-400">Risk / action</p><p className={`mt-1 text-xs font-black ${["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK"].includes(risk) ? "text-rose-700" : "text-slate-700"}`}>{risk.replaceAll("_", " ")}</p><p className="mt-1 text-[11px] text-slate-500">{recommendedAction(risk)}</p>{hardOverride && <p className="mt-1 flex items-center gap-1 text-[10px] font-black text-rose-700"><AlertTriangle size={12} />HARD OVERRIDE · HUMAN REVIEW</p>}</div></article> })}{!loading && visibleRows.length === 0 && <div className="flex items-center gap-3 p-6 text-sm text-slate-500"><Box />No listings match this evidence filter.</div>}</div>
+      {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">La lectura se detuvo de forma segura: {error}</div>}
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+        <article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[13px] font-black text-slate-500">Motor Stock Guard</p><p className="mt-2 font-black text-emerald-700">Listo</p></article>
+        <article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[13px] font-black text-slate-500">Publicaciones activas</p><p className="mt-2 text-xl font-black">{monitor ? rows.length : "—"}</p></article>
+        <article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[13px] font-black text-slate-500">Vínculo exacto del proveedor</p><p className="mt-2 text-xl font-black">{monitor ? exactCount : "—"}</p></article>
+        <article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[13px] font-black text-slate-500">Esperando evidencia</p><p className="mt-2 text-xl font-black">{monitor ? needsLinkCount : "—"}</p><p className="mt-1 text-[13px] font-bold text-amber-700">{monitor && exactCount === 0 ? "Luna lista, no activada" : "Cobertura de vínculos Luna"}</p></article>
+        <article className="rounded-xl border border-rose-200 bg-white p-4"><p className="text-[13px] font-black text-rose-700">Riesgos de stock</p><p className="mt-2 text-xl font-black">{monitor ? stockRiskCount : "—"}</p></article>
+        <article className="rounded-xl border border-amber-200 bg-white p-4"><p className="text-[13px] font-black text-amber-800">Evidencia vencida</p><p className="mt-2 text-xl font-black">{monitor ? staleCount : "—"}</p></article>
+        <article className="rounded-xl border border-slate-200 bg-white p-4"><p className="text-[13px] font-black text-slate-500">Stock desconocido</p><p className="mt-2 text-xl font-black">{monitor ? unknownCount : "—"}</p><p className="mt-1 text-[13px] font-bold text-slate-500">No es un riesgo comprobado</p></article>
+        <article className="rounded-xl border border-cyan-200 bg-white p-4"><p className="text-[13px] font-black text-cyan-800">Accionable</p><p className="mt-2 text-xl font-black">{monitor ? actionableCount : "—"}</p></article>
       </section>
-      <p className="flex items-center gap-2 rounded-xl bg-slate-900 p-3 text-xs text-white"><PackageCheck size={15} />0 eBay writes · 0 Inventory writes · 0 Registry writes · recommendations only</p>
+      {monitor && exactCount === 0 && <section className="rounded-2xl border border-cyan-200 bg-cyan-50 p-5"><div className="flex gap-3"><Link2 className="shrink-0 text-cyan-700" /><div><h2 className="text-lg font-black">Se requiere activar el vínculo del proveedor</h2><p className="mt-1 text-sm text-cyan-950">Los estados de stock permanecen no disponibles hasta que Luna identifique producto, variante y SKU exactos y una persona apruebe la relación con el Item ID.</p><p className="mt-3 text-sm font-bold">Siguiente acción segura: capturar una variante exacta de Luna, revisar la evidencia y aprobar el vínculo determinista. No se realiza vinculación difusa ni automática.</p></div></div></section>}
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="border-b border-slate-200 px-4 py-3"><div className="flex items-center justify-between"><div><h2 className="text-lg font-black">Portafolio activo</h2><p className="text-sm text-slate-500">Una fila por Item ID autoritativo de Trading</p></div><span className="text-sm font-bold text-slate-500">{loading ? "Leyendo…" : `${visibleRows.length} de ${rows.length} publicaciones`}</span></div><div className="mt-3 flex flex-wrap gap-2" aria-label="Filtros del portafolio de Stock Guard">{filters.map(([value, label, count]) => <button type="button" key={value} onClick={() => setFilter(value)} aria-pressed={filter === value} className={`rounded-full border px-3 py-1.5 text-[13px] font-black ${filter === value ? "border-cyan-600 bg-cyan-50 text-cyan-800" : "border-slate-200 text-slate-500"}`}>{label} · {count}</button>)}</div></div>
+        <div className="divide-y divide-slate-100">
+          {visibleRows.map(({ listing, risk }) => {
+            const hardOverride = listing.experiment.status === "AVAILABLE" &&
+              listing.experiment.lifecycleState === "RUNNING" &&
+              ["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK"].includes(risk)
+            return (
+              <article key={listing.identity.itemId} className="grid min-h-[88px] gap-4 p-4 lg:grid-cols-[minmax(280px,1.4fr)_repeat(4,minmax(145px,1fr))]">
+                <div className="flex min-w-0 gap-3">
+                  {listing.identity.primaryImageUrl
+                    ? <Image src={listing.identity.primaryImageUrl} alt="" width={64} height={64} unoptimized className="h-16 w-16 shrink-0 rounded-xl border border-slate-200 object-cover" />
+                    : <span className="grid h-16 w-16 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-400"><ImageOff size={20} /></span>}
+                  <div className="min-w-0">
+                    <h3 className="truncate text-[15px] font-black">{listing.identity.title ?? `Item ${listing.identity.itemId}`}</h3>
+                    <p className="mt-1 text-[13px] text-slate-500">Item {listing.identity.itemId} · SKU {shown(listing.identity.sku)}</p>
+                    <p className="mt-1 text-[13px] font-bold text-cyan-700">{listing.identity.primaryImageUrl ? "Imagen disponible" : "Imagen no comprobada"}</p>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[13px] font-black uppercase text-slate-400">Vínculo del proveedor</p>
+                  <p className="mt-1 text-sm font-bold">{exactSupplierEvidence(listing) ? "Evidencia exacta" : "No comprobado"}</p>
+                  <p className="mt-1 text-[13px] leading-5 text-slate-500">Producto {shown(listing.stock.supplierProductId)} · Variante {shown(listing.stock.supplierVariantId)} · SKU {shown(listing.stock.supplierSku)}</p>
+                </div>
+                <div>
+                  <p className="text-[13px] font-black uppercase text-slate-400">Evidencia de stock</p>
+                  <p className="mt-1 text-sm font-bold">{presentSellerOsStatus(listing.stock.state)}</p>
+                  <p className="mt-1 text-[13px] leading-5 text-slate-500">Proveedor {shown(listing.stock.quantity.value)} · Publicado {shown(listing.identity.listedQuantity)} · Capacidad segura {shown(listing.composition.bundleCapacity.value)}</p>
+                </div>
+                <div>
+                  <p className="text-[13px] font-black uppercase text-slate-400">Vigencia</p>
+                  <p className="mt-1 text-sm font-bold">{presentSellerOsStatus(listing.stock.freshness.status)}</p>
+                  <p className="mt-1 text-[13px] leading-5 text-slate-500">Antigüedad {shown(listing.stock.freshness.ageSeconds)} s · fuente {presentSellerOsStatus(listing.stock.sourceContractStatus)}</p>
+                </div>
+                <div>
+                  <p className="text-[13px] font-black uppercase text-slate-400">Riesgo y acción</p>
+                  <p className={`mt-1 text-sm font-black ${["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK"].includes(risk) ? "text-rose-700" : "text-slate-700"}`}>{presentSellerOsStatus(risk)}</p>
+                  <p className="mt-1 text-[13px] leading-5 text-slate-500">{recommendedAction(risk)}</p>
+                  {hardOverride && <p className="mt-1 flex items-center gap-1 text-[13px] font-black text-rose-700"><AlertTriangle size={14} />Excepción crítica · revisión humana</p>}
+                  <details className="mt-2"><summary className="cursor-pointer text-[13px] font-bold text-cyan-700">Ver códigos técnicos</summary><p className="mt-1 font-mono text-[13px] text-slate-500">{risk} · {listing.stock.state} · {listing.stock.sourceContractStatus}</p></details>
+                </div>
+              </article>
+            )
+          })}
+          {!loading && visibleRows.length === 0 && <div className="flex items-center gap-3 p-6 text-sm text-slate-500"><Box />Ninguna publicación coincide con este filtro de evidencia.</div>}
+        </div>
+      </section>
+      <p className="flex items-center gap-2 rounded-xl bg-slate-900 p-3 text-sm text-white"><PackageCheck size={15} />0 escrituras en eBay · 0 escrituras de inventario · 0 escrituras del registro · sólo recomendaciones</p>
     </div>
   </main>
 }

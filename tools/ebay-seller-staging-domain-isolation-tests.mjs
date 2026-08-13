@@ -86,12 +86,14 @@ test("unauthorized admin pages redirect server-side with a safe internal return 
   assert.match(returnPath, /candidate\.startsWith\("\/\/"\)/)
 })
 
-test("canonical navigation has exactly five professional areas and one source", () => {
+test("canonical navigation has intent-based areas and one source", () => {
   const navigation = read("lib/seller-os/navigation.ts")
   const mobile = read("app/admin/ebay/components/seller-os-mobile-nav.tsx")
-  const ids = [...navigation.matchAll(/id: "(home|ebay-opportunities|listings|operations|health-settings)"/g)].map((match) => match[1])
-  assert.deepEqual(ids, ["home", "ebay-opportunities", "listings", "operations", "health-settings"])
-  assert.match(mobile, /SELLER_OS_NAVIGATION\.map/)
+  const ids = [...navigation.matchAll(/id: "(monitor|listings|opportunities|experiments|inventory|orders|decisions|learning|system-status)"/g)].map((match) => match[1])
+  assert.deepEqual(ids, ["monitor", "listings", "opportunities", "experiments", "inventory",
+    "orders", "decisions", "learning", "system-status"])
+  assert.match(mobile, /SELLER_OS_MOBILE_NAVIGATION\.map/)
+  assert.match(navigation, /objective:/)
   assert.doesNotMatch(mobile, /const destinations|Comunidad|Idea Lab|Productos IMNOVA|Product Development/)
 })
 

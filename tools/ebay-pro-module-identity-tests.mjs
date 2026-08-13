@@ -257,7 +257,7 @@ test("canonical Seller OS hub is lightweight and does not read data", () => {
     true,
   );
   assert.equal(
-    content.includes("Crear o publicar un listing en eBay requiere una autorización separada"),
+    content.includes("Crear o activar una publicación en eBay requiere una autorización separada"),
     true,
   );
   assert.equal(
@@ -265,7 +265,7 @@ test("canonical Seller OS hub is lightweight and does not read data", () => {
     true,
   );
   assert.equal(
-    content.includes("Seller Command Center"),
+    content.includes("Centro de mando"),
     true,
   );
   assert.equal(
@@ -273,7 +273,7 @@ test("canonical Seller OS hub is lightweight and does not read data", () => {
     true,
   );
   assert.equal(
-    content.includes("Optimizar listing"),
+    content.includes("Optimizar publicación"),
     true,
   );
   assert.equal(

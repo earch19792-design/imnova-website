@@ -10,6 +10,10 @@ const client = readFileSync(
   new URL("./commercial-monitor-readonly-client.tsx", import.meta.url),
   "utf8",
 )
+const presentation = readFileSync(
+  new URL("../../../../lib/seller-os/presentation.ts", import.meta.url),
+  "utf8",
+)
 
 test("canonical dashboard consumes backend DTO states without synthetic KPI fallbacks", () => {
   assert.ok(dashboard.startsWith('"use client"'))
@@ -20,20 +24,20 @@ test("canonical dashboard consumes backend DTO states without synthetic KPI fall
     "selectedTraffic.ctr",
     "selectedTraffic.quantitySold",
     "backend.kpis.orders.value",
-    "UNAVAILABLE_AUTH_PENDING",
-    "UNAVAILABLE_NO_CURRENT_REPORT",
     "backend.capabilities.inventory.inventoryItemsResource",
-    "DEGRADED",
-    "PARTIAL_CERTIFIED",
   ]) {
     assert.match(dashboard, new RegExp(expression))
   }
   assert.match(dashboard, /value === null \? "—"/)
-  assert.match(dashboard, /No current report/)
+  assert.match(dashboard, /Sin informe vigente/)
   assert.match(dashboard, /No se generan puntos sintéticos/)
-  assert.match(dashboard, /No se inventan benchmarks Top-10%/)
+  for (const status of ["UNAVAILABLE_AUTH_PENDING", "UNAVAILABLE_NO_CURRENT_REPORT",
+    "DEGRADED", "PARTIAL_CERTIFIED"]) {
+    assert.match(presentation, new RegExp(status))
+  }
+  assert.match(dashboard, /No se inventan valores del Top 10 %/)
   assert.match(dashboard, /suffix="%"/)
-  assert.match(dashboard, /TRANSACTION · not orders/)
+  assert.match(dashboard, /Métrica TRANSACTION de eBay Analytics; no equivale a órdenes/)
   assert.match(dashboard, /backend\.trafficScopes\.accountTraffic/)
 })
 
@@ -44,13 +48,12 @@ test("canonical dashboard surfaces decisions and review-only Registry state with
     "CONVERSION",
     "DATA_QUALITY",
     "HEALTHY_WAIT",
-    "eBay guidance vs Seller OS",
-    "Priority action plan",
-    "Upcoming reviews",
-    "Human Review",
-    "DO NOT TOUCH",
-    "Experiments",
-    "0 marketplace writes · 0 Registry writes",
+    "Portafolio y decisiones comerciales",
+    "Plan de acción prioritario",
+    "Próximas revisiones",
+    "Revisión humana",
+    "Experimentos",
+    "0 escrituras de marketplace · 0 escrituras del registro",
   ]) {
     assert.match(dashboard, new RegExp(expression))
   }
@@ -62,7 +65,7 @@ test("canonical dashboard surfaces decisions and review-only Registry state with
   assert.match(dashboard, /onClick=\{onRefresh\}/)
   assert.match(dashboard, /ACCOUNT_TRAFFIC/)
   assert.match(dashboard, /CURRENT_LIVE_PORTFOLIO/)
-  assert.match(dashboard, /no portfolio fallback/i)
+  assert.match(dashboard, /sin usar el portafolio como sustituto/i)
   assert.match(dashboard, /renderedCriticalAlerts\.length/)
   assert.match(dashboard, /priorityActionPlan/)
 })
@@ -70,13 +73,12 @@ test("canonical dashboard surfaces decisions and review-only Registry state with
 test("canonical dashboard exposes scope integrity without implying unknown stock is safe", () => {
   for (const expression of [
     "backend.livePortfolioIntegrity",
-    "Current Live Cohort",
-    "Listings canónicos",
-    "Evidencia stock no-live",
+    "Publicaciones canónicas",
+    "Evidencia histórica",
     "Item IDs duplicados",
-    "Colisiones SKU live",
-    "Riesgos de stock probados",
-    "Stock UNKNOWN no se clasifica como riesgo ni como seguro",
+    "Colisiones de SKU activos",
+    "Riesgos de stock comprobados",
+    "Stock desconocido no se clasifica como riesgo ni como seguro",
   ]) {
     assert.match(dashboard, new RegExp(expression))
   }
@@ -85,32 +87,55 @@ test("canonical dashboard exposes scope integrity without implying unknown stock
   assert.match(dashboard, /liveSkuUniqueness\.collisionCount/)
 })
 
-test("canonical dashboard preserves the dense desktop cockpit composition", () => {
+test("canonical dashboard prioritizes operator intent and legibility", () => {
   for (const expression of [
-    "w-\\[200px\\]",
-    "eBay Commercial Monitor",
-    "Cockpit operativo, diagnóstico y decisiones basadas en datos",
-    "EBAY GUIDANCE",
-    "Listings Activos",
-    "Experimentos RUNNING",
-    "grid-cols-\\[minmax\\(0,1fr\\)_288px\\]",
-    "Alertas críticas",
+    "Monitor comercial de eBay",
+    "Solo lectura",
+    "Publicaciones activas",
+    "Experimentos en curso",
+    "Alertas comerciales",
+    "Integridad del sistema",
+    "Estado del sistema",
+    "Tráfico de la cuenta",
+    "Portafolio activo",
     "Plan de acción prioritario",
-    "System 100% read-only",
+    "Seller OS funciona en modo de solo lectura",
     "Rendimiento general",
     "Distribución por estado",
     "Distribución por tipo",
-    "Benchmark categoría",
-    "Account traffic",
-    "Current live portfolio",
+    "Benchmark de categoría",
   ]) {
     assert.match(dashboard, new RegExp(expression))
   }
   assert.match(dashboard, /liveRows\.map/)
   assert.match(dashboard, /table-fixed/)
   assert.match(dashboard, /identity\.primaryImageUrl/)
+  assert.match(dashboard, /h-16 w-16/)
+  assert.match(dashboard, /min-h-\[88px\]/)
+  assert.match(dashboard, /listing\.metrics\.impressions\.value/)
+  assert.match(dashboard, /listing\.metrics\.ebay_views\.value/)
+  assert.match(dashboard, /listing\.metrics\.transactions\.value/)
   assert.doesNotMatch(dashboard, /min-w-\[820px\]|overflow-x-auto/)
   assert.match(dashboard, /No se generan puntos sintéticos/)
+  assert.doesNotMatch(dashboard, /rounded-full border-\[11px\]/)
+})
+
+test("canonical dashboard uses progressive disclosure for technical integrity", () => {
+  assert.match(dashboard, /<details id="system-integrity"/)
+  assert.match(dashboard, /Ver detalle técnico/)
+  assert.match(dashboard, /presentSellerOsCode\(finding\.invariantCode\)/)
+  assert.match(dashboard, /finding\.invariantCode} · {finding\.lifecycle}/)
+  assert.match(dashboard, /activeIntegrityFindings\.length/)
+  assert.match(dashboard, /mitigatedIntegrityFindings\.length/)
+  assert.match(dashboard, /passingIntegrityGuards/)
+})
+
+test("commercial and system alerts remain visually and semantically distinct", () => {
+  assert.match(dashboard, /Alertas comerciales/)
+  assert.match(dashboard, /Integridad del sistema/)
+  assert.match(dashboard, /acciones comerciales ejecutables/)
+  assert.match(dashboard, /relaciones del registro requieren revisión humana/)
+  assert.match(dashboard, /Cero riesgos de stock comprobados no significa/)
 })
 
 test("legacy technical diagnostics remain secondary to the canonical dashboard", () => {
@@ -118,13 +143,13 @@ test("legacy technical diagnostics remain secondary to the canonical dashboard",
   assert.match(client, /<details id="advanced-diagnostics"/)
   assert.match(client, /Diagnóstico técnico avanzado/)
   assert.doesNotMatch(client, /Estado comercial verificable, sin ejecutar cambios/)
-  assert.match(client, /SellerOsMobileNav active="operations" hideOnDesktop/)
+  assert.match(client, /SellerOsMobileNav active="monitor" hideOnDesktop/)
 })
 
 test("live Trading rows remain visible when Quality Report is unavailable", () => {
   assert.match(dashboard, /const liveRows = backend\.decisions\.flatMap/)
-  assert.match(dashboard, /qualityUnavailable \? <>/)
-  assert.match(dashboard, /No current report/)
+  assert.match(dashboard, /qualityUnavailable \? \(/)
+  assert.match(dashboard, /Sin informe vigente/)
   assert.match(dashboard, /ImageOff/)
   assert.match(dashboard, /key=\{listing\.identity\.itemId\}/)
   assert.match(dashboard, /decision\.experimentRunning/)

@@ -1762,10 +1762,10 @@ export default function EbayMobileReviewPage() {
         </footer>
       </section>
       <SellerOsMobileNav
-        active={view === "blocked" ? "operations" : "ebay-opportunities"}
+        active={view === "blocked" ? "inventory" : "opportunities"}
         operationCount={serverReviewsLoadState === "READY" ? alertCount : 0}
         onNavigate={(destination) => {
-          if (destination === "ebay-opportunities") { setView("opportunities"); return true }
+          if (destination === "opportunities") { setView("opportunities"); return true }
           if (hasReviewInProgress && !confirmReviewReset()) return true
           return false
         }}

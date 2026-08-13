@@ -11,6 +11,7 @@ import type {
   Observation,
 } from "@/lib/ebay/commercial-monitor-readonly-contract"
 import { supabase } from "@/lib/supabase"
+import { presentSellerOsStatus } from "@/lib/seller-os/presentation"
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 import { CommercialMonitorCanonicalDashboard } from "./commercial-monitor-canonical-dashboard"
 
@@ -25,20 +26,20 @@ const numberFormatter = new Intl.NumberFormat("es-US", {
 })
 
 const metricLabels: Record<CommercialMetricKey, string> = {
-  listing_price: "Precio del listing",
+  listing_price: "Precio de la publicación",
   impressions: "Impresiones",
   ebay_views: "Vistas eBay calculadas",
   external_views: "Vistas externas",
   ctr_reported: "CTR reportado",
   ctr_calculated: "CTR calculado",
-  watchers: "Watchers",
+  watchers: "Seguidores",
   transactions: "Transacciones Analytics",
   orders: "Órdenes observadas",
   units_sold: "Unidades observadas",
   conversion: "Conversión reportada",
   revenue: "Ingresos observados",
-  fees: "Fees",
-  promoted_fees: "Promoted fees",
+  fees: "Comisiones",
+  promoted_fees: "Comisiones promocionadas",
   supplier_cost: "Costo proveedor",
   shipping: "Envío",
   contribution: "Contribución",
@@ -75,8 +76,8 @@ const statusTone: Record<string, string> = {
 
 function Status({ value }: { value: string }) {
   return (
-    <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wide ${statusTone[value] ?? statusTone.UNKNOWN}`}>
-      {value.replaceAll("_", " ")}
+    <span title={value} className={`inline-flex rounded-full border px-2.5 py-1 text-[13px] font-bold ${statusTone[value] ?? statusTone.UNKNOWN}`}>
+      {presentSellerOsStatus(value)} <span className="ml-1 font-mono text-[11px] opacity-60">· {value}</span>
     </span>
   )
 }
@@ -97,7 +98,7 @@ function formatTimestamp(value: string | null) {
 }
 
 function shortCode(value: string | null) {
-  return value ? value.replaceAll("_", " ") : "Sin limitación reportada"
+  return value ?? "Sin limitación reportada"
 }
 
 function humanError(code: string) {
@@ -105,13 +106,13 @@ function humanError(code: string) {
     AUTH_REQUIRED: "La sesión Admin expiró. Vuelve a iniciar sesión.",
     ADMIN_FORBIDDEN: "La cuenta autenticada no tiene permisos de administrador.",
     COMMERCIAL_MONITOR_PREVIEW_ONLY:
-      "Commercial Monitor está aislado de Production.",
+      "El Monitor comercial está aislado de Producción.",
     COMMERCIAL_MONITOR_ASSISTANT_DTO_SANITIZATION_FAILED:
       "La respuesta fue bloqueada por el filtro de datos sensibles.",
     COMMERCIAL_MONITOR_READONLY_REQUEST_FAILED:
       "No se pudo construir la lectura comercial sanitizada.",
   }
-  return messages[code] ?? "No se pudo consultar Commercial Monitor. Intenta nuevamente."
+  return messages[code] ?? "No se pudo consultar el Monitor comercial. Intenta nuevamente."
 }
 
 function isCalculatedObservation(
@@ -128,7 +129,7 @@ function MetricValue({ observation }: { observation: Observation<number> }) {
         <strong className="text-xl">{formatNumber(observation.value)}{observation.value !== null && observation.unit ? ` ${observation.unit}` : ""}</strong>
         <Status value={observation.availability} />
       </div>
-      <dl className="mt-3 space-y-1 text-[11px] leading-5 text-white/55">
+      <dl className="mt-3 space-y-1 text-[13px] leading-5 text-white/55">
         <div><dt className="inline font-bold text-white/75">Completitud: </dt><dd className="inline">{observation.completeness}</dd></div>
         <div><dt className="inline font-bold text-white/75">Grano: </dt><dd className="inline">{observation.grain}</dd></div>
         <div><dt className="inline font-bold text-white/75">Fuente: </dt><dd className="inline break-all">{observation.source.system} · {observation.source.operation}</dd></div>
@@ -150,9 +151,9 @@ function HeroCard({ label, value, detail }: {
 }) {
   return (
     <article className="rounded-3xl border border-white/10 bg-white/[0.045] p-5">
-      <p className="text-[11px] font-black uppercase tracking-[0.2em] text-white/45">{label}</p>
+      <p className="text-[13px] font-black uppercase tracking-[0.12em] text-white/45">{label}</p>
       <p className="mt-3 text-3xl font-black">{value}</p>
-      <p className="mt-2 text-xs leading-5 text-white/55">{detail}</p>
+      <p className="mt-2 text-[13px] leading-5 text-white/55">{detail}</p>
     </article>
   )
 }
@@ -250,7 +251,7 @@ export function CommercialMonitorReadonlyClient() {
           onRefresh={() => void loadMonitor()}
           refreshing={loading}
         />
-        <div className="bg-[#05070d] px-4 py-6 text-white sm:px-6 xl:pl-[216px]">
+        <div className="bg-[#05070d] px-4 py-6 text-white sm:px-6">
           <details id="advanced-diagnostics" className="mx-auto max-w-[1680px] rounded-2xl border border-white/10 bg-white/[0.025] p-5 md:p-7">
             <summary className="cursor-pointer list-none text-sm font-black text-white/80 marker:hidden">Diagnóstico técnico avanzado <span className="ml-2 text-xs font-normal text-white/45">Readers, evidencia, detalles de composición y auditoría</span></summary>
             <div className="mt-6 space-y-6">
@@ -260,10 +261,10 @@ export function CommercialMonitorReadonlyClient() {
               <p className="text-xs text-white/50">Generado <time dateTime={monitor.generatedAt}>{formatTimestamp(monitor.generatedAt)}</time></p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <HeroCard label="Items live observados" value={monitor.discoveryCoverage.dimensions?.liveEnumeration.observedLiveItemCount === null || monitor.discoveryCoverage.dimensions?.liveEnumeration.observedLiveItemCount === undefined ? "—" : numberFormatter.format(monitor.discoveryCoverage.dimensions.liveEnumeration.observedLiveItemCount)} detail="Trading ActiveList; es total autoritativo sólo cuando Discovery live está COMPLETE." />
-              <HeroCard label="Discovery live" value={monitor.discoveryCoverage.dimensions?.liveEnumeration.status ?? monitor.discoveryCoverage.status} detail={monitor.discoveryCoverage.knownGapCodes.map(shortCode).join(" · ") || "Sin gaps de enumeración live"} />
-              <HeroCard label="Blockers" value={blockerCount === undefined ? "—" : numberFormatter.format(blockerCount)} detail="Separados de cualquier recomendación comercial." />
-              <HeroCard label="Alert candidates" value={numberFormatter.format(monitor.alertCandidates.length)} detail="Candidatos internos; dispatchAllowed=false." />
+              <HeroCard label="Items activos observados" value={monitor.discoveryCoverage.dimensions?.liveEnumeration.observedLiveItemCount === null || monitor.discoveryCoverage.dimensions?.liveEnumeration.observedLiveItemCount === undefined ? "—" : numberFormatter.format(monitor.discoveryCoverage.dimensions.liveEnumeration.observedLiveItemCount)} detail="Trading ActiveList; es total autoritativo sólo cuando el descubrimiento activo está completo." />
+              <HeroCard label="Descubrimiento activo" value={presentSellerOsStatus(monitor.discoveryCoverage.dimensions?.liveEnumeration.status ?? monitor.discoveryCoverage.status)} detail={monitor.discoveryCoverage.knownGapCodes.map(shortCode).join(" · ") || "Sin brechas en la enumeración activa"} />
+              <HeroCard label="Bloqueos" value={blockerCount === undefined ? "—" : numberFormatter.format(blockerCount)} detail="Separados de cualquier recomendación comercial." />
+              <HeroCard label="Candidatos de alerta" value={numberFormatter.format(monitor.alertCandidates.length)} detail="Candidatos internos; los envíos están desactivados." />
             </div>
             <div className="grid gap-3 lg:grid-cols-[1fr_2fr]">
               <article className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
@@ -374,7 +375,7 @@ export function CommercialMonitorReadonlyClient() {
           </details>
         </div>
       </>}
-      <SellerOsMobileNav active="operations" hideOnDesktop />
+      <SellerOsMobileNav active="monitor" hideOnDesktop />
     </main>
   )
 }

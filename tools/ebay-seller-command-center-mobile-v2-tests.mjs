@@ -30,11 +30,11 @@ const normalizeEstimateOnlyShippingMigration = readFileSync(
   "utf8",
 )
 
-test("mobile command center centralizes the five Seller OS areas", () => {
-  for (const label of ["Inicio", "Oportunidades eBay", "Listings", "Operación", "Salud y configuración"]) {
+test("mobile command center centralizes the five primary Seller OS intentions", () => {
+  for (const label of ["Monitor", "Publicaciones", "Oportunidades", "Inventario", "Estado del sistema"]) {
     assert.match(canonicalNavigation, new RegExp(label))
   }
-  assert.match(mobileNav, /SELLER_OS_NAVIGATION\.map/)
+  assert.match(mobileNav, /SELLER_OS_MOBILE_NAVIGATION\.map/)
   assert.match(mobile, /SellerOsMobileNav/)
   assert.match(hub, /SellerOsMobileNav/)
   assert.match(mobileNav, /env\(safe-area-inset-bottom\)/)
@@ -84,7 +84,7 @@ test("mobile navigation exposes one hybrid opportunity view, protects work and r
 })
 
 test("listing entry points use one safe name and remain gated", () => {
-  assert.match(hub, /Draft \/ manual/)
+  assert.match(hub, /Borrador manual/)
   assert.match(hub, /\/admin\/ebay\/listings\/register/)
   assert.match(mobile, /Registrar listing manual/)
   assert.match(queue, /Registrar listing manual/)

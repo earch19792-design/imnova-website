@@ -81,7 +81,7 @@ test("directed Luna import is Admin-only, production-bound and cannot resurrect 
 })
 
 test("Seller OS and Command Center call the flow an assistant", () => {
-  assert.match(sellerOsPage, /title: "Vincular listing activo"/)
+  assert.match(sellerOsPage, /title: "Vincular publicación activa"/)
   assert.match(sellerOsPage, /Abrir asistente guiado →/)
   assert.match(mobileReviewPage, /Abrir asistente para vincular listing/)
 })

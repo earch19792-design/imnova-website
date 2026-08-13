@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { SELLER_OS_NAVIGATION } from "@/lib/seller-os/navigation"
 import { validateAdminSession } from "@/lib/admin-auth"
+import { SellerOsDesktopNavigation } from "./ebay/components/seller-os-desktop-navigation"
 import { SellerOsMobileNav } from "./ebay/components/seller-os-mobile-nav"
 import { TodayLaunchPanel } from "./today-launch-panel"
 
@@ -43,13 +43,9 @@ export default function SellerOsAdminHome() {
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#05070d] px-4 pb-28 pt-4 text-white sm:px-6">
-      <div className="mx-auto grid max-w-7xl gap-5 lg:grid-cols-[16rem_1fr]">
-        <aside className="hidden self-start rounded-3xl border border-white/10 bg-white/[0.035] p-4 lg:sticky lg:top-4 lg:block">
-          <p className="px-3 text-xs font-black tracking-[0.24em] text-cyan-200">SELLER OS</p>
-          <nav aria-label="Áreas principales de Seller OS" className="mt-6 space-y-2">{SELLER_OS_NAVIGATION.map((item) => <a key={item.id} href={item.href} aria-current={item.id === "home" ? "page" : undefined} title={item.description} className={`flex min-h-14 items-center gap-3 rounded-2xl px-3 py-2.5 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200 ${item.id === "home" ? "bg-white text-black" : "text-white/65 hover:bg-white/10 hover:text-white"}`}><span className={`flex size-9 shrink-0 items-center justify-center rounded-xl text-xs font-black ${item.id === "home" ? "bg-black/10" : "bg-white/[0.06] text-cyan-100"}`} aria-hidden="true">0{item.order}</span><span className="min-w-0"><span className="block text-sm font-black leading-5">{item.label}</span><span className={`mt-0.5 block text-[10px] font-bold uppercase tracking-wider ${item.id === "home" ? "text-black/55" : "text-white/35"}`}>{item.status === "ACTIVE" ? "Disponible" : "Limitado"}</span></span></a>)}</nav>
-        </aside>
-
-        <section className="min-w-0">
+      <SellerOsDesktopNavigation active="monitor" />
+      <div className="mx-auto max-w-7xl xl:pl-[232px]">
+        <section className="min-w-0 xl:pl-5">
           <header className="rounded-3xl border border-white/10 bg-gradient-to-br from-cyan-200/[0.10] via-white/[0.03] to-emerald-200/[0.06] p-5 sm:p-7">
             <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-100/60">Inicio operativo</p><h1 className="mt-2 text-2xl font-black leading-tight sm:text-3xl">Tu siguiente decisión, sin ruido</h1></div><span className={`shrink-0 rounded-full px-3 py-2 text-xs font-black ${state === "READY" ? "bg-emerald-200 text-black" : "border border-amber-200/30 text-amber-100"}`}>{state === "LOADING" ? "VALIDANDO SESIÓN" : state === "READY" ? "SESIÓN PROTEGIDA" : "REVISAR CONEXIÓN"}</span></div>
             <p className="mt-3 max-w-3xl text-sm leading-6 text-white/60">Seller OS trabaja en segundo plano, se detiene sólo ante una decisión indispensable y te muestra qué continuará después.</p>
@@ -63,7 +59,7 @@ export default function SellerOsAdminHome() {
           </details>
         </section>
       </div>
-      <SellerOsMobileNav active="home" hideOnDesktop />
+      <SellerOsMobileNav active="monitor" hideOnDesktop />
     </main>
   )
 }
