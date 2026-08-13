@@ -7,6 +7,7 @@
   ],
   "scripts": {
     "dev": "next dev",
+    "dev:seller-os-mcp:tunnel": "SELLER_OS_MCP_DEPLOYMENT_MODE=TUNNEL_DEVELOPMENT SELLER_OS_MCP_BIND_HOST=127.0.0.1 next dev -H 127.0.0.1 -p 3000",
     "build": "next build --webpack",
     "build:seller-os-mcp": "npm run build --workspace @imnova/seller-os-mcp",
     "start": "next start",

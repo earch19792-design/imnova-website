@@ -8,8 +8,13 @@ import { executeSellerOsAssistantToolV1, SELLER_OS_ASSISTANT_TOOLS_V1 } from
 import { loadSellerOsAssistantMonitorV1 } from "./ebay-seller-os-assistant-runtime"
 import { authenticateSellerOsMcpRequestV1, loadSellerOsMcpOAuthConfigurationV1 } from
   "./ebay-seller-os-mcp-oauth-v1"
-import { getSellerOsDedicatedMcpDeploymentStateV1 } from
+import { SELLER_OS_DEDICATED_MCP_MODE, getSellerOsDedicatedMcpDeploymentStateV1 } from
   "./ebay-seller-os-mcp-deployment-v1"
+import { getSellerOsMcpRuntimePolicyV1, type SellerOsMcpApplicationAuthModeV1 } from
+  "./ebay-seller-os-mcp-tunnel-development-v1"
+import { SELLER_OS_MCP_BUILTIN_TOOL_POLICIES_V1,
+  evaluateSellerOsMcpToolSafetyV1, getSellerOsMcpToolSecuritySchemesV1 } from
+  "./ebay-seller-os-mcp-tool-policy-v1"
 import { getEbayProRuntimeBoundary } from "./environment-boundaries"
 import { validateAdminApiRequest } from "../supabase-admin"
 
@@ -61,7 +66,19 @@ function safeErrorResponse(status: number, code: number, message: string) {
 
 export function createSellerOsMcpServerV1(options: {
   monitorLoader?: SellerOsAssistantMonitorLoaderV1
+  applicationAuthMode?: SellerOsMcpApplicationAuthModeV1
 } = {}) {
+  const applicationAuthMode = options.applicationAuthMode ??
+    "OAUTH_SELLER_OS_READ"
+  const toolSafety = evaluateSellerOsMcpToolSafetyV1(
+    SELLER_OS_ASSISTANT_TOOLS_V1,
+  )
+  if (!toolSafety.allToolsReadOnly) {
+    throw new Error("SELLER_OS_MCP_WRITE_TOOL_REGISTRATION_FORBIDDEN")
+  }
+  const securitySchemes = getSellerOsMcpToolSecuritySchemesV1(
+    applicationAuthMode,
+  )
   const server = new McpServer({ name: "seller-os-private-readonly",
     version: SELLER_OS_MCP_ENDPOINT_VERSION }, {
     instructions: "Private Seller OS canonical read-only evidence. Preserve unavailable and unproven states. Never claim or perform marketplace, inventory, supplier, Registry, Product Case, buyer-message, WhatsApp, OAuth, environment, SQL, or arbitrary URL mutations.",
@@ -77,8 +94,8 @@ export function createSellerOsMcpServerV1(options: {
       inputSchema: { ...(needsItem ? { itemId: z.string().regex(/^\d{9,19}$/) } : {}),
         ...(needsCase ? { opportunityCaseId: z.string().min(1).max(120) } : {}),
         limit: z.number().int().min(1).max(100).optional() },
-      annotations: descriptor.annotations, securitySchemes: descriptor.securitySchemes,
-      _meta: { securitySchemes: descriptor.securitySchemes },
+      annotations: descriptor.annotations, securitySchemes,
+      _meta: { securitySchemes },
     }
     server.registerTool(descriptor.name, config, async (args) => {
       try {
@@ -99,10 +116,9 @@ export function createSellerOsMcpServerV1(options: {
     description: "Search the bounded Seller OS resource catalog. This never proxies arbitrary URLs.",
     inputSchema: { query: z.string().min(1).max(120),
       limit: z.number().int().min(1).max(20).optional() },
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false,
-      idempotentHint: true },
-    securitySchemes: [{ type: "oauth2" as const, scopes: ["seller_os.read"] }],
-    _meta: { securitySchemes: [{ type: "oauth2", scopes: ["seller_os.read"] }] },
+    annotations: SELLER_OS_MCP_BUILTIN_TOOL_POLICIES_V1[0].annotations,
+    securitySchemes,
+    _meta: { securitySchemes },
   }
   server.registerTool("search", searchConfig, async ({ query, limit }) => {
     const normalized = query.toLowerCase().trim()
@@ -123,10 +139,9 @@ export function createSellerOsMcpServerV1(options: {
     title: "Fetch a Seller OS read-only resource",
     description: "Fetch one allowlisted Seller OS resource ID returned by search. Arbitrary URLs are rejected.",
     inputSchema: { id: z.string().min(1).max(180) },
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false,
-      idempotentHint: true },
-    securitySchemes: [{ type: "oauth2" as const, scopes: ["seller_os.read"] }],
-    _meta: { securitySchemes: [{ type: "oauth2", scopes: ["seller_os.read"] }] },
+    annotations: SELLER_OS_MCP_BUILTIN_TOOL_POLICIES_V1[1].annotations,
+    securitySchemes,
+    _meta: { securitySchemes },
   }
   server.registerTool("fetch", fetchConfig, async ({ id }) => {
     const standard = STANDARD_RESOURCES.find((row) => row.id === id)
@@ -157,8 +172,12 @@ export function createSellerOsMcpServerV1(options: {
   return server
 }
 
-async function serveAuthenticatedSellerOsMcpRequestV1(req: Request) {
-  const server = createSellerOsMcpServerV1()
+async function serveAuthenticatedSellerOsMcpRequestV1(
+  req: Request,
+  applicationAuthMode: SellerOsMcpApplicationAuthModeV1 =
+    "OAUTH_SELLER_OS_READ",
+) {
+  const server = createSellerOsMcpServerV1({ applicationAuthMode })
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined,
     enableJsonResponse: true })
   await server.connect(transport)
@@ -171,9 +190,27 @@ async function serveAuthenticatedSellerOsMcpRequestV1(req: Request) {
 
 export async function handleSellerOsMcpRequestV1(req: Request) {
   const pathname = new URL(req.url).pathname
+  let applicationAuthMode: SellerOsMcpApplicationAuthModeV1 =
+    "OAUTH_SELLER_OS_READ"
+  let deploymentMode = "INTERNAL_ADMIN_AUTH"
   if (pathname.startsWith("/api/seller-os/")) {
-    const oauth = await authenticateSellerOsMcpRequestV1(req)
-    if (!oauth.ok) return oauth.response
+    const toolSafety = evaluateSellerOsMcpToolSafetyV1(
+      SELLER_OS_ASSISTANT_TOOLS_V1,
+    )
+    const runtimePolicy = getSellerOsMcpRuntimePolicyV1({
+      assistantWriteTools: toolSafety.assistantWriteTools,
+      dedicatedMode: SELLER_OS_DEDICATED_MCP_MODE,
+    })
+    if (!runtimePolicy.requestHandlingAllowed) {
+      return safeErrorResponse(503, -32004,
+        "SELLER_OS_MCP_DEPLOYMENT_MODE_NOT_ALLOWED")
+    }
+    applicationAuthMode = runtimePolicy.applicationAuthMode
+    deploymentMode = runtimePolicy.configuredMode
+    if (runtimePolicy.oauthRequired) {
+      const oauth = await authenticateSellerOsMcpRequestV1(req)
+      if (!oauth.ok) return oauth.response
+    }
   } else {
     const validation = await validateAdminApiRequest(req)
     if (!validation.ok) return safeErrorResponse(validation.status || 401, -32001,
@@ -183,7 +220,14 @@ export async function handleSellerOsMcpRequestV1(req: Request) {
     method: req.method })
   if (boundary.blocked) return safeErrorResponse(403, -32003,
     "SELLER_OS_ASSISTANT_PREVIEW_ONLY")
-  return serveAuthenticatedSellerOsMcpRequestV1(req)
+  const response = await serveAuthenticatedSellerOsMcpRequestV1(
+    req,
+    applicationAuthMode,
+  )
+  const headers = new Headers(response.headers)
+  headers.set("X-Seller-OS-MCP-Deployment", deploymentMode)
+  return new Response(response.body, { status: response.status,
+    statusText: response.statusText, headers })
 }
 
 /**

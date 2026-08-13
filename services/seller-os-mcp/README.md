@@ -66,3 +66,25 @@ tool or mutation code path to this service.
 
 The previously created Secure MCP Tunnel remains an alternative/fallback path.
 This service does not create a tunnel runtime key and does not start a tunnel.
+
+## Local Secure MCP Tunnel development fallback
+
+The repository root provides one supported local command for the preserved
+development-only tunnel path:
+
+```sh
+npm run dev:seller-os-mcp:tunnel
+```
+
+It sets `SELLER_OS_MCP_DEPLOYMENT_MODE=TUNNEL_DEVELOPMENT`, declares the exact
+bind host as `127.0.0.1`, and passes `-H 127.0.0.1` to the Next.js development
+server. The local MCP target remains
+`http://127.0.0.1:3000/api/seller-os/assistant/mcp`. In this mode only, tools
+advertise application-level `noauth`; access still depends on the private
+OpenAI Secure MCP Tunnel transport. The runtime rejects Production, every
+Vercel context, missing or unknown modes, non-loopback hosts, and any non-zero
+assistant write-tool count. No tunnel credential is stored by this command.
+
+The dedicated HTTPS service remains unchanged: its only accepted deployment
+mode is `DEDICATED_HTTPS_OAUTH_READ_ONLY`, and it continues to require Auth0,
+the exact `seller_os.read` scope, and the canonical resource audience.
