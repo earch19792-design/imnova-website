@@ -754,6 +754,7 @@ export function buildSystemReviewBundleV1(input: {
     },
     crossModuleIntegrity: {
       contractVersion: integrity.contractVersion,
+      hardeningVersion: integrity.hardeningVersion,
       canonicalCohort: {
         ...integrity.canonicalCohort,
         itemIds: cap(integrity.canonicalCohort.itemIds, 25),
