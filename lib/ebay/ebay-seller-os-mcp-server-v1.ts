@@ -67,6 +67,14 @@ function safeErrorResponse(status: number, code: number, message: string) {
     { status, headers: READ_ONLY_HEADERS })
 }
 
+function statelessMethodNotAllowedResponse() {
+  return Response.json({ jsonrpc: "2.0", error: { code: -32000,
+    message: "Method not allowed." }, id: null }, {
+    status: 405,
+    headers: { ...READ_ONLY_HEADERS, Allow: "POST" },
+  })
+}
+
 export function getSellerOsMcpToolExecutionSourceV1(
   applicationAuthMode: SellerOsMcpApplicationAuthModeV1,
 ) {
@@ -197,6 +205,17 @@ async function serveAuthenticatedSellerOsMcpRequestV1(
   applicationAuthMode: SellerOsMcpApplicationAuthModeV1 =
     "OAUTH_SELLER_OS_READ",
 ) {
+  // SDK 1.30.0 stateless transports are fresh per POST and have no shared
+  // session on which GET/SSE or DELETE can operate. Passing GET to a fresh
+  // transport creates an unbound stream, so advertise the supported method
+  // explicitly, as the SDK's stateless Streamable HTTP example does. Preserve
+  // the SDK's required GET Accept negotiation before method discovery.
+  if (req.method === "GET" &&
+      !req.headers.get("accept")?.includes("text/event-stream")) {
+    return safeErrorResponse(406, -32000,
+      "Not Acceptable: Client must accept text/event-stream")
+  }
+  if (req.method !== "POST") return statelessMethodNotAllowedResponse()
   const server = createSellerOsMcpServerV1({ applicationAuthMode })
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined,
     enableJsonResponse: true })
