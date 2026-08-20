@@ -26,6 +26,10 @@ import { collectSellerOsDevStatusV1,
   createUnavailableSellerOsDevStatusV1,
   SELLER_OS_DEV_STATUS_TOOL_V1,
   type SellerOsDevStatusV1 } from "./ebay-seller-os-dev-status-v1"
+import { collectSellerOsCiStatusV1,
+  createUnavailableSellerOsCiStatusV1,
+  SELLER_OS_CI_STATUS_TOOL_V1,
+  type SellerOsCiStatusV1 } from "./ebay-seller-os-ci-status-v1"
 import { getEbayProRuntimeBoundary } from "./environment-boundaries"
 import { validateAdminApiRequest } from "../supabase-admin"
 
@@ -63,6 +67,7 @@ const SELLER_OS_MCP_TOOL_POLICIES_V1 = Object.freeze([
   ...SELLER_OS_ASSISTANT_TOOLS_V1,
   SELLER_OS_RUNTIME_HEALTH_TOOL_V1,
   SELLER_OS_DEV_STATUS_TOOL_V1,
+  SELLER_OS_CI_STATUS_TOOL_V1,
 ])
 
 type SellerOsAssistantMonitorLoaderV1 = typeof loadSellerOsAssistantMonitorV1
@@ -103,6 +108,7 @@ export function createSellerOsMcpServerV1(options: {
   toolExecutor?: SellerOsAssistantToolExecutorV1
   runtimeHealthCollector?: () => Promise<SellerOsRuntimeHealthV1>
   devStatusCollector?: () => Promise<SellerOsDevStatusV1>
+  ciStatusCollector?: () => Promise<SellerOsCiStatusV1>
 } = {}) {
   const applicationAuthMode = options.applicationAuthMode ??
     "OAUTH_SELLER_OS_READ"
@@ -195,6 +201,26 @@ export function createSellerOsMcpServerV1(options: {
     }
     return { structuredContent: { result }, content: [{ type: "text" as const,
       text: "Seller OS returned bounded read-only canonical development status evidence." }] }
+    })
+  const ciStatusCollector = options.ciStatusCollector ?? collectSellerOsCiStatusV1
+  const ciStatusConfig = {
+    title: SELLER_OS_CI_STATUS_TOOL_V1.title,
+    description: SELLER_OS_CI_STATUS_TOOL_V1.description,
+    inputSchema: z.object({}).strict(),
+    annotations: SELLER_OS_CI_STATUS_TOOL_V1.annotations,
+    securitySchemes,
+    _meta: { securitySchemes },
+  }
+  server.registerTool(SELLER_OS_CI_STATUS_TOOL_V1.name,
+    ciStatusConfig, async () => {
+    let result: SellerOsCiStatusV1
+    try {
+      result = await ciStatusCollector()
+    } catch {
+      result = createUnavailableSellerOsCiStatusV1()
+    }
+    return { structuredContent: { result }, content: [{ type: "text" as const,
+      text: "Seller OS returned bounded read-only SHA-bound validation evidence." }] }
     })
   const searchConfig = {
     title: "Search Seller OS read-only resources",

@@ -15,6 +15,7 @@ node_modules/
 out/
 
 # Local runtime artifacts
+.seller-os/
 .tmp/
 .tmp-*/
 *.log
