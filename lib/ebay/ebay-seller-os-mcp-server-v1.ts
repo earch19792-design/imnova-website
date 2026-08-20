@@ -18,6 +18,10 @@ import { getSellerOsMcpRuntimePolicyV1, type SellerOsMcpApplicationAuthModeV1 } 
 import { SELLER_OS_MCP_BUILTIN_TOOL_POLICIES_V1,
   evaluateSellerOsMcpToolSafetyV1, getSellerOsMcpToolSecuritySchemesV1 } from
   "./ebay-seller-os-mcp-tool-policy-v1"
+import { collectSellerOsRuntimeHealthV1,
+  createUnavailableSellerOsRuntimeHealthV1,
+  SELLER_OS_RUNTIME_HEALTH_TOOL_V1,
+  type SellerOsRuntimeHealthV1 } from "./ebay-seller-os-runtime-health-v1"
 import { getEbayProRuntimeBoundary } from "./environment-boundaries"
 import { validateAdminApiRequest } from "../supabase-admin"
 
@@ -50,6 +54,11 @@ export function getSellerOsChatGptConnectionStateV1(
 const READ_ONLY_HEADERS = { "Cache-Control": "private, no-store, max-age=0",
   "X-Seller-OS-Assistant-Mode": "READ_ONLY",
   "X-Seller-OS-MCP-Version": SELLER_OS_MCP_ENDPOINT_VERSION } as const
+
+const SELLER_OS_MCP_TOOL_POLICIES_V1 = Object.freeze([
+  ...SELLER_OS_ASSISTANT_TOOLS_V1,
+  SELLER_OS_RUNTIME_HEALTH_TOOL_V1,
+])
 
 type SellerOsAssistantMonitorLoaderV1 = typeof loadSellerOsAssistantMonitorV1
 
@@ -87,11 +96,12 @@ export function createSellerOsMcpServerV1(options: {
   monitorLoader?: SellerOsAssistantMonitorLoaderV1
   applicationAuthMode?: SellerOsMcpApplicationAuthModeV1
   toolExecutor?: SellerOsAssistantToolExecutorV1
+  runtimeHealthCollector?: () => Promise<SellerOsRuntimeHealthV1>
 } = {}) {
   const applicationAuthMode = options.applicationAuthMode ??
     "OAUTH_SELLER_OS_READ"
   const toolSafety = evaluateSellerOsMcpToolSafetyV1(
-    SELLER_OS_ASSISTANT_TOOLS_V1,
+    SELLER_OS_MCP_TOOL_POLICIES_V1,
   )
   if (!toolSafety.allToolsReadOnly) {
     throw new Error("SELLER_OS_MCP_WRITE_TOOL_REGISTRATION_FORBIDDEN")
@@ -139,6 +149,27 @@ export function createSellerOsMcpServerV1(options: {
       }
     })
   }
+  const runtimeHealthCollector = options.runtimeHealthCollector ??
+    collectSellerOsRuntimeHealthV1
+  const runtimeHealthConfig = {
+    title: SELLER_OS_RUNTIME_HEALTH_TOOL_V1.title,
+    description: SELLER_OS_RUNTIME_HEALTH_TOOL_V1.description,
+    inputSchema: z.object({}).strict(),
+    annotations: SELLER_OS_RUNTIME_HEALTH_TOOL_V1.annotations,
+    securitySchemes,
+    _meta: { securitySchemes },
+  }
+  server.registerTool(SELLER_OS_RUNTIME_HEALTH_TOOL_V1.name,
+    runtimeHealthConfig, async () => {
+    let result: SellerOsRuntimeHealthV1
+    try {
+      result = await runtimeHealthCollector()
+    } catch {
+      result = createUnavailableSellerOsRuntimeHealthV1()
+    }
+    return { structuredContent: { result }, content: [{ type: "text" as const,
+      text: "Seller OS returned bounded read-only local runtime health evidence." }] }
+    })
   const searchConfig = {
     title: "Search Seller OS read-only resources",
     description: "Search the bounded Seller OS resource catalog. This never proxies arbitrary URLs.",
@@ -234,7 +265,7 @@ export async function handleSellerOsMcpRequestV1(req: Request) {
   let deploymentMode = "INTERNAL_ADMIN_AUTH"
   if (pathname.startsWith("/api/seller-os/")) {
     const toolSafety = evaluateSellerOsMcpToolSafetyV1(
-      SELLER_OS_ASSISTANT_TOOLS_V1,
+      SELLER_OS_MCP_TOOL_POLICIES_V1,
     )
     const runtimePolicy = getSellerOsMcpRuntimePolicyV1({
       assistantWriteTools: toolSafety.assistantWriteTools,
