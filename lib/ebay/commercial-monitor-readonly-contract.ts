@@ -1159,6 +1159,7 @@ export type CommercialListingIdentity = {
   brand: string | null
   mpn: string | null
   listedQuantity: number | null
+  listedPrice?: number | null
   currency: string | null
   marketplaceCertification:
     | {

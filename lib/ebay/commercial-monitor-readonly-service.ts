@@ -1994,6 +1994,7 @@ function projectListing(input: {
       brand: rawFields.brand,
       mpn: rawFields.mpn,
       listedQuantity,
+      listedPrice: nonNegativeNumber(row?.ebay_price),
       currency: currencyCode(row?.currency),
       marketplaceCertification: listing.marketplaceCertification,
       source: sanitizeMonitorText(

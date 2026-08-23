@@ -95,6 +95,40 @@ function assistantRecentSalesForItem(
   }
 }
 
+const SELLER_OS_CURRENT_LIVE_DISCOVERY_SOURCE_V1 =
+  "EBAY_TRADING_GET_MY_EBAY_SELLING" as const
+
+const SELLER_OS_LISTING_INTELLIGENCE_READ_SAFETY_V1 = Object.freeze({
+  readOnly: true as const,
+  buyerPiiIncluded: false as const,
+  rawPayloadIncluded: false as const,
+  credentialsIncluded: false as const,
+  environmentValuesIncluded: false as const,
+  databaseWrites: 0 as const,
+  marketplaceWrites: 0 as const,
+  woMutations: 0 as const,
+  lunaMutations: 0 as const,
+})
+
+function currentLiveFactsV1(listing: CommercialMonitorGetDto["listings"][number]) {
+  const live = listing.discovery.livePresence
+  if (live.status !== "LIVE_ACTIVE" ||
+      live.source !== SELLER_OS_CURRENT_LIVE_DISCOVERY_SOURCE_V1 ||
+      !live.observedAt) return null
+  return Object.freeze({
+    itemId: listing.identity.itemId,
+    sku: listing.identity.sku,
+    customLabel: listing.identity.customLabel,
+    title: listing.identity.title,
+    quantity: listing.identity.listedQuantity,
+    price: listing.identity.listedPrice ?? null,
+    currency: listing.identity.currency,
+    liveStatus: live.status,
+    source: live.source,
+    observedAt: live.observedAt,
+  })
+}
+
 function safeListing(
   monitor: CommercialMonitorGetDto,
   itemId: string,
@@ -125,9 +159,12 @@ function safeListing(
   const exception = buildProactiveExceptionQueueV1({ monitor,
     canonicalOpportunities: canonical ? [canonical.decisionIntegration] : [], maximumEntries: 100 })
     .find((row) => row.entityKey === itemId) ?? null
+  const currentLiveFacts = currentLiveFactsV1(listing)
+  if (!currentLiveFacts) return null
   return { identity: { itemId: listing.identity.itemId, title: listing.identity.title,
       sku: listing.identity.sku, thumbnail: listing.identity.primaryImageUrl,
       liveStatus: listing.discovery.livePresence.status },
+    currentLiveFacts,
     analytics: { impressions: listing.metrics.impressions, views: listing.metrics.ebay_views,
       ctr: listing.metrics.ctr_calculated, quantitySold: listing.metrics.transactions,
       scope: "CURRENT_LIVE_LISTING" },
@@ -195,7 +232,8 @@ function safeListing(
     },
     learningHistory: { status: monitor.learning.status, limitationCode: monitor.learning.limitationCode },
     currentAlertState: cap(monitor.alertCandidates.filter((row) =>
-      row.listingReference.itemId === itemId), 20), noFalseZeros: true as const }
+      row.listingReference.itemId === itemId), 20), noFalseZeros: true as const,
+    safety: SELLER_OS_LISTING_INTELLIGENCE_READ_SAFETY_V1 }
 }
 
 export function buildAssistantCommercialContextV1(
@@ -325,7 +363,9 @@ export function executeSellerOsAssistantToolV1(input: {
     const itemId = typeof input.arguments.itemId === "string" ? input.arguments.itemId : ""
     if (!/^\d{9,19}$/.test(itemId)) throw new Error("ASSISTANT_ITEM_ID_REQUIRED")
     return safeListing(input.monitor, itemId, input.canonicalOpportunities?.[itemId]) ??
-      { status: "NOT_FOUND", itemId }
+      { status: "NOT_FOUND", reason: "NOT_CURRENT_LIVE", conflict: "CONFLICT",
+        itemId, currentLiveFacts: null,
+        safety: SELLER_OS_LISTING_INTELLIGENCE_READ_SAFETY_V1 }
   }
   if (input.toolName === "seller_os_get_opportunity_radar") {
     const entries = cap(canonicalResults.map((row) => ({ itemId: row.sourceItemId,
