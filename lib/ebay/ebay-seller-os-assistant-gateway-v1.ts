@@ -1,4 +1,6 @@
 import type { CommercialMonitorGetDto } from "./commercial-monitor-readonly-contract"
+// @ts-expect-error Node's direct TypeScript runner requires the explicit extension.
+import { createUnavailableSellerOsOfficialOrdersReadV1, type SellerOsOfficialOrdersReadV1 } from "./ebay-official-orders-read-v1.ts"
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
 import { buildAutomationHealthMetricsV1, buildPortfolioIntelligenceV1, buildProactiveExceptionQueueV1, evaluateReplaceKillIntelligenceV1, selectMaterialPrioritiesV2 } from "./ebay-seller-os-portfolio-intelligence-v1.ts"
 import type { CanonicalOpportunityResultV2 } from
@@ -10,6 +12,10 @@ import { currentLiveListingsForMonitorV1, resolveCrossModuleLivePortfolioIntegri
 
 export const SELLER_OS_ASSISTANT_GATEWAY_VERSION = "SELLER_OS_ASSISTANT_GATEWAY_V1_2026_08_12"
 export const SELLER_OS_ASSISTANT_MAX_ITEMS = 100
+
+type SellerOsAssistantMonitorWithOfficialOrdersV1 = CommercialMonitorGetDto & {
+  officialOrders?: SellerOsOfficialOrdersReadV1
+}
 
 export const SELLER_OS_ASSISTANT_TOOLS_V1 = Object.freeze([
   ["seller_os_get_commercial_context", "Get commercial context",
@@ -48,6 +54,47 @@ function cap<T>(values: T[], maximum = SELLER_OS_ASSISTANT_MAX_ITEMS) {
   return values.slice(0, Math.min(SELLER_OS_ASSISTANT_MAX_ITEMS, Math.max(1, maximum)))
 }
 
+function assistantRecentSales(monitor: CommercialMonitorGetDto) {
+  return monitor.backend.recentSales ?? {
+    contractVersion: "RECENT_SALES_FEED_V1" as const,
+    status: "UNAVAILABLE" as const,
+    resultCount: null,
+    entries: [],
+    maximumEntries: 10 as const,
+    truncated: false,
+    limitationCodes: ["RECENT_SALES_FEED_NOT_AVAILABLE"],
+    source: "PERSISTED_OFFICIAL_EBAY_ORDER_EVENTS" as const,
+    buyerPiiIncluded: false as const,
+  }
+}
+
+function assistantOfficialOrders(monitor: CommercialMonitorGetDto) {
+  return (monitor as SellerOsAssistantMonitorWithOfficialOrdersV1).officialOrders ??
+    createUnavailableSellerOsOfficialOrdersReadV1()
+}
+
+function assistantRecentSalesForItem(
+  monitor: CommercialMonitorGetDto,
+  itemId: string,
+) {
+  const feed = assistantRecentSales(monitor)
+  const entries = cap(feed.entries.filter((sale) =>
+    sale.itemIds.includes(itemId)), 10)
+  const authoritativeItemCount = feed.status === "AVAILABLE" &&
+    feed.truncated === false
+  return {
+    status: feed.status,
+    resultCount: authoritativeItemCount ? entries.length : null,
+    entries,
+    source: feed.source,
+    globalFeedTruncated: feed.truncated,
+    itemSearchCoverage: feed.truncated
+      ? "PARTIAL_RECENT_WINDOW" as const
+      : feed.status,
+    buyerPiiIncluded: false as const,
+  }
+}
+
 function safeListing(
   monitor: CommercialMonitorGetDto,
   itemId: string,
@@ -60,6 +107,21 @@ function safeListing(
   const guidance = monitor.backend.guidanceVsSellerOs.find((row) => row.listingKey === listing.key) ?? null
   const canonical = canonicalOpportunity?.sourceItemId === itemId
     ? canonicalOpportunity : null
+  const coverage = monitor.backend.monitorCoverage
+  const monitored = coverage
+    ? coverage.monitoredItemIds.includes(itemId)
+    : null
+  const visibleInPriorityRows = coverage
+    ? coverage.visiblePriorityItemIds.includes(itemId)
+    : null
+  const monitorCoverage = { itemId, currentLive: monitored, monitored,
+    visibleInPriorityRows,
+    monitoredOutsideTopN: monitored === null || visibleInPriorityRows === null
+      ? null
+      : monitored && !visibleInPriorityRows,
+    status: coverage?.status === "UNPROVEN" || !coverage
+      ? "UNPROVEN" as const
+      : monitored ? "MONITORED" as const : "NOT_IN_CURRENT_LIVE_SCOPE" as const }
   const exception = buildProactiveExceptionQueueV1({ monitor,
     canonicalOpportunities: canonical ? [canonical.decisionIntegration] : [], maximumEntries: 100 })
     .find((row) => row.entityKey === itemId) ?? null
@@ -71,6 +133,9 @@ function safeListing(
       scope: "CURRENT_LIVE_LISTING" },
     accountTrafficScope: monitor.backend.trafficScopes.accountTraffic,
     ordersStatus: monitor.backend.orders.status,
+    orderSourceHealth: monitor.backend.orderSourceHealth,
+    monitorCoverage,
+    recentSales: assistantRecentSalesForItem(monitor, itemId),
     qualityGuidance: guidance,
     diagnosis: decision ? { classification: decision.classification, evidenceStatus: decision.evidenceStatus,
       reasonCodes: decision.reasonCodes, recommendedOperationalAction: decision.recommendedAction,
@@ -152,6 +217,23 @@ export function buildAssistantCommercialContextV1(
     generatedFrom: monitor.contractVersion, observedAt: monitor.generatedAt,
     accountTraffic: monitor.backend.trafficScopes.accountTraffic,
     currentLivePortfolio: monitor.backend.trafficScopes.currentLivePortfolio,
+    monitorCoverage: monitor.backend.monitorCoverage
+      ? { ...monitor.backend.monitorCoverage,
+          monitoredItemIds: cap(
+            [...monitor.backend.monitorCoverage.monitoredItemIds],
+            25,
+          ),
+          visiblePriorityItemIds: cap(
+            [...monitor.backend.monitorCoverage.visiblePriorityItemIds],
+            25,
+          ),
+          monitoredItemIdsTruncated:
+            monitor.backend.monitorCoverage.monitoredItemIds.length > 25 }
+      : null,
+    orderSourceHealth: monitor.backend.orderSourceHealth ?? null,
+    officialOrders: assistantOfficialOrders(monitor),
+    recentSales: { ...assistantRecentSales(monitor),
+      entries: cap(assistantRecentSales(monitor).entries, 10) },
     livePortfolioIntegrity: {
       canonicalCohort: { ...integrity.canonicalCohort,
         itemIds: cap(integrity.canonicalCohort.itemIds, 25),

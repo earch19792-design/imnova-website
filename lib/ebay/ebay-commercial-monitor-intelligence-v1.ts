@@ -10,6 +10,7 @@ import type {
   EbayGuidanceComparisonV1,
   EbayListingQualityRecommendation,
   EbayLiveCertificationReadModel,
+  DataQualityCode,
   OperationalReviewBurdenV2,
 } from "./commercial-monitor-readonly-contract"
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
@@ -18,6 +19,10 @@ import { assessExperimentGuardianV1, EXPERIMENT_REGISTRY_CONTRACT_VERSION, type 
 import { buildCanonicalCommercialTimeSeriesV1, unavailableAccountTrafficV1, type AccountTrafficEvidenceV1, type CommercialSeriesSnapshotV1 } from "./ebay-commercial-monitor-traffic-scope-v1.ts"
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
 import { buildCrossModuleLivePortfolioIntegrityV1, selectCanonicalCurrentLiveListingsV1 } from "./ebay-seller-os-live-portfolio-integrity-v1.ts"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { buildMonitorCoverageTransparencyV1, buildOrderSourceHealthV1 } from "./ebay-sales-order-event-foundation-v1.ts"
+// @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
+import { createUnavailableSellerOsSaleAlertsReadV1, type SellerOsSaleAlertsReadV1 } from "./ebay-sale-alerts-read-v1.ts"
 
 export const EBAY_LISTING_QUALITY_REPORT_SOURCE =
   "EBAY_LISTING_QUALITY_REPORT" as const
@@ -40,6 +45,9 @@ export type CommercialMonitorOrderFactsV1 = {
   orderStatuses: string[]
   fulfillmentStatuses: string[]
   trackingAvailability: "AVAILABLE" | "MISSING" | "UNPROVEN"
+  sourceObservedAt?: string | null
+  pollIntervalMinutes?: number
+  recentSales?: CommercialMonitorBackendV1["recentSales"]
 }
 
 type QualityReportArtifact = {
@@ -244,6 +252,40 @@ const REGISTRY_AVAILABLE_STATUSES = new Set<CommercialMonitorCapabilityStatus>([
   "AVAILABLE", "COMPLETE", "PARTIAL", "PARTIAL_CERTIFIED",
 ])
 
+const REGISTRY_SURFACE_OR_INDEPENDENT_DECISION_BLOCKERS = new Set<string>(
+  [
+    "MISSING_COMPOSITION",
+    "COMPOSITION_UNPROVEN",
+    "UNKNOWN_SHARED_ALLOCATION",
+    "REGISTRY_RECONCILIATION_FAILED",
+    "PRODUCT_CASE_LINK_MISSING",
+    "PRODUCT_CASE_LINK_UNPROVEN",
+    "ECONOMICS_INCOMPLETE",
+    "EXPERIMENT_STATE_UNPROVEN",
+    "ACTIVE_EXPERIMENT_CONFLICT",
+    "REPORT_NOT_UPDATED_YET",
+    "LISTING_DISCOVERY_INCOMPLETE",
+    "LISTING_IDENTITY_UNPROVEN",
+    "DUPLICATE_LISTING_IDENTITY",
+    "SUPPLIER_IDENTITY_CONFLICT",
+  ],
+)
+
+function isIndependentDecisionPreservingBlocker(code: string): boolean {
+  return REGISTRY_SURFACE_OR_INDEPENDENT_DECISION_BLOCKERS.has(
+    code as DataQualityCode,
+  )
+}
+
+function hasDecisionPreservingRegistryDependency(blockers: CommercialListingReadModel["blockers"]) {
+  return blockers.some((entry) =>
+    isIndependentDecisionPreservingBlocker(entry.code))
+}
+
+function requiresOperationalManualReviewFromDecision(row: CommercialListingDecisionV1) {
+  return row.recommendedAction !== "WAIT"
+}
+
 function operationalReviewDispositionV2(input: {
   listing: CommercialListingReadModel
   decision: CommercialListingDecisionV1
@@ -251,38 +293,60 @@ function operationalReviewDispositionV2(input: {
 }) {
   const reasons = new Set(input.decision.reasonCodes)
   const blockers = new Set(input.listing.blockers.map((row) => row.code))
+  const requiresOperationalIntervention = new Set<string>([
+    "IMPROVE_VISIBILITY",
+    "IMPROVE_CTR",
+    "IMPROVE_CONVERSION",
+    "FIX_DATA_QUALITY",
+    "REVIEW_EBAY_GUIDANCE",
+    "START_CONTROLLED_EXPERIMENT",
+    "HUMAN_REVIEW",
+  ] as const).has(input.decision.recommendedAction)
+  const isRegistryDependentBlocker = [...blockers].some((code) =>
+    isIndependentDecisionPreservingBlocker(code))
   const hardOverride = reasons.has("HARD_OVERRIDE_REQUIRES_HUMAN_REVIEW")
   const policyOrComplianceBlock = [...reasons].some((reason) =>
     /POLICY|COMPLIANCE/.test(reason))
+  const nonRegistryIdentityConflict = ["LISTING_IDENTITY_UNPROVEN",
+    "DUPLICATE_LISTING_IDENTITY", "SUPPLIER_IDENTITY_CONFLICT"].some((code) =>
+    blockers.has(code as typeof input.listing.blockers[number]["code"]))
+  const registryReconciliationConflict = blockers.has(
+    "REGISTRY_RECONCILIATION_FAILED",
+  )
   if (hardOverride || policyOrComplianceBlock ||
       input.decision.protectionState === "DO_NOT_TOUCH") {
     return { status: "RESOLVED" as const, humanReview: false,
       registryDependent: false }
   }
-  const nonRegistryIdentityConflict = ["LISTING_IDENTITY_UNPROVEN",
-    "DUPLICATE_LISTING_IDENTITY", "SUPPLIER_IDENTITY_CONFLICT"].some((code) =>
-    blockers.has(code as typeof input.listing.blockers[number]["code"]))
   if (nonRegistryIdentityConflict) {
     return { status: "RESOLVED" as const, humanReview: true,
       registryDependent: false }
   }
-  const registryReconciliationConflict = blockers.has(
-    "REGISTRY_RECONCILIATION_FAILED",
-  )
-  if (registryReconciliationConflict &&
-      !REGISTRY_AVAILABLE_STATUSES.has(input.registryStatus)) {
-    return { status: "UNPROVEN" as const, humanReview: null,
-      registryDependent: true }
-  }
-  if (registryReconciliationConflict ||
-      input.decision.recommendedAction === "HUMAN_REVIEW") {
-    return { status: "RESOLVED" as const, humanReview: true,
-      registryDependent: registryReconciliationConflict }
+  if (registryReconciliationConflict) {
+    const requiresRegistryDependentResolution = input.registryStatus === "UNAVAILABLE"
+    if (input.decision.actionBlockedByInsufficientEvidence ||
+        input.decision.evidenceStatus === "UNPROVEN") {
+      return { status: "UNPROVEN" as const, humanReview: null,
+        registryDependent: requiresRegistryDependentResolution &&
+          input.decision.evidenceStatus === "UNPROVEN" }
+    }
+    if (input.decision.recommendedAction === "HUMAN_REVIEW" ||
+        requiresOperationalIntervention) {
+      return { status: "RESOLVED" as const, humanReview: true,
+        registryDependent: false }
+    }
+    return { status: "RESOLVED" as const, humanReview: false,
+      registryDependent: requiresRegistryDependentResolution }
   }
   if (input.decision.actionBlockedByInsufficientEvidence ||
       input.decision.evidenceStatus === "UNPROVEN") {
     return { status: "UNPROVEN" as const, humanReview: null,
-      registryDependent: !REGISTRY_AVAILABLE_STATUSES.has(input.registryStatus) }
+      registryDependent: isRegistryDependentBlocker && input.registryStatus === "UNAVAILABLE" }
+  }
+  if (input.decision.recommendedAction === "HUMAN_REVIEW" ||
+      requiresOperationalIntervention) {
+    return { status: "RESOLVED" as const, humanReview: true,
+      registryDependent: false }
   }
   return { status: "RESOLVED" as const, humanReview: false,
     registryDependent: false }
@@ -300,12 +364,99 @@ export function resolveOperationalReviewTaxonomyV2(input: {
   identityStatus: "CERTIFIED" | "PARTIAL" | "UNPROVEN"
 }) {
   const canonicalListings = selectCanonicalCurrentLiveListingsV1(input.listings)
-  const decisionGroups = new Map<string, CommercialListingDecisionV1[]>()
-  for (const decision of input.decisions) {
-    const group = decisionGroups.get(decision.listingKey) ?? []
-    group.push(decision)
-    decisionGroups.set(decision.listingKey, group)
+  const decisionsByKey = new Map<string, CommercialListingDecisionV1[]>()
+  const decisionIndexByItemId = new Map<string, CommercialListingDecisionV1[]>()
+  const listingKeyToItemId = new Map<string, string>()
+  for (const listing of input.listings) {
+    listingKeyToItemId.set(listing.key, listing.identity.itemId)
   }
+  for (const decision of input.decisions) {
+    const group = decisionsByKey.get(decision.listingKey) ?? []
+    group.push(decision)
+    decisionsByKey.set(decision.listingKey, group)
+    const itemId = listingKeyToItemId.get(decision.listingKey)
+    if (itemId) {
+      const byItem = decisionIndexByItemId.get(itemId) ?? []
+      byItem.push(decision)
+      decisionIndexByItemId.set(itemId, byItem)
+    }
+  }
+  const usedDecisionIndexes = new Set<string>()
+
+  const takeNextUnused = (entries: CommercialListingDecisionV1[]) =>
+    entries.find((entry, index) => !usedDecisionIndexes.has(`${entry.listingKey}:${index}`))
+
+  const classifyDecisionForOperationalReview = (
+    entry: CommercialListingDecisionV1,
+  ) => {
+    const hasUsableEvidence = entry.evidenceStatus !== "UNPROVEN" &&
+      entry.actionBlockedByInsufficientEvidence !== true
+    const requiresReview = entry.recommendedAction !== "WAIT"
+    const priorityScore = entry.priority === "CRITICAL" ? 4
+      : entry.priority === "HIGH" ? 3
+        : entry.priority === "MEDIUM" ? 2
+          : 1
+    if (requiresReview && hasUsableEvidence) return 400 + priorityScore
+    if (hasUsableEvidence) return 100 + priorityScore
+    if (requiresReview) return 40
+    return 10
+  }
+
+  const chooseDecision = (listing: CommercialListingReadModel) => {
+    const byKey = decisionsByKey.get(listing.key) ?? []
+    const keyMatch = [...byKey]
+      .map((entry, index) => ({
+        entry,
+        index,
+        score: classifyDecisionForOperationalReview(entry),
+      }))
+      .filter((candidate) =>
+        !usedDecisionIndexes.has(`${candidate.entry.listingKey}:${candidate.index}`))
+      .sort((left, right) => {
+        if (right.score !== left.score) return right.score - left.score
+        if (right.entry.priority !== left.entry.priority) {
+          return (right.entry.priority === "CRITICAL" ? 4
+            : right.entry.priority === "HIGH" ? 3
+              : right.entry.priority === "MEDIUM" ? 2 : 1) -
+            (left.entry.priority === "CRITICAL" ? 4
+              : left.entry.priority === "HIGH" ? 3
+                : left.entry.priority === "MEDIUM" ? 2 : 1)
+        }
+        return left.index - right.index
+      })
+    if (keyMatch.length > 0) {
+      const winner = keyMatch[0]
+      usedDecisionIndexes.add(`${winner.entry.listingKey}:${winner.index}`)
+      return winner.entry
+    }
+    const itemId = listing.identity.itemId
+    if (!itemId) return null
+    const byItem = decisionIndexByItemId.get(itemId) ?? []
+    const fallbackMatch = byItem
+      .map((entry, index) => ({
+        entry,
+        index,
+        score: classifyDecisionForOperationalReview(entry),
+      }))
+      .filter((candidate) => !usedDecisionIndexes.has(
+        `${candidate.entry.listingKey}:${candidate.index}`))
+      .sort((left, right) => {
+        if (right.score !== left.score) return right.score - left.score
+        if (right.entry.priority !== left.entry.priority) {
+          return (right.entry.priority === "CRITICAL" ? 4
+            : right.entry.priority === "HIGH" ? 3
+              : right.entry.priority === "MEDIUM" ? 2 : 1) -
+            (left.entry.priority === "CRITICAL" ? 4
+              : left.entry.priority === "HIGH" ? 3
+                : left.entry.priority === "MEDIUM" ? 2 : 1)
+        }
+        return left.index - right.index
+      })[0]
+    if (!fallbackMatch) return null
+    usedDecisionIndexes.add(`${fallbackMatch.entry.listingKey}:${fallbackMatch.index}`)
+    return fallbackMatch.entry
+  }
+
   const cohortAligned = typeof input.activeListingCount === "number" &&
     input.activeListingCount === input.scopeCount &&
     canonicalListings.length === input.scopeCount
@@ -315,27 +466,117 @@ export function resolveOperationalReviewTaxonomyV2(input: {
   const cohortPartial = cohortAligned && !cohortProven &&
     (["PARTIAL", "PARTIAL_CERTIFIED"].includes(input.activeListingStatus) ||
       input.identityStatus === "PARTIAL")
+
   const assessments = canonicalListings.map((listing) => {
-    const group = decisionGroups.get(listing.key) ?? []
-    if (group.length !== 1) {
+    const selectedDecision = chooseDecision(listing)
+    if (!selectedDecision) {
       return { itemId: listing.identity.itemId, listingKey: listing.key,
         status: "UNPROVEN" as const,
-        humanReview: null, registryDependent: false }
+        humanReview: null, registryDependent: false,
+        requiresReview: false, decision: null as never }
     }
     return { itemId: listing.identity.itemId, listingKey: listing.key,
-      ...operationalReviewDispositionV2({ listing, decision: group[0],
-        registryStatus: input.registryStatus }) }
+      ...operationalReviewDispositionV2({
+        listing,
+        decision: selectedDecision,
+        registryStatus: input.registryStatus,
+      }),
+      decision: selectedDecision,
+      requiresReview: requiresOperationalManualReviewFromDecision(selectedDecision) }
   })
+
+  const independentDecisionManualReviewItemIds =
+    assessments
+      .filter((row) => row.status === "RESOLVED" &&
+        row.humanReview === true &&
+        row.decision !== null &&
+        row.decision.evidenceStatus !== "UNPROVEN" &&
+        row.decision.actionBlockedByInsufficientEvidence !== true)
+      .map((row) => row.itemId)
+      .filter((itemId, index, array) => array.indexOf(itemId) === index)
+  const fallbackIndependentReviewItemIds = new Set<string>(
+    assessments
+      .filter((row) => row.decision &&
+        row.status === "RESOLVED" &&
+        row.requiresReview &&
+        row.humanReview === true &&
+        row.decision.evidenceStatus !== "UNPROVEN" &&
+        row.decision.actionBlockedByInsufficientEvidence !== true)
+      .map((row) => row.itemId),
+  )
+  for (const itemId of fallbackIndependentReviewItemIds) {
+    if (!independentDecisionManualReviewItemIds.includes(itemId)) {
+      independentDecisionManualReviewItemIds.push(itemId)
+    }
+  }
   const decisionCoverageComplete = assessments.length === input.scopeCount &&
-    assessments.every((row) => decisionGroups.get(row.listingKey)?.length === 1)
+    assessments.every((row) => row.decision !== null)
+  const operationalReviewEvidentRows = assessments.filter((row) =>
+    row.decision !== null &&
+    row.decision.evidenceStatus !== "UNPROVEN" &&
+    row.decision.actionBlockedByInsufficientEvidence !== true)
+  const independentOperationallyResolvedRows = assessments.filter((row) =>
+    row.decision !== null &&
+    row.decision.evidenceStatus !== "UNPROVEN" &&
+    row.decision.actionBlockedByInsufficientEvidence !== true &&
+    (input.registryStatus !== "UNAVAILABLE" || !row.registryDependent))
+  const independentOperationalReviewCandidates = operationalReviewEvidentRows.filter((row) =>
+    row.status === "RESOLVED" &&
+    row.decision !== null &&
+    row.decision.recommendedAction !== "WAIT" &&
+    (input.registryStatus !== "UNAVAILABLE" || !row.registryDependent))
+      .map((row) => row.itemId)
+      .filter((itemId, index, array) => array.indexOf(itemId) === index)
+  const hasOnlyIndependentNoReviewRows = operationalReviewEvidentRows.length > 0 &&
+    operationalReviewEvidentRows.every((row) => row.decision !== null &&
+      !row.decision.actionBlockedByInsufficientEvidence &&
+      row.decision.recommendedAction === "WAIT" &&
+      (input.registryStatus !== "UNAVAILABLE" || !row.registryDependent))
+  const hasIndependentOperationalCoverage = independentOperationallyResolvedRows.length ===
+    assessments.length && assessments.length > 0
+  const canProveIndependentOperationalZeroDuringOutage =
+    hasIndependentOperationalCoverage &&
+    independentOperationallyResolvedRows.every((row) => row.decision !== null &&
+      row.decision.recommendedAction === "WAIT")
+  const hasAnyIndependentOperationalEvidence = operationalReviewEvidentRows.some((row) =>
+    row.status === "RESOLVED" &&
+    row.decision !== null &&
+    (input.registryStatus !== "UNAVAILABLE" || !row.registryDependent))
   const unresolvedListingCount = assessments.filter((row) =>
     row.status === "UNPROVEN").length
   const humanReviewItemIds = assessments.filter((row) =>
     row.status === "RESOLVED" && row.humanReview === true).map((row) => row.itemId)
+  const independentHumanReviewItemIds = independentDecisionManualReviewItemIds
+  const hasIndependentReviewEvidence = independentDecisionManualReviewItemIds.length > 0
+  const hasRegistryDependentEvidence = canonicalListings.some((listing) =>
+    hasDecisionPreservingRegistryDependency(listing.blockers) &&
+    input.registryStatus === "UNAVAILABLE")
+  const canDetermineOperationalReviewDuringRegistryOutage =
+    hasIndependentReviewEvidence ||
+    canProveIndependentOperationalZeroDuringOutage
+  const registryRecoveryCalculationPossible =
+    input.registryStatus !== "UNAVAILABLE" || canDetermineOperationalReviewDuringRegistryOutage
+  const hasRegistrySuppressedReviewRisk =
+    input.registryStatus === "UNAVAILABLE" &&
+    hasRegistryDependentEvidence &&
+    !hasIndependentReviewEvidence
   const status = !cohortProven ? cohortPartial ? "PARTIAL" as const : "UNPROVEN" as const
-    : !decisionCoverageComplete ? assessments.length ? "PARTIAL" as const : "UNPROVEN" as const
-      : unresolvedListingCount > 0 ? "PARTIAL" as const : "AVAILABLE" as const
-  const value = status === "AVAILABLE" ? humanReviewItemIds.length : null
+    : !decisionCoverageComplete
+      ? assessments.length ? "PARTIAL" as const : "UNPROVEN" as const
+      : unresolvedListingCount > 0
+        ? "PARTIAL" as const
+        : !registryRecoveryCalculationPossible
+          ? "PARTIAL" as const
+          : "AVAILABLE" as const
+  const value = status === "AVAILABLE" &&
+    (input.registryStatus !== "UNAVAILABLE" || canDetermineOperationalReviewDuringRegistryOutage)
+    ? independentHumanReviewItemIds.length
+    : null
+  const effectiveDecisionDependencyStatus =
+    !registryRecoveryCalculationPossible ? "PARTIAL" as const : (!cohortProven
+      ? "UNPROVEN" as const
+      : !decisionCoverageComplete || unresolvedListingCount > 0
+        ? "PARTIAL" as const : "AVAILABLE" as const)
   const reasonCode: OperationalReviewBurdenV2["reasonCode"] = !cohortProven
     ? cohortPartial ? "CURRENT_LIVE_COHORT_PARTIAL"
       : "CURRENT_LIVE_COHORT_UNPROVEN"
@@ -343,14 +584,22 @@ export function resolveOperationalReviewTaxonomyV2(input: {
       ? "OPERATIONAL_REVIEW_DECISION_COVERAGE_INCOMPLETE"
       : unresolvedListingCount > 0
         ? "OPERATIONAL_REVIEW_DEPENDENCY_UNAVAILABLE"
+        : !registryRecoveryCalculationPossible
+          ? "OPERATIONAL_REVIEW_DEPENDENCY_UNAVAILABLE"
+            : value === 0 && input.registryStatus === "UNAVAILABLE" &&
+              independentOperationalReviewCandidates.length === 0 &&
+              !hasOnlyIndependentNoReviewRows
+              ? "CURRENT_LIVE_COHORT_PARTIAL"
+            : canProveIndependentOperationalZeroDuringOutage
+              && input.registryStatus === "UNAVAILABLE" && value === 0
+              && !hasRegistryDependentEvidence
+              ? "OPERATIONAL_REVIEW_AUTHORITATIVE_ZERO"
         : value === 0 ? "OPERATIONAL_REVIEW_AUTHORITATIVE_ZERO"
           : "OPERATIONAL_REVIEW_AUTHORITATIVE_COUNT"
   return { status, value, reasonCode, cohortProven, cohortPartial,
     decisionCoverageComplete,
     unresolvedListingCount, humanReviewItemIds,
-    decisionDependencyStatus: !cohortProven ? "UNPROVEN" as const
-      : !decisionCoverageComplete || unresolvedListingCount > 0
-        ? "PARTIAL" as const : "AVAILABLE" as const }
+    decisionDependencyStatus: effectiveDecisionDependencyStatus }
 }
 
 export function evaluateOperationalReviewFalseZeroGuardV1(input: Pick<
@@ -358,8 +607,13 @@ export function evaluateOperationalReviewFalseZeroGuardV1(input: Pick<
   "status" | "value" | "authority" | "scopeType" | "scopeCount" |
   "zeroIsAuthoritative" | "dependencyStatus" | "observedAt"
 >): OperationalReviewBurdenV2["falseZeroGuard"] {
-  const triggered = input.value === 0 && (!input.zeroIsAuthoritative ||
-    input.status !== "AVAILABLE")
+  const dependencyUnavailable = input.dependencyStatus.registry === "UNAVAILABLE"
+  const unresolvedListingCannotBeAuthoritativeZero = input.dependencyStatus.unresolvedListingCount > 0
+  const triggered = input.value === 0 &&
+    (input.authority === "DECISION_TAXONOMY_V2" &&
+      (!input.zeroIsAuthoritative || input.status !== "AVAILABLE" ||
+        (dependencyUnavailable && (input.dependencyStatus.decisions !== "AVAILABLE" ||
+          unresolvedListingCannotBeAuthoritativeZero))))
   return { guardCode: "OPERATIONAL_REVIEW_FALSE_ZERO_GUARD",
     status: triggered ? "TRIGGERED" : "PASS", authority: input.authority,
     scopeType: input.scopeType, scopeCount: input.scopeCount,
@@ -402,8 +656,13 @@ export function buildOperationalReviewBurdenV2(input: Parameters<
       registryUnavailableMayBecomeZero: false as const,
     },
   }
-  return { ...provisional,
-    falseZeroGuard: evaluateOperationalReviewFalseZeroGuardV1(provisional) }
+  const resolved = { ...provisional,
+    zeroIsAuthoritative: provisional.status === "AVAILABLE" &&
+      provisional.value === 0 &&
+      provisional.reasonCode === "OPERATIONAL_REVIEW_AUTHORITATIVE_ZERO",
+  }
+  return { ...resolved,
+    falseZeroGuard: evaluateOperationalReviewFalseZeroGuardV1(resolved) }
 }
 
 const EXPERIMENT_EVIDENCE_METRICS = new Set<ExperimentEvidenceMetricV1>([
@@ -512,16 +771,17 @@ export function classifyCommercialListingV1(
   let evidenceStatus: CommercialListingDecisionV1["evidenceStatus"] =
     independent.evidenceStatus
   const reasons: CommercialListingDecisionV1["reasonCodes"] = []
-
-  if (listing.blockers.length > 0) {
+  const blockerCodes = listing.blockers.map((row) => row.code)
+  const nonPreservingBlockers = blockerCodes
+    .filter((row) => !isIndependentDecisionPreservingBlocker(row))
+  if (nonPreservingBlockers.length > 0) {
     classification = "DATA_QUALITY"
     action = "FIX_DATA_QUALITY"
     priority = "HIGH"
     evidenceStatus = "UNPROVEN"
     reasons.push("BLOCKING_DATA_QUALITY_ISSUE")
-  } else {
-    reasons.push(...independent.reasonCodes)
   }
+  reasons.push(...independent.reasonCodes)
   if (guardian?.active) {
     if (guardian.operationalAction === "HARD_OVERRIDE_REQUIRED") {
       action = "HUMAN_REVIEW"
@@ -696,6 +956,7 @@ function capabilityFromLiveStatus(
 export function buildCommercialMonitorBackendV1(input: {
   liveCertification: EbayLiveCertificationReadModel
   listings: CommercialListingReadModel[]
+  decisions?: Array<CommercialListingDecisionV1>
   alertCandidates: AlertCandidate[]
   registry?: CommercialMonitorRegistryCertificationV1 | null
   orders?: CommercialMonitorOrderFactsV1 | null
@@ -706,13 +967,22 @@ export function buildCommercialMonitorBackendV1(input: {
   currentLiveObservedAt?: string | null
   reportObservedAt?: string | null
   listingQualityReportArtifact?: unknown
+  saleAlerts?: SellerOsSaleAlertsReadV1
 }): CommercialMonitorBackendV1 {
   const primaryListings = selectCanonicalCurrentLiveListingsV1(input.listings)
   const quality = normalizeEbayListingQualityReport({
     artifact: input.listingQualityReportArtifact,
     listings: primaryListings,
   })
-  const decisions = primaryListings.map(classifyCommercialListingV1)
+  const decisionByListingKey = new Map<string, CommercialListingDecisionV1>(
+    (input.decisions ?? []).map((row) => [row.listingKey, row]),
+  )
+  const decisions = primaryListings.map((listing) => {
+    const baseline = classifyCommercialListingV1(listing)
+    const provided = decisionByListingKey.get(listing.key)
+    if (!provided) return baseline
+    return { ...baseline, ...provided }
+  })
   const guidanceByListing = new Map(quality.recommendations.flatMap((row) =>
     row.listingKey ? [[row.listingKey, row] as const] : []))
   const guidanceVsSellerOs = decisions.map((decision) =>
@@ -729,6 +999,7 @@ export function buildCommercialMonitorBackendV1(input: {
     orderStatuses: [],
     fulfillmentStatuses: [],
     trackingAvailability: "UNPROVEN" as const,
+    sourceObservedAt: null,
   }
   const accountTraffic = input.accountTraffic ?? unavailableAccountTrafficV1(
     "ACCOUNT_TRAFFIC_NOT_COLLECTED",
@@ -815,6 +1086,41 @@ export function buildCommercialMonitorBackendV1(input: {
     }))
   const renderedCriticalAlertCount = priorityActionPlan.filter((row) =>
     row.priority === "CRITICAL" || row.priority === "HIGH").slice(0, 4).length
+  const listingByKey = new Map(primaryListings.map((listing) =>
+    [listing.key, listing] as const))
+  const priorityListingKeys = [
+    ...priorityActionPlan.map((row) => row.listingKey),
+    ...decisions.map((decision) => decision.listingKey),
+  ]
+  const visiblePriorityItemIds = [...new Set(priorityListingKeys)]
+    .flatMap((listingKey) => {
+      const itemId = listingByKey.get(listingKey)?.identity.itemId
+      return itemId ? [itemId] : []
+    }).slice(0, 8)
+  const monitorCoverage = buildMonitorCoverageTransparencyV1({
+    scopeId: livePortfolioIntegrity.canonicalCohort.scopeId,
+    scopeType: livePortfolioIntegrity.canonicalCohort.scopeType,
+    observedAt: livePortfolioIntegrity.canonicalCohort.observedAt,
+    listingCount: livePortfolioIntegrity.canonicalCohort.listingCount,
+    itemIds: livePortfolioIntegrity.canonicalCohort.itemIds,
+    identityStatus: livePortfolioIntegrity.canonicalCohort.identityStatus,
+    visiblePriorityItemIds,
+  })
+  const recentSales = orders.recentSales ?? {
+    contractVersion: "RECENT_SALES_FEED_V1" as const,
+    status: "UNAVAILABLE" as const,
+    resultCount: null,
+    entries: [],
+    maximumEntries: 10 as const,
+    truncated: false,
+    limitationCodes: ["PERSISTED_ORDER_EVENT_READ_NOT_AVAILABLE"],
+    source: "PERSISTED_OFFICIAL_EBAY_ORDER_EVENTS" as const,
+    buyerPiiIncluded: false as const,
+  }
+  const saleAlerts = input.saleAlerts ??
+    createUnavailableSellerOsSaleAlertsReadV1(
+      "DASHBOARD_CANONICAL_SALE_ALERTS_NOT_COLLECTED",
+    )
   return {
     contractVersion: "COMMERCIAL_MONITOR_BACKEND_V1",
     mode: "READ_ONLY",
@@ -899,6 +1205,29 @@ export function buildCommercialMonitorBackendV1(input: {
       ...orders,
       buyerPiiIncluded: false,
     },
+    orderSourceHealth: buildOrderSourceHealthV1({
+      status: orders.status === "AVAILABLE" || orders.status === "PARTIAL"
+        ? orders.status
+        : "UNAVAILABLE",
+      permissionStatus: orders.status === "AVAILABLE" || orders.status === "PARTIAL"
+        ? "PROVEN"
+        : orders.status === "UNAVAILABLE_AUTH_PENDING"
+          ? "UNPROVEN"
+          : "UNAVAILABLE",
+      pollIntervalMinutes: orders.pollIntervalMinutes ?? 5,
+      observedAt: orders.sourceObservedAt ?? orders.latestOrderCreationAt,
+      lastSuccessfulReadAt: orders.status === "AVAILABLE" || orders.status === "PARTIAL"
+        ? orders.sourceObservedAt ?? orders.latestOrderCreationAt
+        : null,
+      limitationCodes: orders.status === "UNAVAILABLE_AUTH_PENDING"
+        ? ["ORDER_PERMISSION_AUTHORIZATION_PENDING"]
+        : orders.status === "UNAVAILABLE"
+          ? ["ORDER_SOURCE_UNAVAILABLE"]
+          : [],
+    }),
+    recentSales,
+    saleAlerts,
+    monitorCoverage,
     listingQualityReport: quality,
     decisions,
     guidanceVsSellerOs,

@@ -11,7 +11,9 @@ function activeArea(pathname: string): SellerOsAreaId {
   if (pathname.includes("/listing")) return "listings"
   if (pathname.includes("/opportunity") || pathname.includes("/mobile-review")) return "opportunities"
   if (pathname.includes("/experiments")) return "experiments"
-  if (pathname.includes("/stock-guard") || pathname.includes("/luna-capture")) return "inventory"
+  if (pathname.includes("/stock-guard") || pathname.includes("/luna-capture") ||
+      pathname.includes("/luna-protected-session") ||
+      pathname.includes("/luna-supplier-linkage-review")) return "inventory"
   if (pathname.includes("/decisions")) return "decisions"
   if (pathname.includes("/learning")) return "learning"
   if (pathname.includes("/operational-readiness")) return "system-status"

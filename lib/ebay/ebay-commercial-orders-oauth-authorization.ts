@@ -20,11 +20,33 @@ import {
   isValidEbayCommercialOAuthState,
   validateEbayCommercialOAuthPublicKey,
 } from "./ebay-commercial-orders-oauth-domain"
+import {
+  buildEbayCommercialOrdersBrowserStartUrl,
+  createEbayCommercialOrdersBrowserStartTicket,
+  EBAY_COMMERCIAL_ORDERS_BROWSER_START_TTL_MS,
+  verifyEbayCommercialOrdersBrowserStartTicket,
+} from "./ebay-commercial-orders-oauth-browser-ceremony"
+import {
+  assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified,
+  createEbaySellerOAuthReauthCookie,
+  EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION,
+  EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS,
+  getEbaySellerOAuthReauthConfiguration,
+  getEbaySellerOAuthReauthRuntimeCredentialMatch,
+  hashEbaySellerOAuthReauthState,
+} from "./ebay-seller-oauth-reauth-domain"
+import type {
+  EbaySellerOAuthReauthStateLedger,
+} from "./ebay-seller-oauth-reauth-ledger"
 import { verifyEbayCommercialOfficialAccount } from "./ebay-commercial-readers"
 import { getEbayProductionIdentityBindingConfiguration } from "./ebay-seller-account-scope"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
-const AUTHORIZED_PREVIEW_BRANCH = "feature/centralize-ebay-mobile-command-center"
+// The eBay RuName is registered to the canonical Seller OS Preview callback.
+// The authorization ceremony must execute on that same branch and host so its
+// host-only state cookie returns to the boundary that performs code exchange.
+const AUTHORIZED_PREVIEW_BRANCH =
+  "feature/seller-os-canonical-integration-foundation-v1"
 const HANDOFF_TTL_MS = 30 * 60 * 1_000
 const REQUEST_TIMEOUT_MS = 12_000
 
@@ -240,6 +262,62 @@ function assertAuthorizationConfiguration(environment: NodeJS.ProcessEnv) {
   return getCredentials(environment)
 }
 
+function normalizedHost(value: string) {
+  return value.trim().toLowerCase().replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "")
+}
+
+function assertBrowserCeremonyBinding(
+  requestHost: string,
+  environment: NodeJS.ProcessEnv,
+) {
+  const credentials = assertAuthorizationConfiguration(environment)
+  const host = normalizedHost(requestHost)
+  const deploymentIdentity = normalizedHost(environment.VERCEL_URL ?? "")
+  if (!deploymentIdentity || !/^[a-z0-9.-]+$/.test(deploymentIdentity)) {
+    throw new Error(
+      "EBAY_COMMERCIAL_ORDERS_BROWSER_CEREMONY_DEPLOYMENT_UNAVAILABLE",
+    )
+  }
+  const sellerConfiguration = getEbaySellerOAuthReauthConfiguration({
+    environment,
+    requestHost: host,
+  })
+  if (!sellerConfiguration.ready) {
+    throw new Error(
+      sellerConfiguration.reason ??
+        "EBAY_COMMERCIAL_ORDERS_BROWSER_CEREMONY_CONFIGURATION_INVALID",
+    )
+  }
+  assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
+    getEbaySellerOAuthReauthRuntimeCredentialMatch(sellerConfiguration),
+  )
+  const callback = getEbayCommercialOrdersCallbackConfiguration(
+    environment,
+    host,
+  )
+  const sameCredentialBinding =
+    credentials.clientId === sellerConfiguration.clientId &&
+    credentials.clientSecret === sellerConfiguration.clientSecret &&
+    credentials.runame === sellerConfiguration.runame
+  const exactCallbackBinding =
+    callback.deployedBranchHostStatus === "MATCH" &&
+    sellerConfiguration.branchHost === host &&
+    sellerConfiguration.callbackUrl === callback.canonicalUrl
+  if (!sameCredentialBinding || !exactCallbackBinding) {
+    throw new Error(
+      "EBAY_COMMERCIAL_ORDERS_BROWSER_CEREMONY_BINDING_MISMATCH",
+    )
+  }
+  return {
+    credentials,
+    sellerConfiguration,
+    host,
+    deploymentIdentity,
+    callback,
+  }
+}
+
 export async function diagnoseEbayCommercialOrdersConsentRequest(
   phase: EbayCommercialOrdersDiagnosticPhase,
   fetchImpl: FetchLike = fetch,
@@ -295,7 +373,7 @@ export async function diagnoseEbayCommercialOrdersConsentRequest(
     stateIncluded: Boolean(state),
     stateFormatValid: state ? isValidEbayCommercialOAuthState(state) : null,
     scopes: phase === "base_with_state_and_fulfillment"
-      ? "BASE_AND_FULFILLMENT_READONLY" as const
+      ? "BASE_FULFILLMENT_READONLY_AND_COMMERCE_MESSAGE" as const
       : "BASE_ONLY" as const,
     parameterNames: [
       "client_id",
@@ -362,6 +440,219 @@ export async function startEbayCommercialOrdersAuthorization(
       secretsReturned: false,
     },
   }
+}
+
+export async function startEbayCommercialOrdersBrowserAuthorization(
+  supabase: SupabaseClient,
+  input: {
+    publicKeyPem: string
+    actorUserId: string
+    requestHost: string
+  },
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  const binding = assertBrowserCeremonyBinding(input.requestHost, environment)
+  if (!validateEbayCommercialOAuthPublicKey(input.publicKeyPem)) {
+    throw new Error("EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_PUBLIC_KEY_INVALID")
+  }
+  const state = createEbayCommercialOAuthState()
+  const expiresAtMs = Date.now() +
+    EBAY_COMMERCIAL_ORDERS_BROWSER_START_TTL_MS
+  const expiresAt = new Date(expiresAtMs).toISOString()
+  const handoffExpiresAt = new Date(
+    expiresAtMs + EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS,
+  ).toISOString()
+  const { data, error } = await supabase
+    .from("ebay_commercial_oauth_handoffs")
+    .insert({
+      state_hash: hashEbayCommercialOAuthState(state),
+      public_key_pem: input.publicKeyPem,
+      status: "pending",
+      expires_at: handoffExpiresAt,
+    })
+    .select("id")
+    .single()
+  if (error || !data?.id) {
+    throw new Error("EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_HANDOFF_FAILED")
+  }
+  const startTicket = createEbayCommercialOrdersBrowserStartTicket({
+    state,
+    handoffId: String(data.id),
+    expiresAt: expiresAtMs,
+    host: binding.host,
+    deploymentIdentity: binding.deploymentIdentity,
+    actorUserId: input.actorUserId,
+    clientSecret: binding.sellerConfiguration.clientSecret,
+    expectedAccountFingerprint:
+      binding.sellerConfiguration.expectedAccountFingerprint,
+  })
+  return {
+    startUrl: buildEbayCommercialOrdersBrowserStartUrl({
+      host: binding.host,
+      ticket: startTicket,
+    }),
+    handoffId: String(data.id),
+    expiresAt,
+    ceremony: {
+      contractVersion: "EBAY_COMMERCIAL_ORDERS_BROWSER_CEREMONY_V2" as const,
+      startHost: binding.host,
+      callbackHost: binding.host,
+      startHostMatchesCallbackHost: true as const,
+      startTicketMinted: true as const,
+      startTicketUnconsumed: true as const,
+      clientExchangePathReady: true as const,
+      stateCookieCanBeIssued: true as const,
+      transport: "SEALED_QUERY_TO_SAME_ORIGIN_CLIENT_POST" as const,
+      actorBound: true as const,
+      deploymentBound: true as const,
+      stateCookieIssued: false as const,
+      runameResolvesToExpectedCallback: true as const,
+      requestedScopes: [...EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES],
+      rawAuthorizationUrlReturned: false as const,
+      secretsReturned: false as const,
+    },
+  }
+}
+
+export async function activateEbayCommercialOrdersBrowserAuthorization(
+  supabase: SupabaseClient,
+  input: {
+    startTicket: string
+    actorUserId: string
+    requestHost: string
+    ledger: EbaySellerOAuthReauthStateLedger
+  },
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  const binding = assertBrowserCeremonyBinding(input.requestHost, environment)
+  const now = Date.now()
+  const ticket = verifyEbayCommercialOrdersBrowserStartTicket({
+    ticket: input.startTicket,
+    now,
+    host: binding.host,
+    deploymentIdentity: binding.deploymentIdentity,
+    actorUserId: input.actorUserId,
+    clientSecret: binding.sellerConfiguration.clientSecret,
+    expectedAccountFingerprint:
+      binding.sellerConfiguration.expectedAccountFingerprint,
+  })
+  const { data: handoff, error } = await supabase
+    .from("ebay_commercial_oauth_handoffs")
+    .select("id,state_hash,status,expires_at")
+    .eq("id", ticket.handoffId)
+    .maybeSingle()
+  if (error || !handoff?.id) {
+    throw new Error("EBAY_COMMERCIAL_ORDERS_BROWSER_START_STATE_INVALID")
+  }
+  if (handoff.status !== "pending") {
+    throw new Error(
+      "EBAY_COMMERCIAL_ORDERS_BROWSER_START_TICKET_ALREADY_CONSUMED",
+    )
+  }
+  const handoffExpiresAt = Date.parse(String(handoff.expires_at ?? ""))
+  if (!Number.isFinite(handoffExpiresAt) || handoffExpiresAt <= now) {
+    throw new Error("EBAY_COMMERCIAL_ORDERS_BROWSER_START_TICKET_EXPIRED")
+  }
+  if (handoff.state_hash !== hashEbayCommercialOAuthState(ticket.state)) {
+    throw new Error("EBAY_COMMERCIAL_ORDERS_BROWSER_START_STATE_INVALID")
+  }
+  const stateHash = hashEbaySellerOAuthReauthState(ticket.state)
+  const callbackExpiresAt = Math.min(
+    now + EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS,
+    handoffExpiresAt,
+  )
+  const stateHashPersisted = await input.ledger.createPending({
+    stateHash,
+    expiresAt: new Date(callbackExpiresAt).toISOString(),
+    flowVersion: EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION,
+  })
+  if (!stateHashPersisted) {
+    throw new Error(
+      "EBAY_COMMERCIAL_ORDERS_BROWSER_START_TICKET_ALREADY_CONSUMED",
+    )
+  }
+  const authorizationUrl = buildEbayCommercialOrdersConsentUrl({
+    clientId: binding.credentials.clientId,
+    runame: binding.credentials.runame,
+    state: ticket.state,
+  })
+  const parsedAuthorization = new URL(authorizationUrl)
+  const exactScopeContract =
+    parsedAuthorization.searchParams.get("scope") ===
+      EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES.join(" ")
+  if (!exactScopeContract) {
+    throw new Error("EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPE_CONTRACT_INVALID")
+  }
+  return {
+    authorizationUrl,
+    cookie: createEbaySellerOAuthReauthCookie({
+      state: ticket.state,
+      expiresAt: callbackExpiresAt,
+      actorUserId: input.actorUserId,
+      branchHost: binding.host,
+      clientSecret: binding.sellerConfiguration.clientSecret,
+      expectedAccountFingerprint:
+        binding.sellerConfiguration.expectedAccountFingerprint,
+    }),
+    expiresAt: callbackExpiresAt,
+    ceremony: {
+      contractVersion: "EBAY_COMMERCIAL_ORDERS_BROWSER_CEREMONY_V2" as const,
+      startHost: binding.host,
+      callbackHost: binding.host,
+      startHostMatchesCallbackHost: true as const,
+      startTicketMinted: true as const,
+      startTicketUnconsumed: false as const,
+      clientExchangePathReady: true as const,
+      stateCookieCanBeIssued: true as const,
+      transport: "SEALED_QUERY_TO_SAME_ORIGIN_CLIENT_POST" as const,
+      actorBound: true as const,
+      deploymentBound: true as const,
+      stateCookieIssued: true as const,
+      stateHashPersisted: true as const,
+      rawStatePersisted: false as const,
+      runameResolvesToExpectedCallback: true as const,
+      requestedScopes: [...EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES],
+      exactScopeContract: true as const,
+      secretsReturned: false as const,
+    },
+  }
+}
+
+export async function hasPendingEbayCommercialOrdersAuthorization(
+  supabase: SupabaseClient,
+  state: string,
+) {
+  if (!isValidEbayCommercialOAuthState(state)) return false
+  const now = new Date().toISOString()
+  const { data, error } = await supabase
+    .from("ebay_commercial_oauth_handoffs")
+    .select("id")
+    .eq("state_hash", hashEbayCommercialOAuthState(state))
+    .eq("status", "pending")
+    .gt("expires_at", now)
+    .maybeSingle()
+  if (error) {
+    throw new Error("EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_STATE_READ_FAILED")
+  }
+  return Boolean(data?.id)
+}
+
+export async function failPendingEbayCommercialOrdersAuthorization(
+  supabase: SupabaseClient,
+  state: string,
+  errorCode: string,
+) {
+  if (!isValidEbayCommercialOAuthState(state) ||
+      !/^[A-Z0-9_]{3,160}$/.test(errorCode)) return false
+  const now = new Date().toISOString()
+  const { data, error } = await supabase
+    .from("ebay_commercial_oauth_handoffs")
+    .update({ status: "failed", error_code: errorCode, updated_at: now })
+    .eq("state_hash", hashEbayCommercialOAuthState(state))
+    .eq("status", "pending")
+    .select("id")
+    .maybeSingle()
+  return !error && Boolean(data?.id)
 }
 
 async function tokenExchange(input: {
@@ -499,6 +790,7 @@ export async function completeEbayCommercialOrdersAuthorization(
       status: "READY" as const,
       identityMatch: true as const,
       fulfillmentScopeConfirmed: true as const,
+      commerceMessageScopeConfirmed: true as const,
       secretsReturned: false as const,
     }
   } catch (error) {

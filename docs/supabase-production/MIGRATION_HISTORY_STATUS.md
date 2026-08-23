@@ -129,3 +129,35 @@ Before any future production migration:
 8. Return the CLI link to staging after inspection or application.
 
 Direct `supabase db push` remains prohibited until the remaining blocked migrations are resolved or formally documented as intentionally skipped in a future approved process.
+
+## P2-I01B Targeted Artifact — 2026-08-22
+
+Artifact:
+
+- `20260822150720_create_seller_os_luna_linkage_approval_control_plane.sql`
+- Status: `TARGETED_MIGRATION_REQUIRED / NOT_APPLIED`.
+- Apply authorization: not granted by P2-I01B.
+
+Purpose:
+
+- Add the canonical, append-only human-review candidate and linkage-decision
+  grain for exact external Luna product/variant identities.
+- Preserve single-component, supplier multiplier and multi-component BOM
+  semantics without writing the legacy active-listing payload.
+- Provide atomic, idempotent service-role RPCs for replacing a bounded
+  server-generated review set and recording a human decision.
+
+Data API and security boundary:
+
+- Both tables enable and force RLS.
+- `public`, `anon` and `authenticated` receive no table or function access.
+- The backend service role receives read access and execute access only to the
+  fixed RPCs; direct decision DML remains revoked.
+- The decision RPC accepts only review/cohort/item/evidence/decision bindings.
+  It does not accept Luna IDs, components, URLs, SQL or credentials from the
+  caller.
+- The artifact performs no backfill, approval, Luna read, stock observation,
+  scheduler activation or eBay mutation.
+
+Until a separate Teo authorization applies and certifies this exact artifact,
+the Admin writer must fail closed and existing linkage counts remain unchanged.

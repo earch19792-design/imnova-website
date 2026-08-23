@@ -3,6 +3,10 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { extname, join, relative } from "node:path"
 
+import {
+  sellerOsMigrationVersionFromFilenameV1,
+} from "./ebay-seller-os-migration-version-v1.mjs"
+
 const root = process.cwd()
 const failures = []
 
@@ -44,7 +48,7 @@ const migrationNames = readdirSync(migrationDirectory)
   .filter((name) => name.endsWith(".sql"))
 const timestamps = new Map()
 for (const name of migrationNames) {
-  const timestamp = name.match(/^(\d{12}|\d{14})_/)?.[1]
+  const timestamp = sellerOsMigrationVersionFromFilenameV1(name)
   if (!timestamp) {
     failures.push(`MIGRATION_TIMESTAMP_INVALID:${name}`)
     continue
@@ -114,7 +118,7 @@ for (const sourceTable of [
   sellerOsAclRemediations.set(sourceTable, v3AclRemediation)
 }
 for (const name of migrationNames) {
-  const timestamp = name.match(/^(\d{12}|\d{14})_/)?.[1]
+  const timestamp = sellerOsMigrationVersionFromFilenameV1(name)
   const source = readFileSync(join(migrationDirectory, name), "utf8")
 
   if (/alter\s+default\s+privileges\s+for\s+role\s+supabase_admin/i.test(source)) {

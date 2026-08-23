@@ -194,19 +194,29 @@ export function normalizeCompletedEbayOrders(payload: unknown): SafeMarketplaceO
       !creationDate ||
       !lastModifiedDate ||
       orderPaymentStatus !== "PAID" ||
-      !["NOT_STARTED", "IN_PROGRESS"].includes(orderFulfillmentStatus) ||
+      !["NOT_STARTED", "IN_PROGRESS", "FULFILLED"].includes(
+        orderFulfillmentStatus,
+      ) ||
       orderCannotBeFulfilled(order)
     ) {
       return []
     }
     const pricing = record(order.pricingSummary)
     const total = record(pricing.total)
-    const lineItems = array(order.lineItems).flatMap((lineValue) => {
+    const rawLineItems = array(order.lineItems)
+    const lineItems = rawLineItems.flatMap((lineValue) => {
       const line = record(lineValue)
       const lineItemId = text(line.lineItemId, 100)
       const listingId = text(line.legacyItemId, 20)
-      const quantity = Math.max(0, Math.trunc(numeric(line.quantity) ?? 0))
-      if (!lineItemId || !/^\d{9,20}$/.test(listingId) || quantity < 1) return []
+      const listingMarketplaceId = text(
+        line.listingMarketplaceId,
+        40,
+      ).toUpperCase()
+      const quantityValue = numeric(line.quantity)
+      if (!lineItemId || !/^\d{9,20}$/.test(listingId) ||
+          listingMarketplaceId !== "EBAY_US" || quantityValue === null) return []
+      const quantity = Math.max(0, Math.trunc(quantityValue))
+      if (quantity < 1) return []
       const cost = record(line.lineItemCost)
       const delivery = record(line.lineItemFulfillmentInstructions)
       return [{
@@ -221,7 +231,10 @@ export function normalizeCompletedEbayOrders(payload: unknown): SafeMarketplaceO
         shipByDate: isoDate(delivery.shipByDate),
       }]
     })
-    if (!lineItems.length) return []
+    // A partially sanitized multi-line order cannot be represented as a
+    // proven sale: its total, quantity and identity would no longer describe
+    // the same authoritative Order. Reject the whole Order fail-closed.
+    if (!rawLineItems.length || lineItems.length !== rawLineItems.length) return []
     return [{
       ebayOrderId,
       creationDate,
@@ -230,7 +243,7 @@ export function normalizeCompletedEbayOrders(payload: unknown): SafeMarketplaceO
       orderFulfillmentStatus,
       totalAmount: amount(total),
       currency: text(total.currency, 10) || null,
-      marketplaceId: text(order.salesRecordReference ? "EBAY_US" : order.marketplaceId, 30) || "EBAY_US",
+      marketplaceId: "EBAY_US",
       lineItems,
     }]
   })
@@ -375,8 +388,9 @@ export function evaluateCommercialRules(input: {
     }, "Revisar oferta, descripción, envío y confianza del listing antes de proponer cambios.", bucket))
   }
 
-  const unitsSold24h = Math.max(0, Math.trunc(input.unitsSold24h ?? 0))
-  if (unitsSold24h >= thresholds.acceleratedUnits24h) {
+  const unitsSold24h = input.unitsSold24h === undefined
+    ? null : Math.max(0, Math.trunc(input.unitsSold24h))
+  if (unitsSold24h !== null && unitsSold24h >= thresholds.acceleratedUnits24h) {
     events.push(baseEvent(snapshot, thresholds, "ACCELERATED_SALES", "high", {
       confirmedUnits24h: unitsSold24h,
       threshold: thresholds.acceleratedUnits24h,
@@ -485,7 +499,7 @@ export function buildDailyCommercialSummary(input: {
     input.snapshots.length > 0 && input.snapshots.every((row) =>
       row.completenessStatus === "complete" && row[key] !== null
     )
-      ? input.snapshots.reduce((sum, row) => sum + (row[key] ?? 0), 0)
+      ? input.snapshots.reduce((sum, row) => sum + row[key]!, 0)
       : null
   const impressions = sumWhenComplete("impressions")
   const views = sumWhenComplete("views")

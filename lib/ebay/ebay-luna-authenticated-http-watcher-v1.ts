@@ -8,6 +8,8 @@ import {
   parseLunaAuthenticatedHttpCaptureV1,
   type LunaExactApprovedLinkV1,
 } from "./ebay-luna-supplier-stock-watcher-v1"
+import { resolveServerOwnedLunaSessionValueV1 } from
+  "./ebay-luna-protected-session-server-v1"
 
 const LUNA_HOSTS = new Set(["lunaportex.com", "www.lunaportex.com"])
 const MAX_RESPONSE_BYTES = 1_000_000
@@ -58,7 +60,7 @@ export async function fetchLunaAuthenticatedDirectedProductV1(
     sleep?: (milliseconds: number) => Promise<void>
   } = {},
 ) {
-  const protectedValue = protectedSessionValue()
+  const protectedValue = await resolveServerOwnedLunaSessionValueV1()
   if (!protectedValue) throw new Error("LUNA_REAUTH_REQUIRED")
   const urls = productJsonUrl(canonicalSourceUrl)
   const fetchImpl = options.fetchImpl ?? fetch
@@ -237,7 +239,7 @@ export async function captureLunaAuthenticatedHttpV1(
   } = {},
 ) {
   const request = buildLunaAuthenticatedHttpRequestV1(link)
-  const protectedValue = protectedSessionValue()
+  const protectedValue = await resolveServerOwnedLunaSessionValueV1()
   const observedAt = options.now ?? new Date().toISOString()
   if (!protectedValue) return parseLunaAuthenticatedHttpCaptureV1({
     request,

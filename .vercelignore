@@ -2,6 +2,8 @@
 .next/
 .tmp/
 .tmp-*/
+.tmp-*
+.seller-os/
 .vercel/
 node_modules/
 out/

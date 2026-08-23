@@ -7,6 +7,7 @@ import type {
   AccountTrafficEvidenceV1,
   CanonicalCommercialTimeSeriesPointV1,
 } from "./ebay-commercial-monitor-traffic-scope-v1"
+import type { SellerOsSaleAlertsReadV1 } from "./ebay-sale-alerts-read-v1"
 
 export const COMMERCIAL_MONITOR_READONLY_CONTRACT_VERSION =
   "COMMERCIAL_MONITOR_READONLY_FOUNDATION_V1" as const
@@ -1727,6 +1728,73 @@ export type CommercialMonitorBackendV1 = {
     fulfillmentStatuses: string[]
     trackingAvailability: "AVAILABLE" | "MISSING" | "UNPROVEN"
     buyerPiiIncluded: false
+  }
+  orderSourceHealth: {
+    contractVersion: "ORDER_SOURCE_HEALTH_V1"
+    detectionPolicyVersion: "ORDER_DETECTION_POLICY_V1"
+    capability: "EBAY_SELL_FULFILLMENT_GET_ORDERS"
+    permissionStatus: "PROVEN" | "UNPROVEN" | "UNAVAILABLE"
+    detectionMode: "POLLING"
+    eventDrivenStatus: "OFFICIAL_CAPABILITY_UNPROVEN_NOT_CONFIGURED"
+    status: "AVAILABLE" | "PARTIAL" | "UNPROVEN" | "UNAVAILABLE"
+    pollIntervalMinutes: number
+    expectedDetectionLatency: string
+    observedAt: string | null
+    lastSuccessfulReadAt: string | null
+    limitationCodes: readonly string[]
+    bounded: true
+    idempotent: true
+    incrementalCursor: true
+    overlapMinutes: 5
+  }
+  recentSales: {
+    contractVersion: "RECENT_SALES_FEED_V1"
+    status: CommercialMonitorCapabilityStatus
+    resultCount: number | null
+    entries: Array<{
+      orderId: string
+      orderLineItemIds: string[]
+      itemIds: string[]
+      listingTitle: string | null
+      quantity: number | null
+      orderTotal: number | null
+      currency: string | null
+      soldAt: string
+      paymentState: string
+      fulfillmentState: string
+      attributionStatus: "PROVEN" | "PARTIAL" | "AMBIGUOUS" |
+        "UNPROVEN" | "UNAVAILABLE"
+      buyerMessageStatus: "SENT" | "SKIPPED" | "FAILED" | "BLOCKED" |
+        "UNPROVEN" | "UNAVAILABLE"
+      whatsappNotificationStatus: "QUEUED" | "ACCEPTED_BY_META" |
+        "FAILED" | "DEFERRED" | "UNPROVEN" | "UNAVAILABLE"
+      supplierStockStatus: "REFRESH_REQUEST_READY" |
+        "SUPPLIER_RECHECK_PENDING_LINK" | "BLOCKED" | "UNPROVEN" |
+        "UNAVAILABLE"
+      evidenceReference: string
+      buyerPiiIncluded: false
+    }>
+    maximumEntries: 10
+    truncated: boolean
+    limitationCodes: string[]
+    source: "PERSISTED_OFFICIAL_EBAY_ORDER_EVENTS"
+    buyerPiiIncluded: false
+  }
+  saleAlerts: SellerOsSaleAlertsReadV1
+  monitorCoverage: {
+    contractVersion: "MONITOR_COVERAGE_TRANSPARENCY_V1"
+    status: "AVAILABLE" | "PARTIAL" | "UNPROVEN"
+    currentLiveScopeId: string
+    currentLiveScopeType: "CURRENT_LIVE_COHORT_SCOPE"
+    currentLiveScopeCount: number | null
+    currentLiveObservedAt: string | null
+    monitoredItemIds: readonly string[]
+    visiblePriorityItemIds: readonly string[]
+    visiblePriorityRowCount: number
+    monitoredOutsideVisibleCount: number | null
+    visibleRowsEqualMonitoredScope: boolean | null
+    visibleRowsArePresentationSubset: true
+    notVisibleDoesNotMeanNotMonitored: true
   }
   listingQualityReport: {
     status: CommercialMonitorCapabilityStatus

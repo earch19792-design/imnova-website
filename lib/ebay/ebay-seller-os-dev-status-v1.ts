@@ -24,6 +24,7 @@ const GIT_EXECUTABLE = "/usr/bin/git"
 const GIT_TIMEOUT_MS = 2_000
 const GIT_OUTPUT_MAX_BYTES = 65_536
 const MAX_PATHS_PER_CATEGORY = 100
+const MAX_HEAD_COMMIT_PATHS = 100
 const MAX_RECENT_COMMITS = 10
 const MAX_SUBJECT_LENGTH = 240
 const MAX_LIMITATIONS = 24
@@ -47,6 +48,8 @@ export type SellerOsDevStatusAdapterV1 = Readonly<{
   verifyRepository: () => Promise<GitCommandResultV1>
   readHeadSha: () => Promise<GitCommandResultV1>
   readHeadMetadata: () => Promise<GitCommandResultV1>
+  readHeadParents: () => Promise<GitCommandResultV1>
+  readHeadChangedPaths: () => Promise<GitCommandResultV1>
   readBranch: () => Promise<GitCommandResultV1>
   readStatus: () => Promise<GitCommandResultV1>
   readRecentCommits: () => Promise<GitCommandResultV1>
@@ -67,6 +70,17 @@ export type SellerOsDevStatusV1 = Readonly<{
     detached: boolean
     commitTimestamp: string | null
     commitSubject: string | null
+  }>
+  headCommit: Readonly<{
+    sha: string | null
+    parentSha: string | null
+    subject: string | null
+    changedPathCount: CountV1
+    changedPaths: readonly Readonly<{
+      path: string
+      status: "A" | "M" | "D" | "R" | "C" | "T" | "U" | "X" | "B" | "UNKNOWN"
+    }>[]
+    pathsTruncated: boolean
   }>
   workingTree: Readonly<{
     status: WorkingTreeStatusV1
@@ -154,6 +168,10 @@ const DEFAULT_ADAPTER: SellerOsDevStatusAdapterV1 = Object.freeze({
   verifyRepository: () => runFixedGit(["rev-parse", "--is-inside-work-tree"]),
   readHeadSha: () => runFixedGit(["rev-parse", "HEAD"]),
   readHeadMetadata: () => runFixedGit(["show", "-s", "--format=%cI%x1f%s", "HEAD"]),
+  readHeadParents: () => runFixedGit(["show", "-s", "--format=%P", "HEAD"]),
+  readHeadChangedPaths: () => runFixedGit([
+    "diff-tree", "--no-commit-id", "--name-status", "-r", "-z", "--find-renames", "HEAD",
+  ]),
   readBranch: () => runFixedGit(["symbolic-ref", "--quiet", "--short", "HEAD"]),
   readStatus: () => runFixedGit(["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
   readRecentCommits: () => runFixedGit([
@@ -281,6 +299,56 @@ function parseRecentCommits(raw: string) {
   return { commits: Object.freeze(commits), limitations }
 }
 
+function parseHeadParents(raw: string) {
+  const values = raw.trim() ? raw.trim().split(/\s+/) : []
+  if (values.length === 0) return { parentSha: null, limitations: [] as string[] }
+  const parents = values.map(safeSha)
+  if (parents.some((parent) => parent === null)) {
+    return { parentSha: null, limitations: ["GIT_HEAD_PARENT_MALFORMED"] }
+  }
+  return { parentSha: parents[0] ?? null,
+    limitations: parents.length > 1 ? ["GIT_HEAD_MULTIPLE_PARENTS"] : [] as string[] }
+}
+
+function parseHeadChangedPaths(raw: string) {
+  const changedPaths: Array<{ path: string;
+    status: "A" | "M" | "D" | "R" | "C" | "T" | "U" | "X" | "B" | "UNKNOWN" }> = []
+  const limitations: string[] = []
+  let changedPathCount = 0
+  let pathsTruncated = false
+  let malformed = false
+  const records = raw.split("\0")
+  for (let index = 0; index < records.length; index += 1) {
+    const rawStatus = records[index]
+    if (!rawStatus) continue
+    const code = rawStatus.slice(0, 1)
+    const destination = code === "R" || code === "C"
+      ? records[index += 2] : records[index += 1]
+    if (!destination) {
+      malformed = true
+      limitations.push("GIT_HEAD_CHANGED_PATHS_MALFORMED")
+      break
+    }
+    changedPathCount += 1
+    const path = safeRepoRelativePath(destination)
+    const status = (["A", "M", "D", "R", "C", "T", "U", "X", "B"] as const)
+      .includes(code as "A" | "M" | "D" | "R" | "C" | "T" | "U" | "X" | "B")
+      ? code as "A" | "M" | "D" | "R" | "C" | "T" | "U" | "X" | "B"
+      : "UNKNOWN" as const
+    if (status === "UNKNOWN") limitations.push("GIT_HEAD_CHANGED_PATH_STATUS_UNKNOWN")
+    if (!path) {
+      pathsTruncated = true
+      limitations.push("GIT_HEAD_CHANGED_PATH_OMITTED_UNSAFE")
+      continue
+    }
+    if (changedPaths.length < MAX_HEAD_COMMIT_PATHS) changedPaths.push(Object.freeze({ path, status }))
+    else pathsTruncated = true
+  }
+  return { changedPathCount: malformed ? null : changedPathCount,
+    changedPaths: malformed ? Object.freeze([]) : Object.freeze(changedPaths),
+    pathsTruncated, limitations }
+}
+
 export function createUnavailableSellerOsDevStatusV1(
   timestamp = new Date().toISOString(),
 ): SellerOsDevStatusV1 {
@@ -291,6 +359,8 @@ export function createUnavailableSellerOsDevStatusV1(
       status: "UNAVAILABLE" as const }),
     head: Object.freeze({ sha: null, shortSha: null, branch: null,
       detached: false, commitTimestamp: null, commitSubject: null }),
+    headCommit: Object.freeze({ sha: null, parentSha: null, subject: null,
+      changedPathCount: null, changedPaths: Object.freeze([]), pathsTruncated: false }),
     workingTree: Object.freeze({ status: "UNAVAILABLE" as const, stagedCount: null,
       unstagedCount: null, untrackedCount: null, stagedPaths: Object.freeze([]),
       unstagedPaths: Object.freeze([]), untrackedPaths: Object.freeze([]),
@@ -314,11 +384,11 @@ export async function collectSellerOsDevStatusV1(options: {
   try { verified = await adapter.verifyRepository() } catch { return createUnavailableSellerOsDevStatusV1(timestamp) }
   if (verified.exitCode !== 0 || verified.stdout.trim() !== "true") return createUnavailableSellerOsDevStatusV1(timestamp)
 
-  const [headResult, metadataResult, branchResult, statusResult, logResult,
+  const [headResult, metadataResult, parentResult, changedPathsResult, branchResult, statusResult, logResult,
     upstreamResult, aheadBehindResult] = await Promise.allSettled([
-    adapter.readHeadSha(), adapter.readHeadMetadata(), adapter.readBranch(),
-    adapter.readStatus(), adapter.readRecentCommits(), adapter.readUpstreamName(),
-    adapter.readAheadBehind(),
+    adapter.readHeadSha(), adapter.readHeadMetadata(), adapter.readHeadParents(),
+    adapter.readHeadChangedPaths(), adapter.readBranch(), adapter.readStatus(),
+    adapter.readRecentCommits(), adapter.readUpstreamName(), adapter.readAheadBehind(),
   ])
   const limitations: string[] = []
   const headSha = headResult.status === "fulfilled" && headResult.value.exitCode === 0
@@ -329,6 +399,16 @@ export async function collectSellerOsDevStatusV1(options: {
   const commitTimestamp = metadata.length === 2 ? safeTimestamp(metadata[0]) : null
   const commitSubject = metadata.length === 2 ? cleanText(metadata[1]) || null : null
   if (!commitTimestamp || !commitSubject) limitations.push("GIT_HEAD_METADATA_PARTIAL")
+  const parsedParents = parentResult.status === "fulfilled" && parentResult.value.exitCode === 0
+    ? parseHeadParents(parentResult.value.stdout)
+    : { parentSha: null, limitations: ["GIT_HEAD_PARENT_UNAVAILABLE"] }
+  limitations.push(...parsedParents.limitations)
+  const parsedHeadChangedPaths = changedPathsResult.status === "fulfilled" &&
+      changedPathsResult.value.exitCode === 0
+    ? parseHeadChangedPaths(changedPathsResult.value.stdout)
+    : { changedPathCount: null, changedPaths: Object.freeze([]), pathsTruncated: false,
+      limitations: ["GIT_HEAD_CHANGED_PATHS_UNAVAILABLE"] }
+  limitations.push(...parsedHeadChangedPaths.limitations)
   const branch = branchResult.status === "fulfilled" && branchResult.value.exitCode === 0
     ? safeBranch(branchResult.value.stdout) : null
   const detached = branch === null
@@ -397,6 +477,10 @@ export async function collectSellerOsDevStatusV1(options: {
       status: repositoryStatus }),
     head: Object.freeze({ sha: headSha, shortSha: headSha?.slice(0, 12) ?? null,
       branch, detached, commitTimestamp, commitSubject }),
+    headCommit: Object.freeze({ sha: headSha, parentSha: parsedParents.parentSha,
+      subject: commitSubject, changedPathCount: parsedHeadChangedPaths.changedPathCount,
+      changedPaths: parsedHeadChangedPaths.changedPaths,
+      pathsTruncated: parsedHeadChangedPaths.pathsTruncated }),
     workingTree, upstream, recentCommits: parsedLog.commits, evidenceCompleteness,
     limitations: boundedLimitations, safety: SAFETY,
   })

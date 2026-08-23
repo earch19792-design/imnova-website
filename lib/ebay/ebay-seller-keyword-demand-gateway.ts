@@ -303,6 +303,14 @@ async function getApplicationToken(scope: string) {
   throw new Error("EBAY_OAUTH_FAILED")
 }
 
+// The Developer Analytics application-level rate-limit read uses the same
+// canonical production app-token boundary as the existing official Browse
+// quota preflight. Keep the base scope fixed so callers cannot turn this into
+// a general-purpose token minting surface.
+export async function getEbayBaseApplicationTokenV1() {
+  return getApplicationToken(BROWSE_SCOPE)
+}
+
 function readonlyRequestContext(url: URL) {
   const endpoint = url.pathname
   if (endpoint.startsWith("/buy/browse/")) return { apiFamily: "BROWSE", operation: endpoint.includes("item_summary/search") ? "SEARCH" : "ITEM_DETAIL", endpoint }

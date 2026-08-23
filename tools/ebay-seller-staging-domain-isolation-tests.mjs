@@ -135,10 +135,43 @@ test("route and bundle surface regress downward", () => {
   const temporarySellerOauthApi = exists(
     "app/api/admin/ebay/monitor/seller-oauth-reauth/route.ts",
   )
+  const commercialOauthBrowserPage = exists(
+    "app/admin/ebay/monitor/commercial-orders-oauth-start/page.tsx",
+  )
+  const commercialOauthBrowserApi = exists(
+    "app/api/admin/ebay/commercial-orders-oauth/browser-start/route.ts",
+  )
+  const lunaProtectedSessionPage = exists(
+    "app/admin/ebay/luna-protected-session/page.tsx",
+  )
+  const lunaProtectedSessionApi = exists(
+    "app/api/admin/ebay/luna-protected-session/route.ts",
+  )
+  const lunaSupplierLinkageReviewPage = exists(
+    "app/admin/ebay/luna-supplier-linkage-review/page.tsx",
+  )
+  const lunaSupplierLinkageReviewApi = exists(
+    "app/api/admin/ebay/luna-supplier-linkage-review/route.ts",
+  )
   assert.equal(
     temporarySellerOauthPage,
     temporarySellerOauthApi,
     "temporary seller OAuth UI/API must be added and retired together",
+  )
+  assert.equal(
+    commercialOauthBrowserPage,
+    commercialOauthBrowserApi,
+    "Commercial Orders browser START UI/API must be added and retired together",
+  )
+  assert.equal(
+    lunaProtectedSessionPage,
+    lunaProtectedSessionApi,
+    "Luna protected-session UI/API must be added and retired together",
+  )
+  assert.equal(
+    lunaSupplierLinkageReviewPage,
+    lunaSupplierLinkageReviewApi,
+    "Luna supplier-linkage review UI/API must be added and retired together",
   )
   // The read-only monitor, Market Research, Commercial Operational Readiness,
   // Decisions, Experiments, Learning, Luna Capture, Copilot, and Strategic
@@ -148,7 +181,9 @@ test("route and bundle surface regress downward", () => {
   // to the previously isolated Seller OS surface. The explicitly temporary
   // seller reauthorization gate may add one paired page/API while present.
   assert.ok(
-    countNamed("app", "page.tsx") <= 23 + Number(temporarySellerOauthPage),
+    countNamed("app", "page.tsx") <= 23 + Number(temporarySellerOauthPage) +
+      Number(commercialOauthBrowserPage) + Number(lunaProtectedSessionPage) +
+      Number(lunaSupplierLinkageReviewPage),
     "page route count regressed",
   )
   // 68 legacy-era routes -> 65 isolated routes -> one approval-only Seller OS
@@ -165,10 +200,14 @@ test("route and bundle surface regress downward", () => {
   // operational-readiness contract/dry-run route with all dispatch disabled
   // -> one authenticated read-only Intelligence route shared by Decisions,
   // Experiments, and Learning -> one Preview-only authenticated cloud read
-  // relay for the loopback Secure MCP Tunnel runtime.
+  // relay for the loopback Secure MCP Tunnel runtime -> one authenticated,
+  // quota-zero Daily Dollar Radar cron boundary that remains unregistered
+  // until its durable scheduler/timezone policy is approved.
   // The old product/community domain remains at zero.
   assert.ok(
-    countNamed("app/api", "route.ts") <= 89 + Number(temporarySellerOauthApi),
+    countNamed("app/api", "route.ts") <= 90 + Number(temporarySellerOauthApi) +
+      Number(commercialOauthBrowserApi) + Number(lunaProtectedSessionApi) +
+      Number(lunaSupplierLinkageReviewApi),
     "API route count regressed",
   )
   assert.equal(countNamed("app/api/community", "route.ts"), 0)

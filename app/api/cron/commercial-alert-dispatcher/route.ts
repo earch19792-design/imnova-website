@@ -14,6 +14,10 @@ import {
   preflightSellerWhatsAppGateway,
 } from "@/lib/ebay/ebay-seller-whatsapp-gateway"
 import { dispatchCommercialAlertOutbox } from "@/lib/marketplace/commercial-alert-dispatcher"
+import { dispatchSellerOsBuyerThankYouV1 } from
+  "@/lib/ebay/ebay-buyer-thank-you-dispatcher-v1"
+import { collectSellerOsBuyerThankYouStatusV1 } from
+  "@/lib/ebay/ebay-seller-os-assistant-runtime"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
 function boundedInteger(value: string | undefined, fallback: number, minimum: number, maximum: number) {
@@ -205,21 +209,52 @@ export async function GET(req: Request) {
       supabase,
       accountKey,
     )
-    const result = await dispatchCommercialAlertOutbox(
-      supabase,
-      {
-        marketplaceAccountKey: accountKey,
-        workerId: `commercial-dispatch-schedule:${randomUUID()}`,
-        // Immediate events remain individual. Due digest events are claimed
-        // together and rendered as one WhatsApp summary by the dispatcher.
-        limit: 10,
-        dryRun: false,
-      },
-    )
+    let result: unknown
+    try {
+      result = await dispatchCommercialAlertOutbox(
+        supabase,
+        {
+          marketplaceAccountKey: accountKey,
+          workerId: `commercial-dispatch-schedule:${randomUUID()}`,
+          // Immediate events remain individual. Due digest events are claimed
+          // together and rendered as one WhatsApp summary by the dispatcher.
+          limit: 10,
+          dryRun: false,
+        },
+      )
+    } catch {
+      // Sibling isolation: a WhatsApp provider failure must not mutate or
+      // replay Dashboard state and must not suppress the independent eBay
+      // thank-you step. The result is bounded and contains no provider body.
+      result = {
+        status: "FAILED",
+        error: "WHATSAPP_DISPATCH_FAILED_ISOLATED",
+        whatsappMessagesAttempted: null,
+      }
+    }
+    let buyerThankYou: unknown
+    try {
+      const status = await collectSellerOsBuyerThankYouStatusV1()
+      buyerThankYou = await dispatchSellerOsBuyerThankYouV1({
+        supabase,
+        accountKey,
+        status,
+        capability: status.capability,
+        workerId: `buyer-thank-you:${randomUUID()}`,
+      })
+    } catch {
+      buyerThankYou = {
+        status: "FAILED",
+        error: "BUYER_THANK_YOU_DISPATCH_FAILED_CLOSED",
+        marketplaceWrites: 0,
+        buyerMessageSends: 0,
+      }
+    }
     return NextResponse.json({
       success: true,
       heartbeat,
       result,
+      buyerThankYou,
       whatsappPolicy: {
         immediateEventTypes: [...IMMEDIATE_WHATSAPP_EVENT_TYPES],
         deferredNonUrgent,

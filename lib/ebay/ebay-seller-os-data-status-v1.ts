@@ -59,6 +59,8 @@ const MIGRATION_ID_PATTERN = /^\d{12,20}$/
 type SourceStatusV1 = "AVAILABLE" | "UNAVAILABLE" | "UNPROVEN"
 type ReconciliationStatusV1 = "NONE" | "PRESENT" | "UNAVAILABLE" | "UNPROVEN"
 type SchemaDriftStatusV1 = "MATCHED" | "DRIFT_DETECTED" | "UNAVAILABLE" | "UNPROVEN"
+type SchemaDriftConclusionV1 = "SCHEMA_DRIFT_PROVEN_NONE" | "SCHEMA_DRIFT_PRESENT" |
+  "SCHEMA_DRIFT_REMAINS_UNPROVEN"
 
 type AppliedLedgerReadV1 = Readonly<{
   ids: readonly unknown[]
@@ -124,6 +126,7 @@ export type SellerOsDataStatusV1 = Readonly<{
   }>
   schemaDrift: Readonly<{
     status: SchemaDriftStatusV1
+    conclusion: SchemaDriftConclusionV1 | null
     method: string | null
     checkedAt: string | null
   }>
@@ -402,7 +405,7 @@ export function createUnavailableSellerOsDataStatusV1(
       remoteOnly: emptyReconciliation("UNAVAILABLE"),
     }),
     schemaDrift: Object.freeze({ status: "UNAVAILABLE" as const,
-      method: null, checkedAt: null }),
+      conclusion: null, method: null, checkedAt: null }),
     targetedAttestation: unavailableSellerOsTargetedMigrationAttestationV1(),
     overallStatus: "UNAVAILABLE",
     evidenceCompleteness: "UNAVAILABLE",
@@ -533,7 +536,7 @@ export async function collectSellerOsDataStatusV1(options: {
   }
 
   let schemaDrift: SellerOsDataStatusV1["schemaDrift"] = Object.freeze({
-    status: "UNAVAILABLE", method: null, checkedAt: null,
+    status: "UNAVAILABLE", conclusion: null, method: null, checkedAt: null,
   })
   if (driftRead && ["MATCHED", "DRIFT_DETECTED", "UNAVAILABLE", "UNPROVEN"]
     .includes(driftRead.status)) {
@@ -543,13 +546,27 @@ export async function collectSellerOsDataStatusV1(options: {
         (!method || !checkedAt)) {
       addLimitation(limitations, "SCHEMA_DRIFT_EVIDENCE_MALFORMED")
     } else {
-      schemaDrift = Object.freeze({ status: driftRead.status, method, checkedAt })
-      if (driftRead.status === "UNPROVEN") addLimitation(limitations,
-        "SCHEMA_DRIFT_NOT_PROVEN_BY_AUTHORITATIVE_MECHANISM")
-      if (driftRead.status === "UNAVAILABLE") addLimitation(limitations,
-        "SCHEMA_DRIFT_EVIDENCE_UNAVAILABLE")
+      const conclusion = driftRead.status === "MATCHED" ? "SCHEMA_DRIFT_PROVEN_NONE" as const
+        : driftRead.status === "DRIFT_DETECTED" ? "SCHEMA_DRIFT_PRESENT" as const
+        : driftRead.status === "UNPROVEN" ? "SCHEMA_DRIFT_REMAINS_UNPROVEN" as const : null
+      schemaDrift = Object.freeze({ status: driftRead.status, conclusion, method, checkedAt })
     }
   } else addLimitation(limitations, "SCHEMA_DRIFT_EVIDENCE_MALFORMED")
+
+  if (schemaDrift.status === "UNPROVEN" && targetedAttestation.status === "AVAILABLE" &&
+      targetedAttestation.schemaDrift.method && targetedAttestation.schemaDrift.checkedAt) {
+    const conclusion = targetedAttestation.schemaDrift.conclusion
+    const status = conclusion === "SCHEMA_DRIFT_PROVEN_NONE" ? "MATCHED" as const
+      : conclusion === "SCHEMA_DRIFT_PRESENT" ? "DRIFT_DETECTED" as const
+      : "UNPROVEN" as const
+    schemaDrift = Object.freeze({ status, conclusion,
+      method: targetedAttestation.schemaDrift.method,
+      checkedAt: targetedAttestation.schemaDrift.checkedAt })
+  }
+  if (schemaDrift.status === "UNPROVEN") addLimitation(limitations,
+    "SCHEMA_DRIFT_NOT_PROVEN_BY_AUTHORITATIVE_MECHANISM")
+  if (schemaDrift.status === "UNAVAILABLE") addLimitation(limitations,
+    "SCHEMA_DRIFT_EVIDENCE_UNAVAILABLE")
 
   const dataLayerStatus = connectivity === "AVAILABLE"
     ? appliedStatus === "AVAILABLE" ? "AVAILABLE" as const : "DEGRADED" as const

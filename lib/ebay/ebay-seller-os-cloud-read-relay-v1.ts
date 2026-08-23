@@ -4,11 +4,26 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { executeSellerOsAssistantToolV1, SELLER_OS_ASSISTANT_TOOLS_V1 } from "./ebay-seller-os-assistant-gateway-v1.ts"
 import type { CommercialMonitorGetDto } from
   "./commercial-monitor-readonly-contract"
+// @ts-expect-error Node's direct TypeScript runner requires the explicit extension.
+import { SELLER_OS_OFFICIAL_ORDERS_TOOL_V1, type SellerOsOfficialOrdersReadV1 } from "./ebay-official-orders-read-v1.ts"
+// @ts-expect-error Node's direct TypeScript runner requires the explicit extension.
+import { SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1, type SellerOsWhatsappSaleAlertStatusV1 } from "./ebay-whatsapp-sale-alert-v1.ts"
+// @ts-expect-error Node's direct TypeScript runner requires the explicit extension.
+import { SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1, type SellerOsBuyerThankYouStatusV1 } from "./ebay-post-purchase-buyer-message-v1.ts"
+import type { SellerOsLunaSupplierLinkageReadV1 } from "./ebay-luna-supplier-linkage-certification-v1.ts"
+import type { SellerOsEbayTradingRateLimitStatusV1 } from
+  "./ebay-trading-rate-limit-observability-v1.ts"
+// @ts-expect-error Node's direct TypeScript runner requires the explicit extension.
+import { collectSellerOsLongitudinalOpportunityReadV1 } from "./ebay-longitudinal-opportunity-radar-read-v1.ts"
 
 export const SELLER_OS_CLOUD_READ_RELAY_VERSION =
   "SELLER_OS_CLOUD_READ_RELAY_V1_2026_08_12"
 export const SELLER_OS_CLOUD_READ_RELAY_PATH =
   "/api/seller-os/assistant/cloud-read-relay"
+export const SELLER_OS_LUNA_SUPPLIER_LINKAGE_RELAY_OPERATION_V1 =
+  "seller_os_internal_read_luna_supplier_linkage_resource" as const
+export const SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1 =
+  "seller_os_internal_read_ebay_trading_rate_limit_resource" as const
 export const SELLER_OS_CLOUD_READ_RELAY_ENVIRONMENT = Object.freeze({
   endpointUrl: "SELLER_OS_CLOUD_READ_RELAY_URL",
   authenticationSecret: "SELLER_OS_CLOUD_READ_RELAY_SECRET",
@@ -19,6 +34,7 @@ export const SELLER_OS_CLOUD_READ_RELAY_HEADERS = Object.freeze({
   nonce: "x-seller-os-relay-nonce",
   signature: "x-seller-os-relay-signature",
   protectionBypass: "x-vercel-protection-bypass",
+  protectionCookieRequest: "x-vercel-set-bypass-cookie",
 })
 
 const MAX_REQUEST_BYTES = 8_192
@@ -26,7 +42,14 @@ const MAX_RESPONSE_BYTES = 2_000_000
 const MAX_CLOCK_SKEW_MS = 60_000
 const REQUEST_TIMEOUT_MS = 30_000
 const RELAY_TOOL_NAMES = new Set(
-  SELLER_OS_ASSISTANT_TOOLS_V1.map((descriptor) => descriptor.name),
+  [
+    ...SELLER_OS_ASSISTANT_TOOLS_V1.map((descriptor) => descriptor.name),
+    SELLER_OS_OFFICIAL_ORDERS_TOOL_V1.name,
+    SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1.name,
+    SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1.name,
+    SELLER_OS_LUNA_SUPPLIER_LINKAGE_RELAY_OPERATION_V1,
+    SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1,
+  ],
 )
 const SAFE_HEADERS = Object.freeze({
   "Cache-Control": "private, no-store, max-age=0",
@@ -108,7 +131,14 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
     throw new Error("SELLER_OS_RELAY_ARGUMENTS_INVALID")
   }
   const args = value as Record<string, unknown>
-  const allowedKeys = new Set(["limit"])
+  const allowedKeys = new Set<string>(
+    toolName === SELLER_OS_OFFICIAL_ORDERS_TOOL_V1.name ||
+        toolName === SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1.name ||
+        toolName === SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1.name ||
+        toolName === SELLER_OS_LUNA_SUPPLIER_LINKAGE_RELAY_OPERATION_V1 ||
+        toolName === SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1
+      ? [] : ["limit"],
+  )
   if (toolName === "seller_os_get_listing_intelligence") {
     allowedKeys.add("itemId")
   }
@@ -134,7 +164,9 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
   }
   if (toolName === "seller_os_get_opportunity_case") {
     if (typeof args.opportunityCaseId !== "string" ||
-      args.opportunityCaseId.length < 1 || args.opportunityCaseId.length > 120) {
+      !/^opportunity-case-v1:sha256:[0-9a-f]{64}$/.test(
+        args.opportunityCaseId,
+      )) {
       throw new Error("SELLER_OS_RELAY_OPPORTUNITY_CASE_ID_INVALID")
     }
     normalized.opportunityCaseId = args.opportunityCaseId
@@ -276,19 +308,53 @@ export function createSellerOsCloudReadRelayExecutorV1(options: {
     const signature = signSellerOsCloudReadRelayRequestV1({ timestamp,
       nonce: requestNonce, body,
       authenticationSecret: configuration.authenticationSecret })
-    const response = await fetcher(configuration.endpointUrl, {
+    const headers = { "Content-Type": "application/json",
+      [SELLER_OS_CLOUD_READ_RELAY_HEADERS.timestamp]: timestamp,
+      [SELLER_OS_CLOUD_READ_RELAY_HEADERS.nonce]: requestNonce,
+      [SELLER_OS_CLOUD_READ_RELAY_HEADERS.signature]: signature,
+      [SELLER_OS_CLOUD_READ_RELAY_HEADERS.protectionBypass]:
+        configuration.vercelProtectionBypass,
+      [SELLER_OS_CLOUD_READ_RELAY_HEADERS.protectionCookieRequest]: "true" }
+    let response = await fetcher(configuration.endpointUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json",
-        [SELLER_OS_CLOUD_READ_RELAY_HEADERS.timestamp]: timestamp,
-        [SELLER_OS_CLOUD_READ_RELAY_HEADERS.nonce]: requestNonce,
-        [SELLER_OS_CLOUD_READ_RELAY_HEADERS.signature]: signature,
-        [SELLER_OS_CLOUD_READ_RELAY_HEADERS.protectionBypass]:
-          configuration.vercelProtectionBypass },
+      headers,
       body,
       cache: "no-store",
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
+    if (response.status === 307) {
+      const locationValue = response.headers.get("location")
+      const cookieValue = response.headers.get("set-cookie")
+      const endpoint = new URL(configuration.endpointUrl)
+      let location: URL | null = null
+      try {
+        location = locationValue ? new URL(locationValue, endpoint) : null
+      } catch {
+        location = null
+      }
+      const cookieMatch = cookieValue?.match(
+        /^_vercel_jwt=([A-Za-z0-9._~-]{16,4096})(?:;|$)/,
+      ) ?? null
+      if (!location || location.origin !== endpoint.origin ||
+          location.pathname !== endpoint.pathname || location.search ||
+          location.hash || !cookieMatch) {
+        throw new Error("SELLER_OS_CLOUD_READ_RELAY_READ_FAILED_CLOSED")
+      }
+      let protectionCookie = cookieMatch[1]
+      try {
+        response = await fetcher(configuration.endpointUrl, {
+          method: "POST",
+          headers: { ...headers, Cookie: `_vercel_jwt=${protectionCookie}` },
+          body,
+          cache: "no-store",
+          redirect: "error",
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        })
+      } finally {
+        protectionCookie = ""
+      }
+    }
     const responseText = await response.text()
     if (!response.ok || byteLength(responseText) > MAX_RESPONSE_BYTES) {
       throw new Error("SELLER_OS_CLOUD_READ_RELAY_READ_FAILED_CLOSED")
@@ -309,6 +375,21 @@ export async function handleSellerOsCloudReadRelayRequestV1(
     environment?: NodeJS.ProcessEnv
     now?: () => number
     monitorLoader?: () => Promise<CommercialMonitorGetDto>
+    officialOrdersCollector?: () => Promise<SellerOsOfficialOrdersReadV1>
+    whatsappSaleAlertStatusCollector?: () => Promise<
+      SellerOsWhatsappSaleAlertStatusV1
+    >
+    buyerThankYouStatusCollector?: () => Promise<
+      SellerOsBuyerThankYouStatusV1
+    >
+    lunaSupplierLinkageStatusCollector?: () => Promise<
+      SellerOsLunaSupplierLinkageReadV1
+    >
+    ebayTradingRateLimitStatusCollector?: () => Promise<
+      SellerOsEbayTradingRateLimitStatusV1
+    >
+    longitudinalOpportunityReadCollector?: typeof
+      collectSellerOsLongitudinalOpportunityReadV1
   } = {},
 ) {
   const environment = options.environment ?? process.env
@@ -359,16 +440,67 @@ export async function handleSellerOsCloudReadRelayRequestV1(
     return relayError(400, "SELLER_OS_CLOUD_READ_RELAY_REQUEST_NOT_ALLOWLISTED")
   }
   try {
-    const monitorLoader = options.monitorLoader ?? (async () => {
-      const runtime = await import("./ebay-seller-os-assistant-runtime")
-      return runtime.loadSellerOsAssistantMonitorSnapshotV1()
-    })
-    const monitor = await monitorLoader()
-    const result = executeSellerOsAssistantToolV1({
-      toolName: envelope.toolName,
-      arguments: envelope.arguments,
-      monitor,
-    })
+    let result: unknown
+    if (envelope.toolName === SELLER_OS_OFFICIAL_ORDERS_TOOL_V1.name) {
+      const collector = options.officialOrdersCollector ?? (async () => {
+        const runtime = await import("./ebay-seller-os-assistant-runtime")
+        return runtime.collectSellerOsOfficialOrdersReadV1()
+      })
+      result = await collector()
+    } else if (envelope.toolName ===
+        SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1.name) {
+      const collector = options.whatsappSaleAlertStatusCollector ??
+        (async () => {
+          const runtime = await import("./ebay-seller-os-assistant-runtime")
+          return runtime.collectSellerOsWhatsappSaleAlertStatusV1()
+        })
+      result = await collector()
+    } else if (envelope.toolName ===
+        SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1.name) {
+      const collector = options.buyerThankYouStatusCollector ??
+        (async () => {
+          const runtime = await import("./ebay-seller-os-assistant-runtime")
+          return runtime.collectSellerOsBuyerThankYouStatusV1()
+      })
+      result = await collector()
+    } else if (envelope.toolName ===
+        SELLER_OS_LUNA_SUPPLIER_LINKAGE_RELAY_OPERATION_V1) {
+      const collector = options.lunaSupplierLinkageStatusCollector ??
+        (async () => {
+          const runtime = await import("./ebay-seller-os-assistant-runtime")
+          return runtime.collectSellerOsLunaSupplierLinkageStatusV1()
+        })
+      result = await collector()
+    } else if (envelope.toolName ===
+        SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1) {
+      const collector = options.ebayTradingRateLimitStatusCollector ??
+        (async () => {
+          const runtime = await import(
+            "./ebay-trading-rate-limit-observability-v1"
+          )
+          return runtime.collectSellerOsEbayTradingRateLimitStatusV1()
+        })
+      result = await collector()
+    } else if (envelope.toolName === "seller_os_get_opportunity_radar" ||
+        envelope.toolName === "seller_os_get_opportunity_case") {
+      const collector = options.longitudinalOpportunityReadCollector ??
+        collectSellerOsLongitudinalOpportunityReadV1
+      result = await collector({
+        toolName: envelope.toolName,
+        arguments: envelope.arguments,
+      })
+    } else {
+      const monitorLoader = options.monitorLoader ?? (async () => {
+        const runtime = await import("./ebay-seller-os-assistant-runtime")
+        return runtime.loadSellerOsAssistantMonitorSnapshotV1()
+      })
+      const monitor = await monitorLoader()
+      result = executeSellerOsAssistantToolV1({
+        toolName: envelope.toolName,
+        arguments: envelope.arguments,
+        monitor,
+      })
+    }
     assertRelayResultSafe(result)
     return Response.json({
       contractVersion: SELLER_OS_CLOUD_READ_RELAY_VERSION,

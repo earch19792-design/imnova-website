@@ -2,15 +2,17 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 import { NextResponse } from "next/server"
+import { isSameSellerOsAdminOriginV1 } from "@/lib/admin-session-origin-v1"
 import { validateAdminApiRequest } from "@/lib/supabase-admin"
 
 const SELLER_OS_ADMIN_COOKIE = "seller_os_admin_session"
 
 function sameOrigin(request: Request) {
-  const origin = request.headers.get("origin")
-  const fetchSite = request.headers.get("sec-fetch-site")
-  if (fetchSite && fetchSite !== "same-origin") return false
-  return !origin || origin === new URL(request.url).origin
+  return isSameSellerOsAdminOriginV1({
+    requestUrl: request.url,
+    origin: request.headers.get("origin"),
+    secFetchSite: request.headers.get("sec-fetch-site"),
+  })
 }
 
 export async function POST(request: Request) {

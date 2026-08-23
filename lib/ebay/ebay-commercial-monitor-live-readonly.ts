@@ -14,6 +14,7 @@ import {
   parseEbayTradingGetItemMarketplace,
   parseEbayTradingGetItemPrimaryImage,
   parseEbayTradingGetMyeBaySellingPage,
+  parseEbayTradingGetSellerListPage,
   parseEbayTradingGetUser,
   sanitizeLiveEbayOrders,
   type EbayLiveListing,
@@ -2248,7 +2249,10 @@ export type EbayCommercialMonitorLiveReadonlyResult = {
     bindingConfigured: boolean
     bindingMatched: boolean
     observedAt: string | null
-    source: "EBAY_TRADING_GET_USER" | "LOCAL_CONFIGURATION"
+    source:
+      | "EBAY_TRADING_GET_USER"
+      | "EBAY_SELL_FULFILLMENT_GET_ORDERS_SELLER_ID"
+      | "LOCAL_CONFIGURATION"
     limitationCode: string | null
   }
   oauth: {
@@ -2707,6 +2711,18 @@ function fulfillmentCredentials(environment: NodeJS.ProcessEnv) {
   }
 }
 
+function canonicalTradingCredentials(environment: NodeJS.ProcessEnv) {
+  const fulfillment = fulfillmentCredentials(environment)
+  if (fulfillment.refreshToken && !fulfillment.partialDedicatedClient) {
+    return {
+      clientId: fulfillment.clientId,
+      clientSecret: fulfillment.clientSecret,
+      refreshToken: fulfillment.refreshToken,
+    }
+  }
+  return generalCredentials(environment)
+}
+
 function callEvidence(input: {
   operation: EbayMonitorReadonlyOperation
   method: "GET" | "POST"
@@ -2726,7 +2742,11 @@ async function allowlistedFetch(input: {
   operation: EbayMonitorReadonlyOperation
   method: "GET" | "POST"
   url: URL | string
-  tradingCallName?: "GetUser" | "GetMyeBaySelling" | "GetItem"
+  tradingCallName?:
+    | "GetUser"
+    | "GetMyeBaySelling"
+    | "GetSellerList"
+    | "GetItem"
   headers?: HeadersInit
   body?: BodyInit
   fetchImpl: FetchLike
@@ -2991,6 +3011,7 @@ async function verifyAccount(input: {
   fetchImpl: FetchLike
   calls: EbayMonitorReadonlyCallEvidence[]
   clock: Clock
+  fulfillmentSellerIdentityFallback?: boolean
 }) {
   const response = await allowlistedFetch({
     operation: "TRADING_GET_USER",
@@ -3012,9 +3033,100 @@ async function verifyAccount(input: {
     "EBAY_MONITOR_ACCOUNT_IDENTITY_RESPONSE_INVALID",
   )
   const parsed = parseEbayTradingGetUser(xml)
-  if (!response.ok || !parsed.accepted || !parsed.userId) {
+  if (!response.ok) {
     markResponseCallFailed(response)
-    throw new Error("EBAY_MONITOR_ACCOUNT_IDENTITY_UNAVAILABLE")
+    throw new Error(
+      `EBAY_MONITOR_ACCOUNT_IDENTITY_HTTP_${response.status}`,
+    )
+  }
+  if (!parsed.accepted) {
+    markResponseCallFailed(response)
+    const providerCode = xml.match(
+      /<ErrorCode(?:\s[^>]*)?>(\d{1,12})<\/ErrorCode>/i,
+    )?.[1]
+    if (providerCode === "518" &&
+        input.fulfillmentSellerIdentityFallback === true) {
+      const window = orderWindow(input.clock())
+      const identityUrl = new URL(FULFILLMENT_ORDERS_ENDPOINT)
+      identityUrl.searchParams.set(
+        "filter",
+        `lastmodifieddate:[${window.start}..${window.end}]`,
+      )
+      identityUrl.searchParams.set("limit", "1")
+      identityUrl.searchParams.set("offset", "0")
+      const identityResponse = await allowlistedFetch({
+        operation: "FULFILLMENT_GET_ORDERS",
+        method: "GET",
+        url: identityUrl,
+        headers: {
+          Authorization: `Bearer ${input.token}`,
+          "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+        },
+        fetchImpl: input.fetchImpl,
+        calls: input.calls,
+        clock: input.clock,
+      })
+      if (!identityResponse.ok) {
+        markResponseCallFailed(identityResponse)
+        throw new Error(
+          `EBAY_MONITOR_ACCOUNT_IDENTITY_FULFILLMENT_HTTP_${
+            identityResponse.status
+          }`,
+        )
+      }
+      const identityPayload = record(await readJsonResponse({
+        response: identityResponse,
+        calls: input.calls,
+        operation: "FULFILLMENT_GET_ORDERS",
+        errorCode:
+          "EBAY_MONITOR_ACCOUNT_IDENTITY_FULFILLMENT_RESPONSE_INVALID",
+      }))
+      if (!Array.isArray(identityPayload.orders) ||
+          identityPayload.orders.length !== 1) {
+        markResponseCallFailed(identityResponse)
+        throw new Error(
+          "EBAY_MONITOR_ACCOUNT_IDENTITY_FULFILLMENT_EVIDENCE_UNAVAILABLE",
+        )
+      }
+      const identityOrder = record(identityPayload.orders[0])
+      const sellerId = text(identityOrder.sellerId, 100)
+      const lineItems = Array.isArray(identityOrder.lineItems)
+        ? identityOrder.lineItems.map(record)
+        : []
+      const marketplaceIds = lineItems
+        .map((lineItem) => text(lineItem.listingMarketplaceId, 40))
+        .filter(Boolean)
+      if (!sellerId || marketplaceIds.length === 0) {
+        markResponseCallFailed(identityResponse)
+        throw new Error(
+          "EBAY_MONITOR_ACCOUNT_IDENTITY_FULFILLMENT_EVIDENCE_UNAVAILABLE",
+        )
+      }
+      const fingerprintMatch = ebayProductionAccountFingerprint(sellerId) ===
+        input.expectedFingerprint
+      const userMatch = !input.expectedUserId ||
+        sellerId.toLocaleLowerCase("en-US") ===
+          input.expectedUserId.toLocaleLowerCase("en-US")
+      if (!fingerprintMatch || !userMatch) {
+        throw new Error("EBAY_MONITOR_ACCOUNT_IDENTITY_MISMATCH")
+      }
+      return {
+        observedAt: input.clock().toISOString(),
+        fingerprintMatch: true,
+        site: marketplaceIds.every((marketplaceId) =>
+          marketplaceId === MARKETPLACE_ID)
+          ? "US"
+          : null,
+        source: "EBAY_SELL_FULFILLMENT_GET_ORDERS_SELLER_ID" as const,
+      }
+    }
+    throw new Error(providerCode
+      ? `EBAY_MONITOR_ACCOUNT_IDENTITY_TRADING_ERROR_${providerCode}`
+      : "EBAY_MONITOR_ACCOUNT_IDENTITY_REJECTED")
+  }
+  if (!parsed.userId) {
+    markResponseCallFailed(response)
+    throw new Error("EBAY_MONITOR_ACCOUNT_IDENTITY_RESPONSE_INVALID")
   }
   const fingerprintMatch = ebayProductionAccountFingerprint(parsed.userId) ===
     input.expectedFingerprint
@@ -3028,6 +3140,7 @@ async function verifyAccount(input: {
     observedAt: input.clock().toISOString(),
     fingerprintMatch: true,
     site: parsed.site,
+    source: "EBAY_TRADING_GET_USER" as const,
   }
 }
 
@@ -3042,6 +3155,24 @@ function getMyeBaySellingBody(page: number) {
     "<HideVariations>false</HideVariations>" +
     "<DetailLevel>ReturnAll</DetailLevel>" +
     "</GetMyeBaySellingRequest>"
+}
+
+function getSellerListBody(input: {
+  page: number
+  endTimeFrom: string
+  endTimeTo: string
+}) {
+  return "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
+    "<GetSellerListRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
+    `<EndTimeFrom>${input.endTimeFrom}</EndTimeFrom>` +
+    `<EndTimeTo>${input.endTimeTo}</EndTimeTo>` +
+    "<GranularityLevel>Fine</GranularityLevel>" +
+    "<IncludeVariations>true</IncludeVariations>" +
+    "<Pagination>" +
+    `<EntriesPerPage>${SELLER_WIDE_PAGE_SIZE}</EntriesPerPage>` +
+    `<PageNumber>${input.page}</PageNumber>` +
+    "</Pagination>" +
+    "</GetSellerListRequest>"
 }
 
 function getItemMarketplaceBody(itemId: string) {
@@ -3071,30 +3202,60 @@ async function sellerWideDiscovery(input: {
   let paginationMetadataConflict = false
   let ambiguousVariationIdentity = false
   let sourceIdentityConflict = false
+  let operation:
+    | "TRADING_GET_MY_EBAY_SELLING"
+    | "TRADING_GET_SELLER_LIST" = "TRADING_GET_MY_EBAY_SELLING"
+  const sellerListEndTimeFrom = input.clock().toISOString()
+  const sellerListEndTimeTo = new Date(
+    Date.parse(sellerListEndTimeFrom) + 119 * 24 * 60 * 60 * 1_000,
+  ).toISOString()
   for (let page = 1; page <= SELLER_WIDE_MAX_PAGES; page += 1) {
     try {
+      const tradingCallName = operation === "TRADING_GET_SELLER_LIST"
+        ? "GetSellerList" as const
+        : "GetMyeBaySelling" as const
       const response = await allowlistedFetch({
-        operation: "TRADING_GET_MY_EBAY_SELLING",
+        operation,
         method: "POST",
         url: TRADING_ENDPOINT,
-        tradingCallName: "GetMyeBaySelling",
-        headers: tradingHeaders(input.token, "GetMyeBaySelling"),
-        body: getMyeBaySellingBody(page),
+        tradingCallName,
+        headers: tradingHeaders(input.token, tradingCallName),
+        body: operation === "TRADING_GET_SELLER_LIST"
+          ? getSellerListBody({ page, endTimeFrom: sellerListEndTimeFrom,
+              endTimeTo: sellerListEndTimeTo })
+          : getMyeBaySellingBody(page),
         fetchImpl: input.fetchImpl,
         calls: input.calls,
         clock: input.clock,
       })
       const observedAt = input.clock().toISOString()
-      const parsed = parseEbayTradingGetMyeBaySellingPage(
-        await readTextResponse(
-          response,
-          "EBAY_MONITOR_SELLER_DISCOVERY_RESPONSE_INVALID",
-        ),
-        observedAt,
+      const xml = await readTextResponse(
+        response,
+        "EBAY_MONITOR_SELLER_DISCOVERY_RESPONSE_INVALID",
       )
+      const parsed = operation === "TRADING_GET_SELLER_LIST"
+        ? parseEbayTradingGetSellerListPage(xml, observedAt)
+        : parseEbayTradingGetMyeBaySellingPage(xml, observedAt)
       if (!response.ok || !parsed.accepted) {
         markResponseCallFailed(response)
-        throw new Error(`EBAY_MONITOR_SELLER_DISCOVERY_${response.status}`)
+        const providerCode = xml.match(
+          /<ErrorCode(?:\s[^>]*)?>(\d{1,12})<\/ErrorCode>/i,
+        )?.[1]
+        if (providerCode === "518" && page === 1 &&
+            operation === "TRADING_GET_MY_EBAY_SELLING") {
+          operation = "TRADING_GET_SELLER_LIST"
+          limitationCode =
+            "SELLER_WIDE_ENUMERATION_GET_SELLER_LIST_FALLBACK"
+          page = 0
+          continue
+        }
+        throw new Error(providerCode
+          ? operation === "TRADING_GET_SELLER_LIST"
+            ? `EBAY_MONITOR_SELLER_LIST_TRADING_ERROR_${providerCode}`
+            : `EBAY_MONITOR_SELLER_DISCOVERY_TRADING_ERROR_${providerCode}`
+          : operation === "TRADING_GET_SELLER_LIST"
+            ? `EBAY_MONITOR_SELLER_LIST_${response.status}`
+            : `EBAY_MONITOR_SELLER_DISCOVERY_${response.status}`)
       }
       pagesRead += 1
       const parsedTotalPages = parsed.totalPages === 0 &&
@@ -4274,6 +4435,7 @@ async function ordersRead(input: {
       fetchImpl: input.fetchImpl,
       calls: input.calls,
       clock: input.clock,
+      fulfillmentSellerIdentityFallback: true,
     })
     input.scopeGrant.bindingVerified = true
     if (missingRequestedScopes.includes(FULFILLMENT_READONLY_SCOPE)) {
@@ -4453,6 +4615,119 @@ async function ordersRead(input: {
     }
   } finally {
     token = ""
+  }
+}
+
+export type EbayOfficialOrdersLiveReadonlyEvidenceV1 = {
+  orders: EbayCommercialMonitorLiveReadonlyResult["orders"]
+  canonicalAccountBinding: "MATCHED" | "UNAVAILABLE"
+  refreshCapability: boolean
+  accountIdentitySource:
+    | "EBAY_TRADING_GET_USER"
+    | "EBAY_SELL_FULFILLMENT_GET_ORDERS_SELLER_ID"
+    | null
+  calls: EbayMonitorReadonlyCallEvidence[]
+  safety: {
+    marketplaceWrites: 0
+    inventoryWrites: 0
+    fulfillmentWrites: 0
+    buyerMessages: 0
+    whatsappCalls: 0
+    tokensReturned: false
+    rawPayloadsReturned: false
+    buyerPiiReturned: false
+  }
+}
+
+/**
+ * Dedicated fixed-account Orders read. Official Orders must not depend on
+ * seller-wide listing discovery, Inventory, or Analytics availability.
+ */
+export async function getEbayOfficialOrdersLiveReadonly(input: {
+  accountKey: string | null
+  accountAlias: string | null
+  environment?: NodeJS.ProcessEnv
+  fetchImpl?: FetchLike
+  clock?: Clock
+}): Promise<EbayOfficialOrdersLiveReadonlyEvidenceV1> {
+  const environment = input.environment ?? process.env
+  const fetchImpl = input.fetchImpl ?? fetch
+  const clock = input.clock ?? (() => new Date())
+  const configuration = getEbayCommercialMonitorLiveConfigurationState(
+    environment,
+  )
+  const identity = getEbayProductionIdentityBindingConfiguration(environment)
+  const expectedAccountKey = configuration.accountAlias && identity.bound
+    ? `${configuration.accountAlias}:${identity.expectedAccountFingerprint}`
+    : null
+  const calls: EbayMonitorReadonlyCallEvidence[] = []
+  const safety = {
+    marketplaceWrites: 0 as const,
+    inventoryWrites: 0 as const,
+    fulfillmentWrites: 0 as const,
+    buyerMessages: 0 as const,
+    whatsappCalls: 0 as const,
+    tokensReturned: false as const,
+    rawPayloadsReturned: false as const,
+    buyerPiiReturned: false as const,
+  }
+  if (!configuration.configured || !input.accountKey ||
+      input.accountKey !== expectedAccountKey ||
+      input.accountAlias !== configuration.accountAlias) {
+    const unavailable = unavailableResult({
+      accountAlias: configuration.accountAlias,
+      bindingConfigured: identity.bound,
+      limitationCode: !configuration.configured
+        ? "LOCAL_EBAY_AUTH_CONTEXT_UNAVAILABLE"
+        : "EBAY_MONITOR_ACCOUNT_SCOPE_CONFIGURATION_MISMATCH",
+    })
+    return {
+      orders: unavailable.orders,
+      canonicalAccountBinding: "UNAVAILABLE",
+      refreshCapability: false,
+      accountIdentitySource: null,
+      calls,
+      safety,
+    }
+  }
+
+  const maximumCalls = FULFILLMENT_MAX_PAGES + 4
+  requestBudgets.set(calls, {
+    deadlineAt: Date.now() + REQUEST_BUDGET_MS,
+    callsRemaining: maximumCalls,
+    maximumCalls,
+    callsStarted: 0,
+  })
+  const expiries: string[] = []
+  const fulfillmentGrant = scopeGrantEvidence()
+  const orders = await ordersRead({
+    credentials: fulfillmentCredentials(environment),
+    expectedUserId: identity.expectedUserId,
+    expectedFingerprint: identity.expectedAccountFingerprint,
+    fetchImpl,
+    calls,
+    clock,
+    expiries,
+    scopeGrant: fulfillmentGrant,
+  })
+  const refreshCapability = calls.some((call) =>
+    call.operation === "OAUTH_REFRESH_FULFILLMENT" &&
+    call.status === "SUCCEEDED")
+  const accountIdentitySource = fulfillmentGrant.bindingVerified
+    ? calls.some((call) => call.operation === "TRADING_GET_USER" &&
+        call.status === "SUCCEEDED")
+      ? "EBAY_TRADING_GET_USER" as const
+      : "EBAY_SELL_FULFILLMENT_GET_ORDERS_SELLER_ID" as const
+    : null
+  return {
+    orders,
+    canonicalAccountBinding: fulfillmentGrant.bindingVerified
+      ? "MATCHED"
+      : "UNAVAILABLE",
+    refreshCapability,
+    accountIdentitySource,
+    calls: [...calls],
+    safety,
   }
 }
 
@@ -5243,17 +5518,21 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
   const analyticsGrant = scopeGrantEvidence()
   const fulfillmentGrant = scopeGrantEvidence()
   const credentials = generalCredentials(environment)
+  const tradingCredentials = canonicalTradingCredentials(environment)
   let tradingToken = ""
   let verifiedAccount: {
     observedAt: string
     fingerprintMatch: boolean
     site: string | null
+    source:
+      | "EBAY_TRADING_GET_USER"
+      | "EBAY_SELL_FULFILLMENT_GET_ORDERS_SELLER_ID"
   } | null = null
   try {
     const minted = await accessToken({
-      operation: "OAUTH_REFRESH_TRADING",
-      credentials,
-      scopes: [BASE_SCOPE],
+      operation: "OAUTH_REFRESH_FULFILLMENT",
+      credentials: tradingCredentials,
+      scopes: [BASE_SCOPE, FULFILLMENT_READONLY_SCOPE],
       fetchImpl,
       calls,
       clock,
@@ -5263,7 +5542,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
     const missingRequestedScopes = registerScopeEvidence({
       ledger: tradingGrant,
       token: minted,
-      requestedScopes: [BASE_SCOPE],
+      requestedScopes: [BASE_SCOPE, FULFILLMENT_READONLY_SCOPE],
     })
     const account = await verifyAccount({
       token: tradingToken,
@@ -5272,6 +5551,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
       fetchImpl,
       calls,
       clock,
+      fulfillmentSellerIdentityFallback: true,
     })
     verifiedAccount = account
     tradingGrant.bindingVerified = true
@@ -5522,7 +5802,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
         bindingConfigured: true,
         bindingMatched: account.fingerprintMatch,
         observedAt: account.observedAt,
-        source: "EBAY_TRADING_GET_USER",
+        source: account.source,
         limitationCode: marketplaceProven
           ? null
           : "EBAY_US_MARKETPLACE_BINDING_UNPROVEN",
@@ -5618,7 +5898,7 @@ export async function getEbayCommercialMonitorLiveReadonly(input: {
         bindingConfigured: true,
         bindingMatched: true,
         observedAt: verifiedAccount.observedAt,
-        source: "EBAY_TRADING_GET_USER",
+        source: verifiedAccount.source,
         limitationCode: verifiedAccount.site === "US"
           ? null
           : "EBAY_US_MARKETPLACE_BINDING_UNPROVEN",

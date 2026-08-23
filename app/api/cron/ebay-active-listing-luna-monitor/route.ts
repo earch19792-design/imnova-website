@@ -14,6 +14,8 @@ import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-a
 import { fetchLunaAuthenticatedDirectedProductV1 } from
   "@/lib/ebay/ebay-luna-authenticated-http-watcher-v1"
 import { runTargetedActiveListingLunaMonitor } from "@/lib/ebay/ebay-targeted-active-listing-luna-monitor"
+import { getSellerOsLunaStockObservationActivationPolicyV1 } from
+  "@/lib/ebay/ebay-luna-stock-observation-v1"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
 function safeCode(error: unknown) {
@@ -61,13 +63,20 @@ export async function GET(req: Request) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" }, { status: 401 })
   }
   const config = configuration()
-  if (process.env.VERCEL_ENV !== "preview" || !config.enabled) {
+  const activation = getSellerOsLunaStockObservationActivationPolicyV1({
+    p2I01GateCertified: false,
+    schedulerRequested: config.enabled,
+  })
+  if (process.env.VERCEL_ENV !== "preview" || !config.enabled ||
+      !activation.productionSchedulerEnabled) {
     return NextResponse.json({
       success: true,
       status: "disabled",
       configuration: config,
+      activation,
       safety: {
         previewOnly: true,
+        productionSchedulerEnabled: false,
         authenticatedLunaReads: 0,
         ebayApiWrites: 0,
         openAiCalls: 0,

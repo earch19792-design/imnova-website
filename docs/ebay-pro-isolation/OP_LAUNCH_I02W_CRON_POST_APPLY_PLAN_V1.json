@@ -1,0 +1,18 @@
+{
+  "artifactVersion": "SELLER_OS_DAILY_DOLLAR_RADAR_CRON_POST_APPLY_PLAN_V1",
+  "status": "PREPARED_DISABLED_NOT_REGISTERED",
+  "commercialTimeZone": "America/New_York",
+  "morningQueueReadyByLocal": "06:00",
+  "dstPolicy": "FIXED_UTC_TRIGGER_WITH_LOCAL_READY_BY_INVARIANT",
+  "vercelCron": {
+    "path": "/api/cron/daily-dollar-radar-autopilot",
+    "schedule": "0 9 * * *"
+  },
+  "expectedLocalTrigger": {
+    "EDT": "05:00",
+    "EST": "04:00"
+  },
+  "logicalBusinessDay": "CALENDAR_DATE_IN_AMERICA_NEW_YORK",
+  "cronExecutionAuthority": false,
+  "requiresSeparatePostApplyAuthorization": true
+}

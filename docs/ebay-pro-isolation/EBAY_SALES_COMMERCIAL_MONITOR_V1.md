@@ -98,7 +98,7 @@ scheduler. Los tres endpoints devuelven bloqueo o estado desactivado si
 El único callback canónico del consentimiento Fulfillment es:
 
 ```text
-https://imnova-website-z1qh-git-featur-438554-earch19792-6888s-projects.vercel.app/api/admin/ebay/commercial-orders-oauth/callback
+https://imnova-website-z1qh-git-featur-6c9e25-earch19792-6888s-projects.vercel.app/api/admin/ebay/monitor/seller-oauth-reauth
 ```
 
 La ruta legacy `/api/admin/ebay/oauth/callback` permanece bloqueada y nunca

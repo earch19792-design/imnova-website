@@ -11,6 +11,8 @@ import {
   type EbayCommercialOAuthStatus,
 } from "./ebay-commercial-oauth-domain"
 import {
+  EBAY_COMMERCIAL_ORDERS_COMMERCE_MESSAGE_SCOPE,
+  EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES,
   getEbayCommercialOrdersCallbackConfiguration,
 } from "./ebay-commercial-orders-oauth-domain"
 import {
@@ -33,7 +35,15 @@ const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
 const BASE_SCOPE = "https://api.ebay.com/oauth/api_scope"
 export const EBAY_FULFILLMENT_READONLY_SCOPE =
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly"
+export const EBAY_COMMERCE_MESSAGE_SCOPE =
+  EBAY_COMMERCIAL_ORDERS_COMMERCE_MESSAGE_SCOPE
 const FULFILLMENT_SCOPES = `${BASE_SCOPE} ${EBAY_FULFILLMENT_READONLY_SCOPE}`
+// The browser grant is minted with this exact canonical set. Reuse the same
+// set when refreshing the purpose-bound Message token: eBay documents that a
+// refresh request may use the original set (or a supported subset), and the
+// exact set avoids a provider-side invalid_scope divergence while retaining
+// the already-authorized read-only Fulfillment capability.
+const MESSAGE_SCOPES = EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES.join(" ")
 const REQUEST_TIMEOUT_MS = 12_000
 const MAX_RETRIES = 3
 
@@ -46,6 +56,7 @@ type CachedToken = {
 }
 
 let cachedOrdersToken: CachedToken | null = null
+let cachedMessageToken: CachedToken | null = null
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -206,6 +217,40 @@ export async function getEbayCommercialOrdersAccessToken(
 
 export function clearEbayCommercialOrdersAccessToken() {
   cachedOrdersToken = null
+}
+
+/**
+ * Purpose-bound Message API token. It deliberately reuses the canonical
+ * Orders application/refresh-token binding instead of introducing another
+ * OAuth flow or credential store. eBay will reject the refresh if the human
+ * grant does not include commerce.message, which keeps the caller fail-closed.
+ */
+export async function getEbayCommercialMessageAccessToken(
+  fetchImpl: FetchLike = fetch,
+) {
+  if (cachedMessageToken && cachedMessageToken.expiresAt > Date.now() + 60_000) {
+    return cachedMessageToken.value
+  }
+  const credentials = ordersCredentials()
+  if (credentials.dedicatedClientPairPartial) {
+    throw new EbayCommercialOrdersOAuthError("CLIENT_CREDENTIAL_MISMATCH")
+  }
+  const token = await tokenRequest({
+    clientId: credentials.clientId,
+    clientSecret: credentials.clientSecret,
+    refreshToken: credentials.refreshToken,
+    scope: MESSAGE_SCOPES,
+    fetchImpl,
+  })
+  cachedMessageToken = {
+    value: token.accessToken,
+    expiresAt: Date.now() + token.expiresIn * 1_000,
+  }
+  return token.accessToken
+}
+
+export function clearEbayCommercialMessageAccessToken() {
+  cachedMessageToken = null
 }
 
 async function legacyGenericFulfillmentPreflight(fetchImpl: FetchLike) {

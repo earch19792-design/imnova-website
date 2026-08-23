@@ -14,6 +14,8 @@ export const EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION =
   "EBAY_SELLER_OAUTH_REAUTH_V1" as const
 export const EBAY_SELLER_OAUTH_REAUTH_BRANCH =
   "feature/seller-os-canonical-integration-foundation-v1" as const
+export const EBAY_SELLER_OAUTH_REAUTH_PREVIEW_BRANCH_HOST =
+  "imnova-website-z1qh-git-featur-6c9e25-earch19792-6888s-projects.vercel.app" as const
 export const EBAY_SELLER_OAUTH_REAUTH_PAGE_PATH =
   "/admin/ebay/monitor/seller-oauth-reauth" as const
 export const EBAY_SELLER_OAUTH_REAUTH_CALLBACK_PATH =
@@ -305,12 +307,17 @@ export function getEbaySellerOAuthReauthConfiguration(input: {
   const clientId = boundedCredential(environment.EBAY_CLIENT_ID, 512)
   const clientSecret = boundedCredential(environment.EBAY_CLIENT_SECRET, 2_048)
   const runame = boundedCredential(environment.EBAY_RuName, 512)
-  const branchHost = normalizedHost(environment.VERCEL_BRANCH_URL)
   const requestHost = normalizedHost(input.requestHost)
+  const deployedBranchHost = normalizedHost(environment.VERCEL_BRANCH_URL)
   const scope = getEbaySellerAccountScopeConfiguration(environment)
   const preview = environment.VERCEL_ENV?.trim().toLowerCase() === "preview"
   const branchMatch = environment.VERCEL_GIT_COMMIT_REF?.trim() ===
     EBAY_SELLER_OAUTH_REAUTH_BRANCH
+  const exactCanonicalHostFallback = branchMatch &&
+    requestHost === EBAY_SELLER_OAUTH_REAUTH_PREVIEW_BRANCH_HOST
+  const branchHost = deployedBranchHost || (
+    exactCanonicalHostFallback ? requestHost : ""
+  )
   const hostMatch = Boolean(branchHost && requestHost && branchHost === requestHost)
   const reason = !preview
     ? "EBAY_SELLER_OAUTH_REAUTH_PREVIEW_REQUIRED"

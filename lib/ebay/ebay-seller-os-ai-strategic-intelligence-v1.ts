@@ -728,6 +728,73 @@ export function buildSystemReviewBundleV1(input: {
   const actualCosts = usage.filter((row) => row.costEvidence === "AUTHORITATIVE" &&
     row.actualCostUsd !== null).map((row) => row.actualCostUsd!)
   const portfolioState = buildPortfolioIntelligenceV1({ monitor: input.monitor })
+  const recentSales = input.monitor.backend.recentSales ?? {
+    contractVersion: "RECENT_SALES_FEED_V1" as const,
+    status: "UNAVAILABLE" as const,
+    resultCount: null,
+    entries: [],
+    maximumEntries: 10 as const,
+    truncated: false,
+    limitationCodes: ["RECENT_SALES_FEED_NOT_AVAILABLE"],
+    source: "PERSISTED_OFFICIAL_EBAY_ORDER_EVENTS" as const,
+    buyerPiiIncluded: false as const,
+  }
+  const sourceHealth = input.monitor.backend.orderSourceHealth ?? {
+    contractVersion: "ORDER_SOURCE_HEALTH_V1" as const,
+    detectionPolicyVersion: "ORDER_DETECTION_POLICY_V1" as const,
+    capability: "EBAY_SELL_FULFILLMENT_GET_ORDERS" as const,
+    permissionStatus: "UNPROVEN" as const,
+    detectionMode: "POLLING" as const,
+    eventDrivenStatus: "OFFICIAL_CAPABILITY_UNPROVEN_NOT_CONFIGURED" as const,
+    status: "UNPROVEN" as const,
+    pollIntervalMinutes: 5,
+    expectedDetectionLatency:
+      "Configuración de sondeo presente; activación del scheduler no comprobada",
+    observedAt: null,
+    lastSuccessfulReadAt: null,
+    limitationCodes: ["ORDER_SOURCE_HEALTH_NOT_AVAILABLE"],
+    bounded: true as const,
+    idempotent: true as const,
+    incrementalCursor: true as const,
+    overlapMinutes: 5 as const,
+  }
+  const monitorCoverage = input.monitor.backend.monitorCoverage ?? {
+    contractVersion: "MONITOR_COVERAGE_TRANSPARENCY_V1" as const,
+    status: integrity.canonicalCohort.identityStatus === "UNPROVEN"
+      ? "UNPROVEN" as const : "PARTIAL" as const,
+    currentLiveScopeId: integrity.canonicalCohort.scopeId,
+    currentLiveScopeType: integrity.canonicalCohort.scopeType,
+    currentLiveScopeCount: integrity.canonicalCohort.listingCount,
+    currentLiveObservedAt: integrity.canonicalCohort.observedAt,
+    monitoredItemIds: integrity.canonicalCohort.itemIds,
+    visiblePriorityItemIds: [] as readonly string[],
+    visiblePriorityRowCount: 0,
+    monitoredOutsideVisibleCount: integrity.canonicalCohort.listingCount,
+    visibleRowsEqualMonitoredScope:
+      integrity.canonicalCohort.listingCount === null
+        ? null
+        : integrity.canonicalCohort.listingCount === 0,
+    visibleRowsArePresentationSubset: true as const,
+    notVisibleDoesNotMeanNotMonitored: true as const,
+  }
+  const orderOperations = {
+    sourceHealth,
+    recentSales: {
+      ...recentSales,
+      entries: cap(recentSales.entries, 10),
+    },
+    monitorCoverage: {
+      ...monitorCoverage,
+      monitoredItemIds: cap([...monitorCoverage.monitoredItemIds], 25),
+      visiblePriorityItemIds: cap(
+        [...monitorCoverage.visiblePriorityItemIds],
+        10,
+      ),
+      monitoredItemIdsTruncated: monitorCoverage.monitoredItemIds.length > 25,
+    },
+    bounded: true as const,
+    buyerPiiIncluded: false as const,
+  }
   const operationalReviewInput = {
     listings: liveListings,
     decisions: input.monitor.backend.decisions,
@@ -742,8 +809,7 @@ export function buildSystemReviewBundleV1(input: {
   const operationalReviewAssessment = resolveOperationalReviewTaxonomyV2(
     operationalReviewInput,
   )
-  const operationalReview = input.monitor.backend.operationalHealth.manualReview ??
-    buildOperationalReviewBurdenV2(operationalReviewInput)
+  const operationalReview = buildOperationalReviewBurdenV2(operationalReviewInput)
   const liveHumanReviewIds = new Set(operationalReviewAssessment.humanReviewItemIds)
   const evidenceEntityHumanReviewCount = input.monitor.listings.filter((row) =>
     liveHumanReviewIds.has(row.identity.itemId)).length
@@ -899,6 +965,7 @@ export function buildSystemReviewBundleV1(input: {
       },
       scopesAreNumericallyIndependent: true as const,
     },
+    orderOperations,
     registryIntegrity: {
       status: registry.status,
       currentLiveCount: registry.currentLiveCount,
@@ -1213,6 +1280,7 @@ export function prefilterStrategicReviewV1(input: {
     learning: input.bundle.learning,
     automationHealth: input.bundle.automationHealth,
     operationalBurden: input.bundle.operationalBurden,
+    orderOperations: input.bundle.orderOperations,
     strategicSignals: ranked,
     automationCandidates: input.bundle.automationCandidates.entries,
     aiBudget: budget,
@@ -1234,6 +1302,29 @@ export function prefilterStrategicReviewV1(input: {
         priceDistributionCount: input.bundle.commercialAnomalies.priceDistribution.length,
         referenceCandidateCount: input.bundle.commercialAnomalies.referenceCandidates.length,
         sellOneLikeThisReady: input.bundle.commercialAnomalies.sellOneLikeThisReady },
+      orderOperations: {
+        sourceHealth: input.bundle.orderOperations.sourceHealth,
+        recentSales: {
+          status: input.bundle.orderOperations.recentSales.status,
+          resultCount: input.bundle.orderOperations.recentSales.resultCount,
+          entries: input.bundle.orderOperations.recentSales.entries.slice(0, 3),
+          truncated: input.bundle.orderOperations.recentSales.truncated,
+          buyerPiiIncluded: false as const,
+        },
+        monitorCoverage: {
+          status: input.bundle.orderOperations.monitorCoverage.status,
+          currentLiveScopeId:
+            input.bundle.orderOperations.monitorCoverage.currentLiveScopeId,
+          currentLiveScopeCount:
+            input.bundle.orderOperations.monitorCoverage.currentLiveScopeCount,
+          visiblePriorityRowCount:
+            input.bundle.orderOperations.monitorCoverage.visiblePriorityRowCount,
+          monitoredItemIdsTruncated:
+            input.bundle.orderOperations.monitorCoverage.monitoredItemIdsTruncated,
+        },
+        bounded: true as const,
+        buyerPiiIncluded: false as const,
+      },
       strategicSignals: ranked.slice(0, 8), automationCandidates: [], recentSystemChanges: [] }
   const materialEvidence = ranked.length > 0
   return {

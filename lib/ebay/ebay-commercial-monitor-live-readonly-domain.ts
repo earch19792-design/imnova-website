@@ -4,6 +4,7 @@ export const EBAY_MONITOR_LIVE_READONLY_CONTRACT_VERSION =
 export const EBAY_MONITOR_TRADING_READ_OPERATIONS = [
   "GetUser",
   "GetMyeBaySelling",
+  "GetSellerList",
   "GetItem",
 ] as const
 
@@ -14,6 +15,7 @@ export type EbayMonitorReadonlyOperation =
   | "OAUTH_REFRESH_TRADING"
   | "TRADING_GET_USER"
   | "TRADING_GET_MY_EBAY_SELLING"
+  | "TRADING_GET_SELLER_LIST"
   | "TRADING_GET_ITEM_MARKETPLACE"
   | "OAUTH_REFRESH_INVENTORY"
   | "OAUTH_REFRESH_INVENTORY_FOUR_SCOPE"
@@ -217,6 +219,10 @@ const READONLY_REST_PATHS = new Map<EbayMonitorReadonlyOperation, {
     method: "POST",
     path: "/ws/api.dll",
   }],
+  ["TRADING_GET_SELLER_LIST", {
+    method: "POST",
+    path: "/ws/api.dll",
+  }],
   ["TRADING_GET_ITEM_MARKETPLACE", {
     method: "POST",
     path: "/ws/api.dll",
@@ -392,6 +398,8 @@ export function assertEbayMonitorReadonlyRequest(input: {
     ? "GetUser"
     : input.operation === "TRADING_GET_MY_EBAY_SELLING"
       ? "GetMyeBaySelling"
+      : input.operation === "TRADING_GET_SELLER_LIST"
+        ? "GetSellerList"
       : input.operation === "TRADING_GET_ITEM_MARKETPLACE"
         ? "GetItem"
       : null
@@ -1446,6 +1454,84 @@ export function parseEbayTradingGetMyeBaySellingPage(
   }
 }
 
+export function parseEbayTradingGetSellerListPage(
+  xml: string,
+  observedAt: string,
+): ParsedGetMyeBaySellingPage {
+  const responses = ebayTradingXmlContainers(xml, "GetSellerListResponse")
+  const response = responses.length === 1 ? responses[0] : ""
+  const acknowledgements = ebayTradingXmlDirectChildContainers(response, "Ack")
+  const ack = acknowledgements.length === 1
+    ? ebayTradingXmlDirectChildValue(response, "Ack")?.toUpperCase() ?? null
+    : null
+  const paginations = ebayTradingXmlDirectChildContainers(
+    response,
+    "PaginationResult",
+  )
+  const pagination = paginations.length === 1 ? paginations[0] : ""
+  const totalEntryFields = ebayTradingXmlDirectChildContainers(
+    pagination,
+    "TotalNumberOfEntries",
+  )
+  const totalPageFields = ebayTradingXmlDirectChildContainers(
+    pagination,
+    "TotalNumberOfPages",
+  )
+  const totalEntries = totalEntryFields.length === 1
+    ? nonNegativeInteger(ebayTradingXmlDirectChildValue(
+        pagination,
+        "TotalNumberOfEntries",
+      ))
+    : null
+  const totalPages = totalPageFields.length === 1
+    ? nonNegativeInteger(ebayTradingXmlDirectChildValue(
+        pagination,
+        "TotalNumberOfPages",
+      ))
+    : null
+  const hasMoreFields = ebayTradingXmlDirectChildContainers(
+    response,
+    "HasMoreItems",
+  )
+  const hasMoreText = hasMoreFields.length === 1
+    ? ebayTradingXmlDirectChildValue(response, "HasMoreItems")?.toLowerCase()
+    : null
+  const hasMoreItems = hasMoreText === "true"
+    ? true
+    : hasMoreText === "false"
+      ? false
+      : null
+  const itemArrays = ebayTradingXmlDirectChildContainers(response, "ItemArray")
+  const itemArray = itemArrays.length === 1 ? itemArrays[0] : ""
+  const items = ebayTradingXmlDirectChildContainers(itemArray, "Item")
+  const sourceIdentityConflict = itemArrays.length > 1 || items.some((item) => {
+    const itemIds = ebayTradingXmlDirectChildContainers(item, "ItemID")
+    const sites = ebayTradingXmlDirectChildContainers(item, "Site")
+    return itemIds.length !== 1 ||
+      !/^\d{9,20}$/.test(
+        ebayTradingXmlDirectChildValue(item, "ItemID") ?? "",
+      ) ||
+      sites.length > 1 ||
+      (sites.length === 1 && ebayTradingMarketplaceSite(
+        ebayTradingXmlDirectChildValue(item, "Site"),
+      ) === null)
+  })
+  const paginationMetadataConflict = responses.length !== 1 ||
+    acknowledgements.length !== 1 || paginations.length > 1 ||
+    totalEntryFields.length > 1 || totalPageFields.length > 1 ||
+    hasMoreFields.length > 1 ||
+    (hasMoreFields.length === 1 && hasMoreItems === null)
+  return {
+    accepted: responses.length === 1 && ack === "SUCCESS",
+    totalEntries,
+    totalPages,
+    hasMoreItems,
+    listings: items.flatMap((item) => itemListings(item, observedAt)),
+    sourceIdentityConflict,
+    paginationMetadataConflict,
+  }
+}
+
 function jsonRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -1525,10 +1611,13 @@ export function sanitizeLiveEbayOrders(
     ).toUpperCase()
     if (!ebayOrderId || !creationDate || !lastModifiedDate ||
         orderPaymentStatus !== "PAID" ||
-        !["NOT_STARTED", "IN_PROGRESS"].includes(orderFulfillmentStatus) ||
+        !["NOT_STARTED", "IN_PROGRESS", "FULFILLED"].includes(
+          orderFulfillmentStatus,
+        ) ||
         orderCannotBeFulfilled(order)) return []
     const total = jsonRecord(jsonRecord(order.pricingSummary).total)
-    const lineItems = jsonArray(order.lineItems).flatMap((value) => {
+    const rawLineItems = jsonArray(order.lineItems)
+    const lineItems = rawLineItems.flatMap((value) => {
       const line = jsonRecord(value)
       const lineItemId = jsonText(line.lineItemId, 100)
       const listingId = jsonText(line.legacyItemId, 20)
@@ -1556,7 +1645,9 @@ export function sanitizeLiveEbayOrders(
         shipByDate: jsonIso(instructions.shipByDate),
       }]
     })
-    if (!lineItems.length) return []
+    // Do not turn a partially valid multi-line Order into a proven partial
+    // identity with the original whole-order total.
+    if (!rawLineItems.length || lineItems.length !== rawLineItems.length) return []
     const currency = jsonText(total.currency, 3).toUpperCase()
     return [{
       ebayOrderId,

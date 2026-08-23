@@ -73,6 +73,15 @@ import {
   type ReadonlySupplySourceRow,
   type ReadonlySupplyRow,
 } from "./commercial-monitor-readonly-repository"
+import { projectRecentSalesFeedV1 } from "./ebay-sales-order-read-model-v1"
+import { buildSellerOsOfficialOrdersReadV1 } from
+  "./ebay-official-orders-read-v1"
+import { buildSellerOsSalesOrderEventsReadV1 } from
+  "./ebay-sales-order-events-read-v1"
+import { buildSellerOsRecentSalesFeedV1 } from
+  "./ebay-sales-order-read-model-v1"
+import { buildSellerOsSaleAlertsReadV1,
+  type SellerOsSaleAlertsReadV1 } from "./ebay-sale-alerts-read-v1"
 import {
   classifyStoredAnalyticsEvidence,
   classifyTargetedLunaSnapshotContract,
@@ -2281,6 +2290,7 @@ function withLiveReadonlyEvidence(input: {
           hashEbayMonitorEvidenceIdentifier(line.lineItemId),
         listing_id: line.listingId,
         sku: line.sku,
+        product_title: null,
         pack_quantity: null,
         quantity: line.quantity,
         line_item_amount: line.lineItemAmount,
@@ -2609,6 +2619,8 @@ function discoveryCoverage(
     ? live.discovery.gapCodes.filter((code) =>
         code !== "REGISTRY_RECONCILIATION_UNAVAILABLE")
     : [
+        ...live.discovery.gapCodes.filter((code) =>
+          /^[A-Z0-9_]{3,160}$/.test(code)),
         "UNIVERSAL_ACCOUNT_LISTING_DISCOVERY_UNPROVEN",
         "MANUAL_LISTINGS_REQUIRE_KNOWN_ITEM_ID",
       ]
@@ -2791,6 +2803,8 @@ function discoveryCoverage(
         code === "GET_MY_EBAY_SELLING_25000_LIMIT" ||
         code === "SELLER_WIDE_SOURCE_IDENTITY_CONFLICT")
     : [
+        ...live.discovery.gapCodes.filter((code) =>
+          /^[A-Z0-9_]{3,160}$/.test(code)),
         "UNIVERSAL_ACCOUNT_LISTING_DISCOVERY_UNPROVEN",
         "MANUAL_LISTINGS_REQUIRE_KNOWN_ITEM_ID",
       ]
@@ -3606,6 +3620,7 @@ function baseReport(input: {
   orderFacts?: CommercialMonitorOrderFactsV1 | null
   liveAnalytics?: EbayCommercialMonitorLiveReadonlyResult["analytics"] | null
   historicalSnapshots?: ReadonlyCommercialSnapshotRow[]
+  saleAlerts: SellerOsSaleAlertsReadV1
 }) : CommercialMonitorGetDto {
   return {
     contractVersion: COMMERCIAL_MONITOR_READONLY_CONTRACT_VERSION,
@@ -3635,6 +3650,7 @@ function baseReport(input: {
       currentLiveWindowEnd: input.liveAnalytics?.windowEnd,
       currentLiveObservedAt: input.liveAnalytics?.observedAt,
       reportObservedAt: input.generatedAt,
+      saleAlerts: input.saleAlerts,
       historicalSnapshots: (input.historicalSnapshots ?? []).map((row) => ({
         id: row.id,
         listingId: row.listing_id,
@@ -3680,9 +3696,25 @@ function baseReport(input: {
   }
 }
 
+function configuredOrderPollIntervalMinutes() {
+  const configured = Number(process.env.EBAY_COMMERCIAL_ORDERS_INTERVAL_MINUTES ?? "5")
+  return Number.isSafeInteger(configured)
+    ? Math.max(5, Math.min(1_440, configured))
+    : 5
+}
+
 function orderFactsProjection(
   live: EbayCommercialMonitorLiveReadonlyResult,
+  stored?: CommercialMonitorReadonlySources,
 ): CommercialMonitorOrderFactsV1 {
+  const recentSales = stored
+    ? projectRecentSalesFeedV1({
+        orders: stored.orders,
+        orderLines: stored.orderLines,
+        saleEvents: stored.saleEvents,
+        saleDeliveries: stored.saleDeliveries,
+      })
+    : undefined
   if (live.orders.status === "UNAVAILABLE") {
     const authPending = live.orders.gapCodes.some((code) =>
       code === "FULFILLMENT_DEDICATED_CLIENT_PAIR_INCOMPLETE" ||
@@ -3697,6 +3729,9 @@ function orderFactsProjection(
       orderStatuses: [],
       fulfillmentStatuses: [],
       trackingAvailability: "UNPROVEN",
+      sourceObservedAt: live.orders.observedAt,
+      pollIntervalMinutes: configuredOrderPollIntervalMinutes(),
+      recentSales,
     }
   }
   const lineItems = live.orders.orders.flatMap((order) => order.lineItems)
@@ -3714,7 +3749,24 @@ function orderFactsProjection(
     fulfillmentStatuses: [...new Set(live.orders.orders.map((order) =>
       order.orderFulfillmentStatus))].sort(),
     trackingAvailability: "UNPROVEN",
+    sourceObservedAt: live.orders.observedAt,
+    pollIntervalMinutes: configuredOrderPollIntervalMinutes(),
+    recentSales,
   }
+}
+
+function canonicalSaleAlertsProjection(
+  live: EbayCommercialMonitorLiveReadonlyResult,
+) {
+  const officialOrders = buildSellerOsOfficialOrdersReadV1({
+    orders: live.orders,
+    analytics: live.analytics,
+  })
+  return buildSellerOsSaleAlertsReadV1(
+    buildSellerOsRecentSalesFeedV1(
+      buildSellerOsSalesOrderEventsReadV1(officialOrders),
+    ),
+  )
 }
 
 function registryCertificationProjection(input: {
@@ -3859,6 +3911,7 @@ function unconfiguredReport(
     timeline: [],
     liveCertification: liveCertificationProjection(live),
     orderFacts: orderFactsProjection(live),
+    saleAlerts: canonicalSaleAlertsProjection(live),
   }))
 }
 
@@ -3977,7 +4030,8 @@ export async function getCommercialMonitorReadonly(
     timeline: timeline(listings, learning, alertCandidates, generatedAt),
     liveCertification: liveCertificationProjection(live, coverage),
     registryCertification,
-    orderFacts: orderFactsProjection(live),
+    orderFacts: orderFactsProjection(live, storedSources),
+    saleAlerts: canonicalSaleAlertsProjection(live),
     liveAnalytics: live.analytics,
     historicalSnapshots: sources.commercialSnapshots.rows,
   }))

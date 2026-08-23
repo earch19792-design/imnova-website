@@ -20,6 +20,10 @@
     {
       "path": "/api/cron/ebay-luna-opportunity-scan",
       "schedule": "17 9 * * *"
+    },
+    {
+      "path": "/api/cron/daily-dollar-radar-autopilot",
+      "schedule": "0 9 * * *"
     }
   ]
 }

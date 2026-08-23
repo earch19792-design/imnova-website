@@ -104,6 +104,54 @@ function formatTimestamp(value: string | null) {
     : "Fecha no disponible"
 }
 
+function formatMoney(value: number | null, currency: string | null) {
+  if (value === null || !currency) return "Importe no comprobado"
+  try {
+    return new Intl.NumberFormat("es-US", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(value)
+  } catch {
+    return `${numberFormatter.format(value)} ${currency}`
+  }
+}
+
+const buyerMessageLabels: Record<
+  CommercialMonitorGetDto["backend"]["recentSales"]["entries"][number]["buyerMessageStatus"],
+  string
+> = {
+  SENT: "Enviado",
+  SKIPPED: "Omitido de forma segura",
+  FAILED: "Falló; requiere revisión",
+  BLOCKED: "Bloqueado por evidencia",
+  UNPROVEN: "No comprobado",
+  UNAVAILABLE: "No disponible",
+}
+
+const whatsappStatusLabels: Record<
+  CommercialMonitorGetDto["backend"]["recentSales"]["entries"][number]["whatsappNotificationStatus"],
+  string
+> = {
+  QUEUED: "En cola",
+  ACCEPTED_BY_META: "Aceptado por Meta",
+  FAILED: "Falló; requiere revisión",
+  DEFERRED: "Diferido",
+  UNPROVEN: "No comprobado",
+  UNAVAILABLE: "No disponible",
+}
+
+const supplierStockLabels: Record<
+  CommercialMonitorGetDto["backend"]["recentSales"]["entries"][number]["supplierStockStatus"],
+  string
+> = {
+  REFRESH_REQUEST_READY: "Revisión preparada",
+  SUPPLIER_RECHECK_PENDING_LINK: "Pendiente de vínculo exacto",
+  BLOCKED: "Bloqueado por atribución",
+  UNPROVEN: "Pendiente de comprobar",
+  UNAVAILABLE: "No disponible",
+}
+
 function humanReason(reason: string) {
   return reasonLabels[reason] ?? presentSellerOsCode(reason)
 }
@@ -236,6 +284,7 @@ export function CommercialMonitorCanonicalDashboard({
   const [trafficScope, setTrafficScope] = useState<"ACCOUNT_TRAFFIC" | "CURRENT_LIVE_PORTFOLIO">(
     "CURRENT_LIVE_PORTFOLIO",
   )
+  const [showAllLiveListings, setShowAllLiveListings] = useState(false)
   const backend = monitor.backend
   const accountTraffic = backend.trafficScopes.accountTraffic
   const currentLiveTraffic = backend.trafficScopes.currentLivePortfolio
@@ -279,10 +328,26 @@ export function CommercialMonitorCanonicalDashboard({
     decision.priority === "CRITICAL" || decision.priority === "HIGH").slice(0, 4)
   const guidanceByListing = new Map(backend.guidanceVsSellerOs.map((row) =>
     [row.listingKey, row] as const))
-  const liveRows = backend.decisions.flatMap((decision) => {
-    const listing = monitor.listings.find((candidate) => candidate.key === decision.listingKey)
-    return listing ? [{ listing, decision }] : []
-  }).slice(0, 8)
+  const listingsByKey = new Map(monitor.listings.map((listing) =>
+    [listing.key, listing] as const))
+  const canonicalRowsByItemId = new Map(backend.decisions.flatMap((decision) => {
+    const listing = listingsByKey.get(decision.listingKey)
+    return listing
+      ? [[listing.identity.itemId, { listing, decision }] as const]
+      : []
+  }))
+  const selectedLiveItemIds = showAllLiveListings
+    ? backend.monitorCoverage.monitoredItemIds
+    : backend.monitorCoverage.visiblePriorityItemIds
+  const liveRows = selectedLiveItemIds.flatMap((itemId) => {
+    const row = canonicalRowsByItemId.get(itemId)
+    return row ? [row] : []
+  })
+  const monitoredCount = backend.monitorCoverage.currentLiveScopeCount
+  const saleAlerts = backend.saleAlerts
+  const saleAlertRows = saleAlerts.alerts.slice(0, 5)
+  const recentSales = backend.recentSales
+  const recentSaleRows = recentSales.entries.slice(0, 5)
   const distributionTotal = backend.operationalHealth.statusDistribution.reduce(
     (total, row) => total + row.count,
     0,
@@ -448,15 +513,156 @@ export function CommercialMonitorCanonicalDashboard({
           </div>
         </section>
 
+        <section aria-labelledby="sale-alerts-heading" data-canonical-owner="SELLER_OS_RECENT_SALES_FEED_V1" className="overflow-hidden rounded-2xl border border-cyan-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cyan-100 px-5 py-4">
+            <div>
+              <p className={`${type.sectionEyebrow} text-cyan-800`}>Alertas operativas · line item oficial</p>
+              <h2 id="sale-alerts-heading" className={type.sectionTitle}>Alertas de venta</h2>
+              <p className={`${type.helper} mt-1 text-slate-500`}>
+                Una alerta lógica por Sales Order Event. Las ventas históricas permanecen visibles sin simular una notificación nueva.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusChip status={saleAlerts.status} />
+              <span className={`${type.helper} text-slate-500`}>
+                {saleAlerts.observedAlertCount === null
+                  ? "Conteo no comprobado"
+                  : `${saleAlerts.observedAlertCount} alertas observadas`}
+              </span>
+            </div>
+          </div>
+          {saleAlertRows.length ? (
+            <div className="divide-y divide-slate-100">
+              {saleAlertRows.map((alert) => (
+                <article key={alert.alertId} data-root-event-id={alert.eventId} className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,.8fr))] lg:items-center">
+                  <div className="min-w-0">
+                    <p className={`${type.tablePrimary} truncate font-black text-slate-900`}>
+                      {alert.detectionClass === "NEWLY_DETECTED_AFTER_I04_ACTIVATION"
+                        ? "Nueva venta"
+                        : "Venta histórica recuperada"}
+                    </p>
+                    <p className={`${type.tableSecondary} mt-1 text-slate-500`}>
+                      {alert.sku ? `SKU ${alert.sku}` : "SKU no disponible"} · {alert.itemId ? `Item ${alert.itemId}` : "Item ID no disponible"} · {alert.quantity} {alert.quantity === 1 ? "unidad" : "unidades"}
+                    </p>
+                    <p className={`${type.tableSecondary} mt-1 text-slate-500`}>
+                      Orden {alert.orderId} · Línea {alert.lineItemId} · {formatTimestamp(alert.orderCreatedAt)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className={`${type.cardLabel} text-slate-500`}>Venta</p>
+                    <p className={`${type.helper} mt-1 font-bold text-slate-800`}>{alert.orderStatus ?? "No disponible"}</p>
+                  </div>
+                  <div>
+                    <p className={`${type.cardLabel} text-slate-500`}>Fulfillment</p>
+                    <p className={`${type.helper} mt-1 font-bold text-slate-800`}>{alert.fulfillmentStatus ?? "No disponible"}</p>
+                  </div>
+                  <div>
+                    <p className={`${type.cardLabel} text-slate-500`}>Alerta Dashboard</p>
+                    <p className={`${type.helper} mt-1 font-bold text-slate-800`}>{alert.lifecycleStatus} · {alert.workflowStep.state}</p>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="px-5 pb-4">
+              <EmptyState
+                title={saleAlerts.status === "AVAILABLE"
+                  ? "No hay alertas oficiales en la ventana"
+                  : "Alertas de venta no disponibles"}
+                detail={saleAlerts.status === "AVAILABLE"
+                  ? "La fuente oficial confirmó una ventana sin Sales Order Events elegibles."
+                  : "Seller OS conserva el conteo como no comprobado; ausencia de evidencia no prueba cero ventas."}
+              />
+            </div>
+          )}
+        </section>
+
+        <section aria-labelledby="recent-sales-heading" className="overflow-hidden rounded-2xl border border-emerald-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-emerald-100 px-5 py-4">
+            <div>
+              <p className={`${type.sectionEyebrow} text-emerald-700`}>Órdenes oficiales de eBay</p>
+              <h2 id="recent-sales-heading" className={type.sectionTitle}>Ventas recientes</h2>
+              <p className={`${type.helper} mt-1 text-slate-500`}>
+                Cada venta proviene de una orden oficial; la cantidad vendida de Analytics no se usa para atribuirla.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusChip status={recentSales.status} />
+              <span className={`${type.helper} text-slate-500`}>
+                Sondeo configurado cada {backend.orderSourceHealth.pollIntervalMinutes} min · activación del scheduler no comprobada aquí
+              </span>
+            </div>
+          </div>
+          {recentSaleRows.length ? (
+            <div className="divide-y divide-slate-100">
+              {recentSaleRows.map((sale) => (
+                <article key={sale.orderId} className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,1.4fr)_repeat(3,minmax(0,.8fr))] lg:items-center">
+                  <div className="min-w-0">
+                    <p className={`${type.tablePrimary} truncate font-black text-slate-900`}>
+                      {sale.listingTitle ?? `Orden ${sale.orderId}`}
+                    </p>
+                    <p className={`${type.tableSecondary} mt-1 text-slate-500`}>
+                      {sale.quantity === null
+                        ? "Cantidad no comprobada"
+                        : `${sale.quantity} ${sale.quantity === 1 ? "unidad" : "unidades"}`} · {formatMoney(sale.orderTotal, sale.currency)} · {formatTimestamp(sale.soldAt)}
+                    </p>
+                    <p className={`${type.tableSecondary} mt-1 text-slate-500`}>
+                      {sale.itemIds.length
+                        ? `Item ID ${sale.itemIds.join(", ")}`
+                        : "Item ID no comprobado"} · Orden {sale.orderId}
+                    </p>
+                  </div>
+                  <div>
+                    <p className={`${type.cardLabel} text-slate-500`}>Mensaje al comprador</p>
+                    <p className={`${type.helper} mt-1 font-bold text-slate-800`}>
+                      {buyerMessageLabels[sale.buyerMessageStatus]}
+                    </p>
+                  </div>
+                  <div>
+                    <p className={`${type.cardLabel} text-slate-500`}>Aviso interno por WhatsApp</p>
+                    <p className={`${type.helper} mt-1 font-bold text-slate-800`}>
+                      {whatsappStatusLabels[sale.whatsappNotificationStatus]}
+                    </p>
+                  </div>
+                  <div>
+                    <p className={`${type.cardLabel} text-slate-500`}>Stock del proveedor</p>
+                    <p className={`${type.helper} mt-1 font-bold text-slate-800`}>
+                      {supplierStockLabels[sale.supplierStockStatus]}
+                    </p>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="px-5 pb-4">
+              <EmptyState
+                title={recentSales.status === "AVAILABLE"
+                  ? "Todavía no hay ventas oficiales registradas"
+                  : "Ventas recientes no disponibles"}
+                detail={recentSales.status === "AVAILABLE"
+                  ? "La lectura persistida está disponible; una nueva orden oficial aparecerá cuando el sondeo configurado se ejecute."
+                  : "Seller OS mantiene el estado sin convertir una fuente no disponible en cero ventas."}
+              />
+            </div>
+          )}
+        </section>
+
         <article id="guidance-table" className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
             <div>
               <p className={`${type.sectionEyebrow} text-cyan-800`}>Inteligencia central</p>
               <h2 className={type.sectionTitle}>Portafolio y decisiones comerciales</h2>
-              <p className={`${type.helper} mt-1 text-slate-500`}>La evidencia comercial y la calidad de datos se muestran por separado.</p>
+              <p className={`${type.helper} mt-1 text-slate-500`}>
+                {monitoredCount === null
+                  ? "El total monitoreado todavía no está comprobado."
+                  : `${formatValue(monitoredCount)} publicaciones activas monitoreadas.`}
+                {` Mostrando ${formatValue(liveRows.length)} de mayor prioridad.`}
+              </p>
             </div>
             <div className="flex items-center gap-2">
-              <span className={`${type.helper} text-slate-500`}>{liveRows.length} de {backend.decisions.length} publicaciones</span>
+              <span className={`${type.helper} text-slate-500`}>
+                Visible ≠ alcance monitoreado
+              </span>
               <StatusChip status={backend.listingQualityReport.status} />
             </div>
           </div>
@@ -524,8 +730,16 @@ export function CommercialMonitorCanonicalDashboard({
             ))}
           </div>
           <div className={`flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-5 py-3 ${type.helper} text-slate-500`}>
-            <span>Identidad activa de Trading · el Informe de calidad es enriquecimiento opcional</span>
-            <a href="#advanced-diagnostics" className="font-black text-cyan-800">Ver todas y diagnóstico avanzado</a>
+            <span>Identidad activa de Trading · no aparecer en esta selección no significa quedar sin monitoreo</span>
+            <button
+              type="button"
+              aria-expanded={showAllLiveListings}
+              aria-controls="guidance-table"
+              onClick={() => setShowAllLiveListings((value) => !value)}
+              className="font-black text-cyan-800"
+            >
+              {showAllLiveListings ? "Volver a las prioridades" : "Ver todas las publicaciones"}
+            </button>
           </div>
         </article>
 
@@ -667,9 +881,9 @@ export function CommercialMonitorCanonicalDashboard({
         </details>
 
         <article className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-emerald-950 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><LockKeyhole size={19} className="text-emerald-700" /><p className={type.cardTitle}>Seller OS funciona en modo de solo lectura</p></div><ShieldCheck size={20} className="text-emerald-700" /></div>
-          <p className={`${type.helper} mt-2`}>Sin escrituras en eBay, cambios de publicaciones, mensajes a compradores ni envíos de WhatsApp.</p>
-          <p className={`${type.helper} mt-2 font-black uppercase tracking-[0.08em] text-emerald-800`}>0 escrituras de marketplace · 0 escrituras del registro</p>
+          <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><LockKeyhole size={19} className="text-emerald-700" /><p className={type.cardTitle}>Este Monitor funciona en modo de solo lectura</p></div><ShieldCheck size={20} className="text-emerald-700" /></div>
+          <p className={`${type.helper} mt-2`}>Esta vista no ejecuta acciones. Las automatizaciones postventa autorizadas operan en un flujo separado, acotado e idempotente.</p>
+          <p className={`${type.helper} mt-2 font-black uppercase tracking-[0.08em] text-emerald-800`}>0 escrituras desde el Monitor · 0 escrituras del registro</p>
         </article>
       </main>
     </div>

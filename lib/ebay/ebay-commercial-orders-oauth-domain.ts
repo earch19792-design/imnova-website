@@ -10,40 +10,57 @@ import {
 export const EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly",
+  "https://api.ebay.com/oauth/api_scope/commerce.message",
 ] as const
 
 export const EBAY_COMMERCIAL_ORDERS_BASE_SCOPE =
   EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES[0]
 export const EBAY_COMMERCIAL_ORDERS_FULFILLMENT_READONLY_SCOPE =
   EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES[1]
+export const EBAY_COMMERCIAL_ORDERS_COMMERCE_MESSAGE_SCOPE =
+  EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES[2]
 
 export const EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_ENDPOINT =
   "https://auth.ebay.com/oauth2/authorize"
 
 export const EBAY_COMMERCIAL_ORDERS_CANONICAL_CALLBACK_PATH =
-  "/api/admin/ebay/commercial-orders-oauth/callback"
+  "/api/admin/ebay/monitor/seller-oauth-reauth"
+export const EBAY_COMMERCIAL_ORDERS_BROWSER_START_PAGE_PATH =
+  "/admin/ebay/monitor/commercial-orders-oauth-start"
 export const EBAY_COMMERCIAL_ORDERS_LEGACY_CALLBACK_PATH =
   "/api/admin/ebay/oauth/callback"
 export const EBAY_COMMERCIAL_ORDERS_PREVIEW_BRANCH_HOST =
-  "imnova-website-z1qh-git-featur-438554-earch19792-6888s-projects.vercel.app"
+  "imnova-website-z1qh-git-featur-6c9e25-earch19792-6888s-projects.vercel.app"
 export const EBAY_COMMERCIAL_ORDERS_CANONICAL_CALLBACK_URL =
   `https://${EBAY_COMMERCIAL_ORDERS_PREVIEW_BRANCH_HOST}${EBAY_COMMERCIAL_ORDERS_CANONICAL_CALLBACK_PATH}`
 
 export function getEbayCommercialOrdersCallbackConfiguration(
   environment: NodeJS.ProcessEnv = process.env,
+  requestHost?: string | null,
 ) {
+  const normalizedRequestHost = (requestHost ?? "")
+    .trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "")
   const deployedBranchHost = (environment.VERCEL_BRANCH_URL ?? "")
     .trim()
     .replace(/^https?:\/\//, "")
     .replace(/\/+$/, "")
+  const attestedBranchHost = deployedBranchHost || (
+    environment.VERCEL_GIT_COMMIT_REF ===
+        "feature/seller-os-canonical-integration-foundation-v1" &&
+      normalizedRequestHost === EBAY_COMMERCIAL_ORDERS_PREVIEW_BRANCH_HOST
+      ? normalizedRequestHost
+      : ""
+  )
   return {
     canonicalPath: EBAY_COMMERCIAL_ORDERS_CANONICAL_CALLBACK_PATH,
     canonicalUrl: EBAY_COMMERCIAL_ORDERS_CANONICAL_CALLBACK_URL,
     legacyPath: EBAY_COMMERCIAL_ORDERS_LEGACY_CALLBACK_PATH,
     legacyCallbackBlocked: true as const,
-    deployedBranchHostStatus: !deployedBranchHost
+    deployedBranchHostStatus: !attestedBranchHost
       ? "UNAVAILABLE" as const
-      : deployedBranchHost === EBAY_COMMERCIAL_ORDERS_PREVIEW_BRANCH_HOST
+      : attestedBranchHost === EBAY_COMMERCIAL_ORDERS_PREVIEW_BRANCH_HOST
         ? "MATCH" as const
         : "MISMATCH" as const,
     secretsReturned: false as const,

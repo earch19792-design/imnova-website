@@ -9,6 +9,16 @@ import { getEbayProRuntimeBoundary } from
 const root = process.cwd()
 const canonicalRoute = "app/api/admin/ebay/monitor/route.ts"
 const canonicalPage = "app/admin/ebay/monitor/page.tsx"
+const registeredRuntimeGraphAdditions = Object.freeze([
+  "lib/ebay/ebay-official-orders-read-v1.ts",
+  "lib/ebay/ebay-sale-alerts-read-v1.ts",
+  "lib/ebay/ebay-sales-order-event-foundation-v1.ts",
+  "lib/ebay/ebay-sales-order-events-read-v1.ts",
+  "lib/ebay/ebay-sales-order-read-model-v1.ts",
+  "lib/ebay/ebay-sales-order-readonly-audit-repository-v1.ts",
+  "lib/ebay/ebay-seller-os-workflow-foundation-v1.ts",
+  "lib/marketplace/commercial-monitor-domain.ts",
+])
 
 function read(path) {
   return readFileSync(join(root, path), "utf8")
@@ -113,6 +123,7 @@ test("el repositorio canónico sólo contiene SELECTs y ninguna ejecución exter
     "lib/ebay/commercial-monitor-readonly-utilities.mjs",
     "lib/ebay/ebay-commercial-monitor-live-readonly.ts",
     "lib/ebay/ebay-seller-account-scope.ts",
+    "lib/marketplace/commercial-monitor-domain.ts",
   ])
   assert.match(
     read("lib/ebay/commercial-monitor-readonly-utilities.mjs"),
@@ -125,6 +136,10 @@ test("el repositorio canónico sólo contiene SELECTs y ninguna ejecución exter
   assert.match(
     read("lib/ebay/ebay-commercial-monitor-live-readonly.ts"),
     /createHash\("sha256"\)\s*\.update\(`EBAY_MONITOR_EVIDENCE:\$\{value\}`\)/,
+  )
+  assert.match(
+    read("lib/marketplace/commercial-monitor-domain.ts"),
+    /createHash\("sha256"\)\.update\(JSON\.stringify\(parts\)\)/,
   )
 
   const monitorOwnedRuntime = routeGraph
@@ -171,6 +186,18 @@ test("el grafo canónico excluye writers, dispatchers, WhatsApp y runners mutant
   assert.ok(routeGraph.includes(
     "lib/ebay/commercial-monitor-readonly-service.ts",
   ))
+  assert.ok(routeGraph.includes(
+    "lib/ebay/ebay-sales-order-readonly-audit-repository-v1.ts",
+  ))
+  const salesAuditReader = read(
+    "lib/ebay/ebay-sales-order-readonly-audit-repository-v1.ts",
+  )
+  assert.match(salesAuditReader, /\.select\(/)
+  assert.doesNotMatch(
+    salesAuditReader,
+    /\.(?:insert|update|upsert|delete|rpc)\s*\(/,
+  )
+  assert.doesNotMatch(salesAuditReader, /\bfetch\s*\(/)
 })
 
 test("el reader live usa una allowlist cerrada y nunca persiste respuestas", () => {
@@ -280,8 +307,9 @@ test("la UI contiene las secciones canónicas y sólo un control GET de actualiz
   assert.match(client, /String\(alert\.deliveryAttempted\)/)
   assert.match(client, /alert\.componentReference\.componentId/)
   assert.match(client, /alert\.componentReference\.sku/)
-  assert.equal((canonicalUi.match(/onClick=/g) ?? []).length, 3)
+  assert.equal((canonicalUi.match(/onClick=/g) ?? []).length, 4)
   assert.match(canonicalDashboard, /onClick=\{onRefresh\}/)
+  assert.match(canonicalDashboard, /Ver todas las publicaciones/)
   assert.match(canonicalDashboard, /ACCOUNT_TRAFFIC/)
   assert.match(canonicalDashboard, /CURRENT_LIVE_PORTFOLIO/)
   assert.match(canonicalDashboard, /Actualizar datos/)
@@ -394,5 +422,14 @@ test("el grafo canónico se mantiene físicamente pequeño y auditable", () => {
   assert.ok(routeGraph.length > 3)
   assert.ok(uiGraph.length > 3)
   assert.ok(runtimeGraph.includes("lib/seller-os/presentation.ts"))
-  assert.ok(runtimeGraph.length < 27, `unexpected dependency expansion: ${runtimeGraph.join(", ")}`)
+  assert.deepEqual(
+    runtimeGraph.filter((path) => registeredRuntimeGraphAdditions.includes(path)),
+    [...registeredRuntimeGraphAdditions].sort(),
+  )
+  const baselineRuntimeGraph = runtimeGraph.filter((path) =>
+    !registeredRuntimeGraphAdditions.includes(path))
+  assert.ok(
+    baselineRuntimeGraph.length < 27,
+    `unexpected dependency expansion: ${runtimeGraph.join(", ")}`,
+  )
 })

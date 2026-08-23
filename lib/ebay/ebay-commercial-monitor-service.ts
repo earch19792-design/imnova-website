@@ -10,7 +10,6 @@ import {
   extractPackQuantity,
   mergePreviousCommercialSnapshot,
   renderDailyCommercialSummary,
-  renderSaleDetectedMessage,
   stableCommercialKey,
   selectExactCommercialSupply,
   type CommercialEvent,
@@ -74,12 +73,33 @@ import {
   type EbayQuotaLane,
 } from "./ebay-persistent-quota-coordinator"
 import { monitorEbayListingCompetitors } from "./ebay-competitor-watch-service"
+import { getSellerWhatsAppGatewayConfiguration } from "./ebay-seller-whatsapp-gateway"
+import {
+  buildCanonicalOrderEventIngestionV1,
+  buildCommercialSaleLearningEventV1,
+  buildSaleTriggeredStockRecheckV1,
+  evaluateBuyerMessageEligibilityV1,
+  evaluateWhatsappSaleNotificationEligibilityV1,
+  type OrderListingIdentityV1,
+  type OrderSourceStatus,
+} from "./ebay-sales-order-event-foundation-v1"
+import { sellerOsSalesOrderEventIdentityV1 } from
+  "./ebay-sales-order-events-read-v1"
+import { classifySellerOsSaleAlertDetectionV1 } from
+  "./ebay-sale-alerts-read-v1"
+import { buildSellerOsWhatsappSaleAlertDeliveryPlanV1,
+  SELLER_OS_WHATSAPP_SALE_ALERT_STORAGE_ADAPTER_VERSION } from
+  "./ebay-whatsapp-sale-alert-v1"
 
 const MARKETPLACE = "EBAY_US"
 const COMPETITOR_PARTIAL_RETRY_MINUTES = 15
 const MONITOR_LEASE_SECONDS = 300
 const READER_HISTORY_LIMIT = 500
 const DEFAULT_LUNA_SUPPLY_MAX_AGE_MINUTES = 24 * 60
+const ORDER_NOTIFICATION_CUTOVER_EVENT_TYPE =
+  "ORDER_NOTIFICATION_CUTOVER_ACTIVATED_V1"
+const INTERNAL_OPERATOR_SALE_ALERT_TEMPLATE_VERSION =
+  "INTERNAL_OPERATOR_SALE_ALERT_V1"
 
 export const COMMERCIAL_MONITOR_LANES = [
   "orders", "messages", "analytics", "watchers", "competitors", "rules", "daily_summary", "whatsapp",
@@ -1037,6 +1057,177 @@ async function enqueueAlert(supabase: SupabaseClient, input: {
   return !error
 }
 
+/**
+ * Reserves an outbox obligation rather than treating a duplicate insert as a
+ * failed enqueue. The unique outbox key is the durable one-order/one-channel
+ * lease; retries recover that same reservation after any later fan-out crash.
+ */
+async function reserveAlertOutbox(supabase: SupabaseClient, input: {
+  accountKey: string
+  eventId: string
+  severity: CommercialEvent["severity"]
+  deduplicationKey: string
+  deliveryClass: "immediate" | "digest"
+  channel?: "whatsapp" | "in_app"
+  payload: Record<string, unknown>
+}) {
+  if (containsPrivateBuyerData(input.payload)) {
+    throw new Error("COMMERCIAL_ALERT_PRIVATE_BUYER_DATA_BLOCKED")
+  }
+  const channel = input.channel ?? "whatsapp"
+  const outboxDeduplicationKey = `${channel}:${input.deduplicationKey}`
+  const dueAt = input.deliveryClass === "digest"
+    ? nextCommercialDigestAt().toISOString()
+    : new Date().toISOString()
+  const { data, error } = await supabase.from("alert_delivery_outbox").insert({
+    marketplace_account_key: input.accountKey,
+    marketplace: MARKETPLACE,
+    commercial_event_id: input.eventId,
+    channel,
+    delivery_class: input.deliveryClass,
+    severity: input.severity,
+    deduplication_key: outboxDeduplicationKey,
+    status: "pending",
+    payload: input.payload,
+    due_at: dueAt,
+  }).select("id").maybeSingle()
+  if (error?.code === "23505") {
+    const { data: existing, error: readError } = await supabase
+      .from("alert_delivery_outbox")
+      .select("id")
+      .eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("channel", channel)
+      .eq("deduplication_key", outboxDeduplicationKey)
+      .maybeSingle()
+    if (readError || !existing?.id) {
+      throw new Error("COMMERCIAL_ALERT_RESERVATION_RECOVERY_FAILED")
+    }
+    return Object.freeze({
+      reserved: true as const,
+      created: false as const,
+      outboxId: existing.id as string,
+    })
+  }
+  if (error || !data?.id) throw new Error("COMMERCIAL_ALERT_ENQUEUE_FAILED")
+  return Object.freeze({
+    reserved: true as const,
+    created: true as const,
+    outboxId: data.id as string,
+  })
+}
+
+function orderNotificationCutoverAt(row: unknown) {
+  const candidate = row && typeof row === "object"
+    ? row as Record<string, unknown>
+    : {}
+  const evidence = candidate.evidence && typeof candidate.evidence === "object"
+    ? candidate.evidence as Record<string, unknown>
+    : {}
+  const value = typeof evidence.cutoverAt === "string"
+    ? evidence.cutoverAt
+    : typeof candidate.detected_at === "string"
+      ? candidate.detected_at
+      : ""
+  return Number.isFinite(Date.parse(value)) ? value : null
+}
+
+async function ensureOrderNotificationCutoverV1(input: {
+  supabase: SupabaseClient
+  accountKey: string
+  observedAt: string
+  thresholdConfigVersion: string
+}) {
+  if (!Number.isFinite(Date.parse(input.observedAt))) {
+    throw new Error("COMMERCIAL_ORDER_NOTIFICATION_CUTOVER_INVALID")
+  }
+  const deduplicationKey = stableCommercialKey(
+    input.accountKey,
+    ORDER_NOTIFICATION_CUTOVER_EVENT_TYPE,
+  )
+  const readExisting = async () => {
+    const { data, error } = await input.supabase
+      .from("commercial_alert_events")
+      .select("id,evidence,detected_at")
+      .eq("marketplace_account_key", input.accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("deduplication_key", deduplicationKey)
+      .maybeSingle()
+    if (error) throw new Error("COMMERCIAL_ORDER_NOTIFICATION_CUTOVER_READ_FAILED")
+    return data ?? null
+  }
+  const existing = await readExisting()
+  const existingCutoverAt = orderNotificationCutoverAt(existing)
+  if (existing) {
+    if (!existingCutoverAt) {
+      throw new Error("COMMERCIAL_ORDER_NOTIFICATION_CUTOVER_INVALID")
+    }
+    return Object.freeze({
+      cutoverAt: existingCutoverAt,
+      created: false as const,
+      eventId: existing.id as string,
+    })
+  }
+  const inserted = await insertEvent(input.supabase, input.accountKey, {
+    eventType: ORDER_NOTIFICATION_CUTOVER_EVENT_TYPE,
+    severity: "low",
+    evidence: {
+      contractVersion: ORDER_NOTIFICATION_CUTOVER_EVENT_TYPE,
+      cutoverAt: input.observedAt,
+      dispositionPolicy: "SOLD_AT_LESS_THAN_OR_EQUAL_TO_CUTOVER_IS_HISTORICAL",
+      historicalBackfillSendAllowed: false,
+      buyerPiiIncluded: false,
+    },
+    thresholdConfigVersion: input.thresholdConfigVersion,
+    detectedAt: input.observedAt,
+    listingId: "ACCOUNT_SCOPE",
+    sku: null,
+    deduplicationKey,
+    recommendedAction: "Conservar este corte para impedir notificaciones retroactivas de ventas históricas.",
+  })
+  if (inserted.created) {
+    return Object.freeze({
+      cutoverAt: input.observedAt,
+      created: true as const,
+      eventId: inserted.id,
+    })
+  }
+  const recovered = await readExisting()
+  const recoveredCutoverAt = orderNotificationCutoverAt(recovered)
+  if (!recovered?.id || !recoveredCutoverAt) {
+    throw new Error("COMMERCIAL_ORDER_NOTIFICATION_CUTOVER_RECOVERY_FAILED")
+  }
+  return Object.freeze({
+    cutoverAt: recoveredCutoverAt,
+    created: false as const,
+    eventId: recovered.id as string,
+  })
+}
+
+export function orderNotificationDispositionV1(input: {
+  soldAt: string
+  cutoverAt: string
+  legacyLineSaleObservation?: boolean
+}) {
+  const soldAt = Date.parse(input.soldAt)
+  const cutoverAt = Date.parse(input.cutoverAt)
+  const historical = input.legacyLineSaleObservation === true ||
+    !Number.isFinite(soldAt) || !Number.isFinite(cutoverAt) || soldAt <= cutoverAt
+  return Object.freeze({
+    historicalOrderObservation: historical,
+    disposition: historical
+      ? "HISTORICAL_RECOVERY" as const
+      : "POST_CUTOVER_ORDER" as const,
+    reasonCode: input.legacyLineSaleObservation
+      ? "LEGACY_LINE_SALE_NOTIFICATION_ALREADY_MATERIALIZED" as const
+      : !Number.isFinite(soldAt) || !Number.isFinite(cutoverAt)
+        ? "ORDER_NOTIFICATION_DATE_INVALID_FAIL_CLOSED" as const
+        : soldAt <= cutoverAt
+          ? "ORDER_SOLD_AT_OR_BEFORE_NOTIFICATION_CUTOVER" as const
+          : "ORDER_SOLD_AFTER_NOTIFICATION_CUTOVER" as const,
+  })
+}
+
 function nextCommercialDigestAt(now = new Date()) {
   const configuredHour = Number(
     process.env.EBAY_SELLER_WHATSAPP_DIGEST_HOUR_UTC ?? "0",
@@ -1305,7 +1496,179 @@ async function persistSellerInboxMessageAlerts(input: {
   return { eventsCreated, alertsGenerated, duplicatesAvoided }
 }
 
-async function persistOrdersAndSales(input: {
+function orderListingIdentitiesV1(input: {
+  orders: SafeMarketplaceOrder[]
+  listings: ListingRow[]
+  verifiedIdentities: Set<string>
+}) {
+  const identities: OrderListingIdentityV1[] = input.listings.map((listing) => ({
+    listingKey: listing.id,
+    itemId: listing.ebay_item_id,
+    sku: listing.ebay_sku,
+    title: listing.title,
+    currentLive: listing.listing_status === "active",
+    source: listing.source,
+    evidenceReference: `SELLER_OS_LISTING:${listing.id}`,
+  }))
+  // A successful official GetItem identity check is independent evidence. It
+  // keeps Order attribution available when the local Registry presentation is
+  // temporarily missing, without fabricating a Registry relationship.
+  for (const order of input.orders) {
+    for (const line of order.lineItems) {
+      if (!line.sku || !input.verifiedIdentities.has(`${line.listingId}:${line.sku}`)) {
+        continue
+      }
+      if (identities.some((identity) => identity.itemId === line.listingId &&
+        identity.sku === line.sku)) continue
+      identities.push({
+        listingKey: `EBAY_GET_ITEM:${line.listingId}:${line.sku}`,
+        itemId: line.listingId,
+        sku: line.sku,
+        title: line.title,
+        currentLive: true,
+        source: "EBAY_TRADING_GET_ITEM_READONLY",
+        evidenceReference: `EBAY_GET_ITEM:${line.listingId}:${line.sku}`,
+      })
+    }
+  }
+  return identities
+}
+
+function exactLinkedSupplyForOrderLine(
+  listings: ListingRow[],
+  supplies: SupplyRow[],
+  line: SafeMarketplaceOrderLine,
+) {
+  const listing = listings.find((candidate) =>
+    candidate.ebay_item_id === line.listingId &&
+    candidate.listing_status === "active" &&
+    (!line.sku || !candidate.ebay_sku || candidate.ebay_sku === line.sku)
+  ) ?? null
+  if (!listing?.supplier_sku || !listing.supplier_variant_id) {
+    return { listing, supply: null as SupplyRow | null, exactLink: false }
+  }
+  const supply = supplyForListing(listing, supplies)
+  const exactLink = Boolean(
+    supply &&
+    supply.sku === listing.supplier_sku &&
+    supply.supplier_variant_id === listing.supplier_variant_id &&
+    isAllowedLunaProductUrl(supply.product_url),
+  )
+  return { listing, supply: exactLink ? supply : null, exactLink }
+}
+
+/**
+ * Pure orchestration projection used by persistence and deterministic tests.
+ * It deliberately creates the Order/Sale truth before optional Registry,
+ * Luna, buyer-message, or WhatsApp capabilities are considered.
+ */
+export function buildOrderPersistenceOrchestrationV1(input: {
+  accountKey: string
+  orders: SafeMarketplaceOrder[]
+  listings: ListingRow[]
+  supplies: SupplyRow[]
+  observedAt: string
+  verifiedIdentities: Set<string>
+  listingSourceStatus?: OrderSourceStatus
+  whatsappCapability: "AVAILABLE" | "UNAVAILABLE" | "UNPROVEN"
+  whatsappOperatorDestination: "AUTHORIZED" | "UNAUTHORIZED" | "UNPROVEN"
+}) {
+  const listingIdentities = orderListingIdentitiesV1(input)
+  const canonicalCurrentLiveItemIds = [...new Set([
+    ...input.listings
+      .filter((listing) => listing.listing_status === "active")
+      .map((listing) => listing.ebay_item_id),
+    ...listingIdentities
+      .filter((identity) => identity.currentLive)
+      .map((identity) => identity.itemId),
+  ])]
+  const listingSourceStatus = input.listingSourceStatus ?? (
+    listingIdentities.length ? "AVAILABLE" : "UNAVAILABLE"
+  )
+  const ingestion = buildCanonicalOrderEventIngestionV1({
+    accountKey: input.accountKey,
+    sourceStatus: "AVAILABLE",
+    observedAt: input.observedAt,
+    orders: input.orders,
+    listingIdentities,
+    listingSourceStatus,
+    canonicalCurrentLiveItemIds,
+  })
+  const orderById = new Map(input.orders.map((order) => [order.ebayOrderId, order]))
+  const effects = ingestion.saleEvents.map((saleEvent) => {
+    const order = orderById.get(saleEvent.orderId) as SafeMarketplaceOrder
+    const linkedLines = order.lineItems.map((line) => ({
+      line,
+      ...exactLinkedSupplyForOrderLine(input.listings, input.supplies, line),
+    }))
+    const supplierLinkStatus = linkedLines.length > 0 &&
+      linkedLines.every((candidate) => candidate.exactLink)
+      ? "PROVEN" as const
+      : "UNPROVEN" as const
+    const stockRecheck = buildSaleTriggeredStockRecheckV1({
+      saleEvent,
+      supplierLinkStatus,
+    })
+    const learningEvent = buildCommercialSaleLearningEventV1({
+      saleEvent,
+      supplierState: { status: supplierLinkStatus },
+      stockState: {
+        status: stockRecheck.state,
+        refreshRequested: false,
+      },
+      economicsState: { status: "UNPROVEN" },
+    })
+    const buyerMessageEligibility = evaluateBuyerMessageEligibilityV1({
+      saleEvent,
+      buyerOrderContext: "UNAVAILABLE",
+      capability: "UNAVAILABLE",
+      previouslySent: "NO",
+    })
+    const whatsappEligibility = evaluateWhatsappSaleNotificationEligibilityV1({
+      saleEvent,
+      saleEventCreated: true,
+      operatorDestination: input.whatsappOperatorDestination,
+      capability: input.whatsappCapability,
+      previouslySent: "NO",
+    })
+    return Object.freeze({
+      order,
+      saleEvent,
+      linkedLines: Object.freeze(linkedLines),
+      stockRecheck,
+      learningEvent,
+      buyerMessageEligibility,
+      whatsappEligibility,
+      whatsappOutboxAllowed: whatsappEligibility.sendAllowed,
+    })
+  })
+  return Object.freeze({
+    ingestion,
+    effects: Object.freeze(effects),
+    saleEventCount: effects.length,
+    buyerPiiIncluded: false as const,
+  })
+}
+
+export function orderExternalNotificationPlanV1(input: {
+  historicalOrderObservation: boolean
+  saleEventCreated?: boolean
+  whatsappEligibility: Readonly<{ sendAllowed: boolean }>
+}) {
+  return Object.freeze({
+    whatsappOutboxAllowed: !input.historicalOrderObservation &&
+      input.whatsappEligibility.sendAllowed,
+    buyerMessageSendAllowed: false as const,
+    historicalBackfillSendAllowed: false as const,
+    reasonCode: input.historicalOrderObservation
+      ? "HISTORICAL_BACKFILL_NOTIFICATION_BLOCKED" as const
+      : input.whatsappEligibility.sendAllowed
+        ? "POST_CUTOVER_PROVEN_SALE_OUTBOX_RESERVATION_ALLOWED" as const
+        : "WHATSAPP_ELIGIBILITY_NOT_PROVEN" as const,
+  })
+}
+
+export async function persistOrdersAndSales(input: {
   supabase: SupabaseClient
   accountKey: string
   orders: SafeMarketplaceOrder[]
@@ -1326,6 +1689,47 @@ async function persistOrdersAndSales(input: {
   let duplicatesAvoided = 0
   let estimatedProfit = 0
   const errors: RunError[] = []
+
+  const whatsappConfiguration = getSellerWhatsAppGatewayConfiguration()
+  const whatsappDurableDeliveryConfigurationAvailable =
+    whatsappConfiguration.enabled &&
+    whatsappConfiguration.configurationComplete &&
+    whatsappConfiguration.deliveryAttemptAllowed
+  const orchestration = buildOrderPersistenceOrchestrationV1({
+    accountKey,
+    orders,
+    listings,
+    supplies,
+    observedAt,
+    verifiedIdentities,
+    listingSourceStatus: listings.length || verifiedIdentities.size
+      ? "AVAILABLE"
+      : "UNAVAILABLE",
+    // The dispatcher performs the network preflight. Order ingestion depends
+    // only on the durable Preview-safe configuration so a cold in-memory
+    // preflight cache cannot permanently discard a notification obligation.
+    whatsappCapability: whatsappDurableDeliveryConfigurationAvailable
+      ? "AVAILABLE"
+      : "UNAVAILABLE",
+    whatsappOperatorDestination: whatsappConfiguration.recipientConfigured
+      ? "AUTHORIZED"
+      : "UNAUTHORIZED",
+  })
+  const effectByOrderId = new Map(orchestration.effects.map((effect) => [
+    effect.saleEvent.orderId,
+    effect,
+  ]))
+  // A successful Orders acquisition establishes the rollout boundary even
+  // when eBay returns an authoritative empty page. Snapshot existence is not
+  // an observation disposition: a crash may persist a snapshot before the
+  // sale fan-out has completed.
+  const notificationCutover = await ensureOrderNotificationCutoverV1({
+    supabase,
+    accountKey,
+    observedAt,
+    thresholdConfigVersion: thresholds.version,
+  })
+  if (notificationCutover.created) eventsCreated += 1
 
   for (const order of orders) {
     const { error: orderError } = await supabase
@@ -1369,6 +1773,300 @@ async function persistOrdersAndSales(input: {
         }, { onConflict: "marketplace_account_key,marketplace,marketplace_order_id,marketplace_line_item_id" })
       if (lineError) throw new Error("COMMERCIAL_ORDER_LINE_WRITE_FAILED")
 
+    }
+
+    const effect = effectByOrderId.get(order.ebayOrderId)
+    if (!effect) continue
+    const saleEvent = effect.saleEvent
+
+    // Compatibility guard: the previous implementation used one
+    // SALE_DETECTED key per line. Recognizing any historical event for the
+    // authoritative Order prevents a deploy from replaying old sales through
+    // the new one-order grain.
+    const { data: existingSales, error: legacySaleError } = await supabase
+      .from("commercial_alert_events")
+      .select("id,deduplication_key,marketplace_line_item_id,evidence")
+      .eq("marketplace_account_key", accountKey)
+      .eq("marketplace", MARKETPLACE)
+      .eq("event_type", "SALE_DETECTED")
+      .eq("marketplace_order_id", order.ebayOrderId)
+      .limit(Math.max(2, order.lineItems.length + 1))
+    if (legacySaleError) throw new Error("COMMERCIAL_SALE_HISTORY_READ_FAILED")
+
+    const primaryLine = saleEvent.lineEvents[0]
+    const existingSaleRows = existingSales ?? []
+    const canonicalOrderSale = existingSaleRows.find((row) =>
+      row.deduplication_key === saleEvent.idempotencyKey &&
+      !row.marketplace_line_item_id) ?? null
+    const legacyLineSale = existingSaleRows.find((row) => {
+      const evidence = row.evidence && typeof row.evidence === "object"
+        ? row.evidence as Record<string, unknown> : {}
+      return evidence.contractVersion !==
+          SELLER_OS_WHATSAPP_SALE_ALERT_STORAGE_ADAPTER_VERSION &&
+        (row.deduplication_key !== saleEvent.idempotencyKey ||
+          Boolean(row.marketplace_line_item_id))
+    }) ?? null
+    const legacyLineSaleObservation = Boolean(legacyLineSale?.id)
+    const notificationDisposition = orderNotificationDispositionV1({
+      soldAt: saleEvent.soldAt,
+      cutoverAt: notificationCutover.cutoverAt,
+      legacyLineSaleObservation,
+    })
+    const historicalOrderObservation =
+      notificationDisposition.historicalOrderObservation
+    const orderAlreadyFulfilled = order.orderFulfillmentStatus === "FULFILLED"
+    const persistedStockRecheck = orderAlreadyFulfilled
+      ? Object.freeze({
+          ...effect.stockRecheck,
+          state: "STOCK_RECHECK_SKIPPED_ORDER_FULFILLED" as const,
+          requestAllowed: false as const,
+          requestExecuted: false as const,
+          orderAlreadyFulfilled: true as const,
+        })
+      : effect.stockRecheck
+    const orderSaleEvent: CommercialEvent & {
+      marketplaceOrderId: string
+      marketplaceLineItemId: null
+    } = {
+      eventType: "SALE_DETECTED",
+      severity: "critical",
+      evidence: {
+        contractVersion: saleEvent.contractVersion,
+        sourceSystem: "EBAY_SELL_FULFILLMENT",
+        sourceOperation: "GET_ORDERS",
+        source: "OFFICIAL_COMPLETED_CHECKOUT_ORDER",
+        orderStatus: saleEvent.status,
+        attributionStatus: saleEvent.attributionStatus,
+        itemIds: saleEvent.itemIds,
+        orderLineItemIds: saleEvent.orderLineItemIds,
+        quantity: saleEvent.quantity,
+        orderTotal: saleEvent.orderTotal,
+        currency: saleEvent.currency,
+        soldAt: saleEvent.soldAt,
+        paymentState: saleEvent.paymentState,
+        fulfillmentState: saleEvent.fulfillmentState,
+        independentOfAnalytics: true,
+        independentOfSupplierState: true,
+        independentOfNotificationState: true,
+        notificationDisposition: notificationDisposition.disposition,
+        notificationDispositionReasonCode: notificationDisposition.reasonCode,
+        notificationCutoverAt: notificationCutover.cutoverAt,
+        buyerPiiIncluded: false,
+      },
+      thresholdConfigVersion: thresholds.version,
+      detectedAt: saleEvent.soldAt,
+      // The persisted event schema requires one listing reference. For a
+      // multi-line order keep a real authoritative Item ID here and retain
+      // the full ordered Item-ID set in evidence; never invent a listing ID.
+      listingId: primaryLine.ebayItemId,
+      sku: saleEvent.lineEvents.length === 1 ? primaryLine.sku : null,
+      deduplicationKey: saleEvent.idempotencyKey,
+      recommendedAction: "Procesar la venta y revisar de forma independiente fulfillment, mensaje al comprador, aviso interno y stock del proveedor.",
+      marketplaceOrderId: order.ebayOrderId,
+      marketplaceLineItemId: null,
+    }
+    const persistedSale = canonicalOrderSale?.id
+      ? { id: canonicalOrderSale.id as string, created: false }
+      : legacyLineSale?.id
+        ? { id: legacyLineSale.id as string, created: false }
+      : await insertEvent(supabase, accountKey, orderSaleEvent)
+    if (persistedSale.created && !historicalOrderObservation) {
+      newSales += saleEvent.quantity
+      eventsCreated += 1
+    } else if (persistedSale.created) {
+      eventsCreated += 1
+    } else {
+      duplicatesAvoided += 1
+    }
+
+    // These are local, read-model-safe audit records. They may be recovered for
+    // historical orders, while external notifications below are strictly
+    // limited to a newly observed Order plus a newly reserved sale event.
+    const stockEvent = await insertEvent(supabase, accountKey, {
+      eventType: "SALE_TRIGGERED_STOCK_RECHECK",
+      severity: orderAlreadyFulfilled
+        ? "low"
+        : persistedStockRecheck.requestAllowed ? "high" : "medium",
+      evidence: {
+        ...persistedStockRecheck,
+        buyerPiiIncluded: false,
+      },
+      thresholdConfigVersion: thresholds.version,
+      detectedAt: observedAt,
+      listingId: orderSaleEvent.listingId,
+      sku: orderSaleEvent.sku,
+      deduplicationKey: persistedStockRecheck.idempotencyKey,
+      recommendedAction: orderAlreadyFulfilled
+        ? "No reabrir compra ni actualización de proveedor para una orden ya cumplida."
+        : persistedStockRecheck.requestAllowed
+          ? "La actualización acotada de stock está lista para solicitarse usando el vínculo de proveedor ya aprobado."
+          : "Vincular y aprobar el proveedor exacto antes de solicitar una actualización de stock.",
+      marketplaceOrderId: order.ebayOrderId,
+      marketplaceLineItemId: null,
+    })
+    if (stockEvent.created) eventsCreated += 1
+
+    const learningEvent = await insertEvent(supabase, accountKey, {
+      eventType: "COMMERCIAL_SALE_LEARNING_EVENT",
+      severity: "low",
+      evidence: {
+        ...effect.learningEvent,
+        buyerPiiIncluded: false,
+      },
+      thresholdConfigVersion: thresholds.version,
+      detectedAt: saleEvent.soldAt,
+      listingId: orderSaleEvent.listingId,
+      sku: orderSaleEvent.sku,
+      deduplicationKey: effect.learningEvent.idempotencyKey,
+      recommendedAction: "Conservar esta observación para aprendizaje futuro sin inferir causalidad a partir de una sola venta.",
+      marketplaceOrderId: order.ebayOrderId,
+      marketplaceLineItemId: null,
+    })
+    if (learningEvent.created) eventsCreated += 1
+
+    const buyerEligibilityAuditKey = stableCommercialKey(
+      "BUYER_MESSAGE_ELIGIBILITY_EVALUATED_V1",
+      saleEvent.idempotencyKey,
+      effect.buyerMessageEligibility.status,
+    )
+    const buyerDeliveryStatus = historicalOrderObservation
+      ? "SKIPPED" as const
+      : effect.buyerMessageEligibility.status === "UNAVAILABLE"
+        ? "UNAVAILABLE" as const
+        : "BLOCKED" as const
+    const buyerFailureReason = historicalOrderObservation
+      ? notificationDisposition.reasonCode
+      : effect.buyerMessageEligibility.reasonCodes[0] ??
+        "BUYER_MESSAGE_SEND_NOT_ACTIVATED"
+    const buyerAudit = await insertEvent(supabase, accountKey, {
+      eventType: "POST_PURCHASE_THANK_YOU_MESSAGE_AUDIT",
+      severity: "low",
+      evidence: {
+        contractVersion: effect.buyerMessageEligibility.contractVersion,
+        status: historicalOrderObservation
+          ? "HISTORICAL_RECOVERY_SKIPPED"
+          : effect.buyerMessageEligibility.status,
+        deliveryStatus: buyerDeliveryStatus,
+        templateVersion: effect.buyerMessageEligibility.templateVersion,
+        messageId: null,
+        createdAt: observedAt,
+        sentAt: null,
+        failureReason: buyerFailureReason,
+        retryCount: 0,
+        // This is the eligibility-audit key, not the future send lease.
+        idempotencyKey: buyerEligibilityAuditKey,
+        sendIdempotencyKeyReserved: false,
+        sendAllowed: false,
+        sendAttempted: false,
+        reasonCodes: historicalOrderObservation
+          ? [notificationDisposition.reasonCode]
+          : effect.buyerMessageEligibility.reasonCodes,
+        authorizedMarketplaceWriteScope:
+          "EBAY_POST_PURCHASE_THANK_YOU_MESSAGE_ONLY",
+        historicalBackfillSendAllowed: false,
+        buyerPiiIncluded: false,
+      },
+      thresholdConfigVersion: thresholds.version,
+      detectedAt: observedAt,
+      listingId: orderSaleEvent.listingId,
+      sku: orderSaleEvent.sku,
+        // A blocked eligibility audit must not consume the one-order/one-send
+        // reservation. The send key is reserved only immediately before a
+        // future proven eligible official message attempt.
+      deduplicationKey: buyerEligibilityAuditKey,
+      recommendedAction: "Mantener el envío bloqueado hasta probar el contexto oficial del comprador y la capacidad de mensajería sin ampliar OAuth.",
+      marketplaceOrderId: order.ebayOrderId,
+      marketplaceLineItemId: null,
+    })
+    if (buyerAudit.created) eventsCreated += 1
+
+    // I05 compatibility adapter: the existing durable outbox/lease/receipt
+    // remains canonical infrastructure, while the certified line-grained
+    // Sales Order eventId is the sole business and delivery identity root.
+    // The legacy SALE_DETECTED event_type is retained only because the live DB
+    // immediate-delivery guard recognizes it; evidence declares that it is not
+    // the canonical identity owner.
+    for (const lineEvent of saleEvent.lineEvents) {
+      const canonicalEventId = sellerOsSalesOrderEventIdentityV1({
+        marketplaceId: order.marketplaceId ?? MARKETPLACE,
+        orderId: saleEvent.orderId,
+        lineItemId: lineEvent.orderLineItemId,
+      })
+      const detectionClass = classifySellerOsSaleAlertDetectionV1(
+        saleEvent.soldAt,
+      )
+      const deliveryPlan = buildSellerOsWhatsappSaleAlertDeliveryPlanV1({
+        eventId: canonicalEventId,
+        orderId: saleEvent.orderId,
+        lineItemId: lineEvent.orderLineItemId,
+        itemId: lineEvent.ebayItemId,
+        sku: lineEvent.sku,
+        quantity: lineEvent.quantity,
+        orderCreatedAt: saleEvent.soldAt,
+        orderStatus: lineEvent.paymentState,
+        fulfillmentStatus: lineEvent.fulfillmentState,
+        marketplaceId: order.marketplaceId ?? MARKETPLACE,
+        detectionClass,
+        providerDeliveryAttemptAllowed:
+          whatsappDurableDeliveryConfigurationAvailable &&
+          whatsappConfiguration.recipientConfigured,
+        legacyNotificationAlreadyMaterialized: legacyLineSaleObservation,
+      })
+      if (!deliveryPlan.eligible) continue
+      const adapterEvent = await insertEvent(supabase, accountKey, {
+        eventType: "SALE_DETECTED",
+        severity: "critical",
+        evidence: {
+          contractVersion:
+            SELLER_OS_WHATSAPP_SALE_ALERT_STORAGE_ADAPTER_VERSION,
+          canonicalIdentityOwner: "SELLER_OS_SALES_ORDER_EVENTS_READ_V1",
+          canonicalSalesOrderEventId: canonicalEventId,
+          dashboardAlertId: deliveryPlan.alertId,
+          whatsappDeliveryKey: deliveryPlan.deliveryKey,
+          storageEventTypeCompatibilityAdapter: "SALE_DETECTED",
+          legacyOrderGrainSaleDetectedUsedAsCanonicalOwner: false,
+          detectionClass,
+          historicalBackfillSendAllowed: false,
+          source: "EBAY_SELL_FULFILLMENT_GET_ORDERS",
+          sourceOperation: "GET_ORDERS",
+          quantity: lineEvent.quantity,
+          buyerPiiIncluded: false,
+          rawUpstreamPayloadIncluded: false,
+        },
+        thresholdConfigVersion: thresholds.version,
+        detectedAt: saleEvent.soldAt,
+        listingId: lineEvent.ebayItemId,
+        sku: lineEvent.sku,
+        deduplicationKey: deliveryPlan.storageAdapterKey,
+        recommendedAction:
+          "Entregar una sola alerta operativa WhatsApp al owner mediante el outbox canónico.",
+        marketplaceOrderId: order.ebayOrderId,
+        marketplaceLineItemId: lineEvent.orderLineItemId,
+      })
+      if (adapterEvent.created) eventsCreated += 1
+      const reservation = await reserveAlertOutbox(supabase, {
+        accountKey,
+        eventId: adapterEvent.id,
+        severity: "critical",
+        deduplicationKey: deliveryPlan.deliveryKey,
+        deliveryClass: "immediate",
+        payload: {
+          ...deliveryPlan.payload,
+          templateVersion: INTERNAL_OPERATOR_SALE_ALERT_TEMPLATE_VERSION,
+          sellerOrderUrl: sellerOrderUrl(order.ebayOrderId),
+          whatsappAction:
+            "Revisar la venta oficial en Seller OS; no contactar al comprador desde WhatsApp.",
+        },
+      })
+      if (reservation.created) alertsGenerated += 1
+      else duplicatesAvoided += 1
+    }
+
+    for (const line of order.lineItems) {
+      // A fully fulfilled order remains authoritative sale/feed evidence, but
+      // must not reopen purchasing or supplier-recheck operator work.
+      if (orderAlreadyFulfilled) continue
+      const packQuantity = extractPackQuantity(line.title)
       const listing = verifiedListingForLine(listings, line, verifiedIdentities)
       if (!listing) {
         errors.push({
@@ -1403,16 +2101,6 @@ async function persistOrdersAndSales(input: {
           code: "SALE_LUNA_SUPPLY_STALE_RECHECK_REQUIRED",
           retryable: true,
         })
-        const recheck = await persistLunaSupplyRecheckAlert({
-          supabase,
-          accountKey,
-          listing,
-          supply,
-          thresholds,
-          observedAt,
-        })
-        if (recheck.eventCreated) eventsCreated += 1
-        if (recheck.alertCreated) alertsGenerated += 1
       }
       const identityFingerprint = fulfillmentIdentityFingerprint({
         marketplaceAccountKey: accountKey,
@@ -1480,82 +2168,9 @@ async function persistOrdersAndSales(input: {
       if (task?.id) tasksCreated += 1
       else if (taskError?.code === "23505") duplicatesAvoided += 1
 
-      const saleKey = stableCommercialKey(accountKey, "SALE_DETECTED", order.ebayOrderId, line.lineItemId)
-      const saleEvent: CommercialEvent & { marketplaceOrderId: string; marketplaceLineItemId: string } = {
-        eventType: "SALE_DETECTED",
-        severity: "critical",
-        evidence: {
-          source: "OFFICIAL_COMPLETED_CHECKOUT_ORDER",
-          orderPaymentStatus: order.orderPaymentStatus,
-          orderFulfillmentStatus: order.orderFulfillmentStatus,
-          quantity: line.quantity,
-          amount: line.lineItemAmount,
-          currency: line.currency,
-          packQuantity,
-          supplierUnitCost,
-          estimatedSupplierCost,
-          estimatedProfit: profit,
-          stockAvailable,
-          lunaSupplyFresh: supplyFresh,
-          lunaSupplyObservedAt: supply.captured_at,
-          staleLunaValuesUsedAsCurrent: false,
-          itemIdVerified: true,
-          ebayCustomLabelVerified: line.sku === listing.ebay_sku,
-          supplierSkuVerified: fulfillmentSku === listing.supplier_sku,
-          ebayCustomLabel: listing.ebay_sku,
-          supplierSku: fulfillmentSku,
-        },
-        thresholdConfigVersion: thresholds.version,
-        detectedAt: observedAt,
-        listingId: line.listingId,
-        sku: fulfillmentSku,
-        deduplicationKey: saleKey,
-        recommendedAction: supplyFresh
-          ? "Comprar manualmente en Luna Portex y luego pegar el tracking en Seller OS."
-          : "Reconfirmar costo y disponibilidad en Luna, comprar manualmente y luego pegar el tracking en Seller OS.",
-        marketplaceOrderId: order.ebayOrderId,
-        marketplaceLineItemId: line.lineItemId,
-      }
-      const saleEventResult = await insertEvent(supabase, accountKey, saleEvent)
-      if (saleEventResult.created) {
-        newSales += line.quantity
-        eventsCreated += 1
-      }
-      const message = renderSaleDetectedMessage({
-        product: line.title,
-        sku: fulfillmentSku ?? "pendiente",
-        quantity: line.quantity,
-        amount: line.lineItemAmount,
-        currency: line.currency ?? order.currency ?? "USD",
-        shipByDate: line.shipByDate,
-        estimatedLunaCost: estimatedSupplierCost,
-        estimatedProfit: profit,
-        stockAvailable,
-        sellerOrderUrl: sellerOrderUrl(order.ebayOrderId),
-        lunaProductUrl: supply?.product_url ?? null,
-      })
-      const messageLines = message.split("\n")
-      if (await enqueueAlert(supabase, {
-        accountKey,
-        eventId: saleEventResult.id,
-        severity: "critical",
-        deduplicationKey: saleKey,
-        deliveryClass: "immediate",
-        payload: {
-          title: messageLines[0],
-          summary: messageLines.slice(2, 11).join(" · "),
-          action: `${supplyFresh ? "" : "Antes de comprar, reconfirma costo y disponibilidad en Luna. "}${messageLines.slice(11).join(" ")}`,
-          sellerOrderUrl: sellerOrderUrl(order.ebayOrderId),
-          lunaProductUrl: supply?.product_url ?? null,
-          lunaSupplyFresh: supplyFresh,
-          staleLunaValuesForwardedAsCurrent: false,
-        },
-      })) alertsGenerated += 1
-
       const firstSaleIdentity = line.listingId || fulfillmentSku || "unknown"
       const firstSaleKey = stableCommercialKey(accountKey, "FIRST_SALE_CONFIRMED", firstSaleIdentity)
       const firstEventResult = await insertEvent(supabase, accountKey, {
-        ...saleEvent,
         eventType: "FIRST_SALE_CONFIRMED",
         severity: "high",
         evidence: {
@@ -1565,8 +2180,14 @@ async function persistOrdersAndSales(input: {
           ebayCustomLabelVerified: line.sku === listing.ebay_sku,
           supplierSkuVerified: fulfillmentSku === listing.supplier_sku,
         },
+        thresholdConfigVersion: thresholds.version,
+        detectedAt: observedAt,
+        listingId: line.listingId,
+        sku: fulfillmentSku,
         deduplicationKey: firstSaleKey,
         recommendedAction: "Conservar esta confirmación y priorizar el fulfillment manual de la primera venta.",
+        marketplaceOrderId: order.ebayOrderId,
+        marketplaceLineItemId: line.lineItemId,
       })
       if (firstEventResult.created) eventsCreated += 1
       // FIRST_SALE_CONFIRMED is companion audit evidence for the same sale.
@@ -2754,7 +3375,7 @@ export async function runEbayCommercialMonitor(
         })
       : { eventsCreated: 0, alertsGenerated: 0, duplicatesAvoided: 0 }
 
-    const orderWork = lanes.includes("orders") && orders.length
+    const orderWork = lanes.includes("orders") && ordersResponseAvailable
       ? await persistOrdersAndSales({
           supabase, accountKey, orders, listings, supplies, thresholds, observedAt,
           verifiedIdentities,

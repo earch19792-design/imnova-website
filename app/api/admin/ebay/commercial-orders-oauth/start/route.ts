@@ -5,8 +5,11 @@ import { NextResponse } from "next/server"
 
 import {
   getEbayCommercialOrdersAuthorizationConfiguration,
-  startEbayCommercialOrdersAuthorization,
+  startEbayCommercialOrdersBrowserAuthorization,
 } from "@/lib/ebay/ebay-commercial-orders-oauth-authorization"
+import {
+  assertEbaySellerOAuthReauthAdmin,
+} from "@/lib/ebay/ebay-seller-oauth-reauth-domain"
 import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
@@ -27,6 +30,15 @@ export async function POST(req: Request) {
       { status: validation.status || 403 },
     )
   }
+  let actorUserId: string
+  try {
+    actorUserId = assertEbaySellerOAuthReauthAdmin(validation)
+  } catch (error) {
+    return NextResponse.json(
+      { success: false, error: safeCode(error) },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    )
+  }
   let input: { publicKeyPem?: unknown } = {}
   try {
     input = await req.json()
@@ -43,9 +55,13 @@ export async function POST(req: Request) {
     )
   }
   try {
-    const result = await startEbayCommercialOrdersAuthorization(
+    const result = await startEbayCommercialOrdersBrowserAuthorization(
       getSupabaseAdminClient(),
-      input.publicKeyPem,
+      {
+        publicKeyPem: input.publicKeyPem,
+        actorUserId,
+        requestHost: new URL(req.url).host,
+      },
     )
     return NextResponse.json(
       { success: true, ...result },

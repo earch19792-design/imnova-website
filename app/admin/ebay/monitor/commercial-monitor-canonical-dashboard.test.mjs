@@ -53,7 +53,7 @@ test("canonical dashboard surfaces decisions and review-only Registry state with
     "Próximas revisiones",
     "Revisión humana",
     "Experimentos",
-    "0 escrituras de marketplace · 0 escrituras del registro",
+    "0 escrituras desde el Monitor · 0 escrituras del registro",
   ]) {
     assert.match(dashboard, new RegExp(expression))
   }
@@ -61,7 +61,7 @@ test("canonical dashboard surfaces decisions and review-only Registry state with
     dashboard,
     /fetch\(|method:\s*["'](?:POST|PUT|PATCH|DELETE)["']|ReviseItem|EndItem|publishOffer/,
   )
-  assert.equal((dashboard.match(/onClick=/g) ?? []).length, 3)
+  assert.equal((dashboard.match(/onClick=/g) ?? []).length, 4)
   assert.match(dashboard, /onClick=\{onRefresh\}/)
   assert.match(dashboard, /ACCOUNT_TRAFFIC/)
   assert.match(dashboard, /CURRENT_LIVE_PORTFOLIO/)
@@ -99,7 +99,7 @@ test("canonical dashboard prioritizes operator intent and legibility", () => {
     "Tráfico de la cuenta",
     "Portafolio activo",
     "Plan de acción prioritario",
-    "Seller OS funciona en modo de solo lectura",
+    "Este Monitor funciona en modo de solo lectura",
     "Rendimiento general",
     "Distribución por estado",
     "Distribución por tipo",
@@ -182,11 +182,83 @@ test("legacy technical diagnostics remain secondary to the canonical dashboard",
 })
 
 test("live Trading rows remain visible when Quality Report is unavailable", () => {
-  assert.match(dashboard, /const liveRows = backend\.decisions\.flatMap/)
+  assert.match(dashboard,
+    /const liveRows = selectedLiveItemIds\.flatMap/)
   assert.match(dashboard, /qualityUnavailable \? \(/)
   assert.match(dashboard, /Sin informe vigente/)
   assert.match(dashboard, /ImageOff/)
   assert.match(dashboard, /key=\{listing\.identity\.itemId\}/)
   assert.match(dashboard, /decision\.experimentRunning/)
   assert.match(dashboard, /decision\.frozenVariables/)
+})
+
+test("recent sales are bounded, official, sanitized, and separate from Analytics", () => {
+  for (const expression of [
+    "backend.recentSales",
+    "backend.orderSourceHealth",
+    "Ventas recientes",
+    "Órdenes oficiales de eBay",
+    "no se usa para atribuirla",
+    "Mensaje al comprador",
+    "Aviso interno por WhatsApp",
+    "Stock del proveedor",
+    "Cantidad no comprobada",
+    "Aceptado por Meta",
+  ]) {
+    assert.match(dashboard, new RegExp(expression))
+  }
+  assert.match(dashboard, /recentSales\.entries\.slice\(0, 5\)/)
+  assert.match(dashboard, /recentSales\.status === "AVAILABLE"/)
+  assert.doesNotMatch(dashboard, /buyerEmail|buyerUsername|shippingAddress/)
+})
+
+test("canonical line-grained sale alerts are visible without using legacy identity", () => {
+  for (const expression of [
+    "backend.saleAlerts",
+    "Alertas de venta",
+    "SELLER_OS_RECENT_SALES_FEED_V1",
+    "alert.alertId",
+    "alert.eventId",
+    "alert.lineItemId",
+    "alert.quantity",
+    "NEWLY_DETECTED_AFTER_I04_ACTIVATION",
+    "Venta histórica recuperada",
+    "alert.workflowStep.state",
+  ]) {
+    assert.match(dashboard, new RegExp(expression))
+  }
+  assert.match(dashboard, /saleAlerts\.alerts\.slice\(0, 5\)/)
+  assert.match(dashboard, /key=\{alert\.alertId\}/)
+  assert.doesNotMatch(dashboard,
+    /alert\.(?:buyerName|buyerEmail|buyerUsername|phone|shippingAddress|payment)/)
+})
+
+test("monitor coverage makes visible Top N distinct from monitored scope", () => {
+  for (const expression of [
+    "backend.monitorCoverage",
+    "publicaciones activas monitoreadas",
+    "de mayor prioridad",
+    "Visible ≠ alcance monitoreado",
+    "no aparecer en esta selección no significa quedar sin monitoreo",
+    "Ver todas las publicaciones",
+  ]) {
+    assert.match(dashboard, new RegExp(expression))
+  }
+  assert.match(dashboard, /monitorCoverage\.visiblePriorityItemIds/)
+  assert.match(dashboard, /monitorCoverage\.currentLiveScopeCount/)
+  assert.match(dashboard, /showAllLiveListings/)
+  assert.match(dashboard, /aria-expanded=\{showAllLiveListings\}/)
+  assert.match(dashboard, /Volver a las prioridades/)
+  assert.match(dashboard, /canonicalRowsByItemId/)
+  assert.match(dashboard, /listingsByKey\.get\(decision\.listingKey\)/)
+  assert.doesNotMatch(dashboard, /new Map\(monitor\.listings\.map\(\(listing\) =>\s*\[listing\.identity\.itemId/)
+  assert.doesNotMatch(dashboard, /\/admin\/ebay\/listing-workspace\?source=monitor/)
+  assert.doesNotMatch(dashboard, /backend\.decisions\.flatMap[\s\S]*\.slice\(0, 8\)/)
+})
+
+test("order polling copy distinguishes configuration from proven scheduler activation", () => {
+  assert.match(dashboard, /Sondeo configurado cada/)
+  assert.match(dashboard, /activación del scheduler no comprobada aquí/)
+  assert.match(dashboard, /La lectura persistida está disponible/)
+  assert.doesNotMatch(dashboard, /El feed está activo/)
 })

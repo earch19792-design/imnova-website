@@ -10,6 +10,11 @@ import {
   previewEbayRegistryRepairRuntime,
 } from "@/lib/ebay/ebay-commercial-monitor-live-readonly"
 import {
+  completeEbayCommercialOrdersAuthorization,
+  failPendingEbayCommercialOrdersAuthorization,
+  hasPendingEbayCommercialOrdersAuthorization,
+} from "@/lib/ebay/ebay-commercial-orders-oauth-authorization"
+import {
   certifyInstalledEbaySellerOAuthRuntime,
   claimAndVerifyEbaySellerOAuthReauth,
   diagnoseEbaySellerOAuthReauthAuthorization,
@@ -23,6 +28,7 @@ import {
   ebaySellerOAuthReauthCookieOptions,
   EBAY_SELLER_OAUTH_REAUTH_CALLBACK_PATH,
   EBAY_SELLER_OAUTH_REAUTH_COOKIE,
+  EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION,
   EBAY_SELLER_OAUTH_REAUTH_INTERNAL_HARD_BUDGET_MS,
   EBAY_SELLER_OAUTH_REAUTH_RESPONSE_HEADERS,
   EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS,
@@ -77,6 +83,32 @@ function callbackHtml(code: string, status: number) {
 function successHtml(refreshToken: string) {
   const response = new NextResponse(
     renderEbaySellerOAuthReauthSuccessHtml(refreshToken),
+    {
+      status: 200,
+      headers: {
+        ...EBAY_SELLER_OAUTH_REAUTH_RESPONSE_HEADERS,
+        "Content-Type": "text/html; charset=utf-8",
+      },
+    },
+  )
+  response.cookies.set(
+    EBAY_SELLER_OAUTH_REAUTH_COOKIE,
+    "",
+    ebaySellerOAuthReauthCookieOptions(0),
+  )
+  return response
+}
+
+function commercialOrdersSuccessHtml() {
+  const response = new NextResponse(
+    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">" +
+      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
+      "<title>eBay Commercial Orders authorization ready</title></head><body>" +
+      "<main><h1>Authorization completed</h1>" +
+      "<p>The canonical account and required scopes were verified.</p>" +
+      "<p>The refresh credential was persisted only as an encrypted one-time handoff. " +
+      "No token, cookie, authorization code, or environment value is displayed.</p>" +
+      "</main></body></html>",
     {
       status: 200,
       headers: {
@@ -609,9 +641,46 @@ export async function GET(request: NextRequest) {
       clientSecret: configuration.clientSecret,
       expectedAccountFingerprint: configuration.expectedAccountFingerprint,
     })
-    const ledger = createSupabaseEbaySellerOAuthReauthStateLedger(
-      getSupabaseAdminClient(),
-    )
+    const supabase = getSupabaseAdminClient()
+    const ledger = createSupabaseEbaySellerOAuthReauthStateLedger(supabase)
+    const commercialOrdersCeremony =
+      await hasPendingEbayCommercialOrdersAuthorization(
+        supabase,
+        callback.state,
+      )
+    if (commercialOrdersCeremony) {
+      const claimed = await ledger.claimPending({
+        stateHash: transaction.stateHash,
+        flowVersion: EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION,
+      })
+      if (!claimed) {
+        await failPendingEbayCommercialOrdersAuthorization(
+          supabase,
+          callback.state,
+          "EBAY_COMMERCIAL_ORDERS_BROWSER_START_STATE_NOT_CLAIMED",
+        )
+        return callbackHtml(
+          "EBAY_COMMERCIAL_ORDERS_BROWSER_START_STATE_NOT_CLAIMED",
+          409,
+        )
+      }
+      if (callback.kind === "DENIED") {
+        await failPendingEbayCommercialOrdersAuthorization(
+          supabase,
+          callback.state,
+          "EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_CONSENT_DENIED",
+        )
+        return callbackHtml(
+          "EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_CONSENT_DENIED",
+          400,
+        )
+      }
+      await completeEbayCommercialOrdersAuthorization(supabase, {
+        state: callback.state,
+        code: callback.code,
+      })
+      return commercialOrdersSuccessHtml()
+    }
     const result = await claimAndVerifyEbaySellerOAuthReauth({
       callback,
       stateHash: transaction.stateHash,

@@ -26,8 +26,59 @@ export const SELLER_OS_RUNTIME_HEALTH_INSPECTION_SCOPE_V1 = Object.freeze({
   port: 3000 as const,
 })
 
+export const SELLER_OS_RUNTIME_CATALOG_ATTESTATION_VERSION =
+  "SELLER_OS_RUNTIME_CATALOG_ATTESTATION_V1" as const
+
+export const SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1 = Object.freeze({
+  serviceIdentity: "imnova-seller-os-mcp.service" as const,
+  runtimeEntrypointIdentity:
+    "NEXT_APP_ROUTE_SELLER_OS_ASSISTANT_MCP" as const,
+  runtimeWorkingDirectoryIdentity:
+    "SELLER_OS_CANONICAL_REPOSITORY" as const,
+  catalogSource: "MCP_SERVER_FACTORY_REGISTRATION_LEDGER" as const,
+  officialOrdersToolName: "seller_os_get_official_orders" as const,
+  salesOrderEventsToolName: "seller_os_get_sales_order_events" as const,
+  recentSalesFeedToolName: "seller_os_get_recent_sales_feed" as const,
+  saleAlertsToolName: "seller_os_get_sale_alerts" as const,
+  whatsappSaleAlertStatusToolName:
+    "seller_os_get_whatsapp_sale_alert_status" as const,
+  buyerThankYouStatusToolName:
+    "seller_os_get_buyer_thank_you_status" as const,
+})
+
 type RuntimeStatusV1 = "HEALTHY" | "DEGRADED" | "FAILED" | "UNAVAILABLE"
 type PortStatusV1 = "AVAILABLE" | "UNAVAILABLE" | "UNKNOWN"
+
+export type SellerOsRuntimeCatalogAttestationV1 = Readonly<{
+  contractVersion: typeof SELLER_OS_RUNTIME_CATALOG_ATTESTATION_VERSION
+  observedAt: string
+  serviceIdentity: typeof SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.serviceIdentity
+  runtimeEntrypointIdentity:
+    typeof SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.runtimeEntrypointIdentity
+  runtimeWorkingDirectoryIdentity:
+    typeof SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.runtimeWorkingDirectoryIdentity
+  runtimeWorkingDirectoryMatch: boolean | null
+  loadedMcpImplementationVersion: string | null
+  catalogSource: typeof SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.catalogSource
+  runtimeCatalogCount: number | null
+  expectedCatalogCount: number | null
+  officialOrdersToolPresent: boolean | null
+  salesOrderEventsToolPresent: boolean | null
+  recentSalesFeedToolPresent: boolean | null
+  saleAlertsToolPresent: boolean | null
+  whatsappSaleAlertStatusToolPresent: boolean | null
+  buyerThankYouStatusToolPresent: boolean | null
+  exactCatalogMatch: boolean | null
+  workspaceRuntimeBindingStatus: "MATCHED" | "MISMATCHED" | "UNAVAILABLE"
+  limitations: readonly string[]
+  safety: Readonly<{
+    readOnly: true
+    callerControlledPathAllowed: false
+    fileContentsIncluded: false
+    credentialsIncluded: false
+    environmentValuesIncluded: false
+  }>
+}>
 
 type RuntimeServiceHealthV1 = Readonly<{
   service: string
@@ -69,6 +120,7 @@ export type SellerOsRuntimeHealthV1 = Readonly<{
     lastSuccessAt: string | null
     lastResult: string | null
   }>
+  runtimeCatalog: SellerOsRuntimeCatalogAttestationV1
   evidenceCompleteness: "COMPLETE" | "PARTIAL" | "UNAVAILABLE"
   limitations: readonly string[]
   safety: Readonly<{
@@ -159,6 +211,140 @@ const SAFETY = Object.freeze({
   lunaLinkMutations: 0 as const,
   whatsappSends: 0 as const,
 })
+
+const RUNTIME_CATALOG_SAFETY = Object.freeze({
+  readOnly: true as const,
+  callerControlledPathAllowed: false as const,
+  fileContentsIncluded: false as const,
+  credentialsIncluded: false as const,
+  environmentValuesIncluded: false as const,
+})
+
+function unavailableRuntimeCatalogV1(
+  timestamp: string,
+): SellerOsRuntimeCatalogAttestationV1 {
+  return Object.freeze({
+    contractVersion: SELLER_OS_RUNTIME_CATALOG_ATTESTATION_VERSION,
+    observedAt: timestamp,
+    serviceIdentity: SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.serviceIdentity,
+    runtimeEntrypointIdentity:
+      SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.runtimeEntrypointIdentity,
+    runtimeWorkingDirectoryIdentity:
+      SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.runtimeWorkingDirectoryIdentity,
+    runtimeWorkingDirectoryMatch: null,
+    loadedMcpImplementationVersion: null,
+    catalogSource: SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.catalogSource,
+    runtimeCatalogCount: null,
+    expectedCatalogCount: null,
+    officialOrdersToolPresent: null,
+    salesOrderEventsToolPresent: null,
+    recentSalesFeedToolPresent: null,
+    saleAlertsToolPresent: null,
+    whatsappSaleAlertStatusToolPresent: null,
+    buyerThankYouStatusToolPresent: null,
+    exactCatalogMatch: null,
+    workspaceRuntimeBindingStatus: "UNAVAILABLE",
+    limitations: Object.freeze(["RUNTIME_CATALOG_ATTESTATION_UNAVAILABLE"]),
+    safety: RUNTIME_CATALOG_SAFETY,
+  })
+}
+
+function normalizedToolNamesV1(names: readonly string[]) {
+  if (names.length > 100 || names.some((name) =>
+    !/^seller_os_get_[a-z_]+$|^(?:search|fetch)$/.test(name))) return null
+  const unique = [...new Set(names)].sort()
+  return unique.length === names.length ? unique : null
+}
+
+export function attestSellerOsRuntimeCatalogV1(
+  runtime: SellerOsRuntimeHealthV1,
+  input: Readonly<{
+    registeredToolNames: readonly string[]
+    expectedToolNames: readonly string[]
+    runtimeWorkingDirectoryMatch: boolean
+    loadedMcpImplementationVersion: string
+  }>,
+): SellerOsRuntimeHealthV1 {
+  const registered = normalizedToolNamesV1(input.registeredToolNames)
+  const expected = normalizedToolNamesV1(input.expectedToolNames)
+  const implementationVersion = /^[A-Z0-9_]{8,100}$/.test(
+    input.loadedMcpImplementationVersion,
+  ) ? input.loadedMcpImplementationVersion : null
+  if (!registered || !expected || !implementationVersion) {
+    return Object.freeze({ ...runtime,
+      runtimeCatalog: Object.freeze({
+        ...unavailableRuntimeCatalogV1(runtime.observedAt),
+        limitations: Object.freeze(["RUNTIME_CATALOG_ATTESTATION_INVALID"]),
+      }) })
+  }
+  const officialOrdersToolPresent = registered.includes(
+    SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.officialOrdersToolName,
+  )
+  const salesOrderEventsToolPresent = registered.includes(
+    SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.salesOrderEventsToolName,
+  )
+  const recentSalesFeedToolPresent = registered.includes(
+    SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.recentSalesFeedToolName,
+  )
+  const saleAlertsToolPresent = registered.includes(
+    SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.saleAlertsToolName,
+  )
+  const whatsappSaleAlertStatusToolPresent = registered.includes(
+    SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.whatsappSaleAlertStatusToolName,
+  )
+  const buyerThankYouStatusToolPresent = registered.includes(
+    SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.buyerThankYouStatusToolName,
+  )
+  const exactCatalogMatch = registered.length === expected.length &&
+    registered.every((name, index) => name === expected[index])
+  const limitations = Object.freeze([
+    ...(!input.runtimeWorkingDirectoryMatch
+      ? ["RUNTIME_WORKING_DIRECTORY_IDENTITY_MISMATCH"] : []),
+    ...(!exactCatalogMatch ? ["RUNTIME_CATALOG_EXPECTATION_MISMATCH"] : []),
+    ...(!officialOrdersToolPresent
+      ? ["OFFICIAL_ORDERS_TOOL_NOT_REGISTERED"] : []),
+    ...(!salesOrderEventsToolPresent
+      ? ["SALES_ORDER_EVENTS_TOOL_NOT_REGISTERED"] : []),
+    ...(!recentSalesFeedToolPresent
+      ? ["RECENT_SALES_FEED_TOOL_NOT_REGISTERED"] : []),
+    ...(!saleAlertsToolPresent
+      ? ["SALE_ALERTS_TOOL_NOT_REGISTERED"] : []),
+    ...(!whatsappSaleAlertStatusToolPresent
+      ? ["WHATSAPP_SALE_ALERT_STATUS_TOOL_NOT_REGISTERED"] : []),
+    ...(!buyerThankYouStatusToolPresent
+      ? ["BUYER_THANK_YOU_STATUS_TOOL_NOT_REGISTERED"] : []),
+  ])
+  return Object.freeze({ ...runtime,
+    runtimeCatalog: Object.freeze({
+      contractVersion: SELLER_OS_RUNTIME_CATALOG_ATTESTATION_VERSION,
+      observedAt: runtime.observedAt,
+      serviceIdentity: SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.serviceIdentity,
+      runtimeEntrypointIdentity:
+        SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.runtimeEntrypointIdentity,
+      runtimeWorkingDirectoryIdentity:
+        SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.runtimeWorkingDirectoryIdentity,
+      runtimeWorkingDirectoryMatch: input.runtimeWorkingDirectoryMatch,
+      loadedMcpImplementationVersion: implementationVersion,
+      catalogSource: SELLER_OS_RUNTIME_CATALOG_IDENTITY_V1.catalogSource,
+      runtimeCatalogCount: registered.length,
+      expectedCatalogCount: expected.length,
+      officialOrdersToolPresent,
+      salesOrderEventsToolPresent,
+      recentSalesFeedToolPresent,
+      saleAlertsToolPresent,
+      whatsappSaleAlertStatusToolPresent,
+      buyerThankYouStatusToolPresent,
+      exactCatalogMatch,
+      workspaceRuntimeBindingStatus: input.runtimeWorkingDirectoryMatch &&
+        exactCatalogMatch && officialOrdersToolPresent &&
+          salesOrderEventsToolPresent && recentSalesFeedToolPresent &&
+          saleAlertsToolPresent && whatsappSaleAlertStatusToolPresent
+          && buyerThankYouStatusToolPresent
+        ? "MATCHED" as const : "MISMATCHED" as const,
+      limitations,
+      safety: RUNTIME_CATALOG_SAFETY,
+    }) })
+}
 
 function runFixedSystemctl(
   args: readonly string[],
@@ -489,6 +675,7 @@ export function createUnavailableSellerOsRuntimeHealthV1(
     }),
     watchdog: Object.freeze({ lastRunAt: null, lastSuccessAt: null,
       lastResult: null }),
+    runtimeCatalog: unavailableRuntimeCatalogV1(timestamp),
     evidenceCompleteness: "UNAVAILABLE",
     limitations: Object.freeze(["RUNTIME_HEALTH_COLLECTOR_FAILED_CLOSED"]),
     safety: SAFETY,
@@ -567,6 +754,7 @@ export async function collectSellerOsRuntimeHealthV1(options: {
       observedAt: timestamp,
     }),
     watchdog,
+    runtimeCatalog: unavailableRuntimeCatalogV1(timestamp),
     evidenceCompleteness,
     limitations: boundedLimitations,
     safety: SAFETY,

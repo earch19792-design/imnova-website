@@ -135,6 +135,7 @@ test("cron cadence preserves priority while respecting the serverless budget", (
   assert.deepEqual(vercel.crons, [
     { path: "/api/cron/market-radar-luna-sync", schedule: "0 9 * * *" },
     { path: "/api/cron/ebay-luna-opportunity-scan", schedule: "17 9 * * *" },
+    { path: "/api/cron/daily-dollar-radar-autopilot", schedule: "0 9 * * *" },
   ])
   assert.match(scanService, /productionSchedule: "17 9 \* \* \*"/)
   assert.match(scanService, /lunaProductionSchedule: "0 9 \* \* \*"/)

@@ -1,5 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 
+import {
+  readSalesOrderReadonlyAuditV1,
+  type ReadonlyCommercialEventRow,
+  type ReadonlyDeliveryOutboxRow,
+} from "./ebay-sales-order-readonly-audit-repository-v1"
+
 export type ReadonlySourceStatus = "AVAILABLE" | "PARTIAL" | "ERROR"
 
 export type ReadonlySourceResult<T> = {
@@ -125,6 +131,7 @@ export type ReadonlyOrderLineRow = {
   marketplace_line_item_id: string
   listing_id: string
   sku: string | null
+  product_title: string | null
   pack_quantity: number | string | null
   quantity: number | string
   line_item_amount: number | string | null
@@ -187,6 +194,8 @@ export type CommercialMonitorReadonlySources = {
   supplySources: ReadonlySourceResult<ReadonlySupplySourceRow>
   orders: ReadonlySourceResult<ReadonlyOrderRow>
   orderLines: ReadonlySourceResult<ReadonlyOrderLineRow>
+  saleEvents: ReadonlySourceResult<ReadonlyCommercialEventRow>
+  saleDeliveries: ReadonlySourceResult<ReadonlyDeliveryOutboxRow>
   learning: ReadonlySourceResult<ReadonlyLearningAdjustmentRow>
   experiments: ReadonlySourceResult<ReadonlyExperimentRow>
 }
@@ -443,28 +452,40 @@ async function readOrders(
 async function readOrderLines(
   supabase: SupabaseClient,
   accountKey: string,
-  itemIds: string[],
+  orderIds: string[],
 ) : Promise<ReadonlySourceResult<ReadonlyOrderLineRow>> {
   const maximum = 2_000
-  if (!itemIds.length) {
+  if (!orderIds.length) {
     return success("SANITIZED_ORDER_LINE_ITEMS", [], maximum)
   }
   const rows: ReadonlyOrderLineRow[] = []
   let failed = false
-  for (const selection of chunks(itemIds, 100)) {
+  let budgetReached = false
+  const selections = chunks(orderIds, 100)
+  for (const [index, selection] of selections.entries()) {
+    const remaining = maximum + 1 - rows.length
+    if (remaining <= 0) {
+      budgetReached = true
+      break
+    }
     const { data, error } = await supabase
       .from("marketplace_order_line_items")
-      .select("marketplace_order_id,marketplace_line_item_id,listing_id,sku,pack_quantity,quantity,line_item_amount,currency,ship_by_at,source,first_observed_at,last_observed_at")
+      .select("marketplace_order_id,marketplace_line_item_id,listing_id,sku,product_title,pack_quantity,quantity,line_item_amount,currency,ship_by_at,source,first_observed_at,last_observed_at")
       .eq("marketplace_account_key", accountKey)
       .eq("marketplace", "EBAY_US")
-      .in("listing_id", selection)
+      .in("marketplace_order_id", selection)
       .order("last_observed_at", { ascending: false })
-      .limit(maximum + 1)
+      .limit(remaining)
     if (error) {
       failed = true
       continue
     }
     rows.push(...((data ?? []) as ReadonlyOrderLineRow[]))
+    if (rows.length > maximum ||
+        (rows.length === maximum && index < selections.length - 1)) {
+      budgetReached = true
+      break
+    }
   }
   const unique = [...new Map(rows.map((row) => [
     `${row.marketplace_order_id}:${row.marketplace_line_item_id}`,
@@ -476,6 +497,15 @@ async function readOrderLines(
       "COMMERCIAL_ORDER_LINE_READ_PARTIAL",
       unique.slice(0, maximum),
     )
+  }
+  if (budgetReached) {
+    return {
+      source: "SANITIZED_ORDER_LINE_ITEMS",
+      status: "PARTIAL",
+      rows: unique.slice(0, maximum),
+      limitationCode: "SANITIZED_ORDER_LINE_ITEMS_RESULT_LIMIT_REACHED",
+      truncated: true,
+    }
   }
   return success("SANITIZED_ORDER_LINE_ITEMS", unique, maximum)
 }
@@ -535,21 +565,13 @@ export async function readCommercialMonitorReadonlySources(
     readRegistry(supabase, accountKey),
     readIdentityVerifications(supabase, accountKey),
   ])
-  const itemIds = [...new Set([
-    ...registry.rows.map((listing) => listing.ebay_item_id),
-    ...identityVerifications.rows.flatMap((verification) => [
-      verification.listing_id,
-      verification.observed_listing_id,
-    ]),
-  ].filter((value): value is string =>
-    typeof value === "string" && /^\d{9,20}$/.test(value)))]
   const [
     syncState,
     commercialSnapshots,
     supplies,
     supplySources,
     orders,
-    orderLines,
+    salesOrderAudit,
     learning,
     experiments,
   ] = await Promise.all([
@@ -558,10 +580,15 @@ export async function readCommercialMonitorReadonlySources(
     readSupplies(supabase, registry.rows),
     readSupplySources(supabase),
     readOrders(supabase, accountKey),
-    readOrderLines(supabase, accountKey, itemIds),
+    readSalesOrderReadonlyAuditV1(supabase, accountKey),
     readLearning(supabase, accountKey),
     readExperiments(supabase, accountKey),
   ])
+  const orderLines = await readOrderLines(
+    supabase,
+    accountKey,
+    [...new Set(orders.rows.map((order) => order.marketplace_order_id))],
+  )
   return {
     registry,
     syncState,
@@ -571,6 +598,8 @@ export async function readCommercialMonitorReadonlySources(
     supplySources,
     orders,
     orderLines,
+    saleEvents: salesOrderAudit.saleEvents,
+    saleDeliveries: salesOrderAudit.saleDeliveries,
     learning,
     experiments,
   }
