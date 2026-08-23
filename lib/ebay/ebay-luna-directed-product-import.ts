@@ -3,6 +3,8 @@ import { createHash } from "node:crypto"
 const LUNA_HOSTS = new Set(["lunaportex.com", "www.lunaportex.com"])
 const ALLOWED_PACK_SIZES = new Set([3, 6, 12])
 const MAX_RESPONSE_BYTES = 1_000_000
+export const SELLER_OS_LUNA_PUBLIC_PRODUCT_PARSER_VERSION =
+  "SELLER_OS_LUNA_PUBLIC_PRODUCT_PARSER_V1" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -45,6 +47,15 @@ function record(value: unknown): JsonRecord {
 
 function text(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+function explicitInventoryQuantity(variant: JsonRecord) {
+  if (!Object.prototype.hasOwnProperty.call(variant, "inventory_quantity")) {
+    return Object.freeze({ quantity: null, explicit: false as const })
+  }
+  const quantity = Number(variant.inventory_quantity)
+  if (!Number.isSafeInteger(quantity) || quantity < 0) return null
+  return Object.freeze({ quantity, explicit: true as const })
 }
 
 function safeImageUrl(value: unknown) {
@@ -148,13 +159,15 @@ export async function fetchDirectedLunaProduct(
         const id = String(variant.id ?? "")
         const sku = text(variant.sku)
         const cents = Number(variant.price)
+        const inventory = explicitInventoryQuantity(variant)
         if (
           !/^\d{1,30}$/.test(id) ||
           !sku ||
           sku.length > 120 ||
           !Number.isInteger(cents) ||
           cents <= 0 ||
-          typeof variant.available !== "boolean"
+          typeof variant.available !== "boolean" ||
+          !inventory
         ) {
           return null
         }
@@ -176,6 +189,8 @@ export async function fetchDirectedLunaProduct(
             ? grams
             : Number.isFinite(weight) && weight > 0 ? weight : null,
           weightUnit: hasGrams ? "g" : text(variant.weight_unit),
+          sourceInventoryQuantity: inventory.quantity,
+          sourceInventoryQuantityExplicit: inventory.explicit,
         }
       }).filter((variant): variant is DirectedLunaVariant => Boolean(variant))
     : []
@@ -192,6 +207,8 @@ export async function fetchDirectedLunaProduct(
     canonicalUrl: parsedUrl.canonicalUrl,
     imageUrls,
     variants,
+    sourceMode: "PUBLIC_READ_ONLY_PRODUCT_PAGE",
+    sourceParserVersion: SELLER_OS_LUNA_PUBLIC_PRODUCT_PARSER_VERSION,
   }
 }
 
