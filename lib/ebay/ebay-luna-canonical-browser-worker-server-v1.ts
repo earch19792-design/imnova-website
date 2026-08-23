@@ -809,6 +809,11 @@ export async function auditSellerOsLunaCanonicalBrowserRuntimeV1() {
     process.env.DISPLAY || process.env.WAYLAND_DISPLAY,
   )
   const localBackend = !process.env.VERCEL
+  let browserContextActive = false
+  try {
+    activeBrowserWorker()
+    browserContextActive = true
+  } catch { /* safe context-presence metadata only */ }
   return Object.freeze({
     contractVersion: "SELLER_OS_LUNA_CANONICAL_BROWSER_WORKER_V1" as const,
     status: playwrightInstalled && chromiumInstalled &&
@@ -819,6 +824,7 @@ export async function auditSellerOsLunaCanonicalBrowserRuntimeV1() {
     localRuntimeLibrariesAvailable,
     humanDisplayAvailable,
     localBackend,
+    browserContextActive,
     browserWorker: "BACKEND_CONTROLLED" as const,
     browserVisibleToHuman: true as const,
     profile: "EPHEMERAL" as const,

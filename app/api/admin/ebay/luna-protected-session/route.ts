@@ -19,6 +19,9 @@ import {
   auditSellerOsLunaCanonicalBrowserRuntimeV1,
   getSellerOsLunaBrowserCeremonyCoordinatorV1,
 } from "@/lib/ebay/ebay-luna-canonical-browser-worker-server-v1"
+import {
+  resolveSellerOsLunaBrowserContextRecoveryGateV1,
+} from "@/lib/ebay/ebay-luna-browser-context-recovery-gate-v1"
 import { auditSellerOsLunaProtectedSessionV1 } from
   "@/lib/ebay/ebay-luna-protected-session-server-v1"
 import { validateAdminApiRequest } from "@/lib/supabase-admin"
@@ -150,24 +153,36 @@ export async function GET(request: NextRequest) {
       stateToken,
     })
   }
+  const ceremonyActive = Boolean(ceremony &&
+    ["LAUNCHING", "AWAITING_HUMAN_LOGIN", "COMPLETING"]
+      .includes(ceremony.phase))
+  const recoveryGate = resolveSellerOsLunaBrowserContextRecoveryGateV1({
+    protectedSessionStatus: prerequisites.lunaProtectedSessionStatus,
+    browserContextActive: browserRuntime.browserContextActive,
+    ceremonyActive,
+  })
   const response = NextResponse.json({
     success: true,
     prerequisites,
     browserRuntime,
     ceremony,
     operatorAction: Object.freeze({
-      status: session.humanBootstrapRequired
-        ? "HUMAN_BOOTSTRAP_REQUIRED" : "NO_ACTION_REQUIRED",
+      status: recoveryGate.recoveryRequired
+        ? "BROWSER_CONTEXT_RECOVERY_REQUIRED"
+        : session.humanBootstrapRequired
+          ? "HUMAN_BOOTSTRAP_REQUIRED" : "NO_ACTION_REQUIRED",
       path: session.bootstrapPath,
-      instructionCode: session.humanBootstrapRequired
-        ? "START_CANONICAL_BACKEND_CONTROLLED_LUNA_BROWSER"
-        : null,
+      instructionCode: recoveryGate.recoveryRequired
+        ? "RECOVER_CANONICAL_BACKEND_CONTROLLED_LUNA_BROWSER_CONTEXT"
+        : session.humanBootstrapRequired
+          ? "START_CANONICAL_BACKEND_CONTROLLED_LUNA_BROWSER"
+          : null,
       acceptsCallerCredentials: false,
       acceptsCallerCookies: false,
       acceptsCallerUrls: false,
-      controlledBrowserWorkerActivated: Boolean(ceremony &&
-        ["LAUNCHING", "AWAITING_HUMAN_LOGIN", "COMPLETING"]
-          .includes(ceremony.phase)),
+      controlledBrowserWorkerActivated: ceremonyActive,
+      browserContextRecoveryRequired: recoveryGate.recoveryRequired,
+      ceremonyStartAllowed: recoveryGate.startAllowed,
       ceremonyReady: browserRuntime.status === "READY" &&
         session.status !== "SOURCE_UNAVAILABLE" &&
         session.status !== "AUTH_FAILED",

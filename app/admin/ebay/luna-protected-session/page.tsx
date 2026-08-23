@@ -28,6 +28,7 @@ type StatusPayload = {
   }
   browserRuntime?: {
     status?: string
+    browserContextActive?: boolean
     browserWorker?: string
     browserVisibleToHuman?: boolean
     profile?: string
@@ -50,6 +51,8 @@ type StatusPayload = {
     instructionCode?: string | null
     acceptsCallerCredentials?: boolean
     acceptsCallerCookies?: boolean
+    browserContextRecoveryRequired?: boolean
+    ceremonyStartAllowed?: boolean
     ceremonyReady?: boolean
     csrfReadyForCurrentAdmin?: boolean
     csrfToken?: string | null
@@ -141,6 +144,12 @@ export default function LunaProtectedSessionPage() {
     payload?.operatorAction?.ceremonyReady === true &&
     payload?.operatorAction?.csrfReadyForCurrentAdmin === true
   const configured = status?.lunaProtectedSessionStatus === "SESSION_READY"
+  const browserContextActive =
+    payload?.browserRuntime?.browserContextActive === true
+  const recoveryRequired =
+    payload?.operatorAction?.browserContextRecoveryRequired === true
+  const ceremonyStartAllowed =
+    payload?.operatorAction?.ceremonyStartAllowed === true
 
   return (
     <main className="min-h-screen bg-slate-50 px-5 py-10 text-slate-950">
@@ -176,6 +185,9 @@ export default function LunaProtectedSessionPage() {
                 <dd className="font-black">{status?.schemaAppliedStatus}</dd></div>
               <div><dt className="text-slate-500">Browser worker</dt>
                 <dd className="font-black">{payload.browserRuntime?.status}</dd></div>
+              <div><dt className="text-slate-500">Browser context</dt>
+                <dd className="font-black">{browserContextActive
+                  ? "ACTIVE" : "ABSENT"}</dd></div>
               <div><dt className="text-slate-500">Ceremony</dt>
                 <dd className="font-black">{phase}</dd></div>
               <div><dt className="text-slate-500">Profile</dt>
@@ -206,11 +218,12 @@ export default function LunaProtectedSessionPage() {
             </div>}
 
             <div className="flex flex-wrap gap-3">
-              {!active && !configured && <button type="button"
+              {ceremonyStartAllowed && <button type="button"
                 disabled={busy || !runtimeReady}
                 onClick={() => { void act("START") }}
                 className="inline-flex items-center gap-2 rounded-xl bg-cyan-800 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
-                <MonitorUp size={18} /> Iniciar ceremonia
+                <MonitorUp size={18} /> {recoveryRequired
+                  ? "Recuperar contexto browser" : "Iniciar ceremonia"}
               </button>}
               {phase === "AWAITING_HUMAN_LOGIN" && <button type="button"
                 disabled={busy}
