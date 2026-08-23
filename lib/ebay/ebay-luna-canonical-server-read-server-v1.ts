@@ -3,8 +3,8 @@ import "server-only"
 import {
   createSellerOsLunaCanonicalServerReadV1,
 } from "./ebay-luna-canonical-server-read-v1"
-import { fetchLunaAuthenticatedDirectedProductV1 } from
-  "./ebay-luna-authenticated-http-watcher-v1"
+import { fetchLunaAuthenticatedBrowserProductV1 } from
+  "./ebay-luna-canonical-browser-worker-server-v1"
 
 type LinkageLoader = Parameters<
   typeof createSellerOsLunaCanonicalServerReadV1
@@ -17,7 +17,7 @@ export function createSellerOsProtectedLunaServerReadV1(input: Readonly<{
 }>) {
   return createSellerOsLunaCanonicalServerReadV1({
     loadLinkageById: input.loadLinkageById,
-    readFixedProduct: fetchLunaAuthenticatedDirectedProductV1,
+    readFixedProduct: fetchLunaAuthenticatedBrowserProductV1,
     now: input.now,
   })
 }

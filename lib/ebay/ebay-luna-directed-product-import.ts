@@ -29,7 +29,8 @@ export type DirectedLunaProduct = {
   canonicalUrl: string
   imageUrls: string[]
   variants: DirectedLunaVariant[]
-  sourceMode?: "PUBLIC_READ_ONLY_PRODUCT_PAGE" | "AUTHENTICATED_SERVER_HTTP"
+  sourceMode?: "PUBLIC_READ_ONLY_PRODUCT_PAGE" | "AUTHENTICATED_SERVER_HTTP" |
+    "AUTHENTICATED_WEB_SESSION"
   sourceSessionHealth?: "SESSION_OK"
   sourceParserVersion?: string
   sourceEvidenceFingerprint?: string

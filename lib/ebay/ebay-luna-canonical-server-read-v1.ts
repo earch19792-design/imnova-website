@@ -14,7 +14,7 @@ type CanonicalProductRead = Readonly<{
     sourceInventoryQuantity: number | null
     sourceInventoryQuantityExplicit: boolean
   }>[]
-  sourceMode: "AUTHENTICATED_SERVER_HTTP"
+  sourceMode: "AUTHENTICATED_WEB_SESSION"
   sourceSessionHealth: "SESSION_OK"
   sourceParserVersion: string
   sourceEvidenceFingerprint: string
@@ -50,7 +50,7 @@ export function createSellerOsLunaCanonicalServerReadV1(input: Readonly<{
   }>) {
     const target = await resolveTarget(request)
     const product = await input.readFixedProduct(target.canonicalSourceUrl)
-    if (!product || product.sourceMode !== "AUTHENTICATED_SERVER_HTTP" ||
+    if (!product || product.sourceMode !== "AUTHENTICATED_WEB_SESSION" ||
         product.sourceSessionHealth !== "SESSION_OK" ||
         !Array.isArray(product.variants) || product.variants.length > 500 ||
         typeof product.sourceParserVersion !== "string" ||

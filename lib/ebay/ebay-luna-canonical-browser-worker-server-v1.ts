@@ -7,6 +7,9 @@ import { basename, join, resolve } from "node:path"
 
 import type { BrowserContext, Cookie, Page, Route } from "playwright"
 
+import { parseDirectedLunaProductUrl } from
+  "./ebay-luna-directed-product-import"
+
 import {
   SELLER_OS_LUNA_LOGIN_ENTRYPOINT,
   classifySellerOsLunaBrowserRequestV1,
@@ -15,10 +18,23 @@ import {
 } from "./ebay-luna-protected-session-ceremony-v1"
 import {
   storeSellerOsLunaProtectedSessionV1,
-  verifyStoredSellerOsLunaProtectedSessionV1,
 } from "./ebay-luna-protected-session-server-v1"
 import { SELLER_OS_LUNA_PROTECTED_SESSION_VERSION } from
   "./ebay-luna-automation-prerequisites-v1"
+import {
+  buildSellerOsLunaBrowserDirectedProductV1,
+  classifySellerOsLunaBrowserSessionHealthV1,
+  SELLER_OS_LUNA_BROWSER_STOCK_READ_VERSION,
+  type SellerOsLunaBrowserProductEvidenceV1,
+  type SellerOsLunaBrowserSessionHealthV1,
+} from "./ebay-luna-canonical-browser-stock-read-v1"
+import {
+  buildLunaAuthenticatedBrowserAgentRequestV1,
+  LUNA_AUTHENTICATED_BROWSER_PARSER_VERSION,
+  LUNA_SUPPLIER_STOCK_WATCHER_VERSION,
+  type LunaAuthenticatedCaptureV1,
+  type LunaExactApprovedLinkV1,
+} from "./ebay-luna-supplier-stock-watcher-v1"
 
 const PROFILE_PREFIX = "seller-os-luna-browser-v1-"
 const PROFILE_ROOT = resolve(tmpdir())
@@ -35,8 +51,40 @@ const SAFE_COOKIE_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/
 const SAFE_COOKIE_VALUE = /^[^;\u0000-\u001f\u007f]{1,4096}$/
 const REQUIRED_LUNA_COOKIE_NAME = /^(?:__Host-|__Secure-)?(?:_shopify_essential|_secure_customer_sig|customer_auth_provider|customer_auth_session_created_at|customer_account_session|shopify_customer_account_session|_shopify_customer_account_session|account_session|accounts_session|identity_session)$/i
 const LOGIN_PATH = /^(?:\/account\/(?:login|signin)|\/(?:login|signin)|\/authentication\/(?:login|oauth\/authorize)|\/callback)\/?$/i
+const AUTHENTICATED_PAGE_MARKER = [
+  "a[href*='/account/logout']",
+  "form[action*='/account/logout']",
+  "a[href*='/logout']",
+  "form[action*='/logout']",
+  "[data-customer-id]",
+  "[data-testid='account-menu']",
+].join(",")
+const LOGIN_PAGE_MARKER = [
+  "form[action*='/account/login']",
+  "form[action*='/authentication/login']",
+  "input[type='password']",
+].join(",")
+const MAX_BROWSER_PRODUCT_VARIANTS = 500
 
 type PolicyFailure = Readonly<{ host: string | null; code: string }>
+
+type ActiveLunaBrowserWorkerV1 = {
+  context: BrowserContext
+  page: Page
+  profilePath: string
+  expiresAt: number
+  busy: boolean
+  expiryTimer: ReturnType<typeof setTimeout> | null
+}
+
+type GlobalWithLunaBrowserWorker = typeof globalThis & {
+  __sellerOsLunaActiveBrowserWorkerV1?: ActiveLunaBrowserWorkerV1 | null
+  __sellerOsLunaPendingBrowserWorkerV1?: ActiveLunaBrowserWorkerV1 | null
+}
+
+function browserWorkerState() {
+  return globalThis as GlobalWithLunaBrowserWorker
+}
 
 function safeProfilePath(path: string) {
   const parent = resolve(path, "..")
@@ -53,10 +101,15 @@ async function deleteEphemeralProfile(path: string) {
 async function cleanupAbandonedProfiles() {
   let names: string[] = []
   try { names = await readdir(PROFILE_ROOT) } catch { return }
+  const shared = browserWorkerState()
+  const retainedProfiles = new Set([
+    shared.__sellerOsLunaActiveBrowserWorkerV1?.profilePath,
+    shared.__sellerOsLunaPendingBrowserWorkerV1?.profilePath,
+  ].filter((value): value is string => Boolean(value)))
   await Promise.all(names.filter((name) => name.startsWith(PROFILE_PREFIX))
     .map(async (name) => {
       const path = join(PROFILE_ROOT, name)
-      if (safeProfilePath(path)) {
+      if (safeProfilePath(path) && !retainedProfiles.has(path)) {
         try {
           const metadata = await stat(path)
           if (metadata.mtimeMs <= Date.now() - ABANDONED_PROFILE_AGE_MS) {
@@ -165,6 +218,130 @@ function captureExpiry(cookies: readonly Cookie[], now: number) {
     throw new Error("LUNA_CEREMONY_SESSION_EXPIRY_INVALID")
   }
   return new Date(expiresAt).toISOString()
+}
+
+async function pageSessionHealth(page: Page) : Promise<Readonly<{
+  health: SellerOsLunaBrowserSessionHealthV1
+  postLoginHost: string | null
+  postLoginPathClass: string | null
+}>> {
+  if (page.isClosed()) return Object.freeze({
+    health: "REAUTH_REQUIRED" as const,
+    postLoginHost: null,
+    postLoginPathClass: null,
+  })
+  const frames = page.frames().map((frame) => frame.url())
+  const cloudflareChallengePresent = frames.some((url) => {
+    try { return new URL(url).hostname === "challenges.cloudflare.com" }
+    catch { return false }
+  })
+  const metadata = await page.evaluate((selectors) => Object.freeze({
+    title: document.title.slice(0, 160),
+    authenticatedMarkerPresent: Boolean(document.querySelector(selectors.auth)),
+    loginFormPresent: Boolean(document.querySelector(selectors.login)),
+  }), { auth: AUTHENTICATED_PAGE_MARKER, login: LOGIN_PAGE_MARKER })
+  const health = classifySellerOsLunaBrowserSessionHealthV1({
+    url: page.url(),
+    title: metadata.title,
+    cloudflareChallengePresent,
+    loginFormPresent: metadata.loginFormPresent,
+    authenticatedMarkerPresent: metadata.authenticatedMarkerPresent,
+  })
+  if (health !== "HEALTHY") return Object.freeze({
+    health,
+    postLoginHost: null,
+    postLoginPathClass: null,
+  })
+  const landing = postLoginPathClass(page)
+  return Object.freeze({
+    health,
+    postLoginHost: landing.host,
+    postLoginPathClass: landing.pathClass,
+  })
+}
+
+async function destroyBrowserWorker(worker: ActiveLunaBrowserWorkerV1) {
+  if (worker.expiryTimer) clearTimeout(worker.expiryTimer)
+  worker.expiryTimer = null
+  try { await worker.context.clearCookies() } catch { /* fail closed */ }
+  try { await worker.context.close() } catch { /* fail closed */ }
+  await deleteEphemeralProfile(worker.profilePath).catch(() => undefined)
+}
+
+async function promotePendingBrowserWorker(worker: ActiveLunaBrowserWorkerV1) {
+  const shared = browserWorkerState()
+  if (shared.__sellerOsLunaPendingBrowserWorkerV1 !== worker) {
+    throw new Error("LUNA_BROWSER_WORKER_PENDING_CONTEXT_MISMATCH")
+  }
+  const previous = shared.__sellerOsLunaActiveBrowserWorkerV1
+  shared.__sellerOsLunaPendingBrowserWorkerV1 = null
+  shared.__sellerOsLunaActiveBrowserWorkerV1 = worker
+  const remaining = Math.max(1, worker.expiresAt - Date.now())
+  worker.expiryTimer = setTimeout(() => {
+    if (browserWorkerState().__sellerOsLunaActiveBrowserWorkerV1 === worker) {
+      browserWorkerState().__sellerOsLunaActiveBrowserWorkerV1 = null
+    }
+    void destroyBrowserWorker(worker)
+  }, remaining)
+  worker.expiryTimer.unref?.()
+  if (previous && previous !== worker) await destroyBrowserWorker(previous)
+}
+
+function activeBrowserWorker() {
+  const shared = browserWorkerState()
+  const worker = shared.__sellerOsLunaActiveBrowserWorkerV1
+  if (!worker || worker.expiresAt <= Date.now() || worker.page.isClosed()) {
+    if (worker) {
+      shared.__sellerOsLunaActiveBrowserWorkerV1 = null
+      void destroyBrowserWorker(worker)
+    }
+    throw new Error("LUNA_REAUTH_REQUIRED")
+  }
+  return worker
+}
+
+function quantityEvidence(variant: Record<string, unknown>) {
+  for (const key of ["inventory_quantity", "inventoryQuantity",
+    "quantity_available", "quantityAvailable", "stock_quantity",
+    "stockQuantity"]) {
+    if (Object.prototype.hasOwnProperty.call(variant, key)) {
+      return Object.freeze({ quantity: variant[key], quantityExplicit: true })
+    }
+  }
+  return Object.freeze({ quantity: null, quantityExplicit: false })
+}
+
+function boundedBrowserProductEvidence(value: unknown) :
+  SellerOsLunaBrowserProductEvidenceV1 | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const payload = value as Record<string, unknown>
+  if (!Array.isArray(payload.variants) ||
+      payload.variants.length > MAX_BROWSER_PRODUCT_VARIANTS) return null
+  return Object.freeze({
+    productId: payload.id,
+    handle: payload.handle,
+    title: payload.title,
+    vendor: payload.vendor,
+    productType: payload.type,
+    currency: payload.currency,
+    variants: Object.freeze(payload.variants.map((entry) => {
+      const variant = entry && typeof entry === "object" && !Array.isArray(entry)
+        ? entry as Record<string, unknown> : {}
+      return Object.freeze({
+        id: variant.id,
+        title: variant.title,
+        sku: variant.sku,
+        barcode: variant.barcode,
+        price: variant.price,
+        compareAtPrice: variant.compare_at_price,
+        available: variant.available,
+        grams: variant.grams,
+        weight: variant.weight,
+        weightUnit: variant.weight_unit,
+        ...quantityEvidence(variant),
+      })
+    })),
+  })
 }
 
 async function createBrowserHandle(input: Readonly<{
@@ -289,10 +466,18 @@ async function createBrowserHandle(input: Readonly<{
           timeout: 5_000,
         }).catch(() => undefined)
         assertNoPolicyFailure()
-        const landing = postLoginPathClass(activePage)
-        const captured = sessionCookies(await context.cookies(
+        const browserHealth = await pageSessionHealth(activePage)
+        if (browserHealth.health !== "HEALTHY" ||
+            !browserHealth.postLoginHost ||
+            !browserHealth.postLoginPathClass) {
+          throw new Error(browserHealth.health === "CLOUDFLARE_CHALLENGE"
+            ? "LUNA_CAPTCHA_BLOCKED"
+            : "LUNA_CEREMONY_AUTHENTICATION_NOT_COMPLETE")
+        }
+        const captured = sessionCookies(await context.cookies([
           "https://www.lunaportex.com/account",
-        ))
+          "https://account.lunaportex.com/",
+        ]))
         const changedAfterHumanLogin = captured.cookies.some((cookie) => {
           const digest = createHash("sha256").update(cookie.name, "utf8")
             .update("\u0000", "utf8").update(cookie.value, "utf8")
@@ -304,6 +489,20 @@ async function createBrowserHandle(input: Readonly<{
         }
         const capturedAt = Date.now()
         const expiresAt = captureExpiry(captured.cookies, capturedAt)
+        const pendingWorker: ActiveLunaBrowserWorkerV1 = {
+          context,
+          page: activePage,
+          profilePath,
+          expiresAt: Date.parse(expiresAt),
+          busy: false,
+          expiryTimer: null,
+        }
+        const shared = browserWorkerState()
+        const stalePending = shared.__sellerOsLunaPendingBrowserWorkerV1
+        if (stalePending && stalePending !== pendingWorker) {
+          await destroyBrowserWorker(stalePending)
+        }
+        shared.__sellerOsLunaPendingBrowserWorkerV1 = pendingWorker
         const payload = Buffer.from(JSON.stringify({
           contractVersion: SELLER_OS_LUNA_PROTECTED_SESSION_VERSION,
           cookieHeader: captured.cookieHeader,
@@ -314,14 +513,26 @@ async function createBrowserHandle(input: Readonly<{
         return Object.freeze({
           sessionPayload: payload,
           expiresAt,
-          postLoginHost: landing.host,
-          postLoginPathClass: landing.pathClass,
+          postLoginHost: browserHealth.postLoginHost,
+          postLoginPathClass: browserHealth.postLoginPathClass,
           authenticatedStateProven: true as const,
         })
       },
-      async close() {
+      async close(reason) {
         if (closing) return
         closing = true
+        const shared = browserWorkerState()
+        const pending = shared.__sellerOsLunaPendingBrowserWorkerV1
+        if (reason === "COMPLETED" && pending?.context === context) {
+          await promotePendingBrowserWorker(pending)
+          context = null
+          unauthenticatedCookieFingerprints.clear()
+          closed = true
+          return
+        }
+        if (pending?.context === context) {
+          shared.__sellerOsLunaPendingBrowserWorkerV1 = null
+        }
         try { await context?.clearCookies() } catch { /* fail closed */ }
         try { await context?.close() } catch { /* fail closed */ }
         context = null
@@ -338,6 +549,246 @@ async function createBrowserHandle(input: Readonly<{
     await deleteEphemeralProfile(profilePath).catch(() => undefined)
     throw cause
   }
+}
+
+export async function probeSellerOsLunaCanonicalBrowserSessionV1() {
+  let worker: ActiveLunaBrowserWorkerV1
+  try { worker = activeBrowserWorker() } catch {
+    return Object.freeze({
+      health: "REAUTH_REQUIRED" as const,
+      authenticated: false as const,
+      postLoginHost: null,
+      postLoginPathClass: null,
+      browserContextReused: true as const,
+      stockReadPerformed: false as const,
+      sessionMaterialIncluded: false as const,
+    })
+  }
+  if (worker.busy) return Object.freeze({
+    health: "UNPROVEN" as const,
+    authenticated: false as const,
+    postLoginHost: null,
+    postLoginPathClass: null,
+    browserContextReused: true as const,
+    stockReadPerformed: false as const,
+    sessionMaterialIncluded: false as const,
+  })
+  worker.busy = true
+  try {
+    const result = await pageSessionHealth(worker.page)
+    return Object.freeze({
+      health: result.health,
+      authenticated: result.health === "HEALTHY",
+      postLoginHost: result.postLoginHost,
+      postLoginPathClass: result.postLoginPathClass,
+      browserContextReused: true as const,
+      stockReadPerformed: false as const,
+      sessionMaterialIncluded: false as const,
+    })
+  } finally {
+    worker.busy = false
+  }
+}
+
+/**
+ * Authoritative authenticated stock path. It uses only the context retained by
+ * the existing human ceremony; it never imports or reconstructs browser state.
+ */
+export async function fetchLunaAuthenticatedBrowserProductV1(
+  canonicalSourceUrl: string,
+) {
+  const parsed = parseDirectedLunaProductUrl(canonicalSourceUrl)
+  const worker = activeBrowserWorker()
+  if (worker.busy) throw new Error("LUNA_BROWSER_WORKER_BUSY")
+  worker.busy = true
+  try {
+    const preflight = await pageSessionHealth(worker.page)
+    if (preflight.health !== "HEALTHY") {
+      return buildSellerOsLunaBrowserDirectedProductV1({
+        canonicalSourceUrl,
+        sessionHealth: preflight.health,
+        evidence: null,
+      })
+    }
+    await worker.page.goto(parsed.canonicalUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 15_000,
+    })
+    const productPageMetadata = await worker.page.evaluate((selectors) => ({
+      title: document.title.slice(0, 160),
+      loginFormPresent: Boolean(document.querySelector(selectors.login)),
+    }), { login: LOGIN_PAGE_MARKER })
+    const challengePresent = worker.page.frames().some((frame) => {
+      try { return new URL(frame.url()).hostname === "challenges.cloudflare.com" }
+      catch { return false }
+    })
+    const health = classifySellerOsLunaBrowserSessionHealthV1({
+      url: worker.page.url(),
+      title: productPageMetadata.title,
+      cloudflareChallengePresent: challengePresent,
+      loginFormPresent: productPageMetadata.loginFormPresent,
+      // The same retained context passed an authenticated account preflight.
+      authenticatedMarkerPresent: true,
+    })
+    if (health !== "HEALTHY") {
+      return buildSellerOsLunaBrowserDirectedProductV1({
+        canonicalSourceUrl,
+        sessionHealth: health,
+        evidence: null,
+      })
+    }
+    const response = await worker.page.evaluate(async (jsonUrl) => {
+      const result = await fetch(jsonUrl, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        credentials: "include",
+        cache: "no-store",
+        redirect: "follow",
+      })
+      let payload: unknown = null
+      if (result.ok) {
+        try {
+          const raw = await result.json() as Record<string, unknown>
+          const rawVariants = Array.isArray(raw.variants)
+            ? raw.variants.slice(0, 501) : []
+          payload = {
+            id: raw.id,
+            handle: raw.handle,
+            title: raw.title,
+            vendor: raw.vendor,
+            type: raw.type,
+            currency: raw.currency,
+            variants: rawVariants.map((entry) => {
+              const variant = entry && typeof entry === "object" &&
+                !Array.isArray(entry)
+                ? entry as Record<string, unknown> : {}
+              const quantity: Record<string, unknown> = {}
+              for (const key of ["inventory_quantity", "inventoryQuantity",
+                "quantity_available", "quantityAvailable", "stock_quantity",
+                "stockQuantity"]) {
+                if (Object.prototype.hasOwnProperty.call(variant, key)) {
+                  quantity[key] = variant[key]
+                  break
+                }
+              }
+              return {
+                id: variant.id,
+                title: variant.title,
+                sku: variant.sku,
+                barcode: variant.barcode,
+                price: variant.price,
+                compare_at_price: variant.compare_at_price,
+                available: variant.available,
+                grams: variant.grams,
+                weight: variant.weight,
+                weight_unit: variant.weight_unit,
+                ...quantity,
+              }
+            }),
+          }
+        } catch { payload = null }
+      }
+      const finalUrl = new URL(result.url)
+      return {
+        status: result.status,
+        finalHost: finalUrl.hostname,
+        finalPath: finalUrl.pathname,
+        payload,
+      }
+    }, parsed.jsonUrl)
+    if (response.finalHost !== "lunaportex.com" &&
+        response.finalHost !== "www.lunaportex.com") {
+      throw new Error("LUNA_AUTHENTICATED_BROWSER_REDIRECT_REJECTED")
+    }
+    if (/\/(?:account\/)?(?:login|signin)\/?$/i.test(response.finalPath) ||
+        response.status === 401) throw new Error("LUNA_REAUTH_REQUIRED")
+    if (response.status === 403) throw new Error("LUNA_AUTHORIZATION_DENIED")
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error("LUNA_AUTHENTICATED_SOURCE_UNAVAILABLE")
+    }
+    const evidence = boundedBrowserProductEvidence(response.payload)
+    return buildSellerOsLunaBrowserDirectedProductV1({
+      canonicalSourceUrl,
+      sessionHealth: "HEALTHY",
+      evidence,
+    })
+  } finally {
+    worker.busy = false
+  }
+}
+
+export async function captureLunaAuthenticatedBrowserWorkerV1(
+  link: LunaExactApprovedLinkV1,
+) : Promise<LunaAuthenticatedCaptureV1> {
+  const request = buildLunaAuthenticatedBrowserAgentRequestV1(link)
+  const product = await fetchLunaAuthenticatedBrowserProductV1(
+    request.canonicalSourceUrl,
+  )
+  const variant = product.productId === request.expectedIdentity.supplierProductId
+    ? product.variants.find((candidate) =>
+        candidate.id === request.expectedIdentity.supplierVariantId &&
+        candidate.sku === request.expectedIdentity.supplierSku) ?? null
+    : null
+  const observedAt = new Date().toISOString()
+  const quantity = variant?.sourceInventoryQuantityExplicit === true &&
+    Number.isSafeInteger(variant.sourceInventoryQuantity) &&
+    Number(variant.sourceInventoryQuantity) >= 0
+    ? Number(variant.sourceInventoryQuantity) : null
+  const regularPrice = variant?.sourceCompareAtPrice !== null &&
+      variant?.sourceCompareAtPrice !== undefined &&
+      variant.sourceCompareAtPrice > variant.sourceUnitPrice
+    ? variant.sourceCompareAtPrice : variant?.sourceUnitPrice ?? null
+  const salePrice = variant?.sourceCompareAtPrice !== null &&
+      variant?.sourceCompareAtPrice !== undefined &&
+      variant.sourceCompareAtPrice > variant.sourceUnitPrice
+    ? variant.sourceUnitPrice : null
+  const evidence = {
+    requestId: request.requestId,
+    productId: product.productId,
+    variantId: variant?.id ?? null,
+    supplierSku: variant?.sku ?? null,
+    availability: variant?.available ?? null,
+    quantity,
+    quantityExplicit: quantity !== null,
+    regularPrice,
+    salePrice,
+    currency: product.sourceCurrency ?? null,
+    observedAt,
+    sourceEvidenceFingerprint: product.sourceEvidenceFingerprint ?? null,
+  }
+  const fingerprint = createHash("sha256").update(JSON.stringify(evidence))
+    .digest("hex")
+  return Object.freeze({
+    contractVersion: LUNA_SUPPLIER_STOCK_WATCHER_VERSION,
+    requestId: request.requestId,
+    sourceMode: "AUTHENTICATED_WEB_SESSION" as const,
+    sessionState: variant ? "SESSION_OK" as const : "VARIANT_UNPROVEN" as const,
+    productId: product.productId,
+    variantId: variant?.id ?? null,
+    supplierSku: variant?.sku ?? null,
+    availability: variant?.available ?? null,
+    quantity,
+    quantityExplicit: quantity !== null,
+    explicitLowStock: false,
+    regularPrice,
+    salePrice,
+    currency: product.sourceCurrency ?? null,
+    observedAt,
+    parserVersion: LUNA_AUTHENTICATED_BROWSER_PARSER_VERSION,
+    selectorContractVersion: SELLER_OS_LUNA_BROWSER_STOCK_READ_VERSION,
+    sourceEvidenceFingerprint:
+      `luna_agent_evidence_${fingerprint.slice(0, 48)}`,
+    limitationCode: variant ? null : "EXACT_AUTHENTICATED_VARIANT_UNPROVEN",
+    agentAttestation: {
+      persistentProfileUsed: true as const,
+      isolatedProfileRequired: true as const,
+      sessionMaterialExported: false as const,
+      rawHtmlExported: false as const,
+      screenshotExported: false as const,
+      captchaBypassAttempted: false as const,
+      mfaBypassAttempted: false as const,
+    },
+  })
 }
 
 export async function auditSellerOsLunaCanonicalBrowserRuntimeV1() {
@@ -371,7 +822,9 @@ export async function auditSellerOsLunaCanonicalBrowserRuntimeV1() {
     browserWorker: "BACKEND_CONTROLLED" as const,
     browserVisibleToHuman: true as const,
     profile: "EPHEMERAL" as const,
-    profileReuse: false as const,
+    profileReuse: true as const,
+    authenticatedStockPath: "CANONICAL_BROWSER_WORKER" as const,
+    authenticatedServerHttpAuthoritative: false as const,
     remoteDebuggingPublic: false as const,
     navigationAllowlist: [
       "www.lunaportex.com",
@@ -407,9 +860,14 @@ export function getSellerOsLunaBrowserCeremonyCoordinatorV1() {
             actorUserId, sessionPayload, now,
           }),
         verifyStoredSession: async () => {
-          const result = await verifyStoredSellerOsLunaProtectedSessionV1()
+          const pending = browserWorkerState()
+            .__sellerOsLunaPendingBrowserWorkerV1
+          const result = pending
+            ? await pageSessionHealth(pending.page)
+            : { health: "REAUTH_REQUIRED" as const,
+                postLoginHost: null, postLoginPathClass: null }
           return Object.freeze({
-            authenticated: result.authenticated,
+            authenticated: result.health === "HEALTHY",
             postLoginHost: result.postLoginHost,
             postLoginPathClass: result.postLoginPathClass,
           })

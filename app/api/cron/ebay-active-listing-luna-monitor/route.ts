@@ -11,8 +11,8 @@ import {
 } from "@/lib/ebay/ebay-seller-command-center-automation"
 import { commercialPreviewCronAuthorized } from "@/lib/ebay/ebay-commercial-preview-pilot"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
-import { fetchLunaAuthenticatedDirectedProductV1 } from
-  "@/lib/ebay/ebay-luna-authenticated-http-watcher-v1"
+import { fetchLunaAuthenticatedBrowserProductV1 } from
+  "@/lib/ebay/ebay-luna-canonical-browser-worker-server-v1"
 import { runTargetedActiveListingLunaMonitor } from "@/lib/ebay/ebay-targeted-active-listing-luna-monitor"
 import { getSellerOsLunaStockObservationActivationPolicyV1 } from
   "@/lib/ebay/ebay-luna-stock-observation-v1"
@@ -156,7 +156,7 @@ export async function GET(req: Request) {
       limit: config.limit,
       concurrency: config.concurrency,
       productFetcher: (target) =>
-        fetchLunaAuthenticatedDirectedProductV1(target.productUrl),
+        fetchLunaAuthenticatedBrowserProductV1(target.productUrl),
     })
 
     // Global reconciliation is safe only after every selected active listing

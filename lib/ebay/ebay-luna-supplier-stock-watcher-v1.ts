@@ -638,27 +638,27 @@ export function parseLunaAuthenticatedHttpCaptureV1(input: {
 
 export function resolveLunaWatcherSourcePriorityV1(input: {
   protectedServerSessionPresent?: boolean
+  authenticatedBrowserWorkerReady?: boolean
 } = {}) {
-  const serverReady = input.protectedServerSessionPresent === true
+  const browserReady = input.authenticatedBrowserWorkerReady === true
   return {
     supplier: "LUNA_PORTEX" as const,
-    actualMode: "AUTHENTICATED_SERVER_HTTP" as const,
-    actualAdapter: "SERVER_ONLY_BOUNDED_AUTHENTICATED_HTTP" as const,
+    actualMode: "AUTHENTICATED_WEB_SESSION" as const,
+    actualAdapter: "EXISTING_CANONICAL_BROWSER_WORKER" as const,
     sourcePriority: [
-      { mode: "AUTHENTICATED_SERVER_HTTP" as const,
-        status: serverReady ? "AVAILABLE" as const : "PROTECTED_SESSION_NOT_PRESENT" as const },
       { mode: "AUTHENTICATED_WEB_SESSION" as const,
-        status: "NOT_EVALUATED_SERVER_HTTP_FIRST" as const },
+        status: browserReady ? "AVAILABLE" as const : "REAUTH_REQUIRED" as const },
+      { mode: "AUTHENTICATED_SERVER_HTTP" as const,
+        status: "NON_AUTHORITATIVE_FOR_AUTHENTICATED_STOCK" as const },
       { mode: "MANUAL_FALLBACK" as const, status: "AVAILABLE" as const },
     ],
-    browserFallbackEligibility:
-      "ONLY_AFTER_AUTHENTICATED_SERVER_HTTP_PROVEN_INSUFFICIENT" as const,
+    browserFallbackEligibility: "AUTHORITATIVE_AUTHENTICATED_PATH" as const,
     unavailableModes: [{ mode: "OFFICIAL_API_FEED_WEBHOOK" as const,
       status: "NOT_AVAILABLE_THIS_MILESTONE" as const }],
     publicCatalogPolicy: "NOT_AUTHORITATIVE_FOR_LUNA_STOCK" as const,
     protectedProfileContract: {
-      activated: false,
-      persistentProfileRequiredIfLaterAuthorized: true,
+      activated: browserReady,
+      persistentProfileRequiredIfLaterAuthorized: false,
       dedicatedIsolatedProfileRequired: true,
       rawSessionMaterialReadBySellerOs: false,
       rawSessionMaterialReturnedInDtos: false,
@@ -986,8 +986,8 @@ export async function runLunaSupplierStockRecaptureV1(input: {
       persistentScheduleActivated: input.trigger === "SCHEDULED",
     },
     source: resolveLunaWatcherSourcePriorityV1({
-      protectedServerSessionPresent:
-        capture.sourceMode === "AUTHENTICATED_SERVER_HTTP",
+      authenticatedBrowserWorkerReady:
+        capture.sourceMode === "AUTHENTICATED_WEB_SESSION",
     }),
     observation,
     scheduler,
@@ -1150,12 +1150,11 @@ export const LUNA_WATCHER_LARGE_VOLUME_CONTRACT_V1 = Object.freeze({
     fuzzyAutomaticLinkingAllowed: false,
   },
   sourceWatcher: {
-    sourceMode: "AUTHENTICATED_SERVER_HTTP",
-    protectedServerSessionRequired: true,
-    browserFallbackActivated: false,
-    browserFallbackEligibility:
-      "ONLY_AFTER_AUTHENTICATED_SERVER_HTTP_PROVEN_INSUFFICIENT",
-    dedicatedPersistentProfileRequiredIfLaterAuthorized: true,
+    sourceMode: "AUTHENTICATED_WEB_SESSION",
+    protectedServerSessionRequired: false,
+    browserFallbackActivated: true,
+    browserFallbackEligibility: "AUTHORITATIVE_AUTHENTICATED_PATH",
+    dedicatedPersistentProfileRequiredIfLaterAuthorized: false,
     rawSessionMaterialCrossesAgentBoundary: false,
     captchaOrMfaBypassAllowed: false,
   },

@@ -373,7 +373,7 @@ export function buildExactTargetedLunaObservation(input: {
     previousAvailable: previous.available,
     previousRaw: previous.raw,
   })
-  const authenticatedSource = product.sourceMode === "AUTHENTICATED_SERVER_HTTP" &&
+  const authenticatedSource = product.sourceMode === "AUTHENTICATED_WEB_SESSION" &&
     product.sourceSessionHealth === "SESSION_OK"
   const explicitQuantity = variant.sourceInventoryQuantityExplicit === true &&
     Number.isInteger(variant.sourceInventoryQuantity) &&
@@ -443,7 +443,7 @@ export function buildExactTargetedLunaObservation(input: {
         observed_inventory_quantity: explicitQuantity,
         inventory_status: resolvedAvailability.stockState.toLowerCase(),
         inventory_source: authenticatedSource
-          ? "luna_authenticated_server_http" : "luna_public_product_json",
+          ? "luna_authenticated_browser_worker" : "luna_public_product_json",
         inventory_confidence: authenticatedSource ? "high" : "medium",
         inventory_scope: explicitQuantity !== null
           ? "explicit_variant_quantity" : "availability_only",
@@ -454,7 +454,8 @@ export function buildExactTargetedLunaObservation(input: {
         public_data_only: !authenticatedSource,
         login_automation_used: false,
         credentials_used: authenticatedSource,
-        protected_server_session_used: authenticatedSource,
+        protected_server_session_used: false,
+        protected_browser_session_used: authenticatedSource,
         credential_value_exposed: false,
         credential_value_persisted: false,
         exact_identity_verified: true,
@@ -496,7 +497,7 @@ export function buildExactTargetedLunaObservation(input: {
         available: false,
         inventory_quantity: snapshot.inventory_quantity,
         observation_source: authenticatedSource
-          ? "luna_authenticated_server_http" : "luna_public_product_json",
+          ? "luna_authenticated_browser_worker" : "luna_public_product_json",
         public_confirmation_count: resolvedAvailability.confirmationCount,
       },
       observedAt,
@@ -514,7 +515,7 @@ export function buildExactTargetedLunaObservation(input: {
         available: true,
         inventory_quantity: snapshot.inventory_quantity,
         observation_source: authenticatedSource
-          ? "luna_authenticated_server_http" : "luna_public_product_json",
+          ? "luna_authenticated_browser_worker" : "luna_public_product_json",
       },
       observedAt,
     }))
@@ -528,7 +529,7 @@ export function buildExactTargetedLunaObservation(input: {
       newValue: {
         price: snapshot.price,
         observation_source: authenticatedSource
-          ? "luna_authenticated_server_http" : "luna_public_product_json",
+          ? "luna_authenticated_browser_worker" : "luna_public_product_json",
       },
       observedAt,
     }))
@@ -910,7 +911,7 @@ export async function runTargetedActiveListingLunaMonitor(
     publicProductsFetched: input.productFetcher ? 0 : fetchCache.size,
     supplierProductsFetched: fetchCache.size,
     sourceMode: input.productFetcher
-      ? "AUTHENTICATED_SERVER_HTTP" as const
+      ? "AUTHENTICATED_WEB_SESSION" as const
       : "LEGACY_PUBLIC_AVAILABILITY_ONLY" as const,
     snapshotsInserted,
     unchangedTargetsObserved: availableObservations.length - changedObservations.length,
@@ -921,9 +922,11 @@ export async function runTargetedActiveListingLunaMonitor(
     safety: {
       previewOnly: true,
       publicLunaReadsOnly: !input.productFetcher,
-      authenticatedServerReadsUsed: Boolean(input.productFetcher),
+      authenticatedServerReadsUsed: false as const,
+      authenticatedBrowserWorkerReadsUsed: Boolean(input.productFetcher),
       loginAutomationUsed: false,
-      protectedServerSessionUsed: Boolean(input.productFetcher),
+      protectedServerSessionUsed: false as const,
+      protectedBrowserSessionUsed: Boolean(input.productFetcher),
       credentialValueExposed: false,
       credentialValuePersisted: false,
       fullCatalogScanUsed: false,

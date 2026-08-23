@@ -34,8 +34,9 @@ import {
 } from "@/lib/ebay/ebay-luna-supplier-stock-watcher-v1"
 import {
   auditLunaProtectedSessionConfigurationV1,
-  captureLunaAuthenticatedHttpV1,
 } from "@/lib/ebay/ebay-luna-authenticated-http-watcher-v1"
+import { captureLunaAuthenticatedBrowserWorkerV1 } from
+  "@/lib/ebay/ebay-luna-canonical-browser-worker-server-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
 function record(value: unknown): Record<string, unknown> {
@@ -59,11 +60,11 @@ function capabilities() {
     qualityReport: "READY_FOR_REAL_SAMPLE",
     qualityReportAcquisition: "HUMAN_ASSISTED_CSV_JSON_XLSX",
     orders: ordersConfigured ? "READY_FOR_READONLY_RUNTIME" : "AUTH_PENDING",
-    lunaCapture: lunaSession.lunaCookiePresent
-      ? "AUTHENTICATED_SERVER_HTTP_READY_NOT_RUNTIME_ACCEPTED"
-      : "AUTHENTICATED_SERVER_HTTP_REAUTH_REQUIRED",
-    lunaSourceMode: "AUTHENTICATED_SERVER_HTTP",
-    lunaPersistentProfile: "NOT_EVALUATED_SERVER_HTTP_FIRST",
+    lunaCapture: "AUTHENTICATED_BROWSER_WORKER_REAUTH_GATED",
+    lunaSourceMode: "AUTHENTICATED_WEB_SESSION",
+    lunaPersistentProfile: "EXISTING_CANONICAL_BROWSER_WORKER",
+    lunaServerHttpStockAuthority:
+      "NON_AUTHORITATIVE_FOR_AUTHENTICATED_STOCK",
     lunaRuntimeRecapture: "PENDING_REAL_SCHEDULED_OBSERVATION",
     lunaCookiePresent: lunaSession.lunaCookiePresent,
     lunaCookieServerOnly: lunaSession.lunaCookieServerOnly,
@@ -141,13 +142,12 @@ export async function POST(req: Request) {
       result = linkSupplierToEbayIdentityV1(input as never)
     } else if (body.action === "PREPARE_LUNA_WATCHER") {
       const link = record(input.link) as LunaExactApprovedLinkV1
-      const sessionAudit = auditLunaProtectedSessionConfigurationV1()
       result = {
         source: resolveLunaWatcherSourcePriorityV1({
-          protectedServerSessionPresent: sessionAudit.lunaCookiePresent,
+          authenticatedBrowserWorkerReady: false,
         }),
         scheduleState: "READY_PENDING_DURABLE_EXACT_LINK",
-        browserFallbackStatus: "NOT_EVALUATED_SERVER_HTTP_FIRST",
+        browserFallbackStatus: "REAUTH_REQUIRED_UNTIL_BROWSER_HEALTH_PROVEN",
         exactLinkPersistence: "REQUIRES_SEPARATE_REGISTRY_MUTATION_AUTHORIZATION",
         approvalPersistenceContract:
           buildLunaWatcherApprovalPersistenceContractV1(link),
@@ -155,15 +155,16 @@ export async function POST(req: Request) {
       }
     } else if (body.action === "RUN_LUNA_AUTHENTICATED_CAPTURE") {
       const link = record(input.link) as LunaExactApprovedLinkV1
-      const currentCapture = await captureLunaAuthenticatedHttpV1(link)
+      const currentCapture = await captureLunaAuthenticatedBrowserWorkerV1(link)
       const observation = evaluateLunaAuthenticatedBrowserCaptureV1({
         link, capture: currentCapture, previous: null,
       })
-      const sessionAudit = auditLunaProtectedSessionConfigurationV1()
       result = {
         watcherVersion: observation.contractVersion,
         source: resolveLunaWatcherSourcePriorityV1({
-          protectedServerSessionPresent: sessionAudit.lunaCookiePresent,
+          authenticatedBrowserWorkerReady:
+            currentCapture.sourceMode === "AUTHENTICATED_WEB_SESSION" &&
+            currentCapture.sessionState === "SESSION_OK",
         }),
         capture: currentCapture,
         observation,
