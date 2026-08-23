@@ -1113,9 +1113,17 @@ function nonNegativeNumber(value: string | null) {
 function remainingQuantity(container: string) {
   const listed = nonNegativeInteger(ebayTradingXmlValue(container, "Quantity"))
   const selling = ebayTradingXmlContainers(container, "SellingStatus")[0] ?? ""
-  const sold = nonNegativeInteger(
-    ebayTradingXmlValue(selling, "QuantitySold"),
+  const soldContainers = ebayTradingXmlDirectChildContainers(
+    selling,
+    "QuantitySold",
   )
+  const sold = soldContainers.length === 0
+    ? 0
+    : soldContainers.length === 1
+      ? nonNegativeInteger(
+        ebayTradingXmlDirectChildValue(selling, "QuantitySold"),
+      )
+      : null
   return listed !== null && sold !== null && sold <= listed
     ? listed - sold
     : null
