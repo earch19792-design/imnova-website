@@ -207,6 +207,72 @@ const FORBIDDEN_OUTPUT_KEYS = new Set([
   "shippingaddress", "recipientaddress",
 ])
 
+export const SELLER_OS_CURRENT_LIVE_FACTS_RELAY_FIELDS_V1 = Object.freeze([
+  "itemId", "sku", "customLabel", "title", "quantity", "price", "currency",
+  "liveStatus", "source", "observedAt",
+] as const)
+
+const SELLER_OS_CURRENT_LIVE_DISCOVERY_SOURCE_V1 =
+  "EBAY_TRADING_GET_MY_EBAY_SELLING" as const
+
+function nullableString(value: unknown) {
+  return value === null || typeof value === "string"
+}
+
+export function projectSellerOsCloudReadRelayResultV1(
+  toolName: string,
+  value: unknown,
+) {
+  if (toolName !== "seller_os_get_listing_intelligence") return value
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("SELLER_OS_RELAY_LISTING_RESULT_INVALID")
+  }
+  const result = value as Record<string, unknown>
+  if (!Object.prototype.hasOwnProperty.call(result, "currentLiveFacts")) {
+    return value
+  }
+  const candidate = result.currentLiveFacts
+  if (candidate === null) return value
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    throw new Error("SELLER_OS_RELAY_CURRENT_LIVE_FACTS_INVALID")
+  }
+  const facts = candidate as Record<string, unknown>
+  if (!SELLER_OS_CURRENT_LIVE_FACTS_RELAY_FIELDS_V1.every((field) =>
+    Object.prototype.hasOwnProperty.call(facts, field)) ||
+      typeof facts.itemId !== "string" || !/^\d{9,19}$/.test(facts.itemId) ||
+      !nullableString(facts.sku) || !nullableString(facts.customLabel) ||
+      !nullableString(facts.title) ||
+      !(facts.quantity === null ||
+        (Number.isSafeInteger(facts.quantity) && Number(facts.quantity) >= 0)) ||
+      !(facts.price === null ||
+        (typeof facts.price === "number" && Number.isFinite(facts.price) &&
+          facts.price >= 0)) ||
+      !nullableString(facts.currency) || facts.liveStatus !== "LIVE_ACTIVE" ||
+      facts.source !== SELLER_OS_CURRENT_LIVE_DISCOVERY_SOURCE_V1 ||
+      typeof facts.observedAt !== "string" ||
+      !Number.isFinite(Date.parse(facts.observedAt))) {
+    throw new Error("SELLER_OS_RELAY_CURRENT_LIVE_FACTS_INVALID")
+  }
+  const identity = result.identity
+  if (identity && typeof identity === "object" && !Array.isArray(identity) &&
+      typeof (identity as Record<string, unknown>).itemId === "string" &&
+      (identity as Record<string, unknown>).itemId !== facts.itemId) {
+    throw new Error("SELLER_OS_RELAY_CURRENT_LIVE_FACTS_IDENTITY_CONFLICT")
+  }
+  return Object.freeze({ ...result, currentLiveFacts: Object.freeze({
+    itemId: facts.itemId,
+    sku: facts.sku,
+    customLabel: facts.customLabel,
+    title: facts.title,
+    quantity: facts.quantity,
+    price: facts.price,
+    currency: facts.currency,
+    liveStatus: facts.liveStatus,
+    source: facts.source,
+    observedAt: facts.observedAt,
+  }) })
+}
+
 function assertRelayResultSafe(value: unknown) {
   const serialized = JSON.stringify(value)
   if (byteLength(serialized) > MAX_RESPONSE_BYTES) {
@@ -364,8 +430,12 @@ export function createSellerOsCloudReadRelayExecutorV1(options: {
       payload.requestId !== envelope.requestId || !("result" in payload)) {
       throw new Error("SELLER_OS_CLOUD_READ_RELAY_RESPONSE_INVALID")
     }
-    assertRelayResultSafe(payload.result)
-    return payload.result
+    const result = projectSellerOsCloudReadRelayResultV1(
+      input.toolName,
+      payload.result,
+    )
+    assertRelayResultSafe(result)
+    return result
   }
 }
 
@@ -501,6 +571,10 @@ export async function handleSellerOsCloudReadRelayRequestV1(
         monitor,
       })
     }
+    result = projectSellerOsCloudReadRelayResultV1(
+      envelope.toolName,
+      result,
+    )
     assertRelayResultSafe(result)
     return Response.json({
       contractVersion: SELLER_OS_CLOUD_READ_RELAY_VERSION,
