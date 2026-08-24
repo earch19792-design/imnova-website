@@ -11,7 +11,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.13"
+const EXPECTED_EXTENSION_VERSION = "1.0.14"
 const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
@@ -78,6 +78,16 @@ type RuntimeTrace = {
   checkoutPageDetected: boolean
   checkoutPageClassification: string
   checkoutHostClassification: string
+  shopPayMarkerOrderSummary: boolean
+  shopPayMarkerProduct: boolean
+  shopPayMarkerQuantity: boolean
+  shopPayMarkerShipTo: boolean
+  shopPayMarkerShipping: boolean
+  shopPayMarkerSubtotal: boolean
+  shopPayMarkerShippingAmount: boolean
+  shopPayMarkerTotal: boolean
+  shopPayMarkerPayment: boolean
+  shopPayMarkerPayNow: boolean
   explicitAuthRequired: boolean
   canonicalUsProfileFound: boolean
   shippingAddressAccepted: boolean
@@ -121,6 +131,16 @@ const EMPTY_RUNTIME_TRACE: RuntimeTrace = Object.freeze({
   checkoutPageDetected: false,
   checkoutPageClassification: "NOT_CHECKED",
   checkoutHostClassification: "NOT_CHECKED",
+  shopPayMarkerOrderSummary: false,
+  shopPayMarkerProduct: false,
+  shopPayMarkerQuantity: false,
+  shopPayMarkerShipTo: false,
+  shopPayMarkerShipping: false,
+  shopPayMarkerSubtotal: false,
+  shopPayMarkerShippingAmount: false,
+  shopPayMarkerTotal: false,
+  shopPayMarkerPayment: false,
+  shopPayMarkerPayNow: false,
   explicitAuthRequired: false,
   canonicalUsProfileFound: false,
   shippingAddressAccepted: false,
@@ -287,7 +307,10 @@ export default function LunaShippingCapturePage() {
             "CHECKOUT_INJECTION_REQUESTED", "CHECKOUT_INJECTION_API_SUCCEEDED",
             "CHECKOUT_SCRIPT_INJECTED", "CHECKOUT_SCRIPT_BOOTSTRAP_ACK",
             "CHECKOUT_CONTENT_SCRIPT_LOADED",
-            "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", "CHECKOUT_PAGE_DETECTED",
+            "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", "CHECKOUT_CLASSIFIER_STARTED",
+            "CHECKOUT_HOST_CLASSIFIED", "SHOP_PAY_DOM_WAITING",
+            "SHOP_PAY_DOM_READY", "CHECKOUT_PAGE_CLASSIFIED",
+            "CHECKOUT_PAGE_DETECTED", "SHOP_PAY_QUOTE_PARSER_STARTED",
             "NORMAL_GUEST_CHECKOUT",
             "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
             "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "NORMAL_CHECKOUT_WITH_SHIPPING",
@@ -359,6 +382,31 @@ export default function LunaShippingCapturePage() {
                     message.checkoutScriptBootstrapErrorCode } : {}),
               ...(message.state === "CHECKOUT_PAGE_DETECTED"
                 ? { checkoutPageDetected: true } : {}),
+              ...(typeof message.checkoutPageClassification === "string"
+                ? { checkoutPageClassification:
+                    message.checkoutPageClassification } : {}),
+              ...(typeof message.shopPayMarkerOrderSummary === "boolean"
+                ? { shopPayMarkerOrderSummary:
+                    message.shopPayMarkerOrderSummary } : {}),
+              ...(typeof message.shopPayMarkerProduct === "boolean"
+                ? { shopPayMarkerProduct: message.shopPayMarkerProduct } : {}),
+              ...(typeof message.shopPayMarkerQuantity === "boolean"
+                ? { shopPayMarkerQuantity: message.shopPayMarkerQuantity } : {}),
+              ...(typeof message.shopPayMarkerShipTo === "boolean"
+                ? { shopPayMarkerShipTo: message.shopPayMarkerShipTo } : {}),
+              ...(typeof message.shopPayMarkerShipping === "boolean"
+                ? { shopPayMarkerShipping: message.shopPayMarkerShipping } : {}),
+              ...(typeof message.shopPayMarkerSubtotal === "boolean"
+                ? { shopPayMarkerSubtotal: message.shopPayMarkerSubtotal } : {}),
+              ...(typeof message.shopPayMarkerShippingAmount === "boolean"
+                ? { shopPayMarkerShippingAmount:
+                    message.shopPayMarkerShippingAmount } : {}),
+              ...(typeof message.shopPayMarkerTotal === "boolean"
+                ? { shopPayMarkerTotal: message.shopPayMarkerTotal } : {}),
+              ...(typeof message.shopPayMarkerPayment === "boolean"
+                ? { shopPayMarkerPayment: message.shopPayMarkerPayment } : {}),
+              ...(typeof message.shopPayMarkerPayNow === "boolean"
+                ? { shopPayMarkerPayNow: message.shopPayMarkerPayNow } : {}),
               ...(new Set(["NORMAL_GUEST_CHECKOUT",
                 "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
                 "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "NORMAL_CHECKOUT_WITH_SHIPPING",
@@ -466,6 +514,8 @@ export default function LunaShippingCapturePage() {
         if (new Set(["AWAITING_CHECKOUT_SHIPPING", "CHECKOUT_PAGE_DETECTED",
           "CHECKOUT_INJECTION_REQUESTED", "CHECKOUT_INJECTION_API_SUCCEEDED",
           "CHECKOUT_SCRIPT_INJECTED", "CHECKOUT_SCRIPT_BOOTSTRAP_ACK",
+          "CHECKOUT_CLASSIFIER_STARTED", "CHECKOUT_HOST_CLASSIFIED",
+          "CHECKOUT_PAGE_CLASSIFIED", "SHOP_PAY_QUOTE_PARSER_STARTED",
           "NORMAL_GUEST_CHECKOUT", "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
           "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "NORMAL_CHECKOUT_WITH_SHIPPING",
           "SHOP_PAY_DOM_WAITING", "SHOP_PAY_DOM_READY",
@@ -582,6 +632,16 @@ export default function LunaShippingCapturePage() {
             `CHECKOUT_PAGE_DETECTED=${runtimeTrace.checkoutPageDetected}\n` +
             `CHECKOUT_PAGE_CLASSIFICATION=${runtimeTrace.checkoutPageClassification}\n` +
             `CHECKOUT_HOST_CLASSIFICATION=${runtimeTrace.checkoutHostClassification}\n` +
+            `SHOP_PAY_MARKER_ORDER_SUMMARY=${runtimeTrace.shopPayMarkerOrderSummary}\n` +
+            `SHOP_PAY_MARKER_PRODUCT=${runtimeTrace.shopPayMarkerProduct}\n` +
+            `SHOP_PAY_MARKER_QUANTITY=${runtimeTrace.shopPayMarkerQuantity}\n` +
+            `SHOP_PAY_MARKER_SHIP_TO=${runtimeTrace.shopPayMarkerShipTo}\n` +
+            `SHOP_PAY_MARKER_SHIPPING=${runtimeTrace.shopPayMarkerShipping}\n` +
+            `SHOP_PAY_MARKER_SUBTOTAL=${runtimeTrace.shopPayMarkerSubtotal}\n` +
+            `SHOP_PAY_MARKER_SHIPPING_AMOUNT=${runtimeTrace.shopPayMarkerShippingAmount}\n` +
+            `SHOP_PAY_MARKER_TOTAL=${runtimeTrace.shopPayMarkerTotal}\n` +
+            `SHOP_PAY_MARKER_PAYMENT=${runtimeTrace.shopPayMarkerPayment}\n` +
+            `SHOP_PAY_MARKER_PAY_NOW=${runtimeTrace.shopPayMarkerPayNow}\n` +
             `EXPLICIT_AUTH_REQUIRED=${runtimeTrace.explicitAuthRequired}\n` +
             `CANONICAL_US_PROFILE_FOUND=${runtimeTrace.canonicalUsProfileFound}\n` +
             `SHIPPING_ADDRESS_ACCEPTED=${runtimeTrace.shippingAddressAccepted}\n` +

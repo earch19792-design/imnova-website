@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.13"
+const EXTENSION_BUILD_VERSION = "1.0.14"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -24,6 +24,26 @@ const CHECKOUT_BOOTSTRAP_ACK_TIMEOUT_MS = 2_500
 const CHECKOUT_HOSTS = new Set(["lunaportex.com", "www.lunaportex.com",
   "account.lunaportex.com", "shop.app"])
 const SHOP_APP_HOST_PATTERN = "https://shop.app/*"
+const CHECKOUT_STATE_RANK = new Map([
+  ["SHIPPING_FLOW_RESUMED", 5], [CHECKOUT_PHASE, 6],
+  ["CHECKOUT_NAVIGATION_OBSERVED", 10], ["CHECKOUT_HOST_ALLOWED", 11],
+  ["CHECKOUT_INJECTION_REQUESTED", 20],
+  ["CHECKOUT_INJECTION_API_SUCCEEDED", 21],
+  ["CHECKOUT_SCRIPT_INJECTED", 22], ["CHECKOUT_SCRIPT_BOOTSTRAP_ACK", 30],
+  ["CHECKOUT_CONTENT_SCRIPT_LOADED", 40], ["CONTENT_SCRIPT_LOADED", 40],
+  ["ACTIVE_JOB_REQUESTED", 45], ["ACTIVE_JOB_RECOVERED_ON_CHECKOUT", 50],
+  ["CHECKOUT_CLASSIFIER_STARTED", 60], ["CHECKOUT_HOST_CLASSIFIED", 70],
+  ["SHOP_PAY_DOM_WAITING", 80], ["SHOP_PAY_DOM_READY", 90],
+  ["CHECKOUT_PAGE_CLASSIFIED", 100], ["CHECKOUT_PAGE_DETECTED", 101],
+  ["NORMAL_CHECKOUT_WITH_SHIPPING", 102], ["UNKNOWN_CHECKOUT_PAGE", 102],
+  ["CHECKOUT_EXPECTED_PRODUCT_VERIFIED", 103],
+  ["CHECKOUT_EXPECTED_QUANTITY_VERIFIED", 104],
+  ["CANONICAL_US_PROFILE_FOUND", 105],
+  ["SHOP_PAY_QUOTE_PARSER_STARTED", 110], ["SHIPPING_CAPTURE_STARTED", 111],
+  ["SHIPPING_ADDRESS_ACCEPTED", 112], ["SHIPPING_OPTIONS_DETECTED", 113],
+  ["SHIPPING_QUOTE_CAPTURED", 120], ["RESULT_POSTED", 130],
+  ["AUTHENTICATED_OPERATION_CONFIRMED", 121],
+])
 
 let sellerPort = null
 let activeTabId = null
@@ -38,6 +58,8 @@ let checkoutInjectionApiSucceeded = false
 let checkoutBootstrapAckReceived = false
 let checkoutBootstrapAckEmitted = false
 let checkoutBootstrapAckTimer = null
+let lastCheckoutStateRank = 0
+let lastCheckoutState = null
 let disconnectCleanupTimer = null
 
 function clearActiveJob() {
@@ -52,6 +74,8 @@ function clearActiveJob() {
   checkoutBootstrapAckEmitted = false
   if (checkoutBootstrapAckTimer) clearTimeout(checkoutBootstrapAckTimer)
   checkoutBootstrapAckTimer = null
+  lastCheckoutStateRank = 0
+  lastCheckoutState = null
   lastRuntimeState = null
 }
 
@@ -247,7 +271,21 @@ function safeRuntimeReason(value) {
 
 function emitProgress(state, details = {}) {
   if (!sellerPort || !activeJob) return
+  const rank = CHECKOUT_STATE_RANK.get(state) ?? 0
+  if (rank && (rank < lastCheckoutStateRank ||
+      (rank === lastCheckoutStateRank && state !== lastCheckoutState))) return
+  if (rank) {
+    lastCheckoutStateRank = rank
+    lastCheckoutState = state
+  }
   lastRuntimeState = state
+  const markerDetails = {}
+  for (const field of ["shopPayMarkerOrderSummary", "shopPayMarkerProduct",
+    "shopPayMarkerQuantity", "shopPayMarkerShipTo", "shopPayMarkerShipping",
+    "shopPayMarkerSubtotal", "shopPayMarkerShippingAmount",
+    "shopPayMarkerTotal", "shopPayMarkerPayment", "shopPayMarkerPayNow"]) {
+    if (typeof details[field] === "boolean") markerDetails[field] = details[field]
+  }
   sellerPort.postMessage({ type: JOB_PROGRESS, state,
     candidateId: activeJob.identity.candidateId,
     ...(Number.isFinite(details.cartSubtotalUsd) &&
@@ -274,11 +312,15 @@ function emitProgress(state, details = {}) {
       .has(details.checkoutScriptBootstrapErrorCode)
       ? { checkoutScriptBootstrapErrorCode:
           details.checkoutScriptBootstrapErrorCode } : {}),
+    ...(new Set(["NORMAL_CHECKOUT_WITH_SHIPPING", "UNKNOWN_CHECKOUT_PAGE"])
+      .has(details.checkoutPageClassification)
+      ? { checkoutPageClassification: details.checkoutPageClassification } : {}),
     ...(new Set(["EXPLICIT_CHALLENGE_UI", "EXPLICIT_LOGIN_REQUIRED",
       "SESSION_EXPIRED_UI", "NO_EXPLICIT_AUTH_REQUIREMENT"])
       .has(details.authSignal) ? { authSignal: details.authSignal } : {}),
     ...(details.authSignalSource === "FIXED_HOST_PATH_AND_VISIBLE_DOM"
-      ? { authSignalSource: details.authSignalSource } : {}) })
+      ? { authSignalSource: details.authSignalSource } : {}),
+    ...markerDetails })
 }
 
 async function startJob(job) {
@@ -298,6 +340,8 @@ async function startJob(job) {
   checkoutBootstrapAckEmitted = false
   if (checkoutBootstrapAckTimer) clearTimeout(checkoutBootstrapAckTimer)
   checkoutBootstrapAckTimer = null
+  lastCheckoutStateRank = 0
+  lastCheckoutState = null
   lastRuntimeState = "CANARY_DISPATCHED"
   url.hash = `seller-os-luna-shipping-v1=${encodeJob(exact)}`
   if (activeTabId === null) {
@@ -339,6 +383,10 @@ function observeCheckoutNavigation(details, inject) {
   const observed = safeNavigationIdentity(details.url)
   if (!observed) return
   const allowed = allowedCheckoutNavigation(details.url)
+  if (!inject) {
+    lastCheckoutStateRank = CHECKOUT_STATE_RANK.get(CHECKOUT_PHASE) ?? 0
+    lastCheckoutState = CHECKOUT_PHASE
+  }
   emitProgress("CHECKOUT_NAVIGATION_OBSERVED", {
     checkoutNavigationHost: observed.host,
     checkoutNavigationOrigin: observed.origin,
@@ -561,7 +609,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         "CHECKOUT_INJECTION_API_SUCCEEDED", "CHECKOUT_SCRIPT_INJECTED",
         "CHECKOUT_SCRIPT_BOOTSTRAP_ACK",
         "CHECKOUT_CONTENT_SCRIPT_LOADED",
-        "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", "CHECKOUT_PAGE_DETECTED",
+        "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", "CHECKOUT_CLASSIFIER_STARTED",
+        "CHECKOUT_HOST_CLASSIFIED", "SHOP_PAY_DOM_WAITING",
+        "SHOP_PAY_DOM_READY", "CHECKOUT_PAGE_CLASSIFIED",
+        "CHECKOUT_PAGE_DETECTED", "SHOP_PAY_QUOTE_PARSER_STARTED",
         "NORMAL_GUEST_CHECKOUT", "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
         "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "NORMAL_CHECKOUT_WITH_SHIPPING",
         "EXPLICIT_LOGIN_PAGE",
@@ -575,13 +626,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       checkoutNavigationHost: message.checkoutNavigationHost,
       checkoutNavigationOrigin: message.checkoutNavigationOrigin,
       checkoutHostPermissionMatch: message.checkoutHostPermissionMatch,
+      checkoutPageClassification: message.checkoutPageClassification,
+      shopPayMarkerOrderSummary: message.shopPayMarkerOrderSummary,
+      shopPayMarkerProduct: message.shopPayMarkerProduct,
+      shopPayMarkerQuantity: message.shopPayMarkerQuantity,
+      shopPayMarkerShipTo: message.shopPayMarkerShipTo,
+      shopPayMarkerShipping: message.shopPayMarkerShipping,
+      shopPayMarkerSubtotal: message.shopPayMarkerSubtotal,
+      shopPayMarkerShippingAmount: message.shopPayMarkerShippingAmount,
+      shopPayMarkerTotal: message.shopPayMarkerTotal,
+      shopPayMarkerPayment: message.shopPayMarkerPayment,
+      shopPayMarkerPayNow: message.shopPayMarkerPayNow,
       authSignal: message.authSignal,
       authSignalSource: message.authSignalSource })
     return false
   }
   if (message?.type === JOB_RUNTIME_FAILURE && recoverActiveJob(sender)) {
+    let error = safeRuntimeReason(message.error)
+    if (error === "LUNA_UNKNOWN_CHECKOUT_PAGE") {
+      if (!checkoutBootstrapAckEmitted) {
+        error = "CHECKOUT_CONTENT_SCRIPT_BOOTSTRAP_NOT_ACKNOWLEDGED"
+      } else if (lastCheckoutStateRank < 50) {
+        error = "ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN"
+      } else if (lastCheckoutStateRank < 60) {
+        error = "CHECKOUT_CLASSIFIER_NOT_STARTED"
+      } else if (lastCheckoutStateRank < 70) {
+        error = "CHECKOUT_HOST_NOT_CLASSIFIED"
+      }
+    }
     sellerPort?.postMessage({ type: JOB_RESULT, success: false,
-      error: safeRuntimeReason(message.error), lastRuntimeState,
+      error, lastRuntimeState,
       capture: { candidateId: activeJob.identity.candidateId } })
     return false
   }

@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.13" },
+      extensionBuildVersion: "1.0.14" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -127,6 +127,13 @@ function getActiveJob() {
 }
 
 function progress(job, state, details = {}) {
+  const markerDetails = {}
+  for (const field of ["shopPayMarkerOrderSummary", "shopPayMarkerProduct",
+    "shopPayMarkerQuantity", "shopPayMarkerShipTo", "shopPayMarkerShipping",
+    "shopPayMarkerSubtotal", "shopPayMarkerShippingAmount",
+    "shopPayMarkerTotal", "shopPayMarkerPayment", "shopPayMarkerPayNow"]) {
+    if (typeof details[field] === "boolean") markerDetails[field] = details[field]
+  }
   chrome.runtime.sendMessage({ type: JOB_PROGRESS, state,
     ...(job ? { captureSessionId: job.captureSessionId,
       candidateId: job.identity.candidateId } : {}),
@@ -143,7 +150,11 @@ function progress(job, state, details = {}) {
     ...(typeof details.authSignal === "string"
       ? { authSignal: details.authSignal } : {}),
     ...(typeof details.authSignalSource === "string"
-      ? { authSignalSource: details.authSignalSource } : {}) })
+      ? { authSignalSource: details.authSignalSource } : {}),
+    ...(new Set(["NORMAL_CHECKOUT_WITH_SHIPPING", "UNKNOWN_CHECKOUT_PAGE"])
+      .has(details.checkoutPageClassification)
+      ? { checkoutPageClassification: details.checkoutPageClassification } : {}),
+    ...markerDetails })
 }
 
 function setActiveJobPhase(job, phase, details = {}) {
@@ -531,7 +542,7 @@ function normalizeVisibleText(value) {
     .replace(/[^a-z0-9]+/g, " ").trim()
 }
 
-function checkoutExpectedLine(job) {
+function checkoutExpectedLineMarkers(job) {
   const candidates = [...document.querySelectorAll(
     '[data-order-summary] [data-line-item], [data-testid*="line-item" i], ' +
     '[data-testid*="product" i], [class*="line-item" i], ' +
@@ -539,6 +550,8 @@ function checkoutExpectedLine(job) {
     '[aria-label], article, li')]
     .slice(0, 180)
   const normalizedName = normalizeVisibleText(job.productName)
+  let product = false
+  let quantity = false
   for (const element of candidates) {
     if (!isVisible(element)) continue
     const text = normalizeVisibleText(element.textContent)
@@ -549,9 +562,16 @@ function checkoutExpectedLine(job) {
       Number(element.getAttribute?.("data-quantity")) === job.identity.quantity ||
       Number(String(quantityElement?.textContent ?? "").trim()) ===
         job.identity.quantity
-    if (text.includes(normalizedName) && quantityMatches) return true
+    if (!text.includes(normalizedName)) continue
+    product = true
+    if (quantityMatches) quantity = true
   }
-  return false
+  return { product, quantity }
+}
+
+function checkoutExpectedLine(job) {
+  const markers = checkoutExpectedLineMarkers(job)
+  return markers.product && markers.quantity
 }
 
 function semanticCheckoutSignal(pattern) {
@@ -572,6 +592,36 @@ function shopPayCheckoutPopulated() {
   const summary = ["subtotal", "shipping", "total"]
     .every((label) => Number.isFinite(labeledMoney(label)))
   return shipTo && shipping && paymentBoundary && summary
+}
+
+function shopPayMarkerSnapshot(job) {
+  const line = checkoutExpectedLineMarkers(job)
+  const subtotal = labeledMoney("subtotal")
+  const shipping = labeledMoney("shipping")
+  const total = labeledMoney("total")
+  const orderSummary = visibleMatch(['[data-order-summary]',
+    '[data-testid*="order-summary" i]']) ||
+    [subtotal, shipping, total].every(Number.isFinite)
+  return {
+    shopPayMarkerOrderSummary: orderSummary,
+    shopPayMarkerProduct: line.product,
+    shopPayMarkerQuantity: line.quantity,
+    shopPayMarkerShipTo: semanticCheckoutSignal(/^ship to\b/),
+    shopPayMarkerShipping: semanticCheckoutSignal(/^shipping\b/),
+    shopPayMarkerSubtotal: Number.isFinite(subtotal),
+    shopPayMarkerShippingAmount: Number.isFinite(shipping),
+    shopPayMarkerTotal: Number.isFinite(total),
+    shopPayMarkerPayment: semanticCheckoutSignal(/^payment\b/),
+    shopPayMarkerPayNow: semanticCheckoutSignal(/^pay now\b/),
+  }
+}
+
+function shopPayMarkersSufficient(markers) {
+  return markers.shopPayMarkerOrderSummary && markers.shopPayMarkerProduct &&
+    markers.shopPayMarkerQuantity && markers.shopPayMarkerShipTo &&
+    markers.shopPayMarkerShipping && markers.shopPayMarkerSubtotal &&
+    markers.shopPayMarkerShippingAmount && markers.shopPayMarkerTotal &&
+    markers.shopPayMarkerPayment
 }
 
 function visibleShippingMethod() {
@@ -751,24 +801,51 @@ function shopPayCanonicalShippingProfile(job) {
 }
 
 async function checkoutClassificationWhenReady(job, expectedSubtotal) {
-  if (location.hostname !== "shop.app") {
-    return { classification: checkoutPageClassification(),
-      quote: checkoutSummaryQuote(expectedSubtotal) }
-  }
-  progress(job, "SHOP_PAY_DOM_WAITING", {
+  progress(job, "CHECKOUT_CLASSIFIER_STARTED", {
     checkoutHostClassification: checkoutHostClassification(),
   })
-  const ready = await boundedDomWait(() => {
+  progress(job, "CHECKOUT_HOST_CLASSIFIED", {
+    checkoutHostClassification: checkoutHostClassification(),
+  })
+  if (location.hostname !== "shop.app") {
     const classification = checkoutPageClassification()
-    if (new Set(["EXPLICIT_AUTH_CHALLENGE", "EXPLICIT_LOGIN_PAGE",
-      "SESSION_EXPIRED"]).has(classification)) return { classification, quote: null }
-    if (classification !== "NORMAL_CHECKOUT_WITH_SHIPPING") return null
-    const quote = checkoutSummaryQuote(expectedSubtotal)
-    if (!quote || !checkoutExpectedLine(job)) return null
-    return { classification, quote }
-  }, "LUNA_UNKNOWN_CHECKOUT_PAGE")
+    progress(job, "CHECKOUT_PAGE_CLASSIFIED", {
+      checkoutHostClassification: checkoutHostClassification(),
+      checkoutPageClassification: classification,
+    })
+    return { classification, quote: checkoutSummaryQuote(expectedSubtotal) }
+  }
+  let markers = shopPayMarkerSnapshot(job)
+  progress(job, "SHOP_PAY_DOM_WAITING", {
+    checkoutHostClassification: checkoutHostClassification(),
+    ...markers,
+  })
+  let ready = null
+  try {
+    ready = await boundedDomWait(() => {
+      const classification = checkoutPageClassification()
+      markers = shopPayMarkerSnapshot(job)
+      if (new Set(["EXPLICIT_AUTH_CHALLENGE", "EXPLICIT_LOGIN_PAGE",
+        "SESSION_EXPIRED"]).has(classification)) {
+        return { classification, quote: null, markers }
+      }
+      if (!shopPayMarkersSufficient(markers)) return null
+      const quote = checkoutSummaryQuote(expectedSubtotal)
+      if (!quote) return null
+      return { classification: "NORMAL_CHECKOUT_WITH_SHIPPING", quote, markers }
+    }, "SHOP_PAY_BOUNDED_DOM_READINESS_EXHAUSTED")
+  } catch {
+    markers = shopPayMarkerSnapshot(job)
+    ready = { classification: "UNKNOWN_CHECKOUT_PAGE", quote: null, markers }
+  }
   progress(job, "SHOP_PAY_DOM_READY", {
     checkoutHostClassification: checkoutHostClassification(),
+    ...ready.markers,
+  })
+  progress(job, "CHECKOUT_PAGE_CLASSIFIED", {
+    checkoutHostClassification: checkoutHostClassification(),
+    checkoutPageClassification: ready.classification,
+    ...ready.markers,
   })
   return ready
 }
@@ -796,8 +873,13 @@ async function checkoutShipping(job, expectedSubtotal) {
     checkoutHostPermissionMatch: checkoutHostPermissionMatch(),
     authSignalSource: "FIXED_HOST_PATH_AND_VISIBLE_DOM",
   }
-  progress(job, "CHECKOUT_PAGE_DETECTED", classificationDetails)
-  progress(job, classification, classificationDetails)
+  if (classification !== "UNKNOWN_CHECKOUT_PAGE") {
+    progress(job, "CHECKOUT_PAGE_DETECTED", classificationDetails)
+  }
+  progress(job, classification, { ...classificationDetails,
+    checkoutPageClassification: classification,
+    ...(ready.markers ?? {}),
+  })
   if (classification === "EXPLICIT_AUTH_CHALLENGE") {
     throw new Error("LUNA_AUTH_CHALLENGE_REQUIRED")
   }
@@ -820,6 +902,8 @@ async function checkoutShipping(job, expectedSubtotal) {
     progress(job, "CHECKOUT_EXPECTED_QUANTITY_VERIFIED")
   }
   progress(job, "CANONICAL_US_PROFILE_FOUND")
+  progress(job, "SHOP_PAY_QUOTE_PARSER_STARTED", classificationDetails)
+  progress(job, "SHIPPING_CAPTURE_STARTED", classificationDetails)
   if (summaryQuote) {
     progress(job, "SHIPPING_ADDRESS_ACCEPTED")
     progress(job, "SHIPPING_OPTIONS_DETECTED")
@@ -967,7 +1051,6 @@ async function runCheckoutStage(job, original, subtotalUsd) {
     if (checkoutHostClassification() === "UNSUPPORTED_CHECKOUT_HOST") {
       throw new Error("LUNA_UNKNOWN_CHECKOUT_PAGE")
     }
-    progress(job, "SHIPPING_CAPTURE_STARTED")
     const visible = await checkoutShipping(job, subtotalUsd)
     progress(job, "SHIPPING_QUOTE_CAPTURED", {
       checkoutHostClassification: checkoutHostClassification(),
