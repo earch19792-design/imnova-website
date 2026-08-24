@@ -269,7 +269,6 @@ export async function GET(req: Request) {
         listing.discovery.livePresence.status === "LIVE_ACTIVE")
       const eligibleItemIds = currentLive.filter((listing) =>
         listing.stock.supplierLinkageStatus === "CERTIFIED" &&
-        listing.stock.state !== "STOCK_UNKNOWN" &&
         listing.stock.limitationCode !==
           "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH")
         .map((listing) => listing.identity.itemId).sort()
@@ -277,7 +276,24 @@ export async function GET(req: Request) {
         listing.stock.limitationCode ===
           "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH")
         .map((listing) => listing.identity.itemId).sort()
-      const canaryRequested = new URL(req.url).searchParams.get("canary") === "true"
+      const { data: canaryJobs, error: canaryJobsError } = await supabase
+        .from("seller_os_luna_stock_check_jobs")
+        .select("observation_window_start,observation_window_end,workflow_state")
+        .eq("account_key", accountKey)
+        .eq("ebay_item_id", LUNA_PRODUCTION_POLLING_CANARY_ITEM_ID)
+        .eq("workflow_state", "SUCCEEDED")
+        .order("observation_window_end", { ascending: false })
+        .limit(8)
+      if (canaryJobsError) {
+        throw new Error("LUNA_PRODUCTION_POLLING_CANARY_STATE_READ_FAILED")
+      }
+      const canaryPreviouslyCertified = (canaryJobs ?? []).some((job) =>
+        Date.parse(String(job.observation_window_end)) -
+          Date.parse(String(job.observation_window_start)) ===
+            LUNA_PRODUCTION_POLL_INTERVAL_SECONDS * 1_000)
+      const canaryRequested =
+        new URL(req.url).searchParams.get("canary") === "true" ||
+        !canaryPreviouslyCertified
       const targetItemIds = canaryRequested
         ? eligibleItemIds.filter((itemId) =>
             itemId === LUNA_PRODUCTION_POLLING_CANARY_ITEM_ID)
@@ -331,7 +347,8 @@ export async function GET(req: Request) {
             listing.stock.supplierLinkageStatus === "CERTIFIED").length,
           pollEligibleCount: eligibleItemIds.length,
           identityMismatchSkippedCount: identityMismatchSkippedItemIds.length,
-          canaryRequested, stockPolling, automaticOosProtection },
+          canaryRequested, canaryPreviouslyCertified,
+          stockPolling, automaticOosProtection },
       })
       return NextResponse.json({ success,
         status: success ? "completed" : "partial",
@@ -345,6 +362,7 @@ export async function GET(req: Request) {
         pollEligibleCount: eligibleItemIds.length,
         identityMismatchSkippedCount: identityMismatchSkippedItemIds.length,
         canaryRequested,
+        canaryPreviouslyCertified,
         canaryItemId: LUNA_PRODUCTION_POLLING_CANARY_ITEM_ID,
         stockPolling,
         automaticOosProtection,
