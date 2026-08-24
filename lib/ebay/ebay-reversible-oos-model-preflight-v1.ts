@@ -14,6 +14,8 @@ const EBAY_ORIGIN = "https://api.ebay.com"
 const TOKEN_ENDPOINT = `${EBAY_ORIGIN}/identity/v1/oauth2/token`
 const TRADING_ENDPOINT = `${EBAY_ORIGIN}/ws/api.dll`
 const INVENTORY_ITEM_ENDPOINT = `${EBAY_ORIGIN}/sell/inventory/v1/inventory_item`
+const BULK_GET_INVENTORY_ITEM_ENDPOINT =
+  `${EBAY_ORIGIN}/sell/inventory/v1/bulk_get_inventory_item`
 const INVENTORY_OFFER_ENDPOINT = `${EBAY_ORIGIN}/sell/inventory/v1/offer`
 const INVENTORY_LOCATION_ENDPOINT = `${EBAY_ORIGIN}/sell/inventory/v1/location`
 const BASE_SCOPE = "https://api.ebay.com/oauth/api_scope"
@@ -137,6 +139,12 @@ export type ReversibleOosModelPreflightV1 = Readonly<{
   exactSkuFieldNameClass: Live25709FieldNameClass
   exactSkuInvalidValueClass: Live25709InvalidValueClass
   exactSkuMessageTemplateClass: Live25709MessageTemplateClass
+  exactSkuAuthorityOperation:
+    | "GET_INVENTORY_ITEM"
+    | "BULK_GET_INVENTORY_ITEM"
+    | "UNPROVEN"
+  exactSkuBulkFallbackAttempted: boolean
+  exactSkuBulkHttpStatus: number | null
   exactOfferLookupAttempted: boolean
   exactOfferFound: ExactInventoryEvidence
   exactPublicationItemIdMatch: ExactInventoryEvidence
@@ -328,6 +336,12 @@ type ExactSkuReadResult = {
   safeErrorClass: ExactInventorySafeErrorClass
   errorMetadata: Live25709Metadata
   requestContractFixRequired: boolean
+  authorityOperation:
+    | "GET_INVENTORY_ITEM"
+    | "BULK_GET_INVENTORY_ITEM"
+    | "UNPROVEN"
+  bulkFallbackAttempted: boolean
+  bulkHttpStatus: number | null
 }
 
 type ExactInventoryLookup = {
@@ -505,17 +519,76 @@ async function exactInventoryItemRead(input: {
       : safeErrorClass(response.status)
   const exactIdentity = response.ok && payload !== null &&
     text(payload.sku, 100) === REVERSIBLE_OOS_TARGET_SKU
+  if (exactIdentity || response.status === 404 ||
+      !(response.status === 400 && observedErrorId === "25709")) {
+    return {
+      attempted: true,
+      httpStatus: response.status,
+      exists: exactIdentity ? true
+        : response.status === 404 ? false : "UNPROVEN",
+      authoritativeAbsence: response.status === 404,
+      errorId: observedErrorId,
+      safeErrorClass: classification,
+      errorMetadata,
+      requestContractFixRequired:
+        response.status === 400 && observedErrorId === "25709",
+      authorityOperation: exactIdentity || response.status === 404
+        ? "GET_INVENTORY_ITEM" : "UNPROVEN",
+      bulkFallbackAttempted: false,
+      bulkHttpStatus: null,
+    }
+  }
+
+  // eBay's documented bulk read is a second, bounded representation of the
+  // same exact Inventory item. It is used only when the documented single-SKU
+  // GET is rejected with the surface-specific 25709 response. This avoids
+  // guessing at optional headers while preserving exact-SKU authority.
+  const bulkResponse = await input.fetchImpl(BULK_GET_INVENTORY_ITEM_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ requests: [{ sku: REVERSIBLE_OOS_TARGET_SKU }] }),
+    cache: "no-store",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  })
+  const bulkPayload = await inventoryJson(bulkResponse)
+  const responses = bulkPayload && Array.isArray(bulkPayload.responses)
+    ? bulkPayload.responses.filter((candidate): candidate is Record<string, unknown> =>
+      Boolean(candidate) && typeof candidate === "object" && !Array.isArray(candidate))
+    : []
+  const exactResponses = responses.filter((candidate) =>
+    text(candidate.sku, 100) === REVERSIBLE_OOS_TARGET_SKU)
+  const exactResponse = exactResponses.length === 1 ? exactResponses[0] : null
+  const inventoryItem = exactResponse?.inventoryItem &&
+      typeof exactResponse.inventoryItem === "object" &&
+      !Array.isArray(exactResponse.inventoryItem)
+    ? exactResponse.inventoryItem as Record<string, unknown> : null
+  const bulkIdentity = bulkResponse.ok && exactResponses.length === 1 &&
+    inventoryItem !== null &&
+    text(inventoryItem.sku, 100) === REVERSIBLE_OOS_TARGET_SKU &&
+    exactResponse?.statusCode === 200
+  const exactErrors = Array.isArray(exactResponse?.errors)
+    ? exactResponse.errors : []
+  const exactNotFound = bulkResponse.ok && exactResponses.length === 1 &&
+    exactResponse?.statusCode === 404 && exactErrors.some((candidate) => {
+      const record = inventoryErrorRecord(candidate)
+      return record?.errorId === 25710 || record?.errorId === "25710"
+    })
   return {
     attempted: true,
     httpStatus: response.status,
-    exists: exactIdentity ? true
-      : response.status === 404 ? false : "UNPROVEN",
-    authoritativeAbsence: response.status === 404,
+    exists: bulkIdentity ? true : exactNotFound ? false : "UNPROVEN",
+    authoritativeAbsence: exactNotFound,
     errorId: observedErrorId,
     safeErrorClass: classification,
     errorMetadata,
-    requestContractFixRequired:
-      response.status === 400 && observedErrorId === "25709",
+    requestContractFixRequired: !bulkIdentity && !exactNotFound,
+    authorityOperation: bulkIdentity || exactNotFound
+      ? "BULK_GET_INVENTORY_ITEM" : "UNPROVEN",
+    bulkFallbackAttempted: true,
+    bulkHttpStatus: bulkResponse.status,
   }
 }
 
@@ -671,6 +744,9 @@ function unavailable(limitationCode: string,
     exactSkuFieldNameClass: "UNPROVEN",
     exactSkuInvalidValueClass: "UNPROVEN",
     exactSkuMessageTemplateClass: "NO_MESSAGE",
+    exactSkuAuthorityOperation: "UNPROVEN",
+    exactSkuBulkFallbackAttempted: false,
+    exactSkuBulkHttpStatus: null,
     exactOfferLookupAttempted: false,
     exactOfferFound: "UNPROVEN",
     exactPublicationItemIdMatch: "UNPROVEN",
@@ -759,7 +835,8 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       exactSku: { attempted: false, httpStatus: null, exists: "UNPROVEN",
         authoritativeAbsence: false, errorId: null, safeErrorClass: "OTHER",
         errorMetadata: UNPROVEN_25709_METADATA,
-        requestContractFixRequired: false } }
+        requestContractFixRequired: false, authorityOperation: "UNPROVEN",
+        bulkFallbackAttempted: false, bulkHttpStatus: null } }
     let inventoryLookupFailure: string | null = null
     const inventoryOwnershipNeedsResolution = tradingReadSuccess &&
       listingType === "FixedPriceItem" && listingDuration === "GTC"
@@ -880,6 +957,9 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
         inventory.exactSku.errorMetadata.invalidValueClass,
       exactSkuMessageTemplateClass:
         inventory.exactSku.errorMetadata.messageTemplateClass,
+      exactSkuAuthorityOperation: inventory.exactSku.authorityOperation,
+      exactSkuBulkFallbackAttempted: inventory.exactSku.bulkFallbackAttempted,
+      exactSkuBulkHttpStatus: inventory.exactSku.bulkHttpStatus,
       exactOfferLookupAttempted: inventory.attempted,
       exactOfferFound,
       exactPublicationItemIdMatch,
