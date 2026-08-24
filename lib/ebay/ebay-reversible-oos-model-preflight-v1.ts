@@ -331,7 +331,7 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
   const environment = input.environment ?? process.env
   const fetchImpl = input.fetchImpl ?? fetch
   const identity = getEbayProductionIdentityBindingConfiguration(environment)
-  if (!identity.bound || !identity.consistent || !identity.expectedUserId) {
+  if (!identity.bound || !identity.consistent) {
     return unavailable("REVERSIBLE_OOS_ACCOUNT_BINDING_UNPROVEN")
   }
   let preferenceAttempted = false
@@ -372,7 +372,9 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
     const quantity = nonNegativeInteger(tradingXmlTagValue(itemXml, "Quantity"))
     const itemIdMatch = observedItemId === REVERSIBLE_OOS_TARGET_ITEM_ID
     const skuMatch = observedSku === REVERSIBLE_OOS_TARGET_SKU
-    const sellerAccountMatch = observedSeller === identity.expectedUserId &&
+    const sellerAccountMatch = Boolean(observedSeller) &&
+      (!identity.expectedUserId || observedSeller.toLocaleLowerCase("en-US") ===
+        identity.expectedUserId.toLocaleLowerCase("en-US")) &&
       ebayProductionAccountFingerprint(observedSeller) ===
         identity.expectedAccountFingerprint
     const tradingReadSuccess = itemIdMatch && skuMatch && sellerAccountMatch &&
