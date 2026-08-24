@@ -48,6 +48,26 @@ type Result = {
   contributionMarginPercent: number | null
 }
 
+type RuntimeTrace = {
+  authClassification: string
+  noExplicitAuthFailure: boolean
+  productIdentityVerified: boolean
+  addToCartElementFound: boolean
+  addToCartClickDispatched: boolean
+  cartMutationConfirmed: boolean
+  authenticatedOperationConfirmed: boolean
+}
+
+const EMPTY_RUNTIME_TRACE: RuntimeTrace = Object.freeze({
+  authClassification: "NOT_CHECKED",
+  noExplicitAuthFailure: false,
+  productIdentityVerified: false,
+  addToCartElementFound: false,
+  addToCartClickDispatched: false,
+  cartMutationConfirmed: false,
+  authenticatedOperationConfirmed: false,
+})
+
 async function adminPost(action: string, body: Record<string, unknown>,
   idempotencyKey?: string) {
   const { data: { session } } = await supabase.auth.getSession()
@@ -108,6 +128,7 @@ export default function LunaShippingCapturePage() {
   const [connected, setConnected] = useState(false)
   const [running, setRunning] = useState(false)
   const [lastRuntimeState, setLastRuntimeState] = useState("NOT_STARTED")
+  const [runtimeTrace, setRuntimeTrace] = useState<RuntimeTrace>(EMPTY_RUNTIME_TRACE)
   const [results, setResults] = useState<Result[]>([])
   const triggerRef = useRef<(() => void) | null>(null)
 
@@ -167,6 +188,7 @@ export default function LunaShippingCapturePage() {
       setError("")
       setResults([])
       setLastRuntimeState("CANARY_DISPATCHED")
+      setRuntimeTrace(EMPTY_RUNTIME_TRACE)
       void loadJobs([CANARY_ID], "CANARY").catch(fail)
     }
     triggerRef.current = beginCanary
@@ -189,6 +211,8 @@ export default function LunaShippingCapturePage() {
           const allowed = new Set(["CONTENT_SCRIPT_LOADED",
             "ACTIVE_JOB_REQUESTED", "ACTIVE_JOB_RECOVERED",
             "PRODUCT_PAGE_DOM_READY", "PRODUCT_IDENTITY_CHECK_STARTED",
+            "AUTH_EXPLICITLY_FAILED", "AUTH_CHALLENGE_PRESENT",
+            "AUTH_NOT_YET_REQUIRED", "AUTHENTICATED_OPERATION_CONFIRMED",
             "PRODUCT_IDENTITY_VERIFIED", "ADD_TO_CART_ELEMENT_FOUND",
             "ADD_TO_CART_CLICK_DISPATCHED", "CART_MUTATION_CONFIRMED",
             "SHIPPING_CAPTURE_STARTED", "RESULT_POSTED"])
@@ -196,6 +220,23 @@ export default function LunaShippingCapturePage() {
               message.candidateId === jobs[index]?.identity.candidateId) {
             setStatus(message.state)
             setLastRuntimeState(message.state)
+            setRuntimeTrace((current) => ({ ...current,
+              ...(message.state.startsWith("AUTH_")
+                ? { authClassification: message.state } : {}),
+              ...(message.state === "AUTH_NOT_YET_REQUIRED" ||
+                  message.state === "AUTHENTICATED_OPERATION_CONFIRMED"
+                ? { noExplicitAuthFailure: true } : {}),
+              ...(message.state === "PRODUCT_IDENTITY_VERIFIED"
+                ? { productIdentityVerified: true } : {}),
+              ...(message.state === "ADD_TO_CART_ELEMENT_FOUND"
+                ? { addToCartElementFound: true } : {}),
+              ...(message.state === "ADD_TO_CART_CLICK_DISPATCHED"
+                ? { addToCartClickDispatched: true } : {}),
+              ...(message.state === "CART_MUTATION_CONFIRMED"
+                ? { cartMutationConfirmed: true } : {}),
+              ...(message.state === "AUTHENTICATED_OPERATION_CONFIRMED"
+                ? { authenticatedOperationConfirmed: true } : {}),
+            }))
           }
           return
         }
@@ -292,6 +333,15 @@ export default function LunaShippingCapturePage() {
         <p className="mt-2 text-lg font-black">{status}</p>
         <code className="mt-2 block break-all text-xs text-cyan-100">
           LAST_RUNTIME_STATE={lastRuntimeState}
+        </code>
+        <code className="mt-2 block whitespace-pre-wrap text-xs text-cyan-100">
+          {`AUTH_CLASSIFICATION=${runtimeTrace.authClassification}\n` +
+            `NO_EXPLICIT_AUTH_FAILURE=${runtimeTrace.noExplicitAuthFailure}\n` +
+            `PRODUCT_IDENTITY_VERIFIED=${runtimeTrace.productIdentityVerified}\n` +
+            `ADD_TO_CART_ELEMENT_FOUND=${runtimeTrace.addToCartElementFound}\n` +
+            `ADD_TO_CART_CLICK_DISPATCHED=${runtimeTrace.addToCartClickDispatched}\n` +
+            `CART_MUTATION_CONFIRMED=${runtimeTrace.cartMutationConfirmed}\n` +
+            `AUTHENTICATED_OPERATION_CONFIRMED=${runtimeTrace.authenticatedOperationConfirmed}`}
         </code>
         {error && <code className="mt-3 block break-all text-sm text-rose-100">
           FINAL_BLOCKER={error}

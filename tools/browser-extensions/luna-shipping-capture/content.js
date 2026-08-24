@@ -131,20 +131,26 @@ function isVisible(element) {
     Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0
 }
 
-function authenticatedVisibleDom() {
-  if (location.hostname === "account.lunaportex.com" ||
-      /\/account\/(?:login|signin)/i.test(location.pathname) ||
-      document.querySelector('input[type="password"]')) return false
-  const selectors = [
-    'a[href*="/account/logout"]', 'a[href*="/account/signout"]',
-    '[data-customer-id]', '[data-customer-logged-in="true"]',
-    '.customer-account', '[aria-label*="Log out" i]',
-  ]
+function visibleMatch(selectors) {
   return selectors.some((selector) => [...document.querySelectorAll(selector)]
-    .some((element) => isVisible(element))) ||
-    [...document.querySelectorAll("a,button")].slice(0, 400).some((element) =>
-      isVisible(element) && /^(?:log out|sign out|cerrar sesi[oó]n)$/i
-        .test((element.textContent ?? "").trim()))
+    .some((element) => isVisible(element)))
+}
+
+function classifyPageAuth() {
+  const challenge = visibleMatch([
+    'iframe[src*="captcha" i]', '[data-cf-challenge]', '[id*="challenge" i]',
+    'input[name*="verification" i]', 'input[autocomplete="one-time-code"]',
+  ]) || [...document.querySelectorAll("h1,h2,p,label")].slice(0, 300)
+    .some((element) => isVisible(element) &&
+      /verify you are human|security challenge|verification code|captcha/i
+        .test(element.textContent ?? ""))
+  if (challenge) return "AUTH_CHALLENGE_PRESENT"
+  const explicitLogin = location.hostname === "account.lunaportex.com" &&
+      /\/(?:login|signin|auth|code|verify)(?:\/|$)/i.test(location.pathname) ||
+    /\/account\/(?:login|signin)(?:\/|$)/i.test(location.pathname) ||
+    visibleMatch(['input[type="password"]', 'form[action*="/account/login"]',
+      'form[action*="/login"]'])
+  return explicitLogin ? "AUTH_EXPLICITLY_FAILED" : "AUTH_NOT_YET_REQUIRED"
 }
 
 async function boundedJson(response) {
@@ -162,14 +168,22 @@ async function request(path, options = {}) {
   if (url.origin !== location.origin ||
       !new Set(["/cart.js", "/cart/clear.js", "/cart/add.js"])
         .has(url.pathname)) throw new Error("LUNA_CART_ENDPOINT_DENIED")
-  const response = await fetch(url, {
-    method: options.method ?? "GET",
-    credentials: "same-origin", redirect: "error", cache: "no-store",
-    headers: { Accept: "application/json",
-      ...(options.body === undefined ? {} : { "Content-Type": "application/json" }) },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    signal: AbortSignal.timeout(STEP_TIMEOUT_MS),
-  })
+  let response
+  try {
+    response = await fetch(url, {
+      method: options.method ?? "GET",
+      credentials: "same-origin", redirect: "manual", cache: "no-store",
+      headers: { Accept: "application/json",
+        ...(options.body === undefined ? {} : { "Content-Type": "application/json" }) },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      signal: AbortSignal.timeout(STEP_TIMEOUT_MS),
+    })
+  } catch { throw new Error("LUNA_CART_TRANSPORT_UNAVAILABLE") }
+  if (response.type === "opaqueredirect" ||
+      (response.status >= 300 && response.status < 400) || response.status === 401) {
+    throw new Error("LUNA_SESSION_EXPIRED")
+  }
+  if (response.status === 403) throw new Error("LUNA_AUTH_CHALLENGE_REQUIRED")
   if (!response.ok) throw new Error(`LUNA_CART_HTTP_${response.status}`)
   return boundedJson(response)
 }
@@ -368,7 +382,13 @@ async function visibleShipping(job, expectedSubtotal) {
       frame.addEventListener("load", () => { clearTimeout(timeout); resolve() }, { once: true })
     })
     const root = frame.contentDocument
-    if (!root) throw new Error("LUNA_CART_DOM_UNAVAILABLE")
+    if (!root) throw new Error("LUNA_AUTH_CHALLENGE_REQUIRED")
+    if (root.querySelector('iframe[src*="captcha" i],[data-cf-challenge],input[autocomplete="one-time-code"]')) {
+      throw new Error("LUNA_AUTH_CHALLENGE_REQUIRED")
+    }
+    if (root.querySelector('input[type="password"],form[action*="/account/login"],form[action*="/login"]')) {
+      throw new Error("LUNA_SESSION_EXPIRED")
+    }
     const subtotalElement = firstVisible(root, [
       "[data-cart-subtotal]", ".totals__total-value", ".cart-subtotal__price",
       "[data-cart-total]", ".cart__subtotal .money",
@@ -438,7 +458,14 @@ async function run(job) {
   progress(job, "ACTIVE_JOB_RECOVERED")
   await productPageReady(job)
   progress(job, "PRODUCT_PAGE_DOM_READY")
-  if (!authenticatedVisibleDom()) throw new Error("LUNA_NORMAL_CHROME_AUTH_UNPROVEN")
+  const authClassification = classifyPageAuth()
+  progress(job, authClassification)
+  if (authClassification === "AUTH_EXPLICITLY_FAILED") {
+    throw new Error("LUNA_SESSION_EXPIRED")
+  }
+  if (authClassification === "AUTH_CHALLENGE_PRESENT") {
+    throw new Error("LUNA_AUTH_CHALLENGE_REQUIRED")
+  }
   progress(job, "PRODUCT_IDENTITY_CHECK_STARTED")
   await retry(() => exactProduct(job))
   progress(job, "PRODUCT_IDENTITY_VERIFIED")
@@ -462,6 +489,7 @@ async function run(job) {
     const subtotalUsd = Math.round(minor) / 100
     progress(job, "SHIPPING_CAPTURE_STARTED")
     const visible = await visibleShipping(job, subtotalUsd)
+    progress(job, "AUTHENTICATED_OPERATION_CONFIRMED")
     const observedAt = new Date().toISOString()
     const evidenceInput = {
       candidateId: job.identity.candidateId,
