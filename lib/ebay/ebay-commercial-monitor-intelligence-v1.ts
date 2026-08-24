@@ -739,7 +739,8 @@ function experimentGuardian(
     updatedAt: experiment.evidenceTimestamp,
   }
   const signalCodes = [...(experiment.externalSignalCodes ?? [])]
-  if (listing.stock?.state === "OUT_OF_STOCK_SIGNAL") {
+  if (["OUT_OF_STOCK_SIGNAL", "CERTIFIED_OOS"].includes(
+      listing.stock?.state ?? "")) {
     signalCodes.push("OUT_OF_STOCK")
   }
   const signals: ExternalEbaySignalV1[] = [...new Set(signalCodes)].map(
@@ -1271,7 +1272,8 @@ export function buildCommercialMonitorBackendV1(input: {
         status: countStatus,
         count: decisions.length
           ? primaryListings.filter((listing) =>
-              listing.stock?.state === "OUT_OF_STOCK_SIGNAL").length
+              ["OUT_OF_STOCK_SIGNAL", "CERTIFIED_OOS"].includes(
+                listing.stock?.state ?? "")).length
           : null,
       },
       stockUnknown: {

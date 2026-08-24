@@ -1,4 +1,7 @@
-import type { CommercialMonitorGetDto } from "./commercial-monitor-readonly-contract"
+import { isProvenSupplierLinkageV1,
+  type CommercialMonitorGetDto } from
+// @ts-expect-error Node's direct TypeScript test runner requires the extension.
+  "./commercial-monitor-readonly-contract.ts"
 // @ts-expect-error Node's direct TypeScript runner requires the explicit extension.
 import { createUnavailableSellerOsOfficialOrdersReadV1, type SellerOsOfficialOrdersReadV1 } from "./ebay-official-orders-read-v1.ts"
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
@@ -185,8 +188,9 @@ function safeListing(
       nextReviewCondition: decision.nextReviewCondition, nextReviewAt: decision.nextReviewAt } : null,
     supplier: { productId: listing.stock.supplierProductId,
       variantId: listing.stock.supplierVariantId, sku: listing.stock.supplierSku,
-      linkage: listing.stock.supplierProductId && listing.stock.supplierVariantId
-        ? "EXACT_PROVEN" : "UNPROVEN" },
+      linkage: listing.stock.supplierLinkageStatus === "CERTIFIED"
+        ? "CERTIFIED" : isProvenSupplierLinkageV1(listing.stock)
+          ? "EXACT_PROVEN" : "UNPROVEN" },
     stockGuard: { state: listing.stock.state, sourceHealth: listing.stock.sourceContractStatus,
       quantity: listing.stock.quantity, freshness: listing.stock.freshness,
       safeCapacity: listing.composition.bundleCapacity, hardOverride:
@@ -309,7 +313,7 @@ export function buildAssistantCommercialContextV1(
     supplierReadiness: { status: livePortfolioProven
       ? "AVAILABLE" as const : "UNPROVEN" as const,
       exactLinkedListings: livePortfolioProven ? liveListings.filter((row) =>
-        row.stock.supplierProductId && row.stock.supplierVariantId).length : null,
+        isProvenSupplierLinkageV1(row.stock)).length : null,
       totalLiveListings: livePortfolioProven
         ? integrity.canonicalCohort.listingCount : null,
       currentLiveScopeId: integrity.canonicalCohort.scopeId },
@@ -424,8 +428,10 @@ export function executeSellerOsAssistantToolV1(input: {
     const integrity = resolveCrossModuleLivePortfolioIntegrityV1(input.monitor)
     const liveListings = currentLiveListingsForMonitorV1(input.monitor)
     const entries = cap(liveListings.map((row) => ({ itemId: row.identity.itemId,
-      title: row.identity.title, supplierLinkage: row.stock.supplierProductId &&
-        row.stock.supplierVariantId ? "EXACT_PROVEN" : "UNPROVEN", state: row.stock.state,
+      title: row.identity.title, supplierLinkage:
+        row.stock.supplierLinkageStatus === "CERTIFIED" ? "CERTIFIED" :
+          isProvenSupplierLinkageV1(row.stock) ? "EXACT_PROVEN" : "UNPROVEN",
+      state: row.stock.state,
       freshness: row.stock.freshness, quantity: row.stock.quantity.value,
       safeCapacity: row.composition.bundleCapacity.value,
       limitationCode: row.stock.limitationCode })), maximum)

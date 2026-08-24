@@ -45,6 +45,10 @@ import {
   type TimelineEntry,
 } from "./commercial-monitor-readonly-contract"
 import {
+  projectSellerOsCanonicalLunaStockReadModelV1,
+// @ts-expect-error Node's direct TypeScript test runner requires the extension.
+} from "./ebay-luna-canonical-stock-read-model-adapter-v1.ts"
+import {
   hashEbayMonitorEvidenceIdentifier,
   type EbayCommercialMonitorLiveReadonlyResult,
   type EbayMonitorOAuthSafeErrorCategory,
@@ -1311,7 +1315,8 @@ function listingAlerts(input: {
   }
   const alerts: AlertCandidate[] = []
   const stockEvidence = listing.stock.evidenceReferences
-  if (listing.stock.state === "OUT_OF_STOCK_SIGNAL" && stockEvidence.length) {
+  if (["OUT_OF_STOCK_SIGNAL", "CERTIFIED_OOS"].includes(
+      listing.stock.state) && stockEvidence.length) {
     alerts.push(createAlertCandidate({
       ...common,
       componentReference: listing.stock.supplierVariantId ? {
@@ -1333,7 +1338,8 @@ function listingAlerts(input: {
     alerts.push(createAlertCandidate({
       ...common,
       reasonCode: "PAID_ORDER_STOCK_RISK",
-      severity: listing.stock.state === "OUT_OF_STOCK_SIGNAL" ? "CRITICAL" : "HIGH",
+      severity: ["OUT_OF_STOCK_SIGNAL", "CERTIFIED_OOS"].includes(
+        listing.stock.state) ? "CRITICAL" : "HIGH",
       supportingEvidence: [
         ...stockEvidence,
         ...input.orderProjection.evidenceReferences,
@@ -1584,7 +1590,7 @@ function projectListing(input: {
       supplierSku: approvedSupplierSku,
     },
   )
-  const stock = resolveStockEvidence({
+  const legacyStock = resolveStockEvidence({
     productId: approvedProductId,
     supplierVariantId: approvedVariantId,
     supplierSku: approvedSupplierSku,
@@ -1596,11 +1602,30 @@ function projectListing(input: {
     now: input.now,
     maximumAgeSeconds: LUNA_MAXIMUM_AGE_SECONDS,
   })
-  const composition = unprovenComposition({
+  const legacyComposition = unprovenComposition({
     marketplace: input.marketplace,
     identity: identityEvidence,
     listingType: rawFields.listingType,
   })
+  const canonicalLuna = projectSellerOsCanonicalLunaStockReadModelV1({
+    itemId: listing.itemId,
+    marketplace: input.marketplace,
+    identity: identityEvidence,
+    now: input.now,
+    decisions: input.sources.lunaLinkageDecisions ?? {
+      status: "ERROR",
+      rows: [],
+    },
+    jobs: input.sources.lunaStockJobs ?? { status: "ERROR", rows: [] },
+    observations: input.sources.lunaStockObservations ?? {
+      status: "ERROR",
+      rows: [],
+    },
+  })
+  const stock = canonicalLuna.applied && canonicalLuna.stock
+    ? canonicalLuna.stock : legacyStock
+  const composition = canonicalLuna.applied && canonicalLuna.composition
+    ? canonicalLuna.composition : legacyComposition
   const productCase = resolveProductCaseLink()
   const experiment = resolveExperiment(authoritativeExperimentLookup({
     sources: input.sources,
@@ -2532,6 +2557,22 @@ function readerStatuses(
       sources.supplySources as unknown as ReadonlySourceResult<Record<string, unknown>>,
       latestIso(sources.supplySources.rows.map((row) => row.last_success_at)),
     ),
+    ...(sources.lunaLinkageDecisions ? [readerStatus(
+      sources.lunaLinkageDecisions as unknown as
+        ReadonlySourceResult<Record<string, unknown>>,
+      latestIso(sources.lunaLinkageDecisions.rows.map((row) => row.decision_at)),
+    )] : []),
+    ...(sources.lunaStockJobs ? [readerStatus(
+      sources.lunaStockJobs as unknown as
+        ReadonlySourceResult<Record<string, unknown>>,
+      latestIso(sources.lunaStockJobs.rows.map((row) =>
+        row.observation_window_end)),
+    )] : []),
+    ...(sources.lunaStockObservations ? [readerStatus(
+      sources.lunaStockObservations as unknown as
+        ReadonlySourceResult<Record<string, unknown>>,
+      latestIso(sources.lunaStockObservations.rows.map((row) => row.observed_at)),
+    )] : []),
     readerStatus(
       sources.orders as unknown as ReadonlySourceResult<Record<string, unknown>>,
       latestIso(sources.orders.rows.map((row) => row.observed_at)),

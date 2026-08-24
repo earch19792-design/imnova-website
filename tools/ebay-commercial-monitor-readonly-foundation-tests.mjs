@@ -10,6 +10,7 @@ const root = process.cwd()
 const canonicalRoute = "app/api/admin/ebay/monitor/route.ts"
 const canonicalPage = "app/admin/ebay/monitor/page.tsx"
 const registeredRuntimeGraphAdditions = Object.freeze([
+  "lib/ebay/ebay-luna-canonical-stock-read-model-adapter-v1.ts",
   "lib/ebay/ebay-official-orders-read-v1.ts",
   "lib/ebay/ebay-sale-alerts-read-v1.ts",
   "lib/ebay/ebay-sales-order-event-foundation-v1.ts",
@@ -122,6 +123,7 @@ test("el repositorio canónico sólo contiene SELECTs y ninguna ejecución exter
   assert.deepEqual(updateCalls.sort(), [
     "lib/ebay/commercial-monitor-readonly-utilities.mjs",
     "lib/ebay/ebay-commercial-monitor-live-readonly.ts",
+    "lib/ebay/ebay-luna-canonical-stock-read-model-adapter-v1.ts",
     "lib/ebay/ebay-seller-account-scope.ts",
     "lib/marketplace/commercial-monitor-domain.ts",
   ])
@@ -136,6 +138,10 @@ test("el repositorio canónico sólo contiene SELECTs y ninguna ejecución exter
   assert.match(
     read("lib/ebay/ebay-commercial-monitor-live-readonly.ts"),
     /createHash\("sha256"\)\s*\.update\(`EBAY_MONITOR_EVIDENCE:\$\{value\}`\)/,
+  )
+  assert.match(
+    read("lib/ebay/ebay-luna-canonical-stock-read-model-adapter-v1.ts"),
+    /createHash\("sha256"\)\s*\.update\(JSON\.stringify\(parts\)\)/,
   )
   assert.match(
     read("lib/marketplace/commercial-monitor-domain.ts"),

@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto"
 
-import type { CommercialMonitorGetDto, DeterministicIntegrityGuardCode,
-  LivePortfolioInvariantCode, LivePortfolioInvariantLifecycle } from
-  "./commercial-monitor-readonly-contract"
+import { isProvenSupplierLinkageV1,
+  type CommercialMonitorGetDto, type DeterministicIntegrityGuardCode,
+  type LivePortfolioInvariantCode, type LivePortfolioInvariantLifecycle } from
+// @ts-expect-error Node's direct TypeScript test runner requires the extension.
+  "./commercial-monitor-readonly-contract.ts"
 import type { CanonicalOpportunityResultV2 } from
   "./ebay-commercial-intelligence-upgrade-v1"
 // @ts-expect-error Node's direct TypeScript test runner requires the explicit extension.
@@ -716,7 +718,7 @@ export function buildSystemReviewBundleV1(input: {
   const staleCount = liveListings.filter((row) =>
     row.stock.freshness.status === "STALE").length
   const exactSupplierLinked = liveListings.filter((row) =>
-    row.stock.supplierProductId && row.stock.supplierVariantId && row.stock.supplierSku).length
+    isProvenSupplierLinkageV1(row.stock)).length
   const dataParity = buildSystemReviewSourceParityV1({ monitor: input.monitor,
     canonicalOpportunityCount: canonical.length })
   const portfolioCountsProven = dataParity.livePortfolio.zeroIsAuthoritative

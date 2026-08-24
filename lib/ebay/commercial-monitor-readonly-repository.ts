@@ -5,6 +5,11 @@ import {
   type ReadonlyCommercialEventRow,
   type ReadonlyDeliveryOutboxRow,
 } from "./ebay-sales-order-readonly-audit-repository-v1"
+import type {
+  ReadonlyLunaLinkageDecisionRowV1,
+  ReadonlyLunaStockJobRowV1,
+  ReadonlyLunaStockObservationRowV1,
+} from "./ebay-luna-canonical-stock-read-model-adapter-v1"
 
 export type ReadonlySourceStatus = "AVAILABLE" | "PARTIAL" | "ERROR"
 
@@ -192,12 +197,89 @@ export type CommercialMonitorReadonlySources = {
   commercialSnapshots: ReadonlySourceResult<ReadonlyCommercialSnapshotRow>
   supplies: ReadonlySourceResult<ReadonlySupplyRow>
   supplySources: ReadonlySourceResult<ReadonlySupplySourceRow>
+  lunaLinkageDecisions?: ReadonlySourceResult<ReadonlyLunaLinkageDecisionRowV1>
+  lunaStockJobs?: ReadonlySourceResult<ReadonlyLunaStockJobRowV1>
+  lunaStockObservations?: ReadonlySourceResult<ReadonlyLunaStockObservationRowV1>
   orders: ReadonlySourceResult<ReadonlyOrderRow>
   orderLines: ReadonlySourceResult<ReadonlyOrderLineRow>
   saleEvents: ReadonlySourceResult<ReadonlyCommercialEventRow>
   saleDeliveries: ReadonlySourceResult<ReadonlyDeliveryOutboxRow>
   learning: ReadonlySourceResult<ReadonlyLearningAdjustmentRow>
   experiments: ReadonlySourceResult<ReadonlyExperimentRow>
+}
+
+async function readCanonicalLunaLinkageDecisions(
+  supabase: SupabaseClient,
+  accountKey: string,
+): Promise<ReadonlySourceResult<ReadonlyLunaLinkageDecisionRowV1>> {
+  const maximum = 500
+  const { data, error } = await supabase
+    .from("seller_os_luna_linkage_decisions")
+    .select("decision_id,decision_version,decision,decision_at,ebay_item_id,ebay_sku,linkage_id,components,evidence_digest,evidence_references")
+    .eq("account_key", accountKey)
+    .eq("marketplace_id", "EBAY_US")
+    .order("decision_version", { ascending: false })
+    .limit(maximum + 1)
+  if (error) {
+    return failure(
+      "SELLER_OS_LUNA_LINKAGE_DECISIONS_V1",
+      "CANONICAL_LUNA_LINKAGE_DECISION_READ_FAILED",
+    )
+  }
+  return success(
+    "SELLER_OS_LUNA_LINKAGE_DECISIONS_V1",
+    (data ?? []) as ReadonlyLunaLinkageDecisionRowV1[],
+    maximum,
+  )
+}
+
+async function readCanonicalLunaStockJobs(
+  supabase: SupabaseClient,
+  accountKey: string,
+): Promise<ReadonlySourceResult<ReadonlyLunaStockJobRowV1>> {
+  const maximum = 500
+  const { data, error } = await supabase
+    .from("seller_os_luna_stock_check_jobs")
+    .select("stock_check_job_id,linkage_id,ebay_item_id,observation_window_start,observation_window_end,workflow_state,attempt_count,success_receipt_digest")
+    .eq("account_key", accountKey)
+    .eq("workflow_state", "SUCCEEDED")
+    .order("observation_window_end", { ascending: false })
+    .limit(maximum + 1)
+  if (error) {
+    return failure(
+      "SELLER_OS_LUNA_STOCK_CHECK_JOBS_V1",
+      "CANONICAL_LUNA_STOCK_JOB_READ_FAILED",
+    )
+  }
+  return success(
+    "SELLER_OS_LUNA_STOCK_CHECK_JOBS_V1",
+    (data ?? []) as ReadonlyLunaStockJobRowV1[],
+    maximum,
+  )
+}
+
+async function readCanonicalLunaStockObservations(
+  supabase: SupabaseClient,
+  accountKey: string,
+): Promise<ReadonlySourceResult<ReadonlyLunaStockObservationRowV1>> {
+  const maximum = 1_500
+  const { data, error } = await supabase
+    .from("seller_os_luna_stock_observations")
+    .select("observation_id,stock_check_job_id,linkage_id,ebay_item_id,component_identity_id,luna_product_id,luna_variant_id,luna_sku,supplier_quantity_required,observation_state,source_status,observed_availability,observed_supplier_quantity,evidence_class,evidence_digest,acquisition_method,attempt_number,observed_at,maximum_age_seconds,limitations")
+    .eq("account_key", accountKey)
+    .order("observed_at", { ascending: false })
+    .limit(maximum + 1)
+  if (error) {
+    return failure(
+      "SELLER_OS_LUNA_STOCK_OBSERVATIONS_V1",
+      "CANONICAL_LUNA_STOCK_OBSERVATION_READ_FAILED",
+    )
+  }
+  return success(
+    "SELLER_OS_LUNA_STOCK_OBSERVATIONS_V1",
+    (data ?? []) as ReadonlyLunaStockObservationRowV1[],
+    maximum,
+  )
 }
 
 function success<T>(source: string, rows: T[], maximum: number) {
@@ -570,6 +652,9 @@ export async function readCommercialMonitorReadonlySources(
     commercialSnapshots,
     supplies,
     supplySources,
+    lunaLinkageDecisions,
+    lunaStockJobs,
+    lunaStockObservations,
     orders,
     salesOrderAudit,
     learning,
@@ -579,6 +664,9 @@ export async function readCommercialMonitorReadonlySources(
     readCommercialSnapshots(supabase, accountKey),
     readSupplies(supabase, registry.rows),
     readSupplySources(supabase),
+    readCanonicalLunaLinkageDecisions(supabase, accountKey),
+    readCanonicalLunaStockJobs(supabase, accountKey),
+    readCanonicalLunaStockObservations(supabase, accountKey),
     readOrders(supabase, accountKey),
     readSalesOrderReadonlyAuditV1(supabase, accountKey),
     readLearning(supabase, accountKey),
@@ -596,6 +684,9 @@ export async function readCommercialMonitorReadonlySources(
     commercialSnapshots,
     supplies,
     supplySources,
+    lunaLinkageDecisions,
+    lunaStockJobs,
+    lunaStockObservations,
     orders,
     orderLines,
     saleEvents: salesOrderAudit.saleEvents,

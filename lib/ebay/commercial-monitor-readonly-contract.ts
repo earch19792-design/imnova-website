@@ -455,6 +455,7 @@ export function resolveExperiment(
 export type StockState =
   | "IN_STOCK_SIGNAL"
   | "OUT_OF_STOCK_SIGNAL"
+  | "CERTIFIED_OOS"
   | "STOCK_UNKNOWN"
   | "STOCK_CONFLICTED"
   | "STALE"
@@ -536,6 +537,7 @@ export type SupplyEvidence = {
 export type StockReadModel = {
   state: StockState
   sourceContractStatus: "HEALTHY" | "UNPROVEN" | "ERROR"
+  supplierLinkageStatus?: "CERTIFIED" | "EXACT_PROVEN" | "UNPROVEN"
   supplierProductId: string | null
   supplierVariantId: string | null
   supplierSku: string | null
@@ -592,6 +594,8 @@ export function resolveStockEvidence(input: {
   const unknownQuantity = (limitationCode: string, state: StockState) => ({
     state,
     sourceContractStatus: state === "SOURCE_FORMAT_CHANGED" ? "ERROR" as const : "UNPROVEN" as const,
+    supplierLinkageStatus: input.productId && input.supplierVariantId &&
+      input.supplierSku ? "EXACT_PROVEN" as const : "UNPROVEN" as const,
     supplierProductId: input.productId,
     supplierVariantId: input.supplierVariantId,
     supplierSku: input.supplierSku,
@@ -815,6 +819,7 @@ export function resolveStockEvidence(input: {
   return {
     state: supply.available ? "IN_STOCK_SIGNAL" : "OUT_OF_STOCK_SIGNAL",
     sourceContractStatus: "HEALTHY",
+    supplierLinkageStatus: "EXACT_PROVEN" as const,
     supplierProductId: supply.productId,
     supplierVariantId: supply.supplierVariantId,
     supplierSku: supply.sku,
@@ -825,6 +830,12 @@ export function resolveStockEvidence(input: {
     evidenceReferences: references,
     limitationCode: null,
   }
+}
+
+export function isProvenSupplierLinkageV1(stock: StockReadModel) {
+  return stock.supplierLinkageStatus === "CERTIFIED" ||
+    stock.supplierLinkageStatus === "EXACT_PROVEN" || Boolean(
+      stock.supplierProductId && stock.supplierVariantId && stock.supplierSku)
 }
 
 export const COMMERCIAL_MONITOR_METRIC_KEYS = [
