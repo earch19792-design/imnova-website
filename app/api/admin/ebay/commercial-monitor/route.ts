@@ -25,8 +25,10 @@ import { getEbayReadonlyRateLimitMetadata } from "@/lib/ebay/ebay-readonly-rate-
 import {
   applyCertifiedOosProtectionV1,
   applyEbayCommercialImprovement,
+  endLiveInvariantViolationNotAvailableV1,
   preflightCertifiedOosExecutionV1,
   prepareEbayCommercialImprovement,
+  SELLER_OS_LIVE_INVARIANT_END_AUTHORIZATION_V1,
 } from "@/lib/ebay/ebay-commercial-improvement-action-service"
 import { getCommercialMonitorReadonly } from
   "@/lib/ebay/commercial-monitor-readonly-service"
@@ -123,6 +125,17 @@ function explicitSellerHubEvidence(value: unknown) {
     ctr: candidate.ctr,
   } as SellerHubEvidence
 }
+
+const BULK_END_UNLINKED_LIVE_TARGETS_V1 = Object.freeze([
+  "366543596425",
+  "366575102453",
+  "366582630351",
+  "366584136876",
+  "366584249461",
+  "366597780377",
+  "366602466981",
+  "366608128809",
+])
 
 export async function GET(req: Request) {
   const validation = await validateAdminApiRequest(req)
@@ -283,6 +296,88 @@ export async function POST(req: Request) {
         safety: { previewOnly: true, readOnly: true, rawPayloadReturned: false,
           credentialsReturned: false, databaseWrites: 0, ebayWrites: 0,
           lunaWrites: 0 },
+      }, { headers: { "Cache-Control": "no-store" } })
+    }
+    if (input.action === "execute_bulk_end_unlinked_live_v1") {
+      if (validation.authenticationMode !== "service_role" ||
+          Object.keys(input).sort().join(",") !== "action" ||
+          input.confirmed !== undefined) {
+        return NextResponse.json({ success: false,
+          error: "BULK_END_UNLINKED_LIVE_REQUEST_INVALID" }, { status: 403 })
+      }
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) {
+        throw new Error("COMMERCIAL_MONITOR_ACCOUNT_SCOPE_REQUIRED")
+      }
+      const outcomes: Array<Record<string, unknown>> = []
+      for (const itemId of BULK_END_UNLINKED_LIVE_TARGETS_V1) {
+        try {
+          const live = await getEbayCommercialMonitorLiveReadonly({
+            accountKey: account.accountKey,
+            accountAlias: account.accountAlias,
+          })
+          const monitor = await getCommercialMonitorReadonly(
+            supabase,
+            { accountKey: account.accountKey,
+              accountAlias: account.accountAlias,
+              configurationReason: account.reason },
+            live,
+          )
+          const listing = monitor.listings.find((row) =>
+            row.identity.itemId === itemId) ?? null
+          if (!listing ||
+              listing.discovery.livePresence.status !== "LIVE_ACTIVE") {
+            outcomes.push({ itemId, status: "SKIPPED_NOT_CURRENT_LIVE",
+              ebayWriteCount: 0 })
+            continue
+          }
+          if (listing.stock.supplierLinkageStatus === "CERTIFIED") {
+            outcomes.push({ itemId, status: "SKIPPED_CERTIFIED",
+              ebayWriteCount: 0 })
+            continue
+          }
+          const result = await endLiveInvariantViolationNotAvailableV1({
+            itemId,
+            expectedSku: listing.identity.sku,
+            automationAuthorization:
+              SELLER_OS_LIVE_INVARIANT_END_AUTHORIZATION_V1,
+          })
+          outcomes.push({ itemId, status: result.status,
+            ebayWriteCount: result.ebayWriteCount,
+            officialReadbackNotCurrentLive:
+              result.officialReadbackNotCurrentLive })
+        } catch (error) {
+          outcomes.push({ itemId, status: "FAILED",
+            error: safeCode(error), ebayWriteCount: 0 })
+        }
+      }
+      const finalLive = await getEbayCommercialMonitorLiveReadonly({
+        accountKey: account.accountKey,
+        accountAlias: account.accountAlias,
+      })
+      const finalMonitor = await getCommercialMonitorReadonly(
+        supabase,
+        { accountKey: account.accountKey,
+          accountAlias: account.accountAlias,
+          configurationReason: account.reason },
+        finalLive,
+      )
+      const finalLiveRows = finalMonitor.listings.filter((listing) =>
+        listing.discovery.livePresence.status === "LIVE_ACTIVE")
+      const finalLiveItemIds = [...new Set(finalLiveRows.map((listing) =>
+        listing.identity.itemId))].sort()
+      return NextResponse.json({ success: outcomes.every((outcome) =>
+        outcome.status !== "FAILED"),
+        action: input.action,
+        targetCount: BULK_END_UNLINKED_LIVE_TARGETS_V1.length,
+        outcomes,
+        ebayWriteCount: outcomes.reduce((sum, outcome) => sum +
+          (typeof outcome.ebayWriteCount === "number"
+            ? outcome.ebayWriteCount : 0), 0),
+        finalLiveItemIds,
+        safety: { serviceRoleOnly: true, browserSessionRequired: false,
+          inventoryApiUsed: false, databaseWrites: 0, lunaWrites: 0,
+          newSchedulerCreated: false },
       }, { headers: { "Cache-Control": "no-store" } })
     }
     if (input.action === "preflight_certified_oos_protection" ||
