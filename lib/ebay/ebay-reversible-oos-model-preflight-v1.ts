@@ -15,6 +15,7 @@ const TOKEN_ENDPOINT = `${EBAY_ORIGIN}/identity/v1/oauth2/token`
 const TRADING_ENDPOINT = `${EBAY_ORIGIN}/ws/api.dll`
 const INVENTORY_ITEM_ENDPOINT = `${EBAY_ORIGIN}/sell/inventory/v1/inventory_item`
 const INVENTORY_OFFER_ENDPOINT = `${EBAY_ORIGIN}/sell/inventory/v1/offer`
+const INVENTORY_LOCATION_ENDPOINT = `${EBAY_ORIGIN}/sell/inventory/v1/location`
 const BASE_SCOPE = "https://api.ebay.com/oauth/api_scope"
 const INVENTORY_READONLY_SCOPE =
   "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly"
@@ -77,6 +78,13 @@ type Live25709MessageTemplateClass =
   | "OTHER"
   | "NO_MESSAGE"
 
+type InventoryBoundaryClass =
+  | "INVENTORY_ITEM_SURFACE_SPECIFIC"
+  | "COMMON_INVENTORY_API_BOUNDARY"
+  | "AUTHORIZATION_OR_ACCOUNT_ACCESS"
+  | "OTHER_PROVEN_CLASS"
+  | "UNPROVEN"
+
 type Live25709Metadata = Readonly<{
   domain: string
   category: string
@@ -109,6 +117,15 @@ export type ReversibleOosModelPreflightV1 = Readonly<{
   inventoryOfferLookupAttempted: boolean
   inventoryOfferExactMatch: boolean
   inventoryPublicationItemIdMatch: boolean
+  inventoryLocationReadAttempted: boolean
+  inventoryLocationHttpStatus: number | null
+  inventoryLocationReadAccepted: boolean
+  inventoryLocationErrorId: string | null
+  inventoryLocationErrorDomain: string
+  inventoryLocationErrorCategory: string
+  inventoryBoundaryClass: InventoryBoundaryClass
+  inventoryCommonRootCauseProven: boolean
+  inventoryCommonRootCause: string
   exactSkuReadAttempted: boolean
   exactSkuReadHttpStatus: number | null
   exactSkuExists: ExactInventoryEvidence
@@ -324,8 +341,27 @@ type ExactInventoryLookup = {
   errorId: string | null
   safeErrorClass: ExactInventorySafeErrorClass
   requestContractFixRequired: boolean
+  location: InventoryLocationReadResult
   exactSku: ExactSkuReadResult
 }
+
+type InventoryLocationReadResult = Readonly<{
+  attempted: boolean
+  httpStatus: number | null
+  accepted: boolean
+  errorId: string | null
+  errorDomain: string
+  errorCategory: string
+}>
+
+const UNPROVEN_LOCATION_READ: InventoryLocationReadResult = Object.freeze({
+  attempted: false,
+  httpStatus: null,
+  accepted: false,
+  errorId: null,
+  errorDomain: "UNPROVEN",
+  errorCategory: "UNPROVEN",
+})
 
 function errorId(payload: Record<string, unknown>) {
   if (!Array.isArray(payload.errors)) return null
@@ -483,12 +519,39 @@ async function exactInventoryItemRead(input: {
   }
 }
 
+async function inventoryLocationRead(input: {
+  token: string
+  fetchImpl: FetchLike
+}): Promise<InventoryLocationReadResult> {
+  const response = await input.fetchImpl(INVENTORY_LOCATION_ENDPOINT, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${input.token}` },
+    cache: "no-store",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  })
+  const payload = await inventoryJson(response)
+  const metadata = payload
+    ? parseSafeEbayInventoryErrorMetadata(payload)
+    : parseSafeEbayInventoryErrorMetadata(null)
+  return Object.freeze({
+    attempted: true,
+    httpStatus: response.status,
+    accepted: response.ok,
+    errorId: payload ? errorId(payload) : null,
+    errorDomain: metadata.domains.length === 1
+      ? metadata.domains[0] ?? "UNPROVEN" : "UNPROVEN",
+    errorCategory: metadata.categories.length === 1
+      ? metadata.categories[0] ?? "UNPROVEN" : "UNPROVEN",
+  })
+}
+
 async function exactInventoryOfferLookup(input: {
   environment: NodeJS.ProcessEnv
   fetchImpl: FetchLike
 }): Promise<ExactInventoryLookup> {
   const token = await mintToken({ credentials: generalCredentials(input.environment),
     scopes: [BASE_SCOPE, INVENTORY_READONLY_SCOPE], fetchImpl: input.fetchImpl })
+  const location = await inventoryLocationRead({ token, fetchImpl: input.fetchImpl })
   const item = await exactInventoryItemRead({ token, fetchImpl: input.fetchImpl })
   if (item.exists !== true) {
     return {
@@ -502,6 +565,7 @@ async function exactInventoryOfferLookup(input: {
       errorId: item.errorId,
       safeErrorClass: item.safeErrorClass,
       requestContractFixRequired: item.requestContractFixRequired,
+      location,
       exactSku: item,
     }
   }
@@ -532,6 +596,7 @@ async function exactInventoryOfferLookup(input: {
       safeErrorClass: payload ? safeErrorClass(response.status) : "RESPONSE_INVALID",
       requestContractFixRequired:
         response.status === 400 && observedErrorId === "25709",
+      location,
       exactSku: item,
     }
   }
@@ -564,6 +629,7 @@ async function exactInventoryOfferLookup(input: {
     errorId: observedErrorId,
     safeErrorClass: "NONE",
     requestContractFixRequired: false,
+    location,
     exactSku: item,
   }
 }
@@ -585,6 +651,15 @@ function unavailable(limitationCode: string,
     inventoryOfferLookupAttempted: false,
     inventoryOfferExactMatch: false,
     inventoryPublicationItemIdMatch: false,
+    inventoryLocationReadAttempted: false,
+    inventoryLocationHttpStatus: null,
+    inventoryLocationReadAccepted: false,
+    inventoryLocationErrorId: null,
+    inventoryLocationErrorDomain: "UNPROVEN",
+    inventoryLocationErrorCategory: "UNPROVEN",
+    inventoryBoundaryClass: "UNPROVEN",
+    inventoryCommonRootCauseProven: false,
+    inventoryCommonRootCause: "UNPROVEN",
     exactSkuReadAttempted: false,
     exactSkuReadHttpStatus: null,
     exactSkuExists: "UNPROVEN",
@@ -680,6 +755,7 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       exactMatch: false, exactOfferId: null, itemIdMatch: false,
       ambiguous: false, httpStatus: null, errorId: null,
       safeErrorClass: "OTHER", requestContractFixRequired: false,
+      location: UNPROVEN_LOCATION_READ,
       exactSku: { attempted: false, httpStatus: null, exists: "UNPROVEN",
         authoritativeAbsence: false, errorId: null, safeErrorClass: "OTHER",
         errorMetadata: UNPROVEN_25709_METADATA,
@@ -702,6 +778,21 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       input.authorizedPublication.sku === REVERSIBLE_OOS_TARGET_SKU &&
       inventory.exactOfferId &&
       input.authorizedPublication.offerId === inventory.exactOfferId)
+    const inventoryBoundaryClass: InventoryBoundaryClass =
+      inventory.location.accepted &&
+          inventory.exactSku.httpStatus === 400 &&
+          inventory.exactSku.errorId === "25709"
+        ? "INVENTORY_ITEM_SURFACE_SPECIFIC"
+        : inventory.location.httpStatus === 400 &&
+            inventory.location.errorId === "25709" &&
+            inventory.exactSku.httpStatus === 400 &&
+            inventory.exactSku.errorId === "25709"
+          ? "COMMON_INVENTORY_API_BOUNDARY"
+          : [401, 403].includes(inventory.location.httpStatus ?? 0) ||
+              [401, 403].includes(inventory.exactSku.httpStatus ?? 0)
+            ? "AUTHORIZATION_OR_ACCOUNT_ACCESS"
+            : inventory.location.attempted && inventory.exactSku.attempted
+              ? "OTHER_PROVEN_CLASS" : "UNPROVEN"
     const exactOfferFound: ExactInventoryEvidence =
       inventory.exactSku.exists === false ? false
         : inventory.attempted && inventory.complete
@@ -765,6 +856,15 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       inventoryOfferLookupAttempted: inventory.attempted,
       inventoryOfferExactMatch: inventory.exactMatch,
       inventoryPublicationItemIdMatch: publicationMatch,
+      inventoryLocationReadAttempted: inventory.location.attempted,
+      inventoryLocationHttpStatus: inventory.location.httpStatus,
+      inventoryLocationReadAccepted: inventory.location.accepted,
+      inventoryLocationErrorId: inventory.location.errorId,
+      inventoryLocationErrorDomain: inventory.location.errorDomain,
+      inventoryLocationErrorCategory: inventory.location.errorCategory,
+      inventoryBoundaryClass,
+      inventoryCommonRootCauseProven: false,
+      inventoryCommonRootCause: "UNPROVEN",
       exactSkuReadAttempted: inventory.exactSku.attempted,
       exactSkuReadHttpStatus: inventory.exactSku.httpStatus,
       exactSkuExists: inventory.exactSku.exists,
