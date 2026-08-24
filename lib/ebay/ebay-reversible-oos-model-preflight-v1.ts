@@ -30,6 +30,7 @@ type AuthorizedPublication = Readonly<{
 export type ReversibleOosListingManagementModel =
   | "TRADING_FIXED_PRICE"
   | "INVENTORY_API_MANAGED"
+  | "OTHER"
   | "UNPROVEN"
 
 export type ReversibleOosModelPreflightV1 = Readonly<{
@@ -41,6 +42,7 @@ export type ReversibleOosModelPreflightV1 = Readonly<{
   listingManagementModel: ReversibleOosListingManagementModel
   listingManagementModelProven: boolean
   managementEvidenceSource: string
+  tradingItemReadAttempted: boolean
   tradingReadSuccess: boolean
   inventoryOfferLookupAttempted: boolean
   inventoryOfferExactMatch: boolean
@@ -56,6 +58,7 @@ export type ReversibleOosModelPreflightV1 = Readonly<{
     listingType: string | null
     listingDuration: string | null
     listingStatus: string | null
+    inventoryTrackingMethod: string | null
     quantity: number | null
   }
   safety: {
@@ -120,6 +123,13 @@ function generalCredentials(environment: NodeJS.ProcessEnv) {
     clientSecret: text(environment.EBAY_CLIENT_SECRET, 500),
     refreshToken: text(environment.EBAY_SELLER_REFRESH_TOKEN, 8_000),
   }
+}
+
+async function canonicalCommercialTradingAccessToken(fetchImpl: FetchLike) {
+  const { getEbayCommercialOrdersAccessToken } = await import(
+    "./ebay-commercial-oauth"
+  )
+  return getEbayCommercialOrdersAccessToken(fetchImpl)
 }
 
 async function mintToken(input: {
@@ -292,6 +302,7 @@ function unavailable(limitationCode: string,
     listingManagementModel: "UNPROVEN",
     listingManagementModelProven: false,
     managementEvidenceSource: "UNPROVEN",
+    tradingItemReadAttempted: false,
     tradingReadSuccess: false,
     inventoryOfferLookupAttempted: false,
     inventoryOfferExactMatch: false,
@@ -302,7 +313,7 @@ function unavailable(limitationCode: string,
     targetReversibleProtectPossible: false,
     listing: { itemIdMatch: false, skuMatch: false,
       sellerAccountMatch: false, listingType: null, listingDuration: null,
-      listingStatus: null, quantity: null },
+      listingStatus: null, inventoryTrackingMethod: null, quantity: null },
     safety: { readOnly: true as const, rawPayloadReturned: false as const,
       credentialsReturned: false as const, ebayWrites: 0 as const,
       databaseWrites: 0 as const, lunaWrites: 0 as const },
@@ -315,6 +326,7 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
   authorizedPublication: AuthorizedPublication
   environment?: NodeJS.ProcessEnv
   fetchImpl?: FetchLike
+  tradingAccessTokenProvider?: (fetchImpl: FetchLike) => Promise<string>
 }>): Promise<ReversibleOosModelPreflightV1> {
   const environment = input.environment ?? process.env
   const fetchImpl = input.fetchImpl ?? fetch
@@ -323,10 +335,12 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
     return unavailable("REVERSIBLE_OOS_ACCOUNT_BINDING_UNPROVEN")
   }
   let preferenceAttempted = false
+  let tradingItemReadAttempted = false
+  let outOfStockControl: boolean | "UNPROVEN" = "UNPROVEN"
   try {
-    const credentials = generalCredentials(environment)
-    const tradingToken = await mintToken({ credentials, scopes: [BASE_SCOPE],
-      fetchImpl })
+    const tradingToken = await (
+      input.tradingAccessTokenProvider ?? canonicalCommercialTradingAccessToken
+    )(fetchImpl)
     preferenceAttempted = true
     const preferenceXml = await tradingRead({
       callName: "GetUserPreferences",
@@ -337,8 +351,9 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
     const preference = text(tradingXmlTagValue(
       preferenceXml, "OutOfStockControlPreference",
     ), 10).toLowerCase()
-    const outOfStockControl = preference === "true" ? true
+    outOfStockControl = preference === "true" ? true
       : preference === "false" ? false : "UNPROVEN" as const
+    tradingItemReadAttempted = true
     const itemXml = await tradingRead({ callName: "GetItem",
       body: getItemXml(), token: tradingToken, fetchImpl })
     const observedItemId = text(tradingXmlTagValue(itemXml, "ItemID"), 20)
@@ -351,6 +366,9 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
     const listingStatus = text(
       tradingXmlTagValue(itemXml, "ListingStatus"), 50,
     ) || null
+    const inventoryTrackingMethod = text(
+      tradingXmlTagValue(itemXml, "InventoryTrackingMethod"), 50,
+    ) || "ItemID"
     const quantity = nonNegativeInteger(tradingXmlTagValue(itemXml, "Quantity"))
     const itemIdMatch = observedItemId === REVERSIBLE_OOS_TARGET_ITEM_ID
     const skuMatch = observedSku === REVERSIBLE_OOS_TARGET_SKU
@@ -360,8 +378,23 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
     const tradingReadSuccess = itemIdMatch && skuMatch && sellerAccountMatch &&
       listingStatus?.toLowerCase() === "active" && quantity !== null
 
-    const inventory = await exactInventoryOfferLookup({ environment, fetchImpl })
-    const publicationMatch = Boolean(input.authorizedPublication &&
+    let inventory: ExactInventoryLookup = { attempted: false, complete: false,
+      exactMatch: false, exactOfferId: null, itemIdMatch: false,
+      ambiguous: false }
+    let inventoryLookupFailure: string | null = null
+    const inventoryOwnershipNeedsResolution = tradingReadSuccess &&
+      inventoryTrackingMethod?.toLowerCase() === "sku"
+    if (inventoryOwnershipNeedsResolution) {
+      try {
+        inventory = await exactInventoryOfferLookup({ environment, fetchImpl })
+      } catch (error) {
+        inventoryLookupFailure = error instanceof Error &&
+            /^[A-Z0-9_]+$/.test(error.message)
+          ? error.message : "REVERSIBLE_OOS_INVENTORY_LOOKUP_FAILED"
+      }
+    }
+    const publicationMatch = Boolean(inventory.attempted &&
+      input.authorizedPublication &&
       input.authorizedPublication.listingId === REVERSIBLE_OOS_TARGET_ITEM_ID &&
       input.authorizedPublication.sku === REVERSIBLE_OOS_TARGET_SKU &&
       inventory.exactOfferId &&
@@ -373,18 +406,25 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       listingManagementModel = "INVENTORY_API_MANAGED"
       managementEvidenceSource =
         "EBAY_TRADING_GET_ITEM_PLUS_EXACT_INVENTORY_OFFER_PLUS_AUTHORIZED_PUBLICATION"
-    } else if (tradingReadSuccess && inventory.complete &&
-        !inventory.exactMatch && !inventory.ambiguous &&
+    } else if (tradingReadSuccess &&
+        inventoryTrackingMethod?.toLowerCase() === "itemid" &&
         listingType === "FixedPriceItem" && listingDuration === "GTC") {
       listingManagementModel = "TRADING_FIXED_PRICE"
       managementEvidenceSource =
-        "EBAY_TRADING_GET_ITEM_PLUS_COMPLETE_EXACT_INVENTORY_OFFER_ABSENCE"
+        "EBAY_TRADING_GET_ITEM_INVENTORY_TRACKING_METHOD_ITEM_ID"
     } else if (inventory.exactMatch && !publicationMatch) {
       managementEvidenceSource =
         "INVENTORY_OFFER_PRESENT_WITHOUT_AUTHORIZED_PUBLICATION_RELATIONSHIP"
+    } else if (inventoryLookupFailure) {
+      managementEvidenceSource = inventoryLookupFailure
+    } else if (tradingReadSuccess && listingType !== "FixedPriceItem") {
+      listingManagementModel = "OTHER"
+      managementEvidenceSource = "EBAY_TRADING_GET_ITEM_LISTING_TYPE"
     }
     const modelProven = listingManagementModel !== "UNPROVEN"
-    const reversibleSemantics = outOfStockControl === true && modelProven &&
+    const reversibleModel = listingManagementModel === "TRADING_FIXED_PRICE" ||
+      listingManagementModel === "INVENTORY_API_MANAGED"
+    const reversibleSemantics = outOfStockControl === true && reversibleModel &&
       tradingReadSuccess
     const limitationCode = outOfStockControl !== true
       ? outOfStockControl === false
@@ -392,6 +432,8 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
         : "OUT_OF_STOCK_CONTROL_UNPROVEN"
       : !modelProven
         ? "LISTING_MANAGEMENT_MODEL_UNPROVEN"
+        : !reversibleModel
+          ? "LISTING_MANAGEMENT_MODEL_NOT_REVERSIBLE"
         : null
     return Object.freeze({
       contractVersion: SELLER_OS_REVERSIBLE_OOS_PREFLIGHT_V1,
@@ -402,6 +444,7 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       listingManagementModel,
       listingManagementModelProven: modelProven,
       managementEvidenceSource,
+      tradingItemReadAttempted,
       tradingReadSuccess,
       inventoryOfferLookupAttempted: inventory.attempted,
       inventoryOfferExactMatch: inventory.exactMatch,
@@ -411,7 +454,7 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       preservesItemId: reversibleSemantics,
       targetReversibleProtectPossible: reversibleSemantics,
       listing: { itemIdMatch, skuMatch, sellerAccountMatch, listingType,
-        listingDuration, listingStatus, quantity },
+        listingDuration, listingStatus, inventoryTrackingMethod, quantity },
       safety: { readOnly: true as const, rawPayloadReturned: false as const,
         credentialsReturned: false as const, ebayWrites: 0 as const,
         databaseWrites: 0 as const, lunaWrites: 0 as const },
@@ -422,6 +465,8 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       ? error.message : "REVERSIBLE_OOS_PREFLIGHT_FAILED"
     return unavailable(code, {
       outOfStockControlReadAttempted: preferenceAttempted,
+      outOfStockControl,
+      tradingItemReadAttempted,
     })
   }
 }
