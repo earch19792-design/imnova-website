@@ -18,6 +18,8 @@ const RESUME_ACTIVE_JOB = "RESUME_ACTIVE_LUNA_SHIPPING_JOB"
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
 const CHECKOUT_PHASE = "AWAITING_CHECKOUT_SHIPPING"
 const RECONNECT_GRACE_MS = 20_000
+const CHECKOUT_HOSTS = new Set(["lunaportex.com", "www.lunaportex.com",
+  "account.lunaportex.com", "shop.app", "pay.shopify.com"])
 
 let sellerPort = null
 let activeTabId = null
@@ -62,6 +64,28 @@ function exactLunaUrl(value) {
     url.hostname = "www.lunaportex.com"
     url.search = ""
     return url
+  } catch { return null }
+}
+
+function safeNavigationIdentity(value) {
+  if (typeof value !== "string") return null
+  try {
+    const url = new URL(value)
+    if (url.protocol !== "https:" || url.username || url.password || url.port ||
+        !/^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/.test(url.hostname)) return null
+    return { host: url.hostname, origin: `https://${url.hostname}` }
+  } catch { return null }
+}
+
+function allowedCheckoutNavigation(value) {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== "https:" || !CHECKOUT_HOSTS.has(url.hostname)) return null
+    const pathAllowed = new Set(["lunaportex.com", "www.lunaportex.com"])
+      .has(url.hostname) ? /^\/checkouts?(?:\/|$)/.test(url.pathname)
+      : true
+    return pathAllowed ? { host: url.hostname,
+      origin: `https://${url.hostname}` } : null
   } catch { return null }
 }
 
@@ -178,10 +202,10 @@ function recoverActiveJob(sender) {
   const lunaCheckout = storefrontHost && /^\/checkouts?(?:\/|$)/
     .test(actual.pathname)
   const accountCheckout = actual.hostname === "account.lunaportex.com"
-  const shopPayCheckout = actual.hostname === "shop.app" &&
-    /^\/pay(?:\/|$)/.test(actual.pathname)
+  const shopPayCheckout = actual.hostname === "shop.app"
+  const shopifyPayCheckout = actual.hostname === "pay.shopify.com"
   const checkoutPath = activeJobPhase === CHECKOUT_PHASE &&
-    (lunaCheckout || accountCheckout || shopPayCheckout)
+    (lunaCheckout || accountCheckout || shopPayCheckout || shopifyPayCheckout)
   if (!expected || actual.protocol !== "https:" ||
       ((!storefrontHost || (!productPath && !cartPath)) && !checkoutPath)) return null
   activeTabId = sender.tab.id
@@ -203,15 +227,15 @@ function emitProgress(state, details = {}) {
       ? { cartSubtotalUsd: Math.round(details.cartSubtotalUsd * 100) / 100 }
       : {}),
     ...(new Set(["LUNA_STOREFRONT_CHECKOUT_HOST", "LUNA_ACCOUNT_HOST",
-      "SHOP_PAY_CHECKOUT_HOST",
+      "SHOP_PAY_CHECKOUT_HOST", "SHOPIFY_PAY_CHECKOUT_HOST",
       "UNSUPPORTED_CHECKOUT_HOST"]).has(details.checkoutHostClassification)
       ? { checkoutHostClassification: details.checkoutHostClassification } : {}),
-    ...(new Set(["lunaportex.com", "www.lunaportex.com",
-      "account.lunaportex.com", "shop.app"])
-      .has(details.checkoutNavigationHost)
+    ...(safeNavigationIdentity(`https://${details.checkoutNavigationHost}`)
       ? { checkoutNavigationHost: details.checkoutNavigationHost } : {}),
-    ...(details.checkoutHostPermissionMatch === true
-      ? { checkoutHostPermissionMatch: true } : {}),
+    ...(safeNavigationIdentity(details.checkoutNavigationOrigin)
+      ? { checkoutNavigationOrigin: details.checkoutNavigationOrigin } : {}),
+    ...(typeof details.checkoutHostPermissionMatch === "boolean"
+      ? { checkoutHostPermissionMatch: details.checkoutHostPermissionMatch } : {}),
     ...(new Set(["EXPLICIT_CHALLENGE_UI", "EXPLICIT_LOGIN_REQUIRED",
       "SESSION_EXPIRED_UI", "NO_EXPLICIT_AUTH_REQUIREMENT"])
       .has(details.authSignal) ? { authSignal: details.authSignal } : {}),
@@ -238,6 +262,45 @@ async function startJob(job) {
   } else {
     await chrome.tabs.update(activeTabId, { url: url.toString(), active: true })
   }
+}
+
+function failActiveJob(error) {
+  if (!activeJob) return
+  sellerPort?.postMessage({ type: JOB_RESULT, success: false,
+    error: safeRuntimeReason(error), lastRuntimeState,
+    capture: { candidateId: activeJob.identity.candidateId } })
+  clearActiveJob()
+}
+
+function observeCheckoutNavigation(details, inject) {
+  if (!activeJob || activeJobPhase !== CHECKOUT_PHASE ||
+      details?.tabId !== activeTabId || details?.frameId !== 0) return
+  const observed = safeNavigationIdentity(details.url)
+  if (!observed) return
+  const allowed = allowedCheckoutNavigation(details.url)
+  emitProgress("CHECKOUT_NAVIGATION_OBSERVED", {
+    checkoutNavigationHost: observed.host,
+    checkoutNavigationOrigin: observed.origin,
+    checkoutHostPermissionMatch: Boolean(allowed),
+  })
+  if (!allowed) {
+    failActiveJob("REAL_CHECKOUT_HOST_NOT_ALLOWLISTED")
+    return
+  }
+  emitProgress("CHECKOUT_HOST_ALLOWED", {
+    checkoutNavigationHost: allowed.host,
+    checkoutNavigationOrigin: allowed.origin,
+    checkoutHostPermissionMatch: true,
+  })
+  if (!inject) return
+  void chrome.scripting.executeScript({ target: { tabId: activeTabId,
+    frameIds: [0] }, files: ["content.js"] }).then(() => {
+      emitProgress("CHECKOUT_SCRIPT_INJECTED", {
+        checkoutNavigationHost: allowed.host,
+        checkoutNavigationOrigin: allowed.origin,
+        checkoutHostPermissionMatch: true,
+      })
+    }).catch(() => failActiveJob("CHECKOUT_CONTENT_SCRIPT_NOT_INJECTED"))
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -333,7 +396,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (startingCheckout) {
       cartSubtotalUsd = Math.round(message.cartSubtotalUsd * 100) / 100
     }
-    emitProgress(CART_PHASE)
+    emitProgress(activeJobPhase)
     sendResponse({ accepted: true, phase: activeJobPhase })
     return false
   }
@@ -365,17 +428,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         "CART_PAGE_DETECTED", "CART_EXPECTED_PRODUCT_FOUND",
         "CART_EXPECTED_QUANTITY_FOUND", "CART_MUTATION_CONFIRMED",
         "BRIDGE_RECONNECTED", "SHIPPING_FLOW_RESUMED",
-        "AWAITING_CHECKOUT_SHIPPING", "CHECKOUT_CONTENT_SCRIPT_LOADED",
+        "AWAITING_CHECKOUT_SHIPPING", "CHECKOUT_NAVIGATION_OBSERVED",
+        "CHECKOUT_HOST_ALLOWED", "CHECKOUT_SCRIPT_INJECTED",
+        "CHECKOUT_CONTENT_SCRIPT_LOADED",
         "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", "CHECKOUT_PAGE_DETECTED",
         "NORMAL_GUEST_CHECKOUT", "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
         "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "EXPLICIT_LOGIN_PAGE",
         "EXPLICIT_AUTH_CHALLENGE", "SESSION_EXPIRED",
         "UNKNOWN_CHECKOUT_PAGE", "CANONICAL_US_PROFILE_FOUND",
         "SHIPPING_ADDRESS_ACCEPTED", "SHIPPING_OPTIONS_DETECTED",
-        "SHIPPING_CAPTURE_STARTED", "RESULT_POSTED"]).has(message.state)) {
+        "SHIPPING_CAPTURE_STARTED", "SHIPPING_QUOTE_CAPTURED",
+        "RESULT_POSTED"]).has(message.state)) {
     emitProgress(message.state, { cartSubtotalUsd: message.cartSubtotalUsd,
       checkoutHostClassification: message.checkoutHostClassification,
       checkoutNavigationHost: message.checkoutNavigationHost,
+      checkoutNavigationOrigin: message.checkoutNavigationOrigin,
       checkoutHostPermissionMatch: message.checkoutHostPermissionMatch,
       authSignal: message.authSignal,
       authSignalSource: message.authSignalSource })
@@ -409,4 +476,12 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     activeTabId = null
     clearActiveJob()
   }
+})
+
+chrome.webNavigation?.onCommitted?.addListener((details) => {
+  observeCheckoutNavigation(details, false)
+})
+
+chrome.webNavigation?.onCompleted?.addListener((details) => {
+  observeCheckoutNavigation(details, true)
 })

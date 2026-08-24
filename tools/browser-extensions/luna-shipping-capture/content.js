@@ -125,6 +125,8 @@ function progress(job, state, details = {}) {
       ? { checkoutHostClassification: details.checkoutHostClassification } : {}),
     ...(typeof details.checkoutNavigationHost === "string"
       ? { checkoutNavigationHost: details.checkoutNavigationHost } : {}),
+    ...(typeof details.checkoutNavigationOrigin === "string"
+      ? { checkoutNavigationOrigin: details.checkoutNavigationOrigin } : {}),
     ...(details.checkoutHostPermissionMatch === true
       ? { checkoutHostPermissionMatch: true } : {}),
     ...(typeof details.authSignal === "string"
@@ -452,9 +454,11 @@ function checkoutHostClassification() {
   if (location.hostname === "account.lunaportex.com") {
     return "LUNA_ACCOUNT_HOST"
   }
-  if (location.hostname === "shop.app" &&
-      /^\/pay(?:\/|$)/.test(location.pathname)) {
+  if (location.hostname === "shop.app") {
     return "SHOP_PAY_CHECKOUT_HOST"
+  }
+  if (location.hostname === "pay.shopify.com") {
+    return "SHOPIFY_PAY_CHECKOUT_HOST"
   }
   return "UNSUPPORTED_CHECKOUT_HOST"
 }
@@ -510,14 +514,19 @@ function normalizeVisibleText(value) {
 function checkoutExpectedLine(job) {
   const candidates = [...document.querySelectorAll(
     '[data-order-summary] [data-line-item], [data-testid*="line-item" i], ' +
-    '[data-testid*="product" i], [role="listitem"]')].slice(0, 120)
+    '[data-testid*="product" i], [class*="line-item" i], ' +
+    '[class*="product" i], [role="listitem"]')].slice(0, 120)
   const normalizedName = normalizeVisibleText(job.productName)
   for (const element of candidates) {
     if (!isVisible(element)) continue
     const text = normalizeVisibleText(element.textContent)
+    const quantityElement = element.querySelector?.(
+      '[data-quantity], [data-testid*="quantity" i], [class*="quantity" i]')
     const quantityMatches = new RegExp(`(?:qty|quantity|×|x)\\s*${
       job.identity.quantity}(?:\\b|$)`, "i").test(element.textContent ?? "") ||
-      Number(element.getAttribute?.("data-quantity")) === job.identity.quantity
+      Number(element.getAttribute?.("data-quantity")) === job.identity.quantity ||
+      Number(String(quantityElement?.textContent ?? "").trim()) ===
+        job.identity.quantity
     if (text.includes(normalizedName) && quantityMatches) return true
   }
   return false
@@ -553,8 +562,8 @@ function checkoutPageClassification() {
   const checkoutShell = /^\/checkouts?(?:\/|$)/.test(location.pathname) &&
     visibleMatch(['[data-checkout-root]', '[data-order-summary]',
       '[data-checkout-subtotal]', 'form[action*="/checkout"]'])
-  const shopPayShell = location.hostname === "shop.app" &&
-    /^\/pay(?:\/|$)/.test(location.pathname) &&
+  const shopPayShell = new Set(["shop.app", "pay.shopify.com"])
+    .has(location.hostname) &&
     visibleMatch(['[data-order-summary]', '[data-testid*="order-summary" i]',
       '[data-testid*="subtotal" i]', '[data-testid*="shipping" i]'])
   if (checkoutFields) {
@@ -642,6 +651,7 @@ async function checkoutShipping(job, expectedSubtotal) {
   const classificationDetails = {
     checkoutHostClassification: checkoutHostClassification(), authSignal,
     checkoutNavigationHost: location.hostname,
+    checkoutNavigationOrigin: location.origin,
     checkoutHostPermissionMatch: checkoutHostPermissionMatch(),
     authSignalSource: "FIXED_HOST_PATH_AND_VISIBLE_DOM",
   }
@@ -814,6 +824,12 @@ async function runCheckoutStage(job, original, subtotalUsd) {
     }
     progress(job, "SHIPPING_CAPTURE_STARTED")
     const visible = await checkoutShipping(job, subtotalUsd)
+    progress(job, "SHIPPING_QUOTE_CAPTURED", {
+      checkoutHostClassification: checkoutHostClassification(),
+      checkoutNavigationHost: location.hostname,
+      checkoutNavigationOrigin: location.origin,
+      checkoutHostPermissionMatch: true,
+    })
     progress(job, "AUTHENTICATED_OPERATION_CONFIRMED")
     const observedAt = new Date().toISOString()
     const evidenceInput = {
@@ -870,13 +886,16 @@ const isProductPage = /^\/products\/[a-z0-9][a-z0-9-]{1,180}\/?$/
 const isCartPage = location.pathname.replace(/\/$/, "") === "/cart"
 const isCheckoutPage = /^\/checkouts?(?:\/|$)/.test(location.pathname) ||
   location.hostname === "account.lunaportex.com" ||
-  location.hostname === "shop.app" && /^\/pay(?:\/|$)/.test(location.pathname)
+  new Set(["shop.app", "pay.shopify.com"]).has(location.hostname)
 
-if (isProductPage || isCartPage || isCheckoutPage) {
+if ((isProductPage || isCartPage || isCheckoutPage) &&
+    globalThis.__sellerOsLunaShippingCaptureAttachedV1 !== true) {
+  globalThis.__sellerOsLunaShippingCaptureAttachedV1 = true
   progress(null, "CONTENT_SCRIPT_LOADED")
   if (isCheckoutPage) progress(null, "CHECKOUT_CONTENT_SCRIPT_LOADED", {
     checkoutHostClassification: checkoutHostClassification(),
     checkoutNavigationHost: location.hostname,
+    checkoutNavigationOrigin: location.origin,
     checkoutHostPermissionMatch: checkoutHostPermissionMatch(),
   })
   progress(null, "ACTIVE_JOB_REQUESTED")
@@ -890,6 +909,7 @@ if (isProductPage || isCartPage || isCheckoutPage) {
       progress(context.job, "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", {
         checkoutHostClassification: checkoutHostClassification(),
         checkoutNavigationHost: location.hostname,
+        checkoutNavigationOrigin: location.origin,
         checkoutHostPermissionMatch: checkoutHostPermissionMatch(),
       })
       return { job: context.job,

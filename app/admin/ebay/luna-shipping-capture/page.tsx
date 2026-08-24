@@ -63,7 +63,10 @@ type RuntimeTrace = {
   bridgeReconnected: boolean
   shippingFlowResumed: boolean
   checkoutNavigationHost: string
+  checkoutNavigationOrigin: string
   checkoutHostPermissionMatch: boolean
+  checkoutNavigationObserved: boolean
+  checkoutScriptInjected: boolean
   checkoutContentScriptLoaded: boolean
   activeJobRecoveredOnCheckout: boolean
   checkoutPageDetected: boolean
@@ -98,7 +101,10 @@ const EMPTY_RUNTIME_TRACE: RuntimeTrace = Object.freeze({
   bridgeReconnected: false,
   shippingFlowResumed: false,
   checkoutNavigationHost: "NOT_OBSERVED",
+  checkoutNavigationOrigin: "NOT_OBSERVED",
   checkoutHostPermissionMatch: false,
+  checkoutNavigationObserved: false,
+  checkoutScriptInjected: false,
   checkoutContentScriptLoaded: false,
   activeJobRecoveredOnCheckout: false,
   checkoutPageDetected: false,
@@ -260,6 +266,8 @@ export default function LunaShippingCapturePage() {
             "CART_EXPECTED_PRODUCT_FOUND", "CART_EXPECTED_QUANTITY_FOUND",
             "CART_MUTATION_CONFIRMED", "BRIDGE_RECONNECTED",
             "SHIPPING_FLOW_RESUMED", "AWAITING_CHECKOUT_SHIPPING",
+            "CHECKOUT_NAVIGATION_OBSERVED", "CHECKOUT_HOST_ALLOWED",
+            "CHECKOUT_SCRIPT_INJECTED",
             "CHECKOUT_CONTENT_SCRIPT_LOADED",
             "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", "CHECKOUT_PAGE_DETECTED",
             "NORMAL_GUEST_CHECKOUT",
@@ -268,7 +276,8 @@ export default function LunaShippingCapturePage() {
             "EXPLICIT_AUTH_CHALLENGE", "SESSION_EXPIRED",
             "UNKNOWN_CHECKOUT_PAGE", "CANONICAL_US_PROFILE_FOUND",
             "SHIPPING_ADDRESS_ACCEPTED", "SHIPPING_OPTIONS_DETECTED",
-            "SHIPPING_CAPTURE_STARTED", "RESULT_POSTED"])
+            "SHIPPING_CAPTURE_STARTED", "SHIPPING_QUOTE_CAPTURED",
+            "RESULT_POSTED"])
           if (allowed.has(message.state) &&
               message.candidateId === jobs[index]?.identity.candidateId) {
             setStatus(message.state)
@@ -308,8 +317,14 @@ export default function LunaShippingCapturePage() {
                 ? { activeJobRecoveredOnCheckout: true } : {}),
               ...(typeof message.checkoutNavigationHost === "string"
                 ? { checkoutNavigationHost: message.checkoutNavigationHost } : {}),
+              ...(typeof message.checkoutNavigationOrigin === "string"
+                ? { checkoutNavigationOrigin: message.checkoutNavigationOrigin } : {}),
               ...(message.checkoutHostPermissionMatch === true
                 ? { checkoutHostPermissionMatch: true } : {}),
+              ...(message.state === "CHECKOUT_NAVIGATION_OBSERVED"
+                ? { checkoutNavigationObserved: true } : {}),
+              ...(message.state === "CHECKOUT_SCRIPT_INJECTED"
+                ? { checkoutScriptInjected: true } : {}),
               ...(message.state === "CHECKOUT_PAGE_DETECTED"
                 ? { checkoutPageDetected: true } : {}),
               ...(new Set(["NORMAL_GUEST_CHECKOUT",
@@ -512,8 +527,11 @@ export default function LunaShippingCapturePage() {
             `CART_MUTATION_CONFIRMED=${runtimeTrace.cartMutationConfirmed}\n` +
             `BRIDGE_RECONNECTED=${runtimeTrace.bridgeReconnected}\n` +
             `SHIPPING_FLOW_RESUMED=${runtimeTrace.shippingFlowResumed}\n` +
+            `CHECKOUT_NAVIGATION_OBSERVED=${runtimeTrace.checkoutNavigationObserved}\n` +
+            `CHECKOUT_ACTUAL_ORIGIN=${runtimeTrace.checkoutNavigationOrigin}\n` +
             `CHECKOUT_NAVIGATION_HOST=${runtimeTrace.checkoutNavigationHost}\n` +
             `CHECKOUT_HOST_PERMISSION_MATCH=${runtimeTrace.checkoutHostPermissionMatch}\n` +
+            `CHECKOUT_SCRIPT_INJECTED=${runtimeTrace.checkoutScriptInjected}\n` +
             `CHECKOUT_CONTENT_SCRIPT_LOADED=${runtimeTrace.checkoutContentScriptLoaded}\n` +
             `ACTIVE_JOB_RECOVERED_ON_CHECKOUT=${runtimeTrace.activeJobRecoveredOnCheckout}\n` +
             `CHECKOUT_PAGE_DETECTED=${runtimeTrace.checkoutPageDetected}\n` +
