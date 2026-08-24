@@ -250,8 +250,20 @@ export async function collectSellerOsLunaStockObservationStatusV1() {
   const session = await auditSellerOsLunaProtectedSessionV1({
     vaultSchemaApplied: true,
   })
+  const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
+  const currentLive = monitor.listings.filter((listing) =>
+    listing.discovery.livePresence.status === "LIVE_ACTIVE")
+  const currentPrerequisitesSatisfied = currentLive.length > 0 &&
+    currentLive.every((listing) =>
+      listing.stock.supplierLinkageStatus === "CERTIFIED" &&
+      listing.stock.state !== "STOCK_UNKNOWN" &&
+      listing.stock.limitationCode !==
+        "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH")
   return createSellerOsLunaStockObservationPrebuildStatusV1({
     sessionAssessment: session,
+    activationCertified:
+      process.env.EBAY_TARGETED_LUNA_ACTIVE_MONITOR_ENABLED === "true" &&
+      currentPrerequisitesSatisfied,
   })
 }
 

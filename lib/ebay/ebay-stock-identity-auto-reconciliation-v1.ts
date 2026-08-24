@@ -196,6 +196,7 @@ export async function reconcileSellerOsStockIdentityV1(
     accountKey: string
     targetItemIds: readonly string[]
     now?: Date
+    intervalSeconds?: number
   }>,
 ) {
   const targets = [...new Set(input.targetItemIds.filter((itemId) =>
@@ -251,6 +252,7 @@ export async function reconcileSellerOsStockIdentityV1(
   const variants = (variantRead.data ?? []) as VariantRow[]
   const repository = createSellerOsLunaStockObservationRepositoryV1(supabase)
   const now = input.now ?? new Date()
+  const intervalSeconds = input.intervalSeconds ?? 3_600
   const outcomes: Array<Record<string, unknown>> = []
   let databaseWrites = 0
   for (const target of targets) {
@@ -280,7 +282,7 @@ export async function reconcileSellerOsStockIdentityV1(
         ? "MULTI_COMPONENT_BOM" : "NOT_APPLICABLE",
     })
     const window = buildLunaStockObservationWindowV1({
-      now: now.toISOString(), intervalSeconds: 3_600,
+      now: now.toISOString(), intervalSeconds,
     })
     const job = buildLunaStockCheckJobV1({ linkage,
       observationWindow: window, acquisitionMethod: "CANONICAL_SERVER_READ" })
@@ -325,7 +327,11 @@ export async function reconcileSellerOsStockIdentityV1(
       entry.observed.stockState === "IN_STOCK")
     outcomes.push({ itemId: target, status: "AUTO_RESOLVED",
       stockState: certifiedOos ? "CERTIFIED_OOS"
-        : allInStock ? "IN_STOCK_SIGNAL" : "STOCK_UNKNOWN" })
+        : allInStock ? "IN_STOCK_SIGNAL" : "STOCK_UNKNOWN",
+      sourceStatus: persisted.every((entry) =>
+        entry.observed.sourceStatus === "AVAILABLE") ? "AVAILABLE" : "UNAVAILABLE",
+      observedAt: persisted.map((entry) => entry.observed.observedAt).sort().at(-1) ?? null,
+      newObservationPersisted: true })
   }
   return Object.freeze({
     contractVersion: SELLER_OS_STOCK_IDENTITY_AUTO_RECONCILIATION_VERSION,
@@ -338,6 +344,9 @@ export async function reconcileSellerOsStockIdentityV1(
       row.stockState === "IN_STOCK_SIGNAL").length,
     certifiedOosCount: outcomes.filter((row) =>
       row.stockState === "CERTIFIED_OOS").length,
+    newObservationCount: outcomes.filter((row) =>
+      row.newObservationPersisted === true).length,
+    intervalSeconds,
     outcomes: Object.freeze(outcomes.map(Object.freeze)),
     databaseWrites,
     ebayWrites: 0 as const,

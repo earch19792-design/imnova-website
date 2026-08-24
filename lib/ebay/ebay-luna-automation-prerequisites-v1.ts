@@ -214,7 +214,10 @@ export function createSellerOsCanonicalLunaServerReadResolverV1(input: Readonly<
 
 export function buildSellerOsLunaAutomationPrerequisitesStatusV1(input: Readonly<{
   session: ReturnType<typeof assessSellerOsLunaProtectedSessionV1>
+  productionSchedulerEnabled?: boolean
 }>) {
+  const enabled = input.productionSchedulerEnabled === true &&
+    input.session.status === "SESSION_READY"
   return Object.freeze({
     contractVersion: SELLER_OS_LUNA_AUTOMATION_PREREQUISITES_VERSION,
     ...P2_I02A_STORAGE_READINESS_V1,
@@ -224,11 +227,11 @@ export function buildSellerOsLunaAutomationPrerequisitesStatusV1(input: Readonly
     humanBootstrapPath: input.session.bootstrapPath,
     sessionOwnership: input.session.ownership,
     sessionStorage: "SUPABASE_VAULT" as const,
-    schedulerStatus: "DISABLED" as const,
-    productionSchedulerEnabled: false as const,
-    productionLunaPolling: 0 as const,
-    p2I01Dependency: "BLOCKED" as const,
-    p2I01Blocker: "EXTERNAL_EBAY_QUOTA_BLOCKER" as const,
+    schedulerStatus: enabled ? "ENABLED" as const : "DISABLED" as const,
+    productionSchedulerEnabled: enabled,
+    productionLunaPolling: enabled ? 1 as const : 0 as const,
+    p2I01Dependency: enabled ? "CERTIFIED" as const : "BLOCKED" as const,
+    p2I01Blocker: enabled ? null : "EXTERNAL_EBAY_QUOTA_BLOCKER" as const,
     secretsIncluded: false as const,
     cookiesIncluded: false as const,
     environmentValuesIncluded: false as const,

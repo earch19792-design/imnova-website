@@ -25,12 +25,12 @@ export const SELLER_OS_LUNA_STOCK_OBSERVATION_STATUS_VERSION =
   "SELLER_OS_LUNA_STOCK_OBSERVATION_STATUS_V1" as const
 export const SELLER_OS_LUNA_STOCK_OBSERVATION_RESOURCE_V1 = Object.freeze({
   id: "seller-os://phase-2/luna-stock-observation",
-  title: "Seller OS automatic Luna stock observation PREBUILD",
-  description: "Read the bounded PREBUILD activation, scheduler, dependency, observation, retry and safety status for exact certified Luna mappings. This resource never polls Luna, certifies OOS, or changes eBay.",
+  title: "Seller OS automatic Luna stock observation",
+  description: "Read the bounded production activation, scheduler, dependency, observation, retry and safety status for exact certified Luna mappings. Reading this resource never polls Luna or changes eBay.",
 })
 
 export const P2_I01_GATE_PASS_REQUIRED_FOR_LIVE_POLLING = true as const
-export const P2_I02_PREBUILD_LIVE_ACTIVATION_LOCKED = true as const
+export const P2_I02_PREBUILD_LIVE_ACTIVATION_LOCKED = false as const
 export const SELLER_OS_LUNA_STOCK_OBSERVATION_MAXIMUM_LINKAGES = 50
 export const SELLER_OS_LUNA_STOCK_OBSERVATION_MAXIMUM_COMPONENTS = 150
 
@@ -319,6 +319,8 @@ export function getSellerOsLunaStockObservationActivationPolicyV1(input: {
   leaseSeconds?: number
 } = {}) {
   const p2I01GateCertified = input.p2I01GateCertified === true
+  const productionSchedulerEnabled = p2I01GateCertified &&
+    input.schedulerRequested === true
   const intervalSeconds = Math.max(300, Math.min(86_400,
     positiveInteger(input.intervalSeconds ?? 3_600, 86_400) ?? 3_600))
   const maximumAttempts = Math.max(1, Math.min(5,
@@ -328,14 +330,15 @@ export function getSellerOsLunaStockObservationActivationPolicyV1(input: {
   const leaseSeconds = Math.max(60, Math.min(600,
     positiveInteger(input.leaseSeconds ?? 180, 600) ?? 180))
   return Object.freeze({
-    activationStatus: p2I01GateCertified
-      ? "PREBUILD_NOT_ACTIVATED" as const
+    activationStatus: productionSchedulerEnabled
+      ? "ACTIVATED" as const
+      : p2I01GateCertified ? "PREBUILD_NOT_ACTIVATED" as const
       : "BLOCKED_BY_P2_I01_GATE" as const,
     p2I01GatePassRequiredForLivePolling:
       P2_I01_GATE_PASS_REQUIRED_FOR_LIVE_POLLING,
     p2I01GateCertified,
     schedulerRequested: input.schedulerRequested === true,
-    productionSchedulerEnabled: false as const,
+    productionSchedulerEnabled,
     prebuildLiveActivationLocked: P2_I02_PREBUILD_LIVE_ACTIVATION_LOCKED,
     policy: Object.freeze({
       intervalSeconds,
@@ -1002,6 +1005,7 @@ export function buildSellerOsLunaStockObservationStatusV1(input: Readonly<{
   prerequisites?: ReturnType<
     typeof buildSellerOsLunaAutomationPrerequisitesStatusV1
   >
+  productionSchedulerEnabled?: boolean
 }>) {
   const observedAt = safeIso(input.observedAt) ?? new Date(0).toISOString()
   const observations = [...(input.observations ?? [])]
@@ -1019,6 +1023,8 @@ export function buildSellerOsLunaStockObservationStatusV1(input: Readonly<{
       Date.parse(right.observedAt))
     .map((observation) => [observation.linkageId, observation])).values()]
   const dependencyCertified = input.p2I01DependencyStatus === "CERTIFIED"
+  const productionSchedulerEnabled = dependencyCertified &&
+    input.productionSchedulerEnabled === true
   const prerequisites = input.prerequisites ??
     buildSellerOsLunaAutomationPrerequisitesStatusV1({
       session: assessSellerOsLunaProtectedSessionV1({
@@ -1032,14 +1038,17 @@ export function buildSellerOsLunaStockObservationStatusV1(input: Readonly<{
     })
   return Object.freeze({
     contractVersion: SELLER_OS_LUNA_STOCK_OBSERVATION_STATUS_VERSION,
-    status: dependencyCertified ? "PREBUILD_READY" as const
+    status: productionSchedulerEnabled ? "ACTIVE" as const
+      : dependencyCertified ? "PREBUILD_READY" as const
       : "BLOCKED" as const,
     observedAt,
     bounded: true as const,
     maximumEntries: SELLER_OS_LUNA_STOCK_OBSERVATION_MAXIMUM_COMPONENTS,
     truncated: (input.observations?.length ?? 0) > observations.length ||
       Boolean(plan?.truncated),
-    activationStatus: dependencyCertified
+    activationStatus: productionSchedulerEnabled
+      ? "ACTIVATED" as const
+      : dependencyCertified
       ? "PREBUILD_NOT_ACTIVATED" as const
       : "BLOCKED_BY_P2_I01_GATE" as const,
     p2I01Dependency: Object.freeze({
@@ -1060,12 +1069,16 @@ export function buildSellerOsLunaStockObservationStatusV1(input: Readonly<{
     humanBootstrapPath: prerequisites.humanBootstrapPath,
     acquisition: input.acquisition,
     scheduler: Object.freeze({
-      status: "DISABLED" as const,
-      productionSchedulerEnabled: false as const,
+      status: productionSchedulerEnabled ? "ENABLED" as const : "DISABLED" as const,
+      productionSchedulerEnabled,
       preparedJobCount: plan?.preparedJobCount ?? null,
       dispatchableJobCount: 0 as const,
       policy: plan?.controls ??
-        getSellerOsLunaStockObservationActivationPolicyV1().policy,
+        getSellerOsLunaStockObservationActivationPolicyV1({
+          p2I01GateCertified: dependencyCertified,
+          schedulerRequested: productionSchedulerEnabled,
+          intervalSeconds: productionSchedulerEnabled ? 900 : 3_600,
+        }).policy,
     }),
     counts: Object.freeze({
       eligibleCertifiedLinkages: plan?.eligibleCertifiedLinkageCount ?? null,
@@ -1081,7 +1094,8 @@ export function buildSellerOsLunaStockObservationStatusV1(input: Readonly<{
     limitations: Object.freeze(uniqueCodes([
       ...(input.p2I01Limitations ?? []),
       ...(!dependencyCertified ? ["P2_I01_GATE_NOT_CERTIFIED"] : []),
-      "P2_I02_PREBUILD_PRODUCTION_SCHEDULER_DISABLED",
+      ...(!productionSchedulerEnabled
+        ? ["P2_I02_PREBUILD_PRODUCTION_SCHEDULER_DISABLED"] : []),
       ...(prerequisites.humanBootstrapRequired
         ? ["LUNA_PROTECTED_SESSION_HUMAN_BOOTSTRAP_REQUIRED"] : []),
       ...(observations.length === 0
@@ -1099,6 +1113,7 @@ export function createSellerOsLunaStockObservationPrebuildStatusV1(input: {
   protectedSessionConfigured?: boolean
   protectedSessionServerOnly?: boolean
   sessionAssessment?: ReturnType<typeof assessSellerOsLunaProtectedSessionV1>
+  activationCertified?: boolean
 } = {}) {
   const observedAt = input.observedAt ?? new Date().toISOString()
   const session = input.sessionAssessment ??
@@ -1113,19 +1128,22 @@ export function createSellerOsLunaStockObservationPrebuildStatusV1(input: {
       validation: input.protectedSessionConfigured === true &&
         input.protectedSessionServerOnly === true ? "VALID" : "AUTH_REQUIRED",
     })
+  const activationCertified = input.activationCertified === true &&
+    session.status === "SESSION_READY"
   const prerequisites = buildSellerOsLunaAutomationPrerequisitesStatusV1({
-    session,
+    session, productionSchedulerEnabled: activationCertified,
   })
   return buildSellerOsLunaStockObservationStatusV1({
     observedAt,
-    p2I01DependencyStatus: "BLOCKED",
-    p2I01Limitations: ["P2_I01_GATE_NOT_CERTIFIED",
+    p2I01DependencyStatus: activationCertified ? "CERTIFIED" : "BLOCKED",
+    p2I01Limitations: activationCertified ? [] : ["P2_I01_GATE_NOT_CERTIFIED",
       "EXTERNAL_EBAY_QUOTA_BLOCKER"],
     acquisition: getLunaStockAcquisitionCapabilityV1({
       protectedSessionConfigured: session.status === "SESSION_READY",
       protectedSessionServerOnly: session.backendOnly,
     }),
     prerequisites,
+    productionSchedulerEnabled: activationCertified,
     observations: [],
   })
 }

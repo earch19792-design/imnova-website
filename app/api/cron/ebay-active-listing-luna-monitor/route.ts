@@ -23,6 +23,8 @@ import { runAutomaticCertifiedOosProtectionV1 } from
   "@/lib/ebay/ebay-auto-certified-oos-protection-v1"
 import { reconcileSellerOsStockIdentityV1 } from
   "@/lib/ebay/ebay-stock-identity-auto-reconciliation-v1"
+import { auditSellerOsLunaProtectedSessionV1 } from
+  "@/lib/ebay/ebay-luna-protected-session-server-v1"
 import {
   endLiveInvariantViolationNotAvailableV1,
   SELLER_OS_LIVE_INVARIANT_END_AUTHORIZATION_V1,
@@ -43,6 +45,8 @@ const BULK_END_UNLINKED_LIVE_TARGETS_V1 = Object.freeze([
 const STOCK_IDENTITY_RECONCILIATION_TARGETS_V1 = Object.freeze([
   "366582586826", "366592485792", "366597434810",
 ])
+const LUNA_PRODUCTION_POLLING_CANARY_ITEM_ID = "366574069492"
+const LUNA_PRODUCTION_POLL_INTERVAL_SECONDS = 900
 
 function safeCode(error: unknown) {
   const code = error instanceof Error ? error.message : ""
@@ -90,11 +94,22 @@ export async function GET(req: Request) {
   }
   const config = configuration()
   const activation = Object.freeze({
-    contractVersion: "AUTO_CERTIFIED_OOS_END_LISTING_V1",
+    contractVersion: "ACTIVATE_LUNA_STOCKGUARD_PRODUCTION_POLLING_V1",
     schedulerRequested: config.enabled,
     previewSchedulerEnabled:
       process.env.VERCEL_ENV === "preview" && config.enabled,
-    productionSchedulerEnabled: false as const,
+    productionSchedulerEnabled:
+      process.env.VERCEL_ENV === "preview" && config.enabled,
+    scheduler: Object.freeze({
+      status: process.env.VERCEL_ENV === "preview" && config.enabled
+        ? "ENABLED" as const : "DISABLED" as const,
+      intervalSeconds: LUNA_PRODUCTION_POLL_INTERVAL_SECONDS,
+      maximumAttempts: 3 as const,
+      baseBackoffSeconds: 30 as const,
+      maximumBackoffSeconds: 900 as const,
+      maximumConcurrency: 4 as const,
+      oneEffectiveActiveWorkerPerLogicalWindow: true as const,
+    }),
   })
   if (process.env.VERCEL_ENV !== "preview" || !config.enabled) {
     return NextResponse.json({
@@ -123,7 +138,8 @@ export async function GET(req: Request) {
   }
   const supabase = getSupabaseAdminClient()
   const bulkEndOutcomes: Array<Record<string, unknown>> = []
-  for (const itemId of BULK_END_UNLINKED_LIVE_TARGETS_V1) {
+  for (const itemId of activation.productionSchedulerEnabled
+    ? [] : BULK_END_UNLINKED_LIVE_TARGETS_V1) {
     try {
       const currentLive = await getEbayCommercialMonitorLiveReadonly({
         accountKey,
@@ -231,6 +247,114 @@ export async function GET(req: Request) {
       }, { status: 202 })
     }
     leaseOwned = true
+
+    if (activation.productionSchedulerEnabled) {
+      const protectedSession = await auditSellerOsLunaProtectedSessionV1({
+        vaultSchemaApplied: true,
+      })
+      if (protectedSession.status !== "SESSION_READY") {
+        throw new Error("LUNA_PROTECTED_SESSION_NOT_READY")
+      }
+      const live = await getEbayCommercialMonitorLiveReadonly({
+        accountKey,
+        accountAlias: account.accountAlias,
+      })
+      const canonicalMonitor = await getCommercialMonitorReadonly(
+        supabase,
+        { accountKey, accountAlias: account.accountAlias,
+          configurationReason: account.reason },
+        live,
+      )
+      const currentLive = canonicalMonitor.listings.filter((listing) =>
+        listing.discovery.livePresence.status === "LIVE_ACTIVE")
+      const eligibleItemIds = currentLive.filter((listing) =>
+        listing.stock.supplierLinkageStatus === "CERTIFIED" &&
+        listing.stock.state !== "STOCK_UNKNOWN" &&
+        listing.stock.limitationCode !==
+          "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH")
+        .map((listing) => listing.identity.itemId).sort()
+      const identityMismatchSkippedItemIds = currentLive.filter((listing) =>
+        listing.stock.limitationCode ===
+          "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH")
+        .map((listing) => listing.identity.itemId).sort()
+      const canaryRequested = new URL(req.url).searchParams.get("canary") === "true"
+      const targetItemIds = canaryRequested
+        ? eligibleItemIds.filter((itemId) =>
+            itemId === LUNA_PRODUCTION_POLLING_CANARY_ITEM_ID)
+        : eligibleItemIds
+      if (canaryRequested && targetItemIds.length !== 1) {
+        throw new Error("LUNA_PRODUCTION_POLLING_CANARY_NOT_ELIGIBLE")
+      }
+      const stockPolling = await reconcileSellerOsStockIdentityV1(supabase, {
+        accountKey,
+        targetItemIds,
+        intervalSeconds: LUNA_PRODUCTION_POLL_INTERVAL_SECONDS,
+      })
+      const postPollLive = await getEbayCommercialMonitorLiveReadonly({
+        accountKey,
+        accountAlias: account.accountAlias,
+      })
+      const postPollMonitor = await getCommercialMonitorReadonly(
+        supabase,
+        { accountKey, accountAlias: account.accountAlias,
+          configurationReason: account.reason },
+        postPollLive,
+      )
+      const automaticOosProtection = await runAutomaticCertifiedOosProtectionV1({
+        monitor: postPollMonitor,
+        allowedItemIds: targetItemIds,
+        maxMarketplaceWrites: 1,
+      })
+      const sourceUnavailableCount = (stockPolling.outcomes as readonly
+        Record<string, unknown>[]).filter((outcome) =>
+        outcome.stockState === "STOCK_UNKNOWN").length
+      const success = stockPolling.targetCount === targetItemIds.length &&
+        stockPolling.ambiguousCount === 0 && stockPolling.noMatchCount === 0 &&
+        sourceUnavailableCount === 0
+      const { error: leaseFinishError } = await supabase.rpc(
+        "finish_ebay_targeted_luna_monitor_run",
+        { p_account_key: accountKey, p_run_id: runId, p_success: success,
+          p_error_code: success ? null : "LUNA_PRODUCTION_POLLING_PARTIAL" },
+      )
+      if (leaseFinishError) throw new Error("TARGETED_LUNA_MONITOR_FINISH_FAILED")
+      leaseOwned = false
+      await finishSellerAutomationRun(supabase, runId, {
+        status: success ? "completed" : "partial",
+        claimedTasks: stockPolling.targetCount,
+        successfulTasks: stockPolling.autoResolvedCount,
+        failedTasks: stockPolling.ambiguousCount + stockPolling.noMatchCount +
+          sourceUnavailableCount,
+        metrics: { stage: "LUNA_PRODUCTION_STOCK_POLLING_V1", accountKey,
+          activation, protectedSessionStatus: protectedSession.status,
+          currentLiveCount: currentLive.length,
+          certifiedLinkageCount: currentLive.filter((listing) =>
+            listing.stock.supplierLinkageStatus === "CERTIFIED").length,
+          pollEligibleCount: eligibleItemIds.length,
+          identityMismatchSkippedCount: identityMismatchSkippedItemIds.length,
+          canaryRequested, stockPolling, automaticOosProtection },
+      })
+      return NextResponse.json({ success,
+        status: success ? "completed" : "partial",
+        activation,
+        oldGateRevalidation: "STALE_GATE_CLOSED_CURRENT_PREREQUISITES_SATISFIED",
+        protectedSessionStatus: protectedSession.status,
+        humanBootstrapRequired: false,
+        currentLiveCount: currentLive.length,
+        certifiedLinkageCount: currentLive.filter((listing) =>
+          listing.stock.supplierLinkageStatus === "CERTIFIED").length,
+        pollEligibleCount: eligibleItemIds.length,
+        identityMismatchSkippedCount: identityMismatchSkippedItemIds.length,
+        canaryRequested,
+        canaryItemId: LUNA_PRODUCTION_POLLING_CANARY_ITEM_ID,
+        stockPolling,
+        automaticOosProtection,
+        automationRunId: runId,
+        safety: { parallelSchedulerCreated: false, newMigrationCount: 0,
+          browserSessionRequired: false, humanInterventionCount: 0,
+          lunaWrites: 0, marketplaceWrites:
+            automaticOosProtection.ebayWriteCount },
+      }, { status: success ? 200 : 503 })
+    }
 
     // Protection is evaluated first so a fresh certified-zero condition cannot
     // age out behind the broader evidence refresh. The account-scoped lease
