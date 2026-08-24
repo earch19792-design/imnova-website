@@ -64,6 +64,10 @@ export async function runAutomaticCertifiedOosProtectionV1(input: Readonly<{
         : "ALREADY_PROTECTED" as const,
     listingsEvaluated: preflights.length,
     eligibleItemIds: Object.freeze(eligible.map((entry) => entry.itemId)),
+    blockedCandidates: Object.freeze(preflights
+      .filter((entry) => entry.status === "BLOCKED")
+      .map((entry) => Object.freeze({ itemId: entry.itemId, sku: entry.sku,
+        blockerCodes: entry.blockerCodes }))),
     deferredEligibleItemIds: Object.freeze(
       eligible.slice(executions.length).map((entry) => entry.itemId),
     ),
