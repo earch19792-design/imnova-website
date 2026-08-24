@@ -62,6 +62,10 @@ type RuntimeTrace = {
   cartMutationConfirmed: boolean
   bridgeReconnected: boolean
   shippingFlowResumed: boolean
+  checkoutNavigationHost: string
+  checkoutHostPermissionMatch: boolean
+  checkoutContentScriptLoaded: boolean
+  activeJobRecoveredOnCheckout: boolean
   checkoutPageDetected: boolean
   checkoutPageClassification: string
   checkoutHostClassification: string
@@ -93,6 +97,10 @@ const EMPTY_RUNTIME_TRACE: RuntimeTrace = Object.freeze({
   cartMutationConfirmed: false,
   bridgeReconnected: false,
   shippingFlowResumed: false,
+  checkoutNavigationHost: "NOT_OBSERVED",
+  checkoutHostPermissionMatch: false,
+  checkoutContentScriptLoaded: false,
+  activeJobRecoveredOnCheckout: false,
   checkoutPageDetected: false,
   checkoutPageClassification: "NOT_CHECKED",
   checkoutHostClassification: "NOT_CHECKED",
@@ -252,7 +260,9 @@ export default function LunaShippingCapturePage() {
             "CART_EXPECTED_PRODUCT_FOUND", "CART_EXPECTED_QUANTITY_FOUND",
             "CART_MUTATION_CONFIRMED", "BRIDGE_RECONNECTED",
             "SHIPPING_FLOW_RESUMED", "AWAITING_CHECKOUT_SHIPPING",
-            "CHECKOUT_PAGE_DETECTED", "NORMAL_GUEST_CHECKOUT",
+            "CHECKOUT_CONTENT_SCRIPT_LOADED",
+            "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", "CHECKOUT_PAGE_DETECTED",
+            "NORMAL_GUEST_CHECKOUT",
             "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
             "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "EXPLICIT_LOGIN_PAGE",
             "EXPLICIT_AUTH_CHALLENGE", "SESSION_EXPIRED",
@@ -292,6 +302,14 @@ export default function LunaShippingCapturePage() {
                 ? { bridgeReconnected: true } : {}),
               ...(message.state === "SHIPPING_FLOW_RESUMED"
                 ? { shippingFlowResumed: true } : {}),
+              ...(message.state === "CHECKOUT_CONTENT_SCRIPT_LOADED"
+                ? { checkoutContentScriptLoaded: true } : {}),
+              ...(message.state === "ACTIVE_JOB_RECOVERED_ON_CHECKOUT"
+                ? { activeJobRecoveredOnCheckout: true } : {}),
+              ...(typeof message.checkoutNavigationHost === "string"
+                ? { checkoutNavigationHost: message.checkoutNavigationHost } : {}),
+              ...(message.checkoutHostPermissionMatch === true
+                ? { checkoutHostPermissionMatch: true } : {}),
               ...(message.state === "CHECKOUT_PAGE_DETECTED"
                 ? { checkoutPageDetected: true } : {}),
               ...(new Set(["NORMAL_GUEST_CHECKOUT",
@@ -494,6 +512,10 @@ export default function LunaShippingCapturePage() {
             `CART_MUTATION_CONFIRMED=${runtimeTrace.cartMutationConfirmed}\n` +
             `BRIDGE_RECONNECTED=${runtimeTrace.bridgeReconnected}\n` +
             `SHIPPING_FLOW_RESUMED=${runtimeTrace.shippingFlowResumed}\n` +
+            `CHECKOUT_NAVIGATION_HOST=${runtimeTrace.checkoutNavigationHost}\n` +
+            `CHECKOUT_HOST_PERMISSION_MATCH=${runtimeTrace.checkoutHostPermissionMatch}\n` +
+            `CHECKOUT_CONTENT_SCRIPT_LOADED=${runtimeTrace.checkoutContentScriptLoaded}\n` +
+            `ACTIVE_JOB_RECOVERED_ON_CHECKOUT=${runtimeTrace.activeJobRecoveredOnCheckout}\n` +
             `CHECKOUT_PAGE_DETECTED=${runtimeTrace.checkoutPageDetected}\n` +
             `CHECKOUT_PAGE_CLASSIFICATION=${runtimeTrace.checkoutPageClassification}\n` +
             `CHECKOUT_HOST_CLASSIFICATION=${runtimeTrace.checkoutHostClassification}\n` +
@@ -508,7 +530,8 @@ export default function LunaShippingCapturePage() {
             `CAPTURE_RESULT_DURABLE=${runtimeTrace.captureResultDurable}\n` +
             `DURABLE_READBACK_MATCH=${runtimeTrace.durableReadbackMatch}\n` +
             `ECONOMICS_STATUS=${runtimeTrace.economicsStatus}\n` +
-            `AUTHENTICATED_OPERATION_CONFIRMED=${runtimeTrace.authenticatedOperationConfirmed}`}
+            `AUTHENTICATED_OPERATION_CONFIRMED=${runtimeTrace.authenticatedOperationConfirmed}\n` +
+            `PURCHASE_BOUNDARY_ENFORCED=true`}
         </code>
         {error && <code className="mt-3 block break-all text-sm text-rose-100">
           FINAL_BLOCKER={error}

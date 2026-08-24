@@ -175,10 +175,13 @@ function recoverActiveJob(sender) {
     expected.pathname.replace(/\/$/, "")
   const cartPath = activeJobPhase === CART_PHASE &&
     actual.pathname.replace(/\/$/, "") === "/cart"
-  const checkoutHost = storefrontHost || actual.hostname === "account.lunaportex.com"
-  const checkoutPath = activeJobPhase === CHECKOUT_PHASE && checkoutHost &&
-    (/^\/checkouts?(?:\/|$)/.test(actual.pathname) ||
-      actual.hostname === "account.lunaportex.com")
+  const lunaCheckout = storefrontHost && /^\/checkouts?(?:\/|$)/
+    .test(actual.pathname)
+  const accountCheckout = actual.hostname === "account.lunaportex.com"
+  const shopPayCheckout = actual.hostname === "shop.app" &&
+    /^\/pay(?:\/|$)/.test(actual.pathname)
+  const checkoutPath = activeJobPhase === CHECKOUT_PHASE &&
+    (lunaCheckout || accountCheckout || shopPayCheckout)
   if (!expected || actual.protocol !== "https:" ||
       ((!storefrontHost || (!productPath && !cartPath)) && !checkoutPath)) return null
   activeTabId = sender.tab.id
@@ -200,8 +203,15 @@ function emitProgress(state, details = {}) {
       ? { cartSubtotalUsd: Math.round(details.cartSubtotalUsd * 100) / 100 }
       : {}),
     ...(new Set(["LUNA_STOREFRONT_CHECKOUT_HOST", "LUNA_ACCOUNT_HOST",
+      "SHOP_PAY_CHECKOUT_HOST",
       "UNSUPPORTED_CHECKOUT_HOST"]).has(details.checkoutHostClassification)
       ? { checkoutHostClassification: details.checkoutHostClassification } : {}),
+    ...(new Set(["lunaportex.com", "www.lunaportex.com",
+      "account.lunaportex.com", "shop.app"])
+      .has(details.checkoutNavigationHost)
+      ? { checkoutNavigationHost: details.checkoutNavigationHost } : {}),
+    ...(details.checkoutHostPermissionMatch === true
+      ? { checkoutHostPermissionMatch: true } : {}),
     ...(new Set(["EXPLICIT_CHALLENGE_UI", "EXPLICIT_LOGIN_REQUIRED",
       "SESSION_EXPIRED_UI", "NO_EXPLICIT_AUTH_REQUIREMENT"])
       .has(details.authSignal) ? { authSignal: details.authSignal } : {}),
@@ -355,7 +365,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         "CART_PAGE_DETECTED", "CART_EXPECTED_PRODUCT_FOUND",
         "CART_EXPECTED_QUANTITY_FOUND", "CART_MUTATION_CONFIRMED",
         "BRIDGE_RECONNECTED", "SHIPPING_FLOW_RESUMED",
-        "AWAITING_CHECKOUT_SHIPPING", "CHECKOUT_PAGE_DETECTED",
+        "AWAITING_CHECKOUT_SHIPPING", "CHECKOUT_CONTENT_SCRIPT_LOADED",
+        "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", "CHECKOUT_PAGE_DETECTED",
         "NORMAL_GUEST_CHECKOUT", "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
         "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "EXPLICIT_LOGIN_PAGE",
         "EXPLICIT_AUTH_CHALLENGE", "SESSION_EXPIRED",
@@ -364,6 +375,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         "SHIPPING_CAPTURE_STARTED", "RESULT_POSTED"]).has(message.state)) {
     emitProgress(message.state, { cartSubtotalUsd: message.cartSubtotalUsd,
       checkoutHostClassification: message.checkoutHostClassification,
+      checkoutNavigationHost: message.checkoutNavigationHost,
+      checkoutHostPermissionMatch: message.checkoutHostPermissionMatch,
       authSignal: message.authSignal,
       authSignalSource: message.authSignalSource })
     return false

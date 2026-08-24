@@ -123,6 +123,10 @@ function progress(job, state, details = {}) {
       ? { cartSubtotalUsd: details.cartSubtotalUsd } : {}),
     ...(typeof details.checkoutHostClassification === "string"
       ? { checkoutHostClassification: details.checkoutHostClassification } : {}),
+    ...(typeof details.checkoutNavigationHost === "string"
+      ? { checkoutNavigationHost: details.checkoutNavigationHost } : {}),
+    ...(details.checkoutHostPermissionMatch === true
+      ? { checkoutHostPermissionMatch: true } : {}),
     ...(typeof details.authSignal === "string"
       ? { authSignal: details.authSignal } : {}),
     ...(typeof details.authSignalSource === "string"
@@ -448,7 +452,75 @@ function checkoutHostClassification() {
   if (location.hostname === "account.lunaportex.com") {
     return "LUNA_ACCOUNT_HOST"
   }
+  if (location.hostname === "shop.app" &&
+      /^\/pay(?:\/|$)/.test(location.pathname)) {
+    return "SHOP_PAY_CHECKOUT_HOST"
+  }
   return "UNSUPPORTED_CHECKOUT_HOST"
+}
+
+function checkoutHostPermissionMatch() {
+  return checkoutHostClassification() !== "UNSUPPORTED_CHECKOUT_HOST"
+}
+
+function labeledMoney(label) {
+  const selectors = label === "subtotal"
+    ? ['[data-checkout-subtotal]', '[data-order-summary-subtotal]',
+      '[data-subtotal-price]', '[data-testid*="subtotal" i]']
+    : label === "shipping"
+      ? ['[data-checkout-shipping]', '[data-order-summary-shipping]',
+        '[data-shipping-price]', '[data-testid*="shipping" i]']
+      : ['[data-checkout-total]', '[data-order-summary-total]',
+        '[data-total-price]', '[data-testid*="total" i]']
+  for (const selector of selectors) {
+    for (const element of document.querySelectorAll(selector)) {
+      if (!isVisible(element)) continue
+      const values = moneyValues(element.textContent)
+      if (values.length === 1) return values[0]
+    }
+  }
+  const labelPattern = label === "subtotal" ? /^subtotal\b/i
+    : label === "shipping" ? /^(?:shipping|delivery)\b/i : /^total\b/i
+  for (const element of [...document.querySelectorAll(
+    'dt,th,[role="rowheader"],[data-testid*="summary" i]')].slice(0, 160)) {
+    if (!isVisible(element) || !labelPattern.test(
+      String(element.textContent ?? "").trim())) continue
+    const row = element.closest?.('tr,dl,[role="row"],li,div') ?? element.parentElement
+    const values = moneyValues(row?.textContent)
+    if (values.length === 1) return values[0]
+  }
+  return null
+}
+
+function checkoutSummaryQuote(expectedSubtotal) {
+  const subtotalUsd = labeledMoney("subtotal")
+  const shippingUsd = labeledMoney("shipping")
+  const totalUsd = labeledMoney("total")
+  if (![subtotalUsd, shippingUsd, totalUsd].every(Number.isFinite) ||
+      Math.abs(subtotalUsd - expectedSubtotal) > 0.01 ||
+      Math.abs(subtotalUsd + shippingUsd - totalUsd) > 0.02) return null
+  return { shippingUsd, totalUsd }
+}
+
+function normalizeVisibleText(value) {
+  return String(value ?? "").normalize("NFKC").toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ").trim()
+}
+
+function checkoutExpectedLine(job) {
+  const candidates = [...document.querySelectorAll(
+    '[data-order-summary] [data-line-item], [data-testid*="line-item" i], ' +
+    '[data-testid*="product" i], [role="listitem"]')].slice(0, 120)
+  const normalizedName = normalizeVisibleText(job.productName)
+  for (const element of candidates) {
+    if (!isVisible(element)) continue
+    const text = normalizeVisibleText(element.textContent)
+    const quantityMatches = new RegExp(`(?:qty|quantity|×|x)\\s*${
+      job.identity.quantity}(?:\\b|$)`, "i").test(element.textContent ?? "") ||
+      Number(element.getAttribute?.("data-quantity")) === job.identity.quantity
+    if (text.includes(normalizedName) && quantityMatches) return true
+  }
+  return false
 }
 
 function checkoutPageClassification() {
@@ -481,11 +553,15 @@ function checkoutPageClassification() {
   const checkoutShell = /^\/checkouts?(?:\/|$)/.test(location.pathname) &&
     visibleMatch(['[data-checkout-root]', '[data-order-summary]',
       '[data-checkout-subtotal]', 'form[action*="/checkout"]'])
+  const shopPayShell = location.hostname === "shop.app" &&
+    /^\/pay(?:\/|$)/.test(location.pathname) &&
+    visibleMatch(['[data-order-summary]', '[data-testid*="order-summary" i]',
+      '[data-testid*="subtotal" i]', '[data-testid*="shipping" i]'])
   if (checkoutFields) {
     return "NORMAL_CHECKOUT_WITH_SHIPPING_FORM"
   }
   if (contactFields) return "NORMAL_CHECKOUT_WITH_CONTACT_FORM"
-  if (shippingOptions || checkoutShell) {
+  if (shippingOptions || checkoutShell || shopPayShell) {
     return "NORMAL_GUEST_CHECKOUT"
   }
   const explicitLogin = location.hostname === "account.lunaportex.com" &&
@@ -565,6 +641,8 @@ async function checkoutShipping(job, expectedSubtotal) {
         : "NO_EXPLICIT_AUTH_REQUIREMENT"
   const classificationDetails = {
     checkoutHostClassification: checkoutHostClassification(), authSignal,
+    checkoutNavigationHost: location.hostname,
+    checkoutHostPermissionMatch: checkoutHostPermissionMatch(),
     authSignalSource: "FIXED_HOST_PATH_AND_VISIBLE_DOM",
   }
   progress(job, "CHECKOUT_PAGE_DETECTED", classificationDetails)
@@ -579,10 +657,19 @@ async function checkoutShipping(job, expectedSubtotal) {
   if (classification === "UNKNOWN_CHECKOUT_PAGE") {
     throw new Error("LUNA_UNKNOWN_CHECKOUT_PAGE")
   }
-  if (!canonicalShippingProfile(job)) {
+  const summaryQuote = checkoutSummaryQuote(expectedSubtotal)
+  if (!canonicalShippingProfile(job) && !summaryQuote) {
     throw new Error("CANONICAL_US_SHIPPING_PROFILE_UNAVAILABLE")
   }
+  if (summaryQuote && !checkoutExpectedLine(job)) {
+    throw new Error("LUNA_CHECKOUT_EXPECTED_PRODUCT_UNPROVEN")
+  }
   progress(job, "CANONICAL_US_PROFILE_FOUND")
+  if (summaryQuote) {
+    progress(job, "SHIPPING_ADDRESS_ACCEPTED")
+    progress(job, "SHIPPING_OPTIONS_DETECTED")
+    return summaryQuote
+  }
   let shippingOption = firstVisible(document, [
     '[data-shipping-method]', '[data-shipping-rate]',
     'input[name*="shipping_method" i]', 'input[name*="shipping_rate" i]',
@@ -782,10 +869,16 @@ const isProductPage = /^\/products\/[a-z0-9][a-z0-9-]{1,180}\/?$/
   .test(location.pathname)
 const isCartPage = location.pathname.replace(/\/$/, "") === "/cart"
 const isCheckoutPage = /^\/checkouts?(?:\/|$)/.test(location.pathname) ||
-  location.hostname === "account.lunaportex.com"
+  location.hostname === "account.lunaportex.com" ||
+  location.hostname === "shop.app" && /^\/pay(?:\/|$)/.test(location.pathname)
 
 if (isProductPage || isCartPage || isCheckoutPage) {
   progress(null, "CONTENT_SCRIPT_LOADED")
+  if (isCheckoutPage) progress(null, "CHECKOUT_CONTENT_SCRIPT_LOADED", {
+    checkoutHostClassification: checkoutHostClassification(),
+    checkoutNavigationHost: location.hostname,
+    checkoutHostPermissionMatch: checkoutHostPermissionMatch(),
+  })
   progress(null, "ACTIVE_JOB_REQUESTED")
   void recoverJobContext().then(async (context) => {
     if (isCheckoutPage) {
@@ -794,6 +887,11 @@ if (isProductPage || isCartPage || isCheckoutPage) {
           !Number.isFinite(context.cartSubtotalUsd)) {
         throw new Error("ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN")
       }
+      progress(context.job, "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", {
+        checkoutHostClassification: checkoutHostClassification(),
+        checkoutNavigationHost: location.hostname,
+        checkoutHostPermissionMatch: checkoutHostPermissionMatch(),
+      })
       return { job: context.job,
         capture: await runCheckoutStage(context.job,
           context.originalCartSnapshot, context.cartSubtotalUsd) }
