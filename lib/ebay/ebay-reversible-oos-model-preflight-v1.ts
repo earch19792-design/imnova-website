@@ -321,7 +321,6 @@ async function exactInventoryItemRead(input: {
     method: "GET",
     headers: {
       Authorization: `Bearer ${input.token}`,
-      Accept: "application/json",
     },
     cache: "no-store",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
