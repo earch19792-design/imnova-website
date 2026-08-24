@@ -16,7 +16,7 @@ jobs:
   active-listing-luna-monitor:
     # Runs for the full lifetime of the active listings. The endpoint remains
     # Preview-only and also enforces its own runtime kill switch and lease.
-    if: vars.EBAY_COMMERCIAL_PREVIEW_MONITOR_ENABLED == 'true'
+    if: vars.EBAY_TARGETED_LUNA_ACTIVE_MONITOR_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
