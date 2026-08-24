@@ -68,6 +68,14 @@ export async function runAutomaticCertifiedOosProtectionV1(input: Readonly<{
       .filter((entry) => entry.status === "BLOCKED")
       .map((entry) => Object.freeze({ itemId: entry.itemId, sku: entry.sku,
         blockerCodes: entry.blockerCodes }))),
+    marketplaceSafetyGate: Object.freeze({
+      status: input.monitor.liveCertification.status,
+      marketplaceId: input.monitor.liveCertification.marketplaceId,
+      account: input.monitor.liveCertification.account,
+      oauth: input.monitor.liveCertification.oauth,
+      marketplaceWrites:
+        input.monitor.liveCertification.safety.marketplaceWrites,
+    }),
     deferredEligibleItemIds: Object.freeze(
       eligible.slice(executions.length).map((entry) => entry.itemId),
     ),
