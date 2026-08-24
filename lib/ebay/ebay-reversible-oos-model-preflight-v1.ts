@@ -11,6 +11,7 @@ export const REVERSIBLE_OOS_TARGET_SKU = "IMN-LST-000001" as const
 const EBAY_ORIGIN = "https://api.ebay.com"
 const TOKEN_ENDPOINT = `${EBAY_ORIGIN}/identity/v1/oauth2/token`
 const TRADING_ENDPOINT = `${EBAY_ORIGIN}/ws/api.dll`
+const INVENTORY_ITEM_ENDPOINT = `${EBAY_ORIGIN}/sell/inventory/v1/inventory_item`
 const INVENTORY_OFFER_ENDPOINT = `${EBAY_ORIGIN}/sell/inventory/v1/offer`
 const BASE_SCOPE = "https://api.ebay.com/oauth/api_scope"
 const INVENTORY_READONLY_SCOPE =
@@ -33,6 +34,18 @@ export type ReversibleOosListingManagementModel =
   | "OTHER"
   | "UNPROVEN"
 
+type ExactInventoryEvidence = boolean | "UNPROVEN"
+
+type ExactInventorySafeErrorClass =
+  | "NONE"
+  | "NOT_FOUND"
+  | "INVALID_REQUEST"
+  | "AUTHORIZATION"
+  | "RATE_LIMITED"
+  | "UPSTREAM_UNAVAILABLE"
+  | "RESPONSE_INVALID"
+  | "OTHER"
+
 export type ReversibleOosModelPreflightV1 = Readonly<{
   contractVersion: typeof SELLER_OS_REVERSIBLE_OOS_PREFLIGHT_V1
   target: { itemId: typeof REVERSIBLE_OOS_TARGET_ITEM_ID
@@ -47,8 +60,20 @@ export type ReversibleOosModelPreflightV1 = Readonly<{
   inventoryOfferLookupAttempted: boolean
   inventoryOfferExactMatch: boolean
   inventoryPublicationItemIdMatch: boolean
+  exactSkuReadAttempted: boolean
+  exactSkuReadHttpStatus: number | null
+  exactSkuExists: ExactInventoryEvidence
+  exactSkuErrorId: string | null
+  exactSkuSafeErrorClass: ExactInventorySafeErrorClass
+  exactOfferLookupAttempted: boolean
+  exactOfferFound: ExactInventoryEvidence
+  exactPublicationItemIdMatch: ExactInventoryEvidence
+  requestContractFixRequired: boolean
   reversibleQuantityZeroSemanticsProven: boolean
   reversibleRestoreSemanticsProven: boolean
+  restoreRequiresFreshHealthyStock: true
+  restoreRequiresPositiveSafeCapacity: true
+  inStockWithoutSafeCapacityAutoRestoreAllowed: false
   preservesItemId: boolean
   targetReversibleProtectPossible: boolean
   listing: {
@@ -222,6 +247,16 @@ function getItemXml() {
     "</GetItemRequest>"
 }
 
+type ExactSkuReadResult = {
+  attempted: boolean
+  httpStatus: number | null
+  exists: ExactInventoryEvidence
+  authoritativeAbsence: boolean
+  errorId: string | null
+  safeErrorClass: ExactInventorySafeErrorClass
+  requestContractFixRequired: boolean
+}
+
 type ExactInventoryLookup = {
   attempted: boolean
   complete: boolean
@@ -229,17 +264,111 @@ type ExactInventoryLookup = {
   exactOfferId: string | null
   itemIdMatch: boolean
   ambiguous: boolean
+  httpStatus: number | null
+  errorId: string | null
+  safeErrorClass: ExactInventorySafeErrorClass
+  requestContractFixRequired: boolean
+  exactSku: ExactSkuReadResult
+}
+
+function errorId(payload: Record<string, unknown>) {
+  if (!Array.isArray(payload.errors)) return null
+  for (const candidate of payload.errors) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      continue
+    }
+    const value = (candidate as Record<string, unknown>).errorId
+    const normalized = typeof value === "number" && Number.isSafeInteger(value)
+      ? String(value)
+      : typeof value === "string" && /^\d{1,12}$/.test(value.trim())
+        ? value.trim()
+        : null
+    if (normalized) return normalized
+  }
+  return null
+}
+
+function safeErrorClass(status: number): ExactInventorySafeErrorClass {
+  if (status >= 200 && status < 300) return "NONE"
+  if (status === 400) return "INVALID_REQUEST"
+  if (status === 401 || status === 403) return "AUTHORIZATION"
+  if (status === 404) return "NOT_FOUND"
+  if (status === 429) return "RATE_LIMITED"
+  if (status >= 500) return "UPSTREAM_UNAVAILABLE"
+  return "OTHER"
+}
+
+async function inventoryJson(response: Response) {
+  const raw = await boundedText(response, MAX_JSON_BYTES)
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null
+  } catch {
+    return null
+  }
+}
+
+async function exactInventoryItemRead(input: {
+  token: string
+  fetchImpl: FetchLike
+}): Promise<ExactSkuReadResult> {
+  const url = new URL(
+    `${INVENTORY_ITEM_ENDPOINT}/${encodeURIComponent(REVERSIBLE_OOS_TARGET_SKU)}`,
+  )
+  const response = await input.fetchImpl(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${input.token}`,
+      Accept: "application/json",
+    },
+    cache: "no-store",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  })
+  const payload = await inventoryJson(response)
+  const observedErrorId = payload ? errorId(payload) : null
+  const classification = response.status === 404
+    ? "NOT_FOUND" as const
+    : payload === null ? "RESPONSE_INVALID" as const
+      : safeErrorClass(response.status)
+  const exactIdentity = response.ok && payload !== null &&
+    text(payload.sku, 100) === REVERSIBLE_OOS_TARGET_SKU
+  return {
+    attempted: true,
+    httpStatus: response.status,
+    exists: exactIdentity ? true
+      : response.status === 404 ? false : "UNPROVEN",
+    authoritativeAbsence: response.status === 404,
+    errorId: observedErrorId,
+    safeErrorClass: classification,
+    requestContractFixRequired:
+      response.status === 400 && observedErrorId === "25709",
+  }
 }
 
 async function exactInventoryOfferLookup(input: {
   environment: NodeJS.ProcessEnv
   fetchImpl: FetchLike
 }): Promise<ExactInventoryLookup> {
-  const token = await mintToken({
-    credentials: generalCredentials(input.environment),
-    scopes: [BASE_SCOPE, INVENTORY_READONLY_SCOPE],
-    fetchImpl: input.fetchImpl,
-  })
+  const token = await mintToken({ credentials: generalCredentials(input.environment),
+    scopes: [BASE_SCOPE, INVENTORY_READONLY_SCOPE], fetchImpl: input.fetchImpl })
+  const item = await exactInventoryItemRead({ token, fetchImpl: input.fetchImpl })
+  if (item.exists !== true) {
+    return {
+      attempted: false,
+      complete: item.authoritativeAbsence,
+      exactMatch: false,
+      exactOfferId: null,
+      itemIdMatch: false,
+      ambiguous: false,
+      httpStatus: item.httpStatus,
+      errorId: item.errorId,
+      safeErrorClass: item.safeErrorClass,
+      requestContractFixRequired: item.requestContractFixRequired,
+      exactSku: item,
+    }
+  }
   const url = new URL(INVENTORY_OFFER_ENDPOINT)
   url.searchParams.set("sku", REVERSIBLE_OOS_TARGET_SKU)
   url.searchParams.set("limit", "100")
@@ -247,20 +376,28 @@ async function exactInventoryOfferLookup(input: {
     method: "GET",
     headers: {
       Authorization: `Bearer ${token}`,
-      "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+      Accept: "application/json",
     },
     cache: "no-store",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
-  const raw = await boundedText(response, MAX_JSON_BYTES)
-  let payload: Record<string, unknown> = {}
-  try {
-    payload = JSON.parse(raw) as Record<string, unknown>
-  } catch {
-    throw new Error("REVERSIBLE_OOS_INVENTORY_RESPONSE_INVALID")
-  }
-  if (!response.ok || !Array.isArray(payload.offers)) {
-    throw new Error(`REVERSIBLE_OOS_INVENTORY_${response.status}`)
+  const payload = await inventoryJson(response)
+  const observedErrorId = payload ? errorId(payload) : null
+  if (!response.ok || !payload || !Array.isArray(payload.offers)) {
+    return {
+      attempted: true,
+      complete: false,
+      exactMatch: false,
+      exactOfferId: null,
+      itemIdMatch: false,
+      ambiguous: false,
+      httpStatus: response.status,
+      errorId: observedErrorId,
+      safeErrorClass: payload ? safeErrorClass(response.status) : "RESPONSE_INVALID",
+      requestContractFixRequired:
+        response.status === 400 && observedErrorId === "25709",
+      exactSku: item,
+    }
   }
   const offers = payload.offers.filter((offer): offer is Record<string, unknown> =>
     Boolean(offer) && typeof offer === "object" && !Array.isArray(offer))
@@ -287,6 +424,11 @@ async function exactInventoryOfferLookup(input: {
     exactOfferId,
     itemIdMatch: exact.length === 1,
     ambiguous: exact.length > 1,
+    httpStatus: response.status,
+    errorId: observedErrorId,
+    safeErrorClass: "NONE",
+    requestContractFixRequired: false,
+    exactSku: item,
   }
 }
 
@@ -307,8 +449,20 @@ function unavailable(limitationCode: string,
     inventoryOfferLookupAttempted: false,
     inventoryOfferExactMatch: false,
     inventoryPublicationItemIdMatch: false,
+    exactSkuReadAttempted: false,
+    exactSkuReadHttpStatus: null,
+    exactSkuExists: "UNPROVEN",
+    exactSkuErrorId: null,
+    exactSkuSafeErrorClass: "OTHER",
+    exactOfferLookupAttempted: false,
+    exactOfferFound: "UNPROVEN",
+    exactPublicationItemIdMatch: "UNPROVEN",
+    requestContractFixRequired: false,
     reversibleQuantityZeroSemanticsProven: false,
     reversibleRestoreSemanticsProven: false,
+    restoreRequiresFreshHealthyStock: true,
+    restoreRequiresPositiveSafeCapacity: true,
+    inStockWithoutSafeCapacityAutoRestoreAllowed: false,
     preservesItemId: false,
     targetReversibleProtectPossible: false,
     listing: { itemIdMatch: false, skuMatch: false,
@@ -382,7 +536,11 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
 
     let inventory: ExactInventoryLookup = { attempted: false, complete: false,
       exactMatch: false, exactOfferId: null, itemIdMatch: false,
-      ambiguous: false }
+      ambiguous: false, httpStatus: null, errorId: null,
+      safeErrorClass: "OTHER", requestContractFixRequired: false,
+      exactSku: { attempted: false, httpStatus: null, exists: "UNPROVEN",
+        authoritativeAbsence: false, errorId: null, safeErrorClass: "OTHER",
+        requestContractFixRequired: false } }
     let inventoryLookupFailure: string | null = null
     const inventoryOwnershipNeedsResolution = tradingReadSuccess &&
       listingType === "FixedPriceItem" && listingDuration === "GTC"
@@ -401,6 +559,14 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       input.authorizedPublication.sku === REVERSIBLE_OOS_TARGET_SKU &&
       inventory.exactOfferId &&
       input.authorizedPublication.offerId === inventory.exactOfferId)
+    const exactOfferFound: ExactInventoryEvidence =
+      inventory.exactSku.exists === false ? false
+        : inventory.attempted && inventory.complete
+          ? inventory.exactMatch : "UNPROVEN"
+    const exactPublicationItemIdMatch: ExactInventoryEvidence =
+      inventory.exactSku.exists === false ? false
+        : inventory.attempted && inventory.complete
+          ? inventory.itemIdMatch : "UNPROVEN"
     let listingManagementModel: ReversibleOosListingManagementModel = "UNPROVEN"
     let managementEvidenceSource = "UNPROVEN"
     if (tradingReadSuccess && inventory.complete && inventory.exactMatch &&
@@ -412,13 +578,18 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
         !inventory.exactMatch && !inventory.ambiguous &&
         listingType === "FixedPriceItem" && listingDuration === "GTC") {
       listingManagementModel = "TRADING_FIXED_PRICE"
-      managementEvidenceSource =
-        "EBAY_TRADING_GET_ITEM_PLUS_COMPLETE_EXACT_INVENTORY_OFFER_ABSENCE"
+      managementEvidenceSource = inventory.exactSku.exists === false
+        ? "EBAY_TRADING_GET_ITEM_PLUS_EXACT_INVENTORY_ITEM_NOT_FOUND"
+        : "EBAY_TRADING_GET_ITEM_PLUS_COMPLETE_EXACT_INVENTORY_OFFER_ABSENCE"
     } else if (inventory.exactMatch && !publicationMatch) {
       managementEvidenceSource =
         "INVENTORY_OFFER_PRESENT_WITHOUT_AUTHORIZED_PUBLICATION_RELATIONSHIP"
     } else if (inventoryLookupFailure) {
       managementEvidenceSource = inventoryLookupFailure
+    } else if (inventory.exactSku.attempted) {
+      managementEvidenceSource = inventory.exactSku.errorId
+        ? `EXACT_SKU_READ_${inventory.exactSku.httpStatus}_${inventory.exactSku.errorId}`
+        : `EXACT_SKU_READ_${inventory.exactSku.httpStatus ?? "UNPROVEN"}_${inventory.exactSku.safeErrorClass}`
     } else if (tradingReadSuccess && listingType !== "FixedPriceItem") {
       listingManagementModel = "OTHER"
       managementEvidenceSource = "EBAY_TRADING_GET_ITEM_LISTING_TYPE"
@@ -451,8 +622,20 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       inventoryOfferLookupAttempted: inventory.attempted,
       inventoryOfferExactMatch: inventory.exactMatch,
       inventoryPublicationItemIdMatch: publicationMatch,
+      exactSkuReadAttempted: inventory.exactSku.attempted,
+      exactSkuReadHttpStatus: inventory.exactSku.httpStatus,
+      exactSkuExists: inventory.exactSku.exists,
+      exactSkuErrorId: inventory.exactSku.errorId,
+      exactSkuSafeErrorClass: inventory.exactSku.safeErrorClass,
+      exactOfferLookupAttempted: inventory.attempted,
+      exactOfferFound,
+      exactPublicationItemIdMatch,
+      requestContractFixRequired: inventory.requestContractFixRequired,
       reversibleQuantityZeroSemanticsProven: reversibleSemantics,
       reversibleRestoreSemanticsProven: reversibleSemantics,
+      restoreRequiresFreshHealthyStock: true,
+      restoreRequiresPositiveSafeCapacity: true,
+      inStockWithoutSafeCapacityAutoRestoreAllowed: false,
       preservesItemId: reversibleSemantics,
       targetReversibleProtectPossible: reversibleSemantics,
       listing: { itemIdMatch, skuMatch, sellerAccountMatch, listingType,
