@@ -671,5 +671,5 @@ test("migration, performance route and scan enforce the conservative learning pa
   assert.match(scanCron, /remainingWorkMs\(\) < CRON_CANDIDATE_MINIMUM_REMAINING_MS/)
   assert.doesNotMatch(scanCron, /index > 0/)
   assert.doesNotMatch(vercel, /ebay-seller-performance-learning/)
-  assert.equal(JSON.parse(vercel).crons.length, 3)
+  assert.equal(JSON.parse(vercel).crons.length, 4)
 })
