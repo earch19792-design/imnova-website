@@ -9,6 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
+const EXTENSION_BUILD_VERSION = "1.0.13"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -22,6 +23,7 @@ const RECONNECT_GRACE_MS = 20_000
 const CHECKOUT_BOOTSTRAP_ACK_TIMEOUT_MS = 2_500
 const CHECKOUT_HOSTS = new Set(["lunaportex.com", "www.lunaportex.com",
   "account.lunaportex.com", "shop.app"])
+const SHOP_APP_HOST_PATTERN = "https://shop.app/*"
 
 let sellerPort = null
 let activeTabId = null
@@ -102,6 +104,17 @@ function allowedCheckoutNavigation(value) {
     return pathAllowed ? { host: url.hostname,
       origin: `https://${url.hostname}` } : null
   } catch { return null }
+}
+
+function effectiveShopAppContract() {
+  const manifest = chrome.runtime.getManifest()
+  return manifest.version === EXTENSION_BUILD_VERSION &&
+    Array.isArray(manifest.host_permissions) &&
+    manifest.host_permissions.includes(SHOP_APP_HOST_PATTERN) &&
+    Array.isArray(manifest.content_scripts) &&
+    manifest.content_scripts.some((entry) =>
+      Array.isArray(entry.matches) && entry.matches.includes(SHOP_APP_HOST_PATTERN)) &&
+    CHECKOUT_HOSTS.has("shop.app")
 }
 
 function jobValidationReason(value) {
@@ -399,11 +412,17 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
   if (message?.type !== EXTENSION_PING || !safeSellerSender(sender) ||
-      chrome.runtime.id !== EXACT_EXTENSION_ID) return false
+      chrome.runtime.id !== EXACT_EXTENSION_ID ||
+      !effectiveShopAppContract()) return false
   sendResponse({
     type: EXTENSION_READY,
     extensionId: EXACT_EXTENSION_ID,
     extensionVersion: chrome.runtime.getManifest().version,
+    extensionBuildVersion: EXTENSION_BUILD_VERSION,
+    shopAppManifestPermission: true,
+    shopAppContentScriptMatch: true,
+    shopAppRuntimeAllowlist: true,
+    shopAppCheckoutHostClassification: true,
     sellerOsOriginValidated: true,
   })
   return false
@@ -454,6 +473,11 @@ chrome.runtime.onConnectExternal.addListener((port) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === CHECKOUT_BOOTSTRAP_ACK) {
+    if (message.extensionBuildVersion !== EXTENSION_BUILD_VERSION) {
+      sendResponse({ accepted: false,
+        error: "EXTENSION_ARTIFACT_VERSION_MISMATCH" })
+      return false
+    }
     const recovered = sender.frameId === 0 && recoverActiveJob(sender)
     if (!recovered || activeJobPhase !== CHECKOUT_PHASE ||
         !checkoutNavigationArmed) {

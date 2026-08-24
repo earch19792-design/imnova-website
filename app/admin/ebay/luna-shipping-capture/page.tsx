@@ -11,6 +11,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
+const EXPECTED_EXTENSION_VERSION = "1.0.13"
 const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
@@ -176,6 +177,12 @@ function pingExtension(runtime: ChromeRuntime) {
         }
         if (response?.type !== EXTENSION_READY ||
             response?.extensionId !== EXTENSION_ID ||
+            response?.extensionVersion !== EXPECTED_EXTENSION_VERSION ||
+            response?.extensionBuildVersion !== EXPECTED_EXTENSION_VERSION ||
+            response?.shopAppManifestPermission !== true ||
+            response?.shopAppContentScriptMatch !== true ||
+            response?.shopAppRuntimeAllowlist !== true ||
+            response?.shopAppCheckoutHostClassification !== true ||
             response?.sellerOsOriginValidated !== true) {
           finish(new Error("LUNA_SHIPPING_EXTENSION_HANDSHAKE_INVALID"))
           return

@@ -6,7 +6,9 @@ Extensión MV3 separada y limitada exclusivamente a cotizaciones de envío de Lu
 
 1. Abre `chrome://extensions` o `edge://extensions`.
 2. Activa **Developer mode**.
-3. Selecciona **Load unpacked** y elige esta carpeta.
+3. Selecciona **Load unpacked** y elige esta carpeta completa. No copies ni
+   reemplaces archivos individuales: `manifest.json`, `background.js` y
+   `content.js` forman un único artefacto versionado.
 4. La extensión abre automáticamente la página canónica de captura de Seller OS.
 
 El ID estable de la extensión es `mhpkojahbbfdgodeaecggpjaplllgclk`.
@@ -16,8 +18,8 @@ candidatos secuencialmente sin clic por producto.
 ## Límite de seguridad
 
 - No solicita permisos de cookies, storage, webRequest ni `<all_urls>`.
-- Sólo se inyecta en `lunaportex.com`, `www.lunaportex.com` y, para detectar un
-  desvío de autenticación, `account.lunaportex.com`.
+- Sólo se inyecta en `lunaportex.com`, `www.lunaportex.com`, el desvío de
+  autenticación `account.lunaportex.com` y el checkout acotado `shop.app`.
 - No lee contraseñas, cookies, tokens, headers de autenticación ni almacenamiento
   del navegador.
 - Sólo modifica temporalmente el carrito, intenta restaurarlo y nunca navega a
