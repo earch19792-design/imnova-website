@@ -109,12 +109,18 @@ function experimentBlocked(listing: CommercialListingReadModel | null) {
 }
 
 function marketplaceSafetyReady(monitor: CommercialMonitorGetDto) {
+  const tradingGrantReady = monitor.liveCertification.oauth.scopes.some(
+    (scope) => scope.scope === "https://api.ebay.com/oauth/api_scope" &&
+      scope.classifications.includes("READ_AVAILABLE") &&
+      scope.classifications.includes("WRITE_CAPABLE_BUT_NOT_USED") &&
+      scope.evidenceOperation?.includes("TRADING_GET_ITEM_MARKETPLACE"),
+  )
   return monitor.liveCertification.status === "CERTIFIED" &&
     monitor.liveCertification.marketplaceId === "EBAY_US" &&
     monitor.liveCertification.account.bindingConfigured === true &&
     monitor.liveCertification.account.bindingMatched === true &&
-    monitor.liveCertification.oauth.status === "AVAILABLE" &&
     monitor.liveCertification.oauth.tokenReceived === true &&
+    tradingGrantReady &&
     monitor.liveCertification.safety.marketplaceWrites === 0
 }
 
