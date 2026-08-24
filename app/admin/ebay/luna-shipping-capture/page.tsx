@@ -272,7 +272,8 @@ export default function LunaShippingCapturePage() {
             "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", "CHECKOUT_PAGE_DETECTED",
             "NORMAL_GUEST_CHECKOUT",
             "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
-            "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "EXPLICIT_LOGIN_PAGE",
+            "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "NORMAL_CHECKOUT_WITH_SHIPPING",
+            "EXPLICIT_LOGIN_PAGE",
             "EXPLICIT_AUTH_CHALLENGE", "SESSION_EXPIRED",
             "UNKNOWN_CHECKOUT_PAGE", "CANONICAL_US_PROFILE_FOUND",
             "SHIPPING_ADDRESS_ACCEPTED", "SHIPPING_OPTIONS_DETECTED",
@@ -329,7 +330,8 @@ export default function LunaShippingCapturePage() {
                 ? { checkoutPageDetected: true } : {}),
               ...(new Set(["NORMAL_GUEST_CHECKOUT",
                 "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
-                "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "EXPLICIT_LOGIN_PAGE",
+                "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "NORMAL_CHECKOUT_WITH_SHIPPING",
+                "EXPLICIT_LOGIN_PAGE",
                 "EXPLICIT_AUTH_CHALLENGE", "SESSION_EXPIRED",
                 "UNKNOWN_CHECKOUT_PAGE"]).has(message.state)
                 ? { checkoutPageClassification: message.state } : {}),
@@ -430,7 +432,8 @@ export default function LunaShippingCapturePage() {
       const phaseForResume = () => {
         if (new Set(["AWAITING_CHECKOUT_SHIPPING", "CHECKOUT_PAGE_DETECTED",
           "NORMAL_GUEST_CHECKOUT", "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
-          "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "CANONICAL_US_PROFILE_FOUND",
+          "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "NORMAL_CHECKOUT_WITH_SHIPPING",
+          "CANONICAL_US_PROFILE_FOUND",
           "SHIPPING_ADDRESS_ACCEPTED", "SHIPPING_OPTIONS_DETECTED",
           "SHIPPING_CAPTURE_STARTED"]).has(lastProgressState)) {
           return "AWAITING_CHECKOUT_SHIPPING"

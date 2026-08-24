@@ -457,9 +457,6 @@ function checkoutHostClassification() {
   if (location.hostname === "shop.app") {
     return "SHOP_PAY_CHECKOUT_HOST"
   }
-  if (location.hostname === "pay.shopify.com") {
-    return "SHOPIFY_PAY_CHECKOUT_HOST"
-  }
   return "UNSUPPORTED_CHECKOUT_HOST"
 }
 
@@ -562,15 +559,18 @@ function checkoutPageClassification() {
   const checkoutShell = /^\/checkouts?(?:\/|$)/.test(location.pathname) &&
     visibleMatch(['[data-checkout-root]', '[data-order-summary]',
       '[data-checkout-subtotal]', 'form[action*="/checkout"]'])
-  const shopPayShell = new Set(["shop.app", "pay.shopify.com"])
-    .has(location.hostname) &&
+  const shopPayShell = location.hostname === "shop.app" &&
     visibleMatch(['[data-order-summary]', '[data-testid*="order-summary" i]',
       '[data-testid*="subtotal" i]', '[data-testid*="shipping" i]'])
+  if (location.hostname === "shop.app" &&
+      (checkoutFields || shippingOptions || shopPayShell)) {
+    return "NORMAL_CHECKOUT_WITH_SHIPPING"
+  }
   if (checkoutFields) {
     return "NORMAL_CHECKOUT_WITH_SHIPPING_FORM"
   }
   if (contactFields) return "NORMAL_CHECKOUT_WITH_CONTACT_FORM"
-  if (shippingOptions || checkoutShell || shopPayShell) {
+  if (shippingOptions || checkoutShell) {
     return "NORMAL_GUEST_CHECKOUT"
   }
   const explicitLogin = location.hostname === "account.lunaportex.com" &&
@@ -886,7 +886,7 @@ const isProductPage = /^\/products\/[a-z0-9][a-z0-9-]{1,180}\/?$/
 const isCartPage = location.pathname.replace(/\/$/, "") === "/cart"
 const isCheckoutPage = /^\/checkouts?(?:\/|$)/.test(location.pathname) ||
   location.hostname === "account.lunaportex.com" ||
-  new Set(["shop.app", "pay.shopify.com"]).has(location.hostname)
+  location.hostname === "shop.app"
 
 if ((isProductPage || isCartPage || isCheckoutPage) &&
     globalThis.__sellerOsLunaShippingCaptureAttachedV1 !== true) {
