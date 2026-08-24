@@ -49,10 +49,12 @@ function evidenceScore(listing: CommercialListingReadModel) {
     ? 10_000 : 0) + metrics * 100 + listing.evidenceReferences.length
 }
 
-function selectCanonicalRows(
+export function selectCanonicalCurrentLiveListingsV1(
   monitor: CommercialMonitorGetDto,
-  liveSet: ReadonlySet<string>,
 ) {
+  const liveSet = new Set(
+    monitor.backend.livePortfolioIntegrity.canonicalCohort.itemIds,
+  )
   const byItemId = new Map<string, CommercialListingReadModel[]>()
   for (const listing of monitor.listings) {
     const itemId = listing.identity.itemId.trim()
@@ -71,7 +73,7 @@ export function buildCanonicalLiveListingDashboardMetricsV1(
   const integrity = monitor.backend.livePortfolioIntegrity
   const liveCount = integrity.canonicalCohort.listingCount
   const liveSet = new Set(integrity.canonicalCohort.itemIds)
-  const liveListings = selectCanonicalRows(monitor, liveSet)
+  const liveListings = selectCanonicalCurrentLiveListingsV1(monitor)
   const monitoredItemIds = new Set(
     monitor.backend.monitorCoverage.monitoredItemIds.filter((itemId) =>
       liveSet.has(itemId)),
@@ -98,16 +100,20 @@ export function buildCanonicalLiveListingDashboardMetricsV1(
   return Object.freeze({
     contractVersion: SELLER_OS_CANONICAL_LIVE_DASHBOARD_VERSION,
     canonicalParity,
+    monitorAndInventoryCanonicalParity: canonicalParity,
     currentLiveInvariantPass,
     status: canonicalParity ? "AVAILABLE" as const : "UNPROVEN" as const,
     scopeId: integrity.canonicalCohort.scopeId,
     observedAt: integrity.canonicalCohort.observedAt,
     liveCount,
+    exactSupplierLinked: lunaLinkedCertified,
+    needsLinkage: unlinkedLive,
     lunaLinkedCertified,
     unlinkedLive,
     monitoredLive: monitoredItemIds.size,
     unmonitoredLive,
     stockguardEnrolledLive: liveCount - stockguardMissingItemIds.size,
+    stockGuardEnrolled: liveCount - stockguardMissingItemIds.size,
     liveWithoutStockguard,
     inStockSignal: liveListings.filter((listing) =>
       listing.stock.state === "IN_STOCK_SIGNAL").length,
@@ -116,12 +122,15 @@ export function buildCanonicalLiveListingDashboardMetricsV1(
     stockUnknown: liveListings.filter((listing) =>
       listing.stock.state === "STOCK_UNKNOWN").length,
     identityMismatch: liveListings.filter((listing) =>
+      listing.stock.supplierLinkageStatus === "CERTIFIED" &&
       listing.stock.limitationCode ===
         "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH").length,
     definitions: Object.freeze({
       linkedMeansSupplierLinkageCertifiedOnly: true as const,
       linkedDoesNotRequireInStock: true as const,
       certifiedOosRemainsVisibleAsRisk: true as const,
+      needsLinkageDoesNotMeanStockUnknown: true as const,
+      actionableDoesNotComeFromStockUnknown: true as const,
       nonLiveEvidenceExcluded: true as const,
     }),
   })
