@@ -385,7 +385,7 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       ambiguous: false }
     let inventoryLookupFailure: string | null = null
     const inventoryOwnershipNeedsResolution = tradingReadSuccess &&
-      inventoryTrackingMethod?.toLowerCase() === "sku"
+      listingType === "FixedPriceItem" && listingDuration === "GTC"
     if (inventoryOwnershipNeedsResolution) {
       try {
         inventory = await exactInventoryOfferLookup({ environment, fetchImpl })
@@ -408,12 +408,12 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       listingManagementModel = "INVENTORY_API_MANAGED"
       managementEvidenceSource =
         "EBAY_TRADING_GET_ITEM_PLUS_EXACT_INVENTORY_OFFER_PLUS_AUTHORIZED_PUBLICATION"
-    } else if (tradingReadSuccess &&
-        inventoryTrackingMethod?.toLowerCase() === "itemid" &&
+    } else if (tradingReadSuccess && inventory.complete &&
+        !inventory.exactMatch && !inventory.ambiguous &&
         listingType === "FixedPriceItem" && listingDuration === "GTC") {
       listingManagementModel = "TRADING_FIXED_PRICE"
       managementEvidenceSource =
-        "EBAY_TRADING_GET_ITEM_INVENTORY_TRACKING_METHOD_ITEM_ID"
+        "EBAY_TRADING_GET_ITEM_PLUS_COMPLETE_EXACT_INVENTORY_OFFER_ABSENCE"
     } else if (inventory.exactMatch && !publicationMatch) {
       managementEvidenceSource =
         "INVENTORY_OFFER_PRESENT_WITHOUT_AUTHORIZED_PUBLICATION_RELATIONSHIP"
