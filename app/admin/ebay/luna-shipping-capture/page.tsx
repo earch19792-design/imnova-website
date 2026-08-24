@@ -66,7 +66,12 @@ type RuntimeTrace = {
   checkoutNavigationOrigin: string
   checkoutHostPermissionMatch: boolean
   checkoutNavigationObserved: boolean
+  checkoutInjectionRequested: boolean
+  checkoutInjectionApiSucceeded: boolean
+  checkoutInjectionFrameId: number | null
   checkoutScriptInjected: boolean
+  checkoutScriptBootstrapAck: boolean
+  checkoutScriptBootstrapErrorCode: string
   checkoutContentScriptLoaded: boolean
   activeJobRecoveredOnCheckout: boolean
   checkoutPageDetected: boolean
@@ -104,7 +109,12 @@ const EMPTY_RUNTIME_TRACE: RuntimeTrace = Object.freeze({
   checkoutNavigationOrigin: "NOT_OBSERVED",
   checkoutHostPermissionMatch: false,
   checkoutNavigationObserved: false,
+  checkoutInjectionRequested: false,
+  checkoutInjectionApiSucceeded: false,
+  checkoutInjectionFrameId: null,
   checkoutScriptInjected: false,
+  checkoutScriptBootstrapAck: false,
+  checkoutScriptBootstrapErrorCode: "NOT_CHECKED",
   checkoutContentScriptLoaded: false,
   activeJobRecoveredOnCheckout: false,
   checkoutPageDetected: false,
@@ -267,7 +277,8 @@ export default function LunaShippingCapturePage() {
             "CART_MUTATION_CONFIRMED", "BRIDGE_RECONNECTED",
             "SHIPPING_FLOW_RESUMED", "AWAITING_CHECKOUT_SHIPPING",
             "CHECKOUT_NAVIGATION_OBSERVED", "CHECKOUT_HOST_ALLOWED",
-            "CHECKOUT_SCRIPT_INJECTED",
+            "CHECKOUT_INJECTION_REQUESTED", "CHECKOUT_INJECTION_API_SUCCEEDED",
+            "CHECKOUT_SCRIPT_INJECTED", "CHECKOUT_SCRIPT_BOOTSTRAP_ACK",
             "CHECKOUT_CONTENT_SCRIPT_LOADED",
             "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", "CHECKOUT_PAGE_DETECTED",
             "NORMAL_GUEST_CHECKOUT",
@@ -326,8 +337,19 @@ export default function LunaShippingCapturePage() {
                 ? { checkoutHostPermissionMatch: true } : {}),
               ...(message.state === "CHECKOUT_NAVIGATION_OBSERVED"
                 ? { checkoutNavigationObserved: true } : {}),
+              ...(message.state === "CHECKOUT_INJECTION_REQUESTED"
+                ? { checkoutInjectionRequested: true } : {}),
+              ...(message.state === "CHECKOUT_INJECTION_API_SUCCEEDED"
+                ? { checkoutInjectionApiSucceeded: true } : {}),
+              ...(message.checkoutInjectionFrameId === 0
+                ? { checkoutInjectionFrameId: 0 } : {}),
               ...(message.state === "CHECKOUT_SCRIPT_INJECTED"
                 ? { checkoutScriptInjected: true } : {}),
+              ...(message.checkoutScriptBootstrapAck === true
+                ? { checkoutScriptBootstrapAck: true } : {}),
+              ...(typeof message.checkoutScriptBootstrapErrorCode === "string"
+                ? { checkoutScriptBootstrapErrorCode:
+                    message.checkoutScriptBootstrapErrorCode } : {}),
               ...(message.state === "CHECKOUT_PAGE_DETECTED"
                 ? { checkoutPageDetected: true } : {}),
               ...(new Set(["NORMAL_GUEST_CHECKOUT",
@@ -435,6 +457,8 @@ export default function LunaShippingCapturePage() {
       }
       const phaseForResume = () => {
         if (new Set(["AWAITING_CHECKOUT_SHIPPING", "CHECKOUT_PAGE_DETECTED",
+          "CHECKOUT_INJECTION_REQUESTED", "CHECKOUT_INJECTION_API_SUCCEEDED",
+          "CHECKOUT_SCRIPT_INJECTED", "CHECKOUT_SCRIPT_BOOTSTRAP_ACK",
           "NORMAL_GUEST_CHECKOUT", "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
           "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "NORMAL_CHECKOUT_WITH_SHIPPING",
           "SHOP_PAY_DOM_WAITING", "SHOP_PAY_DOM_READY",
@@ -540,7 +564,12 @@ export default function LunaShippingCapturePage() {
             `CHECKOUT_ACTUAL_ORIGIN=${runtimeTrace.checkoutNavigationOrigin}\n` +
             `CHECKOUT_NAVIGATION_HOST=${runtimeTrace.checkoutNavigationHost}\n` +
             `CHECKOUT_HOST_PERMISSION_MATCH=${runtimeTrace.checkoutHostPermissionMatch}\n` +
+            `CHECKOUT_INJECTION_REQUESTED=${runtimeTrace.checkoutInjectionRequested}\n` +
+            `CHECKOUT_INJECTION_API_SUCCEEDED=${runtimeTrace.checkoutInjectionApiSucceeded}\n` +
+            `CHECKOUT_INJECTION_FRAME_ID=${runtimeTrace.checkoutInjectionFrameId ?? "UNAVAILABLE"}\n` +
             `CHECKOUT_SCRIPT_INJECTED=${runtimeTrace.checkoutScriptInjected}\n` +
+            `CHECKOUT_SCRIPT_BOOTSTRAP_ACK=${runtimeTrace.checkoutScriptBootstrapAck}\n` +
+            `CHECKOUT_SCRIPT_BOOTSTRAP_ERROR_CODE=${runtimeTrace.checkoutScriptBootstrapErrorCode}\n` +
             `CHECKOUT_CONTENT_SCRIPT_LOADED=${runtimeTrace.checkoutContentScriptLoaded}\n` +
             `ACTIVE_JOB_RECOVERED_ON_CHECKOUT=${runtimeTrace.activeJobRecoveredOnCheckout}\n` +
             `CHECKOUT_PAGE_DETECTED=${runtimeTrace.checkoutPageDetected}\n` +

@@ -1,5 +1,15 @@
 "use strict"
 
+const checkoutBootstrapAckPromise = new Promise((resolve) => {
+  try {
+    chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK" },
+      (response) => {
+        const runtimeUnavailable = Boolean(chrome.runtime.lastError)
+        resolve(!runtimeUnavailable && response?.accepted === true)
+      })
+  } catch { resolve(false) }
+})
+
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const JOB_RESULT = "LUNA_SHIPPING_JOB_RESULT"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
@@ -1025,15 +1035,16 @@ const isCheckoutPage = /^\/checkouts?(?:\/|$)/.test(location.pathname) ||
 if ((isProductPage || isCartPage || isCheckoutPage) &&
     globalThis.__sellerOsLunaShippingCaptureAttachedV1 !== true) {
   globalThis.__sellerOsLunaShippingCaptureAttachedV1 = true
-  progress(null, "CONTENT_SCRIPT_LOADED")
-  if (isCheckoutPage) progress(null, "CHECKOUT_CONTENT_SCRIPT_LOADED", {
-    checkoutHostClassification: checkoutHostClassification(),
-    checkoutNavigationHost: location.hostname,
-    checkoutNavigationOrigin: location.origin,
-    checkoutHostPermissionMatch: checkoutHostPermissionMatch(),
-  })
-  progress(null, "ACTIVE_JOB_REQUESTED")
-  void recoverJobContext().then(async (context) => {
+  const bootstrapReady = isCheckoutPage ? checkoutBootstrapAckPromise
+    : Promise.resolve(true)
+  void bootstrapReady.then(async (acknowledged) => {
+    if (!acknowledged) {
+      throw new Error("CHECKOUT_CONTENT_SCRIPT_BOOTSTRAP_NOT_ACKNOWLEDGED")
+    }
+    progress(null, "CONTENT_SCRIPT_LOADED")
+    progress(null, "ACTIVE_JOB_REQUESTED")
+    return recoverJobContext()
+  }).then(async (context) => {
     if (isCheckoutPage) {
       if (context.phase !== CHECKOUT_PHASE ||
           !Array.isArray(context.originalCartSnapshot) ||

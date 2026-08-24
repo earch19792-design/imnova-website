@@ -14,10 +14,12 @@ const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
 const JOB_RUNTIME_FAILURE = "LUNA_SHIPPING_JOB_RUNTIME_FAILURE"
 const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
+const CHECKOUT_BOOTSTRAP_ACK = "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK"
 const RESUME_ACTIVE_JOB = "RESUME_ACTIVE_LUNA_SHIPPING_JOB"
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
 const CHECKOUT_PHASE = "AWAITING_CHECKOUT_SHIPPING"
 const RECONNECT_GRACE_MS = 20_000
+const CHECKOUT_BOOTSTRAP_ACK_TIMEOUT_MS = 2_500
 const CHECKOUT_HOSTS = new Set(["lunaportex.com", "www.lunaportex.com",
   "account.lunaportex.com", "shop.app"])
 
@@ -29,6 +31,11 @@ let activeJobPhase = null
 let originalCartSnapshot = null
 let cartSubtotalUsd = null
 let checkoutNavigationArmed = false
+let checkoutInjectionStarted = false
+let checkoutInjectionApiSucceeded = false
+let checkoutBootstrapAckReceived = false
+let checkoutBootstrapAckEmitted = false
+let checkoutBootstrapAckTimer = null
 let disconnectCleanupTimer = null
 
 function clearActiveJob() {
@@ -37,6 +44,12 @@ function clearActiveJob() {
   originalCartSnapshot = null
   cartSubtotalUsd = null
   checkoutNavigationArmed = false
+  checkoutInjectionStarted = false
+  checkoutInjectionApiSucceeded = false
+  checkoutBootstrapAckReceived = false
+  checkoutBootstrapAckEmitted = false
+  if (checkoutBootstrapAckTimer) clearTimeout(checkoutBootstrapAckTimer)
+  checkoutBootstrapAckTimer = null
   lastRuntimeState = null
 }
 
@@ -238,6 +251,16 @@ function emitProgress(state, details = {}) {
       ? { checkoutNavigationOrigin: details.checkoutNavigationOrigin } : {}),
     ...(typeof details.checkoutHostPermissionMatch === "boolean"
       ? { checkoutHostPermissionMatch: details.checkoutHostPermissionMatch } : {}),
+    ...(Number.isInteger(details.checkoutInjectionFrameId) &&
+      details.checkoutInjectionFrameId === 0
+      ? { checkoutInjectionFrameId: details.checkoutInjectionFrameId } : {}),
+    ...(typeof details.checkoutScriptBootstrapAck === "boolean"
+      ? { checkoutScriptBootstrapAck: details.checkoutScriptBootstrapAck } : {}),
+    ...(new Set(["PENDING", "INJECTION_API_ERROR", "WRONG_FRAME_TARGET",
+      "CHECKOUT_CONTENT_SCRIPT_BOOTSTRAP_NOT_ACKNOWLEDGED"])
+      .has(details.checkoutScriptBootstrapErrorCode)
+      ? { checkoutScriptBootstrapErrorCode:
+          details.checkoutScriptBootstrapErrorCode } : {}),
     ...(new Set(["EXPLICIT_CHALLENGE_UI", "EXPLICIT_LOGIN_REQUIRED",
       "SESSION_EXPIRED_UI", "NO_EXPLICIT_AUTH_REQUIREMENT"])
       .has(details.authSignal) ? { authSignal: details.authSignal } : {}),
@@ -256,6 +279,12 @@ async function startJob(job) {
   originalCartSnapshot = null
   cartSubtotalUsd = null
   checkoutNavigationArmed = false
+  checkoutInjectionStarted = false
+  checkoutInjectionApiSucceeded = false
+  checkoutBootstrapAckReceived = false
+  checkoutBootstrapAckEmitted = false
+  if (checkoutBootstrapAckTimer) clearTimeout(checkoutBootstrapAckTimer)
+  checkoutBootstrapAckTimer = null
   lastRuntimeState = "CANARY_DISPATCHED"
   url.hash = `seller-os-luna-shipping-v1=${encodeJob(exact)}`
   if (activeTabId === null) {
@@ -273,6 +302,20 @@ function failActiveJob(error) {
     error: safeRuntimeReason(error), lastRuntimeState,
     capture: { candidateId: activeJob.identity.candidateId } })
   clearActiveJob()
+}
+
+function emitCheckoutBootstrapAck() {
+  if (!activeJob || !checkoutInjectionApiSucceeded ||
+      !checkoutBootstrapAckReceived || checkoutBootstrapAckEmitted) return
+  checkoutBootstrapAckEmitted = true
+  if (checkoutBootstrapAckTimer) clearTimeout(checkoutBootstrapAckTimer)
+  checkoutBootstrapAckTimer = null
+  emitProgress("CHECKOUT_SCRIPT_BOOTSTRAP_ACK", {
+    checkoutInjectionFrameId: 0, checkoutScriptBootstrapAck: true,
+  })
+  emitProgress("CHECKOUT_CONTENT_SCRIPT_LOADED", {
+    checkoutInjectionFrameId: 0, checkoutScriptBootstrapAck: true,
+  })
 }
 
 function observeCheckoutNavigation(details, inject) {
@@ -297,15 +340,56 @@ function observeCheckoutNavigation(details, inject) {
     checkoutNavigationOrigin: allowed.origin,
     checkoutHostPermissionMatch: true,
   })
-  if (!inject) return
+  if (!inject) {
+    checkoutInjectionStarted = false
+    checkoutInjectionApiSucceeded = false
+    checkoutBootstrapAckReceived = false
+    checkoutBootstrapAckEmitted = false
+    if (checkoutBootstrapAckTimer) clearTimeout(checkoutBootstrapAckTimer)
+    checkoutBootstrapAckTimer = null
+    return
+  }
+  if (checkoutInjectionStarted) return
+  checkoutInjectionStarted = true
+  emitProgress("CHECKOUT_INJECTION_REQUESTED", {
+    checkoutInjectionFrameId: 0, checkoutScriptBootstrapAck: false,
+    checkoutScriptBootstrapErrorCode: "PENDING",
+  })
   void chrome.scripting.executeScript({ target: { tabId: activeTabId,
-    frameIds: [0] }, files: ["content.js"] }).then(() => {
+    frameIds: [0] }, world: "ISOLATED", files: ["content.js"] })
+    .then((results) => {
+      if (!Array.isArray(results) ||
+          !results.some((result) => result?.frameId === 0)) {
+        failActiveJob("WRONG_FRAME_TARGET")
+        return
+      }
+      checkoutInjectionApiSucceeded = true
+      emitProgress("CHECKOUT_INJECTION_API_SUCCEEDED", {
+        checkoutInjectionFrameId: 0, checkoutScriptBootstrapAck: false,
+        checkoutScriptBootstrapErrorCode: "PENDING",
+      })
       emitProgress("CHECKOUT_SCRIPT_INJECTED", {
         checkoutNavigationHost: allowed.host,
         checkoutNavigationOrigin: allowed.origin,
         checkoutHostPermissionMatch: true,
+        checkoutInjectionFrameId: 0,
+        checkoutScriptBootstrapAck: checkoutBootstrapAckReceived,
+        checkoutScriptBootstrapErrorCode: "PENDING",
       })
-    }).catch(() => failActiveJob("CHECKOUT_CONTENT_SCRIPT_NOT_INJECTED"))
+      if (checkoutBootstrapAckReceived) {
+        emitCheckoutBootstrapAck()
+        return
+      }
+      checkoutBootstrapAckTimer = setTimeout(() => {
+        checkoutBootstrapAckTimer = null
+        emitProgress("CHECKOUT_SCRIPT_INJECTED", {
+          checkoutInjectionFrameId: 0, checkoutScriptBootstrapAck: false,
+          checkoutScriptBootstrapErrorCode:
+            "CHECKOUT_CONTENT_SCRIPT_BOOTSTRAP_NOT_ACKNOWLEDGED",
+        })
+        failActiveJob("CHECKOUT_CONTENT_SCRIPT_BOOTSTRAP_NOT_ACKNOWLEDGED")
+      }, CHECKOUT_BOOTSTRAP_ACK_TIMEOUT_MS)
+    }).catch(() => failActiveJob("INJECTION_API_ERROR"))
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -369,6 +453,19 @@ chrome.runtime.onConnectExternal.addListener((port) => {
 })
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === CHECKOUT_BOOTSTRAP_ACK) {
+    const recovered = sender.frameId === 0 && recoverActiveJob(sender)
+    if (!recovered || activeJobPhase !== CHECKOUT_PHASE ||
+        !checkoutNavigationArmed) {
+      sendResponse({ accepted: false, error: sender.frameId === 0
+        ? "ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN" : "WRONG_FRAME_TARGET" })
+      return false
+    }
+    checkoutBootstrapAckReceived = true
+    emitCheckoutBootstrapAck()
+    sendResponse({ accepted: true, captureSessionId: activeJob.captureSessionId })
+    return false
+  }
   if (message?.type === GET_ACTIVE_JOB) {
     const recovered = recoverActiveJob(sender)
     if (!recovered) {
@@ -436,7 +533,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         "CART_EXPECTED_QUANTITY_FOUND", "CART_MUTATION_CONFIRMED",
         "BRIDGE_RECONNECTED", "SHIPPING_FLOW_RESUMED",
         "AWAITING_CHECKOUT_SHIPPING", "CHECKOUT_NAVIGATION_OBSERVED",
-        "CHECKOUT_HOST_ALLOWED", "CHECKOUT_SCRIPT_INJECTED",
+        "CHECKOUT_HOST_ALLOWED", "CHECKOUT_INJECTION_REQUESTED",
+        "CHECKOUT_INJECTION_API_SUCCEEDED", "CHECKOUT_SCRIPT_INJECTED",
+        "CHECKOUT_SCRIPT_BOOTSTRAP_ACK",
         "CHECKOUT_CONTENT_SCRIPT_LOADED",
         "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", "CHECKOUT_PAGE_DETECTED",
         "NORMAL_GUEST_CHECKOUT", "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
