@@ -1,0 +1,78 @@
+name: eBay commercial Preview monitor
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ebay-commercial-preview-monitor
+  cancel-in-progress: false
+
+jobs:
+  active-listing-luna-monitor:
+    # Runs for the full lifetime of the active listings. The endpoint remains
+    # Preview-only and also enforces its own runtime kill switch and lease.
+    if: vars.EBAY_TARGETED_LUNA_ACTIVE_MONITOR_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refresh exact Luna stock, cost and availability evidence
+        env:
+          PREVIEW_URL: ${{ secrets.EBAY_COMMERCIAL_PREVIEW_URL }}
+          CRON_SECRET: ${{ secrets.EBAY_COMMERCIAL_CRON_SECRET }}
+          VERCEL_BYPASS_SECRET: ${{ secrets.EBAY_COMMERCIAL_VERCEL_BYPASS_SECRET }}
+        run: |
+          test -n "$PREVIEW_URL"
+          test -n "$CRON_SECRET"
+          args=(--fail --silent --show-error --max-time 55
+            -H "Authorization: Bearer $CRON_SECRET")
+          if [ -n "$VERCEL_BYPASS_SECRET" ]; then
+            args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
+          fi
+          curl "${args[@]}" "$PREVIEW_URL/api/cron/ebay-active-listing-luna-monitor"
+
+  commercial-monitor:
+    if: vars.EBAY_COMMERCIAL_PREVIEW_MONITOR_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Run due commercial readers in Preview
+        env:
+          PREVIEW_URL: ${{ secrets.EBAY_COMMERCIAL_PREVIEW_URL }}
+          CRON_SECRET: ${{ secrets.EBAY_COMMERCIAL_CRON_SECRET }}
+          VERCEL_BYPASS_SECRET: ${{ secrets.EBAY_COMMERCIAL_VERCEL_BYPASS_SECRET }}
+        run: |
+          test -n "$PREVIEW_URL"
+          test -n "$CRON_SECRET"
+          args=(--fail --silent --show-error --max-time 55
+            -H "Authorization: Bearer $CRON_SECRET")
+          if [ -n "$VERCEL_BYPASS_SECRET" ]; then
+            args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
+          fi
+          curl "${args[@]}" "$PREVIEW_URL/api/cron/ebay-commercial-monitor"
+
+  whatsapp-dispatcher:
+    # The delivery flag remains independent, but the endpoint also requires the
+    # same durable dry-run authorization as the commercial scheduler.
+    if: vars.EBAY_COMMERCIAL_PREVIEW_WHATSAPP_DISPATCHER_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch one leased WhatsApp alert in Preview
+        env:
+          PREVIEW_URL: ${{ secrets.EBAY_COMMERCIAL_PREVIEW_URL }}
+          CRON_SECRET: ${{ secrets.EBAY_COMMERCIAL_CRON_SECRET }}
+          VERCEL_BYPASS_SECRET: ${{ secrets.EBAY_COMMERCIAL_VERCEL_BYPASS_SECRET }}
+        run: |
+          test -n "$PREVIEW_URL"
+          test -n "$CRON_SECRET"
+          args=(--fail --silent --show-error --max-time 55
+            -H "Authorization: Bearer $CRON_SECRET")
+          if [ -n "$VERCEL_BYPASS_SECRET" ]; then
+            args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
+          fi
+          curl "${args[@]}" "$PREVIEW_URL/api/cron/commercial-alert-dispatcher"
