@@ -7,10 +7,13 @@ import type { LunaChromeShippingJobV1 } from
   "@/lib/ebay/ebay-luna-chrome-shipping-capture-v1"
 
 const PORT_NAME = "SELLER_OS_LUNA_SHIPPING_CAPTURE_V1"
-const LUNA_SHIPPING_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
-const LUNA_SHIPPING_QUOTE_CAPTURE_VERSION = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
+const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
+const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
+const CANARY_ID =
+  "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
+const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
 
 type ExternalPort = {
   postMessage: (message: unknown) => void
@@ -21,11 +24,8 @@ type ExternalPort = {
 
 type ChromeRuntime = {
   connect: (extensionId: string, options: { name: string }) => ExternalPort
-  sendMessage: (
-    extensionId: string,
-    message: unknown,
-    callback: (response: any) => void,
-  ) => void
+  sendMessage: (extensionId: string, message: unknown,
+    callback: (response: any) => void) => void
   lastError?: { message?: string }
 }
 
@@ -35,7 +35,14 @@ declare global {
 
 type Result = {
   candidateId: string
+  productName: string
+  subtotalUsd: number
   shippingUsd: number
+  totalUsd: number
+  identityVerified: boolean
+  capturePostAccepted: boolean
+  captureResultDurable: boolean
+  durableReadbackMatch: boolean
   economicsStatus: string
   contributionProfitUsd: number | null
   contributionMarginPercent: number | null
@@ -76,16 +83,13 @@ function pingExtension(runtime: ChromeRuntime) {
       else resolve()
     }
     try {
-      runtime.sendMessage(LUNA_SHIPPING_EXTENSION_ID, {
-        type: EXTENSION_PING,
-      }, (response) => {
-        const lastError = window.chrome?.runtime?.lastError?.message
-        if (lastError) {
+      runtime.sendMessage(EXTENSION_ID, { type: EXTENSION_PING }, (response) => {
+        if (window.chrome?.runtime?.lastError?.message) {
           finish(new Error("LUNA_SHIPPING_EXTENSION_DISCONNECTED"))
           return
         }
         if (response?.type !== EXTENSION_READY ||
-            response?.extensionId !== LUNA_SHIPPING_EXTENSION_ID ||
+            response?.extensionId !== EXTENSION_ID ||
             response?.sellerOsOriginValidated !== true) {
           finish(new Error("LUNA_SHIPPING_EXTENSION_HANDSHAKE_INVALID"))
           return
@@ -101,55 +105,84 @@ function pingExtension(runtime: ChromeRuntime) {
 export default function LunaShippingCapturePage() {
   const [status, setStatus] = useState("CONNECTING_EXTENSION")
   const [error, setError] = useState("")
+  const [connected, setConnected] = useState(false)
+  const [running, setRunning] = useState(false)
   const [results, setResults] = useState<Result[]>([])
-  const jobsRef = useRef<LunaChromeShippingJobV1[]>([])
-  const indexRef = useRef(0)
-  const portRef = useRef<ExternalPort | null>(null)
+  const triggerRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     let active = true
+    let jobs: LunaChromeShippingJobV1[] = []
+    let index = 0
+    let mode: "CANARY" | "AUTO" = "CANARY"
+    let busy = false
+    let extensionReady = false
+    let port: ExternalPort | null = null
+
     const fail = (value: unknown) => {
       if (!active) return
-      setStatus("BLOCKED")
+      busy = false
+      setRunning(false)
+      setStatus("FAIL")
       setError(value instanceof Error ? value.message
         : "LUNA_SHIPPING_CAPTURE_FAILED")
     }
+
+    const sendCurrent = () => {
+      const job = jobs[index]
+      if (!job || !port) return
+      setStatus(mode === "CANARY" && index === 0
+        ? "CANARY_DISPATCHED" : "CAPTURING")
+      port.postMessage({ type: "START_SHIPPING_JOB", job })
+      window.setTimeout(() => {
+        if (active && busy) setStatus("CAPTURING")
+      }, 0)
+    }
+
+    const loadJobs = async (candidateIds: readonly string[] | undefined,
+      nextMode: "CANARY" | "AUTO") => {
+      const payload = await adminPost("resolve_jobs", { candidateIds })
+      const resolved = Array.isArray(payload.jobs) ? payload.jobs : []
+      if (resolved.some((job: any) => job?.contractVersion !== CONTRACT)) {
+        throw new Error("LUNA_SHIPPING_EXTENSION_JOB_UNAVAILABLE")
+      }
+      if (!resolved.length) {
+        busy = false
+        setRunning(false)
+        setStatus("PASS")
+        return
+      }
+      jobs = resolved
+      index = 0
+      mode = nextMode
+      busy = true
+      setRunning(true)
+      sendCurrent()
+    }
+
+    const beginCanary = () => {
+      if (busy || !extensionReady) return
+      setError("")
+      setResults([])
+      void loadJobs([CANARY_ID], "CANARY").catch(fail)
+    }
+    triggerRef.current = beginCanary
+
     const start = async () => {
-      if (!window.chrome?.runtime?.connect ||
-          !window.chrome.runtime.sendMessage) {
+      const runtime = window.chrome?.runtime
+      if (!runtime?.connect || !runtime.sendMessage) {
         throw new Error("LUNA_SHIPPING_EXTENSION_NOT_INSTALLED")
       }
       setStatus("PINGING_EXTENSION")
-      await pingExtension(window.chrome.runtime)
+      await pingExtension(runtime)
+      if (!active) return
+      extensionReady = true
+      setConnected(true)
       setStatus("EXTENSION_CONNECTED")
-      if (new URLSearchParams(window.location.search)
-          .get("runShipping") !== "1") return
-      const requestedCandidate = new URLSearchParams(window.location.search)
-        .get("candidateId")
-      const payload = await adminPost("resolve_jobs", {
-        candidateIds: requestedCandidate ? [requestedCandidate] : undefined,
-      })
-      const jobs = Array.isArray(payload.jobs) ? payload.jobs : []
-      if (!jobs.length || jobs.some((job: any) =>
-        job?.contractVersion !== LUNA_SHIPPING_QUOTE_CAPTURE_VERSION)) {
-        throw new Error("LUNA_SHIPPING_EXTENSION_JOB_UNAVAILABLE")
-      }
-      jobsRef.current = jobs
-      const port = window.chrome.runtime.connect(LUNA_SHIPPING_EXTENSION_ID,
-        { name: PORT_NAME })
-      portRef.current = port
-      const sendCurrent = () => {
-        const job = jobsRef.current[indexRef.current]
-        if (!job) {
-          setStatus("COMPLETED")
-          return
-        }
-        setStatus(indexRef.current === 0 ? "RUNNING_CANARY" : "RUNNING_NEXT")
-        port.postMessage({ type: "START_SHIPPING_JOB", job })
-      }
+      port = runtime.connect(EXTENSION_ID, { name: PORT_NAME })
       port.onMessage.addListener((message) => {
         if (!active || message?.type !== "LUNA_SHIPPING_JOB_RESULT") return
-        const job = jobsRef.current[indexRef.current]
+        const job = jobs[index]
         if (!job || message.capture?.candidateId !== job.identity.candidateId) {
           fail(new Error("LUNA_SHIPPING_EXTENSION_RESULT_SCOPE_MISMATCH"))
           return
@@ -159,6 +192,7 @@ export default function LunaShippingCapturePage() {
             ? message.error : "LUNA_SHIPPING_EXTENSION_JOB_FAILED"))
           return
         }
+        setStatus("RESULT_RECEIVED")
         const capture = {
           candidateId: message.capture.candidateId,
           lunaProductId: message.capture.lunaProductId,
@@ -175,34 +209,49 @@ export default function LunaShippingCapturePage() {
           captureSessionId: message.capture.captureSessionId,
           nonce: message.capture.nonce,
         }
-        void adminPost("certify_capture", { capture },
-          capture.captureSessionId)
-          .then((certified) => {
-            const economics = certified.result?.economics ?? {}
+        void adminPost("certify_capture", { capture }, capture.captureSessionId)
+          .then(async (certified) => {
+            if (!active) return
+            const result = certified.result ?? {}
+            const economics = result.economics ?? {}
+            setStatus("RESULT_PERSISTED")
             setResults((current) => [...current, {
               candidateId: job.identity.candidateId,
-              shippingUsd: Number(certified.result.capture.shippingUsd),
+              productName: String(result.productName ?? job.productName),
+              subtotalUsd: Number(result.capture?.subtotalUsd),
+              shippingUsd: Number(result.capture?.shippingUsd),
+              totalUsd: Number(result.capture?.totalUsd),
+              identityVerified: result.quote?.exactLunaIdentity === true,
+              capturePostAccepted: result.capturePostAccepted === true,
+              captureResultDurable: result.captureResultDurable === true,
+              durableReadbackMatch: result.durableReadbackMatch === true,
               economicsStatus: String(economics.status ?? "UNPROVEN"),
               contributionProfitUsd: economics.contributionProfitUsd ?? null,
               contributionMarginPercent:
                 economics.contributionMarginPercent ?? null,
             }])
-            indexRef.current += 1
-            sendCurrent()
+            setStatus("ECONOMICS_EVALUATED")
+            index += 1
+            if (index < jobs.length) {
+              sendCurrent()
+              return
+            }
+            await loadJobs(undefined, "AUTO")
           }).catch(fail)
       })
       port.onDisconnect.addListener(() => {
-        if (active && indexRef.current < jobsRef.current.length) {
+        if (active && busy) {
           fail(new Error("LUNA_SHIPPING_EXTENSION_DISCONNECTED"))
         }
       })
-      sendCurrent()
+      const params = new URLSearchParams(window.location.search)
+      if (params.get("runShipping") === "1") beginCanary()
     }
     void start().catch(fail)
     return () => {
       active = false
-      portRef.current?.disconnect()
-      portRef.current = null
+      triggerRef.current = null
+      port?.disconnect()
     }
   }, [])
 
@@ -210,15 +259,26 @@ export default function LunaShippingCapturePage() {
     <section className="mx-auto max-w-2xl rounded-3xl border border-white/15 bg-white/[0.05] p-6">
       <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100">Seller OS · Luna shipping</p>
       <h1 className="mt-3 text-2xl font-black">Captura automática de envío</h1>
-      <p className="mt-2 text-sm text-white/65">La extensión usa únicamente la sesión normal ya autenticada de Chrome. No lee cookies, credenciales ni almacenamiento del navegador y nunca completa una compra.</p>
+      <p className="mt-2 text-sm text-white/65">La extensión usa la sesión normal ya autenticada de Chrome. No lee cookies ni credenciales y nunca completa una compra.</p>
+      <button type="button" disabled={!connected || running}
+        onClick={() => triggerRef.current?.()}
+        className="mt-6 w-full rounded-2xl bg-cyan-300 px-5 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
+        Ejecutar canary de shipping
+      </button>
+      <p className="mt-2 text-xs text-white/50">Certificación inicial: {CANARY_NAME}</p>
       <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 p-4">
         <p className="text-xs uppercase tracking-widest text-white/50">Estado</p>
         <p className="mt-2 text-lg font-black">{status}</p>
         {error && <code className="mt-3 block break-all text-sm text-rose-100">{error}</code>}
       </div>
-      {results.map((result) => <dl key={result.candidateId} className="mt-4 grid grid-cols-2 gap-2 rounded-2xl border border-emerald-200/20 p-4 text-sm">
-        <div className="col-span-2"><dt className="text-white/50">Candidato</dt><dd className="break-all font-bold">{result.candidateId}</dd></div>
+      {results.map((result) => <dl key={`${result.candidateId}:${result.shippingUsd}`}
+        className="mt-4 grid grid-cols-2 gap-2 rounded-2xl border border-emerald-200/20 p-4 text-sm">
+        <div className="col-span-2"><dt className="text-white/50">Producto</dt><dd className="font-bold">{result.productName}</dd></div>
+        <div><dt className="text-white/50">Subtotal</dt><dd>${result.subtotalUsd.toFixed(2)}</dd></div>
         <div><dt className="text-white/50">Envío</dt><dd>${result.shippingUsd.toFixed(2)}</dd></div>
+        <div><dt className="text-white/50">Total</dt><dd>${result.totalUsd.toFixed(2)}</dd></div>
+        <div><dt className="text-white/50">Identidad</dt><dd>{result.identityVerified ? "VERIFICADA" : "NO PROBADA"}</dd></div>
+        <div><dt className="text-white/50">Persistencia</dt><dd>{result.capturePostAccepted && result.captureResultDurable && result.durableReadbackMatch ? "DURABLE" : "NO PROBADA"}</dd></div>
         <div><dt className="text-white/50">Economía</dt><dd>{result.economicsStatus}</dd></div>
         <div><dt className="text-white/50">Contribución</dt><dd>{result.contributionProfitUsd === null ? "N/D" : `$${result.contributionProfitUsd.toFixed(2)}`}</dd></div>
         <div><dt className="text-white/50">Margen</dt><dd>{result.contributionMarginPercent === null ? "N/D" : `${result.contributionMarginPercent.toFixed(2)}%`}</dd></div>

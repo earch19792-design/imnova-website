@@ -187,14 +187,16 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
     })
   const requested = input.candidateIds?.length
     ? [...new Set(input.candidateIds)]
-    : [LUNA_SHIPPING_CANARY_CANDIDATE_ID,
-      ...exactCandidates.map((candidate) => candidate.candidateId)
-        .filter((candidateId) => candidateId !== LUNA_SHIPPING_CANARY_CANDIDATE_ID)]
+    : exactCandidates.filter((candidate) =>
+      !["SHIPPING_DURABLY_PERSISTED", "SHIPPING_OBSERVED"]
+        .includes(String(candidate.frontier.shippingStatus)))
+      .map((candidate) => candidate.candidateId)
       .slice(0, 2)
-  if (!requested.length || requested.length > LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH ||
+  if (requested.length > LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH ||
       requested.some((candidateId) => !/^sha256:[0-9a-f]{64}$/.test(candidateId))) {
     throw new Error("LUNA_SHIPPING_EXTENSION_CANDIDATE_SCOPE_INVALID")
   }
+  if (!requested.length) return Object.freeze([])
   const selected = requested.map((requestedId) => exactCandidates.find((candidate) =>
     candidate.candidateId === requestedId)).filter((candidate) => Boolean(candidate))
   if (selected.length !== requested.length) {
