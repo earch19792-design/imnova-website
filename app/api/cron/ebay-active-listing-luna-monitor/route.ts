@@ -28,6 +28,7 @@ import {
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
 const BULK_END_UNLINKED_LIVE_TARGETS_V1 = Object.freeze([
+  "366608128809",
   "366543596425",
   "366575102453",
   "366582630351",
@@ -35,7 +36,6 @@ const BULK_END_UNLINKED_LIVE_TARGETS_V1 = Object.freeze([
   "366584249461",
   "366597780377",
   "366602466981",
-  "366608128809",
 ])
 
 function safeCode(error: unknown) {
