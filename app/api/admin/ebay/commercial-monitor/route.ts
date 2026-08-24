@@ -36,6 +36,11 @@ import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
 } from "@/lib/supabase-admin"
+import {
+  REVERSIBLE_OOS_TARGET_ITEM_ID,
+  REVERSIBLE_OOS_TARGET_SKU,
+  runVercelReversibleOosPreflightV1,
+} from "@/lib/ebay/ebay-reversible-oos-model-preflight-v1"
 
 function safeCode(error: unknown) {
   const message = error instanceof Error ? error.message : ""
@@ -244,6 +249,41 @@ export async function POST(req: Request) {
         evidence,
         dashboard: await getEbayCommercialMonitorDashboard(supabase),
       })
+    }
+    if (input.action === "preflight_reversible_oos_model") {
+      if (input.itemId !== REVERSIBLE_OOS_TARGET_ITEM_ID ||
+          input.sku !== REVERSIBLE_OOS_TARGET_SKU ||
+          Object.keys(input).some((key) =>
+            !["action", "itemId", "sku"].includes(key))) {
+        return NextResponse.json({ success: false,
+          error: "REVERSIBLE_OOS_PREFLIGHT_REQUEST_INVALID" }, { status: 400 })
+      }
+      const { data: publication, error: publicationError } = await supabase
+        .from("ebay_authorized_listing_publications")
+        .select("listing_id,sku,offer_id")
+        .eq("listing_id", REVERSIBLE_OOS_TARGET_ITEM_ID)
+        .eq("sku", REVERSIBLE_OOS_TARGET_SKU)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (publicationError) {
+        throw new Error("REVERSIBLE_OOS_PUBLICATION_READ_FAILED")
+      }
+      const preflight = await runVercelReversibleOosPreflightV1({
+        authorizedPublication: publication ? {
+          listingId: publication.listing_id,
+          sku: publication.sku,
+          offerId: publication.offer_id,
+        } : null,
+      })
+      return NextResponse.json({
+        success: true,
+        action: "preflight_reversible_oos_model",
+        preflight,
+        safety: { previewOnly: true, readOnly: true, rawPayloadReturned: false,
+          credentialsReturned: false, databaseWrites: 0, ebayWrites: 0,
+          lunaWrites: 0 },
+      }, { headers: { "Cache-Control": "no-store" } })
     }
     if (input.action === "preflight_certified_oos_protection" ||
         input.action === "apply_certified_oos_protection") {
