@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.14"
+const EXTENSION_BUILD_VERSION = "1.0.15"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -33,8 +33,9 @@ const CHECKOUT_STATE_RANK = new Map([
   ["CHECKOUT_CONTENT_SCRIPT_LOADED", 40], ["CONTENT_SCRIPT_LOADED", 40],
   ["ACTIVE_JOB_REQUESTED", 45], ["ACTIVE_JOB_RECOVERED_ON_CHECKOUT", 50],
   ["CHECKOUT_CLASSIFIER_STARTED", 60], ["CHECKOUT_HOST_CLASSIFIED", 70],
+  ["CHECKOUT_PAGE_DETECTED", 75],
   ["SHOP_PAY_DOM_WAITING", 80], ["SHOP_PAY_DOM_READY", 90],
-  ["CHECKOUT_PAGE_CLASSIFIED", 100], ["CHECKOUT_PAGE_DETECTED", 101],
+  ["CHECKOUT_PAGE_CLASSIFIED", 100],
   ["NORMAL_CHECKOUT_WITH_SHIPPING", 102], ["UNKNOWN_CHECKOUT_PAGE", 102],
   ["CHECKOUT_EXPECTED_PRODUCT_VERIFIED", 103],
   ["CHECKOUT_EXPECTED_QUANTITY_VERIFIED", 104],
@@ -283,7 +284,8 @@ function emitProgress(state, details = {}) {
   for (const field of ["shopPayMarkerOrderSummary", "shopPayMarkerProduct",
     "shopPayMarkerQuantity", "shopPayMarkerShipTo", "shopPayMarkerShipping",
     "shopPayMarkerSubtotal", "shopPayMarkerShippingAmount",
-    "shopPayMarkerTotal", "shopPayMarkerPayment", "shopPayMarkerPayNow"]) {
+    "shopPayMarkerTotal", "shopPayMarkerShippingMethod",
+    "shopPayMarkerPayment", "shopPayMarkerPayNow"]) {
     if (typeof details[field] === "boolean") markerDetails[field] = details[field]
   }
   sellerPort.postMessage({ type: JOB_PROGRESS, state,
@@ -635,6 +637,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       shopPayMarkerSubtotal: message.shopPayMarkerSubtotal,
       shopPayMarkerShippingAmount: message.shopPayMarkerShippingAmount,
       shopPayMarkerTotal: message.shopPayMarkerTotal,
+      shopPayMarkerShippingMethod: message.shopPayMarkerShippingMethod,
       shopPayMarkerPayment: message.shopPayMarkerPayment,
       shopPayMarkerPayNow: message.shopPayMarkerPayNow,
       authSignal: message.authSignal,

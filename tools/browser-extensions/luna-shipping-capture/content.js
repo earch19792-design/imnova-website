@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.14" },
+      extensionBuildVersion: "1.0.15" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -24,6 +24,7 @@ const MAX_ATTEMPTS_PER_STEP = 2
 const MAXIMUM_PRODUCT_JSON_BYTES = 256_000
 const MAXIMUM_CART_ITEMS = 50
 const STEP_TIMEOUT_MS = 15_000
+const SHOP_PAY_DOM_TIMEOUT_MS = 20_000
 const MONEY = /(?:\$\s*([0-9][0-9,]*(?:\.\d{2})?)|([0-9][0-9,]*(?:\.\d{2})?)\s*USD)\b/gi
 
 function exactProductUrl(value) {
@@ -131,7 +132,8 @@ function progress(job, state, details = {}) {
   for (const field of ["shopPayMarkerOrderSummary", "shopPayMarkerProduct",
     "shopPayMarkerQuantity", "shopPayMarkerShipTo", "shopPayMarkerShipping",
     "shopPayMarkerSubtotal", "shopPayMarkerShippingAmount",
-    "shopPayMarkerTotal", "shopPayMarkerPayment", "shopPayMarkerPayNow"]) {
+    "shopPayMarkerTotal", "shopPayMarkerShippingMethod",
+    "shopPayMarkerPayment", "shopPayMarkerPayNow"]) {
     if (typeof details[field] === "boolean") markerDetails[field] = details[field]
   }
   chrome.runtime.sendMessage({ type: JOB_PROGRESS, state,
@@ -279,7 +281,7 @@ async function exactProduct(job) {
   return { product, variant }
 }
 
-function boundedDomWait(probe, failureCode) {
+function boundedDomWait(probe, failureCode, timeoutMs = STEP_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     let settled = false
     let observer = null
@@ -300,7 +302,7 @@ function boundedDomWait(probe, failureCode) {
     }
     const interval = setInterval(inspect, 250)
     const timeout = setTimeout(() => finish(null, new Error(failureCode)),
-      STEP_TIMEOUT_MS)
+      timeoutMs)
     if (document.documentElement) {
       observer = new MutationObserver(inspect)
       observer.observe(document.documentElement, { childList: true, subtree: true,
@@ -486,6 +488,37 @@ function checkoutHostPermissionMatch() {
   return checkoutHostClassification() !== "UNSUPPORTED_CHECKOUT_HOST"
 }
 
+function semanticMoneyLabelPattern(label) {
+  if (label === "subtotal") return /^subtotal\b/i
+  if (label === "shipping") return /^(?:shipping|delivery)\b/i
+  if (label === "tax") return /^(?:tax|taxes)\b/i
+  if (label === "discount") return /^(?:discount|discounts)\b/i
+  return /^total\b/i
+}
+
+function semanticMoneyRowValue(element, label) {
+  const candidates = [element, element.nextElementSibling,
+    element.closest?.('tr,[role="row"],dl,li,section'), element.parentElement,
+    element.parentElement?.parentElement].filter(Boolean)
+  for (const candidate of [...new Set(candidates)]) {
+    const text = String(candidate.textContent ?? "").replace(/\s+/g, " ").trim()
+    if (!text || text.length > 800) continue
+    if (label === "shipping" && /\bfree\b/i.test(text)) return 0
+    const values = moneyValues(text)
+    if (values.length === 1) return values[0]
+  }
+  return null
+}
+
+function semanticMoneyLabelFound(label) {
+  const pattern = semanticMoneyLabelPattern(label)
+  return [...document.querySelectorAll(
+    'dt,dd,th,td,label,[role="rowheader"],[role="cell"],[role="row"],' +
+    '[aria-label],li,section,div,span')].slice(0, 360)
+    .some((element) => isVisible(element) && pattern.test(normalizeVisibleText(
+      `${element.getAttribute?.("aria-label") ?? ""} ${element.textContent ?? ""}`)))
+}
+
 function labeledMoney(label) {
   const selectors = label === "subtotal"
     ? ['[data-checkout-subtotal]', '[data-order-summary-subtotal]',
@@ -496,29 +529,35 @@ function labeledMoney(label) {
       : label === "tax"
         ? ['[data-checkout-tax]', '[data-order-summary-tax]',
           '[data-tax-price]', '[data-testid*="tax" i]']
-        : ['[data-checkout-total]', '[data-order-summary-total]',
-          '[data-total-price]', '[data-testid*="total" i]']
+        : label === "discount"
+          ? ['[data-checkout-discount]', '[data-order-summary-discount]',
+            '[data-discount-price]', '[data-testid*="discount" i]']
+          : ['[data-checkout-total]', '[data-order-summary-total]',
+            '[data-total-price]', '[data-testid*="total" i]']
   for (const selector of selectors) {
     for (const element of document.querySelectorAll(selector)) {
       if (!isVisible(element)) continue
+      const semanticIdentity = normalizeVisibleText(
+        `${element.getAttribute?.("data-testid") ?? ""} ${
+          element.getAttribute?.("aria-label") ?? ""}`)
+      if (label === "total" && /\bsubtotal\b/.test(semanticIdentity)) continue
+      if (label === "shipping" && /\bfree\b/i.test(element.textContent ?? "")) {
+        return 0
+      }
       const values = moneyValues(element.textContent)
       if (values.length === 1) return values[0]
     }
   }
-  const labelPattern = label === "subtotal" ? /^subtotal\b/i
-    : label === "shipping" ? /^(?:shipping|delivery)\b/i
-      : label === "tax" ? /^(?:tax|taxes)\b/i : /^total\b/i
+  const labelPattern = semanticMoneyLabelPattern(label)
   for (const element of [...document.querySelectorAll(
-    'dt,th,[role="rowheader"],[data-testid*="summary" i],' +
-    '[aria-label],[role="row"],li,section,div,span')].slice(0, 240)) {
+    'dt,dd,th,td,label,[role="rowheader"],[role="cell"],' +
+    '[data-testid*="summary" i],[aria-label],[role="row"],li,section,div,span')]
+    .slice(0, 360)) {
     if (!isVisible(element) || !labelPattern.test(
-      normalizeVisibleText(element.textContent))) continue
-    const row = element.closest?.('tr,dl,[role="row"],li,section,div') ??
-      element.parentElement
-    const rowText = `${element.textContent ?? ""} ${
-      element.nextElementSibling?.textContent ?? ""} ${row?.textContent ?? ""}`
-    const values = moneyValues(rowText)
-    if (values.length === 1) return values[0]
+      normalizeVisibleText(`${element.getAttribute?.("aria-label") ?? ""} ${
+        element.textContent ?? ""}`))) continue
+    const value = semanticMoneyRowValue(element, label)
+    if (Number.isFinite(value)) return value
   }
   return null
 }
@@ -527,13 +566,16 @@ function checkoutSummaryQuote(expectedSubtotal) {
   const subtotalUsd = labeledMoney("subtotal")
   const shippingUsd = labeledMoney("shipping")
   const taxUsd = labeledMoney("tax")
+  const discountUsd = labeledMoney("discount")
   const totalUsd = labeledMoney("total")
   if (![subtotalUsd, shippingUsd, totalUsd].every(Number.isFinite) ||
       Math.abs(subtotalUsd - expectedSubtotal) > 0.01 ||
       Math.abs(subtotalUsd + shippingUsd +
-        (Number.isFinite(taxUsd) ? taxUsd : 0) - totalUsd) > 0.02) return null
+        (Number.isFinite(taxUsd) ? taxUsd : 0) -
+        (Number.isFinite(discountUsd) ? discountUsd : 0) - totalUsd) > 0.02) return null
   return { subtotalUsd, shippingUsd, totalUsd,
     ...(Number.isFinite(taxUsd) ? { taxUsd } : {}),
+    ...(Number.isFinite(discountUsd) ? { discountUsd } : {}),
     shippingMethod: visibleShippingMethod() }
 }
 
@@ -594,34 +636,46 @@ function shopPayCheckoutPopulated() {
   return shipTo && shipping && paymentBoundary && summary
 }
 
-function shopPayMarkerSnapshot(job) {
-  const line = checkoutExpectedLineMarkers(job)
+function shopPayMarkerSnapshot() {
   const subtotal = labeledMoney("subtotal")
   const shipping = labeledMoney("shipping")
   const total = labeledMoney("total")
+  const shippingMethod = visibleShippingMethod()
   const orderSummary = visibleMatch(['[data-order-summary]',
     '[data-testid*="order-summary" i]']) ||
     [subtotal, shipping, total].every(Number.isFinite)
   return {
     shopPayMarkerOrderSummary: orderSummary,
-    shopPayMarkerProduct: line.product,
-    shopPayMarkerQuantity: line.quantity,
+    shopPayMarkerProduct: false,
+    shopPayMarkerQuantity: false,
     shopPayMarkerShipTo: semanticCheckoutSignal(/^ship to\b/),
-    shopPayMarkerShipping: semanticCheckoutSignal(/^shipping\b/),
-    shopPayMarkerSubtotal: Number.isFinite(subtotal),
+    shopPayMarkerShipping: semanticMoneyLabelFound("shipping"),
+    shopPayMarkerSubtotal: semanticMoneyLabelFound("subtotal"),
     shopPayMarkerShippingAmount: Number.isFinite(shipping),
-    shopPayMarkerTotal: Number.isFinite(total),
+    shopPayMarkerTotal: semanticMoneyLabelFound("total"),
+    shopPayMarkerShippingMethod: typeof shippingMethod === "string" &&
+      shippingMethod.length > 0,
     shopPayMarkerPayment: semanticCheckoutSignal(/^payment\b/),
     shopPayMarkerPayNow: semanticCheckoutSignal(/^pay now\b/),
   }
 }
 
 function shopPayMarkersSufficient(markers) {
-  return markers.shopPayMarkerOrderSummary && markers.shopPayMarkerProduct &&
-    markers.shopPayMarkerQuantity && markers.shopPayMarkerShipTo &&
-    markers.shopPayMarkerShipping && markers.shopPayMarkerSubtotal &&
+  return markers.shopPayMarkerShipping && markers.shopPayMarkerSubtotal &&
     markers.shopPayMarkerShippingAmount && markers.shopPayMarkerTotal &&
-    markers.shopPayMarkerPayment
+    (markers.shopPayMarkerPayment || markers.shopPayMarkerPayNow)
+}
+
+function shopPayQuoteFailure(markers, quote, timedOut = false) {
+  if (!markers.shopPayMarkerSubtotal) return timedOut &&
+      !markers.shopPayMarkerShipping && !markers.shopPayMarkerTotal
+    ? "SHOP_PAY_DOM_READY_TIMEOUT" : "SHOP_PAY_SUBTOTAL_NOT_FOUND"
+  if (!markers.shopPayMarkerShipping) return "SHOP_PAY_SHIPPING_NOT_FOUND"
+  if (!markers.shopPayMarkerTotal) return "SHOP_PAY_TOTAL_NOT_FOUND"
+  if (!quote || !markers.shopPayMarkerShippingAmount) {
+    return "SHOP_PAY_MONEY_PARSE_FAILED"
+  }
+  return "OTHER:SHOP_PAY_COMMERCIAL_BOUNDARY_INSUFFICIENT"
 }
 
 function visibleShippingMethod() {
@@ -774,7 +828,7 @@ function profileFieldValue(selectors) {
   return ""
 }
 
-function shopPayCanonicalShippingProfile(job) {
+function shopPayCanonicalShippingProfileStatus(job) {
   const countryValue = profileFieldValue([
     '[autocomplete="country"]', '[autocomplete="country-name"]',
     'select[name*="country" i]', 'input[name*="country" i]',
@@ -788,7 +842,11 @@ function shopPayCanonicalShippingProfile(job) {
     '[autocomplete="postal-code"]', 'input[name*="postal" i]',
     'input[name*="zip" i]',
   ])
-  const summary = normalizeVisibleText(boundedProfileText())
+  const rawSummary = boundedProfileText()
+  const summary = normalizeVisibleText(rawSummary)
+  if (!countryValue && !provinceValue && !postalValue && !rawSummary) {
+    return "UNAVAILABLE"
+  }
   const expectedPostal = job.destination.postalCode.toLowerCase()
   const expectedProvince = job.destination.province.toLowerCase()
   const countryMatches = /^(?:us|usa|united states|united states of america)$/i
@@ -798,6 +856,11 @@ function shopPayCanonicalShippingProfile(job) {
   const postalMatches = postalValue.toLowerCase() === expectedPostal ||
     new RegExp(`\\b${expectedPostal.replace("-", " ")}\\b`).test(summary)
   return countryMatches && provinceMatches && postalMatches
+    ? "MATCH" : "MISMATCH"
+}
+
+function shopPayCanonicalShippingProfile(job) {
+  return shopPayCanonicalShippingProfileStatus(job) === "MATCH"
 }
 
 async function checkoutClassificationWhenReady(job, expectedSubtotal) {
@@ -815,7 +878,10 @@ async function checkoutClassificationWhenReady(job, expectedSubtotal) {
     })
     return { classification, quote: checkoutSummaryQuote(expectedSubtotal) }
   }
-  let markers = shopPayMarkerSnapshot(job)
+  progress(job, "CHECKOUT_PAGE_DETECTED", {
+    checkoutHostClassification: checkoutHostClassification(),
+  })
+  let markers = shopPayMarkerSnapshot()
   progress(job, "SHOP_PAY_DOM_WAITING", {
     checkoutHostClassification: checkoutHostClassification(),
     ...markers,
@@ -824,7 +890,7 @@ async function checkoutClassificationWhenReady(job, expectedSubtotal) {
   try {
     ready = await boundedDomWait(() => {
       const classification = checkoutPageClassification()
-      markers = shopPayMarkerSnapshot(job)
+      markers = shopPayMarkerSnapshot()
       if (new Set(["EXPLICIT_AUTH_CHALLENGE", "EXPLICIT_LOGIN_PAGE",
         "SESSION_EXPIRED"]).has(classification)) {
         return { classification, quote: null, markers }
@@ -833,10 +899,12 @@ async function checkoutClassificationWhenReady(job, expectedSubtotal) {
       const quote = checkoutSummaryQuote(expectedSubtotal)
       if (!quote) return null
       return { classification: "NORMAL_CHECKOUT_WITH_SHIPPING", quote, markers }
-    }, "SHOP_PAY_BOUNDED_DOM_READINESS_EXHAUSTED")
+    }, "SHOP_PAY_BOUNDED_DOM_READINESS_EXHAUSTED", SHOP_PAY_DOM_TIMEOUT_MS)
   } catch {
-    markers = shopPayMarkerSnapshot(job)
-    ready = { classification: "UNKNOWN_CHECKOUT_PAGE", quote: null, markers }
+    markers = shopPayMarkerSnapshot()
+    const quote = checkoutSummaryQuote(expectedSubtotal)
+    ready = { classification: "UNKNOWN_CHECKOUT_PAGE", quote, markers,
+      failureReason: shopPayQuoteFailure(markers, quote, true) }
   }
   progress(job, "SHOP_PAY_DOM_READY", {
     checkoutHostClassification: checkoutHostClassification(),
@@ -873,7 +941,8 @@ async function checkoutShipping(job, expectedSubtotal) {
     checkoutHostPermissionMatch: checkoutHostPermissionMatch(),
     authSignalSource: "FIXED_HOST_PATH_AND_VISIBLE_DOM",
   }
-  if (classification !== "UNKNOWN_CHECKOUT_PAGE") {
+  if (location.hostname !== "shop.app" &&
+      classification !== "UNKNOWN_CHECKOUT_PAGE") {
     progress(job, "CHECKOUT_PAGE_DETECTED", classificationDetails)
   }
   progress(job, classification, { ...classificationDetails,
@@ -888,16 +957,26 @@ async function checkoutShipping(job, expectedSubtotal) {
     throw new Error("LUNA_SESSION_EXPIRED")
   }
   if (classification === "UNKNOWN_CHECKOUT_PAGE") {
-    throw new Error("LUNA_UNKNOWN_CHECKOUT_PAGE")
+    throw new Error(ready.failureReason ?? "OTHER:SHOP_PAY_PAGE_AMBIGUOUS")
   }
   const summaryQuote = ready.quote ?? checkoutSummaryQuote(expectedSubtotal)
-  if (!canonicalShippingProfile(job)) throw new Error(
-    location.hostname === "shop.app" ? "CANONICAL_US_SHIPPING_PROFILE_MISMATCH"
-      : "CANONICAL_US_SHIPPING_PROFILE_UNAVAILABLE")
-  if (summaryQuote && !checkoutExpectedLine(job)) {
+  const profile = location.hostname === "shop.app"
+    ? shopPayCanonicalShippingProfileStatus(job)
+    : canonicalShippingProfile(job) ? "MATCH" : "UNAVAILABLE"
+  if (profile !== "MATCH") throw new Error(
+    location.hostname === "shop.app" && profile === "MISMATCH"
+      ? "CANONICAL_US_SHIPPING_PROFILE_MISMATCH"
+      : location.hostname === "shop.app"
+        ? "CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE"
+        : "CANONICAL_US_SHIPPING_PROFILE_UNAVAILABLE")
+  if (summaryQuote && location.hostname !== "shop.app" &&
+      !checkoutExpectedLine(job)) {
     throw new Error("LUNA_CHECKOUT_EXPECTED_PRODUCT_UNPROVEN")
   }
   if (summaryQuote) {
+    // The exact Luna product and quantity were already certified by the
+    // product page and cart for this same captureSessionId. Shop Pay is quote
+    // authority only and does not need to repeat Luna identity evidence.
     progress(job, "CHECKOUT_EXPECTED_PRODUCT_VERIFIED")
     progress(job, "CHECKOUT_EXPECTED_QUANTITY_VERIFIED")
   }
@@ -1060,13 +1139,15 @@ async function runCheckoutStage(job, original, subtotalUsd) {
     })
     progress(job, "AUTHENTICATED_OPERATION_CONFIRMED")
     const observedAt = new Date().toISOString()
+    const checkoutSubtotalUsd = Number.isFinite(visible.subtotalUsd)
+      ? visible.subtotalUsd : subtotalUsd
     const evidenceInput = {
       candidateId: job.identity.candidateId,
       lunaProductId: job.identity.lunaProductId,
       lunaVariantId: job.identity.lunaVariantId,
       supplierSku: job.identity.supplierSku,
       quantity: job.identity.quantity,
-      subtotalUsd,
+      subtotalUsd: checkoutSubtotalUsd,
       shippingUsd: visible.shippingUsd, totalUsd: visible.totalUsd,
       currency: "USD", observedAt,
       acquisitionMethod: ACQUISITION_METHOD,

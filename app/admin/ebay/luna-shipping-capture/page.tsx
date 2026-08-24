@@ -11,7 +11,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.14"
+const EXPECTED_EXTENSION_VERSION = "1.0.15"
 const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
@@ -86,6 +86,7 @@ type RuntimeTrace = {
   shopPayMarkerSubtotal: boolean
   shopPayMarkerShippingAmount: boolean
   shopPayMarkerTotal: boolean
+  shopPayMarkerShippingMethod: boolean
   shopPayMarkerPayment: boolean
   shopPayMarkerPayNow: boolean
   explicitAuthRequired: boolean
@@ -139,6 +140,7 @@ const EMPTY_RUNTIME_TRACE: RuntimeTrace = Object.freeze({
   shopPayMarkerSubtotal: false,
   shopPayMarkerShippingAmount: false,
   shopPayMarkerTotal: false,
+  shopPayMarkerShippingMethod: false,
   shopPayMarkerPayment: false,
   shopPayMarkerPayNow: false,
   explicitAuthRequired: false,
@@ -403,6 +405,9 @@ export default function LunaShippingCapturePage() {
                     message.shopPayMarkerShippingAmount } : {}),
               ...(typeof message.shopPayMarkerTotal === "boolean"
                 ? { shopPayMarkerTotal: message.shopPayMarkerTotal } : {}),
+              ...(typeof message.shopPayMarkerShippingMethod === "boolean"
+                ? { shopPayMarkerShippingMethod:
+                    message.shopPayMarkerShippingMethod } : {}),
               ...(typeof message.shopPayMarkerPayment === "boolean"
                 ? { shopPayMarkerPayment: message.shopPayMarkerPayment } : {}),
               ...(typeof message.shopPayMarkerPayNow === "boolean"
@@ -640,6 +645,7 @@ export default function LunaShippingCapturePage() {
             `SHOP_PAY_MARKER_SUBTOTAL=${runtimeTrace.shopPayMarkerSubtotal}\n` +
             `SHOP_PAY_MARKER_SHIPPING_AMOUNT=${runtimeTrace.shopPayMarkerShippingAmount}\n` +
             `SHOP_PAY_MARKER_TOTAL=${runtimeTrace.shopPayMarkerTotal}\n` +
+            `SHOP_PAY_MARKER_SHIPPING_METHOD=${runtimeTrace.shopPayMarkerShippingMethod}\n` +
             `SHOP_PAY_MARKER_PAYMENT=${runtimeTrace.shopPayMarkerPayment}\n` +
             `SHOP_PAY_MARKER_PAY_NOW=${runtimeTrace.shopPayMarkerPayNow}\n` +
             `EXPLICIT_AUTH_REQUIRED=${runtimeTrace.explicitAuthRequired}\n` +
