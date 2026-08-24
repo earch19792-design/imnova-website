@@ -11,11 +11,12 @@ import {
   listingAiResponse,
 } from "@/lib/ebay/ebay-listing-ai-api"
 import {
-  certifyLunaChromeShippingVisibleCaptureV1,
-  normalizeLunaChromeShippingJobV1,
-  type LunaChromeShippingVisibleCaptureV1,
+  type LunaShippingCapturePostV1,
 } from "@/lib/ebay/ebay-luna-chrome-shipping-capture-v1"
-import { resolveLunaChromeShippingJobsV1 } from
+import {
+  persistLunaChromeShippingCaptureV1,
+  resolveLunaChromeShippingJobsV1,
+} from
   "@/lib/ebay/ebay-luna-chrome-shipping-capture-server-v1"
 
 function candidateIds(value: unknown) {
@@ -24,53 +25,40 @@ function candidateIds(value: unknown) {
     .map((entry) => entry.trim()).filter(Boolean).slice(0, 20)
 }
 
-function sameAuthority(left: ReturnType<typeof normalizeLunaChromeShippingJobV1>,
-  right: ReturnType<typeof normalizeLunaChromeShippingJobV1>) {
-  return JSON.stringify({ identity: left.identity, destination: left.destination,
-    salePriceUsd: left.salePriceUsd, supplierCostUsd: left.supplierCostUsd,
-    productName: left.productName }) ===
-    JSON.stringify({ identity: right.identity, destination: right.destination,
-      salePriceUsd: right.salePriceUsd, supplierCostUsd: right.supplierCostUsd,
-      productName: right.productName })
+function sessionSecret() {
+  const value = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ?? ""
+  if (value.length < 32) throw new Error("LUNA_SHIPPING_CAPTURE_SESSION_SECRET_MISSING")
+  return value
 }
 
 export async function POST(req: Request) {
   const auth = await authorizeListingAiRequest(req)
   if (!auth.ok) return auth.response
   try {
-    enforceListingAiRouteRateLimit(auth.actorId, "READ")
     const body = await listingAiJson(req)
     if (body.action === "resolve_jobs") {
+      enforceListingAiRouteRateLimit(auth.actorId, "READ")
       const requested = candidateIds(body.candidateIds)
       const jobs = await resolveLunaChromeShippingJobsV1({
         supabase: auth.supabase,
         accountKey: auth.accountKey,
         candidateIds: requested.length ? requested : undefined,
+        sessionSecret: sessionSecret(),
       })
       return listingAiResponse({ success: true, jobs,
         safety: { readOnly: true, cookieAccess: false,
           credentialAccess: false, lunaPurchases: 0, marketplaceWrites: 0 } })
     }
     if (body.action === "certify_capture") {
-      const claimed = normalizeLunaChromeShippingJobV1(
-        listingAiRecord(body.job) as never)
-      const [authority] = await resolveLunaChromeShippingJobsV1({
-        supabase: auth.supabase,
-        accountKey: auth.accountKey,
-        candidateIds: [claimed.identity.candidateId],
-      })
-      if (!authority || !sameAuthority(claimed, authority)) {
-        throw new Error("LUNA_SHIPPING_EXTENSION_JOB_AUTHORITY_MISMATCH")
-      }
-      const certified = certifyLunaChromeShippingVisibleCaptureV1({
-        job: Object.freeze({ ...authority,
-          captureSessionId: claimed.captureSessionId,
-          nonce: claimed.nonce }),
+      enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
+      const result = await persistLunaChromeShippingCaptureV1({
+        supabase: auth.supabase, accountKey: auth.accountKey,
         capture: listingAiRecord(body.capture) as
-          LunaChromeShippingVisibleCaptureV1,
+          LunaShippingCapturePostV1,
+        sessionSecret: sessionSecret(),
       })
-      return listingAiResponse({ success: true, result: certified,
-        safety: { readOnly: true, cookieAccess: false,
+      return listingAiResponse({ success: true, result,
+        safety: { cookieAccess: false,
           credentialAccess: false, lunaPurchases: 0, marketplaceWrites: 0 } })
     }
     throw new Error("LUNA_SHIPPING_EXTENSION_ACTION_INVALID")

@@ -12,7 +12,7 @@ export const LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE =
   "NORMAL_CHROME_EXTENSION_VISIBLE_DOM" as const
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const NONCE = /^[A-Za-z0-9_-]{32,128}$/
+const NONCE = /^[A-Za-z0-9_.-]{32,128}$/
 const SHA256 = /^sha256:[0-9a-f]{64}$/
 const PRODUCT_ID = /^\d{8,24}$/
 const SAFE_SKU = /^[A-Za-z0-9][A-Za-z0-9._:+/ -]{0,159}$/
@@ -71,6 +71,71 @@ export type LunaChromeShippingVisibleCaptureV1 = Readonly<{
   credentialAccess: false
   lunaPurchases: 0
 }>
+
+export type LunaShippingCapturePostV1 = Readonly<{
+  candidateId: string
+  lunaProductId: string
+  lunaVariantId: string
+  supplierSku: string
+  quantity: number
+  subtotalUsd: number
+  shippingUsd: number
+  totalUsd: number
+  currency: "USD"
+  observedAt: string
+  acquisitionMethod: typeof LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE
+  evidenceDigest: string
+  captureSessionId: string
+  nonce: string
+}>
+
+const CAPTURE_POST_KEYS = Object.freeze([
+  "acquisitionMethod", "candidateId", "captureSessionId", "currency",
+  "evidenceDigest", "lunaProductId", "lunaVariantId", "nonce", "observedAt",
+  "quantity", "shippingUsd", "subtotalUsd", "supplierSku", "totalUsd",
+].sort())
+
+export function certifyLunaShippingCapturePostV1(input: Readonly<{
+  job: LunaChromeShippingJobV1
+  capture: LunaShippingCapturePostV1
+  now?: number
+}>) {
+  const keys = Object.keys(input.capture).sort()
+  if (keys.length !== CAPTURE_POST_KEYS.length ||
+      keys.some((key, index) => key !== CAPTURE_POST_KEYS[index])) {
+    throw new Error("LUNA_SHIPPING_CAPTURE_POST_CONTRACT_INVALID")
+  }
+  return certifyLunaChromeShippingVisibleCaptureV1({
+    job: input.job,
+    now: input.now,
+    capture: {
+      contractVersion: LUNA_SHIPPING_QUOTE_CAPTURE_VERSION,
+      captureSessionId: input.capture.captureSessionId,
+      nonce: input.capture.nonce,
+      candidateId: input.capture.candidateId,
+      lunaProductId: input.capture.lunaProductId,
+      lunaVariantId: input.capture.lunaVariantId,
+      supplierSku: input.capture.supplierSku,
+      quantity: input.capture.quantity,
+      subtotalUsd: input.capture.subtotalUsd,
+      shippingUsd: input.capture.shippingUsd,
+      totalUsd: input.capture.totalUsd,
+      currency: input.capture.currency,
+      observedAt: input.capture.observedAt,
+      acquisitionMethod: input.capture.acquisitionMethod,
+      extensionEvidenceDigest: input.capture.evidenceDigest,
+      normalChromeAuthenticated: true,
+      expectedProductIdMatch: true,
+      expectedVariantIdMatch: true,
+      expectedSupplierSkuMatch: true,
+      subtotalPlusShippingReconciles: true,
+      cartRestoreProven: true,
+      cookieAccess: false,
+      credentialAccess: false,
+      lunaPurchases: 0,
+    },
+  })
+}
 
 function money(value: unknown) {
   const parsed = Number(value)
@@ -211,6 +276,11 @@ export function certifyLunaChromeShippingVisibleCaptureV1(input: Readonly<{
       ? "PROVEN_PROFITABLE" as const : "PROVEN_UNPROFITABLE" as const,
     contributionProfitUsd: economicsResult.estimatedNetProfit,
     contributionMarginPercent: economicsResult.estimatedNetMarginPercent,
+    salePriceUsd: economicsResult.salePrice,
+    supplierCostUsd: economicsResult.supplierCost,
+    ebayFeeUsd: economicsResult.estimatedEbayFees,
+    returnsReserveUsd: economicsResult.returnsReserve,
+    promotionReserveUsd: economicsResult.promotedListingsReserve,
     passesEconomics: economicsResult.passesProfitGate,
   })
   return Object.freeze({

@@ -41,13 +41,15 @@ type Result = {
   contributionMarginPercent: number | null
 }
 
-async function adminPost(action: string, body: Record<string, unknown>) {
+async function adminPost(action: string, body: Record<string, unknown>,
+  idempotencyKey?: string) {
   const { data: { session } } = await supabase.auth.getSession()
   if (!session?.access_token) throw new Error("LUNA_SHIPPING_ADMIN_SESSION_REQUIRED")
   const response = await fetch("/api/admin/ebay/luna-shipping-capture", {
     method: "POST", cache: "no-store",
     headers: { "Content-Type": "application/json",
-      Authorization: `Bearer ${session.access_token}` },
+      Authorization: `Bearer ${session.access_token}`,
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}) },
     body: JSON.stringify({ action, ...body }),
   })
   const payload = await response.json() as any
@@ -122,7 +124,11 @@ export default function LunaShippingCapturePage() {
       setStatus("EXTENSION_CONNECTED")
       if (new URLSearchParams(window.location.search)
           .get("runShipping") !== "1") return
-      const payload = await adminPost("resolve_jobs", {})
+      const requestedCandidate = new URLSearchParams(window.location.search)
+        .get("candidateId")
+      const payload = await adminPost("resolve_jobs", {
+        candidateIds: requestedCandidate ? [requestedCandidate] : undefined,
+      })
       const jobs = Array.isArray(payload.jobs) ? payload.jobs : []
       if (!jobs.length || jobs.some((job: any) =>
         job?.contractVersion !== LUNA_SHIPPING_QUOTE_CAPTURE_VERSION)) {
@@ -153,12 +159,29 @@ export default function LunaShippingCapturePage() {
             ? message.error : "LUNA_SHIPPING_EXTENSION_JOB_FAILED"))
           return
         }
-        void adminPost("certify_capture", { job, capture: message.capture })
+        const capture = {
+          candidateId: message.capture.candidateId,
+          lunaProductId: message.capture.lunaProductId,
+          lunaVariantId: message.capture.lunaVariantId,
+          supplierSku: message.capture.supplierSku,
+          quantity: message.capture.quantity,
+          subtotalUsd: message.capture.subtotalUsd,
+          shippingUsd: message.capture.shippingUsd,
+          totalUsd: message.capture.totalUsd,
+          currency: message.capture.currency,
+          observedAt: message.capture.observedAt,
+          acquisitionMethod: message.capture.acquisitionMethod,
+          evidenceDigest: message.capture.extensionEvidenceDigest,
+          captureSessionId: message.capture.captureSessionId,
+          nonce: message.capture.nonce,
+        }
+        void adminPost("certify_capture", { capture },
+          capture.captureSessionId)
           .then((certified) => {
             const economics = certified.result?.economics ?? {}
             setResults((current) => [...current, {
               candidateId: job.identity.candidateId,
-              shippingUsd: Number(certified.result.quote.shippingAmountUsd),
+              shippingUsd: Number(certified.result.capture.shippingUsd),
               economicsStatus: String(economics.status ?? "UNPROVEN"),
               contributionProfitUsd: economics.contributionProfitUsd ?? null,
               contributionMarginPercent:
