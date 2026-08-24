@@ -107,6 +107,7 @@ export default function LunaShippingCapturePage() {
   const [error, setError] = useState("")
   const [connected, setConnected] = useState(false)
   const [running, setRunning] = useState(false)
+  const [lastRuntimeState, setLastRuntimeState] = useState("NOT_STARTED")
   const [results, setResults] = useState<Result[]>([])
   const triggerRef = useRef<(() => void) | null>(null)
 
@@ -133,6 +134,7 @@ export default function LunaShippingCapturePage() {
       if (!job || !port) return
       setStatus(mode === "CANARY" && index === 0
         ? "CANARY_DISPATCHED" : "CAPTURING")
+      setLastRuntimeState("CANARY_DISPATCHED")
       port.postMessage({ type: "START_SHIPPING_JOB", job })
       window.setTimeout(() => {
         if (active && busy) setStatus("CAPTURING")
@@ -164,6 +166,7 @@ export default function LunaShippingCapturePage() {
       if (busy || !extensionReady) return
       setError("")
       setResults([])
+      setLastRuntimeState("CANARY_DISPATCHED")
       void loadJobs([CANARY_ID], "CANARY").catch(fail)
     }
     triggerRef.current = beginCanary
@@ -183,12 +186,16 @@ export default function LunaShippingCapturePage() {
       port.onMessage.addListener((message) => {
         if (!active) return
         if (message?.type === "LUNA_SHIPPING_JOB_PROGRESS") {
-          const allowed = new Set(["PRODUCT_PAGE_OPENED",
-            "PRODUCT_IDENTITY_VERIFIED", "ADD_TO_CART_DISPATCHED",
-            "CART_CONFIRMED", "SHIPPING_CAPTURE_STARTED", "RESULT_POSTED"])
+          const allowed = new Set(["CONTENT_SCRIPT_LOADED",
+            "ACTIVE_JOB_REQUESTED", "ACTIVE_JOB_RECOVERED",
+            "PRODUCT_PAGE_DOM_READY", "PRODUCT_IDENTITY_CHECK_STARTED",
+            "PRODUCT_IDENTITY_VERIFIED", "ADD_TO_CART_ELEMENT_FOUND",
+            "ADD_TO_CART_CLICK_DISPATCHED", "CART_MUTATION_CONFIRMED",
+            "SHIPPING_CAPTURE_STARTED", "RESULT_POSTED"])
           if (allowed.has(message.state) &&
               message.candidateId === jobs[index]?.identity.candidateId) {
             setStatus(message.state)
+            setLastRuntimeState(message.state)
           }
           return
         }
@@ -199,6 +206,9 @@ export default function LunaShippingCapturePage() {
           return
         }
         if (message.success !== true) {
+          if (typeof message.lastRuntimeState === "string") {
+            setLastRuntimeState(message.lastRuntimeState)
+          }
           fail(new Error(typeof message.error === "string"
             ? message.error : "LUNA_SHIPPING_EXTENSION_JOB_FAILED"))
           return
@@ -280,7 +290,12 @@ export default function LunaShippingCapturePage() {
       <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 p-4">
         <p className="text-xs uppercase tracking-widest text-white/50">Estado</p>
         <p className="mt-2 text-lg font-black">{status}</p>
-        {error && <code className="mt-3 block break-all text-sm text-rose-100">{error}</code>}
+        <code className="mt-2 block break-all text-xs text-cyan-100">
+          LAST_RUNTIME_STATE={lastRuntimeState}
+        </code>
+        {error && <code className="mt-3 block break-all text-sm text-rose-100">
+          FINAL_BLOCKER={error}
+        </code>}
       </div>
       {results.map((result) => <dl key={`${result.candidateId}:${result.shippingUsd}`}
         className="mt-4 grid grid-cols-2 gap-2 rounded-2xl border border-emerald-200/20 p-4 text-sm">

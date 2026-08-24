@@ -10,11 +10,14 @@ const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
+const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
+const JOB_RUNTIME_FAILURE = "LUNA_SHIPPING_JOB_RUNTIME_FAILURE"
 
 let sellerPort = null
 let activeTabId = null
 let activeJob = null
+let lastRuntimeState = null
 
 function safeSellerSender(sender) {
   try {
@@ -115,6 +118,49 @@ function encodeJob(job) {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
 }
 
+function decodeJobFromUrl(value) {
+  try {
+    const encoded = new URL(value).hash.slice(1)
+      .split("&").map((entry) => entry.split("="))
+      .find(([key]) => key === "seller-os-luna-shipping-v1")?.[1]
+    if (!encoded || encoded.length > 12_000) return null
+    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/") +
+      "=".repeat((4 - encoded.length % 4) % 4)
+    const binary = atob(base64)
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
+    const decoded = JSON.parse(new TextDecoder().decode(bytes))
+    return safeJob(decoded)
+  } catch { return null }
+}
+
+function recoverActiveJob(sender) {
+  if (!Number.isInteger(sender.tab?.id)) return null
+  const navigatedJob = decodeJobFromUrl(sender.url ?? "")
+  if (activeJob && navigatedJob && !sameJob(activeJob, navigatedJob)) return null
+  if (!activeJob) activeJob = navigatedJob
+  if (!activeJob) return null
+  const expected = exactLunaUrl(activeJob.identity.canonicalProductUrl)
+  let actual = null
+  try { actual = new URL(sender.url ?? "") } catch { return null }
+  if (!expected || actual.protocol !== "https:" ||
+      !new Set(["lunaportex.com", "www.lunaportex.com"]).has(actual.hostname) ||
+      actual.pathname.replace(/\/$/, "") !== expected.pathname.replace(/\/$/, "")) return null
+  activeTabId = sender.tab.id
+  return activeJob
+}
+
+function safeRuntimeReason(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_:.-]{3,120}$/.test(value)
+    ? value : "LUNA_SHIPPING_RUNTIME_FAILURE"
+}
+
+function emitProgress(state) {
+  if (!sellerPort || !activeJob) return
+  lastRuntimeState = state
+  sellerPort.postMessage({ type: JOB_PROGRESS, state,
+    candidateId: activeJob.identity.candidateId })
+}
+
 async function startJob(job) {
   const invalidReason = jobValidationReason(job)
   if (invalidReason) throw new Error(invalidReason)
@@ -122,6 +168,7 @@ async function startJob(job) {
   const url = exact && exactLunaUrl(exact.identity.canonicalProductUrl)
   if (!exact || !url) throw new Error("JOB_IDENTITY_MISMATCH:identity.canonicalProductUrl")
   activeJob = exact
+  lastRuntimeState = "CANARY_DISPATCHED"
   url.hash = `seller-os-luna-shipping-v1=${encodeJob(exact)}`
   if (activeTabId === null) {
     const tab = await chrome.tabs.create({ url: url.toString(), active: true })
@@ -143,6 +190,7 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
   if (sellerPort) sellerPort.disconnect()
   sellerPort = null
   activeJob = null
+  lastRuntimeState = null
   sendResponse({
     type: EXTENSION_READY,
     extensionId: EXACT_EXTENSION_ID,
@@ -174,6 +222,17 @@ chrome.runtime.onConnectExternal.addListener((port) => {
 })
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === GET_ACTIVE_JOB) {
+    const recovered = recoverActiveJob(sender)
+    if (!recovered) {
+      sendResponse({ accepted: false,
+        error: "SERVICE_WORKER_JOB_STATE_NOT_RECOVERED" })
+      return false
+    }
+    emitProgress("ACTIVE_JOB_REQUESTED")
+    sendResponse({ accepted: true, job: recovered })
+    return false
+  }
   if (message?.type === JOB_RESUME) {
     const invalidReason = jobValidationReason(message.job)
     if (invalidReason || !Number.isInteger(sender.tab?.id) ||
@@ -187,15 +246,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ accepted: true, captureSessionId: activeJob.captureSessionId })
     return false
   }
-  if (message?.type === JOB_PROGRESS && sellerPort && activeJob &&
-      sender.tab?.id === activeTabId &&
-      message.captureSessionId === activeJob.captureSessionId &&
-      message.candidateId === activeJob.identity.candidateId &&
-      new Set(["PRODUCT_PAGE_OPENED", "PRODUCT_IDENTITY_VERIFIED",
-        "ADD_TO_CART_DISPATCHED", "CART_CONFIRMED",
-        "SHIPPING_CAPTURE_STARTED", "RESULT_POSTED"]).has(message.state)) {
-    sellerPort.postMessage({ type: JOB_PROGRESS, state: message.state,
-      candidateId: activeJob.identity.candidateId })
+  if (message?.type === JOB_PROGRESS && recoverActiveJob(sender) &&
+      (!message.captureSessionId ||
+        message.captureSessionId === activeJob.captureSessionId) &&
+      (!message.candidateId ||
+        message.candidateId === activeJob.identity.candidateId) &&
+      new Set(["CONTENT_SCRIPT_LOADED", "ACTIVE_JOB_REQUESTED",
+        "ACTIVE_JOB_RECOVERED", "PRODUCT_PAGE_DOM_READY",
+        "PRODUCT_IDENTITY_CHECK_STARTED", "PRODUCT_IDENTITY_VERIFIED",
+        "ADD_TO_CART_ELEMENT_FOUND", "ADD_TO_CART_CLICK_DISPATCHED",
+        "CART_MUTATION_CONFIRMED", "SHIPPING_CAPTURE_STARTED",
+        "RESULT_POSTED"]).has(message.state)) {
+    emitProgress(message.state)
+    return false
+  }
+  if (message?.type === JOB_RUNTIME_FAILURE && recoverActiveJob(sender)) {
+    sellerPort?.postMessage({ type: JOB_RESULT, success: false,
+      error: safeRuntimeReason(message.error), lastRuntimeState,
+      capture: { candidateId: activeJob.identity.candidateId } })
     return false
   }
   if (message?.type !== JOB_RESULT || !sellerPort ||
@@ -209,8 +277,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     success: message.success === true,
     ...(message.success === true ? { capture }
       : { error: typeof message.error === "string"
-        ? message.error : "LUNA_SHIPPING_JOB_FAILED", capture }) })
+        ? safeRuntimeReason(message.error) : "LUNA_SHIPPING_JOB_FAILED",
+        lastRuntimeState, capture }) })
   activeJob = null
+  lastRuntimeState = null
   return false
 })
 
@@ -218,5 +288,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === activeTabId) {
     activeTabId = null
     activeJob = null
+    lastRuntimeState = null
   }
 })

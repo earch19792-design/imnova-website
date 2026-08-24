@@ -2,27 +2,15 @@
 
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const JOB_RESULT = "LUNA_SHIPPING_JOB_RESULT"
-const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
+const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
+const JOB_RUNTIME_FAILURE = "LUNA_SHIPPING_JOB_RUNTIME_FAILURE"
 const ACQUISITION_METHOD = "NORMAL_CHROME_EXTENSION_VISIBLE_DOM"
 const MAX_ATTEMPTS_PER_STEP = 2
 const MAXIMUM_PRODUCT_JSON_BYTES = 256_000
 const MAXIMUM_CART_ITEMS = 50
 const STEP_TIMEOUT_MS = 15_000
 const MONEY = /(?:\$\s*([0-9][0-9,]*(?:\.\d{2})?)|([0-9][0-9,]*(?:\.\d{2})?)\s*USD)\b/gi
-
-function decodeJob() {
-  const encoded = new URLSearchParams(location.hash.slice(1))
-    .get("seller-os-luna-shipping-v1")
-  if (!encoded || encoded.length > 12_000) return null
-  try {
-    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/") +
-      "=".repeat((4 - encoded.length % 4) % 4)
-    const binary = atob(base64)
-    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
-    return JSON.parse(new TextDecoder().decode(bytes))
-  } catch { return null }
-}
 
 function exactProductUrl(value) {
   try {
@@ -98,24 +86,31 @@ function validateJob(value) {
   return jobValidationReason(value) === null ? value : null
 }
 
-function resumeJob(job) {
+function getActiveJob() {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(
       "SERVICE_WORKER_JOB_STATE_NOT_RECOVERED")), 5_000)
-    chrome.runtime.sendMessage({ type: JOB_RESUME, job }, (response) => {
+    chrome.runtime.sendMessage({ type: GET_ACTIVE_JOB }, (response) => {
       clearTimeout(timeout)
-      if (response?.accepted === true &&
-          response.captureSessionId === job.captureSessionId) resolve()
-      else reject(new Error(typeof response?.error === "string"
-        ? response.error : "SERVICE_WORKER_JOB_STATE_NOT_RECOVERED"))
+      const job = validateJob(response?.job)
+      if (response?.accepted === true && job) resolve(job)
+      else reject(new Error(typeof response?.error === "string" ? response.error
+        : jobValidationReason(response?.job) ??
+          "SERVICE_WORKER_JOB_STATE_NOT_RECOVERED"))
     })
   })
 }
 
 function progress(job, state) {
   chrome.runtime.sendMessage({ type: JOB_PROGRESS, state,
-    captureSessionId: job.captureSessionId,
-    candidateId: job.identity.candidateId })
+    ...(job ? { captureSessionId: job.captureSessionId,
+      candidateId: job.identity.candidateId } : {}) })
+}
+
+function reportRuntimeFailure(value) {
+  const error = value instanceof Error ? value.message
+    : "LUNA_SHIPPING_RUNTIME_FAILURE"
+  chrome.runtime.sendMessage({ type: JOB_RUNTIME_FAILURE, error })
 }
 
 function send(success, job, value) {
@@ -202,40 +197,89 @@ async function exactProduct(job) {
   return { product, variant }
 }
 
-async function productPageReady() {
-  await retry(async () => {
-    if (document.readyState === "loading" || !document.body) {
-      throw new Error("PRODUCT_PAGE_NOT_READY")
+function boundedDomWait(probe, failureCode) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let observer = null
+    const finish = (value, error) => {
+      if (settled) return
+      settled = true
+      observer?.disconnect()
+      clearInterval(interval)
+      clearTimeout(timeout)
+      if (error) reject(error)
+      else resolve(value)
     }
-    return true
+    const inspect = () => {
+      try {
+        const value = probe()
+        if (value) finish(value)
+      } catch (error) { finish(null, error) }
+    }
+    const interval = setInterval(inspect, 250)
+    const timeout = setTimeout(() => finish(null, new Error(failureCode)),
+      STEP_TIMEOUT_MS)
+    if (document.documentElement) {
+      observer = new MutationObserver(inspect)
+      observer.observe(document.documentElement, { childList: true, subtree: true,
+        attributes: true, attributeFilter: ["disabled", "aria-disabled", "value"] })
+    }
+    inspect()
   })
 }
 
-function visibleAddToCartControl(job) {
-  const controls = [...document.querySelectorAll([
+function productPageReady(job) {
+  const expected = exactProductUrl(job.identity.canonicalProductUrl)
+  return boundedDomWait(() => document.readyState !== "loading" && document.body &&
+    expected && expected.pathname.replace(/\/$/, "") ===
+      location.pathname.replace(/\/$/, "") &&
+    document.querySelector('form[action*="/cart/add"]'),
+  "PRODUCT_IDENTITY_DOM_EVIDENCE_NOT_FOUND")
+}
+
+function findVisibleAddToCartControl(job) {
+  const semanticControls = [...document.querySelectorAll([
     'form[action*="/cart/add"] button[type="submit"]',
     'form[action*="/cart/add"] input[type="submit"]',
-    'button[name="add"]', '[data-add-to-cart]', '.product-form__submit',
+    'button[name="add"]', '[data-add-to-cart]', '[data-testid="add-to-cart"]',
+    '.product-form__submit',
   ].join(","))]
-  const control = controls.find((element) => isVisible(element) &&
-    /add to cart|add to bag|agregar al carrito/i.test(
-      `${element.textContent ?? ""} ${element.value ?? ""}`))
-  if (!control) throw new Error("ADD_TO_CART_SELECTOR_NOT_FOUND")
-  if (control.disabled || control.getAttribute("aria-disabled") === "true") {
-    throw new Error("ADD_TO_CART_DISABLED")
-  }
+  const exactTextControls = [...document.querySelectorAll(
+    'button,input[type="submit"]')].filter((element) =>
+    /^(?:ADD TO CART)$/i.test(
+      `${element.textContent ?? ""} ${element.value ?? ""}`.trim()))
+  const controls = [...new Set([...semanticControls, ...exactTextControls])]
+  const control = controls.find((element) => isVisible(element))
+  if (!control) return null
   const form = control.form ?? control.closest("form")
   const variantField = form?.querySelector('[name="id"]')
   if (!form || !variantField) {
-    throw new Error("ADD_TO_CART_SELECTOR_NOT_FOUND")
+    return { error: "ADD_TO_CART_SELECTOR_NOT_FOUND" }
   }
   variantField.value = job.identity.lunaVariantId
   variantField.dispatchEvent(new Event("input", { bubbles: true }))
   variantField.dispatchEvent(new Event("change", { bubbles: true }))
   if (String(variantField.value) !== job.identity.lunaVariantId) {
-    throw new Error("LUNA_EXACT_PRODUCT_IDENTITY_MISMATCH")
+    return { error: "LUNA_EXACT_PRODUCT_IDENTITY_MISMATCH" }
   }
-  return control
+  if (control.disabled || control.getAttribute("aria-disabled") === "true") {
+    return { error: "ADD_TO_CART_DISABLED" }
+  }
+  return { control }
+}
+
+async function visibleAddToCartControl(job) {
+  let lastReason = "ADD_TO_CART_SELECTOR_NOT_FOUND"
+  try {
+    return await boundedDomWait(() => {
+      const found = findVisibleAddToCartControl(job)
+      if (!found) return null
+      if (found.error) { lastReason = found.error; return null }
+      return found.control
+    }, "ADD_TO_CART_SELECTOR_NOT_FOUND")
+  } catch {
+    throw new Error(lastReason)
+  }
 }
 
 function exactCartMatch(cart, job) {
@@ -246,6 +290,16 @@ function exactCartMatch(cart, job) {
       job.identity.lunaVariantId &&
     String(items[0]?.sku ?? "") === job.identity.supplierSku &&
     Number(items[0]?.quantity) === job.identity.quantity
+}
+
+async function waitForCartMutation(job) {
+  const deadline = Date.now() + STEP_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    const cart = await request("/cart.js")
+    if (exactCartMatch(cart, job)) return cart
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  throw new Error("CLICK_DID_NOT_MUTATE_CART")
 }
 
 function cartSnapshot(cart) {
@@ -381,9 +435,11 @@ async function digest(value) {
 }
 
 async function run(job) {
-  progress(job, "PRODUCT_PAGE_OPENED")
-  await productPageReady()
+  progress(job, "ACTIVE_JOB_RECOVERED")
+  await productPageReady(job)
+  progress(job, "PRODUCT_PAGE_DOM_READY")
   if (!authenticatedVisibleDom()) throw new Error("LUNA_NORMAL_CHROME_AUTH_UNPROVEN")
+  progress(job, "PRODUCT_IDENTITY_CHECK_STARTED")
   await retry(() => exactProduct(job))
   progress(job, "PRODUCT_IDENTITY_VERIFIED")
   const original = cartSnapshot(await retry(() => request("/cart.js")))
@@ -394,18 +450,12 @@ async function run(job) {
   try {
     await retry(() => request("/cart/clear.js", { method: "POST", body: {} }))
     cartTouched = true
-    const addToCart = await retry(() => visibleAddToCartControl(job))
+    const addToCart = await visibleAddToCartControl(job)
+    progress(job, "ADD_TO_CART_ELEMENT_FOUND")
     addToCart.click()
-    progress(job, "ADD_TO_CART_DISPATCHED")
-    const confirmedCart = await retry(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 750))
-      const cart = await request("/cart.js")
-      if (!exactCartMatch(cart, job)) {
-        throw new Error("LUNA_EXACT_CART_IDENTITY_MISMATCH")
-      }
-      return cart
-    })
-    progress(job, "CART_CONFIRMED")
+    progress(job, "ADD_TO_CART_CLICK_DISPATCHED")
+    const confirmedCart = await waitForCartMutation(job)
+    progress(job, "CART_MUTATION_CONFIRMED")
     const added = confirmedCart.items[0]
     const minor = Number(added?.final_line_price ?? added?.line_price)
     if (!Number.isFinite(minor) || minor < 0) throw new Error("LUNA_CART_SUBTOTAL_UNPROVEN")
@@ -456,12 +506,12 @@ async function run(job) {
   return capture
 }
 
-const decoded = decodeJob()
-const job = validateJob(decoded)
-if (job) {
-  void resumeJob(job).then(() => run(job)).then(
-    (capture) => { progress(job, "RESULT_POSTED"); send(true, job, capture) },
-    (error) => send(false, job, error instanceof Error
-      ? error.message : "LUNA_SHIPPING_JOB_FAILED"),
-  )
+if (/^\/products\/[a-z0-9][a-z0-9-]{1,180}\/?$/.test(location.pathname)) {
+  progress(null, "CONTENT_SCRIPT_LOADED")
+  progress(null, "ACTIVE_JOB_REQUESTED")
+  void getActiveJob().then(async (job) => ({ job, capture: await run(job) }))
+    .then(({ job, capture }) => {
+      progress(job, "RESULT_POSTED")
+      send(true, job, capture)
+    }).catch(reportRuntimeFailure)
 }
