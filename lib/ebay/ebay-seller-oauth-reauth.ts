@@ -936,6 +936,70 @@ async function requireJsonSuccess(response: Response, code: string) {
   }
 }
 
+function hasAuthoritativeAnalyticsScopeFailure(input: {
+  response: Response
+  payload: JsonRecord
+}) {
+  const authenticate = input.response.headers.get("www-authenticate") ?? ""
+  const errors = Array.isArray(input.payload.errors)
+    ? input.payload.errors.map(record)
+    : []
+  const evidence = [
+    authenticate,
+    input.payload.error,
+    input.payload.error_description,
+    ...errors.flatMap((error) => [
+      error.error,
+      error.error_description,
+      error.message,
+      error.longMessage,
+    ]),
+  ].filter((value): value is string => typeof value === "string")
+    .map((value) => value.toLowerCase().slice(0, 512))
+  return evidence.some((value) =>
+    /(?:^|[^a-z])invalid[_ -]scope(?:[^a-z]|$)/.test(value) ||
+    /(?:^|[^a-z])insufficient[_ -]scope(?:[^a-z]|$)/.test(value))
+}
+
+async function requireAnalyticsProbeSuccess(response: Response) {
+  if (response.status === 429) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_ENDPOINT_RATE_LIMITED",
+    )
+  }
+  if (response.status >= 500) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_ENDPOINT_SERVER_UNAVAILABLE",
+    )
+  }
+  let payload: JsonRecord = {}
+  try {
+    const parsed = await response.json()
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("INVALID_JSON_SHAPE")
+    }
+    payload = record(parsed)
+  } catch {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_ENDPOINT_RESPONSE_INVALID",
+    )
+  }
+  if (response.ok) return
+  if (hasAuthoritativeAnalyticsScopeFailure({ response, payload })) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_SCOPE_UNAVAILABLE",
+    )
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_ENDPOINT_ACCESS_DENIED",
+    )
+  }
+  throw new EbaySellerOAuthReauthError(
+    "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_ENDPOINT_REJECTED",
+  )
+}
+
 async function verifyRefreshTokenCapabilities(input: {
   refreshToken: string
   configuration: EbaySellerOAuthReauthConfiguration
@@ -1039,16 +1103,19 @@ async function verifyRefreshTokenCapabilities(input: {
         operation: "INVENTORY_GET_LOCATIONS_SCOPE_PROBE" as const,
         url: new URL(EBAY_INVENTORY_LOCATION_ENDPOINT),
         failure: "EBAY_SELLER_OAUTH_REAUTH_INVENTORY_SCOPE_UNAVAILABLE",
+        analytics: false,
       },
       {
         operation: "ANALYTICS_TRAFFIC_REPORT_SCOPE_PROBE" as const,
         url: analyticsUrl,
         failure: "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_SCOPE_UNAVAILABLE",
+        analytics: true,
       },
       {
         operation: "ACCOUNT_PRIVILEGE_SCOPE_PROBE" as const,
         url: new URL(EBAY_ACCOUNT_PRIVILEGE_ENDPOINT),
         failure: "EBAY_SELLER_OAUTH_REAUTH_ACCOUNT_SCOPE_UNAVAILABLE",
+        analytics: false,
       },
     ]
     if (input.externalDeadlineAt - input.clock() < 500) {
@@ -1068,7 +1135,8 @@ async function verifyRefreshTokenCapabilities(input: {
         externalDeadlineAt: input.externalDeadlineAt,
         requestedTimeoutMs: PARALLEL_PROBE_TIMEOUT_MS,
       })
-      await requireJsonSuccess(response, probe.failure)
+      if (probe.analytics) await requireAnalyticsProbeSuccess(response)
+      else await requireJsonSuccess(response, probe.failure)
     }))
     const rejected = settled.find(
       (result): result is PromiseRejectedResult => result.status === "rejected",
