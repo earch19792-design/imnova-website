@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.16" },
+      extensionBuildVersion: "1.0.17" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -20,8 +20,6 @@ const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
 const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
 const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
-const RESUME_AFTER_DESTINATION_BINDING =
-  "RESUME_LUNA_SHIPPING_AFTER_DESTINATION_BINDING"
 const DESTINATION_FINGERPRINT_VERSION =
   "LUNA_SHOP_PAY_DESTINATION_SHA256_V1"
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
@@ -846,20 +844,24 @@ function profileFieldValue(selectors) {
   return ""
 }
 
-function normalizedShopPayDestination(job) {
+function normalizedShopPayDestination(job = null) {
   const raw = boundedProfileText()
   if (!raw) return null
   const normalized = raw.normalize("NFKC").toLowerCase()
     .replace(/\bship\s+to\b/g, " ")
     .replace(/[^a-z0-9]+/g, " ").trim()
   if (normalized.length < 8 || normalized.length > 900) return null
-  const expectedPostal = job.destination.postalCode.toLowerCase()
-  const expectedProvince = job.destination.province.toLowerCase()
+  const expectedPostal = typeof job?.destination?.postalCode === "string"
+    ? job.destination.postalCode.toLowerCase() : null
+  const expectedProvince = typeof job?.destination?.province === "string"
+    ? job.destination.province.toLowerCase() : null
   const countryMatches = /\b(?:us|usa|united states|united states of america)\b/
     .test(normalized)
-  const provinceMatches = new RegExp(`\\b${expectedProvince}\\b`).test(normalized)
-  const postalMatches = new RegExp(`\\b${expectedPostal.replace("-", " ")}\\b`)
-    .test(normalized)
+  const provinceMatches = expectedProvince
+    ? new RegExp(`\\b${expectedProvince}\\b`).test(normalized) : countryMatches
+  const postalMatches = expectedPostal
+    ? new RegExp(`\\b${expectedPostal.replace("-", " ")}\\b`).test(normalized)
+    : countryMatches
   return { normalized, countryClass: countryMatches ? "US" : "UNPROVEN",
     canonicalFieldsMatch: countryMatches && provinceMatches && postalMatches }
 }
@@ -879,8 +881,7 @@ function getCanonicalDestinationBinding(job) {
       if (response?.accepted !== true ||
           binding?.fingerprintVersion !== DESTINATION_FINGERPRINT_VERSION ||
           !/^sha256:[0-9a-f]{64}$/.test(binding?.canonicalDestinationFingerprint ?? "") ||
-          binding?.countryClass !== "US" ||
-          binding?.canonicalProfileDigest !== job.destination.profileDigest) {
+          binding?.countryClass !== "US") {
         resolve(null)
         return
       }
@@ -891,8 +892,7 @@ function getCanonicalDestinationBinding(job) {
 
 async function canonicalDestinationFingerprintMatch(job, binding) {
   const current = normalizedShopPayDestination(job)
-  if (!current || current.countryClass !== "US" || !binding ||
-      binding.canonicalProfileDigest !== job.destination.profileDigest) return false
+  if (!current || current.countryClass !== "US" || !binding) return false
   return await sha256Text(current.normalized) ===
     binding.canonicalDestinationFingerprint
 }
@@ -1277,51 +1277,31 @@ chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
         error: "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE" })
       return false
     }
-    void recoverJobContext().then(async (context) => {
-      if (context.phase !== CHECKOUT_PHASE ||
-          message.captureSessionId !== context.job.captureSessionId) {
-        throw new Error("ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN")
+    void boundedDomWait(() => {
+      const markers = shopPayMarkerSnapshot()
+      return markers.shopPayMarkerShipTo &&
+        markers.shopPayMarkerShipping && markers.shopPayMarkerSubtotal &&
+        markers.shopPayMarkerTotal && markers.shopPayMarkerPayNow
+        ? markers : null
+    }, "CANONICAL_BINDING_CHECKOUT_SHAPE_UNPROVEN",
+    SHOP_PAY_DOM_TIMEOUT_MS).then(async (markers) => {
+      if (checkoutPageClassification() !== "NORMAL_CHECKOUT_WITH_SHIPPING") {
+        throw new Error("CANONICAL_BINDING_CHECKOUT_SHAPE_UNPROVEN")
       }
-      const current = normalizedShopPayDestination(context.job)
+      const current = normalizedShopPayDestination()
       if (!current || current.countryClass !== "US") {
         throw new Error("CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE")
       }
-      if (!current.canonicalFieldsMatch) {
-        throw new Error("CANONICAL_US_SHIPPING_PROFILE_MISMATCH")
-      }
       const canonicalDestinationFingerprint = await sha256Text(current.normalized)
-      sendResponse({ accepted: true, captureSessionId: context.job.captureSessionId,
+      sendResponse({ accepted: true,
         canonicalDestinationFingerprint,
         fingerprintVersion: DESTINATION_FINGERPRINT_VERSION,
         countryClass: "US",
-        canonicalProfileDigest: context.job.destination.profileDigest })
+        safeCheckoutMarkersVerified: Boolean(markers) })
     }).catch((error) => sendResponse({ accepted: false,
       error: error instanceof Error ? error.message
         : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE" }))
     return true
-  }
-  if (message?.type === RESUME_AFTER_DESTINATION_BINDING) {
-    if (globalThis.__sellerOsLunaDestinationResumeInFlightV1 === true) {
-      sendResponse({ accepted: false, error: "LUNA_SHIPPING_RESUME_IN_PROGRESS" })
-      return false
-    }
-    globalThis.__sellerOsLunaDestinationResumeInFlightV1 = true
-    sendResponse({ accepted: true })
-    void recoverJobContext().then(async (context) => {
-      if (context.phase !== CHECKOUT_PHASE ||
-          message.captureSessionId !== context.job.captureSessionId ||
-          !Array.isArray(context.originalCartSnapshot) ||
-          !Number.isFinite(context.cartSubtotalUsd)) {
-        throw new Error("ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN")
-      }
-      const capture = await runCheckoutStage(context.job,
-        context.originalCartSnapshot, context.cartSubtotalUsd)
-      progress(context.job, "RESULT_POSTED")
-      send(true, context.job, capture)
-    }).catch(reportRuntimeFailure).finally(() => {
-      globalThis.__sellerOsLunaDestinationResumeInFlightV1 = false
-    })
-    return false
   }
   return false
 })

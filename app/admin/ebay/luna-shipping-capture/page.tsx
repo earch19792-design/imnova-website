@@ -11,7 +11,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.16"
+const EXPECTED_EXTENSION_VERSION = "1.0.17"
 const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
@@ -314,10 +314,14 @@ export default function LunaShippingCapturePage() {
           }
           setCanonicalDestinationBound(true)
           setCanonicalDestinationMatch(true)
-          busy = true
-          setRunning(true)
+          busy = false
+          setRunning(false)
           setError("")
-          setStatus("CANONICAL_DESTINATION_BOUND")
+          setStatus("Benchmark configurado")
+          setRuntimeTrace((current) => ({ ...current,
+            canonicalUsProfileFound: true,
+            shippingAddressAccepted: true,
+          }))
           return
         }
         if (message?.type === "LUNA_SHIPPING_JOB_PROGRESS") {
@@ -627,7 +631,8 @@ export default function LunaShippingCapturePage() {
       <button type="button" disabled={!connected || running}
         onClick={() => triggerRef.current?.()}
         className="mt-6 w-full rounded-2xl bg-cyan-300 px-5 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
-        Ejecutar canary de shipping
+        {canonicalDestinationBound
+          ? "Ejecutar canary final" : "Ejecutar canary de shipping"}
       </button>
       <button type="button"
         disabled={!connected || running || canonicalDestinationBound}

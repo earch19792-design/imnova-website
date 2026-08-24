@@ -19,7 +19,10 @@ candidatos secuencialmente sin clic por producto.
 
 - No solicita permisos de cookies, webRequest ni `<all_urls>`. El permiso
   `storage` guarda únicamente el SHA-256 del destino canónico, su versión, la
-  clase de país y el digest del perfil; nunca guarda la dirección.
+  clase de país; nunca guarda la dirección.
+- El binding explícito descubre exactamente un checkout `shop.app` poblado y
+  no depende de que siga vivo un canary. Los candidatos posteriores comparan
+  automáticamente el fingerprint antes de aceptar la cotización.
 - Sólo se inyecta en `lunaportex.com`, `www.lunaportex.com`, el desvío de
   autenticación `account.lunaportex.com` y el checkout acotado `shop.app`.
 - No lee contraseñas, cookies, tokens, headers de autenticación, localStorage ni

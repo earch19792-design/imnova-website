@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.16"
+const EXTENSION_BUILD_VERSION = "1.0.17"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -20,8 +20,6 @@ const RESUME_ACTIVE_JOB = "RESUME_ACTIVE_LUNA_SHIPPING_JOB"
 const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
 const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
-const RESUME_AFTER_DESTINATION_BINDING =
-  "RESUME_LUNA_SHIPPING_AFTER_DESTINATION_BINDING"
 const DESTINATION_BINDING_RESULT =
   "LUNA_CANONICAL_DESTINATION_BINDING_RESULT"
 const DESTINATION_FINGERPRINT_VERSION =
@@ -285,11 +283,9 @@ function safeRuntimeReason(value) {
 function safeDestinationBinding(value) {
   return value?.fingerprintVersion === DESTINATION_FINGERPRINT_VERSION &&
     /^sha256:[0-9a-f]{64}$/.test(value?.canonicalDestinationFingerprint ?? "") &&
-    /^sha256:[0-9a-f]{64}$/.test(value?.canonicalProfileDigest ?? "") &&
     value?.countryClass === "US" ? Object.freeze({
       fingerprintVersion: value.fingerprintVersion,
       canonicalDestinationFingerprint: value.canonicalDestinationFingerprint,
-      canonicalProfileDigest: value.canonicalProfileDigest,
       countryClass: "US",
     }) : null
 }
@@ -314,13 +310,13 @@ function writeDestinationBinding(binding) {
   }))
 }
 
-function sendActiveTabMessage(message) {
+function sendTabMessage(tabId, message) {
   return new Promise((resolve, reject) => {
-    if (!Number.isInteger(activeTabId)) {
-      reject(new Error("ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN"))
+    if (!Number.isInteger(tabId)) {
+      reject(new Error("CANONICAL_BINDING_CHECKOUT_TAB_NOT_FOUND"))
       return
     }
-    chrome.tabs.sendMessage(activeTabId, message, { frameId: 0 }, (response) => {
+    chrome.tabs.sendMessage(tabId, message, { frameId: 0 }, (response) => {
       if (chrome.runtime.lastError) {
         reject(new Error("CHECKOUT_CONTENT_SCRIPT_NOT_AVAILABLE"))
         return
@@ -330,34 +326,70 @@ function sendActiveTabMessage(message) {
   })
 }
 
+function queryShopAppTabs() {
+  return new Promise((resolve, reject) => chrome.tabs.query({
+    url: SHOP_APP_HOST_PATTERN,
+  }, (tabs) => {
+    if (chrome.runtime.lastError) {
+      reject(new Error("CANONICAL_BINDING_CHECKOUT_TAB_DISCOVERY_FAILED"))
+      return
+    }
+    resolve((Array.isArray(tabs) ? tabs : []).filter((tab) => {
+      if (!Number.isInteger(tab?.id)) return false
+      try {
+        const parsed = new URL(tab.url ?? "")
+        return parsed.protocol === "https:" && parsed.hostname === "shop.app"
+      } catch { return false }
+    }).map((tab) => ({ id: tab.id })))
+  }))
+}
+
+async function requestDestinationBindingFromTab(tabId) {
+  try {
+    return await sendTabMessage(tabId, { type: BIND_CANONICAL_DESTINATION })
+  } catch (error) {
+    if (!(error instanceof Error) ||
+        error.message !== "CHECKOUT_CONTENT_SCRIPT_NOT_AVAILABLE") throw error
+    try {
+      await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] },
+        files: ["content.js"], world: "ISOLATED" })
+    } catch {
+      throw new Error("CHECKOUT_CONTENT_SCRIPT_NOT_AVAILABLE")
+    }
+    return sendTabMessage(tabId, { type: BIND_CANONICAL_DESTINATION })
+  }
+}
+
 async function bindCanonicalDestination(port) {
-  if (!activeJob || activeJobPhase !== CHECKOUT_PHASE ||
-      !checkoutNavigationArmed || !Number.isInteger(activeTabId) ||
-      lastRuntimeState !== "NORMAL_CHECKOUT_WITH_SHIPPING") {
-    throw new Error("ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN")
+  const checkoutTabs = await queryShopAppTabs()
+  if (!checkoutTabs.length) {
+    throw new Error("CANONICAL_BINDING_CHECKOUT_TAB_NOT_FOUND")
   }
-  const response = await sendActiveTabMessage({
-    type: BIND_CANONICAL_DESTINATION,
-    captureSessionId: activeJob.captureSessionId,
-  })
-  const binding = safeDestinationBinding(response)
-  if (response?.accepted !== true || !binding ||
-      binding.canonicalProfileDigest !== activeJob.destination.profileDigest) {
-    throw new Error(safeRuntimeReason(response?.error ??
-      "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE"))
+  const candidates = await Promise.all(checkoutTabs.map(async ({ id }) => {
+    try {
+      const response = await requestDestinationBindingFromTab(id)
+      const binding = safeDestinationBinding(response)
+      return response?.accepted === true && binding ? { binding } : null
+    } catch { return null }
+  }))
+  const eligible = candidates.filter(Boolean)
+  if (!eligible.length) {
+    throw new Error("CANONICAL_BINDING_CHECKOUT_TAB_NOT_FOUND")
   }
+  if (eligible.length > 1) {
+    throw new Error("CANONICAL_BINDING_CHECKOUT_TAB_AMBIGUOUS")
+  }
+  const binding = eligible[0].binding
   await writeDestinationBinding(binding)
   const readback = await readDestinationBinding()
   if (!readback ||
       readback.canonicalDestinationFingerprint !==
-        binding.canonicalDestinationFingerprint ||
-      readback.canonicalProfileDigest !== binding.canonicalProfileDigest) {
+        binding.canonicalDestinationFingerprint) {
     throw new Error("CANONICAL_DESTINATION_FINGERPRINT_READBACK_FAILED")
   }
   port.postMessage({ type: DESTINATION_BINDING_RESULT, success: true,
-    canonicalDestinationBound: true, canonicalDestinationMatch: true })
-  await sendActiveTabMessage({ type: RESUME_AFTER_DESTINATION_BINDING,
-    captureSessionId: activeJob.captureSessionId })
+    canonicalDestinationBound: true, canonicalDestinationMatch: true,
+    canonicalUsProfileFound: true, shippingAddressAccepted: true })
 }
 
 function emitProgress(state, details = {}) {
@@ -630,10 +662,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false
     }
     void readDestinationBinding().then((binding) => sendResponse({
-      accepted: Boolean(binding && binding.canonicalProfileDigest ===
-        activeJob?.destination.profileDigest),
-      ...(binding && binding.canonicalProfileDigest ===
-        activeJob?.destination.profileDigest ? { binding } : {}),
+      accepted: Boolean(binding), ...(binding ? { binding } : {}),
     }))
     return true
   }
