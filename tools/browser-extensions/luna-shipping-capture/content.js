@@ -32,25 +32,68 @@ function exactProductUrl(value) {
   } catch { return null }
 }
 
-function validateJob(value) {
+function jobValidationReason(value) {
   const job = value && typeof value === "object" ? value : {}
   const identity = job.identity && typeof job.identity === "object"
     ? job.identity : {}
   const destination = job.destination && typeof job.destination === "object"
     ? job.destination : {}
-  if (job.contractVersion !== CONTRACT ||
-      !/^[0-9a-f-]{36}$/i.test(job.captureSessionId ?? "") ||
-      !/^[A-Za-z0-9_-]{32,128}$/.test(job.nonce ?? "") ||
-      !/^sha256:[0-9a-f]{64}$/.test(identity.candidateId ?? "") ||
-      !/^\d{8,24}$/.test(identity.lunaProductId ?? "") ||
-      !/^\d{8,24}$/.test(identity.lunaVariantId ?? "") ||
-      typeof identity.supplierSku !== "string" || identity.supplierSku.length > 160 ||
-      !Number.isInteger(identity.quantity) || identity.quantity < 1 ||
-      identity.quantity > 20 || !exactProductUrl(identity.canonicalProductUrl) ||
-      destination.country !== "US" || !/^[A-Z]{2}$/.test(destination.province ?? "") ||
-      !/^\d{5}(?:-\d{4})?$/.test(destination.postalCode ?? "") ||
-      !/^sha256:[0-9a-f]{64}$/.test(destination.profileDigest ?? "")) return null
-  return job
+  if (!("contractVersion" in job)) return "JOB_MISSING_FIELD:contractVersion"
+  if (job.contractVersion !== CONTRACT) return "JOB_INVALID_CONTRACT_VERSION"
+  for (const [field, owner] of [
+    ["captureSessionId", job], ["nonce", job], ["productName", job],
+    ["salePriceUsd", job], ["supplierCostUsd", job],
+    ["candidateId", identity], ["canonicalProductUrl", identity],
+    ["lunaProductId", identity], ["lunaVariantId", identity],
+    ["supplierSku", identity], ["quantity", identity],
+    ["profileId", destination], ["profileDigest", destination],
+    ["country", destination], ["province", destination],
+    ["postalCode", destination],
+  ]) if (!(field in owner)) return `JOB_MISSING_FIELD:${
+    owner === identity ? "identity." : owner === destination ? "destination." : ""}${field}`
+  if (typeof job.captureSessionId !== "string" || typeof job.nonce !== "string" ||
+      typeof job.productName !== "string" || typeof job.salePriceUsd !== "number" ||
+      typeof job.supplierCostUsd !== "number") return "JOB_INVALID_TYPE:job"
+  if (typeof identity.candidateId !== "string" ||
+      typeof identity.canonicalProductUrl !== "string" ||
+      typeof identity.lunaProductId !== "string" ||
+      typeof identity.lunaVariantId !== "string" ||
+      typeof identity.supplierSku !== "string" ||
+      typeof identity.quantity !== "number") return "JOB_INVALID_TYPE:identity"
+  if (typeof destination.profileId !== "string" ||
+      typeof destination.profileDigest !== "string" ||
+      typeof destination.country !== "string" ||
+      typeof destination.province !== "string" ||
+      typeof destination.postalCode !== "string") return "JOB_INVALID_TYPE:destination"
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      .test(job.captureSessionId) || !/^\d{13}\.[A-Za-z0-9_-]{43}$/.test(job.nonce)) {
+    return "JOB_INVALID_TYPE:session"
+  }
+  if (!/^sha256:[0-9a-f]{64}$/.test(identity.candidateId) ||
+      !/^\d{8,24}$/.test(identity.lunaProductId) ||
+      !/^\d{8,24}$/.test(identity.lunaVariantId) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:+/ -]{0,159}$/.test(identity.supplierSku)) {
+    return "JOB_IDENTITY_MISMATCH:identity"
+  }
+  if (!Number.isInteger(identity.quantity) || identity.quantity < 1 ||
+      identity.quantity > 20) return "JOB_INVALID_TYPE:identity.quantity"
+  if (!exactProductUrl(identity.canonicalProductUrl)) {
+    return "JOB_IDENTITY_MISMATCH:identity.canonicalProductUrl"
+  }
+  if (!/^[A-Z0-9_-]{3,80}$/.test(destination.profileId) ||
+      !/^sha256:[0-9a-f]{64}$/.test(destination.profileDigest) ||
+      destination.country !== "US" || !/^[A-Z]{2}$/.test(destination.province) ||
+      !/^\d{5}(?:-\d{4})?$/.test(destination.postalCode) ||
+      !Number.isFinite(job.salePriceUsd) || job.salePriceUsd <= 0 ||
+      !Number.isFinite(job.supplierCostUsd) || job.supplierCostUsd < 0 ||
+      job.productName.trim().length < 2 || job.productName.length > 240) {
+    return "JOB_INVALID_TYPE:job"
+  }
+  return null
+}
+
+function validateJob(value) {
+  return jobValidationReason(value) === null ? value : null
 }
 
 function send(success, job, value) {
