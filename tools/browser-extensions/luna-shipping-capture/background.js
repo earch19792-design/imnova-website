@@ -106,6 +106,7 @@ chrome.runtime.onConnectExternal.addListener((port) => {
     }))
   })
   port.onDisconnect.addListener(() => {
+    if (sellerPort !== port) return
     sellerPort = null
     activeJob = null
   })
