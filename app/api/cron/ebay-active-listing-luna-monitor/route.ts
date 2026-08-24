@@ -21,7 +21,22 @@ import { getCommercialMonitorReadonly } from
   "@/lib/ebay/commercial-monitor-readonly-service"
 import { runAutomaticCertifiedOosProtectionV1 } from
   "@/lib/ebay/ebay-auto-certified-oos-protection-v1"
+import {
+  endLiveInvariantViolationNotAvailableV1,
+  SELLER_OS_LIVE_INVARIANT_END_AUTHORIZATION_V1,
+} from "@/lib/ebay/ebay-commercial-improvement-action-service"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
+
+const BULK_END_UNLINKED_LIVE_TARGETS_V1 = Object.freeze([
+  "366543596425",
+  "366575102453",
+  "366582630351",
+  "366584136876",
+  "366584249461",
+  "366597780377",
+  "366602466981",
+  "366608128809",
+])
 
 function safeCode(error: unknown) {
   const code = error instanceof Error ? error.message : ""
@@ -101,6 +116,66 @@ export async function GET(req: Request) {
     )
   }
   const supabase = getSupabaseAdminClient()
+  const bulkEndOutcomes: Array<Record<string, unknown>> = []
+  for (const itemId of BULK_END_UNLINKED_LIVE_TARGETS_V1) {
+    try {
+      const currentLive = await getEbayCommercialMonitorLiveReadonly({
+        accountKey,
+        accountAlias: account.accountAlias,
+      })
+      const currentMonitor = await getCommercialMonitorReadonly(
+        supabase,
+        { accountKey, accountAlias: account.accountAlias,
+          configurationReason: account.reason },
+        currentLive,
+      )
+      const listing = currentMonitor.listings.find((row) =>
+        row.identity.itemId === itemId) ?? null
+      if (!listing ||
+          listing.discovery.livePresence.status !== "LIVE_ACTIVE") {
+        bulkEndOutcomes.push({ itemId, status: "SKIPPED_NOT_CURRENT_LIVE",
+          ebayWriteCount: 0 })
+        continue
+      }
+      if (listing.stock.supplierLinkageStatus === "CERTIFIED") {
+        bulkEndOutcomes.push({ itemId, status: "SKIPPED_CERTIFIED",
+          ebayWriteCount: 0 })
+        continue
+      }
+      const result = await endLiveInvariantViolationNotAvailableV1({
+        itemId,
+        expectedSku: listing.identity.sku,
+        automationAuthorization:
+          SELLER_OS_LIVE_INVARIANT_END_AUTHORIZATION_V1,
+      })
+      bulkEndOutcomes.push({ itemId, status: result.status,
+        ebayWriteCount: result.ebayWriteCount,
+        officialReadbackNotCurrentLive:
+          result.officialReadbackNotCurrentLive })
+    } catch (error) {
+      bulkEndOutcomes.push({ itemId, status: "FAILED",
+        error: safeCode(error), ebayWriteCount: 0 })
+    }
+  }
+  const bulkEndWriteCount = bulkEndOutcomes.reduce((sum, outcome) => sum +
+    (typeof outcome.ebayWriteCount === "number"
+      ? outcome.ebayWriteCount : 0), 0)
+  const bulkEndFailedCount = bulkEndOutcomes.filter((outcome) =>
+    outcome.status === "FAILED").length
+  if (bulkEndWriteCount > 0 || bulkEndFailedCount > 0) {
+    return NextResponse.json({
+      success: bulkEndFailedCount === 0,
+      status: bulkEndFailedCount === 0
+        ? "bulk_end_unlinked_completed" : "bulk_end_unlinked_partial",
+      targetCount: BULK_END_UNLINKED_LIVE_TARGETS_V1.length,
+      outcomes: bulkEndOutcomes,
+      ebayWriteCount: bulkEndWriteCount,
+      humanInterventionCount: 0,
+      safety: { browserSessionRequired: false, inventoryApiUsed: false,
+        databaseWrites: 0, lunaWrites: 0, otherListingWrites: 0,
+        newSchedulerCreated: false },
+    }, { status: bulkEndFailedCount === 0 ? 200 : 502 })
+  }
   let runId = ""
   let leaseOwned = false
   try {
