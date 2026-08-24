@@ -7,6 +7,7 @@ const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
 const JOB_RUNTIME_FAILURE = "LUNA_SHIPPING_JOB_RUNTIME_FAILURE"
 const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
+const CHECKOUT_PHASE = "AWAITING_CHECKOUT_SHIPPING"
 const ACQUISITION_METHOD = "NORMAL_CHROME_EXTENSION_VISIBLE_DOM"
 const MAX_ATTEMPTS_PER_STEP = 2
 const MAXIMUM_PRODUCT_JSON_BYTES = 256_000
@@ -98,12 +99,16 @@ function getActiveJob() {
       const originalCartSnapshot = Array.isArray(response?.originalCartSnapshot)
         ? cartSnapshot(response.originalCartSnapshot) : null
       if (response?.accepted === true && job &&
-          (response?.phase !== CART_PHASE || originalCartSnapshot !== null)) {
-        resolve({ job, phase: response?.phase, originalCartSnapshot })
+          (![CART_PHASE, CHECKOUT_PHASE].includes(response?.phase) ||
+            originalCartSnapshot !== null) &&
+          (response?.phase !== CHECKOUT_PHASE ||
+            Number.isFinite(response?.cartSubtotalUsd))) {
+        resolve({ job, phase: response?.phase, originalCartSnapshot,
+          cartSubtotalUsd: response?.cartSubtotalUsd })
       }
       else reject(new Error(typeof response?.error === "string" ? response.error
         : jobValidationReason(response?.job) ??
-          (response?.phase === CART_PHASE
+          ([CART_PHASE, CHECKOUT_PHASE].includes(response?.phase)
             ? "ACTIVE_JOB_CART_CONTINUITY_UNPROVEN"
             : "SERVICE_WORKER_JOB_STATE_NOT_RECOVERED")))
     })
@@ -115,18 +120,27 @@ function progress(job, state, details = {}) {
     ...(job ? { captureSessionId: job.captureSessionId,
       candidateId: job.identity.candidateId } : {}),
     ...(Number.isFinite(details.cartSubtotalUsd)
-      ? { cartSubtotalUsd: details.cartSubtotalUsd } : {}) })
+      ? { cartSubtotalUsd: details.cartSubtotalUsd } : {}),
+    ...(typeof details.checkoutHostClassification === "string"
+      ? { checkoutHostClassification: details.checkoutHostClassification } : {}),
+    ...(typeof details.authSignal === "string"
+      ? { authSignal: details.authSignal } : {}),
+    ...(typeof details.authSignalSource === "string"
+      ? { authSignalSource: details.authSignalSource } : {}) })
 }
 
-function setActiveJobPhase(job, originalCartSnapshot) {
+function setActiveJobPhase(job, phase, details = {}) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(
       "ACTIVE_JOB_CART_CONTINUITY_UNPROVEN")), 5_000)
     chrome.runtime.sendMessage({ type: SET_ACTIVE_JOB_PHASE,
-      phase: CART_PHASE, captureSessionId: job.captureSessionId,
-      originalCartSnapshot }, (response) => {
+      phase, captureSessionId: job.captureSessionId,
+      ...(Array.isArray(details.originalCartSnapshot)
+        ? { originalCartSnapshot: details.originalCartSnapshot } : {}),
+      ...(Number.isFinite(details.cartSubtotalUsd)
+        ? { cartSubtotalUsd: details.cartSubtotalUsd } : {}) }, (response) => {
       clearTimeout(timeout)
-      if (response?.accepted === true && response?.phase === CART_PHASE) resolve()
+      if (response?.accepted === true && response?.phase === phase) resolve()
       else reject(new Error(typeof response?.error === "string" ? response.error
         : "ACTIVE_JOB_CART_CONTINUITY_UNPROVEN"))
     })
@@ -428,89 +442,196 @@ async function retry(step) {
   throw last ?? new Error("LUNA_SHIPPING_DOM_CONTRACT_CHANGED")
 }
 
-async function visibleShipping(job, expectedSubtotal) {
-  const overlay = document.createElement("section")
-  overlay.id = "seller-os-luna-shipping-capture"
-  overlay.style.cssText = "position:fixed;inset:16px;z-index:2147483647;background:#07111a;border:2px solid #a5f3fc;border-radius:16px;padding:12px;box-shadow:0 20px 80px #000;color:white"
-  const label = document.createElement("p")
-  label.textContent = "Seller OS: calculando envío visible de Luna. No se realizará ninguna compra."
-  label.style.cssText = "font:700 14px system-ui;margin:0 0 8px"
-  const frame = document.createElement("iframe")
-  frame.src = "/cart"
-  frame.style.cssText = "width:100%;height:calc(100% - 30px);border:0;background:white"
-  overlay.append(label, frame)
-  document.documentElement.append(overlay)
-  try {
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("LUNA_CART_DOM_TIMEOUT")),
-        STEP_TIMEOUT_MS)
-      frame.addEventListener("load", () => { clearTimeout(timeout); resolve() }, { once: true })
-    })
-    const root = frame.contentDocument
-    if (!root) throw new Error("LUNA_AUTH_CHALLENGE_REQUIRED")
-    if (root.querySelector('iframe[src*="captcha" i],[data-cf-challenge],input[autocomplete="one-time-code"]')) {
-      throw new Error("LUNA_AUTH_CHALLENGE_REQUIRED")
+function checkoutHostClassification() {
+  if (new Set(["lunaportex.com", "www.lunaportex.com"])
+      .has(location.hostname)) return "LUNA_STOREFRONT_CHECKOUT_HOST"
+  if (location.hostname === "account.lunaportex.com") {
+    return "LUNA_ACCOUNT_HOST"
+  }
+  return "UNSUPPORTED_CHECKOUT_HOST"
+}
+
+function checkoutPageClassification() {
+  const explicitChallenge = visibleMatch([
+    'iframe[src*="captcha" i]', '[data-cf-challenge]',
+    '[id*="challenge" i]', 'form[action*="/challenge" i]',
+  ]) || [...document.querySelectorAll("h1,h2,p,label")].slice(0, 300)
+    .some((element) => isVisible(element) &&
+      /verify you are human|authentication required|security challenge/i
+        .test(element.textContent ?? ""))
+  if (explicitChallenge) return "EXPLICIT_AUTH_CHALLENGE"
+  const sessionExpired = [...document.querySelectorAll("h1,h2,p")].slice(0, 300)
+    .some((element) => isVisible(element) &&
+      /session (?:has )?expired|please sign in again/i
+        .test(element.textContent ?? ""))
+  if (sessionExpired) return "SESSION_EXPIRED"
+  const checkoutFields = visibleMatch([
+    'input[name*="shipping" i]', 'select[name*="shipping" i]',
+    'input[name*="address" i]', 'select[name*="address" i]',
+    '[data-shipping-address]', '[data-delivery-address]',
+  ])
+  const contactFields = visibleMatch([
+    'input[type="email"]', 'input[name*="contact" i]',
+    '[data-contact-information]',
+  ])
+  const shippingOptions = visibleMatch([
+    '[data-shipping-method]', '[data-shipping-rate]',
+    'input[name*="shipping_method" i]', 'input[name*="shipping_rate" i]',
+  ])
+  const checkoutShell = /^\/checkouts?(?:\/|$)/.test(location.pathname) &&
+    visibleMatch(['[data-checkout-root]', '[data-order-summary]',
+      '[data-checkout-subtotal]', 'form[action*="/checkout"]'])
+  if (checkoutFields) {
+    return "NORMAL_CHECKOUT_WITH_SHIPPING_FORM"
+  }
+  if (contactFields) return "NORMAL_CHECKOUT_WITH_CONTACT_FORM"
+  if (shippingOptions || checkoutShell) {
+    return "NORMAL_GUEST_CHECKOUT"
+  }
+  const explicitLogin = location.hostname === "account.lunaportex.com" &&
+      /\/(?:login|signin|auth|code|verify)(?:\/|$)/i.test(location.pathname) ||
+    visibleMatch(['form[action*="/account/login"]',
+      'form[action*="/login"] input[type="password"]'])
+  return explicitLogin ? "EXPLICIT_LOGIN_PAGE" : "UNKNOWN_CHECKOUT_PAGE"
+}
+
+function irreversibleCommerceControl(element) {
+  const value = `${element?.textContent ?? ""} ${element?.value ?? ""} ` +
+    `${element?.getAttribute?.("name") ?? ""} ${element?.id ?? ""}`
+  return /place order|complete order|submit order|pay now|payment|purchase/i
+    .test(value)
+}
+
+function visibleCheckoutControl() {
+  const controls = [...document.querySelectorAll(
+    'button[name="checkout"],input[name="checkout"],a[href*="/checkout"],button,input[type="submit"]')]
+  return controls.find((element) => isVisible(element) &&
+    !irreversibleCommerceControl(element) &&
+    /checkout|continue to checkout/i.test(
+      `${element.textContent ?? ""} ${element.value ?? ""} ` +
+      `${element.getAttribute?.("name") ?? ""}`)) ?? null
+}
+
+function requiredFieldMissing(selectors) {
+  return selectors.some((selector) => [...document.querySelectorAll(selector)]
+    .some((element) => isVisible(element) && element.required &&
+      String(element.value ?? "").trim() === ""))
+}
+
+function canonicalShippingProfile(job) {
+  const country = firstVisible(document, [
+    'select[name*="country" i]', 'input[name*="country" i]',
+    '[data-shipping-country]',
+  ])
+  const province = firstVisible(document, [
+    'select[name*="province" i]', 'input[name*="province" i]',
+    'select[name*="state" i]', 'input[name*="state" i]',
+    '[data-shipping-province]',
+  ])
+  const postal = firstVisible(document, [
+    'input[name*="postal" i]', 'input[name*="zip" i]',
+    '[data-shipping-postal-code]',
+  ])
+  const shippingOptions = firstVisible(document, [
+    '[data-shipping-method]', '[data-shipping-rate]',
+    'input[name*="shipping_method" i]', 'input[name*="shipping_rate" i]',
+  ])
+  if (!country && !province && !postal && shippingOptions) return true
+  if (!country || !province || !postal) return false
+  if (requiredFieldMissing([
+    'input[name*="address1" i]', 'input[name*="address_1" i]',
+    'input[name*="city" i]', 'input[name*="first_name" i]',
+    'input[name*="last_name" i]', 'input[type="email"]',
+  ])) return false
+  return setField(country, "US") &&
+    setField(province, job.destination.province) &&
+    setField(postal, job.destination.postalCode)
+}
+
+function continueToShippingControl() {
+  return [...document.querySelectorAll('button,input[type="submit"]')]
+    .find((element) => isVisible(element) &&
+      !irreversibleCommerceControl(element) &&
+      /continue to shipping|shipping method|continue/i.test(
+        `${element.textContent ?? ""} ${element.value ?? ""}`)) ?? null
+}
+
+async function checkoutShipping(job, expectedSubtotal) {
+  const classification = checkoutPageClassification()
+  const authSignal = classification === "EXPLICIT_AUTH_CHALLENGE"
+    ? "EXPLICIT_CHALLENGE_UI"
+    : classification === "EXPLICIT_LOGIN_PAGE" ? "EXPLICIT_LOGIN_REQUIRED"
+      : classification === "SESSION_EXPIRED" ? "SESSION_EXPIRED_UI"
+        : "NO_EXPLICIT_AUTH_REQUIREMENT"
+  const classificationDetails = {
+    checkoutHostClassification: checkoutHostClassification(), authSignal,
+    authSignalSource: "FIXED_HOST_PATH_AND_VISIBLE_DOM",
+  }
+  progress(job, "CHECKOUT_PAGE_DETECTED", classificationDetails)
+  progress(job, classification, classificationDetails)
+  if (classification === "EXPLICIT_AUTH_CHALLENGE") {
+    throw new Error("LUNA_AUTH_CHALLENGE_REQUIRED")
+  }
+  if (classification === "EXPLICIT_LOGIN_PAGE" ||
+      classification === "SESSION_EXPIRED") {
+    throw new Error("LUNA_SESSION_EXPIRED")
+  }
+  if (classification === "UNKNOWN_CHECKOUT_PAGE") {
+    throw new Error("LUNA_UNKNOWN_CHECKOUT_PAGE")
+  }
+  if (!canonicalShippingProfile(job)) {
+    throw new Error("CANONICAL_US_SHIPPING_PROFILE_UNAVAILABLE")
+  }
+  progress(job, "CANONICAL_US_PROFILE_FOUND")
+  let shippingOption = firstVisible(document, [
+    '[data-shipping-method]', '[data-shipping-rate]',
+    'input[name*="shipping_method" i]', 'input[name*="shipping_rate" i]',
+  ])
+  if (!shippingOption) {
+    const proceed = continueToShippingControl()
+    if (!proceed) throw new Error("LUNA_SHIPPING_CONTINUE_CONTROL_UNAVAILABLE")
+    if (irreversibleCommerceControl(proceed)) {
+      throw new Error("LUNA_PURCHASE_BOUNDARY_REACHED")
     }
-    if (root.querySelector('input[type="password"],form[action*="/account/login"],form[action*="/login"]')) {
-      throw new Error("LUNA_SESSION_EXPIRED")
-    }
-    const subtotalElement = firstVisible(root, [
-      "[data-cart-subtotal]", ".totals__total-value", ".cart-subtotal__price",
-      "[data-cart-total]", ".cart__subtotal .money",
+    proceed.click()
+    progress(job, "SHIPPING_ADDRESS_ACCEPTED")
+    shippingOption = await boundedDomWait(() => firstVisible(document, [
+      '[data-shipping-method]', '[data-shipping-rate]',
+      'input[name*="shipping_method" i]', 'input[name*="shipping_rate" i]',
+    ]), "LUNA_SHIPPING_OPTIONS_UNAVAILABLE")
+  } else {
+    progress(job, "SHIPPING_ADDRESS_ACCEPTED")
+  }
+  if (shippingOption.type === "radio" && !shippingOption.checked) {
+    shippingOption.click()
+  }
+  progress(job, "SHIPPING_OPTIONS_DETECTED")
+  return boundedDomWait(() => {
+    const shippingRoot = shippingOption.closest?.("label,[data-shipping-method]," +
+      "[data-shipping-rate]") ?? shippingOption.parentElement
+    const shippingText = shippingRoot?.textContent ?? shippingOption.textContent ?? ""
+    const shippingValues = moneyValues(shippingText)
+    const shippingUsd = /\bfree\b/i.test(shippingText) ? 0
+      : shippingValues.length === 1 ? shippingValues[0] : null
+    if (shippingUsd === null) return null
+    const subtotalElement = firstVisible(document, [
+      '[data-checkout-subtotal]', '[data-order-summary-subtotal]',
+      '[data-subtotal-price]', '.order-summary__emphasis',
     ])
     const subtotalValues = moneyValues(subtotalElement?.textContent)
     if (!subtotalValues.some((value) => Math.abs(value - expectedSubtotal) <= 0.01)) {
-      throw new Error("LUNA_VISIBLE_SUBTOTAL_MISMATCH")
+      return null
     }
-    const country = firstVisible(root, [
-      'select[name="address[country]"]',
-      'select[name="shipping_address[country]"]',
-      '[data-shipping-country]',
+    const totalElement = firstVisible(document, [
+      '[data-checkout-total]', '[data-order-summary-total]',
+      '[data-total-price]', '.payment-due__price',
     ])
-    const province = firstVisible(root, [
-      'select[name="address[province]"]', 'input[name="address[province]"]',
-      'select[name="shipping_address[province]"]',
-      'input[name="shipping_address[province]"]', '[data-shipping-province]',
-    ])
-    const postal = firstVisible(root, [
-      'input[name="address[zip]"]', 'input[name="address[postal_code]"]',
-      'input[name="shipping_address[zip]"]', '[data-shipping-postal-code]',
-    ])
-    if (!setField(country, "US") || !setField(province, job.destination.province) ||
-        !setField(postal, job.destination.postalCode)) {
-      throw new Error("LUNA_SHIPPING_DOM_CONTRACT_CHANGED")
-    }
-    const calculate = [...root.querySelectorAll("button,input[type=button],input[type=submit]")]
-      .find((element) => isVisible(element) &&
-        /calculate shipping|get rates|calculate|shipping rates/i
-          .test(element.textContent ?? element.value ?? ""))
-    if (!calculate) throw new Error("LUNA_SHIPPING_DOM_CONTRACT_CHANGED")
-    calculate.click()
-    const result = await retry(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 750))
-      const shippingElement = firstVisible(root, [
-        "[data-shipping-rate-price]", "#shipping-rates li",
-        ".shipping-rates li", ".shipping-calculator__response li",
-        "[data-shipping-rates] li",
-      ])
-      const shippingValues = moneyValues(shippingElement?.textContent)
-      if (shippingValues.length !== 1) throw new Error("LUNA_VISIBLE_SHIPPING_AMBIGUOUS")
-      const shippingUsd = shippingValues[0]
-      const totalExpected = Math.round((expectedSubtotal + shippingUsd) * 100) / 100
-      const totalElement = firstVisible(root, [
-        "[data-shipping-total]", "[data-order-total]", ".shipping-calculator__total",
-        ".cart__grand-total", ".grand-total",
-      ])
-      const totalValues = moneyValues(totalElement?.textContent)
-      if (!totalValues.some((value) => Math.abs(value - totalExpected) <= 0.01)) {
-        throw new Error("LUNA_VISIBLE_TOTAL_UNAVAILABLE")
-      }
-      return { shippingUsd, totalUsd: totalExpected }
-    })
-    return result
-  } finally {
-    overlay.remove()
-  }
+    const totalValues = moneyValues(totalElement?.textContent)
+    const minimumTotal = Math.round((expectedSubtotal + shippingUsd) * 100) / 100
+    const totalUsd = totalValues.find((value) => value >= minimumTotal)
+    if (!Number.isFinite(totalUsd)) return null
+    return { shippingUsd, totalUsd }
+  }, "LUNA_AUTHORITATIVE_SHIPPING_QUOTE_UNAVAILABLE")
 }
 
 async function digest(value) {
@@ -546,7 +667,9 @@ async function runProductStage(job) {
     await retry(() => request("/cart/clear.js", { method: "POST", body: {} }))
     const addToCart = await visibleAddToCartControl(job)
     progress(job, "ADD_TO_CART_ELEMENT_FOUND")
-    await setActiveJobPhase(job, original)
+    await setActiveJobPhase(job, CART_PHASE, {
+      originalCartSnapshot: original,
+    })
     addToCart.click()
     progress(job, "ADD_TO_CART_CLICK_DISPATCHED")
     const productPath = location.pathname
@@ -564,9 +687,6 @@ async function runProductStage(job) {
 async function runCartStage(job, original) {
   progress(job, "ACTIVE_JOB_RECOVERED_ON_CART")
   progress(job, "CART_PAGE_DETECTED")
-  let capture = null
-  let operationError = null
-  let restoreError = null
   try {
     const confirmedCart = await retry(() => request("/cart.js"))
     const exact = exactCartEvidence(confirmedCart, job)
@@ -579,8 +699,34 @@ async function runCartStage(job, original) {
     progress(job, "SHIPPING_FLOW_RESUMED", {
       cartSubtotalUsd: exact.subtotalUsd,
     })
+    await setActiveJobPhase(job, CHECKOUT_PHASE, {
+      cartSubtotalUsd: exact.subtotalUsd,
+    })
+    const checkout = await boundedDomWait(visibleCheckoutControl,
+      "LUNA_CHECKOUT_CONTROL_UNAVAILABLE")
+    checkout.click()
+    const cartPath = location.pathname
+    setTimeout(() => {
+      if (location.pathname === cartPath) location.assign("/checkout")
+    }, 1_500)
+  } catch (error) {
+    try { await restoreCart(original) } catch {
+      throw new Error("LUNA_CART_RESTORE_UNPROVEN")
+    }
+    throw error
+  }
+}
+
+async function runCheckoutStage(job, original, subtotalUsd) {
+  let capture = null
+  let operationError = null
+  let restoreError = null
+  try {
+    if (checkoutHostClassification() === "UNSUPPORTED_CHECKOUT_HOST") {
+      throw new Error("LUNA_UNKNOWN_CHECKOUT_PAGE")
+    }
     progress(job, "SHIPPING_CAPTURE_STARTED")
-    const visible = await visibleShipping(job, exact.subtotalUsd)
+    const visible = await checkoutShipping(job, subtotalUsd)
     progress(job, "AUTHENTICATED_OPERATION_CONFIRMED")
     const observedAt = new Date().toISOString()
     const evidenceInput = {
@@ -589,7 +735,7 @@ async function runCartStage(job, original) {
       lunaVariantId: job.identity.lunaVariantId,
       supplierSku: job.identity.supplierSku,
       quantity: job.identity.quantity,
-      subtotalUsd: exact.subtotalUsd,
+      subtotalUsd,
       shippingUsd: visible.shippingUsd, totalUsd: visible.totalUsd,
       currency: "USD", observedAt,
       acquisitionMethod: ACQUISITION_METHOD,
@@ -612,7 +758,10 @@ async function runCartStage(job, original) {
   } catch (error) {
     operationError = error
   } finally {
-    try { await restoreCart(original) } catch (error) { restoreError = error }
+    if (new Set(["lunaportex.com", "www.lunaportex.com"])
+        .has(location.hostname)) {
+      try { await restoreCart(original) } catch (error) { restoreError = error }
+    }
   }
   if (restoreError) throw new Error("LUNA_CART_RESTORE_UNPROVEN")
   if (operationError) throw operationError
@@ -632,18 +781,30 @@ async function recoverJobContext() {
 const isProductPage = /^\/products\/[a-z0-9][a-z0-9-]{1,180}\/?$/
   .test(location.pathname)
 const isCartPage = location.pathname.replace(/\/$/, "") === "/cart"
+const isCheckoutPage = /^\/checkouts?(?:\/|$)/.test(location.pathname) ||
+  location.hostname === "account.lunaportex.com"
 
-if (isProductPage || isCartPage) {
+if (isProductPage || isCartPage || isCheckoutPage) {
   progress(null, "CONTENT_SCRIPT_LOADED")
   progress(null, "ACTIVE_JOB_REQUESTED")
   void recoverJobContext().then(async (context) => {
+    if (isCheckoutPage) {
+      if (context.phase !== CHECKOUT_PHASE ||
+          !Array.isArray(context.originalCartSnapshot) ||
+          !Number.isFinite(context.cartSubtotalUsd)) {
+        throw new Error("ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN")
+      }
+      return { job: context.job,
+        capture: await runCheckoutStage(context.job,
+          context.originalCartSnapshot, context.cartSubtotalUsd) }
+    }
     if (isCartPage) {
       if (context.phase !== CART_PHASE ||
           !Array.isArray(context.originalCartSnapshot)) {
         throw new Error("ACTIVE_JOB_CART_CONTINUITY_UNPROVEN")
       }
-      return { job: context.job,
-        capture: await runCartStage(context.job, context.originalCartSnapshot) }
+      await runCartStage(context.job, context.originalCartSnapshot)
+      return { job: context.job, capture: null }
     }
     await runProductStage(context.job)
     return { job: context.job, capture: null }

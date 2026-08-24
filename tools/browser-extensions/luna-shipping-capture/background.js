@@ -16,6 +16,7 @@ const JOB_RUNTIME_FAILURE = "LUNA_SHIPPING_JOB_RUNTIME_FAILURE"
 const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
 const RESUME_ACTIVE_JOB = "RESUME_ACTIVE_LUNA_SHIPPING_JOB"
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
+const CHECKOUT_PHASE = "AWAITING_CHECKOUT_SHIPPING"
 const RECONNECT_GRACE_MS = 20_000
 
 let sellerPort = null
@@ -24,12 +25,14 @@ let activeJob = null
 let lastRuntimeState = null
 let activeJobPhase = null
 let originalCartSnapshot = null
+let cartSubtotalUsd = null
 let disconnectCleanupTimer = null
 
 function clearActiveJob() {
   activeJob = null
   activeJobPhase = null
   originalCartSnapshot = null
+  cartSubtotalUsd = null
   lastRuntimeState = null
 }
 
@@ -166,14 +169,18 @@ function recoverActiveJob(sender) {
   const expected = exactLunaUrl(activeJob.identity.canonicalProductUrl)
   let actual = null
   try { actual = new URL(sender.url ?? "") } catch { return null }
-  const hostAllowed = new Set(["lunaportex.com", "www.lunaportex.com"])
+  const storefrontHost = new Set(["lunaportex.com", "www.lunaportex.com"])
     .has(actual.hostname)
   const productPath = expected && actual.pathname.replace(/\/$/, "") ===
     expected.pathname.replace(/\/$/, "")
   const cartPath = activeJobPhase === CART_PHASE &&
     actual.pathname.replace(/\/$/, "") === "/cart"
-  if (!expected || actual.protocol !== "https:" || !hostAllowed ||
-      (!productPath && !cartPath)) return null
+  const checkoutHost = storefrontHost || actual.hostname === "account.lunaportex.com"
+  const checkoutPath = activeJobPhase === CHECKOUT_PHASE && checkoutHost &&
+    (/^\/checkouts?(?:\/|$)/.test(actual.pathname) ||
+      actual.hostname === "account.lunaportex.com")
+  if (!expected || actual.protocol !== "https:" ||
+      ((!storefrontHost || (!productPath && !cartPath)) && !checkoutPath)) return null
   activeTabId = sender.tab.id
   return activeJob
 }
@@ -191,7 +198,15 @@ function emitProgress(state, details = {}) {
     ...(Number.isFinite(details.cartSubtotalUsd) &&
       details.cartSubtotalUsd >= 0 && details.cartSubtotalUsd <= 100_000
       ? { cartSubtotalUsd: Math.round(details.cartSubtotalUsd * 100) / 100 }
-      : {}) })
+      : {}),
+    ...(new Set(["LUNA_STOREFRONT_CHECKOUT_HOST", "LUNA_ACCOUNT_HOST",
+      "UNSUPPORTED_CHECKOUT_HOST"]).has(details.checkoutHostClassification)
+      ? { checkoutHostClassification: details.checkoutHostClassification } : {}),
+    ...(new Set(["EXPLICIT_CHALLENGE_UI", "EXPLICIT_LOGIN_REQUIRED",
+      "SESSION_EXPIRED_UI", "NO_EXPLICIT_AUTH_REQUIREMENT"])
+      .has(details.authSignal) ? { authSignal: details.authSignal } : {}),
+    ...(details.authSignalSource === "FIXED_HOST_PATH_AND_VISIBLE_DOM"
+      ? { authSignalSource: details.authSignalSource } : {}) })
 }
 
 async function startJob(job) {
@@ -203,6 +218,7 @@ async function startJob(job) {
   activeJob = exact
   activeJobPhase = "PRODUCT_PAGE"
   originalCartSnapshot = null
+  cartSubtotalUsd = null
   lastRuntimeState = "CANARY_DISPATCHED"
   url.hash = `seller-os-luna-shipping-v1=${encodeJob(exact)}`
   if (activeTabId === null) {
@@ -259,7 +275,8 @@ chrome.runtime.onConnectExternal.addListener((port) => {
       return
     }
     activeJob = message.job
-    activeJobPhase = message.phase === CART_PHASE ? CART_PHASE : "PRODUCT_PAGE"
+    activeJobPhase = new Set([CART_PHASE, CHECKOUT_PHASE]).has(message.phase)
+      ? message.phase : "PRODUCT_PAGE"
     emitProgress("BRIDGE_RECONNECTED")
   })
   port.onDisconnect.addListener(() => {
@@ -283,20 +300,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     emitProgress("ACTIVE_JOB_REQUESTED")
     sendResponse({ accepted: true, job: recovered, phase: activeJobPhase,
-      originalCartSnapshot })
+      originalCartSnapshot, cartSubtotalUsd })
     return false
   }
   if (message?.type === SET_ACTIVE_JOB_PHASE) {
     const recovered = recoverActiveJob(sender)
-    const snapshot = safeCartSnapshot(message.originalCartSnapshot)
-    if (!recovered || message.phase !== CART_PHASE || !snapshot ||
+    const startingCart = message.phase === CART_PHASE
+    const startingCheckout = message.phase === CHECKOUT_PHASE &&
+      activeJobPhase === CART_PHASE && Array.isArray(originalCartSnapshot) &&
+      Number.isFinite(message.cartSubtotalUsd) && message.cartSubtotalUsd >= 0 &&
+      message.cartSubtotalUsd <= 100_000
+    const snapshot = startingCart
+      ? safeCartSnapshot(message.originalCartSnapshot) : originalCartSnapshot
+    if (!recovered || (!startingCart && !startingCheckout) || !snapshot ||
         message.captureSessionId !== activeJob.captureSessionId) {
       sendResponse({ accepted: false,
         error: "ACTIVE_JOB_CART_CONTINUITY_UNPROVEN" })
       return false
     }
-    activeJobPhase = CART_PHASE
+    activeJobPhase = message.phase
     originalCartSnapshot = snapshot
+    if (startingCheckout) {
+      cartSubtotalUsd = Math.round(message.cartSubtotalUsd * 100) / 100
+    }
     emitProgress(CART_PHASE)
     sendResponse({ accepted: true, phase: activeJobPhase })
     return false
@@ -329,8 +355,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         "CART_PAGE_DETECTED", "CART_EXPECTED_PRODUCT_FOUND",
         "CART_EXPECTED_QUANTITY_FOUND", "CART_MUTATION_CONFIRMED",
         "BRIDGE_RECONNECTED", "SHIPPING_FLOW_RESUMED",
+        "AWAITING_CHECKOUT_SHIPPING", "CHECKOUT_PAGE_DETECTED",
+        "NORMAL_GUEST_CHECKOUT", "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
+        "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "EXPLICIT_LOGIN_PAGE",
+        "EXPLICIT_AUTH_CHALLENGE", "SESSION_EXPIRED",
+        "UNKNOWN_CHECKOUT_PAGE", "CANONICAL_US_PROFILE_FOUND",
+        "SHIPPING_ADDRESS_ACCEPTED", "SHIPPING_OPTIONS_DETECTED",
         "SHIPPING_CAPTURE_STARTED", "RESULT_POSTED"]).has(message.state)) {
-    emitProgress(message.state, { cartSubtotalUsd: message.cartSubtotalUsd })
+    emitProgress(message.state, { cartSubtotalUsd: message.cartSubtotalUsd,
+      checkoutHostClassification: message.checkoutHostClassification,
+      authSignal: message.authSignal,
+      authSignalSource: message.authSignalSource })
     return false
   }
   if (message?.type === JOB_RUNTIME_FAILURE && recoverActiveJob(sender)) {

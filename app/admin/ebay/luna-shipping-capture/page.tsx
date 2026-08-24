@@ -62,6 +62,20 @@ type RuntimeTrace = {
   cartMutationConfirmed: boolean
   bridgeReconnected: boolean
   shippingFlowResumed: boolean
+  checkoutPageDetected: boolean
+  checkoutPageClassification: string
+  checkoutHostClassification: string
+  explicitAuthRequired: boolean
+  canonicalUsProfileFound: boolean
+  shippingAddressAccepted: boolean
+  shippingOptionsDetected: boolean
+  shippingUsd: number | null
+  subtotalUsd: number | null
+  totalUsd: number | null
+  capturePostAccepted: boolean
+  captureResultDurable: boolean
+  durableReadbackMatch: boolean
+  economicsStatus: string
   authenticatedOperationConfirmed: boolean
 }
 
@@ -79,6 +93,20 @@ const EMPTY_RUNTIME_TRACE: RuntimeTrace = Object.freeze({
   cartMutationConfirmed: false,
   bridgeReconnected: false,
   shippingFlowResumed: false,
+  checkoutPageDetected: false,
+  checkoutPageClassification: "NOT_CHECKED",
+  checkoutHostClassification: "NOT_CHECKED",
+  explicitAuthRequired: false,
+  canonicalUsProfileFound: false,
+  shippingAddressAccepted: false,
+  shippingOptionsDetected: false,
+  shippingUsd: null,
+  subtotalUsd: null,
+  totalUsd: null,
+  capturePostAccepted: false,
+  captureResultDurable: false,
+  durableReadbackMatch: false,
+  economicsStatus: "NOT_EVALUATED",
   authenticatedOperationConfirmed: false,
 })
 
@@ -223,8 +251,14 @@ export default function LunaShippingCapturePage() {
             "ACTIVE_JOB_RECOVERED_ON_CART", "CART_PAGE_DETECTED",
             "CART_EXPECTED_PRODUCT_FOUND", "CART_EXPECTED_QUANTITY_FOUND",
             "CART_MUTATION_CONFIRMED", "BRIDGE_RECONNECTED",
-            "SHIPPING_FLOW_RESUMED", "SHIPPING_CAPTURE_STARTED",
-            "RESULT_POSTED"])
+            "SHIPPING_FLOW_RESUMED", "AWAITING_CHECKOUT_SHIPPING",
+            "CHECKOUT_PAGE_DETECTED", "NORMAL_GUEST_CHECKOUT",
+            "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
+            "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "EXPLICIT_LOGIN_PAGE",
+            "EXPLICIT_AUTH_CHALLENGE", "SESSION_EXPIRED",
+            "UNKNOWN_CHECKOUT_PAGE", "CANONICAL_US_PROFILE_FOUND",
+            "SHIPPING_ADDRESS_ACCEPTED", "SHIPPING_OPTIONS_DETECTED",
+            "SHIPPING_CAPTURE_STARTED", "RESULT_POSTED"])
           if (allowed.has(message.state) &&
               message.candidateId === jobs[index]?.identity.candidateId) {
             setStatus(message.state)
@@ -258,6 +292,26 @@ export default function LunaShippingCapturePage() {
                 ? { bridgeReconnected: true } : {}),
               ...(message.state === "SHIPPING_FLOW_RESUMED"
                 ? { shippingFlowResumed: true } : {}),
+              ...(message.state === "CHECKOUT_PAGE_DETECTED"
+                ? { checkoutPageDetected: true } : {}),
+              ...(new Set(["NORMAL_GUEST_CHECKOUT",
+                "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
+                "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "EXPLICIT_LOGIN_PAGE",
+                "EXPLICIT_AUTH_CHALLENGE", "SESSION_EXPIRED",
+                "UNKNOWN_CHECKOUT_PAGE"]).has(message.state)
+                ? { checkoutPageClassification: message.state } : {}),
+              ...(typeof message.checkoutHostClassification === "string"
+                ? { checkoutHostClassification:
+                    message.checkoutHostClassification } : {}),
+              ...(new Set(["EXPLICIT_LOGIN_PAGE", "EXPLICIT_AUTH_CHALLENGE",
+                "SESSION_EXPIRED"]).has(message.state)
+                ? { explicitAuthRequired: true } : {}),
+              ...(message.state === "CANONICAL_US_PROFILE_FOUND"
+                ? { canonicalUsProfileFound: true } : {}),
+              ...(message.state === "SHIPPING_ADDRESS_ACCEPTED"
+                ? { shippingAddressAccepted: true } : {}),
+              ...(message.state === "SHIPPING_OPTIONS_DETECTED"
+                ? { shippingOptionsDetected: true } : {}),
               ...(message.state === "AUTHENTICATED_OPERATION_CONFIRMED"
                 ? { authenticatedOperationConfirmed: true } : {}),
             }))
@@ -316,6 +370,15 @@ export default function LunaShippingCapturePage() {
               contributionMarginPercent:
                 economics.contributionMarginPercent ?? null,
             }])
+            setRuntimeTrace((current) => ({ ...current,
+              subtotalUsd: Number(result.capture?.subtotalUsd),
+              shippingUsd: Number(result.capture?.shippingUsd),
+              totalUsd: Number(result.capture?.totalUsd),
+              capturePostAccepted: result.capturePostAccepted === true,
+              captureResultDurable: result.captureResultDurable === true,
+              durableReadbackMatch: result.durableReadbackMatch === true,
+              economicsStatus: String(economics.status ?? "UNPROVEN"),
+            }))
             setStatus("ECONOMICS_EVALUATED")
             index += 1
             if (index < jobs.length) {
@@ -331,13 +394,22 @@ export default function LunaShippingCapturePage() {
       if (!runtime?.connect || !runtime.sendMessage) {
         throw new Error("LUNA_SHIPPING_EXTENSION_NOT_INSTALLED")
       }
-      const awaitingCart = () => new Set([
+      const phaseForResume = () => {
+        if (new Set(["AWAITING_CHECKOUT_SHIPPING", "CHECKOUT_PAGE_DETECTED",
+          "NORMAL_GUEST_CHECKOUT", "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
+          "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "CANONICAL_US_PROFILE_FOUND",
+          "SHIPPING_ADDRESS_ACCEPTED", "SHIPPING_OPTIONS_DETECTED",
+          "SHIPPING_CAPTURE_STARTED"]).has(lastProgressState)) {
+          return "AWAITING_CHECKOUT_SHIPPING"
+        }
+        if (new Set([
         "AWAITING_CART_CONFIRMATION", "ADD_TO_CART_CLICK_DISPATCHED",
         "ACTIVE_JOB_RECOVERED_ON_CART", "CART_PAGE_DETECTED",
         "CART_EXPECTED_PRODUCT_FOUND", "CART_EXPECTED_QUANTITY_FOUND",
         "CART_MUTATION_CONFIRMED", "SHIPPING_FLOW_RESUMED",
-        "SHIPPING_CAPTURE_STARTED",
-      ]).has(lastProgressState)
+        ]).has(lastProgressState)) return "AWAITING_CART_CONFIRMATION"
+        return "PRODUCT_PAGE"
+      }
       const attachPort = (nextPort: ExternalPort) => {
         port = nextPort
         nextPort.onMessage.addListener(handlePortMessage)
@@ -359,8 +431,7 @@ export default function LunaShippingCapturePage() {
                   { name: PORT_NAME })
                 attachPort(resumedPort)
                 resumedPort.postMessage({ type: "RESUME_ACTIVE_LUNA_SHIPPING_JOB",
-                  job: jobs[index], phase: awaitingCart()
-                    ? "AWAITING_CART_CONFIRMATION" : "PRODUCT_PAGE" })
+                  job: jobs[index], phase: phaseForResume() })
                 reconnecting = false
                 setConnected(true)
                 setStatus("BRIDGE_RECONNECTED")
@@ -423,6 +494,20 @@ export default function LunaShippingCapturePage() {
             `CART_MUTATION_CONFIRMED=${runtimeTrace.cartMutationConfirmed}\n` +
             `BRIDGE_RECONNECTED=${runtimeTrace.bridgeReconnected}\n` +
             `SHIPPING_FLOW_RESUMED=${runtimeTrace.shippingFlowResumed}\n` +
+            `CHECKOUT_PAGE_DETECTED=${runtimeTrace.checkoutPageDetected}\n` +
+            `CHECKOUT_PAGE_CLASSIFICATION=${runtimeTrace.checkoutPageClassification}\n` +
+            `CHECKOUT_HOST_CLASSIFICATION=${runtimeTrace.checkoutHostClassification}\n` +
+            `EXPLICIT_AUTH_REQUIRED=${runtimeTrace.explicitAuthRequired}\n` +
+            `CANONICAL_US_PROFILE_FOUND=${runtimeTrace.canonicalUsProfileFound}\n` +
+            `SHIPPING_ADDRESS_ACCEPTED=${runtimeTrace.shippingAddressAccepted}\n` +
+            `SHIPPING_OPTIONS_DETECTED=${runtimeTrace.shippingOptionsDetected}\n` +
+            `SHIPPING_USD=${runtimeTrace.shippingUsd ?? "UNAVAILABLE"}\n` +
+            `SUBTOTAL_USD=${runtimeTrace.subtotalUsd ?? "UNAVAILABLE"}\n` +
+            `TOTAL_USD=${runtimeTrace.totalUsd ?? "UNAVAILABLE"}\n` +
+            `CAPTURE_POST_ACCEPTED=${runtimeTrace.capturePostAccepted}\n` +
+            `CAPTURE_RESULT_DURABLE=${runtimeTrace.captureResultDurable}\n` +
+            `DURABLE_READBACK_MATCH=${runtimeTrace.durableReadbackMatch}\n` +
+            `ECONOMICS_STATUS=${runtimeTrace.economicsStatus}\n` +
             `AUTHENTICATED_OPERATION_CONFIRMED=${runtimeTrace.authenticatedOperationConfirmed}`}
         </code>
         {error && <code className="mt-3 block break-all text-sm text-rose-100">
