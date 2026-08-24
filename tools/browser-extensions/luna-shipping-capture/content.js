@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.17" },
+      extensionBuildVersion: "1.0.18" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -20,6 +20,7 @@ const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
 const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
 const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
+const VALIDATE_CANONICAL_DESTINATION = "VALIDATE_LUNA_CANONICAL_DESTINATION"
 const DESTINATION_FINGERPRINT_VERSION =
   "LUNA_SHOP_PAY_DESTINATION_SHA256_V1"
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
@@ -1271,7 +1272,8 @@ const isCheckoutPage = /^\/checkouts?(?:\/|$)/.test(location.pathname) ||
   location.hostname === "shop.app"
 
 chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
-  if (message?.type === BIND_CANONICAL_DESTINATION) {
+  if (message?.type === BIND_CANONICAL_DESTINATION ||
+      message?.type === VALIDATE_CANONICAL_DESTINATION) {
     if (location.hostname !== "shop.app") {
       sendResponse({ accepted: false,
         error: "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE" })
@@ -1293,6 +1295,23 @@ chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
         throw new Error("CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE")
       }
       const canonicalDestinationFingerprint = await sha256Text(current.normalized)
+      if (message.type === VALIDATE_CANONICAL_DESTINATION) {
+        const binding = message.binding
+        if (binding?.fingerprintVersion !== DESTINATION_FINGERPRINT_VERSION ||
+            binding?.countryClass !== "US" ||
+            !/^sha256:[0-9a-f]{64}$/.test(
+              binding?.canonicalDestinationFingerprint ?? "")) {
+          throw new Error("CANONICAL_DESTINATION_FINGERPRINT_UNAVAILABLE")
+        }
+        if (canonicalDestinationFingerprint !==
+            binding.canonicalDestinationFingerprint) {
+          throw new Error("CANONICAL_US_SHIPPING_PROFILE_MISMATCH")
+        }
+        sendResponse({ accepted: true, canonicalDestinationMatch: true,
+          fingerprintVersion: DESTINATION_FINGERPRINT_VERSION,
+          countryClass: "US", safeCheckoutMarkersVerified: Boolean(markers) })
+        return
+      }
       sendResponse({ accepted: true,
         canonicalDestinationFingerprint,
         fingerprintVersion: DESTINATION_FINGERPRINT_VERSION,

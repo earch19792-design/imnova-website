@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.17"
+const EXTENSION_BUILD_VERSION = "1.0.18"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -18,8 +18,13 @@ const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
 const CHECKOUT_BOOTSTRAP_ACK = "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK"
 const RESUME_ACTIVE_JOB = "RESUME_ACTIVE_LUNA_SHIPPING_JOB"
 const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
+const VALIDATE_CANONICAL_DESTINATION = "VALIDATE_LUNA_CANONICAL_DESTINATION"
 const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
+const GET_CANONICAL_DESTINATION_STATUS =
+  "SELLER_OS_GET_LUNA_CANONICAL_DESTINATION_STATUS"
+const CANONICAL_DESTINATION_STATUS =
+  "LUNA_CANONICAL_DESTINATION_STATUS"
 const DESTINATION_BINDING_RESULT =
   "LUNA_CANONICAL_DESTINATION_BINDING_RESULT"
 const DESTINATION_FINGERPRINT_VERSION =
@@ -344,9 +349,9 @@ function queryShopAppTabs() {
   }))
 }
 
-async function requestDestinationBindingFromTab(tabId) {
+async function requestDestinationOperationFromTab(tabId, message) {
   try {
-    return await sendTabMessage(tabId, { type: BIND_CANONICAL_DESTINATION })
+    return await sendTabMessage(tabId, message)
   } catch (error) {
     if (!(error instanceof Error) ||
         error.message !== "CHECKOUT_CONTENT_SCRIPT_NOT_AVAILABLE") throw error
@@ -356,31 +361,39 @@ async function requestDestinationBindingFromTab(tabId) {
     } catch {
       throw new Error("CHECKOUT_CONTENT_SCRIPT_NOT_AVAILABLE")
     }
-    return sendTabMessage(tabId, { type: BIND_CANONICAL_DESTINATION })
+    return sendTabMessage(tabId, message)
   }
 }
 
-async function bindCanonicalDestination(port) {
+async function bindCanonicalDestination(port, existingBinding) {
   const checkoutTabs = await queryShopAppTabs()
   if (!checkoutTabs.length) {
     throw new Error("CANONICAL_BINDING_CHECKOUT_TAB_NOT_FOUND")
   }
-  const candidates = await Promise.all(checkoutTabs.map(async ({ id }) => {
+  const operation = existingBinding
+    ? VALIDATE_CANONICAL_DESTINATION : BIND_CANONICAL_DESTINATION
+  const message = existingBinding ? { type: operation,
+    binding: existingBinding } : { type: operation }
+  const responses = await Promise.all(checkoutTabs.map(async ({ id }) => {
     try {
-      const response = await requestDestinationBindingFromTab(id)
-      const binding = safeDestinationBinding(response)
-      return response?.accepted === true && binding ? { binding } : null
-    } catch { return null }
+      const response = await requestDestinationOperationFromTab(id, message)
+      const binding = existingBinding ?? safeDestinationBinding(response)
+      return { response, binding: response?.accepted === true ? binding : null }
+    } catch { return { response: null, binding: null } }
   }))
-  const eligible = candidates.filter(Boolean)
+  const eligible = responses.filter((candidate) => candidate.binding)
   if (!eligible.length) {
+    if (existingBinding && responses.some(({ response }) =>
+      response?.error === "CANONICAL_US_SHIPPING_PROFILE_MISMATCH")) {
+      throw new Error("CANONICAL_US_SHIPPING_PROFILE_MISMATCH")
+    }
     throw new Error("CANONICAL_BINDING_CHECKOUT_TAB_NOT_FOUND")
   }
   if (eligible.length > 1) {
     throw new Error("CANONICAL_BINDING_CHECKOUT_TAB_AMBIGUOUS")
   }
   const binding = eligible[0].binding
-  await writeDestinationBinding(binding)
+  if (!existingBinding) await writeDestinationBinding(binding)
   const readback = await readDestinationBinding()
   if (!readback ||
       readback.canonicalDestinationFingerprint !==
@@ -389,7 +402,22 @@ async function bindCanonicalDestination(port) {
   }
   port.postMessage({ type: DESTINATION_BINDING_RESULT, success: true,
     canonicalDestinationBound: true, canonicalDestinationMatch: true,
-    canonicalUsProfileFound: true, shippingAddressAccepted: true })
+    canonicalUsProfileFound: true, shippingAddressAccepted: true,
+    operation: existingBinding ? "VALIDATE_CANONICAL_DESTINATION"
+      : "BIND_CANONICAL_DESTINATION" })
+}
+
+async function handleCanonicalDestinationBinding(port) {
+  const existingBinding = await readDestinationBinding()
+  try {
+    await bindCanonicalDestination(port, existingBinding)
+  } catch (error) {
+    port.postMessage({ type: DESTINATION_BINDING_RESULT, success: false,
+      canonicalDestinationBound: Boolean(existingBinding),
+      canonicalDestinationMatch: false,
+      error: safeRuntimeReason(error instanceof Error ? error.message
+        : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE") })
+  }
 }
 
 function emitProgress(state, details = {}) {
@@ -611,13 +639,15 @@ chrome.runtime.onConnectExternal.addListener((port) => {
   }
   sellerPort = port
   port.onMessage.addListener((message) => {
-    if (message?.type === "SELLER_OS_BIND_LUNA_CANONICAL_DESTINATION") {
-      void bindCanonicalDestination(port).catch((error) => port.postMessage({
-        type: DESTINATION_BINDING_RESULT, success: false,
-        canonicalDestinationBound: false, canonicalDestinationMatch: false,
-        error: safeRuntimeReason(error instanceof Error ? error.message
-          : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE"),
+    if (message?.type === GET_CANONICAL_DESTINATION_STATUS) {
+      void readDestinationBinding().then((binding) => port.postMessage({
+        type: CANONICAL_DESTINATION_STATUS,
+        canonicalDestinationBound: Boolean(binding),
       }))
+      return
+    }
+    if (message?.type === "SELLER_OS_BIND_LUNA_CANONICAL_DESTINATION") {
+      void handleCanonicalDestinationBinding(port)
       return
     }
     if (message?.type === "START_SHIPPING_JOB") {
