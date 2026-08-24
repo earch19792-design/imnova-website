@@ -635,6 +635,10 @@ export default function LunaShippingCapturePage() {
         className="mt-3 w-full rounded-2xl border border-cyan-200/40 px-5 py-3 font-black text-cyan-100 disabled:cursor-not-allowed disabled:opacity-40">
         Usar destino actual como benchmark canónico
       </button>
+      <p className="mt-2 text-xs text-white/65">
+        Configuración única. Seller OS guarda sólo un fingerprint del destino,
+        no la dirección.
+      </p>
       <p className="mt-2 text-xs text-white/50">
         CANONICAL_DESTINATION_BOUND={String(canonicalDestinationBound)} · CANONICAL_DESTINATION_MATCH={String(canonicalDestinationMatch)}
       </p>
