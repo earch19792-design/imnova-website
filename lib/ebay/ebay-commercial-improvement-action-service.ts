@@ -660,6 +660,63 @@ export async function applyAutomaticCertifiedOosProtectionV1(input: Readonly<{
   return executeCertifiedOosProtectionV1(input)
 }
 
+export async function compensatePublishedListingAttachmentFailureV1(
+  input: Readonly<{
+    itemId: string
+    sku: string
+    failureCode: string
+    fetchImpl?: FetchLike
+  }>,
+) {
+  const itemId = text(input.itemId, 20)
+  const sku = text(input.sku, 200)
+  const failureCode = text(input.failureCode, 120)
+  if (!/^\d{9,20}$/.test(itemId) || !sku ||
+      !/^EBAY_FINAL_PUBLICATION_[A-Z0-9_]+$/.test(failureCode)) {
+    throw new Error("EBAY_FINAL_PUBLICATION_COMPENSATION_TARGET_INVALID")
+  }
+  const fetchImpl = input.fetchImpl ?? fetch
+  const officialBefore = await readManualListingFromTradingApi(itemId, fetchImpl)
+  if (officialBefore.ownership === "inactive" ||
+      officialBefore.listingStatus?.toLowerCase() !== "active") {
+    return Object.freeze({
+      status: "ALREADY_NOT_CURRENT_LIVE" as const,
+      itemId,
+      sku,
+      failureCode,
+      marketplaceOperation: "EndFixedPriceItem" as const,
+      endingReason: "NotAvailable" as const,
+      ebayWriteCount: 0 as const,
+      officialReadbackNotCurrentLive: true as const,
+      officialBefore,
+      officialAfter: officialBefore,
+    })
+  }
+  if (officialBefore.ownership !== "verified" ||
+      officialBefore.ebaySku !== sku) {
+    throw new Error("EBAY_FINAL_PUBLICATION_COMPENSATION_IDENTITY_MISMATCH")
+  }
+  const accessToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
+  await endListingOutOfStock({ accessToken, listingId: itemId, fetchImpl })
+  const officialAfter = await readManualListingFromTradingApi(itemId, fetchImpl)
+  if (officialAfter.ownership !== "inactive" ||
+      officialAfter.listingStatus?.toLowerCase() === "active") {
+    throw new Error("EBAY_FINAL_PUBLICATION_COMPENSATION_READBACK_MISMATCH")
+  }
+  return Object.freeze({
+    status: "COMPENSATING_END_VERIFIED" as const,
+    itemId,
+    sku,
+    failureCode,
+    marketplaceOperation: "EndFixedPriceItem" as const,
+    endingReason: "NotAvailable" as const,
+    ebayWriteCount: 1 as const,
+    officialReadbackNotCurrentLive: true as const,
+    officialBefore,
+    officialAfter,
+  })
+}
+
 async function marketingAccessToken(fetchImpl: FetchLike) {
   const clientId = process.env.EBAY_CLIENT_ID?.trim() ?? ""
   const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim() ?? ""

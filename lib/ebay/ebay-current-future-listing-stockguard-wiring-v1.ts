@@ -190,6 +190,7 @@ export function evaluatePublishWithStockguardContractV1(input: {
   components: readonly SellerOsPublishStockguardComponentV1[]
   expectedComponentCount: number
   economicsReady: boolean
+  monitorEnrollmentIntentPrepared: boolean
 }) {
   const components = Array.isArray(input?.components) ? input.components : []
   const sellerSku = typeof input?.sellerSku === "string" ? input.sellerSku : ""
@@ -215,19 +216,40 @@ export function evaluatePublishWithStockguardContractV1(input: {
       component.safeCapacity === null ||
         (Number.isSafeInteger(component.safeCapacity) &&
           Number(component.safeCapacity) >= 0)))
-  const publishAllowed = exact && composition && stockguard &&
+  const monitorEnrollment = input?.monitorEnrollmentIntentPrepared === true
+  const publishAllowed = exact && composition && stockguard && monitorEnrollment &&
     input?.economicsReady === true && !components.some((component) =>
       component.stockState === "CERTIFIED_OOS" || component.safeCapacity === 0)
   return Object.freeze({
     contractVersion: SELLER_OS_PUBLISH_WITH_STOCKGUARD_CONTRACT_VERSION,
     exactLunaLinkageReady: exact, compositionReady: composition,
     stockguardReady: stockguard, economicsReady: input?.economicsReady === true,
+    monitorEnrollmentIntentPrepared: monitorEnrollment,
     publishAllowed, noExactLunaLinkageNoPublish: true as const,
     noStockguardReadyNoPublish: true as const,
+    noMonitorEnrollmentNoPublish: true as const,
+    attachmentIntent: Object.freeze({
+      sellerSku,
+      expectedComponentCount,
+      components: Object.freeze(components.map((component) => Object.freeze({
+        productId: component.productId,
+        variantId: component.variantId,
+        supplierSku: component.supplierSku,
+        canonicalLunaUrl: component.canonicalLunaUrl,
+        quantityRequiredPerBundle: component.quantityRequiredPerBundle,
+        stockState: component.stockState,
+        sourceHealth: component.sourceHealth,
+        freshness: component.freshness,
+        safeCapacity: component.safeCapacity,
+      }))),
+      stockguardEnrollmentIntentPrepared: stockguard,
+      monitorEnrollmentIntentPrepared: monitorEnrollment,
+    }),
     blockers: Object.freeze([
       ...(!exact ? ["EXACT_LUNA_LINKAGE_REQUIRED"] : []),
       ...(!composition ? ["COMPOSITION_REQUIRED"] : []),
       ...(!stockguard ? ["STOCKGUARD_READY_REQUIRED"] : []),
+      ...(!monitorEnrollment ? ["MONITOR_ENROLLMENT_INTENT_REQUIRED"] : []),
       ...(input?.economicsReady !== true ? ["ECONOMICS_READY_REQUIRED"] : []),
       ...(components.some((component) => component.stockState ===
         "CERTIFIED_OOS" || component.safeCapacity === 0)

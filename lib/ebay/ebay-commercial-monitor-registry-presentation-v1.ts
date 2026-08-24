@@ -1,4 +1,8 @@
-import type { CommercialMonitorBackendV1 } from
+import type {
+  CommercialListingReadModel,
+  CommercialMonitorBackendV1,
+  CommercialMonitorGetDto,
+} from
   "./commercial-monitor-readonly-contract"
 
 type RegistryCapability = CommercialMonitorBackendV1["capabilities"]["registry"]
@@ -32,4 +36,93 @@ export function presentCommercialMonitorRegistryV1(registry: RegistryCapability)
       ? `${matchedCount} matched · ${humanReviewCount} review · ${derivedCoverage}%`
       : `Unavailable · ${limitation.replaceAll("_", " ")}`,
   }
+}
+
+export const SELLER_OS_CANONICAL_LIVE_DASHBOARD_VERSION =
+  "DASHBOARD_AND_LIVE_LISTING_INVARIANT_HARDENING_V1" as const
+
+function evidenceScore(listing: CommercialListingReadModel) {
+  const metrics = Object.values(listing.metrics).filter((metric) =>
+    (metric.availability === "AVAILABLE" || metric.availability === "PARTIAL") &&
+    typeof metric.value === "number" && Number.isFinite(metric.value)).length
+  return (listing.identity.marketplaceCertification?.status === "US_CERTIFIED"
+    ? 10_000 : 0) + metrics * 100 + listing.evidenceReferences.length
+}
+
+function selectCanonicalRows(
+  monitor: CommercialMonitorGetDto,
+  liveSet: ReadonlySet<string>,
+) {
+  const byItemId = new Map<string, CommercialListingReadModel[]>()
+  for (const listing of monitor.listings) {
+    const itemId = listing.identity.itemId.trim()
+    if (!liveSet.has(itemId) ||
+        listing.discovery.livePresence.status !== "LIVE_ACTIVE") continue
+    byItemId.set(itemId, [...(byItemId.get(itemId) ?? []), listing])
+  }
+  return [...byItemId.values()].map((rows) => [...rows].sort((left, right) =>
+    evidenceScore(right) - evidenceScore(left) ||
+    left.key.localeCompare(right.key))[0])
+}
+
+export function buildCanonicalLiveListingDashboardMetricsV1(
+  monitor: CommercialMonitorGetDto,
+) {
+  const integrity = monitor.backend.livePortfolioIntegrity
+  const liveCount = integrity.canonicalCohort.listingCount
+  const liveSet = new Set(integrity.canonicalCohort.itemIds)
+  const liveListings = selectCanonicalRows(monitor, liveSet)
+  const monitoredItemIds = new Set(
+    monitor.backend.monitorCoverage.monitoredItemIds.filter((itemId) =>
+      liveSet.has(itemId)),
+  )
+  const stockguardMissingItemIds = new Set(
+    integrity.stockCohort.missingCurrentLiveItemIds,
+  )
+  const lunaLinkedCertified = liveListings.filter((listing) =>
+    listing.stock.supplierLinkageStatus === "CERTIFIED").length
+  const canonicalParity =
+    integrity.canonicalCohort.identityStatus === "CERTIFIED" &&
+    liveListings.length === liveCount &&
+    monitor.backend.monitorCoverage.status === "AVAILABLE" &&
+    monitor.backend.monitorCoverage.currentLiveScopeId ===
+      integrity.canonicalCohort.scopeId &&
+    monitor.backend.monitorCoverage.currentLiveScopeCount === liveCount &&
+    integrity.stockCohort.currentLiveItemCount === liveCount
+  const unlinkedLive = liveCount - lunaLinkedCertified
+  const unmonitoredLive = liveCount - monitoredItemIds.size
+  const liveWithoutStockguard = stockguardMissingItemIds.size
+  const currentLiveInvariantPass = canonicalParity && unlinkedLive === 0 &&
+    unmonitoredLive === 0 && liveWithoutStockguard === 0
+
+  return Object.freeze({
+    contractVersion: SELLER_OS_CANONICAL_LIVE_DASHBOARD_VERSION,
+    canonicalParity,
+    currentLiveInvariantPass,
+    status: canonicalParity ? "AVAILABLE" as const : "UNPROVEN" as const,
+    scopeId: integrity.canonicalCohort.scopeId,
+    observedAt: integrity.canonicalCohort.observedAt,
+    liveCount,
+    lunaLinkedCertified,
+    unlinkedLive,
+    monitoredLive: monitoredItemIds.size,
+    unmonitoredLive,
+    stockguardEnrolledLive: liveCount - stockguardMissingItemIds.size,
+    liveWithoutStockguard,
+    inStockSignal: liveListings.filter((listing) =>
+      listing.stock.state === "IN_STOCK_SIGNAL").length,
+    certifiedOosLive: liveListings.filter((listing) =>
+      listing.stock.state === "CERTIFIED_OOS").length,
+    stockUnknown: liveListings.filter((listing) =>
+      listing.stock.state === "STOCK_UNKNOWN").length,
+    identityMismatch: liveListings.filter((listing) =>
+      listing.stock.limitationCode ===
+        "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH").length,
+    definitions: Object.freeze({
+      linkedMeansSupplierLinkageCertifiedOnly: true as const,
+      linkedDoesNotRequireInStock: true as const,
+      certifiedOosRemainsVisibleAsRisk: true as const,
+      nonLiveEvidenceExcluded: true as const,
+    }),
+  })
 }

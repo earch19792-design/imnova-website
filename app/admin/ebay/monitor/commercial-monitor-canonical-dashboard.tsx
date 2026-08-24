@@ -31,7 +31,10 @@ import type {
   CommercialMonitorCapabilityStatus,
   CommercialMonitorGetDto,
 } from "@/lib/ebay/commercial-monitor-readonly-contract"
-import { presentCommercialMonitorRegistryV1 } from
+import {
+  buildCanonicalLiveListingDashboardMetricsV1,
+  presentCommercialMonitorRegistryV1,
+} from
   "@/lib/ebay/ebay-commercial-monitor-registry-presentation-v1"
 import {
   presentSellerOsCode,
@@ -286,6 +289,7 @@ export function CommercialMonitorCanonicalDashboard({
   )
   const [showAllLiveListings, setShowAllLiveListings] = useState(false)
   const backend = monitor.backend
+  const canonicalLive = buildCanonicalLiveListingDashboardMetricsV1(monitor)
   const accountTraffic = backend.trafficScopes.accountTraffic
   const currentLiveTraffic = backend.trafficScopes.currentLivePortfolio
   const accountTrafficSelected = trafficScope === "ACCOUNT_TRAFFIC"
@@ -455,6 +459,33 @@ export function CommercialMonitorCanonicalDashboard({
           <KpiCard label="CTR" value={selectedTraffic.ctr} status={selectedTraffic.status} detail={selectedTraffic.detail} icon={<TrendingUp size={20} />} suffix="%" />
           <KpiCard label="Cantidad vendida" value={selectedTraffic.quantitySold} status={selectedTraffic.status} detail="Métrica TRANSACTION de eBay Analytics; no equivale a órdenes" icon={<Activity size={20} />} />
           <KpiCard label="Órdenes" value={backend.kpis.orders.value} status={backend.kpis.orders.status} detail={backend.kpis.orders.value === null ? "Autorización o fuente pendiente" : "Lectura de fulfillment"} icon={<ShoppingBag size={20} />} />
+        </section>
+
+        <section aria-labelledby="live-invariant-heading">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className={`${type.sectionEyebrow} text-cyan-800`}>Control canónico live</p>
+              <h2 id="live-invariant-heading" className={type.sectionTitle}>Linkage, StockGuard y monitor</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <StatusChip status={canonicalLive.currentLiveInvariantPass ? "PASS" : "BLOCKED"} />
+              <p className={`${type.helper} text-slate-500`}>
+                Cohorte actual de Trading · {formatTimestamp(canonicalLive.observedAt)}
+              </p>
+            </div>
+          </div>
+          <div className="grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:grid-cols-2 xl:grid-cols-5">
+            <KpiCard label="Live canónicos" value={canonicalLive.liveCount} status={canonicalLive.status} detail="Item IDs live únicos; evidencia histórica excluida" icon={<Package size={20} />} />
+            <KpiCard label="Luna linkage certificado" value={canonicalLive.lunaLinkedCertified} status={canonicalLive.status} detail="supplierLinkage = CERTIFIED; no depende de estar in stock" icon={<ShieldCheck size={20} />} />
+            <KpiCard label="Live sin linkage" value={canonicalLive.unlinkedLive} status={canonicalLive.unlinkedLive === 0 ? canonicalLive.status : "BLOCKED"} detail="LIVE_COUNT − linkage CERTIFIED" icon={<AlertTriangle size={20} />} />
+            <KpiCard label="Live monitoreados" value={canonicalLive.monitoredLive} status={canonicalLive.status} detail="Item IDs inscritos en el monitor canónico" icon={<Activity size={20} />} />
+            <KpiCard label="Live sin monitor" value={canonicalLive.unmonitoredLive} status={canonicalLive.unmonitoredLive === 0 ? canonicalLive.status : "BLOCKED"} detail="Listings live fuera de la cobertura canónica" icon={<AlertTriangle size={20} />} />
+            <KpiCard label="StockGuard inscritos" value={canonicalLive.stockguardEnrolledLive} status={canonicalLive.status} detail="Item IDs live presentes en el modelo canónico de stock" icon={<LockKeyhole size={20} />} />
+            <KpiCard label="Live sin StockGuard" value={canonicalLive.liveWithoutStockguard} status={canonicalLive.liveWithoutStockguard === 0 ? canonicalLive.status : "BLOCKED"} detail="Sin fila canónica de StockGuard" icon={<AlertTriangle size={20} />} />
+            <KpiCard label="Disponibilidad observada" value={canonicalLive.inStockSignal} status={canonicalLive.status} detail="state = IN_STOCK_SIGNAL" icon={<CheckCircle2 size={20} />} />
+            <KpiCard label="Stock desconocido" value={canonicalLive.stockUnknown} status={canonicalLive.status} detail={`Incluye ${canonicalLive.identityMismatch} mismatch de identidad certificado`} icon={<CircleGauge size={20} />} />
+            <KpiCard label="OOS certificado live" value={canonicalLive.certifiedOosLive} status={canonicalLive.certifiedOosLive === 0 ? canonicalLive.status : "CRITICAL"} detail="Nunca se oculta dentro de un agregado de riesgo" icon={<AlertTriangle size={20} />} />
+          </div>
         </section>
 
         <section aria-labelledby="attention-heading">

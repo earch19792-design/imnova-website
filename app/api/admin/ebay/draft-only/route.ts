@@ -22,6 +22,8 @@ import {
   verifyEbayUnpublishedOffer,
 } from "@/lib/ebay/ebay-draft-only-gateway"
 import { registerManualEbayListing } from "@/lib/ebay/ebay-manual-listing-service"
+import { compensatePublishedListingAttachmentFailureV1 } from
+  "@/lib/ebay/ebay-commercial-improvement-action-service"
 import { saveVerifiedEbayAccountPolicyProfile } from "@/lib/ebay/ebay-account-policy-profile"
 import {
   approvalExpiresAt,
@@ -238,6 +240,8 @@ function buildFinalPublicationPreview(
   const authorization = record(record(payload.compliance).imageAuthorization)
   const offerId = sanitizeEbayOfferId(execution.offer_id)
   const sku = text(payload.sku)
+  const publishWithStockguardContract =
+    finalPublicationStockguardContract(payload)
   if (
     approval.status !== "consumed"
     || !approval.consumed_at
@@ -274,6 +278,7 @@ function buildFinalPublicationPreview(
       promotionsIncluded: false,
       volumePricingIncluded: false,
     },
+    publishWithStockguardContract,
     permittedOperation: "publishOffer",
   }
   return { preview, previewHash: publicationPreviewHash(preview), offerId, sku }
@@ -1906,6 +1911,91 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   }, { status: 201 })
 }
 
+async function compensateFinalPublicationAttachmentFailure(input: {
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  actor: string
+  publication: JsonRecord
+  context: Awaited<ReturnType<typeof loadFinalPublicationContext>>
+  listingId: string
+  failureCode: string
+}) {
+  let compensation: Awaited<ReturnType<
+    typeof compensatePublishedListingAttachmentFailureV1
+  >>
+  try {
+    compensation = await compensatePublishedListingAttachmentFailureV1({
+      itemId: input.listingId,
+      sku: text(input.publication.sku),
+      failureCode: input.failureCode,
+    })
+  } catch {
+    await input.supabase
+      .from("ebay_authorized_listing_publications")
+      .update({
+        phase: "published_pending_verification",
+        last_error_code:
+          "EBAY_FINAL_PUBLICATION_COMPENSATING_END_UNVERIFIED",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", input.publication.id)
+      .eq("actor_user_id", input.actor)
+      .eq("listing_id", input.listingId)
+    return jsonError(new Error(
+      "EBAY_FINAL_PUBLICATION_COMPENSATING_END_UNVERIFIED",
+    ), 503)
+  }
+  const endedAt = new Date().toISOString()
+  const { error: registryError } = await input.supabase
+    .from("ebay_active_listings")
+    .update({ listing_status: "ended", updated_at: endedAt })
+    .eq("account_key", input.context.accountKey)
+    .eq("ebay_item_id", input.listingId)
+    .eq("listing_status", "active")
+  const { error: publicationError } = await input.supabase
+    .from("ebay_authorized_listing_publications")
+    .update({
+      phase: "terminal_failure",
+      last_error_code: input.failureCode,
+      sanitized_result: {
+        attachmentFailed: true,
+        compensatingEndVerified: true,
+        officialReadbackNotCurrentLive:
+          compensation.officialReadbackNotCurrentLive,
+        marketplaceOperation: compensation.marketplaceOperation,
+        endingReason: compensation.endingReason,
+        ebayWriteCount: compensation.ebayWriteCount,
+      },
+      updated_at: endedAt,
+    })
+    .eq("id", input.publication.id)
+    .eq("actor_user_id", input.actor)
+    .eq("listing_id", input.listingId)
+  return NextResponse.json({
+    success: false,
+    error: publicationError
+      ? "EBAY_FINAL_PUBLICATION_COMPENSATION_LEDGER_FAILED"
+      : input.failureCode,
+    listing: {
+      listingId: input.listingId,
+      status: "NOT_CURRENT_LIVE",
+    },
+    compensation: {
+      status: compensation.status,
+      marketplaceOperation: compensation.marketplaceOperation,
+      endingReason: compensation.endingReason,
+      officialReadbackNotCurrentLive:
+        compensation.officialReadbackNotCurrentLive,
+      ebayWriteCount: compensation.ebayWriteCount,
+      registrySynchronized: !registryError,
+      ledgerSynchronized: !publicationError,
+    },
+    safety: {
+      orphanLiveListingPrevented: true,
+      publishOfferCalledAgain: false,
+    },
+  }, { status: publicationError ? 503 : 409 })
+}
+
 async function completeFinalPublicationMonitor(input: {
   supabase: ReturnType<typeof getSupabaseAdminClient>
   actor: string
@@ -1928,32 +2018,10 @@ async function completeFinalPublicationMonitor(input: {
     || verification.connectorListingStatus !== "active"
     || !uuid(verification.connectorListingId)
   ) {
-    await input.supabase
-      .from("ebay_authorized_listing_publications")
-      .update({
-        phase: "published_pending_verification",
-        last_error_code: text(verification.reason) || "EBAY_ACTIVE_VERIFICATION_PENDING",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", input.publication.id)
-      .eq("actor_user_id", input.actor)
-      .eq("listing_id", input.listingId)
-    return NextResponse.json({
-      success: true,
-      publication: {
-        ...input.publication,
-        phase: "published_pending_verification",
-        listing_id: input.listingId,
-        last_error_code: verification.reason,
-      },
-      listing: {
-        listingId: input.listingId,
-        url: `https://www.ebay.com/itm/${input.listingId}`,
-        status: "PUBLISHED_PENDING_ACTIVE_VERIFICATION",
-      },
-      monitoring: { registered: false, reason: verification.reason },
-      safety: { publishOfferCalledAgain: false },
-    }, { status: 202 })
+    return compensateFinalPublicationAttachmentFailure({
+      ...input,
+      failureCode: "EBAY_FINAL_PUBLICATION_ACTIVE_ATTACHMENT_FAILED",
+    })
   }
   const registration = record(registrationResult.registration)
   const { data: completed, error: completionError } = await input.supabase
@@ -1966,10 +2034,41 @@ async function completeFinalPublicationMonitor(input: {
     })
     .single()
   if (completionError || !completed) {
-    throw new Error(databaseExceptionCode(
-      completionError,
-      "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED",
-    ))
+    return compensateFinalPublicationAttachmentFailure({
+      ...input,
+      failureCode: "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED",
+    })
+  }
+  const completedPublication = record(completed)
+  const persistedStockguard = record(record(
+    completedPublication.preview,
+  ).publishWithStockguardContract)
+  const persistedAttachmentIntent = record(
+    persistedStockguard.attachmentIntent,
+  )
+  const persistedComponents = Array.isArray(
+    persistedAttachmentIntent.components,
+  ) ? persistedAttachmentIntent.components : []
+  const stockguardEnrollmentPersisted =
+    text(completedPublication.phase) === "monitor_registered" &&
+    text(completedPublication.listing_id) === input.listingId &&
+    persistedStockguard.publishAllowed === true &&
+    persistedStockguard.exactLunaLinkageReady === true &&
+    persistedStockguard.compositionReady === true &&
+    persistedStockguard.stockguardReady === true &&
+    persistedStockguard.monitorEnrollmentIntentPrepared === true &&
+    text(persistedAttachmentIntent.sellerSku) ===
+      text(completedPublication.sku) &&
+    persistedComponents.length > 0 &&
+    Number(persistedAttachmentIntent.expectedComponentCount) ===
+      persistedComponents.length &&
+    persistedAttachmentIntent.stockguardEnrollmentIntentPrepared === true &&
+    persistedAttachmentIntent.monitorEnrollmentIntentPrepared === true
+  if (!stockguardEnrollmentPersisted) {
+    return compensateFinalPublicationAttachmentFailure({
+      ...input,
+      failureCode: "EBAY_FINAL_PUBLICATION_STOCKGUARD_ATTACH_FAILED",
+    })
   }
   const stockguardAttachment = buildPostPublishStockguardAttachmentV1({
     prePublish: finalPublicationStockguardContract(
@@ -1979,8 +2078,10 @@ async function completeFinalPublicationMonitor(input: {
     officialSellerSku: text(input.publication.sku),
     officialItemId: input.listingId,
     activeObservationVerified: true,
-    stockguardEnrollmentPersisted: true,
-    monitorEnrollmentPersisted: true,
+    stockguardEnrollmentPersisted,
+    monitorEnrollmentPersisted:
+      text(completedPublication.phase) === "monitor_registered" &&
+      Boolean(completedPublication.monitor_registered_at),
   })
   return NextResponse.json({
     success: true,
