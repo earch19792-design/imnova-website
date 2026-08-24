@@ -2,6 +2,8 @@ import {
   ebayProductionAccountFingerprint,
   getEbayProductionIdentityBindingConfiguration,
 } from "./ebay-seller-account-scope"
+import { parseSafeEbayInventoryErrorMetadata } from
+  "./ebay-commercial-monitor-live-readonly-domain"
 
 export const SELLER_OS_REVERSIBLE_OOS_PREFLIGHT_V1 =
   "SELLER_OS_REVERSIBLE_OOS_PREFLIGHT_V1_2026_08_23" as const
@@ -46,6 +48,53 @@ type ExactInventorySafeErrorClass =
   | "RESPONSE_INVALID"
   | "OTHER"
 
+type Live25709FieldNameClass =
+  | "PATH_SKU"
+  | "QUERY_PARAMETER"
+  | "AUTHORIZATION_HEADER"
+  | "ACCEPT_HEADER"
+  | "CONTENT_TYPE_HEADER"
+  | "CONTENT_LANGUAGE_HEADER"
+  | "MARKETPLACE_HEADER"
+  | "HTTP_METHOD"
+  | "API_PATH"
+  | "OTHER"
+  | "UNPROVEN"
+
+type Live25709InvalidValueClass =
+  | "MISSING"
+  | "EMPTY"
+  | "FORMAT"
+  | "ENCODING"
+  | "UNSUPPORTED"
+  | "OUT_OF_RANGE"
+  | "OTHER"
+  | "UNPROVEN"
+
+type Live25709MessageTemplateClass =
+  | "INVALID_VALUE_FOR_SUBSTITUTED_FIELD"
+  | "INVALID_VALUE_FOR_LITERAL_PLACEHOLDER"
+  | "OTHER"
+  | "NO_MESSAGE"
+
+type Live25709Metadata = Readonly<{
+  domain: string
+  category: string
+  parameterNames: string[]
+  fieldNameClass: Live25709FieldNameClass
+  invalidValueClass: Live25709InvalidValueClass
+  messageTemplateClass: Live25709MessageTemplateClass
+}>
+
+const UNPROVEN_25709_METADATA: Live25709Metadata = Object.freeze({
+  domain: "UNPROVEN",
+  category: "UNPROVEN",
+  parameterNames: [],
+  fieldNameClass: "UNPROVEN",
+  invalidValueClass: "UNPROVEN",
+  messageTemplateClass: "NO_MESSAGE",
+})
+
 export type ReversibleOosModelPreflightV1 = Readonly<{
   contractVersion: typeof SELLER_OS_REVERSIBLE_OOS_PREFLIGHT_V1
   target: { itemId: typeof REVERSIBLE_OOS_TARGET_ITEM_ID
@@ -65,6 +114,12 @@ export type ReversibleOosModelPreflightV1 = Readonly<{
   exactSkuExists: ExactInventoryEvidence
   exactSkuErrorId: string | null
   exactSkuSafeErrorClass: ExactInventorySafeErrorClass
+  exactSkuErrorDomain: string
+  exactSkuErrorCategory: string
+  exactSkuErrorParameterNames: string[]
+  exactSkuFieldNameClass: Live25709FieldNameClass
+  exactSkuInvalidValueClass: Live25709InvalidValueClass
+  exactSkuMessageTemplateClass: Live25709MessageTemplateClass
   exactOfferLookupAttempted: boolean
   exactOfferFound: ExactInventoryEvidence
   exactPublicationItemIdMatch: ExactInventoryEvidence
@@ -254,6 +309,7 @@ type ExactSkuReadResult = {
   authoritativeAbsence: boolean
   errorId: string | null
   safeErrorClass: ExactInventorySafeErrorClass
+  errorMetadata: Live25709Metadata
   requestContractFixRequired: boolean
 }
 
@@ -286,6 +342,84 @@ function errorId(payload: Record<string, unknown>) {
     if (normalized) return normalized
   }
   return null
+}
+
+function inventoryErrorRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : null
+}
+
+function fieldNameClass(value: unknown): Live25709FieldNameClass {
+  if (typeof value !== "string") return "UNPROVEN"
+  const normalized = value.normalize("NFKC").trim().toLowerCase()
+  if (["sku", "inventory_item.sku", "inventoryitem.sku"].includes(normalized)) {
+    return "PATH_SKU"
+  }
+  if (["limit", "offset", "query", "query-parameter"].includes(normalized)) {
+    return "QUERY_PARAMETER"
+  }
+  if (normalized === "authorization") return "AUTHORIZATION_HEADER"
+  if (normalized === "accept") return "ACCEPT_HEADER"
+  if (normalized === "content-type") return "CONTENT_TYPE_HEADER"
+  if (normalized === "content-language") return "CONTENT_LANGUAGE_HEADER"
+  if (["x-ebay-c-marketplace-id", "marketplaceid", "marketplace-id"]
+    .includes(normalized)) return "MARKETPLACE_HEADER"
+  if (["method", "http-method"].includes(normalized)) return "HTTP_METHOD"
+  if (["path", "api-path", "resource", "resource-uri"].includes(normalized)) {
+    return "API_PATH"
+  }
+  return /^[a-z][a-z0-9_.-]{0,79}$/.test(normalized) ? "OTHER" : "UNPROVEN"
+}
+
+function sanitized25709Metadata(payload: Record<string, unknown>): Live25709Metadata {
+  const safe = parseSafeEbayInventoryErrorMetadata(payload)
+  if (safe.status !== "CLASSIFIED" || !safe.errorIds.includes("25709")) {
+    return UNPROVEN_25709_METADATA
+  }
+  const allowlistedParameterNames = new Set([
+    "sku", "field", "fieldname", "parameter", "parametername", "limit",
+    "offset", "authorization", "accept", "content-type", "content-language",
+    "x-ebay-c-marketplace-id", "method", "path",
+  ])
+  const parameterNames = safe.parameterNames.map((name) =>
+    name.normalize("NFKC").trim().toLowerCase())
+    .filter((name) => allowlistedParameterNames.has(name))
+  const rawErrors = Array.isArray(payload.errors) ? payload.errors : []
+  const error = rawErrors.map(inventoryErrorRecord).find((candidate) =>
+    candidate?.errorId === 25709) ?? null
+  const message = typeof error?.message === "string" && error.message.length <= 8_192
+    ? error.message : null
+  let classifiedField: Live25709FieldNameClass = "UNPROVEN"
+  const substituted = message?.match(
+    /^Invalid value for ([A-Za-z][A-Za-z0-9_.-]{0,79})\.$/,
+  )
+  if (substituted?.[1]) classifiedField = fieldNameClass(substituted[1])
+  const parameters = Array.isArray(error?.parameters) ? error.parameters : []
+  for (const rawParameter of parameters) {
+    const parameter = inventoryErrorRecord(rawParameter)
+    const name = typeof parameter?.name === "string"
+      ? parameter.name.normalize("NFKC").trim().toLowerCase() : ""
+    if (["field", "fieldname", "parameter", "parametername"].includes(name)) {
+      const candidate = fieldNameClass(parameter?.value)
+      if (candidate !== "UNPROVEN") classifiedField = candidate
+    }
+  }
+  const messageTemplateClass: Live25709MessageTemplateClass = !message
+    ? "NO_MESSAGE"
+    : /^Invalid value for \{fieldName\}\.$/.test(message)
+      ? "INVALID_VALUE_FOR_LITERAL_PLACEHOLDER"
+      : substituted
+        ? "INVALID_VALUE_FOR_SUBSTITUTED_FIELD"
+        : "OTHER"
+  return Object.freeze({
+    domain: safe.domains.length === 1 ? safe.domains[0] ?? "UNPROVEN" : "UNPROVEN",
+    category: safe.categories.length === 1
+      ? safe.categories[0] ?? "UNPROVEN" : "UNPROVEN",
+    parameterNames: [...new Set(parameterNames)].sort(),
+    fieldNameClass: classifiedField,
+    invalidValueClass: "UNPROVEN",
+    messageTemplateClass,
+  })
 }
 
 function safeErrorClass(status: number): ExactInventorySafeErrorClass {
@@ -327,6 +461,8 @@ async function exactInventoryItemRead(input: {
   })
   const payload = await inventoryJson(response)
   const observedErrorId = payload ? errorId(payload) : null
+  const errorMetadata = payload && observedErrorId === "25709"
+    ? sanitized25709Metadata(payload) : UNPROVEN_25709_METADATA
   const classification = response.status === 404
     ? "NOT_FOUND" as const
     : payload === null ? "RESPONSE_INVALID" as const
@@ -341,6 +477,7 @@ async function exactInventoryItemRead(input: {
     authoritativeAbsence: response.status === 404,
     errorId: observedErrorId,
     safeErrorClass: classification,
+    errorMetadata,
     requestContractFixRequired:
       response.status === 400 && observedErrorId === "25709",
   }
@@ -453,6 +590,12 @@ function unavailable(limitationCode: string,
     exactSkuExists: "UNPROVEN",
     exactSkuErrorId: null,
     exactSkuSafeErrorClass: "OTHER",
+    exactSkuErrorDomain: "UNPROVEN",
+    exactSkuErrorCategory: "UNPROVEN",
+    exactSkuErrorParameterNames: [],
+    exactSkuFieldNameClass: "UNPROVEN",
+    exactSkuInvalidValueClass: "UNPROVEN",
+    exactSkuMessageTemplateClass: "NO_MESSAGE",
     exactOfferLookupAttempted: false,
     exactOfferFound: "UNPROVEN",
     exactPublicationItemIdMatch: "UNPROVEN",
@@ -539,6 +682,7 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       safeErrorClass: "OTHER", requestContractFixRequired: false,
       exactSku: { attempted: false, httpStatus: null, exists: "UNPROVEN",
         authoritativeAbsence: false, errorId: null, safeErrorClass: "OTHER",
+        errorMetadata: UNPROVEN_25709_METADATA,
         requestContractFixRequired: false } }
     let inventoryLookupFailure: string | null = null
     const inventoryOwnershipNeedsResolution = tradingReadSuccess &&
@@ -626,6 +770,16 @@ export async function runVercelReversibleOosPreflightV1(input: Readonly<{
       exactSkuExists: inventory.exactSku.exists,
       exactSkuErrorId: inventory.exactSku.errorId,
       exactSkuSafeErrorClass: inventory.exactSku.safeErrorClass,
+      exactSkuErrorDomain: inventory.exactSku.errorMetadata.domain,
+      exactSkuErrorCategory: inventory.exactSku.errorMetadata.category,
+      exactSkuErrorParameterNames:
+        inventory.exactSku.errorMetadata.parameterNames,
+      exactSkuFieldNameClass:
+        inventory.exactSku.errorMetadata.fieldNameClass,
+      exactSkuInvalidValueClass:
+        inventory.exactSku.errorMetadata.invalidValueClass,
+      exactSkuMessageTemplateClass:
+        inventory.exactSku.errorMetadata.messageTemplateClass,
       exactOfferLookupAttempted: inventory.attempted,
       exactOfferFound,
       exactPublicationItemIdMatch,
