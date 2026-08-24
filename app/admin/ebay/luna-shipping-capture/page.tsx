@@ -11,7 +11,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.15"
+const EXPECTED_EXTENSION_VERSION = "1.0.16"
 const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
@@ -225,7 +225,10 @@ export default function LunaShippingCapturePage() {
   const [lastRuntimeState, setLastRuntimeState] = useState("NOT_STARTED")
   const [runtimeTrace, setRuntimeTrace] = useState<RuntimeTrace>(EMPTY_RUNTIME_TRACE)
   const [results, setResults] = useState<Result[]>([])
+  const [canonicalDestinationBound, setCanonicalDestinationBound] = useState(false)
+  const [canonicalDestinationMatch, setCanonicalDestinationMatch] = useState(false)
   const triggerRef = useRef<(() => void) | null>(null)
+  const bindDestinationRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     let active = true
@@ -291,8 +294,32 @@ export default function LunaShippingCapturePage() {
     }
     triggerRef.current = beginCanary
 
+    const bindCanonicalDestination = () => {
+      if (!port || !extensionReady || busy) return
+      setError("")
+      setStatus("BINDING_CANONICAL_DESTINATION")
+      port.postMessage({ type: "SELLER_OS_BIND_LUNA_CANONICAL_DESTINATION" })
+    }
+    bindDestinationRef.current = bindCanonicalDestination
+
     const handlePortMessage = (message: any) => {
         if (!active) return
+        if (message?.type === "LUNA_CANONICAL_DESTINATION_BINDING_RESULT") {
+          if (message.success !== true ||
+              message.canonicalDestinationBound !== true ||
+              message.canonicalDestinationMatch !== true) {
+            fail(new Error(typeof message.error === "string" ? message.error
+              : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE"))
+            return
+          }
+          setCanonicalDestinationBound(true)
+          setCanonicalDestinationMatch(true)
+          busy = true
+          setRunning(true)
+          setError("")
+          setStatus("CANONICAL_DESTINATION_BOUND")
+          return
+        }
         if (message?.type === "LUNA_SHIPPING_JOB_PROGRESS") {
           const allowed = new Set(["CONTENT_SCRIPT_LOADED",
             "ACTIVE_JOB_REQUESTED", "ACTIVE_JOB_RECOVERED",
@@ -587,6 +614,7 @@ export default function LunaShippingCapturePage() {
     return () => {
       active = false
       triggerRef.current = null
+      bindDestinationRef.current = null
       port?.disconnect()
     }
   }, [])
@@ -601,6 +629,15 @@ export default function LunaShippingCapturePage() {
         className="mt-6 w-full rounded-2xl bg-cyan-300 px-5 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
         Ejecutar canary de shipping
       </button>
+      <button type="button"
+        disabled={!connected || running || canonicalDestinationBound}
+        onClick={() => bindDestinationRef.current?.()}
+        className="mt-3 w-full rounded-2xl border border-cyan-200/40 px-5 py-3 font-black text-cyan-100 disabled:cursor-not-allowed disabled:opacity-40">
+        Usar destino actual como benchmark canónico
+      </button>
+      <p className="mt-2 text-xs text-white/50">
+        CANONICAL_DESTINATION_BOUND={String(canonicalDestinationBound)} · CANONICAL_DESTINATION_MATCH={String(canonicalDestinationMatch)}
+      </p>
       <p className="mt-2 text-xs text-white/50">Certificación inicial: {CANARY_NAME}</p>
       <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 p-4">
         <p className="text-xs uppercase tracking-widest text-white/50">Estado</p>

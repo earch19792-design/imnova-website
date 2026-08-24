@@ -17,11 +17,13 @@ candidatos secuencialmente sin clic por producto.
 
 ## Límite de seguridad
 
-- No solicita permisos de cookies, storage, webRequest ni `<all_urls>`.
+- No solicita permisos de cookies, webRequest ni `<all_urls>`. El permiso
+  `storage` guarda únicamente el SHA-256 del destino canónico, su versión, la
+  clase de país y el digest del perfil; nunca guarda la dirección.
 - Sólo se inyecta en `lunaportex.com`, `www.lunaportex.com`, el desvío de
   autenticación `account.lunaportex.com` y el checkout acotado `shop.app`.
-- No lee contraseñas, cookies, tokens, headers de autenticación ni almacenamiento
-  del navegador.
+- No lee contraseñas, cookies, tokens, headers de autenticación, localStorage ni
+  sessionStorage del sitio.
 - Sólo modifica temporalmente el carrito, intenta restaurarlo y nunca navega a
   pago ni crea una orden.
 - Falla cerrado si no prueba sesión autenticada, identidad exacta, subtotal,

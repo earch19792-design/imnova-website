@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.15" },
+      extensionBuildVersion: "1.0.16" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -17,6 +17,13 @@ const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
 const JOB_RUNTIME_FAILURE = "LUNA_SHIPPING_JOB_RUNTIME_FAILURE"
 const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
+const GET_CANONICAL_DESTINATION_BINDING =
+  "GET_LUNA_CANONICAL_DESTINATION_BINDING"
+const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
+const RESUME_AFTER_DESTINATION_BINDING =
+  "RESUME_LUNA_SHIPPING_AFTER_DESTINATION_BINDING"
+const DESTINATION_FINGERPRINT_VERSION =
+  "LUNA_SHOP_PAY_DESTINATION_SHA256_V1"
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
 const CHECKOUT_PHASE = "AWAITING_CHECKOUT_SHIPPING"
 const ACQUISITION_METHOD = "NORMAL_CHROME_EXTENSION_VISIBLE_DOM"
@@ -772,9 +779,7 @@ function requiredFieldMissing(selectors) {
 }
 
 function canonicalShippingProfile(job) {
-  if (location.hostname === "shop.app") {
-    return shopPayCanonicalShippingProfile(job)
-  }
+  if (location.hostname === "shop.app") return false
   const country = firstVisible(document, [
     'select[name*="country" i]', 'input[name*="country" i]',
     '[data-shipping-country]',
@@ -808,14 +813,27 @@ function boundedProfileText() {
   const candidates = [...document.querySelectorAll(
     '[data-shipping-address],[data-delivery-address],' +
     '[data-testid*="ship-to" i],[aria-label*="ship to" i],' +
-    '[class*="address" i],[role="group"],section,div')]
+    '[class*="address" i],[role="group"],[role="region"],' +
+    'h1,h2,h3,dt,dd,button,section,div,span')]
     .slice(0, 80)
+  const bounded = []
   for (const element of candidates) {
     if (!isVisible(element)) continue
-    const text = String(element.textContent ?? "")
-    if (/\bship\s+to\b/i.test(text) && text.length <= 1_000) return text
+    const marker = `${element.getAttribute?.("aria-label") ?? ""} ${
+      element.textContent ?? ""}`
+    if (!/\bship\s+to\b/i.test(marker)) continue
+    let current = element
+    for (let depth = 0; current && depth < 4; depth += 1) {
+      const text = `${current.getAttribute?.("aria-label") ?? ""} ${
+        current.textContent ?? ""}`.replace(/\s+/g, " ").trim()
+      if (text.length >= 8 && text.length <= 1_000 &&
+          /\bship\s+to\b/i.test(text)) bounded.push(text)
+      current = current.parentElement
+    }
   }
-  return ""
+  return bounded.sort((left, right) => left.length - right.length)
+    .find((text) => /\b(?:united states|usa)\b/i.test(text) ||
+      /\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/.test(text)) ?? ""
 }
 
 function profileFieldValue(selectors) {
@@ -828,7 +846,58 @@ function profileFieldValue(selectors) {
   return ""
 }
 
-function shopPayCanonicalShippingProfileStatus(job) {
+function normalizedShopPayDestination(job) {
+  const raw = boundedProfileText()
+  if (!raw) return null
+  const normalized = raw.normalize("NFKC").toLowerCase()
+    .replace(/\bship\s+to\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ").trim()
+  if (normalized.length < 8 || normalized.length > 900) return null
+  const expectedPostal = job.destination.postalCode.toLowerCase()
+  const expectedProvince = job.destination.province.toLowerCase()
+  const countryMatches = /\b(?:us|usa|united states|united states of america)\b/
+    .test(normalized)
+  const provinceMatches = new RegExp(`\\b${expectedProvince}\\b`).test(normalized)
+  const postalMatches = new RegExp(`\\b${expectedPostal.replace("-", " ")}\\b`)
+    .test(normalized)
+  return { normalized, countryClass: countryMatches ? "US" : "UNPROVEN",
+    canonicalFieldsMatch: countryMatches && provinceMatches && postalMatches }
+}
+
+async function sha256Text(value) {
+  const bytes = new TextEncoder().encode(value)
+  const result = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))
+  return `sha256:${[...result].map((byte) =>
+    byte.toString(16).padStart(2, "0")).join("")}`
+}
+
+function getCanonicalDestinationBinding(job) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: GET_CANONICAL_DESTINATION_BINDING,
+      captureSessionId: job.captureSessionId }, (response) => {
+      const binding = response?.binding
+      if (response?.accepted !== true ||
+          binding?.fingerprintVersion !== DESTINATION_FINGERPRINT_VERSION ||
+          !/^sha256:[0-9a-f]{64}$/.test(binding?.canonicalDestinationFingerprint ?? "") ||
+          binding?.countryClass !== "US" ||
+          binding?.canonicalProfileDigest !== job.destination.profileDigest) {
+        resolve(null)
+        return
+      }
+      resolve(binding)
+    })
+  })
+}
+
+async function canonicalDestinationFingerprintMatch(job, binding) {
+  const current = normalizedShopPayDestination(job)
+  if (!current || current.countryClass !== "US" || !binding ||
+      binding.canonicalProfileDigest !== job.destination.profileDigest) return false
+  return await sha256Text(current.normalized) ===
+    binding.canonicalDestinationFingerprint
+}
+
+async function shopPayCanonicalShippingProfileStatus(job) {
   const countryValue = profileFieldValue([
     '[autocomplete="country"]', '[autocomplete="country-name"]',
     'select[name*="country" i]', 'input[name*="country" i]',
@@ -844,9 +913,6 @@ function shopPayCanonicalShippingProfileStatus(job) {
   ])
   const rawSummary = boundedProfileText()
   const summary = normalizeVisibleText(rawSummary)
-  if (!countryValue && !provinceValue && !postalValue && !rawSummary) {
-    return "UNAVAILABLE"
-  }
   const expectedPostal = job.destination.postalCode.toLowerCase()
   const expectedProvince = job.destination.province.toLowerCase()
   const countryMatches = /^(?:us|usa|united states|united states of america)$/i
@@ -855,12 +921,19 @@ function shopPayCanonicalShippingProfileStatus(job) {
     new RegExp(`\\b${expectedProvince}\\b`).test(summary)
   const postalMatches = postalValue.toLowerCase() === expectedPostal ||
     new RegExp(`\\b${expectedPostal.replace("-", " ")}\\b`).test(summary)
-  return countryMatches && provinceMatches && postalMatches
-    ? "MATCH" : "MISMATCH"
+  const current = normalizedShopPayDestination(job)
+  if (current) {
+    const binding = await getCanonicalDestinationBinding(job)
+    if (binding) return await canonicalDestinationFingerprintMatch(job, binding)
+      ? "MATCH" : "MISMATCH"
+  }
+  if (countryMatches && provinceMatches && postalMatches) return "MATCH"
+  if (!current) return "UNAVAILABLE"
+  return current.canonicalFieldsMatch ? "MATCH" : "MISMATCH"
 }
 
-function shopPayCanonicalShippingProfile(job) {
-  return shopPayCanonicalShippingProfileStatus(job) === "MATCH"
+async function shopPayCanonicalShippingProfile(job) {
+  return await shopPayCanonicalShippingProfileStatus(job) === "MATCH"
 }
 
 async function checkoutClassificationWhenReady(job, expectedSubtotal) {
@@ -961,7 +1034,7 @@ async function checkoutShipping(job, expectedSubtotal) {
   }
   const summaryQuote = ready.quote ?? checkoutSummaryQuote(expectedSubtotal)
   const profile = location.hostname === "shop.app"
-    ? shopPayCanonicalShippingProfileStatus(job)
+    ? await shopPayCanonicalShippingProfileStatus(job)
     : canonicalShippingProfile(job) ? "MATCH" : "UNAVAILABLE"
   if (profile !== "MATCH") throw new Error(
     location.hostname === "shop.app" && profile === "MISMATCH"
@@ -1196,6 +1269,62 @@ const isCartPage = location.pathname.replace(/\/$/, "") === "/cart"
 const isCheckoutPage = /^\/checkouts?(?:\/|$)/.test(location.pathname) ||
   location.hostname === "account.lunaportex.com" ||
   location.hostname === "shop.app"
+
+chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
+  if (message?.type === BIND_CANONICAL_DESTINATION) {
+    if (location.hostname !== "shop.app") {
+      sendResponse({ accepted: false,
+        error: "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE" })
+      return false
+    }
+    void recoverJobContext().then(async (context) => {
+      if (context.phase !== CHECKOUT_PHASE ||
+          message.captureSessionId !== context.job.captureSessionId) {
+        throw new Error("ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN")
+      }
+      const current = normalizedShopPayDestination(context.job)
+      if (!current || current.countryClass !== "US") {
+        throw new Error("CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE")
+      }
+      if (!current.canonicalFieldsMatch) {
+        throw new Error("CANONICAL_US_SHIPPING_PROFILE_MISMATCH")
+      }
+      const canonicalDestinationFingerprint = await sha256Text(current.normalized)
+      sendResponse({ accepted: true, captureSessionId: context.job.captureSessionId,
+        canonicalDestinationFingerprint,
+        fingerprintVersion: DESTINATION_FINGERPRINT_VERSION,
+        countryClass: "US",
+        canonicalProfileDigest: context.job.destination.profileDigest })
+    }).catch((error) => sendResponse({ accepted: false,
+      error: error instanceof Error ? error.message
+        : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE" }))
+    return true
+  }
+  if (message?.type === RESUME_AFTER_DESTINATION_BINDING) {
+    if (globalThis.__sellerOsLunaDestinationResumeInFlightV1 === true) {
+      sendResponse({ accepted: false, error: "LUNA_SHIPPING_RESUME_IN_PROGRESS" })
+      return false
+    }
+    globalThis.__sellerOsLunaDestinationResumeInFlightV1 = true
+    sendResponse({ accepted: true })
+    void recoverJobContext().then(async (context) => {
+      if (context.phase !== CHECKOUT_PHASE ||
+          message.captureSessionId !== context.job.captureSessionId ||
+          !Array.isArray(context.originalCartSnapshot) ||
+          !Number.isFinite(context.cartSubtotalUsd)) {
+        throw new Error("ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN")
+      }
+      const capture = await runCheckoutStage(context.job,
+        context.originalCartSnapshot, context.cartSubtotalUsd)
+      progress(context.job, "RESULT_POSTED")
+      send(true, context.job, capture)
+    }).catch(reportRuntimeFailure).finally(() => {
+      globalThis.__sellerOsLunaDestinationResumeInFlightV1 = false
+    })
+    return false
+  }
+  return false
+})
 
 if ((isProductPage || isCartPage || isCheckoutPage) &&
     globalThis.__sellerOsLunaShippingCaptureAttachedV1 !== true) {

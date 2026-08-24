@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.15"
+const EXTENSION_BUILD_VERSION = "1.0.16"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -17,6 +17,16 @@ const JOB_RUNTIME_FAILURE = "LUNA_SHIPPING_JOB_RUNTIME_FAILURE"
 const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
 const CHECKOUT_BOOTSTRAP_ACK = "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK"
 const RESUME_ACTIVE_JOB = "RESUME_ACTIVE_LUNA_SHIPPING_JOB"
+const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
+const GET_CANONICAL_DESTINATION_BINDING =
+  "GET_LUNA_CANONICAL_DESTINATION_BINDING"
+const RESUME_AFTER_DESTINATION_BINDING =
+  "RESUME_LUNA_SHIPPING_AFTER_DESTINATION_BINDING"
+const DESTINATION_BINDING_RESULT =
+  "LUNA_CANONICAL_DESTINATION_BINDING_RESULT"
+const DESTINATION_FINGERPRINT_VERSION =
+  "LUNA_SHOP_PAY_DESTINATION_SHA256_V1"
+const DESTINATION_STORAGE_KEY = "sellerOsLunaCanonicalDestinationBindingV1"
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
 const CHECKOUT_PHASE = "AWAITING_CHECKOUT_SHIPPING"
 const RECONNECT_GRACE_MS = 20_000
@@ -134,6 +144,8 @@ function allowedCheckoutNavigation(value) {
 function effectiveShopAppContract() {
   const manifest = chrome.runtime.getManifest()
   return manifest.version === EXTENSION_BUILD_VERSION &&
+    Array.isArray(manifest.permissions) &&
+    manifest.permissions.includes("storage") &&
     Array.isArray(manifest.host_permissions) &&
     manifest.host_permissions.includes(SHOP_APP_HOST_PATTERN) &&
     Array.isArray(manifest.content_scripts) &&
@@ -268,6 +280,84 @@ function recoverActiveJob(sender) {
 function safeRuntimeReason(value) {
   return typeof value === "string" && /^[A-Za-z0-9_:.-]{3,120}$/.test(value)
     ? value : "LUNA_SHIPPING_RUNTIME_FAILURE"
+}
+
+function safeDestinationBinding(value) {
+  return value?.fingerprintVersion === DESTINATION_FINGERPRINT_VERSION &&
+    /^sha256:[0-9a-f]{64}$/.test(value?.canonicalDestinationFingerprint ?? "") &&
+    /^sha256:[0-9a-f]{64}$/.test(value?.canonicalProfileDigest ?? "") &&
+    value?.countryClass === "US" ? Object.freeze({
+      fingerprintVersion: value.fingerprintVersion,
+      canonicalDestinationFingerprint: value.canonicalDestinationFingerprint,
+      canonicalProfileDigest: value.canonicalProfileDigest,
+      countryClass: "US",
+    }) : null
+}
+
+function readDestinationBinding() {
+  return new Promise((resolve) => chrome.storage.local.get(
+    DESTINATION_STORAGE_KEY, (value) => {
+      if (chrome.runtime.lastError) { resolve(null); return }
+      resolve(safeDestinationBinding(value?.[DESTINATION_STORAGE_KEY]))
+    }))
+}
+
+function writeDestinationBinding(binding) {
+  return new Promise((resolve, reject) => chrome.storage.local.set({
+    [DESTINATION_STORAGE_KEY]: binding,
+  }, () => {
+    if (chrome.runtime.lastError) {
+      reject(new Error("CANONICAL_DESTINATION_FINGERPRINT_PERSIST_FAILED"))
+      return
+    }
+    resolve()
+  }))
+}
+
+function sendActiveTabMessage(message) {
+  return new Promise((resolve, reject) => {
+    if (!Number.isInteger(activeTabId)) {
+      reject(new Error("ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN"))
+      return
+    }
+    chrome.tabs.sendMessage(activeTabId, message, { frameId: 0 }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error("CHECKOUT_CONTENT_SCRIPT_NOT_AVAILABLE"))
+        return
+      }
+      resolve(response)
+    })
+  })
+}
+
+async function bindCanonicalDestination(port) {
+  if (!activeJob || activeJobPhase !== CHECKOUT_PHASE ||
+      !checkoutNavigationArmed || !Number.isInteger(activeTabId) ||
+      lastRuntimeState !== "NORMAL_CHECKOUT_WITH_SHIPPING") {
+    throw new Error("ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN")
+  }
+  const response = await sendActiveTabMessage({
+    type: BIND_CANONICAL_DESTINATION,
+    captureSessionId: activeJob.captureSessionId,
+  })
+  const binding = safeDestinationBinding(response)
+  if (response?.accepted !== true || !binding ||
+      binding.canonicalProfileDigest !== activeJob.destination.profileDigest) {
+    throw new Error(safeRuntimeReason(response?.error ??
+      "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE"))
+  }
+  await writeDestinationBinding(binding)
+  const readback = await readDestinationBinding()
+  if (!readback ||
+      readback.canonicalDestinationFingerprint !==
+        binding.canonicalDestinationFingerprint ||
+      readback.canonicalProfileDigest !== binding.canonicalProfileDigest) {
+    throw new Error("CANONICAL_DESTINATION_FINGERPRINT_READBACK_FAILED")
+  }
+  port.postMessage({ type: DESTINATION_BINDING_RESULT, success: true,
+    canonicalDestinationBound: true, canonicalDestinationMatch: true })
+  await sendActiveTabMessage({ type: RESUME_AFTER_DESTINATION_BINDING,
+    captureSessionId: activeJob.captureSessionId })
 }
 
 function emitProgress(state, details = {}) {
@@ -489,6 +579,15 @@ chrome.runtime.onConnectExternal.addListener((port) => {
   }
   sellerPort = port
   port.onMessage.addListener((message) => {
+    if (message?.type === "SELLER_OS_BIND_LUNA_CANONICAL_DESTINATION") {
+      void bindCanonicalDestination(port).catch((error) => port.postMessage({
+        type: DESTINATION_BINDING_RESULT, success: false,
+        canonicalDestinationBound: false, canonicalDestinationMatch: false,
+        error: safeRuntimeReason(error instanceof Error ? error.message
+          : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE"),
+      }))
+      return
+    }
     if (message?.type === "START_SHIPPING_JOB") {
       void startJob(message.job).catch((error) => port.postMessage({
         type: JOB_RESULT, success: false,
@@ -522,6 +621,22 @@ chrome.runtime.onConnectExternal.addListener((port) => {
 })
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === GET_CANONICAL_DESTINATION_BINDING) {
+    const recovered = recoverActiveJob(sender)
+    if (!recovered || activeJobPhase !== CHECKOUT_PHASE ||
+        message.captureSessionId !== activeJob.captureSessionId) {
+      sendResponse({ accepted: false,
+        error: "ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN" })
+      return false
+    }
+    void readDestinationBinding().then((binding) => sendResponse({
+      accepted: Boolean(binding && binding.canonicalProfileDigest ===
+        activeJob?.destination.profileDigest),
+      ...(binding && binding.canonicalProfileDigest ===
+        activeJob?.destination.profileDigest ? { binding } : {}),
+    }))
+    return true
+  }
   if (message?.type === CHECKOUT_BOOTSTRAP_ACK) {
     if (message.extensionBuildVersion !== EXTENSION_BUILD_VERSION) {
       sendResponse({ accepted: false,
