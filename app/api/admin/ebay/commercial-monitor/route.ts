@@ -23,9 +23,15 @@ import {
 } from "@/lib/ebay/ebay-commercial-analytics-reconciliation"
 import { getEbayReadonlyRateLimitMetadata } from "@/lib/ebay/ebay-readonly-rate-limit"
 import {
+  applyCertifiedOosProtectionV1,
   applyEbayCommercialImprovement,
+  preflightCertifiedOosExecutionV1,
   prepareEbayCommercialImprovement,
 } from "@/lib/ebay/ebay-commercial-improvement-action-service"
+import { getCommercialMonitorReadonly } from
+  "@/lib/ebay/commercial-monitor-readonly-service"
+import { getEbayCommercialMonitorLiveReadonly } from
+  "@/lib/ebay/ebay-commercial-monitor-live-readonly"
 import {
   getSupabaseAdminClient,
   validateAdminApiRequest,
@@ -237,6 +243,44 @@ export async function POST(req: Request) {
         action: "record_seller_hub_listing_evidence",
         evidence,
         dashboard: await getEbayCommercialMonitorDashboard(supabase),
+      })
+    }
+    if (input.action === "preflight_certified_oos_protection" ||
+        input.action === "apply_certified_oos_protection") {
+      const account = getEbaySellerAccountScopeConfiguration()
+      const itemId = typeof input.itemId === "string" ? input.itemId.trim() : ""
+      const sku = typeof input.sku === "string" ? input.sku.trim() : ""
+      if (!account.accountKey || !validation.userId ||
+          !/^\d{9,20}$/.test(itemId) ||
+          !/^[A-Za-z0-9._:-]{1,100}$/.test(sku)) {
+        return NextResponse.json({ success: false,
+          error: "CERTIFIED_OOS_PREFLIGHT_REQUEST_INVALID" }, { status: 400 })
+      }
+      const live = await getEbayCommercialMonitorLiveReadonly({
+        accountKey: account.accountKey,
+        accountAlias: account.accountAlias,
+      })
+      const monitor = await getCommercialMonitorReadonly(
+        supabase,
+        { accountKey: account.accountKey, accountAlias: account.accountAlias,
+          configurationReason: account.reason },
+        live,
+      )
+      const preflight = preflightCertifiedOosExecutionV1({ monitor,
+        targetItemId: itemId, targetSku: sku, operatorAuthorized: true })
+      if (input.action === "apply_certified_oos_protection") {
+        const protection = await applyCertifiedOosProtectionV1({ preflight,
+          confirmation: typeof input.confirmation === "string"
+            ? input.confirmation : "" })
+        return NextResponse.json({ success: true, action: input.action,
+          preflight, protection })
+      }
+      return NextResponse.json({
+        success: true,
+        action: "preflight_certified_oos_protection",
+        preflight,
+        safety: { preflightOnly: true, databaseWrites: 0, ebayWrites: 0,
+          lunaWrites: 0, whatsappSends: 0 },
       })
     }
     if (input.action === "prepare_improvement" || input.action === "apply_improvement") {

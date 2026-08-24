@@ -18,6 +18,14 @@ import {
   endActiveListingOutOfStockRequestXml,
   reviseActiveListingPriceRequestXml,
 } from "./ebay-commercial-improvement-action-domain"
+import type { CertifiedOosExecutionPreflightV1 } from
+  "./ebay-certified-oos-execution-adapter-v1"
+
+export {
+  preflightCertifiedOosExecutionV1,
+  SELLER_OS_CERTIFIED_OOS_EXECUTION_ADAPTER_V1,
+  SELLER_OS_CERTIFIED_OOS_MARKETPLACE_OPERATION_V1,
+} from "./ebay-certified-oos-execution-adapter-v1"
 
 export { COMMERCIAL_IMPROVEMENT_CONFIRMATION,
   endActiveListingOutOfStockRequestXml,
@@ -577,6 +585,55 @@ async function endListingOutOfStock(input: {
       ? `COMMERCIAL_IMPROVEMENT_EBAY_END_REJECTED_${code}`
       : "COMMERCIAL_IMPROVEMENT_EBAY_END_REJECTED")
   }
+}
+
+export async function applyCertifiedOosProtectionV1(input: Readonly<{
+  preflight: CertifiedOosExecutionPreflightV1
+  confirmation: string
+  fetchImpl?: FetchLike
+}>) {
+  if (input.confirmation !== COMMERCIAL_IMPROVEMENT_CONFIRMATION) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_CONFIRMATION_REQUIRED")
+  }
+  if (!input.preflight.executionEligible ||
+      !input.preflight.mutationRequired ||
+      input.preflight.status !== "ELIGIBLE" ||
+      input.preflight.marketplaceOperation.actionType !== "END_LISTING" ||
+      input.preflight.marketplaceOperation.tradingCall !== "EndFixedPriceItem" ||
+      input.preflight.marketplaceOperation.endingReason !== "NotAvailable") {
+    throw new Error("CERTIFIED_OOS_EXECUTION_PREFLIGHT_REQUIRED")
+  }
+  const fetchImpl = input.fetchImpl ?? fetch
+  const officialBefore = await readManualListingFromTradingApi(
+    input.preflight.itemId,
+    fetchImpl,
+  )
+  if (officialBefore.ownership === "inactive" ||
+      officialBefore.listingStatus?.toLowerCase() !== "active") {
+    return Object.freeze({ status: "ALREADY_PROTECTED" as const,
+      itemId: input.preflight.itemId, sku: input.preflight.sku,
+      marketplaceOperation: input.preflight.marketplaceOperation,
+      ebayWriteCount: 0 as const, officialBefore, officialAfter: officialBefore })
+  }
+  if (officialBefore.ownership !== "verified" ||
+      officialBefore.ebaySku !== input.preflight.sku) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_OFFICIAL_IDENTITY_MISMATCH")
+  }
+  const accessToken = await getEbayTradingReadOnlyAccessToken(fetchImpl)
+  await endListingOutOfStock({ accessToken,
+    listingId: input.preflight.itemId, fetchImpl })
+  const officialAfter = await readManualListingFromTradingApi(
+    input.preflight.itemId,
+    fetchImpl,
+  )
+  if (officialAfter.ownership !== "inactive" ||
+      officialAfter.listingStatus?.toLowerCase() === "active") {
+    throw new Error("COMMERCIAL_IMPROVEMENT_END_READBACK_MISMATCH")
+  }
+  return Object.freeze({ status: "PROTECTED_VERIFIED" as const,
+    itemId: input.preflight.itemId, sku: input.preflight.sku,
+    marketplaceOperation: input.preflight.marketplaceOperation,
+    ebayWriteCount: 1 as const, officialBefore, officialAfter })
 }
 
 async function marketingAccessToken(fetchImpl: FetchLike) {
