@@ -73,7 +73,7 @@ async function startJob(job) {
 
 chrome.runtime.onInstalled.addListener(() => {
   if (chrome.runtime.id !== EXACT_EXTENSION_ID) return
-  void chrome.tabs.create({ url: `${CONTROL_PAGE}?autostart=1`, active: true })
+  void chrome.tabs.create({ url: `${CONTROL_PAGE}?bridgeOnly=1`, active: true })
 })
 
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {

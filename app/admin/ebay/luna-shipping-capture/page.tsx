@@ -120,6 +120,8 @@ export default function LunaShippingCapturePage() {
       setStatus("PINGING_EXTENSION")
       await pingExtension(window.chrome.runtime)
       setStatus("EXTENSION_CONNECTED")
+      if (new URLSearchParams(window.location.search)
+          .get("runShipping") !== "1") return
       const payload = await adminPost("resolve_jobs", {})
       const jobs = Array.isArray(payload.jobs) ? payload.jobs : []
       if (!jobs.length || jobs.some((job: any) =>
