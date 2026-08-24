@@ -22,6 +22,7 @@ type ProtectionResult = Readonly<{
 export async function runAutomaticCertifiedOosProtectionV1(input: Readonly<{
   monitor: CommercialMonitorGetDto
   maxMarketplaceWrites?: number
+  allowedItemIds?: readonly string[]
   executor?: (preflight: CertifiedOosExecutionPreflightV1) =>
     Promise<ProtectionResult>
 }>) {
@@ -29,7 +30,11 @@ export async function runAutomaticCertifiedOosProtectionV1(input: Readonly<{
     Math.trunc(input.maxMarketplaceWrites ?? 1),
     1,
   ))
+  const allowedItemIds = input.allowedItemIds
+    ? new Set(input.allowedItemIds) : null
   const preflights = input.monitor.listings
+    .filter((listing) => !allowedItemIds ||
+      allowedItemIds.has(listing.identity.itemId))
     .map((listing) => preflightCertifiedOosExecutionV1({
       monitor: input.monitor,
       targetItemId: listing.identity.itemId,

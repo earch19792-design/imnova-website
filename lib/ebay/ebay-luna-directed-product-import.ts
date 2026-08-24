@@ -97,7 +97,11 @@ export function parseDirectedLunaProductUrl(value: unknown) {
   const handleCodepoints = [...handle]
   if (
     handleCodepoints.length < 1 ||
-    handleCodepoints.length > 181 ||
+    // Luna currently has canonical product handles longer than the original
+    // import-only bound. Keep this aligned with the already-approved exact
+    // product URL boundary used by StockGuard; this is still a single fixed
+    // /products/{handle} path and does not broaden hosts or URL shapes.
+    handleCodepoints.length > 220 ||
     !/^[\p{L}\p{N}\p{M}\p{Extended_Pictographic}\u200D-]+$/u.test(handle) ||
     !/^[\p{L}\p{N}\p{Extended_Pictographic}]/u.test(handle)
   ) {

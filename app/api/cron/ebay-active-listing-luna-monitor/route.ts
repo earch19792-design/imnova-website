@@ -21,6 +21,8 @@ import { getCommercialMonitorReadonly } from
   "@/lib/ebay/commercial-monitor-readonly-service"
 import { runAutomaticCertifiedOosProtectionV1 } from
   "@/lib/ebay/ebay-auto-certified-oos-protection-v1"
+import { reconcileSellerOsStockIdentityV1 } from
+  "@/lib/ebay/ebay-stock-identity-auto-reconciliation-v1"
 import {
   endLiveInvariantViolationNotAvailableV1,
   SELLER_OS_LIVE_INVARIANT_END_AUTHORIZATION_V1,
@@ -36,6 +38,10 @@ const BULK_END_UNLINKED_LIVE_TARGETS_V1 = Object.freeze([
   "366584249461",
   "366597780377",
   "366602466981",
+])
+
+const STOCK_IDENTITY_RECONCILIATION_TARGETS_V1 = Object.freeze([
+  "366582586826", "366592485792", "366597434810",
 ])
 
 function safeCode(error: unknown) {
@@ -271,6 +277,59 @@ export async function GET(req: Request) {
       automaticSupplierLinksCreated: 0 as const,
       registryBusinessDataMutations: 0 as const,
     }
+    const stockIdentityTargetIds = canonicalMonitor.listings
+      .filter((listing) =>
+        STOCK_IDENTITY_RECONCILIATION_TARGETS_V1.includes(
+          listing.identity.itemId) &&
+        listing.discovery.livePresence.status === "LIVE_ACTIVE" &&
+        listing.stock.supplierLinkageStatus === "CERTIFIED" &&
+        listing.stock.state === "STOCK_UNKNOWN")
+      .map((listing) => listing.identity.itemId)
+    const stockIdentityReconciliation =
+      await reconcileSellerOsStockIdentityV1(supabase, {
+        accountKey, targetItemIds: stockIdentityTargetIds,
+      })
+    const postReconciliationLive = stockIdentityReconciliation.autoResolvedCount
+      ? await getEbayCommercialMonitorLiveReadonly({
+          accountKey, accountAlias: account.accountAlias,
+        }) : live
+    const postReconciliationMonitor = stockIdentityReconciliation.autoResolvedCount
+      ? await getCommercialMonitorReadonly(
+          supabase,
+          { accountKey, accountAlias: account.accountAlias,
+            configurationReason: account.reason },
+          postReconciliationLive,
+        ) : canonicalMonitor
+    const postReconciliationProtection =
+      await runAutomaticCertifiedOosProtectionV1({
+        monitor: postReconciliationMonitor,
+        allowedItemIds: stockIdentityTargetIds,
+        maxMarketplaceWrites: 1,
+      })
+    if (postReconciliationProtection.ebayWriteCount === 1) {
+      const { error: leaseFinishError } = await supabase.rpc(
+        "finish_ebay_targeted_luna_monitor_run",
+        { p_account_key: accountKey, p_run_id: runId, p_success: true,
+          p_error_code: null },
+      )
+      if (leaseFinishError) throw new Error("TARGETED_LUNA_MONITOR_FINISH_FAILED")
+      leaseOwned = false
+      await finishSellerAutomationRun(supabase, runId, {
+        status: "completed",
+        claimedTasks: stockIdentityReconciliation.targetCount,
+        successfulTasks: stockIdentityReconciliation.autoResolvedCount,
+        failedTasks: stockIdentityReconciliation.ambiguousCount +
+          stockIdentityReconciliation.noMatchCount,
+        metrics: { stage: "STOCK_IDENTITY_AUTO_RECONCILIATION_V1",
+          accountKey, stockIdentityReconciliation,
+          automaticOosProtection: postReconciliationProtection,
+          heartbeatAvailable: false },
+      })
+      return NextResponse.json({ success: true, status: "completed",
+        stockIdentityReconciliation,
+        automaticOosProtection: postReconciliationProtection,
+        automationRunId: runId })
+    }
     const monitor = await runTargetedActiveListingLunaMonitor(supabase, {
       accountKey,
       limit: config.limit,
@@ -299,6 +358,8 @@ export async function GET(req: Request) {
       preflightProtection,
       protection,
       automaticOosProtection,
+      stockIdentityReconciliation,
+      postReconciliationProtection,
       heartbeatAvailable: monitor.status === "complete",
     }
     const leaseSuccess = monitor.status === "complete"
@@ -331,6 +392,8 @@ export async function GET(req: Request) {
       preflightProtection,
       protection,
       automaticOosProtection,
+      stockIdentityReconciliation,
+      postReconciliationProtection,
       automationRunId: runId,
     }, { status: monitor.status === "unavailable" ? 503 : 200 })
   } catch (error) {

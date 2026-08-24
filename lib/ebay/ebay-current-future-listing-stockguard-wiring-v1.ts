@@ -179,6 +179,7 @@ export type SellerOsPublishStockguardComponentV1 = Readonly<{
   canonicalLunaUrl: string
   quantityRequiredPerBundle: number
   identityCertified: boolean
+  stockIdentityResolved: boolean
   stockState: "CERTIFIED_OOS" | "IN_STOCK" | "STOCK_UNKNOWN"
   sourceHealth: "HEALTHY" | "UNAVAILABLE" | "UNPROVEN"
   freshness: "FRESH" | "STALE" | "UNPROVEN"
@@ -209,7 +210,10 @@ export function evaluatePublishWithStockguardContractV1(input: {
     new Set(components.map((component) =>
       `${component.productId}:${component.variantId}`)).size ===
         components.length
-  const stockguard = exact && composition && components.every((component) =>
+  const stockIdentity = exact && components.every((component) =>
+    component.stockIdentityResolved === true)
+  const stockguard = exact && stockIdentity && composition &&
+    components.every((component) =>
     component.sourceHealth === "HEALTHY" && component.freshness === "FRESH" &&
     component.stockState !== "STOCK_UNKNOWN" &&
     (component.stockState === "CERTIFIED_OOS" ? component.safeCapacity === 0 :
@@ -225,7 +229,9 @@ export function evaluatePublishWithStockguardContractV1(input: {
     exactLunaLinkageReady: exact, compositionReady: composition,
     stockguardReady: stockguard, economicsReady: input?.economicsReady === true,
     monitorEnrollmentIntentPrepared: monitorEnrollment,
+    stockIdentityResolved: stockIdentity,
     publishAllowed, noExactLunaLinkageNoPublish: true as const,
+    noStockIdentityResolutionNoPublish: true as const,
     noStockguardReadyNoPublish: true as const,
     noMonitorEnrollmentNoPublish: true as const,
     attachmentIntent: Object.freeze({
@@ -237,6 +243,7 @@ export function evaluatePublishWithStockguardContractV1(input: {
         supplierSku: component.supplierSku,
         canonicalLunaUrl: component.canonicalLunaUrl,
         quantityRequiredPerBundle: component.quantityRequiredPerBundle,
+        stockIdentityResolved: component.stockIdentityResolved,
         stockState: component.stockState,
         sourceHealth: component.sourceHealth,
         freshness: component.freshness,
@@ -247,6 +254,9 @@ export function evaluatePublishWithStockguardContractV1(input: {
     }),
     blockers: Object.freeze([
       ...(!exact ? ["EXACT_LUNA_LINKAGE_REQUIRED"] : []),
+      ...(components.some((component) =>
+        component.stockIdentityResolved !== true)
+        ? ["STOCK_IDENTITY_RESOLUTION_REQUIRED"] : []),
       ...(!composition ? ["COMPOSITION_REQUIRED"] : []),
       ...(!stockguard ? ["STOCKGUARD_READY_REQUIRED"] : []),
       ...(!monitorEnrollment ? ["MONITOR_ENROLLMENT_INTENT_REQUIRED"] : []),

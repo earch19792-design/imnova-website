@@ -1,7 +1,29 @@
 import type {
   SellerOsLunaStockCheckJobV1,
-  SellerOsLunaStockObservationV1,
 } from "./ebay-luna-stock-observation-v1"
+
+export type SellerOsPersistableLunaStockObservationV1 = Readonly<{
+  observationId: string
+  stockCheckJobId: string
+  linkageId: string
+  canonicalEbayItemId: string
+  componentIdentityId: string
+  lunaProductIdentity: string
+  lunaVariantIdentity: string | null
+  lunaSku: string
+  supplierQuantityRequired: number
+  observationState: string
+  sourceStatus: string
+  observedAvailability: boolean | null
+  observedSupplierQuantity: number | null
+  evidenceClass: string
+  evidenceDigest: string
+  acquisitionMethod: string
+  attemptCorrelation: Readonly<{ attemptNumber: number }>
+  observedAt: string
+  freshnessInput: Readonly<{ maximumAgeSeconds: number }>
+  limitations: readonly string[]
+}>
 
 type SupabaseRpcResult = Readonly<{ data: unknown; error: unknown }>
 type SupabaseRpcClient = Readonly<{
@@ -104,7 +126,7 @@ export function createSellerOsLunaStockObservationRepositoryV1(
 
     async ensureObservation(input: Readonly<{
       accountKey: string
-      observation: SellerOsLunaStockObservationV1
+      observation: SellerOsPersistableLunaStockObservationV1
       leaseOwner: string
       now: string
     }>) {

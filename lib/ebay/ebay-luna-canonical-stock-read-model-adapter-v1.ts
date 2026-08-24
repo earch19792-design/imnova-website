@@ -417,8 +417,20 @@ export function projectSellerOsCanonicalLunaStockReadModelV1(input: Readonly<{
     row.linkage_id === decision.linkage_id &&
     row.ebay_item_id === input.itemId &&
     integer(row.attempt_number, 1, 100) === attemptNumber)
-  const selected = components.map((component) => matching.filter((row) =>
-    row.component_identity_id === component.componentIdentityId))
+  const selected = components.map((component) => {
+    const canonicalIdentityMatches = matching.filter((row) =>
+      row.component_identity_id === component.componentIdentityId)
+    if (canonicalIdentityMatches.length) return canonicalIdentityMatches
+    // Historical observers can carry an earlier component hash while still
+    // preserving the complete certified tuple. Reconcile only an exact,
+    // unique tuple; zero or multiple matches remain fail-closed.
+    return matching.filter((row) =>
+      row.luna_product_id === component.productId &&
+      row.luna_variant_id === component.variantId &&
+      row.luna_sku === component.sku &&
+      integer(row.supplier_quantity_required, 1, 10_000) ===
+        component.quantityRequired)
+  })
   if (!attemptNumber || selected.some((rows) => rows.length !== 1)) {
     return unknownProjection({
       limitationCode: "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH",
@@ -439,14 +451,38 @@ export function projectSellerOsCanonicalLunaStockReadModelV1(input: Readonly<{
       row.luna_sku === component.sku &&
       integer(row.supplier_quantity_required, 1, 10_000) ===
         component.quantityRequired &&
-      DIGEST.test(row.evidence_digest) &&
-      row.source_status === "AVAILABLE" &&
-      codes(row.limitations).includes(
-        SELLER_OS_LUNA_CANONICAL_STOCK_READ_SOURCE_V1)
+      DIGEST.test(row.evidence_digest)
   })
   if (!identitiesMatch) {
     return unknownProjection({
       limitationCode: "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH",
+      supplierLinkageStatus: "CERTIFIED",
+      composition: preliminaryComposition,
+      marketplace: input.marketplace,
+      identity: input.identity,
+      components,
+      evidenceReferences: [decisionEvidence],
+      freshness: preliminaryFreshness,
+    })
+  }
+  const approvedSourceLineage = rows.every((row) =>
+    codes(row.limitations).includes(
+      SELLER_OS_LUNA_CANONICAL_STOCK_READ_SOURCE_V1))
+  if (!approvedSourceLineage) {
+    return unknownProjection({
+      limitationCode: "CERTIFIED_COMPONENT_STOCK_SOURCE_UNAPPROVED",
+      supplierLinkageStatus: "CERTIFIED",
+      composition: preliminaryComposition,
+      marketplace: input.marketplace,
+      identity: input.identity,
+      components,
+      evidenceReferences: [decisionEvidence],
+      freshness: preliminaryFreshness,
+    })
+  }
+  if (rows.some((row) => row.source_status !== "AVAILABLE")) {
+    return unknownProjection({
+      limitationCode: "CERTIFIED_COMPONENT_STOCK_SOURCE_UNAVAILABLE",
       supplierLinkageStatus: "CERTIFIED",
       composition: preliminaryComposition,
       marketplace: input.marketplace,
