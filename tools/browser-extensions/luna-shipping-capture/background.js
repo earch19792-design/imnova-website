@@ -7,6 +7,8 @@ const PORT_NAME = "SELLER_OS_LUNA_SHIPPING_CAPTURE_V1"
 const JOB_RESULT = "LUNA_SHIPPING_JOB_RESULT"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
+const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
+const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
 
 let sellerPort = null
 let activeTabId = null
@@ -72,6 +74,21 @@ async function startJob(job) {
 chrome.runtime.onInstalled.addListener(() => {
   if (chrome.runtime.id !== EXACT_EXTENSION_ID) return
   void chrome.tabs.create({ url: `${CONTROL_PAGE}?autostart=1`, active: true })
+})
+
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  if (message?.type !== EXTENSION_PING || !safeSellerSender(sender) ||
+      chrome.runtime.id !== EXACT_EXTENSION_ID) return false
+  if (sellerPort) sellerPort.disconnect()
+  sellerPort = null
+  activeJob = null
+  sendResponse({
+    type: EXTENSION_READY,
+    extensionId: EXACT_EXTENSION_ID,
+    extensionVersion: chrome.runtime.getManifest().version,
+    sellerOsOriginValidated: true,
+  })
+  return false
 })
 
 chrome.runtime.onConnectExternal.addListener((port) => {

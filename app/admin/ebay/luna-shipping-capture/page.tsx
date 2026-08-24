@@ -9,6 +9,8 @@ import type { LunaChromeShippingJobV1 } from
 const PORT_NAME = "SELLER_OS_LUNA_SHIPPING_CAPTURE_V1"
 const LUNA_SHIPPING_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const LUNA_SHIPPING_QUOTE_CAPTURE_VERSION = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
+const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
+const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
 
 type ExternalPort = {
   postMessage: (message: unknown) => void
@@ -19,6 +21,11 @@ type ExternalPort = {
 
 type ChromeRuntime = {
   connect: (extensionId: string, options: { name: string }) => ExternalPort
+  sendMessage: (
+    extensionId: string,
+    message: unknown,
+    callback: (response: any) => void,
+  ) => void
   lastError?: { message?: string }
 }
 
@@ -51,6 +58,44 @@ async function adminPost(action: string, body: Record<string, unknown>) {
   return payload
 }
 
+function pingExtension(runtime: ChromeRuntime) {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false
+    const timeout = window.setTimeout(() => {
+      if (settled) return
+      settled = true
+      reject(new Error("LUNA_SHIPPING_EXTENSION_PING_TIMEOUT"))
+    }, 5_000)
+    const finish = (error?: Error) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timeout)
+      if (error) reject(error)
+      else resolve()
+    }
+    try {
+      runtime.sendMessage(LUNA_SHIPPING_EXTENSION_ID, {
+        type: EXTENSION_PING,
+      }, (response) => {
+        const lastError = window.chrome?.runtime?.lastError?.message
+        if (lastError) {
+          finish(new Error("LUNA_SHIPPING_EXTENSION_DISCONNECTED"))
+          return
+        }
+        if (response?.type !== EXTENSION_READY ||
+            response?.extensionId !== LUNA_SHIPPING_EXTENSION_ID ||
+            response?.sellerOsOriginValidated !== true) {
+          finish(new Error("LUNA_SHIPPING_EXTENSION_HANDSHAKE_INVALID"))
+          return
+        }
+        finish()
+      })
+    } catch {
+      finish(new Error("LUNA_SHIPPING_EXTENSION_DISCONNECTED"))
+    }
+  })
+}
+
 export default function LunaShippingCapturePage() {
   const [status, setStatus] = useState("CONNECTING_EXTENSION")
   const [error, setError] = useState("")
@@ -68,9 +113,13 @@ export default function LunaShippingCapturePage() {
         : "LUNA_SHIPPING_CAPTURE_FAILED")
     }
     const start = async () => {
-      if (!window.chrome?.runtime?.connect) {
+      if (!window.chrome?.runtime?.connect ||
+          !window.chrome.runtime.sendMessage) {
         throw new Error("LUNA_SHIPPING_EXTENSION_NOT_INSTALLED")
       }
+      setStatus("PINGING_EXTENSION")
+      await pingExtension(window.chrome.runtime)
+      setStatus("EXTENSION_CONNECTED")
       const payload = await adminPost("resolve_jobs", {})
       const jobs = Array.isArray(payload.jobs) ? payload.jobs : []
       if (!jobs.length || jobs.some((job: any) =>
