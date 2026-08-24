@@ -2,6 +2,8 @@
 
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const JOB_RESULT = "LUNA_SHIPPING_JOB_RESULT"
+const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
+const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
 const ACQUISITION_METHOD = "NORMAL_CHROME_EXTENSION_VISIBLE_DOM"
 const MAX_ATTEMPTS_PER_STEP = 2
 const MAXIMUM_PRODUCT_JSON_BYTES = 256_000
@@ -96,6 +98,26 @@ function validateJob(value) {
   return jobValidationReason(value) === null ? value : null
 }
 
+function resumeJob(job) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(
+      "SERVICE_WORKER_JOB_STATE_NOT_RECOVERED")), 5_000)
+    chrome.runtime.sendMessage({ type: JOB_RESUME, job }, (response) => {
+      clearTimeout(timeout)
+      if (response?.accepted === true &&
+          response.captureSessionId === job.captureSessionId) resolve()
+      else reject(new Error(typeof response?.error === "string"
+        ? response.error : "SERVICE_WORKER_JOB_STATE_NOT_RECOVERED"))
+    })
+  })
+}
+
+function progress(job, state) {
+  chrome.runtime.sendMessage({ type: JOB_PROGRESS, state,
+    captureSessionId: job.captureSessionId,
+    candidateId: job.identity.candidateId })
+}
+
 function send(success, job, value) {
   const capture = success ? value : {
     captureSessionId: job.captureSessionId,
@@ -178,6 +200,52 @@ async function exactProduct(job) {
     throw new Error("LUNA_EXACT_PRODUCT_IDENTITY_MISMATCH")
   }
   return { product, variant }
+}
+
+async function productPageReady() {
+  await retry(async () => {
+    if (document.readyState === "loading" || !document.body) {
+      throw new Error("PRODUCT_PAGE_NOT_READY")
+    }
+    return true
+  })
+}
+
+function visibleAddToCartControl(job) {
+  const controls = [...document.querySelectorAll([
+    'form[action*="/cart/add"] button[type="submit"]',
+    'form[action*="/cart/add"] input[type="submit"]',
+    'button[name="add"]', '[data-add-to-cart]', '.product-form__submit',
+  ].join(","))]
+  const control = controls.find((element) => isVisible(element) &&
+    /add to cart|add to bag|agregar al carrito/i.test(
+      `${element.textContent ?? ""} ${element.value ?? ""}`))
+  if (!control) throw new Error("ADD_TO_CART_SELECTOR_NOT_FOUND")
+  if (control.disabled || control.getAttribute("aria-disabled") === "true") {
+    throw new Error("ADD_TO_CART_DISABLED")
+  }
+  const form = control.form ?? control.closest("form")
+  const variantField = form?.querySelector('[name="id"]')
+  if (!form || !variantField) {
+    throw new Error("ADD_TO_CART_SELECTOR_NOT_FOUND")
+  }
+  variantField.value = job.identity.lunaVariantId
+  variantField.dispatchEvent(new Event("input", { bubbles: true }))
+  variantField.dispatchEvent(new Event("change", { bubbles: true }))
+  if (String(variantField.value) !== job.identity.lunaVariantId) {
+    throw new Error("LUNA_EXACT_PRODUCT_IDENTITY_MISMATCH")
+  }
+  return control
+}
+
+function exactCartMatch(cart, job) {
+  const items = Array.isArray(cart?.items) ? cart.items : []
+  return items.length === 1 &&
+    String(items[0]?.product_id ?? "") === job.identity.lunaProductId &&
+    String(items[0]?.variant_id ?? items[0]?.id ?? "") ===
+      job.identity.lunaVariantId &&
+    String(items[0]?.sku ?? "") === job.identity.supplierSku &&
+    Number(items[0]?.quantity) === job.identity.quantity
 }
 
 function cartSnapshot(cart) {
@@ -313,8 +381,11 @@ async function digest(value) {
 }
 
 async function run(job) {
+  progress(job, "PRODUCT_PAGE_OPENED")
+  await productPageReady()
   if (!authenticatedVisibleDom()) throw new Error("LUNA_NORMAL_CHROME_AUTH_UNPROVEN")
   await retry(() => exactProduct(job))
+  progress(job, "PRODUCT_IDENTITY_VERIFIED")
   const original = cartSnapshot(await retry(() => request("/cart.js")))
   let cartTouched = false
   let capture = null
@@ -323,16 +394,23 @@ async function run(job) {
   try {
     await retry(() => request("/cart/clear.js", { method: "POST", body: {} }))
     cartTouched = true
-    const added = await retry(() => request("/cart/add.js", { method: "POST",
-      body: { id: job.identity.lunaVariantId, quantity: job.identity.quantity } }))
-    const exact = String(added?.product_id ?? "") === job.identity.lunaProductId &&
-      String(added?.variant_id ?? added?.id ?? "") === job.identity.lunaVariantId &&
-      String(added?.sku ?? "") === job.identity.supplierSku &&
-      Number(added?.quantity) === job.identity.quantity
-    if (!exact) throw new Error("LUNA_EXACT_CART_IDENTITY_MISMATCH")
+    const addToCart = await retry(() => visibleAddToCartControl(job))
+    addToCart.click()
+    progress(job, "ADD_TO_CART_DISPATCHED")
+    const confirmedCart = await retry(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 750))
+      const cart = await request("/cart.js")
+      if (!exactCartMatch(cart, job)) {
+        throw new Error("LUNA_EXACT_CART_IDENTITY_MISMATCH")
+      }
+      return cart
+    })
+    progress(job, "CART_CONFIRMED")
+    const added = confirmedCart.items[0]
     const minor = Number(added?.final_line_price ?? added?.line_price)
     if (!Number.isFinite(minor) || minor < 0) throw new Error("LUNA_CART_SUBTOTAL_UNPROVEN")
     const subtotalUsd = Math.round(minor) / 100
+    progress(job, "SHIPPING_CAPTURE_STARTED")
     const visible = await visibleShipping(job, subtotalUsd)
     const observedAt = new Date().toISOString()
     const evidenceInput = {
@@ -381,8 +459,8 @@ async function run(job) {
 const decoded = decodeJob()
 const job = validateJob(decoded)
 if (job) {
-  void run(job).then(
-    (capture) => send(true, job, capture),
+  void resumeJob(job).then(() => run(job)).then(
+    (capture) => { progress(job, "RESULT_POSTED"); send(true, job, capture) },
     (error) => send(false, job, error instanceof Error
       ? error.message : "LUNA_SHIPPING_JOB_FAILED"),
   )

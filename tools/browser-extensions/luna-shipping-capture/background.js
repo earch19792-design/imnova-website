@@ -9,6 +9,8 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
+const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
+const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
 
 let sellerPort = null
 let activeTabId = null
@@ -100,6 +102,12 @@ function safeJob(value) {
   return jobValidationReason(value) === null ? value : null
 }
 
+function sameJob(left, right) {
+  return left?.captureSessionId === right?.captureSessionId &&
+    left?.nonce === right?.nonce &&
+    left?.identity?.candidateId === right?.identity?.candidateId
+}
+
 function encodeJob(job) {
   const bytes = new TextEncoder().encode(JSON.stringify(job))
   let binary = ""
@@ -165,7 +173,31 @@ chrome.runtime.onConnectExternal.addListener((port) => {
   })
 })
 
-chrome.runtime.onMessage.addListener((message, sender) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === JOB_RESUME) {
+    const invalidReason = jobValidationReason(message.job)
+    if (invalidReason || !Number.isInteger(sender.tab?.id) ||
+        (activeJob && !sameJob(activeJob, message.job))) {
+      sendResponse({ accepted: false,
+        error: invalidReason ?? "SERVICE_WORKER_JOB_STATE_NOT_RECOVERED" })
+      return false
+    }
+    activeJob = message.job
+    activeTabId = sender.tab.id
+    sendResponse({ accepted: true, captureSessionId: activeJob.captureSessionId })
+    return false
+  }
+  if (message?.type === JOB_PROGRESS && sellerPort && activeJob &&
+      sender.tab?.id === activeTabId &&
+      message.captureSessionId === activeJob.captureSessionId &&
+      message.candidateId === activeJob.identity.candidateId &&
+      new Set(["PRODUCT_PAGE_OPENED", "PRODUCT_IDENTITY_VERIFIED",
+        "ADD_TO_CART_DISPATCHED", "CART_CONFIRMED",
+        "SHIPPING_CAPTURE_STARTED", "RESULT_POSTED"]).has(message.state)) {
+    sellerPort.postMessage({ type: JOB_PROGRESS, state: message.state,
+      candidateId: activeJob.identity.candidateId })
+    return false
+  }
   if (message?.type !== JOB_RESULT || !sellerPort ||
       sender.tab?.id !== activeTabId || !activeJob) return false
   const capture = message.capture && typeof message.capture === "object"

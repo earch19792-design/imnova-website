@@ -181,6 +181,17 @@ export default function LunaShippingCapturePage() {
       setStatus("EXTENSION_CONNECTED")
       port = runtime.connect(EXTENSION_ID, { name: PORT_NAME })
       port.onMessage.addListener((message) => {
+        if (!active) return
+        if (message?.type === "LUNA_SHIPPING_JOB_PROGRESS") {
+          const allowed = new Set(["PRODUCT_PAGE_OPENED",
+            "PRODUCT_IDENTITY_VERIFIED", "ADD_TO_CART_DISPATCHED",
+            "CART_CONFIRMED", "SHIPPING_CAPTURE_STARTED", "RESULT_POSTED"])
+          if (allowed.has(message.state) &&
+              message.candidateId === jobs[index]?.identity.candidateId) {
+            setStatus(message.state)
+          }
+          return
+        }
         if (!active || message?.type !== "LUNA_SHIPPING_JOB_RESULT") return
         const job = jobs[index]
         if (!job || message.capture?.candidateId !== job.identity.candidateId) {
@@ -192,7 +203,7 @@ export default function LunaShippingCapturePage() {
             ? message.error : "LUNA_SHIPPING_EXTENSION_JOB_FAILED"))
           return
         }
-        setStatus("RESULT_RECEIVED")
+        setStatus("RESULT_POSTED")
         const capture = {
           candidateId: message.capture.candidateId,
           lunaProductId: message.capture.lunaProductId,
