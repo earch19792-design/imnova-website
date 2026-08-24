@@ -127,11 +127,16 @@ export function preflightCertifiedOosExecutionV1(input: Readonly<{
 }>): CertifiedOosExecutionPreflightV1 {
   const targetIdentityValid = safeItemId(input.targetItemId) &&
     safeSku(input.targetSku)
-  const listing = targetIdentityValid
+  const itemListing = targetIdentityValid
     ? input.monitor.listings.find((candidate) =>
         candidate.identity.itemId === input.targetItemId) ?? null
     : null
-  const exactIdentity = listing?.identity.sku === input.targetSku
+  const listing = targetIdentityValid
+    ? input.monitor.listings.find((candidate) =>
+        candidate.identity.itemId === input.targetItemId &&
+        candidate.identity.sku === input.targetSku) ?? null
+    : null
+  const exactIdentity = listing !== null
   const source = stockSource(listing)
   const safeCapacity = listing?.composition.bundleCapacity.value ?? null
   const explicitAuthoritativeZero =
@@ -160,12 +165,9 @@ export function preflightCertifiedOosExecutionV1(input: Readonly<{
   if (!targetIdentityValid) blockers.push(
     "CERTIFIED_OOS_TARGET_IDENTITY_INVALID",
   )
-  if (targetIdentityValid && !listing) blockers.push(
-    "CERTIFIED_OOS_TARGET_NOT_FOUND",
-  )
-  if (listing && !exactIdentity) blockers.push(
-    "CERTIFIED_OOS_TARGET_IDENTITY_MISMATCH",
-  )
+  if (targetIdentityValid && !listing) blockers.push(itemListing
+    ? "CERTIFIED_OOS_TARGET_IDENTITY_MISMATCH"
+    : "CERTIFIED_OOS_TARGET_NOT_FOUND")
 
   if (listing && ebayState !== "LIVE_ACTIVE") {
     return Object.freeze({
