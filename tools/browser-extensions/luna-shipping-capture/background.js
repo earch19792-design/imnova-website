@@ -13,11 +13,35 @@ const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
 const JOB_RUNTIME_FAILURE = "LUNA_SHIPPING_JOB_RUNTIME_FAILURE"
+const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
+const RESUME_ACTIVE_JOB = "RESUME_ACTIVE_LUNA_SHIPPING_JOB"
+const CART_PHASE = "AWAITING_CART_CONFIRMATION"
+const RECONNECT_GRACE_MS = 20_000
 
 let sellerPort = null
 let activeTabId = null
 let activeJob = null
 let lastRuntimeState = null
+let activeJobPhase = null
+let originalCartSnapshot = null
+let disconnectCleanupTimer = null
+
+function clearActiveJob() {
+  activeJob = null
+  activeJobPhase = null
+  originalCartSnapshot = null
+  lastRuntimeState = null
+}
+
+function safeCartSnapshot(value) {
+  if (!Array.isArray(value) || value.length > 50) return null
+  const rows = value.map((entry) => ({
+    id: String(entry?.id ?? ""), quantity: Number(entry?.quantity),
+  }))
+  return rows.every((entry) => /^\d{8,24}$/.test(entry.id) &&
+    Number.isInteger(entry.quantity) && entry.quantity >= 1 &&
+    entry.quantity <= 1_000) ? rows : null
+}
 
 function safeSellerSender(sender) {
   try {
@@ -142,9 +166,14 @@ function recoverActiveJob(sender) {
   const expected = exactLunaUrl(activeJob.identity.canonicalProductUrl)
   let actual = null
   try { actual = new URL(sender.url ?? "") } catch { return null }
-  if (!expected || actual.protocol !== "https:" ||
-      !new Set(["lunaportex.com", "www.lunaportex.com"]).has(actual.hostname) ||
-      actual.pathname.replace(/\/$/, "") !== expected.pathname.replace(/\/$/, "")) return null
+  const hostAllowed = new Set(["lunaportex.com", "www.lunaportex.com"])
+    .has(actual.hostname)
+  const productPath = expected && actual.pathname.replace(/\/$/, "") ===
+    expected.pathname.replace(/\/$/, "")
+  const cartPath = activeJobPhase === CART_PHASE &&
+    actual.pathname.replace(/\/$/, "") === "/cart"
+  if (!expected || actual.protocol !== "https:" || !hostAllowed ||
+      (!productPath && !cartPath)) return null
   activeTabId = sender.tab.id
   return activeJob
 }
@@ -154,11 +183,15 @@ function safeRuntimeReason(value) {
     ? value : "LUNA_SHIPPING_RUNTIME_FAILURE"
 }
 
-function emitProgress(state) {
+function emitProgress(state, details = {}) {
   if (!sellerPort || !activeJob) return
   lastRuntimeState = state
   sellerPort.postMessage({ type: JOB_PROGRESS, state,
-    candidateId: activeJob.identity.candidateId })
+    candidateId: activeJob.identity.candidateId,
+    ...(Number.isFinite(details.cartSubtotalUsd) &&
+      details.cartSubtotalUsd >= 0 && details.cartSubtotalUsd <= 100_000
+      ? { cartSubtotalUsd: Math.round(details.cartSubtotalUsd * 100) / 100 }
+      : {}) })
 }
 
 async function startJob(job) {
@@ -168,6 +201,8 @@ async function startJob(job) {
   const url = exact && exactLunaUrl(exact.identity.canonicalProductUrl)
   if (!exact || !url) throw new Error("JOB_IDENTITY_MISMATCH:identity.canonicalProductUrl")
   activeJob = exact
+  activeJobPhase = "PRODUCT_PAGE"
+  originalCartSnapshot = null
   lastRuntimeState = "CANARY_DISPATCHED"
   url.hash = `seller-os-luna-shipping-v1=${encodeJob(exact)}`
   if (activeTabId === null) {
@@ -187,10 +222,6 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
   if (message?.type !== EXTENSION_PING || !safeSellerSender(sender) ||
       chrome.runtime.id !== EXACT_EXTENSION_ID) return false
-  if (sellerPort) sellerPort.disconnect()
-  sellerPort = null
-  activeJob = null
-  lastRuntimeState = null
   sendResponse({
     type: EXTENSION_READY,
     extensionId: EXACT_EXTENSION_ID,
@@ -205,19 +236,40 @@ chrome.runtime.onConnectExternal.addListener((port) => {
     port.disconnect()
     return
   }
+  if (disconnectCleanupTimer) {
+    clearTimeout(disconnectCleanupTimer)
+    disconnectCleanupTimer = null
+  }
   sellerPort = port
   port.onMessage.addListener((message) => {
-    if (message?.type !== "START_SHIPPING_JOB") return
-    void startJob(message.job).catch((error) => port.postMessage({
-      type: JOB_RESULT, success: false,
-      error: error instanceof Error ? error.message : "LUNA_SHIPPING_JOB_FAILED",
-      capture: { candidateId: message.job?.identity?.candidateId ?? null },
-    }))
+    if (message?.type === "START_SHIPPING_JOB") {
+      void startJob(message.job).catch((error) => port.postMessage({
+        type: JOB_RESULT, success: false,
+        error: error instanceof Error ? error.message : "LUNA_SHIPPING_JOB_FAILED",
+        capture: { candidateId: message.job?.identity?.candidateId ?? null },
+      }))
+      return
+    }
+    if (message?.type !== RESUME_ACTIVE_JOB) return
+    const invalidReason = jobValidationReason(message.job)
+    if (invalidReason || (activeJob && !sameJob(activeJob, message.job))) {
+      port.postMessage({ type: JOB_RESULT, success: false,
+        error: invalidReason ?? "SERVICE_WORKER_JOB_STATE_NOT_RECOVERED",
+        capture: { candidateId: message.job?.identity?.candidateId ?? null } })
+      return
+    }
+    activeJob = message.job
+    activeJobPhase = message.phase === CART_PHASE ? CART_PHASE : "PRODUCT_PAGE"
+    emitProgress("BRIDGE_RECONNECTED")
   })
   port.onDisconnect.addListener(() => {
     if (sellerPort !== port) return
     sellerPort = null
-    activeJob = null
+    if (!activeJob) return
+    disconnectCleanupTimer = setTimeout(() => {
+      if (!sellerPort) clearActiveJob()
+      disconnectCleanupTimer = null
+    }, RECONNECT_GRACE_MS)
   })
 })
 
@@ -230,7 +282,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false
     }
     emitProgress("ACTIVE_JOB_REQUESTED")
-    sendResponse({ accepted: true, job: recovered })
+    sendResponse({ accepted: true, job: recovered, phase: activeJobPhase,
+      originalCartSnapshot })
+    return false
+  }
+  if (message?.type === SET_ACTIVE_JOB_PHASE) {
+    const recovered = recoverActiveJob(sender)
+    const snapshot = safeCartSnapshot(message.originalCartSnapshot)
+    if (!recovered || message.phase !== CART_PHASE || !snapshot ||
+        message.captureSessionId !== activeJob.captureSessionId) {
+      sendResponse({ accepted: false,
+        error: "ACTIVE_JOB_CART_CONTINUITY_UNPROVEN" })
+      return false
+    }
+    activeJobPhase = CART_PHASE
+    originalCartSnapshot = snapshot
+    emitProgress(CART_PHASE)
+    sendResponse({ accepted: true, phase: activeJobPhase })
     return false
   }
   if (message?.type === JOB_RESUME) {
@@ -257,9 +325,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         "AUTH_NOT_YET_REQUIRED", "AUTHENTICATED_OPERATION_CONFIRMED",
         "PRODUCT_IDENTITY_CHECK_STARTED", "PRODUCT_IDENTITY_VERIFIED",
         "ADD_TO_CART_ELEMENT_FOUND", "ADD_TO_CART_CLICK_DISPATCHED",
-        "CART_MUTATION_CONFIRMED", "SHIPPING_CAPTURE_STARTED",
-        "RESULT_POSTED"]).has(message.state)) {
-    emitProgress(message.state)
+        "AWAITING_CART_CONFIRMATION", "ACTIVE_JOB_RECOVERED_ON_CART",
+        "CART_PAGE_DETECTED", "CART_EXPECTED_PRODUCT_FOUND",
+        "CART_EXPECTED_QUANTITY_FOUND", "CART_MUTATION_CONFIRMED",
+        "BRIDGE_RECONNECTED", "SHIPPING_FLOW_RESUMED",
+        "SHIPPING_CAPTURE_STARTED", "RESULT_POSTED"]).has(message.state)) {
+    emitProgress(message.state, { cartSubtotalUsd: message.cartSubtotalUsd })
     return false
   }
   if (message?.type === JOB_RUNTIME_FAILURE && recoverActiveJob(sender)) {
@@ -281,15 +352,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       : { error: typeof message.error === "string"
         ? safeRuntimeReason(message.error) : "LUNA_SHIPPING_JOB_FAILED",
         lastRuntimeState, capture }) })
-  activeJob = null
-  lastRuntimeState = null
+  clearActiveJob()
   return false
 })
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === activeTabId) {
     activeTabId = null
-    activeJob = null
-    lastRuntimeState = null
+    clearActiveJob()
   }
 })

@@ -54,7 +54,14 @@ type RuntimeTrace = {
   productIdentityVerified: boolean
   addToCartElementFound: boolean
   addToCartClickDispatched: boolean
+  activeJobRecoveredOnCart: boolean
+  cartPageDetected: boolean
+  cartExpectedProductFound: boolean
+  cartExpectedQuantityFound: boolean
+  cartSubtotalUsd: number | null
   cartMutationConfirmed: boolean
+  bridgeReconnected: boolean
+  shippingFlowResumed: boolean
   authenticatedOperationConfirmed: boolean
 }
 
@@ -64,7 +71,14 @@ const EMPTY_RUNTIME_TRACE: RuntimeTrace = Object.freeze({
   productIdentityVerified: false,
   addToCartElementFound: false,
   addToCartClickDispatched: false,
+  activeJobRecoveredOnCart: false,
+  cartPageDetected: false,
+  cartExpectedProductFound: false,
+  cartExpectedQuantityFound: false,
+  cartSubtotalUsd: null,
   cartMutationConfirmed: false,
+  bridgeReconnected: false,
+  shippingFlowResumed: false,
   authenticatedOperationConfirmed: false,
 })
 
@@ -140,6 +154,8 @@ export default function LunaShippingCapturePage() {
     let busy = false
     let extensionReady = false
     let port: ExternalPort | null = null
+    let lastProgressState = "NOT_STARTED"
+    let reconnecting = false
 
     const fail = (value: unknown) => {
       if (!active) return
@@ -156,6 +172,7 @@ export default function LunaShippingCapturePage() {
       setStatus(mode === "CANARY" && index === 0
         ? "CANARY_DISPATCHED" : "CAPTURING")
       setLastRuntimeState("CANARY_DISPATCHED")
+      lastProgressState = "CANARY_DISPATCHED"
       port.postMessage({ type: "START_SHIPPING_JOB", job })
       window.setTimeout(() => {
         if (active && busy) setStatus("CAPTURING")
@@ -193,19 +210,7 @@ export default function LunaShippingCapturePage() {
     }
     triggerRef.current = beginCanary
 
-    const start = async () => {
-      const runtime = window.chrome?.runtime
-      if (!runtime?.connect || !runtime.sendMessage) {
-        throw new Error("LUNA_SHIPPING_EXTENSION_NOT_INSTALLED")
-      }
-      setStatus("PINGING_EXTENSION")
-      await pingExtension(runtime)
-      if (!active) return
-      extensionReady = true
-      setConnected(true)
-      setStatus("EXTENSION_CONNECTED")
-      port = runtime.connect(EXTENSION_ID, { name: PORT_NAME })
-      port.onMessage.addListener((message) => {
+    const handlePortMessage = (message: any) => {
         if (!active) return
         if (message?.type === "LUNA_SHIPPING_JOB_PROGRESS") {
           const allowed = new Set(["CONTENT_SCRIPT_LOADED",
@@ -214,12 +219,17 @@ export default function LunaShippingCapturePage() {
             "AUTH_EXPLICITLY_FAILED", "AUTH_CHALLENGE_PRESENT",
             "AUTH_NOT_YET_REQUIRED", "AUTHENTICATED_OPERATION_CONFIRMED",
             "PRODUCT_IDENTITY_VERIFIED", "ADD_TO_CART_ELEMENT_FOUND",
-            "ADD_TO_CART_CLICK_DISPATCHED", "CART_MUTATION_CONFIRMED",
-            "SHIPPING_CAPTURE_STARTED", "RESULT_POSTED"])
+            "AWAITING_CART_CONFIRMATION", "ADD_TO_CART_CLICK_DISPATCHED",
+            "ACTIVE_JOB_RECOVERED_ON_CART", "CART_PAGE_DETECTED",
+            "CART_EXPECTED_PRODUCT_FOUND", "CART_EXPECTED_QUANTITY_FOUND",
+            "CART_MUTATION_CONFIRMED", "BRIDGE_RECONNECTED",
+            "SHIPPING_FLOW_RESUMED", "SHIPPING_CAPTURE_STARTED",
+            "RESULT_POSTED"])
           if (allowed.has(message.state) &&
               message.candidateId === jobs[index]?.identity.candidateId) {
             setStatus(message.state)
             setLastRuntimeState(message.state)
+            lastProgressState = message.state
             setRuntimeTrace((current) => ({ ...current,
               ...(message.state.startsWith("AUTH_")
                 ? { authClassification: message.state } : {}),
@@ -232,8 +242,22 @@ export default function LunaShippingCapturePage() {
                 ? { addToCartElementFound: true } : {}),
               ...(message.state === "ADD_TO_CART_CLICK_DISPATCHED"
                 ? { addToCartClickDispatched: true } : {}),
+              ...(message.state === "ACTIVE_JOB_RECOVERED_ON_CART"
+                ? { activeJobRecoveredOnCart: true } : {}),
+              ...(message.state === "CART_PAGE_DETECTED"
+                ? { cartPageDetected: true } : {}),
+              ...(message.state === "CART_EXPECTED_PRODUCT_FOUND"
+                ? { cartExpectedProductFound: true } : {}),
+              ...(message.state === "CART_EXPECTED_QUANTITY_FOUND"
+                ? { cartExpectedQuantityFound: true } : {}),
+              ...(Number.isFinite(message.cartSubtotalUsd)
+                ? { cartSubtotalUsd: Number(message.cartSubtotalUsd) } : {}),
               ...(message.state === "CART_MUTATION_CONFIRMED"
                 ? { cartMutationConfirmed: true } : {}),
+              ...(message.state === "BRIDGE_RECONNECTED"
+                ? { bridgeReconnected: true } : {}),
+              ...(message.state === "SHIPPING_FLOW_RESUMED"
+                ? { shippingFlowResumed: true } : {}),
               ...(message.state === "AUTHENTICATED_OPERATION_CONFIRMED"
                 ? { authenticatedOperationConfirmed: true } : {}),
             }))
@@ -300,12 +324,63 @@ export default function LunaShippingCapturePage() {
             }
             await loadJobs(undefined, "AUTO")
           }).catch(fail)
-      })
-      port.onDisconnect.addListener(() => {
-        if (active && busy) {
-          fail(new Error("LUNA_SHIPPING_EXTENSION_DISCONNECTED"))
-        }
-      })
+    }
+
+    const start = async () => {
+      const runtime = window.chrome?.runtime
+      if (!runtime?.connect || !runtime.sendMessage) {
+        throw new Error("LUNA_SHIPPING_EXTENSION_NOT_INSTALLED")
+      }
+      const awaitingCart = () => new Set([
+        "AWAITING_CART_CONFIRMATION", "ADD_TO_CART_CLICK_DISPATCHED",
+        "ACTIVE_JOB_RECOVERED_ON_CART", "CART_PAGE_DETECTED",
+        "CART_EXPECTED_PRODUCT_FOUND", "CART_EXPECTED_QUANTITY_FOUND",
+        "CART_MUTATION_CONFIRMED", "SHIPPING_FLOW_RESUMED",
+        "SHIPPING_CAPTURE_STARTED",
+      ]).has(lastProgressState)
+      const attachPort = (nextPort: ExternalPort) => {
+        port = nextPort
+        nextPort.onMessage.addListener(handlePortMessage)
+        nextPort.onDisconnect.addListener(() => {
+          if (!active || port !== nextPort) return
+          port = null
+          setConnected(false)
+          if (!busy || reconnecting) return
+          reconnecting = true
+          void (async () => {
+            let lastError: unknown = new Error(
+              "LUNA_SHIPPING_EXTENSION_DISCONNECTED")
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+              await new Promise((resolve) => window.setTimeout(resolve, 500))
+              try {
+                await pingExtension(runtime)
+                if (!active) return
+                const resumedPort = runtime.connect(EXTENSION_ID,
+                  { name: PORT_NAME })
+                attachPort(resumedPort)
+                resumedPort.postMessage({ type: "RESUME_ACTIVE_LUNA_SHIPPING_JOB",
+                  job: jobs[index], phase: awaitingCart()
+                    ? "AWAITING_CART_CONFIRMATION" : "PRODUCT_PAGE" })
+                reconnecting = false
+                setConnected(true)
+                setStatus("BRIDGE_RECONNECTED")
+                setRuntimeTrace((current) => ({ ...current,
+                  bridgeReconnected: true }))
+                return
+              } catch (error) { lastError = error }
+            }
+            reconnecting = false
+            fail(lastError)
+          })()
+        })
+      }
+      setStatus("PINGING_EXTENSION")
+      await pingExtension(runtime)
+      if (!active) return
+      extensionReady = true
+      setConnected(true)
+      setStatus("EXTENSION_CONNECTED")
+      attachPort(runtime.connect(EXTENSION_ID, { name: PORT_NAME }))
       const params = new URLSearchParams(window.location.search)
       if (params.get("runShipping") === "1") beginCanary()
     }
@@ -340,7 +415,14 @@ export default function LunaShippingCapturePage() {
             `PRODUCT_IDENTITY_VERIFIED=${runtimeTrace.productIdentityVerified}\n` +
             `ADD_TO_CART_ELEMENT_FOUND=${runtimeTrace.addToCartElementFound}\n` +
             `ADD_TO_CART_CLICK_DISPATCHED=${runtimeTrace.addToCartClickDispatched}\n` +
+            `ACTIVE_JOB_RECOVERED_ON_CART=${runtimeTrace.activeJobRecoveredOnCart}\n` +
+            `CART_PAGE_DETECTED=${runtimeTrace.cartPageDetected}\n` +
+            `CART_EXPECTED_PRODUCT_FOUND=${runtimeTrace.cartExpectedProductFound}\n` +
+            `CART_EXPECTED_QUANTITY_FOUND=${runtimeTrace.cartExpectedQuantityFound}\n` +
+            `CART_SUBTOTAL_USD=${runtimeTrace.cartSubtotalUsd ?? "UNAVAILABLE"}\n` +
             `CART_MUTATION_CONFIRMED=${runtimeTrace.cartMutationConfirmed}\n` +
+            `BRIDGE_RECONNECTED=${runtimeTrace.bridgeReconnected}\n` +
+            `SHIPPING_FLOW_RESUMED=${runtimeTrace.shippingFlowResumed}\n` +
             `AUTHENTICATED_OPERATION_CONFIRMED=${runtimeTrace.authenticatedOperationConfirmed}`}
         </code>
         {error && <code className="mt-3 block break-all text-sm text-rose-100">
