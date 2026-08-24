@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      preview_url:
+        description: "Optional one-run Git-associated Preview URL"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -22,7 +27,7 @@ jobs:
     steps:
       - name: Refresh exact Luna stock, cost and availability evidence
         env:
-          PREVIEW_URL: ${{ secrets.EBAY_COMMERCIAL_PREVIEW_URL }}
+          PREVIEW_URL: ${{ inputs.preview_url || secrets.EBAY_COMMERCIAL_PREVIEW_URL }}
           CRON_SECRET: ${{ secrets.EBAY_COMMERCIAL_CRON_SECRET }}
           VERCEL_BYPASS_SECRET: ${{ secrets.EBAY_COMMERCIAL_VERCEL_BYPASS_SECRET }}
         run: |
