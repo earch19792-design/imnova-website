@@ -153,6 +153,12 @@ test("route and bundle surface regress downward", () => {
   const lunaSupplierLinkageReviewApi = exists(
     "app/api/admin/ebay/luna-supplier-linkage-review/route.ts",
   )
+  const lunaShippingCapturePage = exists(
+    "app/admin/ebay/luna-shipping-capture/page.tsx",
+  )
+  const lunaShippingCaptureApi = exists(
+    "app/api/admin/ebay/luna-shipping-capture/route.ts",
+  )
   assert.equal(
     temporarySellerOauthPage,
     temporarySellerOauthApi,
@@ -173,6 +179,11 @@ test("route and bundle surface regress downward", () => {
     lunaSupplierLinkageReviewApi,
     "Luna supplier-linkage review UI/API must be added and retired together",
   )
+  assert.equal(
+    lunaShippingCapturePage,
+    lunaShippingCaptureApi,
+    "Luna shipping capture UI/API must be added and retired together",
+  )
   // The read-only monitor, Market Research, Commercial Operational Readiness,
   // Decisions, Experiments, Learning, Luna Capture, Copilot, and Strategic
   // Review workspaces add nine intentional pages. Their protected surfaces
@@ -183,7 +194,7 @@ test("route and bundle surface regress downward", () => {
   assert.ok(
     countNamed("app", "page.tsx") <= 23 + Number(temporarySellerOauthPage) +
       Number(commercialOauthBrowserPage) + Number(lunaProtectedSessionPage) +
-      Number(lunaSupplierLinkageReviewPage),
+      Number(lunaSupplierLinkageReviewPage) + Number(lunaShippingCapturePage),
     "page route count regressed",
   )
   // 68 legacy-era routes -> 65 isolated routes -> one approval-only Seller OS
@@ -207,7 +218,7 @@ test("route and bundle surface regress downward", () => {
   assert.ok(
     countNamed("app/api", "route.ts") <= 90 + Number(temporarySellerOauthApi) +
       Number(commercialOauthBrowserApi) + Number(lunaProtectedSessionApi) +
-      Number(lunaSupplierLinkageReviewApi),
+      Number(lunaSupplierLinkageReviewApi) + Number(lunaShippingCaptureApi),
     "API route count regressed",
   )
   assert.equal(countNamed("app/api/community", "route.ts"), 0)

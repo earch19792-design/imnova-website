@@ -1,0 +1,225 @@
+import { createHash } from "node:crypto"
+
+import { calculateEbayUnitEconomics } from "./ebay-unit-economics"
+
+export const LUNA_SHIPPING_QUOTE_CAPTURE_VERSION =
+  "LUNA_SHIPPING_QUOTE_CAPTURE_V1" as const
+export const LUNA_SHIPPING_EXTENSION_ID =
+  "mhpkojahbbfdgodeaecggpjaplllgclk" as const
+export const LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH = 20
+export const LUNA_SHIPPING_EXTENSION_MAXIMUM_CAPTURE_AGE_MS = 10 * 60 * 1_000
+export const LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE =
+  "NORMAL_CHROME_EXTENSION_VISIBLE_DOM" as const
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const NONCE = /^[A-Za-z0-9_-]{32,128}$/
+const SHA256 = /^sha256:[0-9a-f]{64}$/
+const PRODUCT_ID = /^\d{8,24}$/
+const SAFE_SKU = /^[A-Za-z0-9][A-Za-z0-9._:+/ -]{0,159}$/
+
+export type LunaShippingIdentityV1 = Readonly<{
+  candidateId: string
+  canonicalProductUrl: string
+  lunaProductId: string
+  lunaVariantId: string
+  supplierSku: string
+  quantity: number
+}>
+
+export type LunaShippingDestinationV1 = Readonly<{
+  profileId: string
+  profileDigest: string
+  country: "US"
+  province: string
+  postalCode: string
+}>
+
+export type LunaChromeShippingJobV1 = Readonly<{
+  contractVersion: typeof LUNA_SHIPPING_QUOTE_CAPTURE_VERSION
+  captureSessionId: string
+  nonce: string
+  identity: LunaShippingIdentityV1
+  destination: LunaShippingDestinationV1
+  salePriceUsd: number
+  supplierCostUsd: number
+  productName: string
+}>
+
+export type LunaChromeShippingVisibleCaptureV1 = Readonly<{
+  contractVersion: typeof LUNA_SHIPPING_QUOTE_CAPTURE_VERSION
+  captureSessionId: string
+  nonce: string
+  candidateId: string
+  lunaProductId: string
+  lunaVariantId: string
+  supplierSku: string
+  quantity: number
+  subtotalUsd: number
+  shippingUsd: number
+  totalUsd: number
+  currency: "USD"
+  observedAt: string
+  acquisitionMethod: typeof LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE
+  extensionEvidenceDigest: string
+  normalChromeAuthenticated: true
+  expectedProductIdMatch: true
+  expectedVariantIdMatch: true
+  expectedSupplierSkuMatch: true
+  subtotalPlusShippingReconciles: true
+  cartRestoreProven: true
+  cookieAccess: false
+  credentialAccess: false
+  lunaPurchases: 0
+}>
+
+function money(value: unknown) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100_000) return null
+  return Math.round((parsed + Number.EPSILON) * 100) / 100
+}
+
+function safeProductName(value: unknown) {
+  if (typeof value !== "string") return null
+  const normalized = value.normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim()
+  return normalized.length >= 2 && normalized.length <= 240 ? normalized : null
+}
+
+function canonicalProductUrl(value: string) {
+  let parsed: URL
+  try { parsed = new URL(value) } catch {
+    throw new Error("LUNA_SHIPPING_PRODUCT_URL_INVALID")
+  }
+  if (parsed.protocol !== "https:" ||
+      !new Set(["lunaportex.com", "www.lunaportex.com"]).has(parsed.hostname) ||
+      !/^\/products\/[a-z0-9][a-z0-9-]{1,180}\/?$/.test(parsed.pathname) ||
+      parsed.username || parsed.password || parsed.port) {
+    throw new Error("LUNA_SHIPPING_PRODUCT_URL_INVALID")
+  }
+  parsed.hostname = "www.lunaportex.com"
+  parsed.pathname = parsed.pathname.replace(/\/$/, "")
+  parsed.search = ""
+  parsed.hash = ""
+  return parsed.toString()
+}
+
+function normalizeIdentity(input: LunaShippingIdentityV1) {
+  if (!SHA256.test(input.candidateId) || !PRODUCT_ID.test(input.lunaProductId) ||
+      !PRODUCT_ID.test(input.lunaVariantId) || !SAFE_SKU.test(input.supplierSku) ||
+      !Number.isInteger(input.quantity) || input.quantity < 1 || input.quantity > 20) {
+    throw new Error("LUNA_SHIPPING_IDENTITY_INVALID")
+  }
+  return Object.freeze({ ...input,
+    canonicalProductUrl: canonicalProductUrl(input.canonicalProductUrl) })
+}
+
+export function normalizeLunaChromeShippingDestinationV1(
+  input: LunaShippingDestinationV1,
+) {
+  if (!/^[A-Z0-9_-]{3,80}$/.test(input.profileId) ||
+      !SHA256.test(input.profileDigest) || input.country !== "US" ||
+      !/^[A-Z]{2}$/.test(input.province) ||
+      !/^\d{5}(?:-\d{4})?$/.test(input.postalCode)) {
+    throw new Error("LUNA_SHIPPING_DESTINATION_INVALID")
+  }
+  return Object.freeze({ ...input })
+}
+
+export function normalizeLunaChromeShippingJobV1(
+  input: LunaChromeShippingJobV1,
+) : LunaChromeShippingJobV1 {
+  const identity = normalizeIdentity(input.identity)
+  const destination = normalizeLunaChromeShippingDestinationV1(input.destination)
+  const salePriceUsd = money(input.salePriceUsd)
+  const supplierCostUsd = money(input.supplierCostUsd)
+  const productName = safeProductName(input.productName)
+  if (input.contractVersion !== LUNA_SHIPPING_QUOTE_CAPTURE_VERSION ||
+      !UUID.test(input.captureSessionId) || !NONCE.test(input.nonce) ||
+      salePriceUsd === null || salePriceUsd <= 0 ||
+      supplierCostUsd === null || productName === null) {
+    throw new Error("LUNA_SHIPPING_EXTENSION_JOB_INVALID")
+  }
+  return Object.freeze({ ...input, identity, destination, salePriceUsd,
+    supplierCostUsd, productName })
+}
+
+export function certifyLunaChromeShippingVisibleCaptureV1(input: Readonly<{
+  job: LunaChromeShippingJobV1
+  capture: LunaChromeShippingVisibleCaptureV1
+  now?: number
+}>) {
+  const job = normalizeLunaChromeShippingJobV1(input.job)
+  const capture = input.capture
+  const subtotalUsd = money(capture.subtotalUsd)
+  const shippingUsd = money(capture.shippingUsd)
+  const totalUsd = money(capture.totalUsd)
+  const observedAtMs = Date.parse(capture.observedAt)
+  const now = input.now ?? Date.now()
+  if (capture.contractVersion !== LUNA_SHIPPING_QUOTE_CAPTURE_VERSION ||
+      capture.captureSessionId !== job.captureSessionId ||
+      capture.nonce !== job.nonce ||
+      capture.candidateId !== job.identity.candidateId ||
+      capture.lunaProductId !== job.identity.lunaProductId ||
+      capture.lunaVariantId !== job.identity.lunaVariantId ||
+      capture.supplierSku !== job.identity.supplierSku ||
+      capture.quantity !== job.identity.quantity ||
+      subtotalUsd === null || shippingUsd === null || totalUsd === null ||
+      capture.currency !== "USD" ||
+      capture.acquisitionMethod !== LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE ||
+      !SHA256.test(capture.extensionEvidenceDigest) ||
+      !Number.isFinite(observedAtMs) || observedAtMs > now + 60_000 ||
+      now - observedAtMs > LUNA_SHIPPING_EXTENSION_MAXIMUM_CAPTURE_AGE_MS ||
+      capture.normalChromeAuthenticated !== true ||
+      capture.expectedProductIdMatch !== true ||
+      capture.expectedVariantIdMatch !== true ||
+      capture.expectedSupplierSkuMatch !== true ||
+      capture.subtotalPlusShippingReconciles !== true ||
+      capture.cartRestoreProven !== true || capture.cookieAccess !== false ||
+      capture.credentialAccess !== false || capture.lunaPurchases !== 0 ||
+      Math.round(totalUsd * 100) !==
+        Math.round((subtotalUsd + shippingUsd) * 100)) {
+    throw new Error("LUNA_SHIPPING_EXTENSION_CAPTURE_UNPROVEN")
+  }
+  const quoteInput = {
+    lunaProductId: job.identity.lunaProductId,
+    lunaVariantId: job.identity.lunaVariantId,
+    supplierSku: job.identity.supplierSku,
+    subtotalUsd, shippingAmountUsd: shippingUsd, currency: "USD" as const,
+    destinationProfileDigest: job.destination.profileDigest,
+    acquisitionMethod: LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE,
+    observedAt: capture.observedAt,
+  }
+  const evidenceDigest = `sha256:${createHash("sha256")
+    .update(JSON.stringify(quoteInput)).digest("hex")}`
+  const quote = Object.freeze({
+    status: "AVAILABLE" as const,
+    subtotalUsd, shippingAmountUsd: shippingUsd, currency: "USD" as const,
+    acquisitionMethod: LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE,
+    observedAt: capture.observedAt,
+    evidenceDigest,
+    exactLunaIdentity: true as const,
+    destinationProfileId: job.destination.profileId,
+    destinationProfileDigest: job.destination.profileDigest,
+    noPurchase: true as const, noPayment: true as const,
+  })
+  const economicsResult = calculateEbayUnitEconomics({
+    salePrice: job.salePriceUsd,
+    supplierCost: job.supplierCostUsd,
+  }, { estimatedOutboundShipping: shippingUsd })
+  const economics = Object.freeze({
+    status: economicsResult.ready && economicsResult.passesProfitGate
+      ? "PROVEN_PROFITABLE" as const : "PROVEN_UNPROFITABLE" as const,
+    contributionProfitUsd: economicsResult.estimatedNetProfit,
+    contributionMarginPercent: economicsResult.estimatedNetMarginPercent,
+    passesEconomics: economicsResult.passesProfitGate,
+  })
+  return Object.freeze({
+    captureStatus: "AUTHORITATIVE_LUNA_SHIPPING_AVAILABLE" as const,
+    quote,
+    economics,
+    cookieAccess: false as const,
+    credentialAccess: false as const,
+    lunaPurchases: 0 as const,
+    marketplaceWrites: 0 as const,
+  })
+}
