@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.18" },
+      extensionBuildVersion: "1.0.19" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -1283,7 +1283,7 @@ chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
       const markers = shopPayMarkerSnapshot()
       return markers.shopPayMarkerShipTo &&
         markers.shopPayMarkerShipping && markers.shopPayMarkerSubtotal &&
-        markers.shopPayMarkerTotal && markers.shopPayMarkerPayNow
+        markers.shopPayMarkerShippingAmount && markers.shopPayMarkerTotal
         ? markers : null
     }, "CANONICAL_BINDING_CHECKOUT_SHAPE_UNPROVEN",
     SHOP_PAY_DOM_TIMEOUT_MS).then(async (markers) => {

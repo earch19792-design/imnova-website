@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.18"
+const EXTENSION_BUILD_VERSION = "1.0.19"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -285,7 +285,7 @@ function safeRuntimeReason(value) {
     ? value : "LUNA_SHIPPING_RUNTIME_FAILURE"
 }
 
-function safeDestinationBinding(value) {
+function safeDestinationCandidate(value) {
   return value?.fingerprintVersion === DESTINATION_FINGERPRINT_VERSION &&
     /^sha256:[0-9a-f]{64}$/.test(value?.canonicalDestinationFingerprint ?? "") &&
     value?.countryClass === "US" ? Object.freeze({
@@ -293,6 +293,14 @@ function safeDestinationBinding(value) {
       canonicalDestinationFingerprint: value.canonicalDestinationFingerprint,
       countryClass: "US",
     }) : null
+}
+
+function safeDestinationBinding(value) {
+  const candidate = safeDestinationCandidate(value)
+  const boundAt = typeof value?.boundAt === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.boundAt) &&
+    Number.isFinite(Date.parse(value.boundAt)) ? value.boundAt : null
+  return candidate && boundAt ? Object.freeze({ ...candidate, boundAt }) : null
 }
 
 function readDestinationBinding() {
@@ -377,7 +385,7 @@ async function bindCanonicalDestination(port, existingBinding) {
   const responses = await Promise.all(checkoutTabs.map(async ({ id }) => {
     try {
       const response = await requestDestinationOperationFromTab(id, message)
-      const binding = existingBinding ?? safeDestinationBinding(response)
+      const binding = existingBinding ?? safeDestinationCandidate(response)
       return { response, binding: response?.accepted === true ? binding : null }
     } catch { return { response: null, binding: null } }
   }))
@@ -392,7 +400,8 @@ async function bindCanonicalDestination(port, existingBinding) {
   if (eligible.length > 1) {
     throw new Error("CANONICAL_BINDING_CHECKOUT_TAB_AMBIGUOUS")
   }
-  const binding = eligible[0].binding
+  const binding = existingBinding ?? Object.freeze({ ...eligible[0].binding,
+    boundAt: new Date().toISOString() })
   if (!existingBinding) await writeDestinationBinding(binding)
   const readback = await readDestinationBinding()
   if (!readback ||
@@ -643,6 +652,7 @@ chrome.runtime.onConnectExternal.addListener((port) => {
       void readDestinationBinding().then((binding) => port.postMessage({
         type: CANONICAL_DESTINATION_STATUS,
         canonicalDestinationBound: Boolean(binding),
+        canonicalDestinationMatch: false,
       }))
       return
     }

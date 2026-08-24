@@ -25,6 +25,8 @@ candidatos secuencialmente sin clic por producto.
   automáticamente el fingerprint antes de aceptar la cotización.
 - La existencia del fingerprint persistido es la única autoridad de `BOUND`:
   el primer clic crea el benchmark y las capturas posteriores sólo lo validan.
+- El envelope durable contiene exclusivamente fingerprint, versión, clase de
+  país y `boundAt`; el ACK se emite únicamente después del readback exacto.
 - Sólo se inyecta en `lunaportex.com`, `www.lunaportex.com`, el desvío de
   autenticación `account.lunaportex.com` y el checkout acotado `shop.app`.
 - No lee contraseñas, cookies, tokens, headers de autenticación, localStorage ni
