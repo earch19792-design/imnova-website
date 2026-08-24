@@ -85,6 +85,18 @@ export type EbaySellerOAuthReauthCallEvidence = {
   persisted: false
 }
 
+export type EbaySellerOAuthAnalyticsEndpointHealth = Readonly<{
+  status:
+    | "HEALTHY"
+    | "RATE_LIMITED"
+    | "SERVER_UNAVAILABLE"
+    | "TRANSPORT_DEGRADED"
+    | "ACCESS_DENIED"
+    | "RESPONSE_INVALID"
+    | "REJECTED"
+  httpStatus: number | null
+}>
+
 type CandidateVerificationResult = {
   refreshToken: string
   credentialSource: "NEW_OAUTH_CANDIDATE_ONLY"
@@ -94,6 +106,9 @@ type CandidateVerificationResult = {
     inventoryReadonly: "AVAILABLE"
     analyticsReadonly: "AVAILABLE"
     accountReadonly: "AVAILABLE"
+  }
+  endpointHealth: {
+    analytics: EbaySellerOAuthAnalyticsEndpointHealth
   }
   calls: EbaySellerOAuthReauthCallEvidence[]
   safety: {
@@ -126,6 +141,9 @@ export type EbaySellerInstalledRuntimeCertificationResult = {
     analyticsReadonly: "AVAILABLE"
     accountReadonly: "AVAILABLE"
   }
+  endpointHealth: {
+    analytics: EbaySellerOAuthAnalyticsEndpointHealth
+  }
   calls: EbaySellerOAuthReauthCallEvidence[]
   safety: {
     tokenPersisted: false
@@ -149,6 +167,7 @@ export type EbaySellerInstalledRuntimeCertificationResult = {
 
 type RefreshTokenCapabilityVerification = {
   capabilities: CandidateVerificationResult["capabilities"]
+  endpointHealth: CandidateVerificationResult["endpointHealth"]
   calls: EbaySellerOAuthReauthCallEvidence[]
 }
 
@@ -727,6 +746,7 @@ function exactTokenScopes(payload: JsonRecord) {
       "EBAY_SELLER_OAUTH_REAUTH_SCOPE_RESPONSE_REJECTED",
     )
   }
+  return result
 }
 
 function assertAllowedRequest(input: {
@@ -900,7 +920,7 @@ async function tokenResponse(input: {
       `EBAY_SELLER_OAUTH_REAUTH_${input.operation}_${category}`,
     )
   }
-  exactTokenScopes(payload)
+  const returnedScopes = exactTokenScopes(payload)
   const accessToken = credential(payload.access_token)
   const refreshToken = input.requireRefreshToken
     ? credential(payload.refresh_token)
@@ -913,7 +933,13 @@ async function tokenResponse(input: {
       "EBAY_SELLER_OAUTH_REAUTH_TOKEN_RESPONSE_INVALID",
     )
   }
-  return { accessToken, refreshToken }
+  return {
+    accessToken,
+    refreshToken,
+    exactScopeUnionProven:
+      input.operation === "OAUTH_EXACT_UNION_REFRESH" &&
+      (returnedScopes === true || returnedScopes === null),
+  }
 }
 
 function bearerHeaders(accessToken: string) {
@@ -961,15 +987,21 @@ function hasAuthoritativeAnalyticsScopeFailure(input: {
     /(?:^|[^a-z])insufficient[_ -]scope(?:[^a-z]|$)/.test(value))
 }
 
-async function requireAnalyticsProbeSuccess(response: Response) {
+async function classifyAnalyticsEndpointHealth(
+  response: Response,
+): Promise<EbaySellerOAuthAnalyticsEndpointHealth> {
   if (response.status === 429) {
-    throw new EbaySellerOAuthReauthError(
-      "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_ENDPOINT_RATE_LIMITED",
-    )
+    return Object.freeze({ status: "RATE_LIMITED", httpStatus: 429 })
   }
   if (response.status >= 500) {
+    return Object.freeze({
+      status: "SERVER_UNAVAILABLE",
+      httpStatus: response.status,
+    })
+  }
+  if (hasAuthoritativeAnalyticsScopeFailure({ response, payload: {} })) {
     throw new EbaySellerOAuthReauthError(
-      "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_ENDPOINT_SERVER_UNAVAILABLE",
+      "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_SCOPE_UNAVAILABLE",
     )
   }
   let payload: JsonRecord = {}
@@ -980,24 +1012,38 @@ async function requireAnalyticsProbeSuccess(response: Response) {
     }
     payload = record(parsed)
   } catch {
-    throw new EbaySellerOAuthReauthError(
-      "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_ENDPOINT_RESPONSE_INVALID",
-    )
+    return Object.freeze({
+      status: "RESPONSE_INVALID",
+      httpStatus: response.status,
+    })
   }
-  if (response.ok) return
   if (hasAuthoritativeAnalyticsScopeFailure({ response, payload })) {
     throw new EbaySellerOAuthReauthError(
       "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_SCOPE_UNAVAILABLE",
     )
   }
+  if (response.ok) {
+    return Object.freeze({ status: "HEALTHY", httpStatus: response.status })
+  }
   if (response.status === 401 || response.status === 403) {
+    return Object.freeze({
+      status: "ACCESS_DENIED",
+      httpStatus: response.status,
+    })
+  }
+  return Object.freeze({ status: "REJECTED", httpStatus: response.status })
+}
+
+export function assertEbaySellerOAuthAnalyticsHandoffPolicy(input: {
+  exactScopeUnionProven: boolean
+  endpointHealth: EbaySellerOAuthAnalyticsEndpointHealth
+}) {
+  if (!input.exactScopeUnionProven) {
     throw new EbaySellerOAuthReauthError(
-      "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_ENDPOINT_ACCESS_DENIED",
+      "EBAY_SELLER_OAUTH_REAUTH_SCOPE_GRANT_UNPROVEN",
     )
   }
-  throw new EbaySellerOAuthReauthError(
-    "EBAY_SELLER_OAUTH_REAUTH_ANALYTICS_ENDPOINT_REJECTED",
-  )
+  return input.endpointHealth
 }
 
 async function verifyRefreshTokenCapabilities(input: {
@@ -1124,24 +1170,49 @@ async function verifyRefreshTokenCapabilities(input: {
       )
     }
     const settled = await Promise.allSettled(probeInputs.map(async (probe) => {
-      const response = await boundedFetch({
-        operation: probe.operation,
-        method: "GET",
-        url: probe.url,
-        headers: bearerHeaders(accessToken),
-        fetchImpl: input.fetchImpl,
-        calls: input.calls,
-        clock: input.clock,
-        externalDeadlineAt: input.externalDeadlineAt,
-        requestedTimeoutMs: PARALLEL_PROBE_TIMEOUT_MS,
-      })
-      if (probe.analytics) await requireAnalyticsProbeSuccess(response)
-      else await requireJsonSuccess(response, probe.failure)
+      try {
+        const response = await boundedFetch({
+          operation: probe.operation,
+          method: "GET",
+          url: probe.url,
+          headers: bearerHeaders(accessToken),
+          fetchImpl: input.fetchImpl,
+          calls: input.calls,
+          clock: input.clock,
+          externalDeadlineAt: input.externalDeadlineAt,
+          requestedTimeoutMs: PARALLEL_PROBE_TIMEOUT_MS,
+        })
+        if (probe.analytics) {
+          return classifyAnalyticsEndpointHealth(response)
+        }
+        await requireJsonSuccess(response, probe.failure)
+        return null
+      } catch (cause) {
+        if (probe.analytics && cause instanceof EbaySellerOAuthReauthError &&
+            cause.code === "EBAY_SELLER_OAUTH_REAUTH_NETWORK_FAILURE") {
+          return Object.freeze({
+            status: "TRANSPORT_DEGRADED" as const,
+            httpStatus: null,
+          })
+        }
+        throw cause
+      }
     }))
     const rejected = settled.find(
       (result): result is PromiseRejectedResult => result.status === "rejected",
     )
     if (rejected) throw rejected.reason
+    const analyticsResult = settled[1]
+    if (!analyticsResult || analyticsResult.status !== "fulfilled" ||
+        !analyticsResult.value) {
+      throw new EbaySellerOAuthReauthError(
+        "EBAY_SELLER_OAUTH_REAUTH_VERIFICATION_INCOMPLETE",
+      )
+    }
+    const analyticsEndpointHealth = assertEbaySellerOAuthAnalyticsHandoffPolicy({
+      exactScopeUnionProven: refreshed.exactScopeUnionProven,
+      endpointHealth: analyticsResult.value,
+    })
     if (input.calls.length !== input.expectedTotalCalls ||
         input.clock() > input.externalDeadlineAt) {
       throw new EbaySellerOAuthReauthError(
@@ -1155,6 +1226,7 @@ async function verifyRefreshTokenCapabilities(input: {
         analyticsReadonly: "AVAILABLE",
         accountReadonly: "AVAILABLE",
       },
+      endpointHealth: { analytics: analyticsEndpointHealth },
       calls: input.calls,
     }
   } finally {
@@ -1304,6 +1376,7 @@ export async function verifyEbaySellerOAuthReauthCandidate(input: {
       credentialSource: "NEW_OAUTH_CANDIDATE_ONLY",
       genericEnvironmentTokenFallback: false,
       capabilities: verified.capabilities,
+      endpointHealth: verified.endpointHealth,
       calls: verified.calls,
       safety: {
         tokenPersisted: false,
@@ -1373,6 +1446,7 @@ export async function certifyInstalledEbaySellerOAuthRuntime(input: {
       refreshTokenPresent: true,
       oauthRefreshExchange: "AVAILABLE",
       capabilities: verified.capabilities,
+      endpointHealth: verified.endpointHealth,
       calls: verified.calls,
       safety: {
         tokenPersisted: false,
