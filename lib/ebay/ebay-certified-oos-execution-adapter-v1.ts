@@ -25,6 +25,7 @@ type Blocker =
   | "CERTIFIED_OOS_SOURCE_HEALTH_REQUIRED"
   | "CERTIFIED_OOS_FRESH_EVIDENCE_REQUIRED"
   | "CERTIFIED_OOS_SAFE_CAPACITY_REQUIRED"
+  | "CERTIFIED_OOS_EXPLICIT_AUTHORITATIVE_ZERO_REQUIRED"
   | "CERTIFIED_OOS_APPROVED_SOURCE_REQUIRED"
   | "CERTIFIED_OOS_COMPOSITION_REQUIRED"
   | "CERTIFIED_OOS_CRITICAL_ALERT_REQUIRED"
@@ -44,6 +45,7 @@ export type CertifiedOosExecutionPreflightV1 = Readonly<{
   sourceHealth: string
   freshness: string
   safeCapacity: number | null
+  explicitAuthoritativeZero: boolean
   stockSource: string | null
   ebayState: string
   ebayQuantity: number | null
@@ -120,7 +122,8 @@ export function preflightCertifiedOosExecutionV1(input: Readonly<{
   monitor: CommercialMonitorGetDto
   targetItemId: string
   targetSku: string
-  operatorAuthorized: boolean
+  operatorAuthorized?: boolean
+  automationAuthorized?: boolean
 }>): CertifiedOosExecutionPreflightV1 {
   const targetIdentityValid = safeItemId(input.targetItemId) &&
     safeSku(input.targetSku)
@@ -131,6 +134,8 @@ export function preflightCertifiedOosExecutionV1(input: Readonly<{
   const exactIdentity = listing?.identity.sku === input.targetSku
   const source = stockSource(listing)
   const safeCapacity = listing?.composition.bundleCapacity.value ?? null
+  const explicitAuthoritativeZero =
+    listing?.composition.bundleCapacity.explicitAuthoritativeZero === true
   const compositionComplete = Boolean(listing &&
     listing.composition.status === "AVAILABLE" &&
     listing.composition.components.length > 0 &&
@@ -144,7 +149,7 @@ export function preflightCertifiedOosExecutionV1(input: Readonly<{
   )
   const protectedExperiment = experimentBlocked(listing)
   const marketplaceReady = marketplaceSafetyReady(input.monitor) &&
-    input.operatorAuthorized
+    (input.operatorAuthorized === true || input.automationAuthorized === true)
   const ebayState = listing?.discovery.livePresence.status ?? "NOT_FOUND"
   const supplierLinkage = listing?.stock.supplierLinkageStatus ?? "UNPROVEN"
   const state = listing?.stock.state ?? "STOCK_UNKNOWN"
@@ -175,6 +180,7 @@ export function preflightCertifiedOosExecutionV1(input: Readonly<{
       sourceHealth,
       freshness,
       safeCapacity,
+      explicitAuthoritativeZero,
       stockSource: source,
       ebayState,
       ebayQuantity: listing.identity.listedQuantity,
@@ -205,6 +211,9 @@ export function preflightCertifiedOosExecutionV1(input: Readonly<{
   )
   if (safeCapacity !== 0) blockers.push(
     "CERTIFIED_OOS_SAFE_CAPACITY_REQUIRED",
+  )
+  if (!explicitAuthoritativeZero) blockers.push(
+    "CERTIFIED_OOS_EXPLICIT_AUTHORITATIVE_ZERO_REQUIRED",
   )
   if (!source || !SELLER_OS_CERTIFIED_OOS_APPROVED_STOCK_SOURCES_V1
     .includes(source as never)) blockers.push(
@@ -239,6 +248,7 @@ export function preflightCertifiedOosExecutionV1(input: Readonly<{
     sourceHealth,
     freshness,
     safeCapacity,
+    explicitAuthoritativeZero,
     stockSource: source,
     ebayState,
     ebayQuantity: listing?.identity.listedQuantity ?? null,

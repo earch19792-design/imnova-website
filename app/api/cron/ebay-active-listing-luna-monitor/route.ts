@@ -11,11 +11,16 @@ import {
 } from "@/lib/ebay/ebay-seller-command-center-automation"
 import { commercialPreviewCronAuthorized } from "@/lib/ebay/ebay-commercial-preview-pilot"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
-import { fetchLunaAuthenticatedBrowserProductV1 } from
-  "@/lib/ebay/ebay-luna-canonical-browser-worker-server-v1"
-import { runTargetedActiveListingLunaMonitor } from "@/lib/ebay/ebay-targeted-active-listing-luna-monitor"
-import { getSellerOsLunaStockObservationActivationPolicyV1 } from
-  "@/lib/ebay/ebay-luna-stock-observation-v1"
+import {
+  fetchPublicLunaProductForActiveListingMonitor,
+  runTargetedActiveListingLunaMonitor,
+} from "@/lib/ebay/ebay-targeted-active-listing-luna-monitor"
+import { getEbayCommercialMonitorLiveReadonly } from
+  "@/lib/ebay/ebay-commercial-monitor-live-readonly"
+import { getCommercialMonitorReadonly } from
+  "@/lib/ebay/commercial-monitor-readonly-service"
+import { runAutomaticCertifiedOosProtectionV1 } from
+  "@/lib/ebay/ebay-auto-certified-oos-protection-v1"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
 
 function safeCode(error: unknown) {
@@ -63,12 +68,14 @@ export async function GET(req: Request) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" }, { status: 401 })
   }
   const config = configuration()
-  const activation = getSellerOsLunaStockObservationActivationPolicyV1({
-    p2I01GateCertified: false,
+  const activation = Object.freeze({
+    contractVersion: "AUTO_CERTIFIED_OOS_END_LISTING_V1",
     schedulerRequested: config.enabled,
+    previewSchedulerEnabled:
+      process.env.VERCEL_ENV === "preview" && config.enabled,
+    productionSchedulerEnabled: false as const,
   })
-  if (process.env.VERCEL_ENV !== "preview" || !config.enabled ||
-      !activation.productionSchedulerEnabled) {
+  if (process.env.VERCEL_ENV !== "preview" || !config.enabled) {
     return NextResponse.json({
       success: true,
       status: "disabled",
@@ -85,7 +92,8 @@ export async function GET(req: Request) {
     })
   }
 
-  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  const account = getEbaySellerAccountScopeConfiguration()
+  const accountKey = account.accountKey
   if (!accountKey) {
     return NextResponse.json(
       { success: false, error: "TARGETED_ACTIVE_LISTING_ACCOUNT_SCOPE_REQUIRED" },
@@ -143,7 +151,44 @@ export async function GET(req: Request) {
     }
     leaseOwned = true
 
-    // The authenticated watcher never invokes the legacy automatic supplier
+    // Protection is evaluated first so a fresh certified-zero condition cannot
+    // age out behind the broader evidence refresh. The account-scoped lease
+    // serializes writers; the writer itself re-reads eBay before and after.
+    const live = await getEbayCommercialMonitorLiveReadonly({
+      accountKey,
+      accountAlias: account.accountAlias,
+    })
+    const canonicalMonitor = await getCommercialMonitorReadonly(
+      supabase,
+      { accountKey, accountAlias: account.accountAlias,
+        configurationReason: account.reason },
+      live,
+    )
+    const automaticOosProtection = await runAutomaticCertifiedOosProtectionV1({
+      monitor: canonicalMonitor,
+      maxMarketplaceWrites: 1,
+    })
+    if (automaticOosProtection.ebayWriteCount === 1) {
+      const { error: leaseFinishError } = await supabase.rpc(
+        "finish_ebay_targeted_luna_monitor_run",
+        { p_account_key: accountKey, p_run_id: runId, p_success: true,
+          p_error_code: null },
+      )
+      if (leaseFinishError) throw new Error("TARGETED_LUNA_MONITOR_FINISH_FAILED")
+      leaseOwned = false
+      await finishSellerAutomationRun(supabase, runId, {
+        status: "completed",
+        claimedTasks: automaticOosProtection.eligibleItemIds.length,
+        successfulTasks: 1,
+        failedTasks: 0,
+        metrics: { stage: "AUTO_CERTIFIED_OOS_END_LISTING",
+          accountKey, automaticOosProtection, heartbeatAvailable: true },
+      })
+      return NextResponse.json({ success: true, status: "completed",
+        automaticOosProtection, automationRunId: runId })
+    }
+
+    // The public exact watcher never invokes the legacy automatic supplier
     // linker. Existing listings enter the bounded human-approval queue; only
     // the versioned Item-ID-bound approval contract can authorize a Luna read.
     const preflightProtection = {
@@ -156,7 +201,7 @@ export async function GET(req: Request) {
       limit: config.limit,
       concurrency: config.concurrency,
       productFetcher: (target) =>
-        fetchLunaAuthenticatedBrowserProductV1(target.productUrl),
+        fetchPublicLunaProductForActiveListingMonitor(target.productUrl),
     })
 
     // Global reconciliation is safe only after every selected active listing
@@ -178,6 +223,7 @@ export async function GET(req: Request) {
       monitor,
       preflightProtection,
       protection,
+      automaticOosProtection,
       heartbeatAvailable: monitor.status === "complete",
     }
     const leaseSuccess = monitor.status === "complete"
@@ -209,6 +255,7 @@ export async function GET(req: Request) {
       monitor,
       preflightProtection,
       protection,
+      automaticOosProtection,
       automationRunId: runId,
     }, { status: monitor.status === "unavailable" ? 503 : 200 })
   } catch (error) {

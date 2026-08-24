@@ -587,17 +587,18 @@ async function endListingOutOfStock(input: {
   }
 }
 
-export async function applyCertifiedOosProtectionV1(input: Readonly<{
+export const SELLER_OS_AUTOMATIC_CERTIFIED_OOS_AUTHORIZATION_V1 =
+  "SELLER_OS_AUTOMATIC_CERTIFIED_OOS_AUTHORIZATION_V1" as const
+
+async function executeCertifiedOosProtectionV1(input: Readonly<{
   preflight: CertifiedOosExecutionPreflightV1
-  confirmation: string
   fetchImpl?: FetchLike
 }>) {
-  if (input.confirmation !== COMMERCIAL_IMPROVEMENT_CONFIRMATION) {
-    throw new Error("COMMERCIAL_IMPROVEMENT_CONFIRMATION_REQUIRED")
-  }
   if (!input.preflight.executionEligible ||
       !input.preflight.mutationRequired ||
       input.preflight.status !== "ELIGIBLE" ||
+      input.preflight.safeCapacity !== 0 ||
+      input.preflight.explicitAuthoritativeZero !== true ||
       input.preflight.marketplaceOperation.actionType !== "END_LISTING" ||
       input.preflight.marketplaceOperation.tradingCall !== "EndFixedPriceItem" ||
       input.preflight.marketplaceOperation.endingReason !== "NotAvailable") {
@@ -634,6 +635,29 @@ export async function applyCertifiedOosProtectionV1(input: Readonly<{
     itemId: input.preflight.itemId, sku: input.preflight.sku,
     marketplaceOperation: input.preflight.marketplaceOperation,
     ebayWriteCount: 1 as const, officialBefore, officialAfter })
+}
+
+export async function applyCertifiedOosProtectionV1(input: Readonly<{
+  preflight: CertifiedOosExecutionPreflightV1
+  confirmation: string
+  fetchImpl?: FetchLike
+}>) {
+  if (input.confirmation !== COMMERCIAL_IMPROVEMENT_CONFIRMATION) {
+    throw new Error("COMMERCIAL_IMPROVEMENT_CONFIRMATION_REQUIRED")
+  }
+  return executeCertifiedOosProtectionV1(input)
+}
+
+export async function applyAutomaticCertifiedOosProtectionV1(input: Readonly<{
+  preflight: CertifiedOosExecutionPreflightV1
+  automationAuthorization: string
+  fetchImpl?: FetchLike
+}>) {
+  if (input.automationAuthorization !==
+      SELLER_OS_AUTOMATIC_CERTIFIED_OOS_AUTHORIZATION_V1) {
+    throw new Error("CERTIFIED_OOS_AUTOMATION_AUTHORIZATION_REQUIRED")
+  }
+  return executeCertifiedOosProtectionV1(input)
 }
 
 async function marketingAccessToken(fetchImpl: FetchLike) {
