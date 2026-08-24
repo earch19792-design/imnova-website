@@ -512,6 +512,10 @@ export function buildEbayDraftOnlyPayload(
       aspectValidation: record(draftConfiguration.aspectValidation),
       skuCollisionCheck: record(draftConfiguration.skuCollisionCheck),
       ebayPreflightSnapshot: text(draftConfiguration.ebayPreflightSnapshot).slice(0, 4_096),
+      ...(Object.keys(record(draftConfiguration.publishWithStockguardContract))
+        .length ? { publishWithStockguardContract: record(
+          draftConfiguration.publishWithStockguardContract,
+        ) } : {}),
       ...(sameDayPilotAuthorization?.validated === true
         ? { sameDayPilotAuthorization }
         : {}),

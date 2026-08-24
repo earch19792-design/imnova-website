@@ -33,6 +33,10 @@ import {
   type EbayDraftOnlyTarget,
   type JsonRecord,
 } from "@/lib/ebay/ebay-draft-only-readiness"
+import {
+  buildPostPublishStockguardAttachmentV1,
+  evaluatePublishWithStockguardContractV1,
+} from "@/lib/ebay/ebay-current-future-listing-stockguard-wiring-v1"
 import { isCanonicalEbayPackageSku } from "@/lib/ebay/ebay-sku"
 import {
   canRetireSupersededSkuPreflight,
@@ -648,7 +652,20 @@ function serverApprovedConfiguration(
       serverPreflightRequiredAtExecution: true,
     },
     ebayPreflightSnapshot: text(raw.ebayPreflightSnapshot).slice(0, 4_096),
+    publishWithStockguardContract: record(raw.publishWithStockguardContract),
   }
+}
+
+function finalPublicationStockguardContract(approvedPayload: JsonRecord) {
+  const value = record(record(approvedPayload.compliance)
+    .publishWithStockguardContract)
+  const result = evaluatePublishWithStockguardContractV1(value as Parameters<
+    typeof evaluatePublishWithStockguardContractV1
+  >[0])
+  if (!result.publishAllowed) {
+    throw new Error("PUBLISH_WITH_STOCKGUARD_CONTRACT_REQUIRED")
+  }
+  return result
 }
 
 async function loadLivePackageTaxonomy(listingPackage: JsonRecord) {
@@ -1954,6 +1971,17 @@ async function completeFinalPublicationMonitor(input: {
       "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED",
     ))
   }
+  const stockguardAttachment = buildPostPublishStockguardAttachmentV1({
+    prePublish: finalPublicationStockguardContract(
+      record(input.context.approval.approved_payload),
+    ),
+    sellerSku: text(input.publication.sku),
+    officialSellerSku: text(input.publication.sku),
+    officialItemId: input.listingId,
+    activeObservationVerified: true,
+    stockguardEnrollmentPersisted: true,
+    monitorEnrollmentPersisted: true,
+  })
   return NextResponse.json({
     success: true,
     publication: completed,
@@ -1968,6 +1996,7 @@ async function completeFinalPublicationMonitor(input: {
       activeListingId: verification.connectorListingId,
       source: verification.method,
     },
+    stockguard: stockguardAttachment,
     safety: {
       publishOfferCalledAgain: false,
       activeOwnershipVerified: true,
@@ -2024,6 +2053,7 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     text(current.draft_execution_id),
     actor,
   )
+  finalPublicationStockguardContract(record(context.approval.approved_payload))
   const built = buildFinalPublicationPreview(context.approval, context.execution)
   if (built.previewHash !== current.preview_hash) {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_PREVIEW_CHANGED"), 409)
@@ -2281,6 +2311,7 @@ async function reconcileFinalPublication(body: JsonRecord, actor: string) {
     text(publication.draft_execution_id),
     actor,
   )
+  finalPublicationStockguardContract(record(context.approval.approved_payload))
   let reconciledPublication = publication as JsonRecord
   let listingId = text(publication.listing_id)
   if (["publish_in_flight", "outcome_unknown"].includes(text(publication.phase))) {
