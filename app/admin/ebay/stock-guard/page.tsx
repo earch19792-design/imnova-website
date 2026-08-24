@@ -10,6 +10,7 @@ import type { CommercialListingReadModel, CommercialMonitorGetDto } from
   "@/lib/ebay/commercial-monitor-readonly-contract"
 import {
   buildCanonicalLiveListingDashboardMetricsV1,
+  presentStockGuardInventoryIdentityV1,
   selectCanonicalCurrentLiveListingsV1,
 } from "@/lib/ebay/ebay-commercial-monitor-registry-presentation-v1"
 import { presentSellerOsStatus } from "@/lib/seller-os/presentation"
@@ -133,6 +134,8 @@ export default function StockGuardPage() {
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white"><div className="border-b border-slate-200 px-4 py-3"><div className="flex items-center justify-between"><div><h2 className="text-lg font-black">Portafolio activo</h2><p className="text-sm text-slate-500">Una fila por Item ID autoritativo de Trading</p></div><span className="text-sm font-bold text-slate-500">{loading ? "Leyendo…" : `${visibleRows.length} de ${rows.length} publicaciones`}</span></div><div className="mt-3 flex flex-wrap gap-2" aria-label="Filtros del portafolio de Stock Guard">{filters.map(([value, label, count]) => <button type="button" key={value} onClick={() => setFilter(value)} aria-pressed={filter === value} className={`rounded-full border px-3 py-1.5 text-[13px] font-black ${filter === value ? "border-cyan-600 bg-cyan-50 text-cyan-800" : "border-slate-200 text-slate-500"}`}>{label} · {count}</button>)}</div></div>
         <div className="divide-y divide-slate-100">
           {visibleRows.map(({ listing, risk }) => {
+            const inventoryPresentation =
+              presentStockGuardInventoryIdentityV1(listing)
             const hardOverride = listing.experiment.status === "AVAILABLE" &&
               listing.experiment.lifecycleState === "RUNNING" &&
               ["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK"].includes(risk)
@@ -150,25 +153,25 @@ export default function StockGuardPage() {
                 </div>
                 <div>
                   <p className="text-[13px] font-black uppercase text-slate-400">Vínculo del proveedor</p>
-                  <p className="mt-1 text-sm font-bold">{exactSupplierEvidence(listing) ? "Evidencia exacta" : "No comprobado"}</p>
+                  <p className="mt-1 text-sm font-bold">{inventoryPresentation.supplierLinkageLabel}</p>
                   <p className="mt-1 text-[13px] leading-5 text-slate-500">Producto {shown(listing.stock.supplierProductId)} · Variante {shown(listing.stock.supplierVariantId)} · SKU {shown(listing.stock.supplierSku)}</p>
                 </div>
                 <div>
                   <p className="text-[13px] font-black uppercase text-slate-400">Evidencia de stock</p>
-                  <p className="mt-1 text-sm font-bold">{presentSellerOsStatus(listing.stock.state)}</p>
-                  <p className="mt-1 text-[13px] leading-5 text-slate-500">Proveedor {shown(listing.stock.quantity.value)} · Publicado {shown(listing.identity.listedQuantity)} · Capacidad segura {shown(listing.composition.bundleCapacity.value)}</p>
+                  <p className="mt-1 text-sm font-bold">{inventoryPresentation.stockLabel ?? presentSellerOsStatus(listing.stock.state)}</p>
+                  <p className="mt-1 text-[13px] leading-5 text-slate-500">{inventoryPresentation.stockDetail ?? `Proveedor ${shown(listing.stock.quantity.value)} · Publicado ${shown(listing.identity.listedQuantity)} · Capacidad segura ${shown(listing.composition.bundleCapacity.value)}`}</p>
                 </div>
                 <div>
                   <p className="text-[13px] font-black uppercase text-slate-400">Vigencia</p>
-                  <p className="mt-1 text-sm font-bold">{presentSellerOsStatus(listing.stock.freshness.status)}</p>
-                  <p className="mt-1 text-[13px] leading-5 text-slate-500">Antigüedad {shown(listing.stock.freshness.ageSeconds)} s · fuente {presentSellerOsStatus(listing.stock.sourceContractStatus)}</p>
+                  <p className="mt-1 text-sm font-bold">{inventoryPresentation.freshnessLabel ?? presentSellerOsStatus(listing.stock.freshness.status)}</p>
+                  <p className="mt-1 text-[13px] leading-5 text-slate-500">{inventoryPresentation.freshnessDetail ?? `Antigüedad ${shown(listing.stock.freshness.ageSeconds)} s · fuente ${presentSellerOsStatus(listing.stock.sourceContractStatus)}`}</p>
                 </div>
                 <div>
                   <p className="text-[13px] font-black uppercase text-slate-400">Riesgo y acción</p>
-                  <p className={`mt-1 text-sm font-black ${["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK"].includes(risk) ? "text-rose-700" : "text-slate-700"}`}>{presentSellerOsStatus(risk)}</p>
-                  <p className="mt-1 text-[13px] leading-5 text-slate-500">{recommendedAction(risk)}</p>
+                  <p className={`mt-1 text-sm font-black ${["OUT_OF_STOCK_CONFIRMED", "OVERSELL_RISK"].includes(risk) ? "text-rose-700" : "text-slate-700"}`}>{inventoryPresentation.riskLabel ?? presentSellerOsStatus(risk)}</p>
+                  <p className="mt-1 text-[13px] leading-5 text-slate-500">{inventoryPresentation.recommendedAction ?? recommendedAction(risk)}</p>
                   {hardOverride && <p className="mt-1 flex items-center gap-1 text-[13px] font-black text-rose-700"><AlertTriangle size={14} />Excepción crítica · revisión humana</p>}
-                  <details className="mt-2"><summary className="cursor-pointer text-[13px] font-bold text-cyan-700">Ver códigos técnicos</summary><p className="mt-1 font-mono text-[13px] text-slate-500">{risk} · {listing.stock.state} · {listing.stock.sourceContractStatus}</p></details>
+                  <details className="mt-2"><summary className="cursor-pointer text-[13px] font-bold text-cyan-700">Ver códigos técnicos</summary><p className="mt-1 font-mono text-[13px] text-slate-500">{risk} · {listing.stock.state} · {listing.stock.limitationCode ?? "NO_LIMITATION"} · {listing.stock.sourceContractStatus}</p></details>
                 </div>
               </article>
             )

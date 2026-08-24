@@ -41,6 +41,39 @@ export function presentCommercialMonitorRegistryV1(registry: RegistryCapability)
 export const SELLER_OS_CANONICAL_LIVE_DASHBOARD_VERSION =
   "DASHBOARD_AND_LIVE_LISTING_INVARIANT_HARDENING_V1" as const
 
+export const CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH =
+  "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH" as const
+
+export function presentStockGuardInventoryIdentityV1(
+  listing: CommercialListingReadModel,
+) {
+  const supplierLinkageCertified =
+    listing.stock.supplierLinkageStatus === "CERTIFIED"
+  const certifiedStockIdentityMismatch = supplierLinkageCertified &&
+    listing.stock.state === "STOCK_UNKNOWN" &&
+    listing.stock.limitationCode ===
+      CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH
+
+  return Object.freeze({
+    supplierLinkageCertified,
+    supplierLinkageLabel: supplierLinkageCertified
+      ? "Evidencia exacta ✅" : "No comprobado",
+    certifiedStockIdentityMismatch,
+    stockLabel: certifiedStockIdentityMismatch
+      ? "Stock desconocido ⚠️" : null,
+    stockDetail: certifiedStockIdentityMismatch
+      ? "Identidad de stock no conciliada" : null,
+    freshnessLabel: certifiedStockIdentityMismatch ? "Desconocida" : null,
+    freshnessDetail: certifiedStockIdentityMismatch
+      ? "No existe todavía evidencia de stock conciliada para calcular vigencia."
+      : null,
+    riskLabel: certifiedStockIdentityMismatch ? "Stock desconocido" : null,
+    recommendedAction: certifiedStockIdentityMismatch
+      ? "Reconciliar identidad de stock del producto certificado con la evidencia de disponibilidad de Luna."
+      : null,
+  })
+}
+
 function evidenceScore(listing: CommercialListingReadModel) {
   const metrics = Object.values(listing.metrics).filter((metric) =>
     (metric.availability === "AVAILABLE" || metric.availability === "PARTIAL") &&
@@ -124,7 +157,7 @@ export function buildCanonicalLiveListingDashboardMetricsV1(
     identityMismatch: liveListings.filter((listing) =>
       listing.stock.supplierLinkageStatus === "CERTIFIED" &&
       listing.stock.limitationCode ===
-        "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH").length,
+        CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH).length,
     definitions: Object.freeze({
       linkedMeansSupplierLinkageCertifiedOnly: true as const,
       linkedDoesNotRequireInStock: true as const,
