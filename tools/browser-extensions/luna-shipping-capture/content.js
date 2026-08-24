@@ -471,8 +471,11 @@ function labeledMoney(label) {
     : label === "shipping"
       ? ['[data-checkout-shipping]', '[data-order-summary-shipping]',
         '[data-shipping-price]', '[data-testid*="shipping" i]']
-      : ['[data-checkout-total]', '[data-order-summary-total]',
-        '[data-total-price]', '[data-testid*="total" i]']
+      : label === "tax"
+        ? ['[data-checkout-tax]', '[data-order-summary-tax]',
+          '[data-tax-price]', '[data-testid*="tax" i]']
+        : ['[data-checkout-total]', '[data-order-summary-total]',
+          '[data-total-price]', '[data-testid*="total" i]']
   for (const selector of selectors) {
     for (const element of document.querySelectorAll(selector)) {
       if (!isVisible(element)) continue
@@ -481,13 +484,18 @@ function labeledMoney(label) {
     }
   }
   const labelPattern = label === "subtotal" ? /^subtotal\b/i
-    : label === "shipping" ? /^(?:shipping|delivery)\b/i : /^total\b/i
+    : label === "shipping" ? /^(?:shipping|delivery)\b/i
+      : label === "tax" ? /^(?:tax|taxes)\b/i : /^total\b/i
   for (const element of [...document.querySelectorAll(
-    'dt,th,[role="rowheader"],[data-testid*="summary" i]')].slice(0, 160)) {
+    'dt,th,[role="rowheader"],[data-testid*="summary" i],' +
+    '[aria-label],[role="row"],li,section,div,span')].slice(0, 240)) {
     if (!isVisible(element) || !labelPattern.test(
-      String(element.textContent ?? "").trim())) continue
-    const row = element.closest?.('tr,dl,[role="row"],li,div') ?? element.parentElement
-    const values = moneyValues(row?.textContent)
+      normalizeVisibleText(element.textContent))) continue
+    const row = element.closest?.('tr,dl,[role="row"],li,section,div') ??
+      element.parentElement
+    const rowText = `${element.textContent ?? ""} ${
+      element.nextElementSibling?.textContent ?? ""} ${row?.textContent ?? ""}`
+    const values = moneyValues(rowText)
     if (values.length === 1) return values[0]
   }
   return null
@@ -496,11 +504,15 @@ function labeledMoney(label) {
 function checkoutSummaryQuote(expectedSubtotal) {
   const subtotalUsd = labeledMoney("subtotal")
   const shippingUsd = labeledMoney("shipping")
+  const taxUsd = labeledMoney("tax")
   const totalUsd = labeledMoney("total")
   if (![subtotalUsd, shippingUsd, totalUsd].every(Number.isFinite) ||
       Math.abs(subtotalUsd - expectedSubtotal) > 0.01 ||
-      Math.abs(subtotalUsd + shippingUsd - totalUsd) > 0.02) return null
-  return { shippingUsd, totalUsd }
+      Math.abs(subtotalUsd + shippingUsd +
+        (Number.isFinite(taxUsd) ? taxUsd : 0) - totalUsd) > 0.02) return null
+  return { subtotalUsd, shippingUsd, totalUsd,
+    ...(Number.isFinite(taxUsd) ? { taxUsd } : {}),
+    shippingMethod: visibleShippingMethod() }
 }
 
 function normalizeVisibleText(value) {
@@ -512,7 +524,9 @@ function checkoutExpectedLine(job) {
   const candidates = [...document.querySelectorAll(
     '[data-order-summary] [data-line-item], [data-testid*="line-item" i], ' +
     '[data-testid*="product" i], [class*="line-item" i], ' +
-    '[class*="product" i], [role="listitem"]')].slice(0, 120)
+    '[class*="product" i], [role="listitem"], [role="row"], ' +
+    '[aria-label], article, li')]
+    .slice(0, 180)
   const normalizedName = normalizeVisibleText(job.productName)
   for (const element of candidates) {
     if (!isVisible(element)) continue
@@ -527,6 +541,44 @@ function checkoutExpectedLine(job) {
     if (text.includes(normalizedName) && quantityMatches) return true
   }
   return false
+}
+
+function semanticCheckoutSignal(pattern) {
+  return [...document.querySelectorAll(
+    'h1,h2,h3,dt,th,label,[role="heading"],[role="rowheader"],' +
+    '[aria-label],button,section,div,span')].slice(0, 260)
+    .some((element) => isVisible(element) && pattern.test(
+      normalizeVisibleText(`${element.getAttribute?.("aria-label") ?? ""} ${
+        element.textContent ?? ""}`)))
+}
+
+function shopPayCheckoutPopulated() {
+  if (location.hostname !== "shop.app") return false
+  const shipTo = semanticCheckoutSignal(/^ship to\b/)
+  const shipping = semanticCheckoutSignal(/^shipping\b/) ||
+    Number.isFinite(labeledMoney("shipping"))
+  const paymentBoundary = semanticCheckoutSignal(/^(?:payment|pay now)\b/)
+  const summary = ["subtotal", "shipping", "total"]
+    .every((label) => Number.isFinite(labeledMoney(label)))
+  return shipTo && shipping && paymentBoundary && summary
+}
+
+function visibleShippingMethod() {
+  const candidates = [...document.querySelectorAll(
+    '[data-shipping-method],[data-shipping-rate],' +
+    '[data-testid*="shipping-method" i],[aria-label*="shipping" i],' +
+    'input[name*="shipping_method" i],input[name*="shipping_rate" i]')]
+    .slice(0, 80)
+  for (const element of candidates) {
+    if (!isVisible(element)) continue
+    const root = element.closest?.('label,[role="row"],section,li,div') ?? element
+    const normalized = String(root.textContent ?? element.getAttribute?.("aria-label") ?? "")
+      .replace(MONEY, " ").replace(/\s+/g, " ").trim()
+    if (/^[A-Za-z0-9][A-Za-z0-9 ._+()/-]{1,79}$/.test(normalized)) {
+      return normalized
+    }
+  }
+  return null
 }
 
 function checkoutPageClassification() {
@@ -560,8 +612,9 @@ function checkoutPageClassification() {
     visibleMatch(['[data-checkout-root]', '[data-order-summary]',
       '[data-checkout-subtotal]', 'form[action*="/checkout"]'])
   const shopPayShell = location.hostname === "shop.app" &&
-    visibleMatch(['[data-order-summary]', '[data-testid*="order-summary" i]',
-      '[data-testid*="subtotal" i]', '[data-testid*="shipping" i]'])
+    (visibleMatch(['[data-order-summary]', '[data-testid*="order-summary" i]',
+      '[data-testid*="subtotal" i]', '[data-testid*="shipping" i]']) ||
+      shopPayCheckoutPopulated())
   if (location.hostname === "shop.app" &&
       (checkoutFields || shippingOptions || shopPayShell)) {
     return "NORMAL_CHECKOUT_WITH_SHIPPING"
@@ -604,6 +657,9 @@ function requiredFieldMissing(selectors) {
 }
 
 function canonicalShippingProfile(job) {
+  if (location.hostname === "shop.app") {
+    return shopPayCanonicalShippingProfile(job)
+  }
   const country = firstVisible(document, [
     'select[name*="country" i]', 'input[name*="country" i]',
     '[data-shipping-country]',
@@ -633,6 +689,79 @@ function canonicalShippingProfile(job) {
     setField(postal, job.destination.postalCode)
 }
 
+function boundedProfileText() {
+  const candidates = [...document.querySelectorAll(
+    '[data-shipping-address],[data-delivery-address],' +
+    '[data-testid*="ship-to" i],[aria-label*="ship to" i],' +
+    '[class*="address" i],[role="group"],section,div')]
+    .slice(0, 80)
+  for (const element of candidates) {
+    if (!isVisible(element)) continue
+    const text = String(element.textContent ?? "")
+    if (/\bship\s+to\b/i.test(text) && text.length <= 1_000) return text
+  }
+  return ""
+}
+
+function profileFieldValue(selectors) {
+  for (const selector of selectors) {
+    const element = document.querySelector(selector)
+    const value = String(element?.value ?? element?.getAttribute?.("value") ?? "")
+      .trim()
+    if (value) return value
+  }
+  return ""
+}
+
+function shopPayCanonicalShippingProfile(job) {
+  const countryValue = profileFieldValue([
+    '[autocomplete="country"]', '[autocomplete="country-name"]',
+    'select[name*="country" i]', 'input[name*="country" i]',
+  ])
+  const provinceValue = profileFieldValue([
+    '[autocomplete="address-level1"]', 'select[name*="province" i]',
+    'input[name*="province" i]', 'select[name*="state" i]',
+    'input[name*="state" i]',
+  ])
+  const postalValue = profileFieldValue([
+    '[autocomplete="postal-code"]', 'input[name*="postal" i]',
+    'input[name*="zip" i]',
+  ])
+  const summary = normalizeVisibleText(boundedProfileText())
+  const expectedPostal = job.destination.postalCode.toLowerCase()
+  const expectedProvince = job.destination.province.toLowerCase()
+  const countryMatches = /^(?:us|usa|united states|united states of america)$/i
+      .test(countryValue) || /\b(?:us|usa|united states)\b/.test(summary)
+  const provinceMatches = provinceValue.toLowerCase() === expectedProvince ||
+    new RegExp(`\\b${expectedProvince}\\b`).test(summary)
+  const postalMatches = postalValue.toLowerCase() === expectedPostal ||
+    new RegExp(`\\b${expectedPostal.replace("-", " ")}\\b`).test(summary)
+  return countryMatches && provinceMatches && postalMatches
+}
+
+async function checkoutClassificationWhenReady(job, expectedSubtotal) {
+  if (location.hostname !== "shop.app") {
+    return { classification: checkoutPageClassification(),
+      quote: checkoutSummaryQuote(expectedSubtotal) }
+  }
+  progress(job, "SHOP_PAY_DOM_WAITING", {
+    checkoutHostClassification: checkoutHostClassification(),
+  })
+  const ready = await boundedDomWait(() => {
+    const classification = checkoutPageClassification()
+    if (new Set(["EXPLICIT_AUTH_CHALLENGE", "EXPLICIT_LOGIN_PAGE",
+      "SESSION_EXPIRED"]).has(classification)) return { classification, quote: null }
+    if (classification !== "NORMAL_CHECKOUT_WITH_SHIPPING") return null
+    const quote = checkoutSummaryQuote(expectedSubtotal)
+    if (!quote || !checkoutExpectedLine(job)) return null
+    return { classification, quote }
+  }, "LUNA_UNKNOWN_CHECKOUT_PAGE")
+  progress(job, "SHOP_PAY_DOM_READY", {
+    checkoutHostClassification: checkoutHostClassification(),
+  })
+  return ready
+}
+
 function continueToShippingControl() {
   return [...document.querySelectorAll('button,input[type="submit"]')]
     .find((element) => isVisible(element) &&
@@ -642,7 +771,8 @@ function continueToShippingControl() {
 }
 
 async function checkoutShipping(job, expectedSubtotal) {
-  const classification = checkoutPageClassification()
+  const ready = await checkoutClassificationWhenReady(job, expectedSubtotal)
+  const classification = ready.classification
   const authSignal = classification === "EXPLICIT_AUTH_CHALLENGE"
     ? "EXPLICIT_CHALLENGE_UI"
     : classification === "EXPLICIT_LOGIN_PAGE" ? "EXPLICIT_LOGIN_REQUIRED"
@@ -667,12 +797,16 @@ async function checkoutShipping(job, expectedSubtotal) {
   if (classification === "UNKNOWN_CHECKOUT_PAGE") {
     throw new Error("LUNA_UNKNOWN_CHECKOUT_PAGE")
   }
-  const summaryQuote = checkoutSummaryQuote(expectedSubtotal)
-  if (!canonicalShippingProfile(job) && !summaryQuote) {
-    throw new Error("CANONICAL_US_SHIPPING_PROFILE_UNAVAILABLE")
-  }
+  const summaryQuote = ready.quote ?? checkoutSummaryQuote(expectedSubtotal)
+  if (!canonicalShippingProfile(job)) throw new Error(
+    location.hostname === "shop.app" ? "CANONICAL_US_SHIPPING_PROFILE_MISMATCH"
+      : "CANONICAL_US_SHIPPING_PROFILE_UNAVAILABLE")
   if (summaryQuote && !checkoutExpectedLine(job)) {
     throw new Error("LUNA_CHECKOUT_EXPECTED_PRODUCT_UNPROVEN")
+  }
+  if (summaryQuote) {
+    progress(job, "CHECKOUT_EXPECTED_PRODUCT_VERIFIED")
+    progress(job, "CHECKOUT_EXPECTED_QUANTITY_VERIFIED")
   }
   progress(job, "CANONICAL_US_PROFILE_FOUND")
   if (summaryQuote) {
