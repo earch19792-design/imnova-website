@@ -27,6 +27,9 @@ candidatos secuencialmente sin clic por producto.
   el primer clic crea el benchmark y las capturas posteriores sólo lo validan.
 - El envelope durable contiene exclusivamente fingerprint, versión, clase de
   país y `boundAt`; el ACK se emite únicamente después del readback exacto.
+- Cada corrida emite como máximo 100 transiciones allowlisted al transporte
+  admin existente. Seller OS las conserva en el event store del mismo flujo y
+  nunca incluye dirección, URL de checkout, DOM, cookies ni datos de pago.
 - Sólo se inyecta en `lunaportex.com`, `www.lunaportex.com`, el desvío de
   autenticación `account.lunaportex.com` y el checkout acotado `shop.app`.
 - No lee contraseñas, cookies, tokens, headers de autenticación, localStorage ni

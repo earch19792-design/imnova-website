@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.19"
+const EXTENSION_BUILD_VERSION = "1.0.20"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -30,6 +30,10 @@ const DESTINATION_BINDING_RESULT =
 const DESTINATION_FINGERPRINT_VERSION =
   "LUNA_SHOP_PAY_DESTINATION_SHA256_V1"
 const DESTINATION_STORAGE_KEY = "sellerOsLunaCanonicalDestinationBindingV1"
+const RUNTIME_TRACE_CONTRACT = "LUNA_SHIPPING_RUNTIME_TRACE_V1"
+const RUNTIME_TRACE_EVENT = "LUNA_SHIPPING_RUNTIME_TRACE_EVENT"
+const SHIPPING_SERVER_RESULT = "SELLER_OS_LUNA_SHIPPING_SERVER_RESULT"
+const MAX_RUNTIME_TRACE_EVENTS = 100
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
 const CHECKOUT_PHASE = "AWAITING_CHECKOUT_SHIPPING"
 const RECONNECT_GRACE_MS = 20_000
@@ -75,6 +79,92 @@ let checkoutBootstrapAckTimer = null
 let lastCheckoutStateRank = 0
 let lastCheckoutState = null
 let disconnectCleanupTimer = null
+let activeRuntimeTrace = null
+
+const PROGRESS_TRACE_STATE = new Map([
+  ["PRODUCT_PAGE_DOM_READY", "PRODUCT_PAGE_OPENED"],
+  ["PRODUCT_IDENTITY_VERIFIED", "PRODUCT_IDENTITY_VERIFIED"],
+  ["ADD_TO_CART_ELEMENT_FOUND", "ADD_TO_CART_FOUND"],
+  ["ADD_TO_CART_CLICK_DISPATCHED", "ADD_TO_CART_DISPATCHED"],
+  ["CART_PAGE_DETECTED", "CART_PAGE_DETECTED"],
+  ["ACTIVE_JOB_RECOVERED_ON_CART", "ACTIVE_JOB_RECOVERED_ON_CART"],
+  ["CART_EXPECTED_PRODUCT_FOUND", "CART_PRODUCT_VERIFIED"],
+  ["CART_EXPECTED_QUANTITY_FOUND", "CART_QUANTITY_VERIFIED"],
+  ["CART_MUTATION_CONFIRMED", "CART_MUTATION_CONFIRMED"],
+  ["CHECKOUT_NAVIGATION_OBSERVED", "CHECKOUT_NAVIGATION_OBSERVED"],
+  ["CHECKOUT_HOST_CLASSIFIED", "CHECKOUT_HOST_CLASSIFIED"],
+  ["CHECKOUT_HOST_ALLOWED", "CHECKOUT_HOST_CLASSIFIED"],
+  ["CHECKOUT_INJECTION_REQUESTED", "CHECKOUT_SCRIPT_INJECTION_REQUESTED"],
+  ["CHECKOUT_INJECTION_API_SUCCEEDED", "CHECKOUT_SCRIPT_INJECTION_RESULT"],
+  ["CHECKOUT_SCRIPT_BOOTSTRAP_ACK", "CHECKOUT_BOOTSTRAP_ACK"],
+  ["ACTIVE_JOB_RECOVERED_ON_CHECKOUT", "ACTIVE_JOB_RECOVERED_ON_CHECKOUT"],
+  ["SHOP_PAY_DOM_READY", "SHOP_PAY_DOM_READY"],
+  ["CHECKOUT_PAGE_CLASSIFIED", "CHECKOUT_PAGE_CLASSIFIED"],
+  ["CHECKOUT_PAGE_DETECTED", "CHECKOUT_PAGE_CLASSIFIED"],
+  ["NORMAL_CHECKOUT_WITH_SHIPPING", "CHECKOUT_PAGE_CLASSIFIED"],
+  ["CANONICAL_US_PROFILE_FOUND", "CANONICAL_DESTINATION_MATCH"],
+  ["SHOP_PAY_QUOTE_PARSER_STARTED", "QUOTE_PARSER_STARTED"],
+])
+
+async function sha256(value) {
+  const bytes = new TextEncoder().encode(String(value))
+  const result = await crypto.subtle.digest("SHA-256", bytes)
+  return `sha256:${Array.from(new Uint8Array(result))
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("")}`
+}
+
+async function beginRuntimeTrace(seed, candidateId) {
+  const captureSessionIdHash = await sha256(seed)
+  activeRuntimeTrace = {
+    traceId: `luna-shipping-trace-v1:${captureSessionIdHash}`,
+    captureSessionIdHash,
+    candidateId: /^sha256:[0-9a-f]{64}$/.test(candidateId ?? "")
+      ? candidateId : null,
+    sequence: 0,
+  }
+}
+
+function traceMoney(value) {
+  return Number.isFinite(value) && value >= 0 && value <= 100_000
+    ? Math.round(value * 100) / 100 : null
+}
+
+function emitRuntimeTrace(state, success = true, reasonCode = "NONE", details = {}) {
+  if (!sellerPort || !activeRuntimeTrace ||
+      activeRuntimeTrace.sequence >= MAX_RUNTIME_TRACE_EVENTS) return
+  activeRuntimeTrace.sequence += 1
+  const event = {
+    contractVersion: RUNTIME_TRACE_CONTRACT,
+    traceId: activeRuntimeTrace.traceId,
+    candidateId: activeRuntimeTrace.candidateId,
+    sequence: activeRuntimeTrace.sequence,
+    timestamp: new Date().toISOString(),
+    extensionVersion: EXTENSION_BUILD_VERSION,
+    captureSessionIdHash: activeRuntimeTrace.captureSessionIdHash,
+    state, event: state, success,
+    reasonCode: safeRuntimeReason(reasonCode).toUpperCase(),
+    purchaseBoundaryEnforced: true,
+  }
+  for (const field of ["subtotalUsd", "shippingUsd", "totalUsd"]) {
+    const value = traceMoney(details[field])
+    if (value !== null) event[field] = value
+  }
+  for (const field of ["shopPayMarkerShipTo", "shopPayMarkerShipping",
+    "shopPayMarkerSubtotal", "shopPayMarkerTotal", "shopPayMarkerPayNow"]) {
+    if (typeof details[field] === "boolean") event[field] = details[field]
+  }
+  sellerPort.postMessage({ type: RUNTIME_TRACE_EVENT, event })
+}
+
+function traceProgress(state, details) {
+  const traceState = PROGRESS_TRACE_STATE.get(state)
+  if (traceState) emitRuntimeTrace(traceState, true, "NONE", details)
+  if (state === "SHIPPING_QUOTE_CAPTURED") {
+    emitRuntimeTrace("SUBTOTAL_PARSED", true, "NONE", details)
+    emitRuntimeTrace("SHIPPING_PARSED", true, "NONE", details)
+    emitRuntimeTrace("TOTAL_PARSED", true, "NONE", details)
+  }
+}
 
 function clearActiveJob() {
   activeJob = null
@@ -91,6 +181,7 @@ function clearActiveJob() {
   lastCheckoutStateRank = 0
   lastCheckoutState = null
   lastRuntimeState = null
+  activeRuntimeTrace = null
 }
 
 function safeCartSnapshot(value) {
@@ -400,15 +491,21 @@ async function bindCanonicalDestination(port, existingBinding) {
   if (eligible.length > 1) {
     throw new Error("CANONICAL_BINDING_CHECKOUT_TAB_AMBIGUOUS")
   }
+  emitRuntimeTrace("CANONICAL_FINGERPRINT_COMPUTED")
   const binding = existingBinding ?? Object.freeze({ ...eligible[0].binding,
     boundAt: new Date().toISOString() })
-  if (!existingBinding) await writeDestinationBinding(binding)
+  if (!existingBinding) {
+    await writeDestinationBinding(binding)
+    emitRuntimeTrace("CANONICAL_FINGERPRINT_WRITE")
+  }
   const readback = await readDestinationBinding()
   if (!readback ||
       readback.canonicalDestinationFingerprint !==
         binding.canonicalDestinationFingerprint) {
     throw new Error("CANONICAL_DESTINATION_FINGERPRINT_READBACK_FAILED")
   }
+  emitRuntimeTrace("CANONICAL_FINGERPRINT_READBACK")
+  emitRuntimeTrace("CANONICAL_DESTINATION_MATCH")
   port.postMessage({ type: DESTINATION_BINDING_RESULT, success: true,
     canonicalDestinationBound: true, canonicalDestinationMatch: true,
     canonicalUsProfileFound: true, shippingAddressAccepted: true,
@@ -419,8 +516,13 @@ async function bindCanonicalDestination(port, existingBinding) {
 async function handleCanonicalDestinationBinding(port) {
   const existingBinding = await readDestinationBinding()
   try {
+    await beginRuntimeTrace(crypto.randomUUID(), null)
+    emitRuntimeTrace("CANONICAL_BIND_REQUESTED")
     await bindCanonicalDestination(port, existingBinding)
+    emitRuntimeTrace("PASS")
   } catch (error) {
+    emitRuntimeTrace("FAIL", false, error instanceof Error ? error.message
+      : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE")
     port.postMessage({ type: DESTINATION_BINDING_RESULT, success: false,
       canonicalDestinationBound: Boolean(existingBinding),
       canonicalDestinationMatch: false,
@@ -439,6 +541,7 @@ function emitProgress(state, details = {}) {
     lastCheckoutState = state
   }
   lastRuntimeState = state
+  traceProgress(state, details)
   const markerDetails = {}
   for (const field of ["shopPayMarkerOrderSummary", "shopPayMarkerProduct",
     "shopPayMarkerQuantity", "shopPayMarkerShipTo", "shopPayMarkerShipping",
@@ -453,6 +556,12 @@ function emitProgress(state, details = {}) {
       details.cartSubtotalUsd >= 0 && details.cartSubtotalUsd <= 100_000
       ? { cartSubtotalUsd: Math.round(details.cartSubtotalUsd * 100) / 100 }
       : {}),
+    ...(traceMoney(details.subtotalUsd) !== null
+      ? { subtotalUsd: traceMoney(details.subtotalUsd) } : {}),
+    ...(traceMoney(details.shippingUsd) !== null
+      ? { shippingUsd: traceMoney(details.shippingUsd) } : {}),
+    ...(traceMoney(details.totalUsd) !== null
+      ? { totalUsd: traceMoney(details.totalUsd) } : {}),
     ...(new Set(["LUNA_STOREFRONT_CHECKOUT_HOST", "LUNA_ACCOUNT_HOST",
       "SHOP_PAY_CHECKOUT_HOST",
       "UNSUPPORTED_CHECKOUT_HOST"]).has(details.checkoutHostClassification)
@@ -491,6 +600,9 @@ async function startJob(job) {
   const url = exact && exactLunaUrl(exact.identity.canonicalProductUrl)
   if (!exact || !url) throw new Error("JOB_IDENTITY_MISMATCH:identity.canonicalProductUrl")
   activeJob = exact
+  await beginRuntimeTrace(exact.captureSessionId, exact.identity.candidateId)
+  emitRuntimeTrace("BRIDGE_CONNECTED")
+  emitRuntimeTrace("JOB_DISPATCHED")
   activeJobPhase = "PRODUCT_PAGE"
   originalCartSnapshot = null
   cartSubtotalUsd = null
@@ -516,6 +628,7 @@ async function startJob(job) {
 
 function failActiveJob(error) {
   if (!activeJob) return
+  emitRuntimeTrace("FAIL", false, safeRuntimeReason(error))
   sellerPort?.postMessage({ type: JOB_RESULT, success: false,
     error: safeRuntimeReason(error), lastRuntimeState,
     capture: { candidateId: activeJob.identity.candidateId } })
@@ -668,6 +781,24 @@ chrome.runtime.onConnectExternal.addListener((port) => {
       }))
       return
     }
+    if (message?.type === SHIPPING_SERVER_RESULT) {
+      if (!activeJob || message.candidateId !== activeJob.identity.candidateId) {
+        return
+      }
+      if (message.success !== true) {
+        failActiveJob(typeof message.reasonCode === "string"
+          ? message.reasonCode : "LUNA_SHIPPING_CAPTURE_SERVER_RESULT_FAILED")
+        return
+      }
+      const safeDetails = { subtotalUsd: message.subtotalUsd,
+        shippingUsd: message.shippingUsd, totalUsd: message.totalUsd }
+      emitRuntimeTrace("CAPTURE_POST", true, "NONE", safeDetails)
+      emitRuntimeTrace("DURABLE_READBACK", true, "NONE", safeDetails)
+      emitRuntimeTrace("ECONOMICS_EVALUATED", true, "NONE", safeDetails)
+      emitRuntimeTrace("PASS", true, "NONE", safeDetails)
+      clearActiveJob()
+      return
+    }
     if (message?.type !== RESUME_ACTIVE_JOB) return
     const invalidReason = jobValidationReason(message.job)
     if (invalidReason || (activeJob && !sameJob(activeJob, message.job))) {
@@ -808,6 +939,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         "SHIPPING_CAPTURE_STARTED", "SHIPPING_QUOTE_CAPTURED",
         "RESULT_POSTED"]).has(message.state)) {
     emitProgress(message.state, { cartSubtotalUsd: message.cartSubtotalUsd,
+      subtotalUsd: message.subtotalUsd,
+      shippingUsd: message.shippingUsd,
+      totalUsd: message.totalUsd,
       checkoutHostClassification: message.checkoutHostClassification,
       checkoutNavigationHost: message.checkoutNavigationHost,
       checkoutNavigationOrigin: message.checkoutNavigationOrigin,
@@ -841,9 +975,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         error = "CHECKOUT_HOST_NOT_CLASSIFIED"
       }
     }
-    sellerPort?.postMessage({ type: JOB_RESULT, success: false,
-      error, lastRuntimeState,
-      capture: { candidateId: activeJob.identity.candidateId } })
+    failActiveJob(error)
     return false
   }
   if (message?.type !== JOB_RESULT || !sellerPort ||
@@ -859,7 +991,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       : { error: typeof message.error === "string"
         ? safeRuntimeReason(message.error) : "LUNA_SHIPPING_JOB_FAILED",
         lastRuntimeState, capture }) })
-  clearActiveJob()
+  if (message.success !== true) {
+    emitRuntimeTrace("FAIL", false, typeof message.error === "string"
+      ? safeRuntimeReason(message.error) : "LUNA_SHIPPING_JOB_FAILED")
+    clearActiveJob()
+  }
   return false
 })
 

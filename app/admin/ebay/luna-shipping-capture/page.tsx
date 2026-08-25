@@ -5,13 +5,15 @@ import { useEffect, useRef, useState } from "react"
 import { supabase } from "@/lib/supabase"
 import type { LunaChromeShippingJobV1 } from
   "@/lib/ebay/ebay-luna-chrome-shipping-capture-v1"
+import type { LunaShippingRuntimeTraceEventV1 } from
+  "@/lib/ebay/ebay-luna-chrome-shipping-capture-v1"
 
 const PORT_NAME = "SELLER_OS_LUNA_SHIPPING_CAPTURE_V1"
 const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.19"
+const EXPECTED_EXTENSION_VERSION = "1.0.20"
 const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
@@ -227,6 +229,9 @@ export default function LunaShippingCapturePage() {
   const [results, setResults] = useState<Result[]>([])
   const [canonicalDestinationBound, setCanonicalDestinationBound] = useState(false)
   const [canonicalDestinationMatch, setCanonicalDestinationMatch] = useState(false)
+  const [liveTraceEvents, setLiveTraceEvents] =
+    useState<LunaShippingRuntimeTraceEventV1[]>([])
+  const [traceDurable, setTraceDurable] = useState(false)
   const triggerRef = useRef<(() => void) | null>(null)
   const bindDestinationRef = useRef<(() => void) | null>(null)
 
@@ -240,6 +245,50 @@ export default function LunaShippingCapturePage() {
     let port: ExternalPort | null = null
     let lastProgressState = "NOT_STARTED"
     let reconnecting = false
+    let traceEvents: LunaShippingRuntimeTraceEventV1[] = []
+    let traceFlushTimer: number | null = null
+    let traceFlushChain = Promise.resolve()
+
+    const flushRuntimeTrace = (immediate = false) => {
+      if (traceFlushTimer !== null) {
+        window.clearTimeout(traceFlushTimer)
+        traceFlushTimer = null
+      }
+      const persist = () => {
+        if (!traceEvents.length) return
+        const snapshot = [...traceEvents]
+        traceFlushChain = traceFlushChain.then(() => adminPost(
+          "persist_runtime_trace", { events: snapshot },
+          `${snapshot[0].traceId}:${snapshot.length}`,
+        ).then((payload) => {
+          if (!active) return
+          setTraceDurable(payload.result?.traceDurable === true &&
+            payload.result?.durableReadbackMatch === true)
+        })).catch((traceError) => fail(traceError))
+      }
+      if (immediate) persist()
+      else traceFlushTimer = window.setTimeout(persist, 5_000)
+    }
+
+    const acceptRuntimeTraceEvent = (value: unknown) => {
+      const event = value && typeof value === "object"
+        ? value as LunaShippingRuntimeTraceEventV1 : null
+      if (!event || !/^luna-shipping-trace-v1:sha256:[0-9a-f]{64}$/
+          .test(event.traceId) || !Number.isInteger(event.sequence) ||
+          event.sequence < 1 || event.sequence > 100 ||
+          event.purchaseBoundaryEnforced !== true) return
+      if (traceEvents[0]?.traceId !== event.traceId) {
+        traceEvents = []
+        setTraceDurable(false)
+      }
+      const existing = traceEvents.find((entry) =>
+        entry.sequence === event.sequence)
+      if (!existing) traceEvents = [...traceEvents, event]
+        .sort((left, right) => left.sequence - right.sequence).slice(0, 100)
+      setLiveTraceEvents([...traceEvents])
+      const terminal = event.state === "PASS" || event.state === "FAIL"
+      flushRuntimeTrace(terminal)
+    }
 
     const fail = (value: unknown) => {
       if (!active) return
@@ -304,6 +353,10 @@ export default function LunaShippingCapturePage() {
 
     const handlePortMessage = (message: any) => {
         if (!active) return
+        if (message?.type === "LUNA_SHIPPING_RUNTIME_TRACE_EVENT") {
+          acceptRuntimeTraceEvent(message.event)
+          return
+        }
         if (message?.type === "LUNA_CANONICAL_DESTINATION_STATUS") {
           const bound = message.canonicalDestinationBound === true
           setCanonicalDestinationBound(bound)
@@ -541,16 +594,46 @@ export default function LunaShippingCapturePage() {
               economicsStatus: String(economics.status ?? "UNPROVEN"),
             }))
             setStatus("ECONOMICS_EVALUATED")
+            port?.postMessage({
+              type: "SELLER_OS_LUNA_SHIPPING_SERVER_RESULT",
+              candidateId: job.identity.candidateId,
+              success: true,
+              subtotalUsd: Number(result.capture?.subtotalUsd),
+              shippingUsd: Number(result.capture?.shippingUsd),
+              totalUsd: Number(result.capture?.totalUsd),
+            })
             index += 1
             if (index < jobs.length) {
               sendCurrent()
               return
             }
             await loadJobs(undefined, "AUTO")
-          }).catch(fail)
+          }).catch((certificationError) => {
+            port?.postMessage({
+              type: "SELLER_OS_LUNA_SHIPPING_SERVER_RESULT",
+              candidateId: job.identity.candidateId,
+              success: false,
+              reasonCode: certificationError instanceof Error
+                ? certificationError.message
+                : "LUNA_SHIPPING_CAPTURE_SERVER_RESULT_FAILED",
+            })
+            fail(certificationError)
+          })
     }
 
     const start = async () => {
+      try {
+        const persisted = await adminPost("read_runtime_trace", {})
+        const recovered = Array.isArray(persisted.result?.events)
+          ? persisted.result.events as LunaShippingRuntimeTraceEventV1[] : []
+        if (recovered.length) {
+          traceEvents = recovered.slice(0, 100)
+          setLiveTraceEvents([...traceEvents])
+          setTraceDurable(persisted.result?.traceDurable === true)
+        }
+      } catch {
+        // A missing historical trace must not block the extension connection.
+      }
       const runtime = window.chrome?.runtime
       if (!runtime?.connect || !runtime.sendMessage) {
         throw new Error("LUNA_SHIPPING_EXTENSION_NOT_INSTALLED")
@@ -629,11 +712,18 @@ export default function LunaShippingCapturePage() {
     void start().catch(fail)
     return () => {
       active = false
+      if (traceFlushTimer !== null) window.clearTimeout(traceFlushTimer)
       triggerRef.current = null
       bindDestinationRef.current = null
       port?.disconnect()
     }
   }, [])
+
+  const newestTrace = liveTraceEvents.at(-1) ?? null
+  const lastSuccessfulTrace = [...liveTraceEvents].reverse()
+    .find((event) => event.success) ?? null
+  const traceBlocker = newestTrace?.state === "FAIL"
+    ? newestTrace.reasonCode : "NONE"
 
   return <main className="min-h-screen bg-[#07111a] px-4 py-10 text-white">
     <section className="mx-auto max-w-2xl rounded-3xl border border-white/15 bg-white/[0.05] p-6">
@@ -660,6 +750,30 @@ export default function LunaShippingCapturePage() {
         CANONICAL_DESTINATION_BOUND={String(canonicalDestinationBound)} · CANONICAL_DESTINATION_MATCH={String(canonicalDestinationMatch)}
       </p>
       <p className="mt-2 text-xs text-white/50">Certificación inicial: {CANARY_NAME}</p>
+      <section className="mt-6 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.04] p-4">
+        <h2 className="text-sm font-black">Monitor de ejecución</h2>
+        <code className="mt-3 block whitespace-pre-wrap break-all text-xs text-cyan-100">
+          {`TRACE_ID=${newestTrace?.traceId ?? "NONE"}\n` +
+            `CURRENT_STATE=${newestTrace?.state ?? "NOT_STARTED"}\n` +
+            `LAST_SUCCESSFUL_STATE=${lastSuccessfulTrace?.state ?? "NONE"}\n` +
+            `CURRENT_BLOCKER=${traceBlocker}\n` +
+            `TRACE_DURABLE=${traceDurable}\n` +
+            `PURCHASE_BOUNDARY_ENFORCED=true`}
+        </code>
+        <ol className="mt-4 max-h-80 space-y-2 overflow-y-auto text-xs">
+          {[...liveTraceEvents].reverse().map((event) =>
+            <li key={`${event.traceId}:${event.sequence}`}
+              className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <span className="font-mono text-cyan-100">#{event.sequence}</span>
+              {" · "}{event.state}{" · "}
+              <span className={event.success ? "text-emerald-200" : "text-rose-200"}>
+                {event.success ? "PASS" : "FAIL"}
+              </span>
+              {event.reasonCode !== "NONE" ? ` · ${event.reasonCode}` : ""}
+              <time className="mt-1 block text-white/40">{event.timestamp}</time>
+            </li>)}
+        </ol>
+      </section>
       <div className="mt-6 rounded-2xl border border-white/10 bg-black/25 p-4">
         <p className="text-xs uppercase tracking-widest text-white/50">Estado</p>
         <p className="mt-2 text-lg font-black">{status}</p>

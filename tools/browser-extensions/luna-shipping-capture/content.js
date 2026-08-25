@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.19" },
+      extensionBuildVersion: "1.0.20" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -147,6 +147,12 @@ function progress(job, state, details = {}) {
       candidateId: job.identity.candidateId } : {}),
     ...(Number.isFinite(details.cartSubtotalUsd)
       ? { cartSubtotalUsd: details.cartSubtotalUsd } : {}),
+    ...(Number.isFinite(details.subtotalUsd)
+      ? { subtotalUsd: details.subtotalUsd } : {}),
+    ...(Number.isFinite(details.shippingUsd)
+      ? { shippingUsd: details.shippingUsd } : {}),
+    ...(Number.isFinite(details.totalUsd)
+      ? { totalUsd: details.totalUsd } : {}),
     ...(typeof details.checkoutHostClassification === "string"
       ? { checkoutHostClassification: details.checkoutHostClassification } : {}),
     ...(typeof details.checkoutNavigationHost === "string"
@@ -1210,6 +1216,10 @@ async function runCheckoutStage(job, original, subtotalUsd) {
       checkoutNavigationHost: location.hostname,
       checkoutNavigationOrigin: location.origin,
       checkoutHostPermissionMatch: true,
+      subtotalUsd: Number.isFinite(visible.subtotalUsd)
+        ? visible.subtotalUsd : subtotalUsd,
+      shippingUsd: visible.shippingUsd,
+      totalUsd: visible.totalUsd,
     })
     progress(job, "AUTHENTICATED_OPERATION_CONFIRMED")
     const observedAt = new Date().toISOString()

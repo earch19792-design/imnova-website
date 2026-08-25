@@ -8,10 +8,14 @@ import {
   certifyLunaShippingCapturePostV1,
   LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH,
   LUNA_SHIPPING_QUOTE_CAPTURE_VERSION,
+  LUNA_SHIPPING_RUNTIME_TRACE_MAXIMUM_EVENTS,
+  LUNA_SHIPPING_RUNTIME_TRACE_VERSION,
   normalizeLunaChromeShippingDestinationV1,
   normalizeLunaChromeShippingJobV1,
+  normalizeLunaShippingRuntimeTraceEventV1,
   type LunaChromeShippingJobV1,
   type LunaShippingCapturePostV1,
+  type LunaShippingRuntimeTraceEventV1,
 } from "./ebay-luna-chrome-shipping-capture-v1"
 import { EBAY_LUNA_BOCA_RATON_LOCATION } from
   "./ebay-merchant-location-one-shot-gateway"
@@ -70,6 +74,151 @@ function canonical(value: unknown): unknown {
 function digest(value: unknown) {
   return `sha256:${createHash("sha256")
     .update(JSON.stringify(canonical(value))).digest("hex")}`
+}
+
+async function latestSameDayRun(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+}>) {
+  const result = await input.supabase.from("ebay_same_day_pilot_runs")
+    .select("id").eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US").order("created_at", { ascending: false })
+    .limit(1).maybeSingle()
+  if (result.error || !text(record(result.data).id, 80)) {
+    throw new Error("LUNA_SHIPPING_RUNTIME_TRACE_DURABLE_RUN_UNAVAILABLE")
+  }
+  return text(record(result.data).id, 80)!
+}
+
+export async function persistLunaShippingRuntimeTraceEventV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  event: LunaShippingRuntimeTraceEventV1
+  now?: number
+}>) {
+  const event = normalizeLunaShippingRuntimeTraceEventV1(input.event,
+    input.now ?? Date.now())
+  const runId = await latestSameDayRun(input)
+  let durableCandidateId: string | null = null
+  if (event.candidateId) {
+    const candidate = await input.supabase.from("ebay_same_day_pilot_candidates")
+      .select("id").eq("run_id", runId)
+      .eq("candidate_key", event.candidateId).limit(1).maybeSingle()
+    if (!candidate.error) durableCandidateId = text(record(candidate.data).id, 80)
+  }
+  const idempotencyKey = [runId, LUNA_SHIPPING_RUNTIME_TRACE_VERSION,
+    event.captureSessionIdHash.slice("sha256:".length), event.sequence].join(":")
+  const eventPayload = event
+  const write = await input.supabase.from("ebay_same_day_pilot_events").upsert({
+    run_id: runId,
+    candidate_id: durableCandidateId,
+    event_type: LUNA_SHIPPING_RUNTIME_TRACE_VERSION,
+    event_payload: eventPayload,
+    idempotency_key: idempotencyKey,
+    ebay_read_calls: 0,
+    openai_calls: 0,
+    ebay_writes: 0,
+    production_changed: false,
+  }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (write.error) throw new Error("LUNA_SHIPPING_RUNTIME_TRACE_DURABLE_WRITE_FAILED")
+  const readback = await input.supabase.from("ebay_same_day_pilot_events")
+    .select("event_payload").eq("idempotency_key", idempotencyKey).maybeSingle()
+  const stored = record(record(readback.data).event_payload)
+  if (readback.error || stored.traceId !== event.traceId ||
+      stored.sequence !== event.sequence || stored.state !== event.state) {
+    throw new Error("LUNA_SHIPPING_RUNTIME_TRACE_DURABLE_READBACK_FAILED")
+  }
+  return Object.freeze({ traceDurable: true as const,
+    durableReadbackMatch: true as const, event })
+}
+
+export async function persistLunaShippingRuntimeTraceV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  events: readonly LunaShippingRuntimeTraceEventV1[]
+  now?: number
+}>) {
+  if (!input.events.length ||
+      input.events.length > LUNA_SHIPPING_RUNTIME_TRACE_MAXIMUM_EVENTS) {
+    throw new Error("LUNA_SHIPPING_RUNTIME_TRACE_CONTRACT_INVALID")
+  }
+  const events = input.events.map((event) =>
+    normalizeLunaShippingRuntimeTraceEventV1(event, input.now ?? Date.now()))
+  const traceId = events[0].traceId
+  if (events.some((event, index) => event.traceId !== traceId ||
+      event.sequence !== index + 1 ||
+      event.captureSessionIdHash !== events[0].captureSessionIdHash ||
+      event.candidateId !== events[0].candidateId)) {
+    throw new Error("LUNA_SHIPPING_RUNTIME_TRACE_SEQUENCE_INVALID")
+  }
+  const runId = await latestSameDayRun(input)
+  let durableCandidateId: string | null = null
+  if (events[0].candidateId) {
+    const candidate = await input.supabase.from("ebay_same_day_pilot_candidates")
+      .select("id").eq("run_id", runId)
+      .eq("candidate_key", events[0].candidateId).limit(1).maybeSingle()
+    if (!candidate.error) durableCandidateId = text(record(candidate.data).id, 80)
+  }
+  const rows = events.map((event) => ({
+    run_id: runId,
+    candidate_id: durableCandidateId,
+    event_type: LUNA_SHIPPING_RUNTIME_TRACE_VERSION,
+    event_payload: event,
+    idempotency_key: [runId, LUNA_SHIPPING_RUNTIME_TRACE_VERSION,
+      event.captureSessionIdHash.slice("sha256:".length), event.sequence].join(":"),
+    ebay_read_calls: 0,
+    openai_calls: 0,
+    ebay_writes: 0,
+    production_changed: false,
+  }))
+  const write = await input.supabase.from("ebay_same_day_pilot_events")
+    .upsert(rows, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (write.error) throw new Error("LUNA_SHIPPING_RUNTIME_TRACE_DURABLE_WRITE_FAILED")
+  const keys = rows.map((row) => row.idempotency_key)
+  const readback = await input.supabase.from("ebay_same_day_pilot_events")
+    .select("idempotency_key,event_payload").in("idempotency_key", keys)
+  const persisted = records(readback.data)
+  if (readback.error || persisted.length !== events.length ||
+      persisted.some((row) => {
+        const stored = record(row.event_payload)
+        return stored.traceId !== traceId ||
+          !events.some((event) => event.sequence === stored.sequence &&
+            event.state === stored.state)
+      })) {
+    throw new Error("LUNA_SHIPPING_RUNTIME_TRACE_DURABLE_READBACK_FAILED")
+  }
+  return Object.freeze({ traceId, eventCount: events.length,
+    traceDurable: true as const, durableReadbackMatch: true as const,
+    events: Object.freeze(events) })
+}
+
+export async function readLatestLunaShippingRuntimeTraceV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  now?: number
+}>) {
+  const runId = await latestSameDayRun(input)
+  const result = await input.supabase.from("ebay_same_day_pilot_events")
+    .select("event_payload,created_at").eq("run_id", runId)
+    .eq("event_type", LUNA_SHIPPING_RUNTIME_TRACE_VERSION)
+    .order("created_at", { ascending: false })
+    .limit(LUNA_SHIPPING_RUNTIME_TRACE_MAXIMUM_EVENTS)
+  if (result.error) throw new Error("LUNA_SHIPPING_RUNTIME_TRACE_READ_FAILED")
+  const valid = records(result.data).flatMap((row) => {
+    try {
+      return [normalizeLunaShippingRuntimeTraceEventV1(
+        record(row.event_payload) as LunaShippingRuntimeTraceEventV1,
+        input.now ?? Date.now())]
+    } catch { return [] }
+  })
+  const latestTraceId = valid[0]?.traceId ?? null
+  const events = latestTraceId ? valid.filter((entry) =>
+    entry.traceId === latestTraceId).sort((left, right) =>
+    left.sequence - right.sequence) : []
+  return Object.freeze({ traceId: latestTraceId,
+    events: Object.freeze(events.slice(0,
+      LUNA_SHIPPING_RUNTIME_TRACE_MAXIMUM_EVENTS)),
+    traceDurable: events.length > 0 })
 }
 
 function sessionSignature(input: Readonly<{

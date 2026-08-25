@@ -12,9 +12,12 @@ import {
 } from "@/lib/ebay/ebay-listing-ai-api"
 import {
   type LunaShippingCapturePostV1,
+  type LunaShippingRuntimeTraceEventV1,
 } from "@/lib/ebay/ebay-luna-chrome-shipping-capture-v1"
 import {
   persistLunaChromeShippingCaptureV1,
+  persistLunaShippingRuntimeTraceV1,
+  readLatestLunaShippingRuntimeTraceV1,
   resolveLunaChromeShippingJobsV1,
 } from
   "@/lib/ebay/ebay-luna-chrome-shipping-capture-server-v1"
@@ -59,6 +62,28 @@ export async function POST(req: Request) {
       })
       return listingAiResponse({ success: true, result,
         safety: { cookieAccess: false,
+          credentialAccess: false, lunaPurchases: 0, marketplaceWrites: 0 } })
+    }
+    if (body.action === "persist_runtime_trace") {
+      enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
+      const events = (Array.isArray(body.events) ? body.events : [])
+        .map((event) => listingAiRecord(event) as LunaShippingRuntimeTraceEventV1)
+        .slice(0, 100)
+      const result = await persistLunaShippingRuntimeTraceV1({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+        events,
+      })
+      return listingAiResponse({ success: true, result,
+        safety: { traceSafeNoPii: true, cookieAccess: false,
+          credentialAccess: false, lunaPurchases: 0, marketplaceWrites: 0 } })
+    }
+    if (body.action === "read_runtime_trace") {
+      enforceListingAiRouteRateLimit(auth.actorId, "READ")
+      const result = await readLatestLunaShippingRuntimeTraceV1({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+      })
+      return listingAiResponse({ success: true, result,
+        safety: { traceSafeNoPii: true, cookieAccess: false,
           credentialAccess: false, lunaPurchases: 0, marketplaceWrites: 0 } })
     }
     throw new Error("LUNA_SHIPPING_EXTENSION_ACTION_INVALID")
