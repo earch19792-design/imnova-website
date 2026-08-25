@@ -60,6 +60,10 @@ export type LunaShippingRuntimeTraceEventV1 = Readonly<{
   shopPayMarkerSubtotal?: boolean
   shopPayMarkerTotal?: boolean
   shopPayMarkerPayNow?: boolean
+  totalLabelFound?: boolean
+  totalCurrencyFound?: boolean
+  totalAmountCandidateFound?: boolean
+  totalLabelAmountContainerFound?: boolean
   purchaseBoundaryEnforced: true
 }>
 
@@ -76,7 +80,9 @@ const TRACE_EVENT_KEYS = new Set([
   "extensionVersion", "purchaseBoundaryEnforced", "reasonCode", "sequence",
   "shippingUsd", "shopPayMarkerPayNow", "shopPayMarkerShipTo",
   "shopPayMarkerShipping", "shopPayMarkerSubtotal", "shopPayMarkerTotal",
-  "state", "subtotalUsd", "success", "timestamp", "totalUsd", "traceId",
+  "state", "subtotalUsd", "success", "timestamp", "totalAmountCandidateFound",
+  "totalCurrencyFound", "totalLabelAmountContainerFound", "totalLabelFound",
+  "totalUsd", "traceId",
 ])
 const TRACE_STATE_SET = new Set<string>(LUNA_SHIPPING_RUNTIME_TRACE_STATES)
 
@@ -90,7 +96,9 @@ export function normalizeLunaShippingRuntimeTraceEventV1(
     .filter((value) => value !== undefined)
   const markerFields = [input.shopPayMarkerShipTo,
     input.shopPayMarkerShipping, input.shopPayMarkerSubtotal,
-    input.shopPayMarkerTotal, input.shopPayMarkerPayNow]
+    input.shopPayMarkerTotal, input.shopPayMarkerPayNow,
+    input.totalLabelFound, input.totalCurrencyFound,
+    input.totalAmountCandidateFound, input.totalLabelAmountContainerFound]
     .filter((value) => value !== undefined)
   if (keys.some((key) => !TRACE_EVENT_KEYS.has(key)) ||
       input.contractVersion !== LUNA_SHIPPING_RUNTIME_TRACE_VERSION ||

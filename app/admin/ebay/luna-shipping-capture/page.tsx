@@ -13,7 +13,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.22"
+const EXPECTED_EXTENSION_VERSION = "1.0.23"
 const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
@@ -91,6 +91,10 @@ type RuntimeTrace = {
   shopPayMarkerShippingMethod: boolean
   shopPayMarkerPayment: boolean
   shopPayMarkerPayNow: boolean
+  totalLabelFound: boolean
+  totalCurrencyFound: boolean
+  totalAmountCandidateFound: boolean
+  totalLabelAmountContainerFound: boolean
   explicitAuthRequired: boolean
   canonicalUsProfileFound: boolean
   shippingAddressAccepted: boolean
@@ -145,6 +149,10 @@ const EMPTY_RUNTIME_TRACE: RuntimeTrace = Object.freeze({
   shopPayMarkerShippingMethod: false,
   shopPayMarkerPayment: false,
   shopPayMarkerPayNow: false,
+  totalLabelFound: false,
+  totalCurrencyFound: false,
+  totalAmountCandidateFound: false,
+  totalLabelAmountContainerFound: false,
   explicitAuthRequired: false,
   canonicalUsProfileFound: false,
   shippingAddressAccepted: false,
@@ -516,6 +524,16 @@ export default function LunaShippingCapturePage() {
                 ? { shopPayMarkerPayment: message.shopPayMarkerPayment } : {}),
               ...(typeof message.shopPayMarkerPayNow === "boolean"
                 ? { shopPayMarkerPayNow: message.shopPayMarkerPayNow } : {}),
+              ...(typeof message.totalLabelFound === "boolean"
+                ? { totalLabelFound: message.totalLabelFound } : {}),
+              ...(typeof message.totalCurrencyFound === "boolean"
+                ? { totalCurrencyFound: message.totalCurrencyFound } : {}),
+              ...(typeof message.totalAmountCandidateFound === "boolean"
+                ? { totalAmountCandidateFound:
+                    message.totalAmountCandidateFound } : {}),
+              ...(typeof message.totalLabelAmountContainerFound === "boolean"
+                ? { totalLabelAmountContainerFound:
+                    message.totalLabelAmountContainerFound } : {}),
               ...(new Set(["NORMAL_GUEST_CHECKOUT",
                 "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
                 "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "NORMAL_CHECKOUT_WITH_SHIPPING",
@@ -838,6 +856,10 @@ export default function LunaShippingCapturePage() {
             `SHOP_PAY_MARKER_SHIPPING_METHOD=${runtimeTrace.shopPayMarkerShippingMethod}\n` +
             `SHOP_PAY_MARKER_PAYMENT=${runtimeTrace.shopPayMarkerPayment}\n` +
             `SHOP_PAY_MARKER_PAY_NOW=${runtimeTrace.shopPayMarkerPayNow}\n` +
+            `TOTAL_LABEL_FOUND=${runtimeTrace.totalLabelFound}\n` +
+            `TOTAL_CURRENCY_FOUND=${runtimeTrace.totalCurrencyFound}\n` +
+            `TOTAL_AMOUNT_CANDIDATE_FOUND=${runtimeTrace.totalAmountCandidateFound}\n` +
+            `TOTAL_LABEL_AMOUNT_CONTAINER_FOUND=${runtimeTrace.totalLabelAmountContainerFound}\n` +
             `EXPLICIT_AUTH_REQUIRED=${runtimeTrace.explicitAuthRequired}\n` +
             `CANONICAL_US_PROFILE_FOUND=${runtimeTrace.canonicalUsProfileFound}\n` +
             `SHIPPING_ADDRESS_ACCEPTED=${runtimeTrace.shippingAddressAccepted}\n` +

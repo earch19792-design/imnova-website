@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.22"
+const EXTENSION_BUILD_VERSION = "1.0.23"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -155,6 +155,10 @@ function emitRuntimeTrace(state, success = true, reasonCode = "NONE", details = 
   }
   for (const field of ["shopPayMarkerShipTo", "shopPayMarkerShipping",
     "shopPayMarkerSubtotal", "shopPayMarkerTotal", "shopPayMarkerPayNow"]) {
+    if (typeof details[field] === "boolean") event[field] = details[field]
+  }
+  for (const field of ["totalLabelFound", "totalCurrencyFound",
+    "totalAmountCandidateFound", "totalLabelAmountContainerFound"]) {
     if (typeof details[field] === "boolean") event[field] = details[field]
   }
   activeRuntimeTrace.events.push(event)
@@ -603,7 +607,9 @@ function emitProgress(state, details = {}) {
     "shopPayMarkerQuantity", "shopPayMarkerShipTo", "shopPayMarkerShipping",
     "shopPayMarkerSubtotal", "shopPayMarkerShippingAmount",
     "shopPayMarkerTotal", "shopPayMarkerShippingMethod",
-    "shopPayMarkerPayment", "shopPayMarkerPayNow"]) {
+    "shopPayMarkerPayment", "shopPayMarkerPayNow", "totalLabelFound",
+    "totalCurrencyFound", "totalAmountCandidateFound",
+    "totalLabelAmountContainerFound"]) {
     if (typeof details[field] === "boolean") markerDetails[field] = details[field]
   }
   sellerPort.postMessage({ type: JOB_PROGRESS, state,

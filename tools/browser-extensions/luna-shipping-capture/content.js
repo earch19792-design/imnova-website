@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.22" },
+      extensionBuildVersion: "1.0.23" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -139,7 +139,9 @@ function progress(job, state, details = {}) {
     "shopPayMarkerQuantity", "shopPayMarkerShipTo", "shopPayMarkerShipping",
     "shopPayMarkerSubtotal", "shopPayMarkerShippingAmount",
     "shopPayMarkerTotal", "shopPayMarkerShippingMethod",
-    "shopPayMarkerPayment", "shopPayMarkerPayNow"]) {
+    "shopPayMarkerPayment", "shopPayMarkerPayNow", "totalLabelFound",
+    "totalCurrencyFound", "totalAmountCandidateFound",
+    "totalLabelAmountContainerFound"]) {
     if (typeof details[field] === "boolean") markerDetails[field] = details[field]
   }
   chrome.runtime.sendMessage({ type: JOB_PROGRESS, state,
@@ -508,13 +510,46 @@ function semanticMoneyLabelPattern(label) {
   return /^total\b/i
 }
 
-function semanticMoneyRowValue(element, label) {
-  const candidates = [element, element.nextElementSibling,
-    element.closest?.('tr,[role="row"],dl,li,section'), element.parentElement,
+const SEMANTIC_MONEY_SELECTOR =
+  'dt,dd,th,td,label,p,strong,b,h1,h2,h3,h4,h5,h6,' +
+  '[role="rowheader"],[role="cell"],[role="row"],[role="term"],' +
+  '[role="definition"],[role="group"],[role="status"],[aria-label],' +
+  '[data-testid],li,section,footer,div,span'
+
+function semanticMoneyText(element) {
+  return `${element?.getAttribute?.("aria-label") ?? ""} ${
+    element?.getAttribute?.("data-value") ?? ""} ${
+    element?.value ?? ""} ${element?.textContent ?? ""}`
+    .replace(/[\s\u00a0]+/g, " ").trim()
+}
+
+function relatedMoneyElements(element) {
+  const row = element.closest?.(
+    'tr,[role="row"],[role="group"],dl,li,section,footer')
+  const containers = [row, element.parentElement,
     element.parentElement?.parentElement].filter(Boolean)
+  const candidates = [element, element.nextElementSibling,
+    element.previousElementSibling]
+  for (const container of containers) {
+    candidates.push(container)
+    for (const child of Array.from(container.children ?? []).slice(0, 48)) {
+      candidates.push(child)
+    }
+    for (const descendant of Array.from(container.querySelectorAll?.(
+      'dd,[role="cell"],[role="definition"],[data-value],[aria-label],p,strong,b,span')
+      ?? []).slice(0, 48)) candidates.push(descendant)
+  }
+  return [...new Set(candidates.filter(Boolean))].slice(0, 120)
+}
+
+function semanticMoneyRowValue(element, label) {
+  const candidates = relatedMoneyElements(element)
   for (const candidate of [...new Set(candidates)]) {
-    const text = String(candidate.textContent ?? "").replace(/\s+/g, " ").trim()
+    if (!isVisible(candidate)) continue
+    const text = semanticMoneyText(candidate)
     if (!text || text.length > 800) continue
+    if (label === "total" && /^subtotal\b/i.test(
+      normalizeVisibleText(text))) continue
     if (label === "shipping" && /\bfree\b/i.test(text)) return 0
     const values = moneyValues(text)
     if (values.length === 1) return values[0]
@@ -524,14 +559,12 @@ function semanticMoneyRowValue(element, label) {
 
 function semanticMoneyLabelFound(label) {
   const pattern = semanticMoneyLabelPattern(label)
-  return [...document.querySelectorAll(
-    'dt,dd,th,td,label,[role="rowheader"],[role="cell"],[role="row"],' +
-    '[aria-label],li,section,div,span')].slice(0, 360)
+  return [...document.querySelectorAll(SEMANTIC_MONEY_SELECTOR)].slice(0, 480)
     .some((element) => isVisible(element) && pattern.test(normalizeVisibleText(
-      `${element.getAttribute?.("aria-label") ?? ""} ${element.textContent ?? ""}`)))
+      semanticMoneyText(element))))
 }
 
-function labeledMoney(label) {
+function labeledMoneyResult(label) {
   const selectors = label === "subtotal"
     ? ['[data-checkout-subtotal]', '[data-order-summary-subtotal]',
       '[data-subtotal-price]', '[data-testid*="subtotal" i]']
@@ -554,24 +587,48 @@ function labeledMoney(label) {
           element.getAttribute?.("aria-label") ?? ""}`)
       if (label === "total" && /\bsubtotal\b/.test(semanticIdentity)) continue
       if (label === "shipping" && /\bfree\b/i.test(element.textContent ?? "")) {
-        return 0
+        return { value: 0, labelFound: true, currencyFound: false,
+          amountCandidateFound: true, labelAmountContainerFound: true }
       }
-      const values = moneyValues(element.textContent)
-      if (values.length === 1) return values[0]
+      const text = semanticMoneyText(element)
+      const values = moneyValues(text)
+      if (values.length === 1) return { value: values[0], labelFound: true,
+        currencyFound: /(?:\$|\bUSD\b)/i.test(text),
+        amountCandidateFound: true, labelAmountContainerFound: true }
     }
   }
   const labelPattern = semanticMoneyLabelPattern(label)
-  for (const element of [...document.querySelectorAll(
-    'dt,dd,th,td,label,[role="rowheader"],[role="cell"],' +
-    '[data-testid*="summary" i],[aria-label],[role="row"],li,section,div,span')]
-    .slice(0, 360)) {
+  let labelFound = false
+  let currencyFound = false
+  let amountCandidateFound = false
+  let labelAmountContainerFound = false
+  for (const element of [...document.querySelectorAll(SEMANTIC_MONEY_SELECTOR)]
+    .slice(0, 480)) {
     if (!isVisible(element) || !labelPattern.test(
-      normalizeVisibleText(`${element.getAttribute?.("aria-label") ?? ""} ${
-        element.textContent ?? ""}`))) continue
+      normalizeVisibleText(semanticMoneyText(element)))) continue
+    labelFound = true
+    const related = relatedMoneyElements(element)
+    for (const candidate of related) {
+      const text = semanticMoneyText(candidate)
+      if (/(?:\$|\bUSD\b)/i.test(text)) currencyFound = true
+      if (moneyValues(text).length > 0 ||
+          (label === "shipping" && /\bfree\b/i.test(text))) {
+        amountCandidateFound = true
+        if (candidate !== element) labelAmountContainerFound = true
+      }
+    }
     const value = semanticMoneyRowValue(element, label)
-    if (Number.isFinite(value)) return value
+    if (Number.isFinite(value)) return { value, labelFound, currencyFound,
+      amountCandidateFound: true,
+      labelAmountContainerFound: labelAmountContainerFound ||
+        related.length > 1 }
   }
-  return null
+  return { value: null, labelFound, currencyFound, amountCandidateFound,
+    labelAmountContainerFound }
+}
+
+function labeledMoney(label) {
+  return labeledMoneyResult(label).value
 }
 
 function checkoutSummaryQuote(expectedSubtotal) {
@@ -651,7 +708,8 @@ function shopPayCheckoutPopulated() {
 function shopPayMarkerSnapshot() {
   const subtotal = labeledMoney("subtotal")
   const shipping = labeledMoney("shipping")
-  const total = labeledMoney("total")
+  const totalResult = labeledMoneyResult("total")
+  const total = totalResult.value
   const shippingMethod = visibleShippingMethod()
   const orderSummary = visibleMatch(['[data-order-summary]',
     '[data-testid*="order-summary" i]']) ||
@@ -664,11 +722,16 @@ function shopPayMarkerSnapshot() {
     shopPayMarkerShipping: semanticMoneyLabelFound("shipping"),
     shopPayMarkerSubtotal: semanticMoneyLabelFound("subtotal"),
     shopPayMarkerShippingAmount: Number.isFinite(shipping),
-    shopPayMarkerTotal: semanticMoneyLabelFound("total"),
+    shopPayMarkerTotal: Number.isFinite(total),
     shopPayMarkerShippingMethod: typeof shippingMethod === "string" &&
       shippingMethod.length > 0,
     shopPayMarkerPayment: semanticCheckoutSignal(/^payment\b/),
     shopPayMarkerPayNow: semanticCheckoutSignal(/^pay now\b/),
+    totalLabelFound: totalResult.labelFound,
+    totalCurrencyFound: totalResult.currencyFound,
+    totalAmountCandidateFound: totalResult.amountCandidateFound,
+    totalLabelAmountContainerFound:
+      totalResult.labelAmountContainerFound,
   }
 }
 
@@ -683,7 +746,16 @@ function shopPayQuoteFailure(markers, quote, timedOut = false) {
       !markers.shopPayMarkerShipping && !markers.shopPayMarkerTotal
     ? "SHOP_PAY_DOM_READY_TIMEOUT" : "SHOP_PAY_SUBTOTAL_NOT_FOUND"
   if (!markers.shopPayMarkerShipping) return "SHOP_PAY_SHIPPING_NOT_FOUND"
-  if (!markers.shopPayMarkerTotal) return "SHOP_PAY_TOTAL_NOT_FOUND"
+  if (!markers.shopPayMarkerTotal) {
+    if (!markers.totalLabelFound) return "SHOP_PAY_TOTAL_LABEL_NOT_FOUND"
+    if (!markers.totalAmountCandidateFound) {
+      return "SHOP_PAY_TOTAL_AMOUNT_NOT_FOUND"
+    }
+    if (!markers.totalLabelAmountContainerFound) {
+      return "SHOP_PAY_TOTAL_RELATIONSHIP_NOT_FOUND"
+    }
+    return "SHOP_PAY_TOTAL_MONEY_PARSE_FAILED"
+  }
   if (!quote || !markers.shopPayMarkerShippingAmount) {
     return "SHOP_PAY_MONEY_PARSE_FAILED"
   }
