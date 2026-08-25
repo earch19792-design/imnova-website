@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.26" },
+      extensionBuildVersion: "1.0.27" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -21,6 +21,8 @@ const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
 const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
 const PROBE_CANONICAL_DESTINATION = "PROBE_LUNA_CANONICAL_DESTINATION"
+const BIND_ELIGIBILITY_PROBE =
+  "SELLER_OS_LUNA_BIND_ELIGIBILITY_PROBE_V1"
 const VALIDATE_CANONICAL_DESTINATION = "VALIDATE_LUNA_CANONICAL_DESTINATION"
 const DESTINATION_FINGERPRINT_VERSION =
   "LUNA_SHOP_PAY_DESTINATION_SHA256_V1"
@@ -1565,6 +1567,22 @@ function canonicalBindingCheckoutSnapshot() {
 }
 
 chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
+  if (message?.type === BIND_ELIGIBILITY_PROBE) {
+    if (location.hostname !== "shop.app") return false
+    const snapshot = canonicalBindingCheckoutSnapshot()
+    const response = {
+      isShopPayCheckout: true,
+      checkoutPageDetected: snapshot.safeCheckoutMarkersVerified &&
+        snapshot.markers.shopPayMarkerPayNow,
+      shipToMarker: snapshot.markers.shopPayMarkerShipTo,
+      shippingMarker: snapshot.markers.shopPayMarkerShipping,
+      subtotalMarker: snapshot.markers.shopPayMarkerSubtotal,
+      totalMarker: snapshot.markers.shopPayMarkerTotal,
+      payNowMarker: snapshot.markers.shopPayMarkerPayNow,
+    }
+    sendResponse(response)
+    return false
+  }
   if (message?.type === PROBE_CANONICAL_DESTINATION ||
       message?.type === BIND_CANONICAL_DESTINATION ||
       message?.type === VALIDATE_CANONICAL_DESTINATION) {

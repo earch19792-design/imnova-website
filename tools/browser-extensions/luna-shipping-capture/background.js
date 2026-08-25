@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.26"
+const EXTENSION_BUILD_VERSION = "1.0.27"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -18,7 +18,8 @@ const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
 const CHECKOUT_BOOTSTRAP_ACK = "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK"
 const RESUME_ACTIVE_JOB = "RESUME_ACTIVE_LUNA_SHIPPING_JOB"
 const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
-const PROBE_CANONICAL_DESTINATION = "PROBE_LUNA_CANONICAL_DESTINATION"
+const BIND_ELIGIBILITY_PROBE =
+  "SELLER_OS_LUNA_BIND_ELIGIBILITY_PROBE_V1"
 const VALIDATE_CANONICAL_DESTINATION = "VALIDATE_LUNA_CANONICAL_DESTINATION"
 const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
@@ -41,6 +42,7 @@ const RECONNECT_GRACE_MS = 20_000
 const CHECKOUT_BOOTSTRAP_ACK_TIMEOUT_MS = 2_500
 const BIND_STEP_TIMEOUT_MS = 2_000
 const BIND_TOP_FRAME_TIMEOUT_MS = 25_000
+const MAX_BIND_DISCOVERY_TABS = 200
 const CHECKOUT_HOSTS = new Set(["lunaportex.com", "www.lunaportex.com",
   "account.lunaportex.com", "shop.app"])
 const SHOP_APP_HOST_PATTERN = "https://shop.app/*"
@@ -166,7 +168,8 @@ function emitRuntimeTrace(state, success = true, reasonCode = "NONE", details = 
     if (typeof details[field] === "boolean") event[field] = details[field]
   }
   for (const field of ["tabsQueryTotalCount", "shopAppHostTabCount",
-    "shopAppProbedCount", "eligibleCheckoutCount"]) {
+    "shopAppProbedCount", "tabsEnumeratedCount",
+    "contentScriptResponderCount", "eligibleCheckoutCount"]) {
     const value = details[field]
     if (Number.isInteger(value) && value >= 0 && value <= 10_000) {
       event[field] = value
@@ -487,15 +490,40 @@ function queryTabs(queryInfo) {
   }))
 }
 
-async function queryShopAppTabs() {
-  const [normalTabs, shopAppTabs] = await Promise.all([
-    queryTabs({ windowType: "normal" }),
-    queryTabs({ windowType: "normal", url: SHOP_APP_HOST_PATTERN }),
-  ])
+async function queryAccessibleTabIds() {
+  const tabs = await queryTabs({})
+  if (tabs.length > MAX_BIND_DISCOVERY_TABS) {
+    throw new Error("BIND_TAB_ENUMERATION_LIMIT_EXCEEDED")
+  }
   return {
-    totalCount: normalTabs.length,
-    tabs: shopAppTabs.filter((tab) => Number.isInteger(tab?.id))
+    totalCount: tabs.length,
+    tabs: tabs.filter((tab) => Number.isInteger(tab?.id))
       .map((tab) => ({ id: tab.id })),
+  }
+}
+
+function safeEligibilityResponse(value) {
+  const fields = ["isShopPayCheckout", "checkoutPageDetected",
+    "shipToMarker", "shippingMarker", "subtotalMarker", "totalMarker",
+    "payNowMarker"]
+  if (!value || typeof value !== "object" ||
+      fields.some((field) => typeof value[field] !== "boolean")) return null
+  return Object.freeze(Object.fromEntries(fields.map((field) =>
+    [field, value[field]])))
+}
+
+async function probeBindingCapability(tabId) {
+  try {
+    const response = await boundedBindStep(sendTabMessage(tabId, {
+      type: BIND_ELIGIBILITY_PROBE,
+    }), "BIND_CHECKOUT_TAB_ELIGIBILITY", BIND_TOP_FRAME_TIMEOUT_MS)
+    const safe = safeEligibilityResponse(response)
+    return { id: tabId, responder: Boolean(safe), eligible: Boolean(safe) &&
+      safe.isShopPayCheckout && safe.checkoutPageDetected &&
+      safe.shipToMarker && safe.shippingMarker && safe.subtotalMarker &&
+      safe.totalMarker && safe.payNowMarker }
+  } catch {
+    return { id: tabId, responder: false, eligible: false }
   }
 }
 
@@ -517,39 +545,21 @@ async function requestDestinationOperationFromTab(tabId, message) {
 
 async function bindCanonicalDestination(port, existingBinding) {
   emitRuntimeTrace("BIND_SHOP_APP_TAB_DISCOVERY_STARTED")
-  const discovery = await boundedBindStep(queryShopAppTabs(),
+  const discovery = await boundedBindStep(queryAccessibleTabIds(),
     "BIND_SHOP_APP_TAB_DISCOVERY_STARTED")
   const checkoutTabs = discovery.tabs
-  const probedTabs = await Promise.all(checkoutTabs.map(async ({ id }) => {
-    try {
-      const response = await boundedBindStep(
-        requestDestinationOperationFromTab(id, {
-          type: PROBE_CANONICAL_DESTINATION,
-        }), "BIND_CHECKOUT_TAB_ELIGIBILITY", BIND_TOP_FRAME_TIMEOUT_MS)
-      const eligible = response?.accepted === true &&
-        response?.safeCheckoutMarkersVerified === true &&
-        response?.shipToAvailable === true
-      return eligible ? { id, eligible: true, error: null }
-        : { id, eligible: false,
-          error: safeRuntimeReason(response?.error ??
-            "BIND_CHECKOUT_TAB_NOT_ELIGIBLE") }
-    } catch (error) {
-      return { id, eligible: false,
-        error: safeRuntimeReason(error instanceof Error ? error.message
-          : "BIND_CHECKOUT_TAB_NOT_ELIGIBLE") }
-    }
-  }))
+  const probedTabs = await Promise.all(checkoutTabs.map(({ id }) =>
+    probeBindingCapability(id)))
+  const responderTabs = probedTabs.filter((tab) => tab.responder)
   const eligibleTabs = probedTabs.filter((tab) => tab.eligible)
   emitRuntimeTrace("BIND_SHOP_APP_TAB_DISCOVERY_RESULT", true, "NONE", {
     tabsQueryTotalCount: discovery.totalCount,
-    shopAppHostTabCount: checkoutTabs.length,
+    tabsEnumeratedCount: checkoutTabs.length,
     shopAppProbedCount: probedTabs.length,
+    contentScriptResponderCount: responderTabs.length,
     eligibleCheckoutCount: eligibleTabs.length,
   })
   if (!eligibleTabs.length) {
-    if (checkoutTabs.length === 1 && probedTabs[0]?.error) {
-      throw new Error(probedTabs[0].error)
-    }
     throw new Error("BIND_CHECKOUT_TAB_NOT_FOUND")
   }
   if (eligibleTabs.length > 1) {
