@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.21"
+const EXTENSION_BUILD_VERSION = "1.0.22"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -38,6 +38,8 @@ const CART_PHASE = "AWAITING_CART_CONFIRMATION"
 const CHECKOUT_PHASE = "AWAITING_CHECKOUT_SHIPPING"
 const RECONNECT_GRACE_MS = 20_000
 const CHECKOUT_BOOTSTRAP_ACK_TIMEOUT_MS = 2_500
+const BIND_STEP_TIMEOUT_MS = 2_000
+const BIND_TOP_FRAME_TIMEOUT_MS = 25_000
 const CHECKOUT_HOSTS = new Set(["lunaportex.com", "www.lunaportex.com",
   "account.lunaportex.com", "shop.app"])
 const SHOP_APP_HOST_PATTERN = "https://shop.app/*"
@@ -80,6 +82,7 @@ let lastCheckoutStateRank = 0
 let lastCheckoutState = null
 let disconnectCleanupTimer = null
 let activeRuntimeTrace = null
+let canonicalBindInFlight = false
 
 const PROGRESS_TRACE_STATE = new Map([
   ["PRODUCT_PAGE_DOM_READY", "PRODUCT_PAGE_OPENED"],
@@ -155,7 +158,9 @@ function emitRuntimeTrace(state, success = true, reasonCode = "NONE", details = 
     if (typeof details[field] === "boolean") event[field] = details[field]
   }
   activeRuntimeTrace.events.push(event)
-  sellerPort?.postMessage({ type: RUNTIME_TRACE_EVENT, event })
+  try { sellerPort?.postMessage({ type: RUNTIME_TRACE_EVENT, event }) } catch {
+    // The bounded trace remains buffered and is replayed on bridge reconnect.
+  }
 }
 
 function traceProgress(state, details) {
@@ -404,6 +409,28 @@ function readDestinationBinding() {
     }))
 }
 
+function boundedBindStep(promise, transition, timeoutMs = BIND_STEP_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      reject(new Error(`BIND_TIMEOUT:${transition}`))
+    }, timeoutMs)
+    Promise.resolve(promise).then((value) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }, (error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(error)
+    })
+  })
+}
+
 function writeDestinationBinding(binding) {
   return new Promise((resolve, reject) => chrome.storage.local.set({
     [DESTINATION_STORAGE_KEY]: binding,
@@ -419,7 +446,7 @@ function writeDestinationBinding(binding) {
 function sendTabMessage(tabId, message) {
   return new Promise((resolve, reject) => {
     if (!Number.isInteger(tabId)) {
-      reject(new Error("CANONICAL_BINDING_CHECKOUT_TAB_NOT_FOUND"))
+      reject(new Error("BIND_CHECKOUT_TAB_NOT_FOUND"))
       return
     }
     chrome.tabs.sendMessage(tabId, message, { frameId: 0 }, (response) => {
@@ -467,69 +494,96 @@ async function requestDestinationOperationFromTab(tabId, message) {
 }
 
 async function bindCanonicalDestination(port, existingBinding) {
-  const checkoutTabs = await queryShopAppTabs()
+  emitRuntimeTrace("BIND_SHOP_APP_TAB_DISCOVERY_STARTED")
+  const checkoutTabs = await boundedBindStep(queryShopAppTabs(),
+    "BIND_SHOP_APP_TAB_DISCOVERY_STARTED")
   if (!checkoutTabs.length) {
-    throw new Error("CANONICAL_BINDING_CHECKOUT_TAB_NOT_FOUND")
+    throw new Error("BIND_CHECKOUT_TAB_NOT_FOUND")
   }
+  if (checkoutTabs.length > 1) {
+    throw new Error("BIND_CHECKOUT_TAB_AMBIGUOUS")
+  }
+  const [{ id: checkoutTabId }] = checkoutTabs
+  emitRuntimeTrace("BIND_SHOP_APP_TAB_SELECTED")
   const operation = existingBinding
     ? VALIDATE_CANONICAL_DESTINATION : BIND_CANONICAL_DESTINATION
   const message = existingBinding ? { type: operation,
     binding: existingBinding } : { type: operation }
-  const responses = await Promise.all(checkoutTabs.map(async ({ id }) => {
-    try {
-      const response = await requestDestinationOperationFromTab(id, message)
-      const binding = existingBinding ?? safeDestinationCandidate(response)
-      return { response, binding: response?.accepted === true ? binding : null }
-    } catch { return { response: null, binding: null } }
-  }))
-  const eligible = responses.filter((candidate) => candidate.binding)
-  if (!eligible.length) {
-    if (existingBinding && responses.some(({ response }) =>
-      response?.error === "CANONICAL_US_SHIPPING_PROFILE_MISMATCH")) {
-      throw new Error("CANONICAL_US_SHIPPING_PROFILE_MISMATCH")
-    }
-    throw new Error("CANONICAL_BINDING_CHECKOUT_TAB_NOT_FOUND")
+  emitRuntimeTrace("BIND_TOP_FRAME_EXECUTION_STARTED")
+  const response = await boundedBindStep(
+    requestDestinationOperationFromTab(checkoutTabId, message),
+    "BIND_TOP_FRAME_EXECUTION_STARTED", BIND_TOP_FRAME_TIMEOUT_MS)
+  if (response?.accepted !== true) {
+    throw new Error(safeRuntimeReason(response?.error ??
+      "BIND_EXECUTE_SCRIPT_RESULT_NOT_RETURNED"))
   }
-  if (eligible.length > 1) {
-    throw new Error("CANONICAL_BINDING_CHECKOUT_TAB_AMBIGUOUS")
+  if (response.safeCheckoutMarkersVerified !== true) {
+    throw new Error("BIND_CHECKOUT_MARKERS_UNPROVEN")
   }
+  emitRuntimeTrace("BIND_CHECKOUT_MARKERS_VERIFIED")
+  const candidate = existingBinding ?? safeDestinationCandidate(response)
+  if (!candidate) throw new Error("BIND_SHIP_TO_NOT_FOUND")
+  emitRuntimeTrace("BIND_SHIP_TO_AVAILABLE")
   emitRuntimeTrace("CANONICAL_FINGERPRINT_COMPUTED")
-  const binding = existingBinding ?? Object.freeze({ ...eligible[0].binding,
+  const binding = existingBinding ?? Object.freeze({ ...candidate,
     boundAt: new Date().toISOString() })
   if (!existingBinding) {
-    await writeDestinationBinding(binding)
-    emitRuntimeTrace("CANONICAL_FINGERPRINT_WRITE")
+    emitRuntimeTrace("CANONICAL_FINGERPRINT_WRITE_STARTED")
+    await boundedBindStep(writeDestinationBinding(binding),
+      "CANONICAL_FINGERPRINT_WRITE_STARTED")
+    emitRuntimeTrace("CANONICAL_FINGERPRINT_WRITE_COMPLETE")
   }
-  const readback = await readDestinationBinding()
+  const readback = await boundedBindStep(readDestinationBinding(),
+    "CANONICAL_FINGERPRINT_READBACK_VERIFIED")
   if (!readback ||
       readback.canonicalDestinationFingerprint !==
         binding.canonicalDestinationFingerprint) {
-    throw new Error("CANONICAL_DESTINATION_FINGERPRINT_READBACK_FAILED")
+    throw new Error("BIND_STORAGE_READBACK_MISMATCH")
   }
-  emitRuntimeTrace("CANONICAL_FINGERPRINT_READBACK")
+  emitRuntimeTrace("CANONICAL_FINGERPRINT_READBACK_VERIFIED")
   emitRuntimeTrace("CANONICAL_DESTINATION_MATCH")
-  port.postMessage({ type: DESTINATION_BINDING_RESULT, success: true,
-    canonicalDestinationBound: true, canonicalDestinationMatch: true,
-    canonicalUsProfileFound: true, shippingAddressAccepted: true,
-    operation: existingBinding ? "VALIDATE_CANONICAL_DESTINATION"
-      : "BIND_CANONICAL_DESTINATION" })
+  emitRuntimeTrace("CANONICAL_BIND_COMPLETED")
+  try {
+    port.postMessage({ type: DESTINATION_BINDING_RESULT, success: true,
+      canonicalDestinationBound: true, canonicalDestinationMatch: true,
+      canonicalUsProfileFound: true, shippingAddressAccepted: true,
+      operation: existingBinding ? "VALIDATE_CANONICAL_DESTINATION"
+        : "BIND_CANONICAL_DESTINATION" })
+  } catch { throw new Error("BIND_ACK_FAILED") }
 }
 
 async function handleCanonicalDestinationBinding(port) {
-  const existingBinding = await readDestinationBinding()
+  if (canonicalBindInFlight) {
+    try {
+      port.postMessage({ type: DESTINATION_BINDING_RESULT, success: false,
+        canonicalDestinationBound: false, canonicalDestinationMatch: false,
+        error: "BIND_ALREADY_IN_PROGRESS" })
+    } catch { /* The caller bridge is already unavailable. */ }
+    return
+  }
+  canonicalBindInFlight = true
+  let existingBinding = null
   try {
     await beginRuntimeTrace(crypto.randomUUID(), null)
     emitRuntimeTrace("CANONICAL_BIND_REQUESTED")
+    existingBinding = await boundedBindStep(readDestinationBinding(),
+      "CANONICAL_BIND_REQUESTED")
     await bindCanonicalDestination(port, existingBinding)
     emitRuntimeTrace("PASS")
   } catch (error) {
     emitRuntimeTrace("FAIL", false, error instanceof Error ? error.message
       : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE")
-    port.postMessage({ type: DESTINATION_BINDING_RESULT, success: false,
-      canonicalDestinationBound: Boolean(existingBinding),
-      canonicalDestinationMatch: false,
-      error: safeRuntimeReason(error instanceof Error ? error.message
-        : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE") })
+    try {
+      port.postMessage({ type: DESTINATION_BINDING_RESULT, success: false,
+        canonicalDestinationBound: Boolean(existingBinding),
+        canonicalDestinationMatch: false,
+        error: safeRuntimeReason(error instanceof Error ? error.message
+          : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE") })
+    } catch {
+      emitRuntimeTrace("FAIL", false, "BIND_ACK_FAILED")
+    }
+  } finally {
+    canonicalBindInFlight = false
   }
 }
 
