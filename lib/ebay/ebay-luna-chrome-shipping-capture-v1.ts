@@ -25,7 +25,8 @@ export const LUNA_SHIPPING_RUNTIME_TRACE_STATES = Object.freeze([
   "CHECKOUT_SCRIPT_INJECTION_RESULT", "CHECKOUT_BOOTSTRAP_ACK",
   "ACTIVE_JOB_RECOVERED_ON_CHECKOUT", "SHOP_PAY_DOM_READY",
   "CHECKOUT_PAGE_CLASSIFIED", "CANONICAL_BIND_REQUESTED",
-  "BIND_SHOP_APP_TAB_DISCOVERY_STARTED", "BIND_SHOP_APP_TAB_SELECTED",
+  "BIND_SHOP_APP_TAB_DISCOVERY_STARTED", "BIND_SHOP_APP_TAB_DISCOVERY_RESULT",
+  "BIND_SHOP_APP_TAB_SELECTED",
   "BIND_TOP_FRAME_EXECUTION_STARTED", "BIND_CHECKOUT_MARKERS_VERIFIED",
   "BIND_SHIP_TO_AVAILABLE", "CANONICAL_FINGERPRINT_COMPUTED",
   "CANONICAL_FINGERPRINT_WRITE_STARTED",
@@ -73,6 +74,10 @@ export type LunaShippingRuntimeTraceEventV1 = Readonly<{
   totalAmountCandidateFound?: boolean
   totalLabelAmountContainerFound?: boolean
   totalParsed?: boolean
+  tabsQueryTotalCount?: number
+  shopAppHostTabCount?: number
+  shopAppProbedCount?: number
+  eligibleCheckoutCount?: number
   purchaseBoundaryEnforced: true
 }>
 
@@ -95,7 +100,8 @@ const TRACE_EVENT_KEYS = new Set([
   "subtotalLabelFound", "subtotalParsed", "subtotalUsd", "success",
   "timestamp", "totalAmountCandidateFound", "totalCurrencyFound",
   "totalLabelAmountContainerFound", "totalLabelFound", "totalParsed",
-  "totalUsd", "traceId",
+  "totalUsd", "traceId", "tabsQueryTotalCount", "shopAppHostTabCount",
+  "shopAppProbedCount", "eligibleCheckoutCount",
 ])
 const TRACE_STATE_SET = new Set<string>(LUNA_SHIPPING_RUNTIME_TRACE_STATES)
 
@@ -118,6 +124,9 @@ export function normalizeLunaShippingRuntimeTraceEventV1(
     input.totalAmountCandidateFound, input.totalLabelAmountContainerFound,
     input.totalParsed]
     .filter((value) => value !== undefined)
+  const countFields = [input.tabsQueryTotalCount, input.shopAppHostTabCount,
+    input.shopAppProbedCount, input.eligibleCheckoutCount]
+    .filter((value) => value !== undefined)
   if (keys.some((key) => !TRACE_EVENT_KEYS.has(key)) ||
       input.contractVersion !== LUNA_SHIPPING_RUNTIME_TRACE_VERSION ||
       !TRACE_ID.test(input.traceId) ||
@@ -132,7 +141,9 @@ export function normalizeLunaShippingRuntimeTraceEventV1(
       typeof input.success !== "boolean" || !SAFE_REASON.test(input.reasonCode) ||
       input.purchaseBoundaryEnforced !== true ||
       optionalMoney.some((value) => money(value) === null) ||
-      markerFields.some((value) => typeof value !== "boolean")) {
+      markerFields.some((value) => typeof value !== "boolean") ||
+      countFields.some((value) => !Number.isInteger(value) || value < 0 ||
+        value > 10_000)) {
     throw new Error("LUNA_SHIPPING_RUNTIME_TRACE_CONTRACT_INVALID")
   }
   return Object.freeze({ ...input })

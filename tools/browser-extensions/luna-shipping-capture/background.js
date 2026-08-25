@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.25"
+const EXTENSION_BUILD_VERSION = "1.0.26"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -164,6 +164,13 @@ function emitRuntimeTrace(state, success = true, reasonCode = "NONE", details = 
     "totalLabelFound", "totalAmountCandidateFound", "totalCurrencyFound",
     "totalParsed"]) {
     if (typeof details[field] === "boolean") event[field] = details[field]
+  }
+  for (const field of ["tabsQueryTotalCount", "shopAppHostTabCount",
+    "shopAppProbedCount", "eligibleCheckoutCount"]) {
+    const value = details[field]
+    if (Number.isInteger(value) && value >= 0 && value <= 10_000) {
+      event[field] = value
+    }
   }
   activeRuntimeTrace.events.push(event)
   try { sellerPort?.postMessage({ type: RUNTIME_TRACE_EVENT, event }) } catch {
@@ -470,22 +477,26 @@ function sendTabMessage(tabId, message) {
   })
 }
 
-function queryShopAppTabs() {
-  return new Promise((resolve, reject) => chrome.tabs.query({
-    url: SHOP_APP_HOST_PATTERN,
-  }, (tabs) => {
+function queryTabs(queryInfo) {
+  return new Promise((resolve, reject) => chrome.tabs.query(queryInfo, (tabs) => {
     if (chrome.runtime.lastError) {
       reject(new Error("CANONICAL_BINDING_CHECKOUT_TAB_DISCOVERY_FAILED"))
       return
     }
-    resolve((Array.isArray(tabs) ? tabs : []).filter((tab) => {
-      if (!Number.isInteger(tab?.id)) return false
-      try {
-        const parsed = new URL(tab.url ?? "")
-        return parsed.protocol === "https:" && parsed.hostname === "shop.app"
-      } catch { return false }
-    }).map((tab) => ({ id: tab.id })))
+    resolve(Array.isArray(tabs) ? tabs : [])
   }))
+}
+
+async function queryShopAppTabs() {
+  const [normalTabs, shopAppTabs] = await Promise.all([
+    queryTabs({ windowType: "normal" }),
+    queryTabs({ windowType: "normal", url: SHOP_APP_HOST_PATTERN }),
+  ])
+  return {
+    totalCount: normalTabs.length,
+    tabs: shopAppTabs.filter((tab) => Number.isInteger(tab?.id))
+      .map((tab) => ({ id: tab.id })),
+  }
 }
 
 async function requestDestinationOperationFromTab(tabId, message) {
@@ -506,11 +517,9 @@ async function requestDestinationOperationFromTab(tabId, message) {
 
 async function bindCanonicalDestination(port, existingBinding) {
   emitRuntimeTrace("BIND_SHOP_APP_TAB_DISCOVERY_STARTED")
-  const checkoutTabs = await boundedBindStep(queryShopAppTabs(),
+  const discovery = await boundedBindStep(queryShopAppTabs(),
     "BIND_SHOP_APP_TAB_DISCOVERY_STARTED")
-  if (!checkoutTabs.length) {
-    throw new Error("BIND_CHECKOUT_TAB_NOT_FOUND")
-  }
+  const checkoutTabs = discovery.tabs
   const probedTabs = await Promise.all(checkoutTabs.map(async ({ id }) => {
     try {
       const response = await boundedBindStep(
@@ -531,6 +540,12 @@ async function bindCanonicalDestination(port, existingBinding) {
     }
   }))
   const eligibleTabs = probedTabs.filter((tab) => tab.eligible)
+  emitRuntimeTrace("BIND_SHOP_APP_TAB_DISCOVERY_RESULT", true, "NONE", {
+    tabsQueryTotalCount: discovery.totalCount,
+    shopAppHostTabCount: checkoutTabs.length,
+    shopAppProbedCount: probedTabs.length,
+    eligibleCheckoutCount: eligibleTabs.length,
+  })
   if (!eligibleTabs.length) {
     if (checkoutTabs.length === 1 && probedTabs[0]?.error) {
       throw new Error(probedTabs[0].error)
