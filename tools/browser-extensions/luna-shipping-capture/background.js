@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.35"
+const EXTENSION_BUILD_VERSION = "1.0.36"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -101,6 +101,7 @@ let canonicalBindInFlight = false
 let canonicalBindBootstrapActive = false
 let canonicalBindCheckoutWaiter = null
 let canonicalBindBootstrapTraceStates = new Set()
+let canonicalBindBootstrapAttempted = false
 
 const PROGRESS_TRACE_STATE = new Map([
   ["PRODUCT_PAGE_DOM_READY", "PRODUCT_PAGE_OPENED"],
@@ -175,6 +176,10 @@ function emitRuntimeTrace(state, success = true, reasonCode = "NONE", details = 
     "shopPayMarkerSubtotal", "shopPayMarkerTotal", "shopPayMarkerPayNow"]) {
     if (typeof details[field] === "boolean") event[field] = details[field]
   }
+  for (const field of ["bindCheckoutBootstrapRequired",
+    "bindCheckoutBootstrapAttempted", "bindStartJobInvoked"]) {
+    if (typeof details[field] === "boolean") event[field] = details[field]
+  }
   for (const field of ["subtotalLabelFound", "subtotalAmountCandidateFound",
     "subtotalCurrencyFound", "subtotalParsed", "shippingLabelFound",
     "shippingAmountCandidateFound", "shippingCurrencyFound", "shippingParsed",
@@ -186,7 +191,7 @@ function emitRuntimeTrace(state, success = true, reasonCode = "NONE", details = 
     "shopAppProbedCount", "tabsEnumeratedCount",
     "contentScriptResponderCount", "eligibleCheckoutCount",
     "probeAttemptCount", "probeResponseCount", "eligibleResponseCount",
-    "probeErrorCount"]) {
+    "probeErrorCount", "bindCheckoutDiscoveryValidCount"]) {
     const value = details[field]
     if (Number.isInteger(value) && value >= 0 && value <= 10_000) {
       event[field] = value
@@ -252,6 +257,7 @@ function clearActiveJob() {
   activeRuntimeTrace = null
   canonicalBindBootstrapActive = false
   canonicalBindBootstrapTraceStates = new Set()
+  canonicalBindBootstrapAttempted = false
   settleCanonicalBindCheckout(new Error("BIND_CHECKOUT_BOOTSTRAP_ABORTED"))
 }
 
@@ -603,7 +609,7 @@ function writeDestinationBinding(binding) {
 function sendTabMessage(tabId, message) {
   return new Promise((resolve, reject) => {
     if (!Number.isInteger(tabId)) {
-      reject(new Error("BIND_CHECKOUT_TAB_NOT_FOUND"))
+      reject(new Error("BIND_CHECKOUT_TAB_ID_INVALID"))
       return
     }
     chrome.tabs.sendMessage(tabId, message, { frameId: 0 }, (response) => {
@@ -722,6 +728,7 @@ async function discoverCanonicalBindingCheckoutTab() {
     probeResponseCount: responseTabs.length,
     eligibleResponseCount: eligibleTabs.length,
     probeErrorCount: errorTabs.length,
+    bindCheckoutDiscoveryValidCount: eligibleTabs.length,
   })
   if (!eligibleTabs.length) {
     return null
@@ -736,7 +743,7 @@ async function discoverCanonicalBindingCheckoutTab() {
 
 async function bindCanonicalDestination(port, existingBinding, checkoutTabId) {
   if (!Number.isInteger(checkoutTabId)) {
-    throw new Error("BIND_CHECKOUT_TAB_NOT_FOUND")
+    throw new Error("BIND_CHECKOUT_TAB_SELECTION_INVALID")
   }
   const message = { type: BIND_CANONICAL_DESTINATION_EXECUTE,
     contractVersion: BIND_EXECUTION_CONTRACT,
@@ -795,9 +802,16 @@ async function bootstrapCanonicalDestinationCheckout(bootstrapJob) {
   if (activeJob) throw new Error("BIND_BOOTSTRAP_ACTIVE_JOB_CONFLICT")
   canonicalBindBootstrapActive = true
   canonicalBindBootstrapTraceStates = new Set()
+  canonicalBindBootstrapAttempted = true
   const checkoutReady = waitForCanonicalBindCheckout()
   try {
-    await startJob(bootstrapJob, false, true)
+    const startJobPromise = startJob(bootstrapJob, false, true)
+    emitRuntimeTrace("BIND_START_JOB_INVOKED", true, "NONE", {
+      bindCheckoutBootstrapRequired: true,
+      bindCheckoutBootstrapAttempted: true,
+      bindStartJobInvoked: true,
+    })
+    await startJobPromise
     emitBindBootstrapTraceOnce("BIND_BOOTSTRAP_PRODUCT_OPENED")
     await checkoutReady
   } catch (error) {
@@ -808,6 +822,9 @@ async function bootstrapCanonicalDestinationCheckout(bootstrapJob) {
   }
   const checkoutTabId = await discoverCanonicalBindingCheckoutTab()
   if (!Number.isInteger(checkoutTabId)) {
+    if (!canonicalBindBootstrapAttempted) {
+      throw new Error("BIND_CHECKOUT_BOOTSTRAP_INVARIANT_VIOLATION")
+    }
     throw new Error("BIND_CHECKOUT_TAB_NOT_FOUND")
   }
   emitBindBootstrapTraceOnce("BIND_BOOTSTRAP_CHECKOUT_DETECTED")
@@ -824,6 +841,7 @@ async function handleCanonicalDestinationBinding(port, bootstrapJob) {
     return
   }
   canonicalBindInFlight = true
+  canonicalBindBootstrapAttempted = false
   let existingBinding = null
   let bootstrapStarted = false
   try {
@@ -836,7 +854,11 @@ async function handleCanonicalDestinationBinding(port, bootstrapJob) {
     if (Number.isInteger(checkoutTabId)) {
       emitRuntimeTrace("BIND_EXISTING_CHECKOUT_FOUND")
     } else {
-      emitRuntimeTrace("BIND_CHECKOUT_BOOTSTRAP_REQUIRED")
+      emitRuntimeTrace("BIND_CHECKOUT_BOOTSTRAP_REQUIRED", true, "NONE", {
+        bindCheckoutBootstrapRequired: true,
+        bindCheckoutBootstrapAttempted: false,
+        bindStartJobInvoked: false,
+      })
       bootstrapStarted = true
       checkoutTabId = await bootstrapCanonicalDestinationCheckout(bootstrapJob)
     }
