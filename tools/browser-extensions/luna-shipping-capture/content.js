@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.29" },
+      extensionBuildVersion: "1.0.30" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -19,12 +19,12 @@ const JOB_RUNTIME_FAILURE = "LUNA_SHIPPING_JOB_RUNTIME_FAILURE"
 const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
 const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
-const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
-const PROBE_CANONICAL_DESTINATION = "PROBE_LUNA_CANONICAL_DESTINATION"
+const BIND_CANONICAL_DESTINATION_EXECUTE =
+  "BIND_CANONICAL_DESTINATION_EXECUTE_V1"
+const BIND_EXECUTION_CONTRACT = "LUNA_CANONICAL_DESTINATION_BIND_EXECUTION_V1"
 const BIND_ELIGIBILITY_PROBE =
   "SELLER_OS_LUNA_BIND_ELIGIBILITY_PROBE_V1"
 const BIND_ELIGIBILITY_CONTRACT = "LUNA_BIND_ELIGIBILITY_PROBE_V1"
-const VALIDATE_CANONICAL_DESTINATION = "VALIDATE_LUNA_CANONICAL_DESTINATION"
 const DESTINATION_FINGERPRINT_VERSION =
   "LUNA_SHOP_PAY_DESTINATION_SHA256_V1"
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
@@ -1547,26 +1547,6 @@ const isCheckoutPage = /^\/checkouts?(?:\/|$)/.test(location.pathname) ||
   location.hostname === "account.lunaportex.com" ||
   location.hostname === "shop.app"
 
-function canonicalBindingCheckoutSnapshot() {
-  const destination = shopPayDestinationSnapshot()
-  const markers = {
-    shopPayMarkerShipTo: destination.markerFound,
-    shopPayMarkerShipping: semanticCheckoutSignal(/^shipping\b/),
-    shopPayMarkerSubtotal: semanticCheckoutSignal(/^subtotal\b/),
-    shopPayMarkerTotal: semanticCheckoutSignal(/^total\b/),
-    shopPayMarkerPayment: semanticCheckoutSignal(/^payment\b/),
-    shopPayMarkerPayNow: semanticCheckoutSignal(/^pay now\b/),
-  }
-  const safeCheckoutShellVerified = markers.shopPayMarkerShipping &&
-    markers.shopPayMarkerSubtotal &&
-    markers.shopPayMarkerTotal &&
-    (markers.shopPayMarkerPayment || markers.shopPayMarkerPayNow)
-  const safeCheckoutMarkersVerified = safeCheckoutShellVerified &&
-    markers.shopPayMarkerShipTo
-  return { destination, markers, safeCheckoutShellVerified,
-    safeCheckoutMarkersVerified }
-}
-
 function bindingEligibilityResponse() {
   const runtimeMarkers = shopPayMarkerSnapshot()
   const checkoutHost = checkoutHostClassification()
@@ -1582,6 +1562,51 @@ function bindingEligibilityResponse() {
   return Object.freeze({ contractVersion: BIND_ELIGIBILITY_CONTRACT,
     eligible: checkoutPageDetected, checkoutPageDetected,
     checkoutHostClassification: checkoutHost, ...markers })
+}
+
+async function executeCanonicalDestinationBinding(message) {
+  if (message.contractVersion !== BIND_EXECUTION_CONTRACT ||
+      !new Set(["BIND", "VALIDATE"]).has(message.operation)) {
+    throw new Error("BIND_MESSAGE_CONTRACT_INVALID")
+  }
+  const eligibility = bindingEligibilityResponse()
+  if (eligibility.checkoutHostClassification !== "SHOP_PAY_CHECKOUT_HOST" ||
+      !eligibility.shippingMarker || !eligibility.subtotalMarker ||
+      !eligibility.totalMarker || !eligibility.payNowMarker) {
+    throw new Error("BIND_CHECKOUT_MARKERS_INVALID")
+  }
+  if (!eligibility.shipToMarker) throw new Error("BIND_SHIP_TO_NOT_FOUND")
+  const destination = shopPayDestinationSnapshot()
+  if (destination.ambiguous || !destination.normalized) {
+    throw new Error("BIND_SHIP_TO_NOT_FOUND")
+  }
+  if (destination.countryClass !== "US") {
+    throw new Error("BIND_COUNTRY_CLASS_UNPROVEN")
+  }
+  let fingerprint
+  try { fingerprint = await sha256Text(destination.normalized) } catch {
+    throw new Error("BIND_FINGERPRINT_FAILED")
+  }
+  const binding = message.binding
+  const validating = message.operation === "VALIDATE"
+  if (validating && (binding?.fingerprintVersion !==
+        DESTINATION_FINGERPRINT_VERSION || binding?.countryClass !== "US" ||
+      !/^sha256:[0-9a-f]{64}$/.test(
+        binding?.canonicalDestinationFingerprint ?? ""))) {
+    throw new Error("CANONICAL_DESTINATION_FINGERPRINT_UNAVAILABLE")
+  }
+  if (validating && fingerprint !==
+      binding.canonicalDestinationFingerprint) {
+    throw new Error("CANONICAL_US_SHIPPING_PROFILE_MISMATCH")
+  }
+  return Object.freeze({ contractVersion: BIND_EXECUTION_CONTRACT,
+    success: true, fingerprint,
+    fingerprintVersion: DESTINATION_FINGERPRINT_VERSION, countryClass: "US",
+    canonicalDestinationMatch: true,
+    safeMarkerBooleans: Object.freeze({ shipTo: eligibility.shipToMarker,
+      shipping: eligibility.shippingMarker,
+      subtotal: eligibility.subtotalMarker, total: eligibility.totalMarker,
+      payNow: eligibility.payNowMarker }) })
 }
 
 chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
@@ -1600,58 +1625,18 @@ chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
       .catch(() => sendResponse(bindingEligibilityResponse()))
     return true
   }
-  if (message?.type === PROBE_CANONICAL_DESTINATION ||
-      message?.type === BIND_CANONICAL_DESTINATION ||
-      message?.type === VALIDATE_CANONICAL_DESTINATION) {
+  if (message?.type === BIND_CANONICAL_DESTINATION_EXECUTE) {
     if (location.hostname !== "shop.app") {
-      sendResponse({ accepted: false,
-        error: "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE" })
+      sendResponse({ contractVersion: BIND_EXECUTION_CONTRACT, success: false,
+        error: "BIND_CHECKOUT_MARKERS_INVALID" })
       return false
     }
-    void boundedDomWait(() => {
-      const snapshot = canonicalBindingCheckoutSnapshot()
-      if (snapshot.destination.ambiguous) {
-        throw new Error("BIND_SHIP_TO_AMBIGUOUS")
-      }
-      return snapshot.safeCheckoutShellVerified ? snapshot : null
-    }, "CANONICAL_BINDING_CHECKOUT_SHAPE_UNPROVEN",
-    SHOP_PAY_DOM_TIMEOUT_MS).then(async (snapshot) => {
-      const current = snapshot.destination
-      if (current.ambiguous) throw new Error("BIND_SHIP_TO_AMBIGUOUS")
-      if (!current.normalized || current.countryClass !== "US") {
-        throw new Error("BIND_SHIP_TO_NOT_FOUND")
-      }
-      if (message.type === PROBE_CANONICAL_DESTINATION) {
-        sendResponse({ accepted: true, shipToAvailable: true,
-          safeCheckoutMarkersVerified: true })
-        return
-      }
-      const canonicalDestinationFingerprint = await sha256Text(current.normalized)
-      if (message.type === VALIDATE_CANONICAL_DESTINATION) {
-        const binding = message.binding
-        if (binding?.fingerprintVersion !== DESTINATION_FINGERPRINT_VERSION ||
-            binding?.countryClass !== "US" ||
-            !/^sha256:[0-9a-f]{64}$/.test(
-              binding?.canonicalDestinationFingerprint ?? "")) {
-          throw new Error("CANONICAL_DESTINATION_FINGERPRINT_UNAVAILABLE")
-        }
-        if (canonicalDestinationFingerprint !==
-            binding.canonicalDestinationFingerprint) {
-          throw new Error("CANONICAL_US_SHIPPING_PROFILE_MISMATCH")
-        }
-        sendResponse({ accepted: true, canonicalDestinationMatch: true,
-          fingerprintVersion: DESTINATION_FINGERPRINT_VERSION,
-          countryClass: "US", safeCheckoutMarkersVerified: true })
-        return
-      }
-      sendResponse({ accepted: true,
-        canonicalDestinationFingerprint,
-        fingerprintVersion: DESTINATION_FINGERPRINT_VERSION,
-        countryClass: "US",
-        safeCheckoutMarkersVerified: true })
-    }).catch((error) => sendResponse({ accepted: false,
+    void executeCanonicalDestinationBinding(message)
+      .then((response) => sendResponse(response))
+      .catch((error) => sendResponse({
+        contractVersion: BIND_EXECUTION_CONTRACT, success: false,
       error: error instanceof Error ? error.message
-        : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE" }))
+        : "BIND_FINGERPRINT_FAILED" }))
     return true
   }
   return false

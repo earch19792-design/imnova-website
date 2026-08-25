@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.29"
+const EXTENSION_BUILD_VERSION = "1.0.30"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -17,11 +17,12 @@ const JOB_RUNTIME_FAILURE = "LUNA_SHIPPING_JOB_RUNTIME_FAILURE"
 const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
 const CHECKOUT_BOOTSTRAP_ACK = "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK"
 const RESUME_ACTIVE_JOB = "RESUME_ACTIVE_LUNA_SHIPPING_JOB"
-const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
+const BIND_CANONICAL_DESTINATION_EXECUTE =
+  "BIND_CANONICAL_DESTINATION_EXECUTE_V1"
+const BIND_EXECUTION_CONTRACT = "LUNA_CANONICAL_DESTINATION_BIND_EXECUTION_V1"
 const BIND_ELIGIBILITY_PROBE =
   "SELLER_OS_LUNA_BIND_ELIGIBILITY_PROBE_V1"
 const BIND_ELIGIBILITY_CONTRACT = "LUNA_BIND_ELIGIBILITY_PROBE_V1"
-const VALIDATE_CANONICAL_DESTINATION = "VALIDATE_LUNA_CANONICAL_DESTINATION"
 const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
 const GET_CANONICAL_DESTINATION_STATUS =
@@ -43,6 +44,7 @@ const RECONNECT_GRACE_MS = 20_000
 const CHECKOUT_BOOTSTRAP_ACK_TIMEOUT_MS = 2_500
 const BIND_STEP_TIMEOUT_MS = 2_000
 const BIND_TOP_FRAME_TIMEOUT_MS = 25_000
+const BIND_CONTENT_RESPONSE_TIMEOUT_MS = 5_000
 const MAX_BIND_DISCOVERY_TABS = 200
 const CHECKOUT_HOSTS = new Set(["lunaportex.com", "www.lunaportex.com",
   "account.lunaportex.com", "shop.app"])
@@ -536,7 +538,33 @@ async function probeBindingCapability(tabId) {
 }
 
 async function requestDestinationOperationFromTab(tabId, message) {
-  return sendTabMessage(tabId, message)
+  try {
+    return await boundedBindStep(sendTabMessage(tabId, message),
+      "BIND_CONTENT_SCRIPT_RESPONSE", BIND_CONTENT_RESPONSE_TIMEOUT_MS)
+  } catch (error) {
+    if (error instanceof Error && new Set([
+      "CHECKOUT_CONTENT_SCRIPT_NOT_AVAILABLE",
+      "BIND_TIMEOUT:BIND_CONTENT_SCRIPT_RESPONSE",
+    ]).has(error.message)) {
+      throw new Error("BIND_CONTENT_SCRIPT_NOT_RESPONDING")
+    }
+    throw error
+  }
+}
+
+function safeBindingExecutionResponse(value, validating) {
+  const markers = value?.safeMarkerBooleans
+  const markerFields = ["shipTo", "shipping", "subtotal", "total", "payNow"]
+  if (!value || typeof value !== "object" ||
+      value.contractVersion !== BIND_EXECUTION_CONTRACT ||
+      value.success !== true || value.fingerprintVersion !==
+        DESTINATION_FINGERPRINT_VERSION || value.countryClass !== "US" ||
+      !/^sha256:[0-9a-f]{64}$/.test(value.fingerprint ?? "") ||
+      !markers || markerFields.some((field) => markers[field] !== true) ||
+      (validating && value.canonicalDestinationMatch !== true)) return null
+  return Object.freeze({ fingerprint: value.fingerprint,
+    fingerprintVersion: value.fingerprintVersion, countryClass: "US",
+    canonicalDestinationMatch: value.canonicalDestinationMatch === true })
 }
 
 async function bindCanonicalDestination(port, existingBinding) {
@@ -569,23 +597,26 @@ async function bindCanonicalDestination(port, existingBinding) {
   }
   const [{ id: checkoutTabId }] = eligibleTabs
   emitRuntimeTrace("BIND_SHOP_APP_TAB_SELECTED")
-  const operation = existingBinding
-    ? VALIDATE_CANONICAL_DESTINATION : BIND_CANONICAL_DESTINATION
-  const message = existingBinding ? { type: operation,
-    binding: existingBinding } : { type: operation }
+  const message = { type: BIND_CANONICAL_DESTINATION_EXECUTE,
+    contractVersion: BIND_EXECUTION_CONTRACT,
+    operation: existingBinding ? "VALIDATE" : "BIND",
+    ...(existingBinding ? { binding: existingBinding } : {}) }
   emitRuntimeTrace("BIND_TOP_FRAME_EXECUTION_STARTED")
-  const response = await boundedBindStep(
-    requestDestinationOperationFromTab(checkoutTabId, message),
-    "BIND_TOP_FRAME_EXECUTION_STARTED", BIND_TOP_FRAME_TIMEOUT_MS)
-  if (response?.accepted !== true) {
+  const response = await requestDestinationOperationFromTab(
+    checkoutTabId, message)
+  if (response?.success !== true) {
     throw new Error(safeRuntimeReason(response?.error ??
       "BIND_EXECUTE_SCRIPT_RESULT_NOT_RETURNED"))
   }
-  if (response.safeCheckoutMarkersVerified !== true) {
-    throw new Error("BIND_CHECKOUT_MARKERS_UNPROVEN")
-  }
+  const safeExecution = safeBindingExecutionResponse(response,
+    Boolean(existingBinding))
+  if (!safeExecution) throw new Error("BIND_CHECKOUT_MARKERS_INVALID")
   emitRuntimeTrace("BIND_CHECKOUT_MARKERS_VERIFIED")
-  const candidate = existingBinding ?? safeDestinationCandidate(response)
+  const candidate = existingBinding ?? safeDestinationCandidate({
+    canonicalDestinationFingerprint: safeExecution.fingerprint,
+    fingerprintVersion: safeExecution.fingerprintVersion,
+    countryClass: safeExecution.countryClass,
+  })
   if (!candidate) throw new Error("BIND_SHIP_TO_NOT_FOUND")
   emitRuntimeTrace("BIND_SHIP_TO_AVAILABLE")
   emitRuntimeTrace("CANONICAL_FINGERPRINT_COMPUTED")
