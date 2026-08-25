@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.33"
+const EXTENSION_BUILD_VERSION = "1.0.34"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -29,11 +29,17 @@ const GET_CANONICAL_DESTINATION_STATUS =
   "SELLER_OS_GET_LUNA_CANONICAL_DESTINATION_STATUS"
 const CANONICAL_DESTINATION_STATUS =
   "LUNA_CANONICAL_DESTINATION_STATUS"
+const GET_BINDING_STORAGE_DIAGNOSTIC =
+  "SELLER_OS_GET_LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
+const BINDING_STORAGE_DIAGNOSTIC =
+  "LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
 const DESTINATION_BINDING_RESULT =
   "LUNA_CANONICAL_DESTINATION_BINDING_RESULT"
 const DESTINATION_FINGERPRINT_VERSION =
   "LUNA_SHOP_PAY_DESTINATION_SHA256_V1"
 const DESTINATION_STORAGE_KEY = "sellerOsLunaCanonicalDestinationBindingV1"
+const DESTINATION_STORAGE_AUTHORITY =
+  `chrome.storage.local:${DESTINATION_STORAGE_KEY}`
 const RUNTIME_TRACE_CONTRACT = "LUNA_SHIPPING_RUNTIME_TRACE_V1"
 const RUNTIME_TRACE_EVENT = "LUNA_SHIPPING_RUNTIME_TRACE_EVENT"
 const SHIPPING_SERVER_RESULT = "SELLER_OS_LUNA_SHIPPING_SERVER_RESULT"
@@ -437,6 +443,72 @@ function readDestinationBindingEnvelope() {
         value, DESTINATION_STORAGE_KEY))
       resolve({ present, value: present ? value[DESTINATION_STORAGE_KEY] : null })
     }))
+}
+
+function bindingStorageDiagnostic() {
+  const base = {
+    type: BINDING_STORAGE_DIAGNOSTIC,
+    extensionId: chrome.runtime.id,
+    expectedExtensionId: EXACT_EXTENSION_ID,
+    extensionVersion: chrome.runtime.getManifest().version,
+    storageAreaUsed: "chrome.storage.local",
+    writeStorageAuthority: DESTINATION_STORAGE_AUTHORITY,
+    readStorageAuthority: DESTINATION_STORAGE_AUTHORITY,
+    statusStorageAuthority: DESTINATION_STORAGE_AUTHORITY,
+    autoClaimStorageAuthority: DESTINATION_STORAGE_AUTHORITY,
+    authoritiesAligned: true,
+    extensionIdContinuity: chrome.runtime.id === EXACT_EXTENSION_ID,
+  }
+  return readDestinationBindingEnvelope().then((stored) => {
+    const envelope = stored.present && stored.value &&
+      typeof stored.value === "object" ? stored.value : null
+    const fingerprintPresent =
+      typeof envelope?.canonicalDestinationFingerprint === "string" &&
+      envelope.canonicalDestinationFingerprint.length > 0
+    const countryClassPresent = typeof envelope?.countryClass === "string" &&
+      envelope.countryClass.length > 0
+    const boundAtPresent = typeof envelope?.boundAt === "string" &&
+      envelope.boundAt.length > 0
+    const schemaVersion = envelope?.fingerprintVersion ===
+      DESTINATION_FINGERPRINT_VERSION ? DESTINATION_FINGERPRINT_VERSION
+      : envelope?.fingerprintVersion == null ? "ABSENT" : "UNSUPPORTED"
+    const current = safeDestinationBinding(envelope)
+    const legacy = current ? null : safeDestinationCandidate(envelope)
+    let bindingClassification = "NO_BINDING_PRESENT"
+    if (current) bindingClassification = "PRIMARY_BINDING_VALID"
+    else if (legacy) bindingClassification = "LEGACY_BINDING_VALID"
+    else if (stored.present && envelope?.fingerprintVersion !==
+        DESTINATION_FINGERPRINT_VERSION) {
+      bindingClassification = "BINDING_PRESENT_SCHEMA_REJECTED"
+    } else if (stored.present) {
+      bindingClassification = "BINDING_PRESENT_FIELD_REJECTED"
+    }
+    return {
+      ...base,
+      canonicalPrimaryKeyPresent: stored.present,
+      canonicalLegacyKeyPresent: false,
+      canonicalEnvelopePresent: Boolean(envelope),
+      canonicalEnvelopeSchemaVersion: schemaVersion,
+      canonicalEnvelopeValid: Boolean(current || legacy),
+      canonicalCountryClassPresent: countryClassPresent,
+      canonicalBoundAtPresent: boundAtPresent,
+      canonicalFingerprintPresent: fingerprintPresent,
+      storageReadStatus: "READ_OK",
+      bindingClassification,
+    }
+  }, () => ({
+    ...base,
+    canonicalPrimaryKeyPresent: false,
+    canonicalLegacyKeyPresent: false,
+    canonicalEnvelopePresent: false,
+    canonicalEnvelopeSchemaVersion: "NOT_READ",
+    canonicalEnvelopeValid: false,
+    canonicalCountryClassPresent: false,
+    canonicalBoundAtPresent: false,
+    canonicalFingerprintPresent: false,
+    storageReadStatus: "BINDING_STORAGE_READ_FAILED",
+    bindingClassification: "STORAGE_READ_FAILED",
+  }))
 }
 
 async function readDestinationBinding() {
@@ -929,6 +1001,11 @@ chrome.runtime.onConnectExternal.addListener((port) => {
     port.postMessage({ type: RUNTIME_TRACE_EVENT, event })
   }
   port.onMessage.addListener((message) => {
+    if (message?.type === GET_BINDING_STORAGE_DIAGNOSTIC) {
+      void bindingStorageDiagnostic().then((diagnostic) =>
+        port.postMessage(diagnostic))
+      return
+    }
     if (message?.type === GET_CANONICAL_DESTINATION_STATUS) {
       void readDestinationBinding().then((binding) => port.postMessage({
         type: CANONICAL_DESTINATION_STATUS,

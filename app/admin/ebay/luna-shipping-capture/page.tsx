@@ -13,7 +13,10 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.33"
+const EXPECTED_EXTENSION_VERSION = "1.0.34"
+const GET_BINDING_STORAGE_DIAGNOSTIC =
+  "SELLER_OS_GET_LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
+const BINDING_STORAGE_DIAGNOSTIC = "LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
 const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
@@ -54,6 +57,29 @@ type Result = {
   economicsStatus: string
   contributionProfitUsd: number | null
   contributionMarginPercent: number | null
+}
+
+type BindingStorageDiagnostic = {
+  extensionId: string
+  expectedExtensionId: string
+  extensionVersion: string
+  storageAreaUsed: string
+  canonicalPrimaryKeyPresent: boolean
+  canonicalLegacyKeyPresent: boolean
+  canonicalEnvelopePresent: boolean
+  canonicalEnvelopeSchemaVersion: string
+  canonicalEnvelopeValid: boolean
+  canonicalCountryClassPresent: boolean
+  canonicalBoundAtPresent: boolean
+  canonicalFingerprintPresent: boolean
+  storageReadStatus: string
+  bindingClassification: string
+  writeStorageAuthority: string
+  readStorageAuthority: string
+  statusStorageAuthority: string
+  autoClaimStorageAuthority: string
+  authoritiesAligned: boolean
+  extensionIdContinuity: boolean
 }
 
 type RuntimeTrace = {
@@ -258,6 +284,8 @@ export default function LunaShippingCapturePage() {
   const [results, setResults] = useState<Result[]>([])
   const [canonicalDestinationBound, setCanonicalDestinationBound] = useState(false)
   const [canonicalDestinationMatch, setCanonicalDestinationMatch] = useState(false)
+  const [bindingStorageDiagnostic, setBindingStorageDiagnostic] =
+    useState<BindingStorageDiagnostic | null>(null)
   const [liveTraceEvents, setLiveTraceEvents] =
     useState<LunaShippingRuntimeTraceEventV1[]>([])
   const [traceDurable, setTraceDurable] = useState(false)
@@ -412,6 +440,41 @@ export default function LunaShippingCapturePage() {
         if (!active) return
         if (message?.type === "LUNA_SHIPPING_RUNTIME_TRACE_EVENT") {
           acceptRuntimeTraceEvent(message.event)
+          return
+        }
+        if (message?.type === BINDING_STORAGE_DIAGNOSTIC) {
+          setBindingStorageDiagnostic({
+            extensionId: String(message.extensionId ?? "UNKNOWN"),
+            expectedExtensionId: String(message.expectedExtensionId ?? "UNKNOWN"),
+            extensionVersion: String(message.extensionVersion ?? "UNKNOWN"),
+            storageAreaUsed: String(message.storageAreaUsed ?? "UNKNOWN"),
+            canonicalPrimaryKeyPresent:
+              message.canonicalPrimaryKeyPresent === true,
+            canonicalLegacyKeyPresent:
+              message.canonicalLegacyKeyPresent === true,
+            canonicalEnvelopePresent: message.canonicalEnvelopePresent === true,
+            canonicalEnvelopeSchemaVersion:
+              String(message.canonicalEnvelopeSchemaVersion ?? "UNKNOWN"),
+            canonicalEnvelopeValid: message.canonicalEnvelopeValid === true,
+            canonicalCountryClassPresent:
+              message.canonicalCountryClassPresent === true,
+            canonicalBoundAtPresent: message.canonicalBoundAtPresent === true,
+            canonicalFingerprintPresent:
+              message.canonicalFingerprintPresent === true,
+            storageReadStatus: String(message.storageReadStatus ?? "UNKNOWN"),
+            bindingClassification:
+              String(message.bindingClassification ?? "UNKNOWN"),
+            writeStorageAuthority:
+              String(message.writeStorageAuthority ?? "UNKNOWN"),
+            readStorageAuthority:
+              String(message.readStorageAuthority ?? "UNKNOWN"),
+            statusStorageAuthority:
+              String(message.statusStorageAuthority ?? "UNKNOWN"),
+            autoClaimStorageAuthority:
+              String(message.autoClaimStorageAuthority ?? "UNKNOWN"),
+            authoritiesAligned: message.authoritiesAligned === true,
+            extensionIdContinuity: message.extensionIdContinuity === true,
+          })
           return
         }
         if (message?.type === "LUNA_CANONICAL_DESTINATION_STATUS") {
@@ -769,6 +832,7 @@ export default function LunaShippingCapturePage() {
       const attachPort = (nextPort: ExternalPort) => {
         port = nextPort
         nextPort.onMessage.addListener(handlePortMessage)
+        nextPort.postMessage({ type: GET_BINDING_STORAGE_DIAGNOSTIC })
         nextPort.postMessage({
           type: "SELLER_OS_GET_LUNA_CANONICAL_DESTINATION_STATUS",
         })
@@ -859,6 +923,38 @@ export default function LunaShippingCapturePage() {
       <p className="mt-2 text-xs text-white/50">
         CANONICAL_DESTINATION_BOUND={String(canonicalDestinationBound)} · CANONICAL_DESTINATION_MATCH={String(canonicalDestinationMatch)}
       </p>
+      <section className="mt-4 rounded-2xl border border-amber-200/20 bg-amber-200/[0.04] p-4">
+        <h2 className="text-sm font-black">Diagnóstico real de storage</h2>
+        <p className="mt-2 text-xs text-white/60">
+          Sólo muestra metadatos de presencia y validación. Nunca muestra el
+          fingerprint ni el destino.
+        </p>
+        <code className="mt-3 block whitespace-pre-wrap break-all text-xs text-amber-100">
+          {bindingStorageDiagnostic
+            ? `REAL_BINDING_STORAGE_DIAGNOSTIC:\n` +
+              `EXTENSION_ID=${bindingStorageDiagnostic.extensionId}\n` +
+              `EXPECTED_EXTENSION_ID=${bindingStorageDiagnostic.expectedExtensionId}\n` +
+              `EXTENSION_VERSION=${bindingStorageDiagnostic.extensionVersion}\n` +
+              `EXTENSION_ID_CONTINUITY=${bindingStorageDiagnostic.extensionIdContinuity}\n` +
+              `STORAGE_AREA_USED=${bindingStorageDiagnostic.storageAreaUsed}\n` +
+              `CANONICAL_PRIMARY_KEY_PRESENT=${bindingStorageDiagnostic.canonicalPrimaryKeyPresent}\n` +
+              `CANONICAL_LEGACY_KEY_PRESENT=${bindingStorageDiagnostic.canonicalLegacyKeyPresent}\n` +
+              `CANONICAL_ENVELOPE_PRESENT=${bindingStorageDiagnostic.canonicalEnvelopePresent}\n` +
+              `CANONICAL_ENVELOPE_SCHEMA_VERSION=${bindingStorageDiagnostic.canonicalEnvelopeSchemaVersion}\n` +
+              `CANONICAL_ENVELOPE_VALID=${bindingStorageDiagnostic.canonicalEnvelopeValid}\n` +
+              `CANONICAL_COUNTRY_CLASS_PRESENT=${bindingStorageDiagnostic.canonicalCountryClassPresent}\n` +
+              `CANONICAL_BOUND_AT_PRESENT=${bindingStorageDiagnostic.canonicalBoundAtPresent}\n` +
+              `CANONICAL_FINGERPRINT_PRESENT=${bindingStorageDiagnostic.canonicalFingerprintPresent}\n` +
+              `STORAGE_READ_STATUS=${bindingStorageDiagnostic.storageReadStatus}\n` +
+              `BINDING_CLASSIFICATION=${bindingStorageDiagnostic.bindingClassification}\n` +
+              `WRITE_STORAGE_AUTHORITY=${bindingStorageDiagnostic.writeStorageAuthority}\n` +
+              `READ_STORAGE_AUTHORITY=${bindingStorageDiagnostic.readStorageAuthority}\n` +
+              `STATUS_STORAGE_AUTHORITY=${bindingStorageDiagnostic.statusStorageAuthority}\n` +
+              `AUTO_CLAIM_STORAGE_AUTHORITY=${bindingStorageDiagnostic.autoClaimStorageAuthority}\n` +
+              `AUTHORITIES_ALIGNED=${bindingStorageDiagnostic.authoritiesAligned}`
+            : "REAL_BINDING_STORAGE_DIAGNOSTIC=PENDING"}
+        </code>
+      </section>
       <p className="mt-2 text-xs text-white/50">Certificación inicial: {CANARY_NAME}</p>
       <section className="mt-6 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.04] p-4">
         <h2 className="text-sm font-black">Monitor de ejecución</h2>
