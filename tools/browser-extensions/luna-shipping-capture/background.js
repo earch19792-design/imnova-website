@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.36"
+const EXTENSION_BUILD_VERSION = "1.0.37"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -55,6 +55,7 @@ const BIND_STEP_TIMEOUT_MS = 2_000
 const BIND_TOP_FRAME_TIMEOUT_MS = 25_000
 const BIND_CONTENT_RESPONSE_TIMEOUT_MS = 5_000
 const BIND_CHECKOUT_BOOTSTRAP_TIMEOUT_MS = 90_000
+const CHECKOUT_NAVIGATION_OBSERVATION_TIMEOUT_MS = 20_000
 const MAX_BIND_DISCOVERY_TABS = 200
 const CHECKOUT_HOSTS = new Set(["lunaportex.com", "www.lunaportex.com",
   "account.lunaportex.com", "shop.app"])
@@ -102,6 +103,8 @@ let canonicalBindBootstrapActive = false
 let canonicalBindCheckoutWaiter = null
 let canonicalBindBootstrapTraceStates = new Set()
 let canonicalBindBootstrapAttempted = false
+let checkoutNavigationObservation = null
+let checkoutNavigationObservationTimer = null
 
 const PROGRESS_TRACE_STATE = new Map([
   ["PRODUCT_PAGE_DOM_READY", "PRODUCT_PAGE_OPENED"],
@@ -240,7 +243,47 @@ function settleCanonicalBindCheckout(error = null) {
   else waiter.resolve()
 }
 
+function resetCheckoutNavigationObserver() {
+  if (checkoutNavigationObservationTimer) {
+    clearTimeout(checkoutNavigationObservationTimer)
+  }
+  checkoutNavigationObservationTimer = null
+  checkoutNavigationObservation = null
+}
+
+function initializeCheckoutNavigationObserver(job) {
+  resetCheckoutNavigationObserver()
+  checkoutNavigationObservation = {
+    captureSessionId: job.captureSessionId,
+    armed: false,
+    observed: false,
+    tabId: null,
+    host: null,
+    origin: null,
+  }
+}
+
+function armCheckoutNavigationObserver() {
+  if (!activeJob || !checkoutNavigationObservation ||
+      checkoutNavigationObservation.captureSessionId !==
+        activeJob.captureSessionId) return false
+  checkoutNavigationObservation.armed = true
+  if (checkoutNavigationObservationTimer) {
+    clearTimeout(checkoutNavigationObservationTimer)
+  }
+  const captureSessionId = activeJob.captureSessionId
+  checkoutNavigationObservationTimer = setTimeout(() => {
+    checkoutNavigationObservationTimer = null
+    if (!activeJob || activeJob.captureSessionId !== captureSessionId ||
+        !checkoutNavigationObservation?.armed ||
+        checkoutNavigationObservation.observed) return
+    failBindingBootstrapOrActiveJob("CHECKOUT_NAVIGATION_NOT_OBSERVED")
+  }, CHECKOUT_NAVIGATION_OBSERVATION_TIMEOUT_MS)
+  return true
+}
+
 function clearActiveJob() {
+  resetCheckoutNavigationObserver()
   activeJob = null
   activeJobPhase = null
   originalCartSnapshot = null
@@ -960,6 +1003,7 @@ async function startJob(job, productionAutoClaim = false,
     throw new Error("LUNA_SHIPPING_JOB_ALREADY_RUNNING")
   }
   activeJob = exact
+  initializeCheckoutNavigationObserver(exact)
   if (!preserveRuntimeTrace) {
     await beginRuntimeTrace(exact.captureSessionId, exact.identity.candidateId)
   }
@@ -1031,21 +1075,49 @@ function observeCheckoutNavigation(details, inject) {
       !checkoutNavigationArmed || !Array.isArray(originalCartSnapshot) ||
       !Number.isFinite(cartSubtotalUsd) ||
       details?.tabId !== activeTabId || details?.frameId !== 0) return
+  if (!checkoutNavigationObservation?.armed ||
+      checkoutNavigationObservation.captureSessionId !==
+        activeJob.captureSessionId) return
   const observed = safeNavigationIdentity(details.url)
   if (!observed) return
   const allowed = allowedCheckoutNavigation(details.url)
-  if (!inject) {
+  const firstObservation = !checkoutNavigationObservation.observed
+  if (firstObservation) {
+    checkoutNavigationObservation.observed = true
+    checkoutNavigationObservation.tabId = details.tabId
+    checkoutNavigationObservation.host = observed.host
+    checkoutNavigationObservation.origin = observed.origin
+    if (checkoutNavigationObservationTimer) {
+      clearTimeout(checkoutNavigationObservationTimer)
+      checkoutNavigationObservationTimer = null
+    }
+  } else if (checkoutNavigationObservation.tabId !== details.tabId) {
+    return
+  } else if (checkoutNavigationObservation.host !== observed.host) {
+    checkoutNavigationObservation.host = observed.host
+    checkoutNavigationObservation.origin = observed.origin
+    if (!allowed) {
+      failBindingBootstrapOrActiveJob("REAL_CHECKOUT_HOST_NOT_ALLOWLISTED")
+    }
+    return
+  }
+  if (!inject && !checkoutBootstrapAckReceived) {
     lastCheckoutStateRank = CHECKOUT_STATE_RANK.get(CHECKOUT_PHASE) ?? 0
     lastCheckoutState = CHECKOUT_PHASE
   }
-  emitProgress("CHECKOUT_NAVIGATION_OBSERVED", {
-    checkoutNavigationHost: observed.host,
-    checkoutNavigationOrigin: observed.origin,
-    checkoutHostPermissionMatch: Boolean(allowed),
-  })
-  emitBindBootstrapTraceOnce("BIND_BOOTSTRAP_CHECKOUT_NAVIGATION_OBSERVED")
+  if (firstObservation) {
+    emitProgress("CHECKOUT_NAVIGATION_OBSERVED", {
+      checkoutNavigationHost: observed.host,
+      checkoutNavigationOrigin: observed.origin,
+      checkoutHostPermissionMatch: Boolean(allowed),
+    })
+    emitBindBootstrapTraceOnce("BIND_BOOTSTRAP_CHECKOUT_NAVIGATION_OBSERVED")
+  }
   if (!allowed) {
-    failBindingBootstrapOrActiveJob("REAL_CHECKOUT_HOST_NOT_ALLOWLISTED")
+    if (checkoutNavigationObservation.observed &&
+        checkoutNavigationObservation.origin === observed.origin) {
+      failBindingBootstrapOrActiveJob("REAL_CHECKOUT_HOST_NOT_ALLOWLISTED")
+    }
     return
   }
   emitProgress("CHECKOUT_HOST_ALLOWED", {
@@ -1053,7 +1125,7 @@ function observeCheckoutNavigation(details, inject) {
     checkoutNavigationOrigin: allowed.origin,
     checkoutHostPermissionMatch: true,
   })
-  if (!inject) {
+  if (!inject && !checkoutBootstrapAckReceived) {
     checkoutInjectionStarted = false
     checkoutBootstrapAckReceived = false
     checkoutBootstrapAckEmitted = false
@@ -1223,6 +1295,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         ? "ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN" : "WRONG_FRAME_TARGET" })
       return false
     }
+    observeCheckoutNavigation({ tabId: sender.tab.id, frameId: 0,
+      url: sender.url }, true)
+    if (!checkoutNavigationObservation?.observed) {
+      sendResponse({ accepted: false,
+        error: "CHECKOUT_NAVIGATION_NOT_OBSERVED" })
+      return false
+    }
     checkoutBootstrapAckReceived = true
     emitCheckoutBootstrapAck()
     if (canonicalBindBootstrapActive) settleCanonicalBindCheckout()
@@ -1263,6 +1342,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (startingCheckout) {
       cartSubtotalUsd = Math.round(message.cartSubtotalUsd * 100) / 100
       checkoutNavigationArmed = true
+      if (!armCheckoutNavigationObserver()) {
+        sendResponse({ accepted: false,
+          error: "CHECKOUT_NAVIGATION_OBSERVER_NOT_ARMED" })
+        return false
+      }
     }
     emitProgress(activeJobPhase)
     sendResponse({ accepted: true, phase: activeJobPhase })

@@ -13,7 +13,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.36"
+const EXPECTED_EXTENSION_VERSION = "1.0.37"
 const GET_BINDING_STORAGE_DIAGNOSTIC =
   "SELLER_OS_GET_LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
 const BINDING_STORAGE_DIAGNOSTIC = "LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
@@ -363,6 +363,8 @@ export default function LunaShippingCapturePage() {
     const sendCurrent = () => {
       const job = jobs[index]
       if (!job || !port) return
+      setError("")
+      setRuntimeTrace(EMPTY_RUNTIME_TRACE)
       setStatus(mode === "CANARY" && index === 0
         ? "CANARY_DISPATCHED" : "CAPTURING")
       const dispatchState = mode === "AUTO"
