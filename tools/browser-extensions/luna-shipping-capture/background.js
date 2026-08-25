@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.28"
+const EXTENSION_BUILD_VERSION = "1.0.29"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -20,6 +20,7 @@ const RESUME_ACTIVE_JOB = "RESUME_ACTIVE_LUNA_SHIPPING_JOB"
 const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
 const BIND_ELIGIBILITY_PROBE =
   "SELLER_OS_LUNA_BIND_ELIGIBILITY_PROBE_V1"
+const BIND_ELIGIBILITY_CONTRACT = "LUNA_BIND_ELIGIBILITY_PROBE_V1"
 const VALIDATE_CANONICAL_DESTINATION = "VALIDATE_LUNA_CANONICAL_DESTINATION"
 const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
@@ -168,7 +169,9 @@ function emitRuntimeTrace(state, success = true, reasonCode = "NONE", details = 
   }
   for (const field of ["tabsQueryTotalCount", "shopAppHostTabCount",
     "shopAppProbedCount", "tabsEnumeratedCount",
-    "contentScriptResponderCount", "eligibleCheckoutCount"]) {
+    "contentScriptResponderCount", "eligibleCheckoutCount",
+    "probeAttemptCount", "probeResponseCount", "eligibleResponseCount",
+    "probeErrorCount"]) {
     const value = details[field]
     if (Number.isInteger(value) && value >= 0 && value <= 10_000) {
       event[field] = value
@@ -501,27 +504,34 @@ async function queryAccessibleTabIds() {
 }
 
 function safeEligibilityResponse(value) {
-  const fields = ["isShopPayCheckout", "checkoutPageDetected",
+  const fields = ["eligible", "checkoutPageDetected",
     "shipToMarker", "shippingMarker", "subtotalMarker", "totalMarker",
     "payNowMarker"]
   if (!value || typeof value !== "object" ||
+      value.contractVersion !== BIND_ELIGIBILITY_CONTRACT ||
+      value.checkoutHostClassification !== "SHOP_PAY_CHECKOUT_HOST" ||
       fields.some((field) => typeof value[field] !== "boolean")) return null
-  return Object.freeze(Object.fromEntries(fields.map((field) =>
-    [field, value[field]])))
+  return Object.freeze({ contractVersion: value.contractVersion,
+    checkoutHostClassification: value.checkoutHostClassification,
+    ...Object.fromEntries(fields.map((field) => [field, value[field]])) })
 }
 
 async function probeBindingCapability(tabId) {
   try {
     const response = await boundedBindStep(sendTabMessage(tabId, {
       type: BIND_ELIGIBILITY_PROBE,
+      contractVersion: BIND_ELIGIBILITY_CONTRACT,
     }), "BIND_CHECKOUT_TAB_ELIGIBILITY", BIND_TOP_FRAME_TIMEOUT_MS)
     const safe = safeEligibilityResponse(response)
-    return { id: tabId, responder: Boolean(safe), eligible: Boolean(safe) &&
-      safe.isShopPayCheckout && safe.checkoutPageDetected &&
+    return { id: tabId, responded: response !== undefined,
+      responder: Boolean(safe), probeError: !safe,
+      eligible: Boolean(safe) && safe.eligible && safe.checkoutPageDetected &&
+      safe.checkoutHostClassification === "SHOP_PAY_CHECKOUT_HOST" &&
       safe.shipToMarker && safe.shippingMarker && safe.subtotalMarker &&
       safe.totalMarker && safe.payNowMarker }
   } catch {
-    return { id: tabId, responder: false, eligible: false }
+    return { id: tabId, responded: false, responder: false,
+      probeError: true, eligible: false }
   }
 }
 
@@ -538,12 +548,18 @@ async function bindCanonicalDestination(port, existingBinding) {
     probeBindingCapability(id)))
   const responderTabs = probedTabs.filter((tab) => tab.responder)
   const eligibleTabs = probedTabs.filter((tab) => tab.eligible)
+  const responseTabs = probedTabs.filter((tab) => tab.responded)
+  const errorTabs = probedTabs.filter((tab) => tab.probeError)
   emitRuntimeTrace("BIND_SHOP_APP_TAB_DISCOVERY_RESULT", true, "NONE", {
     tabsQueryTotalCount: discovery.totalCount,
     tabsEnumeratedCount: checkoutTabs.length,
     shopAppProbedCount: probedTabs.length,
     contentScriptResponderCount: responderTabs.length,
     eligibleCheckoutCount: eligibleTabs.length,
+    probeAttemptCount: probedTabs.length,
+    probeResponseCount: responseTabs.length,
+    eligibleResponseCount: eligibleTabs.length,
+    probeErrorCount: errorTabs.length,
   })
   if (!eligibleTabs.length) {
     throw new Error("BIND_CHECKOUT_TAB_NOT_FOUND")

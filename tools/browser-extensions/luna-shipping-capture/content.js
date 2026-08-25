@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.28" },
+      extensionBuildVersion: "1.0.29" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -23,6 +23,7 @@ const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
 const PROBE_CANONICAL_DESTINATION = "PROBE_LUNA_CANONICAL_DESTINATION"
 const BIND_ELIGIBILITY_PROBE =
   "SELLER_OS_LUNA_BIND_ELIGIBILITY_PROBE_V1"
+const BIND_ELIGIBILITY_CONTRACT = "LUNA_BIND_ELIGIBILITY_PROBE_V1"
 const VALIDATE_CANONICAL_DESTINATION = "VALIDATE_LUNA_CANONICAL_DESTINATION"
 const DESTINATION_FINGERPRINT_VERSION =
   "LUNA_SHOP_PAY_DESTINATION_SHA256_V1"
@@ -1566,22 +1567,38 @@ function canonicalBindingCheckoutSnapshot() {
     safeCheckoutMarkersVerified }
 }
 
+function bindingEligibilityResponse() {
+  const runtimeMarkers = shopPayMarkerSnapshot()
+  const checkoutHost = checkoutHostClassification()
+  const markers = {
+    shipToMarker: runtimeMarkers.shopPayMarkerShipTo,
+    shippingMarker: runtimeMarkers.shopPayMarkerShipping,
+    subtotalMarker: runtimeMarkers.shopPayMarkerSubtotal,
+    totalMarker: runtimeMarkers.shopPayMarkerTotal,
+    payNowMarker: runtimeMarkers.shopPayMarkerPayNow,
+  }
+  const checkoutPageDetected = checkoutHost === "SHOP_PAY_CHECKOUT_HOST" &&
+    Object.values(markers).every((value) => value === true)
+  return Object.freeze({ contractVersion: BIND_ELIGIBILITY_CONTRACT,
+    eligible: checkoutPageDetected, checkoutPageDetected,
+    checkoutHostClassification: checkoutHost, ...markers })
+}
+
 chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
   if (message?.type === BIND_ELIGIBILITY_PROBE) {
     if (location.hostname !== "shop.app") return false
-    const snapshot = canonicalBindingCheckoutSnapshot()
-    const response = {
-      isShopPayCheckout: true,
-      checkoutPageDetected: snapshot.safeCheckoutMarkersVerified &&
-        snapshot.markers.shopPayMarkerPayNow,
-      shipToMarker: snapshot.markers.shopPayMarkerShipTo,
-      shippingMarker: snapshot.markers.shopPayMarkerShipping,
-      subtotalMarker: snapshot.markers.shopPayMarkerSubtotal,
-      totalMarker: snapshot.markers.shopPayMarkerTotal,
-      payNowMarker: snapshot.markers.shopPayMarkerPayNow,
+    if (message.contractVersion !== BIND_ELIGIBILITY_CONTRACT) {
+      sendResponse({ ...bindingEligibilityResponse(), eligible: false,
+        checkoutPageDetected: false })
+      return false
     }
-    sendResponse(response)
-    return false
+    void boundedDomWait(() => {
+      const response = bindingEligibilityResponse()
+      return response.eligible ? response : null
+    }, "BIND_ELIGIBILITY_DOM_NOT_READY", SHOP_PAY_DOM_TIMEOUT_MS)
+      .then((response) => sendResponse(response))
+      .catch(() => sendResponse(bindingEligibilityResponse()))
+    return true
   }
   if (message?.type === PROBE_CANONICAL_DESTINATION ||
       message?.type === BIND_CANONICAL_DESTINATION ||
