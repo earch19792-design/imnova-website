@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.32" },
+      extensionBuildVersion: "1.0.33" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -1164,9 +1164,12 @@ function getCanonicalDestinationBinding(job) {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ type: GET_CANONICAL_DESTINATION_BINDING,
       captureSessionId: job.captureSessionId }, (response) => {
-      if (chrome.runtime.lastError ||
-          response?.error === "BIND_STORAGE_READBACK_FAILED") {
-        reject(new Error("BIND_STORAGE_READBACK_FAILED"))
+      if (chrome.runtime.lastError || new Set([
+        "BINDING_STORAGE_READ_FAILED", "BINDING_PRESENT_INVALID",
+        "BINDING_STORAGE_MIGRATION_WRITE_FAILED",
+        "BINDING_STORAGE_MIGRATION_READBACK_FAILED",
+      ]).has(response?.error)) {
+        reject(new Error(response?.error ?? "BINDING_STORAGE_READ_FAILED"))
         return
       }
       const binding = response?.binding

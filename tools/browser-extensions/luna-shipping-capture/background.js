@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.32"
+const EXTENSION_BUILD_VERSION = "1.0.33"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -419,21 +419,45 @@ function safeDestinationCandidate(value) {
 
 function safeDestinationBinding(value) {
   const candidate = safeDestinationCandidate(value)
-  const boundAt = typeof value?.boundAt === "string" &&
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value.boundAt) &&
-    Number.isFinite(Date.parse(value.boundAt)) ? value.boundAt : null
+  const boundAtMs = typeof value?.boundAt === "string"
+    ? Date.parse(value.boundAt) : Number.NaN
+  const boundAt = Number.isFinite(boundAtMs)
+    ? new Date(boundAtMs).toISOString() : null
   return candidate && boundAt ? Object.freeze({ ...candidate, boundAt }) : null
 }
 
-function readDestinationBinding() {
+function readDestinationBindingEnvelope() {
   return new Promise((resolve, reject) => chrome.storage.local.get(
     DESTINATION_STORAGE_KEY, (value) => {
       if (chrome.runtime.lastError) {
-        reject(new Error("BIND_STORAGE_READBACK_FAILED"))
+        reject(new Error("BINDING_STORAGE_READ_FAILED"))
         return
       }
-      resolve(safeDestinationBinding(value?.[DESTINATION_STORAGE_KEY]))
+      const present = Boolean(value && Object.prototype.hasOwnProperty.call(
+        value, DESTINATION_STORAGE_KEY))
+      resolve({ present, value: present ? value[DESTINATION_STORAGE_KEY] : null })
     }))
+}
+
+async function readDestinationBinding() {
+  const stored = await readDestinationBindingEnvelope()
+  if (!stored.present) return null
+  const current = safeDestinationBinding(stored.value)
+  if (current) return current
+  const legacy = safeDestinationCandidate(stored.value)
+  if (!legacy) throw new Error("BINDING_PRESENT_INVALID")
+  const normalized = Object.freeze({ ...legacy, boundAt: new Date().toISOString() })
+  try { await writeDestinationBinding(normalized) } catch {
+    throw new Error("BINDING_STORAGE_MIGRATION_WRITE_FAILED")
+  }
+  const readbackEnvelope = await readDestinationBindingEnvelope()
+  const readback = readbackEnvelope.present
+    ? safeDestinationBinding(readbackEnvelope.value) : null
+  if (!readback || readback.canonicalDestinationFingerprint !==
+      normalized.canonicalDestinationFingerprint) {
+    throw new Error("BINDING_STORAGE_MIGRATION_READBACK_FAILED")
+  }
+  return readback
 }
 
 function boundedBindStep(promise, transition, timeoutMs = BIND_STEP_TIMEOUT_MS) {
@@ -910,9 +934,11 @@ chrome.runtime.onConnectExternal.addListener((port) => {
         type: CANONICAL_DESTINATION_STATUS,
         canonicalDestinationBound: Boolean(binding),
         canonicalDestinationMatch: false,
-      })).catch(() => port.postMessage({
+        bindingStatus: binding ? "BINDING_PRESENT_VALID" : "NO_BINDING_PRESENT",
+      })).catch((error) => port.postMessage({
         type: CANONICAL_DESTINATION_STATUS,
-        error: "BIND_STORAGE_READBACK_FAILED",
+        error: safeRuntimeReason(error instanceof Error ? error.message
+          : "BINDING_STORAGE_READ_FAILED"),
       }))
       return
     }
@@ -988,8 +1014,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     void readDestinationBinding().then((binding) => sendResponse({
       accepted: Boolean(binding), ...(binding ? { binding } : {}),
-    })).catch(() => sendResponse({ accepted: false,
-      error: "BIND_STORAGE_READBACK_FAILED" }))
+    })).catch((error) => sendResponse({ accepted: false,
+      error: safeRuntimeReason(error instanceof Error ? error.message
+        : "BINDING_STORAGE_READ_FAILED") }))
     return true
   }
   if (message?.type === CHECKOUT_BOOTSTRAP_ACK) {
