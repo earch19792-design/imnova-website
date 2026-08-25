@@ -308,6 +308,7 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
   accountKey: string
   candidateIds?: readonly string[]
   sessionSecret: string
+  purpose?: "CANONICAL_BIND_BOOTSTRAP"
   now?: number
 }>) : Promise<readonly LunaChromeShippingJobV1[]> {
   const frontierResult = await input.supabase.rpc(
@@ -328,8 +329,16 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
       const lunaVariantId = text(frontier.lunaVariantId, 30)
       const supplierSku = text(frontier.lunaSku, 160)
       if (!familyId || !/^market-family-v1:sha256:[0-9a-f]{64}$/.test(familyId) ||
-          !lunaProductId || !lunaVariantId || !supplierSku ||
-          frontier.economicClassification === "ECONOMICALLY_DEAD") return []
+          !lunaProductId || !lunaVariantId || !supplierSku) return []
+      const resolvedCandidateId = candidateId(familyId, lunaProductId,
+        lunaVariantId, supplierSku)
+      const certificationBootstrap =
+        input.purpose === "CANONICAL_BIND_BOOTSTRAP" &&
+        input.candidateIds?.length === 1 &&
+        input.candidateIds[0] === LUNA_SHIPPING_CANARY_CANDIDATE_ID &&
+        resolvedCandidateId === LUNA_SHIPPING_CANARY_CANDIDATE_ID
+      if (frontier.economicClassification === "ECONOMICALLY_DEAD" &&
+          !certificationBootstrap) return []
       const snapshotDigest = text(outer.snapshotDigest, 80)
       if (!snapshotDigest || !SHA256.test(snapshotDigest)) return []
       const calculatedAt = text(outer.calculatedAt, 48) ??
@@ -337,8 +346,7 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
       if (!calculatedAt || !Number.isFinite(Date.parse(calculatedAt))) return []
       return [Object.freeze({ familyId, lunaProductId, lunaVariantId,
         supplierSku, frontier, outer, snapshotDigest, calculatedAt,
-        candidateId: candidateId(familyId, lunaProductId, lunaVariantId,
-          supplierSku) })]
+        candidateId: resolvedCandidateId })]
     })
   const promotions = await readProductFitStrongPromotionsV1({
     supabase: input.supabase, accountKey: input.accountKey,

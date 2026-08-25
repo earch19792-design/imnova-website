@@ -13,7 +13,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.34"
+const EXPECTED_EXTENSION_VERSION = "1.0.35"
 const GET_BINDING_STORAGE_DIAGNOSTIC =
   "SELLER_OS_GET_LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
 const BINDING_STORAGE_DIAGNOSTIC = "LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
@@ -430,9 +430,21 @@ export default function LunaShippingCapturePage() {
 
     const bindCanonicalDestination = () => {
       if (!port || !extensionReady || busy) return
+      busy = true
+      setRunning(true)
       setError("")
       setStatus("BINDING_CANONICAL_DESTINATION")
-      port.postMessage({ type: "SELLER_OS_BIND_LUNA_CANONICAL_DESTINATION" })
+      void adminPost("resolve_jobs", { candidateIds: [CANARY_ID],
+        purpose: "CANONICAL_BIND_BOOTSTRAP" }).then((payload) => {
+        const bootstrapJobs = Array.isArray(payload.jobs) ? payload.jobs : []
+        const bootstrapJob = bootstrapJobs.length === 1
+          ? bootstrapJobs[0] as LunaChromeShippingJobV1 : null
+        if (!bootstrapJob || bootstrapJob.contractVersion !== CONTRACT || !port) {
+          throw new Error("LUNA_CANONICAL_BIND_BOOTSTRAP_JOB_UNAVAILABLE")
+        }
+        port.postMessage({ type: "SELLER_OS_BIND_LUNA_CANONICAL_DESTINATION",
+          bootstrapJob })
+      }).catch(fail)
     }
     bindDestinationRef.current = bindCanonicalDestination
 

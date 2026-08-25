@@ -51,6 +51,8 @@ export async function POST(req: Request) {
         accountKey: auth.accountKey,
         candidateIds: requested.length ? requested : undefined,
         sessionSecret: sessionSecret(),
+        purpose: body.purpose === "CANONICAL_BIND_BOOTSTRAP"
+          ? "CANONICAL_BIND_BOOTSTRAP" : undefined,
       })
       return listingAiResponse({ success: true, jobs,
         safety: { readOnly: true, cookieAccess: false,

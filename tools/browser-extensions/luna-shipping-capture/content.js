@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.34" },
+      extensionBuildVersion: "1.0.35" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -126,7 +126,8 @@ function getActiveJob() {
           (response?.phase !== CHECKOUT_PHASE ||
             Number.isFinite(response?.cartSubtotalUsd))) {
         resolve({ job, phase: response?.phase, originalCartSnapshot,
-          cartSubtotalUsd: response?.cartSubtotalUsd })
+          cartSubtotalUsd: response?.cartSubtotalUsd,
+          bindingBootstrap: response?.bindingBootstrap === true })
       }
       else reject(new Error(typeof response?.error === "string" ? response.error
         : jobValidationReason(response?.job) ??
@@ -1670,6 +1671,9 @@ if ((isProductPage || isCartPage || isCheckoutPage) &&
         checkoutNavigationOrigin: location.origin,
         checkoutHostPermissionMatch: checkoutHostPermissionMatch(),
       })
+      if (context.bindingBootstrap === true) {
+        return { job: context.job, capture: null }
+      }
       return { job: context.job,
         capture: await runCheckoutStage(context.job,
           context.originalCartSnapshot, context.cartSubtotalUsd) }
