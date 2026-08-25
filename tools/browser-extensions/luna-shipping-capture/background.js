@@ -1,7 +1,7 @@
 "use strict"
 
 const SELLER_OS_ORIGIN =
-  "https://imnova-website-z1qh-git-featur-6c9e25-earch19792-6888s-projects.vercel.app"
+  "https://imnova-website-z1qh-git-codex-674439-earch19792-6888s-projects.vercel.app"
 const CONTROL_PAGE = `${SELLER_OS_ORIGIN}/admin/ebay/luna-shipping-capture`
 const PORT_NAME = "SELLER_OS_LUNA_SHIPPING_CAPTURE_V1"
 const JOB_RESULT = "LUNA_SHIPPING_JOB_RESULT"
@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.31"
+const EXTENSION_BUILD_VERSION = "1.0.32"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
