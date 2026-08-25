@@ -13,7 +13,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.30"
+const EXPECTED_EXTENSION_VERSION = "1.0.31"
 const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
@@ -272,6 +272,9 @@ export default function LunaShippingCapturePage() {
     let busy = false
     let extensionReady = false
     let canonicalBindingReady = false
+    let activeJobStatusReady = false
+    let recoveredActiveJob: LunaChromeShippingJobV1 | null = null
+    let initialAutoClaimStarted = false
     let port: ExternalPort | null = null
     let lastProgressState = "NOT_STARTED"
     let reconnecting = false
@@ -334,9 +337,12 @@ export default function LunaShippingCapturePage() {
       if (!job || !port) return
       setStatus(mode === "CANARY" && index === 0
         ? "CANARY_DISPATCHED" : "CAPTURING")
-      setLastRuntimeState("CANARY_DISPATCHED")
-      lastProgressState = "CANARY_DISPATCHED"
-      port.postMessage({ type: "START_SHIPPING_JOB", job })
+      const dispatchState = mode === "AUTO"
+        ? "PRODUCTION_JOB_DISPATCHED" : "CANARY_DISPATCHED"
+      setLastRuntimeState(dispatchState)
+      lastProgressState = dispatchState
+      port.postMessage({ type: "START_SHIPPING_JOB", job,
+        productionAutoClaim: mode === "AUTO" })
       window.setTimeout(() => {
         if (active && busy) setStatus("CAPTURING")
       }, 0)
@@ -352,7 +358,7 @@ export default function LunaShippingCapturePage() {
       if (!resolved.length) {
         busy = false
         setRunning(false)
-        setStatus("PASS")
+        setStatus(nextMode === "AUTO" ? "WORKER_IDLE_NO_ELIGIBLE_JOB" : "PASS")
         return
       }
       jobs = resolved
@@ -361,6 +367,27 @@ export default function LunaShippingCapturePage() {
       busy = true
       setRunning(true)
       sendCurrent()
+    }
+
+    const startInitialProductionClaim = () => {
+      if (!active || initialAutoClaimStarted || !extensionReady ||
+          !canonicalBindingReady || !activeJobStatusReady || busy || !port) return
+      initialAutoClaimStarted = true
+      setError("")
+      setStatus("PRODUCTION_WORKER_READY")
+      if (recoveredActiveJob) {
+        jobs = [recoveredActiveJob]
+        index = 0
+        mode = "AUTO"
+        busy = true
+        setRunning(true)
+        setStatus("CAPTURING")
+        setLastRuntimeState("PRODUCTION_JOB_CLAIMED")
+        lastProgressState = "PRODUCTION_JOB_CLAIMED"
+        return
+      }
+      setStatus("INITIAL_AUTO_CLAIM_STARTED")
+      void loadJobs(undefined, "AUTO").catch(fail)
     }
 
     const beginCanary = () => {
@@ -396,6 +423,16 @@ export default function LunaShippingCapturePage() {
           canonicalBindingReady = bound
           setCanonicalDestinationBound(bound)
           if (!bound) setCanonicalDestinationMatch(false)
+          startInitialProductionClaim()
+          return
+        }
+        if (message?.type === "LUNA_SHIPPING_ACTIVE_JOB_STATUS") {
+          const candidate = message.active === true &&
+              message.job?.contractVersion === CONTRACT
+            ? message.job as LunaChromeShippingJobV1 : null
+          recoveredActiveJob = candidate
+          activeJobStatusReady = true
+          startInitialProductionClaim()
           return
         }
         if (message?.type === "LUNA_CANONICAL_DESTINATION_BINDING_RESULT") {
@@ -418,6 +455,7 @@ export default function LunaShippingCapturePage() {
             canonicalUsProfileFound: true,
             shippingAddressAccepted: true,
           }))
+          startInitialProductionClaim()
           return
         }
         if (message?.type === "LUNA_SHIPPING_JOB_PROGRESS") {
@@ -733,6 +771,9 @@ export default function LunaShippingCapturePage() {
         nextPort.onMessage.addListener(handlePortMessage)
         nextPort.postMessage({
           type: "SELLER_OS_GET_LUNA_CANONICAL_DESTINATION_STATUS",
+        })
+        nextPort.postMessage({
+          type: "SELLER_OS_GET_ACTIVE_LUNA_SHIPPING_JOB_STATUS",
         })
         nextPort.onDisconnect.addListener(() => {
           if (!active || port !== nextPort) return

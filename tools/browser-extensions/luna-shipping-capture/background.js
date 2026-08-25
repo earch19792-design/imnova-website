@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.30"
+const EXTENSION_BUILD_VERSION = "1.0.31"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -37,6 +37,9 @@ const DESTINATION_STORAGE_KEY = "sellerOsLunaCanonicalDestinationBindingV1"
 const RUNTIME_TRACE_CONTRACT = "LUNA_SHIPPING_RUNTIME_TRACE_V1"
 const RUNTIME_TRACE_EVENT = "LUNA_SHIPPING_RUNTIME_TRACE_EVENT"
 const SHIPPING_SERVER_RESULT = "SELLER_OS_LUNA_SHIPPING_SERVER_RESULT"
+const GET_ACTIVE_PRODUCTION_JOB_STATUS =
+  "SELLER_OS_GET_ACTIVE_LUNA_SHIPPING_JOB_STATUS"
+const ACTIVE_PRODUCTION_JOB_STATUS = "LUNA_SHIPPING_ACTIVE_JOB_STATUS"
 const MAX_RUNTIME_TRACE_EVENTS = 100
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
 const CHECKOUT_PHASE = "AWAITING_CHECKOUT_SHIPPING"
@@ -748,14 +751,25 @@ function emitProgress(state, details = {}) {
     ...markerDetails })
 }
 
-async function startJob(job) {
+async function startJob(job, productionAutoClaim = false) {
   const invalidReason = jobValidationReason(job)
   if (invalidReason) throw new Error(invalidReason)
   const exact = safeJob(job)
   const url = exact && exactLunaUrl(exact.identity.canonicalProductUrl)
   if (!exact || !url) throw new Error("JOB_IDENTITY_MISMATCH:identity.canonicalProductUrl")
+  if (activeJob) {
+    if (sameJob(activeJob, exact)) return false
+    throw new Error("LUNA_SHIPPING_JOB_ALREADY_RUNNING")
+  }
   activeJob = exact
   await beginRuntimeTrace(exact.captureSessionId, exact.identity.candidateId)
+  if (productionAutoClaim === true) {
+    emitRuntimeTrace("PRODUCTION_WORKER_READY")
+    emitRuntimeTrace("INITIAL_AUTO_CLAIM_STARTED")
+    emitRuntimeTrace("ELIGIBLE_JOB_FOUND")
+    emitRuntimeTrace("PRODUCTION_JOB_CLAIMED")
+    emitRuntimeTrace("PRODUCTION_JOB_DISPATCHED")
+  }
   emitRuntimeTrace("BRIDGE_CONNECTED")
   emitRuntimeTrace("JOB_DISPATCHED")
   activeJobPhase = "PRODUCT_PAGE"
@@ -778,6 +792,7 @@ async function startJob(job) {
   } else {
     await chrome.tabs.update(activeTabId, { url: url.toString(), active: true })
   }
+  return true
 }
 
 function failActiveJob(error) {
@@ -905,8 +920,15 @@ chrome.runtime.onConnectExternal.addListener((port) => {
       void handleCanonicalDestinationBinding(port)
       return
     }
+    if (message?.type === GET_ACTIVE_PRODUCTION_JOB_STATUS) {
+      port.postMessage({ type: ACTIVE_PRODUCTION_JOB_STATUS,
+        active: Boolean(activeJob),
+        ...(activeJob ? { job: activeJob, phase: activeJobPhase } : {}) })
+      return
+    }
     if (message?.type === "START_SHIPPING_JOB") {
-      void startJob(message.job).catch((error) => port.postMessage({
+      void startJob(message.job, message.productionAutoClaim === true)
+        .catch((error) => port.postMessage({
         type: JOB_RESULT, success: false,
         error: error instanceof Error ? error.message : "LUNA_SHIPPING_JOB_FAILED",
         capture: { candidateId: message.job?.identity?.candidateId ?? null },
