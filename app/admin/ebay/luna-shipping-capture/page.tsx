@@ -7,13 +7,16 @@ import type { LunaChromeShippingJobV1 } from
   "@/lib/ebay/ebay-luna-chrome-shipping-capture-v1"
 import type { LunaShippingRuntimeTraceEventV1 } from
   "@/lib/ebay/ebay-luna-chrome-shipping-capture-v1"
+import { detectAndWakeLunaShippingExtensionV1,
+  wakeLunaShippingExtensionV1 } from
+  "@/lib/ebay/ebay-luna-extension-detection-v1"
 
 const PORT_NAME = "SELLER_OS_LUNA_SHIPPING_CAPTURE_V1"
 const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.37"
+const EXPECTED_EXTENSION_VERSION = "1.0.38"
 const GET_BINDING_STORAGE_DIAGNOSTIC =
   "SELLER_OS_GET_LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
 const BINDING_STORAGE_DIAGNOSTIC = "LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
@@ -233,7 +236,7 @@ async function adminPost(action: string, body: Record<string, unknown>,
   return payload
 }
 
-function pingExtension(runtime: ChromeRuntime) {
+function pingExtensionOnce(runtime: ChromeRuntime) {
   return new Promise<void>((resolve, reject) => {
     let settled = false
     const timeout = window.setTimeout(() => {
@@ -816,10 +819,13 @@ export default function LunaShippingCapturePage() {
       } catch {
         // A missing historical trace must not block the extension connection.
       }
-      const runtime = window.chrome?.runtime
-      if (!runtime?.connect || !runtime.sendMessage) {
-        throw new Error("LUNA_SHIPPING_EXTENSION_NOT_INSTALLED")
-      }
+      const wait = (milliseconds: number) => new Promise<void>((resolve) =>
+        window.setTimeout(resolve, milliseconds))
+      const runtime = await detectAndWakeLunaShippingExtensionV1({
+        readRuntime: () => window.chrome?.runtime,
+        pingRuntime: pingExtensionOnce,
+        wait,
+      })
       const phaseForResume = () => {
         if (new Set(["AWAITING_CHECKOUT_SHIPPING", "CHECKOUT_PAGE_DETECTED",
           "CHECKOUT_INJECTION_REQUESTED", "CHECKOUT_INJECTION_API_SUCCEEDED",
@@ -865,7 +871,8 @@ export default function LunaShippingCapturePage() {
             for (let attempt = 0; attempt < 2; attempt += 1) {
               await new Promise((resolve) => window.setTimeout(resolve, 500))
               try {
-                await pingExtension(runtime)
+                await wakeLunaShippingExtensionV1(runtime,
+                  pingExtensionOnce, wait)
                 if (!active) return
                 const resumedPort = runtime.connect(EXTENSION_ID,
                   { name: PORT_NAME })
@@ -886,7 +893,6 @@ export default function LunaShippingCapturePage() {
         })
       }
       setStatus("PINGING_EXTENSION")
-      await pingExtension(runtime)
       if (!active) return
       extensionReady = true
       setConnected(true)
