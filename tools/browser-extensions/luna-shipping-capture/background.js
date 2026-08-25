@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.27"
+const EXTENSION_BUILD_VERSION = "1.0.28"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -77,7 +77,6 @@ let originalCartSnapshot = null
 let cartSubtotalUsd = null
 let checkoutNavigationArmed = false
 let checkoutInjectionStarted = false
-let checkoutInjectionApiSucceeded = false
 let checkoutBootstrapAckReceived = false
 let checkoutBootstrapAckEmitted = false
 let checkoutBootstrapAckTimer = null
@@ -198,7 +197,6 @@ function clearActiveJob() {
   cartSubtotalUsd = null
   checkoutNavigationArmed = false
   checkoutInjectionStarted = false
-  checkoutInjectionApiSucceeded = false
   checkoutBootstrapAckReceived = false
   checkoutBootstrapAckEmitted = false
   if (checkoutBootstrapAckTimer) clearTimeout(checkoutBootstrapAckTimer)
@@ -528,19 +526,7 @@ async function probeBindingCapability(tabId) {
 }
 
 async function requestDestinationOperationFromTab(tabId, message) {
-  try {
-    return await sendTabMessage(tabId, message)
-  } catch (error) {
-    if (!(error instanceof Error) ||
-        error.message !== "CHECKOUT_CONTENT_SCRIPT_NOT_AVAILABLE") throw error
-    try {
-      await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] },
-        files: ["content.js"], world: "ISOLATED" })
-    } catch {
-      throw new Error("CHECKOUT_CONTENT_SCRIPT_NOT_AVAILABLE")
-    }
-    return sendTabMessage(tabId, message)
-  }
+  return sendTabMessage(tabId, message)
 }
 
 async function bindCanonicalDestination(port, existingBinding) {
@@ -730,7 +716,6 @@ async function startJob(job) {
   cartSubtotalUsd = null
   checkoutNavigationArmed = false
   checkoutInjectionStarted = false
-  checkoutInjectionApiSucceeded = false
   checkoutBootstrapAckReceived = false
   checkoutBootstrapAckEmitted = false
   if (checkoutBootstrapAckTimer) clearTimeout(checkoutBootstrapAckTimer)
@@ -758,7 +743,7 @@ function failActiveJob(error) {
 }
 
 function emitCheckoutBootstrapAck() {
-  if (!activeJob || !checkoutInjectionApiSucceeded ||
+  if (!activeJob || !checkoutInjectionStarted ||
       !checkoutBootstrapAckReceived || checkoutBootstrapAckEmitted) return
   checkoutBootstrapAckEmitted = true
   if (checkoutBootstrapAckTimer) clearTimeout(checkoutBootstrapAckTimer)
@@ -799,7 +784,6 @@ function observeCheckoutNavigation(details, inject) {
   })
   if (!inject) {
     checkoutInjectionStarted = false
-    checkoutInjectionApiSucceeded = false
     checkoutBootstrapAckReceived = false
     checkoutBootstrapAckEmitted = false
     if (checkoutBootstrapAckTimer) clearTimeout(checkoutBootstrapAckTimer)
@@ -812,41 +796,14 @@ function observeCheckoutNavigation(details, inject) {
     checkoutInjectionFrameId: 0, checkoutScriptBootstrapAck: false,
     checkoutScriptBootstrapErrorCode: "PENDING",
   })
-  void chrome.scripting.executeScript({ target: { tabId: activeTabId,
-    frameIds: [0] }, world: "ISOLATED", files: ["content.js"] })
-    .then((results) => {
-      if (!Array.isArray(results) ||
-          !results.some((result) => result?.frameId === 0)) {
-        failActiveJob("WRONG_FRAME_TARGET")
-        return
-      }
-      checkoutInjectionApiSucceeded = true
-      emitProgress("CHECKOUT_INJECTION_API_SUCCEEDED", {
-        checkoutInjectionFrameId: 0, checkoutScriptBootstrapAck: false,
-        checkoutScriptBootstrapErrorCode: "PENDING",
-      })
-      emitProgress("CHECKOUT_SCRIPT_INJECTED", {
-        checkoutNavigationHost: allowed.host,
-        checkoutNavigationOrigin: allowed.origin,
-        checkoutHostPermissionMatch: true,
-        checkoutInjectionFrameId: 0,
-        checkoutScriptBootstrapAck: checkoutBootstrapAckReceived,
-        checkoutScriptBootstrapErrorCode: "PENDING",
-      })
-      if (checkoutBootstrapAckReceived) {
-        emitCheckoutBootstrapAck()
-        return
-      }
-      checkoutBootstrapAckTimer = setTimeout(() => {
-        checkoutBootstrapAckTimer = null
-        emitProgress("CHECKOUT_SCRIPT_INJECTED", {
-          checkoutInjectionFrameId: 0, checkoutScriptBootstrapAck: false,
-          checkoutScriptBootstrapErrorCode:
-            "CHECKOUT_CONTENT_SCRIPT_BOOTSTRAP_NOT_ACKNOWLEDGED",
-        })
-        failActiveJob("CHECKOUT_CONTENT_SCRIPT_BOOTSTRAP_NOT_ACKNOWLEDGED")
-      }, CHECKOUT_BOOTSTRAP_ACK_TIMEOUT_MS)
-    }).catch(() => failActiveJob("INJECTION_API_ERROR"))
+  if (checkoutBootstrapAckReceived) {
+    emitCheckoutBootstrapAck()
+    return
+  }
+  checkoutBootstrapAckTimer = setTimeout(() => {
+    checkoutBootstrapAckTimer = null
+    failActiveJob("CHECKOUT_CONTENT_SCRIPT_BOOTSTRAP_NOT_ACKNOWLEDGED")
+  }, CHECKOUT_BOOTSTRAP_ACK_TIMEOUT_MS)
 }
 
 chrome.runtime.onInstalled.addListener(() => {
