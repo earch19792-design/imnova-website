@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.23" },
+      extensionBuildVersion: "1.0.24" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -31,7 +31,7 @@ const MAXIMUM_PRODUCT_JSON_BYTES = 256_000
 const MAXIMUM_CART_ITEMS = 50
 const STEP_TIMEOUT_MS = 15_000
 const SHOP_PAY_DOM_TIMEOUT_MS = 20_000
-const MONEY = /(?:\$\s*([0-9][0-9,]*(?:\.\d{2})?)|([0-9][0-9,]*(?:\.\d{2})?)\s*USD)\b/gi
+const MONEY = /(?:\$\s*([0-9][0-9,]*(?:\.\d{2})?)|([0-9][0-9,]*(?:\.\d{2})?)\s*USD\b|\bUSD\s*\$?\s*([0-9][0-9,]*(?:\.\d{2})?))/gi
 
 function exactProductUrl(value) {
   try {
@@ -139,9 +139,11 @@ function progress(job, state, details = {}) {
     "shopPayMarkerQuantity", "shopPayMarkerShipTo", "shopPayMarkerShipping",
     "shopPayMarkerSubtotal", "shopPayMarkerShippingAmount",
     "shopPayMarkerTotal", "shopPayMarkerShippingMethod",
-    "shopPayMarkerPayment", "shopPayMarkerPayNow", "totalLabelFound",
-    "totalCurrencyFound", "totalAmountCandidateFound",
-    "totalLabelAmountContainerFound"]) {
+    "shopPayMarkerPayment", "shopPayMarkerPayNow", "subtotalLabelFound",
+    "subtotalAmountCandidateFound", "subtotalCurrencyFound", "subtotalParsed",
+    "shippingLabelFound", "shippingAmountCandidateFound",
+    "shippingCurrencyFound", "shippingParsed", "totalLabelFound",
+    "totalAmountCandidateFound", "totalCurrencyFound", "totalParsed"]) {
     if (typeof details[field] === "boolean") markerDetails[field] = details[field]
   }
   chrome.runtime.sendMessage({ type: JOB_PROGRESS, state,
@@ -454,7 +456,8 @@ function cartSnapshot(cart) {
 function moneyValues(text) {
   const values = []
   for (const match of String(text ?? "").matchAll(MONEY)) {
-    const value = Number((match[1] ?? match[2] ?? "").replace(/,/g, ""))
+    const value = Number((match[1] ?? match[2] ?? match[3] ?? "")
+      .replace(/,/g, ""))
     if (Number.isFinite(value) && value >= 0) values.push(Math.round(value * 100) / 100)
   }
   return [...new Set(values)]
@@ -510,6 +513,23 @@ function semanticMoneyLabelPattern(label) {
   return /^total\b/i
 }
 
+function semanticMoneyDirectSelectors(label) {
+  if (label === "subtotal") return ['[data-checkout-subtotal]',
+    '[data-order-summary-subtotal]', '[data-subtotal-price]',
+    '[data-testid*="subtotal" i]']
+  if (label === "shipping") return ['[data-checkout-shipping]',
+    '[data-order-summary-shipping]', '[data-shipping-price]',
+    '[data-testid*="shipping" i]']
+  if (label === "tax") return ['[data-checkout-tax]',
+    '[data-order-summary-tax]', '[data-tax-price]',
+    '[data-testid*="tax" i]']
+  if (label === "discount") return ['[data-checkout-discount]',
+    '[data-order-summary-discount]', '[data-discount-price]',
+    '[data-testid*="discount" i]']
+  return ['[data-checkout-total]', '[data-order-summary-total]',
+    '[data-total-price]', '[data-testid*="total" i]']
+}
+
 const SEMANTIC_MONEY_SELECTOR =
   'dt,dd,th,td,label,p,strong,b,h1,h2,h3,h4,h5,h6,' +
   '[role="rowheader"],[role="cell"],[role="row"],[role="term"],' +
@@ -520,6 +540,19 @@ function semanticMoneyText(element) {
   return `${element?.getAttribute?.("aria-label") ?? ""} ${
     element?.getAttribute?.("data-value") ?? ""} ${
     element?.value ?? ""} ${element?.textContent ?? ""}`
+    .replace(/[\s\u00a0]+/g, " ").trim()
+}
+
+function semanticMoneyIdentity(element) {
+  const directText = Array.from(element?.childNodes ?? [])
+    .filter((node) => node?.nodeType === 3)
+    .map((node) => node.textContent ?? "").join(" ")
+  const leafText = (element?.children?.length ?? 0) === 0
+    ? element?.textContent ?? "" : ""
+  return `${element?.getAttribute?.("aria-label") ?? ""} ${
+    element?.getAttribute?.("data-testid") ?? ""} ${
+    element?.getAttribute?.("data-label") ?? ""} ${
+    element?.getAttribute?.("name") ?? ""} ${directText || leafText}`
     .replace(/[\s\u00a0]+/g, " ").trim()
 }
 
@@ -557,86 +590,68 @@ function semanticMoneyRowValue(element, label) {
   return null
 }
 
-function semanticMoneyLabelFound(label) {
-  const pattern = semanticMoneyLabelPattern(label)
-  return [...document.querySelectorAll(SEMANTIC_MONEY_SELECTOR)].slice(0, 480)
-    .some((element) => isVisible(element) && pattern.test(normalizeVisibleText(
-      semanticMoneyText(element))))
-}
-
-function labeledMoneyResult(label) {
-  const selectors = label === "subtotal"
-    ? ['[data-checkout-subtotal]', '[data-order-summary-subtotal]',
-      '[data-subtotal-price]', '[data-testid*="subtotal" i]']
-    : label === "shipping"
-      ? ['[data-checkout-shipping]', '[data-order-summary-shipping]',
-        '[data-shipping-price]', '[data-testid*="shipping" i]']
-      : label === "tax"
-        ? ['[data-checkout-tax]', '[data-order-summary-tax]',
-          '[data-tax-price]', '[data-testid*="tax" i]']
-        : label === "discount"
-          ? ['[data-checkout-discount]', '[data-order-summary-discount]',
-            '[data-discount-price]', '[data-testid*="discount" i]']
-          : ['[data-checkout-total]', '[data-order-summary-total]',
-            '[data-total-price]', '[data-testid*="total" i]']
-  for (const selector of selectors) {
-    for (const element of document.querySelectorAll(selector)) {
-      if (!isVisible(element)) continue
-      const semanticIdentity = normalizeVisibleText(
-        `${element.getAttribute?.("data-testid") ?? ""} ${
-          element.getAttribute?.("aria-label") ?? ""}`)
-      if (label === "total" && /\bsubtotal\b/.test(semanticIdentity)) continue
-      if (label === "shipping" && /\bfree\b/i.test(element.textContent ?? "")) {
-        return { value: 0, labelFound: true, currencyFound: false,
-          amountCandidateFound: true, labelAmountContainerFound: true }
-      }
-      const text = semanticMoneyText(element)
-      const values = moneyValues(text)
-      if (values.length === 1) return { value: values[0], labelFound: true,
-        currencyFound: /(?:\$|\bUSD\b)/i.test(text),
-        amountCandidateFound: true, labelAmountContainerFound: true }
-    }
-  }
+function semanticMoneyRow(label) {
   const labelPattern = semanticMoneyLabelPattern(label)
   let labelFound = false
-  let currencyFound = false
+  let currencyDetected = false
   let amountCandidateFound = false
-  let labelAmountContainerFound = false
-  for (const element of [...document.querySelectorAll(SEMANTIC_MONEY_SELECTOR)]
-    .slice(0, 480)) {
-    if (!isVisible(element) || !labelPattern.test(
-      normalizeVisibleText(semanticMoneyText(element)))) continue
+  const directAnchors = semanticMoneyDirectSelectors(label).flatMap((selector) =>
+    [...document.querySelectorAll(selector)].slice(0, 80))
+  const semanticAnchors = [...document.querySelectorAll(SEMANTIC_MONEY_SELECTOR)]
+    .slice(0, 480)
+  for (const element of [...new Set([...directAnchors, ...semanticAnchors])]) {
+    const directAnchor = directAnchors.includes(element)
+    const semanticIdentity = normalizeVisibleText(semanticMoneyIdentity(element))
+    if (!isVisible(element) || (!directAnchor &&
+        !labelPattern.test(semanticIdentity))) continue
+    if (label === "total" && /\bsubtotal\b/.test(semanticIdentity)) continue
     labelFound = true
     const related = relatedMoneyElements(element)
     for (const candidate of related) {
       const text = semanticMoneyText(candidate)
-      if (/(?:\$|\bUSD\b)/i.test(text)) currencyFound = true
+      if (/(?:\$|\bUSD\b)/i.test(text)) currencyDetected = true
       if (moneyValues(text).length > 0 ||
           (label === "shipping" && /\bfree\b/i.test(text))) {
         amountCandidateFound = true
-        if (candidate !== element) labelAmountContainerFound = true
       }
     }
     const value = semanticMoneyRowValue(element, label)
-    if (Number.isFinite(value)) return { value, labelFound, currencyFound,
-      amountCandidateFound: true,
-      labelAmountContainerFound: labelAmountContainerFound ||
-        related.length > 1 }
+    if (Number.isFinite(value)) return { labelFound: true,
+      amountCandidateFound: true, currencyDetected,
+      parsedUsd: value }
   }
-  return { value: null, labelFound, currencyFound, amountCandidateFound,
-    labelAmountContainerFound }
+  return { labelFound, amountCandidateFound, currencyDetected,
+    parsedUsd: null }
+}
+
+function semanticMoneyRows() {
+  return Object.freeze({
+    subtotal: semanticMoneyRow("subtotal"),
+    shipping: semanticMoneyRow("shipping"),
+    tax: semanticMoneyRow("tax"),
+    discount: semanticMoneyRow("discount"),
+    total: semanticMoneyRow("total"),
+  })
+}
+
+function labeledMoneyResult(label) {
+  const row = semanticMoneyRow(label)
+  return { value: row.parsedUsd, labelFound: row.labelFound,
+    currencyFound: row.currencyDetected,
+    amountCandidateFound: row.amountCandidateFound,
+    labelAmountContainerFound: row.labelFound && row.amountCandidateFound }
 }
 
 function labeledMoney(label) {
   return labeledMoneyResult(label).value
 }
 
-function checkoutSummaryQuote(expectedSubtotal) {
-  const subtotalUsd = labeledMoney("subtotal")
-  const shippingUsd = labeledMoney("shipping")
-  const taxUsd = labeledMoney("tax")
-  const discountUsd = labeledMoney("discount")
-  const totalUsd = labeledMoney("total")
+function checkoutSummaryQuote(expectedSubtotal, rows = semanticMoneyRows()) {
+  const subtotalUsd = rows.subtotal.parsedUsd
+  const shippingUsd = rows.shipping.parsedUsd
+  const taxUsd = rows.tax.parsedUsd
+  const discountUsd = rows.discount.parsedUsd
+  const totalUsd = rows.total.parsedUsd
   if (![subtotalUsd, shippingUsd, totalUsd].every(Number.isFinite) ||
       Math.abs(subtotalUsd - expectedSubtotal) > 0.01 ||
       Math.abs(subtotalUsd + shippingUsd +
@@ -696,20 +711,20 @@ function semanticCheckoutSignal(pattern) {
 
 function shopPayCheckoutPopulated() {
   if (location.hostname !== "shop.app") return false
+  const rows = semanticMoneyRows()
   const shipTo = semanticCheckoutSignal(/^ship to\b/)
   const shipping = semanticCheckoutSignal(/^shipping\b/) ||
-    Number.isFinite(labeledMoney("shipping"))
+    Number.isFinite(rows.shipping.parsedUsd)
   const paymentBoundary = semanticCheckoutSignal(/^(?:payment|pay now)\b/)
-  const summary = ["subtotal", "shipping", "total"]
-    .every((label) => Number.isFinite(labeledMoney(label)))
+  const summary = [rows.subtotal, rows.shipping, rows.total]
+    .every((row) => Number.isFinite(row.parsedUsd))
   return shipTo && shipping && paymentBoundary && summary
 }
 
-function shopPayMarkerSnapshot() {
-  const subtotal = labeledMoney("subtotal")
-  const shipping = labeledMoney("shipping")
-  const totalResult = labeledMoneyResult("total")
-  const total = totalResult.value
+function shopPayMarkerSnapshot(rows = semanticMoneyRows()) {
+  const subtotal = rows.subtotal.parsedUsd
+  const shipping = rows.shipping.parsedUsd
+  const total = rows.total.parsedUsd
   const shippingMethod = visibleShippingMethod()
   const orderSummary = visibleMatch(['[data-order-summary]',
     '[data-testid*="order-summary" i]']) ||
@@ -719,46 +734,62 @@ function shopPayMarkerSnapshot() {
     shopPayMarkerProduct: false,
     shopPayMarkerQuantity: false,
     shopPayMarkerShipTo: semanticCheckoutSignal(/^ship to\b/),
-    shopPayMarkerShipping: semanticMoneyLabelFound("shipping"),
-    shopPayMarkerSubtotal: semanticMoneyLabelFound("subtotal"),
+    shopPayMarkerShipping: rows.shipping.labelFound,
+    shopPayMarkerSubtotal: rows.subtotal.labelFound,
     shopPayMarkerShippingAmount: Number.isFinite(shipping),
-    shopPayMarkerTotal: Number.isFinite(total),
+    shopPayMarkerTotal: rows.total.labelFound,
     shopPayMarkerShippingMethod: typeof shippingMethod === "string" &&
       shippingMethod.length > 0,
     shopPayMarkerPayment: semanticCheckoutSignal(/^payment\b/),
     shopPayMarkerPayNow: semanticCheckoutSignal(/^pay now\b/),
-    totalLabelFound: totalResult.labelFound,
-    totalCurrencyFound: totalResult.currencyFound,
-    totalAmountCandidateFound: totalResult.amountCandidateFound,
-    totalLabelAmountContainerFound:
-      totalResult.labelAmountContainerFound,
+    subtotalLabelFound: rows.subtotal.labelFound,
+    subtotalAmountCandidateFound: rows.subtotal.amountCandidateFound,
+    subtotalCurrencyFound: rows.subtotal.currencyDetected,
+    subtotalParsed: Number.isFinite(subtotal),
+    shippingLabelFound: rows.shipping.labelFound,
+    shippingAmountCandidateFound: rows.shipping.amountCandidateFound,
+    shippingCurrencyFound: rows.shipping.currencyDetected,
+    shippingParsed: Number.isFinite(shipping),
+    totalLabelFound: rows.total.labelFound,
+    totalAmountCandidateFound: rows.total.amountCandidateFound,
+    totalCurrencyFound: rows.total.currencyDetected,
+    totalParsed: Number.isFinite(total),
+    ...(Number.isFinite(subtotal) ? { subtotalUsd: subtotal } : {}),
+    ...(Number.isFinite(shipping) ? { shippingUsd: shipping } : {}),
+    ...(Number.isFinite(total) ? { totalUsd: total } : {}),
   }
 }
 
 function shopPayMarkersSufficient(markers) {
   return markers.shopPayMarkerShipping && markers.shopPayMarkerSubtotal &&
-    markers.shopPayMarkerShippingAmount && markers.shopPayMarkerTotal &&
+    markers.shopPayMarkerTotal && markers.subtotalParsed &&
+    markers.shippingParsed && markers.totalParsed &&
     (markers.shopPayMarkerPayment || markers.shopPayMarkerPayNow)
 }
 
 function shopPayQuoteFailure(markers, quote, timedOut = false) {
-  if (!markers.shopPayMarkerSubtotal) return timedOut &&
-      !markers.shopPayMarkerShipping && !markers.shopPayMarkerTotal
-    ? "SHOP_PAY_DOM_READY_TIMEOUT" : "SHOP_PAY_SUBTOTAL_NOT_FOUND"
-  if (!markers.shopPayMarkerShipping) return "SHOP_PAY_SHIPPING_NOT_FOUND"
-  if (!markers.shopPayMarkerTotal) {
-    if (!markers.totalLabelFound) return "SHOP_PAY_TOTAL_LABEL_NOT_FOUND"
-    if (!markers.totalAmountCandidateFound) {
-      return "SHOP_PAY_TOTAL_AMOUNT_NOT_FOUND"
-    }
-    if (!markers.totalLabelAmountContainerFound) {
-      return "SHOP_PAY_TOTAL_RELATIONSHIP_NOT_FOUND"
-    }
-    return "SHOP_PAY_TOTAL_MONEY_PARSE_FAILED"
+  if (timedOut && !markers.subtotalLabelFound &&
+      !markers.shippingLabelFound && !markers.totalLabelFound) {
+    return "SHOP_PAY_DOM_READY_TIMEOUT"
   }
-  if (!quote || !markers.shopPayMarkerShippingAmount) {
-    return "SHOP_PAY_MONEY_PARSE_FAILED"
+  for (const [name, row] of [["SUBTOTAL", {
+    label: markers.subtotalLabelFound,
+    amount: markers.subtotalAmountCandidateFound,
+    parsed: markers.subtotalParsed,
+  }], ["SHIPPING", {
+    label: markers.shippingLabelFound,
+    amount: markers.shippingAmountCandidateFound,
+    parsed: markers.shippingParsed,
+  }], ["TOTAL", {
+    label: markers.totalLabelFound,
+    amount: markers.totalAmountCandidateFound,
+    parsed: markers.totalParsed,
+  }]]) {
+    if (!row.label) return `SHOP_PAY_${name}_LABEL_NOT_FOUND`
+    if (!row.amount) return `SHOP_PAY_${name}_AMOUNT_NOT_FOUND`
+    if (!row.parsed) return `SHOP_PAY_${name}_PARSE_FAILED`
   }
+  if (!quote) return "SHOP_PAY_QUOTE_RECONCILIATION_FAILED"
   return "OTHER:SHOP_PAY_COMMERCIAL_BOUNDARY_INSUFFICIENT"
 }
 
@@ -1033,7 +1064,8 @@ async function checkoutClassificationWhenReady(job, expectedSubtotal) {
   progress(job, "CHECKOUT_PAGE_DETECTED", {
     checkoutHostClassification: checkoutHostClassification(),
   })
-  let markers = shopPayMarkerSnapshot()
+  let rows = semanticMoneyRows()
+  let markers = shopPayMarkerSnapshot(rows)
   progress(job, "SHOP_PAY_DOM_WAITING", {
     checkoutHostClassification: checkoutHostClassification(),
     ...markers,
@@ -1042,19 +1074,21 @@ async function checkoutClassificationWhenReady(job, expectedSubtotal) {
   try {
     ready = await boundedDomWait(() => {
       const classification = checkoutPageClassification()
-      markers = shopPayMarkerSnapshot()
+      rows = semanticMoneyRows()
+      markers = shopPayMarkerSnapshot(rows)
       if (new Set(["EXPLICIT_AUTH_CHALLENGE", "EXPLICIT_LOGIN_PAGE",
         "SESSION_EXPIRED"]).has(classification)) {
         return { classification, quote: null, markers }
       }
       if (!shopPayMarkersSufficient(markers)) return null
-      const quote = checkoutSummaryQuote(expectedSubtotal)
+      const quote = checkoutSummaryQuote(expectedSubtotal, rows)
       if (!quote) return null
       return { classification: "NORMAL_CHECKOUT_WITH_SHIPPING", quote, markers }
     }, "SHOP_PAY_BOUNDED_DOM_READINESS_EXHAUSTED", SHOP_PAY_DOM_TIMEOUT_MS)
   } catch {
-    markers = shopPayMarkerSnapshot()
-    const quote = checkoutSummaryQuote(expectedSubtotal)
+    rows = semanticMoneyRows()
+    markers = shopPayMarkerSnapshot(rows)
+    const quote = checkoutSummaryQuote(expectedSubtotal, rows)
     ready = { classification: "UNKNOWN_CHECKOUT_PAGE", quote, markers,
       failureReason: shopPayQuoteFailure(markers, quote, true) }
   }

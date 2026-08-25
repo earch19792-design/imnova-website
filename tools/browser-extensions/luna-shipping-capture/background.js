@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.23"
+const EXTENSION_BUILD_VERSION = "1.0.24"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -157,8 +157,11 @@ function emitRuntimeTrace(state, success = true, reasonCode = "NONE", details = 
     "shopPayMarkerSubtotal", "shopPayMarkerTotal", "shopPayMarkerPayNow"]) {
     if (typeof details[field] === "boolean") event[field] = details[field]
   }
-  for (const field of ["totalLabelFound", "totalCurrencyFound",
-    "totalAmountCandidateFound", "totalLabelAmountContainerFound"]) {
+  for (const field of ["subtotalLabelFound", "subtotalAmountCandidateFound",
+    "subtotalCurrencyFound", "subtotalParsed", "shippingLabelFound",
+    "shippingAmountCandidateFound", "shippingCurrencyFound", "shippingParsed",
+    "totalLabelFound", "totalAmountCandidateFound", "totalCurrencyFound",
+    "totalParsed"]) {
     if (typeof details[field] === "boolean") event[field] = details[field]
   }
   activeRuntimeTrace.events.push(event)
@@ -607,9 +610,11 @@ function emitProgress(state, details = {}) {
     "shopPayMarkerQuantity", "shopPayMarkerShipTo", "shopPayMarkerShipping",
     "shopPayMarkerSubtotal", "shopPayMarkerShippingAmount",
     "shopPayMarkerTotal", "shopPayMarkerShippingMethod",
-    "shopPayMarkerPayment", "shopPayMarkerPayNow", "totalLabelFound",
-    "totalCurrencyFound", "totalAmountCandidateFound",
-    "totalLabelAmountContainerFound"]) {
+    "shopPayMarkerPayment", "shopPayMarkerPayNow", "subtotalLabelFound",
+    "subtotalAmountCandidateFound", "subtotalCurrencyFound", "subtotalParsed",
+    "shippingLabelFound", "shippingAmountCandidateFound",
+    "shippingCurrencyFound", "shippingParsed", "totalLabelFound",
+    "totalAmountCandidateFound", "totalCurrencyFound", "totalParsed"]) {
     if (typeof details[field] === "boolean") markerDetails[field] = details[field]
   }
   sellerPort.postMessage({ type: JOB_PROGRESS, state,
@@ -1023,6 +1028,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       shopPayMarkerShippingMethod: message.shopPayMarkerShippingMethod,
       shopPayMarkerPayment: message.shopPayMarkerPayment,
       shopPayMarkerPayNow: message.shopPayMarkerPayNow,
+      subtotalLabelFound: message.subtotalLabelFound,
+      subtotalAmountCandidateFound: message.subtotalAmountCandidateFound,
+      subtotalCurrencyFound: message.subtotalCurrencyFound,
+      subtotalParsed: message.subtotalParsed,
+      shippingLabelFound: message.shippingLabelFound,
+      shippingAmountCandidateFound: message.shippingAmountCandidateFound,
+      shippingCurrencyFound: message.shippingCurrencyFound,
+      shippingParsed: message.shippingParsed,
+      totalLabelFound: message.totalLabelFound,
+      totalAmountCandidateFound: message.totalAmountCandidateFound,
+      totalCurrencyFound: message.totalCurrencyFound,
+      totalParsed: message.totalParsed,
       authSignal: message.authSignal,
       authSignalSource: message.authSignalSource })
     return false

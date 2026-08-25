@@ -13,7 +13,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.23"
+const EXPECTED_EXTENSION_VERSION = "1.0.24"
 const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
@@ -91,10 +91,18 @@ type RuntimeTrace = {
   shopPayMarkerShippingMethod: boolean
   shopPayMarkerPayment: boolean
   shopPayMarkerPayNow: boolean
+  subtotalLabelFound: boolean
+  subtotalAmountCandidateFound: boolean
+  subtotalCurrencyFound: boolean
+  subtotalParsed: boolean
+  shippingLabelFound: boolean
+  shippingAmountCandidateFound: boolean
+  shippingCurrencyFound: boolean
+  shippingParsed: boolean
   totalLabelFound: boolean
   totalCurrencyFound: boolean
   totalAmountCandidateFound: boolean
-  totalLabelAmountContainerFound: boolean
+  totalParsed: boolean
   explicitAuthRequired: boolean
   canonicalUsProfileFound: boolean
   shippingAddressAccepted: boolean
@@ -149,10 +157,18 @@ const EMPTY_RUNTIME_TRACE: RuntimeTrace = Object.freeze({
   shopPayMarkerShippingMethod: false,
   shopPayMarkerPayment: false,
   shopPayMarkerPayNow: false,
+  subtotalLabelFound: false,
+  subtotalAmountCandidateFound: false,
+  subtotalCurrencyFound: false,
+  subtotalParsed: false,
+  shippingLabelFound: false,
+  shippingAmountCandidateFound: false,
+  shippingCurrencyFound: false,
+  shippingParsed: false,
   totalLabelFound: false,
   totalCurrencyFound: false,
   totalAmountCandidateFound: false,
-  totalLabelAmountContainerFound: false,
+  totalParsed: false,
   explicitAuthRequired: false,
   canonicalUsProfileFound: false,
   shippingAddressAccepted: false,
@@ -463,6 +479,12 @@ export default function LunaShippingCapturePage() {
                 ? { cartExpectedQuantityFound: true } : {}),
               ...(Number.isFinite(message.cartSubtotalUsd)
                 ? { cartSubtotalUsd: Number(message.cartSubtotalUsd) } : {}),
+              ...(Number.isFinite(message.subtotalUsd)
+                ? { subtotalUsd: Number(message.subtotalUsd) } : {}),
+              ...(Number.isFinite(message.shippingUsd)
+                ? { shippingUsd: Number(message.shippingUsd) } : {}),
+              ...(Number.isFinite(message.totalUsd)
+                ? { totalUsd: Number(message.totalUsd) } : {}),
               ...(message.state === "CART_MUTATION_CONFIRMED"
                 ? { cartMutationConfirmed: true } : {}),
               ...(message.state === "BRIDGE_RECONNECTED"
@@ -524,6 +546,24 @@ export default function LunaShippingCapturePage() {
                 ? { shopPayMarkerPayment: message.shopPayMarkerPayment } : {}),
               ...(typeof message.shopPayMarkerPayNow === "boolean"
                 ? { shopPayMarkerPayNow: message.shopPayMarkerPayNow } : {}),
+              ...(typeof message.subtotalLabelFound === "boolean"
+                ? { subtotalLabelFound: message.subtotalLabelFound } : {}),
+              ...(typeof message.subtotalAmountCandidateFound === "boolean"
+                ? { subtotalAmountCandidateFound:
+                    message.subtotalAmountCandidateFound } : {}),
+              ...(typeof message.subtotalCurrencyFound === "boolean"
+                ? { subtotalCurrencyFound: message.subtotalCurrencyFound } : {}),
+              ...(typeof message.subtotalParsed === "boolean"
+                ? { subtotalParsed: message.subtotalParsed } : {}),
+              ...(typeof message.shippingLabelFound === "boolean"
+                ? { shippingLabelFound: message.shippingLabelFound } : {}),
+              ...(typeof message.shippingAmountCandidateFound === "boolean"
+                ? { shippingAmountCandidateFound:
+                    message.shippingAmountCandidateFound } : {}),
+              ...(typeof message.shippingCurrencyFound === "boolean"
+                ? { shippingCurrencyFound: message.shippingCurrencyFound } : {}),
+              ...(typeof message.shippingParsed === "boolean"
+                ? { shippingParsed: message.shippingParsed } : {}),
               ...(typeof message.totalLabelFound === "boolean"
                 ? { totalLabelFound: message.totalLabelFound } : {}),
               ...(typeof message.totalCurrencyFound === "boolean"
@@ -531,9 +571,8 @@ export default function LunaShippingCapturePage() {
               ...(typeof message.totalAmountCandidateFound === "boolean"
                 ? { totalAmountCandidateFound:
                     message.totalAmountCandidateFound } : {}),
-              ...(typeof message.totalLabelAmountContainerFound === "boolean"
-                ? { totalLabelAmountContainerFound:
-                    message.totalLabelAmountContainerFound } : {}),
+              ...(typeof message.totalParsed === "boolean"
+                ? { totalParsed: message.totalParsed } : {}),
               ...(new Set(["NORMAL_GUEST_CHECKOUT",
                 "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
                 "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "NORMAL_CHECKOUT_WITH_SHIPPING",
@@ -856,10 +895,18 @@ export default function LunaShippingCapturePage() {
             `SHOP_PAY_MARKER_SHIPPING_METHOD=${runtimeTrace.shopPayMarkerShippingMethod}\n` +
             `SHOP_PAY_MARKER_PAYMENT=${runtimeTrace.shopPayMarkerPayment}\n` +
             `SHOP_PAY_MARKER_PAY_NOW=${runtimeTrace.shopPayMarkerPayNow}\n` +
+            `SUBTOTAL_LABEL_FOUND=${runtimeTrace.subtotalLabelFound}\n` +
+            `SUBTOTAL_AMOUNT_CANDIDATE_FOUND=${runtimeTrace.subtotalAmountCandidateFound}\n` +
+            `SUBTOTAL_CURRENCY_FOUND=${runtimeTrace.subtotalCurrencyFound}\n` +
+            `SUBTOTAL_PARSED=${runtimeTrace.subtotalParsed}\n` +
+            `SHIPPING_LABEL_FOUND=${runtimeTrace.shippingLabelFound}\n` +
+            `SHIPPING_AMOUNT_CANDIDATE_FOUND=${runtimeTrace.shippingAmountCandidateFound}\n` +
+            `SHIPPING_CURRENCY_FOUND=${runtimeTrace.shippingCurrencyFound}\n` +
+            `SHIPPING_PARSED=${runtimeTrace.shippingParsed}\n` +
             `TOTAL_LABEL_FOUND=${runtimeTrace.totalLabelFound}\n` +
             `TOTAL_CURRENCY_FOUND=${runtimeTrace.totalCurrencyFound}\n` +
             `TOTAL_AMOUNT_CANDIDATE_FOUND=${runtimeTrace.totalAmountCandidateFound}\n` +
-            `TOTAL_LABEL_AMOUNT_CONTAINER_FOUND=${runtimeTrace.totalLabelAmountContainerFound}\n` +
+            `TOTAL_PARSED=${runtimeTrace.totalParsed}\n` +
             `EXPLICIT_AUTH_REQUIRED=${runtimeTrace.explicitAuthRequired}\n` +
             `CANONICAL_US_PROFILE_FOUND=${runtimeTrace.canonicalUsProfileFound}\n` +
             `SHIPPING_ADDRESS_ACCEPTED=${runtimeTrace.shippingAddressAccepted}\n` +
