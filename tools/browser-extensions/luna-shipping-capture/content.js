@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.24" },
+      extensionBuildVersion: "1.0.25" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -20,6 +20,7 @@ const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
 const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
 const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
+const PROBE_CANONICAL_DESTINATION = "PROBE_LUNA_CANONICAL_DESTINATION"
 const VALIDATE_CANONICAL_DESTINATION = "VALIDATE_LUNA_CANONICAL_DESTINATION"
 const DESTINATION_FINGERPRINT_VERSION =
   "LUNA_SHOP_PAY_DESTINATION_SHA256_V1"
@@ -513,137 +514,257 @@ function semanticMoneyLabelPattern(label) {
   return /^total\b/i
 }
 
-function semanticMoneyDirectSelectors(label) {
-  if (label === "subtotal") return ['[data-checkout-subtotal]',
-    '[data-order-summary-subtotal]', '[data-subtotal-price]',
-    '[data-testid*="subtotal" i]']
-  if (label === "shipping") return ['[data-checkout-shipping]',
-    '[data-order-summary-shipping]', '[data-shipping-price]',
-    '[data-testid*="shipping" i]']
-  if (label === "tax") return ['[data-checkout-tax]',
-    '[data-order-summary-tax]', '[data-tax-price]',
-    '[data-testid*="tax" i]']
-  if (label === "discount") return ['[data-checkout-discount]',
-    '[data-order-summary-discount]', '[data-discount-price]',
-    '[data-testid*="discount" i]']
-  return ['[data-checkout-total]', '[data-order-summary-total]',
-    '[data-total-price]', '[data-testid*="total" i]']
-}
-
 const SEMANTIC_MONEY_SELECTOR =
   'dt,dd,th,td,label,p,strong,b,h1,h2,h3,h4,h5,h6,' +
   '[role="rowheader"],[role="cell"],[role="row"],[role="term"],' +
   '[role="definition"],[role="group"],[role="status"],[aria-label],' +
   '[data-testid],li,section,footer,div,span'
+const ORDER_SUMMARY_SELECTOR =
+  '[data-order-summary],[data-testid*="order-summary" i],' +
+  '[aria-label*="order summary" i],[role="table"],table,dl'
+
+function visibleElementText(element) {
+  const rendered = typeof element?.innerText === "string"
+    ? element.innerText : element?.textContent ?? ""
+  return String(rendered).replace(/[\s\u00a0]+/g, " ").trim()
+}
 
 function semanticMoneyText(element) {
   return `${element?.getAttribute?.("aria-label") ?? ""} ${
     element?.getAttribute?.("data-value") ?? ""} ${
-    element?.value ?? ""} ${element?.textContent ?? ""}`
+    element?.value ?? ""} ${visibleElementText(element)}`
     .replace(/[\s\u00a0]+/g, " ").trim()
 }
 
-function semanticMoneyIdentity(element) {
+function semanticMoneyLabel(element) {
   const directText = Array.from(element?.childNodes ?? [])
     .filter((node) => node?.nodeType === 3)
     .map((node) => node.textContent ?? "").join(" ")
   const leafText = (element?.children?.length ?? 0) === 0
-    ? element?.textContent ?? "" : ""
-  return `${element?.getAttribute?.("aria-label") ?? ""} ${
-    element?.getAttribute?.("data-testid") ?? ""} ${
-    element?.getAttribute?.("data-label") ?? ""} ${
-    element?.getAttribute?.("name") ?? ""} ${directText || leafText}`
-    .replace(/[\s\u00a0]+/g, " ").trim()
-}
-
-function relatedMoneyElements(element) {
-  const row = element.closest?.(
-    'tr,[role="row"],[role="group"],dl,li,section,footer')
-  const containers = [row, element.parentElement,
-    element.parentElement?.parentElement].filter(Boolean)
-  const candidates = [element, element.nextElementSibling,
-    element.previousElementSibling]
-  for (const container of containers) {
-    candidates.push(container)
-    for (const child of Array.from(container.children ?? []).slice(0, 48)) {
-      candidates.push(child)
-    }
-    for (const descendant of Array.from(container.querySelectorAll?.(
-      'dd,[role="cell"],[role="definition"],[data-value],[aria-label],p,strong,b,span')
-      ?? []).slice(0, 48)) candidates.push(descendant)
-  }
-  return [...new Set(candidates.filter(Boolean))].slice(0, 120)
-}
-
-function semanticMoneyRowValue(element, label) {
-  const candidates = relatedMoneyElements(element)
-  for (const candidate of [...new Set(candidates)]) {
-    if (!isVisible(candidate)) continue
-    const text = semanticMoneyText(candidate)
-    if (!text || text.length > 800) continue
-    if (label === "total" && /^subtotal\b/i.test(
-      normalizeVisibleText(text))) continue
-    if (label === "shipping" && /\bfree\b/i.test(text)) return 0
-    const values = moneyValues(text)
-    if (values.length === 1) return values[0]
+    ? visibleElementText(element) : ""
+  const identities = [element?.getAttribute?.("aria-label"),
+    element?.getAttribute?.("data-testid"),
+    element?.getAttribute?.("data-label"), element?.getAttribute?.("name"),
+    directText || leafText].map(normalizeVisibleText).filter(Boolean)
+  for (const label of ["subtotal", "shipping", "tax", "discount", "total"]) {
+    const pattern = semanticMoneyLabelPattern(label)
+    if (identities.some((identity) => pattern.test(identity) &&
+        (label !== "total" || !/\bsubtotal\b/.test(identity)))) return label
   }
   return null
 }
 
-function semanticMoneyRow(label) {
-  const labelPattern = semanticMoneyLabelPattern(label)
-  let labelFound = false
-  let currencyDetected = false
-  let amountCandidateFound = false
-  const directAnchors = semanticMoneyDirectSelectors(label).flatMap((selector) =>
-    [...document.querySelectorAll(selector)].slice(0, 80))
-  const semanticAnchors = [...document.querySelectorAll(SEMANTIC_MONEY_SELECTOR)]
-    .slice(0, 480)
-  for (const element of [...new Set([...directAnchors, ...semanticAnchors])]) {
-    const directAnchor = directAnchors.includes(element)
-    const semanticIdentity = normalizeVisibleText(semanticMoneyIdentity(element))
-    if (!isVisible(element) || (!directAnchor &&
-        !labelPattern.test(semanticIdentity))) continue
-    if (label === "total" && /\bsubtotal\b/.test(semanticIdentity)) continue
-    labelFound = true
-    const related = relatedMoneyElements(element)
-    for (const candidate of related) {
-      const text = semanticMoneyText(candidate)
-      if (/(?:\$|\bUSD\b)/i.test(text)) currencyDetected = true
-      if (moneyValues(text).length > 0 ||
-          (label === "shipping" && /\bfree\b/i.test(text))) {
-        amountCandidateFound = true
-      }
-    }
-    const value = semanticMoneyRowValue(element, label)
-    if (Number.isFinite(value)) return { labelFound: true,
-      amountCandidateFound: true, currencyDetected,
-      parsedUsd: value }
-  }
-  return { labelFound, amountCandidateFound, currencyDetected,
-    parsedUsd: null }
+function elementAncestors(element, maximum = 16) {
+  const result = []
+  for (let current = element, depth = 0; current && depth < maximum;
+    current = current.parentElement, depth += 1) result.push(current)
+  return result
 }
 
-function semanticMoneyRows() {
-  return Object.freeze({
-    subtotal: semanticMoneyRow("subtotal"),
-    shipping: semanticMoneyRow("shipping"),
-    tax: semanticMoneyRow("tax"),
-    discount: semanticMoneyRow("discount"),
-    total: semanticMoneyRow("total"),
+function orderSummaryRegion(snapshotRecords) {
+  const labelsIn = (region) => new Set(snapshotRecords
+    .filter((record) => elementWithin(record.element, region))
+    .map((record) => record.label).filter(Boolean))
+  const candidates = new Map()
+  for (const record of snapshotRecords) {
+    const element = record.element
+    const explicit = element?.matches?.(ORDER_SUMMARY_SELECTOR) === true ||
+      /\border summary\b/.test(normalizeVisibleText(
+        `${element?.getAttribute?.("aria-label") ?? ""} ${
+          element?.getAttribute?.("data-testid") ?? ""}`))
+    if (explicit) candidates.set(element, true)
+  }
+  const subtotals = snapshotRecords.filter((record) => record.label === "subtotal")
+  const totals = snapshotRecords.filter((record) => record.label === "total")
+  for (const subtotal of subtotals) {
+    for (const total of totals) {
+      for (const ancestor of elementAncestors(subtotal.element)) {
+        if (elementWithin(total.element, ancestor) && !candidates.has(ancestor)) {
+          candidates.set(ancestor, false)
+        }
+      }
+    }
+  }
+  const qualified = [...candidates].flatMap(([element, explicit]) => {
+    const members = snapshotRecords.filter((record) =>
+      elementWithin(record.element, element))
+    const labels = labelsIn(element)
+    const requiredLabelCount = ["subtotal", "shipping", "total"]
+      .filter((label) => labels.has(label)).length
+    const textLength = visibleElementText(element).length
+    const sufficientlyScoped = explicit ? requiredLabelCount >= 2
+      : requiredLabelCount === 3
+    return sufficientlyScoped && members.length <= 360 && textLength <= 12_000
+      ? [{ element, breadth: members.length, textLength,
+        requiredLabelCount }] : []
+  }).sort((left, right) => right.requiredLabelCount - left.requiredLabelCount ||
+    left.breadth - right.breadth ||
+    left.textLength - right.textLength)
+  if (!qualified.length) return { region: null, ambiguous: false }
+  const best = qualified[0]
+  const disjoint = qualified.filter((candidate) =>
+    candidate.element !== best.element &&
+    !elementWithin(best.element, candidate.element) &&
+    !elementWithin(candidate.element, best.element))
+  return disjoint.length ? { region: null, ambiguous: true }
+    : { region: best.element, ambiguous: false }
+}
+
+function createShopPayMoneyDomSnapshot() {
+  const elements = [...new Set([...document.querySelectorAll(
+    `${ORDER_SUMMARY_SELECTOR},${SEMANTIC_MONEY_SELECTOR}`)])]
+    .filter((element) => isVisible(element)).slice(0, 800)
+  const records = elements.map((element) => Object.freeze({ element,
+    label: semanticMoneyLabel(element), text: semanticMoneyText(element) }))
+  const resolved = orderSummaryRegion(records)
+  return Object.freeze({ records: Object.freeze(records),
+    region: resolved.region, orderSummaryAmbiguous: resolved.ambiguous })
+}
+
+function directUsdRowValue(value) {
+  const text = String(value ?? "").replace(/[\s\u00a0]+/g, " ").trim()
+  if (/^free$/i.test(text)) return { value: 0, explicitFree: true,
+    currencyDetected: false }
+  const match = text.match(/^(?:\$\s*([0-9][0-9,]*(?:\.\d{2})?)(?:\s*USD)?|\bUSD\s*\$?\s*([0-9][0-9,]*(?:\.\d{2})?)|([0-9][0-9,]*(?:\.\d{2})?)\s*USD\b)$/i)
+  if (!match) return null
+  const parsed = Number((match[1] ?? match[2] ?? match[3] ?? "")
+    .replace(/,/g, ""))
+  return Number.isFinite(parsed) && parsed >= 0
+    ? { value: Math.round(parsed * 100) / 100, explicitFree: false,
+      currencyDetected: true } : null
+}
+
+function boundedLeafText(element, maximum = 48) {
+  const leaves = []
+  const visit = (current, depth) => {
+    if (!current || depth > 8 || leaves.length >= maximum) return
+    const children = Array.from(current.children ?? []).slice(0, maximum)
+    if (!children.length) {
+      const text = visibleElementText(current)
+      if (text) leaves.push(text)
+      return
+    }
+    for (const child of children) visit(child, depth + 1)
+  }
+  visit(element, 0)
+  return leaves.join(" ").replace(/[\s\u00a0]+/g, " ").trim()
+}
+
+function boundMoneyRowValueCandidates(label, container) {
+  const labelSource = label === "shipping" ? "(?:shipping|delivery)"
+    : label === "tax" ? "(?:tax|taxes)"
+      : label === "discount" ? "(?:discount|discounts)" : label
+  const labelAtStart = new RegExp(`^${labelSource}\\b`, "i")
+  const sources = [visibleElementText(container), boundedLeafText(container),
+    container?.getAttribute?.("aria-label") ?? "",
+    `${container?.getAttribute?.("data-label") ?? ""} ${
+      container?.getAttribute?.("data-value") ?? ""}`]
+    .map((value) => String(value).replace(/[\s\u00a0]+/g, " ").trim())
+    .filter(Boolean)
+  const visible = sources[0] ?? ""
+  if (!labelAtStart.test(visible)) {
+    for (const identity of [container?.getAttribute?.("aria-label"),
+      container?.getAttribute?.("data-label")]) {
+      const boundedIdentity = String(identity ?? "")
+        .replace(/[\s\u00a0]+/g, " ").trim()
+      const identityLabel = boundedIdentity.match(labelAtStart)?.[0]
+      if (identityLabel) {
+        sources.push(`${identityLabel} ${visible}`.trim())
+      }
+    }
+  }
+  return [...new Set(sources)].flatMap((source) => {
+    const matched = source.match(new RegExp(
+      `^${labelSource}\\b\\s*(?:[:–—-]\\s*)?(.*)$`, "i"))
+    if (!matched) return []
+    const valueText = matched[1].trim()
+    return [{ valueText, parsed: directUsdRowValue(valueText),
+      amountSignal: /(?:\$|\bUSD\b|\bfree\b)/i.test(valueText) }]
   })
 }
 
-function labeledMoneyResult(label) {
-  const row = semanticMoneyRow(label)
-  return { value: row.parsedUsd, labelFound: row.labelFound,
-    currencyFound: row.currencyDetected,
-    amountCandidateFound: row.amountCandidateFound,
-    labelAmountContainerFound: row.labelFound && row.amountCandidateFound }
+function parseSemanticMoneyRowContainer(label, container) {
+  const text = visibleElementText(container)
+  const normalizedText = normalizeVisibleText(text)
+  const nonMonetaryShippingContext = label === "shipping" &&
+    /\b(?:free shipping|shipping (?:option|plan|method|section))\b/
+      .test(normalizedText)
+  if (nonMonetaryShippingContext) return { container, labelFound: true,
+    rowContainerFound: false, amountCandidateFound: false,
+    currencyDetected: false, explicitFree: false, explicitZeroAmount: false,
+    parsedUsd: null, ambiguityReason: null }
+  const candidates = boundMoneyRowValueCandidates(label, container)
+  const parsedCandidates = candidates.filter((candidate) => candidate.parsed)
+  const values = [...new Set(parsedCandidates.map((candidate) =>
+    candidate.parsed.value))]
+  const ambiguous = values.length > 1
+  const parsedUsd = ambiguous || values.length !== 1 ? null : values[0]
+  const explicitFree = parsedUsd === 0 && parsedCandidates.some((candidate) =>
+    candidate.parsed.value === 0 && candidate.parsed.explicitFree)
+  const explicitZeroAmount = parsedUsd === 0 && parsedCandidates.some(
+    (candidate) => candidate.parsed.value === 0 &&
+      !candidate.parsed.explicitFree)
+  const currencyDetected = parsedCandidates.some((candidate) =>
+    candidate.parsed.currencyDetected)
+  return { container, labelFound: true, rowContainerFound: true,
+    amountCandidateFound: candidates.some((candidate) =>
+      candidate.amountSignal), currencyDetected,
+    explicitFree, explicitZeroAmount, parsedUsd,
+    ambiguityReason: ambiguous ? `SHOP_PAY_${label.toUpperCase()}_ROW_AMBIGUOUS`
+      : null }
 }
 
-function labeledMoney(label) {
-  return labeledMoneyResult(label).value
+function semanticMoneyRow(label, snapshot = createShopPayMoneyDomSnapshot()) {
+  const inRegion = snapshot.region ? snapshot.records.filter((record) =>
+    elementWithin(record.element, snapshot.region)) : []
+  const anchors = inRegion.filter((record) => record.label === label)
+  if (!snapshot.region || snapshot.orderSummaryAmbiguous) return {
+    labelFound: anchors.length > 0, rowContainerFound: false,
+    amountCandidateFound: false, currencyDetected: false,
+    explicitFree: false, explicitZeroAmount: false, parsedUsd: null,
+    ambiguityReason: snapshot.orderSummaryAmbiguous
+      ? "SHOP_PAY_ORDER_SUMMARY_AMBIGUOUS" : null,
+  }
+  const containers = []
+  for (const anchor of anchors) {
+    for (const container of elementAncestors(anchor.element, 10)) {
+      if (!elementWithin(container, snapshot.region)) break
+      const members = inRegion.filter((record) =>
+        elementWithin(record.element, container))
+      const labels = new Set(members.map((record) => record.label).filter(Boolean))
+      if (labels.size !== 1 || !labels.has(label)) {
+        if (container === snapshot.region) break
+        continue
+      }
+      const parsed = parseSemanticMoneyRowContainer(label, container)
+      if (parsed.amountCandidateFound) { containers.push(parsed); break }
+      if (container === snapshot.region) break
+    }
+  }
+  const unique = [...new Map(containers.map((entry) =>
+    [entry.container, entry])).values()].filter((entry, index, all) =>
+    !all.some((other, otherIndex) => otherIndex !== index &&
+      elementWithin(other.container, entry.container)))
+  if (unique.length > 1) return { labelFound: anchors.length > 0,
+    rowContainerFound: true, amountCandidateFound: true,
+    currencyDetected: unique.some((entry) => entry.currencyDetected),
+    explicitFree: false, explicitZeroAmount: false, parsedUsd: null,
+    ambiguityReason: `SHOP_PAY_${label.toUpperCase()}_ROW_AMBIGUOUS` }
+  if (unique.length === 1) return unique[0]
+  return { labelFound: anchors.length > 0, rowContainerFound: false,
+    amountCandidateFound: false, currencyDetected: false,
+    explicitFree: false, explicitZeroAmount: false, parsedUsd: null,
+    ambiguityReason: null }
+}
+
+function semanticMoneyRows(snapshot = createShopPayMoneyDomSnapshot()) {
+  return Object.freeze({ orderSummaryFound: Boolean(snapshot.region),
+    orderSummaryAmbiguous: snapshot.orderSummaryAmbiguous,
+    subtotal: semanticMoneyRow("subtotal", snapshot),
+    shipping: semanticMoneyRow("shipping", snapshot),
+    tax: semanticMoneyRow("tax", snapshot),
+    discount: semanticMoneyRow("discount", snapshot),
+    total: semanticMoneyRow("total", snapshot) })
 }
 
 function checkoutSummaryQuote(expectedSubtotal, rows = semanticMoneyRows()) {
@@ -652,12 +773,18 @@ function checkoutSummaryQuote(expectedSubtotal, rows = semanticMoneyRows()) {
   const taxUsd = rows.tax.parsedUsd
   const discountUsd = rows.discount.parsedUsd
   const totalUsd = rows.total.parsedUsd
-  if (![subtotalUsd, shippingUsd, totalUsd].every(Number.isFinite) ||
+  const authoritativeZero = shippingUsd !== 0 || rows.shipping.explicitFree ||
+    rows.shipping.explicitZeroAmount
+  if (!rows.orderSummaryFound || rows.orderSummaryAmbiguous ||
+      [rows.subtotal, rows.shipping, rows.total]
+        .some((row) => Boolean(row.ambiguityReason)) || !authoritativeZero ||
+      ![subtotalUsd, shippingUsd, totalUsd].every(Number.isFinite) ||
       Math.abs(subtotalUsd - expectedSubtotal) > 0.01 ||
       Math.abs(subtotalUsd + shippingUsd +
         (Number.isFinite(taxUsd) ? taxUsd : 0) -
         (Number.isFinite(discountUsd) ? discountUsd : 0) - totalUsd) > 0.02) return null
   return { subtotalUsd, shippingUsd, totalUsd,
+    shippingZeroAuthoritative: authoritativeZero,
     ...(Number.isFinite(taxUsd) ? { taxUsd } : {}),
     ...(Number.isFinite(discountUsd) ? { discountUsd } : {}),
     shippingMethod: visibleShippingMethod() }
@@ -709,10 +836,9 @@ function semanticCheckoutSignal(pattern) {
         element.textContent ?? ""}`)))
 }
 
-function shopPayCheckoutPopulated() {
+function shopPayCheckoutPopulated(rows = semanticMoneyRows()) {
   if (location.hostname !== "shop.app") return false
-  const rows = semanticMoneyRows()
-  const shipTo = semanticCheckoutSignal(/^ship to\b/)
+  const shipTo = shopPayDestinationSnapshot().markerFound
   const shipping = semanticCheckoutSignal(/^shipping\b/) ||
     Number.isFinite(rows.shipping.parsedUsd)
   const paymentBoundary = semanticCheckoutSignal(/^(?:payment|pay now)\b/)
@@ -721,19 +847,25 @@ function shopPayCheckoutPopulated() {
   return shipTo && shipping && paymentBoundary && summary
 }
 
-function shopPayMarkerSnapshot(rows = semanticMoneyRows()) {
+function shopPayMarkerSnapshot(rows = semanticMoneyRows(),
+  destination = shopPayDestinationSnapshot()) {
   const subtotal = rows.subtotal.parsedUsd
   const shipping = rows.shipping.parsedUsd
   const total = rows.total.parsedUsd
   const shippingMethod = visibleShippingMethod()
-  const orderSummary = visibleMatch(['[data-order-summary]',
-    '[data-testid*="order-summary" i]']) ||
-    [subtotal, shipping, total].every(Number.isFinite)
+  const firstRowAmbiguity = [rows.subtotal, rows.shipping, rows.total]
+    .map((row) => row.ambiguityReason).find((reason) => typeof reason === "string")
+  const shippingValueConflict = shipping === 0 &&
+    !rows.shipping.explicitFree && !rows.shipping.explicitZeroAmount
   return {
-    shopPayMarkerOrderSummary: orderSummary,
+    shopPayMarkerOrderSummary: rows.orderSummaryFound &&
+      !rows.orderSummaryAmbiguous,
+    orderSummaryAmbiguous: rows.orderSummaryAmbiguous,
+    firstRowAmbiguity: firstRowAmbiguity ?? null,
+    shippingValueConflict,
     shopPayMarkerProduct: false,
     shopPayMarkerQuantity: false,
-    shopPayMarkerShipTo: semanticCheckoutSignal(/^ship to\b/),
+    shopPayMarkerShipTo: destination.markerFound,
     shopPayMarkerShipping: rows.shipping.labelFound,
     shopPayMarkerSubtotal: rows.subtotal.labelFound,
     shopPayMarkerShippingAmount: Number.isFinite(shipping),
@@ -761,16 +893,26 @@ function shopPayMarkerSnapshot(rows = semanticMoneyRows()) {
 }
 
 function shopPayMarkersSufficient(markers) {
-  return markers.shopPayMarkerShipping && markers.shopPayMarkerSubtotal &&
+  return markers.shopPayMarkerOrderSummary &&
+    markers.shopPayMarkerShipping && markers.shopPayMarkerSubtotal &&
     markers.shopPayMarkerTotal && markers.subtotalParsed &&
     markers.shippingParsed && markers.totalParsed &&
     (markers.shopPayMarkerPayment || markers.shopPayMarkerPayNow)
 }
 
 function shopPayQuoteFailure(markers, quote, timedOut = false) {
+  if (markers.orderSummaryAmbiguous) return "SHOP_PAY_ORDER_SUMMARY_AMBIGUOUS"
+  if (!markers.shopPayMarkerOrderSummary) return timedOut
+    ? "SHOP_PAY_ORDER_SUMMARY_NOT_FOUND" : "SHOP_PAY_DOM_NOT_READY"
   if (timedOut && !markers.subtotalLabelFound &&
       !markers.shippingLabelFound && !markers.totalLabelFound) {
     return "SHOP_PAY_DOM_READY_TIMEOUT"
+  }
+  if (typeof markers.firstRowAmbiguity === "string") {
+    return markers.firstRowAmbiguity
+  }
+  if (markers.shippingValueConflict === true) {
+    return "SHOP_PAY_SHIPPING_ROW_VALUE_CONFLICT"
   }
   for (const [name, row] of [["SUBTOTAL", {
     label: markers.subtotalLabelFound,
@@ -811,7 +953,7 @@ function visibleShippingMethod() {
   return null
 }
 
-function checkoutPageClassification() {
+function checkoutPageClassification(shopPayRows = null) {
   const explicitChallenge = visibleMatch([
     'iframe[src*="captcha" i]', '[data-cf-challenge]',
     '[id*="challenge" i]', 'form[action*="/challenge" i]',
@@ -844,7 +986,7 @@ function checkoutPageClassification() {
   const shopPayShell = location.hostname === "shop.app" &&
     (visibleMatch(['[data-order-summary]', '[data-testid*="order-summary" i]',
       '[data-testid*="subtotal" i]', '[data-testid*="shipping" i]']) ||
-      shopPayCheckoutPopulated())
+      shopPayCheckoutPopulated(shopPayRows ?? semanticMoneyRows()))
   if (location.hostname === "shop.app" &&
       (checkoutFields || shippingOptions || shopPayShell)) {
     return "NORMAL_CHECKOUT_WITH_SHIPPING"
@@ -917,63 +1059,95 @@ function canonicalShippingProfile(job) {
     setField(postal, job.destination.postalCode)
 }
 
-function boundedProfileText() {
-  const candidates = [...document.querySelectorAll(
+const US_STATE_CODES = new Set([
+  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA",
+  "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA",
+  "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY",
+  "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX",
+  "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+])
+
+function elementWithin(element, ancestor) {
+  if (!ancestor || ancestor === document) return true
+  for (let current = element, depth = 0; current && depth < 24;
+    current = current.parentElement, depth += 1) {
+    if (current === ancestor) return true
+  }
+  return false
+}
+
+function usDestinationEvidence(value) {
+  const text = String(value ?? "").replace(/[\s\u00a0]+/g, " ").trim()
+  const normalized = normalizeVisibleText(text)
+  const literalCountry = /\b(?:us|usa|united states|united states of america)\b/
+    .test(normalized)
+  const statePostal = [...text.matchAll(
+    /\b([A-Z]{2})[\s,]+(\d{5}(?:-\d{4})?)\b/gi)]
+    .some((match) => US_STATE_CODES.has(match[1].toUpperCase()))
+  return { literalCountry, statePostal, isUs: literalCountry || statePostal }
+}
+
+function shipToBoundaryText(element) {
+  return `${element?.getAttribute?.("aria-label") ?? ""} ${
+    visibleElementText(element)}`.replace(/[\s\u00a0]+/g, " ").trim()
+}
+
+function shopPayDestinationSnapshot(job = null) {
+  const direct = [...document.querySelectorAll(
     '[data-shipping-address],[data-delivery-address],' +
-    '[data-testid*="ship-to" i],[aria-label*="ship to" i],' +
-    '[class*="address" i],[role="group"],[role="region"],' +
-    'h1,h2,h3,dt,dd,button,section,div,span')]
-    .slice(0, 80)
-  const bounded = []
-  for (const element of candidates) {
-    if (!isVisible(element)) continue
-    const marker = `${element.getAttribute?.("aria-label") ?? ""} ${
-      element.textContent ?? ""}`
-    if (!/\bship\s+to\b/i.test(marker)) continue
-    let current = element
-    for (let depth = 0; current && depth < 4; depth += 1) {
-      const text = `${current.getAttribute?.("aria-label") ?? ""} ${
-        current.textContent ?? ""}`.replace(/\s+/g, " ").trim()
-      if (text.length >= 8 && text.length <= 1_000 &&
-          /\bship\s+to\b/i.test(text)) bounded.push(text)
+    '[data-testid*="ship-to" i],[aria-label*="ship to" i]')]
+  const semantic = [...document.querySelectorAll(
+    'h1,h2,h3,dt,dd,label,button,[role="group"],[role="region"],section,div,span')]
+    .filter((element) => /\bship\s+to\b/i.test(shipToBoundaryText(element)))
+  const roots = [...new Set([...direct, ...semantic])]
+    .filter((element) => isVisible(element)).slice(0, 240)
+  const byContainer = new Map()
+  for (const root of roots) {
+    let current = root
+    for (let depth = 0; current && depth < 6; depth += 1) {
+      const raw = shipToBoundaryText(current)
+      const normalizedBoundary = normalizeVisibleText(raw)
+      if (raw.length >= 8 && raw.length <= 1_000 &&
+          /\bship\s+to\b/i.test(raw) &&
+          !/\b(?:subtotal|total|payment|pay now)\b/.test(normalizedBoundary)) {
+        const evidence = usDestinationEvidence(raw)
+        if (evidence.isUs) {
+          const normalized = raw.normalize("NFKC").toLowerCase()
+            .replace(/\bship\s+to\b/g, " ")
+            .replace(/[^a-z0-9]+/g, " ").trim()
+          if (normalized.length >= 8 && normalized.length <= 900) {
+            byContainer.set(current, { element: current, normalized,
+              countryClass: "US" })
+            break
+          }
+        }
+      }
       current = current.parentElement
     }
   }
-  return bounded.sort((left, right) => left.length - right.length)
-    .find((text) => /\b(?:united states|usa)\b/i.test(text) ||
-      /\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/.test(text)) ?? ""
-}
-
-function profileFieldValue(selectors) {
-  for (const selector of selectors) {
-    const element = document.querySelector(selector)
-    const value = String(element?.value ?? element?.getAttribute?.("value") ?? "")
-      .trim()
-    if (value) return value
-  }
-  return ""
+  const candidates = [...byContainer.values()].filter((candidate, index, all) =>
+    !all.some((other, otherIndex) => otherIndex !== index &&
+      elementWithin(other.element, candidate.element)))
+  const unique = [...new Map(candidates.map((candidate) =>
+    [candidate.normalized, candidate])).values()]
+  if (unique.length !== 1) return { markerFound: roots.length > 0,
+    ambiguous: unique.length > 1, normalized: null, countryClass: "UNPROVEN",
+    canonicalFieldsMatch: false }
+  const [{ normalized, countryClass }] = unique
+  const expectedPostal = typeof job?.destination?.postalCode === "string"
+    ? normalizeVisibleText(job.destination.postalCode) : null
+  const expectedProvince = typeof job?.destination?.province === "string"
+    ? normalizeVisibleText(job.destination.province) : null
+  const canonicalFieldsMatch = (!expectedPostal || new RegExp(
+    `\\b${expectedPostal.replace(/\s+/g, " ")}\\b`).test(normalized)) &&
+    (!expectedProvince || new RegExp(`\\b${expectedProvince}\\b`).test(normalized))
+  return { markerFound: true, ambiguous: false, normalized, countryClass,
+    canonicalFieldsMatch }
 }
 
 function normalizedShopPayDestination(job = null) {
-  const raw = boundedProfileText()
-  if (!raw) return null
-  const normalized = raw.normalize("NFKC").toLowerCase()
-    .replace(/\bship\s+to\b/g, " ")
-    .replace(/[^a-z0-9]+/g, " ").trim()
-  if (normalized.length < 8 || normalized.length > 900) return null
-  const expectedPostal = typeof job?.destination?.postalCode === "string"
-    ? job.destination.postalCode.toLowerCase() : null
-  const expectedProvince = typeof job?.destination?.province === "string"
-    ? job.destination.province.toLowerCase() : null
-  const countryMatches = /\b(?:us|usa|united states|united states of america)\b/
-    .test(normalized)
-  const provinceMatches = expectedProvince
-    ? new RegExp(`\\b${expectedProvince}\\b`).test(normalized) : countryMatches
-  const postalMatches = expectedPostal
-    ? new RegExp(`\\b${expectedPostal.replace("-", " ")}\\b`).test(normalized)
-    : countryMatches
-  return { normalized, countryClass: countryMatches ? "US" : "UNPROVEN",
-    canonicalFieldsMatch: countryMatches && provinceMatches && postalMatches }
+  const snapshot = shopPayDestinationSnapshot(job)
+  return snapshot.normalized && snapshot.countryClass === "US" ? snapshot : null
 }
 
 async function sha256Text(value) {
@@ -984,9 +1158,14 @@ async function sha256Text(value) {
 }
 
 function getCanonicalDestinationBinding(job) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ type: GET_CANONICAL_DESTINATION_BINDING,
       captureSessionId: job.captureSessionId }, (response) => {
+      if (chrome.runtime.lastError ||
+          response?.error === "BIND_STORAGE_READBACK_FAILED") {
+        reject(new Error("BIND_STORAGE_READBACK_FAILED"))
+        return
+      }
       const binding = response?.binding
       if (response?.accepted !== true ||
           binding?.fingerprintVersion !== DESTINATION_FINGERPRINT_VERSION ||
@@ -1008,38 +1187,12 @@ async function canonicalDestinationFingerprintMatch(job, binding) {
 }
 
 async function shopPayCanonicalShippingProfileStatus(job) {
-  const countryValue = profileFieldValue([
-    '[autocomplete="country"]', '[autocomplete="country-name"]',
-    'select[name*="country" i]', 'input[name*="country" i]',
-  ])
-  const provinceValue = profileFieldValue([
-    '[autocomplete="address-level1"]', 'select[name*="province" i]',
-    'input[name*="province" i]', 'select[name*="state" i]',
-    'input[name*="state" i]',
-  ])
-  const postalValue = profileFieldValue([
-    '[autocomplete="postal-code"]', 'input[name*="postal" i]',
-    'input[name*="zip" i]',
-  ])
-  const rawSummary = boundedProfileText()
-  const summary = normalizeVisibleText(rawSummary)
-  const expectedPostal = job.destination.postalCode.toLowerCase()
-  const expectedProvince = job.destination.province.toLowerCase()
-  const countryMatches = /^(?:us|usa|united states|united states of america)$/i
-      .test(countryValue) || /\b(?:us|usa|united states)\b/.test(summary)
-  const provinceMatches = provinceValue.toLowerCase() === expectedProvince ||
-    new RegExp(`\\b${expectedProvince}\\b`).test(summary)
-  const postalMatches = postalValue.toLowerCase() === expectedPostal ||
-    new RegExp(`\\b${expectedPostal.replace("-", " ")}\\b`).test(summary)
   const current = normalizedShopPayDestination(job)
-  if (current) {
-    const binding = await getCanonicalDestinationBinding(job)
-    if (binding) return await canonicalDestinationFingerprintMatch(job, binding)
-      ? "MATCH" : "MISMATCH"
-  }
-  if (countryMatches && provinceMatches && postalMatches) return "MATCH"
   if (!current) return "UNAVAILABLE"
-  return current.canonicalFieldsMatch ? "MATCH" : "MISMATCH"
+  const binding = await getCanonicalDestinationBinding(job)
+  if (!binding) return "UNAVAILABLE"
+  return await canonicalDestinationFingerprintMatch(job, binding)
+    ? "MATCH" : "MISMATCH"
 }
 
 async function shopPayCanonicalShippingProfile(job) {
@@ -1073,8 +1226,8 @@ async function checkoutClassificationWhenReady(job, expectedSubtotal) {
   let ready = null
   try {
     ready = await boundedDomWait(() => {
-      const classification = checkoutPageClassification()
       rows = semanticMoneyRows()
+      const classification = checkoutPageClassification(rows)
       markers = shopPayMarkerSnapshot(rows)
       if (new Set(["EXPLICIT_AUTH_CHALLENGE", "EXPLICIT_LOGIN_PAGE",
         "SESSION_EXPIRED"]).has(classification)) {
@@ -1317,6 +1470,10 @@ async function runCheckoutStage(job, original, subtotalUsd) {
       throw new Error("LUNA_UNKNOWN_CHECKOUT_PAGE")
     }
     const visible = await checkoutShipping(job, subtotalUsd)
+    if (location.hostname === "shop.app" && visible.shippingUsd === 0 &&
+        visible.shippingZeroAuthoritative !== true) {
+      throw new Error("SHOP_PAY_SHIPPING_ROW_VALUE_CONFLICT")
+    }
     progress(job, "SHIPPING_QUOTE_CAPTURED", {
       checkoutHostClassification: checkoutHostClassification(),
       checkoutNavigationHost: location.hostname,
@@ -1387,8 +1544,29 @@ const isCheckoutPage = /^\/checkouts?(?:\/|$)/.test(location.pathname) ||
   location.hostname === "account.lunaportex.com" ||
   location.hostname === "shop.app"
 
+function canonicalBindingCheckoutSnapshot() {
+  const destination = shopPayDestinationSnapshot()
+  const markers = {
+    shopPayMarkerShipTo: destination.markerFound,
+    shopPayMarkerShipping: semanticCheckoutSignal(/^shipping\b/),
+    shopPayMarkerSubtotal: semanticCheckoutSignal(/^subtotal\b/),
+    shopPayMarkerTotal: semanticCheckoutSignal(/^total\b/),
+    shopPayMarkerPayment: semanticCheckoutSignal(/^payment\b/),
+    shopPayMarkerPayNow: semanticCheckoutSignal(/^pay now\b/),
+  }
+  const safeCheckoutShellVerified = markers.shopPayMarkerShipping &&
+    markers.shopPayMarkerSubtotal &&
+    markers.shopPayMarkerTotal &&
+    (markers.shopPayMarkerPayment || markers.shopPayMarkerPayNow)
+  const safeCheckoutMarkersVerified = safeCheckoutShellVerified &&
+    markers.shopPayMarkerShipTo
+  return { destination, markers, safeCheckoutShellVerified,
+    safeCheckoutMarkersVerified }
+}
+
 chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
-  if (message?.type === BIND_CANONICAL_DESTINATION ||
+  if (message?.type === PROBE_CANONICAL_DESTINATION ||
+      message?.type === BIND_CANONICAL_DESTINATION ||
       message?.type === VALIDATE_CANONICAL_DESTINATION) {
     if (location.hostname !== "shop.app") {
       sendResponse({ accepted: false,
@@ -1396,19 +1574,22 @@ chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
       return false
     }
     void boundedDomWait(() => {
-      const markers = shopPayMarkerSnapshot()
-      return markers.shopPayMarkerShipTo &&
-        markers.shopPayMarkerShipping && markers.shopPayMarkerSubtotal &&
-        markers.shopPayMarkerShippingAmount && markers.shopPayMarkerTotal
-        ? markers : null
-    }, "CANONICAL_BINDING_CHECKOUT_SHAPE_UNPROVEN",
-    SHOP_PAY_DOM_TIMEOUT_MS).then(async (markers) => {
-      if (checkoutPageClassification() !== "NORMAL_CHECKOUT_WITH_SHIPPING") {
-        throw new Error("CANONICAL_BINDING_CHECKOUT_SHAPE_UNPROVEN")
+      const snapshot = canonicalBindingCheckoutSnapshot()
+      if (snapshot.destination.ambiguous) {
+        throw new Error("BIND_SHIP_TO_AMBIGUOUS")
       }
-      const current = normalizedShopPayDestination()
-      if (!current || current.countryClass !== "US") {
-        throw new Error("CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE")
+      return snapshot.safeCheckoutShellVerified ? snapshot : null
+    }, "CANONICAL_BINDING_CHECKOUT_SHAPE_UNPROVEN",
+    SHOP_PAY_DOM_TIMEOUT_MS).then(async (snapshot) => {
+      const current = snapshot.destination
+      if (current.ambiguous) throw new Error("BIND_SHIP_TO_AMBIGUOUS")
+      if (!current.normalized || current.countryClass !== "US") {
+        throw new Error("BIND_SHIP_TO_NOT_FOUND")
+      }
+      if (message.type === PROBE_CANONICAL_DESTINATION) {
+        sendResponse({ accepted: true, shipToAvailable: true,
+          safeCheckoutMarkersVerified: true })
+        return
       }
       const canonicalDestinationFingerprint = await sha256Text(current.normalized)
       if (message.type === VALIDATE_CANONICAL_DESTINATION) {
@@ -1425,14 +1606,14 @@ chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
         }
         sendResponse({ accepted: true, canonicalDestinationMatch: true,
           fingerprintVersion: DESTINATION_FINGERPRINT_VERSION,
-          countryClass: "US", safeCheckoutMarkersVerified: Boolean(markers) })
+          countryClass: "US", safeCheckoutMarkersVerified: true })
         return
       }
       sendResponse({ accepted: true,
         canonicalDestinationFingerprint,
         fingerprintVersion: DESTINATION_FINGERPRINT_VERSION,
         countryClass: "US",
-        safeCheckoutMarkersVerified: Boolean(markers) })
+        safeCheckoutMarkersVerified: true })
     }).catch((error) => sendResponse({ accepted: false,
       error: error instanceof Error ? error.message
         : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE" }))

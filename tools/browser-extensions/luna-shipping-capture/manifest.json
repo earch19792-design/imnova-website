@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Seller OS — Luna Shipping Capture",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "description": "Captura únicamente cotizaciones visibles de envío Luna para candidatos exactos de Seller OS.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAz68PgQfa9ADdxjzZnNA8z/JmB8wXGkyhsQ7e97t4vwc8ByVCHvq/vjRryVXMiOWKZDaZ+JPwI+QxczvigJgiE8yaadDEL8ouRubF99hRWeUbW3aMT9D/dIhMHkFGj5IAB3o7PHYNtpq1qcxVrD+XTaHf9GBY7s0qjWp8foMCcuav2HUB0kZKsYlCqrpaeY/2uYC/LVgXlYD8iaGML7tFpEK5vNn9nLlk79BYJH3SeEd1N4pXSVpPeK1ZpmoQl6TOLLSNBzy/0ER5LBqDm3kDSfRTKoD0yZR0VqvGwCQTmBf3nhWfteLC+fp7tfWWhEtB5ANWA/zk3zKavwj9pGqvkQIDAQAB",
   "permissions": ["scripting", "webNavigation", "storage"],

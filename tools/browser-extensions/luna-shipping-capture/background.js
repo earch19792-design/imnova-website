@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.24"
+const EXTENSION_BUILD_VERSION = "1.0.25"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -18,6 +18,7 @@ const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
 const CHECKOUT_BOOTSTRAP_ACK = "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK"
 const RESUME_ACTIVE_JOB = "RESUME_ACTIVE_LUNA_SHIPPING_JOB"
 const BIND_CANONICAL_DESTINATION = "BIND_LUNA_CANONICAL_DESTINATION"
+const PROBE_CANONICAL_DESTINATION = "PROBE_LUNA_CANONICAL_DESTINATION"
 const VALIDATE_CANONICAL_DESTINATION = "VALIDATE_LUNA_CANONICAL_DESTINATION"
 const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
@@ -409,9 +410,12 @@ function safeDestinationBinding(value) {
 }
 
 function readDestinationBinding() {
-  return new Promise((resolve) => chrome.storage.local.get(
+  return new Promise((resolve, reject) => chrome.storage.local.get(
     DESTINATION_STORAGE_KEY, (value) => {
-      if (chrome.runtime.lastError) { resolve(null); return }
+      if (chrome.runtime.lastError) {
+        reject(new Error("BIND_STORAGE_READBACK_FAILED"))
+        return
+      }
       resolve(safeDestinationBinding(value?.[DESTINATION_STORAGE_KEY]))
     }))
 }
@@ -443,7 +447,7 @@ function writeDestinationBinding(binding) {
     [DESTINATION_STORAGE_KEY]: binding,
   }, () => {
     if (chrome.runtime.lastError) {
-      reject(new Error("CANONICAL_DESTINATION_FINGERPRINT_PERSIST_FAILED"))
+      reject(new Error("BIND_STORAGE_WRITE_FAILED"))
       return
     }
     resolve()
@@ -507,10 +511,36 @@ async function bindCanonicalDestination(port, existingBinding) {
   if (!checkoutTabs.length) {
     throw new Error("BIND_CHECKOUT_TAB_NOT_FOUND")
   }
-  if (checkoutTabs.length > 1) {
+  const probedTabs = await Promise.all(checkoutTabs.map(async ({ id }) => {
+    try {
+      const response = await boundedBindStep(
+        requestDestinationOperationFromTab(id, {
+          type: PROBE_CANONICAL_DESTINATION,
+        }), "BIND_CHECKOUT_TAB_ELIGIBILITY", BIND_TOP_FRAME_TIMEOUT_MS)
+      const eligible = response?.accepted === true &&
+        response?.safeCheckoutMarkersVerified === true &&
+        response?.shipToAvailable === true
+      return eligible ? { id, eligible: true, error: null }
+        : { id, eligible: false,
+          error: safeRuntimeReason(response?.error ??
+            "BIND_CHECKOUT_TAB_NOT_ELIGIBLE") }
+    } catch (error) {
+      return { id, eligible: false,
+        error: safeRuntimeReason(error instanceof Error ? error.message
+          : "BIND_CHECKOUT_TAB_NOT_ELIGIBLE") }
+    }
+  }))
+  const eligibleTabs = probedTabs.filter((tab) => tab.eligible)
+  if (!eligibleTabs.length) {
+    if (checkoutTabs.length === 1 && probedTabs[0]?.error) {
+      throw new Error(probedTabs[0].error)
+    }
+    throw new Error("BIND_CHECKOUT_TAB_NOT_FOUND")
+  }
+  if (eligibleTabs.length > 1) {
     throw new Error("BIND_CHECKOUT_TAB_AMBIGUOUS")
   }
-  const [{ id: checkoutTabId }] = checkoutTabs
+  const [{ id: checkoutTabId }] = eligibleTabs
   emitRuntimeTrace("BIND_SHOP_APP_TAB_SELECTED")
   const operation = existingBinding
     ? VALIDATE_CANONICAL_DESTINATION : BIND_CANONICAL_DESTINATION
@@ -836,6 +866,9 @@ chrome.runtime.onConnectExternal.addListener((port) => {
         type: CANONICAL_DESTINATION_STATUS,
         canonicalDestinationBound: Boolean(binding),
         canonicalDestinationMatch: false,
+      })).catch(() => port.postMessage({
+        type: CANONICAL_DESTINATION_STATUS,
+        error: "BIND_STORAGE_READBACK_FAILED",
       }))
       return
     }
@@ -904,7 +937,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     void readDestinationBinding().then((binding) => sendResponse({
       accepted: Boolean(binding), ...(binding ? { binding } : {}),
-    }))
+    })).catch(() => sendResponse({ accepted: false,
+      error: "BIND_STORAGE_READBACK_FAILED" }))
     return true
   }
   if (message?.type === CHECKOUT_BOOTSTRAP_ACK) {
