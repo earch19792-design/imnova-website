@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.38"
+const EXTENSION_BUILD_VERSION = "1.0.39"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -302,6 +302,21 @@ function clearActiveJob() {
   canonicalBindBootstrapTraceStates = new Set()
   canonicalBindBootstrapAttempted = false
   settleCanonicalBindCheckout(new Error("BIND_CHECKOUT_BOOTSTRAP_ABORTED"))
+}
+
+function finalizeCanonicalBindRuntime(bootstrapStarted) {
+  const bindTrace = activeRuntimeTrace
+  if (bootstrapStarted || !activeJob) {
+    clearActiveJob()
+    activeTabId = null
+  } else {
+    canonicalBindBootstrapActive = false
+    canonicalBindBootstrapTraceStates = new Set()
+    canonicalBindBootstrapAttempted = false
+    settleCanonicalBindCheckout(new Error("BIND_CHECKOUT_BOOTSTRAP_ABORTED"))
+  }
+  activeRuntimeTrace = bindTrace
+  emitRuntimeTrace("BIND_RUNTIME_CLEARED")
 }
 
 function safeCartSnapshot(value) {
@@ -784,7 +799,7 @@ async function discoverCanonicalBindingCheckoutTab() {
   return checkoutTabId
 }
 
-async function bindCanonicalDestination(port, existingBinding, checkoutTabId) {
+async function bindCanonicalDestination(existingBinding, checkoutTabId) {
   if (!Number.isInteger(checkoutTabId)) {
     throw new Error("BIND_CHECKOUT_TAB_SELECTION_INVALID")
   }
@@ -830,13 +845,11 @@ async function bindCanonicalDestination(port, existingBinding, checkoutTabId) {
   emitRuntimeTrace("CANONICAL_FINGERPRINT_READBACK_VERIFIED")
   emitRuntimeTrace("CANONICAL_DESTINATION_MATCH")
   emitRuntimeTrace("CANONICAL_BIND_COMPLETED")
-  try {
-    port.postMessage({ type: DESTINATION_BINDING_RESULT, success: true,
-      canonicalDestinationBound: true, canonicalDestinationMatch: true,
-      canonicalUsProfileFound: true, shippingAddressAccepted: true,
-      operation: existingBinding ? "VALIDATE_CANONICAL_DESTINATION"
-        : "BIND_CANONICAL_DESTINATION" })
-  } catch { throw new Error("BIND_ACK_FAILED") }
+  return { type: DESTINATION_BINDING_RESULT, success: true,
+    canonicalDestinationBound: true, canonicalDestinationMatch: true,
+    canonicalUsProfileFound: true, shippingAddressAccepted: true,
+    operation: existingBinding ? "VALIDATE_CANONICAL_DESTINATION"
+      : "BIND_CANONICAL_DESTINATION" }
 }
 
 async function bootstrapCanonicalDestinationCheckout(bootstrapJob) {
@@ -887,6 +900,7 @@ async function handleCanonicalDestinationBinding(port, bootstrapJob) {
   canonicalBindBootstrapAttempted = false
   let existingBinding = null
   let bootstrapStarted = false
+  let bindingResponse = null
   try {
     await beginRuntimeTrace(crypto.randomUUID(), null)
     emitRuntimeTrace("CANONICAL_BIND_REQUESTED")
@@ -905,8 +919,8 @@ async function handleCanonicalDestinationBinding(port, bootstrapJob) {
       bootstrapStarted = true
       checkoutTabId = await bootstrapCanonicalDestinationCheckout(bootstrapJob)
     }
-    await bindCanonicalDestination(port, existingBinding, checkoutTabId)
-    emitRuntimeTrace("PASS")
+    bindingResponse = await bindCanonicalDestination(existingBinding,
+      checkoutTabId)
   } catch (error) {
     emitRuntimeTrace("FAIL", false, error instanceof Error ? error.message
       : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE")
@@ -920,8 +934,18 @@ async function handleCanonicalDestinationBinding(port, bootstrapJob) {
       emitRuntimeTrace("FAIL", false, "BIND_ACK_FAILED")
     }
   } finally {
-    if (bootstrapStarted) clearActiveJob()
+    if (bindingResponse) finalizeCanonicalBindRuntime(bootstrapStarted)
+    else if (bootstrapStarted) clearActiveJob()
     canonicalBindInFlight = false
+  }
+  if (!bindingResponse) return
+  emitRuntimeTrace("PASS")
+  try {
+    port.postMessage(bindingResponse)
+  } catch {
+    emitRuntimeTrace("FAIL", false, "BIND_ACK_FAILED")
+  } finally {
+    activeRuntimeTrace = null
   }
 }
 
@@ -1008,6 +1032,7 @@ async function startJob(job, productionAutoClaim = false,
     await beginRuntimeTrace(exact.captureSessionId, exact.identity.candidateId)
   }
   if (productionAutoClaim === true) {
+    emitRuntimeTrace("PRODUCTION_OBSERVER_REARMED")
     emitRuntimeTrace("PRODUCTION_WORKER_READY")
     emitRuntimeTrace("INITIAL_AUTO_CLAIM_STARTED")
     emitRuntimeTrace("ELIGIBLE_JOB_FOUND")
@@ -1056,6 +1081,13 @@ function failBindingBootstrapOrActiveJob(error) {
   failActiveJob(error)
 }
 
+function failObservedDisallowedCheckout(observed, allowed) {
+  if (!observed || allowed || !checkoutNavigationObservation?.observed ||
+      checkoutNavigationObservation.origin !== observed.origin) return false
+  failBindingBootstrapOrActiveJob("REAL_CHECKOUT_HOST_NOT_ALLOWLISTED")
+  return true
+}
+
 function emitCheckoutBootstrapAck() {
   if (!activeJob || !checkoutInjectionStarted ||
       !checkoutBootstrapAckReceived || checkoutBootstrapAckEmitted) return
@@ -1096,9 +1128,7 @@ function observeCheckoutNavigation(details, inject) {
   } else if (checkoutNavigationObservation.host !== observed.host) {
     checkoutNavigationObservation.host = observed.host
     checkoutNavigationObservation.origin = observed.origin
-    if (!allowed) {
-      failBindingBootstrapOrActiveJob("REAL_CHECKOUT_HOST_NOT_ALLOWLISTED")
-    }
+    failObservedDisallowedCheckout(observed, allowed)
     return
   }
   if (!inject && !checkoutBootstrapAckReceived) {
@@ -1114,10 +1144,7 @@ function observeCheckoutNavigation(details, inject) {
     emitBindBootstrapTraceOnce("BIND_BOOTSTRAP_CHECKOUT_NAVIGATION_OBSERVED")
   }
   if (!allowed) {
-    if (checkoutNavigationObservation.observed &&
-        checkoutNavigationObservation.origin === observed.origin) {
-      failBindingBootstrapOrActiveJob("REAL_CHECKOUT_HOST_NOT_ALLOWLISTED")
-    }
+    failObservedDisallowedCheckout(observed, allowed)
     return
   }
   emitProgress("CHECKOUT_HOST_ALLOWED", {
