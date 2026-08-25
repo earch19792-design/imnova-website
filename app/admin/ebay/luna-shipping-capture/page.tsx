@@ -534,7 +534,13 @@ export default function LunaShippingCapturePage() {
           const bound = message.canonicalDestinationBound === true
           canonicalBindingReady = bound
           setCanonicalDestinationBound(bound)
-          if (!bound) setCanonicalDestinationMatch(false)
+          if (bound) {
+            setError("")
+          } else {
+            setCanonicalDestinationMatch(false)
+            setStatus("CANONICAL_BINDING_REQUIRED")
+            setError("CANONICAL_BINDING_REQUIRED")
+          }
           startInitialProductionClaim()
           return
         }
@@ -899,12 +905,20 @@ export default function LunaShippingCapturePage() {
           if (!active || port !== nextPort) return
           port = null
           setConnected(false)
-          if (!busy || reconnecting) return
+          if (reconnecting) return
           reconnecting = true
+          const jobToResume = busy ? jobs[index] : null
+          canonicalBindingReady = false
+          activeJobStatusReady = false
+          recoveredActiveJob = null
+          if (!busy) {
+            initialAutoClaimStarted = false
+            setStatus("RECONNECTING_EXTENSION")
+          }
           void (async () => {
             let lastError: unknown = new Error(
               "LUNA_SHIPPING_EXTENSION_DISCONNECTED")
-            for (let attempt = 0; attempt < 2; attempt += 1) {
+            for (let attempt = 0; attempt < 12; attempt += 1) {
               await new Promise((resolve) => window.setTimeout(resolve, 500))
               try {
                 await wakeLunaShippingExtensionV1(runtime,
@@ -913,9 +927,15 @@ export default function LunaShippingCapturePage() {
                 const resumedPort = runtime.connect(EXTENSION_ID,
                   { name: PORT_NAME })
                 attachPort(resumedPort)
-                resumedPort.postMessage({ type: "RESUME_ACTIVE_LUNA_SHIPPING_JOB",
-                  job: jobs[index], phase: phaseForResume() })
+                if (jobToResume) {
+                  resumedPort.postMessage({
+                    type: "RESUME_ACTIVE_LUNA_SHIPPING_JOB",
+                    job: jobToResume,
+                    phase: phaseForResume(),
+                  })
+                }
                 reconnecting = false
+                extensionReady = true
                 setConnected(true)
                 setStatus("BRIDGE_RECONNECTED")
                 setRuntimeTrace((current) => ({ ...current,
