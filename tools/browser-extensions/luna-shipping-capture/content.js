@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.41" },
+      extensionBuildVersion: "1.0.42" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -178,6 +178,10 @@ function progress(job, state, details = {}) {
     ...(new Set(["NORMAL_CHECKOUT_WITH_SHIPPING", "UNKNOWN_CHECKOUT_PAGE"])
       .has(details.checkoutPageClassification)
       ? { checkoutPageClassification: details.checkoutPageClassification } : {}),
+    ...(details.productOosConfirmed === true
+      ? { productOosConfirmed: true } : {}),
+    ...(details.productPageStockStatus === "FRESH_OUT_OF_STOCK"
+      ? { productPageStockStatus: details.productPageStockStatus } : {}),
     ...markerDetails })
 }
 
@@ -357,6 +361,69 @@ function productPageReady(job) {
   "PRODUCT_IDENTITY_DOM_EVIDENCE_NOT_FOUND")
 }
 
+function selectExactProductVariant(job, exactForm = null) {
+  const form = exactForm ??
+    document.querySelector('form[action*="/cart/add"]')
+  const variantField = form?.querySelector('[name="id"]')
+  if (!form || !variantField) {
+    throw new Error("LUNA_EXACT_PRODUCT_IDENTITY_MISMATCH")
+  }
+  variantField.value = job.identity.lunaVariantId
+  variantField.dispatchEvent(new Event("input", { bubbles: true }))
+  variantField.dispatchEvent(new Event("change", { bubbles: true }))
+  if (String(variantField.value) !== job.identity.lunaVariantId) {
+    throw new Error("LUNA_EXACT_PRODUCT_IDENTITY_MISMATCH")
+  }
+  return form
+}
+
+const PRODUCT_OOS_TEXT = Object.freeze({
+  soldOut: /^SOLD\s+OUT[.!]?$/i,
+  outOfStock: /^OUT\s+OF\s+STOCK[.!]?$/i,
+})
+
+function positiveProductPageOosEvidence(job) {
+  const form = selectExactProductVariant(job)
+  const roots = [form]
+  const productRoot = form.closest?.([
+    "[data-product]", "[data-product-section]", ".product",
+    ".product-section",
+  ].join(","))
+  if (productRoot && productRoot !== form) roots.push(productRoot)
+  const candidates = []
+  const selector = [
+    'button', 'input[type="submit"]', '[role="status"]', '[aria-live]',
+    '[data-stock-status]', '[data-sold-out]', '[data-out-of-stock]',
+    '.sold-out', '.sold_out', '.out-of-stock', '.product-form__inventory',
+    'span', 'strong', 'p',
+  ].join(",")
+  for (const root of roots) {
+    if (candidates.length >= 240) break
+    for (const element of root.querySelectorAll(selector)) {
+      if (candidates.length >= 240) break
+      if (isVisible(element)) candidates.push(element)
+    }
+    const direct = [root].filter((element) => isVisible(element))
+    candidates.push(...direct)
+  }
+  let soldOutMarker = false
+  let outOfStockMarker = false
+  for (const element of [...new Set(candidates)]) {
+    const texts = [element.getAttribute?.("aria-label"), element.value,
+      element.textContent].filter((value) => typeof value === "string")
+      .map((value) => value.normalize("NFKC")
+        .replace(/[\s\u00a0]+/g, " ").trim()).filter(Boolean)
+    if (texts.some((text) => PRODUCT_OOS_TEXT.soldOut.test(text))) {
+      soldOutMarker = true
+    }
+    if (texts.some((text) => PRODUCT_OOS_TEXT.outOfStock.test(text))) {
+      outOfStockMarker = true
+    }
+  }
+  return soldOutMarker || outOfStockMarker
+    ? Object.freeze({ soldOutMarker, outOfStockMarker }) : null
+}
+
 function findVisibleAddToCartControl(job) {
   const semanticControls = [...document.querySelectorAll([
     'form[action*="/cart/add"] button[type="submit"]',
@@ -372,14 +439,10 @@ function findVisibleAddToCartControl(job) {
   const control = controls.find((element) => isVisible(element))
   if (!control) return null
   const form = control.form ?? control.closest("form")
-  const variantField = form?.querySelector('[name="id"]')
-  if (!form || !variantField) {
+  if (!form) {
     return { error: "ADD_TO_CART_SELECTOR_NOT_FOUND" }
   }
-  variantField.value = job.identity.lunaVariantId
-  variantField.dispatchEvent(new Event("input", { bubbles: true }))
-  variantField.dispatchEvent(new Event("change", { bubbles: true }))
-  if (String(variantField.value) !== job.identity.lunaVariantId) {
+  try { selectExactProductVariant(job, form) } catch {
     return { error: "LUNA_EXACT_PRODUCT_IDENTITY_MISMATCH" }
   }
   if (control.disabled || control.getAttribute("aria-disabled") === "true") {
@@ -1426,8 +1489,55 @@ async function runProductStage(job) {
     throw new Error("LUNA_AUTH_CHALLENGE_REQUIRED")
   }
   progress(job, "PRODUCT_IDENTITY_CHECK_STARTED")
-  await retry(() => exactProduct(job))
+  const identity = await retry(() => exactProduct(job))
   progress(job, "PRODUCT_IDENTITY_VERIFIED")
+  let oosEvidence = positiveProductPageOosEvidence(job)
+  if (!oosEvidence && identity.variant.available === false) {
+    try {
+      oosEvidence = await boundedDomWait(() =>
+        positiveProductPageOosEvidence(job),
+      "PRODUCT_PAGE_POSITIVE_OOS_MARKER_NOT_FOUND")
+    } catch {
+      // Variant availability alone cannot prove a visible product-page OOS state.
+    }
+  }
+  if (oosEvidence) {
+    const observedAt = new Date().toISOString()
+    const acquisitionMethod =
+      "NORMAL_CHROME_EXTENSION_VISIBLE_PRODUCT_PAGE"
+    const evidenceDigest = await digest({
+      candidateId: job.identity.candidateId,
+      lunaProductId: job.identity.lunaProductId,
+      lunaVariantId: job.identity.lunaVariantId,
+      supplierSku: job.identity.supplierSku,
+      quantity: job.identity.quantity,
+      productPageStockStatus: "FRESH_OUT_OF_STOCK",
+      productOosConfirmed: true,
+      soldOutMarker: oosEvidence.soldOutMarker,
+      outOfStockMarker: oosEvidence.outOfStockMarker,
+      observedAt,
+      acquisitionMethod,
+    })
+    progress(job, "PRODUCT_OOS_CONFIRMED", {
+      productOosConfirmed: true,
+      productPageStockStatus: "FRESH_OUT_OF_STOCK",
+    })
+    chrome.runtime.sendMessage({ type: JOB_RESULT, success: true,
+      terminalDecision: "REJECT_STOCK", capture: {
+        captureSessionId: job.captureSessionId, nonce: job.nonce,
+        candidateId: job.identity.candidateId,
+        lunaProductId: job.identity.lunaProductId,
+        lunaVariantId: job.identity.lunaVariantId,
+        supplierSku: job.identity.supplierSku,
+        quantity: job.identity.quantity,
+        productPageStockStatus: "FRESH_OUT_OF_STOCK",
+        productOosConfirmed: true,
+        soldOutMarker: oosEvidence.soldOutMarker,
+        outOfStockMarker: oosEvidence.outOfStockMarker,
+        observedAt, acquisitionMethod, evidenceDigest,
+      } })
+    return
+  }
   const original = cartSnapshot(await retry(() => request("/cart.js")))
   try {
     await retry(() => request("/cart/clear.js", { method: "POST", body: {} }))

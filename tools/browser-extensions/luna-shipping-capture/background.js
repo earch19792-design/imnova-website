@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.41"
+const EXTENSION_BUILD_VERSION = "1.0.42"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -114,6 +114,7 @@ let checkoutNavigationObservationTimer = null
 const PROGRESS_TRACE_STATE = new Map([
   ["PRODUCT_PAGE_DOM_READY", "PRODUCT_PAGE_OPENED"],
   ["PRODUCT_IDENTITY_VERIFIED", "PRODUCT_IDENTITY_VERIFIED"],
+  ["PRODUCT_OOS_CONFIRMED", "PRODUCT_OOS_CONFIRMED"],
   ["ADD_TO_CART_ELEMENT_FOUND", "ADD_TO_CART_FOUND"],
   ["ADD_TO_CART_CLICK_DISPATCHED", "ADD_TO_CART_DISPATCHED"],
   ["CART_PAGE_DETECTED", "CART_PAGE_DETECTED"],
@@ -190,6 +191,10 @@ function emitRuntimeTrace(state, success = true, reasonCode = "NONE", details = 
   for (const field of ["bindCheckoutBootstrapRequired",
     "bindCheckoutBootstrapAttempted", "bindStartJobInvoked"]) {
     if (typeof details[field] === "boolean") event[field] = details[field]
+  }
+  if (details.productOosConfirmed === true) event.productOosConfirmed = true
+  if (details.productPageStockStatus === "FRESH_OUT_OF_STOCK") {
+    event.productPageStockStatus = "FRESH_OUT_OF_STOCK"
   }
   for (const field of ["subtotalLabelFound", "subtotalAmountCandidateFound",
     "subtotalCurrencyFound", "subtotalParsed", "shippingLabelFound",
@@ -1308,6 +1313,18 @@ chrome.runtime.onConnectExternal.addListener((port) => {
           ? message.reasonCode : "LUNA_SHIPPING_CAPTURE_SERVER_RESULT_FAILED")
         return
       }
+      if (message.terminalDecision === "REJECT_STOCK") {
+        emitRuntimeTrace("STOCK_EVIDENCE_RECONCILED", true, "NONE", {
+          productOosConfirmed: true,
+          productPageStockStatus: "FRESH_OUT_OF_STOCK",
+        })
+        emitRuntimeTrace("REJECTED_STOCK")
+        emitRuntimeTrace("PRODUCTION_JOB_COMPLETED")
+        emitRuntimeTrace("AUTO_NEXT")
+        emitRuntimeTrace("PASS")
+        clearActiveJob()
+        return
+      }
       const safeDetails = { subtotalUsd: message.subtotalUsd,
         shippingUsd: message.shippingUsd, totalUsd: message.totalUsd }
       emitRuntimeTrace("CAPTURE_POST", true, "NONE", safeDetails)
@@ -1467,6 +1484,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         "AUTH_EXPLICITLY_FAILED", "AUTH_CHALLENGE_PRESENT",
         "AUTH_NOT_YET_REQUIRED", "AUTHENTICATED_OPERATION_CONFIRMED",
         "PRODUCT_IDENTITY_CHECK_STARTED", "PRODUCT_IDENTITY_VERIFIED",
+        "PRODUCT_OOS_CONFIRMED",
         "ADD_TO_CART_ELEMENT_FOUND", "ADD_TO_CART_CLICK_DISPATCHED",
         "AWAITING_CART_CONFIRMATION", "ACTIVE_JOB_RECOVERED_ON_CART",
         "CART_PAGE_DETECTED", "CART_EXPECTED_PRODUCT_FOUND",
@@ -1533,6 +1551,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       totalAmountCandidateFound: message.totalAmountCandidateFound,
       totalCurrencyFound: message.totalCurrencyFound,
       totalParsed: message.totalParsed,
+      productOosConfirmed: message.productOosConfirmed,
+      productPageStockStatus: message.productPageStockStatus,
       authSignal: message.authSignal,
       authSignalSource: message.authSignalSource })
     return false
@@ -1566,7 +1586,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       capture.nonce !== activeJob.nonce) return false
   sellerPort.postMessage({ type: JOB_RESULT,
     success: message.success === true,
-    ...(message.success === true ? { capture }
+    ...(message.success === true ? { capture,
+      ...(message.terminalDecision === "REJECT_STOCK" &&
+        capture.productOosConfirmed === true &&
+        capture.productPageStockStatus === "FRESH_OUT_OF_STOCK"
+        ? { terminalDecision: "REJECT_STOCK" } : {}) }
       : { error: typeof message.error === "string"
         ? safeRuntimeReason(message.error) : "LUNA_SHIPPING_JOB_FAILED",
         lastRuntimeState, capture }) })

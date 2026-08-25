@@ -16,7 +16,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.41"
+const EXPECTED_EXTENSION_VERSION = "1.0.42"
 const SELLER_OS_EXTENSION_ORIGIN =
   "https://imnova-website-z1qh-git-codex-674439-earch19792-6888s-projects.vercel.app"
 const STARTUP_PROBE_CONTRACT = "SELLER_OS_LUNA_EXTENSION_STARTUP_PROBE_V1"
@@ -582,7 +582,8 @@ export default function LunaShippingCapturePage() {
             "PRODUCT_PAGE_DOM_READY", "PRODUCT_IDENTITY_CHECK_STARTED",
             "AUTH_EXPLICITLY_FAILED", "AUTH_CHALLENGE_PRESENT",
             "AUTH_NOT_YET_REQUIRED", "AUTHENTICATED_OPERATION_CONFIRMED",
-            "PRODUCT_IDENTITY_VERIFIED", "ADD_TO_CART_ELEMENT_FOUND",
+            "PRODUCT_IDENTITY_VERIFIED", "PRODUCT_OOS_CONFIRMED",
+            "ADD_TO_CART_ELEMENT_FOUND",
             "AWAITING_CART_CONFIRMATION", "ADD_TO_CART_CLICK_DISPATCHED",
             "ACTIVE_JOB_RECOVERED_ON_CART", "CART_PAGE_DETECTED",
             "CART_EXPECTED_PRODUCT_FOUND", "CART_EXPECTED_QUANTITY_FOUND",
@@ -769,6 +770,64 @@ export default function LunaShippingCapturePage() {
           }
           fail(new Error(typeof message.error === "string"
             ? message.error : "LUNA_SHIPPING_EXTENSION_JOB_FAILED"))
+          return
+        }
+        if (message.terminalDecision === "REJECT_STOCK" &&
+            message.capture?.productOosConfirmed === true &&
+            message.capture?.productPageStockStatus === "FRESH_OUT_OF_STOCK") {
+          setStatus("REJECTED_STOCK")
+          setLastRuntimeState("REJECTED_STOCK")
+          const observation = {
+            candidateId: message.capture.candidateId,
+            lunaProductId: message.capture.lunaProductId,
+            lunaVariantId: message.capture.lunaVariantId,
+            supplierSku: message.capture.supplierSku,
+            quantity: message.capture.quantity,
+            productPageStockStatus: message.capture.productPageStockStatus,
+            productOosConfirmed: true,
+            soldOutMarker: message.capture.soldOutMarker === true,
+            outOfStockMarker: message.capture.outOfStockMarker === true,
+            observedAt: message.capture.observedAt,
+            acquisitionMethod: message.capture.acquisitionMethod,
+            evidenceDigest: message.capture.evidenceDigest,
+            captureSessionId: message.capture.captureSessionId,
+            nonce: message.capture.nonce,
+          }
+          void adminPost("reject_product_oos", { observation },
+            observation.captureSessionId).then(async (payload) => {
+            if (!active) return
+            const result = payload.result ?? {}
+            if (result.productOosConfirmed !== true ||
+                result.stockEvidenceReconciled !== true ||
+                result.durableReadbackMatch !== true ||
+                result.candidateDecision !== "REJECT_STOCK") {
+              throw new Error("LUNA_PRODUCT_PAGE_OOS_DURABLE_READBACK_FAILED")
+            }
+            port?.postMessage({
+              type: "SELLER_OS_LUNA_SHIPPING_SERVER_RESULT",
+              candidateId: job.identity.candidateId,
+              success: true,
+              terminalDecision: "REJECT_STOCK",
+            })
+            setStatus("PRODUCTION_JOB_COMPLETED")
+            setLastRuntimeState("AUTO_NEXT")
+            index += 1
+            if (index < jobs.length) {
+              sendCurrent()
+              return
+            }
+            await loadJobs(undefined, "AUTO")
+          }).catch((stockError) => {
+            port?.postMessage({
+              type: "SELLER_OS_LUNA_SHIPPING_SERVER_RESULT",
+              candidateId: job.identity.candidateId,
+              success: false,
+              reasonCode: stockError instanceof Error
+                ? stockError.message
+                : "LUNA_PRODUCT_PAGE_OOS_DURABLE_WRITE_FAILED",
+            })
+            fail(stockError)
+          })
           return
         }
         setStatus("RESULT_POSTED")

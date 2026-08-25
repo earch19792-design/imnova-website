@@ -10,10 +10,14 @@ import {
   LUNA_SHIPPING_QUOTE_CAPTURE_VERSION,
   LUNA_SHIPPING_RUNTIME_TRACE_MAXIMUM_EVENTS,
   LUNA_SHIPPING_RUNTIME_TRACE_VERSION,
+  LUNA_PRODUCT_PAGE_STOCK_MAXIMUM_AGE_SECONDS,
+  LUNA_PRODUCT_PAGE_STOCK_OBSERVATION_VERSION,
+  LUNA_NORMAL_CHROME_PRODUCT_PAGE_STOCK_SOURCE,
   normalizeLunaChromeShippingDestinationV1,
   normalizeLunaChromeShippingJobV1,
   normalizeLunaShippingRuntimeTraceEventV1,
   type LunaChromeShippingJobV1,
+  type LunaProductPageOosPostV1,
   type LunaShippingCapturePostV1,
   type LunaShippingRuntimeTraceEventV1,
 } from "./ebay-luna-chrome-shipping-capture-v1"
@@ -92,6 +96,57 @@ async function latestSameDayRun(input: Readonly<{
     throw new Error("LUNA_SHIPPING_RUNTIME_TRACE_DURABLE_RUN_UNAVAILABLE")
   }
   return text(record(result.data).id, 80)!
+}
+
+async function freshProductPageOosCandidateIds(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  candidates: readonly Readonly<{ candidateId: string
+    lunaProductId: string; lunaVariantId: string; supplierSku: string }>[]
+  now: number
+}>) {
+  if (!input.candidates.length) return new Set<string>()
+  const runs = await input.supabase.from("ebay_same_day_pilot_runs")
+    .select("id").eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US").order("created_at", { ascending: false })
+    .limit(100)
+  if (runs.error) throw new Error("LUNA_PRODUCT_PAGE_OOS_AUTHORITY_READ_FAILED")
+  const runIds = records(runs.data).map((row) => text(row.id, 80))
+    .filter((id): id is string => Boolean(id))
+  if (!runIds.length) return new Set<string>()
+  const events = await input.supabase.from("ebay_same_day_pilot_events")
+    .select("event_payload,created_at").in("run_id", runIds)
+    .eq("event_type", LUNA_PRODUCT_PAGE_STOCK_OBSERVATION_VERSION)
+    .order("created_at", { ascending: false }).limit(1_000)
+  if (events.error) throw new Error("LUNA_PRODUCT_PAGE_OOS_AUTHORITY_READ_FAILED")
+  const candidates = new Map(input.candidates.map((candidate) =>
+    [candidate.candidateId, candidate]))
+  const rejected = new Set<string>()
+  for (const row of records(events.data)) {
+    const evidence = record(row.event_payload)
+    const candidateId = text(evidence.candidateId, 80)
+    const candidate = candidateId ? candidates.get(candidateId) : null
+    const observedAt = Date.parse(String(evidence.observedAt ?? ""))
+    const maximumAgeSeconds = Number(evidence.maximumAgeSeconds)
+    const { decisionDigest: _decisionDigest, ...body } = evidence
+    if (!candidate || rejected.has(candidateId!) ||
+        evidence.contractVersion !== LUNA_PRODUCT_PAGE_STOCK_OBSERVATION_VERSION ||
+        evidence.productPageStockStatus !== "FRESH_OUT_OF_STOCK" ||
+        evidence.productOosConfirmed !== true ||
+        evidence.observedAvailability !== false ||
+        evidence.candidateDecision !== "REJECT_STOCK" ||
+        evidence.lunaProductId !== candidate.lunaProductId ||
+        evidence.lunaVariantId !== candidate.lunaVariantId ||
+        evidence.supplierSku !== candidate.supplierSku ||
+        !SHA256.test(String(evidence.decisionDigest ?? "")) ||
+        evidence.decisionDigest !== digest(body) ||
+        !Number.isFinite(observedAt) || !Number.isInteger(maximumAgeSeconds) ||
+        maximumAgeSeconds !== LUNA_PRODUCT_PAGE_STOCK_MAXIMUM_AGE_SECONDS ||
+        input.now < observedAt ||
+        input.now - observedAt > maximumAgeSeconds * 1_000) continue
+    rejected.add(candidateId!)
+  }
+  return rejected
 }
 
 export async function persistLunaShippingRuntimeTraceEventV1(input: Readonly<{
@@ -364,9 +419,15 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
       frontierCalculatedAt: candidate.calculatedAt,
       promotion: promotions.get(candidate.candidateId),
     }).productFitStrongDurable)
+  const freshOosCandidateIds = await freshProductPageOosCandidateIds({
+    supabase: input.supabase, accountKey: input.accountKey,
+    candidates: exactCandidates, now: input.now ?? Date.now(),
+  })
+  const stockEligibleCandidates = exactCandidates.filter((candidate) =>
+    !freshOosCandidateIds.has(candidate.candidateId))
   const requested = input.candidateIds?.length
     ? [...new Set(input.candidateIds)]
-    : exactCandidates.filter((candidate) =>
+    : stockEligibleCandidates.filter((candidate) =>
       !["SHIPPING_DURABLY_PERSISTED", "SHIPPING_OBSERVED"]
         .includes(String(candidate.frontier.shippingStatus)))
       .map((candidate) => candidate.candidateId)
@@ -376,7 +437,7 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
     throw new Error("LUNA_SHIPPING_EXTENSION_CANDIDATE_SCOPE_INVALID")
   }
   if (!requested.length) return Object.freeze([])
-  const selected = requested.map((requestedId) => exactCandidates.find((candidate) =>
+  const selected = requested.map((requestedId) => stockEligibleCandidates.find((candidate) =>
     candidate.candidateId === requestedId)).filter((candidate) => Boolean(candidate))
   if (selected.length !== requested.length) {
     throw new Error("LUNA_SHIPPING_EXTENSION_EXACT_CANDIDATE_NOT_FOUND")
@@ -436,6 +497,139 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
       productName,
     })
   }))
+}
+
+const PRODUCT_PAGE_OOS_KEYS = Object.freeze([
+  "acquisitionMethod", "candidateId", "captureSessionId", "evidenceDigest",
+  "lunaProductId", "lunaVariantId", "nonce", "observedAt",
+  "outOfStockMarker", "productOosConfirmed", "productPageStockStatus",
+  "quantity", "soldOutMarker", "supplierSku",
+].sort())
+
+function normalizeProductPageOos(input: LunaProductPageOosPostV1,
+  authority: LunaChromeShippingJobV1, now: number) {
+  const keys = Object.keys(input).sort()
+  const observedAt = Date.parse(input.observedAt)
+  if (keys.length !== PRODUCT_PAGE_OOS_KEYS.length ||
+      keys.some((key, index) => key !== PRODUCT_PAGE_OOS_KEYS[index]) ||
+      input.candidateId !== authority.identity.candidateId ||
+      input.lunaProductId !== authority.identity.lunaProductId ||
+      input.lunaVariantId !== authority.identity.lunaVariantId ||
+      input.supplierSku !== authority.identity.supplierSku ||
+      input.quantity !== authority.identity.quantity ||
+      input.productPageStockStatus !== "FRESH_OUT_OF_STOCK" ||
+      input.productOosConfirmed !== true ||
+      (input.soldOutMarker !== true && input.outOfStockMarker !== true) ||
+      typeof input.soldOutMarker !== "boolean" ||
+      typeof input.outOfStockMarker !== "boolean" ||
+      input.acquisitionMethod !== LUNA_NORMAL_CHROME_PRODUCT_PAGE_STOCK_SOURCE ||
+      !SHA256.test(input.evidenceDigest) || !Number.isFinite(observedAt) ||
+      observedAt > now + 60_000 || now - observedAt > CAPTURE_SESSION_MAXIMUM_AGE_MS) {
+    throw new Error("LUNA_PRODUCT_PAGE_OOS_EVIDENCE_INVALID")
+  }
+  return Object.freeze({ ...input, observedAt: new Date(observedAt).toISOString() })
+}
+
+export async function persistLunaProductPageOosV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  observation: LunaProductPageOosPostV1
+  sessionSecret: string
+  now?: number
+}>) {
+  const now = input.now ?? Date.now()
+  const [authority] = await resolveLunaChromeShippingJobsV1({
+    supabase: input.supabase, accountKey: input.accountKey,
+    candidateIds: [input.observation.candidateId],
+    sessionSecret: input.sessionSecret, now,
+  })
+  if (!authority) throw new Error("LUNA_PRODUCT_PAGE_OOS_AUTHORITY_MISMATCH")
+  const observation = normalizeProductPageOos(input.observation, authority, now)
+  const latest = await input.supabase.rpc(
+    "get_seller_os_latest_profitability_frontiers_v1", {
+      p_account_key: input.accountKey, p_marketplace_id: "EBAY_US",
+      p_family_ids: null, p_limit: 100,
+    })
+  if (latest.error) throw new Error("LUNA_PRODUCT_PAGE_OOS_AUTHORITY_READ_FAILED")
+  const source = records(record(latest.data).frontiers).find((outer) => {
+    const frontier = record(outer.frontier)
+    return frontier.lunaProductId === observation.lunaProductId &&
+      frontier.lunaVariantId === observation.lunaVariantId &&
+      frontier.lunaSku === observation.supplierSku
+  })
+  const snapshotDigest = text(source?.snapshotDigest, 80)
+  if (!source || !snapshotDigest || !SHA256.test(snapshotDigest)) {
+    throw new Error("LUNA_PRODUCT_PAGE_OOS_AUTHORITY_MISMATCH")
+  }
+  verifyLunaShippingCaptureSessionV1({
+    secret: input.sessionSecret, candidateId: observation.candidateId,
+    snapshotDigest, captureSessionId: observation.captureSessionId,
+    nonce: observation.nonce, now,
+  })
+  const eventBody = {
+    contractVersion: LUNA_PRODUCT_PAGE_STOCK_OBSERVATION_VERSION,
+    candidateId: observation.candidateId,
+    lunaProductId: observation.lunaProductId,
+    lunaVariantId: observation.lunaVariantId,
+    supplierSku: observation.supplierSku,
+    quantity: observation.quantity,
+    productPageStockStatus: "FRESH_OUT_OF_STOCK",
+    productOosConfirmed: true,
+    soldOutMarker: observation.soldOutMarker,
+    outOfStockMarker: observation.outOfStockMarker,
+    observedAvailability: false,
+    observedAt: observation.observedAt,
+    maximumAgeSeconds: LUNA_PRODUCT_PAGE_STOCK_MAXIMUM_AGE_SECONDS,
+    acquisitionMethod: observation.acquisitionMethod,
+    extensionEvidenceDigest: observation.evidenceDigest,
+    candidateDecision: "REJECT_STOCK",
+    exactIdentityOnly: true,
+    titleOnlyAttribution: false,
+  }
+  const eventPayload = Object.freeze({ ...eventBody,
+    decisionDigest: digest(eventBody) })
+  const runId = await latestSameDayRun(input)
+  const candidate = await input.supabase.from("ebay_same_day_pilot_candidates")
+    .select("id").eq("run_id", runId)
+    .eq("candidate_key", observation.candidateId).limit(1).maybeSingle()
+  const durableCandidateId = candidate.error
+    ? null : text(record(candidate.data).id, 80)
+  const idempotencyKey = [runId, LUNA_PRODUCT_PAGE_STOCK_OBSERVATION_VERSION,
+    observation.candidateId.slice("sha256:".length),
+    eventPayload.decisionDigest.slice("sha256:".length)].join(":")
+  const write = await input.supabase.from("ebay_same_day_pilot_events").upsert({
+    run_id: runId, candidate_id: durableCandidateId,
+    event_type: LUNA_PRODUCT_PAGE_STOCK_OBSERVATION_VERSION,
+    event_payload: eventPayload, idempotency_key: idempotencyKey,
+    ebay_read_calls: 0, openai_calls: 0, ebay_writes: 0,
+    production_changed: false,
+  }, { onConflict: "idempotency_key", ignoreDuplicates: true })
+  if (write.error) {
+    throw new Error("LUNA_PRODUCT_PAGE_OOS_DURABLE_WRITE_FAILED")
+  }
+  const readback = await input.supabase.from("ebay_same_day_pilot_events")
+    .select("event_payload").eq("idempotency_key", idempotencyKey).maybeSingle()
+  const stored = record(record(readback.data).event_payload)
+  if (readback.error || stored.decisionDigest !== eventPayload.decisionDigest ||
+      stored.candidateId !== observation.candidateId ||
+      stored.lunaProductId !== observation.lunaProductId ||
+      stored.lunaVariantId !== observation.lunaVariantId ||
+      stored.supplierSku !== observation.supplierSku ||
+      stored.productPageStockStatus !== "FRESH_OUT_OF_STOCK" ||
+      stored.productOosConfirmed !== true) {
+    throw new Error("LUNA_PRODUCT_PAGE_OOS_DURABLE_READBACK_FAILED")
+  }
+  return Object.freeze({
+    productPageStockStatus: "FRESH_OUT_OF_STOCK" as const,
+    productOosConfirmed: true as const,
+    candidateDecision: "REJECT_STOCK" as const,
+    stockEvidenceReconciled: true as const,
+    durableWriteVerified: true as const,
+    durableReadbackMatch: true as const,
+    stockAuthority: "ebay_same_day_pilot_events" as const,
+    lunaPurchases: 0 as const,
+    marketplaceWrites: 0 as const,
+  })
 }
 
 function persistedFrontier(input: Readonly<{

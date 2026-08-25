@@ -20,7 +20,9 @@ export const LUNA_SHIPPING_RUNTIME_TRACE_STATES = Object.freeze([
   "ELIGIBLE_JOB_FOUND", "PRODUCTION_JOB_CLAIMED",
   "PRODUCTION_JOB_DISPATCHED", "WORKER_IDLE_NO_ELIGIBLE_JOB",
   "BRIDGE_CONNECTED", "JOB_DISPATCHED", "PRODUCT_PAGE_OPENED",
-  "PRODUCT_IDENTITY_VERIFIED", "ADD_TO_CART_FOUND",
+  "PRODUCT_IDENTITY_VERIFIED", "PRODUCT_OOS_CONFIRMED",
+  "STOCK_EVIDENCE_RECONCILED", "REJECTED_STOCK",
+  "PRODUCTION_JOB_COMPLETED", "AUTO_NEXT", "ADD_TO_CART_FOUND",
   "ADD_TO_CART_DISPATCHED", "CART_PAGE_DETECTED",
   "ACTIVE_JOB_RECOVERED_ON_CART", "CART_PRODUCT_VERIFIED",
   "CART_QUANTITY_VERIFIED", "CART_MUTATION_CONFIRMED",
@@ -101,6 +103,8 @@ export type LunaShippingRuntimeTraceEventV1 = Readonly<{
   bindCheckoutBootstrapRequired?: boolean
   bindCheckoutBootstrapAttempted?: boolean
   bindStartJobInvoked?: boolean
+  productOosConfirmed?: boolean
+  productPageStockStatus?: "FRESH_OUT_OF_STOCK"
   purchaseBoundaryEnforced: true
 }>
 
@@ -129,6 +133,7 @@ const TRACE_EVENT_KEYS = new Set([
   "eligibleResponseCount", "probeErrorCount",
   "bindCheckoutDiscoveryValidCount", "bindCheckoutBootstrapRequired",
   "bindCheckoutBootstrapAttempted", "bindStartJobInvoked",
+  "productOosConfirmed", "productPageStockStatus",
 ])
 const TRACE_STATE_SET = new Set<string>(LUNA_SHIPPING_RUNTIME_TRACE_STATES)
 
@@ -174,6 +179,10 @@ export function normalizeLunaShippingRuntimeTraceEventV1(
       input.purchaseBoundaryEnforced !== true ||
       optionalMoney.some((value) => money(value) === null) ||
       markerFields.some((value) => typeof value !== "boolean") ||
+      (input.productPageStockStatus !== undefined &&
+        input.productPageStockStatus !== "FRESH_OUT_OF_STOCK") ||
+      (input.productOosConfirmed !== undefined &&
+        typeof input.productOosConfirmed !== "boolean") ||
       countFields.some((value) => !Number.isInteger(value) || value < 0 ||
         value > 10_000)) {
     throw new Error("LUNA_SHIPPING_RUNTIME_TRACE_CONTRACT_INVALID")
@@ -248,6 +257,29 @@ export type LunaShippingCapturePostV1 = Readonly<{
   currency: "USD"
   observedAt: string
   acquisitionMethod: typeof LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE
+  evidenceDigest: string
+  captureSessionId: string
+  nonce: string
+}>
+
+export const LUNA_PRODUCT_PAGE_STOCK_OBSERVATION_VERSION =
+  "LUNA_PRODUCT_PAGE_STOCK_OBSERVATION_V1" as const
+export const LUNA_PRODUCT_PAGE_STOCK_MAXIMUM_AGE_SECONDS = 86_400
+export const LUNA_NORMAL_CHROME_PRODUCT_PAGE_STOCK_SOURCE =
+  "NORMAL_CHROME_EXTENSION_VISIBLE_PRODUCT_PAGE" as const
+
+export type LunaProductPageOosPostV1 = Readonly<{
+  candidateId: string
+  lunaProductId: string
+  lunaVariantId: string
+  supplierSku: string
+  quantity: number
+  productPageStockStatus: "FRESH_OUT_OF_STOCK"
+  productOosConfirmed: true
+  soldOutMarker: boolean
+  outOfStockMarker: boolean
+  observedAt: string
+  acquisitionMethod: typeof LUNA_NORMAL_CHROME_PRODUCT_PAGE_STOCK_SOURCE
   evidenceDigest: string
   captureSessionId: string
   nonce: string

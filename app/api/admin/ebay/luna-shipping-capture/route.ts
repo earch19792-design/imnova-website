@@ -12,10 +12,12 @@ import {
 } from "@/lib/ebay/ebay-listing-ai-api"
 import {
   type LunaShippingCapturePostV1,
+  type LunaProductPageOosPostV1,
   type LunaShippingRuntimeTraceEventV1,
 } from "@/lib/ebay/ebay-luna-chrome-shipping-capture-v1"
 import {
   persistLunaChromeShippingCaptureV1,
+  persistLunaProductPageOosV1,
   persistLunaShippingRuntimeTraceV1,
   readLatestLunaShippingRuntimeTraceV1,
   resolveLunaChromeShippingJobsV1,
@@ -82,6 +84,18 @@ export async function POST(req: Request) {
       return listingAiResponse({ success: true, result,
         safety: { cookieAccess: false,
           credentialAccess: false, lunaPurchases: 0, marketplaceWrites: 0 } })
+    }
+    if (body.action === "reject_product_oos") {
+      enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
+      const result = await persistLunaProductPageOosV1({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+        observation: listingAiRecord(body.observation) as
+          LunaProductPageOosPostV1,
+        sessionSecret: sessionSecret(),
+      })
+      return listingAiResponse({ success: true, result,
+        safety: { exactIdentityOnly: true, shippingExecuted: false,
+          economicsExecuted: false, lunaPurchases: 0, marketplaceWrites: 0 } })
     }
     if (body.action === "persist_runtime_trace") {
       enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
