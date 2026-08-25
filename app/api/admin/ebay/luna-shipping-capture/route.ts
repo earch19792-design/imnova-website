@@ -21,6 +21,10 @@ import {
   resolveLunaChromeShippingJobsV1,
 } from
   "@/lib/ebay/ebay-luna-chrome-shipping-capture-server-v1"
+import {
+  persistProductFitStrongPromotionV1,
+  type SellerOsProductFitStrongRevalidationV1,
+} from "@/lib/ebay/ebay-product-fit-durable-promotion-v1"
 
 function candidateIds(value: unknown) {
   return (Array.isArray(value) ? value : [])
@@ -51,6 +55,19 @@ export async function POST(req: Request) {
       return listingAiResponse({ success: true, jobs,
         safety: { readOnly: true, cookieAccess: false,
           credentialAccess: false, lunaPurchases: 0, marketplaceWrites: 0 } })
+    }
+    if (body.action === "promote_product_fit_strong") {
+      enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
+      const result = await persistProductFitStrongPromotionV1({
+        supabase: auth.supabase,
+        accountKey: auth.accountKey,
+        revalidation: listingAiRecord(body.revalidation) as
+          SellerOsProductFitStrongRevalidationV1,
+      })
+      return listingAiResponse({ success: true, result,
+        safety: { durableAuthorityReused: "ebay_same_day_pilot_events",
+          newInfrastructureCreated: false,
+          lunaPurchases: 0, marketplaceWrites: 0 } })
     }
     if (body.action === "certify_capture") {
       enforceListingAiRouteRateLimit(auth.actorId, "WRITE")

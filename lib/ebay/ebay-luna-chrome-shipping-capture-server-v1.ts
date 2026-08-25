@@ -19,6 +19,10 @@ import {
 } from "./ebay-luna-chrome-shipping-capture-v1"
 import { EBAY_LUNA_BOCA_RATON_LOCATION } from
   "./ebay-merchant-location-one-shot-gateway"
+import {
+  readProductFitStrongPromotionsV1,
+  resolveDurableProductFitStrongV1,
+} from "./ebay-product-fit-durable-promotion-v1"
 
 export const LUNA_SHIPPING_CANARY_CANDIDATE_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60" as const
@@ -316,7 +320,7 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
   if (frontierResult.error) {
     throw new Error("LUNA_SHIPPING_EXTENSION_CANDIDATE_EVIDENCE_READ_FAILED")
   }
-  const exactCandidates = records(record(frontierResult.data).frontiers)
+  const frontierCandidates = records(record(frontierResult.data).frontiers)
     .flatMap((outer) => {
       const frontier = record(outer.frontier)
       const familyId = text(frontier.familyId, 120)
@@ -325,15 +329,33 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
       const supplierSku = text(frontier.lunaSku, 160)
       if (!familyId || !/^market-family-v1:sha256:[0-9a-f]{64}$/.test(familyId) ||
           !lunaProductId || !lunaVariantId || !supplierSku ||
-          frontier.productFit !== "STRONG" ||
           frontier.economicClassification === "ECONOMICALLY_DEAD") return []
       const snapshotDigest = text(outer.snapshotDigest, 80)
       if (!snapshotDigest || !SHA256.test(snapshotDigest)) return []
+      const calculatedAt = text(outer.calculatedAt, 48) ??
+        text(frontier.evaluatedAt, 48)
+      if (!calculatedAt || !Number.isFinite(Date.parse(calculatedAt))) return []
       return [Object.freeze({ familyId, lunaProductId, lunaVariantId,
-        supplierSku, frontier, outer, snapshotDigest,
+        supplierSku, frontier, outer, snapshotDigest, calculatedAt,
         candidateId: candidateId(familyId, lunaProductId, lunaVariantId,
           supplierSku) })]
     })
+  const promotions = await readProductFitStrongPromotionsV1({
+    supabase: input.supabase, accountKey: input.accountKey,
+    candidateIds: frontierCandidates.filter((candidate) =>
+      candidate.frontier.productFit !== "STRONG")
+      .map((candidate) => candidate.candidateId),
+  })
+  const exactCandidates = frontierCandidates.filter((candidate) =>
+    resolveDurableProductFitStrongV1({
+      candidateId: candidate.candidateId, familyId: candidate.familyId,
+      lunaProductId: candidate.lunaProductId,
+      lunaVariantId: candidate.lunaVariantId,
+      supplierSku: candidate.supplierSku,
+      frontierProductFit: candidate.frontier.productFit,
+      frontierCalculatedAt: candidate.calculatedAt,
+      promotion: promotions.get(candidate.candidateId),
+    }).productFitStrongDurable)
   const requested = input.candidateIds?.length
     ? [...new Set(input.candidateIds)]
     : exactCandidates.filter((candidate) =>
