@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.20"
+const EXTENSION_BUILD_VERSION = "1.0.21"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -121,6 +121,7 @@ async function beginRuntimeTrace(seed, candidateId) {
     candidateId: /^sha256:[0-9a-f]{64}$/.test(candidateId ?? "")
       ? candidateId : null,
     sequence: 0,
+    events: [],
   }
 }
 
@@ -130,7 +131,7 @@ function traceMoney(value) {
 }
 
 function emitRuntimeTrace(state, success = true, reasonCode = "NONE", details = {}) {
-  if (!sellerPort || !activeRuntimeTrace ||
+  if (!activeRuntimeTrace ||
       activeRuntimeTrace.sequence >= MAX_RUNTIME_TRACE_EVENTS) return
   activeRuntimeTrace.sequence += 1
   const event = {
@@ -153,7 +154,8 @@ function emitRuntimeTrace(state, success = true, reasonCode = "NONE", details = 
     "shopPayMarkerSubtotal", "shopPayMarkerTotal", "shopPayMarkerPayNow"]) {
     if (typeof details[field] === "boolean") event[field] = details[field]
   }
-  sellerPort.postMessage({ type: RUNTIME_TRACE_EVENT, event })
+  activeRuntimeTrace.events.push(event)
+  sellerPort?.postMessage({ type: RUNTIME_TRACE_EVENT, event })
 }
 
 function traceProgress(state, details) {
@@ -760,6 +762,9 @@ chrome.runtime.onConnectExternal.addListener((port) => {
     disconnectCleanupTimer = null
   }
   sellerPort = port
+  for (const event of activeRuntimeTrace?.events ?? []) {
+    port.postMessage({ type: RUNTIME_TRACE_EVENT, event })
+  }
   port.onMessage.addListener((message) => {
     if (message?.type === GET_CANONICAL_DESTINATION_STATUS) {
       void readDestinationBinding().then((binding) => port.postMessage({
