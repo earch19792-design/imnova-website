@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.39" },
+      extensionBuildVersion: "1.0.40" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -17,6 +17,7 @@ const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
 const JOB_RUNTIME_FAILURE = "LUNA_SHIPPING_JOB_RUNTIME_FAILURE"
 const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
+const CHECKOUT_NAVIGATION_TRIGGER = "LUNA_CHECKOUT_NAVIGATION_TRIGGERED"
 const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
 const BIND_CANONICAL_DESTINATION_EXECUTE =
@@ -194,6 +195,20 @@ function setActiveJobPhase(job, phase, details = {}) {
       if (response?.accepted === true && response?.phase === phase) resolve()
       else reject(new Error(typeof response?.error === "string" ? response.error
         : "ACTIVE_JOB_CART_CONTINUITY_UNPROVEN"))
+    })
+  })
+}
+
+function triggerCheckoutNavigation(job) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(
+      "CHECKOUT_NAVIGATION_NOT_TRIGGERED")), 5_000)
+    chrome.runtime.sendMessage({ type: CHECKOUT_NAVIGATION_TRIGGER,
+      captureSessionId: job.captureSessionId }, (response) => {
+      clearTimeout(timeout)
+      if (response?.accepted === true) resolve()
+      else reject(new Error(typeof response?.error === "string"
+        ? response.error : "CHECKOUT_NAVIGATION_NOT_TRIGGERED"))
     })
   })
 }
@@ -1455,6 +1470,7 @@ async function runCartStage(job, original) {
     })
     const checkout = await boundedDomWait(visibleCheckoutControl,
       "LUNA_CHECKOUT_CONTROL_UNAVAILABLE")
+    await triggerCheckoutNavigation(job)
     checkout.click()
     const cartPath = location.pathname
     setTimeout(() => {
