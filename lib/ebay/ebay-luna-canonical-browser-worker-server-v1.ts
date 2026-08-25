@@ -17,6 +17,7 @@ import {
   type SellerOsLunaBrowserHandleV1,
 } from "./ebay-luna-protected-session-ceremony-v1"
 import {
+  resolveServerOwnedLunaSessionValueV1,
   storeSellerOsLunaProtectedSessionV1,
 } from "./ebay-luna-protected-session-server-v1"
 import { SELLER_OS_LUNA_PROTECTED_SESSION_VERSION } from
@@ -35,6 +36,15 @@ import {
   type LunaAuthenticatedCaptureV1,
   type LunaExactApprovedLinkV1,
 } from "./ebay-luna-supplier-stock-watcher-v1"
+import {
+  buildLunaShippingEvidenceDigestV1,
+  LUNA_PROTECTED_BROWSER_SHIPPING_SOURCE,
+  normalizeLunaShippingDestinationV1,
+  normalizeLunaShippingIdentityV1,
+  type LunaShippingAttemptV1,
+  type LunaShippingDestinationV1,
+  type LunaShippingIdentityV1,
+} from "./ebay-luna-authoritative-shipping-v1"
 
 const PROFILE_PREFIX = "seller-os-luna-browser-v1-"
 const PROFILE_ROOT = resolve(tmpdir())
@@ -65,6 +75,7 @@ const LOGIN_PAGE_MARKER = [
   "input[type='password']",
 ].join(",")
 const MAX_BROWSER_PRODUCT_VARIANTS = 500
+const AUTOMATIC_BROWSER_CONTEXT_LIFETIME_MS = 10 * 60 * 1_000
 
 type PolicyFailure = Readonly<{ host: string | null; code: string }>
 
@@ -789,6 +800,328 @@ export async function captureLunaAuthenticatedBrowserWorkerV1(
       mfaBypassAttempted: false as const,
     },
   })
+}
+
+function protectedCookieEntries(cookieHeader: string) {
+  const entries = cookieHeader.split(/;\s*/).map((entry) => {
+    const split = entry.indexOf("=")
+    return split > 0
+      ? { name: entry.slice(0, split), value: entry.slice(split + 1) }
+      : null
+  }).filter((entry): entry is { name: string; value: string } =>
+    Boolean(entry && SAFE_COOKIE_NAME.test(entry.name) &&
+      SAFE_COOKIE_VALUE.test(entry.value)))
+  if (entries.length < 1 || entries.length > MAX_SESSION_COOKIE_COUNT) {
+    throw new Error("LUNA_PROTECTED_BROWSER_SESSION_INVALID")
+  }
+  return entries
+}
+
+async function createAutomaticProtectedBrowserWorkerV1() {
+  const cookieHeader = await resolveServerOwnedLunaSessionValueV1()
+  if (!cookieHeader) throw new Error("LUNA_REAUTH_REQUIRED")
+  await cleanupAbandonedProfiles()
+  const profilePath = await mkdtemp(join(PROFILE_ROOT, PROFILE_PREFIX))
+  await chmod(profilePath, 0o700)
+  let context: BrowserContext | null = null
+  try {
+    const { chromium } = await import("playwright")
+    context = await chromium.launchPersistentContext(profilePath, {
+      headless: true,
+      acceptDownloads: false,
+      serviceWorkers: "block",
+      locale: "es-GT",
+      viewport: { width: 1160, height: 820 },
+      env: browserChildEnvironment(profilePath),
+      args: [
+        "--disable-background-networking",
+        "--disable-breakpad",
+        "--disable-component-update",
+        "--disable-default-apps",
+        "--disable-domain-reliability",
+        "--disable-sync",
+        "--no-default-browser-check",
+        "--no-first-run",
+      ],
+    })
+    context.setDefaultTimeout(8_000)
+    context.setDefaultNavigationTimeout(15_000)
+    await context.route("**/*", async (route) => {
+      const decision = classifySellerOsLunaBrowserRequestV1({
+        url: route.request().url(),
+        method: route.request().method(),
+        topLevelNavigation: requestIsTopLevel(route),
+      })
+      if (decision.allowed) await route.continue()
+      else await route.abort("blockedbyclient")
+    })
+    await context.addCookies(protectedCookieEntries(cookieHeader).map((cookie) =>
+      cookie.name.startsWith("__Host-")
+        ? { ...cookie, url: "https://www.lunaportex.com", secure: true }
+        : { ...cookie, domain: ".lunaportex.com", path: "/", secure: true }))
+    const page = context.pages()[0] ?? await context.newPage()
+    await page.goto("https://www.lunaportex.com/account", {
+      waitUntil: "domcontentloaded",
+      timeout: 15_000,
+    })
+    const health = await pageSessionHealth(page)
+    if (health.health !== "HEALTHY") {
+      throw new Error(health.health === "CLOUDFLARE_CHALLENGE"
+        ? "LUNA_CAPTCHA_BLOCKED" : "LUNA_REAUTH_REQUIRED")
+    }
+    const worker: ActiveLunaBrowserWorkerV1 = {
+      context,
+      page,
+      profilePath,
+      expiresAt: Date.now() + AUTOMATIC_BROWSER_CONTEXT_LIFETIME_MS,
+      busy: false,
+      expiryTimer: null,
+    }
+    const shared = browserWorkerState()
+    const previous = shared.__sellerOsLunaActiveBrowserWorkerV1
+    shared.__sellerOsLunaActiveBrowserWorkerV1 = worker
+    worker.expiryTimer = setTimeout(() => {
+      if (browserWorkerState().__sellerOsLunaActiveBrowserWorkerV1 === worker) {
+        browserWorkerState().__sellerOsLunaActiveBrowserWorkerV1 = null
+      }
+      void destroyBrowserWorker(worker)
+    }, AUTOMATIC_BROWSER_CONTEXT_LIFETIME_MS)
+    worker.expiryTimer.unref?.()
+    context = null
+    if (previous && previous !== worker) await destroyBrowserWorker(previous)
+    return worker
+  } catch (cause) {
+    try { await context?.clearCookies() } catch { /* fail closed */ }
+    try { await context?.close() } catch { /* fail closed */ }
+    await deleteEphemeralProfile(profilePath).catch(() => undefined)
+    throw cause
+  }
+}
+
+async function automaticOrActiveBrowserWorkerV1() {
+  try { return activeBrowserWorker() } catch {
+    return createAutomaticProtectedBrowserWorkerV1()
+  }
+}
+
+type BrowserCartQuote = Readonly<{
+  status: number
+  exactIdentity: boolean
+  subtotalUsd: number | null
+  rateAmountsUsd: readonly number[]
+  currency: string | null
+  cartRestored: boolean
+}>
+
+async function readBrowserCartShippingQuoteV1(
+  page: Page,
+  input: Readonly<{
+    identity: LunaShippingIdentityV1
+    destination: LunaShippingDestinationV1
+  }>,
+) : Promise<BrowserCartQuote> {
+  return page.evaluate(async ({ identity, destination }) => {
+    const safeJson = (raw: string) => {
+      try {
+        return JSON.parse(raw.replace(/(:\s*)(-?\d{16,})(?=\s*[,}])/g,
+          '$1"$2"')) as Record<string, any>
+      } catch { return null }
+    }
+    const request = async (path: string, init?: RequestInit) => {
+      const response = await fetch(path, {
+        ...init,
+        credentials: "include",
+        cache: "no-store",
+        redirect: "follow",
+        headers: {
+          Accept: "application/json",
+          ...(init?.body ? { "Content-Type": "application/json" } : {}),
+          ...(init?.headers ?? {}),
+        },
+      })
+      const raw = await response.text()
+      return { status: response.status, body: safeJson(raw) }
+    }
+    const snapshot = await request("/cart.js")
+    const snapshotItems = snapshot.status >= 200 && snapshot.status < 300 &&
+      Array.isArray(snapshot.body?.items)
+      ? snapshot.body.items.slice(0, 100).flatMap((item: any) => {
+        const id = String(item?.variant_id ?? item?.id ?? "")
+        const quantity = Number(item?.quantity)
+        return /^\d{8,24}$/.test(id) && Number.isInteger(quantity) &&
+          quantity > 0 && quantity <= 1_000 ? [{ id, quantity }] : []
+      }) : []
+    let status = snapshot.status
+    let exactIdentity = false
+    let subtotalUsd: number | null = null
+    let rateAmountsUsd: number[] = []
+    let currency: string | null = null
+    let cartRestored = false
+    try {
+      if (status !== 429 && status >= 200 && status < 300) {
+        const cleared = await request("/cart/clear.js", {
+          method: "POST", body: JSON.stringify({}),
+        })
+        status = cleared.status
+      }
+      if (status !== 429 && status >= 200 && status < 300) {
+        const added = await request("/cart/add.js", {
+          method: "POST",
+          body: JSON.stringify({ id: identity.lunaVariantId,
+            quantity: identity.quantity }),
+        })
+        status = added.status
+        exactIdentity = String(added.body?.product_id ?? "") ===
+            identity.lunaProductId &&
+          String(added.body?.variant_id ?? added.body?.id ?? "") ===
+            identity.lunaVariantId &&
+          String(added.body?.sku ?? "") === identity.supplierSku
+        const subtotalMinor = Number(added.body?.final_line_price ??
+          added.body?.final_price ?? added.body?.line_price ?? added.body?.price)
+        subtotalUsd = Number.isFinite(subtotalMinor) && subtotalMinor >= 0
+          ? Math.round(subtotalMinor) / 100 : null
+      }
+      if (status !== 429 && status >= 200 && status < 300 &&
+          exactIdentity && subtotalUsd !== null) {
+        const query = new URLSearchParams({
+          "shipping_address[country]": destination.country,
+          "shipping_address[province]": destination.province,
+          "shipping_address[zip]": destination.postalCode,
+        })
+        const shipping = await request(`/cart/shipping_rates.json?${query}`)
+        status = shipping.status
+        const rates = Array.isArray(shipping.body?.shipping_rates)
+          ? shipping.body.shipping_rates.slice(0, 20) : []
+        rateAmountsUsd = rates.flatMap((rate: any) => {
+          const amount = Number(rate?.price)
+          return Number.isFinite(amount) && amount >= 0
+            ? [Math.round((amount + Number.EPSILON) * 100) / 100] : []
+        })
+        const currencies = [...new Set(rates.map((rate: any) =>
+          typeof rate?.currency === "string" ? rate.currency.toUpperCase() : null)
+          .filter(Boolean))]
+        currency = currencies.length === 1 ? String(currencies[0]) : null
+      }
+    } finally {
+      const cleared = await request("/cart/clear.js", {
+        method: "POST", body: JSON.stringify({}),
+      }).catch(() => null)
+      if (cleared && cleared.status >= 200 && cleared.status < 300) {
+        if (!snapshotItems.length) cartRestored = true
+        else {
+          const restored = await request("/cart/add.js", {
+            method: "POST",
+            body: JSON.stringify({ items: snapshotItems }),
+          }).catch(() => null)
+          cartRestored = Boolean(restored && restored.status >= 200 &&
+            restored.status < 300)
+        }
+      }
+    }
+    return { status, exactIdentity, subtotalUsd, rateAmountsUsd,
+      currency, cartRestored }
+  }, input)
+}
+
+export async function fetchLunaProtectedBrowserShippingQuoteV1(input: Readonly<{
+  identity: LunaShippingIdentityV1
+  destination: LunaShippingDestinationV1
+}>) : Promise<LunaShippingAttemptV1> {
+  const identity = normalizeLunaShippingIdentityV1(input.identity)
+  const destination = normalizeLunaShippingDestinationV1(input.destination)
+  let worker: ActiveLunaBrowserWorkerV1
+  try { worker = await automaticOrActiveBrowserWorkerV1() } catch (cause) {
+    const code = cause instanceof Error && /^[A-Z0-9_]{3,160}$/.test(cause.message)
+      ? cause.message : "LUNA_PROTECTED_BROWSER_UNAVAILABLE"
+    return Object.freeze({ status: "BLOCKED" as const, blocker: code,
+      retryAfterMs: null, retryNotBefore: null,
+      purchasePerformed: false as const, paymentPerformed: false as const })
+  }
+  if (worker.busy) return Object.freeze({
+    status: "BLOCKED" as const,
+    blocker: "LUNA_BROWSER_WORKER_BUSY",
+    retryAfterMs: null,
+    retryNotBefore: null,
+    purchasePerformed: false as const,
+    paymentPerformed: false as const,
+  })
+  worker.busy = true
+  try {
+    const preflight = await pageSessionHealth(worker.page)
+    if (preflight.health !== "HEALTHY") return Object.freeze({
+      status: "BLOCKED" as const,
+      blocker: preflight.health === "CLOUDFLARE_CHALLENGE"
+        ? "LUNA_CAPTCHA_BLOCKED" : "LUNA_REAUTH_REQUIRED",
+      retryAfterMs: null, retryNotBefore: null,
+      purchasePerformed: false as const, paymentPerformed: false as const,
+    })
+    await worker.page.goto(identity.canonicalProductUrl, {
+      waitUntil: "domcontentloaded", timeout: 15_000,
+    })
+    const result = await readBrowserCartShippingQuoteV1(worker.page, {
+      identity, destination,
+    })
+    if (!result.cartRestored) return Object.freeze({
+      status: "BLOCKED" as const,
+      blocker: "LUNA_BROWSER_CART_RESTORE_UNPROVEN",
+      retryAfterMs: null, retryNotBefore: null,
+      purchasePerformed: false as const, paymentPerformed: false as const,
+    })
+    if (result.status === 429) return Object.freeze({
+      status: "BLOCKED" as const,
+      blocker: "LUNA_BROWSER_SHIPPING_RATE_LIMITED",
+      retryAfterMs: null, retryNotBefore: null,
+      purchasePerformed: false as const, paymentPerformed: false as const,
+    })
+    const uniqueAmounts = [...new Set(result.rateAmountsUsd)]
+    if (result.status < 200 || result.status >= 300 ||
+        !result.exactIdentity || result.subtotalUsd === null ||
+        result.currency !== "USD" || uniqueAmounts.length !== 1) {
+      return Object.freeze({
+        status: "BLOCKED" as const,
+        blocker: uniqueAmounts.length > 1
+          ? "LUNA_SHIPPING_SERVICE_SELECTION_UNPROVEN"
+          : "LUNA_BROWSER_AUTHORITATIVE_SHIPPING_UNAVAILABLE",
+        retryAfterMs: null, retryNotBefore: null,
+        purchasePerformed: false as const, paymentPerformed: false as const,
+      })
+    }
+    const observedAt = new Date().toISOString()
+    const evidence = {
+      lunaProductId: identity.lunaProductId,
+      lunaVariantId: identity.lunaVariantId,
+      supplierSku: identity.supplierSku,
+      subtotalUsd: result.subtotalUsd,
+      shippingAmountUsd: uniqueAmounts[0],
+      currency: "USD" as const,
+      destinationProfileDigest: destination.profileDigest,
+      acquisitionMethod: LUNA_PROTECTED_BROWSER_SHIPPING_SOURCE,
+      observedAt,
+    }
+    return Object.freeze({
+      status: "AVAILABLE" as const,
+      subtotalUsd: result.subtotalUsd,
+      shippingAmountUsd: uniqueAmounts[0],
+      currency: "USD" as const,
+      acquisitionMethod: LUNA_PROTECTED_BROWSER_SHIPPING_SOURCE,
+      observedAt,
+      evidenceDigest: buildLunaShippingEvidenceDigestV1(evidence),
+      exactLunaIdentity: true as const,
+      destinationProfileId: destination.profileId,
+      destinationProfileDigest: destination.profileDigest,
+      noPurchase: true as const,
+      noPayment: true as const,
+    })
+  } catch {
+    return Object.freeze({
+      status: "BLOCKED" as const,
+      blocker: "LUNA_PROTECTED_BROWSER_UNAVAILABLE",
+      retryAfterMs: null, retryNotBefore: null,
+      purchasePerformed: false as const, paymentPerformed: false as const,
+    })
+  } finally {
+    worker.busy = false
+  }
 }
 
 export async function auditSellerOsLunaCanonicalBrowserRuntimeV1() {

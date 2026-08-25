@@ -72,6 +72,7 @@ export type SameDayCandidateInput = {
   score?: number
   listingPackageReadiness?: number
   queueItemAvailable?: boolean
+  radarFamilyEvidence?: Record<string, unknown> | null
 }
 
 export function resolveSameDayCommercialEvidenceMode(input: {
@@ -531,6 +532,7 @@ export function buildSameDayLocalPreparationPackage(candidate: SameDayCandidateD
       evidenceFresh: candidate.evidenceFresh === true,
       productResearchQuery: candidate.queryPlan.query,
       broadSearchPresentedAsDemand: false,
+      radarFamilyEvidence: candidate.radarFamilyEvidence ?? null,
     },
     unresolved: candidate.blockers,
     intentionallyOmitted: [

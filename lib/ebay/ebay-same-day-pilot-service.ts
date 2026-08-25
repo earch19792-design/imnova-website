@@ -3440,18 +3440,26 @@ export async function previewSameDayPilot(input: {
   if (queueRunError) throw new Error("SAME_DAY_PILOT_QUEUE_RUN_READ_FAILED")
   const { data: queueItems, error: queueItemError } = latestQueueRun?.id
     ? await input.supabase.from("marketplace_listing_approval_queue_items")
-      .select("id,supplier_variant_id").eq("run_id", latestQueueRun.id)
+      .select("id,supplier_variant_id,evidence_snapshot").eq("run_id", latestQueueRun.id)
       .eq("marketplace_account_key", input.accountKey).limit(200)
     : { data: [], error: null }
   if (queueItemError) throw new Error("SAME_DAY_PILOT_QUEUE_ITEM_READ_FAILED")
   const queueItemByVariant = new Map((queueItems ?? [])
     .map((row) => [text(row.supplier_variant_id), row.id]))
+  const radarFamilyEvidenceByVariant = new Map((queueItems ?? []).flatMap((row) => {
+    const evidence = record(record(row.evidence_snapshot).radarFamilyEvidence)
+    return Object.keys(evidence).length
+      ? [[text(row.supplier_variant_id), evidence] as const] : []
+  }))
   const candidateInputs = eligibleOpportunities.map((row) => {
     const key = `${text(row.market_radar_product_id)}:${text(row.supplier_variant_id)}`
     const candidate = candidateInput(record(row), variantByKey.get(key) ?? {}, now,
       descriptionIdentityByProductId.get(text(row.market_radar_product_id)) ?? {})
     return { ...candidate,
-      queueItemAvailable: queueItemByVariant.has(text(candidate.supplierVariantId)) }
+      queueItemAvailable: queueItemByVariant.has(text(candidate.supplierVariantId)),
+      radarFamilyEvidence: radarFamilyEvidenceByVariant.get(
+        text(candidate.supplierVariantId),
+      ) ?? null }
   })
   const evaluatedCandidates = candidateInputs.map((candidate) =>
     evaluateSameDayCandidate(candidate, now))

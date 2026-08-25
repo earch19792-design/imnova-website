@@ -99,6 +99,10 @@ import {
   type HybridEbayProduct,
   type HybridLunaCandidate,
 } from "./ebay-listing-ai-hybrid-discovery"
+import {
+  buildRadarRevenueFactoryCandidateBatchV1,
+  type RadarRevenueFactoryCandidateV1,
+} from "./ebay-opportunity-radar-revenue-factory-adapter-v1"
 
 type JsonRecord = Record<string, unknown>
 
@@ -1022,6 +1026,59 @@ async function loadPriorIntelligenceProductIds(supabase: SupabaseClient) {
   return ids
 }
 
+async function loadRadarRevenueFactoryCandidates(
+  supabase: SupabaseClient,
+  accountKey: string,
+  catalogRows: JsonRecord[],
+) {
+  const { data: radarPayload, error: radarError } = await supabase.rpc(
+    "get_seller_os_family_market_radar_v1", { p_family_id: null, p_limit: 100 },
+  )
+  if (radarError) return []
+  const familyIds = records(record(radarPayload).families)
+    .map((family) => text(family.familyId)).filter(
+      (familyId): familyId is string =>
+        Boolean(familyId && /^market-family-v1:sha256:[0-9a-f]{64}$/.test(familyId)),
+    ).slice(0, 100)
+  if (!familyIds.length) return []
+  const { data: frontierPayload, error: frontierError } = await supabase.rpc(
+    "get_seller_os_latest_profitability_frontiers_v1", {
+      p_account_key: accountKey,
+      p_marketplace_id: MARKETPLACE,
+      p_family_ids: familyIds,
+      p_limit: 100,
+    },
+  )
+  if (frontierError) return []
+  return buildRadarRevenueFactoryCandidateBatchV1({
+    radarPayload, frontierPayload, lunaCatalogRows: catalogRows,
+    targetCandidates: 100,
+  }).candidates.filter((candidate) =>
+    candidate.disposition === "PASS_TO_LUNA" && candidate.marketRadarProductId)
+}
+
+function radarFamilyEvidence(candidate: RadarRevenueFactoryCandidateV1) {
+  return Object.freeze({
+    adapterVersion: "OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_V1",
+    familyId: candidate.lineage.familyId,
+    familyName: candidate.lineage.familyName,
+    opportunityCaseId: candidate.lineage.opportunityCaseId,
+    demandEvidenceDigest: candidate.lineage.demandEvidenceDigest,
+    familyDemandStatus: candidate.lineage.familyDemandStatus,
+    soldComparableCount: candidate.lineage.soldComparableCount,
+    soldQuantityEvidence: candidate.lineage.soldQuantityEvidence,
+    priceBand: candidate.lineage.priceBand,
+    evidenceObservedAt: candidate.lineage.evidenceObservedAt,
+    sourceUpdatedAt: candidate.lineage.sourceUpdatedAt,
+    limitations: candidate.lineage.limitations,
+    evidenceScope: candidate.lineage.evidenceScope,
+    exactProductDemandClaimed: candidate.lineage.exactProductDemandClaimed,
+    exactCandidateIdentity: candidate.exactCandidateIdentity,
+    disposition: candidate.disposition,
+    dispositionReason: candidate.dispositionReason,
+  })
+}
+
 async function ensureTop20RunTargets(
   supabase: SupabaseClient,
   accountKey: string,
@@ -1038,6 +1095,11 @@ async function ensureTop20RunTargets(
     loadTop20TargetCatalog(supabase),
     loadPriorIntelligenceProductIds(supabase),
   ])
+  const radarCandidates = await loadRadarRevenueFactoryCandidates(
+    supabase, accountKey, catalogRows,
+  )
+  const radarByProductId = new Map(radarCandidates.map((candidate) =>
+    [candidate.marketRadarProductId!, candidate]))
   const catalog: Top20TargetCandidate[] = catalogRows.map((row) => ({
     productId: text(row.product_id) ?? "",
     supplierProductId: text(row.supplier_product_id),
@@ -1045,9 +1107,8 @@ async function ensureTop20RunTargets(
     supplierSku: text(row.sku),
     priorityScore: number(row.seller_scan_priority_score) ?? 0,
   })).filter((row) => row.productId)
-  const radarProductIds = [...catalog]
-    .sort((left, right) => right.priorityScore - left.priorityScore || left.productId.localeCompare(right.productId))
-    .slice(0, 5).map((row) => row.productId)
+  const radarProductIds = radarCandidates.map((candidate) =>
+    candidate.marketRadarProductId!).slice(0, 5)
   const manifest = buildTop20TargetManifest({
     catalog,
     radarProductIds,
@@ -1066,6 +1127,11 @@ async function ensureTop20RunTargets(
       supplier_sku: target.supplierSku,
       deduplication_key_hash: target.deduplicationKeyHash,
       status: "PENDING",
+      discovery_snapshot: radarByProductId.has(target.productId)
+        ? { radarFamilyEvidence: radarFamilyEvidence(
+          radarByProductId.get(target.productId)!,
+        ) }
+        : {},
       updated_at: now.toISOString(),
     }))
     const { error } = await supabase.from("marketplace_listing_approval_queue_scan_targets")
@@ -1801,6 +1867,8 @@ async function runTop20DiscoveryBatch(input: {
         lunaMatchStatus: entry.target.ebay_first_luna_match_status ?? "NOT_APPLICABLE",
         ebayFirstEvidence: entry.target.discovery_strategy === "EBAY_FIRST"
           ? record(entry.target.ebay_first_evidence_snapshot) : null,
+        radarFamilyEvidence:
+          record(entry.target.discovery_snapshot).radarFamilyEvidence ?? null,
         source: signals?.source ?? "LUNA_SUPPLY_ONLY",
         observedAt: signals?.observedAt ?? input.now.toISOString(),
         supplierAvailable,
@@ -1844,6 +1912,8 @@ async function runTop20DiscoveryBatch(input: {
         .from("marketplace_listing_approval_queue_scan_targets")
         .update({ status: "DISCOVERED", discovery_score: 0,
           discovery_snapshot: { version: "EBAY_LUNA_DISCOVERY_V1", basicRiskCodes: [code],
+            radarFamilyEvidence:
+              record(entry.target.discovery_snapshot).radarFamilyEvidence ?? null,
             origin: entry.target.discovery_strategy === "EBAY_FIRST" ? "EBAY_FIRST" : "LUNA_FIRST",
             lunaMatchStatus: entry.target.ebay_first_luna_match_status ?? "NOT_APPLICABLE",
             fullCompetitorContentStored: false, openAiCalls: 0, ebayWrites: 0 },
@@ -2200,6 +2270,12 @@ export async function runListingAiApprovalQueueBatch(input: {
     if (candidate.packCount) coverageAfter.pack += 1
     if (candidate.weight) coverageAfter.weight += 1
     if (candidate.dimensions) coverageAfter.dimensions += 1
+    const preservedRadarFamilyEvidence =
+      record(entry.target.discovery_snapshot).radarFamilyEvidence
+    if (preservedRadarFamilyEvidence) {
+      snapshot = { ...snapshot,
+        radarFamilyEvidence: preservedRadarFamilyEvidence }
+    }
     itemPayloads.push({
         run_id: run.id,
         marketplace_account_key: input.accountKey,
