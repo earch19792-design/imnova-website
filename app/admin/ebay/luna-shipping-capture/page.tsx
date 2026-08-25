@@ -16,7 +16,10 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.40"
+const EXPECTED_EXTENSION_VERSION = "1.0.41"
+const SELLER_OS_EXTENSION_ORIGIN =
+  "https://imnova-website-z1qh-git-codex-674439-earch19792-6888s-projects.vercel.app"
+const STARTUP_PROBE_CONTRACT = "SELLER_OS_LUNA_EXTENSION_STARTUP_PROBE_V1"
 const GET_BINDING_STORAGE_DIAGNOSTIC =
   "SELLER_OS_GET_LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
 const BINDING_STORAGE_DIAGNOSTIC = "LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
@@ -41,6 +44,32 @@ type ChromeRuntime = {
   sendMessage: (extensionId: string, message: unknown,
     callback: (response: any) => void) => void
   lastError?: { message?: string }
+}
+
+function ensureCanonicalExtensionOrigin() {
+  if (window.location.origin === SELLER_OS_EXTENSION_ORIGIN) return true
+  const target = new URL(
+    `${window.location.pathname}${window.location.search}${window.location.hash}`,
+    SELLER_OS_EXTENSION_ORIGIN,
+  )
+  window.location.replace(target.toString())
+  return false
+}
+
+async function probeInstalledExtension() {
+  try {
+    const response = await fetch(
+      `chrome-extension://${EXTENSION_ID}/startup-probe.json`,
+      { cache: "no-store" },
+    )
+    if (!response.ok) return false
+    const payload = await response.json() as Record<string, unknown>
+    return payload.contractVersion === STARTUP_PROBE_CONTRACT &&
+      payload.extensionId === EXTENSION_ID &&
+      payload.extensionVersion === EXPECTED_EXTENSION_VERSION
+  } catch {
+    return false
+  }
 }
 
 declare global {
@@ -253,8 +282,11 @@ function pingExtensionOnce(runtime: ChromeRuntime) {
     }
     try {
       runtime.sendMessage(EXTENSION_ID, { type: EXTENSION_PING }, (response) => {
-        if (window.chrome?.runtime?.lastError?.message) {
-          finish(new Error("LUNA_SHIPPING_EXTENSION_DISCONNECTED"))
+        const runtimeError = window.chrome?.runtime?.lastError?.message ?? ""
+        if (runtimeError) {
+          finish(new Error(/receiving end does not exist/i.test(runtimeError)
+            ? "LUNA_SHIPPING_EXTENSION_EXTERNAL_LISTENER_UNAVAILABLE"
+            : "LUNA_SHIPPING_EXTENSION_SERVICE_WORKER_UNAVAILABLE"))
           return
         }
         if (response?.type !== EXTENSION_READY ||
@@ -809,6 +841,7 @@ export default function LunaShippingCapturePage() {
     }
 
     const start = async () => {
+      if (!ensureCanonicalExtensionOrigin()) return
       try {
         const persisted = await adminPost("read_runtime_trace", {})
         const recovered = Array.isArray(persisted.result?.events)
@@ -826,6 +859,7 @@ export default function LunaShippingCapturePage() {
       const runtime = await detectAndWakeLunaShippingExtensionV1({
         readRuntime: () => window.chrome?.runtime,
         pingRuntime: pingExtensionOnce,
+        probeInstalledExtension,
         wait,
       })
       const phaseForResume = () => {

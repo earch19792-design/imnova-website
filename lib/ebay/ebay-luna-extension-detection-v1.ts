@@ -1,5 +1,9 @@
 export const LUNA_SHIPPING_EXTENSION_NOT_INSTALLED =
   "LUNA_SHIPPING_EXTENSION_NOT_INSTALLED"
+export const LUNA_SHIPPING_EXTENSION_RUNTIME_API_UNAVAILABLE =
+  "LUNA_SHIPPING_EXTENSION_RUNTIME_API_UNAVAILABLE"
+export const LUNA_SHIPPING_EXTENSION_PRESENCE_UNPROVEN =
+  "LUNA_SHIPPING_EXTENSION_PRESENCE_UNPROVEN"
 
 const RETRYABLE_EXTENSION_WAKE_ERRORS = new Set([
   "LUNA_SHIPPING_EXTENSION_DISCONNECTED",
@@ -10,6 +14,7 @@ const RETRYABLE_EXTENSION_WAKE_ERRORS = new Set([
 type ExtensionRuntimeDetectionOptionsV1<Runtime> = {
   readRuntime: () => Runtime | undefined
   pingRuntime: (runtime: Runtime) => Promise<void>
+  probeInstalledExtension?: () => Promise<boolean | null>
   wait: (milliseconds: number) => Promise<void>
   runtimeAttempts?: number
   runtimePollIntervalMs?: number
@@ -71,7 +76,21 @@ export async function detectAndWakeLunaShippingExtensionV1<Runtime>(
       await options.wait(runtimePollIntervalMs)
     }
   }
-  if (!runtime) throw new Error(LUNA_SHIPPING_EXTENSION_NOT_INSTALLED)
+  if (!runtime) {
+    let installed: boolean | null = null
+    try {
+      installed = options.probeInstalledExtension
+        ? await options.probeInstalledExtension() : null
+    } catch {
+      installed = null
+    }
+    if (installed === false) {
+      throw new Error(LUNA_SHIPPING_EXTENSION_NOT_INSTALLED)
+    }
+    throw new Error(installed === true
+      ? LUNA_SHIPPING_EXTENSION_RUNTIME_API_UNAVAILABLE
+      : LUNA_SHIPPING_EXTENSION_PRESENCE_UNPROVEN)
+  }
   await wakeLunaShippingExtensionV1(runtime, options.pingRuntime,
     options.wait, {
       pingAttempts: options.pingAttempts,
