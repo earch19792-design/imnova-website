@@ -18,6 +18,11 @@ const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
 
+function finalCanaryStartEnabled(connected: boolean,
+  canonicalDestinationBound: boolean, canaryRunInProgress: boolean) {
+  return connected && canonicalDestinationBound && !canaryRunInProgress
+}
+
 type ExternalPort = {
   postMessage: (message: unknown) => void
   disconnect: () => void
@@ -266,6 +271,7 @@ export default function LunaShippingCapturePage() {
     let mode: "CANARY" | "AUTO" = "CANARY"
     let busy = false
     let extensionReady = false
+    let canonicalBindingReady = false
     let port: ExternalPort | null = null
     let lastProgressState = "NOT_STARTED"
     let reconnecting = false
@@ -358,7 +364,7 @@ export default function LunaShippingCapturePage() {
     }
 
     const beginCanary = () => {
-      if (busy || !extensionReady) return
+      if (busy || !extensionReady || !canonicalBindingReady) return
       setError("")
       setResults([])
       setLastRuntimeState("CANARY_DISPATCHED")
@@ -387,6 +393,7 @@ export default function LunaShippingCapturePage() {
             return
           }
           const bound = message.canonicalDestinationBound === true
+          canonicalBindingReady = bound
           setCanonicalDestinationBound(bound)
           if (!bound) setCanonicalDestinationMatch(false)
           return
@@ -401,6 +408,7 @@ export default function LunaShippingCapturePage() {
             return
           }
           setCanonicalDestinationBound(true)
+          canonicalBindingReady = true
           setCanonicalDestinationMatch(true)
           busy = false
           setRunning(false)
@@ -783,13 +791,15 @@ export default function LunaShippingCapturePage() {
     .find((event) => event.success) ?? null
   const traceBlocker = newestTrace?.state === "FAIL"
     ? newestTrace.reasonCode : "NONE"
+  const canStartFinalCanary = finalCanaryStartEnabled(connected,
+    canonicalDestinationBound, running)
 
   return <main className="min-h-screen bg-[#07111a] px-4 py-10 text-white">
     <section className="mx-auto max-w-2xl rounded-3xl border border-white/15 bg-white/[0.05] p-6">
       <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100">Seller OS · Luna shipping</p>
       <h1 className="mt-3 text-2xl font-black">Captura automática de envío</h1>
       <p className="mt-2 text-sm text-white/65">La extensión usa la sesión normal ya autenticada de Chrome. No lee cookies ni credenciales y nunca completa una compra.</p>
-      <button type="button" disabled={!connected || running}
+      <button type="button" disabled={!canStartFinalCanary}
         onClick={() => triggerRef.current?.()}
         className="mt-6 w-full rounded-2xl bg-cyan-300 px-5 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
         {canonicalDestinationBound
