@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Seller OS — eBay Product Research Capture",
-  "version": "1.2.20",
+  "version": "1.2.21",
   "description": "Automatiza una sesión acotada de Product Research y Sold desde Seller OS.",
   "permissions": [],
   "host_permissions": [

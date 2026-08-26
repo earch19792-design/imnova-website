@@ -12,6 +12,7 @@
   const ANALYZE_THUMBNAIL_MESSAGE = "IMNOVA_ANALYZE_VISIBLE_EBAY_THUMBNAIL_V1"
   const AUTOMATED_CAPTURE_MESSAGE = "IMNOVA_AUTOMATED_PRODUCT_RESEARCH_CAPTURE_V1"
   const AUTOMATED_DIAGNOSTIC_PING = "IMNOVA_PRODUCT_RESEARCH_DIAGNOSTIC_PING_V1"
+  const PRODUCT_RESEARCH_TASK_BINDING_VERSION = "PRODUCT_RESEARCH_TASK_BINDING_V1"
   const VISUAL_PATTERN_SCHEMA_VERSION = "PRODUCT_RESEARCH_VISUAL_PATTERN_V2_2026_07_21"
   const VISUAL_PATTERN_ALGORITHM_VERSION = "PR_VISIBLE_THUMBNAIL_LOCAL_V2"
   const OFFICIAL_RESEARCH_PATH = /^\/sh\/research\/?$/
@@ -1528,6 +1529,80 @@
     return { ready: true, reason: "READY" }
   }
 
+  function automatedTaskBindingDecision(input) {
+    const binding = input.taskBinding && typeof input.taskBinding === "object"
+      ? input.taskBinding : null
+    const taskId = text(binding?.taskId).slice(0, 80)
+    const ordinal = Number(binding?.ordinal)
+    const sessionId = text(binding?.sessionId)
+    const expectedQuery = text(input.expectedQuery).slice(0, 100)
+    const expectedCategoryId = text(input.expectedCategoryId) || "0"
+    const valid = binding?.version === PRODUCT_RESEARCH_TASK_BINDING_VERSION &&
+      /^[0-9a-f-]{36}$/i.test(sessionId) && /^[A-Za-z0-9_.:-]+$/.test(taskId) &&
+      Number.isInteger(ordinal) && ordinal > 0 &&
+      normalizedQuery(binding?.expectedQuery) === normalizedQuery(expectedQuery) &&
+      (text(binding?.expectedCategoryId) || "0") === expectedCategoryId &&
+      binding?.navigationAttested === true && binding?.freshTabForTask === true
+    if (!valid) return { accepted: false, reason: "TASK_BINDING_INVALID" }
+    if (!input.queryStateMatch) {
+      return { accepted: false, reason: "QUERY_STATE_MISMATCH" }
+    }
+    if (!input.categoryStateMatch) {
+      return { accepted: false, reason: "CATEGORY_STATE_MISMATCH" }
+    }
+    const bindingId = `${sessionId}:${taskId}:${ordinal}`
+    if (input.existingBindingId && input.existingBindingId !== bindingId) {
+      return { accepted: false, reason: "TASK_BINDING_CONFLICT" }
+    }
+    if (input.guidedStatePresent &&
+      normalizedQuery(input.guidedQuery) !== normalizedQuery(expectedQuery)) {
+      return { accepted: false, reason: "GUIDED_QUERY_MISMATCH" }
+    }
+    if (input.guidedStatePresent &&
+      (text(input.guidedCategoryId) || "0") !== expectedCategoryId) {
+      return { accepted: false, reason: "CATEGORY_STATE_MISMATCH" }
+    }
+    return { accepted: true, reason: "TASK_BINDING_ATTESTED", bindingId, ordinal }
+  }
+
+  function establishAutomatedGuidedState(message) {
+    if (!message?.taskBinding) {
+      return { present: false, accepted: false, reason: "TASK_BINDING_MISSING" }
+    }
+    const expectedQuery = text(message.searchQuery).slice(0, 100)
+    const expectedCategoryId = text(message.categoryId) || "0"
+    const context = queryContext()
+    const decision = automatedTaskBindingDecision({
+      taskBinding: message.taskBinding,
+      expectedQuery,
+      expectedCategoryId,
+      queryStateMatch: normalizedQuery(context.searchQuery) === normalizedQuery(expectedQuery),
+      categoryStateMatch: context.categoryId === expectedCategoryId,
+      guidedStatePresent: Boolean(nextQueryState),
+      guidedQuery: nextQueryState?.expectedQuery,
+      guidedCategoryId: nextQueryState?.expectedCategoryId,
+      existingBindingId: nextQueryState?.taskBindingId,
+    })
+    if (!decision.accepted) return { present: true, ...decision }
+    if (!nextQueryState) {
+      showNextQuery(expectedQuery, decision.ordinal, null, {
+        applied: true,
+        previousResultsFingerprint: null,
+        taskBindingId: decision.bindingId,
+        taskBindingAuthority: "EXTENSION_TASK_SCOPED_EPHEMERAL",
+      }, "AUTOMATED_TASK")
+    } else {
+      nextQueryState.taskBindingId = decision.bindingId
+      nextQueryState.taskBindingAuthority = "EXTENSION_TASK_SCOPED_EPHEMERAL"
+    }
+    if (!nextQueryState) {
+      return { present: true, accepted: false, reason: "GUIDED_STATE_UNAVAILABLE" }
+    }
+    nextQueryState.expectedQuery = expectedQuery
+    nextQueryState.expectedCategoryId = expectedCategoryId
+    return { present: true, ...decision }
+  }
+
   function positivePlanInteger(value) {
     if (value === null || value === undefined || value === "") return null
     const parsed = Number(value)
@@ -2068,7 +2143,13 @@
       sender?.id !== chrome.runtime.id) return false
     const expectedQuery = text(message.searchQuery).slice(0, 100)
     const expectedCategoryId = text(message.categoryId) || "0"
+    const taskBinding = establishAutomatedGuidedState(message)
     const diagnostic = productResearchDiagnostic(expectedQuery, expectedCategoryId)
+    if (taskBinding.present && !taskBinding.accepted) {
+      sendResponse({ success: false, status: "FAILED",
+        error: `PRODUCT_RESEARCH_AUTOMATED_${taskBinding.reason}`, diagnostic })
+      return false
+    }
     if (message.type === AUTOMATED_DIAGNOSTIC_PING) {
       sendResponse({ success: true, status: "READY", diagnostic })
       return false
@@ -2090,7 +2171,8 @@
         error: "PRODUCT_RESEARCH_AUTOMATED_CATEGORY_MISMATCH", diagnostic })
       return false
     }
-    if (!nextQueryState || normalizedQuery(nextQueryState.query) !== normalizedQuery(expectedQuery) ||
+    if (!taskBinding.accepted || nextQueryState?.taskBindingId !== taskBinding.bindingId ||
+      !nextQueryState || normalizedQuery(nextQueryState.query) !== normalizedQuery(expectedQuery) ||
       normalizedQuery(currentQuery) !== normalizedQuery(expectedQuery) ||
       !nextQueryState.resultsReady) {
       sendResponse({ success: true, status: "PENDING", diagnostic })
@@ -2180,6 +2262,8 @@
       transitionSource,
       previousResultsSignature: restored?.applied ? "" : visibleResultsSignature(),
       previousResultsFingerprint: restored?.previousResultsFingerprint ?? null,
+      taskBindingId: restored?.taskBindingId ?? null,
+      taskBindingAuthority: restored?.taskBindingAuthority ?? null,
       resultsReady: false,
       workflowStage: "APPLYING_QUERY",
     }
@@ -2332,7 +2416,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.20"
+  title.textContent = "Seller OS · Product Research · v1.2.21"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"

@@ -21,6 +21,7 @@ const MAX_RETRIES = 1
 const PRODUCT_RESEARCH_DAY_RANGE = 90
 const PRODUCT_RESEARCH_PAGE_LIMIT = 50
 const PRODUCT_RESEARCH_TRACE_VERSION = "PRODUCT_RESEARCH_STAGE_TRACE_V2"
+const PRODUCT_RESEARCH_TASK_BINDING_VERSION = "PRODUCT_RESEARCH_TASK_BINDING_V1"
 
 function officialResearchSender(sender) {
   try {
@@ -469,9 +470,11 @@ async function productResearchContentCapture(input) {
     if (Date.now() >= input.expiresAt) {
       throw productResearchFailure("ONE_CLICK_RESEARCH_SESSION_EXPIRED", input.trace)
     }
+    let taskBinding = null
     try {
       const tab = await chrome.tabs.get(input.tabId)
       updateProductResearchTabTrace(tab, input, input.trace)
+      taskBinding = attestedProductResearchTaskBinding(tab, input, input.trace)
     } catch { /* the bounded message probe below remains authoritative */ }
     if (["LOGIN_REDIRECT", "ACCESS_CHALLENGE", "CONSENT_OR_INTERSTITIAL",
       "UNSUPPORTED_NAVIGATION", "UNSUPPORTED_PRODUCT_RESEARCH_PAGE_STATE"]
@@ -485,6 +488,7 @@ async function productResearchContentCapture(input) {
         type: PRODUCT_RESEARCH_DIAGNOSTIC_PING,
         searchQuery: input.searchQuery,
         categoryId: input.categoryId,
+        ...(taskBinding ? { taskBinding } : {}),
       })
       if (ping?.success === true && ping?.status === "READY") {
         updateProductResearchContentTrace(ping.diagnostic, input.trace)
@@ -492,7 +496,10 @@ async function productResearchContentCapture(input) {
     } catch { /* missing receiver is recorded by a false ping ACK */ }
     input.trace.captureRequestSent = true
     try {
-      const response = await chrome.tabs.sendMessage(input.tabId, input.message)
+      const response = await chrome.tabs.sendMessage(input.tabId, {
+        ...input.message,
+        ...(taskBinding ? { taskBinding } : {}),
+      })
       input.trace.captureResponseReceived = true
       input.trace.captureResponseState = response?.status === "READY" ? "READY"
         : response?.status === "FAILED" || response?.success === false ? "FAILED" : "PENDING"
@@ -562,6 +569,42 @@ function productResearchCategoryId(value) {
   return categoryId
 }
 
+function productResearchTaskBinding(lease, task, searchQuery, categoryId, ordinal) {
+  const taskId = typeof task?.id === "string"
+    ? task.id.normalize("NFKC").trim().slice(0, 80) : ""
+  if (!taskId || !/^[A-Za-z0-9_.:-]+$/.test(taskId)) {
+    throw new Error("ONE_CLICK_RESEARCH_TASK_ID_INVALID")
+  }
+  return {
+    version: PRODUCT_RESEARCH_TASK_BINDING_VERSION,
+    sessionId: lease.sessionId,
+    taskId,
+    ordinal,
+    expectedQuery: searchQuery,
+    expectedCategoryId: categoryId,
+  }
+}
+
+function attestedProductResearchTaskBinding(tab, input, trace) {
+  let url
+  try { url = new URL(typeof tab?.url === "string" ? tab.url : "") } catch { return null }
+  const navigationAttested = tab?.id === input.tabId && tab?.status === "complete" &&
+    url.protocol === "https:" && url.hostname === "www.ebay.com" &&
+    /^\/sh\/research\/?$/.test(url.pathname) &&
+    url.searchParams.get("keywords") === input.searchQuery &&
+    url.searchParams.get("categoryId") === input.categoryId &&
+    url.searchParams.get("tabName") === "SOLD" &&
+    url.searchParams.get("dayRange") === String(PRODUCT_RESEARCH_DAY_RANGE) &&
+    trace.urlPathState === "MATCH" && trace.urlQueryState === "MATCH" &&
+    trace.urlCategoryState === "MATCH"
+  if (!navigationAttested) return null
+  return {
+    ...input.taskBinding,
+    navigationAttested: true,
+    freshTabForTask: true,
+  }
+}
+
 function productResearchUrl(searchQuery, categoryId) {
   const endDate = Date.now()
   const startDate = endDate - PRODUCT_RESEARCH_DAY_RANGE * 24 * 60 * 60 * 1_000
@@ -606,6 +649,9 @@ async function runOneClickQueryOnce(message, lease) {
     throw new Error("ONE_CLICK_RESEARCH_QUERY_BOUNDS_INVALID")
   }
   const categoryId = productResearchCategoryId(task.categoryId)
+  const taskBinding = productResearchTaskBinding(
+    lease, task, searchQuery, categoryId, ordinal,
+  )
   const productResearchTrace = newProductResearchTrace()
   const tab = await chrome.tabs.create({
     url: productResearchUrl(searchQuery, categoryId), active: false,
@@ -621,6 +667,7 @@ async function runOneClickQueryOnce(message, lease) {
       timeoutCode: "PRODUCT_RESEARCH_AUTOMATED_CAPTURE_TIMEOUT",
       searchQuery,
       categoryId,
+      taskBinding,
       trace: productResearchTrace,
       message: { type: PRODUCT_RESEARCH_CAPTURE, searchQuery, categoryId,
         maxRows: Number(lease.bounds.maxRowsPerCapture) },

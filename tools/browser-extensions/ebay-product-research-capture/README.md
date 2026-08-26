@@ -9,7 +9,15 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Abre Seller OS Preview y usa **INICIAR RESEARCH AUTOMÁTICO** una sola vez.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.20.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.21.
+
+## Binding efímero de tarea guiada (v1.2.21)
+
+La automatización conserva el `nextQueryState` existente, pero ya no depende de que eBay
+retenga el fragmento `#seller-os-*`. El service worker entrega una atestación efímera solo
+después de confirmar un tab nuevo y completo con path, consulta, categoría, rango y pestaña
+Sold correctos. El content script enlaza esa tarea con la identidad visible de resultados;
+una tarea distinta, una consulta/categoría diferente o una firma previa siguen bloqueadas.
 
 ## Diagnóstico estructural de readiness (v1.2.20)
 
