@@ -41,6 +41,7 @@ export const SELLER_OS_DEMAND_FIRST_BROAD_NET_LIMITS_V1 = Object.freeze({
   observations: 100,
   familyCandidates: 10,
   persistedFamiliesPerManualCanary: 1,
+  persistedFamiliesPerNightlyRun: 10,
 } as const)
 
 const MAXIMUM_AGE_SECONDS = 30 * 24 * 60 * 60
@@ -118,6 +119,50 @@ function demandTokens(value: string) {
     .replace(/([0-9])([a-z])/g, "$1 $2")
     .replace(/[^a-z0-9+.-]+/g, " ").trim().split(/\s+/)
     .filter(Boolean).slice(0, 30)
+}
+
+function soldEvidenceTokens(evidence: readonly MarketEvidenceV1[]) {
+  return new Set(evidence.flatMap((entry) => entry.keywordSignals)
+    .flatMap((signal) => demandTokens(signal)))
+}
+
+function hasEveryToken(tokens: ReadonlySet<string>, required: readonly string[]) {
+  return required.every((token) => tokens.has(token))
+}
+
+function reconcileCanonicalFamilyNameFromSoldEvidenceV1(input: Readonly<{
+  familyName: string
+  categoryId: string
+  evidence: readonly MarketEvidenceV1[]
+}>) {
+  const tokens = soldEvidenceTokens(input.evidence)
+  if (input.categoryId === "31387" &&
+      hasEveryToken(tokens, ["women", "watch", "mother", "pearl", "dial", "quartz"])) {
+    return "Women's Mother-of-Pearl Dial Quartz Watches"
+  }
+  return input.familyName
+}
+
+function reviewedCommercialConceptKey(input: Readonly<{
+  familyName: string
+  categoryId?: string | null
+  evidence?: readonly MarketEvidenceV1[]
+}>) {
+  const tokens = new Set([
+    ...demandTokens(input.familyName),
+    ...(input.evidence ? [...soldEvidenceTokens(input.evidence)] : []),
+  ])
+  if (tokens.has("tesla") && tokens.has("nema") &&
+      (tokens.has("adapter") || tokens.has("adapters"))) {
+    return "reviewed-commercial-concept:tesla-gen-ii-nema-adapters"
+  }
+  if (tokens.has("microcurrent") && tokens.has("facial") &&
+      (tokens.has("device") || tokens.has("devices"))) {
+    return "reviewed-commercial-concept:microcurrent-facial-devices"
+  }
+  return input.categoryId
+    ? `canonical-family:${input.categoryId}:${normalizedFamilyClusterKey(input.familyName)}`
+    : null
 }
 
 type DemandKeywordFamilyInputV1 = Readonly<{
@@ -687,6 +732,17 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
     const category = text(identity.category, 120)?.toLowerCase()
     return productFunction && category ? [`${category}\n${productFunction}`] : []
   }))
+  const reviewedExisting = new Set(rows(input.existingCases).flatMap((row) => {
+    const identity = record(row.family_identity ?? row.familyIdentity)
+    const name = text(row.family_name ?? row.familyName, 160) ??
+      text(identity.productFunction, 160)
+    const category = text(identity.category, 120)
+    const categoryId = category?.match(/^ebay-us-category:(\d+)$/)?.[1] ?? null
+    const key = name ? reviewedCommercialConceptKey({
+      familyName: name, categoryId,
+    }) : null
+    return key ? [key] : []
+  }))
   let duplicatesSuppressed = 0
   const candidates: SellerOsDemandFirstFamilyCandidateV1[] = []
   for (const cluster of clusters) {
@@ -710,9 +766,12 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
     const evidenceObservedAt = windowComplete
       ? cluster.windows.map((window) => window.capturedAt as string)
         .sort((left, right) => Date.parse(right) - Date.parse(left))[0] : null
+    const canonicalFamilyName = reconcileCanonicalFamilyNameFromSoldEvidenceV1({
+      familyName: cluster.familyName, categoryId: cluster.categoryId, evidence,
+    })
     const aggregateResearch = buildMarketOpportunityResearchV1({
       request: normalizeMarketResearchRequestV1({ marketplace: "EBAY_US",
-        seedType: "SEED_QUERY", seedValue: cluster.familyName,
+        seedType: "SEED_QUERY", seedValue: canonicalFamilyName,
         requestedWindowDays: 30, researchIntent: "FAMILY_DISCOVERY",
         queryBudget: 5,
         seedIdentity: { categoryId: cluster.categoryId, categoryName: null,
@@ -728,7 +787,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
       entry.evidenceStatus === "SOLD_EVIDENCE_AVAILABLE")
       ? "AVAILABLE" as const : "UNPROVEN" as const
     const metrics = Object.freeze({
-      clusterKey: cluster.clusterKey, familyName: cluster.familyName,
+      clusterKey: cluster.clusterKey, familyName: canonicalFamilyName,
       categoryId: cluster.categoryId, rawClusterCount: cluster.rawClusterCount,
       signalCount: evidence.length,
       uniqueSoldItemCount: unique(evidence.flatMap((entry) =>
@@ -741,15 +800,19 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
       keywordDnaStatus, identitySupportCount: cluster.identityHashes.length,
     })
     const familyIdentity: SellerOsMarketFamilyIdentityV1 = {
-      productFunction: cluster.familyName,
-      buyerUseCase: cluster.queries[0] ?? cluster.familyName,
+      productFunction: canonicalFamilyName,
+      buyerUseCase: cluster.queries[0] ?? canonicalFamilyName,
       category: `ebay-us-category:${cluster.categoryId}`,
       structuredDefinition: { "category id": cluster.categoryId,
-        "product family": cluster.familyName },
+        "product family": canonicalFamilyName },
     }
     const familyId = buildSellerOsMarketFamilyIdV1(familyIdentity)
     const semantic = `${familyIdentity.category.toLowerCase()}\n${familyIdentity.productFunction.toLowerCase()}`
-    if (exactExisting.has(familyId) || semanticExisting.has(semantic)) {
+    const reviewedConcept = reviewedCommercialConceptKey({
+      familyName: canonicalFamilyName, categoryId: cluster.categoryId, evidence,
+    })
+    if (exactExisting.has(familyId) || semanticExisting.has(semantic) ||
+        (reviewedConcept !== null && reviewedExisting.has(reviewedConcept))) {
       duplicatesSuppressed += 1
       candidates.push(Object.freeze({ status: "DUPLICATE" as const,
         reason: "CANONICAL_FAMILY_DUPLICATE_SUPPRESSED", familyDefinition: null,
@@ -758,7 +821,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
       continue
     }
     if (evidence.length < 2 || cluster.identityHashes.length < 2 ||
-        soldEvidenceCount < 2 || cluster.familyName === "Unproven product family") {
+        soldEvidenceCount < 2 || canonicalFamilyName === "Unproven product family") {
       candidates.push(Object.freeze({ status: "UNQUALIFIED" as const,
         reason: "DEFENSIBLE_FAMILY_EVIDENCE_INSUFFICIENT", familyDefinition: null,
         observation: null, taskId: cluster.taskIds[0] ?? null,
@@ -804,7 +867,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
     const intent = unique((aggregateResearch.keywordSpine.terms.length
       ? aggregateResearch.keywordSpine.terms : cluster.queries).slice(0, 8))
     const familyDefinition: SellerOsMarketFamilyDefinitionV1 = {
-      identity: familyIdentity, familyName: cluster.familyName,
+      identity: familyIdentity, familyName: canonicalFamilyName,
       familyQuerySet: unique([...cluster.queries, ...cluster.generatedQueries,
         ...aggregateResearch.generatedQueries.map((row) => row.query)]).slice(0, 16),
       keyProductAttributes: ["category id", "product family"],
@@ -1151,10 +1214,12 @@ export async function runSellerOsDemandFirstBroadNetCanaryV1(input: Readonly<{
   accountKey: string
   maximumFamiliesToPersist?: number
   officialItemReader?: OfficialItemCategoryReaderV1
+  executionMode?: "MANUAL_CANARY" | "NIGHTLY"
 }>) {
   const { tasks, batches, observations } =
     await loadSellerOsDemandFirstBroadNetCohortV1(input)
-  const categoryAuthorities = await resolveSellerOsOfficialSoldCategoryAuthoritiesV1({
+  const categoryResolution =
+    await resolveSellerOsOfficialSoldCategoryAuthoritiesWithMetricsV1({
     tasks, observations, officialItemReader: input.officialItemReader,
   })
   const existingResult = await input.supabase.rpc(
@@ -1165,14 +1230,19 @@ export async function runSellerOsDemandFirstBroadNetCanaryV1(input: Readonly<{
     throw new Error("DEMAND_FIRST_FAMILY_AUTHORITY_UNAVAILABLE")
   }
   const candidates = buildSellerOsDemandFirstFamilyCandidatesV1({
-    tasks, batches, observations, categoryAuthorities,
+    tasks, batches, observations,
+    categoryAuthorities: categoryResolution.authorities,
     existingCases: rows(existingRadar.families).map(
       (family) => ({ family_id: family.familyId, family_name: family.familyName,
-        opportunity_case_id: family.opportunityCaseId })),
+        opportunity_case_id: family.opportunityCaseId,
+        family_identity: family.familyIdentity ?? null })),
   })
+  const persistenceLimit = input.executionMode === "NIGHTLY"
+    ? SELLER_OS_DEMAND_FIRST_BROAD_NET_LIMITS_V1.persistedFamiliesPerNightlyRun
+    : SELLER_OS_DEMAND_FIRST_BROAD_NET_LIMITS_V1.persistedFamiliesPerManualCanary
   const qualified = candidates.filter((item) => item.status === "QUALIFIED")
-    .slice(0, Math.min(SELLER_OS_DEMAND_FIRST_BROAD_NET_LIMITS_V1
-      .persistedFamiliesPerManualCanary, input.maximumFamiliesToPersist ?? 1))
+    .slice(0, Math.min(persistenceLimit,
+      input.maximumFamiliesToPersist ?? persistenceLimit))
   let persisted = 0
   let opportunityCasesCreated = 0
   let observationsCreated = 0
@@ -1268,12 +1338,17 @@ export async function runSellerOsDemandFirstBroadNetCanaryV1(input: Readonly<{
     }
     persisted += 1
     persistedNames.push(definition.familyName)
-    if (expected.familyDemandStatus === "FAMILY_DEMAND_PROVEN") {
-      productFitHandoff = await collectRadarRevenueFactoryCandidateBatchV1({
-        supabase: input.supabase, accountKey: input.accountKey,
-        allowedFamilyNames: [definition.familyName], targetCandidates: 10,
-      })
-    }
+  }
+  const productFitNames = qualified.flatMap((candidate) =>
+    candidate.observation?.familyDemandStatus === "FAMILY_DEMAND_PROVEN" &&
+      candidate.familyDefinition &&
+      persistedNames.includes(candidate.familyDefinition.familyName)
+      ? [candidate.familyDefinition.familyName] : [])
+  if (productFitNames.length) {
+    productFitHandoff = await collectRadarRevenueFactoryCandidateBatchV1({
+      supabase: input.supabase, accountKey: input.accountKey,
+      allowedFamilyNames: productFitNames, targetCandidates: 10,
+    })
   }
   const radarReadback = persisted ? await checkedRpc(input.supabase,
     "get_seller_os_family_market_radar_v1", { p_family_id: null, p_limit: 100 })
@@ -1282,6 +1357,8 @@ export async function runSellerOsDemandFirstBroadNetCanaryV1(input: Readonly<{
     contractVersion: SELLER_OS_DEMAND_FIRST_BROAD_NET_ORCHESTRATOR_VERSION,
     status: "PASS" as const,
     eBayDiscoverySignals: observations.length,
+    browseItemLookupsAttempted: categoryResolution.browseItemLookupsAttempted,
+    browseItemLookupsSucceeded: categoryResolution.browseItemLookupsSucceeded,
     newFamilyCandidates: qualified.length,
     duplicatesSuppressed: candidates.filter((item) => item.status === "DUPLICATE").length,
     newFamiliesPersisted: persisted, opportunityCasesCreated,
@@ -1290,6 +1367,19 @@ export async function runSellerOsDemandFirstBroadNetCanaryV1(input: Readonly<{
     lunaProductFitHandoff: productFitHandoff ?? (persistedNames.length
       ? "NOT_ELIGIBLE_UNTIL_FAMILY_DEMAND_PROVEN" : "NO_NEW_ELIGIBLE_FAMILY"),
     shippingRuns: 0 as const, marketplaceWrites: 0 as const,
-    externalAlerts: 0 as const, nightlyPolicyEnabled: false as const,
+    externalAlerts: 0 as const,
+    nightlyPolicyEnabled: input.executionMode === "NIGHTLY",
+  })
+}
+
+export async function runSellerOsDemandFirstBroadNetNightlyV1(input: Readonly<{
+  supabase: ReadWriteClient
+  accountKey: string
+  officialItemReader?: OfficialItemCategoryReaderV1
+}>) {
+  return runSellerOsDemandFirstBroadNetCanaryV1({ ...input,
+    executionMode: "NIGHTLY",
+    maximumFamiliesToPersist:
+      SELLER_OS_DEMAND_FIRST_BROAD_NET_LIMITS_V1.persistedFamiliesPerNightlyRun,
   })
 }
