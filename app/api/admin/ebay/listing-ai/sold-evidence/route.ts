@@ -12,6 +12,8 @@ import {
 import {
   getOfficialSoldEvidenceImportStatus,
   importOfficialSoldEvidence,
+  oneClickSoldEvidenceNoValidRowsCode,
+  soldEvidenceNoValidRowsDiagnostic,
   type OfficialSoldEvidenceExport,
   type OfficialSoldEvidenceFormat,
 } from "@/lib/ebay/ebay-official-sold-evidence-import"
@@ -68,15 +70,31 @@ export async function POST(req: Request) {
       captureAdapter = await adaptMainSearchSoldCaptureForCanonicalImport({ rows })
       content = JSON.stringify({ rows: captureAdapter.rows })
     }
-    const result = await importOfficialSoldEvidence({
-      supabase: auth.supabase,
-      accountKey: auth.accountKey,
-      actorId: auth.actorId,
-      format: text(body.format).toLocaleUpperCase("en-US") as OfficialSoldEvidenceFormat,
-      sourceExportType: text(body.sourceExportType) as OfficialSoldEvidenceExport,
-      content,
-      operatorAttested: body.operatorAttested === true,
-    })
+    let result: Awaited<ReturnType<typeof importOfficialSoldEvidence>>
+    try {
+      result = await importOfficialSoldEvidence({
+        supabase: auth.supabase,
+        accountKey: auth.accountKey,
+        actorId: auth.actorId,
+        format: text(body.format).toLocaleUpperCase("en-US") as OfficialSoldEvidenceFormat,
+        sourceExportType: text(body.sourceExportType) as OfficialSoldEvidenceExport,
+        content,
+        operatorAttested: body.operatorAttested === true,
+      })
+    } catch (error) {
+      const diagnostic = soldEvidenceNoValidRowsDiagnostic(error)
+      if (!oneClickResearch || !captureAdapter || !diagnostic) throw error
+      return listingAiResponse({
+        success: false,
+        error: oneClickSoldEvidenceNoValidRowsCode({
+          observedCount: captureAdapter.sourceRowCount,
+          parsedCount: captureAdapter.freshRowCount,
+          diagnostic,
+        }),
+        safety: { secretsExposed: false, piiExposed: false,
+          canPublish: false, ebayWrites: 0 },
+      }, 400)
+    }
     let scan: Record<string, unknown> | null = null
     if (result.reanalysisRequired && !oneClickResearch) {
       const started = await startListingAiApprovalQueueScan({

@@ -346,6 +346,52 @@ type ParsedObservation = {
 } | { completedWithoutSale: true }
   | { error: string }
 
+export type SoldEvidenceNoValidRowsDiagnostic = Readonly<{
+  sourceRowCount: number
+  rejectedCount: number
+  errorCounts: Readonly<Record<string, number>>
+}>
+
+export class SoldEvidenceNoValidRowsError extends Error {
+  readonly diagnostic: SoldEvidenceNoValidRowsDiagnostic
+
+  constructor(input: { sourceRowCount: number; errorCounts: Record<string, number> }) {
+    super("SOLD_EVIDENCE_NO_VALID_ROWS")
+    this.name = "SoldEvidenceNoValidRowsError"
+    this.diagnostic = Object.freeze({
+      sourceRowCount: input.sourceRowCount,
+      rejectedCount: Object.values(input.errorCounts).reduce((total, count) => total + count, 0),
+      errorCounts: Object.freeze({ ...input.errorCounts }),
+    })
+  }
+}
+
+export function soldEvidenceNoValidRowsDiagnostic(error: unknown) {
+  return error instanceof SoldEvidenceNoValidRowsError ? error.diagnostic : null
+}
+
+export function oneClickSoldEvidenceNoValidRowsCode(input: {
+  observedCount: number
+  parsedCount: number
+  diagnostic: SoldEvidenceNoValidRowsDiagnostic
+}) {
+  const reasons = Object.entries(input.diagnostic.errorCounts)
+    .filter(([code, count]) => /^[A-Z0-9_]+$/.test(code) && Number.isInteger(count) && count > 0)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0], "en-US"))
+    .slice(0, 8)
+    .map(([code, count]) => `${code}_${count}`)
+  return [
+    "SOLD_EVIDENCE_NO_VALID_ROWS",
+    `OBSERVED_${input.observedCount}`,
+    `PARSED_${input.parsedCount}`,
+    `NORMALIZED_${input.diagnostic.sourceRowCount}`,
+    "VALID_0",
+    `REJECTED_${input.diagnostic.rejectedCount}`,
+    "DUPLICATE_NOT_REACHED",
+    ...reasons,
+  ].join(":")
+}
+
 function sourceSemantics(sourceExportType: OfficialSoldEvidenceExport, rows: JsonRecord[]) {
   if (sourceExportType === "EBAY_MAIN_SEARCH_SOLD_CAPTURE") {
     return { evidenceScope: "MARKET_WIDE_SOLD_EVIDENCE" as const,
@@ -551,7 +597,7 @@ export function parseOfficialSoldEvidenceImport(input: {
     keywordSignals: entry.transientTitleTokens.filter((token) => (tokenFrequency.get(token) ?? 0) >= 2)
       .slice(0, 12) }))
   if (!observations.length && completedWithoutSaleCount === 0) {
-    throw new Error("SOLD_EVIDENCE_NO_VALID_ROWS")
+    throw new SoldEvidenceNoValidRowsError({ sourceRowCount: rows.length, errorCounts: errors })
   }
   return {
     sourceType: input.sourceExportType === "EBAY_MAIN_SEARCH_SOLD_CAPTURE"
