@@ -41,6 +41,8 @@ export async function GET(req: Request) {
   const workDeadlineAt = startedAt + CRON_TIME_BUDGET_MS
   const remainingWorkMs = () => Math.max(0, workDeadlineAt - Date.now())
   const workerId = buildSellerWorkerId("vercel-cron")
+  const suppressExternalAlertDelivery =
+    new URL(req.url).searchParams.get("suppressExternalAlerts") === "true"
   try {
     const manualListingReverification =
       await reverifyManualEbayListingsReadonly(supabase, {
@@ -104,6 +106,7 @@ export async function GET(req: Request) {
         const batch = await processNextEbayFirstLunaBatch(supabase, runId, {
           batchSize: 1,
           workerId,
+          suppressExternalAlertDelivery,
         })
         batches.push(batch)
         if (batch.completed) break

@@ -9,6 +9,11 @@ on:
         description: "Optional one-run Git-associated Preview URL"
         required: false
         type: string
+      run_luna_discovery_batch:
+        description: "Run one bounded Luna opportunity discovery batch"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -18,6 +23,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  bounded-luna-opportunity-discovery:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_luna_discovery_batch == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Process up to 50 Luna candidates without external alert delivery
+        env:
+          PREVIEW_URL: ${{ inputs.preview_url || secrets.EBAY_COMMERCIAL_PREVIEW_URL }}
+          CRON_SECRET: ${{ secrets.EBAY_COMMERCIAL_CRON_SECRET }}
+          VERCEL_BYPASS_SECRET: ${{ secrets.EBAY_COMMERCIAL_VERCEL_BYPASS_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$PREVIEW_URL"
+          test -n "$CRON_SECRET"
+          response_file=$(mktemp)
+          trap 'rm -f "$response_file"' EXIT
+          processed_total=0
+          for attempt in $(seq 1 10); do
+            args=(--silent --show-error --max-time 55
+              --output "$response_file"
+              --write-out "%{http_code}"
+              -H "Authorization: Bearer $CRON_SECRET")
+            if [ -n "$VERCEL_BYPASS_SECRET" ]; then
+              args+=(-H "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET")
+            fi
+            http_code=$(curl "${args[@]}" "$PREVIEW_URL/api/cron/ebay-luna-opportunity-scan?suppressExternalAlerts=true")
+            if [ "$http_code" = "429" ]; then
+              echo "discovery_paused_by_ebay_quota=true"
+              break
+            fi
+            test "$http_code" = "200"
+            jq -e '.success == true' "$response_file" >/dev/null
+            processed_now=$(jq '[.batches[]?.processed // 0] | add // 0' "$response_file")
+            processed_total=$((processed_total + processed_now))
+            echo "discovery_progress=$processed_total/50"
+            if [ "$processed_total" -ge 50 ] || [ "$processed_now" -eq 0 ]; then
+              break
+            fi
+          done
+          echo "discovery_processed_total=$processed_total"
+
   active-listing-luna-monitor:
     # Runs for the full lifetime of the active listings. The endpoint remains
     # Preview-only and also enforces its own runtime kill switch and lease.
