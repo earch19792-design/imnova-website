@@ -754,8 +754,9 @@ export async function persistLunaChromeShippingCaptureV1(input: Readonly<{
     p_frontier: frontier,
   })
   if (write.error) throw new Error("LUNA_SHIPPING_CAPTURE_DURABLE_WRITE_FAILED")
-  if (record(write.data).outcome !== "CREATED") {
-    throw new Error("LUNA_SHIPPING_CAPTURE_SESSION_REPLAYED")
+  const writeOutcome = record(write.data).outcome
+  if (writeOutcome !== "CREATED" && writeOutcome !== "IDEMPOTENT_SUCCESS") {
+    throw new Error("LUNA_SHIPPING_CAPTURE_DURABLE_WRITE_FAILED")
   }
   const readback = await input.supabase.rpc(
     "get_seller_os_latest_profitability_frontiers_v1", {
