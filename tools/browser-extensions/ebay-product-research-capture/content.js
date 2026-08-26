@@ -11,6 +11,7 @@
   const CAPTURE_RESULT_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1"
   const ANALYZE_THUMBNAIL_MESSAGE = "IMNOVA_ANALYZE_VISIBLE_EBAY_THUMBNAIL_V1"
   const AUTOMATED_CAPTURE_MESSAGE = "IMNOVA_AUTOMATED_PRODUCT_RESEARCH_CAPTURE_V1"
+  const AUTOMATED_DIAGNOSTIC_PING = "IMNOVA_PRODUCT_RESEARCH_DIAGNOSTIC_PING_V1"
   const VISUAL_PATTERN_SCHEMA_VERSION = "PRODUCT_RESEARCH_VISUAL_PATTERN_V2_2026_07_21"
   const VISUAL_PATTERN_ALGORITHM_VERSION = "PR_VISIBLE_THUMBNAIL_LOCAL_V2"
   const OFFICIAL_RESEARCH_PATH = /^\/sh\/research\/?$/
@@ -27,6 +28,7 @@
   const VISUAL_FALLBACK_MESSAGE_TIMEOUT_MS = 2_500
   const VISUAL_FALLBACK_TOTAL_BUDGET_MS = 12_000
   let automatedCapturePromise = null
+  const contentScriptBootId = crypto.randomUUID()
   const REQUIRED_FIELDS = ["temporaryTitle", "averageSoldPrice", "totalSold", "lastSoldDate"]
   const HEADER_SELECTOR = [
     "th", '[role="columnheader"]', '[data-testid*="header" i]',
@@ -1889,6 +1891,60 @@
     return null
   }
 
+  function productResearchDiagnostic(expectedQuery, expectedCategoryId) {
+    let context = { searchQuery: "", categoryId: "0" }
+    try { context = queryContext() } catch { /* diagnostic remains fail closed */ }
+    const pageText = text(document.body?.innerText).slice(0, 50_000)
+    const accessChallenge = Boolean(
+      document.querySelector(".g-recaptcha,[data-captcha],iframe[src*='captcha']") ||
+      /pardon our interruption|verify you are human|security measure|access denied|captcha/i
+        .test(pageText),
+    )
+    const loginRequired = Boolean(document.querySelector(
+      'form[action*="signin" i] input[type="password"],input[type="password"][name*="pass" i]',
+    ))
+    const consentOrInterstitial = [...document.querySelectorAll(
+      '[role="dialog"],[aria-modal="true"],[data-testid*="consent" i],'+
+      '[class*="consent" i],[id*="consent" i]',
+    )].filter(visible).slice(0, 20).some((element) =>
+      /consent|privacy choices|accept cookies|agree and continue|cookie settings/i.test(
+        text(element.innerText || element.textContent).slice(0, 1_000),
+      ))
+    let resultsSignature = ""
+    try { resultsSignature = visibleResultsSignature() } catch { /* no recognized result */ }
+    const resultsContainerFound = Boolean(resultsSignature) || [
+      "table", '[role="table"]', '[role="grid"]', '[data-testid*="table" i]',
+      '[data-testid*="grid" i]', '[class*="table" i]', '[class*="grid" i]',
+    ].some((selector) => deepQueryAll(selector).slice(0, 200).some(visible))
+    const resultsLoading = [...document.querySelectorAll([
+      '[aria-busy="true"]', '[role="progressbar"]', '[data-testid*="loading" i]',
+      '[data-testid*="spinner" i]', '[class*="loading" i]', '[class*="spinner" i]',
+    ].join(","))].slice(0, 100).some(visible)
+    const recognizedResearchPage = isOfficialResearchTarget(window.location.href) &&
+      Boolean(researchSearchInput() || resultsContainerFound || resultsLoading)
+    const authState = accessChallenge ? "ACCESS_CHALLENGE"
+      : loginRequired ? "LOGIN_REQUIRED"
+        : consentOrInterstitial ? "CONSENT_OR_INTERSTITIAL"
+          : recognizedResearchPage ? "AUTHENTICATED_PRODUCT_RESEARCH" : "UNVERIFIED"
+    const externalEbayBlocker = accessChallenge ? "ACCESS_CHALLENGE"
+      : loginRequired ? "LOGIN_REDIRECT"
+        : consentOrInterstitial ? "CONSENT_OR_INTERSTITIAL"
+          : nextQueryState?.workflowStage === "MANUAL_COPY_REQUIRED" ||
+            nextQueryState?.workflowStage === "MANUAL_SEARCH_REQUIRED"
+            ? "UNSUPPORTED_PRODUCT_RESEARCH_PAGE_STATE" : "NONE"
+    return {
+      contentScriptBootId,
+      contentScriptBooted: true,
+      authState,
+      queryStateMatch: normalizedQuery(context.searchQuery) === normalizedQuery(expectedQuery),
+      categoryStateMatch: context.categoryId === expectedCategoryId,
+      resultsContainerFound,
+      resultsLoading,
+      resultsReady: nextQueryState?.resultsReady === true,
+      externalEbayBlocker,
+    }
+  }
+
   async function prepareAutomatedCapture() {
     if (automatedCapturePromise) return automatedCapturePromise
     automatedCapturePromise = (async () => {
@@ -1912,39 +1968,46 @@
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message?.type !== AUTOMATED_CAPTURE_MESSAGE ||
+    if (![AUTOMATED_CAPTURE_MESSAGE, AUTOMATED_DIAGNOSTIC_PING].includes(message?.type) ||
       sender?.id !== chrome.runtime.id) return false
     const expectedQuery = text(message.searchQuery).slice(0, 100)
     const expectedCategoryId = text(message.categoryId) || "0"
+    const diagnostic = productResearchDiagnostic(expectedQuery, expectedCategoryId)
+    if (message.type === AUTOMATED_DIAGNOSTIC_PING) {
+      sendResponse({ success: true, status: "READY", diagnostic })
+      return false
+    }
     if (expectedQuery.length < 3 || guidedPlanCompleted) {
       sendResponse({ success: false, status: "FAILED",
-        error: "PRODUCT_RESEARCH_AUTOMATED_QUERY_INVALID" })
+        error: "PRODUCT_RESEARCH_AUTOMATED_QUERY_INVALID", diagnostic })
       return false
     }
     const blocker = automatedAccessBlocker()
     if (blocker) {
-      sendResponse({ success: false, status: "FAILED", error: blocker })
+      sendResponse({ success: false, status: "FAILED", error: blocker, diagnostic })
       return false
     }
     const currentContext = queryContext()
     const currentQuery = text(currentContext.searchQuery)
     if (currentContext.categoryId !== expectedCategoryId) {
       sendResponse({ success: false, status: "FAILED",
-        error: "PRODUCT_RESEARCH_AUTOMATED_CATEGORY_MISMATCH" })
+        error: "PRODUCT_RESEARCH_AUTOMATED_CATEGORY_MISMATCH", diagnostic })
       return false
     }
     if (!nextQueryState || normalizedQuery(nextQueryState.query) !== normalizedQuery(expectedQuery) ||
       normalizedQuery(currentQuery) !== normalizedQuery(expectedQuery) ||
       !nextQueryState.resultsReady) {
-      sendResponse({ success: true, status: "PENDING" })
+      sendResponse({ success: true, status: "PENDING", diagnostic })
       return false
     }
     void prepareAutomatedCapture().then(
       (capture) => sendResponse({ success: true, status: "READY", capture,
-        marketplaceWrites: 0 }),
+        diagnostic: { ...productResearchDiagnostic(expectedQuery, expectedCategoryId),
+          resultsReady: true }, marketplaceWrites: 0 }),
       (error) => sendResponse({ success: false, status: "FAILED",
         error: error instanceof Error ? error.message :
-          "PRODUCT_RESEARCH_AUTOMATED_CAPTURE_FAILED" }),
+          "PRODUCT_RESEARCH_AUTOMATED_CAPTURE_FAILED",
+        diagnostic: productResearchDiagnostic(expectedQuery, expectedCategoryId) }),
     )
     return true
   })
@@ -2170,7 +2233,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.18"
+  title.textContent = "Seller OS · Product Research · v1.2.19"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"

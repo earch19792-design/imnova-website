@@ -7,6 +7,7 @@ const ALLOWED_IMAGE_HOST = "i.ebayimg.com"
 const ONE_CLICK_PROBE = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_PROBE_V1"
 const ONE_CLICK_RUN_QUERY = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_QUERY_V1"
 const PRODUCT_RESEARCH_CAPTURE = "IMNOVA_AUTOMATED_PRODUCT_RESEARCH_CAPTURE_V1"
+const PRODUCT_RESEARCH_DIAGNOSTIC_PING = "IMNOVA_PRODUCT_RESEARCH_DIAGNOSTIC_PING_V1"
 const MAIN_SEARCH_SOLD_CAPTURE = "IMNOVA_AUTOMATED_MAIN_SEARCH_SOLD_CAPTURE_V1"
 const ADMIN_ORIGIN = "https://imnova-website-z1qh-canonical-preview.vercel.app"
 const ADMIN_PATH = /^\/admin\/ebay\/mobile-review\/?$/
@@ -19,6 +20,7 @@ const MAX_PAGES_PER_QUERY = 2
 const MAX_RETRIES = 1
 const PRODUCT_RESEARCH_DAY_RANGE = 90
 const PRODUCT_RESEARCH_PAGE_LIMIT = 50
+const PRODUCT_RESEARCH_TRACE_VERSION = "PRODUCT_RESEARCH_STAGE_TRACE_V1"
 
 function officialResearchSender(sender) {
   try {
@@ -273,6 +275,201 @@ function boundedLease(value) {
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
+function newProductResearchTrace() {
+  return {
+    version: PRODUCT_RESEARCH_TRACE_VERSION,
+    lastConfirmedStage: "TASK_RECEIVED",
+    taskReceived: true,
+    tabCreated: false,
+    tabUpdatedComplete: false,
+    finalUrlStateValid: false,
+    authState: "UNVERIFIED",
+    contentScriptPingSent: false,
+    contentScriptPingAck: false,
+    contentScriptBooted: false,
+    queryStateMatch: false,
+    categoryStateMatch: false,
+    resultsContainerFound: false,
+    resultsLoading: false,
+    resultsReady: false,
+    captureRequestSent: false,
+    captureResponseReceived: false,
+    captureResponseState: "NONE",
+    rowCount: 0,
+    sourceFormatChanged: false,
+    externalEbayBlocker: "NONE",
+    tabReloadedAfterContentScriptBoot: false,
+  }
+}
+
+function productResearchLastStage(trace) {
+  if (trace.rowCount > 0) return "ROW_COUNT"
+  if (trace.captureResponseReceived) return "CAPTURE_RESPONSE_RECEIVED"
+  if (trace.captureRequestSent) return "CAPTURE_REQUEST_SENT"
+  if (trace.resultsReady) return "RESULTS_READY"
+  if (trace.resultsLoading) return "RESULTS_LOADING"
+  if (trace.resultsContainerFound) return "RESULTS_CONTAINER_FOUND"
+  if (trace.categoryStateMatch) return "CATEGORY_STATE_MATCH"
+  if (trace.queryStateMatch) return "QUERY_STATE_MATCH"
+  if (trace.contentScriptBooted) return "CONTENT_SCRIPT_BOOTED"
+  if (trace.contentScriptPingAck) return "CONTENT_SCRIPT_PING_ACK"
+  if (trace.contentScriptPingSent) return "CONTENT_SCRIPT_PING_SENT"
+  if (trace.finalUrlStateValid) return "FINAL_URL_STATE_VALID"
+  if (trace.tabUpdatedComplete) return "TAB_UPDATED_COMPLETE"
+  if (trace.tabCreated) return "TAB_CREATED"
+  return "TASK_RECEIVED"
+}
+
+function boundedProductResearchTrace(value) {
+  if (!value || typeof value !== "object") return null
+  const trace = { ...value }
+  trace.lastConfirmedStage = productResearchLastStage(trace)
+  delete trace.contentScriptBootId
+  return trace
+}
+
+function productResearchFailure(code, trace) {
+  const error = new Error(code)
+  error.diagnosticTrace = boundedProductResearchTrace(trace)
+  return error
+}
+
+function updateProductResearchTabTrace(tab, input, trace) {
+  if (tab?.status === "complete") trace.tabUpdatedComplete = true
+  let url
+  try { url = new URL(typeof tab?.url === "string" ? tab.url : "") } catch { return }
+  if (url.hostname === "signin.ebay.com") {
+    trace.authState = "LOGIN_REQUIRED"
+    trace.externalEbayBlocker = "LOGIN_REDIRECT"
+    return
+  }
+  if (url.hostname !== "www.ebay.com") {
+    if (tab?.status === "complete") trace.externalEbayBlocker = "UNSUPPORTED_NAVIGATION"
+    return
+  }
+  if (/captcha|splashui/i.test(url.pathname)) {
+    trace.authState = "ACCESS_CHALLENGE"
+    trace.externalEbayBlocker = "ACCESS_CHALLENGE"
+    return
+  }
+  if (/consent|interstitial/i.test(url.pathname)) {
+    trace.authState = "CONSENT_OR_INTERSTITIAL"
+    trace.externalEbayBlocker = "CONSENT_OR_INTERSTITIAL"
+    return
+  }
+  if (!/^\/sh\/research\/?$/.test(url.pathname)) {
+    if (tab?.status === "complete") {
+      trace.externalEbayBlocker = "UNSUPPORTED_PRODUCT_RESEARCH_PAGE_STATE"
+    }
+    return
+  }
+  const fragment = new URLSearchParams(url.hash.replace(/^#/, ""))
+  trace.finalUrlStateValid = url.searchParams.get("marketplace") === "EBAY-US" &&
+    url.searchParams.get("keywords") === input.searchQuery &&
+    url.searchParams.get("categoryId") === input.categoryId &&
+    url.searchParams.get("tabName") === "SOLD" &&
+    url.searchParams.get("dayRange") === String(PRODUCT_RESEARCH_DAY_RANGE) &&
+    fragment.get("seller-os-query") === input.searchQuery &&
+    ["AWAITING_RESULTS", "RESULTS_READY"].includes(
+      fragment.get("seller-os-query-stage") ?? "",
+    )
+}
+
+function updateProductResearchContentTrace(diagnostic, trace) {
+  if (!diagnostic || typeof diagnostic !== "object") return
+  trace.contentScriptPingAck = true
+  trace.contentScriptBooted = diagnostic.contentScriptBooted === true
+  trace.queryStateMatch = diagnostic.queryStateMatch === true
+  trace.categoryStateMatch = diagnostic.categoryStateMatch === true
+  trace.resultsContainerFound = diagnostic.resultsContainerFound === true
+  trace.resultsLoading = diagnostic.resultsLoading === true
+  trace.resultsReady = diagnostic.resultsReady === true
+  trace.authState = [
+    "AUTHENTICATED_PRODUCT_RESEARCH", "LOGIN_REQUIRED", "CONSENT_OR_INTERSTITIAL",
+    "ACCESS_CHALLENGE", "UNVERIFIED",
+  ].includes(diagnostic.authState) ? diagnostic.authState : "UNVERIFIED"
+  if (diagnostic.externalEbayBlocker && diagnostic.externalEbayBlocker !== "NONE") {
+    trace.externalEbayBlocker = diagnostic.externalEbayBlocker
+  }
+  if (typeof diagnostic.contentScriptBootId === "string" &&
+    /^[0-9a-f-]{36}$/i.test(diagnostic.contentScriptBootId)) {
+    if (trace.contentScriptBootId &&
+      trace.contentScriptBootId !== diagnostic.contentScriptBootId) {
+      trace.tabReloadedAfterContentScriptBoot = true
+    }
+    trace.contentScriptBootId = diagnostic.contentScriptBootId
+  }
+}
+
+async function productResearchContentCapture(input) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < input.timeoutMs) {
+    if (Date.now() >= input.expiresAt) {
+      throw productResearchFailure("ONE_CLICK_RESEARCH_SESSION_EXPIRED", input.trace)
+    }
+    try {
+      const tab = await chrome.tabs.get(input.tabId)
+      updateProductResearchTabTrace(tab, input, input.trace)
+    } catch { /* the bounded message probe below remains authoritative */ }
+    if (["LOGIN_REDIRECT", "ACCESS_CHALLENGE", "CONSENT_OR_INTERSTITIAL",
+      "UNSUPPORTED_NAVIGATION", "UNSUPPORTED_PRODUCT_RESEARCH_PAGE_STATE"]
+      .includes(input.trace.externalEbayBlocker)) {
+      throw productResearchFailure(`PRODUCT_RESEARCH_${input.trace.externalEbayBlocker}`,
+        input.trace)
+    }
+    input.trace.contentScriptPingSent = true
+    try {
+      const ping = await chrome.tabs.sendMessage(input.tabId, {
+        type: PRODUCT_RESEARCH_DIAGNOSTIC_PING,
+        searchQuery: input.searchQuery,
+        categoryId: input.categoryId,
+      })
+      if (ping?.success === true && ping?.status === "READY") {
+        updateProductResearchContentTrace(ping.diagnostic, input.trace)
+      }
+    } catch { /* missing receiver is recorded by a false ping ACK */ }
+    input.trace.captureRequestSent = true
+    try {
+      const response = await chrome.tabs.sendMessage(input.tabId, input.message)
+      input.trace.captureResponseReceived = true
+      input.trace.captureResponseState = response?.status === "READY" ? "READY"
+        : response?.status === "FAILED" || response?.success === false ? "FAILED" : "PENDING"
+      updateProductResearchContentTrace(response?.diagnostic, input.trace)
+      if (response?.success === false || response?.status === "FAILED") {
+        throw productResearchFailure(safeFailureCode(new Error(String(response?.error ?? "")),
+          "ONE_CLICK_RESEARCH_CONTENT_CAPTURE_FAILED"), input.trace)
+      }
+      if (response?.success === true && response?.status === "READY") {
+        input.trace.resultsReady = true
+        input.trace.rowCount = Math.max(0, Math.min(MAX_ROWS,
+          Number(response?.capture?.visibleResultCount) || 0))
+        return response
+      }
+    } catch (error) {
+      if (error?.diagnosticTrace) throw error
+      const code = safeFailureCode(error, "")
+      if (code && !/receiving end does not exist|message port closed/i.test(
+        error instanceof Error ? error.message : "")) {
+        throw productResearchFailure(code, input.trace)
+      }
+    }
+    await wait(750)
+  }
+  if (input.trace.tabUpdatedComplete && input.trace.finalUrlStateValid &&
+    !input.trace.contentScriptPingAck) {
+    input.trace.externalEbayBlocker = "CONTENT_SCRIPT_MISSING"
+  } else if (input.trace.contentScriptBooted &&
+    input.trace.authState === "AUTHENTICATED_PRODUCT_RESEARCH" &&
+    input.trace.queryStateMatch && input.trace.categoryStateMatch &&
+    !input.trace.resultsContainerFound && !input.trace.resultsLoading) {
+    input.trace.sourceFormatChanged = true
+    input.trace.externalEbayBlocker = "SOURCE_FORMAT_CHANGED"
+  } else if (!input.trace.tabUpdatedComplete || input.trace.resultsLoading) {
+    input.trace.externalEbayBlocker = "EBAY_PAGE_STILL_LOADING"
+  }
+  throw productResearchFailure(input.timeoutCode, input.trace)
+}
+
 async function contentCapture(input) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < input.timeoutMs) {
@@ -347,16 +544,22 @@ async function runOneClickQueryOnce(message, lease) {
     throw new Error("ONE_CLICK_RESEARCH_QUERY_BOUNDS_INVALID")
   }
   const categoryId = productResearchCategoryId(task.categoryId)
+  const productResearchTrace = newProductResearchTrace()
   const tab = await chrome.tabs.create({
     url: productResearchUrl(searchQuery, categoryId), active: false,
   })
   if (!Number.isInteger(tab?.id)) throw new Error("ONE_CLICK_RESEARCH_TAB_CREATE_FAILED")
+  productResearchTrace.tabCreated = true
+  updateProductResearchTabTrace(tab, { searchQuery, categoryId }, productResearchTrace)
   try {
-    const productResearch = await contentCapture({
+    const productResearch = await productResearchContentCapture({
       tabId: tab.id,
       expiresAt: lease.expiresAt,
       timeoutMs: 60_000,
       timeoutCode: "PRODUCT_RESEARCH_AUTOMATED_CAPTURE_TIMEOUT",
+      searchQuery,
+      categoryId,
+      trace: productResearchTrace,
       message: { type: PRODUCT_RESEARCH_CAPTURE, searchQuery, categoryId,
         maxRows: Number(lease.bounds.maxRowsPerCapture) },
     })
@@ -385,6 +588,7 @@ async function runOneClickQueryOnce(message, lease) {
       extensionId: chrome.runtime.id,
       extensionVersion: chrome.runtime.getManifest().version,
       productResearchCapture: productResearch.capture,
+      productResearchDiagnosticTrace: boundedProductResearchTrace(productResearchTrace),
       mainSearchSoldRows: soldRows,
       soldFilterAutomated,
       paginationAutomated: true,
@@ -423,6 +627,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (result) => sendResponse(result),
     (error) => sendResponse({ success: false,
       error: safeFailureCode(error, "ONE_CLICK_RESEARCH_QUERY_FAILED"),
+      diagnosticTrace: boundedProductResearchTrace(error?.diagnosticTrace),
       cookieAccess: false, marketplaceWrites: 0 }),
   )
   return true

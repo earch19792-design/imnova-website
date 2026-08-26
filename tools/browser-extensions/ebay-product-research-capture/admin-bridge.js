@@ -21,6 +21,7 @@
         success: payload?.success === true,
         payload: payload?.success === true ? payload : null,
         error: payload?.success === true ? null : payload?.error ?? "RESEARCH_EXTENSION_FAILED",
+        diagnosticTrace: payload?.diagnosticTrace ?? null,
         extensionId: chrome.runtime.id,
       }, ADMIN_ORIGIN),
       () => window.postMessage({
@@ -29,6 +30,7 @@
         success: false,
         payload: null,
         error: "RESEARCH_EXTENSION_BRIDGE_DISCONNECTED",
+        diagnosticTrace: null,
         extensionId: chrome.runtime.id,
       }, ADMIN_ORIGIN),
     )
@@ -38,7 +40,7 @@
     type: RESULT,
     requestId: "00000000-0000-4000-8000-000000000000",
     success: true,
-    payload: { success: true, ready: true, version: "1.2.18" },
+    payload: { success: true, ready: true, version: "1.2.19" },
     extensionId: chrome.runtime.id,
   }, ADMIN_ORIGIN)
 })()

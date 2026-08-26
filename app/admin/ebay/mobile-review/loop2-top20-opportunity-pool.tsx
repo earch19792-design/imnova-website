@@ -395,6 +395,49 @@ type MarketplaceInsightsPreflight = {
   }
 }
 
+const PRODUCT_RESEARCH_TRACE_STAGES = [
+  "TASK_RECEIVED", "TAB_CREATED", "TAB_UPDATED_COMPLETE", "FINAL_URL_STATE_VALID",
+  "CONTENT_SCRIPT_PING_SENT", "CONTENT_SCRIPT_PING_ACK", "CONTENT_SCRIPT_BOOTED",
+  "QUERY_STATE_MATCH", "CATEGORY_STATE_MATCH", "RESULTS_CONTAINER_FOUND",
+  "RESULTS_LOADING", "RESULTS_READY", "CAPTURE_REQUEST_SENT",
+  "CAPTURE_RESPONSE_RECEIVED", "ROW_COUNT",
+] as const
+const PRODUCT_RESEARCH_AUTH_STATES = [
+  "UNVERIFIED", "AUTHENTICATED_PRODUCT_RESEARCH", "LOGIN_REQUIRED",
+  "CONSENT_OR_INTERSTITIAL", "ACCESS_CHALLENGE",
+] as const
+const PRODUCT_RESEARCH_RESPONSE_STATES = ["NONE", "PENDING", "READY", "FAILED"] as const
+const PRODUCT_RESEARCH_EXTERNAL_BLOCKERS = [
+  "NONE", "LOGIN_REDIRECT", "ACCESS_CHALLENGE", "CONSENT_OR_INTERSTITIAL",
+  "UNSUPPORTED_NAVIGATION", "UNSUPPORTED_PRODUCT_RESEARCH_PAGE_STATE",
+  "CONTENT_SCRIPT_MISSING", "SOURCE_FORMAT_CHANGED", "EBAY_PAGE_STILL_LOADING",
+] as const
+
+type ProductResearchDiagnosticTrace = {
+  version: "PRODUCT_RESEARCH_STAGE_TRACE_V1"
+  lastConfirmedStage: typeof PRODUCT_RESEARCH_TRACE_STAGES[number]
+  taskReceived: boolean
+  tabCreated: boolean
+  tabUpdatedComplete: boolean
+  finalUrlStateValid: boolean
+  authState: typeof PRODUCT_RESEARCH_AUTH_STATES[number]
+  contentScriptPingSent: boolean
+  contentScriptPingAck: boolean
+  contentScriptBooted: boolean
+  queryStateMatch: boolean
+  categoryStateMatch: boolean
+  resultsContainerFound: boolean
+  resultsLoading: boolean
+  resultsReady: boolean
+  captureRequestSent: boolean
+  captureResponseReceived: boolean
+  captureResponseState: typeof PRODUCT_RESEARCH_RESPONSE_STATES[number]
+  rowCount: number
+  sourceFormatChanged: boolean
+  externalEbayBlocker: typeof PRODUCT_RESEARCH_EXTERNAL_BLOCKERS[number]
+  tabReloadedAfterContentScriptBoot: boolean
+}
+
 type OneClickResearchSummary = {
   status: "IDLE" | "RUNNING" | "COMPLETED" | "FAILED"
   extensionId: string | null
@@ -410,6 +453,7 @@ type OneClickResearchSummary = {
   economicsRescue: number
   coverageLimitation: string | null
   error: string | null
+  diagnosticTrace: ProductResearchDiagnosticTrace | null
 }
 
 function rateLimitWaitLabel(nextAt: string | null | undefined, nowMs: number) {
@@ -502,6 +546,49 @@ function safeOneClickCode(value: unknown) {
     ? value : "ONE_CLICK_RESEARCH_EXTENSION_FAILED"
 }
 
+function safeProductResearchDiagnosticTrace(value: unknown): ProductResearchDiagnosticTrace | null {
+  if (!value || typeof value !== "object") return null
+  const input = value as Record<string, unknown>
+  const stage = PRODUCT_RESEARCH_TRACE_STAGES.find((candidate) =>
+    candidate === input.lastConfirmedStage)
+  const authState = PRODUCT_RESEARCH_AUTH_STATES.find((candidate) =>
+    candidate === input.authState)
+  const responseState = PRODUCT_RESEARCH_RESPONSE_STATES.find((candidate) =>
+    candidate === input.captureResponseState)
+  const blocker = PRODUCT_RESEARCH_EXTERNAL_BLOCKERS.find((candidate) =>
+    candidate === input.externalEbayBlocker)
+  const rowCount = Number(input.rowCount)
+  if (input.version !== "PRODUCT_RESEARCH_STAGE_TRACE_V1" || !stage || !authState ||
+    !responseState || !blocker || !Number.isInteger(rowCount) || rowCount < 0 || rowCount > 200) {
+    return null
+  }
+  const bool = (name: string) => input[name] === true
+  return {
+    version: "PRODUCT_RESEARCH_STAGE_TRACE_V1",
+    lastConfirmedStage: stage,
+    taskReceived: bool("taskReceived"),
+    tabCreated: bool("tabCreated"),
+    tabUpdatedComplete: bool("tabUpdatedComplete"),
+    finalUrlStateValid: bool("finalUrlStateValid"),
+    authState,
+    contentScriptPingSent: bool("contentScriptPingSent"),
+    contentScriptPingAck: bool("contentScriptPingAck"),
+    contentScriptBooted: bool("contentScriptBooted"),
+    queryStateMatch: bool("queryStateMatch"),
+    categoryStateMatch: bool("categoryStateMatch"),
+    resultsContainerFound: bool("resultsContainerFound"),
+    resultsLoading: bool("resultsLoading"),
+    resultsReady: bool("resultsReady"),
+    captureRequestSent: bool("captureRequestSent"),
+    captureResponseReceived: bool("captureResponseReceived"),
+    captureResponseState: responseState,
+    rowCount,
+    sourceFormatChanged: bool("sourceFormatChanged"),
+    externalEbayBlocker: blocker,
+    tabReloadedAfterContentScriptBoot: bool("tabReloadedAfterContentScriptBoot"),
+  }
+}
+
 function extensionResearchCommand<T extends Record<string, unknown>>(
   command: Record<string, unknown>,
   timeoutMs: number,
@@ -520,7 +607,11 @@ function extensionResearchCommand<T extends Record<string, unknown>>(
       window.clearTimeout(timeout)
       window.removeEventListener("message", receive)
       if (message.success !== true || !message.payload || typeof message.payload !== "object") {
-        reject(new Error(safeOneClickCode(message.error)))
+        const failure = new Error(safeOneClickCode(message.error)) as Error & {
+          diagnosticTrace?: ProductResearchDiagnosticTrace | null
+        }
+        failure.diagnosticTrace = safeProductResearchDiagnosticTrace(message.diagnosticTrace)
+        reject(failure)
         return
       }
       resolve({ ...(message.payload as T),
@@ -580,6 +671,7 @@ export function Loop2Top20OpportunityPool() {
     freshSoldRows: 0, evidenceMaxAgeDays: null,
     newDiscovery: 0, strongFamilyExpansion: 0, staleDemandRefresh: 0,
     economicsRescue: 0, coverageLimitation: null, error: null,
+    diagnosticTrace: null,
   })
   const oneClickResearchInFlight = useRef(false)
   const [clockMs, setClockMs] = useState(0)
@@ -762,7 +854,7 @@ export function Loop2Top20OpportunityPool() {
         strongFamilyExpansion: plan.missionMix.strongFamilyExpansion,
         staleDemandRefresh: plan.missionMix.staleDemandRefresh,
         economicsRescue: plan.missionMix.economicsRescue,
-        coverageLimitation: plan.coverageLimitation, error: null,
+        coverageLimitation: plan.coverageLimitation, error: null, diagnosticTrace: null,
       }
       setOneClickResearch(initialSummary)
       const probe = await probeOneClickResearchExtension()
@@ -783,6 +875,7 @@ export function Loop2Top20OpportunityPool() {
           extensionId: string
           extensionVersion: string
           productResearchCapture: Record<string, unknown>
+          productResearchDiagnosticTrace: ProductResearchDiagnosticTrace
           mainSearchSoldRows: Array<Record<string, unknown>>
           soldFilterAutomated: boolean
           paginationAutomated: boolean
@@ -824,6 +917,9 @@ export function Loop2Top20OpportunityPool() {
           }),
         })
         productResearchCaptures += 1
+        const productResearchDiagnosticTrace = safeProductResearchDiagnosticTrace(
+          extensionResult.productResearchDiagnosticTrace,
+        )
 
         if (extensionResult.mainSearchSoldRows.length) {
           const sold = await adminFetch<{ result: {
@@ -863,7 +959,8 @@ export function Loop2Top20OpportunityPool() {
         completedQueries += 1
         setOneClickResearch((current) => ({ ...current, completedQueries,
           productResearchCaptures, freshSoldRows,
-          evidenceMaxAgeDays: freshSoldRows ? evidenceMaxAgeDays : null }))
+          evidenceMaxAgeDays: freshSoldRows ? evidenceMaxAgeDays : null,
+          diagnosticTrace: productResearchDiagnosticTrace ?? current.diagnosticTrace }))
       }
       validateEbayOneClickResearchCompletion({
         sessionStatus: "COMPLETED",
@@ -883,8 +980,12 @@ export function Loop2Top20OpportunityPool() {
         "Precio mostrado y precio realizado permanecen separados; escrituras eBay 0.")
     } catch (sessionError) {
       const code = safeOneClickCode(sessionError instanceof Error ? sessionError.message : "")
+      const diagnosticTrace = safeProductResearchDiagnosticTrace(
+        (sessionError as Error & { diagnosticTrace?: unknown })?.diagnosticTrace,
+      )
       setOneClickResearch((current) => ({ ...(initialSummary ?? current),
-        ...current, status: "FAILED", error: code }))
+        ...current, status: "FAILED", error: code,
+        diagnosticTrace: diagnosticTrace ?? current.diagnosticTrace }))
       setError(code)
     } finally {
       oneClickResearchInFlight.current = false
@@ -1117,7 +1218,7 @@ export function Loop2Top20OpportunityPool() {
               <p className="mt-1 text-white/60">La página autenticada autoriza una sola sesión temporal; la extensión existente ejecuta Product Research y Main Search Sold sin copiar cookies, credenciales ni el bearer de Seller OS.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.18.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.18</a>
+              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.19.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.19</a>
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
             <div className="space-y-3 rounded-xl border border-fuchsia-200/25 bg-fuchsia-200/[0.06] p-3">
@@ -1148,9 +1249,30 @@ export function Loop2Top20OpportunityPool() {
               <p className="text-white/45">Extensión {oneClickResearch.extensionVersion ?? "SIN CONECTAR"} · ID {oneClickResearch.extensionId ?? "NO OBSERVADO"} · evidencia máxima {oneClickResearch.evidenceMaxAgeDays === null ? "N/D" : `${oneClickResearch.evidenceMaxAgeDays.toFixed(1)} días`}.</p>
               {oneClickResearch.coverageLimitation && <p className="text-amber-100/70">PLAN_COVERAGE_LIMITATION: {oneClickResearch.coverageLimitation}</p>}
               {oneClickResearch.error && <p className="text-rose-100">{oneClickResearch.error}</p>}
+              {oneClickResearch.diagnosticTrace && <div className="space-y-2 rounded-lg border border-amber-100/20 bg-black/20 p-2">
+                <p className="font-black text-amber-100">Diagnóstico seguro Product Research</p>
+                <dl className="grid grid-cols-2 gap-1 sm:grid-cols-4">
+                  <div><dt className="text-white/45">Última etapa</dt><dd>{oneClickResearch.diagnosticTrace.lastConfirmedStage}</dd></div>
+                  <div><dt className="text-white/45">Tab complete</dt><dd>{String(oneClickResearch.diagnosticTrace.tabUpdatedComplete)}</dd></div>
+                  <div><dt className="text-white/45">URL state</dt><dd>{String(oneClickResearch.diagnosticTrace.finalUrlStateValid)}</dd></div>
+                  <div><dt className="text-white/45">Auth</dt><dd>{oneClickResearch.diagnosticTrace.authState}</dd></div>
+                  <div><dt className="text-white/45">Ping ACK</dt><dd>{String(oneClickResearch.diagnosticTrace.contentScriptPingAck)}</dd></div>
+                  <div><dt className="text-white/45">Script boot</dt><dd>{String(oneClickResearch.diagnosticTrace.contentScriptBooted)}</dd></div>
+                  <div><dt className="text-white/45">Query match</dt><dd>{String(oneClickResearch.diagnosticTrace.queryStateMatch)}</dd></div>
+                  <div><dt className="text-white/45">Category match</dt><dd>{String(oneClickResearch.diagnosticTrace.categoryStateMatch)}</dd></div>
+                  <div><dt className="text-white/45">Container</dt><dd>{String(oneClickResearch.diagnosticTrace.resultsContainerFound)}</dd></div>
+                  <div><dt className="text-white/45">Loading</dt><dd>{String(oneClickResearch.diagnosticTrace.resultsLoading)}</dd></div>
+                  <div><dt className="text-white/45">Results ready</dt><dd>{String(oneClickResearch.diagnosticTrace.resultsReady)}</dd></div>
+                  <div><dt className="text-white/45">Capture sent</dt><dd>{String(oneClickResearch.diagnosticTrace.captureRequestSent)}</dd></div>
+                  <div><dt className="text-white/45">Capture response</dt><dd>{oneClickResearch.diagnosticTrace.captureResponseState}</dd></div>
+                  <div><dt className="text-white/45">Rows</dt><dd>{oneClickResearch.diagnosticTrace.rowCount}</dd></div>
+                  <div><dt className="text-white/45">Format changed</dt><dd>{String(oneClickResearch.diagnosticTrace.sourceFormatChanged)}</dd></div>
+                  <div><dt className="text-white/45">External blocker</dt><dd>{oneClickResearch.diagnosticTrace.externalEbayBlocker}</dd></div>
+                </dl>
+              </div>}
               <p className="text-white/45">Límites: 15 minutos · 15 consultas · 200 filas Sold · 2 páginas por consulta · 1 reintento · EBAY_US · escrituras eBay 0.</p>
             </div>
-            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.18 conserva la captura manual anterior como diagnóstico y navega la sesión automática al query/categoría acotados; no almacena tokens ni usa credenciales persistentes.</p>
+            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.19 conserva la captura manual anterior y reporta sólo etapas seguras de carga/captura; no almacena tokens ni usa credenciales persistentes.</p>
             <div className="rounded-xl border border-amber-100/20 bg-amber-100/[0.04] p-3">
               <p className="font-black">Cuota oficial Browse</p>
               <p className="mt-1 text-white/55">Estado {browserCaptureStatus?.browseQuota?.status ?? "SIN VERIFICAR"} · restantes {browserCaptureStatus?.browseQuota?.remaining ?? "N/D"} de {browserCaptureStatus?.browseQuota?.limit ?? "N/D"} · reset {browserCaptureStatus?.browseQuota?.resetAt ? new Date(browserCaptureStatus.browseQuota.resetAt).toLocaleString("es") : "N/D"}.</p>
