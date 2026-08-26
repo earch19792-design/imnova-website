@@ -10,6 +10,9 @@ import type { LunaShippingRuntimeTraceEventV1 } from
 import { detectAndWakeLunaShippingExtensionV1,
   wakeLunaShippingExtensionV1 } from
   "@/lib/ebay/ebay-luna-extension-detection-v1"
+import { canonicalSellerOsLunaPreviewOriginV1,
+  SELLER_OS_LUNA_STABLE_PREVIEW_ORIGIN } from
+  "@/lib/ebay/ebay-luna-shipping-preview-origin-v1.mjs"
 
 const PORT_NAME = "SELLER_OS_LUNA_SHIPPING_CAPTURE_V1"
 const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
@@ -17,8 +20,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
 const EXPECTED_EXTENSION_VERSION = "1.0.42"
-const SELLER_OS_EXTENSION_ORIGIN =
-  "https://imnova-website-z1qh-canonical-preview.vercel.app"
+const SELLER_OS_EXTENSION_ORIGIN = SELLER_OS_LUNA_STABLE_PREVIEW_ORIGIN
 const STARTUP_PROBE_CONTRACT = "SELLER_OS_LUNA_EXTENSION_STARTUP_PROBE_V1"
 const GET_BINDING_STORAGE_DIAGNOSTIC =
   "SELLER_OS_GET_LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
@@ -49,11 +51,18 @@ type ChromeRuntime = {
 }
 
 function ensureCanonicalExtensionOrigin() {
-  const current = new URL(window.location.origin)
-  if (current.protocol === "https:" && !current.username &&
-      !current.password && !current.port &&
-      current.origin === SELLER_OS_EXTENSION_ORIGIN) return true
-  throw new Error("LUNA_SHIPPING_EXTENSION_ORIGIN_REJECTED")
+  const canonicalOrigin = canonicalSellerOsLunaPreviewOriginV1(
+    window.location.origin)
+  if (!canonicalOrigin) {
+    throw new Error("LUNA_SHIPPING_EXTENSION_ORIGIN_REJECTED")
+  }
+  if (window.location.origin === canonicalOrigin) return true
+  const target = new URL(
+    `${window.location.pathname}${window.location.search}${window.location.hash}`,
+    canonicalOrigin,
+  )
+  window.location.replace(target.toString())
+  return false
 }
 
 async function probeInstalledExtension(): Promise<boolean | null> {
