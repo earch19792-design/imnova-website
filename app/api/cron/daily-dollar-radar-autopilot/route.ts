@@ -18,6 +18,12 @@ function authorized(request: Request) {
     request.headers.get("authorization") === `Bearer ${secret}`)
 }
 
+function safeFailureCode(error: unknown) {
+  const candidate = error instanceof Error ? error.message : ""
+  return /^[A-Z][A-Z0-9_]{2,119}$/.test(candidate)
+    ? candidate : "DAILY_DOLLAR_RADAR_CRON_FAILED_CLOSED"
+}
+
 export async function GET(request: Request) {
   if (!authorized(request)) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" },
@@ -47,8 +53,8 @@ export async function GET(request: Request) {
       result.status === "IDEMPOTENT_SUCCESS"
     return NextResponse.json({ success, broadNet, result },
       { status: success ? 200 : 503 })
-  } catch {
+  } catch (error) {
     return NextResponse.json({ success: false,
-      error: "DAILY_DOLLAR_RADAR_CRON_FAILED_CLOSED" }, { status: 503 })
+      error: safeFailureCode(error) }, { status: 503 })
   }
 }
