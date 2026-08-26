@@ -7,7 +7,7 @@ import { classifyWinnerComparable, normalizeProductIdentity } from "./ebay-winne
 import type { ProductIdentityInput, WinnerComparableInput, WinnerComparableVisualEvidence } from "./ebay-winner-evidence-v2.ts"
 
 export const OFFICIAL_SOLD_EVIDENCE_IMPORT_VERSION =
-  "EBAY_OFFICIAL_SOLD_EVIDENCE_IMPORT_V2_2026_07_17"
+  "EBAY_OFFICIAL_SOLD_EVIDENCE_IMPORT_V3_2026_08_26"
 export const OFFICIAL_SOLD_EVIDENCE_MAX_ROWS = 2_000
 export const OFFICIAL_SOLD_EVIDENCE_MAX_BYTES = 2_000_000
 export const OFFICIAL_SOLD_EVIDENCE_RECENCY_DAYS = 90
@@ -17,6 +17,14 @@ export type OfficialSoldEvidenceExport =
   | "EBAY_PRODUCT_RESEARCH_EXPORT"
   | "EBAY_SELLER_HUB_EXPORT"
   | "EBAY_MARKETPLACE_INSIGHTS_EXPORT"
+  | "EBAY_MAIN_SEARCH_SOLD_CAPTURE"
+export type SoldEvidenceSourceClass =
+  | "OFFICIAL_PRODUCT_RESEARCH"
+  | "MAIN_SEARCH_SOLD"
+  | "OFFICIAL_API"
+export type RealizedPriceStatus = "PROVEN" | "UNPROVEN" | "UNAVAILABLE"
+export type BestOfferStatus = "EXPLICIT_PRESENT" | "EXPLICIT_ABSENT" | "UNKNOWN"
+export type ShippingEvidenceStatus = "OBSERVED" | "UNAVAILABLE" | "AMBIGUOUS"
 export type OfficialSoldEvidenceScope =
   | "MARKET_WIDE_SOLD_EVIDENCE"
   | "OWN_ACCOUNT_SOLD_EVIDENCE"
@@ -27,6 +35,11 @@ export type OfficialSaleConfirmationBasis =
 type JsonRecord = Record<string, unknown>
 
 export type NormalizedOfficialSoldEvidence = {
+  sourceClass: SoldEvidenceSourceClass
+  itemId: string | null
+  soldAt: string
+  capturedAt: string
+  queryOrResearchIdentity: string | null
   sourceListingReferenceHash: string
   evidenceDeduplicationKey: string
   normalizedIdentity: ReturnType<typeof normalizeProductIdentity>
@@ -35,6 +48,17 @@ export type NormalizedOfficialSoldEvidence = {
   saleConfirmationBasis: OfficialSaleConfirmationBasis
   itemPrice: number | null
   shippingCost: number | null
+  displayedSoldPriceAmount: number | null
+  displayedSoldPriceCurrency: string | null
+  realizedTransactionPriceAmount: number | null
+  realizedTransactionPriceCurrency: string | null
+  realizedPriceStatus: RealizedPriceStatus
+  bestOfferStatus: BestOfferStatus
+  visibleShippingAmount: number | null
+  visibleShippingCurrency: string | null
+  shippingStatus: ShippingEvidenceStatus
+  priceEvidenceProvenance: string
+  evidenceDigest: string
   keywordSignals: string[]
   shippingPattern: string | null
   returnsPattern: string | null
@@ -46,7 +70,12 @@ export type NormalizedOfficialSoldEvidence = {
 
 export type StoredOfficialSoldEvidence = {
   source_type: "EBAY_OFFICIAL_CSV_IMPORT" | "EBAY_OFFICIAL_JSON_IMPORT" |
-    "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE"
+    "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE" | "EBAY_MAIN_SEARCH_SOLD_BROWSER_CAPTURE"
+  source_class?: SoldEvidenceSourceClass
+  item_id?: string | null
+  sold_at?: string
+  captured_at?: string
+  query_or_research_identity?: string | null
   source_listing_reference_hash: string
   normalized_identity: ReturnType<typeof normalizeProductIdentity>
   confirmed_sold_quantity: number
@@ -54,6 +83,17 @@ export type StoredOfficialSoldEvidence = {
   sale_confirmation_basis: OfficialSaleConfirmationBasis
   item_price: number | null
   shipping_cost: number | null
+  displayed_sold_price_amount?: number | null
+  displayed_sold_price_currency?: string | null
+  realized_transaction_price_amount?: number | null
+  realized_transaction_price_currency?: string | null
+  realized_price_status?: RealizedPriceStatus
+  best_offer_status?: BestOfferStatus
+  visible_shipping_amount?: number | null
+  visible_shipping_currency?: string | null
+  shipping_status?: ShippingEvidenceStatus
+  price_evidence_provenance?: string
+  evidence_digest?: string
   keyword_signals: string[]
   shipping_pattern: string | null
   returns_pattern: string | null
@@ -69,6 +109,7 @@ const EXPORT_TYPES = new Set<OfficialSoldEvidenceExport>([
   "EBAY_PRODUCT_RESEARCH_EXPORT",
   "EBAY_SELLER_HUB_EXPORT",
   "EBAY_MARKETPLACE_INSIGHTS_EXPORT",
+  "EBAY_MAIN_SEARCH_SOLD_CAPTURE",
 ])
 
 const PII_KEYS = new Set([
@@ -92,6 +133,18 @@ const ALIASES: Record<string, string[]> = {
   confirmedSoldQuantity: ["confirmedsoldquantity", "quantitysold", "soldquantity", "qtysold", "totalsold"],
   itemPrice: ["itemprice", "price", "soldprice", "averagesoldprice", "averageprice"],
   shippingCost: ["shippingcost", "shipping", "deliverycost"],
+  capturedAt: ["capturedat", "capturetimestamp"],
+  queryOrResearchIdentity: ["queryorresearchidentity", "queryidentity", "researchidentity"],
+  displayedSoldPriceAmount: ["displayedsoldpriceamount", "displayedpriceamount"],
+  displayedSoldPriceCurrency: ["displayedsoldpricecurrency", "displayedpricecurrency"],
+  realizedTransactionPriceAmount: ["realizedtransactionpriceamount", "realizedpriceamount"],
+  realizedTransactionPriceCurrency: ["realizedtransactionpricecurrency", "realizedpricecurrency"],
+  realizedPriceStatus: ["realizedpricestatus"],
+  bestOfferStatus: ["bestofferstatus"],
+  visibleShippingAmount: ["visibleshippingamount"],
+  visibleShippingCurrency: ["visibleshippingcurrency"],
+  shippingStatus: ["shippingstatus"],
+  priceEvidenceProvenance: ["priceevidenceprovenance"],
   manufacturerBrand: ["manufacturerbrand", "brand"],
   gtin: ["gtin", "upc", "ean", "isbn"],
   mpn: ["mpn", "manufacturerpartnumber", "partnumber"],
@@ -149,6 +202,11 @@ function booleanValue(value: unknown) {
   if (["true", "yes", "si", "sí", "1"].includes(normalized ?? "")) return true
   if (["false", "no", "0"].includes(normalized ?? "")) return false
   return null
+}
+
+function currencyValue(value: unknown) {
+  const normalized = normalizedText(value)?.toLocaleUpperCase("en-US")
+  return normalized && /^[A-Z]{3}$/.test(normalized) ? normalized : null
 }
 
 function canonicalJson(value: unknown): string {
@@ -289,6 +347,10 @@ type ParsedObservation = {
   | { error: string }
 
 function sourceSemantics(sourceExportType: OfficialSoldEvidenceExport, rows: JsonRecord[]) {
+  if (sourceExportType === "EBAY_MAIN_SEARCH_SOLD_CAPTURE") {
+    return { evidenceScope: "MARKET_WIDE_SOLD_EVIDENCE" as const,
+      marketWideSchemaConfirmed: true }
+  }
   if (sourceExportType === "EBAY_PRODUCT_RESEARCH_EXPORT" ||
     sourceExportType === "EBAY_MARKETPLACE_INSIGHTS_EXPORT") {
     return { evidenceScope: "MARKET_WIDE_SOLD_EVIDENCE" as const,
@@ -312,6 +374,7 @@ function normalizeObservation(
   row: JsonRecord,
   now: Date,
   evidenceScope: OfficialSoldEvidenceScope,
+  sourceExportType: OfficialSoldEvidenceExport,
 ): ParsedObservation {
   const values = normalizedRow(row)
   const sourceListingId = normalizedText(field(values, "sourceListingId"))
@@ -349,12 +412,85 @@ function normalizeObservation(
     return { error: "STRONG_PRODUCT_IDENTIFIER_REQUIRED" as const }
   }
   const observedAt = observed.toISOString()
+  const isMainSearchSold = sourceExportType === "EBAY_MAIN_SEARCH_SOLD_CAPTURE"
+  const sourceClass: SoldEvidenceSourceClass = isMainSearchSold
+    ? "MAIN_SEARCH_SOLD"
+    : sourceExportType === "EBAY_PRODUCT_RESEARCH_EXPORT"
+      ? "OFFICIAL_PRODUCT_RESEARCH"
+      : "OFFICIAL_API"
+  const capturedRaw = normalizedText(field(values, "capturedAt"))
+  const captured = capturedRaw ? new Date(capturedRaw) : now
+  if (Number.isNaN(captured.getTime()) || captured.getTime() > now.getTime() + 86_400_000) {
+    return { error: "CAPTURED_AT_INVALID" as const }
+  }
+  const queryIdentityRaw = normalizedText(field(values, "queryOrResearchIdentity"))
+  if (isMainSearchSold && !queryIdentityRaw) {
+    return { error: "QUERY_OR_RESEARCH_IDENTITY_REQUIRED" as const }
+  }
   const eligibleUntil = new Date(observed.getTime() +
     OFFICIAL_SOLD_EVIDENCE_RECENCY_DAYS * 86_400_000).toISOString()
   const sourceListingReferenceHash = sha256(sourceListingId)
-  const itemPrice = finiteNumber(field(values, "itemPrice"))
-  const shippingCost = finiteNumber(field(values, "shippingCost"))
+  const displayedSoldPriceAmount = finiteNumber(field(values, "displayedSoldPriceAmount"))
+  const displayedSoldPriceCurrency = displayedSoldPriceAmount === null ? null
+    : currencyValue(field(values, "displayedSoldPriceCurrency")) ?? "USD"
+  const bestOfferStatus = enumValue(field(values, "bestOfferStatus"),
+    ["EXPLICIT_PRESENT", "EXPLICIT_ABSENT", "UNKNOWN"] as const) ?? "UNKNOWN"
+  const requestedRealizedStatus = enumValue(field(values, "realizedPriceStatus"),
+    ["PROVEN", "UNPROVEN", "UNAVAILABLE"] as const)
+  const requestedRealizedAmount = finiteNumber(field(values, "realizedTransactionPriceAmount"))
+  const requestedRealizedCurrency = requestedRealizedAmount === null ? null
+    : currencyValue(field(values, "realizedTransactionPriceCurrency")) ?? "USD"
+  const realizedPriceStatus: RealizedPriceStatus = isMainSearchSold || bestOfferStatus === "EXPLICIT_PRESENT"
+    ? "UNPROVEN"
+    : requestedRealizedStatus ?? "UNAVAILABLE"
+  if (requestedRealizedStatus === "PROVEN" &&
+    (isMainSearchSold || bestOfferStatus === "EXPLICIT_PRESENT")) {
+    return { error: "REALIZED_PRICE_PROOF_FORBIDDEN" as const }
+  }
+  if (realizedPriceStatus === "PROVEN" && requestedRealizedAmount === null) {
+    return { error: "REALIZED_PRICE_AMOUNT_REQUIRED" as const }
+  }
+  const realizedTransactionPriceAmount = realizedPriceStatus === "PROVEN"
+    ? requestedRealizedAmount : null
+  const realizedTransactionPriceCurrency = realizedPriceStatus === "PROVEN"
+    ? requestedRealizedCurrency : null
+  const visibleShippingAmount = finiteNumber(field(values, "visibleShippingAmount"))
+  const requestedShippingStatus = enumValue(field(values, "shippingStatus"),
+    ["OBSERVED", "UNAVAILABLE", "AMBIGUOUS"] as const)
+  const shippingStatus: ShippingEvidenceStatus = requestedShippingStatus ??
+    (visibleShippingAmount === null ? "UNAVAILABLE" : "OBSERVED")
+  if (shippingStatus === "OBSERVED" && visibleShippingAmount === null) {
+    return { error: "VISIBLE_SHIPPING_AMOUNT_REQUIRED" as const }
+  }
+  const durableVisibleShippingAmount = shippingStatus === "OBSERVED" ? visibleShippingAmount : null
+  const visibleShippingCurrency = durableVisibleShippingAmount === null ? null
+    : currencyValue(field(values, "visibleShippingCurrency")) ?? "USD"
+  const itemPrice = isMainSearchSold ? null : finiteNumber(field(values, "itemPrice"))
+  const shippingCost = isMainSearchSold ? null : finiteNumber(field(values, "shippingCost"))
+  const priceEvidenceProvenance = normalizedText(field(values, "priceEvidenceProvenance")) ??
+    (isMainSearchSold ? "MAIN_SEARCH_VISIBLE_SOLD_ROW"
+      : sourceClass === "OFFICIAL_PRODUCT_RESEARCH"
+        ? "PRODUCT_RESEARCH_AGGREGATE"
+        : "OFFICIAL_SOURCE_LEGACY_PRICE")
+  const provenance = {
+    sourceClass,
+    itemId: isMainSearchSold ? sourceListingId : null,
+    soldAt: observedAt,
+    capturedAt: captured.toISOString(),
+    queryOrResearchIdentity: queryIdentityRaw ? sha256(queryIdentityRaw) : null,
+    displayedSoldPriceAmount,
+    displayedSoldPriceCurrency,
+    realizedTransactionPriceAmount,
+    realizedTransactionPriceCurrency,
+    realizedPriceStatus,
+    bestOfferStatus,
+    visibleShippingAmount: durableVisibleShippingAmount,
+    visibleShippingCurrency,
+    shippingStatus,
+    priceEvidenceProvenance,
+  }
   const normalized = {
+    ...provenance,
     sourceListingReferenceHash,
     normalizedIdentity: identity,
     confirmedSoldQuantity: soldQuantity,
@@ -369,10 +505,12 @@ function normalizeObservation(
     observedAt,
     eligibleUntil,
   }
+  const evidenceDigest = sha256(normalized)
   return {
     value: {
       ...normalized,
-      evidenceDeduplicationKey: sha256(normalized),
+      evidenceDigest,
+      evidenceDeduplicationKey: evidenceDigest,
       keywordSignals: [] as string[],
     },
     transientTitleTokens: titleTokens(field(values, "title")),
@@ -395,7 +533,9 @@ export function parseOfficialSoldEvidenceImport(input: {
   if (rows.length > OFFICIAL_SOLD_EVIDENCE_MAX_ROWS) throw new Error("SOLD_EVIDENCE_ROW_LIMIT_EXCEEDED")
   const now = input.now ?? new Date()
   const semantics = sourceSemantics(input.sourceExportType, rows)
-  const normalized = rows.map((row) => normalizeObservation(row, now, semantics.evidenceScope))
+  const normalized = rows.map((row) => normalizeObservation(
+    row, now, semantics.evidenceScope, input.sourceExportType,
+  ))
   const errors = normalized.reduce<Record<string, number>>((counts, entry) => {
     if ("error" in entry) counts[entry.error] = (counts[entry.error] ?? 0) + 1
     return counts
@@ -414,8 +554,10 @@ export function parseOfficialSoldEvidenceImport(input: {
     throw new Error("SOLD_EVIDENCE_NO_VALID_ROWS")
   }
   return {
-    sourceType: input.format === "CSV" ? "EBAY_OFFICIAL_CSV_IMPORT" as const
-      : "EBAY_OFFICIAL_JSON_IMPORT" as const,
+    sourceType: input.sourceExportType === "EBAY_MAIN_SEARCH_SOLD_CAPTURE"
+      ? "EBAY_MAIN_SEARCH_SOLD_BROWSER_CAPTURE" as const
+      : input.format === "CSV" ? "EBAY_OFFICIAL_CSV_IMPORT" as const
+        : "EBAY_OFFICIAL_JSON_IMPORT" as const,
     sourceExportType: input.sourceExportType,
     evidenceScope: semantics.evidenceScope,
     marketWideSchemaConfirmed: semantics.marketWideSchemaConfirmed,
@@ -434,6 +576,37 @@ export function parseOfficialSoldEvidenceImport(input: {
     competitorImageUrlsStored: false,
     piiStored: false,
   }
+}
+
+export function soldPriceEvidenceForPositioning(row: StoredOfficialSoldEvidence) {
+  const realized = finiteNumber(row.realized_transaction_price_amount)
+  if (row.realized_price_status === "PROVEN" && realized !== null) {
+    return { amount: realized,
+      currency: row.realized_transaction_price_currency ?? "USD",
+      semantics: "REALIZED_TRANSACTION_PRICE" as const,
+      authoritativeRealizedPrice: true }
+  }
+  const displayed = finiteNumber(row.displayed_sold_price_amount)
+  if (displayed !== null) {
+    return { amount: displayed,
+      currency: row.displayed_sold_price_currency ?? "USD",
+      semantics: "DISPLAYED_SOLD_PRICE" as const,
+      authoritativeRealizedPrice: false }
+  }
+  if (row.source_class === "OFFICIAL_PRODUCT_RESEARCH" ||
+    row.source_type === "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE") {
+    const aggregate = finiteNumber(row.item_price)
+    return { amount: aggregate, currency: aggregate === null ? null : "USD",
+      semantics: aggregate === null ? "UNAVAILABLE" as const : "PRODUCT_RESEARCH_AGGREGATE" as const,
+      authoritativeRealizedPrice: false }
+  }
+  return { amount: null, currency: null, semantics: "UNAVAILABLE" as const,
+    authoritativeRealizedPrice: false }
+}
+
+export function authoritativeRealizedTransactionPrice(row: StoredOfficialSoldEvidence) {
+  const evidence = soldPriceEvidenceForPositioning(row)
+  return evidence.authoritativeRealizedPrice ? evidence.amount : null
 }
 
 export function officialSoldEvidenceComparablesForTarget(input: {
@@ -463,7 +636,13 @@ export function officialSoldEvidenceComparablesForTarget(input: {
       sourceListingId: row.source_listing_reference_hash,
       observedAt: row.observed_at,
       identity: { ...identity, productName: target.normalizedProductName },
-      itemPrice: row.item_price, shippingCost: row.shipping_cost, currency: "USD",
+      itemPrice: row.source_class === "MAIN_SEARCH_SOLD"
+        ? authoritativeRealizedTransactionPrice(row)
+        : row.realized_price_status === "PROVEN"
+          ? authoritativeRealizedTransactionPrice(row)
+          : row.item_price,
+      shippingCost: row.source_class === "MAIN_SEARCH_SOLD" ? null : row.shipping_cost,
+      currency: "USD",
       confirmedSoldQuantity: row.confirmed_sold_quantity,
       evidenceScope: row.evidence_scope,
       keywords: row.keyword_signals, shippingPattern: row.shipping_pattern,
@@ -506,11 +685,12 @@ export async function readReviewedOfficialSoldEvidence(input: {
 }) {
   const now = input.now ?? new Date()
   const [imports, captures, reconciliations] = await Promise.all([
-    input.supabase.from("marketplace_sold_evidence_observations")
-      .select("source_type,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,evidence_scope,sale_confirmation_basis,item_price,shipping_cost,keyword_signals,shipping_pattern,returns_pattern,image_count,visual_evidence,observed_at")
-      .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
-      .eq("evidence_reviewed", true).gte("eligible_until", now.toISOString())
-      .order("observed_at", { ascending: false }).limit(2_000),
+    input.supabase.rpc("read_marketplace_sold_evidence_v1", {
+      p_marketplace_account_key: input.accountKey,
+      p_eligible_at: now.toISOString(),
+      p_import_batch_id: null,
+      p_limit: 2_000,
+    }),
     input.supabase.from("marketplace_product_research_capture_observations")
       .select("id,source,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,evidence_scope,average_sold_price,average_shipping,keyword_signals,visible_image_count,last_sold_date,match_classification,matched_supplier_variant_id")
       .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
@@ -540,6 +720,11 @@ export async function readReviewedOfficialSoldEvidence(input: {
     if (!eligible.has(classification) || !matchedVariant) return []
     return [{
     source_type: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
+    source_class: "OFFICIAL_PRODUCT_RESEARCH",
+    item_id: null,
+    sold_at: row.last_sold_date,
+    captured_at: row.last_sold_date,
+    query_or_research_identity: null,
     source_listing_reference_hash: row.source_listing_reference_hash,
     normalized_identity: row.normalized_identity as ReturnType<typeof normalizeProductIdentity>,
     confirmed_sold_quantity: row.confirmed_sold_quantity,
@@ -547,6 +732,17 @@ export async function readReviewedOfficialSoldEvidence(input: {
     sale_confirmation_basis: "SOLD_QUANTITY_POSITIVE",
     item_price: row.average_sold_price,
     shipping_cost: row.average_shipping,
+    displayed_sold_price_amount: null,
+    displayed_sold_price_currency: null,
+    realized_transaction_price_amount: null,
+    realized_transaction_price_currency: null,
+    realized_price_status: "UNAVAILABLE",
+    best_offer_status: "UNKNOWN",
+    visible_shipping_amount: null,
+    visible_shipping_currency: null,
+    shipping_status: "UNAVAILABLE",
+    price_evidence_provenance: "PRODUCT_RESEARCH_AGGREGATE",
+    evidence_digest: row.source_listing_reference_hash,
     keyword_signals: row.keyword_signals,
     shipping_pattern: row.average_shipping === 0 ? "FREE_SHIPPING" : null,
     returns_pattern: null,
@@ -605,6 +801,11 @@ export async function importOfficialSoldEvidence(input: {
   const batchId = randomUUID()
   const observedTimes = fresh.map((row) => Date.parse(row.observedAt)).filter(Number.isFinite)
   const rpcRows = fresh.map((row) => ({
+    source_class: row.sourceClass,
+    item_id: row.itemId,
+    sold_at: row.soldAt,
+    captured_at: row.capturedAt,
+    query_or_research_identity: row.queryOrResearchIdentity,
     sale_confirmation_basis: row.saleConfirmationBasis,
     source_listing_reference_hash: row.sourceListingReferenceHash,
     evidence_deduplication_key: row.evidenceDeduplicationKey,
@@ -612,6 +813,17 @@ export async function importOfficialSoldEvidence(input: {
     confirmed_sold_quantity: row.confirmedSoldQuantity,
     item_price: row.itemPrice,
     shipping_cost: row.shippingCost,
+    displayed_sold_price_amount: row.displayedSoldPriceAmount,
+    displayed_sold_price_currency: row.displayedSoldPriceCurrency,
+    realized_transaction_price_amount: row.realizedTransactionPriceAmount,
+    realized_transaction_price_currency: row.realizedTransactionPriceCurrency,
+    realized_price_status: row.realizedPriceStatus,
+    best_offer_status: row.bestOfferStatus,
+    visible_shipping_amount: row.visibleShippingAmount,
+    visible_shipping_currency: row.visibleShippingCurrency,
+    shipping_status: row.shippingStatus,
+    price_evidence_provenance: row.priceEvidenceProvenance,
+    evidence_digest: row.evidenceDigest,
     keyword_signals: row.keywordSignals,
     shipping_pattern: row.shippingPattern,
     returns_pattern: row.returnsPattern,
@@ -620,7 +832,7 @@ export async function importOfficialSoldEvidence(input: {
     observed_at: row.observedAt,
     eligible_until: row.eligibleUntil,
   }))
-  const { error: importError } = await input.supabase.rpc("import_marketplace_sold_evidence_v2", {
+  const { error: importError } = await input.supabase.rpc("import_marketplace_sold_evidence_v3", {
     p_batch_id: batchId,
     p_marketplace_account_key: input.accountKey,
     p_source_type: parsed.sourceType,
@@ -741,10 +953,12 @@ export async function getOfficialSoldEvidenceImportStatus(input: {
     top20CandidatesEnriched: 0 }
   if (latest) {
     const [observationResult, targetResult] = await Promise.all([
-      input.supabase.from("marketplace_sold_evidence_observations")
-        .select("source_type,source_listing_reference_hash,normalized_identity,confirmed_sold_quantity,evidence_scope,sale_confirmation_basis,item_price,shipping_cost,keyword_signals,shipping_pattern,returns_pattern,image_count,visual_evidence,observed_at")
-        .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
-        .eq("import_batch_id", latest.id).eq("evidence_reviewed", true),
+      input.supabase.rpc("read_marketplace_sold_evidence_v1", {
+        p_marketplace_account_key: input.accountKey,
+        p_eligible_at: null,
+        p_import_batch_id: latest.id,
+        p_limit: 2_000,
+      }),
       latestRun ? input.supabase.from("marketplace_listing_approval_queue_items")
         .select("id,evidence_snapshot").eq("marketplace_account_key", input.accountKey)
         .eq("marketplace", "EBAY_US").eq("run_id", latestRun.id) : Promise.resolve({ data: [], error: null }),

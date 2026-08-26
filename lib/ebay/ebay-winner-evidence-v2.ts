@@ -38,6 +38,7 @@ export type WinnerComparableSource =
   | "EBAY_OFFICIAL_CSV_IMPORT"
   | "EBAY_OFFICIAL_JSON_IMPORT"
   | "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE"
+  | "EBAY_MAIN_SEARCH_SOLD_BROWSER_CAPTURE"
   | "HUMAN_REVIEWED_IMPORT"
 
 export type WinnerVisualEvidenceSourceType =
@@ -568,6 +569,7 @@ function comparableCohort(source: WinnerComparableSource): WinnerEvidenceCohort 
     "EBAY_OFFICIAL_CSV_IMPORT",
     "EBAY_OFFICIAL_JSON_IMPORT",
     "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
+    "EBAY_MAIN_SEARCH_SOLD_BROWSER_CAPTURE",
     "HUMAN_REVIEWED_IMPORT",
   ].includes(source)) return "SOLD_OR_COMPLETED_EXACT_MATCHES"
   if (source === "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE") return "ESTIMATED_DEMAND_SIGNALS"
@@ -674,6 +676,7 @@ function safeObservationList(value: unknown) {
 function defaultVisualSource(source: WinnerComparableSource): WinnerVisualEvidenceSourceType {
   if (source === "EBAY_OFFICIAL_CSV_IMPORT") return "OFFICIAL_EBAY_CSV_IMPORT"
   if (source === "EBAY_OFFICIAL_JSON_IMPORT") return "OFFICIAL_EBAY_JSON_IMPORT"
+  if (source === "EBAY_MAIN_SEARCH_SOLD_BROWSER_CAPTURE") return "OFFICIAL_EBAY_BROWSER_CAPTURE"
   if (source === "HUMAN_REVIEWED_IMPORT") return "HUMAN_REVIEWED_OBSERVATION"
   return "OFFICIAL_EBAY_METADATA"
 }
