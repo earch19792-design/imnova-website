@@ -9,7 +9,13 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Abre Seller OS Preview y usa **INICIAR RESEARCH AUTOMÁTICO** una sola vez.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.21.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.22.
+
+## Diagnóstico acotado de handshake (v1.2.22)
+
+El bridge comunica únicamente etapas, contadores y booleanos del handshake. No persiste HTML,
+cookies, credenciales, consultas ni contenido de resultados. El service worker puede permanecer
+inactivo entre eventos; cada probe válido lo despierta bajo el contrato normal de Manifest V3.
 
 ## Binding efímero de tarea guiada (v1.2.21)
 

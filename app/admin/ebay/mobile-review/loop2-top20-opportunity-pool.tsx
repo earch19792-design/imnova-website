@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { supabase } from "@/lib/supabase"
 import {
   EBAY_ONE_CLICK_RESEARCH_BOUNDS,
+  EBAY_ONE_CLICK_RESEARCH_BRIDGE_LIFECYCLE,
   EBAY_ONE_CLICK_RESEARCH_COMMAND,
   EBAY_ONE_CLICK_RESEARCH_RESULT,
   buildEbayOneClickResearchLease,
@@ -474,6 +475,34 @@ type ProductResearchDiagnosticTrace = {
   tabReloadedAfterContentScriptBoot: boolean
 }
 
+const ONE_CLICK_HANDSHAKE_STAGES = [
+  "NOT_STARTED", "PAGE_LISTENER_REGISTERED", "PROBE_SENT",
+  "BRIDGE_LISTENER_REGISTERED", "PROBE_RECEIVED_BY_BRIDGE",
+  "SERVICE_WORKER_RESPONSE_FAILED", "ACK_SENT_BY_BRIDGE",
+  "ACK_RECEIVED_BY_PAGE", "CONNECTED_STATE_COMMITTED",
+] as const
+const ONE_CLICK_EXTENSION_CONTEXT_STATES = ["UNOBSERVED", "ACTIVE", "INVALIDATED"] as const
+const ONE_CLICK_SERVICE_WORKER_RESPONSES = ["UNOBSERVED", "PENDING", "ACK", "FAILED"] as const
+
+type OneClickHandshakeTrace = {
+  version: "ONE_CLICK_EXTENSION_HANDSHAKE_TRACE_V1"
+  lastConfirmedStage: typeof ONE_CLICK_HANDSHAKE_STAGES[number]
+  manifestMatched: boolean
+  adminBridgeInjected: boolean
+  adminBridgeBooted: boolean
+  bridgeListenerRegistered: boolean
+  pageListenerRegistered: boolean
+  probeCount: number
+  probeEventsSent: number
+  probeEventsReceivedByBridge: number
+  ackEventsSent: number
+  ackEventsReceivedByPage: number
+  connectedStateCommitted: boolean
+  extensionContextState: typeof ONE_CLICK_EXTENSION_CONTEXT_STATES[number]
+  serviceWorkerResponse: typeof ONE_CLICK_SERVICE_WORKER_RESPONSES[number]
+  lastErrorCode: string
+}
+
 type OneClickResearchSummary = {
   status: "IDLE" | "RUNNING" | "COMPLETED" | "COMPLETED_WITH_REJECTIONS" | "FAILED"
   extensionId: string | null
@@ -498,6 +527,7 @@ type OneClickResearchSummary = {
   coverageLimitation: string | null
   error: string | null
   diagnosticTrace: ProductResearchDiagnosticTrace | null
+  handshakeTrace: OneClickHandshakeTrace | null
 }
 
 function rateLimitWaitLabel(nextAt: string | null | undefined, nowMs: number) {
@@ -590,6 +620,96 @@ function safeOneClickCode(value: unknown) {
     ? value : "ONE_CLICK_RESEARCH_EXTENSION_FAILED"
 }
 
+function emptyOneClickHandshakeTrace(): OneClickHandshakeTrace {
+  return {
+    version: "ONE_CLICK_EXTENSION_HANDSHAKE_TRACE_V1",
+    lastConfirmedStage: "NOT_STARTED",
+    manifestMatched: false,
+    adminBridgeInjected: false,
+    adminBridgeBooted: false,
+    bridgeListenerRegistered: false,
+    pageListenerRegistered: false,
+    probeCount: 0,
+    probeEventsSent: 0,
+    probeEventsReceivedByBridge: 0,
+    ackEventsSent: 0,
+    ackEventsReceivedByPage: 0,
+    connectedStateCommitted: false,
+    extensionContextState: "UNOBSERVED",
+    serviceWorkerResponse: "UNOBSERVED",
+    lastErrorCode: "NONE",
+  }
+}
+
+function safeOneClickHandshakeTrace(value: unknown): OneClickHandshakeTrace | null {
+  if (!value || typeof value !== "object") return null
+  const input = value as Record<string, unknown>
+  const stage = ONE_CLICK_HANDSHAKE_STAGES.find((candidate) =>
+    candidate === input.lastConfirmedStage)
+  const extensionContextState = ONE_CLICK_EXTENSION_CONTEXT_STATES.find((candidate) =>
+    candidate === input.extensionContextState)
+  const serviceWorkerResponse = ONE_CLICK_SERVICE_WORKER_RESPONSES.find((candidate) =>
+    candidate === input.serviceWorkerResponse)
+  const boundedCount = (name: string) => {
+    const count = Number(input[name])
+    return Number.isInteger(count) && count >= 0 && count <= 32 ? count : null
+  }
+  const probeCount = boundedCount("probeCount")
+  const probeEventsSent = boundedCount("probeEventsSent")
+  const probeEventsReceivedByBridge = boundedCount("probeEventsReceivedByBridge")
+  const ackEventsSent = boundedCount("ackEventsSent")
+  const ackEventsReceivedByPage = boundedCount("ackEventsReceivedByPage")
+  if (input.version !== "ONE_CLICK_EXTENSION_HANDSHAKE_TRACE_V1" || !stage ||
+    !extensionContextState || !serviceWorkerResponse || probeCount === null ||
+    probeEventsSent === null || probeEventsReceivedByBridge === null ||
+    ackEventsSent === null || ackEventsReceivedByPage === null) return null
+  return {
+    version: "ONE_CLICK_EXTENSION_HANDSHAKE_TRACE_V1",
+    lastConfirmedStage: stage,
+    manifestMatched: input.manifestMatched === true,
+    adminBridgeInjected: input.adminBridgeInjected === true,
+    adminBridgeBooted: input.adminBridgeBooted === true,
+    bridgeListenerRegistered: input.bridgeListenerRegistered === true,
+    pageListenerRegistered: input.pageListenerRegistered === true,
+    probeCount,
+    probeEventsSent,
+    probeEventsReceivedByBridge,
+    ackEventsSent,
+    ackEventsReceivedByPage,
+    connectedStateCommitted: input.connectedStateCommitted === true,
+    extensionContextState,
+    serviceWorkerResponse,
+    lastErrorCode: safeOneClickCode(input.lastErrorCode ?? "NONE"),
+  }
+}
+
+function safeOneClickBridgeLifecycle(value: unknown) {
+  if (!value || typeof value !== "object") return null
+  const input = value as Record<string, unknown>
+  const stage = ONE_CLICK_HANDSHAKE_STAGES.find((candidate) => candidate === input.stage)
+  const extensionContextState = ONE_CLICK_EXTENSION_CONTEXT_STATES.find((candidate) =>
+    candidate === input.extensionContextState)
+  const serviceWorkerResponse = ONE_CLICK_SERVICE_WORKER_RESPONSES.find((candidate) =>
+    candidate === input.serviceWorkerResponse)
+  const probeEventsReceivedByBridge = Number(input.probeEventsReceivedByBridge)
+  const ackEventsSent = Number(input.ackEventsSent)
+  if (input.traceVersion !== "ONE_CLICK_EXTENSION_HANDSHAKE_TRACE_V1" || !stage ||
+    !extensionContextState || !serviceWorkerResponse ||
+    !Number.isInteger(probeEventsReceivedByBridge) || probeEventsReceivedByBridge < 0 ||
+    probeEventsReceivedByBridge > 32 || !Number.isInteger(ackEventsSent) ||
+    ackEventsSent < 0 || ackEventsSent > 32) return null
+  return {
+    stage,
+    adminBridgeInjected: input.adminBridgeInjected === true,
+    adminBridgeBooted: input.adminBridgeBooted === true,
+    bridgeListenerRegistered: input.bridgeListenerRegistered === true,
+    probeEventsReceivedByBridge,
+    ackEventsSent,
+    extensionContextState,
+    serviceWorkerResponse,
+  }
+}
+
 function safeProductResearchDiagnosticTrace(value: unknown): ProductResearchDiagnosticTrace | null {
   if (!value || typeof value !== "object") return null
   const input = value as Record<string, unknown>
@@ -680,6 +800,12 @@ function safeProductResearchDiagnosticTrace(value: unknown): ProductResearchDiag
 function extensionResearchCommand<T extends Record<string, unknown>>(
   command: Record<string, unknown>,
   timeoutMs: number,
+  lifecycle?: Readonly<{
+    pageListenerRegistered?: () => void
+    commandPosted?: () => void
+    bridgeLifecycleObserved?: (value: unknown) => void
+    resultObserved?: (value: Record<string, unknown>) => void
+  }>,
 ): Promise<T & { bridgeExtensionId: string }> {
   const requestId = crypto.randomUUID()
   return new Promise((resolve, reject) => {
@@ -691,7 +817,13 @@ function extensionResearchCommand<T extends Record<string, unknown>>(
       const message = event.data && typeof event.data === "object"
         ? event.data as Record<string, unknown> : {}
       if (event.source !== window || event.origin !== window.location.origin ||
-        message.type !== EBAY_ONE_CLICK_RESEARCH_RESULT || message.requestId !== requestId) return
+        message.requestId !== requestId) return
+      if (message.type === EBAY_ONE_CLICK_RESEARCH_BRIDGE_LIFECYCLE) {
+        lifecycle?.bridgeLifecycleObserved?.(message)
+        return
+      }
+      if (message.type !== EBAY_ONE_CLICK_RESEARCH_RESULT) return
+      lifecycle?.resultObserved?.(message)
       window.clearTimeout(timeout)
       window.removeEventListener("message", receive)
       if (message.success !== true || !message.payload || typeof message.payload !== "object") {
@@ -706,31 +838,77 @@ function extensionResearchCommand<T extends Record<string, unknown>>(
         bridgeExtensionId: String(message.extensionId ?? "UNKNOWN") })
     }
     window.addEventListener("message", receive)
+    lifecycle?.pageListenerRegistered?.()
+    lifecycle?.commandPosted?.()
     window.postMessage({ type: EBAY_ONE_CLICK_RESEARCH_COMMAND, requestId, command },
       window.location.origin)
   })
 }
 
 async function probeOneClickResearchExtension() {
-  return establishEbayOneClickResearchHandshake({
-    probe: async (attemptTimeoutMs) => {
-      const probe = await extensionResearchCommand<{
-        success: true
-        ready: true
-        extensionId: string
-        extensionVersion: string
-        persistentCredential: false
-        cookieAccess: false
-        marketplaceWrites: 0
-      }>({ type: "IMNOVA_EBAY_ONE_CLICK_RESEARCH_PROBE_V1" }, attemptTimeoutMs)
-      if (probe.ready !== true || probe.persistentCredential !== false ||
-        probe.cookieAccess !== false || probe.marketplaceWrites !== 0 ||
-        probe.extensionId !== probe.bridgeExtensionId) {
-        throw new Error("ONE_CLICK_RESEARCH_EXTENSION_ATTESTATION_FAILED")
-      }
-      return probe
-    },
-  })
+  let trace = emptyOneClickHandshakeTrace()
+  try {
+    const probe = await establishEbayOneClickResearchHandshake({
+      probe: async (attemptTimeoutMs) => {
+        trace = { ...trace, probeCount: Math.min(trace.probeCount + 1, 32) }
+        const result = await extensionResearchCommand<{
+          success: true
+          ready: true
+          extensionId: string
+          extensionVersion: string
+          persistentCredential: false
+          cookieAccess: false
+          marketplaceWrites: 0
+        }>({ type: "IMNOVA_EBAY_ONE_CLICK_RESEARCH_PROBE_V1" }, attemptTimeoutMs, {
+          pageListenerRegistered: () => {
+            trace = { ...trace, pageListenerRegistered: true,
+              lastConfirmedStage: "PAGE_LISTENER_REGISTERED" }
+          },
+          commandPosted: () => {
+            trace = { ...trace,
+              probeEventsSent: Math.min(trace.probeEventsSent + 1, 32),
+              lastConfirmedStage: "PROBE_SENT" }
+          },
+          bridgeLifecycleObserved: (value) => {
+            const lifecycle = safeOneClickBridgeLifecycle(value)
+            if (!lifecycle) return
+            trace = { ...trace,
+              lastConfirmedStage: lifecycle.stage,
+              manifestMatched: true,
+              adminBridgeInjected: lifecycle.adminBridgeInjected,
+              adminBridgeBooted: lifecycle.adminBridgeBooted,
+              bridgeListenerRegistered: lifecycle.bridgeListenerRegistered,
+              probeEventsReceivedByBridge: lifecycle.probeEventsReceivedByBridge,
+              ackEventsSent: lifecycle.ackEventsSent,
+              extensionContextState: lifecycle.extensionContextState,
+              serviceWorkerResponse: lifecycle.serviceWorkerResponse,
+            }
+          },
+          resultObserved: (message) => {
+            if (message.success !== true) return
+            trace = { ...trace,
+              ackEventsReceivedByPage: Math.min(trace.ackEventsReceivedByPage + 1, 32),
+              lastConfirmedStage: "ACK_RECEIVED_BY_PAGE",
+              serviceWorkerResponse: "ACK",
+            }
+          },
+        })
+        if (result.ready !== true || result.persistentCredential !== false ||
+          result.cookieAccess !== false || result.marketplaceWrites !== 0 ||
+          result.extensionId !== result.bridgeExtensionId) {
+          throw new Error("ONE_CLICK_RESEARCH_EXTENSION_ATTESTATION_FAILED")
+        }
+        return result
+      },
+    })
+    return { ...probe, handshakeTrace: trace }
+  } catch (error) {
+    const failure = new Error(safeOneClickCode(
+      error instanceof Error ? error.message : "ONE_CLICK_RESEARCH_EXTENSION_HANDSHAKE_TIMEOUT",
+    )) as Error & { handshakeTrace?: OneClickHandshakeTrace }
+    failure.handshakeTrace = { ...trace, lastErrorCode: failure.message }
+    throw failure
+  }
 }
 
 export function Loop2Top20OpportunityPool() {
@@ -760,7 +938,7 @@ export function Loop2Top20OpportunityPool() {
     evidenceMaxAgeDays: null,
     newDiscovery: 0, strongFamilyExpansion: 0, staleDemandRefresh: 0,
     economicsRescue: 0, coverageLimitation: null, error: null,
-    diagnosticTrace: null,
+    diagnosticTrace: null, handshakeTrace: null,
   })
   const oneClickResearchInFlight = useRef(false)
   const [clockMs, setClockMs] = useState(0)
@@ -817,8 +995,19 @@ export function Loop2Top20OpportunityPool() {
     void probeOneClickResearchExtension().then((probe) => {
       if (!active) return
       setOneClickResearch((current) => ({ ...current,
-        extensionId: probe.extensionId, extensionVersion: probe.extensionVersion }))
-    }, () => { /* disconnected remains fail-closed and no research starts */ })
+        extensionId: probe.extensionId, extensionVersion: probe.extensionVersion,
+        error: null,
+        handshakeTrace: { ...probe.handshakeTrace, connectedStateCommitted: true,
+          lastConfirmedStage: "CONNECTED_STATE_COMMITTED" } }))
+    }, (probeError) => {
+      if (!active) return
+      const handshakeTrace = safeOneClickHandshakeTrace(
+        (probeError as Error & { handshakeTrace?: unknown })?.handshakeTrace,
+      )
+      setOneClickResearch((current) => ({ ...current,
+        error: safeOneClickCode(probeError instanceof Error ? probeError.message : ""),
+        handshakeTrace: handshakeTrace ?? current.handshakeTrace }))
+    })
     return () => { active = false }
   }, [])
   const scanActive = ["RUNNING", "PARTIAL_AUTO_CONTINUING"].includes(payload?.run?.status ?? "")
@@ -945,11 +1134,14 @@ export function Loop2Top20OpportunityPool() {
         staleDemandRefresh: plan.missionMix.staleDemandRefresh,
         economicsRescue: plan.missionMix.economicsRescue,
         coverageLimitation: plan.coverageLimitation, error: null, diagnosticTrace: null,
+        handshakeTrace: oneClickResearch.handshakeTrace,
       }
       setOneClickResearch(initialSummary)
       const probe = await probeOneClickResearchExtension()
       setOneClickResearch((current) => ({ ...current,
-        extensionId: probe.extensionId, extensionVersion: probe.extensionVersion }))
+        extensionId: probe.extensionId, extensionVersion: probe.extensionVersion,
+        handshakeTrace: { ...probe.handshakeTrace, connectedStateCommitted: true,
+          lastConfirmedStage: "CONNECTED_STATE_COMMITTED" } }))
 
       let completedQueries = 0
       let productResearchCaptures = 0
@@ -1107,9 +1299,13 @@ export function Loop2Top20OpportunityPool() {
       const diagnosticTrace = safeProductResearchDiagnosticTrace(
         (sessionError as Error & { diagnosticTrace?: unknown })?.diagnosticTrace,
       )
+      const handshakeTrace = safeOneClickHandshakeTrace(
+        (sessionError as Error & { handshakeTrace?: unknown })?.handshakeTrace,
+      )
       setOneClickResearch((current) => ({ ...(initialSummary ?? current),
         ...current, status: "FAILED", error: code,
-        diagnosticTrace: diagnosticTrace ?? current.diagnosticTrace }))
+        diagnosticTrace: diagnosticTrace ?? current.diagnosticTrace,
+        handshakeTrace: handshakeTrace ?? current.handshakeTrace }))
       setError(code)
     } finally {
       oneClickResearchInFlight.current = false
@@ -1342,7 +1538,7 @@ export function Loop2Top20OpportunityPool() {
               <p className="mt-1 text-white/60">La página autenticada autoriza una sola sesión temporal; la extensión existente ejecuta Product Research y Main Search Sold sin copiar cookies, credenciales ni el bearer de Seller OS.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.21.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.21</a>
+              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.22.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.22</a>
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
             <div className="space-y-3 rounded-xl border border-fuchsia-200/25 bg-fuchsia-200/[0.06] p-3">
@@ -1383,6 +1579,25 @@ export function Loop2Top20OpportunityPool() {
                 </p>)}
               </div>}
               <p className="text-white/45">Extensión {oneClickResearch.extensionVersion ?? "SIN CONECTAR"} · ID {oneClickResearch.extensionId ?? "NO OBSERVADO"} · evidencia máxima {oneClickResearch.evidenceMaxAgeDays === null ? "N/D" : `${oneClickResearch.evidenceMaxAgeDays.toFixed(1)} días`}.</p>
+              {oneClickResearch.handshakeTrace && <div className="space-y-2 rounded-lg border border-cyan-100/20 bg-black/20 p-2">
+                <p className="font-black text-cyan-100">Diagnóstico seguro del handshake</p>
+                <dl className="grid grid-cols-2 gap-1 sm:grid-cols-4">
+                  <div><dt className="text-white/45">Última etapa</dt><dd>{oneClickResearch.handshakeTrace.lastConfirmedStage}</dd></div>
+                  <div><dt className="text-white/45">Manifest match</dt><dd>{String(oneClickResearch.handshakeTrace.manifestMatched)}</dd></div>
+                  <div><dt className="text-white/45">Bridge injected</dt><dd>{String(oneClickResearch.handshakeTrace.adminBridgeInjected)}</dd></div>
+                  <div><dt className="text-white/45">Bridge booted</dt><dd>{String(oneClickResearch.handshakeTrace.adminBridgeBooted)}</dd></div>
+                  <div><dt className="text-white/45">Listener bridge</dt><dd>{String(oneClickResearch.handshakeTrace.bridgeListenerRegistered)}</dd></div>
+                  <div><dt className="text-white/45">Listener página</dt><dd>{String(oneClickResearch.handshakeTrace.pageListenerRegistered)}</dd></div>
+                  <div><dt className="text-white/45">Probes enviados</dt><dd>{oneClickResearch.handshakeTrace.probeEventsSent}</dd></div>
+                  <div><dt className="text-white/45">Probes recibidos</dt><dd>{oneClickResearch.handshakeTrace.probeEventsReceivedByBridge}</dd></div>
+                  <div><dt className="text-white/45">ACK bridge</dt><dd>{oneClickResearch.handshakeTrace.ackEventsSent}</dd></div>
+                  <div><dt className="text-white/45">ACK página</dt><dd>{oneClickResearch.handshakeTrace.ackEventsReceivedByPage}</dd></div>
+                  <div><dt className="text-white/45">Estado conectado</dt><dd>{String(oneClickResearch.handshakeTrace.connectedStateCommitted)}</dd></div>
+                  <div><dt className="text-white/45">Contexto extensión</dt><dd>{oneClickResearch.handshakeTrace.extensionContextState}</dd></div>
+                  <div><dt className="text-white/45">Worker response</dt><dd>{oneClickResearch.handshakeTrace.serviceWorkerResponse}</dd></div>
+                  <div><dt className="text-white/45">Error acotado</dt><dd>{oneClickResearch.handshakeTrace.lastErrorCode}</dd></div>
+                </dl>
+              </div>}
               {oneClickResearch.coverageLimitation && <p className="text-amber-100/70">PLAN_COVERAGE_LIMITATION: {oneClickResearch.coverageLimitation}</p>}
               {oneClickResearch.error && <p className="text-rose-100">{oneClickResearch.error}</p>}
               {oneClickResearch.diagnosticTrace && <div className="space-y-2 rounded-lg border border-amber-100/20 bg-black/20 p-2">
@@ -1426,7 +1641,7 @@ export function Loop2Top20OpportunityPool() {
               </div>}
               <p className="text-white/45">Límites: 15 minutos · 15 consultas · 200 filas Sold · 2 páginas por consulta · 1 reintento · EBAY_US · escrituras eBay 0.</p>
             </div>
-            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.21 conserva la captura manual anterior y enlaza cada tarea automática con el tab, la consulta, la categoría y la identidad de resultados sin depender de un fragmento URL; no almacena tokens ni usa credenciales persistentes.</p>
+            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.22 conserva la captura anterior y añade diagnóstico acotado del ciclo de handshake; no almacena tokens ni usa credenciales persistentes.</p>
             <div className="rounded-xl border border-amber-100/20 bg-amber-100/[0.04] p-3">
               <p className="font-black">Cuota oficial Browse</p>
               <p className="mt-1 text-white/55">Estado {browserCaptureStatus?.browseQuota?.status ?? "SIN VERIFICAR"} · restantes {browserCaptureStatus?.browseQuota?.remaining ?? "N/D"} de {browserCaptureStatus?.browseQuota?.limit ?? "N/D"} · reset {browserCaptureStatus?.browseQuota?.resetAt ? new Date(browserCaptureStatus.browseQuota.resetAt).toLocaleString("es") : "N/D"}.</p>
