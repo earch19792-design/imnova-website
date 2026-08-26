@@ -407,6 +407,23 @@ const PRODUCT_RESEARCH_AUTH_STATES = [
   "CONSENT_OR_INTERSTITIAL", "ACCESS_CHALLENGE",
 ] as const
 const PRODUCT_RESEARCH_RESPONSE_STATES = ["NONE", "PENDING", "READY", "FAILED"] as const
+const PRODUCT_RESEARCH_URL_FIELD_STATES = ["UNAVAILABLE", "ABSENT", "MATCH", "MISMATCH"] as const
+const PRODUCT_RESEARCH_URL_STATE_CLASSES = [
+  "UNAVAILABLE", "EXACT_REQUESTED_REPRESENTATION",
+  "QUERY_CATEGORY_MATCH_URL_REPRESENTATION_DIFFERENT", "REQUEST_IDENTITY_MISMATCH",
+] as const
+const PRODUCT_RESEARCH_GUIDED_STAGE_STATES = [
+  "UNAVAILABLE", "ABSENT", "AWAITING_RESULTS", "RESULTS_READY", "OTHER",
+] as const
+const PRODUCT_RESEARCH_RESULT_IDENTITY_STATES = [
+  "NONE", "SOLD_ITEM_IDS", "OFFICIAL_ZERO_RESULTS", "SOURCE_FORMAT_UNRECOGNIZED",
+] as const
+const PRODUCT_RESEARCH_READINESS_REASONS = [
+  "READY", "GUIDED_QUERY_STATE_MISSING", "GUIDED_QUERY_MISMATCH",
+  "QUERY_STATE_MISMATCH", "CATEGORY_STATE_MISMATCH", "RESULTS_STILL_LOADING",
+  "RESULT_IDENTITY_MISSING", "STALE_RESULT_IDENTITY", "SOURCE_FORMAT_UNRECOGNIZED",
+] as const
+const PRODUCT_RESEARCH_ZERO_RESULT_STATES = ["NOT_PROVEN", "OFFICIAL_ZERO_RESULTS"] as const
 const PRODUCT_RESEARCH_EXTERNAL_BLOCKERS = [
   "NONE", "LOGIN_REDIRECT", "ACCESS_CHALLENGE", "CONSENT_OR_INTERSTITIAL",
   "UNSUPPORTED_NAVIGATION", "UNSUPPORTED_PRODUCT_RESEARCH_PAGE_STATE",
@@ -414,12 +431,21 @@ const PRODUCT_RESEARCH_EXTERNAL_BLOCKERS = [
 ] as const
 
 type ProductResearchDiagnosticTrace = {
-  version: "PRODUCT_RESEARCH_STAGE_TRACE_V1"
+  version: "PRODUCT_RESEARCH_STAGE_TRACE_V2"
   lastConfirmedStage: typeof PRODUCT_RESEARCH_TRACE_STAGES[number]
   taskReceived: boolean
   tabCreated: boolean
   tabUpdatedComplete: boolean
   finalUrlStateValid: boolean
+  urlStateClass: typeof PRODUCT_RESEARCH_URL_STATE_CLASSES[number]
+  urlPathState: typeof PRODUCT_RESEARCH_URL_FIELD_STATES[number]
+  urlMarketplaceState: typeof PRODUCT_RESEARCH_URL_FIELD_STATES[number]
+  urlQueryState: typeof PRODUCT_RESEARCH_URL_FIELD_STATES[number]
+  urlCategoryState: typeof PRODUCT_RESEARCH_URL_FIELD_STATES[number]
+  urlSoldTabState: typeof PRODUCT_RESEARCH_URL_FIELD_STATES[number]
+  urlDayRangeState: typeof PRODUCT_RESEARCH_URL_FIELD_STATES[number]
+  urlGuidedQueryState: typeof PRODUCT_RESEARCH_URL_FIELD_STATES[number]
+  urlGuidedStageState: typeof PRODUCT_RESEARCH_GUIDED_STAGE_STATES[number]
   authState: typeof PRODUCT_RESEARCH_AUTH_STATES[number]
   contentScriptPingSent: boolean
   contentScriptPingAck: boolean
@@ -429,6 +455,15 @@ type ProductResearchDiagnosticTrace = {
   resultsContainerFound: boolean
   resultsLoading: boolean
   resultsReady: boolean
+  guidedQueryStatePresent: boolean
+  guidedQueryMatch: boolean
+  resultIdentityState: typeof PRODUCT_RESEARCH_RESULT_IDENTITY_STATES[number]
+  resultIdentityCount: number
+  resultFingerprintChanged: boolean
+  previousResultsFingerprintPresent: boolean
+  resultStateBoundToCurrentQuery: boolean
+  readinessRejectionReason: typeof PRODUCT_RESEARCH_READINESS_REASONS[number]
+  zeroResultsState: typeof PRODUCT_RESEARCH_ZERO_RESULT_STATES[number]
   captureRequestSent: boolean
   captureResponseReceived: boolean
   captureResponseState: typeof PRODUCT_RESEARCH_RESPONSE_STATES[number]
@@ -555,21 +590,56 @@ function safeProductResearchDiagnosticTrace(value: unknown): ProductResearchDiag
     candidate === input.authState)
   const responseState = PRODUCT_RESEARCH_RESPONSE_STATES.find((candidate) =>
     candidate === input.captureResponseState)
+  const urlStateClass = PRODUCT_RESEARCH_URL_STATE_CLASSES.find((candidate) =>
+    candidate === input.urlStateClass)
+  const urlField = (name: string) => PRODUCT_RESEARCH_URL_FIELD_STATES.find((candidate) =>
+    candidate === input[name])
+  const urlPathState = urlField("urlPathState")
+  const urlMarketplaceState = urlField("urlMarketplaceState")
+  const urlQueryState = urlField("urlQueryState")
+  const urlCategoryState = urlField("urlCategoryState")
+  const urlSoldTabState = urlField("urlSoldTabState")
+  const urlDayRangeState = urlField("urlDayRangeState")
+  const urlGuidedQueryState = urlField("urlGuidedQueryState")
+  const urlGuidedStageState = PRODUCT_RESEARCH_GUIDED_STAGE_STATES.find((candidate) =>
+    candidate === input.urlGuidedStageState)
+  const resultIdentityState = PRODUCT_RESEARCH_RESULT_IDENTITY_STATES.find((candidate) =>
+    candidate === input.resultIdentityState)
+  const readinessRejectionReason = PRODUCT_RESEARCH_READINESS_REASONS.find((candidate) =>
+    candidate === input.readinessRejectionReason)
+  const zeroResultsState = PRODUCT_RESEARCH_ZERO_RESULT_STATES.find((candidate) =>
+    candidate === input.zeroResultsState)
   const blocker = PRODUCT_RESEARCH_EXTERNAL_BLOCKERS.find((candidate) =>
     candidate === input.externalEbayBlocker)
   const rowCount = Number(input.rowCount)
-  if (input.version !== "PRODUCT_RESEARCH_STAGE_TRACE_V1" || !stage || !authState ||
-    !responseState || !blocker || !Number.isInteger(rowCount) || rowCount < 0 || rowCount > 200) {
+  const resultIdentityCount = Number(input.resultIdentityCount)
+  if (input.version !== "PRODUCT_RESEARCH_STAGE_TRACE_V2" || !stage || !authState ||
+    !responseState || !urlStateClass || !urlPathState || !urlMarketplaceState ||
+    !urlQueryState || !urlCategoryState || !urlSoldTabState || !urlDayRangeState ||
+    !urlGuidedQueryState || !urlGuidedStageState || !resultIdentityState ||
+    !readinessRejectionReason || !zeroResultsState || !blocker ||
+    !Number.isInteger(rowCount) || rowCount < 0 || rowCount > 200 ||
+    !Number.isInteger(resultIdentityCount) || resultIdentityCount < 0 ||
+    resultIdentityCount > 12) {
     return null
   }
   const bool = (name: string) => input[name] === true
   return {
-    version: "PRODUCT_RESEARCH_STAGE_TRACE_V1",
+    version: "PRODUCT_RESEARCH_STAGE_TRACE_V2",
     lastConfirmedStage: stage,
     taskReceived: bool("taskReceived"),
     tabCreated: bool("tabCreated"),
     tabUpdatedComplete: bool("tabUpdatedComplete"),
     finalUrlStateValid: bool("finalUrlStateValid"),
+    urlStateClass,
+    urlPathState,
+    urlMarketplaceState,
+    urlQueryState,
+    urlCategoryState,
+    urlSoldTabState,
+    urlDayRangeState,
+    urlGuidedQueryState,
+    urlGuidedStageState,
     authState,
     contentScriptPingSent: bool("contentScriptPingSent"),
     contentScriptPingAck: bool("contentScriptPingAck"),
@@ -579,6 +649,15 @@ function safeProductResearchDiagnosticTrace(value: unknown): ProductResearchDiag
     resultsContainerFound: bool("resultsContainerFound"),
     resultsLoading: bool("resultsLoading"),
     resultsReady: bool("resultsReady"),
+    guidedQueryStatePresent: bool("guidedQueryStatePresent"),
+    guidedQueryMatch: bool("guidedQueryMatch"),
+    resultIdentityState,
+    resultIdentityCount,
+    resultFingerprintChanged: bool("resultFingerprintChanged"),
+    previousResultsFingerprintPresent: bool("previousResultsFingerprintPresent"),
+    resultStateBoundToCurrentQuery: bool("resultStateBoundToCurrentQuery"),
+    readinessRejectionReason,
+    zeroResultsState,
     captureRequestSent: bool("captureRequestSent"),
     captureResponseReceived: bool("captureResponseReceived"),
     captureResponseState: responseState,
@@ -1218,7 +1297,7 @@ export function Loop2Top20OpportunityPool() {
               <p className="mt-1 text-white/60">La página autenticada autoriza una sola sesión temporal; la extensión existente ejecuta Product Research y Main Search Sold sin copiar cookies, credenciales ni el bearer de Seller OS.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.19.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.19</a>
+              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.20.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.20</a>
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
             <div className="space-y-3 rounded-xl border border-fuchsia-200/25 bg-fuchsia-200/[0.06] p-3">
@@ -1255,6 +1334,15 @@ export function Loop2Top20OpportunityPool() {
                   <div><dt className="text-white/45">Última etapa</dt><dd>{oneClickResearch.diagnosticTrace.lastConfirmedStage}</dd></div>
                   <div><dt className="text-white/45">Tab complete</dt><dd>{String(oneClickResearch.diagnosticTrace.tabUpdatedComplete)}</dd></div>
                   <div><dt className="text-white/45">URL state</dt><dd>{String(oneClickResearch.diagnosticTrace.finalUrlStateValid)}</dd></div>
+                  <div><dt className="text-white/45">URL class</dt><dd>{oneClickResearch.diagnosticTrace.urlStateClass}</dd></div>
+                  <div><dt className="text-white/45">URL path</dt><dd>{oneClickResearch.diagnosticTrace.urlPathState}</dd></div>
+                  <div><dt className="text-white/45">URL marketplace</dt><dd>{oneClickResearch.diagnosticTrace.urlMarketplaceState}</dd></div>
+                  <div><dt className="text-white/45">URL query</dt><dd>{oneClickResearch.diagnosticTrace.urlQueryState}</dd></div>
+                  <div><dt className="text-white/45">URL category</dt><dd>{oneClickResearch.diagnosticTrace.urlCategoryState}</dd></div>
+                  <div><dt className="text-white/45">URL Sold tab</dt><dd>{oneClickResearch.diagnosticTrace.urlSoldTabState}</dd></div>
+                  <div><dt className="text-white/45">URL day range</dt><dd>{oneClickResearch.diagnosticTrace.urlDayRangeState}</dd></div>
+                  <div><dt className="text-white/45">URL guided query</dt><dd>{oneClickResearch.diagnosticTrace.urlGuidedQueryState}</dd></div>
+                  <div><dt className="text-white/45">URL guided stage</dt><dd>{oneClickResearch.diagnosticTrace.urlGuidedStageState}</dd></div>
                   <div><dt className="text-white/45">Auth</dt><dd>{oneClickResearch.diagnosticTrace.authState}</dd></div>
                   <div><dt className="text-white/45">Ping ACK</dt><dd>{String(oneClickResearch.diagnosticTrace.contentScriptPingAck)}</dd></div>
                   <div><dt className="text-white/45">Script boot</dt><dd>{String(oneClickResearch.diagnosticTrace.contentScriptBooted)}</dd></div>
@@ -1263,6 +1351,15 @@ export function Loop2Top20OpportunityPool() {
                   <div><dt className="text-white/45">Container</dt><dd>{String(oneClickResearch.diagnosticTrace.resultsContainerFound)}</dd></div>
                   <div><dt className="text-white/45">Loading</dt><dd>{String(oneClickResearch.diagnosticTrace.resultsLoading)}</dd></div>
                   <div><dt className="text-white/45">Results ready</dt><dd>{String(oneClickResearch.diagnosticTrace.resultsReady)}</dd></div>
+                  <div><dt className="text-white/45">Guided state</dt><dd>{String(oneClickResearch.diagnosticTrace.guidedQueryStatePresent)}</dd></div>
+                  <div><dt className="text-white/45">Guided match</dt><dd>{String(oneClickResearch.diagnosticTrace.guidedQueryMatch)}</dd></div>
+                  <div><dt className="text-white/45">Result identity</dt><dd>{oneClickResearch.diagnosticTrace.resultIdentityState}</dd></div>
+                  <div><dt className="text-white/45">Identity count</dt><dd>{oneClickResearch.diagnosticTrace.resultIdentityCount}</dd></div>
+                  <div><dt className="text-white/45">Result changed</dt><dd>{String(oneClickResearch.diagnosticTrace.resultFingerprintChanged)}</dd></div>
+                  <div><dt className="text-white/45">Previous fingerprint</dt><dd>{String(oneClickResearch.diagnosticTrace.previousResultsFingerprintPresent)}</dd></div>
+                  <div><dt className="text-white/45">Result/query bound</dt><dd>{String(oneClickResearch.diagnosticTrace.resultStateBoundToCurrentQuery)}</dd></div>
+                  <div><dt className="text-white/45">Readiness reason</dt><dd>{oneClickResearch.diagnosticTrace.readinessRejectionReason}</dd></div>
+                  <div><dt className="text-white/45">Zero results</dt><dd>{oneClickResearch.diagnosticTrace.zeroResultsState}</dd></div>
                   <div><dt className="text-white/45">Capture sent</dt><dd>{String(oneClickResearch.diagnosticTrace.captureRequestSent)}</dd></div>
                   <div><dt className="text-white/45">Capture response</dt><dd>{oneClickResearch.diagnosticTrace.captureResponseState}</dd></div>
                   <div><dt className="text-white/45">Rows</dt><dd>{oneClickResearch.diagnosticTrace.rowCount}</dd></div>
@@ -1272,7 +1369,7 @@ export function Loop2Top20OpportunityPool() {
               </div>}
               <p className="text-white/45">Límites: 15 minutos · 15 consultas · 200 filas Sold · 2 páginas por consulta · 1 reintento · EBAY_US · escrituras eBay 0.</p>
             </div>
-            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.19 conserva la captura manual anterior y reporta sólo etapas seguras de carga/captura; no almacena tokens ni usa credenciales persistentes.</p>
+            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.20 conserva la captura manual anterior y separa estado URL, estado guiado e identidad de resultados sin exponer consultas, títulos ni URLs; no almacena tokens ni usa credenciales persistentes.</p>
             <div className="rounded-xl border border-amber-100/20 bg-amber-100/[0.04] p-3">
               <p className="font-black">Cuota oficial Browse</p>
               <p className="mt-1 text-white/55">Estado {browserCaptureStatus?.browseQuota?.status ?? "SIN VERIFICAR"} · restantes {browserCaptureStatus?.browseQuota?.remaining ?? "N/D"} de {browserCaptureStatus?.browseQuota?.limit ?? "N/D"} · reset {browserCaptureStatus?.browseQuota?.resetAt ? new Date(browserCaptureStatus.browseQuota.resetAt).toLocaleString("es") : "N/D"}.</p>

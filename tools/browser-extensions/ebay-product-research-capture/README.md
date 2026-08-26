@@ -9,7 +9,13 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Abre Seller OS Preview y usa **INICIAR RESEARCH AUTOMÁTICO** una sola vez.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.19.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.20.
+
+## Diagnóstico estructural de readiness (v1.2.20)
+
+La automatización mantiene el gate fail-closed y separa, mediante enums,
+el estado estructural de la URL, el estado guiado y la identidad acotada de
+resultados. No transmite URLs, consultas, títulos, HTML, cookies ni credenciales.
 
 ## Diagnóstico acotado de Product Research (v1.2.19)
 

@@ -40,7 +40,7 @@
     type: RESULT,
     requestId: "00000000-0000-4000-8000-000000000000",
     success: true,
-    payload: { success: true, ready: true, version: "1.2.19" },
+    payload: { success: true, ready: true, version: "1.2.20" },
     extensionId: chrome.runtime.id,
   }, ADMIN_ORIGIN)
 })()

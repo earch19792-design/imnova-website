@@ -1490,6 +1490,44 @@
 
   const normalizedQuery = (value) => text(value).toLocaleLowerCase("en-US")
 
+  let lastProductResearchReadinessDecision = {
+    ready: false,
+    reason: "GUIDED_QUERY_STATE_MISSING",
+    resultIdentityState: "NONE",
+    resultIdentityCount: 0,
+    resultFingerprintChanged: false,
+  }
+
+  function productResearchReadinessGate(input) {
+    if (!input.guidedQueryStatePresent) {
+      return { ready: false, reason: "GUIDED_QUERY_STATE_MISSING" }
+    }
+    if (!input.guidedQueryMatch) {
+      return { ready: false, reason: "GUIDED_QUERY_MISMATCH" }
+    }
+    if (!input.queryStateMatch) {
+      return { ready: false, reason: "QUERY_STATE_MISMATCH" }
+    }
+    if (!input.categoryStateMatch) {
+      return { ready: false, reason: "CATEGORY_STATE_MISMATCH" }
+    }
+    if (input.resultsLoading) {
+      return { ready: false, reason: "RESULTS_STILL_LOADING" }
+    }
+    if (input.resultIdentityState === "SOURCE_FORMAT_UNRECOGNIZED") {
+      return { ready: false, reason: "SOURCE_FORMAT_UNRECOGNIZED" }
+    }
+    if (!["SOLD_ITEM_IDS", "OFFICIAL_ZERO_RESULTS"].includes(
+      input.resultIdentityState,
+    )) {
+      return { ready: false, reason: "RESULT_IDENTITY_MISSING" }
+    }
+    if (input.resultMatchesPrevious) {
+      return { ready: false, reason: "STALE_RESULT_IDENTITY" }
+    }
+    return { ready: true, reason: "READY" }
+  }
+
   function positivePlanInteger(value) {
     if (value === null || value === undefined || value === "") return null
     const parsed = Number(value)
@@ -1548,13 +1586,31 @@
       `${window.location.pathname}${window.location.search}${suffix ? `#${suffix}` : ""}`)
   }
 
-  function visibleResultsSignature() {
+  function visibleResultsIdentity() {
     const ids = deepQueryAll('a[href*="/itm/"]').filter(visible)
       .map((link) => listingIdFromLink(link)).filter(Boolean).slice(0, 12)
-    if (ids.length) return [...new Set(ids)].join(",")
+    if (ids.length) {
+      const uniqueIds = [...new Set(ids)]
+      return { state: "SOLD_ITEM_IDS", count: uniqueIds.length,
+        signature: uniqueIds.join(",") }
+    }
     const context = queryContext()
-    return officialNoSoldResultsProof(context.searchQuery)
-      ? `OFFICIAL_NO_SOLD_RESULTS:${comparableQuery(context.searchQuery)}` : ""
+    if (officialNoSoldResultsProof(context.searchQuery)) {
+      return { state: "OFFICIAL_ZERO_RESULTS", count: 0,
+        signature: `OFFICIAL_NO_SOLD_RESULTS:${comparableQuery(context.searchQuery)}` }
+    }
+    return { state: "NONE", count: 0, signature: "" }
+  }
+
+  function visibleResultsSignature() {
+    return visibleResultsIdentity().signature
+  }
+
+  function productResearchResultsLoading() {
+    return [...document.querySelectorAll([
+      '[aria-busy="true"]', '[role="progressbar"]', '[data-testid*="loading" i]',
+      '[data-testid*="spinner" i]', '[class*="loading" i]', '[class*="spinner" i]',
+    ].join(","))].slice(0, 100).some(visible)
   }
 
   function stopNextQueryWatch() {
@@ -1648,15 +1704,42 @@
   }
 
   async function confirmNextQueryResults() {
-    if (!nextQueryState || nextQueryCheckPending) return false
+    if (!nextQueryState) {
+      lastProductResearchReadinessDecision = {
+        ready: false, reason: "GUIDED_QUERY_STATE_MISSING",
+        resultIdentityState: "NONE", resultIdentityCount: 0,
+        resultFingerprintChanged: false,
+      }
+      return false
+    }
+    if (nextQueryCheckPending) return false
     nextQueryCheckPending = true
     try {
-      const current = normalizedQuery(queryContext().searchQuery)
-      if (current !== normalizedQuery(nextQueryState.query)) return false
-      const signature = visibleResultsSignature()
-      if (!signature || signature === nextQueryState.previousResultsSignature) return false
-      const fingerprint = await resultsFingerprint(signature)
-      if (fingerprint === nextQueryState.previousResultsFingerprint) return false
+      const context = queryContext()
+      const identity = visibleResultsIdentity()
+      const fingerprint = identity.signature
+        ? await resultsFingerprint(identity.signature) : null
+      const resultMatchesPrevious = Boolean(identity.signature) &&
+        (identity.signature === nextQueryState.previousResultsSignature ||
+          fingerprint === nextQueryState.previousResultsFingerprint)
+      const decision = productResearchReadinessGate({
+        guidedQueryStatePresent: true,
+        guidedQueryMatch: normalizedQuery(nextQueryState.query) ===
+          normalizedQuery(nextQueryState.expectedQuery),
+        queryStateMatch: normalizedQuery(context.searchQuery) ===
+          normalizedQuery(nextQueryState.expectedQuery),
+        categoryStateMatch: context.categoryId === nextQueryState.expectedCategoryId,
+        resultsLoading: productResearchResultsLoading(),
+        resultIdentityState: identity.state,
+        resultMatchesPrevious,
+      })
+      lastProductResearchReadinessDecision = {
+        ...decision,
+        resultIdentityState: identity.state,
+        resultIdentityCount: identity.count,
+        resultFingerprintChanged: Boolean(fingerprint) && !resultMatchesPrevious,
+      }
+      if (!decision.ready) return false
       nextQueryState.resultsReady = true
       persistGuidedQueryFragment(
         nextQueryState.query, nextQueryState.previousResultsFingerprint, "RESULTS_READY",
@@ -1910,16 +1993,13 @@
       /consent|privacy choices|accept cookies|agree and continue|cookie settings/i.test(
         text(element.innerText || element.textContent).slice(0, 1_000),
       ))
-    let resultsSignature = ""
-    try { resultsSignature = visibleResultsSignature() } catch { /* no recognized result */ }
-    const resultsContainerFound = Boolean(resultsSignature) || [
+    let resultIdentity = { state: "NONE", count: 0, signature: "" }
+    try { resultIdentity = visibleResultsIdentity() } catch { /* no recognized result */ }
+    const resultsContainerFound = Boolean(resultIdentity.signature) || [
       "table", '[role="table"]', '[role="grid"]', '[data-testid*="table" i]',
       '[data-testid*="grid" i]', '[class*="table" i]', '[class*="grid" i]',
     ].some((selector) => deepQueryAll(selector).slice(0, 200).some(visible))
-    const resultsLoading = [...document.querySelectorAll([
-      '[aria-busy="true"]', '[role="progressbar"]', '[data-testid*="loading" i]',
-      '[data-testid*="spinner" i]', '[class*="loading" i]', '[class*="spinner" i]',
-    ].join(","))].slice(0, 100).some(visible)
+    const resultsLoading = productResearchResultsLoading()
     const recognizedResearchPage = isOfficialResearchTarget(window.location.href) &&
       Boolean(researchSearchInput() || resultsContainerFound || resultsLoading)
     const authState = accessChallenge ? "ACCESS_CHALLENGE"
@@ -1941,6 +2021,22 @@
       resultsContainerFound,
       resultsLoading,
       resultsReady: nextQueryState?.resultsReady === true,
+      guidedQueryStatePresent: Boolean(nextQueryState),
+      guidedQueryMatch: Boolean(nextQueryState) &&
+        normalizedQuery(nextQueryState.expectedQuery) === normalizedQuery(expectedQuery),
+      resultIdentityState: resultIdentity.state,
+      resultIdentityCount: Math.max(0, Math.min(12, resultIdentity.count)),
+      resultFingerprintChanged: lastProductResearchReadinessDecision
+        .resultFingerprintChanged === true,
+      previousResultsFingerprintPresent: Boolean(
+        nextQueryState?.previousResultsFingerprint || nextQueryState?.previousResultsSignature,
+      ),
+      resultStateBoundToCurrentQuery: nextQueryState?.resultsReady === true &&
+        normalizedQuery(context.searchQuery) === normalizedQuery(expectedQuery) &&
+        context.categoryId === expectedCategoryId,
+      readinessRejectionReason: lastProductResearchReadinessDecision.reason,
+      zeroResultsState: resultIdentity.state === "OFFICIAL_ZERO_RESULTS"
+        ? "OFFICIAL_ZERO_RESULTS" : "NOT_PROVEN",
       externalEbayBlocker,
     }
   }
@@ -2074,8 +2170,11 @@
     if (query.length < 3 || !nextQueryPanel || !nextQueryField || !nextQueryProgress) return
     const parsedOrdinal = positivePlanInteger(ordinal)
     const parsedTotal = positivePlanInteger(total)
+    const initialContext = queryContext()
     nextQueryState = {
       query,
+      expectedQuery: query,
+      expectedCategoryId: initialContext.categoryId,
       ordinal: parsedOrdinal,
       total: parsedTotal,
       transitionSource,
@@ -2233,7 +2332,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.19"
+  title.textContent = "Seller OS · Product Research · v1.2.20"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"

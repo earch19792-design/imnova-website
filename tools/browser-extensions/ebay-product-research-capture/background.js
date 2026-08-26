@@ -20,7 +20,7 @@ const MAX_PAGES_PER_QUERY = 2
 const MAX_RETRIES = 1
 const PRODUCT_RESEARCH_DAY_RANGE = 90
 const PRODUCT_RESEARCH_PAGE_LIMIT = 50
-const PRODUCT_RESEARCH_TRACE_VERSION = "PRODUCT_RESEARCH_STAGE_TRACE_V1"
+const PRODUCT_RESEARCH_TRACE_VERSION = "PRODUCT_RESEARCH_STAGE_TRACE_V2"
 
 function officialResearchSender(sender) {
   try {
@@ -283,6 +283,15 @@ function newProductResearchTrace() {
     tabCreated: false,
     tabUpdatedComplete: false,
     finalUrlStateValid: false,
+    urlStateClass: "UNAVAILABLE",
+    urlPathState: "UNAVAILABLE",
+    urlMarketplaceState: "UNAVAILABLE",
+    urlQueryState: "UNAVAILABLE",
+    urlCategoryState: "UNAVAILABLE",
+    urlSoldTabState: "UNAVAILABLE",
+    urlDayRangeState: "UNAVAILABLE",
+    urlGuidedQueryState: "UNAVAILABLE",
+    urlGuidedStageState: "UNAVAILABLE",
     authState: "UNVERIFIED",
     contentScriptPingSent: false,
     contentScriptPingAck: false,
@@ -292,6 +301,15 @@ function newProductResearchTrace() {
     resultsContainerFound: false,
     resultsLoading: false,
     resultsReady: false,
+    guidedQueryStatePresent: false,
+    guidedQueryMatch: false,
+    resultIdentityState: "NONE",
+    resultIdentityCount: 0,
+    resultFingerprintChanged: false,
+    previousResultsFingerprintPresent: false,
+    resultStateBoundToCurrentQuery: false,
+    readinessRejectionReason: "GUIDED_QUERY_STATE_MISSING",
+    zeroResultsState: "NOT_PROVEN",
     captureRequestSent: false,
     captureResponseReceived: false,
     captureResponseState: "NONE",
@@ -338,6 +356,39 @@ function updateProductResearchTabTrace(tab, input, trace) {
   if (tab?.status === "complete") trace.tabUpdatedComplete = true
   let url
   try { url = new URL(typeof tab?.url === "string" ? tab.url : "") } catch { return }
+  const boundedUrlFieldState = (value, expected) => value === null || value === ""
+    ? "ABSENT" : value === expected ? "MATCH" : "MISMATCH"
+  trace.urlPathState = /^\/sh\/research\/?$/.test(url.pathname) ? "MATCH" : "MISMATCH"
+  trace.urlMarketplaceState = boundedUrlFieldState(
+    url.searchParams.get("marketplace"), "EBAY-US",
+  )
+  trace.urlQueryState = boundedUrlFieldState(url.searchParams.get("keywords"), input.searchQuery)
+  trace.urlCategoryState = boundedUrlFieldState(
+    url.searchParams.get("categoryId"), input.categoryId,
+  )
+  trace.urlSoldTabState = boundedUrlFieldState(url.searchParams.get("tabName"), "SOLD")
+  trace.urlDayRangeState = boundedUrlFieldState(
+    url.searchParams.get("dayRange"), String(PRODUCT_RESEARCH_DAY_RANGE),
+  )
+  const fragment = new URLSearchParams(url.hash.replace(/^#/, ""))
+  trace.urlGuidedQueryState = boundedUrlFieldState(
+    fragment.get("seller-os-query"), input.searchQuery,
+  )
+  const guidedStage = fragment.get("seller-os-query-stage")
+  trace.urlGuidedStageState = guidedStage === null || guidedStage === ""
+    ? "ABSENT" : guidedStage === "AWAITING_RESULTS" ? "AWAITING_RESULTS"
+      : guidedStage === "RESULTS_READY" ? "RESULTS_READY" : "OTHER"
+  const requestIdentityMatches = trace.urlQueryState === "MATCH" &&
+    trace.urlCategoryState === "MATCH"
+  const fullRepresentationMatches = [
+    trace.urlPathState, trace.urlMarketplaceState, trace.urlQueryState,
+    trace.urlCategoryState, trace.urlSoldTabState, trace.urlDayRangeState,
+    trace.urlGuidedQueryState,
+  ].every((state) => state === "MATCH") &&
+    ["AWAITING_RESULTS", "RESULTS_READY"].includes(trace.urlGuidedStageState)
+  trace.urlStateClass = fullRepresentationMatches ? "EXACT_REQUESTED_REPRESENTATION"
+    : requestIdentityMatches ? "QUERY_CATEGORY_MATCH_URL_REPRESENTATION_DIFFERENT"
+      : "REQUEST_IDENTITY_MISMATCH"
   if (url.hostname === "signin.ebay.com") {
     trace.authState = "LOGIN_REQUIRED"
     trace.externalEbayBlocker = "LOGIN_REDIRECT"
@@ -363,16 +414,7 @@ function updateProductResearchTabTrace(tab, input, trace) {
     }
     return
   }
-  const fragment = new URLSearchParams(url.hash.replace(/^#/, ""))
-  trace.finalUrlStateValid = url.searchParams.get("marketplace") === "EBAY-US" &&
-    url.searchParams.get("keywords") === input.searchQuery &&
-    url.searchParams.get("categoryId") === input.categoryId &&
-    url.searchParams.get("tabName") === "SOLD" &&
-    url.searchParams.get("dayRange") === String(PRODUCT_RESEARCH_DAY_RANGE) &&
-    fragment.get("seller-os-query") === input.searchQuery &&
-    ["AWAITING_RESULTS", "RESULTS_READY"].includes(
-      fragment.get("seller-os-query-stage") ?? "",
-    )
+  trace.finalUrlStateValid = fullRepresentationMatches
 }
 
 function updateProductResearchContentTrace(diagnostic, trace) {
@@ -384,6 +426,26 @@ function updateProductResearchContentTrace(diagnostic, trace) {
   trace.resultsContainerFound = diagnostic.resultsContainerFound === true
   trace.resultsLoading = diagnostic.resultsLoading === true
   trace.resultsReady = diagnostic.resultsReady === true
+  trace.guidedQueryStatePresent = diagnostic.guidedQueryStatePresent === true
+  trace.guidedQueryMatch = diagnostic.guidedQueryMatch === true
+  trace.resultIdentityState = ["NONE", "SOLD_ITEM_IDS", "OFFICIAL_ZERO_RESULTS",
+    "SOURCE_FORMAT_UNRECOGNIZED"].includes(diagnostic.resultIdentityState)
+    ? diagnostic.resultIdentityState : "NONE"
+  const resultIdentityCount = Number(diagnostic.resultIdentityCount)
+  trace.resultIdentityCount = Number.isInteger(resultIdentityCount) &&
+    resultIdentityCount >= 0 && resultIdentityCount <= 12 ? resultIdentityCount : 0
+  trace.resultFingerprintChanged = diagnostic.resultFingerprintChanged === true
+  trace.previousResultsFingerprintPresent =
+    diagnostic.previousResultsFingerprintPresent === true
+  trace.resultStateBoundToCurrentQuery = diagnostic.resultStateBoundToCurrentQuery === true
+  trace.readinessRejectionReason = [
+    "READY", "GUIDED_QUERY_STATE_MISSING", "GUIDED_QUERY_MISMATCH",
+    "QUERY_STATE_MISMATCH", "CATEGORY_STATE_MISMATCH", "RESULTS_STILL_LOADING",
+    "RESULT_IDENTITY_MISSING", "STALE_RESULT_IDENTITY", "SOURCE_FORMAT_UNRECOGNIZED",
+  ].includes(diagnostic.readinessRejectionReason)
+    ? diagnostic.readinessRejectionReason : "RESULT_IDENTITY_MISSING"
+  trace.zeroResultsState = diagnostic.zeroResultsState === "OFFICIAL_ZERO_RESULTS"
+    ? "OFFICIAL_ZERO_RESULTS" : "NOT_PROVEN"
   trace.authState = [
     "AUTHENTICATED_PRODUCT_RESEARCH", "LOGIN_REQUIRED", "CONSENT_OR_INTERSTITIAL",
     "ACCESS_CHALLENGE", "UNVERIFIED",
