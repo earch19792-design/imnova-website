@@ -334,7 +334,9 @@ export function normalizeSellerOsDemandKeywordDnaV1(
   })
 }
 
-function normalizeFamilyIdentity(input: SellerOsMarketFamilyIdentityV1) {
+export function normalizeSellerOsMarketFamilyIdentityV1(
+  input: SellerOsMarketFamilyIdentityV1,
+) {
   return Object.freeze({
     productFunction: canonicalText(input.productFunction,
       "FAMILY_PRODUCT_FUNCTION_INVALID", 120),
@@ -349,7 +351,7 @@ function normalizeFamilyIdentity(input: SellerOsMarketFamilyIdentityV1) {
 export function buildSellerOsMarketFamilyIdV1(
   input: SellerOsMarketFamilyIdentityV1,
 ) {
-  const identity = normalizeFamilyIdentity(input)
+  const identity = normalizeSellerOsMarketFamilyIdentityV1(input)
   const structured = Object.entries(identity.structuredDefinition)
     .map(([key, value]) => `${key}=${value}`).join("\n")
   return `market-family-v1:${digest([

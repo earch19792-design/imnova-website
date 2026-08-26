@@ -11,6 +11,7 @@ import {
   buildSellerOsFamilyMarketObservationV1,
   buildSellerOsMarketFamilyIdV1,
   buildSellerOsOpportunityMonitorEnrollmentV1,
+  normalizeSellerOsMarketFamilyIdentityV1,
   normalizeSellerOsDemandKeywordDnaV1,
   SELLER_OS_DEMAND_KEYWORD_DNA_VERSION,
   type SellerOsDemandKeywordDnaV1,
@@ -799,13 +800,14 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
       windowEvidenceStatus: windowComplete ? "AVAILABLE" as const : "UNAVAILABLE" as const,
       keywordDnaStatus, identitySupportCount: cluster.identityHashes.length,
     })
-    const familyIdentity: SellerOsMarketFamilyIdentityV1 = {
+    const familyIdentity: SellerOsMarketFamilyIdentityV1 =
+      normalizeSellerOsMarketFamilyIdentityV1({
       productFunction: canonicalFamilyName,
       buyerUseCase: cluster.queries[0] ?? canonicalFamilyName,
       category: `ebay-us-category:${cluster.categoryId}`,
       structuredDefinition: { "category id": cluster.categoryId,
         "product family": canonicalFamilyName },
-    }
+      })
     const familyId = buildSellerOsMarketFamilyIdV1(familyIdentity)
     const semantic = `${familyIdentity.category.toLowerCase()}\n${familyIdentity.productFunction.toLowerCase()}`
     const reviewedConcept = reviewedCommercialConceptKey({
