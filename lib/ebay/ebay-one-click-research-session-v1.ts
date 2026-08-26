@@ -18,6 +18,44 @@ export const EBAY_ONE_CLICK_RESEARCH_BOUNDS = Object.freeze({
   maxRetries: 1,
 })
 
+export const EBAY_ONE_CLICK_RESEARCH_HANDSHAKE_BOUNDS = Object.freeze({
+  maxRuntimeMs: 8_000,
+  attemptTimeoutMs: 750,
+  retryDelayMs: 250,
+})
+
+export async function establishEbayOneClickResearchHandshake<T>(input: Readonly<{
+  probe: (attemptTimeoutMs: number) => Promise<T>
+  now?: () => number
+  wait?: (delayMs: number) => Promise<void>
+}>): Promise<T> {
+  const now = input.now ?? Date.now
+  const wait = input.wait ?? ((delayMs: number) => new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs)
+  }))
+  const startedAt = now()
+  while (true) {
+    const remainingMs = EBAY_ONE_CLICK_RESEARCH_HANDSHAKE_BOUNDS.maxRuntimeMs -
+      (now() - startedAt)
+    if (remainingMs <= 0) break
+    try {
+      return await input.probe(Math.min(
+        EBAY_ONE_CLICK_RESEARCH_HANDSHAKE_BOUNDS.attemptTimeoutMs,
+        remainingMs,
+      ))
+    } catch {
+      const retryRemainingMs = EBAY_ONE_CLICK_RESEARCH_HANDSHAKE_BOUNDS.maxRuntimeMs -
+        (now() - startedAt)
+      if (retryRemainingMs <= 0) break
+      await wait(Math.min(
+        EBAY_ONE_CLICK_RESEARCH_HANDSHAKE_BOUNDS.retryDelayMs,
+        retryRemainingMs,
+      ))
+    }
+  }
+  throw new Error("ONE_CLICK_RESEARCH_EXTENSION_HANDSHAKE_TIMEOUT")
+}
+
 type QueryPlanTask = Readonly<{
   id?: unknown
   ordinal?: unknown

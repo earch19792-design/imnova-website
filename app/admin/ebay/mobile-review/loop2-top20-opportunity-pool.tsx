@@ -9,6 +9,7 @@ import {
   EBAY_ONE_CLICK_RESEARCH_RESULT,
   buildEbayOneClickResearchLease,
   buildEbayOneClickResearchPlan,
+  establishEbayOneClickResearchHandshake,
   validateEbayOneClickResearchCompletion,
 } from "@/lib/ebay/ebay-one-click-research-session-v1"
 
@@ -532,21 +533,25 @@ function extensionResearchCommand<T extends Record<string, unknown>>(
 }
 
 async function probeOneClickResearchExtension() {
-  const probe = await extensionResearchCommand<{
-    success: true
-    ready: true
-    extensionId: string
-    extensionVersion: string
-    persistentCredential: false
-    cookieAccess: false
-    marketplaceWrites: 0
-  }>({ type: "IMNOVA_EBAY_ONE_CLICK_RESEARCH_PROBE_V1" }, 8_000)
-  if (probe.ready !== true || probe.persistentCredential !== false ||
-    probe.cookieAccess !== false || probe.marketplaceWrites !== 0 ||
-    probe.extensionId !== probe.bridgeExtensionId) {
-    throw new Error("ONE_CLICK_RESEARCH_EXTENSION_ATTESTATION_FAILED")
-  }
-  return probe
+  return establishEbayOneClickResearchHandshake({
+    probe: async (attemptTimeoutMs) => {
+      const probe = await extensionResearchCommand<{
+        success: true
+        ready: true
+        extensionId: string
+        extensionVersion: string
+        persistentCredential: false
+        cookieAccess: false
+        marketplaceWrites: 0
+      }>({ type: "IMNOVA_EBAY_ONE_CLICK_RESEARCH_PROBE_V1" }, attemptTimeoutMs)
+      if (probe.ready !== true || probe.persistentCredential !== false ||
+        probe.cookieAccess !== false || probe.marketplaceWrites !== 0 ||
+        probe.extensionId !== probe.bridgeExtensionId) {
+        throw new Error("ONE_CLICK_RESEARCH_EXTENSION_ATTESTATION_FAILED")
+      }
+      return probe
+    },
+  })
 }
 
 export function Loop2Top20OpportunityPool() {
