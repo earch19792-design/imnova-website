@@ -240,8 +240,12 @@ function identityText(identity: JsonRecord, camel: string, alternate?: string) {
 function dateRange(batch: JsonRecord) {
   const range = record(batch.date_range ?? batch.dateRange)
   const parse = (value: unknown) => {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return new Date(value).toISOString()
+    const epoch = typeof value === "number" && Number.isFinite(value)
+      ? value : typeof value === "string" && /^\d{10,16}$/.test(value.trim())
+        ? Number(value.trim()) : null
+    if (epoch !== null) {
+      const parsed = new Date(epoch)
+      return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null
     }
     return instant(value)
   }
@@ -431,13 +435,90 @@ export type SellerOsDemandFirstFamilyCandidateV1 = Readonly<{
   observation: ReturnType<typeof buildSellerOsFamilyMarketObservationV1> | null
   taskId: string | null
   batchId: string | null
+  clusterMetrics: Readonly<{
+    clusterKey: string
+    familyName: string
+    categoryId: string
+    rawClusterCount: number
+    signalCount: number
+    uniqueSoldItemCount: number
+    soldQuantity: number
+    evidenceReferences: readonly string[]
+    priceSampleCount: number
+    priceEvidenceStatus: "AVAILABLE" | "UNAVAILABLE"
+    observationWindowStart: string | null
+    observationWindowEnd: string | null
+    evidenceObservedAt: string | null
+    windowEvidenceStatus: "AVAILABLE" | "UNAVAILABLE"
+    keywordDnaStatus: "AVAILABLE" | "UNPROVEN"
+    identitySupportCount: number
+  }>
 }>
 
-export function buildSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
+type SellerOsDemandFirstRawClusterV1 = Readonly<{
+  clusterKey: string
+  familyKey: string
+  familyName: string
+  categoryId: string
+  semanticsKey: string
+  evidence: readonly MarketEvidenceV1[]
+  identityHashes: readonly string[]
+  sellerHashes: readonly string[]
+  queries: readonly string[]
+  generatedQueries: readonly string[]
+  taskIds: readonly string[]
+  batchIds: readonly string[]
+  windows: readonly Readonly<{
+    startAt: string | null
+    endAt: string | null
+    capturedAt: string | null
+  }>[]
+  rawClusterCount: number
+}>
+
+export type SellerOsDemandFirstFamilyEvaluationV1 = Readonly<{
+  rawClustersFormed: number
+  crossBatchClustersAggregated: number
+  clustersAfterDedupe: number
+  numericStringWindowsParsed: number
+  secondaryClustersEvaluated: number
+  candidateFamiliesBeforeCap: number
+  candidateFamiliesAfterCap: number
+  qualifiedFamilies: number
+  duplicatesSuppressed: number
+  allCandidates: readonly SellerOsDemandFirstFamilyCandidateV1[]
+  candidatesAfterCap: readonly SellerOsDemandFirstFamilyCandidateV1[]
+}>
+
+function normalizedFamilyClusterKey(value: string) {
+  return value.normalize("NFKC").toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9+.-]+/g, " ").trim()
+}
+
+function dedupeMarketEvidence(values: readonly MarketEvidenceV1[]) {
+  return [...new Map(values.map((entry) => [entry.evidenceId, entry])).values()]
+    .sort((left, right) => Buffer.compare(
+      Buffer.from(left.evidenceId), Buffer.from(right.evidenceId)))
+}
+
+function clusterSemanticsKey(batch: JsonRecord,
+  evidence: readonly MarketEvidenceV1[]) {
+  const range = record(batch.date_range ?? batch.dateRange)
+  return digest({
+    source: text(batch.source, 120),
+    listingSite: text(batch.listing_site ?? batch.listingSite, 120),
+    rawHtmlStored: batch.raw_html_stored === true || batch.rawHtmlStored === true,
+    piiStored: batch.pii_stored === true || batch.piiStored === true,
+    windowLabel: text(range.label, 80),
+    evidenceSources: unique(evidence.map((entry) => entry.source)),
+    evidenceSourceVersions: unique(evidence.map((entry) => entry.sourceVersion)),
+  })
+}
+
+function buildDemandFirstRawClustersV1(input: Readonly<{
   tasks: readonly unknown[]
   batches: readonly unknown[]
   observations: readonly unknown[]
-  existingCases: readonly unknown[]
   categoryAuthorities?: readonly SellerOsOfficialSoldCategoryAuthorityV1[]
 }>) {
   const batchesById = new Map(rows(input.batches).flatMap((batch) => {
@@ -451,20 +532,11 @@ export function buildSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
     observationsByBatch.set(batchId,
       [...(observationsByBatch.get(batchId) ?? []), observation])
   }
-  const exactExisting = new Set(rows(input.existingCases)
-    .flatMap((row) => text(row.family_id, 120) ? [text(row.family_id, 120) as string] : []))
-  const semanticExisting = new Set(rows(input.existingCases).flatMap((row) => {
-    const identity = record(row.family_identity)
-    const productFunction = text(identity.productFunction, 120)?.toLowerCase()
-    const category = text(identity.category, 120)?.toLowerCase()
-    return productFunction && category ? [`${category}\n${productFunction}`] : []
-  }))
-  const emitted = new Set<string>()
   const categoryAuthorityByObservation = new Map(
     (input.categoryAuthorities ?? []).map((authority) =>
       [authority.observationId, authority] as const),
   )
-  const candidates: SellerOsDemandFirstFamilyCandidateV1[] = []
+  const clusters: SellerOsDemandFirstRawClusterV1[] = []
   for (const task of rows(input.tasks).slice(0,
     SELLER_OS_DEMAND_FIRST_BROAD_NET_LIMITS_V1.queryTasks)) {
     const taskId = text(task.id, 80)
@@ -473,12 +545,10 @@ export function buildSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
     const categoryId = text(task.category_id, 40)
     const batch = batchId ? batchesById.get(batchId) : null
     if (task.status !== "PROCESSED" || !taskId || !batchId || !query || !batch) {
-      candidates.push(Object.freeze({ status: "UNQUALIFIED" as const,
-        reason: "PROCESSED_REVIEWED_CAPTURE_REQUIRED", familyDefinition: null,
-        observation: null, taskId, batchId }))
       continue
     }
-    const taskEvidence = (observationsByBatch.get(batchId) ?? [])
+    const taskObservations = observationsByBatch.get(batchId) ?? []
+    const taskEvidence = taskObservations
       .flatMap((row) => {
         const observationId = text(row.id, 80)
         const item = marketEvidenceFromOfficialSoldObservationV1({
@@ -503,40 +573,204 @@ export function buildSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
       sourceLimitations: ["MARKETPLACE_INSIGHTS_UNAVAILABLE_OR_RESTRICTED",
         "ACTIVE_ASKING_PRICE_NOT_USED_AS_SOLD_EVIDENCE"],
     })
-    const family = research.productFamilies[0]
-    const familyCategoryId = categoryId ?? family?.category.categoryId ?? null
-    const identityCount = new Set((observationsByBatch.get(batchId) ?? [])
-      .flatMap((row) => text(row.identity_hash, 80) ?
-        [text(row.identity_hash, 80) as string] : [])).size
-    if (!familyCategoryId || taskEvidence.length < 2 || identityCount < 2 || !family ||
-        family.soldEvidenceCount < 2 || family.supportingListingCount < 2 ||
-        family.canonicalLabel === "Unproven product family") {
-      candidates.push(Object.freeze({ status: "UNQUALIFIED" as const,
-        reason: "DEFENSIBLE_FAMILY_EVIDENCE_INSUFFICIENT", familyDefinition: null,
-        observation: null, taskId, batchId }))
-      continue
-    }
-    const intent = unique((research.keywordSpine.terms.length
-      ? research.keywordSpine.terms : [query]).slice(0, 8))
-    const familyIdentity: SellerOsMarketFamilyIdentityV1 = {
-      productFunction: family.canonicalLabel,
-      buyerUseCase: query,
-      category: `ebay-us-category:${familyCategoryId}`,
-      structuredDefinition: {
-        "category id": familyCategoryId,
-        "product family": family.canonicalLabel,
-      },
-    }
+    const relevantEvidenceIds = new Set(research.comparables.filter((entry) =>
+      entry.classification === "EXACT_OR_STRONG_COMPARABLE" ||
+      entry.classification === "PRODUCT_FAMILY_COMPARABLE")
+      .map((entry) => entry.evidenceId))
+    const observationById = new Map(taskObservations.flatMap((observation) => {
+      const id = text(observation.id, 80)
+      return id ? [[id, observation] as const] : []
+    }))
     const range = dateRange(batch)
     const capturedAt = instant(batch.captured_at)
-    const references = unique(taskEvidence.map((row) => row.evidenceId))
-    const prices = taskEvidence.flatMap((row) => row.price === null ? [] : [row.price])
-    const quantities = taskEvidence.reduce((sum, row) =>
-      sum + (row.confirmedSoldQuantity ?? 0), 0)
-    if (!range.startAt || !range.endAt || !capturedAt || !prices.length) {
+    for (const family of research.productFamilies) {
+      const familyCategoryId = family.category.categoryId ?? categoryId ?? null
+      const familyName = text(family.canonicalLabel, 160)
+      if (!familyCategoryId || !familyName ||
+          familyName === "Unproven product family") continue
+      const evidence = taskEvidence.filter((entry) =>
+        relevantEvidenceIds.has(entry.evidenceId) &&
+        entry.categoryId === family.category.categoryId)
+      if (!evidence.length) continue
+      const evidenceObservationIds = new Set(evidence.map((entry) =>
+        entry.evidenceId.split(":").at(-1) ?? ""))
+      const familyObservations = [...evidenceObservationIds]
+        .flatMap((id) => observationById.get(id) ? [observationById.get(id)!] : [])
+      const familyKey = normalizedFamilyClusterKey(familyName)
+      const semanticsKey = clusterSemanticsKey(batch, evidence)
+      clusters.push(Object.freeze({
+        clusterKey: `${familyKey}\n${familyCategoryId}\n${semanticsKey}`,
+        familyKey, familyName, categoryId: familyCategoryId, semanticsKey,
+        evidence: Object.freeze(dedupeMarketEvidence(evidence)),
+        identityHashes: Object.freeze(unique(familyObservations.flatMap((row) => {
+          const value = text(row.identity_hash, 80)
+          return value ? [value] : []
+        }))),
+        sellerHashes: Object.freeze(unique(evidence.flatMap((entry) =>
+          entry.sellerReferenceHash ? [entry.sellerReferenceHash] : []))),
+        queries: Object.freeze([query]),
+        generatedQueries: Object.freeze(research.generatedQueries.map((entry) =>
+          entry.query)),
+        taskIds: Object.freeze([taskId]), batchIds: Object.freeze([batchId]),
+        windows: Object.freeze([Object.freeze({ ...range, capturedAt })]),
+        rawClusterCount: 1,
+      }))
+    }
+  }
+  return Object.freeze(clusters)
+}
+
+function aggregateDemandFirstRawClustersV1(
+  rawClusters: readonly SellerOsDemandFirstRawClusterV1[],
+) {
+  const aggregated = new Map<string, SellerOsDemandFirstRawClusterV1>()
+  for (const cluster of [...rawClusters].sort((left, right) =>
+    Buffer.compare(Buffer.from(left.clusterKey), Buffer.from(right.clusterKey)) ||
+    Buffer.compare(Buffer.from(left.batchIds[0] ?? ""),
+      Buffer.from(right.batchIds[0] ?? "")))) {
+    const current = aggregated.get(cluster.clusterKey)
+    if (!current) {
+      aggregated.set(cluster.clusterKey, cluster)
+      continue
+    }
+    const familyName = [current.familyName, cluster.familyName]
+      .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))[0]
+    aggregated.set(cluster.clusterKey, Object.freeze({
+      ...current, familyName,
+      evidence: Object.freeze(dedupeMarketEvidence([
+        ...current.evidence, ...cluster.evidence])),
+      identityHashes: Object.freeze(unique([
+        ...current.identityHashes, ...cluster.identityHashes])),
+      sellerHashes: Object.freeze(unique([
+        ...current.sellerHashes, ...cluster.sellerHashes])),
+      queries: Object.freeze(unique([...current.queries, ...cluster.queries])),
+      generatedQueries: Object.freeze(unique([
+        ...current.generatedQueries, ...cluster.generatedQueries])),
+      taskIds: Object.freeze(unique([...current.taskIds, ...cluster.taskIds])),
+      batchIds: Object.freeze(unique([...current.batchIds, ...cluster.batchIds])),
+      windows: Object.freeze([...current.windows, ...cluster.windows]),
+      rawClusterCount: current.rawClusterCount + cluster.rawClusterCount,
+    }))
+  }
+  return Object.freeze([...aggregated.values()])
+}
+
+function candidateRank(left: SellerOsDemandFirstFamilyCandidateV1,
+  right: SellerOsDemandFirstFamilyCandidateV1) {
+  const priority = { QUALIFIED: 0, DUPLICATE: 1, UNQUALIFIED: 2 } as const
+  return priority[left.status] - priority[right.status] ||
+    right.clusterMetrics.soldQuantity - left.clusterMetrics.soldQuantity ||
+    right.clusterMetrics.signalCount - left.clusterMetrics.signalCount ||
+    right.clusterMetrics.identitySupportCount -
+      left.clusterMetrics.identitySupportCount ||
+    Buffer.compare(Buffer.from(left.clusterMetrics.familyName),
+      Buffer.from(right.clusterMetrics.familyName)) ||
+    Buffer.compare(Buffer.from(left.clusterMetrics.categoryId),
+      Buffer.from(right.clusterMetrics.categoryId))
+}
+
+export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
+  tasks: readonly unknown[]
+  batches: readonly unknown[]
+  observations: readonly unknown[]
+  existingCases: readonly unknown[]
+  categoryAuthorities?: readonly SellerOsOfficialSoldCategoryAuthorityV1[]
+}>) : SellerOsDemandFirstFamilyEvaluationV1 {
+  const rawClusters = buildDemandFirstRawClustersV1(input)
+  const clusters = aggregateDemandFirstRawClustersV1(rawClusters)
+  const exactExisting = new Set(rows(input.existingCases)
+    .flatMap((row) => text(row.family_id, 120) ?
+      [text(row.family_id, 120) as string] : []))
+  const semanticExisting = new Set(rows(input.existingCases).flatMap((row) => {
+    const identity = record(row.family_identity)
+    const productFunction = text(identity.productFunction, 120)?.toLowerCase()
+    const category = text(identity.category, 120)?.toLowerCase()
+    return productFunction && category ? [`${category}\n${productFunction}`] : []
+  }))
+  let duplicatesSuppressed = 0
+  const candidates: SellerOsDemandFirstFamilyCandidateV1[] = []
+  for (const cluster of clusters) {
+    const evidence = dedupeMarketEvidence(cluster.evidence)
+    const references = unique(evidence.map((entry) => entry.evidenceId))
+    const prices = evidence.flatMap((entry) =>
+      entry.price === null ? [] : [entry.price])
+    const quantities = evidence.reduce((sum, entry) =>
+      sum + (entry.confirmedSoldQuantity ?? 0), 0)
+    const soldEvidenceCount = evidence.filter((entry) =>
+      entry.confirmedSold && (entry.confirmedSoldQuantity ?? 0) > 0).length
+    const windowComplete = cluster.windows.length > 0 &&
+      cluster.windows.every((window) => window.startAt && window.endAt &&
+        window.capturedAt)
+    const observationWindowStart = windowComplete
+      ? cluster.windows.map((window) => window.startAt as string)
+        .sort((left, right) => Date.parse(left) - Date.parse(right))[0] : null
+    const observationWindowEnd = windowComplete
+      ? cluster.windows.map((window) => window.endAt as string)
+        .sort((left, right) => Date.parse(right) - Date.parse(left))[0] : null
+    const evidenceObservedAt = windowComplete
+      ? cluster.windows.map((window) => window.capturedAt as string)
+        .sort((left, right) => Date.parse(right) - Date.parse(left))[0] : null
+    const aggregateResearch = buildMarketOpportunityResearchV1({
+      request: normalizeMarketResearchRequestV1({ marketplace: "EBAY_US",
+        seedType: "SEED_QUERY", seedValue: cluster.familyName,
+        requestedWindowDays: 30, researchIntent: "FAMILY_DISCOVERY",
+        queryBudget: 5,
+        seedIdentity: { categoryId: cluster.categoryId, categoryName: null,
+          brand: null, gtin: null, mpn: null, model: null, packCount: null,
+          size: null, color: null } }),
+      evidence, observedAt: evidenceObservedAt ?? new Date(0).toISOString(),
+      activeMarketStatus: "UNAVAILABLE", soldHistoryStatus: "AVAILABLE",
+      paginationCoverage: "BOUNDED_REVIEWED_PRODUCT_RESEARCH_CAPTURE",
+      sourceLimitations: ["MARKETPLACE_INSIGHTS_UNAVAILABLE_OR_RESTRICTED",
+        "ACTIVE_ASKING_PRICE_NOT_USED_AS_SOLD_EVIDENCE"],
+    })
+    const keywordDnaStatus = aggregateResearch.keywordFamilies.some((entry) =>
+      entry.evidenceStatus === "SOLD_EVIDENCE_AVAILABLE")
+      ? "AVAILABLE" as const : "UNPROVEN" as const
+    const metrics = Object.freeze({
+      clusterKey: cluster.clusterKey, familyName: cluster.familyName,
+      categoryId: cluster.categoryId, rawClusterCount: cluster.rawClusterCount,
+      signalCount: evidence.length,
+      uniqueSoldItemCount: unique(evidence.flatMap((entry) =>
+        entry.itemId ? [entry.itemId] : [])).length,
+      soldQuantity: quantities, evidenceReferences: Object.freeze(references),
+      priceSampleCount: prices.length,
+      priceEvidenceStatus: prices.length ? "AVAILABLE" as const : "UNAVAILABLE" as const,
+      observationWindowStart, observationWindowEnd, evidenceObservedAt,
+      windowEvidenceStatus: windowComplete ? "AVAILABLE" as const : "UNAVAILABLE" as const,
+      keywordDnaStatus, identitySupportCount: cluster.identityHashes.length,
+    })
+    const familyIdentity: SellerOsMarketFamilyIdentityV1 = {
+      productFunction: cluster.familyName,
+      buyerUseCase: cluster.queries[0] ?? cluster.familyName,
+      category: `ebay-us-category:${cluster.categoryId}`,
+      structuredDefinition: { "category id": cluster.categoryId,
+        "product family": cluster.familyName },
+    }
+    const familyId = buildSellerOsMarketFamilyIdV1(familyIdentity)
+    const semantic = `${familyIdentity.category.toLowerCase()}\n${familyIdentity.productFunction.toLowerCase()}`
+    if (exactExisting.has(familyId) || semanticExisting.has(semantic)) {
+      duplicatesSuppressed += 1
+      candidates.push(Object.freeze({ status: "DUPLICATE" as const,
+        reason: "CANONICAL_FAMILY_DUPLICATE_SUPPRESSED", familyDefinition: null,
+        observation: null, taskId: cluster.taskIds[0] ?? null,
+        batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
+      continue
+    }
+    if (evidence.length < 2 || cluster.identityHashes.length < 2 ||
+        soldEvidenceCount < 2 || cluster.familyName === "Unproven product family") {
+      candidates.push(Object.freeze({ status: "UNQUALIFIED" as const,
+        reason: "DEFENSIBLE_FAMILY_EVIDENCE_INSUFFICIENT", familyDefinition: null,
+        observation: null, taskId: cluster.taskIds[0] ?? null,
+        batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
+      continue
+    }
+    if (!observationWindowStart || !observationWindowEnd ||
+        !evidenceObservedAt || !prices.length) {
       candidates.push(Object.freeze({ status: "UNQUALIFIED" as const,
         reason: "CAPTURE_WINDOW_OR_PRICE_EVIDENCE_INVALID", familyDefinition: null,
-        observation: null, taskId, batchId }))
+        observation: null, taskId: cluster.taskIds[0] ?? null,
+        batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
       continue
     }
     const familyDemandStatus = references.length >= 5 && quantities >= 10
@@ -545,43 +779,42 @@ export function buildSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
       "CORE", "FORM_FACTOR", "FEATURE", "USE_CASE", "BENEFIT", "PACK_FORMAT",
       "AUDIENCE", "ATTRIBUTE",
     ])
-    const demandKeywordDna = buildSellerOsDemandKeywordDnaV1({
-      keywordFamilies: research.keywordFamilies.flatMap((keywordFamily) =>
+    let demandKeywordDna: SellerOsDemandKeywordDnaV1
+    try {
+      demandKeywordDna = buildSellerOsDemandKeywordDnaV1({
+      keywordFamilies: aggregateResearch.keywordFamilies.flatMap((keywordFamily) =>
         demandKeywordFamilyTypes.has(
           keywordFamily.familyType as DemandKeywordFamilyInputV1["familyType"],
         ) ? [{ ...keywordFamily,
-          familyType: keywordFamily.familyType as
+            familyType: keywordFamily.familyType as
             DemandKeywordFamilyInputV1["familyType"] }] : []),
-      soldTitles: taskEvidence.flatMap((row) => row.title ? [{ title: row.title,
+      soldTitles: evidence.flatMap((row) => row.title ? [{ title: row.title,
         soldQuantityObserved: row.confirmedSoldQuantity ?? 0,
         evidenceReference: row.evidenceId }] : []),
-      familyDemandStatus, evidenceObservedAt: capturedAt,
+      familyDemandStatus, evidenceObservedAt,
       maximumAgeSeconds: MAXIMUM_AGE_SECONDS,
-    })
+      })
+    } catch {
+      candidates.push(Object.freeze({ status: "UNQUALIFIED" as const,
+        reason: "DEMAND_KEYWORD_DNA_UNAVAILABLE", familyDefinition: null,
+        observation: null, taskId: cluster.taskIds[0] ?? null,
+        batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
+      continue
+    }
+    const intent = unique((aggregateResearch.keywordSpine.terms.length
+      ? aggregateResearch.keywordSpine.terms : cluster.queries).slice(0, 8))
     const familyDefinition: SellerOsMarketFamilyDefinitionV1 = {
-      identity: familyIdentity, familyName: family.canonicalLabel,
-      familyQuerySet: unique([query, ...research.generatedQueries.map((row) => row.query)])
-        .slice(0, 16),
+      identity: familyIdentity, familyName: cluster.familyName,
+      familyQuerySet: unique([...cluster.queries, ...cluster.generatedQueries,
+        ...aggregateResearch.generatedQueries.map((row) => row.query)]).slice(0, 16),
       keyProductAttributes: ["category id", "product family"],
       keyBuyerIntentTerms: intent, demandKeywordDna,
       adapterContract: SELLER_OS_DEMAND_FIRST_BROAD_NET_ORCHESTRATOR_VERSION,
       adapterVersion: "1",
     }
-    const familyId = buildSellerOsMarketFamilyIdV1(familyIdentity)
-    const semantic = `${familyIdentity.category.toLowerCase()}\n${familyIdentity.productFunction.toLowerCase()}`
-    if (exactExisting.has(familyId) || semanticExisting.has(semantic) ||
-        emitted.has(familyId)) {
-      candidates.push(Object.freeze({ status: "DUPLICATE" as const,
-        reason: "CANONICAL_FAMILY_DUPLICATE_SUPPRESSED", familyDefinition,
-        observation: null, taskId, batchId }))
-      continue
-    }
-    emitted.add(familyId)
-    const sellerHashes = unique(taskEvidence.flatMap((row) =>
-      row.sellerReferenceHash ? [row.sellerReferenceHash] : []))
     const observation = buildSellerOsFamilyMarketObservationV1({
-      familyDefinition, observationWindowStart: range.startAt,
-      observationWindowEnd: range.endAt, familyDemandStatus,
+      familyDefinition, observationWindowStart,
+      observationWindowEnd, familyDemandStatus,
       demandEvidenceClass: "OFFICIAL_SOLD_EVIDENCE", sourceStatus: "AVAILABLE",
       aggregationSemantics: "CUMULATIVE_SNAPSHOT",
       demandEvidenceReferences: references, demandEvidenceDigest: digest(references),
@@ -589,7 +822,7 @@ export function buildSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
       soldQuantityEvidence: { quantity: quantities,
         authorityClass: "OFFICIAL_EXTERNAL_FACT", evidenceReferences: references },
       activeComparableCount: null,
-      sellerDiversity: sellerHashes.length ? sellerHashes.length : null,
+      sellerDiversity: cluster.sellerHashes.length ? cluster.sellerHashes.length : null,
       priceBand: { currency: "USD", minimum: Math.min(...prices),
         maximum: Math.max(...prices) },
       priceMedian: median(prices), priceDistributionEvidence: references,
@@ -597,7 +830,7 @@ export function buildSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
       keywordState: "AVAILABLE", demandKeywordDna,
       attributeProfile: familyIdentity.structuredDefinition,
       opportunityTypes: ["DEMAND_FIRST_TEST_LAUNCH"],
-      evidenceObservedAt: capturedAt, sourceUpdatedAt: capturedAt,
+      evidenceObservedAt, sourceUpdatedAt: evidenceObservedAt,
       maximumAgeSeconds: MAXIMUM_AGE_SECONDS, sourceAdapter: SOURCE_ADAPTER,
       sourceContractVersion: SOURCE_CONTRACT,
       limitations: ["MARKETPLACE_INSIGHTS_UNAVAILABLE_OR_RESTRICTED",
@@ -605,10 +838,47 @@ export function buildSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
     })
     candidates.push(Object.freeze({ status: "QUALIFIED" as const,
       reason: "OFFICIAL_SOLD_FAMILY_EVIDENCE_QUALIFIED", familyDefinition,
-      observation, taskId, batchId }))
+      observation, taskId: cluster.taskIds[0] ?? null,
+      batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
   }
-  return Object.freeze(candidates.slice(0,
+  const ranked = Object.freeze([...candidates].sort(candidateRank))
+  const candidatesAfterCap = Object.freeze(ranked.slice(0,
     SELLER_OS_DEMAND_FIRST_BROAD_NET_LIMITS_V1.familyCandidates))
+  const qualifiedBeforeCap = ranked.filter((candidate) =>
+    candidate.status === "QUALIFIED").length
+  const qualifiedAfterCap = candidatesAfterCap.filter((candidate) =>
+    candidate.status === "QUALIFIED").length
+  const numericStringWindowsParsed = rows(input.batches).reduce((count, batch) => {
+    const range = record(batch.date_range ?? batch.dateRange)
+    return count + [range.start, range.end].filter((value) =>
+      typeof value === "string" && /^\d{10,16}$/.test(value.trim()) &&
+      dateRange(batch).startAt !== null && dateRange(batch).endAt !== null).length
+  }, 0)
+  const rawClustersByTask = rawClusters.reduce((counts, cluster) => {
+    const taskId = cluster.taskIds[0]
+    if (taskId) counts.set(taskId, (counts.get(taskId) ?? 0) + 1)
+    return counts
+  }, new Map<string, number>())
+  const secondaryClustersEvaluated = [...rawClustersByTask.values()]
+    .reduce((count, clustersForTask) => count + Math.max(0, clustersForTask - 1), 0)
+  return Object.freeze({ rawClustersFormed: rawClusters.length,
+    crossBatchClustersAggregated: clusters.length,
+    clustersAfterDedupe: clusters.length - duplicatesSuppressed,
+    numericStringWindowsParsed, secondaryClustersEvaluated,
+    candidateFamiliesBeforeCap: qualifiedBeforeCap,
+    candidateFamiliesAfterCap: qualifiedAfterCap,
+    qualifiedFamilies: qualifiedAfterCap, duplicatesSuppressed,
+    allCandidates: ranked, candidatesAfterCap })
+}
+
+export function buildSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
+  tasks: readonly unknown[]
+  batches: readonly unknown[]
+  observations: readonly unknown[]
+  existingCases: readonly unknown[]
+  categoryAuthorities?: readonly SellerOsOfficialSoldCategoryAuthorityV1[]
+}>) {
+  return evaluateSellerOsDemandFirstFamilyCandidatesV1(input).candidatesAfterCap
 }
 
 function currentObservation(family: JsonRecord) {
@@ -742,114 +1012,30 @@ async function loadSellerOsDemandFirstBroadNetCohortV1(input: Readonly<{
 }
 
 function buildSellerOsDemandFirstBroadNetReplayFunnelV1(input: Readonly<{
-  tasks: readonly unknown[]
-  batches: readonly unknown[]
   observations: readonly unknown[]
   categoryAuthorities: readonly SellerOsOfficialSoldCategoryAuthorityV1[]
-  candidates: readonly SellerOsDemandFirstFamilyCandidateV1[]
-  existingCases: readonly unknown[]
+  evaluation: SellerOsDemandFirstFamilyEvaluationV1
   browseItemLookupsAttempted: number
   browseItemLookupsSucceeded: number
 }>) {
-  const batchesById = new Map(rows(input.batches).flatMap((batch) => {
-    const id = text(batch.id, 80)
-    return id ? [[id, batch] as const] : []
-  }))
-  const observationsByBatch = new Map<string, JsonRecord[]>()
-  for (const observation of rows(input.observations)) {
-    const batchId = text(observation.capture_batch_id, 80)
-    if (!batchId) continue
-    observationsByBatch.set(batchId,
-      [...(observationsByBatch.get(batchId) ?? []), observation])
-  }
-  const authorityByObservation = new Map(input.categoryAuthorities.map(
-    (authority) => [authority.observationId, authority] as const))
-  const candidateByTask = new Map(input.candidates.flatMap((candidate) =>
-    candidate.taskId ? [[candidate.taskId, candidate] as const] : []))
-  const relevantEvidenceIds = new Set<string>()
-  const keywordDnaEvidenceIds = new Set<string>()
-  const clusteringEvidenceIds = new Set<string>()
-  const clusters: Array<{
-    familyName: string
-    categoryId: string | null
-    supportingSignals: number
-    soldQuantity: number
-    keywordDnaStatus: "AVAILABLE" | "UNPROVEN"
-    candidateStatus: SellerOsDemandFirstFamilyCandidateV1["status"] | "UNPROVEN"
-    reason: string
-  }> = []
-  for (const task of rows(input.tasks).slice(0,
-    SELLER_OS_DEMAND_FIRST_BROAD_NET_LIMITS_V1.queryTasks)) {
-    const taskId = text(task.id, 80)
-    const batchId = text(task.capture_batch_id, 80)
-    const query = text(task.search_query, 100)
-    const batch = batchId ? batchesById.get(batchId) : null
-    if (!taskId || !batchId || !query || !batch || task.status !== "PROCESSED") {
-      continue
-    }
-    const evidence = (observationsByBatch.get(batchId) ?? []).flatMap((row) => {
-      const observationId = text(row.id, 80)
-      const item = marketEvidenceFromOfficialSoldObservationV1({ task, batch,
-        observation: row, categoryAuthority: observationId
-          ? authorityByObservation.get(observationId) ?? null : null })
-      return item ? [item] : []
-    }).slice(0, SELLER_OS_DEMAND_FIRST_BROAD_NET_LIMITS_V1.observations)
-    const research = buildMarketOpportunityResearchV1({
-      request: normalizeMarketResearchRequestV1({ marketplace: "EBAY_US",
-        seedType: "SEED_QUERY", seedValue: query, requestedWindowDays: 30,
-        researchIntent: "FAMILY_DISCOVERY", queryBudget: 5,
-        seedIdentity: { categoryId: text(task.category_id, 40), categoryName: null,
-          brand: null, gtin: null, mpn: null, model: null, packCount: null,
-          size: null, color: null } }),
-      evidence, observedAt: instant(batch.captured_at) ?? new Date(0).toISOString(),
-      activeMarketStatus: "UNAVAILABLE", soldHistoryStatus: "AVAILABLE",
-      paginationCoverage: "BOUNDED_REVIEWED_PRODUCT_RESEARCH_CAPTURE",
-      sourceLimitations: ["MARKETPLACE_INSIGHTS_UNAVAILABLE_OR_RESTRICTED",
-        "ACTIVE_ASKING_PRICE_NOT_USED_AS_SOLD_EVIDENCE"],
-    })
-    const relevantIds = research.comparables.filter((comparable) =>
-      comparable.classification === "EXACT_OR_STRONG_COMPARABLE" ||
-      comparable.classification === "PRODUCT_FAMILY_COMPARABLE")
-      .map((comparable) => comparable.evidenceId)
-    relevantIds.forEach((id) => relevantEvidenceIds.add(id))
-    const hasSoldKeywordDna = research.keywordFamilies.some((family) =>
-      family.evidenceStatus === "SOLD_EVIDENCE_AVAILABLE")
-    if (hasSoldKeywordDna) relevantIds.forEach((id) => keywordDnaEvidenceIds.add(id))
-    relevantIds.forEach((id) => clusteringEvidenceIds.add(id))
-    const candidate = candidateByTask.get(taskId)
-    for (const family of research.productFamilies.filter((entry) =>
-      entry.supportingListingCount > 0)) {
-      const evidenceIds = new Set(family.representativeItems)
-      const soldQuantity = evidence.filter((entry) =>
-        evidenceIds.has(entry.evidenceId) ||
-        entry.categoryId === family.category.categoryId).reduce((sum, entry) =>
-        sum + (entry.confirmedSoldQuantity ?? 0), 0)
-      clusters.push({ familyName: family.canonicalLabel,
-        categoryId: family.category.categoryId,
-        supportingSignals: family.supportingListingCount, soldQuantity,
-        keywordDnaStatus: hasSoldKeywordDna ? "AVAILABLE" : "UNPROVEN",
-        candidateStatus: candidate?.status ?? "UNPROVEN",
-        reason: candidate?.reason ?? "CANDIDATE_NOT_FORMED" })
-    }
-  }
-  const clusterSizeDistribution = Object.fromEntries([...clusters.reduce(
-    (counts, cluster) => counts.set(cluster.supportingSignals,
-      (counts.get(cluster.supportingSignals) ?? 0) + 1), new Map<number, number>())]
+  const relevantEvidenceIds = new Set(input.evaluation.allCandidates.flatMap(
+    (candidate) => candidate.clusterMetrics.evidenceReferences))
+  const keywordDnaEvidenceIds = new Set(input.evaluation.allCandidates.flatMap(
+    (candidate) => candidate.clusterMetrics.keywordDnaStatus === "AVAILABLE"
+      ? candidate.clusterMetrics.evidenceReferences : []))
+  const clusterSizeDistribution = Object.fromEntries([
+    ...input.evaluation.allCandidates.reduce((counts, candidate) =>
+      counts.set(candidate.clusterMetrics.signalCount,
+        (counts.get(candidate.clusterMetrics.signalCount) ?? 0) + 1),
+    new Map<number, number>())]
     .sort(([left], [right]) => left - right).map(([size, count]) =>
       [String(size), count]))
-  const rejectionReasonCounts = Object.fromEntries([...input.candidates.filter(
+  const rejectionReasonCounts = Object.fromEntries([
+    ...input.evaluation.allCandidates.filter(
     (candidate) => candidate.status !== "QUALIFIED").reduce((counts, candidate) =>
     counts.set(candidate.reason, (counts.get(candidate.reason) ?? 0) + 1),
   new Map<string, number>())].sort(([left], [right]) =>
     Buffer.compare(Buffer.from(left), Buffer.from(right))))
-  const existingIds = new Set(rows(input.existingCases).flatMap((entry) => {
-    const value = text(entry.family_id, 120)
-    return value ? [value] : []
-  }))
-  const existingFamilyMatches = input.candidates.filter((candidate) =>
-    candidate.status === "DUPLICATE" && candidate.familyDefinition &&
-    existingIds.has(buildSellerOsMarketFamilyIdV1(
-      candidate.familyDefinition.identity))).length
   const signalsWithValidIdentity = rows(input.observations).filter((observation) =>
     officialSoldFamilyIdentity(observation) !== null).length
   const signalsWithCategoryAuthority = input.categoryAuthorities.filter(
@@ -865,23 +1051,35 @@ function buildSellerOsDemandFirstBroadNetReplayFunnelV1(input: Readonly<{
       signalsWithCategoryAuthority,
     signalsRelevant: relevantEvidenceIds.size,
     signalsWithKeywordDna: keywordDnaEvidenceIds.size,
-    signalsEnteringClustering: clusteringEvidenceIds.size,
-    clustersFormed: clusters.length,
+    signalsEnteringClustering: relevantEvidenceIds.size,
+    rawClustersFormed: input.evaluation.rawClustersFormed,
+    crossBatchClustersAggregated: input.evaluation.crossBatchClustersAggregated,
+    clustersAfterDedupe: input.evaluation.clustersAfterDedupe,
+    numericStringWindowsParsed: input.evaluation.numericStringWindowsParsed,
+    secondaryClustersEvaluated: input.evaluation.secondaryClustersEvaluated,
+    capAppliedPostClustering: true as const,
+    crossBatchAggregation: true as const,
+    clusterSoldQuantityScoped: true as const,
     clusterSizeDistribution: Object.freeze(clusterSizeDistribution),
-    candidateFamilies: input.candidates.filter((candidate) =>
-      candidate.familyDefinition !== null).length,
-    qualifiedFamilies: input.candidates.filter((candidate) =>
-      candidate.status === "QUALIFIED").length,
-    existingFamilyMatches,
-    duplicatesSuppressed: input.candidates.filter((candidate) =>
-      candidate.status === "DUPLICATE").length,
+    candidateFamiliesBeforeCap: input.evaluation.candidateFamiliesBeforeCap,
+    candidateFamiliesAfterCap: input.evaluation.candidateFamiliesAfterCap,
+    qualifiedFamilies: input.evaluation.qualifiedFamilies,
+    existingFamilyMatches: input.evaluation.duplicatesSuppressed,
+    duplicatesSuppressed: input.evaluation.duplicatesSuppressed,
     rejectionReasonCounts: Object.freeze(rejectionReasonCounts),
-    topCandidateClusters: Object.freeze([...clusters].sort((left, right) =>
-      right.supportingSignals - left.supportingSignals ||
-      right.soldQuantity - left.soldQuantity ||
-      Buffer.compare(Buffer.from(left.familyName), Buffer.from(right.familyName)))
-      .slice(0, SELLER_OS_DEMAND_FIRST_BROAD_NET_LIMITS_V1.familyCandidates)
-      .map((cluster) => Object.freeze(cluster))),
+    topCandidateClusters: Object.freeze(input.evaluation.candidatesAfterCap.map(
+      (candidate) => Object.freeze({
+        family: candidate.clusterMetrics.familyName,
+        category: candidate.clusterMetrics.categoryId,
+        signals: candidate.clusterMetrics.signalCount,
+        uniqueSoldItems: candidate.clusterMetrics.uniqueSoldItemCount,
+        soldQuantity: candidate.clusterMetrics.soldQuantity,
+        priceEvidence: candidate.clusterMetrics.priceEvidenceStatus,
+        windowEvidence: candidate.clusterMetrics.windowEvidenceStatus,
+        keywordDna: candidate.clusterMetrics.keywordDnaStatus,
+        qualification: candidate.status,
+        rejectionReason: candidate.status === "QUALIFIED" ? null : candidate.reason,
+      }))),
   })
 }
 
@@ -910,14 +1108,14 @@ export async function runSellerOsDemandFirstBroadNetServerReplayV1(
     opportunity_case_id: family.opportunityCaseId,
     family_identity: family.familyIdentity ?? null,
   }))
-  const candidates = buildSellerOsDemandFirstFamilyCandidatesV1({
+  const evaluation = evaluateSellerOsDemandFirstFamilyCandidatesV1({
     tasks: cohort.tasks, batches: cohort.batches,
     observations: cohort.observations,
     categoryAuthorities: categoryResolution.authorities, existingCases,
   })
   const funnel = buildSellerOsDemandFirstBroadNetReplayFunnelV1({
     ...cohort, categoryAuthorities: categoryResolution.authorities,
-    candidates, existingCases,
+    evaluation,
     browseItemLookupsAttempted: categoryResolution.browseItemLookupsAttempted,
     browseItemLookupsSucceeded: categoryResolution.browseItemLookupsSucceeded,
   })
