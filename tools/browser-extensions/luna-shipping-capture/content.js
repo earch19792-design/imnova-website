@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.42" },
+      extensionBuildVersion: "1.0.43" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -20,6 +20,9 @@ const SET_ACTIVE_JOB_PHASE = "SET_ACTIVE_LUNA_SHIPPING_JOB_PHASE"
 const CHECKOUT_NAVIGATION_TRIGGER = "LUNA_CHECKOUT_NAVIGATION_TRIGGERED"
 const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
+const AUTO_BIND_CANONICAL_DESTINATION =
+  "AUTO_BIND_LUNA_CANONICAL_DESTINATION_V1"
+const AUTO_BIND_CONTRACT = "LUNA_CANONICAL_DESTINATION_AUTO_BIND_V1"
 const BIND_CANONICAL_DESTINATION_EXECUTE =
   "BIND_CANONICAL_DESTINATION_EXECUTE_V1"
 const BIND_EXECUTION_CONTRACT = "LUNA_CANONICAL_DESTINATION_BIND_EXECUTION_V1"
@@ -1193,13 +1196,15 @@ function shopPayDestinationSnapshot(job = null) {
           /\bship\s+to\b/i.test(raw) &&
           !/\b(?:subtotal|total|payment|pay now)\b/.test(normalizedBoundary)) {
         const evidence = usDestinationEvidence(raw)
-        if (evidence.isUs) {
+        const explicitNonUs = /\b(?:canada|mexico|united kingdom|australia|france|germany|spain|italy|japan)\b/
+          .test(normalizedBoundary)
+        if (evidence.isUs || explicitNonUs) {
           const normalized = raw.normalize("NFKC").toLowerCase()
             .replace(/\bship\s+to\b/g, " ")
             .replace(/[^a-z0-9]+/g, " ").trim()
           if (normalized.length >= 8 && normalized.length <= 900) {
             byContainer.set(current, { element: current, normalized,
-              countryClass: "US" })
+              countryClass: evidence.isUs ? "US" : "NON_US" })
             break
           }
         }
@@ -1227,6 +1232,73 @@ function shopPayDestinationSnapshot(job = null) {
     canonicalFieldsMatch }
 }
 
+function shopPayAcceptedShippingProfileSnapshot(job = null) {
+  const destination = shopPayDestinationSnapshot(job)
+  const options = [...document.querySelectorAll(
+    '[data-shipping-method],[data-shipping-rate],' +
+    '[data-testid*="shipping-method" i],[aria-label*="shipping method" i],' +
+    'input[name*="shipping_method" i],input[name*="shipping_rate" i]')]
+    .filter((element) => isVisible(element) && element.disabled !== true &&
+      element.getAttribute?.("aria-disabled") !== "true").slice(0, 80)
+  const selectable = options.filter((element) =>
+    new Set(["radio", "checkbox"]).has(String(element.type ?? "").toLowerCase()))
+  const selected = selectable.filter((element) => element.checked === true ||
+    element.getAttribute?.("aria-checked") === "true")
+  const shippingOptionsDetected = options.length > 0 &&
+    (selectable.length === 0 || selected.length === 1)
+  const shippingZeroProven = options.some((element) => {
+    const text = `${element.textContent ?? ""} ${
+      element.getAttribute?.("aria-label") ?? ""}`
+      .replace(/[\s\u00a0]+/g, " ").trim()
+    return /\bfree\b/i.test(text) ||
+      /(?:\$\s*0(?:\.00)?\b|\b0(?:\.00)?\s*USD\b|\bUSD\s*\$?\s*0(?:\.00)?\b)/i
+        .test(text)
+  })
+  const shippingAddressAccepted = destination.markerFound &&
+    !destination.ambiguous && destination.countryClass === "US" &&
+    Boolean(destination.normalized) && shippingOptionsDetected
+  return Object.freeze({ destination, shippingAddressAccepted,
+    shippingOptionsDetected, shippingZeroProven })
+}
+
+function checkoutSummaryQuoteAfterAcceptedProfile(expectedSubtotal, rows,
+  profile) {
+  if (!profile?.shippingAddressAccepted ||
+      !profile?.shippingOptionsDetected) return null
+  const quote = checkoutSummaryQuote(expectedSubtotal, rows)
+  if (!quote) return null
+  return quote.shippingUsd !== 0 || profile.shippingZeroProven === true
+    ? quote : null
+}
+
+function acceptedShopPayProfileFailure(profile) {
+  if (profile.destination.ambiguous) return "BIND_SHIP_TO_AMBIGUOUS"
+  if (profile.destination.countryClass === "NON_US") {
+    return "BIND_COUNTRY_CLASS_UNPROVEN"
+  }
+  return "CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE"
+}
+
+function waitForAcceptedShopPayProfile(job) {
+  let latest = shopPayAcceptedShippingProfileSnapshot(job)
+  return boundedDomWait(() => {
+    latest = shopPayAcceptedShippingProfileSnapshot(job)
+    const terminal = acceptedShopPayProfileFailure(latest)
+    if (terminal !== "CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE") {
+      throw new Error(terminal)
+    }
+    return latest.shippingAddressAccepted && latest.shippingOptionsDetected
+      ? latest : null
+  }, "CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE",
+  SHOP_PAY_DOM_TIMEOUT_MS).catch((error) => {
+    const terminal = acceptedShopPayProfileFailure(latest)
+    throw new Error(terminal !==
+      "CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE"
+      ? terminal : error instanceof Error ? error.message
+        : "CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE")
+  })
+}
+
 function normalizedShopPayDestination(job = null) {
   const snapshot = shopPayDestinationSnapshot(job)
   return snapshot.normalized && snapshot.countryClass === "US" ? snapshot : null
@@ -1252,11 +1324,17 @@ function getCanonicalDestinationBinding(job) {
         return
       }
       const binding = response?.binding
+      if (response?.accepted === true &&
+          response?.bindingStatus === "NO_BINDING_PRESENT" && !binding) {
+        resolve(null)
+        return
+      }
       if (response?.accepted !== true ||
+          response?.bindingStatus !== "BINDING_PRESENT_VALID" ||
           binding?.fingerprintVersion !== DESTINATION_FINGERPRINT_VERSION ||
           !/^sha256:[0-9a-f]{64}$/.test(binding?.canonicalDestinationFingerprint ?? "") ||
           binding?.countryClass !== "US") {
-        resolve(null)
+        reject(new Error("CANONICAL_DESTINATION_BINDING_RESPONSE_INVALID"))
         return
       }
       resolve(binding)
@@ -1264,19 +1342,59 @@ function getCanonicalDestinationBinding(job) {
   })
 }
 
-async function canonicalDestinationFingerprintMatch(job, binding) {
-  const current = normalizedShopPayDestination(job)
+function requestCanonicalDestinationAutoBind(job, acceptedProfile) {
+  return executeCanonicalDestinationBinding({
+    contractVersion: BIND_EXECUTION_CONTRACT, operation: "BIND",
+  }, acceptedProfile).then((candidate) => new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ type: AUTO_BIND_CANONICAL_DESTINATION,
+      contractVersion: AUTO_BIND_CONTRACT,
+      captureSessionId: job.captureSessionId,
+      fingerprint: candidate.fingerprint,
+      fingerprintVersion: candidate.fingerprintVersion,
+      countryClass: candidate.countryClass,
+      destinationUnambiguous: true,
+      acceptedUsDestination: true,
+      shippingAddressAccepted: true,
+      shippingOptionsDetected: true,
+      safeMarkerBooleans: candidate.safeMarkerBooleans,
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error("CANONICAL_DESTINATION_AUTO_BIND_UNAVAILABLE"))
+        return
+      }
+      const binding = response?.binding
+      if (response?.success !== true ||
+          response?.contractVersion !== AUTO_BIND_CONTRACT ||
+          response?.canonicalDestinationBound !== true ||
+          response?.canonicalDestinationMatch !== true ||
+          binding?.fingerprintVersion !== DESTINATION_FINGERPRINT_VERSION ||
+          binding?.countryClass !== "US" ||
+          binding?.canonicalDestinationFingerprint !== candidate.fingerprint) {
+        reject(new Error(response?.error ??
+          "CANONICAL_DESTINATION_AUTO_BIND_READBACK_INVALID"))
+        return
+      }
+      resolve(binding)
+    })
+  }))
+}
+
+async function canonicalDestinationFingerprintMatch(job, binding,
+  acceptedProfile = null) {
+  const current = acceptedProfile?.destination ?? normalizedShopPayDestination(job)
   if (!current || current.countryClass !== "US" || !binding) return false
   return await sha256Text(current.normalized) ===
     binding.canonicalDestinationFingerprint
 }
 
-async function shopPayCanonicalShippingProfileStatus(job) {
-  const current = normalizedShopPayDestination(job)
-  if (!current) return "UNAVAILABLE"
-  const binding = await getCanonicalDestinationBinding(job)
-  if (!binding) return "UNAVAILABLE"
-  return await canonicalDestinationFingerprintMatch(job, binding)
+async function shopPayCanonicalShippingProfileStatus(job,
+  acceptedProfile = null) {
+  const currentProfile = acceptedProfile ??
+    await waitForAcceptedShopPayProfile(job)
+  const binding = await getCanonicalDestinationBinding(job) ??
+    await requestCanonicalDestinationAutoBind(job, currentProfile)
+  return await canonicalDestinationFingerprintMatch(job, binding,
+    currentProfile)
     ? "MATCH" : "MISMATCH"
 }
 
@@ -1309,8 +1427,17 @@ async function checkoutClassificationWhenReady(job, expectedSubtotal) {
     ...markers,
   })
   let ready = null
+  let acceptedProfile = null
   try {
     ready = await boundedDomWait(() => {
+      const profile = shopPayAcceptedShippingProfileSnapshot(job)
+      const profileFailure = acceptedShopPayProfileFailure(profile)
+      if (profileFailure !==
+          "CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE") {
+        throw new Error(profileFailure)
+      }
+      if (!profile.shippingAddressAccepted ||
+          !profile.shippingOptionsDetected) return null
       rows = semanticMoneyRows()
       const classification = checkoutPageClassification(rows)
       markers = shopPayMarkerSnapshot(rows)
@@ -1319,16 +1446,30 @@ async function checkoutClassificationWhenReady(job, expectedSubtotal) {
         return { classification, quote: null, markers }
       }
       if (!shopPayMarkersSufficient(markers)) return null
-      const quote = checkoutSummaryQuote(expectedSubtotal, rows)
+      const quote = checkoutSummaryQuoteAfterAcceptedProfile(expectedSubtotal,
+        rows, profile)
       if (!quote) return null
-      return { classification: "NORMAL_CHECKOUT_WITH_SHIPPING", quote, markers }
+      acceptedProfile = profile
+      return { classification: "NORMAL_CHECKOUT_WITH_SHIPPING", quote, markers,
+        acceptedProfile }
     }, "SHOP_PAY_BOUNDED_DOM_READINESS_EXHAUSTED", SHOP_PAY_DOM_TIMEOUT_MS)
-  } catch {
+  } catch (error) {
     rows = semanticMoneyRows()
     markers = shopPayMarkerSnapshot(rows)
-    const quote = checkoutSummaryQuote(expectedSubtotal, rows)
-    ready = { classification: "UNKNOWN_CHECKOUT_PAGE", quote, markers,
-      failureReason: shopPayQuoteFailure(markers, quote, true) }
+    const profile = shopPayAcceptedShippingProfileSnapshot(job)
+    const profileFailure = acceptedShopPayProfileFailure(profile)
+    const quote = profile.shippingAddressAccepted &&
+      profile.shippingOptionsDetected
+      ? checkoutSummaryQuoteAfterAcceptedProfile(expectedSubtotal, rows,
+        profile) : null
+    ready = { classification: "UNKNOWN_CHECKOUT_PAGE", quote: null, markers,
+      failureReason: profileFailure !==
+          "CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE"
+        ? profileFailure
+        : error instanceof Error && error.message ===
+            "SHOP_PAY_BOUNDED_DOM_READINESS_EXHAUSTED"
+          ? "CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE"
+          : shopPayQuoteFailure(markers, quote, true) }
   }
   progress(job, "SHOP_PAY_DOM_READY", {
     checkoutHostClassification: checkoutHostClassification(),
@@ -1385,7 +1526,7 @@ async function checkoutShipping(job, expectedSubtotal) {
   }
   const summaryQuote = ready.quote ?? checkoutSummaryQuote(expectedSubtotal)
   const profile = location.hostname === "shop.app"
-    ? await shopPayCanonicalShippingProfileStatus(job)
+    ? await shopPayCanonicalShippingProfileStatus(job, ready.acceptedProfile)
     : canonicalShippingProfile(job) ? "MATCH" : "UNAVAILABLE"
   if (profile !== "MATCH") throw new Error(
     location.hostname === "shop.app" && profile === "MISMATCH"
@@ -1694,7 +1835,8 @@ function bindingEligibilityResponse() {
     checkoutHostClassification: checkoutHost, ...markers })
 }
 
-async function executeCanonicalDestinationBinding(message) {
+async function executeCanonicalDestinationBinding(message,
+  acceptedProfile = null) {
   if (message.contractVersion !== BIND_EXECUTION_CONTRACT ||
       !new Set(["BIND", "VALIDATE"]).has(message.operation)) {
     throw new Error("BIND_MESSAGE_CONTRACT_INVALID")
@@ -1706,12 +1848,19 @@ async function executeCanonicalDestinationBinding(message) {
     throw new Error("BIND_CHECKOUT_MARKERS_INVALID")
   }
   if (!eligibility.shipToMarker) throw new Error("BIND_SHIP_TO_NOT_FOUND")
-  const destination = shopPayDestinationSnapshot()
-  if (destination.ambiguous || !destination.normalized) {
+  const profile = acceptedProfile ?? shopPayAcceptedShippingProfileSnapshot()
+  const destination = profile.destination
+  if (destination.ambiguous) {
+    throw new Error("BIND_SHIP_TO_AMBIGUOUS")
+  }
+  if (!destination.normalized) {
     throw new Error("BIND_SHIP_TO_NOT_FOUND")
   }
   if (destination.countryClass !== "US") {
     throw new Error("BIND_COUNTRY_CLASS_UNPROVEN")
+  }
+  if (!profile.shippingAddressAccepted || !profile.shippingOptionsDetected) {
+    throw new Error("CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE")
   }
   let fingerprint
   try { fingerprint = await sha256Text(destination.normalized) } catch {
