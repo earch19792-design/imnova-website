@@ -13,14 +13,14 @@
   ],
   "externally_connectable": {
     "matches": [
-      "https://imnova-website-z1qh-git-codex-674439-earch19792-6888s-projects.vercel.app/*"
+      "https://imnova-website-z1qh-canonical-preview.vercel.app/*"
     ]
   },
   "web_accessible_resources": [
     {
       "resources": ["startup-probe.json"],
       "matches": [
-        "https://imnova-website-z1qh-git-codex-674439-earch19792-6888s-projects.vercel.app/*"
+        "https://imnova-website-z1qh-canonical-preview.vercel.app/*"
       ]
     }
   ],

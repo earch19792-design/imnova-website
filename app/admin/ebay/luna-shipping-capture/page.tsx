@@ -18,7 +18,7 @@ const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
 const EXPECTED_EXTENSION_VERSION = "1.0.42"
 const SELLER_OS_EXTENSION_ORIGIN =
-  "https://imnova-website-z1qh-git-codex-674439-earch19792-6888s-projects.vercel.app"
+  "https://imnova-website-z1qh-canonical-preview.vercel.app"
 const STARTUP_PROBE_CONTRACT = "SELLER_OS_LUNA_EXTENSION_STARTUP_PROBE_V1"
 const GET_BINDING_STORAGE_DIAGNOSTIC =
   "SELLER_OS_GET_LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
@@ -47,28 +47,27 @@ type ChromeRuntime = {
 }
 
 function ensureCanonicalExtensionOrigin() {
-  if (window.location.origin === SELLER_OS_EXTENSION_ORIGIN) return true
-  const target = new URL(
-    `${window.location.pathname}${window.location.search}${window.location.hash}`,
-    SELLER_OS_EXTENSION_ORIGIN,
-  )
-  window.location.replace(target.toString())
-  return false
+  const current = new URL(window.location.origin)
+  if (current.protocol === "https:" && !current.username &&
+      !current.password && !current.port &&
+      current.origin === SELLER_OS_EXTENSION_ORIGIN) return true
+  throw new Error("LUNA_SHIPPING_EXTENSION_ORIGIN_REJECTED")
 }
 
-async function probeInstalledExtension() {
+async function probeInstalledExtension(): Promise<boolean | null> {
   try {
     const response = await fetch(
       `chrome-extension://${EXTENSION_ID}/startup-probe.json`,
       { cache: "no-store" },
     )
-    if (!response.ok) return false
+    if (!response.ok) return null
     const payload = await response.json() as Record<string, unknown>
     return payload.contractVersion === STARTUP_PROBE_CONTRACT &&
       payload.extensionId === EXTENSION_ID &&
       payload.extensionVersion === EXPECTED_EXTENSION_VERSION
+      ? true : null
   } catch {
-    return false
+    return null
   }
 }
 

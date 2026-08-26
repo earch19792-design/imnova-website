@@ -1,7 +1,7 @@
 "use strict"
 
 const SELLER_OS_ORIGIN =
-  "https://imnova-website-z1qh-git-codex-674439-earch19792-6888s-projects.vercel.app"
+  "https://imnova-website-z1qh-canonical-preview.vercel.app"
 const CONTROL_PAGE = `${SELLER_OS_ORIGIN}/admin/ebay/luna-shipping-capture`
 const PORT_NAME = "SELLER_OS_LUNA_SHIPPING_CAPTURE_V1"
 const JOB_RESULT = "LUNA_SHIPPING_JOB_RESULT"
@@ -370,7 +370,9 @@ function safeCartSnapshot(value) {
 
 function safeSellerSender(sender) {
   try {
-    return new URL(sender?.url ?? "").origin === SELLER_OS_ORIGIN
+    const url = new URL(sender?.origin ?? sender?.url ?? "")
+    return url.protocol === "https:" && !url.username && !url.password &&
+      !url.port && url.origin === SELLER_OS_ORIGIN
   } catch { return false }
 }
 
