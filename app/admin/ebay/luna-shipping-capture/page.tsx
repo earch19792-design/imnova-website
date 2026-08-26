@@ -28,8 +28,8 @@ const CANARY_ID =
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
 
 function finalCanaryStartEnabled(connected: boolean,
-  canonicalDestinationBound: boolean, canaryRunInProgress: boolean) {
-  return connected && canonicalDestinationBound && !canaryRunInProgress
+  canonicalBindingStatusReady: boolean, canaryRunInProgress: boolean) {
+  return connected && canonicalBindingStatusReady && !canaryRunInProgress
 }
 
 type ExternalPort = {
@@ -318,6 +318,8 @@ export default function LunaShippingCapturePage() {
   const [results, setResults] = useState<Result[]>([])
   const [canonicalDestinationBound, setCanonicalDestinationBound] = useState(false)
   const [canonicalDestinationMatch, setCanonicalDestinationMatch] = useState(false)
+  const [canonicalBindingStatusReady, setCanonicalBindingStatusReady] =
+    useState(false)
   const [bindingStorageDiagnostic, setBindingStorageDiagnostic] =
     useState<BindingStorageDiagnostic | null>(null)
   const [liveTraceEvents, setLiveTraceEvents] =
@@ -333,7 +335,7 @@ export default function LunaShippingCapturePage() {
     let mode: "CANARY" | "AUTO" = "CANARY"
     let busy = false
     let extensionReady = false
-    let canonicalBindingReady = false
+    let canonicalBindingStatusRead = false
     let activeJobStatusReady = false
     let recoveredActiveJob: LunaChromeShippingJobV1 | null = null
     let initialAutoClaimStarted = false
@@ -381,6 +383,12 @@ export default function LunaShippingCapturePage() {
       if (!existing) traceEvents = [...traceEvents, event]
         .sort((left, right) => left.sequence - right.sequence).slice(0, 100)
       setLiveTraceEvents([...traceEvents])
+      if (event.state === "CANONICAL_BIND_COMPLETED") {
+        canonicalBindingStatusRead = true
+        setCanonicalBindingStatusReady(true)
+        setCanonicalDestinationBound(true)
+        setCanonicalDestinationMatch(true)
+      }
       const terminal = event.state === "PASS" || event.state === "FAIL"
       flushRuntimeTrace(terminal)
     }
@@ -435,7 +443,9 @@ export default function LunaShippingCapturePage() {
 
     const startInitialProductionClaim = () => {
       if (!active || initialAutoClaimStarted || !extensionReady ||
-          !canonicalBindingReady || !activeJobStatusReady || busy || !port) return
+          !canonicalBindingStatusRead || !activeJobStatusReady || busy || !port) {
+        return
+      }
       initialAutoClaimStarted = true
       setError("")
       setStatus("PRODUCTION_WORKER_READY")
@@ -455,7 +465,7 @@ export default function LunaShippingCapturePage() {
     }
 
     const beginCanary = () => {
-      if (busy || !extensionReady || !canonicalBindingReady) return
+      if (busy || !extensionReady || !canonicalBindingStatusRead) return
       setError("")
       setResults([])
       setLastRuntimeState("CANARY_DISPATCHED")
@@ -531,14 +541,15 @@ export default function LunaShippingCapturePage() {
             return
           }
           const bound = message.canonicalDestinationBound === true
-          canonicalBindingReady = bound
+          canonicalBindingStatusRead = true
+          setCanonicalBindingStatusReady(true)
           setCanonicalDestinationBound(bound)
           if (bound) {
             setError("")
           } else {
             setCanonicalDestinationMatch(false)
-            setStatus("CANONICAL_BINDING_REQUIRED")
-            setError("CANONICAL_BINDING_REQUIRED")
+            setStatus("CANONICAL_AUTO_BIND_PENDING")
+            setError("")
           }
           startInitialProductionClaim()
           return
@@ -562,7 +573,8 @@ export default function LunaShippingCapturePage() {
             return
           }
           setCanonicalDestinationBound(true)
-          canonicalBindingReady = true
+          canonicalBindingStatusRead = true
+          setCanonicalBindingStatusReady(true)
           setCanonicalDestinationMatch(true)
           busy = false
           setRunning(false)
@@ -966,7 +978,8 @@ export default function LunaShippingCapturePage() {
           if (reconnecting) return
           reconnecting = true
           const jobToResume = busy ? jobs[index] : null
-          canonicalBindingReady = false
+          canonicalBindingStatusRead = false
+          setCanonicalBindingStatusReady(false)
           activeJobStatusReady = false
           recoveredActiveJob = null
           if (!busy) {
@@ -1031,7 +1044,7 @@ export default function LunaShippingCapturePage() {
   const traceBlocker = newestTrace?.state === "FAIL"
     ? newestTrace.reasonCode : "NONE"
   const canStartFinalCanary = finalCanaryStartEnabled(connected,
-    canonicalDestinationBound, running)
+    canonicalBindingStatusReady, running)
 
   return <main className="min-h-screen bg-[#07111a] px-4 py-10 text-white">
     <section className="mx-auto max-w-2xl rounded-3xl border border-white/15 bg-white/[0.05] p-6">

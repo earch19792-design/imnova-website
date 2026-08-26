@@ -26,6 +26,9 @@ const BIND_ELIGIBILITY_PROBE =
 const BIND_ELIGIBILITY_CONTRACT = "LUNA_BIND_ELIGIBILITY_PROBE_V1"
 const GET_CANONICAL_DESTINATION_BINDING =
   "GET_LUNA_CANONICAL_DESTINATION_BINDING"
+const AUTO_BIND_CANONICAL_DESTINATION =
+  "AUTO_BIND_LUNA_CANONICAL_DESTINATION_V1"
+const AUTO_BIND_CONTRACT = "LUNA_CANONICAL_DESTINATION_AUTO_BIND_V1"
 const GET_CANONICAL_DESTINATION_STATUS =
   "SELLER_OS_GET_LUNA_CANONICAL_DESTINATION_STATUS"
 const CANONICAL_DESTINATION_STATUS =
@@ -582,6 +585,22 @@ function safeDestinationBinding(value) {
   return candidate && boundAt ? Object.freeze({ ...candidate, boundAt }) : null
 }
 
+function safeAutoBindCandidate(value) {
+  const markers = value?.safeMarkerBooleans
+  const markerFields = ["shipTo", "shipping", "subtotal", "total", "payNow"]
+  if (value?.contractVersion !== AUTO_BIND_CONTRACT ||
+      value?.destinationUnambiguous !== true ||
+      value?.acceptedUsDestination !== true ||
+      !markers || markerFields.some((field) => markers[field] !== true)) {
+    return null
+  }
+  return safeDestinationCandidate({
+    fingerprintVersion: value.fingerprintVersion,
+    canonicalDestinationFingerprint: value.fingerprint,
+    countryClass: value.countryClass,
+  })
+}
+
 function readDestinationBindingEnvelope() {
   return new Promise((resolve, reject) => chrome.storage.local.get(
     DESTINATION_STORAGE_KEY, (value) => {
@@ -714,6 +733,48 @@ function writeDestinationBinding(binding) {
     }
     resolve()
   }))
+}
+
+async function autoBindCanonicalDestination(value) {
+  const candidate = safeAutoBindCandidate(value)
+  if (!candidate) {
+    throw new Error("CANONICAL_DESTINATION_AUTO_BIND_UNVERIFIABLE")
+  }
+  const existingBinding = await readDestinationBinding()
+  if (existingBinding) {
+    if (existingBinding.canonicalDestinationFingerprint !==
+        candidate.canonicalDestinationFingerprint) {
+      throw new Error("CANONICAL_US_SHIPPING_PROFILE_MISMATCH")
+    }
+    return { contractVersion: AUTO_BIND_CONTRACT, success: true,
+      canonicalDestinationBound: true, canonicalDestinationMatch: true,
+      operation: "VALIDATE_EXISTING_CANONICAL_DESTINATION",
+      binding: existingBinding }
+  }
+  const binding = Object.freeze({ ...candidate,
+    boundAt: new Date().toISOString() })
+  emitRuntimeTrace("BIND_CHECKOUT_MARKERS_VERIFIED")
+  emitRuntimeTrace("CANONICAL_FINGERPRINT_COMPUTED")
+  await writeDestinationBinding(binding)
+  emitRuntimeTrace("CANONICAL_FINGERPRINT_WRITE_COMPLETE")
+  let readback
+  try {
+    readback = await readDestinationBinding()
+  } catch {
+    throw new Error("BIND_STORAGE_READBACK_FAILED")
+  }
+  if (!readback || readback.fingerprintVersion !== binding.fingerprintVersion ||
+      readback.countryClass !== binding.countryClass ||
+      readback.canonicalDestinationFingerprint !==
+        binding.canonicalDestinationFingerprint) {
+    throw new Error("BIND_STORAGE_READBACK_MISMATCH")
+  }
+  emitRuntimeTrace("CANONICAL_FINGERPRINT_READBACK_VERIFIED")
+  emitRuntimeTrace("CANONICAL_DESTINATION_MATCH")
+  emitRuntimeTrace("CANONICAL_BIND_COMPLETED")
+  return { contractVersion: AUTO_BIND_CONTRACT, success: true,
+    canonicalDestinationBound: true, canonicalDestinationMatch: true,
+    operation: "AUTO_BIND_CANONICAL_DESTINATION", binding: readback }
 }
 
 function sendTabMessage(tabId, message) {
@@ -1370,10 +1431,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false
     }
     void readDestinationBinding().then((binding) => sendResponse({
-      accepted: Boolean(binding), ...(binding ? { binding } : {}),
+      accepted: true,
+      bindingStatus: binding ? "BINDING_PRESENT_VALID" : "NO_BINDING_PRESENT",
+      ...(binding ? { binding } : {}),
     })).catch((error) => sendResponse({ accepted: false,
       error: safeRuntimeReason(error instanceof Error ? error.message
         : "BINDING_STORAGE_READ_FAILED") }))
+    return true
+  }
+  if (message?.type === AUTO_BIND_CANONICAL_DESTINATION) {
+    const recovered = sender.frameId === 0 && recoverActiveJob(sender)
+    if (!recovered || activeJobPhase !== CHECKOUT_PHASE ||
+        message.captureSessionId !== activeJob.captureSessionId) {
+      sendResponse({ contractVersion: AUTO_BIND_CONTRACT, success: false,
+        error: "ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN" })
+      return false
+    }
+    void autoBindCanonicalDestination(message)
+      .then((response) => sendResponse(response))
+      .catch((error) => sendResponse({ contractVersion: AUTO_BIND_CONTRACT,
+        success: false, error: safeRuntimeReason(error instanceof Error
+          ? error.message : "CANONICAL_DESTINATION_AUTO_BIND_FAILED") }))
     return true
   }
   if (message?.type === CHECKOUT_BOOTSTRAP_ACK) {
