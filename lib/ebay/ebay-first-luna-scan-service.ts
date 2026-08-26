@@ -806,7 +806,12 @@ async function processClaimedCandidate(
 export async function processNextEbayFirstLunaBatch(
   supabase: SupabaseClient,
   runId: string,
-  options: { batchSize?: number; workerId?: string; lanes?: SellerScanLane[] } = {},
+  options: {
+    batchSize?: number
+    workerId?: string
+    lanes?: SellerScanLane[]
+    suppressExternalAlertDelivery?: boolean
+  } = {},
 ) {
   const run = await getRun(supabase, runId)
   if (run.status !== "running") return { run, processed: 0, completed: true, results: [], failures: [] }
@@ -989,7 +994,10 @@ export async function processNextEbayFirstLunaBatch(
       })
       .eq("id", run.automation_run_id)
   }
-  if (getSellerWhatsAppGatewayConfiguration().deliveryAttemptAllowed) {
+  if (
+    options.suppressExternalAlertDelivery !== true &&
+    getSellerWhatsAppGatewayConfiguration().deliveryAttemptAllowed
+  ) {
     await deliverSellerWhatsAppAlerts(supabase, {
       workerId: buildSellerWorkerId("seller-whatsapp"),
       limit: 10,

@@ -160,7 +160,9 @@ export async function POST(req: Request) {
           { status: 400 },
         )
       }
-      const batch = await processNextEbayFirstLunaBatch(supabase, runId)
+      const batch = await processNextEbayFirstLunaBatch(supabase, runId, {
+        suppressExternalAlertDelivery: body.suppressExternalAlerts === true,
+      })
       return batchResponse(action, null, batch)
     }
     return NextResponse.json(
