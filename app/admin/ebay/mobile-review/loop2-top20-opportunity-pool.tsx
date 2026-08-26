@@ -10,6 +10,7 @@ import {
   buildEbayOneClickResearchLease,
   buildEbayOneClickResearchPlan,
   establishEbayOneClickResearchHandshake,
+  validateEbayOneClickNoValidSoldEvidenceOutcome,
   validateEbayOneClickResearchCompletion,
 } from "@/lib/ebay/ebay-one-click-research-session-v1"
 
@@ -474,13 +475,21 @@ type ProductResearchDiagnosticTrace = {
 }
 
 type OneClickResearchSummary = {
-  status: "IDLE" | "RUNNING" | "COMPLETED" | "FAILED"
+  status: "IDLE" | "RUNNING" | "COMPLETED" | "COMPLETED_WITH_REJECTIONS" | "FAILED"
   extensionId: string | null
   extensionVersion: string | null
   completedQueries: number
   totalQueries: number
   productResearchCaptures: number
   freshSoldRows: number
+  noValidSoldEvidenceTasks: number
+  taskOutcomes: Array<{
+    ordinal: number
+    state: "DURABLE_SOLD_EVIDENCE" | "NO_VALID_SOLD_EVIDENCE"
+    validCount: number
+    rejectedCount: number
+    rejectionReasonCounts: Record<string, number>
+  }>
   evidenceMaxAgeDays: number | null
   newDiscovery: number
   strongFamilyExpansion: number
@@ -747,7 +756,8 @@ export function Loop2Top20OpportunityPool() {
   const [oneClickResearch, setOneClickResearch] = useState<OneClickResearchSummary>({
     status: "IDLE", extensionId: null, extensionVersion: null,
     completedQueries: 0, totalQueries: 0, productResearchCaptures: 0,
-    freshSoldRows: 0, evidenceMaxAgeDays: null,
+    freshSoldRows: 0, noValidSoldEvidenceTasks: 0, taskOutcomes: [],
+    evidenceMaxAgeDays: null,
     newDiscovery: 0, strongFamilyExpansion: 0, staleDemandRefresh: 0,
     economicsRescue: 0, coverageLimitation: null, error: null,
     diagnosticTrace: null,
@@ -928,7 +938,8 @@ export function Loop2Top20OpportunityPool() {
       initialSummary = {
         status: "RUNNING", extensionId: null, extensionVersion: null,
         completedQueries: 0, totalQueries: plan.missionMix.totalQueries,
-        productResearchCaptures: 0, freshSoldRows: 0, evidenceMaxAgeDays: null,
+        productResearchCaptures: 0, freshSoldRows: 0,
+        noValidSoldEvidenceTasks: 0, taskOutcomes: [], evidenceMaxAgeDays: null,
         newDiscovery: plan.missionMix.newDiscovery,
         strongFamilyExpansion: plan.missionMix.strongFamilyExpansion,
         staleDemandRefresh: plan.missionMix.staleDemandRefresh,
@@ -944,6 +955,8 @@ export function Loop2Top20OpportunityPool() {
       let productResearchCaptures = 0
       let capturedSoldRows = 0
       let freshSoldRows = 0
+      let noValidSoldEvidenceTasks = 0
+      const taskOutcomes: OneClickResearchSummary["taskOutcomes"] = []
       let evidenceMaxAgeDays = 0
       for (const task of plan.tasks) {
         const remainingRows = EBAY_ONE_CLICK_RESEARCH_BOUNDS.maxRows - capturedSoldRows
@@ -1002,6 +1015,8 @@ export function Loop2Top20OpportunityPool() {
 
         if (extensionResult.mainSearchSoldRows.length) {
           const sold = await adminFetch<{ result: {
+            taskOutcome: "DURABLE_SOLD_EVIDENCE" | "NO_VALID_SOLD_EVIDENCE"
+            noValidSoldEvidence?: Record<string, unknown>
             durableValidation: {
               status: "PASS"
               readbackCount: number
@@ -1025,24 +1040,52 @@ export function Loop2Top20OpportunityPool() {
               operatorAttested: true,
             }),
           })
-          const durable = sold.result.durableValidation
-          if (!durable || durable.status !== "PASS" || durable.readbackCount < 1 ||
-            durable.marketplaceWrites !== 0 ||
-            durable.displayedVsRealizedGuard !== "PASS" ||
-            durable.bestOfferGuard !== "PASS") {
-            throw new Error("ONE_CLICK_RESEARCH_DURABLE_VALIDATION_FAILED")
+          if (sold.result.taskOutcome === "NO_VALID_SOLD_EVIDENCE") {
+            const terminal = validateEbayOneClickNoValidSoldEvidenceOutcome(
+              sold.result.noValidSoldEvidence ?? {},
+            )
+            noValidSoldEvidenceTasks += 1
+            taskOutcomes.push({
+              ordinal: task.ordinal,
+              state: "NO_VALID_SOLD_EVIDENCE",
+              validCount: 0,
+              rejectedCount: terminal.rejectedCount,
+              rejectionReasonCounts: { ...terminal.rejectionReasonCounts },
+            })
+          } else if (sold.result.taskOutcome !== "DURABLE_SOLD_EVIDENCE") {
+            throw new Error("ONE_CLICK_RESEARCH_SOLD_TASK_OUTCOME_INVALID")
           }
-          freshSoldRows += durable.freshSoldRows
-          evidenceMaxAgeDays = Math.max(evidenceMaxAgeDays, durable.evidenceMaxAgeDays)
+          const durable = sold.result.durableValidation
+          if (sold.result.taskOutcome === "DURABLE_SOLD_EVIDENCE") {
+            if (!durable || durable.status !== "PASS" || durable.readbackCount < 1 ||
+              durable.marketplaceWrites !== 0 ||
+              durable.displayedVsRealizedGuard !== "PASS" ||
+              durable.bestOfferGuard !== "PASS") {
+              throw new Error("ONE_CLICK_RESEARCH_DURABLE_VALIDATION_FAILED")
+            }
+            freshSoldRows += durable.freshSoldRows
+            evidenceMaxAgeDays = Math.max(evidenceMaxAgeDays, durable.evidenceMaxAgeDays)
+            taskOutcomes.push({
+              ordinal: task.ordinal,
+              state: "DURABLE_SOLD_EVIDENCE",
+              validCount: durable.freshSoldRows,
+              rejectedCount: 0,
+              rejectionReasonCounts: {},
+            })
+          }
         }
         completedQueries += 1
         setOneClickResearch((current) => ({ ...current, completedQueries,
-          productResearchCaptures, freshSoldRows,
+          productResearchCaptures, freshSoldRows, noValidSoldEvidenceTasks,
+          taskOutcomes: [...taskOutcomes],
           evidenceMaxAgeDays: freshSoldRows ? evidenceMaxAgeDays : null,
           diagnosticTrace: productResearchDiagnosticTrace ?? current.diagnosticTrace }))
       }
+      const sessionStatus = noValidSoldEvidenceTasks > 0
+        ? "COMPLETED_WITH_REJECTIONS" as const : "COMPLETED" as const
       validateEbayOneClickResearchCompletion({
-        sessionStatus: "COMPLETED",
+        sessionStatus,
+        noValidSoldEvidenceTasks,
         freshSoldRows,
         evidenceMaxAgeDays,
         durableReadback: "PASS",
@@ -1050,12 +1093,14 @@ export function Loop2Top20OpportunityPool() {
         bestOfferGuard: "PASS",
         marketplaceWrites: 0,
       })
-      setOneClickResearch((current) => ({ ...current, status: "COMPLETED",
+      setOneClickResearch((current) => ({ ...current, status: sessionStatus,
         completedQueries, productResearchCaptures, freshSoldRows,
+        noValidSoldEvidenceTasks, taskOutcomes: [...taskOutcomes],
         evidenceMaxAgeDays, error: null }))
       await Promise.all([loadBrowserCapture(), loadSoldEvidence()])
       setMessage(`Research automático completado: ${completedQueries} consulta(s), ` +
-        `${freshSoldRows} filas Sold frescas con lectura durable. ` +
+        `${freshSoldRows} filas Sold frescas con lectura durable; ` +
+        `${noValidSoldEvidenceTasks} tarea(s) sin comparables Sold válidos. ` +
         "Precio mostrado y precio realizado permanecen separados; escrituras eBay 0.")
     } catch (sessionError) {
       const code = safeOneClickCode(sessionError instanceof Error ? sessionError.message : "")
@@ -1320,11 +1365,23 @@ export function Loop2Top20OpportunityPool() {
                 <div><dt className="text-white/45">Consultas</dt><dd>{oneClickResearch.completedQueries} / {oneClickResearch.totalQueries}</dd></div>
                 <div><dt className="text-white/45">Product Research</dt><dd>{oneClickResearch.productResearchCaptures}</dd></div>
                 <div><dt className="text-white/45">Sold frescas</dt><dd>{oneClickResearch.freshSoldRows}</dd></div>
+                <div><dt className="text-white/45">Sin Sold válido</dt><dd>{oneClickResearch.noValidSoldEvidenceTasks}</dd></div>
                 <div><dt className="text-white/45">Nueva discovery</dt><dd>{oneClickResearch.newDiscovery}</dd></div>
                 <div><dt className="text-white/45">Expansión fuerte</dt><dd>{oneClickResearch.strongFamilyExpansion}</dd></div>
                 <div><dt className="text-white/45">Refresh vencido</dt><dd>{oneClickResearch.staleDemandRefresh}</dd></div>
                 <div><dt className="text-white/45">Rescate economics</dt><dd>{oneClickResearch.economicsRescue}</dd></div>
               </dl>
+              {oneClickResearch.taskOutcomes.length > 0 && <div className="space-y-1 rounded-lg border border-white/10 bg-black/20 p-2">
+                <p className="font-black">Resultado terminal por consulta</p>
+                {oneClickResearch.taskOutcomes.map((outcome) => <p key={outcome.ordinal}
+                  className={outcome.state === "NO_VALID_SOLD_EVIDENCE"
+                    ? "text-amber-100" : "text-emerald-100"}>
+                  #{outcome.ordinal} · {outcome.state} · válidas {outcome.validCount} · rechazadas {outcome.rejectedCount}
+                  {Object.keys(outcome.rejectionReasonCounts).length > 0
+                    ? ` · ${Object.entries(outcome.rejectionReasonCounts)
+                      .map(([code, count]) => `${code}=${count}`).join(" · ")}` : ""}
+                </p>)}
+              </div>}
               <p className="text-white/45">Extensión {oneClickResearch.extensionVersion ?? "SIN CONECTAR"} · ID {oneClickResearch.extensionId ?? "NO OBSERVADO"} · evidencia máxima {oneClickResearch.evidenceMaxAgeDays === null ? "N/D" : `${oneClickResearch.evidenceMaxAgeDays.toFixed(1)} días`}.</p>
               {oneClickResearch.coverageLimitation && <p className="text-amber-100/70">PLAN_COVERAGE_LIMITATION: {oneClickResearch.coverageLimitation}</p>}
               {oneClickResearch.error && <p className="text-rose-100">{oneClickResearch.error}</p>}

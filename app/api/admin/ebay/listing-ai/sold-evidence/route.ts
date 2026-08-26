@@ -19,6 +19,8 @@ import {
 } from "@/lib/ebay/ebay-official-sold-evidence-import"
 import { adaptMainSearchSoldCaptureForCanonicalImport } from
   "@/lib/ebay/ebay-main-search-sold-capture-adapter-v1"
+import { validateEbayOneClickNoValidSoldEvidenceOutcome } from
+  "@/lib/ebay/ebay-one-click-research-session-v1"
 import { startListingAiApprovalQueueScan } from "@/lib/ebay/ebay-listing-ai-approval-queue-service"
 import { enqueueListingAiTop20Continuation } from "@/lib/ebay/ebay-listing-ai-top20-queue"
 
@@ -84,16 +86,38 @@ export async function POST(req: Request) {
     } catch (error) {
       const diagnostic = soldEvidenceNoValidRowsDiagnostic(error)
       if (!oneClickResearch || !captureAdapter || !diagnostic) throw error
-      return listingAiResponse({
-        success: false,
-        error: oneClickSoldEvidenceNoValidRowsCode({
+      const noValidSoldEvidence = validateEbayOneClickNoValidSoldEvidenceOutcome({
+        taskOutcome: "NO_VALID_SOLD_EVIDENCE",
+        sourceStatus: "HEALTHY",
+        parserStatus: "HEALTHY",
+        normalizationStatus: "COMPLETE",
+        observedCount: captureAdapter.sourceRowCount,
+        parsedCount: captureAdapter.freshRowCount,
+        normalizedCount: diagnostic.sourceRowCount,
+        validCount: 0,
+        rejectedCount: diagnostic.rejectedCount,
+        duplicateStatus: "NOT_REACHED",
+        rejectionReasonCounts: diagnostic.errorCounts,
+        exactSoldComparablesCreated: 0,
+        marketplaceWrites: 0,
+      })
+      return listingAiResponse({ success: true, result: {
+        taskOutcome: "NO_VALID_SOLD_EVIDENCE",
+        noValidSoldEvidence,
+        validationCode: oneClickSoldEvidenceNoValidRowsCode({
           observedCount: captureAdapter.sourceRowCount,
           parsedCount: captureAdapter.freshRowCount,
           diagnostic,
         }),
+        durableValidation: null,
+        scan: { status: "ONE_CLICK_RESEARCH_CAPTURE_ONLY",
+          sameRunResumed: false, heavyRadarStarted: false, lunaProductFitStarted: false },
+        openAiCalls: 0,
+        ebayWrites: 0,
+        canPublish: false,
         safety: { secretsExposed: false, piiExposed: false,
           canPublish: false, ebayWrites: 0 },
-      }, 400)
+      } }, 202)
     }
     let scan: Record<string, unknown> | null = null
     if (result.reanalysisRequired && !oneClickResearch) {
@@ -155,6 +179,7 @@ export async function POST(req: Request) {
         sameRunResumed: false, heavyRadarStarted: false, lunaProductFitStarted: false }
     }
     return listingAiResponse({ success: true, result: { ...result, scan,
+      taskOutcome: oneClickResearch ? "DURABLE_SOLD_EVIDENCE" : null,
       captureAdapter: captureAdapter ? {
         version: captureAdapter.version,
         sourceRowCount: captureAdapter.sourceRowCount,

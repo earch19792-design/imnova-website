@@ -9,6 +9,9 @@ export const EBAY_ONE_CLICK_RESEARCH_COMMAND =
 export const EBAY_ONE_CLICK_RESEARCH_RESULT =
   "IMNOVA_EBAY_ONE_CLICK_RESEARCH_RESULT_V1"
 
+export const EBAY_ONE_CLICK_NO_VALID_SOLD_EVIDENCE =
+  "NO_VALID_SOLD_EVIDENCE" as const
+
 export const EBAY_ONE_CLICK_RESEARCH_BOUNDS = Object.freeze({
   maxRuntimeMs: 15 * 60_000,
   maxQueries: 15,
@@ -175,6 +178,7 @@ export function buildEbayOneClickResearchLease(input: {
 
 export function validateEbayOneClickResearchCompletion(input: {
   sessionStatus: unknown
+  noValidSoldEvidenceTasks?: unknown
   freshSoldRows: unknown
   evidenceMaxAgeDays: unknown
   durableReadback: unknown
@@ -184,8 +188,14 @@ export function validateEbayOneClickResearchCompletion(input: {
 }) {
   const freshSoldRows = Number(input.freshSoldRows)
   const evidenceMaxAgeDays = Number(input.evidenceMaxAgeDays)
-  if (input.sessionStatus !== "COMPLETED" || !Number.isInteger(freshSoldRows) ||
-    freshSoldRows <= 0 || !Number.isFinite(evidenceMaxAgeDays) ||
+  const noValidSoldEvidenceTasks = Number(input.noValidSoldEvidenceTasks ?? 0)
+  const sessionStatusValid = input.sessionStatus === "COMPLETED"
+    ? noValidSoldEvidenceTasks === 0
+    : input.sessionStatus === "COMPLETED_WITH_REJECTIONS" && noValidSoldEvidenceTasks > 0
+  const freshEvidenceValid = Number.isInteger(freshSoldRows) && freshSoldRows >= 0 &&
+    (freshSoldRows > 0 || noValidSoldEvidenceTasks > 0)
+  if (!sessionStatusValid || !Number.isInteger(noValidSoldEvidenceTasks) ||
+    noValidSoldEvidenceTasks < 0 || !freshEvidenceValid || !Number.isFinite(evidenceMaxAgeDays) ||
     evidenceMaxAgeDays < 0 || evidenceMaxAgeDays > 30 ||
     input.durableReadback !== "PASS" ||
     input.displayedVsRealizedGuard !== "PASS" ||
@@ -194,11 +204,75 @@ export function validateEbayOneClickResearchCompletion(input: {
   }
   return Object.freeze({
     status: "PASS" as const,
+    sessionStatus: input.sessionStatus as "COMPLETED" | "COMPLETED_WITH_REJECTIONS",
+    noValidSoldEvidenceTasks,
     freshSoldRows,
     evidenceMaxAgeDays,
     durableReadback: "PASS" as const,
     displayedVsRealizedGuard: "PASS" as const,
     bestOfferGuard: "PASS" as const,
+    marketplaceWrites: 0 as const,
+  })
+}
+
+export type EbayOneClickNoValidSoldEvidenceOutcome = Readonly<{
+  taskOutcome: typeof EBAY_ONE_CLICK_NO_VALID_SOLD_EVIDENCE
+  sourceStatus: "HEALTHY"
+  parserStatus: "HEALTHY"
+  normalizationStatus: "COMPLETE"
+  observedCount: number
+  parsedCount: number
+  normalizedCount: number
+  validCount: 0
+  rejectedCount: number
+  duplicateStatus: "NOT_REACHED"
+  rejectionReasonCounts: Readonly<Record<string, number>>
+  exactSoldComparablesCreated: 0
+  marketplaceWrites: 0
+}>
+
+export function validateEbayOneClickNoValidSoldEvidenceOutcome(
+  input: Record<string, unknown>,
+): EbayOneClickNoValidSoldEvidenceOutcome {
+  const integer = (value: unknown) => Number.isInteger(value) ? Number(value) : null
+  const observedCount = integer(input.observedCount)
+  const parsedCount = integer(input.parsedCount)
+  const normalizedCount = integer(input.normalizedCount)
+  const rejectedCount = integer(input.rejectedCount)
+  const reasonsInput = input.rejectionReasonCounts &&
+    typeof input.rejectionReasonCounts === "object" &&
+    !Array.isArray(input.rejectionReasonCounts)
+    ? input.rejectionReasonCounts as Record<string, unknown> : {}
+  const rejectionReasonCounts = Object.fromEntries(Object.entries(reasonsInput)
+    .filter(([code, count]) => /^[A-Z0-9_]+$/.test(code) &&
+      Number.isInteger(count) && Number(count) > 0)
+    .sort((left, right) => left[0].localeCompare(right[0], "en-US"))) as Record<string, number>
+  const rejectionTotal = Object.values(rejectionReasonCounts)
+    .reduce((total, count) => total + count, 0)
+  if (input.taskOutcome !== EBAY_ONE_CLICK_NO_VALID_SOLD_EVIDENCE ||
+    input.sourceStatus !== "HEALTHY" || input.parserStatus !== "HEALTHY" ||
+    input.normalizationStatus !== "COMPLETE" || observedCount === null || observedCount < 1 ||
+    parsedCount === null || parsedCount < 1 || parsedCount > observedCount ||
+    normalizedCount === null || normalizedCount !== parsedCount || input.validCount !== 0 ||
+    rejectedCount === null || rejectedCount !== normalizedCount ||
+    rejectionTotal !== rejectedCount || !Object.keys(rejectionReasonCounts).length ||
+    input.duplicateStatus !== "NOT_REACHED" || input.exactSoldComparablesCreated !== 0 ||
+    input.marketplaceWrites !== 0) {
+    throw new Error("ONE_CLICK_RESEARCH_NO_VALID_SOLD_OUTCOME_INVALID")
+  }
+  return Object.freeze({
+    taskOutcome: EBAY_ONE_CLICK_NO_VALID_SOLD_EVIDENCE,
+    sourceStatus: "HEALTHY" as const,
+    parserStatus: "HEALTHY" as const,
+    normalizationStatus: "COMPLETE" as const,
+    observedCount,
+    parsedCount,
+    normalizedCount,
+    validCount: 0 as const,
+    rejectedCount,
+    duplicateStatus: "NOT_REACHED" as const,
+    rejectionReasonCounts: Object.freeze(rejectionReasonCounts),
+    exactSoldComparablesCreated: 0 as const,
     marketplaceWrites: 0 as const,
   })
 }
