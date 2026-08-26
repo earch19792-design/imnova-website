@@ -17,6 +17,8 @@ const MAX_QUERIES = 15
 const MAX_ROWS = 200
 const MAX_PAGES_PER_QUERY = 2
 const MAX_RETRIES = 1
+const PRODUCT_RESEARCH_DAY_RANGE = 90
+const PRODUCT_RESEARCH_PAGE_LIMIT = 50
 
 function officialResearchSender(sender) {
   try {
@@ -292,10 +294,32 @@ async function contentCapture(input) {
   throw new Error(input.timeoutCode)
 }
 
-function productResearchUrl(searchQuery) {
+function productResearchCategoryId(value) {
+  const categoryId = String(value ?? "").trim()
+  if (!categoryId) return "0"
+  if (!/^\d{1,12}$/.test(categoryId)) {
+    throw new Error("ONE_CLICK_RESEARCH_CATEGORY_INVALID")
+  }
+  return categoryId
+}
+
+function productResearchUrl(searchQuery, categoryId) {
+  const endDate = Date.now()
+  const startDate = endDate - PRODUCT_RESEARCH_DAY_RANGE * 24 * 60 * 60 * 1_000
   const url = new URL("https://www.ebay.com/sh/research")
+  url.searchParams.set("marketplace", "EBAY-US")
+  url.searchParams.set("keywords", searchQuery)
+  url.searchParams.set("dayRange", String(PRODUCT_RESEARCH_DAY_RANGE))
+  url.searchParams.set("endDate", String(endDate))
+  url.searchParams.set("startDate", String(startDate))
+  url.searchParams.set("categoryId", productResearchCategoryId(categoryId))
+  url.searchParams.set("offset", "0")
+  url.searchParams.set("limit", String(PRODUCT_RESEARCH_PAGE_LIMIT))
+  url.searchParams.set("tabName", "SOLD")
+  url.searchParams.set("tz", Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC")
   const fragment = new URLSearchParams()
   fragment.set("seller-os-query", searchQuery)
+  fragment.set("seller-os-query-stage", "AWAITING_RESULTS")
   url.hash = fragment.toString()
   return url.href
 }
@@ -322,7 +346,10 @@ async function runOneClickQueryOnce(message, lease) {
     remainingRows < 1 || remainingRows > Number(lease.bounds.maxRows)) {
     throw new Error("ONE_CLICK_RESEARCH_QUERY_BOUNDS_INVALID")
   }
-  const tab = await chrome.tabs.create({ url: productResearchUrl(searchQuery), active: false })
+  const categoryId = productResearchCategoryId(task.categoryId)
+  const tab = await chrome.tabs.create({
+    url: productResearchUrl(searchQuery, categoryId), active: false,
+  })
   if (!Number.isInteger(tab?.id)) throw new Error("ONE_CLICK_RESEARCH_TAB_CREATE_FAILED")
   try {
     const productResearch = await contentCapture({
@@ -330,7 +357,7 @@ async function runOneClickQueryOnce(message, lease) {
       expiresAt: lease.expiresAt,
       timeoutMs: 60_000,
       timeoutCode: "PRODUCT_RESEARCH_AUTOMATED_CAPTURE_TIMEOUT",
-      message: { type: PRODUCT_RESEARCH_CAPTURE, searchQuery,
+      message: { type: PRODUCT_RESEARCH_CAPTURE, searchQuery, categoryId,
         maxRows: Number(lease.bounds.maxRowsPerCapture) },
     })
     const soldRows = []

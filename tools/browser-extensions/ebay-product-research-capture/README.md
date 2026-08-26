@@ -9,7 +9,14 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Abre Seller OS Preview y usa **INICIAR RESEARCH AUTOMÁTICO** una sola vez.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.17.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.18.
+
+## Navegación Product Research acotada (v1.2.18)
+
+La versión 1.2.18 abre cada consulta en el estado oficial de Product Research:
+`SOLD`, 90 días, query y categoría exactas. El fragmento local se conserva
+únicamente como gate de readiness; nunca sustituye la consulta de eBay. La captura
+exige que la categoría visible coincida antes de devolver el resultado al worker.
 
 ## Sesión automática acotada (v1.2.17)
 

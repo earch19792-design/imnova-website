@@ -1841,10 +1841,12 @@
     const start = ["start_date", "startDate", "from"].map((name) => params.get(name)).find(Boolean) || null
     const end = ["end_date", "endDate", "to"].map((name) => params.get(name)).find(Boolean) || null
     const rangeParameter = ["date_range", "dateRange", "range"].map((name) => params.get(name)).find(Boolean)
+    const categoryId = text(params.get("categoryId")) || "0"
     const selectedRange = [...document.querySelectorAll('[aria-label*="date" i],[data-testid*="date" i],button')]
       .filter(visible).map((element) => text(element.innerText || element.getAttribute("aria-label")))
       .find((value) => /(?:last|past|days?|months?|\d{4}.+\d{4})/i.test(value) && value.length <= 120)
-    return { searchQuery, dateRange: { label: rangeParameter || selectedRange || null, start, end } }
+    return { searchQuery, categoryId,
+      dateRange: { label: rangeParameter || selectedRange || null, start, end } }
   }
 
   function buildCapture() {
@@ -1913,6 +1915,7 @@
     if (message?.type !== AUTOMATED_CAPTURE_MESSAGE ||
       sender?.id !== chrome.runtime.id) return false
     const expectedQuery = text(message.searchQuery).slice(0, 100)
+    const expectedCategoryId = text(message.categoryId) || "0"
     if (expectedQuery.length < 3 || guidedPlanCompleted) {
       sendResponse({ success: false, status: "FAILED",
         error: "PRODUCT_RESEARCH_AUTOMATED_QUERY_INVALID" })
@@ -1923,7 +1926,13 @@
       sendResponse({ success: false, status: "FAILED", error: blocker })
       return false
     }
-    const currentQuery = text(queryContext().searchQuery)
+    const currentContext = queryContext()
+    const currentQuery = text(currentContext.searchQuery)
+    if (currentContext.categoryId !== expectedCategoryId) {
+      sendResponse({ success: false, status: "FAILED",
+        error: "PRODUCT_RESEARCH_AUTOMATED_CATEGORY_MISMATCH" })
+      return false
+    }
     if (!nextQueryState || normalizedQuery(nextQueryState.query) !== normalizedQuery(expectedQuery) ||
       normalizedQuery(currentQuery) !== normalizedQuery(expectedQuery) ||
       !nextQueryState.resultsReady) {
@@ -2161,7 +2170,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.17"
+  title.textContent = "Seller OS · Product Research · v1.2.18"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"
