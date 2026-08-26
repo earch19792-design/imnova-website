@@ -531,6 +531,24 @@ function extensionResearchCommand<T extends Record<string, unknown>>(
   })
 }
 
+async function probeOneClickResearchExtension() {
+  const probe = await extensionResearchCommand<{
+    success: true
+    ready: true
+    extensionId: string
+    extensionVersion: string
+    persistentCredential: false
+    cookieAccess: false
+    marketplaceWrites: 0
+  }>({ type: "IMNOVA_EBAY_ONE_CLICK_RESEARCH_PROBE_V1" }, 8_000)
+  if (probe.ready !== true || probe.persistentCredential !== false ||
+    probe.cookieAccess !== false || probe.marketplaceWrites !== 0 ||
+    probe.extensionId !== probe.bridgeExtensionId) {
+    throw new Error("ONE_CLICK_RESEARCH_EXTENSION_ATTESTATION_FAILED")
+  }
+  return probe
+}
+
 export function Loop2Top20OpportunityPool() {
   const [payload, setPayload] = useState<QueuePayload | null>(null)
   const [loading, setLoading] = useState(true)
@@ -608,6 +626,15 @@ export function Loop2Top20OpportunityPool() {
 
   useEffect(() => { void load(); void loadSoldEvidence(); void loadBrowserCapture(); void loadIdentityReconciliation() },
     [load, loadSoldEvidence, loadBrowserCapture, loadIdentityReconciliation])
+  useEffect(() => {
+    let active = true
+    void probeOneClickResearchExtension().then((probe) => {
+      if (!active) return
+      setOneClickResearch((current) => ({ ...current,
+        extensionId: probe.extensionId, extensionVersion: probe.extensionVersion }))
+    }, () => { /* disconnected remains fail-closed and no research starts */ })
+    return () => { active = false }
+  }, [])
   const scanActive = ["RUNNING", "PARTIAL_AUTO_CONTINUING"].includes(payload?.run?.status ?? "")
   const rateLimitPaused = payload?.run?.status === "PAUSED_RATE_LIMIT"
   useEffect(() => {
@@ -733,20 +760,7 @@ export function Loop2Top20OpportunityPool() {
         coverageLimitation: plan.coverageLimitation, error: null,
       }
       setOneClickResearch(initialSummary)
-      const probe = await extensionResearchCommand<{
-        success: true
-        ready: true
-        extensionId: string
-        extensionVersion: string
-        persistentCredential: false
-        cookieAccess: false
-        marketplaceWrites: 0
-      }>({ type: "IMNOVA_EBAY_ONE_CLICK_RESEARCH_PROBE_V1" }, 8_000)
-      if (probe.ready !== true || probe.persistentCredential !== false ||
-        probe.cookieAccess !== false || probe.marketplaceWrites !== 0 ||
-        probe.extensionId !== probe.bridgeExtensionId) {
-        throw new Error("ONE_CLICK_RESEARCH_EXTENSION_ATTESTATION_FAILED")
-      }
+      const probe = await probeOneClickResearchExtension()
       setOneClickResearch((current) => ({ ...current,
         extensionId: probe.extensionId, extensionVersion: probe.extensionVersion }))
 
