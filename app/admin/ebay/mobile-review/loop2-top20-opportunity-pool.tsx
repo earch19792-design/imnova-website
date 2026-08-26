@@ -1,8 +1,16 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { supabase } from "@/lib/supabase"
+import {
+  EBAY_ONE_CLICK_RESEARCH_BOUNDS,
+  EBAY_ONE_CLICK_RESEARCH_COMMAND,
+  EBAY_ONE_CLICK_RESEARCH_RESULT,
+  buildEbayOneClickResearchLease,
+  buildEbayOneClickResearchPlan,
+  validateEbayOneClickResearchCompletion,
+} from "@/lib/ebay/ebay-one-click-research-session-v1"
 
 type QueueItem = {
   id: string
@@ -386,6 +394,23 @@ type MarketplaceInsightsPreflight = {
   }
 }
 
+type OneClickResearchSummary = {
+  status: "IDLE" | "RUNNING" | "COMPLETED" | "FAILED"
+  extensionId: string | null
+  extensionVersion: string | null
+  completedQueries: number
+  totalQueries: number
+  productResearchCaptures: number
+  freshSoldRows: number
+  evidenceMaxAgeDays: number | null
+  newDiscovery: number
+  strongFamilyExpansion: number
+  staleDemandRefresh: number
+  economicsRescue: number
+  coverageLimitation: string | null
+  error: string | null
+}
+
 function rateLimitWaitLabel(nextAt: string | null | undefined, nowMs: number) {
   const nextMs = Date.parse(nextAt ?? "")
   if (!Number.isFinite(nextMs) || !nowMs) return null
@@ -471,6 +496,41 @@ function requestKey(action: string, id: string) {
   return `${action}:${id}:${crypto.randomUUID()}`
 }
 
+function safeOneClickCode(value: unknown) {
+  return typeof value === "string" && /^[A-Z0-9_:;.-]+$/.test(value)
+    ? value : "ONE_CLICK_RESEARCH_EXTENSION_FAILED"
+}
+
+function extensionResearchCommand<T extends Record<string, unknown>>(
+  command: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<T & { bridgeExtensionId: string }> {
+  const requestId = crypto.randomUUID()
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      window.removeEventListener("message", receive)
+      reject(new Error("ONE_CLICK_RESEARCH_EXTENSION_TIMEOUT"))
+    }, timeoutMs)
+    const receive = (event: MessageEvent) => {
+      const message = event.data && typeof event.data === "object"
+        ? event.data as Record<string, unknown> : {}
+      if (event.source !== window || event.origin !== window.location.origin ||
+        message.type !== EBAY_ONE_CLICK_RESEARCH_RESULT || message.requestId !== requestId) return
+      window.clearTimeout(timeout)
+      window.removeEventListener("message", receive)
+      if (message.success !== true || !message.payload || typeof message.payload !== "object") {
+        reject(new Error(safeOneClickCode(message.error)))
+        return
+      }
+      resolve({ ...(message.payload as T),
+        bridgeExtensionId: String(message.extensionId ?? "UNKNOWN") })
+    }
+    window.addEventListener("message", receive)
+    window.postMessage({ type: EBAY_ONE_CLICK_RESEARCH_COMMAND, requestId, command },
+      window.location.origin)
+  })
+}
+
 export function Loop2Top20OpportunityPool() {
   const [payload, setPayload] = useState<QueuePayload | null>(null)
   const [loading, setLoading] = useState(true)
@@ -491,6 +551,14 @@ export function Loop2Top20OpportunityPool() {
     useState<ProductIdentityReconciliationStatus | null>(null)
   const [marketplaceInsightsPreflight, setMarketplaceInsightsPreflight] =
     useState<MarketplaceInsightsPreflight | null>(null)
+  const [oneClickResearch, setOneClickResearch] = useState<OneClickResearchSummary>({
+    status: "IDLE", extensionId: null, extensionVersion: null,
+    completedQueries: 0, totalQueries: 0, productResearchCaptures: 0,
+    freshSoldRows: 0, evidenceMaxAgeDays: null,
+    newDiscovery: 0, strongFamilyExpansion: 0, staleDemandRefresh: 0,
+    economicsRescue: 0, coverageLimitation: null, error: null,
+  })
+  const oneClickResearchInFlight = useRef(false)
   const [clockMs, setClockMs] = useState(0)
 
   const load = useCallback(async (silent = false) => {
@@ -643,6 +711,165 @@ export function Loop2Top20OpportunityPool() {
       setMessage("Consulta agrupada copiada. Ejecútala en Product Research y usa Capturar y continuar.")
     } catch {
       setError("PRODUCT_RESEARCH_QUERY_COPY_FAILED")
+    }
+  }
+
+  const startOneClickResearch = async () => {
+    if (oneClickResearchInFlight.current) return
+    oneClickResearchInFlight.current = true
+    setWorkingId("one-click-research"); setError(""); setMessage("")
+    let initialSummary: OneClickResearchSummary | null = null
+    try {
+      const plan = buildEbayOneClickResearchPlan(browserCaptureStatus?.queryPlan)
+      const lease = buildEbayOneClickResearchLease({ sessionId: crypto.randomUUID() })
+      initialSummary = {
+        status: "RUNNING", extensionId: null, extensionVersion: null,
+        completedQueries: 0, totalQueries: plan.missionMix.totalQueries,
+        productResearchCaptures: 0, freshSoldRows: 0, evidenceMaxAgeDays: null,
+        newDiscovery: plan.missionMix.newDiscovery,
+        strongFamilyExpansion: plan.missionMix.strongFamilyExpansion,
+        staleDemandRefresh: plan.missionMix.staleDemandRefresh,
+        economicsRescue: plan.missionMix.economicsRescue,
+        coverageLimitation: plan.coverageLimitation, error: null,
+      }
+      setOneClickResearch(initialSummary)
+      const probe = await extensionResearchCommand<{
+        success: true
+        ready: true
+        extensionId: string
+        extensionVersion: string
+        persistentCredential: false
+        cookieAccess: false
+        marketplaceWrites: 0
+      }>({ type: "IMNOVA_EBAY_ONE_CLICK_RESEARCH_PROBE_V1" }, 8_000)
+      if (probe.ready !== true || probe.persistentCredential !== false ||
+        probe.cookieAccess !== false || probe.marketplaceWrites !== 0 ||
+        probe.extensionId !== probe.bridgeExtensionId) {
+        throw new Error("ONE_CLICK_RESEARCH_EXTENSION_ATTESTATION_FAILED")
+      }
+      setOneClickResearch((current) => ({ ...current,
+        extensionId: probe.extensionId, extensionVersion: probe.extensionVersion }))
+
+      let completedQueries = 0
+      let productResearchCaptures = 0
+      let capturedSoldRows = 0
+      let freshSoldRows = 0
+      let evidenceMaxAgeDays = 0
+      for (const task of plan.tasks) {
+        const remainingRows = EBAY_ONE_CLICK_RESEARCH_BOUNDS.maxRows - capturedSoldRows
+        if (remainingRows <= 0) break
+        if (Date.now() >= lease.expiresAt) throw new Error("ONE_CLICK_RESEARCH_SESSION_EXPIRED")
+        const extensionResult = await extensionResearchCommand<{
+          success: true
+          extensionId: string
+          extensionVersion: string
+          productResearchCapture: Record<string, unknown>
+          mainSearchSoldRows: Array<Record<string, unknown>>
+          soldFilterAutomated: boolean
+          paginationAutomated: boolean
+          cookieAccess: false
+          marketplaceWrites: 0
+        }>({
+          type: "IMNOVA_EBAY_ONE_CLICK_RESEARCH_QUERY_V1",
+          lease,
+          task,
+          remainingRows,
+        }, 150_000)
+        if (extensionResult.extensionId !== probe.extensionId ||
+          extensionResult.bridgeExtensionId !== probe.extensionId ||
+          extensionResult.cookieAccess !== false ||
+          extensionResult.marketplaceWrites !== 0 ||
+          extensionResult.soldFilterAutomated !== true ||
+          extensionResult.paginationAutomated !== true ||
+          !extensionResult.productResearchCapture ||
+          typeof extensionResult.productResearchCapture !== "object" ||
+          !Array.isArray(extensionResult.mainSearchSoldRows)) {
+          throw new Error("ONE_CLICK_RESEARCH_EXTENSION_RESULT_INVALID")
+        }
+        if (Date.now() >= lease.expiresAt) {
+          throw new Error("ONE_CLICK_RESEARCH_SESSION_EXPIRED")
+        }
+        if (extensionResult.mainSearchSoldRows.length > remainingRows) {
+          throw new Error("ONE_CLICK_RESEARCH_CAPTURE_ROW_BOUND_EXCEEDED")
+        }
+        capturedSoldRows += extensionResult.mainSearchSoldRows.length
+        await adminFetch("/api/admin/ebay/listing-ai/product-research-capture", {
+          method: "POST",
+          headers: { "Idempotency-Key": requestKey(
+            "one-click-product-research", `${lease.sessionId}:${task.ordinal}`,
+          ) },
+          body: JSON.stringify({
+            action: "capture",
+            researchSessionMode: "EBAY_ONE_CLICK_RESEARCH_SESSION_V1",
+            capture: extensionResult.productResearchCapture,
+          }),
+        })
+        productResearchCaptures += 1
+
+        if (extensionResult.mainSearchSoldRows.length) {
+          const sold = await adminFetch<{ result: {
+            durableValidation: {
+              status: "PASS"
+              readbackCount: number
+              freshSoldRows: number
+              evidenceMaxAgeDays: number
+              displayedVsRealizedGuard: "PASS"
+              bestOfferGuard: "PASS"
+              marketplaceWrites: 0
+            } | null
+          } }>("/api/admin/ebay/listing-ai/sold-evidence", {
+            method: "POST",
+            headers: { "Idempotency-Key": requestKey(
+              "one-click-main-search-sold", `${lease.sessionId}:${task.ordinal}`,
+            ) },
+            body: JSON.stringify({
+              action: "import",
+              researchSessionMode: "EBAY_ONE_CLICK_RESEARCH_SESSION_V1",
+              format: "JSON",
+              sourceExportType: "EBAY_MAIN_SEARCH_SOLD_CAPTURE",
+              content: JSON.stringify({ rows: extensionResult.mainSearchSoldRows }),
+              operatorAttested: true,
+            }),
+          })
+          const durable = sold.result.durableValidation
+          if (!durable || durable.status !== "PASS" || durable.readbackCount < 1 ||
+            durable.marketplaceWrites !== 0 ||
+            durable.displayedVsRealizedGuard !== "PASS" ||
+            durable.bestOfferGuard !== "PASS") {
+            throw new Error("ONE_CLICK_RESEARCH_DURABLE_VALIDATION_FAILED")
+          }
+          freshSoldRows += durable.freshSoldRows
+          evidenceMaxAgeDays = Math.max(evidenceMaxAgeDays, durable.evidenceMaxAgeDays)
+        }
+        completedQueries += 1
+        setOneClickResearch((current) => ({ ...current, completedQueries,
+          productResearchCaptures, freshSoldRows,
+          evidenceMaxAgeDays: freshSoldRows ? evidenceMaxAgeDays : null }))
+      }
+      validateEbayOneClickResearchCompletion({
+        sessionStatus: "COMPLETED",
+        freshSoldRows,
+        evidenceMaxAgeDays,
+        durableReadback: "PASS",
+        displayedVsRealizedGuard: "PASS",
+        bestOfferGuard: "PASS",
+        marketplaceWrites: 0,
+      })
+      setOneClickResearch((current) => ({ ...current, status: "COMPLETED",
+        completedQueries, productResearchCaptures, freshSoldRows,
+        evidenceMaxAgeDays, error: null }))
+      await Promise.all([loadBrowserCapture(), loadSoldEvidence()])
+      setMessage(`Research automático completado: ${completedQueries} consulta(s), ` +
+        `${freshSoldRows} filas Sold frescas con lectura durable. ` +
+        "Precio mostrado y precio realizado permanecen separados; escrituras eBay 0.")
+    } catch (sessionError) {
+      const code = safeOneClickCode(sessionError instanceof Error ? sessionError.message : "")
+      setOneClickResearch((current) => ({ ...(initialSummary ?? current),
+        ...current, status: "FAILED", error: code }))
+      setError(code)
+    } finally {
+      oneClickResearchInFlight.current = false
+      setWorkingId("")
     }
   }
 
@@ -868,13 +1095,43 @@ export function Loop2Top20OpportunityPool() {
           <section aria-labelledby="product-research-capture-heading" className="space-y-3 rounded-xl border border-cyan-200/20 bg-cyan-100/[0.04] p-3 text-xs">
             <div>
               <h4 id="product-research-capture-heading" className="font-black">Captura oficial desde Product Research</h4>
-              <p className="mt-1 text-white/60">Para cuentas sin export CSV/JSON: la extensión captura con un clic únicamente la tabla visible en la página oficial autenticada. No comparte cookies ni credenciales con Seller OS.</p>
+              <p className="mt-1 text-white/60">La página autenticada autoriza una sola sesión temporal; la extensión existente ejecuta Product Research y Main Search Sold sin copiar cookies, credenciales ni el bearer de Seller OS.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.16.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.16</a>
+              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.17.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.17</a>
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
-            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.16 vuelve siempre al lanzamiento activo del mismo lote, evita recapturar una tabla ya aceptada y recupera de forma idempotente una confirmación perdida; además registra cero ventas cuando eBay sustituye resultados vendidos por anuncios activos y nunca importa esas filas activas como ventas.</p>
+            <div className="space-y-3 rounded-xl border border-fuchsia-200/25 bg-fuchsia-200/[0.06] p-3">
+              <div>
+                <p className="font-black text-fuchsia-50">Sesión acotada de un clic</p>
+                <p className="mt-1 text-white/55">La página debe permanecer abierta durante V1. Si la sesión, autenticación o bridge desaparece, la captura se detiene; no inicia nuevas importaciones y conserva sólo evidencia ya confirmada durablemente. Nunca inicia Radar, Luna o publicación.</p>
+              </div>
+              <button type="button"
+                onClick={() => void startOneClickResearch()}
+                disabled={Boolean(workingId) || scanActive ||
+                  !browserCaptureStatus?.queryPlan ||
+                  (browserCaptureStatus.queryPlan.pendingCount ?? 0) < 1}
+                className="min-h-12 w-full rounded-xl bg-fuchsia-100 px-4 font-black text-fuchsia-950 disabled:opacity-40">
+                {workingId === "one-click-research"
+                  ? "RESEARCH AUTOMÁTICO EN CURSO…"
+                  : "INICIAR RESEARCH AUTOMÁTICO"}
+              </button>
+              <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div><dt className="text-white/45">Estado</dt><dd className="font-black">{oneClickResearch.status}</dd></div>
+                <div><dt className="text-white/45">Consultas</dt><dd>{oneClickResearch.completedQueries} / {oneClickResearch.totalQueries}</dd></div>
+                <div><dt className="text-white/45">Product Research</dt><dd>{oneClickResearch.productResearchCaptures}</dd></div>
+                <div><dt className="text-white/45">Sold frescas</dt><dd>{oneClickResearch.freshSoldRows}</dd></div>
+                <div><dt className="text-white/45">Nueva discovery</dt><dd>{oneClickResearch.newDiscovery}</dd></div>
+                <div><dt className="text-white/45">Expansión fuerte</dt><dd>{oneClickResearch.strongFamilyExpansion}</dd></div>
+                <div><dt className="text-white/45">Refresh vencido</dt><dd>{oneClickResearch.staleDemandRefresh}</dd></div>
+                <div><dt className="text-white/45">Rescate economics</dt><dd>{oneClickResearch.economicsRescue}</dd></div>
+              </dl>
+              <p className="text-white/45">Extensión {oneClickResearch.extensionVersion ?? "SIN CONECTAR"} · ID {oneClickResearch.extensionId ?? "NO OBSERVADO"} · evidencia máxima {oneClickResearch.evidenceMaxAgeDays === null ? "N/D" : `${oneClickResearch.evidenceMaxAgeDays.toFixed(1)} días`}.</p>
+              {oneClickResearch.coverageLimitation && <p className="text-amber-100/70">PLAN_COVERAGE_LIMITATION: {oneClickResearch.coverageLimitation}</p>}
+              {oneClickResearch.error && <p className="text-rose-100">{oneClickResearch.error}</p>}
+              <p className="text-white/45">Límites: 15 minutos · 15 consultas · 200 filas Sold · 2 páginas por consulta · 1 reintento · EBAY_US · escrituras eBay 0.</p>
+            </div>
+            <p className="text-white/55">Instálala localmente una vez. La versión 1.2.17 conserva la captura manual anterior como diagnóstico y añade la sesión automática acotada; no almacena tokens ni usa credenciales persistentes.</p>
             <div className="rounded-xl border border-amber-100/20 bg-amber-100/[0.04] p-3">
               <p className="font-black">Cuota oficial Browse</p>
               <p className="mt-1 text-white/55">Estado {browserCaptureStatus?.browseQuota?.status ?? "SIN VERIFICAR"} · restantes {browserCaptureStatus?.browseQuota?.remaining ?? "N/D"} de {browserCaptureStatus?.browseQuota?.limit ?? "N/D"} · reset {browserCaptureStatus?.browseQuota?.resetAt ? new Date(browserCaptureStatus.browseQuota.resetAt).toLocaleString("es") : "N/D"}.</p>

@@ -5,11 +5,28 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 1. Abre `chrome://extensions` o `edge://extensions`.
 2. Activa **Developer mode**.
 3. Selecciona **Load unpacked** y elige esta carpeta.
-4. Abre la página oficial `https://www.ebay.com/sh/research` e inicia sesión normalmente.
-5. Ejecuta una búsqueda y usa **Capturar y continuar**.
+4. Inicia sesión normalmente en eBay dentro de ese mismo perfil de Chrome.
+5. Abre Seller OS Preview y usa **INICIAR RESEARCH AUTOMÁTICO** una sola vez.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.16.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.17.
+
+## Sesión automática acotada (v1.2.17)
+
+La versión 1.2.17 reutiliza esta misma extensión y el plan de consultas ya
+preparado por Seller OS. La página administrativa autenticada entrega al
+service worker una autorización efímera de hasta 15 minutos: máximo 15
+consultas, 200 filas Sold, 2 páginas por consulta y 1 reintento. El bearer de
+Seller OS permanece en la página y nunca se entrega a la extensión.
+
+Tras el único clic, la extensión abre pestañas de lectura en el perfil normal
+de Chrome, ejecuta Product Research y Main Search con `Sold` + `Completed`,
+captura sólo campos visibles y cierra las pestañas de trabajo. Seller OS usa
+los importadores existentes para persistir la evidencia. Un precio mostrado
+nunca se convierte en precio realizado; `Best Offer` conserva el precio
+realizado como `UNPROVEN`. CAPTCHA, acceso denegado, DOM desconocido, pérdida
+del bridge, sesión vencida o límites excedidos detienen el proceso de forma
+segura. No hay login automatizado, credencial persistente ni escritura eBay.
 
 ## Recuperación extremo a extremo (v1.2.16)
 

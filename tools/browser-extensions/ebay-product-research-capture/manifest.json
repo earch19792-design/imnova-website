@@ -1,11 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Seller OS — eBay Product Research Capture",
-  "version": "1.2.16",
-  "description": "Captura ventas visibles o una confirmación oficial de cero resultados en Product Research.",
+  "version": "1.2.17",
+  "description": "Automatiza una sesión acotada de Product Research y Sold desde Seller OS.",
   "permissions": [],
   "host_permissions": [
     "https://www.ebay.com/sh/research*",
+    "https://www.ebay.com/sch/*",
+    "https://imnova-website-z1qh-canonical-preview.vercel.app/admin/ebay/mobile-review*",
     "https://i.ebayimg.com/*"
   ],
   "background": {
@@ -20,6 +22,24 @@
         "content.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.ebay.com/sch/*"
+      ],
+      "js": [
+        "sold-content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://imnova-website-z1qh-canonical-preview.vercel.app/admin/ebay/mobile-review*"
+      ],
+      "js": [
+        "admin-bridge.js"
+      ],
+      "run_at": "document_start"
     }
   ]
 }

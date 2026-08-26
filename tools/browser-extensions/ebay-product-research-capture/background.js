@@ -4,6 +4,19 @@ const ANALYZE_MESSAGE = "IMNOVA_ANALYZE_VISIBLE_EBAY_THUMBNAIL_V1"
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024
 const MAX_DECODED_PIXELS = 16_000_000
 const ALLOWED_IMAGE_HOST = "i.ebayimg.com"
+const ONE_CLICK_PROBE = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_PROBE_V1"
+const ONE_CLICK_RUN_QUERY = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_QUERY_V1"
+const PRODUCT_RESEARCH_CAPTURE = "IMNOVA_AUTOMATED_PRODUCT_RESEARCH_CAPTURE_V1"
+const MAIN_SEARCH_SOLD_CAPTURE = "IMNOVA_AUTOMATED_MAIN_SEARCH_SOLD_CAPTURE_V1"
+const ADMIN_ORIGIN = "https://imnova-website-z1qh-canonical-preview.vercel.app"
+const ADMIN_PATH = /^\/admin\/ebay\/mobile-review\/?$/
+const SESSION_VERSION = "EBAY_ONE_CLICK_RESEARCH_SESSION_V1_2026_08_26"
+const SESSION_SCOPE = "EBAY_RESEARCH_CAPTURE_ONLY"
+const MAX_RUNTIME_MS = 15 * 60_000
+const MAX_QUERIES = 15
+const MAX_ROWS = 200
+const MAX_PAGES_PER_QUERY = 2
+const MAX_RETRIES = 1
 
 function officialResearchSender(sender) {
   try {
@@ -219,6 +232,171 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   void analyzeThumbnail(url).then(
     (stats) => sendResponse({ success: true, stats }),
     () => sendResponse({ success: false, error: "VISUAL_THUMBNAIL_ANALYSIS_UNAVAILABLE" }),
+  )
+  return true
+})
+
+function oneClickAdminSender(sender) {
+  try {
+    const url = new URL(sender?.tab?.url ?? sender?.url ?? "")
+    return sender?.frameId === 0 && url.origin === ADMIN_ORIGIN &&
+      ADMIN_PATH.test(url.pathname)
+  } catch {
+    return false
+  }
+}
+
+function safeFailureCode(error, fallback) {
+  const value = error instanceof Error ? error.message : ""
+  return /^[A-Z0-9_:.-]+$/.test(value) ? value : fallback
+}
+
+function boundedLease(value) {
+  const lease = value && typeof value === "object" ? value : {}
+  const bounds = lease.bounds && typeof lease.bounds === "object" ? lease.bounds : {}
+  const now = Date.now()
+  const valid = lease.version === SESSION_VERSION && lease.scope === SESSION_SCOPE &&
+    lease.marketplace === "EBAY_US" && /^[0-9a-f-]{36}$/i.test(lease.sessionId ?? "") &&
+    Number.isFinite(lease.issuedAt) && Number.isFinite(lease.expiresAt) &&
+    lease.issuedAt <= now + 60_000 && lease.expiresAt > now &&
+    lease.expiresAt - lease.issuedAt <= MAX_RUNTIME_MS && lease.marketplaceWrites === 0 &&
+    Number(bounds.maxRuntimeMs) <= MAX_RUNTIME_MS &&
+    Number(bounds.maxQueries) <= MAX_QUERIES && Number(bounds.maxRows) <= MAX_ROWS &&
+    Number(bounds.maxRowsPerCapture) <= MAX_ROWS &&
+    Number(bounds.maxPagesPerQuery) <= MAX_PAGES_PER_QUERY &&
+    Number(bounds.maxRetries) <= MAX_RETRIES
+  if (!valid) throw new Error("ONE_CLICK_RESEARCH_LEASE_INVALID")
+  return lease
+}
+
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+
+async function contentCapture(input) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < input.timeoutMs) {
+    if (Date.now() >= input.expiresAt) throw new Error("ONE_CLICK_RESEARCH_SESSION_EXPIRED")
+    try {
+      const response = await chrome.tabs.sendMessage(input.tabId, input.message)
+      if (response?.success === false || response?.status === "FAILED") {
+        throw new Error(safeFailureCode(new Error(String(response?.error ?? "")),
+          "ONE_CLICK_RESEARCH_CONTENT_CAPTURE_FAILED"))
+      }
+      if (response?.success === true && response?.status === "READY") return response
+    } catch (error) {
+      const code = safeFailureCode(error, "")
+      if (code && !/receiving end does not exist|message port closed/i.test(
+        error instanceof Error ? error.message : "")) throw error
+    }
+    await wait(750)
+  }
+  throw new Error(input.timeoutCode)
+}
+
+function productResearchUrl(searchQuery) {
+  const url = new URL("https://www.ebay.com/sh/research")
+  const fragment = new URLSearchParams()
+  fragment.set("seller-os-query", searchQuery)
+  url.hash = fragment.toString()
+  return url.href
+}
+
+function soldSearchUrl(searchQuery, page) {
+  const url = new URL("https://www.ebay.com/sch/i.html")
+  url.searchParams.set("_nkw", searchQuery)
+  url.searchParams.set("LH_Sold", "1")
+  url.searchParams.set("LH_Complete", "1")
+  url.searchParams.set("_sop", "13")
+  url.searchParams.set("_ipg", "60")
+  url.searchParams.set("_pgn", String(page))
+  return url.href
+}
+
+async function runOneClickQueryOnce(message, lease) {
+  const task = message.task && typeof message.task === "object" ? message.task : {}
+  const searchQuery = typeof task.searchQuery === "string"
+    ? task.searchQuery.normalize("NFKC").trim().replace(/\s+/g, " ").slice(0, 100) : ""
+  const ordinal = Number(task.ordinal)
+  const remainingRows = Number(message.remainingRows)
+  if (searchQuery.length < 3 || !Number.isInteger(ordinal) || ordinal < 1 ||
+    !Number.isInteger(remainingRows) ||
+    remainingRows < 1 || remainingRows > Number(lease.bounds.maxRows)) {
+    throw new Error("ONE_CLICK_RESEARCH_QUERY_BOUNDS_INVALID")
+  }
+  const tab = await chrome.tabs.create({ url: productResearchUrl(searchQuery), active: false })
+  if (!Number.isInteger(tab?.id)) throw new Error("ONE_CLICK_RESEARCH_TAB_CREATE_FAILED")
+  try {
+    const productResearch = await contentCapture({
+      tabId: tab.id,
+      expiresAt: lease.expiresAt,
+      timeoutMs: 60_000,
+      timeoutCode: "PRODUCT_RESEARCH_AUTOMATED_CAPTURE_TIMEOUT",
+      message: { type: PRODUCT_RESEARCH_CAPTURE, searchQuery,
+        maxRows: Number(lease.bounds.maxRowsPerCapture) },
+    })
+    const soldRows = []
+    let soldFilterAutomated = false
+    for (let page = 1; page <= Number(lease.bounds.maxPagesPerQuery) &&
+      soldRows.length < remainingRows; page += 1) {
+      await chrome.tabs.update(tab.id, { url: soldSearchUrl(searchQuery, page), active: false })
+      const sold = await contentCapture({
+        tabId: tab.id,
+        expiresAt: lease.expiresAt,
+        timeoutMs: 45_000,
+        timeoutCode: "MAIN_SEARCH_SOLD_AUTOMATED_CAPTURE_TIMEOUT",
+        message: { type: MAIN_SEARCH_SOLD_CAPTURE, queryIdentity: searchQuery,
+          maxRows: Math.min(remainingRows - soldRows.length, MAX_ROWS) },
+      })
+      soldFilterAutomated = sold.soldFilterProven === true
+      for (const row of Array.isArray(sold.rows) ? sold.rows : []) {
+        if (soldRows.length >= remainingRows) break
+        soldRows.push(row)
+      }
+      if (!sold.nextPageAvailable || !sold.rows?.length) break
+    }
+    return {
+      success: true,
+      extensionId: chrome.runtime.id,
+      extensionVersion: chrome.runtime.getManifest().version,
+      productResearchCapture: productResearch.capture,
+      mainSearchSoldRows: soldRows,
+      soldFilterAutomated,
+      paginationAutomated: true,
+      cookieAccess: false,
+      marketplaceWrites: 0,
+    }
+  } finally {
+    try { await chrome.tabs.remove(tab.id) } catch { /* already closed */ }
+  }
+}
+
+async function runOneClickQuery(message) {
+  const lease = boundedLease(message.lease)
+  let lastError = null
+  for (let attempt = 0; attempt <= Number(lease.bounds.maxRetries); attempt += 1) {
+    try {
+      return await runOneClickQueryOnce(message, lease)
+    } catch (error) {
+      lastError = error
+      if (Date.now() >= lease.expiresAt) break
+    }
+  }
+  throw lastError ?? new Error("ONE_CLICK_RESEARCH_QUERY_FAILED")
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!oneClickAdminSender(sender)) return false
+  if (message?.type === ONE_CLICK_PROBE) {
+    sendResponse({ success: true, ready: true, extensionId: chrome.runtime.id,
+      extensionVersion: chrome.runtime.getManifest().version,
+      persistentCredential: false, cookieAccess: false, marketplaceWrites: 0 })
+    return false
+  }
+  if (message?.type !== ONE_CLICK_RUN_QUERY) return false
+  void runOneClickQuery(message).then(
+    (result) => sendResponse(result),
+    (error) => sendResponse({ success: false,
+      error: safeFailureCode(error, "ONE_CLICK_RESEARCH_QUERY_FAILED"),
+      cookieAccess: false, marketplaceWrites: 0 }),
   )
   return true
 })

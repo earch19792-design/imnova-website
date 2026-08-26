@@ -1,7 +1,7 @@
 (() => {
   "use strict"
 
-  const SELLER_OS_ORIGIN = "https://imnova-website-z1qh-git-featur-438554-earch19792-6888s-projects.vercel.app"
+  const SELLER_OS_ORIGIN = "https://imnova-website-z1qh-canonical-preview.vercel.app"
   const RECEIVER_URL = `${SELLER_OS_ORIGIN}/admin/ebay/mobile-review/product-research-capture`
   const SELLER_OS_HOME_URL = `${SELLER_OS_ORIGIN}/admin#today-launch`
   const RECEIVER_WINDOW_NAME = "sellerOsProductResearchBatchReceiver"
@@ -10,6 +10,7 @@
   const RECEIVER_READY_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_RECEIVER_READY_V1"
   const CAPTURE_RESULT_MESSAGE = "IMNOVA_PRODUCT_RESEARCH_CAPTURE_RESULT_V1"
   const ANALYZE_THUMBNAIL_MESSAGE = "IMNOVA_ANALYZE_VISIBLE_EBAY_THUMBNAIL_V1"
+  const AUTOMATED_CAPTURE_MESSAGE = "IMNOVA_AUTOMATED_PRODUCT_RESEARCH_CAPTURE_V1"
   const VISUAL_PATTERN_SCHEMA_VERSION = "PRODUCT_RESEARCH_VISUAL_PATTERN_V2_2026_07_21"
   const VISUAL_PATTERN_ALGORITHM_VERSION = "PR_VISIBLE_THUMBNAIL_LOCAL_V2"
   const OFFICIAL_RESEARCH_PATH = /^\/sh\/research\/?$/
@@ -25,6 +26,7 @@
   const VISUAL_FALLBACK_LIMIT = 20
   const VISUAL_FALLBACK_MESSAGE_TIMEOUT_MS = 2_500
   const VISUAL_FALLBACK_TOTAL_BUDGET_MS = 12_000
+  let automatedCapturePromise = null
   const REQUIRED_FIELDS = ["temporaryTitle", "averageSoldPrice", "totalSold", "lastSoldDate"]
   const HEADER_SELECTOR = [
     "th", '[role="columnheader"]', '[data-testid*="header" i]',
@@ -1873,6 +1875,71 @@
     }
   }
 
+  function automatedAccessBlocker() {
+    const pageText = text(document.body?.innerText).slice(0, 50_000)
+    if (document.querySelector(".g-recaptcha,[data-captcha],iframe[src*='captcha']") ||
+      /pardon our interruption|verify you are human|security measure|access denied|captcha/i
+        .test(pageText)) return "PRODUCT_RESEARCH_ACCESS_CHALLENGE"
+    if (nextQueryState?.workflowStage === "MANUAL_COPY_REQUIRED" ||
+      nextQueryState?.workflowStage === "MANUAL_SEARCH_REQUIRED") {
+      return "PRODUCT_RESEARCH_AUTOMATED_SUBMIT_UNAVAILABLE"
+    }
+    return null
+  }
+
+  async function prepareAutomatedCapture() {
+    if (automatedCapturePromise) return automatedCapturePromise
+    automatedCapturePromise = (async () => {
+      captureContext = { roots: new WeakMap(), queries: new WeakMap(),
+        rects: new WeakMap(), visibility: new WeakMap(), visualFallbacks: [] }
+      try {
+        const prepared = buildCapture()
+        if (captureContext.visualFallbacks.length) {
+          await enrichVisualFallbacks(captureContext.visualFallbacks)
+        }
+        return prepared
+      } finally {
+        captureContext = null
+      }
+    })()
+    try {
+      return await automatedCapturePromise
+    } finally {
+      automatedCapturePromise = null
+    }
+  }
+
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type !== AUTOMATED_CAPTURE_MESSAGE ||
+      sender?.id !== chrome.runtime.id) return false
+    const expectedQuery = text(message.searchQuery).slice(0, 100)
+    if (expectedQuery.length < 3 || guidedPlanCompleted) {
+      sendResponse({ success: false, status: "FAILED",
+        error: "PRODUCT_RESEARCH_AUTOMATED_QUERY_INVALID" })
+      return false
+    }
+    const blocker = automatedAccessBlocker()
+    if (blocker) {
+      sendResponse({ success: false, status: "FAILED", error: blocker })
+      return false
+    }
+    const currentQuery = text(queryContext().searchQuery)
+    if (!nextQueryState || normalizedQuery(nextQueryState.query) !== normalizedQuery(expectedQuery) ||
+      normalizedQuery(currentQuery) !== normalizedQuery(expectedQuery) ||
+      !nextQueryState.resultsReady) {
+      sendResponse({ success: true, status: "PENDING" })
+      return false
+    }
+    void prepareAutomatedCapture().then(
+      (capture) => sendResponse({ success: true, status: "READY", capture,
+        marketplaceWrites: 0 }),
+      (error) => sendResponse({ success: false, status: "FAILED",
+        error: error instanceof Error ? error.message :
+          "PRODUCT_RESEARCH_AUTOMATED_CAPTURE_FAILED" }),
+    )
+    return true
+  })
+
   function setStatus(message, tone = "neutral") {
     if (!statusElement) return
     statusElement.textContent = ERROR_MESSAGES[message] ?? message
@@ -2094,7 +2161,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.16"
+  title.textContent = "Seller OS · Product Research · v1.2.17"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"

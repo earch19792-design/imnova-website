@@ -148,6 +148,8 @@ export async function POST(req: Request) {
     listingAiIdempotencyKey(req)
     const body = await listingAiJson(req)
     if (body.action !== "capture") throw new Error("PRODUCT_RESEARCH_CAPTURE_ACTION_INVALID")
+    const oneClickResearch = body.researchSessionMode ===
+      "EBAY_ONE_CLICK_RESEARCH_SESSION_V1"
     if (!body.capture || typeof body.capture !== "object") {
       throw new Error("PRODUCT_RESEARCH_CAPTURE_BODY_INVALID")
     }
@@ -206,6 +208,30 @@ export async function POST(req: Request) {
       const queryPlan = await getProductResearchQueryPlanStatus({
         supabase: auth.supabase, accountKey: auth.accountKey, planId: plannedTask.planId,
       })
+      if (oneClickResearch) {
+        const visualStatus = await visualStatusOrUnavailable({
+          supabase: auth.supabase, accountKey: auth.accountKey,
+        })
+        return listingAiResponse({ success: true, result: {
+          captureAlreadyProcessed: true,
+          batchId: plannedTask.captureBatchId,
+          capturedAt: plannedTask.capturedAt,
+          rowCount: 0, validCount: 0, importedCount: 0, duplicateCount: 0,
+          rejectedCount: 0, candidatesEnriched: 0,
+          matchCounts: { exactLuna: 0, differentPack: 0, differentSize: 0,
+            differentVariant: 0, ambiguous: 0, noLunaMatch: 0 },
+          reanalysisRequired: false,
+          scan: { status: "ONE_CLICK_RESEARCH_CAPTURE_REPLAY",
+            commercialEvidencePreserved: true, browserMayClose: true,
+            sameDayPilotStarted: false, lunaProductFitStarted: false,
+            discoveryRepeated: false },
+          queryPlan, visualStatus, sameDayPilot: null,
+          source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
+          rawHtmlStored: false, temporaryTitlesStored: false,
+          competitorImagesDownloaded: 0, piiStored: false,
+          openAiCalls: 0, ebayWrites: 0, canPublish: false,
+        } }, 200)
+      }
       let sameDayPilot: {
         resumed: number
         familyEnriched: number
@@ -263,6 +289,22 @@ export async function POST(req: Request) {
       searchQueryHash: plannedTask.queryHash, captureBatchId: result.batchId,
       planId: plannedTask.planId, taskId: plannedTask.taskId,
     }) : null
+    if (oneClickResearch) {
+      const visualStatus = await visualStatusOrUnavailable({
+        supabase: auth.supabase, accountKey: auth.accountKey,
+      })
+      return listingAiResponse({ success: true, result: { ...result,
+        scan: { status: "ONE_CLICK_RESEARCH_CAPTURE_ONLY",
+          observationsImported: result.importedCount,
+          sameDayPilotStarted: false, lunaProductFitStarted: false,
+          heavyRadarStarted: false, discoveryRepeated: false },
+        queryPlan, visualStatus, sameDayPilot: null,
+        source: "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
+        rawHtmlStored: false, temporaryTitlesStored: false,
+        competitorImagesDownloaded: 0, piiStored: false,
+        openAiCalls: 0, ebayWrites: 0, canPublish: false,
+      } }, 202)
+    }
     // Resume the durable same-day state machine immediately after the safe
     // commercial import. Official reconciliation can be long-running and must
     // never make the browser receipt fail after evidence was already stored.
