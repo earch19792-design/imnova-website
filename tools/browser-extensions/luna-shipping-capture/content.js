@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.43" },
+      extensionBuildVersion: "1.0.44" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -1279,6 +1279,24 @@ function acceptedShopPayProfileFailure(profile) {
   return "CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE"
 }
 
+function validatedShopPayProfileAuthority(profile, markers) {
+  const safeMarkerBooleans = Object.freeze({
+    shipTo: markers?.shopPayMarkerShipTo === true,
+    shipping: markers?.shopPayMarkerShipping === true,
+    subtotal: markers?.shopPayMarkerSubtotal === true,
+    total: markers?.shopPayMarkerTotal === true,
+    payNow: markers?.shopPayMarkerPayNow === true,
+  })
+  return profile?.shippingAddressAccepted === true &&
+    profile?.shippingOptionsDetected === true &&
+    profile.destination?.ambiguous === false &&
+    profile.destination?.countryClass === "US" &&
+    typeof profile.destination?.normalized === "string" &&
+    profile.destination.normalized.length > 0 &&
+    Object.values(safeMarkerBooleans).every((value) => value === true)
+    ? Object.freeze({ ...profile, safeMarkerBooleans }) : null
+}
+
 function waitForAcceptedShopPayProfile(job) {
   let latest = shopPayAcceptedShippingProfileSnapshot(job)
   return boundedDomWait(() => {
@@ -1287,8 +1305,11 @@ function waitForAcceptedShopPayProfile(job) {
     if (terminal !== "CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE") {
       throw new Error(terminal)
     }
-    return latest.shippingAddressAccepted && latest.shippingOptionsDetected
-      ? latest : null
+    if (!latest.shippingAddressAccepted ||
+        !latest.shippingOptionsDetected) return null
+    const markers = shopPayMarkerSnapshot(semanticMoneyRows(),
+      latest.destination)
+    return validatedShopPayProfileAuthority(latest, markers)
   }, "CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE",
   SHOP_PAY_DOM_TIMEOUT_MS).catch((error) => {
     const terminal = acceptedShopPayProfileFailure(latest)
@@ -1342,10 +1363,33 @@ function getCanonicalDestinationBinding(job) {
   })
 }
 
+async function canonicalDestinationFingerprintCandidate(acceptedProfile) {
+  if (!acceptedProfile?.shippingAddressAccepted ||
+      !acceptedProfile?.shippingOptionsDetected ||
+      acceptedProfile.destination?.ambiguous !== false ||
+      acceptedProfile.destination?.countryClass !== "US" ||
+      typeof acceptedProfile.destination?.normalized !== "string" ||
+      !acceptedProfile.safeMarkerBooleans ||
+      Object.values(acceptedProfile.safeMarkerBooleans)
+        .some((value) => value !== true)) {
+    throw new Error("CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE")
+  }
+  let fingerprint
+  try {
+    fingerprint = await sha256Text(acceptedProfile.destination.normalized)
+  } catch {
+    throw new Error("BIND_FINGERPRINT_FAILED")
+  }
+  return Object.freeze({ contractVersion: BIND_EXECUTION_CONTRACT,
+    success: true, fingerprint,
+    fingerprintVersion: DESTINATION_FINGERPRINT_VERSION, countryClass: "US",
+    canonicalDestinationMatch: true,
+    safeMarkerBooleans: acceptedProfile.safeMarkerBooleans })
+}
+
 function requestCanonicalDestinationAutoBind(job, acceptedProfile) {
-  return executeCanonicalDestinationBinding({
-    contractVersion: BIND_EXECUTION_CONTRACT, operation: "BIND",
-  }, acceptedProfile).then((candidate) => new Promise((resolve, reject) => {
+  return canonicalDestinationFingerprintCandidate(acceptedProfile)
+    .then((candidate) => new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ type: AUTO_BIND_CANONICAL_DESTINATION,
       contractVersion: AUTO_BIND_CONTRACT,
       captureSessionId: job.captureSessionId,
@@ -1376,7 +1420,7 @@ function requestCanonicalDestinationAutoBind(job, acceptedProfile) {
       }
       resolve(binding)
     })
-  }))
+    }))
 }
 
 async function canonicalDestinationFingerprintMatch(job, binding,
@@ -1449,7 +1493,8 @@ async function checkoutClassificationWhenReady(job, expectedSubtotal) {
       const quote = checkoutSummaryQuoteAfterAcceptedProfile(expectedSubtotal,
         rows, profile)
       if (!quote) return null
-      acceptedProfile = profile
+      acceptedProfile = validatedShopPayProfileAuthority(profile, markers)
+      if (!acceptedProfile) return null
       return { classification: "NORMAL_CHECKOUT_WITH_SHIPPING", quote, markers,
         acceptedProfile }
     }, "SHOP_PAY_BOUNDED_DOM_READINESS_EXHAUSTED", SHOP_PAY_DOM_TIMEOUT_MS)
@@ -1842,14 +1887,13 @@ async function executeCanonicalDestinationBinding(message,
     throw new Error("BIND_MESSAGE_CONTRACT_INVALID")
   }
   const eligibility = bindingEligibilityResponse()
-  if (eligibility.checkoutHostClassification !== "SHOP_PAY_CHECKOUT_HOST" ||
-      !eligibility.shippingMarker || !eligibility.subtotalMarker ||
-      !eligibility.totalMarker || !eligibility.payNowMarker) {
+  if (eligibility.checkoutHostClassification !== "SHOP_PAY_CHECKOUT_HOST") {
     throw new Error("BIND_CHECKOUT_MARKERS_INVALID")
   }
   if (!eligibility.shipToMarker) throw new Error("BIND_SHIP_TO_NOT_FOUND")
-  const profile = acceptedProfile ?? shopPayAcceptedShippingProfileSnapshot()
-  const destination = profile.destination
+  const currentProfile = acceptedProfile ??
+    shopPayAcceptedShippingProfileSnapshot()
+  const destination = currentProfile.destination
   if (destination.ambiguous) {
     throw new Error("BIND_SHIP_TO_AMBIGUOUS")
   }
@@ -1859,13 +1903,14 @@ async function executeCanonicalDestinationBinding(message,
   if (destination.countryClass !== "US") {
     throw new Error("BIND_COUNTRY_CLASS_UNPROVEN")
   }
-  if (!profile.shippingAddressAccepted || !profile.shippingOptionsDetected) {
+  const profile = acceptedProfile ?? validatedShopPayProfileAuthority(
+    currentProfile, shopPayMarkerSnapshot(undefined,
+      currentProfile.destination))
+  if (!profile) {
     throw new Error("CANONICAL_US_SHIPPING_PROFILE_VALIDATION_UNAVAILABLE")
   }
-  let fingerprint
-  try { fingerprint = await sha256Text(destination.normalized) } catch {
-    throw new Error("BIND_FINGERPRINT_FAILED")
-  }
+  const candidate = await canonicalDestinationFingerprintCandidate(profile)
+  const fingerprint = candidate.fingerprint
   const binding = message.binding
   const validating = message.operation === "VALIDATE"
   if (validating && (binding?.fingerprintVersion !==
@@ -1878,14 +1923,7 @@ async function executeCanonicalDestinationBinding(message,
       binding.canonicalDestinationFingerprint) {
     throw new Error("CANONICAL_US_SHIPPING_PROFILE_MISMATCH")
   }
-  return Object.freeze({ contractVersion: BIND_EXECUTION_CONTRACT,
-    success: true, fingerprint,
-    fingerprintVersion: DESTINATION_FINGERPRINT_VERSION, countryClass: "US",
-    canonicalDestinationMatch: true,
-    safeMarkerBooleans: Object.freeze({ shipTo: eligibility.shipToMarker,
-      shipping: eligibility.shippingMarker,
-      subtotal: eligibility.subtotalMarker, total: eligibility.totalMarker,
-      payNow: eligibility.payNowMarker }) })
+  return candidate
 }
 
 chrome.runtime.onMessage?.addListener?.((message, _sender, sendResponse) => {
