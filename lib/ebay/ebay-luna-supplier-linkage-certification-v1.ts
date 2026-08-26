@@ -376,7 +376,7 @@ function projectEntry(input: Readonly<{
     (component) => component.variantPresence === "MISSING"))
   const approvedComponentVariantMissing = decision?.status === "APPROVED" &&
     candidateComponentVariantMissing
-  
+
   let status: SellerOsLunaSupplierLinkageStatusV1 = "UNPROVEN"
   if (input.conflict?.identityRepresentationConflict ||
       approvalIdentities.size > 1 || equallyPlausible || candidateMismatch ||
