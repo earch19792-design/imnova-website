@@ -10,6 +10,8 @@ export const SELLER_OS_OPPORTUNITY_MONITOR_ENROLLMENT_VERSION =
   "SELLER_OS_OPPORTUNITY_MONITOR_ENROLLMENT_V1" as const
 export const SELLER_OS_OPPORTUNITY_CASE_ID_VERSION =
   "SELLER_OS_OPPORTUNITY_CASE_ID_V1" as const
+export const SELLER_OS_DEMAND_KEYWORD_DNA_VERSION =
+  "SELLER_OS_DEMAND_KEYWORD_DNA_V1" as const
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/
 const FAMILY_ID = /^market-family-v1:sha256:[0-9a-f]{64}$/
@@ -25,12 +27,49 @@ export type SellerOsMarketFamilyIdentityV1 = Readonly<{
   structuredDefinition: Readonly<Record<string, string>>
 }>
 
+export type SellerOsDemandKeywordDnaV1 = Readonly<{
+  contractVersion: typeof SELLER_OS_DEMAND_KEYWORD_DNA_VERSION
+  primaryDemandKeyword: string
+  soldWeightedTerms: readonly Readonly<{
+    term: string
+    familyType: "CORE" | "FORM_FACTOR" | "FEATURE" | "USE_CASE" |
+      "BENEFIT" | "PACK_FORMAT" | "AUDIENCE" | "ATTRIBUTE"
+    soldListingsObserved: number
+    soldQuantityObserved: number
+    weightRank: number
+    evidenceReferences: readonly string[]
+  }>[]
+  highIntentModifiers: readonly string[]
+  attributeTerms: readonly string[]
+  useCaseTerms: readonly string[]
+  compatibilityTerms: readonly string[]
+  titleTokenStructure: readonly Readonly<{
+    tokens: readonly string[]
+    soldQuantityObserved: number
+    evidenceReferences: readonly string[]
+  }>[]
+  keywordDemandConfidence: Readonly<{
+    scope: "FAMILY_LEVEL"
+    status: "PROVEN" | "SUPPORTED"
+    exactProductDemandClaimed: false
+  }>
+  keywordEvidenceClass: "OFFICIAL_SOLD_EVIDENCE"
+  keywordEvidenceDigest: string
+  keywordEvidenceReferences: readonly string[]
+  keywordEvidenceObservedAt: string
+  keywordEvidenceFreshness: Readonly<{
+    statusAtObservation: "FRESH"
+    maximumAgeSeconds: number
+  }>
+}>
+
 export type SellerOsMarketFamilyDefinitionV1 = Readonly<{
   identity: SellerOsMarketFamilyIdentityV1
   familyName: string
   familyQuerySet: readonly string[]
   keyProductAttributes: readonly string[]
   keyBuyerIntentTerms: readonly string[]
+  demandKeywordDna?: SellerOsDemandKeywordDnaV1 | null
   adapterContract: string
   adapterVersion: string
 }>
@@ -78,6 +117,7 @@ export type SellerOsFamilyMarketObservationV1 = Readonly<{
   competitionState: "LOW" | "MODERATE" | "HIGH" | "UNPROVEN"
   buyerIntentTerms: readonly string[]
   keywordState: "AVAILABLE" | "UNPROVEN" | "UNAVAILABLE"
+  demandKeywordDna: SellerOsDemandKeywordDnaV1 | null
   attributeProfile: Readonly<Record<string, string>>
   opportunityTypes: readonly string[]
   evidenceObservedAt: string
@@ -190,6 +230,110 @@ function canonicalRecord(input: Readonly<Record<string, string>>, code: string) 
   return Object.freeze(Object.fromEntries(normalized))
 }
 
+export function normalizeSellerOsDemandKeywordDnaV1(
+  input: SellerOsDemandKeywordDnaV1,
+) : SellerOsDemandKeywordDnaV1 {
+  if (!input || typeof input !== "object" || Array.isArray(input) ||
+      input.contractVersion !== SELLER_OS_DEMAND_KEYWORD_DNA_VERSION ||
+      input.keywordEvidenceClass !== "OFFICIAL_SOLD_EVIDENCE" ||
+      !SHA256.test(input.keywordEvidenceDigest)) {
+    fail("DEMAND_KEYWORD_DNA_CONTRACT_INVALID")
+  }
+  if (!Array.isArray(input.soldWeightedTerms) ||
+      input.soldWeightedTerms.length < 1 || input.soldWeightedTerms.length > 30 ||
+      !Array.isArray(input.titleTokenStructure) ||
+      input.titleTokenStructure.length < 1 || input.titleTokenStructure.length > 20) {
+    fail("DEMAND_KEYWORD_DNA_BOUNDS_INVALID")
+  }
+  const evidenceReferences = uniqueSorted(input.keywordEvidenceReferences,
+    "DEMAND_KEYWORD_DNA_EVIDENCE_REFERENCES_INVALID", 100)
+  if (!evidenceReferences.length) fail("DEMAND_KEYWORD_DNA_EVIDENCE_REQUIRED")
+  const evidenceSet = new Set(evidenceReferences)
+  const familyTypes = new Set(["CORE", "FORM_FACTOR", "FEATURE", "USE_CASE",
+    "BENEFIT", "PACK_FORMAT", "AUDIENCE", "ATTRIBUTE"])
+  const soldWeightedTerms = input.soldWeightedTerms.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry) ||
+        !familyTypes.has(entry.familyType) || entry.weightRank !== index + 1) {
+      fail("DEMAND_KEYWORD_DNA_SOLD_WEIGHT_INVALID")
+    }
+    const references = uniqueSorted(entry.evidenceReferences,
+      "DEMAND_KEYWORD_DNA_TERM_REFERENCES_INVALID", 100)
+    if (!references.length || references.some((reference) =>
+      !evidenceSet.has(reference))) fail("DEMAND_KEYWORD_DNA_TERM_EVIDENCE_INVALID")
+    return Object.freeze({
+      term: canonicalText(entry.term, "DEMAND_KEYWORD_DNA_TERM_INVALID", 120),
+      familyType: entry.familyType,
+      soldListingsObserved: integer(entry.soldListingsObserved,
+        "DEMAND_KEYWORD_DNA_SOLD_LISTINGS_INVALID", 1),
+      soldQuantityObserved: integer(entry.soldQuantityObserved,
+        "DEMAND_KEYWORD_DNA_SOLD_QUANTITY_INVALID", 1),
+      weightRank: index + 1,
+      evidenceReferences: references,
+    })
+  })
+  if (new Set(soldWeightedTerms.map((entry) => entry.term)).size !==
+      soldWeightedTerms.length) fail("DEMAND_KEYWORD_DNA_TERM_DUPLICATE")
+  const primaryDemandKeyword = canonicalText(input.primaryDemandKeyword,
+    "DEMAND_KEYWORD_DNA_PRIMARY_INVALID", 120)
+  if (soldWeightedTerms[0]?.term !== primaryDemandKeyword) {
+    fail("DEMAND_KEYWORD_DNA_PRIMARY_WEIGHT_MISMATCH")
+  }
+  const soldTerms = new Set(soldWeightedTerms.map((entry) => entry.term))
+  const evidenceBackedTerms = (values: readonly string[], code: string) => {
+    const normalized = uniqueSorted(values, code, 30)
+    if (normalized.some((term) => !soldTerms.has(term))) fail(code)
+    return normalized
+  }
+  const titleTokenStructure = input.titleTokenStructure.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry) ||
+        !Array.isArray(entry.tokens) || entry.tokens.length < 1 ||
+        entry.tokens.length > 30) fail("DEMAND_KEYWORD_DNA_TITLE_STRUCTURE_INVALID")
+    const references = uniqueSorted(entry.evidenceReferences,
+      "DEMAND_KEYWORD_DNA_TITLE_REFERENCES_INVALID", 100)
+    if (!references.length || references.some((reference) =>
+      !evidenceSet.has(reference))) fail("DEMAND_KEYWORD_DNA_TITLE_EVIDENCE_INVALID")
+    return Object.freeze({
+      tokens: Object.freeze(entry.tokens.map((token: string) => canonicalText(token,
+        "DEMAND_KEYWORD_DNA_TITLE_TOKEN_INVALID", 60))),
+      soldQuantityObserved: integer(entry.soldQuantityObserved,
+        "DEMAND_KEYWORD_DNA_TITLE_SOLD_QUANTITY_INVALID", 1),
+      evidenceReferences: references,
+    })
+  })
+  if (!input.keywordDemandConfidence ||
+      input.keywordDemandConfidence.scope !== "FAMILY_LEVEL" ||
+      !["PROVEN", "SUPPORTED"].includes(input.keywordDemandConfidence.status) ||
+      input.keywordDemandConfidence.exactProductDemandClaimed !== false ||
+      input.keywordEvidenceFreshness?.statusAtObservation !== "FRESH") {
+    fail("DEMAND_KEYWORD_DNA_EVIDENCE_SEMANTICS_INVALID")
+  }
+  return Object.freeze({
+    contractVersion: SELLER_OS_DEMAND_KEYWORD_DNA_VERSION,
+    primaryDemandKeyword,
+    soldWeightedTerms: Object.freeze(soldWeightedTerms),
+    highIntentModifiers: evidenceBackedTerms(input.highIntentModifiers,
+      "DEMAND_KEYWORD_DNA_HIGH_INTENT_INVALID"),
+    attributeTerms: evidenceBackedTerms(input.attributeTerms,
+      "DEMAND_KEYWORD_DNA_ATTRIBUTE_TERMS_INVALID"),
+    useCaseTerms: evidenceBackedTerms(input.useCaseTerms,
+      "DEMAND_KEYWORD_DNA_USE_CASE_TERMS_INVALID"),
+    compatibilityTerms: evidenceBackedTerms(input.compatibilityTerms,
+      "DEMAND_KEYWORD_DNA_COMPATIBILITY_TERMS_INVALID"),
+    titleTokenStructure: Object.freeze(titleTokenStructure),
+    keywordDemandConfidence: Object.freeze({ scope: "FAMILY_LEVEL" as const,
+      status: input.keywordDemandConfidence.status,
+      exactProductDemandClaimed: false as const }),
+    keywordEvidenceClass: "OFFICIAL_SOLD_EVIDENCE" as const,
+    keywordEvidenceDigest: input.keywordEvidenceDigest,
+    keywordEvidenceReferences: evidenceReferences,
+    keywordEvidenceObservedAt: instant(input.keywordEvidenceObservedAt,
+      "DEMAND_KEYWORD_DNA_OBSERVED_AT_INVALID"),
+    keywordEvidenceFreshness: Object.freeze({ statusAtObservation: "FRESH" as const,
+      maximumAgeSeconds: integer(input.keywordEvidenceFreshness.maximumAgeSeconds,
+        "DEMAND_KEYWORD_DNA_FRESHNESS_INVALID", 60, 366 * 24 * 60 * 60) }),
+  })
+}
+
 function normalizeFamilyIdentity(input: SellerOsMarketFamilyIdentityV1) {
   return Object.freeze({
     productFunction: canonicalText(input.productFunction,
@@ -227,11 +371,16 @@ export function buildSellerOsMarketFamilyDefinitionVersionIdV1(
   const intent = uniqueSorted(input.keyBuyerIntentTerms,
     "FAMILY_INTENT_SET_INVALID", 32)
   const name = displayText(input.familyName, "FAMILY_NAME_INVALID", 120)
+  const keywordDna = input.demandKeywordDna === undefined ||
+      input.demandKeywordDna === null ? null :
+    normalizeSellerOsDemandKeywordDnaV1(input.demandKeywordDna)
   return `market-family-definition-v1:${digest([
     "SELLER_OS_MARKET_FAMILY_DEFINITION_V1", familyId, name,
     JSON.stringify(querySet), JSON.stringify(attributes), JSON.stringify(intent),
     safeId(input.adapterContract, "FAMILY_ADAPTER_CONTRACT_INVALID"),
     safeId(input.adapterVersion, "FAMILY_ADAPTER_VERSION_INVALID"),
+    ...(keywordDna ? [keywordDna.contractVersion,
+      keywordDna.keywordEvidenceDigest] : []),
   ])}`
 }
 
@@ -265,6 +414,7 @@ export function buildSellerOsFamilyMarketObservationV1(input: Readonly<{
   competitionState: SellerOsFamilyMarketObservationV1["competitionState"]
   buyerIntentTerms: readonly string[]
   keywordState: SellerOsFamilyMarketObservationV1["keywordState"]
+  demandKeywordDna?: SellerOsDemandKeywordDnaV1 | null
   attributeProfile: Readonly<Record<string, string>>
   opportunityTypes: readonly string[]
   evidenceObservedAt: string
@@ -295,6 +445,15 @@ export function buildSellerOsFamilyMarketObservationV1(input: Readonly<{
     instant(input.sourceUpdatedAt, "OBSERVATION_SOURCE_UPDATED_AT_INVALID")
   const maximumAgeSeconds = integer(input.maximumAgeSeconds,
     "OBSERVATION_MAXIMUM_AGE_INVALID", 60, 366 * 24 * 60 * 60)
+  const demandKeywordDna = input.demandKeywordDna === undefined ||
+      input.demandKeywordDna === null ? null :
+    normalizeSellerOsDemandKeywordDnaV1(input.demandKeywordDna)
+  if (demandKeywordDna && (
+      demandKeywordDna.keywordEvidenceObservedAt !== evidenceObservedAt ||
+      demandKeywordDna.keywordEvidenceFreshness.maximumAgeSeconds !==
+        maximumAgeSeconds)) {
+    fail("DEMAND_KEYWORD_DNA_OBSERVATION_BINDING_INVALID")
+  }
   if (!SHA256.test(input.demandEvidenceDigest)) {
     fail("OBSERVATION_EVIDENCE_DIGEST_INVALID")
   }
@@ -371,6 +530,7 @@ export function buildSellerOsFamilyMarketObservationV1(input: Readonly<{
     buyerIntentTerms: uniqueSorted(input.buyerIntentTerms,
       "OBSERVATION_BUYER_INTENT_INVALID", 32),
     keywordState: input.keywordState,
+    demandKeywordDna,
     attributeProfile: canonicalRecord(input.attributeProfile,
       "OBSERVATION_ATTRIBUTE_PROFILE_INVALID"),
     opportunityTypes: uniqueSorted(input.opportunityTypes,

@@ -21,6 +21,7 @@ export type MarketResearchEvidenceSource =
   | "EBAY_BROWSE_ACTIVE_LISTING"
   | "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
   | "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY"
+  | "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE"
   | "MANUAL_MARKET_EVIDENCE"
 
 export const EBAY_MARKET_RESEARCH_SOURCE_CAPABILITIES_V1 = Object.freeze([
@@ -617,7 +618,10 @@ export function buildMarketOpportunityResearchV1(input: {
       familyType: keywordFamilyType(phrase, input.request.seedValue),
       soldListingsObserved: soldEvidenceAvailable ? values.soldIds.size : null,
       soldQuantityObserved: soldEvidenceAvailable ? values.soldQuantity : null,
+      soldEvidenceReferences: soldEvidenceAvailable
+        ? unique([...values.soldIds]) : [],
       activeListingsObserved: values.activeIds.size,
+      activeEvidenceReferences: unique([...values.activeIds]),
       comparableListingsObserved: values.evidenceIds.size,
       medianSoldPrice: percentile(values.soldPrices, .5),
       medianActivePrice: percentile(values.activePrices, .5),

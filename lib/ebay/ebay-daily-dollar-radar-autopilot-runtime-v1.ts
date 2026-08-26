@@ -5,6 +5,8 @@ import {
   type SellerOsDailyDollarRadarAutopilotInputV1,
 } from "./ebay-daily-dollar-radar-autopilot-v1"
 import { getEbaySellerAccountScopeConfiguration } from "./ebay-seller-account-scope"
+import { buildPersistedDailyDollarFamiliesV1 } from
+  "./ebay-demand-first-broad-net-orchestrator-v1"
 
 export const SELLER_OS_DAILY_DOLLAR_RADAR_AUTOPILOT_RUNTIME_VERSION =
   "SELLER_OS_DAILY_DOLLAR_RADAR_AUTOPILOT_RUNTIME_V1" as const
@@ -355,27 +357,27 @@ export async function collectSellerOsDailyDollarRadarAutopilotInputV1(
     queryRows(lunaIdentityQuery, input.deadline),
   ])
 
-  // Frontiers are consumed exclusively through the bounded server RPC above.
-  // A frontier alone does not supply an approved candidate identity, target
-  // profile, or exact Luna identity authority, so this pre-activation adapter
-  // still omits any row whose complete graph cannot be reconstructed. UNKNOWN
-  // therefore never becomes a morning opportunity merely because storage exists.
+  const persistedFamilies = buildPersistedDailyDollarFamiliesV1({
+    radarPayload: radarResult.data,
+  })
   const plannerInput: SellerOsDailyDollarRadarAutopilotInputV1 = Object.freeze({
     logicalWindow: input.logicalWindow,
     evidenceCutoffAt: input.logicalWindow.endAt,
     evaluatedAt: input.evaluatedAt,
     maxQueueEntries: input.maximumQueueEntries,
-    families: Object.freeze([]),
+    families: persistedFamilies,
   })
   const sourceReceipt = Object.freeze({
     radarFamilyRows: familyIds.length,
     productResearchRows: researchRows.length,
     lunaVariantRows: lunaIdentityRows.length,
     familyEvaluationRows: evaluationRows.length,
+    persistedFamilyGraphRows: persistedFamilies.length,
     completeI02VFrontierRows: frontierRows.length,
     completeI02VFrontierReadStatus: safeText(frontierRead.status, 40) ||
       "UNAVAILABLE",
-    incompleteFrontiersOmitted: frontierRows.length !== plannerInput.families.length,
+    incompleteFrontiersOmitted: Math.max(0,
+      persistedFamilies.length - frontierRows.length),
     frontierReadBoundary: "get_seller_os_latest_profitability_frontiers_v1",
     rawMarketFactsCopied: false,
     rawProductResearchSignalsAssessed: researchRows.length > 0,

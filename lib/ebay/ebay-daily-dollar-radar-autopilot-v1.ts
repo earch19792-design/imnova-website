@@ -10,6 +10,10 @@ import {
   SELLER_OS_PRELINKED_TARGET_PRODUCT_PROFILE_VERSION,
   type SellerOsTargetProductProfileWithAuthorityV1,
 } from "./ebay-prelinked-target-product-profile-and-luna-fit-v1"
+import {
+  normalizeSellerOsDemandKeywordDnaV1,
+  type SellerOsDemandKeywordDnaV1,
+} from "./ebay-prelinked-family-market-observation-v1"
 
 export const SELLER_OS_DAILY_DOLLAR_RADAR_AUTOPILOT_VERSION =
   "SELLER_OS_DAILY_DOLLAR_RADAR_AUTOPILOT_V1" as const
@@ -61,6 +65,7 @@ export type SellerOsDailyDollarKeywordSourceV1 = Readonly<{
   observedAt: string
   maximumAgeSeconds: number
   terms: readonly string[]
+  demandKeywordDna?: SellerOsDemandKeywordDnaV1 | null
 }>
 
 export type SellerOsDailyDollarRadarFamilyV1 = Readonly<{
@@ -262,7 +267,8 @@ function normalizeKeywordSource(input: SellerOsDailyDollarKeywordSourceV1,
     fail("DAILY_RADAR_KEYWORD_SOURCE_INVALID")
   }
   const allowedKeys = new Set(["sourceContractVersion", "authorityClass", "reference",
-    "evidenceDigest", "observedAt", "maximumAgeSeconds", "terms"])
+    "evidenceDigest", "observedAt", "maximumAgeSeconds", "terms",
+    "demandKeywordDna"])
   if (Object.keys(input).some((key) => !allowedKeys.has(key))) {
     fail("DAILY_RADAR_KEYWORD_SOURCE_FIELD_FORBIDDEN")
   }
@@ -274,6 +280,15 @@ function normalizeKeywordSource(input: SellerOsDailyDollarKeywordSourceV1,
     "DAILY_RADAR_KEYWORD_SOURCE")
   const terms = uniqueSorted(input.terms.map((term) => text(term,
     "DAILY_RADAR_KEYWORD_INVALID", 120).toLocaleLowerCase("en-US")))
+  const demandKeywordDna = input.demandKeywordDna === undefined ||
+      input.demandKeywordDna === null ? null :
+    normalizeSellerOsDemandKeywordDnaV1(input.demandKeywordDna)
+  if (demandKeywordDna && (
+      demandKeywordDna.keywordEvidenceObservedAt !== evidence.observedAt ||
+      demandKeywordDna.keywordEvidenceFreshness.maximumAgeSeconds !==
+        evidence.maximumAgeSeconds)) {
+    fail("DAILY_RADAR_KEYWORD_DNA_EVIDENCE_BINDING_INVALID")
+  }
   return Object.freeze({
     sourceContractVersion: safeId(input.sourceContractVersion,
       "DAILY_RADAR_KEYWORD_CONTRACT_INVALID"),
@@ -284,6 +299,9 @@ function normalizeKeywordSource(input: SellerOsDailyDollarKeywordSourceV1,
     observedAt: evidence.observedAt,
     maximumAgeSeconds: evidence.maximumAgeSeconds,
     fresh: evidence.fresh,
+    demandKeywordDna,
+    demandKeywordDnaStatus: demandKeywordDna ? "AVAILABLE" as const :
+      "LEGACY_UNAVAILABLE" as const,
     searchVolumeClaimed: false as const,
     activeListingsProveDemand: false as const,
     titleFrequencyProvesDemand: false as const,
@@ -684,10 +702,15 @@ export function buildSellerOsDailyDollarRadarAutopilotV1(
         ...buyerIntentTerms.map((term) => term.toLocaleLowerCase("en-US")),
         ...family.keywordPackage.terms,
       ])
-      const primaryKeyword = keywordCandidates[0] ?? null
+      const demandKeywordDna = family.keywordPackage.demandKeywordDna
+      const primaryKeyword = demandKeywordDna?.primaryDemandKeyword ??
+        keywordCandidates[0] ?? null
       const primaryKeywords = Object.freeze(primaryKeyword === null
         ? [] : [primaryKeyword])
-      const secondaryKeywords = Object.freeze(keywordCandidates.slice(1))
+      const weightedKeywords = demandKeywordDna?.soldWeightedTerms
+        .map((entry) => entry.term) ?? keywordCandidates
+      const secondaryKeywords = Object.freeze(uniqueSorted(weightedKeywords
+        .filter((term) => term !== primaryKeyword)))
       return Object.freeze({
         familyId: family.radar.familyId,
         familyName: family.radar.familyName,
@@ -705,6 +728,7 @@ export function buildSellerOsDailyDollarRadarAutopilotV1(
         primaryKeyword,
         primaryKeywords,
         secondaryKeywords,
+        demandKeywordDna,
         keywordPackage: family.keywordPackage,
         matches,
         eligibleMatchCount: matches.filter((match) => match.queueEligible).length,
