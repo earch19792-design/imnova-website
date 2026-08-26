@@ -28,8 +28,10 @@ const CANARY_ID =
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
 
 function finalCanaryStartEnabled(connected: boolean,
-  canonicalBindingStatusReady: boolean, canaryRunInProgress: boolean) {
-  return connected && canonicalBindingStatusReady && !canaryRunInProgress
+  canonicalBindingStatusReady: boolean, canonicalDestinationMismatch: boolean,
+  canaryRunInProgress: boolean) {
+  return connected && canonicalBindingStatusReady &&
+    !canonicalDestinationMismatch && !canaryRunInProgress
 }
 
 type ExternalPort = {
@@ -320,6 +322,8 @@ export default function LunaShippingCapturePage() {
   const [canonicalDestinationMatch, setCanonicalDestinationMatch] = useState(false)
   const [canonicalBindingStatusReady, setCanonicalBindingStatusReady] =
     useState(false)
+  const [canonicalDestinationMismatch, setCanonicalDestinationMismatch] =
+    useState(false)
   const [bindingStorageDiagnostic, setBindingStorageDiagnostic] =
     useState<BindingStorageDiagnostic | null>(null)
   const [liveTraceEvents, setLiveTraceEvents] =
@@ -388,6 +392,11 @@ export default function LunaShippingCapturePage() {
         setCanonicalBindingStatusReady(true)
         setCanonicalDestinationBound(true)
         setCanonicalDestinationMatch(true)
+        setCanonicalDestinationMismatch(false)
+      }
+      if (event.state === "FAIL" &&
+          event.reasonCode === "CANONICAL_US_SHIPPING_PROFILE_MISMATCH") {
+        setCanonicalDestinationMismatch(true)
       }
       const terminal = event.state === "PASS" || event.state === "FAIL"
       flushRuntimeTrace(terminal)
@@ -501,6 +510,10 @@ export default function LunaShippingCapturePage() {
           return
         }
         if (message?.type === BINDING_STORAGE_DIAGNOSTIC) {
+          const storageReadStatus = String(
+            message.storageReadStatus ?? "UNKNOWN")
+          const bindingClassification = String(
+            message.bindingClassification ?? "UNKNOWN")
           setBindingStorageDiagnostic({
             extensionId: String(message.extensionId ?? "UNKNOWN"),
             expectedExtensionId: String(message.expectedExtensionId ?? "UNKNOWN"),
@@ -519,9 +532,8 @@ export default function LunaShippingCapturePage() {
             canonicalBoundAtPresent: message.canonicalBoundAtPresent === true,
             canonicalFingerprintPresent:
               message.canonicalFingerprintPresent === true,
-            storageReadStatus: String(message.storageReadStatus ?? "UNKNOWN"),
-            bindingClassification:
-              String(message.bindingClassification ?? "UNKNOWN"),
+            storageReadStatus,
+            bindingClassification,
             writeStorageAuthority:
               String(message.writeStorageAuthority ?? "UNKNOWN"),
             readStorageAuthority:
@@ -533,16 +545,35 @@ export default function LunaShippingCapturePage() {
             authoritiesAligned: message.authoritiesAligned === true,
             extensionIdContinuity: message.extensionIdContinuity === true,
           })
+          const bindingStatusAccepted = storageReadStatus === "READ_OK" &&
+            new Set(["NO_BINDING_PRESENT", "PRIMARY_BINDING_VALID",
+              "LEGACY_BINDING_VALID"]).has(bindingClassification)
+          if (!bindingStatusAccepted) {
+            canonicalBindingStatusRead = false
+            setCanonicalBindingStatusReady(false)
+            fail(new Error(storageReadStatus === "READ_OK"
+              ? bindingClassification : storageReadStatus))
+            return
+          }
+          canonicalBindingStatusRead = true
+          setCanonicalBindingStatusReady(true)
+          setCanonicalDestinationBound(
+            bindingClassification !== "NO_BINDING_PRESENT")
+          setCanonicalDestinationMismatch(false)
+          startInitialProductionClaim()
           return
         }
         if (message?.type === "LUNA_CANONICAL_DESTINATION_STATUS") {
           if (typeof message.error === "string") {
+            canonicalBindingStatusRead = false
+            setCanonicalBindingStatusReady(false)
             fail(new Error(message.error))
             return
           }
           const bound = message.canonicalDestinationBound === true
           canonicalBindingStatusRead = true
           setCanonicalBindingStatusReady(true)
+          setCanonicalDestinationMismatch(false)
           setCanonicalDestinationBound(bound)
           if (bound) {
             setError("")
@@ -568,6 +599,9 @@ export default function LunaShippingCapturePage() {
               message.canonicalDestinationBound !== true ||
               message.canonicalDestinationMatch !== true) {
             setCanonicalDestinationMatch(false)
+            if (message.error === "CANONICAL_US_SHIPPING_PROFILE_MISMATCH") {
+              setCanonicalDestinationMismatch(true)
+            }
             fail(new Error(typeof message.error === "string" ? message.error
               : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE"))
             return
@@ -576,6 +610,7 @@ export default function LunaShippingCapturePage() {
           canonicalBindingStatusRead = true
           setCanonicalBindingStatusReady(true)
           setCanonicalDestinationMatch(true)
+          setCanonicalDestinationMismatch(false)
           busy = false
           setRunning(false)
           setError("")
@@ -776,6 +811,9 @@ export default function LunaShippingCapturePage() {
           return
         }
         if (message.success !== true) {
+          if (message.error === "CANONICAL_US_SHIPPING_PROFILE_MISMATCH") {
+            setCanonicalDestinationMismatch(true)
+          }
           if (typeof message.lastRuntimeState === "string") {
             setLastRuntimeState(message.lastRuntimeState)
           }
@@ -1044,7 +1082,7 @@ export default function LunaShippingCapturePage() {
   const traceBlocker = newestTrace?.state === "FAIL"
     ? newestTrace.reasonCode : "NONE"
   const canStartFinalCanary = finalCanaryStartEnabled(connected,
-    canonicalBindingStatusReady, running)
+    canonicalBindingStatusReady, canonicalDestinationMismatch, running)
 
   return <main className="min-h-screen bg-[#07111a] px-4 py-10 text-white">
     <section className="mx-auto max-w-2xl rounded-3xl border border-white/15 bg-white/[0.05] p-6">
