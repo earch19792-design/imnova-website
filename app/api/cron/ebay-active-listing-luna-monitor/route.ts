@@ -47,6 +47,8 @@ const STOCK_IDENTITY_RECONCILIATION_TARGETS_V1 = Object.freeze([
 ])
 const LUNA_PRODUCTION_POLLING_CANARY_ITEM_ID = "366574069492"
 const LUNA_PRODUCTION_POLL_INTERVAL_SECONDS = 900
+const LUNA_PRODUCTION_STOCK_READ_AUTHORITY =
+  "LUNA_PORTEX_PUBLIC_EXACT_PRODUCT_STOCK" as const
 
 function safeCode(error: unknown) {
   const code = error instanceof Error ? error.message : ""
@@ -252,9 +254,11 @@ export async function GET(req: Request) {
       const protectedSession = await auditSellerOsLunaProtectedSessionV1({
         vaultSchemaApplied: true,
       })
-      if (protectedSession.status !== "SESSION_READY") {
-        throw new Error("LUNA_PROTECTED_SESSION_NOT_READY")
-      }
+      const publicStockSessionGate = Object.freeze({
+        authority: LUNA_PRODUCTION_STOCK_READ_AUTHORITY,
+        protectedSessionRequired: false as const,
+        protectedSessionStatus: protectedSession.status,
+      })
       const live = await getEbayCommercialMonitorLiveReadonly({
         accountKey,
         accountAlias: account.accountAlias,
@@ -341,7 +345,8 @@ export async function GET(req: Request) {
         failedTasks: stockPolling.ambiguousCount + stockPolling.noMatchCount +
           sourceUnavailableCount,
         metrics: { stage: "LUNA_PRODUCTION_STOCK_POLLING_V1", accountKey,
-          activation, protectedSessionStatus: protectedSession.status,
+          activation, publicStockSessionGate,
+          protectedSessionStatus: protectedSession.status,
           currentLiveCount: currentLive.length,
           certifiedLinkageCount: currentLive.filter((listing) =>
             listing.stock.supplierLinkageStatus === "CERTIFIED").length,
@@ -353,6 +358,7 @@ export async function GET(req: Request) {
       return NextResponse.json({ success,
         status: success ? "completed" : "partial",
         activation,
+        publicStockSessionGate,
         oldGateRevalidation: "STALE_GATE_CLOSED_CURRENT_PREREQUISITES_SATISFIED",
         protectedSessionStatus: protectedSession.status,
         humanBootstrapRequired: false,
