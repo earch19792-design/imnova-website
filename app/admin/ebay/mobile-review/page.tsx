@@ -1212,6 +1212,11 @@ export default function EbayMobileReviewPage() {
           <div className="mt-3 flex items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-widest text-cyan-100">eBay read-only · progreso sincronizado</p><h1 className="mt-1 text-2xl font-black">Seller Command Center</h1></div><StatusPill tone={report.dataSource === "MARKET_RADAR_READONLY" ? "good" : report.fixtureUsed ? "warning" : "danger"}>{sourceLabel}</StatusPill></div>
         </header>
 
+        <nav aria-label="Áreas de trabajo Seller OS" className="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-black/20 p-2">
+          <button type="button" aria-pressed={view === "opportunities"} onClick={() => setView("opportunities")} className={`min-h-11 rounded-xl px-3 text-sm font-black ${view === "opportunities" ? "bg-cyan-200 text-black" : "border border-white/15 text-white"}`}>Oportunidades</button>
+          <button type="button" aria-pressed={view === "loop2"} onClick={() => setView("loop2")} className={`min-h-11 rounded-xl px-3 text-sm font-black ${view === "loop2" ? "bg-fuchsia-100 text-fuchsia-950" : "border border-fuchsia-200/25 text-fuchsia-50"}`}>Research automático</button>
+        </nav>
+
         <SellerJourneyGuide currentStep={journeyStep} title={journey.title} instruction={journey.instruction} actionLabel={journey.actionLabel} missingCount={journey.missingCount} pendingLabel={journey.pendingLabel} systemTask={journey.systemTask} userTask={journey.userTask} actionDisabled={false} onAction={followJourney} />
 
         <details open={loadState !== "READY"} className={`rounded-2xl border p-3 ${loadState === "READY" ? "border-emerald-200/20 bg-emerald-200/[0.05]" : "border-amber-200/25 bg-amber-200/[0.07]"}`}>
