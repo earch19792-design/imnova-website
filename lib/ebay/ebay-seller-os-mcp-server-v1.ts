@@ -90,6 +90,9 @@ import { collectSellerOsEbayTradingRateLimitStatusV1,
   "./ebay-trading-rate-limit-observability-v1"
 import { getEbayProRuntimeBoundary } from "./environment-boundaries"
 import { validateAdminApiRequest } from "../supabase-admin"
+import { collectSellerOsDemandFirstBroadNetServerReplayV1,
+  SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1 } from
+  "./ebay-demand-first-broad-net-orchestrator-v1"
 
 export const SELLER_OS_MCP_ENDPOINT_VERSION =
   "SELLER_OS_MCP_READONLY_V1_2026_08_22_P2_I01A_RATE_LIMIT"
@@ -134,6 +137,7 @@ const SELLER_OS_MCP_TOOL_POLICIES_V1 = Object.freeze([
   SELLER_OS_SALE_ALERTS_TOOL_V1,
   SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1,
   SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1,
+  SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1,
 ])
 
 const SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1 = Object.freeze([
@@ -148,6 +152,7 @@ const SELLER_OS_MCP_EXPECTED_TOOL_NAMES_V1 = Object.freeze([
   SELLER_OS_SALE_ALERTS_TOOL_V1.name,
   SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1.name,
   SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1.name,
+  SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1.name,
   "search",
   "fetch",
 ])
@@ -198,6 +203,7 @@ const DEDICATED_READ_TOOLS = Object.freeze([
   SELLER_OS_SALE_ALERTS_TOOL_V1,
   SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1,
   SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1,
+  SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1,
 ])
 
 function safeErrorResponse(status: number, code: number, message: string) {
@@ -401,6 +407,7 @@ export function createSellerOsMcpServerV1(options: {
   ebayTradingRateLimitStatusCollector?: () => Promise<
     SellerOsEbayTradingRateLimitStatusV1
   >
+  demandFirstBroadNetReplayCollector?: () => Promise<unknown>
 } = {}) {
   const applicationAuthMode = options.applicationAuthMode ??
     "OAUTH_SELLER_OS_READ"
@@ -441,8 +448,16 @@ export function createSellerOsMcpServerV1(options: {
       "CLOUD_READ_RELAY"
     ? createSellerOsCloudReadRelayExecutorV1()
     : localToolExecutor)
+  const demandFirstBroadNetReplayCollector =
+    options.demandFirstBroadNetReplayCollector ??
+    collectSellerOsDemandFirstBroadNetServerReplayV1
   const toolExecutor = options.toolExecutor ?? (async (input) =>
-    input.toolName === "seller_os_get_opportunity_radar" ||
+    input.toolName === SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1.name
+      ? getSellerOsMcpToolExecutionSourceV1(applicationAuthMode) ===
+        "CLOUD_READ_RELAY"
+        ? configuredToolExecutor(input)
+        : demandFirstBroadNetReplayCollector()
+      : input.toolName === "seller_os_get_opportunity_radar" ||
       input.toolName === "seller_os_get_opportunity_case"
       ? collectSellerOsLongitudinalOpportunityReadV1({
           toolName: input.toolName,
@@ -477,6 +492,33 @@ export function createSellerOsMcpServerV1(options: {
     })
     registeredToolNames.add(descriptor.name)
   }
+  const broadNetReplayConfig = {
+    title: SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1.title,
+    description: SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1.description,
+    inputSchema: z.object({}).strict(),
+    annotations: SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1.annotations,
+    securitySchemes,
+    _meta: { securitySchemes },
+  }
+  server.registerTool(SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1.name,
+    broadNetReplayConfig, async () => {
+      try {
+        const result = await toolExecutor({
+          toolName: SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1.name,
+          arguments: {},
+        })
+        return { structuredContent: { result }, content: [{ type: "text" as const,
+          text: "Seller OS completed the bounded read-only demand-first replay." }] }
+      } catch {
+        const result = { status: "SELLER_OS_EVIDENCE_READ_FAILED_CLOSED",
+          credentialsIncluded: false, buyerPiiIncluded: false, marketplaceWrites: 0 }
+        return { isError: true, structuredContent: { result }, content: [{
+          type: "text" as const,
+          text: "Seller OS stopped the bounded replay safely; no evidence was inferred.",
+        }] }
+      }
+    })
+  registeredToolNames.add(SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_TOOL_V1.name)
   const runtimeHealthCollector = options.runtimeHealthCollector ??
     collectSellerOsRuntimeHealthV1
   const runtimeHealthConfig = {

@@ -24,6 +24,8 @@ export const SELLER_OS_LUNA_SUPPLIER_LINKAGE_RELAY_OPERATION_V1 =
   "seller_os_internal_read_luna_supplier_linkage_resource" as const
 export const SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1 =
   "seller_os_internal_read_ebay_trading_rate_limit_resource" as const
+export const SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_OPERATION_V1 =
+  "seller_os_get_demand_first_broad_net_replay" as const
 export const SELLER_OS_CLOUD_READ_RELAY_ENVIRONMENT = Object.freeze({
   endpointUrl: "SELLER_OS_CLOUD_READ_RELAY_URL",
   authenticationSecret: "SELLER_OS_CLOUD_READ_RELAY_SECRET",
@@ -49,6 +51,7 @@ const RELAY_TOOL_NAMES = new Set(
     SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1.name,
     SELLER_OS_LUNA_SUPPLIER_LINKAGE_RELAY_OPERATION_V1,
     SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1,
+    SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_OPERATION_V1,
   ],
 )
 const SAFE_HEADERS = Object.freeze({
@@ -136,7 +139,8 @@ function normalizeRelayArguments(toolName: string, value: unknown) {
         toolName === SELLER_OS_WHATSAPP_SALE_ALERT_STATUS_TOOL_V1.name ||
         toolName === SELLER_OS_BUYER_THANK_YOU_STATUS_TOOL_V1.name ||
         toolName === SELLER_OS_LUNA_SUPPLIER_LINKAGE_RELAY_OPERATION_V1 ||
-        toolName === SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1
+        toolName === SELLER_OS_EBAY_TRADING_RATE_LIMIT_RELAY_OPERATION_V1 ||
+        toolName === SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_OPERATION_V1
       ? [] : ["limit"],
   )
   if (toolName === "seller_os_get_listing_intelligence") {
@@ -460,6 +464,7 @@ export async function handleSellerOsCloudReadRelayRequestV1(
     >
     longitudinalOpportunityReadCollector?: typeof
       collectSellerOsLongitudinalOpportunityReadV1
+    demandFirstBroadNetReplayCollector?: () => Promise<unknown>
   } = {},
 ) {
   const environment = options.environment ?? process.env
@@ -549,6 +554,16 @@ export async function handleSellerOsCloudReadRelayRequestV1(
             "./ebay-trading-rate-limit-observability-v1"
           )
           return runtime.collectSellerOsEbayTradingRateLimitStatusV1()
+        })
+      result = await collector()
+    } else if (envelope.toolName ===
+        SELLER_OS_DEMAND_FIRST_BROAD_NET_REPLAY_OPERATION_V1) {
+      const collector = options.demandFirstBroadNetReplayCollector ??
+        (async () => {
+          const runtime = await import(
+            "./ebay-demand-first-broad-net-orchestrator-v1"
+          )
+          return runtime.collectSellerOsDemandFirstBroadNetServerReplayV1()
         })
       result = await collector()
     } else if (envelope.toolName === "seller_os_get_opportunity_radar" ||
