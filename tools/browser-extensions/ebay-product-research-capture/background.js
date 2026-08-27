@@ -36,7 +36,12 @@ function canonicalAdminScopeTab(tab) {
 }
 
 async function injectAdminBridgeIntoExistingTabs() {
-  const tabs = await chrome.tabs.query({ url: ADMIN_SCOPE_MATCH })
+  let tabs
+  try {
+    tabs = await chrome.tabs.query({ url: ADMIN_SCOPE_MATCH })
+  } catch {
+    return
+  }
   await Promise.allSettled(tabs.map(async (tab) => {
     if (!canonicalAdminScopeTab(tab)) return
     await chrome.scripting.executeScript({
@@ -47,10 +52,7 @@ async function injectAdminBridgeIntoExistingTabs() {
   }))
 }
 
-chrome.runtime.onInstalled?.addListener((details) => {
-  if (details?.reason !== "install" && details?.reason !== "update") return
-  void injectAdminBridgeIntoExistingTabs()
-})
+void injectAdminBridgeIntoExistingTabs()
 
 function officialResearchSender(sender) {
   try {
