@@ -23,6 +23,8 @@ export const CAKE_TURNTABLE_LISTING_INTAKE_KEY =
 
 const LISTING_TITLE =
   "11 in Revolving Plastic Cake Turntable Non-Slip Base Decorating Stand"
+const LUNA_EXACT_PRODUCT_TRUTH_AUTHORITY =
+  "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1" as const
 
 type JsonRecord = Record<string, unknown>
 const SHA256 = /^sha256:[0-9a-f]{64}$/
@@ -45,6 +47,15 @@ function money(value: unknown) {
   return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : null
 }
 
+function positiveInteger(value: unknown) {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+function sameInstant(left: string | null, right: string | null) {
+  return Boolean(left && right && Date.parse(left) === Date.parse(right))
+}
+
 export type CakeTurntableListingWorkspaceEvidenceV1 = Readonly<{
   authorityClass: "SELLER_OS_ITEM3525_FINAL_WORKSPACE_EVIDENCE_V1"
   decisionPackageId: string
@@ -61,10 +72,17 @@ export type CakeTurntableListingWorkspaceEvidenceV1 = Readonly<{
   roiPercent: 144.33
   launchTier: "CONTROLLED_MERCHANDISING_BET"
   entryPotentialScore: 57
+  productTruth: Readonly<{
+    authorityClass: typeof LUNA_EXACT_PRODUCT_TRUTH_AUTHORITY
+    evidenceDigest: string
+    noManufacturerBrandClaim: "PROVEN"
+    ebayBrandSemantics: "UNBRANDED_SUPPORTED"
+    taxonomyBrandValue: "Unbranded"
+  }>
   stock: Readonly<{
     state: "IN_STOCK_SUPPLIER_STATED"
     available: true
-    quantity: null
+    quantity: number
     safeCapacity: null
     observedAt: string
   }>
@@ -92,6 +110,14 @@ export function buildCakeTurntableListingWorkspaceEvidenceV1(input: Readonly<{
   const assessment = record(input.opportunity.assessment)
   const candidate = record(assessment.candidate)
   const assessmentEconomics = record(assessment.economics)
+  const productTruth = record(assessment.productTruth)
+  const productTruthStock = record(productTruth.stock)
+  const productTruthBrand = record(productTruth.brand)
+  const productTruthDigest = text(productTruth.evidenceDigest)
+  const supplierQuantity = positiveInteger(
+    productTruthStock.supplierStatedQuantity,
+  )
+  const productTruthObservedAt = text(productTruthStock.observedAt)
   const profile = input.decisionPackage.smartStockingLearningProfile
   const decision = profile?.decisionSnapshot
   const economics = decision?.finalEconomics
@@ -129,9 +155,37 @@ export function buildCakeTurntableListingWorkspaceEvidenceV1(input: Readonly<{
     input.opportunity.gtin !== target.gtin ||
     money(input.opportunity.supplier_price) !== target.unitCostUsd ||
     input.opportunity.supplier_available !== true ||
-    input.opportunity.supplier_inventory_quantity !== null ||
-    candidate.available !== true || candidate.inventoryQuantity !== null ||
+    supplierQuantity === null ||
+    input.opportunity.supplier_inventory_quantity !== supplierQuantity ||
+    candidate.available !== true ||
+    candidate.inventoryQuantity !== supplierQuantity ||
     !stockObservedAt || !Number.isFinite(Date.parse(stockObservedAt)) ||
+    !productTruthObservedAt ||
+    !Number.isFinite(Date.parse(productTruthObservedAt)) ||
+    !sameInstant(stockObservedAt, productTruthObservedAt) ||
+    !sameInstant(text(candidate.stockCapturedAt), productTruthObservedAt) ||
+    productTruth.authorityClass !== LUNA_EXACT_PRODUCT_TRUTH_AUTHORITY ||
+    !productTruthDigest || !SHA256.test(productTruthDigest) ||
+    productTruth.candidateKey !== CAKE_TURNTABLE_LISTING_INTAKE_KEY ||
+    productTruth.lunaProductId !== target.lunaProductId ||
+    productTruth.lunaVariantId !== target.lunaVariantId ||
+    productTruth.supplierSku !== target.lunaSku ||
+    productTruth.gtin !== target.gtin ||
+    money(productTruth.supplierPriceUsd) !== target.unitCostUsd ||
+    productTruth.rawHtmlStored !== false ||
+    productTruth.marketplaceWrites !== 0 ||
+    productTruthStock.state !== "IN_STOCK_SUPPLIER_STATED" ||
+    productTruthStock.freshness !== "FRESH" ||
+    productTruthStock.exactIdentityVerified !== true ||
+    productTruthStock.safeCapacity !== null ||
+    productTruthStock.safeCapacityStatus !== "UNPROVEN_NOT_INFERRED" ||
+    productTruthBrand.noManufacturerBrandClaim !== "PROVEN" ||
+    productTruthBrand.ebayBrandSemantics !== "UNBRANDED_SUPPORTED" ||
+    productTruthBrand.taxonomyBrandValue !== "Unbranded" ||
+    productTruthBrand.brandMetadataPresent !== false ||
+    productTruthBrand.manufacturerMetadataPresent !== false ||
+    productTruthBrand.visibleManufacturerBrandingPresent !== false ||
+    productTruthBrand.supplierImageBrandConflictFound !== false ||
     money(assessmentEconomics.authoritativeSupplierShippingUsd) !== 9.99 ||
     money(assessmentEconomics.estimatedNetProfit) !== 5.48 ||
     money(assessmentEconomics.estimatedNetMarginPercent) !== 21.1 ||
@@ -169,12 +223,19 @@ export function buildCakeTurntableListingWorkspaceEvidenceV1(input: Readonly<{
     roiPercent: 144.33 as const,
     launchTier: "CONTROLLED_MERCHANDISING_BET" as const,
     entryPotentialScore: 57 as const,
+    productTruth: Object.freeze({
+      authorityClass: LUNA_EXACT_PRODUCT_TRUTH_AUTHORITY,
+      evidenceDigest: productTruthDigest,
+      noManufacturerBrandClaim: "PROVEN" as const,
+      ebayBrandSemantics: "UNBRANDED_SUPPORTED" as const,
+      taxonomyBrandValue: "Unbranded" as const,
+    }),
     stock: Object.freeze({
       state: "IN_STOCK_SUPPLIER_STATED" as const,
       available: true as const,
-      quantity: null,
+      quantity: supplierQuantity,
       safeCapacity: null,
-      observedAt: new Date(stockObservedAt).toISOString(),
+      observedAt: new Date(productTruthObservedAt).toISOString(),
     }),
     category: Object.freeze({
       categoryId: "183335" as const,
