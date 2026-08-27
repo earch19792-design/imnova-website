@@ -421,6 +421,43 @@ test("a server-validated same-day binding supersedes only stale generic scoring 
   assert.ok(forged.blockers.includes("EXACT_IDENTITY_REQUIRED"))
 })
 
+test("exact durable Smart Stocking launch evidence supersedes only the preliminary potential score", async () => {
+  const module = await importTypeScript(readinessSource)
+  const input = validInput()
+  input.opportunity.assessment.scores.potentialScore = 57
+  input.smartStockingPublicationAuthorization = {
+    validated: true,
+    version: "SELLER_OS_SMART_STOCKING_AUTHORIZED_PUBLICATION_V1",
+    listingPackageId: input.listingPackage.id,
+    opportunityId: input.opportunity.id,
+    candidateKey: input.listingPackage.candidate_key,
+    entrySnapshotHash: `sha256:${"a".repeat(64)}`,
+    decisionSnapshotHash: `sha256:${"b".repeat(64)}`,
+    authorizationDigest: `sha256:${"c".repeat(64)}`,
+    finalEconomicsStatus: "PASS",
+    thresholdResult: "PASS",
+    finalHumanAuthorizationRequired: true,
+    unattendedPublicationAllowed: false,
+  }
+  const authorized = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(authorized.ready, true)
+  assert.deepEqual(
+    authorized.payload.compliance.smartStockingPublicationAuthorization,
+    input.smartStockingPublicationAuthorization,
+  )
+
+  input.opportunity.assessment.identity.exactIdentityConfirmed = false
+  const identityMismatch = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(identityMismatch.ready, false)
+  assert.ok(identityMismatch.blockers.includes("EXACT_IDENTITY_REQUIRED"))
+
+  input.opportunity.assessment.identity.exactIdentityConfirmed = true
+  input.smartStockingPublicationAuthorization.decisionSnapshotHash = "forged"
+  const forged = module.evaluateEbayDraftOnlyReadiness(input)
+  assert.equal(forged.ready, false)
+  assert.ok(forged.blockers.includes("POTENTIAL_SCORE_BELOW_70"))
+})
+
 test("locked V3 execution evidence supersedes only redundant package and image age", async () => {
   const module = await importTypeScript(readinessSource)
   const now = new Date("2026-07-13T12:00:00.000Z")
@@ -1946,7 +1983,9 @@ test("Production draft and final publication use separate account-bound one-shot
   assert.match(gatewaySource, /A timeout is never retried with POST/)
   assert.match(routeSource, /verifyEbayPublishedOffer/)
   assert.match(routeSource, /sync_same_day_source_before_authorized_publication/)
-  assert.match(routeSource, /EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_REQUIRED/)
+  assert.match(routeSource, /EBAY_FINAL_PUBLICATION_SOURCE_BINDING_REQUIRED/)
+  assert.match(routeSource,
+    /EBAY_FINAL_PUBLICATION_SMART_STOCKING_BINDING_CHANGED/)
   assert.match(sameDayPublicationSource, /SELLER_OS_AUTHORIZED_PUBLICATION_V1_2026_07_20/)
   assert.match(sameDayPublicationSource, /exactSevenHttpsUrls/)
   assert.match(sameDayPublicationSource, /finalHumanAuthorizationRequired: true/)
@@ -2040,7 +2079,11 @@ test("V3 final publication claim validates the append-only seven-image chain", (
   )
   assert.match(
     routeSource,
-    /verifyEbayUnpublishedOffer\([\s\S]*sync_ebay_v3_source_before_authorized_publication[\s\S]*prepare_ebay_authorized_listing_publication[\s\S]*claim_ebay_authorized_listing_publication/,
+    /revalidateFinalPublicationSource[\s\S]*sync_ebay_v3_source_before_authorized_publication/,
+  )
+  assert.match(
+    routeSource,
+    /verifyEbayUnpublishedOffer\([\s\S]*revalidateFinalPublicationSource\([\s\S]*prepare_ebay_authorized_listing_publication[\s\S]*claim_ebay_authorized_listing_publication/,
   )
   assert.match(
     routeSource,

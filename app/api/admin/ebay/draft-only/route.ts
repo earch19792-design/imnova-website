@@ -56,6 +56,10 @@ import {
 import { enqueueSellerWhatsAppAlert } from "@/lib/ebay/ebay-seller-whatsapp-alerts"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { loadSameDayAuthorizedPublicationContext } from "@/lib/ebay/ebay-same-day-authorized-publication"
+import { isSmartStockingListingIntakeV1 } from
+  "@/lib/ebay/ebay-smart-stocking-listing-intake-v1"
+import { resolveSmartStockingAuthorizedPublicationV1 } from
+  "@/lib/ebay/ebay-smart-stocking-authorized-publication-v1"
 import {
   bindCanonicalPublicationImageSet,
   loadFinalListingReviewPublicationGate,
@@ -340,10 +344,21 @@ async function loadFinalPublicationContext(
       opportunity: opportunity as JsonRecord,
     })
     : null
-  if (!sameDayContext) {
-    throw new Error("EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_REQUIRED")
+  const effectiveOpportunity = sameDayContext?.opportunity ??
+    (opportunity as JsonRecord)
+  const smartStockingContext = accountKey &&
+    isSmartStockingListingIntakeV1(record(effectiveOpportunity.assessment))
+    ? await resolveSmartStockingAuthorizedPublicationV1({
+      supabase,
+      accountKey,
+      actorUserId: actor,
+      listingPackage: listingPackage as JsonRecord,
+      opportunity: effectiveOpportunity,
+    })
+    : null
+  if (!sameDayContext && !smartStockingContext) {
+    throw new Error("EBAY_FINAL_PUBLICATION_SOURCE_BINDING_REQUIRED")
   }
-  const effectiveOpportunity = sameDayContext.opportunity
   if (
     !runtime.enabled
     || !runtime.configured
@@ -381,12 +396,32 @@ async function loadFinalPublicationContext(
         !== text(sameDayContext.authorization.handoffPackageHash)
     ) throw new Error("EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_CHANGED")
   }
+  if (smartStockingContext) {
+    const approvedPayload = record(approval.approved_payload)
+    const approvedCompliance = record(approvedPayload.compliance)
+    const approvedAuthorization = record(
+      approvedCompliance.smartStockingPublicationAuthorization,
+    )
+    const approvedStockguard = record(
+      approvedCompliance.publishWithStockguardContract,
+    )
+    if (
+      hashEbayDraftOnlyPayload(approvedAuthorization) !==
+        hashEbayDraftOnlyPayload(smartStockingContext.authorization) ||
+      hashEbayDraftOnlyPayload(approvedStockguard) !==
+        hashEbayDraftOnlyPayload(
+          smartStockingContext.publishWithStockguardContract,
+        )
+    ) throw new Error("EBAY_FINAL_PUBLICATION_SMART_STOCKING_BINDING_CHANGED")
+  }
   return {
     execution: execution as JsonRecord,
     approval: approval as JsonRecord,
     listingPackage: listingPackage as JsonRecord,
     opportunity: effectiveOpportunity,
-    sameDayPilotAuthorization: sameDayContext.authorization,
+    sameDayPilotAuthorization: sameDayContext?.authorization ?? null,
+    smartStockingPublicationAuthorization:
+      smartStockingContext?.authorization ?? null,
     runtime,
     accountKey,
   }
@@ -418,6 +453,38 @@ async function revalidateFinalPublicationDependencies(approvedPayload: JsonRecor
     throw new Error(dependencies.blocker || "EBAY_FINAL_PUBLICATION_DEPENDENCIES_INVALID")
   }
   return { preflight, dependencies }
+}
+
+async function revalidateFinalPublicationSource(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  context: Awaited<ReturnType<typeof loadFinalPublicationContext>>,
+) {
+  if (context.smartStockingPublicationAuthorization) {
+    return { authority: text(
+      context.smartStockingPublicationAuthorization.sourceRevalidationAuthority,
+    ) }
+  }
+  const approvedCompliance = record(
+    record(context.approval.approved_payload).compliance,
+  )
+  const v3FinalSetAuthorization = record(
+    approvedCompliance.v3FinalSetAuthorization,
+  )
+  const sourceSyncFunction = Object.keys(v3FinalSetAuthorization).length
+    ? "sync_ebay_v3_source_before_authorized_publication"
+    : "sync_same_day_source_before_authorized_publication"
+  const { error } = await supabase.rpc(sourceSyncFunction, {
+    p_draft_execution_id: text(context.execution.id),
+    p_actor_user_id: text(context.execution.actor_user_id),
+    p_marketplace_account_key: context.accountKey,
+  })
+  if (error) {
+    throw new Error(databaseExceptionCode(
+      error,
+      "EBAY_FINAL_PUBLICATION_LUNA_SOURCE_SYNC_FAILED",
+    ))
+  }
+  return { authority: sourceSyncFunction }
 }
 
 async function loadPackageContext(
@@ -475,6 +542,15 @@ async function loadPackageContext(
     if (!finalReviewGate.allowed) throw contextError
   }
   const effectiveOpportunity = sameDayContext?.opportunity ?? (opportunity as JsonRecord)
+  const smartStockingContext = isSmartStockingListingIntakeV1(
+    record(effectiveOpportunity.assessment),
+  ) ? await resolveSmartStockingAuthorizedPublicationV1({
+    supabase,
+    accountKey: sellerAccountKey,
+    actorUserId,
+    listingPackage: listingPackage as JsonRecord,
+    opportunity: effectiveOpportunity,
+  }) : null
   const collisionSku = expectedEbayDraftOnlySku(listingPackage as JsonRecord)
   const candidateKey = text(listingPackage.candidate_key)
   const supplierSku = text(effectiveOpportunity.supplier_sku)
@@ -570,7 +646,12 @@ async function loadPackageContext(
     listingPackage: listingPackage as JsonRecord,
     opportunity: effectiveOpportunity,
     sameDayPilotAuthorization: sameDayContext?.authorization ?? null,
-    economicsConfig: sameDayContext?.economicsConfig,
+    smartStockingPublicationAuthorization:
+      smartStockingContext?.authorization ?? null,
+    economicsConfig: sameDayContext?.economicsConfig ??
+      smartStockingContext?.economicsConfig,
+    publishWithStockguardContract:
+      smartStockingContext?.publishWithStockguardContract ?? null,
     activeSkuCollision: Boolean(ebaySkuResult.data?.length),
     ledgerSkuCollision: Boolean(ledgerResult.data?.length),
     identityCollisionReasons,
@@ -674,6 +755,16 @@ function serverApprovedConfiguration(
   }
 }
 
+function bindServerPublicationContracts(
+  draftConfiguration: JsonRecord,
+  context: { publishWithStockguardContract?: unknown },
+) {
+  const stockguard = record(context.publishWithStockguardContract)
+  return Object.keys(stockguard).length
+    ? { ...draftConfiguration, publishWithStockguardContract: stockguard }
+    : draftConfiguration
+}
+
 function finalPublicationStockguardContract(approvedPayload: JsonRecord) {
   const value = record(record(approvedPayload.compliance)
     .publishWithStockguardContract)
@@ -768,9 +859,12 @@ export async function GET(req: Request) {
       true,
     )
     const packageConfig = record(initialContext.listingPackage.package_data).draftConfiguration
-    const draftConfiguration = latestApproval
-      ? configurationFromApprovedPayload(approvedPayload)
-      : record(packageConfig)
+    const draftConfiguration = bindServerPublicationContracts(
+      latestApproval
+        ? configurationFromApprovedPayload(approvedPayload)
+        : record(packageConfig),
+      initialContext,
+    )
     const sku = text(record(draftConfiguration).sku)
     const context = sku
       ? await loadPackageContext(
@@ -1130,14 +1224,17 @@ async function previewDraft(body: JsonRecord, actor: string) {
   }
   const now = new Date()
   const liveTaxonomy = await loadLivePackageTaxonomy(context.listingPackage)
-  const draftConfiguration = serverApprovedConfiguration(
-    requestedConfiguration,
-    context.listingPackage,
-    context.opportunity,
-    actor,
-    now,
-    body.confirmImagesAuthorized === true,
-    liveTaxonomy,
+  const draftConfiguration = bindServerPublicationContracts(
+    serverApprovedConfiguration(
+      requestedConfiguration,
+      context.listingPackage,
+      context.opportunity,
+      actor,
+      now,
+      body.confirmImagesAuthorized === true,
+      liveTaxonomy,
+    ),
+    context,
   )
   const readiness = evaluateEbayDraftOnlyReadiness({
     ...context,
@@ -1194,14 +1291,17 @@ async function approveDraft(body: JsonRecord, actor: string) {
   }
   const now = new Date()
   const liveTaxonomy = await loadLivePackageTaxonomy(context.listingPackage)
-  const draftConfiguration = serverApprovedConfiguration(
-    requestedConfiguration,
-    context.listingPackage,
-    context.opportunity,
-    actor,
-    now,
-    true,
-    liveTaxonomy,
+  const draftConfiguration = bindServerPublicationContracts(
+    serverApprovedConfiguration(
+      requestedConfiguration,
+      context.listingPackage,
+      context.opportunity,
+      actor,
+      now,
+      true,
+      liveTaxonomy,
+    ),
+    context,
   )
   const readiness = evaluateEbayDraftOnlyReadiness({
     ...context,
@@ -1638,6 +1738,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
     fingerprint,
     context.economicsConfig,
     context.sameDayPilotAuthorization,
+    context.smartStockingPublicationAuthorization,
   )
   const currentPayload = Object.keys(v3Binding).length
     ? withV3FinalSetAuthorization(rebuiltPayload, v3Binding)
@@ -1993,9 +2094,6 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   if (!visualPublicationGate.allowed) {
     throw new Error(visualPublicationGate.reason ?? "FINAL_LISTING_REVIEW_NOT_READY")
   }
-  if (!context.sameDayPilotAuthorization) {
-    return jsonError(new Error("EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_REQUIRED"), 409)
-  }
   const built = buildFinalPublicationPreview(
     context.approval,
     context.execution,
@@ -2010,29 +2108,7 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   if (!offerVerification.safe) {
     return jsonError(new Error(offerVerification.blocker), 409)
   }
-  const approvedCompliance = record(
-    record(context.approval.approved_payload).compliance,
-  )
-  const v3FinalSetAuthorization = record(
-    approvedCompliance.v3FinalSetAuthorization,
-  )
-  const sourceSyncFunction = Object.keys(v3FinalSetAuthorization).length
-    ? "sync_ebay_v3_source_before_authorized_publication"
-    : "sync_same_day_source_before_authorized_publication"
-  const { error: sourceSyncError } = await supabase.rpc(
-    sourceSyncFunction,
-    {
-      p_draft_execution_id: executionId,
-      p_actor_user_id: actor,
-      p_marketplace_account_key: context.accountKey,
-    },
-  )
-  if (sourceSyncError) {
-    throw new Error(databaseExceptionCode(
-      sourceSyncError,
-      "EBAY_FINAL_PUBLICATION_LUNA_SOURCE_SYNC_FAILED",
-    ))
-  }
+  await revalidateFinalPublicationSource(supabase, context)
   const { data: publication, error } = await supabase
     .rpc("prepare_ebay_authorized_listing_publication", {
       p_draft_execution_id: executionId,
@@ -2325,28 +2401,7 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
   await revalidateFinalPublicationDependencies(record(context.approval.approved_payload))
   const unpublished = await verifyEbayUnpublishedOffer(built.offerId, built.sku, "EBAY_US")
   if (!unpublished.safe) return jsonError(new Error(unpublished.blocker), 409)
-  const approvedPayload = record(context.approval.approved_payload)
-  const approvedCompliance = record(approvedPayload.compliance)
-  const v3FinalSetAuthorization = record(
-    approvedCompliance.v3FinalSetAuthorization,
-  )
-  const sourceSyncFunction = Object.keys(v3FinalSetAuthorization).length
-    ? "sync_ebay_v3_source_before_authorized_publication"
-    : "sync_same_day_source_before_authorized_publication"
-  const { error: sourceSyncError } = await supabase.rpc(
-    sourceSyncFunction,
-    {
-      p_draft_execution_id: text(context.execution.id),
-      p_actor_user_id: actor,
-      p_marketplace_account_key: context.accountKey,
-    },
-  )
-  if (sourceSyncError) {
-    return jsonError(new Error(databaseExceptionCode(
-      sourceSyncError,
-      "EBAY_FINAL_PUBLICATION_LUNA_SOURCE_SYNC_FAILED",
-    )), 409)
-  }
+  await revalidateFinalPublicationSource(supabase, context)
   const { data: refreshed, error: refreshError } = await supabase
     .rpc("prepare_ebay_authorized_listing_publication", {
       p_draft_execution_id: text(context.execution.id),

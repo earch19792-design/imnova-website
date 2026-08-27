@@ -28,6 +28,7 @@ export type DraftOnlyReadinessInput = {
   opportunity: JsonRecord
   draftConfiguration: JsonRecord
   sameDayPilotAuthorization?: JsonRecord | null
+  smartStockingPublicationAuthorization?: JsonRecord | null
   revalidatedExecutionEvidence?: {
     freshSameDaySourceVerified?: boolean
     finalV3ImageTransportVerified?: boolean
@@ -412,6 +413,7 @@ export function buildEbayDraftOnlyPayload(
   accountFingerprint = "",
   economicsConfig: Partial<EbayUnitEconomicsConfig> = {},
   sameDayPilotAuthorization: JsonRecord | null = null,
+  smartStockingPublicationAuthorization: JsonRecord | null = null,
 ) {
   const packageData = record(listingPackage.package_data)
   const pricing = record(packageData.pricing)
@@ -519,6 +521,9 @@ export function buildEbayDraftOnlyPayload(
       ...(sameDayPilotAuthorization?.validated === true
         ? { sameDayPilotAuthorization }
         : {}),
+      ...(smartStockingPublicationAuthorization?.validated === true
+        ? { smartStockingPublicationAuthorization }
+        : {}),
     },
     sku,
     inventoryItemPayload,
@@ -563,6 +568,32 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     && text(sameDayPilotAuthorization.listingPackageId) === text(listingPackage.id)
     && sameDayPilotAuthorization.finalHumanAuthorizationRequired === true
     && sameDayPilotAuthorization.unattendedPublicationAllowed === false
+  const smartStockingPublicationAuthorization = record(
+    input.smartStockingPublicationAuthorization,
+  )
+  const smartStockingPublicationAuthorized =
+    smartStockingPublicationAuthorization.validated === true
+    && text(smartStockingPublicationAuthorization.version)
+      === "SELLER_OS_SMART_STOCKING_AUTHORIZED_PUBLICATION_V1"
+    && text(smartStockingPublicationAuthorization.listingPackageId)
+      === text(listingPackage.id)
+    && text(smartStockingPublicationAuthorization.opportunityId)
+      === text(opportunity.id)
+    && text(smartStockingPublicationAuthorization.candidateKey)
+      === text(listingPackage.candidate_key)
+    && /^sha256:[0-9a-f]{64}$/.test(text(
+      smartStockingPublicationAuthorization.decisionSnapshotHash,
+    ))
+    && /^sha256:[0-9a-f]{64}$/.test(text(
+      smartStockingPublicationAuthorization.entrySnapshotHash,
+    ))
+    && /^sha256:[0-9a-f]{64}$/.test(text(
+      smartStockingPublicationAuthorization.authorizationDigest,
+    ))
+    && smartStockingPublicationAuthorization.finalEconomicsStatus === "PASS"
+    && smartStockingPublicationAuthorization.thresholdResult === "PASS"
+    && smartStockingPublicationAuthorization.finalHumanAuthorizationRequired === true
+    && smartStockingPublicationAuthorization.unattendedPublicationAllowed === false
   const supplierPrice = numberOrNull(opportunity.supplier_price)
   const supplierStock = numberOrNull(opportunity.supplier_inventory_quantity)
   const price = numberOrNull(pricing.targetPrice)
@@ -654,7 +685,9 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (!sameDayPilotAuthorized) {
     if (['hold', 'rejected', 'listed', 'archived'].includes(text(opportunity.queue_status))) blockers.push("OPPORTUNITY_STATUS_BLOCKED")
     if (!exactIdentityConfirmed) blockers.push("EXACT_IDENTITY_REQUIRED")
-    if (potentialScore < 70) blockers.push("POTENTIAL_SCORE_BELOW_70")
+    if (potentialScore < 70 && !smartStockingPublicationAuthorized) {
+      blockers.push("POTENTIAL_SCORE_BELOW_70")
+    }
     if (confidenceScore < 70) blockers.push("CONFIDENCE_SCORE_BELOW_70")
     blockers.push(...remainingHardGates.map((gate) => `HARD_GATE:${gate}`))
     blockers.push(...evidenceGuards.map((guard) => `EVIDENCE_GUARD:${guard}`))
@@ -744,6 +777,9 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     accountFingerprint,
     economicsConfig,
     sameDayPilotAuthorized ? sameDayPilotAuthorization : null,
+    smartStockingPublicationAuthorized
+      ? smartStockingPublicationAuthorization
+      : null,
   )
   const uniqueBlockers = unique(blockers)
   return {

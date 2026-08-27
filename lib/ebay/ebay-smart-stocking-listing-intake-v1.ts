@@ -59,6 +59,7 @@ function sameInstant(left: string | null, right: string | null) {
 export type CakeTurntableListingWorkspaceEvidenceV1 = Readonly<{
   authorityClass: "SELLER_OS_ITEM3525_FINAL_WORKSPACE_EVIDENCE_V1"
   decisionPackageId: string
+  entrySnapshotHash: string
   decisionSnapshotHash: string
   frontierId: string
   frontierDigest: string
@@ -210,6 +211,7 @@ export function buildCakeTurntableListingWorkspaceEvidenceV1(input: Readonly<{
   return Object.freeze({
     authorityClass: "SELLER_OS_ITEM3525_FINAL_WORKSPACE_EVIDENCE_V1" as const,
     decisionPackageId: target.packageId,
+    entrySnapshotHash: profile.entrySnapshotHash,
     decisionSnapshotHash: profile.decisionSnapshotHash,
     frontierId: String(frontierRow.frontierId ?? ""),
     frontierDigest: String(frontier.frontierDigest),
