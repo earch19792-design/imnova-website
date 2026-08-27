@@ -26,6 +26,7 @@ type Opportunity = {
   supplier_sku: string | null
   supplier_variant_id?: string | null
   supplier_price: number | null
+  supplier_available: boolean | null
   supplier_inventory_quantity: number | null
   supplier_snapshot_at: string | null
   opportunity_score: number
@@ -80,6 +81,8 @@ type FormState = {
     estimatedRoiPercent: number | null
     minimumProfitablePrice: number | null
     passesProfitGate: boolean | null
+    calculationSource: string | null
+    authoritativeSupplierShipping: boolean
   }
   shipping: Record<string, unknown>
 }
@@ -358,6 +361,8 @@ const emptyForm: FormState = {
     estimatedRoiPercent: null,
     minimumProfitablePrice: null,
     passesProfitGate: null,
+    calculationSource: null,
+    authoritativeSupplierShipping: false,
   },
   shipping: {},
 }
@@ -717,6 +722,9 @@ function fromPackage(value: Record<string, unknown>): FormState {
       estimatedRoiPercent: numberOrNull(pricing.estimatedRoiPercent),
       minimumProfitablePrice: numberOrNull(pricing.minimumProfitablePrice),
       passesProfitGate: booleanOrNull(pricing.passesProfitGate),
+      calculationSource: String(pricing.calculationSource ?? "") || null,
+      authoritativeSupplierShipping:
+        pricing.authoritativeSupplierShipping === true,
     },
     shipping: object(value.shipping),
   }
@@ -2164,6 +2172,10 @@ function ListingWorkspacePageContent() {
       ?.signedPreviewUrl
       ?? form.imageUrls[0]
       ?? ""
+  const finalSmartStockingEconomics =
+    form.pricing.authoritativeSupplierShipping === true &&
+    form.pricing.calculationSource ===
+      "SELLER_OS_SMART_STOCKING_FINAL_ECONOMICS_DURABLE_READBACK_V1"
   const effectiveDraftQuantity = productionTarget ? 1 : draftConfiguration.quantity
   const accountPreflightAutoStarted = useRef(false)
   const accountPreflightAutoSaveKey = useRef("")
@@ -3973,7 +3985,7 @@ function ListingWorkspacePageContent() {
         {opportunity && listingPackage && !finalReviewCompleted && <>
           <section className={`${maintenanceMode ? "hidden" : ""} rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.06] p-4`}>
             <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-black uppercase text-emerald-100/65">Datos reales de Luna + evidencia eBay</p><h2 className="mt-2 text-xl font-black">{opportunity.product_title}</h2><p className="mt-1 text-sm text-white/60">{opportunity.variant_title ?? "Variante general"} · {opportunity.supplier_sku ?? "SKU pendiente"}</p></div><strong className="rounded-2xl bg-white px-3 py-2 text-xl text-black">{Math.round(Number(opportunity.opportunity_score))}</strong></div>
-            <dl className="mt-3 grid grid-cols-3 gap-2 text-xs"><div><dt className="text-white/50">Costo Luna</dt><dd className="font-black">{opportunity.supplier_price == null ? "Pendiente" : `$${Number(opportunity.supplier_price).toFixed(2)}`}</dd></div><div><dt className="text-white/50">Stock</dt><dd className="font-black">{opportunity.supplier_inventory_quantity ?? "Pendiente"}</dd></div><div><dt className="text-white/50">Fuente</dt><dd className="font-black">{listingPackage.source_observed_at ? new Date(listingPackage.source_observed_at).toLocaleDateString("es") : "Pendiente"}</dd></div></dl>
+            <dl className="mt-3 grid grid-cols-3 gap-2 text-xs"><div><dt className="text-white/50">Costo Luna</dt><dd className="font-black">{opportunity.supplier_price == null ? "Pendiente" : `$${Number(opportunity.supplier_price).toFixed(2)}`}</dd></div><div><dt className="text-white/50">Stock</dt><dd className="font-black">{opportunity.supplier_inventory_quantity != null ? opportunity.supplier_inventory_quantity : opportunity.supplier_available === true ? "Disponible · cantidad no probada" : opportunity.supplier_available === false ? "No disponible" : "Pendiente"}</dd></div><div><dt className="text-white/50">Fuente</dt><dd className="font-black">{listingPackage.source_observed_at ? new Date(listingPackage.source_observed_at).toLocaleDateString("es") : "Pendiente"}</dd></div></dl>
             {publicationGateAllowed && <div className="mt-4 rounded-2xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3 text-xs leading-5 text-emerald-50">
               <strong>Publicación controlada desde Seller OS:</strong>
               <ol className="mt-2 list-decimal space-y-1 pl-5">
@@ -3991,7 +4003,7 @@ function ListingWorkspacePageContent() {
             <label className="block"><span className="font-black">Título eBay · máximo 80 caracteres</span><input value={form.title} maxLength={80} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /><span className="mt-1 block text-right text-xs text-white/50">{form.title.length}/80</span></label>
             <div className="grid gap-3 sm:grid-cols-2"><label><span className="font-black">Category ID</span><input inputMode="numeric" value={form.categoryId} onChange={(event) => setForm((current) => ({ ...current, categoryId: event.target.value.replace(/\D/g, "") }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label><label><span className="font-black">Categoría</span><input value={form.categoryName} onChange={(event) => setForm((current) => ({ ...current, categoryName: event.target.value }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label></div>
             <div className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.04] p-3">
-              <label className="block"><span className="font-black">Precio objetivo USD</span><input inputMode="decimal" value={form.pricing.targetPrice ?? ""} onChange={(event) => setForm((current) => ({ ...current, pricing: {
+              <label className="block"><span className="font-black">{finalSmartStockingEconomics ? "Precio final USD" : "Precio objetivo USD"}</span><input inputMode="decimal" readOnly={finalSmartStockingEconomics} value={form.pricing.targetPrice ?? ""} onChange={(event) => setForm((current) => ({ ...current, pricing: {
                 ...current.pricing,
                 targetPrice: event.target.value ? Number(event.target.value) : null,
                 estimatedEbayFees: null,
@@ -4004,15 +4016,16 @@ function ListingWorkspacePageContent() {
                 minimumProfitablePrice: null,
                 passesProfitGate: null,
               } }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label>
-              <button type="button" disabled={busy || !(Number(form.pricing.targetPrice) > 0)} onClick={() => void save(false)} className="mt-2 min-h-11 w-full rounded-xl border border-cyan-200/30 px-3 text-sm font-black text-cyan-50 disabled:opacity-40">{busy ? "Recalculando…" : "Guardar y recalcular rentabilidad"}</button>
+              {!finalSmartStockingEconomics && <button type="button" disabled={busy || !(Number(form.pricing.targetPrice) > 0)} onClick={() => void save(false)} className="mt-2 min-h-11 w-full rounded-xl border border-cyan-200/30 px-3 text-sm font-black text-cyan-50 disabled:opacity-40">{busy ? "Recalculando…" : "Guardar y recalcular rentabilidad"}</button>}
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
                 <div className="rounded-xl bg-black/25 p-2"><span className="text-white/50">Costo Luna</span><strong className="mt-1 block">{money(form.pricing.supplierCost)}</strong></div>
                 <div className="rounded-xl bg-black/25 p-2"><span className="text-white/50">Tarifas eBay est.</span><strong className="mt-1 block">{money(form.pricing.estimatedEbayFees)}</strong></div>
-                <div className="rounded-xl bg-black/25 p-2"><span className="text-white/50">Envío estimado</span><strong className="mt-1 block">{money(form.pricing.estimatedOutboundShipping)}</strong></div>
+                <div className="rounded-xl bg-black/25 p-2"><span className="text-white/50">{finalSmartStockingEconomics ? "Envío Luna · economía" : "Envío estimado"}</span><strong className="mt-1 block">{money(form.pricing.estimatedOutboundShipping)}</strong></div>
                 <div className="rounded-xl bg-black/25 p-2"><span className="text-white/50">Beneficio neto est.</span><strong className="mt-1 block">{money(form.pricing.estimatedNetProfit)}</strong></div>
                 <div className="rounded-xl bg-black/25 p-2"><span className="text-white/50">Margen neto</span><strong className="mt-1 block">{percent(form.pricing.estimatedNetMarginPercent)}</strong></div>
                 <div className="rounded-xl bg-black/25 p-2"><span className="text-white/50">ROI estimado</span><strong className="mt-1 block">{percent(form.pricing.estimatedRoiPercent)}</strong></div>
               </div>
+              {finalSmartStockingEconomics && <p className="mt-3 rounded-xl border border-cyan-200/20 bg-black/20 p-3 text-xs leading-5 text-cyan-50">El envío Luna de $9.99 es un costo proveedor certificado para economía. No configura ni implica automáticamente el envío que verá o pagará el comprador en eBay.</p>}
               <div className={`mt-3 rounded-xl border p-3 text-xs leading-5 ${form.pricing.passesProfitGate === true ? "border-emerald-200/25 text-emerald-50" : form.pricing.passesProfitGate === false ? "border-rose-200/25 text-rose-50" : "border-amber-200/25 text-amber-50"}`}>
                 {form.pricing.passesProfitGate === true
                   ? "Rentabilidad mínima superada con las reservas configuradas."

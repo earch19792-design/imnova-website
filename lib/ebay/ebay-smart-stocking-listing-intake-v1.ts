@@ -10,6 +10,10 @@ import type { DirectedLunaProduct } from "./ebay-luna-directed-product-import"
 import {
   readWinnerEvidenceDecisionPackage,
 } from "./ebay-winner-evidence-v2-service"
+import {
+  LUNA_CANONICAL_SINGLE_RATE_PROOF_V1,
+  LUNA_OPERATOR_BOUND_CANONICAL_US_DESTINATION_V1,
+} from "./ebay-luna-chrome-shipping-capture-v1"
 
 export const SMART_STOCKING_LISTING_INTAKE_VERSION =
   "SELLER_OS_SMART_STOCKING_LISTING_INTAKE_V1" as const
@@ -21,6 +25,7 @@ const LISTING_TITLE =
   "11 in Revolving Plastic Cake Turntable Non-Slip Base Decorating Stand"
 
 type JsonRecord = Record<string, unknown>
+const SHA256 = /^sha256:[0-9a-f]{64}$/
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -29,6 +34,189 @@ function record(value: unknown): JsonRecord {
 
 function text(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+function records(value: unknown) {
+  return Array.isArray(value) ? value.map(record) : []
+}
+
+function money(value: unknown) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : null
+}
+
+export type CakeTurntableListingWorkspaceEvidenceV1 = Readonly<{
+  authorityClass: "SELLER_OS_ITEM3525_FINAL_WORKSPACE_EVIDENCE_V1"
+  decisionPackageId: string
+  decisionSnapshotHash: string
+  frontierId: string
+  frontierDigest: string
+  snapshotDigest: string
+  salePriceUsd: 25.99
+  supplierCostUsd: 3.8
+  supplierShippingUsd: 9.99
+  estimatedEbayFeesUsd: 4.38
+  contributionProfitUsd: 5.48
+  contributionMarginPercent: 21.1
+  roiPercent: 144.33
+  launchTier: "CONTROLLED_MERCHANDISING_BET"
+  entryPotentialScore: 57
+  stock: Readonly<{
+    state: "IN_STOCK_SUPPLIER_STATED"
+    available: true
+    quantity: null
+    safeCapacity: null
+    observedAt: string
+  }>
+  category: Readonly<{
+    categoryId: "183335"
+    categoryName: "Icing Turntables"
+  }>
+  shipping: Readonly<{
+    status: "SHIPPING_DURABLY_PERSISTED"
+    canonicalDestinationMatch: true
+    canonicalDestinationCountryClass: "US"
+    acquisitionAuthority: typeof LUNA_OPERATOR_BOUND_CANONICAL_US_DESTINATION_V1
+    selectedShippingStateProof: typeof LUNA_CANONICAL_SINGLE_RATE_PROOF_V1
+    noPurchase: true
+    buyerFacingShipping: false
+  }>
+}>
+
+export function buildCakeTurntableListingWorkspaceEvidenceV1(input: Readonly<{
+  decisionPackage: Awaited<ReturnType<typeof readWinnerEvidenceDecisionPackage>>
+  opportunity: JsonRecord
+  profitabilityFrontiers: unknown
+}>): CakeTurntableListingWorkspaceEvidenceV1 {
+  const target = CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1
+  const assessment = record(input.opportunity.assessment)
+  const candidate = record(assessment.candidate)
+  const assessmentEconomics = record(assessment.economics)
+  const profile = input.decisionPackage.smartStockingLearningProfile
+  const decision = profile?.decisionSnapshot
+  const economics = decision?.finalEconomics
+  const stockObservedAt = text(input.opportunity.supplier_snapshot_at)
+  const frontierRow = records(record(input.profitabilityFrontiers).frontiers)
+    .find((outer) => {
+      const frontier = record(outer.frontier)
+      return frontier.lunaProductId === target.lunaProductId &&
+        frontier.lunaVariantId === target.lunaVariantId &&
+        frontier.lunaSku === target.lunaSku &&
+        frontier.shippingStatus === "SHIPPING_DURABLY_PERSISTED"
+    })
+  const frontier = record(frontierRow?.frontier)
+  const shipping = record(frontier.shippingCaptureEvidence)
+  if (
+    input.decisionPackage.packageId !== target.packageId ||
+    input.decisionPackage.status !== "GENERATED" ||
+    !profile || !decision || !economics ||
+    profile.entrySnapshot.entryPotentialScore !== 57 ||
+    decision.launchTier !== "CONTROLLED_MERCHANDISING_BET" ||
+    decision.parkReason !== null ||
+    economics.status !== "PASS" || economics.thresholdResult !== "PASS" ||
+    money(economics.salePriceUsd) !== 25.99 ||
+    money(economics.ebayFeesUsd) !== 4.38 ||
+    money(economics.lunaProductCostUsd) !== 3.8 ||
+    money(economics.lunaShippingUsd) !== 9.99 ||
+    money(economics.contributionProfitUsd) !== 5.48 ||
+    money(economics.contributionMarginPercent) !== 21.1 ||
+    money(economics.roiPercent) !== 144.33 ||
+    !isSmartStockingListingIntakeV1(assessment) ||
+    input.opportunity.candidate_key !== CAKE_TURNTABLE_LISTING_INTAKE_KEY ||
+    input.opportunity.supplier_product_id !== target.lunaProductId ||
+    input.opportunity.supplier_variant_id !== target.lunaVariantId ||
+    input.opportunity.supplier_sku !== target.lunaSku ||
+    input.opportunity.gtin !== target.gtin ||
+    money(input.opportunity.supplier_price) !== target.unitCostUsd ||
+    input.opportunity.supplier_available !== true ||
+    input.opportunity.supplier_inventory_quantity !== null ||
+    candidate.available !== true || candidate.inventoryQuantity !== null ||
+    !stockObservedAt || !Number.isFinite(Date.parse(stockObservedAt)) ||
+    money(assessmentEconomics.authoritativeSupplierShippingUsd) !== 9.99 ||
+    money(assessmentEconomics.estimatedNetProfit) !== 5.48 ||
+    money(assessmentEconomics.estimatedNetMarginPercent) !== 21.1 ||
+    money(assessmentEconomics.estimatedRoiPercent) !== 144.33 ||
+    !frontierRow || !SHA256.test(String(frontierRow.snapshotDigest ?? "")) ||
+    !SHA256.test(String(frontier.frontierDigest ?? "")) ||
+    frontier.shippingStatus !== "SHIPPING_DURABLY_PERSISTED" ||
+    money(frontier.shippingValue) !== 9.99 ||
+    shipping.lunaProductId !== target.lunaProductId ||
+    shipping.lunaVariantId !== target.lunaVariantId ||
+    shipping.supplierSku !== target.lunaSku ||
+    money(shipping.shippingUsd) !== 9.99 ||
+    shipping.canonicalDestinationAuthority !==
+      LUNA_OPERATOR_BOUND_CANONICAL_US_DESTINATION_V1 ||
+    shipping.canonicalDestinationCountryClass !== "US" ||
+    shipping.canonicalDestinationMatch !== true ||
+    !SHA256.test(String(shipping.canonicalDestinationFingerprint ?? "")) ||
+    shipping.selectedShippingStateProof !== LUNA_CANONICAL_SINGLE_RATE_PROOF_V1 ||
+    shipping.noPurchase !== true
+  ) throw new Error("CAKE_TURNTABLE_WORKSPACE_EVIDENCE_MISMATCH")
+
+  return Object.freeze({
+    authorityClass: "SELLER_OS_ITEM3525_FINAL_WORKSPACE_EVIDENCE_V1" as const,
+    decisionPackageId: target.packageId,
+    decisionSnapshotHash: profile.decisionSnapshotHash,
+    frontierId: String(frontierRow.frontierId ?? ""),
+    frontierDigest: String(frontier.frontierDigest),
+    snapshotDigest: String(frontierRow.snapshotDigest),
+    salePriceUsd: 25.99 as const,
+    supplierCostUsd: 3.8 as const,
+    supplierShippingUsd: 9.99 as const,
+    estimatedEbayFeesUsd: 4.38 as const,
+    contributionProfitUsd: 5.48 as const,
+    contributionMarginPercent: 21.1 as const,
+    roiPercent: 144.33 as const,
+    launchTier: "CONTROLLED_MERCHANDISING_BET" as const,
+    entryPotentialScore: 57 as const,
+    stock: Object.freeze({
+      state: "IN_STOCK_SUPPLIER_STATED" as const,
+      available: true as const,
+      quantity: null,
+      safeCapacity: null,
+      observedAt: new Date(stockObservedAt).toISOString(),
+    }),
+    category: Object.freeze({
+      categoryId: "183335" as const,
+      categoryName: "Icing Turntables" as const,
+    }),
+    shipping: Object.freeze({
+      status: "SHIPPING_DURABLY_PERSISTED" as const,
+      canonicalDestinationMatch: true as const,
+      canonicalDestinationCountryClass: "US" as const,
+      acquisitionAuthority: LUNA_OPERATOR_BOUND_CANONICAL_US_DESTINATION_V1,
+      selectedShippingStateProof: LUNA_CANONICAL_SINGLE_RATE_PROOF_V1,
+      noPurchase: true as const,
+      buyerFacingShipping: false as const,
+    }),
+  })
+}
+
+export async function resolveCakeTurntableListingWorkspaceEvidenceV1(
+  input: Readonly<{
+    supabase: SupabaseClient
+    accountKey: string
+    opportunity: JsonRecord
+  }>,
+) {
+  const [decisionPackage, frontiers] = await Promise.all([
+    readWinnerEvidenceDecisionPackage(input.supabase,
+      CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.packageId, input.accountKey),
+    input.supabase.rpc("get_seller_os_latest_profitability_frontiers_v1", {
+      p_account_key: input.accountKey,
+      p_marketplace_id: "EBAY_US",
+      p_family_ids: null,
+      p_limit: 100,
+    }),
+  ])
+  if (frontiers.error) {
+    throw new Error("CAKE_TURNTABLE_WORKSPACE_SHIPPING_READBACK_FAILED")
+  }
+  return buildCakeTurntableListingWorkspaceEvidenceV1({
+    decisionPackage,
+    opportunity: input.opportunity,
+    profitabilityFrontiers: frontiers.data,
+  })
 }
 
 export function isSmartStockingListingIntakeV1(value: unknown) {

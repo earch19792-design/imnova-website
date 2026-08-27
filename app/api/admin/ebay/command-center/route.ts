@@ -28,6 +28,8 @@ import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-
 import {
   CAKE_TURNTABLE_LISTING_INTAKE_KEY,
   materializeCakeTurntableListingIntakeV1,
+  resolveCakeTurntableListingWorkspaceEvidenceV1,
+  type CakeTurntableListingWorkspaceEvidenceV1,
 } from "@/lib/ebay/ebay-smart-stocking-listing-intake-v1"
 import {
   CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1,
@@ -240,7 +242,68 @@ async function opportunity(supabase: ReturnType<typeof getSupabaseAdminClient>, 
   return data as Record<string, unknown>
 }
 
-function buildInitialPackage(row: Record<string, unknown>) {
+function smartStockingBoundPricing(
+  evidence: CakeTurntableListingWorkspaceEvidenceV1,
+) {
+  const canonical = canonicalPackagePricing(
+    evidence.supplierCostUsd,
+    evidence.salePriceUsd,
+    { estimatedOutboundShipping: evidence.supplierShippingUsd },
+  )
+  if (canonical.estimatedEbayFees !== evidence.estimatedEbayFeesUsd ||
+      canonical.estimatedNetProfit !== evidence.contributionProfitUsd ||
+      canonical.estimatedNetMarginPercent !== evidence.contributionMarginPercent ||
+      canonical.returnsReserve === null ||
+      canonical.promotedListingsReserve === null ||
+      canonical.passesProfitGate !== true) {
+    throw new Error("CAKE_TURNTABLE_WORKSPACE_ECONOMICS_POLICY_MISMATCH")
+  }
+  return {
+    ...canonical,
+    estimatedEbayFees: evidence.estimatedEbayFeesUsd,
+    estimatedOutboundShipping: evidence.supplierShippingUsd,
+    estimatedNetProfit: evidence.contributionProfitUsd,
+    estimatedNetMarginPercent: evidence.contributionMarginPercent,
+    estimatedRoiPercent: evidence.roiPercent,
+    policyReserves: Math.round((canonical.returnsReserve +
+      canonical.promotedListingsReserve) * 100) / 100,
+    calculationSource:
+      "SELLER_OS_SMART_STOCKING_FINAL_ECONOMICS_DURABLE_READBACK_V1",
+    authoritativeSupplierShipping: true,
+    supplierShippingOnly: true,
+    evidenceBinding: evidence,
+  }
+}
+
+function applySmartStockingWorkspaceEvidence(
+  packageData: Record<string, unknown>,
+  evidence: CakeTurntableListingWorkspaceEvidenceV1 | null,
+) {
+  if (!evidence) return packageData
+  return {
+    ...packageData,
+    categoryId: evidence.category.categoryId,
+    categoryName: evidence.category.categoryName,
+    pricing: smartStockingBoundPricing(evidence),
+    shipping: {
+      ...object(packageData.shipping),
+      supplierShippingEconomicsUsd: evidence.supplierShippingUsd,
+      supplierShippingEvidenceClass: evidence.shipping.status,
+      canonicalDestinationMatch: evidence.shipping.canonicalDestinationMatch,
+      buyerFacingShippingPolicy: "USE_CANONICAL_ACCOUNT_POLICY",
+      supplierShippingIsBuyerFacing: false,
+    },
+    evidenceSnapshot: {
+      ...object(packageData.evidenceSnapshot),
+      smartStockingFinalWorkspaceEvidenceV1: evidence,
+    },
+  }
+}
+
+function buildInitialPackage(
+  row: Record<string, unknown>,
+  smartStockingEvidence: CakeTurntableListingWorkspaceEvidenceV1 | null = null,
+) {
   const assessment = object(row.assessment)
   const intelligence = object(assessment.listingIntelligencePackage)
   const candidate = object(assessment.candidate)
@@ -253,7 +316,7 @@ function buildInitialPackage(row: Record<string, unknown>) {
   const targetPrice = row.median_total_buyer_price
     ?? economics.conservativeTotalBuyerPrice
     ?? null
-  return {
+  return applySmartStockingWorkspaceEvidence({
     title: String(
       intelligence.recommendedTitle
       ?? recommended.titleFormula
@@ -277,7 +340,7 @@ function buildInitialPackage(row: Record<string, unknown>) {
       evidenceGuards: strings(row.evidence_guards),
       assessment,
     },
-  }
+  }, smartStockingEvidence)
 }
 
 type ApplicableSafeDefaults = NonNullable<Awaited<ReturnType<
@@ -711,6 +774,12 @@ export async function POST(req: Request) {
     }
 
     if (action === "prepare_package") {
+      const smartStockingEvidence = candidateKey ===
+        CAKE_TURNTABLE_LISTING_INTAKE_KEY
+        ? await resolveCakeTurntableListingWorkspaceEvidenceV1({
+          supabase, accountKey, opportunity: sourceOpportunity,
+        })
+        : null
       const { data: existing, error: readError } = await supabase
         .from("ebay_listing_packages")
         .select("*")
@@ -877,7 +946,10 @@ export async function POST(req: Request) {
         }, { status: 409 })
       }
       const effectiveOpportunity = sameDayContext?.opportunity ?? sourceOpportunity
-      const initialSeed = buildInitialPackage(effectiveOpportunity)
+      const initialSeed = buildInitialPackage(
+        effectiveOpportunity,
+        smartStockingEvidence,
+      )
       const existingPricing = object(object(existing?.package_data).pricing)
       const authorizedTargetPrice = sameDayContext
         ? sameDayContext.authorization.controlledRisk
@@ -901,14 +973,19 @@ export async function POST(req: Request) {
         if (existing.account_key !== accountKey) {
           throw new Error("COMMAND_CENTER_PACKAGE_ACCOUNT_SCOPE_REQUIRED")
         }
-        const currentPackageData = sameDayContext ? object(seed) : object(existing.package_data)
+        const currentPackageData = applySmartStockingWorkspaceEvidence(
+          sameDayContext ? object(seed) : object(existing.package_data),
+          smartStockingEvidence,
+        )
         const currentPricing = object(currentPackageData.pricing)
         const seedPricing = object(seed.pricing)
-        const refreshedPricing = canonicalPackagePricing(
-          effectiveOpportunity.supplier_price ?? seedPricing.supplierCost,
-          currentPricing.targetPrice ?? seedPricing.targetPrice,
-          sameDayContext?.economicsConfig,
-        )
+        const refreshedPricing = smartStockingEvidence
+          ? smartStockingBoundPricing(smartStockingEvidence)
+          : canonicalPackagePricing(
+            effectiveOpportunity.supplier_price ?? seedPricing.supplierCost,
+            currentPricing.targetPrice ?? seedPricing.targetPrice,
+            sameDayContext?.economicsConfig,
+          )
         const refreshedPackageData = applySafeSellerDefaults({
           ...currentPackageData,
           pricing: refreshedPricing,
@@ -1050,8 +1127,26 @@ export async function POST(req: Request) {
       }
       const form = object(body.packageData)
       const effectiveOpportunity = sameDayContext?.opportunity ?? sourceOpportunity
-      const sourceSeed = buildInitialPackage(effectiveOpportunity)
+      const smartStockingEvidence = candidateKey ===
+        CAKE_TURNTABLE_LISTING_INTAKE_KEY
+        ? await resolveCakeTurntableListingWorkspaceEvidenceV1({
+          supabase, accountKey, opportunity: sourceOpportunity,
+        })
+        : null
+      const sourceSeed = buildInitialPackage(
+        effectiveOpportunity,
+        smartStockingEvidence,
+      )
       const requestedPricing = object(form.pricing)
+      if (smartStockingEvidence &&
+          Number(requestedPricing.targetPrice) !==
+            smartStockingEvidence.salePriceUsd) {
+        return NextResponse.json({
+          success: false,
+          error: "COMMAND_CENTER_SMART_STOCKING_FINAL_PRICE_CHANGED",
+          blockers: ["SMART_STOCKING_FINAL_PRICE_25_99_REQUIRED"],
+        }, { status: 409 })
+      }
       const controlledRiskPrice = sameDayContext?.authorization.controlledRisk === true
         ? Number(sameDayContext.handoffPackage.price)
         : null
@@ -1063,11 +1158,13 @@ export async function POST(req: Request) {
           blockers: ["CONTROLLED_RISK_APPROVED_PRICE_REQUIRED"],
         }, { status: 409 })
       }
-      const canonicalPricing = canonicalPackagePricing(
-        effectiveOpportunity.supplier_price ?? object(sourceSeed.pricing).supplierCost,
-        requestedPricing.targetPrice,
-        sameDayContext?.economicsConfig,
-      )
+      const canonicalPricing = smartStockingEvidence
+        ? smartStockingBoundPricing(smartStockingEvidence)
+        : canonicalPackagePricing(
+          effectiveOpportunity.supplier_price ?? object(sourceSeed.pricing).supplierCost,
+          requestedPricing.targetPrice,
+          sameDayContext?.economicsConfig,
+        )
       const packageForValidation = {
         ...form,
         imageAssetManifest: currentPackageData.imageAssetManifest,
@@ -1109,9 +1206,20 @@ export async function POST(req: Request) {
           imageUrls: strings(form.imageUrls, 24),
           imageAssetManifest: currentPackageData.imageAssetManifest,
           pricing: canonicalPricing,
-          shipping: object(form.shipping),
+          shipping: smartStockingEvidence
+            ? object(applySmartStockingWorkspaceEvidence(
+              { shipping: object(form.shipping) },
+              smartStockingEvidence,
+            ).shipping)
+            : object(form.shipping),
           draftConfiguration: object(form.draftConfiguration),
-          evidenceSnapshot: currentPackageData.evidenceSnapshot ?? sourceSeed.evidenceSnapshot,
+          evidenceSnapshot: smartStockingEvidence
+            ? object(applySmartStockingWorkspaceEvidence(
+              { evidenceSnapshot: currentPackageData.evidenceSnapshot ??
+                sourceSeed.evidenceSnapshot },
+              smartStockingEvidence,
+            ).evidenceSnapshot)
+            : currentPackageData.evidenceSnapshot ?? sourceSeed.evidenceSnapshot,
           sourceRefresh: currentPackageData.sourceRefresh ?? null,
           safeDefaults: currentPackageData.safeDefaults ?? null,
           sameDayPilot: currentPackageData.sameDayPilot ?? null,
