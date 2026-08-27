@@ -16,6 +16,8 @@ import {
   LUNA_SUPPLIER_IMAGE_RIGHTS_AUTHORITY_V1,
   resolveInheritedLunaSupplierImageRightsV1,
 } from "./luna-supplier-image-rights-authority-v1"
+import { assertAutomaticLunaImageDurableReadbackV1 } from
+  "./luna-supplier-image-durable-readback-v1"
 import { getSupabaseAdminClient } from "../supabase-admin"
 
 const OUTPUT_BUCKET = "ebay-listing-images"
@@ -485,15 +487,22 @@ export async function ensureAutomaticLunaSupplierImagesV1(input: Readonly<{
     ))
   }
   const savedPackageData = record(listingPackage.package_data)
+  const durableReadback = assertAutomaticLunaImageDurableReadbackV1({
+    packageData: savedPackageData,
+    acceptedAssets: accepted,
+  })
   return {
     listingPackage,
     imageUrls: Array.isArray(savedPackageData.imageUrls)
       ? savedPackageData.imageUrls : [],
     authority,
     officialImageCount: context.officialImageUrls.length,
-    validCompliantImageCount: acceptedIds.size,
+    validCompliantImageCount: durableReadback.validCompliantImageCount,
     excludedImageCount: excluded.length,
     excluded,
+    durableImageAssetReadback: durableReadback.durableImageAssetReadback,
+    finalPublicationPreflightImageCountMatch:
+      durableReadback.finalPublicationPreflightImageCountMatch,
     imageRights: "PASS_INHERITED" as const,
     imageOptimization: "AUTO_PASS" as const,
     imageReady: true as const,

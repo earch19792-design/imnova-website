@@ -48,6 +48,7 @@ export type FinalListingReviewPublicationGate = {
     | "ebay_reference_guided_final_listing_review_previews"
     | "APPROVED_IMAGE_REVISION_AUTOMATED_QA"
     | "APPROVED_SAME_DAY_IMAGE_SET_AUTOMATED_QA"
+    | "APPROVED_LUNA_SUPPLIER_IMAGE_AUTOMATED_QA"
 }
 
 type AutomatedRevisionEvidence = {
@@ -60,6 +61,8 @@ type AutomatedSameDayEvidence = {
   listingPackage: Record<string, any> | null
   assets: Array<Record<string, any>>
 }
+
+type AutomatedLunaSupplierEvidence = AutomatedSameDayEvidence
 
 const AUTOMATED_CURATION_CONTRACT =
   "SELLER_OS_AUTHORIZED_COMMERCIAL_CURATION_V1_2026_07_24"
@@ -115,6 +118,123 @@ function blockedAutomatedGate(
     selectedAssets: 0,
     passedAssets: 0,
     source,
+  }
+}
+
+export function evaluateApprovedLunaSupplierImageAutomationGate(
+  evidence: AutomatedLunaSupplierEvidence,
+): FinalListingReviewPublicationGate {
+  const listingPackage = object(evidence.listingPackage)
+  const packageData = object(listingPackage.package_data)
+  const readiness = object(packageData.supplierImageReadiness)
+  const imageUrls = stringArray(packageData.imageUrls)
+  const manifest = Array.isArray(packageData.imageAssetManifest)
+    ? packageData.imageAssetManifest.map(object) : []
+  const assetIds = manifest.map((entry) => text(entry.assetId))
+  const actor = text(listingPackage.created_by)
+  const blocked = () => blockedAutomatedGate(
+    "FINAL_LISTING_LUNA_SUPPLIER_IMAGE_GATE_NOT_READY",
+    "APPROVED_LUNA_SUPPLIER_IMAGE_AUTOMATED_QA",
+  )
+  if (
+    !["draft", "ready_for_review", "approved"].includes(
+      text(listingPackage.status),
+    ) || !actor || readiness.version !== "LUNA_SUPPLIER_IMAGE_AUTO_READY_V1" ||
+    readiness.authorityVersion !==
+      "OPERATOR_BOUND_LUNA_SUPPLIER_IMAGE_RIGHTS_V1" ||
+    readiness.imageRights !== "PASS_INHERITED" ||
+    readiness.imageOptimization !== "AUTO_PASS" ||
+    readiness.imageReady !== true ||
+    readiness.humanImageActionRequired !== false ||
+    imageUrls.length < 1 || imageUrls.length > 24 ||
+    new Set(imageUrls).size !== imageUrls.length ||
+    manifest.length !== imageUrls.length ||
+    assetIds.length !== imageUrls.length ||
+    assetIds.some((id) => !/^[0-9a-f-]{36}$/i.test(id)) ||
+    new Set(assetIds).size !== assetIds.length ||
+    Number(readiness.validCompliantImageCount) !== imageUrls.length ||
+    evidence.assets.length !== imageUrls.length
+  ) return blocked()
+
+  const byId = new Map(evidence.assets.map((asset) => [
+    text(asset.id), object(asset),
+  ]))
+  const ordered = assetIds.map((id) => byId.get(id)).filter(Boolean)
+  const passed = ordered.filter((asset, index) => {
+    const transformation = object(asset?.transformation)
+    const qa = object(asset?.qa_result)
+    const rightsAuthority = object(qa.rightsAuthority)
+    const entry = manifest[index]
+    const allowedTransform = (
+      transformation.backgroundMethod === "AUTHORIZED_SOURCE_FRAMED_CONTAIN" &&
+      transformation.sourcePixelsTreatment === "PRESERVED_FULL_FRAME"
+    ) || (
+      transformation.backgroundMethod ===
+        "LIGHT_NEUTRAL_DETERMINISTIC_NORMALIZATION" &&
+      transformation.sourcePixelsTreatment === "NEAR_NEUTRAL_WHITEN_ONLY"
+    )
+    let officialSource = false
+    try {
+      const host = new URL(text(asset?.source_url)).hostname.toLowerCase()
+      officialSource = host === "cdn.shopify.com" ||
+        host === "lunaportex.com" || host.endsWith(".lunaportex.com")
+    } catch {
+      officialSource = false
+    }
+    return asset?.status === "approved" &&
+      text(asset?.approved_by) === actor &&
+      text(asset?.created_by) === actor &&
+      Number.isFinite(Date.parse(text(asset?.approved_at))) &&
+      officialSource && asset?.rights_evidence_confirmed === true &&
+      asset?.rights_basis === "supplier_authorized" &&
+      asset?.authorization_reference ===
+        "OPERATOR_ATTESTED_LUNA_SUPPLIER_IMAGE_AUTHORIZATION_V1" &&
+      asset?.transformation_version === "EBAY_MAIN_IMAGE_SAFE_WHITE_V2" &&
+      asset?.output_width === 1600 && asset?.output_height === 1600 &&
+      transformation.supplierRightsAuthorityVersion ===
+        "OPERATOR_BOUND_LUNA_SUPPLIER_IMAGE_RIGHTS_V1" &&
+      /^[0-9a-f]{64}$/.test(text(
+        transformation.supplierImageIdentityDigest,
+      )) && /^[0-9a-f]{64}$/.test(text(
+        transformation.supplierImageSourceBindingDigest,
+      )) && transformation.generativeAiUsed === false && allowedTransform &&
+      qa.automaticStatus === "PASSED" &&
+      qa.approvalMode === "AUTOMATIC_DETERMINISTIC" &&
+      qa.imageReadiness === "IMAGE_READY_AUTO_PASS" &&
+      qa.humanApprovalRequired === false &&
+      qa.outputQualityPassed === true &&
+      qa.materialProductEquivalencePassed === true &&
+      qa.sourceHashPreserved === true &&
+      qa.onlyAllowedDeterministicTransforms === true &&
+      rightsAuthority.version ===
+        "OPERATOR_BOUND_LUNA_SUPPLIER_IMAGE_RIGHTS_V1" &&
+      rightsAuthority.authorityProvenance === "OPERATOR_ATTESTED" &&
+      rightsAuthority.documentedLicense === false &&
+      rightsAuthority.operatorAttested === true &&
+      text(entry.assetId) === text(asset?.id) &&
+      text(entry.sha256) === text(asset?.output_sha256) &&
+      text(entry.url) === text(asset?.public_url) &&
+      imageUrls[index] === text(asset?.public_url) &&
+      entry.automaticQa === "PASSED"
+  })
+  const ready = ordered.length === imageUrls.length &&
+    passed.length === imageUrls.length
+  return {
+    required: true,
+    allowed: ready,
+    reason: ready ? null : "FINAL_LISTING_LUNA_SUPPLIER_IMAGE_GATE_NOT_READY",
+    reviewId: null,
+    revisionId: null,
+    attemptId: null,
+    previewHash: null,
+    finalVisualSetLocked: ready,
+    generationControlsHidden: true,
+    readyForUnpublishedOfferAuthorization: ready,
+    visualPhase: ready ? "COMPLETED" : null,
+    providerCallsSnapshot: 0,
+    selectedAssets: ordered.length,
+    passedAssets: passed.length,
+    source: "APPROVED_LUNA_SUPPLIER_IMAGE_AUTOMATED_QA",
   }
 }
 
@@ -537,14 +657,15 @@ export async function loadFinalListingReviewPublicationGate(input: {
     .filter(Boolean)
   if (!listingPackage) return legacyGate
 
-  if (!preferredRevisionId && packageAssetIds.length === 7) {
+  if (!preferredRevisionId && packageAssetIds.length > 0) {
     let assetsQuery = input.supabase
       .from("ebay_listing_image_assets")
       .select([
         "id", "status", "approved_by", "approved_at", "public_url",
         "source_sha256", "output_sha256", "output_width", "output_height",
         "rights_evidence_confirmed", "transformation", "qa_result",
-        "created_by",
+        "created_by", "source_url", "rights_basis",
+        "authorization_reference", "transformation_version",
       ].join(","))
       .eq("listing_package_id", input.listingPackageId)
       .in("id", packageAssetIds)
@@ -553,10 +674,20 @@ export async function loadFinalListingReviewPublicationGate(input: {
     if (assetsError) {
       throw new Error("FINAL_LISTING_AUTOMATED_GATE_LOOKUP_FAILED")
     }
-    return evaluateApprovedSameDayImageSetAutomationGate({
+    const automatedEvidence = {
       listingPackage: listingPackage as Record<string, any>,
       assets: (assets ?? []) as Array<Record<string, any>>,
-    })
+    }
+    if (object(packageData.supplierImageReadiness).version ===
+        "LUNA_SUPPLIER_IMAGE_AUTO_READY_V1") {
+      return evaluateApprovedLunaSupplierImageAutomationGate(
+        automatedEvidence,
+      )
+    }
+    if (packageAssetIds.length === 7) {
+      return evaluateApprovedSameDayImageSetAutomationGate(automatedEvidence)
+    }
+    return legacyGate
   }
   if (!preferredRevisionId) return legacyGate
 
