@@ -12,6 +12,10 @@ import {
   type WinnerEvidenceDecisionPackage,
   type WinnerEvidenceInput,
 } from "./ebay-winner-evidence-v2"
+import {
+  validateSmartStockingLearningProfileV1,
+  type SmartStockingLearningProfile,
+} from "./ebay-smart-stocking-learning-profile-v1"
 
 const STAGING_REF = "vsfthqydfrdzulldbfbe"
 
@@ -169,7 +173,7 @@ export async function readWinnerEvidenceDecisionPackage(
   }
   const { data, error } = await supabase
     .from("marketplace_listing_decision_packages")
-    .select("id,status,package_version,package_hash,verdict,generated_at,package_payload")
+    .select("id,status,package_version,package_hash,verdict,generated_at,package_payload,smart_stocking_learning_profile,smart_stocking_learning_profile_updated_at")
     .eq("id", packageId)
     .eq("marketplace_account_key", marketplaceAccountKey)
     .eq("marketplace", "EBAY_US")
@@ -187,11 +191,16 @@ export async function readWinnerEvidenceDecisionPackage(
   ) {
     throw new Error("WINNER_EVIDENCE_PACKAGE_INTEGRITY_MISMATCH")
   }
+  const learningProfile = data.smart_stocking_learning_profile
+  if (learningProfile !== null) validateSmartStockingLearningProfileV1(learningProfile)
   return {
     packageId: data.id as string,
     status: data.status as string,
     generatedAt: data.generated_at as string,
     package: sanitizeWinnerEvidencePackage(payload),
+    smartStockingLearningProfile: learningProfile as SmartStockingLearningProfile | null,
+    smartStockingLearningProfileUpdatedAt:
+      data.smart_stocking_learning_profile_updated_at as string | null,
     safety: {
       previewOnly: true,
       stagingOnly: true,
@@ -202,6 +211,109 @@ export async function readWinnerEvidenceDecisionPackage(
       draftsCreated: 0,
       publicationsCreated: 0,
     },
+  }
+}
+
+export async function persistSmartStockingLearningProfileV1(
+  supabase: SupabaseClient,
+  input: {
+    packageId: string
+    marketplaceAccountKey: string
+    profile: SmartStockingLearningProfile
+  },
+) {
+  if (!winnerEvidencePreviewConfiguration().configured) {
+    throw new Error("SMART_STOCKING_PROFILE_PREVIEW_STAGING_REQUIRED")
+  }
+  const packageId = uuidOrNull(input.packageId)
+  if (!packageId) throw new Error("SMART_STOCKING_PROFILE_PACKAGE_ID_INVALID")
+  validateSmartStockingLearningProfileV1(input.profile)
+
+  const { data: existing, error: readError } = await supabase
+    .from("marketplace_listing_decision_packages")
+    .select("id,supplier_sku,supplier_variant_id,smart_stocking_learning_profile")
+    .eq("id", packageId)
+    .eq("marketplace_account_key", input.marketplaceAccountKey)
+    .eq("marketplace", "EBAY_US")
+    .maybeSingle()
+  if (readError) throw new Error("SMART_STOCKING_PROFILE_PACKAGE_READ_FAILED")
+  if (!existing) throw new Error("SMART_STOCKING_PROFILE_PACKAGE_NOT_FOUND")
+
+  const durableProfile = existing.smart_stocking_learning_profile
+  if (durableProfile !== null) {
+    validateSmartStockingLearningProfileV1(durableProfile)
+    if (durableProfile.entrySnapshotHash !== input.profile.entrySnapshotHash) {
+      throw new Error("SMART_STOCKING_ENTRY_SNAPSHOT_IMMUTABLE")
+    }
+  }
+
+  const { data: written, error: writeError } = await supabase
+    .from("marketplace_listing_decision_packages")
+    .update({ smart_stocking_learning_profile: input.profile })
+    .eq("id", packageId)
+    .eq("marketplace_account_key", input.marketplaceAccountKey)
+    .eq("marketplace", "EBAY_US")
+    .select("id,supplier_sku,supplier_variant_id,smart_stocking_learning_profile,smart_stocking_learning_profile_updated_at")
+    .single()
+  if (writeError) throw new Error("SMART_STOCKING_PROFILE_DURABLE_WRITE_FAILED")
+  validateSmartStockingLearningProfileV1(written.smart_stocking_learning_profile)
+  if (written.smart_stocking_learning_profile.entrySnapshotHash !==
+        input.profile.entrySnapshotHash ||
+      written.smart_stocking_learning_profile.decisionSnapshotHash !==
+        input.profile.decisionSnapshotHash) {
+    throw new Error("SMART_STOCKING_PROFILE_DURABLE_READBACK_MISMATCH")
+  }
+  return {
+    packageId: written.id as string,
+    supplierSku: written.supplier_sku as string,
+    supplierVariantId: written.supplier_variant_id as string | null,
+    profile: written.smart_stocking_learning_profile as SmartStockingLearningProfile,
+    updatedAt: written.smart_stocking_learning_profile_updated_at as string,
+    entrySnapshotImmutable: true as const,
+    durableReadback: "PASS" as const,
+    safety: {
+      ebayWrites: 0,
+      productionAllowed: false,
+      publishingAllowed: false,
+    },
+  }
+}
+
+export async function readSmartStockingLearningProfileV1(
+  supabase: SupabaseClient,
+  input: {
+    marketplaceAccountKey: string
+    supplierSku: string
+    supplierVariantId?: string | null
+  },
+) {
+  if (!winnerEvidencePreviewConfiguration().configured) {
+    throw new Error("SMART_STOCKING_PROFILE_PREVIEW_STAGING_REQUIRED")
+  }
+  let query = supabase
+    .from("marketplace_listing_decision_packages")
+    .select("id,supplier_sku,supplier_variant_id,smart_stocking_learning_profile,smart_stocking_learning_profile_updated_at")
+    .eq("marketplace_account_key", input.marketplaceAccountKey)
+    .eq("marketplace", "EBAY_US")
+    .eq("supplier_sku", input.supplierSku)
+    .not("smart_stocking_learning_profile", "is", null)
+  if (input.supplierVariantId) {
+    query = query.eq("supplier_variant_id", input.supplierVariantId)
+  }
+  const { data, error } = await query
+    .order("smart_stocking_learning_profile_updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error("SMART_STOCKING_PROFILE_READ_FAILED")
+  if (!data) throw new Error("SMART_STOCKING_PROFILE_NOT_FOUND")
+  validateSmartStockingLearningProfileV1(data.smart_stocking_learning_profile)
+  return {
+    packageId: data.id as string,
+    supplierSku: data.supplier_sku as string,
+    supplierVariantId: data.supplier_variant_id as string | null,
+    profile: data.smart_stocking_learning_profile as SmartStockingLearningProfile,
+    updatedAt: data.smart_stocking_learning_profile_updated_at as string,
+    durableReadback: "PASS" as const,
   }
 }
 
