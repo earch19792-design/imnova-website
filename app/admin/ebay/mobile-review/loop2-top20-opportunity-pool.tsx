@@ -12,6 +12,7 @@ import {
   buildEbayOneClickResearchLease,
   buildEbayOneClickResearchPlan,
   establishEbayOneClickResearchHandshake,
+  validateEbayOneClickDurableSoldEvidenceOutcome,
   validateEbayOneClickNoValidSoldEvidenceOutcome,
   validateEbayOneClickResearchCompletion,
 } from "@/lib/ebay/ebay-one-click-research-session-v1"
@@ -1457,9 +1458,10 @@ export function Loop2Top20OpportunityPool({
             taskOutcome: "DURABLE_SOLD_EVIDENCE" | "NO_VALID_SOLD_EVIDENCE"
             noValidSoldEvidence?: Record<string, unknown>
             durableValidation: {
-              status: "PASS"
+              status: "PASS" | "PASS_WITH_PACK_SIGNALS" | "PASS_PACK_SIGNALS_ONLY"
               readbackCount: number
               freshSoldRows: number
+              commercialPackSignalsPreserved: number
               evidenceMaxAgeDays: number
               displayedVsRealizedGuard: "PASS"
               bestOfferGuard: "PASS"
@@ -1496,18 +1498,17 @@ export function Loop2Top20OpportunityPool({
           }
           const durable = sold.result.durableValidation
           if (sold.result.taskOutcome === "DURABLE_SOLD_EVIDENCE") {
-            if (!durable || durable.status !== "PASS" || durable.readbackCount < 1 ||
-              durable.marketplaceWrites !== 0 ||
-              durable.displayedVsRealizedGuard !== "PASS" ||
-              durable.bestOfferGuard !== "PASS") {
-              throw new Error("ONE_CLICK_RESEARCH_DURABLE_VALIDATION_FAILED")
-            }
-            freshSoldRows += durable.freshSoldRows
-            evidenceMaxAgeDays = Math.max(evidenceMaxAgeDays, durable.evidenceMaxAgeDays)
+            const validatedDurable = validateEbayOneClickDurableSoldEvidenceOutcome(
+              durable ?? {},
+            )
+            freshSoldRows += validatedDurable.freshSoldRows
+            evidenceMaxAgeDays = Math.max(
+              evidenceMaxAgeDays, validatedDurable.evidenceMaxAgeDays,
+            )
             taskOutcomes.push({
               ordinal: task.ordinal,
               state: "DURABLE_SOLD_EVIDENCE",
-              validCount: durable.freshSoldRows,
+              validCount: validatedDurable.freshSoldRows,
               rejectedCount: 0,
               rejectionReasonCounts: {},
             })

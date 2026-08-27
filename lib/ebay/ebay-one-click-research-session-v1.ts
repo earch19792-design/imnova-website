@@ -217,6 +217,43 @@ export function validateEbayOneClickResearchCompletion(input: {
   })
 }
 
+export function validateEbayOneClickDurableSoldEvidenceOutcome(
+  input: Record<string, unknown>,
+) {
+  const integer = (value: unknown) => Number.isInteger(value) ? Number(value) : null
+  const status = input.status === "PASS" || input.status === "PASS_WITH_PACK_SIGNALS"
+    ? input.status : null
+  const readbackCount = integer(input.readbackCount)
+  const freshSoldRows = integer(input.freshSoldRows)
+  const commercialPackSignalsPreserved = integer(input.commercialPackSignalsPreserved)
+  const evidenceMaxAgeDays = typeof input.evidenceMaxAgeDays === "number"
+    ? input.evidenceMaxAgeDays : Number.NaN
+  const packStatusValid = commercialPackSignalsPreserved !== null &&
+    (status === "PASS"
+      ? commercialPackSignalsPreserved === 0
+      : status === "PASS_WITH_PACK_SIGNALS" && commercialPackSignalsPreserved > 0)
+  if (!status || readbackCount === null || readbackCount < 1 ||
+    freshSoldRows === null || freshSoldRows < 1 ||
+    commercialPackSignalsPreserved === null || commercialPackSignalsPreserved < 0 ||
+    readbackCount !== freshSoldRows + commercialPackSignalsPreserved ||
+    !packStatusValid || !Number.isFinite(evidenceMaxAgeDays) ||
+    evidenceMaxAgeDays < 0 || evidenceMaxAgeDays > 30 ||
+    input.displayedVsRealizedGuard !== "PASS" || input.bestOfferGuard !== "PASS" ||
+    input.marketplaceWrites !== 0) {
+    throw new Error("ONE_CLICK_RESEARCH_DURABLE_VALIDATION_FAILED")
+  }
+  return Object.freeze({
+    status,
+    readbackCount,
+    freshSoldRows,
+    commercialPackSignalsPreserved,
+    evidenceMaxAgeDays,
+    displayedVsRealizedGuard: "PASS" as const,
+    bestOfferGuard: "PASS" as const,
+    marketplaceWrites: 0 as const,
+  })
+}
+
 export type EbayOneClickNoValidSoldEvidenceOutcome = Readonly<{
   taskOutcome: typeof EBAY_ONE_CLICK_NO_VALID_SOLD_EVIDENCE
   sourceStatus: "HEALTHY"
