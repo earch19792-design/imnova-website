@@ -220,9 +220,20 @@ function resolvedPackageHardGates(packageData: Record<string, unknown>) {
     && positive(dimensions.height)
     && ["INCH", "CENTIMETER"].includes(String(dimensions.unit ?? "").toUpperCase())
   const aspectEntries = Object.entries(object(packageData.aspects))
+  const taxonomyPreflight = object(packageData.taxonomyPreflight)
+  const requiredTaxonomyAspects = Array.isArray(
+    taxonomyPreflight.requiredAspects,
+  )
+    ? taxonomyPreflight.requiredAspects.map(object)
+      .map((aspect) => String(aspect.name ?? "").trim()).filter(Boolean)
+    : []
   const taxonomyReady = /^\d{1,12}$/.test(String(packageData.categoryId ?? ""))
+    && taxonomyPreflight.status === "CONSULTADO"
+    && String(taxonomyPreflight.categoryId ?? "")
+      === String(packageData.categoryId ?? "")
     && aspectEntries.length > 0
-    && aspectEntries.every(([, value]) => String(value ?? "").trim().length > 0)
+    && requiredTaxonomyAspects.every((name) =>
+      String(object(packageData.aspects)[name] ?? "").trim().length > 0)
   return new Set([
     ...(imagesReady ? ["NEED_AUTHORIZED_PRODUCT_IMAGES"] : []),
     ...(weightReady ? ["NEED_PACKAGE_WEIGHT"] : []),
@@ -1220,6 +1231,7 @@ export async function POST(req: Request) {
               smartStockingEvidence,
             ).evidenceSnapshot)
             : currentPackageData.evidenceSnapshot ?? sourceSeed.evidenceSnapshot,
+          taxonomyPreflight: currentPackageData.taxonomyPreflight ?? null,
           sourceRefresh: currentPackageData.sourceRefresh ?? null,
           safeDefaults: currentPackageData.safeDefaults ?? null,
           sameDayPilot: currentPackageData.sameDayPilot ?? null,

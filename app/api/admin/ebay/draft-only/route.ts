@@ -50,6 +50,9 @@ import {
   getEbayTaxonomyListingIntelligence,
   type EbayTaxonomyListingIntelligence,
 } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
+import {
+  buildEbayListingTaxonomyPreflightV1,
+} from "@/lib/ebay/ebay-listing-taxonomy-preflight-v1"
 import { enqueueSellerWhatsAppAlert } from "@/lib/ebay/ebay-seller-whatsapp-alerts"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { loadSameDayAuthorizedPublicationContext } from "@/lib/ebay/ebay-same-day-authorized-publication"
@@ -845,6 +848,9 @@ export async function POST(req: Request) {
   }
   const action = text(body.action)
   try {
+    if (action === "taxonomy_preflight") {
+      return taxonomyPreflight(body, auth.actor)
+    }
     if (action === "preview") return previewDraft(body, auth.actor)
     if (action === "preflight") return preflightDraft(body, auth.actor)
     if (action === "account_preflight") return preflightAccount(body, auth.actor)
@@ -859,6 +865,133 @@ export async function POST(req: Request) {
   } catch (error) {
     return jsonError(error)
   }
+}
+
+async function taxonomyPreflight(body: JsonRecord, actor: string) {
+  const packageId = uuid(body.packageId)
+  if (!packageId) {
+    return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_REQUIRED"), 400)
+  }
+  const sellerAccountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!sellerAccountKey) {
+    return jsonError(new Error(
+      "EBAY_DRAFT_ONLY_PACKAGE_ACCOUNT_SCOPE_REQUIRED",
+    ), 503)
+  }
+  const supabase = getSupabaseAdminClient()
+  const { data: listingPackage, error: packageError } = await supabase
+    .from("ebay_listing_packages")
+    .select("id,account_key,opportunity_id,candidate_key,created_by,status,readiness,source_observed_at,updated_at,package_data")
+    .eq("id", packageId)
+    .eq("created_by", actor)
+    .eq("account_key", sellerAccountKey)
+    .maybeSingle()
+  if (packageError || !listingPackage) {
+    return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_NOT_FOUND"), 404)
+  }
+  if (!["draft", "ready_for_review"].includes(text(listingPackage.status))) {
+    return jsonError(new Error(
+      "EBAY_LISTING_TAXONOMY_PACKAGE_STATUS_INVALID",
+    ), 409)
+  }
+
+  const packageData = record(listingPackage.package_data)
+  const categoryId = text(packageData.categoryId)
+  if (!/^\d{1,12}$/.test(categoryId)) {
+    return jsonError(new Error(
+      "EBAY_LISTING_TAXONOMY_CATEGORY_REQUIRED",
+    ), 409)
+  }
+  const taxonomy = await getEbayTaxonomyListingIntelligence(
+    text(packageData.title).slice(0, 350),
+    categoryId,
+    { allowTitleSuggestionFallback: false },
+  )
+  if (taxonomy.status !== "AVAILABLE") {
+    return NextResponse.json({
+      success: false,
+      error: taxonomy.failureCode ?? "EBAY_LISTING_TAXONOMY_FETCH_FAILED",
+      taxonomy,
+      safety: {
+        ebayWriteUsed: false,
+        ebayResourceMethods: ["GET"],
+        canPublish: false,
+      },
+    }, { status: 502 })
+  }
+
+  const item3525 = text(listingPackage.candidate_key)
+    === "smart-stocking:EBAY_US:9220835475680:48809646653664"
+  const preflight = buildEbayListingTaxonomyPreflightV1({
+    taxonomy,
+    expectedCategoryId: categoryId,
+    existingAspects: record(packageData.aspects),
+    provenProductValues: item3525 ? {
+      Type: "Turntable",
+      Material: "Plastic",
+      Features: "Non-Slip Base",
+      Size: "11 in",
+      UPC: "740119084743",
+    } : {},
+    knownUnknownAspectNames: item3525
+      ? ["Brand", "MPN", "Model", "Color"] : [],
+  })
+  const nextPackageData = {
+    ...packageData,
+    categoryName: taxonomy.categoryName ?? packageData.categoryName,
+    aspects: preflight.resolvedAspects,
+    taxonomyPreflight: preflight,
+  }
+  const { data: savedData, error: saveError } = await supabase.rpc(
+    "ebay_save_listing_package_guarded",
+    {
+      p_package_id: listingPackage.id,
+      p_account_key: sellerAccountKey,
+      p_actor: actor,
+      p_opportunity_id: listingPackage.opportunity_id,
+      p_candidate_key: listingPackage.candidate_key,
+      p_operation: "save",
+      p_package_patch: nextPackageData,
+      p_status: listingPackage.status,
+      p_readiness: listingPackage.readiness,
+      p_source_observed_at: listingPackage.source_observed_at,
+      p_expected_updated_at: listingPackage.updated_at,
+    },
+  )
+  const saved = Array.isArray(savedData)
+    ? record(savedData[0]) : record(savedData)
+  if (saveError || !uuid(saved.id)) {
+    const code = databaseExceptionCode(
+      saveError,
+      "EBAY_LISTING_TAXONOMY_PREFLIGHT_SAVE_FAILED",
+    )
+    return jsonError(new Error(code), code.includes("STALE_VERSION") ? 409 : 502)
+  }
+  const readback = record(record(saved.package_data).taxonomyPreflight)
+  const durableReadbackMatch = text(readback.evidenceDigest)
+    === preflight.evidenceDigest
+    && text(readback.categoryId) === categoryId
+    && text(readback.status) === "CONSULTADO"
+  if (!durableReadbackMatch) {
+    return jsonError(new Error(
+      "EBAY_LISTING_TAXONOMY_PREFLIGHT_READBACK_MISMATCH",
+    ), 502)
+  }
+
+  return NextResponse.json({
+    success: true,
+    taxonomy,
+    preflight,
+    listingPackage: saved,
+    durableReadbackMatch,
+    unresolvedRequiredAspectNames: preflight.unprovenRequiredAspectNames,
+    safety: {
+      ebayWriteUsed: false,
+      ebayResourceMethods: ["GET"],
+      internalPackageWrite: true,
+      canPublish: false,
+    },
+  })
 }
 
 async function preflightDraft(body: JsonRecord, actor: string) {

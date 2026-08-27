@@ -154,6 +154,8 @@ type EbayTaxonomyAspect = {
   format: string | null
   advancedDataType: string | null
   expectedRequiredByDate: string | null
+  required?: boolean
+  usage?: string | null
   suggestedValues: string[]
   values: Array<{
     value: string
@@ -228,6 +230,8 @@ type DraftState = {
     aspects?: EbayTaxonomyAspect[]
     requiredAspects: EbayTaxonomyAspect[]
     recommendedAspects: EbayTaxonomyAspect[]
+    optionalAspects?: EbayTaxonomyAspect[]
+    consultationStatus?: "CONSULTADO"
     source: "EBAY_TAXONOMY_OFFICIAL_READONLY"
   }
 }
@@ -727,6 +731,78 @@ function fromPackage(value: Record<string, unknown>): FormState {
         pricing.authoritativeSupplierShipping === true,
     },
     shipping: object(value.shipping),
+  }
+}
+
+function taxonomyAspectFromUnknown(value: unknown): EbayTaxonomyAspect | null {
+  const aspect = object(value)
+  const name = String(aspect.name ?? "").trim()
+  if (!name) return null
+  return {
+    name,
+    mode: typeof aspect.mode === "string" ? aspect.mode : null,
+    cardinality: typeof aspect.cardinality === "string" ? aspect.cardinality : null,
+    maxLength: typeof aspect.maxLength === "number" ? aspect.maxLength : null,
+    dataType: typeof aspect.dataType === "string" ? aspect.dataType : null,
+    format: typeof aspect.format === "string" ? aspect.format : null,
+    advancedDataType: typeof aspect.advancedDataType === "string"
+      ? aspect.advancedDataType : null,
+    expectedRequiredByDate:
+      typeof aspect.expectedRequiredByDate === "string"
+        ? aspect.expectedRequiredByDate : null,
+    required: aspect.required === true,
+    usage: typeof aspect.usage === "string" ? aspect.usage : null,
+    suggestedValues: Array.isArray(aspect.suggestedValues)
+      ? aspect.suggestedValues.filter((entry): entry is string =>
+        typeof entry === "string") : [],
+    values: Array.isArray(aspect.values)
+      ? aspect.values.map((entry) => {
+        const option = object(entry)
+        return {
+          value: String(option.value ?? ""),
+          valueConstraints: Array.isArray(option.valueConstraints)
+            ? option.valueConstraints.map((constraint) => {
+              const item = object(constraint)
+              return {
+                applicableForAspectName:
+                  String(item.applicableForAspectName ?? ""),
+                applicableForAspectValues:
+                  Array.isArray(item.applicableForAspectValues)
+                    ? item.applicableForAspectValues.filter(
+                      (entry): entry is string => typeof entry === "string",
+                    ) : [],
+              }
+            }) : [],
+        }
+      }).filter((entry) => entry.value) : [],
+    valuesComplete: aspect.valuesComplete === true,
+    constraintsComplete: aspect.constraintsComplete === true,
+  }
+}
+
+function taxonomyFromPackage(
+  packageData: Record<string, unknown>,
+): DraftState["taxonomy"] | undefined {
+  const preflight = object(packageData.taxonomyPreflight)
+  if (preflight.status !== "CONSULTADO"
+    || preflight.officialStatus !== "AVAILABLE"
+    || preflight.source !== "EBAY_TAXONOMY_OFFICIAL_READONLY") return undefined
+  const mapAspects = (value: unknown) => Array.isArray(value)
+    ? value.map(taxonomyAspectFromUnknown)
+      .filter((aspect): aspect is EbayTaxonomyAspect => Boolean(aspect))
+    : []
+  return {
+    status: "AVAILABLE",
+    consultationStatus: "CONSULTADO",
+    categoryTreeId: String(preflight.categoryTreeId ?? "") || null,
+    categoryTreeVersion: String(preflight.categoryTreeVersion ?? "") || null,
+    categoryId: String(preflight.categoryId ?? "") || null,
+    categoryName: String(preflight.categoryName ?? "") || null,
+    aspects: mapAspects(preflight.aspects),
+    requiredAspects: mapAspects(preflight.requiredAspects),
+    recommendedAspects: mapAspects(preflight.recommendedAspects),
+    optionalAspects: mapAspects(preflight.optionalAspects),
+    source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
   }
 }
 
@@ -1709,6 +1785,15 @@ function ListingWorkspacePageContent() {
         setPublicationLunaReconfirmed(false)
         setListingPackage(nextPackage)
         setForm(fromPackage(object(nextPackage.package_data)))
+        const persistedTaxonomy = taxonomyFromPackage(
+          object(nextPackage.package_data),
+        )
+        if (persistedTaxonomy) {
+          setDraftState((current) => ({
+            ...current,
+            taxonomy: persistedTaxonomy,
+          }))
+        }
         setImageRevision(null)
         setDraftConfiguration((current) => {
           const next = {
@@ -1756,14 +1841,20 @@ function ListingWorkspacePageContent() {
               && Object.keys(object(nextPackageData.sameDayPilot)).length > 0
             )
           if (legacyVisualUpgradeRequired) {
-            setDraftState((current) => ({ preflight: current.preflight }))
+            setDraftState((current) => ({
+              preflight: current.preflight,
+              taxonomy: current.taxonomy,
+            }))
             draftWarning = " Completa y aprueba la revisión visual activa de siete imágenes antes de validar el conector de publicación."
           } else {
             try {
               const draft = await draftRequest(undefined, nextPackage.id)
               setDraftState((current) => ({ ...current, ...draft }))
             } catch (draftError) {
-              setDraftState((current) => ({ preflight: current.preflight }))
+              setDraftState((current) => ({
+                preflight: current.preflight,
+                taxonomy: current.taxonomy,
+              }))
               draftWarning = ` ${getMobileReviewRequestError(draftError, "El conector draft todavía no pudo validarse.")}`
             }
           }
@@ -2009,6 +2100,15 @@ function ListingWorkspacePageContent() {
       ? names
       : draftState.taxonomy?.requiredAspects.map((aspect) => aspect.name) ?? [])
   }, [draftState.taxonomy, finalListingReview?.taxonomy?.requiredAspectNames])
+  const recommendedTaxonomyAspects = useMemo(() => new Set(
+    draftState.taxonomy?.recommendedAspects.map((aspect) => aspect.name) ?? [],
+  ), [draftState.taxonomy])
+  const visibleTaxonomyAspectNames = useMemo(() => Array.from(new Set([
+    ...(draftState.taxonomy?.requiredAspects.map((aspect) => aspect.name) ?? []),
+    ...(draftState.taxonomy?.recommendedAspects.map((aspect) => aspect.name) ?? []),
+    ...(draftState.taxonomy?.optionalAspects?.map((aspect) => aspect.name) ?? []),
+    ...Object.keys(form.aspects),
+  ].filter(Boolean))), [draftState.taxonomy, form.aspects])
   const safeDefaultsMetadata = useMemo(
     () => object(object(listingPackage?.package_data).safeDefaults),
     [listingPackage],
@@ -2026,6 +2126,8 @@ function ListingWorkspacePageContent() {
       && ["INCH", "CENTIMETER"].includes(draftConfiguration.dimensionUnit)
     const aspectEntries = Object.entries(form.aspects)
     const taxonomyReady = /^\d{1,12}$/.test(form.categoryId)
+      && (draftState.taxonomy?.consultationStatus === "CONSULTADO"
+        || finalListingReview?.taxonomy?.status === "AVAILABLE")
       && aspectEntries.length > 0
       && [...requiredTaxonomyAspects].every((name) =>
         Boolean(form.aspects[name]?.trim())
@@ -2037,7 +2139,7 @@ function ListingWorkspacePageContent() {
       ...(weightReady && dimensionsReady ? ["NEED_PACKAGE_WEIGHT_AND_DIMENSIONS"] : []),
       ...(taxonomyReady ? ["NEED_EBAY_TAXONOMY_CATEGORY", "NEED_REQUIRED_EBAY_ITEM_ASPECTS"] : []),
     ])
-  }, [approvedImageAssets, draftConfiguration, form.aspects, form.categoryId, form.imageUrls, requiredTaxonomyAspects])
+  }, [approvedImageAssets, draftConfiguration, draftState.taxonomy?.consultationStatus, finalListingReview?.taxonomy?.status, form.aspects, form.categoryId, form.imageUrls, requiredTaxonomyAspects])
   const finalReviewRecord = object(finalListingReview?.review)
   const finalReviewCompleted = v3FinalListingReviewCanonicalReady({
     activeRevisionId: activeVisualRevision?.id,
@@ -3041,6 +3143,54 @@ function ListingWorkspacePageContent() {
       if (blockers.length) setDraftState((current) => ({ ...current, readiness: { ready: false, blockers } }))
       setError(getMobileReviewRequestError(requestError, "No se pudo validar el draft.")); setMessage("")
     } finally { setDraftBusy(false) }
+  }
+
+  async function loadTaxonomyPreflight() {
+    if (!listingPackage) return
+    setDraftBusy(true)
+    setError("")
+    setMessage("Consultando aspectos oficiales de eBay Taxonomy…")
+    try {
+      await persistCurrentPackage()
+      const payload = await draftRequest({
+        action: "taxonomy_preflight",
+        packageId: listingPackage.id,
+      })
+      const nextPackage = payload.listingPackage as ListingPackage
+      const taxonomy = payload.taxonomy as DraftState["taxonomy"]
+      const persistedTaxonomy = taxonomyFromPackage(
+        object(nextPackage.package_data),
+      )
+      if (!persistedTaxonomy || payload.durableReadbackMatch !== true) {
+        throw new Error("EBAY_LISTING_TAXONOMY_PREFLIGHT_READBACK_MISMATCH")
+      }
+      setListingPackage(nextPackage)
+      setForm(fromPackage(object(nextPackage.package_data)))
+      setDraftState((current) => ({
+        ...current,
+        taxonomy: {
+          ...taxonomy,
+          ...persistedTaxonomy,
+          consultationStatus: "CONSULTADO",
+        },
+      }))
+      const unresolved = Array.isArray(
+        payload.unresolvedRequiredAspectNames,
+      ) ? payload.unresolvedRequiredAspectNames.filter(
+          (entry): entry is string => typeof entry === "string",
+        ) : []
+      setMessage(unresolved.length
+        ? `Taxonomy consultado y guardado. Faltan valores de producto probados para: ${unresolved.join(", ")}.`
+        : "Taxonomy consultado y guardado con readback durable. No se creó ni publicó nada en eBay.")
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(
+        requestError,
+        "No se pudieron cargar los requisitos oficiales de eBay Taxonomy.",
+      ))
+      setMessage("")
+    } finally {
+      setDraftBusy(false)
+    }
   }
 
   async function approveDraft() {
@@ -4108,9 +4258,10 @@ function ListingWorkspacePageContent() {
           </section>
 
           <section className="rounded-3xl border border-violet-200/20 bg-violet-200/[0.05] p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-black">Item specifics</h2><p className="mt-1 text-xs leading-5 text-white/50">eBay Taxonomy define los nombres y opciones; tú confirmas los valores reales del producto Luna.</p></div><span className="rounded-full border border-violet-200/20 px-2 py-1 text-[10px] font-black">{String(finalReviewTaxonomy.status ?? finalListingReview?.taxonomy?.status ?? draftState.taxonomy?.status ?? "SIN CONSULTAR")}</span></div>
-            {!finalReviewCompleted && <button type="button" disabled={draftBusy || !/^\d{1,12}$/.test(form.categoryId)} onClick={() => void validateDraft()} className="mt-3 min-h-11 w-full rounded-xl border border-violet-200/30 px-3 text-sm font-black text-violet-50 disabled:opacity-40">Cargar requisitos oficiales del Category ID</button>}
-            <div className="mt-3 space-y-2">{Object.entries(form.aspects).map(([name, value]) => {
+            <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-black">Item specifics</h2><p className="mt-1 text-xs leading-5 text-white/50">eBay Taxonomy define los nombres y opciones; tú confirmas los valores reales del producto Luna.</p></div><span className="rounded-full border border-violet-200/20 px-2 py-1 text-[10px] font-black">{String(finalReviewTaxonomy.status ?? finalListingReview?.taxonomy?.status ?? draftState.taxonomy?.consultationStatus ?? "SIN CONSULTAR")}</span></div>
+            {!finalReviewCompleted && <button type="button" disabled={draftBusy || !/^\d{1,12}$/.test(form.categoryId)} onClick={() => void loadTaxonomyPreflight()} className="mt-3 min-h-11 w-full rounded-xl border border-violet-200/30 px-3 text-sm font-black text-violet-50 disabled:opacity-40">Cargar requisitos oficiales del Category ID</button>}
+            <div className="mt-3 space-y-2">{visibleTaxonomyAspectNames.map((name) => {
+              const value = form.aspects[name] ?? ""
               const finalTaxonomyAspect =
                 finalListingReview?.taxonomy?.relevantAspects.find(
                   (aspect) => aspect.name === name,
@@ -4129,6 +4280,7 @@ function ListingWorkspacePageContent() {
                   ...(draftState.taxonomy?.recommendedAspects ?? []),
                 ]).find((aspect) => aspect.name === name)
               const required = requiredTaxonomyAspects.has(name)
+              const recommended = recommendedTaxonomyAspects.has(name)
               const selectionOnly = taxonomyAspect?.mode === "SELECTION_ONLY"
               const selectionOptions = taxonomyAspect?.values ?? []
               const constraintSummary = taxonomyAspect
@@ -4143,9 +4295,10 @@ function ListingWorkspacePageContent() {
                 : "No validado todavía contra Taxonomy"
               return <div key={name} className="grid grid-cols-[1fr_auto] gap-2 sm:grid-cols-[1fr_1fr_auto]">
                 <label className="col-span-2 grid gap-1 sm:col-span-1">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-violet-100/60">{required ? "Requerido por eBay" : "Aspecto"}</span>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-violet-100/60">{required ? "Requerido por eBay" : recommended ? "Recomendado por eBay" : "Opcional por eBay"}</span>
                   <input aria-label="Nombre del aspecto" value={name} readOnly className="min-h-11 min-w-0 rounded-xl bg-black/25 px-3" />
                   <span className="text-[10px] leading-4 text-white/45">{constraintSummary}{taxonomyAspect?.expectedRequiredByDate ? ` · requerido aproximadamente desde ${taxonomyAspect.expectedRequiredByDate}` : ""}</span>
+                  {!selectionOnly && selectionOptions.length > 0 && <span className="text-[10px] leading-4 text-violet-100/55">Valores oficiales: {selectionOptions.map((option) => option.value).join(" · ")}</span>}
                 </label>
                 <label className="grid gap-1">
                   <span className="text-[10px] font-black uppercase tracking-wider text-white/45">Valor confirmado</span>
