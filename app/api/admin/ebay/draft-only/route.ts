@@ -149,6 +149,7 @@ function configurationFromApprovedPayload(payload: JsonRecord) {
     aspectValidation: compliance.aspectValidation,
     skuCollisionCheck: compliance.skuCollisionCheck,
     ebayPreflightSnapshot: compliance.ebayPreflightSnapshot,
+    publishWithStockguardContract: compliance.publishWithStockguardContract,
   }
 }
 

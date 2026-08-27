@@ -458,6 +458,17 @@ test("exact durable Smart Stocking launch evidence supersedes only the prelimina
   assert.ok(forged.blockers.includes("POTENTIAL_SCORE_BELOW_70"))
 })
 
+test("execution reconstructs the approved server-bound StockGuard contract", () => {
+  assert.match(
+    routeSource,
+    /function configurationFromApprovedPayload\([\s\S]*publishWithStockguardContract: compliance\.publishWithStockguardContract/,
+  )
+  assert.match(
+    routeSource,
+    /buildEbayDraftOnlyPayload\([\s\S]*context\.smartStockingPublicationAuthorization/,
+  )
+})
+
 test("locked V3 execution evidence supersedes only redundant package and image age", async () => {
   const module = await importTypeScript(readinessSource)
   const now = new Date("2026-07-13T12:00:00.000Z")
