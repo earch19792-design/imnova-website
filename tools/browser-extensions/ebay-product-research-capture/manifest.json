@@ -8,6 +8,7 @@
     "https://www.ebay.com/sh/research*",
     "https://www.ebay.com/sch/*",
     "https://imnova-website-z1qh-canonical-preview.vercel.app/admin/ebay/mobile-review*",
+    "https://imnova-website-z1qh-canonical-preview.vercel.app/admin/ebay/opportunity-queue/research*",
     "https://i.ebayimg.com/*"
   ],
   "background": {
@@ -34,7 +35,8 @@
     },
     {
       "matches": [
-        "https://imnova-website-z1qh-canonical-preview.vercel.app/admin/ebay/mobile-review*"
+        "https://imnova-website-z1qh-canonical-preview.vercel.app/admin/ebay/mobile-review*",
+        "https://imnova-website-z1qh-canonical-preview.vercel.app/admin/ebay/opportunity-queue/research*"
       ],
       "js": [
         "admin-bridge.js"

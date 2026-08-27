@@ -2,7 +2,7 @@
   "use strict"
 
   const ADMIN_ORIGIN = "https://imnova-website-z1qh-canonical-preview.vercel.app"
-  const ADMIN_PATH = /^\/admin\/ebay\/mobile-review\/?$/
+  const ADMIN_PATH = /^\/admin\/ebay\/(?:mobile-review|opportunity-queue\/research)\/?$/
   const COMMAND = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_COMMAND_V1"
   const RESULT = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_RESULT_V1"
   const LIFECYCLE = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_BRIDGE_LIFECYCLE_V1"
