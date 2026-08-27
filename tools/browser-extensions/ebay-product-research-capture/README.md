@@ -9,7 +9,15 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Abre Seller OS Preview y usa **INICIAR RESEARCH AUTOMÁTICO** una sola vez.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.22.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.23.
+
+## Activación determinista por ruta (v1.2.23)
+
+El content script ligero se carga únicamente bajo el scope administrativo acotado del host
+canónico de Seller OS. Fuera de `/admin/ebay/mobile-review` y
+`/admin/ebay/opportunity-queue/research` permanece inerte. Al entrar o salir mediante una
+navegación de documento o una transición SPA, activa o retira el mismo listener del bridge
+sin polling, credenciales, listeners duplicados ni una segunda autoridad de sesión.
 
 ## Diagnóstico acotado de handshake (v1.2.22)
 

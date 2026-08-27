@@ -2,19 +2,27 @@
   "use strict"
 
   const ADMIN_ORIGIN = "https://imnova-website-z1qh-canonical-preview.vercel.app"
-  const ADMIN_PATH = /^\/admin\/ebay\/(?:mobile-review|opportunity-queue\/research)\/?$/
+  const ADMIN_SCOPE_PATH = /^\/admin\/ebay(?:\/|$)/
+  const OPERATIONAL_PATH = /^\/admin\/ebay\/(?:mobile-review|opportunity-queue\/research)\/?$/
   const COMMAND = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_COMMAND_V1"
   const RESULT = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_RESULT_V1"
   const LIFECYCLE = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_BRIDGE_LIFECYCLE_V1"
   const PROBE = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_PROBE_V1"
   const TRACE_VERSION = "ONE_CLICK_EXTENSION_HANDSHAKE_TRACE_V1"
   const PASSIVE_REQUEST_ID = "00000000-0000-4000-8000-000000000000"
+  const INSTANCE_KEY = "__IMNOVA_EBAY_ONE_CLICK_ADMIN_BRIDGE_V1__"
 
   if (window.top !== window || window.location.origin !== ADMIN_ORIGIN ||
-    !ADMIN_PATH.test(window.location.pathname)) return
+    !ADMIN_SCOPE_PATH.test(window.location.pathname)) return
+
+  if (globalThis[INSTANCE_KEY]) {
+    globalThis[INSTANCE_KEY].syncRoute()
+    return
+  }
 
   let probeEventsReceived = 0
   let ackEventsSent = 0
+  let bridgeActive = false
 
   function extensionContextState() {
     try {
@@ -56,7 +64,9 @@
     }, ADMIN_ORIGIN)
   }
 
-  window.addEventListener("message", (event) => {
+  function receiveCommand(event) {
+    if (!bridgeActive || !OPERATIONAL_PATH.test(window.location.pathname) ||
+      window.location.origin !== ADMIN_ORIGIN) return
     if (event.source !== window || event.origin !== ADMIN_ORIGIN ||
       event.data?.type !== COMMAND ||
       !/^[0-9a-f-]{36}$/i.test(event.data.requestId ?? "")) return
@@ -113,14 +123,41 @@
         }, ADMIN_ORIGIN)
       },
     )
-  })
+  }
 
-  postLifecycle(PASSIVE_REQUEST_ID, "BRIDGE_LISTENER_REGISTERED")
-  window.postMessage({
-    type: RESULT,
-    requestId: PASSIVE_REQUEST_ID,
-    success: true,
-    payload: { success: true, ready: true, version: extensionVersion() },
-    extensionId: extensionId(),
-  }, ADMIN_ORIGIN)
+  function activateBridge() {
+    if (bridgeActive) return
+    bridgeActive = true
+    window.addEventListener("message", receiveCommand)
+    postLifecycle(PASSIVE_REQUEST_ID, "BRIDGE_LISTENER_REGISTERED")
+    window.postMessage({
+      type: RESULT,
+      requestId: PASSIVE_REQUEST_ID,
+      success: true,
+      payload: { success: true, ready: true, version: extensionVersion() },
+      extensionId: extensionId(),
+    }, ADMIN_ORIGIN)
+  }
+
+  function deactivateBridge() {
+    if (!bridgeActive) return
+    bridgeActive = false
+    window.removeEventListener("message", receiveCommand)
+  }
+
+  function syncRoute() {
+    if (window.location.origin === ADMIN_ORIGIN &&
+      OPERATIONAL_PATH.test(window.location.pathname)) activateBridge()
+    else deactivateBridge()
+  }
+
+  const routeObserver = new MutationObserver(syncRoute)
+  routeObserver.observe(document, { childList: true, subtree: true })
+  for (const eventName of ["popstate", "hashchange", "pageshow"]) {
+    window.addEventListener(eventName, syncRoute)
+  }
+  window.navigation?.addEventListener?.("navigatesuccess", syncRoute)
+
+  globalThis[INSTANCE_KEY] = { syncRoute }
+  syncRoute()
 })()
