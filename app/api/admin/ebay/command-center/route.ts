@@ -227,13 +227,23 @@ function resolvedPackageHardGates(packageData: Record<string, unknown>) {
     ? taxonomyPreflight.requiredAspects.map(object)
       .map((aspect) => String(aspect.name ?? "").trim()).filter(Boolean)
     : []
+  const resolvedTaxonomyAspects = object(taxonomyPreflight.resolvedAspects)
+  const unprovenRequiredTaxonomyAspects = Array.isArray(
+    taxonomyPreflight.unprovenRequiredAspectNames,
+  )
+    ? taxonomyPreflight.unprovenRequiredAspectNames
+      .map((name) => String(name ?? "").trim()).filter(Boolean)
+    : requiredTaxonomyAspects
   const taxonomyReady = /^\d{1,12}$/.test(String(packageData.categoryId ?? ""))
     && taxonomyPreflight.status === "CONSULTADO"
     && String(taxonomyPreflight.categoryId ?? "")
-      === String(packageData.categoryId ?? "")
+    === String(packageData.categoryId ?? "")
     && aspectEntries.length > 0
+    && unprovenRequiredTaxonomyAspects.length === 0
     && requiredTaxonomyAspects.every((name) =>
-      String(object(packageData.aspects)[name] ?? "").trim().length > 0)
+      String(object(packageData.aspects)[name] ?? "").trim().length > 0
+      && String(object(packageData.aspects)[name] ?? "").trim()
+        === String(resolvedTaxonomyAspects[name] ?? "").trim())
   return new Set([
     ...(imagesReady ? ["NEED_AUTHORIZED_PRODUCT_IMAGES"] : []),
     ...(weightReady ? ["NEED_PACKAGE_WEIGHT"] : []),

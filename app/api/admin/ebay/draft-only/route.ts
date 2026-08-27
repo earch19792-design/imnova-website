@@ -76,6 +76,17 @@ function text(value: unknown) {
   return typeof value === "string" ? value.trim() : ""
 }
 
+function exactTextRecordMatch(left: unknown, right: unknown) {
+  const leftRecord = record(left)
+  const rightRecord = record(right)
+  const keys = new Set([
+    ...Object.keys(leftRecord),
+    ...Object.keys(rightRecord),
+  ])
+  return [...keys].every((name) =>
+    text(leftRecord[name]) === text(rightRecord[name]))
+}
+
 function evidenceTimestamp(...values: unknown[]) {
   for (const value of values) {
     const candidate = text(value)
@@ -929,12 +940,16 @@ async function taxonomyPreflight(body: JsonRecord, actor: string) {
     provenProductValues: item3525 ? {
       Type: "Turntable",
       Material: "Plastic",
-      Features: "Non-Slip Base",
+      Features: "Non-Slip",
       Size: "11 in",
       UPC: "740119084743",
     } : {},
     knownUnknownAspectNames: item3525
       ? ["Brand", "MPN", "Model", "Color"] : [],
+    unprovenAspectEvidenceRequirements: item3525 ? {
+      Brand:
+        "AUTHORITATIVE_PRODUCT_TRUTH_NO_MANUFACTURER_BRAND_CLAIM_REQUIRED",
+    } : {},
   })
   const nextPackageData = {
     ...packageData,
@@ -972,6 +987,12 @@ async function taxonomyPreflight(body: JsonRecord, actor: string) {
     === preflight.evidenceDigest
     && text(readback.categoryId) === categoryId
     && text(readback.status) === "CONSULTADO"
+    && exactTextRecordMatch(
+      readback.resolvedAspects,
+      preflight.resolvedAspects,
+    )
+    && JSON.stringify(readback.unprovenRequiredAspectNames)
+      === JSON.stringify(preflight.unprovenRequiredAspectNames)
   if (!durableReadbackMatch) {
     return jsonError(new Error(
       "EBAY_LISTING_TAXONOMY_PREFLIGHT_READBACK_MISMATCH",
@@ -985,6 +1006,8 @@ async function taxonomyPreflight(body: JsonRecord, actor: string) {
     listingPackage: saved,
     durableReadbackMatch,
     unresolvedRequiredAspectNames: preflight.unprovenRequiredAspectNames,
+    unprovenAspectEvidenceRequirements:
+      preflight.unprovenAspectEvidenceRequirements,
     safety: {
       ebayWriteUsed: false,
       ebayResourceMethods: ["GET"],

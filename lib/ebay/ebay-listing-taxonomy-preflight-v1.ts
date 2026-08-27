@@ -14,6 +14,7 @@ type BuildTaxonomyPreflightInput = {
   existingAspects: Record<string, unknown>
   provenProductValues: Record<string, string>
   knownUnknownAspectNames?: string[]
+  unprovenAspectEvidenceRequirements?: Record<string, string>
 }
 
 function text(value: unknown) {
@@ -87,7 +88,7 @@ export function buildEbayListingTaxonomyPreflightV1(
   const provenValuesAutoBound: Record<string, string> = {}
   for (const [name, proposed] of Object.entries(input.provenProductValues)) {
     const aspect = officialByKey.get(key(name))
-    if (!aspect) continue
+    if (!aspect || unknown.has(key(aspect.name))) continue
     const compatible = compatibleOfficialValue(aspect, text(proposed))
     if (!compatible) continue
     resolvedAspects[aspect.name] = compatible
@@ -103,6 +104,14 @@ export function buildEbayListingTaxonomyPreflightV1(
   const unprovenRequiredAspectNames = requiredAspects
     .filter((aspect) => !text(resolvedAspects[aspect.name]))
     .map((aspect) => aspect.name)
+  const unprovenAspectEvidenceRequirements = Object.fromEntries(
+    unprovenRequiredAspectNames.flatMap((name) => {
+      const requirement = Object.entries(
+        input.unprovenAspectEvidenceRequirements ?? {},
+      ).find(([candidate]) => key(candidate) === key(name))?.[1]
+      return requirement ? [[name, requirement]] : []
+    }),
+  )
 
   const digestPayload = {
     schemaVersion: EBAY_LISTING_TAXONOMY_PREFLIGHT_V1,
@@ -113,8 +122,10 @@ export function buildEbayListingTaxonomyPreflightV1(
     categoryTreeVersion: input.taxonomy.categoryTreeVersion,
     taxonomyMarketplaceId: input.taxonomy.taxonomyMarketplaceId,
     aspects,
+    resolvedAspects,
     provenValuesAutoBound,
     unprovenRequiredAspectNames,
+    unprovenAspectEvidenceRequirements,
   }
   const evidenceDigest = `sha256:${createHash("sha256")
     .update(JSON.stringify(digestPayload)).digest("hex")}`
@@ -128,7 +139,6 @@ export function buildEbayListingTaxonomyPreflightV1(
     requiredAspects,
     recommendedAspects,
     optionalAspects,
-    resolvedAspects,
     evidenceDigest,
   }
 }

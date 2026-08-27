@@ -2103,6 +2103,21 @@ function ListingWorkspacePageContent() {
   const recommendedTaxonomyAspects = useMemo(() => new Set(
     draftState.taxonomy?.recommendedAspects.map((aspect) => aspect.name) ?? [],
   ), [draftState.taxonomy])
+  const persistedTaxonomyPreflight = object(
+    object(listingPackage?.package_data).taxonomyPreflight,
+  )
+  const unprovenRequiredTaxonomyAspects = useMemo(() => new Set(
+    Array.isArray(persistedTaxonomyPreflight.unprovenRequiredAspectNames)
+      ? persistedTaxonomyPreflight.unprovenRequiredAspectNames.filter(
+        (name): name is string => typeof name === "string" && Boolean(name),
+      ) : [],
+  ), [persistedTaxonomyPreflight.unprovenRequiredAspectNames])
+  const resolvedTaxonomyAspects = object(
+    persistedTaxonomyPreflight.resolvedAspects,
+  )
+  const taxonomyEvidenceRequirements = object(
+    persistedTaxonomyPreflight.unprovenAspectEvidenceRequirements,
+  )
   const visibleTaxonomyAspectNames = useMemo(() => Array.from(new Set([
     ...(draftState.taxonomy?.requiredAspects.map((aspect) => aspect.name) ?? []),
     ...(draftState.taxonomy?.recommendedAspects.map((aspect) => aspect.name) ?? []),
@@ -2129,8 +2144,11 @@ function ListingWorkspacePageContent() {
       && (draftState.taxonomy?.consultationStatus === "CONSULTADO"
         || finalListingReview?.taxonomy?.status === "AVAILABLE")
       && aspectEntries.length > 0
+      && unprovenRequiredTaxonomyAspects.size === 0
       && [...requiredTaxonomyAspects].every((name) =>
         Boolean(form.aspects[name]?.trim())
+        && form.aspects[name]?.trim()
+          === String(resolvedTaxonomyAspects[name] ?? "").trim()
       )
     return new Set([
       ...(imagesReady ? ["NEED_AUTHORIZED_PRODUCT_IMAGES"] : []),
@@ -2139,7 +2157,7 @@ function ListingWorkspacePageContent() {
       ...(weightReady && dimensionsReady ? ["NEED_PACKAGE_WEIGHT_AND_DIMENSIONS"] : []),
       ...(taxonomyReady ? ["NEED_EBAY_TAXONOMY_CATEGORY", "NEED_REQUIRED_EBAY_ITEM_ASPECTS"] : []),
     ])
-  }, [approvedImageAssets, draftConfiguration, draftState.taxonomy?.consultationStatus, finalListingReview?.taxonomy?.status, form.aspects, form.categoryId, form.imageUrls, requiredTaxonomyAspects])
+  }, [approvedImageAssets, draftConfiguration, draftState.taxonomy?.consultationStatus, finalListingReview?.taxonomy?.status, form.aspects, form.categoryId, form.imageUrls, requiredTaxonomyAspects, resolvedTaxonomyAspects, unprovenRequiredTaxonomyAspects])
   const finalReviewRecord = object(finalListingReview?.review)
   const finalReviewCompleted = v3FinalListingReviewCanonicalReady({
     activeRevisionId: activeVisualRevision?.id,
@@ -4266,21 +4284,28 @@ function ListingWorkspacePageContent() {
                 finalListingReview?.taxonomy?.relevantAspects.find(
                   (aspect) => aspect.name === name,
                 )
-              const taxonomyAspect = finalTaxonomyAspect
-                ? {
+              const officialTaxonomyAspect = (
+                draftState.taxonomy?.aspects ?? [
+                  ...(draftState.taxonomy?.requiredAspects ?? []),
+                  ...(draftState.taxonomy?.recommendedAspects ?? []),
+                  ...(draftState.taxonomy?.optionalAspects ?? []),
+                ]
+              ).find((aspect) => aspect.name === name)
+              const taxonomyAspect = officialTaxonomyAspect
+                ?? (finalTaxonomyAspect ? {
                   ...finalTaxonomyAspect,
                   maxLength: null,
                   format: null,
                   advancedDataType: null,
                   expectedRequiredByDate: null,
                   values: [],
-                }
-                : (draftState.taxonomy?.aspects ?? [
-                  ...(draftState.taxonomy?.requiredAspects ?? []),
-                  ...(draftState.taxonomy?.recommendedAspects ?? []),
-                ]).find((aspect) => aspect.name === name)
+                } : undefined)
               const required = requiredTaxonomyAspects.has(name)
               const recommended = recommendedTaxonomyAspects.has(name)
+              const evidenceBlocked = unprovenRequiredTaxonomyAspects.has(name)
+              const evidenceRequirement = String(
+                taxonomyEvidenceRequirements[name] ?? "",
+              )
               const selectionOnly = taxonomyAspect?.mode === "SELECTION_ONLY"
               const selectionOptions = taxonomyAspect?.values ?? []
               const constraintSummary = taxonomyAspect
@@ -4294,20 +4319,21 @@ function ListingWorkspacePageContent() {
                 ].filter(Boolean).join(" · ")
                 : "No validado todavía contra Taxonomy"
               return <div key={name} className="grid grid-cols-[1fr_auto] gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                <label className="col-span-2 grid gap-1 sm:col-span-1">
+                <div aria-label={`Aspecto oficial de eBay: ${name}`} className="col-span-2 grid gap-1 sm:col-span-1">
                   <span className="text-[10px] font-black uppercase tracking-wider text-violet-100/60">{required ? "Requerido por eBay" : recommended ? "Recomendado por eBay" : "Opcional por eBay"}</span>
-                  <input aria-label="Nombre del aspecto" value={name} readOnly className="min-h-11 min-w-0 rounded-xl bg-black/25 px-3" />
+                  <strong data-ebay-taxonomy-aspect-name={name} className="flex min-h-11 items-center rounded-xl bg-black/25 px-3 text-sm">{name}</strong>
                   <span className="text-[10px] leading-4 text-white/45">{constraintSummary}{taxonomyAspect?.expectedRequiredByDate ? ` · requerido aproximadamente desde ${taxonomyAspect.expectedRequiredByDate}` : ""}</span>
                   {!selectionOnly && selectionOptions.length > 0 && <span className="text-[10px] leading-4 text-violet-100/55">Valores oficiales: {selectionOptions.map((option) => option.value).join(" · ")}</span>}
-                </label>
+                  {evidenceBlocked && <span role="alert" className="text-[10px] leading-4 text-amber-100">Bloqueado hasta que Product Truth aporte evidencia autoritativa{evidenceRequirement ? ` · ${evidenceRequirement}` : ""}.</span>}
+                </div>
                 <label className="grid gap-1">
                   <span className="text-[10px] font-black uppercase tracking-wider text-white/45">Valor confirmado</span>
                   {selectionOnly
-                    ? <select aria-label={`Valor de ${name}`} value={value} onChange={(event) => setForm((current) => ({ ...current, aspects: { ...current.aspects, [name]: event.target.value } }))} className="min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3">
+                    ? <select aria-label={`Valor de ${name}`} disabled={evidenceBlocked} value={value} onChange={(event) => setForm((current) => ({ ...current, aspects: { ...current.aspects, [name]: event.target.value } }))} className="min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3 disabled:opacity-50">
                       <option value="">Seleccionar valor oficial</option>
                       {selectionOptions.map((option) => <option key={option.value} value={option.value} disabled={!taxonomyOptionAvailable(option, form.aspects)}>{option.value}</option>)}
                     </select>
-                    : <input aria-label={`Valor de ${name}`} maxLength={taxonomyAspect?.maxLength ?? undefined} value={value} onChange={(event) => setForm((current) => ({ ...current, aspects: { ...current.aspects, [name]: event.target.value } }))} className="min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3" />}
+                    : <input aria-label={`Valor de ${name}`} disabled={evidenceBlocked} maxLength={taxonomyAspect?.maxLength ?? undefined} value={value} onChange={(event) => setForm((current) => ({ ...current, aspects: { ...current.aspects, [name]: event.target.value } }))} className="min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3 disabled:opacity-50" />}
                 </label>
                 {required
                   ? <span aria-label={`${name} es obligatorio`} title="eBay exige este aspecto y no se puede borrar" className="mt-4 flex size-11 items-center justify-center rounded-xl border border-violet-200/25 text-violet-100">✓</span>
