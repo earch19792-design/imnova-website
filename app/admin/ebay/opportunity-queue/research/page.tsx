@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useState } from "react"
 
 import { Loop2Top20OpportunityPool } from "../../mobile-review/loop2-top20-opportunity-pool"
+import { SmartStockingListingIntakeCard } from "./smart-stocking-listing-intake-card"
 import type { MarketOpportunityResearchV1 } from "@/lib/ebay/ebay-market-opportunity-research-v1"
 import type { CommercialIntelligenceUpgradeV1, ItemIdCanonicalFamilyBridgeV1 } from
   "@/lib/ebay/ebay-commercial-intelligence-upgrade-v1"
@@ -142,6 +143,8 @@ export default function MarketResearchPage() {
             <ShieldCheck className="h-3.5 w-3.5" /> 100% read-only
           </span>
         </header>
+
+        <SmartStockingListingIntakeCard />
 
         <Loop2Top20OpportunityPool surface="opportunities">
         <div data-market-opportunity-research className="space-y-3">

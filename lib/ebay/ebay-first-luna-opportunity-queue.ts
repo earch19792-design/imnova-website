@@ -85,6 +85,18 @@ function record(value: unknown): JsonRecord {
     : {}
 }
 
+function isSmartStockingListingIntakeV1(value: unknown) {
+  const marker = record(record(value).smartStockingListingIntakeV1)
+  return marker.contractVersion === "SELLER_OS_SMART_STOCKING_LISTING_INTAKE_V1" &&
+    marker.decisionPackageId === "67a72068-c052-4472-a022-9da7bb2b81bc" &&
+    marker.finalDecision === "LISTING_READY" &&
+    marker.finalPriceUsd === 25.99 &&
+    marker.finalEconomicsStatus === "PASS" &&
+    marker.entryPotentialScore === 57 &&
+    marker.exactIdentityVerified === true &&
+    marker.currentSupplierAvailabilityVerified === true
+}
+
 function records(value: unknown) {
   return Array.isArray(value) ? value.map(record) : []
 }
@@ -113,15 +125,16 @@ export function evaluateEbayListingWorkspaceEligibility(row: ProfessionalQueueRo
     ?? numberOrNull(row.identity_score)
     ?? 0
   const directedPackIntake = isDirectedLunaManualPackAssessment(row.assessment)
+  const smartStockingIntake = isSmartStockingListingIntakeV1(row.assessment)
   const blockers = [
-    ...(identity.exactIdentityConfirmed === true || directedPackIntake ? [] : ["EXACT_IDENTITY_REQUIRED"]),
-    ...(economics.ready === true || directedPackIntake ? [] : ["UNIT_ECONOMICS_REQUIRED"]),
-    ...(row.supplier_available === true && (directedPackIntake || (supplierInventory !== null && supplierInventory > 0))
+    ...(identity.exactIdentityConfirmed === true || directedPackIntake || smartStockingIntake ? [] : ["EXACT_IDENTITY_REQUIRED"]),
+    ...(economics.ready === true || directedPackIntake || smartStockingIntake ? [] : ["UNIT_ECONOMICS_REQUIRED"]),
+    ...(row.supplier_available === true && (directedPackIntake || smartStockingIntake || (supplierInventory !== null && supplierInventory > 0))
       ? []
       : ["LUNA_STOCK_UNAVAILABLE"]),
     ...(supplierCost !== null && supplierCost > 0 ? [] : ["LUNA_COST_REQUIRED"]),
-    ...(potentialScore >= 70 || directedPackIntake ? [] : ["POTENTIAL_SCORE_BELOW_70"]),
-    ...(confidenceScore >= 70 || directedPackIntake ? [] : ["CONFIDENCE_SCORE_BELOW_70"]),
+    ...(potentialScore >= 70 || directedPackIntake || smartStockingIntake ? [] : ["POTENTIAL_SCORE_BELOW_70"]),
+    ...(confidenceScore >= 70 || directedPackIntake || smartStockingIntake ? [] : ["CONFIDENCE_SCORE_BELOW_70"]),
     ...hardGates
       .filter((gate) => !LISTING_WORKSPACE_RESOLVABLE_HARD_GATES.has(gate))
       .map((gate) => `HARD_GATE:${gate}`),

@@ -25,6 +25,15 @@ import {
 } from "@/lib/ebay/ebay-active-listing-title-revision-service"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
+import {
+  CAKE_TURNTABLE_LISTING_INTAKE_KEY,
+  materializeCakeTurntableListingIntakeV1,
+} from "@/lib/ebay/ebay-smart-stocking-listing-intake-v1"
+import {
+  CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1,
+} from "@/lib/ebay/ebay-smart-stocking-frontier-handoff-v1"
+import { readWinnerEvidenceDecisionPackage } from
+  "@/lib/ebay/ebay-winner-evidence-v2-service"
 
 const OPEN_REVIEW_STATUSES = ["in_progress", "blocked", "ready_for_package"]
 const REVIEW_STEPS = ["luna", "ebay", "economics", "listing", "review"]
@@ -360,6 +369,7 @@ export async function GET(req: Request) {
     const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
     const url = new URL(req.url)
     const opportunityId = url.searchParams.get("opportunity") ?? ""
+    const smartStockingCandidate = url.searchParams.get("smartStockingCandidate")
     const [dashboard, sessions, packages, alertOutbox] = await Promise.all([
       getEbayFirstLunaQueueDashboard(supabase),
       supabase
@@ -387,6 +397,37 @@ export async function GET(req: Request) {
     const firstError = sessions.error ?? packages.error ?? alertOutbox.error
     if (firstError) throw new Error("COMMAND_CENTER_STATE_READ_FAILED")
     const selectedOpportunity = opportunityId ? await opportunity(supabase, opportunityId) : null
+    let smartStockingListingIntake: Record<string, unknown> | null = null
+    if (smartStockingCandidate === CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.lunaSku) {
+      const decision = await readWinnerEvidenceDecisionPackage(
+        supabase,
+        CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.packageId,
+        accountKey ?? "",
+      )
+      const profile = decision.smartStockingLearningProfile
+      const { data: existingIntake, error: intakeError } = await supabase
+        .from("ebay_luna_opportunity_queue")
+        .select("id,candidate_key,decision")
+        .eq("candidate_key", CAKE_TURNTABLE_LISTING_INTAKE_KEY)
+        .maybeSingle()
+      if (intakeError) throw new Error("COMMAND_CENTER_SMART_STOCKING_INTAKE_READ_FAILED")
+      smartStockingListingIntake = {
+        decisionPackageId: decision.packageId,
+        supplierSku: CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.lunaSku,
+        gtin: CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.gtin,
+        productTitle: "11 in Revolving Plastic Cake Turntable Non-Slip Base",
+        finalDecision: profile?.decisionSnapshot.finalEconomics.status === "PASS" &&
+          profile.decisionSnapshot.parkReason === null
+          ? "LISTING_READY" : "BLOCKED",
+        finalPriceUsd: profile?.decisionSnapshot.finalEconomics.salePriceUsd ?? null,
+        entryPotentialScore: profile?.entrySnapshot.entryPotentialScore ?? null,
+        intakeMaterialized: Boolean(existingIntake),
+        listingWorkspaceUrl: existingIntake
+          ? `/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(String(existingIntake.id))}&candidate=${encodeURIComponent(CAKE_TURNTABLE_LISTING_INTAKE_KEY)}`
+          : null,
+        publicationAuthorized: false,
+      }
+    }
     return NextResponse.json({
       success: true,
       dashboard,
@@ -397,6 +438,7 @@ export async function GET(req: Request) {
         outbox: alertOutbox.data ?? [],
       },
       selectedOpportunity,
+      smartStockingListingIntake,
       refreshedAt: new Date().toISOString(),
       safety: { ebayReadOnly: true, ebayWriteUsed: false, canPublish: false },
     })
@@ -418,11 +460,6 @@ export async function POST(req: Request) {
   try {
     const body = object(await req.json())
     const action = typeof body.action === "string" ? body.action : ""
-    const opportunityId = typeof body.opportunityId === "string" ? body.opportunityId : ""
-    const candidateKey = typeof body.candidateKey === "string" ? body.candidateKey.slice(0, 300) : ""
-    if (!/^[0-9a-f-]{36}$/i.test(opportunityId) || !candidateKey) {
-      return NextResponse.json({ success: false, error: "COMMAND_CENTER_CANDIDATE_REQUIRED" }, { status: 400 })
-    }
     const supabase = getSupabaseAdminClient()
     const reviewer = validation.userId
     const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
@@ -431,6 +468,28 @@ export async function POST(req: Request) {
         success: false,
         error: "COMMAND_CENTER_ACCOUNT_SCOPE_REQUIRED",
       }, { status: 503 })
+    }
+    if (action === "prepare_smart_stocking_listing_intake") {
+      if (body.supplierSku !== CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.lunaSku ||
+          body.decisionPackageId !== CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.packageId) {
+        return NextResponse.json({ success: false,
+          error: "COMMAND_CENTER_SMART_STOCKING_CANDIDATE_MISMATCH" }, { status: 409 })
+      }
+      const intake = await materializeCakeTurntableListingIntakeV1({
+        supabase,
+        accountKey,
+      })
+      return NextResponse.json({
+        success: true,
+        ...intake,
+        safety: { ebayWriteUsed: false, canPublish: false,
+          publicationAuthorized: false },
+      })
+    }
+    const opportunityId = typeof body.opportunityId === "string" ? body.opportunityId : ""
+    const candidateKey = typeof body.candidateKey === "string" ? body.candidateKey.slice(0, 300) : ""
+    if (!/^[0-9a-f-]{36}$/i.test(opportunityId) || !candidateKey) {
+      return NextResponse.json({ success: false, error: "COMMAND_CENTER_CANDIDATE_REQUIRED" }, { status: 400 })
     }
     const sourceOpportunity = await opportunity(supabase, opportunityId)
     if (sourceOpportunity.candidate_key !== candidateKey) {
