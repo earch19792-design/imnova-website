@@ -11,6 +11,7 @@ import {
   readMobileReviewJson,
 } from "@/lib/ebay/ebay-mobile-review-http"
 import {
+  canonicalWorkspacePreparationBlockers,
   v3FinalListingReviewCanonicalReady,
   v3VisualReviewAccessible,
   visibleWorkspaceBlockers,
@@ -2197,17 +2198,17 @@ function ListingWorkspacePageContent() {
     if (finalReviewCompleted) {
       return []
     }
-    return [
-      ...(!form.title ? ["Falta título"] : []),
-      ...(!form.categoryId ? ["Falta categoría"] : []),
-      ...(!form.description ? ["Falta descripción"] : []),
-      ...(!form.imageUrls.length ? ["Faltan imágenes"] : []),
-      ...(!(Number(form.pricing.targetPrice) > 0) ? ["Falta precio"] : []),
-      ...(opportunity?.hard_gates ?? [])
-        .filter((gate) => !resolvedWorkspaceGates.has(gate)),
-      ...(opportunity?.evidence_guards ?? []),
-    ]
-  }, [finalListingReview, finalReviewCompleted, form, opportunity, resolvedWorkspaceGates])
+    return canonicalWorkspacePreparationBlockers({
+      title: form.title,
+      categoryId: form.categoryId,
+      description: form.description,
+      imageUrls: form.imageUrls,
+      targetPrice: form.pricing.targetPrice,
+      hardGates: opportunity?.hard_gates,
+      evidenceGuards: opportunity?.evidence_guards,
+      resolvedHardGates: resolvedWorkspaceGates,
+    })
+  }, [finalReviewCompleted, form, opportunity, resolvedWorkspaceGates])
   const draftTarget = draftState.runtime?.target ?? "PENDIENTE"
   const productionTarget = draftTarget === "PRODUCTION"
   const expectedApprovalPhrase = draftState.approvalRequirements?.exactPhrase

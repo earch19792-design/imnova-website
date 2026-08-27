@@ -112,3 +112,40 @@ export function visibleWorkspaceBlockers(input: {
       || !LEGACY_DRAFT_IMAGE_AUTH_BLOCKERS.has(normalized)
   })
 }
+
+export function canonicalWorkspacePreparationBlockers(input: {
+  title: unknown
+  categoryId: unknown
+  description: unknown
+  imageUrls: unknown
+  targetPrice: unknown
+  hardGates: unknown
+  evidenceGuards: unknown
+  resolvedHardGates: ReadonlySet<string>
+}) {
+  const hardGates = Array.isArray(input.hardGates)
+    ? input.hardGates.filter((gate): gate is string => typeof gate === "string")
+    : []
+  const evidenceGuards = Array.isArray(input.evidenceGuards)
+    ? input.evidenceGuards.filter((guard): guard is string =>
+        typeof guard === "string")
+    : []
+  const unresolvedHardGates = hardGates.filter((gate) =>
+    !input.resolvedHardGates.has(gate))
+  const imageUrls = Array.isArray(input.imageUrls) ? input.imageUrls : []
+  const targetPrice = Number(input.targetPrice)
+
+  return [...new Set([
+    ...(!String(input.title ?? "").trim() ? ["TITLE_REQUIRED"] : []),
+    ...(!String(input.categoryId ?? "").trim() ? ["CATEGORY_REQUIRED"] : []),
+    ...(!String(input.description ?? "").trim()
+      ? ["DESCRIPTION_REQUIRED"] : []),
+    ...(!imageUrls.length
+      && !unresolvedHardGates.includes("NEED_AUTHORIZED_PRODUCT_IMAGES")
+      ? ["IMAGE_REQUIRED"] : []),
+    ...(!(Number.isFinite(targetPrice) && targetPrice > 0)
+      ? ["PRICE_REQUIRED"] : []),
+    ...unresolvedHardGates,
+    ...evidenceGuards,
+  ])]
+}
