@@ -51,6 +51,52 @@ export type FinalListingReviewPublicationGate = {
     | "APPROVED_LUNA_SUPPLIER_IMAGE_AUTOMATED_QA"
 }
 
+export const EBAY_MINIMUM_PUBLICATION_IMAGE_COUNT = 1
+export const EBAY_MERCHANDISING_IMAGE_TARGET = 7
+
+export function bindCanonicalPublicationImageSet(input: Readonly<{
+  imageUrls: unknown
+  imageAuthorization: unknown
+  gate: FinalListingReviewPublicationGate
+}>) {
+  const images = stringArray(input.imageUrls)
+  const authorization = object(input.imageAuthorization)
+  const approvedImages = stringArray(authorization.approvedImageUrls)
+  const uniqueHttpsImages = images.length >= EBAY_MINIMUM_PUBLICATION_IMAGE_COUNT &&
+    new Set(images).size === images.length &&
+    images.every((url) => {
+      try {
+        return new URL(url).protocol === "https:"
+      } catch {
+        return false
+      }
+    })
+  const canonicalCount = Number(input.gate.passedAssets)
+  const allowed = input.gate.allowed === true &&
+    input.gate.finalVisualSetLocked === true &&
+    input.gate.readyForUnpublishedOfferAuthorization === true &&
+    Number.isInteger(canonicalCount) &&
+    canonicalCount >= EBAY_MINIMUM_PUBLICATION_IMAGE_COUNT &&
+    input.gate.selectedAssets === canonicalCount &&
+    uniqueHttpsImages && images.length === canonicalCount &&
+    approvedImages.length === images.length &&
+    approvedImages.every((url, index) => url === images[index]) &&
+    authorization.approved === true &&
+    authorization.protectedManifestVerified === true &&
+    Number(authorization.protectedManifestAssetCount) === images.length &&
+    Number.isFinite(Date.parse(text(authorization.approvedAt)))
+  return {
+    allowed,
+    images: allowed ? images : [],
+    count: allowed ? images.length : 0,
+    canonicalPreflightCount: canonicalCount,
+    hardMinimum: EBAY_MINIMUM_PUBLICATION_IMAGE_COUNT,
+    qualityTarget: EBAY_MERCHANDISING_IMAGE_TARGET,
+    qualityTargetMet: allowed && images.length >= EBAY_MERCHANDISING_IMAGE_TARGET,
+    reason: allowed ? null : "FINAL_LISTING_CANONICAL_IMAGE_BINDING_NOT_READY",
+  }
+}
+
 type AutomatedRevisionEvidence = {
   listingPackage: Record<string, any> | null
   revision: Record<string, any> | null

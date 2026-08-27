@@ -57,7 +57,9 @@ import { enqueueSellerWhatsAppAlert } from "@/lib/ebay/ebay-seller-whatsapp-aler
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { loadSameDayAuthorizedPublicationContext } from "@/lib/ebay/ebay-same-day-authorized-publication"
 import {
+  bindCanonicalPublicationImageSet,
   loadFinalListingReviewPublicationGate,
+  type FinalListingReviewPublicationGate,
 } from "@/lib/ebay/final-listing-review-publication-gate"
 import {
   packageWithV3PublicationAssets,
@@ -230,28 +232,21 @@ function publicationPreviewHash(value: JsonRecord) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex")
 }
 
-function exactApprovedImages(payload: JsonRecord) {
-  const images = record(record(payload.inventoryItemPayload).product).imageUrls
-  if (!Array.isArray(images)) return []
-  const normalized = images.map((value) => text(value)).filter((value) => {
-    try {
-      return new URL(value).protocol === "https:"
-    } catch {
-      return false
-    }
-  })
-  return normalized.length === 7 && new Set(normalized).size === 7 ? normalized : []
-}
-
 function buildFinalPublicationPreview(
   approval: JsonRecord,
   execution: JsonRecord,
+  visualPublicationGate: FinalListingReviewPublicationGate,
 ) {
   const payload = record(approval.approved_payload)
   const inventoryItemPayload = record(payload.inventoryItemPayload)
   const offerPayload = record(payload.offerPayload)
-  const images = exactApprovedImages(payload)
   const authorization = record(record(payload.compliance).imageAuthorization)
+  const imageBinding = bindCanonicalPublicationImageSet({
+    imageUrls: record(inventoryItemPayload.product).imageUrls,
+    imageAuthorization: authorization,
+    gate: visualPublicationGate,
+  })
+  const images = imageBinding.images
   const offerId = sanitizeEbayOfferId(execution.offer_id)
   const sku = text(payload.sku)
   const publishWithStockguardContract =
@@ -262,10 +257,7 @@ function buildFinalPublicationPreview(
     || execution.phase !== "completed"
     || !offerId
     || !isCanonicalEbayPackageSku(sku)
-    || images.length !== 7
-    || authorization.approved !== true
-    || authorization.protectedManifestVerified !== true
-    || Number(authorization.protectedManifestAssetCount) < 6
+    || !imageBinding.allowed
     || offerPayload.marketplaceId !== "EBAY_US"
     || offerPayload.sku !== sku
   ) throw new Error("EBAY_FINAL_PUBLICATION_PREVIEW_NOT_READY")
@@ -286,6 +278,13 @@ function buildFinalPublicationPreview(
     offerPayload,
     imageCount: images.length,
     imageUrls: images,
+    imagePolicy: {
+      canonicalPreflightCount: imageBinding.canonicalPreflightCount,
+      hardMinimum: imageBinding.hardMinimum,
+      qualityTarget: imageBinding.qualityTarget,
+      qualityTargetMet: imageBinding.qualityTargetMet,
+      qualityTargetBlocking: false,
+    },
     pricingGuard: {
       exactApprovedPrice: record(record(offerPayload.pricingSummary).price).value,
       currency: record(record(offerPayload.pricingSummary).price).currency,
@@ -1997,7 +1996,11 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   if (!context.sameDayPilotAuthorization) {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_REQUIRED"), 409)
   }
-  const built = buildFinalPublicationPreview(context.approval, context.execution)
+  const built = buildFinalPublicationPreview(
+    context.approval,
+    context.execution,
+    visualPublicationGate,
+  )
   await revalidateFinalPublicationDependencies(record(context.approval.approved_payload))
   const offerVerification = await verifyEbayUnpublishedOffer(
     built.offerId,
@@ -2311,7 +2314,11 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     actor,
   )
   finalPublicationStockguardContract(record(context.approval.approved_payload))
-  const built = buildFinalPublicationPreview(context.approval, context.execution)
+  const built = buildFinalPublicationPreview(
+    context.approval,
+    context.execution,
+    visualPublicationGate,
+  )
   if (built.previewHash !== current.preview_hash) {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_PREVIEW_CHANGED"), 409)
   }
@@ -2487,6 +2494,7 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
   const built = buildFinalPublicationPreview(
     context.approval,
     context.execution,
+    visualPublicationGate,
   )
   if (built.previewHash !== publication.preview_hash) {
     return jsonError(
