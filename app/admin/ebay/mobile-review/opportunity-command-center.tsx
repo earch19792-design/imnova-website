@@ -10,6 +10,8 @@ import {
 } from "@/lib/ebay/ebay-mobile-review-http"
 import type { RealRadarCandidate } from "@/lib/ebay/ebay-mobile-review-real-radar-connector"
 
+import { Loop2Top20OpportunityPool } from "./loop2-top20-opportunity-pool"
+
 type Run = {
   id: string
   status: string
@@ -495,6 +497,8 @@ export function OpportunityCommandCenter({
       {error && <p role="alert" className="mt-3 rounded-2xl border border-rose-200/25 bg-rose-200/[0.08] p-3 text-sm text-rose-50">{error}</p>}
       </details>
     </header>
+
+    <Loop2Top20OpportunityPool surface="opportunities" />
 
     {missingRadarOpportunity && <section role="status" className="rounded-3xl border border-amber-200/30 bg-amber-200/[0.08] p-4 text-amber-50">
       <p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Sincronización pendiente</p>

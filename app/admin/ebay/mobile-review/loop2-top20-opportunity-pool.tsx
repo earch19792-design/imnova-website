@@ -911,7 +911,137 @@ async function probeOneClickResearchExtension() {
   }
 }
 
-export function Loop2Top20OpportunityPool() {
+type Loop2Top20OpportunityPoolProps = {
+  surface?: "loop2" | "opportunities"
+}
+
+function OneClickResearchCommandCenter({
+  browserCaptureStatus,
+  oneClickResearch,
+  workingId,
+  scanActive,
+  onStart,
+}: {
+  browserCaptureStatus: ProductResearchCaptureStatus | null
+  oneClickResearch: OneClickResearchSummary
+  workingId: string
+  scanActive: boolean
+  onStart: () => void
+}) {
+  const queryPlan = browserCaptureStatus?.queryPlan ?? null
+  const extensionConnected = Boolean(
+    oneClickResearch.extensionId && oneClickResearch.extensionVersion,
+  )
+
+  return <section
+    aria-labelledby="one-click-research-command-center-heading"
+    data-one-click-research-command-center
+    className="space-y-3 rounded-3xl border border-fuchsia-200/30 bg-gradient-to-br from-fuchsia-200/[0.1] via-violet-200/[0.05] to-black p-4 text-xs"
+  >
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <p className="font-black uppercase tracking-widest text-fuchsia-100/65">Research Automático</p>
+        <h3 id="one-click-research-command-center-heading" className="mt-1 text-lg font-black">Evidencia eBay reciente en un clic</h3>
+        <p className="mt-1 max-w-3xl leading-5 text-white/60">Usa la sesión certificada existente. Abrir OPORTUNIDADES sólo comprueba disponibilidad; ninguna sesión empieza hasta pulsar el botón.</p>
+      </div>
+      <span className={`rounded-full border px-3 py-1 font-black ${extensionConnected
+        ? "border-emerald-200/30 bg-emerald-200/[0.08] text-emerald-100"
+        : "border-amber-200/30 bg-amber-200/[0.08] text-amber-100"}`}>
+        {extensionConnected ? "EXTENSIÓN CONECTADA" : "EXTENSIÓN SIN CONECTAR"}
+      </span>
+    </div>
+
+    <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Versión extensión</dt><dd className="font-black">{oneClickResearch.extensionVersion ?? "NO OBSERVADA"}</dd></div>
+      <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Plan</dt><dd className="font-black">{queryPlan?.status ?? "NO DISPONIBLE"}</dd></div>
+      <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Consultas pendientes</dt><dd className="font-black">{queryPlan?.pendingCount ?? 0}</dd></div>
+      <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Plan capturado</dt><dd className="font-black">{queryPlan ? `${queryPlan.capturedCount} / ${queryPlan.queryCount}` : "0 / 0"}</dd></div>
+    </dl>
+
+    <button type="button"
+      onClick={onStart}
+      disabled={Boolean(workingId) || scanActive || !queryPlan || queryPlan.pendingCount < 1}
+      className="min-h-12 w-full rounded-xl bg-fuchsia-100 px-4 font-black text-fuchsia-950 disabled:opacity-40">
+      {workingId === "one-click-research"
+        ? "RESEARCH AUTOMÁTICO EN CURSO…"
+        : "INICIAR RESEARCH AUTOMÁTICO"}
+    </button>
+
+    <dl className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+      <div><dt className="text-white/45">Estado sesión</dt><dd className="font-black">{oneClickResearch.status}</dd></div>
+      <div><dt className="text-white/45">Consultas</dt><dd>{oneClickResearch.completedQueries} / {oneClickResearch.totalQueries}</dd></div>
+      <div><dt className="text-white/45">Product Research</dt><dd>{oneClickResearch.productResearchCaptures}</dd></div>
+      <div><dt className="text-white/45">Sold frescas</dt><dd>{oneClickResearch.freshSoldRows}</dd></div>
+      <div><dt className="text-white/45">NO_VALID_SOLD_EVIDENCE</dt><dd>{oneClickResearch.noValidSoldEvidenceTasks}</dd></div>
+    </dl>
+
+    {oneClickResearch.taskOutcomes.length > 0 && <div className="space-y-1 rounded-xl border border-white/10 bg-black/20 p-3">
+      <p className="font-black">Resultado terminal por consulta</p>
+      {oneClickResearch.taskOutcomes.map((outcome) => <p key={outcome.ordinal}
+        className={outcome.state === "NO_VALID_SOLD_EVIDENCE"
+          ? "text-amber-100" : "text-emerald-100"}>
+        #{outcome.ordinal} · {outcome.state} · válidas {outcome.validCount} · rechazadas {outcome.rejectedCount}
+        {Object.keys(outcome.rejectionReasonCounts).length > 0
+          ? ` · ${Object.entries(outcome.rejectionReasonCounts)
+            .map(([code, count]) => `${code}=${count}`).join(" · ")}` : ""}
+      </p>)}
+    </div>}
+
+    <p className="text-white/45">ID {oneClickResearch.extensionId ?? "NO OBSERVADO"} · evidencia máxima {oneClickResearch.evidenceMaxAgeDays === null ? "N/D" : `${oneClickResearch.evidenceMaxAgeDays.toFixed(1)} días`}.</p>
+    {oneClickResearch.coverageLimitation && <p className="text-amber-100/70">PLAN_COVERAGE_LIMITATION: {oneClickResearch.coverageLimitation}</p>}
+    {oneClickResearch.error && <p role="alert" className="text-rose-100">{oneClickResearch.error}</p>}
+
+    {oneClickResearch.handshakeTrace && <details data-one-click-handshake-diagnostic className="rounded-xl border border-cyan-100/20 bg-black/20 p-3">
+      <summary className="cursor-pointer font-black text-cyan-100">Diagnóstico seguro del handshake</summary>
+      <dl className="mt-3 grid grid-cols-2 gap-1 sm:grid-cols-4">
+        <div><dt className="text-white/45">Última etapa</dt><dd>{oneClickResearch.handshakeTrace.lastConfirmedStage}</dd></div>
+        <div><dt className="text-white/45">Manifest match</dt><dd>{String(oneClickResearch.handshakeTrace.manifestMatched)}</dd></div>
+        <div><dt className="text-white/45">Bridge injected</dt><dd>{String(oneClickResearch.handshakeTrace.adminBridgeInjected)}</dd></div>
+        <div><dt className="text-white/45">Bridge booted</dt><dd>{String(oneClickResearch.handshakeTrace.adminBridgeBooted)}</dd></div>
+        <div><dt className="text-white/45">Listener bridge</dt><dd>{String(oneClickResearch.handshakeTrace.bridgeListenerRegistered)}</dd></div>
+        <div><dt className="text-white/45">Listener página</dt><dd>{String(oneClickResearch.handshakeTrace.pageListenerRegistered)}</dd></div>
+        <div><dt className="text-white/45">Probes enviados</dt><dd>{oneClickResearch.handshakeTrace.probeEventsSent}</dd></div>
+        <div><dt className="text-white/45">Probes recibidos</dt><dd>{oneClickResearch.handshakeTrace.probeEventsReceivedByBridge}</dd></div>
+        <div><dt className="text-white/45">ACK bridge</dt><dd>{oneClickResearch.handshakeTrace.ackEventsSent}</dd></div>
+        <div><dt className="text-white/45">ACK página</dt><dd>{oneClickResearch.handshakeTrace.ackEventsReceivedByPage}</dd></div>
+        <div><dt className="text-white/45">Estado conectado</dt><dd>{String(oneClickResearch.handshakeTrace.connectedStateCommitted)}</dd></div>
+        <div><dt className="text-white/45">Contexto extensión</dt><dd>{oneClickResearch.handshakeTrace.extensionContextState}</dd></div>
+        <div><dt className="text-white/45">Worker response</dt><dd>{oneClickResearch.handshakeTrace.serviceWorkerResponse}</dd></div>
+        <div><dt className="text-white/45">Error acotado</dt><dd>{oneClickResearch.handshakeTrace.lastErrorCode}</dd></div>
+      </dl>
+    </details>}
+
+    {oneClickResearch.diagnosticTrace && <details data-one-click-product-research-diagnostic className="rounded-xl border border-amber-100/20 bg-black/20 p-3">
+      <summary className="cursor-pointer font-black text-amber-100">Diagnóstico seguro Product Research</summary>
+      <dl className="mt-3 grid grid-cols-2 gap-1 sm:grid-cols-4">
+        <div><dt className="text-white/45">Última etapa</dt><dd>{oneClickResearch.diagnosticTrace.lastConfirmedStage}</dd></div>
+        <div><dt className="text-white/45">Tab complete</dt><dd>{String(oneClickResearch.diagnosticTrace.tabUpdatedComplete)}</dd></div>
+        <div><dt className="text-white/45">URL state</dt><dd>{String(oneClickResearch.diagnosticTrace.finalUrlStateValid)}</dd></div>
+        <div><dt className="text-white/45">URL class</dt><dd>{oneClickResearch.diagnosticTrace.urlStateClass}</dd></div>
+        <div><dt className="text-white/45">Auth</dt><dd>{oneClickResearch.diagnosticTrace.authState}</dd></div>
+        <div><dt className="text-white/45">Ping ACK</dt><dd>{String(oneClickResearch.diagnosticTrace.contentScriptPingAck)}</dd></div>
+        <div><dt className="text-white/45">Script boot</dt><dd>{String(oneClickResearch.diagnosticTrace.contentScriptBooted)}</dd></div>
+        <div><dt className="text-white/45">Query match</dt><dd>{String(oneClickResearch.diagnosticTrace.queryStateMatch)}</dd></div>
+        <div><dt className="text-white/45">Category match</dt><dd>{String(oneClickResearch.diagnosticTrace.categoryStateMatch)}</dd></div>
+        <div><dt className="text-white/45">Container</dt><dd>{String(oneClickResearch.diagnosticTrace.resultsContainerFound)}</dd></div>
+        <div><dt className="text-white/45">Loading</dt><dd>{String(oneClickResearch.diagnosticTrace.resultsLoading)}</dd></div>
+        <div><dt className="text-white/45">Results ready</dt><dd>{String(oneClickResearch.diagnosticTrace.resultsReady)}</dd></div>
+        <div><dt className="text-white/45">Result/query bound</dt><dd>{String(oneClickResearch.diagnosticTrace.resultStateBoundToCurrentQuery)}</dd></div>
+        <div><dt className="text-white/45">Readiness reason</dt><dd>{oneClickResearch.diagnosticTrace.readinessRejectionReason}</dd></div>
+        <div><dt className="text-white/45">Capture response</dt><dd>{oneClickResearch.diagnosticTrace.captureResponseState}</dd></div>
+        <div><dt className="text-white/45">Rows</dt><dd>{oneClickResearch.diagnosticTrace.rowCount}</dd></div>
+        <div><dt className="text-white/45">Format changed</dt><dd>{String(oneClickResearch.diagnosticTrace.sourceFormatChanged)}</dd></div>
+        <div><dt className="text-white/45">External blocker</dt><dd>{oneClickResearch.diagnosticTrace.externalEbayBlocker}</dd></div>
+      </dl>
+    </details>}
+
+    <p className="text-white/45">Límites: 15 minutos · 15 consultas · 200 filas Sold · 2 páginas por consulta · 1 reintento · EBAY_US · escrituras eBay 0.</p>
+  </section>
+}
+
+export function Loop2Top20OpportunityPool({
+  surface = "loop2",
+}: Loop2Top20OpportunityPoolProps = {}) {
   const [payload, setPayload] = useState<QueuePayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [workingId, setWorkingId] = useState("")
@@ -1441,6 +1571,16 @@ export function Loop2Top20OpportunityPool() {
     }
   }
 
+  const oneClickResearchCommandCenter = <OneClickResearchCommandCenter
+    browserCaptureStatus={browserCaptureStatus}
+    oneClickResearch={oneClickResearch}
+    workingId={workingId}
+    scanActive={scanActive}
+    onStart={() => void startOneClickResearch()}
+  />
+
+  if (surface === "opportunities") return oneClickResearchCommandCenter
+
   return (
     <section aria-labelledby="top20-heading" className="space-y-4 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1541,106 +1681,7 @@ export function Loop2Top20OpportunityPool() {
               <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.22.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.22</a>
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
-            <div className="space-y-3 rounded-xl border border-fuchsia-200/25 bg-fuchsia-200/[0.06] p-3">
-              <div>
-                <p className="font-black text-fuchsia-50">Sesión acotada de un clic</p>
-                <p className="mt-1 text-white/55">La página debe permanecer abierta durante V1. Si la sesión, autenticación o bridge desaparece, la captura se detiene; no inicia nuevas importaciones y conserva sólo evidencia ya confirmada durablemente. Nunca inicia Radar, Luna o publicación.</p>
-              </div>
-              <button type="button"
-                onClick={() => void startOneClickResearch()}
-                disabled={Boolean(workingId) || scanActive ||
-                  !browserCaptureStatus?.queryPlan ||
-                  (browserCaptureStatus.queryPlan.pendingCount ?? 0) < 1}
-                className="min-h-12 w-full rounded-xl bg-fuchsia-100 px-4 font-black text-fuchsia-950 disabled:opacity-40">
-                {workingId === "one-click-research"
-                  ? "RESEARCH AUTOMÁTICO EN CURSO…"
-                  : "INICIAR RESEARCH AUTOMÁTICO"}
-              </button>
-              <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <div><dt className="text-white/45">Estado</dt><dd className="font-black">{oneClickResearch.status}</dd></div>
-                <div><dt className="text-white/45">Consultas</dt><dd>{oneClickResearch.completedQueries} / {oneClickResearch.totalQueries}</dd></div>
-                <div><dt className="text-white/45">Product Research</dt><dd>{oneClickResearch.productResearchCaptures}</dd></div>
-                <div><dt className="text-white/45">Sold frescas</dt><dd>{oneClickResearch.freshSoldRows}</dd></div>
-                <div><dt className="text-white/45">Sin Sold válido</dt><dd>{oneClickResearch.noValidSoldEvidenceTasks}</dd></div>
-                <div><dt className="text-white/45">Nueva discovery</dt><dd>{oneClickResearch.newDiscovery}</dd></div>
-                <div><dt className="text-white/45">Expansión fuerte</dt><dd>{oneClickResearch.strongFamilyExpansion}</dd></div>
-                <div><dt className="text-white/45">Refresh vencido</dt><dd>{oneClickResearch.staleDemandRefresh}</dd></div>
-                <div><dt className="text-white/45">Rescate economics</dt><dd>{oneClickResearch.economicsRescue}</dd></div>
-              </dl>
-              {oneClickResearch.taskOutcomes.length > 0 && <div className="space-y-1 rounded-lg border border-white/10 bg-black/20 p-2">
-                <p className="font-black">Resultado terminal por consulta</p>
-                {oneClickResearch.taskOutcomes.map((outcome) => <p key={outcome.ordinal}
-                  className={outcome.state === "NO_VALID_SOLD_EVIDENCE"
-                    ? "text-amber-100" : "text-emerald-100"}>
-                  #{outcome.ordinal} · {outcome.state} · válidas {outcome.validCount} · rechazadas {outcome.rejectedCount}
-                  {Object.keys(outcome.rejectionReasonCounts).length > 0
-                    ? ` · ${Object.entries(outcome.rejectionReasonCounts)
-                      .map(([code, count]) => `${code}=${count}`).join(" · ")}` : ""}
-                </p>)}
-              </div>}
-              <p className="text-white/45">Extensión {oneClickResearch.extensionVersion ?? "SIN CONECTAR"} · ID {oneClickResearch.extensionId ?? "NO OBSERVADO"} · evidencia máxima {oneClickResearch.evidenceMaxAgeDays === null ? "N/D" : `${oneClickResearch.evidenceMaxAgeDays.toFixed(1)} días`}.</p>
-              {oneClickResearch.handshakeTrace && <div className="space-y-2 rounded-lg border border-cyan-100/20 bg-black/20 p-2">
-                <p className="font-black text-cyan-100">Diagnóstico seguro del handshake</p>
-                <dl className="grid grid-cols-2 gap-1 sm:grid-cols-4">
-                  <div><dt className="text-white/45">Última etapa</dt><dd>{oneClickResearch.handshakeTrace.lastConfirmedStage}</dd></div>
-                  <div><dt className="text-white/45">Manifest match</dt><dd>{String(oneClickResearch.handshakeTrace.manifestMatched)}</dd></div>
-                  <div><dt className="text-white/45">Bridge injected</dt><dd>{String(oneClickResearch.handshakeTrace.adminBridgeInjected)}</dd></div>
-                  <div><dt className="text-white/45">Bridge booted</dt><dd>{String(oneClickResearch.handshakeTrace.adminBridgeBooted)}</dd></div>
-                  <div><dt className="text-white/45">Listener bridge</dt><dd>{String(oneClickResearch.handshakeTrace.bridgeListenerRegistered)}</dd></div>
-                  <div><dt className="text-white/45">Listener página</dt><dd>{String(oneClickResearch.handshakeTrace.pageListenerRegistered)}</dd></div>
-                  <div><dt className="text-white/45">Probes enviados</dt><dd>{oneClickResearch.handshakeTrace.probeEventsSent}</dd></div>
-                  <div><dt className="text-white/45">Probes recibidos</dt><dd>{oneClickResearch.handshakeTrace.probeEventsReceivedByBridge}</dd></div>
-                  <div><dt className="text-white/45">ACK bridge</dt><dd>{oneClickResearch.handshakeTrace.ackEventsSent}</dd></div>
-                  <div><dt className="text-white/45">ACK página</dt><dd>{oneClickResearch.handshakeTrace.ackEventsReceivedByPage}</dd></div>
-                  <div><dt className="text-white/45">Estado conectado</dt><dd>{String(oneClickResearch.handshakeTrace.connectedStateCommitted)}</dd></div>
-                  <div><dt className="text-white/45">Contexto extensión</dt><dd>{oneClickResearch.handshakeTrace.extensionContextState}</dd></div>
-                  <div><dt className="text-white/45">Worker response</dt><dd>{oneClickResearch.handshakeTrace.serviceWorkerResponse}</dd></div>
-                  <div><dt className="text-white/45">Error acotado</dt><dd>{oneClickResearch.handshakeTrace.lastErrorCode}</dd></div>
-                </dl>
-              </div>}
-              {oneClickResearch.coverageLimitation && <p className="text-amber-100/70">PLAN_COVERAGE_LIMITATION: {oneClickResearch.coverageLimitation}</p>}
-              {oneClickResearch.error && <p className="text-rose-100">{oneClickResearch.error}</p>}
-              {oneClickResearch.diagnosticTrace && <div className="space-y-2 rounded-lg border border-amber-100/20 bg-black/20 p-2">
-                <p className="font-black text-amber-100">Diagnóstico seguro Product Research</p>
-                <dl className="grid grid-cols-2 gap-1 sm:grid-cols-4">
-                  <div><dt className="text-white/45">Última etapa</dt><dd>{oneClickResearch.diagnosticTrace.lastConfirmedStage}</dd></div>
-                  <div><dt className="text-white/45">Tab complete</dt><dd>{String(oneClickResearch.diagnosticTrace.tabUpdatedComplete)}</dd></div>
-                  <div><dt className="text-white/45">URL state</dt><dd>{String(oneClickResearch.diagnosticTrace.finalUrlStateValid)}</dd></div>
-                  <div><dt className="text-white/45">URL class</dt><dd>{oneClickResearch.diagnosticTrace.urlStateClass}</dd></div>
-                  <div><dt className="text-white/45">URL path</dt><dd>{oneClickResearch.diagnosticTrace.urlPathState}</dd></div>
-                  <div><dt className="text-white/45">URL marketplace</dt><dd>{oneClickResearch.diagnosticTrace.urlMarketplaceState}</dd></div>
-                  <div><dt className="text-white/45">URL query</dt><dd>{oneClickResearch.diagnosticTrace.urlQueryState}</dd></div>
-                  <div><dt className="text-white/45">URL category</dt><dd>{oneClickResearch.diagnosticTrace.urlCategoryState}</dd></div>
-                  <div><dt className="text-white/45">URL Sold tab</dt><dd>{oneClickResearch.diagnosticTrace.urlSoldTabState}</dd></div>
-                  <div><dt className="text-white/45">URL day range</dt><dd>{oneClickResearch.diagnosticTrace.urlDayRangeState}</dd></div>
-                  <div><dt className="text-white/45">URL guided query</dt><dd>{oneClickResearch.diagnosticTrace.urlGuidedQueryState}</dd></div>
-                  <div><dt className="text-white/45">URL guided stage</dt><dd>{oneClickResearch.diagnosticTrace.urlGuidedStageState}</dd></div>
-                  <div><dt className="text-white/45">Auth</dt><dd>{oneClickResearch.diagnosticTrace.authState}</dd></div>
-                  <div><dt className="text-white/45">Ping ACK</dt><dd>{String(oneClickResearch.diagnosticTrace.contentScriptPingAck)}</dd></div>
-                  <div><dt className="text-white/45">Script boot</dt><dd>{String(oneClickResearch.diagnosticTrace.contentScriptBooted)}</dd></div>
-                  <div><dt className="text-white/45">Query match</dt><dd>{String(oneClickResearch.diagnosticTrace.queryStateMatch)}</dd></div>
-                  <div><dt className="text-white/45">Category match</dt><dd>{String(oneClickResearch.diagnosticTrace.categoryStateMatch)}</dd></div>
-                  <div><dt className="text-white/45">Container</dt><dd>{String(oneClickResearch.diagnosticTrace.resultsContainerFound)}</dd></div>
-                  <div><dt className="text-white/45">Loading</dt><dd>{String(oneClickResearch.diagnosticTrace.resultsLoading)}</dd></div>
-                  <div><dt className="text-white/45">Results ready</dt><dd>{String(oneClickResearch.diagnosticTrace.resultsReady)}</dd></div>
-                  <div><dt className="text-white/45">Guided state</dt><dd>{String(oneClickResearch.diagnosticTrace.guidedQueryStatePresent)}</dd></div>
-                  <div><dt className="text-white/45">Guided match</dt><dd>{String(oneClickResearch.diagnosticTrace.guidedQueryMatch)}</dd></div>
-                  <div><dt className="text-white/45">Result identity</dt><dd>{oneClickResearch.diagnosticTrace.resultIdentityState}</dd></div>
-                  <div><dt className="text-white/45">Identity count</dt><dd>{oneClickResearch.diagnosticTrace.resultIdentityCount}</dd></div>
-                  <div><dt className="text-white/45">Result changed</dt><dd>{String(oneClickResearch.diagnosticTrace.resultFingerprintChanged)}</dd></div>
-                  <div><dt className="text-white/45">Previous fingerprint</dt><dd>{String(oneClickResearch.diagnosticTrace.previousResultsFingerprintPresent)}</dd></div>
-                  <div><dt className="text-white/45">Result/query bound</dt><dd>{String(oneClickResearch.diagnosticTrace.resultStateBoundToCurrentQuery)}</dd></div>
-                  <div><dt className="text-white/45">Readiness reason</dt><dd>{oneClickResearch.diagnosticTrace.readinessRejectionReason}</dd></div>
-                  <div><dt className="text-white/45">Zero results</dt><dd>{oneClickResearch.diagnosticTrace.zeroResultsState}</dd></div>
-                  <div><dt className="text-white/45">Capture sent</dt><dd>{String(oneClickResearch.diagnosticTrace.captureRequestSent)}</dd></div>
-                  <div><dt className="text-white/45">Capture response</dt><dd>{oneClickResearch.diagnosticTrace.captureResponseState}</dd></div>
-                  <div><dt className="text-white/45">Rows</dt><dd>{oneClickResearch.diagnosticTrace.rowCount}</dd></div>
-                  <div><dt className="text-white/45">Format changed</dt><dd>{String(oneClickResearch.diagnosticTrace.sourceFormatChanged)}</dd></div>
-                  <div><dt className="text-white/45">External blocker</dt><dd>{oneClickResearch.diagnosticTrace.externalEbayBlocker}</dd></div>
-                </dl>
-              </div>}
-              <p className="text-white/45">Límites: 15 minutos · 15 consultas · 200 filas Sold · 2 páginas por consulta · 1 reintento · EBAY_US · escrituras eBay 0.</p>
-            </div>
+            {oneClickResearchCommandCenter}
             <p className="text-white/55">Instálala localmente una vez. La versión 1.2.22 conserva la captura anterior y añade diagnóstico acotado del ciclo de handshake; no almacena tokens ni usa credenciales persistentes.</p>
             <div className="rounded-xl border border-amber-100/20 bg-amber-100/[0.04] p-3">
               <p className="font-black">Cuota oficial Browse</p>
