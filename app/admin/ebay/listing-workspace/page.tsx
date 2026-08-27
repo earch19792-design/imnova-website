@@ -1307,6 +1307,14 @@ function ListingWorkspacePageContent() {
   const [imageRightsBasis, setImageRightsBasis] = useState("supplier_authorized")
   const [imageAuthorizationReference, setImageAuthorizationReference] = useState("")
   const [rightsEvidenceConfirmed, setRightsEvidenceConfirmed] = useState(false)
+  const [lunaSupplierImageState, setLunaSupplierImageState] = useState<{
+    status: "processing" | "ready" | "blocked"
+    imageRights?: string
+    imageOptimization?: string
+    validCompliantImageCount?: number
+    excludedImageCount?: number
+    error?: string
+  } | null>(null)
   const [draftConfiguration, setDraftConfiguration] = useState<DraftConfiguration>(emptyDraftConfiguration)
   const [draftState, setDraftState] = useState<DraftState>({})
   const [draftBusy, setDraftBusy] = useState(false)
@@ -1328,6 +1336,7 @@ function ListingWorkspacePageContent() {
   const [activeTitleBusy, setActiveTitleBusy] = useState(false)
   const activeTitleIdempotency = useRef<{ scope: string; key: string } | null>(null)
   const publicationIntentScrolled = useRef(false)
+  const lunaSupplierImageRun = useRef("")
   const publicationLunaRecheckRequired = useRef(false)
   const accountPolicyProfileSaved = useRef(false)
 
@@ -1876,6 +1885,73 @@ function ListingWorkspacePageContent() {
       }
     })()
   }, [request, draftRequest, loadImageAssets, loadImageRevision, workspaceRetry])
+
+  useEffect(() => {
+    if (!listingPackage || !opportunity || workspaceMode !== "CREATION") return
+    const persisted = object(
+      object(listingPackage.package_data).supplierImageReadiness,
+    )
+    if (persisted.imageReady === true &&
+        persisted.imageRights === "PASS_INHERITED" &&
+        persisted.imageOptimization === "AUTO_PASS") {
+      setLunaSupplierImageState({
+        status: "ready",
+        imageRights: "PASS_INHERITED",
+        imageOptimization: "AUTO_PASS",
+        validCompliantImageCount: Number(
+          persisted.validCompliantImageCount ?? 0,
+        ),
+        excludedImageCount: Number(persisted.excludedImageCount ?? 0),
+      })
+      return
+    }
+    if (lunaSupplierImageRun.current === listingPackage.id) return
+    lunaSupplierImageRun.current = listingPackage.id
+    setLunaSupplierImageState({ status: "processing" })
+    void (async () => {
+      try {
+        const payload = await imageRequest({
+          action: "ensure_luna_supplier_images",
+          listingPackageId: listingPackage.id,
+        })
+        const nextPackage = payload.listingPackage as ListingPackage
+        if (!nextPackage?.id || payload.imageReady !== true ||
+            payload.imageRights !== "PASS_INHERITED" ||
+            payload.imageOptimization !== "AUTO_PASS" ||
+            Number(payload.validCompliantImageCount ?? 0) < 1) {
+          throw new Error("LUNA_IMAGE_VALID_COMPLIANT_COUNT_ZERO")
+        }
+        setListingPackage(nextPackage)
+        setForm(fromPackage(object(nextPackage.package_data)))
+        setDraftConfiguration((current) => ({
+          ...current,
+          imageRightsBasis: "supplier_authorized",
+          imageSource: "luna",
+        }))
+        setLunaSupplierImageState({
+          status: "ready",
+          imageRights: "PASS_INHERITED",
+          imageOptimization: "AUTO_PASS",
+          validCompliantImageCount: Number(
+            payload.validCompliantImageCount ?? 0,
+          ),
+          excludedImageCount: Number(payload.excludedImageCount ?? 0),
+        })
+        await loadImageAssets(nextPackage.id, opportunity.candidate_key)
+        setMessage(
+          `${Number(payload.validCompliantImageCount)} imágenes oficiales Luna ` +
+          "quedaron listas automáticamente; la autorización humana final de publicación permanece separada.",
+        )
+      } catch (requestError) {
+        const code = getMobileReviewRequestError(
+          requestError,
+          "LUNA_IMAGE_AUTOMATIC_PIPELINE_FAILED",
+        )
+        setLunaSupplierImageState({ status: "blocked", error: code })
+        setError(code)
+      }
+    })()
+  }, [imageRequest, listingPackage, loadImageAssets, opportunity, workspaceMode])
 
   useEffect(() => {
     if (!listingPackage || workspaceMode !== "CREATION"
@@ -4242,6 +4318,9 @@ function ListingWorkspacePageContent() {
               </div>}
             </div>
 
+            {lunaSupplierImageState && <div className={`mt-4 rounded-2xl border p-3 text-sm leading-6 ${lunaSupplierImageState.status === "ready" ? "border-emerald-200/30 bg-emerald-200/[0.06] text-emerald-50" : lunaSupplierImageState.status === "processing" ? "border-cyan-200/30 bg-cyan-200/[0.05] text-cyan-50" : "border-amber-200/30 bg-amber-200/[0.06] text-amber-50"}`}><strong>{lunaSupplierImageState.status === "ready" ? "Derechos Luna heredados · imágenes listas" : lunaSupplierImageState.status === "processing" ? "Validando imágenes oficiales Luna automáticamente…" : "La vía automática encontró una anomalía"}</strong>{lunaSupplierImageState.status === "ready" && <span className="mt-1 block">PASS_INHERITED · AUTO_PASS · {lunaSupplierImageState.validCompliantImageCount} imágenes conformes{Number(lunaSupplierImageState.excludedImageCount ?? 0) > 0 ? ` · ${lunaSupplierImageState.excludedImageCount} excluidas sin bloquear el paquete` : ""}. No se requiere confirmación rutinaria de derechos ni QA visual.</span>}{lunaSupplierImageState.status === "blocked" && <code className="mt-1 block break-all text-xs">{lunaSupplierImageState.error}</code>}</div>}
+
+            {lunaSupplierImageState?.status !== "ready" && <>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <label className="grid gap-1 text-sm font-bold"><span>Derechos de la imagen</span><select value={imageRightsBasis} onChange={(event) => { setImageRightsBasis(event.target.value); setRightsEvidenceConfirmed(false); setDraftConfiguration((current) => ({ ...current, imageRightsBasis: event.target.value, imageSource: event.target.value === "owned" ? "owned" : event.target.value === "licensed" ? "licensed_asset" : "luna" })) }} className="min-h-12 rounded-2xl border border-white/20 bg-black/30 px-3"><option value="supplier_authorized">Autorizada por Luna/proveedor</option><option value="owned">Fotografía propia</option><option value="licensed">Licencia documentada</option></select></label>
               <label className="grid gap-1 text-sm font-bold"><span>Referencia de autorización</span><input value={imageAuthorizationReference} onChange={(event) => { setImageAuthorizationReference(event.target.value); setRightsEvidenceConfirmed(false) }} placeholder="Ej. email Luna 2026-07-13" className="min-h-12 rounded-2xl border border-white/20 bg-black/30 px-3" /></label>
@@ -4260,6 +4339,7 @@ function ListingWorkspacePageContent() {
             </div>
 
             {form.imageUrls.length > 0 && <details className="mt-3 rounded-2xl border border-white/10 p-3"><summary className="cursor-pointer text-sm font-black">{form.imageUrls.length === 6 ? "Conjunto histórico actual · 6 · no publicable" : `Fuentes/URLs actuales del paquete · ${form.imageUrls.length}`}</summary><div className="mt-3 space-y-2">{form.imageUrls.map((url) => <div key={url} className="grid grid-cols-[64px_1fr] gap-3 rounded-xl bg-black/25 p-2"><img src={url} alt="Fuente actual autorizada" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="size-16 rounded-lg bg-white object-contain" /><div className="min-w-0"><p className="truncate text-xs text-white/55">{url}</p><button type="button" disabled={imageBusy || imageAuthorizationReference.trim().length < 8 || !rightsEvidenceConfirmed} onClick={() => void optimizeImageUrl(url)} className="mt-2 min-h-10 rounded-xl border border-cyan-200/30 px-3 text-xs font-black text-cyan-50 disabled:opacity-40">Crear versión blanca</button></div></div>)}</div></details>}
+            </>}
 
             <div className="mt-4 space-y-3">
               {currentPackageImageAssets.map((asset) => <article key={asset.id} className={`rounded-2xl border p-3 ${asset.status === "approved" && asset.qa_result?.automaticStatus === "PASSED" ? "border-emerald-200/30 bg-emerald-200/[0.05]" : asset.status === "rejected" ? "border-rose-200/20 bg-rose-200/[0.04]" : "border-amber-200/25 bg-amber-200/[0.04]"}`}>

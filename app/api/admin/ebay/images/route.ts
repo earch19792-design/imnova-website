@@ -48,6 +48,8 @@ import {
 } from "@/lib/ebay/authorized-catalog-native-media"
 import { persistAuthorizedCatalogSourcePack } from "@/lib/ebay/luna-catalog-source-pack-persistence"
 import { LUNA_CATALOG_SOURCE_RESOLVER_VERSION } from "@/lib/ebay/luna-catalog-original-source-resolver"
+import { ensureAutomaticLunaSupplierImagesV1 } from
+  "@/lib/ebay/luna-supplier-image-auto-runtime-v1"
 import { productFactsHash } from "@/lib/ebay/ebay-product-facts-readiness"
 import { resolveCanonicalProductIdentity } from "@/lib/ebay/canonical-product-identity"
 import {
@@ -1837,6 +1839,38 @@ export async function POST(req: Request) {
         }
         throw new Error(failureCode)
       }
+    }
+
+    if (action === "ensure_luna_supplier_images") {
+      const packageId = uuid(body.listingPackageId)
+      if (!packageId) {
+        return NextResponse.json(
+          { success: false, error: "EBAY_IMAGE_PACKAGE_REQUIRED" },
+          { status: 400 },
+        )
+      }
+      const packageRow = await packageForActor(
+        supabase,
+        packageId,
+        actor,
+        accountKey,
+      )
+      const result = await ensureAutomaticLunaSupplierImagesV1({
+        supabase,
+        accountKey,
+        actor,
+        packageRow,
+      })
+      return NextResponse.json({
+        success: true,
+        ...result,
+        safety: {
+          marketplaceWrites: 0,
+          ebayWrites: 0,
+          productionChanged: false,
+          finalHumanPublicationAuthorizationRequired: true,
+        },
+      })
     }
 
     if (action === "optimize_url" || action === "optimize_upload") {
