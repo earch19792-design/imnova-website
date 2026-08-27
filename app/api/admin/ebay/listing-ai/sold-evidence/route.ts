@@ -28,6 +28,18 @@ function text(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : ""
 }
 
+function boundedReasonCounts(value: Record<string, unknown>) {
+  const counts: Record<string, number> = {}
+  for (const [reason, rawCount] of Object.entries(value)) {
+    const count = Number(rawCount)
+    if (!/^[A-Z0-9_]+$/.test(reason) || !Number.isInteger(count) || count < 0) {
+      throw new Error("ONE_CLICK_RESEARCH_REJECTION_COUNTS_INVALID")
+    }
+    counts[reason] = count
+  }
+  return counts
+}
+
 export async function GET(req: Request) {
   const auth = await authorizeListingAiRequest(req)
   if (!auth.ok) return auth.response
@@ -138,6 +150,9 @@ export async function POST(req: Request) {
         sameRunResumed: true }
     }
     let durableValidation: Record<string, unknown> | null = null
+    let durableNoValidSoldEvidence: ReturnType<
+      typeof validateEbayOneClickNoValidSoldEvidenceOutcome> | null = null
+    let durableNoValidCode: string | null = null
     if (oneClickResearch) {
       const { data: durableRows, error: durableReadError } = await auth.supabase.rpc(
         "read_marketplace_sold_evidence_v1", {
@@ -160,6 +175,17 @@ export async function POST(req: Request) {
         ))) {
         throw new Error("ONE_CLICK_RESEARCH_DURABLE_SEMANTICS_MISMATCH")
       }
+      const packSignalRowCount = rows.filter((row) => {
+        const identity = row.normalized_identity && typeof row.normalized_identity === "object" &&
+          !Array.isArray(row.normalized_identity)
+          ? row.normalized_identity as Record<string, unknown> : {}
+        return identity.packCount === null || identity.packCount === undefined
+      }).length
+      const canonicalComparableRowCount = rows.length - packSignalRowCount
+      const packSignalsOnly = canonicalComparableRowCount === 0 && packSignalRowCount > 0
+      if (result.packSignalsPreservedCount > 0 && packSignalRowCount === 0) {
+        throw new Error("ONE_CLICK_RESEARCH_PACK_UNKNOWN_READBACK_MISMATCH")
+      }
       const now = Date.now()
       const ages = rows.map((row) => now - Date.parse(String(row.sold_at ?? "")))
       if (ages.some((age) => !Number.isFinite(age) || age < -86_400_000 ||
@@ -167,9 +193,11 @@ export async function POST(req: Request) {
         throw new Error("ONE_CLICK_RESEARCH_DURABLE_FRESHNESS_MISMATCH")
       }
       durableValidation = {
-        status: "PASS",
+        status: packSignalsOnly ? "PASS_PACK_SIGNALS_ONLY"
+          : packSignalRowCount ? "PASS_WITH_PACK_SIGNALS" : "PASS",
         readbackCount: rows.length,
-        freshSoldRows: rows.length,
+        freshSoldRows: canonicalComparableRowCount,
+        commercialPackSignalsPreserved: packSignalRowCount,
         evidenceMaxAgeDays: Math.max(0, ...ages.map((age) => age / 86_400_000)),
         displayedVsRealizedGuard: "PASS",
         bestOfferGuard: "PASS",
@@ -177,9 +205,41 @@ export async function POST(req: Request) {
       }
       scan = { status: "ONE_CLICK_RESEARCH_CAPTURE_ONLY",
         sameRunResumed: false, heavyRadarStarted: false, lunaProductFitStarted: false }
+      if (packSignalsOnly && captureAdapter) {
+        const rejectionReasonCounts = boundedReasonCounts(result.errorCounts)
+        const diagnostic = {
+          sourceRowCount: captureAdapter.freshRowCount,
+          rejectedCount: result.rejectedCount,
+          errorCounts: rejectionReasonCounts,
+        }
+        durableNoValidSoldEvidence = validateEbayOneClickNoValidSoldEvidenceOutcome({
+          taskOutcome: "NO_VALID_SOLD_EVIDENCE",
+          sourceStatus: "HEALTHY",
+          parserStatus: "HEALTHY",
+          normalizationStatus: "COMPLETE",
+          observedCount: captureAdapter.sourceRowCount,
+          parsedCount: captureAdapter.freshRowCount,
+          normalizedCount: captureAdapter.freshRowCount,
+          validCount: 0,
+          rejectedCount: result.rejectedCount,
+          duplicateStatus: "NOT_REACHED",
+          rejectionReasonCounts,
+          exactSoldComparablesCreated: 0,
+          marketplaceWrites: 0,
+        })
+        durableNoValidCode = oneClickSoldEvidenceNoValidRowsCode({
+          observedCount: captureAdapter.sourceRowCount,
+          parsedCount: captureAdapter.freshRowCount,
+          diagnostic,
+        })
+      }
     }
     return listingAiResponse({ success: true, result: { ...result, scan,
-      taskOutcome: oneClickResearch ? "DURABLE_SOLD_EVIDENCE" : null,
+      taskOutcome: oneClickResearch
+        ? durableNoValidSoldEvidence ? "NO_VALID_SOLD_EVIDENCE" : "DURABLE_SOLD_EVIDENCE"
+        : null,
+      noValidSoldEvidence: durableNoValidSoldEvidence,
+      validationCode: durableNoValidCode,
       captureAdapter: captureAdapter ? {
         version: captureAdapter.version,
         sourceRowCount: captureAdapter.sourceRowCount,

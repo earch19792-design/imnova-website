@@ -96,6 +96,12 @@ export type WinnerComparableInput = {
   identity: ProductIdentityInput
   itemPrice?: number | null
   shippingCost?: number | null
+  displayedSoldPriceAmount?: number | null
+  displayedSoldPriceCurrency?: string | null
+  priceEvidenceSemantics?: "REALIZED_TRANSACTION_PRICE" | "DISPLAYED_SOLD_PRICE" |
+    "PRODUCT_RESEARCH_AGGREGATE" | "UNAVAILABLE" | null
+  realizedPriceStatus?: "PROVEN" | "UNPROVEN" | "UNAVAILABLE" | null
+  bestOfferStatus?: "EXPLICIT_PRESENT" | "EXPLICIT_ABSENT" | "UNKNOWN" | null
   currency?: string | null
   confirmedSoldQuantity?: number | null
   estimatedSoldQuantity?: number | null
@@ -993,6 +999,7 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
     const classification = classifyWinnerComparable(input.identity, comparable.identity)
     const itemPrice = finiteNonNegative(comparable.itemPrice)
     const shippingCost = finiteNonNegative(comparable.shippingCost)
+    const displayedSoldPrice = finiteNonNegative(comparable.displayedSoldPriceAmount)
     const landedPrice = itemPrice === null || shippingCost === null
       ? null
       : roundMoney(itemPrice + shippingCost)
@@ -1008,6 +1015,7 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
       "EBAY_OFFICIAL_CSV_IMPORT",
       "EBAY_OFFICIAL_JSON_IMPORT",
       "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
+      "EBAY_MAIN_SEARCH_SOLD_BROWSER_CAPTURE",
       "HUMAN_REVIEWED_IMPORT",
     ].includes(comparable.source)
     const sourceAccepted = !reviewedImport || comparable.evidenceReviewed === true
@@ -1031,6 +1039,17 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
       classificationReasons: sourceAccepted
         ? classification.reasons
         : ["IMPORTED_EVIDENCE_REQUIRES_HUMAN_REVIEW"],
+      // Classification is derived from normalized identity, never accepted as
+      // a caller assertion.
+      packEvidenceClassification: sourceAccepted
+        ? comparableIdentity.packCount === null
+          ? "PACK_UNKNOWN"
+          : classification.classification === "EXACT_MATCH"
+            ? "EXACT_PACK_COMPARABLE"
+            : classification.classification === "DIFFERENT_PACK"
+              ? "DIFFERENT_PACK_BUT_COMMERCIALLY_RELEVANT"
+              : null
+        : null,
       cohort: sourceAccepted ? cohort : null,
       identity: {
         ...comparableIdentity,
@@ -1049,6 +1068,13 @@ export function buildWinnerEvidenceDecisionPackage(input: WinnerEvidenceInput) {
         unitPrice: landedPrice === null || totalUnits === null
           ? null
           : roundMoney(landedPrice / totalUnits),
+        displayedSoldPrice: displayedSoldPrice === null ? null
+          : roundMoney(displayedSoldPrice),
+        displayedSoldPriceCurrency: displayedSoldPrice === null ? null
+          : normalizedText(comparable.displayedSoldPriceCurrency) ?? "USD",
+        priceEvidenceSemantics: comparable.priceEvidenceSemantics ?? "UNAVAILABLE",
+        realizedPriceStatus: comparable.realizedPriceStatus ?? "UNAVAILABLE",
+        bestOfferStatus: comparable.bestOfferStatus ?? "UNKNOWN",
       },
       confirmedSoldQuantity: comparable.source === "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE"
         ? null

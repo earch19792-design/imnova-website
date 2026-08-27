@@ -25,6 +25,11 @@ export type SoldEvidenceSourceClass =
 export type RealizedPriceStatus = "PROVEN" | "UNPROVEN" | "UNAVAILABLE"
 export type BestOfferStatus = "EXPLICIT_PRESENT" | "EXPLICIT_ABSENT" | "UNKNOWN"
 export type ShippingEvidenceStatus = "OBSERVED" | "UNAVAILABLE" | "AMBIGUOUS"
+export type CommercialPackEvidenceClassification =
+  | "EXACT_PACK_COMPARABLE"
+  | "DIFFERENT_PACK_BUT_COMMERCIALLY_RELEVANT"
+  | "PACK_UNKNOWN"
+export type PackEvidenceStatus = "PROVEN" | "UNKNOWN"
 export type OfficialSoldEvidenceScope =
   | "MARKET_WIDE_SOLD_EVIDENCE"
   | "OWN_ACCOUNT_SOLD_EVIDENCE"
@@ -66,6 +71,7 @@ export type NormalizedOfficialSoldEvidence = {
   visualEvidence: WinnerComparableVisualEvidence
   observedAt: string
   eligibleUntil: string
+  packEvidenceStatus: PackEvidenceStatus
 }
 
 export type StoredOfficialSoldEvidence = {
@@ -343,6 +349,10 @@ function visualEvidence(row: Map<string, unknown>, observedAt: string): WinnerCo
 type ParsedObservation = {
   value: NormalizedOfficialSoldEvidence
   transientTitleTokens: string[]
+} | {
+  packSignal: NormalizedOfficialSoldEvidence
+  error: "PACK_COUNT_REQUIRED"
+  transientTitleTokens: string[]
 } | { completedWithoutSale: true }
   | { error: string }
 
@@ -442,7 +452,6 @@ function normalizeObservation(
   const observed = observedRaw ? new Date(observedRaw) : null
   if (!sourceListingId) return { error: "SOURCE_LISTING_REFERENCE_REQUIRED" as const }
   if (!soldQuantity || !saleConfirmationBasis) return { error: "SALE_CONFIRMATION_REQUIRED" as const }
-  if (!packCount) return { error: "PACK_COUNT_REQUIRED" as const }
   if (!observed || Number.isNaN(observed.getTime()) || observed.getTime() > now.getTime() + 86_400_000) {
     return { error: "OBSERVED_AT_INVALID" as const }
   }
@@ -552,15 +561,17 @@ function normalizeObservation(
     eligibleUntil,
   }
   const evidenceDigest = sha256(normalized)
-  return {
-    value: {
-      ...normalized,
-      evidenceDigest,
-      evidenceDeduplicationKey: evidenceDigest,
-      keywordSignals: [] as string[],
-    },
-    transientTitleTokens: titleTokens(field(values, "title")),
+  const value = {
+    ...normalized,
+    evidenceDigest,
+    evidenceDeduplicationKey: evidenceDigest,
+    keywordSignals: [] as string[],
+    packEvidenceStatus: packCount ? "PROVEN" as const : "UNKNOWN" as const,
   }
+  const transientTitleTokens = titleTokens(field(values, "title"))
+  return packCount
+    ? { value, transientTitleTokens }
+    : { packSignal: value, error: "PACK_COUNT_REQUIRED" as const, transientTitleTokens }
 }
 
 export function parseOfficialSoldEvidenceImport(input: {
@@ -588,15 +599,27 @@ export function parseOfficialSoldEvidenceImport(input: {
   }, {})
   const accepted = normalized.filter((entry): entry is Extract<ParsedObservation, { value: unknown }> =>
     "value" in entry)
+  const packSignals = normalized.filter((entry): entry is Extract<ParsedObservation,
+    { packSignal: unknown }> => "packSignal" in entry)
   const completedWithoutSaleCount = normalized.filter((entry) => "completedWithoutSale" in entry).length
-  const tokenFrequency = accepted.reduce<Map<string, number>>((counts, entry) => {
+  const durableEvidence = [...accepted.map((entry) => ({ value: entry.value,
+    transientTitleTokens: entry.transientTitleTokens })),
+  ...packSignals.map((entry) => ({ value: entry.packSignal,
+    transientTitleTokens: entry.transientTitleTokens }))]
+  const tokenFrequency = durableEvidence.reduce<Map<string, number>>((counts, entry) => {
     for (const token of entry.transientTitleTokens) counts.set(token, (counts.get(token) ?? 0) + 1)
     return counts
   }, new Map())
-  const observations = accepted.map((entry) => ({ ...entry.value,
+  const withKeywordSignals = (entry: { value: NormalizedOfficialSoldEvidence;
+    transientTitleTokens: string[] }) => ({ ...entry.value,
     keywordSignals: entry.transientTitleTokens.filter((token) => (tokenFrequency.get(token) ?? 0) >= 2)
-      .slice(0, 12) }))
-  if (!observations.length && completedWithoutSaleCount === 0) {
+      .slice(0, 12) })
+  const observations = accepted.map((entry) => withKeywordSignals({ value: entry.value,
+    transientTitleTokens: entry.transientTitleTokens }))
+  const commercialPackSignals = packSignals.map((entry) => withKeywordSignals({
+    value: entry.packSignal, transientTitleTokens: entry.transientTitleTokens,
+  }))
+  if (!observations.length && !commercialPackSignals.length && completedWithoutSaleCount === 0) {
     throw new SoldEvidenceNoValidRowsError({ sourceRowCount: rows.length, errorCounts: errors })
   }
   return {
@@ -610,12 +633,20 @@ export function parseOfficialSoldEvidenceImport(input: {
     sourceFileHash: sha256(input.content),
     sourceRowCount: rows.length,
     rowCount: rows.length - completedWithoutSaleCount,
-    validCount: observations.length + completedWithoutSaleCount,
-    confirmedSaleCount: observations.length,
+    // The durable batch counts every safe, confirmed Sold signal. Canonical pack
+    // comparability remains a separate stricter count and PACK_UNKNOWN never
+    // enters exact pricing/economics.
+    validCount: observations.length + commercialPackSignals.length + completedWithoutSaleCount,
+    confirmedSaleCount: observations.length + commercialPackSignals.length,
     completedWithoutSaleCount,
     rejectedCount: rows.length - observations.length - completedWithoutSaleCount,
+    hardRejectedCount: rows.length - observations.length - commercialPackSignals.length -
+      completedWithoutSaleCount,
     errorCounts: errors,
     observations,
+    commercialPackSignals,
+    packSignalsPreservedCount: commercialPackSignals.length,
+    canonicalComparableCount: observations.length,
     rawFileStored: false,
     competitorTitlesStored: false,
     sellerIdentitiesStored: false,
@@ -655,53 +686,151 @@ export function authoritativeRealizedTransactionPrice(row: StoredOfficialSoldEvi
   return evidence.authoritativeRealizedPrice ? evidence.amount : null
 }
 
+function storedSoldEvidenceBaseMatch(input: {
+  targetIdentity: ProductIdentityInput
+  row: StoredOfficialSoldEvidence
+  targetSupplierVariantId?: string | null
+}) {
+  const target = normalizeProductIdentity(input.targetIdentity)
+  const identity = normalizeProductIdentity(record(input.row.normalized_identity))
+  const strictIdentifierMatch = Boolean(
+    target.gtin && identity.gtin && target.gtin === identity.gtin ||
+    target.manufacturerBrand && identity.manufacturerBrand &&
+    target.manufacturerBrand === identity.manufacturerBrand && (
+      target.mpn && identity.mpn && target.mpn === identity.mpn ||
+      target.model && identity.model && target.model === identity.model
+    ),
+  )
+  const captureStrategicMatch = input.row.source_type ===
+    "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE" && Boolean(input.targetSupplierVariantId &&
+      input.row.matched_supplier_variant_id === input.targetSupplierVariantId)
+  return { target, identity, strictIdentifierMatch, captureStrategicMatch,
+    matched: strictIdentifierMatch || captureStrategicMatch }
+}
+
+function winnerComparableFromStoredSoldEvidence(input: {
+  targetIdentity: ProductIdentityInput
+  row: StoredOfficialSoldEvidence
+}) {
+  const target = normalizeProductIdentity(input.targetIdentity)
+  const identity = normalizeProductIdentity(record(input.row.normalized_identity))
+  const priceEvidence = soldPriceEvidenceForPositioning(input.row)
+  return {
+    source: input.row.source_type,
+    sourceListingId: input.row.source_listing_reference_hash,
+    observedAt: input.row.observed_at,
+    identity: { ...identity, productName: target.normalizedProductName },
+    itemPrice: input.row.source_class === "MAIN_SEARCH_SOLD"
+      ? authoritativeRealizedTransactionPrice(input.row)
+      : input.row.realized_price_status === "PROVEN"
+        ? authoritativeRealizedTransactionPrice(input.row)
+        : input.row.item_price,
+    shippingCost: input.row.source_class === "MAIN_SEARCH_SOLD" ? null : input.row.shipping_cost,
+    displayedSoldPriceAmount: priceEvidence.semantics === "DISPLAYED_SOLD_PRICE"
+      ? priceEvidence.amount : null,
+    displayedSoldPriceCurrency: priceEvidence.semantics === "DISPLAYED_SOLD_PRICE"
+      ? priceEvidence.currency : null,
+    priceEvidenceSemantics: priceEvidence.semantics,
+    realizedPriceStatus: input.row.realized_price_status ?? "UNAVAILABLE",
+    bestOfferStatus: input.row.best_offer_status ?? "UNKNOWN",
+    currency: "USD",
+    confirmedSoldQuantity: input.row.confirmed_sold_quantity,
+    evidenceScope: input.row.evidence_scope,
+    keywords: input.row.keyword_signals, shippingPattern: input.row.shipping_pattern,
+    returnsPattern: input.row.returns_pattern, imageCount: input.row.image_count,
+    visualEvidence: { ...record(input.row.visual_evidence),
+      sourceType: input.row.source_type === "EBAY_OFFICIAL_CSV_IMPORT"
+        ? "OFFICIAL_EBAY_CSV_IMPORT" as const
+        : input.row.source_type === "EBAY_OFFICIAL_JSON_IMPORT"
+          ? "OFFICIAL_EBAY_JSON_IMPORT" as const
+          : "OFFICIAL_EBAY_BROWSER_CAPTURE" as const },
+    evidenceReviewed: true,
+  } satisfies WinnerComparableInput
+}
+
+export type OfficialSoldPackIntelligenceSignal = {
+  classification: CommercialPackEvidenceClassification
+  packCount: number | null
+  soldCount: 1
+  soldQuantity: number
+  recentSoldPrice: ReturnType<typeof soldPriceEvidenceForPositioning>
+  pricePerUnit: number | null
+  evidenceConfidence: "STRONG" | "UNRESOLVED"
+  comparable: WinnerComparableInput
+}
+
+export function officialSoldPackIntelligenceForTarget(input: {
+  targetIdentity: ProductIdentityInput
+  rows: StoredOfficialSoldEvidence[]
+  targetSupplierVariantId?: string | null
+}) {
+  return input.rows.flatMap((row): OfficialSoldPackIntelligenceSignal[] => {
+    const base = storedSoldEvidenceBaseMatch({ ...input, row })
+    if (!base.matched || Date.parse(row.observed_at) > Date.now() + 86_400_000) return []
+    const rawClassification = classifyWinnerComparable(
+      input.targetIdentity,
+      { ...base.identity, productName: base.target.normalizedProductName },
+    ).classification
+    const classification: CommercialPackEvidenceClassification | null =
+      base.identity.packCount === null
+        ? "PACK_UNKNOWN"
+        : rawClassification === "EXACT_MATCH"
+          ? "EXACT_PACK_COMPARABLE"
+          : rawClassification === "DIFFERENT_PACK"
+            ? "DIFFERENT_PACK_BUT_COMMERCIALLY_RELEVANT"
+            : null
+    if (!classification) return []
+    if (row.source_type === "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE") {
+      const expected = row.match_classification === "SAME_PRODUCT_DIFFERENT_PACK"
+        ? "DIFFERENT_PACK_BUT_COMMERCIALLY_RELEVANT"
+        : row.match_classification === "EXACT_LUNA_MATCH"
+          ? "EXACT_PACK_COMPARABLE"
+          : null
+      if (classification !== expected) return []
+    }
+    const recentSoldPrice = soldPriceEvidenceForPositioning(row)
+    const totalUnits = base.identity.packCount && base.identity.unitCount
+      ? base.identity.packCount * base.identity.unitCount : null
+    return [{
+      classification,
+      packCount: base.identity.packCount,
+      soldCount: 1,
+      soldQuantity: row.confirmed_sold_quantity,
+      recentSoldPrice,
+      pricePerUnit: totalUnits && recentSoldPrice.amount !== null
+        ? Math.round(recentSoldPrice.amount / totalUnits * 100) / 100 : null,
+      evidenceConfidence: classification === "PACK_UNKNOWN" ? "UNRESOLVED" : "STRONG",
+      comparable: winnerComparableFromStoredSoldEvidence({ targetIdentity: input.targetIdentity,
+        row }),
+    }]
+  }).slice(0, 100)
+}
+
+export function officialSoldPackIntelligenceComparablesForTarget(input: {
+  targetIdentity: ProductIdentityInput
+  rows: StoredOfficialSoldEvidence[]
+  targetSupplierVariantId?: string | null
+}) {
+  return officialSoldPackIntelligenceForTarget(input)
+    .filter((signal) => signal.classification !== "EXACT_PACK_COMPARABLE")
+    .map((signal) => signal.comparable)
+}
+
 export function officialSoldEvidenceComparablesForTarget(input: {
   targetIdentity: ProductIdentityInput
   rows: StoredOfficialSoldEvidence[]
   targetSupplierVariantId?: string | null
 }) {
-  const target = normalizeProductIdentity(input.targetIdentity)
   const now = Date.now()
   return input.rows.flatMap((row): WinnerComparableInput[] => {
-    const identity = normalizeProductIdentity(record(row.normalized_identity))
-    const strictIdentifierMatch = Boolean(
-      target.gtin && identity.gtin && target.gtin === identity.gtin ||
-      target.manufacturerBrand && identity.manufacturerBrand &&
-      target.manufacturerBrand === identity.manufacturerBrand && (
-        target.mpn && identity.mpn && target.mpn === identity.mpn ||
-        target.model && identity.model && target.model === identity.model
-      ),
-    )
-    const captureStrategicMatch = row.source_type === "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE" &&
-      Boolean(input.targetSupplierVariantId &&
-        row.matched_supplier_variant_id === input.targetSupplierVariantId)
-    if ((!strictIdentifierMatch && !captureStrategicMatch) ||
-      Date.parse(row.observed_at) > now + 86_400_000) return []
-    const comparable: WinnerComparableInput = {
-      source: row.source_type,
-      sourceListingId: row.source_listing_reference_hash,
-      observedAt: row.observed_at,
-      identity: { ...identity, productName: target.normalizedProductName },
-      itemPrice: row.source_class === "MAIN_SEARCH_SOLD"
-        ? authoritativeRealizedTransactionPrice(row)
-        : row.realized_price_status === "PROVEN"
-          ? authoritativeRealizedTransactionPrice(row)
-          : row.item_price,
-      shippingCost: row.source_class === "MAIN_SEARCH_SOLD" ? null : row.shipping_cost,
-      currency: "USD",
-      confirmedSoldQuantity: row.confirmed_sold_quantity,
-      evidenceScope: row.evidence_scope,
-      keywords: row.keyword_signals, shippingPattern: row.shipping_pattern,
-      returnsPattern: row.returns_pattern, imageCount: row.image_count,
-      visualEvidence: { ...record(row.visual_evidence),
-        sourceType: row.source_type === "EBAY_OFFICIAL_CSV_IMPORT"
-          ? "OFFICIAL_EBAY_CSV_IMPORT"
-          : row.source_type === "EBAY_OFFICIAL_JSON_IMPORT"
-            ? "OFFICIAL_EBAY_JSON_IMPORT"
-            : "OFFICIAL_EBAY_BROWSER_CAPTURE" },
-      evidenceReviewed: true,
-    }
-    const classification = classifyWinnerComparable(input.targetIdentity, comparable.identity).classification
+    const base = storedSoldEvidenceBaseMatch({ ...input, row })
+    if (!base.matched || Date.parse(row.observed_at) > now + 86_400_000) return []
+    const classification = classifyWinnerComparable(input.targetIdentity,
+      { ...base.identity, productName: base.target.normalizedProductName }).classification
+    const comparable = winnerComparableFromStoredSoldEvidence({
+      targetIdentity: input.targetIdentity,
+      row,
+    })
     if (row.source_type === "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE") {
       if (row.match_classification === "SAME_PRODUCT_DIFFERENT_SIZE") {
         return ["DIFFERENT_PACK", "DIFFERENT_VARIANT"].includes(classification)
@@ -817,21 +946,33 @@ export async function importOfficialSoldEvidence(input: {
   const parsed = parseOfficialSoldEvidenceImport(input)
   const { data: duplicateBatch, error: duplicateBatchError } = await input.supabase
     .from("marketplace_sold_evidence_import_batches")
-    .select("id,evidence_scope,source_row_count,valid_count,confirmed_sale_count,completed_without_sale_count,imported_count,duplicate_count,rejected_count,imported_at")
+    .select("id,evidence_scope,source_row_count,valid_count,confirmed_sale_count,completed_without_sale_count,imported_count,duplicate_count,rejected_count,error_counts,imported_at")
     .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
     .eq("source_file_hash", parsed.sourceFileHash).maybeSingle()
   if (duplicateBatchError) throw new Error("SOLD_EVIDENCE_BATCH_DEDUP_READ_FAILED")
-  if (duplicateBatch) return { duplicate: true, batchId: duplicateBatch.id,
+  if (duplicateBatch) {
+    const packSignalsPreservedCount = Number(
+      record(duplicateBatch.error_counts).PACK_COUNT_REQUIRED,
+    ) || 0
+    return { duplicate: true, batchId: duplicateBatch.id,
     evidenceScope: duplicateBatch.evidence_scope,
     rowCount: duplicateBatch.source_row_count, validCount: duplicateBatch.valid_count,
     confirmedSaleCount: duplicateBatch.confirmed_sale_count,
     completedWithoutSaleCount: duplicateBatch.completed_without_sale_count,
     importedCount: duplicateBatch.imported_count,
-    duplicateCount: duplicateBatch.duplicate_count, rejectedCount: duplicateBatch.rejected_count,
+    duplicateCount: duplicateBatch.duplicate_count,
+    rejectedCount: duplicateBatch.rejected_count + packSignalsPreservedCount,
+    hardRejectedCount: duplicateBatch.rejected_count,
+    packSignalsPreservedCount,
+    canonicalComparableCount: Math.max(0, duplicateBatch.confirmed_sale_count -
+      packSignalsPreservedCount),
+    errorCounts: record(duplicateBatch.error_counts),
     importedAt: duplicateBatch.imported_at, reanalysisRequired: false,
     rawFileStored: false, piiStored: false, openAiCalls: 0, ebayWrites: 0 }
+  }
 
-  const uniqueObservations = deduplicateOfficialSoldEvidence(parsed.observations).observations
+  const persistableEvidence = [...parsed.observations, ...parsed.commercialPackSignals]
+  const uniqueObservations = deduplicateOfficialSoldEvidence(persistableEvidence).observations
   const deduplicationKeys = uniqueObservations.map((row) => row.evidenceDeduplicationKey)
   const existingKeys = new Set<string>()
   for (let offset = 0; offset < deduplicationKeys.length; offset += 250) {
@@ -843,7 +984,7 @@ export async function importOfficialSoldEvidence(input: {
     for (const row of data ?? []) existingKeys.add(row.evidence_deduplication_key)
   }
   const fresh = uniqueObservations.filter((row) => !existingKeys.has(row.evidenceDeduplicationKey))
-  const duplicateCount = parsed.observations.length - fresh.length
+  const duplicateCount = persistableEvidence.length - fresh.length
   const batchId = randomUUID()
   const observedTimes = fresh.map((row) => Date.parse(row.observedAt)).filter(Number.isFinite)
   const rpcRows = fresh.map((row) => ({
@@ -893,7 +1034,7 @@ export async function importOfficialSoldEvidence(input: {
     p_confirmed_sale_count: parsed.confirmedSaleCount,
     p_completed_without_sale_count: parsed.completedWithoutSaleCount,
     p_duplicate_count: duplicateCount,
-    p_rejected_count: parsed.rejectedCount,
+    p_rejected_count: parsed.hardRejectedCount,
     p_error_counts: parsed.errorCounts,
     p_source_observed_start: observedTimes.length ? new Date(Math.min(...observedTimes)).toISOString() : null,
     p_source_observed_end: observedTimes.length ? new Date(Math.max(...observedTimes)).toISOString() : null,
@@ -933,6 +1074,10 @@ export async function importOfficialSoldEvidence(input: {
     confirmedSaleCount: parsed.confirmedSaleCount,
     completedWithoutSaleCount: parsed.completedWithoutSaleCount,
     importedCount: fresh.length, duplicateCount, rejectedCount: parsed.rejectedCount,
+    hardRejectedCount: parsed.hardRejectedCount,
+    packSignalsPreservedCount: parsed.packSignalsPreservedCount,
+    canonicalComparableCount: parsed.canonicalComparableCount,
+    errorCounts: parsed.errorCounts,
     importedAt, reanalysisRequired: fresh.length > 0,
     rawFileStored: false, piiStored: false, openAiCalls: 0, ebayWrites: 0 }
 }
@@ -987,7 +1132,7 @@ export async function getOfficialSoldEvidenceImportStatus(input: {
         .select("id", { count: "exact", head: true }).eq("marketplace_account_key", input.accountKey)
         .eq("marketplace", "EBAY_US").eq("evidence_reviewed", true),
       input.supabase.from("marketplace_sold_evidence_import_batches")
-        .select("id,source_type,source_export_type,evidence_scope,market_wide_schema_confirmed,source_row_count,valid_count,confirmed_sale_count,completed_without_sale_count,imported_count,duplicate_count,rejected_count,source_observed_start,source_observed_end,imported_at")
+        .select("id,source_type,source_export_type,evidence_scope,market_wide_schema_confirmed,source_row_count,valid_count,confirmed_sale_count,completed_without_sale_count,imported_count,duplicate_count,rejected_count,error_counts,source_observed_start,source_observed_end,imported_at")
         .eq("marketplace_account_key", input.accountKey).eq("marketplace", "EBAY_US")
         .order("imported_at", { ascending: false }).limit(1).maybeSingle(),
       input.supabase.from("marketplace_listing_approval_queue_runs").select("id")
@@ -997,6 +1142,8 @@ export async function getOfficialSoldEvidenceImportStatus(input: {
   if (observationError || latestError || runError) throw new Error("SOLD_EVIDENCE_STATUS_READ_FAILED")
   let coverage = { exactMatches: 0, ambiguousMatches: 0, withoutLunaMatch: 0,
     top20CandidatesEnriched: 0 }
+  let packIntelligence = { packProvenObservationCount: 0, packUnknownSignalCount: 0,
+    packCountRequiredCount: 0 }
   if (latest) {
     const [observationResult, targetResult] = await Promise.all([
       input.supabase.rpc("read_marketplace_sold_evidence_v1", {
@@ -1015,9 +1162,17 @@ export async function getOfficialSoldEvidenceImportStatus(input: {
       targets: (targetResult.data ?? []).map(coverageTarget)
         .filter((value): value is SoldEvidenceCoverageTarget => value !== null),
     })
+    const latestRows = (observationResult.data ?? []) as StoredOfficialSoldEvidence[]
+    packIntelligence = {
+      packProvenObservationCount: latestRows.filter((row) =>
+        normalizeProductIdentity(record(row.normalized_identity)).packCount !== null).length,
+      packUnknownSignalCount: latestRows.filter((row) =>
+        normalizeProductIdentity(record(row.normalized_identity)).packCount === null).length,
+      packCountRequiredCount: Number(record(latest.error_counts).PACK_COUNT_REQUIRED) || 0,
+    }
   }
   return { configured: true, reviewedObservationCount: observations ?? 0, latest: latest ?? null,
-    coverage,
+    coverage, packIntelligence,
     acceptedFormats: ["CSV", "JSON"], maxRows: OFFICIAL_SOLD_EVIDENCE_MAX_ROWS,
     recencyDays: OFFICIAL_SOLD_EVIDENCE_RECENCY_DAYS,
     rawFilesStored: false, competitorTitlesStored: false, sellerIdentitiesStored: false,

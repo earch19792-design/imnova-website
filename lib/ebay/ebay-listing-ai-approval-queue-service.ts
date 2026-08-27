@@ -54,6 +54,7 @@ import {
 } from "./ebay-winner-evidence-v2-service"
 import {
   officialSoldEvidenceComparablesForTarget,
+  officialSoldPackIntelligenceComparablesForTarget,
   readReviewedOfficialSoldEvidence,
   type StoredOfficialSoldEvidence,
 } from "./ebay-official-sold-evidence-import"
@@ -810,6 +811,8 @@ function safeEvidenceSnapshot(input: {
       recommendedPack: input.pack.recommendedPack,
       alternativePack: input.pack.alternativePack,
       matrix: input.pack.packMatrix,
+      cohortCounts: input.pack.cohortCounts,
+      commercialRecommendation: input.pack.commercialRecommendation,
     } : null,
     strategicIntelligence: input.strategicIntelligence ?? null,
     operatorConfirmationRequired: true,
@@ -859,9 +862,14 @@ async function analyzeCandidate(input: {
     rows: input.reviewedSoldEvidence ?? [],
     targetSupplierVariantId: input.candidate.supplierVariantId,
   })
+  const importedPackSignals = officialSoldPackIntelligenceComparablesForTarget({
+    targetIdentity,
+    rows: input.reviewedSoldEvidence ?? [],
+    targetSupplierVariantId: input.candidate.supplierVariantId,
+  })
   const comparables = input.comparables === undefined
     ? undefined
-    : [...input.comparables, ...importedSold]
+    : [...input.comparables, ...importedSold, ...importedPackSignals]
   const generated = await createWinnerEvidenceDecisionPackage(
     input.supabase,
     { ...winnerInput(input.candidate, input.accountKey, input.marketReport, input.discovery),

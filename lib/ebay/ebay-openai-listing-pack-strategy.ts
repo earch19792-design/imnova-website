@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { z } from "zod"
 
 export const LISTING_AI_PACK_STRATEGY_VERSION =
-  "EBAY_LISTING_AI_PACK_STRATEGY_V2_2026_07_24"
+  "EBAY_LISTING_AI_PACK_STRATEGY_V3_2026_08_26"
 export const CONSUMABLE_PAIRED_OFFER_PLAN_VERSION =
   "EBAY_CONSUMABLE_PAIRED_OFFER_PLAN_V1_2026_07_23"
 export const LOW_COST_SMALL_ITEM_PACK_OPPORTUNITY_VERSION =
@@ -16,6 +16,10 @@ const hashSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/)
 const confidenceSchema = z.enum(["STRONG", "MEDIUM", "LOW", "INSUFFICIENT"])
 const nullableMoney = z.number().finite().nonnegative().nullable()
 const nullablePercent = z.number().finite().nullable()
+const packEvidenceClassificationSchema = z.enum([
+  "EXACT_PACK_COMPARABLE",
+  "DIFFERENT_PACK_BUT_COMMERCIALLY_RELEVANT",
+])
 
 const packEconomicsSchema = z.object({
   minimumSafePrice: nullableMoney,
@@ -35,6 +39,7 @@ const packEconomicsSchema = z.object({
 
 export const listingAiPackMatrixRowSchema = z.object({
   offerPackFingerprint: hashSchema,
+  evidenceClassification: packEvidenceClassificationSchema,
   packCount: z.number().int().positive(),
   unitCountPerItem: z.number().int().positive().nullable(),
   totalUnitCount: z.number().int().positive().nullable(),
@@ -52,6 +57,18 @@ export const listingAiPackMatrixRowSchema = z.object({
   landedPriceRange: z.object({ minimum: z.number().finite().nonnegative(), maximum: z.number().finite().nonnegative() }).strict().nullable(),
   medianLandedPrice: nullableMoney,
   medianPricePerUnit: nullableMoney,
+  recentSoldPrice: z.object({
+    minimum: z.number().finite().nonnegative(),
+    maximum: z.number().finite().nonnegative(),
+    median: z.number().finite().nonnegative(),
+    semantics: z.array(z.enum([
+      "REALIZED_TRANSACTION_PRICE",
+      "DISPLAYED_SOLD_PRICE",
+      "PRODUCT_RESEARCH_AGGREGATE",
+    ])).min(1).max(3),
+    displayedOnlyCount: z.number().int().nonnegative(),
+    authoritativeRealizedCount: z.number().int().nonnegative(),
+  }).strict().nullable(),
   medianShippingPrice: nullableMoney,
   freeShippingPrevalencePercent: nullablePercent,
   returnsPrevalencePercent: nullablePercent,
@@ -68,6 +85,17 @@ export const listingAiPackMatrixRowSchema = z.object({
   packageDimensions: z.object({ length: z.number().positive(), width: z.number().positive(), height: z.number().positive(), unit: z.enum(["in", "cm"]) }).strict().nullable(),
   operationalRisk: z.array(z.string().regex(/^[A-Z0-9_]+$/)).max(30),
   economics: packEconomicsSchema,
+  commercialConfiguration: z.object({
+    lunaUnitsRequired: z.number().int().positive().nullable(),
+    lunaSkuOrVariant: z.string().trim().min(1).max(240).nullable(),
+    lunaCostPerPack: nullableMoney,
+    stockRequiredPerSale: z.number().int().positive().nullable(),
+    shippingExposurePerPack: nullableMoney,
+    defensibleTargetPricePerPack: nullableMoney,
+    ebayFeesPerPack: nullableMoney,
+    contributionProfitPerPack: z.number().finite().nullable(),
+    contributionMarginPerPack: nullablePercent,
+  }).strict(),
   scores: z.object({
     demandConfidence: z.number().finite().min(0).max(100),
     competitionPressure: z.number().finite().min(0).max(100),
@@ -199,10 +227,29 @@ export const listingAiPackStrategySchema = z.object({
     soldBaseProductPackVariants: z.number().int().nonnegative(),
     estimatedPackDemandSignals: z.number().int().nonnegative(),
     invalidPackComparables: z.number().int().nonnegative(),
+    packUnknownSignals: z.number().int().nonnegative(),
   }).strict(),
   recommendedPack: listingAiPackMatrixRowSchema.nullable(),
   alternativePack: listingAiPackMatrixRowSchema.nullable(),
   packMatrix: z.array(listingAiPackMatrixRowSchema).max(30),
+  commercialRecommendation: z.object({
+    bestCommercialPackConfiguration: z.object({
+      offerPackFingerprint: hashSchema,
+      packCount: z.number().int().positive(),
+      evidenceConfidence: confidenceSchema,
+      contributionProfitPerPack: z.number().finite(),
+      contributionMarginPerPack: z.number().finite(),
+      whySelected: z.string().trim().min(1).max(500),
+    }).strict().nullable(),
+    alternativeConfigurations: z.array(z.object({
+      offerPackFingerprint: hashSchema,
+      packCount: z.number().int().positive(),
+      decision: z.enum(["RECOMMENDED_PACK", "TEST_AS_SECONDARY_PACK"]),
+    }).strict()).max(29),
+    familyOpportunityPreserved: z.boolean(),
+    blockers: z.array(z.string().regex(/^[A-Z0-9_]+$/)).max(30),
+    packUnknownSignalCount: z.number().int().nonnegative(),
+  }).strict(),
   pairedOfferPlan: consumablePairedOfferPlanSchema.optional(),
   lowCostSmallItemOpportunity: z.object({
     version: z.literal(LOW_COST_SMALL_ITEM_PACK_OPPORTUNITY_VERSION),
@@ -257,6 +304,8 @@ export const listingAiPackStrategySchema = z.object({
     unsafeStockRecommended: z.literal(false),
     shippingIgnoredForRecommendation: z.literal(false),
     competitorContentIncluded: z.literal(false),
+    packUnknownUsedForExactPricing: z.literal(false),
+    differentPackUsedForExactPricing: z.literal(false),
     ebayWrites: z.literal(0),
     publications: z.literal(0),
   }).strict(),
@@ -332,7 +381,9 @@ function sourceCohort(source: string | null) {
   if (source === "EBAY_BROWSE_ACTIVE_LISTING") return "ACTIVE"
   if (source === "EBAY_BROWSE_ACTIVE_MARKET_EVIDENCE") return "ESTIMATED"
   if (["EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY", "EBAY_OFFICIAL_CSV_IMPORT",
-    "EBAY_OFFICIAL_JSON_IMPORT", "HUMAN_REVIEWED_IMPORT"].includes(source ?? "")) return "SOLD"
+    "EBAY_OFFICIAL_JSON_IMPORT", "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE",
+    "EBAY_MAIN_SEARCH_SOLD_BROWSER_CAPTURE",
+    "HUMAN_REVIEWED_IMPORT"].includes(source ?? "")) return "SOLD"
   return "INVALID"
 }
 
@@ -744,6 +795,9 @@ export function buildListingAiPackStrategy(row: DecisionRow): ListingAiPackStrat
   const intake = record(payload.listingAiIntake)
   const classified = records(record(payload.comparables).classified)
   const supplemental = records(record(payload.packStrategyEvidence).offers)
+  const packUnknownSignals = classified.filter((entry) =>
+    entry.packEvidenceClassification === "PACK_UNKNOWN" &&
+    sourceCohort(text(entry.source)) === "SOLD")
   const currentPackCount = positiveInteger(identity.packCount)
   if (!currentPackCount) throw new Error("LISTING_AI_PACK_COUNT_REQUIRED")
   const currentUnitCount = positiveInteger(identity.unitCount)
@@ -836,6 +890,23 @@ export function buildListingAiPackStrategy(row: DecisionRow): ListingAiPackStrat
     const singlePrices = single?.rows.map((entry) => number(record(entry.pricing).landedPrice))
       .filter((entry): entry is number => entry !== null && entry >= 0) ?? []
     const medianLandedPrice = rounded(median(landedPrices))
+    const recentSoldPrices = sold.flatMap((entry) => {
+      const pricing = record(entry.pricing)
+      const landed = number(pricing.landedPrice)
+      const displayed = number(pricing.displayedSoldPrice)
+      const amount = landed ?? displayed
+      if (amount === null || amount < 0) return []
+      const rawSemantics = text(pricing.priceEvidenceSemantics)
+      const semantics = rawSemantics === "REALIZED_TRANSACTION_PRICE" ||
+        rawSemantics === "DISPLAYED_SOLD_PRICE" ||
+        rawSemantics === "PRODUCT_RESEARCH_AGGREGATE"
+        ? rawSemantics
+        : landed !== null ? "PRODUCT_RESEARCH_AGGREGATE" as const
+          : "DISPLAYED_SOLD_PRICE" as const
+      return [{ amount, semantics }]
+    })
+    const recentSoldPriceAmounts = recentSoldPrices.map((entry) => entry.amount)
+    const recentSoldMedian = rounded(median(recentSoldPriceAmounts))
     const singleMedian = rounded(median(singlePrices))
     const pricePerBaseItem = medianLandedPrice === null ? null : medianLandedPrice / group.packCount
     const buyerDiscount = singleMedian && pricePerBaseItem !== null
@@ -877,6 +948,9 @@ export function buildListingAiPackStrategy(row: DecisionRow): ListingAiPackStrat
     if (!cohorts.length) cohorts.push(isCurrentOffer ? "EXACT_OFFER_MATCHES" : "INVALID_PACK_COMPARABLES")
     return listingAiPackMatrixRowSchema.parse({
       offerPackFingerprint: offerFingerprint,
+      evidenceClassification: isCurrentOffer
+        ? "EXACT_PACK_COMPARABLE"
+        : "DIFFERENT_PACK_BUT_COMMERCIALLY_RELEVANT",
       packCount: group.packCount,
       unitCountPerItem: group.unitCount,
       totalUnitCount: group.unitCount ? group.packCount * group.unitCount : null,
@@ -891,6 +965,16 @@ export function buildListingAiPackStrategy(row: DecisionRow): ListingAiPackStrat
       medianLandedPrice,
       medianPricePerUnit: medianLandedPrice !== null && group.unitCount
         ? rounded(medianLandedPrice / (group.packCount * group.unitCount)) : null,
+      recentSoldPrice: recentSoldMedian === null ? null : {
+        minimum: Math.min(...recentSoldPriceAmounts),
+        maximum: Math.max(...recentSoldPriceAmounts),
+        median: recentSoldMedian,
+        semantics: [...new Set(recentSoldPrices.map((entry) => entry.semantics))],
+        displayedOnlyCount: recentSoldPrices.filter((entry) =>
+          entry.semantics === "DISPLAYED_SOLD_PRICE").length,
+        authoritativeRealizedCount: recentSoldPrices.filter((entry) =>
+          entry.semantics === "REALIZED_TRANSACTION_PRICE").length,
+      },
       medianShippingPrice: rounded(median(shippingPrices)),
       freeShippingPrevalencePercent: shippingPrices.length
         ? rounded(shippingPrices.filter((value) => value === 0).length / shippingPrices.length * 100) : null,
@@ -924,6 +1008,19 @@ export function buildListingAiPackStrategy(row: DecisionRow): ListingAiPackStrat
         meetsMinimumRoi: meetsRoi,
         meetsMinimumMargin: meetsMargin,
       },
+      commercialConfiguration: {
+        lunaUnitsRequired: stockRequired,
+        lunaSkuOrVariant: isCurrentOffer || offerEvidence
+          ? text(payload.supplierVariantId) ?? text(payload.supplierSku) : null,
+        lunaCostPerPack: cost,
+        stockRequiredPerSale: stockRequired,
+        shippingExposurePerPack: shippingCost,
+        defensibleTargetPricePerPack: targetPrice,
+        ebayFeesPerPack: isCurrentOffer ? number(targetEconomics.estimatedMarketplaceFees)
+          : number(offerEvidence?.fees),
+        contributionProfitPerPack: sellerProfit,
+        contributionMarginPerPack: netMarginPercent,
+      },
       scores: { demandConfidence: demandScore, competitionPressure: competitionScore, marginSafety: marginScore, operationalFit, visualClarityOpportunity: visualScore, overallPackStrategy: overall },
       decision,
       explanation: decision === "RECOMMENDED_PACK" ? "Current exact offer meets canonical economics and has exact market evidence."
@@ -935,6 +1032,29 @@ export function buildListingAiPackStrategy(row: DecisionRow): ListingAiPackStrat
   }).sort((left, right) => right.scores.overallPackStrategy - left.scores.overallPackStrategy || left.packCount - right.packCount)
   const recommendedPack = matrix.find((entry) => entry.decision === "RECOMMENDED_PACK") ?? null
   const alternativePack = matrix.find((entry) => entry.decision === "TEST_AS_SECONDARY_PACK") ?? null
+  const commerciallyViable = matrix.filter((entry) =>
+    ["RECOMMENDED_PACK", "TEST_AS_SECONDARY_PACK"].includes(entry.decision) &&
+    entry.commercialConfiguration.contributionProfitPerPack !== null &&
+    entry.commercialConfiguration.contributionProfitPerPack > 0 &&
+    entry.commercialConfiguration.contributionMarginPerPack !== null)
+    .sort((left, right) =>
+      (right.commercialConfiguration.contributionProfitPerPack ?? 0) -
+        (left.commercialConfiguration.contributionProfitPerPack ?? 0) ||
+      (right.commercialConfiguration.contributionMarginPerPack ?? 0) -
+        (left.commercialConfiguration.contributionMarginPerPack ?? 0) ||
+      right.scores.demandConfidence - left.scores.demandConfidence ||
+      left.packCount - right.packCount)
+  const bestCommercial = commerciallyViable[0] ?? null
+  const bestCommercialPackConfiguration = bestCommercial ? {
+    offerPackFingerprint: bestCommercial.offerPackFingerprint,
+    packCount: bestCommercial.packCount,
+    evidenceConfidence: bestCommercial.evidenceConfidence,
+    contributionProfitPerPack:
+      bestCommercial.commercialConfiguration.contributionProfitPerPack as number,
+    contributionMarginPerPack:
+      bestCommercial.commercialConfiguration.contributionMarginPerPack as number,
+    whySelected: `Pack ${bestCommercial.packCount} has proven pack demand, explicit Luna/stock/cost inputs and the strongest positive contribution among supported configurations.`,
+  } : null
   const currentOffer = matrix.find((entry) =>
     entry.packCount === currentPackCount
     && entry.unitCountPerItem === currentUnitCount)
@@ -960,10 +1080,30 @@ export function buildListingAiPackStrategy(row: DecisionRow): ListingAiPackStrat
       soldBaseProductPackVariants: classified.filter((entry) => entry.classification === "DIFFERENT_PACK" && sourceCohort(text(entry.source)) === "SOLD").length,
       estimatedPackDemandSignals: classified.filter((entry) => entry.classification === "DIFFERENT_PACK" && sourceCohort(text(entry.source)) === "ESTIMATED").length,
       invalidPackComparables: classified.filter((entry) => !["EXACT_MATCH", "DIFFERENT_PACK"].includes(String(entry.classification))).length,
+      packUnknownSignals: packUnknownSignals.length,
     },
     recommendedPack,
     alternativePack,
     packMatrix: matrix,
+    commercialRecommendation: {
+      bestCommercialPackConfiguration,
+      alternativeConfigurations: commerciallyViable.slice(1).map((entry) => ({
+        offerPackFingerprint: entry.offerPackFingerprint,
+        packCount: entry.packCount,
+        decision: entry.decision as "RECOMMENDED_PACK" | "TEST_AS_SECONDARY_PACK",
+      })),
+      familyOpportunityPreserved: bestCommercialPackConfiguration !== null,
+      blockers: bestCommercialPackConfiguration ? [] : [
+        packUnknownSignals.length ? "PACK_UNKNOWN_NOT_PRICING_ELIGIBLE" : null,
+        matrix.some((entry) => entry.decision === "NO_GO_PACK")
+          ? "PROVEN_PACK_ECONOMICS_NOT_VIABLE" : null,
+        matrix.some((entry) => entry.decision === "OPERATIONALLY_UNSAFE")
+          ? "PROVEN_PACK_OPERATIONALLY_UNSAFE" : null,
+        !matrix.some((entry) => ["NO_GO_PACK", "OPERATIONALLY_UNSAFE"].includes(entry.decision))
+          ? "PROVEN_COMMERCIAL_PACK_CONFIGURATION_REQUIRED" : null,
+      ].filter((entry): entry is string => Boolean(entry)),
+      packUnknownSignalCount: packUnknownSignals.length,
+    },
     pairedOfferPlan,
     lowCostSmallItemOpportunity,
     safeguards: {
@@ -976,6 +1116,8 @@ export function buildListingAiPackStrategy(row: DecisionRow): ListingAiPackStrat
       unsafeStockRecommended: false as const,
       shippingIgnoredForRecommendation: false as const,
       competitorContentIncluded: false as const,
+      packUnknownUsedForExactPricing: false as const,
+      differentPackUsedForExactPricing: false as const,
       ebayWrites: 0 as const,
       publications: 0 as const,
     },

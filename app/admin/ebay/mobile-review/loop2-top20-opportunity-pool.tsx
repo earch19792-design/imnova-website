@@ -64,6 +64,25 @@ type QueueItem = {
       recommendedPack?: Pack | null
       alternativePack?: Pack | null
       matrix?: Pack[]
+      cohortCounts?: { packUnknownSignals?: number }
+      commercialRecommendation?: {
+        bestCommercialPackConfiguration?: {
+          offerPackFingerprint: string
+          packCount: number
+          evidenceConfidence: string
+          contributionProfitPerPack: number
+          contributionMarginPerPack: number
+          whySelected: string
+        } | null
+        alternativeConfigurations?: Array<{
+          offerPackFingerprint: string
+          packCount: number
+          decision: string
+        }>
+        familyOpportunityPreserved?: boolean
+        blockers?: string[]
+        packUnknownSignalCount?: number
+      }
     } | null
     operatorConfirmationRequired?: boolean
     discovery?: {
@@ -125,9 +144,21 @@ type QueueItem = {
 
 type Pack = {
   packCount?: number
+  evidenceClassification?: "EXACT_PACK_COMPARABLE" |
+    "DIFFERENT_PACK_BUT_COMMERCIALLY_RELEVANT"
+  soldEvidenceCount?: number
+  verifiedSoldQuantity?: number | null
   totalUnitCount?: number | null
   medianLandedPrice?: number | null
   medianPricePerUnit?: number | null
+  recentSoldPrice?: {
+    minimum: number
+    maximum: number
+    median: number
+    semantics: string[]
+    displayedOnlyCount: number
+    authoritativeRealizedCount: number
+  } | null
   decision?: string
   evidenceConfidence?: string
   operationalRisk?: string[]
@@ -136,6 +167,17 @@ type Pack = {
     sellerProfit?: number | null
     roiPercent?: number | null
     netMarginPercent?: number | null
+  }
+  commercialConfiguration?: {
+    lunaUnitsRequired?: number | null
+    lunaSkuOrVariant?: string | null
+    lunaCostPerPack?: number | null
+    stockRequiredPerSale?: number | null
+    shippingExposurePerPack?: number | null
+    defensibleTargetPricePerPack?: number | null
+    ebayFeesPerPack?: number | null
+    contributionProfitPerPack?: number | null
+    contributionMarginPerPack?: number | null
   }
 }
 
@@ -276,6 +318,11 @@ type SoldEvidenceStatus = {
     ambiguousMatches: number
     withoutLunaMatch: number
     top20CandidatesEnriched: number
+  }
+  packIntelligence: {
+    packProvenObservationCount: number
+    packUnknownSignalCount: number
+    packCountRequiredCount: number
   }
   maxRows: number
   recencyDays: number
@@ -1039,6 +1086,73 @@ function OneClickResearchCommandCenter({
   </section>
 }
 
+function CommercialPackIntelligence({
+  pool,
+  soldEvidenceStatus,
+  loading,
+}: {
+  pool: QueueItem[]
+  soldEvidenceStatus: SoldEvidenceStatus | null
+  loading: boolean
+}) {
+  const configurations = pool.flatMap((item) =>
+    (item.evidence_snapshot.packStrategy?.matrix ?? []).map((pack) => ({
+      itemId: item.id,
+      productName: item.evidence_snapshot.product?.name ?? item.supplier_sku,
+      pack,
+      best: item.evidence_snapshot.packStrategy?.commercialRecommendation
+        ?.bestCommercialPackConfiguration?.packCount === pack.packCount,
+      familyPreserved: item.evidence_snapshot.packStrategy?.commercialRecommendation
+        ?.familyOpportunityPreserved === true,
+    })))
+  const provenConfigurations = configurations.filter((entry) =>
+    entry.pack.evidenceClassification !== undefined)
+  const differentPackSignals = provenConfigurations.filter((entry) =>
+    entry.pack.evidenceClassification === "DIFFERENT_PACK_BUT_COMMERCIALLY_RELEVANT").length
+  const unresolved = soldEvidenceStatus?.packIntelligence.packUnknownSignalCount ??
+    pool.reduce((total, item) => total +
+      (item.evidence_snapshot.packStrategy?.commercialRecommendation
+        ?.packUnknownSignalCount ?? 0), 0)
+
+  return <section aria-labelledby="commercial-pack-intelligence-heading"
+    data-commercial-pack-intelligence
+    className="space-y-3 rounded-3xl border border-emerald-200/25 bg-emerald-200/[0.045] p-4 text-xs">
+    <div>
+      <p className="font-black uppercase tracking-widest text-emerald-100/65">Pack Intelligence</p>
+      <h3 id="commercial-pack-intelligence-heading" className="mt-1 text-lg font-black">Mejor configuración comercial probada</h3>
+      <p className="mt-1 max-w-3xl leading-5 text-white/60">Separa comparables exactos, packs distintos comercialmente útiles y pack desconocido. Un pack desconocido nunca entra en precio por unidad ni economía.</p>
+    </div>
+    <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Configuraciones probadas</dt><dd className="font-black">{provenConfigurations.length}</dd></div>
+      <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Packs distintos útiles</dt><dd className="font-black">{differentPackSignals}</dd></div>
+      <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Pack sin resolver</dt><dd className="font-black">{unresolved}</dd></div>
+      <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Guardas</dt><dd className="font-black">Exacto ≠ señal</dd></div>
+    </dl>
+    {loading ? <p role="status">Cargando inteligencia de packs…</p>
+      : provenConfigurations.length ? <div className="space-y-2">
+        {provenConfigurations.slice(0, 12).map(({ itemId, productName, pack, best,
+          familyPreserved }, index) => <article key={`${itemId}:${pack.packCount}:${index}`}
+            className="rounded-xl border border-white/10 bg-black/20 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div><p className="font-black">{productName}</p><p className="mt-1 text-white/55">{pack.evidenceClassification === "EXACT_PACK_COMPARABLE" ? "COMPARABLE EXACTO" : "PACK DISTINTO · SEÑAL COMERCIAL"}</p></div>
+              <span className={`rounded-full px-2 py-1 font-black ${best
+                ? "bg-emerald-100 text-emerald-950" : "border border-white/15"}`}>Pack {pack.packCount ?? "N/D"}{best ? " · MEJOR" : ""}</span>
+            </div>
+            <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+              <div><dt className="text-white/45">Sold / cantidad</dt><dd>{pack.soldEvidenceCount ?? 0} / {pack.verifiedSoldQuantity ?? "N/D"}</dd></div>
+              <div><dt className="text-white/45">Sold reciente</dt><dd>{money(pack.recentSoldPrice?.median ?? null)}</dd></div>
+              <div><dt className="text-white/45">Precio / unidad</dt><dd>{money(pack.medianPricePerUnit ?? null)}</dd></div>
+              <div><dt className="text-white/45">Contribución</dt><dd>{money(pack.commercialConfiguration?.contributionProfitPerPack ?? null)}</dd></div>
+              <div><dt className="text-white/45">Confianza</dt><dd>{pack.evidenceConfidence ?? "INSUFFICIENT"}</dd></div>
+            </dl>
+            <p className="mt-2 text-white/50">Luna {pack.commercialConfiguration?.lunaSkuOrVariant ?? "sin configuración exacta"} · unidades requeridas {pack.commercialConfiguration?.lunaUnitsRequired ?? "N/D"} · shipping {money(pack.commercialConfiguration?.shippingExposurePerPack ?? null)} · fees {money(pack.commercialConfiguration?.ebayFeesPerPack ?? null)}.</p>
+            {!best && familyPreserved && <p className="mt-1 text-emerald-100/70">La oportunidad familiar permanece viva por otra configuración probada.</p>}
+          </article>)}
+      </div> : <p className="rounded-xl border border-white/10 bg-black/20 p-3 text-white/55">Aún no hay una matriz de packs analizada para la cola actual. Las señales PACK_UNKNOWN permanecen fuera de pricing hasta resolver cantidad.</p>}
+    <p className="text-white/45">Fuentes: Sold canónico revisado + Product Research. Active listings nunca se convierten en ventas. Escrituras eBay 0.</p>
+  </section>
+}
+
 export function Loop2Top20OpportunityPool({
   surface = "loop2",
 }: Loop2Top20OpportunityPoolProps = {}) {
@@ -1579,7 +1693,11 @@ export function Loop2Top20OpportunityPool({
     onStart={() => void startOneClickResearch()}
   />
 
-  if (surface === "opportunities") return oneClickResearchCommandCenter
+  if (surface === "opportunities") return <div className="space-y-4">
+    {oneClickResearchCommandCenter}
+    <CommercialPackIntelligence pool={pool} soldEvidenceStatus={soldEvidenceStatus}
+      loading={loading} />
+  </div>
 
   return (
     <section aria-labelledby="top20-heading" className="space-y-4 rounded-2xl border border-cyan-200/25 bg-cyan-200/[0.06] p-3">
