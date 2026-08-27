@@ -10,6 +10,8 @@ const PRODUCT_RESEARCH_CAPTURE = "IMNOVA_AUTOMATED_PRODUCT_RESEARCH_CAPTURE_V1"
 const PRODUCT_RESEARCH_DIAGNOSTIC_PING = "IMNOVA_PRODUCT_RESEARCH_DIAGNOSTIC_PING_V1"
 const MAIN_SEARCH_SOLD_CAPTURE = "IMNOVA_AUTOMATED_MAIN_SEARCH_SOLD_CAPTURE_V1"
 const ADMIN_ORIGIN = "https://imnova-website-z1qh-canonical-preview.vercel.app"
+const ADMIN_SCOPE_MATCH = `${ADMIN_ORIGIN}/admin/ebay/*`
+const ADMIN_SCOPE_PATH = /^\/admin\/ebay(?:\/|$)/
 const ADMIN_PATH = /^\/admin\/ebay\/(?:mobile-review|opportunity-queue\/research)\/?$/
 const SESSION_VERSION = "EBAY_ONE_CLICK_RESEARCH_SESSION_V1_2026_08_26"
 const SESSION_SCOPE = "EBAY_RESEARCH_CAPTURE_ONLY"
@@ -22,6 +24,33 @@ const PRODUCT_RESEARCH_DAY_RANGE = 90
 const PRODUCT_RESEARCH_PAGE_LIMIT = 50
 const PRODUCT_RESEARCH_TRACE_VERSION = "PRODUCT_RESEARCH_STAGE_TRACE_V2"
 const PRODUCT_RESEARCH_TASK_BINDING_VERSION = "PRODUCT_RESEARCH_TASK_BINDING_V1"
+
+function canonicalAdminScopeTab(tab) {
+  try {
+    const url = new URL(tab?.url ?? "")
+    return Number.isInteger(tab?.id) && url.origin === ADMIN_ORIGIN &&
+      ADMIN_SCOPE_PATH.test(url.pathname)
+  } catch {
+    return false
+  }
+}
+
+async function injectAdminBridgeIntoExistingTabs() {
+  const tabs = await chrome.tabs.query({ url: ADMIN_SCOPE_MATCH })
+  await Promise.allSettled(tabs.map(async (tab) => {
+    if (!canonicalAdminScopeTab(tab)) return
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id, frameIds: [0] },
+      files: ["admin-bridge.js"],
+      injectImmediately: true,
+    })
+  }))
+}
+
+chrome.runtime.onInstalled?.addListener((details) => {
+  if (details?.reason !== "install" && details?.reason !== "update") return
+  void injectAdminBridgeIntoExistingTabs()
+})
 
 function officialResearchSender(sender) {
   try {

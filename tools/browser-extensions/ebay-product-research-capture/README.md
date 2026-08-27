@@ -9,7 +9,15 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Abre Seller OS Preview y usa **INICIAR RESEARCH AUTOMÁTICO** una sola vez.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.23.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.24.
+
+## Recuperación de pestaña abierta tras actualización (v1.2.24)
+
+Chrome no vuelve a ejecutar de forma retroactiva un content script declarativo en un documento
+que ya estaba abierto al actualizar una extensión unpacked. El evento MV3 `runtime.onInstalled`
+de esta versión realiza una única inyección del mismo `admin-bridge.js` en pestañas ya abiertas
+del scope canónico acotado. La guarda global y la validación de ruta existentes impiden listeners
+duplicados y mantienen el bridge inerte fuera de las dos rutas operativas. No hay polling.
 
 ## Activación determinista por ruta (v1.2.23)
 
