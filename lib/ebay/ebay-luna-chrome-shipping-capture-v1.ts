@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto"
 
 import { calculateEbayUnitEconomics } from "./ebay-unit-economics"
+import { LUNA_HTTP_SHIPPING_SOURCE } from
+  "./ebay-luna-authoritative-shipping-v1"
 
 export const LUNA_SHIPPING_QUOTE_CAPTURE_VERSION =
   "LUNA_SHIPPING_QUOTE_CAPTURE_V1" as const
@@ -10,6 +12,14 @@ export const LUNA_SHIPPING_EXTENSION_MAXIMUM_BATCH = 20
 export const LUNA_SHIPPING_EXTENSION_MAXIMUM_CAPTURE_AGE_MS = 10 * 60 * 1_000
 export const LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE =
   "NORMAL_CHROME_EXTENSION_VISIBLE_DOM" as const
+export const LUNA_OPERATOR_BOUND_CANONICAL_US_DESTINATION_V1 =
+  "OPERATOR_BOUND_CANONICAL_US_DESTINATION_V1" as const
+export const LUNA_CANONICAL_DESTINATION_PROFILE_FINGERPRINT_VERSION_V1 =
+  "LUNA_CANONICAL_DESTINATION_PROFILE_SHA256_V1" as const
+export const LUNA_CANONICAL_DESTINATION_PROFILE_EVIDENCE_V1 =
+  "SERVER_CANONICAL_DESTINATION_PROFILE_DIGEST" as const
+export const LUNA_CANONICAL_SINGLE_RATE_PROOF_V1 =
+  "SINGLE_CANONICAL_RATE" as const
 export const LUNA_SHIPPING_RUNTIME_TRACE_VERSION =
   "LUNA_SHIPPING_RUNTIME_TRACE_V1" as const
 export const LUNA_SHIPPING_RUNTIME_TRACE_MAXIMUM_EVENTS = 100
@@ -232,7 +242,8 @@ export type LunaChromeShippingVisibleCaptureV1 = Readonly<{
   totalUsd: number
   currency: "USD"
   observedAt: string
-  acquisitionMethod: typeof LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE
+  acquisitionMethod: typeof LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE |
+    typeof LUNA_HTTP_SHIPPING_SOURCE
   extensionEvidenceDigest: string
   normalChromeAuthenticated: true
   expectedProductIdMatch: true
@@ -243,6 +254,11 @@ export type LunaChromeShippingVisibleCaptureV1 = Readonly<{
   cookieAccess: false
   credentialAccess: false
   lunaPurchases: 0
+  canonicalDestinationAuthority?:
+    typeof LUNA_OPERATOR_BOUND_CANONICAL_US_DESTINATION_V1
+  canonicalDestinationFingerprint?: string
+  canonicalDestinationMatch?: true
+  selectedShippingStateProof?: typeof LUNA_CANONICAL_SINGLE_RATE_PROOF_V1
 }>
 
 export type LunaShippingCapturePostV1 = Readonly<{
@@ -256,10 +272,16 @@ export type LunaShippingCapturePostV1 = Readonly<{
   totalUsd: number
   currency: "USD"
   observedAt: string
-  acquisitionMethod: typeof LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE
+  acquisitionMethod: typeof LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE |
+    typeof LUNA_HTTP_SHIPPING_SOURCE
   evidenceDigest: string
   captureSessionId: string
   nonce: string
+  canonicalDestinationAuthority?:
+    typeof LUNA_OPERATOR_BOUND_CANONICAL_US_DESTINATION_V1
+  canonicalDestinationFingerprint?: string
+  canonicalDestinationMatch?: true
+  selectedShippingStateProof?: typeof LUNA_CANONICAL_SINGLE_RATE_PROOF_V1
 }>
 
 export const LUNA_PRODUCT_PAGE_STOCK_OBSERVATION_VERSION =
@@ -290,6 +312,11 @@ const CAPTURE_POST_KEYS = Object.freeze([
   "evidenceDigest", "lunaProductId", "lunaVariantId", "nonce", "observedAt",
   "quantity", "shippingUsd", "subtotalUsd", "supplierSku", "totalUsd",
 ].sort())
+const CANONICAL_PROFILE_CAPTURE_POST_KEYS = Object.freeze([
+  ...CAPTURE_POST_KEYS, "canonicalDestinationAuthority",
+  "canonicalDestinationFingerprint", "canonicalDestinationMatch",
+  "selectedShippingStateProof",
+].sort())
 
 export function certifyLunaShippingCapturePostV1(input: Readonly<{
   job: LunaChromeShippingJobV1
@@ -297,8 +324,11 @@ export function certifyLunaShippingCapturePostV1(input: Readonly<{
   now?: number
 }>) {
   const keys = Object.keys(input.capture).sort()
-  if (keys.length !== CAPTURE_POST_KEYS.length ||
-      keys.some((key, index) => key !== CAPTURE_POST_KEYS[index])) {
+  const expectedKeys = input.capture.acquisitionMethod ===
+    LUNA_HTTP_SHIPPING_SOURCE ? CANONICAL_PROFILE_CAPTURE_POST_KEYS
+    : CAPTURE_POST_KEYS
+  if (keys.length !== expectedKeys.length ||
+      keys.some((key, index) => key !== expectedKeys[index])) {
     throw new Error("LUNA_SHIPPING_CAPTURE_POST_CONTRACT_INVALID")
   }
   return certifyLunaChromeShippingVisibleCaptureV1({
@@ -329,6 +359,15 @@ export function certifyLunaShippingCapturePostV1(input: Readonly<{
       cookieAccess: false,
       credentialAccess: false,
       lunaPurchases: 0,
+      ...(input.capture.acquisitionMethod === LUNA_HTTP_SHIPPING_SOURCE ? {
+        canonicalDestinationAuthority:
+          input.capture.canonicalDestinationAuthority,
+        canonicalDestinationFingerprint:
+          input.capture.canonicalDestinationFingerprint,
+        canonicalDestinationMatch: input.capture.canonicalDestinationMatch,
+        selectedShippingStateProof:
+          input.capture.selectedShippingStateProof,
+      } : {}),
     },
   })
 }
@@ -416,6 +455,20 @@ export function certifyLunaChromeShippingVisibleCaptureV1(input: Readonly<{
   const totalUsd = money(capture.totalUsd)
   const observedAtMs = Date.parse(capture.observedAt)
   const now = input.now ?? Date.now()
+  const canonicalProfileCapture = capture.acquisitionMethod ===
+    LUNA_HTTP_SHIPPING_SOURCE
+  const canonicalProfileAuthorityValid = canonicalProfileCapture &&
+    capture.canonicalDestinationAuthority ===
+      LUNA_OPERATOR_BOUND_CANONICAL_US_DESTINATION_V1 &&
+    capture.canonicalDestinationFingerprint === job.destination.profileDigest &&
+    capture.canonicalDestinationMatch === true &&
+    capture.selectedShippingStateProof === LUNA_CANONICAL_SINGLE_RATE_PROOF_V1
+  const legacyVisibleDomCapture = capture.acquisitionMethod ===
+    LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE &&
+    capture.canonicalDestinationAuthority === undefined &&
+    capture.canonicalDestinationFingerprint === undefined &&
+    capture.canonicalDestinationMatch === undefined &&
+    capture.selectedShippingStateProof === undefined
   if (capture.contractVersion !== LUNA_SHIPPING_QUOTE_CAPTURE_VERSION ||
       capture.captureSessionId !== job.captureSessionId ||
       capture.nonce !== job.nonce ||
@@ -426,7 +479,7 @@ export function certifyLunaChromeShippingVisibleCaptureV1(input: Readonly<{
       capture.quantity !== job.identity.quantity ||
       subtotalUsd === null || shippingUsd === null || totalUsd === null ||
       capture.currency !== "USD" ||
-      capture.acquisitionMethod !== LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE ||
+      (!legacyVisibleDomCapture && !canonicalProfileAuthorityValid) ||
       !SHA256.test(capture.extensionEvidenceDigest) ||
       !Number.isFinite(observedAtMs) || observedAtMs > now + 60_000 ||
       now - observedAtMs > LUNA_SHIPPING_EXTENSION_MAXIMUM_CAPTURE_AGE_MS ||
@@ -447,15 +500,21 @@ export function certifyLunaChromeShippingVisibleCaptureV1(input: Readonly<{
     supplierSku: job.identity.supplierSku,
     subtotalUsd, shippingAmountUsd: shippingUsd, currency: "USD" as const,
     destinationProfileDigest: job.destination.profileDigest,
-    acquisitionMethod: LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE,
+    acquisitionMethod: capture.acquisitionMethod,
     observedAt: capture.observedAt,
+    ...(canonicalProfileCapture ? {
+      canonicalDestinationAuthority:
+        capture.canonicalDestinationAuthority,
+      canonicalDestinationMatch: capture.canonicalDestinationMatch,
+      selectedShippingStateProof: capture.selectedShippingStateProof,
+    } : {}),
   }
   const evidenceDigest = `sha256:${createHash("sha256")
     .update(JSON.stringify(quoteInput)).digest("hex")}`
   const quote = Object.freeze({
     status: "AVAILABLE" as const,
     subtotalUsd, shippingAmountUsd: shippingUsd, currency: "USD" as const,
-    acquisitionMethod: LUNA_NORMAL_CHROME_EXTENSION_SHIPPING_SOURCE,
+    acquisitionMethod: capture.acquisitionMethod,
     observedAt: capture.observedAt,
     evidenceDigest,
     exactLunaIdentity: true as const,

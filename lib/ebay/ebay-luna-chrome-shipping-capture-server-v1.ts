@@ -27,6 +27,8 @@ import {
   readProductFitStrongPromotionsV1,
   resolveDurableProductFitStrongV1,
 } from "./ebay-product-fit-durable-promotion-v1"
+import { LUNA_HTTP_SHIPPING_SOURCE } from
+  "./ebay-luna-authoritative-shipping-v1"
 
 export const LUNA_SHIPPING_CANARY_CANDIDATE_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60" as const
@@ -679,6 +681,16 @@ function persistedFrontier(input: Readonly<{
       currency: input.capture.currency,
       observedAt: input.capture.observedAt,
       acquisitionMethod: input.capture.acquisitionMethod,
+      ...(input.capture.canonicalDestinationAuthority ? {
+        canonicalDestinationAuthority:
+          input.capture.canonicalDestinationAuthority,
+        canonicalDestinationCountryClass: "US",
+        canonicalDestinationFingerprint:
+          input.capture.canonicalDestinationFingerprint,
+        canonicalDestinationMatch: input.capture.canonicalDestinationMatch,
+        selectedShippingStateProof:
+          input.capture.selectedShippingStateProof,
+      } : {}),
       evidenceDigest: quote.evidenceDigest,
       extensionEvidenceDigest: input.capture.evidenceDigest,
       captureSessionId: input.capture.captureSessionId,
@@ -767,10 +779,21 @@ export async function persistLunaChromeShippingCaptureV1(input: Readonly<{
   const matched = records(record(readback.data).frontiers).find((outer) => {
     const stored = record(outer.frontier)
     const evidence = record(stored.shippingCaptureEvidence)
+    const canonicalProfileReadbackMatches =
+      input.capture.acquisitionMethod !== LUNA_HTTP_SHIPPING_SOURCE ||
+      (evidence.canonicalDestinationAuthority ===
+          input.capture.canonicalDestinationAuthority &&
+        evidence.canonicalDestinationCountryClass === "US" &&
+        evidence.canonicalDestinationFingerprint ===
+          input.capture.canonicalDestinationFingerprint &&
+        evidence.canonicalDestinationMatch === true &&
+        evidence.selectedShippingStateProof ===
+          input.capture.selectedShippingStateProof)
     return stored.frontierDigest === frontier.frontierDigest &&
       stored.shippingStatus === "SHIPPING_DURABLY_PERSISTED" &&
       evidence.evidenceDigest === certified.quote.evidenceDigest &&
-      evidence.candidateId === input.capture.candidateId
+      evidence.candidateId === input.capture.candidateId &&
+      canonicalProfileReadbackMatches
   })
   if (!matched) throw new Error("LUNA_SHIPPING_CAPTURE_DURABLE_READBACK_FAILED")
   return Object.freeze({

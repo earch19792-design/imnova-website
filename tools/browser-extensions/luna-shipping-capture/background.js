@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.44"
+const EXTENSION_BUILD_VERSION = "1.0.45"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -41,6 +41,13 @@ const DESTINATION_BINDING_RESULT =
   "LUNA_CANONICAL_DESTINATION_BINDING_RESULT"
 const DESTINATION_FINGERPRINT_VERSION =
   "LUNA_SHOP_PAY_DESTINATION_SHA256_V1"
+const PROFILE_DESTINATION_FINGERPRINT_VERSION =
+  "LUNA_CANONICAL_DESTINATION_PROFILE_SHA256_V1"
+const DESTINATION_AUTHORITY_CLASS =
+  "OPERATOR_BOUND_CANONICAL_US_DESTINATION_V1"
+const DESTINATION_EVIDENCE_CLASS =
+  "SERVER_CANONICAL_DESTINATION_PROFILE_DIGEST"
+const DESTINATION_VALIDATION_METHOD = "EXACT_PROFILE_DIGEST_MATCH"
 const DESTINATION_STORAGE_KEY = "sellerOsLunaCanonicalDestinationBindingV1"
 const DESTINATION_STORAGE_AUTHORITY =
   `chrome.storage.local:${DESTINATION_STORAGE_KEY}`
@@ -576,31 +583,33 @@ function safeDestinationCandidate(value) {
     }) : null
 }
 
+function safeOperatorDestinationCandidate(value) {
+  return value?.fingerprintVersion ===
+      PROFILE_DESTINATION_FINGERPRINT_VERSION &&
+    /^sha256:[0-9a-f]{64}$/.test(
+      value?.canonicalDestinationFingerprint ?? "") &&
+    value?.countryClass === "US" &&
+    value?.authorityClass === DESTINATION_AUTHORITY_CLASS &&
+    value?.evidenceClass === DESTINATION_EVIDENCE_CLASS &&
+    value?.validationMethod === DESTINATION_VALIDATION_METHOD
+    ? Object.freeze({
+      fingerprintVersion: PROFILE_DESTINATION_FINGERPRINT_VERSION,
+      canonicalDestinationFingerprint:
+        value.canonicalDestinationFingerprint,
+      countryClass: "US",
+      authorityClass: DESTINATION_AUTHORITY_CLASS,
+      evidenceClass: DESTINATION_EVIDENCE_CLASS,
+      validationMethod: DESTINATION_VALIDATION_METHOD,
+    }) : null
+}
+
 function safeDestinationBinding(value) {
-  const candidate = safeDestinationCandidate(value)
+  const candidate = safeOperatorDestinationCandidate(value)
   const boundAtMs = typeof value?.boundAt === "string"
     ? Date.parse(value.boundAt) : Number.NaN
   const boundAt = Number.isFinite(boundAtMs)
     ? new Date(boundAtMs).toISOString() : null
   return candidate && boundAt ? Object.freeze({ ...candidate, boundAt }) : null
-}
-
-function safeAutoBindCandidate(value) {
-  const markers = value?.safeMarkerBooleans
-  const markerFields = ["shipTo", "shipping", "subtotal", "total", "payNow"]
-  if (value?.contractVersion !== AUTO_BIND_CONTRACT ||
-      value?.destinationUnambiguous !== true ||
-      value?.acceptedUsDestination !== true ||
-      value?.shippingAddressAccepted !== true ||
-      value?.shippingOptionsDetected !== true ||
-      !markers || markerFields.some((field) => markers[field] !== true)) {
-    return null
-  }
-  return safeDestinationCandidate({
-    fingerprintVersion: value.fingerprintVersion,
-    canonicalDestinationFingerprint: value.fingerprint,
-    countryClass: value.countryClass,
-  })
 }
 
 function readDestinationBindingEnvelope() {
@@ -641,15 +650,14 @@ function bindingStorageDiagnostic() {
     const boundAtPresent = typeof envelope?.boundAt === "string" &&
       envelope.boundAt.length > 0
     const schemaVersion = envelope?.fingerprintVersion ===
-      DESTINATION_FINGERPRINT_VERSION ? DESTINATION_FINGERPRINT_VERSION
+      PROFILE_DESTINATION_FINGERPRINT_VERSION
+      ? PROFILE_DESTINATION_FINGERPRINT_VERSION
       : envelope?.fingerprintVersion == null ? "ABSENT" : "UNSUPPORTED"
     const current = safeDestinationBinding(envelope)
-    const legacy = current ? null : safeDestinationCandidate(envelope)
     let bindingClassification = "NO_BINDING_PRESENT"
     if (current) bindingClassification = "PRIMARY_BINDING_VALID"
-    else if (legacy) bindingClassification = "LEGACY_BINDING_VALID"
     else if (stored.present && envelope?.fingerprintVersion !==
-        DESTINATION_FINGERPRINT_VERSION) {
+        PROFILE_DESTINATION_FINGERPRINT_VERSION) {
       bindingClassification = "BINDING_PRESENT_SCHEMA_REJECTED"
     } else if (stored.present) {
       bindingClassification = "BINDING_PRESENT_FIELD_REJECTED"
@@ -660,7 +668,7 @@ function bindingStorageDiagnostic() {
       canonicalLegacyKeyPresent: false,
       canonicalEnvelopePresent: Boolean(envelope),
       canonicalEnvelopeSchemaVersion: schemaVersion,
-      canonicalEnvelopeValid: Boolean(current || legacy),
+      canonicalEnvelopeValid: Boolean(current),
       canonicalCountryClassPresent: countryClassPresent,
       canonicalBoundAtPresent: boundAtPresent,
       canonicalFingerprintPresent: fingerprintPresent,
@@ -687,20 +695,7 @@ async function readDestinationBinding() {
   if (!stored.present) return null
   const current = safeDestinationBinding(stored.value)
   if (current) return current
-  const legacy = safeDestinationCandidate(stored.value)
-  if (!legacy) throw new Error("BINDING_PRESENT_INVALID")
-  const normalized = Object.freeze({ ...legacy, boundAt: new Date().toISOString() })
-  try { await writeDestinationBinding(normalized) } catch {
-    throw new Error("BINDING_STORAGE_MIGRATION_WRITE_FAILED")
-  }
-  const readbackEnvelope = await readDestinationBindingEnvelope()
-  const readback = readbackEnvelope.present
-    ? safeDestinationBinding(readbackEnvelope.value) : null
-  if (!readback || readback.canonicalDestinationFingerprint !==
-      normalized.canonicalDestinationFingerprint) {
-    throw new Error("BINDING_STORAGE_MIGRATION_READBACK_FAILED")
-  }
-  return readback
+  throw new Error("BINDING_PRESENT_INVALID")
 }
 
 function boundedBindStep(promise, transition, timeoutMs = BIND_STEP_TIMEOUT_MS) {
@@ -737,46 +732,60 @@ function writeDestinationBinding(binding) {
   }))
 }
 
-async function autoBindCanonicalDestination(value) {
-  const candidate = safeAutoBindCandidate(value)
+async function autoBindCanonicalDestination() {
+  throw new Error("CANONICAL_DESTINATION_EXPLICIT_OPERATOR_BIND_REQUIRED")
+}
+
+function operatorDestinationCandidateFromJob(job) {
+  const exact = safeJob(job)
+  if (!exact || exact.destination.country !== "US") {
+    throw new Error("CANONICAL_DESTINATION_PROFILE_AUTHORITY_INVALID")
+  }
+  return safeOperatorDestinationCandidate({
+    fingerprintVersion: PROFILE_DESTINATION_FINGERPRINT_VERSION,
+    canonicalDestinationFingerprint: exact.destination.profileDigest,
+    countryClass: "US",
+    authorityClass: DESTINATION_AUTHORITY_CLASS,
+    evidenceClass: DESTINATION_EVIDENCE_CLASS,
+    validationMethod: DESTINATION_VALIDATION_METHOD,
+  })
+}
+
+async function bindOperatorCanonicalDestination(existingBinding, bootstrapJob) {
+  const candidate = operatorDestinationCandidateFromJob(bootstrapJob)
   if (!candidate) {
-    throw new Error("CANONICAL_DESTINATION_AUTO_BIND_UNVERIFIABLE")
+    throw new Error("CANONICAL_DESTINATION_PROFILE_AUTHORITY_INVALID")
   }
-  const existingBinding = await readDestinationBinding()
-  if (existingBinding) {
-    if (existingBinding.canonicalDestinationFingerprint !==
+  if (existingBinding &&
+      existingBinding.canonicalDestinationFingerprint !==
         candidate.canonicalDestinationFingerprint) {
-      throw new Error("CANONICAL_US_SHIPPING_PROFILE_MISMATCH")
-    }
-    return { contractVersion: AUTO_BIND_CONTRACT, success: true,
-      canonicalDestinationBound: true, canonicalDestinationMatch: true,
-      operation: "VALIDATE_EXISTING_CANONICAL_DESTINATION",
-      binding: existingBinding }
+    throw new Error("CANONICAL_US_SHIPPING_PROFILE_MISMATCH")
   }
-  const binding = Object.freeze({ ...candidate,
-    boundAt: new Date().toISOString() })
-  emitRuntimeTrace("BIND_CHECKOUT_MARKERS_VERIFIED")
   emitRuntimeTrace("CANONICAL_FINGERPRINT_COMPUTED")
-  await writeDestinationBinding(binding)
-  emitRuntimeTrace("CANONICAL_FINGERPRINT_WRITE_COMPLETE")
-  let readback
-  try {
-    readback = await readDestinationBinding()
-  } catch {
-    throw new Error("BIND_STORAGE_READBACK_FAILED")
+  const binding = existingBinding ?? Object.freeze({ ...candidate,
+    boundAt: new Date().toISOString() })
+  if (!existingBinding) {
+    emitRuntimeTrace("CANONICAL_FINGERPRINT_WRITE_STARTED")
+    await boundedBindStep(writeDestinationBinding(binding),
+      "CANONICAL_FINGERPRINT_WRITE_STARTED")
+    emitRuntimeTrace("CANONICAL_FINGERPRINT_WRITE_COMPLETE")
   }
-  if (!readback || readback.fingerprintVersion !== binding.fingerprintVersion ||
-      readback.countryClass !== binding.countryClass ||
-      readback.canonicalDestinationFingerprint !==
-        binding.canonicalDestinationFingerprint) {
+  const readback = await boundedBindStep(readDestinationBinding(),
+    "CANONICAL_FINGERPRINT_READBACK_VERIFIED")
+  if (!readback || readback.canonicalDestinationFingerprint !==
+      binding.canonicalDestinationFingerprint ||
+      readback.authorityClass !== DESTINATION_AUTHORITY_CLASS ||
+      readback.evidenceClass !== DESTINATION_EVIDENCE_CLASS) {
     throw new Error("BIND_STORAGE_READBACK_MISMATCH")
   }
   emitRuntimeTrace("CANONICAL_FINGERPRINT_READBACK_VERIFIED")
   emitRuntimeTrace("CANONICAL_DESTINATION_MATCH")
   emitRuntimeTrace("CANONICAL_BIND_COMPLETED")
-  return { contractVersion: AUTO_BIND_CONTRACT, success: true,
+  return { type: DESTINATION_BINDING_RESULT, success: true,
     canonicalDestinationBound: true, canonicalDestinationMatch: true,
-    operation: "AUTO_BIND_CANONICAL_DESTINATION", binding: readback }
+    canonicalUsProfileFound: true,
+    operation: existingBinding ? "VALIDATE_CANONICAL_DESTINATION"
+      : "BIND_CANONICAL_DESTINATION" }
 }
 
 function sendTabMessage(tabId, message) {
@@ -1014,7 +1023,6 @@ async function handleCanonicalDestinationBinding(port, bootstrapJob) {
   canonicalBindInFlight = true
   canonicalBindBootstrapAttempted = false
   let existingBinding = null
-  let bootstrapStarted = false
   let bindingResponse = null
   try {
     await beginRuntimeTrace(crypto.randomUUID(), null)
@@ -1022,20 +1030,8 @@ async function handleCanonicalDestinationBinding(port, bootstrapJob) {
     emitRuntimeTrace("BIND_REQUEST_ACCEPTED")
     existingBinding = await boundedBindStep(readDestinationBinding(),
       "CANONICAL_BIND_REQUESTED")
-    let checkoutTabId = await discoverCanonicalBindingCheckoutTab()
-    if (Number.isInteger(checkoutTabId)) {
-      emitRuntimeTrace("BIND_EXISTING_CHECKOUT_FOUND")
-    } else {
-      emitRuntimeTrace("BIND_CHECKOUT_BOOTSTRAP_REQUIRED", true, "NONE", {
-        bindCheckoutBootstrapRequired: true,
-        bindCheckoutBootstrapAttempted: false,
-        bindStartJobInvoked: false,
-      })
-      bootstrapStarted = true
-      checkoutTabId = await bootstrapCanonicalDestinationCheckout(bootstrapJob)
-    }
-    bindingResponse = await bindCanonicalDestination(existingBinding,
-      checkoutTabId)
+    bindingResponse = await bindOperatorCanonicalDestination(existingBinding,
+      bootstrapJob)
   } catch (error) {
     emitRuntimeTrace("FAIL", false, error instanceof Error ? error.message
       : "CANONICAL_US_PROFILE_VALIDATION_UNAVAILABLE")
@@ -1049,8 +1045,7 @@ async function handleCanonicalDestinationBinding(port, bootstrapJob) {
       emitRuntimeTrace("FAIL", false, "BIND_ACK_FAILED")
     }
   } finally {
-    if (bindingResponse) finalizeCanonicalBindRuntime(bootstrapStarted)
-    else if (bootstrapStarted) clearActiveJob()
+    if (bindingResponse) finalizeCanonicalBindRuntime(false)
     canonicalBindInFlight = false
   }
   if (!bindingResponse) return
@@ -1426,7 +1421,8 @@ chrome.runtime.onConnectExternal.addListener((port) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === GET_CANONICAL_DESTINATION_BINDING) {
     const recovered = recoverActiveJob(sender)
-    if (!recovered || activeJobPhase !== CHECKOUT_PHASE ||
+    if (!recovered || !new Set([CART_PHASE, CHECKOUT_PHASE])
+        .has(activeJobPhase) ||
         message.captureSessionId !== activeJob.captureSessionId) {
       sendResponse({ accepted: false,
         error: "ACTIVE_JOB_CHECKOUT_CONTINUITY_UNPROVEN" })

@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.44" },
+      extensionBuildVersion: "1.0.45" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -31,6 +31,16 @@ const BIND_ELIGIBILITY_PROBE =
 const BIND_ELIGIBILITY_CONTRACT = "LUNA_BIND_ELIGIBILITY_PROBE_V1"
 const DESTINATION_FINGERPRINT_VERSION =
   "LUNA_SHOP_PAY_DESTINATION_SHA256_V1"
+const PROFILE_DESTINATION_FINGERPRINT_VERSION =
+  "LUNA_CANONICAL_DESTINATION_PROFILE_SHA256_V1"
+const DESTINATION_AUTHORITY_CLASS =
+  "OPERATOR_BOUND_CANONICAL_US_DESTINATION_V1"
+const DESTINATION_EVIDENCE_CLASS =
+  "SERVER_CANONICAL_DESTINATION_PROFILE_DIGEST"
+const DESTINATION_VALIDATION_METHOD = "EXACT_PROFILE_DIGEST_MATCH"
+const CANONICAL_RATE_ACQUISITION_METHOD =
+  "LUNA_AUTHENTICATED_HTTP_CART_SHIPPING"
+const CANONICAL_SINGLE_RATE_PROOF = "SINGLE_CANONICAL_RATE"
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
 const CHECKOUT_PHASE = "AWAITING_CHECKOUT_SHIPPING"
 const ACQUISITION_METHOD = "NORMAL_CHROME_EXTENSION_VISIBLE_DOM"
@@ -278,9 +288,29 @@ async function boundedJson(response) {
 
 async function request(path, options = {}) {
   const url = new URL(path, location.origin)
+  const cartEndpoints = new Set([
+    "/cart.js", "/cart/clear.js", "/cart/add.js",
+    "/cart/shipping_rates.json",
+  ])
   if (url.origin !== location.origin ||
-      !new Set(["/cart.js", "/cart/clear.js", "/cart/add.js"])
-        .has(url.pathname)) throw new Error("LUNA_CART_ENDPOINT_DENIED")
+      !cartEndpoints.has(url.pathname)) {
+    throw new Error("LUNA_CART_ENDPOINT_DENIED")
+  }
+  if (url.pathname === "/cart/shipping_rates.json") {
+    const keys = [...url.searchParams.keys()].sort()
+    if (keys.length !== 3 || keys[0] !== "shipping_address[country]" ||
+        keys[1] !== "shipping_address[province]" ||
+        keys[2] !== "shipping_address[zip]" ||
+        url.searchParams.get("shipping_address[country]") !== "US" ||
+        !/^[A-Z]{2}$/.test(
+          url.searchParams.get("shipping_address[province]") ?? "") ||
+        !/^\d{5}(?:-\d{4})?$/.test(
+          url.searchParams.get("shipping_address[zip]") ?? "")) {
+      throw new Error("LUNA_CANONICAL_DESTINATION_QUERY_INVALID")
+    }
+  } else if (url.search) {
+    throw new Error("LUNA_CART_ENDPOINT_DENIED")
+  }
   let response
   try {
     response = await fetch(url, {
@@ -299,6 +329,48 @@ async function request(path, options = {}) {
   if (response.status === 403) throw new Error("LUNA_AUTH_CHALLENGE_REQUIRED")
   if (!response.ok) throw new Error(`LUNA_CART_HTTP_${response.status}`)
   return boundedJson(response)
+}
+
+function canonicalDestinationProfileBindingMatch(job, binding) {
+  return binding?.fingerprintVersion ===
+      PROFILE_DESTINATION_FINGERPRINT_VERSION &&
+    binding?.canonicalDestinationFingerprint === job.destination.profileDigest &&
+    binding?.countryClass === "US" &&
+    binding?.authorityClass === DESTINATION_AUTHORITY_CLASS &&
+    binding?.evidenceClass === DESTINATION_EVIDENCE_CLASS &&
+    binding?.validationMethod === DESTINATION_VALIDATION_METHOD
+}
+
+async function canonicalCartShippingRate(job) {
+  const query = new URLSearchParams({
+    "shipping_address[country]": job.destination.country,
+    "shipping_address[province]": job.destination.province,
+    "shipping_address[zip]": job.destination.postalCode,
+  })
+  const response = await request(`/cart/shipping_rates.json?${query}`)
+  const rates = Array.isArray(response?.shipping_rates)
+    ? response.shipping_rates.slice(0, 20) : []
+  if (rates.length !== 1) {
+    throw new Error(rates.length > 1
+      ? "LUNA_SHIPPING_SERVICE_SELECTION_UNPROVEN"
+      : "LUNA_AUTHORITATIVE_SHIPPING_QUOTE_UNAVAILABLE")
+  }
+  const [rate] = rates
+  const shippingUsd = Number(rate?.price)
+  const currency = typeof rate?.currency === "string"
+    ? rate.currency.toUpperCase() : ""
+  const rateIdentity = String(rate?.name ?? rate?.code ?? rate?.title ?? "")
+    .normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ").trim()
+  if (!Number.isFinite(shippingUsd) || shippingUsd < 0 ||
+      shippingUsd > 100_000 || currency !== "USD" ||
+      rateIdentity.length < 1 || rateIdentity.length > 160) {
+    throw new Error("LUNA_AUTHORITATIVE_SHIPPING_QUOTE_UNAVAILABLE")
+  }
+  return Object.freeze({
+    shippingUsd: Math.round((shippingUsd + Number.EPSILON) * 100) / 100,
+    selectedShippingStateProof: CANONICAL_SINGLE_RATE_PROOF,
+  })
 }
 
 async function exactProduct(job) {
@@ -1352,7 +1424,9 @@ function getCanonicalDestinationBinding(job) {
       }
       if (response?.accepted !== true ||
           response?.bindingStatus !== "BINDING_PRESENT_VALID" ||
-          binding?.fingerprintVersion !== DESTINATION_FINGERPRINT_VERSION ||
+          !new Set([DESTINATION_FINGERPRINT_VERSION,
+            PROFILE_DESTINATION_FINGERPRINT_VERSION])
+            .has(binding?.fingerprintVersion) ||
           !/^sha256:[0-9a-f]{64}$/.test(binding?.canonicalDestinationFingerprint ?? "") ||
           binding?.countryClass !== "US") {
         reject(new Error("CANONICAL_DESTINATION_BINDING_RESPONSE_INVALID"))
@@ -1749,6 +1823,7 @@ async function runProductStage(job) {
 async function runCartStage(job, original) {
   progress(job, "ACTIVE_JOB_RECOVERED_ON_CART")
   progress(job, "CART_PAGE_DETECTED")
+  let capture = null
   try {
     const confirmedCart = await retry(() => request("/cart.js"))
     const exact = exactCartEvidence(confirmedCart, job)
@@ -1761,23 +1836,67 @@ async function runCartStage(job, original) {
     progress(job, "SHIPPING_FLOW_RESUMED", {
       cartSubtotalUsd: exact.subtotalUsd,
     })
-    await setActiveJobPhase(job, CHECKOUT_PHASE, {
-      cartSubtotalUsd: exact.subtotalUsd,
+    const binding = await getCanonicalDestinationBinding(job)
+    if (!binding) throw new Error("CANONICAL_BINDING_REQUIRED")
+    if (!canonicalDestinationProfileBindingMatch(job, binding)) {
+      throw new Error("CANONICAL_US_SHIPPING_PROFILE_MISMATCH")
+    }
+    progress(job, "CANONICAL_US_PROFILE_FOUND")
+    progress(job, "SHIPPING_CAPTURE_STARTED")
+    const rate = await canonicalCartShippingRate(job)
+    progress(job, "SHIPPING_ADDRESS_ACCEPTED")
+    progress(job, "SHIPPING_OPTIONS_DETECTED")
+    const shippingUsd = rate.shippingUsd
+    const totalUsd = Math.round((exact.subtotalUsd + shippingUsd) * 100) / 100
+    progress(job, "SHIPPING_QUOTE_CAPTURED", {
+      checkoutHostClassification: "LUNA_STOREFRONT_CHECKOUT_HOST",
+      checkoutNavigationHost: location.hostname,
+      checkoutNavigationOrigin: location.origin,
+      checkoutHostPermissionMatch: true,
+      subtotalUsd: exact.subtotalUsd, shippingUsd, totalUsd,
     })
-    const checkout = await boundedDomWait(visibleCheckoutControl,
-      "LUNA_CHECKOUT_CONTROL_UNAVAILABLE")
-    await triggerCheckoutNavigation(job)
-    checkout.click()
-    const cartPath = location.pathname
-    setTimeout(() => {
-      if (location.pathname === cartPath) location.assign("/checkout")
-    }, 1_500)
+    progress(job, "AUTHENTICATED_OPERATION_CONFIRMED")
+    const observedAt = new Date().toISOString()
+    const evidenceInput = {
+      candidateId: job.identity.candidateId,
+      lunaProductId: job.identity.lunaProductId,
+      lunaVariantId: job.identity.lunaVariantId,
+      supplierSku: job.identity.supplierSku,
+      quantity: job.identity.quantity,
+      subtotalUsd: exact.subtotalUsd,
+      shippingUsd, totalUsd, currency: "USD", observedAt,
+      acquisitionMethod: CANONICAL_RATE_ACQUISITION_METHOD,
+      destinationProfileDigest: job.destination.profileDigest,
+      canonicalDestinationAuthority: DESTINATION_AUTHORITY_CLASS,
+      canonicalDestinationFingerprint:
+        binding.canonicalDestinationFingerprint,
+      canonicalDestinationMatch: true,
+      selectedShippingStateProof: rate.selectedShippingStateProof,
+    }
+    capture = { contractVersion: CONTRACT,
+      captureSessionId: job.captureSessionId, nonce: job.nonce,
+      ...evidenceInput,
+      extensionEvidenceDigest: await digest(evidenceInput),
+      normalChromeAuthenticated: true,
+      expectedProductIdMatch: true,
+      expectedVariantIdMatch: true,
+      expectedSupplierSkuMatch: true,
+      subtotalPlusShippingReconciles: true,
+      cartRestoreProven: true,
+      cookieAccess: false,
+      credentialAccess: false,
+      lunaPurchases: 0,
+    }
   } catch (error) {
     try { await restoreCart(original) } catch {
       throw new Error("LUNA_CART_RESTORE_UNPROVEN")
     }
     throw error
   }
+  try { await restoreCart(original) } catch {
+    throw new Error("LUNA_CART_RESTORE_UNPROVEN")
+  }
+  return capture
 }
 
 async function runCheckoutStage(job, original, subtotalUsd) {
@@ -1996,8 +2115,9 @@ if ((isProductPage || isCartPage || isCheckoutPage) &&
           !Array.isArray(context.originalCartSnapshot)) {
         throw new Error("ACTIVE_JOB_CART_CONTINUITY_UNPROVEN")
       }
-      await runCartStage(context.job, context.originalCartSnapshot)
-      return { job: context.job, capture: null }
+      return { job: context.job,
+        capture: await runCartStage(context.job,
+          context.originalCartSnapshot) }
     }
     await runProductStage(context.job)
     return { job: context.job, capture: null }

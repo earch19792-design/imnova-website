@@ -19,7 +19,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.44"
+const EXPECTED_EXTENSION_VERSION = "1.0.45"
 const SELLER_OS_EXTENSION_ORIGIN = SELLER_OS_LUNA_STABLE_PREVIEW_ORIGIN
 const STARTUP_PROBE_CONTRACT = "SELLER_OS_LUNA_EXTENSION_STARTUP_PROBE_V1"
 const GET_BINDING_STORAGE_DIAGNOSTIC =
@@ -30,9 +30,9 @@ const CANARY_ID =
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
 
 function finalCanaryStartEnabled(connected: boolean,
-  canonicalBindingStatusReady: boolean, canonicalDestinationMismatch: boolean,
-  canaryRunInProgress: boolean) {
-  return connected && canonicalBindingStatusReady &&
+  canonicalBindingStatusReady: boolean, canonicalDestinationBound: boolean,
+  canonicalDestinationMismatch: boolean, canaryRunInProgress: boolean) {
+  return connected && canonicalBindingStatusReady && canonicalDestinationBound &&
     !canonicalDestinationMismatch && !canaryRunInProgress
 }
 
@@ -349,6 +349,7 @@ export default function LunaShippingCapturePage() {
     let busy = false
     let extensionReady = false
     let canonicalBindingStatusRead = false
+    let canonicalDestinationBindingPresent = false
     let activeJobStatusReady = false
     let recoveredActiveJob: LunaChromeShippingJobV1 | null = null
     let initialAutoClaimStarted = false
@@ -398,6 +399,7 @@ export default function LunaShippingCapturePage() {
       setLiveTraceEvents([...traceEvents])
       if (event.state === "CANONICAL_BIND_COMPLETED") {
         canonicalBindingStatusRead = true
+        canonicalDestinationBindingPresent = true
         setCanonicalBindingStatusReady(true)
         setCanonicalDestinationBound(true)
         setCanonicalDestinationMatch(true)
@@ -461,7 +463,8 @@ export default function LunaShippingCapturePage() {
 
     const startInitialProductionClaim = () => {
       if (!active || initialAutoClaimStarted || !extensionReady ||
-          !canonicalBindingStatusRead || !activeJobStatusReady || busy || !port) {
+          !canonicalBindingStatusRead || !canonicalDestinationBindingPresent ||
+          !activeJobStatusReady || busy || !port) {
         return
       }
       initialAutoClaimStarted = true
@@ -483,7 +486,8 @@ export default function LunaShippingCapturePage() {
     }
 
     const beginCanary = () => {
-      if (busy || !extensionReady || !canonicalBindingStatusRead) return
+      if (busy || !extensionReady || !canonicalBindingStatusRead ||
+          !canonicalDestinationBindingPresent) return
       setError("")
       setResults([])
       setLastRuntimeState("CANARY_DISPATCHED")
@@ -555,8 +559,8 @@ export default function LunaShippingCapturePage() {
             extensionIdContinuity: message.extensionIdContinuity === true,
           })
           const bindingStatusAccepted = storageReadStatus === "READ_OK" &&
-            new Set(["NO_BINDING_PRESENT", "PRIMARY_BINDING_VALID",
-              "LEGACY_BINDING_VALID"]).has(bindingClassification)
+            new Set(["NO_BINDING_PRESENT", "PRIMARY_BINDING_VALID"])
+              .has(bindingClassification)
           if (!bindingStatusAccepted) {
             canonicalBindingStatusRead = false
             setCanonicalBindingStatusReady(false)
@@ -565,9 +569,10 @@ export default function LunaShippingCapturePage() {
             return
           }
           canonicalBindingStatusRead = true
+          canonicalDestinationBindingPresent =
+            bindingClassification === "PRIMARY_BINDING_VALID"
           setCanonicalBindingStatusReady(true)
-          setCanonicalDestinationBound(
-            bindingClassification !== "NO_BINDING_PRESENT")
+          setCanonicalDestinationBound(canonicalDestinationBindingPresent)
           setCanonicalDestinationMismatch(false)
           startInitialProductionClaim()
           return
@@ -581,6 +586,7 @@ export default function LunaShippingCapturePage() {
           }
           const bound = message.canonicalDestinationBound === true
           canonicalBindingStatusRead = true
+          canonicalDestinationBindingPresent = bound
           setCanonicalBindingStatusReady(true)
           setCanonicalDestinationMismatch(false)
           setCanonicalDestinationBound(bound)
@@ -588,7 +594,7 @@ export default function LunaShippingCapturePage() {
             setError("")
           } else {
             setCanonicalDestinationMatch(false)
-            setStatus("CANONICAL_AUTO_BIND_PENDING")
+            setStatus("CANONICAL_OPERATOR_BIND_REQUIRED")
             setError("")
           }
           startInitialProductionClaim()
@@ -617,6 +623,7 @@ export default function LunaShippingCapturePage() {
           }
           setCanonicalDestinationBound(true)
           canonicalBindingStatusRead = true
+          canonicalDestinationBindingPresent = true
           setCanonicalBindingStatusReady(true)
           setCanonicalDestinationMatch(true)
           setCanonicalDestinationMismatch(false)
@@ -626,7 +633,7 @@ export default function LunaShippingCapturePage() {
           setStatus("Benchmark configurado")
           setRuntimeTrace((current) => ({ ...current,
             canonicalUsProfileFound: true,
-            shippingAddressAccepted: true,
+            shippingAddressAccepted: false,
           }))
           startInitialProductionClaim()
           return
@@ -904,6 +911,17 @@ export default function LunaShippingCapturePage() {
           evidenceDigest: message.capture.extensionEvidenceDigest,
           captureSessionId: message.capture.captureSessionId,
           nonce: message.capture.nonce,
+          ...(message.capture.canonicalDestinationAuthority ===
+              "OPERATOR_BOUND_CANONICAL_US_DESTINATION_V1" ? {
+            canonicalDestinationAuthority:
+              message.capture.canonicalDestinationAuthority,
+            canonicalDestinationFingerprint:
+              message.capture.canonicalDestinationFingerprint,
+            canonicalDestinationMatch:
+              message.capture.canonicalDestinationMatch,
+            selectedShippingStateProof:
+              message.capture.selectedShippingStateProof,
+          } : {}),
         }
         void adminPost("certify_capture", { capture }, capture.captureSessionId)
           .then(async (certified) => {
@@ -1026,6 +1044,7 @@ export default function LunaShippingCapturePage() {
           reconnecting = true
           const jobToResume = busy ? jobs[index] : null
           canonicalBindingStatusRead = false
+          canonicalDestinationBindingPresent = false
           setCanonicalBindingStatusReady(false)
           activeJobStatusReady = false
           recoveredActiveJob = null
@@ -1091,7 +1110,8 @@ export default function LunaShippingCapturePage() {
   const traceBlocker = newestTrace?.state === "FAIL"
     ? newestTrace.reasonCode : "NONE"
   const canStartFinalCanary = finalCanaryStartEnabled(connected,
-    canonicalBindingStatusReady, canonicalDestinationMismatch, running)
+    canonicalBindingStatusReady, canonicalDestinationBound,
+    canonicalDestinationMismatch, running)
 
   return <main className="min-h-screen bg-[#07111a] px-4 py-10 text-white">
     <section className="mx-auto max-w-2xl rounded-3xl border border-white/15 bg-white/[0.05] p-6">
@@ -1108,11 +1128,11 @@ export default function LunaShippingCapturePage() {
         disabled={!connected || running || canonicalDestinationBound}
         onClick={() => bindDestinationRef.current?.()}
         className="mt-3 w-full rounded-2xl border border-cyan-200/40 px-5 py-3 font-black text-cyan-100 disabled:cursor-not-allowed disabled:opacity-40">
-        Usar destino actual como benchmark canónico
+        Vincular perfil canónico US de Seller OS
       </button>
       <p className="mt-2 text-xs text-white/65">
-        Configuración única. Seller OS guarda sólo un fingerprint del destino,
-        no la dirección.
+        Acción explícita única. La extensión guarda sólo el fingerprint del
+        perfil US canónico de Seller OS; nunca guarda ni muestra la dirección.
       </p>
       <p className="mt-2 text-xs text-white/50">
         CANONICAL_DESTINATION_BOUND={String(canonicalDestinationBound)} · CANONICAL_DESTINATION_MATCH={String(canonicalDestinationMatch)}
