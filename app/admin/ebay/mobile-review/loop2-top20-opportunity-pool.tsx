@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { ReactNode } from "react"
 
 import { supabase } from "@/lib/supabase"
 import {
@@ -960,6 +961,7 @@ async function probeOneClickResearchExtension() {
 
 type Loop2Top20OpportunityPoolProps = {
   surface?: "loop2" | "opportunities"
+  children?: ReactNode
 }
 
 function OneClickResearchCommandCenter({
@@ -1155,6 +1157,7 @@ function CommercialPackIntelligence({
 
 export function Loop2Top20OpportunityPool({
   surface = "loop2",
+  children,
 }: Loop2Top20OpportunityPoolProps = {}) {
   const [payload, setPayload] = useState<QueuePayload | null>(null)
   const [loading, setLoading] = useState(true)
@@ -1695,6 +1698,7 @@ export function Loop2Top20OpportunityPool({
 
   if (surface === "opportunities") return <div className="space-y-4">
     {oneClickResearchCommandCenter}
+    {children}
     <CommercialPackIntelligence pool={pool} soldEvidenceStatus={soldEvidenceStatus}
       loading={loading} />
   </div>

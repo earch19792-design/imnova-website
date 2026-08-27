@@ -4,6 +4,7 @@ import { ArrowLeft, BarChart3, FlaskConical, Search, ShieldCheck } from "lucide-
 import Link from "next/link"
 import { useState } from "react"
 
+import { Loop2Top20OpportunityPool } from "../../mobile-review/loop2-top20-opportunity-pool"
 import type { MarketOpportunityResearchV1 } from "@/lib/ebay/ebay-market-opportunity-research-v1"
 import type { CommercialIntelligenceUpgradeV1, ItemIdCanonicalFamilyBridgeV1 } from
   "@/lib/ebay/ebay-commercial-intelligence-upgrade-v1"
@@ -142,6 +143,8 @@ export default function MarketResearchPage() {
           </span>
         </header>
 
+        <Loop2Top20OpportunityPool surface="opportunities">
+        <div data-market-opportunity-research className="space-y-3">
         <section className="grid gap-4 rounded-2xl border border-white/10 bg-[#0b1826] p-4 lg:grid-cols-[minmax(260px,1fr)_auto]">
           <label className="text-xs text-slate-400">Product, title, family, search term, or eBay Item ID
             <input value={seedValue} onChange={(event) => setSeedValue(event.target.value)} maxLength={180} placeholder="Enter a research seed" className="mt-1.5 w-full rounded-lg border border-white/10 bg-[#07111d] px-3 py-2.5 text-sm text-white placeholder:text-slate-600" />
@@ -306,6 +309,8 @@ export default function MarketResearchPage() {
             </details>
           </div>
         ) : null}
+        </div>
+        </Loop2Top20OpportunityPool>
       </div>
     </main>
   )
