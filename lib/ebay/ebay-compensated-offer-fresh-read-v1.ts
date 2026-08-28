@@ -1,0 +1,138 @@
+import type { JsonRecord } from "./ebay-draft-only-readiness"
+
+export const EBAY_COMPENSATED_OFFER_FRESH_READ_VERSION =
+  "ITEM3525_COMPENSATED_OFFER_FRESH_READ_GATE_V1" as const
+
+export type CompensatedOfferFreshReadResultV1 = Readonly<{
+  CONTRACT_VERSION: typeof EBAY_COMPENSATED_OFFER_FRESH_READ_VERSION
+  OFFER_DISCOVERY_COUNT: number | null
+  OFFER_ID: string | null
+  OFFER_STATUS: string
+  OFFER_HAS_LISTING: boolean | null
+  ASSOCIATED_LISTING_ID: string | null
+  INVENTORY_ITEM_READBACK_STATUS: "PASS_EXACT_MATCH" | "BLOCKED"
+  HISTORICAL_ITEM_STATUS: "NOT_ACTIVE" | "ACTIVE" | "BLOCKED"
+  ACTIVE_DUPLICATE_COUNT: number | null
+  RECOVERY_SAFETY_CLASSIFICATION:
+    | "SAFE_TO_REARM_EXISTING_GOLDEN_PATH"
+    | "BLOCKED"
+  BLOCKER: string | null
+  OBSERVED_AT: string
+  MARKETPLACE_WRITES: 0
+  DATABASE_MUTATIONS: 0
+  REARM_CALLS: 0
+  NEW_OFFERS: 0
+  PUBLISH_CALLS: 0
+  WITHDRAW_CALLS: 0
+}>
+
+function record(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as JsonRecord
+    : {}
+}
+
+function text(value: unknown) {
+  return typeof value === "string" ? value.trim() : ""
+}
+
+function nonnegativeInteger(value: unknown) {
+  const parsed = Number(value)
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
+}
+
+function listingId(value: unknown) {
+  const parsed = text(value)
+  return /^\d{9,20}$/.test(parsed) ? parsed : null
+}
+
+function offerIdentifier(value: unknown) {
+  const parsed = text(value)
+  return /^[A-Za-z0-9_-]{1,80}$/.test(parsed) ? parsed : null
+}
+
+export function classifyCompensatedOfferFreshReadV1(input: {
+  expectedOfferId: string
+  expectedSku: string
+  expectedHistoricalItemId: string
+  offerVerification: unknown
+  inventoryVerification: unknown
+  historicalItemReadback: unknown
+  activeDuplicateCount: unknown
+  observedAt?: Date
+}): CompensatedOfferFreshReadResultV1 {
+  const offer = record(input.offerVerification)
+  const inventory = record(input.inventoryVerification)
+  const historical = record(input.historicalItemReadback)
+  const expectedOfferId = offerIdentifier(input.expectedOfferId)
+  const expectedHistoricalItemId = listingId(input.expectedHistoricalItemId)
+  const expectedSku = text(input.expectedSku)
+  const offerDiscoveryCount = nonnegativeInteger(offer.offerDiscoveryCount)
+  const returnedOfferId = offerIdentifier(offer.offerId)
+  const offerStatus = text(offer.status).toUpperCase() || "UNKNOWN"
+  const offerHasListing = typeof offer.offerHasListing === "boolean"
+    ? offer.offerHasListing
+    : null
+  const associatedListingId = listingId(offer.associatedListingId)
+  const activeDuplicateCount = nonnegativeInteger(input.activeDuplicateCount)
+  const inventoryExact = inventory.safe === true
+  const historicalStatus = text(historical.listingStatus).toUpperCase()
+  const historicalExactInactive = historical.ownership === "inactive"
+    && listingId(historical.itemId) === expectedHistoricalItemId
+    && text(historical.ebaySku) === expectedSku
+    && historicalStatus !== "ACTIVE"
+
+  let blocker: string | null = null
+  if (!expectedOfferId || !expectedHistoricalItemId || !expectedSku) {
+    blocker = "EBAY_COMPENSATED_PUBLICATION_RECOVERY_IDENTITY_INVALID"
+  } else if (!Object.keys(offer).length) {
+    blocker = "EBAY_COMPENSATED_PUBLICATION_RECOVERY_OFFER_READ_FAILED"
+  } else if (
+    offer.safe !== true
+    || offerDiscoveryCount !== 1
+    || returnedOfferId !== expectedOfferId
+    || offerStatus !== "UNPUBLISHED"
+    || offerHasListing !== false
+    || associatedListingId !== null
+  ) {
+    blocker = text(offer.blocker)
+      || "EBAY_COMPENSATED_PUBLICATION_RECOVERY_OFFER_NOT_UNPUBLISHED"
+  } else if (!inventoryExact) {
+    blocker = text(inventory.blocker)
+      || "EBAY_FINAL_PUBLICATION_INVENTORY_EXACT_READBACK_MISMATCH"
+  } else if (!historicalExactInactive) {
+    blocker = historicalStatus === "ACTIVE"
+      ? "EBAY_COMPENSATED_PUBLICATION_ORIGINAL_LISTING_STILL_ACTIVE"
+      : "EBAY_COMPENSATED_PUBLICATION_ORIGINAL_IDENTITY_MISMATCH"
+  } else if (activeDuplicateCount === null) {
+    blocker = "EBAY_COMPENSATED_PUBLICATION_ACTIVE_DUPLICATE_READ_FAILED"
+  } else if (activeDuplicateCount !== 0) {
+    blocker = "EBAY_COMPENSATED_PUBLICATION_ACTIVE_DUPLICATE"
+  }
+
+  return Object.freeze({
+    CONTRACT_VERSION: EBAY_COMPENSATED_OFFER_FRESH_READ_VERSION,
+    OFFER_DISCOVERY_COUNT: offerDiscoveryCount,
+    OFFER_ID: returnedOfferId ?? expectedOfferId,
+    OFFER_STATUS: offerStatus,
+    OFFER_HAS_LISTING: offerHasListing,
+    ASSOCIATED_LISTING_ID: associatedListingId,
+    INVENTORY_ITEM_READBACK_STATUS: inventoryExact
+      ? "PASS_EXACT_MATCH" : "BLOCKED",
+    HISTORICAL_ITEM_STATUS: historicalExactInactive
+      ? "NOT_ACTIVE"
+      : historicalStatus === "ACTIVE" ? "ACTIVE" : "BLOCKED",
+    ACTIVE_DUPLICATE_COUNT: activeDuplicateCount,
+    RECOVERY_SAFETY_CLASSIFICATION: blocker
+      ? "BLOCKED"
+      : "SAFE_TO_REARM_EXISTING_GOLDEN_PATH",
+    BLOCKER: blocker,
+    OBSERVED_AT: (input.observedAt ?? new Date()).toISOString(),
+    MARKETPLACE_WRITES: 0,
+    DATABASE_MUTATIONS: 0,
+    REARM_CALLS: 0,
+    NEW_OFFERS: 0,
+    PUBLISH_CALLS: 0,
+    WITHDRAW_CALLS: 0,
+  })
+}

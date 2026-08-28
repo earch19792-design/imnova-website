@@ -1318,10 +1318,14 @@ export async function verifyEbayCompensatedOfferRecoveryState(
   ) {
     return {
       safe: false,
+      httpStatus: 0,
       status: "",
       offerId: normalizedOfferId,
       sku: normalizedSku,
       priorListingId: normalizedListingId,
+      offerDiscoveryCount: 0,
+      offerHasListing: null,
+      associatedListingId: null,
       publishedOfferCount: 0,
       matchingOfferCount: 0,
       blocker: "EBAY_COMPENSATED_PUBLICATION_RECOVERY_IDENTITY_INVALID",
@@ -1345,20 +1349,28 @@ export async function verifyEbayCompensatedOfferRecoveryState(
   const published = offers.filter((offer) => {
     const status = typeof offer.status === "string"
       ? offer.status.trim().toUpperCase() : ""
-    return status === "PUBLISHED" || Boolean(publishedListingId(offer))
+    return status === "PUBLISHED" || offerHasAssociatedListing(offer)
   })
   const target = matching.length === 1 ? matching[0] : {}
   const status = typeof target.status === "string"
     ? target.status.trim().toUpperCase() : ""
   const targetListingId = publishedListingId(target)
+  const targetHasListing = matching.length === 1
+    ? offerHasAssociatedListing(target)
+    : null
   const safe = result.ok && offers.length === 1 && matching.length === 1 &&
-    published.length === 0 && status === "UNPUBLISHED" && !targetListingId
+    published.length === 0 && status === "UNPUBLISHED" &&
+    targetHasListing === false && !targetListingId
   return {
     safe,
+    httpStatus: result.status,
     status,
     offerId: normalizedOfferId,
     sku: normalizedSku,
     priorListingId: normalizedListingId,
+    offerDiscoveryCount: offers.length,
+    offerHasListing: targetHasListing,
+    associatedListingId: targetListingId,
     publishedOfferCount: published.length,
     matchingOfferCount: matching.length,
     blocker: safe
@@ -1446,6 +1458,12 @@ function sanitizeEbayListingId(value: unknown) {
 function publishedListingId(body: JsonRecord) {
   return sanitizeEbayListingId(body.listingId)
     ?? sanitizeEbayListingId(record(body.listing).listingId)
+}
+
+function offerHasAssociatedListing(body: JsonRecord) {
+  return Boolean(publishedListingId(body))
+    || Object.prototype.hasOwnProperty.call(body, "listingId")
+    || Object.prototype.hasOwnProperty.call(body, "listing")
 }
 
 async function verifyPublishedOfferWithToken(

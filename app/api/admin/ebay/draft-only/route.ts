@@ -47,6 +47,9 @@ import {
   canRetireSupersededSkuPreflight,
 } from "@/lib/ebay/ebay-draft-only-prewrite-retirement"
 import {
+  classifyCompensatedOfferFreshReadV1,
+} from "@/lib/ebay/ebay-compensated-offer-fresh-read-v1"
+import {
   isCommandCenterCommercialFreshnessRecheck,
 } from "@/lib/ebay/ebay-command-center-commercial-freshness"
 import {
@@ -292,6 +295,69 @@ function oneClickPublicationRequirements(enabled: boolean) {
     humanAuthorizationCount: 2,
     secondHumanAuthorizationRequired: true,
   }
+}
+
+function isCompensatedPublicationFreshReadCandidate(
+  execution: JsonRecord | null,
+  publication: JsonRecord | null,
+) {
+  const sanitized = record(publication?.sanitized_result)
+  return execution?.phase === "completed"
+    && Boolean(sanitizeEbayOfferId(execution.offer_id))
+    && publication?.phase === "terminal_failure"
+    && publication.last_error_code ===
+      "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED"
+    && /^\d{9,20}$/.test(text(publication.listing_id))
+    && text(publication.offer_id) === text(execution.offer_id)
+    && text(publication.sku) === text(execution.sku)
+    && Number(publication.publish_attempt_count) === 1
+    && sanitized.compensatingEndVerified === true
+    && sanitized.officialReadbackNotCurrentLive === true
+}
+
+async function readCompensatedPublicationFreshSafety(input: {
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  accountKey: string
+  approvedPayload: JsonRecord
+  execution: JsonRecord
+  publication: JsonRecord
+}) {
+  const offerId = text(input.execution.offer_id)
+  const sku = text(input.execution.sku)
+  const historicalItemId = text(input.publication.listing_id)
+  const [offerRead, inventoryRead, historicalItemRead, duplicateRead] =
+    await Promise.allSettled([
+      verifyEbayCompensatedOfferRecoveryState(
+        offerId,
+        sku,
+        historicalItemId,
+      ),
+      verifyEbayDraftInventoryItem(
+        sku,
+        record(input.approvedPayload.inventoryItemPayload),
+      ),
+      readManualListingFromTradingApi(historicalItemId),
+      input.supabase
+        .from("ebay_active_listings")
+        .select("id", { count: "exact", head: true })
+        .eq("account_key", input.accountKey)
+        .eq("ebay_sku", sku)
+        .eq("listing_status", "active"),
+    ])
+  const value = <T,>(result: PromiseSettledResult<T>) =>
+    result.status === "fulfilled" ? result.value : null
+  const duplicateResult = record(value(duplicateRead))
+  return classifyCompensatedOfferFreshReadV1({
+    expectedOfferId: offerId,
+    expectedSku: sku,
+    expectedHistoricalItemId: historicalItemId,
+    offerVerification: value(offerRead),
+    inventoryVerification: value(inventoryRead),
+    historicalItemReadback: value(historicalItemRead),
+    activeDuplicateCount: duplicateResult.error
+      ? null
+      : duplicateResult.count,
+  })
 }
 
 async function verifyExactUnpublishedPublicationState(input: {
@@ -1188,7 +1254,7 @@ export async function GET(req: Request) {
     const { data: publication, error: publicationError } = ledger?.id
       ? await supabase
         .from("ebay_authorized_listing_publications")
-        .select("id,draft_execution_id,draft_approval_id,listing_package_id,opportunity_id,phase,target,account_fingerprint,offer_id,sku,preview_hash,preview,publication_idempotency_key,publish_attempt_count,listing_id,publish_http_status,published_at,verified_active_at,monitor_registered_at,last_error_code,updated_at")
+        .select("id,draft_execution_id,draft_approval_id,listing_package_id,opportunity_id,phase,target,account_fingerprint,offer_id,sku,preview_hash,preview,publication_idempotency_key,publish_attempt_count,listing_id,publish_http_status,published_at,verified_active_at,monitor_registered_at,last_error_code,sanitized_result,updated_at")
         .eq("draft_execution_id", ledger.id)
         .maybeSingle()
       : { data: null, error: null }
@@ -1199,6 +1265,19 @@ export async function GET(req: Request) {
       execution: ledger,
       publication,
     })
+    const compensatedOfferFreshRead =
+      isCompensatedPublicationFreshReadCandidate(
+        ledger as JsonRecord | null,
+        publication as JsonRecord | null,
+      )
+        ? await readCompensatedPublicationFreshSafety({
+          supabase,
+          accountKey: text(context.listingPackage.account_key),
+          approvedPayload,
+          execution: ledger as JsonRecord,
+          publication: publication as JsonRecord,
+        })
+        : null
     const smartStockingAuthorization = record(
       context.smartStockingPublicationAuthorization,
     )
@@ -1226,6 +1305,7 @@ export async function GET(req: Request) {
       approval: latestApproval ? { ...latestApproval, approved_payload: undefined } : null,
       execution: ledger,
       publication,
+      compensatedOfferFreshRead,
       authenticatedPublicationRecovery,
       runtime,
       controlledPublication: {

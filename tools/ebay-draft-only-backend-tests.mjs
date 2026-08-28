@@ -2133,6 +2133,9 @@ test("compensated publication recovery accepts only one exact unpublished offer"
       offer.offerId, RESERVED_SKU, "366633121948", fetchFor([offer]),
     )
     assert.equal(safe.safe, true)
+    assert.equal(safe.offerDiscoveryCount, 1)
+    assert.equal(safe.offerHasListing, false)
+    assert.equal(safe.associatedListingId, null)
     assert.equal(safe.publishedOfferCount, 0)
     const published = await module.verifyEbayCompensatedOfferRecoveryState(
       offer.offerId, RESERVED_SKU, "366633121948", fetchFor([{
@@ -2142,12 +2145,25 @@ test("compensated publication recovery accepts only one exact unpublished offer"
     assert.equal(published.safe, false)
     assert.equal(published.blocker,
       "EBAY_COMPENSATED_PUBLICATION_RECOVERY_ACTIVE_OR_PUBLISHED_OFFER")
+    assert.equal(published.offerHasListing, true)
+    assert.equal(published.associatedListingId, "366633121948")
+    const linked = await module.verifyEbayCompensatedOfferRecoveryState(
+      offer.offerId, RESERVED_SKU, "366633121948", fetchFor([{
+        ...offer, listingId: "366633121948",
+      }]),
+    )
+    assert.equal(linked.safe, false)
+    assert.equal(linked.status, "UNPUBLISHED")
+    assert.equal(linked.offerHasListing, true)
+    assert.equal(linked.blocker,
+      "EBAY_COMPENSATED_PUBLICATION_RECOVERY_ACTIVE_OR_PUBLISHED_OFFER")
     const duplicate = await module.verifyEbayCompensatedOfferRecoveryState(
       offer.offerId, RESERVED_SKU, "366633121948", fetchFor([
         offer, { ...offer, offerId: "other-offer" },
       ]),
     )
     assert.equal(duplicate.safe, false)
+    assert.equal(duplicate.offerDiscoveryCount, 2)
     assert.equal(duplicate.blocker,
       "EBAY_COMPENSATED_PUBLICATION_RECOVERY_OFFER_AMBIGUOUS")
   } finally {
