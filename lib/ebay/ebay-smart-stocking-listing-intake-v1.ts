@@ -50,6 +50,10 @@ const LISTING_TITLE =
   "11 in Revolving Plastic Cake Turntable Non-Slip Base Decorating Stand"
 const LUNA_EXACT_PRODUCT_TRUTH_AUTHORITY =
   "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1" as const
+const CANONICAL_ECONOMICS_POLICY_REFERENCE =
+  "SERVER_CANONICAL_EBAY_UNIT_ECONOMICS_V1" as const
+const PROFITABILITY_FRONTIER_CONTRACT =
+  "SELLER_OS_PROFITABILITY_FRONTIER_V1" as const
 
 type JsonRecord = Record<string, unknown>
 const SHA256 = /^sha256:[0-9a-f]{64}$/
@@ -362,11 +366,44 @@ export async function resolveCakeTurntableListingWorkspaceEvidenceV1(
   })
 }
 
-function windowFilmCommercialAuthoritiesV1(input: Readonly<{
+export type SmartStockingListingIntakeAuthorityTargetV1 = Readonly<{
+  decisionPackageId: string
+  candidateKey: string
+  lunaProductId: string
+  lunaVariantId: string
+  lunaSku: string
+  gtin: string
+  unitCostUsd: number
+  entryPotentialScore: number
+  salePriceUsd: number
+  supplierShippingUsd: number
+  estimatedEbayFeesUsd: number
+  contributionProfitUsd: number
+  contributionMarginPercent: number
+  roiPercent: number
+  categoryId: string
+  categoryName: string
+  listingTitle: string
+}>
+
+/**
+ * Shared durable commercial authority for Smart Stocking listing intake.
+ *
+ * Shipping capture re-materializes a Frontier from canonical unit economics.
+ * Current producer snapshots prove the policy result through the immutable
+ * Frontier/snapshot digests, policy reference/digest, exact economics and
+ * ECONOMICALLY_PROMISING classification. Older snapshots may additionally
+ * carry scenarios.median.passesTargetPolicy; when present it remains a strict
+ * fail-closed guard, but it is not part of the current producer contract.
+ */
+export function resolveSmartStockingListingIntakeAuthorityV1<
+  Target extends SmartStockingListingIntakeAuthorityTargetV1,
+>(input: Readonly<{
   decisionPackage: Awaited<ReturnType<typeof readWinnerEvidenceDecisionPackage>>
   profitabilityFrontiers: unknown
+  target: Target
 }>) {
-  const target = WINDOW_FILM_LISTING_INTAKE_TARGET_V1
+  const target = input.target
   const profile = input.decisionPackage.smartStockingLearningProfile
   const identity = input.decisionPackage.package.productIdentity.identity
   const frontierRow = records(record(input.profitabilityFrontiers).frontiers)
@@ -380,6 +417,24 @@ function windowFilmCommercialAuthoritiesV1(input: Readonly<{
   const frontier = record(frontierRow?.frontier)
   const shipping = record(frontier.shippingCaptureEvidence)
   const median = record(record(frontier.scenarios).median)
+  const legacyTargetPolicy = median.passesTargetPolicy
+  const currentCanonicalEconomicsPass =
+    frontierRow?.economicPolicyReference === CANONICAL_ECONOMICS_POLICY_REFERENCE
+    && SHA256.test(String(frontierRow?.economicPolicyDigest ?? ""))
+    && frontierRow?.provisionalFastLaneEconomics === true
+    && frontierRow?.phase6CanonicalAuthority === false
+    && frontier.contractVersion === PROFITABILITY_FRONTIER_CONTRACT
+    && frontier.economicClassification === "ECONOMICALLY_PROMISING"
+    && frontier.nextBestEvidence === "NONE"
+    && money(frontier.contributionProfitAtMarketMedian) !== null
+    && Number(frontier.contributionProfitAtMarketMedian) > 0
+    && money(frontier.contributionMarginAtMarketMedian) !== null
+    && Number(frontier.contributionMarginAtMarketMedian) > 0
+  const legacyTargetPolicyUnavailable = legacyTargetPolicy === undefined
+    || legacyTargetPolicy === null
+  const targetPolicyPass = legacyTargetPolicyUnavailable
+    ? currentCanonicalEconomicsPass
+    : legacyTargetPolicy === true && currentCanonicalEconomicsPass
   if (
     input.decisionPackage.packageId !== target.decisionPackageId
     || input.decisionPackage.status !== "GENERATED"
@@ -405,7 +460,7 @@ function windowFilmCommercialAuthoritiesV1(input: Readonly<{
       !== target.contributionProfitUsd
     || money(frontier.contributionMarginAtMarketMedian)
       !== target.contributionMarginPercent
-    || median.passesTargetPolicy !== true
+    || !targetPolicyPass
     || frontier.economicClassification !== "ECONOMICALLY_PROMISING"
     || frontier.nextBestEvidence !== "NONE"
     || shipping.lunaProductId !== target.lunaProductId
@@ -422,6 +477,16 @@ function windowFilmCommercialAuthoritiesV1(input: Readonly<{
     || shipping.noPurchase !== true
   ) throw new Error("WINDOW_FILM_LISTING_INTAKE_AUTHORITY_MISMATCH")
   return { target, profile, frontierRow, frontier, shipping }
+}
+
+function windowFilmCommercialAuthoritiesV1(input: Readonly<{
+  decisionPackage: Awaited<ReturnType<typeof readWinnerEvidenceDecisionPackage>>
+  profitabilityFrontiers: unknown
+}>) {
+  return resolveSmartStockingListingIntakeAuthorityV1({
+    ...input,
+    target: WINDOW_FILM_LISTING_INTAKE_TARGET_V1,
+  })
 }
 
 export function buildWindowFilmListingWorkspaceEvidenceV1(input: Readonly<{
