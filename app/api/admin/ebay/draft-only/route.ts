@@ -3718,44 +3718,25 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
       409,
     )
   }
-  await revalidateFinalPublicationDependencies(
-    supabase,
-    context,
-    record(context.approval.approved_payload),
-  )
+  let compensatedFreshRead: Awaited<ReturnType<
+    typeof readCompensatedPublicationFreshSafety
+  >> | null = null
   if (compensatedMonitorFailure) {
-    const priorListingId = text(publication.listing_id)
-    const [offerRecovery, priorListing, activeDuplicates] = await Promise.all([
-      verifyEbayCompensatedOfferRecoveryState(
-        built.offerId,
-        built.sku,
-        priorListingId,
-      ),
-      readManualListingFromTradingApi(priorListingId),
-      supabase
-        .from("ebay_active_listings")
-        .select("id", { count: "exact", head: true })
-        .eq("account_key", context.accountKey)
-        .eq("ebay_sku", built.sku)
-        .eq("listing_status", "active"),
-    ])
+    compensatedFreshRead = await readCompensatedPublicationFreshSafety({
+      supabase,
+      accountKey: context.accountKey,
+      approvedPayload: record(context.approval.approved_payload),
+      execution: context.execution,
+      publication: publication as JsonRecord,
+    })
     if (
-      !offerRecovery.safe ||
-      priorListing.ownership !== "inactive" ||
-      priorListing.listingStatus?.toLowerCase() === "active" ||
-      priorListing.ebaySku !== built.sku ||
-      activeDuplicates.error ||
-      (activeDuplicates.count ?? 0) !== 0
+      compensatedFreshRead.RECOVERY_SAFETY_CLASSIFICATION !==
+        "SAFE_TO_REARM_EXISTING_GOLDEN_PATH"
     ) {
-      const blocker = !offerRecovery.safe
-        ? offerRecovery.blocker
-        : priorListing.ownership !== "inactive" ||
-            priorListing.listingStatus?.toLowerCase() === "active"
-          ? "EBAY_COMPENSATED_PUBLICATION_ORIGINAL_LISTING_STILL_ACTIVE"
-          : priorListing.ebaySku !== built.sku
-            ? "EBAY_COMPENSATED_PUBLICATION_ORIGINAL_IDENTITY_MISMATCH"
-            : "EBAY_COMPENSATED_PUBLICATION_ACTIVE_DUPLICATE"
-      return jsonError(new Error(blocker), 409)
+      return jsonError(new Error(
+        compensatedFreshRead.BLOCKER
+          ?? "EBAY_COMPENSATED_PUBLICATION_RECOVERY_NOT_SAFE",
+      ), 409)
     }
   } else {
     const unpublished = await verifyEbayUnpublishedOffer(
@@ -3771,6 +3752,11 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
       )
     }
   }
+  await revalidateFinalPublicationDependencies(
+    supabase,
+    context,
+    record(context.approval.approved_payload),
+  )
   const rearmRpc = compensatedMonitorFailure
     ? "rearm_ebay_authorized_listing_after_compensated_monitor_failure_once"
     : "rearm_ebay_authorized_listing_publication_once"
@@ -3801,6 +3787,7 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
       exactPreviewRevalidated: true,
       priorCompensatedListingInactive: compensatedMonitorFailure,
       activeDuplicateCount: 0,
+      compensatedOfferFreshRead: compensatedFreshRead,
     },
   })
 }

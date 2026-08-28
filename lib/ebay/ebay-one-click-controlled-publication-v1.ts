@@ -138,6 +138,7 @@ export type AuthenticatedPublicationRecoveryStateV1 =
   | "NOT_APPLICABLE"
   | "RECOVERY_BLOCKED"
   | "RESUMABLE_AUTHORIZED_PUBLICATION"
+  | "REARMED_AWAITING_HUMAN_PUBLICATION"
   | "PUBLISH_ALREADY_CLAIMED"
   | "ACTIVE_VERIFIED"
 
@@ -169,6 +170,7 @@ function recoveryResult(input: {
   canonicalStockAuthorized: boolean
 }): AuthenticatedPublicationRecoveryV1 {
   const resumable = input.state === "RESUMABLE_AUTHORIZED_PUBLICATION"
+  const rearmed = input.state === "REARMED_AWAITING_HUMAN_PUBLICATION"
   return Object.freeze({
     version: EBAY_AUTHENTICATED_PUBLICATION_RECOVERY_VERSION,
     state: input.state,
@@ -184,7 +186,7 @@ function recoveryResult(input: {
     authorizedPayloadHash: text(input.approval.payload_hash) || null,
     requestHash: text(input.execution.request_hash) || null,
     canonicalStockAuthorized: input.canonicalStockAuthorized,
-    reusesExistingHumanApproval: resumable,
+    reusesExistingHumanApproval: resumable || rearmed,
     newHumanApprovalAllowed: false,
   })
 }
@@ -327,6 +329,16 @@ export function classifyAuthenticatedPublicationRecoveryV1(input: Readonly<{
     || Number(publication.publish_attempt_count) !== 0
     || Boolean(text(publication.listing_id))
   ) return blocked("EBAY_AUTHENTICATED_RECOVERY_PUBLICATION_NOT_RESUMABLE")
+  const sanitized = record(publication.sanitized_result)
+  if (
+    Number(sanitized.compensatedRecoveryCount) === 1
+    && Boolean(text(sanitized.compensatedRecoveryAuthorizedAt))
+  ) {
+    return recoveryResult({
+      ...base,
+      state: "REARMED_AWAITING_HUMAN_PUBLICATION",
+    })
+  }
   return recoveryResult({
     ...base,
     state: "RESUMABLE_AUTHORIZED_PUBLICATION",

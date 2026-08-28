@@ -240,7 +240,9 @@ type DraftState = {
   authenticatedPublicationRecovery?: {
     version: "AUTHENTICATED_ONE_CLICK_RECOVERY_V1"
     state: "NOT_APPLICABLE" | "RECOVERY_BLOCKED"
-      | "RESUMABLE_AUTHORIZED_PUBLICATION" | "PUBLISH_ALREADY_CLAIMED"
+      | "RESUMABLE_AUTHORIZED_PUBLICATION"
+      | "REARMED_AWAITING_HUMAN_PUBLICATION"
+      | "PUBLISH_ALREADY_CLAIMED"
       | "ACTIVE_VERIFIED"
     autoResume: boolean
     blocker?: string | null
@@ -257,6 +259,24 @@ type DraftState = {
     reusesExistingHumanApproval: boolean
     newHumanApprovalAllowed: false
   }
+  compensatedOfferFreshReadEligibility?: {
+    eligible: boolean
+    reasonCode: string
+    verifierExecuted: boolean
+  }
+  compensatedOfferFreshRead?: {
+    OFFER_ID: string | null
+    RECOVERY_SAFETY_CLASSIFICATION:
+      | "SAFE_TO_REARM_EXISTING_GOLDEN_PATH" | "BLOCKED"
+    BLOCKER: string | null
+    OBSERVED_AT: string
+    MARKETPLACE_WRITES: 0
+    DATABASE_MUTATIONS: 0
+    REARM_CALLS: 0
+    NEW_OFFERS: 0
+    PUBLISH_CALLS: 0
+    WITHDRAW_CALLS: 0
+  } | null
   approvalRequirements?: {
     exactPhrase: string
     oneClickExactIntent?: string
@@ -1392,6 +1412,7 @@ function ListingWorkspacePageContent() {
   const activeTitleIdempotency = useRef<{ scope: string; key: string } | null>(null)
   const publicationIntentScrolled = useRef(false)
   const oneClickPublicationApprovalKey = useRef<string | null>(null)
+  const compensatedPublicationRearmRun = useRef("")
   const authenticatedPublicationRecoveryRun = useRef("")
   const lunaSupplierImageRun = useRef("")
   const publicationLunaRecheckRequired = useRef(false)
@@ -3255,6 +3276,98 @@ function ListingWorkspacePageContent() {
       ebayPreflightSnapshot: "",
     }))
   }
+
+  useEffect(() => {
+    const eligibility = draftState.compensatedOfferFreshReadEligibility
+    const freshRead = draftState.compensatedOfferFreshRead
+    const publication = draftState.publication
+    const expectedOfferId = String(draftState.execution?.offer_id ?? "")
+    if (
+      !listingPackage
+      || !opportunity
+      || !publication?.id
+      || publication.phase !== "terminal_failure"
+      || eligibility?.eligible !== true
+      || eligibility.verifierExecuted !== true
+      || freshRead?.RECOVERY_SAFETY_CLASSIFICATION !==
+        "SAFE_TO_REARM_EXISTING_GOLDEN_PATH"
+      || !expectedOfferId
+      || freshRead.OFFER_ID !== expectedOfferId
+      || freshRead.MARKETPLACE_WRITES !== 0
+      || freshRead.DATABASE_MUTATIONS !== 0
+      || freshRead.REARM_CALLS !== 0
+      || freshRead.NEW_OFFERS !== 0
+      || freshRead.PUBLISH_CALLS !== 0
+      || freshRead.WITHDRAW_CALLS !== 0
+    ) return
+    const runKey = `${publication.id}:${freshRead.OBSERVED_AT}`
+    if (compensatedPublicationRearmRun.current === runKey) return
+    compensatedPublicationRearmRun.current = runKey
+    setPublicationAutomationBusy(true)
+    setDraftBusy(true)
+    setPublicationAutomationFailed(false)
+    setPublicationAutomationPhase("preview")
+    setPublicationAutomationStep(
+      "Recuperando el Golden Path existente · repitiendo GETs oficiales antes del rearm…",
+    )
+    setError("")
+    setMessage("")
+    void (async () => {
+      try {
+        const rearmed = await draftRequest({
+          action: "rearm_publish",
+          publicationId: publication.id,
+          confirmPublish: "PUBLICAR LISTING EN EBAY",
+          confirmFinalPreview: true,
+          confirmProductionAccount: true,
+          confirmRetryRejectedPublish: true,
+        })
+        if (
+          rearmed.safety?.ebayWriteUsed !== false
+          || rearmed.publication?.phase !== "preview_ready"
+          || String(rearmed.publication?.offer_id ?? "") !== expectedOfferId
+          || rearmed.publication?.listing_id
+        ) throw new Error("EBAY_COMPENSATED_PUBLICATION_REARM_INVALID")
+        const refreshed = await draftRequest(
+          undefined,
+          listingPackage.id,
+          opportunity.id,
+          opportunity.candidate_key,
+        )
+        if (
+          refreshed.publication?.phase !== "preview_ready"
+          || String(refreshed.publication?.offer_id ?? "") !== expectedOfferId
+          || refreshed.authenticatedPublicationRecovery?.state !==
+            "REARMED_AWAITING_HUMAN_PUBLICATION"
+          || refreshed.authenticatedPublicationRecovery?.autoResume !== false
+        ) throw new Error("EBAY_COMPENSATED_PUBLICATION_REARM_READBACK_FAILED")
+        setDraftState((current) => ({ ...current, ...refreshed }))
+        setPublicationAutomationPhase("preview")
+        setMessage(
+          `Golden Path rearmado con el Offer ${expectedOfferId}. ` +
+          "No se publicó ni se creó otra aprobación; PUBLICAR EN EBAY espera el clic humano.",
+        )
+      } catch (requestError) {
+        setPublicationAutomationFailed(true)
+        setError(getMobileReviewRequestError(
+          requestError,
+          "El rearm se detuvo sin publicar ni crear artefactos eBay.",
+        ))
+        setMessage("")
+      } finally {
+        setPublicationAutomationBusy(false)
+        setDraftBusy(false)
+      }
+    })()
+  }, [
+    draftRequest,
+    draftState.compensatedOfferFreshRead,
+    draftState.compensatedOfferFreshReadEligibility,
+    draftState.execution?.offer_id,
+    draftState.publication,
+    listingPackage,
+    opportunity,
+  ])
 
   useEffect(() => {
     if (accountPreflightAutoStarted.current) return
