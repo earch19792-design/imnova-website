@@ -2701,5 +2701,5 @@ test("Smart Stocking monitor closure and compensated recovery stay fail closed",
   assert.match(routeSource,
     /SAFE_TO_REARM_EXISTING_GOLDEN_PATH/)
   assert.match(routeSource,
-    /rearm_ebay_authorized_listing_after_compensated_monitor_failure_once/)
+    /rearm_ebay_authorized_listing_after_compensated_monitor_failure/)
 })

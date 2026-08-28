@@ -3799,7 +3799,7 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
     )
   }
   const rearmRpc = compensatedMonitorFailure
-    ? "rearm_ebay_authorized_listing_after_compensated_monitor_failure_once"
+    ? "rearm_ebay_authorized_listing_after_compensated_monitor_failure"
     : "rearm_ebay_authorized_listing_publication_once"
   const expectedErrorCode = compensatedMonitorFailure
     ? "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED"
