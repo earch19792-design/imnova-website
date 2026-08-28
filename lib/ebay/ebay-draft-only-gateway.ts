@@ -1349,7 +1349,7 @@ export async function verifyEbayCompensatedOfferRecoveryState(
   const published = offers.filter((offer) => {
     const status = typeof offer.status === "string"
       ? offer.status.trim().toUpperCase() : ""
-    return status === "PUBLISHED" || offerHasAssociatedListing(offer)
+    return status === "PUBLISHED"
   })
   const target = matching.length === 1 ? matching[0] : {}
   const status = typeof target.status === "string"
@@ -1358,9 +1358,11 @@ export async function verifyEbayCompensatedOfferRecoveryState(
   const targetHasListing = matching.length === 1
     ? offerHasAssociatedListing(target)
     : null
+  const historicalAssociationMatches = targetHasListing === false
+    || targetListingId === normalizedListingId
   const safe = result.ok && offers.length === 1 && matching.length === 1 &&
     published.length === 0 && status === "UNPUBLISHED" &&
-    targetHasListing === false && !targetListingId
+    historicalAssociationMatches
   return {
     safe,
     httpStatus: result.status,
@@ -1381,6 +1383,8 @@ export async function verifyEbayCompensatedOfferRecoveryState(
           ? "EBAY_COMPENSATED_PUBLICATION_RECOVERY_ACTIVE_OR_PUBLISHED_OFFER"
           : offers.length !== 1 || matching.length !== 1
             ? "EBAY_COMPENSATED_PUBLICATION_RECOVERY_OFFER_AMBIGUOUS"
+            : status === "UNPUBLISHED" && !historicalAssociationMatches
+              ? "EBAY_COMPENSATED_PUBLICATION_RECOVERY_HISTORICAL_LISTING_MISMATCH"
             : "EBAY_COMPENSATED_PUBLICATION_RECOVERY_OFFER_NOT_UNPUBLISHED",
   }
 }
@@ -1462,8 +1466,6 @@ function publishedListingId(body: JsonRecord) {
 
 function offerHasAssociatedListing(body: JsonRecord) {
   return Boolean(publishedListingId(body))
-    || Object.prototype.hasOwnProperty.call(body, "listingId")
-    || Object.prototype.hasOwnProperty.call(body, "listing")
 }
 
 async function verifyPublishedOfferWithToken(

@@ -2152,11 +2152,20 @@ test("compensated publication recovery accepts only one exact unpublished offer"
         ...offer, listingId: "366633121948",
       }]),
     )
-    assert.equal(linked.safe, false)
+    assert.equal(linked.safe, true)
     assert.equal(linked.status, "UNPUBLISHED")
     assert.equal(linked.offerHasListing, true)
-    assert.equal(linked.blocker,
-      "EBAY_COMPENSATED_PUBLICATION_RECOVERY_ACTIVE_OR_PUBLISHED_OFFER")
+    assert.equal(linked.associatedListingId, "366633121948")
+    assert.equal(linked.blocker, "")
+    const wrongHistoricalListing =
+      await module.verifyEbayCompensatedOfferRecoveryState(
+        offer.offerId, RESERVED_SKU, "366633121948", fetchFor([{
+          ...offer, listingId: "366633121949",
+        }]),
+      )
+    assert.equal(wrongHistoricalListing.safe, false)
+    assert.equal(wrongHistoricalListing.blocker,
+      "EBAY_COMPENSATED_PUBLICATION_RECOVERY_HISTORICAL_LISTING_MISMATCH")
     const duplicate = await module.verifyEbayCompensatedOfferRecoveryState(
       offer.offerId, RESERVED_SKU, "366633121948", fetchFor([
         offer, { ...offer, offerId: "other-offer" },

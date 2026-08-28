@@ -181,6 +181,10 @@ export function classifyCompensatedOfferFreshReadV1(input: {
     && listingId(historical.itemId) === expectedHistoricalItemId
     && text(historical.ebaySku) === expectedSku
     && historicalStatus !== "ACTIVE"
+  const offerAssociationCompatible =
+    (offerHasListing === false && associatedListingId === null)
+    || (offerHasListing === true
+      && associatedListingId === expectedHistoricalItemId)
 
   let blocker: string | null = null
   if (!expectedOfferId || !expectedHistoricalItemId || !expectedSku) {
@@ -192,8 +196,7 @@ export function classifyCompensatedOfferFreshReadV1(input: {
     || offerDiscoveryCount !== 1
     || returnedOfferId !== expectedOfferId
     || offerStatus !== "UNPUBLISHED"
-    || offerHasListing !== false
-    || associatedListingId !== null
+    || !offerAssociationCompatible
   ) {
     blocker = text(offer.blocker)
       || "EBAY_COMPENSATED_PUBLICATION_RECOVERY_OFFER_NOT_UNPUBLISHED"
