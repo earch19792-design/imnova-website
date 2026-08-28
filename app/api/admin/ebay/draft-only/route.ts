@@ -75,7 +75,7 @@ import { enqueueSellerWhatsAppAlert } from "@/lib/ebay/ebay-seller-whatsapp-aler
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { loadSameDayAuthorizedPublicationContext } from "@/lib/ebay/ebay-same-day-authorized-publication"
 import {
-  isCakeTurntableListingIntakeV1,
+  isSmartStockingListingIntakeV1,
 } from
   "@/lib/ebay/ebay-smart-stocking-listing-intake-v1"
 import { resolveSmartStockingAuthorizedPublicationV1 } from
@@ -368,7 +368,7 @@ async function loadFinalPublicationContext(
   const effectiveOpportunity = sameDayContext?.opportunity ??
     (opportunity as JsonRecord)
   const smartStockingContext = accountKey &&
-    isCakeTurntableListingIntakeV1(record(effectiveOpportunity.assessment))
+    isSmartStockingListingIntakeV1(record(effectiveOpportunity.assessment))
     ? await resolveSmartStockingAuthorizedPublicationV1({
       supabase,
       accountKey,
@@ -390,7 +390,8 @@ async function loadFinalPublicationContext(
     || listingPackage.account_key !== accountKey
     || listingPackage.status !== "approved"
     || effectiveOpportunity.supplier_available !== true
-    || Number(effectiveOpportunity.supplier_inventory_quantity) < 1
+    || (!smartStockingContext &&
+      Number(effectiveOpportunity.supplier_inventory_quantity) < 1)
   ) throw new Error("EBAY_FINAL_PUBLICATION_SCOPE_OR_STOCK_INVALID")
   const approvedSourceEvidence = record(record(approval.approved_payload).sourceEvidence)
   const approvedCost = Number(approvedSourceEvidence.supplierPrice)
@@ -563,7 +564,7 @@ async function loadPackageContext(
     if (!finalReviewGate.allowed) throw contextError
   }
   const effectiveOpportunity = sameDayContext?.opportunity ?? (opportunity as JsonRecord)
-  const smartStockingContext = isCakeTurntableListingIntakeV1(
+  const smartStockingContext = isSmartStockingListingIntakeV1(
     record(effectiveOpportunity.assessment),
   ) ? await resolveSmartStockingAuthorizedPublicationV1({
     supabase,

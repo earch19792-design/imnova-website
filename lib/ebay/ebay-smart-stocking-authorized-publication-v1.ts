@@ -6,10 +6,9 @@ import {
 } from "./ebay-current-future-listing-stockguard-wiring-v1"
 import { canonicalEbayPackageSku } from "./ebay-sku"
 import {
-  CAKE_TURNTABLE_LISTING_INTAKE_KEY,
   isSmartStockingListingIntakeV1,
-  resolveCakeTurntableListingWorkspaceEvidenceV1,
-  type CakeTurntableListingWorkspaceEvidenceV1,
+  resolveSmartStockingListingWorkspaceEvidenceV1,
+  type SmartStockingListingWorkspaceEvidenceV1,
 } from "./ebay-smart-stocking-listing-intake-v1"
 
 export const SMART_STOCKING_AUTHORIZED_PUBLICATION_VERSION =
@@ -49,7 +48,7 @@ export function buildSmartStockingAuthorizedPublicationV1(input: Readonly<{
   actorUserId: string
   listingPackage: JsonRecord
   opportunity: JsonRecord
-  evidence: CakeTurntableListingWorkspaceEvidenceV1
+  evidence: SmartStockingListingWorkspaceEvidenceV1
   canonicalLunaUrl: string
 }>) {
   const packageId = text(input.listingPackage.id)
@@ -58,10 +57,16 @@ export function buildSmartStockingAuthorizedPublicationV1(input: Readonly<{
   const packageData = record(input.listingPackage.package_data)
   const pricing = record(packageData.pricing)
   const evidenceBinding = record(pricing.evidenceBinding)
+  const boundProductTruth = record(evidenceBinding.productTruth)
+  const boundStock = record(evidenceBinding.stock)
   const assessment = record(input.opportunity.assessment)
   const productTruth = record(assessment.productTruth)
   const productTruthStock = record(productTruth.stock)
   const productTruthBrand = record(productTruth.brand)
+  const lunaProductId = text(productTruth.lunaProductId)
+  const lunaVariantId = text(productTruth.lunaVariantId)
+  const supplierSku = text(productTruth.supplierSku)
+  const gtin = text(productTruth.gtin)
   const expectedSku = canonicalEbayPackageSku(packageId)
   let lunaUrl = ""
   try {
@@ -84,18 +89,28 @@ export function buildSmartStockingAuthorizedPublicationV1(input: Readonly<{
     text(input.listingPackage.created_by) !== input.actorUserId ||
     text(input.listingPackage.account_key) !== input.accountKey ||
     text(input.listingPackage.opportunity_id) !== opportunityId ||
-    candidateKey !== CAKE_TURNTABLE_LISTING_INTAKE_KEY ||
     text(input.opportunity.candidate_key) !== candidateKey ||
+    text(input.opportunity.queue_status) !== "ready" ||
+    text(input.opportunity.decision) !== "LISTING_READY" ||
     !isSmartStockingListingIntakeV1(assessment) ||
     evidenceBinding.authorityClass !== input.evidence.authorityClass ||
     evidenceBinding.decisionPackageId !== input.evidence.decisionPackageId ||
     Number(evidenceBinding.entryPotentialScore) !==
       input.evidence.entryPotentialScore ||
+    evidenceBinding.entrySnapshotHash !== input.evidence.entrySnapshotHash ||
     evidenceBinding.decisionSnapshotHash !==
       input.evidence.decisionSnapshotHash ||
+    evidenceBinding.launchTier !== input.evidence.launchTier ||
     evidenceBinding.frontierId !== input.evidence.frontierId ||
     evidenceBinding.frontierDigest !== input.evidence.frontierDigest ||
     evidenceBinding.snapshotDigest !== input.evidence.snapshotDigest ||
+    boundProductTruth.evidenceDigest !==
+      input.evidence.productTruth.evidenceDigest ||
+    boundStock.state !== input.evidence.stock.state ||
+    boundStock.quantity !== input.evidence.stock.quantity ||
+    boundStock.safeCapacity !== input.evidence.stock.safeCapacity ||
+    boundStock.observedAt !== input.evidence.stock.observedAt ||
+    text(packageData.categoryId) !== input.evidence.category.categoryId ||
     !exactMoney(pricing.targetPrice, input.evidence.salePriceUsd) ||
     !exactMoney(pricing.supplierCost, input.evidence.supplierCostUsd) ||
     !exactMoney(pricing.estimatedOutboundShipping,
@@ -108,14 +123,19 @@ export function buildSmartStockingAuthorizedPublicationV1(input: Readonly<{
       input.evidence.contributionMarginPercent) ||
     !exactMoney(pricing.estimatedRoiPercent, input.evidence.roiPercent) ||
     pricing.passesProfitGate !== true ||
-    text(input.opportunity.supplier_product_id) !== "9220835475680" ||
-    text(input.opportunity.supplier_variant_id) !== "48809646653664" ||
-    text(input.opportunity.supplier_sku) !== "ITEM3525" ||
-    text(input.opportunity.gtin) !== "740119084743" ||
+    !/^\d{1,30}$/.test(lunaProductId) ||
+    !/^\d{1,30}$/.test(lunaVariantId) ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,159}$/.test(supplierSku) ||
+    !/^[A-Za-z0-9]{6,32}$/.test(gtin) ||
+    text(productTruth.candidateKey) !== candidateKey ||
+    text(input.opportunity.supplier_product_id) !== lunaProductId ||
+    text(input.opportunity.supplier_variant_id) !== lunaVariantId ||
+    text(input.opportunity.supplier_sku) !== supplierSku ||
+    text(input.opportunity.gtin) !== gtin ||
     input.opportunity.supplier_available !== true ||
     !exactMoney(input.opportunity.supplier_price,
       input.evidence.supplierCostUsd) ||
-    Number(input.opportunity.supplier_inventory_quantity) !==
+    input.opportunity.supplier_inventory_quantity !==
       input.evidence.stock.quantity ||
     productTruth.evidenceDigest !==
       input.evidence.productTruth.evidenceDigest ||
@@ -123,9 +143,13 @@ export function buildSmartStockingAuthorizedPublicationV1(input: Readonly<{
     productTruthStock.freshness !== "FRESH" ||
     productTruthStock.exactIdentityVerified !== true ||
     productTruthStock.safeCapacity !== null ||
-    productTruthBrand.noManufacturerBrandClaim !== "PROVEN" ||
-    productTruthBrand.ebayBrandSemantics !== "UNBRANDED_SUPPORTED" ||
-    productTruthBrand.taxonomyBrandValue !== "Unbranded"
+    productTruthStock.supplierStatedQuantity !== input.evidence.stock.quantity ||
+    productTruthBrand.noManufacturerBrandClaim !==
+      input.evidence.productTruth.noManufacturerBrandClaim ||
+    productTruthBrand.ebayBrandSemantics !==
+      input.evidence.productTruth.ebayBrandSemantics ||
+    productTruthBrand.taxonomyBrandValue !==
+      input.evidence.productTruth.taxonomyBrandValue
   ) throw new Error("SMART_STOCKING_PUBLICATION_EVIDENCE_MISMATCH")
 
   const authorizationCore = Object.freeze({
@@ -136,6 +160,7 @@ export function buildSmartStockingAuthorizedPublicationV1(input: Readonly<{
     listingPackageId: packageId,
     opportunityId,
     candidateKey,
+    workspaceEvidenceAuthorityClass: input.evidence.authorityClass,
     decisionPackageId: input.evidence.decisionPackageId,
     entrySnapshotHash: input.evidence.entrySnapshotHash,
     decisionSnapshotHash: input.evidence.decisionSnapshotHash,
@@ -143,11 +168,14 @@ export function buildSmartStockingAuthorizedPublicationV1(input: Readonly<{
     frontierId: input.evidence.frontierId,
     frontierDigest: input.evidence.frontierDigest,
     frontierSnapshotDigest: input.evidence.snapshotDigest,
-    lunaProductId: "9220835475680",
-    lunaVariantId: "48809646653664",
-    supplierSku: "ITEM3525",
-    gtin: "740119084743",
+    lunaProductId,
+    lunaVariantId,
+    supplierSku,
+    gtin,
     canonicalLunaUrl: lunaUrl,
+    stockState: input.evidence.stock.state,
+    supplierInventoryQuantity: input.evidence.stock.quantity,
+    safeCapacity: input.evidence.stock.safeCapacity,
     stockObservedAt: input.evidence.stock.observedAt,
     finalEconomicsStatus: "PASS" as const,
     thresholdResult: "PASS" as const,
@@ -209,17 +237,24 @@ Readonly<{
   listingPackage: JsonRecord
   opportunity: JsonRecord
 }>) {
-  const evidence = await resolveCakeTurntableListingWorkspaceEvidenceV1({
+  const evidence = await resolveSmartStockingListingWorkspaceEvidenceV1({
     supabase: input.supabase,
     accountKey: input.accountKey,
     opportunity: input.opportunity,
   })
+  if (!evidence) {
+    throw new Error("SMART_STOCKING_PUBLICATION_EVIDENCE_NOT_FOUND")
+  }
+  const productTruth = record(record(input.opportunity.assessment).productTruth)
+  const lunaProductId = text(productTruth.lunaProductId)
+  const lunaVariantId = text(productTruth.lunaVariantId)
+  const supplierSku = text(productTruth.supplierSku)
   const catalog = await input.supabase.from("market_radar_latest_variants")
     .select("source_key,supplier_product_id,supplier_variant_id,sku,product_url")
     .eq("source_key", "lunaportex")
-    .eq("supplier_product_id", "9220835475680")
-    .eq("supplier_variant_id", "48809646653664")
-    .eq("sku", "ITEM3525")
+    .eq("supplier_product_id", lunaProductId)
+    .eq("supplier_variant_id", lunaVariantId)
+    .eq("sku", supplierSku)
     .maybeSingle()
   if (catalog.error || !catalog.data ||
       text(catalog.data.product_url) === "") {

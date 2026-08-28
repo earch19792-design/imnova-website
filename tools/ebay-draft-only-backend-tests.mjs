@@ -433,21 +433,47 @@ test("a server-validated same-day binding supersedes only stale generic scoring 
   assert.ok(forged.blockers.includes("EXACT_IDENTITY_REQUIRED"))
 })
 
-test("exact durable Smart Stocking launch evidence supersedes only the preliminary potential score", async () => {
+test("exact durable Smart Stocking authorization replaces only the legacy candidate state machine", async () => {
   const module = await importTypeScript(readinessSource)
   const input = validInput()
-  input.opportunity.assessment.scores.potentialScore = 57
+  input.opportunity.hard_gates = ["LEGACY_RESEARCH_GATE"]
+  input.opportunity.evidence_guards = ["LEGACY_SCORING_GUARD"]
+  input.opportunity.supplier_product_id = "9220837146848"
+  input.opportunity.supplier_variant_id = "48809648488672"
+  input.opportunity.supplier_sku = "ITEM3404"
+  input.opportunity.gtin = "740145348659"
+  input.opportunity.supplier_inventory_quantity = null
+  input.opportunity.assessment.identity.exactIdentityConfirmed = false
+  input.opportunity.assessment.scores = {
+    potentialScore: 55,
+    confidenceScore: 0,
+  }
   input.smartStockingPublicationAuthorization = {
     validated: true,
     version: "SELLER_OS_SMART_STOCKING_AUTHORIZED_PUBLICATION_V1",
     listingPackageId: input.listingPackage.id,
     opportunityId: input.opportunity.id,
     candidateKey: input.listingPackage.candidate_key,
+    workspaceEvidenceAuthorityClass:
+      "SELLER_OS_WINDOW_FILM_FINAL_WORKSPACE_EVIDENCE_V1",
+    productTruthDigest: `sha256:${"d".repeat(64)}`,
+    frontierId: `profitability-frontier-v1:sha256:${"e".repeat(64)}`,
+    frontierDigest: `sha256:${"f".repeat(64)}`,
+    frontierSnapshotDigest: `sha256:${"1".repeat(64)}`,
     entrySnapshotHash: `sha256:${"a".repeat(64)}`,
     decisionSnapshotHash: `sha256:${"b".repeat(64)}`,
     authorizationDigest: `sha256:${"c".repeat(64)}`,
+    lunaProductId: "9220837146848",
+    lunaVariantId: "48809648488672",
+    supplierSku: "ITEM3404",
+    gtin: "740145348659",
+    stockState: "IN_STOCK_SUPPLIER_STATED",
+    supplierInventoryQuantity: null,
+    safeCapacity: null,
     finalEconomicsStatus: "PASS",
     thresholdResult: "PASS",
+    sourceRevalidationAuthority:
+      "SMART_STOCKING_EXACT_PRODUCT_TRUTH_DURABLE_REVALIDATION_V1",
     finalHumanAuthorizationRequired: true,
     unattendedPublicationAllowed: false,
   }
@@ -458,16 +484,12 @@ test("exact durable Smart Stocking launch evidence supersedes only the prelimina
     input.smartStockingPublicationAuthorization,
   )
 
-  input.opportunity.assessment.identity.exactIdentityConfirmed = false
-  const identityMismatch = module.evaluateEbayDraftOnlyReadiness(input)
-  assert.equal(identityMismatch.ready, false)
-  assert.ok(identityMismatch.blockers.includes("EXACT_IDENTITY_REQUIRED"))
-
-  input.opportunity.assessment.identity.exactIdentityConfirmed = true
-  input.smartStockingPublicationAuthorization.decisionSnapshotHash = "forged"
+  input.smartStockingPublicationAuthorization.supplierSku = "FOREIGN-SKU"
   const forged = module.evaluateEbayDraftOnlyReadiness(input)
   assert.equal(forged.ready, false)
+  assert.ok(forged.blockers.includes("EXACT_IDENTITY_REQUIRED"))
   assert.ok(forged.blockers.includes("POTENTIAL_SCORE_BELOW_70"))
+  assert.ok(forged.blockers.includes("LUNA_STOCK_UNAVAILABLE"))
 })
 
 test("execution reconstructs the approved server-bound StockGuard contract", () => {

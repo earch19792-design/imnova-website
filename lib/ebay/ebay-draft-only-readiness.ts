@@ -568,9 +568,20 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     && text(sameDayPilotAuthorization.listingPackageId) === text(listingPackage.id)
     && sameDayPilotAuthorization.finalHumanAuthorizationRequired === true
     && sameDayPilotAuthorization.unattendedPublicationAllowed === false
+  const supplierStock = numberOrNull(opportunity.supplier_inventory_quantity)
   const smartStockingPublicationAuthorization = record(
     input.smartStockingPublicationAuthorization,
   )
+  const authorizedSupplierStock = numberOrNull(
+    smartStockingPublicationAuthorization.supplierInventoryQuantity,
+  )
+  const authorizedSupplierStockMatches =
+    (smartStockingPublicationAuthorization.supplierInventoryQuantity === null
+      && supplierStock === null)
+    || (authorizedSupplierStock !== null
+      && Number.isInteger(authorizedSupplierStock)
+      && authorizedSupplierStock > 0
+      && authorizedSupplierStock === supplierStock)
   const smartStockingPublicationAuthorized =
     smartStockingPublicationAuthorization.validated === true
     && text(smartStockingPublicationAuthorization.version)
@@ -581,6 +592,21 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
       === text(opportunity.id)
     && text(smartStockingPublicationAuthorization.candidateKey)
       === text(listingPackage.candidate_key)
+    && /^SELLER_OS_[A-Z0-9_]+_FINAL_WORKSPACE_EVIDENCE_V1$/.test(text(
+      smartStockingPublicationAuthorization.workspaceEvidenceAuthorityClass,
+    ))
+    && /^sha256:[0-9a-f]{64}$/.test(text(
+      smartStockingPublicationAuthorization.productTruthDigest,
+    ))
+    && /^profitability-frontier-v1:sha256:[0-9a-f]{64}$/.test(text(
+      smartStockingPublicationAuthorization.frontierId,
+    ))
+    && /^sha256:[0-9a-f]{64}$/.test(text(
+      smartStockingPublicationAuthorization.frontierDigest,
+    ))
+    && /^sha256:[0-9a-f]{64}$/.test(text(
+      smartStockingPublicationAuthorization.frontierSnapshotDigest,
+    ))
     && /^sha256:[0-9a-f]{64}$/.test(text(
       smartStockingPublicationAuthorization.decisionSnapshotHash,
     ))
@@ -592,10 +618,23 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     ))
     && smartStockingPublicationAuthorization.finalEconomicsStatus === "PASS"
     && smartStockingPublicationAuthorization.thresholdResult === "PASS"
+    && smartStockingPublicationAuthorization.stockState
+      === "IN_STOCK_SUPPLIER_STATED"
+    && authorizedSupplierStockMatches
+    && smartStockingPublicationAuthorization.safeCapacity === null
+    && text(smartStockingPublicationAuthorization.lunaProductId)
+      === text(opportunity.supplier_product_id)
+    && text(smartStockingPublicationAuthorization.lunaVariantId)
+      === text(opportunity.supplier_variant_id)
+    && text(smartStockingPublicationAuthorization.supplierSku)
+      === text(opportunity.supplier_sku)
+    && text(smartStockingPublicationAuthorization.gtin)
+      === text(opportunity.gtin)
+    && smartStockingPublicationAuthorization.sourceRevalidationAuthority
+      === "SMART_STOCKING_EXACT_PRODUCT_TRUTH_DURABLE_REVALIDATION_V1"
     && smartStockingPublicationAuthorization.finalHumanAuthorizationRequired === true
     && smartStockingPublicationAuthorization.unattendedPublicationAllowed === false
   const supplierPrice = numberOrNull(opportunity.supplier_price)
-  const supplierStock = numberOrNull(opportunity.supplier_inventory_quantity)
   const price = numberOrNull(pricing.targetPrice)
   const economicsConfig = ebayDraftOnlyEconomicsConfig(input.economicsConfig)
   const economics = calculateEbayUnitEconomics({
@@ -682,17 +721,22 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
 
   if (!text(listingPackage.id) || text(listingPackage.candidate_key) !== text(opportunity.candidate_key)) blockers.push("PACKAGE_OPPORTUNITY_MISMATCH")
   if (!['draft', 'ready_for_review', 'approved'].includes(text(listingPackage.status))) blockers.push("PACKAGE_NOT_READY_FOR_APPROVAL")
-  if (!sameDayPilotAuthorized) {
-    if (['hold', 'rejected', 'listed', 'archived'].includes(text(opportunity.queue_status))) blockers.push("OPPORTUNITY_STATUS_BLOCKED")
+  if (!sameDayPilotAuthorized &&
+    ['hold', 'rejected', 'listed', 'archived'].includes(
+      text(opportunity.queue_status),
+    )) blockers.push("OPPORTUNITY_STATUS_BLOCKED")
+  if (!sameDayPilotAuthorized && !smartStockingPublicationAuthorized) {
     if (!exactIdentityConfirmed) blockers.push("EXACT_IDENTITY_REQUIRED")
-    if (potentialScore < 70 && !smartStockingPublicationAuthorized) {
-      blockers.push("POTENTIAL_SCORE_BELOW_70")
-    }
+    if (potentialScore < 70) blockers.push("POTENTIAL_SCORE_BELOW_70")
     if (confidenceScore < 70) blockers.push("CONFIDENCE_SCORE_BELOW_70")
     blockers.push(...remainingHardGates.map((gate) => `HARD_GATE:${gate}`))
     blockers.push(...evidenceGuards.map((guard) => `EVIDENCE_GUARD:${guard}`))
   }
-  if (opportunity.supplier_available !== true || supplierStock === null || supplierStock <= 0) blockers.push("LUNA_STOCK_UNAVAILABLE")
+  if (
+    opportunity.supplier_available !== true
+    || (!smartStockingPublicationAuthorized
+      && (supplierStock === null || supplierStock <= 0))
+  ) blockers.push("LUNA_STOCK_UNAVAILABLE")
   if (supplierPrice === null || supplierPrice <= 0) blockers.push("LUNA_COST_REQUIRED")
   if (!recent(opportunity.supplier_snapshot_at ?? opportunity.last_scanned_at, sourceMaxAge, now)) blockers.push("LUNA_SNAPSHOT_STALE")
   if (
@@ -733,7 +777,11 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     blockers.push("PRODUCT_IDENTITY_COLLISION")
     blockers.push(...identityCollisionReasons.map((reason) => `PRODUCT_IDENTITY_COLLISION:${reason}`))
   }
-  if (!Number.isInteger(quantity) || quantity < 1 || supplierStock === null || quantity > supplierStock) blockers.push("QUANTITY_EXCEEDS_FRESH_STOCK")
+  if (
+    !Number.isInteger(quantity) || quantity < 1
+    || (!smartStockingPublicationAuthorized && supplierStock === null)
+    || (supplierStock !== null && quantity > supplierStock)
+  ) blockers.push("QUANTITY_EXCEEDS_FRESH_STOCK")
   if (target === "PRODUCTION" && quantity !== 1) blockers.push("PRODUCTION_QUANTITY_MUST_EQUAL_ONE")
   if (!['NEW', 'NEW_OTHER', 'NEW_WITH_DEFECTS', 'USED_EXCELLENT', 'USED_GOOD', 'USED_ACCEPTABLE'].includes(condition)) blockers.push("CONDITION_INVALID")
   if (price === null || price <= 0) blockers.push("PRICE_REQUIRED")
