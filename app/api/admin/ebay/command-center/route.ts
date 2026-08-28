@@ -14,6 +14,7 @@ import {
 } from "@/lib/ebay/ebay-same-day-authorized-publication"
 import {
   loadFinalListingReviewPublicationGate,
+  reconcileFinalListingReviewPackageEvidence,
 } from "@/lib/ebay/final-listing-review-publication-gate"
 import {
   resolveCommandCenterCommercialFreshness,
@@ -1333,9 +1334,9 @@ export async function POST(req: Request) {
         }, { status: 409 })
       }
       const readiness = Math.round((completeFields.filter(Boolean).length / completeFields.length) * 100)
-      const values = {
-        status,
-        package_data: {
+      const nextPackageData = reconcileFinalListingReviewPackageEvidence({
+        currentPackageData,
+        nextPackageData: {
           title,
           categoryId: effectiveCategoryId || null,
           conditionId: form.conditionId || currentPackageData.conditionId || null,
@@ -1367,6 +1368,10 @@ export async function POST(req: Request) {
           controlledRiskPolicy: currentPackageData.controlledRiskPolicy ?? null,
           preferredImageRevisionId: currentPackageData.preferredImageRevisionId ?? null,
         },
+      })
+      const values = {
+        status,
+        package_data: nextPackageData,
         readiness,
       }
       const { data: savedData, error: saveError } = await supabase.rpc(

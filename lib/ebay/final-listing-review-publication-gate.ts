@@ -143,6 +143,28 @@ function emptyArray(value: unknown) {
   return Array.isArray(value) && value.length === 0
 }
 
+export function reconcileFinalListingReviewPackageEvidence(input: Readonly<{
+  currentPackageData: unknown
+  nextPackageData: unknown
+}>) {
+  const current = object(input.currentPackageData)
+  const next = object(input.nextPackageData)
+  const {
+    supplierImageReadiness: _untrustedNextReadiness,
+    ...nextWithoutReadiness
+  } = next
+  if (!Object.prototype.hasOwnProperty.call(
+    current,
+    "supplierImageReadiness",
+  )) return nextWithoutReadiness
+  return {
+    ...nextWithoutReadiness,
+    // This binding is server-owned and validated again with the exact durable
+    // asset ids, hashes, URLs and actor before either approval or execution.
+    supplierImageReadiness: current.supplierImageReadiness,
+  }
+}
+
 function blockedAutomatedGate(
   reason = "FINAL_LISTING_AUTOMATED_GATE_NOT_READY",
   source: FinalListingReviewPublicationGate["source"] =
