@@ -3,6 +3,12 @@ import type { JsonRecord } from "./ebay-draft-only-readiness"
 export const EBAY_COMPENSATED_OFFER_FRESH_READ_VERSION =
   "ITEM3525_COMPENSATED_OFFER_FRESH_READ_GATE_V1" as const
 
+export type CompensatedOfferFreshReadEligibilityV1 = Readonly<{
+  eligible: boolean
+  reasonCode: string
+  verifierExecuted: boolean
+}>
+
 export type CompensatedOfferFreshReadResultV1 = Readonly<{
   CONTRACT_VERSION: typeof EBAY_COMPENSATED_OFFER_FRESH_READ_VERSION
   OFFER_DISCOVERY_COUNT: number | null
@@ -49,6 +55,100 @@ function listingId(value: unknown) {
 function offerIdentifier(value: unknown) {
   const parsed = text(value)
   return /^[A-Za-z0-9_-]{1,80}$/.test(parsed) ? parsed : null
+}
+
+export function classifyCompensatedOfferFreshReadEligibilityV1(input: {
+  approval: unknown
+  execution: unknown
+  publication: unknown
+}): CompensatedOfferFreshReadEligibilityV1 {
+  const approval = record(input.approval)
+  const execution = record(input.execution)
+  const publication = record(input.publication)
+  const sanitized = record(publication.sanitized_result)
+  const approvalId = text(approval.id)
+  const executionId = text(execution.id)
+  let reasonCode = "COMPENSATED_OFFER_FRESH_READ_REQUIRED"
+
+  if (text(approval.status).toLowerCase() !== "consumed") {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_APPROVAL_NOT_CONSUMED"
+  } else if (text(approval.revoked_at)) {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_APPROVAL_REVOKED"
+  } else if (
+    !approvalId
+    || text(execution.approval_id) !== approvalId
+    || text(publication.draft_approval_id) !== approvalId
+  ) {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_APPROVAL_IDENTITY_MISMATCH"
+  } else if (text(execution.phase).toLowerCase() !== "completed") {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_EXECUTION_NOT_COMPLETED"
+  } else if (
+    !executionId
+    || text(publication.draft_execution_id) !== executionId
+  ) {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_EXECUTION_IDENTITY_MISMATCH"
+  } else if (!offerIdentifier(execution.offer_id)) {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_OFFER_ID_REQUIRED"
+  } else if (text(publication.phase).toLowerCase() !== "terminal_failure") {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_NOT_TERMINAL_FAILURE"
+  } else if (
+    text(publication.last_error_code) !==
+      "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED"
+  ) {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_ERROR_CODE_NOT_ELIGIBLE"
+  } else if (!listingId(publication.listing_id)) {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_HISTORICAL_ITEM_ID_REQUIRED"
+  } else if (text(publication.offer_id) !== text(execution.offer_id)) {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_OFFER_ID_MISMATCH"
+  } else if (
+    !text(execution.sku)
+    || text(publication.sku) !== text(execution.sku)
+  ) {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_SKU_MISMATCH"
+  } else if (Number(publication.publish_attempt_count) !== 1) {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_PUBLISH_ATTEMPT_INVALID"
+  } else if (
+    !text(approval.payload_hash)
+    || text(approval.payload_hash) !== text(execution.request_hash)
+  ) {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_AUTHORIZED_HASH_MISMATCH"
+  } else if (sanitized.compensatingEndVerified !== true) {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_COMPENSATION_NOT_VERIFIED"
+  } else if (sanitized.officialReadbackNotCurrentLive !== true) {
+    reasonCode = "COMPENSATED_OFFER_FRESH_READ_HISTORICAL_ITEM_NOT_INACTIVE"
+  }
+
+  return Object.freeze({
+    eligible: reasonCode === "COMPENSATED_OFFER_FRESH_READ_REQUIRED",
+    reasonCode,
+    verifierExecuted: false,
+  })
+}
+
+export async function executeCompensatedOfferFreshReadGateV1<T>(input: {
+  approval: unknown
+  execution: unknown
+  publication: unknown
+  verifier: () => Promise<T>
+}): Promise<Readonly<{
+  eligibility: CompensatedOfferFreshReadEligibilityV1
+  compensatedOfferFreshRead: T | null
+}>> {
+  const eligibility = classifyCompensatedOfferFreshReadEligibilityV1(input)
+  if (!eligibility.eligible) {
+    return Object.freeze({
+      eligibility,
+      compensatedOfferFreshRead: null,
+    })
+  }
+  const compensatedOfferFreshRead = await input.verifier()
+  return Object.freeze({
+    eligibility: Object.freeze({
+      ...eligibility,
+      verifierExecuted: true,
+    }),
+    compensatedOfferFreshRead,
+  })
 }
 
 export function classifyCompensatedOfferFreshReadV1(input: {

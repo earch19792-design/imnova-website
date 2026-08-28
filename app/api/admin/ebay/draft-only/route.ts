@@ -48,6 +48,7 @@ import {
 } from "@/lib/ebay/ebay-draft-only-prewrite-retirement"
 import {
   classifyCompensatedOfferFreshReadV1,
+  executeCompensatedOfferFreshReadGateV1,
 } from "@/lib/ebay/ebay-compensated-offer-fresh-read-v1"
 import {
   isCommandCenterCommercialFreshnessRecheck,
@@ -295,24 +296,6 @@ function oneClickPublicationRequirements(enabled: boolean) {
     humanAuthorizationCount: 2,
     secondHumanAuthorizationRequired: true,
   }
-}
-
-function isCompensatedPublicationFreshReadCandidate(
-  execution: JsonRecord | null,
-  publication: JsonRecord | null,
-) {
-  const sanitized = record(publication?.sanitized_result)
-  return execution?.phase === "completed"
-    && Boolean(sanitizeEbayOfferId(execution.offer_id))
-    && publication?.phase === "terminal_failure"
-    && publication.last_error_code ===
-      "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED"
-    && /^\d{9,20}$/.test(text(publication.listing_id))
-    && text(publication.offer_id) === text(execution.offer_id)
-    && text(publication.sku) === text(execution.sku)
-    && Number(publication.publish_attempt_count) === 1
-    && sanitized.compensatingEndVerified === true
-    && sanitized.officialReadbackNotCurrentLive === true
 }
 
 async function readCompensatedPublicationFreshSafety(input: {
@@ -1265,19 +1248,23 @@ export async function GET(req: Request) {
       execution: ledger,
       publication,
     })
-    const compensatedOfferFreshRead =
-      isCompensatedPublicationFreshReadCandidate(
-        ledger as JsonRecord | null,
-        publication as JsonRecord | null,
-      )
-        ? await readCompensatedPublicationFreshSafety({
+    const compensatedFreshReadGate =
+      await executeCompensatedOfferFreshReadGateV1({
+        approval: latestApproval,
+        execution: ledger,
+        publication,
+        verifier: () => readCompensatedPublicationFreshSafety({
           supabase,
           accountKey: text(context.listingPackage.account_key),
           approvedPayload,
           execution: ledger as JsonRecord,
           publication: publication as JsonRecord,
-        })
-        : null
+        }),
+      })
+    const compensatedOfferFreshReadEligibility =
+      compensatedFreshReadGate.eligibility
+    const compensatedOfferFreshRead =
+      compensatedFreshReadGate.compensatedOfferFreshRead
     const smartStockingAuthorization = record(
       context.smartStockingPublicationAuthorization,
     )
@@ -1305,6 +1292,7 @@ export async function GET(req: Request) {
       approval: latestApproval ? { ...latestApproval, approved_payload: undefined } : null,
       execution: ledger,
       publication,
+      compensatedOfferFreshReadEligibility,
       compensatedOfferFreshRead,
       authenticatedPublicationRecovery,
       runtime,
@@ -1339,6 +1327,10 @@ export async function GET(req: Request) {
         publishOfferCallsAllowed: 1,
         promotionsAllowed: false,
         volumePricingAllowed: false,
+      },
+    }, {
+      headers: {
+        "Cache-Control": "private, no-store, no-cache, max-age=0",
       },
     })
   } catch (error) {
