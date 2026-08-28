@@ -18,6 +18,8 @@ import {
 } from
   "@/lib/ebay/reference-guided-visual-review-access"
 import { canonicalEbayPackageSku } from "@/lib/ebay/ebay-sku"
+import { canonicalListingReadyUi } from
+  "@/lib/ebay/ebay-listing-ready-ui-v1"
 import { taxonomySnapshotMatchesContextV1 } from
   "@/lib/ebay/ebay-listing-context-isolation-v1"
 
@@ -182,7 +184,21 @@ type DraftState = {
     passedJobs: number
     totalJobs: number
   }
-  readiness?: { ready: boolean; blockers: string[]; payloadHash?: string; requiredSku?: string }
+  readiness?: {
+    ready: boolean
+    blockers: string[]
+    payloadHash?: string
+    requiredSku?: string
+    payload?: {
+      offerPayload?: {
+        marketplaceId?: string
+        availableQuantity?: number
+        pricingSummary?: {
+          price?: { currency?: string; value?: number }
+        }
+      }
+    }
+  }
   approval?: { id: string; status: string; expires_at: string; payload_hash?: string } | null
   execution?: { id?: string; phase: string; offer_id?: string | null; last_error_code?: string | null; completed_at?: string | null } | null
   publication?: {
@@ -457,40 +473,6 @@ function humanWorkspaceBlocker(code: string, minimumProfitablePrice?: number | n
   return "Completa la validación pendiente desde Oportunidades y vuelve a intentarlo."
 }
 
-function humanUnpublishedPreflightError(code: string) {
-  const normalizedCode = code.split(" · ")[0]?.trim() ?? code
-  const labels: Record<string, string> = {
-    AUTHORIZATION_PREVIEW_NOT_PREPARED:
-      "Todavía no existe un snapshot server-side vigente para esta autorización.",
-    ACTIVE_APPROVAL_EXPIRED:
-      "La aprobación humana anterior venció. Puedes revisar el mismo payload vigente y autorizarlo nuevamente.",
-    AUTHORIZATION_PREFLIGHT_EXPIRED:
-      "El snapshot server-side de cuenta y policies venció. Se necesita preparar una autorización nueva; no se creó automáticamente.",
-    ACTIVE_APPROVAL_PAYLOAD_MISMATCH:
-      "La aprobación activa no corresponde al payload vigente. Debe reconciliarse de forma explícita antes de una autorización nueva.",
-    FINAL_PREVIEW_HASH_MISMATCH:
-      "El preview final vigente no coincide con el snapshot autorizado.",
-    TARGET_ACCOUNT_MISMATCH:
-      "La cuenta eBay enlazada no coincide con la cuenta de la autorización.",
-    AUTHORIZATION_PREVIEW_INTEGRITY_INVALID:
-      "El snapshot de autorización no supera la verificación criptográfica y de pantalla.",
-    ACTIVE_APPROVAL_INTEGRITY_INVALID:
-      "La evidencia persistida de la aprobación no coincide con su payload hash.",
-    EBAY_DRAFT_ONLY_RUNTIME_NOT_READY:
-      "La ejecución draft-only no está habilitada y enlazada de forma consistente en este Preview.",
-    EBAY_V3_UNPUBLISHED_PREFLIGHT_TIMEOUT:
-      "La verificación server-side agotó el tiempo de espera. Finalizó sin escribir en eBay.",
-    EBAY_SKU_PREFLIGHT_UNAVAILABLE:
-      "eBay no confirmó todavía si el SKU está libre. Seller OS se detuvo antes de crear Inventory Item u Offer; el botón único volverá a consultar sin duplicar operaciones.",
-    EBAY_SKU_PREFLIGHT_REQUEST_REJECTED:
-      "eBay rechazó el formato o los parámetros del SKU antes de cualquier escritura. Seller OS detuvo el flujo y conservó los códigos técnicos seguros para corregir la causa exacta.",
-    EBAY_DRAFT_ONLY_REAPPROVAL_STATE_UNAVAILABLE:
-      "eBay no confirmó el estado del SKU asociado a la aprobación anterior. Seller OS se detuvo antes de reanudar cualquier escritura.",
-  }
-  return labels[normalizedCode]
-    ?? `La verificación server-side terminó con el código ${normalizedCode}.`
-}
-
 function shouldRenewExpiredSkuPreflight(
   approval: DraftState["approval"],
   execution: DraftState["execution"],
@@ -520,6 +502,14 @@ const LEGACY_V3_IMAGE_MESSAGES = new Set([
   "IMAGE_REQUIRED",
   "NEED_AUTHORIZED_PRODUCT_IMAGES",
 ])
+
+function supersededListingReadyMessage(value: string) {
+  const normalized = value.trim()
+  return LEGACY_V3_IMAGE_MESSAGES.has(normalized)
+    || /(?:completa|confirma)[^.]*categor/i.test(normalized)
+    || /completa[^.]*im.gen/i.test(normalized)
+    || /(?:vuelve|volver) a Oportunidades/i.test(normalized)
+}
 
 function safeSku(value: unknown) {
   return String(value ?? "")
@@ -2301,17 +2291,11 @@ function ListingWorkspacePageContent() {
     }),
     [finalReviewCompleted, workspaceGateBlockers],
   )
-  const visibleDraftReadinessBlockers = useMemo(
-    () => visibleWorkspaceBlockers({
-      blockers: draftState.readiness?.blockers ?? [],
-      canonicalV3FinalReview: finalReviewCompleted,
-      source: "draft_readiness",
-    }),
-    [draftState.readiness?.blockers, finalReviewCompleted],
+  const listingReadyUi = useMemo(
+    () => canonicalListingReadyUi(draftState.readiness),
+    [draftState.readiness],
   )
-  const visibleDraftReadinessReady = Boolean(draftState.readiness)
-    && (draftState.readiness?.ready === true
-      || visibleDraftReadinessBlockers.length === 0)
+  const canonicalUiBlockers = listingReadyUi.uiBlockers
   const blockers = useMemo(() => {
     if (finalReviewCompleted) {
       return []
@@ -2328,6 +2312,17 @@ function ListingWorkspacePageContent() {
     })
   }, [finalReviewCompleted, form, opportunity, resolvedWorkspaceGates])
   const draftTarget = draftState.runtime?.target ?? "PENDIENTE"
+  const canonicalOffer = object(draftState.readiness?.payload?.offerPayload)
+  const canonicalOfferPrice = object(
+    object(canonicalOffer.pricingSummary).price,
+  )
+  const canonicalListingPrice = Number.isFinite(Number(canonicalOfferPrice.value))
+    ? Number(canonicalOfferPrice.value)
+    : null
+  const canonicalListingQuantity = Number.isInteger(
+    Number(canonicalOffer.availableQuantity),
+  ) ? Number(canonicalOffer.availableQuantity) : null
+  const canonicalMarketplace = String(canonicalOffer.marketplaceId ?? "")
   const productionTarget = draftTarget === "PRODUCTION"
   const singleHumanPublicationEligible =
     draftState.approvalRequirements?.singleHumanPublicationEligible === true
@@ -2345,6 +2340,9 @@ function ListingWorkspacePageContent() {
     && !retiredPrewriteExecution
   const executionCompleted = unpublishedExecutionPhase === "completed"
   const publicationPhase = draftState.publication?.phase ?? ""
+  const publicationLifecycleStarted = Boolean(draftState.approval?.id)
+    || unpublishedExecutionExists
+    || Boolean(draftState.publication?.id)
   const singleHumanPublicationButtonDisabled =
     publicationAutomationBusy
     || draftBusy
@@ -4411,11 +4409,10 @@ function ListingWorkspacePageContent() {
   ])
 
   useEffect(() => {
-    if (!finalReviewCompleted) return
-    setError((current) => LEGACY_V3_IMAGE_MESSAGES.has(current.trim())
-      ? ""
-      : current)
-  }, [finalReviewCompleted])
+    if (!listingReadyUi.listingReady) return
+    setError((current) => supersededListingReadyMessage(current) ? "" : current)
+    setMessage((current) => supersededListingReadyMessage(current) ? "" : current)
+  }, [listingReadyUi.listingReady])
 
   useEffect(() => {
     if (!authorizationPayloadMatchesApproval) return
@@ -4432,6 +4429,44 @@ function ListingWorkspacePageContent() {
     ? <section className="rounded-3xl border border-white/10 bg-white/[0.04] p-4 text-sm text-white/60">Comprobando si el conjunto V3 ya está cerrado antes de mostrar controles…</section>
     : finalReviewCompleted
     ? <section id="v3-final-listing-review" className="space-y-4 rounded-3xl border border-emerald-200/35 bg-emerald-200/[0.07] p-4">
+      <div
+        data-listing-ready-single-truth
+        data-ui-blockers={canonicalUiBlockers.length}
+        data-ui-blocker-section-hidden={listingReadyUi.blockerSectionHidden}
+        className="space-y-2 rounded-2xl border border-emerald-200/30 bg-black/20 p-4"
+      >
+        {listingReadyUi.listingReady
+          ? <>
+            <p className="font-black text-emerald-100">Preparación 100% ✅</p>
+            <p className="font-black text-emerald-100">Sin bloqueos ✅</p>
+            <h2 className="text-2xl font-black">LISTING_READY ✅</h2>
+          </>
+          : <h2 className="text-xl font-black text-amber-100">LISTING_BLOCKED</h2>}
+        <p className="text-lg font-black">
+          {draftTarget} · {money(canonicalListingPrice)} · Qty {canonicalListingQuantity ?? "—"}
+        </p>
+        <details className="text-xs text-white/55">
+          <summary className="cursor-pointer font-black text-white/70">Identidad exacta</summary>
+          <dl className="mt-2 grid gap-1 break-all">
+            <div><dt className="inline">Candidate: </dt><dd className="inline font-black">{opportunity?.candidate_key}</dd></div>
+            <div><dt className="inline">Package: </dt><dd className="inline font-black">{listingPackage?.id}</dd></div>
+            <div><dt className="inline">Marketplace: </dt><dd className="inline font-black">{canonicalMarketplace || "—"}</dd></div>
+            <div><dt className="inline">Cuenta: </dt><dd className="inline font-black">{draftState.runtime?.accountFingerprint || "—"}</dd></div>
+          </dl>
+        </details>
+      </div>
+      {listingReadyUi.blockerDetails.length > 0 && <section data-canonical-ui-blockers role="alert" className="rounded-2xl border border-amber-200/35 bg-amber-200/[0.08] p-4 text-amber-50">
+        <h2 className="font-black">Publicación detenida por readiness canónico</h2>
+        <ul className="mt-3 space-y-3">
+          {listingReadyUi.blockerDetails.map((blocker) => <li key={blocker.reasonCode} className="rounded-xl bg-black/25 p-3 text-xs">
+            <code className="font-black text-amber-100">{blocker.reasonCode}</code>
+            <p className="mt-2">{blocker.explanation}</p>
+            <p className="mt-2"><strong>resolution_action:</strong> {blocker.resolutionAction}</p>
+          </li>)}
+        </ul>
+      </section>}
+      <details className="rounded-2xl border border-white/10 bg-black/15 p-3">
+        <summary className="cursor-pointer text-sm font-black text-white/70">Ver evidencia canónica y previews aprobados</summary>
       <div>
         <p className="text-xs font-black uppercase tracking-widest text-emerald-100/70">Visual Strategy V3 · COMPLETED</p>
         <h2 className="mt-1 text-xl font-black">Conjunto final bloqueado · 7/7 PASSED</h2>
@@ -4464,46 +4499,28 @@ function ListingWorkspacePageContent() {
         </dl>
         <p className={`rounded-xl border p-3 text-xs ${executionCompleted ? "border-emerald-200/25 bg-emerald-200/[0.07] text-emerald-50" : unpublishedExecutionExists ? "border-amber-200/25 bg-amber-200/[0.07] text-amber-50" : "border-white/15 bg-black/20 text-white/65"}`}>{executionCompleted ? "Inventory Item + Offer UNPUBLISHED creados y verificados; la automatización continuará desde el preview final." : unpublishedExecutionExists ? `Ejecución registrada · fase ${unpublishedExecutionPhase || "PENDIENTE"}. El botón único la reanudará o reconciliará sin duplicarla.` : "Inventory Item y Offer todavía no existen. El botón único realizará la secuencia completa después de revalidar todas las puertas."}</p>
       </section>
-      <section data-v3-one-click-publication data-unpublished-preflight-state={unpublishedPreflightState} className="space-y-3 rounded-2xl border border-rose-200/35 bg-rose-200/[0.07] p-3">
-        <div>
-          <p className="text-xs font-black uppercase tracking-widest text-rose-100/70">Publicación eBay automatizada · PRODUCTION</p>
-          <h3 className="mt-1 text-lg font-black">El producto viaja; el sistema trabaja</h3>
-          <p className="mt-2 text-sm leading-6 text-rose-50/75">Un clic activa la construcción completa y conserva reanudación segura en cada cámara.</p>
-        </div>
-        <PublicationLaunchVisualizer
+      </details>
+      {(listingReadyUi.listingReady || publicationLifecycleStarted) && <section data-v3-one-click-publication data-unpublished-preflight-state={unpublishedPreflightState} className="space-y-3 rounded-2xl border border-rose-200/35 bg-rose-200/[0.07] p-3">
+        {(publicationAutomationBusy || publicationLifecycleStarted) && <PublicationLaunchVisualizer
           phase={publicationVisualizerPhase}
           busy={publicationAutomationBusy || publicationReadOnlyPreflightActive}
           failed={publicationAutomationFailed || unpublishedPreflightState === "error"}
           elapsedSeconds={publicationAutomationElapsed}
           productImageUrl={publicationProductImageUrl}
           status={publicationAutomationStep}
-        />
-        {!unpublishedExecutionExists && unpublishedPreflightState === "error" && <p role="status" className="rounded-xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-xs text-amber-50"><strong>La comprobación previa necesita renovarse.</strong><span className="mt-1 block">{humanUnpublishedPreflightError(unpublishedAuthorizationError || unpublishedPreflightReason)}</span><span className="mt-1 block">El botón único volverá a prepararla antes de cualquier escritura.</span></p>}
-        {!unpublishedExecutionExists && unpublishedPreflightState === "ready_new" && <p role="status" className="rounded-xl border border-emerald-200/25 bg-emerald-200/[0.06] p-3 text-xs text-emerald-50">Listo para registrar la autorización de este clic y ejecutar la secuencia completa.</p>}
-        {unpublishedAuthorization && <details className="rounded-xl border border-white/10 bg-black/25 p-3 text-xs">
-          <summary className="cursor-pointer font-black">Ver resumen técnico del payload exacto</summary>
-          <dl className="mt-3 grid gap-2 sm:grid-cols-2">
-            <div><dt className="text-white/45">Cuenta destino</dt><dd className="font-black">{String(object(unpublishedAuthorization.targetAccount).environment)} · seller {String(object(unpublishedAuthorization.targetAccount).maskedSellerAccountId)}</dd></div>
-            <div><dt className="text-white/45">SKU</dt><dd className="break-all font-black">{String(unpublishedAuthorization.sku)}</dd></div>
-            <div className="sm:col-span-2"><dt className="text-white/45">Título</dt><dd className="font-black">{String(unpublishedAuthorization.title)}</dd></div>
-            <div><dt className="text-white/45">Precio / cantidad</dt><dd className="font-black">{String(object(unpublishedAuthorization.price).currency)} {String(object(unpublishedAuthorization.price).value)} · {String(unpublishedAuthorization.listingQuantity)}</dd></div>
-            <div><dt className="text-white/45">Imágenes</dt><dd className="font-black">{Array.isArray(unpublishedAuthorization.images) ? unpublishedAuthorization.images.length : 0}/7</dd></div>
-          </dl>
-          <p className="mt-3 break-all font-mono text-[10px] text-cyan-100">Payload {String(unpublishedAuthorization.payloadHash)}</p>
-        </details>}
+        />}
         {publicationPhase === "monitor_registered"
           ? <div className="rounded-xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y monitoreado</strong><p className="mt-1 text-xs">Item ID {draftState.publication?.listing_id}</p><a href={`https://www.ebay.com/itm/${draftState.publication?.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-black underline">Abrir listing en eBay</a></div>
           : <button type="button" disabled={publicationButtonDisabled} onClick={() => void publishV3Automatically()} className="relative min-h-16 w-full overflow-hidden rounded-2xl bg-rose-200 px-4 text-lg font-black text-black shadow-[0_0_38px_rgba(254,205,211,0.2)] disabled:opacity-40">
             {publicationAutomationBusy && <span aria-hidden="true" className="absolute inset-y-0 left-0 w-1/3 animate-pulse bg-gradient-to-r from-transparent via-white/45 to-transparent" />}
             <span className="relative">{publicationAutomationBusy
-              ? "Sistema en operación"
+              ? "SISTEMA EN OPERACIÓN"
               : ["publish_in_flight", "outcome_unknown", "published_pending_verification"].includes(publicationPhase)
-                ? "Verificar publicación en eBay"
-                : "Publicar en eBay"}</span>
+                ? "VERIFICAR PUBLICACIÓN EN EBAY"
+                : "PUBLICAR EN EBAY"}</span>
           </button>}
         {!publicationAutomationBusy && publicationButtonBlockReason && <p data-publication-button-blocker role="status" className="rounded-xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-xs text-amber-50"><strong>Control protegido temporalmente.</strong><span className="mt-1 block">{publicationButtonBlockReason}</span></p>}
-        <p className="text-xs leading-5 text-rose-50/65">Si una llamada queda con resultado incierto, la automatización se detiene y este mismo control cambia a verificación por lectura. Nunca repite <code>publishOffer</code> a ciegas.</p>
-      </section>
+      </section>}
     </section>
     : (v3ReviewAccessible || v3ReadyForPrepare)
     ? <section id="v3-human-review" className="space-y-4 rounded-3xl border border-violet-200/30 bg-violet-200/[0.07] p-4">
@@ -4563,7 +4580,7 @@ function ListingWorkspacePageContent() {
             <h2 id="ebay-account-configuration-heading" className="mt-1 text-xl font-black">Policies de la cuenta eBay</h2>
             <p className="mt-2 text-sm leading-6 text-white/65">Seller OS carga automáticamente las policies vigentes de tu cuenta. Sólo usa la actualización manual si cambiaste una policy directamente en eBay.</p>
           </div>
-          {visibleWorkspaceGateBlockers.length > 0 && <div role="status" className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-amber-50">
+          {!draftState.readiness && visibleWorkspaceGateBlockers.length > 0 && <div role="status" className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.08] p-3 text-amber-50">
             <strong className="text-sm">El paquete sigue bloqueado por estas guardas:</strong>
             <ul className="mt-2 space-y-2 text-xs">
               {visibleWorkspaceGateBlockers.map((blocker) => <li key={blocker} className="rounded-xl bg-black/20 p-2"><code className="block break-all font-black text-amber-100">{blocker}</code><span className="mt-1 block text-amber-50/75">{humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)}</span></li>)}
@@ -4857,7 +4874,7 @@ function ListingWorkspacePageContent() {
             <div><span className="text-sm font-black">Dimensiones del paquete</span><div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">{(["length", "width", "height"] as const).map((field) => <input key={field} aria-label={field} inputMode="decimal" placeholder={field === "length" ? "Largo" : field === "width" ? "Ancho" : "Alto"} value={draftConfiguration[field] ?? ""} onChange={(event) => setDraftConfiguration((current) => ({ ...current, [field]: numberOrNull(event.target.value) }))} className="min-h-12 min-w-0 rounded-xl border border-white/20 bg-black/30 px-2" />)}<select aria-label="Unidad de dimensiones" value={draftConfiguration.dimensionUnit} onChange={(event) => setDraftConfiguration((current) => ({ ...current, dimensionUnit: event.target.value }))} className="min-h-12 rounded-xl border border-white/20 bg-black/30 px-1"><option value="">Unidad</option><option value="INCH">in</option><option value="CENTIMETER">cm</option></select></div></div>
             {!singleHumanPublicationEligible && <label className="flex min-h-14 items-start gap-3 rounded-2xl border border-white/15 p-3"><input type="checkbox" checked={imagesAuthorized} onChange={(event) => setImagesAuthorized(event.target.checked)} className="mt-1 size-5" /><span className="text-sm"><strong className="block">Confirmo derechos sobre todas las imágenes</strong><span className="text-white/55">Provienen de Luna/proveedor y están autorizadas; no fueron copiadas de eBay ni de competidores.</span></span></label>}
             {!singleHumanPublicationEligible && <button type="button" disabled={draftBusy} onClick={() => void validateDraft()} className="min-h-13 w-full rounded-2xl border border-cyan-200/35 px-4 font-black text-cyan-50 disabled:opacity-50">{draftBusy ? "Validando…" : "Validar draft seguro"}</button>}
-            {draftState.readiness && <div className={`rounded-2xl border p-3 ${visibleDraftReadinessReady ? "border-emerald-200/30 bg-emerald-200/[0.06]" : "border-amber-200/30 bg-amber-200/[0.06]"}`}><strong>{visibleDraftReadinessReady ? "Listo para tu aprobación" : `${visibleDraftReadinessBlockers.length} bloqueos pendientes`}</strong>{!visibleDraftReadinessReady && <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-50">{visibleDraftReadinessBlockers.map((blocker) => <li key={blocker}>{humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)}</li>)}</ul>}</div>}
+            {draftState.readiness && listingReadyUi.blockerDetails.length > 0 && <div data-canonical-ui-blockers role="alert" className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.06] p-3"><strong>{canonicalUiBlockers.length} bloqueos canónicos</strong><ul className="mt-2 space-y-2 text-xs text-amber-50">{listingReadyUi.blockerDetails.map((blocker) => <li key={blocker.reasonCode} className="rounded-xl bg-black/20 p-2"><code className="font-black">{blocker.reasonCode}</code><p className="mt-1">{blocker.explanation}</p><p className="mt-1"><strong>resolution_action:</strong> {blocker.resolutionAction}</p></li>)}</ul></div>}
             {singleHumanPublicationEligible && <div data-one-click-controlled-publication className="space-y-3 rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-4">
               <div><p className="text-xs font-black uppercase tracking-widest text-rose-100/70">Una autorización humana · todas las puertas internas</p><h3 className="mt-1 text-lg font-black">Publicación controlada de {opportunity?.candidate_key}</h3><p className="mt-2 text-sm leading-6 text-rose-50/75">Este clic queda ligado al candidate, package, digest, cuenta, marketplace, precio, cantidad, policies e imágenes exactos. Cualquier diferencia invalida la continuación y detiene la publicación.</p></div>
               <dl className="grid gap-2 text-xs sm:grid-cols-2"><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Package</dt><dd className="break-all font-black">{listingPackage.id}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Marketplace / cuenta</dt><dd className="font-black">EBAY_US · {draftTarget}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Precio / cantidad</dt><dd className="font-black">USD {Number(form.pricing.targetPrice ?? 0).toFixed(2)} · {effectiveDraftQuantity}</dd></div><div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Policies</dt><dd className="break-all font-black">{draftConfiguration.fulfillmentPolicyId || "pendiente"} · {draftConfiguration.paymentPolicyId || "pendiente"} · {draftConfiguration.returnPolicyId || "pendiente"}</dd></div></dl>
