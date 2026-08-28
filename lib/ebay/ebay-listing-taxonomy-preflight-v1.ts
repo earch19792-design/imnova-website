@@ -31,6 +31,11 @@ function key(value: unknown) {
     .replace(/[^a-z0-9]+/g, " ").trim()
 }
 
+function authoritativeEvidenceRequirement(name: string) {
+  const aspect = key(name).toUpperCase().replace(/\s+/g, "_") || "ASPECT"
+  return `AUTHORITATIVE_PRODUCT_${aspect}_EVIDENCE_REQUIRED`
+}
+
 function compatibleOfficialValue(
   aspect: EbayTaxonomyAspectIntelligence,
   proposed: string,
@@ -120,7 +125,7 @@ export function buildEbayListingTaxonomyPreflightV1(
       const requirement = Object.entries(
         input.unprovenAspectEvidenceRequirements ?? {},
       ).find(([candidate]) => key(candidate) === key(name))?.[1]
-      return requirement ? [[name, requirement]] : []
+      return [[name, requirement || authoritativeEvidenceRequirement(name)]]
     }),
   )
 
