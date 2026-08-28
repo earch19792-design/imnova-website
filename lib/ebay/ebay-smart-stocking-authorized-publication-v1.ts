@@ -43,6 +43,65 @@ function exactMoney(left: unknown, right: number) {
     Math.round(Number(left) * 100) === Math.round(right * 100)
 }
 
+export function rebuildSmartStockingPackageSourceV1(input: Readonly<{
+  listingPackage: JsonRecord
+  evidence: SmartStockingListingWorkspaceEvidenceV1
+}>) {
+  const packageData = record(input.listingPackage.package_data)
+  const pricing = record(packageData.pricing)
+  const sourceObservedAt = input.evidence.stock.observedAt
+  if (
+    !Number.isFinite(Date.parse(sourceObservedAt))
+    || text(packageData.categoryId) !== input.evidence.category.categoryId
+    || !exactMoney(pricing.targetPrice, input.evidence.salePriceUsd)
+    || !exactMoney(pricing.supplierCost, input.evidence.supplierCostUsd)
+    || !exactMoney(
+      pricing.estimatedOutboundShipping,
+      input.evidence.supplierShippingUsd,
+    )
+    || !exactMoney(pricing.estimatedEbayFees,
+      input.evidence.estimatedEbayFeesUsd)
+    || !exactMoney(pricing.estimatedNetProfit,
+      input.evidence.contributionProfitUsd)
+    || !exactMoney(pricing.estimatedNetMarginPercent,
+      input.evidence.contributionMarginPercent)
+    || !exactMoney(pricing.estimatedRoiPercent, input.evidence.roiPercent)
+    || pricing.passesProfitGate !== true
+  ) throw new Error("SMART_STOCKING_PACKAGE_SOURCE_REVALIDATION_FAILED")
+
+  return Object.freeze({
+    packageData: Object.freeze({
+      ...packageData,
+      pricing: Object.freeze({
+        ...pricing,
+        evidenceBinding: input.evidence,
+      }),
+      shipping: Object.freeze({
+        ...record(packageData.shipping),
+        supplierShippingEconomicsUsd: input.evidence.supplierShippingUsd,
+        supplierShippingEvidenceClass: input.evidence.shipping.status,
+        canonicalDestinationMatch:
+          input.evidence.shipping.canonicalDestinationMatch,
+        buyerFacingShippingPolicy: "USE_CANONICAL_ACCOUNT_POLICY",
+        supplierShippingIsBuyerFacing: false,
+      }),
+      evidenceSnapshot: Object.freeze({
+        ...record(packageData.evidenceSnapshot),
+        smartStockingFinalWorkspaceEvidenceV1: input.evidence,
+      }),
+      sourceRefresh: Object.freeze({
+        refreshedAt: new Date(sourceObservedAt).toISOString(),
+        strategy:
+          "SMART_STOCKING_DURABLE_AUTHORITY_REVALIDATION_BEFORE_APPROVAL_V1",
+        frontierDigest: input.evidence.frontierDigest,
+        snapshotDigest: input.evidence.snapshotDigest,
+      }),
+    }),
+    sourceObservedAt: new Date(sourceObservedAt).toISOString(),
+    marketplaceWrites: 0 as const,
+  })
+}
+
 export function buildSmartStockingAuthorizedPublicationV1(input: Readonly<{
   accountKey: string
   actorUserId: string

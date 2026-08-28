@@ -84,10 +84,18 @@ import { enqueueSellerWhatsAppAlert } from "@/lib/ebay/ebay-seller-whatsapp-aler
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { loadSameDayAuthorizedPublicationContext } from "@/lib/ebay/ebay-same-day-authorized-publication"
 import {
+  CAKE_TURNTABLE_LISTING_INTAKE_KEY,
   isSmartStockingListingIntakeV1,
+  materializeCakeTurntableListingIntakeV1,
+  materializeWindowFilmListingIntakeV1,
+  resolveSmartStockingListingWorkspaceEvidenceV1,
+  WINDOW_FILM_LISTING_INTAKE_KEY,
 } from
   "@/lib/ebay/ebay-smart-stocking-listing-intake-v1"
-import { resolveSmartStockingAuthorizedPublicationV1 } from
+import {
+  rebuildSmartStockingPackageSourceV1,
+  resolveSmartStockingAuthorizedPublicationV1,
+} from
   "@/lib/ebay/ebay-smart-stocking-authorized-publication-v1"
 import {
   bindCanonicalPublicationImageSet,
@@ -965,6 +973,27 @@ function jsonError(error: unknown, status = 502, blockers?: string[]) {
   }, { status })
 }
 
+function oneClickPrewriteError(
+  error: unknown,
+  blockers: string[],
+  target: EbayDraftOnlyTarget,
+) {
+  return NextResponse.json({
+    success: false,
+    error: errorCode(error),
+    blockers,
+    safety: {
+      target,
+      canPublish: false,
+      durableApprovalCreated: false,
+      inventoryItemCreated: false,
+      offerCreated: false,
+      ebayWrites: 0,
+      marketplaceWritesBeforeRefreshPass: 0,
+    },
+  }, { status: 409 })
+}
+
 async function enqueueDraftFailure(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   approval: JsonRecord,
@@ -1763,6 +1792,114 @@ async function previewDraft(body: JsonRecord, actor: string) {
   })
 }
 
+async function refreshOneClickSmartStockingSource(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  actor: string,
+  accountKey: string,
+  listingPackage: JsonRecord,
+  opportunity: JsonRecord,
+) {
+  const packageId = uuid(listingPackage.id)
+  const opportunityId = uuid(listingPackage.opportunity_id)
+  const candidateKey = text(listingPackage.candidate_key)
+  if (
+    !packageId || !opportunityId || !candidateKey
+    || text(listingPackage.created_by) !== actor
+    || text(listingPackage.account_key) !== accountKey
+    || text(opportunity.id) !== opportunityId
+    || text(opportunity.candidate_key) !== candidateKey
+  ) throw new Error("EBAY_ONE_CLICK_EXACT_IDENTITY_INVALID")
+
+  const refreshedIntake = candidateKey === WINDOW_FILM_LISTING_INTAKE_KEY
+    ? await materializeWindowFilmListingIntakeV1({ supabase, accountKey })
+    : candidateKey === CAKE_TURNTABLE_LISTING_INTAKE_KEY
+      ? await materializeCakeTurntableListingIntakeV1({ supabase, accountKey })
+      : null
+  if (
+    !refreshedIntake
+    || refreshedIntake.opportunityId !== opportunityId
+    || refreshedIntake.candidateKey !== candidateKey
+    || refreshedIntake.durableReadback !== true
+    || refreshedIntake.marketplaceWrites !== 0
+  ) throw new Error("EBAY_ONE_CLICK_LUNA_REFRESH_IDENTITY_MISMATCH")
+
+  const { data: refreshedOpportunity, error: opportunityError } = await supabase
+    .from("ebay_luna_opportunity_queue")
+    .select("*")
+    .eq("id", opportunityId)
+    .eq("candidate_key", candidateKey)
+    .maybeSingle()
+  if (opportunityError || !refreshedOpportunity) {
+    throw new Error("EBAY_ONE_CLICK_LUNA_REFRESH_READBACK_FAILED")
+  }
+  const evidence = await resolveSmartStockingListingWorkspaceEvidenceV1({
+    supabase,
+    accountKey,
+    opportunity: refreshedOpportunity as JsonRecord,
+  })
+  if (!evidence) {
+    throw new Error("EBAY_ONE_CLICK_DURABLE_SOURCE_EVIDENCE_REQUIRED")
+  }
+  const rebuilt = rebuildSmartStockingPackageSourceV1({
+    listingPackage,
+    evidence,
+  })
+  const { data: savedData, error: saveError } = await supabase.rpc(
+    "ebay_save_listing_package_guarded",
+    {
+      p_package_id: packageId,
+      p_account_key: accountKey,
+      p_actor: actor,
+      p_opportunity_id: opportunityId,
+      p_candidate_key: candidateKey,
+      p_operation: "refresh",
+      p_package_patch: rebuilt.packageData,
+      p_status: text(listingPackage.status),
+      p_readiness: Number(listingPackage.readiness ?? 0),
+      p_source_observed_at: rebuilt.sourceObservedAt,
+      p_expected_updated_at: listingPackage.updated_at,
+    },
+  )
+  const savedPackage = Array.isArray(savedData)
+    ? record(savedData[0])
+    : record(savedData)
+  if (saveError || uuid(savedPackage.id) !== packageId) {
+    throw new Error(databaseExceptionCode(
+      saveError,
+      "EBAY_ONE_CLICK_PACKAGE_SOURCE_REVALIDATION_FAILED",
+    ))
+  }
+  assertListingPackageContextV1({
+    expected: {
+      marketplaceId: "EBAY_US",
+      listingPackageId: packageId,
+      opportunityId,
+      candidateKey,
+    },
+    listingPackage: savedPackage,
+  })
+  if (
+    Date.parse(text(savedPackage.source_observed_at)) !==
+      Date.parse(rebuilt.sourceObservedAt)
+    || Object.keys(record(record(record(savedPackage.package_data).pricing)
+      .evidenceBinding)).length === 0
+  ) throw new Error("EBAY_ONE_CLICK_PACKAGE_SOURCE_READBACK_MISMATCH")
+
+  await resolveSmartStockingAuthorizedPublicationV1({
+    supabase,
+    accountKey,
+    actorUserId: actor,
+    listingPackage: savedPackage,
+    opportunity: refreshedOpportunity as JsonRecord,
+  })
+  return {
+    listingPackage: savedPackage,
+    opportunity: refreshedOpportunity as JsonRecord,
+    sourceObservedAt: rebuilt.sourceObservedAt,
+    marketplaceWrites: 0 as const,
+  }
+}
+
 async function approveDraft(body: JsonRecord, actor: string) {
   const packageId = uuid(body.packageId)
   const approvalKey = idempotencyKey(body.idempotencyKey)
@@ -1794,20 +1931,131 @@ async function approveDraft(body: JsonRecord, actor: string) {
         : "EBAY_DRAFT_ONLY_EXPLICIT_APPROVAL_REQUIRED",
     ), 409)
   }
-  const requestedConfiguration = record(body.draftConfiguration)
+  let requestedConfiguration = record(body.draftConfiguration)
   const supabase = getSupabaseAdminClient()
-  const context = await loadPackageContext(
-    supabase,
-    packageId,
-    actor,
-    text(requestedConfiguration.sku),
-    target,
-    fingerprint,
-  )
-  if (oneClickRequested && !context.smartStockingPublicationAuthorization) {
-    return jsonError(new Error(
-      "EBAY_ONE_CLICK_PUBLICATION_SMART_STOCKING_AUTHORITY_REQUIRED",
-    ), 409)
+  let context: Awaited<ReturnType<typeof loadPackageContext>>
+  let oneClickFreshness: JsonRecord | null = null
+  if (oneClickRequested) {
+    try {
+      const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+      if (!accountKey) {
+        throw new Error("EBAY_ONE_CLICK_ACCOUNT_SCOPE_REQUIRED")
+      }
+      const { data: exactPackage, error: packageError } = await supabase
+        .from("ebay_listing_packages")
+        .select("*")
+        .eq("id", packageId)
+        .eq("created_by", actor)
+        .eq("account_key", accountKey)
+        .maybeSingle()
+      if (packageError || !exactPackage) {
+        throw new Error("EBAY_ONE_CLICK_EXACT_PACKAGE_NOT_FOUND")
+      }
+      const exactOpportunityId = uuid(exactPackage.opportunity_id)
+      const exactCandidateKey = text(exactPackage.candidate_key)
+      const { data: exactOpportunity, error: opportunityError } =
+        exactOpportunityId && exactCandidateKey
+          ? await supabase.from("ebay_luna_opportunity_queue")
+            .select("*")
+            .eq("id", exactOpportunityId)
+            .eq("candidate_key", exactCandidateKey)
+            .maybeSingle()
+          : { data: null, error: null }
+      if (opportunityError || !exactOpportunity) {
+        throw new Error("EBAY_ONE_CLICK_EXACT_OPPORTUNITY_NOT_FOUND")
+      }
+      const refreshedSource = await refreshOneClickSmartStockingSource(
+        supabase,
+        actor,
+        accountKey,
+        exactPackage as JsonRecord,
+        exactOpportunity as JsonRecord,
+      )
+      context = await loadPackageContext(
+        supabase,
+        packageId,
+        actor,
+        text(requestedConfiguration.sku),
+        target,
+        fingerprint,
+      )
+      if (
+        Date.parse(text(context.listingPackage.source_observed_at)) !==
+          Date.parse(refreshedSource.sourceObservedAt)
+        || Date.parse(text(context.opportunity.supplier_snapshot_at)) !==
+          Date.parse(refreshedSource.sourceObservedAt)
+        || !context.smartStockingPublicationAuthorization
+      ) throw new Error(
+        "EBAY_ONE_CLICK_PUBLICATION_SMART_STOCKING_AUTHORITY_REQUIRED",
+      )
+
+      const requestedPolicies = record(
+        requestedConfiguration.businessPolicies,
+      )
+      const requestedSelection = {
+        fulfillmentPolicyId: text(requestedPolicies.fulfillmentPolicyId),
+        paymentPolicyId: text(requestedPolicies.paymentPolicyId),
+        returnPolicyId: text(requestedPolicies.returnPolicyId),
+        merchantLocationKey: text(
+          requestedConfiguration.merchantLocationKey,
+        ),
+      }
+      const ebayPreflight = await preflightEbayDraftOnlyMobile(
+        requestedSelection,
+      )
+      if (
+        ebayPreflight.target !== "PRODUCTION"
+        || ebayPreflight.identity.status !== "BOUND"
+        || !ebayPreflight.privilege.usable
+        || !ebayPreflight.selectionComplete
+        || ebayPreflight.snapshotStatus !== "READY"
+        || !ebayPreflight.snapshot
+        || Object.entries(requestedSelection).some(([key, value]) =>
+          ebayPreflight.selection[key as keyof typeof requestedSelection]
+            !== value)
+      ) throw new Error(
+        "EBAY_ONE_CLICK_PUBLICATION_ACCOUNT_PREFLIGHT_FAILED",
+      )
+      await saveVerifiedEbayAccountPolicyProfile({
+        supabase,
+        accountKey,
+        actorUserId: actor,
+        preflight: ebayPreflight,
+      })
+      requestedConfiguration = {
+        ...requestedConfiguration,
+        merchantLocationKey: ebayPreflight.selection.merchantLocationKey,
+        businessPolicies: {
+          fulfillmentPolicyId:
+            ebayPreflight.selection.fulfillmentPolicyId,
+          paymentPolicyId: ebayPreflight.selection.paymentPolicyId,
+          returnPolicyId: ebayPreflight.selection.returnPolicyId,
+        },
+        ebayPreflightSnapshot: ebayPreflight.snapshot,
+      }
+      oneClickFreshness = {
+        lunaSnapshot: "AUTO_REFRESHED",
+        packageSource: "AUTO_REVALIDATED",
+        ebayPreflightSnapshot: "AUTO_REFRESHED",
+        sourceObservedAt: refreshedSource.sourceObservedAt,
+        marketplaceWritesBeforeRefreshPass: 0,
+      }
+    } catch (refreshError) {
+      return oneClickPrewriteError(
+        refreshError,
+        [errorCode(refreshError)],
+        target,
+      )
+    }
+  } else {
+    context = await loadPackageContext(
+      supabase,
+      packageId,
+      actor,
+      text(requestedConfiguration.sku),
+      target,
+      fingerprint,
+    )
   }
   const visualPublicationGate = await loadFinalListingReviewPublicationGate({
     supabase,
@@ -1838,7 +2086,20 @@ async function approveDraft(body: JsonRecord, actor: string) {
     target,
     accountFingerprint: fingerprint,
   })
-  if (!readiness.ready) return jsonError(new Error("EBAY_DRAFT_ONLY_BLOCKED"), 409, readiness.blockers)
+  if (!readiness.ready) {
+    if (oneClickRequested) {
+      return oneClickPrewriteError(
+        new Error("EBAY_DRAFT_ONLY_BLOCKED"),
+        readiness.blockers,
+        target,
+      )
+    }
+    return jsonError(
+      new Error("EBAY_DRAFT_ONLY_BLOCKED"),
+      409,
+      readiness.blockers,
+    )
+  }
   const approvedPayload = oneClickRequested
     ? bindOneClickControlledPublicationIntentV1({
       approvedPayload: readiness.payload,
@@ -1880,7 +2141,14 @@ async function approveDraft(body: JsonRecord, actor: string) {
             : null,
           ...oneClickPublicationRequirements(oneClickRequested),
         },
-        safety: { canPublish: false, target },
+        oneClickFreshness,
+        safety: {
+          canPublish: false,
+          target,
+          durableApprovalCreatedOnlyAfterRefreshPass:
+            !oneClickRequested || Boolean(oneClickFreshness),
+          marketplaceWritesBeforeRefreshPass: 0,
+        },
       })
     }
     return jsonError(new Error("EBAY_DRAFT_ONLY_ACTIVE_APPROVAL_EXISTS"), 409)
@@ -1903,10 +2171,14 @@ async function approveDraft(body: JsonRecord, actor: string) {
         : null,
       ...oneClickPublicationRequirements(oneClickRequested),
     },
+    oneClickFreshness,
     safety: {
       approvedForOneUnpublishedDraft: true,
       machineContinuationToOneShotPublishAuthorized: oneClickRequested,
+      durableApprovalCreatedOnlyAfterRefreshPass:
+        !oneClickRequested || Boolean(oneClickFreshness),
       finalMachinePreflightRequired: true,
+      marketplaceWritesBeforeRefreshPass: 0,
       canPublish: false,
       target,
     },

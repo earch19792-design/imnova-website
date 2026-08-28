@@ -3478,51 +3478,8 @@ function ListingWorkspacePageContent() {
       if (!nextApproval?.id) {
         setPublicationAutomationPhase("authorization")
         setPublicationAutomationStep(
-          "1/5 · Fijando el paquete exacto y revalidando cuenta/policies…",
+          "1/5 · Renovando Luna, paquete y preflight eBay antes de autorizar…",
         )
-        await persistCurrentPackage()
-        const preflightPayload = await draftRequest({
-          action: "preflight",
-          packageId: listingPackage.id,
-          selection: {
-            fulfillmentPolicyId: draftConfiguration.fulfillmentPolicyId,
-            paymentPolicyId: draftConfiguration.paymentPolicyId,
-            returnPolicyId: draftConfiguration.returnPolicyId,
-            merchantLocationKey: draftConfiguration.merchantLocationKey,
-          },
-        })
-        const preflight = preflightPayload.preflight as EbayMobilePreflight
-        if (
-          preflight.target !== "PRODUCTION"
-          || preflight.identity.status !== "BOUND"
-          || !preflight.privilege.usable
-          || !preflight.selectionComplete
-          || preflight.snapshotStatus !== "READY"
-          || !preflight.snapshot
-        ) throw new Error("EBAY_ONE_CLICK_PUBLICATION_ACCOUNT_PREFLIGHT_FAILED")
-        const exactDraftConfiguration = {
-          ...draftConfigurationPayload(),
-          merchantLocationKey: preflight.selection.merchantLocationKey,
-          businessPolicies: {
-            fulfillmentPolicyId: preflight.selection.fulfillmentPolicyId,
-            paymentPolicyId: preflight.selection.paymentPolicyId,
-            returnPolicyId: preflight.selection.returnPolicyId,
-          },
-          ebayPreflightSnapshot: preflight.snapshot,
-        }
-        setDraftConfiguration((current) => ({
-          ...current,
-          merchantLocationKey: preflight.selection.merchantLocationKey,
-          fulfillmentPolicyId: preflight.selection.fulfillmentPolicyId,
-          paymentPolicyId: preflight.selection.paymentPolicyId,
-          returnPolicyId: preflight.selection.returnPolicyId,
-          ebayPreflightSnapshot: preflight.snapshot,
-        }))
-        setDraftState((current) => ({
-          ...current,
-          ...preflightPayload,
-          preflight,
-        }))
         if (!oneClickPublicationApprovalKey.current) {
           oneClickPublicationApprovalKey.current =
             `one-click:${listingPackage.id}:${crypto.randomUUID()}`
@@ -3543,11 +3500,20 @@ function ListingWorkspacePageContent() {
           confirmExactPayload: true,
           confirmProductionAccount: true,
           confirmImagesAuthorized: true,
-          draftConfiguration: exactDraftConfiguration,
+          draftConfiguration: draftConfigurationPayload(),
         })
         if (authorized.controlledPublication?.authorized !== true) {
           throw new Error("EBAY_ONE_CLICK_PUBLICATION_INTENT_NOT_PERSISTED")
         }
+        if (
+          authorized.oneClickFreshness?.lunaSnapshot !== "AUTO_REFRESHED"
+          || authorized.oneClickFreshness?.packageSource !==
+            "AUTO_REVALIDATED"
+          || authorized.oneClickFreshness?.ebayPreflightSnapshot !==
+            "AUTO_REFRESHED"
+          || authorized.oneClickFreshness
+            ?.marketplaceWritesBeforeRefreshPass !== 0
+        ) throw new Error("EBAY_ONE_CLICK_FRESHNESS_PREWRITE_INCOMPLETE")
         nextApproval = authorized.approval
         setDraftState((current) => ({ ...current, ...authorized }))
       }
@@ -3625,23 +3591,31 @@ function ListingWorkspacePageContent() {
       const code = requestError instanceof Error
         ? requestError.message
         : "EBAY_ONE_CLICK_PUBLICATION_FAILED"
-      try {
-        const refreshed = await draftRequest(
-          undefined,
-          listingPackage.id,
-          opportunity.id,
-          opportunity.candidate_key,
-        )
-        setDraftState((current) => ({ ...current, ...refreshed }))
-      } catch {
-        // Preserve the first fail-closed error; a reload reads the same ledger.
+      const prewriteBlockers = (requestError as Error & {
+        blockers?: string[]
+      }).blockers ?? []
+      if (prewriteBlockers.length) {
+        setDraftState((current) => ({
+          ...current,
+          readiness: { ready: false, blockers: prewriteBlockers },
+        }))
+      } else {
+        try {
+          const refreshed = await draftRequest(
+            undefined,
+            listingPackage.id,
+            opportunity.id,
+            opportunity.candidate_key,
+          )
+          setDraftState((current) => ({ ...current, ...refreshed }))
+        } catch {
+          // Preserve the first fail-closed error; reload reads the same ledger.
+        }
       }
-      setError(code.startsWith("EBAY_FINAL_")
+      setError(prewriteBlockers.length ? "" : code.startsWith("EBAY_FINAL_")
         ? humanFinalPublicationError(requestError)
-        : getMobileReviewRequestError(
-          requestError,
-          "La publicación de un clic se detuvo antes de una operación no validada.",
-        ))
+        : getMobileReviewRequestError(requestError,
+          "La publicación de un clic se detuvo antes de una operación no validada."))
       setMessage("")
     } finally {
       setPublicationAutomationBusy(false)

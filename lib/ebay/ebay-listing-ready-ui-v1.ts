@@ -31,10 +31,18 @@ function explainCanonicalBlocker(reasonCode: string): CanonicalUiBlocker {
       explanation: "Una imagen del payload no pertenece al conjunto canónico aprobado.",
       resolutionAction: "Restablece en Final Listing Review el conjunto exacto aprobado.",
     },
+    EBAY_ONE_CLICK_PUBLICATION_ACCOUNT_PREFLIGHT_FAILED: {
+      explanation: "eBay no confirmó la cuenta, policies o ubicación exactas durante la renovación.",
+      resolutionAction: "Revisa la conexión eBay mostrada aquí y vuelve a usar PUBLICAR EN EBAY.",
+    },
+    SMART_STOCKING_PACKAGE_SOURCE_REVALIDATION_FAILED: {
+      explanation: "El paquete ya no coincide exactamente con la evidencia comercial durable.",
+      resolutionAction: "Revisa el precio o costo señalado aquí antes de volver a publicar.",
+    },
   }
   const known = exact[reasonCode]
   if (known) return { reasonCode, ...known }
-  if (/STOCK|SUPPLY|LUNA/.test(reasonCode)) return {
+  if (/STOCK|SUPPLY|LUNA|LISTING_INTAKE/.test(reasonCode)) return {
     reasonCode,
     explanation: "La disponibilidad o evidencia comercial vigente no permite publicar.",
     resolutionAction: "Reconfirma stock y costo del producto Luna exacto desde este Workspace.",
@@ -43,6 +51,11 @@ function explainCanonicalBlocker(reasonCode: string): CanonicalUiBlocker {
     reasonCode,
     explanation: "La economía canónica no supera una guarda obligatoria.",
     resolutionAction: "Corrige el precio mostrado en este Workspace y vuelve a validar.",
+  }
+  if (/PACKAGE.*SOURCE|SOURCE.*PACKAGE|DURABLE_SOURCE/.test(reasonCode)) return {
+    reasonCode,
+    explanation: "La fuente durable del paquete no superó la revalidación exacta.",
+    resolutionAction: "Revisa la evidencia comercial indicada aquí y vuelve a validar.",
   }
   if (/CATEGORY|TAXONOMY|ASPECT/.test(reasonCode)) return {
     reasonCode,
