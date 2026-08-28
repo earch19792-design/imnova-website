@@ -1858,6 +1858,27 @@ test("Offer verification binds offer, SKU and marketplace; unique unknown outcom
     const reconciled = await module.discoverEbayUnpublishedOfferBySku("PROD-SKU-2", expected, fetchImpl)
     assert.equal(reconciled.safe, true)
     assert.equal(reconciled.offerId, "offer-123")
+    const exact = await module.verifyEbayUnpublishedOffer(
+      "offer-123",
+      "PROD-SKU-2",
+      "EBAY_US",
+      expected,
+      fetchImpl,
+    )
+    assert.equal(exact.safe, true)
+    assert.equal(exact.payloadMatches, true)
+    const changedPrice = structuredClone(expected)
+    changedPrice.pricingSummary.price.value = "29.99"
+    const exactMismatch = await module.verifyEbayUnpublishedOffer(
+      "offer-123",
+      "PROD-SKU-2",
+      "EBAY_US",
+      changedPrice,
+      fetchImpl,
+    )
+    assert.equal(exactMismatch.safe, false)
+    assert.equal(exactMismatch.payloadMatches, false)
+    assert.equal(exactMismatch.blocker, "EBAY_OFFER_EXACT_PAYLOAD_MISMATCH")
     const mismatch = await module.verifyEbayUnpublishedOffer("offer-123", "WRONG-SKU", "EBAY_US", fetchImpl)
     assert.equal(mismatch.safe, false)
     assert.equal(mismatch.blocker, "EBAY_OFFER_IDENTITY_MISMATCH")
@@ -1995,6 +2016,151 @@ test("authorized publication sends publishOffer exactly once and returns the lis
       ["Authorization", "Accept-Language"],
     )
     assert.equal(publishCall.headers["Accept-Language"], "en-US")
+  } finally {
+    process.env = original
+  }
+})
+
+test("exact Inventory or Offer mismatch stops before publishOffer", async () => {
+  const module = await importTypeScript(gatewaySource)
+  const original = { ...process.env }
+  Object.assign(process.env, {
+    EBAY_DRAFT_ONLY_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_TARGET: "PRODUCTION",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID: "production-client-exact-readback",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET: "production-secret",
+    EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN: "production-refresh",
+    EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID: "production-user-1",
+    EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET: SNAPSHOT_SECRET,
+    EBAY_DRAFT_ONLY_PRODUCTION_ALLOWED_GIT_BRANCH: "feature/draft-production",
+    VERCEL_ENV: "preview",
+    VERCEL_GIT_COMMIT_REF: "feature/draft-production",
+    EBAY_PRO_RUNTIME: "staging",
+  })
+  const inventory = {
+    condition: "NEW",
+    availability: { shipToLocationAvailability: { quantity: 1 } },
+    product: {
+      title: "Exact product",
+      aspects: { Brand: ["Unbranded"], Type: ["Window Film"] },
+      imageUrls: ["https://assets.example.test/product.jpg"],
+    },
+  }
+  const offer = {
+    sku: RESERVED_SKU,
+    marketplaceId: "EBAY_US",
+    format: "FIXED_PRICE",
+    availableQuantity: 1,
+    categoryId: "175757",
+    merchantLocationKey: "WAREHOUSE_1",
+    listingPolicies: {
+      fulfillmentPolicyId: "f1",
+      paymentPolicyId: "p1",
+      returnPolicyId: "r1",
+    },
+    pricingSummary: { price: { value: "24.99", currency: "USD" } },
+  }
+  async function run({ inventoryBody = inventory, offerBody = offer } = {}) {
+    const calls = []
+    const fetchImpl = async (url, init = {}) => {
+      const parsed = new URL(url)
+      const method = init.method ?? "GET"
+      calls.push({ pathname: parsed.pathname, method })
+      if (parsed.pathname.endsWith("/oauth2/token")) {
+        return new Response(JSON.stringify({ access_token: "access" }), { status: 200 })
+      }
+      if (parsed.pathname === "/commerce/identity/v1/user/") {
+        return new Response(JSON.stringify({ userId: "production-user-1", status: "CONFIRMED" }), { status: 200 })
+      }
+      if (parsed.pathname.includes("/inventory_item/") && method === "GET") {
+        return new Response(JSON.stringify(inventoryBody), { status: 200 })
+      }
+      if (parsed.pathname === "/sell/inventory/v1/offer/offer-exact" && method === "GET") {
+        return new Response(JSON.stringify({
+          ...offerBody,
+          offerId: "offer-exact",
+          status: "UNPUBLISHED",
+        }), { status: 200 })
+      }
+      if (method === "POST" && parsed.pathname.endsWith("/publish")) {
+        return new Response(JSON.stringify({ listingId: "123456789012" }), { status: 200 })
+      }
+      throw new Error(`unexpected ${method} ${parsed.pathname}`)
+    }
+    const result = await module.publishEbayOfferOnce({
+      offerId: "offer-exact",
+      expectedSku: RESERVED_SKU,
+      expectedInventoryItemPayload: inventory,
+      expectedOfferPayload: offer,
+      previewHash: "d".repeat(64),
+      publicationControlId: "77777777-7777-4777-8777-777777777777",
+      confirmPublish: "PUBLICAR LISTING EN EBAY",
+    }, fetchImpl)
+    return { result, calls }
+  }
+  try {
+    const inventoryMismatch = await run({
+      inventoryBody: { ...inventory, condition: "USED_GOOD" },
+    })
+    assert.equal(inventoryMismatch.result.ok, false)
+    assert.equal(inventoryMismatch.result.publishRequestSent, false)
+    assert.equal(inventoryMismatch.result.blocker,
+      "EBAY_FINAL_PUBLICATION_INVENTORY_EXACT_READBACK_MISMATCH")
+    assert.equal(inventoryMismatch.calls.some((call) =>
+      call.method === "POST" && call.pathname.endsWith("/publish")), false)
+
+    const offerMismatch = await run({
+      offerBody: {
+        ...offer,
+        pricingSummary: { price: { value: "29.99", currency: "USD" } },
+      },
+    })
+    assert.equal(offerMismatch.result.ok, false)
+    assert.equal(offerMismatch.result.publishRequestSent, false)
+    assert.equal(offerMismatch.result.blocker,
+      "EBAY_OFFER_EXACT_PAYLOAD_MISMATCH")
+    assert.equal(offerMismatch.calls.some((call) =>
+      call.method === "POST" && call.pathname.endsWith("/publish")), false)
+
+    const publishedFetch = async (url) => {
+      const parsed = new URL(url)
+      if (parsed.pathname.endsWith("/oauth2/token")) {
+        return new Response(JSON.stringify({ access_token: "access" }), { status: 200 })
+      }
+      if (parsed.pathname === "/commerce/identity/v1/user/") {
+        return new Response(JSON.stringify({ userId: "production-user-1", status: "CONFIRMED" }), { status: 200 })
+      }
+      if (parsed.pathname === "/sell/inventory/v1/offer/offer-exact") {
+        return new Response(JSON.stringify({
+          ...offer,
+          offerId: "offer-exact",
+          status: "PUBLISHED",
+          listing: { listingId: "123456789012" },
+        }), { status: 200 })
+      }
+      throw new Error(`unexpected GET ${parsed.pathname}`)
+    }
+    const activeExact = await module.verifyEbayPublishedOffer(
+      "offer-exact",
+      RESERVED_SKU,
+      offer,
+      publishedFetch,
+    )
+    assert.equal(activeExact.safe, true)
+    assert.equal(activeExact.payloadMatches, true)
+    const activeExpectedMismatch = structuredClone(offer)
+    activeExpectedMismatch.categoryId = "999999"
+    const activeMismatch = await module.verifyEbayPublishedOffer(
+      "offer-exact",
+      RESERVED_SKU,
+      activeExpectedMismatch,
+      publishedFetch,
+    )
+    assert.equal(activeMismatch.safe, false)
+    assert.equal(activeMismatch.payloadMatches, false)
+    assert.equal(activeMismatch.blocker,
+      "EBAY_PUBLISHED_OFFER_EXACT_PAYLOAD_MISMATCH")
   } finally {
     process.env = original
   }

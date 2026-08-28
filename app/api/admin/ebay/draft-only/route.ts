@@ -54,6 +54,14 @@ import {
   type EbayTaxonomyListingIntelligence,
 } from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import {
+  assertOneClickControlledPublicationIntentV1,
+  bindOneClickControlledPublicationIntentV1,
+  EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION,
+  EBAY_ONE_CLICK_PUBLICATION_LABEL,
+  EBAY_ONE_CLICK_PUBLICATION_SURFACE,
+  validateOneClickControlledPublicationIntentV1,
+} from "@/lib/ebay/ebay-one-click-controlled-publication-v1"
+import {
   buildEbayListingTaxonomyPreflightV1,
 } from "@/lib/ebay/ebay-listing-taxonomy-preflight-v1"
 import {
@@ -257,6 +265,53 @@ function publicationPreviewHash(value: JsonRecord) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex")
 }
 
+function hasOneClickControlledPublicationIntent(payload: JsonRecord) {
+  return Object.keys(record(payload.controlledPublicationIntent)).length > 0
+}
+
+function oneClickPublicationRequirements(enabled: boolean) {
+  return enabled ? {
+    humanAuthorizationCount: 1,
+    exactHumanIntent: EBAY_ONE_CLICK_PUBLICATION_LABEL,
+    authorizationSurface: EBAY_ONE_CLICK_PUBLICATION_SURFACE,
+    secondHumanAuthorizationRequired: false,
+    finalMachinePreflightRequired: true,
+    unpublishedOfferMachineValidationRequired: true,
+    activeReadbackRequired: true,
+  } : {
+    humanAuthorizationCount: 2,
+    secondHumanAuthorizationRequired: true,
+  }
+}
+
+async function verifyExactUnpublishedPublicationState(input: {
+  approvedPayload: JsonRecord
+  offerId: string
+  sku: string
+}) {
+  const inventoryItemPayload = record(input.approvedPayload.inventoryItemPayload)
+  const offerPayload = record(input.approvedPayload.offerPayload)
+  const [inventory, offer] = await Promise.all([
+    verifyEbayDraftInventoryItem(input.sku, inventoryItemPayload),
+    verifyEbayUnpublishedOffer(
+      input.offerId,
+      input.sku,
+      "EBAY_US",
+      offerPayload,
+    ),
+  ])
+  if (!inventory.safe) {
+    throw new Error(
+      "EBAY_FINAL_PUBLICATION_INVENTORY_EXACT_READBACK_MISMATCH",
+    )
+  }
+  if (!offer.safe) {
+    throw new Error(offer.blocker ||
+      "EBAY_FINAL_PUBLICATION_OFFER_EXACT_READBACK_MISMATCH")
+  }
+  return { inventory, offer }
+}
+
 function buildFinalPublicationPreview(
   approval: JsonRecord,
   execution: JsonRecord,
@@ -435,6 +490,15 @@ async function loadFinalPublicationContext(
           smartStockingContext.publishWithStockguardContract,
         )
     ) throw new Error("EBAY_FINAL_PUBLICATION_SMART_STOCKING_BINDING_CHANGED")
+    if (hasOneClickControlledPublicationIntent(approvedPayload)) {
+      assertOneClickControlledPublicationIntentV1({
+        approvedPayload,
+        actorUserId: actor,
+        listingPackage: listingPackage as JsonRecord,
+        opportunity: effectiveOpportunity,
+        accountFingerprint: runtime.accountFingerprint,
+      })
+    }
   }
   return {
     execution: execution as JsonRecord,
@@ -930,6 +994,18 @@ export async function GET(req: Request) {
       listingPackageId: packageId,
       actorId: auth.actor,
     })
+    const oneClickEligible = target === "PRODUCTION"
+      && Boolean(context.smartStockingPublicationAuthorization)
+    const oneClickValidation = latestApproval
+      && hasOneClickControlledPublicationIntent(approvedPayload)
+      ? validateOneClickControlledPublicationIntentV1({
+        approvedPayload,
+        actorUserId: auth.actor,
+        listingPackage: context.listingPackage,
+        opportunity: context.opportunity,
+        accountFingerprint: runtime.accountFingerprint,
+      })
+      : null
     const { data: ledger, error: ledgerError } = latestApproval?.id
       ? await supabase
         .from("ebay_draft_only_execution_ledger")
@@ -960,8 +1036,19 @@ export async function GET(req: Request) {
       execution: ledger,
       publication,
       runtime,
+      controlledPublication: {
+        eligible: oneClickEligible,
+        authorized: oneClickValidation?.valid === true,
+        blocker: oneClickValidation?.blocker ?? null,
+        version: oneClickValidation?.valid
+          ? EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION
+          : null,
+        ...oneClickPublicationRequirements(oneClickEligible),
+      },
       approvalRequirements: {
         exactPhrase: ebayDraftOnlyApprovalPhrase(target),
+        oneClickExactIntent: EBAY_ONE_CLICK_PUBLICATION_LABEL,
+        singleHumanPublicationEligible: oneClickEligible,
         target,
         productionAccountConfirmationRequired: target === "PRODUCTION",
         oneTime: true,
@@ -1551,8 +1638,20 @@ async function previewDraft(body: JsonRecord, actor: string) {
     readiness,
     taxonomy: liveTaxonomy,
     runtime,
+    controlledPublication: {
+      eligible: target === "PRODUCTION"
+        && Boolean(context.smartStockingPublicationAuthorization),
+      authorized: false,
+      blocker: null,
+      version: EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION,
+      ...oneClickPublicationRequirements(target === "PRODUCTION"
+        && Boolean(context.smartStockingPublicationAuthorization)),
+    },
     approvalRequirements: {
       exactPhrase: ebayDraftOnlyApprovalPhrase(target),
+      oneClickExactIntent: EBAY_ONE_CLICK_PUBLICATION_LABEL,
+      singleHumanPublicationEligible: target === "PRODUCTION"
+        && Boolean(context.smartStockingPublicationAuthorization),
       target,
       productionAccountConfirmationRequired: target === "PRODUCTION",
     },
@@ -1567,14 +1666,30 @@ async function approveDraft(body: JsonRecord, actor: string) {
   const runtime = ebayDraftOnlyRuntimeStatus()
   const target = runtime.target
   const fingerprint = runtime.accountFingerprint || ""
-  if (
-    text(body.confirmation) !== ebayDraftOnlyApprovalPhrase(target)
-    || text(body.confirmTarget) !== target
-    || body.confirmUnpublishedOnly !== true
-    || body.confirmNoPublish !== true
-    || body.confirmImagesAuthorized !== true
-    || (target === "PRODUCTION" && body.confirmProductionAccount !== true)
-  ) return jsonError(new Error("EBAY_DRAFT_ONLY_EXPLICIT_APPROVAL_REQUIRED"), 409)
+  const oneClickRequested = text(body.authorizationMode) ===
+    EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION
+  const explicitApprovalValid = oneClickRequested
+    ? target === "PRODUCTION"
+      && text(body.confirmation) === EBAY_ONE_CLICK_PUBLICATION_LABEL
+      && text(body.confirmTarget) === "PRODUCTION"
+      && body.confirmControlledPublication === true
+      && body.confirmExactPayload === true
+      && body.confirmProductionAccount === true
+      && text(body.authorizationSurface) ===
+        EBAY_ONE_CLICK_PUBLICATION_SURFACE
+    : text(body.confirmation) === ebayDraftOnlyApprovalPhrase(target)
+      && text(body.confirmTarget) === target
+      && body.confirmUnpublishedOnly === true
+      && body.confirmNoPublish === true
+      && body.confirmImagesAuthorized === true
+      && (target !== "PRODUCTION" || body.confirmProductionAccount === true)
+  if (!explicitApprovalValid) {
+    return jsonError(new Error(
+      oneClickRequested
+        ? "EBAY_ONE_CLICK_PUBLICATION_EXPLICIT_INTENT_REQUIRED"
+        : "EBAY_DRAFT_ONLY_EXPLICIT_APPROVAL_REQUIRED",
+    ), 409)
+  }
   const requestedConfiguration = record(body.draftConfiguration)
   const supabase = getSupabaseAdminClient()
   const context = await loadPackageContext(
@@ -1585,6 +1700,11 @@ async function approveDraft(body: JsonRecord, actor: string) {
     target,
     fingerprint,
   )
+  if (oneClickRequested && !context.smartStockingPublicationAuthorization) {
+    return jsonError(new Error(
+      "EBAY_ONE_CLICK_PUBLICATION_SMART_STOCKING_AUTHORITY_REQUIRED",
+    ), 409)
+  }
   const visualPublicationGate = await loadFinalListingReviewPublicationGate({
     supabase,
     listingPackageId: packageId,
@@ -1602,7 +1722,7 @@ async function approveDraft(body: JsonRecord, actor: string) {
       context.opportunity,
       actor,
       now,
-      true,
+      oneClickRequested || body.confirmImagesAuthorized === true,
       liveTaxonomy,
     ),
     context,
@@ -1614,14 +1734,22 @@ async function approveDraft(body: JsonRecord, actor: string) {
     accountFingerprint: fingerprint,
   })
   if (!readiness.ready) return jsonError(new Error("EBAY_DRAFT_ONLY_BLOCKED"), 409, readiness.blockers)
+  const approvedPayload = oneClickRequested
+    ? bindOneClickControlledPublicationIntentV1({
+      approvedPayload: readiness.payload,
+      actorUserId: actor,
+      listingPackage: context.listingPackage,
+    })
+    : readiness.payload
+  const approvedPayloadHash = hashEbayDraftOnlyPayload(approvedPayload)
   const { data: approval, error } = await supabase
     .rpc("approve_ebay_draft_only_package", {
       p_listing_package_id: packageId,
       p_opportunity_id: context.listingPackage.opportunity_id,
       p_candidate_key: context.listingPackage.candidate_key,
       p_actor_user_id: actor,
-      p_payload_hash: readiness.payloadHash,
-      p_approved_payload: readiness.payload,
+      p_payload_hash: approvedPayloadHash,
+      p_approved_payload: approvedPayload,
       p_idempotency_key: approvalKey,
       p_expires_at: approvalExpiresAt(now),
       p_target: target,
@@ -1634,8 +1762,21 @@ async function approveDraft(body: JsonRecord, actor: string) {
       .select("id,status,target,payload_hash,approved_at,expires_at,actor_user_id")
       .eq("approval_idempotency_key", approvalKey)
       .maybeSingle()
-    if (existing?.actor_user_id === actor && existing.payload_hash === readiness.payloadHash) {
-      return NextResponse.json({ success: true, approval: existing, idempotentReplay: true, safety: { canPublish: false, target } })
+    if (existing?.actor_user_id === actor && existing.payload_hash === approvedPayloadHash) {
+      return NextResponse.json({
+        success: true,
+        approval: existing,
+        idempotentReplay: true,
+        controlledPublication: {
+          eligible: oneClickRequested,
+          authorized: oneClickRequested,
+          version: oneClickRequested
+            ? EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION
+            : null,
+          ...oneClickPublicationRequirements(oneClickRequested),
+        },
+        safety: { canPublish: false, target },
+      })
     }
     return jsonError(new Error("EBAY_DRAFT_ONLY_ACTIVE_APPROVAL_EXISTS"), 409)
   }
@@ -1648,8 +1789,22 @@ async function approveDraft(body: JsonRecord, actor: string) {
       approved_at: record(approval).approved_at,
       expires_at: record(approval).expires_at,
     },
-    readiness: { ready: true, blockers: [], payloadHash: readiness.payloadHash },
-    safety: { approvedForOneUnpublishedDraft: true, canPublish: false, target },
+    readiness: { ready: true, blockers: [], payloadHash: approvedPayloadHash },
+    controlledPublication: {
+      eligible: oneClickRequested,
+      authorized: oneClickRequested,
+      version: oneClickRequested
+        ? EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION
+        : null,
+      ...oneClickPublicationRequirements(oneClickRequested),
+    },
+    safety: {
+      approvedForOneUnpublishedDraft: true,
+      machineContinuationToOneShotPublishAuthorized: oneClickRequested,
+      finalMachinePreflightRequired: true,
+      canPublish: false,
+      target,
+    },
   }, { status: 201 })
 }
 
@@ -1713,6 +1868,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
         text(existing.offer_id),
         approvedSku,
         text(approvedOfferPayload.marketplaceId),
+        approvedOfferPayload,
       )
       : await discoverEbayUnpublishedOfferBySku(approvedSku, approvedOfferPayload)
     const quarantinedOfferId = sanitizeEbayOfferId(verification.offerId)
@@ -2044,9 +2200,28 @@ async function executeDraft(body: JsonRecord, actor: string) {
     context.sameDayPilotAuthorization,
     context.smartStockingPublicationAuthorization,
   )
-  const currentPayload = Object.keys(v3Binding).length
+  const currentBasePayload = Object.keys(v3Binding).length
     ? withV3FinalSetAuthorization(rebuiltPayload, v3Binding)
     : rebuiltPayload
+  const oneClickIntentPresent = hasOneClickControlledPublicationIntent(
+    approvedPayload,
+  )
+  if (oneClickIntentPresent) {
+    assertOneClickControlledPublicationIntentV1({
+      approvedPayload,
+      actorUserId: actor,
+      listingPackage: context.listingPackage,
+      opportunity: context.opportunity,
+      accountFingerprint: fingerprint,
+    })
+  }
+  const currentPayload = oneClickIntentPresent
+    ? bindOneClickControlledPublicationIntentV1({
+      approvedPayload: currentBasePayload,
+      actorUserId: actor,
+      listingPackage: context.listingPackage,
+    })
+    : currentBasePayload
   const currentHash = hashEbayDraftOnlyPayload(currentPayload)
   if (!readiness.ready || currentHash !== approval.payload_hash) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_REAPPROVAL_REQUIRED"), 409, [
@@ -2311,6 +2486,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
     offerId,
     sku,
     text(record(approvedPayload.offerPayload).marketplaceId),
+    record(approvedPayload.offerPayload),
   )
   if (!offerVerification.safe) {
     const { data: quarantinedOffer, error: quarantinedOfferError } = await supabase.from("ebay_draft_only_execution_ledger").update({
@@ -2403,15 +2579,16 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
     context.execution,
     visualPublicationGate,
   )
-  await revalidateFinalPublicationDependencies(record(context.approval.approved_payload))
-  const offerVerification = await verifyEbayUnpublishedOffer(
-    built.offerId,
-    built.sku,
-    "EBAY_US",
+  const approvedPayload = record(context.approval.approved_payload)
+  const oneClickAuthorized = hasOneClickControlledPublicationIntent(
+    approvedPayload,
   )
-  if (!offerVerification.safe) {
-    return jsonError(new Error(offerVerification.blocker), 409)
-  }
+  await revalidateFinalPublicationDependencies(approvedPayload)
+  await verifyExactUnpublishedPublicationState({
+    approvedPayload,
+    offerId: built.offerId,
+    sku: built.sku,
+  })
   await revalidateFinalPublicationSource(supabase, context)
   const { data: publication, error } = await supabase
     .rpc("prepare_ebay_authorized_listing_publication", {
@@ -2440,12 +2617,15 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
       publishOfferCallsAllowed: 1,
       promotionsAllowed: false,
       volumePricingAllowed: false,
+      ...oneClickPublicationRequirements(oneClickAuthorized),
     },
     safety: {
       ebayWriteUsed: false,
       offerStatus: "UNPUBLISHED",
       previewPersisted: true,
-      canPublishOnlyWithExactConfirmation: true,
+      canPublishOnlyWithExactConfirmation: !oneClickAuthorized,
+      machineContinuationAuthorized: oneClickAuthorized,
+      exactInventoryAndOfferReadbackMatched: true,
     },
   }, { status: 201 })
 }
@@ -2542,6 +2722,29 @@ async function completeFinalPublicationMonitor(input: {
   context: Awaited<ReturnType<typeof loadFinalPublicationContext>>
   listingId: string
 }) {
+  const approvedPayload = record(input.context.approval.approved_payload)
+  const expectedInventory = record(approvedPayload.inventoryItemPayload)
+  const expectedOffer = record(approvedPayload.offerPayload)
+  const [inventoryReadback, publishedOfferReadback] = await Promise.all([
+    verifyEbayDraftInventoryItem(text(input.publication.sku), expectedInventory),
+    verifyEbayPublishedOffer(
+      text(input.publication.offer_id),
+      text(input.publication.sku),
+      expectedOffer,
+    ),
+  ])
+  if (
+    !inventoryReadback.safe
+    || !publishedOfferReadback.safe
+    || publishedOfferReadback.listingId !== input.listingId
+  ) {
+    return compensateFinalPublicationAttachmentFailure({
+      ...input,
+      failureCode: !inventoryReadback.safe
+        ? "EBAY_FINAL_PUBLICATION_ACTIVE_INVENTORY_READBACK_MISMATCH"
+        : "EBAY_FINAL_PUBLICATION_ACTIVE_OFFER_READBACK_MISMATCH",
+    })
+  }
   const registrationResult = await registerManualEbayListing(input.supabase, {
     ebayItemId: input.listingId,
     ebayUrl: `https://www.ebay.com/itm/${input.listingId}`,
@@ -2552,14 +2755,38 @@ async function completeFinalPublicationMonitor(input: {
     safeDefaults: {},
   }, input.actor)
   const verification = registrationResult.verification
+  const expectedProduct = record(expectedInventory.product)
+  const expectedPrice = record(record(expectedOffer.pricingSummary).price)
+  const expectedPolicies = record(expectedOffer.listingPolicies)
+  const activeSnapshot = record(verification.connectorListingSnapshot)
+  const activeDefaults = record(verification.learnedSafeDefaults)
+  const exactActiveReadback = verification.status === "verified"
+    && text(activeSnapshot.title) === text(expectedProduct.title)
+    && Number(activeSnapshot.availableQuantity) ===
+      Number(expectedOffer.availableQuantity)
+    && Math.abs(Number(activeSnapshot.price) - Number(expectedPrice.value))
+      < 0.005
+    && text(activeSnapshot.currency) === text(expectedPrice.currency)
+    && text(activeDefaults.categoryId) === text(expectedOffer.categoryId)
+    && text(activeDefaults.fulfillmentPolicyId) ===
+      text(expectedPolicies.fulfillmentPolicyId)
+    && text(activeDefaults.paymentPolicyId) ===
+      text(expectedPolicies.paymentPolicyId)
+    && text(activeDefaults.returnPolicyId) ===
+      text(expectedPolicies.returnPolicyId)
   if (
     verification.status !== "verified"
     || verification.connectorListingStatus !== "active"
     || !uuid(verification.connectorListingId)
+    || !exactActiveReadback
   ) {
     return compensateFinalPublicationAttachmentFailure({
       ...input,
-      failureCode: "EBAY_FINAL_PUBLICATION_ACTIVE_ATTACHMENT_FAILED",
+      failureCode: verification.status === "verified"
+        && verification.connectorListingStatus === "active"
+        && uuid(verification.connectorListingId)
+        ? "EBAY_FINAL_PUBLICATION_ACTIVE_READBACK_MISMATCH"
+        : "EBAY_FINAL_PUBLICATION_ACTIVE_ATTACHMENT_FAILED",
     })
   }
   const registration = record(registrationResult.registration)
@@ -2667,6 +2894,7 @@ async function completeFinalPublicationMonitor(input: {
       publishOfferCalledAgain: false,
       activeOwnershipVerified: true,
       productIdentityVerified: true,
+      exactActiveReadbackMatched: true,
     },
   })
 }
@@ -2674,13 +2902,11 @@ async function completeFinalPublicationMonitor(input: {
 async function publishFinalPublication(body: JsonRecord, actor: string) {
   const publicationId = uuid(body.publicationId)
   const executionKey = idempotencyKey(body.idempotencyKey)
-  if (
-    !publicationId
-    || !executionKey
-    || body.confirmPublish !== EBAY_FINAL_PUBLISH_CONFIRMATION
-    || body.confirmFinalPreview !== true
-    || body.confirmProductionAccount !== true
-  ) return jsonError(new Error("EBAY_FINAL_PUBLISH_EXPLICIT_CONFIRMATION_REQUIRED"), 409)
+  if (!publicationId || !executionKey) {
+    return jsonError(new Error(
+      "EBAY_FINAL_PUBLISH_EXPLICIT_CONFIRMATION_REQUIRED",
+    ), 409)
+  }
   const supabase = getSupabaseAdminClient()
   const { data: current, error: currentError } = await supabase
     .from("ebay_authorized_listing_publications")
@@ -2719,7 +2945,34 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     text(current.draft_execution_id),
     actor,
   )
-  finalPublicationStockguardContract(record(context.approval.approved_payload))
+  const approvedPayload = record(context.approval.approved_payload)
+  const oneClickIntentPresent = hasOneClickControlledPublicationIntent(
+    approvedPayload,
+  )
+  const oneClickIntent = oneClickIntentPresent
+    ? assertOneClickControlledPublicationIntentV1({
+      approvedPayload,
+      actorUserId: actor,
+      listingPackage: context.listingPackage,
+      opportunity: context.opportunity,
+      accountFingerprint: context.runtime.accountFingerprint,
+    })
+    : null
+  const oneClickRequestValid = Boolean(oneClickIntent)
+    && text(body.authorizationSurface) === EBAY_ONE_CLICK_PUBLICATION_SURFACE
+  const legacySecondAuthorizationValid = !oneClickIntentPresent
+    && body.confirmPublish === EBAY_FINAL_PUBLISH_CONFIRMATION
+    && body.confirmFinalPreview === true
+    && body.confirmProductionAccount === true
+  if (!oneClickRequestValid && !legacySecondAuthorizationValid) {
+    return jsonError(new Error(
+      oneClickIntentPresent
+        ? "EBAY_ONE_CLICK_PUBLICATION_MACHINE_CONTINUATION_INVALID"
+        : "EBAY_FINAL_PUBLISH_EXPLICIT_CONFIRMATION_REQUIRED",
+    ), 409)
+  }
+  const machinePublishConfirmation = EBAY_FINAL_PUBLISH_CONFIRMATION
+  finalPublicationStockguardContract(approvedPayload)
   const built = buildFinalPublicationPreview(
     context.approval,
     context.execution,
@@ -2728,9 +2981,12 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
   if (built.previewHash !== current.preview_hash) {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_PREVIEW_CHANGED"), 409)
   }
-  await revalidateFinalPublicationDependencies(record(context.approval.approved_payload))
-  const unpublished = await verifyEbayUnpublishedOffer(built.offerId, built.sku, "EBAY_US")
-  if (!unpublished.safe) return jsonError(new Error(unpublished.blocker), 409)
+  await revalidateFinalPublicationDependencies(approvedPayload)
+  await verifyExactUnpublishedPublicationState({
+    approvedPayload,
+    offerId: built.offerId,
+    sku: built.sku,
+  })
   await revalidateFinalPublicationSource(supabase, context)
   const { data: refreshed, error: refreshError } = await supabase
     .rpc("prepare_ebay_authorized_listing_publication", {
@@ -2762,7 +3018,7 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
       p_actor_user_id: actor,
       p_idempotency_key: executionKey,
       p_preview_hash: built.previewHash,
-      p_confirm_publish: text(body.confirmPublish),
+      p_confirm_publish: machinePublishConfirmation,
       p_claim_token: claimToken,
     })
     .single()
@@ -2779,9 +3035,13 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
   const publishResult = await publishEbayOfferOnce({
     offerId: built.offerId,
     expectedSku: built.sku,
+    expectedInventoryItemPayload: record(
+      approvedPayload.inventoryItemPayload,
+    ),
+    expectedOfferPayload: record(approvedPayload.offerPayload),
     previewHash: built.previewHash,
     publicationControlId: publicationId,
-    confirmPublish: text(body.confirmPublish),
+    confirmPublish: machinePublishConfirmation,
   })
   if (!publishResult.ok || !publishResult.listingId) {
     await supabase.rpc("fail_ebay_authorized_listing_publication", {
@@ -2937,6 +3197,7 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
       built.offerId,
       built.sku,
       "EBAY_US",
+      record(record(context.approval.approved_payload).offerPayload),
     )
     if (!unpublished.safe) {
       return jsonError(
@@ -3020,6 +3281,7 @@ async function reconcileFinalPublication(body: JsonRecord, actor: string) {
     const verification = await verifyEbayPublishedOffer(
       text(publication.offer_id),
       text(publication.sku),
+      record(record(context.approval.approved_payload).offerPayload),
     )
     if (!verification.safe || !verification.listingId) {
       return jsonError(new Error(verification.blocker), 503)

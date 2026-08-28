@@ -1203,6 +1203,7 @@ async function verifyOfferWithToken(
   offerId: string,
   expectedSku: string,
   expectedMarketplaceId: string,
+  expectedPayload: JsonRecord | null,
   fetchImpl: typeof fetch,
 ) {
   const normalizedOfferId = sanitizeEbayOfferId(offerId)
@@ -1247,10 +1248,13 @@ async function verifyOfferWithToken(
   const identityMatches = returnedSku === normalizedSku
     && returnedMarketplaceId === normalizedMarketplaceId
     && offerIdMatches
+  const payloadMatches = !expectedPayload
+    || containsExpected(result.body, expectedPayload)
   const safe = result.ok
     && status === "UNPUBLISHED"
     && !listingPresent
     && identityMatches
+    && payloadMatches
   const publicationIncident = listingPresent || status === "PUBLISHED"
   return {
     safe,
@@ -1260,13 +1264,16 @@ async function verifyOfferWithToken(
     offerId: normalizedOfferId,
     sku: returnedSku,
     marketplaceId: returnedMarketplaceId,
+    payloadMatches,
     blocker: safe
       ? ""
       : publicationIncident
         ? "EBAY_OFFER_PUBLICATION_SAFETY_INCIDENT"
-        : identityMatches
+        : identityMatches && payloadMatches
           ? "EBAY_OFFER_POST_CREATE_VERIFICATION_FAILED"
-          : "EBAY_OFFER_IDENTITY_MISMATCH",
+          : !identityMatches
+            ? "EBAY_OFFER_IDENTITY_MISMATCH"
+            : "EBAY_OFFER_EXACT_PAYLOAD_MISMATCH",
   }
 }
 
@@ -1274,17 +1281,25 @@ export async function verifyEbayUnpublishedOffer(
   offerId: string,
   expectedSku: string,
   expectedMarketplaceId = "EBAY_US",
+  expectedPayloadOrFetch: JsonRecord | typeof fetch | null = null,
   fetchImpl: typeof fetch = fetch,
 ) {
+  const expectedPayload = typeof expectedPayloadOrFetch === "function"
+    ? null
+    : expectedPayloadOrFetch
+  const effectiveFetch = typeof expectedPayloadOrFetch === "function"
+    ? expectedPayloadOrFetch
+    : fetchImpl
   const config = getEbayDraftOnlyGatewayConfig()
-  const token = await accessToken(config, fetchImpl, false)
+  const token = await accessToken(config, effectiveFetch, false)
   return verifyOfferWithToken(
     config,
     token,
     offerId,
     expectedSku,
     expectedMarketplaceId,
-    fetchImpl,
+    expectedPayload,
+    effectiveFetch,
   )
 }
 
@@ -1413,6 +1428,7 @@ export async function discoverEbayUnpublishedOfferBySku(
     offerId,
     normalizedSku,
     "EBAY_US",
+    expectedOfferPayload,
     fetchImpl,
   )
 }
@@ -1437,6 +1453,7 @@ async function verifyPublishedOfferWithToken(
   token: string,
   offerId: string,
   expectedSku: string,
+  expectedPayload: JsonRecord | null,
   fetchImpl: typeof fetch,
 ) {
   const normalizedOfferId = sanitizeEbayOfferId(offerId)
@@ -1471,11 +1488,14 @@ async function verifyPublishedOfferWithToken(
     ? result.body.marketplaceId.trim().toUpperCase()
     : ""
   const listingId = publishedListingId(result.body)
+  const payloadMatches = !expectedPayload
+    || containsExpected(result.body, expectedPayload)
   const safe = result.ok
     && status === "PUBLISHED"
     && sku === normalizedSku
     && marketplaceId === "EBAY_US"
     && Boolean(listingId)
+    && payloadMatches
   return {
     safe,
     // Inventory API PUBLISHED is reconciled here. Trading GetItem performs the
@@ -1487,8 +1507,11 @@ async function verifyPublishedOfferWithToken(
     listingId,
     sku,
     marketplaceId,
+    payloadMatches,
     blocker: safe
       ? ""
+      : !payloadMatches
+        ? "EBAY_PUBLISHED_OFFER_EXACT_PAYLOAD_MISMATCH"
       : status === "UNPUBLISHED"
         ? "EBAY_OFFER_STILL_UNPUBLISHED"
         : "EBAY_PUBLISHED_OFFER_VERIFICATION_PENDING",
@@ -1498,16 +1521,32 @@ async function verifyPublishedOfferWithToken(
 export async function verifyEbayPublishedOffer(
   offerId: string,
   expectedSku: string,
+  expectedPayloadOrFetch: JsonRecord | typeof fetch | null = null,
   fetchImpl: typeof fetch = fetch,
 ) {
+  const expectedPayload = typeof expectedPayloadOrFetch === "function"
+    ? null
+    : expectedPayloadOrFetch
+  const effectiveFetch = typeof expectedPayloadOrFetch === "function"
+    ? expectedPayloadOrFetch
+    : fetchImpl
   const config = getEbayDraftOnlyGatewayConfig()
-  const token = await accessToken(config, fetchImpl, false)
-  return verifyPublishedOfferWithToken(config, token, offerId, expectedSku, fetchImpl)
+  const token = await accessToken(config, effectiveFetch, false)
+  return verifyPublishedOfferWithToken(
+    config,
+    token,
+    offerId,
+    expectedSku,
+    expectedPayload,
+    effectiveFetch,
+  )
 }
 
 export async function publishEbayOfferOnce(input: {
   offerId: string
   expectedSku: string
+  expectedInventoryItemPayload?: JsonRecord
+  expectedOfferPayload?: JsonRecord
   previewHash: string
   publicationControlId: string
   confirmPublish: string
@@ -1525,12 +1564,33 @@ export async function publishEbayOfferOnce(input: {
   ) throw new Error("EBAY_FINAL_PUBLISH_AUTHORIZATION_INVALID")
 
   const token = await accessToken(config, fetchImpl)
+  const inventory = input.expectedInventoryItemPayload
+    ? await verifyInventoryItemWithToken(
+      config,
+      token,
+      expectedSku,
+      input.expectedInventoryItemPayload,
+      fetchImpl,
+    )
+    : null
+  if (inventory && !inventory.safe) {
+    return {
+      ok: false,
+      status: inventory.httpStatus,
+      listingId: null,
+      outcomeKnown: true,
+      reconciled: false,
+      publishRequestSent: false,
+      blocker: "EBAY_FINAL_PUBLICATION_INVENTORY_EXACT_READBACK_MISMATCH",
+    }
+  }
   const unpublished = await verifyOfferWithToken(
     config,
     token,
     offerId,
     expectedSku,
     "EBAY_US",
+    input.expectedOfferPayload ?? null,
     fetchImpl,
   )
   if (!unpublished.safe) {
@@ -1539,6 +1599,7 @@ export async function publishEbayOfferOnce(input: {
       token,
       offerId,
       expectedSku,
+      input.expectedOfferPayload ?? null,
       fetchImpl,
     )
     if (alreadyPublished.safe) {
@@ -1619,6 +1680,7 @@ export async function publishEbayOfferOnce(input: {
     token,
     offerId,
     expectedSku,
+    input.expectedOfferPayload ?? null,
     fetchImpl,
   )
   for (let attempt = 1; attempt < 3 && !verification.safe; attempt += 1) {
@@ -1628,6 +1690,7 @@ export async function publishEbayOfferOnce(input: {
       token,
       offerId,
       expectedSku,
+      input.expectedOfferPayload ?? null,
       fetchImpl,
     )
   }
