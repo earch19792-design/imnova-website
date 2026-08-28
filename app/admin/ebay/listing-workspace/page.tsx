@@ -4299,7 +4299,7 @@ function ListingWorkspacePageContent() {
                 <div className="rounded-xl bg-black/25 p-2"><span className="text-white/50">Margen neto</span><strong className="mt-1 block">{percent(form.pricing.estimatedNetMarginPercent)}</strong></div>
                 <div className="rounded-xl bg-black/25 p-2"><span className="text-white/50">ROI estimado</span><strong className="mt-1 block">{percent(form.pricing.estimatedRoiPercent)}</strong></div>
               </div>
-              {finalSmartStockingEconomics && <p className="mt-3 rounded-xl border border-cyan-200/20 bg-black/20 p-3 text-xs leading-5 text-cyan-50">El envío Luna de $9.99 es un costo proveedor certificado para economía. No configura ni implica automáticamente el envío que verá o pagará el comprador en eBay.</p>}
+              {finalSmartStockingEconomics && <p className="mt-3 rounded-xl border border-cyan-200/20 bg-black/20 p-3 text-xs leading-5 text-cyan-50">El envío Luna de {money(form.pricing.estimatedOutboundShipping)} es el costo proveedor durable usado por esta economía. No configura ni implica automáticamente el envío que verá o pagará el comprador en eBay.</p>}
               <div className={`mt-3 rounded-xl border p-3 text-xs leading-5 ${form.pricing.passesProfitGate === true ? "border-emerald-200/25 text-emerald-50" : form.pricing.passesProfitGate === false ? "border-rose-200/25 text-rose-50" : "border-amber-200/25 text-amber-50"}`}>
                 {form.pricing.passesProfitGate === true
                   ? "Rentabilidad mínima superada con las reservas configuradas."

@@ -60,6 +60,21 @@ function candidatePath(candidateKey: string) {
   return createHash("sha256").update(candidateKey).digest("hex").slice(0, 24)
 }
 
+export function listingPackagePreparationReadinessV1(value: unknown) {
+  const packageData = record(value)
+  const completeFields = [
+    text(packageData.title),
+    /^\d{1,12}$/.test(text(packageData.categoryId, 12)),
+    text(packageData.description),
+    Array.isArray(packageData.imageUrls) && packageData.imageUrls.some((url) =>
+      Boolean(text(url, 2_000))),
+    Number(record(packageData.pricing).targetPrice) > 0,
+  ]
+  return Math.round(
+    completeFields.filter(Boolean).length / completeFields.length * 100,
+  )
+}
+
 async function exactLunaSupplierImageContext(
   supabase: SupabaseAdmin,
   packageRow: JsonRecord,
@@ -474,7 +489,7 @@ export async function ensureAutomaticLunaSupplierImagesV1(input: Readonly<{
     p_operation: "save",
     p_package_patch: nextPackageData,
     p_status: refreshed.data.status,
-    p_readiness: refreshed.data.readiness,
+    p_readiness: listingPackagePreparationReadinessV1(nextPackageData),
     p_source_observed_at: refreshed.data.source_observed_at,
     p_expected_updated_at: refreshed.data.updated_at,
   })

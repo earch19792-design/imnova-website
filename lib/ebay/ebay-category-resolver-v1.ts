@@ -331,6 +331,18 @@ export function buildEbayCategoryResolverProductTruthV1(input: Readonly<{
     unprovenAspectEvidenceRequirements.Brand =
       "AUTHORITATIVE_PRODUCT_BRAND_EVIDENCE_REQUIRED"
   }
+  if (knownUnknownAspectNames.includes("MPN")) {
+    unprovenAspectEvidenceRequirements.MPN =
+      "AUTHORITATIVE_PRODUCT_MPN_EVIDENCE_REQUIRED"
+  }
+  if (knownUnknownAspectNames.includes("Model")) {
+    unprovenAspectEvidenceRequirements.Model =
+      "AUTHORITATIVE_PRODUCT_MODEL_EVIDENCE_REQUIRED"
+  }
+  if (knownUnknownAspectNames.includes("Color")) {
+    unprovenAspectEvidenceRequirements.Color =
+      "AUTHORITATIVE_PRODUCT_COLOR_EVIDENCE_REQUIRED"
+  }
   return Object.freeze({
     title,
     normalizedProductFamily: identity.normalizedProductFamily,
