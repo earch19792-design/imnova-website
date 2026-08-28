@@ -104,6 +104,18 @@ const finalMonitorClosureMigrationSource = readFileSync(
   new URL("../supabase/migrations/20260724003000_fix_final_publication_monitor_closure.sql", import.meta.url),
   "utf8",
 )
+const smartStockingImageGateMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260828000800_align_smart_stocking_prepare_image_gate_v1.sql", import.meta.url),
+  "utf8",
+)
+const smartStockingMonitorMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260828001200_align_smart_stocking_monitor_registration_v1.sql", import.meta.url),
+  "utf8",
+)
+const compensatedPublicationRecoveryMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260828001500_recover_compensated_smart_stocking_publication_v1.sql", import.meta.url),
+  "utf8",
+)
 
 async function importTypeScript(source) {
   const javascript = ts.transpileModule(source, {
@@ -466,6 +478,25 @@ test("execution reconstructs the approved server-bound StockGuard contract", () 
   assert.match(
     routeSource,
     /buildEbayDraftOnlyPayload\([\s\S]*context\.smartStockingPublicationAuthorization/,
+  )
+})
+
+test("Smart Stocking canonical images bypass only the legacy merchandising count", () => {
+  assert.match(
+    smartStockingImageGateMigrationSource,
+    /if not v_smart_stocking and \([\s\S]*jsonb_array_length\(v_images\) not in \(6, 7\)/,
+  )
+  assert.match(
+    smartStockingImageGateMigrationSource,
+    /assert_ebay_smart_stocking_canonical_images_v1/,
+  )
+  assert.match(
+    smartStockingImageGateMigrationSource,
+    /EBAY_AUTHORIZED_PUBLICATION_V3_SEVEN_APPROVED_IMAGES_REQUIRED/,
+  )
+  assert.match(
+    smartStockingImageGateMigrationSource,
+    /EBAY_AUTHORIZED_PUBLICATION_SIX_APPROVED_IMAGES_REQUIRED/,
   )
 })
 
@@ -1814,6 +1845,68 @@ test("Offer verification binds offer, SKU and marketplace; unique unknown outcom
   }
 })
 
+test("compensated publication recovery accepts only one exact unpublished offer", async () => {
+  const module = await importTypeScript(gatewaySource)
+  const original = { ...process.env }
+  Object.assign(process.env, {
+    EBAY_DRAFT_ONLY_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED: "true",
+    EBAY_DRAFT_ONLY_PRODUCTION_ALLOWED_GIT_BRANCH: "feature/draft-production",
+    VERCEL_ENV: "preview",
+    VERCEL_GIT_COMMIT_REF: "feature/draft-production",
+    EBAY_DRAFT_ONLY_TARGET: "PRODUCTION",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID: "production-client-recovery",
+    EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET: "production-secret",
+    EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN: "production-refresh",
+    EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID: "production-user-1",
+    EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET: SNAPSHOT_SECRET,
+  })
+  const offer = {
+    offerId: "offer-recovery",
+    sku: RESERVED_SKU,
+    marketplaceId: "EBAY_US",
+    status: "UNPUBLISHED",
+  }
+  const fetchFor = (offers) => async (url) => {
+    const parsed = new URL(url)
+    if (parsed.pathname.endsWith("/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: "access" }), { status: 200 })
+    }
+    if (parsed.pathname === "/commerce/identity/v1/user/") {
+      return new Response(JSON.stringify({ userId: "production-user-1" }), { status: 200 })
+    }
+    if (parsed.pathname === "/sell/inventory/v1/offer") {
+      return new Response(JSON.stringify({ offers }), { status: 200 })
+    }
+    throw new Error(`unexpected GET ${parsed.pathname}`)
+  }
+  try {
+    const safe = await module.verifyEbayCompensatedOfferRecoveryState(
+      offer.offerId, RESERVED_SKU, "366633121948", fetchFor([offer]),
+    )
+    assert.equal(safe.safe, true)
+    assert.equal(safe.publishedOfferCount, 0)
+    const published = await module.verifyEbayCompensatedOfferRecoveryState(
+      offer.offerId, RESERVED_SKU, "366633121948", fetchFor([{
+        ...offer, status: "PUBLISHED", listingId: "366633121948",
+      }]),
+    )
+    assert.equal(published.safe, false)
+    assert.equal(published.blocker,
+      "EBAY_COMPENSATED_PUBLICATION_RECOVERY_ACTIVE_OR_PUBLISHED_OFFER")
+    const duplicate = await module.verifyEbayCompensatedOfferRecoveryState(
+      offer.offerId, RESERVED_SKU, "366633121948", fetchFor([
+        offer, { ...offer, offerId: "other-offer" },
+      ]),
+    )
+    assert.equal(duplicate.safe, false)
+    assert.equal(duplicate.blocker,
+      "EBAY_COMPENSATED_PUBLICATION_RECOVERY_OFFER_AMBIGUOUS")
+  } finally {
+    process.env = original
+  }
+})
+
 test("authorized publication sends publishOffer exactly once and returns the listing ID", async () => {
   const module = await importTypeScript(gatewaySource)
   const original = { ...process.env }
@@ -2123,4 +2216,30 @@ test("published ACTIVE monitor closure uses schema-qualified pgcrypto", () => {
     routeSource,
     /if \(publication\.phase === "monitor_registered"\)[\s\S]*loadFinalListingReviewPublicationGate/,
   )
+})
+
+test("Smart Stocking monitor closure and compensated recovery stay fail closed", () => {
+  assert.match(smartStockingMonitorMigrationSource,
+    /is_ebay_smart_stocking_authorized_publication_v1/)
+  assert.match(smartStockingMonitorMigrationSource,
+    /EBAY_AUTHORIZED_PUBLICATION_ACTIVE_EVIDENCE_REQUIRED/)
+  assert.match(smartStockingMonitorMigrationSource,
+    /EBAY_AUTHORIZED_PUBLICATION_PILOT_CANDIDATE_REQUIRED/)
+  assert.match(compensatedPublicationRecoveryMigrationSource,
+    /compensatingEndVerified.*'true'/s)
+  assert.match(compensatedPublicationRecoveryMigrationSource,
+    /listing_status = 'ended'/)
+  assert.match(compensatedPublicationRecoveryMigrationSource,
+    /EBAY_COMPENSATED_PUBLICATION_ACTIVE_DUPLICATE/)
+  assert.match(compensatedPublicationRecoveryMigrationSource,
+    /publish_recovery_count = 1/)
+  assert.match(compensatedPublicationRecoveryMigrationSource,
+    /sanitized_result = sanitized_result \|\| jsonb_build_object/)
+  assert.match(compensatedPublicationRecoveryMigrationSource,
+    /MANUAL_LISTING_COMPENSATED_RELINK_FAILED/)
+  assert.match(routeSource, /verifyEbayCompensatedOfferRecoveryState/)
+  assert.match(routeSource,
+    /readManualListingFromTradingApi\(priorListingId\)/)
+  assert.match(routeSource,
+    /rearm_ebay_authorized_listing_after_compensated_monitor_failure_once/)
 })

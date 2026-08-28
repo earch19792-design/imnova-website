@@ -18,10 +18,13 @@ import {
   publishEbayOfferOnce,
   sanitizeEbayOfferId,
   verifyEbayDraftInventoryItem,
+  verifyEbayCompensatedOfferRecoveryState,
   verifyEbayPublishedOffer,
   verifyEbayUnpublishedOffer,
 } from "@/lib/ebay/ebay-draft-only-gateway"
 import { registerManualEbayListing } from "@/lib/ebay/ebay-manual-listing-service"
+import { readManualListingFromTradingApi } from
+  "@/lib/ebay/ebay-manual-listing-trading-readonly"
 import { compensatePublishedListingAttachmentFailureV1 } from
   "@/lib/ebay/ebay-commercial-improvement-action-service"
 import { saveVerifiedEbayAccountPolicyProfile } from "@/lib/ebay/ebay-account-policy-profile"
@@ -2515,12 +2518,20 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
   if (error || !publication) {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_NOT_FOUND"), 404)
   }
-  if (
-    publication.phase !== "terminal_failure"
-    || publication.publish_http_status !== 400
-    || publication.last_error_code !== "EBAY_PUBLISH_WRITE_REJECTED"
-    || publication.listing_id
-  ) {
+  const rejectedWithoutListing =
+    publication.phase === "terminal_failure" &&
+    publication.publish_http_status === 400 &&
+    publication.last_error_code === "EBAY_PUBLISH_WRITE_REJECTED" &&
+    !publication.listing_id
+  const sanitized = record(publication.sanitized_result)
+  const compensatedMonitorFailure =
+    publication.phase === "terminal_failure" &&
+    publication.last_error_code ===
+      "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED" &&
+    /^\d{9,20}$/.test(text(publication.listing_id)) &&
+    sanitized.compensatingEndVerified === true &&
+    sanitized.officialReadbackNotCurrentLive === true
+  if (!rejectedWithoutListing && !compensatedMonitorFailure) {
     return jsonError(
       new Error("EBAY_FINAL_PUBLISH_RECOVERY_NOT_ELIGIBLE"),
       409,
@@ -2555,23 +2566,65 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
   await revalidateFinalPublicationDependencies(
     record(context.approval.approved_payload),
   )
-  const unpublished = await verifyEbayUnpublishedOffer(
-    built.offerId,
-    built.sku,
-    "EBAY_US",
-  )
-  if (!unpublished.safe) {
-    return jsonError(
-      new Error(unpublished.blocker || "EBAY_OFFER_NOT_PUBLISHABLE"),
-      409,
+  if (compensatedMonitorFailure) {
+    const priorListingId = text(publication.listing_id)
+    const [offerRecovery, priorListing, activeDuplicates] = await Promise.all([
+      verifyEbayCompensatedOfferRecoveryState(
+        built.offerId,
+        built.sku,
+        priorListingId,
+      ),
+      readManualListingFromTradingApi(priorListingId),
+      supabase
+        .from("ebay_active_listings")
+        .select("id", { count: "exact", head: true })
+        .eq("account_key", context.accountKey)
+        .eq("ebay_sku", built.sku)
+        .eq("listing_status", "active"),
+    ])
+    if (
+      !offerRecovery.safe ||
+      priorListing.ownership !== "inactive" ||
+      priorListing.listingStatus?.toLowerCase() === "active" ||
+      priorListing.ebaySku !== built.sku ||
+      activeDuplicates.error ||
+      (activeDuplicates.count ?? 0) !== 0
+    ) {
+      const blocker = !offerRecovery.safe
+        ? offerRecovery.blocker
+        : priorListing.ownership !== "inactive" ||
+            priorListing.listingStatus?.toLowerCase() === "active"
+          ? "EBAY_COMPENSATED_PUBLICATION_ORIGINAL_LISTING_STILL_ACTIVE"
+          : priorListing.ebaySku !== built.sku
+            ? "EBAY_COMPENSATED_PUBLICATION_ORIGINAL_IDENTITY_MISMATCH"
+            : "EBAY_COMPENSATED_PUBLICATION_ACTIVE_DUPLICATE"
+      return jsonError(new Error(blocker), 409)
+    }
+  } else {
+    const unpublished = await verifyEbayUnpublishedOffer(
+      built.offerId,
+      built.sku,
+      "EBAY_US",
     )
+    if (!unpublished.safe) {
+      return jsonError(
+        new Error(unpublished.blocker || "EBAY_OFFER_NOT_PUBLISHABLE"),
+        409,
+      )
+    }
   }
+  const rearmRpc = compensatedMonitorFailure
+    ? "rearm_ebay_authorized_listing_after_compensated_monitor_failure_once"
+    : "rearm_ebay_authorized_listing_publication_once"
+  const expectedErrorCode = compensatedMonitorFailure
+    ? "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED"
+    : "EBAY_PUBLISH_WRITE_REJECTED"
   const { data: rearmed, error: rearmError } = await supabase
-    .rpc("rearm_ebay_authorized_listing_publication_once", {
+    .rpc(rearmRpc, {
       p_publication_id: publicationId,
       p_actor_user_id: actor,
       p_confirm_publish: text(body.confirmPublish),
-      p_expected_error_code: "EBAY_PUBLISH_WRITE_REJECTED",
+      p_expected_error_code: expectedErrorCode,
     })
     .single()
   if (rearmError || !rearmed) {
@@ -2588,6 +2641,8 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
       offerStatus: "UNPUBLISHED",
       recoveryAttemptsRemaining: 0,
       exactPreviewRevalidated: true,
+      priorCompensatedListingInactive: compensatedMonitorFailure,
+      activeDuplicateCount: 0,
     },
   })
 }

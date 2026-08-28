@@ -1288,6 +1288,76 @@ export async function verifyEbayUnpublishedOffer(
   )
 }
 
+export async function verifyEbayCompensatedOfferRecoveryState(
+  offerId: string,
+  expectedSku: string,
+  expectedEndedListingId: string,
+  fetchImpl: typeof fetch = fetch,
+) {
+  const normalizedOfferId = sanitizeEbayOfferId(offerId)
+  const normalizedSku = typeof expectedSku === "string" ? expectedSku.trim() : ""
+  const normalizedListingId = sanitizeEbayListingId(expectedEndedListingId)
+  if (
+    !normalizedOfferId || !isCanonicalEbayPackageSku(normalizedSku) ||
+    !normalizedListingId
+  ) {
+    return {
+      safe: false,
+      status: "",
+      offerId: normalizedOfferId,
+      sku: normalizedSku,
+      priorListingId: normalizedListingId,
+      publishedOfferCount: 0,
+      matchingOfferCount: 0,
+      blocker: "EBAY_COMPENSATED_PUBLICATION_RECOVERY_IDENTITY_INVALID",
+    }
+  }
+  const config = getEbayDraftOnlyGatewayConfig()
+  if (config.target !== "PRODUCTION" || !config.configured) {
+    throw new Error("EBAY_COMPENSATED_PUBLICATION_RECOVERY_RUNTIME_INVALID")
+  }
+  const token = await accessToken(config, fetchImpl, false)
+  const url = new URL("/sell/inventory/v1/offer", config.apiOrigin)
+  url.searchParams.set("sku", normalizedSku)
+  url.searchParams.set("limit", "100")
+  const result = await preflightRead(config, token, url, fetchImpl)
+  const offers = result.ok && Array.isArray(result.body.offers)
+    ? result.body.offers.map(record).filter((offer) =>
+      offer.sku === normalizedSku && offer.marketplaceId === "EBAY_US")
+    : []
+  const matching = offers.filter((offer) =>
+    sanitizeEbayOfferId(offer.offerId) === normalizedOfferId)
+  const published = offers.filter((offer) => {
+    const status = typeof offer.status === "string"
+      ? offer.status.trim().toUpperCase() : ""
+    return status === "PUBLISHED" || Boolean(publishedListingId(offer))
+  })
+  const target = matching.length === 1 ? matching[0] : {}
+  const status = typeof target.status === "string"
+    ? target.status.trim().toUpperCase() : ""
+  const targetListingId = publishedListingId(target)
+  const safe = result.ok && offers.length === 1 && matching.length === 1 &&
+    published.length === 0 && status === "UNPUBLISHED" && !targetListingId
+  return {
+    safe,
+    status,
+    offerId: normalizedOfferId,
+    sku: normalizedSku,
+    priorListingId: normalizedListingId,
+    publishedOfferCount: published.length,
+    matchingOfferCount: matching.length,
+    blocker: safe
+      ? ""
+      : !result.ok
+        ? "EBAY_COMPENSATED_PUBLICATION_RECOVERY_OFFER_READ_FAILED"
+        : published.length > 0
+          ? "EBAY_COMPENSATED_PUBLICATION_RECOVERY_ACTIVE_OR_PUBLISHED_OFFER"
+          : offers.length !== 1 || matching.length !== 1
+            ? "EBAY_COMPENSATED_PUBLICATION_RECOVERY_OFFER_AMBIGUOUS"
+            : "EBAY_COMPENSATED_PUBLICATION_RECOVERY_OFFER_NOT_UNPUBLISHED",
+  }
+}
+
 export async function discoverEbayUnpublishedOfferBySku(
   sku: string,
   expectedOfferPayload: JsonRecord,
