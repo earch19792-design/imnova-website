@@ -116,6 +116,10 @@ const compensatedPublicationRecoveryMigrationSource = readFileSync(
   new URL("../supabase/migrations/20260828001500_recover_compensated_smart_stocking_publication_v1.sql", import.meta.url),
   "utf8",
 )
+const canonicalStockQuantityGateMigrationSource = readFileSync(
+  new URL("../supabase/migrations/20260828183828_canonical_stock_quantity_gate_v1.sql", import.meta.url),
+  "utf8",
+)
 
 async function importTypeScript(source) {
   const javascript = ts.transpileModule(source, {
@@ -479,6 +483,13 @@ test("exact durable Smart Stocking authorization replaces only the legacy candid
   }
   const authorized = module.evaluateEbayDraftOnlyReadiness(input)
   assert.equal(authorized.ready, true)
+  assert.equal(input.opportunity.supplier_inventory_quantity, null)
+  assert.equal(
+    authorized.payload.inventoryItemPayload.availability
+      .shipToLocationAvailability.quantity,
+    1,
+  )
+  assert.equal(authorized.payload.offerPayload.availableQuantity, 1)
   assert.deepEqual(
     authorized.payload.compliance.smartStockingPublicationAuthorization,
     input.smartStockingPublicationAuthorization,
@@ -2508,6 +2519,46 @@ test("Production draft and final publication use separate account-bound one-shot
   assert.match(productionMigrationSource, /p_claim_token uuid/)
   assert.match(productionMigrationSource, /lease_token is distinct from p_claim_token/)
   assert.match(productionMigrationSource, /inventoryItemPayload,availability,shipToLocationAvailability,quantity.*is distinct from '1'/s)
+})
+
+test("canonical stock quantity gate admits fresh supplier-stated unknown quantity only", () => {
+  const gateBlocks = ({ quantity, canonicalStockAuthorized }) =>
+    quantity === null ? !canonicalStockAuthorized : quantity < 1
+
+  assert.equal(gateBlocks({
+    quantity: null,
+    canonicalStockAuthorized: true,
+  }), false, "fresh supplier-stated stock with unknown quantity must pass")
+  assert.equal(gateBlocks({
+    quantity: 0,
+    canonicalStockAuthorized: true,
+  }), true, "explicit authoritative zero must block")
+  for (const canonicalStockFailure of [
+    "CERTIFIED_OOS",
+    "STALE",
+    "UNKNOWN",
+    "ERROR",
+  ]) {
+    assert.equal(gateBlocks({
+      quantity: null,
+      canonicalStockAuthorized: false,
+    }), true, canonicalStockFailure)
+  }
+
+  assert.match(canonicalStockQuantityGateMigrationSource,
+    /execute replace\(v_definition, v_legacy_gate, v_canonical_gate\)/)
+  assert.match(canonicalStockQuantityGateMigrationSource,
+    /supplier_inventory_quantity is null[\s\S]*not public\.is_ebay_smart_stocking_authorized_publication_v1/)
+  assert.match(canonicalStockQuantityGateMigrationSource,
+    /supplier_inventory_quantity is not null[\s\S]*supplier_inventory_quantity < 1/)
+  assert.match(canonicalStockQuantityGateMigrationSource,
+    /coalesce\(v_opportunity\.supplier_inventory_quantity, 0\) < 1/)
+  assert.match(canonicalStockQuantityGateMigrationSource,
+    /strpos\(v_definition,[\s\S]*coalesce\(v_opportunity\.supplier_inventory_quantity, 0\) < 1'[\s\S]*> 0/)
+  assert.doesNotMatch(canonicalStockQuantityGateMigrationSource,
+    /\b(?:create table|alter table|drop table|truncate table)\b/i)
+  assert.doesNotMatch(canonicalStockQuantityGateMigrationSource,
+    /createOrReplaceInventoryItem|createOffer|publishOffer\s*\(/)
 })
 
 test("V3 final publication persists the exact seven-image authority and preserves legacy six", () => {
