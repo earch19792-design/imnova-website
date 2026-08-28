@@ -18,6 +18,8 @@ import {
 } from
   "@/lib/ebay/reference-guided-visual-review-access"
 import { canonicalEbayPackageSku } from "@/lib/ebay/ebay-sku"
+import { taxonomySnapshotMatchesContextV1 } from
+  "@/lib/ebay/ebay-listing-context-isolation-v1"
 
 type Opportunity = {
   id: string
@@ -782,12 +784,26 @@ function taxonomyAspectFromUnknown(value: unknown): EbayTaxonomyAspect | null {
 }
 
 function taxonomyFromPackage(
-  packageData: Record<string, unknown>,
+  listingPackage: ListingPackage,
+  opportunity: Opportunity,
 ): DraftState["taxonomy"] | undefined {
+  const packageData = object(listingPackage.package_data)
   const preflight = object(packageData.taxonomyPreflight)
   if (preflight.status !== "CONSULTADO"
     || preflight.officialStatus !== "AVAILABLE"
-    || preflight.source !== "EBAY_TAXONOMY_OFFICIAL_READONLY") return undefined
+    || preflight.source !== "EBAY_TAXONOMY_OFFICIAL_READONLY"
+    || listingPackage.opportunity_id !== opportunity.id
+    || listingPackage.candidate_key !== opportunity.candidate_key
+    || !taxonomySnapshotMatchesContextV1({
+      expected: {
+        marketplaceId: "EBAY_US",
+        listingPackageId: listingPackage.id,
+        opportunityId: opportunity.id,
+        candidateKey: opportunity.candidate_key,
+      },
+      taxonomyPreflight: preflight,
+      categoryId: packageData.categoryId,
+    })) return undefined
   const mapAspects = (value: unknown) => Array.isArray(value)
     ? value.map(taxonomyAspectFromUnknown)
       .filter((aspect): aspect is EbayTaxonomyAspect => Boolean(aspect))
@@ -1652,6 +1668,8 @@ function ListingWorkspacePageContent() {
   const draftRequest = useCallback(async (
     body?: Record<string, unknown>,
     packageId?: string,
+    opportunityId?: string,
+    candidateKey?: string,
   ) => {
     const { data, error: sessionError } = await supabase.auth.getSession()
     if (sessionError || !data.session) throw new Error("La sesión Admin expiró.")
@@ -1661,7 +1679,7 @@ function ListingWorkspacePageContent() {
       ? "/api/admin/ebay/account-policies"
       : body
         ? "/api/admin/ebay/draft-only"
-        : `/api/admin/ebay/draft-only?packageId=${encodeURIComponent(packageId ?? "")}`
+        : `/api/admin/ebay/draft-only?packageId=${encodeURIComponent(packageId ?? "")}&opportunityId=${encodeURIComponent(opportunityId ?? "")}&candidateKey=${encodeURIComponent(candidateKey ?? "")}`
     const response = await fetch(endpoint, {
       method: body ? "POST" : "GET",
       cache: "no-store",
@@ -1796,7 +1814,8 @@ function ListingWorkspacePageContent() {
         setListingPackage(nextPackage)
         setForm(fromPackage(object(nextPackage.package_data)))
         const persistedTaxonomy = taxonomyFromPackage(
-          object(nextPackage.package_data),
+          nextPackage,
+          selected,
         )
         if (persistedTaxonomy) {
           setDraftState((current) => ({
@@ -1858,7 +1877,12 @@ function ListingWorkspacePageContent() {
             draftWarning = " Completa y aprueba la revisión visual activa de siete imágenes antes de validar el conector de publicación."
           } else {
             try {
-              const draft = await draftRequest(undefined, nextPackage.id)
+              const draft = await draftRequest(
+                undefined,
+                nextPackage.id,
+                opportunityId,
+                candidateKey,
+              )
               setDraftState((current) => ({ ...current, ...draft }))
             } catch (draftError) {
               setDraftState((current) => ({
@@ -3241,7 +3265,7 @@ function ListingWorkspacePageContent() {
   }
 
   async function loadTaxonomyPreflight() {
-    if (!listingPackage) return
+    if (!listingPackage || !opportunity) return
     setDraftBusy(true)
     setError("")
     setMessage("Consultando aspectos oficiales de eBay Taxonomy…")
@@ -3250,12 +3274,12 @@ function ListingWorkspacePageContent() {
       const payload = await draftRequest({
         action: "taxonomy_preflight",
         packageId: listingPackage.id,
+        opportunityId: opportunity.id,
+        candidateKey: opportunity.candidate_key,
       })
       const nextPackage = payload.listingPackage as ListingPackage
       const taxonomy = payload.taxonomy as DraftState["taxonomy"]
-      const persistedTaxonomy = taxonomyFromPackage(
-        object(nextPackage.package_data),
-      )
+      const persistedTaxonomy = taxonomyFromPackage(nextPackage, opportunity)
       if (!persistedTaxonomy || payload.durableReadbackMatch !== true) {
         throw new Error("EBAY_LISTING_TAXONOMY_PREFLIGHT_READBACK_MISMATCH")
       }
@@ -3688,7 +3712,12 @@ function ListingWorkspacePageContent() {
         ? requestError.message
         : "EBAY_ONE_CLICK_PUBLICATION_FAILED"
       try {
-        const refreshed = await draftRequest(undefined, listingPackage.id)
+        const refreshed = await draftRequest(
+          undefined,
+          listingPackage.id,
+          opportunity?.id,
+          opportunity?.candidate_key,
+        )
         const refreshedPublication = refreshed.publication
           && typeof refreshed.publication === "object"
           ? refreshed.publication as DraftState["publication"]

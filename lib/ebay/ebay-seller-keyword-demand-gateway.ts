@@ -1078,6 +1078,20 @@ export type EbayTaxonomyListingIntelligence = {
   source: "EBAY_TAXONOMY_OFFICIAL_READONLY"
 }
 
+export function ebayTaxonomyCacheKeyV1(input: Readonly<{
+  marketplaceId: "EBAY_US" | "EBAY_MOTORS_US"
+  categoryId?: string | null
+  query: string
+}>) {
+  const categoryId = /^\d+$/.test(text(input.categoryId))
+    ? text(input.categoryId) : ""
+  const identity = categoryId
+    ? `category:${categoryId}`
+    : `query:${input.query.toLowerCase().replace(/[^a-z0-9]+/g, " ")
+      .trim().slice(0, 160)}`
+  return `marketplace:${input.marketplaceId}:${identity}`
+}
+
 function mapTaxonomyAspect(value: unknown) {
   const aspect = record(value)
   const constraint = record(aspect.aspectConstraint)
@@ -1139,9 +1153,11 @@ export async function getEbayTaxonomyListingIntelligence(
   const normalizedKnownCategory = /^\d+$/.test(text(knownCategoryId))
     ? text(knownCategoryId)
     : ""
-  const cacheKey = normalizedKnownCategory
-    ? `category:${normalizedKnownCategory}`
-    : `query:${query.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 160)}`
+  const cacheKey = ebayTaxonomyCacheKeyV1({
+    marketplaceId: MARKETPLACE_ID,
+    categoryId: normalizedKnownCategory,
+    query,
+  })
   const cached = taxonomyCache.get(cacheKey)
   if (cached && cached.expiresAt > Date.now()) return cached.value
   const persistentCached = await readPersistentReadonlyCache<EbayTaxonomyListingIntelligence>("TAXONOMY", cacheKey)

@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase"
 
 type Intake = {
   decisionPackageId: string
+  candidateKey: string
   supplierSku: string
   gtin: string
   productTitle: string
@@ -17,6 +18,21 @@ type Intake = {
   publicationAuthorized: false
 }
 
+const CANDIDATES = Object.freeze([
+  {
+    supplierSku: "ITEM3404",
+    candidateKey:
+      "smart-stocking:EBAY_US:9220837146848:48809648488672",
+    label: "Window Privacy Film",
+  },
+  {
+    supplierSku: "ITEM3525",
+    candidateKey:
+      "smart-stocking:EBAY_US:9220835475680:48809646653664",
+    label: "Cake Turntable",
+  },
+])
+
 async function bearer() {
   const { data, error } = await supabase.auth.getSession()
   if (error || !data.session) throw new Error("AUTH_REQUIRED")
@@ -24,44 +40,57 @@ async function bearer() {
 }
 
 export function SmartStockingListingIntakeCard() {
-  const [intake, setIntake] = useState<Intake | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState("")
+  const [intakes, setIntakes] = useState<Record<string, Intake | null>>({})
+  const [busySku, setBusySku] = useState("")
+  const [errors, setErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
     let active = true
     void (async () => {
       try {
         const token = await bearer()
-        const response = await fetch(
-          "/api/admin/ebay/command-center?smartStockingCandidate=ITEM3525",
-          { cache: "no-store", headers: { Authorization: `Bearer ${token}` } },
-        )
-        const payload = await response.json() as {
-          success?: boolean
-          smartStockingListingIntake?: Intake
-          error?: string
-        }
-        if (!response.ok || !payload.success || !payload.smartStockingListingIntake) {
-          throw new Error(payload.error ?? "SMART_STOCKING_INTAKE_READ_FAILED")
-        }
-        if (active) setIntake(payload.smartStockingListingIntake)
+        const entries = await Promise.all(CANDIDATES.map(async (candidate) => {
+          const response = await fetch(
+            `/api/admin/ebay/command-center?smartStockingCandidate=${encodeURIComponent(candidate.supplierSku)}`,
+            { cache: "no-store", headers: { Authorization: `Bearer ${token}` } },
+          )
+          const payload = await response.json() as {
+            success?: boolean
+            smartStockingListingIntake?: Intake
+            error?: string
+          }
+          const intake = payload.smartStockingListingIntake
+          if (!response.ok || !payload.success || !intake
+            || intake.supplierSku !== candidate.supplierSku
+            || intake.candidateKey !== candidate.candidateKey) {
+            throw new Error(payload.error
+              ?? "SMART_STOCKING_INTAKE_CONTEXT_MISMATCH")
+          }
+          return [candidate.supplierSku, intake] as const
+        }))
+        if (active) setIntakes(Object.fromEntries(entries))
       } catch (caught) {
-        if (active) setError(caught instanceof Error ? caught.message :
-          "SMART_STOCKING_INTAKE_READ_FAILED")
+        if (active) setErrors({ general: caught instanceof Error
+          ? caught.message : "SMART_STOCKING_INTAKE_READ_FAILED" })
       }
     })()
     return () => { active = false }
   }, [])
 
-  async function completePackage() {
+  async function completePackage(candidate: typeof CANDIDATES[number]) {
+    const intake = intakes[candidate.supplierSku]
     if (!intake || intake.finalDecision !== "LISTING_READY") return
+    if (intake.candidateKey !== candidate.candidateKey) {
+      setErrors((current) => ({ ...current,
+        [candidate.supplierSku]: "SMART_STOCKING_INTAKE_CONTEXT_MISMATCH" }))
+      return
+    }
     if (intake.listingWorkspaceUrl) {
       window.location.assign(intake.listingWorkspaceUrl)
       return
     }
-    setBusy(true)
-    setError("")
+    setBusySku(candidate.supplierSku)
+    setErrors((current) => ({ ...current, [candidate.supplierSku]: "" }))
     try {
       const token = await bearer()
       const response = await fetch("/api/admin/ebay/command-center", {
@@ -77,40 +106,58 @@ export function SmartStockingListingIntakeCard() {
       })
       const payload = await response.json() as {
         success?: boolean
+        candidateKey?: string
         listingWorkspaceUrl?: string
         error?: string
       }
-      if (!response.ok || !payload.success || !payload.listingWorkspaceUrl) {
-        throw new Error(payload.error ?? "SMART_STOCKING_INTAKE_WRITE_FAILED")
+      if (!response.ok || !payload.success || !payload.listingWorkspaceUrl
+        || payload.candidateKey !== candidate.candidateKey) {
+        throw new Error(payload.error
+          ?? "SMART_STOCKING_INTAKE_CONTEXT_MISMATCH")
       }
       window.location.assign(payload.listingWorkspaceUrl)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message :
-        "SMART_STOCKING_INTAKE_WRITE_FAILED")
-      setBusy(false)
+      setErrors((current) => ({ ...current,
+        [candidate.supplierSku]: caught instanceof Error ? caught.message
+          : "SMART_STOCKING_INTAKE_WRITE_FAILED" }))
+      setBusySku("")
     }
   }
 
   return <section data-smart-stocking-listing-intake className="mb-5 rounded-2xl border border-emerald-300/25 bg-emerald-300/[0.06] p-4">
-    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200">Smart Stocking · paquete sin publicar</p>
-    <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h2 className="text-lg font-semibold">ITEM3525 · Cake Turntable</h2>
-        <p className="mt-1 text-xs text-slate-400">GTIN 740119084743 · single unit · ENTRY 57 preservado</p>
-      </div>
-      <span className="rounded-full border border-emerald-200/25 px-3 py-1 text-xs font-semibold text-emerald-100">{intake?.finalDecision ?? "VERIFICANDO"}</span>
+    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200">Smart Stocking · paquetes sin publicar</p>
+    <div className="mt-3 grid gap-3 lg:grid-cols-2">
+      {CANDIDATES.map((candidate) => {
+        const intake = intakes[candidate.supplierSku]
+        const error = errors[candidate.supplierSku]
+        return <article key={candidate.supplierSku}
+          data-smart-stocking-candidate={candidate.supplierSku}
+          className="rounded-2xl border border-white/10 bg-black/20 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold">{candidate.supplierSku} · {candidate.label}</h2>
+              <p className="mt-1 text-xs text-slate-400">{intake
+                ? `GTIN ${intake.gtin} · ENTRY ${intake.entryPotentialScore ?? "N/D"}`
+                : "Verificando identidad y decisión durable…"}</p>
+            </div>
+            <span className="rounded-full border border-emerald-200/25 px-3 py-1 text-xs font-semibold text-emerald-100">{intake?.finalDecision ?? "VERIFICANDO"}</span>
+          </div>
+          <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+            <p className="rounded-xl bg-black/20 p-3"><span className="block text-slate-500">Precio final</span><strong className="mt-1 block text-white">{intake?.finalPriceUsd
+              ? `USD ${intake.finalPriceUsd.toFixed(2)}` : "Verificando"}</strong></p>
+            <p className="rounded-xl bg-black/20 p-3"><span className="block text-slate-500">Publicación</span><strong className="mt-1 block text-white">Requiere aprobación humana</strong></p>
+          </div>
+          <button type="button" onClick={() => void completePackage(candidate)}
+            disabled={busySku === candidate.supplierSku || !intake
+              || intake.finalDecision !== "LISTING_READY"}
+            className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-semibold text-slate-950 disabled:opacity-40">
+            {busySku === candidate.supplierSku ? "Preparando intake…" : "Completar paquete"}
+          </button>
+          {error ? <p role="alert" className="mt-2 rounded-lg border border-rose-300/20 bg-rose-300/10 p-2 text-xs text-rose-100">{error}</p> : null}
+        </article>
+      })}
     </div>
-    <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
-      <p className="rounded-xl bg-black/20 p-3"><span className="block text-slate-500">Precio final</span><strong className="mt-1 block text-white">{intake?.finalPriceUsd === 25.99 ? "USD 25.99" : "Verificando"}</strong></p>
-      <p className="rounded-xl bg-black/20 p-3"><span className="block text-slate-500">Autoridad</span><strong className="mt-1 block text-white">Decision Package + Product Truth</strong></p>
-      <p className="rounded-xl bg-black/20 p-3"><span className="block text-slate-500">Publicación</span><strong className="mt-1 block text-white">Requiere aprobación humana</strong></p>
-    </div>
-    <button type="button" onClick={() => void completePackage()}
-      disabled={busy || !intake || intake.finalDecision !== "LISTING_READY"}
-      className="mt-3 min-h-12 w-full rounded-xl bg-emerald-200 px-4 font-semibold text-slate-950 disabled:opacity-40">
-      {busy ? "Preparando intake…" : "Completar paquete"}
-    </button>
-    <p className="mt-2 text-[11px] text-slate-500">Abre el Listing Workspace existente para categoría/aspectos, imágenes, políticas y revisión final. No publica automáticamente.</p>
-    {error ? <p role="alert" className="mt-2 rounded-lg border border-rose-300/20 bg-rose-300/10 p-2 text-xs text-rose-100">{error}</p> : null}
+    <p className="mt-3 text-[11px] text-slate-500">Cada acción queda enlazada a candidato, oportunidad y paquete exactos. Abre el Listing Workspace existente; nunca publica automáticamente.</p>
+    {errors.general ? <p role="alert" className="mt-2 rounded-lg border border-rose-300/20 bg-rose-300/10 p-2 text-xs text-rose-100">{errors.general}</p> : null}
   </section>
 }

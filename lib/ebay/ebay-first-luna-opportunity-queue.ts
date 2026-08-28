@@ -87,14 +87,25 @@ function record(value: unknown): JsonRecord {
 
 function isSmartStockingListingIntakeV1(value: unknown) {
   const marker = record(record(value).smartStockingListingIntakeV1)
-  return marker.contractVersion === "SELLER_OS_SMART_STOCKING_LISTING_INTAKE_V1" &&
-    marker.decisionPackageId === "67a72068-c052-4472-a022-9da7bb2b81bc" &&
-    marker.finalDecision === "LISTING_READY" &&
-    marker.finalPriceUsd === 25.99 &&
-    marker.finalEconomicsStatus === "PASS" &&
-    marker.entryPotentialScore === 57 &&
-    marker.exactIdentityVerified === true &&
-    marker.currentSupplierAvailabilityVerified === true
+  const exactKnownCandidate = (
+    marker.decisionPackageId === "67a72068-c052-4472-a022-9da7bb2b81bc"
+    && marker.finalPriceUsd === 25.99
+    && marker.entryPotentialScore === 57
+  ) || (
+    marker.decisionPackageId === "5f72bb09-c1f2-48b2-be81-7333d8dd39fd"
+    && marker.candidateKey
+      === "smart-stocking:EBAY_US:9220837146848:48809648488672"
+    && marker.supplierSku === "ITEM3404"
+    && marker.finalPriceUsd === 24.99
+    && marker.entryPotentialScore === 55
+  )
+  return marker.contractVersion ===
+      "SELLER_OS_SMART_STOCKING_LISTING_INTAKE_V1"
+    && exactKnownCandidate
+    && marker.finalDecision === "LISTING_READY"
+    && marker.finalEconomicsStatus === "PASS"
+    && marker.exactIdentityVerified === true
+    && marker.currentSupplierAvailabilityVerified === true
 }
 
 function records(value: unknown) {

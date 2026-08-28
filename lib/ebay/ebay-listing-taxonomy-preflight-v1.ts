@@ -4,13 +4,18 @@ import type {
   EbayTaxonomyAspectIntelligence,
   EbayTaxonomyListingIntelligence,
 } from "./ebay-seller-keyword-demand-gateway"
+import type { EbayListingContextIdentityV1 } from
+  "./ebay-listing-context-isolation-v1"
 
 export const EBAY_LISTING_TAXONOMY_PREFLIGHT_V1 =
   "SELLER_OS_EBAY_LISTING_TAXONOMY_PREFLIGHT_V1" as const
+const EBAY_LISTING_CONTEXT_BINDING_V1 =
+  "SELLER_OS_EBAY_LISTING_CONTEXT_ISOLATION_V1" as const
 
 type BuildTaxonomyPreflightInput = {
   taxonomy: EbayTaxonomyListingIntelligence
   expectedCategoryId: string
+  context: EbayListingContextIdentityV1
   existingAspects: Record<string, unknown>
   provenProductValues: Record<string, string>
   knownUnknownAspectNames?: string[]
@@ -62,6 +67,12 @@ export function buildEbayListingTaxonomyPreflightV1(
 ) {
   const expectedCategoryId = text(input.expectedCategoryId)
   if (
+    input.context.marketplaceId !== "EBAY_US"
+    || !/^[0-9a-f-]{36}$/i.test(input.context.listingPackageId)
+    || !/^[0-9a-f-]{36}$/i.test(input.context.opportunityId)
+    || !text(input.context.candidateKey)
+    || input.context.candidateKey.length > 300
+    ||
     input.taxonomy.status !== "AVAILABLE"
     || input.taxonomy.source !== "EBAY_TAXONOMY_OFFICIAL_READONLY"
     || input.taxonomy.categoryResolution !== "KNOWN_CATEGORY"
@@ -115,6 +126,11 @@ export function buildEbayListingTaxonomyPreflightV1(
 
   const digestPayload = {
     schemaVersion: EBAY_LISTING_TAXONOMY_PREFLIGHT_V1,
+    contextBindingVersion: EBAY_LISTING_CONTEXT_BINDING_V1,
+    marketplaceId: input.context.marketplaceId,
+    listingPackageId: input.context.listingPackageId,
+    opportunityId: input.context.opportunityId,
+    candidateKey: input.context.candidateKey,
     source: input.taxonomy.source,
     categoryId: input.taxonomy.categoryId,
     categoryName: input.taxonomy.categoryName,

@@ -28,9 +28,16 @@ import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-
 import {
   CAKE_TURNTABLE_LISTING_INTAKE_KEY,
   materializeCakeTurntableListingIntakeV1,
-  resolveCakeTurntableListingWorkspaceEvidenceV1,
-  type CakeTurntableListingWorkspaceEvidenceV1,
+  materializeWindowFilmListingIntakeV1,
+  readWindowFilmListingIntakeSummaryV1,
+  resolveSmartStockingListingWorkspaceEvidenceV1,
+  WINDOW_FILM_LISTING_INTAKE_TARGET_V1,
+  type SmartStockingListingWorkspaceEvidenceV1,
 } from "@/lib/ebay/ebay-smart-stocking-listing-intake-v1"
+import {
+  taxonomySnapshotMatchesContextV1,
+  type EbayListingContextIdentityV1,
+} from "@/lib/ebay/ebay-listing-context-isolation-v1"
 import {
   CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1,
 } from "@/lib/ebay/ebay-smart-stocking-frontier-handoff-v1"
@@ -194,7 +201,10 @@ function canonicalPackagePricing(
   }
 }
 
-function resolvedPackageHardGates(packageData: Record<string, unknown>) {
+function resolvedPackageHardGates(
+  packageData: Record<string, unknown>,
+  context: EbayListingContextIdentityV1,
+) {
   const draft = object(packageData.draftConfiguration)
   const packageWeightAndSize = object(draft.packageWeightAndSize)
   const dimensions = object(packageWeightAndSize.dimensions)
@@ -238,6 +248,11 @@ function resolvedPackageHardGates(packageData: Record<string, unknown>) {
     && taxonomyPreflight.status === "CONSULTADO"
     && String(taxonomyPreflight.categoryId ?? "")
     === String(packageData.categoryId ?? "")
+    && taxonomySnapshotMatchesContextV1({
+      expected: context,
+      taxonomyPreflight,
+      categoryId: packageData.categoryId,
+    })
     && aspectEntries.length > 0
     && unprovenRequiredTaxonomyAspects.length === 0
     && requiredTaxonomyAspects.every((name) =>
@@ -264,7 +279,7 @@ async function opportunity(supabase: ReturnType<typeof getSupabaseAdminClient>, 
 }
 
 function smartStockingBoundPricing(
-  evidence: CakeTurntableListingWorkspaceEvidenceV1,
+  evidence: SmartStockingListingWorkspaceEvidenceV1,
 ) {
   const canonical = canonicalPackagePricing(
     evidence.supplierCostUsd,
@@ -277,7 +292,7 @@ function smartStockingBoundPricing(
       canonical.returnsReserve === null ||
       canonical.promotedListingsReserve === null ||
       canonical.passesProfitGate !== true) {
-    throw new Error("CAKE_TURNTABLE_WORKSPACE_ECONOMICS_POLICY_MISMATCH")
+    throw new Error("SMART_STOCKING_WORKSPACE_ECONOMICS_POLICY_MISMATCH")
   }
   return {
     ...canonical,
@@ -298,7 +313,7 @@ function smartStockingBoundPricing(
 
 function applySmartStockingWorkspaceEvidence(
   packageData: Record<string, unknown>,
-  evidence: CakeTurntableListingWorkspaceEvidenceV1 | null,
+  evidence: SmartStockingListingWorkspaceEvidenceV1 | null,
 ) {
   if (!evidence) return packageData
   return {
@@ -323,7 +338,7 @@ function applySmartStockingWorkspaceEvidence(
 
 function buildInitialPackage(
   row: Record<string, unknown>,
-  smartStockingEvidence: CakeTurntableListingWorkspaceEvidenceV1 | null = null,
+  smartStockingEvidence: SmartStockingListingWorkspaceEvidenceV1 | null = null,
 ) {
   const assessment = object(row.assessment)
   const intelligence = object(assessment.listingIntelligencePackage)
@@ -497,6 +512,7 @@ export async function GET(req: Request) {
       if (intakeError) throw new Error("COMMAND_CENTER_SMART_STOCKING_INTAKE_READ_FAILED")
       smartStockingListingIntake = {
         decisionPackageId: decision.packageId,
+        candidateKey: CAKE_TURNTABLE_LISTING_INTAKE_KEY,
         supplierSku: CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.lunaSku,
         gtin: CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.gtin,
         productTitle: "11 in Revolving Plastic Cake Turntable Non-Slip Base",
@@ -511,6 +527,12 @@ export async function GET(req: Request) {
           : null,
         publicationAuthorized: false,
       }
+    } else if (smartStockingCandidate ===
+      WINDOW_FILM_LISTING_INTAKE_TARGET_V1.lunaSku) {
+      smartStockingListingIntake = await readWindowFilmListingIntakeSummaryV1({
+        supabase,
+        accountKey: accountKey ?? "",
+      })
     }
     return NextResponse.json({
       success: true,
@@ -554,15 +576,21 @@ export async function POST(req: Request) {
       }, { status: 503 })
     }
     if (action === "prepare_smart_stocking_listing_intake") {
-      if (body.supplierSku !== CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.lunaSku ||
-          body.decisionPackageId !== CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.packageId) {
+      const cake = body.supplierSku ===
+          CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.lunaSku
+        && body.decisionPackageId ===
+          CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1.packageId
+      const windowFilm = body.supplierSku ===
+          WINDOW_FILM_LISTING_INTAKE_TARGET_V1.lunaSku
+        && body.decisionPackageId ===
+          WINDOW_FILM_LISTING_INTAKE_TARGET_V1.decisionPackageId
+      if (!cake && !windowFilm) {
         return NextResponse.json({ success: false,
           error: "COMMAND_CENTER_SMART_STOCKING_CANDIDATE_MISMATCH" }, { status: 409 })
       }
-      const intake = await materializeCakeTurntableListingIntakeV1({
-        supabase,
-        accountKey,
-      })
+      const intake = cake
+        ? await materializeCakeTurntableListingIntakeV1({ supabase, accountKey })
+        : await materializeWindowFilmListingIntakeV1({ supabase, accountKey })
       return NextResponse.json({
         success: true,
         ...intake,
@@ -795,12 +823,10 @@ export async function POST(req: Request) {
     }
 
     if (action === "prepare_package") {
-      const smartStockingEvidence = candidateKey ===
-        CAKE_TURNTABLE_LISTING_INTAKE_KEY
-        ? await resolveCakeTurntableListingWorkspaceEvidenceV1({
+      const smartStockingEvidence =
+        await resolveSmartStockingListingWorkspaceEvidenceV1({
           supabase, accountKey, opportunity: sourceOpportunity,
         })
-        : null
       const { data: existing, error: readError } = await supabase
         .from("ebay_listing_packages")
         .select("*")
@@ -1148,12 +1174,10 @@ export async function POST(req: Request) {
       }
       const form = object(body.packageData)
       const effectiveOpportunity = sameDayContext?.opportunity ?? sourceOpportunity
-      const smartStockingEvidence = candidateKey ===
-        CAKE_TURNTABLE_LISTING_INTAKE_KEY
-        ? await resolveCakeTurntableListingWorkspaceEvidenceV1({
+      const smartStockingEvidence =
+        await resolveSmartStockingListingWorkspaceEvidenceV1({
           supabase, accountKey, opportunity: sourceOpportunity,
         })
-        : null
       const sourceSeed = buildInitialPackage(
         effectiveOpportunity,
         smartStockingEvidence,
@@ -1165,7 +1189,9 @@ export async function POST(req: Request) {
         return NextResponse.json({
           success: false,
           error: "COMMAND_CENTER_SMART_STOCKING_FINAL_PRICE_CHANGED",
-          blockers: ["SMART_STOCKING_FINAL_PRICE_25_99_REQUIRED"],
+          blockers: [smartStockingEvidence.salePriceUsd === 25.99
+            ? "SMART_STOCKING_FINAL_PRICE_25_99_REQUIRED"
+            : "SMART_STOCKING_FINAL_PRICE_24_99_REQUIRED"],
         }, { status: 409 })
       }
       const controlledRiskPrice = sameDayContext?.authorization.controlledRisk === true
@@ -1192,7 +1218,15 @@ export async function POST(req: Request) {
       }
       const title = String(form.title ?? "").trim().slice(0, 80)
       const status = body.markReady === true ? "ready_for_review" : "draft"
-      const resolvedHardGates = resolvedPackageHardGates(packageForValidation)
+      const resolvedHardGates = resolvedPackageHardGates(
+        packageForValidation,
+        {
+          marketplaceId: "EBAY_US",
+          listingPackageId: packageId,
+          opportunityId,
+          candidateKey,
+        },
+      )
       const sourceGates = [
         ...((sameDayContext || finalListingReviewReady) ? [] : strings(sourceOpportunity.hard_gates)
           .filter((gate) => !resolvedHardGates.has(gate))),

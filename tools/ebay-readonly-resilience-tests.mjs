@@ -20,7 +20,9 @@ test("eBay read-only gateway caches short-lived OAuth and taxonomy data", () => 
   assert.match(gateway, /expires_in/)
   assert.match(gateway, /taxonomyCache = new Map/)
   assert.match(gateway, /TAXONOMY_CACHE_TTL_MS/)
-  assert.match(gateway, /category:\$\{normalizedKnownCategory\}/)
+  assert.match(gateway, /ebayTaxonomyCacheKeyV1/)
+  assert.match(gateway,
+    /marketplace:\$\{input\.marketplaceId\}:\$\{identity\}/)
 })
 
 test("Taxonomy replaces a rejected inherited category only with an official leaf suggestion", () => {

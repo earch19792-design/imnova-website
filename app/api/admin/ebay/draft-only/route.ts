@@ -56,10 +56,19 @@ import {
 import {
   buildEbayListingTaxonomyPreflightV1,
 } from "@/lib/ebay/ebay-listing-taxonomy-preflight-v1"
+import {
+  assertLifecycleStateContextV1,
+  assertListingPackageContextV1,
+  assertTaxonomySnapshotContextV1,
+  type EbayListingContextIdentityV1,
+} from "@/lib/ebay/ebay-listing-context-isolation-v1"
 import { enqueueSellerWhatsAppAlert } from "@/lib/ebay/ebay-seller-whatsapp-alerts"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { loadSameDayAuthorizedPublicationContext } from "@/lib/ebay/ebay-same-day-authorized-publication"
-import { isSmartStockingListingIntakeV1 } from
+import {
+  isCakeTurntableListingIntakeV1,
+  WINDOW_FILM_LISTING_INTAKE_TARGET_V1,
+} from
   "@/lib/ebay/ebay-smart-stocking-listing-intake-v1"
 import { resolveSmartStockingAuthorizedPublicationV1 } from
   "@/lib/ebay/ebay-smart-stocking-authorized-publication-v1"
@@ -351,7 +360,7 @@ async function loadFinalPublicationContext(
   const effectiveOpportunity = sameDayContext?.opportunity ??
     (opportunity as JsonRecord)
   const smartStockingContext = accountKey &&
-    isSmartStockingListingIntakeV1(record(effectiveOpportunity.assessment))
+    isCakeTurntableListingIntakeV1(record(effectiveOpportunity.assessment))
     ? await resolveSmartStockingAuthorizedPublicationV1({
       supabase,
       accountKey,
@@ -546,7 +555,7 @@ async function loadPackageContext(
     if (!finalReviewGate.allowed) throw contextError
   }
   const effectiveOpportunity = sameDayContext?.opportunity ?? (opportunity as JsonRecord)
-  const smartStockingContext = isSmartStockingListingIntakeV1(
+  const smartStockingContext = isCakeTurntableListingIntakeV1(
     record(effectiveOpportunity.assessment),
   ) ? await resolveSmartStockingAuthorizedPublicationV1({
     supabase,
@@ -827,16 +836,41 @@ export async function GET(req: Request) {
   const auth = await authenticate(req)
   if (auth.response) return auth.response
   if (!auth.actor) return jsonError(new Error("EBAY_DRAFT_ONLY_HUMAN_ADMIN_REQUIRED"), 403)
-  const packageId = uuid(new URL(req.url).searchParams.get("packageId"))
-  if (!packageId) return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_REQUIRED"), 400)
+  const url = new URL(req.url)
+  const packageId = uuid(url.searchParams.get("packageId"))
+  const expectedOpportunityId = uuid(url.searchParams.get("opportunityId"))
+  const expectedCandidateKey = text(url.searchParams.get("candidateKey"))
+    .slice(0, 300)
+  if (!packageId || !expectedOpportunityId || !expectedCandidateKey) {
+    return jsonError(new Error("EBAY_DRAFT_ONLY_CONTEXT_REQUIRED"), 400)
+  }
   try {
     const runtime = ebayDraftOnlyRuntimeStatus()
     const target = runtime.target
     const fingerprint = runtime.accountFingerprint || ""
     const supabase = getSupabaseAdminClient()
+    const expectedContext: EbayListingContextIdentityV1 = {
+      marketplaceId: "EBAY_US",
+      listingPackageId: packageId,
+      opportunityId: expectedOpportunityId,
+      candidateKey: expectedCandidateKey,
+    }
+    const { data: packageIdentity, error: packageIdentityError } = await supabase
+      .from("ebay_listing_packages")
+      .select("id,opportunity_id,candidate_key")
+      .eq("id", packageId)
+      .eq("created_by", auth.actor)
+      .maybeSingle()
+    if (packageIdentityError || !packageIdentity) {
+      throw new Error("EBAY_DRAFT_ONLY_PACKAGE_NOT_FOUND")
+    }
+    assertListingPackageContextV1({
+      expected: expectedContext,
+      listingPackage: packageIdentity,
+    })
     const { data: latestApproval, error: approvalError } = await supabase
       .from("ebay_draft_only_approvals")
-      .select("id,status,target,payload_hash,approved_at,expires_at,consumed_at,revoked_at,approved_payload")
+      .select("id,listing_package_id,opportunity_id,candidate_key,status,target,payload_hash,approved_at,expires_at,consumed_at,revoked_at,approved_payload")
       .eq("listing_package_id", packageId)
       .eq("actor_user_id", auth.actor)
       .eq("target", target)
@@ -890,7 +924,7 @@ export async function GET(req: Request) {
     const { data: ledger, error: ledgerError } = latestApproval?.id
       ? await supabase
         .from("ebay_draft_only_execution_ledger")
-        .select("id,phase,sku,target,offer_id,completed_at,last_error_code,updated_at")
+        .select("id,approval_id,listing_package_id,opportunity_id,phase,sku,target,offer_id,completed_at,last_error_code,updated_at")
         .eq("approval_id", latestApproval.id)
         .maybeSingle()
       : { data: null, error: null }
@@ -898,11 +932,17 @@ export async function GET(req: Request) {
     const { data: publication, error: publicationError } = ledger?.id
       ? await supabase
         .from("ebay_authorized_listing_publications")
-        .select("id,phase,offer_id,sku,preview_hash,preview,listing_id,publish_http_status,published_at,verified_active_at,monitor_registered_at,last_error_code,updated_at")
+        .select("id,draft_execution_id,listing_package_id,opportunity_id,phase,offer_id,sku,preview_hash,preview,listing_id,publish_http_status,published_at,verified_active_at,monitor_registered_at,last_error_code,updated_at")
         .eq("draft_execution_id", ledger.id)
         .maybeSingle()
       : { data: null, error: null }
     if (publicationError) throw new Error("EBAY_FINAL_PUBLICATION_READ_FAILED")
+    assertLifecycleStateContextV1({
+      expected: expectedContext,
+      approval: latestApproval,
+      execution: ledger,
+      publication,
+    })
     return NextResponse.json({
       success: true,
       visualPublicationGate,
@@ -971,7 +1011,9 @@ export async function POST(req: Request) {
 
 async function taxonomyPreflight(body: JsonRecord, actor: string) {
   const packageId = uuid(body.packageId)
-  if (!packageId) {
+  const expectedOpportunityId = uuid(body.opportunityId)
+  const expectedCandidateKey = text(body.candidateKey).slice(0, 300)
+  if (!packageId || !expectedOpportunityId || !expectedCandidateKey) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_REQUIRED"), 400)
   }
   const sellerAccountKey = getEbaySellerAccountScopeConfiguration().accountKey
@@ -991,6 +1033,13 @@ async function taxonomyPreflight(body: JsonRecord, actor: string) {
   if (packageError || !listingPackage) {
     return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_NOT_FOUND"), 404)
   }
+  const context: EbayListingContextIdentityV1 = {
+    marketplaceId: "EBAY_US",
+    listingPackageId: packageId,
+    opportunityId: expectedOpportunityId,
+    candidateKey: expectedCandidateKey,
+  }
+  assertListingPackageContextV1({ expected: context, listingPackage })
   if (!["draft", "ready_for_review"].includes(text(listingPackage.status))) {
     return jsonError(new Error(
       "EBAY_LISTING_TAXONOMY_PACKAGE_STATUS_INVALID",
@@ -1024,23 +1073,34 @@ async function taxonomyPreflight(body: JsonRecord, actor: string) {
 
   const item3525 = text(listingPackage.candidate_key)
     === "smart-stocking:EBAY_US:9220835475680:48809646653664"
+  const item3404 = text(listingPackage.candidate_key)
+    === WINDOW_FILM_LISTING_INTAKE_TARGET_V1.candidateKey
   const preflight = buildEbayListingTaxonomyPreflightV1({
     taxonomy,
     expectedCategoryId: categoryId,
+    context,
     existingAspects: record(packageData.aspects),
-    provenProductValues: item3525 ? {
-      Type: "Turntable",
-      Material: "Plastic",
-      Features: "Non-Slip",
-      Size: "11 in",
-      UPC: "740119084743",
-    } : {},
+    provenProductValues: item3525
+      ? {
+        Type: "Turntable",
+        Material: "Plastic",
+        Features: "Non-Slip",
+        Size: "11 in",
+        UPC: "740119084743",
+      }
+      : item3404 ? {
+        Type: "Window Film",
+        Size: "23.6 in x 9.84 ft",
+        UPC: WINDOW_FILM_LISTING_INTAKE_TARGET_V1.gtin,
+      } : {},
     knownUnknownAspectNames: item3525
-      ? ["Brand", "MPN", "Model", "Color"] : [],
-    unprovenAspectEvidenceRequirements: item3525 ? {
-      Brand:
-        "AUTHORITATIVE_PRODUCT_TRUTH_NO_MANUFACTURER_BRAND_CLAIM_REQUIRED",
-    } : {},
+      ? ["Brand", "MPN", "Model", "Color"]
+      : item3404 ? ["Brand", "MPN", "Model", "Color", "Material"] : [],
+    unprovenAspectEvidenceRequirements: item3525
+      ? { Brand:
+        "AUTHORITATIVE_PRODUCT_TRUTH_NO_MANUFACTURER_BRAND_CLAIM_REQUIRED" }
+      : item3404 ? { Brand: "AUTHORITATIVE_PRODUCT_BRAND_EVIDENCE_REQUIRED" }
+        : {},
   })
   const nextPackageData = {
     ...packageData,
@@ -1074,6 +1134,11 @@ async function taxonomyPreflight(body: JsonRecord, actor: string) {
     return jsonError(new Error(code), code.includes("STALE_VERSION") ? 409 : 502)
   }
   const readback = record(record(saved.package_data).taxonomyPreflight)
+  assertTaxonomySnapshotContextV1({
+    expected: context,
+    taxonomyPreflight: readback,
+    categoryId,
+  })
   const durableReadbackMatch = text(readback.evidenceDigest)
     === preflight.evidenceDigest
     && text(readback.categoryId) === categoryId
