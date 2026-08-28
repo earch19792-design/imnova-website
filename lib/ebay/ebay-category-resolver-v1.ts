@@ -2,6 +2,9 @@ import { createHash } from "node:crypto"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
+import { humanConfirmedProductTruthValuesV1 } from
+  "./ebay-human-product-truth-evidence-v1"
+
 import {
   buildEbayListingTaxonomyPreflightV1,
 } from "./ebay-listing-taxonomy-preflight-v1"
@@ -215,6 +218,16 @@ function exactProductValuesFromOpportunity(input: Readonly<{
     && brand.noManufacturerBrandClaim === "PROVEN"
     && brand.ebayBrandSemantics === "UNBRANDED_SUPPORTED"
   ) proven.Brand = taxonomyBrand
+  const humanConfirmed = humanConfirmedProductTruthValuesV1(input.opportunity)
+  for (const [name, value] of Object.entries(humanConfirmed)) {
+    const existing = Object.entries(proven).find(([candidate]) =>
+      normalizeIdentityPhrase(candidate) === normalizeIdentityPhrase(name))
+    if (existing && normalizeIdentityPhrase(existing[1]) !==
+        normalizeIdentityPhrase(value)) {
+      throw new Error("HUMAN_PRODUCT_TRUTH_EVIDENCE_CONFLICT")
+    }
+    proven[name] = value
+  }
   return proven
 }
 

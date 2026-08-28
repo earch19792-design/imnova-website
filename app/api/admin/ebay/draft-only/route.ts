@@ -61,6 +61,11 @@ import {
   recordEbayCategoryListingAcceptanceV1,
 } from "@/lib/ebay/ebay-category-resolver-v1"
 import {
+  applyHumanConfirmedProductTruthEvidenceV1,
+  buildHumanConfirmedProductTruthEvidenceV1,
+  humanConfirmedProductTruthValuesV1,
+} from "@/lib/ebay/ebay-human-product-truth-evidence-v1"
+import {
   assertLifecycleStateContextV1,
   assertListingPackageContextV1,
   assertTaxonomySnapshotContextV1,
@@ -996,6 +1001,9 @@ export async function POST(req: Request) {
     if (action === "taxonomy_preflight") {
       return taxonomyPreflight(body, auth.actor)
     }
+    if (action === "confirm_product_truth_evidence") {
+      return confirmProductTruthEvidence(body, auth.actor)
+    }
     if (action === "preview") return previewDraft(body, auth.actor)
     if (action === "preflight") return preflightDraft(body, auth.actor)
     if (action === "account_preflight") return preflightAccount(body, auth.actor)
@@ -1010,6 +1018,241 @@ export async function POST(req: Request) {
   } catch (error) {
     return jsonError(error)
   }
+}
+
+async function confirmProductTruthEvidence(body: JsonRecord, actor: string) {
+  const packageId = uuid(body.packageId)
+  const expectedOpportunityId = uuid(body.opportunityId)
+  const expectedCandidateKey = text(body.candidateKey).slice(0, 300)
+  const aspectName = text(body.aspectName).slice(0, 120)
+  const normalizedValue = text(body.normalizedValue).slice(0, 500)
+  const evidenceStatement = text(body.evidenceStatement).slice(0, 500)
+  if (
+    !packageId || !expectedOpportunityId || !expectedCandidateKey
+    || !aspectName || !normalizedValue || evidenceStatement.length < 12
+    || body.confirmEvidence !== true
+  ) return jsonError(new Error("HUMAN_PRODUCT_TRUTH_EVIDENCE_INVALID"), 400)
+
+  const sellerAccountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!sellerAccountKey) {
+    return jsonError(new Error(
+      "EBAY_DRAFT_ONLY_PACKAGE_ACCOUNT_SCOPE_REQUIRED",
+    ), 503)
+  }
+  const supabase = getSupabaseAdminClient()
+  const { data: listingPackage, error: packageError } = await supabase
+    .from("ebay_listing_packages")
+    .select("id,account_key,opportunity_id,candidate_key,created_by,status,readiness,source_observed_at,updated_at,package_data")
+    .eq("id", packageId)
+    .eq("created_by", actor)
+    .eq("account_key", sellerAccountKey)
+    .maybeSingle()
+  if (packageError || !listingPackage) {
+    return jsonError(new Error("EBAY_DRAFT_ONLY_PACKAGE_NOT_FOUND"), 404)
+  }
+  const context: EbayListingContextIdentityV1 = {
+    marketplaceId: "EBAY_US",
+    listingPackageId: packageId,
+    opportunityId: expectedOpportunityId,
+    candidateKey: expectedCandidateKey,
+  }
+  assertListingPackageContextV1({ expected: context, listingPackage })
+  if (!["draft", "ready_for_review"].includes(text(listingPackage.status))) {
+    return jsonError(new Error(
+      "HUMAN_PRODUCT_TRUTH_PACKAGE_STATUS_INVALID",
+    ), 409)
+  }
+
+  const packageData = record(listingPackage.package_data)
+  const categoryId = text(packageData.categoryId)
+  const persistedPreflight = record(packageData.taxonomyPreflight)
+  assertTaxonomySnapshotContextV1({
+    expected: context,
+    taxonomyPreflight: persistedPreflight,
+    categoryId,
+  })
+  const unresolvedRequired = Array.isArray(
+    persistedPreflight.unprovenRequiredAspectNames,
+  ) ? persistedPreflight.unprovenRequiredAspectNames.map(text) : []
+  if (!unresolvedRequired.some((name) =>
+    name.toLocaleLowerCase("en-US") === aspectName.toLocaleLowerCase("en-US"))) {
+    return jsonError(new Error(
+      "HUMAN_PRODUCT_TRUTH_REQUIRED_ASPECT_NOT_BLOCKED",
+    ), 409)
+  }
+
+  const taxonomy = await getEbayTaxonomyListingIntelligence(
+    text(packageData.title).slice(0, 350),
+    categoryId,
+    { allowTitleSuggestionFallback: false },
+  )
+  if (taxonomy.status !== "AVAILABLE") {
+    return NextResponse.json({
+      success: false,
+      error: taxonomy.failureCode ?? "EBAY_LISTING_TAXONOMY_FETCH_FAILED",
+      taxonomy,
+      safety: { ebayWriteUsed: false, ebayResourceMethods: ["GET"] },
+    }, { status: 502 })
+  }
+  const officialAspect = taxonomy.aspects.find((aspect) =>
+    aspect.required
+    && aspect.name.toLocaleLowerCase("en-US") ===
+      aspectName.toLocaleLowerCase("en-US"))
+  if (!officialAspect) {
+    return jsonError(new Error(
+      "HUMAN_PRODUCT_TRUTH_OFFICIAL_REQUIRED_ASPECT_MISMATCH",
+    ), 409)
+  }
+
+  const { data: sourceOpportunity, error: opportunityError } = await supabase
+    .from("ebay_luna_opportunity_queue")
+    .select("*")
+    .eq("id", expectedOpportunityId)
+    .eq("candidate_key", expectedCandidateKey)
+    .maybeSingle()
+  if (opportunityError || !sourceOpportunity) {
+    return jsonError(new Error(
+      "EBAY_LISTING_TAXONOMY_PRODUCT_TRUTH_REQUIRED",
+    ), 409)
+  }
+
+  const confirmedAt = new Date().toISOString()
+  const evidence = buildHumanConfirmedProductTruthEvidenceV1({
+    opportunity: sourceOpportunity as JsonRecord,
+    listingPackageId: packageId,
+    marketplaceId: "EBAY_US",
+    actorId: actor,
+    aspect: {
+      name: officialAspect.name,
+      required: officialAspect.required,
+      mode: officialAspect.mode ?? "FREE_TEXT",
+      valuesComplete: officialAspect.valuesComplete,
+      values: officialAspect.values,
+    },
+    normalizedValue,
+    evidenceStatement,
+    confirmedAt,
+  })
+  const applied = applyHumanConfirmedProductTruthEvidenceV1({
+    opportunity: sourceOpportunity as JsonRecord,
+    evidence,
+  })
+  const { data: updatedOpportunity, error: updateError } = await supabase
+    .from("ebay_luna_opportunity_queue")
+    .update({ assessment: applied.assessment, updated_at: confirmedAt })
+    .eq("id", expectedOpportunityId)
+    .eq("candidate_key", expectedCandidateKey)
+    .eq("updated_at", sourceOpportunity.updated_at)
+    .select("*")
+    .maybeSingle()
+  if (updateError || !updatedOpportunity) {
+    return jsonError(new Error(
+      "HUMAN_PRODUCT_TRUTH_EVIDENCE_STALE_VERSION",
+    ), 409)
+  }
+  const durableValues = humanConfirmedProductTruthValuesV1(
+    updatedOpportunity as JsonRecord,
+  )
+  if (durableValues[officialAspect.name] !== evidence.normalizedValue) {
+    return jsonError(new Error(
+      "HUMAN_PRODUCT_TRUTH_EVIDENCE_READBACK_MISMATCH",
+    ), 502)
+  }
+
+  const productTruth = buildEbayCategoryResolverProductTruthV1({
+    opportunity: updatedOpportunity as JsonRecord,
+    packageData,
+  })
+  const preflight = buildEbayListingTaxonomyPreflightV1({
+    taxonomy,
+    expectedCategoryId: categoryId,
+    context,
+    existingAspects: record(packageData.aspects),
+    provenProductValues: productTruth.provenProductValues,
+    knownUnknownAspectNames: productTruth.knownUnknownAspectNames,
+    unprovenAspectEvidenceRequirements:
+      productTruth.unprovenAspectEvidenceRequirements,
+  })
+  if (
+    text(preflight.resolvedAspects[officialAspect.name]) !==
+      evidence.normalizedValue
+    || preflight.unprovenRequiredAspectNames.some((name) =>
+      name.toLocaleLowerCase("en-US") ===
+        officialAspect.name.toLocaleLowerCase("en-US"))
+  ) return jsonError(new Error(
+    "HUMAN_PRODUCT_TRUTH_TAXONOMY_BINDING_FAILED",
+  ), 502)
+
+  const nextPackageData = {
+    ...packageData,
+    categoryName: taxonomy.categoryName ?? packageData.categoryName,
+    aspects: preflight.resolvedAspects,
+    taxonomyPreflight: preflight,
+  }
+  const { data: savedData, error: saveError } = await supabase.rpc(
+    "ebay_save_listing_package_guarded",
+    {
+      p_package_id: listingPackage.id,
+      p_account_key: sellerAccountKey,
+      p_actor: actor,
+      p_opportunity_id: listingPackage.opportunity_id,
+      p_candidate_key: listingPackage.candidate_key,
+      p_operation: "save",
+      p_package_patch: nextPackageData,
+      p_status: listingPackage.status,
+      p_readiness: listingPackage.readiness,
+      p_source_observed_at: listingPackage.source_observed_at,
+      p_expected_updated_at: listingPackage.updated_at,
+    },
+  )
+  const saved = Array.isArray(savedData)
+    ? record(savedData[0]) : record(savedData)
+  if (saveError || !uuid(saved.id)) {
+    const code = databaseExceptionCode(
+      saveError,
+      "HUMAN_PRODUCT_TRUTH_PACKAGE_SAVE_FAILED",
+    )
+    return jsonError(new Error(code), code.includes("STALE_VERSION") ? 409 : 502)
+  }
+  const readback = record(record(saved.package_data).taxonomyPreflight)
+  assertTaxonomySnapshotContextV1({
+    expected: context,
+    taxonomyPreflight: readback,
+    categoryId,
+  })
+  const unprovenReadback = Array.isArray(
+    readback.unprovenRequiredAspectNames,
+  ) ? readback.unprovenRequiredAspectNames : null
+  const durableReadbackMatch = text(readback.evidenceDigest)
+    === preflight.evidenceDigest
+    && text(record(readback.resolvedAspects)[officialAspect.name])
+      === evidence.normalizedValue
+    && unprovenReadback !== null
+    && !unprovenReadback.some((name) =>
+        text(name).toLocaleLowerCase("en-US") ===
+          officialAspect.name.toLocaleLowerCase("en-US"))
+  if (!durableReadbackMatch) {
+    return jsonError(new Error(
+      "HUMAN_PRODUCT_TRUTH_PACKAGE_READBACK_MISMATCH",
+    ), 502)
+  }
+
+  return NextResponse.json({
+    success: true,
+    evidence,
+    taxonomy,
+    preflight,
+    listingPackage: saved,
+    durableReadbackMatch,
+    unresolvedRequiredAspectNames: preflight.unprovenRequiredAspectNames,
+    safety: {
+      ebayWriteUsed: false,
+      ebayResourceMethods: ["GET"],
+      internalProductTruthWrite: true,
+      internalPackageWrite: true,
+      canPublish: false,
+    },
+  })
 }
 
 async function taxonomyPreflight(body: JsonRecord, actor: string) {

@@ -1265,6 +1265,10 @@ function ListingWorkspacePageContent() {
   const [busy, setBusy] = useState(false)
   const [aspectName, setAspectName] = useState("")
   const [aspectValue, setAspectValue] = useState("")
+  const [productTruthEvidenceDrafts, setProductTruthEvidenceDrafts] = useState<
+    Record<string, { value: string; statement: string; confirmed: boolean }>
+  >({})
+  const [productTruthEvidenceBusy, setProductTruthEvidenceBusy] = useState("")
   const [imageUrl, setImageUrl] = useState("")
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imageAssets, setImageAssets] = useState<ImageAsset[]>([])
@@ -3312,6 +3316,82 @@ function ListingWorkspacePageContent() {
     }
   }
 
+  function updateProductTruthEvidenceDraft(
+    name: string,
+    patch: Partial<{ value: string; statement: string; confirmed: boolean }>,
+  ) {
+    setProductTruthEvidenceDrafts((current) => {
+      const existing = current[name] ?? {
+        value: "",
+        statement: "",
+        confirmed: false,
+      }
+      return {
+        ...current,
+        [name]: {
+          ...existing,
+          ...patch,
+        },
+      }
+    })
+  }
+
+  async function confirmProductTruthEvidence(name: string) {
+    if (!listingPackage || !opportunity || productTruthEvidenceBusy) return
+    const evidenceDraft = productTruthEvidenceDrafts[name]
+    if (
+      !evidenceDraft?.value.trim()
+      || evidenceDraft.statement.trim().length < 12
+      || !evidenceDraft.confirmed
+    ) return
+    setProductTruthEvidenceBusy(name)
+    setError("")
+    setMessage(`Validando evidencia Product Truth para ${name}…`)
+    try {
+      const payload = await draftRequest({
+        action: "confirm_product_truth_evidence",
+        packageId: listingPackage.id,
+        opportunityId: opportunity.id,
+        candidateKey: opportunity.candidate_key,
+        aspectName: name,
+        normalizedValue: evidenceDraft.value.trim(),
+        evidenceStatement: evidenceDraft.statement.trim(),
+        confirmEvidence: true,
+      })
+      const nextPackage = payload.listingPackage as ListingPackage
+      const taxonomy = payload.taxonomy as DraftState["taxonomy"]
+      const persistedTaxonomy = taxonomyFromPackage(nextPackage, opportunity)
+      if (!persistedTaxonomy || payload.durableReadbackMatch !== true) {
+        throw new Error("HUMAN_PRODUCT_TRUTH_PACKAGE_READBACK_MISMATCH")
+      }
+      setListingPackage(nextPackage)
+      setForm(fromPackage(object(nextPackage.package_data)))
+      setDraftState((current) => ({
+        ...current,
+        taxonomy: {
+          ...taxonomy,
+          ...persistedTaxonomy,
+          consultationStatus: "CONSULTADO",
+        },
+      }))
+      setProductTruthEvidenceDrafts((current) => Object.fromEntries(
+        Object.entries(current).filter(([aspect]) => aspect !== name),
+      ))
+      setWorkspaceRetry((current) => current + 1)
+      setMessage(
+        `${name} quedó confirmado en Product Truth y enlazado a Taxonomy con readback durable. No se realizó ninguna escritura en eBay.`,
+      )
+    } catch (requestError) {
+      setError(getMobileReviewRequestError(
+        requestError,
+        `No se pudo confirmar evidencia Product Truth para ${name}.`,
+      ))
+      setMessage("")
+    } finally {
+      setProductTruthEvidenceBusy("")
+    }
+  }
+
   async function approveDraft() {
     if (!listingPackage) return
     setDraftBusy(true); setError(""); setMessage("Registrando aprobación de un solo uso…")
@@ -4428,26 +4508,57 @@ function ListingWorkspacePageContent() {
                   taxonomyAspect.advancedDataType,
                 ].filter(Boolean).join(" · ")
                 : "No validado todavía contra Taxonomy"
-              return <div key={name} className="grid grid-cols-[1fr_auto] gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                <div aria-label={`Aspecto oficial de eBay: ${name}`} className="col-span-2 grid gap-1 sm:col-span-1">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-violet-100/60">{required ? "Requerido por eBay" : recommended ? "Recomendado por eBay" : "Opcional por eBay"}</span>
-                  <strong data-ebay-taxonomy-aspect-name={name} className="flex min-h-11 items-center rounded-xl bg-black/25 px-3 text-sm">{name}</strong>
-                  <span className="text-[10px] leading-4 text-white/45">{constraintSummary}{taxonomyAspect?.expectedRequiredByDate ? ` · requerido aproximadamente desde ${taxonomyAspect.expectedRequiredByDate}` : ""}</span>
-                  {!selectionOnly && selectionOptions.length > 0 && <span className="text-[10px] leading-4 text-violet-100/55">Valores oficiales: {selectionOptions.map((option) => option.value).join(" · ")}</span>}
-                  {evidenceBlocked && <span role="alert" className="text-[10px] leading-4 text-amber-100">Bloqueado hasta que Product Truth aporte evidencia autoritativa{evidenceRequirement ? ` · ${evidenceRequirement}` : ""}.</span>}
+              const evidenceDraft = productTruthEvidenceDrafts[name] ?? {
+                value: "",
+                statement: "",
+                confirmed: false,
+              }
+              return <div key={name} className="rounded-2xl border border-white/10 p-2">
+                <div className="grid grid-cols-[1fr_auto] gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                  <div aria-label={`Aspecto oficial de eBay: ${name}`} className="col-span-2 grid gap-1 sm:col-span-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-violet-100/60">{required ? "Requerido por eBay" : recommended ? "Recomendado por eBay" : "Opcional por eBay"}</span>
+                    <strong data-ebay-taxonomy-aspect-name={name} className="flex min-h-11 items-center rounded-xl bg-black/25 px-3 text-sm">{name}</strong>
+                    <span className="text-[10px] leading-4 text-white/45">{constraintSummary}{taxonomyAspect?.expectedRequiredByDate ? ` · requerido aproximadamente desde ${taxonomyAspect.expectedRequiredByDate}` : ""}</span>
+                    {!selectionOnly && selectionOptions.length > 0 && <span className="text-[10px] leading-4 text-violet-100/55">Valores oficiales: {selectionOptions.map((option) => option.value).join(" · ")}</span>}
+                    {evidenceBlocked && <span role="alert" className="text-[10px] leading-4 text-amber-100">Bloqueado hasta que Product Truth aporte evidencia autoritativa{evidenceRequirement ? ` · ${evidenceRequirement}` : ""}.</span>}
+                  </div>
+                  <label className="grid gap-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-white/45">Valor confirmado</span>
+                    {selectionOnly
+                      ? <select aria-label={`Valor de ${name}`} disabled={evidenceBlocked} value={value} onChange={(event) => setForm((current) => ({ ...current, aspects: { ...current.aspects, [name]: event.target.value } }))} className="min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3 disabled:opacity-50">
+                        <option value="">Seleccionar valor oficial</option>
+                        {selectionOptions.map((option) => <option key={option.value} value={option.value} disabled={!taxonomyOptionAvailable(option, form.aspects)}>{option.value}</option>)}
+                      </select>
+                      : <input aria-label={`Valor de ${name}`} disabled={evidenceBlocked} maxLength={taxonomyAspect?.maxLength ?? undefined} value={value} onChange={(event) => setForm((current) => ({ ...current, aspects: { ...current.aspects, [name]: event.target.value } }))} className="min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3 disabled:opacity-50" />}
+                  </label>
+                  {required
+                    ? <span aria-label={`${name} es obligatorio`} title="eBay exige este aspecto y no se puede borrar" className="mt-4 flex size-11 items-center justify-center rounded-xl border border-violet-200/25 text-violet-100">✓</span>
+                    : <button type="button" aria-label={`Eliminar ${name}`} onClick={() => setForm((current) => ({ ...current, aspects: Object.fromEntries(Object.entries(current.aspects).filter(([key]) => key !== name)) }))} className="mt-4 size-11 rounded-xl border border-rose-200/30">×</button>}
                 </div>
-                <label className="grid gap-1">
-                  <span className="text-[10px] font-black uppercase tracking-wider text-white/45">Valor confirmado</span>
-                  {selectionOnly
-                    ? <select aria-label={`Valor de ${name}`} disabled={evidenceBlocked} value={value} onChange={(event) => setForm((current) => ({ ...current, aspects: { ...current.aspects, [name]: event.target.value } }))} className="min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3 disabled:opacity-50">
-                      <option value="">Seleccionar valor oficial</option>
-                      {selectionOptions.map((option) => <option key={option.value} value={option.value} disabled={!taxonomyOptionAvailable(option, form.aspects)}>{option.value}</option>)}
-                    </select>
-                    : <input aria-label={`Valor de ${name}`} disabled={evidenceBlocked} maxLength={taxonomyAspect?.maxLength ?? undefined} value={value} onChange={(event) => setForm((current) => ({ ...current, aspects: { ...current.aspects, [name]: event.target.value } }))} className="min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3 disabled:opacity-50" />}
-                </label>
-                {required
-                  ? <span aria-label={`${name} es obligatorio`} title="eBay exige este aspecto y no se puede borrar" className="mt-4 flex size-11 items-center justify-center rounded-xl border border-violet-200/25 text-violet-100">✓</span>
-                  : <button type="button" aria-label={`Eliminar ${name}`} onClick={() => setForm((current) => ({ ...current, aspects: Object.fromEntries(Object.entries(current.aspects).filter(([key]) => key !== name)) }))} className="mt-4 size-11 rounded-xl border border-rose-200/30">×</button>}
+                {evidenceBlocked && <div className="mt-3 grid gap-3 rounded-xl border border-amber-200/25 bg-amber-200/[0.05] p-3">
+                  <div>
+                    <strong className="text-xs text-amber-50">Confirmar evidencia Product Truth</strong>
+                    <p className="mt-1 text-[10px] leading-4 text-white/55">Fuente: página oficial Luna del producto exacto vinculada por Seller OS. El servidor vuelve a validar identidad, Taxonomy y procedencia; una afirmación sin evidencia no se guarda.</p>
+                  </div>
+                  <label className="grid gap-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-white/45">Valor normalizado de {name}</span>
+                    {selectionOnly
+                      ? <select aria-label={`Valor Product Truth de ${name}`} value={evidenceDraft.value} onChange={(event) => updateProductTruthEvidenceDraft(name, { value: event.target.value })} className="min-h-11 rounded-xl border border-white/15 bg-black/30 px-3">
+                        <option value="">Seleccionar valor oficial observado</option>
+                        {selectionOptions.map((option) => <option key={option.value} value={option.value} disabled={!taxonomyOptionAvailable(option, form.aspects)}>{option.value}</option>)}
+                      </select>
+                      : <input aria-label={`Valor Product Truth de ${name}`} maxLength={taxonomyAspect?.maxLength ?? 500} value={evidenceDraft.value} onChange={(event) => updateProductTruthEvidenceDraft(name, { value: event.target.value })} className="min-h-11 rounded-xl border border-white/15 bg-black/30 px-3" />}
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-white/45">Evidencia observada en Luna</span>
+                    <textarea aria-label={`Evidencia Product Truth de ${name}`} maxLength={500} value={evidenceDraft.statement} onChange={(event) => updateProductTruthEvidenceDraft(name, { statement: event.target.value })} placeholder="Describe el texto o atributo visible que prueba este valor para el producto exacto." className="min-h-20 rounded-xl border border-white/15 bg-black/30 p-3 text-sm" />
+                  </label>
+                  <label className="flex items-start gap-2 text-xs leading-5 text-white/70">
+                    <input type="checkbox" checked={evidenceDraft.confirmed} onChange={(event) => updateProductTruthEvidenceDraft(name, { confirmed: event.target.checked })} className="mt-1" />
+                    Confirmo que observé esta evidencia en la página oficial Luna del producto exacto mostrado por Seller OS.
+                  </label>
+                  <button type="button" disabled={productTruthEvidenceBusy !== "" || !evidenceDraft.value.trim() || evidenceDraft.statement.trim().length < 12 || !evidenceDraft.confirmed} onClick={() => void confirmProductTruthEvidence(name)} className="min-h-11 rounded-xl bg-amber-200 px-3 text-sm font-black text-black disabled:cursor-not-allowed disabled:opacity-35">{productTruthEvidenceBusy === name ? "Validando y guardando…" : "Confirmar evidencia y resolver aspecto"}</button>
+                </div>}
               </div>
             })}</div>
             <div className="mt-3 grid grid-cols-[1fr_auto] gap-2 sm:grid-cols-[1fr_1fr_auto]"><input aria-label="Nombre del nuevo aspecto" placeholder="Marca" value={aspectName} onChange={(event) => setAspectName(event.target.value)} className="col-span-2 min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3 sm:col-span-1" /><input aria-label="Valor del nuevo aspecto" placeholder="Valor" value={aspectValue} onChange={(event) => setAspectValue(event.target.value)} className="min-h-11 min-w-0 rounded-xl border border-white/15 bg-black/25 px-3" /><button type="button" aria-label="Agregar aspecto" disabled={!aspectName.trim() || !aspectValue.trim()} onClick={() => { setForm((current) => ({ ...current, aspects: { ...current.aspects, [aspectName.trim()]: aspectValue.trim() } })); setAspectName(""); setAspectValue("") }} className="size-11 rounded-xl bg-violet-200 font-black text-black disabled:opacity-40">+</button></div>
