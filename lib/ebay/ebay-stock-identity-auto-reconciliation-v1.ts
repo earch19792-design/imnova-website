@@ -36,6 +36,7 @@ type DecisionRow = Readonly<{
   ebay_sku: string | null
   linkage_id: string | null
   components: unknown
+  evidence_maximum_age_seconds: number
 }>
 
 type VariantRow = Readonly<{
@@ -117,6 +118,11 @@ function positiveInteger(value: unknown) {
     Number(value) <= 10_000 ? Number(value) : null
 }
 
+function freshnessMaximumAgeSeconds(value: unknown) {
+  return Number.isSafeInteger(value) && Number(value) >= 60 &&
+    Number(value) <= 604_800 ? Number(value) : null
+}
+
 function parseCertifiedComponents(value: unknown) {
   if (!Array.isArray(value) || value.length < 1 || value.length > 20) return []
   const parsed = value.flatMap((entry) => {
@@ -139,18 +145,36 @@ function parseCertifiedComponents(value: unknown) {
     ? parsed : []
 }
 
+export function classifyPersistedLunaStockObservationStateV1(input: Readonly<{
+  sourceAvailable: boolean
+  stockState: string
+  observedSupplierQuantity: number | null
+}>) {
+  if (!input.sourceAvailable) return "UNKNOWN" as const
+  if (input.stockState === "CERTIFIED_OOS") {
+    return "OBSERVED_OUT_OF_STOCK" as const
+  }
+  if (input.observedSupplierQuantity !== null) {
+    return "OBSERVED_QUANTITY" as const
+  }
+  return input.stockState === "IN_STOCK"
+    ? "OBSERVED_IN_STOCK" as const : "UNKNOWN" as const
+}
+
 function persistedObservation(input: {
   job: ReturnType<typeof buildLunaStockCheckJobV1>
   attemptNumber: number
   observation: Awaited<ReturnType<ReturnType<
     typeof createSellerOsLunaPublicExactStockAuthorityV1>>>
+  maximumAgeSeconds: number
 }): SellerOsPersistableLunaStockObservationV1 {
   const value = input.observation
   const available = value.sourceStatus === "AVAILABLE"
-  const state = !available ? "UNKNOWN"
-    : value.stockState === "CERTIFIED_OOS" ? "OBSERVED_OUT_OF_STOCK"
-      : value.observedSupplierQuantity !== null ? "OBSERVED_QUANTITY"
-        : value.stockState === "IN_STOCK" ? "OBSERVED_IN_STOCK" : "UNKNOWN"
+  const state = classifyPersistedLunaStockObservationStateV1({
+    sourceAvailable: available,
+    stockState: value.stockState,
+    observedSupplierQuantity: value.observedSupplierQuantity,
+  })
   const observationId = digest("luna-stock-observation-v1", [
     input.job.stockCheckJobId, value.componentIdentityId,
     input.attemptNumber, input.job.contractVersion,
@@ -185,7 +209,9 @@ function persistedObservation(input: {
     acquisitionMethod: "CANONICAL_SERVER_READ",
     attemptCorrelation: Object.freeze({ attemptNumber: input.attemptNumber }),
     observedAt: value.observedAt,
-    freshnessInput: Object.freeze({ maximumAgeSeconds: 21_600 }),
+    freshnessInput: Object.freeze({
+      maximumAgeSeconds: input.maximumAgeSeconds,
+    }),
     limitations: Object.freeze(limitations),
   })
 }
@@ -214,7 +240,7 @@ export async function reconcileSellerOsStockIdentityV1(
       .eq("listing_status", "active")
       .in("ebay_item_id", targets),
     supabase.from("seller_os_luna_linkage_decisions")
-      .select("decision_id,decision_version,decision,ebay_item_id,ebay_sku,linkage_id,components")
+      .select("decision_id,decision_version,decision,ebay_item_id,ebay_sku,linkage_id,components,evidence_maximum_age_seconds")
       .eq("account_key", input.accountKey)
       .eq("marketplace_id", "EBAY_US")
       .in("ebay_item_id", targets)
@@ -232,10 +258,14 @@ export async function reconcileSellerOsStockIdentityV1(
   const seeds = targets.flatMap((itemId) => {
     const decision = latest.get(itemId)
     const components = decision ? parseCertifiedComponents(decision.components) : []
+    const maximumAgeSeconds = decision
+      ? freshnessMaximumAgeSeconds(decision.evidence_maximum_age_seconds)
+      : null
     return liveSkus.has(itemId) && decision?.decision ===
-      "APPROVE_EXACT_LINKAGE" && decision.linkage_id && components.length
+      "APPROVE_EXACT_LINKAGE" && decision.linkage_id && components.length &&
+      maximumAgeSeconds
       ? [{ itemId, ebaySku: liveSkus.get(itemId) ?? decision.ebay_sku,
-          linkageId: decision.linkage_id, components }]
+          linkageId: decision.linkage_id, components, maximumAgeSeconds }]
       : []
   })
   const productIds = [...new Set(seeds.flatMap((seed) =>
@@ -309,7 +339,8 @@ export async function reconcileSellerOsStockIdentityV1(
       const observed = await authority({ linkageId: seed.linkageId,
         componentIdentityId: component.componentIdentityId })
       const row = persistedObservation({ job,
-        attemptNumber: claim.attemptNumber, observation: observed })
+        attemptNumber: claim.attemptNumber, observation: observed,
+        maximumAgeSeconds: seed.maximumAgeSeconds })
       await repository.ensureObservation({ accountKey: input.accountKey,
         observation: row, leaseOwner: workerId, now: new Date().toISOString() })
       databaseWrites += 1
@@ -330,6 +361,11 @@ export async function reconcileSellerOsStockIdentityV1(
         : allInStock ? "IN_STOCK_SIGNAL" : "STOCK_UNKNOWN",
       sourceStatus: persisted.every((entry) =>
         entry.observed.sourceStatus === "AVAILABLE") ? "AVAILABLE" : "UNAVAILABLE",
+      reasonCodes: [...new Set(persisted.flatMap((entry) =>
+        entry.observed.limitationCode
+          ? [entry.observed.limitationCode]
+          : entry.observed.sourceStatus === "AVAILABLE"
+            ? [] : ["LUNA_SOURCE_UNAVAILABLE"]))].sort(),
       observedAt: persisted.map((entry) => entry.observed.observedAt).sort().at(-1) ?? null,
       newObservationPersisted: true })
   }

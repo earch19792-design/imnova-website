@@ -23,6 +23,8 @@ import { runAutomaticCertifiedOosProtectionV1 } from
   "@/lib/ebay/ebay-auto-certified-oos-protection-v1"
 import { reconcileSellerOsStockIdentityV1 } from
   "@/lib/ebay/ebay-stock-identity-auto-reconciliation-v1"
+import { selectSellerOsLunaStockFreshnessRenewalsV1 } from
+  "@/lib/ebay/ebay-luna-stock-freshness-renewal-v1"
 import { auditSellerOsLunaProtectedSessionV1 } from
   "@/lib/ebay/ebay-luna-protected-session-server-v1"
 import {
@@ -45,7 +47,6 @@ const BULK_END_UNLINKED_LIVE_TARGETS_V1 = Object.freeze([
 const STOCK_IDENTITY_RECONCILIATION_TARGETS_V1 = Object.freeze([
   "366582586826", "366592485792", "366597434810",
 ])
-const LUNA_PRODUCTION_POLLING_CANARY_ITEM_ID = "366574069492"
 const LUNA_PRODUCTION_POLL_INTERVAL_SECONDS = 900
 const LUNA_PRODUCTION_STOCK_READ_AUTHORITY =
   "LUNA_PORTEX_PUBLIC_EXACT_PRODUCT_STOCK" as const
@@ -95,6 +96,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" }, { status: 401 })
   }
   const config = configuration()
+  const refreshOnly = new URL(req.url).searchParams.get("refreshOnly") ===
+    "true"
   const activation = Object.freeze({
     contractVersion: "ACTIVATE_LUNA_STOCKGUARD_PRODUCTION_POLLING_V1",
     schedulerRequested: config.enabled,
@@ -271,40 +274,25 @@ export async function GET(req: Request) {
       )
       const currentLive = canonicalMonitor.listings.filter((listing) =>
         listing.discovery.livePresence.status === "LIVE_ACTIVE")
+      const freshnessRenewal =
+        selectSellerOsLunaStockFreshnessRenewalsV1({
+          schedulerIntervalSeconds: LUNA_PRODUCTION_POLL_INTERVAL_SECONDS,
+          listings: currentLive.map((listing) => ({
+            itemId: listing.identity.itemId,
+            liveStatus: listing.discovery.livePresence.status,
+            supplierLinkageStatus: listing.stock.supplierLinkageStatus,
+            limitationCode: listing.stock.limitationCode,
+            freshness: listing.stock.freshness,
+          })),
+        })
       const eligibleItemIds = currentLive.filter((listing) =>
-        listing.stock.supplierLinkageStatus === "CERTIFIED" &&
-        listing.stock.limitationCode !==
-          "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH")
+        listing.stock.supplierLinkageStatus === "CERTIFIED")
         .map((listing) => listing.identity.itemId).sort()
       const identityMismatchSkippedItemIds = currentLive.filter((listing) =>
         listing.stock.limitationCode ===
           "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH")
         .map((listing) => listing.identity.itemId).sort()
-      const { data: canaryJobs, error: canaryJobsError } = await supabase
-        .from("seller_os_luna_stock_check_jobs")
-        .select("observation_window_start,observation_window_end,workflow_state")
-        .eq("account_key", accountKey)
-        .eq("ebay_item_id", LUNA_PRODUCTION_POLLING_CANARY_ITEM_ID)
-        .eq("workflow_state", "SUCCEEDED")
-        .order("observation_window_end", { ascending: false })
-        .limit(8)
-      if (canaryJobsError) {
-        throw new Error("LUNA_PRODUCTION_POLLING_CANARY_STATE_READ_FAILED")
-      }
-      const canaryPreviouslyCertified = (canaryJobs ?? []).some((job) =>
-        Date.parse(String(job.observation_window_end)) -
-          Date.parse(String(job.observation_window_start)) ===
-            LUNA_PRODUCTION_POLL_INTERVAL_SECONDS * 1_000)
-      const canaryRequested =
-        new URL(req.url).searchParams.get("canary") === "true" ||
-        !canaryPreviouslyCertified
-      const targetItemIds = canaryRequested
-        ? eligibleItemIds.filter((itemId) =>
-            itemId === LUNA_PRODUCTION_POLLING_CANARY_ITEM_ID)
-        : eligibleItemIds
-      if (canaryRequested && targetItemIds.length !== 1) {
-        throw new Error("LUNA_PRODUCTION_POLLING_CANARY_NOT_ELIGIBLE")
-      }
+      const targetItemIds = freshnessRenewal.targetItemIds
       const stockPolling = await reconcileSellerOsStockIdentityV1(supabase, {
         accountKey,
         targetItemIds,
@@ -323,14 +311,53 @@ export async function GET(req: Request) {
       const automaticOosProtection = await runAutomaticCertifiedOosProtectionV1({
         monitor: postPollMonitor,
         allowedItemIds: targetItemIds,
-        maxMarketplaceWrites: 1,
+        maxMarketplaceWrites: refreshOnly ? 0 : 1,
       })
-      const sourceUnavailableCount = (stockPolling.outcomes as readonly
-        Record<string, unknown>[]).filter((outcome) =>
-        outcome.stockState === "STOCK_UNKNOWN").length
+      const postPollCertified = postPollMonitor.listings.filter((listing) =>
+        listing.discovery.livePresence.status === "LIVE_ACTIVE" &&
+        listing.stock.supplierLinkageStatus === "CERTIFIED")
+      const targetSet = new Set(targetItemIds)
+      const refreshedTargets = postPollCertified.filter((listing) =>
+        targetSet.has(listing.identity.itemId))
+      const refreshedByItemId = new Map(refreshedTargets.map((listing) =>
+        [listing.identity.itemId, listing]))
+      const pollingByItemId = new Map((stockPolling.outcomes as readonly
+        Record<string, unknown>[]).map((outcome) =>
+        [String(outcome.itemId ?? ""), outcome]))
+      const refreshSucceeded = refreshedTargets.filter((listing) =>
+        listing.stock.freshness.status === "FRESH").length
+      const refreshFailed = targetItemIds.length - refreshSucceeded
+      const sourceUnavailableCount = refreshFailed
       const success = stockPolling.targetCount === targetItemIds.length &&
         stockPolling.ambiguousCount === 0 && stockPolling.noMatchCount === 0 &&
         sourceUnavailableCount === 0
+      const refreshResults = Object.freeze({
+        refreshAttempted: targetItemIds.length,
+        refreshSucceeded,
+        refreshFailed,
+        freshCount: postPollCertified.filter((listing) =>
+          listing.stock.freshness.status === "FRESH").length,
+        staleCount: postPollCertified.filter((listing) =>
+          listing.stock.freshness.status === "STALE").length,
+        unknownCount: postPollCertified.filter((listing) =>
+          listing.stock.freshness.status === "UNKNOWN").length,
+        certifiedOosCount: postPollCertified.filter((listing) =>
+          listing.stock.state === "CERTIFIED_OOS").length,
+        failures: Object.freeze(targetItemIds.flatMap((itemId) => {
+          const listing = refreshedByItemId.get(itemId)
+          if (listing?.stock.freshness.status === "FRESH") return []
+          const outcome = pollingByItemId.get(itemId)
+          const reasonCodes = Array.isArray(outcome?.reasonCodes)
+            ? outcome.reasonCodes.filter((code): code is string =>
+                typeof code === "string" && /^[A-Z0-9_]+$/.test(code))
+            : []
+          return [{ itemId, reasonCodes: reasonCodes.length
+            ? reasonCodes
+            : [listing?.stock.limitationCode ??
+                String(outcome?.status ??
+                  "LUNA_REFRESH_DID_NOT_PRODUCE_FRESH_EVIDENCE")] }]
+        })),
+      })
       const { error: leaseFinishError } = await supabase.rpc(
         "finish_ebay_targeted_luna_monitor_run",
         { p_account_key: accountKey, p_run_id: runId, p_success: success,
@@ -352,7 +379,7 @@ export async function GET(req: Request) {
             listing.stock.supplierLinkageStatus === "CERTIFIED").length,
           pollEligibleCount: eligibleItemIds.length,
           identityMismatchSkippedCount: identityMismatchSkippedItemIds.length,
-          canaryRequested, canaryPreviouslyCertified,
+          freshnessRenewal, refreshResults,
           stockPolling, automaticOosProtection },
       })
       return NextResponse.json({ success,
@@ -367,13 +394,12 @@ export async function GET(req: Request) {
           listing.stock.supplierLinkageStatus === "CERTIFIED").length,
         pollEligibleCount: eligibleItemIds.length,
         identityMismatchSkippedCount: identityMismatchSkippedItemIds.length,
-        canaryRequested,
-        canaryPreviouslyCertified,
-        canaryItemId: LUNA_PRODUCTION_POLLING_CANARY_ITEM_ID,
+        freshnessRenewal,
+        refreshResults,
         stockPolling,
         automaticOosProtection,
         automationRunId: runId,
-        safety: { parallelSchedulerCreated: false, newMigrationCount: 0,
+        safety: { parallelSchedulerCreated: false, newMigrationCount: 1,
           browserSessionRequired: false, humanInterventionCount: 0,
           lunaWrites: 0, marketplaceWrites:
             automaticOosProtection.ebayWriteCount },

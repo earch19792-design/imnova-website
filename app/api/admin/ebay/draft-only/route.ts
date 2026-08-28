@@ -3232,13 +3232,53 @@ async function completeFinalPublicationMonitor(input: {
     })
   }
   const registration = record(registrationResult.registration)
+  const activeListingId = uuid(verification.connectorListingId)
+  const manualRegistrationId = uuid(registration.id)
+  if (!activeListingId || !manualRegistrationId) {
+    return compensateFinalPublicationAttachmentFailure({
+      ...input,
+      failureCode: "EBAY_FINAL_PUBLICATION_LUNA_LINEAGE_HANDOFF_FAILED",
+    })
+  }
+  const { data: linkageHandoffData, error: linkageHandoffError } =
+    await input.supabase.rpc(
+      "handoff_ebay_authorized_publication_luna_linkage_v1",
+      {
+        p_publication_id: input.publication.id,
+        p_expected_listing_id: input.listingId,
+        p_active_listing_id: activeListingId,
+        p_manual_registration_id: manualRegistrationId,
+      },
+    )
+  const linkageHandoff = record(linkageHandoffData)
+  const smartStockingAuthorization = record(record(
+    input.context.approval.approved_payload,
+  ).compliance).smartStockingPublicationAuthorization
+  const exactAuthorization = record(smartStockingAuthorization)
+  if (
+    linkageHandoffError
+    || text(linkageHandoff.status) !== "CERTIFIED"
+    || text(linkageHandoff.itemId) !== input.listingId
+    || text(linkageHandoff.productId) !==
+      text(exactAuthorization.lunaProductId)
+    || text(linkageHandoff.variantId) !==
+      text(exactAuthorization.lunaVariantId)
+    || text(linkageHandoff.sourceSku) !== text(exactAuthorization.supplierSku)
+    || text(linkageHandoff.gtin) !== text(exactAuthorization.gtin)
+    || Number(linkageHandoff.marketplaceWrites) !== 0
+  ) {
+    return compensateFinalPublicationAttachmentFailure({
+      ...input,
+      failureCode: "EBAY_FINAL_PUBLICATION_LUNA_LINEAGE_HANDOFF_FAILED",
+    })
+  }
   const { data: completed, error: completionError } = await input.supabase
     .rpc("complete_ebay_authorized_listing_monitor_registration", {
       p_publication_id: input.publication.id,
       p_actor_user_id: input.actor,
       p_listing_id: input.listingId,
-      p_active_listing_id: verification.connectorListingId,
-      p_manual_registration_id: uuid(registration.id),
+      p_active_listing_id: activeListingId,
+      p_manual_registration_id: manualRegistrationId,
     })
     .single()
   if (completionError || !completed) {
@@ -3331,6 +3371,7 @@ async function completeFinalPublicationMonitor(input: {
       source: verification.method,
     },
     stockguard: stockguardAttachment,
+    supplierLinkage: linkageHandoff,
     categoryLearning,
     safety: {
       publishOfferCalledAgain: false,
