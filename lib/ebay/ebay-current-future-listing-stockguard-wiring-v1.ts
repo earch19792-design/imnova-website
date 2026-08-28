@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { isDeepStrictEqual } from "node:util"
 
 export const SELLER_OS_CURRENT_FUTURE_STOCKGUARD_WIRING_VERSION =
   "CURRENT_AND_FUTURE_LISTING_LUNA_STOCKGUARD_WIRING_V1" as const
@@ -265,6 +266,32 @@ export function evaluatePublishWithStockguardContractV1(input: {
         "CERTIFIED_OOS" || component.safeCapacity === 0)
         ? ["PRE_PUBLISH_OOS_BLOCKED"] : []),
     ]), marketplaceWrites: 0 as const })
+}
+
+export function revalidateMaterializedPublishWithStockguardContractV1(
+  input: unknown,
+) {
+  const contract = input as ReturnType<
+    typeof evaluatePublishWithStockguardContractV1
+  >
+  const attachment = contract?.attachmentIntent
+  const components = Array.isArray(attachment?.components)
+    ? attachment.components : []
+  const evaluated = evaluatePublishWithStockguardContractV1({
+    sellerSku: attachment?.sellerSku ?? "",
+    expectedComponentCount: Number(attachment?.expectedComponentCount),
+    economicsReady: contract?.economicsReady === true,
+    monitorEnrollmentIntentPrepared:
+      contract?.monitorEnrollmentIntentPrepared === true,
+    components: components.map((component) => ({
+      ...component,
+      identityCertified: contract?.exactLunaLinkageReady === true,
+    })),
+  })
+  if (!evaluated.publishAllowed || !isDeepStrictEqual(evaluated, input)) {
+    throw new Error("PUBLISH_WITH_STOCKGUARD_CONTRACT_REQUIRED")
+  }
+  return evaluated
 }
 
 export function buildPostPublishStockguardAttachmentV1(input: {

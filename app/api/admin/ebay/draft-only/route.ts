@@ -37,7 +37,7 @@ import {
 } from "@/lib/ebay/ebay-draft-only-readiness"
 import {
   buildPostPublishStockguardAttachmentV1,
-  evaluatePublishWithStockguardContractV1,
+  revalidateMaterializedPublishWithStockguardContractV1,
 } from "@/lib/ebay/ebay-current-future-listing-stockguard-wiring-v1"
 import { isCanonicalEbayPackageSku } from "@/lib/ebay/ebay-sku"
 import {
@@ -769,13 +769,7 @@ function bindServerPublicationContracts(
 function finalPublicationStockguardContract(approvedPayload: JsonRecord) {
   const value = record(record(approvedPayload.compliance)
     .publishWithStockguardContract)
-  const result = evaluatePublishWithStockguardContractV1(value as Parameters<
-    typeof evaluatePublishWithStockguardContractV1
-  >[0])
-  if (!result.publishAllowed) {
-    throw new Error("PUBLISH_WITH_STOCKGUARD_CONTRACT_REQUIRED")
-  }
-  return result
+  return revalidateMaterializedPublishWithStockguardContractV1(value)
 }
 
 async function loadLivePackageTaxonomy(listingPackage: JsonRecord) {
