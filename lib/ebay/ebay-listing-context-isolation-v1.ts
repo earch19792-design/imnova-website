@@ -61,6 +61,35 @@ export function taxonomySnapshotMatchesContextV1(input: Readonly<{
     && text(preflight.categoryId) === categoryId
 }
 
+export function categoryResolverBindingMatchesContextV1(input: Readonly<{
+  expected: EbayListingContextIdentityV1
+  categoryResolver: unknown
+  taxonomyPreflight: unknown
+  categoryId: unknown
+}>) {
+  const resolver = record(input.categoryResolver)
+  const preflight = record(input.taxonomyPreflight)
+  const categoryId = text(input.categoryId)
+  return validIdentity(input.expected)
+    && /^\d{1,12}$/.test(categoryId)
+    && resolver.authorityClass === "SELLER_OS_EBAY_CATEGORY_RESOLVER_V1"
+    && resolver.status === "AUTO_SELECTED"
+    && resolver.resolutionClass === "HIGH_CONFIDENCE"
+    && resolver.contextBindingVersion === EBAY_LISTING_CONTEXT_ISOLATION_V1
+    && text(resolver.marketplaceId) === input.expected.marketplaceId
+    && text(resolver.listingPackageId) === input.expected.listingPackageId
+    && text(resolver.opportunityId) === input.expected.opportunityId
+    && text(resolver.candidateKey) === input.expected.candidateKey
+    && text(resolver.selectedCategoryId) === categoryId
+    && /^[0-9a-f-]{36}$/i.test(text(resolver.learningId))
+    && /^sha256:[0-9a-f]{64}$/.test(text(resolver.taxonomySnapshotDigest))
+    && /^sha256:[0-9a-f]{64}$/.test(
+      text(resolver.taxonomyPreflightEvidenceDigest),
+    )
+    && text(resolver.taxonomyPreflightEvidenceDigest)
+      === text(preflight.evidenceDigest)
+}
+
 export function lifecycleStateMatchesContextV1(input: Readonly<{
   expected: EbayListingContextIdentityV1
   approval?: unknown
@@ -103,6 +132,14 @@ export function assertTaxonomySnapshotContextV1(input: Parameters<
 >[0]) {
   if (!taxonomySnapshotMatchesContextV1(input)) {
     throw new Error("EBAY_LISTING_TAXONOMY_CONTEXT_IDENTITY_MISMATCH")
+  }
+}
+
+export function assertCategoryResolverBindingContextV1(input: Parameters<
+  typeof categoryResolverBindingMatchesContextV1
+>[0]) {
+  if (!categoryResolverBindingMatchesContextV1(input)) {
+    throw new Error("EBAY_CATEGORY_RESOLVER_CONTEXT_IDENTITY_MISMATCH")
   }
 }
 

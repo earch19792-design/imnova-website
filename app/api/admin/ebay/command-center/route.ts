@@ -35,9 +35,16 @@ import {
   type SmartStockingListingWorkspaceEvidenceV1,
 } from "@/lib/ebay/ebay-smart-stocking-listing-intake-v1"
 import {
+  categoryResolverBindingMatchesContextV1,
   taxonomySnapshotMatchesContextV1,
   type EbayListingContextIdentityV1,
 } from "@/lib/ebay/ebay-listing-context-isolation-v1"
+import {
+  resolveAndBindEbayListingCategoryV1,
+} from "@/lib/ebay/ebay-category-resolver-v1"
+import {
+  getEbayTaxonomyListingIntelligence,
+} from "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 import {
   CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1,
 } from "@/lib/ebay/ebay-smart-stocking-frontier-handoff-v1"
@@ -231,6 +238,7 @@ function resolvedPackageHardGates(
     && ["INCH", "CENTIMETER"].includes(String(dimensions.unit ?? "").toUpperCase())
   const aspectEntries = Object.entries(object(packageData.aspects))
   const taxonomyPreflight = object(packageData.taxonomyPreflight)
+  const categoryResolver = object(packageData.categoryResolverV1)
   const requiredTaxonomyAspects = Array.isArray(
     taxonomyPreflight.requiredAspects,
   )
@@ -253,6 +261,13 @@ function resolvedPackageHardGates(
       taxonomyPreflight,
       categoryId: packageData.categoryId,
     })
+    && (!Object.keys(categoryResolver).length
+      || categoryResolverBindingMatchesContextV1({
+        expected: context,
+        categoryResolver,
+        taxonomyPreflight,
+        categoryId: packageData.categoryId,
+      }))
     && aspectEntries.length > 0
     && unprovenRequiredTaxonomyAspects.length === 0
     && requiredTaxonomyAspects.every((name) =>
@@ -1033,7 +1048,7 @@ export async function POST(req: Request) {
             currentPricing.targetPrice ?? seedPricing.targetPrice,
             sameDayContext?.economicsConfig,
           )
-        const refreshedPackageData = applySafeSellerDefaults({
+        const refreshedPackageSeed = applySafeSellerDefaults({
           ...currentPackageData,
           pricing: refreshedPricing,
           evidenceSnapshot: sameDayContext
@@ -1046,6 +1061,20 @@ export async function POST(req: Request) {
               : "SAFE_EVIDENCE_ONLY_USER_FIELDS_PRESERVED",
           },
         }, selectedSafeDefaults)
+        const categoryBinding = await resolveAndBindEbayListingCategoryV1({
+          supabase,
+          accountKey,
+          context: {
+            marketplaceId: "EBAY_US",
+            listingPackageId: existing.id,
+            opportunityId,
+            candidateKey,
+          },
+          opportunity: effectiveOpportunity,
+          packageData: refreshedPackageSeed,
+          taxonomyReader: getEbayTaxonomyListingIntelligence,
+        })
+        const refreshedPackageData = categoryBinding.packageData
         const sourceObservedAt = sameDayContext?.sourceObservedAt
           ?? latestEvidenceTimestamp(sourceOpportunity)
         const packageRpc = sameDayContext
@@ -1103,11 +1132,13 @@ export async function POST(req: Request) {
           sameDayAuthorizedPublication: Boolean(sameDayContext),
           safeDefaultsApplied:
             strings(object(persistedRefreshedPackageData.safeDefaults).appliedFields).length > 0,
+          categoryResolution: categoryBinding.resolution,
           safety: { ebayWriteUsed: false, canPublish: false },
         })
       }
       const packageSeed = applySafeSellerDefaults(seed, selectedSafeDefaults)
-      const { data, error } = await supabase.from("ebay_listing_packages").insert({
+      const { data: created, error } = await supabase
+        .from("ebay_listing_packages").insert({
         account_key: accountKey,
         opportunity_id: opportunityId,
         candidate_key: candidateKey,
@@ -1117,12 +1148,51 @@ export async function POST(req: Request) {
         source_observed_at: latestEvidenceTimestamp(sourceOpportunity),
         created_by: reviewer,
       }).select("*").single()
-      if (error) throw new Error("COMMAND_CENTER_PACKAGE_CREATE_FAILED")
+      if (error || !created) {
+        throw new Error("COMMAND_CENTER_PACKAGE_CREATE_FAILED")
+      }
+      const categoryBinding = await resolveAndBindEbayListingCategoryV1({
+        supabase,
+        accountKey,
+        context: {
+          marketplaceId: "EBAY_US",
+          listingPackageId: created.id,
+          opportunityId,
+          candidateKey,
+        },
+        opportunity: effectiveOpportunity,
+        packageData: packageSeed,
+        taxonomyReader: getEbayTaxonomyListingIntelligence,
+      })
+      const { data: savedData, error: saveError } = await supabase.rpc(
+        "ebay_save_listing_package_guarded",
+        {
+          p_package_id: created.id,
+          p_account_key: accountKey,
+          p_actor: reviewer,
+          p_opportunity_id: opportunityId,
+          p_candidate_key: candidateKey,
+          p_operation: "save",
+          p_package_patch: categoryBinding.packageData,
+          p_status: "draft",
+          p_readiness: 0,
+          p_source_observed_at: latestEvidenceTimestamp(sourceOpportunity),
+          p_expected_updated_at: created.updated_at,
+        },
+      )
+      const saved = guardedPackageRow(savedData)
+      if (saveError || !saved) {
+        throw new Error(databaseErrorCode(
+          saveError,
+          "COMMAND_CENTER_PACKAGE_CATEGORY_BIND_FAILED",
+        ))
+      }
       return NextResponse.json({
         success: true,
-        listingPackage: data,
+        listingPackage: saved,
         created: true,
         sameDayAuthorizedPublication: false,
+        categoryResolution: categoryBinding.resolution,
         safeDefaultsApplied:
           strings(object(packageSeed.safeDefaults).appliedFields).length > 0,
         safety: { ebayWriteUsed: false, canPublish: false },
@@ -1212,9 +1282,23 @@ export async function POST(req: Request) {
           requestedPricing.targetPrice,
           sameDayContext?.economicsConfig,
         )
+      const persistedCategoryResolver = object(
+        currentPackageData.categoryResolverV1,
+      )
+      const categoryAutoSelected =
+        persistedCategoryResolver.status === "AUTO_SELECTED"
+        && persistedCategoryResolver.resolutionClass === "HIGH_CONFIDENCE"
+      const effectiveCategoryId = categoryAutoSelected
+        ? currentPackageData.categoryId : form.categoryId
+      const effectiveCategoryName = categoryAutoSelected
+        ? currentPackageData.categoryName : form.categoryName
       const packageForValidation = {
         ...form,
+        categoryId: effectiveCategoryId,
+        categoryName: effectiveCategoryName,
         imageAssetManifest: currentPackageData.imageAssetManifest,
+        taxonomyPreflight: currentPackageData.taxonomyPreflight,
+        categoryResolverV1: currentPackageData.categoryResolverV1,
       }
       const title = String(form.title ?? "").trim().slice(0, 80)
       const status = body.markReady === true ? "ready_for_review" : "draft"
@@ -1233,10 +1317,10 @@ export async function POST(req: Request) {
         ...((sameDayContext || finalListingReviewReady) ? [] : strings(sourceOpportunity.evidence_guards)),
         ...(canonicalPricing.passesProfitGate ? [] : ["MINIMUM_NET_MARGIN_NOT_MET"]),
       ]
-      const completeFields = [title, form.categoryId, String(form.description ?? ""), strings(form.imageUrls, 24)[0], canonicalPricing.targetPrice]
+      const completeFields = [title, effectiveCategoryId, String(form.description ?? ""), strings(form.imageUrls, 24)[0], canonicalPricing.targetPrice]
       const missingFields = [
         ...(!title ? ["TITLE_REQUIRED"] : []),
-        ...(!form.categoryId ? ["CATEGORY_REQUIRED"] : []),
+        ...(!effectiveCategoryId ? ["CATEGORY_REQUIRED"] : []),
         ...(!String(form.description ?? "").trim() ? ["DESCRIPTION_REQUIRED"] : []),
         ...(!strings(form.imageUrls, 24).length ? ["IMAGE_REQUIRED"] : []),
         ...(!(Number(canonicalPricing.targetPrice) > 0) ? ["PRICE_REQUIRED"] : []),
@@ -1253,9 +1337,9 @@ export async function POST(req: Request) {
         status,
         package_data: {
           title,
-          categoryId: form.categoryId || null,
+          categoryId: effectiveCategoryId || null,
           conditionId: form.conditionId || currentPackageData.conditionId || null,
-          categoryName: form.categoryName || null,
+          categoryName: effectiveCategoryName || null,
           aspects: object(form.aspects),
           description: String(form.description ?? "").slice(0, 100_000),
           imageUrls: strings(form.imageUrls, 24),
@@ -1276,6 +1360,7 @@ export async function POST(req: Request) {
             ).evidenceSnapshot)
             : currentPackageData.evidenceSnapshot ?? sourceSeed.evidenceSnapshot,
           taxonomyPreflight: currentPackageData.taxonomyPreflight ?? null,
+          categoryResolverV1: currentPackageData.categoryResolverV1 ?? null,
           sourceRefresh: currentPackageData.sourceRefresh ?? null,
           safeDefaults: currentPackageData.safeDefaults ?? null,
           sameDayPilot: currentPackageData.sameDayPilot ?? null,

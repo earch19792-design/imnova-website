@@ -57,6 +57,10 @@ import {
   buildEbayListingTaxonomyPreflightV1,
 } from "@/lib/ebay/ebay-listing-taxonomy-preflight-v1"
 import {
+  buildEbayCategoryResolverProductTruthV1,
+  recordEbayCategoryListingAcceptanceV1,
+} from "@/lib/ebay/ebay-category-resolver-v1"
+import {
   assertLifecycleStateContextV1,
   assertListingPackageContextV1,
   assertTaxonomySnapshotContextV1,
@@ -67,7 +71,6 @@ import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-a
 import { loadSameDayAuthorizedPublicationContext } from "@/lib/ebay/ebay-same-day-authorized-publication"
 import {
   isCakeTurntableListingIntakeV1,
-  WINDOW_FILM_LISTING_INTAKE_TARGET_V1,
 } from
   "@/lib/ebay/ebay-smart-stocking-listing-intake-v1"
 import { resolveSmartStockingAuthorizedPublicationV1 } from
@@ -1071,36 +1074,30 @@ async function taxonomyPreflight(body: JsonRecord, actor: string) {
     }, { status: 502 })
   }
 
-  const item3525 = text(listingPackage.candidate_key)
-    === "smart-stocking:EBAY_US:9220835475680:48809646653664"
-  const item3404 = text(listingPackage.candidate_key)
-    === WINDOW_FILM_LISTING_INTAKE_TARGET_V1.candidateKey
+  const { data: sourceOpportunity, error: opportunityError } = await supabase
+    .from("ebay_luna_opportunity_queue")
+    .select("*")
+    .eq("id", expectedOpportunityId)
+    .eq("candidate_key", expectedCandidateKey)
+    .maybeSingle()
+  if (opportunityError || !sourceOpportunity) {
+    return jsonError(new Error(
+      "EBAY_LISTING_TAXONOMY_PRODUCT_TRUTH_REQUIRED",
+    ), 409)
+  }
+  const productTruth = buildEbayCategoryResolverProductTruthV1({
+    opportunity: sourceOpportunity as JsonRecord,
+    packageData,
+  })
   const preflight = buildEbayListingTaxonomyPreflightV1({
     taxonomy,
     expectedCategoryId: categoryId,
     context,
     existingAspects: record(packageData.aspects),
-    provenProductValues: item3525
-      ? {
-        Type: "Turntable",
-        Material: "Plastic",
-        Features: "Non-Slip",
-        Size: "11 in",
-        UPC: "740119084743",
-      }
-      : item3404 ? {
-        Type: "Window Film",
-        Size: "23.6 in x 9.84 ft",
-        UPC: WINDOW_FILM_LISTING_INTAKE_TARGET_V1.gtin,
-      } : {},
-    knownUnknownAspectNames: item3525
-      ? ["Brand", "MPN", "Model", "Color"]
-      : item3404 ? ["Brand", "MPN", "Model", "Color", "Material"] : [],
-    unprovenAspectEvidenceRequirements: item3525
-      ? { Brand:
-        "AUTHORITATIVE_PRODUCT_TRUTH_NO_MANUFACTURER_BRAND_CLAIM_REQUIRED" }
-      : item3404 ? { Brand: "AUTHORITATIVE_PRODUCT_BRAND_EVIDENCE_REQUIRED" }
-        : {},
+    provenProductValues: productTruth.provenProductValues,
+    knownUnknownAspectNames: productTruth.knownUnknownAspectNames,
+    unprovenAspectEvidenceRequirements:
+      productTruth.unprovenAspectEvidenceRequirements,
   })
   const nextPackageData = {
     ...packageData,
@@ -2368,6 +2365,31 @@ async function completeFinalPublicationMonitor(input: {
       failureCode: "EBAY_FINAL_PUBLICATION_STOCKGUARD_ATTACH_FAILED",
     })
   }
+  const listingPackageData = record(input.context.listingPackage.package_data)
+  const learnedCategoryId = text(listingPackageData.categoryId)
+  let categoryLearning: JsonRecord = {
+    recorded: false,
+    reason: "CATEGORY_RESOLVER_LEARNING_ID_UNAVAILABLE",
+  }
+  if (/^\d{1,12}$/.test(learnedCategoryId)) {
+    try {
+      categoryLearning = await recordEbayCategoryListingAcceptanceV1({
+        supabase: input.supabase,
+        accountKey: text(input.context.listingPackage.account_key),
+        listingPackageId: text(input.context.listingPackage.id),
+        packageData: listingPackageData,
+        categoryId: learnedCategoryId,
+        listingAcceptance: "ACCEPTED",
+        ebayItemId: input.listingId,
+        observedAt: verification.connectorObservedAt ?? undefined,
+      })
+    } catch {
+      categoryLearning = {
+        recorded: false,
+        reason: "CATEGORY_RESOLVER_LISTING_ACCEPTANCE_WRITE_FAILED",
+      }
+    }
+  }
   const stockguardAttachment = buildPostPublishStockguardAttachmentV1({
     prePublish: finalPublicationStockguardContract(
       record(input.context.approval.approved_payload),
@@ -2396,6 +2418,7 @@ async function completeFinalPublicationMonitor(input: {
       source: verification.method,
     },
     stockguard: stockguardAttachment,
+    categoryLearning,
     safety: {
       publishOfferCalledAgain: false,
       activeOwnershipVerified: true,
