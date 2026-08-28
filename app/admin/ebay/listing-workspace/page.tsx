@@ -1793,7 +1793,40 @@ function ListingWorkspacePageContent() {
     void (async () => {
       try {
         const state = await request(undefined, opportunityId)
-        const selected = state.selectedOpportunity as Opportunity
+        let selected = state.selectedOpportunity as Opportunity
+        const smartStockingMarker = object(
+          object(selected.assessment).smartStockingListingIntakeV1,
+        )
+        const decisionPackageId = String(
+          smartStockingMarker.decisionPackageId ?? "",
+        )
+        const supplierSku = String(selected.supplier_sku ?? "")
+        if (
+          !maintenanceRequested
+          && selected.candidate_key.startsWith("smart-stocking:")
+          && decisionPackageId
+          && supplierSku
+        ) {
+          const refreshedIntake = await request({
+            action: "prepare_smart_stocking_listing_intake",
+            supplierSku,
+            decisionPackageId,
+          })
+          if (
+            String(refreshedIntake.candidateKey ?? "") !== candidateKey
+            || String(refreshedIntake.opportunityId ?? "") !== opportunityId
+            || refreshedIntake.marketplaceWrites !== 0
+          ) throw new Error(
+            "COMMAND_CENTER_SMART_STOCKING_REFRESH_IDENTITY_MISMATCH",
+          )
+          const refreshedState = await request(undefined, opportunityId)
+          selected = refreshedState.selectedOpportunity as Opportunity
+          if (selected.candidate_key !== candidateKey) {
+            throw new Error(
+              "COMMAND_CENTER_SMART_STOCKING_REFRESH_IDENTITY_MISMATCH",
+            )
+          }
+        }
         setOpportunity(selected)
         setDraftConfiguration((current) => {
           const initial = initialDraftConfiguration(selected)
@@ -3360,6 +3393,7 @@ function ListingWorkspacePageContent() {
         ))
         setMessage("")
       } finally {
+        setPublicationAutomationStep("")
         setPublicationAutomationBusy(false)
         setDraftBusy(false)
       }
@@ -3769,6 +3803,7 @@ function ListingWorkspacePageContent() {
           "La publicación de un clic se detuvo antes de una operación no validada."))
       setMessage("")
     } finally {
+      setPublicationAutomationStep("")
       setPublicationAutomationBusy(false)
       setDraftBusy(false)
     }
@@ -3891,6 +3926,7 @@ function ListingWorkspacePageContent() {
         setError(authenticatedPublicationRecoveryError(requestError))
         setMessage("")
       } finally {
+        setPublicationAutomationStep("")
         setPublicationAutomationBusy(false)
         setDraftBusy(false)
       }
@@ -4364,6 +4400,7 @@ function ListingWorkspacePageContent() {
     } finally {
       prepareVisualTimers.splice(0).forEach((timer) =>
         window.clearTimeout(timer))
+      setPublicationAutomationStep("")
       setPublicationAutomationBusy(false)
       setDraftBusy(false)
     }

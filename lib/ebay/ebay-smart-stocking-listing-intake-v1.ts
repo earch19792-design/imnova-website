@@ -90,6 +90,100 @@ function digest(value: unknown) {
     .update(JSON.stringify(value)).digest("hex")}`
 }
 
+/**
+ * Revalidates freshness-dependent Luna facts without discarding stable,
+ * durable Product Truth. The durable authority may come from the exact
+ * opportunity or its exact package lineage; it is never inferred from a
+ * title, an eBay SKU, or a refreshed availability response.
+ */
+export function revalidateSmartStockingProductTruthV1(input: Readonly<{
+  refreshedRow: JsonRecord
+  durableProductTruth: JsonRecord
+}>) {
+  const row = input.refreshedRow
+  const assessment = record(row.assessment)
+  const candidate = record(assessment.candidate)
+  const durable = input.durableProductTruth
+  const durableStock = record(durable.stock)
+  const brand = record(durable.brand)
+  const observedAt = text(row.supplier_snapshot_at)
+  const quantity = row.supplier_inventory_quantity === null
+    ? null
+    : positiveInteger(row.supplier_inventory_quantity)
+  const supportedUnbranded =
+    brand.noManufacturerBrandClaim === "PROVEN"
+    && brand.ebayBrandSemantics === "UNBRANDED_SUPPORTED"
+    && Boolean(text(brand.taxonomyBrandValue))
+    && brand.brandMetadataPresent === false
+    && brand.manufacturerMetadataPresent === false
+    && brand.visibleManufacturerBrandingPresent === false
+    && brand.supplierImageBrandConflictFound === false
+  const supportedUnknown =
+    brand.noManufacturerBrandClaim === "UNPROVEN"
+    && brand.ebayBrandSemantics === "UNKNOWN"
+    && (brand.taxonomyBrandValue === null
+      || brand.taxonomyBrandValue === undefined)
+  if (
+    durable.authorityClass !== LUNA_EXACT_PRODUCT_TRUTH_AUTHORITY
+    || !SHA256.test(String(durable.evidenceDigest ?? ""))
+    || durable.candidateKey !== row.candidate_key
+    || durable.lunaProductId !== row.supplier_product_id
+    || durable.lunaVariantId !== row.supplier_variant_id
+    || durable.supplierSku !== row.supplier_sku
+    || durable.gtin !== row.gtin
+    || money(durable.supplierPriceUsd) !== money(row.supplier_price)
+    || durable.rawHtmlStored !== false
+    || durable.marketplaceWrites !== 0
+    || durableStock.exactIdentityVerified !== true
+    || durableStock.safeCapacity !== null
+    || durableStock.safeCapacityStatus !== "UNPROVEN_NOT_INFERRED"
+    || (!supportedUnbranded && !supportedUnknown)
+    || candidate.candidateKey !== row.candidate_key
+    || candidate.supplierProductId !== row.supplier_product_id
+    || candidate.supplierVariantId !== row.supplier_variant_id
+    || candidate.sku !== row.supplier_sku
+    || candidate.gtin !== row.gtin
+    || row.supplier_available !== true
+    || (row.supplier_inventory_quantity !== null && quantity === null)
+    || !observedAt
+    || !Number.isFinite(Date.parse(observedAt))
+  ) throw new Error("SMART_STOCKING_PRODUCT_TRUTH_REVALIDATION_MISMATCH")
+
+  const { evidenceDigest: _oldDigest, stock: _oldStock, ...stableTruth } =
+    durable
+  const productTruthCore = {
+    ...stableTruth,
+    supplierPriceUsd: money(row.supplier_price),
+    stock: {
+      ...durableStock,
+      state: "IN_STOCK_SUPPLIER_STATED",
+      freshness: "FRESH",
+      observedAt: new Date(observedAt).toISOString(),
+      exactIdentityVerified: true,
+      supplierStatedQuantity: quantity,
+      safeCapacity: null,
+      safeCapacityStatus: "UNPROVEN_NOT_INFERRED",
+    },
+    brand,
+  }
+  return {
+    ...row,
+    assessment: {
+      ...assessment,
+      candidate: {
+        ...candidate,
+        available: true,
+        inventoryQuantity: quantity,
+        stockCapturedAt: new Date(observedAt).toISOString(),
+      },
+      productTruth: {
+        ...productTruthCore,
+        evidenceDigest: digest(productTruthCore),
+      },
+    },
+  }
+}
+
 export type CakeTurntableListingWorkspaceEvidenceV1 = Readonly<{
   authorityClass: "SELLER_OS_ITEM3525_FINAL_WORKSPACE_EVIDENCE_V1"
   decisionPackageId: string
@@ -117,7 +211,7 @@ export type CakeTurntableListingWorkspaceEvidenceV1 = Readonly<{
   stock: Readonly<{
     state: "IN_STOCK_SUPPLIER_STATED"
     available: true
-    quantity: number
+    quantity: number | null
     safeCapacity: null
     observedAt: string
   }>
@@ -199,9 +293,10 @@ export function buildCakeTurntableListingWorkspaceEvidenceV1(input: Readonly<{
   const productTruthStock = record(productTruth.stock)
   const productTruthBrand = record(productTruth.brand)
   const productTruthDigest = text(productTruth.evidenceDigest)
-  const supplierQuantity = positiveInteger(
-    productTruthStock.supplierStatedQuantity,
-  )
+  const supplierQuantityRaw = productTruthStock.supplierStatedQuantity
+  const supplierQuantity = supplierQuantityRaw === null
+    ? null
+    : positiveInteger(supplierQuantityRaw)
   const productTruthObservedAt = text(productTruthStock.observedAt)
   const profile = input.decisionPackage.smartStockingLearningProfile
   const decision = profile?.decisionSnapshot
@@ -240,7 +335,7 @@ export function buildCakeTurntableListingWorkspaceEvidenceV1(input: Readonly<{
     input.opportunity.gtin !== target.gtin ||
     money(input.opportunity.supplier_price) !== target.unitCostUsd ||
     input.opportunity.supplier_available !== true ||
-    supplierQuantity === null ||
+    (supplierQuantityRaw !== null && supplierQuantity === null) ||
     input.opportunity.supplier_inventory_quantity !== supplierQuantity ||
     candidate.available !== true ||
     candidate.inventoryQuantity !== supplierQuantity ||
@@ -1024,6 +1119,38 @@ export function buildWindowFilmListingIntakeV1(input: Readonly<{
   }
 }
 
+async function readExactDurableProductTruthForRefreshV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  candidateKey: string
+}>) {
+  const existing = await input.supabase.from("ebay_luna_opportunity_queue")
+    .select("id,candidate_key,assessment")
+    .eq("candidate_key", input.candidateKey).maybeSingle()
+  if (existing.error) {
+    throw new Error("SMART_STOCKING_PRODUCT_TRUTH_DURABLE_READ_FAILED")
+  }
+  if (!existing.data) return null
+  const opportunityTruth = record(
+    record(existing.data.assessment).productTruth,
+  )
+  if (Object.keys(opportunityTruth).length) return opportunityTruth
+
+  const exactPackage = await input.supabase.from("ebay_listing_packages")
+    .select("opportunity_id,candidate_key,package_data,updated_at")
+    .eq("account_key", input.accountKey)
+    .eq("opportunity_id", existing.data.id)
+    .eq("candidate_key", input.candidateKey)
+    .order("updated_at", { ascending: false })
+    .limit(1).maybeSingle()
+  if (exactPackage.error) {
+    throw new Error("SMART_STOCKING_PRODUCT_TRUTH_DURABLE_READ_FAILED")
+  }
+  const packageData = record(exactPackage.data?.package_data)
+  return record(record(record(packageData.evidenceSnapshot).assessment)
+    .productTruth)
+}
+
 export async function materializeCakeTurntableListingIntakeV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
@@ -1031,7 +1158,7 @@ export async function materializeCakeTurntableListingIntakeV1(input: Readonly<{
   readPublicProduct?: typeof fetchPublicLunaProductForActiveListingMonitor
 }>) {
   const target = CAKE_TURNTABLE_FRONTIER_HANDOFF_TARGET_V1
-  const [decisionPackage, catalog] = await Promise.all([
+  const [decisionPackage, catalog, durableProductTruth] = await Promise.all([
     readWinnerEvidenceDecisionPackage(input.supabase, target.packageId,
       input.accountKey),
     input.supabase.from("market_radar_latest_variants")
@@ -1040,6 +1167,11 @@ export async function materializeCakeTurntableListingIntakeV1(input: Readonly<{
       .eq("supplier_product_id", target.lunaProductId)
       .eq("supplier_variant_id", target.lunaVariantId)
       .eq("sku", target.lunaSku).maybeSingle(),
+    readExactDurableProductTruthForRefreshV1({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      candidateKey: CAKE_TURNTABLE_LISTING_INTAKE_KEY,
+    }),
   ])
   if (catalog.error || !catalog.data || !text(catalog.data.product_url)) {
     throw new Error("CAKE_TURNTABLE_LISTING_INTAKE_PRODUCT_TRUTH_UNAVAILABLE")
@@ -1047,12 +1179,21 @@ export async function materializeCakeTurntableListingIntakeV1(input: Readonly<{
   const readPublicProduct = input.readPublicProduct ??
     fetchPublicLunaProductForActiveListingMonitor
   const product = await readPublicProduct(String(catalog.data.product_url))
-  const row = buildCakeTurntableListingIntakeV1({
+  const freshRow = buildCakeTurntableListingIntakeV1({
     decisionPackage,
     lunaProduct: product,
     marketRadarProductId: String(catalog.data.product_id),
     observedAt: input.observedAt ?? new Date().toISOString(),
   })
+  const productTruthRevalidated = Boolean(
+    durableProductTruth && Object.keys(durableProductTruth).length,
+  )
+  const row = (productTruthRevalidated
+    ? revalidateSmartStockingProductTruthV1({
+      refreshedRow: freshRow,
+      durableProductTruth: durableProductTruth ?? {},
+    })
+    : freshRow) as typeof freshRow
   const write = await input.supabase.from("ebay_luna_opportunity_queue")
     .upsert(row, { onConflict: "candidate_key" }).select("id,candidate_key,decision")
     .single()
@@ -1073,6 +1214,7 @@ export async function materializeCakeTurntableListingIntakeV1(input: Readonly<{
     candidateKey: CAKE_TURNTABLE_LISTING_INTAKE_KEY,
     listingWorkspaceUrl: `/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(String(readback.data.id))}&candidate=${encodeURIComponent(CAKE_TURNTABLE_LISTING_INTAKE_KEY)}`,
     durableReadback: true as const,
+    productTruthRevalidated,
     marketplaceWrites: 0 as const,
   })
 }

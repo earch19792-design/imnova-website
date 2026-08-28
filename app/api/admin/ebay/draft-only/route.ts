@@ -1211,9 +1211,52 @@ export async function GET(req: Request) {
       true,
     )
     const packageConfig = record(initialContext.listingPackage.package_data).draftConfiguration
-    const requestedConfiguration = latestApproval
+    let requestedConfiguration: JsonRecord = latestApproval
       ? configurationFromApprovedPayload(approvedPayload)
       : record(packageConfig)
+    let canonicalFreshPreflight: Awaited<ReturnType<
+      typeof preflightEbayDraftOnlyMobile
+    >> | null = null
+    if (isSmartStockingListingIntakeV1(
+      record(initialContext.opportunity.assessment),
+    )) {
+      const policies = record(requestedConfiguration.businessPolicies)
+      const selection = {
+        fulfillmentPolicyId: text(policies.fulfillmentPolicyId),
+        paymentPolicyId: text(policies.paymentPolicyId),
+        returnPolicyId: text(policies.returnPolicyId),
+        merchantLocationKey: text(
+          requestedConfiguration.merchantLocationKey,
+        ),
+      }
+      if (Object.values(selection).every(Boolean)) {
+        try {
+          const fresh = await preflightEbayDraftOnlyMobile(selection)
+          const exactSelection = Object.entries(selection).every(
+            ([key, value]) => fresh.selection[
+              key as keyof typeof selection
+            ] === value,
+          )
+          if (
+            fresh.snapshotStatus === "READY"
+            && Boolean(fresh.snapshot)
+            && fresh.identity.status === "BOUND"
+            && fresh.privilege.usable
+            && fresh.selectionComplete
+            && exactSelection
+          ) {
+            canonicalFreshPreflight = fresh
+            requestedConfiguration = {
+              ...requestedConfiguration,
+              ebayPreflightSnapshot: fresh.snapshot,
+            }
+          }
+        } catch {
+          // Readiness remains fail-closed with the precise stale/missing
+          // preflight blocker when the existing GET-only authority fails.
+        }
+      }
+    }
     const sku = text(record(requestedConfiguration).sku)
     const context = sku
       ? await loadPackageContext(
@@ -1333,6 +1376,7 @@ export async function GET(req: Request) {
       compensatedOfferFreshReadEligibility,
       compensatedOfferFreshRead,
       authenticatedPublicationRecovery,
+      preflight: canonicalFreshPreflight,
       runtime,
       controlledPublication: {
         eligible: oneClickEligible,
