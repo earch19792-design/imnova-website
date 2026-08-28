@@ -662,6 +662,37 @@ test("prewrite adapter prefers durable canonical Taxonomy and Final Listing Revi
   assert.match(routeSource, /packageMeasurementsComplete[\s\S]*\? raw\.packageWeightAndSize[\s\S]*: undefined/)
 })
 
+test("GET and POST readiness consume the same canonical authority adapter", () => {
+  const getSource = routeSource.slice(
+    routeSource.indexOf("export async function GET"),
+    routeSource.indexOf("export async function POST"),
+  )
+  const previewSource = routeSource.slice(
+    routeSource.indexOf("async function previewDraft"),
+    routeSource.indexOf("async function approveDraft"),
+  )
+  const approveSource = routeSource.slice(
+    routeSource.indexOf("async function approveDraft"),
+    routeSource.indexOf("async function executeDraft"),
+  )
+  for (const source of [getSource, previewSource, approveSource]) {
+    const finalReviewIndex = source.indexOf(
+      "loadFinalListingReviewPublicationGate",
+    )
+    const taxonomyIndex = source.indexOf("loadLivePackageTaxonomy")
+    const canonicalConfigurationIndex = source.indexOf(
+      "serverApprovedConfiguration",
+    )
+    const readinessIndex = source.indexOf("evaluateEbayDraftOnlyReadiness")
+    assert.ok(finalReviewIndex >= 0)
+    assert.ok(taxonomyIndex > finalReviewIndex)
+    assert.ok(canonicalConfigurationIndex > taxonomyIndex)
+    assert.ok(readinessIndex > canonicalConfigurationIndex)
+  }
+  assert.match(getSource,
+    /serverApprovedConfiguration\([\s\S]*visualPublicationGate,[\s\S]*liveTaxonomy,[\s\S]*\)[\s\S]*evaluateEbayDraftOnlyReadiness/)
+})
+
 test("Smart Stocking canonical images bypass only the legacy merchandising count", () => {
   assert.match(
     smartStockingImageGateMigrationSource,

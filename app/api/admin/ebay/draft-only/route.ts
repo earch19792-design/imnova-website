@@ -1056,13 +1056,10 @@ export async function GET(req: Request) {
       true,
     )
     const packageConfig = record(initialContext.listingPackage.package_data).draftConfiguration
-    const draftConfiguration = bindServerPublicationContracts(
-      latestApproval
-        ? configurationFromApprovedPayload(approvedPayload)
-        : record(packageConfig),
-      initialContext,
-    )
-    const sku = text(record(draftConfiguration).sku)
+    const requestedConfiguration = latestApproval
+      ? configurationFromApprovedPayload(approvedPayload)
+      : record(packageConfig)
+    const sku = text(record(requestedConfiguration).sku)
     const context = sku
       ? await loadPackageContext(
         supabase,
@@ -1075,16 +1072,30 @@ export async function GET(req: Request) {
         true,
       )
       : initialContext
+    const visualPublicationGate = await loadFinalListingReviewPublicationGate({
+      supabase,
+      listingPackageId: packageId,
+      actorId: auth.actor,
+    })
+    const liveTaxonomy = await loadLivePackageTaxonomy(context.listingPackage)
+    const draftConfiguration = bindServerPublicationContracts(
+      serverApprovedConfiguration(
+        record(requestedConfiguration),
+        context.listingPackage,
+        context.opportunity,
+        auth.actor,
+        new Date(),
+        false,
+        visualPublicationGate,
+        liveTaxonomy,
+      ),
+      context,
+    )
     const readiness = evaluateEbayDraftOnlyReadiness({
       ...context,
       draftConfiguration: record(draftConfiguration),
       target,
       accountFingerprint: fingerprint,
-    })
-    const visualPublicationGate = await loadFinalListingReviewPublicationGate({
-      supabase,
-      listingPackageId: packageId,
-      actorId: auth.actor,
     })
     const oneClickEligible = target === "PRODUCTION"
       && Boolean(context.smartStockingPublicationAuthorization)
