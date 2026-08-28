@@ -42,6 +42,16 @@ function explainCanonicalBlocker(reasonCode: string): CanonicalUiBlocker {
   }
   const known = exact[reasonCode]
   if (known) return { reasonCode, ...known }
+  if (reasonCode.startsWith("REQUIRED_ASPECT_MISSING:")) {
+    const aspectName = reasonCode.slice("REQUIRED_ASPECT_MISSING:".length)
+      .trim() || "requerido"
+    return {
+      reasonCode,
+      explanation: `Taxonomy exige ${aspectName}, pero el package canónico no tiene un valor respaldado.`,
+      resolutionAction:
+        `Completa ${aspectName} en Aspectos de este Workspace usando sólo un valor permitido por Taxonomy y probado por Product Truth.`,
+    }
+  }
   if (/STOCK|SUPPLY|LUNA|LISTING_INTAKE/.test(reasonCode)) return {
     reasonCode,
     explanation: "La disponibilidad o evidencia comercial vigente no permite publicar.",

@@ -96,6 +96,35 @@ function guardedPackageRow(value: unknown) {
     : null
 }
 
+async function compensatedPublicationHydrationIsReadOnly(input: {
+  supabase: ReturnType<typeof getSupabaseAdminClient>
+  listingPackage: Record<string, unknown>
+  actorUserId: string
+  accountKey: string
+}) {
+  const { data: publication, error } = await input.supabase
+    .from("ebay_authorized_listing_publications")
+    .select("id,phase,last_error_code,publish_attempt_count,publish_recovery_count,listing_id,offer_id,sanitized_result,updated_at")
+    .eq("listing_package_id", input.listingPackage.id)
+    .eq("opportunity_id", input.listingPackage.opportunity_id)
+    .eq("actor_user_id", input.actorUserId)
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("phase", "terminal_failure")
+    .eq("last_error_code", "EBAY_FINAL_PUBLICATION_MONITOR_PERSIST_FAILED")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error("COMMAND_CENTER_RECOVERY_HYDRATION_READ_FAILED")
+  if (!publication) return false
+  const sanitized = object(publication.sanitized_result)
+  return Number(publication.publish_attempt_count) === 1
+    && Number(publication.publish_recovery_count) === 0
+    && /^\d{9,20}$/.test(String(publication.listing_id ?? ""))
+    && /^\d{9,20}$/.test(String(publication.offer_id ?? ""))
+    && sanitized.compensatingEndVerified === true
+    && sanitized.officialReadbackNotCurrentLive === true
+}
+
 function latestEvidenceTimestamp(row: Record<string, unknown>) {
   const candidates = [row.last_scanned_at, row.supplier_snapshot_at]
     .filter((value): value is string => typeof value === "string" && Number.isFinite(Date.parse(value)))
@@ -839,10 +868,6 @@ export async function POST(req: Request) {
     }
 
     if (action === "prepare_package") {
-      const smartStockingEvidence =
-        await resolveSmartStockingListingWorkspaceEvidenceV1({
-          supabase, accountKey, opportunity: sourceOpportunity,
-        })
       const { data: existing, error: readError } = await supabase
         .from("ebay_listing_packages")
         .select("*")
@@ -854,6 +879,31 @@ export async function POST(req: Request) {
       if (existing && existing.created_by !== reviewer) {
         throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
       }
+      if (existing && await compensatedPublicationHydrationIsReadOnly({
+        supabase,
+        listingPackage: existing,
+        actorUserId: reviewer,
+        accountKey,
+      })) {
+        return NextResponse.json({
+          success: true,
+          listingPackage: existing,
+          created: false,
+          evidenceRefreshed: false,
+          preservedUserFields: true,
+          hydrationMode: "COMPENSATED_PUBLICATION_RECOVERY_READ_ONLY",
+          safety: {
+            ebayWriteUsed: false,
+            databaseWriteUsed: false,
+            productionChanged: false,
+            canPublish: false,
+          },
+        })
+      }
+      const smartStockingEvidence =
+        await resolveSmartStockingListingWorkspaceEvidenceV1({
+          supabase, accountKey, opportunity: sourceOpportunity,
+        })
       if (existing?.status === "approved") {
         // Reused approved packages still need the final Luna freshness gate.
         // Do this before returning the cached package so the Workspace cannot

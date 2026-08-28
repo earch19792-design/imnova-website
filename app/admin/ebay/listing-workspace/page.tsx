@@ -923,7 +923,7 @@ const PUBLICATION_JOURNEY_STAGES = [
     productX: 360,
     productY: 145,
     accessibleLabel:
-      "Las siete imágenes aprobadas se inspeccionan y se sellan por posición.",
+      "Las imágenes canónicas aprobadas se inspeccionan y se sellan por posición.",
   },
   {
     id: "authorization",
@@ -3306,6 +3306,8 @@ function ListingWorkspacePageContent() {
     setPublicationAutomationBusy(true)
     setDraftBusy(true)
     setPublicationAutomationFailed(false)
+    setPublicationAutomationStartedAt(Date.now())
+    setPublicationAutomationElapsed(0)
     setPublicationAutomationPhase("preview")
     setPublicationAutomationStep(
       "Recuperando el Golden Path existente · repitiendo GETs oficiales antes del rearm…",
@@ -3349,6 +3351,9 @@ function ListingWorkspacePageContent() {
         )
       } catch (requestError) {
         setPublicationAutomationFailed(true)
+        setPublicationAutomationStep(
+          "Rearm detenido de forma segura; no se publicó ni se crearon artefactos eBay.",
+        )
         setError(getMobileReviewRequestError(
           requestError,
           "El rearm se detuvo sin publicar ni crear artefactos eBay.",

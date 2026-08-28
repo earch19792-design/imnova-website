@@ -232,10 +232,6 @@ export function classifyAuthenticatedPublicationRecoveryV1(input: Readonly<{
     || !text(approval.consumed_at)
     || Boolean(approval.revoked_at)
   ) return blocked("EBAY_AUTHENTICATED_RECOVERY_APPROVAL_INVALID")
-  if (input.controlledIntentValidation?.valid !== true) {
-    return blocked(input.controlledIntentValidation?.blocker
-      ?? "EBAY_ONE_CLICK_PUBLICATION_INTENT_MISSING")
-  }
   const expected = input.expected
   if (
     text(approval.listing_package_id) !== expected.listingPackageId
@@ -255,6 +251,40 @@ export function classifyAuthenticatedPublicationRecoveryV1(input: Readonly<{
     !authorizedHash
     || requestHash !== authorizedHash
   ) return blocked("APPROVED_PAYLOAD_CHANGED")
+  const offerId = text(execution.offer_id)
+  const sku = text(execution.sku)
+  if (execution.phase !== "completed" || !offerId || !sku) {
+    return blocked("EBAY_AUTHENTICATED_RECOVERY_COMPLETED_OFFER_REQUIRED")
+  }
+  if (text(publication.id)) {
+    if (
+      text(publication.draft_execution_id) !== text(execution.id)
+      || text(publication.draft_approval_id) !== text(approval.id)
+      || text(publication.listing_package_id) !== expected.listingPackageId
+      || text(publication.opportunity_id) !== expected.opportunityId
+      || text(publication.target) !== expected.target
+      || text(publication.account_fingerprint) !== expected.accountFingerprint
+      || text(publication.offer_id) !== offerId
+      || text(publication.sku) !== sku
+    ) return blocked("EBAY_AUTHENTICATED_RECOVERY_PUBLICATION_CHANGED")
+    const rearmedResult = record(publication.sanitized_result)
+    if (
+      publication.phase === "preview_ready"
+      && Number(publication.publish_attempt_count) === 0
+      && !text(publication.listing_id)
+      && Number(rearmedResult.compensatedRecoveryCount) === 1
+      && Boolean(text(rearmedResult.compensatedRecoveryAuthorizedAt))
+    ) {
+      return recoveryResult({
+        ...base,
+        state: "REARMED_AWAITING_HUMAN_PUBLICATION",
+      })
+    }
+  }
+  if (input.controlledIntentValidation?.valid !== true) {
+    return blocked(input.controlledIntentValidation?.blocker
+      ?? "EBAY_ONE_CLICK_PUBLICATION_INTENT_MISSING")
+  }
   const canonicalBlockers = Array.isArray(input.readiness?.blockers)
     ? input.readiness.blockers.filter((value): value is string =>
         typeof value === "string" && Boolean(value.trim()))
@@ -274,11 +304,6 @@ export function classifyAuthenticatedPublicationRecoveryV1(input: Readonly<{
   }
   if (!input.canonicalStockAuthorized) {
     return blocked("EBAY_AUTHENTICATED_RECOVERY_CANONICAL_STOCK_REQUIRED")
-  }
-  const offerId = text(execution.offer_id)
-  const sku = text(execution.sku)
-  if (execution.phase !== "completed" || !offerId || !sku) {
-    return blocked("EBAY_AUTHENTICATED_RECOVERY_COMPLETED_OFFER_REQUIRED")
   }
   if (!text(publication.id)) {
     return recoveryResult({
@@ -329,16 +354,6 @@ export function classifyAuthenticatedPublicationRecoveryV1(input: Readonly<{
     || Number(publication.publish_attempt_count) !== 0
     || Boolean(text(publication.listing_id))
   ) return blocked("EBAY_AUTHENTICATED_RECOVERY_PUBLICATION_NOT_RESUMABLE")
-  const sanitized = record(publication.sanitized_result)
-  if (
-    Number(sanitized.compensatedRecoveryCount) === 1
-    && Boolean(text(sanitized.compensatedRecoveryAuthorizedAt))
-  ) {
-    return recoveryResult({
-      ...base,
-      state: "REARMED_AWAITING_HUMAN_PUBLICATION",
-    })
-  }
   return recoveryResult({
     ...base,
     state: "RESUMABLE_AUTHORIZED_PUBLICATION",
