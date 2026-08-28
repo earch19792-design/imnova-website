@@ -441,7 +441,7 @@ async function loadFinalPublicationContext(
   executionId: string,
   actor: string,
   options: Readonly<{
-    allowCompensatedRearmPackage?: boolean
+    compensatedRearmLedgerOnly?: boolean
   }> = {},
 ) {
   const { data: execution, error: executionError } = await supabase
@@ -473,6 +473,41 @@ async function loadFinalPublicationContext(
   if (opportunityError || !opportunity) throw new Error("EBAY_FINAL_PUBLICATION_OPPORTUNITY_NOT_FOUND")
   const runtime = ebayDraftOnlyRuntimeStatus()
   const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (options.compensatedRearmLedgerOnly) {
+    if (
+      !runtime.enabled
+      || !runtime.configured
+      || runtime.target !== "PRODUCTION"
+      || runtime.accountFingerprint !== execution.account_fingerprint
+      || execution.target !== "PRODUCTION"
+      || !accountKey
+      || listingPackage.account_key !== accountKey
+      || approval.status !== "consumed"
+      || !text(approval.consumed_at)
+      || Boolean(approval.revoked_at)
+      || approval.target !== "PRODUCTION"
+      || approval.account_fingerprint !== execution.account_fingerprint
+      || approval.id !== execution.approval_id
+      || approval.listing_package_id !== execution.listing_package_id
+      || approval.opportunity_id !== execution.opportunity_id
+      || approval.candidate_key !== listingPackage.candidate_key
+      || listingPackage.opportunity_id !== execution.opportunity_id
+      || listingPackage.candidate_key !== opportunity.candidate_key
+      || approval.payload_hash !== execution.request_hash
+      || execution.phase !== "completed"
+      || !/^\d{9,20}$/.test(text(execution.offer_id))
+    ) throw new Error("EBAY_COMPENSATED_PUBLICATION_DURABLE_LINEAGE_CHANGED")
+    return {
+      execution: execution as JsonRecord,
+      approval: approval as JsonRecord,
+      listingPackage: listingPackage as JsonRecord,
+      opportunity: opportunity as JsonRecord,
+      sameDayPilotAuthorization: null,
+      smartStockingPublicationAuthorization: null,
+      runtime,
+      accountKey,
+    }
+  }
   const sameDayContext = accountKey
     ? await loadSameDayAuthorizedPublicationContext({
       supabase,
@@ -505,8 +540,7 @@ async function loadFinalPublicationContext(
     || execution.target !== "PRODUCTION"
     || !accountKey
     || listingPackage.account_key !== accountKey
-    || (!options.allowCompensatedRearmPackage
-      && listingPackage.status !== "approved")
+    || listingPackage.status !== "approved"
     || effectiveOpportunity.supplier_available !== true
     || (!smartStockingContext &&
       Number(effectiveOpportunity.supplier_inventory_quantity) < 1)
@@ -580,9 +614,6 @@ async function revalidateFinalPublicationDependencies(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   context: Awaited<ReturnType<typeof loadFinalPublicationContext>>,
   approvedPayload: JsonRecord,
-  options: Readonly<{
-    persistVerifiedProfile?: boolean
-  }> = {},
 ) {
   const offer = record(approvedPayload.offerPayload)
   const policies = record(offer.listingPolicies)
@@ -608,16 +639,14 @@ async function revalidateFinalPublicationDependencies(
   if (!dependencies.safe) {
     throw new Error(dependencies.blocker || "EBAY_FINAL_PUBLICATION_DEPENDENCIES_INVALID")
   }
-  if (options.persistVerifiedProfile !== false) {
-    const profileSaved = await saveVerifiedEbayAccountPolicyProfile({
-      supabase,
-      accountKey: context.accountKey,
-      actorUserId: text(context.execution.actor_user_id),
-      preflight,
-    })
-    if (!profileSaved) {
-      throw new Error("EBAY_FINAL_PUBLICATION_ACCOUNT_PREFLIGHT_FAILED")
-    }
+  const profileSaved = await saveVerifiedEbayAccountPolicyProfile({
+    supabase,
+    accountKey: context.accountKey,
+    actorUserId: text(context.execution.actor_user_id),
+    preflight,
+  })
+  if (!profileSaved) {
+    throw new Error("EBAY_FINAL_PUBLICATION_ACCOUNT_PREFLIGHT_FAILED")
   }
   return { preflight, dependencies }
 }
@@ -3715,7 +3744,7 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
     supabase,
     text(publication.draft_execution_id),
     actor,
-    { allowCompensatedRearmPackage: compensatedMonitorFailure },
+    { compensatedRearmLedgerOnly: compensatedMonitorFailure },
   )
   const built = buildFinalPublicationPreview(
     context.approval,
@@ -3762,12 +3791,13 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
       )
     }
   }
-  await revalidateFinalPublicationDependencies(
-    supabase,
-    context,
-    record(context.approval.approved_payload),
-    { persistVerifiedProfile: !compensatedMonitorFailure },
-  )
+  if (!compensatedMonitorFailure) {
+    await revalidateFinalPublicationDependencies(
+      supabase,
+      context,
+      record(context.approval.approved_payload),
+    )
+  }
   const rearmRpc = compensatedMonitorFailure
     ? "rearm_ebay_authorized_listing_after_compensated_monitor_failure_once"
     : "rearm_ebay_authorized_listing_publication_once"
