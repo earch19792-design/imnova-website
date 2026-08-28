@@ -77,6 +77,7 @@ import {
   assertLifecycleStateContextV1,
   assertListingPackageContextV1,
   assertTaxonomySnapshotContextV1,
+  taxonomySnapshotMatchesContextV1,
   type EbayListingContextIdentityV1,
 } from "@/lib/ebay/ebay-listing-context-isolation-v1"
 import { enqueueSellerWhatsAppAlert } from "@/lib/ebay/ebay-seller-whatsapp-alerts"
@@ -751,6 +752,7 @@ function serverApprovedConfiguration(
   actor: string,
   now: Date,
   imagesConfirmed: boolean,
+  finalReviewGate: FinalListingReviewPublicationGate,
   liveTaxonomy?: EbayTaxonomyListingIntelligence,
 ) {
   const packageData = record(listingPackage.package_data)
@@ -769,18 +771,67 @@ function serverApprovedConfiguration(
     .filter(Boolean)
   const imageManifestConfirmed = images.length > 0
     && images.every((url) => approvedManifestUrls.includes(url))
+  const canonicalImageAuthorization = {
+    approved: true,
+    approvedAt: now.toISOString(),
+    approvedBy: actor,
+    approvedImageUrls: images,
+    protectedManifestVerified: true,
+    protectedManifestAssetCount: images.length,
+    rightsBasis: finalReviewGate.source ===
+      "APPROVED_LUNA_SUPPLIER_IMAGE_AUTOMATED_QA"
+      ? "supplier_authorized"
+      : text(record(raw.imageAuthorization).rightsBasis),
+    source: finalReviewGate.source ===
+      "APPROVED_LUNA_SUPPLIER_IMAGE_AUTOMATED_QA"
+      ? "luna"
+      : text(record(raw.imageAuthorization).source),
+  }
+  const canonicalImageBinding = bindCanonicalPublicationImageSet({
+    imageUrls: images,
+    imageAuthorization: canonicalImageAuthorization,
+    gate: finalReviewGate,
+  })
   const assessment = record(opportunity.assessment)
   const intelligence = record(assessment.listingIntelligencePackage)
   const category = record(intelligence.categoryRecommendation)
   const liveTaxonomyAvailable = liveTaxonomy?.status === "AVAILABLE"
+    && liveTaxonomy.source === "EBAY_TAXONOMY_OFFICIAL_READONLY"
+    && Boolean(text(liveTaxonomy.observedAt))
+    && Boolean(text(liveTaxonomy.categoryTreeId))
+    && Boolean(text(liveTaxonomy.categoryTreeVersion))
   const liveAspectConstraints = liveTaxonomyAvailable
     ? liveTaxonomy.aspects ?? []
     : []
   const taxonomyConstraintsCaptured = liveTaxonomyAvailable
-    && Boolean(text(liveTaxonomy.categoryTreeId))
-    && Boolean(text(liveTaxonomy.categoryTreeVersion))
+  const persistedTaxonomy = record(packageData.taxonomyPreflight)
+  const persistedTaxonomyContext: EbayListingContextIdentityV1 = {
+    marketplaceId: "EBAY_US",
+    listingPackageId: text(listingPackage.id),
+    opportunityId: text(listingPackage.opportunity_id),
+    candidateKey: text(listingPackage.candidate_key),
+  }
+  const persistedTaxonomyAvailable =
+    persistedTaxonomy.status === "CONSULTADO"
+    && persistedTaxonomy.officialStatus === "AVAILABLE"
+    && persistedTaxonomy.source === "EBAY_TAXONOMY_OFFICIAL_READONLY"
+    && /^sha256:[0-9a-f]{64}$/.test(text(
+      persistedTaxonomy.evidenceDigest,
+    ))
+    && taxonomySnapshotMatchesContextV1({
+      expected: persistedTaxonomyContext,
+      taxonomyPreflight: persistedTaxonomy,
+      categoryId: packageData.categoryId,
+    })
+  const persistedRequiredAspects = Array.isArray(
+    persistedTaxonomy.requiredAspects,
+  ) ? persistedTaxonomy.requiredAspects.map(record) : []
+  const persistedAspectConstraints = Array.isArray(persistedTaxonomy.aspects)
+    ? persistedTaxonomy.aspects.map(record) : []
   const requiredAspects = liveTaxonomyAvailable
     ? liveTaxonomy.requiredAspects.map((item) => text(item.name)).filter(Boolean)
+    : persistedTaxonomyAvailable
+      ? persistedRequiredAspects.map((item) => text(item.name)).filter(Boolean)
     : Array.isArray(category.requiredAspects)
       ? category.requiredAspects.map((item) => text(record(item).name)).filter(Boolean)
       : []
@@ -788,10 +839,14 @@ function serverApprovedConfiguration(
   const packageCategoryId = text(packageData.categoryId)
   const taxonomyConfirmed = liveTaxonomyAvailable
     ? text(liveTaxonomy.categoryId) === packageCategoryId
+    : persistedTaxonomyAvailable
+      ? text(persistedTaxonomy.categoryId) === packageCategoryId
     : text(category.categoryId) === packageCategoryId
       && text(category.taxonomyStatus) === "AVAILABLE"
   const taxonomyObservedAt = liveTaxonomyAvailable
     ? evidenceTimestamp(liveTaxonomy.observedAt)
+    : persistedTaxonomyAvailable
+      ? evidenceTimestamp(persistedTaxonomy.observedAt)
     : evidenceTimestamp(
       category.observedAt,
       category.fetchedAt,
@@ -799,6 +854,24 @@ function serverApprovedConfiguration(
       assessment.assessedAt,
       opportunity.last_scanned_at,
       listingPackage.source_observed_at,
+  )
+  const packageMeasurements = record(raw.packageWeightAndSize)
+  const packageDimensions = record(packageMeasurements.dimensions)
+  const packageWeight = record(packageMeasurements.weight)
+  const dimensionValues = [
+    packageDimensions.length,
+    packageDimensions.width,
+    packageDimensions.height,
+  ].map((value) => Number(value))
+  const packageMeasurementsComplete = dimensionValues.every((value) =>
+    Number.isFinite(value) && value > 0)
+    && ["INCH", "CENTIMETER"].includes(
+      text(packageDimensions.unit).toUpperCase(),
+    )
+    && Number.isFinite(Number(packageWeight.value))
+    && Number(packageWeight.value) > 0
+    && ["POUND", "KILOGRAM", "OUNCE", "GRAM"].includes(
+      text(packageWeight.unit).toUpperCase(),
     )
   return {
     sku: expectedEbayDraftOnlySku(listingPackage),
@@ -806,30 +879,49 @@ function serverApprovedConfiguration(
     condition: raw.condition,
     merchantLocationKey: raw.merchantLocationKey,
     businessPolicies: raw.businessPolicies,
-    packageWeightAndSize: raw.packageWeightAndSize,
-    imageAuthorization: {
-      approved: imagesConfirmed && imageManifestConfirmed,
-      approvedAt: imagesConfirmed && imageManifestConfirmed
-        ? now.toISOString()
-        : null,
-      approvedBy: imagesConfirmed && imageManifestConfirmed ? actor : null,
-      approvedImageUrls: imageManifestConfirmed ? images : [],
-      protectedManifestVerified: imageManifestConfirmed,
-      protectedManifestAssetCount: approvedImageManifest.length,
-      rightsBasis: requestedAuthorization.rightsBasis,
-      source: requestedAuthorization.source,
-    },
+    packageWeightAndSize: packageMeasurementsComplete
+      ? raw.packageWeightAndSize
+      : undefined,
+    imageAuthorization: canonicalImageBinding.allowed
+      ? canonicalImageAuthorization
+      : {
+        approved: imagesConfirmed && imageManifestConfirmed,
+        approvedAt: imagesConfirmed && imageManifestConfirmed
+          ? now.toISOString()
+          : null,
+        approvedBy: imagesConfirmed && imageManifestConfirmed ? actor : null,
+        approvedImageUrls: imageManifestConfirmed ? images : [],
+        protectedManifestVerified: imageManifestConfirmed,
+        protectedManifestAssetCount: approvedImageManifest.length,
+        rightsBasis: requestedAuthorization.rightsBasis,
+        source: requestedAuthorization.source,
+      },
     aspectValidation: {
       validated: taxonomyConfirmed && Boolean(taxonomyObservedAt),
       validatedAt: taxonomyObservedAt,
       categoryId: packageCategoryId,
-      categoryTreeId: liveTaxonomyAvailable ? liveTaxonomy.categoryTreeId : null,
-      categoryTreeVersion: liveTaxonomyAvailable ? liveTaxonomy.categoryTreeVersion : null,
+      categoryTreeId: liveTaxonomyAvailable
+        ? liveTaxonomy.categoryTreeId
+        : persistedTaxonomyAvailable
+          ? persistedTaxonomy.categoryTreeId
+          : null,
+      categoryTreeVersion: liveTaxonomyAvailable
+        ? liveTaxonomy.categoryTreeVersion
+        : persistedTaxonomyAvailable
+          ? persistedTaxonomy.categoryTreeVersion
+          : null,
       requiredAspects,
-      aspectConstraints: liveAspectConstraints,
-      constraintSnapshotStatus: taxonomyConstraintsCaptured ? "AVAILABLE" : "UNAVAILABLE",
+      aspectConstraints: liveTaxonomyAvailable
+        ? liveAspectConstraints
+        : persistedTaxonomyAvailable
+          ? persistedAspectConstraints
+          : [],
+      constraintSnapshotStatus: taxonomyConstraintsCaptured
+        || persistedTaxonomyAvailable ? "AVAILABLE" : "UNAVAILABLE",
       source: liveTaxonomyAvailable
         ? liveTaxonomy.source
+        : persistedTaxonomyAvailable
+          ? persistedTaxonomy.source
         : "opportunity.assessment.listingIntelligencePackage.categoryRecommendation",
     },
     skuCollisionCheck: {
@@ -1623,6 +1715,7 @@ async function previewDraft(body: JsonRecord, actor: string) {
       actor,
       now,
       body.confirmImagesAuthorized === true,
+      visualPublicationGate,
       liveTaxonomy,
     ),
     context,
@@ -1723,6 +1816,7 @@ async function approveDraft(body: JsonRecord, actor: string) {
       actor,
       now,
       oneClickRequested || body.confirmImagesAuthorized === true,
+      visualPublicationGate,
       liveTaxonomy,
     ),
     context,

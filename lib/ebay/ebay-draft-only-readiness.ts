@@ -693,13 +693,14 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
     && text(taxonomy.categoryId) === categoryId
     && requiredAspects.every((name) => Boolean(aspects[name]?.length))
     && aspectConstraintBlockers.length === 0
-  const packageMeasurementsProvided = dimensionValues.some((value) => value !== null)
-    || Boolean(dimensionUnit)
-    || weightValue !== null
-    || Boolean(weightUnit)
   const dimensionsEvidenceReady = dimensionValues.every((value) => value !== null && value > 0)
     && validDimensionUnit
   const weightEvidenceReady = weightValue !== null && weightValue > 0 && validWeightUnit
+  // packageWeightAndSize is optional. A partial legacy block is not evidence
+  // and must be treated as omitted; product dimensions never fill package
+  // dimensions and no unit or conversion may be inferred here.
+  const packageMeasurementsProvided = dimensionsEvidenceReady
+    && weightEvidenceReady
   const resolvablePackageGates = new Set([
     ...(imageEvidenceReady ? ["NEED_AUTHORIZED_PRODUCT_IMAGES"] : []),
     ...(weightEvidenceReady ? ["NEED_PACKAGE_WEIGHT"] : []),
@@ -786,14 +787,6 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
   if (!['NEW', 'NEW_OTHER', 'NEW_WITH_DEFECTS', 'USED_EXCELLENT', 'USED_GOOD', 'USED_ACCEPTABLE'].includes(condition)) blockers.push("CONDITION_INVALID")
   if (price === null || price <= 0) blockers.push("PRICE_REQUIRED")
   if (!economics.ready || !economics.passesProfitGate) blockers.push("MINIMUM_NET_MARGIN_NOT_MET")
-  if (packageMeasurementsProvided && !dimensionsEvidenceReady) {
-    if (!dimensionValues.every((value) => value !== null && value > 0)) blockers.push("PACKAGE_DIMENSIONS_REQUIRED")
-    if (!validDimensionUnit) blockers.push("PACKAGE_DIMENSION_UNIT_INVALID")
-  }
-  if (packageMeasurementsProvided && !weightEvidenceReady) {
-    if (weightValue === null || weightValue <= 0) blockers.push("PACKAGE_WEIGHT_REQUIRED")
-    if (!validWeightUnit) blockers.push("PACKAGE_WEIGHT_UNIT_REQUIRED")
-  }
   for (const [key, value] of Object.entries({
     FULFILLMENT_POLICY_REQUIRED: policies.fulfillmentPolicyId,
     PAYMENT_POLICY_REQUIRED: policies.paymentPolicyId,

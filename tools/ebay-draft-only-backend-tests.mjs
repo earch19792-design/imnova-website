@@ -492,6 +492,158 @@ test("exact durable Smart Stocking authorization replaces only the legacy candid
   assert.ok(forged.blockers.includes("LUNA_STOCK_UNAVAILABLE"))
 })
 
+test("SUPERSEDED_AUTHORITY_REINTRODUCED: ITEM3404 canonical prewrite stays blocker-free", async () => {
+  const module = await importTypeScript(readinessSource)
+  const now = new Date("2026-08-28T12:00:00.000Z")
+  const input = validInput(now)
+  const packageId = "3a394c94-108b-4ca0-b373-5e589dc4a652"
+  const imageUrls = Array.from({ length: 4 }, (_, index) =>
+    `https://assets.example.test/item3404-${index + 1}.jpg`)
+  input.listingPackage = {
+    ...input.listingPackage,
+    id: packageId,
+    candidate_key: "smart-stocking:EBAY_US:9220837146848:48809648488672",
+    status: "ready_for_review",
+    source_observed_at: now.toISOString(),
+    package_data: {
+      title: "Window Privacy Film One Way Tint for Home Black",
+      categoryId: "175757",
+      aspects: { Color: ["Black"], Type: ["Window Film"] },
+      description: "Supplier-backed black window privacy film.",
+      imageUrls,
+      pricing: { targetPrice: 30 },
+    },
+  }
+  input.opportunity = {
+    ...input.opportunity,
+    candidate_key: input.listingPackage.candidate_key,
+    queue_status: "ready",
+    hard_gates: [
+      "NEED_AUTHORIZED_PRODUCT_IMAGES",
+      "NEED_PACKAGE_WEIGHT",
+      "NEED_PACKAGE_DIMENSIONS",
+      "NEED_EBAY_TAXONOMY_CATEGORY",
+      "NEED_REQUIRED_EBAY_ITEM_ASPECTS",
+    ],
+    evidence_guards: ["LEGACY_SCORING_GUARD"],
+    supplier_product_id: "9220837146848",
+    supplier_variant_id: "48809648488672",
+    supplier_sku: "ITEM3404",
+    gtin: "740145348659",
+    supplier_available: true,
+    supplier_inventory_quantity: 8,
+    supplier_price: 7,
+    supplier_snapshot_at: now.toISOString(),
+    last_scanned_at: now.toISOString(),
+  }
+  input.draftConfiguration = {
+    ...input.draftConfiguration,
+    sku: module.expectedEbayDraftOnlySku(input.listingPackage),
+    packageWeightAndSize: {
+      // 113 exists, but neither its unit nor package LxWxH are authoritative.
+      weight: { value: 113, unit: "" },
+      dimensions: { length: null, width: null, height: null, unit: "" },
+    },
+    imageAuthorization: {
+      approved: true,
+      approvedAt: now.toISOString(),
+      approvedImageUrls: imageUrls,
+      protectedManifestVerified: true,
+      protectedManifestAssetCount: 4,
+      rightsBasis: "supplier_authorized",
+      source: "luna",
+    },
+    aspectValidation: {
+      validated: true,
+      validatedAt: now.toISOString(),
+      categoryId: "175757",
+      categoryTreeId: "0",
+      categoryTreeVersion: "134",
+      requiredAspects: ["Color", "Type"],
+      source: "EBAY_TAXONOMY_OFFICIAL_READONLY",
+      constraintSnapshotStatus: "AVAILABLE",
+      aspectConstraints: [{
+        name: "Color",
+        mode: "SELECTION_ONLY",
+        cardinality: "SINGLE",
+        maxLength: 65,
+        dataType: "STRING",
+        format: null,
+        advancedDataType: null,
+        valuesComplete: true,
+        constraintsComplete: true,
+        values: [{ value: "Black", valueConstraints: [] }],
+      }, {
+        name: "Type",
+        mode: "SELECTION_ONLY",
+        cardinality: "SINGLE",
+        maxLength: 65,
+        dataType: "STRING",
+        format: null,
+        advancedDataType: null,
+        valuesComplete: true,
+        constraintsComplete: true,
+        values: [{ value: "Window Film", valueConstraints: [] }],
+      }],
+    },
+    ebayPreflightSnapshot: signedSnapshot({ now }),
+  }
+  input.smartStockingPublicationAuthorization = {
+    validated: true,
+    version: "SELLER_OS_SMART_STOCKING_AUTHORIZED_PUBLICATION_V1",
+    listingPackageId: packageId,
+    opportunityId: input.opportunity.id,
+    candidateKey: input.listingPackage.candidate_key,
+    workspaceEvidenceAuthorityClass:
+      "SELLER_OS_ITEM3404_FINAL_WORKSPACE_EVIDENCE_V1",
+    productTruthDigest: `sha256:${"d".repeat(64)}`,
+    frontierId: `profitability-frontier-v1:sha256:${"e".repeat(64)}`,
+    frontierDigest: `sha256:${"f".repeat(64)}`,
+    frontierSnapshotDigest: `sha256:${"1".repeat(64)}`,
+    entrySnapshotHash: `sha256:${"a".repeat(64)}`,
+    decisionSnapshotHash: `sha256:${"b".repeat(64)}`,
+    authorizationDigest: `sha256:${"c".repeat(64)}`,
+    lunaProductId: "9220837146848",
+    lunaVariantId: "48809648488672",
+    supplierSku: "ITEM3404",
+    gtin: "740145348659",
+    stockState: "IN_STOCK_SUPPLIER_STATED",
+    supplierInventoryQuantity: 8,
+    safeCapacity: null,
+    finalEconomicsStatus: "PASS",
+    thresholdResult: "PASS",
+    sourceRevalidationAuthority:
+      "SMART_STOCKING_EXACT_PRODUCT_TRUTH_DURABLE_REVALIDATION_V1",
+    finalHumanAuthorizationRequired: true,
+    unattendedPublicationAllowed: false,
+  }
+  const result = module.evaluateEbayDraftOnlyReadiness(input)
+  const supersededBlockers = new Set([
+    "CATEGORY_ASPECTS_NOT_VALIDATED",
+    "ASPECT_CONSTRAINTS_UNVERIFIABLE",
+    "IMAGE_AUTHORIZATION_REQUIRED",
+    "IMAGE_NOT_AUTHORIZED",
+    "PACKAGE_DIMENSIONS_REQUIRED",
+    "PACKAGE_DIMENSION_UNIT_INVALID",
+    "PACKAGE_WEIGHT_UNIT_REQUIRED",
+    "EBAY_PREFLIGHT_SNAPSHOT_REQUIRED",
+  ])
+  assert.deepEqual(
+    result.blockers.filter((blocker) => supersededBlockers.has(blocker)),
+    [],
+    "SUPERSEDED_AUTHORITY_REINTRODUCED",
+  )
+  assert.equal(result.ready, true)
+  assert.deepEqual(result.blockers, [])
+  assert.equal("packageWeightAndSize" in result.payload.inventoryItemPayload,
+    false)
+  assert.ok(result.warnings.includes("OPTIONAL_PACKAGE_MEASUREMENTS_OMITTED"))
+  assert.equal(result.payload.inventoryItemPayload.product.imageUrls.length, 4)
+  assert.deepEqual(result.payload.inventoryItemPayload.product.aspects, {
+    Color: ["Black"], Type: ["Window Film"],
+  })
+})
+
 test("execution reconstructs the approved server-bound StockGuard contract", () => {
   assert.match(
     routeSource,
@@ -501,6 +653,13 @@ test("execution reconstructs the approved server-bound StockGuard contract", () 
     routeSource,
     /buildEbayDraftOnlyPayload\([\s\S]*context\.smartStockingPublicationAuthorization/,
   )
+})
+
+test("prewrite adapter prefers durable canonical Taxonomy and Final Listing Review authorities", () => {
+  assert.match(routeSource, /taxonomySnapshotMatchesContextV1/)
+  assert.match(routeSource, /persistedTaxonomyAvailable/)
+  assert.match(routeSource, /bindCanonicalPublicationImageSet/)
+  assert.match(routeSource, /packageMeasurementsComplete[\s\S]*\? raw\.packageWeightAndSize[\s\S]*: undefined/)
 })
 
 test("Smart Stocking canonical images bypass only the legacy merchandising count", () => {
@@ -709,7 +868,8 @@ test("taxonomy adapter, server snapshot and workspace retain and enforce officia
     "expectedRequiredByDate",
     "valueConstraints",
   ]) assert.match(taxonomyGatewaySource, new RegExp(field))
-  assert.match(routeSource, /aspectConstraints: liveAspectConstraints/)
+  assert.match(routeSource,
+    /aspectConstraints: liveTaxonomyAvailable[\s\S]*liveAspectConstraints/)
   assert.match(routeSource, /constraintSnapshotStatus/)
   assert.match(workspaceSource, /selectionOnly/)
   assert.match(workspaceSource, /maxLength=\{taxonomyAspect\?\.maxLength/)
@@ -754,7 +914,7 @@ test("readiness recalculates profit on the server and ignores client profit clai
   assert.ok(missingSupplierCostResult.blockers.includes("LUNA_COST_REQUIRED"))
 })
 
-test("readiness requires a real authorized image, explicit weight unit and collision-free identity", async () => {
+test("readiness omits an incomplete optional package block and still requires image and collision evidence", async () => {
   const module = await importTypeScript(readinessSource)
   const input = validInput()
   input.listingPackage.package_data.imageUrls = []
@@ -765,7 +925,10 @@ test("readiness requires a real authorized image, explicit weight unit and colli
   assert.equal(result.ready, false)
   assert.ok(result.blockers.includes("HTTPS_IMAGES_REQUIRED"))
   assert.ok(result.blockers.includes("IMAGE_AUTHORIZATION_WITHOUT_SOURCE_IMAGE"))
-  assert.ok(result.blockers.includes("PACKAGE_WEIGHT_UNIT_REQUIRED"))
+  assert.equal(result.blockers.includes("PACKAGE_WEIGHT_UNIT_REQUIRED"), false)
+  assert.equal("packageWeightAndSize" in result.payload.inventoryItemPayload,
+    false)
+  assert.ok(result.warnings.includes("OPTIONAL_PACKAGE_MEASUREMENTS_OMITTED"))
   assert.ok(result.blockers.includes("PRODUCT_IDENTITY_COLLISION"))
   assert.ok(result.blockers.includes("PRODUCT_IDENTITY_COLLISION:ACTIVE_SUPPLIER_SKU"))
   assert.ok(result.blockers.includes("PRODUCT_IDENTITY_COLLISION:LISTING_PACKAGE_GTIN"))
