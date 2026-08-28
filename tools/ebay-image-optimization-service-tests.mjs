@@ -262,14 +262,14 @@ test("listing package writes are server-only and atomically derive the protected
   const sameDayRestoreCalls = route.match(
     /restore_ebay_same_day_authorized_listing_package_v1/g,
   ) ?? []
-  // One guarded write serves normal package saves; the second binds the
-  // automatically Taxonomy-validated category after the seed package exists.
-  // Both continue to derive the protected image manifest server-side.
-  assert.equal(guardedCalls.length, 2)
+  // Normal saves, initial category binding and the conditional post-refresh
+  // canonical binding all use the same guard. Each call reconstructs the
+  // protected image manifest server-side; none trusts browser image fields.
+  assert.equal(guardedCalls.length, 3)
   assert.equal(sameDayRestoreCalls.length, 1)
   assert.equal(
     (route.match(/p_expected_updated_at:/g) ?? []).length,
-    4,
+    5,
   )
   assert.doesNotMatch(
     route,

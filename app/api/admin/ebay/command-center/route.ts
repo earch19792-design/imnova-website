@@ -41,6 +41,8 @@ import {
   type EbayListingContextIdentityV1,
 } from "@/lib/ebay/ebay-listing-context-isolation-v1"
 import {
+  canonicalCategoryBindingNeedsDurableSaveV1,
+  mergeCanonicalCategoryBindingV1,
   resolveAndBindEbayListingCategoryV1,
 } from "@/lib/ebay/ebay-category-resolver-v1"
 import {
@@ -1173,13 +1175,59 @@ export async function POST(req: Request) {
           }
           throw new Error(code)
         }
-        const persistedRefreshedPackageData = object(refreshed.package_data)
+        const categoryBindingNeedsDurableSave =
+          canonicalCategoryBindingNeedsDurableSaveV1({
+            currentPackageData: object(refreshed.package_data),
+            resolvedPackageData: refreshedPackageData,
+          })
+        let persistedPackage = refreshed
+        if (categoryBindingNeedsDurableSave) {
+          const { data: boundData, error: bindError } = await supabase.rpc(
+            "ebay_save_listing_package_guarded",
+            {
+              p_package_id: existing.id,
+              p_account_key: accountKey,
+              p_actor: reviewer,
+              p_opportunity_id: opportunityId,
+              p_candidate_key: candidateKey,
+              p_operation: "save",
+              p_package_patch: mergeCanonicalCategoryBindingV1({
+                durablePackageData: object(refreshed.package_data),
+                resolvedPackageData: refreshedPackageData,
+              }),
+              p_status: "draft",
+              p_readiness: 0,
+              p_source_observed_at: null,
+              p_expected_updated_at: refreshed.updated_at,
+            },
+          )
+          const boundPackage = guardedPackageRow(boundData)
+          if (bindError || !boundPackage) {
+            const code = databaseErrorCode(
+              bindError,
+              "COMMAND_CENTER_PACKAGE_CANONICAL_CATEGORY_BIND_FAILED",
+            )
+            if (code === "EBAY_LISTING_PACKAGE_STALE_VERSION") {
+              return NextResponse.json({
+                success: false,
+                error: "COMMAND_CENTER_PACKAGE_CHANGED_RETRY",
+              }, { status: 409 })
+            }
+            throw new Error(code)
+          }
+          persistedPackage = boundPackage
+        }
+        const persistedRefreshedPackageData = object(
+          persistedPackage.package_data,
+        )
         return NextResponse.json({
           success: true,
-          listingPackage: refreshed,
+          listingPackage: persistedPackage,
           created: false,
           evidenceRefreshed: true,
           preservedUserFields: true,
+          canonicalCategoryBindingPersisted:
+            categoryBindingNeedsDurableSave,
           sameDayAuthorizedPublication: Boolean(sameDayContext),
           safeDefaultsApplied:
             strings(object(persistedRefreshedPackageData.safeDefaults).appliedFields).length > 0,

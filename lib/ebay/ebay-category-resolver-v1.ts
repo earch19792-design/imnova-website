@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { isDeepStrictEqual } from "node:util"
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
@@ -874,6 +875,44 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
     learning,
     taxonomyPreflight: preflight,
   })
+}
+
+const CANONICAL_CATEGORY_BINDING_FIELDS = [
+  "categoryId",
+  "categoryName",
+  "aspects",
+  "taxonomyPreflight",
+  "categoryResolverV1",
+] as const
+
+function canonicalCategoryBindingProjectionV1(
+  packageData: Record<string, unknown>,
+) {
+  return Object.fromEntries(CANONICAL_CATEGORY_BINDING_FIELDS.map((field) => [
+    field,
+    packageData[field] ?? null,
+  ]))
+}
+
+export function canonicalCategoryBindingNeedsDurableSaveV1(input: Readonly<{
+  currentPackageData: Record<string, unknown>
+  resolvedPackageData: Record<string, unknown>
+}>) {
+  return !isDeepStrictEqual(
+    canonicalCategoryBindingProjectionV1(input.currentPackageData),
+    canonicalCategoryBindingProjectionV1(input.resolvedPackageData),
+  )
+}
+
+export function mergeCanonicalCategoryBindingV1(input: Readonly<{
+  durablePackageData: Record<string, unknown>
+  resolvedPackageData: Record<string, unknown>
+}>) {
+  const next = { ...input.durablePackageData }
+  for (const field of CANONICAL_CATEGORY_BINDING_FIELDS) {
+    next[field] = input.resolvedPackageData[field] ?? null
+  }
+  return next
 }
 
 export async function recordEbayCategoryListingAcceptanceV1(input: Readonly<{

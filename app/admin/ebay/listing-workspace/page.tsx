@@ -2302,6 +2302,14 @@ function ListingWorkspacePageContent() {
   const persistedTaxonomyPreflight = object(
     object(listingPackage?.package_data).taxonomyPreflight,
   )
+  const canonicalTaxonomyLoaded = Boolean(
+    draftState.taxonomy?.consultationStatus === "CONSULTADO"
+    && draftState.taxonomy.categoryId === form.categoryId
+    && persistedTaxonomyPreflight.status === "CONSULTADO"
+    && persistedTaxonomyPreflight.officialStatus === "AVAILABLE"
+    && persistedTaxonomyPreflight.source ===
+      "EBAY_TAXONOMY_OFFICIAL_READONLY",
+  )
   const unprovenRequiredTaxonomyAspects = useMemo(() => new Set(
     Array.isArray(persistedTaxonomyPreflight.unprovenRequiredAspectNames)
       ? persistedTaxonomyPreflight.unprovenRequiredAspectNames.filter(
@@ -5033,7 +5041,7 @@ function ListingWorkspacePageContent() {
 
           <section className="rounded-3xl border border-violet-200/20 bg-violet-200/[0.05] p-4">
             <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-black">Item specifics</h2><p className="mt-1 text-xs leading-5 text-white/50">eBay Taxonomy define los nombres y opciones; tú confirmas los valores reales del producto Luna.</p></div><span className="rounded-full border border-violet-200/20 px-2 py-1 text-[10px] font-black">{String(finalReviewTaxonomy.status ?? finalListingReview?.taxonomy?.status ?? draftState.taxonomy?.consultationStatus ?? "SIN CONSULTAR")}</span></div>
-            {!finalReviewCompleted && <button type="button" disabled={draftBusy || !/^\d{1,12}$/.test(form.categoryId)} onClick={() => void loadTaxonomyPreflight()} className="mt-3 min-h-11 w-full rounded-xl border border-violet-200/30 px-3 text-sm font-black text-violet-50 disabled:opacity-40">Cargar requisitos oficiales del Category ID</button>}
+            {!finalReviewCompleted && !canonicalTaxonomyLoaded && <button type="button" disabled={draftBusy || !/^\d{1,12}$/.test(form.categoryId)} onClick={() => void loadTaxonomyPreflight()} className="mt-3 min-h-11 w-full rounded-xl border border-violet-200/30 px-3 text-sm font-black text-violet-50 disabled:opacity-40">Cargar requisitos oficiales del Category ID</button>}
             <div className="mt-3 space-y-2">{visibleTaxonomyAspectNames.map((name) => {
               const value = form.aspects[name] ?? ""
               const finalTaxonomyAspect =
@@ -5185,18 +5193,16 @@ function ListingWorkspacePageContent() {
           <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4">
             <div className="flex justify-between gap-3">
               <h2 className="font-black">Preparación del paquete</h2>
-              <strong>{finalReviewCompleted
-                ? blockers.length
-                  ? "BLOQUEADO"
-                  : `${String(finalReviewPreparation.percent ?? 100)}%`
-                : `${listingPackage.readiness}%`}</strong>
+              <strong>{!draftState.readiness
+                ? "CARGANDO"
+                : listingReadyUi.listingReady
+                  ? `${String(listingReadyUi.preparationPercent)}%`
+                  : "BLOQUEADO"}</strong>
             </div>
-            {finalReviewCompleted
-              ? <ul className="mt-3 grid gap-2 text-xs">{finalReviewGateDetails.map((detail) => <li key={`package-${String(detail.gate)}`} className={`rounded-xl border p-2 ${detail.passed === true ? "border-emerald-200/20 text-emerald-100" : "border-rose-200/25 text-rose-100"}`}><strong>{detail.passed === true ? "✓" : "✕"} {String(detail.gate)}</strong><span className="mt-1 block text-[10px] text-white/45">{String(detail.source ?? "")}</span></li>)}</ul>
-              : blockers.length
-                ? <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-50">{blockers.map((blocker) => <li key={blocker}>{humanWorkspaceBlocker(blocker, form.pricing.minimumProfitablePrice)}</li>)}</ul>
-                : <p className="mt-2 text-sm text-emerald-100">Sin bloqueos. Puedes enviarlo a revisión humana.</p>}
-            <p className="mt-3 text-xs leading-5 text-white/50">La preparación V3 se calcula desde fuentes persistidas y muestra cada puerta por separado. El estado de Inventory Item, Offer y publicación aparece arriba; esta tarjeta no ejecuta escrituras.</p>
+            {draftState.readiness && <p className={`mt-2 text-sm ${listingReadyUi.listingReady ? "text-emerald-100" : "text-amber-50"}`}>{listingReadyUi.listingReady
+              ? "Sin bloqueos canónicos. LISTING_READY."
+              : `${canonicalUiBlockers.length} bloqueo${canonicalUiBlockers.length === 1 ? "" : "s"} canónico${canonicalUiBlockers.length === 1 ? "" : "s"}; el detalle y su resolution_action aparecen una sola vez arriba.`}</p>}
+            <p data-preparation-v3-source="CANONICAL_DRAFT_ONLY_READINESS" className="mt-3 text-xs leading-5 text-white/50">Preparation V3 usa exclusivamente la readiness canónica compartida por GET/POST. El estado de Inventory Item, Offer y publicación aparece arriba; esta tarjeta no ejecuta escrituras.</p>
           </section>
         </>}
       </section>

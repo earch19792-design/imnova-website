@@ -154,11 +154,23 @@ test("opportunity and demand states are reconciled without synthetic completion"
   assert.match(reconciliationMigration, /operatorPriceApproved' = 'true'/)
 })
 
-test("package preparation shows each persisted gate and only shows a percentage when unblocked", () => {
+test("package preparation projects only canonical readiness", () => {
   assert.match(reconciliationMigration, /'percent',100/)
   assert.match(reconciliationMigration, /'gateDetails',v_gate_details/)
-  assert.match(workspace, /blockers\.length\s*\?\s*"BLOQUEADO"/)
-  assert.match(workspace, /finalReviewGateDetails\.map/)
+  assert.match(workspace,
+    /data-preparation-v3-source="CANONICAL_DRAFT_ONLY_READINESS"/)
+  assert.match(workspace, /listingReadyUi\.preparationPercent/)
+  const preparationStart = workspace.indexOf(
+    '<section className="rounded-3xl border border-amber-200/20',
+  )
+  const preparationEnd = workspace.indexOf(
+    "{opportunity && listingPackage && !finalReviewCompleted",
+    preparationStart,
+  )
+  const preparation = workspace.slice(preparationStart, preparationEnd)
+  assert.doesNotMatch(preparation, /listingPackage\.readiness/)
+  assert.doesNotMatch(preparation, /finalReviewGateDetails\.map/)
+  assert.doesNotMatch(preparation, /humanWorkspaceBlocker\(/)
   assert.match(workspace, /esta tarjeta no ejecuta escrituras/)
 })
 
