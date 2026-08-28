@@ -56,6 +56,7 @@ import {
 import {
   assertOneClickControlledPublicationIntentV1,
   bindOneClickControlledPublicationIntentV1,
+  classifyAuthenticatedPublicationRecoveryV1,
   EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION,
   EBAY_ONE_CLICK_PUBLICATION_LABEL,
   EBAY_ONE_CLICK_PUBLICATION_SURFACE,
@@ -522,7 +523,11 @@ async function loadFinalPublicationContext(
   }
 }
 
-async function revalidateFinalPublicationDependencies(approvedPayload: JsonRecord) {
+async function revalidateFinalPublicationDependencies(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  context: Awaited<ReturnType<typeof loadFinalPublicationContext>>,
+  approvedPayload: JsonRecord,
+) {
   const offer = record(approvedPayload.offerPayload)
   const policies = record(offer.listingPolicies)
   const requested = {
@@ -546,6 +551,15 @@ async function revalidateFinalPublicationDependencies(approvedPayload: JsonRecor
   })
   if (!dependencies.safe) {
     throw new Error(dependencies.blocker || "EBAY_FINAL_PUBLICATION_DEPENDENCIES_INVALID")
+  }
+  const profileSaved = await saveVerifiedEbayAccountPolicyProfile({
+    supabase,
+    accountKey: context.accountKey,
+    actorUserId: text(context.execution.actor_user_id),
+    preflight,
+  })
+  if (!profileSaved) {
+    throw new Error("EBAY_FINAL_PUBLICATION_ACCOUNT_PREFLIGHT_FAILED")
   }
   return { preflight, dependencies }
 }
@@ -580,6 +594,31 @@ async function revalidateFinalPublicationSource(
     ))
   }
   return { authority: sourceSyncFunction }
+}
+
+async function revalidateFinalPublicationDuplicateGuard(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  context: Awaited<ReturnType<typeof loadFinalPublicationContext>>,
+) {
+  const collisionContext = await loadPackageContext(
+    supabase,
+    text(context.listingPackage.id),
+    text(context.execution.actor_user_id),
+    text(context.execution.sku),
+    "PRODUCTION",
+    text(context.execution.account_fingerprint),
+    text(context.approval.id),
+    true,
+  )
+  const identityCollisions = Array.isArray(
+    collisionContext.identityCollisionReasons,
+  ) ? collisionContext.identityCollisionReasons : []
+  if (
+    collisionContext.activeSkuCollision
+    || collisionContext.ledgerSkuCollision
+    || identityCollisions.length > 0
+  ) throw new Error("EBAY_FINAL_PUBLICATION_DUPLICATE_DETECTED")
+  return { duplicateCount: 0 as const }
 }
 
 async function loadPackageContext(
@@ -1064,7 +1103,7 @@ export async function GET(req: Request) {
     })
     const { data: latestApproval, error: approvalError } = await supabase
       .from("ebay_draft_only_approvals")
-      .select("id,listing_package_id,opportunity_id,candidate_key,status,target,payload_hash,approved_at,expires_at,consumed_at,revoked_at,approved_payload")
+      .select("id,listing_package_id,opportunity_id,candidate_key,status,target,account_fingerprint,payload_hash,approved_at,expires_at,consumed_at,revoked_at,approved_payload")
       .eq("listing_package_id", packageId)
       .eq("actor_user_id", auth.actor)
       .eq("target", target)
@@ -1141,7 +1180,7 @@ export async function GET(req: Request) {
     const { data: ledger, error: ledgerError } = latestApproval?.id
       ? await supabase
         .from("ebay_draft_only_execution_ledger")
-        .select("id,approval_id,listing_package_id,opportunity_id,phase,sku,target,offer_id,completed_at,last_error_code,updated_at")
+        .select("id,approval_id,listing_package_id,opportunity_id,phase,sku,target,account_fingerprint,request_hash,offer_id,completed_at,last_error_code,updated_at")
         .eq("approval_id", latestApproval.id)
         .maybeSingle()
       : { data: null, error: null }
@@ -1149,7 +1188,7 @@ export async function GET(req: Request) {
     const { data: publication, error: publicationError } = ledger?.id
       ? await supabase
         .from("ebay_authorized_listing_publications")
-        .select("id,draft_execution_id,listing_package_id,opportunity_id,phase,offer_id,sku,preview_hash,preview,listing_id,publish_http_status,published_at,verified_active_at,monitor_registered_at,last_error_code,updated_at")
+        .select("id,draft_execution_id,draft_approval_id,listing_package_id,opportunity_id,phase,target,account_fingerprint,offer_id,sku,preview_hash,preview,publication_idempotency_key,publish_attempt_count,listing_id,publish_http_status,published_at,verified_active_at,monitor_registered_at,last_error_code,updated_at")
         .eq("draft_execution_id", ledger.id)
         .maybeSingle()
       : { data: null, error: null }
@@ -1160,6 +1199,26 @@ export async function GET(req: Request) {
       execution: ledger,
       publication,
     })
+    const smartStockingAuthorization = record(
+      context.smartStockingPublicationAuthorization,
+    )
+    const authenticatedPublicationRecovery =
+      classifyAuthenticatedPublicationRecoveryV1({
+        readiness,
+        approval: latestApproval,
+        execution: ledger,
+        publication,
+        controlledIntentValidation: oneClickValidation,
+        canonicalStockAuthorized:
+          smartStockingAuthorization.validated === true,
+        expected: {
+          listingPackageId: packageId,
+          opportunityId: expectedOpportunityId,
+          candidateKey: expectedCandidateKey,
+          target,
+          accountFingerprint: fingerprint,
+        },
+      })
     return NextResponse.json({
       success: true,
       visualPublicationGate,
@@ -1167,6 +1226,7 @@ export async function GET(req: Request) {
       approval: latestApproval ? { ...latestApproval, approved_payload: undefined } : null,
       execution: ledger,
       publication,
+      authenticatedPublicationRecovery,
       runtime,
       controlledPublication: {
         eligible: oneClickEligible,
@@ -2960,13 +3020,18 @@ async function prepareFinalPublication(body: JsonRecord, actor: string) {
   const oneClickAuthorized = hasOneClickControlledPublicationIntent(
     approvedPayload,
   )
-  await revalidateFinalPublicationDependencies(approvedPayload)
   await verifyExactUnpublishedPublicationState({
     approvedPayload,
     offerId: built.offerId,
     sku: built.sku,
   })
+  await revalidateFinalPublicationDependencies(
+    supabase,
+    context,
+    approvedPayload,
+  )
   await revalidateFinalPublicationSource(supabase, context)
+  await revalidateFinalPublicationDuplicateGuard(supabase, context)
   const { data: publication, error } = await supabase
     .rpc("prepare_ebay_authorized_listing_publication", {
       p_draft_execution_id: executionId,
@@ -3358,13 +3423,18 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
   if (built.previewHash !== current.preview_hash) {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_PREVIEW_CHANGED"), 409)
   }
-  await revalidateFinalPublicationDependencies(approvedPayload)
   await verifyExactUnpublishedPublicationState({
     approvedPayload,
     offerId: built.offerId,
     sku: built.sku,
   })
+  await revalidateFinalPublicationDependencies(
+    supabase,
+    context,
+    approvedPayload,
+  )
   await revalidateFinalPublicationSource(supabase, context)
+  await revalidateFinalPublicationDuplicateGuard(supabase, context)
   const { data: refreshed, error: refreshError } = await supabase
     .rpc("prepare_ebay_authorized_listing_publication", {
       p_draft_execution_id: text(context.execution.id),
@@ -3406,7 +3476,10 @@ async function publishFinalPublication(body: JsonRecord, actor: string) {
     )), 409)
   }
   const claimedPublication = record(claimed)
-  if (text(claimedPublication.phase) !== "publish_in_flight") {
+  if (
+    text(claimedPublication.phase) !== "publish_in_flight"
+    || text(claimedPublication.claim_token) !== claimToken
+  ) {
     return jsonError(new Error("EBAY_FINAL_PUBLICATION_RECONCILIATION_REQUIRED"), 409)
   }
   const publishResult = await publishEbayOfferOnce({
@@ -3533,6 +3606,8 @@ async function rearmFinalPublication(body: JsonRecord, actor: string) {
     )
   }
   await revalidateFinalPublicationDependencies(
+    supabase,
+    context,
     record(context.approval.approved_payload),
   )
   if (compensatedMonitorFailure) {

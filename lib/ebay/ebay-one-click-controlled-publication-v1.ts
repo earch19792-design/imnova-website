@@ -6,6 +6,8 @@ export const EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION =
 export const EBAY_ONE_CLICK_PUBLICATION_LABEL = "PUBLICAR EN EBAY"
 export const EBAY_ONE_CLICK_PUBLICATION_SURFACE =
   "SELLER_OS_SMART_STOCKING_ONE_CLICK_PUBLICATION_V1"
+export const EBAY_AUTHENTICATED_PUBLICATION_RECOVERY_VERSION =
+  "AUTHENTICATED_ONE_CLICK_RECOVERY_V1"
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -130,6 +132,205 @@ export type OneClickPublicationIntentValidationV1 = {
   valid: boolean
   blocker: string | null
   intent: JsonRecord
+}
+
+export type AuthenticatedPublicationRecoveryStateV1 =
+  | "NOT_APPLICABLE"
+  | "RECOVERY_BLOCKED"
+  | "RESUMABLE_AUTHORIZED_PUBLICATION"
+  | "PUBLISH_ALREADY_CLAIMED"
+  | "ACTIVE_VERIFIED"
+
+export type AuthenticatedPublicationRecoveryV1 = Readonly<{
+  version: typeof EBAY_AUTHENTICATED_PUBLICATION_RECOVERY_VERSION
+  state: AuthenticatedPublicationRecoveryStateV1
+  autoResume: boolean
+  blocker: string | null
+  approvalId: string | null
+  executionId: string | null
+  publicationId: string | null
+  listingPackageId: string | null
+  opportunityId: string | null
+  candidateKey: string | null
+  offerId: string | null
+  authorizedPayloadHash: string | null
+  requestHash: string | null
+  canonicalStockAuthorized: boolean
+  reusesExistingHumanApproval: boolean
+  newHumanApprovalAllowed: false
+}>
+
+function recoveryResult(input: {
+  state: AuthenticatedPublicationRecoveryStateV1
+  blocker?: string | null
+  approval: JsonRecord
+  execution: JsonRecord
+  publication: JsonRecord
+  canonicalStockAuthorized: boolean
+}): AuthenticatedPublicationRecoveryV1 {
+  const resumable = input.state === "RESUMABLE_AUTHORIZED_PUBLICATION"
+  return Object.freeze({
+    version: EBAY_AUTHENTICATED_PUBLICATION_RECOVERY_VERSION,
+    state: input.state,
+    autoResume: resumable,
+    blocker: input.blocker ?? null,
+    approvalId: text(input.approval.id) || null,
+    executionId: text(input.execution.id) || null,
+    publicationId: text(input.publication.id) || null,
+    listingPackageId: text(input.approval.listing_package_id) || null,
+    opportunityId: text(input.approval.opportunity_id) || null,
+    candidateKey: text(input.approval.candidate_key) || null,
+    offerId: text(input.execution.offer_id) || null,
+    authorizedPayloadHash: text(input.approval.payload_hash) || null,
+    requestHash: text(input.execution.request_hash) || null,
+    canonicalStockAuthorized: input.canonicalStockAuthorized,
+    reusesExistingHumanApproval: resumable,
+    newHumanApprovalAllowed: false,
+  })
+}
+
+export function classifyAuthenticatedPublicationRecoveryV1(input: Readonly<{
+  readiness?: Readonly<{
+    ready?: boolean
+    blockers?: readonly string[]
+    payloadHash?: string | null
+  }> | null
+  approval?: JsonRecord | null
+  execution?: JsonRecord | null
+  publication?: JsonRecord | null
+  controlledIntentValidation?: OneClickPublicationIntentValidationV1 | null
+  canonicalStockAuthorized: boolean
+  expected: Readonly<{
+    listingPackageId: string
+    opportunityId: string
+    candidateKey: string
+    target: string
+    accountFingerprint: string
+  }>
+}>): AuthenticatedPublicationRecoveryV1 {
+  const approval = record(input.approval)
+  const execution = record(input.execution)
+  const publication = record(input.publication)
+  const base = {
+    approval,
+    execution,
+    publication,
+    canonicalStockAuthorized: input.canonicalStockAuthorized,
+  }
+  if (!text(approval.id) || !text(execution.id)) {
+    return recoveryResult({ ...base, state: "NOT_APPLICABLE" })
+  }
+  const blocked = (blocker: string) => recoveryResult({
+    ...base,
+    state: "RECOVERY_BLOCKED",
+    blocker,
+  })
+  if (
+    approval.status !== "consumed"
+    || !text(approval.consumed_at)
+    || Boolean(approval.revoked_at)
+  ) return blocked("EBAY_AUTHENTICATED_RECOVERY_APPROVAL_INVALID")
+  if (input.controlledIntentValidation?.valid !== true) {
+    return blocked(input.controlledIntentValidation?.blocker
+      ?? "EBAY_ONE_CLICK_PUBLICATION_INTENT_MISSING")
+  }
+  const expected = input.expected
+  if (
+    text(approval.listing_package_id) !== expected.listingPackageId
+    || text(approval.opportunity_id) !== expected.opportunityId
+    || text(approval.candidate_key) !== expected.candidateKey
+    || text(approval.target) !== expected.target
+    || text(approval.account_fingerprint) !== expected.accountFingerprint
+    || text(execution.approval_id) !== text(approval.id)
+    || text(execution.listing_package_id) !== expected.listingPackageId
+    || text(execution.opportunity_id) !== expected.opportunityId
+    || text(execution.target) !== expected.target
+    || text(execution.account_fingerprint) !== expected.accountFingerprint
+  ) return blocked("EBAY_AUTHENTICATED_RECOVERY_IDENTITY_CHANGED")
+  const authorizedHash = text(approval.payload_hash)
+  const requestHash = text(execution.request_hash)
+  if (
+    !authorizedHash
+    || requestHash !== authorizedHash
+  ) return blocked("APPROVED_PAYLOAD_CHANGED")
+  const canonicalBlockers = Array.isArray(input.readiness?.blockers)
+    ? input.readiness.blockers.filter((value): value is string =>
+        typeof value === "string" && Boolean(value.trim()))
+    : []
+  const finalPreflightRefreshable = new Set([
+    "EBAY_PREFLIGHT_SNAPSHOT_REQUIRED",
+    "EBAY_PREFLIGHT_SNAPSHOT_STALE",
+  ])
+  const materialCanonicalBlockers = canonicalBlockers.filter((blocker) =>
+    !finalPreflightRefreshable.has(blocker))
+  if (
+    materialCanonicalBlockers.length > 0
+    || (input.readiness?.ready !== true && canonicalBlockers.length === 0)
+  ) {
+    return blocked(materialCanonicalBlockers[0]
+      ?? "EBAY_AUTHENTICATED_RECOVERY_CANONICAL_READINESS_REQUIRED")
+  }
+  if (!input.canonicalStockAuthorized) {
+    return blocked("EBAY_AUTHENTICATED_RECOVERY_CANONICAL_STOCK_REQUIRED")
+  }
+  const offerId = text(execution.offer_id)
+  const sku = text(execution.sku)
+  if (execution.phase !== "completed" || !offerId || !sku) {
+    return blocked("EBAY_AUTHENTICATED_RECOVERY_COMPLETED_OFFER_REQUIRED")
+  }
+  if (!text(publication.id)) {
+    return recoveryResult({
+      ...base,
+      state: "RESUMABLE_AUTHORIZED_PUBLICATION",
+    })
+  }
+  if (
+    text(publication.draft_execution_id) !== text(execution.id)
+    || text(publication.draft_approval_id) !== text(approval.id)
+    || text(publication.listing_package_id) !== expected.listingPackageId
+    || text(publication.opportunity_id) !== expected.opportunityId
+    || text(publication.target) !== expected.target
+    || text(publication.account_fingerprint) !== expected.accountFingerprint
+    || text(publication.offer_id) !== offerId
+    || text(publication.sku) !== sku
+  ) return blocked("EBAY_AUTHENTICATED_RECOVERY_PUBLICATION_CHANGED")
+  if (
+    publication.phase === "monitor_registered"
+    && /^[0-9]{9,20}$/.test(text(publication.listing_id))
+    && text(publication.verified_active_at)
+    && text(publication.monitor_registered_at)
+  ) {
+    return recoveryResult({ ...base, state: "ACTIVE_VERIFIED" })
+  }
+  if (
+    Number(publication.publish_attempt_count) > 0
+    || Boolean(text(publication.publication_idempotency_key))
+    || Boolean(text(publication.listing_id))
+    || [
+      "publish_in_flight",
+      "outcome_unknown",
+      "published_pending_verification",
+    ].includes(text(publication.phase))
+  ) {
+    return recoveryResult({
+      ...base,
+      state: "PUBLISH_ALREADY_CLAIMED",
+      blocker: "EBAY_FINAL_PUBLICATION_RECONCILIATION_REQUIRED",
+    })
+  }
+  if (publication.phase === "terminal_failure") {
+    return blocked(text(publication.last_error_code)
+      || "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE")
+  }
+  if (
+    publication.phase !== "preview_ready"
+    || Number(publication.publish_attempt_count) !== 0
+    || Boolean(text(publication.listing_id))
+  ) return blocked("EBAY_AUTHENTICATED_RECOVERY_PUBLICATION_NOT_RESUMABLE")
+  return recoveryResult({
+    ...base,
+    state: "RESUMABLE_AUTHORIZED_PUBLICATION",
+  })
 }
 
 export function validateOneClickControlledPublicationIntentV1(input: {

@@ -237,6 +237,26 @@ type DraftState = {
     unpublishedOfferMachineValidationRequired?: boolean
     activeReadbackRequired?: boolean
   }
+  authenticatedPublicationRecovery?: {
+    version: "AUTHENTICATED_ONE_CLICK_RECOVERY_V1"
+    state: "NOT_APPLICABLE" | "RECOVERY_BLOCKED"
+      | "RESUMABLE_AUTHORIZED_PUBLICATION" | "PUBLISH_ALREADY_CLAIMED"
+      | "ACTIVE_VERIFIED"
+    autoResume: boolean
+    blocker?: string | null
+    approvalId?: string | null
+    executionId?: string | null
+    publicationId?: string | null
+    listingPackageId?: string | null
+    opportunityId?: string | null
+    candidateKey?: string | null
+    offerId?: string | null
+    authorizedPayloadHash?: string | null
+    requestHash?: string | null
+    canonicalStockAuthorized: boolean
+    reusesExistingHumanApproval: boolean
+    newHumanApprovalAllowed: false
+  }
   approvalRequirements?: {
     exactPhrase: string
     oneClickExactIntent?: string
@@ -704,9 +724,21 @@ function humanFinalPublicationError(error: unknown) {
     ["EBAY_FINAL_PUBLICATION_SAME_DAY_BINDING_CHANGED", "El candidato o su paquete cambió después de la aprobación. Reabre el producto exacto y autoriza un preview nuevo."],
     ["EBAY_FINAL_PUBLICATION_RECONCILIATION_REQUIRED", "La llamada de publicación ya fue reclamada. Usa “Verificar ACTIVE”; Seller OS no repetirá publishOffer."],
     ["EBAY_FINAL_PUBLICATION_PREVIEW_CHANGED", "El preview cambió después de tu autorización. Prepara y revisa uno nuevo antes de publicar."],
+    ["APPROVED_PAYLOAD_CHANGED", "El payload actual ya no coincide con el digest autorizado. Seller OS no reutilizará esa aprobación."],
+    ["EBAY_FINAL_PUBLICATION_DUPLICATE_DETECTED", "Seller OS encontró otra identidad activa o reservada para este producto y detuvo la publicación antes del claim."],
+    ["EBAY_FINAL_PUBLICATION_INVENTORY_EXACT_READBACK_MISMATCH", "El Inventory Item oficial ya no coincide exactamente con el payload autorizado. No se publicó."],
+    ["EBAY_FINAL_PUBLICATION_OFFER_EXACT_READBACK_MISMATCH", "El Offer oficial ya no coincide exactamente con el payload autorizado. No se publicó."],
+    ["EBAY_AUTHENTICATED_RECOVERY_OFFER_MISMATCH", "El Offer recuperado no pertenece exactamente a la ejecución autorizada. No se publicó."],
   ]
   return messages.find(([candidate]) => code.includes(candidate))?.[1]
     ?? getMobileReviewRequestError(error, "No se pudo completar la publicación autorizada.")
+}
+
+function authenticatedPublicationRecoveryError(error: unknown) {
+  const code = error instanceof Error ? error.message : String(error ?? "")
+  return code
+    ? `${code} · ${humanFinalPublicationError(error)}`
+    : humanFinalPublicationError(error)
 }
 
 function fromPackage(value: Record<string, unknown>): FormState {
@@ -1360,6 +1392,7 @@ function ListingWorkspacePageContent() {
   const activeTitleIdempotency = useRef<{ scope: string; key: string } | null>(null)
   const publicationIntentScrolled = useRef(false)
   const oneClickPublicationApprovalKey = useRef<string | null>(null)
+  const authenticatedPublicationRecoveryRun = useRef("")
   const lunaSupplierImageRun = useRef("")
   const publicationLunaRecheckRequired = useRef(false)
   const accountPolicyProfileSaved = useRef(false)
@@ -3622,6 +3655,134 @@ function ListingWorkspacePageContent() {
       setDraftBusy(false)
     }
   }
+
+  useEffect(() => {
+    const recovery = draftState.authenticatedPublicationRecovery
+    if (!recovery) return
+    if (
+      recovery.state !== "RESUMABLE_AUTHORIZED_PUBLICATION"
+      || recovery.autoResume !== true
+    ) {
+      if (recovery.blocker) {
+        setError(authenticatedPublicationRecoveryError(
+          new Error(recovery.blocker),
+        ))
+        setMessage("")
+      }
+      return
+    }
+    const executionId = String(recovery.executionId ?? "")
+    const approvalId = String(recovery.approvalId ?? "")
+    const offerId = String(recovery.offerId ?? "")
+    const authorizedPayloadHash = String(
+      recovery.authorizedPayloadHash ?? "",
+    )
+    if (
+      !listingPackage
+      || !opportunity
+      || !executionId
+      || !approvalId
+      || !offerId
+      || !authorizedPayloadHash
+      || recovery.canonicalStockAuthorized !== true
+      || recovery.reusesExistingHumanApproval !== true
+      || recovery.newHumanApprovalAllowed !== false
+      || recovery.listingPackageId !== listingPackage.id
+      || recovery.opportunityId !== opportunity.id
+      || recovery.candidateKey !== opportunity.candidate_key
+    ) return
+    const runKey = `${executionId}:${offerId}:${authorizedPayloadHash}`
+    if (authenticatedPublicationRecoveryRun.current === runKey) return
+    authenticatedPublicationRecoveryRun.current = runKey
+    setPublicationAutomationBusy(true)
+    setDraftBusy(true)
+    setPublicationAutomationFailed(false)
+    setPublicationAutomationStartedAt(Date.now())
+    setPublicationAutomationElapsed(0)
+    setPublicationAutomationPhase("preview")
+    setPublicationAutomationStep(
+      "Recuperando autorización existente · GET oficial de Inventory Item y Offer…",
+    )
+    setError("")
+    setMessage("")
+    void (async () => {
+      try {
+        const prepared = await draftRequest({
+          action: "prepare_publish",
+          executionId,
+        })
+        const preparedPublication = prepared.publication
+        if (
+          !preparedPublication?.id
+          || preparedPublication.phase !== "preview_ready"
+          || String(preparedPublication.offer_id ?? "") !== offerId
+          || String(preparedPublication.draft_execution_id ?? "") !==
+            executionId
+        ) throw new Error("EBAY_AUTHENTICATED_RECOVERY_OFFER_MISMATCH")
+        setDraftState((current) => ({
+          ...current,
+          publication: preparedPublication,
+          publicationRequirements: prepared.publicationRequirements,
+        }))
+        setPublicationAutomationPhase("publishing")
+        setPublicationAutomationStep(
+          "Autorización recuperada · preflight final, claim atómico y publish one-shot…",
+        )
+        const published = await draftRequest({
+          action: "publish",
+          publicationId: preparedPublication.id,
+          idempotencyKey: `publish:${preparedPublication.id}`,
+          authorizationSurface:
+            "SELLER_OS_SMART_STOCKING_ONE_CLICK_PUBLICATION_V1",
+        })
+        if (
+          String(published.publication?.offer_id ?? "") !== offerId
+          || published.listing?.status !== "ACTIVE"
+          || published.monitoring?.registered !== true
+        ) throw new Error("EBAY_AUTHENTICATED_RECOVERY_ACTIVE_REQUIRED")
+        setDraftState((current) => ({
+          ...current,
+          publication: published.publication,
+          authenticatedPublicationRecovery: {
+            ...recovery,
+            state: "ACTIVE_VERIFIED",
+            autoResume: false,
+            blocker: null,
+          },
+        }))
+        setPublicationAutomationPhase("complete")
+        setMessage(
+          `Listing ${published.listing.listingId} ACTIVE, enlazado y monitoreado usando la autorización existente.`,
+        )
+      } catch (requestError) {
+        const code = requestError instanceof Error
+          ? requestError.message
+          : "EBAY_AUTHENTICATED_RECOVERY_FAILED"
+        setDraftState((current) => ({
+          ...current,
+          authenticatedPublicationRecovery: {
+            ...recovery,
+            state: code.includes("RECONCILIATION_REQUIRED")
+              ? "PUBLISH_ALREADY_CLAIMED"
+              : "RECOVERY_BLOCKED",
+            autoResume: false,
+            blocker: code,
+          },
+        }))
+        setPublicationAutomationFailed(true)
+        setError(authenticatedPublicationRecoveryError(requestError))
+        setMessage("")
+      } finally {
+        setPublicationAutomationBusy(false)
+        setDraftBusy(false)
+      }
+    })()
+  }, [
+    draftRequest,
+    draftState.authenticatedPublicationRecovery,
+    listingPackage,
+    opportunity,
+  ])
 
   async function approveDraft() {
     if (!listingPackage) return
