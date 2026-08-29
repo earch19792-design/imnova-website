@@ -15,6 +15,8 @@ import { getSellerOsAiRuntimeStatusV1, runSellerOsStrategicReviewV1 } from
 import { getEbayProRuntimeBoundary } from "@/lib/ebay/environment-boundaries"
 import { getSellerOsChatGptConnectionStateV1 } from
   "@/lib/ebay/ebay-seller-os-mcp-server-v1"
+import { buildSellerOsCurrentLiveVisualQualityV1 } from
+  "@/lib/ebay/ebay-seller-os-visual-quality-v1"
 import { validateAdminApiRequest } from "@/lib/supabase-admin"
 
 const requestWindows = new Map<string, number[]>()
@@ -40,7 +42,8 @@ async function authorize(req: Request) {
 
 async function evidence() {
   const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
-  const bundle = buildSystemReviewBundleV1({ monitor })
+  const visualQuality = await buildSellerOsCurrentLiveVisualQualityV1({ monitor })
+  const bundle = { ...buildSystemReviewBundleV1({ monitor }), visualQuality }
   return { monitor, bundle,
     deterministicBrief: buildDailyStrategicBriefFallbackV1({ bundle }) }
 }
