@@ -18,18 +18,21 @@ const presentation = readFileSync(
 test("canonical dashboard consumes backend DTO states without synthetic KPI fallbacks", () => {
   assert.ok(dashboard.startsWith('"use client"'))
   for (const expression of [
-    "backend.kpis.activeListings.value",
-    "selectedTraffic.impressions",
-    "selectedTraffic.listingViews",
-    "selectedTraffic.ctr",
-    "selectedTraffic.quantitySold",
-    "backend.kpis.orders.value",
+    "livePortfolio.activeListings.value",
+    "livePortfolio.impressions.value",
+    "livePortfolio.ebayViews.value",
+    "livePortfolio.averageCtr.value",
+    "livePortfolio.quantitySold.value",
+    "dashboardKpis.orders.value",
     "backend.capabilities.inventory.inventoryItemsResource",
   ]) {
     assert.match(dashboard, new RegExp(expression))
   }
   assert.match(dashboard, /value === null \? "—"/)
-  assert.match(dashboard, /Sin informe vigente/)
+  assert.match(dashboard, /Listing Quality Report todavía no conectado/)
+  assert.match(dashboard, /value === null && status === "AVAILABLE"/)
+  assert.match(dashboard, /\? "Error de datos"/)
+  assert.doesNotMatch(dashboard, /Rendimiento de las 10 publicaciones activas/)
   assert.match(dashboard, /No se generan puntos sintéticos/)
   for (const status of ["UNAVAILABLE_AUTH_PENDING", "UNAVAILABLE_NO_CURRENT_REPORT",
     "DEGRADED", "PARTIAL_CERTIFIED"]) {
@@ -38,7 +41,8 @@ test("canonical dashboard consumes backend DTO states without synthetic KPI fall
   assert.match(dashboard, /No se inventan valores del Top 10 %/)
   assert.match(dashboard, /suffix="%"/)
   assert.match(dashboard, /Métrica TRANSACTION de eBay Analytics; no equivale a órdenes/)
-  assert.match(dashboard, /backend\.trafficScopes\.accountTraffic/)
+  assert.match(dashboard, /dashboardKpis\.accountTraffic/)
+  assert.doesNotMatch(dashboard, /selectedTraffic|setTrafficScope/)
 })
 
 test("canonical dashboard surfaces decisions and review-only Registry state without write controls", () => {
@@ -61,11 +65,11 @@ test("canonical dashboard surfaces decisions and review-only Registry state with
     dashboard,
     /fetch\(|method:\s*["'](?:POST|PUT|PATCH|DELETE)["']|ReviseItem|EndItem|publishOffer/,
   )
-  assert.equal((dashboard.match(/onClick=/g) ?? []).length, 4)
+  assert.equal((dashboard.match(/onClick=/g) ?? []).length, 2)
   assert.match(dashboard, /onClick=\{onRefresh\}/)
-  assert.match(dashboard, /ACCOUNT_TRAFFIC/)
-  assert.match(dashboard, /CURRENT_LIVE_PORTFOLIO/)
-  assert.match(dashboard, /sin usar el portafolio como sustituto/i)
+  assert.match(dashboard, /Tráfico de la cuenta/)
+  assert.match(dashboard, /Portafolio LIVE actual/)
+  assert.match(dashboard, /Sus denominadores nunca se mezclan con el portafolio LIVE/)
   assert.match(dashboard, /renderedCriticalAlerts\.length/)
   assert.match(dashboard, /priorityActionPlan/)
 })
@@ -97,7 +101,14 @@ test("canonical dashboard prioritizes operator intent and legibility", () => {
     "Integridad del sistema",
     "Estado del sistema",
     "Tráfico de la cuenta",
-    "Portafolio activo",
+    "Portafolio LIVE actual",
+    "Veces que eBay mostró tus productos · Impresiones",
+    "Personas que entraron a verlos · Vistas",
+    "CTR · Tasa de clics",
+    "¿Qué significa?",
+    "Inventario protegido",
+    "con evidencia fresca",
+    "requieren atención",
     "Plan de acción prioritario",
     "Este Monitor funciona en modo de solo lectura",
     "Rendimiento general",
@@ -158,7 +169,7 @@ test("final UX hardening keeps operational language human and empty states compa
   assert.doesNotMatch(dashboard, /Semánticas específicas, sin falsos ceros/)
   assert.match(dashboard, /data-compact-empty-state="true"/)
   assert.match(dashboard, /Tendencia no disponible todavía/)
-  assert.match(dashboard, /Carga un informe vigente para habilitar benchmarks/)
+  assert.match(dashboard, /Listing Quality Report todavía no conectado/)
   assert.match(dashboard, /presentSellerOsCapabilitySummary/)
 })
 
@@ -185,7 +196,7 @@ test("live Trading rows remain visible when Quality Report is unavailable", () =
   assert.match(dashboard,
     /const liveRows = selectedLiveItemIds\.flatMap/)
   assert.match(dashboard, /qualityUnavailable \? \(/)
-  assert.match(dashboard, /Sin informe vigente/)
+  assert.match(dashboard, /Listing Quality Report todavía no conectado/)
   assert.match(dashboard, /ImageOff/)
   assert.match(dashboard, /key=\{listing\.identity\.itemId\}/)
   assert.match(dashboard, /decision\.experimentRunning/)

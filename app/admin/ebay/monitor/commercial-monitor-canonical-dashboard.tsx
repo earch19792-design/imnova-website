@@ -33,6 +33,7 @@ import type {
 } from "@/lib/ebay/commercial-monitor-readonly-contract"
 import {
   buildCanonicalLiveListingDashboardMetricsV1,
+  presentSellerOsCanonicalDashboardKpisV1,
   presentCommercialMonitorRegistryV1,
 } from
   "@/lib/ebay/ebay-commercial-monitor-registry-presentation-v1"
@@ -95,8 +96,10 @@ const reasonLabels: Record<string, string> = {
   GUIDANCE_NOT_AVAILABLE: "Guía de eBay no disponible",
 }
 
-function formatValue(value: number | null) {
-  return value === null ? "—" : numberFormatter.format(value)
+function formatValue(value: number | null, maximumFractionDigits = 2) {
+  return value === null ? "—" : new Intl.NumberFormat("es-US", {
+    maximumFractionDigits,
+  }).format(value)
 }
 
 function formatTimestamp(value: string | null) {
@@ -182,6 +185,8 @@ function KpiCard({
   detail,
   icon,
   suffix,
+  meaning,
+  maximumFractionDigits,
 }: {
   label: string
   value: number | null
@@ -189,14 +194,20 @@ function KpiCard({
   detail: string
   icon: ReactNode
   suffix?: string
+  meaning?: string
+  maximumFractionDigits?: number
 }) {
+  const displayValue = value === null && status === "AVAILABLE"
+    ? "Error de datos"
+    : formatValue(value, maximumFractionDigits)
+
   return (
     <article className="min-w-0 border-b border-slate-100 bg-white p-5 last:border-b-0 sm:border-r xl:border-b-0">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className={`${type.cardLabel} text-slate-500`}>{label}</p>
           <p className="mt-2 text-[34px] font-black leading-none tracking-tight text-slate-950 xl:text-[38px]">
-            {formatValue(value)}{value === null || !suffix ? "" : suffix}
+            {displayValue}{value === null || !suffix ? "" : suffix}
           </p>
         </div>
         <span className="rounded-lg bg-cyan-50 p-2 text-cyan-700">{icon}</span>
@@ -205,6 +216,12 @@ function KpiCard({
         <StatusChip status={status} />
         <p className={`${type.helper} max-w-[18rem] text-right text-slate-500`}>{detail}</p>
       </div>
+      {meaning && (
+        <details className={`${type.helper} mt-3 text-slate-500`}>
+          <summary className="cursor-pointer font-bold text-cyan-800">¿Qué significa?</summary>
+          <p className="mt-1 leading-5">{meaning}</p>
+        </details>
+      )}
     </article>
   )
 }
@@ -284,37 +301,15 @@ export function CommercialMonitorCanonicalDashboard({
   onRefresh,
   refreshing,
 }: CommercialMonitorCanonicalDashboardProps) {
-  const [trafficScope, setTrafficScope] = useState<"ACCOUNT_TRAFFIC" | "CURRENT_LIVE_PORTFOLIO">(
-    "CURRENT_LIVE_PORTFOLIO",
-  )
   const [showAllLiveListings, setShowAllLiveListings] = useState(false)
   const backend = monitor.backend
+  const dashboardKpis = presentSellerOsCanonicalDashboardKpisV1(monitor)
+  const livePortfolio = dashboardKpis.livePortfolio
   const canonicalLive = buildCanonicalLiveListingDashboardMetricsV1(monitor)
   const listingsNeedingLinkage = monitor.listings.filter((listing) =>
     listing.discovery.livePresence.status === "LIVE_ACTIVE" &&
     listing.stock.supplierLinkageStatus !== "CERTIFIED")
-  const accountTraffic = backend.trafficScopes.accountTraffic
-  const currentLiveTraffic = backend.trafficScopes.currentLivePortfolio
-  const accountTrafficSelected = trafficScope === "ACCOUNT_TRAFFIC"
-  const selectedTraffic = accountTrafficSelected
-    ? {
-        status: accountTraffic.status as CommercialMonitorCapabilityStatus,
-        impressions: accountTraffic.impressions,
-        listingViews: accountTraffic.listingViews,
-        quantitySold: accountTraffic.quantitySold,
-        ctr: accountTraffic.ctr,
-        detail: accountTraffic.status === "AVAILABLE"
-          ? `Tráfico de la cuenta · ${accountTraffic.timeZone}`
-          : "Tráfico de la cuenta no disponible · sin usar el portafolio como sustituto",
-      }
-    : {
-        status: currentLiveTraffic.completeness,
-        impressions: currentLiveTraffic.impressions,
-        listingViews: currentLiveTraffic.listingViews,
-        quantitySold: currentLiveTraffic.quantitySold,
-        ctr: currentLiveTraffic.ctr,
-        detail: "Publicaciones activas canónicas · Item IDs únicos de Trading",
-      }
+  const accountTraffic = dashboardKpis.accountTraffic
   const registry = backend.capabilities.registry
   const registryPresentation = presentCommercialMonitorRegistryV1(registry)
   const integrity = backend.livePortfolioIntegrity
@@ -434,34 +429,34 @@ export function CommercialMonitorCanonicalDashboard({
           </div>
         </section>
 
-        <section aria-label="Seleccionar ámbito de métricas" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-3 shadow-sm">
-          <div>
-            <p className={`${type.cardLabel} text-slate-800`}>Ámbito de las métricas</p>
-            <p className={`${type.helper} text-slate-500`}>La cuenta y el portafolio activo son poblaciones diferentes y no se mezclan.</p>
+        <section aria-labelledby="live-portfolio-kpis-heading">
+          <div className="mb-3">
+            <p className={`${type.sectionEyebrow} text-cyan-800`}>Portafolio LIVE actual</p>
+            <h2 id="live-portfolio-kpis-heading" className={type.sectionTitle}>Rendimiento del portafolio LIVE</h2>
+            <p className={`${type.helper} mt-1 text-slate-500`}>Sólo Item IDs que Trading confirma LIVE; no incluye tráfico ajeno a esta cohorte.</p>
           </div>
-          <div className="inline-flex rounded-xl bg-slate-100 p-1" role="group" aria-label="Seleccionar ámbito de tráfico">
-            <button
-              type="button"
-              aria-pressed={accountTrafficSelected}
-              onClick={() => setTrafficScope("ACCOUNT_TRAFFIC")}
-              className={`min-h-10 rounded-lg px-4 ${type.button} ${accountTrafficSelected ? "bg-white text-cyan-800 shadow-sm" : "text-slate-600"}`}
-            >Tráfico de la cuenta</button>
-            <button
-              type="button"
-              aria-pressed={!accountTrafficSelected}
-              onClick={() => setTrafficScope("CURRENT_LIVE_PORTFOLIO")}
-              className={`min-h-10 rounded-lg px-4 ${type.button} ${!accountTrafficSelected ? "bg-white text-cyan-800 shadow-sm" : "text-slate-600"}`}
-            >Portafolio activo</button>
+          <div className="grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:grid-cols-2 xl:grid-cols-5">
+            <KpiCard label="Publicaciones activas" value={livePortfolio.activeListings.value} status={livePortfolio.activeListings.status} detail="Item IDs LIVE únicos de Trading" meaning="Cantidad de publicaciones que eBay confirma activas ahora." maximumFractionDigits={0} icon={<Package size={20} />} />
+            <KpiCard label="Veces que eBay mostró tus productos · Impresiones" value={livePortfolio.impressions.value} status={livePortfolio.impressions.status} detail="Portafolio LIVE actual" meaning="Cuántas veces eBay mostró alguna de estas publicaciones activas." maximumFractionDigits={0} icon={<BarChart3 size={20} />} />
+            <KpiCard label="Personas que entraron a verlos · Vistas" value={livePortfolio.ebayViews.value} status={livePortfolio.ebayViews.status} detail="Portafolio LIVE actual" meaning="Cuántas visitas registró eBay para estas publicaciones activas." maximumFractionDigits={0} icon={<Eye size={20} />} />
+            <KpiCard label="CTR · Tasa de clics" value={livePortfolio.averageCtr.value} status={livePortfolio.averageCtr.status} detail="Portafolio LIVE actual" meaning="De cada 100 veces que eBay muestra tus productos, indica cuántas personas entran a verlos." maximumFractionDigits={5} icon={<TrendingUp size={20} />} suffix="%" />
+            <KpiCard label="Artículos vendidos" value={livePortfolio.quantitySold.value} status={livePortfolio.quantitySold.status} detail="Métrica TRANSACTION de eBay Analytics; no equivale a órdenes" meaning="Unidades atribuidas por eBay Analytics a estas publicaciones activas." maximumFractionDigits={0} icon={<Activity size={20} />} />
           </div>
         </section>
 
-        <section aria-label="Indicadores principales" className="grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:grid-cols-2 xl:grid-cols-6">
-          <KpiCard label="Publicaciones activas" value={backend.kpis.activeListings.value} status={backend.kpis.activeListings.status} detail="Publicaciones activas canónicas" icon={<Package size={20} />} />
-          <KpiCard label="Impresiones" value={selectedTraffic.impressions} status={selectedTraffic.status} detail={selectedTraffic.detail} icon={<BarChart3 size={20} />} />
-          <KpiCard label="Vistas" value={selectedTraffic.listingViews} status={selectedTraffic.status} detail={selectedTraffic.detail} icon={<Eye size={20} />} />
-          <KpiCard label="CTR" value={selectedTraffic.ctr} status={selectedTraffic.status} detail={selectedTraffic.detail} icon={<TrendingUp size={20} />} suffix="%" />
-          <KpiCard label="Cantidad vendida" value={selectedTraffic.quantitySold} status={selectedTraffic.status} detail="Métrica TRANSACTION de eBay Analytics; no equivale a órdenes" icon={<Activity size={20} />} />
-          <KpiCard label="Órdenes" value={backend.kpis.orders.value} status={backend.kpis.orders.status} detail={backend.kpis.orders.value === null ? "Autorización o fuente pendiente" : "Lectura de fulfillment"} icon={<ShoppingBag size={20} />} />
+        <section aria-labelledby="account-traffic-heading">
+          <div className="mb-3">
+            <p className={`${type.sectionEyebrow} text-violet-800`}>Tráfico de la cuenta</p>
+            <h2 id="account-traffic-heading" className={type.sectionTitle}>Actividad total informada por eBay</h2>
+            <p className={`${type.helper} mt-1 text-slate-500`}>Scope de cuenta separado · {accountTraffic.timeZone}. Sus denominadores nunca se mezclan con el portafolio LIVE.</p>
+          </div>
+          <div className="grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:grid-cols-2 xl:grid-cols-5">
+            <KpiCard label="Veces que eBay mostró tus productos · Impresiones" value={accountTraffic.impressions} status={accountTraffic.status} detail="Tráfico de toda la cuenta" meaning="Cuántas veces eBay mostró productos de la cuenta dentro de la ventana reportada." maximumFractionDigits={0} icon={<BarChart3 size={20} />} />
+            <KpiCard label="Personas que entraron a verlos · Vistas" value={accountTraffic.listingViews} status={accountTraffic.status} detail="Tráfico de toda la cuenta" meaning="Visitas a publicaciones de la cuenta dentro de la ventana reportada." maximumFractionDigits={0} icon={<Eye size={20} />} />
+            <KpiCard label="CTR · Tasa de clics" value={accountTraffic.ctr} status={accountTraffic.status} detail="Tráfico de toda la cuenta" meaning="De cada 100 impresiones de búsqueda de la cuenta, cuántas terminaron en una visita." maximumFractionDigits={5} icon={<TrendingUp size={20} />} suffix="%" />
+            <KpiCard label="Artículos vendidos" value={accountTraffic.quantitySold} status={accountTraffic.status} detail="Tráfico de toda la cuenta" meaning="Cantidad vendida informada por el reporte de tráfico; no equivale al número de órdenes." maximumFractionDigits={0} icon={<Activity size={20} />} />
+            <KpiCard label="Órdenes" value={dashboardKpis.orders.value} status={dashboardKpis.orders.status} detail={dashboardKpis.orders.value === null ? "Fuente Fulfillment no disponible" : "Lectura oficial de Fulfillment"} meaning="Pedidos observados por Fulfillment. Se muestra separado del tráfico y no se usa como su denominador." maximumFractionDigits={0} icon={<ShoppingBag size={20} />} />
+          </div>
         </section>
 
         <section aria-labelledby="live-invariant-heading">
@@ -477,17 +472,19 @@ export function CommercialMonitorCanonicalDashboard({
               </p>
             </div>
           </div>
-          <div className="grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:grid-cols-2 xl:grid-cols-5">
-            <KpiCard label="Live canónicos" value={canonicalLive.liveCount} status={canonicalLive.status} detail="Item IDs live únicos; evidencia histórica excluida" icon={<Package size={20} />} />
-            <KpiCard label="Luna linkage certificado" value={canonicalLive.lunaLinkedCertified} status={canonicalLive.status} detail="supplierLinkage = CERTIFIED; no depende de estar in stock" icon={<ShieldCheck size={20} />} />
-            <KpiCard label="Live sin linkage" value={canonicalLive.unlinkedLive} status={canonicalLive.unlinkedLive === 0 ? canonicalLive.status : "BLOCKED"} detail="LIVE_COUNT − linkage CERTIFIED" icon={<AlertTriangle size={20} />} />
-            <KpiCard label="Live monitoreados" value={canonicalLive.monitoredLive} status={canonicalLive.status} detail="Item IDs inscritos en el monitor canónico" icon={<Activity size={20} />} />
-            <KpiCard label="Live sin monitor" value={canonicalLive.unmonitoredLive} status={canonicalLive.unmonitoredLive === 0 ? canonicalLive.status : "BLOCKED"} detail="Listings live fuera de la cobertura canónica" icon={<AlertTriangle size={20} />} />
-            <KpiCard label="StockGuard inscritos" value={canonicalLive.stockguardEnrolledLive} status={canonicalLive.status} detail="Item IDs live presentes en el modelo canónico de stock" icon={<LockKeyhole size={20} />} />
-            <KpiCard label="Live sin StockGuard" value={canonicalLive.liveWithoutStockguard} status={canonicalLive.liveWithoutStockguard === 0 ? canonicalLive.status : "BLOCKED"} detail="Sin fila canónica de StockGuard" icon={<AlertTriangle size={20} />} />
-            <KpiCard label="Disponibilidad observada" value={canonicalLive.inStockSignal} status={canonicalLive.status} detail="state = IN_STOCK_SIGNAL" icon={<CheckCircle2 size={20} />} />
-            <KpiCard label="Stock desconocido" value={canonicalLive.stockUnknown} status={canonicalLive.status} detail={`Incluye ${canonicalLive.identityMismatch} mismatch de identidad certificado`} icon={<CircleGauge size={20} />} />
-            <KpiCard label="OOS certificado live" value={canonicalLive.certifiedOosLive} status={canonicalLive.certifiedOosLive === 0 ? canonicalLive.status : "CRITICAL"} detail="Nunca se oculta dentro de un agregado de riesgo" icon={<AlertTriangle size={20} />} />
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className={`${type.cardLabel} text-slate-500`}>Inventario protegido</p>
+                <p className="mt-1 text-3xl font-black text-slate-950">{canonicalLive.stockguardProtectedLive} de {canonicalLive.liveCount}</p>
+              </div>
+              <ShieldCheck className="text-emerald-700" size={28} />
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl bg-emerald-50 p-3"><strong className="text-xl text-emerald-900">{canonicalLive.lunaLinkedCertified}</strong><p className={`${type.helper} mt-1 text-emerald-800`}>vinculados</p></div>
+              <div className="rounded-xl bg-cyan-50 p-3"><strong className="text-xl text-cyan-900">{canonicalLive.freshEvidenceLive}</strong><p className={`${type.helper} mt-1 text-cyan-800`}>con evidencia fresca</p></div>
+              <div className={`rounded-xl p-3 ${canonicalLive.stockguardRequiresAttention === 0 ? "bg-slate-50" : "bg-amber-50"}`}><strong className="text-xl text-slate-900">{canonicalLive.stockguardRequiresAttention}</strong><p className={`${type.helper} mt-1 text-slate-700`}>requieren atención</p></div>
+            </div>
           </div>
         </section>
 
@@ -736,7 +733,7 @@ export function CommercialMonitorCanonicalDashboard({
                       </td>
                       <td className={`px-3 py-3 ${type.tableSecondary} text-slate-600`}>
                         {qualityUnavailable ? (
-                          <><strong className="block text-slate-700">Sin informe vigente</strong><span>No se inventa una recomendación.</span></>
+                          <><strong className="block text-slate-700">Listing Quality Report todavía no conectado</strong><span>No se inventa una recomendación.</span></>
                         ) : (
                           <><strong className="block text-slate-700">{presentSellerOsStatus(guidance?.ebayGuidanceStatus)}</strong><span>{guidance?.reasonCodes.map(humanReason).join(" · ") || "Sin razón disponible"}</span></>
                         )}
@@ -912,7 +909,7 @@ export function CommercialMonitorCanonicalDashboard({
 
           <article id="category-benchmark" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-start justify-between gap-3"><div><p className={`${type.sectionEyebrow} text-slate-500`}>Benchmark de categoría</p><h2 className={type.cardTitle}>Calidad de publicaciones</h2></div><CircleGauge size={20} className="text-slate-400" /></div>
-            {backend.operationalHealth.categoryBenchmarks.length > 0 ? <div className="mt-4 space-y-2">{backend.operationalHealth.categoryBenchmarks.map((benchmark) => <div key={benchmark.recommendationCategory} className={`flex items-center justify-between border-b border-slate-100 pb-2 ${type.tableSecondary}`}><span>{benchmark.recommendationCategory}</span><strong>{formatValue(benchmark.benchmark)}</strong></div>)}</div> : <EmptyState title="Informe de calidad no disponible" detail="Carga un informe vigente para habilitar benchmarks. No se inventan valores del Top 10 %." />}
+            {backend.operationalHealth.categoryBenchmarks.length > 0 ? <div className="mt-4 space-y-2">{backend.operationalHealth.categoryBenchmarks.map((benchmark) => <div key={benchmark.recommendationCategory} className={`flex items-center justify-between border-b border-slate-100 pb-2 ${type.tableSecondary}`}><span>{benchmark.recommendationCategory}</span><strong>{formatValue(benchmark.benchmark)}</strong></div>)}</div> : <EmptyState title="Listing Quality Report todavía no conectado" detail="Cuando exista un informe vigente aparecerán aquí sus benchmarks. No se inventan valores del Top 10 %." />}
           </article>
         </section>
 

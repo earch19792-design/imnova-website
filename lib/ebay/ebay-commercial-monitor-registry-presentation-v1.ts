@@ -44,6 +44,47 @@ export const SELLER_OS_CANONICAL_LIVE_DASHBOARD_VERSION =
 export const CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH =
   "CERTIFIED_COMPONENT_STOCK_IDENTITY_MISMATCH" as const
 
+export function presentSellerOsCanonicalDashboardKpisV1(
+  monitor: CommercialMonitorGetDto,
+) {
+  const backend = monitor.backend
+  const livePortfolio = Object.freeze({
+    scope: "CURRENT_LIVE_PORTFOLIO" as const,
+    activeListings: backend.kpis.activeListings,
+    impressions: backend.kpis.impressions,
+    ebayViews: backend.kpis.ebayViews,
+    averageCtr: backend.kpis.averageCtr,
+    quantitySold: backend.kpis.quantitySold,
+  })
+  const accountTraffic = Object.freeze({
+    ...backend.trafficScopes.accountTraffic,
+    scope: "ACCOUNT_TRAFFIC" as const,
+  })
+  const availableValueViolations = [
+    ["ACTIVE_LISTINGS", livePortfolio.activeListings],
+    ["IMPRESSIONS", livePortfolio.impressions],
+    ["EBAY_VIEWS", livePortfolio.ebayViews],
+    ["AVERAGE_CTR", livePortfolio.averageCtr],
+    ["QUANTITY_SOLD", livePortfolio.quantitySold],
+    ["ORDERS", backend.kpis.orders],
+  ].flatMap(([metric, observation]) =>
+    typeof observation === "object" && observation !== null &&
+      "status" in observation && observation.status === "AVAILABLE" &&
+      "value" in observation && observation.value === null
+      ? [String(metric)]
+      : [])
+
+  return Object.freeze({
+    contractVersion: "SELLER_OS_DASHBOARD_CANONICAL_KPI_HYDRATION_V1" as const,
+    livePortfolio,
+    accountTraffic,
+    orders: backend.kpis.orders,
+    listingQualityReport: backend.listingQualityReport,
+    availableValueViolations: Object.freeze(availableValueViolations),
+    scopesSeparated: true as const,
+  })
+}
+
 export function presentStockGuardInventoryIdentityV1(
   listing: CommercialListingReadModel,
 ) {
@@ -127,6 +168,22 @@ export function buildCanonicalLiveListingDashboardMetricsV1(
   const unlinkedLive = liveCount - lunaLinkedCertified
   const unmonitoredLive = liveCount - monitoredItemIds.size
   const liveWithoutStockguard = stockguardMissingItemIds.size
+  const freshEvidenceItemIds = new Set(liveListings.filter((listing) =>
+    listing.stock.freshness?.status === "FRESH")
+    .map((listing) => listing.identity.itemId))
+  const protectedItemIds = new Set(liveListings.filter((listing) =>
+    listing.stock.supplierLinkageStatus === "CERTIFIED" &&
+    !stockguardMissingItemIds.has(listing.identity.itemId) &&
+    listing.stock.freshness?.status === "FRESH")
+    .map((listing) => listing.identity.itemId))
+  const attentionItemIds = new Set([
+    ...integrity.canonicalCohort.itemIds.filter((itemId) =>
+      !protectedItemIds.has(itemId)),
+    ...liveListings.filter((listing) =>
+      listing.stock.state === "STOCK_UNKNOWN" ||
+      listing.stock.state === "CERTIFIED_OOS")
+      .map((listing) => listing.identity.itemId),
+  ])
   const currentLiveInvariantPass = canonicalParity && unlinkedLive === 0 &&
     unmonitoredLive === 0 && liveWithoutStockguard === 0
 
@@ -148,6 +205,9 @@ export function buildCanonicalLiveListingDashboardMetricsV1(
     stockguardEnrolledLive: liveCount - stockguardMissingItemIds.size,
     stockGuardEnrolled: liveCount - stockguardMissingItemIds.size,
     liveWithoutStockguard,
+    freshEvidenceLive: freshEvidenceItemIds.size,
+    stockguardProtectedLive: protectedItemIds.size,
+    stockguardRequiresAttention: attentionItemIds.size,
     inStockSignal: liveListings.filter((listing) =>
       listing.stock.state === "IN_STOCK_SIGNAL").length,
     certifiedOosLive: liveListings.filter((listing) =>
