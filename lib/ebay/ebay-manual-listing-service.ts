@@ -19,6 +19,8 @@ import {
 } from "@/lib/ebay/ebay-manual-listing-trading-readonly"
 import { expectedEbayDraftOnlySku } from "@/lib/ebay/ebay-draft-only-readiness"
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
+import { reconcileSellerOsStockIdentityV1 } from
+  "@/lib/ebay/ebay-stock-identity-auto-reconciliation-v1"
 
 type JsonRecord = Record<string, unknown>
 
@@ -453,6 +455,60 @@ async function hydrateVerifiedManualActiveListing(
   }
 }
 
+async function refreshCertifiedManualListingStockGuard(
+  supabase: SupabaseClient,
+  input: { accountKey: string; ebayItemId: string },
+) {
+  const { data: decisions, error } = await supabase
+    .from("seller_os_luna_linkage_decisions")
+    .select("decision,decision_version")
+    .eq("account_key", input.accountKey)
+    .eq("marketplace_id", "EBAY_US")
+    .eq("ebay_item_id", input.ebayItemId)
+    .order("decision_version", { ascending: false })
+    .limit(1)
+  if (error) {
+    return {
+      status: "REFRESH_FAILED" as const,
+      reasonCode: "MANUAL_LISTING_STOCKGUARD_DECISION_READ_FAILED",
+      marketplaceWrites: 0 as const,
+    }
+  }
+  if (decisions?.[0]?.decision !== "APPROVE_EXACT_LINKAGE") {
+    return {
+      status: "NOT_CERTIFIED" as const,
+      reasonCode: "MANUAL_LISTING_STOCKGUARD_CERTIFIED_LINKAGE_REQUIRED",
+      marketplaceWrites: 0 as const,
+    }
+  }
+  try {
+    const refreshed = await reconcileSellerOsStockIdentityV1(supabase, {
+      accountKey: input.accountKey,
+      targetItemIds: [input.ebayItemId],
+    })
+    return {
+      status: refreshed.inStockCount === 1
+        ? "IN_STOCK_SIGNAL" as const
+        : refreshed.certifiedOosCount === 1
+          ? "CERTIFIED_OOS" as const
+          : "REFRESHED_WITHOUT_IN_STOCK_SIGNAL" as const,
+      reasonCode: text(record(refreshed.outcomes[0]).status),
+      refresh: refreshed,
+      marketplaceWrites: 0 as const,
+    }
+  } catch (error) {
+    const reasonCode = error instanceof Error &&
+      /^[A-Z0-9_]{3,160}$/.test(error.message)
+      ? error.message
+      : "MANUAL_LISTING_STOCKGUARD_REFRESH_FAILED"
+    return {
+      status: "REFRESH_FAILED" as const,
+      reasonCode,
+      marketplaceWrites: 0 as const,
+    }
+  }
+}
+
 export async function registerManualEbayListing(
   supabase: SupabaseClient,
   input: ManualListingRegistrationInput,
@@ -545,6 +601,12 @@ export async function registerManualEbayListing(
         verification: persistedVerification,
       })
     : null
+  const stockGuardRefresh = persistedVerification.status === "verified"
+    ? await refreshCertifiedManualListingStockGuard(supabase, {
+        accountKey,
+        ebayItemId: input.ebayItemId,
+      })
+    : null
 
   let template: JsonRecord | null = null
   if (
@@ -571,6 +633,7 @@ export async function registerManualEbayListing(
     declaredDefaultsActivated: false,
     effectiveSafeDefaults,
     activeListingHydration,
+    stockGuardRefresh,
     template,
     templateActivated: Boolean(template),
   }
