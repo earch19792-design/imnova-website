@@ -2,6 +2,8 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 300
 
+import { randomBytes } from "node:crypto"
+
 import { NextRequest, NextResponse } from "next/server"
 
 import {
@@ -26,6 +28,7 @@ import {
   assertEbaySellerOAuthReauthAdmin,
   assertEbaySellerOAuthReauthSameOrigin,
   ebaySellerOAuthReauthCookieOptions,
+  ebaySellerOAuthReauthSuccessResponseHeaders,
   EBAY_SELLER_OAUTH_REAUTH_CALLBACK_PATH,
   EBAY_SELLER_OAUTH_REAUTH_COOKIE,
   EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION,
@@ -81,12 +84,13 @@ function callbackHtml(code: string, status: number) {
 }
 
 function successHtml(refreshToken: string) {
+  const scriptNonce = randomBytes(18).toString("base64url")
   const response = new NextResponse(
-    renderEbaySellerOAuthReauthSuccessHtml(refreshToken),
+    renderEbaySellerOAuthReauthSuccessHtml(refreshToken, scriptNonce),
     {
       status: 200,
       headers: {
-        ...EBAY_SELLER_OAUTH_REAUTH_RESPONSE_HEADERS,
+        ...ebaySellerOAuthReauthSuccessResponseHeaders(scriptNonce),
         "Content-Type": "text/html; charset=utf-8",
       },
     },

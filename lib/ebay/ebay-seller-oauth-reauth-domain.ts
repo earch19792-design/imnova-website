@@ -9,6 +9,10 @@ import {
 import {
   getEbaySellerAccountScopeConfiguration,
 } from "./ebay-seller-account-scope"
+import {
+  getEbayProRuntimeBoundary,
+  SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION,
+} from "./environment-boundaries"
 
 export const EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION =
   "EBAY_SELLER_OAUTH_REAUTH_V1" as const
@@ -311,17 +315,41 @@ export function getEbaySellerOAuthReauthConfiguration(input: {
   const deployedBranchHost = normalizedHost(environment.VERCEL_BRANCH_URL)
   const scope = getEbaySellerAccountScopeConfiguration(environment)
   const preview = environment.VERCEL_ENV?.trim().toLowerCase() === "preview"
+  const runtimeBoundary = getEbayProRuntimeBoundary({
+    vercelEnv: environment.VERCEL_ENV,
+    vercelTargetEnv: environment.VERCEL_TARGET_ENV,
+    vercelSystem: environment.VERCEL,
+    vercelProjectId: environment.VERCEL_PROJECT_ID,
+    vercelProjectProductionUrl:
+      environment.VERCEL_PROJECT_PRODUCTION_URL,
+    nodeEnv: environment.NODE_ENV,
+    ebayProRuntime: environment.EBAY_PRO_RUNTIME,
+    supabaseUrl: environment.NEXT_PUBLIC_SUPABASE_URL,
+    pathname: EBAY_SELLER_OAUTH_REAUTH_PAGE_PATH,
+    method: "GET",
+  })
+  const dedicatedPreprod =
+    runtimeBoundary.boundaryClassification ===
+      SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION &&
+    runtimeBoundary.dedicatedPreprod.certified &&
+    runtimeBoundary.blocked === false
   const branchMatch = environment.VERCEL_GIT_COMMIT_REF?.trim() ===
     EBAY_SELLER_OAUTH_REAUTH_BRANCH
   const exactCanonicalHostFallback = branchMatch &&
     requestHost === EBAY_SELLER_OAUTH_REAUTH_PREVIEW_BRANCH_HOST
-  const branchHost = deployedBranchHost || (
-    exactCanonicalHostFallback ? requestHost : ""
+  const dedicatedPreprodHost = normalizedHost(
+    environment.VERCEL_PROJECT_PRODUCTION_URL,
   )
+  const branchHost = dedicatedPreprod
+    ? dedicatedPreprodHost
+    : deployedBranchHost || (
+      exactCanonicalHostFallback ? requestHost : ""
+    )
   const hostMatch = Boolean(branchHost && requestHost && branchHost === requestHost)
-  const reason = !preview
+  const runtimeAllowed = preview || dedicatedPreprod
+  const reason = !runtimeAllowed
     ? "EBAY_SELLER_OAUTH_REAUTH_PREVIEW_REQUIRED"
-    : !branchMatch
+    : preview && !branchMatch
       ? "EBAY_SELLER_OAUTH_REAUTH_BRANCH_DENIED"
       : !hostMatch
         ? "EBAY_SELLER_OAUTH_REAUTH_HOST_DENIED"
@@ -682,6 +710,24 @@ export const EBAY_SELLER_OAUTH_REAUTH_RESPONSE_HEADERS = {
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 } as const
 
+export function ebaySellerOAuthReauthSuccessResponseHeaders(
+  scriptNonce: string,
+) {
+  if (!/^[A-Za-z0-9_-]{24,64}$/.test(scriptNonce)) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_HANDOFF_NONCE_INVALID",
+    )
+  }
+  return {
+    ...EBAY_SELLER_OAUTH_REAUTH_RESPONSE_HEADERS,
+    "Content-Security-Policy":
+      `default-src 'none'; script-src 'nonce-${scriptNonce}'; ` +
+      "connect-src 'none'; img-src 'none'; style-src 'none'; " +
+      "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; " +
+      "sandbox allow-scripts",
+  }
+}
+
 function escapeHtml(value: string) {
   return value
     .replaceAll("&", "&amp;")
@@ -691,8 +737,12 @@ function escapeHtml(value: string) {
     .replaceAll("'", "&#39;")
 }
 
-export function renderEbaySellerOAuthReauthSuccessHtml(refreshToken: string) {
-  if (!boundedCredential(refreshToken, 8_192)) {
+export function renderEbaySellerOAuthReauthSuccessHtml(
+  refreshToken: string,
+  scriptNonce: string,
+) {
+  if (!boundedCredential(refreshToken, 8_192) ||
+      !/^[A-Za-z0-9_-]{24,64}$/.test(scriptNonce)) {
     throw new EbaySellerOAuthReauthError(
       "EBAY_SELLER_OAUTH_REAUTH_TOKEN_RESPONSE_INVALID",
     )
@@ -702,9 +752,18 @@ export function renderEbaySellerOAuthReauthSuccessHtml(refreshToken: string) {
     "<title>eBay seller OAuth handoff</title></head><body>" +
     "<main><h1>Verified one-time seller refresh token handoff</h1>" +
     "<p>This OAuth state is already CLAIMED. Reload, Back, or replay cannot produce another handoff.</p>" +
-    "<p><strong>Paste this value directly into the Vercel Sensitive Environment Variable UI. " +
-    "Do not copy it into chat, terminal, markdown, source, .env, issue, PR, or logs.</strong></p>" +
-    `<textarea readonly autocomplete=\"off\" spellcheck=\"false\" rows=\"8\" cols=\"100\">${escapeHtml(refreshToken)}</textarea>` +
+    "<p><strong>Credencial sensible · copiar directamente a Vercel y cerrar esta página.</strong></p>" +
+    "<p>Do not copy it into chat, terminal, markdown, source, .env, issue, PR, or logs.</p>" +
+    `<textarea id=\"refresh-token\" readonly autocomplete=\"off\" spellcheck=\"false\" rows=\"8\" cols=\"100\">${escapeHtml(refreshToken)}</textarea>` +
+    "<p><button id=\"copy-token\" type=\"button\">Copiar token</button> " +
+    "<span id=\"copy-status\" role=\"status\" aria-live=\"polite\"></span></p>" +
+    `<script nonce=\"${scriptNonce}\">` +
+    "document.getElementById('copy-token').addEventListener('click',async()=>{" +
+    "const token=document.getElementById('refresh-token');" +
+    "const status=document.getElementById('copy-status');" +
+    "try{await navigator.clipboard.writeText(token.value);status.textContent='Token copiado. Cierra esta página después de guardarlo en Vercel.';}" +
+    "catch{token.focus();token.select();status.textContent='Seleccionado para copia manual.';}" +
+    "});</script>" +
     "<p>If this response is lost, start a completely new OAuth ceremony. There is no recovery or replay.</p>" +
     "</main></body></html>"
 }
