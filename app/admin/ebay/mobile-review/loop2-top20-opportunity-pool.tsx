@@ -8,7 +8,9 @@ import {
   EBAY_ONE_CLICK_RESEARCH_BOUNDS,
   EBAY_ONE_CLICK_RESEARCH_BRIDGE_LIFECYCLE,
   EBAY_ONE_CLICK_RESEARCH_COMMAND,
+  EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT,
   EBAY_ONE_CLICK_RESEARCH_RESULT,
+  attestEbayOneClickResearchExtensionArtifact,
   buildEbayOneClickResearchLease,
   buildEbayOneClickResearchPlan,
   establishEbayOneClickResearchHandshake,
@@ -947,6 +949,10 @@ async function probeOneClickResearchExtension() {
           result.extensionId !== result.bridgeExtensionId) {
           throw new Error("ONE_CLICK_RESEARCH_EXTENSION_ATTESTATION_FAILED")
         }
+        attestEbayOneClickResearchExtensionArtifact({
+          extensionVersion: result.extensionVersion,
+          manifestOriginMatch: trace.manifestMatched,
+        })
         return result
       },
     })
@@ -979,9 +985,12 @@ function OneClickResearchCommandCenter({
   onStart: () => void
 }) {
   const queryPlan = browserCaptureStatus?.queryPlan ?? null
-  const extensionConnected = Boolean(
-    oneClickResearch.extensionId && oneClickResearch.extensionVersion,
-  )
+  const extensionVersionMatch = oneClickResearch.extensionVersion ===
+    EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version
+  const manifestOriginMatch = oneClickResearch.handshakeTrace?.manifestMatched === true
+  const extensionConnected = Boolean(oneClickResearch.extensionId &&
+    extensionVersionMatch && manifestOriginMatch &&
+    oneClickResearch.handshakeTrace?.connectedStateCommitted === true)
 
   return <section
     aria-labelledby="one-click-research-command-center-heading"
@@ -1001,8 +1010,9 @@ function OneClickResearchCommandCenter({
       </span>
     </div>
 
-    <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <dl className="grid grid-cols-2 gap-2 sm:grid-cols-5">
       <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Versión extensión</dt><dd className="font-black">{oneClickResearch.extensionVersion ?? "NO OBSERVADA"}</dd></div>
+      <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Artefacto esperado</dt><dd className="font-black">{EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version} · {EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.buildId.slice(0, 7)} · {extensionVersionMatch && manifestOriginMatch ? "MATCH" : "NO MATCH"}</dd></div>
       <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Plan</dt><dd className="font-black">{queryPlan?.status ?? "NO DISPONIBLE"}</dd></div>
       <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Consultas pendientes</dt><dd className="font-black">{queryPlan?.pendingCount ?? 0}</dd></div>
       <div className="rounded-xl bg-black/25 p-2"><dt className="text-white/45">Plan capturado</dt><dd className="font-black">{queryPlan ? `${queryPlan.capturedCount} / ${queryPlan.queryCount}` : "0 / 0"}</dd></div>
@@ -1046,6 +1056,7 @@ function OneClickResearchCommandCenter({
       <dl className="mt-3 grid grid-cols-2 gap-1 sm:grid-cols-4">
         <div><dt className="text-white/45">Última etapa</dt><dd>{oneClickResearch.handshakeTrace.lastConfirmedStage}</dd></div>
         <div><dt className="text-white/45">Manifest match</dt><dd>{String(oneClickResearch.handshakeTrace.manifestMatched)}</dd></div>
+        <div><dt className="text-white/45">Origin autorizado</dt><dd>{String(manifestOriginMatch)}</dd></div>
         <div><dt className="text-white/45">Bridge injected</dt><dd>{String(oneClickResearch.handshakeTrace.adminBridgeInjected)}</dd></div>
         <div><dt className="text-white/45">Bridge booted</dt><dd>{String(oneClickResearch.handshakeTrace.adminBridgeBooted)}</dd></div>
         <div><dt className="text-white/45">Listener bridge</dt><dd>{String(oneClickResearch.handshakeTrace.bridgeListenerRegistered)}</dd></div>
@@ -1801,7 +1812,7 @@ export function Loop2Top20OpportunityPool({
               <p className="mt-1 text-white/60">La página autenticada autoriza una sola sesión temporal; la extensión existente ejecuta Product Research y Main Search Sold sin copiar cookies, credenciales ni el bearer de Seller OS.</p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <a href="/seller-os-tools/ebay-product-research-capture-extension-v1.2.26.zip" download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v1.2.26</a>
+              <a href={EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.archivePath} download className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl bg-cyan-100 px-4 font-black text-cyan-950">Descargar extensión asistida v{EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version}</a>
               <a href="https://www.ebay.com/sh/research" target="_blank" rel="noreferrer" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-white/20 px-4 font-black text-white">Abrir Product Research</a>
             </div>
             {oneClickResearchCommandCenter}

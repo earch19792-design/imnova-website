@@ -11,6 +11,28 @@ export const EBAY_ONE_CLICK_RESEARCH_RESULT =
 export const EBAY_ONE_CLICK_RESEARCH_BRIDGE_LIFECYCLE =
   "IMNOVA_EBAY_ONE_CLICK_RESEARCH_BRIDGE_LIFECYCLE_V1"
 
+export const EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT = Object.freeze({
+  version: "1.2.26",
+  buildId: "10fa05a43791ff4bd42083d0ca88341a5c99a947",
+  archivePath:
+    "/seller-os-tools/ebay-product-research-capture-extension-v1.2.26.zip",
+})
+
+export function attestEbayOneClickResearchExtensionArtifact(input: Readonly<{
+  extensionVersion: unknown
+  manifestOriginMatch: unknown
+}>) {
+  if (input.extensionVersion !== EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version ||
+    input.manifestOriginMatch !== true) {
+    throw new Error("ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT_MISMATCH")
+  }
+  return Object.freeze({
+    extensionVersion: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.version,
+    buildId: EBAY_ONE_CLICK_RESEARCH_EXTENSION_ARTIFACT.buildId,
+    manifestOriginMatch: true as const,
+  })
+}
+
 export const EBAY_ONE_CLICK_NO_VALID_SOLD_EVIDENCE =
   "NO_VALID_SOLD_EVIDENCE" as const
 
