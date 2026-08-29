@@ -51,6 +51,28 @@ function record(value: unknown): JsonRecord {
     : {}
 }
 
+const exposedManualSuccessorDatabaseErrors = new Set([
+  "POST_PUBLISH_LUNA_LINEAGE_HANDOFF_INPUT_INVALID",
+  "POST_PUBLISH_LUNA_LINEAGE_PUBLICATION_NOT_EXACT",
+  "POST_PUBLISH_LUNA_LINEAGE_IDENTITY_MISMATCH",
+  "POST_PUBLISH_LUNA_LINEAGE_COMPONENT_INVALID",
+  "POST_PUBLISH_LUNA_LINEAGE_EXISTING_DECISION_CONFLICT",
+  "MANUAL_LIVE_LINKAGE_INPUT_INVALID",
+  "MANUAL_LIVE_LINKAGE_IDENTITY_MISMATCH",
+  "MANUAL_LIVE_LINKAGE_COMPONENT_INVALID",
+  "MANUAL_LIVE_LINKAGE_EXISTING_DECISION_CONFLICT",
+  "MANUAL_LIVE_SUCCESSOR_DUPLICATE_OR_HISTORY_MISMATCH",
+  "MANUAL_LIVE_SUCCESSOR_PREDECESSOR_NOT_EXACT",
+  "MANUAL_LIVE_SUCCESSOR_LINEAGE_RETIREMENT_FAILED",
+])
+
+export function isSafeManualListingErrorCode(value: unknown): value is string {
+  return typeof value === "string" && (
+    /^MANUAL_LISTING_[A-Z0-9_]+$/.test(value) ||
+    exposedManualSuccessorDatabaseErrors.has(value)
+  )
+}
+
 function safeDatabaseErrorCode(error: unknown, fallback: string) {
   if (!error || typeof error !== "object") return fallback
   const values = [
@@ -60,8 +82,9 @@ function safeDatabaseErrorCode(error: unknown, fallback: string) {
   ]
   for (const value of values) {
     if (typeof value !== "string") continue
-    const match = value.match(/MANUAL_LISTING_[A-Z0-9_]+/)
-    if (match) return match[0]
+    const matches = value.match(/[A-Z][A-Z0-9_]{2,}/g) ?? []
+    const safeCode = matches.find(isSafeManualListingErrorCode)
+    if (safeCode) return safeCode
   }
   return fallback
 }
@@ -509,6 +532,36 @@ async function refreshCertifiedManualListingStockGuard(
   }
 }
 
+async function readCertifiedManualLiveLinkage(
+  supabase: SupabaseClient,
+  input: { connectorListingId: string | null },
+) {
+  if (!input.connectorListingId) return null
+  const { data, error } = await supabase
+    .from("ebay_active_listings")
+    .select("raw_payload")
+    .eq("id", input.connectorListingId)
+    .maybeSingle()
+  if (error || !data) return null
+  const lineage = record(record(data.raw_payload).canonicalSupplierLineage)
+  const mode = text(lineage.mode)
+  return lineage.status === "CERTIFIED" && (
+    mode === "AUTO_LINEAGE_SUCCESSOR" ||
+    mode === "NET_NEW_MANUAL_LIVE"
+  )
+    ? {
+        status: "CERTIFIED" as const,
+        mode,
+        itemId: text(lineage.itemId),
+        productId: text(lineage.productId),
+        variantId: text(lineage.variantId),
+        sourceSku: text(lineage.sourceSku),
+        legacyLineageSuperseded: mode === "AUTO_LINEAGE_SUCCESSOR",
+        marketplaceWrites: 0 as const,
+      }
+    : null
+}
+
 export async function registerManualEbayListing(
   supabase: SupabaseClient,
   input: ManualListingRegistrationInput,
@@ -607,6 +660,11 @@ export async function registerManualEbayListing(
         ebayItemId: input.ebayItemId,
       })
     : null
+  const manualLiveLinkage = persistedVerification.status === "verified"
+    ? await readCertifiedManualLiveLinkage(supabase, {
+        connectorListingId: persistedVerification.connectorListingId,
+      })
+    : null
 
   let template: JsonRecord | null = null
   if (
@@ -633,6 +691,7 @@ export async function registerManualEbayListing(
     declaredDefaultsActivated: false,
     effectiveSafeDefaults,
     activeListingHydration,
+    manualLiveLinkage,
     stockGuardRefresh,
     template,
     templateActivated: Boolean(template),

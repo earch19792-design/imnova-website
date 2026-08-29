@@ -10,6 +10,7 @@ import {
 } from "@/lib/ebay/ebay-manual-listing-domain"
 import {
   getManualListingRegistrationConfiguration,
+  isSafeManualListingErrorCode,
   listManualEbayListingRegistrations,
   registerManualEbayListing,
 } from "@/lib/ebay/ebay-manual-listing-service"
@@ -20,7 +21,7 @@ import {
 
 function safeErrorCode(error: unknown) {
   const message = error instanceof Error ? error.message : ""
-  return /^MANUAL_LISTING_[A-Z0-9_]+$/.test(message)
+  return isSafeManualListingErrorCode(message)
     ? message
     : "MANUAL_LISTING_REQUEST_FAILED"
 }

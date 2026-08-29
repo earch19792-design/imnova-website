@@ -68,6 +68,15 @@ type ApiPayload = {
     reason?: string
   }
   templateActivated?: boolean
+  manualLiveLinkage?: {
+    status?: "CERTIFIED"
+    mode?: "AUTO_LINEAGE_SUCCESSOR" | "NET_NEW_MANUAL_LIVE"
+    legacyLineageSuperseded?: boolean
+  } | null
+  stockGuardRefresh?: {
+    status?: string
+    reasonCode?: string | null
+  } | null
   configuration?: {
     accountKey?: string | null
     accountAlias?: string | null
@@ -204,6 +213,20 @@ function errorLabel(code: string) {
       "No se pudieron cargar las plantillas reutilizables.",
     MANUAL_LISTING_REGISTRATION_WRITE_FAILED:
       "No se pudo guardar el vínculo. Confirma que la migración esté aplicada.",
+    POST_PUBLISH_LUNA_LINEAGE_IDENTITY_MISMATCH:
+      "POST_PUBLISH_LUNA_LINEAGE_IDENTITY_MISMATCH: la identidad durable del successor LIVE no coincide exactamente con el lineage Luna autorizado.",
+    MANUAL_LIVE_LINKAGE_IDENTITY_MISMATCH:
+      "MANUAL_LIVE_LINKAGE_IDENTITY_MISMATCH: Item ID, Custom Label, identidad Luna o duplicate guard no coincidieron exactamente.",
+    MANUAL_LIVE_LINKAGE_COMPONENT_INVALID:
+      "MANUAL_LIVE_LINKAGE_COMPONENT_INVALID: la identidad Luna actual no forma un componente StockGuard certificable.",
+    MANUAL_LIVE_LINKAGE_EXISTING_DECISION_CONFLICT:
+      "MANUAL_LIVE_LINKAGE_EXISTING_DECISION_CONFLICT: ya existe una decisión de linkage incompatible para este Item ID.",
+    MANUAL_LIVE_SUCCESSOR_PREDECESSOR_NOT_EXACT:
+      "MANUAL_LIVE_SUCCESSOR_PREDECESSOR_NOT_EXACT: el Item histórico terminado ya no coincide con el lineage successor.",
+    MANUAL_LIVE_SUCCESSOR_DUPLICATE_OR_HISTORY_MISMATCH:
+      "MANUAL_LIVE_SUCCESSOR_DUPLICATE_OR_HISTORY_MISMATCH: el predecessor o el duplicate guard cambió antes de guardar.",
+    MANUAL_LIVE_SUCCESSOR_LINEAGE_RETIREMENT_FAILED:
+      "MANUAL_LIVE_SUCCESSOR_LINEAGE_RETIREMENT_FAILED: no se pudo retirar atómicamente el lineage histórico.",
     MANUAL_LISTING_ACCOUNT_KEY_REQUIRED:
       "Falta configurar EBAY_SELLER_ACCOUNT_KEY para aislar los datos de la cuenta oficial.",
     MANUAL_LISTING_ACCOUNT_KEY_INVALID:
@@ -229,7 +252,11 @@ function errorLabel(code: string) {
     LUNA_DIRECTED_IMPORT_PERSIST_FAILED:
       "El producto fue validado, pero no se pudo guardar en la cola Seller OS.",
   }
-  return labels[code] ?? "No se pudo completar la operación. Intenta nuevamente."
+  if (labels[code]) return labels[code]
+  if (/^(MANUAL_LIVE_|POST_PUBLISH_LUNA_LINEAGE_)[A-Z0-9_]+$/.test(code)) {
+    return code
+  }
+  return "No se pudo completar la operación. Intenta nuevamente."
 }
 
 function templateFacts(template: ListingTemplate) {
@@ -495,9 +522,13 @@ export default function RegisterManualEbayListingPage() {
         safeDefaults: {},
       })
       const verified = payload.verification?.status === "verified"
+      const linkageMode = payload.manualLiveLinkage?.mode
+      const stockGuardStatus = payload.stockGuardRefresh?.status
       setMessage(
         verified
-          ? payload.templateActivated
+          ? linkageMode
+            ? `${linkageMode}: linkage Luna certificado; StockGuard ${stockGuardStatus ?? "pendiente"}.`
+            : payload.templateActivated
             ? "Listing verificado y plantilla segura activada para los próximos drafts."
             : "Listing verificado. eBay no devolvió campos operativos reutilizables para crear una plantilla."
           : "Vínculo guardado como pendiente. No se activó ninguna automatización hasta verificar la propiedad.",
