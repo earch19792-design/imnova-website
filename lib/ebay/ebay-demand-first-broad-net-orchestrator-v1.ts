@@ -1248,6 +1248,7 @@ export async function runSellerOsDemandFirstBroadNetCanaryV1(input: Readonly<{
   let persisted = 0
   let opportunityCasesCreated = 0
   let observationsCreated = 0
+  let freshObservationsCreated = 0
   let enrollmentsCreated = 0
   let productFitHandoff: unknown = null
   const persistedNames: string[] = []
@@ -1306,6 +1307,11 @@ export async function runSellerOsDemandFirstBroadNetCanaryV1(input: Readonly<{
       throw new Error("DEMAND_FIRST_OBSERVATION_READBACK_MISMATCH")
     }
     observationsCreated += observationResult.outcome === "CREATED" ? 1 : 0
+    if (observationResult.outcome === "CREATED" &&
+        Date.parse(expected.evidenceObservedAt) + MAXIMUM_AGE_SECONDS * 1000 >=
+          Date.now()) {
+      freshObservationsCreated += 1
+    }
     const enrollment = buildSellerOsOpportunityMonitorEnrollmentV1({
       familyIdentity: definition.identity, monitorPolicyVersion: MONITOR_POLICY,
       enrolledAt: expected.evidenceObservedAt, status: "ENROLLED",
@@ -1364,7 +1370,7 @@ export async function runSellerOsDemandFirstBroadNetCanaryV1(input: Readonly<{
     newFamilyCandidates: qualified.length,
     duplicatesSuppressed: candidates.filter((item) => item.status === "DUPLICATE").length,
     newFamiliesPersisted: persisted, opportunityCasesCreated,
-    observationsCreated, enrollmentsCreated,
+    observationsCreated, freshObservationsCreated, enrollmentsCreated,
     radarReadback: radarReadback.status === "AVAILABLE" ? "PASS" as const : "FAIL" as const,
     lunaProductFitHandoff: productFitHandoff ?? (persistedNames.length
       ? "NOT_ELIGIBLE_UNTIL_FAMILY_DEMAND_PROVEN" : "NO_NEW_ELIGIBLE_FAMILY"),

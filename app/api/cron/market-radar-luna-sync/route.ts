@@ -1,5 +1,5 @@
 export const runtime = "nodejs"
-export const maxDuration = 60
+export const maxDuration = 300
 
 import { NextResponse } from "next/server"
 
@@ -14,6 +14,14 @@ import {
 } from "@/lib/ebay/ebay-seller-command-center-automation"
 import { deliverSellerWhatsAppAlerts } from "@/lib/ebay/ebay-seller-whatsapp-alerts"
 import { getSellerWhatsAppGatewayConfiguration } from "@/lib/ebay/ebay-seller-whatsapp-gateway"
+import { runSellerOsDemandFirstBroadNetNightlyV1 } from
+  "@/lib/ebay/ebay-demand-first-broad-net-orchestrator-v1"
+import {
+  collectRadarRevenueFactoryCandidateBatchV1,
+  materializeRadarRevenueFactoryCandidateBatchV1,
+} from "@/lib/ebay/ebay-opportunity-radar-revenue-factory-adapter-v1"
+import { getEbaySellerAccountScopeConfiguration } from
+  "@/lib/ebay/ebay-seller-account-scope"
 
 function authorized(req: Request) {
   const secret = process.env.CRON_SECRET?.trim() ?? ""
@@ -34,6 +42,46 @@ export async function GET(req: Request) {
     })
     automationRunId = automationRun.id
     const sync = await runLunaPortexMarketRadarSync(supabase)
+    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    if (!accountKey) throw new Error("NIGHT_RADAR_FACTORY_ACCOUNT_SCOPE_REQUIRED")
+    const broadNet = await runSellerOsDemandFirstBroadNetNightlyV1({
+      supabase, accountKey,
+    })
+    let factory
+    try {
+      const candidateBatch = await collectRadarRevenueFactoryCandidateBatchV1({
+        supabase, accountKey, targetCandidates: 100,
+      })
+      factory = await materializeRadarRevenueFactoryCandidateBatchV1({
+        supabase, accountKey, batch: candidateBatch,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ""
+      const reasonCode = /^[A-Z][A-Z0-9_]{2,119}$/.test(message)
+        ? message : "NIGHT_RADAR_FACTORY_CONNECTION_FAILED"
+      factory = {
+        contractVersion: "NIGHT_RADAR_TO_GENERAL_FACTORY_CONNECTION_V1",
+        authority: "SELLER_OS_DETERMINISTIC_FACTORY",
+        targetSpecificAllowlistUsed: false,
+        familiesEvaluated: 0,
+        lunaProductsEvaluated: 0,
+        deterministicallyRejected: 0,
+        factoryCandidatesCreated: 0,
+        factoryCandidatesReused: 0,
+        productTruthReady: 0,
+        demandReady: 0,
+        economicsReady: 0,
+        listingPackageReady: 0,
+        listingReady: 0,
+        parked: 0,
+        exceptions: 1,
+        humanClicksRequired: 0,
+        outcomes: [{ status: "EXCEPTION", reasonCode }],
+        dollarCheck: { triggered: false, candidates: [] },
+        safety: { marketplaceWrites: 0, publishCalls: 0,
+          newEbayOffers: 0, withdrawCalls: 0 },
+      }
+    }
     const taskReconciliation = await reconcileSellerScanTasks(supabase, {
       forceDue: false,
       limit: 300,
@@ -50,6 +98,9 @@ export async function GET(req: Request) {
     const metrics = {
       syncStatus: sync.scanStatus,
       scanCompletenessPercent: sync.scanCompletenessPercent,
+      radarRefreshExecuted: true,
+      freshFamilyObservationsCreated: broadNet.freshObservationsCreated,
+      factory,
       taskReconciliation,
       protection,
       whatsapp,
@@ -62,12 +113,17 @@ export async function GET(req: Request) {
     return NextResponse.json({
       success: true,
       sync,
+      broadNet,
+      factory,
       taskReconciliation,
       protection,
       whatsapp,
       automation: {
-        stage: "LUNA_MARKET_RADAR_REFRESH",
-        nextStage: "EBAY_LUNA_PRIORITY_SCAN",
+        stage: "NIGHT_RADAR_TO_GENERAL_FACTORY",
+        nextStage: factory.listingReady > 0
+          ? "DOLLAR_CHECK_LISTING_READY" : "EBAY_LUNA_PRIORITY_SCAN",
+        radarRefreshExecuted: true,
+        freshFamilyObservationsCreated: broadNet.freshObservationsCreated,
         elapsedMs: Date.now() - startedAt,
       },
     })
