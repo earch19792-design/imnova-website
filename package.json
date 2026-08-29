@@ -14,6 +14,7 @@
     "lint": "eslint .",
     "test:seller-os": "node --test lib/ebay/*.test.mjs tools/ebay-*-tests.mjs",
     "audit:seller-os": "node tools/ebay-seller-os-ci-guards.mjs",
+    "refresh:ebay-preprod-runame-evidence": "node tools/ebay-preprod-runame-expected-evidence-refresh.mjs",
     "record:seller-os-validation": "node tools/ebay-seller-os-validation-recorder-run.mjs",
     "market-intelligence:ebay": "node tools/ebay-market-intelligence-loop.mjs"
   },
