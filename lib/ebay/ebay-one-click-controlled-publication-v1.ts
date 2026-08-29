@@ -134,6 +134,189 @@ export type OneClickPublicationIntentValidationV1 = {
   intent: JsonRecord
 }
 
+export type ExactDraftOnlyPublicationSelfLineageV1 = Readonly<{
+  exact: boolean
+  reasonCode: string
+  excludeApprovalId: string | null
+  rearmedAwaitingHumanPublication: boolean
+}>
+
+function selfLineageResult(
+  exact: boolean,
+  reasonCode: string,
+  approvalId: string | null = null,
+  rearmedAwaitingHumanPublication = false,
+): ExactDraftOnlyPublicationSelfLineageV1 {
+  return Object.freeze({
+    exact,
+    reasonCode,
+    excludeApprovalId: exact ? approvalId : null,
+    rearmedAwaitingHumanPublication:
+      exact && rearmedAwaitingHumanPublication,
+  })
+}
+
+/**
+ * Certifies that a SKU ledger row belongs to the exact package lifecycle that
+ * is currently being read or approved. This is the only authority allowed to
+ * remove a ledger row from SKU-collision evaluation; active-listing and
+ * official eBay duplicate guards remain independent and fail closed.
+ */
+export function classifyExactDraftOnlyPublicationSelfLineageV1(
+  input: Readonly<{
+    approval?: JsonRecord | null
+    execution?: JsonRecord | null
+    publication?: JsonRecord | null
+    expected: Readonly<{
+      actorUserId: string
+      listingPackageId: string
+      opportunityId: string
+      candidateKey: string
+      target: string
+      accountFingerprint: string
+      sku: string
+    }>
+  }>,
+): ExactDraftOnlyPublicationSelfLineageV1 {
+  const approval = record(input.approval)
+  const execution = record(input.execution)
+  const publication = record(input.publication)
+  const expected = input.expected
+  const approvalId = text(approval.id)
+  const executionId = text(execution.id)
+  if (!approvalId || !executionId) {
+    return selfLineageResult(false, "SELF_LINEAGE_LEDGER_NOT_FOUND")
+  }
+  const approvalUsable = approval.status === "approved"
+    ? !text(approval.consumed_at) && !Boolean(approval.revoked_at)
+    : approval.status === "consumed"
+      && Boolean(text(approval.consumed_at))
+      && !Boolean(approval.revoked_at)
+  if (!approvalUsable) {
+    return selfLineageResult(false, "SELF_LINEAGE_APPROVAL_INVALID")
+  }
+  if (
+    text(approval.actor_user_id) !== expected.actorUserId
+    || text(approval.listing_package_id) !== expected.listingPackageId
+    || text(approval.opportunity_id) !== expected.opportunityId
+    || text(approval.candidate_key) !== expected.candidateKey
+    || text(approval.target) !== expected.target
+    || text(approval.account_fingerprint) !== expected.accountFingerprint
+    || text(execution.actor_user_id) !== expected.actorUserId
+    || text(execution.approval_id) !== approvalId
+    || text(execution.listing_package_id) !== expected.listingPackageId
+    || text(execution.opportunity_id) !== expected.opportunityId
+    || text(execution.target) !== expected.target
+    || text(execution.account_fingerprint) !== expected.accountFingerprint
+    || text(execution.sku) !== expected.sku
+  ) return selfLineageResult(false, "SELF_LINEAGE_IDENTITY_MISMATCH")
+  const approvedPayload = record(approval.approved_payload)
+  const approvedSafety = record(approvedPayload.safety)
+  if (
+    text(record(approvedPayload.listingPackage).id) !==
+      expected.listingPackageId
+    || text(record(approvedPayload.listingPackage).candidateKey) !==
+      expected.candidateKey
+    || text(record(approvedPayload.sourceEvidence).opportunityId) !==
+      expected.opportunityId
+    || text(approvedPayload.sku) !== expected.sku
+    || text(record(approvedPayload.offerPayload).sku) !== expected.sku
+    || text(approvedSafety.target) !== expected.target
+    || text(approvedSafety.accountFingerprint) !==
+      expected.accountFingerprint
+  ) return selfLineageResult(false, "SELF_LINEAGE_APPROVED_PAYLOAD_MISMATCH")
+  if (
+    !text(approval.payload_hash)
+    || text(execution.request_hash) !== text(approval.payload_hash)
+  ) return selfLineageResult(false, "SELF_LINEAGE_REQUEST_MISMATCH")
+  if (execution.phase !== "completed") {
+    return selfLineageResult(
+      true,
+      "EXACT_IN_PROGRESS_EXECUTION_SELF_LINEAGE",
+      approvalId,
+    )
+  }
+  if (!text(execution.offer_id)) {
+    return selfLineageResult(false, "SELF_LINEAGE_COMPLETED_OFFER_REQUIRED")
+  }
+  if (!text(publication.id)) {
+    return selfLineageResult(true, "EXACT_EXECUTION_SELF_LINEAGE", approvalId)
+  }
+  if (
+    text(publication.draft_execution_id) !== executionId
+    || text(publication.draft_approval_id) !== approvalId
+    || text(publication.listing_package_id) !== expected.listingPackageId
+    || text(publication.opportunity_id) !== expected.opportunityId
+    || text(publication.target) !== expected.target
+    || text(publication.account_fingerprint) !== expected.accountFingerprint
+    || text(publication.offer_id) !== text(execution.offer_id)
+    || text(publication.sku) !== expected.sku
+  ) return selfLineageResult(false, "SELF_LINEAGE_PUBLICATION_MISMATCH")
+  const preview = record(publication.preview)
+  if (
+    text(preview.draftExecutionId) !== executionId
+    || text(preview.draftApprovalId) !== approvalId
+    || text(preview.listingPackageId) !== expected.listingPackageId
+    || text(preview.opportunityId) !== expected.opportunityId
+    || text(preview.candidateKey) !== expected.candidateKey
+    || text(preview.approvedPayloadHash) !== text(approval.payload_hash)
+    || text(preview.offerId) !== text(execution.offer_id)
+    || text(preview.sku) !== expected.sku
+    || hashEbayDraftOnlyPayload(preview.inventoryItemPayload) !==
+      hashEbayDraftOnlyPayload(approvedPayload.inventoryItemPayload)
+    || hashEbayDraftOnlyPayload(preview.offerPayload) !==
+      hashEbayDraftOnlyPayload(approvedPayload.offerPayload)
+  ) return selfLineageResult(false, "SELF_LINEAGE_PREVIEW_MISMATCH")
+  const rearmedResult = record(publication.sanitized_result)
+  const rearmed = publication.phase === "preview_ready"
+    && Number(publication.publish_attempt_count) === 0
+    && !text(publication.publication_idempotency_key)
+    && !text(publication.listing_id)
+    && Number(rearmedResult.compensatedRecoveryCount) === 1
+    && Boolean(text(rearmedResult.compensatedRecoveryAuthorizedAt))
+  return selfLineageResult(
+    true,
+    rearmed
+      ? "REARMED_EXACT_OFFER_SELF_LINEAGE"
+      : "EXACT_OFFER_SELF_LINEAGE",
+    approvalId,
+    rearmed,
+  )
+}
+
+export function validateExactRearmedPublicationMaterialV1(input: Readonly<{
+  approvedPayload: JsonRecord
+  currentPayload: JsonRecord
+}>) {
+  const approved = input.approvedPayload
+  const current = input.currentPayload
+  const approvedListingPackage = record(approved.listingPackage)
+  const currentListingPackage = record(current.listingPackage)
+  const approvedSource = record(approved.sourceEvidence)
+  const currentSource = record(current.sourceEvidence)
+  const approvedSafety = record(approved.safety)
+  const currentSafety = record(current.safety)
+  const exact =
+    text(approvedListingPackage.id) === text(currentListingPackage.id)
+    && text(approvedListingPackage.candidateKey) ===
+      text(currentListingPackage.candidateKey)
+    && text(approvedSource.opportunityId) === text(currentSource.opportunityId)
+    && text(approved.sku) === text(current.sku)
+    && text(approvedSafety.target) === text(currentSafety.target)
+    && text(approvedSafety.accountFingerprint) ===
+      text(currentSafety.accountFingerprint)
+    && hashEbayDraftOnlyPayload(approved.inventoryItemPayload) ===
+      hashEbayDraftOnlyPayload(current.inventoryItemPayload)
+    && hashEbayDraftOnlyPayload(approved.offerPayload) ===
+      hashEbayDraftOnlyPayload(current.offerPayload)
+  return Object.freeze({
+    exact,
+    reasonCode: exact
+      ? "EXACT_REARMED_PUBLICATION_MATERIAL"
+      : "REARMED_PUBLICATION_MATERIAL_CHANGED",
+  })
+}
+
 export type AuthenticatedPublicationRecoveryStateV1 =
   | "NOT_APPLICABLE"
   | "RECOVERY_BLOCKED"

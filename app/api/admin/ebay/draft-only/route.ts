@@ -61,9 +61,12 @@ import {
   assertOneClickControlledPublicationIntentV1,
   bindOneClickControlledPublicationIntentV1,
   classifyAuthenticatedPublicationRecoveryV1,
+  classifyExactDraftOnlyPublicationSelfLineageV1,
   EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION,
   EBAY_ONE_CLICK_PUBLICATION_LABEL,
   EBAY_ONE_CLICK_PUBLICATION_SURFACE,
+  type ExactDraftOnlyPublicationSelfLineageV1,
+  validateExactRearmedPublicationMaterialV1,
   validateOneClickControlledPublicationIntentV1,
 } from "@/lib/ebay/ebay-one-click-controlled-publication-v1"
 import {
@@ -453,7 +456,7 @@ async function loadFinalPublicationContext(
   if (executionError || !execution) throw new Error("EBAY_FINAL_PUBLICATION_EXECUTION_NOT_FOUND")
   const { data: approval, error: approvalError } = await supabase
     .from("ebay_draft_only_approvals")
-    .select("*")
+    .select("id,actor_user_id,listing_package_id,opportunity_id,candidate_key,status,target,account_fingerprint,payload_hash,approved_at,expires_at,consumed_at,revoked_at,approved_payload,created_at")
     .eq("id", execution.approval_id)
     .eq("actor_user_id", actor)
     .maybeSingle()
@@ -683,10 +686,77 @@ async function revalidateFinalPublicationSource(
   return { authority: sourceSyncFunction }
 }
 
+async function loadExactDraftOnlyPublicationSelfLineage(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  expected: Readonly<{
+    actorUserId: string
+    listingPackageId: string
+    opportunityId: string
+    candidateKey: string
+    target: EbayDraftOnlyTarget
+    accountFingerprint: string
+    sku: string
+  }>,
+) {
+  const { data: approval, error: approvalError } = await supabase
+    .from("ebay_draft_only_approvals")
+    .select("*")
+    .eq("listing_package_id", expected.listingPackageId)
+    .eq("actor_user_id", expected.actorUserId)
+    .eq("target", expected.target)
+    .eq("account_fingerprint",
+      expected.accountFingerprint || "__unconfigured__")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (approvalError) throw new Error("EBAY_DRAFT_ONLY_APPROVAL_READ_FAILED")
+  const { data: execution, error: executionError } = approval?.id
+    ? await supabase
+      .from("ebay_draft_only_execution_ledger")
+      .select("id,approval_id,actor_user_id,listing_package_id,opportunity_id,phase,sku,target,account_fingerprint,request_hash,offer_id,completed_at,last_error_code,updated_at")
+      .eq("approval_id", approval.id)
+      .maybeSingle()
+    : { data: null, error: null }
+  if (executionError) throw new Error("EBAY_DRAFT_ONLY_LEDGER_READ_FAILED")
+  const { data: publication, error: publicationError } = execution?.id
+    ? await supabase
+      .from("ebay_authorized_listing_publications")
+      .select("id,draft_execution_id,draft_approval_id,listing_package_id,opportunity_id,phase,target,account_fingerprint,offer_id,sku,preview_hash,preview,publication_idempotency_key,publish_attempt_count,listing_id,publish_http_status,published_at,verified_active_at,monitor_registered_at,last_error_code,sanitized_result,updated_at")
+      .eq("draft_execution_id", execution.id)
+      .maybeSingle()
+    : { data: null, error: null }
+  if (publicationError) throw new Error("EBAY_FINAL_PUBLICATION_READ_FAILED")
+  const classification = classifyExactDraftOnlyPublicationSelfLineageV1({
+    approval: approval as JsonRecord | null,
+    execution: execution as JsonRecord | null,
+    publication: publication as JsonRecord | null,
+    expected,
+  })
+  return {
+    approval: approval as JsonRecord | null,
+    execution: execution as JsonRecord | null,
+    publication: publication as JsonRecord | null,
+    classification,
+  }
+}
+
 async function revalidateFinalPublicationDuplicateGuard(
   supabase: ReturnType<typeof getSupabaseAdminClient>,
   context: Awaited<ReturnType<typeof loadFinalPublicationContext>>,
 ) {
+  const selfLineage = classifyExactDraftOnlyPublicationSelfLineageV1({
+    approval: context.approval,
+    execution: context.execution,
+    expected: {
+      actorUserId: text(context.execution.actor_user_id),
+      listingPackageId: text(context.listingPackage.id),
+      opportunityId: text(context.opportunity.id),
+      candidateKey: text(context.listingPackage.candidate_key),
+      target: "PRODUCTION",
+      accountFingerprint: text(context.execution.account_fingerprint),
+      sku: text(context.execution.sku),
+    },
+  })
   const collisionContext = await loadPackageContext(
     supabase,
     text(context.listingPackage.id),
@@ -694,7 +764,7 @@ async function revalidateFinalPublicationDuplicateGuard(
     text(context.execution.sku),
     "PRODUCTION",
     text(context.execution.account_fingerprint),
-    text(context.approval.id),
+    selfLineage,
     true,
   )
   const identityCollisions = Array.isArray(
@@ -715,7 +785,7 @@ async function loadPackageContext(
   sku: string,
   target: EbayDraftOnlyTarget,
   accountFingerprint: string,
-  excludeApprovalId?: string,
+  selfLineage?: ExactDraftOnlyPublicationSelfLineageV1,
   allowFinalV3ReadOnlyFallback = false,
 ) {
   const sellerAccountKey = getEbaySellerAccountScopeConfiguration().accountKey
@@ -820,7 +890,12 @@ async function loadPackageContext(
     .eq("sku", collisionSku || "__missing__")
     .neq("phase", "terminal_failure")
     .limit(1)
-  if (excludeApprovalId) ledgerQuery = ledgerQuery.neq("approval_id", excludeApprovalId)
+  if (selfLineage?.exact && selfLineage.excludeApprovalId) {
+    ledgerQuery = ledgerQuery.neq(
+      "approval_id",
+      selfLineage.excludeApprovalId,
+    )
+  }
   const [
     ebaySkuResult,
     supplierSkuResult,
@@ -1188,17 +1263,21 @@ export async function GET(req: Request) {
       expected: expectedContext,
       listingPackage: packageIdentity,
     })
-    const { data: latestApproval, error: approvalError } = await supabase
-      .from("ebay_draft_only_approvals")
-      .select("id,listing_package_id,opportunity_id,candidate_key,status,target,account_fingerprint,payload_hash,approved_at,expires_at,consumed_at,revoked_at,approved_payload")
-      .eq("listing_package_id", packageId)
-      .eq("actor_user_id", auth.actor)
-      .eq("target", target)
-      .eq("account_fingerprint", fingerprint || "__unconfigured__")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    if (approvalError) throw new Error("EBAY_DRAFT_ONLY_APPROVAL_READ_FAILED")
+    const lifecycle = await loadExactDraftOnlyPublicationSelfLineage(
+      supabase,
+      {
+        actorUserId: auth.actor,
+        listingPackageId: packageId,
+        opportunityId: expectedOpportunityId,
+        candidateKey: expectedCandidateKey,
+        target,
+        accountFingerprint: fingerprint,
+        sku: expectedEbayDraftOnlySku({ id: packageId }),
+      },
+    )
+    const latestApproval = lifecycle.approval
+    const ledger = lifecycle.execution
+    const publication = lifecycle.publication
     const approvedPayload = record(latestApproval?.approved_payload)
     const initialContext = await loadPackageContext(
       supabase,
@@ -1207,7 +1286,7 @@ export async function GET(req: Request) {
       "",
       target,
       fingerprint,
-      latestApproval?.id,
+      lifecycle.classification,
       true,
     )
     const packageConfig = record(initialContext.listingPackage.package_data).draftConfiguration
@@ -1266,7 +1345,7 @@ export async function GET(req: Request) {
         sku,
         target,
         fingerprint,
-        latestApproval?.id,
+        lifecycle.classification,
         true,
       )
       : initialContext
@@ -1307,22 +1386,6 @@ export async function GET(req: Request) {
         accountFingerprint: runtime.accountFingerprint,
       })
       : null
-    const { data: ledger, error: ledgerError } = latestApproval?.id
-      ? await supabase
-        .from("ebay_draft_only_execution_ledger")
-        .select("id,approval_id,listing_package_id,opportunity_id,phase,sku,target,account_fingerprint,request_hash,offer_id,completed_at,last_error_code,updated_at")
-        .eq("approval_id", latestApproval.id)
-        .maybeSingle()
-      : { data: null, error: null }
-    if (ledgerError) throw new Error("EBAY_DRAFT_ONLY_LEDGER_READ_FAILED")
-    const { data: publication, error: publicationError } = ledger?.id
-      ? await supabase
-        .from("ebay_authorized_listing_publications")
-        .select("id,draft_execution_id,draft_approval_id,listing_package_id,opportunity_id,phase,target,account_fingerprint,offer_id,sku,preview_hash,preview,publication_idempotency_key,publish_attempt_count,listing_id,publish_http_status,published_at,verified_active_at,monitor_registered_at,last_error_code,sanitized_result,updated_at")
-        .eq("draft_execution_id", ledger.id)
-        .maybeSingle()
-      : { data: null, error: null }
-    if (publicationError) throw new Error("EBAY_FINAL_PUBLICATION_READ_FAILED")
     assertLifecycleStateContextV1({
       expected: expectedContext,
       approval: latestApproval,
@@ -2148,6 +2211,9 @@ async function approveDraft(body: JsonRecord, actor: string) {
   let requestedConfiguration = record(body.draftConfiguration)
   const supabase = getSupabaseAdminClient()
   let context: Awaited<ReturnType<typeof loadPackageContext>>
+  let exactSelfLineage: Awaited<ReturnType<
+    typeof loadExactDraftOnlyPublicationSelfLineage
+  >> | null = null
   let oneClickFreshness: JsonRecord | null = null
   if (oneClickRequested) {
     try {
@@ -2175,7 +2241,12 @@ async function approveDraft(body: JsonRecord, actor: string) {
             .eq("candidate_key", exactCandidateKey)
             .maybeSingle()
           : { data: null, error: null }
-      if (opportunityError || !exactOpportunity) {
+      if (
+        opportunityError
+        || !exactOpportunityId
+        || !exactCandidateKey
+        || !exactOpportunity
+      ) {
         throw new Error("EBAY_ONE_CLICK_EXACT_OPPORTUNITY_NOT_FOUND")
       }
       const refreshedSource = await refreshOneClickSmartStockingSource(
@@ -2185,6 +2256,18 @@ async function approveDraft(body: JsonRecord, actor: string) {
         exactPackage as JsonRecord,
         exactOpportunity as JsonRecord,
       )
+      exactSelfLineage = await loadExactDraftOnlyPublicationSelfLineage(
+        supabase,
+        {
+          actorUserId: actor,
+          listingPackageId: packageId,
+          opportunityId: exactOpportunityId,
+          candidateKey: exactCandidateKey,
+          target,
+          accountFingerprint: fingerprint,
+          sku: expectedEbayDraftOnlySku(exactPackage as JsonRecord),
+        },
+      )
       context = await loadPackageContext(
         supabase,
         packageId,
@@ -2192,6 +2275,7 @@ async function approveDraft(body: JsonRecord, actor: string) {
         text(requestedConfiguration.sku),
         target,
         fingerprint,
+        exactSelfLineage.classification,
       )
       if (
         Date.parse(text(context.listingPackage.source_observed_at)) !==
@@ -2313,6 +2397,67 @@ async function approveDraft(body: JsonRecord, actor: string) {
       409,
       readiness.blockers,
     )
+  }
+  if (
+    oneClickRequested
+    && exactSelfLineage?.classification
+      .rearmedAwaitingHumanPublication === true
+    && exactSelfLineage.approval
+    && exactSelfLineage.execution
+    && exactSelfLineage.publication
+  ) {
+    const material = validateExactRearmedPublicationMaterialV1({
+      approvedPayload: record(exactSelfLineage.approval.approved_payload),
+      currentPayload: readiness.payload,
+    })
+    if (!material.exact) {
+      return oneClickPrewriteError(
+        new Error(material.reasonCode),
+        [material.reasonCode],
+        target,
+      )
+    }
+    return NextResponse.json({
+      success: true,
+      approval: {
+        id: exactSelfLineage.approval.id,
+        status: exactSelfLineage.approval.status,
+        payload_hash: exactSelfLineage.approval.payload_hash,
+        approved_at: exactSelfLineage.approval.approved_at,
+        expires_at: exactSelfLineage.approval.expires_at,
+      },
+      execution: exactSelfLineage.execution,
+      publication: exactSelfLineage.publication,
+      readiness: {
+        ready: true,
+        blockers: [],
+        payloadHash: exactSelfLineage.approval.payload_hash,
+      },
+      controlledPublication: {
+        eligible: true,
+        authorized: true,
+        version: EBAY_ONE_CLICK_CONTROLLED_PUBLICATION_VERSION,
+        authorizationAuthority:
+          "REARMED_EXACT_SELF_LINEAGE_CURRENT_HUMAN_CLICK",
+        reusesExistingHumanApproval: true,
+        newHumanApprovalCreated: false,
+        ...oneClickPublicationRequirements(true),
+      },
+      rearmedSelfLineageAuthorization: {
+        authorized: true,
+        classification: exactSelfLineage.classification.reasonCode,
+        materialClassification: material.reasonCode,
+        publishWithExistingFinalAuthorizationContract: true,
+      },
+      oneClickFreshness,
+      safety: {
+        canPublish: false,
+        newHumanApprovalCreated: false,
+        durableApprovalCreatedOnlyAfterRefreshPass: true,
+        marketplaceWritesBeforeRefreshPass: 0,
+        target,
+      },
+    })
   }
   const approvedPayload = oneClickRequested
     ? bindOneClickControlledPublicationIntentV1({
@@ -2685,6 +2830,19 @@ async function executeDraft(body: JsonRecord, actor: string) {
     target,
     accountFingerprint: fingerprint,
   })
+  const executionSelfLineage = classifyExactDraftOnlyPublicationSelfLineageV1({
+    approval: approval as JsonRecord,
+    execution: existing as JsonRecord | null,
+    expected: {
+      actorUserId: actor,
+      listingPackageId: text(approval.listing_package_id),
+      opportunityId: text(approval.opportunity_id),
+      candidateKey: text(approval.candidate_key),
+      target,
+      accountFingerprint: fingerprint,
+      sku,
+    },
+  })
   let context = await loadPackageContext(
     supabase,
     approval.listing_package_id,
@@ -2692,7 +2850,7 @@ async function executeDraft(body: JsonRecord, actor: string) {
     sku,
     target,
     fingerprint,
-    approvalId,
+    executionSelfLineage,
   )
   const v3Binding = record(record(approvedPayload.compliance).v3FinalSetAuthorization)
   let revalidatedExecutionEvidence:

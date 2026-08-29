@@ -3676,6 +3676,7 @@ function ListingWorkspacePageContent() {
       : null
     let nextExecution = draftState.execution
     let nextPublication = draftState.publication
+    let rearmedSelfLineageAuthorization = false
     try {
       if (nextPublication?.phase === "monitor_registered") {
         setPublicationAutomationPhase("complete")
@@ -3755,6 +3756,10 @@ function ListingWorkspacePageContent() {
             ?.marketplaceWritesBeforeRefreshPass !== 0
         ) throw new Error("EBAY_ONE_CLICK_FRESHNESS_PREWRITE_INCOMPLETE")
         nextApproval = authorized.approval
+        nextExecution = authorized.execution ?? nextExecution
+        nextPublication = authorized.publication ?? nextPublication
+        rearmedSelfLineageAuthorization = authorized
+          .rearmedSelfLineageAuthorization?.authorized === true
         setDraftState((current) => ({ ...current, ...authorized }))
       }
       if (!nextApproval?.id) {
@@ -3814,6 +3819,11 @@ function ListingWorkspacePageContent() {
         idempotencyKey: `publish:${nextPublication.id}`,
         authorizationSurface:
           "SELLER_OS_SMART_STOCKING_ONE_CLICK_PUBLICATION_V1",
+        ...(rearmedSelfLineageAuthorization ? {
+          confirmPublish: "PUBLICAR LISTING EN EBAY",
+          confirmFinalPreview: true,
+          confirmProductionAccount: true,
+        } : {}),
       })
       nextPublication = published.publication
       setDraftState((current) => ({
@@ -3828,6 +3838,7 @@ function ListingWorkspacePageContent() {
         : `Listing ${published.listing?.listingId} publicado; falta confirmar ACTIVE. No se repetirá publishOffer.`)
     } catch (requestError) {
       setPublicationAutomationFailed(true)
+      setPublicationAutomationPhase("idle")
       const code = requestError instanceof Error
         ? requestError.message
         : "EBAY_ONE_CLICK_PUBLICATION_FAILED"
@@ -3859,6 +3870,7 @@ function ListingWorkspacePageContent() {
       setMessage("")
     } finally {
       setPublicationAutomationStep("")
+      setPublicationAutomationStartedAt(null)
       setPublicationAutomationBusy(false)
       setDraftBusy(false)
     }
