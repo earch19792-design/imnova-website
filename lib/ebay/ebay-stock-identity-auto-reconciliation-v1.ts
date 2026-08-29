@@ -123,6 +123,12 @@ function freshnessMaximumAgeSeconds(value: unknown) {
     Number(value) <= 604_800 ? Number(value) : null
 }
 
+function safeRefreshFailureCode(error: unknown) {
+  const code = error instanceof Error ? error.message : ""
+  return /^[A-Z0-9_]{3,160}$/.test(code)
+    ? code : "LUNA_STOCK_REFRESH_FAILED"
+}
+
 function parseCertifiedComponents(value: unknown) {
   if (!Array.isArray(value) || value.length < 1 || value.length > 20) return []
   const parsed = value.flatMap((entry) => {
@@ -286,88 +292,100 @@ export async function reconcileSellerOsStockIdentityV1(
   const outcomes: Array<Record<string, unknown>> = []
   let databaseWrites = 0
   for (const target of targets) {
-    const seed = seeds.find((candidate) => candidate.itemId === target)
-    if (!seed) {
-      outcomes.push({ itemId: target, status: "NO_MATCH" })
-      continue
-    }
-    const resolution = resolveSellerOsExactStockIdentityV1({
-      certifiedComponents: seed.components,
-      availableIdentities: variants,
-    })
-    const exactComponents = resolution.components
-    if (resolution.status !== "AUTO_RESOLVED") {
-      outcomes.push({ itemId: target, status: resolution.status })
-      continue
-    }
-    const linkage: SellerOsLunaStockLinkageV1 = Object.freeze({
-      linkageId: seed.linkageId,
-      status: "CERTIFIED",
-      ebayItemId: target,
-      ebaySku: seed.ebaySku,
-      components: Object.freeze(exactComponents.map((component) =>
-        Object.freeze({ ...component,
-          variantSemantics: "EXACT_VARIANT_REQUIRED" as const }))),
-      bundleMode: exactComponents.length > 1
-        ? "MULTI_COMPONENT_BOM" : "NOT_APPLICABLE",
-    })
-    const window = buildLunaStockObservationWindowV1({
-      now: now.toISOString(), intervalSeconds,
-    })
-    const job = buildLunaStockCheckJobV1({ linkage,
-      observationWindow: window, acquisitionMethod: "CANONICAL_SERVER_READ" })
-    await repository.ensureJob({ accountKey: input.accountKey, job })
-    databaseWrites += 1
-    const workerId = `stock-identity-v1:${createHash("sha256")
-      .update(`${target}:${now.toISOString()}`).digest("hex").slice(0, 32)}`
-    // The job row is created by the database during ensureJob. Claim with a
-    // fresh timestamp so its immutable timestamp ordering cannot move
-    // backwards when the request crossed a network boundary.
-    const claim = await repository.claimJob({ stockCheckJobId: job.stockCheckJobId,
-      workerId, now: new Date().toISOString() })
-    if (!claim.claimed || !claim.attemptNumber) {
-      outcomes.push({ itemId: target, status: "ALREADY_CURRENT" })
-      continue
-    }
-    databaseWrites += 1
-    const authority = createSellerOsLunaPublicExactStockAuthorityV1({
-      loadLinkageById: async (linkageId) =>
-        linkageId === seed.linkageId ? linkage : null,
-    })
-    const persisted = []
-    for (const component of exactComponents) {
-      const observed = await authority({ linkageId: seed.linkageId,
-        componentIdentityId: component.componentIdentityId })
-      const row = persistedObservation({ job,
-        attemptNumber: claim.attemptNumber, observation: observed,
-        maximumAgeSeconds: seed.maximumAgeSeconds })
-      await repository.ensureObservation({ accountKey: input.accountKey,
-        observation: row, leaseOwner: workerId, now: new Date().toISOString() })
+    try {
+      const seed = seeds.find((candidate) => candidate.itemId === target)
+      if (!seed) {
+        outcomes.push({ itemId: target, status: "NO_MATCH" })
+        continue
+      }
+      const resolution = resolveSellerOsExactStockIdentityV1({
+        certifiedComponents: seed.components,
+        availableIdentities: variants,
+      })
+      const exactComponents = resolution.components
+      if (resolution.status !== "AUTO_RESOLVED") {
+        outcomes.push({ itemId: target, status: resolution.status })
+        continue
+      }
+      const linkage: SellerOsLunaStockLinkageV1 = Object.freeze({
+        linkageId: seed.linkageId,
+        status: "CERTIFIED",
+        ebayItemId: target,
+        ebaySku: seed.ebaySku,
+        components: Object.freeze(exactComponents.map((component) =>
+          Object.freeze({ ...component,
+            variantSemantics: "EXACT_VARIANT_REQUIRED" as const }))),
+        bundleMode: exactComponents.length > 1
+          ? "MULTI_COMPONENT_BOM" : "NOT_APPLICABLE",
+      })
+      const window = buildLunaStockObservationWindowV1({
+        now: now.toISOString(), intervalSeconds,
+      })
+      const job = buildLunaStockCheckJobV1({ linkage,
+        observationWindow: window, acquisitionMethod: "CANONICAL_SERVER_READ" })
+      await repository.ensureJob({ accountKey: input.accountKey, job })
       databaseWrites += 1
-      persisted.push({ observed, row })
+      const workerId = `stock-identity-v1:${createHash("sha256")
+        .update(`${target}:${now.toISOString()}`).digest("hex").slice(0, 32)}`
+      // The job row is created by the database during ensureJob. Claim with a
+      // fresh timestamp so its immutable timestamp ordering cannot move
+      // backwards when the request crossed a network boundary.
+      const claim = await repository.claimJob({
+        stockCheckJobId: job.stockCheckJobId,
+        workerId, now: new Date().toISOString(),
+      })
+      if (!claim.claimed || !claim.attemptNumber) {
+        outcomes.push({ itemId: target, status: "ALREADY_CURRENT" })
+        continue
+      }
+      databaseWrites += 1
+      const authority = createSellerOsLunaPublicExactStockAuthorityV1({
+        loadLinkageById: async (linkageId) =>
+          linkageId === seed.linkageId ? linkage : null,
+      })
+      const persisted = []
+      for (const component of exactComponents) {
+        const observed = await authority({ linkageId: seed.linkageId,
+          componentIdentityId: component.componentIdentityId })
+        const row = persistedObservation({ job,
+          attemptNumber: claim.attemptNumber, observation: observed,
+          maximumAgeSeconds: seed.maximumAgeSeconds })
+        await repository.ensureObservation({ accountKey: input.accountKey,
+          observation: row, leaseOwner: workerId,
+          now: new Date().toISOString() })
+        databaseWrites += 1
+        persisted.push({ observed, row })
+      }
+      const packageDigest = digest("luna-stock-package-v1", [
+        job.stockCheckJobId,
+        persisted.map((entry) => entry.row.evidenceDigest).sort(),
+      ])
+      await repository.completeJob({ stockCheckJobId: job.stockCheckJobId,
+        workerId, packageDigest, now: new Date().toISOString() })
+      databaseWrites += 1
+      const certifiedOos = persisted.some((entry) => entry.observed.certifiedOos)
+      const allInStock = persisted.every((entry) =>
+        entry.observed.stockState === "IN_STOCK")
+      outcomes.push({ itemId: target, status: "AUTO_RESOLVED",
+        stockState: certifiedOos ? "CERTIFIED_OOS"
+          : allInStock ? "IN_STOCK_SIGNAL" : "STOCK_UNKNOWN",
+        sourceStatus: persisted.every((entry) =>
+          entry.observed.sourceStatus === "AVAILABLE")
+          ? "AVAILABLE" : "UNAVAILABLE",
+        reasonCodes: [...new Set(persisted.flatMap((entry) =>
+          entry.observed.limitationCode
+            ? [entry.observed.limitationCode]
+            : entry.observed.sourceStatus === "AVAILABLE"
+              ? [] : ["LUNA_SOURCE_UNAVAILABLE"]))].sort(),
+        observedAt: persisted.map((entry) =>
+          entry.observed.observedAt).sort().at(-1) ?? null,
+        newObservationPersisted: true })
+    } catch (error) {
+      outcomes.push({ itemId: target, status: "REFRESH_FAILED",
+        stockState: "STOCK_UNKNOWN", sourceStatus: "UNAVAILABLE",
+        reasonCodes: [safeRefreshFailureCode(error)],
+        newObservationPersisted: false })
     }
-    const packageDigest = digest("luna-stock-package-v1", [
-      job.stockCheckJobId,
-      persisted.map((entry) => entry.row.evidenceDigest).sort(),
-    ])
-    await repository.completeJob({ stockCheckJobId: job.stockCheckJobId,
-      workerId, packageDigest, now: new Date().toISOString() })
-    databaseWrites += 1
-    const certifiedOos = persisted.some((entry) => entry.observed.certifiedOos)
-    const allInStock = persisted.every((entry) =>
-      entry.observed.stockState === "IN_STOCK")
-    outcomes.push({ itemId: target, status: "AUTO_RESOLVED",
-      stockState: certifiedOos ? "CERTIFIED_OOS"
-        : allInStock ? "IN_STOCK_SIGNAL" : "STOCK_UNKNOWN",
-      sourceStatus: persisted.every((entry) =>
-        entry.observed.sourceStatus === "AVAILABLE") ? "AVAILABLE" : "UNAVAILABLE",
-      reasonCodes: [...new Set(persisted.flatMap((entry) =>
-        entry.observed.limitationCode
-          ? [entry.observed.limitationCode]
-          : entry.observed.sourceStatus === "AVAILABLE"
-            ? [] : ["LUNA_SOURCE_UNAVAILABLE"]))].sort(),
-      observedAt: persisted.map((entry) => entry.observed.observedAt).sort().at(-1) ?? null,
-      newObservationPersisted: true })
   }
   return Object.freeze({
     contractVersion: SELLER_OS_STOCK_IDENTITY_AUTO_RECONCILIATION_VERSION,
@@ -376,6 +394,8 @@ export async function reconcileSellerOsStockIdentityV1(
       row.status === "AUTO_RESOLVED" || row.status === "ALREADY_CURRENT").length,
     ambiguousCount: outcomes.filter((row) => row.status === "AMBIGUOUS").length,
     noMatchCount: outcomes.filter((row) => row.status === "NO_MATCH").length,
+    refreshFailedCount: outcomes.filter((row) =>
+      row.status === "REFRESH_FAILED").length,
     inStockCount: outcomes.filter((row) =>
       row.stockState === "IN_STOCK_SIGNAL").length,
     certifiedOosCount: outcomes.filter((row) =>
