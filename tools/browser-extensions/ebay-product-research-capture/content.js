@@ -1,7 +1,7 @@
 (() => {
   "use strict"
 
-  const SELLER_OS_ORIGIN = "https://imnova-website-z1qh-canonical-preview.vercel.app"
+  const SELLER_OS_ORIGIN = "https://imnova-ebay-mobile-preprod.vercel.app"
   const RECEIVER_URL = `${SELLER_OS_ORIGIN}/admin/ebay/mobile-review/product-research-capture`
   const SELLER_OS_HOME_URL = `${SELLER_OS_ORIGIN}/admin#today-launch`
   const RECEIVER_WINDOW_NAME = "sellerOsProductResearchBatchReceiver"
@@ -2416,7 +2416,7 @@
   const panel = document.createElement("section")
   panel.style.cssText = "width:300px;border:1px solid rgba(255,255,255,.28);border-radius:16px;background:#07111a;color:white;padding:14px;font:13px/1.4 system-ui,sans-serif;box-shadow:0 18px 50px rgba(0,0,0,.38)"
   const title = document.createElement("strong")
-  title.textContent = "Seller OS · Product Research · v1.2.25"
+  title.textContent = "Seller OS · Product Research · v1.2.26"
   captureButton = document.createElement("button")
   captureButton.type = "button"
   captureButton.textContent = "Capturar y continuar"

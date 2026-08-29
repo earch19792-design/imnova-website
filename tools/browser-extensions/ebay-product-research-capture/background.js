@@ -9,8 +9,14 @@ const ONE_CLICK_RUN_QUERY = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_QUERY_V1"
 const PRODUCT_RESEARCH_CAPTURE = "IMNOVA_AUTOMATED_PRODUCT_RESEARCH_CAPTURE_V1"
 const PRODUCT_RESEARCH_DIAGNOSTIC_PING = "IMNOVA_PRODUCT_RESEARCH_DIAGNOSTIC_PING_V1"
 const MAIN_SEARCH_SOLD_CAPTURE = "IMNOVA_AUTOMATED_MAIN_SEARCH_SOLD_CAPTURE_V1"
-const ADMIN_ORIGIN = "https://imnova-website-z1qh-canonical-preview.vercel.app"
-const ADMIN_SCOPE_MATCH = `${ADMIN_ORIGIN}/admin/ebay/*`
+const ADMIN_ORIGINS = new Set([
+  "https://imnova-website-z1qh-canonical-preview.vercel.app",
+  "https://imnova-seller-os-preprod.vercel.app",
+  "https://imnova-ebay-mobile-preprod.vercel.app",
+])
+const ADMIN_SCOPE_MATCHES = [...ADMIN_ORIGINS].map(
+  (origin) => `${origin}/admin/ebay/*`,
+)
 const ADMIN_SCOPE_PATH = /^\/admin\/ebay(?:\/|$)/
 const ADMIN_PATH = /^\/admin\/ebay\/(?:mobile-review|opportunity-queue\/research)\/?$/
 const SESSION_VERSION = "EBAY_ONE_CLICK_RESEARCH_SESSION_V1_2026_08_26"
@@ -28,7 +34,7 @@ const PRODUCT_RESEARCH_TASK_BINDING_VERSION = "PRODUCT_RESEARCH_TASK_BINDING_V1"
 function canonicalAdminScopeTab(tab) {
   try {
     const url = new URL(tab?.url ?? "")
-    return Number.isInteger(tab?.id) && url.origin === ADMIN_ORIGIN &&
+    return Number.isInteger(tab?.id) && ADMIN_ORIGINS.has(url.origin) &&
       ADMIN_SCOPE_PATH.test(url.pathname)
   } catch {
     return false
@@ -38,7 +44,7 @@ function canonicalAdminScopeTab(tab) {
 async function injectAdminBridgeIntoExistingTabs() {
   let tabs
   try {
-    tabs = await chrome.tabs.query({ url: ADMIN_SCOPE_MATCH })
+    tabs = await chrome.tabs.query({ url: ADMIN_SCOPE_MATCHES })
   } catch {
     return
   }
@@ -275,7 +281,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 function oneClickAdminSender(sender) {
   try {
     const url = new URL(sender?.tab?.url ?? sender?.url ?? "")
-    return sender?.frameId === 0 && url.origin === ADMIN_ORIGIN &&
+    return sender?.frameId === 0 && ADMIN_ORIGINS.has(url.origin) &&
       ADMIN_PATH.test(url.pathname)
   } catch {
     return false

@@ -1,7 +1,11 @@
 (() => {
   "use strict"
 
-  const ADMIN_ORIGIN = "https://imnova-website-z1qh-canonical-preview.vercel.app"
+  const ADMIN_ORIGINS = new Set([
+    "https://imnova-website-z1qh-canonical-preview.vercel.app",
+    "https://imnova-seller-os-preprod.vercel.app",
+    "https://imnova-ebay-mobile-preprod.vercel.app",
+  ])
   const ADMIN_SCOPE_PATH = /^\/admin\/ebay(?:\/|$)/
   const OPERATIONAL_PATH = /^\/admin\/ebay\/(?:mobile-review|opportunity-queue\/research)\/?$/
   const COMMAND = "IMNOVA_EBAY_ONE_CLICK_RESEARCH_COMMAND_V1"
@@ -12,8 +16,10 @@
   const PASSIVE_REQUEST_ID = "00000000-0000-4000-8000-000000000000"
   const INSTANCE_KEY = "__IMNOVA_EBAY_ONE_CLICK_ADMIN_BRIDGE_V1__"
 
-  if (window.top !== window || window.location.origin !== ADMIN_ORIGIN ||
+  if (window.top !== window || !ADMIN_ORIGINS.has(window.location.origin) ||
     !ADMIN_SCOPE_PATH.test(window.location.pathname)) return
+
+  const adminOrigin = window.location.origin
 
   if (globalThis[INSTANCE_KEY]) {
     globalThis[INSTANCE_KEY].syncRoute()
@@ -61,13 +67,13 @@
       ackEventsSent: Math.min(ackEventsSent, 32),
       extensionContextState: extensionContextState(),
       serviceWorkerResponse,
-    }, ADMIN_ORIGIN)
+    }, adminOrigin)
   }
 
   function receiveCommand(event) {
     if (!bridgeActive || !OPERATIONAL_PATH.test(window.location.pathname) ||
-      window.location.origin !== ADMIN_ORIGIN) return
-    if (event.source !== window || event.origin !== ADMIN_ORIGIN ||
+      window.location.origin !== adminOrigin) return
+    if (event.source !== window || event.origin !== adminOrigin ||
       event.data?.type !== COMMAND ||
       !/^[0-9a-f-]{36}$/i.test(event.data.requestId ?? "")) return
     const requestId = event.data.requestId
@@ -89,7 +95,7 @@
         error: "RESEARCH_EXTENSION_BRIDGE_DISCONNECTED",
         diagnosticTrace: null,
         extensionId: extensionId(),
-      }, ADMIN_ORIGIN)
+      }, adminOrigin)
       return
     }
     Promise.resolve(response).then(
@@ -108,7 +114,7 @@
           error: payload?.success === true ? null : payload?.error ?? "RESEARCH_EXTENSION_FAILED",
           diagnosticTrace: payload?.diagnosticTrace ?? null,
           extensionId: extensionId(),
-        }, ADMIN_ORIGIN)
+        }, adminOrigin)
       },
       () => {
         if (isProbe) postLifecycle(requestId, "SERVICE_WORKER_RESPONSE_FAILED", "FAILED")
@@ -120,7 +126,7 @@
           error: "RESEARCH_EXTENSION_BRIDGE_DISCONNECTED",
           diagnosticTrace: null,
           extensionId: extensionId(),
-        }, ADMIN_ORIGIN)
+        }, adminOrigin)
       },
     )
   }
@@ -136,7 +142,7 @@
       success: true,
       payload: { success: true, ready: true, version: extensionVersion() },
       extensionId: extensionId(),
-    }, ADMIN_ORIGIN)
+    }, adminOrigin)
   }
 
   function deactivateBridge() {
@@ -146,7 +152,7 @@
   }
 
   function syncRoute() {
-    if (window.location.origin === ADMIN_ORIGIN &&
+    if (window.location.origin === adminOrigin &&
       OPERATIONAL_PATH.test(window.location.pathname)) activateBridge()
     else deactivateBridge()
   }

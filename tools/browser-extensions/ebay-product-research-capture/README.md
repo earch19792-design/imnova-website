@@ -9,9 +9,17 @@ Extensión local MV3 para el piloto Preview de Loop 2.
 5. Abre Seller OS Preview y usa **INICIAR RESEARCH AUTOMÁTICO** una sola vez.
 
 Si ya estaba instalada una versión anterior, reemplaza la carpeta extraída y pulsa
-**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.25.
+**Reload** en `chrome://extensions` o `edge://extensions`. La versión guiada actual es 1.2.26.
 
-## Recuperación al iniciar el service worker (v1.2.25)
+## Reentrada por menú y navegación SPA (v1.2.26)
+
+El mismo bridge origin-bound reconoce el Preview histórico, el proyecto dedicado de preproducción
+y su alias operativo exacto. En cada documento permanece inerte fuera de las rutas elegibles y
+observa el lifecycle SPA ya existente: al entrar en Oportunidades activa un único listener; al
+salir lo retira; al volver reactiva ese mismo listener. La guarda global impide reinicializaciones,
+UI o listeners duplicados. No se añadió polling ni un segundo bridge.
+
+## Recuperación al iniciar el service worker (v1.2.26)
 
 Cada inicialización real del service worker ejecuta una sola consulta acotada de pestañas bajo
 el scope canónico `/admin/ebay/*` e inyecta el mismo `admin-bridge.js` en el frame principal.
@@ -25,7 +33,7 @@ keepalive.
 Chrome no vuelve a ejecutar de forma retroactiva un content script declarativo en un documento
 que ya estaba abierto al actualizar una extensión unpacked. Esta versión intentaba recuperar esas
 pestañas únicamente desde `runtime.onInstalled`; la prueba real mostró que ese hook aislado no era
-una autoridad operacional suficiente. La recuperación vigente se documenta en v1.2.25.
+una autoridad operacional suficiente. La recuperación vigente se documenta en v1.2.26.
 
 ## Activación determinista por ruta (v1.2.23)
 

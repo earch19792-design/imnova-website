@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Seller OS — eBay Product Research Capture",
-  "version": "1.2.25",
+  "version": "1.2.26",
   "description": "Automatiza una sesión acotada de Product Research y Sold desde Seller OS.",
   "permissions": [
     "scripting"
@@ -10,6 +10,8 @@
     "https://www.ebay.com/sh/research*",
     "https://www.ebay.com/sch/*",
     "https://imnova-website-z1qh-canonical-preview.vercel.app/admin/ebay/*",
+    "https://imnova-seller-os-preprod.vercel.app/admin/ebay/*",
+    "https://imnova-ebay-mobile-preprod.vercel.app/admin/ebay/*",
     "https://i.ebayimg.com/*"
   ],
   "background": {
@@ -36,7 +38,9 @@
     },
     {
       "matches": [
-        "https://imnova-website-z1qh-canonical-preview.vercel.app/admin/ebay/*"
+        "https://imnova-website-z1qh-canonical-preview.vercel.app/admin/ebay/*",
+        "https://imnova-seller-os-preprod.vercel.app/admin/ebay/*",
+        "https://imnova-ebay-mobile-preprod.vercel.app/admin/ebay/*"
       ],
       "js": [
         "admin-bridge.js"
