@@ -19,6 +19,8 @@ import { getEbayCommercialMonitorLiveReadonly } from
   "@/lib/ebay/ebay-commercial-monitor-live-readonly"
 import { getCommercialMonitorReadonly } from
   "@/lib/ebay/commercial-monitor-readonly-service"
+import { autoIngestUnmanagedEbayLiveListingsV1 } from
+  "@/lib/ebay/ebay-unmanaged-live-auto-intake-v1"
 import { runAutomaticCertifiedOosProtectionV1 } from
   "@/lib/ebay/ebay-auto-certified-oos-protection-v1"
 import { reconcileSellerOsStockIdentityV1 } from
@@ -266,6 +268,13 @@ export async function GET(req: Request) {
         accountKey,
         accountAlias: account.accountAlias,
       })
+      const unmanagedLiveIntake = await autoIngestUnmanagedEbayLiveListingsV1(
+        supabase,
+        {
+          accountKey,
+          listings: live.discovery.currentLiveListings,
+        },
+      )
       const canonicalMonitor = await getCommercialMonitorReadonly(
         supabase,
         { accountKey, accountAlias: account.accountAlias,
@@ -375,6 +384,7 @@ export async function GET(req: Request) {
           activation, publicStockSessionGate,
           protectedSessionStatus: protectedSession.status,
           currentLiveCount: currentLive.length,
+          unmanagedLiveIntake,
           certifiedLinkageCount: currentLive.filter((listing) =>
             listing.stock.supplierLinkageStatus === "CERTIFIED").length,
           pollEligibleCount: eligibleItemIds.length,

@@ -290,6 +290,9 @@ export function CommercialMonitorCanonicalDashboard({
   const [showAllLiveListings, setShowAllLiveListings] = useState(false)
   const backend = monitor.backend
   const canonicalLive = buildCanonicalLiveListingDashboardMetricsV1(monitor)
+  const listingsNeedingLinkage = monitor.listings.filter((listing) =>
+    listing.discovery.livePresence.status === "LIVE_ACTIVE" &&
+    listing.stock.supplierLinkageStatus !== "CERTIFIED")
   const accountTraffic = backend.trafficScopes.accountTraffic
   const currentLiveTraffic = backend.trafficScopes.currentLivePortfolio
   const accountTrafficSelected = trafficScope === "ACCOUNT_TRAFFIC"
@@ -494,6 +497,18 @@ export function CommercialMonitorCanonicalDashboard({
             <h2 id="attention-heading" className={type.sectionTitle}>Requiere atención</h2>
           </div>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            {listingsNeedingLinkage.length > 0 && (
+              <article className="rounded-2xl border border-violet-200 bg-violet-50 p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className={`${type.cardLabel} text-violet-800`}>Listing necesita vinculación</p>
+                    <p className={`${type.helper} mt-1 text-slate-600`}>Seller OS no encontró una única identidad exacta. No se usó similitud de título.</p>
+                  </div>
+                  <strong className="text-3xl font-black text-violet-800">{listingsNeedingLinkage.length}</strong>
+                </div>
+                <a href="/admin/ebay/listings/register" className={`${type.button} mt-3 inline-flex min-h-10 items-center rounded-lg bg-violet-700 px-3 text-white`}>Resolver</a>
+              </article>
+            )}
             <article className="rounded-2xl border border-rose-200 bg-white p-5 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div><p className={`${type.cardLabel} text-rose-700`}>Alertas comerciales</p><p className={`${type.helper} mt-1 text-slate-500`}>Prioridades críticas o altas respaldadas por la decisión actual.</p></div>

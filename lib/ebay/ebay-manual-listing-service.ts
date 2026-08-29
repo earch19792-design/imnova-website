@@ -130,6 +130,7 @@ async function loadOpportunityIdentity(
   supabase: SupabaseClient,
   input: ManualListingRegistrationInput,
   accountKey: string,
+  options: { automatedDeterministic?: boolean } = {},
 ) {
   let query = supabase
     .from("ebay_luna_opportunity_queue")
@@ -250,6 +251,10 @@ async function loadOpportunityIdentity(
   const authoritativeEbaySkus = [...new Set([
     expectedEbaySku,
     authoritativeHandoffCustomLabel,
+    ...(options.automatedDeterministic && input.supplierSku &&
+      input.supplierSku === opportunity.supplier_sku
+      ? [opportunity.supplier_sku]
+      : []),
   ].filter((value): value is string => Boolean(value)))]
   return {
     ...opportunity,
@@ -566,13 +571,21 @@ export async function registerManualEbayListing(
   supabase: SupabaseClient,
   input: ManualListingRegistrationInput,
   actorUserId: string | null,
+  options: { automatedDeterministic?: boolean } = {},
 ) {
   const accountKey = getManualListingAccountKey()
-  const opportunity = await loadOpportunityIdentity(supabase, input, accountKey)
-  const verification = await verifyManualListingOwnershipReadonly(
+  const opportunity = await loadOpportunityIdentity(
+    supabase, input, accountKey, options,
+  )
+  const observedVerification = await verifyManualListingOwnershipReadonly(
     input.ebayItemId,
     opportunity,
   )
+  const verification = options.automatedDeterministic &&
+      observedVerification.status === "verified"
+    ? { ...observedVerification,
+        reason: "OWNERSHIP_AND_DETERMINISTIC_IDENTITY_CONFIRMED_TRADING_READONLY" }
+    : observedVerification
   // Browser-declared defaults are never promoted to a verified template. Only
   // fields returned by the authenticated eBay listing read are reusable.
   const declaredSafeDefaults = input.safeDefaults
@@ -762,7 +775,7 @@ export async function reverifyManualEbayListingsReadonly(
   )
   const { data, error } = await supabase
     .from("ebay_manual_listing_links")
-    .select("id,ebay_item_id,ebay_url,opportunity_id,candidate_key,supplier_sku,supplier_variant_id,verification_method,last_verification_at")
+    .select("id,ebay_item_id,ebay_url,opportunity_id,candidate_key,supplier_sku,supplier_variant_id,verification_method,verification_reason,created_by,last_verification_at")
     .eq("account_key", accountKey)
     .in("verification_method", [
       EBAY_MANUAL_LISTING_TRADING_CONNECTOR,
@@ -789,7 +802,12 @@ export async function reverifyManualEbayListingsReadonly(
         supplierSku: text(link.supplier_sku),
         supplierVariantId: text(link.supplier_variant_id),
         safeDefaults: {},
-      }, null)
+      }, null, {
+        automatedDeterministic:
+          link.created_by === null &&
+          text(link.verification_reason) ===
+            "OWNERSHIP_AND_DETERMINISTIC_IDENTITY_CONFIRMED_TRADING_READONLY",
+      })
       if (result.verification.status === "verified") verified += 1
       else downgraded += 1
     } catch {
