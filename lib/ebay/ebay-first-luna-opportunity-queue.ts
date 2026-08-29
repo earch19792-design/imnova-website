@@ -7,6 +7,8 @@ import { calculateCommercialPriorityScoreV2, classifyTwoSpeedCandidate } from ".
 import { isDirectedLunaManualPackAssessment } from "./ebay-luna-directed-product-import.ts"
 // @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
 import { detectEbayProductRestrictionGuards } from "./ebay-product-restriction-guards.ts"
+// @ts-expect-error Node's native TypeScript test runner requires the explicit extension.
+import { isSmartStockingListingIntakeReadinessV1 } from "./ebay-smart-stocking-durable-factory-v1.ts"
 
 type JsonRecord = Record<string, unknown>
 
@@ -85,29 +87,6 @@ function record(value: unknown): JsonRecord {
     : {}
 }
 
-function isSmartStockingListingIntakeV1(value: unknown) {
-  const marker = record(record(value).smartStockingListingIntakeV1)
-  const exactKnownCandidate = (
-    marker.decisionPackageId === "67a72068-c052-4472-a022-9da7bb2b81bc"
-    && marker.finalPriceUsd === 25.99
-    && marker.entryPotentialScore === 57
-  ) || (
-    marker.decisionPackageId === "5f72bb09-c1f2-48b2-be81-7333d8dd39fd"
-    && marker.candidateKey
-      === "smart-stocking:EBAY_US:9220837146848:48809648488672"
-    && marker.supplierSku === "ITEM3404"
-    && marker.finalPriceUsd === 24.99
-    && marker.entryPotentialScore === 55
-  )
-  return marker.contractVersion ===
-      "SELLER_OS_SMART_STOCKING_LISTING_INTAKE_V1"
-    && exactKnownCandidate
-    && marker.finalDecision === "LISTING_READY"
-    && marker.finalEconomicsStatus === "PASS"
-    && marker.exactIdentityVerified === true
-    && marker.currentSupplierAvailabilityVerified === true
-}
-
 function records(value: unknown) {
   return Array.isArray(value) ? value.map(record) : []
 }
@@ -136,7 +115,8 @@ export function evaluateEbayListingWorkspaceEligibility(row: ProfessionalQueueRo
     ?? numberOrNull(row.identity_score)
     ?? 0
   const directedPackIntake = isDirectedLunaManualPackAssessment(row.assessment)
-  const smartStockingIntake = isSmartStockingListingIntakeV1(row.assessment)
+  const smartStockingIntake =
+    isSmartStockingListingIntakeReadinessV1(row.assessment)
   const blockers = [
     ...(identity.exactIdentityConfirmed === true || directedPackIntake || smartStockingIntake ? [] : ["EXACT_IDENTITY_REQUIRED"]),
     ...(economics.ready === true || directedPackIntake || smartStockingIntake ? [] : ["UNIT_ECONOMICS_REQUIRED"]),

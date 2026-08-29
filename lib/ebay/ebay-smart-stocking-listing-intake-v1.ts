@@ -15,6 +15,8 @@ import {
   LUNA_CANONICAL_SINGLE_RATE_PROOF_V1,
   LUNA_OPERATOR_BOUND_CANONICAL_US_DESTINATION_V1,
 } from "./ebay-luna-chrome-shipping-capture-v1"
+import { isSmartStockingListingIntakeReadinessV1 } from
+  "./ebay-smart-stocking-durable-factory-v1"
 
 export const SMART_STOCKING_LISTING_INTAKE_VERSION =
   "SELLER_OS_SMART_STOCKING_LISTING_INTAKE_V1" as const
@@ -732,8 +734,7 @@ export function isWindowFilmListingIntakeV1(value: unknown) {
 }
 
 export function isSmartStockingListingIntakeV1(value: unknown) {
-  return isCakeTurntableListingIntakeV1(value)
-    || isWindowFilmListingIntakeV1(value)
+  return isSmartStockingListingIntakeReadinessV1(value)
 }
 
 export function buildCakeTurntableListingIntakeV1(input: Readonly<{

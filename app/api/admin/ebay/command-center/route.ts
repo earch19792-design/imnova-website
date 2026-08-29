@@ -53,6 +53,10 @@ import {
 } from "@/lib/ebay/ebay-smart-stocking-frontier-handoff-v1"
 import { readWinnerEvidenceDecisionPackage } from
   "@/lib/ebay/ebay-winner-evidence-v2-service"
+import {
+  isSellerOsDeterministicFactoryPackageV1,
+  materializeSellerOsDeterministicFactoryCandidateV1,
+} from "@/lib/ebay/ebay-smart-stocking-durable-factory-v1"
 
 const OPEN_REVIEW_STATUSES = ["in_progress", "blocked", "ready_for_package"]
 const REVIEW_STEPS = ["luna", "ebay", "economics", "listing", "review"]
@@ -631,13 +635,26 @@ export async function POST(req: Request) {
           WINDOW_FILM_LISTING_INTAKE_TARGET_V1.lunaSku
         && body.decisionPackageId ===
           WINDOW_FILM_LISTING_INTAKE_TARGET_V1.decisionPackageId
-      if (!cake && !windowFilm) {
-        return NextResponse.json({ success: false,
-          error: "COMMAND_CENTER_SMART_STOCKING_CANDIDATE_MISMATCH" }, { status: 409 })
-      }
+      const genericOpportunityId = validUuid(body.opportunityId)
+      const genericCandidateKey = typeof body.candidateKey === "string"
+        ? body.candidateKey.slice(0, 300) : ""
       const intake = cake
         ? await materializeCakeTurntableListingIntakeV1({ supabase, accountKey })
-        : await materializeWindowFilmListingIntakeV1({ supabase, accountKey })
+        : windowFilm
+          ? await materializeWindowFilmListingIntakeV1({ supabase, accountKey })
+          : genericOpportunityId && genericCandidateKey
+            ? await materializeSellerOsDeterministicFactoryCandidateV1({
+              supabase,
+              accountKey,
+              opportunityId: genericOpportunityId,
+              candidateKey: genericCandidateKey,
+              decisionPackageId: validUuid(body.decisionPackageId),
+            })
+            : null
+      if (!intake) {
+        return NextResponse.json({ success: false,
+          error: "COMMAND_CENTER_SMART_STOCKING_CANDIDATE_REQUIRED" }, { status: 400 })
+      }
       return NextResponse.json({
         success: true,
         ...intake,
@@ -878,8 +895,26 @@ export async function POST(req: Request) {
         .eq("candidate_key", candidateKey)
         .maybeSingle()
       if (readError) throw new Error("COMMAND_CENTER_PACKAGE_READ_FAILED")
-      if (existing && existing.created_by !== reviewer) {
+      const serverOwnedFactoryPackage = existing?.created_by === null
+        && isSellerOsDeterministicFactoryPackageV1(existing.package_data)
+      if (existing && existing.created_by !== reviewer
+        && !serverOwnedFactoryPackage) {
         throw new Error("COMMAND_CENTER_PACKAGE_OWNERSHIP_REQUIRED")
+      }
+      if (existing && serverOwnedFactoryPackage) {
+        return NextResponse.json({
+          success: true,
+          listingPackage: existing,
+          created: false,
+          evidenceRefreshed: false,
+          serverOwnedFactoryAuthority: true,
+          humanApproved: false,
+          safety: {
+            ebayWriteUsed: false,
+            databaseWriteUsed: false,
+            canPublish: false,
+          },
+        })
       }
       if (existing && await compensatedPublicationHydrationIsReadOnly({
         supabase,
