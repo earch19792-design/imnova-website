@@ -2,6 +2,15 @@ export const EBAY_PRO_PRODUCTION_ISOLATION_VERSION =
   "EBAY_PRO_PRODUCTION_ISOLATION_FAST_V1"
 export const EBAY_SELLER_OS_CANONICAL_BOUNDARY_VERSION =
   "EBAY_SELLER_OS_CANONICAL_BOUNDARY_V2"
+export const SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION =
+  "SELLER_OS_DEDICATED_PREPROD"
+
+const SELLER_OS_DEDICATED_PREPROD_PROJECT_ID =
+  "prj_XvOpSg1jhmLLG1yOCFhAbiLEn222"
+const SELLER_OS_DEDICATED_PREPROD_PRODUCTION_URL =
+  "imnova-seller-os-preprod.vercel.app"
+const SELLER_OS_DEDICATED_PREPROD_SUPABASE_REF =
+  "vsfthqydfrdzulldbfbe"
 
 export const EBAY_SELLER_OS_UI_PATHS = [
   "/admin/ebay-seller-os",
@@ -66,8 +75,13 @@ export const EBAY_PRO_BLOCKED_IN_PRODUCTION_PATHS = [
 
 type EbayProBoundaryInput = {
   vercelEnv?: string | null
+  vercelTargetEnv?: string | null
+  vercelSystem?: string | null
+  vercelProjectId?: string | null
+  vercelProjectProductionUrl?: string | null
   nodeEnv?: string | null
   ebayProRuntime?: string | null
+  supabaseUrl?: string | null
   pathname?: string | null
   method?: string | null
   vercelGitCommitRef?: string | null
@@ -80,8 +94,13 @@ type EbayProBoundaryInput = {
 type DraftWriteBoundaryInput = Pick<
   EbayProBoundaryInput,
   | "vercelEnv"
+  | "vercelTargetEnv"
+  | "vercelSystem"
+  | "vercelProjectId"
+  | "vercelProjectProductionUrl"
   | "nodeEnv"
   | "ebayProRuntime"
+  | "supabaseUrl"
   | "vercelGitCommitRef"
   | "allowedProductionBranch"
   | "draftTarget"
@@ -99,6 +118,68 @@ function rawValue(value: string | null | undefined) {
 
 function pathMatches(pathname: string, prefix: string) {
   return pathname === prefix || pathname.startsWith(`${prefix}/`)
+}
+
+function supabaseProjectRef(value: string | null | undefined) {
+  const candidate = rawValue(value)
+  if (!candidate) return null
+  try {
+    const url = new URL(candidate)
+    const suffix = ".supabase.co"
+    const host = url.hostname.toLowerCase()
+    const ref = host.endsWith(suffix) ? host.slice(0, -suffix.length) : ""
+    const exactOrigin = url.protocol === "https:" && !url.port &&
+      !url.username && !url.password && url.pathname === "/" &&
+      !url.search && !url.hash
+    return exactOrigin && /^[a-z0-9]{20}$/.test(ref) ? ref : null
+  } catch {
+    return null
+  }
+}
+
+function dedicatedPreprodState(input: EbayProBoundaryInput) {
+  const vercelEnv = normalizeValue(input.vercelEnv ?? process.env.VERCEL_ENV)
+  const vercelTargetEnv = normalizeValue(
+    input.vercelTargetEnv ?? process.env.VERCEL_TARGET_ENV,
+  )
+  const vercelSystem = rawValue(input.vercelSystem ?? process.env.VERCEL)
+  const vercelProjectId = rawValue(
+    input.vercelProjectId ?? process.env.VERCEL_PROJECT_ID,
+  )
+  const vercelProjectProductionUrl = normalizeValue(
+    input.vercelProjectProductionUrl
+      ?? process.env.VERCEL_PROJECT_PRODUCTION_URL,
+  )
+  const ebayProRuntime = normalizeValue(
+    input.ebayProRuntime ?? process.env.EBAY_PRO_RUNTIME,
+  )
+  const configuredSupabaseRef = supabaseProjectRef(
+    input.supabaseUrl ?? process.env.NEXT_PUBLIC_SUPABASE_URL,
+  )
+  const signals = {
+    vercelSystem: vercelSystem === "1",
+    vercelEnvironment: vercelEnv === "production",
+    vercelTargetEnvironment: vercelTargetEnv === "production",
+    vercelProjectId:
+      vercelProjectId === SELLER_OS_DEDICATED_PREPROD_PROJECT_ID,
+    vercelProjectProductionUrl:
+      vercelProjectProductionUrl ===
+        SELLER_OS_DEDICATED_PREPROD_PRODUCTION_URL,
+    stagingRuntimeIntent: ebayProRuntime === "staging",
+    stagingSupabaseProject:
+      configuredSupabaseRef === SELLER_OS_DEDICATED_PREPROD_SUPABASE_REF,
+  }
+  const certified = Object.values(signals).every(Boolean)
+  const failedSignal = Object.entries(signals)
+    .find(([, matched]) => !matched)?.[0] ?? null
+  return {
+    classification: certified
+      ? SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION
+      : null,
+    certified,
+    failedSignal,
+    signals,
+  }
 }
 
 export function isEbayProPath(pathname: string | null | undefined) {
@@ -126,21 +207,30 @@ function runtimeState(input: EbayProBoundaryInput) {
   ].includes(ebayProRuntime)
   const runtimeBlocksEbayPro = ["production_core", "production"]
     .includes(ebayProRuntime)
+  const dedicatedPreprod = dedicatedPreprodState(input)
   const isProductionRuntime = runtimeBlocksEbayPro
-    || vercelEnv === "production"
+    || (vercelEnv === "production" && !dedicatedPreprod.certified)
     || (!vercelEnv && !runtimeAllowsEbayPro && nodeEnv === "production")
   return {
     vercelEnv,
     nodeEnv,
     ebayProRuntime,
+    boundaryClassification: dedicatedPreprod.certified
+      ? SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION
+      : isProductionRuntime
+        ? "PRODUCTION_CORE"
+        : "NON_PRODUCTION",
+    dedicatedPreprod,
     isProductionRuntime,
-    runtime: isProductionRuntime
-      ? "production_core"
-      : runtimeAllowsEbayPro
-        ? ebayProRuntime
-        : vercelEnv === "preview"
-          ? "preview"
-          : "development_or_preview",
+    runtime: dedicatedPreprod.certified
+      ? "seller_os_dedicated_preprod"
+      : isProductionRuntime
+        ? "production_core"
+        : runtimeAllowsEbayPro
+          ? ebayProRuntime
+          : vercelEnv === "preview"
+            ? "preview"
+            : "development_or_preview",
   }
 }
 
@@ -222,6 +312,8 @@ export function getEbayProRuntimeBoundary(input: EbayProBoundaryInput = {}) {
     isolationVersion: EBAY_PRO_PRODUCTION_ISOLATION_VERSION,
     productionCoreProtected: true,
     runtime: runtime.runtime,
+    boundaryClassification: runtime.boundaryClassification,
+    dedicatedPreprod: runtime.dedicatedPreprod,
     isProductionRuntime: runtime.isProductionRuntime,
     isEbayProPath: isBlockedPath,
     isSellerOsPath: isEbaySellerOsPath(pathname),
