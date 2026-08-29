@@ -96,7 +96,8 @@ test("workspace shows COMPLETED, seven previews and one publication control in f
   assert.match(workspace, /Ejecución registrada · fase/)
   assert.match(workspace, /data-v3-one-click-publication/)
   assert.match(workspace, /PUBLICAR EN EBAY/)
-  assert.match(workspace, /!finalReviewCompleted && <div className="fixed/)
+  assert.match(workspace,
+    /!finalReviewCompleted && !listingReadyUi\.listingReady && <div className="fixed/)
   assert.match(workspace, /FINAL_LISTING_REVIEW persistente/)
 })
 
