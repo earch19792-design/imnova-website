@@ -2,8 +2,8 @@ import sharp from "sharp"
 
 import type { CommercialListingReadModel, CommercialMonitorGetDto } from
   "./commercial-monitor-readonly-contract"
-// @ts-expect-error Node's direct TypeScript test runner requires the extension.
 import { currentLiveListingsForMonitorV1 } from
+// @ts-expect-error Node's direct TypeScript test runner requires the extension.
   "./ebay-seller-os-live-portfolio-integrity-v1.ts"
 
 export const SELLER_OS_VISUAL_QUALITY_VERSION =
@@ -210,10 +210,8 @@ export async function analyzeSellerOsHeroImageBytesV1(input: {
   const whiteness = borderSamples ? whiteBorderSamples / borderSamples : 0
   const whiteBackgroundProven = whiteness >= .9
   const maskUsable = whiteness >= .75
-  let left = info.width
-  let top = info.height
-  let right = -1
-  let bottom = -1
+  const columnForeground = new Array<number>(info.width).fill(0)
+  const rowForeground = new Array<number>(info.height).fill(0)
   let foregroundPixels = 0
   let edgeComparisons = 0
   let detailEdges = 0
@@ -223,8 +221,8 @@ export async function analyzeSellerOsHeroImageBytesV1(input: {
       const foreground = Math.min(...channels) < 232 ||
         Math.max(...channels) - Math.min(...channels) > 26
       if (foreground) {
-        left = Math.min(left, x); top = Math.min(top, y)
-        right = Math.max(right, x); bottom = Math.max(bottom, y)
+        columnForeground[x] += 1
+        rowForeground[y] += 1
         foregroundPixels += 1
       }
       if (x + 1 < info.width && y + 1 < info.height) {
@@ -240,6 +238,16 @@ export async function analyzeSellerOsHeroImageBytesV1(input: {
     }
   }
   data.fill(0)
+  const minimumColumnContinuity = Math.max(2, Math.ceil(info.height * .012))
+  const minimumRowContinuity = Math.max(2, Math.ceil(info.width * .012))
+  const foregroundColumns = columnForeground.flatMap((count, index) =>
+    count >= minimumColumnContinuity ? [index] : [])
+  const foregroundRows = rowForeground.flatMap((count, index) =>
+    count >= minimumRowContinuity ? [index] : [])
+  const left = foregroundColumns[0] ?? info.width
+  const right = foregroundColumns.at(-1) ?? -1
+  const top = foregroundRows[0] ?? info.height
+  const bottom = foregroundRows.at(-1) ?? -1
   const bboxAvailable = maskUsable && foregroundPixels > 0 && right >= left && bottom >= top
   const bboxWidthRatio = bboxAvailable ? (right - left + 1) / info.width : null
   const bboxHeightRatio = bboxAvailable ? (bottom - top + 1) / info.height : null
