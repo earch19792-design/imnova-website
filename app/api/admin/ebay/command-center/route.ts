@@ -1126,6 +1126,12 @@ export async function POST(req: Request) {
           opportunity: effectiveOpportunity,
           packageData: refreshedPackageSeed,
           taxonomyReader: getEbayTaxonomyListingIntelligence,
+          exactCanonicalCategory: smartStockingEvidence ? {
+            categoryId: smartStockingEvidence.category.categoryId,
+            categoryName: smartStockingEvidence.category.categoryName,
+            authorityClass: smartStockingEvidence.authorityClass,
+            exactProductIdentityVerified: true,
+          } : null,
         })
         const refreshedPackageData = categoryBinding.packageData
         const sourceObservedAt = sameDayContext?.sourceObservedAt
@@ -1262,6 +1268,12 @@ export async function POST(req: Request) {
         opportunity: effectiveOpportunity,
         packageData: packageSeed,
         taxonomyReader: getEbayTaxonomyListingIntelligence,
+        exactCanonicalCategory: smartStockingEvidence ? {
+          categoryId: smartStockingEvidence.category.categoryId,
+          categoryName: smartStockingEvidence.category.categoryName,
+          authorityClass: smartStockingEvidence.authorityClass,
+          exactProductIdentityVerified: true,
+        } : null,
       })
       const { data: savedData, error: saveError } = await supabase.rpc(
         "ebay_save_listing_package_guarded",

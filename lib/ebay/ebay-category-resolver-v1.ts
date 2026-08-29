@@ -83,6 +83,13 @@ export type EbayCategoryResolverTaxonomyReaderV1 = (
   options?: { allowTitleSuggestionFallback?: boolean },
 ) => Promise<EbayTaxonomyListingIntelligence>
 
+export type EbayExactCanonicalCategoryAuthorityV1 = Readonly<{
+  categoryId: string
+  categoryName?: string | null
+  authorityClass: string
+  exactProductIdentityVerified: true
+}>
+
 type RankedCandidate = {
   categoryId: string
   categoryName: string | null
@@ -764,23 +771,79 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
   opportunity: JsonRecord
   packageData: JsonRecord
   taxonomyReader: EbayCategoryResolverTaxonomyReaderV1
+  exactCanonicalCategory?: EbayExactCanonicalCategoryAuthorityV1 | null
   now?: string | Date
 }>) {
   const productTruth = buildEbayCategoryResolverProductTruthV1({
     opportunity: input.opportunity,
     packageData: input.packageData,
   })
-  const learningRows = await loadEbayCategoryResolverLearningV1({
-    supabase: input.supabase,
-    accountKey: input.accountKey,
-    productTruth,
-  })
-  const resolution = await resolveEbayCategoryV1({
-    productTruth,
-    learningRows,
-    taxonomyReader: input.taxonomyReader,
-    now: input.now,
-  })
+  const exactCanonicalAuthoritySupplied = input.exactCanonicalCategory
+    ?.exactProductIdentityVerified === true
+  const exactCanonicalCategoryId = exactCanonicalAuthoritySupplied
+    ? categoryId(input.exactCanonicalCategory.categoryId) : ""
+  if (exactCanonicalAuthoritySupplied && !exactCanonicalCategoryId) {
+    throw new Error("EBAY_EXACT_CANONICAL_CATEGORY_AUTHORITY_INVALID")
+  }
+  const exactCanonicalTaxonomy = exactCanonicalCategoryId
+    ? await input.taxonomyReader(
+      productTruth.title,
+      exactCanonicalCategoryId,
+      { allowTitleSuggestionFallback: false },
+    ) : null
+  const exactCanonicalCategoryPass = Boolean(
+    exactCanonicalTaxonomy
+    && taxonomyExactPass(exactCanonicalTaxonomy, exactCanonicalCategoryId),
+  )
+  const learningRows = exactCanonicalCategoryId
+    ? []
+    : await loadEbayCategoryResolverLearningV1({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      productTruth,
+    })
+  const resolution = exactCanonicalCategoryId
+    ? Object.freeze({
+      authorityClass: input.exactCanonicalCategory?.authorityClass
+        ?? EBAY_CATEGORY_RESOLVER_V1,
+      status: exactCanonicalCategoryPass
+        ? "AUTO_SELECTED" as const : "CATEGORY_EXCEPTION" as const,
+      resolutionClass: exactCanonicalCategoryPass
+        ? "HIGH_CONFIDENCE" as const : "UNRESOLVED" as const,
+      selectedCategory: exactCanonicalCategoryPass && exactCanonicalTaxonomy
+        ? Object.freeze({
+          categoryId: exactCanonicalCategoryId,
+          categoryName: exactCanonicalTaxonomy.categoryName
+            ?? input.exactCanonicalCategory?.categoryName ?? null,
+          score: 100,
+          sources: ["PRODUCT_TRUTH" as const],
+          mappingIds: [],
+          taxonomy: exactCanonicalTaxonomy,
+          taxonomySnapshotDigest:
+            ebayCategoryTaxonomySnapshotDigestV1(exactCanonicalTaxonomy),
+          taxonomyTreeVersion:
+            exactCanonicalTaxonomy.categoryTreeVersion ?? "UNVERSIONED",
+          freshMapping: false,
+          staleMapping: false,
+        })
+        : null,
+      testedCategoryIds: [exactCanonicalCategoryId],
+      validationFailures: exactCanonicalCategoryPass
+        ? [] : [`${exactCanonicalCategoryId}:${
+          exactCanonicalTaxonomy?.failureCode
+            ?? exactCanonicalTaxonomy?.status ?? "UNAVAILABLE"}`],
+      boundedCandidateLimit: 1,
+      factoryContinuationAllowed: true as const,
+      manualCategorySelectionRequired: false as const,
+      codexRequired: false as const,
+      marketplaceWrites: 0 as const,
+    })
+    : await resolveEbayCategoryV1({
+      productTruth,
+      learningRows,
+      taxonomyReader: input.taxonomyReader,
+      now: input.now,
+    })
   const contextBinding = {
     contextBindingVersion: "SELLER_OS_EBAY_LISTING_CONTEXT_ISOLATION_V1",
     marketplaceId: input.context.marketplaceId,
@@ -836,14 +899,16 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
     unprovenAspectEvidenceRequirements:
       productTruth.unprovenAspectEvidenceRequirements,
   })
-  const learning = await persistEbayCategoryResolverLearningV1({
-    supabase: input.supabase,
-    accountKey: input.accountKey,
-    context: input.context,
-    productTruth,
-    selected,
-    now: input.now,
-  })
+  const learning = exactCanonicalCategoryId
+    ? null
+    : await persistEbayCategoryResolverLearningV1({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      context: input.context,
+      productTruth,
+      selected,
+      now: input.now,
+    })
   return Object.freeze({
     packageData: {
       ...input.packageData,
@@ -853,7 +918,10 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
       taxonomyPreflight: preflight,
       categoryResolverV1: {
         ...contextBinding,
-        authorityClass: EBAY_CATEGORY_RESOLVER_V1,
+        authorityClass: exactCanonicalCategoryId
+          ? input.exactCanonicalCategory?.authorityClass
+            ?? EBAY_CATEGORY_RESOLVER_V1
+          : EBAY_CATEGORY_RESOLVER_V1,
         status: resolution.status,
         resolutionClass: resolution.resolutionClass,
         normalizedProductFamily: productTruth.normalizedProductFamily,
@@ -863,10 +931,15 @@ export async function resolveAndBindEbayListingCategoryV1(input: Readonly<{
         taxonomySnapshotDigest: selected.taxonomySnapshotDigest,
         taxonomyPreflightEvidenceDigest: preflight.evidenceDigest,
         taxonomyTreeVersion: selected.taxonomyTreeVersion,
-        learningId: learning.id,
+        learningId: learning?.id ?? null,
         testedCategoryIds: resolution.testedCategoryIds,
-        listingAcceptance: learning.listingAcceptance,
+        listingAcceptance: learning?.listingAcceptance ?? "UNKNOWN",
         manualCategorySelectionRequired: false,
+        categorySelectionMode: exactCanonicalCategoryId
+          ? "PRESERVED_EXACT_CANONICAL_AUTHORITY"
+          : "AUTOMATIC_CATEGORY_RESOLUTION",
+        exactCanonicalCategoryPreserved: Boolean(exactCanonicalCategoryId),
+        explicitReclassificationRequired: Boolean(exactCanonicalCategoryId),
         codexRequired: false,
         marketplaceWrites: 0,
       },

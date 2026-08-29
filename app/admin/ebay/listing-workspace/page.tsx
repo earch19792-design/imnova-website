@@ -360,6 +360,12 @@ type PublicationAutomationPhase =
   | "verifying"
   | "complete"
 
+type CanonicalReadinessLoadState =
+  | "loading"
+  | "ready"
+  | "error"
+  | "not_applicable"
+
 type ImageRevisionPayload = {
   revision: {
     id: string
@@ -1392,6 +1398,10 @@ function ListingWorkspacePageContent() {
   } | null>(null)
   const [draftConfiguration, setDraftConfiguration] = useState<DraftConfiguration>(emptyDraftConfiguration)
   const [draftState, setDraftState] = useState<DraftState>({})
+  const [canonicalReadinessLoadState, setCanonicalReadinessLoadState] =
+    useState<CanonicalReadinessLoadState>("loading")
+  const [canonicalReadinessLoadError, setCanonicalReadinessLoadError] =
+    useState("")
   const [draftBusy, setDraftBusy] = useState(false)
   const [imagesAuthorized, setImagesAuthorized] = useState(false)
   const [approvalPhrase, setApprovalPhrase] = useState("")
@@ -1781,6 +1791,8 @@ function ListingWorkspacePageContent() {
     const visualReviewRevisionId = validUuid(params.get("revisionId"))
     const maintenanceRequested = params.get("mode") === "maintenance" || /^\d{9,20}$/.test(requestedItemId)
     if (!opportunityId || !candidateKey) {
+      setCanonicalReadinessLoadState("error")
+      setCanonicalReadinessLoadError("EBAY_DRAFT_ONLY_CONTEXT_REQUIRED")
       if (visualReviewRevisionId) {
         setError("")
         setMessage("Abriendo directamente la revisión visual V3. La frescura comercial de Luna se comprobará únicamente antes del Offer o la publicación.")
@@ -1790,6 +1802,8 @@ function ListingWorkspacePageContent() {
       }
       return
     }
+    setCanonicalReadinessLoadState("loading")
+    setCanonicalReadinessLoadError("")
     void (async () => {
       try {
         const state = await request(undefined, opportunityId)
@@ -1877,6 +1891,10 @@ function ListingWorkspacePageContent() {
             setWorkspaceGateBlockers([])
             setListingPackage(null)
             setDraftState((current) => ({ preflight: current.preflight }))
+            setCanonicalReadinessLoadState("error")
+            setCanonicalReadinessLoadError(
+              "SAME_DAY_PUBLICATION_LUNA_RECHECK_REQUIRED",
+            )
             setError("")
             setMessage("La revisión visual V3 sigue disponible. Costo y disponibilidad de Luna deben reconfirmarse únicamente antes de crear o autorizar el Offer o publicar.")
             return
@@ -1889,6 +1907,10 @@ function ListingWorkspacePageContent() {
           setWorkspaceGateBlockers(gateBlockers)
           setListingPackage(null)
           setDraftState((current) => ({ preflight: current.preflight }))
+          setCanonicalReadinessLoadState("error")
+          setCanonicalReadinessLoadError(
+            typedPrepareError.code || "COMMAND_CENTER_WORKSPACE_GATES_PENDING",
+          )
           setError(gateBlockers.length
             ? ""
             : getMobileReviewRequestError(prepareError, "No se pudo preparar el paquete."))
@@ -1951,6 +1973,7 @@ function ListingWorkspacePageContent() {
             listing_id: itemId,
             verified_active_at: String(nextMaintenance.verifiedAt ?? ""),
           } as DraftState["publication"] })
+          setCanonicalReadinessLoadState("not_applicable")
         } else {
           const nextPackageData = object(nextPackage.package_data)
           const sameDayAuthorization = object(
@@ -1969,6 +1992,10 @@ function ListingWorkspacePageContent() {
               preflight: current.preflight,
               taxonomy: current.taxonomy,
             }))
+            setCanonicalReadinessLoadState("error")
+            setCanonicalReadinessLoadError(
+              "EBAY_DRAFT_ONLY_VISUAL_UPGRADE_REQUIRED",
+            )
             draftWarning = " Completa y aprueba la revisión visual activa de siete imágenes antes de validar el conector de publicación."
           } else {
             try {
@@ -1979,12 +2006,20 @@ function ListingWorkspacePageContent() {
                 candidateKey,
               )
               setDraftState((current) => ({ ...current, ...draft }))
+              setCanonicalReadinessLoadState("ready")
+              setCanonicalReadinessLoadError("")
             } catch (draftError) {
+              const draftErrorCode = getMobileReviewRequestError(
+                draftError,
+                "EBAY_DRAFT_ONLY_GET_FAILED",
+              )
               setDraftState((current) => ({
                 preflight: current.preflight,
                 taxonomy: current.taxonomy,
               }))
-              draftWarning = ` ${getMobileReviewRequestError(draftError, "El conector draft todavía no pudo validarse.")}`
+              setCanonicalReadinessLoadState("error")
+              setCanonicalReadinessLoadError(draftErrorCode)
+              draftWarning = ` ${draftErrorCode}`
             }
           }
         }
@@ -1999,8 +2034,17 @@ function ListingWorkspacePageContent() {
             ? "Evidencia Luna/eBay actualizada; tus campos editados se conservaron."
             : "Continuaste el paquete guardado anteriormente."}${defaultsMessage}${draftWarning}`)
       } catch (requestError) {
-        setError(getMobileReviewRequestError(requestError, "No se pudo abrir el workspace."))
+        const hydrationError = getMobileReviewRequestError(
+          requestError,
+          "EBAY_LISTING_WORKSPACE_HYDRATION_FAILED",
+        )
+        setCanonicalReadinessLoadState("error")
+        setCanonicalReadinessLoadError(hydrationError)
+        setError(hydrationError)
         setMessage("")
+      } finally {
+        setCanonicalReadinessLoadState((current) =>
+          current === "loading" ? "error" : current)
       }
     })()
   }, [request, draftRequest, loadImageAssets, loadImageRevision, workspaceRetry])
@@ -2390,6 +2434,8 @@ function ListingWorkspacePageContent() {
     () => canonicalListingReadyUi(draftState.readiness),
     [draftState.readiness],
   )
+  const canonicalReadinessAvailable =
+    canonicalReadinessLoadState === "ready" && Boolean(draftState.readiness)
   const canonicalUiBlockers = listingReadyUi.uiBlockers
   const blockers = useMemo(() => {
     if (finalReviewCompleted) {
@@ -2419,9 +2465,10 @@ function ListingWorkspacePageContent() {
   ) ? Number(canonicalOffer.availableQuantity) : null
   const canonicalMarketplace = String(canonicalOffer.marketplaceId ?? "")
   const productionTarget = draftTarget === "PRODUCTION"
-  const singleHumanPublicationEligible =
+  const singleHumanPublicationEligible = canonicalReadinessAvailable && (
     draftState.approvalRequirements?.singleHumanPublicationEligible === true
     || draftState.controlledPublication?.eligible === true
+  )
   const expectedApprovalPhrase = draftState.approvalRequirements?.exactPhrase
     ?? (productionTarget
       ? "CREAR DRAFT NO PUBLICADO EN PRODUCCIÓN"
@@ -4798,7 +4845,7 @@ function ListingWorkspacePageContent() {
         <p className={`rounded-xl border p-3 text-xs ${executionCompleted ? "border-emerald-200/25 bg-emerald-200/[0.07] text-emerald-50" : unpublishedExecutionExists ? "border-amber-200/25 bg-amber-200/[0.07] text-amber-50" : "border-white/15 bg-black/20 text-white/65"}`}>{executionCompleted ? "Inventory Item + Offer UNPUBLISHED creados y verificados; la automatización continuará desde el preview final." : unpublishedExecutionExists ? `Ejecución registrada · fase ${unpublishedExecutionPhase || "PENDIENTE"}. El botón único la reanudará o reconciliará sin duplicarla.` : "Inventory Item y Offer todavía no existen. El botón único realizará la secuencia completa después de revalidar todas las puertas."}</p>
       </section>
       </details>
-      {(listingReadyUi.listingReady || publicationLifecycleStarted) && <section data-v3-one-click-publication data-unpublished-preflight-state={unpublishedPreflightState} className="space-y-3 rounded-2xl border border-rose-200/35 bg-rose-200/[0.07] p-3">
+      {canonicalReadinessAvailable && (listingReadyUi.listingReady || publicationLifecycleStarted) && <section data-v3-one-click-publication data-unpublished-preflight-state={unpublishedPreflightState} className="space-y-3 rounded-2xl border border-rose-200/35 bg-rose-200/[0.07] p-3">
         {(publicationAutomationBusy || publicationLifecycleStarted) && <PublicationLaunchVisualizer
           phase={publicationVisualizerPhase}
           busy={publicationAutomationBusy || publicationReadOnlyPreflightActive}
@@ -4944,7 +4991,7 @@ function ListingWorkspacePageContent() {
                 minimumProfitablePrice: null,
                 passesProfitGate: null,
               } }))} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 bg-black/30 px-4" /></label>
-              {!finalSmartStockingEconomics && <button type="button" disabled={busy || !(Number(form.pricing.targetPrice) > 0)} onClick={() => void save(false)} className="mt-2 min-h-11 w-full rounded-xl border border-cyan-200/30 px-3 text-sm font-black text-cyan-50 disabled:opacity-40">{busy ? "Recalculando…" : "Guardar y recalcular rentabilidad"}</button>}
+              {canonicalReadinessAvailable && !finalSmartStockingEconomics && <button type="button" disabled={busy || !(Number(form.pricing.targetPrice) > 0)} onClick={() => void save(false)} className="mt-2 min-h-11 w-full rounded-xl border border-cyan-200/30 px-3 text-sm font-black text-cyan-50 disabled:opacity-40">{busy ? "Recalculando…" : "Guardar y recalcular rentabilidad"}</button>}
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
                 <div className="rounded-xl bg-black/25 p-2"><span className="text-white/50">Costo Luna</span><strong className="mt-1 block">{money(form.pricing.supplierCost)}</strong></div>
                 <div className="rounded-xl bg-black/25 p-2"><span className="text-white/50">Tarifas eBay est.</span><strong className="mt-1 block">{money(form.pricing.estimatedEbayFees)}</strong></div>
@@ -5181,10 +5228,10 @@ function ListingWorkspacePageContent() {
               <p className="text-xs leading-5 text-rose-50/65">No existe autorización desatendida: el primer clic es obligatorio. Después, Seller OS exige readback oficial exacto del Inventory Item y Offer UNPUBLISHED, publish one-shot y readback ACTIVE antes de persistir Item ID y activar monitoreo.</p>
             </div>}
             {!singleHumanPublicationEligible && draftState.readiness?.ready && !approvalActive && !executionCompleted && <div className="space-y-3 rounded-2xl border border-emerald-200/25 p-3"><label className="block"><span className="text-sm font-black">Escribe exactamente: {expectedApprovalPhrase}</span><input value={approvalPhrase} onChange={(event) => setApprovalPhrase(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmUnpublishedOnly} onChange={(event) => setConfirmUnpublishedOnly(event.target.checked)} />Entiendo que sólo autoriza un Offer no publicado.</label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmNoPublish} onChange={(event) => setConfirmNoPublish(event.target.checked)} />Confirmo que este primer permiso no publica; la publicación final requerirá otra autorización.</label>{productionTarget && <label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmProductionAccount} onChange={(event) => setConfirmProductionAccount(event.target.checked)} />Confirmo que {draftTarget} es mi cuenta real: autorizo crear Inventory Item + Offer API UNPUBLISHED, sin publicarlo.</label>}<button type="button" disabled={draftBusy || approvalPhrase !== expectedApprovalPhrase || !confirmUnpublishedOnly || !confirmNoPublish || !imagesAuthorized || (productionTarget && !confirmProductionAccount)} onClick={() => void approveDraft()} className="min-h-13 w-full rounded-2xl bg-emerald-200 px-4 font-black text-black disabled:opacity-40">Aprobar {draftTarget} por 15 minutos</button></div>}
-            {!singleHumanPublicationEligible && approvalActive && !executionCompleted && draftState.approval && <div className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.06] p-3"><strong>Aprobación {draftTarget} activa hasta {new Date(draftState.approval.expires_at).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}</strong><p className="mt-2 text-sm text-white/65">Autorización registrada; ejecución pendiente. El siguiente botón es el único que puede escribir y sólo crea Inventory Item + Offer API UNPUBLISHED en {draftTarget}.</p><button type="button" disabled={draftBusy || !draftState.runtime?.enabled || !draftState.runtime?.configured} onClick={() => void executeDraft()} className="mt-3 min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">{unpublishedExecutionButtonLabel}</button><button type="button" disabled={draftBusy} onClick={() => void revokeDraftApproval()} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 px-4 font-black disabled:opacity-40">Cancelar aprobación</button></div>}
+            {canonicalReadinessAvailable && !singleHumanPublicationEligible && approvalActive && !executionCompleted && draftState.approval && <div className="rounded-2xl border border-rose-200/30 bg-rose-200/[0.06] p-3"><strong>Aprobación {draftTarget} activa hasta {new Date(draftState.approval.expires_at).toLocaleTimeString("es", { hour: "2-digit", minute: "2-digit" })}</strong><p className="mt-2 text-sm text-white/65">Autorización registrada; ejecución pendiente. El siguiente botón es el único que puede escribir y sólo crea Inventory Item + Offer API UNPUBLISHED en {draftTarget}.</p><button type="button" disabled={draftBusy || !draftState.runtime?.enabled || !draftState.runtime?.configured} onClick={() => void executeDraft()} className="mt-3 min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">{unpublishedExecutionButtonLabel}</button><button type="button" disabled={draftBusy} onClick={() => void revokeDraftApproval()} className="mt-2 min-h-12 w-full rounded-2xl border border-white/20 px-4 font-black disabled:opacity-40">Cancelar aprobación</button></div>}
             {executionCompleted && <div className="rounded-2xl border border-emerald-200/30 bg-emerald-200/[0.07] p-3 text-emerald-50"><strong>UNPUBLISHED verificado al crear {draftState.execution?.completed_at ? new Date(draftState.execution.completed_at).toLocaleString("es") : "en la ejecución registrada"}</strong><p className="mt-1 text-xs">Este estado describe la verificación realizada en ese momento; vuelve a consultar eBay antes de asumir que sigue igual.</p><p className="mt-1 break-all text-xs">Offer ID: {draftState.execution?.offer_id ?? "guardado"}</p></div>}
-            {!singleHumanPublicationEligible && executionCompleted && !draftState.publication && <div className="rounded-2xl border border-cyan-200/30 bg-cyan-200/[0.06] p-3"><strong>Preparar publicación desde Seller OS</strong><p className="mt-2 text-sm text-white/65">Seller OS revalidará cuenta, costo y stock de Luna, el conjunto canónico de imágenes aprobadas, policies y ubicación. Después mostrará el preview final; este paso todavía no publica.</p><button type="button" disabled={draftBusy || !draftState.execution?.id} onClick={() => void prepareFinalPublication()} className="mt-3 min-h-14 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">Preparar preview final no publicado</button></div>}
-            {!singleHumanPublicationEligible && publicationPhase === "preview_ready" && <div className="space-y-3 rounded-2xl border border-amber-200/35 bg-amber-200/[0.07] p-3"><div><p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Preview final persistido</p><h3 className="mt-1 font-black">{String(publicationProduct.title ?? "Título pendiente")}</h3><p className="mt-2 text-xs text-white/65">SKU: {String(publicationOffer.sku ?? draftState.publication?.sku ?? "")} · Category ID: {String(publicationOffer.categoryId ?? "")} · Cantidad: {String(publicationOffer.availableQuantity ?? "")}</p><p className="mt-1 text-sm font-black">Precio exacto: {String(publicationPrice.currency ?? "USD")} {String(publicationPrice.value ?? "")}</p><p className="mt-1 text-xs text-white/65">Imágenes aprobadas: {Array.isArray(publicationProduct.imageUrls) ? publicationProduct.imageUrls.length : 0} · Location: {String(publicationOffer.merchantLocationKey ?? "")}</p><p className="mt-1 break-all text-[10px] text-white/50">Policies: {String(publicationPolicies.fulfillmentPolicyId ?? "")} · {String(publicationPolicies.paymentPolicyId ?? "")} · {String(publicationPolicies.returnPolicyId ?? "")}</p><p className="mt-2 rounded-xl border border-white/10 p-2 text-xs text-white/60">Sin promociones, Best Offer ni volume pricing. Se publicará exactamente este Offer una sola vez.</p></div><label className="block"><span className="text-sm font-black">Escribe exactamente: {finalPublishPhrase}</span><input value={publishConfirmation} onChange={(event) => setPublishConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmFinalPublication} onChange={(event) => setConfirmFinalPublication(event.target.checked)} />Revisé este preview final, incluidas todas las imágenes canónicas aprobadas y el precio.</label><label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmPublishProductionAccount} onChange={(event) => setConfirmPublishProductionAccount(event.target.checked)} />Confirmo publicar en mi cuenta eBay PRODUCTION y registrar el listing ACTIVE en monitoreo.</label><button type="button" disabled={draftBusy || publishConfirmation !== finalPublishPhrase || !confirmFinalPublication || !confirmPublishProductionAccount} onClick={() => void publishFinalListing()} className="min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Publicar una sola vez en eBay</button></div>}
+            {canonicalReadinessAvailable && !singleHumanPublicationEligible && executionCompleted && !draftState.publication && <div className="rounded-2xl border border-cyan-200/30 bg-cyan-200/[0.06] p-3"><strong>Preparar publicación desde Seller OS</strong><p className="mt-2 text-sm text-white/65">Seller OS revalidará cuenta, costo y stock de Luna, el conjunto canónico de imágenes aprobadas, policies y ubicación. Después mostrará el preview final; este paso todavía no publica.</p><button type="button" disabled={draftBusy || !draftState.execution?.id} onClick={() => void prepareFinalPublication()} className="mt-3 min-h-14 w-full rounded-2xl bg-cyan-200 px-4 font-black text-black disabled:opacity-40">Preparar preview final no publicado</button></div>}
+            {canonicalReadinessAvailable && !singleHumanPublicationEligible && publicationPhase === "preview_ready" && <div className="space-y-3 rounded-2xl border border-amber-200/35 bg-amber-200/[0.07] p-3"><div><p className="text-xs font-black uppercase tracking-widest text-amber-100/70">Preview final persistido</p><h3 className="mt-1 font-black">{String(publicationProduct.title ?? "Título pendiente")}</h3><p className="mt-2 text-xs text-white/65">SKU: {String(publicationOffer.sku ?? draftState.publication?.sku ?? "")} · Category ID: {String(publicationOffer.categoryId ?? "")} · Cantidad: {String(publicationOffer.availableQuantity ?? "")}</p><p className="mt-1 text-sm font-black">Precio exacto: {String(publicationPrice.currency ?? "USD")} {String(publicationPrice.value ?? "")}</p><p className="mt-1 text-xs text-white/65">Imágenes aprobadas: {Array.isArray(publicationProduct.imageUrls) ? publicationProduct.imageUrls.length : 0} · Location: {String(publicationOffer.merchantLocationKey ?? "")}</p><p className="mt-1 break-all text-[10px] text-white/50">Policies: {String(publicationPolicies.fulfillmentPolicyId ?? "")} · {String(publicationPolicies.paymentPolicyId ?? "")} · {String(publicationPolicies.returnPolicyId ?? "")}</p><p className="mt-2 rounded-xl border border-white/10 p-2 text-xs text-white/60">Sin promociones, Best Offer ni volume pricing. Se publicará exactamente este Offer una sola vez.</p></div><label className="block"><span className="text-sm font-black">Escribe exactamente: {finalPublishPhrase}</span><input value={publishConfirmation} onChange={(event) => setPublishConfirmation(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-white/20 bg-black/30 px-3" /></label><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmFinalPublication} onChange={(event) => setConfirmFinalPublication(event.target.checked)} />Revisé este preview final, incluidas todas las imágenes canónicas aprobadas y el precio.</label><label className="flex gap-2 rounded-xl border border-rose-200/30 bg-rose-200/[0.07] p-3 text-sm"><input type="checkbox" checked={confirmPublishProductionAccount} onChange={(event) => setConfirmPublishProductionAccount(event.target.checked)} />Confirmo publicar en mi cuenta eBay PRODUCTION y registrar el listing ACTIVE en monitoreo.</label><button type="button" disabled={draftBusy || publishConfirmation !== finalPublishPhrase || !confirmFinalPublication || !confirmPublishProductionAccount} onClick={() => void publishFinalListing()} className="min-h-14 w-full rounded-2xl bg-rose-200 px-4 font-black text-black disabled:opacity-40">Publicar una sola vez en eBay</button></div>}
             {["publish_in_flight", "outcome_unknown", "published_pending_verification"].includes(publicationPhase) && <div className="rounded-2xl border border-amber-200/30 bg-amber-200/[0.07] p-3"><strong>{publicationPhase === "published_pending_verification" ? "Publicado; falta confirmar ACTIVE" : "Resultado de publicación en reconciliación"}</strong><p className="mt-2 text-sm text-white/65">Esta acción sólo consulta eBay y registra monitoreo. Nunca vuelve a llamar publishOffer.</p>{draftState.publication?.listing_id && <a href={`https://www.ebay.com/itm/${draftState.publication.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-sm font-black text-cyan-100 underline">Ver listing {draftState.publication.listing_id}</a>}<button type="button" disabled={draftBusy} onClick={() => void reconcileFinalListing()} className="mt-3 min-h-13 w-full rounded-2xl border border-amber-200/40 px-4 font-black disabled:opacity-40">Verificar ACTIVE y registrar monitoreo</button></div>}
             {publicationPhase === "monitor_registered" && <div className="rounded-2xl border border-emerald-200/35 bg-emerald-200/[0.08] p-3 text-emerald-50"><strong>Listing ACTIVE y ciclo cerrado</strong><p className="mt-2 text-sm">Item ID {draftState.publication?.listing_id} · monitoreo comercial y disponibilidad Luna registrados.</p><a href={`https://www.ebay.com/itm/${draftState.publication?.listing_id}`} target="_blank" rel="noreferrer" className="mt-2 inline-flex font-black underline">Abrir listing en eBay</a></div>}
             {publicationPhase === "terminal_failure" && <div className="rounded-2xl border border-rose-200/35 bg-rose-200/[0.08] p-3 text-rose-50"><strong>Publicación detenida sin reintento automático</strong><p className="mt-2 text-sm">{humanFinalPublicationError(new Error(draftState.publication?.last_error_code ?? "EBAY_FINAL_PUBLICATION_TERMINAL_FAILURE"))}</p><p className="mt-2 text-xs text-rose-50/70">No publiques manualmente hasta confirmar si eBay recibió la llamada; así se evita duplicar el listing.</p></div>}
@@ -5193,13 +5240,18 @@ function ListingWorkspacePageContent() {
           <section className="rounded-3xl border border-amber-200/20 bg-amber-200/[0.05] p-4">
             <div className="flex justify-between gap-3">
               <h2 className="font-black">Preparación del paquete</h2>
-              <strong>{!draftState.readiness
+              <strong data-canonical-readiness-load-state={canonicalReadinessLoadState}>{canonicalReadinessLoadState === "loading"
                 ? "CARGANDO"
+                : !canonicalReadinessAvailable
+                  ? canonicalReadinessLoadState === "not_applicable"
+                    ? "NO APLICA"
+                    : "ERROR · FAIL-CLOSED"
                 : listingReadyUi.listingReady
                   ? `${String(listingReadyUi.preparationPercent)}%`
                   : "BLOQUEADO"}</strong>
             </div>
-            {draftState.readiness && <p className={`mt-2 text-sm ${listingReadyUi.listingReady ? "text-emerald-100" : "text-amber-50"}`}>{listingReadyUi.listingReady
+            {canonicalReadinessLoadState === "error" && !canonicalReadinessAvailable && <div data-canonical-readiness-fail-closed role="alert" className="mt-2 rounded-2xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50"><strong>Readiness canónica no disponible</strong><p className="mt-1">La carga terminó en modo fail-closed. No se habilitan Guardar, Listo para revisión ni PUBLICAR EN EBAY.</p><code className="mt-2 block break-all text-xs">{canonicalReadinessLoadError || "EBAY_DRAFT_ONLY_READINESS_UNAVAILABLE"}</code></div>}
+            {canonicalReadinessAvailable && draftState.readiness && <p className={`mt-2 text-sm ${listingReadyUi.listingReady ? "text-emerald-100" : "text-amber-50"}`}>{listingReadyUi.listingReady
               ? "Sin bloqueos canónicos. LISTING_READY."
               : `${canonicalUiBlockers.length} bloqueo${canonicalUiBlockers.length === 1 ? "" : "s"} canónico${canonicalUiBlockers.length === 1 ? "" : "s"}; el detalle y su resolution_action aparecen una sola vez arriba.`}</p>}
             <p data-preparation-v3-source="CANONICAL_DRAFT_ONLY_READINESS" className="mt-3 text-xs leading-5 text-white/50">Preparation V3 usa exclusivamente la readiness canónica compartida por GET/POST. El estado de Inventory Item, Offer y publicación aparece arriba; esta tarjeta no ejecuta escrituras.</p>
@@ -5207,7 +5259,7 @@ function ListingWorkspacePageContent() {
         </>}
       </section>
 
-      {opportunity && listingPackage && !finalReviewCompleted && !listingReadyUi.listingReady && <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/15 bg-[#0b1018]/95 px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 backdrop-blur"><div className="mx-auto grid max-w-xl grid-cols-2 gap-2"><button disabled={busy} onClick={() => void save(false)} className="min-h-14 rounded-2xl border border-white/20 font-black disabled:opacity-50">{busy ? "Guardando…" : "Guardar"}</button><button disabled={busy || blockers.length > 0} onClick={() => void save(true)} className="min-h-14 rounded-2xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">Listo para revisión</button></div></div>}
+      {canonicalReadinessAvailable && opportunity && listingPackage && !finalReviewCompleted && !listingReadyUi.listingReady && <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/15 bg-[#0b1018]/95 px-4 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-3 backdrop-blur"><div className="mx-auto grid max-w-xl grid-cols-2 gap-2"><button disabled={busy} onClick={() => void save(false)} className="min-h-14 rounded-2xl border border-white/20 font-black disabled:opacity-50">{busy ? "Guardando…" : "Guardar"}</button><button disabled={busy || blockers.length > 0} onClick={() => void save(true)} className="min-h-14 rounded-2xl bg-emerald-200 px-3 font-black text-black disabled:opacity-40">Listo para revisión</button></div></div>}
     </main>
   )
 }
