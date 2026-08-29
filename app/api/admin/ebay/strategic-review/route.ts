@@ -62,6 +62,8 @@ export async function GET(req: Request) {
     scalePolicy: [27, 100, 1_000, 5_000].map(buildLargeVolumeAiPolicyV1),
     persistence: { findings: "PREVIEW_EPHEMERAL",
       activation: "PERSISTENCE_ACTIVATION_REQUIRES_AUTHORIZATION", remoteDdlExecuted: false },
+    safety: { operatorEbayLoginRequired: false, secretExposure: 0,
+      marketplaceWrites: 0, customerProductionUntouched: true },
   }, { headers: { "Cache-Control": "private, no-store",
     "X-Seller-OS-Strategic-Review": "READ_ONLY" } })
 }
