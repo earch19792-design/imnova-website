@@ -33,9 +33,9 @@ const operationLinks = [
   },
   {
     href: "/admin/ebay/listing-optimization",
-    title: "Optimizar publicación",
-    copy: "Convierte un informe de mercado y hechos verificados en título, descripción, instrucciones, puntuación e iteraciones auditables.",
-    cta: "Abrir ciclo de optimización →",
+    title: "Optimizar publicación · Command Center",
+    copy: "Cruza Current LIVE, Analytics, StockGuard, experimentos y calidad para priorizar mejoras con evidencia canónica.",
+    cta: "Abrir Command Center →",
   },
   {
     href: "/admin/ebay/listings/register",
