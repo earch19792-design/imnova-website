@@ -4,7 +4,7 @@ export const maxDuration = 40
 
 import { NextResponse } from "next/server"
 
-import { loadSellerOsAssistantMonitorV1 } from
+import { loadSellerOsAssistantMonitorSnapshotV1 } from
   "@/lib/ebay/ebay-seller-os-assistant-runtime"
 import { buildDailyStrategicBriefFallbackV1, buildDailyStrategicReviewScheduleContractV1,
   buildLargeVolumeAiPolicyV1, buildSystemReviewBundleV1,
@@ -39,7 +39,7 @@ async function authorize(req: Request) {
 }
 
 async function evidence() {
-  const monitor = await loadSellerOsAssistantMonitorV1()
+  const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
   const bundle = buildSystemReviewBundleV1({ monitor })
   return { monitor, bundle,
     deterministicBrief: buildDailyStrategicBriefFallbackV1({ bundle }) }
