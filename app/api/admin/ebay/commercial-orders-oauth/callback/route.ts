@@ -242,7 +242,10 @@ export async function GET(req: Request) {
     )
   }
   try {
-    await completeEbayCommercialOrdersAuthorization(supabase, input)
+    await completeEbayCommercialOrdersAuthorization(supabase, {
+      ...input,
+      requestHost: url.host,
+    })
     return redirect(req, "ready")
   } catch (error) {
     return redirect(req, "error", safeCode(error))

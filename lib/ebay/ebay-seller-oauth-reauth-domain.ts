@@ -740,9 +740,17 @@ function escapeHtml(value: string) {
 export function renderEbaySellerOAuthReauthSuccessHtml(
   refreshToken: string,
   scriptNonce: string,
+  destinationVariable:
+    | "EBAY_SELLER_REFRESH_TOKEN"
+    | "EBAY_COMMERCIAL_ORDERS_REFRESH_TOKEN" =
+      "EBAY_SELLER_REFRESH_TOKEN",
 ) {
   if (!boundedCredential(refreshToken, 8_192) ||
-      !/^[A-Za-z0-9_-]{24,64}$/.test(scriptNonce)) {
+      !/^[A-Za-z0-9_-]{24,64}$/.test(scriptNonce) ||
+      ![
+        "EBAY_SELLER_REFRESH_TOKEN",
+        "EBAY_COMMERCIAL_ORDERS_REFRESH_TOKEN",
+      ].includes(destinationVariable)) {
     throw new EbaySellerOAuthReauthError(
       "EBAY_SELLER_OAUTH_REAUTH_TOKEN_RESPONSE_INVALID",
     )
@@ -752,7 +760,7 @@ export function renderEbaySellerOAuthReauthSuccessHtml(
     "<title>eBay seller OAuth handoff</title></head><body>" +
     "<main><h1>Verified one-time seller refresh token handoff</h1>" +
     "<p>This OAuth state is already CLAIMED. Reload, Back, or replay cannot produce another handoff.</p>" +
-    "<p><strong>Credencial sensible · copiar directamente a Vercel y cerrar esta página.</strong></p>" +
+    `<p><strong>Credencial sensible · copiar directamente a Vercel como ${destinationVariable} y cerrar esta página.</strong></p>` +
     "<p>Do not copy it into chat, terminal, markdown, source, .env, issue, PR, or logs.</p>" +
     `<textarea id=\"refresh-token\" readonly autocomplete=\"off\" spellcheck=\"false\" rows=\"8\" cols=\"100\">${escapeHtml(refreshToken)}</textarea>` +
     "<p><button id=\"copy-token\" type=\"button\">Copiar token</button> " +

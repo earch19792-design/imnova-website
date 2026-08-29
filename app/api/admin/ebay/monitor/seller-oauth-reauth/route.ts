@@ -129,6 +129,30 @@ function commercialOrdersSuccessHtml() {
   return response
 }
 
+function commercialOrdersTokenSuccessHtml(refreshToken: string) {
+  const scriptNonce = randomBytes(18).toString("base64url")
+  const response = new NextResponse(
+    renderEbaySellerOAuthReauthSuccessHtml(
+      refreshToken,
+      scriptNonce,
+      "EBAY_COMMERCIAL_ORDERS_REFRESH_TOKEN",
+    ),
+    {
+      status: 200,
+      headers: {
+        ...ebaySellerOAuthReauthSuccessResponseHeaders(scriptNonce),
+        "Content-Type": "text/html; charset=utf-8",
+      },
+    },
+  )
+  response.cookies.set(
+    EBAY_SELLER_OAUTH_REAUTH_COOKIE,
+    "",
+    ebaySellerOAuthReauthCookieOptions(0),
+  )
+  return response
+}
+
 function runtimeAllowed(request: NextRequest) {
   return !getEbayProRuntimeBoundary({
     pathname: request.nextUrl.pathname,
@@ -613,6 +637,7 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   const callbackStartedAt = Date.now()
   let candidateRefreshToken = ""
+  let commercialOrdersRefreshToken = ""
   try {
     if (!runtimeAllowed(request)) {
       return callbackHtml("EBAY_SELLER_OAUTH_REAUTH_RUNTIME_DENIED", 403)
@@ -679,10 +704,19 @@ export async function GET(request: NextRequest) {
           400,
         )
       }
-      await completeEbayCommercialOrdersAuthorization(supabase, {
+      const completed = await completeEbayCommercialOrdersAuthorization(supabase, {
         state: callback.state,
         code: callback.code,
+        requestHost: request.nextUrl.host,
       })
+      if (completed.handoffMode === "ONE_TIME_OPERATOR") {
+        commercialOrdersRefreshToken = completed.refreshToken
+        const response = commercialOrdersTokenSuccessHtml(
+          commercialOrdersRefreshToken,
+        )
+        commercialOrdersRefreshToken = ""
+        return response
+      }
       return commercialOrdersSuccessHtml()
     }
     const result = await claimAndVerifyEbaySellerOAuthReauth({
@@ -715,5 +749,6 @@ export async function GET(request: NextRequest) {
     return callbackHtml(safeEbaySellerOAuthReauthError(cause), 400)
   } finally {
     candidateRefreshToken = ""
+    commercialOrdersRefreshToken = ""
   }
 }

@@ -11,6 +11,7 @@ import {
 
 import {
   EBAY_COMMERCIAL_ORDERS_BROWSER_START_PAGE_PATH,
+  type EbayCommercialOrdersScopeProfile,
   isValidEbayCommercialOAuthState,
 } from "./ebay-commercial-orders-oauth-domain"
 
@@ -33,7 +34,7 @@ type TicketPayload = {
   host: string
   deploymentHash: string
   actorHash: string
-  purpose: "COMMERCIAL_ORDERS_AND_BUYER_MESSAGE"
+  purpose: EbayCommercialOrdersScopeProfile
 }
 
 export class EbayCommercialOrdersBrowserCeremonyError extends Error {
@@ -97,6 +98,7 @@ export function createEbayCommercialOrdersBrowserStartTicket(input: {
   actorUserId: string
   clientSecret: string
   expectedAccountFingerprint: string
+  purpose?: EbayCommercialOrdersScopeProfile
 }) {
   if (!isValidEbayCommercialOAuthState(input.state) ||
       !UUID.test(input.handoffId) ||
@@ -117,7 +119,7 @@ export function createEbayCommercialOrdersBrowserStartTicket(input: {
     host: input.host,
     deploymentHash: identityHash("DEPLOYMENT", input.deploymentIdentity),
     actorHash: identityHash("ACTOR", input.actorUserId),
-    purpose: "COMMERCIAL_ORDERS_AND_BUYER_MESSAGE",
+    purpose: input.purpose ?? "COMMERCIAL_ORDERS_AND_BUYER_MESSAGE",
   }
   const nonce = randomBytes(12)
   const encryptionKey = key(input)
@@ -199,7 +201,10 @@ export function verifyEbayCommercialOrdersBrowserStartTicket(input: {
     const exactKeys = Object.keys(parsed).sort().join(",") ===
       "actorHash,deploymentHash,expiresAt,handoffId,host,purpose,state,v"
     if (!exactKeys || parsed.v !== TICKET_VERSION ||
-        parsed.purpose !== "COMMERCIAL_ORDERS_AND_BUYER_MESSAGE" ||
+        ![
+          "COMMERCIAL_ORDERS_AND_BUYER_MESSAGE",
+          "COMMERCIAL_ORDERS_READONLY",
+        ].includes(parsed.purpose) ||
         !isValidEbayCommercialOAuthState(parsed.state) ||
         !UUID.test(parsed.handoffId) ||
         !Number.isSafeInteger(parsed.expiresAt) ||

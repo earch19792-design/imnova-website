@@ -23,6 +23,7 @@ function safeCode(error: unknown) {
 }
 
 export async function POST(req: Request) {
+  const requestHost = new URL(req.url).host
   const validation = await validateAdminApiRequest(req)
   if (!validation.ok) {
     return NextResponse.json(
@@ -60,7 +61,7 @@ export async function POST(req: Request) {
       {
         publicKeyPem: input.publicKeyPem,
         actorUserId,
-        requestHost: new URL(req.url).host,
+        requestHost,
       },
     )
     return NextResponse.json(
@@ -71,7 +72,10 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: false,
       error: safeCode(error),
-      configuration: getEbayCommercialOrdersAuthorizationConfiguration(),
+      configuration: getEbayCommercialOrdersAuthorizationConfiguration(
+        process.env,
+        requestHost,
+      ),
     }, {
       status: 502,
       headers: { "Cache-Control": "no-store" },

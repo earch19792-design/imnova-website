@@ -13,11 +13,13 @@ import {
   buildEbayCommercialOrdersDiagnosticConsentUrl,
   createEbayCommercialOAuthState,
   EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES,
+  EBAY_COMMERCIAL_ORDERS_READONLY_SCOPES,
   encryptEbayCommercialRefreshToken,
   getEbayCommercialOrdersCallbackConfiguration,
   hashEbayCommercialOAuthState,
   isValidEbayCommercialAuthorizationCode,
   isValidEbayCommercialOAuthState,
+  type EbayCommercialOrdersScopeProfile,
   validateEbayCommercialOAuthPublicKey,
 } from "./ebay-commercial-orders-oauth-domain"
 import {
@@ -29,7 +31,9 @@ import {
 import {
   assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified,
   createEbaySellerOAuthReauthCookie,
+  EBAY_SELLER_OAUTH_REAUTH_CALLBACK_PATH,
   EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION,
+  EBAY_SELLER_OAUTH_REAUTH_PAGE_PATH,
   EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS,
   getEbaySellerOAuthReauthConfiguration,
   getEbaySellerOAuthReauthRuntimeCredentialMatch,
@@ -40,11 +44,15 @@ import type {
 } from "./ebay-seller-oauth-reauth-ledger"
 import { verifyEbayCommercialOfficialAccount } from "./ebay-commercial-readers"
 import { getEbayProductionIdentityBindingConfiguration } from "./ebay-seller-account-scope"
+import {
+  getEbayProRuntimeBoundary,
+  SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION,
+} from "./environment-boundaries"
 
 const TOKEN_ENDPOINT = "https://api.ebay.com/identity/v1/oauth2/token"
-// The eBay RuName is registered to the canonical Seller OS Preview callback.
-// The authorization ceremony must execute on that same branch and host so its
-// host-only state cookie returns to the boundary that performs code exchange.
+// The eBay RuName is registered to a certified Seller OS callback. Preview keeps
+// its historical exact host; dedicated preprod uses its canonical boundary host
+// so the host-only state cookie returns to the code-exchange boundary.
 const AUTHORIZED_PREVIEW_BRANCH =
   "feature/seller-os-canonical-integration-foundation-v1"
 const HANDOFF_TTL_MS = 30 * 60 * 1_000
@@ -223,43 +231,108 @@ export function getEbayCommercialOrdersAuthorizationAudit(
 
 export function getEbayCommercialOrdersAuthorizationConfiguration(
   environment: NodeJS.ProcessEnv = process.env,
+  requestHost?: string | null,
 ) {
   const credentials = getCredentials(environment)
-  const identity = getEbayProductionIdentityBindingConfiguration()
+  const identity = getEbayProductionIdentityBindingConfiguration(environment)
   const preview = environment.VERCEL_ENV === "preview"
   const authorizedBranch = environment.VERCEL_GIT_COMMIT_REF === AUTHORIZED_PREVIEW_BRANCH
+  const runtimeBoundary = getEbayProRuntimeBoundary({
+    vercelEnv: environment.VERCEL_ENV,
+    vercelTargetEnv: environment.VERCEL_TARGET_ENV,
+    vercelSystem: environment.VERCEL,
+    vercelProjectId: environment.VERCEL_PROJECT_ID,
+    vercelProjectProductionUrl: environment.VERCEL_PROJECT_PRODUCTION_URL,
+    nodeEnv: environment.NODE_ENV,
+    ebayProRuntime: environment.EBAY_PRO_RUNTIME,
+    supabaseUrl: environment.NEXT_PUBLIC_SUPABASE_URL,
+    pathname: EBAY_SELLER_OAUTH_REAUTH_PAGE_PATH,
+    method: "GET",
+  })
+  const dedicatedPreprod =
+    runtimeBoundary.boundaryClassification ===
+      SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION &&
+    runtimeBoundary.dedicatedPreprod.certified &&
+    runtimeBoundary.blocked === false
+  const sellerConfiguration = getEbaySellerOAuthReauthConfiguration({
+    environment,
+    requestHost,
+  })
+  const scopeProfile: EbayCommercialOrdersScopeProfile = dedicatedPreprod
+    ? "COMMERCIAL_ORDERS_READONLY"
+    : "COMMERCIAL_ORDERS_AND_BUYER_MESSAGE"
+  const scopes = dedicatedPreprod
+    ? [...EBAY_COMMERCIAL_ORDERS_READONLY_SCOPES]
+    : [...EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES]
+  const dedicatedHost = normalizedHost(
+    environment.VERCEL_PROJECT_PRODUCTION_URL ?? "",
+  )
+  const normalizedRequestHost = normalizedHost(requestHost ?? "")
+  const callback = dedicatedPreprod
+    ? {
+        canonicalPath: EBAY_SELLER_OAUTH_REAUTH_CALLBACK_PATH,
+        canonicalUrl: sellerConfiguration.callbackUrl,
+        legacyPath: "/api/admin/ebay/oauth/callback",
+        legacyCallbackBlocked: true as const,
+        deployedBranchHostStatus: dedicatedHost &&
+            normalizedRequestHost === dedicatedHost
+          ? "MATCH" as const
+          : "MISMATCH" as const,
+        secretsReturned: false as const,
+      }
+    : getEbayCommercialOrdersCallbackConfiguration(environment, requestHost)
   return {
     configured: Boolean(
-      preview && authorizedBranch && credentials.clientId &&
+      (dedicatedPreprod ? sellerConfiguration.ready : preview && authorizedBranch) &&
+      credentials.clientId &&
       credentials.clientSecret && credentials.runame && credentials.pairComplete &&
       identity.bound
     ),
     environment: "PRODUCTION" as const,
-    vercelTarget: preview ? "PREVIEW" as const : "BLOCKED" as const,
-    branch: authorizedBranch ? "AUTHORIZED" as const : "BLOCKED" as const,
+    vercelTarget: dedicatedPreprod
+      ? "DEDICATED_PREPROD" as const
+      : preview ? "PREVIEW" as const : "BLOCKED" as const,
+    branch: dedicatedPreprod
+      ? "NOT_REQUIRED" as const
+      : authorizedBranch ? "AUTHORIZED" as const : "BLOCKED" as const,
     clientId: credentials.clientId ? "PRESENT" as const : "MISSING" as const,
     clientSecret: credentials.clientSecret ? "PRESENT" as const : "MISSING" as const,
     runame: credentials.runame ? "PRESENT" as const : "MISSING" as const,
     identityBinding: identity.bound ? "READY" as const : "MISSING" as const,
-    scopes: [...EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES],
-    callback: getEbayCommercialOrdersCallbackConfiguration(environment),
+    scopeProfile,
+    scopes,
+    callback,
+    dedicatedPreprod,
     audit: getEbayCommercialOrdersAuthorizationAudit(environment),
     secretsReturned: false as const,
   }
 }
 
-function assertAuthorizationConfiguration(environment: NodeJS.ProcessEnv) {
-  const configuration = getEbayCommercialOrdersAuthorizationConfiguration(environment)
-  if (configuration.vercelTarget !== "PREVIEW") {
+function assertAuthorizationConfiguration(
+  environment: NodeJS.ProcessEnv,
+  requestHost?: string | null,
+) {
+  const configuration = getEbayCommercialOrdersAuthorizationConfiguration(
+    environment,
+    requestHost,
+  )
+  if (configuration.vercelTarget === "BLOCKED") {
     throw new Error("EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_PREVIEW_ONLY")
   }
-  if (configuration.branch !== "AUTHORIZED") {
+  if (configuration.vercelTarget === "PREVIEW" &&
+      configuration.branch !== "AUTHORIZED") {
     throw new Error("EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_BRANCH_BLOCKED")
   }
   if (!configuration.configured) {
     throw new Error("EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_NOT_CONFIGURED")
   }
-  return getCredentials(environment)
+  return {
+    ...getCredentials(environment),
+    scopeProfile: configuration.scopeProfile,
+    scopes: configuration.scopes,
+    callback: configuration.callback,
+    dedicatedPreprod: configuration.dedicatedPreprod,
+  }
 }
 
 function normalizedHost(value: string) {
@@ -271,7 +344,7 @@ function assertBrowserCeremonyBinding(
   requestHost: string,
   environment: NodeJS.ProcessEnv,
 ) {
-  const credentials = assertAuthorizationConfiguration(environment)
+  const credentials = assertAuthorizationConfiguration(environment, requestHost)
   const host = normalizedHost(requestHost)
   const deploymentIdentity = normalizedHost(environment.VERCEL_URL ?? "")
   if (!deploymentIdentity || !/^[a-z0-9.-]+$/.test(deploymentIdentity)) {
@@ -292,10 +365,7 @@ function assertBrowserCeremonyBinding(
   assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
     getEbaySellerOAuthReauthRuntimeCredentialMatch(sellerConfiguration),
   )
-  const callback = getEbayCommercialOrdersCallbackConfiguration(
-    environment,
-    host,
-  )
+  const callback = credentials.callback
   const sameCredentialBinding =
     credentials.clientId === sellerConfiguration.clientId &&
     credentials.clientSecret === sellerConfiguration.clientSecret &&
@@ -315,6 +385,8 @@ function assertBrowserCeremonyBinding(
     host,
     deploymentIdentity,
     callback,
+    scopeProfile: credentials.scopeProfile,
+    scopes: credentials.scopes,
   }
 }
 
@@ -427,6 +499,7 @@ export async function startEbayCommercialOrdersAuthorization(
       clientId: credentials.clientId,
       runame: credentials.runame,
       state,
+      scopeProfile: credentials.scopeProfile,
     }),
     handoffId: String(data.id),
     expiresAt,
@@ -485,6 +558,7 @@ export async function startEbayCommercialOrdersBrowserAuthorization(
     clientSecret: binding.sellerConfiguration.clientSecret,
     expectedAccountFingerprint:
       binding.sellerConfiguration.expectedAccountFingerprint,
+    purpose: binding.scopeProfile,
   })
   return {
     startUrl: buildEbayCommercialOrdersBrowserStartUrl({
@@ -507,7 +581,8 @@ export async function startEbayCommercialOrdersBrowserAuthorization(
       deploymentBound: true as const,
       stateCookieIssued: false as const,
       runameResolvesToExpectedCallback: true as const,
-      requestedScopes: [...EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES],
+      scopeProfile: binding.scopeProfile,
+      requestedScopes: binding.scopes,
       rawAuthorizationUrlReturned: false as const,
       secretsReturned: false as const,
     },
@@ -536,6 +611,11 @@ export async function activateEbayCommercialOrdersBrowserAuthorization(
     expectedAccountFingerprint:
       binding.sellerConfiguration.expectedAccountFingerprint,
   })
+  if (ticket.purpose !== binding.scopeProfile) {
+    throw new Error(
+      "EBAY_COMMERCIAL_ORDERS_BROWSER_START_SCOPE_PROFILE_MISMATCH",
+    )
+  }
   const { data: handoff, error } = await supabase
     .from("ebay_commercial_oauth_handoffs")
     .select("id,state_hash,status,expires_at")
@@ -575,11 +655,12 @@ export async function activateEbayCommercialOrdersBrowserAuthorization(
     clientId: binding.credentials.clientId,
     runame: binding.credentials.runame,
     state: ticket.state,
+    scopeProfile: binding.scopeProfile,
   })
   const parsedAuthorization = new URL(authorizationUrl)
   const exactScopeContract =
     parsedAuthorization.searchParams.get("scope") ===
-      EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES.join(" ")
+      binding.scopes.join(" ")
   if (!exactScopeContract) {
     throw new Error("EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPE_CONTRACT_INVALID")
   }
@@ -611,7 +692,8 @@ export async function activateEbayCommercialOrdersBrowserAuthorization(
       stateHashPersisted: true as const,
       rawStatePersisted: false as const,
       runameResolvesToExpectedCallback: true as const,
-      requestedScopes: [...EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES],
+      scopeProfile: binding.scopeProfile,
+      requestedScopes: binding.scopes,
       exactScopeContract: true as const,
       secretsReturned: false as const,
     },
@@ -711,11 +793,14 @@ async function failHandoff(
 
 export async function completeEbayCommercialOrdersAuthorization(
   supabase: SupabaseClient,
-  input: { state: string; code: string },
+  input: { state: string; code: string; requestHost?: string | null },
   fetchImpl: FetchLike = fetch,
   environment: NodeJS.ProcessEnv = process.env,
 ) {
-  const credentials = assertAuthorizationConfiguration(environment)
+  const credentials = assertAuthorizationConfiguration(
+    environment,
+    input.requestHost,
+  )
   if (
     !isValidEbayCommercialOAuthState(input.state) ||
     !isValidEbayCommercialAuthorizationCode(input.code)
@@ -757,7 +842,7 @@ export async function completeEbayCommercialOrdersAuthorization(
       body: new URLSearchParams({
         grant_type: "refresh_token",
         refresh_token: refreshToken,
-        scope: EBAY_COMMERCIAL_ORDERS_OAUTH_SCOPES.join(" "),
+        scope: credentials.scopes.join(" "),
       }),
       fetchImpl,
     })
@@ -765,6 +850,36 @@ export async function completeEbayCommercialOrdersAuthorization(
     if (!accessToken) throw authorizationError("MALFORMED_REQUEST")
 
     await verifyEbayCommercialOfficialAccount(accessToken, fetchImpl)
+    if (credentials.scopeProfile === "COMMERCIAL_ORDERS_READONLY") {
+      const consumedAt = new Date().toISOString()
+      const { error: consumedError } = await supabase
+        .from("ebay_commercial_oauth_handoffs")
+        .update({
+          encrypted_refresh_token: null,
+          status: "consumed",
+          identity_match: true,
+          fulfillment_scope_confirmed: true,
+          error_code: null,
+          ready_at: consumedAt,
+          consumed_at: consumedAt,
+          updated_at: consumedAt,
+        })
+        .eq("id", handoffId)
+        .eq("status", "claimed")
+      if (consumedError) {
+        throw new Error("EBAY_COMMERCIAL_ORDERS_AUTHORIZATION_HANDOFF_FAILED")
+      }
+      return {
+        status: "CONSUMED" as const,
+        handoffMode: "ONE_TIME_OPERATOR" as const,
+        refreshToken,
+        identityMatch: true as const,
+        fulfillmentScopeConfirmed: true as const,
+        commerceMessageScopeConfirmed: false as const,
+        tokenPersisted: false as const,
+        secretsReturned: false as const,
+      }
+    }
     const encryptedRefreshToken = encryptEbayCommercialRefreshToken(
       refreshToken,
       String(handoff.public_key_pem),
@@ -788,9 +903,11 @@ export async function completeEbayCommercialOrdersAuthorization(
     }
     return {
       status: "READY" as const,
+      handoffMode: "ENCRYPTED_OPERATOR" as const,
       identityMatch: true as const,
       fulfillmentScopeConfirmed: true as const,
       commerceMessageScopeConfirmed: true as const,
+      tokenPersisted: true as const,
       secretsReturned: false as const,
     }
   } catch (error) {
