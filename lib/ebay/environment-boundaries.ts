@@ -327,6 +327,26 @@ export function getEbayProRuntimeBoundary(input: EbayProBoundaryInput = {}) {
   }
 }
 
+export function getSellerOsStockGuardRuntimeBoundary(
+  input: EbayProBoundaryInput = {},
+) {
+  const runtime = runtimeState(input)
+  const historicalPreviewAllowed = runtime.vercelEnv === "preview"
+  const dedicatedPreprodAllowed =
+    runtime.boundaryClassification ===
+      SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION &&
+    runtime.dedicatedPreprod.certified &&
+    !runtime.isProductionRuntime
+
+  return {
+    boundaryClassification: runtime.boundaryClassification,
+    historicalPreviewAllowed,
+    dedicatedPreprodAllowed,
+    authorized: historicalPreviewAllowed || dedicatedPreprodAllowed,
+    failedDedicatedPreprodSignal: runtime.dedicatedPreprod.failedSignal,
+  }
+}
+
 export function isEbayProAllowed(input: EbayProBoundaryInput = {}) {
   return getEbayProRuntimeBoundary(input).ebayProAllowed
 }

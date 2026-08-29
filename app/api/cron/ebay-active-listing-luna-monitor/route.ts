@@ -34,6 +34,8 @@ import {
   SELLER_OS_LIVE_INVARIANT_END_AUTHORIZATION_V1,
 } from "@/lib/ebay/ebay-commercial-improvement-action-service"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
+import { getSellerOsStockGuardRuntimeBoundary } from
+  "@/lib/ebay/environment-boundaries"
 
 const BULK_END_UNLINKED_LIVE_TARGETS_V1 = Object.freeze([
   "366608128809",
@@ -98,17 +100,22 @@ export async function GET(req: Request) {
     return NextResponse.json({ success: false, error: "CRON_UNAUTHORIZED" }, { status: 401 })
   }
   const config = configuration()
+  const runtimeBoundary = getSellerOsStockGuardRuntimeBoundary()
+  const authorizedStockGuardRuntime = runtimeBoundary.authorized
   const refreshOnly = new URL(req.url).searchParams.get("refreshOnly") ===
     "true"
   const activation = Object.freeze({
     contractVersion: "ACTIVATE_LUNA_STOCKGUARD_PRODUCTION_POLLING_V1",
     schedulerRequested: config.enabled,
     previewSchedulerEnabled:
-      process.env.VERCEL_ENV === "preview" && config.enabled,
+      runtimeBoundary.historicalPreviewAllowed && config.enabled,
+    dedicatedPreprodSchedulerEnabled:
+      runtimeBoundary.dedicatedPreprodAllowed && config.enabled,
     productionSchedulerEnabled:
-      process.env.VERCEL_ENV === "preview" && config.enabled,
+      authorizedStockGuardRuntime && config.enabled,
+    boundaryClassification: runtimeBoundary.boundaryClassification,
     scheduler: Object.freeze({
-      status: process.env.VERCEL_ENV === "preview" && config.enabled
+      status: authorizedStockGuardRuntime && config.enabled
         ? "ENABLED" as const : "DISABLED" as const,
       intervalSeconds: LUNA_PRODUCTION_POLL_INTERVAL_SECONDS,
       maximumAttempts: 3 as const,
@@ -118,14 +125,15 @@ export async function GET(req: Request) {
       oneEffectiveActiveWorkerPerLogicalWindow: true as const,
     }),
   })
-  if (process.env.VERCEL_ENV !== "preview" || !config.enabled) {
+  if (!authorizedStockGuardRuntime || !config.enabled) {
     return NextResponse.json({
       success: true,
       status: "disabled",
       configuration: config,
       activation,
       safety: {
-        previewOnly: true,
+        previewOnly: runtimeBoundary.historicalPreviewAllowed,
+        dedicatedPreprod: runtimeBoundary.dedicatedPreprodAllowed,
         productionSchedulerEnabled: false,
         authenticatedLunaReads: 0,
         ebayApiWrites: 0,
@@ -214,7 +222,9 @@ export async function GET(req: Request) {
       metrics: {
         stage: "TARGETED_ACTIVE_LISTING_LUNA_MONITOR",
         accountKey,
-        previewOnly: true,
+        previewOnly: runtimeBoundary.historicalPreviewAllowed,
+        dedicatedPreprod: runtimeBoundary.dedicatedPreprodAllowed,
+        boundaryClassification: runtimeBoundary.boundaryClassification,
       },
     })
     runId = run.id
