@@ -69,6 +69,17 @@ function digest(value: string) {
   return createHash("sha256").update(value, "utf8").digest("hex")
 }
 
+export function sellerOsLunaOwnerHandoffSameInstantV1(
+  left: unknown,
+  right: unknown,
+) {
+  if (typeof left !== "string" || typeof right !== "string") return false
+  const leftTime = Date.parse(left)
+  const rightTime = Date.parse(right)
+  return Number.isFinite(leftTime) && Number.isFinite(rightTime) &&
+    leftTime === rightTime
+}
+
 export function isSellerOsLunaOwnerHandoffRuntimeV1(
   pathname: string = SELLER_OS_LUNA_OWNER_HANDOFF_PATH,
   method: string = "POST",
@@ -247,17 +258,13 @@ export async function consumeSellerOsLunaOwnerHandoffV1(input: Readonly<{
     p_environment_binding: SELLER_OS_LUNA_OWNER_HANDOFF_ENVIRONMENT,
     p_now: new Date(at).toISOString(),
   })
-  const claimed = data && typeof data === "object" && !Array.isArray(data)
-    ? data as Record<string, unknown> : null
-  if (error || !claimed || typeof claimed.actorUserId !== "string" ||
-      !UUID.test(claimed.actorUserId) ||
-      typeof claimed.privateKeyPem !== "string" ||
-      !claimed.privateKeyPem.startsWith("-----BEGIN PRIVATE KEY-----") ||
-      claimed.environmentBinding !== SELLER_OS_LUNA_OWNER_HANDOFF_ENVIRONMENT ||
-      claimed.expiresAt !== envelope.expiresAt) {
+  if (error) fail("LUNA_OWNER_HANDOFF_CLAIM_UNAVAILABLE")
+  if (data === null || data === undefined) {
     fail("LUNA_OWNER_HANDOFF_REPLAY_OR_EXPIRED")
   }
-  let privateKeyPem: string | null = claimed.privateKeyPem
+  const claimed = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown> : null
+  let privateKeyPem: string | null = null
 
   let wrappedKey: Buffer | null = null
   let iv: Buffer | null = null
@@ -267,6 +274,22 @@ export async function consumeSellerOsLunaOwnerHandoffV1(input: Readonly<{
   let plaintext: Buffer | null = null
   let resultCode = "LUNA_OWNER_HANDOFF_FAILED_CLOSED"
   try {
+    if (!claimed || typeof claimed.actorUserId !== "string" ||
+        !UUID.test(claimed.actorUserId) ||
+        typeof claimed.privateKeyPem !== "string" ||
+        !claimed.privateKeyPem.startsWith("-----BEGIN PRIVATE KEY-----") ||
+        claimed.environmentBinding !==
+          SELLER_OS_LUNA_OWNER_HANDOFF_ENVIRONMENT ||
+        typeof claimed.expiresAt !== "string") {
+      fail("LUNA_OWNER_HANDOFF_POST_CLAIM_VALIDATION_FAILED")
+    }
+    if (!sellerOsLunaOwnerHandoffSameInstantV1(
+      claimed.expiresAt,
+      envelope.expiresAt,
+    )) {
+      fail("LUNA_OWNER_HANDOFF_POST_CLAIM_EXPIRY_MISMATCH")
+    }
+    privateKeyPem = claimed.privateKeyPem
     wrappedKey = decoded(envelope.wrappedKey, 512, 512)
     iv = decoded(envelope.iv, 12, 12)
     authTag = decoded(envelope.authTag, 16, 16)
@@ -342,14 +365,19 @@ export async function consumeSellerOsLunaOwnerHandoffV1(input: Readonly<{
   } catch (cause) {
     resultCode = cause instanceof Error && /^[A-Z0-9_]{3,160}$/.test(cause.message)
       ? cause.message : "LUNA_OWNER_HANDOFF_FAILED_CLOSED"
+    let failureLedgerClosed = false
     try {
-      await rpc.rpc(COMPLETE_RPC, {
+      const completed = await rpc.rpc(COMPLETE_RPC, {
         p_id: envelope.challengeId,
         p_success: false,
         p_result_code: resultCode,
         p_now: new Date(at).toISOString(),
       })
-    } catch { /* challenge remains consumed and fails closed */ }
+      failureLedgerClosed = !completed.error && completed.data === true
+    } catch { /* evaluated below */ }
+    if (!failureLedgerClosed) {
+      fail("LUNA_OWNER_HANDOFF_FAILURE_LEDGER_FAILED")
+    }
     throw cause
   } finally {
     wrappedKey?.fill(0)
