@@ -254,16 +254,21 @@ async function activeVisualVariantCount(input: {
   accountKey: string
   ebayItemId: string
 }) {
-  const { count, error } = await input.supabase.from("ebay_listing_image_assets")
-    .select("id", { count: "exact", head: true })
-    .eq("account_key", input.accountKey)
-    .in("status", ["pending_review", "approved"])
-    .contains("transformation", { sellerOsVisualVariant: {
-      contractVersion: SELLER_OS_VISUAL_VARIANT_VERSION,
-      ebayItemId: input.ebayItemId,
-    } })
+  const { data, error } = await input.supabase
+    .from("ebay_listing_experiments_v1")
+    .select("baseline_evidence_ref,lifecycle_status")
+    .eq("account_key", input.accountKey).eq("marketplace", "EBAY_US")
+    .eq("ebay_item_id", input.ebayItemId)
+    .in("lifecycle_status", ["DRAFT", "READY"])
   if (error) throw new Error("VISUAL_VARIANT_ACTIVE_COUNT_FAILED")
-  return count ?? 0
+  return (data ?? []).reduce((sum, row) => {
+    const visual = record(record(row.baseline_evidence_ref)
+      .sellerOsVisualVariant)
+    if (visual.contractVersion !== SELLER_OS_VISUAL_VARIANT_VERSION) return sum
+    const variants = Array.isArray(visual.variants) ? visual.variants : []
+    return sum + variants.filter((variant) =>
+      record(variant).status !== "DISCARDED").length
+  }, 0)
 }
 
 async function dailyVisualCallCount(input: {
@@ -351,7 +356,6 @@ export async function createSellerOsVisualVariantsV1(input: {
   }
   const linkage = await latestExactLinkage({ supabase: input.supabase,
     accountKey: input.accountKey, ebayItemId: input.ebayItemId })
-  const createdBy = input.actorId || text(linkage.actor_user_id)
   const activeCount = await activeVisualVariantCount({ supabase: input.supabase,
     accountKey: input.accountKey, ebayItemId: input.ebayItemId })
   if (activeCount + variantCount > MAX_ACTIVE_VARIANTS_PER_LISTING) {
@@ -388,6 +392,7 @@ export async function createSellerOsVisualVariantsV1(input: {
     findingCode: input.findingCode, sourceHash, productTruthFingerprint,
     variantCount, model })
   const variants: JsonRecord[] = []
+  const uploadedPaths: string[] = []
   let totalCost = 0
   try {
     for (let index = 0; index < variantCount; index += 1) {
@@ -416,71 +421,66 @@ export async function createSellerOsVisualVariantsV1(input: {
         .upload(storagePath, composition.output, { contentType: "image/png",
           cacheControl: "0", upsert: false })
       if (upload.error) throw new Error("VISUAL_VARIANT_PRIVATE_UPLOAD_FAILED")
-      const transformation = { sellerOsVisualVariant: {
-        contractVersion: SELLER_OS_VISUAL_VARIANT_VERSION,
-        ebayItemId: input.ebayItemId, experimentId, variantLabel: label,
-        requestHash, findingCode: finding.findingCode,
-        observation: finding.observation, objective: finding.objective,
-        hypothesis: finding.hypothesis,
-        productTruthFingerprint, protectedLayerSha256:
-          composition.protectedLayerSha256,
-        productTruthPreserved: true,
-        sourceImageFullResolutionCertified: true,
-        sourceResolution: listing.sourceResolution,
-        promptHash: provider.promptHash,
-        providerRequestId: provider.providerRequestId,
-        productFrame: composition.productFrame,
-        protectedAttributes: composition.protectedAttributes,
-        transformation: composition.transformation,
-        backgroundQa,
-        estimatedOrAuthoritativeCostUsd:
-          provider.estimatedOrAuthoritativeCostUsd,
-        costBasis: provider.costBasis,
-      } }
-      const qaResult = { productTruthPreserved: true, variantRejected: false,
-        experimentReady: true, backgroundQa,
-        protectedLayerRoundtripExact: true }
-      const inserted = await input.supabase.from("ebay_listing_image_assets")
-        .insert({ account_key: input.accountKey, created_by: createdBy,
-          opportunity_id: null, listing_package_id: null,
-          candidate_key: `seller-os-current-live:${input.ebayItemId}`,
-          asset_role: "main", status: "pending_review",
-          source_kind: "authorized_url", source_url: listing.heroImageUrl,
-          source_storage_path: null, output_storage_path: storagePath,
-          published_storage_path: null, public_url: null,
-          source_sha256: sourceHash, output_sha256: outputHash,
-          source_width: composition.sourceWidth,
-          source_height: composition.sourceHeight,
-          output_width: composition.outputWidth,
-          output_height: composition.outputHeight,
-          output_bytes: composition.output.length, rights_basis: "owned",
-          authorization_reference: `CURRENT_LIVE:${input.ebayItemId}`,
-          rights_evidence_confirmed: true,
-          transformation_version: SELLER_OS_VISUAL_VARIANT_VERSION,
-          transformation, qa_result: qaResult, position: index })
-        .select("id,output_sha256,created_at").single()
-      if (inserted.error || !inserted.data) {
-        await input.supabase.storage.from(EBAY_IMAGE_STAGING_BUCKET)
-          .remove([storagePath])
-        throw new Error("VISUAL_VARIANT_ASSET_PERSIST_FAILED")
-      }
+      uploadedPaths.push(storagePath)
       totalCost += provider.estimatedOrAuthoritativeCostUsd
       await persistBudgetUsage({ supabase: input.supabase,
         accountKey: input.accountKey, model, requestHash: sha256Tagged({
           requestHash, variantLabel: label }), experimentId,
         cost: provider.estimatedOrAuthoritativeCostUsd, status: "COMPLETED",
         startedAt, completedAt: new Date().toISOString(), usage: provider.usage })
-      variants.push({ assetId: inserted.data.id, variantLabel: label,
-        outputSha256: inserted.data.output_sha256,
+      variants.push({ assetId: randomUUID(), variantLabel: label,
+        outputStoragePath: storagePath, outputSha256: outputHash,
         status: "EXPERIMENT_READY", productTruthPreserved: true,
         variantRejected: false, sourceImageFullResolutionCertified: true,
+        promptHash: provider.promptHash,
+        providerRequestId: provider.providerRequestId,
+        protectedLayerSha256: composition.protectedLayerSha256,
+        protectedAttributes: composition.protectedAttributes,
+        productFrame: composition.productFrame,
+        transformation: composition.transformation,
+        backgroundQa, protectedLayerRoundtripExact: true,
         estimatedOrAuthoritativeCostUsd:
           provider.estimatedOrAuthoritativeCostUsd,
         costBasis: provider.costBasis })
       composition.output.fill(0)
       composition.protectedLayer.fill(0)
     }
+    const inserted = await input.supabase.from("ebay_listing_experiments_v1")
+      .insert({ experiment_id: experimentId, account_key: input.accountKey,
+        marketplace: "EBAY_US", ebay_item_id: input.ebayItemId,
+        ebay_sku: text(linkage.luna_sku), hypothesis: finding.hypothesis,
+        diagnosis_class: "CTR", experiment_type: "HERO_VISUAL_VARIANT",
+        variable_changed: "MAIN_IMAGE", changed_at: startedAt,
+        baseline_evidence_ref: { sellerOsVisualVariant: {
+          contractVersion: SELLER_OS_VISUAL_VARIANT_VERSION,
+          ebayItemId: input.ebayItemId, experimentId, requestHash,
+          findingCode: finding.findingCode, observation: finding.observation,
+          objective: finding.objective, hypothesis: finding.hypothesis,
+          proposedExperiment: finding.proposedExperiment,
+          sourceImageUrl: listing.heroImageUrl, sourceHash,
+          sourceResolution: listing.sourceResolution,
+          productTruthFingerprint, lunaProductId: linkage.luna_product_id,
+          lunaVariantId: linkage.luna_variant_id,
+          lunaSku: linkage.luna_sku, variants,
+          selectedVariantId: null, operatorEbayLoginRequired: false,
+          ownerApprovalRequired: false, ebayListingEdits: 0,
+          marketplaceWrites: 0 } }, lifecycle_status: "DRAFT",
+        frozen_variables: ["PRODUCT_IDENTITY", "COLOR", "GEOMETRY",
+          "COMPONENT_COUNT", "ACCESSORIES", "REAL_LOGOS_AND_TEXT"],
+        minimum_observation_duration_hours: 0,
+        minimum_evidence_metric: "LISTING_VIEWS", minimum_evidence_value: 0,
+        current_evidence_value: null,
+        next_review_condition: "OPERATOR_SELECTS_VISUAL_VARIANT",
+        next_review_at: null, outcome: null, learning_reference: null })
+      .select("experiment_id,created_at").single()
+    if (inserted.error || !inserted.data) {
+      throw new Error("VISUAL_VARIANT_EXPERIMENT_PERSIST_FAILED")
+    }
   } catch (error) {
+    if (uploadedPaths.length) {
+      await input.supabase.storage.from(EBAY_IMAGE_STAGING_BUCKET)
+        .remove(uploadedPaths).catch(() => undefined)
+    }
     await persistBudgetUsage({ supabase: input.supabase,
       accountKey: input.accountKey, model,
       requestHash: sha256Tagged({ requestHash, failed: variants.length }),
@@ -514,38 +514,52 @@ export async function loadSellerOsVisualVariantsV1(input: {
   supabase: SupabaseClient
   accountKey: string
 }) {
-  const { data, error } = await input.supabase.from("ebay_listing_image_assets")
-    .select("id,status,output_storage_path,output_sha256,transformation,qa_result,created_at,rejected_at")
-    .eq("account_key", input.accountKey)
-    .eq("transformation_version", SELLER_OS_VISUAL_VARIANT_VERSION)
+  const { data, error } = await input.supabase
+    .from("ebay_listing_experiments_v1")
+    .select("experiment_id,ebay_item_id,lifecycle_status,baseline_evidence_ref,created_at,updated_at")
+    .eq("account_key", input.accountKey).eq("marketplace", "EBAY_US")
+    .in("lifecycle_status", ["DRAFT", "READY"])
     .order("created_at", { ascending: false }).limit(80)
   if (error) throw new Error("VISUAL_VARIANT_READ_FAILED")
-  const variants = await Promise.all((data ?? []).map(async (asset) => {
-    const transformation = record(record(asset.transformation)
+  const variants = (await Promise.all((data ?? []).flatMap((experiment) => {
+    const visual = record(record(experiment.baseline_evidence_ref)
       .sellerOsVisualVariant)
-    const preview = asset.status === "pending_review"
-      ? await input.supabase.storage.from(EBAY_IMAGE_STAGING_BUCKET)
-        .createSignedUrl(asset.output_storage_path, 300)
-      : { data: null }
-    return { assetId: asset.id, status: asset.status,
-      listingId: text(transformation.ebayItemId),
-      experimentId: text(transformation.experimentId),
-      variantLabel: text(transformation.variantLabel),
-      observation: text(transformation.observation),
-      objective: text(transformation.objective),
-      hypothesis: text(transformation.hypothesis),
-      productTruthPreserved: transformation.productTruthPreserved === true,
-      sourceImageFullResolutionCertified:
-        transformation.sourceImageFullResolutionCertified === true,
-      estimatedOrAuthoritativeCostUsd:
-        Number(transformation.estimatedOrAuthoritativeCostUsd ?? 0),
-      previewUrl: preview.data?.signedUrl ?? null,
-      outputSha256: asset.output_sha256, qa: asset.qa_result,
-      createdAt: asset.created_at, rejectedAt: asset.rejected_at }
-  }))
+    if (visual.contractVersion !== SELLER_OS_VISUAL_VARIANT_VERSION) return []
+    const rows = Array.isArray(visual.variants) ? visual.variants : []
+    return rows.map(async (value) => {
+      const variant = record(value)
+      const status = text(variant.status)
+      const storagePath = text(variant.outputStoragePath, 2_000)
+      const preview = status !== "DISCARDED" && storagePath
+        ? await input.supabase.storage.from(EBAY_IMAGE_STAGING_BUCKET)
+          .createSignedUrl(storagePath, 300)
+        : { data: null }
+      return { assetId: text(variant.assetId), status,
+        listingId: experiment.ebay_item_id,
+        experimentId: experiment.experiment_id,
+        experimentLifecycleStatus: experiment.lifecycle_status,
+        variantLabel: text(variant.variantLabel),
+        observation: text(visual.observation), objective: text(visual.objective),
+        hypothesis: text(visual.hypothesis),
+        productTruthPreserved: variant.productTruthPreserved === true,
+        sourceImageFullResolutionCertified:
+          variant.sourceImageFullResolutionCertified === true,
+        estimatedOrAuthoritativeCostUsd:
+          Number(variant.estimatedOrAuthoritativeCostUsd ?? 0),
+        previewUrl: preview.data?.signedUrl ?? null,
+        outputSha256: text(variant.outputSha256), qa: {
+          productTruthPreserved: variant.productTruthPreserved === true,
+          variantRejected: variant.variantRejected === true,
+          backgroundQa: variant.backgroundQa,
+          protectedLayerRoundtripExact:
+            variant.protectedLayerRoundtripExact === true },
+        createdAt: experiment.created_at,
+        rejectedAt: status === "DISCARDED" ? experiment.updated_at : null }
+    })
+  }))).filter((variant) => variant.status !== "DISCARDED")
   return { contractVersion: SELLER_OS_VISUAL_VARIANT_VERSION,
     variants, activeVariantCount: variants.filter((row) =>
-      row.status === "pending_review").length,
+      row.status === "EXPERIMENT_READY").length,
     maxVariantsPerRequest: MAX_VARIANTS_PER_REQUEST,
     maxActiveVariantsPerListing: MAX_ACTIVE_VARIANTS_PER_LISTING,
     actions: ["COMPARE", "USE_IN_EXPERIMENT", "DISCARD"] as const,
@@ -558,37 +572,51 @@ export async function updateSellerOsVisualVariantV1(input: {
   assetId: string
   action: "USE_IN_EXPERIMENT" | "DISCARD"
 }) {
-  const { data, error } = await input.supabase.from("ebay_listing_image_assets")
-    .select("id,status,transformation,qa_result")
-    .eq("id", input.assetId).eq("account_key", input.accountKey)
-    .eq("transformation_version", SELLER_OS_VISUAL_VARIANT_VERSION)
-    .maybeSingle()
-  if (error || !data || data.status !== "pending_review") {
+  const { data, error } = await input.supabase
+    .from("ebay_listing_experiments_v1")
+    .select("experiment_id,lifecycle_status,baseline_evidence_ref")
+    .eq("account_key", input.accountKey).eq("marketplace", "EBAY_US")
+    .in("lifecycle_status", ["DRAFT", "READY"]).limit(80)
+  if (error) throw new Error("VISUAL_VARIANT_NOT_ACTIONABLE")
+  const match = (data ?? []).map((experiment) => {
+    const baseline = record(experiment.baseline_evidence_ref)
+    const visual = record(baseline.sellerOsVisualVariant)
+    const variants = Array.isArray(visual.variants)
+      ? visual.variants.map(record) : []
+    const index = variants.findIndex((variant) =>
+      variant.assetId === input.assetId && variant.status !== "DISCARDED")
+    return { experiment, baseline, visual, variants, index }
+  }).find((candidate) => candidate.index >= 0)
+  if (!match || match.visual.contractVersion !==
+      SELLER_OS_VISUAL_VARIANT_VERSION) {
     throw new Error("VISUAL_VARIANT_NOT_ACTIONABLE")
   }
-  const transformation = record(record(data.transformation)
-    .sellerOsVisualVariant)
-  if (input.action === "DISCARD") {
-    const updated = await input.supabase.from("ebay_listing_image_assets")
-      .update({ status: "rejected", rejected_at: new Date().toISOString() })
-      .eq("id", input.assetId).eq("account_key", input.accountKey)
-      .eq("status", "pending_review").select("id,status").single()
-    if (updated.error || !updated.data) throw new Error("VISUAL_VARIANT_DISCARD_FAILED")
-    return { assetId: input.assetId, status: "DISCARDED",
-      experimentId: text(transformation.experimentId), ebayListingEdits: 0,
-      marketplaceWrites: 0 }
-  }
-  const qa = { ...record(data.qa_result), experimentReady: true,
-    selectedForExperiment: true, selectedAt: new Date().toISOString() }
-  const updated = await input.supabase.from("ebay_listing_image_assets")
-    .update({ qa_result: qa }).eq("id", input.assetId)
-    .eq("account_key", input.accountKey).eq("status", "pending_review")
-    .select("id,status").single()
+  const now = new Date().toISOString()
+  const variants = match.variants.map((variant, index) => index !== match.index
+    ? variant : input.action === "DISCARD"
+      ? { ...variant, status: "DISCARDED", discardedAt: now }
+      : { ...variant, selectedForExperiment: true, selectedAt: now })
+  const allDiscarded = variants.every((variant) =>
+    variant.status === "DISCARDED")
+  const baseline = { ...match.baseline, sellerOsVisualVariant: {
+    ...match.visual, variants,
+    selectedVariantId: input.action === "USE_IN_EXPERIMENT"
+      ? input.assetId : match.visual.selectedVariantId ?? null } }
+  const lifecycle = input.action === "USE_IN_EXPERIMENT" ? "READY"
+    : allDiscarded ? "CANCELLED" : match.experiment.lifecycle_status
+  const updated = await input.supabase.from("ebay_listing_experiments_v1")
+    .update({ baseline_evidence_ref: baseline, lifecycle_status: lifecycle,
+      updated_at: now }).eq("experiment_id", match.experiment.experiment_id)
+    .eq("account_key", input.accountKey)
+    .select("experiment_id,lifecycle_status").single()
   if (updated.error || !updated.data) {
-    throw new Error("VISUAL_VARIANT_EXPERIMENT_SELECTION_FAILED")
+    throw new Error(input.action === "DISCARD"
+      ? "VISUAL_VARIANT_DISCARD_FAILED"
+      : "VISUAL_VARIANT_EXPERIMENT_SELECTION_FAILED")
   }
-  return { assetId: input.assetId, status: "EXPERIMENT_READY",
-    experimentId: text(transformation.experimentId), ebayListingEdits: 0,
+  return { assetId: input.assetId,
+    status: input.action === "DISCARD" ? "DISCARDED" : "EXPERIMENT_READY",
+    experimentId: match.experiment.experiment_id, ebayListingEdits: 0,
     marketplaceWrites: 0 }
 }
 

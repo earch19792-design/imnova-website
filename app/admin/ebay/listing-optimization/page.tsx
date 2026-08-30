@@ -304,7 +304,7 @@ export default function EbayListingOptimizationCommandCenterPage() {
               const imageUrl = typeof listing.heroImageUrl === "string" ? listing.heroImageUrl : null
               const listingVariants = visualVariantRows.filter((variant) =>
                 variant.listingId === listing.ebayItemId &&
-                variant.status === "pending_review")
+                variant.status === "EXPERIMENT_READY")
               return <article key={stringValue(listing.ebayItemId)} className="rounded-2xl border border-white/10 bg-black/25 p-4">
                 <div className="flex gap-4">
                   <div className="h-28 w-28 shrink-0 overflow-hidden rounded-2xl border border-white/10 bg-white">{imageUrl ? <img src={imageUrl} alt={`Imagen principal del Item ${stringValue(listing.ebayItemId)}`} className="h-full w-full object-contain" /> : <div className="flex h-full items-center justify-center text-slate-500"><ImageIcon size={24} /></div>}</div>
