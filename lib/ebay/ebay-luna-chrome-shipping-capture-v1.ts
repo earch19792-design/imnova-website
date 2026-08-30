@@ -392,7 +392,7 @@ function canonicalProductUrl(value: string) {
   }
   if (parsed.protocol !== "https:" ||
       !new Set(["lunaportex.com", "www.lunaportex.com"]).has(parsed.hostname) ||
-      !/^\/products\/[a-z0-9][a-z0-9-]{1,180}\/?$/.test(parsed.pathname) ||
+      !/^\/products\/[a-z0-9][a-z0-9-]{1,254}\/?$/.test(parsed.pathname) ||
       parsed.username || parsed.password || parsed.port) {
     throw new Error("LUNA_SHIPPING_PRODUCT_URL_INVALID")
   }
