@@ -43,6 +43,7 @@ type StartPayload = {
   error?: string
   purpose?: string
   targetSecretSlot?: string
+  startCertification?: MarketingReadonlyStartCertification
   authorizationPreflight?: {
     rootCause?: string
     liveAccepted?: boolean
@@ -52,6 +53,21 @@ type StartPayload = {
     positiveInvariantsPassed?: boolean
     runtimeCredentialMatch?: boolean
   }
+}
+
+type MarketingReadonlyStartCertification = {
+  OAUTH_PURPOSE: "MARKETING_READONLY" | "INVALID"
+  REQUESTED_SCOPE_SET_CLASS: "MARKETING_READONLY_EXACT" | "INVALID"
+  BASE_SCOPE_PRESENT: boolean
+  SELL_MARKETING_READONLY_PRESENT: boolean
+  SELL_MARKETING_WRITE_PRESENT: boolean
+  TARGET_SECRET_SLOT: "EBAY_MARKETING_READONLY_REFRESH_TOKEN" | "INVALID"
+  OAUTH_START_ALLOWED: boolean
+}
+
+type PendingMarketingReadonlyOAuth = {
+  authorizationUrl: string
+  certification: MarketingReadonlyStartCertification
 }
 
 type PreflightState = {
@@ -2752,6 +2768,8 @@ export default function EbaySellerOAuthReauthPage() {
   const [callbackUrl, setCallbackUrl] = useState("")
   const [confirmed, setConfirmed] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [pendingMarketingReadonlyOAuth, setPendingMarketingReadonlyOAuth] =
+    useState<PendingMarketingReadonlyOAuth | null>(null)
   const [diagnosing, setDiagnosing] = useState(false)
   const [diagnosis, setDiagnosis] = useState<Diagnosis | null>(null)
   const [matchingCredentials, setMatchingCredentials] = useState(false)
@@ -3465,6 +3483,7 @@ export default function EbaySellerOAuthReauthPage() {
   async function beginMarketingReadonly() {
     setLoading(true)
     setError("")
+    setPendingMarketingReadonlyOAuth(null)
     try {
       if (!runtimeCredentialMatchAllowsStart(credentialMatch)) {
         throw new Error("RUNTIME_CREDENTIAL_MATCH_REQUIRED")
@@ -3487,6 +3506,15 @@ export default function EbaySellerOAuthReauthPage() {
             "EBAY_MARKETING_READONLY_REFRESH_TOKEN" ||
           payload.callbackPath !== CALLBACK_PATH ||
           payload.scopeCount !== MARKETING_READONLY_SCOPES.length ||
+          payload.startCertification?.OAUTH_PURPOSE !== "MARKETING_READONLY" ||
+          payload.startCertification.REQUESTED_SCOPE_SET_CLASS !==
+            "MARKETING_READONLY_EXACT" ||
+          payload.startCertification.BASE_SCOPE_PRESENT !== true ||
+          payload.startCertification.SELL_MARKETING_READONLY_PRESENT !== true ||
+          payload.startCertification.SELL_MARKETING_WRITE_PRESENT !== false ||
+          payload.startCertification.TARGET_SECRET_SLOT !==
+            "EBAY_MARKETING_READONLY_REFRESH_TOKEN" ||
+          payload.startCertification.OAUTH_START_ALLOWED !== true ||
           payload.authorizationPreflight?.liveAccepted !== true ||
           payload.authorizationPreflight?.scopeContractExact !== true ||
           payload.authorizationPreflight?.stateAccepted !== true ||
@@ -3498,13 +3526,33 @@ export default function EbaySellerOAuthReauthPage() {
           )) {
         throw new Error(payload.error || "MARKETING_READONLY_OAUTH_START_REJECTED")
       }
-      window.location.assign(payload.authorizationUrl)
+      setPendingMarketingReadonlyOAuth({
+        authorizationUrl: payload.authorizationUrl,
+        certification: payload.startCertification,
+      })
     } catch (cause) {
       setError(cause instanceof Error
         ? cause.message
         : "MARKETING_READONLY_OAUTH_START_REJECTED")
+    } finally {
       setLoading(false)
     }
+  }
+
+  function continueMarketingReadonly() {
+    const pending = pendingMarketingReadonlyOAuth
+    if (!confirmed || !pending ||
+        pending.certification.OAUTH_START_ALLOWED !== true ||
+        !validAuthorizationUrl(
+          pending.authorizationUrl,
+          MARKETING_READONLY_SCOPES,
+        )) {
+      setPendingMarketingReadonlyOAuth(null)
+      setError("MARKETING_READONLY_OAUTH_START_REJECTED")
+      return
+    }
+    setLoading(true)
+    window.location.assign(pending.authorizationUrl)
   }
 
   return (
@@ -3574,8 +3622,52 @@ export default function EbaySellerOAuthReauthPage() {
               !runtimeCredentialMatchAllowsStart(credentialMatch)}
             onClick={beginMarketingReadonly}
           >
-            {loading ? "Preparando…" : "Autorizar Marketing read-only"}
+            {loading
+              ? "Preparando…"
+              : pendingMarketingReadonlyOAuth
+                ? "Preparar nuevamente"
+                : "Preparar Marketing read-only"}
           </button>
+          {pendingMarketingReadonlyOAuth ? (
+            <div className="mt-5 rounded-2xl border border-fuchsia-200/30 bg-black/20 p-4">
+              <p className="text-sm font-black text-fuchsia-100">
+                Preflight listo · todavía no se inició el consentimiento en eBay
+              </p>
+              <dl className="mt-4 grid gap-2 text-xs text-white/75 sm:grid-cols-2">
+                {Object.entries(pendingMarketingReadonlyOAuth.certification)
+                  .map(([label, value]) => (
+                    <div className="rounded-lg bg-black/20 p-3" key={label}>
+                      <dt className="break-all font-bold text-white/50">{label}</dt>
+                      <dd className="mt-1 break-all">
+                        {typeof value === "boolean"
+                          ? value ? "true" : "false"
+                          : value}
+                      </dd>
+                    </div>
+                  ))}
+              </dl>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button
+                  className="rounded-2xl bg-fuchsia-200 px-5 py-2 text-sm font-black text-black disabled:opacity-40"
+                  type="button"
+                  disabled={!confirmed || loading ||
+                    !pendingMarketingReadonlyOAuth.certification
+                      .OAUTH_START_ALLOWED}
+                  onClick={continueMarketingReadonly}
+                >
+                  Continuar a eBay con Marketing read-only
+                </button>
+                <button
+                  className="rounded-2xl border border-white/20 px-5 py-2 text-sm font-bold text-white/70 disabled:opacity-40"
+                  type="button"
+                  disabled={loading}
+                  onClick={() => setPendingMarketingReadonlyOAuth(null)}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="rounded-3xl border border-red-300/25 bg-red-300/[0.06] p-6 text-sm leading-6">
@@ -4579,6 +4671,7 @@ export default function EbaySellerOAuthReauthPage() {
           disabled={!confirmed || loading || diagnosing || matchingCredentials ||
             certifyingInstalledRuntime || diagnosingInventoryConsumer ||
             diagnosingRegistryCoverage || previewingRegistryRepair ||
+            pendingMarketingReadonlyOAuth !== null ||
             !callbackUrl ||
             !runtimeCredentialMatchAllowsStart(credentialMatch) ||
             !diagnosisAllowsStart(diagnosis)}
@@ -4586,7 +4679,9 @@ export default function EbaySellerOAuthReauthPage() {
             !diagnosisAllowsStart(diagnosis)}
           onClick={begin}
         >
-          {loading ? "Preparando…" : "Iniciar consentimiento eBay una vez"}
+          {loading
+            ? "Preparando…"
+            : "Iniciar consentimiento Seller general una vez"}
         </button>
       </div>
     </main>

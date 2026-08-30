@@ -39,6 +39,13 @@ const MARKETPLACE_ID = "EBAY_US"
 const TRADING_COMPATIBILITY_LEVEL = "1423"
 const REQUEST_TIMEOUT_MS = 6_000
 const TARGET_ITEM_ID = "366582586826"
+const BASE_SCOPE = "https://api.ebay.com/oauth/api_scope"
+const MARKETING_READONLY_SCOPE =
+  "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly"
+const MARKETING_WRITE_SCOPE =
+  "https://api.ebay.com/oauth/api_scope/sell.marketing"
+const MARKETING_TARGET_SECRET_SLOT =
+  "EBAY_MARKETING_READONLY_REFRESH_TOKEN" as const
 
 const GET_USER_BODY = "<?xml version=\"1.0\" encoding=\"utf-8\"?>" +
   "<GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\">" +
@@ -79,6 +86,50 @@ async function withLedgerTimeout<T>(operation: Promise<T>, timeoutMs: number) {
   }
 }
 
+export function certifyEbayMarketingReadonlyOAuthStart(input: {
+  authorizationUrl: string
+  purpose: string
+  targetSecretSlot: string
+}) {
+  let scopes: string[] = []
+  try {
+    const url = new URL(input.authorizationUrl)
+    scopes = [...new Set(
+      (url.searchParams.get("scope") ?? "")
+        .split(/\s+/)
+        .map((scope) => scope.trim())
+        .filter(Boolean),
+    )].sort()
+  } catch {
+    scopes = []
+  }
+  const expectedScopes = [...EBAY_MARKETING_READONLY_OAUTH_SCOPES].sort()
+  const exactScopeSet = scopes.length === expectedScopes.length &&
+    scopes.every((scope, index) => scope === expectedScopes[index])
+  const baseScopePresent = scopes.includes(BASE_SCOPE)
+  const sellMarketingReadonlyPresent = scopes.includes(MARKETING_READONLY_SCOPE)
+  const sellMarketingWritePresent = scopes.includes(MARKETING_WRITE_SCOPE)
+  const oauthStartAllowed = input.purpose === "MARKETING_READONLY" &&
+    input.targetSecretSlot === MARKETING_TARGET_SECRET_SLOT &&
+    exactScopeSet && baseScopePresent && sellMarketingReadonlyPresent &&
+    !sellMarketingWritePresent
+  return {
+    OAUTH_PURPOSE: input.purpose === "MARKETING_READONLY"
+      ? "MARKETING_READONLY" as const
+      : "INVALID" as const,
+    REQUESTED_SCOPE_SET_CLASS: exactScopeSet
+      ? "MARKETING_READONLY_EXACT" as const
+      : "INVALID" as const,
+    BASE_SCOPE_PRESENT: baseScopePresent,
+    SELL_MARKETING_READONLY_PRESENT: sellMarketingReadonlyPresent,
+    SELL_MARKETING_WRITE_PRESENT: sellMarketingWritePresent,
+    TARGET_SECRET_SLOT: input.targetSecretSlot === MARKETING_TARGET_SECRET_SLOT
+      ? MARKETING_TARGET_SECRET_SLOT
+      : "INVALID" as const,
+    OAUTH_START_ALLOWED: oauthStartAllowed,
+  }
+}
+
 export async function prepareEbayMarketingReadonlyOAuthStart(input: {
   configuration: EbaySellerOAuthReauthConfiguration
   actorUserId: string
@@ -105,6 +156,16 @@ export async function prepareEbayMarketingReadonlyOAuthStart(input: {
     state,
     purpose: "MARKETING_READONLY",
   })
+  const startCertification = certifyEbayMarketingReadonlyOAuthStart({
+    authorizationUrl,
+    purpose: "MARKETING_READONLY",
+    targetSecretSlot: MARKETING_TARGET_SECRET_SLOT,
+  })
+  if (!startCertification.OAUTH_START_ALLOWED) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_MARKETING_READONLY_OAUTH_START_CONTRACT_INVALID",
+    )
+  }
   const preflight = await preflightEbaySellerOAuthReauthAuthorizationRequest({
     authorizationUrl,
     stateExpected: true,
@@ -143,7 +204,8 @@ export async function prepareEbayMarketingReadonlyOAuthStart(input: {
     }),
     expiresAt,
     scopeCount: EBAY_MARKETING_READONLY_OAUTH_SCOPES.length,
-    targetSecretSlot: "EBAY_MARKETING_READONLY_REFRESH_TOKEN" as const,
+    targetSecretSlot: MARKETING_TARGET_SECRET_SLOT,
+    startCertification,
     authorizationPreflight: {
       liveAccepted: true as const,
       scopeEncoding: "RFC3986_PERCENT20" as const,

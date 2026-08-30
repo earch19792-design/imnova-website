@@ -26,6 +26,8 @@ export const EBAY_SELLER_OAUTH_REAUTH_CALLBACK_PATH =
   "/api/admin/ebay/monitor/seller-oauth-reauth" as const
 export const EBAY_SELLER_OAUTH_REAUTH_COOKIE =
   "__Secure-ebay_seller_oauth_reauth" as const
+export const EBAY_MARKETING_READONLY_OAUTH_COOKIE =
+  "__Secure-ebay_marketing_readonly_oauth" as const
 export const EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS = 5 * 60 * 1_000
 export const EBAY_SELLER_OAUTH_REAUTH_PLATFORM_LIMIT_MS = 30_000
 export const EBAY_SELLER_OAUTH_REAUTH_INTERNAL_HARD_BUDGET_MS = 24_000
@@ -618,6 +620,7 @@ export function verifyEbaySellerOAuthReauthCookie(input: {
   branchHost: string
   clientSecret: string
   expectedAccountFingerprint: string
+  expectedPurpose?: EbaySellerOAuthReauthPurpose
 }) {
   if (!input.cookie || input.cookie.length > 2_048 ||
       !isValidEbaySellerOAuthReauthState(input.state)) {
@@ -670,17 +673,22 @@ export function verifyEbaySellerOAuthReauthCookie(input: {
     "actorHash,branch,expiresAt,host,purpose,state,v"
   const purpose = legacyKeys ? "SELLER_GENERAL" : payload.purpose
   const exactKeys = legacyKeys || purposeBoundKeys
+  const purposeMismatch = input.expectedPurpose !== undefined &&
+    purpose !== input.expectedPurpose
   if (!exactKeys || payload.v !== STATE_COOKIE_VERSION ||
       payload.branch !== EBAY_SELLER_OAUTH_REAUTH_BRANCH ||
       payload.host !== input.branchHost ||
       !purpose || !EBAY_SELLER_OAUTH_REAUTH_PURPOSES.includes(purpose) ||
+      purposeMismatch ||
       !/^[0-9a-f]{64}$/.test(payload.actorHash) ||
       !Number.isSafeInteger(payload.expiresAt) ||
       payload.expiresAt <= input.now ||
       payload.expiresAt > input.now + EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS ||
       !constantTimeEqual(payload.state, input.state)) {
     throw new EbaySellerOAuthReauthError(
-      payload.expiresAt <= input.now
+      purposeMismatch
+        ? "EBAY_SELLER_OAUTH_REAUTH_PURPOSE_INVALID"
+        : payload.expiresAt <= input.now
         ? "EBAY_SELLER_OAUTH_REAUTH_STATE_EXPIRED"
         : "EBAY_SELLER_OAUTH_REAUTH_STATE_MISMATCH",
     )
@@ -847,11 +855,18 @@ export function renderEbaySellerOAuthReauthSuccessHtml(
       "EBAY_SELLER_OAUTH_REAUTH_TOKEN_RESPONSE_INVALID",
     )
   }
+  const oauthPurpose = destinationVariable ===
+      "EBAY_MARKETING_READONLY_REFRESH_TOKEN"
+    ? "MARKETING_READONLY"
+    : destinationVariable === "EBAY_COMMERCIAL_ORDERS_REFRESH_TOKEN"
+      ? "COMMERCIAL_ORDERS"
+      : "SELLER_GENERAL"
   return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">" +
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
     "<title>eBay seller OAuth handoff</title></head><body>" +
     "<main><h1>Verified one-time seller refresh token handoff</h1>" +
     "<p>This OAuth state is already CLAIMED. Reload, Back, or replay cannot produce another handoff.</p>" +
+    `<p><strong>OAuth purpose: ${oauthPurpose}</strong></p>` +
     `<p><strong>Credencial sensible · copiar directamente a Vercel como ${destinationVariable} y cerrar esta página.</strong></p>` +
     "<p>Do not copy it into chat, terminal, markdown, source, .env, issue, PR, or logs.</p>" +
     `<textarea id=\"refresh-token\" readonly autocomplete=\"off\" spellcheck=\"false\" rows=\"8\" cols=\"100\">${escapeHtml(refreshToken)}</textarea>` +

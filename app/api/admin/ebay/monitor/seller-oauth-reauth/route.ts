@@ -29,6 +29,7 @@ import {
   assertEbaySellerOAuthReauthSameOrigin,
   ebaySellerOAuthReauthCookieOptions,
   ebaySellerOAuthReauthSuccessResponseHeaders,
+  EBAY_MARKETING_READONLY_OAUTH_COOKIE,
   EBAY_SELLER_OAUTH_REAUTH_CALLBACK_PATH,
   EBAY_SELLER_OAUTH_REAUTH_COOKIE,
   EBAY_SELLER_OAUTH_REAUTH_FLOW_VERSION,
@@ -68,6 +69,15 @@ const APPROVED_REGISTRY_REPAIR_EVIDENCE_FINGERPRINT =
 const EXECUTE_APPROVED_REGISTRY_REPAIR_ACTION =
   "execute_approved_registry_repair"
 
+function clearOAuthStateCookies(response: NextResponse) {
+  for (const name of [
+    EBAY_SELLER_OAUTH_REAUTH_COOKIE,
+    EBAY_MARKETING_READONLY_OAUTH_COOKIE,
+  ]) {
+    response.cookies.set(name, "", ebaySellerOAuthReauthCookieOptions(0))
+  }
+}
+
 function callbackHtml(code: string, status: number) {
   const response = new NextResponse(
     renderEbaySellerOAuthReauthFailureHtml(code),
@@ -79,11 +89,7 @@ function callbackHtml(code: string, status: number) {
       },
     },
   )
-  response.cookies.set(
-    EBAY_SELLER_OAUTH_REAUTH_COOKIE,
-    "",
-    ebaySellerOAuthReauthCookieOptions(0),
-  )
+  clearOAuthStateCookies(response)
   return response
 }
 
@@ -109,11 +115,7 @@ function successHtml(
       },
     },
   )
-  response.cookies.set(
-    EBAY_SELLER_OAUTH_REAUTH_COOKIE,
-    "",
-    ebaySellerOAuthReauthCookieOptions(0),
-  )
+  clearOAuthStateCookies(response)
   return response
 }
 
@@ -135,11 +137,7 @@ function commercialOrdersSuccessHtml() {
       },
     },
   )
-  response.cookies.set(
-    EBAY_SELLER_OAUTH_REAUTH_COOKIE,
-    "",
-    ebaySellerOAuthReauthCookieOptions(0),
-  )
+  clearOAuthStateCookies(response)
   return response
 }
 
@@ -159,11 +157,7 @@ function commercialOrdersTokenSuccessHtml(refreshToken: string) {
       },
     },
   )
-  response.cookies.set(
-    EBAY_SELLER_OAUTH_REAUTH_COOKIE,
-    "",
-    ebaySellerOAuthReauthCookieOptions(0),
-  )
+  clearOAuthStateCookies(response)
   return response
 }
 
@@ -531,6 +525,7 @@ export async function POST(request: NextRequest) {
         callbackPath: EBAY_SELLER_OAUTH_REAUTH_CALLBACK_PATH,
         scopeCount: prepared.scopeCount,
         targetSecretSlot: prepared.targetSecretSlot,
+        startCertification: prepared.startCertification,
         expiresAt: new Date(prepared.expiresAt).toISOString(),
         stateHashPersisted: true,
         rawStatePersisted: false,
@@ -541,11 +536,16 @@ export async function POST(request: NextRequest) {
         headers: { "Cache-Control": "private, no-store, max-age=0" },
       })
       response.cookies.set(
-        EBAY_SELLER_OAUTH_REAUTH_COOKIE,
+        EBAY_MARKETING_READONLY_OAUTH_COOKIE,
         prepared.cookie,
         ebaySellerOAuthReauthCookieOptions(
           Math.floor(EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS / 1_000),
         ),
+      )
+      response.cookies.set(
+        EBAY_SELLER_OAUTH_REAUTH_COOKIE,
+        "",
+        ebaySellerOAuthReauthCookieOptions(0),
       )
       return response
     }
@@ -574,6 +574,11 @@ export async function POST(request: NextRequest) {
       ebaySellerOAuthReauthCookieOptions(
         Math.floor(EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS / 1_000),
       ),
+    )
+    response.cookies.set(
+      EBAY_MARKETING_READONLY_OAUTH_COOKIE,
+      "",
+      ebaySellerOAuthReauthCookieOptions(0),
     )
     return response
   } catch (cause) {
@@ -702,20 +707,30 @@ export async function GET(request: NextRequest) {
       getEbaySellerOAuthReauthRuntimeCredentialMatch(configuration),
     )
     const callback = parseEbaySellerOAuthReauthCallbackUrl(request.url)
-    const cookies = request.cookies.getAll(EBAY_SELLER_OAUTH_REAUTH_COOKIE)
-    if (cookies.length !== 1) {
+    const sellerCookies =
+      request.cookies.getAll(EBAY_SELLER_OAUTH_REAUTH_COOKIE)
+    const marketingCookies =
+      request.cookies.getAll(EBAY_MARKETING_READONLY_OAUTH_COOKIE)
+    if (sellerCookies.length > 1 || marketingCookies.length > 1 ||
+        sellerCookies.length + marketingCookies.length !== 1) {
       return callbackHtml(
         "EBAY_SELLER_OAUTH_REAUTH_STATE_COOKIE_INVALID",
         400,
       )
     }
+    const marketingCallback = marketingCookies.length === 1
     const transaction = verifyEbaySellerOAuthReauthCookie({
-      cookie: cookies[0]?.value ?? "",
+      cookie: marketingCallback
+        ? marketingCookies[0]?.value ?? ""
+        : sellerCookies[0]?.value ?? "",
       state: callback.state,
       now: callbackStartedAt,
       branchHost: configuration.branchHost,
       clientSecret: configuration.clientSecret,
       expectedAccountFingerprint: configuration.expectedAccountFingerprint,
+      expectedPurpose: marketingCallback
+        ? "MARKETING_READONLY"
+        : "SELLER_GENERAL",
     })
     const supabase = getSupabaseAdminClient()
     const ledger = createSupabaseEbaySellerOAuthReauthStateLedger(supabase)
