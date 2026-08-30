@@ -37,6 +37,8 @@ import {
 } from "@/lib/ebay/ebay-luna-authenticated-http-watcher-v1"
 import { captureLunaAuthenticatedBrowserWorkerV1 } from
   "@/lib/ebay/ebay-luna-canonical-browser-worker-server-v1"
+import { captureLiveListingShippingEvidenceV1 } from
+  "@/lib/ebay/ebay-live-listing-shipping-evidence-server-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
 function record(value: unknown): Record<string, unknown> {
@@ -136,6 +138,26 @@ export async function POST(req: Request) {
             row.reportedBenchmark !== null, topTenBenchmarkAvailable:
             row.topCategoryBenchmark !== null })), rawFileStored: false, remotePersistence: false,
         buyerPiiStored: false }
+    } else if (body.action === "CAPTURE_LIVE_LISTING_SHIPPING_EVIDENCE") {
+      const account = getEbaySellerAccountScopeConfiguration()
+      if (!account.accountKey) {
+        throw new Error("CANONICAL_SELLER_ACCOUNT_BINDING_UNAVAILABLE")
+      }
+      result = await captureLiveListingShippingEvidenceV1({
+        supabase: getSupabaseAdminClient(),
+        target: {
+          accountKey: account.accountKey,
+          marketplaceId: "EBAY_US",
+          ebayItemId: typeof input.ebayItemId === "string"
+            ? input.ebayItemId : "",
+          lunaProductId: typeof input.lunaProductId === "string"
+            ? input.lunaProductId : "",
+          lunaVariantId: typeof input.lunaVariantId === "string"
+            ? input.lunaVariantId : "",
+          sourceSku: typeof input.sourceSku === "string"
+            ? input.sourceSku : "",
+        },
+      })
     } else if (body.action === "CAPTURE_LUNA") {
       result = captureLunaProductVariantV1(input as never)
     } else if (body.action === "LINK_SUPPLIER_IDENTITY") {

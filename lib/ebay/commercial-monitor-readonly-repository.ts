@@ -189,6 +189,30 @@ export type ReadonlyExperimentRow = {
   updated_at: string
 }
 
+export type ReadonlyLiveListingShippingEvidenceRowV1 = {
+  evidence_id: string
+  account_key: string
+  marketplace_id: string
+  ebay_item_id: string
+  linkage_id: string
+  luna_product_id: string
+  luna_variant_id: string
+  source_sku: string
+  destination_fingerprint: string
+  supplier_subtotal: number | string
+  supplier_currency: string
+  shipping_cost: number | string
+  shipping_currency: string
+  observed_at: string
+  maximum_age_seconds: number | string
+  source_authority: string
+  source_evidence_digest: string
+  purchase_performed: boolean
+  payment_performed: boolean
+  raw_address_persisted: boolean
+  credentials_persisted: boolean
+}
+
 export type ReadonlySupabaseReader = Pick<SupabaseClient, "from">
 
 export type CommercialMonitorReadonlySources = {
@@ -207,6 +231,26 @@ export type CommercialMonitorReadonlySources = {
   saleDeliveries: ReadonlySourceResult<ReadonlyDeliveryOutboxRow>
   learning: ReadonlySourceResult<ReadonlyLearningAdjustmentRow>
   experiments: ReadonlySourceResult<ReadonlyExperimentRow>
+  liveListingShippingEvidence?:
+    ReadonlySourceResult<ReadonlyLiveListingShippingEvidenceRowV1>
+}
+
+async function readLiveListingShippingEvidence(
+  supabase: SupabaseClient,
+  accountKey: string,
+): Promise<ReadonlySourceResult<ReadonlyLiveListingShippingEvidenceRowV1>> {
+  const maximum = 500
+  const { data, error } = await supabase
+    .from("seller_os_live_listing_shipping_evidence")
+    .select("evidence_id,account_key,marketplace_id,ebay_item_id,linkage_id,luna_product_id,luna_variant_id,source_sku,destination_fingerprint,supplier_subtotal,supplier_currency,shipping_cost,shipping_currency,observed_at,maximum_age_seconds,source_authority,source_evidence_digest,purchase_performed,payment_performed,raw_address_persisted,credentials_persisted")
+    .eq("account_key", accountKey)
+    .eq("marketplace_id", "EBAY_US")
+    .order("observed_at", { ascending: false })
+    .limit(maximum + 1)
+  if (error) return failure("LIVE_LISTING_LUNA_SHIPPING_EVIDENCE_V1",
+    "LIVE_LISTING_SHIPPING_EVIDENCE_READ_FAILED")
+  return success("LIVE_LISTING_LUNA_SHIPPING_EVIDENCE_V1",
+    (data ?? []) as ReadonlyLiveListingShippingEvidenceRowV1[], maximum)
 }
 
 async function readCanonicalLunaLinkageDecisions(
@@ -688,6 +732,7 @@ export async function readCommercialMonitorReadonlySources(
     salesOrderAudit,
     learning,
     experiments,
+    liveListingShippingEvidence,
   ] = await Promise.all([
     readSyncState(supabase, accountKey),
     readCommercialSnapshots(supabase, accountKey),
@@ -699,6 +744,7 @@ export async function readCommercialMonitorReadonlySources(
     readSalesOrderReadonlyAuditV1(supabase, accountKey),
     readLearning(supabase, accountKey),
     readExperiments(supabase, accountKey),
+    readLiveListingShippingEvidence(supabase, accountKey),
   ])
   const orderLines = await readOrderLines(
     supabase,
@@ -721,5 +767,6 @@ export async function readCommercialMonitorReadonlySources(
     saleDeliveries: salesOrderAudit.saleDeliveries,
     learning,
     experiments,
+    liveListingShippingEvidence,
   }
 }

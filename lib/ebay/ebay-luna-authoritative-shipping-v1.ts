@@ -16,14 +16,17 @@ const SHA256 = /^sha256:[0-9a-f]{64}$/
 const MAXIMUM_RATE_LIMIT_MS = 15 * 60 * 1_000
 const MAXIMUM_RATE_LIMIT_ENTRIES = 200
 
-export type LunaShippingIdentityV1 = Readonly<{
-  candidateId: string
+type LunaShippingProductIdentityV1 = Readonly<{
   canonicalProductUrl: string
   lunaProductId: string
   lunaVariantId: string
   supplierSku: string
   quantity: number
 }>
+
+export type LunaShippingIdentityV1 = LunaShippingProductIdentityV1 &
+  (Readonly<{ candidateId: string; readerScopeId?: never }> |
+   Readonly<{ candidateId?: never; readerScopeId: string }>)
 
 export type LunaShippingDestinationV1 = Readonly<{
   profileId: string
@@ -99,7 +102,13 @@ function canonicalProductUrl(value: string) {
 export function normalizeLunaShippingIdentityV1(
   input: LunaShippingIdentityV1,
 ) : LunaShippingIdentityV1 {
-  if (!SHA256.test(input.candidateId) ||
+  const candidateScope = typeof input.candidateId === "string" &&
+    SHA256.test(input.candidateId)
+  const liveScope = typeof input.readerScopeId === "string" &&
+    /^live-listing-shipping-reader-v1:sha256:[0-9a-f]{64}$/.test(
+      input.readerScopeId,
+    )
+  if (candidateScope === liveScope ||
       !PRODUCT_ID.test(input.lunaProductId) ||
       !VARIANT_ID.test(input.lunaVariantId) ||
       !SAFE_SKU.test(input.supplierSku) ||
@@ -111,6 +120,10 @@ export function normalizeLunaShippingIdentityV1(
     ...input,
     canonicalProductUrl: canonicalProductUrl(input.canonicalProductUrl),
   })
+}
+
+function readerRateLimitScope(identity: LunaShippingIdentityV1) {
+  return identity.candidateId ?? identity.readerScopeId
 }
 
 export function normalizeLunaShippingDestinationV1(
@@ -177,7 +190,8 @@ export async function acquireAuthoritativeLunaShippingV1(input: Readonly<{
   normalizeLunaShippingDestinationV1(input.destination)
   const now = input.now ?? Date.now()
   cleanExpiredRateLimits(now)
-  const existingLimit = rateLimits().get(identity.candidateId) ?? null
+  const rateLimitScope = readerRateLimitScope(identity)
+  const existingLimit = rateLimits().get(rateLimitScope) ?? null
   let http: LunaShippingAttemptV1
   if (existingLimit !== null && existingLimit > now) {
     http = Object.freeze({
@@ -193,7 +207,7 @@ export async function acquireAuthoritativeLunaShippingV1(input: Readonly<{
     if (http.status === "LUNA_RATE_LIMITED") {
       const retryAfterMs = Math.max(0, Math.min(MAXIMUM_RATE_LIMIT_MS,
         http.retryAfterMs ?? 60_000))
-      rateLimits().set(identity.candidateId, now + retryAfterMs)
+      rateLimits().set(rateLimitScope, now + retryAfterMs)
     }
   }
   if (http.status === "AVAILABLE") return Object.freeze({

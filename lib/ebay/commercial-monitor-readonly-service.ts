@@ -69,6 +69,7 @@ import {
   type ReadonlyExperimentRow,
   type ReadonlyIdentityVerificationRow,
   type ReadonlyLearningAdjustmentRow,
+  type ReadonlyLiveListingShippingEvidenceRowV1,
   type ReadonlyOrderLineRow,
   type ReadonlyOrderRow,
   type ReadonlyRegistryListingRow,
@@ -1058,6 +1059,57 @@ function emptyMetrics(input: {
   ])) as CommercialMetrics
 }
 
+function liveListingShippingMetric(input: {
+  row: ReadonlyLiveListingShippingEvidenceRowV1
+  key: "shipping" | "supplier_cost"
+  value: number
+  marketplace: MarketplaceContext
+  identity: ListingEvidenceIdentity
+  now: Date
+}) {
+  const capturedAt = validIso(input.row.observed_at)
+  const maximumAgeSeconds = nonNegativeInteger(input.row.maximum_age_seconds)
+  if (!capturedAt || maximumAgeSeconds !== 21_600) {
+    return unavailableMetric({ key: input.key,
+      marketplace: input.marketplace, identity: input.identity,
+      limitationCode: "LIVE_LISTING_SHIPPING_EVIDENCE_STALE",
+      availability: "INSUFFICIENT_EVIDENCE" })
+  }
+  const evidenceFreshness = freshness(capturedAt, input.now,
+    maximumAgeSeconds)
+  if (evidenceFreshness.status !== "FRESH") return unavailableMetric({
+    key: input.key, marketplace: input.marketplace, identity: input.identity,
+    limitationCode: "LIVE_LISTING_SHIPPING_EVIDENCE_STALE",
+    availability: "INSUFFICIENT_EVIDENCE" })
+  const unit = input.key === "shipping"
+    ? currencyCode(input.row.shipping_currency)
+    : currencyCode(input.row.supplier_currency)
+  if (!unit) return unavailableMetric({ key: input.key,
+    marketplace: input.marketplace, identity: input.identity,
+    limitationCode: "LIVE_LISTING_SHIPPING_CURRENCY_UNPROVEN",
+    availability: "INSUFFICIENT_EVIDENCE" })
+  return createObservation<number>({
+    value: input.value,
+    availability: "AVAILABLE",
+    completeness: "COMPLETE",
+    source: observationSource(
+      "LUNA_PORTEX",
+      input.key === "shipping" ? "AUTHORITATIVE_SHIPPING_QUOTE"
+        : "AUTHORITATIVE_CART_SUBTOTAL",
+      `LIVE_LISTING_SHIPPING_EVIDENCE:${input.row.evidence_id}`,
+    ),
+    capturedAt,
+    marketplace: input.marketplace,
+    identity: input.identity,
+    grain: input.key === "shipping" ? "ITEM" : "COMPONENT",
+    reportingWindow: null,
+    unit,
+    freshness: evidenceFreshness,
+    limitationCode: null,
+    explicitAuthoritativeZero: input.value === 0,
+  })
+}
+
 function buildMetrics(input: {
   row: ReadonlyRegistryListingRow | null
   snapshot: ReadonlyCommercialSnapshotRow | null
@@ -1066,6 +1118,7 @@ function buildMetrics(input: {
   marketplace: MarketplaceContext
   identity: ListingEvidenceIdentity
   now: Date
+  liveShippingEvidence: ReadonlyLiveListingShippingEvidenceRowV1 | null
 }) {
   const metrics = emptyMetrics(input)
   const itemMetricIdentity = {
@@ -1119,6 +1172,25 @@ function buildMetrics(input: {
   metrics.units_sold = input.orderProjection.units
   metrics.revenue = input.orderProjection.revenue
   metrics.supplier_cost = input.stock.currentSupplierCost
+  if (input.liveShippingEvidence) {
+    const shippingCost = nonNegativeNumber(
+      input.liveShippingEvidence.shipping_cost)
+    const quotedSubtotal = nonNegativeNumber(
+      input.liveShippingEvidence.supplier_subtotal)
+    const currentSupplierCost = nonNegativeNumber(
+      input.stock.currentSupplierCost.value)
+    if (shippingCost !== null) {
+      metrics.shipping = liveListingShippingMetric({ ...input,
+        row: input.liveShippingEvidence, key: "shipping",
+        value: shippingCost })
+    }
+    if (quotedSubtotal !== null && currentSupplierCost !== null &&
+        quotedSubtotal === currentSupplierCost) {
+      metrics.supplier_cost = liveListingShippingMetric({ ...input,
+        row: input.liveShippingEvidence, key: "supplier_cost",
+        value: quotedSubtotal })
+    }
+  }
   metrics.external_views = snapshotMetadata.liveReadOnlyProjection === true &&
       snapshotMetadata.externalViewsApplicable === true
     ? metricFromSnapshot({
@@ -1147,6 +1219,8 @@ function buildMetrics(input: {
     "margin",
     "roi",
   ] as const) {
+    if (key === "shipping" && input.liveShippingEvidence &&
+        metrics.shipping.availability === "AVAILABLE") continue
     metrics[key] = unavailableMetric({
       key,
       marketplace: input.marketplace,
@@ -1156,6 +1230,39 @@ function buildMetrics(input: {
     })
   }
   return metrics
+}
+
+function exactLiveListingShippingEvidence(input: {
+  sources: CommercialMonitorReadonlySources
+  itemId: string
+  supplierProductId: string | null
+  supplierVariantId: string | null
+  supplierSku: string | null
+}) : ReadonlyLiveListingShippingEvidenceRowV1 | null {
+  const source = input.sources.liveListingShippingEvidence
+  const decisions = input.sources.lunaLinkageDecisions
+  if (!source || !["AVAILABLE", "PARTIAL"].includes(source.status) ||
+      !decisions || !["AVAILABLE", "PARTIAL"].includes(decisions.status) ||
+      !input.supplierProductId || !input.supplierVariantId ||
+      !input.supplierSku) return null
+  const currentDecision = decisions.rows
+    .filter((row) => row.ebay_item_id === input.itemId &&
+      row.decision === "APPROVE_EXACT_LINKAGE")
+    .sort((left, right) => Number(right.decision_version) -
+      Number(left.decision_version))[0]
+  if (!currentDecision?.linkage_id) return null
+  return source.rows.filter((row) =>
+    row.marketplace_id === "EBAY_US" && row.ebay_item_id === input.itemId &&
+    row.linkage_id === currentDecision.linkage_id &&
+    row.luna_product_id === input.supplierProductId &&
+    row.luna_variant_id === input.supplierVariantId &&
+    row.source_sku === input.supplierSku &&
+    /^sha256:[0-9a-f]{64}$/.test(row.destination_fingerprint) &&
+    row.purchase_performed === false && row.payment_performed === false &&
+    row.raw_address_persisted === false &&
+    row.credentials_persisted === false)
+    .sort((left, right) => Date.parse(right.observed_at) -
+      Date.parse(left.observed_at))[0] ?? null
 }
 
 function issue(input: {
@@ -1680,6 +1787,13 @@ function projectListing(input: {
     identity: identityEvidence,
     now: input.now,
   })
+  const liveShippingEvidence = exactLiveListingShippingEvidence({
+    sources: input.sources,
+    itemId: listing.itemId,
+    supplierProductId: stock.supplierProductId,
+    supplierVariantId: stock.supplierVariantId,
+    supplierSku: stock.supplierSku,
+  })
   const metrics = buildMetrics({
     row,
     snapshot,
@@ -1688,6 +1802,7 @@ function projectListing(input: {
     marketplace: input.marketplace,
     identity: identityEvidence,
     now: input.now,
+    liveShippingEvidence,
   })
   const listingEvidence = listing.registryObservations.map((entry) => evidence(
     entry.evidenceReference,
