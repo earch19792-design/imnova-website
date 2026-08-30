@@ -38,6 +38,11 @@ function finalCanaryStartEnabled(connected: boolean,
     !canonicalDestinationMismatch && !canaryRunInProgress
 }
 
+function canonicalBindControlVisible(connected: boolean,
+  canonicalBindingStatusReady: boolean, canonicalDestinationBound: boolean) {
+  return connected && canonicalBindingStatusReady && !canonicalDestinationBound
+}
+
 type ExternalPort = {
   postMessage: (message: unknown) => void
   disconnect: () => void
@@ -631,7 +636,7 @@ export default function LunaShippingCapturePage() {
     liveTriggerRef.current = beginLiveCapture
 
     const bindCanonicalDestination = () => {
-      if (hasExactLiveTarget || !port || !extensionReady || busy) return
+      if (!port || !extensionReady || busy) return
       busy = true
       setRunning(true)
       setError("")
@@ -1376,6 +1381,8 @@ export default function LunaShippingCapturePage() {
   const canStartFinalCanary = finalCanaryStartEnabled(connected,
     canonicalBindingStatusReady, canonicalDestinationBound,
     canonicalDestinationMismatch, running)
+  const showCanonicalBindControl = canonicalBindControlVisible(connected,
+    canonicalBindingStatusReady, canonicalDestinationBound)
 
   return <main className="min-h-screen bg-[#07111a] px-4 py-10 text-white">
     <section className="mx-auto max-w-2xl rounded-3xl border border-white/15 bg-white/[0.05] p-6">
@@ -1406,13 +1413,13 @@ export default function LunaShippingCapturePage() {
           `ECONOMICS=${results.at(-1)?.economicsStatus ?? "UNPROVEN"}\n` +
           `IGNORED_OUT_OF_SCOPE=${ignoredOutOfScope}`}
       </code> : null}
-      {!liveTarget ? <button type="button"
-        disabled={!connected || running || canonicalDestinationBound}
+      {showCanonicalBindControl ? <button type="button"
+        disabled={running}
         onClick={() => bindDestinationRef.current?.()}
         className="mt-3 w-full rounded-2xl border border-cyan-200/40 px-5 py-3 font-black text-cyan-100 disabled:cursor-not-allowed disabled:opacity-40">
         Vincular perfil canónico US de Seller OS
       </button> : null}
-      {!liveTarget ? <p className="mt-2 text-xs text-white/65">
+      {showCanonicalBindControl ? <p className="mt-2 text-xs text-white/65">
         Acción explícita única. La extensión guarda sólo el fingerprint del
         perfil US canónico de Seller OS; nunca guarda ni muestra la dirección.
       </p> : null}
