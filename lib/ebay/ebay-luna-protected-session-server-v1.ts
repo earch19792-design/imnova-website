@@ -9,6 +9,12 @@ import {
   SELLER_OS_LUNA_PROTECTED_SESSION_VERSION,
   assessSellerOsLunaProtectedSessionV1,
 } from "./ebay-luna-automation-prerequisites-v1"
+import {
+  SELLER_OS_LUNA_PROTECTED_SESSION_COOKIE_JAR_VERSION,
+  parseSellerOsLunaSessionCookieJarV2,
+  sellerOsLunaCookieHeaderForUrlV2,
+  type SellerOsLunaSessionCookieJarV2,
+} from "./ebay-luna-session-cookie-jar-v2"
 
 const GET_PROTECTED_SESSION_RPC =
   "get_seller_os_luna_protected_session_v1" as const
@@ -26,7 +32,7 @@ const SESSION_PROBE_ENTRYPOINT = "https://www.lunaportex.com/account"
 const SESSION_PROBE_TIMEOUT_MS = 12_000
 const SESSION_PROBE_MAX_REDIRECTS = 6
 
-type ProtectedSessionEnvelope = Readonly<{
+type ProtectedSessionEnvelopeV1 = Readonly<{
   contractVersion: typeof SELLER_OS_LUNA_PROTECTED_SESSION_VERSION
   cookieHeader: string
   capturedAt: string
@@ -34,10 +40,21 @@ type ProtectedSessionEnvelope = Readonly<{
   expiresAt: string
 }>
 
+type ProtectedSessionEnvelopeV2 = Readonly<{
+  contractVersion: typeof SELLER_OS_LUNA_PROTECTED_SESSION_COOKIE_JAR_VERSION
+  cookieJar: SellerOsLunaSessionCookieJarV2
+  capturedAt: string
+  validatedAt: string
+  expiresAt: string
+}>
+
+export type SellerOsLunaProtectedSessionEnvelope =
+  ProtectedSessionEnvelopeV1 | ProtectedSessionEnvelopeV2
+
 function parseProtectedSessionEnvelope(
   value: unknown,
   now: number,
-): ProtectedSessionEnvelope | null {
+): SellerOsLunaProtectedSessionEnvelope | null {
   if (typeof value !== "string" || value.length < 80 || value.length > 12_000) {
     return null
   }
@@ -47,14 +64,7 @@ function parseProtectedSessionEnvelope(
   } catch {
     return null
   }
-  if (Object.keys(parsed).sort().join(",") !==
-      "capturedAt,contractVersion,cookieHeader,expiresAt,validatedAt" ||
-      parsed.contractVersion !== SELLER_OS_LUNA_PROTECTED_SESSION_VERSION ||
-      typeof parsed.cookieHeader !== "string" ||
-      parsed.cookieHeader.length < 8 || parsed.cookieHeader.length > 8_192 ||
-      !COOKIE_HEADER.test(parsed.cookieHeader) ||
-      /(?:authorization|bearer|password|cookie\s*:)/i.test(parsed.cookieHeader) ||
-      typeof parsed.capturedAt !== "string" ||
+  if (typeof parsed.capturedAt !== "string" ||
       typeof parsed.validatedAt !== "string" ||
       typeof parsed.expiresAt !== "string") {
     return null
@@ -68,13 +78,39 @@ function parseProtectedSessionEnvelope(
       expiresAt - capturedAt > MAX_SESSION_LIFETIME_MS) {
     return null
   }
-  return Object.freeze({
-    contractVersion: SELLER_OS_LUNA_PROTECTED_SESSION_VERSION,
-    cookieHeader: parsed.cookieHeader,
+  const timestamps = {
     capturedAt: new Date(capturedAt).toISOString(),
     validatedAt: new Date(validatedAt).toISOString(),
     expiresAt: new Date(expiresAt).toISOString(),
-  })
+  }
+  if (parsed.contractVersion === SELLER_OS_LUNA_PROTECTED_SESSION_VERSION &&
+      Object.keys(parsed).sort().join(",") ===
+        "capturedAt,contractVersion,cookieHeader,expiresAt,validatedAt" &&
+      typeof parsed.cookieHeader === "string" &&
+      parsed.cookieHeader.length >= 8 && parsed.cookieHeader.length <= 8_192 &&
+      COOKIE_HEADER.test(parsed.cookieHeader) &&
+      !/(?:authorization|bearer|password|cookie\s*:)/i.test(parsed.cookieHeader)) {
+    return Object.freeze({
+      contractVersion: SELLER_OS_LUNA_PROTECTED_SESSION_VERSION,
+      cookieHeader: parsed.cookieHeader,
+      ...timestamps,
+    })
+  }
+  if (parsed.contractVersion ===
+        SELLER_OS_LUNA_PROTECTED_SESSION_COOKIE_JAR_VERSION &&
+      Object.keys(parsed).sort().join(",") ===
+        "capturedAt,contractVersion,cookieJar,expiresAt,validatedAt") {
+    const cookieJar = parseSellerOsLunaSessionCookieJarV2(
+      parsed.cookieJar,
+      expiresAt,
+    )
+    return cookieJar ? Object.freeze({
+      contractVersion: SELLER_OS_LUNA_PROTECTED_SESSION_COOKIE_JAR_VERSION,
+      cookieJar,
+      ...timestamps,
+    }) : null
+  }
+  return null
 }
 
 async function readVaultEnvelope(
@@ -108,8 +144,53 @@ export async function resolveServerOwnedLunaSessionValueV1(input: {
   }
   const now = input.now ?? Date.now()
   const result = await readVaultEnvelope(client, now)
+  if (!result.envelope || Date.parse(result.envelope.expiresAt) <= now) return null
+  return result.envelope.contractVersion === SELLER_OS_LUNA_PROTECTED_SESSION_VERSION
+    ? result.envelope.cookieHeader
+    : sellerOsLunaCookieHeaderForUrlV2(
+        result.envelope.cookieJar,
+        SESSION_PROBE_ENTRYPOINT,
+        now,
+      )
+}
+
+export async function resolveServerOwnedLunaSessionEnvelopeV2(input: {
+  client?: Pick<SupabaseClient, "rpc">
+  now?: number
+} = {}) {
+  let client: Pick<SupabaseClient, "rpc">
+  try { client = input.client ?? getSupabaseAdminClient() } catch { return null }
+  const now = input.now ?? Date.now()
+  const result = await readVaultEnvelope(client, now)
   return result.envelope && Date.parse(result.envelope.expiresAt) > now
-    ? result.envelope.cookieHeader : null
+    ? result.envelope : null
+}
+
+export function sellerOsLunaProtectedSessionCookieHeaderForUrlV2(
+  envelope: SellerOsLunaProtectedSessionEnvelope,
+  rawUrl: string,
+  now: number = Date.now(),
+) {
+  return envelope.contractVersion === SELLER_OS_LUNA_PROTECTED_SESSION_VERSION
+    ? envelope.cookieHeader
+    : sellerOsLunaCookieHeaderForUrlV2(envelope.cookieJar, rawUrl, now)
+}
+
+export async function resolveServerOwnedLunaCookieHeaderForUrlV2(
+  rawUrl: string,
+  input: { client?: Pick<SupabaseClient, "rpc">; now?: number } = {},
+) {
+  const now = input.now ?? Date.now()
+  const envelope = await resolveServerOwnedLunaSessionEnvelopeV2({
+    ...input,
+    now,
+  })
+  if (!envelope) return null
+  return sellerOsLunaProtectedSessionCookieHeaderForUrlV2(
+    envelope,
+    rawUrl,
+    now,
+  )
 }
 
 export async function auditSellerOsLunaProtectedSessionV1(input: {
@@ -162,8 +243,13 @@ export async function auditSellerOsLunaProtectedSessionV1(input: {
 }
 
 function sessionDigest(value: Buffer | string) {
-  return `luna-session-v1:sha256:${createHash("sha256")
-    .update(SELLER_OS_LUNA_PROTECTED_SESSION_VERSION, "utf8")
+  const parsed = parseProtectedSessionEnvelope(
+    Buffer.isBuffer(value) ? value.toString("utf8") : value,
+    Date.now(),
+  )
+  const version = parsed?.contractVersion ?? "SELLER_OS_LUNA_PROTECTED_SESSION"
+  return `luna-session:sha256:${createHash("sha256")
+    .update(version, "utf8")
     .update("\u0000", "utf8")
     .update(value)
     .digest("hex")}`
@@ -245,15 +331,11 @@ function postLoginPathClass(url: URL) {
  * One logical, bounded, non-mutating recognition probe. Response bodies are
  * cancelled and never serialized, persisted, returned, or logged.
  */
-export async function probeLunaProtectedSessionHeaderV1(input: Readonly<{
-  cookieHeader: string
+async function probeLunaProtectedSessionWithResolver(input: Readonly<{
+  cookieHeaderForUrl: (url: string) => string | null
   fetchImpl?: typeof fetch
   timeoutMs?: number
 }>) {
-  if (input.cookieHeader.length < 8 || input.cookieHeader.length > 8_192 ||
-      !COOKIE_HEADER.test(input.cookieHeader)) {
-    throw new Error("LUNA_PROTECTED_SESSION_PROBE_INPUT_INVALID")
-  }
   const fetchImpl = input.fetchImpl ?? fetch
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), Math.max(
@@ -262,15 +344,21 @@ export async function probeLunaProtectedSessionHeaderV1(input: Readonly<{
   ))
   timeout.unref?.()
   let current = safeProbeUrl(SESSION_PROBE_ENTRYPOINT)
+  let redirectCount = 0
   try {
-    for (let redirectCount = 0;
+    for (redirectCount = 0;
       redirectCount <= SESSION_PROBE_MAX_REDIRECTS;
       redirectCount += 1) {
+      const cookieHeader = input.cookieHeaderForUrl(current.toString())
+      if (!cookieHeader || cookieHeader.length < 8 || cookieHeader.length > 8_192 ||
+          !COOKIE_HEADER.test(cookieHeader)) {
+        throw new Error("LUNA_PROTECTED_SESSION_PROBE_INPUT_INVALID")
+      }
       const response = await fetchImpl(current.toString(), {
         method: "GET",
         headers: {
           Accept: "text/html,application/xhtml+xml",
-          Cookie: input.cookieHeader,
+          Cookie: cookieHeader,
           "User-Agent": "Seller-OS-Luna-Session-Preflight/1.0",
         },
         cache: "no-store",
@@ -301,6 +389,7 @@ export async function probeLunaProtectedSessionHeaderV1(input: Readonly<{
         responseBodyRead: false as const,
         stockEvaluated: false as const,
         oosInferred: false as const,
+        redirectCookieJarApplied: redirectCount > 0,
       })
     }
     throw new Error("LUNA_PROTECTED_SESSION_REDIRECT_LIMIT")
@@ -312,6 +401,41 @@ export async function probeLunaProtectedSessionHeaderV1(input: Readonly<{
   } finally {
     clearTimeout(timeout)
   }
+}
+
+export async function probeLunaProtectedSessionHeaderV1(input: Readonly<{
+  cookieHeader: string
+  fetchImpl?: typeof fetch
+  timeoutMs?: number
+}>) {
+  if (input.cookieHeader.length < 8 || input.cookieHeader.length > 8_192 ||
+      !COOKIE_HEADER.test(input.cookieHeader)) {
+    throw new Error("LUNA_PROTECTED_SESSION_PROBE_INPUT_INVALID")
+  }
+  return probeLunaProtectedSessionWithResolver({
+    cookieHeaderForUrl: () => input.cookieHeader,
+    fetchImpl: input.fetchImpl,
+    timeoutMs: input.timeoutMs,
+  })
+}
+
+export async function probeLunaProtectedSessionEnvelopeV2(input: Readonly<{
+  envelope: SellerOsLunaProtectedSessionEnvelope
+  fetchImpl?: typeof fetch
+  timeoutMs?: number
+  now?: number
+}>) {
+  const now = input.now ?? Date.now()
+  return probeLunaProtectedSessionWithResolver({
+    cookieHeaderForUrl: (url) =>
+      sellerOsLunaProtectedSessionCookieHeaderForUrlV2(
+        input.envelope,
+        url,
+        now,
+      ),
+    fetchImpl: input.fetchImpl,
+    timeoutMs: input.timeoutMs,
+  })
 }
 
 export async function verifyStoredSellerOsLunaProtectedSessionV1(input: {
@@ -330,8 +454,9 @@ export async function verifyStoredSellerOsLunaProtectedSessionV1(input: {
       postLoginHost: null, postLoginPathClass: null,
       sourceStatus: stored.status, logicalReadCount: 0 as const })
   }
-  return probeLunaProtectedSessionHeaderV1({
-    cookieHeader: stored.envelope.cookieHeader,
+  return probeLunaProtectedSessionEnvelopeV2({
+    envelope: stored.envelope,
     fetchImpl: input.fetchImpl,
+    now,
   })
 }

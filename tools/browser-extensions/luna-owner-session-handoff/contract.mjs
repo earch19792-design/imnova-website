@@ -1,7 +1,8 @@
 export const BUILD_ID = "LUNA_OWNER_SESSION_HANDOFF_EXTENSION_V1"
-export const BUILD_VERSION = "1.0.4"
+export const BUILD_VERSION = "1.1.0"
 export const HANDOFF_VERSION = "SELLER_OS_LUNA_OWNER_REAUTH_HANDOFF_V1"
 export const SESSION_VERSION = "SELLER_OS_LUNA_PROTECTED_SESSION_V1"
+export const SESSION_COOKIE_JAR_VERSION = "SELLER_OS_LUNA_PROTECTED_SESSION_V2"
 export const PREPROD_ORIGIN = "https://imnova-seller-os-preprod.vercel.app"
 export const UPLOAD_PATH = "/api/admin/ebay/luna-protected-session"
 export const LUNA_SESSION_CONSUMER_URL =
@@ -9,12 +10,10 @@ export const LUNA_SESSION_CONSUMER_URL =
 export const ENVIRONMENT =
   "SELLER_OS_DEDICATED_PREPROD:vsfthqydfrdzulldbfbe:prj_XvOpSg1jhmLLG1yOCFhAbiLEn222"
 export const OPTIONAL_LUNA_ORIGINS = Object.freeze([
-  "https://lunaportex.com/*",
   "https://www.lunaportex.com/*",
   "https://account.lunaportex.com/*",
 ])
 export const LUNA_TAB_PATTERNS = Object.freeze([
-  "https://lunaportex.com/*",
   "https://www.lunaportex.com/*",
   "https://account.lunaportex.com/*",
 ])
@@ -25,6 +24,12 @@ const NONCE = /^[A-Za-z0-9_-]{43}$/
 const SAFE_COOKIE_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/
 const SAFE_COOKIE_VALUE = /^[^;\u0000-\u001f\u007f]{1,4096}$/
 const REQUIRED_COOKIE = /^(?:__Host-|__Secure-)?(?:_shopify_essential|_secure_customer_sig|customer_auth_provider|customer_auth_session_created_at|customer_account_session|shopify_customer_account_session|_shopify_customer_account_session|account_session|accounts_session|identity_session)$/i
+const SAFE_COOKIE_PATH = /^\/[\u0020-\u007e]{0,511}$/
+const ALLOWED_COOKIE_DOMAINS = new Set([
+  "lunaportex.com",
+  "www.lunaportex.com",
+  "account.lunaportex.com",
+])
 const CHALLENGE_KEYS = [
   "challengeId",
   "contractVersion",
@@ -49,6 +54,17 @@ function sessionCookieEligible(cookie) {
     cookie.secure === true && SAFE_COOKIE_NAME.test(String(cookie.name ?? "")) &&
     SAFE_COOKIE_VALUE.test(String(cookie.value ?? "")) &&
     REQUIRED_COOKIE.test(String(cookie.name ?? ""))
+}
+
+function sessionCookieJarEligible(cookie) {
+  const domain = normalizedCookieDomain(cookie.domain)
+  return ALLOWED_COOKIE_DOMAINS.has(domain) &&
+    !(cookie.hostOnly === true && domain === "lunaportex.com") &&
+    cookie.secure === true &&
+    SAFE_COOKIE_NAME.test(String(cookie.name ?? "")) &&
+    SAFE_COOKIE_VALUE.test(String(cookie.value ?? "")) &&
+    REQUIRED_COOKIE.test(String(cookie.name ?? "")) &&
+    SAFE_COOKIE_PATH.test(String(cookie.path ?? ""))
 }
 
 function cookieIdentity(cookie) {
@@ -139,6 +155,64 @@ export function diagnoseAuthenticatedCookieContexts(
   })
 }
 
+export function selectSessionCookieJar(
+  accountHostCookies,
+  wwwAccountCookies,
+  now = Date.now(),
+) {
+  const unique = new Map()
+  for (const cookie of [...accountHostCookies, ...wwwAccountCookies]) {
+    const domain = normalizedCookieDomain(cookie.domain)
+    const hostOnly = cookie.hostOnly === true
+    const path = String(cookie.path ?? "")
+    if (!sessionCookieJarEligible(cookie)) continue
+    const expirationMs = Number(cookie.expirationDate) > 0
+      ? Math.floor(Number(cookie.expirationDate) * 1_000) : null
+    if (expirationMs !== null && expirationMs <= now + 60_000) {
+      throw new Error("LUNA_OWNER_HANDOFF_SESSION_EXPIRY_INVALID")
+    }
+    const value = Object.freeze({
+      name: String(cookie.name),
+      value: String(cookie.value),
+      domain,
+      path,
+      secure: cookie.secure,
+      hostOnly,
+      expiresAt: expirationMs === null
+        ? null : new Date(expirationMs).toISOString(),
+    })
+    const identity = cookieIdentity(value)
+    const previous = unique.get(identity)
+    if (previous && previous.value !== value.value) {
+      throw new Error("LUNA_OWNER_HANDOFF_SESSION_COOKIE_SET_AMBIGUOUS")
+    }
+    unique.set(identity, value)
+  }
+  const values = [...unique.values()].sort((left, right) =>
+    left.domain.localeCompare(right.domain) ||
+    left.path.localeCompare(right.path) || left.name.localeCompare(right.name))
+  if (values.length < 2 || values.length > 24) {
+    throw new Error("LUNA_OWNER_HANDOFF_SESSION_COOKIE_JAR_INVALID")
+  }
+  const accountIdentities = new Set(accountHostCookies.map(cookieIdentity))
+  const wwwIdentities = new Set(wwwAccountCookies.map(cookieIdentity))
+  if (!accountIdentities.size || !wwwIdentities.size ||
+      !values.some((cookie) => accountIdentities.has(cookieIdentity(cookie))) ||
+      !values.some((cookie) => wwwIdentities.has(cookieIdentity(cookie)))) {
+    throw new Error("LUNA_OWNER_HANDOFF_SESSION_COOKIE_JAR_INVALID")
+  }
+  const explicitExpiries = values.flatMap((cookie) =>
+    cookie.expiresAt ? [Date.parse(cookie.expiresAt)] : [])
+  const expiresAt = Math.min(
+    now + 24 * 60 * 60_000,
+    explicitExpiries.length ? Math.min(...explicitExpiries) : Infinity,
+  )
+  if (!Number.isFinite(expiresAt) || expiresAt <= now + 60_000) {
+    throw new Error("LUNA_OWNER_HANDOFF_SESSION_EXPIRY_INVALID")
+  }
+  return Object.freeze({ values, expiresAt })
+}
+
 function bytesToBase64Url(bytes) {
   let binary = ""
   for (const value of bytes) binary += String.fromCharCode(value)
@@ -172,12 +246,18 @@ export async function encryptSessionPayload(challengeInput, sessionInput,
   let publicBytes = null
   try {
     sessionBytes = encoder.encode(JSON.stringify({
-      contractVersion: SESSION_VERSION,
-      cookieHeader: sessionInput.cookieHeader,
+      contractVersion: sessionInput.cookieJar
+        ? SESSION_COOKIE_JAR_VERSION : SESSION_VERSION,
+      ...(sessionInput.cookieJar
+        ? { cookieJar: sessionInput.cookieJar }
+        : { cookieHeader: sessionInput.cookieHeader }),
       capturedAt: sessionInput.capturedAt,
       validatedAt: sessionInput.validatedAt,
       expiresAt: sessionInput.expiresAt,
     }))
+    if (sessionBytes.byteLength < 80 || sessionBytes.byteLength > 12_000) {
+      throw new Error("LUNA_OWNER_HANDOFF_SESSION_COOKIE_JAR_INVALID")
+    }
     sessionKeyBytes = cryptoImpl.getRandomValues(new Uint8Array(32))
     iv = cryptoImpl.getRandomValues(new Uint8Array(12))
     const sessionKey = await cryptoImpl.subtle.importKey(

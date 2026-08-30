@@ -17,11 +17,14 @@ import {
   type SellerOsLunaBrowserHandleV1,
 } from "./ebay-luna-protected-session-ceremony-v1"
 import {
-  resolveServerOwnedLunaSessionValueV1,
+  resolveServerOwnedLunaSessionEnvelopeV2,
   storeSellerOsLunaProtectedSessionV1,
+  type SellerOsLunaProtectedSessionEnvelope,
 } from "./ebay-luna-protected-session-server-v1"
 import { SELLER_OS_LUNA_PROTECTED_SESSION_VERSION } from
   "./ebay-luna-automation-prerequisites-v1"
+import { SELLER_OS_LUNA_PROTECTED_SESSION_COOKIE_JAR_VERSION } from
+  "./ebay-luna-session-cookie-jar-v2"
 import {
   buildSellerOsLunaBrowserDirectedProductV1,
   classifySellerOsLunaBrowserSessionHealthV1,
@@ -817,9 +820,35 @@ function protectedCookieEntries(cookieHeader: string) {
   return entries
 }
 
+function protectedBrowserCookies(
+  envelope: SellerOsLunaProtectedSessionEnvelope,
+) {
+  if (envelope.contractVersion === SELLER_OS_LUNA_PROTECTED_SESSION_VERSION) {
+    return protectedCookieEntries(envelope.cookieHeader).map((cookie) =>
+      cookie.name.startsWith("__Host-")
+        ? { ...cookie, url: "https://www.lunaportex.com", secure: true }
+        : { ...cookie, domain: ".lunaportex.com", path: "/", secure: true })
+  }
+  if (envelope.contractVersion !==
+      SELLER_OS_LUNA_PROTECTED_SESSION_COOKIE_JAR_VERSION) {
+    throw new Error("LUNA_PROTECTED_BROWSER_SESSION_INVALID")
+  }
+  return envelope.cookieJar.map((cookie) => ({
+    name: cookie.name,
+    value: cookie.value,
+    ...(cookie.hostOnly
+      ? { url: `https://${cookie.domain}${cookie.path}` }
+      : { domain: cookie.domain === "lunaportex.com"
+          ? ".lunaportex.com" : cookie.domain, path: cookie.path }),
+    secure: cookie.secure,
+    ...(cookie.expiresAt
+      ? { expires: Math.floor(Date.parse(cookie.expiresAt) / 1_000) } : {}),
+  }))
+}
+
 async function createAutomaticProtectedBrowserWorkerV1() {
-  const cookieHeader = await resolveServerOwnedLunaSessionValueV1()
-  if (!cookieHeader) throw new Error("LUNA_REAUTH_REQUIRED")
+  const session = await resolveServerOwnedLunaSessionEnvelopeV2()
+  if (!session) throw new Error("LUNA_REAUTH_REQUIRED")
   await cleanupAbandonedProfiles()
   const profilePath = await mkdtemp(join(PROFILE_ROOT, PROFILE_PREFIX))
   await chmod(profilePath, 0o700)
@@ -855,10 +884,7 @@ async function createAutomaticProtectedBrowserWorkerV1() {
       if (decision.allowed) await route.continue()
       else await route.abort("blockedbyclient")
     })
-    await context.addCookies(protectedCookieEntries(cookieHeader).map((cookie) =>
-      cookie.name.startsWith("__Host-")
-        ? { ...cookie, url: "https://www.lunaportex.com", secure: true }
-        : { ...cookie, domain: ".lunaportex.com", path: "/", secure: true }))
+    await context.addCookies(protectedBrowserCookies(session))
     const page = context.pages()[0] ?? await context.newPage()
     await page.goto("https://www.lunaportex.com/account", {
       waitUntil: "domcontentloaded",

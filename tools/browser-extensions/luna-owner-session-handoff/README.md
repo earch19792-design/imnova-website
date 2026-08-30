@@ -43,17 +43,17 @@ al terminar. No muestra nombres ni valores y no envía el resultado al backend.
 - No navega Luna, no automatiza login/Cloudflare y no usa `<all_urls>`.
 - Reconoce la pantalla admin mediante un handshake con su content script exacto;
   no solicita permiso `tabs` ni permiso host adicional para Seller OS.
-- `cookies` y los únicos tres hosts Luna están declarados como opcionales. Se
+- `cookies` y los únicos dos hosts Luna están declarados como opcionales. Se
   solicitan desde el clic explícito de la propietaria y se revocan al terminar.
-- La captura usa exclusivamente el set aplicable al consumidor canónico
-  `https://www.lunaportex.com/account`; no mezcla sets del apex ni del host
-  `account`, y conserva el fail-closed ante nombres conflictivos dentro de ese
-  único set.
+- La captura versionada conserva por separado las cookies aplicables al consumer
+  `https://www.lunaportex.com/account` y a la ruta autenticada final en
+  `account.lunaportex.com`. Cifra un jar bounded con domain/path/secure/expiry;
+  nunca concatena cookies de hosts distintos en un único header.
 - No declara ni usa `chrome.storage`, localStorage, sessionStorage, clipboard,
   analytics, logs o archivos.
-- Captura sólo los nombres de cookie allowlisted por el contrato Luna existente,
-  los conserva en memoria, cifra con AES-256-GCM + RSA-OAEP SHA-256 y limpia los
-  buffers mutables en `finally`.
+- De esas dos consultas exactas conserva únicamente los nombres allowlisted por
+  el contrato Luna existente. Los mantiene en memoria, cifra con AES-256-GCM +
+  RSA-OAEP SHA-256 y limpia los buffers mutables en `finally`.
 - El diagnóstico local no cambia ese selector: permite probar primero si el
   host autenticado posee identidades host-only que el consumer `www` no recibe.
 - La página admin realiza el PUT same-origin del sobre cifrado. El servidor

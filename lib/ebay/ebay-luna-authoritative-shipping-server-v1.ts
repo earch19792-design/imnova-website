@@ -16,8 +16,14 @@ import {
 } from "./ebay-luna-authoritative-shipping-v1"
 import { fetchLunaProtectedBrowserShippingQuoteV1 } from
   "./ebay-luna-canonical-browser-worker-server-v1"
-import { resolveServerOwnedLunaSessionValueV1 } from
+import {
+  resolveServerOwnedLunaSessionEnvelopeV2,
+  sellerOsLunaProtectedSessionCookieHeaderForUrlV2,
+  type SellerOsLunaProtectedSessionEnvelope,
+} from
   "./ebay-luna-protected-session-server-v1"
+import { SELLER_OS_LUNA_PROTECTED_SESSION_COOKIE_JAR_VERSION } from
+  "./ebay-luna-session-cookie-jar-v2"
 
 const LUNA_ORIGIN = "https://www.lunaportex.com"
 const REQUEST_TIMEOUT_MS = 15_000
@@ -53,7 +59,7 @@ function parseLosslessJson(raw: string) {
   } catch { return null }
 }
 
-function cookieJar(cookieHeader: string) {
+function legacyCookieJar(cookieHeader: string) {
   const values = new Map<string, string>()
   for (const entry of cookieHeader.split(/;\s*/)) {
     const split = entry.indexOf("=")
@@ -65,10 +71,10 @@ function cookieJar(cookieHeader: string) {
   }
   if (!values.size) throw new Error("LUNA_PROTECTED_SESSION_INVALID")
   return {
-    header() {
+    header(_url: URL) {
       return [...values].map(([name, value]) => `${name}=${value}`).join("; ")
     },
-    update(headers: Headers) {
+    update(headers: Headers, _url: URL) {
       const entries = typeof headers.getSetCookie === "function"
         ? headers.getSetCookie()
         : headers.get("set-cookie") ? [headers.get("set-cookie") as string] : []
@@ -85,6 +91,79 @@ function cookieJar(cookieHeader: string) {
   }
 }
 
+function defaultCookiePath(pathname: string) {
+  if (!pathname.startsWith("/") || pathname === "/") return "/"
+  const index = pathname.lastIndexOf("/")
+  return index <= 0 ? "/" : pathname.slice(0, index)
+}
+
+function multiHostCookieJar(session: SellerOsLunaProtectedSessionEnvelope) {
+  if (session.contractVersion !==
+      SELLER_OS_LUNA_PROTECTED_SESSION_COOKIE_JAR_VERSION) {
+    return legacyCookieJar(session.cookieHeader)
+  }
+  const values = new Map(session.cookieJar.map((cookie) => [
+    [cookie.name, cookie.domain, cookie.path].join("\u0000"), { ...cookie },
+  ]))
+  return {
+    header(url: URL) {
+      return sellerOsLunaProtectedSessionCookieHeaderForUrlV2({
+        ...session,
+        cookieJar: [...values.values()],
+      }, url.toString())
+    },
+    update(headers: Headers, url: URL) {
+      const entries = typeof headers.getSetCookie === "function"
+        ? headers.getSetCookie()
+        : headers.get("set-cookie") ? [headers.get("set-cookie") as string] : []
+      for (const line of entries.slice(0, 24)) {
+        const parts = line.split(";").map((part) => part.trim())
+        const split = parts[0]?.indexOf("=") ?? -1
+        const name = split > 0 ? parts[0].slice(0, split) : ""
+        const value = split > 0 ? parts[0].slice(split + 1) : ""
+        if (!SAFE_COOKIE_NAME.test(name) || !SAFE_COOKIE_VALUE.test(value)) continue
+        let domain = url.hostname
+        let hostOnly = true
+        let path = defaultCookiePath(url.pathname)
+        let secure = false
+        let expiresAt: string | null = null
+        for (const attribute of parts.slice(1)) {
+          const separator = attribute.indexOf("=")
+          const key = (separator < 0 ? attribute : attribute.slice(0, separator))
+            .trim().toLowerCase()
+          const attributeValue = separator < 0
+            ? "" : attribute.slice(separator + 1).trim()
+          if (key === "domain") {
+            const candidate = attributeValue.toLowerCase().replace(/^\./, "")
+            if (candidate === "lunaportex.com" || candidate === url.hostname) {
+              domain = candidate
+              hostOnly = false
+            }
+          } else if (key === "path" && /^\/[\u0020-\u007e]{0,511}$/.test(
+            attributeValue,
+          )) path = attributeValue
+          else if (key === "secure") secure = true
+          else if (key === "max-age" && /^-?\d{1,10}$/.test(attributeValue)) {
+            const seconds = Number(attributeValue)
+            expiresAt = new Date(Date.now() + Math.max(0, seconds) * 1_000)
+              .toISOString()
+          } else if (key === "expires") {
+            const expiry = Date.parse(attributeValue)
+            if (Number.isFinite(expiry)) expiresAt = new Date(expiry).toISOString()
+          }
+        }
+        const identity = [name, domain, path].join("\u0000")
+        if (expiresAt && Date.parse(expiresAt) <= Date.now()) values.delete(identity)
+        else values.set(identity, { name, value, domain, path, secure, hostOnly,
+          expiresAt })
+      }
+    },
+  }
+}
+
+type LunaHttpCookieJar = ReturnType<typeof legacyCookieJar> |
+  ReturnType<typeof multiHostCookieJar>
+
 async function boundedBody(response: Response) {
   const declared = Number(response.headers.get("content-length") ?? 0)
   if (declared > MAX_RESPONSE_BYTES) return null
@@ -97,7 +176,7 @@ async function cartRequest(input: Readonly<{
   method?: "GET" | "POST"
   body?: unknown
   fetchImpl: typeof fetch
-  jar: ReturnType<typeof cookieJar>
+  jar: LunaHttpCookieJar
 }>) {
   const url = new URL(input.path, LUNA_ORIGIN)
   if (url.origin !== LUNA_ORIGIN ||
@@ -105,11 +184,12 @@ async function cartRequest(input: Readonly<{
         "/cart/shipping_rates.json"]).has(url.pathname)) {
     throw new Error("LUNA_SHIPPING_ENDPOINT_DENIED")
   }
+  const cookieHeader = input.jar.header(url)
   const response = await input.fetchImpl(url, {
     method: input.method ?? "GET",
     headers: {
       Accept: "application/json",
-      Cookie: input.jar.header(),
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
       "User-Agent": "Seller-OS-Luna-Shipping/1.0",
       ...(input.body === undefined ? {} : { "Content-Type": "application/json" }),
     },
@@ -118,7 +198,7 @@ async function cartRequest(input: Readonly<{
     redirect: "follow",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   })
-  input.jar.update(response.headers)
+  input.jar.update(response.headers, url)
   const raw = await boundedBody(response)
   return Object.freeze({
     status: raw === null ? 460 : response.status,
@@ -165,16 +245,21 @@ export async function attemptLunaAuthenticatedHttpShippingQuoteV1(
   rawIdentity: LunaShippingIdentityV1,
   options: Readonly<{
     fetchImpl?: typeof fetch
-    resolveProtectedSession?: () => Promise<string | null>
+    resolveProtectedSession?: () => Promise<
+      string | SellerOsLunaProtectedSessionEnvelope | null
+    >
   }> = {},
 ) : Promise<LunaShippingAttemptV1> {
   const identity = normalizeLunaShippingIdentityV1(rawIdentity)
   const destination = SELLER_OS_CANONICAL_LUNA_SHIPPING_DESTINATION_V1
-  const cookieHeader = await (options.resolveProtectedSession ??
-    resolveServerOwnedLunaSessionValueV1)()
-  if (!cookieHeader) return blocked("LUNA_REAUTH_REQUIRED")
+  const protectedSession = options.resolveProtectedSession
+    ? await options.resolveProtectedSession()
+    : await resolveServerOwnedLunaSessionEnvelopeV2()
+  if (!protectedSession) return blocked("LUNA_REAUTH_REQUIRED")
   const fetchImpl = options.fetchImpl ?? fetch
-  const jar = cookieJar(cookieHeader)
+  const jar = typeof protectedSession === "string"
+    ? legacyCookieJar(protectedSession)
+    : multiHostCookieJar(protectedSession)
   let touched = false
   let originalItems: readonly SafeCartItem[] = []
   let snapshotCaptured = false

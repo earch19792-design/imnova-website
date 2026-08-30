@@ -8,7 +8,7 @@ import {
   encryptSessionPayload,
   exactChallenge,
   safeCode,
-  selectSessionCookies,
+  selectSessionCookieJar,
 } from "./contract.mjs"
 
 const GET_CHALLENGE = "SELLER_OS_LUNA_OWNER_EXTENSION_GET_CHALLENGE_V1"
@@ -43,7 +43,7 @@ async function exactLunaTab() {
     throw new Error("LUNA_OWNER_EXTENSION_EXACTLY_ONE_LUNA_TAB_REQUIRED")
   }
   const url = new URL(tabs[0].url)
-  if (!new Set(["lunaportex.com", "www.lunaportex.com",
+  if (!new Set(["www.lunaportex.com",
     "account.lunaportex.com"]).has(url.hostname) ||
       /\/(?:login|signin|callback)(?:\/|$)/i.test(url.pathname)) {
     throw new Error("LUNA_OWNER_HANDOFF_AUTHENTICATION_NOT_COMPLETE")
@@ -95,12 +95,7 @@ async function exactAuthenticatedLunaTab() {
   })
 }
 
-async function diagnoseCookieContract(adminTabIdInput) {
-  exactAdminTabId(adminTabIdInput)
-  const allowed = await chrome.permissions.contains({
-    permissions: ["cookies"], origins: [...OPTIONAL_LUNA_ORIGINS],
-  })
-  if (!allowed) throw new Error("LUNA_OWNER_EXTENSION_PERMISSION_REQUIRED")
+async function captureCookieContexts() {
   const authenticated = await exactAuthenticatedLunaTab()
   await proveAuthenticated(authenticated.tab.id)
   const storeId = await cookieStoreForTab(authenticated.tab.id)
@@ -112,6 +107,17 @@ async function diagnoseCookieContract(adminTabIdInput) {
     url: LUNA_SESSION_CONSUMER_URL,
     storeId,
   })
+  return { authenticated, accountHostCookies, wwwAccountCookies }
+}
+
+async function diagnoseCookieContract(adminTabIdInput) {
+  exactAdminTabId(adminTabIdInput)
+  const allowed = await chrome.permissions.contains({
+    permissions: ["cookies"], origins: [...OPTIONAL_LUNA_ORIGINS],
+  })
+  if (!allowed) throw new Error("LUNA_OWNER_EXTENSION_PERMISSION_REQUIRED")
+  const { authenticated, accountHostCookies, wwwAccountCookies } =
+    await captureCookieContexts()
   try {
     return Object.freeze({
       success: true,
@@ -138,30 +144,29 @@ async function captureSession(challenge) {
     permissions: ["cookies"], origins: [...OPTIONAL_LUNA_ORIGINS],
   })
   if (!allowed) throw new Error("LUNA_OWNER_EXTENSION_PERMISSION_REQUIRED")
-  const tab = await exactLunaTab()
-  await proveAuthenticated(tab.id)
-  const storeId = await cookieStoreForTab(tab.id)
-  const consumerCookies = await chrome.cookies.getAll({
-    url: LUNA_SESSION_CONSUMER_URL,
-    storeId,
-  })
+  const { accountHostCookies, wwwAccountCookies } =
+    await captureCookieContexts()
   const capturedAt = Date.now()
-  const selected = selectSessionCookies(consumerCookies, capturedAt)
-  let cookieHeader = selected.cookieHeader
+  const selected = selectSessionCookieJar(
+    accountHostCookies,
+    wwwAccountCookies,
+    capturedAt,
+  )
   try {
     return Object.freeze({
       envelope: await encryptSessionPayload(challenge, {
-        cookieHeader,
+        cookieJar: selected.values,
         capturedAt: new Date(capturedAt).toISOString(),
         validatedAt: new Date(capturedAt).toISOString(),
         expiresAt: new Date(selected.expiresAt).toISOString(),
       }),
       cookieSetCandidateCount: 1,
+      multiHostCookieSetCaptured: true,
     })
   } finally {
-    cookieHeader = ""
     selected.values.length = 0
-    consumerCookies.length = 0
+    accountHostCookies.length = 0
+    wwwAccountCookies.length = 0
   }
 }
 
@@ -190,6 +195,7 @@ async function execute(adminTabIdInput) {
     buildId: BUILD_ID,
     version: BUILD_VERSION,
     cookieSetCandidateCount: captured.cookieSetCandidateCount,
+    multiHostCookieSetCaptured: captured.multiHostCookieSetCaptured,
   })
 }
 

@@ -1,13 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Seller OS — Luna Owner Session Handoff",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "Transfiere una sesión Luna ya autenticada al Vault staging mediante el challenge cifrado de Seller OS.",
   "minimum_chrome_version": "120",
   "permissions": ["scripting"],
   "optional_permissions": ["cookies"],
   "optional_host_permissions": [
-    "https://lunaportex.com/*",
     "https://www.lunaportex.com/*",
     "https://account.lunaportex.com/*"
   ],

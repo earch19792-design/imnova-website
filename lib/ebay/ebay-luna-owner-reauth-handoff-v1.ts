@@ -16,10 +16,14 @@ import { getSupabaseAdminClient } from "../supabase-admin"
 import { SELLER_OS_LUNA_PROTECTED_SESSION_VERSION } from
   "./ebay-luna-automation-prerequisites-v1"
 import {
-  probeLunaProtectedSessionHeaderV1,
+  probeLunaProtectedSessionEnvelopeV2,
   storeSellerOsLunaProtectedSessionV1,
   verifyStoredSellerOsLunaProtectedSessionV1,
 } from "./ebay-luna-protected-session-server-v1"
+import {
+  SELLER_OS_LUNA_PROTECTED_SESSION_COOKIE_JAR_VERSION,
+  parseSellerOsLunaSessionCookieJarV2,
+} from "./ebay-luna-session-cookie-jar-v2"
 import {
   SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION,
   getEbayProRuntimeBoundary,
@@ -197,13 +201,7 @@ function parseSessionPayload(payload: Buffer, now: number) {
     fail("LUNA_OWNER_HANDOFF_SESSION_INVALID")
   }
   const session = value as Record<string, unknown>
-  if (Object.keys(session).sort().join(",") !==
-      "capturedAt,contractVersion,cookieHeader,expiresAt,validatedAt" ||
-      session.contractVersion !== SELLER_OS_LUNA_PROTECTED_SESSION_VERSION ||
-      typeof session.cookieHeader !== "string" ||
-      session.cookieHeader.length < 8 || session.cookieHeader.length > 8_192 ||
-      !COOKIE_HEADER.test(session.cookieHeader) ||
-      typeof session.capturedAt !== "string" ||
+  if (typeof session.capturedAt !== "string" ||
       typeof session.validatedAt !== "string" ||
       typeof session.expiresAt !== "string") {
     fail("LUNA_OWNER_HANDOFF_SESSION_INVALID")
@@ -216,11 +214,38 @@ function parseSessionPayload(payload: Buffer, now: number) {
       expiresAt <= now + 60_000 || expiresAt - capturedAt > 24 * 60 * 60_000) {
     fail("LUNA_OWNER_HANDOFF_SESSION_INVALID")
   }
-  return Object.freeze({
-    cookieHeader: session.cookieHeader,
+  const timestamps = {
     capturedAt: new Date(capturedAt).toISOString(),
+    validatedAt: new Date(validatedAt).toISOString(),
     expiresAt: new Date(expiresAt).toISOString(),
-  })
+  }
+  if (session.contractVersion === SELLER_OS_LUNA_PROTECTED_SESSION_VERSION &&
+      Object.keys(session).sort().join(",") ===
+        "capturedAt,contractVersion,cookieHeader,expiresAt,validatedAt" &&
+      typeof session.cookieHeader === "string" &&
+      session.cookieHeader.length >= 8 && session.cookieHeader.length <= 8_192 &&
+      COOKIE_HEADER.test(session.cookieHeader)) {
+    return Object.freeze({
+      contractVersion: SELLER_OS_LUNA_PROTECTED_SESSION_VERSION,
+      cookieHeader: session.cookieHeader,
+      ...timestamps,
+    })
+  }
+  if (session.contractVersion ===
+        SELLER_OS_LUNA_PROTECTED_SESSION_COOKIE_JAR_VERSION &&
+      Object.keys(session).sort().join(",") ===
+        "capturedAt,contractVersion,cookieJar,expiresAt,validatedAt") {
+    const cookieJar = parseSellerOsLunaSessionCookieJarV2(
+      session.cookieJar,
+      expiresAt,
+    )
+    if (cookieJar) return Object.freeze({
+      contractVersion: SELLER_OS_LUNA_PROTECTED_SESSION_COOKIE_JAR_VERSION,
+      cookieJar,
+      ...timestamps,
+    })
+  }
+  fail("LUNA_OWNER_HANDOFF_SESSION_INVALID")
 }
 
 async function client(input?: RpcClient) {
@@ -351,11 +376,12 @@ export async function consumeSellerOsLunaOwnerHandoffV1(input: Readonly<{
       fail("LUNA_OWNER_HANDOFF_DECRYPT_FAILED")
     }
     const session = parseSessionPayload(plaintext, at)
-    let probe: Awaited<ReturnType<typeof probeLunaProtectedSessionHeaderV1>>
+    let probe: Awaited<ReturnType<typeof probeLunaProtectedSessionEnvelopeV2>>
     try {
-      probe = await probeLunaProtectedSessionHeaderV1({
-        cookieHeader: session.cookieHeader,
+      probe = await probeLunaProtectedSessionEnvelopeV2({
+        envelope: session,
         fetchImpl: input.fetchImpl,
+        now: at,
       })
     } catch (cause) {
       fail(sellerOsLunaOwnerHandoffProbeThrownCodeV1(cause))
@@ -364,8 +390,10 @@ export async function consumeSellerOsLunaOwnerHandoffV1(input: Readonly<{
       fail(sellerOsLunaOwnerHandoffProbeFailureCodeV1(probe))
     }
     const verifiedPayload = Buffer.from(JSON.stringify({
-      contractVersion: SELLER_OS_LUNA_PROTECTED_SESSION_VERSION,
-      cookieHeader: session.cookieHeader,
+      contractVersion: session.contractVersion,
+      ...(session.contractVersion === SELLER_OS_LUNA_PROTECTED_SESSION_VERSION
+        ? { cookieHeader: session.cookieHeader }
+        : { cookieJar: session.cookieJar }),
       capturedAt: session.capturedAt,
       validatedAt: new Date(at).toISOString(),
       expiresAt: session.expiresAt,

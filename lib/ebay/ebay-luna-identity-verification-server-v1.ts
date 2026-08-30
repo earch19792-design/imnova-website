@@ -1,6 +1,6 @@
 import "server-only"
 
-import { resolveServerOwnedLunaSessionValueV1 } from
+import { resolveServerOwnedLunaCookieHeaderForUrlV2 } from
   "./ebay-luna-protected-session-server-v1"
 import {
   buildSellerOsLunaIdentityVerificationEvidenceV1,
@@ -48,8 +48,9 @@ export function createSellerOsLunaIdentityVerificationServerV1(input: Readonly<{
   timeoutMs?: number
 }> = {}) {
   const fetchImpl = input.fetchImpl ?? fetch
-  const resolveSession = input.resolveSession ?? (() =>
-    resolveServerOwnedLunaSessionValueV1())
+  const resolveSession = input.resolveSession
+    ? (_url: string) => input.resolveSession!()
+    : (url: string) => resolveServerOwnedLunaCookieHeaderForUrlV2(url)
   const timeoutMs = Math.max(1_000,
     Math.min(input.timeoutMs ?? DEFAULT_TIMEOUT_MS, 20_000))
   return async function verify(
@@ -58,8 +59,12 @@ export function createSellerOsLunaIdentityVerificationServerV1(input: Readonly<{
     if (!isSellerOsLunaIdentityVerificationTargetV1(target)) {
       throw new Error("LUNA_IDENTITY_TARGET_NOT_SERVER_RESOLVED")
     }
-    const productJsonUrl = sellerOsLunaIdentityProductJsonUrlV1(target)
-    const protectedSession = await resolveSession()
+    const productJson = new URL(sellerOsLunaIdentityProductJsonUrlV1(target))
+    if (productJson.hostname === "lunaportex.com") {
+      productJson.hostname = "www.lunaportex.com"
+    }
+    const productJsonUrl = productJson.toString()
+    const protectedSession = await resolveSession(productJsonUrl)
     if (!protectedSession) throw new Error("LUNA_REAUTH_REQUIRED")
     let response: Response
     try {

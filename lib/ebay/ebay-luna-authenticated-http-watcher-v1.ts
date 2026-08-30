@@ -8,7 +8,11 @@ import {
   parseLunaAuthenticatedHttpCaptureV1,
   type LunaExactApprovedLinkV1,
 } from "./ebay-luna-supplier-stock-watcher-v1"
-import { resolveServerOwnedLunaSessionValueV1 } from
+import {
+  resolveServerOwnedLunaSessionEnvelopeV2,
+  sellerOsLunaProtectedSessionCookieHeaderForUrlV2,
+  type SellerOsLunaProtectedSessionEnvelope,
+} from
   "./ebay-luna-protected-session-server-v1"
 
 const LUNA_HOSTS = new Set(["lunaportex.com", "www.lunaportex.com"])
@@ -60,19 +64,19 @@ export async function fetchLunaAuthenticatedDirectedProductV1(
     sleep?: (milliseconds: number) => Promise<void>
   } = {},
 ) {
-  const protectedValue = await resolveServerOwnedLunaSessionValueV1()
-  if (!protectedValue) throw new Error("LUNA_REAUTH_REQUIRED")
   const urls = productJsonUrl(canonicalSourceUrl)
+  const protectedSession = await resolveServerOwnedLunaSessionEnvelopeV2()
+  if (!protectedSession) throw new Error("LUNA_REAUTH_REQUIRED")
   const fetchImpl = options.fetchImpl ?? fetch
   const timeoutMs = Math.max(1_000, Math.min(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, 20_000))
   const sleep = options.sleep ?? ((milliseconds: number) =>
     new Promise<void>((resolve) => setTimeout(resolve, milliseconds)))
   const htmlResponse = await authenticatedGet({ url: urls.html, accept: "text/html",
-    protectedValue, fetchImpl, timeoutMs, sleep })
+    protectedSession, fetchImpl, timeoutMs, sleep })
   const sessionFailure = authenticatedSessionFailure(htmlResponse)
   if (sessionFailure) throw new Error(sessionFailure)
   const productResponse = await authenticatedGet({ url: urls.product,
-    accept: "application/json", protectedValue, fetchImpl, timeoutMs, sleep })
+    accept: "application/json", protectedSession, fetchImpl, timeoutMs, sleep })
   if (!productResponse) throw new Error("LUNA_AUTHENTICATED_SOURCE_UNAVAILABLE")
   if (productResponse.status === 401) throw new Error("LUNA_REAUTH_REQUIRED")
   if (productResponse.status === 403) throw new Error("LUNA_AUTHORIZATION_DENIED")
@@ -155,6 +159,9 @@ function productJsonUrl(canonicalSourceUrl: string) {
   }
   parsed.search = ""
   parsed.hash = ""
+  if (parsed.hostname === "lunaportex.com") {
+    parsed.hostname = "www.lunaportex.com"
+  }
   parsed.pathname = parsed.pathname.replace(/\/$/, "")
   return { html: parsed.toString(), product: `${parsed.toString()}.js` }
 }
@@ -193,18 +200,24 @@ function retryableStatus(status: number) {
 async function authenticatedGet(input: {
   url: string
   accept: string
-  protectedValue: string
+  protectedSession: SellerOsLunaProtectedSessionEnvelope
   fetchImpl: typeof fetch
   timeoutMs: number
   sleep: (milliseconds: number) => Promise<void>
 }) : Promise<ResponseEvidence | null> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
+      const protectedValue = sellerOsLunaProtectedSessionCookieHeaderForUrlV2(
+        input.protectedSession,
+        input.url,
+      )
+      if (!protectedValue) return { status: 401, location: null,
+        contentType: null, body: "" }
       const response = await input.fetchImpl(input.url, {
         method: "GET",
         headers: {
           Accept: input.accept,
-          Cookie: input.protectedValue,
+          Cookie: protectedValue,
           "User-Agent": "Seller-OS-Luna-Watcher/1.0",
         },
         cache: "no-store",
@@ -239,9 +252,9 @@ export async function captureLunaAuthenticatedHttpV1(
   } = {},
 ) {
   const request = buildLunaAuthenticatedHttpRequestV1(link)
-  const protectedValue = await resolveServerOwnedLunaSessionValueV1()
   const observedAt = options.now ?? new Date().toISOString()
-  if (!protectedValue) return parseLunaAuthenticatedHttpCaptureV1({
+  const protectedSession = await resolveServerOwnedLunaSessionEnvelopeV2()
+  if (!protectedSession) return parseLunaAuthenticatedHttpCaptureV1({
     request,
     protectedSessionValuePresent: false,
     htmlResponse: null,
@@ -254,11 +267,11 @@ export async function captureLunaAuthenticatedHttpV1(
   const sleep = options.sleep ?? ((milliseconds: number) =>
     new Promise<void>((resolve) => setTimeout(resolve, milliseconds)))
   const htmlResponse = await authenticatedGet({ url: urls.html, accept: "text/html",
-    protectedValue, fetchImpl, timeoutMs, sleep })
+    protectedSession, fetchImpl, timeoutMs, sleep })
   const productResponse = htmlResponse && htmlResponse.status >= 200 &&
     htmlResponse.status < 300
     ? await authenticatedGet({ url: urls.product, accept: "application/json",
-        protectedValue, fetchImpl, timeoutMs, sleep })
+        protectedSession, fetchImpl, timeoutMs, sleep })
     : null
   return parseLunaAuthenticatedHttpCaptureV1({
     request,
