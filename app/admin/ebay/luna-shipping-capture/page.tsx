@@ -346,6 +346,8 @@ export default function LunaShippingCapturePage() {
     useState<LunaShippingRuntimeTraceEventV1[]>([])
   const [traceDurable, setTraceDurable] = useState(false)
   const [liveTarget, setLiveTarget] = useState<LiveCaptureTarget | null>(null)
+  const [liveCaptureAttempts, setLiveCaptureAttempts] = useState(0)
+  const [ignoredOutOfScope, setIgnoredOutOfScope] = useState(false)
   const triggerRef = useRef<(() => void) | null>(null)
   const liveTriggerRef = useRef<(() => void) | null>(null)
   const bindDestinationRef = useRef<(() => void) | null>(null)
@@ -379,6 +381,7 @@ export default function LunaShippingCapturePage() {
     let lastProgressState = "NOT_STARTED"
     let reconnecting = false
     let traceEvents: LunaShippingRuntimeTraceEventV1[] = []
+    let exactLiveCandidateId: string | null = null
     let traceFlushTimer: number | null = null
     let traceFlushChain = Promise.resolve()
 
@@ -410,6 +413,11 @@ export default function LunaShippingCapturePage() {
           .test(event.traceId) || !Number.isInteger(event.sequence) ||
           event.sequence < 1 || event.sequence > 100 ||
           event.purchaseBoundaryEnforced !== true) return
+      if (hasExactLiveTarget &&
+          (!exactLiveCandidateId || event.candidateId !== exactLiveCandidateId)) {
+        setIgnoredOutOfScope(true)
+        return
+      }
       if (traceEvents[0]?.traceId !== event.traceId) {
         traceEvents = []
         setTraceDurable(false)
@@ -465,6 +473,9 @@ export default function LunaShippingCapturePage() {
 
     const loadJobs = async (candidateIds: readonly string[] | undefined,
       nextMode: "CANARY" | "AUTO") => {
+      if (hasExactLiveTarget) {
+        throw new Error("LUNA_EXACT_LIVE_TARGET_GLOBAL_QUEUE_FORBIDDEN")
+      }
       const payload = await adminPost("resolve_jobs", { candidateIds })
       const resolved = Array.isArray(payload.jobs) ? payload.jobs : []
       if (resolved.some((job: any) => job?.contractVersion !== CONTRACT)) {
@@ -509,7 +520,8 @@ export default function LunaShippingCapturePage() {
     }
 
     const beginCanary = () => {
-      if (busy || !extensionReady || !canonicalBindingStatusRead ||
+      if (hasExactLiveTarget || busy || !extensionReady ||
+          !canonicalBindingStatusRead ||
           !canonicalDestinationBindingPresent) return
       setError("")
       setResults([])
@@ -527,6 +539,9 @@ export default function LunaShippingCapturePage() {
       setRunning(true)
       setError("")
       setResults([])
+      setLiveTraceEvents([])
+      setIgnoredOutOfScope(false)
+      traceEvents = []
       setRuntimeTrace(EMPTY_RUNTIME_TRACE)
       setStatus("RESOLVING_EXACT_CURRENT_LIVE")
       void adminPost("resolve_live_listing_job", {
@@ -537,16 +552,26 @@ export default function LunaShippingCapturePage() {
             resolved[0]?.contractVersion !== CONTRACT) {
           throw new Error("LUNA_SHIPPING_EXTENSION_LIVE_JOB_UNAVAILABLE")
         }
-        jobs = resolved
+        const exactJob = resolved[0] as LunaChromeShippingJobV1
+        if (exactJob.identity.lunaProductId !==
+              requestedLiveTarget.lunaProductId ||
+            exactJob.identity.lunaVariantId !==
+              requestedLiveTarget.lunaVariantId ||
+            exactJob.identity.supplierSku !== requestedLiveTarget.sourceSku) {
+          throw new Error("LUNA_SHIPPING_EXTENSION_LIVE_IDENTITY_MISMATCH")
+        }
+        exactLiveCandidateId = exactJob.identity.candidateId
+        jobs = [exactJob]
         index = 0
         mode = "LIVE"
+        setLiveCaptureAttempts((current) => current + 1)
         sendCurrent()
       }).catch(fail)
     }
     liveTriggerRef.current = beginLiveCapture
 
     const bindCanonicalDestination = () => {
-      if (!port || !extensionReady || busy) return
+      if (hasExactLiveTarget || !port || !extensionReady || busy) return
       busy = true
       setRunning(true)
       setError("")
@@ -721,8 +746,13 @@ export default function LunaShippingCapturePage() {
             "SHIPPING_ADDRESS_ACCEPTED", "SHIPPING_OPTIONS_DETECTED",
             "SHIPPING_CAPTURE_STARTED", "SHIPPING_QUOTE_CAPTURED",
             "RESULT_POSTED"])
-          if (allowed.has(message.state) &&
-              message.candidateId === jobs[index]?.identity.candidateId) {
+          const progressMatches = message.candidateId ===
+            jobs[index]?.identity.candidateId
+          if (hasExactLiveTarget && !progressMatches) {
+            setIgnoredOutOfScope(true)
+            return
+          }
+          if (allowed.has(message.state) && progressMatches) {
             setStatus(message.state)
             setLastRuntimeState(message.state)
             lastProgressState = message.state
@@ -871,7 +901,18 @@ export default function LunaShippingCapturePage() {
         }
         if (!active || message?.type !== "LUNA_SHIPPING_JOB_RESULT") return
         const job = jobs[index]
-        if (!job || message.capture?.candidateId !== job.identity.candidateId) {
+        const candidateMatches = Boolean(job) &&
+          message.capture?.candidateId === job?.identity.candidateId
+        const exactIdentityMatches = candidateMatches &&
+          (!hasExactLiveTarget ||
+            (message.capture?.lunaProductId === requestedLiveTarget.lunaProductId &&
+             message.capture?.lunaVariantId === requestedLiveTarget.lunaVariantId &&
+             message.capture?.supplierSku === requestedLiveTarget.sourceSku))
+        if (!job || !exactIdentityMatches) {
+          if (hasExactLiveTarget) {
+            setIgnoredOutOfScope(true)
+            return
+          }
           fail(new Error("LUNA_SHIPPING_EXTENSION_RESULT_SCOPE_MISMATCH"))
           return
         }
@@ -924,6 +965,13 @@ export default function LunaShippingCapturePage() {
               terminalDecision: "REJECT_STOCK",
             })
             setStatus("PRODUCTION_JOB_COMPLETED")
+            if (mode === "LIVE") {
+              busy = false
+              setRunning(false)
+              setLastRuntimeState("PRODUCTION_JOB_COMPLETED")
+              setStatus("LIVE_LISTING_STOCK_EVIDENCE_PERSISTED")
+              return
+            }
             setLastRuntimeState("AUTO_NEXT")
             index += 1
             if (index < jobs.length) {
@@ -1043,17 +1091,19 @@ export default function LunaShippingCapturePage() {
 
     const start = async () => {
       if (!ensureCanonicalExtensionOrigin()) return
-      try {
-        const persisted = await adminPost("read_runtime_trace", {})
-        const recovered = Array.isArray(persisted.result?.events)
-          ? persisted.result.events as LunaShippingRuntimeTraceEventV1[] : []
-        if (recovered.length) {
-          traceEvents = recovered.slice(0, 100)
-          setLiveTraceEvents([...traceEvents])
-          setTraceDurable(persisted.result?.traceDurable === true)
+      if (!hasExactLiveTarget) {
+        try {
+          const persisted = await adminPost("read_runtime_trace", {})
+          const recovered = Array.isArray(persisted.result?.events)
+            ? persisted.result.events as LunaShippingRuntimeTraceEventV1[] : []
+          if (recovered.length) {
+            traceEvents = recovered.slice(0, 100)
+            setLiveTraceEvents([...traceEvents])
+            setTraceDurable(persisted.result?.traceDurable === true)
+          }
+        } catch {
+          // A missing historical trace must not block the extension connection.
         }
-      } catch {
-        // A missing historical trace must not block the extension connection.
       }
       const wait = (milliseconds: number) => new Promise<void>((resolve) =>
         window.setTimeout(resolve, milliseconds))
@@ -1151,7 +1201,7 @@ export default function LunaShippingCapturePage() {
       setConnected(true)
       setStatus("EXTENSION_CONNECTED")
       attachPort(runtime.connect(EXTENSION_ID, { name: PORT_NAME }))
-      if (params.get("runShipping") === "1") beginCanary()
+      if (!hasExactLiveTarget && params.get("runShipping") === "1") beginCanary()
     }
     void start().catch(fail)
     return () => {
@@ -1178,12 +1228,12 @@ export default function LunaShippingCapturePage() {
       <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-100">Seller OS · Luna shipping</p>
       <h1 className="mt-3 text-2xl font-black">Captura automática de envío</h1>
       <p className="mt-2 text-sm text-white/65">La extensión usa la sesión normal ya autenticada de Chrome. No lee cookies ni credenciales y nunca completa una compra.</p>
-      <button type="button" disabled={!canStartFinalCanary}
+      {!liveTarget ? <button type="button" disabled={!canStartFinalCanary}
         onClick={() => triggerRef.current?.()}
         className="mt-6 w-full rounded-2xl bg-cyan-300 px-5 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
         {canonicalDestinationBound
           ? "Ejecutar canary final" : "Ejecutar canary de shipping"}
-      </button>
+      </button> : null}
       {liveTarget ? <button type="button" disabled={!canStartFinalCanary}
         onClick={() => liveTriggerRef.current?.()}
         className="mt-3 w-full rounded-2xl bg-emerald-300 px-5 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
@@ -1193,16 +1243,25 @@ export default function LunaShippingCapturePage() {
         Identidad exacta preparada: Item {liveTarget.ebayItemId} · SKU {liveTarget.sourceSku}.
         Una sola captura; sin compra ni escritura en eBay.
       </p> : null}
-      <button type="button"
+      {liveTarget ? <code className="mt-3 block whitespace-pre-wrap text-xs text-emerald-100">
+        {`TARGET_SCOPE=EXACT_LIVE\n` +
+          `TARGET_EBAY_ITEM_ID=${liveTarget.ebayItemId}\n` +
+          `TARGET_SOURCE_SKU=${liveTarget.sourceSku}\n` +
+          `${liveTarget.sourceSku}_CAPTURE_ATTEMPTS=${liveCaptureAttempts}\n` +
+          `SHIPPING=${results.length ? "AVAILABLE" : "UNPROVEN"}\n` +
+          `ECONOMICS=${results.at(-1)?.economicsStatus ?? "UNPROVEN"}\n` +
+          `IGNORED_OUT_OF_SCOPE=${ignoredOutOfScope}`}
+      </code> : null}
+      {!liveTarget ? <button type="button"
         disabled={!connected || running || canonicalDestinationBound}
         onClick={() => bindDestinationRef.current?.()}
         className="mt-3 w-full rounded-2xl border border-cyan-200/40 px-5 py-3 font-black text-cyan-100 disabled:cursor-not-allowed disabled:opacity-40">
         Vincular perfil canónico US de Seller OS
-      </button>
-      <p className="mt-2 text-xs text-white/65">
+      </button> : null}
+      {!liveTarget ? <p className="mt-2 text-xs text-white/65">
         Acción explícita única. La extensión guarda sólo el fingerprint del
         perfil US canónico de Seller OS; nunca guarda ni muestra la dirección.
-      </p>
+      </p> : null}
       <p className="mt-2 text-xs text-white/50">
         CANONICAL_DESTINATION_BOUND={String(canonicalDestinationBound)} · CANONICAL_DESTINATION_MATCH={String(canonicalDestinationMatch)}
       </p>
@@ -1238,7 +1297,9 @@ export default function LunaShippingCapturePage() {
             : "REAL_BINDING_STORAGE_DIAGNOSTIC=PENDING"}
         </code>
       </section>
-      <p className="mt-2 text-xs text-white/50">Certificación inicial: {CANARY_NAME}</p>
+      {!liveTarget ? <p className="mt-2 text-xs text-white/50">
+        Certificación inicial: {CANARY_NAME}
+      </p> : null}
       <section className="mt-6 rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.04] p-4">
         <h2 className="text-sm font-black">Monitor de ejecución</h2>
         <code className="mt-3 block whitespace-pre-wrap break-all text-xs text-cyan-100">
