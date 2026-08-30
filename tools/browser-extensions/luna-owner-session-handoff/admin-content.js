@@ -3,12 +3,14 @@
 
   const ORIGIN = "https://imnova-seller-os-preprod.vercel.app"
   const BUILD_ID = "LUNA_OWNER_SESSION_HANDOFF_EXTENSION_V1"
-  const VERSION = "1.0.0"
+  const VERSION = "1.0.1"
   const PREPARE = "SELLER_OS_LUNA_OWNER_EXTENSION_PREPARE_V1"
   const PROBE = "SELLER_OS_LUNA_OWNER_EXTENSION_PROBE_V1"
   const PREPARED = "SELLER_OS_LUNA_OWNER_EXTENSION_PREPARED_V1"
   const READY = "SELLER_OS_LUNA_OWNER_EXTENSION_READY_V1"
   const GET_CHALLENGE = "SELLER_OS_LUNA_OWNER_EXTENSION_GET_CHALLENGE_V1"
+  const ADMIN_CONTEXT_PROBE =
+    "SELLER_OS_LUNA_OWNER_EXTENSION_ADMIN_CONTEXT_PROBE_V1"
   const DELIVER_ENVELOPE = "SELLER_OS_LUNA_OWNER_EXTENSION_ENVELOPE_V1"
   const PAGE_ENVELOPE = "SELLER_OS_LUNA_OWNER_EXTENSION_PAGE_ENVELOPE_V1"
   let prepared = null
@@ -47,6 +49,19 @@
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id) return false
+    if (message?.type === ADMIN_CONTEXT_PROBE) {
+      const challengeStatePresent = Boolean(prepared &&
+        Date.parse(prepared.challenge.expiresAt) > Date.now())
+      if (prepared && !challengeStatePresent) prepared = null
+      sendResponse({
+        success: true,
+        adminContextConfirmed: true,
+        challengeStatePresent,
+        buildId: BUILD_ID,
+        version: VERSION,
+      })
+      return false
+    }
     if (message?.type === GET_CHALLENGE) {
       if (!prepared || Date.parse(prepared.challenge.expiresAt) <= Date.now()) {
         prepared = null

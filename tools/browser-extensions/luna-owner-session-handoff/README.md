@@ -19,8 +19,11 @@ No instales esta extensión en la computadora de la asistente.
 1. Abre Luna en Chrome normal y confirma que la sesión ya está autenticada.
 2. Abre la pantalla protegida de Seller OS preprod y pulsa **Renovar sesión**.
 3. Cuando Seller OS confirme el challenge fresco, abre el icono de esta
-   extensión y pulsa **Transferir sesión a Seller OS**.
-4. Acepta el permiso temporal y vuelve a Seller OS para verificar
+   extensión y pulsa **Comprobar conexión**. El permiso Luna todavía no se
+   solicita en esta fase.
+4. Cuando aparezca `LUNA_OWNER_EXTENSION_ADMIN_CONTEXT_CONFIRMED`, pulsa
+   **Transferir sesión a Seller OS**.
+5. Acepta el permiso temporal y vuelve a Seller OS para verificar
    `SESSION_READY`.
 
 ## Frontera de seguridad
@@ -28,6 +31,8 @@ No instales esta extensión en la computadora de la asistente.
 - No usa Playwright, CDP, native messaging, daemon, túnel ni automatización del
   navegador.
 - No navega Luna, no automatiza login/Cloudflare y no usa `<all_urls>`.
+- Reconoce la pantalla admin mediante un handshake con su content script exacto;
+  no solicita permiso `tabs` ni permiso host adicional para Seller OS.
 - `cookies` y los únicos tres hosts Luna están declarados como opcionales. Se
   solicitan desde el clic explícito de la propietaria y se revocan al terminar.
 - No declara ni usa `chrome.storage`, localStorage, sessionStorage, clipboard,

@@ -1,5 +1,5 @@
 export const BUILD_ID = "LUNA_OWNER_SESSION_HANDOFF_EXTENSION_V1"
-export const BUILD_VERSION = "1.0.0"
+export const BUILD_VERSION = "1.0.1"
 export const HANDOFF_VERSION = "SELLER_OS_LUNA_OWNER_REAUTH_HANDOFF_V1"
 export const SESSION_VERSION = "SELLER_OS_LUNA_PROTECTED_SESSION_V1"
 export const PREPROD_ORIGIN = "https://imnova-seller-os-preprod.vercel.app"

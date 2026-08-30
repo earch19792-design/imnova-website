@@ -11,8 +11,6 @@ import {
 
 const GET_CHALLENGE = "SELLER_OS_LUNA_OWNER_EXTENSION_GET_CHALLENGE_V1"
 const DELIVER_ENVELOPE = "SELLER_OS_LUNA_OWNER_EXTENSION_ENVELOPE_V1"
-const ADMIN_PATTERN =
-  "https://imnova-seller-os-preprod.vercel.app/admin/ebay/luna-protected-session*"
 const AUTH_MARKERS = [
   "a[href*='/account/logout']",
   "form[action*='/account/logout']",
@@ -27,12 +25,11 @@ const LOGIN_MARKERS = [
   "input[type='password']",
 ]
 
-async function exactAdminBridge() {
-  const tabs = await chrome.tabs.query({ url: ADMIN_PATTERN })
-  if (tabs.length !== 1 || !Number.isInteger(tabs[0]?.id)) {
+function exactAdminTabId(value) {
+  if (!Number.isInteger(value) || value < 0) {
     throw new Error("LUNA_OWNER_EXTENSION_ADMIN_TAB_REQUIRED")
   }
-  return tabs[0]
+  return value
 }
 
 async function exactLunaTab() {
@@ -106,9 +103,9 @@ async function captureSession(challenge) {
   }
 }
 
-async function execute() {
-  const admin = await exactAdminBridge()
-  const prepared = await chrome.tabs.sendMessage(admin.id, {
+async function execute(adminTabIdInput) {
+  const adminTabId = exactAdminTabId(adminTabIdInput)
+  const prepared = await chrome.tabs.sendMessage(adminTabId, {
     type: GET_CHALLENGE,
   })
   if (!prepared?.success || typeof prepared.transferId !== "string") {
@@ -117,7 +114,7 @@ async function execute() {
   }
   const challenge = exactChallenge(prepared.challenge)
   const envelope = await captureSession(challenge)
-  const delivered = await chrome.tabs.sendMessage(admin.id, {
+  const delivered = await chrome.tabs.sendMessage(adminTabId, {
     type: DELIVER_ENVELOPE,
     transferId: prepared.transferId,
     envelope,
@@ -136,7 +133,7 @@ async function execute() {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || message?.type !==
       "SELLER_OS_LUNA_OWNER_EXTENSION_EXECUTE_V1") return false
-  void execute().then(sendResponse).catch((cause) => sendResponse({
+  void execute(message.adminTabId).then(sendResponse).catch((cause) => sendResponse({
     success: false,
     error: safeCode(cause),
   })).finally(async () => {
