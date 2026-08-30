@@ -5,6 +5,8 @@ import {
 } from "./ebay-seller-account-scope"
 import { verifyEbayCommercialOfficialAccount } from "./ebay-commercial-readers"
 import { EBAY_READONLY_SCOPES } from "./ebay-seller-readonly-oauth-data-audit"
+import { parseEbaySellerStoreSubscriptionReadonly } from
+  "./ebay-account-subscription-readonly-domain"
 
 type JsonRecord = Record<string, unknown>
 
@@ -123,6 +125,10 @@ function assertAllowedGet(url: URL, method: string) {
     && url.origin === API_ORIGIN
     && url.pathname === "/sell/account/v1/privilege"
     && url.search === ""
+  const subscriptions = method === "GET"
+    && url.origin === API_ORIGIN
+    && url.pathname === "/sell/account/v1/subscription"
+    && url.search === ""
   const policies = method === "GET"
     && url.origin === API_ORIGIN
     && /^\/sell\/account\/v1\/(fulfillment_policy|payment_policy|return_policy)$/.test(url.pathname)
@@ -134,7 +140,7 @@ function assertAllowedGet(url: URL, method: string) {
     && [...url.searchParams.keys()].every((key) => key === "limit" || key === "offset")
     && /^\d{1,3}$/.test(url.searchParams.get("limit") ?? "")
     && /^\d{1,9}$/.test(url.searchParams.get("offset") ?? "")
-  if (!optedInPrograms && !privilege && !policies && !locations) {
+  if (!optedInPrograms && !privilege && !subscriptions && !policies && !locations) {
     throw new Error("EBAY_ACCOUNT_POLICY_READONLY_ENDPOINT_BLOCKED")
   }
 }
@@ -512,6 +518,34 @@ export async function preflightEbayAccountPoliciesReadonly(
     throw new Error("EBAY_ACCOUNT_POLICY_IDENTITY_UNBOUND")
   }
   return executePreflight(config, requested, fetchImpl, false)
+}
+
+export async function readEbaySellerStoreSubscriptionReadonly(
+  fetchImpl: typeof fetch = fetch,
+) {
+  const config = gatewayConfig()
+  if (!config.configured) {
+    if (!config.oauthConfigured) {
+      throw new Error("EBAY_ACCOUNT_POLICY_READONLY_OAUTH_MISSING")
+    }
+    throw new Error("EBAY_ACCOUNT_POLICY_IDENTITY_UNBOUND")
+  }
+  const execute = async (forceRefresh: boolean): Promise<ReturnType<
+    typeof parseEbaySellerStoreSubscriptionReadonly
+  >> => {
+    const authenticated = await authenticatedToken(config, fetchImpl, forceRefresh)
+    const result = await read(
+      authenticated.token,
+      new URL("/sell/account/v1/subscription", API_ORIGIN),
+      fetchImpl,
+    )
+    if (result.status === 401 && !forceRefresh) return execute(true)
+    if (!result.ok) {
+      throw new Error(failedReadCode("SUBSCRIPTIONS", result))
+    }
+    return parseEbaySellerStoreSubscriptionReadonly(result.body)
+  }
+  return execute(false)
 }
 
 export function ebayAccountPolicyReadonlyRuntimeStatus() {

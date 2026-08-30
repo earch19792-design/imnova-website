@@ -14,6 +14,10 @@ import {
 import { getEbaySellerAccountScopeConfiguration } from "@/lib/ebay/ebay-seller-account-scope"
 import { commercialPreviewCronAuthorized } from "@/lib/ebay/ebay-commercial-preview-pilot"
 import { getSupabaseAdminClient } from "@/lib/supabase-admin"
+import { readManualListingFromTradingApi } from
+  "@/lib/ebay/ebay-manual-listing-trading-readonly"
+import { readEbaySellerStoreSubscriptionReadonly } from
+  "@/lib/ebay/ebay-account-policy-readonly-gateway"
 
 function safeCode(error: unknown) {
   const value = error instanceof Error ? error.message : ""
@@ -25,6 +29,57 @@ export async function GET(req: Request) {
     { success: false, error: "CRON_UNAUTHORIZED" },
     { status: 401 },
   )
+  const feeAuthorityItemId = new URL(req.url).searchParams.get(
+    "feeAuthorityItemId",
+  )?.trim() ?? ""
+  if (feeAuthorityItemId) {
+    if (!/^\d{9,20}$/.test(feeAuthorityItemId)) {
+      return NextResponse.json({
+        success: false,
+        error: "EBAY_FEE_AUTHORITY_ITEM_ID_INVALID",
+        marketplaceWrites: 0,
+      }, { status: 400 })
+    }
+    try {
+      const [listing, subscription] = await Promise.all([
+        readManualListingFromTradingApi(feeAuthorityItemId),
+        readEbaySellerStoreSubscriptionReadonly(),
+      ])
+      return NextResponse.json({
+        success: true,
+        status: "fee_authority_readonly_completed",
+        item: {
+          itemId: listing.itemId,
+          ownership: listing.ownership,
+          listingStatus: listing.listingStatus,
+          categoryId: listing.safeDefaults.categoryId ?? null,
+          marketplaceId: "EBAY_US",
+        },
+        accountFeeContext: subscription,
+        authority: {
+          category: "EBAY_TRADING_GET_ITEM_READONLY",
+          storeSubscription: "EBAY_ACCOUNT_GET_SUBSCRIPTION_READONLY",
+        },
+        safety: {
+          analyticsRequests: 0,
+          lunaRequests: 0,
+          marketplaceWrites: 0,
+          databaseWrites: 0,
+        },
+      })
+    } catch (error) {
+      return NextResponse.json({
+        success: false,
+        error: safeCode(error),
+        safety: {
+          analyticsRequests: 0,
+          lunaRequests: 0,
+          marketplaceWrites: 0,
+          databaseWrites: 0,
+        },
+      }, { status: 502 })
+    }
+  }
   const schedule = getCommercialMonitorScheduleConfiguration()
   if (process.env.VERCEL_ENV !== "preview" || !schedule.enabled) {
     return NextResponse.json({
