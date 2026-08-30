@@ -4,7 +4,7 @@ import {
   LUNA_SESSION_CONSUMER_URL,
   LUNA_TAB_PATTERNS,
   OPTIONAL_LUNA_ORIGINS,
-  diagnoseSessionCookieApplicability,
+  diagnoseAuthenticatedCookieContexts,
   encryptSessionPayload,
   exactChallenge,
   safeCode,
@@ -77,14 +77,22 @@ async function cookieStoreForTab(tabId) {
   return matches[0].id
 }
 
-async function exactConsumerLunaTab() {
+async function exactAuthenticatedLunaTab() {
   const tab = await exactLunaTab()
   const url = new URL(tab.url)
-  if (url.origin !== new URL(LUNA_SESSION_CONSUMER_URL).origin ||
-      !/^\/account\/?$/.test(url.pathname)) {
-    throw new Error("LUNA_OWNER_EXTENSION_EXACT_CONSUMER_TAB_REQUIRED")
+  if (url.protocol !== "https:" || url.hostname !== "account.lunaportex.com" ||
+      /\/(?:login|signin|callback)(?:\/|$)/i.test(url.pathname)) {
+    throw new Error("LUNA_OWNER_EXTENSION_AUTHENTICATED_ACCOUNT_TAB_REQUIRED")
   }
-  return tab
+  const pathClass = /^\/orders(?:\/|$)/i.test(url.pathname)
+    ? "LUNA_CUSTOMER_ORDERS"
+    : "LUNA_CUSTOMER_AUTHENTICATED_ROUTE"
+  return Object.freeze({
+    tab,
+    cookieApplicabilityUrl: `${url.origin}${url.pathname || "/"}`,
+    finalAuthenticatedHostClass: "LUNA_CUSTOMER_ACCOUNT",
+    finalAuthenticatedPathClass: pathClass,
+  })
 }
 
 async function diagnoseCookieContract(adminTabIdInput) {
@@ -93,10 +101,14 @@ async function diagnoseCookieContract(adminTabIdInput) {
     permissions: ["cookies"], origins: [...OPTIONAL_LUNA_ORIGINS],
   })
   if (!allowed) throw new Error("LUNA_OWNER_EXTENSION_PERMISSION_REQUIRED")
-  const tab = await exactConsumerLunaTab()
-  await proveAuthenticated(tab.id)
-  const storeId = await cookieStoreForTab(tab.id)
-  const consumerCookies = await chrome.cookies.getAll({
+  const authenticated = await exactAuthenticatedLunaTab()
+  await proveAuthenticated(authenticated.tab.id)
+  const storeId = await cookieStoreForTab(authenticated.tab.id)
+  const accountHostCookies = await chrome.cookies.getAll({
+    url: authenticated.cookieApplicabilityUrl,
+    storeId,
+  })
+  const wwwAccountCookies = await chrome.cookies.getAll({
     url: LUNA_SESSION_CONSUMER_URL,
     storeId,
   })
@@ -107,10 +119,16 @@ async function diagnoseCookieContract(adminTabIdInput) {
       buildId: BUILD_ID,
       version: BUILD_VERSION,
       ownerBrowserProtectedPageAuthenticated: true,
-      ...diagnoseSessionCookieApplicability(consumerCookies),
+      finalAuthenticatedHostClass: authenticated.finalAuthenticatedHostClass,
+      finalAuthenticatedPathClass: authenticated.finalAuthenticatedPathClass,
+      ...diagnoseAuthenticatedCookieContexts(
+        accountHostCookies,
+        wwwAccountCookies,
+      ),
     })
   } finally {
-    consumerCookies.length = 0
+    accountHostCookies.length = 0
+    wwwAccountCookies.length = 0
   }
 }
 

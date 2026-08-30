@@ -43,24 +43,26 @@ function safeCount(value) {
 
 function renderDiagnosis(result) {
   const counts = [
-    result.browserApplicableCookieCount,
-    result.capturedCookieCount,
-    result.missingCookieIdentityCount,
-    result.extraCookieIdentityCount,
+    result.browserApplicableCookieCountForAccountHost,
+    result.browserApplicableCookieCountForWwwAccountUrl,
+    result.overlapCookieIdentityCount,
+    result.accountOnlyCookieIdentityCount,
+    result.wwwOnlyCookieIdentityCount,
   ].map(safeCount)
   if (result.ownerBrowserProtectedPageAuthenticated !== true ||
       counts.some((value) => value === null) ||
-      !/^[A-Z_]{3,80}$/.test(result.domainClass ?? "") ||
-      !/^[A-Z_]{3,80}$/.test(result.pathClass ?? "")) {
+      !/^[A-Z_]{3,80}$/.test(result.finalAuthenticatedHostClass ?? "") ||
+      !/^[A-Z_]{3,80}$/.test(result.finalAuthenticatedPathClass ?? "")) {
     throw new Error("LUNA_OWNER_EXTENSION_COOKIE_DIAGNOSIS_INVALID")
   }
   diagnosis.replaceChildren(...[
-    `BROWSER_APPLICABLE_COOKIE_COUNT=${counts[0]}`,
-    `CAPTURED_COOKIE_COUNT=${counts[1]}`,
-    `MISSING_COOKIE_IDENTITY_COUNT=${counts[2]}`,
-    `EXTRA_COOKIE_IDENTITY_COUNT=${counts[3]}`,
-    `DOMAIN_CLASS=${result.domainClass}`,
-    `PATH_CLASS=${result.pathClass}`,
+    `FINAL_AUTHENTICATED_HOST_CLASS=${result.finalAuthenticatedHostClass}`,
+    `FINAL_AUTHENTICATED_PATH_CLASS=${result.finalAuthenticatedPathClass}`,
+    `BROWSER_APPLICABLE_COOKIE_COUNT_FOR_ACCOUNT_HOST=${counts[0]}`,
+    `BROWSER_APPLICABLE_COOKIE_COUNT_FOR_WWW_ACCOUNT_URL=${counts[1]}`,
+    `OVERLAP_COOKIE_IDENTITY_COUNT=${counts[2]}`,
+    `ACCOUNT_ONLY_COOKIE_IDENTITY_COUNT=${counts[3]}`,
+    `WWW_ONLY_COOKIE_IDENTITY_COUNT=${counts[4]}`,
     "OWNER_BROWSER_PROTECTED_PAGE_AUTHENTICATED=true",
   ].flatMap((line) => [document.createTextNode(line),
     document.createElement("br")]))

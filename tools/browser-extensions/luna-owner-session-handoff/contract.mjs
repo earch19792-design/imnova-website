@@ -1,5 +1,5 @@
 export const BUILD_ID = "LUNA_OWNER_SESSION_HANDOFF_EXTENSION_V1"
-export const BUILD_VERSION = "1.0.3"
+export const BUILD_VERSION = "1.0.4"
 export const HANDOFF_VERSION = "SELLER_OS_LUNA_OWNER_REAUTH_HANDOFF_V1"
 export const SESSION_VERSION = "SELLER_OS_LUNA_PROTECTED_SESSION_V1"
 export const PREPROD_ORIGIN = "https://imnova-seller-os-preprod.vercel.app"
@@ -57,26 +57,6 @@ function cookieIdentity(cookie) {
     normalizedCookieDomain(cookie.domain),
     String(cookie.path ?? ""),
   ].join("\u0000")
-}
-
-function cookieDomainClass(cookies) {
-  const domains = new Set(cookies.map((cookie) =>
-    normalizedCookieDomain(cookie.domain)))
-  if (domains.size === 0) return "NONE"
-  if ([...domains].some((domain) => domain !== "lunaportex.com" &&
-      domain !== "www.lunaportex.com")) return "UNEXPECTED"
-  if (domains.size === 2) return "PARENT_AND_EXACT_HOST"
-  return domains.has("lunaportex.com") ? "PARENT_DOMAIN_ONLY" : "EXACT_HOST_ONLY"
-}
-
-function cookiePathClass(cookies) {
-  const paths = new Set(cookies.map((cookie) => String(cookie.path ?? "")))
-  if (paths.size === 0) return "NONE"
-  if ([...paths].some((path) => path !== "/" && path !== "/account")) {
-    return "OTHER_APPLICABLE_PREFIX"
-  }
-  if (paths.size === 2) return "ROOT_AND_EXACT_PATH"
-  return paths.has("/") ? "ROOT_ONLY" : "EXACT_PATH_ONLY"
 }
 
 export function safeCode(cause) {
@@ -141,26 +121,22 @@ export function selectSessionCookies(cookies, now = Date.now()) {
   return Object.freeze({ values, cookieHeader, expiresAt })
 }
 
-export function diagnoseSessionCookieApplicability(cookies, now = Date.now()) {
-  const selected = selectSessionCookies(cookies, now)
-  try {
-    const applicableIdentities = new Set(cookies.map(cookieIdentity))
-    const capturedIdentities = new Set(selected.values.map(cookieIdentity))
-    const missingCookieIdentityCount = [...applicableIdentities]
-      .filter((identity) => !capturedIdentities.has(identity)).length
-    const extraCookieIdentityCount = [...capturedIdentities]
-      .filter((identity) => !applicableIdentities.has(identity)).length
-    return Object.freeze({
-      browserApplicableCookieCount: applicableIdentities.size,
-      capturedCookieCount: capturedIdentities.size,
-      missingCookieIdentityCount,
-      extraCookieIdentityCount,
-      domainClass: cookieDomainClass(cookies),
-      pathClass: cookiePathClass(cookies),
-    })
-  } finally {
-    selected.values.length = 0
-  }
+export function diagnoseAuthenticatedCookieContexts(
+  accountHostCookies,
+  wwwAccountCookies,
+) {
+  const accountIdentities = new Set(accountHostCookies.map(cookieIdentity))
+  const wwwIdentities = new Set(wwwAccountCookies.map(cookieIdentity))
+  return Object.freeze({
+    browserApplicableCookieCountForAccountHost: accountIdentities.size,
+    browserApplicableCookieCountForWwwAccountUrl: wwwIdentities.size,
+    overlapCookieIdentityCount: [...accountIdentities]
+      .filter((identity) => wwwIdentities.has(identity)).length,
+    accountOnlyCookieIdentityCount: [...accountIdentities]
+      .filter((identity) => !wwwIdentities.has(identity)).length,
+    wwwOnlyCookieIdentityCount: [...wwwIdentities]
+      .filter((identity) => !accountIdentities.has(identity)).length,
+  })
 }
 
 function bytesToBase64Url(bytes) {
