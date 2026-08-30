@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.49"
+const EXTENSION_BUILD_VERSION = "1.0.50"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -61,6 +61,8 @@ const DURABLE_DISPATCH_ACK = "SELLER_OS_LUNA_SHIPPING_DURABLE_DISPATCH_ACK"
 const JOB_DISPATCH_ACK = "LUNA_SHIPPING_JOB_DISPATCH_ACK"
 const EXTENSION_DISPATCH_RECEIVED =
   "LUNA_SHIPPING_EXTENSION_DISPATCH_RECEIVED"
+const PORT_HANDSHAKE = "SELLER_OS_LUNA_SHIPPING_PORT_HANDSHAKE_V1"
+const PORT_HANDSHAKE_ACK = "LUNA_SHIPPING_PORT_HANDSHAKE_ACK_V1"
 const PAGE_DISPATCH_COMMITTED =
   "SELLER_OS_LUNA_SHIPPING_PAGE_DISPATCH_COMMITTED"
 const MAX_RUNTIME_TRACE_EVENTS = 100
@@ -1176,9 +1178,24 @@ function emitProgress(state, details = {}) {
     ...markerDetails })
 }
 
+function postExactDispatchReceived(deliveryPort, exact, traceId,
+  portGeneration) {
+  exactDispatchMessageReceivedCandidateId = exact.identity.candidateId
+  deliveryPort?.postMessage({ type: EXTENSION_DISPATCH_RECEIVED,
+    candidateId: exact.identity.candidateId,
+    traceId,
+    portGeneration,
+    backgroundOnMessageReached: true,
+    messageTypeAccepted: true,
+    messageCandidateId: exact.identity.candidateId,
+    backgroundActiveJobCandidateId: activeJob?.identity?.candidateId ?? "NONE",
+  })
+}
+
 async function startJob(job, productionAutoClaim = false,
   preserveRuntimeTrace = false, requireDurableDispatchAck = false,
-  preDispatchTrace = null) {
+  preDispatchTrace = null, deliveryPort = sellerPort,
+  portGeneration = null) {
   const invalidReason = jobValidationReason(job)
   if (invalidReason) throw new Error(invalidReason)
   const exact = safeJob(job)
@@ -1187,7 +1204,20 @@ async function startJob(job, productionAutoClaim = false,
   const exactPreDispatchTrace = requireDurableDispatchAck === true
     ? await adoptExactPreDispatchRuntimeTrace(preDispatchTrace, exact) : null
   if (activeJob) {
-    if (sameJob(activeJob, exact)) return false
+    if (sameJob(activeJob, exact)) {
+      if (requireDurableDispatchAck !== true) return false
+      if (!exactPreDispatchTrace ||
+          activeRuntimeTrace?.traceId !== exactPreDispatchTrace.traceId ||
+          activeRuntimeTrace?.candidateId !== exact.identity.candidateId) {
+        throw new Error("LUNA_EXACT_DISPATCH_TRACE_IDENTITY_MISMATCH")
+      }
+      for (const event of activeRuntimeTrace.events) {
+        deliveryPort?.postMessage({ type: RUNTIME_TRACE_EVENT, event })
+      }
+      postExactDispatchReceived(deliveryPort, exact,
+        exactPreDispatchTrace.traceId, portGeneration)
+      return false
+    }
     if (requireDurableDispatchAck !== true) {
       throw new Error("LUNA_SHIPPING_JOB_ALREADY_RUNNING")
     }
@@ -1197,13 +1227,12 @@ async function startJob(job, productionAutoClaim = false,
   if (exactPreDispatchTrace) {
     activeRuntimeTrace = exactPreDispatchTrace
     for (const event of activeRuntimeTrace.events) {
-      sellerPort?.postMessage({ type: RUNTIME_TRACE_EVENT, event })
+      deliveryPort?.postMessage({ type: RUNTIME_TRACE_EVENT, event })
     }
   }
   if (requireDurableDispatchAck === true) {
-    exactDispatchMessageReceivedCandidateId = exact.identity.candidateId
-    sellerPort?.postMessage({ type: EXTENSION_DISPATCH_RECEIVED,
-      candidateId: exact.identity.candidateId })
+    postExactDispatchReceived(deliveryPort, exact,
+      exactPreDispatchTrace?.traceId ?? null, portGeneration)
   }
   initializeCheckoutNavigationObserver(exact)
   if (!preserveRuntimeTrace && !exactPreDispatchTrace) {
@@ -1404,10 +1433,26 @@ chrome.runtime.onConnectExternal.addListener((port) => {
     disconnectCleanupTimer = null
   }
   sellerPort = port
+  let acceptedPortGeneration = null
   for (const event of activeRuntimeTrace?.events ?? []) {
     port.postMessage({ type: RUNTIME_TRACE_EVENT, event })
   }
   port.onMessage.addListener((message) => {
+    if (sellerPort !== port) return
+    if (message?.type === PORT_HANDSHAKE) {
+      if (!Number.isInteger(message.portGeneration) ||
+          message.portGeneration < 1 || message.portGeneration > 1_000_000) {
+        port.disconnect()
+        return
+      }
+      acceptedPortGeneration = message.portGeneration
+      port.postMessage({ type: PORT_HANDSHAKE_ACK,
+        portGeneration: acceptedPortGeneration,
+        portCurrent: sellerPort === port,
+        backgroundActiveJobCandidateId:
+          activeJob?.identity?.candidateId ?? "NONE" })
+      return
+    }
     if (message?.type === GET_BINDING_STORAGE_DIAGNOSTIC) {
       void bindingStorageDiagnostic().then((diagnostic) =>
         port.postMessage(diagnostic))
@@ -1452,9 +1497,23 @@ chrome.runtime.onConnectExternal.addListener((port) => {
       return
     }
     if (message?.type === "START_SHIPPING_JOB") {
+      if (message.requireDurableDispatchAck === true &&
+          acceptedPortGeneration === null) {
+        port.postMessage({ type: JOB_RESULT, success: false,
+          error: "LUNA_SHIPPING_PORT_HANDSHAKE_REQUIRED",
+          capture: { candidateId: message.job?.identity?.candidateId ?? null } })
+        return
+      }
+      if (message.portGeneration !== undefined &&
+          message.portGeneration !== acceptedPortGeneration) {
+        port.postMessage({ type: JOB_RESULT, success: false,
+          error: "LUNA_SHIPPING_PORT_GENERATION_MISMATCH",
+          capture: { candidateId: message.job?.identity?.candidateId ?? null } })
+        return
+      }
       void startJob(message.job, message.productionAutoClaim === true,
         false, message.requireDurableDispatchAck === true,
-        message.preDispatchTrace ?? null)
+        message.preDispatchTrace ?? null, port, acceptedPortGeneration)
         .catch((error) => port.postMessage({
         type: JOB_RESULT, success: false,
         error: error instanceof Error ? error.message : "LUNA_SHIPPING_JOB_FAILED",
