@@ -4,6 +4,7 @@ import {
   LUNA_SESSION_CONSUMER_URL,
   LUNA_TAB_PATTERNS,
   OPTIONAL_LUNA_ORIGINS,
+  diagnoseSessionCookieApplicability,
   encryptSessionPayload,
   exactChallenge,
   safeCode,
@@ -12,6 +13,8 @@ import {
 
 const GET_CHALLENGE = "SELLER_OS_LUNA_OWNER_EXTENSION_GET_CHALLENGE_V1"
 const DELIVER_ENVELOPE = "SELLER_OS_LUNA_OWNER_EXTENSION_ENVELOPE_V1"
+const DIAGNOSE_COOKIE_CONTRACT =
+  "SELLER_OS_LUNA_OWNER_EXTENSION_DIAGNOSE_COOKIE_CONTRACT_V1"
 const AUTH_MARKERS = [
   "a[href*='/account/logout']",
   "form[action*='/account/logout']",
@@ -72,6 +75,43 @@ async function cookieStoreForTab(tabId) {
     throw new Error("LUNA_OWNER_EXTENSION_COOKIE_STORE_AMBIGUOUS")
   }
   return matches[0].id
+}
+
+async function exactConsumerLunaTab() {
+  const tab = await exactLunaTab()
+  const url = new URL(tab.url)
+  if (url.origin !== new URL(LUNA_SESSION_CONSUMER_URL).origin ||
+      !/^\/account\/?$/.test(url.pathname)) {
+    throw new Error("LUNA_OWNER_EXTENSION_EXACT_CONSUMER_TAB_REQUIRED")
+  }
+  return tab
+}
+
+async function diagnoseCookieContract(adminTabIdInput) {
+  exactAdminTabId(adminTabIdInput)
+  const allowed = await chrome.permissions.contains({
+    permissions: ["cookies"], origins: [...OPTIONAL_LUNA_ORIGINS],
+  })
+  if (!allowed) throw new Error("LUNA_OWNER_EXTENSION_PERMISSION_REQUIRED")
+  const tab = await exactConsumerLunaTab()
+  await proveAuthenticated(tab.id)
+  const storeId = await cookieStoreForTab(tab.id)
+  const consumerCookies = await chrome.cookies.getAll({
+    url: LUNA_SESSION_CONSUMER_URL,
+    storeId,
+  })
+  try {
+    return Object.freeze({
+      success: true,
+      code: "LUNA_OWNER_EXTENSION_COOKIE_CONTRACT_DIAGNOSIS_READY",
+      buildId: BUILD_ID,
+      version: BUILD_VERSION,
+      ownerBrowserProtectedPageAuthenticated: true,
+      ...diagnoseSessionCookieApplicability(consumerCookies),
+    })
+  } finally {
+    consumerCookies.length = 0
+  }
 }
 
 async function captureSession(challenge) {
@@ -136,9 +176,14 @@ async function execute(adminTabIdInput) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (sender.id !== chrome.runtime.id || message?.type !==
-      "SELLER_OS_LUNA_OWNER_EXTENSION_EXECUTE_V1") return false
-  void execute(message.adminTabId).then(sendResponse).catch((cause) => sendResponse({
+  if (sender.id !== chrome.runtime.id || ![
+    "SELLER_OS_LUNA_OWNER_EXTENSION_EXECUTE_V1",
+    DIAGNOSE_COOKIE_CONTRACT,
+  ].includes(message?.type)) return false
+  const operation = message.type === DIAGNOSE_COOKIE_CONTRACT
+    ? diagnoseCookieContract(message.adminTabId)
+    : execute(message.adminTabId)
+  void operation.then(sendResponse).catch((cause) => sendResponse({
     success: false,
     error: safeCode(cause),
   })).finally(async () => {

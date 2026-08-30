@@ -26,6 +26,16 @@ No instales esta extensión en la computadora de la asistente.
 5. Acepta el permiso temporal y vuelve a Seller OS para verificar
    `SESSION_READY`.
 
+## Diagnóstico exacto del contrato de cookies
+
+Sin crear challenge ni transferir sesión, abre exactamente
+`https://www.lunaportex.com/account` en una sola pestaña Luna autenticada y la
+pantalla admin protegida en otra pestaña. En el popup pulsa **Diagnosticar
+contrato exacto**. La extensión consulta a Chrome únicamente por las cookies
+aplicables a esa URL, muestra sólo conteos y clases de domain/path, y revoca el
+permiso temporal al terminar. No muestra nombres ni valores y no envía el
+resultado al backend.
+
 ## Frontera de seguridad
 
 - No usa Playwright, CDP, native messaging, daemon, túnel ni automatización del
@@ -44,6 +54,8 @@ No instales esta extensión en la computadora de la asistente.
 - Captura sólo los nombres de cookie allowlisted por el contrato Luna existente,
   los conserva en memoria, cifra con AES-256-GCM + RSA-OAEP SHA-256 y limpia los
   buffers mutables en `finally`.
+- El diagnóstico local no cambia ese selector: permite probar primero si la
+  allowlist omite identidades que Chrome aplicaría a la URL consumidora exacta.
 - La página admin realiza el PUT same-origin del sobre cifrado. El servidor
   conserva los gates existentes de admin, boundary, nonce, TTL, replay,
   validación Luna y Vault readback.

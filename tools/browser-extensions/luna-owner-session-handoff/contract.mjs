@@ -1,5 +1,5 @@
 export const BUILD_ID = "LUNA_OWNER_SESSION_HANDOFF_EXTENSION_V1"
-export const BUILD_VERSION = "1.0.2"
+export const BUILD_VERSION = "1.0.3"
 export const HANDOFF_VERSION = "SELLER_OS_LUNA_OWNER_REAUTH_HANDOFF_V1"
 export const SESSION_VERSION = "SELLER_OS_LUNA_PROTECTED_SESSION_V1"
 export const PREPROD_ORIGIN = "https://imnova-seller-os-preprod.vercel.app"
@@ -39,6 +39,46 @@ const CHALLENGE_KEYS = [
   "uploadPath",
 ].join(",")
 
+function normalizedCookieDomain(value) {
+  return String(value ?? "").toLowerCase().replace(/^\./, "")
+}
+
+function sessionCookieEligible(cookie) {
+  const domain = normalizedCookieDomain(cookie.domain)
+  return (domain === "lunaportex.com" || domain === "www.lunaportex.com") &&
+    cookie.secure === true && SAFE_COOKIE_NAME.test(String(cookie.name ?? "")) &&
+    SAFE_COOKIE_VALUE.test(String(cookie.value ?? "")) &&
+    REQUIRED_COOKIE.test(String(cookie.name ?? ""))
+}
+
+function cookieIdentity(cookie) {
+  return [
+    String(cookie.name ?? ""),
+    normalizedCookieDomain(cookie.domain),
+    String(cookie.path ?? ""),
+  ].join("\u0000")
+}
+
+function cookieDomainClass(cookies) {
+  const domains = new Set(cookies.map((cookie) =>
+    normalizedCookieDomain(cookie.domain)))
+  if (domains.size === 0) return "NONE"
+  if ([...domains].some((domain) => domain !== "lunaportex.com" &&
+      domain !== "www.lunaportex.com")) return "UNEXPECTED"
+  if (domains.size === 2) return "PARENT_AND_EXACT_HOST"
+  return domains.has("lunaportex.com") ? "PARENT_DOMAIN_ONLY" : "EXACT_HOST_ONLY"
+}
+
+function cookiePathClass(cookies) {
+  const paths = new Set(cookies.map((cookie) => String(cookie.path ?? "")))
+  if (paths.size === 0) return "NONE"
+  if ([...paths].some((path) => path !== "/" && path !== "/account")) {
+    return "OTHER_APPLICABLE_PREFIX"
+  }
+  if (paths.size === 2) return "ROOT_AND_EXACT_PATH"
+  return paths.has("/") ? "ROOT_ONLY" : "EXACT_PATH_ONLY"
+}
+
 export function safeCode(cause) {
   const value = cause instanceof Error ? cause.message : String(cause ?? "")
   return /^[A-Z0-9_]{3,160}$/.test(value)
@@ -69,13 +109,7 @@ export function exactChallenge(value, now = Date.now()) {
 }
 
 export function selectSessionCookies(cookies, now = Date.now()) {
-  const selected = cookies.filter((cookie) => {
-    const domain = String(cookie.domain ?? "").toLowerCase().replace(/^\./, "")
-    return (domain === "lunaportex.com" || domain === "www.lunaportex.com") &&
-      cookie.secure === true && SAFE_COOKIE_NAME.test(String(cookie.name ?? "")) &&
-      SAFE_COOKIE_VALUE.test(String(cookie.value ?? "")) &&
-      REQUIRED_COOKIE.test(String(cookie.name ?? ""))
-  })
+  const selected = cookies.filter(sessionCookieEligible)
   const unique = new Map()
   for (const cookie of selected) {
     const previous = unique.get(cookie.name)
@@ -105,6 +139,28 @@ export function selectSessionCookies(cookies, now = Date.now()) {
     throw new Error("LUNA_OWNER_HANDOFF_SESSION_EXPIRY_INVALID")
   }
   return Object.freeze({ values, cookieHeader, expiresAt })
+}
+
+export function diagnoseSessionCookieApplicability(cookies, now = Date.now()) {
+  const selected = selectSessionCookies(cookies, now)
+  try {
+    const applicableIdentities = new Set(cookies.map(cookieIdentity))
+    const capturedIdentities = new Set(selected.values.map(cookieIdentity))
+    const missingCookieIdentityCount = [...applicableIdentities]
+      .filter((identity) => !capturedIdentities.has(identity)).length
+    const extraCookieIdentityCount = [...capturedIdentities]
+      .filter((identity) => !applicableIdentities.has(identity)).length
+    return Object.freeze({
+      browserApplicableCookieCount: applicableIdentities.size,
+      capturedCookieCount: capturedIdentities.size,
+      missingCookieIdentityCount,
+      extraCookieIdentityCount,
+      domainClass: cookieDomainClass(cookies),
+      pathClass: cookiePathClass(cookies),
+    })
+  } finally {
+    selected.values.length = 0
+  }
 }
 
 function bytesToBase64Url(bytes) {
