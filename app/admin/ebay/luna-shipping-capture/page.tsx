@@ -19,12 +19,14 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.46"
+const EXPECTED_EXTENSION_VERSION = "1.0.47"
 const SELLER_OS_EXTENSION_ORIGIN = SELLER_OS_LUNA_STABLE_PREVIEW_ORIGIN
 const STARTUP_PROBE_CONTRACT = "SELLER_OS_LUNA_EXTENSION_STARTUP_PROBE_V1"
 const GET_BINDING_STORAGE_DIAGNOSTIC =
   "SELLER_OS_GET_LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
 const BINDING_STORAGE_DIAGNOSTIC = "LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
+const DURABLE_DISPATCH_ACK = "SELLER_OS_LUNA_SHIPPING_DURABLE_DISPATCH_ACK"
+const JOB_DISPATCH_ACK = "LUNA_SHIPPING_JOB_DISPATCH_ACK"
 const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
@@ -387,8 +389,40 @@ export default function LunaShippingCapturePage() {
     let removePageLifecycleListeners: (() => void) | null = null
     let traceEvents: LunaShippingRuntimeTraceEventV1[] = []
     let exactLiveCandidateId: string | null = null
+    const exactDispatchPersistencePending = new Set<string>()
+    const exactDispatchDurable = new Set<string>()
+    const exactDispatchConfirmed = new Set<string>()
     let traceFlushTimer: number | null = null
     let traceFlushChain = Promise.resolve()
+
+    const exactLiveJobMatches = (value: unknown) => {
+      const job = value && typeof value === "object"
+        ? value as LunaChromeShippingJobV1 : null
+      return Boolean(job) && job?.contractVersion === CONTRACT &&
+        job.identity?.lunaProductId === requestedLiveTarget.lunaProductId &&
+        job.identity?.lunaVariantId === requestedLiveTarget.lunaVariantId &&
+        job.identity?.supplierSku === requestedLiveTarget.sourceSku
+    }
+
+    const persistRuntimeTraceSnapshot = (
+      snapshot: readonly LunaShippingRuntimeTraceEventV1[],
+    ) => {
+      const operation = traceFlushChain.catch(() => undefined).then(() =>
+        adminPost("persist_runtime_trace", { events: snapshot },
+          `${snapshot[0].traceId}:${snapshot.length}`)).then((payload) => {
+        if (active) {
+          setTraceDurable(payload.result?.traceDurable === true &&
+            payload.result?.durableReadbackMatch === true)
+        }
+        if (payload.result?.traceDurable !== true ||
+            payload.result?.durableReadbackMatch !== true) {
+          throw new Error("LUNA_EXACT_DISPATCH_DURABLE_READBACK_FAILED")
+        }
+        return payload
+      })
+      traceFlushChain = operation.then(() => undefined, () => undefined)
+      return operation
+    }
 
     const flushRuntimeTrace = (immediate = false) => {
       if (traceFlushTimer !== null) {
@@ -398,14 +432,7 @@ export default function LunaShippingCapturePage() {
       const persist = () => {
         if (!traceEvents.length) return
         const snapshot = [...traceEvents]
-        traceFlushChain = traceFlushChain.then(() => adminPost(
-          "persist_runtime_trace", { events: snapshot },
-          `${snapshot[0].traceId}:${snapshot.length}`,
-        ).then((payload) => {
-          if (!active) return
-          setTraceDurable(payload.result?.traceDurable === true &&
-            payload.result?.durableReadbackMatch === true)
-        })).catch((traceError) => fail(traceError))
+        void persistRuntimeTraceSnapshot(snapshot).catch(fail)
       }
       if (immediate) persist()
       else traceFlushTimer = window.setTimeout(persist, 5_000)
@@ -432,6 +459,30 @@ export default function LunaShippingCapturePage() {
       if (!existing) traceEvents = [...traceEvents, event]
         .sort((left, right) => left.sequence - right.sequence).slice(0, 100)
       setLiveTraceEvents([...traceEvents])
+      if (hasExactLiveTarget && event.state === "JOB_DISPATCHED" &&
+          event.candidateId === exactLiveCandidateId) {
+        if (exactDispatchDurable.has(event.traceId)) {
+          port?.postMessage({ type: DURABLE_DISPATCH_ACK,
+            candidateId: event.candidateId, traceId: event.traceId })
+        } else if (!exactDispatchPersistencePending.has(event.traceId)) {
+          if (traceFlushTimer !== null) {
+            window.clearTimeout(traceFlushTimer)
+            traceFlushTimer = null
+          }
+          exactDispatchPersistencePending.add(event.traceId)
+          const snapshot = [...traceEvents]
+          void persistRuntimeTraceSnapshot(snapshot).then(() => {
+            exactDispatchPersistencePending.delete(event.traceId)
+            exactDispatchDurable.add(event.traceId)
+            if (!active) return
+            port?.postMessage({ type: DURABLE_DISPATCH_ACK,
+              candidateId: event.candidateId, traceId: event.traceId })
+          }).catch((dispatchError) => {
+            exactDispatchPersistencePending.delete(event.traceId)
+            fail(dispatchError)
+          })
+        }
+      }
       if (event.state === "CANONICAL_BIND_COMPLETED") {
         canonicalBindingStatusRead = true
         canonicalDestinationBindingPresent = true
@@ -464,16 +515,21 @@ export default function LunaShippingCapturePage() {
       setRuntimeTrace(EMPTY_RUNTIME_TRACE)
       setStatus(mode === "CANARY" && index === 0
         ? "CANARY_DISPATCHED" : mode === "LIVE"
-          ? "LIVE_LISTING_CAPTURE_DISPATCHED" : "CAPTURING")
+          ? "LIVE_LISTING_DISPATCH_PENDING_DURABLE_ACK" : "CAPTURING")
       const dispatchState = mode === "AUTO"
         ? "PRODUCTION_JOB_DISPATCHED" : "CANARY_DISPATCHED"
-      setLastRuntimeState(dispatchState)
-      lastProgressState = dispatchState
+      if (mode !== "LIVE") {
+        setLastRuntimeState(dispatchState)
+        lastProgressState = dispatchState
+      }
       port.postMessage({ type: "START_SHIPPING_JOB", job,
-        productionAutoClaim: mode === "AUTO" })
-      window.setTimeout(() => {
-        if (active && busy) setStatus("CAPTURING")
-      }, 0)
+        productionAutoClaim: mode === "AUTO",
+        requireDurableDispatchAck: mode === "LIVE" })
+      if (mode !== "LIVE") {
+        window.setTimeout(() => {
+          if (active && busy) setStatus("CAPTURING")
+        }, 0)
+      }
     }
 
     const loadJobs = async (candidateIds: readonly string[] | undefined,
@@ -569,7 +625,6 @@ export default function LunaShippingCapturePage() {
         jobs = [exactJob]
         index = 0
         mode = "LIVE"
-        setLiveCaptureAttempts((current) => current + 1)
         sendCurrent()
       }).catch(fail)
     }
@@ -594,6 +649,27 @@ export default function LunaShippingCapturePage() {
       }).catch(fail)
     }
     bindDestinationRef.current = bindCanonicalDestination
+
+    const phaseForResume = () => {
+      if (new Set(["AWAITING_CHECKOUT_SHIPPING", "CHECKOUT_PAGE_DETECTED",
+        "CHECKOUT_INJECTION_REQUESTED", "CHECKOUT_INJECTION_API_SUCCEEDED",
+        "CHECKOUT_SCRIPT_INJECTED", "CHECKOUT_SCRIPT_BOOTSTRAP_ACK",
+        "CHECKOUT_CLASSIFIER_STARTED", "CHECKOUT_HOST_CLASSIFIED",
+        "CHECKOUT_PAGE_CLASSIFIED", "SHOP_PAY_QUOTE_PARSER_STARTED",
+        "NORMAL_GUEST_CHECKOUT", "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
+        "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "NORMAL_CHECKOUT_WITH_SHIPPING",
+        "SHOP_PAY_DOM_WAITING", "SHOP_PAY_DOM_READY",
+        "CHECKOUT_EXPECTED_PRODUCT_VERIFIED", "CHECKOUT_EXPECTED_QUANTITY_VERIFIED",
+        "CANONICAL_US_PROFILE_FOUND", "SHIPPING_ADDRESS_ACCEPTED",
+        "SHIPPING_OPTIONS_DETECTED", "SHIPPING_CAPTURE_STARTED"])
+        .has(lastProgressState)) return "AWAITING_CHECKOUT_SHIPPING"
+      if (new Set(["AWAITING_CART_CONFIRMATION", "ADD_TO_CART_CLICK_DISPATCHED",
+        "ACTIVE_JOB_RECOVERED_ON_CART", "CART_PAGE_DETECTED",
+        "CART_EXPECTED_PRODUCT_FOUND", "CART_EXPECTED_QUANTITY_FOUND",
+        "CART_MUTATION_CONFIRMED", "SHIPPING_FLOW_RESUMED"])
+        .has(lastProgressState)) return "AWAITING_CART_CONFIRMATION"
+      return "PRODUCT_PAGE"
+    }
 
     const handlePortMessage = (message: any) => {
         if (!active) return
@@ -683,9 +759,49 @@ export default function LunaShippingCapturePage() {
           const candidate = message.active === true &&
               message.job?.contractVersion === CONTRACT
             ? message.job as LunaChromeShippingJobV1 : null
-          recoveredActiveJob = candidate
           activeJobStatusReady = true
+          if (hasExactLiveTarget) {
+            if (!candidate) return
+            if (!exactLiveJobMatches(candidate)) {
+              setIgnoredOutOfScope(true)
+              return
+            }
+            exactLiveCandidateId = candidate.identity.candidateId
+            jobs = [candidate]
+            index = 0
+            mode = "LIVE"
+            busy = true
+            setRunning(true)
+            const replay = Array.isArray(message.traceEvents)
+              ? message.traceEvents : []
+            for (const event of replay) acceptRuntimeTraceEvent(event)
+            port?.postMessage({ type: "RESUME_ACTIVE_LUNA_SHIPPING_JOB",
+              job: candidate,
+              phase: typeof message.phase === "string"
+                ? message.phase : phaseForResume() })
+            return
+          }
+          recoveredActiveJob = candidate
           startInitialProductionClaim()
+          return
+        }
+        if (message?.type === JOB_DISPATCH_ACK) {
+          const traceId = typeof message.traceId === "string"
+            ? message.traceId : ""
+          const candidateMatches = message.candidateId === exactLiveCandidateId
+          if (!hasExactLiveTarget || !candidateMatches ||
+              message.durableDispatchAcknowledged !== true ||
+              !exactDispatchDurable.has(traceId)) {
+            if (hasExactLiveTarget) setIgnoredOutOfScope(true)
+            return
+          }
+          if (!exactDispatchConfirmed.has(traceId)) {
+            exactDispatchConfirmed.add(traceId)
+            setLiveCaptureAttempts((current) => current + 1)
+          }
+          setStatus("LIVE_LISTING_CAPTURE_DISPATCHED")
+          setLastRuntimeState("CANARY_DISPATCHED")
+          lastProgressState = "CANARY_DISPATCHED"
           return
         }
         if (message?.type === "LUNA_CANONICAL_DESTINATION_BINDING_RESULT") {
@@ -1118,29 +1234,6 @@ export default function LunaShippingCapturePage() {
         probeInstalledExtension,
         wait,
       })
-      const phaseForResume = () => {
-        if (new Set(["AWAITING_CHECKOUT_SHIPPING", "CHECKOUT_PAGE_DETECTED",
-          "CHECKOUT_INJECTION_REQUESTED", "CHECKOUT_INJECTION_API_SUCCEEDED",
-          "CHECKOUT_SCRIPT_INJECTED", "CHECKOUT_SCRIPT_BOOTSTRAP_ACK",
-          "CHECKOUT_CLASSIFIER_STARTED", "CHECKOUT_HOST_CLASSIFIED",
-          "CHECKOUT_PAGE_CLASSIFIED", "SHOP_PAY_QUOTE_PARSER_STARTED",
-          "NORMAL_GUEST_CHECKOUT", "NORMAL_CHECKOUT_WITH_CONTACT_FORM",
-          "NORMAL_CHECKOUT_WITH_SHIPPING_FORM", "NORMAL_CHECKOUT_WITH_SHIPPING",
-          "SHOP_PAY_DOM_WAITING", "SHOP_PAY_DOM_READY",
-          "CHECKOUT_EXPECTED_PRODUCT_VERIFIED", "CHECKOUT_EXPECTED_QUANTITY_VERIFIED",
-          "CANONICAL_US_PROFILE_FOUND",
-          "SHIPPING_ADDRESS_ACCEPTED", "SHIPPING_OPTIONS_DETECTED",
-          "SHIPPING_CAPTURE_STARTED"]).has(lastProgressState)) {
-          return "AWAITING_CHECKOUT_SHIPPING"
-        }
-        if (new Set([
-        "AWAITING_CART_CONFIRMATION", "ADD_TO_CART_CLICK_DISPATCHED",
-        "ACTIVE_JOB_RECOVERED_ON_CART", "CART_PAGE_DETECTED",
-        "CART_EXPECTED_PRODUCT_FOUND", "CART_EXPECTED_QUANTITY_FOUND",
-        "CART_MUTATION_CONFIRMED", "SHIPPING_FLOW_RESUMED",
-        ]).has(lastProgressState)) return "AWAITING_CART_CONFIRMATION"
-        return "PRODUCT_PAGE"
-      }
       const attachPort = (nextPort: ExternalPort) => {
         port = nextPort
         nextPort.onMessage.addListener(handlePortMessage)
