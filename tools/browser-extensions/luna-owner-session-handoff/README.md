@@ -35,6 +35,10 @@ No instales esta extensión en la computadora de la asistente.
   no solicita permiso `tabs` ni permiso host adicional para Seller OS.
 - `cookies` y los únicos tres hosts Luna están declarados como opcionales. Se
   solicitan desde el clic explícito de la propietaria y se revocan al terminar.
+- La captura usa exclusivamente el set aplicable al consumidor canónico
+  `https://www.lunaportex.com/account`; no mezcla sets del apex ni del host
+  `account`, y conserva el fail-closed ante nombres conflictivos dentro de ese
+  único set.
 - No declara ni usa `chrome.storage`, localStorage, sessionStorage, clipboard,
   analytics, logs o archivos.
 - Captura sólo los nombres de cookie allowlisted por el contrato Luna existente,

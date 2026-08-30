@@ -73,7 +73,10 @@ transferButton.addEventListener("click", async () => {
     if (!result?.success) {
       throw new Error(result?.error ?? "LUNA_OWNER_EXTENSION_FAILED_CLOSED")
     }
-    safeStatus("LUNA_OWNER_EXTENSION_ENCRYPTED_HANDOFF_DELIVERED")
+    if (result.cookieSetCandidateCount !== 1) {
+      throw new Error("LUNA_OWNER_EXTENSION_COOKIE_SET_NOT_UNIQUE")
+    }
+    safeStatus("LUNA_OWNER_EXTENSION_ENCRYPTED_HANDOFF_DELIVERED_SET_1")
   } catch (cause) {
     safeStatus(cause instanceof Error ? cause.message : cause)
   } finally {

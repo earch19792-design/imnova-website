@@ -1,6 +1,7 @@
 import {
   BUILD_ID,
   BUILD_VERSION,
+  LUNA_SESSION_CONSUMER_URL,
   LUNA_TAB_PATTERNS,
   OPTIONAL_LUNA_ORIGINS,
   encryptSessionPayload,
@@ -82,24 +83,27 @@ async function captureSession(challenge) {
   const tab = await exactLunaTab()
   await proveAuthenticated(tab.id)
   const storeId = await cookieStoreForTab(tab.id)
-  const groups = await Promise.all([
-    chrome.cookies.getAll({ url: "https://lunaportex.com/", storeId }),
-    chrome.cookies.getAll({ url: "https://www.lunaportex.com/account", storeId }),
-    chrome.cookies.getAll({ url: "https://account.lunaportex.com/", storeId }),
-  ])
+  const consumerCookies = await chrome.cookies.getAll({
+    url: LUNA_SESSION_CONSUMER_URL,
+    storeId,
+  })
   const capturedAt = Date.now()
-  const selected = selectSessionCookies(groups.flat(), capturedAt)
+  const selected = selectSessionCookies(consumerCookies, capturedAt)
   let cookieHeader = selected.cookieHeader
   try {
-    return await encryptSessionPayload(challenge, {
-      cookieHeader,
-      capturedAt: new Date(capturedAt).toISOString(),
-      validatedAt: new Date(capturedAt).toISOString(),
-      expiresAt: new Date(selected.expiresAt).toISOString(),
+    return Object.freeze({
+      envelope: await encryptSessionPayload(challenge, {
+        cookieHeader,
+        capturedAt: new Date(capturedAt).toISOString(),
+        validatedAt: new Date(capturedAt).toISOString(),
+        expiresAt: new Date(selected.expiresAt).toISOString(),
+      }),
+      cookieSetCandidateCount: 1,
     })
   } finally {
     cookieHeader = ""
-    groups.length = 0
+    selected.values.length = 0
+    consumerCookies.length = 0
   }
 }
 
@@ -113,11 +117,11 @@ async function execute(adminTabIdInput) {
       ? prepared.error : "LUNA_OWNER_EXTENSION_FRESH_CHALLENGE_REQUIRED")
   }
   const challenge = exactChallenge(prepared.challenge)
-  const envelope = await captureSession(challenge)
+  const captured = await captureSession(challenge)
   const delivered = await chrome.tabs.sendMessage(adminTabId, {
     type: DELIVER_ENVELOPE,
     transferId: prepared.transferId,
-    envelope,
+    envelope: captured.envelope,
   })
   if (!delivered?.accepted) {
     throw new Error("LUNA_OWNER_EXTENSION_ADMIN_HANDOFF_REJECTED")
@@ -127,6 +131,7 @@ async function execute(adminTabIdInput) {
     code: "LUNA_OWNER_EXTENSION_ENCRYPTED_HANDOFF_DELIVERED",
     buildId: BUILD_ID,
     version: BUILD_VERSION,
+    cookieSetCandidateCount: captured.cookieSetCandidateCount,
   })
 }
 
