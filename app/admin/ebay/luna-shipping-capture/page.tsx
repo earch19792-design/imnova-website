@@ -355,6 +355,8 @@ export default function LunaShippingCapturePage() {
   const [liveTarget, setLiveTarget] = useState<LiveCaptureTarget | null>(null)
   const [liveCaptureAttempts, setLiveCaptureAttempts] = useState(0)
   const [ignoredOutOfScope, setIgnoredOutOfScope] = useState(false)
+  const [exactTraceCandidateMatch, setExactTraceCandidateMatch] = useState(false)
+  const [exactDispatchAcknowledged, setExactDispatchAcknowledged] = useState(false)
   const triggerRef = useRef<(() => void) | null>(null)
   const liveTriggerRef = useRef<(() => void) | null>(null)
   const bindDestinationRef = useRef<(() => void) | null>(null)
@@ -454,6 +456,9 @@ export default function LunaShippingCapturePage() {
           (!exactLiveCandidateId || event.candidateId !== exactLiveCandidateId)) {
         setIgnoredOutOfScope(true)
         return
+      }
+      if (hasExactLiveTarget && event.candidateId === exactLiveCandidateId) {
+        setExactTraceCandidateMatch(true)
       }
       if (traceEvents[0]?.traceId !== event.traceId) {
         traceEvents = []
@@ -607,6 +612,8 @@ export default function LunaShippingCapturePage() {
       setResults([])
       setLiveTraceEvents([])
       setIgnoredOutOfScope(false)
+      setExactTraceCandidateMatch(false)
+      setExactDispatchAcknowledged(false)
       traceEvents = []
       setRuntimeTrace(EMPTY_RUNTIME_TRACE)
       setStatus("RESOLVING_EXACT_CURRENT_LIVE")
@@ -804,6 +811,7 @@ export default function LunaShippingCapturePage() {
             exactDispatchConfirmed.add(traceId)
             setLiveCaptureAttempts((current) => current + 1)
           }
+          setExactDispatchAcknowledged(true)
           setStatus("LIVE_LISTING_CAPTURE_DISPATCHED")
           setLastRuntimeState("CANARY_DISPATCHED")
           lastProgressState = "CANARY_DISPATCHED"
@@ -1409,6 +1417,9 @@ export default function LunaShippingCapturePage() {
           `TARGET_EBAY_ITEM_ID=${liveTarget.ebayItemId}\n` +
           `TARGET_SOURCE_SKU=${liveTarget.sourceSku}\n` +
           `${liveTarget.sourceSku}_CAPTURE_ATTEMPTS=${liveCaptureAttempts}\n` +
+          `TRACE_DURABLE=${traceDurable}\n` +
+          `TRACE_CANDIDATE_MATCH=${exactTraceCandidateMatch}\n` +
+          `DISPATCH_ACK=${exactDispatchAcknowledged}\n` +
           `SHIPPING=${results.length ? "AVAILABLE" : "UNPROVEN"}\n` +
           `ECONOMICS=${results.at(-1)?.economicsStatus ?? "UNPROVEN"}\n` +
           `IGNORED_OUT_OF_SCOPE=${ignoredOutOfScope}`}
