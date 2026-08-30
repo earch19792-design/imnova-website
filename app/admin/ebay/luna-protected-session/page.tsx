@@ -9,11 +9,18 @@ import {
   ShieldCheck,
 } from "lucide-react"
 import Link from "next/link"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import { supabase } from "@/lib/supabase"
 
 const ENDPOINT = "/api/admin/ebay/luna-protected-session"
+const EXTENSION_BUILD_ID = "LUNA_OWNER_SESSION_HANDOFF_EXTENSION_V1"
+const EXTENSION_PROBE = "SELLER_OS_LUNA_OWNER_EXTENSION_PROBE_V1"
+const EXTENSION_READY = "SELLER_OS_LUNA_OWNER_EXTENSION_READY_V1"
+const EXTENSION_PREPARE = "SELLER_OS_LUNA_OWNER_EXTENSION_PREPARE_V1"
+const EXTENSION_PREPARED = "SELLER_OS_LUNA_OWNER_EXTENSION_PREPARED_V1"
+const EXTENSION_ENVELOPE =
+  "SELLER_OS_LUNA_OWNER_EXTENSION_PAGE_ENVELOPE_V1"
 
 type StatusPayload = {
   success?: boolean
@@ -93,6 +100,10 @@ export default function LunaProtectedSessionPage() {
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const [ownerHandoffPrepared, setOwnerHandoffPrepared] = useState(false)
+  const [extensionReady, setExtensionReady] = useState(false)
+  const [extensionVersion, setExtensionVersion] = useState("")
+  const transferIdRef = useRef<string | null>(null)
+  const extensionAckTimerRef = useRef<number | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -122,43 +133,71 @@ export default function LunaProtectedSessionPage() {
     return () => window.clearInterval(timer)
   }, [payload?.ceremony, refresh])
 
-  const act = useCallback(async (action: "START" | "COMPLETE" | "CANCEL") => {
-    setBusy(true)
-    setError("")
-    try {
-      const csrfToken = payload?.operatorAction?.csrfToken
-      if (!csrfToken) throw new Error("LUNA_CEREMONY_CSRF_UNAVAILABLE")
-      const token = await adminToken()
-      const response = await fetch(ENDPOINT, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          "X-Seller-OS-CSRF": csrfToken,
-        },
-        body: JSON.stringify({ action }),
-      })
-      const result = await response.json() as StatusPayload
-      if (!response.ok || !result.success) {
-        const message = result.error ?? "LUNA_CEREMONY_ACTION_FAILED"
-        await refresh()
-        throw new Error(message)
+  useEffect(() => {
+    const receive = (event: MessageEvent) => {
+      if (event.source !== window || event.origin !== window.location.origin ||
+          !event.data || typeof event.data !== "object" ||
+          event.data.buildId !== EXTENSION_BUILD_ID) return
+      if (event.data.type === EXTENSION_READY) {
+        setExtensionReady(true)
+        setExtensionVersion(typeof event.data.version === "string"
+          ? event.data.version : "observed")
+        return
       }
-      await refresh()
-    } catch (cause) {
-      setError(cause instanceof Error
-        ? cause.message : "LUNA_CEREMONY_ACTION_FAILED")
-    } finally {
-      setBusy(false)
+      if (event.data.type === EXTENSION_PREPARED &&
+          event.data.transferId === transferIdRef.current) {
+        if (extensionAckTimerRef.current !== null) {
+          window.clearTimeout(extensionAckTimerRef.current)
+          extensionAckTimerRef.current = null
+        }
+        setOwnerHandoffPrepared(true)
+        setExtensionReady(true)
+        return
+      }
+      if (event.data.type !== EXTENSION_ENVELOPE ||
+          event.data.transferId !== transferIdRef.current ||
+          !event.data.envelope || typeof event.data.envelope !== "object") return
+      transferIdRef.current = null
+      setBusy(true)
+      setError("")
+      void fetch(ENDPOINT, {
+        method: "PUT",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(event.data.envelope),
+      }).then(async (response) => {
+        const result = await response.json() as StatusPayload & {
+          status?: string
+        }
+        if (!response.ok || !result.success || result.status !== "SESSION_READY") {
+          throw new Error(result.error ?? "LUNA_OWNER_HANDOFF_UPLOAD_REJECTED")
+        }
+        setOwnerHandoffPrepared(false)
+        await refresh()
+      }).catch((cause) => {
+        setError(cause instanceof Error
+          ? cause.message : "LUNA_OWNER_HANDOFF_UPLOAD_REJECTED")
+      }).finally(() => setBusy(false))
     }
-  }, [payload?.operatorAction?.csrfToken, refresh])
+    window.addEventListener("message", receive)
+    window.postMessage({ type: EXTENSION_PROBE }, window.location.origin)
+    return () => {
+      window.removeEventListener("message", receive)
+      if (extensionAckTimerRef.current !== null) {
+        window.clearTimeout(extensionAckTimerRef.current)
+      }
+    }
+  }, [refresh])
 
   const prepareOwnerHandoff = useCallback(async () => {
     setBusy(true)
     setError("")
     setOwnerHandoffPrepared(false)
     try {
+      if (!extensionReady) {
+        throw new Error("LUNA_OWNER_HANDOFF_EXTENSION_NOT_OBSERVED")
+      }
       const csrfToken = payload?.operatorAction?.csrfToken
       if (!csrfToken) throw new Error("LUNA_CEREMONY_CSRF_UNAVAILABLE")
       const token = await adminToken()
@@ -182,17 +221,19 @@ export default function LunaProtectedSessionPage() {
           challenge.plaintextSessionAccepted !== false) {
         throw new Error(result.error ?? "LUNA_OWNER_HANDOFF_START_FAILED")
       }
-      const blob = new Blob([JSON.stringify(challenge)], {
-        type: "application/json",
-      })
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement("a")
-      anchor.href = url
-      anchor.download = "seller-os-luna-owner-handoff.json"
-      anchor.rel = "noopener"
-      anchor.click()
-      URL.revokeObjectURL(url)
-      setOwnerHandoffPrepared(true)
+      const transferId = window.crypto.randomUUID()
+      transferIdRef.current = transferId
+      window.postMessage({
+        type: EXTENSION_PREPARE,
+        transferId,
+        challenge,
+      }, window.location.origin)
+      extensionAckTimerRef.current = window.setTimeout(() => {
+        if (transferIdRef.current === transferId) {
+          transferIdRef.current = null
+          setError("LUNA_OWNER_HANDOFF_EXTENSION_PREPARE_TIMEOUT")
+        }
+      }, 2_500)
       await refresh()
     } catch (cause) {
       setError(cause instanceof Error
@@ -200,22 +241,13 @@ export default function LunaProtectedSessionPage() {
     } finally {
       setBusy(false)
     }
-  }, [payload?.operatorAction?.csrfToken, refresh])
+  }, [extensionReady, payload?.operatorAction?.csrfToken, refresh])
 
   const status = payload?.prerequisites
   const phase = payload?.ceremony?.phase ?? "NOT_STARTED"
-  const active = ["LAUNCHING", "AWAITING_HUMAN_LOGIN", "COMPLETING"]
-    .includes(phase)
-  const runtimeReady = payload?.browserRuntime?.status === "READY" &&
-    payload?.operatorAction?.ceremonyReady === true &&
-    payload?.operatorAction?.csrfReadyForCurrentAdmin === true
   const configured = status?.lunaProtectedSessionStatus === "SESSION_READY"
   const browserContextActive =
     payload?.browserRuntime?.browserContextActive === true
-  const recoveryRequired =
-    payload?.operatorAction?.browserContextRecoveryRequired === true
-  const ceremonyStartAllowed =
-    payload?.operatorAction?.ceremonyStartAllowed === true
 
   return (
     <main className="min-h-screen bg-slate-50 px-5 py-10 text-slate-950">
@@ -231,7 +263,7 @@ export default function LunaProtectedSessionPage() {
               <p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-700">
                 Seller OS · Luna protected session
               </p>
-              <h1 className="text-2xl font-black">Ceremonia server-owned</h1>
+              <h1 className="text-2xl font-black">Renovación owner desde Chrome</h1>
             </div>
           </div>
 
@@ -263,10 +295,10 @@ export default function LunaProtectedSessionPage() {
             <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-5">
               <h2 className="font-black text-cyan-950">Flujo humano seguro</h2>
               <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-cyan-950">
-                <li>Inicia la ceremonia. Seller OS abrirá una ventana Chromium efímera y visible.</li>
-                <li>En esa ventana, usa únicamente el formulario normal de Luna. Escribe allí tu correo y contraseña; nunca aquí.</li>
-                <li>No uses “Sign in with Shop” ni un proveedor social. Esas rutas están bloqueadas.</li>
-                <li>Cuando veas tu cuenta Luna autenticada, vuelve a esta pantalla y pulsa “Completar y verificar”.</li>
+                <li>Abre Luna en tu Chrome normal y confirma que ya estás conectada.</li>
+                <li>Vuelve aquí y prepara un challenge de un solo uso.</li>
+                <li>Abre la extensión owner-only y pulsa “Transferir sesión a Seller OS”.</li>
+                <li>Seller OS valida la sesión y confirma <strong>SESSION_READY</strong>.</li>
               </ol>
             </div>
 
@@ -276,23 +308,28 @@ export default function LunaProtectedSessionPage() {
               <div className="rounded-xl border border-violet-200 bg-violet-50 p-5 text-violet-950">
                 <h2 className="font-black">Luna necesita volver a iniciar sesión</h2>
                 <p className="mt-2 text-sm leading-6">
-                  La propietaria puede preparar un challenge de un solo uso y
-                  completar el login en Chromium visible desde su workstation.
-                  Seller OS no recibe correo, contraseña ni cookies sin cifrar.
+                  La extensión usa la sesión ya autenticada de Chrome normal.
+                  No abre un navegador, no navega Luna y cifra en memoria antes
+                  de que el material salga de la workstation.
+                </p>
+                <p className="mt-3 text-sm font-black">
+                  Extensión owner: {extensionReady
+                    ? `OBSERVED · ${extensionVersion}` : "NO OBSERVADA"}
                 </p>
                 <button type="button" disabled={busy ||
+                    !extensionReady ||
                     payload.operatorAction?.csrfReadyForCurrentAdmin !== true}
                   onClick={() => { void prepareOwnerHandoff() }}
                   className="mt-4 inline-flex items-center gap-2 rounded-xl bg-violet-800 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
                   <MonitorUp size={18} /> Renovar sesión
                 </button>
                 {ownerHandoffPrepared && <div className="mt-4 rounded-lg bg-white p-4 text-sm">
-                  <p className="font-black">Challenge listo por menos de 10 minutos.</p>
-                  <p className="mt-2">En la workstation owner, desde el repo canónico:</p>
-                  <code className="mt-2 block overflow-x-auto rounded bg-slate-950 p-3 text-xs text-white">
-                    node tools/luna-owner-reauth-handoff.mjs ~/Downloads/seller-os-luna-owner-handoff.json
-                  </code>
-                  <p className="mt-2">El helper elimina el archivo al leerlo, abre Chromium visible y destruye su contexto al terminar.</p>
+                  <p className="font-black">Challenge fresco recibido por la extensión.</p>
+                  <p className="mt-2">Mantén una sola pestaña Luna autenticada,
+                    abre el icono <strong>Seller OS — Luna Owner Session Handoff</strong>
+                    y pulsa <strong>Transferir sesión a Seller OS</strong>.</p>
+                  <p className="mt-2">Chrome solicitará acceso temporal sólo a
+                    Luna y la extensión lo revocará al terminar.</p>
                 </div>}
               </div>}
 
@@ -310,24 +347,6 @@ export default function LunaProtectedSessionPage() {
             </div>}
 
             <div className="flex flex-wrap gap-3">
-              {ceremonyStartAllowed && <button type="button"
-                disabled={busy || !runtimeReady}
-                onClick={() => { void act("START") }}
-                className="inline-flex items-center gap-2 rounded-xl bg-cyan-800 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
-                <MonitorUp size={18} /> {recoveryRequired
-                  ? "Recuperar contexto browser" : "Iniciar ceremonia"}
-              </button>}
-              {phase === "AWAITING_HUMAN_LOGIN" && <button type="button"
-                disabled={busy}
-                onClick={() => { void act("COMPLETE") }}
-                className="rounded-xl bg-emerald-700 px-4 py-3 text-sm font-black text-white disabled:opacity-50">
-                Completar y verificar
-              </button>}
-              {active && <button type="button" disabled={busy}
-                onClick={() => { void act("CANCEL") }}
-                className="rounded-xl border border-slate-300 px-4 py-3 text-sm font-black text-slate-800 disabled:opacity-50">
-                Cancelar y destruir browser
-              </button>}
               <button type="button" disabled={busy}
                 onClick={() => { void refresh() }}
                 className="rounded-xl border border-slate-300 px-4 py-3 text-sm font-black text-slate-800 disabled:opacity-50">
@@ -337,7 +356,8 @@ export default function LunaProtectedSessionPage() {
 
             <div className="flex gap-2 text-sm text-emerald-800">
               <ShieldCheck size={18} className="shrink-0" />
-              <p>Vault es el único destino. No hay captura de campos, screenshots, perfil reusable, polling ni acciones eBay.</p>
+              <p>Vault es el único destino. No hay Playwright, CDP, navegación,
+                almacenamiento de sesión, polling ni acciones eBay.</p>
             </div>
           </div>}
         </section>

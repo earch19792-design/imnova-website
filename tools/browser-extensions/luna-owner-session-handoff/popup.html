@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Transferir sesión Luna</title>
+    <style>
+      body{font-family:system-ui,sans-serif;margin:0;padding:18px;width:320px;color:#172033;background:#f8fafc}
+      h1{font-size:17px;margin:0 0 8px}p{font-size:13px;line-height:1.45;margin:8px 0;color:#475569}
+      button{width:100%;border:0;border-radius:10px;background:#5b21b6;color:#fff;font-weight:800;padding:12px;margin-top:12px;cursor:pointer}
+      button:disabled{opacity:.55;cursor:not-allowed}.status{margin-top:12px;padding:10px;border-radius:8px;background:#fff;font-weight:700;color:#334155}
+      .safe{font-size:11px;color:#64748b;margin-top:12px}
+    </style>
+  </head>
+  <body>
+    <h1>Transferir sesión a Seller OS</h1>
+    <p>Usa una sola pestaña Luna donde ya estés conectada. Chrome pedirá acceso temporal únicamente a Luna.</p>
+    <button id="transfer" type="button">Transferir sesión a Seller OS</button>
+    <div id="status" class="status" role="status">Challenge pendiente de verificar.</div>
+    <p class="safe">No abre Luna, no automatiza el login y revoca el permiso al terminar.</p>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

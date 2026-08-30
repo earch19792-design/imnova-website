@@ -1,0 +1,42 @@
+# Seller OS — Luna Owner Session Handoff V1
+
+Extensión MV3 owner-only y separada de Luna Shipping Capture. Su única función
+es cifrar y transferir al Vault staging la sesión de una pestaña Luna donde la
+propietaria ya está autenticada.
+
+## Instalación owner-only
+
+1. Descarga o actualiza el repo canónico en la workstation de la propietaria.
+2. Abre `chrome://extensions` y activa **Developer mode**.
+3. Pulsa **Load unpacked** y elige esta carpeta completa:
+   `tools/browser-extensions/luna-owner-session-handoff`.
+4. Fija **Seller OS — Luna Owner Session Handoff** en la barra de Chrome.
+
+No instales esta extensión en la computadora de la asistente.
+
+## Renovación
+
+1. Abre Luna en Chrome normal y confirma que la sesión ya está autenticada.
+2. Abre la pantalla protegida de Seller OS preprod y pulsa **Renovar sesión**.
+3. Cuando Seller OS confirme el challenge fresco, abre el icono de esta
+   extensión y pulsa **Transferir sesión a Seller OS**.
+4. Acepta el permiso temporal y vuelve a Seller OS para verificar
+   `SESSION_READY`.
+
+## Frontera de seguridad
+
+- No usa Playwright, CDP, native messaging, daemon, túnel ni automatización del
+  navegador.
+- No navega Luna, no automatiza login/Cloudflare y no usa `<all_urls>`.
+- `cookies` y los únicos tres hosts Luna están declarados como opcionales. Se
+  solicitan desde el clic explícito de la propietaria y se revocan al terminar.
+- No declara ni usa `chrome.storage`, localStorage, sessionStorage, clipboard,
+  analytics, logs o archivos.
+- Captura sólo los nombres de cookie allowlisted por el contrato Luna existente,
+  los conserva en memoria, cifra con AES-256-GCM + RSA-OAEP SHA-256 y limpia los
+  buffers mutables en `finally`.
+- La página admin realiza el PUT same-origin del sobre cifrado. El servidor
+  conserva los gates existentes de admin, boundary, nonce, TTL, replay,
+  validación Luna y Vault readback.
+- La extensión Luna Shipping Capture permanece separada y sin permiso de
+  cookies.

@@ -229,6 +229,11 @@ export async function GET(request: NextRequest) {
         isSellerOsLunaOwnerHandoffRuntimeV1(),
       ownerWorkstationHandoffRequiresAdmin: true,
       ownerWorkstationLongLivedSecretRequired: false,
+      ownerWorkstationHandoffMechanism:
+        "OWNER_ONLY_CHROME_EXTENSION_ENCRYPTED_IN_MEMORY",
+      playwrightOwnerHandoffEligible: false,
+      cdpOwnerHandoffEligible: false,
+      lunaShippingExtensionReadsCookies: false,
     }),
     safety: Object.freeze({
       productionLunaPolling: 0,
@@ -236,6 +241,9 @@ export async function GET(request: NextRequest) {
       certifiedOosProduced: false,
       lunaMutations: 0,
       marketplaceWrites: 0,
+      browserAutomation: 0,
+      cdpConnections: 0,
+      longLivedLocalSecrets: 0,
       credentialsIncluded: false,
       cookiesIncluded: false,
       environmentValuesIncluded: false,

@@ -218,7 +218,7 @@ for (const sourceRoot of executableRoots) {
 }
 
 const secretPatterns = [
-  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
+  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----\r?\n[A-Za-z0-9+/=\r\n]{64,}/,
   /\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b/,
   /\bsb_secret_[A-Za-z0-9_-]{24,}\b/,
   /\bEAA[A-Za-z0-9]{70,}\b/,
