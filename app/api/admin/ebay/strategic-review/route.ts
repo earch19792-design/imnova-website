@@ -53,7 +53,7 @@ async function evidence() {
   const [visualQuality, visualVariants] = await Promise.all([
     buildSellerOsCurrentLiveVisualQualityV1({ monitor }),
     loadSellerOsVisualVariantsV1({ supabase: getSupabaseAdminClient(),
-      accountKey }),
+      accountKey, monitor }),
   ])
   const bundle = { ...buildSystemReviewBundleV1({ monitor }), visualQuality,
     visualVariants }
@@ -114,9 +114,10 @@ export async function POST(req: Request) {
     try {
       const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
       if (!accountKey) throw new Error("SELLER_ACCOUNT_SCOPE_REQUIRED")
+      const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
       const result = await updateSellerOsVisualVariantV1({
         supabase: getSupabaseAdminClient(),
-        accountKey,
+        accountKey, monitor, actorId: access.auth.userId ?? null,
         assetId, action })
       return NextResponse.json({ success: true, visualVariantAction: result,
         marketplaceWrites: 0 }, { headers: { "Cache-Control": "private, no-store" } })

@@ -25,6 +25,8 @@ const PRODUCT_TRUE_FINDINGS = new Set<SellerOsVisualFindingV1["findingCode"]>([
   "LOW_FRAME_UTILIZATION", "EXCESS_DEAD_SPACE", "OFF_CENTER_PRODUCT",
   "EDGE_CROPPING_RISK", "WHITE_BACKGROUND_NOT_PROVEN",
 ])
+const VISUAL_EXPERIMENT_MINIMUM_HOURS = 168
+const VISUAL_EXPERIMENT_MINIMUM_IMPRESSIONS = 100
 
 type JsonRecord = Record<string, unknown>
 
@@ -43,6 +45,147 @@ function sha256(value: Buffer | string) {
 
 function sha256Tagged(value: unknown) {
   return `sha256:${sha256(JSON.stringify(value))}`
+}
+
+function availableItemMetric(
+  value: CommercialMonitorGetDto["listings"][number]["metrics"][keyof CommercialMonitorGetDto["listings"][number]["metrics"]],
+  ebayItemId: string,
+) {
+  return value.availability === "AVAILABLE" && value.completeness === "COMPLETE" &&
+    value.grain === "ITEM" && value.identity.itemId === ebayItemId &&
+    typeof value.value === "number" && Number.isFinite(value.value) &&
+    value.reportingWindow && value.capturedAt
+      ? { value: value.value, observedAt: value.capturedAt,
+          reportingWindow: value.reportingWindow,
+          evidenceReference: value.source.evidenceReference }
+      : null
+}
+
+function sameReportingWindow(values: Array<ReturnType<typeof availableItemMetric>>) {
+  const proven = values.filter((value): value is NonNullable<typeof value> =>
+    value !== null)
+  if (proven.length !== values.length || !proven.length) return false
+  const first = JSON.stringify(proven[0].reportingWindow)
+  return proven.every((value) => JSON.stringify(value.reportingWindow) === first)
+}
+
+function availableNonNegativeEconomics(
+  value: CommercialMonitorGetDto["listings"][number]["metrics"][keyof CommercialMonitorGetDto["listings"][number]["metrics"]],
+  ebayItemId: string,
+) {
+  return value.availability === "AVAILABLE" && value.completeness === "COMPLETE" &&
+    value.grain === "ITEM" && value.identity.itemId === ebayItemId &&
+    typeof value.value === "number" && Number.isFinite(value.value) &&
+    value.value >= 0 && value.freshness.status !== "STALE"
+}
+
+export function assessSellerOsVisualExperimentV1(input: {
+  monitor: CommercialMonitorGetDto
+  ebayItemId: string
+  visual: unknown
+  lifecycleStatus: string
+  experimentId: string
+  noConflictingExperiment?: boolean
+}) {
+  const visual = record(input.visual)
+  const listing = input.monitor.listings.find((row) =>
+    row.identity.itemId === input.ebayItemId)
+  const impressions = listing
+    ? availableItemMetric(listing.metrics.impressions, input.ebayItemId) : null
+  const views = listing
+    ? availableItemMetric(listing.metrics.ebay_views, input.ebayItemId) : null
+  const ctrReported = listing
+    ? availableItemMetric(listing.metrics.ctr_reported, input.ebayItemId) : null
+  const ctrCalculated = listing
+    ? availableItemMetric(listing.metrics.ctr_calculated, input.ebayItemId) : null
+  const ctr = ctrReported ?? ctrCalculated
+  const orders = listing
+    ? availableItemMetric(listing.metrics.orders, input.ebayItemId) : null
+  const quantitySold = listing
+    ? availableItemMetric(listing.metrics.units_sold, input.ebayItemId) : null
+  const baselineAvailable = sameReportingWindow([impressions, views, ctr])
+  const exactLiveIdentity = Boolean(listing &&
+    listing.discovery.livePresence.status === "LIVE_ACTIVE" &&
+    listing.identity.marketplaceCertification.status === "US_CERTIFIED")
+  const stockguardSafe = Boolean(listing &&
+    listing.stock.state === "IN_STOCK_SIGNAL" &&
+    listing.stock.freshness.status === "FRESH" &&
+    listing.stock.sourceContractStatus === "HEALTHY" &&
+    ["CERTIFIED", "EXACT_PROVEN"].includes(
+      listing.stock.supplierLinkageStatus ?? ""))
+  const economicsNonNegative = Boolean(listing && (
+    availableNonNegativeEconomics(listing.metrics.net_profit, input.ebayItemId) ||
+    availableNonNegativeEconomics(listing.metrics.contribution, input.ebayItemId)))
+  const variants = Array.isArray(visual.variants) ? visual.variants.map(record) : []
+  const usableVariants = variants.filter((row) => row.status !== "DISCARDED")
+  const selected = usableVariants.find((row) =>
+    row.assetId === visual.selectedVariantId)
+  const productTruthPreserved = Boolean(usableVariants.length > 0 &&
+    usableVariants.every((row) => row.productTruthPreserved === true &&
+      row.variantRejected !== true) && visual.productTruthFingerprint)
+  const guardEntries = [
+    ["EXACT_LIVE_IDENTITY", exactLiveIdentity],
+    ["PRODUCT_TRUTH_PRESERVED", productTruthPreserved],
+    ["STOCKGUARD_SAFE", stockguardSafe],
+    ["ECONOMICS_NON_NEGATIVE", economicsNonNegative],
+    ["NO_CONFLICTING_EXPERIMENT", input.noConflictingExperiment !== false],
+    ["CHANGE_TYPE_WHITELISTED", input.lifecycleStatus !== "CANCELLED"],
+  ].map(([code, passed]) => ({ code, passed: passed === true }))
+  const nonAnalyticsGuardsPass = guardEntries.every((entry) => entry.passed)
+  const workflowState = input.lifecycleStatus === "DRAFT"
+    ? "PREPARED_DURABLE_NOT_ACTIVE"
+    : input.lifecycleStatus === "READY" && !baselineAvailable
+      ? "READY_WAITING_FOR_BASELINE"
+      : input.lifecycleStatus === "READY"
+        ? "READY_TO_APPLY"
+        : ["RUNNING", "WAITING_FOR_EVIDENCE"].includes(input.lifecycleStatus)
+          ? "ACTIVE"
+          : input.lifecycleStatus === "READY_TO_EVALUATE"
+            ? "READY_TO_EVALUATE"
+            : input.lifecycleStatus === "COMPLETED"
+              ? "COMPLETED" : input.lifecycleStatus
+  return {
+    contractVersion: "SELLER_OS_VISUAL_EXPERIMENT_WORKFLOW_V1_2026_08_30",
+    experimentId: input.experimentId, ebayItemId: input.ebayItemId,
+    canonicalLifecycleStatus: input.lifecycleStatus, workflowState,
+    variable: "HERO_IMAGE" as const,
+    observation: text(visual.observation), objective: text(visual.objective),
+    hypothesis: text(visual.hypothesis), productTruthPreserved,
+    guards: guardEntries,
+    allNonAnalyticsGuardsPass: nonAnalyticsGuardsPass,
+    baseline: {
+      status: baselineAvailable ? "AVAILABLE" as const : "UNPROVEN" as const,
+      impressions, ebayViews: views, ctr, quantitySold, orders,
+      observedAt: baselineAvailable
+        ? [impressions, views, ctr].map((row) => row?.observedAt).sort().at(-1) ?? null
+        : null,
+      reportingWindow: baselineAvailable ? impressions?.reportingWindow ?? null : null,
+      limitationCode: baselineAvailable ? null :
+        "EXPERIMENT_BASELINE_ANALYTICS_UNAVAILABLE",
+      nullIsZero: false as const,
+    },
+    experimentStartBlockedByAnalytics: !baselineAvailable,
+    readyWaitingForBaseline: input.lifecycleStatus === "READY" && !baselineAvailable,
+    ebayWriteAllowed: input.lifecycleStatus === "READY" && baselineAvailable &&
+      nonAnalyticsGuardsPass,
+    ebayWriteExecuted: false as const, readbackVerified: false as const,
+    operatorEbayLoginRequired: false as const,
+    ownerApprovalRequired: false as const,
+    allListingChangesFromSellerOsUi: true as const,
+    educationalCopy: {
+      title: "Experimento de imagen principal",
+      purpose: "Estamos probando si mostrar el producto con mayor claridad consigue más clics.",
+      metric: "Tasa de clics · CTR",
+      metricHelp: "De cada 100 veces que eBay muestra el producto, indica cuántas personas entran a verlo.",
+      insufficientEvidence: "Todavía no hay suficientes impresiones para decidir.",
+    },
+    policy: { minimumObservationDurationHours: VISUAL_EXPERIMENT_MINIMUM_HOURS,
+      minimumEvidenceMetric: "IMPRESSIONS" as const,
+      minimumEvidenceValue: VISUAL_EXPERIMENT_MINIMUM_IMPRESSIONS,
+      onePrimaryVariable: true as const,
+      doNotTouchVariableWhileActive: "HERO_IMAGE" as const,
+      causalClaimAllowed: false as const },
+  }
 }
 
 function safeCode(error: unknown) {
@@ -259,7 +402,9 @@ async function activeVisualVariantCount(input: {
     .select("baseline_evidence_ref,lifecycle_status")
     .eq("account_key", input.accountKey).eq("marketplace", "EBAY_US")
     .eq("ebay_item_id", input.ebayItemId)
-    .in("lifecycle_status", ["DRAFT", "READY"])
+    .in("lifecycle_status", ["DRAFT", "READY", "RUNNING",
+      "WAITING_FOR_EVIDENCE", "READY_TO_EVALUATE",
+      "PAUSED_FOR_EXTERNAL_SIGNAL"])
   if (error) throw new Error("VISUAL_VARIANT_ACTIVE_COUNT_FAILED")
   return (data ?? []).reduce((sum, row) => {
     const visual = record(record(row.baseline_evidence_ref)
@@ -513,12 +658,15 @@ export async function createSellerOsVisualVariantsV1(input: {
 export async function loadSellerOsVisualVariantsV1(input: {
   supabase: SupabaseClient
   accountKey: string
+  monitor: CommercialMonitorGetDto
 }) {
   const { data, error } = await input.supabase
     .from("ebay_listing_experiments_v1")
     .select("experiment_id,ebay_item_id,lifecycle_status,baseline_evidence_ref,created_at,updated_at")
     .eq("account_key", input.accountKey).eq("marketplace", "EBAY_US")
-    .in("lifecycle_status", ["DRAFT", "READY"])
+    .in("lifecycle_status", ["DRAFT", "READY", "RUNNING",
+      "WAITING_FOR_EVIDENCE", "READY_TO_EVALUATE",
+      "PAUSED_FOR_EXTERNAL_SIGNAL", "COMPLETED", "INCONCLUSIVE"])
     .order("created_at", { ascending: false }).limit(80)
   if (error) throw new Error("VISUAL_VARIANT_READ_FAILED")
   const variants = (await Promise.all((data ?? []).flatMap((experiment) => {
@@ -534,6 +682,15 @@ export async function loadSellerOsVisualVariantsV1(input: {
         ? await input.supabase.storage.from(EBAY_IMAGE_STAGING_BUCKET)
           .createSignedUrl(storagePath, 300)
         : { data: null }
+      const workflow = assessSellerOsVisualExperimentV1({ monitor: input.monitor,
+        ebayItemId: experiment.ebay_item_id, visual,
+        lifecycleStatus: experiment.lifecycle_status,
+        experimentId: experiment.experiment_id,
+        noConflictingExperiment: !(data ?? []).some((other) =>
+          other.experiment_id !== experiment.experiment_id &&
+          other.ebay_item_id === experiment.ebay_item_id &&
+          ["READY", "RUNNING", "WAITING_FOR_EVIDENCE", "READY_TO_EVALUATE",
+            "PAUSED_FOR_EXTERNAL_SIGNAL"].includes(other.lifecycle_status)) })
       return { assetId: text(variant.assetId), status,
         listingId: experiment.ebay_item_id,
         experimentId: experiment.experiment_id,
@@ -554,7 +711,8 @@ export async function loadSellerOsVisualVariantsV1(input: {
           protectedLayerRoundtripExact:
             variant.protectedLayerRoundtripExact === true },
         createdAt: experiment.created_at,
-        rejectedAt: status === "DISCARDED" ? experiment.updated_at : null }
+        rejectedAt: status === "DISCARDED" ? experiment.updated_at : null,
+        workflow }
     })
   }))).filter((variant) => variant.status !== "DISCARDED")
   return { contractVersion: SELLER_OS_VISUAL_VARIANT_VERSION,
@@ -569,6 +727,8 @@ export async function loadSellerOsVisualVariantsV1(input: {
 export async function updateSellerOsVisualVariantV1(input: {
   supabase: SupabaseClient
   accountKey: string
+  monitor: CommercialMonitorGetDto
+  actorId: string | null
   assetId: string
   action: "USE_IN_EXPERIMENT" | "DISCARD"
 }) {
@@ -598,14 +758,50 @@ export async function updateSellerOsVisualVariantV1(input: {
       : { ...variant, selectedForExperiment: true, selectedAt: now })
   const allDiscarded = variants.every((variant) =>
     variant.status === "DISCARDED")
-  const baseline = { ...match.baseline, sellerOsVisualVariant: {
+  const selectedVisual = {
     ...match.visual, variants,
     selectedVariantId: input.action === "USE_IN_EXPERIMENT"
-      ? input.assetId : match.visual.selectedVariantId ?? null } }
+      ? input.assetId : match.visual.selectedVariantId ?? null }
+  const assessment = assessSellerOsVisualExperimentV1({ monitor: input.monitor,
+    ebayItemId: text(match.visual.ebayItemId, 20), visual: selectedVisual,
+    lifecycleStatus: input.action === "USE_IN_EXPERIMENT" ? "READY"
+      : match.experiment.lifecycle_status,
+    experimentId: match.experiment.experiment_id,
+    noConflictingExperiment: !(data ?? []).some((other) =>
+      other.experiment_id !== match.experiment.experiment_id &&
+      text(record(record(other.baseline_evidence_ref).sellerOsVisualVariant)
+        .ebayItemId, 20) === text(match.visual.ebayItemId, 20) &&
+      other.lifecycle_status === "READY") })
+  if (input.action === "USE_IN_EXPERIMENT" &&
+      !assessment.allNonAnalyticsGuardsPass) {
+    throw new Error("VISUAL_EXPERIMENT_SAFETY_GUARD_BLOCKED")
+  }
+  const baseline = { ...match.baseline, sellerOsVisualVariant: selectedVisual,
+    sellerOsVisualExperimentWorkflow: {
+      contractVersion: assessment.contractVersion,
+      preparedBy: input.actorId ? { actorType: "ADMIN_USER",
+        actorId: input.actorId } : { actorType: "SERVICE_ROLE_ADMIN", actorId: null },
+      preparedAt: now, baseline: assessment.baseline,
+      guards: assessment.guards, variable: assessment.variable,
+      workflowState: assessment.workflowState,
+      ebayWriteExecuted: false, readbackVerified: false,
+    } }
   const lifecycle = input.action === "USE_IN_EXPERIMENT" ? "READY"
     : allDiscarded ? "CANCELLED" : match.experiment.lifecycle_status
   const updated = await input.supabase.from("ebay_listing_experiments_v1")
     .update({ baseline_evidence_ref: baseline, lifecycle_status: lifecycle,
+      minimum_observation_duration_hours: input.action === "USE_IN_EXPERIMENT"
+        ? VISUAL_EXPERIMENT_MINIMUM_HOURS : undefined,
+      minimum_evidence_metric: input.action === "USE_IN_EXPERIMENT"
+        ? "IMPRESSIONS" : undefined,
+      minimum_evidence_value: input.action === "USE_IN_EXPERIMENT"
+        ? VISUAL_EXPERIMENT_MINIMUM_IMPRESSIONS : undefined,
+      current_evidence_value: null,
+      next_review_condition: input.action === "USE_IN_EXPERIMENT"
+        ? assessment.experimentStartBlockedByAnalytics
+          ? "WAITING_FOR_ANALYTICS_BASELINE"
+          : "OPERATOR_MAY_APPLY_HERO_VARIANT"
+        : undefined,
       updated_at: now }).eq("experiment_id", match.experiment.experiment_id)
     .eq("account_key", input.accountKey)
     .select("experiment_id,lifecycle_status").single()
@@ -616,8 +812,8 @@ export async function updateSellerOsVisualVariantV1(input: {
   }
   return { assetId: input.assetId,
     status: input.action === "DISCARD" ? "DISCARDED" : "EXPERIMENT_READY",
-    experimentId: match.experiment.experiment_id, ebayListingEdits: 0,
-    marketplaceWrites: 0 }
+    experimentId: match.experiment.experiment_id, workflow: assessment,
+    ebayListingEdits: 0, marketplaceWrites: 0 }
 }
 
 export { safeCode as sellerOsVisualVariantSafeCodeV1 }
