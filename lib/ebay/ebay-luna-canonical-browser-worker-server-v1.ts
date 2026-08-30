@@ -837,9 +837,9 @@ function protectedBrowserCookies(
     name: cookie.name,
     value: cookie.value,
     ...(cookie.hostOnly
-      ? { url: `https://${cookie.domain}${cookie.path}` }
+      ? { domain: cookie.domain, path: cookie.path }
       : { domain: cookie.domain === "lunaportex.com"
-          ? ".lunaportex.com" : cookie.domain, path: cookie.path }),
+          ? ".lunaportex.com" : `.${cookie.domain}`, path: cookie.path }),
     secure: cookie.secure,
     ...(cookie.expiresAt
       ? { expires: Math.floor(Date.parse(cookie.expiresAt) / 1_000) } : {}),
