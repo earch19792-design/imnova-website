@@ -159,7 +159,11 @@ export function liveListingShippingReadbackMatchesV1(
   }
   const row = observed as Record<string, unknown>
   return Object.entries(expected).every(([key, value]) =>
-    typeof value === "number"
+    key === "observed_at"
+      ? typeof row[key] === "string" &&
+        Number.isFinite(Date.parse(value as string)) &&
+        Date.parse(row[key]) === Date.parse(value as string)
+      : typeof value === "number"
       ? Number(row[key]) === value
       : row[key] === value)
 }
