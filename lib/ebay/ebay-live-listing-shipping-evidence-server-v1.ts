@@ -4,6 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { acquireCanonicalLunaShippingV1 } from
   "./ebay-luna-authoritative-shipping-server-v1"
+import type { LunaRateLimitEvidenceV1 } from
+  "./ebay-luna-authoritative-shipping-v1"
 import {
   buildLiveListingShippingEvidenceV1,
   liveListingShippingReadbackMatchesV1,
@@ -16,6 +18,16 @@ import {
 type Acquire = typeof acquireCanonicalLunaShippingV1
 type LiveListingShippingCaptureTargetV1 = Readonly<Omit<
   LiveListingShippingEvidenceIdentityV1, "linkageId">>
+
+export class LiveListingShippingEvidenceCaptureErrorV1 extends Error {
+  readonly rateLimitEvidence: LunaRateLimitEvidenceV1 | null
+
+  constructor(message: string, rateLimitEvidence: LunaRateLimitEvidenceV1 | null) {
+    super(message)
+    this.name = "LiveListingShippingEvidenceCaptureErrorV1"
+    this.rateLimitEvidence = rateLimitEvidence
+  }
+}
 
 function text(value: unknown, maximum = 240) {
   return typeof value === "string"
@@ -142,8 +154,10 @@ export async function captureLiveListingShippingEvidenceV1(input: Readonly<{
     quantity: 1,
   }, { now: input.now })
   if (acquisition.status !== "AVAILABLE" || !acquisition.quote) {
-    throw new Error(acquisition.blocker ||
-      "LIVE_LISTING_SHIPPING_LUNA_READER_UNAVAILABLE")
+    throw new LiveListingShippingEvidenceCaptureErrorV1(
+      acquisition.blocker || "LIVE_LISTING_SHIPPING_LUNA_READER_UNAVAILABLE",
+      acquisition.rateLimitEvidence,
+    )
   }
   const evidence = buildLiveListingShippingEvidenceV1({
     identity,

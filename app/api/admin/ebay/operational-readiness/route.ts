@@ -37,7 +37,8 @@ import {
 } from "@/lib/ebay/ebay-luna-authenticated-http-watcher-v1"
 import { captureLunaAuthenticatedBrowserWorkerV1 } from
   "@/lib/ebay/ebay-luna-canonical-browser-worker-server-v1"
-import { captureLiveListingShippingEvidenceV1 } from
+import { captureLiveListingShippingEvidenceV1,
+  LiveListingShippingEvidenceCaptureErrorV1 } from
   "@/lib/ebay/ebay-live-listing-shipping-evidence-server-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from "@/lib/supabase-admin"
 
@@ -220,7 +221,11 @@ export async function POST(req: Request) {
       productCaseMutations: 0 })
   } catch (error) {
     return NextResponse.json({ success: false, error: safeError(error),
-      ...(error instanceof QualityReportValidationError ? { diagnosis: error.diagnosis } : {}) },
+      ...(error instanceof QualityReportValidationError
+        ? { diagnosis: error.diagnosis }
+        : error instanceof LiveListingShippingEvidenceCaptureErrorV1
+          ? { diagnosis: { rateLimitEvidence: error.rateLimitEvidence } }
+          : {}) },
     { status: 400 })
   }
 }

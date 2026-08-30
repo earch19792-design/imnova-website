@@ -7,10 +7,11 @@ import { EBAY_LUNA_BOCA_RATON_LOCATION } from
 import {
   acquireAuthoritativeLunaShippingV1,
   buildLunaShippingEvidenceDigestV1,
+  classifyLunaRetryAfterV1,
   LUNA_HTTP_SHIPPING_SOURCE,
   normalizeLunaShippingDestinationV1,
   normalizeLunaShippingIdentityV1,
-  parseLunaRetryAfterV1,
+  type LunaRateLimitEvidenceV1,
   type LunaShippingAttemptV1,
   type LunaShippingIdentityV1,
 } from "./ebay-luna-authoritative-shipping-v1"
@@ -164,6 +165,43 @@ function multiHostCookieJar(session: SellerOsLunaProtectedSessionEnvelope) {
 type LunaHttpCookieJar = ReturnType<typeof legacyCookieJar> |
   ReturnType<typeof multiHostCookieJar>
 
+function finalUrlClasses(rawUrl: string) {
+  if (!rawUrl) return Object.freeze({
+    finalUrlHostClass: "UNAVAILABLE" as const,
+    finalPathClass: "UNAVAILABLE" as const,
+  })
+  try {
+    const url = new URL(rawUrl)
+    const finalUrlHostClass = url.hostname === "www.lunaportex.com"
+      ? "LUNA_WWW" as const
+      : url.hostname === "account.lunaportex.com"
+        ? "LUNA_ACCOUNT" as const
+        : url.hostname === "lunaportex.com"
+          ? "LUNA_APEX" as const : "OTHER" as const
+    const finalPathClass = url.pathname === "/cart.js"
+      ? "LUNA_CART_SNAPSHOT" as const
+      : url.pathname === "/cart/clear.js"
+        ? "LUNA_CART_CLEAR" as const
+        : url.pathname === "/cart/add.js"
+          ? "LUNA_CART_ADD" as const
+          : url.pathname === "/cart/shipping_rates.json"
+            ? "LUNA_SHIPPING_RATES" as const
+            : url.pathname === "/account" || url.pathname.startsWith("/account/")
+              ? "LUNA_ACCOUNT" as const
+              : /(?:^|\/)(?:login|sign-in|signin)(?:\/|$)/i.test(url.pathname)
+                ? "LUNA_AUTH" as const
+                : finalUrlHostClass === "LUNA_ACCOUNT"
+                  ? "LUNA_AUTHENTICATED_CUSTOMER_AREA" as const
+                  : "OTHER" as const
+    return Object.freeze({ finalUrlHostClass, finalPathClass })
+  } catch {
+    return Object.freeze({
+      finalUrlHostClass: "UNAVAILABLE" as const,
+      finalPathClass: "UNAVAILABLE" as const,
+    })
+  }
+}
+
 async function boundedBody(response: Response) {
   const declared = Number(response.headers.get("content-length") ?? 0)
   if (declared > MAX_RESPONSE_BYTES) return null
@@ -200,10 +238,24 @@ async function cartRequest(input: Readonly<{
   })
   input.jar.update(response.headers, url)
   const raw = await boundedBody(response)
+  const retryAfter = response.status === 429
+    ? classifyLunaRetryAfterV1(response.headers.get("retry-after")) : null
+  const finalUrl = response.status === 429
+    ? finalUrlClasses(response.url) : null
   return Object.freeze({
     status: raw === null ? 460 : response.status,
-    retryAfterMs: response.status === 429
-      ? parseLunaRetryAfterV1(response.headers.get("retry-after")) : null,
+    retryAfterMs: retryAfter?.retryAfterMs ?? null,
+    rateLimitEvidence: response.status === 429 && retryAfter && finalUrl
+      ? Object.freeze({
+        classificationOrigin: "CURRENT_HTTP_429" as const,
+        upstreamHttpStatusClass: "HTTP_429" as const,
+        retryAfterPresent: retryAfter.retryAfterPresent,
+        retryAfterClass: retryAfter.retryAfterClass,
+        retryAfterSafeValue: retryAfter.retryAfterSafeValue,
+        finalUrlHostClass: finalUrl.finalUrlHostClass,
+        finalPathClass: finalUrl.finalPathClass,
+        cooldownRemainingClass: null,
+      }) satisfies LunaRateLimitEvidenceV1 : null,
     body: raw === null ? null : parseLosslessJson(raw),
   })
 }
@@ -229,13 +281,17 @@ function blocked(blocker: string): LunaShippingAttemptV1 {
     purchasePerformed: false as const, paymentPerformed: false as const })
 }
 
-function limited(retryAfterMs: number | null): LunaShippingAttemptV1 {
-  const delay = retryAfterMs ?? 60_000
+function limited(input: Readonly<{
+  retryAfterMs: number | null
+  rateLimitEvidence: LunaRateLimitEvidenceV1 | null
+}>): LunaShippingAttemptV1 {
+  const delay = input.retryAfterMs ?? 60_000
   return Object.freeze({
     status: "LUNA_RATE_LIMITED" as const,
     blocker: "LUNA_RATE_LIMITED",
     retryAfterMs: delay,
     retryNotBefore: new Date(Date.now() + delay).toISOString(),
+    rateLimitEvidence: input.rateLimitEvidence,
     purchasePerformed: false as const,
     paymentPerformed: false as const,
   })
@@ -268,7 +324,7 @@ export async function attemptLunaAuthenticatedHttpShippingQuoteV1(
   let restoreProven = true
   const execute = async (): Promise<LunaShippingAttemptV1> => {
     const snapshot = await cartRequest({ path: "/cart.js", fetchImpl, jar })
-    if (snapshot.status === 429) return limited(snapshot.retryAfterMs)
+    if (snapshot.status === 429) return limited(snapshot)
     if (snapshot.status < 200 || snapshot.status >= 300) return result
     const parsedSnapshot = snapshotItems(snapshot.body)
     if (parsedSnapshot === null) return blocked("LUNA_HTTP_CART_SNAPSHOT_UNPROVEN")
@@ -277,12 +333,12 @@ export async function attemptLunaAuthenticatedHttpShippingQuoteV1(
     const clear = await cartRequest({ path: "/cart/clear.js", method: "POST",
       body: {}, fetchImpl, jar })
     touched = clear.status >= 200 && clear.status < 300
-    if (clear.status === 429) return limited(clear.retryAfterMs)
+    if (clear.status === 429) return limited(clear)
     if (!touched) return result
     const add = await cartRequest({ path: "/cart/add.js", method: "POST",
       body: { id: identity.lunaVariantId, quantity: identity.quantity },
       fetchImpl, jar })
-    if (add.status === 429) return limited(add.retryAfterMs)
+    if (add.status === 429) return limited(add)
     const exactIdentity = String(add.body?.product_id ?? "") ===
         identity.lunaProductId &&
       String(add.body?.variant_id ?? add.body?.id ?? "") ===
@@ -302,7 +358,7 @@ export async function attemptLunaAuthenticatedHttpShippingQuoteV1(
     const shipping = await cartRequest({
       path: `/cart/shipping_rates.json?${query}`, fetchImpl, jar,
     })
-    if (shipping.status === 429) return limited(shipping.retryAfterMs)
+    if (shipping.status === 429) return limited(shipping)
     const rates = Array.isArray(shipping.body?.shipping_rates)
       ? shipping.body.shipping_rates.slice(0, 20) : []
     const amounts = [...new Set(rates.flatMap((rate: any) => {

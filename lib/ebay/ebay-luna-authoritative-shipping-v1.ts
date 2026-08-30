@@ -53,11 +53,30 @@ export type LunaShippingQuoteV1 = Readonly<{
   noPayment: true
 }>
 
+export type LunaRateLimitEvidenceV1 = Readonly<{
+  classificationOrigin: "CURRENT_HTTP_429" | "ACTIVE_INTERNAL_COOLDOWN"
+  upstreamHttpStatusClass: "HTTP_429" | null
+  retryAfterPresent: boolean | null
+  retryAfterClass: "SECONDS" | "HTTP_DATE" | "ABSENT" | "INVALID" | null
+  retryAfterSafeValue: string | null
+  finalUrlHostClass:
+    | "LUNA_WWW" | "LUNA_ACCOUNT" | "LUNA_APEX" | "OTHER" | "UNAVAILABLE"
+    | null
+  finalPathClass:
+    | "LUNA_CART_SNAPSHOT" | "LUNA_CART_CLEAR" | "LUNA_CART_ADD"
+    | "LUNA_SHIPPING_RATES" | "LUNA_ACCOUNT"
+    | "LUNA_AUTHENTICATED_CUSTOMER_AREA"
+    | "LUNA_AUTH" | "OTHER" | "UNAVAILABLE" | null
+  cooldownRemainingClass:
+    | "UP_TO_60_SECONDS" | "UP_TO_5_MINUTES" | "UP_TO_15_MINUTES" | null
+}>
+
 export type LunaShippingAttemptV1 = LunaShippingQuoteV1 | Readonly<{
   status: "LUNA_RATE_LIMITED" | "BLOCKED"
   blocker: string
   retryAfterMs: number | null
   retryNotBefore: string | null
+  rateLimitEvidence?: LunaRateLimitEvidenceV1 | null
   purchasePerformed: false
   paymentPerformed: false
 }>
@@ -152,6 +171,47 @@ export function parseLunaRetryAfterV1(
   return Math.min(MAXIMUM_RATE_LIMIT_MS, Math.max(0, timestamp - now))
 }
 
+export function classifyLunaRetryAfterV1(
+  value: string | null,
+  now = Date.now(),
+) {
+  if (value === null || value.trim() === "") return Object.freeze({
+    retryAfterPresent: false as const,
+    retryAfterClass: "ABSENT" as const,
+    retryAfterSafeValue: null,
+    retryAfterMs: null,
+  })
+  const normalized = value.trim()
+  const seconds = Number(normalized)
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    const retryAfterMs = Math.min(MAXIMUM_RATE_LIMIT_MS,
+      Math.ceil(seconds * 1_000))
+    return Object.freeze({
+      retryAfterPresent: true as const,
+      retryAfterClass: "SECONDS" as const,
+      retryAfterSafeValue: String(Math.ceil(retryAfterMs / 1_000)),
+      retryAfterMs,
+    })
+  }
+  const timestamp = Date.parse(normalized)
+  if (Number.isFinite(timestamp)) {
+    const retryAfterMs = Math.min(MAXIMUM_RATE_LIMIT_MS,
+      Math.max(0, timestamp - now))
+    return Object.freeze({
+      retryAfterPresent: true as const,
+      retryAfterClass: "HTTP_DATE" as const,
+      retryAfterSafeValue: new Date(now + retryAfterMs).toISOString(),
+      retryAfterMs,
+    })
+  }
+  return Object.freeze({
+    retryAfterPresent: true as const,
+    retryAfterClass: "INVALID" as const,
+    retryAfterSafeValue: null,
+    retryAfterMs: null,
+  })
+}
+
 export function buildLunaShippingEvidenceDigestV1(value: Readonly<{
   lunaProductId: string
   lunaVariantId: string
@@ -179,6 +239,25 @@ function cleanExpiredRateLimits(now: number) {
   }
 }
 
+function cooldownRemainingClass(remainingMs: number) {
+  if (remainingMs <= 60_000) return "UP_TO_60_SECONDS" as const
+  if (remainingMs <= 5 * 60_000) return "UP_TO_5_MINUTES" as const
+  return "UP_TO_15_MINUTES" as const
+}
+
+function unknownCurrentRateLimitEvidence(): LunaRateLimitEvidenceV1 {
+  return Object.freeze({
+    classificationOrigin: "CURRENT_HTTP_429",
+    upstreamHttpStatusClass: "HTTP_429",
+    retryAfterPresent: null,
+    retryAfterClass: null,
+    retryAfterSafeValue: null,
+    finalUrlHostClass: null,
+    finalPathClass: null,
+    cooldownRemainingClass: null,
+  })
+}
+
 export async function acquireAuthoritativeLunaShippingV1(input: Readonly<{
   identity: LunaShippingIdentityV1
   destination: LunaShippingDestinationV1
@@ -193,18 +272,33 @@ export async function acquireAuthoritativeLunaShippingV1(input: Readonly<{
   const rateLimitScope = readerRateLimitScope(identity)
   const existingLimit = rateLimits().get(rateLimitScope) ?? null
   let http: LunaShippingAttemptV1
+  let rateLimitEvidence: LunaRateLimitEvidenceV1 | null = null
   if (existingLimit !== null && existingLimit > now) {
+    const remainingMs = existingLimit - now
+    rateLimitEvidence = Object.freeze({
+      classificationOrigin: "ACTIVE_INTERNAL_COOLDOWN" as const,
+      upstreamHttpStatusClass: null,
+      retryAfterPresent: null,
+      retryAfterClass: null,
+      retryAfterSafeValue: null,
+      finalUrlHostClass: null,
+      finalPathClass: null,
+      cooldownRemainingClass: cooldownRemainingClass(remainingMs),
+    })
     http = Object.freeze({
       status: "LUNA_RATE_LIMITED" as const,
       blocker: "LUNA_HTTP_RATE_LIMIT_WINDOW_ACTIVE",
-      retryAfterMs: existingLimit - now,
+      retryAfterMs: remainingMs,
       retryNotBefore: new Date(existingLimit).toISOString(),
+      rateLimitEvidence,
       purchasePerformed: false as const,
       paymentPerformed: false as const,
     })
   } else {
     http = await input.httpAcquire()
     if (http.status === "LUNA_RATE_LIMITED") {
+      rateLimitEvidence = http.rateLimitEvidence ??
+        unknownCurrentRateLimitEvidence()
       const retryAfterMs = Math.max(0, Math.min(MAXIMUM_RATE_LIMIT_MS,
         http.retryAfterMs ?? 60_000))
       rateLimits().set(rateLimitScope, now + retryAfterMs)
@@ -217,6 +311,7 @@ export async function acquireAuthoritativeLunaShippingV1(input: Readonly<{
     browserFallbackUsed: false,
     quote: http,
     blocker: null,
+    rateLimitEvidence: null,
   })
   if (http.status !== "LUNA_RATE_LIMITED") return Object.freeze({
     status: "BLOCKED" as const,
@@ -225,6 +320,7 @@ export async function acquireAuthoritativeLunaShippingV1(input: Readonly<{
     browserFallbackUsed: false,
     quote: null,
     blocker: http.blocker,
+    rateLimitEvidence: null,
   })
   const browser = await input.browserAcquire()
   if (browser.status === "AVAILABLE") return Object.freeze({
@@ -234,6 +330,7 @@ export async function acquireAuthoritativeLunaShippingV1(input: Readonly<{
     browserFallbackUsed: true,
     quote: browser,
     blocker: null,
+    rateLimitEvidence,
   })
   return Object.freeze({
     status: "BLOCKED" as const,
@@ -242,6 +339,7 @@ export async function acquireAuthoritativeLunaShippingV1(input: Readonly<{
     browserFallbackUsed: true,
     quote: null,
     blocker: browser.blocker,
+    rateLimitEvidence,
   })
 }
 
