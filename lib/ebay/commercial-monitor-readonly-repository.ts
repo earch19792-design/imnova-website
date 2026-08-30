@@ -101,6 +101,7 @@ export type ReadonlyCommercialSnapshotRow = {
 
 export type ReadonlySupplyRow = {
   product_id: string | null
+  supplier_product_id: string | null
   source_key: string | null
   snapshot_id: string | null
   supplier_variant_id: string | null
@@ -438,6 +439,7 @@ function chunks<T>(values: T[], size: number) {
 async function readSupplies(
   supabase: SupabaseClient,
   listings: ReadonlyRegistryListingRow[],
+  linkageDecisions: ReadonlyLunaLinkageDecisionRowV1[] = [],
 ) : Promise<ReadonlySourceResult<ReadonlySupplyRow>> {
   const productIds = [...new Set(listings
     .map((listing) => listing.market_radar_product_id)
@@ -448,10 +450,37 @@ async function readSupplies(
   const supplierSkus = [...new Set(listings
     .map((listing) => listing.supplier_sku)
     .filter((value): value is string => Boolean(value)))]
-  const selectors: Array<["product_id" | "supplier_variant_id" | "sku", string[]]> = [
+  const latestApprovedDecisionByItem = new Map<string,
+    ReadonlyLunaLinkageDecisionRowV1>()
+  for (const decision of linkageDecisions) {
+    if (decision.decision !== "APPROVE_EXACT_LINKAGE" ||
+        latestApprovedDecisionByItem.has(decision.ebay_item_id)) continue
+    latestApprovedDecisionByItem.set(decision.ebay_item_id, decision)
+  }
+  const canonicalComponents = [...latestApprovedDecisionByItem.values()]
+    .flatMap((decision) => Array.isArray(decision.components)
+      ? decision.components.filter((component): component is Record<string,
+        unknown> => Boolean(component && typeof component === "object" &&
+          !Array.isArray(component))) : [])
+  const canonicalProductIds = [...new Set(canonicalComponents
+    .map((component) => typeof component.lunaProductId === "string"
+      ? component.lunaProductId : null)
+    .filter((value): value is string => Boolean(value)))]
+  const canonicalVariantIds = [...new Set(canonicalComponents
+    .map((component) => typeof component.lunaVariantId === "string"
+      ? component.lunaVariantId : null)
+    .filter((value): value is string => Boolean(value)))]
+  const canonicalSkus = [...new Set(canonicalComponents
+    .map((component) => typeof component.lunaSku === "string"
+      ? component.lunaSku : null)
+    .filter((value): value is string => Boolean(value)))]
+  const selectors: Array<["product_id" | "supplier_product_id" |
+    "supplier_variant_id" | "sku", string[]]> = [
     ["product_id", productIds],
-    ["supplier_variant_id", variantIds],
-    ["sku", supplierSkus],
+    ["supplier_product_id", canonicalProductIds],
+    ["supplier_variant_id", [...new Set([...variantIds,
+      ...canonicalVariantIds])]],
+    ["sku", [...new Set([...supplierSkus, ...canonicalSkus])]],
   ]
   const rows: ReadonlySupplyRow[] = []
   let failed = false
@@ -459,7 +488,7 @@ async function readSupplies(
     for (const selection of chunks(values, 100)) {
       const { data, error } = await supabase
         .from("market_radar_latest_variants")
-        .select("product_id,source_key,snapshot_id,supplier_variant_id,sku,price,available,inventory_quantity,captured_at,metadata")
+        .select("product_id,supplier_product_id,source_key,snapshot_id,supplier_variant_id,sku,price,available,inventory_quantity,captured_at,metadata")
         .in(column, selection)
         .limit(1_001)
       if (error) {
@@ -643,16 +672,16 @@ export async function readCommercialMonitorReadonlySources(
   supabase: SupabaseClient,
   accountKey: string,
 ): Promise<CommercialMonitorReadonlySources> {
-  const [registry, identityVerifications] = await Promise.all([
+  const [registry, identityVerifications, lunaLinkageDecisions] = await Promise.all([
     readRegistry(supabase, accountKey),
     readIdentityVerifications(supabase, accountKey),
+    readCanonicalLunaLinkageDecisions(supabase, accountKey),
   ])
   const [
     syncState,
     commercialSnapshots,
     supplies,
     supplySources,
-    lunaLinkageDecisions,
     lunaStockJobs,
     lunaStockObservations,
     orders,
@@ -662,9 +691,8 @@ export async function readCommercialMonitorReadonlySources(
   ] = await Promise.all([
     readSyncState(supabase, accountKey),
     readCommercialSnapshots(supabase, accountKey),
-    readSupplies(supabase, registry.rows),
+    readSupplies(supabase, registry.rows, lunaLinkageDecisions.rows),
     readSupplySources(supabase),
-    readCanonicalLunaLinkageDecisions(supabase, accountKey),
     readCanonicalLunaStockJobs(supabase, accountKey),
     readCanonicalLunaStockObservations(supabase, accountKey),
     readOrders(supabase, accountKey),

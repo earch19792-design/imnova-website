@@ -122,12 +122,37 @@ type CachedAccountTrafficSnapshotV1 = {
 // to the certified seller identity, marketplace and reporting window.
 const accountTrafficSnapshotsByFetch = new WeakMap<FetchLike,
   Map<string, CachedAccountTrafficSnapshotV1>>()
+const accountTrafficRateLimitBackoffsByFetch = new WeakMap<FetchLike,
+  Map<string, number>>()
+const ACCOUNT_TRAFFIC_429_FALLBACK_BACKOFF_MS = 60_000
+
+function accountTrafficRetryAfterMilliseconds(
+  value: string | null,
+  nowMs: number,
+) {
+  const normalized = value?.trim() ?? ""
+  if (/^\d+$/.test(normalized)) {
+    return Math.min(Number(normalized), 7 * 24 * 60 * 60) * 1_000
+  }
+  const parsedDate = Date.parse(normalized)
+  return Number.isFinite(parsedDate) && parsedDate > nowMs
+    ? Math.min(parsedDate - nowMs, 7 * 24 * 60 * 60 * 1_000)
+    : null
+}
 
 function accountTrafficSnapshotCacheV1(fetchImpl: FetchLike) {
   const existing = accountTrafficSnapshotsByFetch.get(fetchImpl)
   if (existing) return existing
   const created = new Map<string, CachedAccountTrafficSnapshotV1>()
   accountTrafficSnapshotsByFetch.set(fetchImpl, created)
+  return created
+}
+
+function accountTrafficRateLimitBackoffCacheV1(fetchImpl: FetchLike) {
+  const existing = accountTrafficRateLimitBackoffsByFetch.get(fetchImpl)
+  if (existing) return existing
+  const created = new Map<string, number>()
+  accountTrafficRateLimitBackoffsByFetch.set(fetchImpl, created)
   return created
 }
 
@@ -3985,11 +4010,17 @@ async function analyticsRead(input: {
       throw new Error("EBAY_MONITOR_ANALYTICS_SCOPE_MISSING")
     }
     const snapshotCache = accountTrafficSnapshotCacheV1(input.fetchImpl)
+    const rateLimitBackoffs = accountTrafficRateLimitBackoffCacheV1(
+      input.fetchImpl,
+    )
     const cacheNow = input.clock().getTime()
     // Serverless processes are ephemeral, but keep the process-local cache
     // bounded even across many account/window partitions.
     if (snapshotCache.size > 128) snapshotCache.clear()
     const cachedSnapshot = snapshotCache.get(accountTrafficCacheKey)
+    const rateLimitBackoffUntil = rateLimitBackoffs.get(
+      accountTrafficCacheKey,
+    )
     if (cachedSnapshot && cachedSnapshot.expiresAt > cacheNow &&
         cachedSnapshot.evidence.metadataValidationStatus === "VALID" &&
         ["AVAILABLE", "PARTIAL"].includes(cachedSnapshot.evidence.status)) {
@@ -4008,7 +4039,23 @@ async function analyticsRead(input: {
         expiresAt: cachedSnapshot.expiresAt,
         evidence: accountTraffic,
       })
+    } else if (typeof rateLimitBackoffUntil === "number" &&
+        rateLimitBackoffUntil > cacheNow) {
+      accountTraffic = unavailableAccountTrafficV1(
+        "EBAY_MONITOR_ACCOUNT_TRAFFIC_429_BACKOFF_ACTIVE",
+        0,
+        {
+          scopeId: accountScopeId,
+          auditSpanId,
+          cumulativeAcquisitionCount:
+            cumulativeAccountTrafficSnapshotAcquisitionCount,
+          retryPolicy: "NO_RETRY",
+          snapshotReuseStatus: "UNAVAILABLE",
+          snapshotReuseReasonCode: "SOURCE_UNAVAILABLE",
+        },
+      )
     } else {
+      rateLimitBackoffs.set(accountTrafficCacheKey, 0)
       try {
         const { url } = buildEbaySellerTrafficReportUrl({
           dateFrom: window.start,
@@ -4030,6 +4077,20 @@ async function analyticsRead(input: {
             calls: input.calls,
             clock: input.clock,
           })
+          if (response.status === 429) {
+            const retryAfterMs = accountTrafficRetryAfterMilliseconds(
+              response.headers.get("retry-after"),
+              input.clock().getTime(),
+            )
+            const backoffMs = retryAfterMs === null
+              ? ACCOUNT_TRAFFIC_429_FALLBACK_BACKOFF_MS
+              : Math.max(1_000, retryAfterMs)
+            rateLimitBackoffs.set(
+              accountTrafficCacheKey,
+              input.clock().getTime() + backoffMs,
+            )
+            throw new Error("EBAY_MONITOR_ACCOUNT_TRAFFIC_429")
+          }
           if (!response.ok) {
             throw new Error(`EBAY_MONITOR_ACCOUNT_TRAFFIC_${response.status}`)
           }
@@ -4116,6 +4177,21 @@ async function analyticsRead(input: {
     const gapCodes = ids.length > selected.length
       ? ["ANALYTICS_LISTING_LIMIT_REACHED"]
       : []
+    if (accountTraffic.gapCodes.some((code) => code.includes("429"))) {
+      return {
+        status: "UNAVAILABLE",
+        observedAt: null,
+        windowStart: null,
+        windowEnd: null,
+        analyticsRequestedItemCount: selected.length,
+        analyticsRepresentedItemCount: null,
+        analyticsMissingItemCount: null,
+        analyticsCoverageStatus: "UNPROVEN",
+        accountTraffic,
+        observations,
+        gapCodes: [...new Set([...gapCodes, ...accountTraffic.gapCodes])],
+      }
+    }
     let observedAt: string | null = null
     let actualWindowStart: string | null = null
     let actualWindowEnd: string | null = null

@@ -143,6 +143,7 @@ type TargetedLunaListingCoverage = {
   listingStatus: string | null
   listingUpdatedAt: string | null
   productId: string | null
+  supplierProductId?: string | null
   supplierVariantId: string | null
   supplierSku: string | null
 }
@@ -1260,6 +1261,10 @@ export function supplyEvidence(
     const inventoryQuantity = nonNegativeInteger(row.inventory_quantity)
     const numericParseFailed = (rawPricePresent && price === null) ||
       (rawQuantityPresent && inventoryQuantity === null)
+    const resolvedProductId = listingCoverage.supplierProductId
+      ? row.supplier_product_id : row.product_id
+    const expectedProductId = listingCoverage.supplierProductId ??
+      listingCoverage.productId
     const contract = classifyTargetedLunaSnapshotContract({
       sourceStatus: sourceResult.status,
       syncStatus: syncResult.status,
@@ -1270,14 +1275,14 @@ export function supplyEvidence(
       listingStatus: listingCoverage.listingStatus,
       listingUpdatedAt: listingCoverage.listingUpdatedAt,
       snapshotCapturedAt: row.captured_at,
-      identityExact: row.product_id === listingCoverage.productId &&
+      identityExact: resolvedProductId === expectedProductId &&
         row.supplier_variant_id === listingCoverage.supplierVariantId &&
         row.sku === listingCoverage.supplierSku,
       now,
       maximumAgeSeconds: LUNA_MAXIMUM_AGE_SECONDS,
     })
     return {
-      productId: row.product_id,
+      productId: resolvedProductId,
       supplierVariantId: row.supplier_variant_id,
       sku: row.sku,
       sourceKey: row.source_key,
@@ -1622,8 +1627,40 @@ function projectListing(input: {
       rows: [],
     },
   })
+  const canonicalSupply = canonicalLuna.applied && canonicalLuna.stock
+    ? supplyEvidence(
+        input.sources.supplies.rows,
+        input.sources.supplySources,
+        input.sources.syncState,
+        input.now,
+        {
+          listingStatus: row?.listing_status ?? null,
+          listingUpdatedAt: row?.updated_at ?? null,
+          productId: null,
+          supplierProductId: canonicalLuna.stock.supplierProductId,
+          supplierVariantId: canonicalLuna.stock.supplierVariantId,
+          supplierSku: canonicalLuna.stock.supplierSku,
+        },
+      ) : null
+  const canonicalCostProjection = canonicalSupply && canonicalLuna.stock
+    ? resolveStockEvidence({
+        productId: canonicalLuna.stock.supplierProductId,
+        supplierVariantId: canonicalLuna.stock.supplierVariantId,
+        supplierSku: canonicalLuna.stock.supplierSku,
+        identityLimitationCode: null,
+        supplies: canonicalSupply,
+        marketplace: input.marketplace,
+        identity: identityEvidence,
+        now: input.now,
+        maximumAgeSeconds: LUNA_MAXIMUM_AGE_SECONDS,
+      }).currentSupplierCost : null
   const stock = canonicalLuna.applied && canonicalLuna.stock
-    ? canonicalLuna.stock : legacyStock
+    ? {
+        ...canonicalLuna.stock,
+        currentSupplierCost: canonicalCostProjection ??
+          canonicalLuna.stock.currentSupplierCost,
+      }
+    : legacyStock
   const composition = canonicalLuna.applied && canonicalLuna.composition
     ? canonicalLuna.composition : legacyComposition
   const productCase = resolveProductCaseLink()

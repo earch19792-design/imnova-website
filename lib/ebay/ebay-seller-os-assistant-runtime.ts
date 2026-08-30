@@ -281,6 +281,19 @@ export function createSellerOsAssistantMonitorSnapshotLoaderV1(input: {
     promise: ReturnType<typeof loadSellerOsAssistantMonitorV1>
   } | null = null
   let cacheHitCount = 0
+  const containsRateLimitedAccountTraffic = (value: unknown) => {
+    if (!value || typeof value !== "object") return false
+    const backend = (value as Record<string, unknown>).backend
+    if (!backend || typeof backend !== "object") return false
+    const trafficScopes = (backend as Record<string, unknown>).trafficScopes
+    if (!trafficScopes || typeof trafficScopes !== "object") return false
+    const accountTraffic = (trafficScopes as Record<string, unknown>)
+      .accountTraffic
+    if (!accountTraffic || typeof accountTraffic !== "object") return false
+    const gapCodes = (accountTraffic as Record<string, unknown>).gapCodes
+    return Array.isArray(gapCodes) && gapCodes.some((code) =>
+      typeof code === "string" && code.includes("429"))
+  }
   return async () => {
     const timestamp = now()
     if (snapshot && snapshot.expiresAt > timestamp) {
@@ -294,7 +307,10 @@ export function createSellerOsAssistantMonitorSnapshotLoaderV1(input: {
     cacheHitCount = 0
     snapshot = { expiresAt: timestamp + maximumAgeMs, promise }
     try {
-      return withAccountTrafficCacheTelemetryV1(await promise, 0)
+      const loaded = await promise
+      if (containsRateLimitedAccountTraffic(loaded) &&
+          snapshot?.promise === promise) snapshot = null
+      return withAccountTrafficCacheTelemetryV1(loaded, 0)
     } catch (error) {
       if (snapshot?.promise === promise) snapshot = null
       throw error

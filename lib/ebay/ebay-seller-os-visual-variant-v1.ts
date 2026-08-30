@@ -69,14 +69,42 @@ function sameReportingWindow(values: Array<ReturnType<typeof availableItemMetric
   return proven.every((value) => JSON.stringify(value.reportingWindow) === first)
 }
 
-function availableNonNegativeEconomics(
+function availableEconomicsValue(
   value: CommercialMonitorGetDto["listings"][number]["metrics"][keyof CommercialMonitorGetDto["listings"][number]["metrics"]],
   ebayItemId: string,
 ) {
   return value.availability === "AVAILABLE" && value.completeness === "COMPLETE" &&
     value.grain === "ITEM" && value.identity.itemId === ebayItemId &&
     typeof value.value === "number" && Number.isFinite(value.value) &&
-    value.value >= 0 && value.freshness.status !== "STALE"
+    value.freshness.status !== "STALE" ? value.value : null
+}
+
+function economicsInputEvidence(
+  value: CommercialMonitorGetDto["listings"][number]["metrics"][keyof CommercialMonitorGetDto["listings"][number]["metrics"]] | undefined,
+) {
+  if (!value) return {
+    status: "UNPROVEN" as const,
+    value: null,
+    availability: "UNAVAILABLE",
+    completeness: "UNPROVEN",
+    freshness: "UNKNOWN",
+    limitationCode: "ECONOMICS_INPUT_NOT_PROJECTED",
+    evidenceReference: null,
+  }
+  const available = value.availability === "AVAILABLE" &&
+    value.completeness === "COMPLETE" &&
+    typeof value.value === "number" && Number.isFinite(value.value) &&
+    value.freshness.status !== "STALE"
+  return {
+    status: available ? "AVAILABLE" as const : "UNPROVEN" as const,
+    value: typeof value.value === "number" && Number.isFinite(value.value)
+      ? value.value : null,
+    availability: value.availability,
+    completeness: value.completeness,
+    freshness: value.freshness.status,
+    limitationCode: value.limitationCode,
+    evidenceReference: value.source.evidenceReference,
+  }
 }
 
 export function assessSellerOsVisualExperimentV1(input: {
@@ -113,9 +141,19 @@ export function assessSellerOsVisualExperimentV1(input: {
     listing.stock.sourceContractStatus === "HEALTHY" &&
     ["CERTIFIED", "EXACT_PROVEN"].includes(
       listing.stock.supplierLinkageStatus ?? ""))
-  const economicsNonNegative = Boolean(listing && (
-    availableNonNegativeEconomics(listing.metrics.net_profit, input.ebayItemId) ||
-    availableNonNegativeEconomics(listing.metrics.contribution, input.ebayItemId)))
+  const economicsValue = listing
+    ? availableEconomicsValue(listing.metrics.net_profit, input.ebayItemId) ??
+      availableEconomicsValue(listing.metrics.contribution, input.ebayItemId)
+    : null
+  const economicsGuardStatus = economicsValue === null
+    ? "UNPROVEN" as const : economicsValue >= 0
+      ? "PASSED" as const : "BLOCKED" as const
+  const economicsInputs = listing ? {
+    supplierCost: economicsInputEvidence(listing.metrics.supplier_cost),
+    shippingCost: economicsInputEvidence(listing.metrics.shipping),
+    ebayFees: economicsInputEvidence(listing.metrics.fees),
+    promotedFees: economicsInputEvidence(listing.metrics.promoted_fees),
+  } : null
   const variants = Array.isArray(visual.variants) ? visual.variants.map(record) : []
   const usableVariants = variants.filter((row) => row.status !== "DISCARDED")
   const selected = usableVariants.find((row) =>
@@ -123,15 +161,33 @@ export function assessSellerOsVisualExperimentV1(input: {
   const productTruthPreserved = Boolean(usableVariants.length > 0 &&
     usableVariants.every((row) => row.productTruthPreserved === true &&
       row.variantRejected !== true) && visual.productTruthFingerprint)
+  const booleanGuard = (code: string, passed: boolean) => ({
+    code,
+    status: passed ? "PASSED" as const : "BLOCKED" as const,
+    passed,
+    reasonCode: passed ? null : `${code}_REQUIRED`,
+  })
   const guardEntries = [
-    ["EXACT_LIVE_IDENTITY", exactLiveIdentity],
-    ["PRODUCT_TRUTH_PRESERVED", productTruthPreserved],
-    ["STOCKGUARD_SAFE", stockguardSafe],
-    ["ECONOMICS_NON_NEGATIVE", economicsNonNegative],
-    ["NO_CONFLICTING_EXPERIMENT", input.noConflictingExperiment !== false],
-    ["CHANGE_TYPE_WHITELISTED", input.lifecycleStatus !== "CANCELLED"],
-  ].map(([code, passed]) => ({ code, passed: passed === true }))
-  const nonAnalyticsGuardsPass = guardEntries.every((entry) => entry.passed)
+    booleanGuard("EXACT_LIVE_IDENTITY", exactLiveIdentity),
+    booleanGuard("PRODUCT_TRUTH_PRESERVED", productTruthPreserved),
+    booleanGuard("STOCKGUARD_SAFE", stockguardSafe),
+    {
+      code: "ECONOMICS_NON_NEGATIVE",
+      status: economicsGuardStatus,
+      passed: economicsGuardStatus === "UNPROVEN"
+        ? null : economicsGuardStatus === "PASSED",
+      reasonCode: economicsGuardStatus === "UNPROVEN"
+        ? "COMPLETE_PROVEN_COST_INPUTS_REQUIRED"
+        : economicsGuardStatus === "BLOCKED"
+          ? "PROVEN_ECONOMICS_NEGATIVE" : null,
+    },
+    booleanGuard("NO_CONFLICTING_EXPERIMENT",
+      input.noConflictingExperiment !== false),
+    booleanGuard("CHANGE_TYPE_WHITELISTED",
+      input.lifecycleStatus !== "CANCELLED"),
+  ]
+  const nonAnalyticsGuardsPass = guardEntries.every((entry) =>
+    entry.status === "PASSED")
   const workflowState = input.lifecycleStatus === "DRAFT"
     ? "PREPARED_DURABLE_NOT_ACTIVE"
     : input.lifecycleStatus === "READY" && !baselineAvailable
@@ -152,6 +208,20 @@ export function assessSellerOsVisualExperimentV1(input: {
     observation: text(visual.observation), objective: text(visual.objective),
     hypothesis: text(visual.hypothesis), productTruthPreserved,
     guards: guardEntries,
+    economics: {
+      status: economicsValue === null ? "UNPROVEN" as const
+        : "AVAILABLE" as const,
+      profitUsd: economicsValue,
+      nonNegative: economicsValue === null ? null : economicsValue >= 0,
+      reasonCode: economicsValue === null
+        ? "COMPLETE_PROVEN_COST_INPUTS_REQUIRED" : null,
+      inputs: economicsInputs,
+      otherRequiredCostInputs: [
+        "RETURNS_RESERVE_POLICY",
+        "PROMOTED_LISTINGS_RESERVE_POLICY",
+      ] as const,
+      unprovenIsNegativeBusinessOutcome: false as const,
+    },
     allNonAnalyticsGuardsPass: nonAnalyticsGuardsPass,
     baseline: {
       status: baselineAvailable ? "AVAILABLE" as const : "UNPROVEN" as const,
