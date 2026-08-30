@@ -46,6 +46,15 @@ const COOKIE_HEADER = /^[^=;\s]+=[^\r\n;]*(?:;\s*[^=;\s]+=[^\r\n;]*)*$/
 const MAX_SESSION_BYTES = 12_000
 const generateKeyPair = promisify(generateKeyPairCallback)
 
+const PROBE_SOURCE_STATUSES = new Set([
+  "AVAILABLE", "AUTH_REQUIRED", "SOURCE_UNAVAILABLE",
+])
+const PROBE_PATH_CLASSES = new Set([
+  "AUTHENTICATION_REQUIRED", "AUTH_CALLBACK", "LUNA_CUSTOMER_ACCOUNT",
+  "LUNA_ACCOUNT", "LUNA_ALLOWED_POST_LOGIN",
+])
+const PROBE_HTTP_STATUS_CLASS = /^[1-5]XX$/
+
 type RpcClient = Pick<SupabaseClient, "rpc">
 
 export type SellerOsLunaOwnerHandoffEncryptedEnvelopeV1 = Readonly<{
@@ -78,6 +87,35 @@ export function sellerOsLunaOwnerHandoffSameInstantV1(
   const rightTime = Date.parse(right)
   return Number.isFinite(leftTime) && Number.isFinite(rightTime) &&
     leftTime === rightTime
+}
+
+export function sellerOsLunaOwnerHandoffProbeFailureCodeV1(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "LUNA_OWNER_HANDOFF_PROBE_PRE_VAULT_CLASSIFICATION_UNAVAILABLE"
+  }
+  const probe = value as Record<string, unknown>
+  const sourceStatus = typeof probe.sourceStatus === "string" &&
+      PROBE_SOURCE_STATUSES.has(probe.sourceStatus)
+    ? probe.sourceStatus : "CLASSIFICATION_UNAVAILABLE"
+  const httpStatusClass = typeof probe.responseStatusClass === "string" &&
+      PROBE_HTTP_STATUS_CLASS.test(probe.responseStatusClass)
+    ? probe.responseStatusClass : "STATUS_UNAVAILABLE"
+  const pathClass = typeof probe.postLoginPathClass === "string" &&
+      PROBE_PATH_CLASSES.has(probe.postLoginPathClass)
+    ? probe.postLoginPathClass : "PATH_UNAVAILABLE"
+  return [
+    "LUNA_OWNER_HANDOFF_PROBE_PRE_VAULT",
+    sourceStatus,
+    httpStatusClass,
+    pathClass,
+  ].join("_")
+}
+
+function sellerOsLunaOwnerHandoffProbeThrownCodeV1(cause: unknown) {
+  const code = cause instanceof Error ? cause.message : ""
+  return /^LUNA_PROTECTED_SESSION_[A-Z0-9_]{3,100}$/.test(code)
+    ? `LUNA_OWNER_HANDOFF_PROBE_PRE_VAULT_${code}`
+    : "LUNA_OWNER_HANDOFF_PROBE_PRE_VAULT_CLASSIFICATION_UNAVAILABLE"
 }
 
 export function isSellerOsLunaOwnerHandoffRuntimeV1(
@@ -313,11 +351,18 @@ export async function consumeSellerOsLunaOwnerHandoffV1(input: Readonly<{
       fail("LUNA_OWNER_HANDOFF_DECRYPT_FAILED")
     }
     const session = parseSessionPayload(plaintext, at)
-    const probe = await probeLunaProtectedSessionHeaderV1({
-      cookieHeader: session.cookieHeader,
-      fetchImpl: input.fetchImpl,
-    })
-    if (!probe.authenticated) fail("LUNA_OWNER_HANDOFF_SESSION_NOT_AUTHENTICATED")
+    let probe: Awaited<ReturnType<typeof probeLunaProtectedSessionHeaderV1>>
+    try {
+      probe = await probeLunaProtectedSessionHeaderV1({
+        cookieHeader: session.cookieHeader,
+        fetchImpl: input.fetchImpl,
+      })
+    } catch (cause) {
+      fail(sellerOsLunaOwnerHandoffProbeThrownCodeV1(cause))
+    }
+    if (!probe.authenticated) {
+      fail(sellerOsLunaOwnerHandoffProbeFailureCodeV1(probe))
+    }
     const verifiedPayload = Buffer.from(JSON.stringify({
       contractVersion: SELLER_OS_LUNA_PROTECTED_SESSION_VERSION,
       cookieHeader: session.cookieHeader,
