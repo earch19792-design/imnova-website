@@ -114,8 +114,10 @@ export function assessSellerOsVisualExperimentV1(input: {
   lifecycleStatus: string
   experimentId: string
   noConflictingExperiment?: boolean
+  preSaleEconomicsEvidence?: unknown
 }) {
   const visual = record(input.visual)
+  const preSaleEconomics = record(input.preSaleEconomicsEvidence)
   const listing = input.monitor.listings.find((row) =>
     row.identity.itemId === input.ebayItemId)
   const impressions = listing
@@ -141,10 +143,24 @@ export function assessSellerOsVisualExperimentV1(input: {
     listing.stock.sourceContractStatus === "HEALTHY" &&
     ["CERTIFIED", "EXACT_PROVEN"].includes(
       listing.stock.supplierLinkageStatus ?? ""))
-  const economicsValue = listing
+  const monitorEconomicsValue = listing
     ? availableEconomicsValue(listing.metrics.net_profit, input.ebayItemId) ??
       availableEconomicsValue(listing.metrics.contribution, input.ebayItemId)
     : null
+  const preSaleEconomicsAvailable =
+    preSaleEconomics.contractVersion ===
+      "SELLER_OS_LIVE_PRE_SALE_ECONOMICS_V1_2026_08_30" &&
+    preSaleEconomics.status === "AVAILABLE" &&
+    preSaleEconomics.feeEvidenceClass ===
+      "PROVEN_RATE_PRE_SALE_FEE_MODEL" &&
+    preSaleEconomics.ebayItemId === input.ebayItemId &&
+    typeof preSaleEconomics.profitUsd === "number" &&
+    Number.isFinite(preSaleEconomics.profitUsd) &&
+    typeof preSaleEconomics.economicsNonNegative === "boolean" &&
+    preSaleEconomics.nextBlocker === null
+  const economicsValue = preSaleEconomicsAvailable
+    ? Number(preSaleEconomics.profitUsd)
+    : monitorEconomicsValue
   const economicsGuardStatus = economicsValue === null
     ? "UNPROVEN" as const : economicsValue >= 0
       ? "PASSED" as const : "BLOCKED" as const
@@ -177,7 +193,8 @@ export function assessSellerOsVisualExperimentV1(input: {
       passed: economicsGuardStatus === "UNPROVEN"
         ? null : economicsGuardStatus === "PASSED",
       reasonCode: economicsGuardStatus === "UNPROVEN"
-        ? "COMPLETE_PROVEN_COST_INPUTS_REQUIRED"
+        ? text(preSaleEconomics.nextBlocker) ||
+          "COMPLETE_PROVEN_COST_INPUTS_REQUIRED"
         : economicsGuardStatus === "BLOCKED"
           ? "PROVEN_ECONOMICS_NEGATIVE" : null,
     },
@@ -214,7 +231,16 @@ export function assessSellerOsVisualExperimentV1(input: {
       profitUsd: economicsValue,
       nonNegative: economicsValue === null ? null : economicsValue >= 0,
       reasonCode: economicsValue === null
-        ? "COMPLETE_PROVEN_COST_INPUTS_REQUIRED" : null,
+        ? text(preSaleEconomics.nextBlocker) ||
+          "COMPLETE_PROVEN_COST_INPUTS_REQUIRED" : null,
+      evidenceClass: preSaleEconomicsAvailable
+        ? "PROVEN_RATE_PRE_SALE_MODEL" as const
+        : economicsValue === null ? "UNPROVEN" as const
+          : "REALIZED_OR_CANONICAL_MONITOR" as const,
+      feeEvidenceClass: preSaleEconomicsAvailable
+        ? "PROVEN_RATE_PRE_SALE_FEE_MODEL" as const
+        : null,
+      preSaleModel: preSaleEconomicsAvailable ? preSaleEconomics : null,
       inputs: economicsInputs,
       otherRequiredCostInputs: [
         "RETURNS_RESERVE_POLICY",
@@ -740,8 +766,8 @@ export async function loadSellerOsVisualVariantsV1(input: {
     .order("created_at", { ascending: false }).limit(80)
   if (error) throw new Error("VISUAL_VARIANT_READ_FAILED")
   const variants = (await Promise.all((data ?? []).flatMap((experiment) => {
-    const visual = record(record(experiment.baseline_evidence_ref)
-      .sellerOsVisualVariant)
+    const baseline = record(experiment.baseline_evidence_ref)
+    const visual = record(baseline.sellerOsVisualVariant)
     if (visual.contractVersion !== SELLER_OS_VISUAL_VARIANT_VERSION) return []
     const rows = Array.isArray(visual.variants) ? visual.variants : []
     return rows.map(async (value) => {
@@ -756,6 +782,8 @@ export async function loadSellerOsVisualVariantsV1(input: {
         ebayItemId: experiment.ebay_item_id, visual,
         lifecycleStatus: experiment.lifecycle_status,
         experimentId: experiment.experiment_id,
+        preSaleEconomicsEvidence:
+          baseline.sellerOsPreSaleEconomicsEvidence,
         noConflictingExperiment: !(data ?? []).some((other) =>
           other.experiment_id !== experiment.experiment_id &&
           other.ebay_item_id === experiment.ebay_item_id &&
@@ -837,6 +865,8 @@ export async function updateSellerOsVisualVariantV1(input: {
     lifecycleStatus: input.action === "USE_IN_EXPERIMENT" ? "READY"
       : match.experiment.lifecycle_status,
     experimentId: match.experiment.experiment_id,
+    preSaleEconomicsEvidence:
+      match.baseline.sellerOsPreSaleEconomicsEvidence,
     noConflictingExperiment: !(data ?? []).some((other) =>
       other.experiment_id !== match.experiment.experiment_id &&
       text(record(record(other.baseline_evidence_ref).sellerOsVisualVariant)

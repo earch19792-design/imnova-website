@@ -37,6 +37,11 @@ export type TradingManualListingResult = {
   availableQuantity: number | null
   price: number | null
   currency: string | null
+  buyerShippingCharge: number | null
+  buyerShippingCurrency: string | null
+  buyerShippingChargeStatus: "AVAILABLE" | "UNPROVEN"
+  buyerShippingChargeBasis: "CHEAPEST_DOMESTIC_OPTION" | null
+  shippingType: string | null
   safeDefaults: SafeListingDefaults
   observedAt: string
 }
@@ -109,6 +114,15 @@ export function tradingXmlContainer(xml: string, tag: string) {
   return xml.match(tagPattern(tag))?.[1] ?? ""
 }
 
+export function tradingXmlContainers(xml: string, tag: string) {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const pattern = new RegExp(
+    `<(?:[A-Za-z0-9_-]+:)?${escaped}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:[A-Za-z0-9_-]+:)?${escaped}>`,
+    "gi",
+  )
+  return [...xml.matchAll(pattern)].map((match) => match[1] ?? "")
+}
+
 function safeIdentifier(value: string | null, maximumLength = 100) {
   return value &&
     value.length <= maximumLength &&
@@ -139,6 +153,12 @@ function positiveNumber(value: string | null) {
   if (value === null || value === "") return null
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function nonNegativeNumber(value: string | null) {
+  if (value === null || value === "") return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
 export function parseTradingManualListingResponses(
@@ -197,6 +217,26 @@ export function parseTradingManualListingResponses(
   const active = listingStatus?.toLowerCase() === "active"
 
   const sellerProfiles = tradingXmlContainer(item, "SellerProfiles")
+  const shippingDetails = tradingXmlContainer(item, "ShippingDetails")
+  const shippingType = safeIdentifier(
+    tradingXmlTagValue(shippingDetails, "ShippingType"),
+    40,
+  )
+  const domesticOptions = tradingXmlContainers(
+    shippingDetails,
+    "ShippingServiceOptions",
+  )
+  const domesticCharges = domesticOptions.flatMap((option) => {
+    const freeShipping = tradingXmlTagValue(option, "FreeShipping")
+      ?.toLowerCase() === "true"
+    const cost = nonNegativeNumber(
+      tradingXmlTagValue(option, "ShippingServiceCost"),
+    )
+    return freeShipping ? [0] : cost === null ? [] : [cost]
+  })
+  const buyerShippingCharge = domesticCharges.length > 0
+    ? Math.min(...domesticCharges)
+    : null
   const category = tradingXmlContainer(item, "PrimaryCategory")
   const safeDefaults: SafeListingDefaults = {}
   const fulfillmentPolicyId = numericIdentifier(
@@ -241,6 +281,18 @@ export function parseTradingManualListingResponses(
     price: positiveNumber(tradingXmlTagValue(sellingStatus, "CurrentPrice")),
     currency: safeIdentifier(tradingXmlTagValue(item, "Currency"), 3)
       ?.toUpperCase() ?? null,
+    buyerShippingCharge,
+    buyerShippingCurrency: buyerShippingCharge === null
+      ? null
+      : safeIdentifier(tradingXmlTagValue(item, "Currency"), 3)
+        ?.toUpperCase() ?? null,
+    buyerShippingChargeStatus: buyerShippingCharge === null
+      ? "UNPROVEN"
+      : "AVAILABLE",
+    buyerShippingChargeBasis: buyerShippingCharge === null
+      ? null
+      : "CHEAPEST_DOMESTIC_OPTION",
+    shippingType,
     safeDefaults,
     observedAt: now.toISOString(),
   }
@@ -347,6 +399,9 @@ function requestXml(callName: "GetUser" | "GetItem", ebayItemId?: string) {
       "Item.SellingStatus.QuantitySold",
       "Item.SellingStatus.CurrentPrice",
       "Item.Currency",
+      "Item.ShippingDetails.ShippingType",
+      "Item.ShippingDetails.ShippingServiceOptions.ShippingServiceCost",
+      "Item.ShippingDetails.ShippingServiceOptions.FreeShipping",
       "Item.PrimaryCategory.CategoryID",
       "Item.ConditionID",
       "Item.SellerProfiles.SellerShippingProfile.ShippingProfileID",
