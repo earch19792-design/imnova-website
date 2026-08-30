@@ -48,6 +48,10 @@ import {
   createSupabaseEbaySellerOAuthReauthStateLedger,
 } from "@/lib/ebay/ebay-seller-oauth-reauth-ledger"
 import {
+  claimAndVerifyEbayMarketingReadonlyOAuth,
+  prepareEbayMarketingReadonlyOAuthStart,
+} from "@/lib/ebay/ebay-marketing-readonly-oauth-ceremony-v1"
+import {
   EbayRegistryRepairExecutorError,
   executeApprovedRegistryRepairV1,
 } from "@/lib/ebay/ebay-registry-repair-executor"
@@ -83,10 +87,20 @@ function callbackHtml(code: string, status: number) {
   return response
 }
 
-function successHtml(refreshToken: string) {
+function successHtml(
+  refreshToken: string,
+  destinationVariable:
+    | "EBAY_SELLER_REFRESH_TOKEN"
+    | "EBAY_MARKETING_READONLY_REFRESH_TOKEN" =
+      "EBAY_SELLER_REFRESH_TOKEN",
+) {
   const scriptNonce = randomBytes(18).toString("base64url")
   const response = new NextResponse(
-    renderEbaySellerOAuthReauthSuccessHtml(refreshToken, scriptNonce),
+    renderEbaySellerOAuthReauthSuccessHtml(
+      refreshToken,
+      scriptNonce,
+      destinationVariable,
+    ),
     {
       status: 200,
       headers: {
@@ -252,6 +266,7 @@ export async function POST(request: NextRequest) {
       )
     }
     if (action !== "diagnose" && action !== "start" &&
+        action !== "start_marketing_readonly" &&
         action !== "certify_installed_runtime" &&
         action !== "diagnose_inventory_consumer" &&
         action !== "diagnose_registry_coverage_runtime" &&
@@ -503,6 +518,37 @@ export async function POST(request: NextRequest) {
     const ledger = createSupabaseEbaySellerOAuthReauthStateLedger(
       getSupabaseAdminClient(),
     )
+    if (action === "start_marketing_readonly") {
+      const prepared = await prepareEbayMarketingReadonlyOAuthStart({
+        configuration,
+        actorUserId,
+        ledger,
+      })
+      const response = NextResponse.json({
+        success: true,
+        purpose: prepared.purpose,
+        authorizationUrl: prepared.authorizationUrl,
+        callbackPath: EBAY_SELLER_OAUTH_REAUTH_CALLBACK_PATH,
+        scopeCount: prepared.scopeCount,
+        targetSecretSlot: prepared.targetSecretSlot,
+        expiresAt: new Date(prepared.expiresAt).toISOString(),
+        stateHashPersisted: true,
+        rawStatePersisted: false,
+        tokenGenerated: false,
+        authorizationPreflight: prepared.authorizationPreflight,
+      }, {
+        status: 200,
+        headers: { "Cache-Control": "private, no-store, max-age=0" },
+      })
+      response.cookies.set(
+        EBAY_SELLER_OAUTH_REAUTH_COOKIE,
+        prepared.cookie,
+        ebaySellerOAuthReauthCookieOptions(
+          Math.floor(EBAY_SELLER_OAUTH_REAUTH_STATE_TTL_MS / 1_000),
+        ),
+      )
+      return response
+    }
     const prepared = await prepareEbaySellerOAuthReauthStart({
       configuration,
       actorUserId,
@@ -638,6 +684,7 @@ export async function GET(request: NextRequest) {
   const callbackStartedAt = Date.now()
   let candidateRefreshToken = ""
   let commercialOrdersRefreshToken = ""
+  let marketingReadonlyRefreshToken = ""
   try {
     if (!runtimeAllowed(request)) {
       return callbackHtml("EBAY_SELLER_OAUTH_REAUTH_RUNTIME_DENIED", 403)
@@ -719,6 +766,33 @@ export async function GET(request: NextRequest) {
       }
       return commercialOrdersSuccessHtml()
     }
+    if (transaction.purpose === "MARKETING_READONLY") {
+      const result = await claimAndVerifyEbayMarketingReadonlyOAuth({
+        callback,
+        stateHash: transaction.stateHash,
+        ledger,
+        configuration,
+      })
+      if (result.kind !== "HANDOFF") {
+        return callbackHtml(
+          result.code,
+          result.claimSucceeded ? 400 : 409,
+        )
+      }
+      marketingReadonlyRefreshToken = result.verification.refreshToken
+      const response = successHtml(
+        marketingReadonlyRefreshToken,
+        "EBAY_MARKETING_READONLY_REFRESH_TOKEN",
+      )
+      marketingReadonlyRefreshToken = ""
+      return response
+    }
+    if (transaction.purpose !== "SELLER_GENERAL") {
+      return callbackHtml(
+        "EBAY_SELLER_OAUTH_REAUTH_PURPOSE_INVALID",
+        400,
+      )
+    }
     const result = await claimAndVerifyEbaySellerOAuthReauth({
       callback,
       stateHash: transaction.stateHash,
@@ -750,5 +824,6 @@ export async function GET(request: NextRequest) {
   } finally {
     candidateRefreshToken = ""
     commercialOrdersRefreshToken = ""
+    marketingReadonlyRefreshToken = ""
   }
 }

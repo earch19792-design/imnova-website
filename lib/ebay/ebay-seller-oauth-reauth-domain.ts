@@ -43,6 +43,18 @@ export const EBAY_SELLER_OAUTH_REAUTH_SCOPES = [
   "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
 ] as const
 
+export const EBAY_MARKETING_READONLY_OAUTH_SCOPES = [
+  "https://api.ebay.com/oauth/api_scope",
+  "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly",
+] as const
+
+export const EBAY_SELLER_OAUTH_REAUTH_PURPOSES = [
+  "SELLER_GENERAL",
+  "MARKETING_READONLY",
+] as const
+export type EbaySellerOAuthReauthPurpose =
+  typeof EBAY_SELLER_OAUTH_REAUTH_PURPOSES[number]
+
 export const EBAY_SELLER_OAUTH_REAUTH_AUTHORIZATION_ENDPOINT =
   "https://auth.ebay.com/oauth2/authorize" as const
 export const EBAY_SELLER_OAUTH_REAUTH_PREFLIGHT_PHASES = [
@@ -101,6 +113,7 @@ type CookiePayload = {
   branch: typeof EBAY_SELLER_OAUTH_REAUTH_BRANCH
   host: string
   actorHash: string
+  purpose?: EbaySellerOAuthReauthPurpose
 }
 
 export type EbaySellerOAuthReauthConfiguration = {
@@ -273,10 +286,19 @@ export function assertEbaySellerOAuthReauthRuntimeCredentialMatchCertified(
   }
 }
 
-function exactScopeSet(scopes: string[]) {
+function scopesForPurpose(purpose: EbaySellerOAuthReauthPurpose) {
+  return purpose === "MARKETING_READONLY"
+    ? EBAY_MARKETING_READONLY_OAUTH_SCOPES
+    : EBAY_SELLER_OAUTH_REAUTH_SCOPES
+}
+
+function exactScopeSet(
+  scopes: string[],
+  purpose: EbaySellerOAuthReauthPurpose = "SELLER_GENERAL",
+) {
   const normalized = [...new Set(scopes.map((scope) => scope.trim())
     .filter(Boolean))].sort()
-  const expected = [...EBAY_SELLER_OAUTH_REAUTH_SCOPES].sort()
+  const expected = [...scopesForPurpose(purpose)].sort()
   return normalized.length === expected.length &&
     normalized.every((scope, index) => scope === expected[index])
 }
@@ -408,10 +430,63 @@ export function buildEbaySellerOAuthReauthAuthorizationUrl(input: {
   runame: string
   state: string
 }) {
-  return buildEbaySellerOAuthReauthDiagnosticAuthorizationUrl({
+  return buildEbaySellerOAuthReauthPurposeAuthorizationUrl({
     ...input,
-    phase: "FULL_FOUR_SCOPES",
-    encoding: "RFC3986_PERCENT20",
+    purpose: "SELLER_GENERAL",
+  })
+}
+
+export function buildEbaySellerOAuthReauthPurposeAuthorizationUrl(input: {
+  clientId: string
+  runame: string
+  state: string
+  purpose: EbaySellerOAuthReauthPurpose
+}) {
+  if (!boundedCredential(input.clientId, 512) ||
+      !boundedCredential(input.runame, 512) ||
+      !isValidEbaySellerOAuthReauthState(input.state) ||
+      !EBAY_SELLER_OAUTH_REAUTH_PURPOSES.includes(input.purpose)) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_START_INVALID",
+    )
+  }
+  const parameters = [
+    ["client_id", input.clientId],
+    ["response_type", "code"],
+    ["redirect_uri", input.runame],
+    ["scope", scopesForPurpose(input.purpose).join(" ")],
+    ["state", input.state],
+  ]
+  const serialized = `${EBAY_SELLER_OAUTH_REAUTH_AUTHORIZATION_ENDPOINT}?` +
+    parameters.map(([key, value]) =>
+      `${encodeURIComponent(key)}=${encodeURIComponent(value)}`,
+    ).join("&")
+  const url = new URL(serialized)
+  if (!exactScopeSet(
+    url.searchParams.get("scope")?.split(/\s+/).filter(Boolean) ?? [],
+    input.purpose,
+  ) ||
+      [...url.searchParams.keys()].sort().join(",") !==
+        "client_id,redirect_uri,response_type,scope,state" ||
+      url.origin !== "https://auth.ebay.com" ||
+      url.pathname !== "/oauth2/authorize" || url.hash || url.username ||
+      url.password || serialized.includes("+") || serialized.includes("%252F")) {
+    throw new EbaySellerOAuthReauthError(
+      "EBAY_SELLER_OAUTH_REAUTH_AUTHORIZATION_SERIALIZATION_INVALID",
+    )
+  }
+  return serialized
+}
+
+export function buildEbaySellerOAuthReauthDiagnosticAuthorizationUrl(input: {
+  clientId: string
+  runame: string
+  phase: EbaySellerOAuthReauthPreflightPhase
+  state?: string
+  encoding?: EbaySellerOAuthReauthScopeEncoding
+}) {
+  return buildEbaySellerOAuthReauthDiagnosticAuthorizationUrlInternal({
+    ...input,
   })
 }
 
@@ -433,7 +508,7 @@ function scopesForPreflightPhase(phase: EbaySellerOAuthReauthPreflightPhase) {
   return EBAY_SELLER_OAUTH_REAUTH_SCOPES.slice(0, count)
 }
 
-export function buildEbaySellerOAuthReauthDiagnosticAuthorizationUrl(input: {
+function buildEbaySellerOAuthReauthDiagnosticAuthorizationUrlInternal(input: {
   clientId: string
   runame: string
   phase: EbaySellerOAuthReauthPreflightPhase
@@ -497,13 +572,17 @@ export function createEbaySellerOAuthReauthCookie(input: {
   branchHost: string
   clientSecret: string
   expectedAccountFingerprint: string
+  purpose?: EbaySellerOAuthReauthPurpose
 }) {
   if (!isValidEbaySellerOAuthReauthState(input.state) ||
       !Number.isSafeInteger(input.expiresAt) ||
       !VALID_ADMIN_USER_ID.test(input.actorUserId) ||
       !VALID_HOST.test(input.branchHost) ||
       !/^[0-9a-f]{64}$/.test(input.expectedAccountFingerprint) ||
-      !boundedCredential(input.clientSecret, 2_048)) {
+      !boundedCredential(input.clientSecret, 2_048) ||
+      !EBAY_SELLER_OAUTH_REAUTH_PURPOSES.includes(
+        input.purpose ?? "SELLER_GENERAL",
+      )) {
     throw new EbaySellerOAuthReauthError(
       "EBAY_SELLER_OAUTH_REAUTH_COOKIE_INVALID",
     )
@@ -515,6 +594,7 @@ export function createEbaySellerOAuthReauthCookie(input: {
     branch: EBAY_SELLER_OAUTH_REAUTH_BRANCH,
     host: input.branchHost,
     actorHash: sha256(`ADMIN:${input.actorUserId}`),
+    purpose: input.purpose ?? "SELLER_GENERAL",
   }
   const encoded = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")
   const signature = cookieSignature(
@@ -583,11 +663,17 @@ export function verifyEbaySellerOAuthReauthCookie(input: {
     )
   }
   const payload = decoded as CookiePayload
-  const exactKeys = Object.keys(payload).sort().join(",") ===
+  const serializedKeys = Object.keys(payload).sort().join(",")
+  const legacyKeys = serializedKeys ===
     "actorHash,branch,expiresAt,host,state,v"
+  const purposeBoundKeys = serializedKeys ===
+    "actorHash,branch,expiresAt,host,purpose,state,v"
+  const purpose = legacyKeys ? "SELLER_GENERAL" : payload.purpose
+  const exactKeys = legacyKeys || purposeBoundKeys
   if (!exactKeys || payload.v !== STATE_COOKIE_VERSION ||
       payload.branch !== EBAY_SELLER_OAUTH_REAUTH_BRANCH ||
       payload.host !== input.branchHost ||
+      !purpose || !EBAY_SELLER_OAUTH_REAUTH_PURPOSES.includes(purpose) ||
       !/^[0-9a-f]{64}$/.test(payload.actorHash) ||
       !Number.isSafeInteger(payload.expiresAt) ||
       payload.expiresAt <= input.now ||
@@ -603,6 +689,7 @@ export function verifyEbaySellerOAuthReauthCookie(input: {
     state: payload.state,
     expiresAt: payload.expiresAt,
     stateHash: hashEbaySellerOAuthReauthState(payload.state),
+    purpose,
   }
 }
 
@@ -678,10 +765,13 @@ export function parseEbaySellerOAuthReauthCallbackUrl(
   return { kind: "CODE", state, code }
 }
 
-export function exactEbaySellerOAuthReauthReturnedScopes(value: unknown) {
+export function exactEbaySellerOAuthReauthReturnedScopes(
+  value: unknown,
+  purpose: EbaySellerOAuthReauthPurpose = "SELLER_GENERAL",
+) {
   if (value === undefined) return null
   if (typeof value !== "string" || !value.trim()) return false
-  return exactScopeSet(value.split(/\s+/).filter(Boolean))
+  return exactScopeSet(value.split(/\s+/).filter(Boolean), purpose)
 }
 
 export function ebaySellerOAuthReauthCookieOptions(maxAgeSeconds: number) {
@@ -742,7 +832,8 @@ export function renderEbaySellerOAuthReauthSuccessHtml(
   scriptNonce: string,
   destinationVariable:
     | "EBAY_SELLER_REFRESH_TOKEN"
-    | "EBAY_COMMERCIAL_ORDERS_REFRESH_TOKEN" =
+    | "EBAY_COMMERCIAL_ORDERS_REFRESH_TOKEN"
+    | "EBAY_MARKETING_READONLY_REFRESH_TOKEN" =
       "EBAY_SELLER_REFRESH_TOKEN",
 ) {
   if (!boundedCredential(refreshToken, 8_192) ||
@@ -750,6 +841,7 @@ export function renderEbaySellerOAuthReauthSuccessHtml(
       ![
         "EBAY_SELLER_REFRESH_TOKEN",
         "EBAY_COMMERCIAL_ORDERS_REFRESH_TOKEN",
+        "EBAY_MARKETING_READONLY_REFRESH_TOKEN",
       ].includes(destinationVariable)) {
     throw new EbaySellerOAuthReauthError(
       "EBAY_SELLER_OAUTH_REAUTH_TOKEN_RESPONSE_INVALID",

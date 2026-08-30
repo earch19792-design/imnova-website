@@ -130,9 +130,11 @@ function credential(value: unknown) {
 async function accessToken(fetchImpl: typeof fetch) {
   const clientId = credential(process.env.EBAY_CLIENT_ID)
   const clientSecret = credential(process.env.EBAY_CLIENT_SECRET)
-  const refreshToken = credential(process.env.EBAY_SELLER_REFRESH_TOKEN)
+  const refreshToken = credential(
+    process.env.EBAY_MARKETING_READONLY_REFRESH_TOKEN,
+  )
   if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error("EBAY_MARKETING_READONLY_NOT_CONFIGURED")
+    throw new Error("MARKETING_READONLY_OAUTH_REQUIRED")
   }
   const response = await fetchImpl(TOKEN_ENDPOINT, {
     method: "POST",

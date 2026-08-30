@@ -30,6 +30,10 @@ const REQUIRED_SCOPES = [
   "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
   "https://api.ebay.com/oauth/api_scope/sell.account.readonly",
 ] as const
+const MARKETING_READONLY_SCOPES = [
+  "https://api.ebay.com/oauth/api_scope",
+  "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly",
+] as const
 
 type StartPayload = {
   success?: boolean
@@ -37,6 +41,8 @@ type StartPayload = {
   callbackPath?: string
   scopeCount?: number
   error?: string
+  purpose?: string
+  targetSecretSlot?: string
   authorizationPreflight?: {
     rootCause?: string
     liveAccepted?: boolean
@@ -2138,16 +2144,17 @@ function diagnosisAllowsStart(value: Diagnosis | null) {
     value.secretsReturned === false
 }
 
-function validAuthorizationUrl(value: string) {
+function validAuthorizationUrl(
+  value: string,
+  expectedScopes: readonly string[] = REQUIRED_SCOPES,
+) {
   try {
     const url = new URL(value)
     const scopes = url.searchParams.get("scope")?.split(/\s+/)
       .filter(Boolean) ?? []
-    const exactScopeSet = scopes.length === REQUIRED_SCOPES.length &&
-      REQUIRED_SCOPES.every((scope) => scopes.includes(scope)) &&
-      scopes.every((scope) => REQUIRED_SCOPES.includes(
-        scope as typeof REQUIRED_SCOPES[number],
-      ))
+    const exactScopeSet = scopes.length === expectedScopes.length &&
+      expectedScopes.every((scope) => scopes.includes(scope)) &&
+      scopes.every((scope) => expectedScopes.includes(scope))
     return !value.includes("+") && !value.includes("%252F") &&
       /scope=[^&]+%20https%3A/.test(value) &&
       url.origin === "https://auth.ebay.com" &&
@@ -3455,6 +3462,51 @@ export default function EbaySellerOAuthReauthPage() {
     }
   }
 
+  async function beginMarketingReadonly() {
+    setLoading(true)
+    setError("")
+    try {
+      if (!runtimeCredentialMatchAllowsStart(credentialMatch)) {
+        throw new Error("RUNTIME_CREDENTIAL_MATCH_REQUIRED")
+      }
+      const bearer = await adminBearer()
+      const response = await fetch(START_PATH, {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: {
+          Authorization: `Bearer ${bearer}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ action: "start_marketing_readonly" }),
+      })
+      const payload = await response.json() as StartPayload
+      if (!response.ok || payload.success !== true ||
+          payload.purpose !== "MARKETING_READONLY" ||
+          payload.targetSecretSlot !==
+            "EBAY_MARKETING_READONLY_REFRESH_TOKEN" ||
+          payload.callbackPath !== CALLBACK_PATH ||
+          payload.scopeCount !== MARKETING_READONLY_SCOPES.length ||
+          payload.authorizationPreflight?.liveAccepted !== true ||
+          payload.authorizationPreflight?.scopeContractExact !== true ||
+          payload.authorizationPreflight?.stateAccepted !== true ||
+          payload.authorizationPreflight?.runtimeCredentialMatch !== true ||
+          !payload.authorizationUrl ||
+          !validAuthorizationUrl(
+            payload.authorizationUrl,
+            MARKETING_READONLY_SCOPES,
+          )) {
+        throw new Error(payload.error || "MARKETING_READONLY_OAUTH_START_REJECTED")
+      }
+      window.location.assign(payload.authorizationUrl)
+    } catch (cause) {
+      setError(cause instanceof Error
+        ? cause.message
+        : "MARKETING_READONLY_OAUTH_START_REJECTED")
+      setLoading(false)
+    }
+  }
+
   return (
     <main className="min-h-screen bg-[#07111f] px-5 py-10 text-white">
       <div className="mx-auto max-w-3xl space-y-7">
@@ -3497,6 +3549,33 @@ export default function EbaySellerOAuthReauthPage() {
           <p className="mt-4 text-sm text-white/60">
             Fulfillment, Marketing y todos los scopes write están excluidos.
           </p>
+        </section>
+
+        <section className="rounded-3xl border border-fuchsia-300/25 bg-fuchsia-300/[0.06] p-6">
+          <h2 className="font-black">Marketing eBay · sólo lectura</h2>
+          <p className="mt-3 text-sm leading-6 text-white/70">
+            Crea una credencial dedicada sin reemplazar Seller, Commercial Orders ni
+            publicación. El callback verifica la cuenta y
+            findCampaignByAdReference antes de mostrar el handoff one-time.
+          </p>
+          <ul className="mt-3 space-y-2 text-xs text-white/70">
+            {MARKETING_READONLY_SCOPES.map((scope) => (
+              <li className="break-all" key={scope}>{scope}</li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs text-white/55">
+            Destino exclusivo: EBAY_MARKETING_READONLY_REFRESH_TOKEN
+          </p>
+          <button
+            className="mt-4 rounded-2xl border border-fuchsia-300/50 px-5 py-2 text-sm font-black text-fuchsia-200 disabled:opacity-40"
+            type="button"
+            disabled={!confirmed || loading || matchingCredentials ||
+              !callbackUrl ||
+              !runtimeCredentialMatchAllowsStart(credentialMatch)}
+            onClick={beginMarketingReadonly}
+          >
+            {loading ? "Preparando…" : "Autorizar Marketing read-only"}
+          </button>
         </section>
 
         <section className="rounded-3xl border border-red-300/25 bg-red-300/[0.06] p-6 text-sm leading-6">
