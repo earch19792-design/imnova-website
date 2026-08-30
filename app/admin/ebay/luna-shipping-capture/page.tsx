@@ -171,6 +171,8 @@ type PortDeliveryDiagnostic = {
   backgroundActiveJobCandidateId: string
   resultIdentityMismatchActualId: string
   resultIdentityMismatchExpectedId: string
+  identityMismatchDimension: "CANDIDATE" | "TRACE" | "JOB" |
+    "GENERATION" | "OTHER" | "NONE"
 }
 
 const EMPTY_EXACT_DISPATCH_STAGES: ExactDispatchStages = Object.freeze({
@@ -195,6 +197,7 @@ const EMPTY_PORT_DELIVERY_DIAGNOSTIC: PortDeliveryDiagnostic = Object.freeze({
   backgroundActiveJobCandidateId: "NONE",
   resultIdentityMismatchActualId: "NONE",
   resultIdentityMismatchExpectedId: "NONE",
+  identityMismatchDimension: "NONE",
 })
 
 type BindingStorageDiagnostic = {
@@ -477,7 +480,6 @@ export default function LunaShippingCapturePage() {
     let initialAutoClaimStarted = false
     let port: ExternalPort | null = null
     let lastProgressState = "NOT_STARTED"
-    let reconnecting = false
     let pageHidden = false
     let pageLifecycleReconnectPending = false
     let pageLifecycleJobToResume: LunaChromeShippingJobV1 | null = null
@@ -510,6 +512,14 @@ export default function LunaShippingCapturePage() {
     const ignoreOutOfScope = (source: string) => {
       setIgnoredOutOfScope(true)
       setIgnoredOutOfScopeSource(source)
+    }
+
+    const acceptExactScope = () => {
+      setIgnoredOutOfScope(false)
+      setIgnoredOutOfScopeSource("NONE")
+      setPortDeliveryDiagnostic((current) => ({ ...current,
+        identityMismatchDimension: "NONE",
+      }))
     }
 
     const exactLiveJobMatches = (value: unknown) => {
@@ -907,6 +917,7 @@ export default function LunaShippingCapturePage() {
                   ? message.capture.candidateId : "NONE",
               resultIdentityMismatchExpectedId:
                 exactLiveCandidateId ?? "NONE",
+              identityMismatchDimension: "GENERATION",
             }))
           }
           if (hasExactLiveTarget) ignoreOutOfScope("STALE_PORT_MESSAGE")
@@ -1065,11 +1076,21 @@ export default function LunaShippingCapturePage() {
         if (message?.type === EXTENSION_DISPATCH_RECEIVED) {
           const generationMatches = message.portGeneration ===
             currentPortGeneration
-          if (!hasExactLiveTarget ||
-              message.candidateId !== exactLiveCandidateId ||
-              message.traceId !== (pendingExactPortDispatch
-                ?.preDispatchTrace.traceId ?? "") || !generationMatches) {
+          const candidateMatches = message.candidateId === exactLiveCandidateId
+          const traceMatches = message.traceId === (pendingExactPortDispatch
+            ?.preDispatchTrace.traceId ?? "")
+          if (!hasExactLiveTarget || !candidateMatches || !traceMatches ||
+              !generationMatches) {
             if (hasExactLiveTarget) {
+              setPortDeliveryDiagnostic((current) => ({ ...current,
+                resultIdentityMismatchActualId:
+                  typeof message.candidateId === "string"
+                    ? message.candidateId : "NONE",
+                resultIdentityMismatchExpectedId:
+                  exactLiveCandidateId ?? "NONE",
+                identityMismatchDimension: !candidateMatches
+                  ? "CANDIDATE" : !traceMatches ? "TRACE" : "GENERATION",
+              }))
               ignoreOutOfScope("EXTENSION_RECEIPT_CANDIDATE_MISMATCH")
             }
             return
@@ -1094,6 +1115,7 @@ export default function LunaShippingCapturePage() {
           }))
           markExactDispatchStage("dispatchPostedToPort")
           markExactDispatchStage("extensionMessageReceived")
+          acceptExactScope()
           return
         }
         if (message?.type === JOB_DISPATCH_ACK) {
@@ -1117,6 +1139,7 @@ export default function LunaShippingCapturePage() {
           markExactDispatchStage("extensionAckEmitted")
           markExactDispatchStage("pageAckReceived")
           pendingExactPortDispatch = null
+          acceptExactScope()
           port?.postMessage({ type: PAGE_DISPATCH_COMMITTED,
             candidateId: message.candidateId, traceId })
           setStatus("LIVE_LISTING_CAPTURE_DISPATCHED")
@@ -1344,12 +1367,7 @@ export default function LunaShippingCapturePage() {
         const job = jobs[index]
         const candidateMatches = Boolean(job) &&
           message.capture?.candidateId === job?.identity.candidateId
-        const exactIdentityMatches = candidateMatches &&
-          (!hasExactLiveTarget ||
-            (message.capture?.lunaProductId === requestedLiveTarget.lunaProductId &&
-             message.capture?.lunaVariantId === requestedLiveTarget.lunaVariantId &&
-             message.capture?.supplierSku === requestedLiveTarget.sourceSku))
-        if (!job || !exactIdentityMatches) {
+        if (!job || !candidateMatches) {
           if (hasExactLiveTarget) {
             setPortDeliveryDiagnostic((current) => ({ ...current,
               resultIdentityMismatchActualId:
@@ -1357,6 +1375,7 @@ export default function LunaShippingCapturePage() {
                   ? message.capture.candidateId : "NONE",
               resultIdentityMismatchExpectedId:
                 exactLiveCandidateId ?? "NONE",
+              identityMismatchDimension: job ? "CANDIDATE" : "JOB",
             }))
             ignoreOutOfScope("RESULT_IDENTITY_MISMATCH")
             return
@@ -1365,6 +1384,7 @@ export default function LunaShippingCapturePage() {
           return
         }
         if (message.success !== true) {
+          acceptExactScope()
           if (message.error === "CANONICAL_US_SHIPPING_PROFILE_MISMATCH") {
             setCanonicalDestinationMismatch(true)
           }
@@ -1375,6 +1395,28 @@ export default function LunaShippingCapturePage() {
             ? message.error : "LUNA_SHIPPING_EXTENSION_JOB_FAILED"))
           return
         }
+        const exactIdentityMatches = candidateMatches &&
+          (!hasExactLiveTarget ||
+            (message.capture?.lunaProductId === requestedLiveTarget.lunaProductId &&
+             message.capture?.lunaVariantId === requestedLiveTarget.lunaVariantId &&
+             message.capture?.supplierSku === requestedLiveTarget.sourceSku))
+        if (!exactIdentityMatches) {
+          if (hasExactLiveTarget) {
+            setPortDeliveryDiagnostic((current) => ({ ...current,
+              resultIdentityMismatchActualId:
+                typeof message.capture?.candidateId === "string"
+                  ? message.capture.candidateId : "NONE",
+              resultIdentityMismatchExpectedId:
+                exactLiveCandidateId ?? "NONE",
+              identityMismatchDimension: "JOB",
+            }))
+            ignoreOutOfScope("RESULT_IDENTITY_MISMATCH")
+            return
+          }
+          fail(new Error("LUNA_SHIPPING_EXTENSION_RESULT_SCOPE_MISMATCH"))
+          return
+        }
+        acceptExactScope()
         if (message.terminalDecision === "REJECT_STOCK" &&
             message.capture?.productOosConfirmed === true &&
             message.capture?.productPageStockStatus === "FRESH_OUT_OF_STOCK") {
@@ -1561,17 +1603,31 @@ export default function LunaShippingCapturePage() {
         probeInstalledExtension,
         wait,
       })
+      let acquireCurrentPort: (
+        jobToResume: LunaChromeShippingJobV1 | null,
+      ) => Promise<void>
       const attachPort = (nextPort: ExternalPort,
-        jobToResume: LunaChromeShippingJobV1 | null = null) => {
+        jobToResume: LunaChromeShippingJobV1 | null = null,
+        settleHandshake?: (accepted: boolean) => void) => {
         const attachedGeneration = ++currentPortGeneration
+        let handshakeSettled = false
+        const settleHandshakeOnce = (accepted: boolean) => {
+          if (handshakeSettled) return
+          handshakeSettled = true
+          settleHandshake?.(accepted)
+        }
         readyPortGeneration = 0
         port = nextPort
         setConnected(false)
-        nextPort.onMessage.addListener((message) =>
-          handlePortMessage(message, nextPort, attachedGeneration))
+        nextPort.onMessage.addListener((message) => {
+          handlePortMessage(message, nextPort, attachedGeneration)
+          if (message?.type !== PORT_HANDSHAKE_ACK) return
+          settleHandshakeOnce(message.portGeneration === attachedGeneration &&
+            message.portCurrent === true && port === nextPort)
+        })
         reconnectCurrentPort = () => {
           if (!active || pageHidden || port !== nextPort) return
-          try { nextPort.disconnect() } catch { /* onDisconnect owns retry */ }
+          void acquireCurrentPort(busy ? jobs[index] : jobToResume)
         }
         nextPort.onDisconnect.addListener(() => {
           if (!active || port !== nextPort) return
@@ -1590,46 +1646,12 @@ export default function LunaShippingCapturePage() {
           readyPortGeneration = 0
           port = null
           setConnected(false)
-          if (pageHidden || pageLifecycleReconnectPending) return
-          if (reconnecting) return
-          reconnecting = true
-          const reconnectToken = ++reconnectGeneration
-          const jobToResume = busy ? jobs[index] : null
-          canonicalBindingStatusRead = false
-          canonicalDestinationBindingPresent = false
-          setCanonicalBindingStatusReady(false)
-          activeJobStatusReady = false
-          recoveredActiveJob = null
-          if (!busy) {
-            initialAutoClaimStarted = false
-            setStatus("RECONNECTING_EXTENSION")
+          if (!handshakeSettled) {
+            settleHandshakeOnce(false)
+            return
           }
-          void (async () => {
-            let lastError: unknown = new Error(
-              "LUNA_SHIPPING_EXTENSION_DISCONNECTED")
-            for (let attempt = 0; attempt < 12; attempt += 1) {
-              await new Promise((resolve) => window.setTimeout(resolve, 500))
-              if (!active || pageHidden ||
-                  reconnectToken !== reconnectGeneration) return
-              try {
-                await wakeLunaShippingExtensionV1(runtime,
-                  pingExtensionOnce, wait)
-                if (!active || pageHidden ||
-                    reconnectToken !== reconnectGeneration) return
-                const resumedPort = runtime.connect(EXTENSION_ID,
-                  { name: PORT_NAME })
-                attachPort(resumedPort, jobToResume)
-                reconnecting = false
-                extensionReady = true
-                setStatus("BRIDGE_RECONNECTED")
-                setRuntimeTrace((current) => ({ ...current,
-                  bridgeReconnected: true }))
-                return
-              } catch (error) { lastError = error }
-            }
-            reconnecting = false
-            fail(lastError)
-          })()
+          if (pageHidden || pageLifecycleReconnectPending) return
+          void acquireCurrentPort(busy ? jobs[index] : jobToResume)
         })
         try {
           nextPort.postMessage({ type: PORT_HANDSHAKE,
@@ -1641,7 +1663,8 @@ export default function LunaShippingCapturePage() {
             portHandshakeTimer = null
             if (!active || pageHidden || port !== nextPort ||
                 readyPortGeneration === attachedGeneration) return
-            reconnectCurrentPort?.()
+            settleHandshakeOnce(false)
+            try { nextPort.disconnect() } catch { /* acquisition retries */ }
           }, 3_000)
         } catch {
           setPortDeliveryDiagnostic((current) => ({ ...current,
@@ -1650,7 +1673,8 @@ export default function LunaShippingCapturePage() {
             portGenerationMatch: false,
             postMessageThrown: true,
           }))
-          reconnectCurrentPort?.()
+          settleHandshakeOnce(false)
+          try { nextPort.disconnect() } catch { /* acquisition retries */ }
           return
         }
         if (jobToResume && !pendingExactPortDispatch) {
@@ -1667,6 +1691,68 @@ export default function LunaShippingCapturePage() {
           nextPort.onMessage.addListener(resumeAfterHandshake)
         }
       }
+      acquireCurrentPort = async (jobToResume) => {
+        if (!active || pageHidden) return
+        const reconnectToken = ++reconnectGeneration
+        const stalePort = port
+        readyPortGeneration = 0
+        port = null
+        setConnected(false)
+        if (portHandshakeTimer !== null) {
+          window.clearTimeout(portHandshakeTimer)
+          portHandshakeTimer = null
+        }
+        if (dispatchReceiptTimer !== null) {
+          window.clearTimeout(dispatchReceiptTimer)
+          dispatchReceiptTimer = null
+        }
+        if (pendingExactPortDispatch) {
+          pendingExactPortDispatch.postedGeneration = null
+        }
+        try { stalePort?.disconnect() } catch { /* stale port is invalid */ }
+        canonicalBindingStatusRead = false
+        canonicalDestinationBindingPresent = false
+        setCanonicalBindingStatusReady(false)
+        activeJobStatusReady = false
+        recoveredActiveJob = null
+        if (!busy) {
+          initialAutoClaimStarted = false
+          setStatus("RECONNECTING_EXTENSION")
+        }
+        let lastError: unknown = new Error(
+          "LUNA_SHIPPING_EXTENSION_DISCONNECTED")
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          if (attempt > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, 500))
+          }
+          if (!active || pageHidden || reconnectToken !== reconnectGeneration) {
+            return
+          }
+          try {
+            await wakeLunaShippingExtensionV1(runtime, pingExtensionOnce, wait)
+            if (!active || pageHidden ||
+                reconnectToken !== reconnectGeneration) return
+            const resumedPort = runtime.connect(EXTENSION_ID,
+              { name: PORT_NAME })
+            const accepted = await new Promise<boolean>((resolve) => {
+              attachPort(resumedPort, jobToResume, resolve)
+            })
+            if (!active || pageHidden ||
+                reconnectToken !== reconnectGeneration) return
+            if (!accepted || port !== resumedPort ||
+                readyPortGeneration !== currentPortGeneration) {
+              lastError = new Error("LUNA_SHIPPING_PORT_HANDSHAKE_REJECTED")
+              continue
+            }
+            extensionReady = true
+            if (!busy) setStatus("BRIDGE_RECONNECTED")
+            setRuntimeTrace((current) => ({ ...current,
+              bridgeReconnected: true }))
+            return
+          } catch (error) { lastError = error }
+        }
+        fail(lastError)
+      }
       const handlePageHide = () => {
         pageHidden = true
         if (portHandshakeTimer !== null) {
@@ -1680,7 +1766,6 @@ export default function LunaShippingCapturePage() {
         pageLifecycleReconnectPending = true
         pageLifecycleJobToResume = busy ? jobs[index] : null
         reconnectGeneration += 1
-        reconnecting = false
         const hiddenPort = port
         port = null
         hiddenPort?.disconnect()
@@ -1689,26 +1774,11 @@ export default function LunaShippingCapturePage() {
         pageHidden = false
         if (!event.persisted && !pageLifecycleReconnectPending) return
         pageLifecycleReconnectPending = false
-        const reconnectToken = ++reconnectGeneration
         setConnected(false)
         setStatus("RECONNECTING_EXTENSION")
-        canonicalBindingStatusRead = false
-        canonicalDestinationBindingPresent = false
-        setCanonicalBindingStatusReady(false)
-        activeJobStatusReady = false
-        recoveredActiveJob = null
-        void (async () => {
-          await wakeLunaShippingExtensionV1(runtime, pingExtensionOnce, wait)
-          if (!active || pageHidden ||
-              reconnectToken !== reconnectGeneration) return
-          const resumedPort = runtime.connect(EXTENSION_ID, { name: PORT_NAME })
-          attachPort(resumedPort, pageLifecycleJobToResume)
-          pageLifecycleJobToResume = null
-          extensionReady = true
-          setStatus("BRIDGE_RECONNECTED")
-          setRuntimeTrace((current) => ({ ...current,
-            bridgeReconnected: true }))
-        })().catch(fail)
+        const jobToResume = pageLifecycleJobToResume
+        pageLifecycleJobToResume = null
+        void acquireCurrentPort(jobToResume).catch(fail)
       }
       if (!active) return
       window.addEventListener("pagehide", handlePageHide)
@@ -1720,7 +1790,7 @@ export default function LunaShippingCapturePage() {
       setStatus("PINGING_EXTENSION")
       extensionReady = true
       setStatus("EXTENSION_CONNECTED")
-      attachPort(runtime.connect(EXTENSION_ID, { name: PORT_NAME }))
+      await acquireCurrentPort(null)
       if (!hasExactLiveTarget && params.get("runShipping") === "1") beginCanary()
     }
     void start().catch(fail)
@@ -1796,6 +1866,7 @@ export default function LunaShippingCapturePage() {
           `BACKGROUND_ACTIVE_JOB_CANDIDATE_ID=${portDeliveryDiagnostic.backgroundActiveJobCandidateId}\n` +
           `RESULT_IDENTITY_MISMATCH_ACTUAL_ID=${portDeliveryDiagnostic.resultIdentityMismatchActualId}\n` +
           `RESULT_IDENTITY_MISMATCH_EXPECTED_ID=${portDeliveryDiagnostic.resultIdentityMismatchExpectedId}\n` +
+          `IDENTITY_MISMATCH_DIMENSION=${portDeliveryDiagnostic.identityMismatchDimension}\n` +
           `SHIPPING=${results.length ? "AVAILABLE" : "UNPROVEN"}\n` +
           `ECONOMICS=${results.at(-1)?.economicsStatus ?? "UNPROVEN"}\n` +
           `IGNORED_OUT_OF_SCOPE=${ignoredOutOfScope}\n` +
