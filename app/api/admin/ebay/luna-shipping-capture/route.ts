@@ -3,13 +3,23 @@ export const dynamic = "force-dynamic"
 export const maxDuration = 60
 
 import {
-  authorizeListingAiRequest,
   enforceListingAiRouteRateLimit,
   listingAiFailure,
   listingAiJson,
   listingAiRecord,
   listingAiResponse,
 } from "@/lib/ebay/ebay-listing-ai-api"
+import {
+  SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION,
+  getEbayProRuntimeBoundary,
+} from "@/lib/ebay/environment-boundaries"
+import {
+  getEbaySellerAccountScopeConfiguration,
+} from "@/lib/ebay/ebay-seller-account-scope"
+import {
+  getSupabaseAdminClient,
+  validateAdminApiRequest,
+} from "@/lib/supabase-admin"
 import {
   type LunaShippingCapturePostV1,
   type LunaProductPageOosPostV1,
@@ -58,8 +68,52 @@ function sessionSecret() {
   return value
 }
 
+async function authorizeLunaShippingCaptureRequest(req: Request) {
+  const validation = await validateAdminApiRequest(req)
+  if (!validation.ok || !validation.userId) return {
+    ok: false as const,
+    response: listingAiResponse({
+      success: false,
+      error: validation.error ?? "LUNA_SHIPPING_ADMIN_REQUIRED",
+      safety: { lunaRequests: 0, marketplaceWrites: 0 },
+    }, validation.status || 403),
+  }
+  const account = getEbaySellerAccountScopeConfiguration()
+  if (!account.accountKey) return {
+    ok: false as const,
+    response: listingAiResponse({
+      success: false,
+      error: "LUNA_SHIPPING_ACCOUNT_REQUIRED",
+      reason: account.reason,
+      safety: { lunaRequests: 0, marketplaceWrites: 0 },
+    }, 409),
+  }
+  const boundary = getEbayProRuntimeBoundary({
+    pathname: "/api/admin/ebay/luna-shipping-capture",
+    method: req.method,
+  })
+  if (boundary.boundaryClassification !==
+        SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION ||
+      !boundary.dedicatedPreprod.certified || boundary.isProductionRuntime) {
+    return {
+      ok: false as const,
+      response: listingAiResponse({
+        success: false,
+        error: "LUNA_SHIPPING_DEDICATED_PREPROD_REQUIRED",
+        safety: { lunaRequests: 0, marketplaceWrites: 0 },
+      }, 403),
+    }
+  }
+  return {
+    ok: true as const,
+    actorId: validation.userId,
+    accountKey: account.accountKey,
+    supabase: getSupabaseAdminClient(),
+  }
+}
+
 export async function POST(req: Request) {
-  const auth = await authorizeListingAiRequest(req)
+  const auth = await authorizeLunaShippingCaptureRequest(req)
   if (!auth.ok) return auth.response
   try {
     const body = await listingAiJson(req)
