@@ -386,7 +386,7 @@ export function createSellerOsLunaCeremonyCsrfBoundaryV1(input: Readonly<{
   }
 
   function consume(context: CsrfContext & Readonly<{
-    action: "START" | "COMPLETE" | "CANCEL"
+    action: "START" | "OWNER_HANDOFF" | "COMPLETE" | "CANCEL"
     contentType: string | null
     csrfHeader: string | null
     csrfCookie: string | null
@@ -397,8 +397,10 @@ export function createSellerOsLunaCeremonyCsrfBoundaryV1(input: Readonly<{
       secFetchSite: context.secFetchSite,
       contentType: context.contentType,
     })
-    if ((context.action === "START" && context.stateToken) ||
-        (context.action !== "START" && !context.stateToken)) {
+    const startsWithoutCeremonyState = context.action === "START" ||
+      context.action === "OWNER_HANDOFF"
+    if ((startsWithoutCeremonyState && context.stateToken) ||
+        (!startsWithoutCeremonyState && !context.stateToken)) {
       throw new SellerOsLunaBrowserCeremonyError(
         "LUNA_CEREMONY_WRONG_STATE",
       )

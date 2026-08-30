@@ -62,7 +62,24 @@ type StatusPayload = {
     csrfCeremonyInstanceBound?: boolean | null
     csrfOriginBound?: boolean | null
     csrfCeremonyStateBound?: boolean | null
+    ownerWorkstationHandoffAvailable?: boolean
+    ownerWorkstationHandoffRequiresAdmin?: boolean
+    ownerWorkstationLongLivedSecretRequired?: boolean
   }
+}
+
+type OwnerHandoffChallenge = {
+  contractVersion: string
+  challengeId: string
+  nonce: string
+  publicKeyPem: string
+  expiresAt: string
+  environmentBinding: string
+  targetOrigin: string
+  uploadPath: string
+  oneTime: true
+  ownerAdminCreated: true
+  plaintextSessionAccepted: false
 }
 
 async function adminToken() {
@@ -75,6 +92,7 @@ export default function LunaProtectedSessionPage() {
   const [payload, setPayload] = useState<StatusPayload | null>(null)
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
+  const [ownerHandoffPrepared, setOwnerHandoffPrepared] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -131,6 +149,54 @@ export default function LunaProtectedSessionPage() {
     } catch (cause) {
       setError(cause instanceof Error
         ? cause.message : "LUNA_CEREMONY_ACTION_FAILED")
+    } finally {
+      setBusy(false)
+    }
+  }, [payload?.operatorAction?.csrfToken, refresh])
+
+  const prepareOwnerHandoff = useCallback(async () => {
+    setBusy(true)
+    setError("")
+    setOwnerHandoffPrepared(false)
+    try {
+      const csrfToken = payload?.operatorAction?.csrfToken
+      if (!csrfToken) throw new Error("LUNA_CEREMONY_CSRF_UNAVAILABLE")
+      const token = await adminToken()
+      const response = await fetch(ENDPOINT, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "X-Seller-OS-CSRF": csrfToken,
+        },
+        body: JSON.stringify({ action: "OWNER_HANDOFF" }),
+      })
+      const result = await response.json() as StatusPayload & {
+        challenge?: OwnerHandoffChallenge
+      }
+      const challenge = result.challenge
+      if (!response.ok || !result.success || !challenge ||
+          challenge.oneTime !== true ||
+          challenge.ownerAdminCreated !== true ||
+          challenge.plaintextSessionAccepted !== false) {
+        throw new Error(result.error ?? "LUNA_OWNER_HANDOFF_START_FAILED")
+      }
+      const blob = new Blob([JSON.stringify(challenge)], {
+        type: "application/json",
+      })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = "seller-os-luna-owner-handoff.json"
+      anchor.rel = "noopener"
+      anchor.click()
+      URL.revokeObjectURL(url)
+      setOwnerHandoffPrepared(true)
+      await refresh()
+    } catch (cause) {
+      setError(cause instanceof Error
+        ? cause.message : "LUNA_OWNER_HANDOFF_START_FAILED")
     } finally {
       setBusy(false)
     }
@@ -203,6 +269,32 @@ export default function LunaProtectedSessionPage() {
                 <li>Cuando veas tu cuenta Luna autenticada, vuelve a esta pantalla y pulsa “Completar y verificar”.</li>
               </ol>
             </div>
+
+            {status?.humanBootstrapRequired === true &&
+              payload.browserRuntime?.status !== "READY" &&
+              payload.operatorAction?.ownerWorkstationHandoffAvailable === true &&
+              <div className="rounded-xl border border-violet-200 bg-violet-50 p-5 text-violet-950">
+                <h2 className="font-black">Luna necesita volver a iniciar sesión</h2>
+                <p className="mt-2 text-sm leading-6">
+                  La propietaria puede preparar un challenge de un solo uso y
+                  completar el login en Chromium visible desde su workstation.
+                  Seller OS no recibe correo, contraseña ni cookies sin cifrar.
+                </p>
+                <button type="button" disabled={busy ||
+                    payload.operatorAction?.csrfReadyForCurrentAdmin !== true}
+                  onClick={() => { void prepareOwnerHandoff() }}
+                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-violet-800 px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50">
+                  <MonitorUp size={18} /> Renovar sesión
+                </button>
+                {ownerHandoffPrepared && <div className="mt-4 rounded-lg bg-white p-4 text-sm">
+                  <p className="font-black">Challenge listo por menos de 10 minutos.</p>
+                  <p className="mt-2">En la workstation owner, desde el repo canónico:</p>
+                  <code className="mt-2 block overflow-x-auto rounded bg-slate-950 p-3 text-xs text-white">
+                    node tools/luna-owner-reauth-handoff.mjs ~/Downloads/seller-os-luna-owner-handoff.json
+                  </code>
+                  <p className="mt-2">El helper elimina el archivo al leerlo, abre Chromium visible y destruye su contexto al terminar.</p>
+                </div>}
+              </div>}
 
             {payload.ceremony?.failureCode &&
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">

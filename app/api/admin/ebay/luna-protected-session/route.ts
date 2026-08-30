@@ -24,6 +24,12 @@ import {
 } from "@/lib/ebay/ebay-luna-browser-context-recovery-gate-v1"
 import { auditSellerOsLunaProtectedSessionV1 } from
   "@/lib/ebay/ebay-luna-protected-session-server-v1"
+import {
+  consumeSellerOsLunaOwnerHandoffV1,
+  createSellerOsLunaOwnerHandoffV1,
+  isSellerOsLunaOwnerHandoffRuntimeV1,
+} from
+  "@/lib/ebay/ebay-luna-owner-reauth-handoff-v1"
 import { validateAdminApiRequest } from "@/lib/supabase-admin"
 
 const HEADERS = {
@@ -71,6 +77,29 @@ function safeError(cause: unknown) {
     ? code : "LUNA_CEREMONY_FAILED_CLOSED"
 }
 
+async function readEncryptedOwnerHandoff(request: NextRequest) {
+  const contentLength = Number(request.headers.get("content-length") ?? "0")
+  if (!Number.isFinite(contentLength) || contentLength < 1 ||
+      contentLength > 24_000 ||
+      request.headers.get("content-type")?.split(";", 1)[0]?.trim() !==
+        "application/json") {
+    throw new SellerOsLunaBrowserCeremonyError(
+      "LUNA_OWNER_HANDOFF_ENVELOPE_INVALID",
+    )
+  }
+  const text = await request.text()
+  if (text.length < 100 || text.length > 24_000) {
+    throw new SellerOsLunaBrowserCeremonyError(
+      "LUNA_OWNER_HANDOFF_ENVELOPE_INVALID",
+    )
+  }
+  try { return JSON.parse(text) as unknown } catch {
+    throw new SellerOsLunaBrowserCeremonyError(
+      "LUNA_OWNER_HANDOFF_ENVELOPE_INVALID",
+    )
+  }
+}
+
 function mutationAdmin(auth: Awaited<ReturnType<typeof validateAdminApiRequest>>) {
   return auth.ok && auth.authenticationMode === "admin_user" &&
     Boolean(auth.userId && UUID.test(auth.userId))
@@ -96,12 +125,13 @@ async function readAction(request: NextRequest) {
     )
   }
   const action = (value as { action?: unknown }).action
-  if (!new Set(["START", "COMPLETE", "CANCEL"]).has(String(action))) {
+  if (!new Set(["START", "OWNER_HANDOFF", "COMPLETE", "CANCEL"])
+    .has(String(action))) {
     throw new SellerOsLunaBrowserCeremonyError(
       "LUNA_CEREMONY_CALLER_INPUT_REJECTED",
     )
   }
-  return action as "START" | "COMPLETE" | "CANCEL"
+  return action as "START" | "OWNER_HANDOFF" | "COMPLETE" | "CANCEL"
 }
 
 export async function GET(request: NextRequest) {
@@ -195,6 +225,10 @@ export async function GET(request: NextRequest) {
       csrfOriginBound: csrf?.originBound ?? null,
       csrfCeremonyStateBound: csrf?.ceremonyStateBound ?? null,
       productionPreflightExecuted: false,
+      ownerWorkstationHandoffAvailable:
+        isSellerOsLunaOwnerHandoffRuntimeV1(),
+      ownerWorkstationHandoffRequiresAdmin: true,
+      ownerWorkstationLongLivedSecretRequired: false,
     }),
     safety: Object.freeze({
       productionLunaPolling: 0,
@@ -287,6 +321,24 @@ export async function POST(request: NextRequest) {
       })
       return response
     }
+    if (action === "OWNER_HANDOFF") {
+      const challenge = await createSellerOsLunaOwnerHandoffV1({
+        actorUserId,
+      })
+      const response = NextResponse.json({
+        success: true,
+        action,
+        challenge,
+        sessionIncluded: false,
+        credentialsIncluded: false,
+        cookiesIncluded: false,
+        marketplaceWrites: 0,
+      }, { status: 201, headers: HEADERS })
+      response.cookies.set(SELLER_OS_LUNA_CEREMONY_CSRF_COOKIE, "", {
+        ...csrfCookieOptions(request), maxAge: 0,
+      })
+      return response
+    }
     if (!stateToken) {
       throw new SellerOsLunaBrowserCeremonyError(
         "LUNA_CEREMONY_WRONG_STATE",
@@ -325,5 +377,28 @@ export async function POST(request: NextRequest) {
       })
     }
     return response
+  }
+}
+
+/**
+ * The admin-authenticated POST creates this delegated one-time capability.
+ * PUT accepts only its short-lived nonce and cannot authorize any other action.
+ */
+export async function PUT(request: NextRequest) {
+  try {
+    const envelope = await readEncryptedOwnerHandoff(request)
+    const result = await consumeSellerOsLunaOwnerHandoffV1({ envelope })
+    return NextResponse.json({ success: true, ...result }, {
+      status: 200,
+      headers: HEADERS,
+    })
+  } catch (cause) {
+    return NextResponse.json({
+      success: false,
+      error: safeError(cause),
+      plaintextSessionReturned: false,
+      credentialsReturned: false,
+      marketplaceWrites: 0,
+    }, { status: 409, headers: HEADERS })
   }
 }
