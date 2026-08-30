@@ -1,6 +1,6 @@
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
-export const maxDuration = 40
+export const maxDuration = 300
 
 import { NextResponse } from "next/server"
 
@@ -13,11 +13,17 @@ import { buildDailyStrategicBriefFallbackV1, buildDailyStrategicReviewScheduleCo
 import { getSellerOsAiRuntimeStatusV1, runSellerOsStrategicReviewV1 } from
   "@/lib/ebay/ebay-seller-os-strategic-agent-v1"
 import { getEbayProRuntimeBoundary } from "@/lib/ebay/environment-boundaries"
+import { getEbaySellerAccountScopeConfiguration } from
+  "@/lib/ebay/ebay-seller-account-scope"
 import { getSellerOsChatGptConnectionStateV1 } from
   "@/lib/ebay/ebay-seller-os-mcp-server-v1"
 import { buildSellerOsCurrentLiveVisualQualityV1 } from
   "@/lib/ebay/ebay-seller-os-visual-quality-v1"
-import { validateAdminApiRequest } from "@/lib/supabase-admin"
+import { createSellerOsVisualVariantsV1, loadSellerOsVisualVariantsV1,
+  sellerOsVisualVariantSafeCodeV1, updateSellerOsVisualVariantV1 } from
+  "@/lib/ebay/ebay-seller-os-visual-variant-v1"
+import { getSupabaseAdminClient, validateAdminApiRequest } from
+  "@/lib/supabase-admin"
 
 const requestWindows = new Map<string, number[]>()
 
@@ -42,8 +48,15 @@ async function authorize(req: Request) {
 
 async function evidence() {
   const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
-  const visualQuality = await buildSellerOsCurrentLiveVisualQualityV1({ monitor })
-  const bundle = { ...buildSystemReviewBundleV1({ monitor }), visualQuality }
+  const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+  if (!accountKey) throw new Error("SELLER_ACCOUNT_SCOPE_REQUIRED")
+  const [visualQuality, visualVariants] = await Promise.all([
+    buildSellerOsCurrentLiveVisualQualityV1({ monitor }),
+    loadSellerOsVisualVariantsV1({ supabase: getSupabaseAdminClient(),
+      accountKey }),
+  ])
+  const bundle = { ...buildSystemReviewBundleV1({ monitor }), visualQuality,
+    visualVariants }
   return { monitor, bundle,
     deterministicBrief: buildDailyStrategicBriefFallbackV1({ bundle }) }
 }
@@ -81,6 +94,8 @@ export async function POST(req: Request) {
   if (!rateAllowed(key)) return NextResponse.json({ success: false,
     error: "STRATEGIC_REVIEW_RATE_LIMITED" }, { status: 429 })
   let body: { previousMaterialFingerprint?: unknown; mode?: unknown;
+    ebayItemId?: unknown; findingCode?: unknown; variantCount?: unknown;
+    assetId?: unknown; action?: unknown;
     event?: { eventType?: unknown; entityRefs?: unknown; observedAt?: unknown;
       previousEventFingerprint?: unknown; previousReviewedAt?: unknown } } = {}
   try { body = await req.json() as typeof body } catch {
@@ -89,6 +104,61 @@ export async function POST(req: Request) {
   }
   const previousMaterialFingerprint = typeof body.previousMaterialFingerprint === "string"
     ? body.previousMaterialFingerprint.slice(0, 100) : null
+  if (body.mode === "VISUAL_VARIANT_ACTION") {
+    const action = body.action === "USE_IN_EXPERIMENT" || body.action === "DISCARD"
+      ? body.action : null
+    const assetId = typeof body.assetId === "string" &&
+      /^[0-9a-f-]{36}$/i.test(body.assetId) ? body.assetId : null
+    if (!action || !assetId) return NextResponse.json({ success: false,
+      error: "VISUAL_VARIANT_ACTION_INVALID" }, { status: 400 })
+    try {
+      const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+      if (!accountKey) throw new Error("SELLER_ACCOUNT_SCOPE_REQUIRED")
+      const result = await updateSellerOsVisualVariantV1({
+        supabase: getSupabaseAdminClient(),
+        accountKey,
+        assetId, action })
+      return NextResponse.json({ success: true, visualVariantAction: result,
+        marketplaceWrites: 0 }, { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false,
+        error: sellerOsVisualVariantSafeCodeV1(error), marketplaceWrites: 0 },
+      { status: 409 })
+    }
+  }
+  if (body.mode === "VISUAL_VARIANT_CREATE") {
+    const ebayItemId = typeof body.ebayItemId === "string" &&
+      /^\d{9,15}$/.test(body.ebayItemId) ? body.ebayItemId : ""
+    const findingCode = typeof body.findingCode === "string"
+      ? body.findingCode.slice(0, 80) : ""
+    const allowedFinding = ["LOW_FRAME_UTILIZATION", "EXCESS_DEAD_SPACE",
+      "OFF_CENTER_PRODUCT", "EDGE_CROPPING_RISK",
+      "WHITE_BACKGROUND_NOT_PROVEN"].includes(findingCode)
+    if (!ebayItemId || !allowedFinding) return NextResponse.json({ success: false,
+      error: "VISUAL_VARIANT_CREATE_INVALID" }, { status: 400 })
+    try {
+      const monitor = await loadSellerOsAssistantMonitorSnapshotV1()
+      const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+      if (!accountKey) throw new Error("SELLER_ACCOUNT_SCOPE_REQUIRED")
+      const result = await createSellerOsVisualVariantsV1({
+        supabase: getSupabaseAdminClient(), monitor,
+        accountKey,
+        actorId: access.auth.userId ?? null, ebayItemId,
+        findingCode: findingCode as "LOW_FRAME_UTILIZATION" |
+          "EXCESS_DEAD_SPACE" | "OFF_CENTER_PRODUCT" |
+          "EDGE_CROPPING_RISK" | "WHITE_BACKGROUND_NOT_PROVEN",
+        variantCount: Number(body.variantCount ?? 1),
+        apiKey: process.env.OPENAI_API_KEY?.trim() ?? "",
+        model: process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-2",
+      })
+      return NextResponse.json({ success: true, visualVariantGeneration: result,
+        marketplaceWrites: 0 }, { headers: { "Cache-Control": "private, no-store" } })
+    } catch (error) {
+      return NextResponse.json({ success: false,
+        error: sellerOsVisualVariantSafeCodeV1(error), marketplaceWrites: 0,
+        automaticRetryOccurred: false }, { status: 409 })
+    }
+  }
   let current: Awaited<ReturnType<typeof evidence>>
   try { current = await evidence() } catch {
     return NextResponse.json({ success: false,

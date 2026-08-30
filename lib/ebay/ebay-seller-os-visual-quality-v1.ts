@@ -10,6 +10,8 @@ export const SELLER_OS_VISUAL_QUALITY_VERSION =
   "SELLER_OS_VISUAL_QUALITY_V1_2026_08_29" as const
 
 type SignalStatus = "AVAILABLE" | "PARTIAL" | "UNPROVEN"
+type EbayImageSourceClass = "ORIGINAL_EBAY_IMAGE" | "EBAY_DERIVATIVE" |
+  "THUMBNAIL" | "OTHER"
 
 type VisualSignal<T> = Readonly<{
   status: SignalStatus
@@ -38,6 +40,17 @@ export type SellerOsHeroVisualReviewV1 = Readonly<{
   evidenceSource: "EBAY_TRADING_GET_MY_EBAY_SELLING" |
     "EBAY_TRADING_GET_ITEM" | null
   heroImageUrl: string | null
+  sourceResolution: Readonly<{
+    readContractSourceClass: EbayImageSourceClass
+    visualAnalyzerSourceClass: EbayImageSourceClass
+    originalReadUrlSizeVariant: string | null
+    analyzedUrlSizeVariant: string | null
+    originalImageUrlAvailable: boolean
+    fullResolutionFetchAvailable: boolean
+    sourceImageFullResolutionCertified: boolean
+    heroDimensionFindingsReferToOriginal: boolean
+    certification: string
+  }>
   evidenceLimitationCode: string | null
   signals: Readonly<{
     heroAspectRatio: VisualSignal<number>
@@ -112,15 +125,67 @@ function officialEbayImageUrl(value: string | null) {
   }
 }
 
+export function resolveMaximumOfficialEbayImageV1(value: string | null) {
+  const official = officialEbayImageUrl(value)
+  if (!official) return {
+    sourceUrl: null, analyzedUrl: null,
+    readContractSourceClass: "OTHER" as const,
+    visualAnalyzerSourceClass: "OTHER" as const,
+    originalReadUrlSizeVariant: null, analyzedUrlSizeVariant: null,
+    originalImageUrlAvailable: false,
+    sourceImageFullResolutionCertified: false,
+  }
+  const parsed = new URL(official)
+  const match = parsed.pathname.match(/\/s-l(\d+)\.(jpe?g|png|webp)$/i)
+  if (!match) return {
+    sourceUrl: official, analyzedUrl: official,
+    readContractSourceClass: "ORIGINAL_EBAY_IMAGE" as const,
+    visualAnalyzerSourceClass: "ORIGINAL_EBAY_IMAGE" as const,
+    originalReadUrlSizeVariant: null, analyzedUrlSizeVariant: "ORIGINAL",
+    originalImageUrlAvailable: true,
+    sourceImageFullResolutionCertified: true,
+  }
+  const pixels = Number(match[1])
+  const analyzed = new URL(official)
+  analyzed.pathname = parsed.pathname.replace(/\/s-l\d+\.(jpe?g|png|webp)$/i,
+    `/s-l1600.${match[2]}`)
+  return {
+    sourceUrl: official, analyzedUrl: analyzed.toString(),
+    readContractSourceClass: (pixels <= 300 ? "THUMBNAIL" :
+      "EBAY_DERIVATIVE") as EbayImageSourceClass,
+    // The analyzer consumes the maximum official derivative resolved above,
+    // never the smaller representation supplied by the read contract.
+    visualAnalyzerSourceClass: "EBAY_DERIVATIVE" as const,
+    originalReadUrlSizeVariant: `s-l${pixels}`,
+    analyzedUrlSizeVariant: "s-l1600",
+    // eBay exposes a maximum official derivative here, not the raw upload URL.
+    originalImageUrlAvailable: false,
+    sourceImageFullResolutionCertified: true,
+  }
+}
+
 function unavailableReview(listing: CommercialListingReadModel, code: string):
 SellerOsHeroVisualReviewV1 {
+  const resolution = resolveMaximumOfficialEbayImageV1(
+    listing.identity.primaryImageUrl)
   const unavailable = <T>(label: string) => unproven<T>(
     `${label} no se puede probar sin una hero oficial accesible.`, code)
   return {
     ebayItemId: listing.identity.itemId,
     status: "UNPROVEN",
     evidenceSource: listing.identity.primaryImageSource,
-    heroImageUrl: officialEbayImageUrl(listing.identity.primaryImageUrl),
+    heroImageUrl: resolution.analyzedUrl,
+    sourceResolution: {
+      readContractSourceClass: resolution.readContractSourceClass,
+      visualAnalyzerSourceClass: resolution.visualAnalyzerSourceClass,
+      originalReadUrlSizeVariant: resolution.originalReadUrlSizeVariant,
+      analyzedUrlSizeVariant: resolution.analyzedUrlSizeVariant,
+      originalImageUrlAvailable: resolution.originalImageUrlAvailable,
+      fullResolutionFetchAvailable: false,
+      sourceImageFullResolutionCertified: false,
+      heroDimensionFindingsReferToOriginal: false,
+      certification: code,
+    },
     evidenceLimitationCode: code,
     signals: {
       heroAspectRatio: unavailable<number>("La proporción"),
@@ -182,6 +247,7 @@ export async function analyzeSellerOsHeroImageBytesV1(input: {
   imageUrl: string
   imageSource: "EBAY_TRADING_GET_MY_EBAY_SELLING" | "EBAY_TRADING_GET_ITEM"
   bytes: Buffer
+  sourceResolution?: ReturnType<typeof resolveMaximumOfficialEbayImageV1>
 }): Promise<SellerOsHeroVisualReviewV1> {
   const metadata = await sharp(input.bytes, { failOn: "error",
     limitInputPixels: 40_000_000 }).rotate().metadata()
@@ -358,6 +424,26 @@ export async function analyzeSellerOsHeroImageBytesV1(input: {
     status: maskUsable ? "AVAILABLE" : "PARTIAL",
     evidenceSource: input.imageSource,
     heroImageUrl: input.imageUrl,
+    sourceResolution: {
+      readContractSourceClass: input.sourceResolution?.readContractSourceClass
+        ?? "OTHER",
+      visualAnalyzerSourceClass: input.sourceResolution?.visualAnalyzerSourceClass
+        ?? "OTHER",
+      originalReadUrlSizeVariant:
+        input.sourceResolution?.originalReadUrlSizeVariant ?? null,
+      analyzedUrlSizeVariant:
+        input.sourceResolution?.analyzedUrlSizeVariant ?? null,
+      originalImageUrlAvailable:
+        input.sourceResolution?.originalImageUrlAvailable ?? false,
+      fullResolutionFetchAvailable: true,
+      sourceImageFullResolutionCertified:
+        input.sourceResolution?.sourceImageFullResolutionCertified ?? false,
+      heroDimensionFindingsReferToOriginal:
+        input.sourceResolution?.originalImageUrlAvailable ?? false,
+      certification: input.sourceResolution?.originalImageUrlAvailable
+        ? "ORIGINAL_EBAY_IMAGE_BYTES_DECODED"
+        : "MAXIMUM_OFFICIAL_EBAY_DERIVATIVE_BYTES_DECODED",
+    },
     evidenceLimitationCode: maskUsable ? null :
       "NON_WHITE_BACKGROUND_LIMITS_DETERMINISTIC_SEGMENTATION",
     signals: {
@@ -448,8 +534,11 @@ export async function buildSellerOsCurrentLiveVisualQualityV1(input: {
   const fetchImage = input.fetchImage ?? fetch
   const reviews = await mapWithConcurrency(listings, MAX_CONCURRENCY,
     async (listing) => {
-      const imageUrl = officialEbayImageUrl(listing.identity.primaryImageUrl)
-      if (!imageUrl || !listing.identity.primaryImageSource) {
+      const sourceResolution = resolveMaximumOfficialEbayImageV1(
+        listing.identity.primaryImageUrl)
+      const imageUrl = sourceResolution.analyzedUrl
+      if (!imageUrl || !sourceResolution.sourceImageFullResolutionCertified ||
+        !listing.identity.primaryImageSource) {
         return unavailableReview(listing, "IMAGE_EVIDENCE_UNAVAILABLE")
       }
       try {
@@ -459,6 +548,7 @@ export async function buildSellerOsCurrentLiveVisualQualityV1(input: {
           imageUrl,
           imageSource: listing.identity.primaryImageSource,
           bytes,
+          sourceResolution,
         })
       } catch {
         return unavailableReview(listing, "IMAGE_EVIDENCE_UNAVAILABLE")
@@ -483,6 +573,20 @@ export async function buildSellerOsCurrentLiveVisualQualityV1(input: {
         ? "PARTIAL" as const : "UNPROVEN" as const,
     authority: "CANONICAL_CURRENT_LIVE_PRIMARY_IMAGE" as const,
     identityGrain: "EBAY_ITEM_ID" as const,
+    sourceResolutionPrecheck: {
+      analyzedUrlSizeVariant: "s-l1600" as const,
+      originalImageUrlAvailable: reviews.some((row) =>
+        row.sourceResolution.originalImageUrlAvailable),
+      fullResolutionFetchAvailable: reviews.some((row) =>
+        row.sourceResolution.fullResolutionFetchAvailable),
+      sourceImageFullResolutionCertified: reviews.some((row) =>
+        row.sourceResolution.sourceImageFullResolutionCertified),
+      heroDimensionFindingsReferToOriginal: reviews.some((row) =>
+        row.sourceResolution.heroDimensionFindingsReferToOriginal),
+      maximumOfficialDerivativeUsed: reviews.some((row) =>
+        row.sourceResolution.certification ===
+          "MAXIMUM_OFFICIAL_EBAY_DERIVATIVE_BYTES_DECODED"),
+    },
     currentLiveCount: listings.length,
     heroImagesObserved: reviews.filter((row) => row.heroImageUrl !== null).length,
     visualAnalysisAvailableCount: availableCount,
