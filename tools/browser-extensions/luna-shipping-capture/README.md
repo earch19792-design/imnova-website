@@ -12,7 +12,7 @@ Extensión MV3 separada y limitada exclusivamente a cotizaciones de envío de Lu
 4. La extensión abre automáticamente la página canónica de captura de Seller OS.
 
 El ID estable de la extensión es `mhpkojahbbfdgodeaecggpjaplllgclk`.
-El artefacto canónico actual es `1.0.48` y su único origen Seller OS externo es
+El artefacto canónico actual es `1.0.49` y su único origen Seller OS externo es
 `https://imnova-seller-os-preprod.vercel.app`.
 Después de instalarla, Seller OS entrega lotes acotados y la extensión procesa los
 candidatos secuencialmente. También puede recibir un único job transitorio de

@@ -19,7 +19,8 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.48"
+const EXPECTED_EXTENSION_VERSION = "1.0.49"
+const RUNTIME_TRACE_CONTRACT = "LUNA_SHIPPING_RUNTIME_TRACE_V1"
 const SELLER_OS_EXTENSION_ORIGIN = SELLER_OS_LUNA_STABLE_PREVIEW_ORIGIN
 const STARTUP_PROBE_CONTRACT = "SELLER_OS_LUNA_EXTENSION_STARTUP_PROBE_V1"
 const GET_BINDING_STORAGE_DIAGNOSTIC =
@@ -91,6 +92,33 @@ async function probeInstalledExtension(): Promise<boolean | null> {
   } catch {
     return null
   }
+}
+
+async function sha256(value: string) {
+  const bytes = new TextEncoder().encode(value)
+  const result = await crypto.subtle.digest("SHA-256", bytes)
+  return `sha256:${Array.from(new Uint8Array(result))
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("")}`
+}
+
+async function createExactLivePreDispatchTrace(
+  job: LunaChromeShippingJobV1,
+): Promise<LunaShippingRuntimeTraceEventV1> {
+  const captureSessionIdHash = await sha256(job.captureSessionId)
+  return Object.freeze({
+    contractVersion: RUNTIME_TRACE_CONTRACT,
+    traceId: `luna-shipping-trace-v1:${captureSessionIdHash}`,
+    candidateId: job.identity.candidateId,
+    sequence: 1,
+    timestamp: new Date().toISOString(),
+    extensionVersion: EXPECTED_EXTENSION_VERSION,
+    captureSessionIdHash,
+    state: "EXACT_JOB_RESOLVED",
+    event: "EXACT_JOB_RESOLVED",
+    success: true,
+    reasonCode: "NONE",
+    purchaseBoundaryEnforced: true,
+  })
 }
 
 declare global {
@@ -381,6 +409,7 @@ export default function LunaShippingCapturePage() {
   const [liveTarget, setLiveTarget] = useState<LiveCaptureTarget | null>(null)
   const [liveCaptureAttempts, setLiveCaptureAttempts] = useState(0)
   const [ignoredOutOfScope, setIgnoredOutOfScope] = useState(false)
+  const [ignoredOutOfScopeSource, setIgnoredOutOfScopeSource] = useState("NONE")
   const [exactTraceCandidateMatch, setExactTraceCandidateMatch] = useState(false)
   const [exactDispatchAcknowledged, setExactDispatchAcknowledged] = useState(false)
   const [exactDispatchCandidateId, setExactDispatchCandidateId] =
@@ -428,12 +457,18 @@ export default function LunaShippingCapturePage() {
     let exactLiveCandidateId: string | null = null
     const exactDispatchPersistencePending = new Set<string>()
     const exactDispatchDurable = new Set<string>()
+    const exactDispatchSnapshotDurable = new Set<string>()
     const exactDispatchConfirmed = new Set<string>()
     let traceFlushTimer: number | null = null
     let traceFlushChain = Promise.resolve()
 
     const markExactDispatchStage = (stage: keyof ExactDispatchStages) => {
       setExactDispatchStages((current) => ({ ...current, [stage]: true }))
+    }
+
+    const ignoreOutOfScope = (source: string) => {
+      setIgnoredOutOfScope(true)
+      setIgnoredOutOfScopeSource(source)
     }
 
     const exactLiveJobMatches = (value: unknown) => {
@@ -488,7 +523,7 @@ export default function LunaShippingCapturePage() {
           event.purchaseBoundaryEnforced !== true) return
       if (hasExactLiveTarget &&
           (!exactLiveCandidateId || event.candidateId !== exactLiveCandidateId)) {
-        setIgnoredOutOfScope(true)
+        ignoreOutOfScope("TRACE_EVENT_CANDIDATE_MISMATCH")
         return
       }
       if (hasExactLiveTarget && event.candidateId === exactLiveCandidateId) {
@@ -505,8 +540,7 @@ export default function LunaShippingCapturePage() {
       setLiveTraceEvents([...traceEvents])
       if (hasExactLiveTarget && event.state === "JOB_DISPATCHED" &&
           event.candidateId === exactLiveCandidateId) {
-        markExactDispatchStage("traceCreateRequested")
-        if (exactDispatchDurable.has(event.traceId)) {
+        if (exactDispatchSnapshotDurable.has(event.traceId)) {
           port?.postMessage({ type: DURABLE_DISPATCH_ACK,
             candidateId: event.candidateId, traceId: event.traceId })
         } else if (!exactDispatchPersistencePending.has(event.traceId)) {
@@ -518,8 +552,7 @@ export default function LunaShippingCapturePage() {
           const snapshot = [...traceEvents]
           void persistRuntimeTraceSnapshot(snapshot).then(() => {
             exactDispatchPersistencePending.delete(event.traceId)
-            exactDispatchDurable.add(event.traceId)
-            markExactDispatchStage("traceCreateAccepted")
+            exactDispatchSnapshotDurable.add(event.traceId)
             if (!active) return
             port?.postMessage({ type: DURABLE_DISPATCH_ACK,
               candidateId: event.candidateId, traceId: event.traceId })
@@ -554,9 +587,18 @@ export default function LunaShippingCapturePage() {
         : "LUNA_SHIPPING_CAPTURE_FAILED")
     }
 
-    const sendCurrent = () => {
+    const sendCurrent = (
+      preDispatchTrace?: LunaShippingRuntimeTraceEventV1,
+    ) => {
       const job = jobs[index]
       if (!job || !port) return
+      if (mode === "LIVE" && (!preDispatchTrace ||
+          preDispatchTrace.state !== "EXACT_JOB_RESOLVED" ||
+          preDispatchTrace.candidateId !== job.identity.candidateId ||
+          !exactDispatchDurable.has(preDispatchTrace.traceId))) {
+        fail(new Error("LUNA_EXACT_DISPATCH_DURABLE_TRACE_REQUIRED"))
+        return
+      }
       setError("")
       setRuntimeTrace(EMPTY_RUNTIME_TRACE)
       setStatus(mode === "CANARY" && index === 0
@@ -570,7 +612,8 @@ export default function LunaShippingCapturePage() {
       }
       port.postMessage({ type: "START_SHIPPING_JOB", job,
         productionAutoClaim: mode === "AUTO",
-        requireDurableDispatchAck: mode === "LIVE" })
+        requireDurableDispatchAck: mode === "LIVE",
+        ...(mode === "LIVE" ? { preDispatchTrace } : {}) })
       if (mode === "LIVE") markExactDispatchStage("dispatchPostedToPort")
       if (mode !== "LIVE") {
         window.setTimeout(() => {
@@ -650,6 +693,7 @@ export default function LunaShippingCapturePage() {
       setResults([])
       setLiveTraceEvents([])
       setIgnoredOutOfScope(false)
+      setIgnoredOutOfScopeSource("NONE")
       setExactTraceCandidateMatch(false)
       setExactDispatchAcknowledged(false)
       setExactDispatchCandidateId("NONE")
@@ -677,10 +721,21 @@ export default function LunaShippingCapturePage() {
         exactLiveCandidateId = exactJob.identity.candidateId
         setExactDispatchCandidateId(exactJob.identity.candidateId)
         markExactDispatchStage("exactJobResolved")
-        jobs = [exactJob]
-        index = 0
-        mode = "LIVE"
-        sendCurrent()
+        markExactDispatchStage("traceCreateRequested")
+        return createExactLivePreDispatchTrace(exactJob).then((event) => {
+          traceEvents = [event]
+          setLiveTraceEvents([event])
+          setExactTraceCandidateMatch(true)
+          return persistRuntimeTraceSnapshot([event]).then(() => event)
+        }).then((event) => {
+          exactDispatchDurable.add(event.traceId)
+          markExactDispatchStage("traceCreateAccepted")
+          if (!active) return
+          jobs = [exactJob]
+          index = 0
+          mode = "LIVE"
+          sendCurrent(event)
+        })
       }).catch(fail)
     }
     liveTriggerRef.current = beginLiveCapture
@@ -818,7 +873,7 @@ export default function LunaShippingCapturePage() {
           if (hasExactLiveTarget) {
             if (!candidate) return
             if (!exactLiveJobMatches(candidate)) {
-              setIgnoredOutOfScope(true)
+              ignoreOutOfScope("ACTIVE_JOB_CANDIDATE_MISMATCH")
               return
             }
             exactLiveCandidateId = candidate.identity.candidateId
@@ -850,7 +905,9 @@ export default function LunaShippingCapturePage() {
         if (message?.type === EXTENSION_DISPATCH_RECEIVED) {
           if (!hasExactLiveTarget ||
               message.candidateId !== exactLiveCandidateId) {
-            if (hasExactLiveTarget) setIgnoredOutOfScope(true)
+            if (hasExactLiveTarget) {
+              ignoreOutOfScope("EXTENSION_RECEIPT_CANDIDATE_MISMATCH")
+            }
             return
           }
           markExactDispatchStage("extensionMessageReceived")
@@ -862,8 +919,11 @@ export default function LunaShippingCapturePage() {
           const candidateMatches = message.candidateId === exactLiveCandidateId
           if (!hasExactLiveTarget || !candidateMatches ||
               message.durableDispatchAcknowledged !== true ||
-              !exactDispatchDurable.has(traceId)) {
-            if (hasExactLiveTarget) setIgnoredOutOfScope(true)
+              !exactDispatchDurable.has(traceId) ||
+              !exactDispatchSnapshotDurable.has(traceId)) {
+            if (hasExactLiveTarget) {
+              ignoreOutOfScope("DISPATCH_ACK_SCOPE_MISMATCH")
+            }
             return
           }
           if (!exactDispatchConfirmed.has(traceId)) {
@@ -946,7 +1006,7 @@ export default function LunaShippingCapturePage() {
           const progressMatches = message.candidateId ===
             jobs[index]?.identity.candidateId
           if (hasExactLiveTarget && !progressMatches) {
-            setIgnoredOutOfScope(true)
+            ignoreOutOfScope("PROGRESS_CANDIDATE_MISMATCH")
             return
           }
           if (allowed.has(message.state) && progressMatches) {
@@ -1107,7 +1167,7 @@ export default function LunaShippingCapturePage() {
              message.capture?.supplierSku === requestedLiveTarget.sourceSku))
         if (!job || !exactIdentityMatches) {
           if (hasExactLiveTarget) {
-            setIgnoredOutOfScope(true)
+            ignoreOutOfScope("RESULT_IDENTITY_MISMATCH")
             return
           }
           fail(new Error("LUNA_SHIPPING_EXTENSION_RESULT_SCOPE_MISMATCH"))
@@ -1494,7 +1554,8 @@ export default function LunaShippingCapturePage() {
           `DISPATCH_ACK=${exactDispatchAcknowledged}\n` +
           `SHIPPING=${results.length ? "AVAILABLE" : "UNPROVEN"}\n` +
           `ECONOMICS=${results.at(-1)?.economicsStatus ?? "UNPROVEN"}\n` +
-          `IGNORED_OUT_OF_SCOPE=${ignoredOutOfScope}`}
+          `IGNORED_OUT_OF_SCOPE=${ignoredOutOfScope}\n` +
+          `IGNORED_OUT_OF_SCOPE_SET_BY=${ignoredOutOfScopeSource}`}
       </code> : null}
       {showCanonicalBindControl ? <button type="button"
         disabled={running}

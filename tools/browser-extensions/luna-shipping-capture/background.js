@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.48"
+const EXTENSION_BUILD_VERSION = "1.0.49"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -176,6 +176,43 @@ async function beginRuntimeTrace(seed, candidateId) {
       ? candidateId : null,
     sequence: 0,
     events: [],
+  }
+}
+
+async function adoptExactPreDispatchRuntimeTrace(event, job) {
+  const captureSessionIdHash = await sha256(job.captureSessionId)
+  const timestampMs = Date.parse(String(event?.timestamp ?? ""))
+  if (!event || event.contractVersion !== RUNTIME_TRACE_CONTRACT ||
+      event.traceId !== `luna-shipping-trace-v1:${captureSessionIdHash}` ||
+      event.candidateId !== job.identity.candidateId || event.sequence !== 1 ||
+      event.extensionVersion !== EXTENSION_BUILD_VERSION ||
+      event.captureSessionIdHash !== captureSessionIdHash ||
+      event.state !== "EXACT_JOB_RESOLVED" ||
+      event.event !== "EXACT_JOB_RESOLVED" || event.success !== true ||
+      event.reasonCode !== "NONE" || event.purchaseBoundaryEnforced !== true ||
+      !Number.isFinite(timestampMs) || timestampMs > Date.now() + 60_000 ||
+      Date.now() - timestampMs > 10 * 60 * 1_000) {
+    throw new Error("LUNA_EXACT_DISPATCH_PRETRACE_INVALID")
+  }
+  return {
+    traceId: event.traceId,
+    captureSessionIdHash,
+    candidateId: job.identity.candidateId,
+    sequence: 1,
+    events: [Object.freeze({
+      contractVersion: RUNTIME_TRACE_CONTRACT,
+      traceId: event.traceId,
+      candidateId: job.identity.candidateId,
+      sequence: 1,
+      timestamp: new Date(timestampMs).toISOString(),
+      extensionVersion: EXTENSION_BUILD_VERSION,
+      captureSessionIdHash,
+      state: "EXACT_JOB_RESOLVED",
+      event: "EXACT_JOB_RESOLVED",
+      success: true,
+      reasonCode: "NONE",
+      purchaseBoundaryEnforced: true,
+    })],
   }
 }
 
@@ -1140,12 +1177,15 @@ function emitProgress(state, details = {}) {
 }
 
 async function startJob(job, productionAutoClaim = false,
-  preserveRuntimeTrace = false, requireDurableDispatchAck = false) {
+  preserveRuntimeTrace = false, requireDurableDispatchAck = false,
+  preDispatchTrace = null) {
   const invalidReason = jobValidationReason(job)
   if (invalidReason) throw new Error(invalidReason)
   const exact = safeJob(job)
   const url = exact && exactLunaUrl(exact.identity.canonicalProductUrl)
   if (!exact || !url) throw new Error("JOB_IDENTITY_MISMATCH:identity.canonicalProductUrl")
+  const exactPreDispatchTrace = requireDurableDispatchAck === true
+    ? await adoptExactPreDispatchRuntimeTrace(preDispatchTrace, exact) : null
   if (activeJob) {
     if (sameJob(activeJob, exact)) return false
     if (requireDurableDispatchAck !== true) {
@@ -1154,13 +1194,19 @@ async function startJob(job, productionAutoClaim = false,
     clearActiveJob()
   }
   activeJob = exact
+  if (exactPreDispatchTrace) {
+    activeRuntimeTrace = exactPreDispatchTrace
+    for (const event of activeRuntimeTrace.events) {
+      sellerPort?.postMessage({ type: RUNTIME_TRACE_EVENT, event })
+    }
+  }
   if (requireDurableDispatchAck === true) {
     exactDispatchMessageReceivedCandidateId = exact.identity.candidateId
     sellerPort?.postMessage({ type: EXTENSION_DISPATCH_RECEIVED,
       candidateId: exact.identity.candidateId })
   }
   initializeCheckoutNavigationObserver(exact)
-  if (!preserveRuntimeTrace) {
+  if (!preserveRuntimeTrace && !exactPreDispatchTrace) {
     await beginRuntimeTrace(exact.captureSessionId, exact.identity.candidateId)
   }
   if (productionAutoClaim === true) {
@@ -1407,7 +1453,8 @@ chrome.runtime.onConnectExternal.addListener((port) => {
     }
     if (message?.type === "START_SHIPPING_JOB") {
       void startJob(message.job, message.productionAutoClaim === true,
-        false, message.requireDurableDispatchAck === true)
+        false, message.requireDurableDispatchAck === true,
+        message.preDispatchTrace ?? null)
         .catch((error) => port.postMessage({
         type: JOB_RESULT, success: false,
         error: error instanceof Error ? error.message : "LUNA_SHIPPING_JOB_FAILED",
