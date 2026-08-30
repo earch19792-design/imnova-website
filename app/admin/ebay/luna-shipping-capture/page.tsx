@@ -380,6 +380,11 @@ export default function LunaShippingCapturePage() {
     let port: ExternalPort | null = null
     let lastProgressState = "NOT_STARTED"
     let reconnecting = false
+    let pageHidden = false
+    let pageLifecycleReconnectPending = false
+    let pageLifecycleJobToResume: LunaChromeShippingJobV1 | null = null
+    let reconnectGeneration = 0
+    let removePageLifecycleListeners: (() => void) | null = null
     let traceEvents: LunaShippingRuntimeTraceEventV1[] = []
     let exactLiveCandidateId: string | null = null
     let traceFlushTimer: number | null = null
@@ -1150,8 +1155,10 @@ export default function LunaShippingCapturePage() {
           if (!active || port !== nextPort) return
           port = null
           setConnected(false)
+          if (pageHidden || pageLifecycleReconnectPending) return
           if (reconnecting) return
           reconnecting = true
+          const reconnectToken = ++reconnectGeneration
           const jobToResume = busy ? jobs[index] : null
           canonicalBindingStatusRead = false
           canonicalDestinationBindingPresent = false
@@ -1167,10 +1174,13 @@ export default function LunaShippingCapturePage() {
               "LUNA_SHIPPING_EXTENSION_DISCONNECTED")
             for (let attempt = 0; attempt < 12; attempt += 1) {
               await new Promise((resolve) => window.setTimeout(resolve, 500))
+              if (!active || pageHidden ||
+                  reconnectToken !== reconnectGeneration) return
               try {
                 await wakeLunaShippingExtensionV1(runtime,
                   pingExtensionOnce, wait)
-                if (!active) return
+                if (!active || pageHidden ||
+                    reconnectToken !== reconnectGeneration) return
                 const resumedPort = runtime.connect(EXTENSION_ID,
                   { name: PORT_NAME })
                 attachPort(resumedPort)
@@ -1195,8 +1205,57 @@ export default function LunaShippingCapturePage() {
           })()
         })
       }
-      setStatus("PINGING_EXTENSION")
+      const handlePageHide = () => {
+        pageHidden = true
+        pageLifecycleReconnectPending = true
+        pageLifecycleJobToResume = busy ? jobs[index] : null
+        reconnectGeneration += 1
+        reconnecting = false
+        const hiddenPort = port
+        port = null
+        hiddenPort?.disconnect()
+      }
+      const handlePageShow = (event: PageTransitionEvent) => {
+        pageHidden = false
+        if (!event.persisted && !pageLifecycleReconnectPending) return
+        pageLifecycleReconnectPending = false
+        const reconnectToken = ++reconnectGeneration
+        setConnected(false)
+        setStatus("RECONNECTING_EXTENSION")
+        canonicalBindingStatusRead = false
+        canonicalDestinationBindingPresent = false
+        setCanonicalBindingStatusReady(false)
+        activeJobStatusReady = false
+        recoveredActiveJob = null
+        void (async () => {
+          await wakeLunaShippingExtensionV1(runtime, pingExtensionOnce, wait)
+          if (!active || pageHidden ||
+              reconnectToken !== reconnectGeneration) return
+          const resumedPort = runtime.connect(EXTENSION_ID, { name: PORT_NAME })
+          attachPort(resumedPort)
+          if (pageLifecycleJobToResume) {
+            resumedPort.postMessage({
+              type: "RESUME_ACTIVE_LUNA_SHIPPING_JOB",
+              job: pageLifecycleJobToResume,
+              phase: phaseForResume(),
+            })
+          }
+          pageLifecycleJobToResume = null
+          extensionReady = true
+          setConnected(true)
+          setStatus("BRIDGE_RECONNECTED")
+          setRuntimeTrace((current) => ({ ...current,
+            bridgeReconnected: true }))
+        })().catch(fail)
+      }
       if (!active) return
+      window.addEventListener("pagehide", handlePageHide)
+      window.addEventListener("pageshow", handlePageShow)
+      removePageLifecycleListeners = () => {
+        window.removeEventListener("pagehide", handlePageHide)
+        window.removeEventListener("pageshow", handlePageShow)
+      }
+      setStatus("PINGING_EXTENSION")
       extensionReady = true
       setConnected(true)
       setStatus("EXTENSION_CONNECTED")
@@ -1206,6 +1265,8 @@ export default function LunaShippingCapturePage() {
     void start().catch(fail)
     return () => {
       active = false
+      reconnectGeneration += 1
+      removePageLifecycleListeners?.()
       if (traceFlushTimer !== null) window.clearTimeout(traceFlushTimer)
       triggerRef.current = null
       liveTriggerRef.current = null
