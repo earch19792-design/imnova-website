@@ -173,6 +173,12 @@ type PortDeliveryDiagnostic = {
   resultIdentityMismatchExpectedId: string
   identityMismatchDimension: "CANDIDATE" | "TRACE" | "JOB" |
     "GENERATION" | "OTHER" | "NONE"
+  preDispatchGuardSequence: string
+  firstFailedGuard: string
+  failedGuardActualValue: string
+  failedGuardExpectedValue: string
+  failStateSetBy: string
+  postMessageCalled: boolean
 }
 
 const EMPTY_EXACT_DISPATCH_STAGES: ExactDispatchStages = Object.freeze({
@@ -198,6 +204,12 @@ const EMPTY_PORT_DELIVERY_DIAGNOSTIC: PortDeliveryDiagnostic = Object.freeze({
   resultIdentityMismatchActualId: "NONE",
   resultIdentityMismatchExpectedId: "NONE",
   identityMismatchDimension: "NONE",
+  preDispatchGuardSequence: "NOT_EVALUATED",
+  firstFailedGuard: "NONE",
+  failedGuardActualValue: "NONE",
+  failedGuardExpectedValue: "NONE",
+  failStateSetBy: "NONE",
+  postMessageCalled: false,
 })
 
 type BindingStorageDiagnostic = {
@@ -629,11 +641,14 @@ export default function LunaShippingCapturePage() {
       flushRuntimeTrace(terminal)
     }
 
-    const fail = (value: unknown) => {
+    const fail = (value: unknown, source = "UNCLASSIFIED_ASYNC_FAILURE") => {
       if (!active) return
       busy = false
       setRunning(false)
       setStatus("FAIL")
+      setPortDeliveryDiagnostic((current) => ({ ...current,
+        failStateSetBy: source,
+      }))
       setError(value instanceof Error ? value.message
         : "LUNA_SHIPPING_CAPTURE_FAILED")
     }
@@ -642,12 +657,37 @@ export default function LunaShippingCapturePage() {
       const pending = pendingExactPortDispatch
       const currentPort = port
       const generation = currentPortGeneration
-      if (!pending || !currentPort || readyPortGeneration !== generation) {
+      if (!pending) return false
+      const guardSequence = [
+        ["PENDING_EXACT_DISPATCH", Boolean(pending), "PRESENT"],
+        ["CURRENT_PORT_PRESENT", Boolean(currentPort), "PRESENT"],
+        ["PORT_INSTANCE_CURRENT", Boolean(currentPort) && port === currentPort,
+          "true"],
+        ["PORT_GENERATION_MATCH", readyPortGeneration === generation, "true"],
+        ["TRACE_DURABLE", exactDispatchDurable.has(
+          pending.preDispatchTrace.traceId), "true"],
+        ["TRACE_CANDIDATE_MATCH",
+          pending.preDispatchTrace.candidateId === pending.job.identity.candidateId,
+          "true"],
+        ["EXACT_CANDIDATE_MATCH",
+          pending.job.identity.candidateId === exactLiveCandidateId, "true"],
+      ] as const
+      const failedGuard = guardSequence.find((entry) => entry[1] !== true)
+      setPortDeliveryDiagnostic((current) => ({ ...current,
+        preDispatchGuardSequence: guardSequence.map((entry) => entry[0]).join("→"),
+        firstFailedGuard: failedGuard?.[0] ?? "NONE",
+        failedGuardActualValue: failedGuard ? String(failedGuard[1]) : "NONE",
+        failedGuardExpectedValue: failedGuard?.[2] ?? "NONE",
+      }))
+      if (failedGuard || !currentPort) {
         setPortDeliveryDiagnostic((current) => ({ ...current,
           portInstanceCurrent: Boolean(currentPort) && port === currentPort,
           portConnectedAtDispatch: false,
-          portGenerationMatch: false,
+          portGenerationMatch: readyPortGeneration === generation,
         }))
+        fail(new Error(`LUNA_EXACT_PRE_DISPATCH_GUARD_${
+          failedGuard?.[0] ?? "CURRENT_PORT_PRESENT"}`),
+        `PRE_DISPATCH_GUARD:${failedGuard?.[0] ?? "CURRENT_PORT_PRESENT"}`)
         return false
       }
       if (pending.postedGeneration === generation) return true
@@ -669,6 +709,10 @@ export default function LunaShippingCapturePage() {
           preDispatchTrace: pending.preDispatchTrace,
           portGeneration: generation })
         pending.postedGeneration = generation
+        setPortDeliveryDiagnostic((current) => ({ ...current,
+          postMessageCalled: true,
+        }))
+        markExactDispatchStage("dispatchPostedToPort")
       } catch {
         setPortDeliveryDiagnostic((current) => ({ ...current,
           portInstanceCurrent: false,
@@ -677,6 +721,8 @@ export default function LunaShippingCapturePage() {
           postMessageThrown: true,
         }))
         pending.postedGeneration = null
+        fail(new Error("LUNA_EXACT_PORT_POSTMESSAGE_THROWN"),
+          "PORT_POSTMESSAGE_THROWN")
         reconnectCurrentPort?.()
         return false
       }
@@ -1751,7 +1797,7 @@ export default function LunaShippingCapturePage() {
             return
           } catch (error) { lastError = error }
         }
-        fail(lastError)
+        fail(lastError, "CURRENT_PORT_ACQUISITION_EXHAUSTED")
       }
       const handlePageHide = () => {
         pageHidden = true
@@ -1813,6 +1859,8 @@ export default function LunaShippingCapturePage() {
     .find((event) => event.success) ?? null
   const traceBlocker = newestTrace?.state === "FAIL"
     ? newestTrace.reasonCode : "NONE"
+  const currentBlocker = traceBlocker !== "NONE"
+    ? traceBlocker : error || "NONE"
   const canStartFinalCanary = finalCanaryStartEnabled(connected,
     canonicalBindingStatusReady, canonicalDestinationBound,
     canonicalDestinationMismatch, running)
@@ -1859,6 +1907,12 @@ export default function LunaShippingCapturePage() {
           `PORT_INSTANCE_CURRENT=${portDeliveryDiagnostic.portInstanceCurrent}\n` +
           `PORT_CONNECTED_AT_DISPATCH=${portDeliveryDiagnostic.portConnectedAtDispatch}\n` +
           `PORT_GENERATION_MATCH=${portDeliveryDiagnostic.portGenerationMatch}\n` +
+          `PRE_DISPATCH_GUARD_SEQUENCE=[${portDeliveryDiagnostic.preDispatchGuardSequence}]\n` +
+          `FIRST_FAILED_GUARD=${portDeliveryDiagnostic.firstFailedGuard}\n` +
+          `FAILED_GUARD_ACTUAL_VALUE=${portDeliveryDiagnostic.failedGuardActualValue}\n` +
+          `FAILED_GUARD_EXPECTED_VALUE=${portDeliveryDiagnostic.failedGuardExpectedValue}\n` +
+          `PORT_POSTMESSAGE_CALLED=${portDeliveryDiagnostic.postMessageCalled}\n` +
+          `FAIL_STATE_SET_BY=${portDeliveryDiagnostic.failStateSetBy}\n` +
           `POSTMESSAGE_THROWN=${portDeliveryDiagnostic.postMessageThrown}\n` +
           `BACKGROUND_ONMESSAGE_REACHED=${portDeliveryDiagnostic.backgroundOnMessageReached}\n` +
           `MESSAGE_TYPE_ACCEPTED=${portDeliveryDiagnostic.messageTypeAccepted}\n` +
@@ -1926,7 +1980,7 @@ export default function LunaShippingCapturePage() {
           {`TRACE_ID=${newestTrace?.traceId ?? "NONE"}\n` +
             `CURRENT_STATE=${newestTrace?.state ?? "NOT_STARTED"}\n` +
             `LAST_SUCCESSFUL_STATE=${lastSuccessfulTrace?.state ?? "NONE"}\n` +
-            `CURRENT_BLOCKER=${traceBlocker}\n` +
+            `CURRENT_BLOCKER=${currentBlocker}\n` +
             `TRACE_DURABLE=${traceDurable}\n` +
             `PURCHASE_BOUNDARY_ENFORCED=true`}
         </code>
