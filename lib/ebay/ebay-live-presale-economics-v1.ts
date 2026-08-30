@@ -61,6 +61,20 @@ function finiteNonNegative(value: number) {
 }
 
 function unavailable(input: ModelInput, blocker: string) {
+  const buyerShippingProven =
+    input.buyerShippingChargeStatus === "AVAILABLE" &&
+    input.buyerShippingChargeUsd !== null &&
+    finiteNonNegative(input.buyerShippingChargeUsd)
+  const knownPreSaleFeeBasisUsd = buyerShippingProven &&
+      finiteNonNegative(input.livePriceUsd)
+    ? money(input.livePriceUsd + Number(input.buyerShippingChargeUsd))
+    : null
+  const baseFeeUsd = knownPreSaleFeeBasisUsd !== null &&
+      finiteNonNegative(input.baseFinalValueFeeRatePercent) &&
+      finiteNonNegative(input.perOrderFixedFeeUsd)
+    ? money(knownPreSaleFeeBasisUsd * input.baseFinalValueFeeRatePercent / 100 +
+      input.perOrderFixedFeeUsd)
+    : null
   return {
     contractVersion: SELLER_OS_LIVE_PRE_SALE_ECONOMICS_VERSION,
     status: "UNPROVEN" as const,
@@ -68,6 +82,58 @@ function unavailable(input: ModelInput, blocker: string) {
     feeEvidenceClass: "PROVEN_RATE_PRE_SALE_FEE_MODEL" as FeeEvidenceClass,
     ebayItemId: input.ebayItemId,
     marketplaceId: input.marketplaceId,
+    categoryId: input.categoryId,
+    currency: "USD" as const,
+    observedAt: input.observedAt ?? new Date().toISOString(),
+    revenueUsd: finiteNonNegative(input.livePriceUsd)
+      ? money(input.livePriceUsd)
+      : null,
+    supplierCostUsd: finiteNonNegative(input.supplierCostUsd)
+      ? money(input.supplierCostUsd)
+      : null,
+    supplierShippingUsd: finiteNonNegative(input.supplierShippingUsd)
+      ? money(input.supplierShippingUsd)
+      : null,
+    buyerShippingChargeUsd: buyerShippingProven
+      ? money(Number(input.buyerShippingChargeUsd))
+      : null,
+    feeBasis: {
+      knownPreSaleBasisUsd: knownPreSaleFeeBasisUsd,
+      provenComponents: buyerShippingProven
+        ? ["ITEM_PRICE", "CHEAPEST_DOMESTIC_BUYER_SHIPPING"]
+        : ["ITEM_PRICE"],
+      salesTaxPreSaleAmount: "UNPROVEN" as const,
+      salesTaxClassification: "CONDITIONAL_POST_SALE" as const,
+      otherMandatoryBasisComponents: [] as const,
+      limitation: "BUYER_DEPENDENT_SALES_TAX_EXCLUDED_FROM_PRE_SALE_MODEL" as const,
+    },
+    baseFees: {
+      officialFinalValueFeeRatePercent: input.baseFinalValueFeeRatePercent,
+      perOrderFixedFeeUsd: input.perOrderFixedFeeUsd,
+      preSaleBaseFeeModelUsd: baseFeeUsd,
+      authority: "EBAY_OFFICIAL_NO_STORE_CATEGORY_FEE_SCHEDULE" as const,
+    },
+    officialModifiers: {
+      sellerPerformanceModifier: "UNPROVEN" as const,
+      serviceMetricsModifier: "UNPROVEN" as const,
+      conservativeMutuallyExclusiveBoundPercent: 7,
+      internationalFeeApplicability: "CONDITIONAL_POST_SALE" as const,
+    },
+    promotion: {
+      state: input.promotion.promotionState,
+      type: input.promotion.promotionType,
+      adRatePercent: input.promotion.adRatePercent,
+      feeBasis: input.promotion.promotionFeeBasis,
+      preSalePromotionFeeModelUsd: null,
+      authority: input.promotion.authority,
+      limitationCode: input.promotion.limitationCode,
+      priceDiscountState: input.promotion.priceDiscountState,
+    },
+    preSaleBaseFeeModelUsd: baseFeeUsd,
+    preSalePromotionFeeModelUsd: null,
+    preSaleTotalEbayFeeModelUsd: null,
+    preSaleProfitUsd: null,
+    preSaleMarginPercent: null,
     profitUsd: null,
     marginPercent: null,
     economicsNonNegative: null,
@@ -77,6 +143,19 @@ function unavailable(input: ModelInput, blocker: string) {
       status: "NOT_IMPLEMENTED" as const,
       futureAuthority: "EBAY_FINANCES_TRANSACTION_FEES" as const,
       modelWillNotBeRelabeledAsRealized: true as const,
+    },
+    provenance: {
+      marketplace: input.marketplaceId,
+      category: input.categoryId,
+      sellerStoreTier: input.storeSubscriptionLevel,
+      officialFeeRate: input.baseFinalValueFeeRatePercent,
+      fixedFee: input.perOrderFixedFeeUsd,
+      feeBasis: buyerShippingProven
+        ? "ITEM_PRICE_PLUS_CHEAPEST_DOMESTIC_BUYER_SHIPPING"
+        : "BUYER_SHIPPING_UNPROVEN",
+      knownApplicableModifiers:
+        "OFFICIAL_MAX_OF_MUTUALLY_EXCLUSIVE_ACCOUNT_SURCHARGES",
+      promotionState: input.promotion.promotionState,
     },
   }
 }
