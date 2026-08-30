@@ -34,6 +34,13 @@ const MARKETING_READONLY_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly",
 ] as const
+const MARKETING_READONLY_SAFE_PREFLIGHT = {
+  OAUTH_PURPOSE: "MARKETING_READONLY",
+  REQUESTED_SCOPE_SET_CLASS: "MARKETING_READONLY_EXACT",
+  SELL_MARKETING_READONLY_PRESENT: true,
+  SELL_MARKETING_WRITE_PRESENT: false,
+  TARGET_SECRET_SLOT: "EBAY_MARKETING_READONLY_REFRESH_TOKEN",
+} as const
 
 type StartPayload = {
   success?: boolean
@@ -3614,60 +3621,10 @@ export default function EbaySellerOAuthReauthPage() {
           <p className="mt-3 text-xs text-white/55">
             Destino exclusivo: EBAY_MARKETING_READONLY_REFRESH_TOKEN
           </p>
-          <button
-            className="mt-4 rounded-2xl border border-fuchsia-300/50 px-5 py-2 text-sm font-black text-fuchsia-200 disabled:opacity-40"
-            type="button"
-            disabled={!confirmed || loading || matchingCredentials ||
-              !callbackUrl ||
-              !runtimeCredentialMatchAllowsStart(credentialMatch)}
-            onClick={beginMarketingReadonly}
-          >
-            {loading
-              ? "Preparando…"
-              : pendingMarketingReadonlyOAuth
-                ? "Preparar nuevamente"
-                : "Preparar Marketing read-only"}
-          </button>
-          {pendingMarketingReadonlyOAuth ? (
-            <div className="mt-5 rounded-2xl border border-fuchsia-200/30 bg-black/20 p-4">
-              <p className="text-sm font-black text-fuchsia-100">
-                Preflight listo · todavía no se inició el consentimiento en eBay
-              </p>
-              <dl className="mt-4 grid gap-2 text-xs text-white/75 sm:grid-cols-2">
-                {Object.entries(pendingMarketingReadonlyOAuth.certification)
-                  .map(([label, value]) => (
-                    <div className="rounded-lg bg-black/20 p-3" key={label}>
-                      <dt className="break-all font-bold text-white/50">{label}</dt>
-                      <dd className="mt-1 break-all">
-                        {typeof value === "boolean"
-                          ? value ? "true" : "false"
-                          : value}
-                      </dd>
-                    </div>
-                  ))}
-              </dl>
-              <div className="mt-4 flex flex-wrap gap-3">
-                <button
-                  className="rounded-2xl bg-fuchsia-200 px-5 py-2 text-sm font-black text-black disabled:opacity-40"
-                  type="button"
-                  disabled={!confirmed || loading ||
-                    !pendingMarketingReadonlyOAuth.certification
-                      .OAUTH_START_ALLOWED}
-                  onClick={continueMarketingReadonly}
-                >
-                  Continuar a eBay con Marketing read-only
-                </button>
-                <button
-                  className="rounded-2xl border border-white/20 px-5 py-2 text-sm font-bold text-white/70 disabled:opacity-40"
-                  type="button"
-                  disabled={loading}
-                  onClick={() => setPendingMarketingReadonlyOAuth(null)}
-                >
-                  Cancelar
-                </button>
-              </div>
-            </div>
-          ) : null}
+          <p className="mt-4 text-sm font-bold text-fuchsia-100">
+            El entrypoint owner está junto a las acciones de consentimiento al final de esta
+            página. Seller general y Marketing permanecen separados.
+          </p>
         </section>
 
         <section className="rounded-3xl border border-red-300/25 bg-red-300/[0.06] p-6 text-sm leading-6">
@@ -4659,30 +4616,117 @@ export default function EbaySellerOAuthReauthPage() {
           usaré la misma cuenta seller Production certificada.
         </label>
 
+        <section
+          className="rounded-3xl border border-fuchsia-300/40 bg-fuchsia-300/[0.08] p-6"
+          data-testid="marketing-readonly-owner-entrypoint"
+        >
+          <h2 className="text-xl font-black text-fuchsia-100">
+            Marketing read-only
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-white/70">
+            Autoridad separada para consultar promociones. No reemplaza Seller general,
+            Commercial Orders ni credenciales de publicación.
+          </p>
+          <dl className="mt-4 grid gap-2 text-xs text-white/80 sm:grid-cols-2">
+            {Object.entries(MARKETING_READONLY_SAFE_PREFLIGHT)
+              .map(([label, value]) => (
+                <div className="rounded-lg bg-black/25 p-3" key={label}>
+                  <dt className="break-all font-bold text-white/50">{label}</dt>
+                  <dd className="mt-1 break-all">
+                    {typeof value === "boolean"
+                      ? value ? "true" : "false"
+                      : value}
+                  </dd>
+                </div>
+              ))}
+          </dl>
+          <button
+            className="mt-4 rounded-2xl bg-fuchsia-200 px-5 py-3 text-sm font-black text-black disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            disabled={!confirmed || loading || matchingCredentials ||
+              !callbackUrl ||
+              !runtimeCredentialMatchAllowsStart(credentialMatch)}
+            onClick={beginMarketingReadonly}
+          >
+            {loading ? "Preparando Marketing read-only…" :
+              "Autorizar Marketing read-only"}
+          </button>
+          {pendingMarketingReadonlyOAuth ? (
+            <div className="mt-5 rounded-2xl border border-fuchsia-200/30 bg-black/20 p-4">
+              <p className="text-sm font-black text-fuchsia-100">
+                Preflight runtime PASS · todavía no se inició el consentimiento en eBay
+              </p>
+              <dl className="mt-4 grid gap-2 text-xs text-white/75 sm:grid-cols-2">
+                {Object.entries(pendingMarketingReadonlyOAuth.certification)
+                  .map(([label, value]) => (
+                    <div className="rounded-lg bg-black/20 p-3" key={label}>
+                      <dt className="break-all font-bold text-white/50">{label}</dt>
+                      <dd className="mt-1 break-all">
+                        {typeof value === "boolean"
+                          ? value ? "true" : "false"
+                          : value}
+                      </dd>
+                    </div>
+                  ))}
+              </dl>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button
+                  className="rounded-2xl bg-fuchsia-200 px-5 py-2 text-sm font-black text-black disabled:opacity-40"
+                  type="button"
+                  disabled={!confirmed || loading ||
+                    !pendingMarketingReadonlyOAuth.certification
+                      .OAUTH_START_ALLOWED}
+                  onClick={continueMarketingReadonly}
+                >
+                  Continuar a eBay con Marketing read-only
+                </button>
+                <button
+                  className="rounded-2xl border border-white/20 px-5 py-2 text-sm font-bold text-white/70 disabled:opacity-40"
+                  type="button"
+                  disabled={loading}
+                  onClick={() => setPendingMarketingReadonlyOAuth(null)}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </section>
+
         {error ? (
           <p className="rounded-xl bg-red-500/15 p-4 text-sm text-red-200">
             {error}
           </p>
         ) : null}
 
-        <button
-          className="rounded-2xl bg-cyan-300 px-6 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
-          type="button"
-          disabled={!confirmed || loading || diagnosing || matchingCredentials ||
-            certifyingInstalledRuntime || diagnosingInventoryConsumer ||
-            diagnosingRegistryCoverage || previewingRegistryRepair ||
-            pendingMarketingReadonlyOAuth !== null ||
-            !callbackUrl ||
-            !runtimeCredentialMatchAllowsStart(credentialMatch) ||
-            !diagnosisAllowsStart(diagnosis)}
-          aria-disabled={!runtimeCredentialMatchAllowsStart(credentialMatch) ||
-            !diagnosisAllowsStart(diagnosis)}
-          onClick={begin}
+        <section
+          className="rounded-3xl border border-cyan-300/30 bg-cyan-300/[0.06] p-6"
+          data-testid="seller-general-owner-entrypoint"
         >
-          {loading
-            ? "Preparando…"
-            : "Iniciar consentimiento Seller general una vez"}
-        </button>
+          <h2 className="text-xl font-black text-cyan-100">Seller general</h2>
+          <p className="mt-3 text-sm leading-6 text-white/70">
+            Flujo existente para Account, Inventory y Analytics readonly. No se reutiliza para
+            Marketing.
+          </p>
+          <button
+            className="mt-4 rounded-2xl bg-cyan-300 px-6 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            disabled={!confirmed || loading || diagnosing || matchingCredentials ||
+              certifyingInstalledRuntime || diagnosingInventoryConsumer ||
+              diagnosingRegistryCoverage || previewingRegistryRepair ||
+              pendingMarketingReadonlyOAuth !== null ||
+              !callbackUrl ||
+              !runtimeCredentialMatchAllowsStart(credentialMatch) ||
+              !diagnosisAllowsStart(diagnosis)}
+            aria-disabled={!runtimeCredentialMatchAllowsStart(credentialMatch) ||
+              !diagnosisAllowsStart(diagnosis)}
+            onClick={begin}
+          >
+            {loading
+              ? "Preparando…"
+              : "Iniciar consentimiento Seller general una vez"}
+          </button>
+        </section>
       </div>
     </main>
   )
