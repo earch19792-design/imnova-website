@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.50"
+const EXTENSION_BUILD_VERSION = "1.0.51"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -444,10 +444,12 @@ function exactLunaUrl(value) {
     const url = new URL(value)
     if (url.protocol !== "https:" ||
         !new Set(["lunaportex.com", "www.lunaportex.com"]).has(url.hostname) ||
-        !/^\/products\/[a-z0-9][a-z0-9-]{1,180}\/?$/.test(url.pathname) ||
+        !/^\/products\/[a-z0-9][a-z0-9-]{1,254}\/?$/.test(url.pathname) ||
         url.username || url.password || url.port) return null
     url.hostname = "www.lunaportex.com"
+    url.pathname = url.pathname.replace(/\/$/, "")
     url.search = ""
+    url.hash = ""
     return url
   } catch { return null }
 }

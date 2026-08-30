@@ -3,7 +3,7 @@
 const checkoutBootstrapAckPromise = new Promise((resolve) => {
   try {
     chrome.runtime.sendMessage({ type: "SHOP_APP_CHECKOUT_BOOTSTRAP_ACK",
-      extensionBuildVersion: "1.0.50" },
+      extensionBuildVersion: "1.0.51" },
       (response) => {
         const runtimeUnavailable = Boolean(chrome.runtime.lastError)
         resolve(!runtimeUnavailable && response?.accepted === true)
@@ -56,7 +56,7 @@ function exactProductUrl(value) {
     const url = new URL(value)
     return url.protocol === "https:" &&
       new Set(["lunaportex.com", "www.lunaportex.com"]).has(url.hostname) &&
-      /^\/products\/[a-z0-9][a-z0-9-]{1,180}\/?$/.test(url.pathname) &&
+      /^\/products\/[a-z0-9][a-z0-9-]{1,254}\/?$/.test(url.pathname) &&
       !url.username && !url.password && !url.port ? url : null
   } catch { return null }
 }
@@ -1975,7 +1975,7 @@ async function recoverJobContext() {
   throw lastError ?? new Error("SERVICE_WORKER_JOB_STATE_NOT_RECOVERED")
 }
 
-const isProductPage = /^\/products\/[a-z0-9][a-z0-9-]{1,180}\/?$/
+const isProductPage = /^\/products\/[a-z0-9][a-z0-9-]{1,254}\/?$/
   .test(location.pathname)
 const isCartPage = location.pathname.replace(/\/$/, "") === "/cart"
 const isCheckoutPage = /^\/checkouts?(?:\/|$)/.test(location.pathname) ||
