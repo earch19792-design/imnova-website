@@ -17,10 +17,12 @@ import {
 } from "@/lib/ebay/ebay-luna-chrome-shipping-capture-v1"
 import {
   persistLunaChromeShippingCaptureV1,
+  persistLunaChromeLiveListingShippingCaptureV1,
   persistLunaProductPageOosV1,
   persistLunaShippingRuntimeTraceV1,
   readLatestLunaShippingRuntimeTraceV1,
   resolveLunaChromeShippingJobsV1,
+  resolveLunaChromeShippingLiveListingJobV1,
 } from
   "@/lib/ebay/ebay-luna-chrome-shipping-capture-server-v1"
 import {
@@ -32,6 +34,22 @@ function candidateIds(value: unknown) {
   return (Array.isArray(value) ? value : [])
     .filter((entry): entry is string => typeof entry === "string")
     .map((entry) => entry.trim()).filter(Boolean).slice(0, 20)
+}
+
+function liveListingTarget(value: unknown, accountKey: string) {
+  const target = listingAiRecord(value)
+  return Object.freeze({
+    accountKey,
+    marketplaceId: "EBAY_US" as const,
+    ebayItemId: typeof target.ebayItemId === "string"
+      ? target.ebayItemId.trim() : "",
+    lunaProductId: typeof target.lunaProductId === "string"
+      ? target.lunaProductId.trim() : "",
+    lunaVariantId: typeof target.lunaVariantId === "string"
+      ? target.lunaVariantId.trim() : "",
+    sourceSku: typeof target.sourceSku === "string"
+      ? target.sourceSku.trim() : "",
+  })
 }
 
 function sessionSecret() {
@@ -60,6 +78,23 @@ export async function POST(req: Request) {
         safety: { readOnly: true, cookieAccess: false,
           credentialAccess: false, lunaPurchases: 0, marketplaceWrites: 0 } })
     }
+    if (body.action === "resolve_live_listing_job") {
+      enforceListingAiRouteRateLimit(auth.actorId, "READ")
+      const target = liveListingTarget(body.target, auth.accountKey)
+      const job = await resolveLunaChromeShippingLiveListingJobV1({
+        supabase: auth.supabase,
+        target,
+        sessionSecret: sessionSecret(),
+      })
+      return listingAiResponse({ success: true, jobs: [job],
+        target: { ebayItemId: target.ebayItemId,
+          lunaProductId: target.lunaProductId,
+          lunaVariantId: target.lunaVariantId,
+          sourceSku: target.sourceSku },
+        safety: { exactCurrentLiveIdentity: true,
+          durableCandidateCreated: false, serverHttpLunaRequests: 0,
+          lunaPurchases: 0, marketplaceWrites: 0 } })
+    }
     if (body.action === "promote_product_fit_strong") {
       enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
       const result = await persistProductFitStrongPromotionV1({
@@ -84,6 +119,20 @@ export async function POST(req: Request) {
       return listingAiResponse({ success: true, result,
         safety: { cookieAccess: false,
           credentialAccess: false, lunaPurchases: 0, marketplaceWrites: 0 } })
+    }
+    if (body.action === "certify_live_listing_capture") {
+      enforceListingAiRouteRateLimit(auth.actorId, "WRITE")
+      const result = await persistLunaChromeLiveListingShippingCaptureV1({
+        supabase: auth.supabase,
+        target: liveListingTarget(body.target, auth.accountKey),
+        capture: listingAiRecord(body.capture) as LunaShippingCapturePostV1,
+        sessionSecret: sessionSecret(),
+      })
+      return listingAiResponse({ success: true, result,
+        safety: { exactCurrentLiveIdentity: true,
+          durableStore: "seller_os_live_listing_shipping_evidence",
+          serverHttpLunaRequests: 0, lunaPurchases: 0,
+          marketplaceWrites: 0 } })
     }
     if (body.action === "reject_product_oos") {
       enforceListingAiRouteRateLimit(auth.actorId, "WRITE")

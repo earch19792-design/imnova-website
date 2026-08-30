@@ -29,9 +29,16 @@ import {
 } from "./ebay-product-fit-durable-promotion-v1"
 import { LUNA_HTTP_SHIPPING_SOURCE } from
   "./ebay-luna-authoritative-shipping-v1"
+import {
+  persistLiveListingShippingQuoteV1,
+  resolveExactCurrentLiveIdentityV1,
+  type LiveListingShippingCaptureTargetV1,
+} from "./ebay-live-listing-shipping-evidence-server-v1"
 
 export const LUNA_SHIPPING_CANARY_CANDIDATE_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60" as const
+export const LUNA_CHROME_LIVE_LISTING_CAPTURE_SCOPE_V1 =
+  "LUNA_CHROME_LIVE_LISTING_CAPTURE_SCOPE_V1" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -359,6 +366,141 @@ const CANONICAL_DESTINATION = normalizeLunaChromeShippingDestinationV1({
   province: canonicalAddress.stateOrProvince,
   postalCode: canonicalAddress.postalCode,
 })
+
+function liveListingChromeAuthority(input: Awaited<ReturnType<
+  typeof resolveExactCurrentLiveIdentityV1>>) {
+  const salePriceUsd = money(input.salePriceUsd)
+  const supplierCostUsd = money(input.supplierCostUsd)
+  const productName = text(input.productName, 200)
+  if (input.currency !== "USD" || salePriceUsd === null || salePriceUsd <= 0 ||
+      supplierCostUsd === null || !productName) {
+    throw new Error("LUNA_SHIPPING_EXTENSION_LIVE_ECONOMIC_FACTS_UNPROVEN")
+  }
+  const captureScopeId = digest({
+    contract: LUNA_CHROME_LIVE_LISTING_CAPTURE_SCOPE_V1,
+    identity: input.identity,
+  })
+  const snapshotDigest = digest({
+    contract: LUNA_CHROME_LIVE_LISTING_CAPTURE_SCOPE_V1,
+    identity: input.identity,
+    canonicalProductUrl: input.canonicalProductUrl,
+    linkageDecisionId: input.linkageDecisionId,
+    activeListingRegistryId: input.activeListingRegistryId,
+    salePriceUsd,
+    supplierCostUsd,
+    productName,
+    destinationProfileDigest: CANONICAL_DESTINATION.profileDigest,
+  })
+  return Object.freeze({ captureScopeId, snapshotDigest, salePriceUsd,
+    supplierCostUsd, productName })
+}
+
+export async function resolveLunaChromeShippingLiveListingJobV1(
+  input: Readonly<{
+    supabase: SupabaseClient
+    target: LiveListingShippingCaptureTargetV1
+    sessionSecret: string
+    now?: number
+  }>,
+) {
+  const resolved = await resolveExactCurrentLiveIdentityV1(input)
+  const authority = liveListingChromeAuthority(resolved)
+  const session = issueLunaShippingCaptureSessionV1({
+    secret: input.sessionSecret,
+    candidateId: authority.captureScopeId,
+    snapshotDigest: authority.snapshotDigest,
+    now: input.now,
+  })
+  return normalizeLunaChromeShippingJobV1({
+    contractVersion: LUNA_SHIPPING_QUOTE_CAPTURE_VERSION,
+    ...session,
+    identity: {
+      candidateId: authority.captureScopeId,
+      canonicalProductUrl: resolved.canonicalProductUrl,
+      lunaProductId: resolved.identity.lunaProductId,
+      lunaVariantId: resolved.identity.lunaVariantId,
+      supplierSku: resolved.identity.sourceSku,
+      quantity: 1,
+    },
+    destination: CANONICAL_DESTINATION,
+    salePriceUsd: authority.salePriceUsd,
+    supplierCostUsd: authority.supplierCostUsd,
+    productName: authority.productName,
+  })
+}
+
+export async function persistLunaChromeLiveListingShippingCaptureV1(
+  input: Readonly<{
+    supabase: SupabaseClient
+    target: LiveListingShippingCaptureTargetV1
+    capture: LunaShippingCapturePostV1
+    sessionSecret: string
+    now?: number
+  }>,
+) {
+  const resolved = await resolveExactCurrentLiveIdentityV1(input)
+  const authority = liveListingChromeAuthority(resolved)
+  if (input.capture.candidateId !== authority.captureScopeId) {
+    throw new Error("LUNA_SHIPPING_EXTENSION_LIVE_SCOPE_MISMATCH")
+  }
+  verifyLunaShippingCaptureSessionV1({
+    secret: input.sessionSecret,
+    candidateId: authority.captureScopeId,
+    snapshotDigest: authority.snapshotDigest,
+    captureSessionId: input.capture.captureSessionId,
+    nonce: input.capture.nonce,
+    now: input.now,
+  })
+  const job = normalizeLunaChromeShippingJobV1({
+    contractVersion: LUNA_SHIPPING_QUOTE_CAPTURE_VERSION,
+    captureSessionId: input.capture.captureSessionId,
+    nonce: input.capture.nonce,
+    identity: {
+      candidateId: authority.captureScopeId,
+      canonicalProductUrl: resolved.canonicalProductUrl,
+      lunaProductId: resolved.identity.lunaProductId,
+      lunaVariantId: resolved.identity.lunaVariantId,
+      supplierSku: resolved.identity.sourceSku,
+      quantity: 1,
+    },
+    destination: CANONICAL_DESTINATION,
+    salePriceUsd: authority.salePriceUsd,
+    supplierCostUsd: authority.supplierCostUsd,
+    productName: authority.productName,
+  })
+  const certified = certifyLunaShippingCapturePostV1({
+    job, capture: input.capture, now: input.now,
+  })
+  if (certified.quote.acquisitionMethod !== LUNA_HTTP_SHIPPING_SOURCE) {
+    throw new Error("LUNA_SHIPPING_EXTENSION_LIVE_CANONICAL_QUOTE_REQUIRED")
+  }
+  const liveQuote = Object.freeze({ ...certified.quote,
+    acquisitionMethod: LUNA_HTTP_SHIPPING_SOURCE })
+  const persisted = await persistLiveListingShippingQuoteV1({
+    supabase: input.supabase,
+    target: input.target,
+    quote: liveQuote,
+    resolved,
+    now: input.now,
+    lunaReaderExecuted: false,
+  })
+  return Object.freeze({
+    ...persisted,
+    capturePostAccepted: true as const,
+    captureResultDurable: true as const,
+    durableReadbackMatch: true as const,
+    durableStore: "seller_os_live_listing_shipping_evidence" as const,
+    productName: authority.productName,
+    identity: job.identity,
+    capture: Object.freeze({ subtotalUsd: input.capture.subtotalUsd,
+      shippingUsd: input.capture.shippingUsd, totalUsd: input.capture.totalUsd }),
+    quote: certified.quote,
+    economics: Object.freeze({ status: "NOT_EVALUATED" as const }),
+    chromeShippingCaptureAttempts: 1 as const,
+    serverHttpLunaRequests: 0 as const,
+    marketplaceWrites: 0 as const,
+  })
+}
 
 export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
   supabase: SupabaseClient

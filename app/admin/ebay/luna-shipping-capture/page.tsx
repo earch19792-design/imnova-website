@@ -19,7 +19,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.45"
+const EXPECTED_EXTENSION_VERSION = "1.0.46"
 const SELLER_OS_EXTENSION_ORIGIN = SELLER_OS_LUNA_STABLE_PREVIEW_ORIGIN
 const STARTUP_PROBE_CONTRACT = "SELLER_OS_LUNA_EXTENSION_STARTUP_PROBE_V1"
 const GET_BINDING_STORAGE_DIAGNOSTIC =
@@ -99,6 +99,13 @@ type Result = {
   economicsStatus: string
   contributionProfitUsd: number | null
   contributionMarginPercent: number | null
+}
+
+type LiveCaptureTarget = {
+  ebayItemId: string
+  lunaProductId: string
+  lunaVariantId: string
+  sourceSku: string
 }
 
 type BindingStorageDiagnostic = {
@@ -338,14 +345,29 @@ export default function LunaShippingCapturePage() {
   const [liveTraceEvents, setLiveTraceEvents] =
     useState<LunaShippingRuntimeTraceEventV1[]>([])
   const [traceDurable, setTraceDurable] = useState(false)
+  const [liveTarget, setLiveTarget] = useState<LiveCaptureTarget | null>(null)
   const triggerRef = useRef<(() => void) | null>(null)
+  const liveTriggerRef = useRef<(() => void) | null>(null)
   const bindDestinationRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     let active = true
     let jobs: LunaChromeShippingJobV1[] = []
     let index = 0
-    let mode: "CANARY" | "AUTO" = "CANARY"
+    let mode: "CANARY" | "AUTO" | "LIVE" = "CANARY"
+    const params = new URLSearchParams(window.location.search)
+    const requestedLiveTarget = {
+      ebayItemId: params.get("ebayItemId")?.trim() ?? "",
+      lunaProductId: params.get("lunaProductId")?.trim() ?? "",
+      lunaVariantId: params.get("lunaVariantId")?.trim() ?? "",
+      sourceSku: params.get("sourceSku")?.trim() ?? "",
+    }
+    const hasExactLiveTarget = /^\d{9,20}$/.test(requestedLiveTarget.ebayItemId) &&
+      /^\d{8,24}$/.test(requestedLiveTarget.lunaProductId) &&
+      /^\d{8,24}$/.test(requestedLiveTarget.lunaVariantId) &&
+      /^[A-Za-z0-9][A-Za-z0-9._:+/ -]{0,159}$/.test(
+        requestedLiveTarget.sourceSku)
+    if (hasExactLiveTarget) setLiveTarget(requestedLiveTarget)
     let busy = false
     let extensionReady = false
     let canonicalBindingStatusRead = false
@@ -428,7 +450,8 @@ export default function LunaShippingCapturePage() {
       setError("")
       setRuntimeTrace(EMPTY_RUNTIME_TRACE)
       setStatus(mode === "CANARY" && index === 0
-        ? "CANARY_DISPATCHED" : "CAPTURING")
+        ? "CANARY_DISPATCHED" : mode === "LIVE"
+          ? "LIVE_LISTING_CAPTURE_DISPATCHED" : "CAPTURING")
       const dispatchState = mode === "AUTO"
         ? "PRODUCTION_JOB_DISPATCHED" : "CANARY_DISPATCHED"
       setLastRuntimeState(dispatchState)
@@ -462,7 +485,7 @@ export default function LunaShippingCapturePage() {
     }
 
     const startInitialProductionClaim = () => {
-      if (!active || initialAutoClaimStarted || !extensionReady ||
+      if (hasExactLiveTarget || !active || initialAutoClaimStarted || !extensionReady ||
           !canonicalBindingStatusRead || !canonicalDestinationBindingPresent ||
           !activeJobStatusReady || busy || !port) {
         return
@@ -495,6 +518,32 @@ export default function LunaShippingCapturePage() {
       void loadJobs([CANARY_ID], "CANARY").catch(fail)
     }
     triggerRef.current = beginCanary
+
+    const beginLiveCapture = () => {
+      if (!hasExactLiveTarget || busy || !extensionReady ||
+          !canonicalBindingStatusRead || !canonicalDestinationBindingPresent ||
+          !port) return
+      busy = true
+      setRunning(true)
+      setError("")
+      setResults([])
+      setRuntimeTrace(EMPTY_RUNTIME_TRACE)
+      setStatus("RESOLVING_EXACT_CURRENT_LIVE")
+      void adminPost("resolve_live_listing_job", {
+        target: requestedLiveTarget,
+      }).then((payload) => {
+        const resolved = Array.isArray(payload.jobs) ? payload.jobs : []
+        if (resolved.length !== 1 ||
+            resolved[0]?.contractVersion !== CONTRACT) {
+          throw new Error("LUNA_SHIPPING_EXTENSION_LIVE_JOB_UNAVAILABLE")
+        }
+        jobs = resolved
+        index = 0
+        mode = "LIVE"
+        sendCurrent()
+      }).catch(fail)
+    }
+    liveTriggerRef.current = beginLiveCapture
 
     const bindCanonicalDestination = () => {
       if (!port || !extensionReady || busy) return
@@ -923,7 +972,12 @@ export default function LunaShippingCapturePage() {
               message.capture.selectedShippingStateProof,
           } : {}),
         }
-        void adminPost("certify_capture", { capture }, capture.captureSessionId)
+        const certificationAction = mode === "LIVE"
+          ? "certify_live_listing_capture" : "certify_capture"
+        const certificationBody = mode === "LIVE"
+          ? { capture, target: requestedLiveTarget } : { capture }
+        void adminPost(certificationAction, certificationBody,
+          capture.captureSessionId)
           .then(async (certified) => {
             if (!active) return
             const result = certified.result ?? {}
@@ -965,6 +1019,12 @@ export default function LunaShippingCapturePage() {
             index += 1
             if (index < jobs.length) {
               sendCurrent()
+              return
+            }
+            if (mode === "LIVE") {
+              busy = false
+              setRunning(false)
+              setStatus("LIVE_LISTING_SHIPPING_EVIDENCE_PERSISTED")
               return
             }
             await loadJobs(undefined, "AUTO")
@@ -1091,7 +1151,6 @@ export default function LunaShippingCapturePage() {
       setConnected(true)
       setStatus("EXTENSION_CONNECTED")
       attachPort(runtime.connect(EXTENSION_ID, { name: PORT_NAME }))
-      const params = new URLSearchParams(window.location.search)
       if (params.get("runShipping") === "1") beginCanary()
     }
     void start().catch(fail)
@@ -1099,6 +1158,7 @@ export default function LunaShippingCapturePage() {
       active = false
       if (traceFlushTimer !== null) window.clearTimeout(traceFlushTimer)
       triggerRef.current = null
+      liveTriggerRef.current = null
       bindDestinationRef.current = null
       port?.disconnect()
     }
@@ -1124,6 +1184,15 @@ export default function LunaShippingCapturePage() {
         {canonicalDestinationBound
           ? "Ejecutar canary final" : "Ejecutar canary de shipping"}
       </button>
+      {liveTarget ? <button type="button" disabled={!canStartFinalCanary}
+        onClick={() => liveTriggerRef.current?.()}
+        className="mt-3 w-full rounded-2xl bg-emerald-300 px-5 py-3 font-black text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
+        Capturar envío del listing LIVE exacto
+      </button> : null}
+      {liveTarget ? <p className="mt-2 text-xs text-white/60">
+        Identidad exacta preparada: Item {liveTarget.ebayItemId} · SKU {liveTarget.sourceSku}.
+        Una sola captura; sin compra ni escritura en eBay.
+      </p> : null}
       <button type="button"
         disabled={!connected || running || canonicalDestinationBound}
         onClick={() => bindDestinationRef.current?.()}

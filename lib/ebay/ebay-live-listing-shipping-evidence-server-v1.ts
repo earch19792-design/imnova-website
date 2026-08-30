@@ -16,7 +16,7 @@ import {
 } from "./ebay-live-listing-shipping-evidence-v1"
 
 type Acquire = typeof acquireCanonicalLunaShippingV1
-type LiveListingShippingCaptureTargetV1 = Readonly<Omit<
+export type LiveListingShippingCaptureTargetV1 = Readonly<Omit<
   LiveListingShippingEvidenceIdentityV1, "linkageId">>
 
 export class LiveListingShippingEvidenceCaptureErrorV1 extends Error {
@@ -36,14 +36,14 @@ function text(value: unknown, maximum = 240) {
     : ""
 }
 
-async function resolveExactCurrentLiveIdentity(input: Readonly<{
+export async function resolveExactCurrentLiveIdentityV1(input: Readonly<{
   supabase: SupabaseClient
   target: LiveListingShippingCaptureTargetV1
 }>) {
   const { supabase, target } = input
   const [activeRead, linkageRead, variantRead] = await Promise.all([
     supabase.from("ebay_active_listings")
-      .select("id,ebay_item_id,listing_status,market_radar_product_id,supplier_variant_id,supplier_sku")
+      .select("id,ebay_item_id,listing_status,title,ebay_price,currency,market_radar_product_id,supplier_variant_id,supplier_sku,supplier_cost_at_linking")
       .eq("account_key", target.accountKey)
       .eq("ebay_item_id", target.ebayItemId)
       .eq("listing_status", "active")
@@ -55,7 +55,7 @@ async function resolveExactCurrentLiveIdentity(input: Readonly<{
       .eq("ebay_item_id", target.ebayItemId)
       .order("decision_version", { ascending: false }).limit(1),
     supabase.from("market_radar_latest_variants")
-      .select("product_id,supplier_product_id,supplier_variant_id,sku,product_url,captured_at")
+      .select("product_id,supplier_product_id,supplier_variant_id,sku,price,product_url,captured_at")
       .eq("source_key", "lunaportex")
       .eq("supplier_product_id", target.lunaProductId)
       .eq("supplier_variant_id", target.lunaVariantId)
@@ -102,6 +102,10 @@ async function resolveExactCurrentLiveIdentity(input: Readonly<{
       linkageId: String(linkage.linkage_id),
     }) satisfies LiveListingShippingEvidenceIdentityV1,
     canonicalProductUrl: text(variants[0].product_url, 2_000),
+    productName: text(listing.title, 240),
+    salePriceUsd: Number(listing.ebay_price),
+    supplierCostUsd: Number(listing.supplier_cost_at_linking ?? variants[0].price),
+    currency: text(listing.currency, 8),
     linkageDecisionId: text(linkage.decision_id),
     activeListingRegistryId: text(listing.id),
   })
@@ -142,7 +146,7 @@ export async function captureLiveListingShippingEvidenceV1(input: Readonly<{
   acquire?: Acquire
   now?: number
 }>) {
-  const resolved = await resolveExactCurrentLiveIdentity(input)
+  const resolved = await resolveExactCurrentLiveIdentityV1(input)
   const identity = resolved.identity
   const acquire = input.acquire ?? acquireCanonicalLunaShippingV1
   const acquisition = await acquire({
@@ -159,9 +163,31 @@ export async function captureLiveListingShippingEvidenceV1(input: Readonly<{
       acquisition.rateLimitEvidence,
     )
   }
+  return persistLiveListingShippingQuoteV1({
+    supabase: input.supabase,
+    target: input.target,
+    quote: acquisition.quote,
+    resolved,
+    now: input.now,
+    lunaReaderExecuted: true,
+  })
+}
+
+export async function persistLiveListingShippingQuoteV1(input: Readonly<{
+  supabase: SupabaseClient
+  target: LiveListingShippingCaptureTargetV1
+  quote: Parameters<typeof buildLiveListingShippingEvidenceV1>[0]["quote"]
+  resolved?: Awaited<ReturnType<typeof resolveExactCurrentLiveIdentityV1>>
+  now?: number
+  lunaReaderExecuted?: boolean
+}>) {
+  const resolved = input.resolved ?? await resolveExactCurrentLiveIdentityV1({
+    supabase: input.supabase, target: input.target,
+  })
+  const identity = resolved.identity
   const evidence = buildLiveListingShippingEvidenceV1({
     identity,
-    quote: acquisition.quote,
+    quote: input.quote,
   })
   const write = await input.supabase
     .from("seller_os_live_listing_shipping_evidence")
@@ -182,7 +208,7 @@ export async function captureLiveListingShippingEvidenceV1(input: Readonly<{
     contractVersion: "LIVE_LISTING_LUNA_SHIPPING_EVIDENCE_V1" as const,
     exactLiveIdentity: true as const,
     supplierLinkage: "CERTIFIED" as const,
-    lunaReaderExecuted: true as const,
+    lunaReaderExecuted: input.lunaReaderExecuted === true,
     acquisitionMethod: evidence.source_authority,
     purchaseBoundaryEnforced: evidence.purchase_performed === false &&
       evidence.payment_performed === false,
