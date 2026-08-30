@@ -9,7 +9,7 @@ const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXACT_EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXTENSION_BUILD_VERSION = "1.0.47"
+const EXTENSION_BUILD_VERSION = "1.0.48"
 const JOB_RESUME = "SELLER_OS_LUNA_SHIPPING_JOB_RESUME"
 const GET_ACTIVE_JOB = "GET_ACTIVE_LUNA_SHIPPING_JOB"
 const JOB_PROGRESS = "LUNA_SHIPPING_JOB_PROGRESS"
@@ -59,6 +59,10 @@ const GET_ACTIVE_PRODUCTION_JOB_STATUS =
 const ACTIVE_PRODUCTION_JOB_STATUS = "LUNA_SHIPPING_ACTIVE_JOB_STATUS"
 const DURABLE_DISPATCH_ACK = "SELLER_OS_LUNA_SHIPPING_DURABLE_DISPATCH_ACK"
 const JOB_DISPATCH_ACK = "LUNA_SHIPPING_JOB_DISPATCH_ACK"
+const EXTENSION_DISPATCH_RECEIVED =
+  "LUNA_SHIPPING_EXTENSION_DISPATCH_RECEIVED"
+const PAGE_DISPATCH_COMMITTED =
+  "SELLER_OS_LUNA_SHIPPING_PAGE_DISPATCH_COMMITTED"
 const MAX_RUNTIME_TRACE_EVENTS = 100
 const CART_PHASE = "AWAITING_CART_CONFIRMATION"
 const CHECKOUT_PHASE = "AWAITING_CHECKOUT_SHIPPING"
@@ -124,6 +128,8 @@ let checkoutNavigationObservation = null
 let checkoutNavigationObservationTimer = null
 let pendingExactDispatch = null
 let completedExactDispatchTraceId = null
+let exactDispatchMessageReceivedCandidateId = null
+let exactDispatchAckEmittedCandidateId = null
 
 const PROGRESS_TRACE_STATE = new Map([
   ["PRODUCT_PAGE_DOM_READY", "PRODUCT_PAGE_OPENED"],
@@ -353,6 +359,8 @@ function clearActiveJob() {
   activeRuntimeTrace = null
   pendingExactDispatch = null
   completedExactDispatchTraceId = null
+  exactDispatchMessageReceivedCandidateId = null
+  exactDispatchAckEmittedCandidateId = null
   canonicalBindBootstrapActive = false
   canonicalBindBootstrapTraceStates = new Set()
   canonicalBindBootstrapAttempted = false
@@ -1140,9 +1148,17 @@ async function startJob(job, productionAutoClaim = false,
   if (!exact || !url) throw new Error("JOB_IDENTITY_MISMATCH:identity.canonicalProductUrl")
   if (activeJob) {
     if (sameJob(activeJob, exact)) return false
-    throw new Error("LUNA_SHIPPING_JOB_ALREADY_RUNNING")
+    if (requireDurableDispatchAck !== true) {
+      throw new Error("LUNA_SHIPPING_JOB_ALREADY_RUNNING")
+    }
+    clearActiveJob()
   }
   activeJob = exact
+  if (requireDurableDispatchAck === true) {
+    exactDispatchMessageReceivedCandidateId = exact.identity.candidateId
+    sellerPort?.postMessage({ type: EXTENSION_DISPATCH_RECEIVED,
+      candidateId: exact.identity.candidateId })
+  }
   initializeCheckoutNavigationObserver(exact)
   if (!preserveRuntimeTrace) {
     await beginRuntimeTrace(exact.captureSessionId, exact.identity.candidateId)
@@ -1374,7 +1390,19 @@ chrome.runtime.onConnectExternal.addListener((port) => {
         ...(activeJob ? { job: activeJob, phase: activeJobPhase,
           dispatchPendingDurableAck: Boolean(pendingExactDispatch),
           dispatchCompleted: Boolean(completedExactDispatchTraceId),
+          dispatchMessageReceived: exactDispatchMessageReceivedCandidateId ===
+            activeJob.identity.candidateId,
+          dispatchAckEmitted: exactDispatchAckEmittedCandidateId ===
+            activeJob.identity.candidateId,
           traceEvents: activeRuntimeTrace?.events ?? [] } : {}) })
+      if (activeJob && pendingExactDispatch && completedExactDispatchTraceId &&
+          exactDispatchAckEmittedCandidateId === activeJob.identity.candidateId) {
+        port.postMessage({ type: JOB_DISPATCH_ACK,
+          candidateId: activeJob.identity.candidateId,
+          traceId: completedExactDispatchTraceId,
+          durableDispatchAcknowledged: true,
+          extensionAckEmitted: true })
+      }
       return
     }
     if (message?.type === "START_SHIPPING_JOB") {
@@ -1396,7 +1424,8 @@ chrome.runtime.onConnectExternal.addListener((port) => {
         port.postMessage({ type: JOB_DISPATCH_ACK,
           candidateId: activeJob.identity.candidateId,
           traceId: completedExactDispatchTraceId,
-          durableDispatchAcknowledged: true })
+          durableDispatchAcknowledged: true,
+          extensionAckEmitted: true })
         return
       }
       if (!pending || !activeJob || message.traceId !== pending.traceId ||
@@ -1407,15 +1436,30 @@ chrome.runtime.onConnectExternal.addListener((port) => {
           capture: { candidateId: message.candidateId ?? null } })
         return
       }
+      completedExactDispatchTraceId = pending.traceId
+      exactDispatchAckEmittedCandidateId = activeJob.identity.candidateId
+      port.postMessage({ type: JOB_DISPATCH_ACK,
+        candidateId: activeJob.identity.candidateId,
+        traceId: completedExactDispatchTraceId,
+        durableDispatchAcknowledged: true,
+        extensionAckEmitted: true })
+      return
+    }
+    if (message?.type === PAGE_DISPATCH_COMMITTED) {
+      const pending = pendingExactDispatch
+      if (!pending || !activeJob ||
+          message.traceId !== completedExactDispatchTraceId ||
+          message.candidateId !== activeJob.identity.candidateId ||
+          activeJob.captureSessionId !== pending.captureSessionId) {
+        port.postMessage({ type: JOB_RESULT, success: false,
+          error: "LUNA_EXACT_DISPATCH_PAGE_COMMIT_MISMATCH",
+          capture: { candidateId: message.candidateId ?? null } })
+        return
+      }
       void navigateActiveJob(pending.url).then(() => {
         if (!activeJob || !pendingExactDispatch ||
             activeJob.captureSessionId !== pending.captureSessionId) return
-        completedExactDispatchTraceId = pending.traceId
         pendingExactDispatch = null
-        port.postMessage({ type: JOB_DISPATCH_ACK,
-          candidateId: activeJob.identity.candidateId,
-          traceId: completedExactDispatchTraceId,
-          durableDispatchAcknowledged: true })
       }).catch((error) => failActiveJob(error))
       return
     }

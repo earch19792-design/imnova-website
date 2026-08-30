@@ -19,7 +19,7 @@ const EXTENSION_ID = "mhpkojahbbfdgodeaecggpjaplllgclk"
 const CONTRACT = "LUNA_SHIPPING_QUOTE_CAPTURE_V1"
 const EXTENSION_PING = "SELLER_OS_LUNA_SHIPPING_PING"
 const EXTENSION_READY = "LUNA_SHIPPING_EXTENSION_READY"
-const EXPECTED_EXTENSION_VERSION = "1.0.47"
+const EXPECTED_EXTENSION_VERSION = "1.0.48"
 const SELLER_OS_EXTENSION_ORIGIN = SELLER_OS_LUNA_STABLE_PREVIEW_ORIGIN
 const STARTUP_PROBE_CONTRACT = "SELLER_OS_LUNA_EXTENSION_STARTUP_PROBE_V1"
 const GET_BINDING_STORAGE_DIAGNOSTIC =
@@ -27,6 +27,10 @@ const GET_BINDING_STORAGE_DIAGNOSTIC =
 const BINDING_STORAGE_DIAGNOSTIC = "LUNA_BINDING_STORAGE_DIAGNOSTIC_V1"
 const DURABLE_DISPATCH_ACK = "SELLER_OS_LUNA_SHIPPING_DURABLE_DISPATCH_ACK"
 const JOB_DISPATCH_ACK = "LUNA_SHIPPING_JOB_DISPATCH_ACK"
+const EXTENSION_DISPATCH_RECEIVED =
+  "LUNA_SHIPPING_EXTENSION_DISPATCH_RECEIVED"
+const PAGE_DISPATCH_COMMITTED =
+  "SELLER_OS_LUNA_SHIPPING_PAGE_DISPATCH_COMMITTED"
 const CANARY_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60"
 const CANARY_NAME = "5-in-1 Microcurrent Facial Device for Skin Tightening & Lifting"
@@ -114,6 +118,28 @@ type LiveCaptureTarget = {
   lunaVariantId: string
   sourceSku: string
 }
+
+type ExactDispatchStages = {
+  clickHandlerReached: boolean
+  exactJobResolved: boolean
+  traceCreateRequested: boolean
+  traceCreateAccepted: boolean
+  dispatchPostedToPort: boolean
+  extensionMessageReceived: boolean
+  extensionAckEmitted: boolean
+  pageAckReceived: boolean
+}
+
+const EMPTY_EXACT_DISPATCH_STAGES: ExactDispatchStages = Object.freeze({
+  clickHandlerReached: false,
+  exactJobResolved: false,
+  traceCreateRequested: false,
+  traceCreateAccepted: false,
+  dispatchPostedToPort: false,
+  extensionMessageReceived: false,
+  extensionAckEmitted: false,
+  pageAckReceived: false,
+})
 
 type BindingStorageDiagnostic = {
   extensionId: string
@@ -357,6 +383,10 @@ export default function LunaShippingCapturePage() {
   const [ignoredOutOfScope, setIgnoredOutOfScope] = useState(false)
   const [exactTraceCandidateMatch, setExactTraceCandidateMatch] = useState(false)
   const [exactDispatchAcknowledged, setExactDispatchAcknowledged] = useState(false)
+  const [exactDispatchCandidateId, setExactDispatchCandidateId] =
+    useState("NONE")
+  const [exactDispatchStages, setExactDispatchStages] =
+    useState<ExactDispatchStages>(EMPTY_EXACT_DISPATCH_STAGES)
   const triggerRef = useRef<(() => void) | null>(null)
   const liveTriggerRef = useRef<(() => void) | null>(null)
   const bindDestinationRef = useRef<(() => void) | null>(null)
@@ -401,6 +431,10 @@ export default function LunaShippingCapturePage() {
     const exactDispatchConfirmed = new Set<string>()
     let traceFlushTimer: number | null = null
     let traceFlushChain = Promise.resolve()
+
+    const markExactDispatchStage = (stage: keyof ExactDispatchStages) => {
+      setExactDispatchStages((current) => ({ ...current, [stage]: true }))
+    }
 
     const exactLiveJobMatches = (value: unknown) => {
       const job = value && typeof value === "object"
@@ -471,6 +505,7 @@ export default function LunaShippingCapturePage() {
       setLiveTraceEvents([...traceEvents])
       if (hasExactLiveTarget && event.state === "JOB_DISPATCHED" &&
           event.candidateId === exactLiveCandidateId) {
+        markExactDispatchStage("traceCreateRequested")
         if (exactDispatchDurable.has(event.traceId)) {
           port?.postMessage({ type: DURABLE_DISPATCH_ACK,
             candidateId: event.candidateId, traceId: event.traceId })
@@ -484,6 +519,7 @@ export default function LunaShippingCapturePage() {
           void persistRuntimeTraceSnapshot(snapshot).then(() => {
             exactDispatchPersistencePending.delete(event.traceId)
             exactDispatchDurable.add(event.traceId)
+            markExactDispatchStage("traceCreateAccepted")
             if (!active) return
             port?.postMessage({ type: DURABLE_DISPATCH_ACK,
               candidateId: event.candidateId, traceId: event.traceId })
@@ -535,6 +571,7 @@ export default function LunaShippingCapturePage() {
       port.postMessage({ type: "START_SHIPPING_JOB", job,
         productionAutoClaim: mode === "AUTO",
         requireDurableDispatchAck: mode === "LIVE" })
+      if (mode === "LIVE") markExactDispatchStage("dispatchPostedToPort")
       if (mode !== "LIVE") {
         window.setTimeout(() => {
           if (active && busy) setStatus("CAPTURING")
@@ -603,6 +640,7 @@ export default function LunaShippingCapturePage() {
     triggerRef.current = beginCanary
 
     const beginLiveCapture = () => {
+      markExactDispatchStage("clickHandlerReached")
       if (!hasExactLiveTarget || busy || !extensionReady ||
           !canonicalBindingStatusRead || !canonicalDestinationBindingPresent ||
           !port) return
@@ -614,6 +652,9 @@ export default function LunaShippingCapturePage() {
       setIgnoredOutOfScope(false)
       setExactTraceCandidateMatch(false)
       setExactDispatchAcknowledged(false)
+      setExactDispatchCandidateId("NONE")
+      setExactDispatchStages({ ...EMPTY_EXACT_DISPATCH_STAGES,
+        clickHandlerReached: true })
       traceEvents = []
       setRuntimeTrace(EMPTY_RUNTIME_TRACE)
       setStatus("RESOLVING_EXACT_CURRENT_LIVE")
@@ -634,6 +675,8 @@ export default function LunaShippingCapturePage() {
           throw new Error("LUNA_SHIPPING_EXTENSION_LIVE_IDENTITY_MISMATCH")
         }
         exactLiveCandidateId = exactJob.identity.candidateId
+        setExactDispatchCandidateId(exactJob.identity.candidateId)
+        markExactDispatchStage("exactJobResolved")
         jobs = [exactJob]
         index = 0
         mode = "LIVE"
@@ -779,6 +822,13 @@ export default function LunaShippingCapturePage() {
               return
             }
             exactLiveCandidateId = candidate.identity.candidateId
+            setExactDispatchCandidateId(candidate.identity.candidateId)
+            if (message.dispatchMessageReceived === true) {
+              markExactDispatchStage("extensionMessageReceived")
+            }
+            if (message.dispatchAckEmitted === true) {
+              markExactDispatchStage("extensionAckEmitted")
+            }
             jobs = [candidate]
             index = 0
             mode = "LIVE"
@@ -797,6 +847,15 @@ export default function LunaShippingCapturePage() {
           startInitialProductionClaim()
           return
         }
+        if (message?.type === EXTENSION_DISPATCH_RECEIVED) {
+          if (!hasExactLiveTarget ||
+              message.candidateId !== exactLiveCandidateId) {
+            if (hasExactLiveTarget) setIgnoredOutOfScope(true)
+            return
+          }
+          markExactDispatchStage("extensionMessageReceived")
+          return
+        }
         if (message?.type === JOB_DISPATCH_ACK) {
           const traceId = typeof message.traceId === "string"
             ? message.traceId : ""
@@ -812,6 +871,10 @@ export default function LunaShippingCapturePage() {
             setLiveCaptureAttempts((current) => current + 1)
           }
           setExactDispatchAcknowledged(true)
+          markExactDispatchStage("extensionAckEmitted")
+          markExactDispatchStage("pageAckReceived")
+          port?.postMessage({ type: PAGE_DISPATCH_COMMITTED,
+            candidateId: message.candidateId, traceId })
           setStatus("LIVE_LISTING_CAPTURE_DISPATCHED")
           setLastRuntimeState("CANARY_DISPATCHED")
           lastProgressState = "CANARY_DISPATCHED"
@@ -1417,6 +1480,15 @@ export default function LunaShippingCapturePage() {
           `TARGET_EBAY_ITEM_ID=${liveTarget.ebayItemId}\n` +
           `TARGET_SOURCE_SKU=${liveTarget.sourceSku}\n` +
           `${liveTarget.sourceSku}_CAPTURE_ATTEMPTS=${liveCaptureAttempts}\n` +
+          `DISPATCH_CANDIDATE_ID=${exactDispatchCandidateId}\n` +
+          `CLICK_HANDLER_REACHED=${exactDispatchStages.clickHandlerReached}\n` +
+          `EXACT_JOB_RESOLVED=${exactDispatchStages.exactJobResolved}\n` +
+          `TRACE_CREATE_REQUESTED=${exactDispatchStages.traceCreateRequested}\n` +
+          `TRACE_CREATE_ACCEPTED=${exactDispatchStages.traceCreateAccepted}\n` +
+          `DISPATCH_POSTED_TO_PORT=${exactDispatchStages.dispatchPostedToPort}\n` +
+          `EXTENSION_MESSAGE_RECEIVED=${exactDispatchStages.extensionMessageReceived}\n` +
+          `EXTENSION_ACK_EMITTED=${exactDispatchStages.extensionAckEmitted}\n` +
+          `PAGE_ACK_RECEIVED=${exactDispatchStages.pageAckReceived}\n` +
           `TRACE_DURABLE=${traceDurable}\n` +
           `TRACE_CANDIDATE_MATCH=${exactTraceCandidateMatch}\n` +
           `DISPATCH_ACK=${exactDispatchAcknowledged}\n` +
