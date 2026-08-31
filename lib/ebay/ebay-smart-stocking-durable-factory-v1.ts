@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { buildSmartStockingLearningProfileV1 } from
+  // @ts-expect-error Node direct TypeScript tests require the explicit extension;
+  // the production bundler resolves the same source module.
+  "./ebay-smart-stocking-learning-profile-v1.ts"
 
 export const SELLER_OS_DETERMINISTIC_FACTORY =
   "SELLER_OS_DETERMINISTIC_FACTORY" as const
@@ -7,6 +11,8 @@ export const SELLER_OS_DURABLE_FACTORY_VERSION =
   "SELLER_OS_GENERAL_DURABLE_FACTORY_AUTHORITY_V1" as const
 export const SMART_STOCKING_LISTING_INTAKE_VERSION =
   "SELLER_OS_SMART_STOCKING_LISTING_INTAKE_V1" as const
+export const SELLER_OS_RADAR_DECISION_PACKAGE_BINDING_VERSION =
+  "SELLER_OS_RADAR_DECISION_PACKAGE_BINDING_V1" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -29,6 +35,10 @@ function text(value: unknown) {
 function number(value: unknown) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function round(value: number) {
+  return Math.round(value * 100) / 100
 }
 
 function canonical(value: unknown): string {
@@ -104,6 +114,10 @@ function normalizeProfitabilityFrontier(value: unknown) {
     frontier_id: outer.frontierId,
     frontier_digest: inner.frontierDigest,
     snapshot_digest: outer.snapshotDigest,
+    opportunity_case_id: outer.opportunityCaseId,
+    market_price_evidence_reference: outer.marketPriceEvidenceReference,
+    market_price_evidence_digest: outer.marketPriceEvidenceDigest,
+    economic_policy_digest: outer.economicPolicyDigest,
     luna_product_id: inner.lunaProductId,
     luna_variant_id: inner.lunaVariantId,
     luna_sku: inner.lunaSku,
@@ -136,6 +150,7 @@ function exactSupplierIdentity(opportunity: JsonRecord, frontier: JsonRecord) {
 
 function decisionPackageAuthority(
   opportunity: JsonRecord,
+  frontier: JsonRecord,
   decisionPackage: unknown,
 ) {
   const row = record(decisionPackage)
@@ -145,17 +160,55 @@ function decisionPackageAuthority(
   const entry = record(profile.entrySnapshot)
   const decision = record(profile.decisionSnapshot)
   const economics = record(decision.finalEconomics)
-  const exact = /^[0-9a-f-]{36}$/i.test(String(row.id ?? ""))
-    && row.status === "GENERATED"
+  const assessment = record(opportunity.assessment)
+  const radar = record(assessment.radarFactoryCandidateV1)
+  const truth = record(assessment.productTruth)
+  const binding = record(payload.identityBinding)
+  const frontierBinding = record(binding.economicsFrontier)
+  const { packageHash: payloadPackageHash, ...payloadWithoutHash } = payload
+  const radarBindingExact = payload.contractVersion ===
+      SELLER_OS_RADAR_DECISION_PACKAGE_BINDING_VERSION
+    && payload.authority === SELLER_OS_DETERMINISTIC_FACTORY
+    && payload.serverOwned === true
+    && payload.humanApproved === false
+    && payload.queueCandidateKey === opportunity.candidate_key
+    && payload.radarCandidateId === radar.candidateId
+    && payload.supplierProductId === opportunity.supplier_product_id
+    && payload.supplierVariantId === opportunity.supplier_variant_id
+    && payload.supplierSku === opportunity.supplier_sku
+    && binding.familyId === record(frontier.frontier_payload).familyId
+    && binding.opportunityCaseId === frontier.opportunity_case_id
+    && binding.demandEvidenceGrain === "FAMILY"
+    && binding.exactProductDemandClaimed === false
+    && binding.demandEvidenceDigest === frontier.market_price_evidence_digest
+    && binding.priceEvidenceScope === "FAMILY"
+    && binding.marketPriceEvidenceReference ===
+      frontier.market_price_evidence_reference
+    && binding.marketPriceEvidenceDigest ===
+      frontier.market_price_evidence_digest
+    && binding.productTruthDigest === truth.evidenceDigest
+    && frontierBinding.frontierId === frontier.frontier_id
+    && frontierBinding.frontierDigest === frontier.frontier_digest
+    && frontierBinding.frontierSnapshotDigest === frontier.snapshot_digest
+    && /^sha256:[0-9a-f]{64}$/.test(String(payload.identityBindingDigest ?? ""))
+    && /^sha256:[0-9a-f]{64}$/.test(String(payload.packageHash ?? ""))
+    && payload.identityBindingDigest === digest(binding)
+    && payloadPackageHash === digest(payloadWithoutHash)
+    && row.package_hash === payload.packageHash
+  const legacyExact = payload.contractVersion !==
+      SELLER_OS_RADAR_DECISION_PACKAGE_BINDING_VERSION
     && payload.supplierSku === opportunity.supplier_sku
     && payload.supplierVariantId === opportunity.supplier_variant_id
     && identity.gtin === opportunity.gtin
+  const exact = /^[0-9a-f-]{36}$/i.test(String(row.id ?? ""))
+    && row.status === "GENERATED"
+    && (radarBindingExact || legacyExact)
     && profile.profileVersion === "SELLER_OS_SMART_STOCKING_LEARNING_PROFILE_V1"
     && /^sha256:[0-9a-f]{64}$/.test(String(profile.entrySnapshotHash ?? ""))
     && /^sha256:[0-9a-f]{64}$/.test(String(profile.decisionSnapshotHash ?? ""))
     && economics.status === "PASS"
     && economics.thresholdResult === "PASS"
-  return { exact, row, profile, entry, decision, economics }
+  return { exact, radarBindingExact, row, profile, entry, decision, economics }
 }
 
 function listingSeed(opportunity: JsonRecord, frontier: JsonRecord) {
@@ -184,6 +237,241 @@ function listingSeed(opportunity: JsonRecord, frontier: JsonRecord) {
       evidenceGuards: strings(opportunity.evidence_guards),
     },
   }
+}
+
+export function buildSellerOsRadarDecisionPackageBindingV1(input: Readonly<{
+  opportunity: JsonRecord
+  frontier: JsonRecord
+}>) {
+  const { opportunity, frontier } = input
+  const assessment = record(opportunity.assessment)
+  const radar = record(assessment.radarFactoryCandidateV1)
+  const truth = record(assessment.productTruth)
+  const stock = record(truth.stock)
+  const frontierPayload = record(frontier.frontier_payload)
+  const target = record(frontier.radar_price_distribution_target)
+  const targetPrice = number(target.targetPrice) ??
+    number(frontier.market_price_median)
+  const profit = number(target.profit) ??
+    number(frontier.contribution_profit_median)
+  const margin = number(target.margin) ??
+    number(frontier.contribution_margin_median)
+  const supplierCost = number(frontier.luna_cost)
+  const shipping = number(frontier.shipping_value)
+  const ebayFees = number(target.estimatedEbayFees) ??
+    number(frontier.ebay_fee_estimate_at_median)
+  const roi = number(target.roi) ?? (profit !== null && supplierCost !== null &&
+    shipping !== null && supplierCost + shipping > 0
+    ? round(profit / (supplierCost + shipping) * 100) : null)
+  const familyId = text(frontierPayload.familyId)
+  const opportunityCaseId = text(frontier.opportunity_case_id)
+  const demandEvidenceDigest = text(frontier.market_price_evidence_digest)
+  const radarCandidateId = text(radar.candidateId)
+  const productTruthDigest = text(truth.evidenceDigest)
+  const exactIdentity = radar.contractVersion ===
+      "NIGHT_RADAR_AUTOMATIC_GOLDEN_PATH_HANDOFF_V1"
+    && radar.authority === SELLER_OS_DETERMINISTIC_FACTORY
+    && radar.demandEvidenceGrain === "FAMILY"
+    && radar.exactProductDemandClaimed === false
+    && radar.familyId === familyId
+    && /^sha256:[0-9a-f]{64}$/.test(radarCandidateId ?? "")
+    && truth.authorityClass === "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1"
+    && truth.candidateKey === radarCandidateId
+    && truth.lunaProductId === opportunity.supplier_product_id
+    && truth.lunaVariantId === opportunity.supplier_variant_id
+    && truth.supplierSku === opportunity.supplier_sku
+    && truth.gtin === opportunity.gtin
+    && stock.exactIdentityVerified === true
+  const evidenceExact = /^market-family-v1:sha256:[0-9a-f]{64}$/.test(
+      familyId ?? "")
+    && /^opportunity-case-v1:sha256:[0-9a-f]{64}$/.test(
+      opportunityCaseId ?? "")
+    && /^sha256:[0-9a-f]{64}$/.test(demandEvidenceDigest ?? "")
+    && /^sha256:[0-9a-f]{64}$/.test(productTruthDigest ?? "")
+    && /^profitability-frontier-v1:sha256:[0-9a-f]{64}$/.test(
+      String(frontier.frontier_id ?? ""))
+    && /^sha256:[0-9a-f]{64}$/.test(String(frontier.frontier_digest ?? ""))
+    && /^sha256:[0-9a-f]{64}$/.test(String(frontier.snapshot_digest ?? ""))
+    && text(frontier.market_price_evidence_reference) !== null
+  const economicsExact = targetPrice !== null && targetPrice > 0
+    && profit !== null && profit > 0 && margin !== null && margin >= 20
+    && roi !== null && roi >= 30 && supplierCost !== null && supplierCost >= 0
+    && shipping !== null && shipping >= 0 && ebayFees !== null && ebayFees >= 0
+    && frontier.shipping_status === "SHIPPING_DURABLY_PERSISTED"
+    && frontier.next_best_evidence === "NONE"
+    && strings(frontier.hard_blockers).length === 0
+  if (!exactIdentity || !evidenceExact || !economicsExact) {
+    throw new Error("RADAR_DECISION_PACKAGE_BINDING_INPUT_UNPROVEN")
+  }
+  const identityBinding = Object.freeze({
+    familyId,
+    opportunityCaseId,
+    demandEvidenceGrain: "FAMILY" as const,
+    exactProductDemandClaimed: false as const,
+    demandEvidenceDigest,
+    priceEvidenceScope: "FAMILY" as const,
+    marketPriceEvidenceReference: frontier.market_price_evidence_reference,
+    marketPriceEvidenceDigest: demandEvidenceDigest,
+    priceDistributionEvidenceDigest: text(record(frontierPayload
+      .radarAutomaticPriceDistributionContinuationV1).evidenceDigest),
+    productTruthDigest,
+    economicsFrontier: Object.freeze({
+      frontierId: frontier.frontier_id,
+      frontierDigest: frontier.frontier_digest,
+      frontierSnapshotDigest: frontier.snapshot_digest,
+      economicPolicyDigest: frontier.economic_policy_digest,
+    }),
+  })
+  const identityBindingDigest = digest(identityBinding)
+  const finalEconomics = Object.freeze({
+    status: "PASS" as const,
+    salePriceUsd: targetPrice,
+    ebayFeesUsd: ebayFees,
+    lunaProductCostUsd: supplierCost,
+    lunaShippingUsd: shipping,
+    landedCostUsd: round(supplierCost + shipping),
+    contributionProfitUsd: profit,
+    contributionMarginPercent: margin,
+    roiPercent: roi,
+    thresholdResult: "PASS" as const,
+  })
+  const scoreBreakdown = {
+    marketDemandScore: frontierPayload.familyDemandStatus ===
+      "FAMILY_DEMAND_PROVEN" ? 25 : 18.75,
+    economicsPotentialScore: 25,
+    merchandisingScore: 0,
+    lunaAdvantageScore: 15,
+    operationalSimplicityScore: 5,
+    portfolioDiversificationScore: 0,
+    evidenceQualityScore: 5,
+  }
+  const launchPotentialScore = Object.values(scoreBreakdown)
+    .reduce((total, score) => total + score, 0)
+  const profile = buildSmartStockingLearningProfileV1({
+    scoreBreakdown,
+    riskPenalty: 0,
+    whyPrioritized: [
+      "EXACT_LUNA_IDENTITY_STOCK_SAFE_AND_ECONOMICS_READY",
+      "FAMILY_DEMAND_AND_PRICE_DISTRIBUTION_SUPPORTED",
+    ],
+    knownUncertainties: [
+      "EXACT_PRODUCT_DEMAND_NOT_CLAIMED_FAMILY_EVIDENCE_ONLY",
+      "MERCHANDISING_AND_MARKETPLACE_READINESS_REMAIN_SEPARATE_GATES",
+    ],
+    entrySnapshotOrigin: "RECORDED_BEFORE_COMMERCIALIZATION",
+    decisionSnapshot: {
+      launchPotentialScore,
+      launchTier: "CONTROLLED_MERCHANDISING_BET",
+      evidenceProfile: [
+        "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1",
+        "FAMILY_DEMAND_SUPPORTED_OR_PROVEN",
+        "RADAR_AUTOMATIC_PRICE_DISTRIBUTION_CONTINUATION_V1",
+        "SHIPPING_DURABLY_PERSISTED",
+      ],
+      finalEconomics,
+      rescueUsed: true,
+      rescueType: "BETTER_PRICE_DISTRIBUTION",
+      whyPublishedOrParked:
+        "ECONOMICS_READY_PENDING_EXISTING_GOLDEN_PATH_GUARDS",
+      parkReason: null,
+      reopenCondition: null,
+    },
+  })
+  const productIdentity = Object.freeze({
+    version: "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1",
+    fingerprint: digest({
+      lunaProductId: opportunity.supplier_product_id,
+      lunaVariantId: opportunity.supplier_variant_id,
+      supplierSku: opportunity.supplier_sku,
+      gtin: opportunity.gtin,
+    }),
+    identity: Object.freeze({ gtin: opportunity.gtin }),
+  })
+  const inputHash = digest({
+    queueCandidateKey: opportunity.candidate_key,
+    radarCandidateId,
+    productIdentity,
+    identityBinding,
+    entrySnapshotHash: profile.entrySnapshotHash,
+    decisionSnapshotHash: profile.decisionSnapshotHash,
+  })
+  const packageCore = {
+    contractVersion: SELLER_OS_RADAR_DECISION_PACKAGE_BINDING_VERSION,
+    authority: SELLER_OS_DETERMINISTIC_FACTORY,
+    serverOwned: true as const,
+    humanApproved: false as const,
+    reviewerUserId: null,
+    publicationAuthorized: false as const,
+    marketplace: "EBAY_US" as const,
+    queueCandidateKey: opportunity.candidate_key,
+    radarCandidateId,
+    supplierProductId: opportunity.supplier_product_id,
+    supplierVariantId: opportunity.supplier_variant_id,
+    supplierSku: opportunity.supplier_sku,
+    productIdentity,
+    identityBinding,
+    identityBindingDigest,
+    inputHash,
+    entrySnapshotHash: profile.entrySnapshotHash,
+    decisionSnapshotHash: profile.decisionSnapshotHash,
+    marketplaceWrites: 0 as const,
+  }
+  const packageHash = digest(packageCore)
+  return Object.freeze({
+    payload: Object.freeze({ ...packageCore, packageHash }),
+    profile: Object.freeze(profile),
+    packageHash,
+    inputHash,
+    identityFingerprint: productIdentity.fingerprint,
+    finalEconomics,
+  })
+}
+
+async function ensureSellerOsRadarDecisionPackageBindingV1(input: Readonly<{
+  supabase: SupabaseClient
+  accountKey: string
+  opportunity: JsonRecord
+  frontier: JsonRecord
+}>) {
+  const binding = buildSellerOsRadarDecisionPackageBindingV1(input)
+  const row = {
+    marketplace_account_key: input.accountKey,
+    marketplace: "EBAY_US",
+    candidate_id: null,
+    supplier_sku: input.opportunity.supplier_sku,
+    supplier_variant_id: input.opportunity.supplier_variant_id,
+    product_identity_fingerprint: binding.identityFingerprint,
+    identity_version: "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1",
+    package_version: SELLER_OS_RADAR_DECISION_PACKAGE_BINDING_VERSION,
+    input_hash: binding.inputHash,
+    package_hash: binding.packageHash,
+    verdict: "GO_WITH_CHANGES",
+    status: "GENERATED",
+    package_payload: binding.payload,
+    smart_stocking_learning_profile: binding.profile,
+    generated_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }
+  const write = await input.supabase
+    .from("marketplace_listing_decision_packages")
+    .upsert(row, {
+      onConflict: "marketplace_account_key,marketplace,package_hash",
+      ignoreDuplicates: false,
+    })
+    .select("id,status,package_hash,package_payload,smart_stocking_learning_profile")
+    .single()
+  if (write.error || !write.data) {
+    throw new Error("RADAR_DECISION_PACKAGE_BINDING_WRITE_FAILED")
+  }
+  const stored = write.data as JsonRecord
+  const authority = decisionPackageAuthority(
+    input.opportunity, input.frontier, stored)
+  if (!authority.exact || !authority.radarBindingExact ||
+      stored.package_hash !== binding.packageHash) {
+    throw new Error("RADAR_DECISION_PACKAGE_BINDING_READBACK_MISMATCH")
+  }
+  return Object.freeze({ row: stored, createdOrReused: true as const,
+    identityAmbiguityReason: null, marketplaceWrites: 0 as const })
 }
 
 export function isSellerOsDeterministicFactoryPackageV1(value: unknown) {
@@ -264,7 +552,7 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
   const canonicalMarketplaceReady = Array.isArray(readiness.blockers)
     && readiness.blockers.length === 0
   const decisionPackage = decisionPackageAuthority(
-    opportunity, input.decisionPackage,
+    opportunity, frontier, input.decisionPackage,
   )
   const decisionPackageReady = decisionPackage.exact
   const blockers = unique([
@@ -405,7 +693,7 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
   if (!productId || !variantId || !supplierSku) {
     throw new Error("DETERMINISTIC_FACTORY_SUPPLIER_IDENTITY_REQUIRED")
   }
-  const [frontierRead, duplicateRead, packageRead, decisionPackageRead] =
+  const [frontierRead, duplicateRead, packageRead, providedDecisionPackageRead] =
     await Promise.all([
     input.supabase.rpc("get_seller_os_latest_profitability_frontiers_v1", {
       p_account_key: input.accountKey,
@@ -422,7 +710,7 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
       .eq("opportunity_id", input.opportunityId).maybeSingle(),
     input.decisionPackageId
       ? input.supabase.from("marketplace_listing_decision_packages")
-        .select("id,status,package_payload,smart_stocking_learning_profile")
+        .select("id,status,package_hash,package_payload,smart_stocking_learning_profile")
         .eq("id", input.decisionPackageId)
         .eq("marketplace_account_key", input.accountKey)
         .eq("marketplace", "EBAY_US").maybeSingle()
@@ -443,9 +731,27 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     throw new Error("DETERMINISTIC_FACTORY_DUPLICATE_GUARD_FAILED")
   }
   if (packageRead.error) throw new Error("DETERMINISTIC_FACTORY_PACKAGE_READ_FAILED")
-  if (decisionPackageRead.error) {
+  if (providedDecisionPackageRead.error) {
     throw new Error("DETERMINISTIC_FACTORY_DECISION_PACKAGE_READ_FAILED")
   }
+  const normalizedFrontier = normalizeProfitabilityFrontier(frontierOuter)
+  const radarCandidate = record(record(opportunity.assessment)
+    .radarFactoryCandidateV1)
+  const radarCandidateEligibleForBinding = radarCandidate.contractVersion ===
+      "NIGHT_RADAR_AUTOMATIC_GOLDEN_PATH_HANDOFF_V1"
+    && radarCandidate.authority === SELLER_OS_DETERMINISTIC_FACTORY
+  const decisionPackageBinding = input.decisionPackageId
+    ? { row: providedDecisionPackageRead.data as JsonRecord | null,
+      createdOrReused: false as const, identityAmbiguityReason: null }
+    : radarCandidateEligibleForBinding
+      ? await ensureSellerOsRadarDecisionPackageBindingV1({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      opportunity,
+      frontier: normalizedFrontier,
+      })
+      : { row: null, createdOrReused: false as const,
+        identityAmbiguityReason: null }
   const activeDuplicateCount = (duplicateRead.data ?? []).filter((value) => {
     const listing = record(value)
     return listing.supplier_variant_id === variantId
@@ -454,9 +760,9 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
   }).length
   const plan = buildSellerOsDeterministicFactoryPlanV1({
     opportunity,
-    frontier: normalizeProfitabilityFrontier(frontierOuter),
+    frontier: normalizedFrontier,
     activeDuplicateCount,
-    decisionPackage: decisionPackageRead.data as JsonRecord | null,
+    decisionPackage: decisionPackageBinding.row,
   })
   const currentAssessment = record(opportunity.assessment)
   const assessment = {
@@ -527,6 +833,12 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     listingPackageId: String(listingPackage.id),
     serverOwnedFactoryAuthority: serverOwned,
     packageCreated,
+    decisionPackageId: plan.factoryPreparationAuthority.decisionPackageId,
+    decisionPackageIdentityResolved:
+      plan.factoryPreparationAuthority.decisionPackageId !== null,
+    decisionPackageCreatedOrReused:
+      decisionPackageBinding.createdOrReused,
+    identityAmbiguityReason: decisionPackageBinding.identityAmbiguityReason,
     duplicateCreated: false as const,
     newEbayOffers: 0 as const,
     withdrawCalls: 0 as const,

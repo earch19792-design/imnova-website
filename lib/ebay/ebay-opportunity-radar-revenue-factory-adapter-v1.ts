@@ -993,16 +993,6 @@ function radarShippingCandidateIdentity(
     continuation.supplierSku === candidate.supplierSku
 }
 
-function exactDecisionPackageIdentity(queueRow: JsonRecord, value: unknown) {
-  const row = record(value)
-  const payload = record(row.package_payload)
-  const identity = record(record(payload.productIdentity).identity)
-  return row.status === "GENERATED" &&
-    payload.supplierSku === queueRow.supplier_sku &&
-    payload.supplierVariantId === queueRow.supplier_variant_id &&
-    identity.gtin === queueRow.gtin
-}
-
 function embeddedDecisionPackageId(queueRow: JsonRecord) {
   const assessment = record(queueRow.assessment)
   return uuid(record(assessment.smartStockingListingIntakeV1).decisionPackageId)
@@ -1289,14 +1279,6 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
       queueCreationFailures.set(candidate.candidateId, failureCode(error))
     }
   }
-  const decisionRead = queueRows.length
-    ? await input.supabase.from("marketplace_listing_decision_packages")
-      .select("id,status,package_payload")
-      .eq("marketplace_account_key", input.accountKey)
-      .eq("marketplace", "EBAY_US").eq("status", "GENERATED")
-      .order("created_at", { ascending: false }).limit(500)
-    : { data: [], error: null }
-  const decisionPackages = rows(decisionRead.data)
   const outcomes: JsonRecord[] = []
   const priceContinuationResults = new Map<string, Awaited<ReturnType<
     typeof continueRadarCandidatePriceDistributionV1>>>()
@@ -1396,38 +1378,14 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
       continue
     }
     const queueRow = exactRows[0]
-    if (decisionRead.error) {
-      outcomes.push({ candidateId: candidate.candidateId,
-        familyId: candidate.familyId, familyName: candidate.familyName,
-        lunaProductId: candidate.lunaProductId,
-        lunaVariantId: candidate.lunaVariantId, supplierSku: candidate.supplierSku,
-        opportunityId: queueRow.id, candidateKey: queueRow.candidate_key,
-        status: "EXCEPTION", reasonCode: "RADAR_DECISION_PACKAGE_READ_FAILED",
-        listingReady: false })
-      continue
-    }
-    const exactPackages = decisionPackages.filter(
-      (entry) => exactDecisionPackageIdentity(queueRow, entry))
     const embeddedId = embeddedDecisionPackageId(queueRow)
-    const decisionPackageId = embeddedId ??
-      (exactPackages.length === 1 ? uuid(exactPackages[0].id) : null)
-    if (exactPackages.length > 1 && !embeddedId) {
-      outcomes.push({ candidateId: candidate.candidateId,
-        familyId: candidate.familyId, familyName: candidate.familyName,
-        lunaProductId: candidate.lunaProductId,
-        lunaVariantId: candidate.lunaVariantId, supplierSku: candidate.supplierSku,
-        opportunityId: queueRow.id, candidateKey: queueRow.candidate_key,
-        status: "PARKED", reasonCode: "DECISION_PACKAGE_IDENTITY_AMBIGUOUS",
-        listingReady: false })
-      continue
-    }
     try {
       const result = await materializeCandidate({
         supabase: input.supabase,
         accountKey: input.accountKey,
         opportunityId: String(queueRow.id),
         candidateKey: String(queueRow.candidate_key),
-        decisionPackageId,
+        decisionPackageId: embeddedId,
       })
       const packageSeed = record(result.packageSeed)
       const pricing = record(packageSeed.pricing)
@@ -1437,6 +1395,10 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         lunaVariantId: candidate.lunaVariantId, supplierSku: candidate.supplierSku,
         opportunityId: result.opportunityId, candidateKey: result.candidateKey,
         listingPackageId: result.listingPackageId,
+        decisionPackageId: result.decisionPackageId ?? null,
+        decisionPackageIdentityResolved:
+          result.decisionPackageIdentityResolved === true,
+        identityAmbiguityReason: result.identityAmbiguityReason ?? null,
         status: result.listingReady ? "LISTING_READY" : "PARKED",
         reasonCode: result.firstBlocker,
         listingReady: result.listingReady,
