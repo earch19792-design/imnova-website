@@ -949,6 +949,19 @@ function exactQueueIdentity(
     queueRow.supplier_sku === candidate.supplierSku
 }
 
+function radarShippingCandidateIdentity(
+  candidate: RadarRevenueFactoryCandidateV1,
+  queueRow: JsonRecord,
+) {
+  const continuation = record(record(queueRow.assessment)
+    .radarAutomaticLunaShippingContinuationV1)
+  return exactQueueIdentity(candidate, queueRow) &&
+    continuation.candidateId === candidate.candidateId &&
+    continuation.lunaProductId === candidate.lunaProductId &&
+    continuation.lunaVariantId === candidate.lunaVariantId &&
+    continuation.supplierSku === candidate.supplierSku
+}
+
 function exactDecisionPackageIdentity(queueRow: JsonRecord, value: unknown) {
   const row = record(value)
   const payload = record(row.package_payload)
@@ -1168,9 +1181,63 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
   const queueCreationFailures = new Map<string, string>()
   const queueCreationOutcomes = new Map<string, "CREATED" | "REUSED">()
   for (const candidate of durableCandidates) {
-    if (queueRows.some((row) => exactQueueIdentity(candidate, row))) {
-      queueCreationOutcomes.set(candidate.candidateId, "REUSED")
+    const existingRows = queueRows.filter((row) =>
+      exactQueueIdentity(candidate, row))
+    if (existingRows.length > 1) {
+      queueCreationFailures.set(candidate.candidateId,
+        "RADAR_SMART_STOCKING_IDENTITY_AMBIGUOUS")
       continue
+    }
+    if (existingRows.length === 1) {
+      try {
+        const existing = existingRows[0]
+        if (!radarShippingCandidateIdentity(candidate, existing)) {
+          const hydrated = buildRadarSmartStockingQueueRowV1(candidate)
+          const update = await input.supabase.from("ebay_luna_opportunity_queue")
+            .update({
+              product_title: hydrated.product_title,
+              variant_title: hydrated.variant_title,
+              gtin: hydrated.gtin,
+              queue_status: hydrated.queue_status,
+              decision: hydrated.decision,
+              demand_score: hydrated.demand_score,
+              economics_score: hydrated.economics_score,
+              identity_score: hydrated.identity_score,
+              supply_score: hydrated.supply_score,
+              active_comparables: hydrated.active_comparables,
+              median_total_buyer_price: hydrated.median_total_buyer_price,
+              estimated_net_profit: hydrated.estimated_net_profit,
+              supplier_price: hydrated.supplier_price,
+              supplier_available: hydrated.supplier_available,
+              supplier_inventory_quantity:
+                hydrated.supplier_inventory_quantity,
+              supplier_snapshot_at: hydrated.supplier_snapshot_at,
+              keyword_structure: hydrated.keyword_structure,
+              hard_gates: hydrated.hard_gates,
+              evidence_guards: hydrated.evidence_guards,
+              assessment: hydrated.assessment,
+              last_scanned_at: hydrated.last_scanned_at,
+              next_scan_at: hydrated.next_scan_at,
+              updated_at: hydrated.updated_at,
+            }).eq("id", existing.id)
+            .eq("supplier_product_id", candidate.lunaProductId)
+            .eq("supplier_variant_id", candidate.lunaVariantId)
+            .eq("supplier_sku", candidate.supplierSku)
+            .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,gtin,assessment")
+            .single()
+          if (update.error || !update.data ||
+              !radarShippingCandidateIdentity(candidate, record(update.data))) {
+            throw new Error("RADAR_SMART_STOCKING_DURABLE_WRITE_FAILED")
+          }
+          const index = queueRows.indexOf(existing)
+          queueRows[index] = record(update.data)
+        }
+        queueCreationOutcomes.set(candidate.candidateId, "REUSED")
+        continue
+      } catch (error) {
+        queueCreationFailures.set(candidate.candidateId, failureCode(error))
+        continue
+      }
     }
     try {
       const write = await input.supabase.from("ebay_luna_opportunity_queue")
@@ -1220,7 +1287,8 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         shippingJobCreatedOrReused: waitingForBrowser && Boolean(durableQueueRow),
         shippingJobStatus: waitingForBrowser && durableQueueRow
           ? "WAITING_BROWSER_WORKER" : null,
-        shippingJobIdentityMatch: waitingForBrowser && Boolean(durableQueueRow),
+        shippingJobIdentityMatch: waitingForBrowser && Boolean(durableQueueRow) &&
+          radarShippingCandidateIdentity(candidate, durableQueueRow!),
         shippingOpportunityId: waitingForBrowser
           ? durableQueueRow?.id ?? null : null,
         queuePersistenceOutcome: queueCreationOutcomes.get(candidate.candidateId)
@@ -1418,8 +1486,7 @@ export async function resumeRadarFactoryCandidateAfterShippingV1(
   }>,
 ) {
   const queueRead = await input.supabase.from("ebay_luna_opportunity_queue")
-    .select("*").eq("candidate_key", input.candidateId)
-    .eq("supplier_product_id", input.lunaProductId)
+    .select("*").eq("supplier_product_id", input.lunaProductId)
     .eq("supplier_variant_id", input.lunaVariantId)
     .eq("supplier_sku", input.supplierSku).limit(2)
   if (queueRead.error) {
@@ -1436,13 +1503,21 @@ export async function resumeRadarFactoryCandidateAfterShippingV1(
     throw new Error("RADAR_SHIPPING_CONTINUATION_IDENTITY_AMBIGUOUS")
   }
   const queueRow = exactRows[0]
+  const durableIdentity = record(record(queueRow.assessment)
+    .radarAutomaticLunaShippingContinuationV1)
+  if (durableIdentity.candidateId !== input.candidateId ||
+      durableIdentity.lunaProductId !== input.lunaProductId ||
+      durableIdentity.lunaVariantId !== input.lunaVariantId ||
+      durableIdentity.supplierSku !== input.supplierSku) {
+    throw new Error("RADAR_SHIPPING_CONTINUATION_IDENTITY_MISMATCH")
+  }
   const materializeCandidate = input.materializeCandidate ??
     materializeSellerOsDeterministicFactoryCandidateV1
   const result = await materializeCandidate({
     supabase: input.supabase,
     accountKey: input.accountKey,
     opportunityId: String(queueRow.id),
-    candidateKey: input.candidateId,
+    candidateKey: String(queueRow.candidate_key),
     decisionPackageId: embeddedDecisionPackageId(queueRow),
   })
   const stages = record(result.stageStatuses)
@@ -1477,7 +1552,7 @@ export async function resumeRadarFactoryCandidateAfterShippingV1(
     .update({ assessment, decision: result.listingReady
       ? "LISTING_READY" : economicsReady ? "FACTORY_PREPARED" : "PARKED_ECONOMICS",
     updated_at: new Date().toISOString() })
-    .eq("id", queueRow.id).eq("candidate_key", input.candidateId)
+    .eq("id", queueRow.id).eq("candidate_key", queueRow.candidate_key)
     .select("id,candidate_key,assessment").single()
   const stored = record(record(write.data).assessment)
   const readback = record(stored.radarAutomaticLunaShippingContinuationV1)
