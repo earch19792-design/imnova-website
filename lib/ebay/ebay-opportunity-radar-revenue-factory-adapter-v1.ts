@@ -14,6 +14,16 @@ import { calculateEbayUnitEconomics,
   DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG } from "./ebay-unit-economics"
 import type { RadarMarketplaceTaxonomyReaderV1 } from
   "./ebay-radar-canonical-marketplace-readiness-v1"
+import {
+  createOpenAiRequiredSpecificsBatchResolverV1,
+  MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1,
+  requiredSpecificBatchEvidenceDigestV1,
+  resolveMarketplaceRequiredSpecificsBatchV1,
+} from "./ebay-marketplace-required-specifics-batch-resolution-v1"
+import type {
+  RequiredSpecificsAiBatchV1,
+  RequiredSpecificsBatchProductV1,
+} from "./ebay-marketplace-required-specifics-batch-resolution-v1"
 
 export const OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_VERSION =
   "OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_V1" as const
@@ -1182,6 +1192,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     materializeCandidate?: DurableFactoryMaterializerV1
     continuePriceDistribution?: typeof continueRadarCandidatePriceDistributionV1
     taxonomyReader?: RadarMarketplaceTaxonomyReaderV1
+    requiredSpecificsAiResolver?: RequiredSpecificsAiBatchV1 | null
   }>,
 ) {
   const startedAt = Date.now()
@@ -1285,6 +1296,12 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     }
   }
   const outcomes: JsonRecord[] = []
+  const requiredSpecificsPending: Array<Readonly<{
+    candidate: RadarRevenueFactoryCandidateV1
+    queueRow: JsonRecord
+    outcomeIndex: number
+    batchInput: RequiredSpecificsBatchProductV1
+  }>> = []
   const priceContinuationResults = new Map<string, Awaited<ReturnType<
     typeof continueRadarCandidatePriceDistributionV1>>>()
   const priceContinuationFailures = new Map<string, string>()
@@ -1395,7 +1412,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
       })
       const packageSeed = record(result.packageSeed)
       const pricing = record(packageSeed.pricing)
-      outcomes.push({ candidateId: candidate.candidateId,
+      const materializedOutcome = { candidateId: candidate.candidateId,
         familyId: candidate.familyId, familyName: candidate.familyName,
         lunaProductId: candidate.lunaProductId,
         lunaVariantId: candidate.lunaVariantId, supplierSku: candidate.supplierSku,
@@ -1473,7 +1490,27 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
             ? packageSeed.imageUrls : [],
           supplierCost: pricing.supplierCost ?? null,
           targetPrice: pricing.targetPrice ?? null,
-        } : null })
+        } : null }
+      outcomes.push(materializedOutcome)
+      const batchInput = record(result.requiredSpecificsBatchInput)
+      if (result.listingReady !== true
+          && Array.isArray(result.unsupportedRequiredSpecifics)
+          && result.unsupportedRequiredSpecifics.length > 0
+          && batchInput.radarCandidateId === candidate.candidateId
+          && batchInput.lunaProductId === candidate.lunaProductId
+          && batchInput.lunaVariantId === candidate.lunaVariantId
+          && batchInput.supplierSku === candidate.supplierSku
+          && batchInput.marketplaceId === "EBAY_US"
+          && typeof batchInput.categoryId === "string"
+          && Array.isArray(batchInput.unresolvedRequiredAspects)
+          && Array.isArray(batchInput.officialAspectDefinitions)
+          && /^sha256:[0-9a-f]{64}$/.test(String(
+            batchInput.inputEvidenceDigest ?? ""))) {
+        requiredSpecificsPending.push(Object.freeze({
+          candidate, queueRow, outcomeIndex: outcomes.length - 1,
+          batchInput: batchInput as unknown as RequiredSpecificsBatchProductV1,
+        }))
+      }
     } catch (error) {
       outcomes.push({ candidateId: candidate.candidateId,
         familyId: candidate.familyId, familyName: candidate.familyName,
@@ -1481,6 +1518,132 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         lunaVariantId: candidate.lunaVariantId, supplierSku: candidate.supplierSku,
         opportunityId: queueRow.id, candidateKey: queueRow.candidate_key,
         status: "EXCEPTION", reasonCode: failureCode(error), listingReady: false })
+    }
+  }
+
+  let requiredSpecificsBatch: JsonRecord = {
+    contractVersion: MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1,
+    productCount: 0, unresolvedAspectCount: 0,
+    deterministicResolvedCount: 0, marketplaceFallbackResolvedCount: 0,
+    aiResolutionRequiredCount: 0, aiCallCount: 0,
+    candidateReadinessReevaluated: 0, marketplaceWrites: 0,
+  }
+  if (requiredSpecificsPending.length) {
+    try {
+      const resolvedBatch = await resolveMarketplaceRequiredSpecificsBatchV1({
+        products: requiredSpecificsPending.map((entry) => entry.batchInput),
+        aiResolver: input.requiredSpecificsAiResolver === undefined
+          ? createOpenAiRequiredSpecificsBatchResolverV1()
+          : input.requiredSpecificsAiResolver,
+      })
+      let candidateReadinessReevaluated = 0
+      for (const candidateResolution of resolvedBatch.candidates) {
+        const pending = requiredSpecificsPending.find((entry) =>
+          entry.candidate.candidateId === candidateResolution.radarCandidateId)
+        if (!pending) continue
+        const rowRead = await input.supabase.from("ebay_luna_opportunity_queue")
+          .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,assessment")
+          .eq("id", pending.queueRow.id)
+          .eq("candidate_key", pending.queueRow.candidate_key).maybeSingle()
+        const row = record(rowRead.data)
+        if (rowRead.error || !row.id
+            || row.supplier_product_id !== candidateResolution.lunaProductId
+            || row.supplier_variant_id !== candidateResolution.lunaVariantId
+            || row.supplier_sku !== candidateResolution.supplierSku) continue
+        const candidateCore = {
+          contractVersion: MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1,
+          authority: "SELLER_OS_DETERMINISTIC_FACTORY",
+          radarCandidateId: candidateResolution.radarCandidateId,
+          lunaProductId: candidateResolution.lunaProductId,
+          lunaVariantId: candidateResolution.lunaVariantId,
+          supplierSku: candidateResolution.supplierSku,
+          marketplaceId: candidateResolution.marketplaceId,
+          categoryId: candidateResolution.categoryId,
+          inputEvidenceDigest: candidateResolution.inputEvidenceDigest,
+          resolutions: candidateResolution.resolutions,
+          groupedBy: "EBAY_MARKETPLACE_PLUS_CATEGORY_ID",
+          factInvented: false,
+          marketplaceWrites: 0,
+        }
+        const durableResolution = Object.freeze({ ...candidateCore,
+          evidenceDigest: requiredSpecificBatchEvidenceDigestV1(candidateCore) })
+        const write = await input.supabase.from("ebay_luna_opportunity_queue")
+          .update({ assessment: { ...record(row.assessment),
+            marketplaceRequiredSpecificsBatchResolutionV1:
+              durableResolution }, updated_at: new Date().toISOString() })
+          .eq("id", row.id).eq("candidate_key", row.candidate_key)
+          .eq("supplier_product_id", candidateResolution.lunaProductId)
+          .eq("supplier_variant_id", candidateResolution.lunaVariantId)
+          .eq("supplier_sku", candidateResolution.supplierSku)
+          .select("id,candidate_key,assessment").single()
+        if (write.error || !write.data) continue
+        const readback = record(record(write.data).assessment)
+        const stored = record(
+          readback.marketplaceRequiredSpecificsBatchResolutionV1)
+        if (stored.evidenceDigest !== durableResolution.evidenceDigest) continue
+        const refreshed = await materializeCandidate({
+          supabase: input.supabase,
+          accountKey: input.accountKey,
+          opportunityId: String(row.id),
+          candidateKey: String(row.candidate_key),
+          decisionPackageId: embeddedDecisionPackageId(row),
+          taxonomyReader: input.taxonomyReader,
+        })
+        const previous = outcomes[pending.outcomeIndex]
+        const refreshedSeed = record(refreshed.packageSeed)
+        const refreshedPricing = record(refreshedSeed.pricing)
+        outcomes[pending.outcomeIndex] = {
+          ...previous,
+          requiredItemSpecificsCount:
+            refreshed.requiredItemSpecificsCount ?? null,
+          requiredItemSpecificsSatisfied:
+            refreshed.requiredItemSpecificsSatisfied ?? null,
+          unsupportedRequiredSpecifics:
+            refreshed.unsupportedRequiredSpecifics ?? [],
+          requiredItemSpecificsReady:
+            refreshed.requiredItemSpecificsReady ?? false,
+          canonicalMarketplaceReadinessReady:
+            refreshed.canonicalMarketplaceReadinessReady ?? false,
+          status: refreshed.listingReady ? "LISTING_READY" : "PARKED",
+          reasonCode: refreshed.firstBlocker,
+          listingReady: refreshed.listingReady,
+          packageCreated: refreshed.packageCreated,
+          stages: refreshed.stageStatuses,
+          requiredSpecificsBatchResolved: true,
+          dollarCheck: refreshed.listingReady ? {
+            title: refreshedSeed.title ?? null,
+            categoryId: refreshedSeed.categoryId ?? null,
+            imageUrls: Array.isArray(refreshedSeed.imageUrls)
+              ? refreshedSeed.imageUrls : [],
+            supplierCost: refreshedPricing.supplierCost ?? null,
+            targetPrice: refreshedPricing.targetPrice ?? null,
+          } : null,
+        }
+        candidateReadinessReevaluated += 1
+      }
+      requiredSpecificsBatch = {
+        ...resolvedBatch,
+        // Candidate-level evidence is durable in the queue assessment; do not
+        // duplicate exact source excerpts or image references in cron output.
+        candidates: resolvedBatch.candidates.map((candidate) => ({
+          radarCandidateId: candidate.radarCandidateId,
+          categoryId: candidate.categoryId,
+          resolvedCount: candidate.resolutions.filter((resolution) =>
+            !resolution.humanReviewRequired).length,
+          humanReviewRequiredCount: candidate.resolutions.filter(
+            (resolution) => resolution.humanReviewRequired).length,
+        })),
+        candidateReadinessReevaluated,
+      }
+    } catch (error) {
+      requiredSpecificsBatch = {
+        ...requiredSpecificsBatch,
+        productCount: requiredSpecificsPending.length,
+        unresolvedAspectCount: requiredSpecificsPending.reduce((sum, entry) =>
+          sum + entry.batchInput.unresolvedRequiredAspects.length, 0),
+        status: "PARTIAL",
+        reasonCode: failureCode(error),
+      }
     }
   }
 
@@ -1504,6 +1667,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     lunaProductsScanned: input.batch.lunaProductsScanned,
     familyToLunaCompatibleCount: input.batch.familyToLunaCompatibleCount,
     uniqueLunaCandidates: input.batch.uniqueLunaCandidates,
+    requiredSpecificsBatch,
     ambiguousFamilyAssignments: input.batch.ambiguousFamilyAssignments,
     stockSafeCount: input.batch.stockSafeCount,
     economicsPreflightCount: input.batch.economicsPreflightCount,

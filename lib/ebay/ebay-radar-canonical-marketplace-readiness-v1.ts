@@ -18,9 +18,13 @@ import type { EbayTaxonomyListingIntelligence } from
   "./ebay-seller-keyword-demand-gateway"
 import type { EbayTaxonomyAspectIntelligence } from
   "./ebay-seller-keyword-demand-gateway"
+import {
+  MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1,
+  requiredSpecificBatchEvidenceDigestV1,
+} from "./ebay-marketplace-required-specifics-batch-resolution-v1"
 
 export const RADAR_CANONICAL_MARKETPLACE_READINESS_VERSION =
-  "RADAR_CANONICAL_MARKETPLACE_READINESS_CONTINUATION_V2" as const
+  "RADAR_CANONICAL_MARKETPLACE_READINESS_CONTINUATION_V3" as const
 export const RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_VERSION =
   "RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_V1" as const
 
@@ -48,6 +52,28 @@ function strings(value: unknown, maximum = 100) {
   return Array.isArray(value)
     ? value.map((entry) => text(entry, 160)).filter(Boolean).slice(0, maximum)
     : []
+}
+
+function urls(value: unknown, maximum = 20) {
+  return Array.isArray(value)
+    ? value.map((entry) => text(entry, 2_000))
+      .filter((entry) => /^https:\/\//.test(entry)).slice(0, maximum)
+    : []
+}
+
+function stringRecord(value: unknown, maximumEntries = 80) {
+  return Object.fromEntries(Object.entries(record(value)).flatMap(
+    ([name, entry]) => {
+      const normalizedName = text(name, 120)
+      const normalizedValue = text(entry, 500)
+      return normalizedName && normalizedValue
+        ? [[normalizedName, normalizedValue] as const] : []
+    }).slice(0, maximumEntries))
+}
+
+function plainText(value: unknown, maximum = 8_000) {
+  return text(typeof value === "string"
+    ? value.replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi, " ") : "", maximum)
 }
 
 function canonical(value: unknown): string {
@@ -227,6 +253,40 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     ...evidenceCore,
     evidenceDigest: digest(evidenceCore),
   })
+  const exactSpecs = exactIdentity ? {
+    ...stringRecord(input.catalogRow?.product_metadata),
+    ...stringRecord(input.catalogRow?.metadata),
+    productType: text(input.catalogRow?.product_type, 160),
+    tags: strings(input.catalogRow?.tags, 40).join(" | "),
+  } : {}
+  const exactVariantData = exactIdentity ? {
+    title: text(input.catalogRow?.variant_title, 240),
+    sku: text(input.catalogRow?.sku, 120),
+    ...stringRecord(input.catalogRow?.variant_metadata),
+  } : {}
+  const batchInputCore = {
+    radarCandidateId: text(record(record(input.opportunity.assessment)
+      .radarFactoryCandidateV1).candidateId, 80),
+    lunaProductId: text(input.opportunity.supplier_product_id, 80),
+    lunaVariantId: text(input.opportunity.supplier_variant_id, 80),
+    supplierSku: text(input.opportunity.supplier_sku, 120),
+    marketplaceId: "EBAY_US" as const,
+    categoryId: input.taxonomy.categoryId ?? "",
+    exactProductTitle: exactTitle,
+    exactDescription: exactIdentity
+      ? plainText(input.catalogRow?.body_html) : "",
+    exactSpecs,
+    exactVariantData,
+    exactImageUrls: exactIdentity
+      ? unique([text(input.catalogRow?.featured_image_url, 2_000),
+        ...urls(input.catalogRow?.image_urls, 20)]) : [],
+    unresolvedRequiredAspects: unresolved,
+    officialAspectDefinitions: aspectContracts,
+  }
+  const requiredSpecificsBatchInput = Object.freeze({
+    ...batchInputCore,
+    inputEvidenceDigest: requiredSpecificBatchEvidenceDigestV1(batchInputCore),
+  })
   const sourceEvidence = {
     ...record(input.productTruth.sourceEvidence),
     requiredItemSpecificsTruthV1,
@@ -247,8 +307,59 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     evidence: requiredItemSpecificsTruthV1,
     resolutions: Object.freeze(resolutions),
     aspectContracts: Object.freeze(aspectContracts),
+    requiredSpecificsBatchInput,
     exactIdentity,
   })
+}
+
+function compatibleBatchResolution(input: Readonly<{
+  opportunity: JsonRecord
+  batchInput: JsonRecord
+}>) {
+  const assessment = record(input.opportunity.assessment)
+  const stored = record(assessment.marketplaceRequiredSpecificsBatchResolutionV1)
+  const { evidenceDigest, ...core } = stored
+  if (stored.contractVersion !==
+      MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1
+      || stored.authority !== "SELLER_OS_DETERMINISTIC_FACTORY"
+      || stored.radarCandidateId !== input.batchInput.radarCandidateId
+      || stored.lunaProductId !== input.batchInput.lunaProductId
+      || stored.lunaVariantId !== input.batchInput.lunaVariantId
+      || stored.supplierSku !== input.batchInput.supplierSku
+      || stored.marketplaceId !== input.batchInput.marketplaceId
+      || stored.categoryId !== input.batchInput.categoryId
+      || stored.inputEvidenceDigest !== input.batchInput.inputEvidenceDigest
+      || evidenceDigest !== requiredSpecificBatchEvidenceDigestV1(core)) {
+    return Object.freeze({ values: {}, evidence: {} })
+  }
+  const definitions = Array.isArray(input.batchInput.officialAspectDefinitions)
+    ? input.batchInput.officialAspectDefinitions.map(record) : []
+  const unresolved = new Set(strings(
+    input.batchInput.unresolvedRequiredAspects).map(aspectKey))
+  const values: Record<string, string> = {}
+  const accepted: JsonRecord[] = []
+  for (const raw of Array.isArray(stored.resolutions)
+    ? stored.resolutions : []) {
+    const resolution = record(raw)
+    const definition = definitions.find((entry) =>
+      aspectKey(entry.name) === aspectKey(resolution.aspectName))
+    const name = text(definition?.name, 120)
+    const value = text(resolution.resolvedValue, 500)
+    if (!name || !value || !unresolved.has(aspectKey(name))
+        || resolution.factInvented !== false
+        || resolution.humanReviewRequired !== false
+        || resolution.resolutionClass === "HUMAN_REVIEW") continue
+    const allowedValues = strings(definition?.allowedValues, 10_000)
+    const compatible = definition?.freeTextAllowed === true
+      || definition?.allowedValuesComplete !== true
+      || allowedValues.some((entry) => aspectKey(entry) === aspectKey(value))
+    if (!compatible) continue
+    values[name] = allowedValues.find((entry) =>
+      aspectKey(entry) === aspectKey(value)) ?? value
+    accepted.push(resolution)
+  }
+  return Object.freeze({ values: Object.freeze(values),
+    evidence: Object.freeze({ ...stored, resolutions: Object.freeze(accepted) }) })
 }
 
 function validUuid(value: unknown) {
@@ -281,6 +392,7 @@ function existingEvidence(input: Readonly<{
   listingPackageId: string
   accountKey: string
   now: Date
+  requiredSpecificsBatchResolutionDigest: string | null
 }>) {
   const assessment = record(input.opportunity.assessment)
   const value = record(assessment.canonicalMarketplaceReadinessV1)
@@ -296,6 +408,8 @@ function existingEvidence(input: Readonly<{
     && value.supplierSku === input.opportunity.supplier_sku
     && value.productTruthDigest === input.productTruthDigest
     && value.listingPackageId === input.listingPackageId
+    && (value.requiredSpecificsBatchResolutionDigest ?? null) ===
+      input.requiredSpecificsBatchResolutionDigest
     && validCandidateId(value.radarCandidateId)
     && value.demandEvidenceGrain === "FAMILY"
     && value.exactProductDemandClaimed === false
@@ -324,12 +438,19 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
   const productTruthDigest = text(input.productTruth.evidenceDigest, 80)
   const listingPackage = input.listingPackage ?? {}
   const listingPackageId = text(listingPackage.id, 80)
+  const storedBatchResolution = record(
+    assessment.marketplaceRequiredSpecificsBatchResolutionV1)
+  const requiredSpecificsBatchResolutionDigest =
+    /^sha256:[0-9a-f]{64}$/.test(text(
+      storedBatchResolution.evidenceDigest, 80))
+      ? text(storedBatchResolution.evidenceDigest, 80) : null
   const reusable = listingPackageId ? existingEvidence({
     opportunity: input.opportunity,
     productTruthDigest,
     listingPackageId,
     accountKey: input.accountKey,
     now,
+    requiredSpecificsBatchResolutionDigest,
   }) : null
   if (reusable) {
     const truthEvidence = record(record(input.productTruth.sourceEvidence)
@@ -338,6 +459,7 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
       evidence: Object.freeze(reusable),
       productTruth: Object.freeze(input.productTruth),
       requiredItemSpecificsTruth: Object.freeze(truthEvidence),
+      requiredSpecificsBatchInput: null,
       acquisitionRequired: false as const,
       reused: true as const,
     })
@@ -409,7 +531,7 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
   let catalogRow: JsonRecord | null = null
   if (categoryReady && input.productTruthExact) {
     const catalogRead = await input.supabase.from("market_radar_latest_variants")
-      .select("product_id,supplier_product_id,supplier_variant_id,sku,title,variant_title,vendor,product_type,tags,metadata,captured_at")
+      .select("product_id,supplier_product_id,supplier_variant_id,sku,title,variant_title,vendor,product_type,tags,metadata,featured_image_url,image_urls,captured_at")
       .eq("source_key", "lunaportex")
       .eq("supplier_product_id", input.opportunity.supplier_product_id)
       .eq("supplier_variant_id", input.opportunity.supplier_variant_id)
@@ -418,6 +540,16 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     const catalogRows = catalogRead.error || !Array.isArray(catalogRead.data)
       ? [] : catalogRead.data.map(record)
     catalogRow = catalogRows.length === 1 ? catalogRows[0] : null
+    if (catalogRow && text(catalogRow.product_id, 80)) {
+      const productRead = await input.supabase.from("market_radar_products")
+        .select("id,body_html,metadata")
+        .eq("id", catalogRow.product_id).limit(1).maybeSingle()
+      if (!productRead.error && productRead.data) {
+        catalogRow = { ...catalogRow,
+          body_html: record(productRead.data).body_html,
+          product_metadata: record(productRead.data).metadata }
+      }
+    }
   }
   const specificsTruth = categoryReady && taxonomy
     ? resolveRadarRequiredItemSpecificsTruthV1({
@@ -437,6 +569,10 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
       productTruth: resolvedProductTruth,
     },
   } : input.opportunity
+  const batchResolution = specificsTruth
+    ? compatibleBatchResolution({ opportunity: input.opportunity,
+      batchInput: specificsTruth.requiredSpecificsBatchInput as unknown as JsonRecord })
+    : Object.freeze({ values: {}, evidence: {} })
 
   let taxonomyPreflight: JsonRecord = {}
   if (categoryReady && taxonomy && validUuid(listingPackageId)) {
@@ -458,6 +594,8 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
         // Product Truth values are eligible for automatic readiness.
         existingAspects: {},
         provenProductValues: exactValues.provenProductValues,
+        marketplaceRequirementValues: batchResolution.values,
+        marketplaceRequirementEvidence: batchResolution.evidence,
         knownUnknownAspectNames: exactValues.knownUnknownAspectNames,
         unprovenAspectEvidenceRequirements:
           exactValues.unprovenAspectEvidenceRequirements,
@@ -527,6 +665,7 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     requiredItemSpecificsReady,
     requiredItemSpecificsTruth:
       specificsTruth?.evidence ?? null,
+    requiredSpecificsBatchResolutionDigest,
     taxonomyPreflight,
     fulfillmentPolicyId: fulfillmentPolicyId || null,
     paymentPolicyId: paymentPolicyId || null,
@@ -553,6 +692,8 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     productTruth: Object.freeze(resolvedProductTruth),
     requiredItemSpecificsTruth:
       Object.freeze(specificsTruth?.evidence ?? {}),
+    requiredSpecificsBatchInput:
+      specificsTruth?.requiredSpecificsBatchInput ?? null,
     acquisitionRequired: true as const,
     reused: false as const,
   })

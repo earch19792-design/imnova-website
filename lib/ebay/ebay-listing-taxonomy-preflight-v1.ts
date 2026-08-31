@@ -18,6 +18,8 @@ type BuildTaxonomyPreflightInput = {
   context: EbayListingContextIdentityV1
   existingAspects: Record<string, unknown>
   provenProductValues: Record<string, string>
+  marketplaceRequirementValues?: Record<string, string>
+  marketplaceRequirementEvidence?: Record<string, unknown>
   knownUnknownAspectNames?: string[]
   unprovenAspectEvidenceRequirements?: Record<string, string>
 }
@@ -111,6 +113,21 @@ export function buildEbayListingTaxonomyPreflightV1(
     provenValuesAutoBound[aspect.name] = compatible
   }
 
+  // Marketplace requirement resolutions are deliberately kept separate from
+  // exact Product Truth. They may include an official absence/fallback value
+  // (for example an eBay-supported value) without turning that value into a
+  // supplier fact.
+  const marketplaceValuesAutoBound: Record<string, string> = {}
+  for (const [name, proposed] of Object.entries(
+    input.marketplaceRequirementValues ?? {})) {
+    const aspect = officialByKey.get(key(name))
+    if (!aspect) continue
+    const compatible = compatibleOfficialValue(aspect, text(proposed))
+    if (!compatible) continue
+    resolvedAspects[aspect.name] = compatible
+    marketplaceValuesAutoBound[aspect.name] = compatible
+  }
+
   const aspects = input.taxonomy.aspects.map(canonicalAspect)
   const requiredAspects = aspects.filter((aspect) => aspect.required)
   const recommendedAspects = aspects.filter((aspect) =>
@@ -145,6 +162,9 @@ export function buildEbayListingTaxonomyPreflightV1(
     aspects,
     resolvedAspects,
     provenValuesAutoBound,
+    marketplaceValuesAutoBound,
+    marketplaceRequirementEvidence:
+      input.marketplaceRequirementEvidence ?? {},
     unprovenRequiredAspectNames,
     unprovenAspectEvidenceRequirements,
   }

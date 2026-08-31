@@ -1052,6 +1052,8 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     requiredItemSpecificAspectContracts:
       Array.isArray(requiredSpecificsTruth.aspectContracts)
         ? requiredSpecificsTruth.aspectContracts : [],
+    requiredSpecificsBatchInput:
+      marketplaceReadinessContinuation?.requiredSpecificsBatchInput ?? null,
     styleValue: styleResolution.value ?? null,
     styleSource: styleResolution.source ?? null,
     styleExactProductSupported:
