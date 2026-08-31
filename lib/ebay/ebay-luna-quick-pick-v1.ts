@@ -299,16 +299,25 @@ function card(input: Partial<LunaQuickPickCardV1> &
     elapsedMs: input.elapsedMs ?? 0 })
 }
 
-function outcomeStages(outcome: JsonRecord) {
+function outcomeStages(outcome: JsonRecord,
+  candidate: RadarRevenueFactoryCandidateV1) {
   const stages = record(outcome.stages)
   const shippingWaiting = outcome.shippingJobStatus === "WAITING_BROWSER_WORKER"
+  const demandReady = candidate.source ===
+      "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY" || candidate.source ===
+      "RADAR_FRONTIER_LUNA_IDENTITY"
+  const shippingReady = candidate.readyForEconomics ||
+    (candidate.economicsNextEvidence !== null &&
+      candidate.economicsNextEvidence !== "ACTUAL_LUNA_SHIPPING")
   const pass = (name: string) => stages[name] === "READY" ? "PASS" as const
     : "BLOCKED" as const
-  return emptyStages({ IDENTITY: "PASS", DUPLICATE: "PASS", STOCK: "PASS",
-    DEMAND: pass("DEMAND_READY"),
+  return emptyStages({ IDENTITY: "PASS", DUPLICATE: "PASS",
+    STOCK: candidate.stockReady ? "PASS" : "BLOCKED",
+    DEMAND: demandReady ? "PASS" : pass("DEMAND_READY"),
     SHIPPING: shippingWaiting ? "RUNNING" :
-      outcome.status === "PARKED_ECONOMICS" ? "BLOCKED" : "PASS",
-    ECONOMICS: pass("ECONOMICS_READY"),
+      shippingReady ? "PASS" : "BLOCKED",
+    ECONOMICS: candidate.readyForEconomics ? "PASS" :
+      pass("ECONOMICS_READY"),
     PRODUCT_TRUTH: pass("PRODUCT_TRUTH_READY"),
     LISTING_PACKAGE: pass("LISTING_PACKAGE_READY"),
     MARKETPLACE_READINESS:
@@ -536,14 +545,20 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       opportunityId: text(outcome.opportunityId, 80),
       candidateKey: text(outcome.candidateKey, 120),
       listingPackageId: text(outcome.listingPackageId, 80),
-      state: ready ? "READY" : outcome.status === "EXCEPTION"
-        ? "BLOCKED" : "RUNNING",
+      state: ready ? "READY" :
+        outcome.shippingJobStatus === "WAITING_BROWSER_WORKER"
+          ? "RUNNING" : "BLOCKED",
       lastStage: ready ? "LISTING_READY" :
         outcome.shippingJobStatus === "WAITING_BROWSER_WORKER"
-          ? "SHIPPING" : text(outcome.reasonCode, 120) ?? "ECONOMICS",
+          ? "SHIPPING" : text(outcome.economicsNextEvidence, 120) ??
+            text(record(outcome.priceDistributionContinuation).finalReason, 120) ??
+            text(outcome.reasonCode, 120) ?? "ECONOMICS",
       disposition: text(outcome.status, 80) ?? "PARKED",
-      exactBlocker: ready ? null : text(outcome.reasonCode, 120),
-      variants: entry.variants, stages: outcomeStages(outcome),
+      exactBlocker: ready ? null :
+        text(outcome.economicsNextEvidence, 120) ??
+        text(record(outcome.priceDistributionContinuation).finalReason, 120) ??
+        text(outcome.reasonCode, 120),
+      variants: entry.variants, stages: outcomeStages(outcome, candidate),
       dollarCheck: ready ? record(outcome.dollarCheck) : null }))
   }
   const orderedUrls = [...collected.invalid.map((entry) => entry.sourceUrl),
