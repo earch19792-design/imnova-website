@@ -1035,12 +1035,8 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
     const demandEvidenceDigest = digest(references)
     const enrollmentRecovery = refreshAuthority !== null &&
       isExistingFamilyRefreshEnrollmentRecoveryV1(refreshAuthority)
-    const recoveryEvidenceMatches = enrollmentRecovery &&
-      Date.parse(evidenceObservedAt) === Date.parse(
-        refreshAuthority.evidenceObservedAt) &&
-      demandEvidenceDigest === refreshAuthority.demandEvidenceDigest
-    if (refreshAuthority && !recoveryEvidenceMatches && (
-        enrollmentRecovery || Date.parse(evidenceObservedAt) <= Date.parse(
+    if (refreshAuthority && !enrollmentRecovery && (
+        Date.parse(evidenceObservedAt) <= Date.parse(
           refreshAuthority.evidenceObservedAt) ||
         demandEvidenceDigest === refreshAuthority.demandEvidenceDigest)) {
       duplicatesSuppressed += 1
@@ -1098,6 +1094,21 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
       limitations: ["MARKETPLACE_INSIGHTS_UNAVAILABLE_OR_RESTRICTED",
         "EXACT_PRODUCT_DEMAND_NOT_CLAIMED"],
     })
+    if (enrollmentRecovery && refreshAuthority && (
+        observation.observationId !== refreshAuthority.observationId ||
+        Date.parse(observation.evidenceObservedAt) !== Date.parse(
+          refreshAuthority.evidenceObservedAt))) {
+      duplicatesSuppressed += 1
+      candidates.push(Object.freeze({ status: "DUPLICATE" as const,
+        reason: "EXISTING_FAMILY_REFRESH_RECOVERY_OBSERVATION_MISMATCH",
+        familyDefinition: null, observation: null,
+        existingFamilyId: refreshAuthority.familyId,
+        existingEnrollmentEnrolledAt: refreshAuthority.enrolledAt,
+        legacyCategorySuccessorResolved: false,
+        taskId: cluster.taskIds[0] ?? null,
+        batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
+      continue
+    }
     const legacyCategorySuccessorResolved = refreshAuthority !== null &&
       !/^\d+$/.test(refreshAuthority.familyIdentity.structuredDefinition[
         "category id"] ?? "")
