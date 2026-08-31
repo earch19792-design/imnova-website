@@ -90,7 +90,7 @@ function normalizeProfitabilityFrontier(value: unknown) {
     shipping_value: inner.shippingValue,
     market_price_median: inner.marketPriceMedian,
     ebay_fee_estimate_at_median: inner.ebayFeeEstimateAtMedian,
-    hard_blockers: inner.hardBlockers,
+    hard_blockers: inner.currentHardBlockers ?? inner.hardBlockers,
   }
 }
 

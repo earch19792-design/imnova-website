@@ -2,6 +2,11 @@ import { createHash } from "node:crypto"
 
 import { materializeSellerOsDeterministicFactoryCandidateV1 } from
   "./ebay-smart-stocking-durable-factory-v1"
+import { buildSellerOsPrelinkedLaunchConfigurationV1 } from
+  "./ebay-prelinked-listing-fast-lane-foundation-v1"
+import { calculateSellerOsProfitabilityFrontierV1 } from
+  "./ebay-prelinked-profitability-frontier-v1"
+import { DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG } from "./ebay-unit-economics"
 
 export const OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_VERSION =
   "OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_V1" as const
@@ -68,6 +73,15 @@ export type RadarRevenueFactoryCandidateV1 = Readonly<{
   readyForEconomics: boolean
   economicsProfit: number | null
   economicsMargin: number | null
+  economicsNextEvidence: string | null
+  supplierCostUsd: number | null
+  supplierCostObservedAt: string | null
+  productTitle: string | null
+  variantTitle: string | null
+  gtin: string | null
+  canonicalProductUrl: string | null
+  imageUrls: readonly string[]
+  supplierInventoryQuantity: number | null
   familyAssignmentConfidence: "PROVEN" | "SUPPORTED" | null
   demandEvidenceGrain: "FAMILY"
   exactProductDemandClaimed: false
@@ -380,8 +394,9 @@ function prepareProductResearchRows(
 
 function frontierEconomicsReady(frontier: JsonRecord) {
   const economics = text(frontier.economicClassification, 80)
-  const hardBlockers = Array.isArray(frontier.hardBlockers)
-    ? frontier.hardBlockers : []
+  const hardBlockers = Array.isArray(frontier.currentHardBlockers)
+    ? frontier.currentHardBlockers
+    : Array.isArray(frontier.hardBlockers) ? frontier.hardBlockers : []
   return economics === "ECONOMICALLY_PROMISING" &&
     frontier.shippingStatus === "SHIPPING_DURABLY_PERSISTED" &&
     frontier.nextBestEvidence === "NONE" &&
@@ -449,6 +464,19 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
         ? number(exactFrontier.contributionProfitAtMarketMedian) : null,
       economicsMargin: exactFrontier
         ? number(exactFrontier.contributionMarginAtMarketMedian) : null,
+      economicsNextEvidence: exactFrontier
+        ? text(exactFrontier.nextBestEvidence, 80) : null,
+      supplierCostUsd: number(row.price),
+      supplierCostObservedAt: iso(row.captured_at),
+      productTitle: text(row.title, 350), variantTitle: text(row.variant_title, 200),
+      gtin: text(row.barcode, 120),
+      canonicalProductUrl: text(row.product_url, 500),
+      imageUrls: Object.freeze((Array.isArray(row.image_urls)
+        ? row.image_urls : []).flatMap((entry) => {
+          const url = text(entry, 500)
+          return url ? [url] : []
+        }).slice(0, 24)),
+      supplierInventoryQuantity: number(row.inventory_quantity),
       familyAssignmentConfidence: confidence,
       demandEvidenceGrain: "FAMILY" as const,
       exactProductDemandClaimed: false as const,
@@ -482,6 +510,18 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
       readyForEconomics: economicsReady,
       economicsProfit: number(frontier.contributionProfitAtMarketMedian),
       economicsMargin: number(frontier.contributionMarginAtMarketMedian),
+      economicsNextEvidence: text(frontier.nextBestEvidence, 80),
+      supplierCostUsd: number(row.price),
+      supplierCostObservedAt: iso(row.captured_at),
+      productTitle: text(row.title, 350), variantTitle: text(row.variant_title, 200),
+      gtin: text(row.barcode, 120),
+      canonicalProductUrl: text(row.product_url, 500),
+      imageUrls: Object.freeze((Array.isArray(row.image_urls)
+        ? row.image_urls : []).flatMap((entry) => {
+          const url = text(entry, 500)
+          return url ? [url] : []
+        }).slice(0, 24)),
+      supplierInventoryQuantity: number(row.inventory_quantity),
       familyAssignmentConfidence: null,
       demandEvidenceGrain: "FAMILY" as const,
       exactProductDemandClaimed: false as const,
@@ -513,6 +553,11 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
         : `FAMILY_SEED_ONLY_${matchClass ?? "EXACT_PRODUCT_IDENTITY_UNPROVEN"}`,
       exactCandidateIdentity: true, lunaMatch: exact, stockReady: false,
       readyForEconomics: false, economicsProfit: null, economicsMargin: null,
+      economicsNextEvidence: null, supplierCostUsd: null,
+      supplierCostObservedAt: null,
+      productTitle: null, variantTitle: null, gtin: null,
+      canonicalProductUrl: null, imageUrls: Object.freeze([]),
+      supplierInventoryQuantity: null,
       marketRadarProductId: null,
       familyAssignmentConfidence: null,
       demandEvidenceGrain: "FAMILY" as const,
@@ -612,7 +657,7 @@ export async function collectRadarRevenueFactoryCandidateBatchV1(input: Readonly
       p_family_ids: familyIds, p_limit: 100,
     }),
     input.supabase.from("market_radar_latest_variants")
-      .select("product_id,supplier_product_id,supplier_variant_id,sku,title,variant_title,product_type,tags,metadata,price,available,inventory_quantity,product_url,captured_at")
+      .select("product_id,supplier_product_id,supplier_variant_id,sku,title,variant_title,product_type,tags,metadata,price,available,inventory_quantity,product_url,image_urls,barcode,captured_at")
       .eq("source_key", "lunaportex").order("captured_at", { ascending: false })
       .limit(2_000),
   ])
@@ -668,6 +713,220 @@ export async function collectRadarRevenueFactoryCandidateBatchV1(input: Readonly
   })
 }
 
+type RadarEconomicsPreflightClientV1 = Readonly<{
+  rpc: (name: string, parameters?: JsonRecord) => PromiseLike<{
+    data: unknown
+    error: unknown
+  }>
+}>
+
+function normalizedInstant(value: string) {
+  return new Date(Date.parse(value)).toISOString()
+}
+
+function laterInstant(left: string, right: string) {
+  return normalizedInstant(Date.parse(left) >= Date.parse(right) ? left : right)
+}
+
+export function buildRadarCandidateEconomicsPreflightV1(input: Readonly<{
+  accountKey: string
+  candidate: RadarRevenueFactoryCandidateV1
+}>) {
+  const candidate = input.candidate
+  if (candidate.source !== "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY" ||
+      candidate.disposition !== "PASS_TO_LUNA" ||
+      !candidate.exactCandidateIdentity || !candidate.lunaMatch ||
+      !candidate.stockReady || !candidate.lunaProductId ||
+      !candidate.lunaVariantId || !candidate.supplierSku) {
+    throw new Error("RADAR_ECONOMICS_PREFLIGHT_CANDIDATE_NOT_ELIGIBLE")
+  }
+  if (candidate.lineage.familyDemandStatus !== "FAMILY_DEMAND_PROVEN" &&
+      candidate.lineage.familyDemandStatus !== "FAMILY_DEMAND_SUPPORTED") {
+    throw new Error("RADAR_ECONOMICS_PREFLIGHT_DEMAND_NOT_READY")
+  }
+  if (candidate.lineage.priceBand.currency !== "USD" ||
+      candidate.lineage.priceBand.minimum === null ||
+      candidate.lineage.priceBand.median === null ||
+      candidate.lineage.priceBand.maximum === null) {
+    throw new Error("RADAR_ECONOMICS_PREFLIGHT_MARKET_PRICE_UNPROVEN")
+  }
+  if (candidate.supplierCostUsd === null || candidate.supplierCostUsd <= 0 ||
+      !candidate.supplierCostObservedAt) {
+    throw new Error("RADAR_ECONOMICS_PREFLIGHT_SUPPLIER_COST_UNPROVEN")
+  }
+  const configuration = buildSellerOsPrelinkedLaunchConfigurationV1({
+    accountKey: input.accountKey,
+    marketplaceId: "EBAY_US",
+    configurationMode: "SINGLE_COMPONENT",
+    expectedComponentCount: 1,
+    components: [{
+      lunaProductId: candidate.lunaProductId,
+      lunaVariantId: candidate.lunaVariantId,
+      lunaSku: candidate.supplierSku,
+      supplierQuantityRequired: 1,
+      supplierIdentityStatus: "EXACT_PRELINKED",
+      p2LinkageId: null,
+    }],
+  })
+  if (!configuration.complete || configuration.components.length !== 1) {
+    throw new Error("RADAR_ECONOMICS_PREFLIGHT_CONFIGURATION_NOT_EXACT")
+  }
+  const evaluatedAt = laterInstant(candidate.lineage.sourceUpdatedAt,
+    candidate.supplierCostObservedAt)
+  const marketReference = `radar-family-demand:${candidate.lineage.familyId}`
+  const marketEvidence = Object.freeze({
+    authorityClass: "OFFICIAL_EXTERNAL_FACT" as const,
+    reference: marketReference,
+    evidenceDigest: candidate.lineage.demandEvidenceDigest,
+    observedAt: normalizedInstant(candidate.lineage.evidenceObservedAt),
+    maximumAgeSeconds: candidate.lineage.maximumAgeSeconds,
+  })
+  const supplierEvidenceDigest = digest({
+    source: "LUNA_MARKET_RADAR_EXACT_VARIANT_PRICE_USD_V1",
+    productId: candidate.lunaProductId,
+    variantId: candidate.lunaVariantId,
+    supplierSku: candidate.supplierSku,
+    unitCostUsd: candidate.supplierCostUsd,
+    observedAt: normalizedInstant(candidate.supplierCostObservedAt),
+  })
+  const costEvidence = Object.freeze({
+    authorityClass: "OFFICIAL_EXTERNAL_FACT" as const,
+    reference: `luna-market-radar-variant:${candidate.lunaVariantId}`,
+    evidenceDigest: supplierEvidenceDigest,
+    observedAt: normalizedInstant(candidate.supplierCostObservedAt),
+    maximumAgeSeconds: 30 * 24 * 60 * 60,
+  })
+  const shippingEvidence = Object.freeze({
+    authorityClass: "UNPROVEN" as const,
+    reference: `luna-shipping-candidate:${candidate.candidateId}`,
+    evidenceDigest: digest({ candidateId: candidate.candidateId,
+      shippingStatus: "UNPROVEN" }),
+    observedAt: evaluatedAt,
+    maximumAgeSeconds: 30 * 24 * 60 * 60,
+  })
+  const price = candidate.lineage.priceBand
+  const frontier = calculateSellerOsProfitabilityFrontierV1({
+    configurationId: configuration.configurationIdentity,
+    familyId: candidate.familyId,
+    familyName: candidate.familyName,
+    familyDemandStatus: candidate.lineage.familyDemandStatus,
+    lunaProductId: candidate.lunaProductId,
+    lunaVariantId: candidate.lunaVariantId,
+    lunaSku: candidate.supplierSku,
+    // The accepted assignment requires corroborated supplier category/type,
+    // structured family terms and one unique exact supplier identity. Title
+    // overlap alone never reaches this branch.
+    productFit: "STRONG",
+    components: [{
+      componentId: configuration.components[0].componentIdentityId,
+      unitCostUsd: candidate.supplierCostUsd,
+      supplierQuantityRequired: 1,
+      costEvidence,
+      quantityEvidence: costEvidence,
+    }],
+    marketPrices: {
+      low: { valueUsd: price.minimum, support: "SUPPORTED", evidence: marketEvidence },
+      median: { valueUsd: price.median, support: "SUPPORTED", evidence: marketEvidence },
+      high: { valueUsd: price.maximum, support: "SUPPORTED", evidence: marketEvidence },
+    },
+    shipping: { status: "SHIPPING_UNPROVEN", valueUsd: null,
+      evidence: shippingEvidence },
+    complianceStatus: "UNPROVEN",
+    currentHardBlockers: [],
+    evidenceAcquisitionCost: "LOW",
+    evaluatedAt,
+  })
+  const economicPolicyDigest = digest({
+    source: "SERVER_CANONICAL_EBAY_UNIT_ECONOMICS_V1",
+    config: DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,
+  })
+  return Object.freeze({
+    candidateId: candidate.candidateId,
+    frontier,
+    persistence: Object.freeze({
+      opportunityCaseId: candidate.lineage.opportunityCaseId,
+      marketPriceEvidenceReference: marketReference,
+      marketPriceEvidenceDigest: candidate.lineage.demandEvidenceDigest,
+      ebayFeePolicyReference:
+        "SERVER_CANONICAL_EBAY_UNIT_ECONOMICS_V1_PROVISIONAL_FEE_POLICY",
+      economicPolicyReference: "SERVER_CANONICAL_EBAY_UNIT_ECONOMICS_V1",
+      economicPolicyDigest,
+      sourceUpdatedAt: normalizedInstant(candidate.lineage.sourceUpdatedAt),
+      evidenceCutoffAt: evaluatedAt,
+    }),
+    shippingRequestedOnlyWhenNeeded:
+      frontier.nextBestEvidence === "ACTUAL_LUNA_SHIPPING",
+    marketplaceWrites: 0 as const,
+  })
+}
+
+/**
+ * Creates or reuses the existing durable profitability frontier for every
+ * independently eligible stock-safe Radar candidate. A failed candidate is
+ * parked in the returned outcome and never aborts the remaining batch.
+ */
+export async function ensureRadarCandidateEconomicsPreflightsV1(input: Readonly<{
+  supabase: RadarEconomicsPreflightClientV1
+  accountKey: string
+  batch: ReturnType<typeof buildRadarRevenueFactoryCandidateBatchV1>
+}>) {
+  const outcomes: JsonRecord[] = []
+  for (const candidate of input.batch.candidates) {
+    if (candidate.source !== "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY" ||
+        candidate.disposition !== "PASS_TO_LUNA" || !candidate.stockReady ||
+        candidate.economicsNextEvidence !== null || candidate.readyForEconomics) {
+      continue
+    }
+    try {
+      const preflight = buildRadarCandidateEconomicsPreflightV1({
+        accountKey: input.accountKey, candidate,
+      })
+      const persistence = preflight.persistence
+      const write = await input.supabase.rpc(
+        "put_seller_os_profitability_frontier_v1", {
+          p_account_key: input.accountKey,
+          p_marketplace_id: "EBAY_US",
+          p_opportunity_case_id: persistence.opportunityCaseId,
+          p_market_price_evidence_reference:
+            persistence.marketPriceEvidenceReference,
+          p_market_price_evidence_digest:
+            persistence.marketPriceEvidenceDigest,
+          p_ebay_fee_policy_reference: persistence.ebayFeePolicyReference,
+          p_economic_policy_reference: persistence.economicPolicyReference,
+          p_economic_policy_digest: persistence.economicPolicyDigest,
+          p_source_updated_at: persistence.sourceUpdatedAt,
+          p_evidence_cutoff_at: persistence.evidenceCutoffAt,
+          p_frontier: preflight.frontier,
+        })
+      const result = record(write.data)
+      const outcome = text(result.outcome, 40)
+      if (write.error || !["CREATED", "IDEMPOTENT_SUCCESS"].includes(
+        outcome ?? "")) {
+        throw new Error("RADAR_ECONOMICS_PREFLIGHT_DURABLE_WRITE_FAILED")
+      }
+      outcomes.push({ candidateId: candidate.candidateId,
+        status: outcome === "CREATED" ? "CREATED" : "REUSED",
+        reasonCode: preflight.frontier.nextBestEvidence === "ACTUAL_LUNA_SHIPPING"
+          ? "SHIPPING_EVIDENCE_REQUIRED" : preflight.frontier.nextBestEvidence,
+        frontierDigest: preflight.frontier.frontierDigest,
+        shippingRequestedOnlyWhenNeeded:
+          preflight.shippingRequestedOnlyWhenNeeded })
+    } catch (error) {
+      outcomes.push({ candidateId: candidate.candidateId, status: "PARKED_ECONOMICS",
+        reasonCode: failureCode(error) })
+    }
+  }
+  return Object.freeze({
+    attempted: outcomes.length,
+    created: outcomes.filter((entry) => entry.status === "CREATED").length,
+    reused: outcomes.filter((entry) => entry.status === "REUSED").length,
+    parkedEconomics: outcomes.filter((entry) =>
+      entry.status === "PARKED_ECONOMICS").length,
+    outcomes: Object.freeze(outcomes),
+    marketplaceWrites: 0 as const,
+  })
+}
+
 type DurableFactoryClientV1 = Parameters<
   typeof materializeSellerOsDeterministicFactoryCandidateV1
 >[0]["supabase"]
@@ -713,6 +972,149 @@ function failureCode(error: unknown) {
     ? message : "RADAR_DURABLE_FACTORY_CANDIDATE_FAILED"
 }
 
+function buildRadarSmartStockingQueueRowV1(
+  candidate: RadarRevenueFactoryCandidateV1,
+) {
+  if (!candidate.lunaProductId || !candidate.lunaVariantId ||
+      !candidate.supplierSku || !candidate.productTitle ||
+      candidate.supplierCostUsd === null || !candidate.supplierCostObservedAt) {
+    throw new Error("RADAR_SMART_STOCKING_DURABLE_INPUT_UNPROVEN")
+  }
+  const stock = Object.freeze({
+    state: "IN_STOCK_SUPPLIER_STATED" as const,
+    freshness: "FRESH" as const,
+    observedAt: normalizedInstant(candidate.supplierCostObservedAt),
+    exactIdentityVerified: true as const,
+    supplierStatedQuantity: candidate.supplierInventoryQuantity,
+    safeCapacity: null,
+    safeCapacityStatus: "UNPROVEN_NOT_INFERRED" as const,
+  })
+  const productTruthCore = {
+    authorityClass: "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1",
+    candidateKey: candidate.candidateId,
+    lunaProductId: candidate.lunaProductId,
+    lunaVariantId: candidate.lunaVariantId,
+    supplierSku: candidate.supplierSku,
+    gtin: candidate.gtin,
+    supplierPriceUsd: candidate.supplierCostUsd,
+    title: candidate.productTitle,
+    sourceUrl: candidate.canonicalProductUrl,
+    imageCount: candidate.imageUrls.length,
+    rawHtmlStored: false,
+    marketplaceWrites: 0,
+    stock,
+  }
+  const canonicalReadinessBlockers = [
+    ...(candidate.imageUrls.length ? [] : ["AUTHORIZED_PRODUCT_IMAGES_UNPROVEN"]),
+    ...(!candidate.lineage.familyCategoryId
+      ? ["MARKETPLACE_CATEGORY_NOT_READY"] : []),
+    "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN",
+  ]
+  const assessment = {
+    radarFactoryCandidateV1: {
+      contractVersion: "NIGHT_RADAR_AUTOMATIC_GOLDEN_PATH_HANDOFF_V1",
+      authority: "SELLER_OS_DETERMINISTIC_FACTORY",
+      candidateId: candidate.candidateId,
+      familyId: candidate.familyId,
+      demandEvidenceGrain: candidate.demandEvidenceGrain,
+      exactProductDemandClaimed: false,
+      familyAssignmentConfidence: candidate.familyAssignmentConfidence,
+      itemSpecificLogicUsed: false,
+      marketplaceWrites: 0,
+    },
+    candidate: {
+      candidateKey: candidate.candidateId,
+      marketRadarProductId: candidate.marketRadarProductId,
+      supplierProductId: candidate.lunaProductId,
+      supplierVariantId: candidate.lunaVariantId,
+      sku: candidate.supplierSku,
+      title: candidate.productTitle,
+      variantTitle: candidate.variantTitle,
+      gtin: candidate.gtin,
+      supplierCost: candidate.supplierCostUsd,
+      available: true,
+      inventoryQuantity: candidate.supplierInventoryQuantity,
+      stockCapturedAt: normalizedInstant(candidate.supplierCostObservedAt),
+      imageUrls: candidate.imageUrls,
+      description: "",
+    },
+    productTruth: { ...productTruthCore,
+      evidenceDigest: digest(productTruthCore) },
+    identity: { exactIdentityConfirmed: true, comparables: [] },
+    economics: {
+      ready: true,
+      estimatedNetProfit: candidate.economicsProfit,
+      estimatedNetMarginPercent: candidate.economicsMargin,
+    },
+    market: {
+      familyDemandStatus: candidate.lineage.familyDemandStatus,
+      demandEvidenceGrain: "FAMILY",
+      exactProductDemandClaimed: false,
+    },
+    canonicalReadiness: { blockers: canonicalReadinessBlockers },
+    listingIntelligencePackage: {
+      recommendedTitle: candidate.productTitle.slice(0, 80),
+      titleStrategy: {
+        titleFormula: candidate.productTitle.slice(0, 80),
+        primarySearchPhrase: candidate.lineage.familyName,
+        secondarySearchTerms: [],
+        confirmedAttributes: [],
+        strategyConfidence: "PRODUCT_TRUTH_AND_FAMILY_MARKET_SUPPORTED",
+      },
+      categoryRecommendation: {
+        categoryId: candidate.lineage.familyCategoryId,
+        categoryName: candidate.lineage.familyName,
+      },
+      itemSpecifics: { supplierConfirmed: {} },
+      shippingRecommendation: {
+        supplierShippingEconomicsUsd: null,
+        buyerFacingShippingPolicy: "USE_CANONICAL_ACCOUNT_POLICY",
+      },
+    },
+    hardGates: canonicalReadinessBlockers,
+    evidenceGuards: [],
+  }
+  return {
+    candidate_key: candidate.candidateId,
+    market_radar_product_id: candidate.marketRadarProductId,
+    supplier_product_id: candidate.lunaProductId,
+    supplier_variant_id: candidate.lunaVariantId,
+    supplier_sku: candidate.supplierSku,
+    product_title: candidate.productTitle,
+    variant_title: candidate.variantTitle,
+    gtin: candidate.gtin,
+    queue_status: "review",
+    decision: "FACTORY_PREPARED",
+    opportunity_score: 0,
+    demand_score: candidate.lineage.familyDemandStatus ===
+      "FAMILY_DEMAND_PROVEN" ? 100 : 75,
+    economics_score: candidate.readyForEconomics ? 100 : 0,
+    identity_score: 100,
+    competition_score: 0,
+    supply_score: 100,
+    listing_readiness_score: 0,
+    active_comparables: candidate.lineage.soldComparableCount,
+    sellers_with_movement: 0,
+    estimated_weekly_velocity: null,
+    median_total_buyer_price: candidate.lineage.priceBand.median,
+    estimated_net_profit: candidate.economicsProfit,
+    supplier_price: candidate.supplierCostUsd,
+    supplier_available: true,
+    supplier_inventory_quantity: candidate.supplierInventoryQuantity,
+    supplier_snapshot_at: normalizedInstant(candidate.supplierCostObservedAt),
+    best_selling_match_score: null,
+    best_selling_matches: [],
+    keyword_structure: assessment.listingIntelligencePackage.titleStrategy,
+    hard_gates: canonicalReadinessBlockers,
+    evidence_guards: [],
+    assessment,
+    last_scanned_at: normalizedInstant(candidate.supplierCostObservedAt),
+    next_scan_at: new Date(Date.parse(candidate.supplierCostObservedAt) +
+      86_400_000).toISOString(),
+    updated_at: normalizedInstant(candidate.supplierCostObservedAt),
+  }
+}
+
 /**
  * The durable handoff for the existing Radar adapter. This function does not
  * create a second candidate model: it resolves the exact existing Smart
@@ -743,6 +1145,24 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
       .in("supplier_variant_id", variantIds).limit(1_000)
     : { data: [], error: null }
   const queueRows = rows(queueRead.data)
+  const queueCreationFailures = new Map<string, string>()
+  for (const candidate of eligible) {
+    if (queueRows.some((row) => exactQueueIdentity(candidate, row))) continue
+    try {
+      const write = await input.supabase.from("ebay_luna_opportunity_queue")
+        .upsert(buildRadarSmartStockingQueueRowV1(candidate), {
+          onConflict: "candidate_key",
+        }).select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,gtin,assessment")
+        .single()
+      if (write.error || !write.data ||
+          !exactQueueIdentity(candidate, record(write.data))) {
+        throw new Error("RADAR_SMART_STOCKING_DURABLE_WRITE_FAILED")
+      }
+      queueRows.push(record(write.data))
+    } catch (error) {
+      queueCreationFailures.set(candidate.candidateId, failureCode(error))
+    }
+  }
   const decisionRead = queueRows.length
     ? await input.supabase.from("marketplace_listing_decision_packages")
       .select("id,status,package_payload")
@@ -758,13 +1178,15 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
       const reason = candidate.disposition === "REJECT"
         ? candidate.dispositionReason
         : !candidate.stockReady ? "CANONICAL_STOCK_NOT_READY"
-          : !candidate.readyForEconomics ? "ECONOMICS_NOT_READY"
+          : !candidate.readyForEconomics ? "PARKED_ECONOMICS"
             : "DETERMINISTIC_FACTORY_INPUT_NOT_ELIGIBLE"
       outcomes.push({ candidateId: candidate.candidateId,
         familyId: candidate.familyId, familyName: candidate.familyName,
         lunaProductId: candidate.lunaProductId,
         lunaVariantId: candidate.lunaVariantId, supplierSku: candidate.supplierSku,
-        status: "PARKED", reasonCode: reason, deterministicRejected: true,
+        status: reason === "PARKED_ECONOMICS" ? "PARKED_ECONOMICS" : "PARKED",
+        reasonCode: reason, economicsNextEvidence: candidate.economicsNextEvidence,
+        deterministicRejected: true,
         listingReady: false })
       continue
     }
@@ -783,10 +1205,11 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         familyId: candidate.familyId, familyName: candidate.familyName,
         lunaProductId: candidate.lunaProductId,
         lunaVariantId: candidate.lunaVariantId, supplierSku: candidate.supplierSku,
-        status: exactRows.length ? "EXCEPTION" : "PARKED",
-        reasonCode: exactRows.length
+        status: exactRows.length || queueCreationFailures.has(candidate.candidateId)
+          ? "EXCEPTION" : "PARKED",
+        reasonCode: queueCreationFailures.get(candidate.candidateId) ?? (exactRows.length
           ? "RADAR_SMART_STOCKING_IDENTITY_AMBIGUOUS"
-          : "RADAR_SMART_STOCKING_CANDIDATE_NOT_DURABLE_YET",
+          : "RADAR_SMART_STOCKING_CANDIDATE_NOT_DURABLE_YET"),
         listingReady: false })
       continue
     }
@@ -903,7 +1326,8 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     economicsReady: stageCount("ECONOMICS_READY"),
     listingPackageReady: stageCount("LISTING_PACKAGE_READY"),
     listingReady: ready.length,
-    parked: outcomes.filter((outcome) => outcome.status === "PARKED").length,
+    parked: outcomes.filter((outcome) =>
+      outcome.status === "PARKED" || outcome.status === "PARKED_ECONOMICS").length,
     exceptions: outcomes.filter((outcome) => outcome.status === "EXCEPTION").length,
     humanClicksRequired: 0 as const,
     elapsedMs: Date.now() - startedAt,

@@ -18,6 +18,7 @@ import { runSellerOsDemandFirstBroadNetNightlyV1 } from
   "@/lib/ebay/ebay-demand-first-broad-net-orchestrator-v1"
 import {
   collectRadarRevenueFactoryCandidateBatchV1,
+  ensureRadarCandidateEconomicsPreflightsV1,
   materializeRadarRevenueFactoryCandidateBatchV1,
 } from "@/lib/ebay/ebay-opportunity-radar-revenue-factory-adapter-v1"
 import { getEbaySellerAccountScopeConfiguration } from
@@ -49,12 +50,31 @@ export async function GET(req: Request) {
     })
     let factory
     try {
-      const candidateBatch = await collectRadarRevenueFactoryCandidateBatchV1({
+      const initialCandidateBatch = await collectRadarRevenueFactoryCandidateBatchV1({
         supabase, accountKey, targetCandidates: 100,
       })
-      factory = await materializeRadarRevenueFactoryCandidateBatchV1({
+      const economicsPreflight = await ensureRadarCandidateEconomicsPreflightsV1({
+        supabase, accountKey, batch: initialCandidateBatch,
+      })
+      const candidateBatch = economicsPreflight.created > 0 ||
+          economicsPreflight.reused > 0
+        ? await collectRadarRevenueFactoryCandidateBatchV1({
+            supabase, accountKey, targetCandidates: 100,
+          })
+        : initialCandidateBatch
+      const materialized = await materializeRadarRevenueFactoryCandidateBatchV1({
         supabase, accountKey, batch: candidateBatch,
       })
+      factory = {
+        ...materialized,
+        economicsPreflightAttempted: economicsPreflight.attempted,
+        economicsPreflightCreated: economicsPreflight.created,
+        economicsPreflightReused: economicsPreflight.reused,
+        parkedEconomics: economicsPreflight.parkedEconomics +
+          materialized.outcomes.filter((outcome) =>
+            outcome.status === "PARKED_ECONOMICS").length,
+        economicsPreflightOutcomes: economicsPreflight.outcomes,
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : ""
       const reasonCode = /^[A-Z][A-Z0-9_]{2,119}$/.test(message)
