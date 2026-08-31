@@ -178,6 +178,88 @@ function digest(value: unknown) {
   return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`
 }
 
+type AlreadyLiveExactProductGuardV1 = Readonly<{
+  status: "AVAILABLE" | "UNAVAILABLE"
+  matches: ReadonlyMap<string, Readonly<{
+    ebayItemIds: readonly string[]
+    linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1"
+  }>>
+  reasonCode: string | null
+}>
+
+async function readAlreadyLiveExactProductsV1(input: Readonly<{
+  supabase: DurableFactoryClientV1
+  accountKey: string
+  candidates: readonly RadarRevenueFactoryCandidateV1[]
+}>): Promise<AlreadyLiveExactProductGuardV1> {
+  const exactCandidates = input.candidates.filter((candidate) =>
+    candidate.exactCandidateIdentity && candidate.lunaProductId
+    && candidate.lunaVariantId && candidate.supplierSku)
+  if (!exactCandidates.length) return Object.freeze({
+    status: "AVAILABLE", matches: new Map(), reasonCode: null,
+  })
+  const variantIds = [...new Set(exactCandidates.map((candidate) =>
+    candidate.lunaVariantId!))]
+  const decisionRead = await input.supabase
+    .from("seller_os_luna_linkage_decisions")
+    .select("decision_id,ebay_item_id,luna_product_id,luna_variant_id,luna_sku,decision,decision_version,classification,contract_version")
+    .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
+    .in("luna_variant_id", variantIds)
+    .order("decision_version", { ascending: false }).limit(1_000)
+  if (decisionRead.error) return Object.freeze({
+    status: "UNAVAILABLE", matches: new Map(),
+    reasonCode: "ALREADY_LIVE_EXACT_PRODUCT_LINKAGE_READ_FAILED",
+  })
+  const latestByItem = new Map<string, JsonRecord>()
+  for (const decision of rows(decisionRead.data).sort((left, right) =>
+    (number(right.decision_version) ?? -1) -
+      (number(left.decision_version) ?? -1))) {
+    const itemId = text(decision.ebay_item_id, 30)
+    if (itemId && /^\d{9,19}$/.test(itemId) && !latestByItem.has(itemId)) {
+      latestByItem.set(itemId, decision)
+    }
+  }
+  const approved = [...latestByItem.entries()].filter(([, decision]) =>
+    decision.decision === "APPROVE_EXACT_LINKAGE"
+    && decision.classification === "EXACT_UNIQUE_MATCH"
+    && text(decision.luna_product_id, 80)
+    && text(decision.luna_variant_id, 80)
+    && text(decision.luna_sku, 120))
+  if (!approved.length) return Object.freeze({
+    status: "AVAILABLE", matches: new Map(), reasonCode: null,
+  })
+  const itemIds = approved.map(([itemId]) => itemId)
+  const activeRead = await input.supabase.from("ebay_active_listings")
+    .select("ebay_item_id,listing_status")
+    .eq("account_key", input.accountKey).eq("listing_status", "active")
+    .in("ebay_item_id", itemIds).limit(1_000)
+  if (activeRead.error) return Object.freeze({
+    status: "UNAVAILABLE", matches: new Map(),
+    reasonCode: "ALREADY_LIVE_EXACT_PRODUCT_CURRENT_LIVE_READ_FAILED",
+  })
+  const activeItems = new Set(rows(activeRead.data).flatMap((listing) => {
+    const itemId = text(listing.ebay_item_id, 30)
+    return itemId && /^\d{9,19}$/.test(itemId)
+      && listing.listing_status === "active" ? [itemId] : []
+  }))
+  const matches = new Map<string, Readonly<{
+    ebayItemIds: readonly string[]
+    linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1"
+  }>>()
+  for (const candidate of exactCandidates) {
+    const linkedItems = approved.flatMap(([itemId, decision]) =>
+      activeItems.has(itemId)
+      && decision.luna_product_id === candidate.lunaProductId
+      && decision.luna_variant_id === candidate.lunaVariantId
+      && decision.luna_sku === candidate.supplierSku ? [itemId] : [])
+    if (linkedItems.length) matches.set(candidate.candidateId, Object.freeze({
+      ebayItemIds: Object.freeze([...new Set(linkedItems)].sort()),
+      linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1",
+    }))
+  }
+  return Object.freeze({ status: "AVAILABLE", matches, reasonCode: null })
+}
+
 function currentObservation(family: JsonRecord) {
   return rows(family.observationSeries)[0] ?? record(family.currentObservation)
 }
@@ -1204,12 +1286,19 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     candidate.exactCandidateIdentity && candidate.lunaMatch &&
     candidate.stockReady && (candidate.readyForEconomics ||
       candidate.economicsNextEvidence === "ACTUAL_LUNA_SHIPPING" ||
-      candidate.economicsNextEvidence === "BETTER_PRICE_DISTRIBUTION") &&
+    candidate.economicsNextEvidence === "BETTER_PRICE_DISTRIBUTION") &&
     candidate.lunaProductId && candidate.lunaVariantId && candidate.supplierSku)
-  const eligibleCandidateIds = new Set(durableCandidates
+  const alreadyLiveGuard = await readAlreadyLiveExactProductsV1({
+    supabase: input.supabase, accountKey: input.accountKey,
+    candidates: durableCandidates,
+  })
+  const newListingDurableCandidates = alreadyLiveGuard.status === "AVAILABLE"
+    ? durableCandidates.filter((candidate) =>
+      !alreadyLiveGuard.matches.has(candidate.candidateId)) : []
+  const eligibleCandidateIds = new Set(newListingDurableCandidates
     .filter((candidate) => candidate.readyForEconomics)
     .map((candidate) => candidate.candidateId))
-  const variantIds = [...new Set(durableCandidates.flatMap((candidate) =>
+  const variantIds = [...new Set(newListingDurableCandidates.flatMap((candidate) =>
     candidate.lunaVariantId ? [candidate.lunaVariantId] : []))]
   const queueRead = variantIds.length
     ? await input.supabase.from("ebay_luna_opportunity_queue")
@@ -1219,7 +1308,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
   const queueRows = rows(queueRead.data)
   const queueCreationFailures = new Map<string, string>()
   const queueCreationOutcomes = new Map<string, "CREATED" | "REUSED">()
-  for (const candidate of durableCandidates) {
+  for (const candidate of newListingDurableCandidates) {
     const existingRows = queueRows.filter((row) =>
       exactQueueIdentity(candidate, row))
     if (existingRows.length > 1) {
@@ -1307,7 +1396,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
   const priceContinuationFailures = new Map<string, string>()
   const continuePriceDistribution = input.continuePriceDistribution ??
     continueRadarCandidatePriceDistributionV1
-  for (const candidate of durableCandidates.filter((entry) =>
+  for (const candidate of newListingDurableCandidates.filter((entry) =>
     entry.economicsNextEvidence === "BETTER_PRICE_DISTRIBUTION")) {
     const exactRows = queueRows.filter((row) => exactQueueIdentity(candidate, row))
     if (exactRows.length !== 1 || !candidate.lunaProductId ||
@@ -1337,6 +1426,31 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
   }
 
   for (const candidate of candidates) {
+    const alreadyLive = alreadyLiveGuard.matches.get(candidate.candidateId)
+    if (alreadyLive) {
+      outcomes.push({ candidateId: candidate.candidateId,
+        familyId: candidate.familyId, familyName: candidate.familyName,
+        lunaProductId: candidate.lunaProductId,
+        lunaVariantId: candidate.lunaVariantId, supplierSku: candidate.supplierSku,
+        status: "EXCLUDED_ALREADY_LIVE",
+        reasonCode: "ALREADY_LIVE_EXACT_PRODUCT",
+        alreadyLiveExactProduct: true,
+        linkedLiveItemIds: alreadyLive.ebayItemIds,
+        linkageAuthority: alreadyLive.linkageAuthority,
+        deterministicRejected: true, listingReady: false })
+      continue
+    }
+    if (alreadyLiveGuard.status === "UNAVAILABLE"
+        && durableCandidates.includes(candidate)) {
+      outcomes.push({ candidateId: candidate.candidateId,
+        familyId: candidate.familyId, familyName: candidate.familyName,
+        lunaProductId: candidate.lunaProductId,
+        lunaVariantId: candidate.lunaVariantId, supplierSku: candidate.supplierSku,
+        status: "EXCEPTION", reasonCode: alreadyLiveGuard.reasonCode,
+        alreadyLiveExactProduct: null,
+        deterministicRejected: true, listingReady: false })
+      continue
+    }
     if (!eligibleCandidateIds.has(candidate.candidateId)) {
       const priceContinuation = priceContinuationResults.get(candidate.candidateId)
       const priceFailure = priceContinuationFailures.get(candidate.candidateId)
@@ -1346,7 +1460,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
           : priceContinuation?.continuation?.finalReason ?? priceFailure ??
             (!candidate.readyForEconomics ? "PARKED_ECONOMICS"
               : "DETERMINISTIC_FACTORY_INPUT_NOT_ELIGIBLE")
-      const waitingForBrowser = durableCandidates.includes(candidate) &&
+      const waitingForBrowser = newListingDurableCandidates.includes(candidate) &&
         candidate.economicsNextEvidence === "ACTUAL_LUNA_SHIPPING"
       const durableQueueRow = queueRows.find((row) =>
         exactQueueIdentity(candidate, row))
@@ -1668,6 +1782,15 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     familyToLunaCompatibleCount: input.batch.familyToLunaCompatibleCount,
     uniqueLunaCandidates: input.batch.uniqueLunaCandidates,
     requiredSpecificsBatch,
+    alreadyLiveExactProductCount: alreadyLiveGuard.matches.size,
+    alreadyLiveExcludedCount: outcomes.filter((outcome) =>
+      outcome.status === "EXCLUDED_ALREADY_LIVE").length,
+    nextCandidateContinued: alreadyLiveGuard.matches.size > 0
+      && outcomes.some((outcome) =>
+        outcome.status !== "EXCLUDED_ALREADY_LIVE"),
+    marketplaceFallbackResolvedCount:
+      number(requiredSpecificsBatch.marketplaceFallbackResolvedCount) ?? 0,
+    aiCallCount: number(requiredSpecificsBatch.aiCallCount) ?? 0,
     ambiguousFamilyAssignments: input.batch.ambiguousFamilyAssignments,
     stockSafeCount: input.batch.stockSafeCount,
     economicsPreflightCount: input.batch.economicsPreflightCount,

@@ -24,6 +24,7 @@ export type RequiredSpecificsBatchProductV1 = Readonly<{
   supplierSku: string
   marketplaceId: "EBAY_US"
   categoryId: string
+  exactProductIdentityProven: boolean
   exactProductTitle: string
   exactDescription: string
   exactSpecs: Readonly<Record<string, string>>
@@ -144,6 +145,29 @@ function deterministicResolution(
       sourceEvidence: Object.freeze({
         sourceField: "SPECS", sourceExcerpt: directSpec[0][1], imageIndex: null,
       }),
+      confidence: "HIGH", factInvented: false,
+      humanReviewRequired: false,
+    })
+  }
+  // Brand follows a stricter hierarchy than ordinary categorizations: only an
+  // explicit exact Luna/Product Truth field can establish a brand. Otherwise
+  // the projection may use eBay's official Unbranded value, without changing
+  // Product Truth or asking text/vision AI to infer a brand.
+  if (key(definition.name) === "brand") {
+    if (product.exactProductIdentityProven !== true) {
+      return humanReview(definition.name)
+    }
+    const unbranded = definition.allowedValues.find((value) =>
+      key(value) === "unbranded")
+    if (!unbranded) return humanReview(definition.name)
+    return Object.freeze({
+      aspectName: definition.name,
+      resolvedValue: unbranded,
+      resolutionClass: "MARKETPLACE_ALLOWED_FALLBACK",
+      sourceEvidence: Object.freeze({ sourceField: "MARKETPLACE_POLICY",
+        sourceExcerpt:
+          "OFFICIAL_UNBRANDED_VALUE_WITH_EXACT_LUNA_IDENTITY_AND_NO_EXPLICIT_BRAND",
+        imageIndex: null }),
       confidence: "HIGH", factInvented: false,
       humanReviewRequired: false,
     })
@@ -307,7 +331,9 @@ Readonly<{
           resolutions.push(resolution)
           if (resolution.resolutionClass === "MARKETPLACE_ALLOWED_FALLBACK") {
             marketplaceFallbackResolvedCount += 1
-          } else deterministicResolvedCount += 1
+          } else if (!resolution.humanReviewRequired) {
+            deterministicResolvedCount += 1
+          }
         }
       }
       candidateResults.set(product.radarCandidateId, Object.freeze({

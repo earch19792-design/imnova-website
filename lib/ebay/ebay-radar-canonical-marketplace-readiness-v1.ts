@@ -272,6 +272,7 @@ export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
     supplierSku: text(input.opportunity.supplier_sku, 120),
     marketplaceId: "EBAY_US" as const,
     categoryId: input.taxonomy.categoryId ?? "",
+    exactProductIdentityProven: exactIdentity,
     exactProductTitle: exactTitle,
     exactDescription: exactIdentity
       ? plainText(input.catalogRow?.body_html) : "",
