@@ -23,6 +23,8 @@ import {
 } from "@/lib/ebay/ebay-opportunity-radar-revenue-factory-adapter-v1"
 import { getEbaySellerAccountScopeConfiguration } from
   "@/lib/ebay/ebay-seller-account-scope"
+import { getEbayTaxonomyListingIntelligence } from
+  "@/lib/ebay/ebay-seller-keyword-demand-gateway"
 
 function authorized(req: Request) {
   const secret = process.env.CRON_SECRET?.trim() ?? ""
@@ -64,6 +66,7 @@ export async function GET(req: Request) {
         : initialCandidateBatch
       const materialized = await materializeRadarRevenueFactoryCandidateBatchV1({
         supabase, accountKey, batch: candidateBatch,
+        taxonomyReader: getEbayTaxonomyListingIntelligence,
       })
       factory = {
         ...materialized,

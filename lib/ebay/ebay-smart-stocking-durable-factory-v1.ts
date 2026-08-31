@@ -4,6 +4,8 @@ import { buildSmartStockingLearningProfileV1 } from
   // @ts-expect-error Node direct TypeScript tests require the explicit extension;
   // the production bundler resolves the same source module.
   "./ebay-smart-stocking-learning-profile-v1.ts"
+import type { RadarMarketplaceTaxonomyReaderV1 } from
+  "./ebay-radar-canonical-marketplace-readiness-v1"
 
 export const SELLER_OS_DETERMINISTIC_FACTORY =
   "SELLER_OS_DETERMINISTIC_FACTORY" as const
@@ -720,6 +722,7 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     opportunityId: string
     candidateKey: string
     decisionPackageId?: string | null
+    taxonomyReader?: RadarMarketplaceTaxonomyReaderV1
   }>,
 ) {
   const opportunityRead = await input.supabase.from("ebay_luna_opportunity_queue")
@@ -800,16 +803,55 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
       || listing.supplier_sku === supplierSku
       || listing.ebay_sku === supplierSku
   }).length
+  const productTruthContinuation = resolveSellerOsExactProductTruthV1(opportunity)
+  const marketplaceReadinessContinuation = radarCandidateEligibleForBinding
+      && input.taxonomyReader
+    ? await (await import(
+      // @ts-expect-error Node direct TypeScript tests require the explicit
+      // extension; the production bundler resolves the same source module.
+      "./ebay-radar-canonical-marketplace-readiness-v1.ts"
+    )).resolveRadarCanonicalMarketplaceReadinessV1({
+      supabase: input.supabase,
+      accountKey: input.accountKey,
+      opportunity,
+      listingPackage: packageRead.data as JsonRecord | null,
+      productTruthExact: productTruthContinuation.exact,
+      productTruth: productTruthContinuation.truth,
+      taxonomyReader: input.taxonomyReader,
+    }) : null
+  const currentAssessment = record(opportunity.assessment)
+  const existingCanonicalBlockers = strings(
+    record(currentAssessment.canonicalReadiness).blockers)
+  const preservedCanonicalBlockers = existingCanonicalBlockers.filter(
+    (blocker) => !blocker.startsWith("MARKETPLACE_")
+      && !["SELLER_ACCOUNT_BINDING_NOT_READY", "FULFILLMENT_POLICY_NOT_READY",
+        "PAYMENT_POLICY_NOT_READY", "RETURN_POLICY_NOT_READY",
+        "LOCATION_OR_INVENTORY_CONTEXT_NOT_READY"]
+        .includes(blocker),
+  )
+  const opportunityForPlan = marketplaceReadinessContinuation ? {
+    ...opportunity,
+    assessment: {
+      ...currentAssessment,
+      canonicalMarketplaceReadinessV1:
+        marketplaceReadinessContinuation.evidence,
+      canonicalReadiness: {
+        blockers: unique([
+          ...preservedCanonicalBlockers,
+          ...strings(marketplaceReadinessContinuation.evidence.blockers),
+        ]),
+      },
+    },
+  } : opportunity
   const plan = buildSellerOsDeterministicFactoryPlanV1({
-    opportunity,
+    opportunity: opportunityForPlan,
     frontier: normalizedFrontier,
     activeDuplicateCount,
     decisionPackage: decisionPackageBinding.row,
   })
-  const productTruthContinuation = resolveSellerOsExactProductTruthV1(opportunity)
-  const currentAssessment = record(opportunity.assessment)
+  const updatedAssessment = record(opportunityForPlan.assessment)
   const assessment = {
-    ...currentAssessment,
+    ...updatedAssessment,
     sellerOsDeterministicFactory: plan.factoryPreparationAuthority,
     ...(plan.smartStockingListingIntakeV1
       ? { smartStockingListingIntakeV1: plan.smartStockingListingIntakeV1 }
@@ -901,6 +943,52 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
       productTruthContinuation.unsupportedAttributeCount,
     unsupportedAttributesPersisted:
       productTruthContinuation.unsupportedAttributesPersisted,
+    marketplaceReadinessAcquisitionRequired:
+      marketplaceReadinessContinuation?.acquisitionRequired ?? null,
+    marketplaceReadinessReused:
+      marketplaceReadinessContinuation?.reused ?? null,
+    categoryId:
+      marketplaceReadinessContinuation?.evidence.categoryId ?? null,
+    categorySource:
+      marketplaceReadinessContinuation?.evidence.categorySource ?? null,
+    categoryReady:
+      marketplaceReadinessContinuation?.evidence.categoryReady ?? false,
+    conditionId:
+      marketplaceReadinessContinuation?.evidence.conditionId ?? null,
+    conditionReady:
+      marketplaceReadinessContinuation?.evidence.conditionReady ?? false,
+    requiredItemSpecificsCount:
+      marketplaceReadinessContinuation?.evidence
+        .requiredItemSpecificsCount ?? null,
+    requiredItemSpecificsSatisfied:
+      marketplaceReadinessContinuation?.evidence
+        .requiredItemSpecificsSatisfied ?? null,
+    unsupportedRequiredSpecifics:
+      marketplaceReadinessContinuation?.evidence
+        .unsupportedRequiredSpecifics ?? [],
+    requiredItemSpecificsReady:
+      marketplaceReadinessContinuation?.evidence
+        .requiredItemSpecificsReady ?? false,
+    fulfillmentPolicyBound:
+      marketplaceReadinessContinuation?.evidence
+        .fulfillmentPolicyReady ?? false,
+    paymentPolicyBound:
+      marketplaceReadinessContinuation?.evidence.paymentPolicyReady ?? false,
+    returnPolicyBound:
+      marketplaceReadinessContinuation?.evidence.returnPolicyReady ?? false,
+    listingPolicyReady:
+      marketplaceReadinessContinuation?.evidence.listingPolicyReady ?? false,
+    locationOrInventoryContextReady:
+      marketplaceReadinessContinuation?.evidence
+        .locationOrInventoryContextReady ?? false,
+    sellerAccountBindingReady:
+      marketplaceReadinessContinuation?.evidence
+        .sellerAccountBindingReady ?? false,
+    marketplaceIdentityReady:
+      marketplaceReadinessContinuation?.evidence
+        .marketplaceIdentityReady ?? false,
+    canonicalMarketplaceReadinessReady:
+      marketplaceReadinessContinuation?.evidence.ready ?? false,
     duplicateCreated: false as const,
     newEbayOffers: 0 as const,
     withdrawCalls: 0 as const,

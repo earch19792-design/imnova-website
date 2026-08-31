@@ -12,6 +12,8 @@ import { calculateSellerOsProfitabilityFrontierV1 } from
   "./ebay-prelinked-profitability-frontier-v1"
 import { calculateEbayUnitEconomics,
   DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG } from "./ebay-unit-economics"
+import type { RadarMarketplaceTaxonomyReaderV1 } from
+  "./ebay-radar-canonical-marketplace-readiness-v1"
 
 export const OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_VERSION =
   "OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_V1" as const
@@ -1179,6 +1181,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     batch: ReturnType<typeof buildRadarRevenueFactoryCandidateBatchV1>
     materializeCandidate?: DurableFactoryMaterializerV1
     continuePriceDistribution?: typeof continueRadarCandidatePriceDistributionV1
+    taxonomyReader?: RadarMarketplaceTaxonomyReaderV1
   }>,
 ) {
   const startedAt = Date.now()
@@ -1388,6 +1391,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         opportunityId: String(queueRow.id),
         candidateKey: String(queueRow.candidate_key),
         decisionPackageId: embeddedId,
+        taxonomyReader: input.taxonomyReader,
       })
       const packageSeed = record(result.packageSeed)
       const pricing = record(packageSeed.pricing)
@@ -1414,6 +1418,35 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         unsupportedAttributeCount: result.unsupportedAttributeCount ?? null,
         unsupportedAttributesPersisted:
           result.unsupportedAttributesPersisted ?? null,
+        marketplaceReadinessAcquisitionRequired:
+          result.marketplaceReadinessAcquisitionRequired ?? null,
+        marketplaceReadinessReused:
+          result.marketplaceReadinessReused ?? null,
+        categoryId: result.categoryId ?? null,
+        categorySource: result.categorySource ?? null,
+        categoryReady: result.categoryReady ?? null,
+        conditionId: result.conditionId ?? null,
+        conditionReady: result.conditionReady ?? null,
+        requiredItemSpecificsCount:
+          result.requiredItemSpecificsCount ?? null,
+        requiredItemSpecificsSatisfied:
+          result.requiredItemSpecificsSatisfied ?? null,
+        unsupportedRequiredSpecifics:
+          result.unsupportedRequiredSpecifics ?? [],
+        requiredItemSpecificsReady:
+          result.requiredItemSpecificsReady ?? null,
+        fulfillmentPolicyBound: result.fulfillmentPolicyBound ?? null,
+        paymentPolicyBound: result.paymentPolicyBound ?? null,
+        returnPolicyBound: result.returnPolicyBound ?? null,
+        listingPolicyReady: result.listingPolicyReady ?? null,
+        locationOrInventoryContextReady:
+          result.locationOrInventoryContextReady ?? null,
+        sellerAccountBindingReady:
+          result.sellerAccountBindingReady ?? null,
+        marketplaceIdentityReady:
+          result.marketplaceIdentityReady ?? null,
+        canonicalMarketplaceReadinessReady:
+          result.canonicalMarketplaceReadinessReady ?? null,
         status: result.listingReady ? "LISTING_READY" : "PARKED",
         reasonCode: result.firstBlocker,
         listingReady: result.listingReady,
