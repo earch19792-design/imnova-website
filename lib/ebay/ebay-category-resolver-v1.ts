@@ -218,6 +218,19 @@ function exactProductValuesFromOpportunity(input: Readonly<{
     const normalized = text(value, 500)
     if (normalized) proven[text(name, 120)] = normalized
   }
+  for (const [name, value] of Object.entries(
+    record(productTruth.provenProductValues))) {
+    const normalizedName = text(name, 120)
+    const normalizedValue = text(value, 500)
+    if (!normalizedName || !normalizedValue) continue
+    const conflict = Object.entries(proven).find(([candidate, existing]) =>
+      normalizeIdentityPhrase(candidate) ===
+        normalizeIdentityPhrase(normalizedName)
+      && normalizeIdentityPhrase(existing) !==
+        normalizeIdentityPhrase(normalizedValue))
+    if (conflict) throw new Error("EXACT_PRODUCT_TRUTH_ASPECT_CONFLICT")
+    proven[normalizedName] = normalizedValue
+  }
   const gtin = text(input.opportunity.gtin ?? candidate.gtin, 20)
   if (/^\d{8,14}$/.test(gtin)) proven.UPC = gtin
   const taxonomyBrand = text(brand.taxonomyBrandValue, 120)

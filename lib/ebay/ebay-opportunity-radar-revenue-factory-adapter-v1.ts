@@ -1447,6 +1447,20 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
           result.marketplaceIdentityReady ?? null,
         canonicalMarketplaceReadinessReady:
           result.canonicalMarketplaceReadinessReady ?? null,
+        requiredItemSpecificAspectContracts:
+          result.requiredItemSpecificAspectContracts ?? [],
+        styleValue: result.styleValue ?? null,
+        styleSource: result.styleSource ?? null,
+        styleExactProductSupported:
+          result.styleExactProductSupported ?? null,
+        brandValue: result.brandValue ?? null,
+        brandSource: result.brandSource ?? null,
+        brandExactProductSupported:
+          result.brandExactProductSupported ?? null,
+        typeValue: result.typeValue ?? null,
+        typeSource: result.typeSource ?? null,
+        typeExactProductSupported:
+          result.typeExactProductSupported ?? null,
         status: result.listingReady ? "LISTING_READY" : "PARKED",
         reasonCode: result.firstBlocker,
         listingReady: result.listingReady,

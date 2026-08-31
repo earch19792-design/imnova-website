@@ -16,9 +16,13 @@ import { ebayConditionContractFromVerifiedFact } from
   "./ebay-manual-listing-domain.ts"
 import type { EbayTaxonomyListingIntelligence } from
   "./ebay-seller-keyword-demand-gateway"
+import type { EbayTaxonomyAspectIntelligence } from
+  "./ebay-seller-keyword-demand-gateway"
 
 export const RADAR_CANONICAL_MARKETPLACE_READINESS_VERSION =
-  "RADAR_CANONICAL_MARKETPLACE_READINESS_CONTINUATION_V1" as const
+  "RADAR_CANONICAL_MARKETPLACE_READINESS_CONTINUATION_V2" as const
+export const RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_VERSION =
+  "RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_V1" as const
 
 const TAXONOMY_REVALIDATION_MS = 6 * 60 * 60 * 1_000
 
@@ -64,6 +68,187 @@ function digest(value: unknown) {
 
 function unique(values: string[]) {
   return [...new Set(values.filter(Boolean))]
+}
+
+function normalizedPhrase(value: unknown) {
+  return text(value, 500).normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ")
+}
+
+function phrasePosition(haystack: string, needle: string) {
+  if (!haystack || !needle) return -1
+  return ` ${haystack} `.indexOf(` ${needle} `)
+}
+
+function aspectKey(value: unknown) {
+  return normalizedPhrase(value)
+}
+
+function exactOfficialValue(
+  aspect: EbayTaxonomyAspectIntelligence,
+  proposed: unknown,
+) {
+  const key = aspectKey(proposed)
+  return aspect.values.find((entry) => aspectKey(entry.value) === key)
+    ?.value ?? null
+}
+
+function compactAspectContract(aspect: EbayTaxonomyAspectIntelligence) {
+  const values = aspect.values.map((entry) => entry.value)
+  return Object.freeze({
+    name: aspect.name,
+    required: aspect.required,
+    dataType: aspect.dataType,
+    mode: aspect.mode,
+    freeTextAllowed: aspect.mode !== "SELECTION_ONLY",
+    cardinality: aspect.cardinality,
+    allowedValues: values.length <= 50 ? values : aspect.suggestedValues,
+    allowedValueCount: values.length,
+    allowedValuesComplete: aspect.valuesComplete,
+    allowedValuesTruncated: values.length > 50,
+    source: "EBAY_TAXONOMY_OFFICIAL_READONLY" as const,
+  })
+}
+
+function firstExactTitleValue(
+  aspect: EbayTaxonomyAspectIntelligence,
+  exactTitle: string,
+) {
+  const title = normalizedPhrase(exactTitle)
+  return aspect.values.map((entry, index) => ({
+    value: entry.value,
+    index,
+    position: phrasePosition(title, normalizedPhrase(entry.value)),
+  })).filter((entry) => entry.position >= 0)
+    .sort((left, right) => left.position - right.position
+      || right.value.length - left.value.length || left.index - right.index)[0]
+    ?.value ?? null
+}
+
+const SUPPLIER_VENDOR_IDENTITIES = new Set([
+  "luna warehouse", "luna portex", "lunaportex",
+])
+
+export function resolveRadarRequiredItemSpecificsTruthV1(input: Readonly<{
+  opportunity: JsonRecord
+  productTruth: JsonRecord
+  taxonomy: EbayTaxonomyListingIntelligence
+  catalogRow: JsonRecord | null
+}>) {
+  const required = input.taxonomy.aspects.filter((aspect) => aspect.required)
+  const byName = new Map(required.map((aspect) => [aspectKey(aspect.name), aspect]))
+  const exactIdentity = Boolean(input.catalogRow
+    && input.catalogRow.supplier_product_id ===
+      input.opportunity.supplier_product_id
+    && input.catalogRow.supplier_variant_id ===
+      input.opportunity.supplier_variant_id
+    && input.catalogRow.sku === input.opportunity.supplier_sku)
+  const existingValues = record(input.productTruth.provenProductValues)
+  const provenProductValues: Record<string, string> = {}
+  for (const [name, value] of Object.entries(existingValues)) {
+    const normalized = text(value, 500)
+    if (normalized) provenProductValues[text(name, 120)] = normalized
+  }
+  const exactTitle = exactIdentity ? text(input.catalogRow?.title, 350) : ""
+  const structuredVendor = exactIdentity
+    ? text(input.catalogRow?.vendor, 160) : ""
+  const resolutions: Record<string, Readonly<{
+    value: string | null
+    source: string | null
+    exactProductSupported: boolean
+  }>> = {}
+  for (const requestedName of ["Style", "Brand", "Type"] as const) {
+    const aspect = byName.get(aspectKey(requestedName))
+    let value: string | null = null
+    let source: string | null = null
+    if (aspect && exactIdentity && requestedName === "Brand") {
+      const allowed = exactOfficialValue(aspect, structuredVendor)
+      if (allowed && !SUPPLIER_VENDOR_IDENTITIES.has(
+        normalizedPhrase(structuredVendor))) {
+        value = allowed
+        source = "LUNA_EXACT_STRUCTURED_VENDOR"
+      }
+    } else if (aspect && exactIdentity) {
+      value = firstExactTitleValue(aspect, exactTitle)
+      if (value) source = "LUNA_EXACT_PRODUCT_TITLE"
+    }
+    if (value) provenProductValues[aspect?.name ?? requestedName] = value
+    resolutions[requestedName] = Object.freeze({
+      value,
+      source,
+      exactProductSupported: Boolean(value),
+    })
+  }
+  const unresolved = Object.entries(resolutions)
+    .filter(([, resolution]) => !resolution.exactProductSupported)
+    .map(([name]) => name)
+  const existingUnknown = strings(input.productTruth.knownUnknownAspectNames)
+  const knownUnknownAspectNames = unique([
+    ...existingUnknown.filter((name) => !Object.entries(resolutions)
+      .some(([candidate, resolution]) => resolution.exactProductSupported
+        && aspectKey(candidate) === aspectKey(name))),
+    ...unresolved,
+  ])
+  const unprovenAspectEvidenceRequirements = {
+    ...record(input.productTruth.unprovenAspectEvidenceRequirements),
+    ...Object.fromEntries(unresolved.map((name) => [name,
+      `AUTHORITATIVE_PRODUCT_${name.toUpperCase()}_EVIDENCE_REQUIRED`])),
+  }
+  for (const [name, resolution] of Object.entries(resolutions)) {
+    if (resolution.exactProductSupported) {
+      delete unprovenAspectEvidenceRequirements[name]
+    }
+  }
+  const aspectContracts = ["Style", "Brand", "Type"].flatMap((name) => {
+    const aspect = byName.get(aspectKey(name))
+    return aspect ? [compactAspectContract(aspect)] : []
+  })
+  const evidenceCore = {
+    contractVersion: RADAR_REQUIRED_ITEM_SPECIFICS_TRUTH_RESOLUTION_VERSION,
+    authority: "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1",
+    marketplaceId: "EBAY_US",
+    categoryId: input.taxonomy.categoryId,
+    candidateKey: input.opportunity.candidate_key,
+    supplierProductId: input.opportunity.supplier_product_id,
+    supplierVariantId: input.opportunity.supplier_variant_id,
+    supplierSku: input.opportunity.supplier_sku,
+    exactIdentity,
+    catalogObservedAt: input.catalogRow?.captured_at ?? null,
+    taxonomyObservedAt: input.taxonomy.observedAt,
+    aspectContracts,
+    resolutions,
+    unsupportedRequiredSpecifics: unresolved,
+    demandEvidenceGrain: "FAMILY",
+    exactProductDemandClaimed: false,
+    marketplaceWrites: 0,
+  }
+  const requiredItemSpecificsTruthV1 = Object.freeze({
+    ...evidenceCore,
+    evidenceDigest: digest(evidenceCore),
+  })
+  const sourceEvidence = {
+    ...record(input.productTruth.sourceEvidence),
+    requiredItemSpecificsTruthV1,
+  }
+  const { evidenceDigest: _previousDigest, ...previousTruth } = input.productTruth
+  const productTruthCore = {
+    ...previousTruth,
+    provenProductValues,
+    knownUnknownAspectNames,
+    unprovenAspectEvidenceRequirements,
+    sourceEvidence,
+  }
+  return Object.freeze({
+    productTruth: Object.freeze({
+      ...productTruthCore,
+      evidenceDigest: digest(productTruthCore),
+    }),
+    evidence: requiredItemSpecificsTruthV1,
+    resolutions: Object.freeze(resolutions),
+    aspectContracts: Object.freeze(aspectContracts),
+    exactIdentity,
+  })
 }
 
 function validUuid(value: unknown) {
@@ -147,8 +332,12 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     now,
   }) : null
   if (reusable) {
+    const truthEvidence = record(record(input.productTruth.sourceEvidence)
+      .requiredItemSpecificsTruthV1)
     return Object.freeze({
       evidence: Object.freeze(reusable),
+      productTruth: Object.freeze(input.productTruth),
+      requiredItemSpecificsTruth: Object.freeze(truthEvidence),
       acquisitionRequired: false as const,
       reused: true as const,
     })
@@ -217,10 +406,42 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     && taxonomy.categoryTreeId
     && taxonomy.observedAt)
 
+  let catalogRow: JsonRecord | null = null
+  if (categoryReady && input.productTruthExact) {
+    const catalogRead = await input.supabase.from("market_radar_latest_variants")
+      .select("product_id,supplier_product_id,supplier_variant_id,sku,title,variant_title,vendor,product_type,tags,metadata,captured_at")
+      .eq("source_key", "lunaportex")
+      .eq("supplier_product_id", input.opportunity.supplier_product_id)
+      .eq("supplier_variant_id", input.opportunity.supplier_variant_id)
+      .eq("sku", input.opportunity.supplier_sku)
+      .limit(2)
+    const catalogRows = catalogRead.error || !Array.isArray(catalogRead.data)
+      ? [] : catalogRead.data.map(record)
+    catalogRow = catalogRows.length === 1 ? catalogRows[0] : null
+  }
+  const specificsTruth = categoryReady && taxonomy
+    ? resolveRadarRequiredItemSpecificsTruthV1({
+      opportunity: input.opportunity,
+      productTruth: input.productTruth,
+      taxonomy,
+      catalogRow,
+    }) : null
+  const resolvedProductTruth = specificsTruth?.productTruth
+    ?? input.productTruth
+  const resolvedProductTruthDigest = text(
+    resolvedProductTruth.evidenceDigest, 80)
+  const opportunityWithProductTruth = specificsTruth ? {
+    ...input.opportunity,
+    assessment: {
+      ...assessment,
+      productTruth: resolvedProductTruth,
+    },
+  } : input.opportunity
+
   let taxonomyPreflight: JsonRecord = {}
   if (categoryReady && taxonomy && validUuid(listingPackageId)) {
     const exactValues = buildEbayCategoryResolverProductTruthV1({
-      opportunity: input.opportunity,
+      opportunity: opportunityWithProductTruth,
       packageData,
     })
     try {
@@ -253,7 +474,7 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
   const requiredItemSpecificsSatisfied = requiredNames.length
     - unsupportedRequiredSpecifics.length
   const requiredItemSpecificsReady = categoryReady
-    && requiredNames.length >= 0
+    && taxonomyPreflight.status === "CONSULTADO"
     && unsupportedRequiredSpecifics.length === 0
   const conditionReady = Boolean(conditionId)
 
@@ -288,7 +509,7 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     supplierProductId: input.opportunity.supplier_product_id,
     supplierVariantId: input.opportunity.supplier_variant_id,
     supplierSku: input.opportunity.supplier_sku,
-    productTruthDigest,
+    productTruthDigest: resolvedProductTruthDigest,
     demandEvidenceGrain: "FAMILY",
     exactProductDemandClaimed: false,
     listingPackageId,
@@ -304,6 +525,8 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     requiredItemSpecificsSatisfied,
     unsupportedRequiredSpecifics,
     requiredItemSpecificsReady,
+    requiredItemSpecificsTruth:
+      specificsTruth?.evidence ?? null,
     taxonomyPreflight,
     fulfillmentPolicyId: fulfillmentPolicyId || null,
     paymentPolicyId: paymentPolicyId || null,
@@ -327,6 +550,9 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
   }
   return Object.freeze({
     evidence: Object.freeze({ ...core, evidenceDigest: digest(core) }),
+    productTruth: Object.freeze(resolvedProductTruth),
+    requiredItemSpecificsTruth:
+      Object.freeze(specificsTruth?.evidence ?? {}),
     acquisitionRequired: true as const,
     reused: false as const,
   })

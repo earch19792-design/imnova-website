@@ -595,6 +595,7 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
     && packageInputsReady
   const canonicalMarketplaceReady = Array.isArray(readiness.blockers)
     && readiness.blockers.length === 0
+  const canonicalMarketplaceBlockers = strings(readiness.blockers)
   const decisionPackage = decisionPackageAuthority(
     opportunity, frontier, input.decisionPackage,
   )
@@ -614,7 +615,10 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
     ...(!categoryReady ? ["MARKETPLACE_CATEGORY_NOT_READY"] : []),
     ...(!packageInputsReady ? ["LISTING_PACKAGE_INPUTS_NOT_READY"] : []),
     ...(!canonicalMarketplaceReady
-      ? ["CANONICAL_MARKETPLACE_READINESS_REQUIRED"] : []),
+      ? canonicalMarketplaceBlockers.length
+        ? canonicalMarketplaceBlockers
+        : ["CANONICAL_MARKETPLACE_READINESS_REQUIRED"]
+      : []),
     ...(!decisionPackageReady ? ["DECISION_PACKAGE_NOT_BOUND"] : []),
   ])
   const listingReady = blockers.length === 0
@@ -785,25 +789,14 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
   const radarCandidateEligibleForBinding = radarCandidate.contractVersion ===
       "NIGHT_RADAR_AUTOMATIC_GOLDEN_PATH_HANDOFF_V1"
     && radarCandidate.authority === SELLER_OS_DETERMINISTIC_FACTORY
-  const decisionPackageBinding = input.decisionPackageId
-    ? { row: providedDecisionPackageRead.data as JsonRecord | null,
-      createdOrReused: false as const, identityAmbiguityReason: null }
-    : radarCandidateEligibleForBinding
-      ? await ensureSellerOsRadarDecisionPackageBindingV1({
-      supabase: input.supabase,
-      accountKey: input.accountKey,
-      opportunity,
-      frontier: normalizedFrontier,
-      })
-      : { row: null, createdOrReused: false as const,
-        identityAmbiguityReason: null }
   const activeDuplicateCount = (duplicateRead.data ?? []).filter((value) => {
     const listing = record(value)
     return listing.supplier_variant_id === variantId
       || listing.supplier_sku === supplierSku
       || listing.ebay_sku === supplierSku
   }).length
-  const productTruthContinuation = resolveSellerOsExactProductTruthV1(opportunity)
+  const initialProductTruthContinuation =
+    resolveSellerOsExactProductTruthV1(opportunity)
   const marketplaceReadinessContinuation = radarCandidateEligibleForBinding
       && input.taxonomyReader
     ? await (await import(
@@ -815,8 +808,8 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
       accountKey: input.accountKey,
       opportunity,
       listingPackage: packageRead.data as JsonRecord | null,
-      productTruthExact: productTruthContinuation.exact,
-      productTruth: productTruthContinuation.truth,
+      productTruthExact: initialProductTruthContinuation.exact,
+      productTruth: initialProductTruthContinuation.truth,
       taxonomyReader: input.taxonomyReader,
     }) : null
   const currentAssessment = record(opportunity.assessment)
@@ -833,6 +826,7 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     ...opportunity,
     assessment: {
       ...currentAssessment,
+      productTruth: marketplaceReadinessContinuation.productTruth,
       canonicalMarketplaceReadinessV1:
         marketplaceReadinessContinuation.evidence,
       canonicalReadiness: {
@@ -843,6 +837,26 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
       },
     },
   } : opportunity
+  const productTruthContinuation = resolveSellerOsExactProductTruthV1(
+    opportunityForPlan)
+  const providedDecisionPackage = providedDecisionPackageRead.data as
+    JsonRecord | null
+  const providedDecisionPackageExact = input.decisionPackageId
+    ? decisionPackageAuthority(
+      opportunityForPlan, normalizedFrontier, providedDecisionPackage).exact
+    : false
+  const decisionPackageBinding = providedDecisionPackageExact
+    ? { row: providedDecisionPackage,
+      createdOrReused: false as const, identityAmbiguityReason: null }
+    : radarCandidateEligibleForBinding
+      ? await ensureSellerOsRadarDecisionPackageBindingV1({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        opportunity: opportunityForPlan,
+        frontier: normalizedFrontier,
+      })
+      : { row: null, createdOrReused: false as const,
+        identityAmbiguityReason: null }
   const plan = buildSellerOsDeterministicFactoryPlanV1({
     opportunity: opportunityForPlan,
     frontier: normalizedFrontier,
@@ -916,6 +930,13 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
   }
   const serverOwned = listingPackage.created_by === null
     && isSellerOsDeterministicFactoryPackageV1(listingPackage.package_data)
+  const requiredSpecificsTruth = record(
+    marketplaceReadinessContinuation?.requiredItemSpecificsTruth)
+  const requiredSpecificResolutions = record(
+    requiredSpecificsTruth.resolutions)
+  const styleResolution = record(requiredSpecificResolutions.Style)
+  const brandResolution = record(requiredSpecificResolutions.Brand)
+  const typeResolution = record(requiredSpecificResolutions.Type)
   return Object.freeze({
     ...plan,
     opportunityId: input.opportunityId,
@@ -989,6 +1010,21 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
         .marketplaceIdentityReady ?? false,
     canonicalMarketplaceReadinessReady:
       marketplaceReadinessContinuation?.evidence.ready ?? false,
+    requiredItemSpecificAspectContracts:
+      Array.isArray(requiredSpecificsTruth.aspectContracts)
+        ? requiredSpecificsTruth.aspectContracts : [],
+    styleValue: styleResolution.value ?? null,
+    styleSource: styleResolution.source ?? null,
+    styleExactProductSupported:
+      styleResolution.exactProductSupported === true,
+    brandValue: brandResolution.value ?? null,
+    brandSource: brandResolution.source ?? null,
+    brandExactProductSupported:
+      brandResolution.exactProductSupported === true,
+    typeValue: typeResolution.value ?? null,
+    typeSource: typeResolution.source ?? null,
+    typeExactProductSupported:
+      typeResolution.exactProductSupported === true,
     duplicateCreated: false as const,
     newEbayOffers: 0 as const,
     withdrawCalls: 0 as const,
