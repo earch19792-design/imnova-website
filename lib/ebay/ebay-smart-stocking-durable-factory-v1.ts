@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { buildSmartStockingLearningProfileV1 } from
+import { buildSmartStockingLearningProfileV1,
+  updateSmartStockingDecisionSnapshotV1 } from
   // @ts-expect-error Node direct TypeScript tests require the explicit extension;
   // the production bundler resolves the same source module.
   "./ebay-smart-stocking-learning-profile-v1.ts"
@@ -286,6 +287,7 @@ function listingSeed(opportunity: JsonRecord, frontier: JsonRecord) {
 export function buildSellerOsRadarDecisionPackageBindingV1(input: Readonly<{
   opportunity: JsonRecord
   frontier: JsonRecord
+  existingLearningProfile?: unknown
 }>) {
   const { opportunity, frontier } = input
   const assessment = record(opportunity.assessment)
@@ -391,7 +393,7 @@ export function buildSellerOsRadarDecisionPackageBindingV1(input: Readonly<{
   }
   const launchPotentialScore = Object.values(scoreBreakdown)
     .reduce((total, score) => total + score, 0)
-  const profile = buildSmartStockingLearningProfileV1({
+  const proposedProfile = buildSmartStockingLearningProfileV1({
     scoreBreakdown,
     riskPenalty: 0,
     whyPrioritized: [
@@ -421,6 +423,13 @@ export function buildSellerOsRadarDecisionPackageBindingV1(input: Readonly<{
       reopenCondition: null,
     },
   })
+  const profile = input.existingLearningProfile
+    ? updateSmartStockingDecisionSnapshotV1(
+      input.existingLearningProfile as Parameters<
+        typeof updateSmartStockingDecisionSnapshotV1>[0],
+      proposedProfile.decisionSnapshot,
+    )
+    : proposedProfile
   const productIdentity = Object.freeze({
     version: "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1",
     fingerprint: digest({
@@ -477,7 +486,32 @@ async function ensureSellerOsRadarDecisionPackageBindingV1(input: Readonly<{
   opportunity: JsonRecord
   frontier: JsonRecord
 }>) {
-  const binding = buildSellerOsRadarDecisionPackageBindingV1(input)
+  const existingRead = await input.supabase
+    .from("marketplace_listing_decision_packages")
+    .select("id,status,package_hash,package_payload,smart_stocking_learning_profile")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US")
+    .eq("supplier_variant_id", input.opportunity.supplier_variant_id)
+    .not("smart_stocking_learning_profile", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(2)
+  if (existingRead.error) {
+    throw new Error("RADAR_DECISION_PACKAGE_BINDING_READ_FAILED")
+  }
+  const existingRows = Array.isArray(existingRead.data)
+    ? existingRead.data.map(record) : []
+  if (existingRows.length > 1) {
+    throw new Error("RADAR_DECISION_PACKAGE_BINDING_IDENTITY_AMBIGUOUS")
+  }
+  const existing = existingRows[0] ?? null
+  if (existing && existing.status !== "GENERATED") {
+    throw new Error("RADAR_DECISION_PACKAGE_BINDING_IMMUTABLE_STATUS")
+  }
+  const binding = buildSellerOsRadarDecisionPackageBindingV1({
+    ...input,
+    existingLearningProfile:
+      existing?.smart_stocking_learning_profile ?? undefined,
+  })
   const row = {
     marketplace_account_key: input.accountKey,
     marketplace: "EBAY_US",
@@ -496,14 +530,19 @@ async function ensureSellerOsRadarDecisionPackageBindingV1(input: Readonly<{
     generated_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }
-  const write = await input.supabase
-    .from("marketplace_listing_decision_packages")
-    .upsert(row, {
-      onConflict: "marketplace_account_key,marketplace,package_hash",
-      ignoreDuplicates: false,
-    })
-    .select("id,status,package_hash,package_payload,smart_stocking_learning_profile")
-    .single()
+  const write = existing
+    ? await input.supabase.from("marketplace_listing_decision_packages")
+      .update(row)
+      .eq("id", existing.id)
+      .select("id,status,package_hash,package_payload,smart_stocking_learning_profile")
+      .single()
+    : await input.supabase.from("marketplace_listing_decision_packages")
+      .upsert(row, {
+        onConflict: "marketplace_account_key,marketplace,package_hash",
+        ignoreDuplicates: false,
+      })
+      .select("id,status,package_hash,package_payload,smart_stocking_learning_profile")
+      .single()
   if (write.error || !write.data) {
     throw new Error("RADAR_DECISION_PACKAGE_BINDING_WRITE_FAILED")
   }
