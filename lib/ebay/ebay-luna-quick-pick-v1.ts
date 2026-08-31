@@ -99,6 +99,11 @@ function safeError(error: unknown) {
     ? code : "LUNA_QUICK_PICK_PROCESSING_FAILED"
 }
 
+function actionable(value: unknown) {
+  const candidate = text(value, 120)
+  return candidate && candidate !== "NONE" ? candidate : null
+}
+
 function canonicalRowUrl(row: JsonRecord) {
   try {
     return parseDirectedLunaProductUrl(row.product_url).canonicalUrl
@@ -325,6 +330,20 @@ function outcomeStages(outcome: JsonRecord,
     LISTING_READY: outcome.listingReady === true ? "PASS" : "BLOCKED" })
 }
 
+function economicsHardBlockerV1(payload: unknown,
+  candidate: RadarRevenueFactoryCandidateV1) {
+  const match = rows(record(payload).frontiers).find((outer) => {
+    const frontier = record(outer.frontier)
+    return frontier.familyId === candidate.familyId &&
+      frontier.lunaProductId === candidate.lunaProductId &&
+      frontier.lunaVariantId === candidate.lunaVariantId &&
+      frontier.lunaSku === candidate.supplierSku
+  })
+  const blockers = Array.isArray(record(match?.frontier).currentHardBlockers)
+    ? record(match?.frontier).currentHardBlockers as unknown[] : []
+  return actionable(blockers[0])
+}
+
 export async function processLunaQuickPickBatchV1(input: Readonly<{
   supabase: SupabaseClient
   accountKey: string
@@ -470,6 +489,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       rowsRead: catalog.rowsRead, uniqueIdentities: catalog.uniqueIdentities,
       truncated: catalog.truncated },
   })
+  let activeFrontierPayload = frontierRead.data
   for (const entry of resolved) {
     if (cards.has(entry.sourceUrl) || !entry.selected) continue
     const exact = currentBatch.candidates.find((candidate) =>
@@ -510,6 +530,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
     if (refreshedFrontier.error) {
       throw new Error("LUNA_QUICK_PICK_ECONOMICS_READBACK_FAILED")
     }
+    activeFrontierPayload = refreshedFrontier.data
     currentBatch = buildRadarRevenueFactoryCandidateBatchV1({
       radarPayload: radarRead.data, frontierPayload: refreshedFrontier.data,
       lunaCatalogRows: candidateRows, targetCandidates: LUNA_QUICK_PICK_MAX_INPUTS,
@@ -536,6 +557,8 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       item.candidateId === candidate.candidateId)) : {}
     if (!candidate || !outcome.candidateId) continue
     const ready = outcome.listingReady === true
+    const economicsBlocker = economicsHardBlockerV1(activeFrontierPayload,
+      candidate)
     cards.set(entry.sourceUrl, card({ sourceUrl: entry.sourceUrl,
       canonicalUrl: entry.canonicalUrl, title: entry.title,
       sourceSku: entry.selected.supplierSku,
@@ -550,14 +573,16 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
           ? "RUNNING" : "BLOCKED",
       lastStage: ready ? "LISTING_READY" :
         outcome.shippingJobStatus === "WAITING_BROWSER_WORKER"
-          ? "SHIPPING" : text(outcome.economicsNextEvidence, 120) ??
-            text(record(outcome.priceDistributionContinuation).finalReason, 120) ??
-            text(outcome.reasonCode, 120) ?? "ECONOMICS",
+          ? "SHIPPING" : actionable(outcome.economicsNextEvidence) ??
+            actionable(record(outcome.priceDistributionContinuation).finalReason) ??
+            economicsBlocker ??
+            actionable(outcome.reasonCode) ?? "ECONOMICS",
       disposition: text(outcome.status, 80) ?? "PARKED",
       exactBlocker: ready ? null :
-        text(outcome.economicsNextEvidence, 120) ??
-        text(record(outcome.priceDistributionContinuation).finalReason, 120) ??
-        text(outcome.reasonCode, 120),
+        actionable(outcome.economicsNextEvidence) ??
+        actionable(record(outcome.priceDistributionContinuation).finalReason) ??
+        economicsBlocker ??
+        actionable(outcome.reasonCode),
       variants: entry.variants, stages: outcomeStages(outcome, candidate),
       dollarCheck: ready ? record(outcome.dollarCheck) : null }))
   }
