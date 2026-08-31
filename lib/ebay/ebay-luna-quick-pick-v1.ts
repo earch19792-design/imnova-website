@@ -929,11 +929,13 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     : { data: [], error: null }
   if (catalogRead.error) throw new Error("LUNA_QUICK_PICK_CATALOG_READ_FAILED")
   const frontierRead = variantIds.length && input.accountKey
-    ? await input.supabase.from("seller_os_profitability_frontier_snapshots")
-      .select("luna_product_id,luna_variant_id,luna_sku,shipping_status,shipping_value,calculated_at")
-      .eq("account_key", input.accountKey).eq("marketplace_id", "EBAY_US")
-      .in("luna_variant_id", variantIds)
-      .order("calculated_at", { ascending: false }).limit(100)
+    ? await input.supabase.rpc(
+      "get_seller_os_latest_profitability_frontiers_v1", {
+        p_account_key: input.accountKey,
+        p_marketplace_id: "EBAY_US",
+        p_family_ids: null,
+        p_limit: 100,
+      })
     : { data: [], error: null }
   if (frontierRead.error) {
     throw new Error("LUNA_QUICK_PICK_FRONTIER_READ_FAILED")
@@ -944,10 +946,11 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     String(row.supplier_product_id), String(row.supplier_variant_id),
     String(row.sku)), row]))
   const frontiers = new Map<string, JsonRecord>()
-  for (const row of rows(frontierRead.data)) {
-    const key = identityKey(String(row.luna_product_id),
-      String(row.luna_variant_id), String(row.luna_sku))
-    if (!frontiers.has(key)) frontiers.set(key, row)
+  for (const outer of rows(record(frontierRead.data).frontiers)) {
+    const frontier = record(outer.frontier)
+    const key = identityKey(String(frontier.lunaProductId),
+      String(frontier.lunaVariantId), String(frontier.lunaSku))
+    if (!frontiers.has(key)) frontiers.set(key, frontier)
   }
   return Object.freeze(queueRows.map((row) => {
     const assessment = record(row.assessment)
@@ -974,9 +977,9 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       ? sourceUrlWithVariant(canonicalUrl,
         String(row.supplier_variant_id)) : `quick-pick:${row.candidate_key}`)
     const frontier = frontiers.get(identity)
-    const shippingUsd = frontier?.shipping_status ===
+    const shippingUsd = frontier?.shippingStatus ===
       "SHIPPING_DURABLY_PERSISTED"
-      ? number(frontier.shipping_value) : null
+      ? number(frontier.shippingValue) : null
     const waitingForWorker = shipping.shippingJobStatus ===
       "WAITING_BROWSER_WORKER"
     const firstBlocker = blockers[0] ??
