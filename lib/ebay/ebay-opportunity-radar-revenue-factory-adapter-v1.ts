@@ -446,6 +446,7 @@ const SUPPLIER_PRODUCT_TYPE_FAMILY_ANCHORS = Object.freeze({
     "battery switch", "mount"],
   "home kitchen": ["home", "kitchen", "organizer", "rack", "kettle", "cookware",
     "blanket", "scale"],
+  "bags storage": ["bag", "storage", "organizer", "rack", "shelf"],
   "craft diy": ["craft", "diy", "sewing", "button", "sticker", "tapestry"],
   "phone electronics": ["phone", "electronic", "camera", "headphone", "charger",
     "adapter", "translator"],
