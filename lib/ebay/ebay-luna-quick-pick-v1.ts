@@ -23,11 +23,19 @@ import {
   "./ebay-opportunity-radar-revenue-factory-adapter-v1.ts"
 import type { RadarMarketplaceTaxonomyReaderV1 } from
   "./ebay-radar-canonical-marketplace-readiness-v1.ts"
+import {
+  discoverAndPersistSellerOsOnDemandFamilyDemandV1,
+  type SellerOsOnDemandFamilyDemandDiscoveryResultV1,
+} from
+  // @ts-expect-error Node direct TypeScript tests require the explicit extension;
+  // the production bundler resolves the same source module.
+  "./ebay-demand-first-broad-net-orchestrator-v1.ts"
 
 export const LUNA_QUICK_PICK_FAST_LISTING_V1 =
   "LUNA_QUICK_PICK_FAST_LISTING_V1" as const
 export const LUNA_QUICK_PICK_MAX_INPUTS = 20
 export const LUNA_QUICK_PICK_CONCURRENCY = 4
+export const LUNA_QUICK_PICK_DEMAND_DISCOVERY_CONCURRENCY = 2
 
 type JsonRecord = Record<string, unknown>
 type RadarBatch = ReturnType<typeof buildRadarRevenueFactoryCandidateBatchV1>
@@ -60,6 +68,13 @@ export type LunaQuickPickCardV1 = Readonly<{
   variants: readonly LunaQuickPickVariantV1[]
   alreadyLive: boolean
   linkedLiveItemIds: readonly string[]
+  durableFamilyHit: boolean
+  onDemandDemandDiscoveryRequired: boolean
+  onDemandDemandDiscoveryExecuted: boolean
+  soldComparableCount: number
+  familyDemandStatus: "FAMILY_DEMAND_PROVEN" | "FAMILY_DEMAND_SUPPORTED" |
+    "DEMAND_NOT_PROVEN" | "DEMAND_DISCOVERY_UNAVAILABLE" | null
+  familyBindingCreatedOrReused: boolean
   stages: Readonly<Record<string, "WAITING" | "RUNNING" | "PASS" | "BLOCKED">>
   dollarCheck: JsonRecord | null
   elapsedMs: number
@@ -300,6 +315,15 @@ function card(input: Partial<LunaQuickPickCardV1> &
     variants: Object.freeze([...(input.variants ?? [])]),
     alreadyLive: input.alreadyLive ?? false,
     linkedLiveItemIds: Object.freeze([...(input.linkedLiveItemIds ?? [])]),
+    durableFamilyHit: input.durableFamilyHit ?? false,
+    onDemandDemandDiscoveryRequired:
+      input.onDemandDemandDiscoveryRequired ?? false,
+    onDemandDemandDiscoveryExecuted:
+      input.onDemandDemandDiscoveryExecuted ?? false,
+    soldComparableCount: input.soldComparableCount ?? 0,
+    familyDemandStatus: input.familyDemandStatus ?? null,
+    familyBindingCreatedOrReused:
+      input.familyBindingCreatedOrReused ?? false,
     stages: input.stages ?? emptyStages(), dollarCheck: input.dollarCheck ?? null,
     elapsedMs: input.elapsedMs ?? 0 })
 }
@@ -351,6 +375,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
   selectedVariants?: Readonly<Record<string, string>>
   taxonomyReader: RadarMarketplaceTaxonomyReaderV1
   fetchImpl?: typeof fetch
+  onDemandDemandDiscovery?: typeof discoverAndPersistSellerOsOnDemandFamilyDemandV1
 }>) {
   const startedAt = Date.now()
   const collected = collectLunaQuickPickInputsV1(input.urls)
@@ -482,13 +507,52 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
     }
     candidateRows.push(entry.selectedRow)
   }
+  let activeRadarPayload = radarRead.data
   let currentBatch = buildRadarRevenueFactoryCandidateBatchV1({
-    radarPayload: radarRead.data, frontierPayload: frontierRead.data,
+    radarPayload: activeRadarPayload, frontierPayload: frontierRead.data,
     lunaCatalogRows: candidateRows, targetCandidates: LUNA_QUICK_PICK_MAX_INPUTS,
     catalogReadMetadata: { pageCount: catalog.pageCount,
       rowsRead: catalog.rowsRead, uniqueIdentities: catalog.uniqueIdentities,
       truncated: catalog.truncated },
   })
+  const discoveryByIdentity = new Map<string,
+    SellerOsOnDemandFamilyDemandDiscoveryResultV1>()
+  const missingDemandEntries = resolved.filter((entry) => {
+    if (cards.has(entry.sourceUrl) || !entry.selected || !entry.selectedRow) return false
+    return !currentBatch.candidates.some((candidate) =>
+      candidate.lunaProductId === entry.selected!.lunaProductId &&
+      candidate.lunaVariantId === entry.selected!.lunaVariantId &&
+      candidate.supplierSku === entry.selected!.supplierSku)
+  })
+  const demandDiscovery = input.onDemandDemandDiscovery ??
+    discoverAndPersistSellerOsOnDemandFamilyDemandV1
+  const discoveryResults = await mapBounded(missingDemandEntries,
+    LUNA_QUICK_PICK_DEMAND_DISCOVERY_CONCURRENCY, async (entry) => {
+      const result = await demandDiscovery({ supabase: input.supabase,
+        accountKey: input.accountKey, lunaCatalogRow: entry.selectedRow! })
+      return Object.freeze({ entry, result })
+    })
+  for (const { entry, result } of discoveryResults) {
+    discoveryByIdentity.set(identityKey(entry.selected!.lunaProductId,
+      entry.selected!.lunaVariantId, entry.selected!.supplierSku), result)
+  }
+  if (discoveryResults.some(({ result }) =>
+      result.familyBindingCreatedOrReused)) {
+    const refreshedRadar = await input.supabase.rpc(
+      "get_seller_os_family_market_radar_v1",
+      { p_family_id: null, p_limit: 100 })
+    if (refreshedRadar.error) {
+      throw new Error("LUNA_QUICK_PICK_DEMAND_READBACK_FAILED")
+    }
+    activeRadarPayload = refreshedRadar.data
+    currentBatch = buildRadarRevenueFactoryCandidateBatchV1({
+      radarPayload: activeRadarPayload, frontierPayload: frontierRead.data,
+      lunaCatalogRows: candidateRows, targetCandidates: LUNA_QUICK_PICK_MAX_INPUTS,
+      catalogReadMetadata: { pageCount: catalog.pageCount,
+        rowsRead: catalog.rowsRead, uniqueIdentities: catalog.uniqueIdentities,
+        truncated: catalog.truncated },
+    })
+  }
   let activeFrontierPayload = frontierRead.data
   for (const entry of resolved) {
     if (cards.has(entry.sourceUrl) || !entry.selected) continue
@@ -497,8 +561,11 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       candidate.lunaVariantId === entry.selected!.lunaVariantId &&
       candidate.supplierSku === entry.selected!.supplierSku)
     if (!exact) {
+      const discovery = discoveryByIdentity.get(identityKey(
+        entry.selected.lunaProductId, entry.selected.lunaVariantId,
+        entry.selected.supplierSku))
       const single = buildRadarRevenueFactoryCandidateBatchV1({
-        radarPayload: radarRead.data, frontierPayload: frontierRead.data,
+        radarPayload: activeRadarPayload, frontierPayload: frontierRead.data,
         lunaCatalogRows: entry.selectedRow ? [entry.selectedRow] : [],
         targetCandidates: 2,
       })
@@ -509,10 +576,18 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
         lunaVariantId: entry.selected.lunaVariantId,
         state: "BLOCKED", lastStage: "DEMAND",
         disposition: "BLOCKED",
-        exactBlocker: single.ambiguousFamilyAssignments > 0
+        exactBlocker: discovery?.reasonCode ??
+          (single.ambiguousFamilyAssignments > 0
           ? "LUNA_QUICK_PICK_DEMAND_FAMILY_AMBIGUOUS"
-          : "LUNA_QUICK_PICK_COMPATIBLE_FAMILY_DEMAND_UNAVAILABLE",
+          : "LUNA_QUICK_PICK_DEMAND_NOT_PROVEN"),
         variants: entry.variants,
+        durableFamilyHit: false,
+        onDemandDemandDiscoveryRequired: true,
+        onDemandDemandDiscoveryExecuted: Boolean(discovery),
+        soldComparableCount: discovery?.soldComparableCount ?? 0,
+        familyDemandStatus: discovery?.status ?? "DEMAND_DISCOVERY_UNAVAILABLE",
+        familyBindingCreatedOrReused:
+          discovery?.familyBindingCreatedOrReused ?? false,
         stages: emptyStages({ IDENTITY: "PASS", DUPLICATE: "PASS",
           STOCK: entry.selected.available ? "PASS" : "BLOCKED",
           DEMAND: "BLOCKED" }) }))
@@ -532,7 +607,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
     }
     activeFrontierPayload = refreshedFrontier.data
     currentBatch = buildRadarRevenueFactoryCandidateBatchV1({
-      radarPayload: radarRead.data, frontierPayload: refreshedFrontier.data,
+      radarPayload: activeRadarPayload, frontierPayload: refreshedFrontier.data,
       lunaCatalogRows: candidateRows, targetCandidates: LUNA_QUICK_PICK_MAX_INPUTS,
       catalogReadMetadata: { pageCount: catalog.pageCount,
         rowsRead: catalog.rowsRead, uniqueIdentities: catalog.uniqueIdentities,
@@ -583,6 +658,25 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
         actionable(record(outcome.priceDistributionContinuation).finalReason) ??
         economicsBlocker ??
         actionable(outcome.reasonCode),
+      durableFamilyHit: !discoveryByIdentity.has(identityKey(
+        entry.selected.lunaProductId, entry.selected.lunaVariantId,
+        entry.selected.supplierSku)),
+      onDemandDemandDiscoveryRequired: discoveryByIdentity.has(identityKey(
+        entry.selected.lunaProductId, entry.selected.lunaVariantId,
+        entry.selected.supplierSku)),
+      onDemandDemandDiscoveryExecuted: discoveryByIdentity.has(identityKey(
+        entry.selected.lunaProductId, entry.selected.lunaVariantId,
+        entry.selected.supplierSku)),
+      soldComparableCount: discoveryByIdentity.get(identityKey(
+        entry.selected.lunaProductId, entry.selected.lunaVariantId,
+        entry.selected.supplierSku))?.soldComparableCount ??
+        candidate.lineage.soldComparableCount,
+      familyDemandStatus: discoveryByIdentity.get(identityKey(
+        entry.selected.lunaProductId, entry.selected.lunaVariantId,
+        entry.selected.supplierSku))?.status ?? candidate.lineage.familyDemandStatus,
+      familyBindingCreatedOrReused: discoveryByIdentity.get(identityKey(
+        entry.selected.lunaProductId, entry.selected.lunaVariantId,
+        entry.selected.supplierSku))?.familyBindingCreatedOrReused ?? false,
       variants: entry.variants, stages: outcomeStages(outcome, candidate),
       dollarCheck: ready ? record(outcome.dollarCheck) : null }))
   }
@@ -601,6 +695,15 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       ? [identityKey(entry.lunaProductId!, entry.lunaVariantId!, entry.sourceSku)]
       : [])).size,
     exactIdentityCount: ordered.filter((entry) => entry.sourceSku).length,
+    durableFamilyHitCount: ordered.filter((entry) => entry.durableFamilyHit).length,
+    onDemandDemandDiscoveryRequiredCount: ordered.filter((entry) =>
+      entry.onDemandDemandDiscoveryRequired).length,
+    onDemandDemandDiscoveryExecutedCount: ordered.filter((entry) =>
+      entry.onDemandDemandDiscoveryExecuted).length,
+    soldComparableCount: ordered.reduce((sum, entry) =>
+      sum + entry.soldComparableCount, 0),
+    familyBindingCreatedOrReusedCount: ordered.filter((entry) =>
+      entry.familyBindingCreatedOrReused).length,
     cards: Object.freeze(ordered), aiCallCount,
     aiProductsBatchedCount: aiCallCount > 0
       ? Number(record(materialized?.requiredSpecificsBatch).productCount ?? 0) : 0,

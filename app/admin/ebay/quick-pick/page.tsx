@@ -25,6 +25,12 @@ type QuickPickCard = {
   variants: Array<{ lunaProductId: string; lunaVariantId: string
     supplierSku: string; title: string; available: boolean
     supplierCostUsd: number }>
+  durableFamilyHit: boolean
+  onDemandDemandDiscoveryRequired: boolean
+  onDemandDemandDiscoveryExecuted: boolean
+  soldComparableCount: number
+  familyDemandStatus: string | null
+  familyBindingCreatedOrReused: boolean
   stages: Record<string, StageState>
   dollarCheck: Record<string, unknown> | null
   elapsedMs: number
@@ -107,7 +113,11 @@ export default function LunaQuickPickPage() {
       listingPackageId: null, title: null, state: "RUNNING",
       lastStage: "IDENTITY", disposition: "RUNNING", exactBlocker: null,
       variantSelectionRequired: false, variants: [], stages: {
-        IDENTITY: "RUNNING" }, dollarCheck: null, elapsedMs: 0 })))
+        IDENTITY: "RUNNING" }, durableFamilyHit: false,
+      onDemandDemandDiscoveryRequired: false,
+      onDemandDemandDiscoveryExecuted: false, soldComparableCount: 0,
+      familyDemandStatus: null, familyBindingCreatedOrReused: false,
+      dollarCheck: null, elapsedMs: 0 })))
     try {
       const payload = await request("/api/admin/ebay/luna-quick-pick", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -221,7 +231,7 @@ export default function LunaQuickPickPage() {
             <p className="mt-2 text-xs text-emerald-50/65">Abre la autoridad de publicación existente. Este Quick Pick no publica automáticamente.</p>
           </section>}
 
-          <details className="mt-3 rounded-xl border border-white/10 p-2 text-xs text-white/55"><summary className="cursor-pointer font-black">Ver evidencia técnica</summary><dl className="mt-2 space-y-1"><div>Product ID: {card.lunaProductId ?? "—"}</div><div>Variant ID: {card.lunaVariantId ?? "—"}</div><div>Última etapa: {card.lastStage}</div><div>Disposición: {card.disposition}</div><div>Tiempo: {card.elapsedMs} ms</div></dl></details>
+          <details className="mt-3 rounded-xl border border-white/10 p-2 text-xs text-white/55"><summary className="cursor-pointer font-black">Ver evidencia técnica</summary><dl className="mt-2 space-y-1"><div>Product ID: {card.lunaProductId ?? "—"}</div><div>Variant ID: {card.lunaVariantId ?? "—"}</div><div>Demanda durable previa: {card.durableFamilyHit ? "sí" : "no"}</div><div>Discovery bajo demanda: {card.onDemandDemandDiscoveryExecuted ? "ejecutado" : card.onDemandDemandDiscoveryRequired ? "requerido" : "no requerido"}</div><div>Estado demanda: {card.familyDemandStatus ?? "—"}</div><div>Comparables sold: {card.soldComparableCount}</div><div>Binding familia: {card.familyBindingCreatedOrReused ? "creado/reutilizado" : "—"}</div><div>Última etapa: {card.lastStage}</div><div>Disposición: {card.disposition}</div><div>Tiempo: {card.elapsedMs} ms</div></dl></details>
         </article>)}
       </section>
     </div>
