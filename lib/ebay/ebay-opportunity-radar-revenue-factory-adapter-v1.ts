@@ -34,6 +34,11 @@ const SHA256 = /^sha256:[0-9a-f]{64}$/
 const MAXIMUM_FAMILIES = 20
 const MAXIMUM_CANDIDATES = 100
 const MAXIMUM_RESEARCH_OBSERVATIONS = 1_000
+export const RADAR_LUNA_CATALOG_PAGE_SIZE = 1_000
+export const RADAR_LUNA_CATALOG_MAX_ROWS = 5_000
+
+const RADAR_LUNA_CATALOG_COLUMNS =
+  "product_id,supplier_product_id,supplier_variant_id,sku,title,variant_title,product_type,tags,metadata,price,available,inventory_quantity,product_url,image_urls,barcode,captured_at"
 
 type JsonRecord = Record<string, unknown>
 
@@ -326,6 +331,60 @@ function catalogKey(productId: string, variantId: string, sku: string) {
   return `${productId}\n${variantId}\n${sku}`
 }
 
+type RadarLunaCatalogReadMetadataV1 = Readonly<{
+  pageCount: number
+  rowsRead: number
+  uniqueIdentities: number
+  truncated: boolean
+}>
+
+export async function readRadarRevenueFactoryLunaCatalogV1(
+  supabase: RadarRevenueFactoryReadClientV1,
+) {
+  const catalog = new Map<string, JsonRecord>()
+  let pageCount = 0
+  let rowsRead = 0
+  let exhausted = false
+
+  for (let from = 0; from < RADAR_LUNA_CATALOG_MAX_ROWS;
+      from += RADAR_LUNA_CATALOG_PAGE_SIZE) {
+    const to = Math.min(from + RADAR_LUNA_CATALOG_PAGE_SIZE,
+      RADAR_LUNA_CATALOG_MAX_ROWS) - 1
+    const result = await supabase.from("market_radar_latest_variants")
+      .select(RADAR_LUNA_CATALOG_COLUMNS)
+      .eq("source_key", "lunaportex")
+      .order("captured_at", { ascending: false })
+      .order("supplier_product_id", { ascending: true })
+      .order("supplier_variant_id", { ascending: true })
+      .order("sku", { ascending: true })
+      .range(from, to)
+    if (result.error) throw new Error("REVENUE_FACTORY_LUNA_CATALOG_READ_FAILED")
+    const page = rows(result.data)
+    pageCount += 1
+    rowsRead += page.length
+    for (const row of page) {
+      const productId = text(row.supplier_product_id) ?? text(row.product_id)
+      const variantId = text(row.supplier_variant_id)
+      const sku = text(row.sku)
+      if (!productId || !variantId || !sku) continue
+      const key = catalogKey(productId, variantId, sku)
+      if (!catalog.has(key)) catalog.set(key, row)
+    }
+    if (page.length < to - from + 1) {
+      exhausted = true
+      break
+    }
+  }
+
+  return Object.freeze({
+    rows: Object.freeze([...catalog.values()]),
+    pageCount,
+    rowsRead,
+    uniqueIdentities: catalog.size,
+    truncated: !exhausted,
+  })
+}
+
 const SUPPLIER_PRODUCT_TYPE_FAMILY_ANCHORS = Object.freeze({
   "jewelry accessories": ["jewelry", "necklace", "bracelet", "anklet", "ring",
     "earring", "pendant", "chain", "charm", "agate", "moonstone", "gemstone"],
@@ -523,6 +582,7 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
   radarPayload: unknown
   frontierPayload: unknown
   lunaCatalogRows: readonly unknown[]
+  catalogReadMetadata?: RadarLunaCatalogReadMetadataV1
   productResearchRows?: readonly unknown[]
   allowedFamilyNames?: readonly string[]
   targetCandidates?: number
@@ -700,6 +760,13 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
     stockReadyCount: bounded.filter((candidate) => candidate.stockReady).length,
     readyForEconomicsCount: bounded.filter((candidate) => candidate.readyForEconomics).length,
     freshFamiliesEvaluated: seeds.length,
+    catalogPageCount: input.catalogReadMetadata?.pageCount ??
+      (input.lunaCatalogRows.length > 0 ? 1 : 0),
+    catalogRowsRead: input.catalogReadMetadata?.rowsRead ??
+      input.lunaCatalogRows.length,
+    catalogUniqueIdentities: input.catalogReadMetadata?.uniqueIdentities ??
+      familySupply.lunaProductsScanned,
+    catalogTruncated: input.catalogReadMetadata?.truncated ?? false,
     lunaProductsScanned: familySupply.lunaProductsScanned,
     familyToLunaCompatibleCount: familySupply.assignments.length,
     uniqueLunaCandidates: new Set(familySupply.assignments.map((entry) => entry.key)).size,
@@ -772,17 +839,14 @@ export async function collectRadarRevenueFactoryCandidateBatchV1(input: Readonly
   })
   if (!initial.seeds.length) throw new Error("REVENUE_FACTORY_RADAR_SEED_UNAVAILABLE")
   const familyIds = initial.seeds.map((seed) => seed.familyId)
-  const [frontierResult, catalogResult] = await Promise.all([
+  const [frontierResult, catalogRead] = await Promise.all([
     input.supabase.rpc("get_seller_os_latest_profitability_frontiers_v1", {
       p_account_key: input.accountKey, p_marketplace_id: "EBAY_US",
       p_family_ids: familyIds, p_limit: 100,
     }),
-    input.supabase.from("market_radar_latest_variants")
-      .select("product_id,supplier_product_id,supplier_variant_id,sku,title,variant_title,product_type,tags,metadata,price,available,inventory_quantity,product_url,image_urls,barcode,captured_at")
-      .eq("source_key", "lunaportex").order("captured_at", { ascending: false })
-      .limit(2_000),
+    readRadarRevenueFactoryLunaCatalogV1(input.supabase),
   ])
-  if (frontierResult.error || catalogResult.error) {
+  if (frontierResult.error) {
     throw new Error("REVENUE_FACTORY_EXACT_IDENTITY_READ_FAILED")
   }
   let researchRows: JsonRecord[] = []
@@ -828,7 +892,9 @@ export async function collectRadarRevenueFactoryCandidateBatchV1(input: Readonly
   }
   return buildRadarRevenueFactoryCandidateBatchV1({
     radarPayload: radarResult.data, frontierPayload: frontierResult.data,
-    lunaCatalogRows: rows(catalogResult.data), productResearchRows: researchRows,
+    lunaCatalogRows: catalogRead.rows,
+    catalogReadMetadata: catalogRead,
+    productResearchRows: researchRows,
     allowedFamilyNames: input.allowedFamilyNames,
     targetCandidates: input.targetCandidates,
   })
@@ -1778,6 +1844,10 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     familiesEvaluated: input.batch.seeds.length,
     lunaProductsEvaluated: candidates.length,
     freshFamiliesEvaluated: input.batch.freshFamiliesEvaluated,
+    catalogPageCount: input.batch.catalogPageCount,
+    catalogRowsRead: input.batch.catalogRowsRead,
+    catalogUniqueIdentities: input.batch.catalogUniqueIdentities,
+    catalogTruncated: input.batch.catalogTruncated,
     lunaProductsScanned: input.batch.lunaProductsScanned,
     familyToLunaCompatibleCount: input.batch.familyToLunaCompatibleCount,
     uniqueLunaCandidates: input.batch.uniqueLunaCandidates,
