@@ -480,6 +480,7 @@ export type SellerOsDemandFirstFamilyCandidateV1 = Readonly<{
   familyDefinition: SellerOsMarketFamilyDefinitionV1 | null
   observation: ReturnType<typeof buildSellerOsFamilyMarketObservationV1> | null
   existingFamilyId: string | null
+  existingEnrollmentEnrolledAt: string | null
   legacyCategorySuccessorResolved: boolean
   taskId: string | null
   batchId: string | null
@@ -551,6 +552,7 @@ type ExistingFamilyRefreshAuthorityV1 = Readonly<{
   maximumAgeSeconds: number
   demandEvidenceDigest: string
   monitorStatus: string
+  enrolledAt: string
   nextReviewCondition: string
   nextEligibleReviewAt: string | null
   lastObservationId: string
@@ -751,6 +753,8 @@ function existingFamilyRefreshAuthorityV1(value: unknown) {
   const lastObservationId = text(enrollment.last_observation_id ??
     enrollment.lastObservationId, 120)
   const monitorStatus = text(enrollment.status, 40)
+  const enrolledAt = instant(enrollment.enrolled_at ?? enrollment.enrolledAt ??
+    row.current_enrollment_enrolled_at ?? row.currentMonitorEnrolledAt)
   const nextReviewCondition = text(enrollment.next_review_condition ??
     enrollment.nextReviewCondition, 80)
   const nextEligibleReviewAt = instant(enrollment.next_eligible_review_at ??
@@ -765,7 +769,8 @@ function existingFamilyRefreshAuthorityV1(value: unknown) {
   }
   if (!familyId || !opportunityCaseId || !familyName || !observationId ||
       !evidenceObservedAt || !maximumAgeSeconds || !demandEvidenceDigest ||
-      !lastObservationId || !monitorStatus || !nextReviewCondition ||
+      !lastObservationId || !monitorStatus || !enrolledAt ||
+      !nextReviewCondition ||
       buildSellerOsMarketFamilyIdV1(familyIdentity) !== familyId) return null
   return Object.freeze({ familyId, opportunityCaseId, familyName,
     familyIdentity,
@@ -774,7 +779,7 @@ function existingFamilyRefreshAuthorityV1(value: unknown) {
     keyProductAttributes: safeStringArray(row.current_key_product_attributes ??
       row.currentKeyProductAttributes, 32),
     observationId, evidenceObservedAt, maximumAgeSeconds,
-    demandEvidenceDigest, monitorStatus, nextReviewCondition,
+    demandEvidenceDigest, monitorStatus, enrolledAt, nextReviewCondition,
     nextEligibleReviewAt, lastObservationId })
 }
 
@@ -791,6 +796,12 @@ function isExistingFamilyRefreshDueV1(input: Readonly<{
     input.authority.lastObservationId === input.authority.observationId &&
     (explicitlyDue || (input.authority.nextReviewCondition ===
       "TIME_WINDOW_ELAPSED" && stale))
+}
+
+function isExistingFamilyRefreshEnrollmentRecoveryV1(
+  authority: ExistingFamilyRefreshAuthorityV1) {
+  return authority.monitorStatus === "ENROLLED" &&
+    authority.lastObservationId !== authority.observationId
 }
 
 function exactQueryLineageMatchV1(input: Readonly<{
@@ -951,9 +962,10 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
       semanticExistingKeys.has(semantic) ||
       (reviewedConcept !== null && reviewedExistingKeys.has(reviewedConcept)) ||
       matchedRefreshAuthorities.length > 0
-    const refreshAuthority = matchedRefreshAuthorities.length === 1 &&
+    const refreshAuthority = matchedRefreshAuthorities.length === 1 && (
       isExistingFamilyRefreshDueV1({ authority: matchedRefreshAuthorities[0],
-        evaluatedAt }) ? matchedRefreshAuthorities[0] : null
+        evaluatedAt }) || isExistingFamilyRefreshEnrollmentRecoveryV1(
+        matchedRefreshAuthorities[0])) ? matchedRefreshAuthorities[0] : null
     if (duplicateExists && refreshAuthority === null) {
       duplicatesSuppressed += 1
       candidates.push(Object.freeze({ status: "DUPLICATE" as const,
@@ -961,6 +973,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
           ? "CANONICAL_FAMILY_REFRESH_IDENTITY_AMBIGUOUS"
           : "CANONICAL_FAMILY_DUPLICATE_SUPPRESSED", familyDefinition: null,
         observation: null, existingFamilyId: null,
+        existingEnrollmentEnrolledAt: null,
         legacyCategorySuccessorResolved: false,
         taskId: cluster.taskIds[0] ?? null,
         batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
@@ -971,6 +984,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
       candidates.push(Object.freeze({ status: "UNQUALIFIED" as const,
         reason: "DEFENSIBLE_FAMILY_EVIDENCE_INSUFFICIENT", familyDefinition: null,
         observation: null, existingFamilyId: refreshAuthority?.familyId ?? null,
+        existingEnrollmentEnrolledAt: refreshAuthority?.enrolledAt ?? null,
         legacyCategorySuccessorResolved: false,
         taskId: cluster.taskIds[0] ?? null,
         batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
@@ -981,6 +995,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
       candidates.push(Object.freeze({ status: "UNQUALIFIED" as const,
         reason: "CAPTURE_WINDOW_OR_PRICE_EVIDENCE_INVALID", familyDefinition: null,
         observation: null, existingFamilyId: refreshAuthority?.familyId ?? null,
+        existingEnrollmentEnrolledAt: refreshAuthority?.enrolledAt ?? null,
         legacyCategorySuccessorResolved: false,
         taskId: cluster.taskIds[0] ?? null,
         batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
@@ -1011,14 +1026,21 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
       candidates.push(Object.freeze({ status: "UNQUALIFIED" as const,
         reason: "DEMAND_KEYWORD_DNA_UNAVAILABLE", familyDefinition: null,
         observation: null, existingFamilyId: refreshAuthority?.familyId ?? null,
+        existingEnrollmentEnrolledAt: refreshAuthority?.enrolledAt ?? null,
         legacyCategorySuccessorResolved: false,
         taskId: cluster.taskIds[0] ?? null,
         batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
       continue
     }
     const demandEvidenceDigest = digest(references)
-    if (refreshAuthority && (
-        Date.parse(evidenceObservedAt) <= Date.parse(
+    const enrollmentRecovery = refreshAuthority !== null &&
+      isExistingFamilyRefreshEnrollmentRecoveryV1(refreshAuthority)
+    const recoveryEvidenceMatches = enrollmentRecovery &&
+      Date.parse(evidenceObservedAt) === Date.parse(
+        refreshAuthority.evidenceObservedAt) &&
+      demandEvidenceDigest === refreshAuthority.demandEvidenceDigest
+    if (refreshAuthority && !recoveryEvidenceMatches && (
+        enrollmentRecovery || Date.parse(evidenceObservedAt) <= Date.parse(
           refreshAuthority.evidenceObservedAt) ||
         demandEvidenceDigest === refreshAuthority.demandEvidenceDigest)) {
       duplicatesSuppressed += 1
@@ -1026,6 +1048,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
         reason: "EXISTING_FAMILY_REFRESH_NEW_SOLD_EVIDENCE_REQUIRED",
         familyDefinition: null, observation: null,
         existingFamilyId: refreshAuthority.familyId,
+        existingEnrollmentEnrolledAt: refreshAuthority.enrolledAt,
         legacyCategorySuccessorResolved: false,
         taskId: cluster.taskIds[0] ?? null,
         batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
@@ -1084,6 +1107,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
         ? "EXISTING_FAMILY_NEW_OFFICIAL_SOLD_EVIDENCE_QUALIFIED"
         : "OFFICIAL_SOLD_FAMILY_EVIDENCE_QUALIFIED", familyDefinition,
       observation, existingFamilyId: refreshAuthority?.familyId ?? null,
+      existingEnrollmentEnrolledAt: refreshAuthority?.enrolledAt ?? null,
       legacyCategorySuccessorResolved,
       taskId: cluster.taskIds[0] ?? null,
       batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
@@ -1344,6 +1368,7 @@ function existingFamilyCasesFromRadarV1(radarPayload: unknown) {
     family_identity: family.familyIdentity ?? null,
     current_family_query_set: family.currentFamilyQuerySet ?? [],
     current_key_product_attributes: family.currentKeyProductAttributes ?? [],
+    current_enrollment_enrolled_at: family.currentMonitorEnrolledAt ?? null,
     observationSeries: family.observationSeries ?? [],
     monitorEnrollments: family.monitorEnrollments ?? [],
   })))
@@ -1513,7 +1538,8 @@ export async function runSellerOsDemandFirstBroadNetCanaryV1(input: Readonly<{
     }
     const enrollment = buildSellerOsOpportunityMonitorEnrollmentV1({
       familyIdentity: definition.identity, monitorPolicyVersion: MONITOR_POLICY,
-      enrolledAt: expected.evidenceObservedAt, status: "ENROLLED",
+      enrolledAt: candidate.existingEnrollmentEnrolledAt ??
+        expected.evidenceObservedAt, status: "ENROLLED",
       nextReviewCondition: "TIME_WINDOW_ELAPSED", nextEligibleReviewAt: null,
       lastObservationId: observationId, lastEvaluatedAt: expected.evidenceObservedAt,
     })
