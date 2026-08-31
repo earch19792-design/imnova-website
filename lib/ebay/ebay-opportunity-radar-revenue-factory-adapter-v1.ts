@@ -43,20 +43,34 @@ export type RadarRevenueFactoryFamilySeedV1 = Readonly<{
   fresh: true
   limitations: readonly string[]
   evidenceScope: "FAMILY_DISCOVERY_SEED_ONLY"
+  demandEvidenceGrain: "FAMILY"
   exactProductDemandClaimed: false
+  familyProductFunction: string
+  familyCategoryId: string
+  demandTerms: readonly Readonly<{
+    term: string
+    familyType: "CORE" | "FORM_FACTOR" | "FEATURE" | "USE_CASE" |
+      "BENEFIT" | "PACK_FORMAT" | "AUDIENCE" | "ATTRIBUTE"
+  }>[]
 }>
 
 export type RadarRevenueFactoryCandidateV1 = Readonly<{
   candidateId: string
   familyId: string
   familyName: string
-  source: "RADAR_FRONTIER_LUNA_IDENTITY" | "PRODUCT_RESEARCH_EXACT_IDENTITY"
+  source: "RADAR_FRONTIER_LUNA_IDENTITY" | "PRODUCT_RESEARCH_EXACT_IDENTITY" |
+    "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY"
   disposition: "PASS_TO_LUNA" | "REJECT"
   dispositionReason: string
   exactCandidateIdentity: boolean
   lunaMatch: boolean
   stockReady: boolean
   readyForEconomics: boolean
+  economicsProfit: number | null
+  economicsMargin: number | null
+  familyAssignmentConfidence: "PROVEN" | "SUPPORTED" | null
+  demandEvidenceGrain: "FAMILY"
+  exactProductDemandClaimed: false
   marketRadarProductId: string | null
   lunaProductId: string | null
   lunaVariantId: string | null
@@ -82,6 +96,7 @@ function text(value: unknown, maximum = 240) {
 }
 
 function number(value: unknown) {
+  if (value === null || value === undefined || value === "") return null
   const parsed = typeof value === "number" ? value : Number(value)
   return Number.isFinite(parsed) ? parsed : null
 }
@@ -100,6 +115,23 @@ function limitations(value: unknown) {
   return Object.freeze([...new Set((Array.isArray(value) ? value : [])
     .map((entry) => text(entry, 160))
     .filter((entry): entry is string => Boolean(entry)))].slice(0, 30))
+}
+
+const DEMAND_FAMILY_TYPES = new Set([
+  "CORE", "FORM_FACTOR", "FEATURE", "USE_CASE", "BENEFIT", "PACK_FORMAT",
+  "AUDIENCE", "ATTRIBUTE",
+])
+
+function demandTerms(value: unknown) {
+  return Object.freeze(rows(record(value).soldWeightedTerms).flatMap((entry) => {
+    const term = text(entry.term, 160)
+    const familyType = text(entry.familyType, 32)
+    return term && familyType && DEMAND_FAMILY_TYPES.has(familyType)
+      ? [Object.freeze({ term, familyType: familyType as
+          "CORE" | "FORM_FACTOR" | "FEATURE" | "USE_CASE" | "BENEFIT" |
+          "PACK_FORMAT" | "AUDIENCE" | "ATTRIBUTE" })]
+      : []
+  }).slice(0, 40))
 }
 
 function digest(value: unknown) {
@@ -127,6 +159,12 @@ function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string
     const evidenceObservedAt = iso(observation.evidenceObservedAt)
     const sourceUpdatedAt = iso(observation.sourceUpdatedAt)
     const maximumAgeSeconds = nonnegativeInteger(observation.maximumAgeSeconds)
+    const attributeProfile = record(observation.attributeProfile)
+    const familyProductFunction = text(
+      attributeProfile["product family"] ?? familyName, 200)
+    const familyCategoryId = text(attributeProfile["category id"], 20)
+    const structuredDemandTerms = demandTerms(
+      observation.demandKeywordDna ?? family.currentDemandKeywordDna)
     const familyDemandStatus = observation.familyDemandStatus
     if (!familyId || !FAMILY_ID.test(familyId) || !familyName ||
         !opportunityCaseId || !OPPORTUNITY_CASE_ID.test(opportunityCaseId) ||
@@ -135,7 +173,8 @@ function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string
           String(familyDemandStatus ?? "")) || observation.fresh !== true ||
         soldComparableCount === null || soldQuantityEvidence === null ||
         !evidenceObservedAt || !sourceUpdatedAt || maximumAgeSeconds === null ||
-        maximumAgeSeconds < 1 ||
+        maximumAgeSeconds < 1 || !familyProductFunction ||
+        !familyCategoryId || !/^\d{1,20}$/.test(familyCategoryId) ||
         allowed && !allowed.has(familyName.normalize("NFKC").toLowerCase())) return []
     return [Object.freeze({
       familyId, familyName, opportunityCaseId, demandEvidenceDigest,
@@ -151,13 +190,123 @@ function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string
       evidenceObservedAt, sourceUpdatedAt, maximumAgeSeconds, fresh: true as const,
       limitations: limitations(observation.limitations),
       evidenceScope: "FAMILY_DISCOVERY_SEED_ONLY" as const,
+      demandEvidenceGrain: "FAMILY" as const,
       exactProductDemandClaimed: false as const,
+      familyProductFunction, familyCategoryId,
+      demandTerms: structuredDemandTerms,
     })]
   })
 }
 
 function catalogKey(productId: string, variantId: string, sku: string) {
   return `${productId}\n${variantId}\n${sku}`
+}
+
+const SUPPLIER_PRODUCT_TYPE_FAMILY_ANCHORS = Object.freeze({
+  "jewelry accessories": ["jewelry", "necklace", "bracelet", "anklet", "ring",
+    "earring", "pendant", "chain", "charm", "agate", "moonstone", "gemstone"],
+  watches: ["watch", "wristwatch"],
+  "hardware tools": ["hardware", "tool", "switch", "selector", "cartridge",
+    "valve", "fastener", "clamp", "wrench", "drill"],
+  "automotive vehicle": ["automotive", "vehicle", "car", "truck", "motorcycle",
+    "battery switch", "mount"],
+  "home kitchen": ["home", "kitchen", "organizer", "rack", "kettle", "cookware",
+    "blanket", "scale"],
+  "craft diy": ["craft", "diy", "sewing", "button", "sticker", "tapestry"],
+  "phone electronics": ["phone", "electronic", "camera", "headphone", "charger",
+    "adapter", "translator"],
+  "beauty skincare": ["beauty", "skincare", "facial", "cosmetic", "makeup"],
+  "health wellness": ["health", "wellness", "hearing", "medical", "supplement"],
+  "sports outdoors": ["sport", "outdoor", "boxing", "camping", "fitness"],
+} as const)
+
+function normalizedPhrase(value: unknown) {
+  return (text(value, 500) ?? "").normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ")
+}
+
+function phraseIncluded(haystack: string, needle: string) {
+  return Boolean(needle && ` ${haystack} `.includes(` ${needle} `))
+}
+
+function supplierCategoryCorroborated(row: JsonRecord) {
+  const productType = normalizedPhrase(row.product_type)
+  if (!productType) return false
+  return (Array.isArray(row.tags) ? row.tags : []).some((tag) =>
+    normalizedPhrase(tag).replace(/^category /, "") === productType)
+}
+
+function supplierTypeCompatible(
+  seed: RadarRevenueFactoryFamilySeedV1,
+  row: JsonRecord,
+) {
+  const productType = normalizedPhrase(row.product_type)
+  const anchors = SUPPLIER_PRODUCT_TYPE_FAMILY_ANCHORS[
+    productType as keyof typeof SUPPLIER_PRODUCT_TYPE_FAMILY_ANCHORS
+  ] ?? []
+  const familyEvidence = normalizedPhrase([
+    seed.familyProductFunction,
+    ...seed.demandTerms.map((entry) => entry.term),
+  ].join(" "))
+  return anchors.some((anchor) => phraseIncluded(
+    familyEvidence, normalizedPhrase(anchor),
+  ))
+}
+
+type FamilyLunaAssignmentV1 = Readonly<{
+  seed: RadarRevenueFactoryFamilySeedV1
+  row: JsonRecord
+  key: string
+  confidence: "PROVEN" | "SUPPORTED"
+}>
+
+function familyLunaAssignments(
+  seeds: readonly RadarRevenueFactoryFamilySeedV1[],
+  catalogRows: readonly unknown[],
+) {
+  const uniqueCatalog = new Map<string, JsonRecord>()
+  for (const row of rows(catalogRows)) {
+    const productId = text(row.supplier_product_id) ?? text(row.product_id)
+    const variantId = text(row.supplier_variant_id)
+    const sku = text(row.sku)
+    if (productId && variantId && sku) {
+      uniqueCatalog.set(catalogKey(productId, variantId, sku), row)
+    }
+  }
+  const accepted: FamilyLunaAssignmentV1[] = []
+  let ambiguousCount = 0
+  for (const [key, row] of uniqueCatalog) {
+    if (!supplierCategoryCorroborated(row)) continue
+    const title = normalizedPhrase(`${text(row.title, 350) ?? ""} ${
+      text(row.variant_title, 200) ?? ""}`)
+    if (!title) continue
+    const matches = seeds.flatMap((seed) => {
+      if (!supplierTypeCompatible(seed, row)) return []
+      const familyPhrase = normalizedPhrase(seed.familyProductFunction)
+      const exactFamilyPhrase = phraseIncluded(title, familyPhrase)
+      const coreMatches = seed.demandTerms.filter((entry) =>
+        entry.familyType === "CORE" && normalizedPhrase(entry.term).split(" ").length >= 2
+        && phraseIncluded(title, normalizedPhrase(entry.term)))
+      const supportingMatches = seed.demandTerms.filter((entry) =>
+        ["ATTRIBUTE", "FEATURE", "FORM_FACTOR", "USE_CASE"].includes(entry.familyType)
+        && phraseIncluded(title, normalizedPhrase(entry.term)))
+      const supported = coreMatches.length > 0 && supportingMatches.some((entry) =>
+        !coreMatches.some((core) => normalizedPhrase(core.term)
+          .includes(normalizedPhrase(entry.term))))
+      if (!exactFamilyPhrase && !supported) return []
+      return [{ seed, row, key,
+        confidence: exactFamilyPhrase ? "PROVEN" as const : "SUPPORTED" as const }]
+    })
+    if (matches.length === 1) accepted.push(Object.freeze(matches[0]))
+    else if (matches.length > 1) ambiguousCount += 1
+  }
+  return Object.freeze({
+    assignments: Object.freeze(accepted),
+    lunaProductsScanned: uniqueCatalog.size,
+    familyToLunaCompatibleCount: accepted.length,
+    ambiguousFamilyAssignments: ambiguousCount,
+  })
 }
 
 function prepareProductResearchRows(
@@ -229,6 +378,18 @@ function prepareProductResearchRows(
   })
 }
 
+function frontierEconomicsReady(frontier: JsonRecord) {
+  const economics = text(frontier.economicClassification, 80)
+  const hardBlockers = Array.isArray(frontier.hardBlockers)
+    ? frontier.hardBlockers : []
+  return economics === "ECONOMICALLY_PROMISING" &&
+    frontier.shippingStatus === "SHIPPING_DURABLY_PERSISTED" &&
+    frontier.nextBestEvidence === "NONE" &&
+    (number(frontier.contributionProfitAtMarketMedian) ?? 0) > 0 &&
+    (number(frontier.contributionMarginAtMarketMedian) ?? 0) > 0 &&
+    hardBlockers.length === 0
+}
+
 export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
   radarPayload: unknown
   frontierPayload: unknown
@@ -252,7 +413,51 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
   const seen = new Set<string>()
   const research = prepareProductResearchRows(input.productResearchRows ?? [], seeds)
   const frontierRoot = record(input.frontierPayload)
-  for (const outer of rows(frontierRoot.frontiers)) {
+  const frontierRows = rows(frontierRoot.frontiers)
+  const familySupply = familyLunaAssignments(seeds, input.lunaCatalogRows)
+  let economicsPreflightCount = 0
+  for (const assignment of familySupply.assignments) {
+    if (candidates.length >= maximum) break
+    const { seed, row, key, confidence } = assignment
+    const productId = text(row.supplier_product_id) ?? text(row.product_id)
+    const variantId = text(row.supplier_variant_id)
+    const sku = text(row.sku)
+    if (!productId || !variantId || !sku || seen.has(key)) continue
+    const exactFrontiers = frontierRows.filter((outer) => {
+      const frontier = record(outer.frontier)
+      return text(frontier.familyId, 120) === seed.familyId &&
+        text(outer.opportunityCaseId, 120) === seed.opportunityCaseId &&
+        frontier.lunaProductId === productId &&
+        frontier.lunaVariantId === variantId && frontier.lunaSku === sku
+    })
+    const exactFrontier = exactFrontiers.length === 1
+      ? record(exactFrontiers[0].frontier) : null
+    if (exactFrontier) economicsPreflightCount += 1
+    seen.add(key)
+    const available = row.available === true &&
+      (number(row.inventory_quantity) === null || Number(row.inventory_quantity) > 0)
+    candidates.push(Object.freeze({
+      candidateId: digest({ familyId: seed.familyId, productId, variantId, sku }),
+      familyId: seed.familyId, familyName: seed.familyName,
+      source: "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY" as const,
+      disposition: "PASS_TO_LUNA" as const,
+      dispositionReason: `FAMILY_TO_LUNA_${confidence}_STRUCTURED_ASSIGNMENT`,
+      exactCandidateIdentity: true, lunaMatch: true, stockReady: available,
+      readyForEconomics: exactFrontier
+        ? frontierEconomicsReady(exactFrontier) : false,
+      economicsProfit: exactFrontier
+        ? number(exactFrontier.contributionProfitAtMarketMedian) : null,
+      economicsMargin: exactFrontier
+        ? number(exactFrontier.contributionMarginAtMarketMedian) : null,
+      familyAssignmentConfidence: confidence,
+      demandEvidenceGrain: "FAMILY" as const,
+      exactProductDemandClaimed: false as const,
+      marketRadarProductId: text(row.product_id),
+      lunaProductId: productId, lunaVariantId: variantId, supplierSku: sku,
+      productResearchIdentityHash: null, lineage: seed,
+    }))
+  }
+  for (const outer of frontierRows) {
     const frontier = record(outer.frontier)
     const seed = seedById.get(text(frontier.familyId, 120) ?? "")
     const productId = text(frontier.lunaProductId)
@@ -266,15 +471,7 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
     seen.add(key)
     const available = row.available === true &&
       (number(row.inventory_quantity) === null || Number(row.inventory_quantity) > 0)
-    const economics = text(frontier.economicClassification, 80)
-    const hardBlockers = Array.isArray(frontier.hardBlockers)
-      ? frontier.hardBlockers : []
-    const economicsReady = economics === "ECONOMICALLY_PROMISING" &&
-      frontier.shippingStatus === "SHIPPING_DURABLY_PERSISTED" &&
-      frontier.nextBestEvidence === "NONE" &&
-      (number(frontier.contributionProfitAtMarketMedian) ?? 0) > 0 &&
-      (number(frontier.contributionMarginAtMarketMedian) ?? 0) > 0 &&
-      hardBlockers.length === 0
+    const economicsReady = frontierEconomicsReady(frontier)
     candidates.push(Object.freeze({
       candidateId: digest({ familyId: seed.familyId, productId, variantId, sku }),
       familyId: seed.familyId, familyName: seed.familyName,
@@ -283,6 +480,11 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
       dispositionReason: "EXACT_LUNA_PRODUCT_VARIANT_IDENTITY_ALREADY_PROVEN",
       exactCandidateIdentity: true, lunaMatch: true, stockReady: available,
       readyForEconomics: economicsReady,
+      economicsProfit: number(frontier.contributionProfitAtMarketMedian),
+      economicsMargin: number(frontier.contributionMarginAtMarketMedian),
+      familyAssignmentConfidence: null,
+      demandEvidenceGrain: "FAMILY" as const,
+      exactProductDemandClaimed: false as const,
       marketRadarProductId: text(row.product_id),
       lunaProductId: productId, lunaVariantId: variantId, supplierSku: sku,
       productResearchIdentityHash: null, lineage: seed,
@@ -310,7 +512,11 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
         ? "PRODUCT_RESEARCH_EXACT_LUNA_MATCH"
         : `FAMILY_SEED_ONLY_${matchClass ?? "EXACT_PRODUCT_IDENTITY_UNPROVEN"}`,
       exactCandidateIdentity: true, lunaMatch: exact, stockReady: false,
-      readyForEconomics: false, marketRadarProductId: null,
+      readyForEconomics: false, economicsProfit: null, economicsMargin: null,
+      marketRadarProductId: null,
+      familyAssignmentConfidence: null,
+      demandEvidenceGrain: "FAMILY" as const,
+      exactProductDemandClaimed: false as const,
       lunaProductId: null, lunaVariantId: matchedVariantId,
       supplierSku: null, productResearchIdentityHash: identityHash, lineage: seed,
     }))
@@ -327,6 +533,18 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
     lunaMatchCount: bounded.filter((candidate) => candidate.lunaMatch).length,
     stockReadyCount: bounded.filter((candidate) => candidate.stockReady).length,
     readyForEconomicsCount: bounded.filter((candidate) => candidate.readyForEconomics).length,
+    freshFamiliesEvaluated: seeds.length,
+    lunaProductsScanned: familySupply.lunaProductsScanned,
+    familyToLunaCompatibleCount: familySupply.assignments.length,
+    uniqueLunaCandidates: new Set(familySupply.assignments.map((entry) => entry.key)).size,
+    ambiguousFamilyAssignments: familySupply.ambiguousFamilyAssignments,
+    stockSafeCount: bounded.filter((candidate) =>
+      candidate.source === "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY" &&
+      candidate.stockReady).length,
+    economicsPreflightCount,
+    economicsReadyCount: bounded.filter((candidate) =>
+      candidate.source === "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY" &&
+      candidate.readyForEconomics).length,
     rejectedCount: bounded.filter((candidate) => candidate.disposition === "REJECT").length,
     inputProducts: research.inputProducts,
     uniqueInputProducts: research.uniqueInputProducts,
@@ -394,7 +612,7 @@ export async function collectRadarRevenueFactoryCandidateBatchV1(input: Readonly
       p_family_ids: familyIds, p_limit: 100,
     }),
     input.supabase.from("market_radar_latest_variants")
-      .select("product_id,supplier_product_id,supplier_variant_id,sku,title,variant_title,price,available,inventory_quantity,product_url,captured_at")
+      .select("product_id,supplier_product_id,supplier_variant_id,sku,title,variant_title,product_type,tags,metadata,price,available,inventory_quantity,product_url,captured_at")
       .eq("source_key", "lunaportex").order("captured_at", { ascending: false })
       .limit(2_000),
   ])
@@ -638,6 +856,13 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
   }
 
   const ready = outcomes.filter((outcome) => outcome.status === "LISTING_READY")
+  const topCandidate = candidates.filter((candidate) =>
+    candidate.source === "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY" &&
+    candidate.stockReady).sort((left, right) =>
+      Number(right.readyForEconomics) - Number(left.readyForEconomics) ||
+      Number(right.familyAssignmentConfidence === "PROVEN") -
+        Number(left.familyAssignmentConfidence === "PROVEN") ||
+      String(left.supplierSku).localeCompare(String(right.supplierSku)))[0] ?? null
   const stageCount = (stage: string) => outcomes.filter((outcome) =>
     record(outcome.stages)[stage] === "READY").length
   return Object.freeze({
@@ -646,6 +871,14 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     targetSpecificAllowlistUsed: false as const,
     familiesEvaluated: input.batch.seeds.length,
     lunaProductsEvaluated: candidates.length,
+    freshFamiliesEvaluated: input.batch.freshFamiliesEvaluated,
+    lunaProductsScanned: input.batch.lunaProductsScanned,
+    familyToLunaCompatibleCount: input.batch.familyToLunaCompatibleCount,
+    uniqueLunaCandidates: input.batch.uniqueLunaCandidates,
+    ambiguousFamilyAssignments: input.batch.ambiguousFamilyAssignments,
+    stockSafeCount: input.batch.stockSafeCount,
+    economicsPreflightCount: input.batch.economicsPreflightCount,
+    economicsReadyCount: input.batch.economicsReadyCount,
     inputProducts: input.batch.inputProducts,
     uniqueInputProducts: input.batch.uniqueInputProducts,
     lunaMatchCount: input.batch.lunaMatchCount,
@@ -674,6 +907,19 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     exceptions: outcomes.filter((outcome) => outcome.status === "EXCEPTION").length,
     humanClicksRequired: 0 as const,
     elapsedMs: Date.now() - startedAt,
+    topCandidate: topCandidate ? Object.freeze({
+      candidateId: topCandidate.candidateId,
+      familyId: topCandidate.familyId,
+      familyName: topCandidate.familyName,
+      lunaProductId: topCandidate.lunaProductId,
+      lunaVariantId: topCandidate.lunaVariantId,
+      supplierSku: topCandidate.supplierSku,
+      familyAssignmentConfidence: topCandidate.familyAssignmentConfidence,
+      demandEvidenceGrain: topCandidate.demandEvidenceGrain,
+      exactProductDemandClaimed: topCandidate.exactProductDemandClaimed,
+      profit: topCandidate.economicsProfit,
+      margin: topCandidate.economicsMargin,
+    }) : null,
     outcomes: Object.freeze(outcomes),
     dollarCheck: Object.freeze({ triggered: ready.length > 0,
       candidates: Object.freeze(ready) }),
