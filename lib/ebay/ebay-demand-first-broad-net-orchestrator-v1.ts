@@ -481,6 +481,7 @@ export type SellerOsDemandFirstFamilyCandidateV1 = Readonly<{
   observation: ReturnType<typeof buildSellerOsFamilyMarketObservationV1> | null
   existingFamilyId: string | null
   existingEnrollmentEnrolledAt: string | null
+  existingMonitorPolicyVersion: string | null
   legacyCategorySuccessorResolved: boolean
   taskId: string | null
   batchId: string | null
@@ -553,6 +554,7 @@ type ExistingFamilyRefreshAuthorityV1 = Readonly<{
   demandEvidenceDigest: string
   monitorStatus: string
   enrolledAt: string
+  monitorPolicyVersion: string
   nextReviewCondition: string
   nextEligibleReviewAt: string | null
   lastObservationId: string
@@ -755,6 +757,8 @@ function existingFamilyRefreshAuthorityV1(value: unknown) {
   const monitorStatus = text(enrollment.status, 40)
   const enrolledAt = instant(enrollment.enrolled_at ?? enrollment.enrolledAt ??
     row.current_enrollment_enrolled_at ?? row.currentMonitorEnrolledAt)
+  const monitorPolicyVersion = text(enrollment.monitor_policy_version ??
+    enrollment.monitorPolicyVersion, 120)
   const nextReviewCondition = text(enrollment.next_review_condition ??
     enrollment.nextReviewCondition, 80)
   const nextEligibleReviewAt = instant(enrollment.next_eligible_review_at ??
@@ -770,6 +774,7 @@ function existingFamilyRefreshAuthorityV1(value: unknown) {
   if (!familyId || !opportunityCaseId || !familyName || !observationId ||
       !evidenceObservedAt || !maximumAgeSeconds || !demandEvidenceDigest ||
       !lastObservationId || !monitorStatus || !enrolledAt ||
+      !monitorPolicyVersion ||
       !nextReviewCondition ||
       buildSellerOsMarketFamilyIdV1(familyIdentity) !== familyId) return null
   return Object.freeze({ familyId, opportunityCaseId, familyName,
@@ -779,7 +784,8 @@ function existingFamilyRefreshAuthorityV1(value: unknown) {
     keyProductAttributes: safeStringArray(row.current_key_product_attributes ??
       row.currentKeyProductAttributes, 32),
     observationId, evidenceObservedAt, maximumAgeSeconds,
-    demandEvidenceDigest, monitorStatus, enrolledAt, nextReviewCondition,
+    demandEvidenceDigest, monitorStatus, enrolledAt, monitorPolicyVersion,
+    nextReviewCondition,
     nextEligibleReviewAt, lastObservationId })
 }
 
@@ -974,6 +980,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
           : "CANONICAL_FAMILY_DUPLICATE_SUPPRESSED", familyDefinition: null,
         observation: null, existingFamilyId: null,
         existingEnrollmentEnrolledAt: null,
+        existingMonitorPolicyVersion: null,
         legacyCategorySuccessorResolved: false,
         taskId: cluster.taskIds[0] ?? null,
         batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
@@ -985,6 +992,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
         reason: "DEFENSIBLE_FAMILY_EVIDENCE_INSUFFICIENT", familyDefinition: null,
         observation: null, existingFamilyId: refreshAuthority?.familyId ?? null,
         existingEnrollmentEnrolledAt: refreshAuthority?.enrolledAt ?? null,
+        existingMonitorPolicyVersion: refreshAuthority?.monitorPolicyVersion ?? null,
         legacyCategorySuccessorResolved: false,
         taskId: cluster.taskIds[0] ?? null,
         batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
@@ -996,6 +1004,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
         reason: "CAPTURE_WINDOW_OR_PRICE_EVIDENCE_INVALID", familyDefinition: null,
         observation: null, existingFamilyId: refreshAuthority?.familyId ?? null,
         existingEnrollmentEnrolledAt: refreshAuthority?.enrolledAt ?? null,
+        existingMonitorPolicyVersion: refreshAuthority?.monitorPolicyVersion ?? null,
         legacyCategorySuccessorResolved: false,
         taskId: cluster.taskIds[0] ?? null,
         batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
@@ -1027,6 +1036,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
         reason: "DEMAND_KEYWORD_DNA_UNAVAILABLE", familyDefinition: null,
         observation: null, existingFamilyId: refreshAuthority?.familyId ?? null,
         existingEnrollmentEnrolledAt: refreshAuthority?.enrolledAt ?? null,
+        existingMonitorPolicyVersion: refreshAuthority?.monitorPolicyVersion ?? null,
         legacyCategorySuccessorResolved: false,
         taskId: cluster.taskIds[0] ?? null,
         batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
@@ -1045,6 +1055,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
         familyDefinition: null, observation: null,
         existingFamilyId: refreshAuthority.familyId,
         existingEnrollmentEnrolledAt: refreshAuthority.enrolledAt,
+        existingMonitorPolicyVersion: refreshAuthority.monitorPolicyVersion,
         legacyCategorySuccessorResolved: false,
         taskId: cluster.taskIds[0] ?? null,
         batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
@@ -1104,6 +1115,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
         familyDefinition: null, observation: null,
         existingFamilyId: refreshAuthority.familyId,
         existingEnrollmentEnrolledAt: refreshAuthority.enrolledAt,
+        existingMonitorPolicyVersion: refreshAuthority.monitorPolicyVersion,
         legacyCategorySuccessorResolved: false,
         taskId: cluster.taskIds[0] ?? null,
         batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
@@ -1119,6 +1131,7 @@ export function evaluateSellerOsDemandFirstFamilyCandidatesV1(input: Readonly<{
         : "OFFICIAL_SOLD_FAMILY_EVIDENCE_QUALIFIED", familyDefinition,
       observation, existingFamilyId: refreshAuthority?.familyId ?? null,
       existingEnrollmentEnrolledAt: refreshAuthority?.enrolledAt ?? null,
+      existingMonitorPolicyVersion: refreshAuthority?.monitorPolicyVersion ?? null,
       legacyCategorySuccessorResolved,
       taskId: cluster.taskIds[0] ?? null,
       batchId: cluster.batchIds[0] ?? null, clusterMetrics: metrics }))
@@ -1547,8 +1560,10 @@ export async function runSellerOsDemandFirstBroadNetCanaryV1(input: Readonly<{
           Date.now()) {
       freshObservationsCreated += 1
     }
+    const monitorPolicyVersion = candidate.existingMonitorPolicyVersion ??
+      MONITOR_POLICY
     const enrollment = buildSellerOsOpportunityMonitorEnrollmentV1({
-      familyIdentity: definition.identity, monitorPolicyVersion: MONITOR_POLICY,
+      familyIdentity: definition.identity, monitorPolicyVersion,
       enrolledAt: candidate.existingEnrollmentEnrolledAt ??
         expected.evidenceObservedAt, status: "ENROLLED",
       nextReviewCondition: "TIME_WINDOW_ELAPSED", nextEligibleReviewAt: null,
@@ -1557,7 +1572,7 @@ export async function runSellerOsDemandFirstBroadNetCanaryV1(input: Readonly<{
     const enrollmentResult = await checkedRpc(input.supabase,
       "put_seller_os_opportunity_monitor_enrollment_v1", {
         p_opportunity_case_id: expected.opportunityCaseId,
-        p_monitor_policy_version: MONITOR_POLICY,
+        p_monitor_policy_version: monitorPolicyVersion,
         p_enrolled_at: enrollment.enrolledAt, p_status: "ENROLLED",
         p_next_review_condition: "TIME_WINDOW_ELAPSED",
         p_next_eligible_review_at: null, p_last_observation_id: observationId,
