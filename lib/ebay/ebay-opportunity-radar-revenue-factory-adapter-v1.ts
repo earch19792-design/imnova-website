@@ -1010,6 +1010,8 @@ function buildRadarSmartStockingQueueRowV1(
       ? ["MARKETPLACE_CATEGORY_NOT_READY"] : []),
     "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN",
   ]
+  const shippingRequired = candidate.economicsNextEvidence ===
+    "ACTUAL_LUNA_SHIPPING"
   const assessment = {
     radarFactoryCandidateV1: {
       contractVersion: "NIGHT_RADAR_AUTOMATIC_GOLDEN_PATH_HANDOFF_V1",
@@ -1021,6 +1023,20 @@ function buildRadarSmartStockingQueueRowV1(
       familyAssignmentConfidence: candidate.familyAssignmentConfidence,
       itemSpecificLogicUsed: false,
       marketplaceWrites: 0,
+    },
+    radarAutomaticLunaShippingContinuationV1: {
+      contractVersion: "RADAR_AUTOMATIC_LUNA_SHIPPING_CONTINUATION_V1",
+      candidateId: candidate.candidateId,
+      lunaProductId: candidate.lunaProductId,
+      lunaVariantId: candidate.lunaVariantId,
+      supplierSku: candidate.supplierSku,
+      shippingJobStatus: shippingRequired
+        ? "WAITING_BROWSER_WORKER" : "SHIPPING_EVIDENCE_DURABLE",
+      canonicalDestinationBindingRequired: true,
+      purchaseBoundaryEnforced: true,
+      rawAddressPersisted: false,
+      oneShippingCapturePerCandidateAtATime: true,
+      itemSpecificLogicUsed: false,
     },
     candidate: {
       candidateKey: candidate.candidateId,
@@ -1042,7 +1058,7 @@ function buildRadarSmartStockingQueueRowV1(
       evidenceDigest: digest(productTruthCore) },
     identity: { exactIdentityConfirmed: true, comparables: [] },
     economics: {
-      ready: true,
+      ready: candidate.readyForEconomics,
       estimatedNetProfit: candidate.economicsProfit,
       estimatedNetMarginPercent: candidate.economicsMargin,
     },
@@ -1084,7 +1100,8 @@ function buildRadarSmartStockingQueueRowV1(
     variant_title: candidate.variantTitle,
     gtin: candidate.gtin,
     queue_status: "review",
-    decision: "FACTORY_PREPARED",
+    decision: shippingRequired
+      ? "WAITING_BROWSER_WORKER" : "FACTORY_PREPARED",
     opportunity_score: 0,
     demand_score: candidate.lineage.familyDemandStatus ===
       "FAMILY_DEMAND_PROVEN" ? 100 : 75,
@@ -1132,12 +1149,15 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
   const materializeCandidate = input.materializeCandidate ??
     materializeSellerOsDeterministicFactoryCandidateV1
   const candidates = [...input.batch.candidates]
-  const eligible = candidates.filter((candidate) =>
+  const durableCandidates = candidates.filter((candidate) =>
     candidate.disposition === "PASS_TO_LUNA" &&
     candidate.exactCandidateIdentity && candidate.lunaMatch &&
-    candidate.stockReady && candidate.readyForEconomics &&
+    candidate.stockReady && (candidate.readyForEconomics ||
+      candidate.economicsNextEvidence === "ACTUAL_LUNA_SHIPPING") &&
     candidate.lunaProductId && candidate.lunaVariantId && candidate.supplierSku)
-  const variantIds = [...new Set(eligible.flatMap((candidate) =>
+  const eligible = durableCandidates.filter((candidate) =>
+    candidate.readyForEconomics)
+  const variantIds = [...new Set(durableCandidates.flatMap((candidate) =>
     candidate.lunaVariantId ? [candidate.lunaVariantId] : []))]
   const queueRead = variantIds.length
     ? await input.supabase.from("ebay_luna_opportunity_queue")
@@ -1146,8 +1166,12 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     : { data: [], error: null }
   const queueRows = rows(queueRead.data)
   const queueCreationFailures = new Map<string, string>()
-  for (const candidate of eligible) {
-    if (queueRows.some((row) => exactQueueIdentity(candidate, row))) continue
+  const queueCreationOutcomes = new Map<string, "CREATED" | "REUSED">()
+  for (const candidate of durableCandidates) {
+    if (queueRows.some((row) => exactQueueIdentity(candidate, row))) {
+      queueCreationOutcomes.set(candidate.candidateId, "REUSED")
+      continue
+    }
     try {
       const write = await input.supabase.from("ebay_luna_opportunity_queue")
         .upsert(buildRadarSmartStockingQueueRowV1(candidate), {
@@ -1159,6 +1183,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         throw new Error("RADAR_SMART_STOCKING_DURABLE_WRITE_FAILED")
       }
       queueRows.push(record(write.data))
+      queueCreationOutcomes.set(candidate.candidateId, "CREATED")
     } catch (error) {
       queueCreationFailures.set(candidate.candidateId, failureCode(error))
     }
@@ -1180,13 +1205,27 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         : !candidate.stockReady ? "CANONICAL_STOCK_NOT_READY"
           : !candidate.readyForEconomics ? "PARKED_ECONOMICS"
             : "DETERMINISTIC_FACTORY_INPUT_NOT_ELIGIBLE"
+      const waitingForBrowser = durableCandidates.includes(candidate) &&
+        candidate.economicsNextEvidence === "ACTUAL_LUNA_SHIPPING"
+      const durableQueueRow = queueRows.find((row) =>
+        exactQueueIdentity(candidate, row))
       outcomes.push({ candidateId: candidate.candidateId,
         familyId: candidate.familyId, familyName: candidate.familyName,
         lunaProductId: candidate.lunaProductId,
         lunaVariantId: candidate.lunaVariantId, supplierSku: candidate.supplierSku,
         status: reason === "PARKED_ECONOMICS" ? "PARKED_ECONOMICS" : "PARKED",
-        reasonCode: reason, economicsNextEvidence: candidate.economicsNextEvidence,
-        deterministicRejected: true,
+        reasonCode: waitingForBrowser
+          ? "WAITING_BROWSER_WORKER" : reason,
+        economicsNextEvidence: candidate.economicsNextEvidence,
+        shippingJobCreatedOrReused: waitingForBrowser && Boolean(durableQueueRow),
+        shippingJobStatus: waitingForBrowser && durableQueueRow
+          ? "WAITING_BROWSER_WORKER" : null,
+        shippingJobIdentityMatch: waitingForBrowser && Boolean(durableQueueRow),
+        shippingOpportunityId: waitingForBrowser
+          ? durableQueueRow?.id ?? null : null,
+        queuePersistenceOutcome: queueCreationOutcomes.get(candidate.candidateId)
+          ?? null,
+        deterministicRejected: !waitingForBrowser,
         listingReady: false })
       continue
     }
@@ -1302,6 +1341,14 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     stockSafeCount: input.batch.stockSafeCount,
     economicsPreflightCount: input.batch.economicsPreflightCount,
     economicsReadyCount: input.batch.economicsReadyCount,
+    shippingJobsCreated: outcomes.filter((outcome) =>
+      outcome.shippingJobCreatedOrReused === true &&
+      outcome.queuePersistenceOutcome === "CREATED").length,
+    shippingJobsReused: outcomes.filter((outcome) =>
+      outcome.shippingJobCreatedOrReused === true &&
+      outcome.queuePersistenceOutcome === "REUSED").length,
+    waitingBrowserWorker: outcomes.filter((outcome) =>
+      outcome.shippingJobStatus === "WAITING_BROWSER_WORKER").length,
     inputProducts: input.batch.inputProducts,
     uniqueInputProducts: input.batch.uniqueInputProducts,
     lunaMatchCount: input.batch.lunaMatchCount,
@@ -1350,5 +1397,99 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     safety: Object.freeze({ marketplaceWrites: 0 as const,
       publishCalls: 0 as const, newEbayOffers: 0 as const,
       withdrawCalls: 0 as const }),
+  })
+}
+
+/**
+ * Continues one exact Radar candidate after the existing Luna Shipping
+ * capture contract has durably persisted and read back its quote. The durable
+ * Smart Stocking row is the handoff authority; no background worker, retry or
+ * second candidate model is introduced here.
+ */
+export async function resumeRadarFactoryCandidateAfterShippingV1(
+  input: Readonly<{
+    supabase: DurableFactoryClientV1
+    accountKey: string
+    candidateId: string
+    lunaProductId: string
+    lunaVariantId: string
+    supplierSku: string
+    materializeCandidate?: DurableFactoryMaterializerV1
+  }>,
+) {
+  const queueRead = await input.supabase.from("ebay_luna_opportunity_queue")
+    .select("*").eq("candidate_key", input.candidateId)
+    .eq("supplier_product_id", input.lunaProductId)
+    .eq("supplier_variant_id", input.lunaVariantId)
+    .eq("supplier_sku", input.supplierSku).limit(2)
+  if (queueRead.error) {
+    throw new Error("RADAR_SHIPPING_CONTINUATION_QUEUE_READ_FAILED")
+  }
+  const exactRows = rows(queueRead.data)
+  if (exactRows.length === 0) return Object.freeze({
+    applicable: false as const,
+    reasonCode: "RADAR_SHIPPING_CONTINUATION_NOT_APPLICABLE" as const,
+    economicsResumed: false as const,
+    marketplaceWrites: 0 as const,
+  })
+  if (exactRows.length !== 1) {
+    throw new Error("RADAR_SHIPPING_CONTINUATION_IDENTITY_AMBIGUOUS")
+  }
+  const queueRow = exactRows[0]
+  const materializeCandidate = input.materializeCandidate ??
+    materializeSellerOsDeterministicFactoryCandidateV1
+  const result = await materializeCandidate({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    opportunityId: String(queueRow.id),
+    candidateKey: input.candidateId,
+    decisionPackageId: embeddedDecisionPackageId(queueRow),
+  })
+  const stages = record(result.stageStatuses)
+  const economicsReady = stages.ECONOMICS_READY === "READY"
+  const continuation = Object.freeze({
+    contractVersion: "RADAR_AUTOMATIC_LUNA_SHIPPING_CONTINUATION_V1" as const,
+    candidateId: input.candidateId,
+    lunaProductId: input.lunaProductId,
+    lunaVariantId: input.lunaVariantId,
+    supplierSku: input.supplierSku,
+    shippingJobStatus: "SHIPPING_EVIDENCE_DURABLE" as const,
+    economicsResumed: true as const,
+    economicsReady,
+    parkedEconomics: !economicsReady,
+    listingPackageReady: stages.LISTING_PACKAGE_READY === "READY",
+    listingReady: result.listingReady === true,
+    firstBlocker: result.firstBlocker ?? null,
+    canonicalDestinationBindingRequired: true as const,
+    purchaseBoundaryEnforced: true as const,
+    rawAddressPersisted: false as const,
+    marketplaceWrites: 0 as const,
+  })
+  const assessment = {
+    ...record(queueRow.assessment),
+    sellerOsDeterministicFactory: result.factoryPreparationAuthority,
+    ...(result.smartStockingListingIntakeV1
+      ? { smartStockingListingIntakeV1: result.smartStockingListingIntakeV1 }
+      : {}),
+    radarAutomaticLunaShippingContinuationV1: continuation,
+  }
+  const write = await input.supabase.from("ebay_luna_opportunity_queue")
+    .update({ assessment, decision: result.listingReady
+      ? "LISTING_READY" : economicsReady ? "FACTORY_PREPARED" : "PARKED_ECONOMICS",
+    updated_at: new Date().toISOString() })
+    .eq("id", queueRow.id).eq("candidate_key", input.candidateId)
+    .select("id,candidate_key,assessment").single()
+  const stored = record(record(write.data).assessment)
+  const readback = record(stored.radarAutomaticLunaShippingContinuationV1)
+  if (write.error || !write.data || readback.candidateId !== input.candidateId ||
+      readback.shippingJobStatus !== "SHIPPING_EVIDENCE_DURABLE" ||
+      readback.economicsResumed !== true) {
+    throw new Error("RADAR_SHIPPING_CONTINUATION_DURABLE_WRITE_FAILED")
+  }
+  return Object.freeze({ applicable: true as const, ...continuation,
+    opportunityId: String(queueRow.id),
+    listingPackageId: result.listingPackageId,
+    durableReadback: true as const,
+    dollarCheck: Object.freeze({ triggered: result.listingReady === true }),
   })
 }

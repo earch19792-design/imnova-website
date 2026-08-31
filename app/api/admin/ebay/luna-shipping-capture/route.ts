@@ -39,6 +39,8 @@ import {
   persistProductFitStrongPromotionV1,
   type SellerOsProductFitStrongRevalidationV1,
 } from "@/lib/ebay/ebay-product-fit-durable-promotion-v1"
+import { resumeRadarFactoryCandidateAfterShippingV1 } from
+  "@/lib/ebay/ebay-opportunity-radar-revenue-factory-adapter-v1"
 
 function candidateIds(value: unknown) {
   return (Array.isArray(value) ? value : [])
@@ -170,7 +172,31 @@ export async function POST(req: Request) {
           LunaShippingCapturePostV1,
         sessionSecret: sessionSecret(),
       })
-      return listingAiResponse({ success: true, result,
+      let economicsContinuation: unknown
+      try {
+        economicsContinuation = await resumeRadarFactoryCandidateAfterShippingV1({
+          supabase: auth.supabase,
+          accountKey: auth.accountKey,
+          candidateId: String(result.identity.candidateId ??
+            listingAiRecord(body.capture).candidateId ?? ""),
+          lunaProductId: result.identity.lunaProductId,
+          lunaVariantId: result.identity.lunaVariantId,
+          supplierSku: result.identity.supplierSku,
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : ""
+        economicsContinuation = Object.freeze({
+          applicable: true,
+          status: "EXCEPTION",
+          reasonCode: /^[A-Z][A-Z0-9_]{2,119}$/.test(message)
+            ? message : "RADAR_SHIPPING_CONTINUATION_FAILED",
+          economicsResumed: false,
+          listingReady: false,
+          marketplaceWrites: 0,
+        })
+      }
+      return listingAiResponse({ success: true,
+        result: { ...result, economicsContinuation },
         safety: { cookieAccess: false,
           credentialAccess: false, lunaPurchases: 0, marketplaceWrites: 0 } })
     }
