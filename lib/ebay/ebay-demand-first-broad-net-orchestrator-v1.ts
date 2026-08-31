@@ -1529,6 +1529,11 @@ export async function discoverAndPersistSellerOsOnDemandFamilyDemandV1(
     evidence.source === "EBAY_MARKETPLACE_INSIGHTS_SOLD_HISTORY" &&
     evidence.confirmedSold && (evidence.confirmedSoldQuantity ?? 0) > 0 &&
     evidence.categoryId && /^\d{1,20}$/.test(evidence.categoryId))
+  if (report.insightsAvailability !== "AVAILABLE" &&
+      soldEvidence.length === 0) {
+    return onDemandDiscoveryResultV1({ status: "DEMAND_DISCOVERY_UNAVAILABLE",
+      reasonCode: `ON_DEMAND_MARKETPLACE_INSIGHTS_${report.insightsAvailability}` })
+  }
   if (report.demandValidationBasis !== "VERIFIED_HISTORICAL_MULTI_SELLER" ||
       soldEvidence.length < 2) {
     return onDemandDiscoveryResultV1({ status: "DEMAND_NOT_PROVEN",
