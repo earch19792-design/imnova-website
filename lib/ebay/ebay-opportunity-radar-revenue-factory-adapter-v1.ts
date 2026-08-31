@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto"
 
 import { getSellerOsRadarPriceDistributionEconomicsV1,
-  materializeSellerOsDeterministicFactoryCandidateV1 } from
+  materializeSellerOsDeterministicFactoryCandidateV1,
+  resolveSellerOsExactProductTruthV1 } from
   "./ebay-smart-stocking-durable-factory-v1"
 import { buildPriceRepresentativenessV2 } from
   "./ebay-commercial-intelligence-upgrade-v1"
@@ -1215,7 +1216,8 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     if (existingRows.length === 1) {
       try {
         const existing = existingRows[0]
-        if (!radarShippingCandidateIdentity(candidate, existing)) {
+        if (!radarShippingCandidateIdentity(candidate, existing) ||
+            !resolveSellerOsExactProductTruthV1(existing).exact) {
           const hydrated = buildRadarSmartStockingQueueRowV1(candidate)
           const update = await input.supabase.from("ebay_luna_opportunity_queue")
             .update({
@@ -1399,6 +1401,19 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         decisionPackageIdentityResolved:
           result.decisionPackageIdentityResolved === true,
         identityAmbiguityReason: result.identityAmbiguityReason ?? null,
+        productTruthAcquisitionRequired:
+          result.productTruthAcquisitionRequired === true,
+        productTruthReused: result.productTruthReused === true,
+        productTruthExactIdentityMatch:
+          result.productTruthExactIdentityMatch === true,
+        productTruthProductId: result.productTruthProductId ?? null,
+        productTruthVariantId: result.productTruthVariantId ?? null,
+        productTruthSource: result.productTruthSource ?? null,
+        productTruthDurable: result.productTruthDurable === true,
+        productTruthReadbackMatch: result.productTruthReadbackMatch === true,
+        unsupportedAttributeCount: result.unsupportedAttributeCount ?? null,
+        unsupportedAttributesPersisted:
+          result.unsupportedAttributesPersisted ?? null,
         status: result.listingReady ? "LISTING_READY" : "PARKED",
         reasonCode: result.firstBlocker,
         listingReady: result.listingReady,

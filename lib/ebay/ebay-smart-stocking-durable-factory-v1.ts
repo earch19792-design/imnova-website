@@ -61,19 +61,61 @@ function unique(values: readonly string[]) {
   return [...new Set(values)]
 }
 
-function exactProductTruth(opportunity: JsonRecord) {
+const PRODUCT_TRUTH_CORE_FIELDS = new Set([
+  "authorityClass", "candidateKey", "evidenceDigest", "lunaProductId",
+  "lunaVariantId", "supplierSku", "gtin", "supplierPriceUsd", "title",
+  "sourceUrl", "imageCount", "rawHtmlStored", "marketplaceWrites", "stock",
+  "brand", "provenProductValues", "knownUnknownAspectNames",
+  "unprovenAspectEvidenceRequirements", "sourceEvidence",
+])
+
+export function resolveSellerOsExactProductTruthV1(opportunity: JsonRecord) {
   const assessment = record(opportunity.assessment)
   const truth = record(assessment.productTruth)
   const stock = record(truth.stock)
+  const radar = record(assessment.radarFactoryCandidateV1)
+  const candidate = record(assessment.candidate)
+  const queueCandidateBound = truth.candidateKey === opportunity.candidate_key
+  const radarCandidateBound = radar.contractVersion ===
+      "NIGHT_RADAR_AUTOMATIC_GOLDEN_PATH_HANDOFF_V1"
+    && radar.authority === SELLER_OS_DETERMINISTIC_FACTORY
+    && /^sha256:[0-9a-f]{64}$/.test(String(radar.candidateId ?? ""))
+    && radar.demandEvidenceGrain === "FAMILY"
+    && radar.exactProductDemandClaimed === false
+    && truth.candidateKey === radar.candidateId
+    && candidate.candidateKey === radar.candidateId
+    && candidate.supplierProductId === opportunity.supplier_product_id
+    && candidate.supplierVariantId === opportunity.supplier_variant_id
+    && candidate.sku === opportunity.supplier_sku
+    && candidate.gtin === opportunity.gtin
   const exact = truth.authorityClass === "SELLER_OS_LUNA_EXACT_PRODUCT_TRUTH_V1"
     && /^sha256:[0-9a-f]{64}$/.test(String(truth.evidenceDigest ?? ""))
-    && truth.candidateKey === opportunity.candidate_key
+    && (queueCandidateBound || radarCandidateBound)
     && truth.lunaProductId === opportunity.supplier_product_id
     && truth.lunaVariantId === opportunity.supplier_variant_id
     && truth.supplierSku === opportunity.supplier_sku
     && truth.gtin === opportunity.gtin
     && stock.exactIdentityVerified === true
-  return { exact, truth, stock }
+  const unsupportedAttributeCount = Object.keys(truth).filter((field) =>
+    !PRODUCT_TRUTH_CORE_FIELDS.has(field)).length
+  return Object.freeze({
+    exact,
+    truth,
+    stock,
+    bindingClass: queueCandidateBound ? "QUEUE_CANDIDATE_KEY" as const
+      : radarCandidateBound ? "RADAR_CANDIDATE_ID" as const : "UNRESOLVED" as const,
+    acquisitionRequired: !exact,
+    reused: exact,
+    source: exact ? String(truth.authorityClass) : null,
+    durable: exact,
+    readbackMatch: exact,
+    unsupportedAttributeCount,
+    unsupportedAttributesPersisted: unsupportedAttributeCount,
+  })
+}
+
+function exactProductTruth(opportunity: JsonRecord) {
+  return resolveSellerOsExactProductTruthV1(opportunity)
 }
 
 function familyDemand(frontier: JsonRecord) {
@@ -764,6 +806,7 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     activeDuplicateCount,
     decisionPackage: decisionPackageBinding.row,
   })
+  const productTruthContinuation = resolveSellerOsExactProductTruthV1(opportunity)
   const currentAssessment = record(opportunity.assessment)
   const assessment = {
     ...currentAssessment,
@@ -779,9 +822,15 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
         ? { decision: "LISTING_READY", queue_status: "ready" } : {}),
       updated_at: new Date().toISOString(),
     }).eq("id", input.opportunityId).eq("candidate_key", input.candidateKey)
-    .select("id,candidate_key,decision,assessment").single()
+    .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,gtin,decision,assessment")
+    .single()
   if (queueWrite.error || !queueWrite.data) {
     throw new Error("DETERMINISTIC_FACTORY_SMART_STOCKING_WRITE_FAILED")
+  }
+  const productTruthReadback = resolveSellerOsExactProductTruthV1(
+    queueWrite.data as JsonRecord)
+  if (productTruthContinuation.exact && !productTruthReadback.exact) {
+    throw new Error("DETERMINISTIC_FACTORY_PRODUCT_TRUTH_READBACK_MISMATCH")
   }
 
   const existingPackage = packageRead.data as JsonRecord | null
@@ -839,6 +888,19 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     decisionPackageCreatedOrReused:
       decisionPackageBinding.createdOrReused,
     identityAmbiguityReason: decisionPackageBinding.identityAmbiguityReason,
+    productTruthAcquisitionRequired:
+      productTruthContinuation.acquisitionRequired,
+    productTruthReused: productTruthContinuation.reused,
+    productTruthExactIdentityMatch: productTruthContinuation.exact,
+    productTruthProductId: productTruthContinuation.exact ? productId : null,
+    productTruthVariantId: productTruthContinuation.exact ? variantId : null,
+    productTruthSource: productTruthContinuation.source,
+    productTruthDurable: productTruthContinuation.durable,
+    productTruthReadbackMatch: productTruthReadback.exact,
+    unsupportedAttributeCount:
+      productTruthContinuation.unsupportedAttributeCount,
+    unsupportedAttributesPersisted:
+      productTruthContinuation.unsupportedAttributesPersisted,
     duplicateCreated: false as const,
     newEbayOffers: 0 as const,
     withdrawCalls: 0 as const,
