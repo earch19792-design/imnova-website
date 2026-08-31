@@ -80,7 +80,8 @@ function text(value: unknown, maximum = 500) {
 }
 
 function number(value: unknown) {
-  const parsed = Number(value)
+  if (value === null || value === undefined || value === "") return null
+  const parsed = typeof value === "number" ? value : Number(value)
   return Number.isFinite(parsed) ? parsed : null
 }
 
