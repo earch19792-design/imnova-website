@@ -31,7 +31,7 @@ export const OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_VERSION =
 const FAMILY_ID = /^market-family-v1:sha256:[0-9a-f]{64}$/
 const OPPORTUNITY_CASE_ID = /^opportunity-case-v1:sha256:[0-9a-f]{64}$/
 const SHA256 = /^sha256:[0-9a-f]{64}$/
-const MAXIMUM_FAMILIES = 20
+export const RADAR_DISCOVERY_MAXIMUM_ELIGIBLE_FAMILIES = 20
 const MAXIMUM_CANDIDATES = 100
 const MAXIMUM_RESEARCH_OBSERVATIONS = 1_000
 export const RADAR_LUNA_CATALOG_PAGE_SIZE = 1_000
@@ -275,7 +275,7 @@ function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string
   const allowed = allowedFamilyNames?.length
     ? new Set(allowedFamilyNames.map((entry) => entry.normalize("NFKC").toLowerCase()))
     : null
-  return rows(root.families).slice(0, MAXIMUM_FAMILIES).flatMap((family) => {
+  return rows(root.families).flatMap((family) => {
     const observation = currentObservation(family)
     const familyId = text(family.familyId, 120)
     const familyName = text(family.familyName, 200)
@@ -324,7 +324,7 @@ function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string
       familyProductFunction, familyCategoryId,
       demandTerms: structuredDemandTerms,
     })]
-  })
+  }).slice(0, RADAR_DISCOVERY_MAXIMUM_ELIGIBLE_FAMILIES)
 }
 
 function catalogKey(productId: string, variantId: string, sku: string) {
@@ -484,10 +484,28 @@ function familyLunaAssignments(
     if (matches.length === 1) accepted.push(Object.freeze(matches[0]))
     else if (matches.length > 1) ambiguousCount += 1
   }
+  const acceptedByFamily = new Map<string, FamilyLunaAssignmentV1[]>()
+  for (const assignment of accepted) {
+    const familyAssignments = acceptedByFamily.get(assignment.seed.familyId) ?? []
+    familyAssignments.push(assignment)
+    acceptedByFamily.set(assignment.seed.familyId, familyAssignments)
+  }
+  const interleaved: FamilyLunaAssignmentV1[] = []
+  for (let index = 0; ; index += 1) {
+    let added = false
+    for (const seed of seeds) {
+      const assignment = acceptedByFamily.get(seed.familyId)?.[index]
+      if (assignment) {
+        interleaved.push(assignment)
+        added = true
+      }
+    }
+    if (!added) break
+  }
   return Object.freeze({
-    assignments: Object.freeze(accepted),
+    assignments: Object.freeze(interleaved),
     lunaProductsScanned: uniqueCatalog.size,
-    familyToLunaCompatibleCount: accepted.length,
+    familyToLunaCompatibleCount: interleaved.length,
     ambiguousFamilyAssignments: ambiguousCount,
   })
 }
@@ -751,6 +769,8 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
   return Object.freeze({
     adapterVersion: OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_VERSION,
     seeds: Object.freeze(seeds), candidates: bounded,
+    familySeedCount: seeds.length,
+    familyDiversityCount: new Set(seeds.map((seed) => seed.familyId)).size,
     radarSeedAccepted: seeds.length > 0,
     radarSeedsUsed: new Set(bounded.map((candidate) => candidate.familyId)).size,
     candidatesGenerated: bounded.length,
@@ -1841,6 +1861,8 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     contractVersion: "NIGHT_RADAR_TO_GENERAL_FACTORY_CONNECTION_V1" as const,
     authority: "SELLER_OS_DETERMINISTIC_FACTORY" as const,
     targetSpecificAllowlistUsed: false as const,
+    familySeedCount: input.batch.familySeedCount,
+    familyDiversityCount: input.batch.familyDiversityCount,
     familiesEvaluated: input.batch.seeds.length,
     lunaProductsEvaluated: candidates.length,
     freshFamiliesEvaluated: input.batch.freshFamiliesEvaluated,
