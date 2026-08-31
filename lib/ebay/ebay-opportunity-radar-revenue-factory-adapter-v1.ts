@@ -11,6 +11,7 @@ const OPPORTUNITY_CASE_ID = /^opportunity-case-v1:sha256:[0-9a-f]{64}$/
 const SHA256 = /^sha256:[0-9a-f]{64}$/
 const MAXIMUM_FAMILIES = 20
 const MAXIMUM_CANDIDATES = 100
+const MAXIMUM_RESEARCH_OBSERVATIONS = 1_000
 
 type JsonRecord = Record<string, unknown>
 
@@ -159,6 +160,75 @@ function catalogKey(productId: string, variantId: string, sku: string) {
   return `${productId}\n${variantId}\n${sku}`
 }
 
+function prepareProductResearchRows(
+  values: readonly unknown[],
+  seeds: readonly RadarRevenueFactoryFamilySeedV1[],
+) {
+  const seedIds = new Set(seeds.map((seed) => seed.familyId))
+  const groupsByFamily = new Map<string, Map<string, JsonRecord[]>>()
+  let validInputProducts = 0
+  for (const row of rows(values)) {
+    const familyId = text(row.radar_family_id, 120)
+    const identityHash = text(row.identity_hash, 80)
+    if (!familyId || !seedIds.has(familyId) || !identityHash ||
+        !SHA256.test(identityHash)) continue
+    validInputProducts += 1
+    const groups = groupsByFamily.get(familyId) ?? new Map<string, JsonRecord[]>()
+    const group = groups.get(identityHash) ?? []
+    group.push(row)
+    groups.set(identityHash, group)
+    groupsByFamily.set(familyId, groups)
+  }
+  let conflictingIdentityGroups = 0
+  const uniqueByFamily = new Map<string, JsonRecord[]>()
+  for (const seed of seeds) {
+    const groups = groupsByFamily.get(seed.familyId)
+    if (!groups) continue
+    const uniqueRows = [...groups].map(([identityHash, group]) => {
+      const classifications = new Set(group.map((entry) =>
+        text(entry.match_classification, 80) ?? "EXACT_PRODUCT_IDENTITY_UNPROVEN"))
+      const variants = new Set(group.flatMap((entry) => {
+        const variantId = text(entry.matched_supplier_variant_id)
+        return variantId ? [variantId] : []
+      }))
+      const exactConsistent = classifications.size === 1 &&
+        classifications.has("EXACT_LUNA_MATCH") && variants.size === 1 &&
+        group.every((entry) => text(entry.matched_supplier_variant_id) !== null)
+      const evidenceConsistent = classifications.size === 1 &&
+        (variants.size <= 1 || exactConsistent)
+      if (evidenceConsistent) return group[0]
+      conflictingIdentityGroups += 1
+      return { ...group[0], identity_hash: identityHash,
+        match_classification: "AMBIGUOUS",
+        matched_supplier_variant_id: null,
+        match_reasons: ["DUPLICATE_IDENTITY_EVIDENCE_CONFLICT"] }
+    })
+    uniqueByFamily.set(seed.familyId, uniqueRows)
+  }
+  const interleaved: JsonRecord[] = []
+  for (let index = 0; ; index += 1) {
+    let added = false
+    for (const seed of seeds) {
+      const row = uniqueByFamily.get(seed.familyId)?.[index]
+      if (row) {
+        interleaved.push(row)
+        added = true
+      }
+    }
+    if (!added) break
+  }
+  const familiesWithInput = [...groupsByFamily.values()]
+    .filter((groups) => groups.size > 0).length
+  return Object.freeze({
+    rows: Object.freeze(interleaved),
+    inputProducts: validInputProducts,
+    uniqueInputProducts: interleaved.length,
+    duplicateCount: validInputProducts - interleaved.length,
+    conflictingIdentityGroups,
+    familiesWithInput,
+  })
+}
+
 export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
   radarPayload: unknown
   frontierPayload: unknown
@@ -180,7 +250,7 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
     Number.isInteger(input.targetCandidates) ? Number(input.targetCandidates) : 30))
   const candidates: RadarRevenueFactoryCandidateV1[] = []
   const seen = new Set<string>()
-  const seenResearchIdentities = new Set<string>()
+  const research = prepareProductResearchRows(input.productResearchRows ?? [], seeds)
   const frontierRoot = record(input.frontierPayload)
   for (const outer of rows(frontierRoot.frontiers)) {
     const frontier = record(outer.frontier)
@@ -218,22 +288,18 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
       productResearchIdentityHash: null, lineage: seed,
     }))
   }
-  for (const observation of rows(input.productResearchRows ?? [])) {
+  for (const observation of research.rows) {
     if (candidates.length >= maximum) break
     const familyId = text(observation.radar_family_id, 120)
     const seed = familyId ? seedById.get(familyId) : null
     const identityHash = text(observation.identity_hash, 80)
     if (!seed || !identityHash || !SHA256.test(identityHash)) continue
-    const observationId = text(observation.id, 80)
-    const key = `${seed.familyId}\n${observationId ?? identityHash}`
+    const key = `${seed.familyId}\n${identityHash}`
     if (seen.has(key)) continue
     seen.add(key)
-    const identityKey = `${seed.familyId}\n${identityHash}`
-    const duplicateIdentity = seenResearchIdentities.has(identityKey)
-    seenResearchIdentities.add(identityKey)
     const matchClass = text(observation.match_classification, 80)
     const matchedVariantId = text(observation.matched_supplier_variant_id)
-    const exact = !duplicateIdentity && matchClass === "EXACT_LUNA_MATCH" &&
+    const exact = matchClass === "EXACT_LUNA_MATCH" &&
       Boolean(matchedVariantId)
     candidates.push(Object.freeze({
       candidateId: digest({ familyId: seed.familyId, identityHash }),
@@ -242,8 +308,6 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
       disposition: exact ? "PASS_TO_LUNA" as const : "REJECT" as const,
       dispositionReason: exact
         ? "PRODUCT_RESEARCH_EXACT_LUNA_MATCH"
-        : duplicateIdentity
-          ? "DUPLICATE_PRODUCT_IDENTITY_WITHIN_FAMILY"
         : `FAMILY_SEED_ONLY_${matchClass ?? "EXACT_PRODUCT_IDENTITY_UNPROVEN"}`,
       exactCandidateIdentity: true, lunaMatch: exact, stockReady: false,
       readyForEconomics: false, marketRadarProductId: null,
@@ -264,6 +328,21 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
     stockReadyCount: bounded.filter((candidate) => candidate.stockReady).length,
     readyForEconomicsCount: bounded.filter((candidate) => candidate.readyForEconomics).length,
     rejectedCount: bounded.filter((candidate) => candidate.disposition === "REJECT").length,
+    inputProducts: research.inputProducts,
+    uniqueInputProducts: research.uniqueInputProducts,
+    duplicateCount: research.duplicateCount,
+    ambiguousCount: bounded.filter((candidate) =>
+      candidate.dispositionReason === "FAMILY_SEED_ONLY_AMBIGUOUS").length,
+    differentVariantCount: bounded.filter((candidate) =>
+      candidate.dispositionReason === "FAMILY_SEED_ONLY_DIFFERENT_VARIANT").length,
+    noLunaMatchCount: bounded.filter((candidate) =>
+      candidate.dispositionReason === "FAMILY_SEED_ONLY_NO_LUNA_MATCH").length,
+    conflictingIdentityGroups: research.conflictingIdentityGroups,
+    familiesWithInput: research.familiesWithInput,
+    allFamiliesWithInputReceiveBoundedCoverage: research.familiesWithInput === 0 ||
+      seeds.filter((seed) => research.rows.some((row) =>
+        row.radar_family_id === seed.familyId)).every((seed) =>
+        bounded.some((candidate) => candidate.familyId === seed.familyId)),
     evidenceLineagePreserved: bounded.length > 0 && bounded.every((candidate) =>
       candidate.lineage.evidenceScope === "FAMILY_DISCOVERY_SEED_ONLY" &&
       candidate.lineage.exactProductDemandClaimed === false),
@@ -354,7 +433,8 @@ export async function collectRadarRevenueFactoryCandidateBatchV1(input: Readonly
         .eq("marketplace_account_key", input.accountKey)
         .eq("marketplace", "EBAY_US").eq("evidence_reviewed", true)
         .eq("quality_status", "VALID").in("capture_batch_id", batchIds)
-        .order("last_sold_date", { ascending: false }).limit(200)
+        .order("last_sold_date", { ascending: false })
+        .limit(MAXIMUM_RESEARCH_OBSERVATIONS)
       if (observationResult.error) {
         throw new Error("REVENUE_FACTORY_PRODUCT_RESEARCH_OBSERVATION_READ_FAILED")
       }
@@ -566,6 +646,19 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     targetSpecificAllowlistUsed: false as const,
     familiesEvaluated: input.batch.seeds.length,
     lunaProductsEvaluated: candidates.length,
+    inputProducts: input.batch.inputProducts,
+    uniqueInputProducts: input.batch.uniqueInputProducts,
+    lunaMatchCount: input.batch.lunaMatchCount,
+    lunaMatchRate: candidates.length > 0
+      ? Math.round(input.batch.lunaMatchCount / candidates.length * 100_000) /
+        1_000 : 0,
+    duplicateCount: input.batch.duplicateCount,
+    ambiguousCount: input.batch.ambiguousCount,
+    differentVariantCount: input.batch.differentVariantCount,
+    noLunaMatchCount: input.batch.noLunaMatchCount,
+    familiesWithInput: input.batch.familiesWithInput,
+    allFamiliesWithInputReceiveBoundedCoverage:
+      input.batch.allFamiliesWithInputReceiveBoundedCoverage,
     deterministicallyRejected: outcomes.filter((outcome) =>
       outcome.deterministicRejected === true).length,
     factoryCandidatesCreated: outcomes.filter((outcome) =>
