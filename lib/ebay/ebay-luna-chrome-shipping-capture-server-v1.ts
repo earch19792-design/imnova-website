@@ -34,6 +34,8 @@ import {
   resolveExactCurrentLiveIdentityV1,
   type LiveListingShippingCaptureTargetV1,
 } from "./ebay-live-listing-shipping-evidence-server-v1"
+import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics } from
+  "./ebay-unit-economics"
 
 export const LUNA_SHIPPING_CANARY_CANDIDATE_ID =
   "sha256:39f9566e97c230d9fdf9882a802af7dad8a7a0e54ab000999bcc3da779f4ab60" as const
@@ -611,7 +613,8 @@ export async function resolveLunaChromeShippingJobsV1(input: Readonly<{
     const supplierSku = text(catalog.sku, 160)
     const canonicalProductUrl = text(catalog.product_url, 500)
     const supplierCostUsd = money(frontier.lunaUnitCost ?? catalog.price)
-    const salePriceUsd = money(frontier.marketPriceMedian)
+    const salePriceUsd = money(frontier.marketPriceMedian ??
+      record(frontier.quickPickMarketTestV1).preliminaryShippingPendingPrice)
     const productName = text(catalog.title, 200)
     if (!supplierProductId || !supplierVariantId || !supplierSku ||
         supplierProductId !== exact.lunaProductId ||
@@ -787,6 +790,21 @@ function persistedFrontier(input: Readonly<{
     ...previousWithoutDigest } = previous
   const economics = input.certified.economics
   const quote = input.certified.quote
+  const marketTest = record(previous.quickPickMarketTestV1)
+  const marketTestEligible = marketTest.contractVersion ===
+      "LUNA_QUICK_PICK_MARKET_TEST_PATH_V1" &&
+    marketTest.marketTestPathEligible === true &&
+    marketTest.demandNegativeEvidencePresent === false
+  const floor = marketTestEligible ? calculateEbayMinimumOperatorPrice({
+    supplierCost: previous.lunaUnitCost,
+  }, { estimatedOutboundShipping: quote.shippingAmountUsd }) : null
+  const marketTestEconomics = floor?.ready && floor.minimumOperatorPrice !== null
+    ? calculateEbayUnitEconomics({ salePrice: floor.minimumOperatorPrice,
+      supplierCost: previous.lunaUnitCost }, {
+      estimatedOutboundShipping: quote.shippingAmountUsd,
+    }) : null
+  const marketTestReady = Boolean(marketTestEconomics?.ready &&
+    marketTestEconomics.passesProfitGate)
   const nextWithoutDigest = {
     ...previousWithoutDigest,
     shippingStatus: "SHIPPING_DURABLY_PERSISTED",
@@ -799,14 +817,33 @@ function persistedFrontier(input: Readonly<{
           economics.promotionReserveUsd) * 100) / 100,
     contributionProfitAtMarketMedian: economics.contributionProfitUsd,
     contributionMarginAtMarketMedian: economics.contributionMarginPercent,
-    economicClassification: economics.passesEconomics
+    economicClassification: marketTestReady || economics.passesEconomics
       ? "ECONOMICALLY_PROMISING" : "ECONOMICALLY_RECOVERABLE",
     shippingEvidenceRequired: false,
-    nextBestEvidence: economics.passesEconomics ? "NONE" :
+    nextBestEvidence: marketTestReady || economics.passesEconomics ? "NONE" :
       previous.nextBestEvidence === "ACTUAL_LUNA_SHIPPING"
         ? "BETTER_PRICE_DISTRIBUTION" : previous.nextBestEvidence,
-    nextEvidenceValue: economics.passesEconomics ? "NEAR_ZERO" :
+    nextEvidenceValue: marketTestReady || economics.passesEconomics ? "NEAR_ZERO" :
       previous.nextEvidenceValue,
+    ...(marketTestEligible ? { quickPickMarketTestV1: {
+      ...marketTest,
+      minimumMarginSafePrice: floor?.minimumOperatorPrice ?? null,
+      testPrice: floor?.minimumOperatorPrice ?? null,
+      testPriceBasis: "MINIMUM_MARGIN_SAFE_PRICE",
+      supplierCost: marketTestEconomics?.supplierCost ?? null,
+      shipping: quote.shippingAmountUsd,
+      ebayFees: marketTestEconomics?.estimatedEbayFees ?? null,
+      testPriceProfit: marketTestEconomics?.estimatedNetProfit ?? null,
+      testPriceMargin: marketTestEconomics?.estimatedNetMarginPercent ?? null,
+      testPriceRoi: marketTestEconomics?.estimatedRoiPercent ?? null,
+      economicsMarginFloorPass: marketTestEconomics?.passesProfitGate === true,
+      economicsReady: marketTestReady,
+      marketTestReady: false,
+      marketPriceSupport: "UNPROVEN",
+      priceCompetitiveness: "UNPROVEN",
+      feeEvidenceClass: "CONSERVATIVE_PRE_SALE_MODEL",
+      calculationSource: floor?.calculationSource ?? null,
+    } } : {}),
     inputAuthority: { ...record(previous.inputAuthority),
       shipping: "DURABLY_PERSISTED_FACT" },
     evaluatedAt: input.capture.observedAt,

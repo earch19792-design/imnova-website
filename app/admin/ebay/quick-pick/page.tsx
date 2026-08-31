@@ -31,6 +31,11 @@ type QuickPickCard = {
   soldComparableCount: number
   familyDemandStatus: string | null
   familyBindingCreatedOrReused: boolean
+  demandEvidenceClass: string | null
+  demandNegativeEvidencePresent: boolean
+  marketTestPathEligible: boolean
+  marketTestReady: boolean
+  marketTestReview: Record<string, unknown> | null
   stages: Record<string, StageState>
   dollarCheck: Record<string, unknown> | null
   elapsedMs: number
@@ -117,6 +122,9 @@ export default function LunaQuickPickPage() {
       onDemandDemandDiscoveryRequired: false,
       onDemandDemandDiscoveryExecuted: false, soldComparableCount: 0,
       familyDemandStatus: null, familyBindingCreatedOrReused: false,
+      demandEvidenceClass: null, demandNegativeEvidencePresent: false,
+      marketTestPathEligible: false, marketTestReady: false,
+      marketTestReview: null,
       dollarCheck: null, elapsedMs: 0 })))
     try {
       const payload = await request("/api/admin/ebay/luna-quick-pick", {
@@ -190,7 +198,8 @@ export default function LunaQuickPickPage() {
 
       <section className="grid gap-4 lg:grid-cols-2">
         {cards.map((card) => <article key={card.sourceUrl}
-          className={`rounded-3xl border p-4 ${stateTone(card.state)}`}>
+          className={`rounded-3xl border p-4 ${card.marketTestReady
+            ? "border-amber-200/45 bg-amber-200/[0.09]" : stateTone(card.state)}`}>
           <div className="flex items-start justify-between gap-3"><div>
             <p className="text-xs font-black uppercase tracking-widest text-white/45">{card.sourceSku ?? "Identificando…"}</p>
             <h2 className="mt-1 font-black">{card.title ?? "Producto Luna"}</h2>
@@ -213,10 +222,16 @@ export default function LunaQuickPickPage() {
 
           {card.exactBlocker && <p className="mt-3 rounded-xl border border-amber-200/20 bg-black/20 p-2 text-xs text-amber-50">{card.exactBlocker}</p>}
 
-          {card.state === "READY" && card.dollarCheck && <section className="mt-4 rounded-2xl border border-emerald-200/30 bg-emerald-200/[0.08] p-3">
-            <h3 className="font-black text-emerald-50">Dollar Check</h3>
+          {card.state === "READY" && card.dollarCheck && <section
+            className={`mt-4 rounded-2xl border p-3 ${card.marketTestReady
+              ? "border-amber-200/35 bg-amber-200/[0.08]"
+              : "border-emerald-200/30 bg-emerald-200/[0.08]"}`}>
+            <h3 className={`font-black ${card.marketTestReady
+              ? "text-amber-50" : "text-emerald-50"}`}>{card.marketTestReady
+              ? "🟡 PRUEBA DE MERCADO" : "Dollar Check"}</h3>
+            {card.marketTestReady && <p className="mt-2 text-sm leading-5 text-amber-50">No encontramos suficiente historial de demanda en eBay. El producto pasa stock, costos y preparación del listing. Puedes probarlo con riesgo comercial explícito.</p>}
             <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
-              <div><dt>Precio</dt><dd className="font-black">{money(card.dollarCheck.targetPrice)}</dd></div>
+              <div><dt>{card.marketTestReady ? "Test price" : "Precio"}</dt><dd className="font-black">{money(card.marketTestReady ? card.marketTestReview?.testPrice : card.dollarCheck.targetPrice)}</dd></div>
               <div><dt>Supplier cost</dt><dd className="font-black">{money(card.dollarCheck.supplierCost)}</dd></div>
               <div><dt>Shipping</dt><dd className="font-black">{money(card.dollarCheck.shipping)}</dd></div>
               <div><dt>eBay fees</dt><dd className="font-black">{money(card.dollarCheck.ebayFees)}</dd></div>
@@ -225,10 +240,14 @@ export default function LunaQuickPickPage() {
               <div><dt>ROI</dt><dd className="font-black">{percent(card.dollarCheck.roi)}</dd></div>
               <div><dt>Stock</dt><dd className="font-black">Seguro</dd></div>
             </dl>
-            {card.opportunityId && card.candidateKey && <a
+            {card.marketTestReady ? <button type="button"
+              className="mt-3 min-h-12 w-full rounded-xl bg-amber-200 px-4 font-black text-black">REVISAR PRUEBA DE MERCADO</button> : card.opportunityId && card.candidateKey && <a
               href={`/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(card.opportunityId)}&candidate=${encodeURIComponent(card.candidateKey)}`}
               className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-emerald-200 px-4 font-black text-black">PUBLICAR EN EBAY</a>}
-            <p className="mt-2 text-xs text-emerald-50/65">Abre la autoridad de publicación existente. Este Quick Pick no publica automáticamente.</p>
+            <p className={`mt-2 text-xs ${card.marketTestReady
+              ? "text-amber-50/70" : "text-emerald-50/65"}`}>{card.marketTestReady
+              ? "Demanda = UNPROVEN. Precio competitivo = UNPROVEN. Requiere autorización explícita del owner."
+              : "Abre la autoridad de publicación existente. Este Quick Pick no publica automáticamente."}</p>
           </section>}
 
           <details className="mt-3 rounded-xl border border-white/10 p-2 text-xs text-white/55"><summary className="cursor-pointer font-black">Ver evidencia técnica</summary><dl className="mt-2 space-y-1"><div>Product ID: {card.lunaProductId ?? "—"}</div><div>Variant ID: {card.lunaVariantId ?? "—"}</div><div>Demanda durable previa: {card.durableFamilyHit ? "sí" : "no"}</div><div>Discovery bajo demanda: {card.onDemandDemandDiscoveryExecuted ? "ejecutado" : card.onDemandDemandDiscoveryRequired ? "requerido" : "no requerido"}</div><div>Estado demanda: {card.familyDemandStatus ?? "—"}</div><div>Comparables sold: {card.soldComparableCount}</div><div>Binding familia: {card.familyBindingCreatedOrReused ? "creado/reutilizado" : "—"}</div><div>Última etapa: {card.lastStage}</div><div>Disposición: {card.disposition}</div><div>Tiempo: {card.elapsedMs} ms</div></dl></details>

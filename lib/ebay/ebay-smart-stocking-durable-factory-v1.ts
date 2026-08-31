@@ -151,10 +151,37 @@ export function getSellerOsRadarPriceDistributionEconomicsV1(value: unknown) {
     targetPrice, profit, margin, roi, estimatedEbayFees }) : null
 }
 
+export function getSellerOsQuickPickMarketTestEconomicsV1(value: unknown) {
+  const frontier = record(value)
+  const marker = record(frontier.quickPickMarketTestV1)
+  const targetPrice = number(marker.testPrice)
+  const profit = number(marker.testPriceProfit)
+  const margin = number(marker.testPriceMargin)
+  const roi = number(marker.testPriceRoi)
+  const estimatedEbayFees = number(marker.ebayFees)
+  const valid = marker.contractVersion === "LUNA_QUICK_PICK_MARKET_TEST_PATH_V1"
+    && marker.demandEvidenceClass ===
+      "UNPROVEN_INSUFFICIENT_MARKET_EVIDENCE"
+    && marker.demandNegativeEvidencePresent === false
+    && marker.marketPriceSupport === "UNPROVEN"
+    && marker.priceCompetitiveness === "UNPROVEN"
+    && marker.testPriceBasis === "MINIMUM_MARGIN_SAFE_PRICE"
+    && marker.economicsMarginFloorPass === true
+    && marker.economicsReady === true
+    && frontier.shippingStatus === "SHIPPING_DURABLY_PERSISTED"
+    && frontier.nextBestEvidence === "NONE"
+    && targetPrice !== null && targetPrice > 0 && profit !== null && profit > 0
+    && margin !== null && margin >= 20 && roi !== null && roi >= 30
+    && estimatedEbayFees !== null && estimatedEbayFees >= 0
+  return valid ? Object.freeze({ economicsReady: true as const, targetPrice,
+    profit, margin, roi, estimatedEbayFees }) : null
+}
+
 function normalizeProfitabilityFrontier(value: unknown) {
   const outer = record(value)
   const inner = record(outer.frontier)
   const target = getSellerOsRadarPriceDistributionEconomicsV1(inner)
+  const marketTestTarget = getSellerOsQuickPickMarketTestEconomicsV1(inner)
   return {
     frontier_id: outer.frontierId,
     frontier_digest: inner.frontierDigest,
@@ -177,6 +204,7 @@ function normalizeProfitabilityFrontier(value: unknown) {
     market_price_median: inner.marketPriceMedian,
     ebay_fee_estimate_at_median: inner.ebayFeeEstimateAtMedian,
     radar_price_distribution_target: target,
+    quick_pick_market_test_target: marketTestTarget,
     hard_blockers: inner.currentHardBlockers ?? inner.hardBlockers,
   }
 }
@@ -600,6 +628,10 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
   const productTruth = exactProductTruth(opportunity)
   const supplierIdentityReady = exactSupplierIdentity(opportunity, frontier)
   const demandStatus = familyDemand(frontier)
+  const marketTestTarget = record(frontier.quick_pick_market_test_target)
+  const marketTestPath = marketTestTarget.economicsReady === true &&
+    ["FAMILY_DEMAND_UNPROVEN", "FAMILY_DEMAND_UNAVAILABLE"]
+      .includes(demandStatus ?? "")
   const demandReady = demandStatus === "FAMILY_DEMAND_PROVEN"
     || demandStatus === "FAMILY_DEMAND_SUPPORTED"
   const hardBlockers = strings(frontier.hard_blockers)
@@ -615,7 +647,12 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
     && (number(frontier.contribution_profit_median) ?? 0) > 0
     && (number(frontier.contribution_margin_median) ?? 0) > 0
     && hardBlockers.length === 0
-  const economicsReady = (legacyEconomicsReady || distributionReady)
+  const marketTestEconomicsReady = marketTestPath &&
+    (number(marketTestTarget.profit) ?? 0) > 0 &&
+    (number(marketTestTarget.margin) ?? 0) >= 20 &&
+    (number(marketTestTarget.roi) ?? 0) >= 30
+  const economicsReady = (legacyEconomicsReady || distributionReady ||
+    marketTestEconomicsReady)
     && frontier.shipping_status === "SHIPPING_DURABLY_PERSISTED"
     && frontier.next_best_evidence === "NONE" && hardBlockers.length === 0
   const duplicateGuardPassed = input.activeDuplicateCount === 0
@@ -629,8 +666,9 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
   const categoryReady = Boolean(seed.categoryId)
   const packageInputsReady = Boolean(seed.title && seed.imageUrls.length > 0
     && categoryReady)
+  const demandPathReady = demandReady || marketTestPath
   const listingPackageReady = supplierIdentityReady && productTruth.exact
-    && demandReady && economicsReady && stockReady && duplicateGuardPassed
+    && demandPathReady && economicsReady && stockReady && duplicateGuardPassed
     && packageInputsReady
   const canonicalMarketplaceReady = Array.isArray(readiness.blockers)
     && readiness.blockers.length === 0
@@ -642,7 +680,7 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
   const blockers = unique([
     ...(!supplierIdentityReady ? ["SUPPLIER_IDENTITY_NOT_EXACT"] : []),
     ...(!productTruth.exact ? ["PRODUCT_TRUTH_NOT_READY"] : []),
-    ...(!demandReady ? ["FAMILY_DEMAND_NOT_READY"] : []),
+    ...(!demandPathReady ? ["FAMILY_DEMAND_NOT_READY"] : []),
     ...(!economicsReady ? [
       hardBlockers[0] ?? `ECONOMICS_${String(frontier.economic_classification
         ?? "UNPROVEN")}`,
@@ -658,16 +696,21 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
         ? canonicalMarketplaceBlockers
         : ["CANONICAL_MARKETPLACE_READINESS_REQUIRED"]
       : []),
-    ...(!decisionPackageReady ? ["DECISION_PACKAGE_NOT_BOUND"] : []),
+    ...(!decisionPackageReady && !marketTestPath
+      ? ["DECISION_PACKAGE_NOT_BOUND"] : []),
   ])
-  const listingReady = blockers.length === 0
+  const marketTestReady = marketTestPath && blockers.length === 0
+  const listingReady = !marketTestPath && blockers.length === 0
   const stageStatuses = {
     SMART_STOCKING: "READY",
     PRODUCT_TRUTH_READY: productTruth.exact ? "READY" : "BLOCKED",
-    DEMAND_READY: demandReady ? "READY" : "BLOCKED",
+    DEMAND_READY: demandPathReady ? "READY" : "BLOCKED",
     ECONOMICS_READY: economicsReady ? "READY" : "BLOCKED",
     LISTING_PACKAGE_READY: listingPackageReady ? "READY" : "BLOCKED",
     LISTING_READY: listingReady ? "READY" : "BLOCKED",
+    ...(marketTestPath ? {
+      MARKET_TEST_READY: marketTestReady ? "READY" as const : "BLOCKED" as const,
+    } : {}),
   } as const
   const evidenceCore = {
     contractVersion: SELLER_OS_DURABLE_FACTORY_VERSION,
@@ -733,6 +776,24 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
     roiPercent: number(targetEconomics.roi) ??
       number(decisionPackage.economics.roiPercent),
   } : null
+  const marketTestReviewV1 = marketTestReady ? Object.freeze({
+    contractVersion: "LUNA_QUICK_PICK_MARKET_TEST_PATH_V1" as const,
+    finalDecision: "MARKET_TEST_READY" as const,
+    ownerAuthorizationRequired: true as const,
+    demandEvidenceClass: "UNPROVEN_INSUFFICIENT_MARKET_EVIDENCE" as const,
+    exactProductDemandClaimed: false as const,
+    marketPriceSupport: "UNPROVEN" as const,
+    priceCompetitiveness: "UNPROVEN" as const,
+    testPriceBasis: "MINIMUM_MARGIN_SAFE_PRICE" as const,
+    testPrice: number(marketTestTarget.targetPrice),
+    supplierCost: number(frontier.luna_cost),
+    shipping: number(frontier.shipping_value),
+    ebayFees: number(marketTestTarget.estimatedEbayFees),
+    profit: number(marketTestTarget.profit),
+    margin: number(marketTestTarget.margin),
+    roi: number(marketTestTarget.roi),
+    marketplaceWrites: 0 as const,
+  }) : null
   return Object.freeze({
     contractVersion: SELLER_OS_DURABLE_FACTORY_VERSION,
     authority: SELLER_OS_DETERMINISTIC_FACTORY,
@@ -741,17 +802,19 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
     marketplaceWrites: 0 as const,
     publishCalls: 0 as const,
     listingReady,
+    marketTestReady,
     firstBlocker: blockers[0] ?? null,
     blockers: Object.freeze(blockers),
     stageStatuses: Object.freeze(stageStatuses),
     factoryPreparationAuthority: Object.freeze(factoryPreparationAuthority),
     smartStockingListingIntakeV1: smartStockingListingIntakeV1
       ? Object.freeze(smartStockingListingIntakeV1) : null,
+    marketTestReviewV1,
     packageSeed: Object.freeze({
       ...seed,
       factoryPreparationAuthority,
     }),
-    readiness: listingReady ? 100 : Math.round(
+    readiness: listingReady || marketTestReady ? 100 : Math.round(
       Object.values(stageStatuses).filter((status) => status === "READY").length
       / Object.keys(stageStatuses).length * 100,
     ),
@@ -884,10 +947,12 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     ? decisionPackageAuthority(
       opportunityForPlan, normalizedFrontier, providedDecisionPackage).exact
     : false
+  const marketTestBinding = record(
+    normalizedFrontier.quick_pick_market_test_target).economicsReady === true
   const decisionPackageBinding = providedDecisionPackageExact
     ? { row: providedDecisionPackage,
       createdOrReused: false as const, identityAmbiguityReason: null }
-    : radarCandidateEligibleForBinding
+    : radarCandidateEligibleForBinding && !marketTestBinding
       ? await ensureSellerOsRadarDecisionPackageBindingV1({
         supabase: input.supabase,
         accountKey: input.accountKey,
@@ -909,12 +974,17 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
     ...(plan.smartStockingListingIntakeV1
       ? { smartStockingListingIntakeV1: plan.smartStockingListingIntakeV1 }
       : {}),
+    ...(plan.marketTestReviewV1
+      ? { quickPickMarketTestReviewV1: plan.marketTestReviewV1 }
+      : {}),
   }
   const queueWrite = await input.supabase.from("ebay_luna_opportunity_queue")
     .update({
       assessment,
       ...(plan.listingReady
-        ? { decision: "LISTING_READY", queue_status: "ready" } : {}),
+        ? { decision: "LISTING_READY", queue_status: "ready" }
+        : plan.marketTestReady
+          ? { decision: "MARKET_TEST_READY", queue_status: "ready" } : {}),
       updated_at: new Date().toISOString(),
     }).eq("id", input.opportunityId).eq("candidate_key", input.candidateKey)
     .select("id,candidate_key,supplier_product_id,supplier_variant_id,supplier_sku,gtin,decision,assessment")
@@ -938,7 +1008,8 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
       const packageWrite = await input.supabase.from("ebay_listing_packages")
         .update({
           package_data: plan.packageSeed,
-          status: plan.listingReady ? "ready_for_review" : "draft",
+          status: plan.listingReady || plan.marketTestReady
+            ? "ready_for_review" : "draft",
           readiness: plan.readiness,
           source_observed_at: opportunity.supplier_snapshot_at ?? null,
           updated_at: new Date().toISOString(),
@@ -955,7 +1026,8 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
         account_key: input.accountKey,
         opportunity_id: input.opportunityId,
         candidate_key: input.candidateKey,
-        status: plan.listingReady ? "ready_for_review" : "draft",
+        status: plan.listingReady || plan.marketTestReady
+          ? "ready_for_review" : "draft",
         package_data: plan.packageSeed,
         readiness: plan.readiness,
         source_observed_at: opportunity.supplier_snapshot_at ?? null,

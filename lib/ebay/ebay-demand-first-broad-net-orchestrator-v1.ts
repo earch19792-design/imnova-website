@@ -1469,6 +1469,7 @@ export type SellerOsOnDemandFamilyDemandDiscoveryResultV1 = Readonly<{
   familyName: string | null
   exactProductDemandClaimed: false
   reasonCode: string | null
+  demandNegativeEvidencePresent: boolean
 }>
 
 type OnDemandKeywordDemandReaderV1 = typeof runEbaySellerKeywordDemandValidation
@@ -1482,7 +1483,116 @@ function onDemandDiscoveryResultV1(input: Partial<
     familyBindingCreatedOrReused: input.familyBindingCreatedOrReused ?? false,
     familyId: input.familyId ?? null, familyName: input.familyName ?? null,
     exactProductDemandClaimed: false as const,
-    reasonCode: input.reasonCode ?? null })
+    reasonCode: input.reasonCode ?? null,
+    demandNegativeEvidencePresent:
+      input.demandNegativeEvidencePresent ?? false })
+}
+
+async function persistOnDemandUnprovenMarketTestFamilyV1(input: Readonly<{
+  supabase: ReadWriteClient
+  productTitle: string
+  productType: string | null
+  report: Awaited<ReturnType<OnDemandKeywordDemandReaderV1>>
+  activeEvidence: readonly MarketEvidenceV1[]
+}>) {
+  const categorized = input.activeEvidence.filter((entry) =>
+    entry.categoryId && /^\d{1,20}$/.test(entry.categoryId))
+  const categories = new Set(categorized.map((entry) => entry.categoryId as string))
+  if (!categorized.length || categories.size !== 1 || !input.productType) return null
+  const categoryId = [...categories][0]
+  const references = unique(categorized.map((entry) => entry.evidenceId))
+  const evidenceObservedAt = instant(input.report.evidenceAsOf)
+  if (!evidenceObservedAt || !references.length) return null
+  const familyName = text(input.report.searchQuery, 160) ??
+    text(input.productTitle, 160)
+  if (!familyName) return null
+  const familyIdentity = normalizeSellerOsMarketFamilyIdentityV1({
+    productFunction: familyName,
+    buyerUseCase: input.productType,
+    category: `ebay-us-category:${categoryId}`,
+    structuredDefinition: { "category id": categoryId,
+      "product family": familyName,
+      "supplier product type": input.productType },
+  })
+  const familyDefinition: SellerOsMarketFamilyDefinitionV1 = {
+    identity: familyIdentity, familyName,
+    familyQuerySet: unique([input.report.searchQuery, input.productTitle,
+      input.productType]).slice(0, 16),
+    keyProductAttributes: ["category id", "product family",
+      "supplier product type"],
+    keyBuyerIntentTerms: [], demandKeywordDna: null,
+    adapterContract: SELLER_OS_DEMAND_FIRST_BROAD_NET_ORCHESTRATOR_VERSION,
+    adapterVersion: "1",
+  }
+  const end = new Date(evidenceObservedAt)
+  const start = new Date(end.getTime() - 24 * 60 * 60_000)
+  const observation = buildSellerOsFamilyMarketObservationV1({
+    familyDefinition, observationWindowStart: start.toISOString(),
+    observationWindowEnd: end.toISOString(),
+    familyDemandStatus: "FAMILY_DEMAND_UNPROVEN",
+    demandEvidenceClass: "DIRECT_MARKET_OBSERVATION",
+    sourceStatus: "AVAILABLE", aggregationSemantics: "CUMULATIVE_SNAPSHOT",
+    demandEvidenceReferences: references,
+    demandEvidenceDigest: digest(references), soldComparableCount: null,
+    soldQuantityEvidence: null, activeComparableCount: categorized.length,
+    sellerDiversity: new Set(categorized.flatMap((entry) =>
+      entry.sellerReferenceHash ? [entry.sellerReferenceHash] : [])).size,
+    priceBand: null, priceMedian: null, priceDistributionEvidence: [],
+    competitionState: "UNPROVEN", buyerIntentTerms: [],
+    keywordState: "UNPROVEN", demandKeywordDna: null,
+    attributeProfile: { "category id": categoryId,
+      "product family": familyName,
+      "supplier product type": input.productType },
+    opportunityTypes: ["QUICK_PICK_MARKET_TEST"], evidenceObservedAt,
+    sourceUpdatedAt: evidenceObservedAt, maximumAgeSeconds: MAXIMUM_AGE_SECONDS,
+    sourceAdapter: "SELLER_OS_EBAY_MARKET_RESEARCH_GATEWAY_V1",
+    sourceContractVersion: input.report.validationVersion,
+    limitations: ["DEMAND_EVIDENCE_ABSENT_NOT_NEGATIVE",
+      "EXACT_PRODUCT_DEMAND_NOT_CLAIMED", "MARKET_PRICE_SUPPORT_UNPROVEN"],
+  })
+  const caseResult = await checkedRpc(input.supabase,
+    "put_seller_os_market_opportunity_case_v1", {
+      p_family_identity: familyDefinition.identity, p_family_name: familyName,
+      p_family_query_set: familyDefinition.familyQuerySet,
+      p_key_product_attributes: familyDefinition.keyProductAttributes,
+      p_key_buyer_intent_terms: familyDefinition.keyBuyerIntentTerms,
+      p_adapter_contract: familyDefinition.adapterContract,
+      p_adapter_version: familyDefinition.adapterVersion,
+      p_demand_keyword_dna: null,
+    })
+  if (text(caseResult.opportunityCaseId, 120) !== observation.opportunityCaseId) {
+    throw new Error("ON_DEMAND_MARKET_TEST_CASE_READBACK_MISMATCH")
+  }
+  const observationResult = await checkedRpc(input.supabase,
+    "put_seller_os_family_market_observation_v1", {
+      p_opportunity_case_id: observation.opportunityCaseId,
+      p_family_definition_version_id: observation.familyDefinitionVersionId,
+      p_observation_window_start: observation.observationWindowStart,
+      p_observation_window_end: observation.observationWindowEnd,
+      p_demand_evidence_class: "DIRECT_MARKET_OBSERVATION",
+      p_source_status: "AVAILABLE", p_aggregation_semantics: "CUMULATIVE_SNAPSHOT",
+      p_demand_evidence_references: observation.demandEvidenceReferences,
+      p_sold_comparable_count: null, p_sold_quantity: null,
+      p_active_comparable_count: observation.activeComparableCount,
+      p_seller_diversity: observation.sellerDiversity,
+      p_price_currency: null, p_price_band_minimum: null,
+      p_price_band_maximum: null, p_price_median: null,
+      p_price_distribution_evidence: [], p_competition_state: "UNPROVEN",
+      p_buyer_intent_terms: [], p_keyword_state: "UNPROVEN",
+      p_demand_keyword_dna: null, p_attribute_profile: observation.attributeProfile,
+      p_opportunity_types: observation.opportunityTypes,
+      p_evidence_observed_at: observation.evidenceObservedAt,
+      p_source_updated_at: observation.sourceUpdatedAt,
+      p_maximum_age_seconds: MAXIMUM_AGE_SECONDS,
+      p_source_adapter: "SELLER_OS_EBAY_MARKET_RESEARCH_GATEWAY_V1",
+      p_source_contract_version: input.report.validationVersion,
+      p_momentum_policy_version: MOMENTUM_POLICY,
+      p_limitations: observation.limitations,
+    })
+  if (text(observationResult.observationId, 120) !== observation.observationId) {
+    throw new Error("ON_DEMAND_MARKET_TEST_OBSERVATION_READBACK_MISMATCH")
+  }
+  return Object.freeze({ familyId: observation.familyId, familyName })
 }
 
 /**
@@ -1531,6 +1641,24 @@ export async function discoverAndPersistSellerOsOnDemandFamilyDemandV1(
     evidence.categoryId && /^\d{1,20}$/.test(evidence.categoryId))
   if (report.insightsAvailability !== "AVAILABLE" &&
       soldEvidence.length === 0) {
+    const activeEvidence = allEvidence.filter((evidence) =>
+      evidence.activeListing && !evidence.confirmedSold)
+    try {
+      const binding = await persistOnDemandUnprovenMarketTestFamilyV1({
+        supabase: input.supabase, productTitle, productType, report,
+        activeEvidence,
+      })
+      if (binding) return onDemandDiscoveryResultV1({
+        status: "DEMAND_DISCOVERY_UNAVAILABLE", soldComparableCount: 0,
+        familyBindingCreatedOrReused: true, familyId: binding.familyId,
+        familyName: binding.familyName,
+        reasonCode: `ON_DEMAND_MARKETPLACE_INSIGHTS_${report.insightsAvailability}`,
+        demandNegativeEvidencePresent: false,
+      })
+    } catch {
+      return onDemandDiscoveryResultV1({ status: "DEMAND_DISCOVERY_UNAVAILABLE",
+        reasonCode: "ON_DEMAND_MARKET_TEST_FAMILY_PERSISTENCE_UNAVAILABLE" })
+    }
     return onDemandDiscoveryResultV1({ status: "DEMAND_DISCOVERY_UNAVAILABLE",
       reasonCode: `ON_DEMAND_MARKETPLACE_INSIGHTS_${report.insightsAvailability}` })
   }

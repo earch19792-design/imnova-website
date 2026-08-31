@@ -73,8 +73,15 @@ export type LunaQuickPickCardV1 = Readonly<{
   onDemandDemandDiscoveryExecuted: boolean
   soldComparableCount: number
   familyDemandStatus: "FAMILY_DEMAND_PROVEN" | "FAMILY_DEMAND_SUPPORTED" |
+    "FAMILY_DEMAND_UNPROVEN" | "FAMILY_DEMAND_UNAVAILABLE" |
     "DEMAND_NOT_PROVEN" | "DEMAND_DISCOVERY_UNAVAILABLE" | null
   familyBindingCreatedOrReused: boolean
+  demandEvidenceClass: "PROVEN_OR_SUPPORTED" |
+    "UNPROVEN_INSUFFICIENT_MARKET_EVIDENCE" | null
+  demandNegativeEvidencePresent: boolean
+  marketTestPathEligible: boolean
+  marketTestReady: boolean
+  marketTestReview: JsonRecord | null
   stages: Readonly<Record<string, "WAITING" | "RUNNING" | "PASS" | "BLOCKED">>
   dollarCheck: JsonRecord | null
   elapsedMs: number
@@ -324,6 +331,12 @@ function card(input: Partial<LunaQuickPickCardV1> &
     familyDemandStatus: input.familyDemandStatus ?? null,
     familyBindingCreatedOrReused:
       input.familyBindingCreatedOrReused ?? false,
+    demandEvidenceClass: input.demandEvidenceClass ?? null,
+    demandNegativeEvidencePresent:
+      input.demandNegativeEvidencePresent ?? false,
+    marketTestPathEligible: input.marketTestPathEligible ?? false,
+    marketTestReady: input.marketTestReady ?? false,
+    marketTestReview: input.marketTestReview ?? null,
     stages: input.stages ?? emptyStages(), dollarCheck: input.dollarCheck ?? null,
     elapsedMs: input.elapsedMs ?? 0 })
 }
@@ -511,6 +524,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
   let currentBatch = buildRadarRevenueFactoryCandidateBatchV1({
     radarPayload: activeRadarPayload, frontierPayload: frontierRead.data,
     lunaCatalogRows: candidateRows, targetCandidates: LUNA_QUICK_PICK_MAX_INPUTS,
+    allowUnprovenMarketTest: true,
     catalogReadMetadata: { pageCount: catalog.pageCount,
       rowsRead: catalog.rowsRead, uniqueIdentities: catalog.uniqueIdentities,
       truncated: catalog.truncated },
@@ -548,6 +562,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
     currentBatch = buildRadarRevenueFactoryCandidateBatchV1({
       radarPayload: activeRadarPayload, frontierPayload: frontierRead.data,
       lunaCatalogRows: candidateRows, targetCandidates: LUNA_QUICK_PICK_MAX_INPUTS,
+      allowUnprovenMarketTest: true,
       catalogReadMetadata: { pageCount: catalog.pageCount,
         rowsRead: catalog.rowsRead, uniqueIdentities: catalog.uniqueIdentities,
         truncated: catalog.truncated },
@@ -567,7 +582,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       const single = buildRadarRevenueFactoryCandidateBatchV1({
         radarPayload: activeRadarPayload, frontierPayload: frontierRead.data,
         lunaCatalogRows: entry.selectedRow ? [entry.selectedRow] : [],
-        targetCandidates: 2,
+        targetCandidates: 2, allowUnprovenMarketTest: true,
       })
       cards.set(entry.sourceUrl, card({ sourceUrl: entry.sourceUrl,
         canonicalUrl: entry.canonicalUrl, title: entry.title,
@@ -609,6 +624,7 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
     currentBatch = buildRadarRevenueFactoryCandidateBatchV1({
       radarPayload: activeRadarPayload, frontierPayload: refreshedFrontier.data,
       lunaCatalogRows: candidateRows, targetCandidates: LUNA_QUICK_PICK_MAX_INPUTS,
+      allowUnprovenMarketTest: true,
       catalogReadMetadata: { pageCount: catalog.pageCount,
         rowsRead: catalog.rowsRead, uniqueIdentities: catalog.uniqueIdentities,
         truncated: catalog.truncated },
@@ -631,7 +647,8 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
     const outcome = candidate ? record(materialized?.outcomes.find((item) =>
       item.candidateId === candidate.candidateId)) : {}
     if (!candidate || !outcome.candidateId) continue
-    const ready = outcome.listingReady === true
+    const marketTestReady = outcome.marketTestReady === true
+    const ready = outcome.listingReady === true || marketTestReady
     const economicsBlocker = economicsHardBlockerV1(activeFrontierPayload,
       candidate)
     cards.set(entry.sourceUrl, card({ sourceUrl: entry.sourceUrl,
@@ -646,7 +663,8 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       state: ready ? "READY" :
         outcome.shippingJobStatus === "WAITING_BROWSER_WORKER"
           ? "RUNNING" : "BLOCKED",
-      lastStage: ready ? "LISTING_READY" :
+      lastStage: marketTestReady ? "MARKET_TEST_READY" :
+        ready ? "LISTING_READY" :
         outcome.shippingJobStatus === "WAITING_BROWSER_WORKER"
           ? "SHIPPING" : actionable(outcome.economicsNextEvidence) ??
             actionable(record(outcome.priceDistributionContinuation).finalReason) ??
@@ -677,6 +695,16 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       familyBindingCreatedOrReused: discoveryByIdentity.get(identityKey(
         entry.selected.lunaProductId, entry.selected.lunaVariantId,
         entry.selected.supplierSku))?.familyBindingCreatedOrReused ?? false,
+      demandEvidenceClass: candidate.marketTestPath
+        ? "UNPROVEN_INSUFFICIENT_MARKET_EVIDENCE"
+        : "PROVEN_OR_SUPPORTED",
+      demandNegativeEvidencePresent: discoveryByIdentity.get(identityKey(
+        entry.selected.lunaProductId, entry.selected.lunaVariantId,
+        entry.selected.supplierSku))?.demandNegativeEvidencePresent ?? false,
+      marketTestPathEligible: candidate.marketTestPath,
+      marketTestReady,
+      marketTestReview: marketTestReady
+        ? record(outcome.marketTestReview) : null,
       variants: entry.variants, stages: outcomeStages(outcome, candidate),
       dollarCheck: ready ? record(outcome.dollarCheck) : null }))
   }
@@ -752,11 +780,15 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     const stages = record(factory.stageStatuses)
     const intake = record(assessment.smartStockingListingIntakeV1)
     const shipping = record(assessment.radarAutomaticLunaShippingContinuationV1)
+    const marketTestReview = record(assessment.quickPickMarketTestReviewV1)
     const listingReady = intake.finalDecision === "LISTING_READY" ||
       row.decision === "LISTING_READY"
+    const marketTestReady = marketTestReview.finalDecision ===
+      "MARKET_TEST_READY" || row.decision === "MARKET_TEST_READY"
+    const reviewReady = listingReady || marketTestReady
     const mapped = emptyStages({ IDENTITY: "PASS", DUPLICATE: "PASS",
-      STOCK: "PASS", DEMAND: stages.DEMAND_READY === "READY"
-        ? "PASS" : "BLOCKED",
+      STOCK: "PASS", DEMAND: marketTestReady ? "BLOCKED" :
+        stages.DEMAND_READY === "READY" ? "PASS" : "BLOCKED",
       SHIPPING: shipping.shippingJobStatus === "WAITING_BROWSER_WORKER"
         ? "RUNNING" : shipping.shippingJobStatus === "SHIPPING_EVIDENCE_DURABLE"
           ? "PASS" : "BLOCKED",
@@ -765,7 +797,7 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
         ? "PASS" : "BLOCKED",
       LISTING_PACKAGE: stages.LISTING_PACKAGE_READY === "READY"
         ? "PASS" : "BLOCKED",
-      MARKETPLACE_READINESS: listingReady ? "PASS" : "BLOCKED",
+      MARKETPLACE_READINESS: reviewReady ? "PASS" : "BLOCKED",
       LISTING_READY: listingReady ? "PASS" : "BLOCKED" })
     return Object.freeze({ candidateKey: String(row.candidate_key),
       candidateId: String(row.candidate_key), opportunityId: String(row.id),
@@ -774,27 +806,41 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       lunaProductId: text(row.supplier_product_id, 80),
       lunaVariantId: text(row.supplier_variant_id, 80),
       title: text(row.product_title, 350),
-      state: listingReady ? "READY" as const :
+      state: reviewReady ? "READY" as const :
         shipping.shippingJobStatus === "WAITING_BROWSER_WORKER"
           ? "RUNNING" as const : "BLOCKED" as const,
-      lastStage: listingReady ? "LISTING_READY" :
+      lastStage: marketTestReady ? "MARKET_TEST_READY" :
+        listingReady ? "LISTING_READY" :
         shipping.shippingJobStatus === "WAITING_BROWSER_WORKER"
           ? "SHIPPING" : text(factory.blockers, 120) ?? "ECONOMICS",
       disposition: String(row.decision ?? row.queue_status ?? "PARKED"),
-      exactBlocker: listingReady ? null :
+      exactBlocker: reviewReady ? null :
         Array.isArray(factory.blockers) ? text(factory.blockers[0], 120) : null,
+      demandEvidenceClass: marketTestReady
+        ? "UNPROVEN_INSUFFICIENT_MARKET_EVIDENCE" : null,
+      demandNegativeEvidencePresent: false,
+      marketTestPathEligible: marketTestReady,
+      marketTestReady,
+      marketTestReview: marketTestReady ? marketTestReview : null,
       stages: mapped,
-      dollarCheck: listingReady ? Object.freeze({
+      dollarCheck: reviewReady ? Object.freeze({
         title: row.product_title,
-        targetPrice: intake.finalPriceUsd ?? null,
-        supplierCost: intake.supplierCostUsd ?? null,
-        shipping: intake.supplierShippingUsd ?? null,
-        ebayFees: intake.estimatedEbayFeesUsd ?? null,
-        profit: intake.contributionProfitUsd ?? null,
-        margin: intake.contributionMarginPercent ?? null,
-        roi: intake.roiPercent ?? null,
+        targetPrice: marketTestReady ? marketTestReview.testPrice ?? null :
+          intake.finalPriceUsd ?? null,
+        supplierCost: marketTestReady ? marketTestReview.supplierCost ?? null :
+          intake.supplierCostUsd ?? null,
+        shipping: marketTestReady ? marketTestReview.shipping ?? null :
+          intake.supplierShippingUsd ?? null,
+        ebayFees: marketTestReady ? marketTestReview.ebayFees ?? null :
+          intake.estimatedEbayFeesUsd ?? null,
+        profit: marketTestReady ? marketTestReview.profit ?? null :
+          intake.contributionProfitUsd ?? null,
+        margin: marketTestReady ? marketTestReview.margin ?? null :
+          intake.contributionMarginPercent ?? null,
+        roi: marketTestReady ? marketTestReview.roi ?? null :
+          intake.roiPercent ?? null,
         stock: "STOCK_SAFE",
-        demandGrain: "FAMILY",
+        demandGrain: marketTestReady ? "UNPROVEN" : "FAMILY",
       }) : null,
       updatedAt: text(row.updated_at, 80),
     })

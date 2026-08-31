@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 
 import { getSellerOsRadarPriceDistributionEconomicsV1,
+  getSellerOsQuickPickMarketTestEconomicsV1,
   materializeSellerOsDeterministicFactoryCandidateV1,
   resolveSellerOsExactProductTruthV1 } from
   "./ebay-smart-stocking-durable-factory-v1"
@@ -10,7 +11,7 @@ import { buildSellerOsPrelinkedLaunchConfigurationV1 } from
   "./ebay-prelinked-listing-fast-lane-foundation-v1"
 import { calculateSellerOsProfitabilityFrontierV1 } from
   "./ebay-prelinked-profitability-frontier-v1"
-import { calculateEbayUnitEconomics,
+import { calculateEbayMinimumOperatorPrice, calculateEbayUnitEconomics,
   DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG } from "./ebay-unit-economics"
 import type { RadarMarketplaceTaxonomyReaderV1 } from
   "./ebay-radar-canonical-marketplace-readiness-v1"
@@ -55,7 +56,8 @@ export type RadarRevenueFactoryFamilySeedV1 = Readonly<{
   familyName: string
   opportunityCaseId: string
   demandEvidenceDigest: string
-  familyDemandStatus: "FAMILY_DEMAND_PROVEN" | "FAMILY_DEMAND_SUPPORTED"
+  familyDemandStatus: "FAMILY_DEMAND_PROVEN" | "FAMILY_DEMAND_SUPPORTED" |
+    "FAMILY_DEMAND_UNPROVEN" | "FAMILY_DEMAND_UNAVAILABLE"
   soldComparableCount: number
   soldQuantityEvidence: number
   priceBand: Readonly<{
@@ -113,6 +115,7 @@ export type RadarRevenueFactoryCandidateV1 = Readonly<{
   lunaVariantId: string | null
   supplierSku: string | null
   productResearchIdentityHash: string | null
+  marketTestPath: boolean
   lineage: RadarRevenueFactoryFamilySeedV1
 }>
 
@@ -304,7 +307,8 @@ function currentObservation(family: JsonRecord) {
   return rows(family.observationSeries)[0] ?? record(family.currentObservation)
 }
 
-function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string[]) {
+function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string[],
+  allowUnprovenMarketTest = false) {
   const root = record(radarPayload)
   if (root.status !== "AVAILABLE") return []
   const allowed = allowedFamilyNames?.length
@@ -316,8 +320,15 @@ function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string
     const familyName = text(family.familyName, 200)
     const opportunityCaseId = text(family.opportunityCaseId, 120)
     const demandEvidenceDigest = text(observation.demandEvidenceDigest, 80)
-    const soldComparableCount = nonnegativeInteger(observation.soldComparableCount)
-    const soldQuantityEvidence = nonnegativeInteger(observation.soldQuantity)
+    const unprovenMarketTest = allowUnprovenMarketTest &&
+      ["FAMILY_DEMAND_UNPROVEN", "FAMILY_DEMAND_UNAVAILABLE"]
+        .includes(String(observation.familyDemandStatus ?? "")) &&
+      limitations(observation.limitations).includes(
+        "DEMAND_EVIDENCE_ABSENT_NOT_NEGATIVE")
+    const soldComparableCount = nonnegativeInteger(
+      observation.soldComparableCount) ?? (unprovenMarketTest ? 0 : null)
+    const soldQuantityEvidence = nonnegativeInteger(
+      observation.soldQuantity) ?? (unprovenMarketTest ? 0 : null)
     const evidenceObservedAt = iso(observation.evidenceObservedAt)
     const sourceUpdatedAt = iso(observation.sourceUpdatedAt)
     const maximumAgeSeconds = nonnegativeInteger(observation.maximumAgeSeconds)
@@ -328,11 +339,16 @@ function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string
     const structuredDemandTerms = demandTerms(
       observation.demandKeywordDna ?? family.currentDemandKeywordDna)
     const familyDemandStatus = observation.familyDemandStatus
+    const demandAccepted = ["FAMILY_DEMAND_PROVEN",
+      "FAMILY_DEMAND_SUPPORTED"].includes(String(familyDemandStatus ?? "")) ||
+      allowUnprovenMarketTest && ["FAMILY_DEMAND_UNPROVEN",
+        "FAMILY_DEMAND_UNAVAILABLE"].includes(String(familyDemandStatus ?? "")) &&
+        limitations(observation.limitations).includes(
+          "DEMAND_EVIDENCE_ABSENT_NOT_NEGATIVE")
     if (!familyId || !FAMILY_ID.test(familyId) || !familyName ||
         !opportunityCaseId || !OPPORTUNITY_CASE_ID.test(opportunityCaseId) ||
         !demandEvidenceDigest || !SHA256.test(demandEvidenceDigest) ||
-        !["FAMILY_DEMAND_PROVEN", "FAMILY_DEMAND_SUPPORTED"].includes(
-          String(familyDemandStatus ?? "")) || observation.fresh !== true ||
+        !demandAccepted || observation.fresh !== true ||
         soldComparableCount === null || soldQuantityEvidence === null ||
         !evidenceObservedAt || !sourceUpdatedAt || maximumAgeSeconds === null ||
         maximumAgeSeconds < 1 || !familyProductFunction ||
@@ -341,7 +357,7 @@ function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string
     return [Object.freeze({
       familyId, familyName, opportunityCaseId, demandEvidenceDigest,
       familyDemandStatus: familyDemandStatus as
-        "FAMILY_DEMAND_PROVEN" | "FAMILY_DEMAND_SUPPORTED",
+        RadarRevenueFactoryFamilySeedV1["familyDemandStatus"],
       soldComparableCount, soldQuantityEvidence,
       priceBand: Object.freeze({
         currency: text(observation.priceCurrency, 12),
@@ -616,6 +632,7 @@ function prepareProductResearchRows(
 
 function frontierEconomicsReady(frontier: JsonRecord) {
   const distribution = getSellerOsRadarPriceDistributionEconomicsV1(frontier)
+  const marketTest = getSellerOsQuickPickMarketTestEconomicsV1(frontier)
   const economics = text(frontier.economicClassification, 80)
   const hardBlockers = Array.isArray(frontier.currentHardBlockers)
     ? frontier.currentHardBlockers
@@ -626,7 +643,8 @@ function frontierEconomicsReady(frontier: JsonRecord) {
     (number(frontier.contributionProfitAtMarketMedian) ?? 0) > 0 &&
     (number(frontier.contributionMarginAtMarketMedian) ?? 0) > 0 &&
     hardBlockers.length === 0
-  return legacyReady || Boolean(distribution?.economicsReady &&
+  return legacyReady || Boolean((distribution?.economicsReady ||
+    marketTest?.economicsReady) &&
     frontier.shippingStatus === "SHIPPING_DURABLY_PERSISTED" &&
     frontier.nextBestEvidence === "NONE" && hardBlockers.length === 0)
 }
@@ -639,8 +657,10 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
   productResearchRows?: readonly unknown[]
   allowedFamilyNames?: readonly string[]
   targetCandidates?: number
+  allowUnprovenMarketTest?: boolean
 }>) {
-  const seeds = familySeeds(input.radarPayload, input.allowedFamilyNames)
+  const seeds = familySeeds(input.radarPayload, input.allowedFamilyNames,
+    input.allowUnprovenMarketTest === true)
   const seedById = new Map(seeds.map((seed) => [seed.familyId, seed]))
   const catalog = new Map(rows(input.lunaCatalogRows).flatMap((row) => {
     const productId = text(row.supplier_product_id) ?? text(row.product_id)
@@ -675,7 +695,8 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
     const exactFrontier = exactFrontiers.length === 1
       ? record(exactFrontiers[0].frontier) : null
     const exactTarget = exactFrontier
-      ? getSellerOsRadarPriceDistributionEconomicsV1(exactFrontier) : null
+      ? getSellerOsRadarPriceDistributionEconomicsV1(exactFrontier) ??
+        getSellerOsQuickPickMarketTestEconomicsV1(exactFrontier) : null
     if (exactFrontier) economicsPreflightCount += 1
     seen.add(key)
     const available = row.available === true &&
@@ -713,7 +734,10 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
       exactProductDemandClaimed: false as const,
       marketRadarProductId: text(row.product_id),
       lunaProductId: productId, lunaVariantId: variantId, supplierSku: sku,
-      productResearchIdentityHash: null, lineage: seed,
+      productResearchIdentityHash: null,
+      marketTestPath: ["FAMILY_DEMAND_UNPROVEN",
+        "FAMILY_DEMAND_UNAVAILABLE"].includes(seed.familyDemandStatus),
+      lineage: seed,
     }))
   }
   for (const outer of frontierRows) {
@@ -731,7 +755,8 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
     const available = row.available === true &&
       (number(row.inventory_quantity) === null || Number(row.inventory_quantity) > 0)
     const economicsReady = frontierEconomicsReady(frontier)
-    const target = getSellerOsRadarPriceDistributionEconomicsV1(frontier)
+    const target = getSellerOsRadarPriceDistributionEconomicsV1(frontier) ??
+      getSellerOsQuickPickMarketTestEconomicsV1(frontier)
     candidates.push(Object.freeze({
       candidateId: digest({ familyId: seed.familyId, productId, variantId, sku }),
       familyId: seed.familyId, familyName: seed.familyName,
@@ -761,7 +786,10 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
       exactProductDemandClaimed: false as const,
       marketRadarProductId: text(row.product_id),
       lunaProductId: productId, lunaVariantId: variantId, supplierSku: sku,
-      productResearchIdentityHash: null, lineage: seed,
+      productResearchIdentityHash: null,
+      marketTestPath: ["FAMILY_DEMAND_UNPROVEN",
+        "FAMILY_DEMAND_UNAVAILABLE"].includes(seed.familyDemandStatus),
+      lineage: seed,
     }))
   }
   for (const observation of research.rows) {
@@ -797,7 +825,8 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
       demandEvidenceGrain: "FAMILY" as const,
       exactProductDemandClaimed: false as const,
       lunaProductId: null, lunaVariantId: matchedVariantId,
-      supplierSku: null, productResearchIdentityHash: identityHash, lineage: seed,
+      supplierSku: null, productResearchIdentityHash: identityHash,
+      marketTestPath: false, lineage: seed,
     }))
   }
   const bounded = Object.freeze(candidates.slice(0, maximum))
@@ -987,14 +1016,19 @@ export function buildRadarCandidateEconomicsPreflightV1(input: Readonly<{
       !candidate.lunaVariantId || !candidate.supplierSku) {
     throw new Error("RADAR_ECONOMICS_PREFLIGHT_CANDIDATE_NOT_ELIGIBLE")
   }
-  if (candidate.lineage.familyDemandStatus !== "FAMILY_DEMAND_PROVEN" &&
+  const marketTestPath = candidate.marketTestPath &&
+    ["FAMILY_DEMAND_UNPROVEN", "FAMILY_DEMAND_UNAVAILABLE"]
+      .includes(candidate.lineage.familyDemandStatus) &&
+    candidate.lineage.limitations.includes("DEMAND_EVIDENCE_ABSENT_NOT_NEGATIVE")
+  if (!marketTestPath &&
+      candidate.lineage.familyDemandStatus !== "FAMILY_DEMAND_PROVEN" &&
       candidate.lineage.familyDemandStatus !== "FAMILY_DEMAND_SUPPORTED") {
     throw new Error("RADAR_ECONOMICS_PREFLIGHT_DEMAND_NOT_READY")
   }
-  if (candidate.lineage.priceBand.currency !== "USD" ||
+  if (!marketTestPath && (candidate.lineage.priceBand.currency !== "USD" ||
       candidate.lineage.priceBand.minimum === null ||
       candidate.lineage.priceBand.median === null ||
-      candidate.lineage.priceBand.maximum === null) {
+      candidate.lineage.priceBand.maximum === null)) {
     throw new Error("RADAR_ECONOMICS_PREFLIGHT_MARKET_PRICE_UNPROVEN")
   }
   if (candidate.supplierCostUsd === null || candidate.supplierCostUsd <= 0 ||
@@ -1022,7 +1056,8 @@ export function buildRadarCandidateEconomicsPreflightV1(input: Readonly<{
     candidate.supplierCostObservedAt)
   const marketReference = `radar-family-demand:${candidate.lineage.familyId}`
   const marketEvidence = Object.freeze({
-    authorityClass: "OFFICIAL_EXTERNAL_FACT" as const,
+    authorityClass: marketTestPath ? "UNPROVEN" as const :
+      "OFFICIAL_EXTERNAL_FACT" as const,
     reference: marketReference,
     evidenceDigest: candidate.lineage.demandEvidenceDigest,
     observedAt: normalizedInstant(candidate.lineage.evidenceObservedAt),
@@ -1052,7 +1087,7 @@ export function buildRadarCandidateEconomicsPreflightV1(input: Readonly<{
     maximumAgeSeconds: 30 * 24 * 60 * 60,
   })
   const price = candidate.lineage.priceBand
-  const frontier = calculateSellerOsProfitabilityFrontierV1({
+  const calculatedFrontier = calculateSellerOsProfitabilityFrontierV1({
     configurationId: configuration.configurationIdentity,
     familyId: candidate.familyId,
     familyName: candidate.familyName,
@@ -1072,9 +1107,12 @@ export function buildRadarCandidateEconomicsPreflightV1(input: Readonly<{
       quantityEvidence: costEvidence,
     }],
     marketPrices: {
-      low: { valueUsd: price.minimum, support: "SUPPORTED", evidence: marketEvidence },
-      median: { valueUsd: price.median, support: "SUPPORTED", evidence: marketEvidence },
-      high: { valueUsd: price.maximum, support: "SUPPORTED", evidence: marketEvidence },
+      low: { valueUsd: marketTestPath ? null : price.minimum,
+        support: marketTestPath ? "UNPROVEN" : "SUPPORTED", evidence: marketEvidence },
+      median: { valueUsd: marketTestPath ? null : price.median,
+        support: marketTestPath ? "UNPROVEN" : "SUPPORTED", evidence: marketEvidence },
+      high: { valueUsd: marketTestPath ? null : price.maximum,
+        support: marketTestPath ? "UNPROVEN" : "SUPPORTED", evidence: marketEvidence },
     },
     shipping: { status: "SHIPPING_UNPROVEN", valueUsd: null,
       evidence: shippingEvidence },
@@ -1083,6 +1121,31 @@ export function buildRadarCandidateEconomicsPreflightV1(input: Readonly<{
     evidenceAcquisitionCost: "LOW",
     evaluatedAt,
   })
+  const frontier = marketTestPath ? (() => {
+    const { frontierDigest: _digest, ...withoutDigest } = calculatedFrontier
+    const preliminary = calculateEbayMinimumOperatorPrice({
+      supplierCost: candidate.supplierCostUsd,
+    })
+    const projected = {
+      ...withoutDigest,
+      nextBestEvidence: "ACTUAL_LUNA_SHIPPING" as const,
+      nextEvidenceValue: "HIGH" as const,
+      quickPickMarketTestV1: Object.freeze({
+        contractVersion: "LUNA_QUICK_PICK_MARKET_TEST_PATH_V1" as const,
+        demandEvidenceClass: "UNPROVEN_INSUFFICIENT_MARKET_EVIDENCE" as const,
+        demandNegativeEvidencePresent: false as const,
+        marketTestPathEligible: true as const,
+        marketPriceSupport: "UNPROVEN" as const,
+        priceCompetitiveness: "UNPROVEN" as const,
+        testPriceBasis: "MINIMUM_MARGIN_SAFE_PRICE" as const,
+        preliminaryShippingPendingPrice: preliminary.minimumOperatorPrice,
+        exactProductDemandClaimed: false as const,
+        economicsReady: false as const,
+        marketTestReady: false as const,
+      }),
+    }
+    return Object.freeze({ ...projected, frontierDigest: digest(projected) })
+  })() : calculatedFrontier
   const economicPolicyDigest = digest({
     source: "SERVER_CANONICAL_EBAY_UNIT_ECONOMICS_V1",
     config: DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,
@@ -1714,9 +1777,12 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         typeSource: result.typeSource ?? null,
         typeExactProductSupported:
           result.typeExactProductSupported ?? null,
-        status: result.listingReady ? "LISTING_READY" : "PARKED",
+        status: result.listingReady ? "LISTING_READY" :
+          result.marketTestReady ? "MARKET_TEST_READY" : "PARKED",
         reasonCode: result.firstBlocker,
         listingReady: result.listingReady,
+        marketTestReady: result.marketTestReady,
+        marketTestReview: result.marketTestReviewV1 ?? null,
         packageCreated: result.packageCreated,
         stages: result.stageStatuses,
         dollarCheck: result.listingReady ? {
@@ -1726,7 +1792,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
             ? packageSeed.imageUrls : [],
           supplierCost: pricing.supplierCost ?? null,
           targetPrice: pricing.targetPrice ?? null,
-        } : null }
+        } : result.marketTestReady ? result.marketTestReviewV1 : null }
       outcomes.push(materializedOutcome)
       const batchInput = record(result.requiredSpecificsBatchInput)
       if (result.listingReady !== true
@@ -1841,9 +1907,12 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
             refreshed.requiredItemSpecificsReady ?? false,
           canonicalMarketplaceReadinessReady:
             refreshed.canonicalMarketplaceReadinessReady ?? false,
-          status: refreshed.listingReady ? "LISTING_READY" : "PARKED",
+          status: refreshed.listingReady ? "LISTING_READY" :
+            refreshed.marketTestReady ? "MARKET_TEST_READY" : "PARKED",
           reasonCode: refreshed.firstBlocker,
           listingReady: refreshed.listingReady,
+          marketTestReady: refreshed.marketTestReady,
+          marketTestReview: refreshed.marketTestReviewV1 ?? null,
           packageCreated: refreshed.packageCreated,
           stages: refreshed.stageStatuses,
           requiredSpecificsBatchResolved: true,
@@ -1854,7 +1923,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
               ? refreshedSeed.imageUrls : [],
             supplierCost: refreshedPricing.supplierCost ?? null,
             targetPrice: refreshedPricing.targetPrice ?? null,
-          } : null,
+          } : refreshed.marketTestReady ? refreshed.marketTestReviewV1 : null,
         }
         candidateReadinessReevaluated += 1
       }
@@ -1885,6 +1954,8 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
   }
 
   const ready = outcomes.filter((outcome) => outcome.status === "LISTING_READY")
+  const marketTestReady = outcomes.filter((outcome) =>
+    outcome.status === "MARKET_TEST_READY")
   const topCandidate = candidates.filter((candidate) =>
     candidate.source === "RADAR_FAMILY_LUNA_SUPPLY_IDENTITY" &&
     candidate.stockReady).sort((left, right) =>
@@ -1963,6 +2034,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     economicsReady: stageCount("ECONOMICS_READY"),
     listingPackageReady: stageCount("LISTING_PACKAGE_READY"),
     listingReady: ready.length,
+    marketTestReady: marketTestReady.length,
     parked: outcomes.filter((outcome) =>
       outcome.status === "PARKED" || outcome.status === "PARKED_ECONOMICS").length,
     exceptions: outcomes.filter((outcome) => outcome.status === "EXCEPTION").length,
@@ -2357,6 +2429,7 @@ export async function resumeRadarFactoryCandidateAfterShippingV1(
     parkedEconomics: !economicsReady,
     listingPackageReady: stages.LISTING_PACKAGE_READY === "READY",
     listingReady: result.listingReady === true,
+    marketTestReady: result.marketTestReady === true,
     firstBlocker: result.firstBlocker ?? null,
     priceDistributionAcquired: priceContinuation.applicable === true,
     priceDistributionContinuation:
@@ -2372,11 +2445,16 @@ export async function resumeRadarFactoryCandidateAfterShippingV1(
     ...(result.smartStockingListingIntakeV1
       ? { smartStockingListingIntakeV1: result.smartStockingListingIntakeV1 }
       : {}),
+    ...(result.marketTestReviewV1
+      ? { quickPickMarketTestReviewV1: result.marketTestReviewV1 }
+      : {}),
     radarAutomaticLunaShippingContinuationV1: continuation,
   }
   const write = await input.supabase.from("ebay_luna_opportunity_queue")
     .update({ assessment, decision: result.listingReady
-      ? "LISTING_READY" : economicsReady ? "FACTORY_PREPARED" : "PARKED_ECONOMICS",
+      ? "LISTING_READY" : result.marketTestReady
+        ? "MARKET_TEST_READY" : economicsReady
+          ? "FACTORY_PREPARED" : "PARKED_ECONOMICS",
     updated_at: new Date().toISOString() })
     .eq("id", queueRow.id).eq("candidate_key", queueRow.candidate_key)
     .select("id,candidate_key,assessment").single()
