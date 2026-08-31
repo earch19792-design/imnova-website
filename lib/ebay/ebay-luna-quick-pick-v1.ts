@@ -550,6 +550,8 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
     discoveryByIdentity.set(identityKey(entry.selected!.lunaProductId,
       entry.selected!.lunaVariantId, entry.selected!.supplierSku), result)
   }
+  const marketTestRadarFamilies = discoveryResults.flatMap(({ result }) =>
+    result.marketTestRadarFamily ? [result.marketTestRadarFamily] : [])
   if (discoveryResults.some(({ result }) =>
       result.familyBindingCreatedOrReused)) {
     const refreshedRadar = await input.supabase.rpc(
@@ -559,6 +561,14 @@ export async function processLunaQuickPickBatchV1(input: Readonly<{
       throw new Error("LUNA_QUICK_PICK_DEMAND_READBACK_FAILED")
     }
     activeRadarPayload = refreshedRadar.data
+  }
+  if (marketTestRadarFamilies.length) {
+    const activeRoot = record(activeRadarPayload)
+    activeRadarPayload = { ...activeRoot, status: "AVAILABLE",
+      families: [...rows(activeRoot.families), ...marketTestRadarFamilies] }
+  }
+  if (discoveryResults.some(({ result }) =>
+      result.familyBindingCreatedOrReused || result.marketTestRadarFamily)) {
     currentBatch = buildRadarRevenueFactoryCandidateBatchV1({
       radarPayload: activeRadarPayload, frontierPayload: frontierRead.data,
       lunaCatalogRows: candidateRows, targetCandidates: LUNA_QUICK_PICK_MAX_INPUTS,
