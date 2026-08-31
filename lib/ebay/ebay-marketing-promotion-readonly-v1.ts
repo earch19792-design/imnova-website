@@ -334,7 +334,9 @@ async function postRecommendationJson(input: {
   const body = record(await response.json().catch(() => ({})))
   if (!response.ok) {
     if (response.status === 403) {
-      throw new Error("EBAY_RECOMMENDATION_READONLY_SCOPE_REQUIRED")
+      throw new Error(
+        "EBAY_RECOMMENDATION_INVENTORY_READONLY_OAUTH_SCOPE_REQUIRED",
+      )
     }
     throw new Error(`EBAY_RECOMMENDATION_READONLY_HTTP_${response.status}`)
   }
