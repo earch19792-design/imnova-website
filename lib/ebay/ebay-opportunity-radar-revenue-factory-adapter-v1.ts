@@ -1,12 +1,16 @@
 import { createHash } from "node:crypto"
 
-import { materializeSellerOsDeterministicFactoryCandidateV1 } from
+import { getSellerOsRadarPriceDistributionEconomicsV1,
+  materializeSellerOsDeterministicFactoryCandidateV1 } from
   "./ebay-smart-stocking-durable-factory-v1"
+import { buildPriceRepresentativenessV2 } from
+  "./ebay-commercial-intelligence-upgrade-v1"
 import { buildSellerOsPrelinkedLaunchConfigurationV1 } from
   "./ebay-prelinked-listing-fast-lane-foundation-v1"
 import { calculateSellerOsProfitabilityFrontierV1 } from
   "./ebay-prelinked-profitability-frontier-v1"
-import { DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG } from "./ebay-unit-economics"
+import { calculateEbayUnitEconomics,
+  DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG } from "./ebay-unit-economics"
 
 export const OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_VERSION =
   "OPPORTUNITY_RADAR_REVENUE_FACTORY_ADAPTER_V1" as const
@@ -42,6 +46,7 @@ export type RadarRevenueFactoryFamilySeedV1 = Readonly<{
     maximum: number | null
     median: number | null
   }>
+  priceDistributionEvidence: readonly string[]
   evidenceObservedAt: string
   sourceUpdatedAt: string
   maximumAgeSeconds: number
@@ -131,6 +136,14 @@ function limitations(value: unknown) {
     .filter((entry): entry is string => Boolean(entry)))].slice(0, 30))
 }
 
+function priceDistributionEvidence(value: unknown) {
+  return Object.freeze([...new Set((Array.isArray(value) ? value : [])
+    .map((entry) => text(entry, 160))
+    .filter((entry): entry is string => typeof entry === "string" &&
+      /^marketplace_product_research_capture_observations:[0-9a-f-]{36}$/i
+        .test(entry)))].sort().slice(0, 100))
+}
+
 const DEMAND_FAMILY_TYPES = new Set([
   "CORE", "FORM_FACTOR", "FEATURE", "USE_CASE", "BENEFIT", "PACK_FORMAT",
   "AUDIENCE", "ATTRIBUTE",
@@ -201,6 +214,8 @@ function familySeeds(radarPayload: unknown, allowedFamilyNames?: readonly string
         maximum: number(observation.priceBandMaximum),
         median: number(observation.priceMedian),
       }),
+      priceDistributionEvidence: priceDistributionEvidence(
+        observation.priceDistributionEvidence),
       evidenceObservedAt, sourceUpdatedAt, maximumAgeSeconds, fresh: true as const,
       limitations: limitations(observation.limitations),
       evidenceScope: "FAMILY_DISCOVERY_SEED_ONLY" as const,
@@ -393,16 +408,20 @@ function prepareProductResearchRows(
 }
 
 function frontierEconomicsReady(frontier: JsonRecord) {
+  const distribution = getSellerOsRadarPriceDistributionEconomicsV1(frontier)
   const economics = text(frontier.economicClassification, 80)
   const hardBlockers = Array.isArray(frontier.currentHardBlockers)
     ? frontier.currentHardBlockers
     : Array.isArray(frontier.hardBlockers) ? frontier.hardBlockers : []
-  return economics === "ECONOMICALLY_PROMISING" &&
+  const legacyReady = economics === "ECONOMICALLY_PROMISING" &&
     frontier.shippingStatus === "SHIPPING_DURABLY_PERSISTED" &&
     frontier.nextBestEvidence === "NONE" &&
     (number(frontier.contributionProfitAtMarketMedian) ?? 0) > 0 &&
     (number(frontier.contributionMarginAtMarketMedian) ?? 0) > 0 &&
     hardBlockers.length === 0
+  return legacyReady || Boolean(distribution?.economicsReady &&
+    frontier.shippingStatus === "SHIPPING_DURABLY_PERSISTED" &&
+    frontier.nextBestEvidence === "NONE" && hardBlockers.length === 0)
 }
 
 export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
@@ -447,6 +466,8 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
     })
     const exactFrontier = exactFrontiers.length === 1
       ? record(exactFrontiers[0].frontier) : null
+    const exactTarget = exactFrontier
+      ? getSellerOsRadarPriceDistributionEconomicsV1(exactFrontier) : null
     if (exactFrontier) economicsPreflightCount += 1
     seen.add(key)
     const available = row.available === true &&
@@ -461,9 +482,11 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
       readyForEconomics: exactFrontier
         ? frontierEconomicsReady(exactFrontier) : false,
       economicsProfit: exactFrontier
-        ? number(exactFrontier.contributionProfitAtMarketMedian) : null,
+        ? exactTarget?.profit ??
+          number(exactFrontier.contributionProfitAtMarketMedian) : null,
       economicsMargin: exactFrontier
-        ? number(exactFrontier.contributionMarginAtMarketMedian) : null,
+        ? exactTarget?.margin ??
+          number(exactFrontier.contributionMarginAtMarketMedian) : null,
       economicsNextEvidence: exactFrontier
         ? text(exactFrontier.nextBestEvidence, 80) : null,
       supplierCostUsd: number(row.price),
@@ -500,6 +523,7 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
     const available = row.available === true &&
       (number(row.inventory_quantity) === null || Number(row.inventory_quantity) > 0)
     const economicsReady = frontierEconomicsReady(frontier)
+    const target = getSellerOsRadarPriceDistributionEconomicsV1(frontier)
     candidates.push(Object.freeze({
       candidateId: digest({ familyId: seed.familyId, productId, variantId, sku }),
       familyId: seed.familyId, familyName: seed.familyName,
@@ -508,8 +532,10 @@ export function buildRadarRevenueFactoryCandidateBatchV1(input: Readonly<{
       dispositionReason: "EXACT_LUNA_PRODUCT_VARIANT_IDENTITY_ALREADY_PROVEN",
       exactCandidateIdentity: true, lunaMatch: true, stockReady: available,
       readyForEconomics: economicsReady,
-      economicsProfit: number(frontier.contributionProfitAtMarketMedian),
-      economicsMargin: number(frontier.contributionMarginAtMarketMedian),
+      economicsProfit: target?.profit ??
+        number(frontier.contributionProfitAtMarketMedian),
+      economicsMargin: target?.margin ??
+        number(frontier.contributionMarginAtMarketMedian),
       economicsNextEvidence: text(frontier.nextBestEvidence, 80),
       supplierCostUsd: number(row.price),
       supplierCostObservedAt: iso(row.captured_at),
@@ -726,6 +752,11 @@ function normalizedInstant(value: string) {
 
 function laterInstant(left: string, right: string) {
   return normalizedInstant(Date.parse(left) >= Date.parse(right) ? left : right)
+}
+
+function round(value: number, digits = 2) {
+  const factor = 10 ** digits
+  return Math.round((value + Number.EPSILON) * factor) / factor
 }
 
 export function buildRadarCandidateEconomicsPreflightV1(input: Readonly<{
@@ -1156,6 +1187,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     accountKey: string
     batch: ReturnType<typeof buildRadarRevenueFactoryCandidateBatchV1>
     materializeCandidate?: DurableFactoryMaterializerV1
+    continuePriceDistribution?: typeof continueRadarCandidatePriceDistributionV1
   }>,
 ) {
   const startedAt = Date.now()
@@ -1166,10 +1198,12 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     candidate.disposition === "PASS_TO_LUNA" &&
     candidate.exactCandidateIdentity && candidate.lunaMatch &&
     candidate.stockReady && (candidate.readyForEconomics ||
-      candidate.economicsNextEvidence === "ACTUAL_LUNA_SHIPPING") &&
+      candidate.economicsNextEvidence === "ACTUAL_LUNA_SHIPPING" ||
+      candidate.economicsNextEvidence === "BETTER_PRICE_DISTRIBUTION") &&
     candidate.lunaProductId && candidate.lunaVariantId && candidate.supplierSku)
-  const eligible = durableCandidates.filter((candidate) =>
-    candidate.readyForEconomics)
+  const eligibleCandidateIds = new Set(durableCandidates
+    .filter((candidate) => candidate.readyForEconomics)
+    .map((candidate) => candidate.candidateId))
   const variantIds = [...new Set(durableCandidates.flatMap((candidate) =>
     candidate.lunaVariantId ? [candidate.lunaVariantId] : []))]
   const queueRead = variantIds.length
@@ -1264,14 +1298,50 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     : { data: [], error: null }
   const decisionPackages = rows(decisionRead.data)
   const outcomes: JsonRecord[] = []
+  const priceContinuationResults = new Map<string, Awaited<ReturnType<
+    typeof continueRadarCandidatePriceDistributionV1>>>()
+  const priceContinuationFailures = new Map<string, string>()
+  const continuePriceDistribution = input.continuePriceDistribution ??
+    continueRadarCandidatePriceDistributionV1
+  for (const candidate of durableCandidates.filter((entry) =>
+    entry.economicsNextEvidence === "BETTER_PRICE_DISTRIBUTION")) {
+    const exactRows = queueRows.filter((row) => exactQueueIdentity(candidate, row))
+    if (exactRows.length !== 1 || !candidate.lunaProductId ||
+        !candidate.lunaVariantId || !candidate.supplierSku) {
+      priceContinuationFailures.set(candidate.candidateId,
+        exactRows.length > 1 ? "RADAR_SMART_STOCKING_IDENTITY_AMBIGUOUS"
+          : "RADAR_SMART_STOCKING_CANDIDATE_NOT_DURABLE_YET")
+      continue
+    }
+    try {
+      const continued = await continuePriceDistribution({
+        supabase: input.supabase,
+        accountKey: input.accountKey,
+        queueRow: exactRows[0],
+        candidateId: candidate.candidateId,
+        lunaProductId: candidate.lunaProductId,
+        lunaVariantId: candidate.lunaVariantId,
+        supplierSku: candidate.supplierSku,
+      })
+      priceContinuationResults.set(candidate.candidateId, continued)
+      if (continued.continuation?.economicsReady === true) {
+        eligibleCandidateIds.add(candidate.candidateId)
+      }
+    } catch (error) {
+      priceContinuationFailures.set(candidate.candidateId, failureCode(error))
+    }
+  }
 
   for (const candidate of candidates) {
-    if (!eligible.includes(candidate)) {
+    if (!eligibleCandidateIds.has(candidate.candidateId)) {
+      const priceContinuation = priceContinuationResults.get(candidate.candidateId)
+      const priceFailure = priceContinuationFailures.get(candidate.candidateId)
       const reason = candidate.disposition === "REJECT"
         ? candidate.dispositionReason
         : !candidate.stockReady ? "CANONICAL_STOCK_NOT_READY"
-          : !candidate.readyForEconomics ? "PARKED_ECONOMICS"
-            : "DETERMINISTIC_FACTORY_INPUT_NOT_ELIGIBLE"
+          : priceContinuation?.continuation?.finalReason ?? priceFailure ??
+            (!candidate.readyForEconomics ? "PARKED_ECONOMICS"
+              : "DETERMINISTIC_FACTORY_INPUT_NOT_ELIGIBLE")
       const waitingForBrowser = durableCandidates.includes(candidate) &&
         candidate.economicsNextEvidence === "ACTUAL_LUNA_SHIPPING"
       const durableQueueRow = queueRows.find((row) =>
@@ -1280,10 +1350,15 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         familyId: candidate.familyId, familyName: candidate.familyName,
         lunaProductId: candidate.lunaProductId,
         lunaVariantId: candidate.lunaVariantId, supplierSku: candidate.supplierSku,
-        status: reason === "PARKED_ECONOMICS" ? "PARKED_ECONOMICS" : "PARKED",
+        status: priceFailure ? "EXCEPTION"
+          : reason === "PARKED_ECONOMICS" ||
+            reason === "NO_SUPPORTED_PRICE_MEETS_MARGIN_FLOOR"
+            ? "PARKED_ECONOMICS" : "PARKED",
         reasonCode: waitingForBrowser
           ? "WAITING_BROWSER_WORKER" : reason,
         economicsNextEvidence: candidate.economicsNextEvidence,
+        priceDistributionContinuation:
+          priceContinuation?.continuation ?? null,
         shippingJobCreatedOrReused: waitingForBrowser && Boolean(durableQueueRow),
         shippingJobStatus: waitingForBrowser && durableQueueRow
           ? "WAITING_BROWSER_WORKER" : null,
@@ -1293,7 +1368,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
           ? durableQueueRow?.id ?? null : null,
         queuePersistenceOutcome: queueCreationOutcomes.get(candidate.candidateId)
           ?? null,
-        deterministicRejected: !waitingForBrowser,
+        deterministicRejected: !waitingForBrowser && !priceContinuation,
         listingReady: false })
       continue
     }
@@ -1408,7 +1483,14 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     ambiguousFamilyAssignments: input.batch.ambiguousFamilyAssignments,
     stockSafeCount: input.batch.stockSafeCount,
     economicsPreflightCount: input.batch.economicsPreflightCount,
-    economicsReadyCount: input.batch.economicsReadyCount,
+    economicsReadyCount: stageCount("ECONOMICS_READY"),
+    priceDistributionAcquired: [...priceContinuationResults.values()]
+      .filter((entry) => entry.applicable === true).length,
+    economicsReevaluated: [...priceContinuationResults.values()]
+      .filter((entry) => entry.continuation?.economicsReevaluated === true).length,
+    priceDistributionOutcomes: Object.freeze([...priceContinuationResults]
+      .map(([candidateId, entry]) => Object.freeze({ candidateId,
+        ...record(entry.continuation) }))),
     shippingJobsCreated: outcomes.filter((outcome) =>
       outcome.shippingJobCreatedOrReused === true &&
       outcome.queuePersistenceOutcome === "CREATED").length,
@@ -1468,6 +1550,296 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
   })
 }
 
+export function buildRadarAutomaticPriceDistributionContinuationV1(
+  input: Readonly<{
+    familyId: string
+    demandEvidenceDigest: string
+    evidenceObservedAt: string
+    priceDistributionSource: string
+    priceEvidence: readonly Readonly<{
+      evidenceId: string
+      price: number
+      currency: "USD"
+    }>[]
+    supplierCostUsd: number
+    shippingUsd: number
+  }>,
+) {
+  if (!FAMILY_ID.test(input.familyId) ||
+      !SHA256.test(input.demandEvidenceDigest) ||
+      !Number.isFinite(Date.parse(input.evidenceObservedAt)) ||
+      input.priceEvidence.length < 4 || input.supplierCostUsd < 0 ||
+      input.shippingUsd < 0 || input.priceEvidence.some((entry) =>
+        !entry.evidenceId || entry.currency !== "USD" ||
+        !Number.isFinite(entry.price) || entry.price <= 0)) {
+    throw new Error("RADAR_PRICE_DISTRIBUTION_INPUT_UNPROVEN")
+  }
+  const representativeness = buildPriceRepresentativenessV2(
+    input.priceEvidence.map((entry) => ({
+      evidenceId: entry.evidenceId,
+      itemId: null,
+      title: null,
+      price: entry.price,
+      currency: entry.currency,
+    })),
+    "USD",
+  )
+  const band = representativeness.ROBUST_CORE_PRICE_BAND
+  if (!band || band.currency !== "USD" || band.p25 === null ||
+      band.median === null || band.p75 === null ||
+      band.range.minimum === null || band.range.maximum === null) {
+    throw new Error("RADAR_PRICE_DISTRIBUTION_ROBUST_BAND_UNPROVEN")
+  }
+  const quantiles = [
+    ["P25", band.p25],
+    ["MEDIAN", band.median],
+    ["P75", band.p75],
+  ] as const
+  const seenPrices = new Set<number>()
+  const scenarios = quantiles.flatMap(([quantile, rawPrice]) => {
+    const price = round(rawPrice)
+    if (seenPrices.has(price)) return []
+    seenPrices.add(price)
+    const result = calculateEbayUnitEconomics({
+      salePrice: price,
+      supplierCost: input.supplierCostUsd,
+    }, { estimatedOutboundShipping: input.shippingUsd })
+    if (!result.ready) {
+      throw new Error("RADAR_PRICE_DISTRIBUTION_ECONOMICS_UNPROVEN")
+    }
+    return [Object.freeze({
+      quantile,
+      price,
+      profit: result.estimatedNetProfit,
+      marginPercent: result.estimatedNetMarginPercent,
+      roiPercent: result.estimatedRoiPercent,
+      estimatedEbayFees: result.estimatedEbayFees,
+      returnsReserve: result.returnsReserve,
+      promotedListingsReserve: result.promotedListingsReserve,
+      passesMarginFloor: result.estimatedNetMarginPercent !== null &&
+        result.estimatedNetMarginPercent >=
+          DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.minimumNetMarginPercent,
+      passesCanonicalEconomicsPolicy: result.passesProfitGate,
+    })]
+  })
+  const selected = [...scenarios]
+    .sort((left, right) => left.price - right.price)
+    .find((scenario) => scenario.passesCanonicalEconomicsPolicy) ?? null
+  const targetWithinSupportedDistribution = Boolean(selected &&
+    selected.price >= band.range.minimum && selected.price <= band.range.maximum)
+  const economicsReady = Boolean(selected && targetWithinSupportedDistribution)
+  const evidenceIds = [...new Set(input.priceEvidence.map((entry) =>
+    entry.evidenceId))].sort()
+  const evidenceDigest = digest({
+    familyId: input.familyId,
+    demandEvidenceDigest: input.demandEvidenceDigest,
+    evidenceIds,
+    prices: [...input.priceEvidence].map((entry) => entry.price)
+      .sort((left, right) => left - right),
+  })
+  return Object.freeze({
+    contractVersion: "RADAR_AUTOMATIC_PRICE_DISTRIBUTION_CONTINUATION_V1" as const,
+    demandEvidenceGrain: "FAMILY" as const,
+    exactProductDemandClaimed: false as const,
+    familyId: input.familyId,
+    evidenceDigest,
+    priceSampleCount: input.priceEvidence.length,
+    priceDistributionSource: input.priceDistributionSource,
+    priceMin: round(band.range.minimum),
+    priceMedian: round(band.median),
+    priceMax: round(band.range.maximum),
+    outlierPolicy: "PRICE_REPRESENTATIVENESS_V2_IQR_1_5" as const,
+    outlierCount: representativeness.PRICE_OUTLIER_COUNT,
+    targetPriceLow: round(band.p25),
+    targetPrice: selected?.price ?? null,
+    targetPriceHigh: round(band.p75),
+    targetPriceWithinSupportedDistribution: targetWithinSupportedDistribution,
+    targetSelectionPolicy:
+      "LOWEST_SUPPORTED_ROBUST_QUANTILE_PASSING_CANONICAL_ECONOMICS" as const,
+    marginFloorPercent:
+      DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG.minimumNetMarginPercent,
+    scenarios: Object.freeze(scenarios),
+    targetEconomics: selected ? Object.freeze({
+      profit: selected.profit,
+      marginPercent: selected.marginPercent,
+      roiPercent: selected.roiPercent,
+      estimatedEbayFees: selected.estimatedEbayFees,
+      returnsReserve: selected.returnsReserve,
+      promotedListingsReserve: selected.promotedListingsReserve,
+    }) : null,
+    economicsReevaluated: true as const,
+    economicsReady,
+    marginFloorPass: selected?.passesMarginFloor === true,
+    finalDisposition: economicsReady
+      ? "ECONOMICS_READY" as const : "PARKED_ECONOMICS" as const,
+    finalReason: economicsReady ? null
+      : "NO_SUPPORTED_PRICE_MEETS_MARGIN_FLOOR" as const,
+    evidenceObservedAt: normalizedInstant(input.evidenceObservedAt),
+    marketplaceWrites: 0 as const,
+  })
+}
+
+async function continueRadarCandidatePriceDistributionV1(input: Readonly<{
+  supabase: DurableFactoryClientV1
+  accountKey: string
+  queueRow: JsonRecord
+  candidateId: string
+  lunaProductId: string
+  lunaVariantId: string
+  supplierSku: string
+}>) {
+  const radarIdentity = record(record(input.queueRow.assessment)
+    .radarFactoryCandidateV1)
+  const familyId = text(radarIdentity.familyId, 120)
+  if (!familyId || !FAMILY_ID.test(familyId)) {
+    throw new Error("RADAR_PRICE_DISTRIBUTION_FAMILY_IDENTITY_UNPROVEN")
+  }
+  const [frontierRead, radarRead] = await Promise.all([
+    input.supabase.rpc("get_seller_os_latest_profitability_frontiers_v1", {
+      p_account_key: input.accountKey,
+      p_marketplace_id: "EBAY_US",
+      p_family_ids: [familyId],
+      p_limit: 100,
+    }),
+    input.supabase.rpc("get_seller_os_family_market_radar_v1", {
+      p_family_id: familyId,
+      p_limit: 1,
+    }),
+  ])
+  if (frontierRead.error || radarRead.error) {
+    throw new Error("RADAR_PRICE_DISTRIBUTION_AUTHORITY_READ_FAILED")
+  }
+  const exact = rows(record(frontierRead.data).frontiers).filter((outer) => {
+    const frontier = record(outer.frontier)
+    return frontier.familyId === familyId &&
+      frontier.lunaProductId === input.lunaProductId &&
+      frontier.lunaVariantId === input.lunaVariantId &&
+      frontier.lunaSku === input.supplierSku
+  })
+  if (exact.length !== 1) {
+    throw new Error("RADAR_PRICE_DISTRIBUTION_FRONTIER_IDENTITY_UNPROVEN")
+  }
+  const outer = exact[0]
+  const current = record(outer.frontier)
+  if (current.economicClassification !== "ECONOMICALLY_RECOVERABLE" ||
+      current.nextBestEvidence !== "BETTER_PRICE_DISTRIBUTION") {
+    return Object.freeze({ applicable: false as const, frontier: current,
+      continuation: null })
+  }
+  if (current.shippingStatus !== "SHIPPING_DURABLY_PERSISTED") {
+    throw new Error("RADAR_PRICE_DISTRIBUTION_SHIPPING_NOT_DURABLE")
+  }
+  const seeds = familySeeds(radarRead.data, undefined)
+    .filter((seed) => seed.familyId === familyId)
+  if (seeds.length !== 1) {
+    throw new Error("RADAR_PRICE_DISTRIBUTION_FAMILY_EVIDENCE_UNPROVEN")
+  }
+  const seed = seeds[0]
+  if (!seed.priceDistributionEvidence.length ||
+      seed.demandEvidenceDigest !== outer.marketPriceEvidenceDigest) {
+    throw new Error("RADAR_PRICE_DISTRIBUTION_LINEAGE_MISMATCH")
+  }
+  const evidenceIds = seed.priceDistributionEvidence.map((reference) =>
+    reference.split(":", 2)[1])
+  const observationRead = await input.supabase
+    .from("marketplace_product_research_capture_observations")
+    .select("id,marketplace,average_sold_price,evidence_reviewed,quality_status")
+    .eq("marketplace_account_key", input.accountKey)
+    .eq("marketplace", "EBAY_US").eq("evidence_reviewed", true)
+    .eq("quality_status", "VALID").in("id", evidenceIds)
+    .limit(100)
+  if (observationRead.error) {
+    throw new Error("RADAR_PRICE_DISTRIBUTION_EVIDENCE_READ_FAILED")
+  }
+  const observations = rows(observationRead.data)
+  const byId = new Map(observations.map((row) => [String(row.id), row]))
+  if (byId.size !== evidenceIds.length) {
+    throw new Error("RADAR_PRICE_DISTRIBUTION_EVIDENCE_INCOMPLETE")
+  }
+  const continuation = buildRadarAutomaticPriceDistributionContinuationV1({
+    familyId,
+    demandEvidenceDigest: seed.demandEvidenceDigest,
+    evidenceObservedAt: seed.evidenceObservedAt,
+    priceDistributionSource:
+      "EBAY_PRODUCT_RESEARCH_BROWSER_CAPTURE_FAMILY_DISTRIBUTION",
+    priceEvidence: evidenceIds.map((id) => {
+      const row = byId.get(id)
+      const price = number(row?.average_sold_price)
+      if (!row || row.marketplace !== "EBAY_US" ||
+          row.evidence_reviewed !== true || row.quality_status !== "VALID" ||
+          price === null || price <= 0) {
+        throw new Error("RADAR_PRICE_DISTRIBUTION_EVIDENCE_INVALID")
+      }
+      return { evidenceId:
+        `marketplace_product_research_capture_observations:${id}`,
+      price, currency: "USD" as const }
+    }),
+    supplierCostUsd: number(current.lunaUnitCost) ?? -1,
+    shippingUsd: number(current.shippingValue) ?? -1,
+  })
+  const evaluatedAt = new Date().toISOString()
+  const existingBlockers = limitations(current.currentHardBlockers ??
+    current.hardBlockers)
+  const currentHardBlockers = continuation.economicsReady
+    ? existingBlockers.filter((blocker) =>
+      blocker !== "NO_SUPPORTED_PRICE_MEETS_MARGIN_FLOOR")
+    : limitations([...existingBlockers,
+      "NO_SUPPORTED_PRICE_MEETS_MARGIN_FLOOR"])
+  const { frontierDigest: _previousDigest, ...currentWithoutDigest } = current
+  const nextWithoutDigest = {
+    ...currentWithoutDigest,
+    currentHardBlockers,
+    nextBestEvidence: "NONE",
+    radarAutomaticPriceDistributionContinuationV1: continuation,
+    evaluatedAt,
+  }
+  const nextFrontier = Object.freeze({ ...nextWithoutDigest,
+    frontierDigest: digest(nextWithoutDigest) })
+  const previousSourceUpdatedAt = iso(outer.sourceUpdatedAt)
+  if (!previousSourceUpdatedAt) {
+    throw new Error("RADAR_PRICE_DISTRIBUTION_SOURCE_TIME_UNPROVEN")
+  }
+  const sourceUpdatedAt = laterInstant(seed.sourceUpdatedAt,
+    previousSourceUpdatedAt)
+  const write = await input.supabase.rpc(
+    "put_seller_os_profitability_frontier_v1", {
+      p_account_key: input.accountKey,
+      p_marketplace_id: "EBAY_US",
+      p_opportunity_case_id: outer.opportunityCaseId ?? seed.opportunityCaseId,
+      p_market_price_evidence_reference: outer.marketPriceEvidenceReference,
+      p_market_price_evidence_digest: outer.marketPriceEvidenceDigest,
+      p_ebay_fee_policy_reference: outer.ebayFeePolicyReference,
+      p_economic_policy_reference: outer.economicPolicyReference,
+      p_economic_policy_digest: outer.economicPolicyDigest,
+      p_source_updated_at: sourceUpdatedAt,
+      p_evidence_cutoff_at: evaluatedAt,
+      p_frontier: nextFrontier,
+    })
+  if (write.error || !["CREATED", "IDEMPOTENT_SUCCESS"].includes(
+    String(record(write.data).outcome ?? ""))) {
+    throw new Error("RADAR_PRICE_DISTRIBUTION_DURABLE_WRITE_FAILED")
+  }
+  const readback = await input.supabase.rpc(
+    "get_seller_os_latest_profitability_frontiers_v1", {
+      p_account_key: input.accountKey,
+      p_marketplace_id: "EBAY_US",
+      p_family_ids: [familyId],
+      p_limit: 100,
+    })
+  const matched = rows(record(readback.data).frontiers).some((candidate) => {
+    const stored = record(candidate.frontier)
+    return stored.frontierDigest === nextFrontier.frontierDigest &&
+      stored.lunaProductId === input.lunaProductId &&
+      stored.lunaVariantId === input.lunaVariantId &&
+      stored.lunaSku === input.supplierSku
+  })
+  if (readback.error || !matched) {
+    throw new Error("RADAR_PRICE_DISTRIBUTION_DURABLE_READBACK_FAILED")
+  }
+  return Object.freeze({ applicable: true as const,
+    frontier: nextFrontier, continuation, durableReadback: true as const })
+}
+
 /**
  * Continues one exact Radar candidate after the existing Luna Shipping
  * capture contract has durably persisted and read back its quote. The durable
@@ -1483,6 +1855,7 @@ export async function resumeRadarFactoryCandidateAfterShippingV1(
     lunaVariantId: string
     supplierSku: string
     materializeCandidate?: DurableFactoryMaterializerV1
+    continuePriceDistribution?: typeof continueRadarCandidatePriceDistributionV1
   }>,
 ) {
   const queueRead = await input.supabase.from("ebay_luna_opportunity_queue")
@@ -1511,6 +1884,16 @@ export async function resumeRadarFactoryCandidateAfterShippingV1(
       durableIdentity.supplierSku !== input.supplierSku) {
     throw new Error("RADAR_SHIPPING_CONTINUATION_IDENTITY_MISMATCH")
   }
+  const priceContinuation = await (input.continuePriceDistribution ??
+    continueRadarCandidatePriceDistributionV1)({
+    supabase: input.supabase,
+    accountKey: input.accountKey,
+    queueRow,
+    candidateId: input.candidateId,
+    lunaProductId: input.lunaProductId,
+    lunaVariantId: input.lunaVariantId,
+    supplierSku: input.supplierSku,
+  })
   const materializeCandidate = input.materializeCandidate ??
     materializeSellerOsDeterministicFactoryCandidateV1
   const result = await materializeCandidate({
@@ -1535,6 +1918,9 @@ export async function resumeRadarFactoryCandidateAfterShippingV1(
     listingPackageReady: stages.LISTING_PACKAGE_READY === "READY",
     listingReady: result.listingReady === true,
     firstBlocker: result.firstBlocker ?? null,
+    priceDistributionAcquired: priceContinuation.applicable === true,
+    priceDistributionContinuation:
+      priceContinuation.continuation ?? null,
     canonicalDestinationBindingRequired: true as const,
     purchaseBoundaryEnforced: true as const,
     rawAddressPersisted: false as const,

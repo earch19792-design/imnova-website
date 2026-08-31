@@ -70,9 +70,36 @@ function familyDemand(frontier: JsonRecord) {
   return text(record(frontier.frontier_payload).familyDemandStatus)
 }
 
+export function getSellerOsRadarPriceDistributionEconomicsV1(value: unknown) {
+  const frontier = record(value)
+  const continuation = record(
+    frontier.radarAutomaticPriceDistributionContinuationV1)
+  const economics = record(continuation.targetEconomics)
+  const targetPrice = number(continuation.targetPrice)
+  const profit = number(economics.profit)
+  const margin = number(economics.marginPercent)
+  const roi = number(economics.roiPercent)
+  const estimatedEbayFees = number(economics.estimatedEbayFees)
+  const valid = continuation.contractVersion ===
+      "RADAR_AUTOMATIC_PRICE_DISTRIBUTION_CONTINUATION_V1"
+    && continuation.demandEvidenceGrain === "FAMILY"
+    && continuation.exactProductDemandClaimed === false
+    && /^sha256:[0-9a-f]{64}$/.test(String(continuation.evidenceDigest ?? ""))
+    && continuation.targetPriceWithinSupportedDistribution === true
+    && continuation.marginFloorPass === true
+    && continuation.economicsReady === true
+    && continuation.finalDisposition === "ECONOMICS_READY"
+    && targetPrice !== null && targetPrice > 0
+    && profit !== null && profit > 0 && margin !== null && margin >= 20
+    && roi !== null && roi >= 30 && estimatedEbayFees !== null
+  return valid ? Object.freeze({ economicsReady: true as const,
+    targetPrice, profit, margin, roi, estimatedEbayFees }) : null
+}
+
 function normalizeProfitabilityFrontier(value: unknown) {
   const outer = record(value)
   const inner = record(outer.frontier)
+  const target = getSellerOsRadarPriceDistributionEconomicsV1(inner)
   return {
     frontier_id: outer.frontierId,
     frontier_digest: inner.frontierDigest,
@@ -90,6 +117,7 @@ function normalizeProfitabilityFrontier(value: unknown) {
     shipping_value: inner.shippingValue,
     market_price_median: inner.marketPriceMedian,
     ebay_fee_estimate_at_median: inner.ebayFeeEstimateAtMedian,
+    radar_price_distribution_target: target,
     hard_blockers: inner.currentHardBlockers ?? inner.hardBlockers,
   }
 }
@@ -130,7 +158,7 @@ function decisionPackageAuthority(
   return { exact, row, profile, entry, decision, economics }
 }
 
-function listingSeed(opportunity: JsonRecord) {
+function listingSeed(opportunity: JsonRecord, frontier: JsonRecord) {
   const assessment = record(opportunity.assessment)
   const intelligence = record(assessment.listingIntelligencePackage)
   const candidate = record(assessment.candidate)
@@ -147,7 +175,8 @@ function listingSeed(opportunity: JsonRecord) {
     imageUrls: strings(candidate.imageUrls, 24),
     pricing: {
       supplierCost: number(opportunity.supplier_price),
-      targetPrice: number(opportunity.median_total_buyer_price),
+      targetPrice: number(record(frontier.radar_price_distribution_target)
+        .targetPrice) ?? number(opportunity.median_total_buyer_price),
     },
     evidenceSnapshot: {
       assessment,
@@ -203,13 +232,21 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
   const demandReady = demandStatus === "FAMILY_DEMAND_PROVEN"
     || demandStatus === "FAMILY_DEMAND_SUPPORTED"
   const hardBlockers = strings(frontier.hard_blockers)
-  const economicsReady = frontier.economic_classification
+  const targetEconomics = record(frontier.radar_price_distribution_target)
+  const distributionReady = targetEconomics.economicsReady === true
+    && (number(targetEconomics.profit) ?? 0) > 0
+    && (number(targetEconomics.margin) ?? 0) >= 20
+    && (number(targetEconomics.roi) ?? 0) >= 30
+  const legacyEconomicsReady = frontier.economic_classification
       === "ECONOMICALLY_PROMISING"
     && frontier.shipping_status === "SHIPPING_DURABLY_PERSISTED"
     && frontier.next_best_evidence === "NONE"
     && (number(frontier.contribution_profit_median) ?? 0) > 0
     && (number(frontier.contribution_margin_median) ?? 0) > 0
     && hardBlockers.length === 0
+  const economicsReady = (legacyEconomicsReady || distributionReady)
+    && frontier.shipping_status === "SHIPPING_DURABLY_PERSISTED"
+    && frontier.next_best_evidence === "NONE" && hardBlockers.length === 0
   const duplicateGuardPassed = input.activeDuplicateCount === 0
   const stockReady = opportunity.supplier_available === true
     && opportunity.supplier_price !== null
@@ -217,7 +254,7 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
     // Unknown supplier quantity is explicitly not OOS.
     && (opportunity.supplier_inventory_quantity === null
       || (number(opportunity.supplier_inventory_quantity) ?? 0) > 0)
-  const seed = listingSeed(opportunity)
+  const seed = listingSeed(opportunity, frontier)
   const categoryReady = Boolean(seed.categoryId)
   const packageInputsReady = Boolean(seed.title && seed.imageUrls.length > 0
     && categoryReady)
@@ -291,7 +328,8 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
     lunaProductId: opportunity.supplier_product_id,
     lunaVariantId: opportunity.supplier_variant_id,
     finalDecision: "LISTING_READY",
-    finalPriceUsd: number(opportunity.median_total_buyer_price),
+    finalPriceUsd: number(targetEconomics.targetPrice) ??
+      number(opportunity.median_total_buyer_price),
     finalEconomicsStatus: "PASS",
     productTruthReady: true,
     demandReady: true,
@@ -309,11 +347,16 @@ export function buildSellerOsDeterministicFactoryPlanV1(input: Readonly<{
     launchTier: decisionPackage.decision.launchTier,
     supplierCostUsd: number(frontier.luna_cost),
     supplierShippingUsd: number(frontier.shipping_value),
-    salePriceUsd: number(frontier.market_price_median),
-    estimatedEbayFeesUsd: number(frontier.ebay_fee_estimate_at_median),
-    contributionProfitUsd: number(frontier.contribution_profit_median),
-    contributionMarginPercent: number(frontier.contribution_margin_median),
-    roiPercent: number(decisionPackage.economics.roiPercent),
+    salePriceUsd: number(targetEconomics.targetPrice) ??
+      number(frontier.market_price_median),
+    estimatedEbayFeesUsd: number(targetEconomics.estimatedEbayFees) ??
+      number(frontier.ebay_fee_estimate_at_median),
+    contributionProfitUsd: number(targetEconomics.profit) ??
+      number(frontier.contribution_profit_median),
+    contributionMarginPercent: number(targetEconomics.margin) ??
+      number(frontier.contribution_margin_median),
+    roiPercent: number(targetEconomics.roi) ??
+      number(decisionPackage.economics.roiPercent),
   } : null
   return Object.freeze({
     contractVersion: SELLER_OS_DURABLE_FACTORY_VERSION,

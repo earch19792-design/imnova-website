@@ -723,12 +723,15 @@ function economics(input?: EconomicsEvidenceV1) {
     promotedFeeRate: promoted, missingCostsAssumedZero: false as const }
 }
 
-function buildPriceRepresentativenessV2(
-  strict: MarketEvidenceV1[],
+export function buildPriceRepresentativenessV2(
+  strict: Array<Pick<MarketEvidenceV1,
+    "evidenceId" | "itemId" | "title" | "price" | "currency">>,
   currency: string | null,
 ) {
-  const priced = strict.filter((row): row is MarketEvidenceV1 & { price: number } =>
-    typeof row.price === "number" && Number.isFinite(row.price))
+  const priced = strict.flatMap((row) => typeof row.price === "number" &&
+      Number.isFinite(row.price)
+    ? [{ ...row, price: row.price }]
+    : [])
   const prices = priced.map((row) => row.price)
   const p25 = percentile(prices, .25)
   const p75 = percentile(prices, .75)
