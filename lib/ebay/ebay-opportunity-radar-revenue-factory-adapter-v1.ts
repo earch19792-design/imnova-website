@@ -192,19 +192,29 @@ type AlreadyLiveExactProductGuardV1 = Readonly<{
   reasonCode: string | null
 }>
 
-async function readAlreadyLiveExactProductsV1(input: Readonly<{
+export type SellerOsExactLunaIdentityV1 = Readonly<{
+  identityKey: string
+  lunaProductId: string
+  lunaVariantId: string
+  supplierSku: string
+}>
+
+export async function readAlreadyLiveExactLunaIdentitiesV1(input: Readonly<{
   supabase: DurableFactoryClientV1
   accountKey: string
-  candidates: readonly RadarRevenueFactoryCandidateV1[]
-}>): Promise<AlreadyLiveExactProductGuardV1> {
-  const exactCandidates = input.candidates.filter((candidate) =>
-    candidate.exactCandidateIdentity && candidate.lunaProductId
-    && candidate.lunaVariantId && candidate.supplierSku)
-  if (!exactCandidates.length) return Object.freeze({
-    status: "AVAILABLE", matches: new Map(), reasonCode: null,
+  identities: readonly SellerOsExactLunaIdentityV1[]
+}>) {
+  const exactIdentities = input.identities.filter((identity) =>
+    identity.identityKey && identity.lunaProductId && identity.lunaVariantId &&
+    identity.supplierSku)
+  if (!exactIdentities.length) return Object.freeze({
+    status: "AVAILABLE" as const,
+    matches: new Map<string, Readonly<{ ebayItemIds: readonly string[]
+      linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" }>>(),
+    reasonCode: null,
   })
-  const variantIds = [...new Set(exactCandidates.map((candidate) =>
-    candidate.lunaVariantId!))]
+  const variantIds = [...new Set(exactIdentities.map((identity) =>
+    identity.lunaVariantId))]
   const decisionRead = await input.supabase
     .from("seller_os_luna_linkage_decisions")
     .select("decision_id,ebay_item_id,luna_product_id,luna_variant_id,luna_sku,decision,decision_version,classification,contract_version")
@@ -212,7 +222,9 @@ async function readAlreadyLiveExactProductsV1(input: Readonly<{
     .in("luna_variant_id", variantIds)
     .order("decision_version", { ascending: false }).limit(1_000)
   if (decisionRead.error) return Object.freeze({
-    status: "UNAVAILABLE", matches: new Map(),
+    status: "UNAVAILABLE" as const,
+    matches: new Map<string, Readonly<{ ebayItemIds: readonly string[]
+      linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" }>>(),
     reasonCode: "ALREADY_LIVE_EXACT_PRODUCT_LINKAGE_READ_FAILED",
   })
   const latestByItem = new Map<string, JsonRecord>()
@@ -225,13 +237,15 @@ async function readAlreadyLiveExactProductsV1(input: Readonly<{
     }
   }
   const approved = [...latestByItem.entries()].filter(([, decision]) =>
-    decision.decision === "APPROVE_EXACT_LINKAGE"
-    && decision.classification === "EXACT_UNIQUE_MATCH"
-    && text(decision.luna_product_id, 80)
-    && text(decision.luna_variant_id, 80)
-    && text(decision.luna_sku, 120))
+    decision.decision === "APPROVE_EXACT_LINKAGE" &&
+    decision.classification === "EXACT_UNIQUE_MATCH" &&
+    text(decision.luna_product_id, 80) &&
+    text(decision.luna_variant_id, 80) && text(decision.luna_sku, 120))
   if (!approved.length) return Object.freeze({
-    status: "AVAILABLE", matches: new Map(), reasonCode: null,
+    status: "AVAILABLE" as const,
+    matches: new Map<string, Readonly<{ ebayItemIds: readonly string[]
+      linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" }>>(),
+    reasonCode: null,
   })
   const itemIds = approved.map(([itemId]) => itemId)
   const activeRead = await input.supabase.from("ebay_active_listings")
@@ -239,30 +253,51 @@ async function readAlreadyLiveExactProductsV1(input: Readonly<{
     .eq("account_key", input.accountKey).eq("listing_status", "active")
     .in("ebay_item_id", itemIds).limit(1_000)
   if (activeRead.error) return Object.freeze({
-    status: "UNAVAILABLE", matches: new Map(),
+    status: "UNAVAILABLE" as const,
+    matches: new Map<string, Readonly<{ ebayItemIds: readonly string[]
+      linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" }>>(),
     reasonCode: "ALREADY_LIVE_EXACT_PRODUCT_CURRENT_LIVE_READ_FAILED",
   })
   const activeItems = new Set(rows(activeRead.data).flatMap((listing) => {
     const itemId = text(listing.ebay_item_id, 30)
-    return itemId && /^\d{9,19}$/.test(itemId)
-      && listing.listing_status === "active" ? [itemId] : []
+    return itemId && /^\d{9,19}$/.test(itemId) &&
+      listing.listing_status === "active" ? [itemId] : []
   }))
-  const matches = new Map<string, Readonly<{
-    ebayItemIds: readonly string[]
-    linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1"
-  }>>()
-  for (const candidate of exactCandidates) {
+  const matches = new Map<string, Readonly<{ ebayItemIds: readonly string[]
+    linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1" }>>()
+  for (const identity of exactIdentities) {
     const linkedItems = approved.flatMap(([itemId, decision]) =>
-      activeItems.has(itemId)
-      && decision.luna_product_id === candidate.lunaProductId
-      && decision.luna_variant_id === candidate.lunaVariantId
-      && decision.luna_sku === candidate.supplierSku ? [itemId] : [])
-    if (linkedItems.length) matches.set(candidate.candidateId, Object.freeze({
+      activeItems.has(itemId) &&
+      decision.luna_product_id === identity.lunaProductId &&
+      decision.luna_variant_id === identity.lunaVariantId &&
+      decision.luna_sku === identity.supplierSku ? [itemId] : [])
+    if (linkedItems.length) matches.set(identity.identityKey, Object.freeze({
       ebayItemIds: Object.freeze([...new Set(linkedItems)].sort()),
       linkageAuthority: "SELLER_OS_LUNA_LINKAGE_DECISION_V1",
     }))
   }
-  return Object.freeze({ status: "AVAILABLE", matches, reasonCode: null })
+  return Object.freeze({ status: "AVAILABLE" as const, matches,
+    reasonCode: null })
+}
+
+async function readAlreadyLiveExactProductsV1(input: Readonly<{
+  supabase: DurableFactoryClientV1
+  accountKey: string
+  candidates: readonly RadarRevenueFactoryCandidateV1[]
+}>): Promise<AlreadyLiveExactProductGuardV1> {
+  const exactCandidates = input.candidates.filter((candidate) =>
+    candidate.exactCandidateIdentity && candidate.lunaProductId
+    && candidate.lunaVariantId && candidate.supplierSku)
+  const result = await readAlreadyLiveExactLunaIdentitiesV1({
+    supabase: input.supabase, accountKey: input.accountKey,
+    identities: exactCandidates.map((candidate) => ({
+      identityKey: candidate.candidateId,
+      lunaProductId: candidate.lunaProductId!,
+      lunaVariantId: candidate.lunaVariantId!,
+      supplierSku: candidate.supplierSku!,
+    })),
+  })
+  return result
 }
 
 function currentObservation(family: JsonRecord) {
@@ -1361,6 +1396,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
     continuePriceDistribution?: typeof continueRadarCandidatePriceDistributionV1
     taxonomyReader?: RadarMarketplaceTaxonomyReaderV1
     requiredSpecificsAiResolver?: RequiredSpecificsAiBatchV1 | null
+    requiredSpecificsAiStages?: readonly ("TEXT" | "VISION")[]
   }>,
 ) {
   const startedAt = Date.now()
@@ -1735,6 +1771,7 @@ export async function materializeRadarRevenueFactoryCandidateBatchV1(
         aiResolver: input.requiredSpecificsAiResolver === undefined
           ? createOpenAiRequiredSpecificsBatchResolverV1()
           : input.requiredSpecificsAiResolver,
+        aiStages: input.requiredSpecificsAiStages,
       })
       let candidateReadinessReevaluated = 0
       for (const candidateResolution of resolvedBatch.candidates) {

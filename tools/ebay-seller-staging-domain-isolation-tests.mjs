@@ -159,6 +159,12 @@ test("route and bundle surface regress downward", () => {
   const lunaShippingCaptureApi = exists(
     "app/api/admin/ebay/luna-shipping-capture/route.ts",
   )
+  const lunaQuickPickPage = exists(
+    "app/admin/ebay/quick-pick/page.tsx",
+  )
+  const lunaQuickPickApi = exists(
+    "app/api/admin/ebay/luna-quick-pick/route.ts",
+  )
   assert.equal(
     temporarySellerOauthPage,
     temporarySellerOauthApi,
@@ -184,6 +190,11 @@ test("route and bundle surface regress downward", () => {
     lunaShippingCaptureApi,
     "Luna shipping capture UI/API must be added and retired together",
   )
+  assert.equal(
+    lunaQuickPickPage,
+    lunaQuickPickApi,
+    "Luna Quick Pick UI/API must be added and retired together",
+  )
   // The read-only monitor, Market Research, Commercial Operational Readiness,
   // Decisions, Experiments, Learning, Luna Capture, Copilot, and Strategic
   // Review workspaces add nine intentional pages. Their protected surfaces
@@ -194,7 +205,8 @@ test("route and bundle surface regress downward", () => {
   assert.ok(
     countNamed("app", "page.tsx") <= 23 + Number(temporarySellerOauthPage) +
       Number(commercialOauthBrowserPage) + Number(lunaProtectedSessionPage) +
-      Number(lunaSupplierLinkageReviewPage) + Number(lunaShippingCapturePage),
+      Number(lunaSupplierLinkageReviewPage) + Number(lunaShippingCapturePage) +
+      Number(lunaQuickPickPage),
     "page route count regressed",
   )
   // 68 legacy-era routes -> 65 isolated routes -> one approval-only Seller OS
@@ -218,7 +230,8 @@ test("route and bundle surface regress downward", () => {
   assert.ok(
     countNamed("app/api", "route.ts") <= 90 + Number(temporarySellerOauthApi) +
       Number(commercialOauthBrowserApi) + Number(lunaProtectedSessionApi) +
-      Number(lunaSupplierLinkageReviewApi) + Number(lunaShippingCaptureApi),
+      Number(lunaSupplierLinkageReviewApi) + Number(lunaShippingCaptureApi) +
+      Number(lunaQuickPickApi),
     "API route count regressed",
   )
   assert.equal(countNamed("app/api/community", "route.ts"), 0)

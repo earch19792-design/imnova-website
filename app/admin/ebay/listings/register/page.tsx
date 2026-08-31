@@ -570,6 +570,9 @@ export default function RegisterManualEbayListingPage() {
           <a className="rounded-full border border-white/10 px-4 py-2 text-white/65" href="/admin/ebay/mobile-review">
             Oportunidades
           </a>
+          <a className="rounded-full border border-cyan-200/30 bg-cyan-200/[0.08] px-4 py-2 text-cyan-50" href="/admin/ebay/quick-pick">
+            ⚡ Quick Pick Luna
+          </a>
           <a className="rounded-full border border-white/10 px-4 py-2 text-white/65" href="/admin">
             Admin
           </a>

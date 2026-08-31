@@ -297,6 +297,7 @@ export async function resolveMarketplaceRequiredSpecificsBatchV1(input:
 Readonly<{
   products: readonly RequiredSpecificsBatchProductV1[]
   aiResolver?: RequiredSpecificsAiBatchV1 | null
+  aiStages?: readonly ("TEXT" | "VISION")[]
 }>) {
   const grouped = new Map<string, RequiredSpecificsBatchProductV1[]>()
   for (const product of input.products) {
@@ -404,8 +405,12 @@ Readonly<{
       }
       return unresolvedForNext
     }
-    const visionPending = await applyAi("TEXT", pending)
-    await applyAi("VISION", visionPending)
+    const aiStages = input.aiStages?.length
+      ? [...new Set(input.aiStages)] : ["TEXT", "VISION"] as const
+    let stagePending = pending
+    for (const stage of aiStages) {
+      stagePending = await applyAi(stage, stagePending)
+    }
     batchSummaries.push(Object.freeze({
       marketplaceId: products[0].marketplaceId,
       categoryId: products[0].categoryId,
