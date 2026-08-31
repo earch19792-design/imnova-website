@@ -36,6 +36,9 @@ type QuickPickCard = {
   marketTestPathEligible: boolean
   marketTestReady: boolean
   marketTestReview: Record<string, unknown> | null
+  shippingUsd: number | null
+  rehydrated: boolean
+  updatedAt: string | null
   stages: Record<string, StageState>
   dollarCheck: Record<string, unknown> | null
   elapsedMs: number
@@ -84,6 +87,7 @@ export default function LunaQuickPickPage() {
   const [input, setInput] = useState("")
   const [cards, setCards] = useState<QuickPickCard[]>([])
   const [error, setError] = useState("")
+  const [rehydrating, setRehydrating] = useState(true)
 
   const candidateKeys = useMemo(() => cards.flatMap((card) =>
     card.candidateKey ? [card.candidateKey] : []), [cards])
@@ -102,9 +106,10 @@ export default function LunaQuickPickPage() {
 
   const mergeCards = useCallback((incoming: QuickPickCard[]) => {
     setCards((current) => {
-      const merged = new Map(current.map((card) => [card.sourceUrl, card]))
-      incoming.forEach((card) => merged.set(card.sourceUrl,
-        { ...merged.get(card.sourceUrl), ...card }))
+      const key = (card: QuickPickCard) => card.candidateKey ?? card.sourceUrl
+      const merged = new Map(current.map((card) => [key(card), card]))
+      incoming.forEach((card) => merged.set(key(card),
+        { ...merged.get(key(card)), ...card }))
       return [...merged.values()]
     })
   }, [])
@@ -125,6 +130,7 @@ export default function LunaQuickPickPage() {
       demandEvidenceClass: null, demandNegativeEvidencePresent: false,
       marketTestPathEligible: false, marketTestReady: false,
       marketTestReview: null,
+      shippingUsd: null, rehydrated: false, updatedAt: null,
       dollarCheck: null, elapsedMs: 0 })))
     try {
       const payload = await request("/api/admin/ebay/luna-quick-pick", {
@@ -155,6 +161,17 @@ export default function LunaQuickPickPage() {
   }
 
   useEffect(() => {
+    let cancelled = false
+    request("/api/admin/ebay/luna-quick-pick").then((payload) => {
+      if (!cancelled) mergeCards(payload.progress ?? [])
+    }).catch((caught) => {
+      if (!cancelled) setError(caught instanceof Error ? caught.message :
+        "LUNA_QUICK_PICK_REHYDRATION_FAILED")
+    }).finally(() => { if (!cancelled) setRehydrating(false) })
+    return () => { cancelled = true }
+  }, [mergeCards, request])
+
+  useEffect(() => {
     if (!candidateKeys.length) return
     let cancelled = false
     const poll = async () => {
@@ -177,6 +194,21 @@ export default function LunaQuickPickPage() {
     return () => { cancelled = true; window.clearInterval(timer) }
   }, [candidateKeys.join("\n"), request])
 
+  const sections = useMemo(() => [
+    { id: "in-progress", title: "En proceso",
+      copy: "Seller OS continúa automáticamente cuando llega nueva evidencia durable.",
+      cards: cards.filter((card) => card.state === "RUNNING") },
+    { id: "ready", title: "Listos para revisar",
+      copy: "Dollar Check y pruebas de mercado que esperan una decisión del owner.",
+      cards: cards.filter((card) => card.state === "READY") },
+    { id: "blocked", title: "Bloqueados",
+      copy: "Cada producto conserva su avance y muestra solamente el blocker real.",
+      cards: cards.filter((card) => card.state === "BLOCKED") },
+    { id: "completed", title: "Completados / Publicados",
+      copy: "Aparecerán aquí después de una publicación autorizada y readback LIVE.",
+      cards: [] as QuickPickCard[] },
+  ], [cards])
+
   return <main className="min-h-screen bg-[#080b11] px-4 pb-28 pt-6 text-white">
     <div className="mx-auto max-w-5xl space-y-5">
       <header className="rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.06] p-5">
@@ -196,8 +228,14 @@ export default function LunaQuickPickPage() {
         {error && <p role="alert" className="mt-3 rounded-xl border border-rose-200/30 bg-rose-200/[0.08] p-3 text-sm text-rose-50">{error}</p>}
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-2">
-        {cards.map((card) => <article key={card.sourceUrl}
+      {rehydrating && <p aria-live="polite" className="rounded-2xl border border-cyan-200/20 bg-cyan-200/[0.05] p-4 text-sm text-cyan-50">Recuperando tus Quick Picks guardados…</p>}
+
+      {sections.map((section) => <section key={section.id}
+        aria-labelledby={`quick-pick-${section.id}`} className="space-y-3">
+        <div><h2 id={`quick-pick-${section.id}`} className="text-xl font-black">{section.title}</h2>
+          <p className="mt-1 text-sm text-white/55">{section.copy}</p></div>
+        {section.cards.length === 0 ? <p className="rounded-2xl border border-white/10 bg-white/[0.025] p-4 text-sm text-white/45">No hay productos en esta sección.</p> : <div className="grid gap-4 lg:grid-cols-2">
+        {section.cards.map((card) => <article key={card.candidateKey ?? card.sourceUrl}
           className={`rounded-3xl border p-4 ${card.marketTestReady
             ? "border-amber-200/45 bg-amber-200/[0.09]" : stateTone(card.state)}`}>
           <div className="flex items-start justify-between gap-3"><div>
@@ -219,6 +257,9 @@ export default function LunaQuickPickPage() {
             <li key={key} className={`flex items-center gap-2 rounded-xl px-2 py-1.5 ${card.stages[key] === "RUNNING" ? "bg-cyan-200/[0.08] text-cyan-50" : card.stages[key] === "BLOCKED" ? "text-amber-100" : "text-white/65"}`}>
               <span aria-hidden="true">{stageIcon(card.stages[key])}</span><span>{label}</span>
             </li>)}</ol>
+
+          {card.stages.SHIPPING === "PASS" && <p className="mt-3 rounded-xl border border-emerald-200/20 bg-emerald-200/[0.06] p-2 text-sm text-emerald-50">Envío comprobado{card.shippingUsd !== null ? ` · ${money(card.shippingUsd)}` : ""}</p>}
+          {card.stages.SHIPPING === "RUNNING" && <p className="mt-3 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.06] p-2 text-sm text-cyan-50">Esperando worker Luna. Seller OS reanudará este producto automáticamente.</p>}
 
           {card.exactBlocker && <p className="mt-3 rounded-xl border border-amber-200/20 bg-black/20 p-2 text-xs text-amber-50">{card.exactBlocker}</p>}
 
@@ -250,9 +291,10 @@ export default function LunaQuickPickPage() {
               : "Abre la autoridad de publicación existente. Este Quick Pick no publica automáticamente."}</p>
           </section>}
 
-          <details className="mt-3 rounded-xl border border-white/10 p-2 text-xs text-white/55"><summary className="cursor-pointer font-black">Ver evidencia técnica</summary><dl className="mt-2 space-y-1"><div>Product ID: {card.lunaProductId ?? "—"}</div><div>Variant ID: {card.lunaVariantId ?? "—"}</div><div>Demanda durable previa: {card.durableFamilyHit ? "sí" : "no"}</div><div>Discovery bajo demanda: {card.onDemandDemandDiscoveryExecuted ? "ejecutado" : card.onDemandDemandDiscoveryRequired ? "requerido" : "no requerido"}</div><div>Estado demanda: {card.familyDemandStatus ?? "—"}</div><div>Comparables sold: {card.soldComparableCount}</div><div>Binding familia: {card.familyBindingCreatedOrReused ? "creado/reutilizado" : "—"}</div><div>Última etapa: {card.lastStage}</div><div>Disposición: {card.disposition}</div><div>Tiempo: {card.elapsedMs} ms</div></dl></details>
+          <details className="mt-3 rounded-xl border border-white/10 p-2 text-xs text-white/55"><summary className="flex min-h-11 cursor-pointer items-center font-black">Ver evidencia técnica</summary><dl className="mt-2 space-y-1"><div>Product ID: {card.lunaProductId ?? "—"}</div><div>Variant ID: {card.lunaVariantId ?? "—"}</div><div>Operación rehidratada: {card.rehydrated ? "sí" : "no"}</div><div>Demanda durable previa: {card.durableFamilyHit ? "sí" : "no"}</div><div>Discovery bajo demanda: {card.onDemandDemandDiscoveryExecuted ? "ejecutado" : card.onDemandDemandDiscoveryRequired ? "requerido" : "no requerido"}</div><div>Estado demanda: {card.familyDemandStatus ?? "—"}</div><div>Comparables sold: {card.soldComparableCount}</div><div>Binding familia: {card.familyBindingCreatedOrReused ? "creado/reutilizado" : "—"}</div><div>Última etapa: {card.lastStage}</div><div>Disposición: {card.disposition}</div><div>Actualizado: {card.updatedAt ? new Date(card.updatedAt).toLocaleString("es-NI") : "—"}</div><div>Tiempo: {card.elapsedMs} ms</div></dl></details>
         </article>)}
-      </section>
+        </div>}
+      </section>)}
     </div>
     <SellerOsMobileNav active="listings" />
   </main>

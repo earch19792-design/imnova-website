@@ -36,7 +36,7 @@ export function SellerOsDesktopNavigation({ active }: { active: SellerOsAreaId }
     SELLER_OS_NAVIGATION[0]
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-[232px] flex-col border-r border-white/10 bg-[#101b2c] px-3 py-4 text-slate-100 xl:flex">
-      <a href="/admin/ebay/monitor" className="flex items-center gap-3 rounded-xl px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
+      <a href="/admin" className="flex items-center gap-3 rounded-xl px-2 py-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
         <span className="grid h-10 w-10 place-items-center rounded-xl bg-cyan-300 text-[#101b2c]">
           <BarChart3 size={20} />
         </span>

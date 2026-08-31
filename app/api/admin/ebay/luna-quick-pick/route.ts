@@ -37,10 +37,19 @@ export async function GET(req: Request) {
   auth.status || 403)
   try {
     const keys = new URL(req.url).searchParams.getAll("candidate")
+    const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+    if (!accountKey) return response({ success: false,
+      error: "LUNA_QUICK_PICK_ACCOUNT_SCOPE_REQUIRED" }, 400)
     const progress = await readLunaQuickPickProgressV1({
-      supabase: getSupabaseAdminClient(), candidateKeys: keys,
+      supabase: getSupabaseAdminClient(), candidateKeys: keys, accountKey,
+      includeRecent: keys.length === 0,
     })
     return response({ success: true, progress,
+      summary: { inProgress: progress.filter((card) =>
+        card.state === "RUNNING").length,
+      readyForReview: progress.filter((card) => card.state === "READY").length,
+      blocked: progress.filter((card) => card.state === "BLOCKED").length,
+      total: progress.length },
       safety: { marketplaceWrites: 0, canPublish: false } })
   } catch (error) {
     return response({ success: false, error: safeError(error) }, 400)
