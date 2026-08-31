@@ -26,6 +26,8 @@ import {
   buildLiveListingPreSaleEconomicsV1,
   resolveOfficialPreSaleFeePolicyV1,
 } from "@/lib/ebay/ebay-live-presale-economics-v1"
+import { loadEbayPromotionRecommendationSafeExecutionV1 } from
+  "@/lib/ebay/ebay-promotion-recommendation-safe-execution-v1"
 
 type JsonRecord = Record<string, unknown>
 
@@ -49,6 +51,37 @@ export async function GET(req: Request) {
     { success: false, error: "CRON_UNAUTHORIZED" },
     { status: 401 },
   )
+  const promotionRecommendationItemId = new URL(req.url).searchParams.get(
+    "promotionRecommendationItemId",
+  )?.trim() ?? ""
+  if (promotionRecommendationItemId) {
+    if (!/^\d{9,20}$/.test(promotionRecommendationItemId)) {
+      return NextResponse.json({ success: false,
+        error: "PROMOTION_RECOMMENDATION_ITEM_ID_INVALID",
+        marketplaceWrites: 0 }, { status: 400 })
+    }
+    try {
+      const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+      if (!accountKey) throw new Error("COMMERCIAL_MONITOR_ACCOUNT_SCOPE_REQUIRED")
+      const result = await loadEbayPromotionRecommendationSafeExecutionV1({
+        supabase: getSupabaseAdminClient(), accountKey,
+        ebayItemId: promotionRecommendationItemId,
+      })
+      return NextResponse.json({ success: true,
+        status: "promotion_recommendation_readonly_completed",
+        promotionRecommendation: result,
+        safety: { analyticsRequests: 0, lunaRequests: 0,
+          promotionWrites: 0, priceChanges: 0, marketplaceWrites: 0,
+          databaseWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store",
+        "X-Seller-OS-Promotion-Recommendation": "READ_ONLY" } })
+    } catch (error) {
+      return NextResponse.json({ success: false, error: safeCode(error),
+        safety: { analyticsRequests: 0, lunaRequests: 0,
+          promotionWrites: 0, priceChanges: 0, marketplaceWrites: 0,
+          databaseWrites: 0 } }, { status: 502 })
+    }
+  }
   const feeAuthorityItemId = new URL(req.url).searchParams.get(
     "feeAuthorityItemId",
   )?.trim() ?? ""

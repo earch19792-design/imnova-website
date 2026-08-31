@@ -69,6 +69,8 @@ export default function EbayListingOptimizationCommandCenterPage() {
   const [reviewing, setReviewing] = useState(false)
   const [visualVariantBusy, setVisualVariantBusy] = useState("")
   const [visualVariantNotice, setVisualVariantNotice] = useState("")
+  const [promotionAssessment, setPromotionAssessment] = useState<Json | null>(null)
+  const [promotionBusy, setPromotionBusy] = useState(false)
   const [error, setError] = useState("")
 
   async function accessToken() {
@@ -194,6 +196,34 @@ export default function EbayListingOptimizationCommandCenterPage() {
     }
   }
 
+  async function reviewPromotion(ebayItemId: string) {
+    if (promotionBusy) return
+    setPromotionBusy(true)
+    setError("")
+    try {
+      const token = await accessToken()
+      const response = await fetch("/api/admin/ebay/strategic-review", {
+        method: "POST", cache: "no-store",
+        headers: { Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "PROMOTION_RECOMMENDATION_READONLY",
+          ebayItemId }),
+      })
+      const body = await response.json() as Json
+      if (!response.ok || body.success !== true) {
+        throw new Error(stringValue(body.error,
+          "La recomendación de promoción no pudo comprobarse"))
+      }
+      setPromotionAssessment(record(body.promotionRecommendation))
+    } catch (caught) {
+      setPromotionAssessment(null)
+      setError(caught instanceof Error ? caught.message :
+        "PROMOTION_RECOMMENDATION_READ_FAILED")
+    } finally {
+      setPromotionBusy(false)
+    }
+  }
+
   const bundle = record(payload?.bundle)
   const portfolio = record(bundle.portfolio)
   const kpis = record(portfolio.kpis)
@@ -204,6 +234,9 @@ export default function EbayListingOptimizationCommandCenterPage() {
   const visualQuality = record(bundle.visualQuality)
   const visualVariants = record(bundle.visualVariants)
   const visualVariantRows = rows(visualVariants.variants)
+  const promotionTargetId = visualVariantRows.map((row) =>
+    typeof row.listingId === "string" ? row.listingId : "")
+    .find((value) => /^\d{9,20}$/.test(value)) ?? ""
   const decisions = record(bundle.decisions)
   const brief = record(review?.dailyBrief ?? payload?.dailyBrief)
   const briefSections = record(brief.sections)
@@ -283,6 +316,25 @@ export default function EbayListingOptimizationCommandCenterPage() {
             <div className="flex items-center gap-2 text-cyan-100"><FlaskConical size={19} /><h2 className="font-black">Experimentos</h2></div>
             <p className="mt-3 text-3xl font-black">{experimentCount ?? "—"}</p><p className="mt-2 text-sm text-white/65">{experiments.resultStatus === "AVAILABLE" ? "registro canónico disponible" : "evidencia no comprobada"}</p><p className="mt-2 text-xs text-white/45">Activos: {rows(experiments.active).length} · listos para evaluar: {rows(experiments.readyToEvaluate).length}</p>
           </article>
+        </section>
+
+        <section className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.04] p-5 md:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><p className="text-xs font-black uppercase tracking-wider text-emerald-100/60">Promoción con economía protegida</p><h2 className="mt-1 text-2xl font-black">Qué recomienda eBay y cuánto considera seguro Seller OS</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">La tasa de anuncio y un descuento de precio son cambios distintos. Seller OS consulta la señal oficial, conserva el margen mínimo vigente y no activa campañas desde esta revisión.</p></div>
+            <span className="rounded-full border border-emerald-200/20 px-3 py-2 text-xs font-black text-emerald-100">SOLO LECTURA</span>
+          </div>
+          {promotionAssessment ? (() => {
+            const recommendation = record(promotionAssessment.recommendation)
+            const economicsGuard = record(promotionAssessment.economicsGuard)
+            const ui = record(promotionAssessment.ui)
+            const execution = record(promotionAssessment.executionContract)
+            const decision = stringValue(promotionAssessment.promotionDecision)
+            return <div className="mt-5 grid gap-3 lg:grid-cols-2">
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-4"><p className="text-xs font-black uppercase tracking-wide text-white/45">eBay recomienda</p><p className="mt-2 text-lg font-black">{stringValue(ui.ebayRecommends)}</p><p className="mt-3 text-xs leading-5 text-white/50">Tipo: {recommendation.type === "AD_RATE" ? "Tasa de anuncio · Promoted Listings" : recommendation.type === "NONE" ? "Sin recomendación aplicable" : "No comprobado"}. Un descuento de precio se evalúa por separado y no se infiere de esta señal.</p></article>
+              <article className="rounded-2xl border border-white/10 bg-black/20 p-4"><p className="text-xs font-black uppercase tracking-wide text-white/45">Seller OS considera seguro</p><p className="mt-2 text-lg font-black">{stringValue(ui.sellerOsConsidersSafe)}</p><div className="mt-3 grid grid-cols-2 gap-2 text-xs"><p>Beneficio después<br /><strong>{formatMetric(numberValue(ui.profitAfter), { style: "currency", currency: "USD" })}</strong></p><p>Margen después<br /><strong>{formatMetric(numberValue(ui.marginAfter), { maximumFractionDigits: 4 })}{numberValue(ui.marginAfter) === null ? "" : "%"}</strong></p><p>Máximo permitido<br /><strong>{formatMetric(numberValue(ui.maximumAllowedAdRatePercent), { maximumFractionDigits: 4 })}{numberValue(ui.maximumAllowedAdRatePercent) === null ? "" : "%"}</strong></p><p>Margen mínimo vigente<br /><strong>{formatMetric(numberValue(record(economicsGuard.marginFloorPolicy).valuePercent))}%</strong></p></div></article>
+              <article className="rounded-2xl border border-amber-200/15 bg-amber-200/[0.05] p-4 lg:col-span-2"><p className="text-xs font-black uppercase tracking-wide text-amber-100/70">Decisión Seller OS</p><p className="mt-2 text-xl font-black">{decision === "DO_NOT_PROMOTE" ? "No promocionar" : decision === "CAP_TO_SAFE_LEVEL" ? "Limitar al nivel seguro" : decision === "APPLY" ? "Aplicable dentro del límite" : decision === "NO_RECOMMENDATION" ? "Sin recomendación de eBay" : "Bloqueado por evidencia"}</p><p className="mt-2 text-sm text-white/55">Motivo: {stringValue(promotionAssessment.decisionReason)}</p><p className="mt-3 text-xs text-white/45">La ejecución futura seguirá recomendación → guard económico → write de promoción → readback eBay → auditoría. Owner approval: {execution.ownerApprovalRequired === false ? "no requerido dentro de guards" : "requerido"}. En este canary: 0 writes.</p></article>
+            </div>
+          })() : <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4"><p className="text-sm leading-6 text-white/55">Lee la recomendación oficial únicamente para el listing exacto preparado. No consulta Analytics ni Luna y no cambia eBay.</p><button type="button" disabled={!promotionTargetId || promotionBusy} onClick={() => void reviewPromotion(promotionTargetId)} className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-emerald-200 px-4 text-sm font-black text-black disabled:opacity-40">{promotionBusy ? "Consultando señal oficial…" : "Revisar recomendación de eBay"}</button></div>}
         </section>
 
         <section className="rounded-3xl border border-sky-200/20 bg-sky-200/[0.04] p-5 md:p-6">

@@ -22,6 +22,8 @@ import { buildSellerOsCurrentLiveVisualQualityV1 } from
 import { createSellerOsVisualVariantsV1, loadSellerOsVisualVariantsV1,
   sellerOsVisualVariantSafeCodeV1, updateSellerOsVisualVariantV1 } from
   "@/lib/ebay/ebay-seller-os-visual-variant-v1"
+import { loadEbayPromotionRecommendationSafeExecutionV1 } from
+  "@/lib/ebay/ebay-promotion-recommendation-safe-execution-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from
   "@/lib/supabase-admin"
 
@@ -104,6 +106,32 @@ export async function POST(req: Request) {
   }
   const previousMaterialFingerprint = typeof body.previousMaterialFingerprint === "string"
     ? body.previousMaterialFingerprint.slice(0, 100) : null
+  if (body.mode === "PROMOTION_RECOMMENDATION_READONLY") {
+    const ebayItemId = typeof body.ebayItemId === "string" &&
+      /^\d{9,20}$/.test(body.ebayItemId) ? body.ebayItemId : ""
+    if (!ebayItemId) return NextResponse.json({ success: false,
+      error: "PROMOTION_RECOMMENDATION_ITEM_ID_INVALID" }, { status: 400 })
+    try {
+      const accountKey = getEbaySellerAccountScopeConfiguration().accountKey
+      if (!accountKey) throw new Error("SELLER_ACCOUNT_SCOPE_REQUIRED")
+      const result = await loadEbayPromotionRecommendationSafeExecutionV1({
+        supabase: getSupabaseAdminClient(), accountKey, ebayItemId,
+      })
+      return NextResponse.json({ success: true,
+        promotionRecommendation: result,
+        safety: { analyticsRequests: 0, lunaRequests: 0,
+          promotionWrites: 0, priceChanges: 0, marketplaceWrites: 0 } },
+      { headers: { "Cache-Control": "private, no-store",
+        "X-Seller-OS-Promotion-Recommendation": "READ_ONLY" } })
+    } catch (error) {
+      const code = error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
+        ? error.message : "PROMOTION_RECOMMENDATION_READ_FAILED_CLOSED"
+      return NextResponse.json({ success: false, error: code,
+        safety: { analyticsRequests: 0, lunaRequests: 0,
+          promotionWrites: 0, priceChanges: 0, marketplaceWrites: 0 } },
+      { status: 409, headers: { "Cache-Control": "private, no-store" } })
+    }
+  }
   if (body.mode === "VISUAL_VARIANT_ACTION") {
     const action = body.action === "USE_IN_EXPERIMENT" || body.action === "DISCARD"
       ? body.action : null

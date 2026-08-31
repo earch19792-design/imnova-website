@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer"
 const API_ORIGIN = "https://api.ebay.com"
 const TOKEN_ENDPOINT = `${API_ORIGIN}/identity/v1/oauth2/token`
 const MARKETING_ENDPOINT = `${API_ORIGIN}/sell/marketing/v1`
+const RECOMMENDATION_ENDPOINT = `${API_ORIGIN}/sell/recommendation/v1/find`
 const BASE_SCOPE = "https://api.ebay.com/oauth/api_scope"
 const MARKETING_READONLY_SCOPE =
   "https://api.ebay.com/oauth/api_scope/sell.marketing.readonly"
@@ -19,6 +20,21 @@ export type EbayPromotionStateReadonlyV1 = {
   promotionFeeBasis: "FINAL_SALES_PRICE" | "NONE" | "UNPROVEN"
   priceDiscountState: "SEPARATE_NOT_EVALUATED"
   authority: "EBAY_MARKETING_FIND_CAMPAIGN_AND_AD_READONLY"
+  limitationCode: string | null
+  observedAt: string
+  marketplaceId: "EBAY_US"
+}
+
+export type EbayPromotionRecommendationReadonlyV1 = {
+  status: "AVAILABLE" | "UNPROVEN"
+  recommendationAvailable: boolean | null
+  recommendationType: "AD_RATE" | "NONE" | "UNPROVEN"
+  recommendedAdRatePercent: number | null
+  recommendedDiscountPercent: null
+  adRateBasis: "TRENDING" | "UNPROVEN" | null
+  promoteWithAd: "RECOMMENDED" | "UNDETERMINED" | "UNPROVEN"
+  priceDiscountRecommendation: "SEPARATE_CAPABILITY_NOT_RETURNED"
+  authority: "EBAY_SELL_RECOMMENDATION_API_AD_READONLY"
   limitationCode: string | null
   observedAt: string
   marketplaceId: "EBAY_US"
@@ -52,6 +68,118 @@ function unproven(code: string, now: Date): EbayPromotionStateReadonlyV1 {
     priceDiscountState: "SEPARATE_NOT_EVALUATED",
     authority: "EBAY_MARKETING_FIND_CAMPAIGN_AND_AD_READONLY",
     limitationCode: code,
+    observedAt: now.toISOString(),
+    marketplaceId: MARKETPLACE_ID,
+  }
+}
+
+function recommendationUnproven(
+  code: string,
+  now: Date,
+): EbayPromotionRecommendationReadonlyV1 {
+  return {
+    status: "UNPROVEN",
+    recommendationAvailable: null,
+    recommendationType: "UNPROVEN",
+    recommendedAdRatePercent: null,
+    recommendedDiscountPercent: null,
+    adRateBasis: "UNPROVEN",
+    promoteWithAd: "UNPROVEN",
+    priceDiscountRecommendation: "SEPARATE_CAPABILITY_NOT_RETURNED",
+    authority: "EBAY_SELL_RECOMMENDATION_API_AD_READONLY",
+    limitationCode: code,
+    observedAt: now.toISOString(),
+    marketplaceId: MARKETPLACE_ID,
+  }
+}
+
+export function parseEbayPromotionRecommendationReadonlyV1(input: {
+  payload: unknown
+  ebayItemId: string
+  now?: Date
+}): EbayPromotionRecommendationReadonlyV1 {
+  const now = input.now ?? new Date()
+  const recommendations = Array.isArray(
+    record(input.payload).listingRecommendations,
+  ) ? (record(input.payload).listingRecommendations as unknown[]).map(record)
+    : []
+  const exact = recommendations.filter((row) =>
+    text(row.listingId, 20) === input.ebayItemId)
+  if (exact.length === 0) return {
+    status: "AVAILABLE",
+    recommendationAvailable: false,
+    recommendationType: "NONE",
+    recommendedAdRatePercent: null,
+    recommendedDiscountPercent: null,
+    adRateBasis: null,
+    promoteWithAd: "UNDETERMINED",
+    priceDiscountRecommendation: "SEPARATE_CAPABILITY_NOT_RETURNED",
+    authority: "EBAY_SELL_RECOMMENDATION_API_AD_READONLY",
+    limitationCode: null,
+    observedAt: now.toISOString(),
+    marketplaceId: MARKETPLACE_ID,
+  }
+  if (exact.length !== 1) {
+    return recommendationUnproven(
+      "EBAY_RECOMMENDATION_EXACT_LISTING_AMBIGUOUS",
+      now,
+    )
+  }
+  const marketing = record(exact[0]?.marketing)
+  const ad = record(marketing.ad)
+  const promoteWithAd = text(
+    ad.promoteWithAd ?? marketing.promoteWithAd,
+  ).toUpperCase()
+  if (promoteWithAd === "UNDETERMINED") return {
+    status: "AVAILABLE",
+    recommendationAvailable: false,
+    recommendationType: "NONE",
+    recommendedAdRatePercent: null,
+    recommendedDiscountPercent: null,
+    adRateBasis: null,
+    promoteWithAd: "UNDETERMINED",
+    priceDiscountRecommendation: "SEPARATE_CAPABILITY_NOT_RETURNED",
+    authority: "EBAY_SELL_RECOMMENDATION_API_AD_READONLY",
+    limitationCode: null,
+    observedAt: now.toISOString(),
+    marketplaceId: MARKETPLACE_ID,
+  }
+  if (promoteWithAd !== "RECOMMENDED") {
+    return recommendationUnproven(
+      "EBAY_RECOMMENDATION_PROMOTE_WITH_AD_UNRECOGNIZED",
+      now,
+    )
+  }
+  const bidPercentages = Array.isArray(ad.bidPercentages)
+    ? ad.bidPercentages.map(record)
+    : Array.isArray(marketing.bidPercentages)
+      ? marketing.bidPercentages.map(record) : []
+  const trending = bidPercentages.filter((row) =>
+    text(row.basis).toUpperCase() === "TRENDING")
+  if (trending.length !== 1) {
+    return recommendationUnproven(
+      "EBAY_RECOMMENDATION_TRENDING_AD_RATE_UNPROVEN",
+      now,
+    )
+  }
+  const recommendedAdRatePercent = percentage(trending[0]?.value)
+  if (recommendedAdRatePercent === null) {
+    return recommendationUnproven(
+      "EBAY_RECOMMENDATION_TRENDING_AD_RATE_INVALID",
+      now,
+    )
+  }
+  return {
+    status: "AVAILABLE",
+    recommendationAvailable: true,
+    recommendationType: "AD_RATE",
+    recommendedAdRatePercent,
+    recommendedDiscountPercent: null,
+    adRateBasis: "TRENDING",
+    promoteWithAd: "RECOMMENDED",
+    priceDiscountRecommendation: "SEPARATE_CAPABILITY_NOT_RETURNED",
+    authority: "EBAY_SELL_RECOMMENDATION_API_AD_READONLY",
+    limitationCode: null,
     observedAt: now.toISOString(),
     marketplaceId: MARKETPLACE_ID,
   }
@@ -176,6 +304,60 @@ async function getJson(url: URL, token: string, fetchImpl: typeof fetch) {
     throw new Error(`EBAY_MARKETING_READONLY_HTTP_${response.status}`)
   }
   return body
+}
+
+async function postRecommendationJson(input: {
+  ebayItemId: string
+  token: string
+  fetchImpl: typeof fetch
+}) {
+  const url = new URL(RECOMMENDATION_ENDPOINT)
+  if (url.origin !== API_ORIGIN ||
+      url.pathname !== "/sell/recommendation/v1/find") {
+    throw new Error("EBAY_RECOMMENDATION_READONLY_ENDPOINT_BLOCKED")
+  }
+  url.searchParams.set("filter", "recommendationTypes:{AD}")
+  url.searchParams.set("limit", "1")
+  const response = await input.fetchImpl(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "Content-Language": "en-US",
+      "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+    },
+    body: JSON.stringify({ listingIds: [input.ebayItemId] }),
+    cache: "no-store",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  })
+  const body = record(await response.json().catch(() => ({})))
+  if (!response.ok) {
+    if (response.status === 403) {
+      throw new Error("EBAY_RECOMMENDATION_READONLY_SCOPE_REQUIRED")
+    }
+    throw new Error(`EBAY_RECOMMENDATION_READONLY_HTTP_${response.status}`)
+  }
+  return body
+}
+
+export async function readEbayPromotionRecommendationReadonlyV1(
+  ebayItemId: string,
+  fetchImpl: typeof fetch = fetch,
+) {
+  if (!/^\d{9,20}$/.test(ebayItemId)) {
+    throw new Error("EBAY_RECOMMENDATION_READONLY_ITEM_ID_INVALID")
+  }
+  const token = await accessToken(fetchImpl)
+  const payload = await postRecommendationJson({
+    ebayItemId,
+    token,
+    fetchImpl,
+  })
+  return parseEbayPromotionRecommendationReadonlyV1({
+    payload,
+    ebayItemId,
+  })
 }
 
 export async function readEbayPromotionStateReadonlyV1(
