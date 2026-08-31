@@ -1722,6 +1722,13 @@ export type CommercialMonitorBackendV1 = {
       timeZone: "UTC"
       observedAt: string | null
       completeness: CommercialMonitorCapabilityStatus
+      analyticsStatus: "CURRENT" | "LAST_KNOWN_GOOD" | "UNAVAILABLE"
+      currentSourceStatus: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE_429" |
+        "UNAVAILABLE_OTHER"
+      snapshotDataStatus: "AVAILABLE_CURRENT" | "AVAILABLE_STALE" |
+        "UNAVAILABLE"
+      snapshotCapturedAt: string | null
+      snapshotAgeSeconds: number | null
       activeListings: number | null
       impressions: number | null
       listingViews: number | null

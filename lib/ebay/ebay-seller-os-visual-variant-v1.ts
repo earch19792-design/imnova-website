@@ -54,7 +54,21 @@ function availableItemMetric(
   return value.availability === "AVAILABLE" && value.completeness === "COMPLETE" &&
     value.grain === "ITEM" && value.identity.itemId === ebayItemId &&
     typeof value.value === "number" && Number.isFinite(value.value) &&
-    value.reportingWindow && value.capturedAt
+    value.freshness.status !== "STALE" && value.reportingWindow && value.capturedAt
+      ? { value: value.value, observedAt: value.capturedAt,
+          reportingWindow: value.reportingWindow,
+          evidenceReference: value.source.evidenceReference }
+      : null
+}
+
+function lastKnownGoodItemMetric(
+  value: CommercialMonitorGetDto["listings"][number]["metrics"][keyof CommercialMonitorGetDto["listings"][number]["metrics"]],
+  ebayItemId: string,
+) {
+  return value.availability === "AVAILABLE" && value.completeness === "COMPLETE" &&
+    value.grain === "ITEM" && value.identity.itemId === ebayItemId &&
+    typeof value.value === "number" && Number.isFinite(value.value) &&
+    value.freshness.status === "STALE" && value.reportingWindow && value.capturedAt
       ? { value: value.value, observedAt: value.capturedAt,
           reportingWindow: value.reportingWindow,
           evidenceReference: value.source.evidenceReference }
@@ -134,6 +148,20 @@ export function assessSellerOsVisualExperimentV1(input: {
   const quantitySold = listing
     ? availableItemMetric(listing.metrics.units_sold, input.ebayItemId) : null
   const baselineAvailable = sameReportingWindow([impressions, views, ctr])
+  const lkgImpressions = listing
+    ? lastKnownGoodItemMetric(listing.metrics.impressions, input.ebayItemId) : null
+  const lkgViews = listing
+    ? lastKnownGoodItemMetric(listing.metrics.ebay_views, input.ebayItemId) : null
+  const lkgCtrReported = listing
+    ? lastKnownGoodItemMetric(listing.metrics.ctr_reported, input.ebayItemId) : null
+  const lkgCtrCalculated = listing
+    ? lastKnownGoodItemMetric(listing.metrics.ctr_calculated, input.ebayItemId) : null
+  const lkgCtr = lkgCtrReported ?? lkgCtrCalculated
+  const lastKnownGoodAvailable = !baselineAvailable &&
+    input.monitor.backend.trafficScopes?.currentLivePortfolio
+      ?.analyticsStatus ===
+      "LAST_KNOWN_GOOD" &&
+    sameReportingWindow([lkgImpressions, lkgViews, lkgCtr])
   const exactLiveIdentity = Boolean(listing &&
     listing.discovery.livePresence.status === "LIVE_ACTIVE" &&
     listing.identity.marketplaceCertification.status === "US_CERTIFIED")
@@ -250,14 +278,28 @@ export function assessSellerOsVisualExperimentV1(input: {
     },
     allNonAnalyticsGuardsPass: nonAnalyticsGuardsPass,
     baseline: {
-      status: baselineAvailable ? "AVAILABLE" as const : "UNPROVEN" as const,
-      impressions, ebayViews: views, ctr, quantitySold, orders,
+      status: baselineAvailable ? "AVAILABLE" as const
+        : lastKnownGoodAvailable ? "LAST_KNOWN_GOOD" as const
+          : "UNPROVEN" as const,
+      freshness: baselineAvailable ? "FRESH" as const
+        : lastKnownGoodAvailable ? "STALE" as const
+          : "UNPROVEN" as const,
+      impressions: baselineAvailable ? impressions : lkgImpressions,
+      ebayViews: baselineAvailable ? views : lkgViews,
+      ctr: baselineAvailable ? ctr : lkgCtr,
+      quantitySold,
+      orders,
       observedAt: baselineAvailable
         ? [impressions, views, ctr].map((row) => row?.observedAt).sort().at(-1) ?? null
-        : null,
-      reportingWindow: baselineAvailable ? impressions?.reportingWindow ?? null : null,
-      limitationCode: baselineAvailable ? null :
-        "EXPERIMENT_BASELINE_ANALYTICS_UNAVAILABLE",
+        : lastKnownGoodAvailable
+          ? [lkgImpressions, lkgViews, lkgCtr]
+              .map((row) => row?.observedAt).sort().at(-1) ?? null
+          : null,
+      reportingWindow: baselineAvailable ? impressions?.reportingWindow ?? null
+        : lastKnownGoodAvailable ? lkgImpressions?.reportingWindow ?? null : null,
+      limitationCode: baselineAvailable ? null : lastKnownGoodAvailable
+        ? "EXPERIMENT_BASELINE_LAST_KNOWN_GOOD_STALE"
+        : "EXPERIMENT_BASELINE_ANALYTICS_UNAVAILABLE",
       nullIsZero: false as const,
     },
     experimentStartBlockedByAnalytics: !baselineAvailable,

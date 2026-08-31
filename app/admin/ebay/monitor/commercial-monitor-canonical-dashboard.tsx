@@ -110,6 +110,20 @@ function formatTimestamp(value: string | null) {
     : "Fecha no disponible"
 }
 
+function analyticsSnapshotDetail(input: {
+  analyticsStatus?: string
+  snapshotCapturedAt?: string | null
+  currentSourceStatus?: string
+}, currentDetail: string) {
+  if (input.analyticsStatus !== "LAST_KNOWN_GOOD") return currentDetail
+  const source = input.currentSourceStatus === "UNAVAILABLE_429"
+    ? "fuente actual limitada por eBay (429)"
+    : "fuente actual no disponible"
+  return `Última lectura válida · ${formatTimestamp(
+    input.snapshotCapturedAt ?? null,
+  )} · ${source}`
+}
+
 function formatMoney(value: number | null, currency: string | null) {
   if (value === null || !currency) return "Importe no comprobado"
   try {
@@ -310,6 +324,14 @@ export function CommercialMonitorCanonicalDashboard({
     listing.discovery.livePresence.status === "LIVE_ACTIVE" &&
     listing.stock.supplierLinkageStatus !== "CERTIFIED")
   const accountTraffic = dashboardKpis.accountTraffic
+  const liveAnalyticsDetail = analyticsSnapshotDetail(
+    backend.trafficScopes.currentLivePortfolio,
+    "Portafolio LIVE actual",
+  )
+  const accountAnalyticsDetail = analyticsSnapshotDetail(
+    accountTraffic,
+    "Tráfico de toda la cuenta",
+  )
   const registry = backend.capabilities.registry
   const registryPresentation = presentCommercialMonitorRegistryV1(registry)
   const integrity = backend.livePortfolioIntegrity
@@ -437,10 +459,10 @@ export function CommercialMonitorCanonicalDashboard({
           </div>
           <div className="grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:grid-cols-2 xl:grid-cols-5">
             <KpiCard label="Publicaciones activas" value={livePortfolio.activeListings.value} status={livePortfolio.activeListings.status} detail="Item IDs LIVE únicos de Trading" meaning="Cantidad de publicaciones que eBay confirma activas ahora." maximumFractionDigits={0} icon={<Package size={20} />} />
-            <KpiCard label="Veces que eBay mostró tus productos · Impresiones" value={livePortfolio.impressions.value} status={livePortfolio.impressions.status} detail="Portafolio LIVE actual" meaning="Cuántas veces eBay mostró alguna de estas publicaciones activas." maximumFractionDigits={0} icon={<BarChart3 size={20} />} />
-            <KpiCard label="Personas que entraron a verlos · Vistas" value={livePortfolio.ebayViews.value} status={livePortfolio.ebayViews.status} detail="Portafolio LIVE actual" meaning="Cuántas visitas registró eBay para estas publicaciones activas." maximumFractionDigits={0} icon={<Eye size={20} />} />
-            <KpiCard label="CTR · Tasa de clics" value={livePortfolio.averageCtr.value} status={livePortfolio.averageCtr.status} detail="Portafolio LIVE actual" meaning="De cada 100 veces que eBay muestra tus productos, indica cuántas personas entran a verlos." maximumFractionDigits={5} icon={<TrendingUp size={20} />} suffix="%" />
-            <KpiCard label="Artículos vendidos" value={livePortfolio.quantitySold.value} status={livePortfolio.quantitySold.status} detail="Métrica TRANSACTION de eBay Analytics; no equivale a órdenes" meaning="Unidades atribuidas por eBay Analytics a estas publicaciones activas." maximumFractionDigits={0} icon={<Activity size={20} />} />
+            <KpiCard label="Veces que eBay mostró tus productos · Impresiones" value={livePortfolio.impressions.value} status={livePortfolio.impressions.status} detail={liveAnalyticsDetail} meaning="Cuántas veces eBay mostró alguna de estas publicaciones activas." maximumFractionDigits={0} icon={<BarChart3 size={20} />} />
+            <KpiCard label="Personas que entraron a verlos · Vistas" value={livePortfolio.ebayViews.value} status={livePortfolio.ebayViews.status} detail={liveAnalyticsDetail} meaning="Cuántas visitas registró eBay para estas publicaciones activas." maximumFractionDigits={0} icon={<Eye size={20} />} />
+            <KpiCard label="CTR · Tasa de clics" value={livePortfolio.averageCtr.value} status={livePortfolio.averageCtr.status} detail={liveAnalyticsDetail} meaning="De cada 100 veces que eBay muestra tus productos, indica cuántas personas entran a verlos." maximumFractionDigits={5} icon={<TrendingUp size={20} />} suffix="%" />
+            <KpiCard label="Artículos vendidos" value={livePortfolio.quantitySold.value} status={livePortfolio.quantitySold.status} detail={liveAnalyticsDetail} meaning="Unidades atribuidas por eBay Analytics a estas publicaciones activas." maximumFractionDigits={0} icon={<Activity size={20} />} />
           </div>
         </section>
 
@@ -451,10 +473,10 @@ export function CommercialMonitorCanonicalDashboard({
             <p className={`${type.helper} mt-1 text-slate-500`}>Scope de cuenta separado · {accountTraffic.timeZone}. Sus denominadores nunca se mezclan con el portafolio LIVE.</p>
           </div>
           <div className="grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:grid-cols-2 xl:grid-cols-5">
-            <KpiCard label="Veces que eBay mostró tus productos · Impresiones" value={accountTraffic.impressions} status={accountTraffic.status} detail="Tráfico de toda la cuenta" meaning="Cuántas veces eBay mostró productos de la cuenta dentro de la ventana reportada." maximumFractionDigits={0} icon={<BarChart3 size={20} />} />
-            <KpiCard label="Personas que entraron a verlos · Vistas" value={accountTraffic.listingViews} status={accountTraffic.status} detail="Tráfico de toda la cuenta" meaning="Visitas a publicaciones de la cuenta dentro de la ventana reportada." maximumFractionDigits={0} icon={<Eye size={20} />} />
-            <KpiCard label="CTR · Tasa de clics" value={accountTraffic.ctr} status={accountTraffic.status} detail="Tráfico de toda la cuenta" meaning="De cada 100 impresiones de búsqueda de la cuenta, cuántas terminaron en una visita." maximumFractionDigits={5} icon={<TrendingUp size={20} />} suffix="%" />
-            <KpiCard label="Artículos vendidos" value={accountTraffic.quantitySold} status={accountTraffic.status} detail="Tráfico de toda la cuenta" meaning="Cantidad vendida informada por el reporte de tráfico; no equivale al número de órdenes." maximumFractionDigits={0} icon={<Activity size={20} />} />
+            <KpiCard label="Veces que eBay mostró tus productos · Impresiones" value={accountTraffic.impressions} status={accountTraffic.status} detail={accountAnalyticsDetail} meaning="Cuántas veces eBay mostró productos de la cuenta dentro de la ventana reportada." maximumFractionDigits={0} icon={<BarChart3 size={20} />} />
+            <KpiCard label="Personas que entraron a verlos · Vistas" value={accountTraffic.listingViews} status={accountTraffic.status} detail={accountAnalyticsDetail} meaning="Visitas a publicaciones de la cuenta dentro de la ventana reportada." maximumFractionDigits={0} icon={<Eye size={20} />} />
+            <KpiCard label="CTR · Tasa de clics" value={accountTraffic.ctr} status={accountTraffic.status} detail={accountAnalyticsDetail} meaning="De cada 100 impresiones de búsqueda de la cuenta, cuántas terminaron en una visita." maximumFractionDigits={5} icon={<TrendingUp size={20} />} suffix="%" />
+            <KpiCard label="Artículos vendidos" value={accountTraffic.quantitySold} status={accountTraffic.status} detail={accountAnalyticsDetail} meaning="Cantidad vendida informada por el reporte de tráfico; no equivale al número de órdenes." maximumFractionDigits={0} icon={<Activity size={20} />} />
             <KpiCard label="Órdenes" value={dashboardKpis.orders.value} status={dashboardKpis.orders.status} detail={dashboardKpis.orders.value === null ? "Fuente Fulfillment no disponible" : "Lectura oficial de Fulfillment"} meaning="Pedidos observados por Fulfillment. Se muestra separado del tráfico y no se usa como su denominador." maximumFractionDigits={0} icon={<ShoppingBag size={20} />} />
           </div>
         </section>

@@ -53,7 +53,15 @@ export type AccountTrafficEvidenceV1 = {
   snapshotReuseReasonCode:
     | "CACHE_MISS_ACQUIRED"
     | "FRESH_MATCHING_ACCOUNT_WINDOW"
+    | "DURABLE_LAST_KNOWN_GOOD"
     | "SOURCE_UNAVAILABLE"
+  analyticsStatus?: "CURRENT" | "LAST_KNOWN_GOOD" | "UNAVAILABLE"
+  currentSourceStatus?: "AVAILABLE" | "PARTIAL" | "UNAVAILABLE_429" |
+    "UNAVAILABLE_OTHER"
+  snapshotDataStatus?: "AVAILABLE_CURRENT" | "AVAILABLE_STALE" |
+    "UNAVAILABLE"
+  snapshotCapturedAt?: string | null
+  snapshotAgeSeconds?: number | null
   gapCodes: string[]
 }
 
@@ -120,6 +128,13 @@ export function unavailableAccountTrafficV1(
     snapshotReuseStatus: telemetry.snapshotReuseStatus ?? "UNAVAILABLE",
     snapshotReuseReasonCode:
       telemetry.snapshotReuseReasonCode ?? "SOURCE_UNAVAILABLE",
+    analyticsStatus: "UNAVAILABLE",
+    currentSourceStatus: gapCode.includes("429")
+      ? "UNAVAILABLE_429"
+      : "UNAVAILABLE_OTHER",
+    snapshotDataStatus: "UNAVAILABLE",
+    snapshotCapturedAt: null,
+    snapshotAgeSeconds: null,
     gapCodes: [gapCode],
   }
 }
@@ -211,6 +226,15 @@ export function summarizeAccountTrafficV1(input: {
     snapshotReuseStatus: input.snapshotReuseStatus ?? "ACQUIRED",
     snapshotReuseReasonCode:
       input.snapshotReuseReasonCode ?? "CACHE_MISS_ACQUIRED",
+    analyticsStatus: "CURRENT",
+    currentSourceStatus: complete ? "AVAILABLE" : input.rows.length
+      ? "PARTIAL"
+      : "UNAVAILABLE_OTHER",
+    snapshotDataStatus: input.rows.length
+      ? "AVAILABLE_CURRENT"
+      : "UNAVAILABLE",
+    snapshotCapturedAt: input.observedAt,
+    snapshotAgeSeconds: 0,
     gapCodes: [...new Set(gapCodes)],
   }
 }

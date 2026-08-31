@@ -54,6 +54,9 @@ import {
   type EbayMonitorOAuthSafeErrorCategory,
 } from "./ebay-commercial-monitor-live-readonly"
 import {
+  resolveAnalyticsLastKnownGoodV1,
+} from "./ebay-analytics-last-known-good-v1"
+import {
   buildEbayRegistryRepairEvidenceFingerprint,
   buildEbayRegistryRepairPlanningResult,
 } from "./ebay-registry-repair-dry-run"
@@ -4126,12 +4129,23 @@ export async function getCommercialMonitorReadonly(
     supabase,
     scope.accountKey,
   )
+  const analyticsAuthority = resolveAnalyticsLastKnownGoodV1({
+    analytics: live.analytics,
+    storedRows: storedSources.commercialSnapshots.rows,
+    currentLiveItemIds: live.discovery.currentLiveListings.map((listing) =>
+      listing.itemId),
+    now,
+  })
+  const effectiveLive: EbayCommercialMonitorLiveReadonlyResult = {
+    ...live,
+    analytics: analyticsAuthority.analytics,
+  }
   const sources = withLiveReadonlyEvidence({
     stored: storedSources,
-    live,
+    live: effectiveLive,
     accountKey: scope.accountKey,
   })
-  const coverage = discoveryCoverage(sources, now, live, storedSources)
+  const coverage = discoveryCoverage(sources, now, effectiveLive, storedSources)
   const inputs = listingInputs(
     sources,
     coverage.reconciliation?.registry.activeRegistryItemCount !== null &&
@@ -4155,13 +4169,14 @@ export async function getCommercialMonitorReadonly(
     marketplace,
     discoveryCoverage: coverage,
     sellerWideItemSetComplete:
-      live.discovery.sellerWideEnumeration.itemSetComplete,
-    sellerWideEnumerationObservedAt: live.discovery.observedAt,
+      effectiveLive.discovery.sellerWideEnumeration.itemSetComplete,
+    sellerWideEnumerationObservedAt: effectiveLive.discovery.observedAt,
     sellerWideCurrentItemIds: new Set(
-      live.discovery.currentLiveListings.map((listing) => listing.itemId),
+      effectiveLive.discovery.currentLiveListings.map((listing) =>
+        listing.itemId),
     ),
     sellerWideCurrentIdentityObservations: new Map(
-      live.discovery.currentLiveListings.flatMap((listing) =>
+      effectiveLive.discovery.currentLiveListings.flatMap((listing) =>
         listing.identityAmbiguous
           ? []
           : [[JSON.stringify([
@@ -4191,7 +4206,7 @@ export async function getCommercialMonitorReadonly(
   ]
     .map((alert) => [alert.eventKey, alert])).values()]
   const learning = learningProjection(sources.learning)
-  const readers = readerStatuses(storedSources, live)
+  const readers = readerStatuses(storedSources, effectiveLive)
   const connectionStatus: ObservationAvailability = readers.every((reader) =>
       reader.status === "ERROR")
     ? "ERROR"
@@ -4205,11 +4220,11 @@ export async function getCommercialMonitorReadonly(
   })
   const registryCertification = registryCertificationProjection({
     accountKey: scope.accountKey,
-    live,
+    live: effectiveLive,
     registryRows: storedSources.registry.rows,
     registrySourceStatus: storedSources.registry.status,
     registrySourceLimitationCode: storedSources.registry.limitationCode,
-    observedAt: live.discovery.observedAt ?? generatedAt,
+    observedAt: effectiveLive.discovery.observedAt ?? generatedAt,
   })
   return assertCommercialMonitorAssistantDtoSafe(baseReport({
     marketplace,
@@ -4222,11 +4237,11 @@ export async function getCommercialMonitorReadonly(
     accountDataQualityIssues: accountIssues,
     learning,
     timeline: timeline(listings, learning, alertCandidates, generatedAt),
-    liveCertification: liveCertificationProjection(live, coverage),
+    liveCertification: liveCertificationProjection(effectiveLive, coverage),
     registryCertification,
-    orderFacts: orderFactsProjection(live, storedSources),
-    saleAlerts: canonicalSaleAlertsProjection(live),
-    liveAnalytics: live.analytics,
+    orderFacts: orderFactsProjection(effectiveLive, storedSources),
+    saleAlerts: canonicalSaleAlertsProjection(effectiveLive),
+    liveAnalytics: effectiveLive.analytics,
     historicalSnapshots: sources.commercialSnapshots.rows,
   }))
 }

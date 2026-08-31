@@ -17,6 +17,8 @@ import {
 } from "@/lib/ebay/ebay-targeted-active-listing-luna-monitor"
 import { getEbayCommercialMonitorLiveReadonly } from
   "@/lib/ebay/ebay-commercial-monitor-live-readonly"
+import { persistAnalyticsLastKnownGoodV1 } from
+  "@/lib/ebay/ebay-analytics-last-known-good-persistence-v1"
 import { getCommercialMonitorReadonly } from
   "@/lib/ebay/commercial-monitor-readonly-service"
 import { autoIngestUnmanagedEbayLiveListingsV1 } from
@@ -278,6 +280,11 @@ export async function GET(req: Request) {
         accountKey,
         accountAlias: account.accountAlias,
       })
+      const analyticsLastKnownGood = await persistAnalyticsLastKnownGoodV1({
+        supabase,
+        accountKey,
+        live,
+      })
       const unmanagedLiveIntake = await autoIngestUnmanagedEbayLiveListingsV1(
         supabase,
         {
@@ -415,6 +422,7 @@ export async function GET(req: Request) {
         pollEligibleCount: eligibleItemIds.length,
         identityMismatchSkippedCount: identityMismatchSkippedItemIds.length,
         freshnessRenewal,
+        analyticsLastKnownGood,
         refreshResults,
         stockPolling,
         automaticOosProtection,

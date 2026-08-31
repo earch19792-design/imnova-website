@@ -1194,6 +1194,19 @@ export function buildCommercialMonitorBackendV1(input: {
             currentLiveImpressions.value !== null
           ? currentLiveImpressions.status
           : "UNPROVEN",
+        analyticsStatus: accountTraffic.analyticsStatus ??
+          (accountTraffic.status === "UNAVAILABLE" ? "UNAVAILABLE" : "CURRENT"),
+        currentSourceStatus: accountTraffic.currentSourceStatus ??
+          (accountTraffic.status === "AVAILABLE" ? "AVAILABLE"
+            : accountTraffic.status === "PARTIAL" ? "PARTIAL"
+              : "UNAVAILABLE_OTHER"),
+        snapshotDataStatus: accountTraffic.snapshotDataStatus ??
+          (currentLiveImpressions.value !== null
+            ? "AVAILABLE_CURRENT"
+            : "UNAVAILABLE"),
+        snapshotCapturedAt: accountTraffic.snapshotCapturedAt ??
+          input.currentLiveObservedAt ?? null,
+        snapshotAgeSeconds: accountTraffic.snapshotAgeSeconds ?? null,
         activeListings: activeListingsProven ? primaryListings.length : null,
         impressions: currentLiveImpressions.value,
         listingViews: currentLiveViews.value,

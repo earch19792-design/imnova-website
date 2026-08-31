@@ -10,6 +10,7 @@ const root = process.cwd()
 const canonicalRoute = "app/api/admin/ebay/monitor/route.ts"
 const canonicalPage = "app/admin/ebay/monitor/page.tsx"
 const registeredRuntimeGraphAdditions = Object.freeze([
+  "lib/ebay/ebay-analytics-last-known-good-v1.ts",
   "lib/ebay/ebay-luna-canonical-stock-read-model-adapter-v1.ts",
   "lib/ebay/ebay-official-orders-read-v1.ts",
   "lib/ebay/ebay-sale-alerts-read-v1.ts",
