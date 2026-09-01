@@ -1350,7 +1350,7 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
           marketplaceReadinessBlocked ? "MARKETPLACE_READINESS" :
             firstBlocker ?? "ECONOMICS"
     const mapped = emptyStages({ IDENTITY: "PASS", DUPLICATE: "PASS",
-      STOCK: "PASS", DEMAND: marketTestReady ? "BLOCKED" :
+      STOCK: "PASS", DEMAND: marketTestReady ? "WAITING" :
         stages.DEMAND_READY === "READY" ? "PASS" : "BLOCKED",
       SHIPPING: waitingForWorker ? "RUNNING" :
         shipping.shippingJobStatus === "SHIPPING_EVIDENCE_DURABLE"
@@ -1362,7 +1362,8 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
         ? "PASS" : "BLOCKED",
       REQUIRED_SPECIFICS: requiredItemSpecificsReady ? "PASS" : "BLOCKED",
       MARKETPLACE_READINESS: marketplaceReadinessReady ? "PASS" : "BLOCKED",
-      LISTING_READY: listingReady ? "PASS" : "BLOCKED" })
+      LISTING_READY: listingReady ? "PASS" : marketTestReady
+        ? "WAITING" : "BLOCKED" })
     return Object.freeze({ sourceUrl, canonicalUrl,
       candidateKey: String(row.candidate_key),
       candidateId: String(row.candidate_key), opportunityId: String(row.id),

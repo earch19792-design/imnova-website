@@ -114,6 +114,7 @@ function durableEnvelope(row: ReadonlyCommercialSnapshotRow) {
 
 function observationFromRow(
   row: ReadonlyCommercialSnapshotRow,
+  freshnessStatus = "STALE_LAST_KNOWN_GOOD",
 ): EbayLiveAnalyticsObservation | null {
   const envelope = durableEnvelope(row)
   if (!envelope.usable || !envelope.capturedAt || !envelope.windowStart ||
@@ -150,7 +151,7 @@ function observationFromRow(
     completeness: row.completeness_status === "complete"
       ? "COMPLETE"
       : "PARTIAL",
-    freshnessStatus: "STALE_LAST_KNOWN_GOOD",
+    freshnessStatus,
     source: "EBAY_SELL_ANALYTICS_TRAFFIC_REPORT",
   }
 }
@@ -161,6 +162,7 @@ function accountTrafficFromEnvelope(input: {
   ageSeconds: number
   currentStatus: AnalyticsLastKnownGoodResolutionV1["currentSourceStatus"]
   currentGapCodes: string[]
+  durableCurrent?: boolean
 }): DurableAccountTrafficV1 | null {
   const candidate = input.accountTraffic
   const status = candidate.status === "AVAILABLE" || candidate.status === "PARTIAL"
@@ -177,18 +179,25 @@ function accountTrafficFromEnvelope(input: {
     windowStart,
     windowEnd,
     observedAt: input.capturedAt,
-    analyticsStatus: "LAST_KNOWN_GOOD",
-    currentSourceStatus: input.currentStatus,
-    snapshotDataStatus: "AVAILABLE_STALE",
+    analyticsStatus: input.durableCurrent ? "CURRENT" : "LAST_KNOWN_GOOD",
+    currentSourceStatus: input.durableCurrent ? "AVAILABLE"
+      : input.currentStatus,
+    snapshotDataStatus: input.durableCurrent
+      ? "AVAILABLE_CURRENT" : "AVAILABLE_STALE",
     snapshotCapturedAt: input.capturedAt,
     snapshotAgeSeconds: input.ageSeconds,
     snapshotReuseStatus: "REUSED",
-    snapshotReuseReasonCode: "DURABLE_LAST_KNOWN_GOOD",
+    snapshotReuseReasonCode: input.durableCurrent
+      ? "FRESH_MATCHING_ACCOUNT_WINDOW" : "DURABLE_LAST_KNOWN_GOOD",
     upstreamSnapshotAcquisitionCount: 0,
-    gapCodes: [...new Set([
-      ...input.currentGapCodes,
-      "ANALYTICS_LAST_KNOWN_GOOD",
-    ])],
+    gapCodes: input.durableCurrent
+      ? [...new Set(Array.isArray(candidate.gapCodes)
+        ? candidate.gapCodes.filter((value): value is string =>
+          typeof value === "string") : [])]
+      : [...new Set([
+        ...input.currentGapCodes,
+        "ANALYTICS_LAST_KNOWN_GOOD",
+      ])],
   }
 }
 
@@ -197,6 +206,7 @@ export function resolveAnalyticsLastKnownGoodV1(input: {
   storedRows: ReadonlyCommercialSnapshotRow[]
   currentLiveItemIds: string[]
   now?: Date
+  durableCurrentMaximumAgeSeconds?: number
 }): AnalyticsLastKnownGoodResolutionV1 {
   const now = input.now ?? new Date()
   const sourceStatus = currentSourceStatus(input.analytics)
@@ -259,12 +269,8 @@ export function resolveAnalyticsLastKnownGoodV1(input: {
     }
   }
   const envelope = durableEnvelope(compatible[0])
-  const observations = compatible.flatMap((row) => {
-    const observation = observationFromRow(row)
-    return observation ? [observation] : []
-  })
-  if (observations.length !== currentItemIds.length || !envelope.capturedAt ||
-      !envelope.windowStart || !envelope.windowEnd) {
+  if (!envelope.capturedAt || !envelope.windowStart ||
+      !envelope.windowEnd) {
     return {
       analytics: input.analytics,
       analyticsStatus: "UNAVAILABLE",
@@ -279,12 +285,42 @@ export function resolveAnalyticsLastKnownGoodV1(input: {
   const ageSeconds = Math.max(0, Math.floor(
     (now.getTime() - Date.parse(envelope.capturedAt)) / 1_000,
   ))
+  const durableCurrentMaximumAgeSeconds = Number.isFinite(
+    input.durableCurrentMaximumAgeSeconds) &&
+      Number(input.durableCurrentMaximumAgeSeconds) >= 0
+    ? Number(input.durableCurrentMaximumAgeSeconds) : null
+  const durableCurrent = durableCurrentMaximumAgeSeconds !== null &&
+    ageSeconds <= durableCurrentMaximumAgeSeconds &&
+    envelope.accountTraffic.analyticsStatus === "CURRENT" &&
+    envelope.accountTraffic.currentSourceStatus === "AVAILABLE" &&
+    envelope.accountTraffic.snapshotDataStatus === "AVAILABLE_CURRENT" &&
+    envelope.accountTraffic.status === "AVAILABLE" &&
+    envelope.accountTraffic.completeness === "COMPLETE" &&
+    compatible.every((row) => row.completeness_status === "complete")
+  const observations = compatible.flatMap((row) => {
+    const observation = observationFromRow(row, durableCurrent
+      ? "FRESH_DURABLE_CURRENT" : "STALE_LAST_KNOWN_GOOD")
+    return observation ? [observation] : []
+  })
+  if (observations.length !== currentItemIds.length) {
+    return {
+      analytics: input.analytics,
+      analyticsStatus: "UNAVAILABLE",
+      currentSourceStatus: sourceStatus,
+      snapshotDataStatus: "UNAVAILABLE",
+      snapshotCapturedAt: null,
+      snapshotAgeSeconds: null,
+      currentLiveSnapshotAvailable: false,
+      itemBaselineAvailable: () => false,
+    }
+  }
   const accountTraffic = accountTrafficFromEnvelope({
     accountTraffic: envelope.accountTraffic,
     capturedAt: envelope.capturedAt,
     ageSeconds,
     currentStatus: sourceStatus,
     currentGapCodes: input.analytics.gapCodes,
+    durableCurrent,
   })
   if (!accountTraffic) {
     return {
@@ -315,14 +351,15 @@ export function resolveAnalyticsLastKnownGoodV1(input: {
         : "PARTIAL",
       accountTraffic,
       observations,
-      gapCodes: [...new Set([
+      gapCodes: durableCurrent ? accountTraffic.gapCodes : [...new Set([
         ...input.analytics.gapCodes,
         "ANALYTICS_LAST_KNOWN_GOOD",
       ])],
     },
-    analyticsStatus: "LAST_KNOWN_GOOD",
-    currentSourceStatus: sourceStatus,
-    snapshotDataStatus: "AVAILABLE_STALE",
+    analyticsStatus: durableCurrent ? "CURRENT" : "LAST_KNOWN_GOOD",
+    currentSourceStatus: durableCurrent ? "AVAILABLE" : sourceStatus,
+    snapshotDataStatus: durableCurrent
+      ? "AVAILABLE_CURRENT" : "AVAILABLE_STALE",
     snapshotCapturedAt: envelope.capturedAt,
     snapshotAgeSeconds: ageSeconds,
     currentLiveSnapshotAvailable: true,

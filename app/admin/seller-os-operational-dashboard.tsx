@@ -14,6 +14,39 @@ type CompactStatus = "READY" | "WORKING" | "WAITING" | "DEGRADED" |
   "OFFLINE"
 type WorkerStatus = CompactStatus | "CONNECTING"
 type DashboardReadState = "REFRESHING" | "STABLE" | "READ_RETRYING"
+type PostSaleStatus = "READY" | "ARMED" | "SUCCEEDED" | "WAITING" |
+  "FAILED" | "MANUAL_REVIEW"
+
+type PostSaleTrace = Readonly<{
+  eventId: string | null
+  detectedAt: string | null
+  orderDetected: boolean
+  dashboardAlert: string
+  whatsappStatus: string
+  whatsappReceiptAt: string | null
+  buyerThankYouStatus: string
+  buyerThankYouReceiptAt: string | null
+}>
+
+type DashboardPostSale = Readonly<{
+  authorityAvailable: boolean
+  saleDetectionStatus: PostSaleStatus
+  saleDetectionSource: string
+  newSaleDetectionLatency: string
+  whatsappStatus: PostSaleStatus
+  whatsappProviderReady: boolean
+  whatsappLastSendAt: string | null
+  whatsappSuccessfulSendCount: number
+  whatsappManualReviewCount: number
+  buyerThankYouStatus: PostSaleStatus
+  buyerMessageCapabilityReady: boolean
+  buyerThankYouLastSendAt: string | null
+  buyerThankYouSendCount: number
+  buyerThankYouManualReviewCount: number
+  historicalReplayNotShownAsFailure: boolean
+  historicalReplayNotSent: boolean
+  recentSaleTraces: readonly PostSaleTrace[]
+}>
 
 type RadarSignal = Readonly<{
   familyId: string
@@ -66,7 +99,29 @@ type DashboardSnapshot = Readonly<{
   stockRiskCount: number | null
   ordersSourceStatus: string
   ordersLastSuccessfulReadAt: string | null
+  officialLineItemQuantity: number | null
+  postSale: DashboardPostSale
 }>
+
+const emptyPostSale: DashboardPostSale = {
+  authorityAvailable: false,
+  saleDetectionStatus: "WAITING",
+  saleDetectionSource: "EBAY_SELL_FULFILLMENT_GET_ORDERS",
+  newSaleDetectionLatency: "—",
+  whatsappStatus: "WAITING",
+  whatsappProviderReady: false,
+  whatsappLastSendAt: null,
+  whatsappSuccessfulSendCount: 0,
+  whatsappManualReviewCount: 0,
+  buyerThankYouStatus: "WAITING",
+  buyerMessageCapabilityReady: false,
+  buyerThankYouLastSendAt: null,
+  buyerThankYouSendCount: 0,
+  buyerThankYouManualReviewCount: 0,
+  historicalReplayNotShownAsFailure: true,
+  historicalReplayNotSent: true,
+  recentSaleTraces: [],
+}
 
 const emptySnapshot: DashboardSnapshot = {
   readyForOwnerReviewCount: 0,
@@ -101,6 +156,8 @@ const emptySnapshot: DashboardSnapshot = {
   stockRiskCount: null,
   ordersSourceStatus: "UNPROVEN",
   ordersLastSuccessfulReadAt: null,
+  officialLineItemQuantity: null,
+  postSale: emptyPostSale,
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -170,6 +227,64 @@ function availableMetric(value: unknown) {
   if (typeof value === "string" && value.trim() === "") return null
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
+function postSaleStatus(value: unknown): PostSaleStatus {
+  const status = String(value ?? "").toUpperCase()
+  return new Set<PostSaleStatus>(["READY", "ARMED", "SUCCEEDED", "WAITING",
+    "FAILED", "MANUAL_REVIEW"]).has(status as PostSaleStatus)
+    ? status as PostSaleStatus : "WAITING"
+}
+
+function parsePostSale(value: unknown): DashboardPostSale {
+  const postSale = record(value)
+  const detection = record(postSale.saleDetection)
+  const whatsapp = record(postSale.whatsapp)
+  const buyer = record(postSale.buyerThankYou)
+  const traces = (Array.isArray(postSale.recentSaleTraces)
+    ? postSale.recentSaleTraces : []).flatMap((raw) => {
+    const trace = record(raw)
+    if (trace.orderDetected !== true) return []
+    return [{
+      eventId: nullableText(trace.eventId, 160),
+      detectedAt: nullableText(trace.detectedAt, 80),
+      orderDetected: true,
+      dashboardAlert: nullableText(trace.dashboardAlert, 40) ?? "READY",
+      whatsappStatus: nullableText(trace.whatsappStatus, 40) ?? "NOT_STARTED",
+      whatsappReceiptAt: nullableText(trace.whatsappReceiptAt, 80),
+      buyerThankYouStatus: nullableText(trace.buyerThankYouStatus, 40)
+        ?? "NOT_STARTED",
+      buyerThankYouReceiptAt: nullableText(trace.buyerThankYouReceiptAt, 80),
+    }]
+  }).slice(0, 5)
+  return {
+    authorityAvailable: postSale.authorityAvailable === true,
+    saleDetectionStatus: postSaleStatus(detection.status),
+    saleDetectionSource: nullableText(detection.source, 120) ??
+      "EBAY_SELL_FULFILLMENT_GET_ORDERS",
+    newSaleDetectionLatency: nullableText(
+      detection.newSaleDetectionLatency, 180) ?? "—",
+    whatsappStatus: postSaleStatus(whatsapp.status),
+    whatsappProviderReady: whatsapp.provider === "META_CLOUD_API" &&
+      whatsapp.configuration === "READY" &&
+      whatsapp.deliveryPath === "READY" &&
+      whatsapp.realDeliveryPermitted === true,
+    whatsappLastSendAt: nullableText(whatsapp.lastNewSaleSendAt, 80),
+    whatsappSuccessfulSendCount: safeCount(whatsapp.successfulSendCount),
+    whatsappManualReviewCount: safeCount(whatsapp.manualReviewCount),
+    buyerThankYouStatus: postSaleStatus(buyer.status),
+    buyerMessageCapabilityReady:
+      buyer.provider === "EBAY_COMMERCE_MESSAGE_API" &&
+      buyer.capability === "READY" &&
+      buyer.automaticExecution === "AUTO_EXECUTION_ALLOWED",
+    buyerThankYouLastSendAt: nullableText(buyer.lastSendAt, 80),
+    buyerThankYouSendCount: safeCount(buyer.totalNewSaleMessagesSent),
+    buyerThankYouManualReviewCount: safeCount(buyer.manualReviewRequired),
+    historicalReplayNotShownAsFailure:
+      postSale.historicalReplayNotShownAsFailure === true,
+    historicalReplayNotSent: postSale.historicalReplayNotSent === true,
+    recentSaleTraces: traces,
+  }
 }
 
 function authoritativeCompactStatus(value: unknown) {
@@ -243,6 +358,30 @@ function StatusPill({ status }: { status: WorkerStatus }) {
   return <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${tone(status)}`}>
     {status}
   </span>
+}
+
+function postSaleTone(status: PostSaleStatus) {
+  if (["READY", "ARMED", "SUCCEEDED"].includes(status)) {
+    return "bg-emerald-200 text-emerald-950"
+  }
+  if (status === "MANUAL_REVIEW") return "bg-amber-200 text-amber-950"
+  if (status === "FAILED") return "bg-rose-200 text-rose-950"
+  return "bg-white/10 text-white/60"
+}
+
+function postSaleHumanStatus(input: Readonly<{
+  status: PostSaleStatus
+  lastSucceededAt?: string | null
+}>) {
+  if (input.status === "SUCCEEDED") {
+    return input.lastSucceededAt
+      ? `ENVIADO · ${shortTimestamp(input.lastSucceededAt)}` : "ENVIADO"
+  }
+  if (input.status === "ARMED") return "ARMADO · esperando próxima venta"
+  if (input.status === "READY") return "LISTO"
+  if (input.status === "MANUAL_REVIEW") return "REVISIÓN MANUAL"
+  if (input.status === "FAILED") return "FALLÓ"
+  return "ESPERANDO AUTORIDAD"
 }
 
 function metricLabel(value: number | null, suffix = "") {
@@ -346,6 +485,7 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
   const dollar = record(review.dollarCheck)
   const band = record(review.supportedPriceBand)
   const ownerReview = record(review.ownerReview)
+  const publishHandoff = record(review.publishAuthorizationHandoff)
   const keywords = Array.isArray(review.keywords)
     ? review.keywords.map(record) : []
   const specifics = record(review.itemSpecifics)
@@ -356,8 +496,17 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
   const [busy, setBusy] = useState(false)
   const [feedback, setFeedback] = useState("")
   const ready = review.finalListingPackageReady === true
-  const confirmed = ownerReview.status === "CONFIRMED" &&
-    ownerReview.readyForOwnerPublishAuthorization === true
+  const marketTest = publishHandoff.publishableAsMarketTest === true
+  const confirmed = ownerReview.ownerReviewConfirmed === true &&
+    ownerReview.packageMatch === true
+  const publishAuthorizationReady = confirmed &&
+    publishHandoff.readyForOwnerPublishAuthorization === true &&
+    publishHandoff.publishCtaEnabled === true
+  const publishAuthorizationUrl = card.opportunityId && card.candidateKey
+    ? `/admin/ebay/listing-workspace?opportunity=${encodeURIComponent(
+      card.opportunityId)}&candidate=${encodeURIComponent(
+      card.candidateKey)}&intent=publish#seller-os-final-publication`
+    : null
 
   useEffect(() => {
     if (editing) return
@@ -406,6 +555,27 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
         {confirmed ? "CONFIRMADO" : ready ? "LISTO PARA REVISAR" : "INCOMPLETO"}
       </span>
     </div>
+
+    <dl data-quick-pick-publish-authorization-handoff
+      className="mt-3 grid gap-2 text-[11px] sm:grid-cols-2 lg:grid-cols-4">
+      <div className="rounded-xl bg-black/20 p-2"><dt
+        className="text-white/40">Market Test readiness</dt><dd
+        className="mt-1 font-black text-emerald-100">
+        {publishHandoff.marketTestReadiness === "PASS" ? "PASS" : "—"}
+      </dd></div>
+      <div className="rounded-xl bg-black/20 p-2"><dt
+        className="text-white/40">Demanda probada</dt><dd
+        className="mt-1 font-black">{publishHandoff.demandProven === true
+          ? "SÍ" : "NO · prueba de mercado"}</dd></div>
+      <div className="rounded-xl bg-black/20 p-2"><dt
+        className="text-white/40">Listing ready</dt><dd
+        className="mt-1 font-black">{publishHandoff.listingReady === true
+          ? "PASS" : "NO · no requerido para Market Test"}</dd></div>
+      <div className="rounded-xl bg-black/20 p-2"><dt
+        className="text-white/40">Publicable como Market Test</dt><dd
+        className="mt-1 font-black text-emerald-100">{marketTest
+          ? "SÍ" : "NO"}</dd></div>
+    </dl>
 
     <div className="mt-3 grid gap-3 xl:grid-cols-[1.2fr_1fr_0.9fr]">
       <div className="rounded-xl bg-black/20 p-3">
@@ -508,6 +678,13 @@ function QuickPickOwnerReviewInline({ card, request, onUpdated }: Readonly<{
         className="min-h-11 rounded-xl bg-emerald-200 px-5 text-sm font-black text-emerald-950 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-200">
         {confirmed ? "CONFIRMADO" : "CONFIRMAR"}
       </button>}
+      {!editing && publishAuthorizationReady && publishAuthorizationUrl &&
+        <a href={publishAuthorizationUrl}
+          data-quick-pick-publish-authorization-cta
+          data-publishable-as-market-test={marketTest ? "true" : "false"}
+          className="inline-flex min-h-11 items-center justify-center rounded-xl bg-rose-200 px-5 text-sm font-black text-rose-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-200">
+          AUTORIZAR PUBLICACIÓN
+        </a>}
     </div>
     {feedback && <p aria-live="polite"
       className="mt-2 text-right text-xs font-bold text-white/60">{feedback}</p>}
@@ -569,6 +746,7 @@ export function SellerOsOperationalDashboard() {
     const stockHealth = record(commercialHealth.stockGuard)
     const orderHealth = record(commercialHealth.orders)
     const analyticsHealth = record(commercialHealth.analytics)
+    const postSaleHealth = record(commercialHealth.postSale)
     const liveListingIds = new Set<string>()
     for (const value of [commercial.supplyActions,
       commercial.optimizationTasks]) {
@@ -650,6 +828,7 @@ export function SellerOsOperationalDashboard() {
         ]).has(String(analyticsHealth.snapshotDataStatus))
           ? analyticsHealth.snapshotDataStatus as
             "AVAILABLE_CURRENT" | "AVAILABLE_STALE" : "UNAVAILABLE"
+        const parsedPostSale = parsePostSale(postSaleHealth)
         next = { ...next,
           stockGuard: stockGuardDashboardStatus(
             stockHealth, previous.stockGuard),
@@ -676,6 +855,10 @@ export function SellerOsOperationalDashboard() {
           ordersLastSuccessfulReadAt:
             typeof orderHealth.lastSuccessfulReadAt === "string"
               ? orderHealth.lastSuccessfulReadAt : null,
+          officialLineItemQuantity: availableMetric(
+            orderHealth.officialLineItemQuantity),
+          postSale: parsedPostSale.authorityAvailable
+            ? parsedPostSale : previous.postSale,
         }
       }
       return next
@@ -1068,6 +1251,81 @@ export function SellerOsOperationalDashboard() {
             Orders {snapshot.ordersSourceStatus} · última lectura {shortTimestamp(snapshot.ordersLastSuccessfulReadAt)}
           </p>
         </div>
+        <section data-dashboard-post-sale-automation-observability
+          className="mt-4 border-t border-white/10 pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-white/50">
+              🔔 Postventa
+            </p>
+            {!snapshot.postSale.authorityAvailable && <span
+              className="text-[10px] font-bold text-white/40">
+              Actualizando autoridad…
+            </span>}
+          </div>
+          <dl className="mt-3 space-y-2">
+            <div data-sale-detection-status-visible
+              className="flex min-h-12 items-center justify-between gap-3 rounded-xl bg-black/20 px-3 py-2">
+              <div><dt className="text-xs font-black">Detección de ventas</dt>
+                <dd className="mt-0.5 text-[10px] text-white/45">
+                  eBay Orders · {snapshot.postSale.newSaleDetectionLatency}
+                </dd></div>
+              <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${postSaleTone(snapshot.postSale.saleDetectionStatus)}`}>
+                {postSaleHumanStatus({ status:
+                  snapshot.postSale.saleDetectionStatus })}
+              </span>
+            </div>
+            <div data-whatsapp-sale-alert-status-visible
+              className="flex min-h-12 items-center justify-between gap-3 rounded-xl bg-black/20 px-3 py-2">
+              <div><dt className="text-xs font-black">WhatsApp al owner</dt>
+                <dd className="mt-0.5 text-[10px] text-white/45">
+                  Meta Cloud API · {snapshot.postSale.whatsappSuccessfulSendCount}
+                  {" "}envíos de venta nueva · {snapshot.postSale.whatsappManualReviewCount}
+                  {" "}en revisión
+                </dd></div>
+              <span className={`rounded-full px-2.5 py-1 text-right text-[10px] font-black ${postSaleTone(snapshot.postSale.whatsappStatus)}`}>
+                {postSaleHumanStatus({ status: snapshot.postSale.whatsappStatus,
+                  lastSucceededAt: snapshot.postSale.whatsappLastSendAt })}
+              </span>
+            </div>
+            <div data-buyer-thank-you-status-visible
+              className="flex min-h-12 items-center justify-between gap-3 rounded-xl bg-black/20 px-3 py-2">
+              <div><dt className="text-xs font-black">Gracias al comprador</dt>
+                <dd className="mt-0.5 text-[10px] text-white/45">
+                  eBay Commerce Message API · {snapshot.postSale.buyerThankYouSendCount}
+                  {" "}mensajes de venta nueva · {snapshot.postSale.buyerThankYouManualReviewCount}
+                  {" "}en revisión
+                </dd></div>
+              <span className={`rounded-full px-2.5 py-1 text-right text-[10px] font-black ${postSaleTone(snapshot.postSale.buyerThankYouStatus)}`}>
+                {postSaleHumanStatus({ status:
+                  snapshot.postSale.buyerThankYouStatus,
+                lastSucceededAt: snapshot.postSale.buyerThankYouLastSendAt })}
+              </span>
+            </div>
+          </dl>
+          {snapshot.postSale.recentSaleTraces.length > 0 && <details
+            className="mt-2 rounded-xl border border-white/10 bg-black/15 px-3"
+            data-post-sale-real-sale-traces>
+            <summary className="min-h-11 cursor-pointer py-3 text-xs font-black text-white/60">
+              Ver ejecuciones de ventas nuevas
+            </summary>
+            <ul className="space-y-2 pb-3">
+              {snapshot.postSale.recentSaleTraces.map((trace, index) => <li
+                key={trace.eventId ?? `sale-trace-${index}`}
+                className="rounded-xl bg-white/[0.04] p-2.5 text-xs leading-5 text-white/60">
+                <strong className="text-white/80">Venta detectada · {shortTimestamp(
+                  trace.detectedAt)}</strong>
+                <span className="block">Dashboard alert ✅</span>
+                <span className="block">WhatsApp · {trace.whatsappStatus}</span>
+                <span className="block">Gracias comprador · {trace.buyerThankYouStatus}</span>
+              </li>)}
+            </ul>
+          </details>}
+          <p className="mt-2 text-[10px] leading-4 text-white/40">
+            LISTO/ARMADO significa que el mecanismo espera una venta nueva;
+            sólo ENVIADO implica un receipt real. Los históricos se omiten,
+            no se envían y no se muestran como fallo.
+          </p>
+        </section>
       </section>
     </div>
   </>

@@ -41,6 +41,9 @@ import { getSellerWhatsAppGatewayConfiguration,
 import { getSupabaseAdminClient } from "../supabase-admin"
 
 export const SELLER_OS_ASSISTANT_MONITOR_SNAPSHOT_TTL_MS = 5 * 60_000
+export const SELLER_OS_POST_SALE_DASHBOARD_STATUS_VERSION =
+  "SELLER_OS_POST_SALE_DASHBOARD_STATUS_V1" as const
+export const SELLER_OS_POST_SALE_DASHBOARD_SNAPSHOT_TTL_MS = 5 * 60_000
 
 function withAccountTrafficCacheTelemetryV1<T>(value: T, cacheHitCount: number): T {
   if (!value || typeof value !== "object") return value
@@ -107,9 +110,13 @@ export async function collectSellerOsOfficialOrdersReadV1() {
  * fixed Meta metadata GETs; durable delivery evidence is read from the
  * existing fixed outbox. This function never claims work or sends WhatsApp.
  */
-export async function collectSellerOsWhatsappSaleAlertStatusV1() {
+export async function collectSellerOsWhatsappSaleAlertStatusV1(input: {
+  officialOrders?: Awaited<ReturnType<
+    typeof collectSellerOsOfficialOrdersReadV1>>
+} = {}) {
   const observedAt = new Date().toISOString()
-  const officialOrders = await collectSellerOsOfficialOrdersReadV1()
+  const officialOrders = input.officialOrders ??
+    await collectSellerOsOfficialOrdersReadV1()
   const saleAlerts = buildSellerOsSaleAlertsReadV1(
     buildSellerOsRecentSalesFeedV1(
       buildSellerOsSalesOrderEventsReadV1(officialOrders),
@@ -174,9 +181,13 @@ export async function collectSellerOsWhatsappSaleAlertStatusV1() {
  * metadata GET to prove capability, reads only the fixed durable delivery
  * ledger, and never resolves a buyer recipient or invokes send_message.
  */
-export async function collectSellerOsBuyerThankYouStatusV1() {
+export async function collectSellerOsBuyerThankYouStatusV1(input: {
+  officialOrders?: Awaited<ReturnType<
+    typeof collectSellerOsOfficialOrdersReadV1>>
+} = {}) {
   const observedAt = new Date().toISOString()
-  const officialOrders = await collectSellerOsOfficialOrdersReadV1()
+  const officialOrders = input.officialOrders ??
+    await collectSellerOsOfficialOrdersReadV1()
   const saleAlerts = buildSellerOsSaleAlertsReadV1(
     buildSellerOsRecentSalesFeedV1(
       buildSellerOsSalesOrderEventsReadV1(officialOrders),
@@ -209,6 +220,68 @@ export async function collectSellerOsBuyerThankYouStatusV1() {
     capability,
     audit,
   })
+}
+
+/**
+ * One bounded read-only snapshot for the Dashboard post-sale cockpit.  The
+ * official Orders read is shared by both already-existing delivery status
+ * collectors so opening /admin never multiplies order reads or creates a new
+ * automation path.
+ */
+export async function collectSellerOsPostSaleDashboardStatusV1() {
+  const officialOrders = await collectSellerOsOfficialOrdersReadV1()
+  const [whatsappSaleAlert, buyerThankYou] = await Promise.all([
+    collectSellerOsWhatsappSaleAlertStatusV1({ officialOrders }),
+    collectSellerOsBuyerThankYouStatusV1({ officialOrders }),
+  ])
+  return Object.freeze({
+    contractVersion: SELLER_OS_POST_SALE_DASHBOARD_STATUS_VERSION,
+    observedAt: new Date().toISOString(),
+    officialOrders,
+    whatsappSaleAlert,
+    buyerThankYou,
+    safety: Object.freeze({
+      readOnly: true as const,
+      sharedOfficialOrdersRead: true as const,
+      newAutomation: 0 as const,
+      schedulerWrites: 0 as const,
+      marketplaceWrites: 0 as const,
+      whatsappSends: 0 as const,
+      buyerMessageSends: 0 as const,
+    }),
+  })
+}
+
+export function createSellerOsPostSaleDashboardSnapshotLoaderV1(input: {
+  loader?: typeof collectSellerOsPostSaleDashboardStatusV1
+  now?: () => number
+  maximumAgeMs?: number
+} = {}) {
+  const loader = input.loader ?? collectSellerOsPostSaleDashboardStatusV1
+  const now = input.now ?? Date.now
+  const maximumAgeMs = Math.min(10 * 60_000, Math.max(60_000,
+    input.maximumAgeMs ?? SELLER_OS_POST_SALE_DASHBOARD_SNAPSHOT_TTL_MS))
+  let snapshot: { expiresAt: number; promise: ReturnType<typeof loader> }
+    | null = null
+  return async () => {
+    const timestamp = now()
+    if (snapshot && snapshot.expiresAt > timestamp) return snapshot.promise
+    const promise = loader()
+    snapshot = { expiresAt: timestamp + maximumAgeMs, promise }
+    try {
+      return await promise
+    } catch (error) {
+      if (snapshot?.promise === promise) snapshot = null
+      throw error
+    }
+  }
+}
+
+const loadBoundedSellerOsPostSaleDashboardSnapshotV1 =
+  createSellerOsPostSaleDashboardSnapshotLoaderV1()
+
+export async function loadSellerOsPostSaleDashboardSnapshotV1() {
+  return loadBoundedSellerOsPostSaleDashboardSnapshotV1()
 }
 
 /**

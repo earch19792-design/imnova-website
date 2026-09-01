@@ -8,6 +8,8 @@ import { unavailableAccountTrafficV1 } from
   "./ebay-commercial-monitor-traffic-scope-v1"
 import { projectSellerOsCanonicalLunaStockReadModelV1 } from
   "./ebay-luna-canonical-stock-read-model-adapter-v1"
+import { loadSellerOsPostSaleDashboardSnapshotV1 } from
+  "./ebay-seller-os-assistant-runtime"
 import {
   readCanonicalLunaLinkageDecisions,
   readCanonicalLunaStockJobs,
@@ -21,6 +23,7 @@ import {
 
 export const SELLER_OS_DASHBOARD_COMMERCIAL_HEALTH_VERSION =
   "SELLER_OS_DASHBOARD_COMMERCIAL_HEALTH_V1" as const
+const DASHBOARD_CURRENT_ANALYTICS_MAXIMUM_AGE_SECONDS = 45 * 60
 
 type Reader = Readonly<{
   status: string
@@ -71,6 +74,175 @@ function integer(value: unknown) {
   if (typeof value === "string" && value.trim() === "") return null
   const parsed = Number(value)
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
+}
+
+function records(value: unknown) {
+  return Array.isArray(value) ? value.map(record) : []
+}
+
+function configuredOrderPollIntervalMinutes() {
+  const configured = Number(
+    process.env.EBAY_COMMERCIAL_ORDERS_INTERVAL_MINUTES ?? "5")
+  return Number.isSafeInteger(configured)
+    ? Math.max(5, Math.min(1_440, configured)) : 5
+}
+
+function postSaleProjection(value: unknown,
+  orders: Readonly<{ sourceStatus: string; lastSuccessfulReadAt: string | null;
+    officialOrderCount: number | null; officialLineItemQuantity: number | null }>) {
+  const source = record(value)
+  const whatsapp = record(source.whatsappSaleAlert)
+  const whatsappProvider = record(whatsapp.providerReadiness)
+  const whatsappOutcomes = record(whatsapp.deliveryOutcomes)
+  const whatsappEntries = records(whatsapp.entries)
+  const buyer = record(source.buyerThankYou)
+  const buyerCapability = record(buyer.capability)
+  const buyerActivation = record(buyer.activation)
+  const buyerMessage = record(buyer.message)
+  const buyerEntries = records(buyer.entries)
+  const whatsappSuccessful = integer(
+    whatsappOutcomes.newlyDetectedSuccessfulReceiptCount) ?? 0
+  const whatsappHistoricalSent = integer(
+    whatsappOutcomes.historicalSendCount) ?? 0
+  const whatsappManualReview = whatsappEntries.filter((entry) => {
+    const state = text(record(entry.workflowStep).state, 40)
+    return state === "TERMINAL_FAILURE" ||
+      entry.limitationCodes instanceof Array && entry.limitationCodes.some(
+        (code) => String(code).includes("MANUAL_REVIEW"))
+  }).length
+  const whatsappFailed = whatsappEntries.filter((entry) => {
+    if (entry.detectionClass === "HISTORICAL_REPLAY") return false
+    return ["RETRYABLE_FAILURE", "TERMINAL_FAILURE", "BLOCKED"].includes(
+      text(record(entry.workflowStep).state, 40) ?? "")
+  }).length
+  const whatsappPathReady = whatsapp.deliveryPathStatus === "READY" &&
+    whatsappProvider.provider === "META_CLOUD_API" &&
+    whatsappProvider.configurationStatus === "READY" &&
+    whatsappProvider.preflightStatus === "PASSED" &&
+    whatsappProvider.realDeliveryPermitted === true
+  const whatsappNewEntries = whatsappEntries.filter((entry) =>
+    entry.detectionClass === "NEWLY_DETECTED_AFTER_I04_ACTIVATION")
+  const lastWhatsappEntry = [...whatsappNewEntries].sort((left, right) => {
+    const leftAt = Date.parse(iso(record(left.durableReceipt)
+      .providerAcceptanceAt) ?? iso(record(left.workflowStep).observedAt) ?? "")
+    const rightAt = Date.parse(iso(record(right.durableReceipt)
+      .providerAcceptanceAt) ?? iso(record(right.workflowStep).observedAt) ?? "")
+    return rightAt - leftAt
+  })[0]
+  const buyerSuccessful = buyerEntries.filter((entry) =>
+    entry.detectionClass === "NEWLY_DETECTED_AFTER_ACTIVATION" &&
+    record(entry.workflowStep).state === "SUCCEEDED").length
+  const buyerManualReview = buyerEntries.filter((entry) =>
+    record(entry.receipt).manualReviewRequired === true).length
+  const buyerFailed = buyerEntries.filter((entry) => {
+    if (entry.detectionClass === "HISTORICAL_REPLAY") return false
+    return ["RETRYABLE_FAILURE", "TERMINAL_FAILURE", "BLOCKED"].includes(
+      text(record(entry.workflowStep).state, 40) ?? "")
+  }).length
+  const buyerCapabilityReady = buyerCapability.provider ===
+      "EBAY_COMMERCE_MESSAGE_API" && buyerCapability.status === "READY" &&
+    buyerCapability.deliveryAttemptAllowed === true &&
+    buyerCapability.automaticExecutionAuthority === "AUTO_EXECUTION_ALLOWED"
+  const buyerNewEntries = buyerEntries.filter((entry) =>
+    entry.detectionClass === "NEWLY_DETECTED_AFTER_ACTIVATION")
+  const lastBuyerEntry = [...buyerNewEntries].sort((left, right) =>
+    Date.parse(iso(record(right.receipt).succeededAt) ??
+      iso(record(right.workflowStep).observedAt) ?? "") -
+    Date.parse(iso(record(left.receipt).succeededAt) ??
+      iso(record(left.workflowStep).observedAt) ?? ""))[0]
+  const intervalMinutes = configuredOrderPollIntervalMinutes()
+  const recentSaleTraces = whatsappNewEntries.slice(0, 5).map((entry) => {
+    const eventId = text(entry.eventId, 120)
+    const buyerEntry = buyerNewEntries.find((candidate) =>
+      Array.isArray(candidate.eventIds) && eventId &&
+      candidate.eventIds.includes(eventId))
+    return Object.freeze({
+      eventId,
+      detectedAt: iso(record(entry.workflowStep).observedAt),
+      orderDetected: true as const,
+      dashboardAlert: "READY" as const,
+      whatsappStatus: text(record(entry.workflowStep).state, 40)
+        ?? "NOT_STARTED",
+      whatsappReceiptAt: iso(record(entry.durableReceipt)
+        .providerAcceptanceAt),
+      buyerThankYouStatus: buyerEntry
+        ? text(record(buyerEntry.workflowStep).state, 40) ?? "NOT_STARTED"
+        : "NOT_STARTED",
+      buyerThankYouReceiptAt: buyerEntry
+        ? iso(record(buyerEntry.receipt).succeededAt) : null,
+      buyerPiiIncluded: false as const,
+    })
+  })
+  return Object.freeze({
+    contractVersion: "DASHBOARD_POST_SALE_AUTOMATION_OBSERVABILITY_V1",
+    authorityAvailable: source.contractVersion ===
+      "SELLER_OS_POST_SALE_DASHBOARD_STATUS_V1",
+    saleDetection: Object.freeze({
+      status: orders.sourceStatus === "AVAILABLE" ? "READY" as const
+        : orders.sourceStatus === "UNPROVEN" ? "WAITING" as const
+          : "DEGRADED" as const,
+      source: "EBAY_SELL_FULFILLMENT_GET_ORDERS" as const,
+      lastSuccessfulReadAt: orders.lastSuccessfulReadAt,
+      officialOrderCount: orders.officialOrderCount,
+      officialLineItemQuantity: orders.officialLineItemQuantity,
+      newSaleDetectionLatency:
+        `Hasta ~${intervalMinutes} minutos más latencia de eBay`,
+    }),
+    whatsapp: Object.freeze({
+      status: whatsappManualReview > 0 ? "MANUAL_REVIEW" as const
+        : whatsappFailed > 0 ? "FAILED" as const
+          : whatsappSuccessful > 0 ? "SUCCEEDED" as const
+            : whatsappPathReady ? "ARMED" as const : "WAITING" as const,
+      provider: "META_CLOUD_API" as const,
+      configuration: whatsappProvider.configurationStatus ?? "UNPROVEN",
+      deliveryPath: whatsapp.deliveryPathStatus ?? "UNPROVEN",
+      realDeliveryPermitted:
+        whatsappProvider.realDeliveryPermitted === true,
+      lastNewSaleSendAt: lastWhatsappEntry
+        ? iso(record(lastWhatsappEntry.durableReceipt)
+          .providerAcceptanceAt) : null,
+      lastDeliveryStatus: lastWhatsappEntry
+        ? text(record(lastWhatsappEntry.workflowStep).state, 40) : null,
+      successfulSendCount: whatsappSuccessful,
+      manualReviewCount: whatsappManualReview,
+      productionNewSaleSendObserved: whatsappSuccessful > 0,
+      historicalReplaySkippedCount: whatsappEntries.filter((entry) =>
+        entry.detectionClass === "HISTORICAL_REPLAY" &&
+        record(entry.workflowStep).state === "SKIPPED").length,
+      historicalReplaySendCount: whatsappHistoricalSent,
+    }),
+    buyerThankYou: Object.freeze({
+      status: buyerManualReview > 0 ? "MANUAL_REVIEW" as const
+        : buyerFailed > 0 ? "FAILED" as const
+          : buyerSuccessful > 0 ? "SUCCEEDED" as const
+            : buyerCapabilityReady ? "ARMED" as const : "WAITING" as const,
+      provider: "EBAY_COMMERCE_MESSAGE_API" as const,
+      capability: buyerCapability.status ?? "UNPROVEN",
+      automaticExecution: buyerCapability.automaticExecutionAuthority ??
+        "UNPROVEN",
+      template: buyerMessage.templateVersion ??
+        "POST_PURCHASE_THANK_YOU_TEMPLATE_V1",
+      lastSendAt: lastBuyerEntry
+        ? iso(record(lastBuyerEntry.receipt).succeededAt) : null,
+      lastSendStatus: lastBuyerEntry
+        ? text(record(lastBuyerEntry.workflowStep).state, 40) : null,
+      totalNewSaleMessagesSent: buyerSuccessful,
+      manualReviewRequired: buyerManualReview,
+      productionNewSaleBuyerMessageObserved: buyerSuccessful > 0,
+      historicalReplaySkippedCount: integer(
+        buyerActivation.historicalOrderCount) ?? 0,
+    }),
+    recentSaleTraces: Object.freeze(recentSaleTraces),
+    historicalReplayNotShownAsFailure: true as const,
+    historicalReplayNotSent: whatsappHistoricalSent === 0 &&
+      buyerEntries.every((entry) => entry.detectionClass !==
+        "HISTORICAL_REPLAY" ||
+        record(entry.workflowStep).state !== "SUCCEEDED"),
+    productionNewSaleWhatsappProof: whatsappSuccessful > 0
+      ? "OBSERVED" as const : "WAITING_NEXT_REAL_NEW_SALE" as const,
+    productionNewSaleBuyerMessageProof: buyerSuccessful > 0
+      ? "OBSERVED" as const : "WAITING_NEXT_REAL_NEW_SALE" as const,
+  })
 }
 
 function canonicalCurrentLiveReceipt(rows: readonly StockAutomationRunRow[],
@@ -214,6 +386,7 @@ export function deriveSellerOsDashboardCommercialHealthV1(input: Readonly<{
   runs: readonly RunRow[]
   stockRuns: readonly StockAutomationRunRow[]
   accountAlias: string | null
+  postSale?: unknown
   now?: Date
 }>) {
   const now = input.now ?? new Date()
@@ -225,19 +398,45 @@ export function deriveSellerOsDashboardCommercialHealthV1(input: Readonly<{
   const lastSuccessfulOrderReader = orderReaders.find((reader) =>
     reader.status === "available" &&
     reader.source === "EBAY_SELL_FULFILLMENT_GET_ORDERS") ?? null
-  const ordersReady = currentOrderReader?.status === "available" &&
+  const postSale = record(input.postSale)
+  const currentOfficialOrders = record(postSale.officialOrders)
+  const currentOfficialOrdersPresent = currentOfficialOrders.contractVersion ===
+    "SELLER_OS_OFFICIAL_ORDERS_READ_V1"
+  const currentOfficialOrdersAvailable = currentOfficialOrdersPresent &&
+    currentOfficialOrders.source === "EBAY_SELL_FULFILLMENT_GET_ORDERS" &&
+    currentOfficialOrders.sourceStatus === "AVAILABLE"
+  const historicalOrdersReady = currentOrderReader?.status === "available" &&
     currentOrderReader.source === "EBAY_SELL_FULFILLMENT_GET_ORDERS"
+  const ordersReady = currentOfficialOrdersPresent
+    ? currentOfficialOrdersAvailable : historicalOrdersReady
   const officialOrderCount = ordersReady
-    ? metric(currentOrderReader.metrics.orders) : null
+    ? currentOfficialOrdersPresent
+      ? metric(currentOfficialOrders.officialOrderCount)
+      : metric(currentOrderReader?.metrics.orders)
+    : null
+  const officialLineItemQuantity = currentOfficialOrdersAvailable
+    ? metric(currentOfficialOrders.officialLineItemQuantity) : null
+  const currentOrdersSourceStatus = currentOfficialOrdersPresent
+    ? text(currentOfficialOrders.sourceStatus, 40)
+    : currentOrderReader ? currentOrderReader.status === "available"
+      ? "AVAILABLE" : "UNAVAILABLE" : "UNPROVEN"
   const orders = Object.freeze({
     sourceStatus: ordersReady ? "AVAILABLE" as const
-      : currentOrderReader ? "UNAVAILABLE" as const : "UNPROVEN" as const,
-    source: currentOrderReader?.source ?? null,
-    lastSuccessfulReadAt: lastSuccessfulOrderReader?.observedAt ??
-      lastSuccessfulOrderReader?.runStartedAt ?? null,
+      : currentOrdersSourceStatus === "UNPROVEN" ? "UNPROVEN" as const
+        : "UNAVAILABLE" as const,
+    source: currentOfficialOrdersPresent
+      ? text(currentOfficialOrders.source, 80)
+      : currentOrderReader?.source ?? null,
+    lastSuccessfulReadAt: currentOfficialOrdersAvailable
+      ? iso(currentOfficialOrders.observedAt) ??
+        iso(currentOfficialOrders.sourceUpdatedAt)
+      : lastSuccessfulOrderReader?.observedAt ??
+        lastSuccessfulOrderReader?.runStartedAt ?? null,
     officialOrderCount,
+    officialLineItemQuantity,
     dashboardStatus: ordersReady ? "READY" as const
-      : currentOrderReader ? "DEGRADED" as const : "WAITING" as const,
+      : currentOfficialOrdersPresent || currentOrderReader
+        ? "DEGRADED" as const : "WAITING" as const,
     analyticsReconciliationAffectsHealth: false,
   })
 
@@ -245,28 +444,32 @@ export function deriveSellerOsDashboardCommercialHealthV1(input: Readonly<{
   const currentAnalyticsReader = analyticsReaders[0] ?? null
   const analyticsError = currentAnalyticsReader?.error ??
     "ANALYTICS_DURABLE_ATTEMPT_UNPROVEN"
-  const analytics429 = analyticsError.includes("429")
   const analyticsResolution = resolveAnalyticsLastKnownGoodV1({
     analytics: unavailableAnalytics(analyticsError,
       currentLiveItemIds.length),
     storedRows: input.snapshots.rows,
     currentLiveItemIds,
     now,
+    durableCurrentMaximumAgeSeconds:
+      DASHBOARD_CURRENT_ANALYTICS_MAXIMUM_AGE_SECONDS,
   })
-  const currentAnalyticsAvailable = currentAnalyticsReader?.status ===
-    "available"
+  const currentAnalyticsAvailable = analyticsResolution.analyticsStatus ===
+      "CURRENT" && analyticsResolution.currentSourceStatus === "AVAILABLE"
   const staleAvailable = !currentAnalyticsAvailable &&
     analyticsResolution.analyticsStatus === "LAST_KNOWN_GOOD" &&
     analyticsResolution.snapshotDataStatus === "AVAILABLE_STALE"
   const currentSnapshotAvailable = currentAnalyticsAvailable &&
+    analyticsResolution.snapshotDataStatus === "AVAILABLE_CURRENT" &&
     analyticsResolution.currentLiveSnapshotAvailable
   const metricsAvailable = currentSnapshotAvailable || staleAvailable
   const accountTraffic = analyticsResolution.analytics.accountTraffic
   const analytics = Object.freeze({
     dashboardStatus: currentAnalyticsAvailable && currentSnapshotAvailable
       ? "READY" as const : "DEGRADED" as const,
-    currentSourceStatus: currentAnalyticsAvailable ? "AVAILABLE" as const
-      : analytics429 ? "UNAVAILABLE_429" as const
+    currentSourceStatus: analyticsResolution.currentSourceStatus ===
+      "AVAILABLE" ? "AVAILABLE" as const
+      : analyticsResolution.currentSourceStatus === "UNAVAILABLE_429"
+        ? "UNAVAILABLE_429" as const
         : currentAnalyticsReader ? "UNAVAILABLE_OTHER" as const
           : "UNPROVEN" as const,
     snapshotDataStatus: currentSnapshotAvailable
@@ -284,6 +487,7 @@ export function deriveSellerOsDashboardCommercialHealthV1(input: Readonly<{
     quantitySold: metricsAvailable ? metric(accountTraffic.quantitySold) : null,
     falseZero: false,
   })
+  const projectedPostSale = postSaleProjection(input.postSale, orders)
 
   return Object.freeze({
     contractVersion: SELLER_OS_DASHBOARD_COMMERCIAL_HEALTH_VERSION,
@@ -292,6 +496,7 @@ export function deriveSellerOsDashboardCommercialHealthV1(input: Readonly<{
     stockGuard,
     orders,
     analytics,
+    postSale: projectedPostSale,
     safety: Object.freeze({
       upstreamEbayRequests: 0,
       analyticsRequests: 0,
@@ -308,7 +513,8 @@ export async function getSellerOsDashboardCommercialHealthV1(input: Readonly<{
   now?: Date
 }>) {
   const now = input.now ?? new Date()
-  const [registry, decisions, jobs, observations, runRows, stockRunRows] =
+  const [registry, decisions, jobs, observations, runRows, stockRunRows,
+    postSale] =
     await Promise.all([
       readRegistry(input.supabase, input.accountKey),
       readCanonicalLunaLinkageDecisions(input.supabase, input.accountKey),
@@ -327,6 +533,7 @@ export async function getSellerOsDashboardCommercialHealthV1(input: Readonly<{
         .in("status", ["completed", "partial"])
         .order("started_at", { ascending: false })
         .limit(50),
+      loadSellerOsPostSaleDashboardSnapshotV1().catch(() => null),
     ])
   if (runRows.error) throw new Error("DASHBOARD_READER_HISTORY_UNAVAILABLE")
   if (stockRunRows.error) {
@@ -349,6 +556,7 @@ export async function getSellerOsDashboardCommercialHealthV1(input: Readonly<{
     runs: (runRows.data ?? []) as RunRow[],
     stockRuns: (stockRunRows.data ?? []) as StockAutomationRunRow[],
     accountAlias: input.accountAlias,
+    postSale,
     now,
   })
 }

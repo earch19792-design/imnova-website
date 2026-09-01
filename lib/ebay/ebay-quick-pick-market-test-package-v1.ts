@@ -314,9 +314,23 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
     aspects.values, description: description.value, categoryId, categoryName,
   conditionId, conditionLabel, targetPrice, supplierCost, shipping,
   ebayFees, profit, margin, roi })
+  const packageDigest = digest(contentCore)
+  const currentListingPackageId = text(input.listingPackage.id, 80)
+  const ownerReviewConfirmed = ownerReview.status === "CONFIRMED" &&
+    ownerReview.readyForOwnerPublishAuthorization === true
+  const reviewedPackageDigest = text(ownerReview.reviewedPackageDigest, 100)
+  const finalListingPackageMatch = ownerReviewConfirmed &&
+    reviewedPackageDigest === packageDigest && Boolean(currentListingPackageId)
+  const listingReady = !marketTest &&
+    input.opportunity.decision === "LISTING_READY"
+  const publishableAsMarketTest = marketTest && packageReady
+  const publishableReadiness = packageReady &&
+    (listingReady || publishableAsMarketTest)
+  const readyForOwnerPublishAuthorization = publishableReadiness &&
+    ownerReviewConfirmed && finalListingPackageMatch
   return Object.freeze({
     contractVersion: QUICK_PICK_MARKET_TEST_PACKAGE_AND_REMOTE_OWNER_REVIEW_V1,
-    listingPackageId: text(input.listingPackage.id, 80),
+    listingPackageId: currentListingPackageId,
     finalListingPackageReady: packageReady,
     titleReady: Boolean(title), title,
     titleSource: text(ownerEdits.title)
@@ -355,8 +369,40 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
       calculationSource: canonicalEconomics?.calculationSource ?? null }),
     ownerReview: Object.freeze({ status: text(ownerReview.status, 80)
       ?? "PENDING", reviewedAt: text(ownerReview.reviewedAt, 80),
-    readyForOwnerPublishAuthorization:
-      ownerReview.readyForOwnerPublishAuthorization === true }),
+    ownerReviewConfirmed,
+    confirmedPackageId: finalListingPackageMatch
+      ? currentListingPackageId : null,
+    currentListingPackageId,
+    packageMatch: finalListingPackageMatch,
+    reviewedPackageDigestMatch: finalListingPackageMatch,
+    persistedReadyForOwnerPublishAuthorization:
+      ownerReview.readyForOwnerPublishAuthorization === true,
+    readyForOwnerPublishAuthorization }),
+    publishAuthorizationHandoff: Object.freeze({
+      contractVersion:
+        "QUICK_PICK_OWNER_CONFIRM_TO_PUBLISH_AUTHORIZATION_HANDOFF_V1",
+      publishAuthorizationEligibilityBefore:
+        "OWNER_CONFIRMATION_DURABLE_BUT_DASHBOARD_CTA_ABSENT_AND_GENERIC_LISTING_READY_VISUALLY_BLOCKED_MARKET_TEST",
+      marketTestReadiness: marketTest && packageReady ? "PASS" as const
+        : "BLOCKED" as const,
+      demandProven: listingReady,
+      listingReady,
+      publishableAsMarketTest,
+      publishableReadiness,
+      ownerReviewConfirmed,
+      confirmedPackageId: finalListingPackageMatch
+        ? currentListingPackageId : null,
+      currentListingPackageId,
+      finalListingPackageMatch,
+      readyForOwnerPublishAuthorization,
+      publishCtaVisible: readyForOwnerPublishAuthorization,
+      publishCtaEnabled: readyForOwnerPublishAuthorization,
+      demandUnprovenDoesNotBlockMarketTest: marketTest,
+      falseListingReadyRequirement: false as const,
+      falseGenericReadyBlocker: false as const,
+      goldenPathRestarted: false as const,
+      marketplaceWriteAuthorized: false as const,
+    }),
     reuseAudit: Object.freeze({ demandIntelligenceReused: true,
       soldEvidenceReused: true, intelligentTitleFactoryReused: true,
       listingPackageReused: true, dollarCheckReused: true,
@@ -364,7 +410,7 @@ export function buildQuickPickMarketTestListingReviewV1(input: Readonly<{
       liveReadbackPathReused: true,
       referenceListingCapabilityFound: true,
       referenceListingUsedAsProductTruth: false }),
-    packageDigest: digest(contentCore),
+    packageDigest,
     factInvented: false as const,
     aiFreeformDemandInvention: false as const,
     marketplaceWrites: 0 as const,
