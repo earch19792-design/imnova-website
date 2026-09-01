@@ -454,6 +454,9 @@ export async function readLunaQuickPickBatchReceiptsV1(input: Readonly<{
       durableOperationCount: number(metrics.durableOperationCount),
       exactProductCount: number(metrics.exactProductCount),
       duplicateOperationCount: number(metrics.duplicateOperationCount),
+      unprovenInputCount: number(metrics.unmaterializedInputCount),
+      unprovenInputDisposition:
+        text(metrics.unmaterializedInputDisposition, 120),
       countEvidenceClass: text(metrics.countEvidenceClass, 120) ??
         "DURABLE_BATCH_RECEIPT",
       candidateKeys: Object.freeze(Array.isArray(metrics.candidateKeys)

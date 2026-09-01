@@ -15,11 +15,38 @@ export type OwnerRuntimeQuickPickSummary = Readonly<{
   total: number
 }>
 
+export type OwnerRuntimeQuickPickStageState = "WAITING" | "RUNNING" |
+  "PASS" | "BLOCKED"
+
+export type OwnerRuntimeQuickPickCard = Readonly<{
+  sourceUrl: string
+  sourceSku: string | null
+  title: string | null
+  candidateKey: string | null
+  state: "WAITING" | "RUNNING" | "BLOCKED" | "READY"
+  disposition: string
+  lastStage: string
+  exactBlocker: string | null
+  stages: Readonly<Record<string, OwnerRuntimeQuickPickStageState>>
+}>
+
+export type OwnerRuntimeQuickPickReceipt = Readonly<{
+  batchId: string
+  ownerReference: string
+  status: string
+  rawInputCount: number | null
+  durableOperationCount: number | null
+  unprovenInputCount: number | null
+}>
+
 type OwnerRuntimeContextValue = Readonly<{
   lunaWorker: LunaShippingOwnerWorkerSnapshot
   quickPick: OwnerRuntimeQuickPickSummary
+  quickPickCards: readonly OwnerRuntimeQuickPickCard[]
+  quickPickReceipt: OwnerRuntimeQuickPickReceipt | null
   quickPickAvailable: boolean
   quickPickReconciliationActive: boolean
+  refreshQuickPicks: () => Promise<void>
 }>
 
 const EMPTY_SUMMARY: OwnerRuntimeQuickPickSummary = Object.freeze({
@@ -38,8 +65,11 @@ const INITIAL_WORKER: LunaShippingOwnerWorkerSnapshot = Object.freeze({
 const OwnerRuntimeContext = createContext<OwnerRuntimeContextValue>({
   lunaWorker: INITIAL_WORKER,
   quickPick: EMPTY_SUMMARY,
+  quickPickCards: Object.freeze([]),
+  quickPickReceipt: null,
   quickPickAvailable: false,
   quickPickReconciliationActive: false,
+  refreshQuickPicks: async () => undefined,
 })
 
 function count(value: unknown) {
@@ -50,6 +80,57 @@ function count(value: unknown) {
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown> : {}
+}
+
+function nullableCount(value: unknown) {
+  const parsed = Number(value)
+  return value !== null && value !== undefined && Number.isSafeInteger(parsed) &&
+    parsed >= 0 ? parsed : null
+}
+
+function nullableText(value: unknown, maximum = 300) {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, maximum) : null
+}
+
+function stageState(value: unknown): OwnerRuntimeQuickPickStageState {
+  const normalized = String(value ?? "WAITING").toUpperCase()
+  return new Set<OwnerRuntimeQuickPickStageState>(["WAITING", "RUNNING",
+    "PASS", "BLOCKED"]).has(normalized as OwnerRuntimeQuickPickStageState)
+    ? normalized as OwnerRuntimeQuickPickStageState : "WAITING"
+}
+
+export function parseOwnerRuntimeQuickPickCard(value: unknown):
+  OwnerRuntimeQuickPickCard | null {
+  const item = record(value)
+  const sourceUrl = nullableText(item.sourceUrl, 2_000)
+  if (!sourceUrl) return null
+  const rawStages = record(item.stages)
+  const stages = Object.fromEntries(Object.entries(rawStages).map(
+    ([key, state]) => [key, stageState(state)]))
+  const state = String(item.state ?? "WAITING").toUpperCase()
+  return Object.freeze({ sourceUrl,
+    sourceSku: nullableText(item.sourceSku, 160),
+    title: nullableText(item.title, 400),
+    candidateKey: nullableText(item.candidateKey, 160),
+    state: new Set(["WAITING", "RUNNING", "BLOCKED", "READY"]).has(state)
+      ? state as OwnerRuntimeQuickPickCard["state"] : "WAITING",
+    disposition: nullableText(item.disposition, 160) ?? "WAITING",
+    lastStage: nullableText(item.lastStage, 160) ?? "IDENTITY",
+    exactBlocker: nullableText(item.exactBlocker, 200),
+    stages: Object.freeze(stages) })
+}
+
+export function parseOwnerRuntimeQuickPickReceipt(value: unknown):
+  OwnerRuntimeQuickPickReceipt | null {
+  const item = record(value)
+  const ownerReference = nullableText(item.ownerReference, 40)
+  if (!ownerReference) return null
+  return Object.freeze({ batchId: nullableText(item.batchId, 80) ?? "",
+    ownerReference, status: nullableText(item.status, 80) ?? "UNPROVEN",
+    rawInputCount: nullableCount(item.rawInputCount),
+    durableOperationCount: nullableCount(item.durableOperationCount),
+    unprovenInputCount: nullableCount(item.unprovenInputCount) })
 }
 
 export function useAdminOwnerRuntime() {
@@ -64,6 +145,10 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
   const [adminSessionReady, setAdminSessionReady] = useState(false)
   const [lunaWorker, setLunaWorker] = useState(INITIAL_WORKER)
   const [quickPick, setQuickPick] = useState(EMPTY_SUMMARY)
+  const [quickPickCards, setQuickPickCards] = useState<
+    readonly OwnerRuntimeQuickPickCard[]>([])
+  const [quickPickReceipt, setQuickPickReceipt] =
+    useState<OwnerRuntimeQuickPickReceipt | null>(null)
   const [quickPickAvailable, setQuickPickAvailable] = useState(false)
   const [quickPickReconciliationActive, setQuickPickReconciliationActive] =
     useState(false)
@@ -99,6 +184,12 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
       blocked: count(summary.blocked),
       total: count(summary.total),
     })
+    setQuickPickCards((Array.isArray(payload.progress) ? payload.progress : [])
+      .flatMap((value: unknown) => {
+        const parsed = parseOwnerRuntimeQuickPickCard(value)
+        return parsed ? [parsed] : []
+      }))
+    setQuickPickReceipt(parseOwnerRuntimeQuickPickReceipt(payload.receipt))
     setQuickPickAvailable(true)
     setQuickPickReconciliationActive(true)
   }, [])
@@ -111,14 +202,15 @@ export function AdminOwnerRuntimeProvider({ children }: { children: ReactNode })
     })
     const timer = window.setInterval(() => {
       if (active) void reconcileQuickPicks().catch(() => undefined)
-    }, 15_000)
+    }, 2_500)
     return () => { active = false; window.clearInterval(timer) }
   }, [quickPickPageOwnsPolling, reconcileQuickPicks, runtimeEnabled])
 
-  const value = useMemo(() => ({ lunaWorker, quickPick,
-    quickPickAvailable, quickPickReconciliationActive }),
-  [lunaWorker, quickPick, quickPickAvailable,
-    quickPickReconciliationActive])
+  const value = useMemo(() => ({ lunaWorker, quickPick, quickPickCards,
+    quickPickReceipt, quickPickAvailable, quickPickReconciliationActive,
+    refreshQuickPicks: reconcileQuickPicks }),
+  [lunaWorker, quickPick, quickPickCards, quickPickReceipt,
+    quickPickAvailable, quickPickReconciliationActive, reconcileQuickPicks])
 
   return <OwnerRuntimeContext.Provider value={value}>
     {runtimeEnabled ? <LunaShippingCaptureControlPlane runtimeOnly

@@ -4,7 +4,11 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from
   "react"
 
 import { supabase } from "@/lib/supabase"
-import { useAdminOwnerRuntime } from "./admin-owner-runtime-provider"
+import { parseOwnerRuntimeQuickPickCard,
+  parseOwnerRuntimeQuickPickReceipt, useAdminOwnerRuntime,
+  type OwnerRuntimeQuickPickCard, type OwnerRuntimeQuickPickReceipt,
+  type OwnerRuntimeQuickPickStageState } from
+  "./admin-owner-runtime-provider"
 
 type CompactStatus = "READY" | "WORKING" | "WAITING" | "DEGRADED" |
   "OFFLINE"
@@ -75,12 +79,6 @@ function record(value: unknown): Record<string, unknown> {
 function safeCount(value: unknown) {
   const count = Number(value)
   return Number.isFinite(count) && count >= 0 ? Math.floor(count) : 0
-}
-
-function nullableCount(value: unknown) {
-  const parsed = Number(value)
-  return value !== null && value !== undefined && Number.isSafeInteger(parsed) &&
-    parsed >= 0 ? parsed : null
 }
 
 function availableMetric(value: unknown) {
@@ -157,17 +155,69 @@ function workerDetail(status: WorkerStatus, reasonCode: string) {
   return "Esperando una condición requerida del worker"
 }
 
+const QUICK_PICK_STAGES = [
+  ["IDENTITY", "Identidad"],
+  ["DUPLICATE", "Duplicado"],
+  ["STOCK", "Stock"],
+  ["DEMAND", "Demanda"],
+  ["SHIPPING", "Shipping"],
+  ["ECONOMICS", "Economics"],
+  ["PRODUCT_TRUTH", "Product Truth"],
+  ["LISTING_PACKAGE", "Marketplace prep"],
+  ["REQUIRED_SPECIFICS", "Required specifics"],
+  ["MARKETPLACE_READINESS", "Marketplace readiness"],
+  ["LISTING_READY", "Ready"],
+] as const
+
+function quickPickStageTone(state: OwnerRuntimeQuickPickStageState) {
+  if (state === "PASS") return "bg-emerald-200/15 text-emerald-50"
+  if (state === "RUNNING") return "bg-cyan-200/15 text-cyan-50"
+  if (state === "BLOCKED") return "bg-amber-200/15 text-amber-50"
+  return "bg-white/[0.04] text-white/45"
+}
+
+function quickPickStageLabel(card: OwnerRuntimeQuickPickCard) {
+  if (card.exactBlocker?.startsWith(
+    "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")) {
+    return "Required specifics"
+  }
+  if (card.exactBlocker?.startsWith("MARKETPLACE_CONDITION_NOT_READY")) {
+    return "Marketplace readiness"
+  }
+  return QUICK_PICK_STAGES.find(([key]) => key === card.lastStage)?.[1] ??
+    card.lastStage.replaceAll("_", " ")
+}
+
+function quickPickBlockerLabel(value: string | null) {
+  if (!value) return "Sin blocker"
+  if (value.startsWith("MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")) {
+    return "Faltan datos requeridos por eBay"
+  }
+  if (value.startsWith("MARKETPLACE_CONDITION_NOT_READY")) {
+    return "Falta demostrar la condición para eBay"
+  }
+  return value.replaceAll("_", " ")
+}
+
+function mergeQuickPickCards(current: readonly OwnerRuntimeQuickPickCard[],
+  incoming: readonly OwnerRuntimeQuickPickCard[]) {
+  const key = (card: OwnerRuntimeQuickPickCard) => card.candidateKey ??
+    card.sourceUrl
+  const merged = new Map(current.map((card) => [key(card), card]))
+  incoming.forEach((card) => merged.set(key(card), card))
+  return [...merged.values()]
+}
+
 export function SellerOsOperationalDashboard() {
   const ownerRuntime = useAdminOwnerRuntime()
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(emptySnapshot)
   const [input, setInput] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [feedback, setFeedback] = useState("")
-  const [quickPickReceipt, setQuickPickReceipt] = useState<{
-    ownerReference: string; rawInputCount: number | null
-    urlDedupedCount: number | null; rejectedInputCount: number | null
-    durableOperationCount: number | null
-  } | null>(null)
+  const [submittedQuickPickReceipt, setSubmittedQuickPickReceipt] =
+    useState<OwnerRuntimeQuickPickReceipt | null>(null)
+  const [submittedQuickPickCards, setSubmittedQuickPickCards] = useState<
+    readonly OwnerRuntimeQuickPickCard[]>([])
 
   const adminRequest = useCallback(async (path: string, init?: RequestInit) => {
     const { data, error } = await supabase.auth.getSession()
@@ -294,22 +344,24 @@ export function SellerOsOperationalDashboard() {
         body: JSON.stringify({ action: "RECEIVE", urls }),
       })
       const receipt = record(received.receipt)
-      setQuickPickReceipt({ ownerReference: String(receipt.ownerReference),
-        rawInputCount: nullableCount(receipt.rawInputCount),
-        urlDedupedCount: nullableCount(receipt.urlDedupedCount),
-        rejectedInputCount: nullableCount(receipt.rejectedInputCount),
-        durableOperationCount: nullableCount(receipt.durableOperationCount) })
+      setSubmittedQuickPickReceipt(
+        parseOwnerRuntimeQuickPickReceipt(received.receipt))
+      setSubmittedQuickPickCards((Array.isArray(receipt.cards)
+        ? receipt.cards : []).flatMap((value) => {
+        const parsed = parseOwnerRuntimeQuickPickCard(value)
+        return parsed ? [parsed] : []
+      }))
       setInput("")
       setFeedback(`Lote recibido · ${String(receipt.ownerReference)}`)
+      void ownerRuntime.refreshQuickPicks().catch(() => undefined)
       void adminRequest("/api/admin/ebay/luna-quick-pick", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "PROCESS", batchId: receipt.batchId,
           urls, selectedVariants: {} }),
       }).then((payload) => {
-        const completed = record(payload.receipt)
-        setQuickPickReceipt((current) => current ? { ...current,
-          durableOperationCount:
-            nullableCount(completed.durableOperationCount) } : current)
+        setSubmittedQuickPickReceipt(
+          parseOwnerRuntimeQuickPickReceipt(payload.receipt))
+        void ownerRuntime.refreshQuickPicks().catch(() => undefined)
       }).catch(() => setFeedback(
         "Lote recibido · reconciliando el progreso durable"))
     } catch {
@@ -330,6 +382,14 @@ export function SellerOsOperationalDashboard() {
     ["ANALYTICS", snapshot.analytics],
     ["ORDERS", snapshot.orders],
   ] as const, [ownerRuntime.lunaWorker.status, snapshot])
+  const quickPickReceipt = submittedQuickPickReceipt &&
+    ownerRuntime.quickPickReceipt?.ownerReference !==
+      submittedQuickPickReceipt.ownerReference
+    ? submittedQuickPickReceipt
+    : ownerRuntime.quickPickReceipt ?? submittedQuickPickReceipt
+  const quickPickCards = useMemo(() => mergeQuickPickCards(
+    submittedQuickPickCards, ownerRuntime.quickPickCards),
+  [ownerRuntime.quickPickCards, submittedQuickPickCards])
 
   return <>
     <div className="grid gap-4 md:grid-cols-2" data-primary-dashboard-block-count="4">
@@ -343,7 +403,7 @@ export function SellerOsOperationalDashboard() {
       </section>
 
       <section data-dashboard-block="quick-pick" className="rounded-3xl border border-cyan-200/25 bg-cyan-200/[0.07] p-5">
-        <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-100/65">⚡ Quick Pick Luna</p><h2 className="mt-1 text-xl font-black">Pega links y sigue trabajando</h2></div><a href="/admin/ebay/quick-pick" className="inline-flex min-h-11 items-center text-sm font-black text-cyan-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Ver detalle</a></div>
+        <div><p className="text-xs font-black uppercase tracking-[0.18em] text-cyan-100/65">⚡ Quick Pick Luna</p><h2 className="mt-1 text-xl font-black">Pega links y sigue trabajando</h2></div>
         <form onSubmit={submitQuickPick} className="mt-3 flex gap-2">
           <label className="sr-only" htmlFor="dashboard-quick-pick-input">Pegar uno o varios links Luna</label>
           <textarea id="dashboard-quick-pick-input" value={input}
@@ -353,8 +413,59 @@ export function SellerOsOperationalDashboard() {
           <button type="submit" disabled={submitting || !input.trim()}
             className="min-h-11 min-w-24 rounded-2xl bg-cyan-200 px-4 text-sm font-black text-black disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200">{submitting ? "Procesando…" : "Procesar"}</button>
         </form>
-        {quickPickReceipt && <p aria-live="polite" className="mt-3 rounded-xl border border-emerald-200/20 bg-emerald-200/[0.06] p-2 text-sm text-emerald-50"><strong>LOTE RECIBIDO · {quickPickReceipt.ownerReference}</strong><span className="mt-1 block">{quickPickReceipt.rawInputCount ?? "—"} links · {quickPickReceipt.urlDedupedCount ?? "—"} únicos · {quickPickReceipt.rejectedInputCount ?? "—"} rechazados · {quickPickReceipt.durableOperationCount ?? "—"} materializados</span></p>}
+        {quickPickReceipt && <section aria-live="polite"
+          data-quick-pick-inline-receipt={quickPickReceipt.ownerReference}
+          className="mt-3 rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.06] p-3 text-emerald-50">
+          <strong className="text-sm">LOTE RECIBIDO · {quickPickReceipt.ownerReference}</strong>
+          <dl className="mt-2 grid grid-cols-2 gap-2 text-center sm:grid-cols-4 lg:grid-cols-7">
+            {([
+              ["Recibidos", quickPickReceipt.rawInputCount],
+              ["Materializados", quickPickReceipt.durableOperationCount],
+              ["No comprobados", quickPickReceipt.unprovenInputCount],
+              ["Trabajando", ownerRuntime.quickPickAvailable
+                ? ownerRuntime.quickPick.inProgress : null],
+              ["Bloqueados", ownerRuntime.quickPickAvailable
+                ? ownerRuntime.quickPick.blocked : null],
+              ["Listos", ownerRuntime.quickPickAvailable
+                ? ownerRuntime.quickPick.readyForReview : null],
+              ["Receipt", quickPickReceipt.ownerReference],
+            ] as const).map(([label, value]) => <div key={label}
+              className="rounded-xl bg-black/20 px-2 py-2">
+              <dt className="text-[10px] font-bold uppercase tracking-wide text-white/45">{label}</dt>
+              <dd className="mt-1 truncate text-sm font-black">{value ?? "—"}</dd>
+            </div>)}
+          </dl>
+        </section>}
         <p aria-live="polite" className="mt-3 text-sm text-white/60">{feedback || (ownerRuntime.quickPickAvailable ? `${ownerRuntime.quickPick.inProgress} en proceso · ${ownerRuntime.quickPick.readyForReview} para revisar · ${ownerRuntime.quickPick.blocked} bloqueados` : "No pude cargar el estado del lote · reintentando")}</p>
+        <div className="mt-3 space-y-2" data-quick-pick-inline-operation-view>
+          {quickPickCards.map((card) => <details
+            key={card.candidateKey ?? card.sourceUrl}
+            data-quick-pick-inline-card
+            className="group rounded-2xl border border-white/10 bg-black/20 p-3">
+            <summary className="flex min-h-11 cursor-pointer list-none items-start justify-between gap-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-black">{card.title ?? "Producto Luna"}</p>
+                <p className="mt-1 truncate text-xs text-white/50">{card.sourceSku ?? "Identificando…"} · {card.disposition}</p>
+                <p className="mt-1 text-xs text-white/65">Etapa: <strong>{quickPickStageLabel(card)}</strong></p>
+                {card.exactBlocker && <p className="mt-1 text-xs font-bold text-amber-100">{quickPickBlockerLabel(card.exactBlocker)} <span className="font-mono font-normal text-amber-100/55">· {card.exactBlocker}</span></p>}
+              </div>
+              <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${quickPickStageTone(card.state === "READY" ? "PASS" : card.state)}`}>{card.state}</span>
+            </summary>
+            <ol className="mt-3 grid gap-1.5 border-t border-white/10 pt-3 sm:grid-cols-2">
+              {QUICK_PICK_STAGES.map(([key, label]) => {
+                const state = card.stages[key] ?? "WAITING"
+                return <li key={key}
+                  className={`flex min-h-9 items-center justify-between gap-2 rounded-xl px-2.5 text-xs ${quickPickStageTone(state)}`}>
+                  <span>{label}</span><strong>{state}</strong>
+                </li>
+              })}
+            </ol>
+          </details>)}
+          {ownerRuntime.quickPickAvailable && quickPickCards.length === 0 &&
+            <p className="rounded-xl border border-white/10 p-3 text-sm text-white/45">No hay operaciones Quick Pick durables recientes.</p>}
+        </div>
+        <a href="/admin/ebay/quick-pick"
+          className="mt-3 inline-flex min-h-11 items-center text-xs font-bold text-cyan-100/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">Detalles técnicos opcionales</a>
       </section>
 
       <section data-dashboard-block="live-attention" className="rounded-3xl border border-white/10 bg-white/[0.035] p-5">
