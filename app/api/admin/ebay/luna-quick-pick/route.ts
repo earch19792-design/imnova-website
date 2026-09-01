@@ -15,6 +15,8 @@ import { completeLunaQuickPickBatchReceiptV1,
   "@/lib/ebay/ebay-luna-quick-pick-v1"
 import { continueLunaQuickPickRequiredSpecificsV1 } from
   "@/lib/ebay/ebay-luna-quick-pick-required-specifics-v1"
+import { mergeSellerOsQuickPickPresentationV1 } from
+  "@/lib/ebay/seller-os-quick-pick-presentation-v1"
 import { getSupabaseAdminClient, validateAdminApiRequest } from
   "@/lib/supabase-admin"
 
@@ -37,12 +39,8 @@ function safeError(error: unknown) {
 
 function mergeProgress(receiptCards: readonly LunaQuickPickCardV1[],
   durableCards: readonly LunaQuickPickCardV1[]) {
-  const key = (card: LunaQuickPickCardV1) => String(card.candidateKey ??
-    card.sourceUrl ?? "")
-  const merged = new Map(receiptCards.map((card) => [key(card), card]))
-  durableCards.forEach((card) => merged.set(key(card), {
-    ...merged.get(key(card)), ...card }))
-  return [...merged.values()]
+  return [...mergeSellerOsQuickPickPresentationV1(
+    receiptCards, durableCards)]
 }
 
 export async function GET(req: Request) {

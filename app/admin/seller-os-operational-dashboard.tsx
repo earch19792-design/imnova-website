@@ -4,7 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from
   "react"
 
 import { supabase } from "@/lib/supabase"
-import { parseOwnerRuntimeQuickPickCard,
+import { mergeOwnerRuntimeQuickPickCards, parseOwnerRuntimeQuickPickCard,
   parseOwnerRuntimeQuickPickReceipt, useAdminOwnerRuntime,
   type OwnerRuntimeQuickPickCard, type OwnerRuntimeQuickPickReceipt,
   type OwnerRuntimeQuickPickStageState } from
@@ -13,6 +13,7 @@ import { parseOwnerRuntimeQuickPickCard,
 type CompactStatus = "READY" | "WORKING" | "WAITING" | "DEGRADED" |
   "OFFLINE"
 type WorkerStatus = CompactStatus | "CONNECTING"
+type DashboardReadState = "REFRESHING" | "STABLE" | "READ_RETRYING"
 
 type DashboardSnapshot = Readonly<{
   radarReady: number
@@ -88,12 +89,42 @@ function availableMetric(value: unknown) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
-function compactStatus(value: unknown,
-  fallback: CompactStatus = "DEGRADED"): CompactStatus {
+function authoritativeCompactStatus(value: unknown) {
   const normalized = String(value ?? "").toUpperCase()
   return new Set<CompactStatus>(["READY", "WORKING", "WAITING", "DEGRADED",
     "OFFLINE"]).has(normalized as CompactStatus)
-    ? normalized as CompactStatus : fallback
+    ? normalized as CompactStatus : null
+}
+
+function ordersDashboardStatus(value: Record<string, unknown>,
+  previous: CompactStatus) {
+  const sourceStatus = String(value.sourceStatus ?? "").toUpperCase()
+  if (sourceStatus === "AVAILABLE") return "READY" as const
+  if (sourceStatus === "UNPROVEN") return "WAITING" as const
+  if (["UNAVAILABLE", "PARTIAL", "UPSTREAM_ERROR", "AUTHORIZATION_BLOCKED"]
+      .includes(sourceStatus)) return "DEGRADED" as const
+  return authoritativeCompactStatus(value.dashboardStatus) ?? previous
+}
+
+function stockGuardDashboardStatus(value: Record<string, unknown>,
+  previous: CompactStatus) {
+  const scope = availableMetric(value.scopeCount)
+  const certified = availableMetric(value.certifiedCount)
+  const fresh = availableMetric(value.freshCount)
+  const stale = availableMetric(value.staleCount)
+  const unknown = availableMetric(value.unknownCount)
+  const risks = availableMetric(value.riskCount)
+  if ([scope, certified, fresh, stale, unknown, risks]
+      .some((entry) => entry === null)) {
+    return authoritativeCompactStatus(value.dashboardStatus) ?? previous
+  }
+  if (risks! > 0 || unknown! > 0 || certified! < scope! ||
+      fresh! + stale! < scope!) return "DEGRADED" as const
+  if (stale! > 0) return "WAITING" as const
+  if (scope! > 0 && certified === scope && fresh === scope) {
+    return "READY" as const
+  }
+  return authoritativeCompactStatus(value.dashboardStatus) ?? previous
 }
 
 function normalizedStatus(value: unknown,
@@ -177,11 +208,15 @@ function quickPickStageTone(state: OwnerRuntimeQuickPickStageState) {
 }
 
 function quickPickStageLabel(card: OwnerRuntimeQuickPickCard) {
-  if (card.exactBlocker?.startsWith(
-    "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")) {
+  if (card.lastStage === "REQUIRED_SPECIFICS" ||
+      card.exactBlockers.some((value) => value.startsWith(
+        "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")) &&
+      card.stages.REQUIRED_SPECIFICS === "BLOCKED") {
     return "Required specifics"
   }
-  if (card.exactBlocker?.startsWith("MARKETPLACE_CONDITION_NOT_READY")) {
+  if (card.lastStage === "MARKETPLACE_READINESS" ||
+      card.exactBlockers.some((value) => value.startsWith(
+        "MARKETPLACE_CONDITION_NOT_READY"))) {
     return "Marketplace readiness"
   }
   return QUICK_PICK_STAGES.find(([key]) => key === card.lastStage)?.[1] ??
@@ -199,15 +234,6 @@ function quickPickBlockerLabel(value: string | null) {
   return value.replaceAll("_", " ")
 }
 
-function mergeQuickPickCards(current: readonly OwnerRuntimeQuickPickCard[],
-  incoming: readonly OwnerRuntimeQuickPickCard[]) {
-  const key = (card: OwnerRuntimeQuickPickCard) => card.candidateKey ??
-    card.sourceUrl
-  const merged = new Map(current.map((card) => [key(card), card]))
-  incoming.forEach((card) => merged.set(key(card), card))
-  return [...merged.values()]
-}
-
 export function SellerOsOperationalDashboard() {
   const ownerRuntime = useAdminOwnerRuntime()
   const [snapshot, setSnapshot] = useState<DashboardSnapshot>(emptySnapshot)
@@ -218,6 +244,10 @@ export function SellerOsOperationalDashboard() {
     useState<OwnerRuntimeQuickPickReceipt | null>(null)
   const [submittedQuickPickCards, setSubmittedQuickPickCards] = useState<
     readonly OwnerRuntimeQuickPickCard[]>([])
+  const [commercialReadState, setCommercialReadState] =
+    useState<DashboardReadState>("REFRESHING")
+  const [radarReadState, setRadarReadState] =
+    useState<DashboardReadState>("REFRESHING")
 
   const adminRequest = useCallback(async (path: string, init?: RequestInit) => {
     const { data, error } = await supabase.auth.getSession()
@@ -238,6 +268,8 @@ export function SellerOsOperationalDashboard() {
   }, [])
 
   const load = useCallback(async () => {
+    setCommercialReadState("REFRESHING")
+    setRadarReadState("REFRESHING")
     const [commercialResult, radarResult] =
       await Promise.allSettled([
         adminRequest(
@@ -250,6 +282,9 @@ export function SellerOsOperationalDashboard() {
       ? record(commercialResult.value) : {}
     const commercial = record(commercialPayload.dashboard)
     const commercialHealth = record(commercialPayload.commercialHealth)
+    const commercialAuthoritative = commercialResult.status === "fulfilled" &&
+      commercialHealth.contractVersion ===
+        "SELLER_OS_DASHBOARD_COMMERCIAL_HEALTH_V1"
     const stockHealth = record(commercialHealth.stockGuard)
     const orderHealth = record(commercialHealth.orders)
     const analyticsHealth = record(commercialHealth.analytics)
@@ -267,6 +302,8 @@ export function SellerOsOperationalDashboard() {
     const radarPayload = radarResult.status === "fulfilled"
       ? record(radarResult.value) : {}
     const radar = record(radarPayload.dashboard)
+    const radarAuthoritative = radarResult.status === "fulfilled" &&
+      Object.keys(radar).length > 0
     const radarSummary = record(radar.summary)
     const runs = Array.isArray(radar.runs) ? radar.runs : []
     const latestRadarRun = record(runs[0])
@@ -279,46 +316,57 @@ export function SellerOsOperationalDashboard() {
       }
     }
 
-    setSnapshot({
-      radarReady: safeCount(radarSummary.ready),
-      radarReview: safeCount(radarSummary.review),
-      radarAvailable: radarResult.status === "fulfilled",
-      liveAttention: liveListingIds.size,
-      liveAttentionAvailable: commercialResult.status === "fulfilled" ||
-        radarResult.status === "fulfilled",
-      stockGuard: commercialResult.status === "rejected" ? "DEGRADED"
-        : compactStatus(stockHealth.dashboardStatus),
-      nightRadar: radarResult.status === "rejected" ? "DEGRADED"
-        : normalizedStatus(latestRadarRun.status ?? radar.status),
-      analytics: commercialResult.status === "rejected" ? "DEGRADED"
-        : compactStatus(analyticsHealth.dashboardStatus),
-      orders: commercialResult.status === "rejected" ? "DEGRADED"
-        : compactStatus(orderHealth.dashboardStatus),
-      activeListings: commercialResult.status === "fulfilled"
-        ? availableMetric(commercialHealth.activeListings) : null,
-      impressions: availableMetric(analyticsHealth.impressions),
-      views: availableMetric(analyticsHealth.views),
-      ctr: availableMetric(analyticsHealth.ctr),
-      quantitySold: availableMetric(analyticsHealth.quantitySold),
-      officialOrders: availableMetric(orderHealth.officialOrderCount),
-      analyticsDataStatus: new Set(["AVAILABLE_CURRENT", "AVAILABLE_STALE"])
-        .has(String(analyticsHealth.snapshotDataStatus))
-        ? analyticsHealth.snapshotDataStatus as
-          "AVAILABLE_CURRENT" | "AVAILABLE_STALE" : "UNAVAILABLE",
-      analyticsSnapshotCapturedAt:
-        typeof analyticsHealth.snapshotCapturedAt === "string"
-          ? analyticsHealth.snapshotCapturedAt : null,
-      stockScopeCount: availableMetric(stockHealth.scopeCount),
-      stockCertifiedCount: availableMetric(stockHealth.certifiedCount),
-      stockFreshCount: availableMetric(stockHealth.freshCount),
-      stockStaleCount: availableMetric(stockHealth.staleCount),
-      stockUnknownCount: availableMetric(stockHealth.unknownCount),
-      stockRiskCount: availableMetric(stockHealth.riskCount),
-      ordersSourceStatus: String(orderHealth.sourceStatus ?? "UNPROVEN"),
-      ordersLastSuccessfulReadAt:
-        typeof orderHealth.lastSuccessfulReadAt === "string"
-          ? orderHealth.lastSuccessfulReadAt : null,
+    setSnapshot((previous) => {
+      let next = { ...previous }
+      if (radarAuthoritative) {
+        next = { ...next,
+          radarReady: safeCount(radarSummary.ready),
+          radarReview: safeCount(radarSummary.review),
+          radarAvailable: true,
+          liveAttention: liveListingIds.size,
+          liveAttentionAvailable: true,
+          nightRadar: normalizedStatus(latestRadarRun.status ?? radar.status),
+        }
+      }
+      if (commercialAuthoritative) {
+        const analyticsDataStatus = new Set([
+          "AVAILABLE_CURRENT", "AVAILABLE_STALE",
+        ]).has(String(analyticsHealth.snapshotDataStatus))
+          ? analyticsHealth.snapshotDataStatus as
+            "AVAILABLE_CURRENT" | "AVAILABLE_STALE" : "UNAVAILABLE"
+        next = { ...next,
+          stockGuard: stockGuardDashboardStatus(
+            stockHealth, previous.stockGuard),
+          analytics: authoritativeCompactStatus(
+            analyticsHealth.dashboardStatus) ?? previous.analytics,
+          orders: ordersDashboardStatus(orderHealth, previous.orders),
+          activeListings: availableMetric(commercialHealth.activeListings),
+          impressions: availableMetric(analyticsHealth.impressions),
+          views: availableMetric(analyticsHealth.views),
+          ctr: availableMetric(analyticsHealth.ctr),
+          quantitySold: availableMetric(analyticsHealth.quantitySold),
+          officialOrders: availableMetric(orderHealth.officialOrderCount),
+          analyticsDataStatus,
+          analyticsSnapshotCapturedAt:
+            typeof analyticsHealth.snapshotCapturedAt === "string"
+              ? analyticsHealth.snapshotCapturedAt : null,
+          stockScopeCount: availableMetric(stockHealth.scopeCount),
+          stockCertifiedCount: availableMetric(stockHealth.certifiedCount),
+          stockFreshCount: availableMetric(stockHealth.freshCount),
+          stockStaleCount: availableMetric(stockHealth.staleCount),
+          stockUnknownCount: availableMetric(stockHealth.unknownCount),
+          stockRiskCount: availableMetric(stockHealth.riskCount),
+          ordersSourceStatus: String(orderHealth.sourceStatus ?? "UNPROVEN"),
+          ordersLastSuccessfulReadAt:
+            typeof orderHealth.lastSuccessfulReadAt === "string"
+              ? orderHealth.lastSuccessfulReadAt : null,
+        }
+      }
+      return next
     })
+    setCommercialReadState(commercialAuthoritative
+      ? "STABLE" : "READ_RETRYING")
+    setRadarReadState(radarAuthoritative ? "STABLE" : "READ_RETRYING")
   }, [adminRequest])
 
   useEffect(() => {
@@ -387,7 +435,7 @@ export function SellerOsOperationalDashboard() {
       submittedQuickPickReceipt.ownerReference
     ? submittedQuickPickReceipt
     : ownerRuntime.quickPickReceipt ?? submittedQuickPickReceipt
-  const quickPickCards = useMemo(() => mergeQuickPickCards(
+  const quickPickCards = useMemo(() => mergeOwnerRuntimeQuickPickCards(
     submittedQuickPickCards, ownerRuntime.quickPickCards),
   [ownerRuntime.quickPickCards, submittedQuickPickCards])
 
@@ -417,7 +465,7 @@ export function SellerOsOperationalDashboard() {
           data-quick-pick-inline-receipt={quickPickReceipt.ownerReference}
           className="mt-3 rounded-2xl border border-emerald-200/20 bg-emerald-200/[0.06] p-3 text-emerald-50">
           <strong className="text-sm">LOTE RECIBIDO · {quickPickReceipt.ownerReference}</strong>
-          <dl className="mt-2 grid grid-cols-2 gap-2 text-center sm:grid-cols-4 lg:grid-cols-7">
+          <dl className="mt-2 grid grid-cols-2 gap-2 text-center sm:grid-cols-3">
             {([
               ["Recibidos", quickPickReceipt.rawInputCount],
               ["Materializados", quickPickReceipt.durableOperationCount],
@@ -428,18 +476,27 @@ export function SellerOsOperationalDashboard() {
                 ? ownerRuntime.quickPick.blocked : null],
               ["Listos", ownerRuntime.quickPickAvailable
                 ? ownerRuntime.quickPick.readyForReview : null],
-              ["Receipt", quickPickReceipt.ownerReference],
             ] as const).map(([label, value]) => <div key={label}
-              className="rounded-xl bg-black/20 px-2 py-2">
-              <dt className="text-[10px] font-bold uppercase tracking-wide text-white/45">{label}</dt>
-              <dd className="mt-1 truncate text-sm font-black">{value ?? "—"}</dd>
+              className="min-w-0 rounded-xl bg-black/20 px-2 py-2">
+              <dt className="break-words text-[10px] font-bold uppercase leading-4 tracking-wide text-white/45">{label}</dt>
+              <dd className="mt-1 text-sm font-black tabular-nums">{value ?? "—"}</dd>
             </div>)}
           </dl>
         </section>}
-        <p aria-live="polite" className="mt-3 text-sm text-white/60">{feedback || (ownerRuntime.quickPickAvailable ? `${ownerRuntime.quickPick.inProgress} en proceso · ${ownerRuntime.quickPick.readyForReview} para revisar · ${ownerRuntime.quickPick.blocked} bloqueados` : "No pude cargar el estado del lote · reintentando")}</p>
+        <p aria-live="polite" className="mt-3 text-sm text-white/60">{feedback ||
+          (ownerRuntime.quickPickReadState === "READ_RETRYING"
+            ? "No pude actualizar · reintentando; conservo el último estado válido"
+            : ownerRuntime.quickPickReadState === "REFRESHING"
+              ? "Actualizando estado…"
+              : ownerRuntime.quickPickAvailable
+                ? `${ownerRuntime.quickPick.inProgress} en proceso · ${ownerRuntime.quickPick.readyForReview} para revisar · ${ownerRuntime.quickPick.blocked} bloqueados`
+                : "Recuperando operaciones durables…")}</p>
         <div className="mt-3 space-y-2" data-quick-pick-inline-operation-view>
           {quickPickCards.map((card) => <details
-            key={card.candidateKey ?? card.sourceUrl}
+            key={card.opportunityId ?? card.candidateKey ??
+              (card.lunaProductId && card.lunaVariantId && card.sourceSku
+                ? `${card.lunaProductId}:${card.lunaVariantId}:${card.sourceSku}`
+                : card.sourceUrl)}
             data-quick-pick-inline-card
             className="group rounded-2xl border border-white/10 bg-black/20 p-3">
             <summary className="flex min-h-11 cursor-pointer list-none items-start justify-between gap-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-200">
@@ -447,7 +504,13 @@ export function SellerOsOperationalDashboard() {
                 <p className="truncate text-sm font-black">{card.title ?? "Producto Luna"}</p>
                 <p className="mt-1 truncate text-xs text-white/50">{card.sourceSku ?? "Identificando…"} · {card.disposition}</p>
                 <p className="mt-1 text-xs text-white/65">Etapa: <strong>{quickPickStageLabel(card)}</strong></p>
-                {card.exactBlocker && <p className="mt-1 text-xs font-bold text-amber-100">{quickPickBlockerLabel(card.exactBlocker)} <span className="font-mono font-normal text-amber-100/55">· {card.exactBlocker}</span></p>}
+                {card.exactBlockers.length > 0 && <ul
+                  data-quick-pick-commercial-blockers
+                  className="mt-1 space-y-1 text-xs font-bold text-amber-100">
+                  {card.exactBlockers.map((blocker) => <li key={blocker}>
+                    {quickPickBlockerLabel(blocker)}
+                  </li>)}
+                </ul>}
               </div>
               <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${quickPickStageTone(card.state === "READY" ? "PASS" : card.state)}`}>{card.state}</span>
             </summary>
@@ -460,6 +523,26 @@ export function SellerOsOperationalDashboard() {
                 </li>
               })}
             </ol>
+            {(card.requiredItemSpecificsCount !== null ||
+              card.conditionReady !== null) && <p
+              className="mt-2 text-xs leading-5 text-white/50"
+              data-quick-pick-durable-readiness-summary>
+              Required specifics {card.requiredItemSpecificsSatisfied ?? "—"}/
+              {card.requiredItemSpecificsCount ?? "—"}
+              {card.unresolvedRequiredAspects.length > 0
+                ? ` · pendientes: ${card.unresolvedRequiredAspects.join(", ")}`
+                : ""} · Condition {card.conditionReady === true ? "PASS" :
+                  card.conditionReady === false ? "BLOCKED" : "WAITING"}
+            </p>}
+            {card.exactBlockers.length > 0 && <details className="mt-2">
+              <summary className="min-h-11 cursor-pointer py-3 text-xs font-bold text-white/45">
+                Ver evidencia técnica
+              </summary>
+              <ul className="space-y-1 text-xs text-white/45">
+                {card.exactBlockers.map((blocker) => <li key={blocker}
+                  className="break-all font-mono">{blocker}</li>)}
+              </ul>
+            </details>}
           </details>)}
           {ownerRuntime.quickPickAvailable && quickPickCards.length === 0 &&
             <p className="rounded-xl border border-white/10 p-3 text-sm text-white/45">No hay operaciones Quick Pick durables recientes.</p>}
@@ -483,6 +566,14 @@ export function SellerOsOperationalDashboard() {
           {workerDetail(ownerRuntime.lunaWorker.status,
             ownerRuntime.lunaWorker.reasonCode)}
         </p>
+        {(commercialReadState !== "STABLE" || radarReadState !== "STABLE") &&
+          <p className="mt-2 text-[11px] font-bold text-sky-100/60"
+            data-dashboard-refresh-state>
+            {commercialReadState === "READ_RETRYING" ||
+              radarReadState === "READ_RETRYING"
+              ? "No pude actualizar una lectura · reintentando; mantengo el último estado válido"
+              : "Actualizando estado…"}
+          </p>}
         <div className="mt-4 border-t border-white/10 pt-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-black uppercase tracking-[0.16em] text-white/50">Métricas comerciales</p>
@@ -506,7 +597,7 @@ export function SellerOsOperationalDashboard() {
           <p className="mt-3 text-xs leading-5 text-white/55" data-stock-freshness-summary>
             StockGuard {snapshot.stockCertifiedCount === null ||
               snapshot.stockScopeCount === null ? "—" :
-              `${snapshot.stockCertifiedCount}/${snapshot.stockScopeCount}`} · FRESH {snapshot.stockFreshCount ?? "—"} · STALE {snapshot.stockStaleCount ?? "—"} · UNKNOWN {snapshot.stockUnknownCount ?? "—"} · RISKS {snapshot.stockRiskCount ?? "—"}
+              `${snapshot.stockCertifiedCount}/${snapshot.stockScopeCount}`} · FRESH {snapshot.stockFreshCount ?? "—"} · REFRESH DUE {snapshot.stockStaleCount ?? "—"} · UNKNOWN {snapshot.stockUnknownCount ?? "—"} · PROVEN RISKS {snapshot.stockRiskCount ?? "—"}
           </p>
           <p className="mt-1 text-[11px] text-white/40">
             Orders {snapshot.ordersSourceStatus} · última lectura {shortTimestamp(snapshot.ordersLastSuccessfulReadAt)}

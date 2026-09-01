@@ -68,6 +68,7 @@ export type LunaQuickPickCardV1 = Readonly<{
   lastStage: string
   disposition: string
   exactBlocker: string | null
+  exactBlockers: readonly string[]
   variantSelectionRequired: boolean
   variants: readonly LunaQuickPickVariantV1[]
   alreadyLive: boolean
@@ -88,6 +89,7 @@ export type LunaQuickPickCardV1 = Readonly<{
   marketTestReview: JsonRecord | null
   requiredItemSpecificsCount: number | null
   requiredItemSpecificsSatisfied: number | null
+  requiredItemSpecificsReady: boolean | null
   unresolvedRequiredAspects: readonly string[]
   deterministicResolvedCount: number
   marketplaceFallbackResolvedCount: number
@@ -95,6 +97,7 @@ export type LunaQuickPickCardV1 = Readonly<{
   aiAspectsResolvedCount: number
   factInvented: false
   marketplaceReadinessReady: boolean
+  conditionReady: boolean | null
   shippingUsd: number | null
   rehydrated: boolean
   updatedAt: string | null
@@ -302,6 +305,7 @@ function batchCardSnapshotV1(value: LunaQuickPickCardV1) {
     opportunityId: value.opportunityId, listingPackageId: value.listingPackageId,
     title: value.title, state: value.state, lastStage: value.lastStage,
     disposition: value.disposition, exactBlocker: value.exactBlocker,
+    exactBlockers: value.exactBlockers,
     variantSelectionRequired: value.variantSelectionRequired,
     variants: value.variants, alreadyLive: value.alreadyLive,
     linkedLiveItemIds: value.linkedLiveItemIds, stages: value.stages,
@@ -612,6 +616,8 @@ function card(input: Partial<LunaQuickPickCardV1> &
     lastStage: input.lastStage ?? "IDENTITY",
     disposition: input.disposition ?? "BLOCKED",
     exactBlocker: input.exactBlocker ?? null,
+    exactBlockers: Object.freeze([...(input.exactBlockers ??
+      (input.exactBlocker ? [input.exactBlocker] : []))]),
     variantSelectionRequired: input.variantSelectionRequired ?? false,
     variants: Object.freeze([...(input.variants ?? [])]),
     alreadyLive: input.alreadyLive ?? false,
@@ -635,6 +641,7 @@ function card(input: Partial<LunaQuickPickCardV1> &
       input.requiredItemSpecificsCount ?? null,
     requiredItemSpecificsSatisfied:
       input.requiredItemSpecificsSatisfied ?? null,
+    requiredItemSpecificsReady: input.requiredItemSpecificsReady ?? null,
     unresolvedRequiredAspects: Object.freeze([
       ...(input.unresolvedRequiredAspects ?? []),
     ]),
@@ -646,6 +653,7 @@ function card(input: Partial<LunaQuickPickCardV1> &
     factInvented: false,
     marketplaceReadinessReady:
       input.marketplaceReadinessReady ?? false,
+    conditionReady: input.conditionReady ?? null,
     shippingUsd: input.shippingUsd ?? null,
     rehydrated: input.rehydrated ?? false,
     updatedAt: input.updatedAt ?? null,
@@ -1204,6 +1212,10 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     const blockers = Array.isArray(factory.blockers)
       ? factory.blockers.flatMap((value) => text(value, 120)
         ? [String(value)] : []) : []
+    const readinessBlockers = Array.isArray(
+      canonicalMarketplaceReadiness.blockers)
+      ? canonicalMarketplaceReadiness.blockers.flatMap((value) =>
+        text(value, 120) ? [String(value)] : []) : []
     const identity = identityKey(String(row.supplier_product_id),
       String(row.supplier_variant_id), String(row.supplier_sku))
     const catalogRow = catalog.get(identity)
@@ -1218,8 +1230,43 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       ? number(frontier.shippingValue) : null
     const waitingForWorker = shipping.shippingJobStatus ===
       "WAITING_BROWSER_WORKER"
-    const firstBlocker = blockers[0] ??
-      text(shipping.firstBlocker, 120)
+    const shippingBlocker = text(shipping.firstBlocker, 120)
+    const exactBlockers = [...new Set([...blockers, ...readinessBlockers,
+      ...(shippingBlocker ? [shippingBlocker] : [])])]
+    const firstBlocker = exactBlockers[0] ?? null
+    const requiredItemSpecificsCount =
+      number(canonicalMarketplaceReadiness.requiredItemSpecificsCount) ??
+      number(specificsContinuation.requiredItemSpecificsCount)
+    const requiredItemSpecificsSatisfied =
+      number(canonicalMarketplaceReadiness.requiredItemSpecificsSatisfied) ??
+      number(specificsContinuation.requiredItemSpecificsSatisfiedAfter)
+    const unresolvedRequiredAspects = Array.isArray(
+      canonicalMarketplaceReadiness.unsupportedRequiredSpecifics)
+      ? canonicalMarketplaceReadiness.unsupportedRequiredSpecifics
+        .flatMap((value) => text(value, 120) ? [String(value)] : [])
+      : Array.isArray(specificsContinuation.unresolvedAspectsAfter)
+        ? specificsContinuation.unresolvedAspectsAfter.flatMap((value) =>
+          text(value, 120) ? [String(value)] : []) : []
+    const requiredItemSpecificsReady =
+      canonicalMarketplaceReadiness.requiredItemSpecificsReady === true ||
+      (requiredItemSpecificsCount !== null &&
+        requiredItemSpecificsSatisfied === requiredItemSpecificsCount &&
+        requiredItemSpecificsCount > 0)
+    const conditionReady = typeof canonicalMarketplaceReadiness.conditionReady
+      === "boolean" ? canonicalMarketplaceReadiness.conditionReady : null
+    const marketplaceReadinessReady =
+      canonicalMarketplaceReadiness.ready === true || reviewReady
+    const requiredSpecificsBlocked = !requiredItemSpecificsReady &&
+      (unresolvedRequiredAspects.length > 0 || exactBlockers.some((value) =>
+        value.startsWith("MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")))
+    const marketplaceReadinessBlocked = !marketplaceReadinessReady &&
+      (conditionReady === false || exactBlockers.some((value) =>
+        value.startsWith("MARKETPLACE_CONDITION_NOT_READY")))
+    const projectedLastStage = marketTestReady ? "MARKET_TEST_READY" :
+      listingReady ? "LISTING_READY" : waitingForWorker ? "SHIPPING" :
+        requiredSpecificsBlocked ? "REQUIRED_SPECIFICS" :
+          marketplaceReadinessBlocked ? "MARKETPLACE_READINESS" :
+            firstBlocker ?? "ECONOMICS"
     const mapped = emptyStages({ IDENTITY: "PASS", DUPLICATE: "PASS",
       STOCK: "PASS", DEMAND: marketTestReady ? "BLOCKED" :
         stages.DEMAND_READY === "READY" ? "PASS" : "BLOCKED",
@@ -1231,13 +1278,8 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
         ? "PASS" : "BLOCKED",
       LISTING_PACKAGE: stages.LISTING_PACKAGE_READY === "READY"
         ? "PASS" : "BLOCKED",
-      REQUIRED_SPECIFICS:
-        canonicalMarketplaceReadiness.requiredItemSpecificsReady === true ||
-        (Number(canonicalMarketplaceReadiness.requiredItemSpecificsSatisfied) ===
-          Number(canonicalMarketplaceReadiness.requiredItemSpecificsCount) &&
-          Number(canonicalMarketplaceReadiness.requiredItemSpecificsCount) > 0)
-          ? "PASS" : "BLOCKED",
-      MARKETPLACE_READINESS: reviewReady ? "PASS" : "BLOCKED",
+      REQUIRED_SPECIFICS: requiredItemSpecificsReady ? "PASS" : "BLOCKED",
+      MARKETPLACE_READINESS: marketplaceReadinessReady ? "PASS" : "BLOCKED",
       LISTING_READY: listingReady ? "PASS" : "BLOCKED" })
     return Object.freeze({ sourceUrl, canonicalUrl,
       candidateKey: String(row.candidate_key),
@@ -1250,11 +1292,11 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       state: reviewReady ? "READY" as const : waitingForWorker
         ? "RUNNING" as const : firstBlocker
           ? "BLOCKED" as const : "RUNNING" as const,
-      lastStage: marketTestReady ? "MARKET_TEST_READY" :
-        listingReady ? "LISTING_READY" :
-        waitingForWorker ? "SHIPPING" : firstBlocker ?? "ECONOMICS",
+      lastStage: projectedLastStage,
       disposition: String(row.decision ?? row.queue_status ?? "PARKED"),
       exactBlocker: reviewReady || waitingForWorker ? null : firstBlocker,
+      exactBlockers: reviewReady
+        ? Object.freeze([]) : Object.freeze(exactBlockers),
       variantSelectionRequired: false, variants: Object.freeze([]),
       alreadyLive: false, linkedLiveItemIds: Object.freeze([]),
       durableFamilyHit: false, onDemandDemandDiscoveryRequired: false,
@@ -1266,19 +1308,10 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
       marketTestPathEligible: marketTestReady,
       marketTestReady,
       marketTestReview: marketTestReady ? marketTestReview : null,
-      requiredItemSpecificsCount:
-        number(canonicalMarketplaceReadiness.requiredItemSpecificsCount) ??
-        number(specificsContinuation.requiredItemSpecificsCount),
-      requiredItemSpecificsSatisfied:
-        number(canonicalMarketplaceReadiness.requiredItemSpecificsSatisfied) ??
-        number(specificsContinuation.requiredItemSpecificsSatisfiedAfter),
-      unresolvedRequiredAspects: Array.isArray(
-        canonicalMarketplaceReadiness.unsupportedRequiredSpecifics)
-        ? canonicalMarketplaceReadiness.unsupportedRequiredSpecifics
-          .flatMap((value) => text(value, 120) ? [String(value)] : [])
-        : Array.isArray(specificsContinuation.unresolvedAspectsAfter)
-          ? specificsContinuation.unresolvedAspectsAfter.flatMap((value) =>
-            text(value, 120) ? [String(value)] : []) : [],
+      requiredItemSpecificsCount,
+      requiredItemSpecificsSatisfied,
+      requiredItemSpecificsReady,
+      unresolvedRequiredAspects,
       deterministicResolvedCount: specificsResolutions.filter((value) =>
         ["EXPLICIT_PRODUCT_TRUTH", "DETERMINISTIC_DERIVATION"]
           .includes(String(value.resolutionClass)) &&
@@ -1291,8 +1324,8 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
         String(value.resolutionClass).startsWith("AI_") &&
         value.humanReviewRequired !== true).length,
       factInvented: false,
-      marketplaceReadinessReady:
-        canonicalMarketplaceReadiness.ready === true || reviewReady,
+      marketplaceReadinessReady,
+      conditionReady,
       shippingUsd,
       rehydrated: input.includeRecent === true,
       stages: mapped,

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { supabase } from "@/lib/supabase"
+import { mergeSellerOsQuickPickPresentationV1 } from
+  "@/lib/ebay/seller-os-quick-pick-presentation-v1"
 import { SellerOsMobileNav } from "../components/seller-os-mobile-nav"
 
 type StageState = "WAITING" | "RUNNING" | "PASS" | "BLOCKED"
@@ -31,6 +33,7 @@ type QuickPickCard = {
   lastStage: string
   disposition: string
   exactBlocker: string | null
+  exactBlockers: string[]
   variantSelectionRequired: boolean
   variants: Array<{ lunaProductId: string; lunaVariantId: string
     supplierSku: string; title: string; available: boolean
@@ -48,7 +51,9 @@ type QuickPickCard = {
   marketTestReview: Record<string, unknown> | null
   requiredItemSpecificsCount: number | null
   requiredItemSpecificsSatisfied: number | null
+  requiredItemSpecificsReady: boolean | null
   unresolvedRequiredAspects: string[]
+  conditionReady: boolean | null
   deterministicResolvedCount: number
   marketplaceFallbackResolvedCount: number
   aiCallCount: number
@@ -103,6 +108,12 @@ function stageIcon(state: StageState | undefined) {
   return "○"
 }
 
+function cardBlockers(card: QuickPickCard) {
+  return [...new Set(card.exactBlockers?.length
+    ? card.exactBlockers
+    : card.exactBlocker ? [card.exactBlocker] : [])]
+}
+
 export default function LunaQuickPickPage() {
   const [input, setInput] = useState("")
   const [cards, setCards] = useState<QuickPickCard[]>([])
@@ -126,21 +137,8 @@ export default function LunaQuickPickPage() {
   }, [])
 
   const mergeCards = useCallback((incoming: QuickPickCard[]) => {
-    setCards((current) => {
-      const key = (card: QuickPickCard) => card.candidateKey ?? card.sourceUrl
-      const merged = new Map(current.map((card) => [key(card), card]))
-      incoming.forEach((card) => {
-        const previousEntry = [...merged.entries()].find(([, previous]) =>
-          previous.sourceUrl === card.sourceUrl || Boolean(card.canonicalUrl &&
-            previous.canonicalUrl === card.canonicalUrl))
-        const previous = previousEntry?.[1]
-        if (previousEntry && previousEntry[0] !== key(card)) {
-          merged.delete(previousEntry[0])
-        }
-        merged.set(key(card), { ...previous, ...card })
-      })
-      return [...merged.values()]
-    })
+    setCards((current) => [...mergeSellerOsQuickPickPresentationV1(
+      current, incoming)])
   }, [])
 
   const processLinks = useCallback(async (urls: string[],
@@ -152,6 +150,7 @@ export default function LunaQuickPickPage() {
       candidateId: null, opportunityId: null, candidateKey: null,
       listingPackageId: null, title: null, state: "RUNNING",
       lastStage: "IDENTITY", disposition: "RUNNING", exactBlocker: null,
+      exactBlockers: [],
       variantSelectionRequired: false, variants: [], stages: {
         IDENTITY: "RUNNING" }, durableFamilyHit: false,
       onDemandDemandDiscoveryRequired: false,
@@ -162,7 +161,8 @@ export default function LunaQuickPickPage() {
       marketTestReview: null,
       requiredItemSpecificsCount: null,
       requiredItemSpecificsSatisfied: null,
-      unresolvedRequiredAspects: [], deterministicResolvedCount: 0,
+      requiredItemSpecificsReady: null, unresolvedRequiredAspects: [],
+      conditionReady: null, deterministicResolvedCount: 0,
       marketplaceFallbackResolvedCount: 0, aiCallCount: 0,
       aiAspectsResolvedCount: 0, factInvented: false,
       marketplaceReadinessReady: false,
@@ -192,6 +192,7 @@ export default function LunaQuickPickPage() {
       setCards((current) => current.map((card) => urls.includes(card.sourceUrl)
         && card.state === "RUNNING" ? { ...card, state: "BLOCKED",
           disposition: "BLOCKED", exactBlocker: message,
+          exactBlockers: message ? [message] : [],
           stages: { ...card.stages, [card.lastStage]: "BLOCKED" } } : card))
     }
   }, [mergeCards, request])
@@ -213,7 +214,7 @@ export default function LunaQuickPickPage() {
     request("/api/admin/ebay/luna-quick-pick").then((payload) => {
       if (!cancelled) {
         mergeCards(payload.progress ?? [])
-        setReceipt(payload.receipt ?? null)
+        if (payload.receipt) setReceipt(payload.receipt)
       }
     }).catch((caught) => {
       if (!cancelled) setError(caught instanceof Error ? caught.message :
@@ -231,7 +232,7 @@ export default function LunaQuickPickPage() {
         const payload = await request(`/api/admin/ebay/luna-quick-pick?${params}`)
         if (cancelled) return
         mergeCards(payload.progress ?? [])
-        setReceipt(payload.receipt ?? null)
+        if (payload.receipt) setReceipt(payload.receipt)
         setError("")
       } catch {
         setError("No pude cargar el estado del lote · reintentando")
@@ -290,7 +291,9 @@ export default function LunaQuickPickPage() {
         <div><h2 id={`quick-pick-${section.id}`} className="text-xl font-black">{section.title}</h2>
           <p className="mt-1 text-sm text-white/55">{section.copy}</p></div>
         {section.cards.length === 0 ? <p className="rounded-2xl border border-white/10 bg-white/[0.025] p-4 text-sm text-white/45">No hay productos en esta sección.</p> : <div className="grid gap-4 lg:grid-cols-2">
-        {section.cards.map((card) => <article key={card.candidateKey ?? card.sourceUrl}
+        {section.cards.map((card) => <article key={card.opportunityId ??
+          card.candidateKey ?? `${card.lunaProductId ?? "pending"}:${
+            card.lunaVariantId ?? card.sourceUrl}`}
           className={`rounded-3xl border p-4 ${card.marketTestReady
             ? "border-amber-200/45 bg-amber-200/[0.09]" : stateTone(card.state)}`}>
           <div className="flex items-start justify-between gap-3"><div>
@@ -316,7 +319,10 @@ export default function LunaQuickPickPage() {
           {card.stages.SHIPPING === "PASS" && <p className="mt-3 rounded-xl border border-emerald-200/20 bg-emerald-200/[0.06] p-2 text-sm text-emerald-50">Envío comprobado{card.shippingUsd !== null ? ` · ${money(card.shippingUsd)}` : ""}</p>}
           {card.stages.SHIPPING === "RUNNING" && <p className="mt-3 rounded-xl border border-cyan-200/20 bg-cyan-200/[0.06] p-2 text-sm text-cyan-50">Esperando worker Luna. Seller OS reanudará este producto automáticamente.</p>}
 
-          {card.exactBlocker && <p className="mt-3 rounded-xl border border-amber-200/20 bg-black/20 p-2 text-xs text-amber-50">{card.exactBlocker}</p>}
+          {cardBlockers(card).length > 0 && <ul
+            className="mt-3 space-y-1 rounded-xl border border-amber-200/20 bg-black/20 p-2 text-xs text-amber-50">
+            {cardBlockers(card).map((blocker) => <li key={blocker}>{blocker}</li>)}
+          </ul>}
 
           {card.state === "READY" && card.dollarCheck && <section
             className={`mt-4 rounded-2xl border p-3 ${card.marketTestReady
@@ -346,7 +352,7 @@ export default function LunaQuickPickPage() {
               : "Abre la autoridad de publicación existente. Este Quick Pick no publica automáticamente."}</p>
           </section>}
 
-          <details className="mt-3 rounded-xl border border-white/10 p-2 text-xs text-white/55"><summary className="flex min-h-11 cursor-pointer items-center font-black">Ver evidencia técnica</summary><dl className="mt-2 space-y-1"><div>Product ID: {card.lunaProductId ?? "—"}</div><div>Variant ID: {card.lunaVariantId ?? "—"}</div><div>Operación rehidratada: {card.rehydrated ? "sí" : "no"}</div><div>Demanda durable previa: {card.durableFamilyHit ? "sí" : "no"}</div><div>Discovery bajo demanda: {card.onDemandDemandDiscoveryExecuted ? "ejecutado" : card.onDemandDemandDiscoveryRequired ? "requerido" : "no requerido"}</div><div>Estado demanda: {card.familyDemandStatus ?? "—"}</div><div>Comparables sold: {card.soldComparableCount}</div><div>Binding familia: {card.familyBindingCreatedOrReused ? "creado/reutilizado" : "—"}</div><div>Specifics requeridos: {card.requiredItemSpecificsCount ?? "—"}</div><div>Specifics satisfechos: {card.requiredItemSpecificsSatisfied ?? "—"}</div><div>Specifics pendientes: {card.unresolvedRequiredAspects.length ? card.unresolvedRequiredAspects.join(", ") : "ninguno"}</div><div>Resueltos determinísticamente: {card.deterministicResolvedCount}</div><div>Fallbacks marketplace: {card.marketplaceFallbackResolvedCount}</div><div>Llamadas IA: {card.aiCallCount}</div><div>Aspectos resueltos por IA: {card.aiAspectsResolvedCount}</div><div>Fact inventado: no</div><div>Última etapa: {card.lastStage}</div><div>Disposición: {card.disposition}</div><div>Actualizado: {card.updatedAt ? new Date(card.updatedAt).toLocaleString("es-NI") : "—"}</div><div>Tiempo: {card.elapsedMs} ms</div></dl></details>
+          <details className="mt-3 rounded-xl border border-white/10 p-2 text-xs text-white/55"><summary className="flex min-h-11 cursor-pointer items-center font-black">Ver evidencia técnica</summary><dl className="mt-2 space-y-1"><div>Product ID: {card.lunaProductId ?? "—"}</div><div>Variant ID: {card.lunaVariantId ?? "—"}</div><div>Operación rehidratada: {card.rehydrated ? "sí" : "no"}</div><div>Demanda durable previa: {card.durableFamilyHit ? "sí" : "no"}</div><div>Discovery bajo demanda: {card.onDemandDemandDiscoveryExecuted ? "ejecutado" : card.onDemandDemandDiscoveryRequired ? "requerido" : "no requerido"}</div><div>Estado demanda: {card.familyDemandStatus ?? "—"}</div><div>Comparables sold: {card.soldComparableCount}</div><div>Binding familia: {card.familyBindingCreatedOrReused ? "creado/reutilizado" : "—"}</div><div>Specifics requeridos: {card.requiredItemSpecificsCount ?? "—"}</div><div>Specifics satisfechos: {card.requiredItemSpecificsSatisfied ?? "—"}</div><div>Specifics listos: {card.requiredItemSpecificsReady === null ? "—" : card.requiredItemSpecificsReady ? "sí" : "no"}</div><div>Specifics pendientes: {card.unresolvedRequiredAspects.length ? card.unresolvedRequiredAspects.join(", ") : "ninguno"}</div><div>Condición lista: {card.conditionReady === null ? "—" : card.conditionReady ? "sí" : "no"}</div><div>Blockers: {cardBlockers(card).length ? cardBlockers(card).join(" · ") : "ninguno"}</div><div>Resueltos determinísticamente: {card.deterministicResolvedCount}</div><div>Fallbacks marketplace: {card.marketplaceFallbackResolvedCount}</div><div>Llamadas IA: {card.aiCallCount}</div><div>Aspectos resueltos por IA: {card.aiAspectsResolvedCount}</div><div>Fact inventado: no</div><div>Última etapa: {card.lastStage}</div><div>Disposición: {card.disposition}</div><div>Actualizado: {card.updatedAt ? new Date(card.updatedAt).toLocaleString("es-NI") : "—"}</div><div>Tiempo: {card.elapsedMs} ms</div></dl></details>
         </article>)}
         </div>}
       </section>)}
