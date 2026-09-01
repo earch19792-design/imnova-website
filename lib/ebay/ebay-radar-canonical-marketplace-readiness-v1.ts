@@ -10,7 +10,8 @@ import { buildEbayListingTaxonomyPreflightV1 } from
   // @ts-expect-error Node direct TypeScript tests require the explicit extension;
   // the production bundler resolves the same source module.
   "./ebay-listing-taxonomy-preflight-v1.ts"
-import { ebayConditionContractFromVerifiedFact } from
+import { ebayConditionContractFromVerifiedFact,
+  LUNA_OWNER_CERTIFIED_NEW_MERCHANDISE_V1 } from
   // @ts-expect-error Node direct TypeScript tests require the explicit extension;
   // the production bundler resolves the same source module.
   "./ebay-manual-listing-domain.ts"
@@ -124,6 +125,9 @@ function exactOfficialValue(
 
 function compactAspectContract(aspect: EbayTaxonomyAspectIntelligence) {
   const values = aspect.values.map((entry) => entry.value)
+  const marketplaceFallbackValues = values.filter((value) => [
+    "unbranded", "does not apply", "not applicable", "none",
+  ].includes(normalizedPhrase(value)))
   return Object.freeze({
     name: aspect.name,
     required: aspect.required,
@@ -131,7 +135,9 @@ function compactAspectContract(aspect: EbayTaxonomyAspectIntelligence) {
     mode: aspect.mode,
     freeTextAllowed: aspect.mode !== "SELECTION_ONLY",
     cardinality: aspect.cardinality,
-    allowedValues: values.length <= 50 ? values : aspect.suggestedValues,
+    allowedValues: values.length <= 50 ? values : unique([
+      ...aspect.suggestedValues, ...marketplaceFallbackValues,
+    ]),
     allowedValueCount: values.length,
     allowedValuesComplete: aspect.valuesComplete,
     allowedValuesTruncated: values.length > 50,
@@ -402,6 +408,7 @@ function existingEvidence(input: Readonly<{
   now: Date
   requiredSpecificsBatchResolutionDigest: string | null
   requiredSpecificsBatchResolutionCompleteScope: boolean
+  listingPackageConditionId: string | null
 }>) {
   const assessment = record(input.opportunity.assessment)
   const value = record(assessment.canonicalMarketplaceReadinessV1)
@@ -417,6 +424,7 @@ function existingEvidence(input: Readonly<{
     && value.supplierSku === input.opportunity.supplier_sku
     && value.productTruthDigest === input.productTruthDigest
     && value.listingPackageId === input.listingPackageId
+    && (value.conditionId ?? null) === input.listingPackageConditionId
     && (value.requiredSpecificsBatchResolutionDigest ?? null) ===
       input.requiredSpecificsBatchResolutionDigest
     && (!input.requiredSpecificsBatchResolutionDigest
@@ -466,6 +474,14 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
     now,
     requiredSpecificsBatchResolutionDigest,
     requiredSpecificsBatchResolutionCompleteScope,
+    listingPackageConditionId: (() => {
+      const packageData = record(input.listingPackage?.package_data)
+      const contract = ebayConditionContractFromVerifiedFact(
+        packageData.conditionLabel)
+      return contract
+        && text(packageData.conditionId, 20) === contract.conditionId
+        ? contract.conditionId : null
+    })(),
   }) : null
   if (reusable) {
     const truthEvidence = record(record(input.productTruth.sourceEvidence)
@@ -495,8 +511,23 @@ export async function resolveRadarCanonicalMarketplaceReadinessV1(
   const conditionId = conditionContract
     && text(packageData.conditionId, 20) === conditionContract.conditionId
     ? conditionContract.conditionId : ""
+  const conditionAuthority = record(packageData.conditionAuthority)
+  const ownerCertifiedLunaCondition = conditionId
+    && conditionAuthority.contractVersion ===
+      LUNA_OWNER_CERTIFIED_NEW_MERCHANDISE_V1
+    && conditionAuthority.lunaProductId ===
+      input.opportunity.supplier_product_id
+    && conditionAuthority.lunaVariantId ===
+      input.opportunity.supplier_variant_id
+    && conditionAuthority.supplierSku === input.opportunity.supplier_sku
+    && conditionAuthority.categoryId === categoryId
+    && conditionAuthority.conditionId === conditionId
+    && conditionAuthority.factInvented === false
   const conditionSource = conditionId
-    ? "EXISTING_DURABLE_LISTING_PACKAGE_EXACT_OPPORTUNITY_BINDING" : null
+    ? ownerCertifiedLunaCondition
+      ? LUNA_OWNER_CERTIFIED_NEW_MERCHANDISE_V1
+      : "EXISTING_DURABLE_LISTING_PACKAGE_EXACT_OPPORTUNITY_BINDING"
+    : null
 
   const profileRead = await input.supabase.from("ebay_account_policy_profiles")
     .select("account_key,marketplace_id,fulfillment_policy_id,payment_policy_id,return_policy_id,merchant_location_key,verification_source,verified_at,expires_at")

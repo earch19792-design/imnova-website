@@ -2,7 +2,8 @@ import { createHash } from "node:crypto"
 
 export const MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1 =
   "MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1" as const
-export const REQUIRED_SPECIFICS_DIGEST_VERSION = "CANONICAL_JSON_V1" as const
+export const REQUIRED_SPECIFICS_DIGEST_VERSION =
+  "CANONICAL_JSON_V2_POLICY_FALLBACKS" as const
 
 type JsonRecord = Record<string, unknown>
 
@@ -129,6 +130,12 @@ const ABSENCE_MARKERS = new Set([
   "unbranded", "does not apply", "not applicable", "none",
 ])
 
+const EBAY_US_PRODUCT_IDENTIFIER_UNAVAILABLE = "Does not apply" as const
+const EXPLICIT_MPN_FIELD_KEYS = new Set([
+  "mpn", "manufacturer part number", "manufacturer part no",
+  "manufacturer part #", "part number", "part no",
+])
+
 function exactSources(product: RequiredSpecificsBatchProductV1) {
   return {
     TITLE: product.exactProductTitle,
@@ -138,6 +145,28 @@ function exactSources(product: RequiredSpecificsBatchProductV1) {
     VARIANT: Object.entries(product.exactVariantData)
       .map(([name, value]) => `${name}: ${value}`).join("\n"),
   } as const
+}
+
+function explicitManufacturerPartNumber(
+  product: RequiredSpecificsBatchProductV1,
+  definition: RequiredSpecificAspectDefinitionV1,
+) {
+  const structured = [...Object.entries(product.exactSpecs),
+    ...Object.entries(product.exactVariantData)].flatMap(([name, value]) => {
+    if (!EXPLICIT_MPN_FIELD_KEYS.has(key(name))) return []
+    const resolved = officialValue(definition, value)
+    return resolved ? [resolved] : []
+  })
+  const labeledText = [product.exactProductTitle, product.exactDescription]
+    .flatMap((source) => {
+      const match = source.match(
+        /(?:manufacturer\s+part\s+(?:number|no\.?|#)|\bmpn)\s*[:#=-]\s*([a-z0-9][a-z0-9._/-]{1,79})/iu,
+      )
+      const resolved = match ? officialValue(definition, match[1]) : null
+      return resolved ? [resolved] : []
+    })
+  const values = [...new Set([...structured, ...labeledText])]
+  return values.length === 1 ? values[0] : null
 }
 
 function deterministicResolution(
@@ -162,6 +191,20 @@ function deterministicResolution(
       humanReviewRequired: false,
     })
   }
+  if (key(definition.name) === "mpn") {
+    const explicitMpn = explicitManufacturerPartNumber(product, definition)
+    if (explicitMpn) {
+      return Object.freeze({
+        aspectName: definition.name,
+        resolvedValue: explicitMpn,
+        resolutionClass: "EXPLICIT_PRODUCT_TRUTH",
+        sourceEvidence: Object.freeze({ sourceField: "SPECS",
+          sourceExcerpt: explicitMpn, imageIndex: null }),
+        confidence: "HIGH", factInvented: false,
+        humanReviewRequired: false,
+      })
+    }
+  }
   // Brand follows a stricter hierarchy than ordinary categorizations: only an
   // explicit exact Luna/Product Truth field can establish a brand. Otherwise
   // the projection may use eBay's official Unbranded value, without changing
@@ -180,6 +223,26 @@ function deterministicResolution(
       sourceEvidence: Object.freeze({ sourceField: "MARKETPLACE_POLICY",
         sourceExcerpt:
           "OFFICIAL_UNBRANDED_VALUE_WITH_EXACT_LUNA_IDENTITY_AND_NO_EXPLICIT_BRAND",
+        imageIndex: null }),
+      confidence: "HIGH", factInvented: false,
+      humanReviewRequired: false,
+    })
+  }
+  // MPN is a manufacturer identifier, never a supplier SKU, ASIN, barcode, or
+  // model-looking title fragment. eBay US provides a marketplace substitute
+  // when that identifier is unavailable. This closes only the marketplace
+  // projection after exact Product Truth fields have been checked above; it
+  // never writes an MPN into Product Truth.
+  if (key(definition.name) === "mpn"
+      && product.exactProductIdentityProven === true
+      && definition.freeTextAllowed === true) {
+    return Object.freeze({
+      aspectName: definition.name,
+      resolvedValue: EBAY_US_PRODUCT_IDENTIFIER_UNAVAILABLE,
+      resolutionClass: "MARKETPLACE_ALLOWED_FALLBACK",
+      sourceEvidence: Object.freeze({ sourceField: "MARKETPLACE_POLICY",
+        sourceExcerpt:
+          "EBAY_US_PRODUCT_IDENTIFIER_UNAVAILABLE_AFTER_EXACT_MPN_SWEEP",
         imageIndex: null }),
       confidence: "HIGH", factInvented: false,
       humanReviewRequired: false,
@@ -231,16 +294,44 @@ function deterministicResolution(
   return null
 }
 
-function humanReview(aspectName: string): RequiredSpecificResolutionV1 {
+function humanReview(aspectName: string, proposal?: Readonly<{
+  resolvedValue: string
+  sourceEvidence: RequiredSpecificResolutionV1["sourceEvidence"]
+  confidence: RequiredSpecificResolutionV1["confidence"]
+}>): RequiredSpecificResolutionV1 {
   return Object.freeze({
     aspectName,
-    resolvedValue: null,
+    resolvedValue: proposal?.resolvedValue ?? null,
     resolutionClass: "HUMAN_REVIEW",
-    sourceEvidence: Object.freeze({ sourceField: "NONE",
-      sourceExcerpt: null, imageIndex: null }),
-    confidence: "LOW", factInvented: false,
+    sourceEvidence: proposal?.sourceEvidence ?? Object.freeze({
+      sourceField: "NONE", sourceExcerpt: null, imageIndex: null }),
+    confidence: proposal?.confidence ?? "LOW", factInvented: false,
     humanReviewRequired: true,
   })
+}
+
+function validatedAiEvidence(input: Readonly<{
+  stage: "TEXT" | "VISION"
+  product: RequiredSpecificsBatchProductV1
+  evidence: RequiredSpecificResolutionV1["sourceEvidence"]
+  resolutionClass: RequiredSpecificResolutionV1["resolutionClass"]
+}>) {
+  const evidence = input.evidence
+  if (evidence.sourceField === "IMAGE") {
+    return input.stage === "VISION" && evidence.imageIndex !== null
+      && evidence.imageIndex >= 0
+      && evidence.imageIndex < input.product.exactImageUrls.length
+  }
+  if (["TITLE", "DESCRIPTION", "SPECS", "VARIANT"]
+      .includes(evidence.sourceField)) {
+    const sources = exactSources(input.product)
+    const source = sources[evidence.sourceField as keyof typeof sources] ?? ""
+    return Boolean(evidence.sourceExcerpt && key(source).includes(
+      key(evidence.sourceExcerpt)))
+  }
+  return evidence.sourceField === "MARKETPLACE_POLICY"
+    && input.resolutionClass === "MARKETPLACE_ALLOWED_FALLBACK"
+    && input.product.exactImageUrls.length === 0
 }
 
 function validateAiResolution(input: Readonly<{
@@ -254,34 +345,20 @@ function validateAiResolution(input: Readonly<{
     key(entry) === key(definition.name)) || input.raw.factInvented !== false) {
     return humanReview(input.raw.aspectName)
   }
-  if (input.raw.humanReviewRequired || !input.raw.resolvedValue) {
-    return humanReview(definition.name)
-  }
+  if (!input.raw.resolvedValue) return humanReview(definition.name)
   const value = officialValue(definition, input.raw.resolvedValue)
   if (!value) return humanReview(definition.name)
   const evidence = input.raw.sourceEvidence
-  if (input.stage === "TEXT") {
-    if (!["TITLE", "DESCRIPTION", "SPECS", "VARIANT",
-      "MARKETPLACE_POLICY"].includes(evidence.sourceField)) {
-      return humanReview(definition.name)
-    }
-    if (evidence.sourceField !== "MARKETPLACE_POLICY") {
-      const sources = exactSources(input.product)
-      const source = sources[evidence.sourceField as keyof typeof sources] ?? ""
-      if (!evidence.sourceExcerpt || !key(source).includes(
-        key(evidence.sourceExcerpt))) return humanReview(definition.name)
-    } else if (input.product.exactImageUrls.length
-        || input.raw.resolutionClass !== "MARKETPLACE_ALLOWED_FALLBACK") {
-      return humanReview(definition.name)
-    }
-  } else if (evidence.sourceField !== "IMAGE"
-      || evidence.imageIndex === null
-      || evidence.imageIndex < 0
-      || evidence.imageIndex >= input.product.exactImageUrls.length) {
+  if (!validatedAiEvidence({ stage: input.stage, product: input.product,
+    evidence, resolutionClass: input.raw.resolutionClass })) {
     return humanReview(definition.name)
   }
   if (input.raw.resolutionClass === "MARKETPLACE_ALLOWED_FALLBACK"
       && !ABSENCE_MARKERS.has(key(value))) return humanReview(definition.name)
+  if (input.raw.humanReviewRequired) return humanReview(definition.name, {
+    resolvedValue: value, sourceEvidence: evidence,
+    confidence: input.raw.confidence,
+  })
   return Object.freeze({ ...input.raw, aspectName: definition.name,
     resolvedValue: value, factInvented: false as const })
 }
@@ -426,7 +503,8 @@ Readonly<{
     }
     for (const product of stagePending) {
       const current = candidateResults.get(product.radarCandidateId)!
-      const residual = product.unresolvedRequiredAspects.map(humanReview)
+      const residual = product.unresolvedRequiredAspects.map((aspectName) =>
+        humanReview(aspectName))
       candidateResults.set(product.radarCandidateId, Object.freeze({
         ...current,
         resolutions: Object.freeze([

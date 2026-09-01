@@ -96,6 +96,10 @@ export type LunaQuickPickCardV1 = Readonly<{
   aiCallCount: number
   aiAspectsResolvedCount: number
   factInvented: false
+  automaticResolutionExhausted: boolean
+  exactUnresolvedFields: readonly string[]
+  ownerResidualActions: readonly JsonRecord[]
+  nextOwnerAction: "CONFIRM" | "ENTER_FACT" | null
   marketplaceReadinessReady: boolean
   conditionReady: boolean | null
   shippingUsd: number | null
@@ -124,6 +128,13 @@ function number(value: unknown) {
   if (value === null || value === undefined || value === "") return null
   const parsed = typeof value === "number" ? value : Number(value)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function textList(value: unknown, maximum = 50) {
+  return Array.isArray(value) ? [...new Set(value.flatMap((entry) => {
+    const parsed = text(entry, 160)
+    return parsed ? [parsed] : []
+  }))].slice(0, maximum) : []
 }
 
 function digest(value: unknown) {
@@ -651,6 +662,15 @@ function card(input: Partial<LunaQuickPickCardV1> &
     aiCallCount: input.aiCallCount ?? 0,
     aiAspectsResolvedCount: input.aiAspectsResolvedCount ?? 0,
     factInvented: false,
+    automaticResolutionExhausted:
+      input.automaticResolutionExhausted ?? false,
+    exactUnresolvedFields: Object.freeze([
+      ...(input.exactUnresolvedFields ?? []),
+    ]),
+    ownerResidualActions: Object.freeze([
+      ...(input.ownerResidualActions ?? []),
+    ]),
+    nextOwnerAction: input.nextOwnerAction ?? null,
     marketplaceReadinessReady:
       input.marketplaceReadinessReady ?? false,
     conditionReady: input.conditionReady ?? null,
@@ -1199,6 +1219,8 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     const marketTestReview = record(assessment.quickPickMarketTestReviewV1)
     const specificsContinuation = record(
       assessment.quickPickRequiredSpecificsContinuationV1)
+    const ownerResidualActions = rows(
+      specificsContinuation.residualOwnerActions)
     const canonicalMarketplaceReadiness = record(
       assessment.canonicalMarketplaceReadinessV1)
     const specificsResolution = record(
@@ -1209,6 +1231,8 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
     const marketTestReady = marketTestReview.finalDecision ===
       "MARKET_TEST_READY" || row.decision === "MARKET_TEST_READY"
     const reviewReady = listingReady || marketTestReady
+    const autonomousDisposition = text(
+      specificsContinuation.finalDisposition, 120)
     const blockers = Array.isArray(factory.blockers)
       ? factory.blockers.flatMap((value) => text(value, 120)
         ? [String(value)] : []) : []
@@ -1293,7 +1317,8 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
         ? "RUNNING" as const : firstBlocker
           ? "BLOCKED" as const : "RUNNING" as const,
       lastStage: projectedLastStage,
-      disposition: String(row.decision ?? row.queue_status ?? "PARKED"),
+      disposition: autonomousDisposition
+        ?? String(row.decision ?? row.queue_status ?? "PARKED"),
       exactBlocker: reviewReady || waitingForWorker ? null : firstBlocker,
       exactBlockers: reviewReady
         ? Object.freeze([]) : Object.freeze(exactBlockers),
@@ -1324,6 +1349,15 @@ export async function readLunaQuickPickProgressV1(input: Readonly<{
         String(value.resolutionClass).startsWith("AI_") &&
         value.humanReviewRequired !== true).length,
       factInvented: false,
+      automaticResolutionExhausted:
+        specificsContinuation.automaticResolutionExhausted === true,
+      exactUnresolvedFields: textList(
+        specificsContinuation.exactUnresolvedFields),
+      ownerResidualActions: Object.freeze(ownerResidualActions),
+      nextOwnerAction: ownerResidualActions.some((value) =>
+        value.ownerAction === "ENTER_FACT") ? "ENTER_FACT" as const
+        : ownerResidualActions.some((value) => value.ownerAction === "CONFIRM")
+          ? "CONFIRM" as const : null,
       marketplaceReadinessReady,
       conditionReady,
       shippingUsd,

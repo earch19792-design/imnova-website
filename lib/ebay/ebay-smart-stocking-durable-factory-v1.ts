@@ -7,6 +7,10 @@ import { buildSmartStockingLearningProfileV1,
   "./ebay-smart-stocking-learning-profile-v1.ts"
 import type { RadarMarketplaceTaxonomyReaderV1 } from
   "./ebay-radar-canonical-marketplace-readiness-v1"
+import { lunaOwnerCertifiedNewMerchandiseConditionV1 } from
+  // @ts-expect-error Node direct TypeScript tests require the explicit
+  // extension; the production bundler resolves the same source module.
+  "./ebay-manual-listing-domain.ts"
 
 export const SELLER_OS_DETERMINISTIC_FACTORY =
   "SELLER_OS_DETERMINISTIC_FACTORY" as const
@@ -284,6 +288,30 @@ function decisionPackageAuthority(
   return { exact, radarBindingExact, row, profile, entry, decision, economics }
 }
 
+export function lunaQuickPickOwnerCertifiedConditionAuthorityV1(
+  opportunity: JsonRecord,
+  frontier: JsonRecord,
+) {
+  const assessment = record(opportunity.assessment)
+  const intelligence = record(assessment.listingIntelligencePackage)
+  const category = record(intelligence.categoryRecommendation)
+  const quickPick = record(assessment.lunaQuickPickOperationV1)
+  return quickPick.contractVersion ===
+      "QUICK_PICK_DURABLE_OPERATION_REHYDRATION_V1"
+      && quickPick.candidateKey === opportunity.candidate_key
+      && quickPick.lunaProductId === opportunity.supplier_product_id
+      && quickPick.lunaVariantId === opportunity.supplier_variant_id
+      && quickPick.supplierSku === opportunity.supplier_sku
+    ? lunaOwnerCertifiedNewMerchandiseConditionV1({
+      exactProductIdentityProven: exactSupplierIdentity(opportunity, frontier)
+        && exactProductTruth(opportunity).exact,
+      lunaProductId: opportunity.supplier_product_id,
+      lunaVariantId: opportunity.supplier_variant_id,
+      supplierSku: opportunity.supplier_sku,
+      categoryId: category.categoryId,
+    }) : null
+}
+
 function listingSeed(opportunity: JsonRecord, frontier: JsonRecord) {
   const assessment = record(opportunity.assessment)
   const intelligence = record(assessment.listingIntelligencePackage)
@@ -291,12 +319,19 @@ function listingSeed(opportunity: JsonRecord, frontier: JsonRecord) {
   const category = record(intelligence.categoryRecommendation)
   const titleStrategy = record(intelligence.titleStrategy)
   const itemSpecifics = record(intelligence.itemSpecifics)
+  const conditionAuthority =
+    lunaQuickPickOwnerCertifiedConditionAuthorityV1(opportunity, frontier)
   return {
     title: String(intelligence.recommendedTitle ?? titleStrategy.titleFormula
       ?? opportunity.product_title ?? "").slice(0, 80),
     categoryId: text(category.categoryId),
     categoryName: text(category.categoryName),
     aspects: record(itemSpecifics.supplierConfirmed),
+    ...(conditionAuthority ? {
+      conditionId: conditionAuthority.conditionId,
+      conditionLabel: conditionAuthority.conditionLabel,
+      conditionAuthority,
+    } : {}),
     description: String(candidate.description ?? ""),
     imageUrls: strings(candidate.imageUrls, 24),
     pricing: {
@@ -1087,6 +1122,8 @@ export async function materializeSellerOsDeterministicFactoryCandidateV1(
       marketplaceReadinessContinuation?.evidence.categoryReady ?? false,
     conditionId:
       marketplaceReadinessContinuation?.evidence.conditionId ?? null,
+    conditionSource:
+      marketplaceReadinessContinuation?.evidence.conditionSource ?? null,
     conditionReady:
       marketplaceReadinessContinuation?.evidence.conditionReady ?? false,
     requiredItemSpecificsCount:

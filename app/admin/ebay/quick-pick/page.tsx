@@ -54,6 +54,12 @@ type QuickPickCard = {
   requiredItemSpecificsReady: boolean | null
   unresolvedRequiredAspects: string[]
   conditionReady: boolean | null
+  automaticResolutionExhausted: boolean
+  exactUnresolvedFields: string[]
+  ownerResidualActions: Array<{ productField: string
+    bestProposal: string | null; proposalEvidence: string
+    confidence: string; ownerAction: "CONFIRM" | "ENTER_FACT" }>
+  nextOwnerAction: "CONFIRM" | "ENTER_FACT" | null
   deterministicResolvedCount: number
   marketplaceFallbackResolvedCount: number
   aiCallCount: number
@@ -162,7 +168,9 @@ export default function LunaQuickPickPage() {
       requiredItemSpecificsCount: null,
       requiredItemSpecificsSatisfied: null,
       requiredItemSpecificsReady: null, unresolvedRequiredAspects: [],
-      conditionReady: null, deterministicResolvedCount: 0,
+      conditionReady: null, automaticResolutionExhausted: false,
+      exactUnresolvedFields: [], ownerResidualActions: [],
+      nextOwnerAction: null, deterministicResolvedCount: 0,
       marketplaceFallbackResolvedCount: 0, aiCallCount: 0,
       aiAspectsResolvedCount: 0, factInvented: false,
       marketplaceReadinessReady: false,
@@ -323,6 +331,21 @@ export default function LunaQuickPickPage() {
             className="mt-3 space-y-1 rounded-xl border border-amber-200/20 bg-black/20 p-2 text-xs text-amber-50">
             {cardBlockers(card).map((blocker) => <li key={blocker}>{blocker}</li>)}
           </ul>}
+
+          {(card.ownerResidualActions ?? []).length > 0 && <section
+            className="mt-3 rounded-xl border border-sky-200/20 bg-sky-200/[0.06] p-3 text-sm text-sky-50">
+            <strong>{card.nextOwnerAction === "ENTER_FACT"
+              ? "Último dato del owner requerido"
+              : "Confirmación final del owner requerida"}</strong>
+            <ul className="mt-2 space-y-1 text-xs">
+              {(card.ownerResidualActions ?? []).map((action) => <li
+                key={action.productField}>
+                {action.productField}: {action.bestProposal
+                  ? `confirmar “${action.bestProposal}” o editar`
+                  : "ingresar el hecho exacto"}
+              </li>)}
+            </ul>
+          </section>}
 
           {card.state === "READY" && card.dollarCheck && <section
             className={`mt-4 rounded-2xl border p-3 ${card.marketTestReady

@@ -22,6 +22,8 @@ export type SafeListingDefaults = Partial<
 >
 
 export const EBAY_US_NEW_CONDITION_ID = "1000" as const
+export const LUNA_OWNER_CERTIFIED_NEW_MERCHANDISE_V1 =
+  "LUNA_OWNER_CERTIFIED_NEW_MERCHANDISE_V1" as const
 
 const verifiedConditionContracts = new Map([
   ["new", { conditionId: EBAY_US_NEW_CONDITION_ID, canonicalLabel: "New" }],
@@ -44,6 +46,49 @@ export function ebayConditionContractFromVerifiedFact(value: unknown) {
     .trim()
   const contract = verifiedConditionContracts.get(normalized)
   return contract ? { ...contract, marketplaceId: "EBAY_US" as const } : null
+}
+
+/**
+ * Owner-certified supplier catalog policy: Luna Portex sells new merchandise,
+ * not used inventory. The certification is projected only after the caller has
+ * proven the exact Luna product + variant + SKU identity. It is deliberately a
+ * marketplace condition authority and does not manufacture unrelated Product
+ * Truth attributes.
+ */
+export function lunaOwnerCertifiedNewMerchandiseConditionV1(input: Readonly<{
+  exactProductIdentityProven: boolean
+  lunaProductId: unknown
+  lunaVariantId: unknown
+  supplierSku: unknown
+  categoryId: unknown
+}>) {
+  const lunaProductId = stringValue(input.lunaProductId)
+  const lunaVariantId = stringValue(input.lunaVariantId)
+  const supplierSku = stringValue(input.supplierSku)
+  const categoryId = stringValue(input.categoryId)
+  const exact = input.exactProductIdentityProven === true
+    && /^\d{1,30}$/.test(lunaProductId)
+    && /^\d{1,30}$/.test(lunaVariantId)
+    && Boolean(supplierSku)
+    && /^\d{1,20}$/.test(categoryId)
+  if (!exact) return null
+  const condition = ebayConditionContractFromVerifiedFact("New")
+  if (!condition) return null
+  return Object.freeze({
+    contractVersion: LUNA_OWNER_CERTIFIED_NEW_MERCHANDISE_V1,
+    authority: "OWNER_CERTIFIED_LUNA_SUPPLIER_CATALOG_POLICY",
+    supplier: "LUNA_PORTEX",
+    scope: "ALL_EXACT_LUNA_CATALOG_PRODUCTS",
+    lunaProductId,
+    lunaVariantId,
+    supplierSku,
+    marketplaceId: condition.marketplaceId,
+    categoryId,
+    conditionId: condition.conditionId,
+    conditionLabel: condition.canonicalLabel,
+    exactProductIdentityRequired: true,
+    factInvented: false,
+  })
 }
 
 export type ManualListingRegistrationInput = {

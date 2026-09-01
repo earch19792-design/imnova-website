@@ -511,6 +511,12 @@ export function SellerOsOperationalDashboard() {
                     {quickPickBlockerLabel(blocker)}
                   </li>)}
                 </ul>}
+                {card.ownerResidualActions.length > 0 && <p
+                  className="mt-2 text-xs font-bold text-sky-100">
+                  {card.nextOwnerAction === "ENTER_FACT"
+                    ? "Falta un dato exacto del owner"
+                    : "Listo para confirmación final del owner"}
+                </p>}
               </div>
               <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${quickPickStageTone(card.state === "READY" ? "PASS" : card.state)}`}>{card.state}</span>
             </summary>
@@ -534,6 +540,15 @@ export function SellerOsOperationalDashboard() {
                 : ""} · Condition {card.conditionReady === true ? "PASS" :
                   card.conditionReady === false ? "BLOCKED" : "WAITING"}
             </p>}
+            {card.ownerResidualActions.length > 0 && <ul
+              className="mt-2 space-y-1 rounded-xl border border-sky-200/15 bg-sky-200/[0.05] p-2 text-xs text-sky-50">
+              {card.ownerResidualActions.map((action) => <li
+                key={action.productField}>
+                <strong>{action.productField}</strong>: {action.bestProposal
+                  ? `confirmar “${action.bestProposal}” o editar`
+                  : "ingresar el hecho exacto"}
+              </li>)}
+            </ul>}
             {card.exactBlockers.length > 0 && <details className="mt-2">
               <summary className="min-h-11 cursor-pointer py-3 text-xs font-bold text-white/45">
                 Ver evidencia técnica

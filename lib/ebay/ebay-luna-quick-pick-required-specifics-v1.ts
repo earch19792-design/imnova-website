@@ -18,9 +18,24 @@ import type {
 
 export const QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1 =
   "QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1" as const
+export const QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1 =
+  "QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1" as const
 
 const MAXIMUM_QUICK_PICKS = 20
 const REQUIRED_ASPECT_SCOPE = "ALL_OFFICIAL_REQUIRED_ASPECTS" as const
+const STALE_CLAIM_MS = 5 * 60 * 1_000
+const AUTOMATIC_RESOLUTION_CASCADE = Object.freeze([
+  "DURABLE_EXACT_LUNA_STRUCTURED_DATA",
+  "EXACT_PUBLIC_LUNA_PRODUCT_JSON",
+  "EXACT_TEXT_VARIANT_AND_SPECIFICATIONS",
+  "EXISTING_PRODUCT_TRUTH_EVIDENCE",
+  "EXACT_PRODUCT_IMAGES",
+  "DETERMINISTIC_DERIVATION",
+  "MARKETPLACE_ALLOWED_FALLBACK",
+  "AI_MULTIMODAL_RESOLUTION",
+  "EXACT_IDENTITY_EXTERNAL_ENRICHMENT",
+  "OWNER_LAST_MILE",
+])
 type JsonRecord = Record<string, unknown>
 
 function record(value: unknown): JsonRecord {
@@ -52,6 +67,154 @@ function marker(value: unknown) {
   const candidate = record(value)
   return candidate.contractVersion ===
     QUICK_PICK_REQUIRED_SPECIFICS_CONTINUATION_V1 ? candidate : null
+}
+
+function unique(values: string[]) {
+  return [...new Set(values.filter(Boolean))]
+}
+
+function normalized(value: unknown) {
+  return String(value ?? "").normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9]+/g, " ").trim()
+}
+
+function unresolvedFields(value: unknown) {
+  return Array.isArray(value) ? unique(value.flatMap((entry) => {
+    const field = text(entry, 120)
+    return field ? [field] : []
+  })) : []
+}
+
+function sourceClassForResolution(value: JsonRecord) {
+  const resolutionClass = String(value.resolutionClass ?? "")
+  if (resolutionClass === "MARKETPLACE_ALLOWED_FALLBACK") {
+    return "MARKETPLACE_ALLOWED_FALLBACK"
+  }
+  if (resolutionClass.startsWith("AI_")) return "AI_COMPLETION"
+  if (resolutionClass === "EXPLICIT_PRODUCT_TRUTH") {
+    return "EXACT_PRODUCT_TRUTH"
+  }
+  return "DETERMINISTIC_EXACT_EVIDENCE"
+}
+
+export function projectQuickPickAutonomousResolutionV1(input: Readonly<{
+  initial: JsonRecord
+  refreshed: JsonRecord
+  resolutions: readonly JsonRecord[]
+  requiredSpecificsBatchInput: JsonRecord
+  aiCallCountBefore: number
+  aiCallCountAfter: number
+}>) {
+  const initialFields = unique([
+    ...unresolvedFields(input.initial.unsupportedRequiredSpecifics),
+    ...(input.initial.conditionReady === false ? ["Condition"] : []),
+  ])
+  let finalFields = unique([
+    ...unresolvedFields(input.refreshed.unsupportedRequiredSpecifics),
+    ...(input.refreshed.conditionReady === false ? ["Condition"] : []),
+  ])
+  if (!finalFields.length && input.refreshed.marketTestReady !== true
+      && input.refreshed.listingReady !== true) {
+    const blocker = text(input.refreshed.firstBlocker, 160)
+    if (blocker?.startsWith("MARKETPLACE_CATEGORY")) {
+      finalFields = ["eBay Category"]
+    } else if (blocker?.startsWith(
+      "MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN")) {
+      finalFields = ["Required item specifics"]
+    } else if (blocker?.startsWith("MARKETPLACE_")) {
+      finalFields = ["Marketplace readiness"]
+    }
+  }
+  const tags = normalized(record(
+    input.requiredSpecificsBatchInput.exactSpecs).tags)
+  const newInventoryProposalAvailable = (` ${tags} `).includes(
+    " new inventory ")
+  const residualOwnerActions = finalFields.map((field) => {
+    const resolution = input.resolutions.find((entry) =>
+      normalized(entry.aspectName) === normalized(field))
+    const proposal = field === "Condition"
+      ? (newInventoryProposalAvailable ? "New" : null)
+      : text(resolution?.resolvedValue, 500)
+    const evidence = field === "Condition"
+      ? (newInventoryProposalAvailable
+          ? "LUNA_EXACT_CATALOG_TAG_NEW_INVENTORY_NOT_CONDITION_CERTIFICATION"
+          : "LUNA_EXACT_PRODUCT_CONDITION_NOT_DECLARED")
+      : text(record(resolution?.sourceEvidence).sourceExcerpt, 500)
+        ?? "AUTOMATIC_EVIDENCE_CASCADE_EXHAUSTED"
+    return Object.freeze({
+      productField: field,
+      exactUnresolvedField: field,
+      disposition: proposal
+        ? "OWNER_CONFIRMATION_REQUIRED" : "OWNER_FACT_REQUIRED",
+      bestProposal: proposal,
+      proposalEvidence: evidence,
+      confidence: proposal
+        ? (field === "Condition" ? "LOW" : resolution?.confidence ?? "LOW")
+        : "LOW",
+      ownerAction: proposal ? "CONFIRM" : "ENTER_FACT",
+      editAllowed: true,
+      automaticResolutionExhausted: true,
+      factInvented: false,
+    })
+  })
+  const finalDisposition = input.refreshed.marketTestReady === true
+    ? "MARKET_TEST_READY"
+    : input.refreshed.listingReady === true
+      ? "LISTING_READY"
+      : residualOwnerActions.some((entry) =>
+          entry.disposition === "OWNER_FACT_REQUIRED")
+        ? "OWNER_FACT_REQUIRED"
+        : residualOwnerActions.length
+          ? "OWNER_CONFIRMATION_REQUIRED"
+          : "OWNER_FACT_REQUIRED"
+  const resolvedFieldAudits = input.resolutions.filter((entry) =>
+    entry.humanReviewRequired === false && text(entry.resolvedValue, 500))
+    .map((entry) => Object.freeze({
+      aspect: text(entry.aspectName, 120),
+      resolvedValue: text(entry.resolvedValue, 500),
+      sourceClass: sourceClassForResolution(entry),
+      sourceEvidence: record(entry.sourceEvidence),
+      resolutionMethod: entry.resolutionClass,
+      confidence: entry.confidence,
+      factInvented: false,
+    }))
+  return Object.freeze({
+    autonomousResolutionContractVersion:
+      QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1,
+    canon: "AUTOMATE_FIRST_EVIDENCE_FIRST_AI_COMPLETION_OWNER_LAST_MILE_ONLY",
+    automaticResolutionCascade: AUTOMATIC_RESOLUTION_CASCADE,
+    initialUnresolvedFieldCount: initialFields.length,
+    initialUnresolvedFields: Object.freeze(initialFields),
+    finalUnresolvedFieldCount: finalFields.length,
+    exactUnresolvedFields: Object.freeze(finalFields),
+    resolvedFieldAudits: Object.freeze(resolvedFieldAudits),
+    residualOwnerActions: Object.freeze(residualOwnerActions),
+    finalDisposition,
+    automaticResolutionExhausted: true,
+    ownerLastMileOnly: residualOwnerActions.length > 0,
+    canLunaCatalogSemanticsCertifyNewMerchandise:
+      input.refreshed.conditionSource ===
+        "LUNA_OWNER_CERTIFIED_NEW_MERCHANDISE_V1",
+    conditionAuthorityReasonCode:
+      input.refreshed.conditionSource ===
+        "LUNA_OWNER_CERTIFIED_NEW_MERCHANDISE_V1"
+        ? "OWNER_CERTIFIED_LUNA_CATALOG_NEW_MERCHANDISE"
+        : "LUNA_CATALOG_GLOBAL_CONDITION_SEMANTICS_UNPROVEN",
+    conditionId: text(input.refreshed.conditionId, 20),
+    conditionSource: text(input.refreshed.conditionSource, 120),
+    conditionReadyAfter: input.refreshed.conditionReady === true,
+    aiCallCountBefore: input.aiCallCountBefore,
+    aiCallCountIncrement: Math.max(0,
+      input.aiCallCountAfter - input.aiCallCountBefore),
+    aiCallCountAfter: input.aiCallCountAfter,
+    externalExactIdentityResolvedCount: 0,
+    metadataOnlyDoNotList: false,
+    metadataFalseRejectionCount: 0,
+    hiddenBlockerCount: 0,
+    factInvented: false,
+    marketplaceWrites: 0,
+  })
 }
 
 export function durableQuickPickRequiredSpecificsCandidateV1(row: unknown) {
@@ -199,7 +362,7 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
   if (read.error) throw new Error("LUNA_QUICK_PICK_SPECIFICS_READ_FAILED")
   const claimed: Array<Readonly<{ row: JsonRecord, candidate: NonNullable<
     ReturnType<typeof durableQuickPickRequiredSpecificsCandidateV1>>,
-    aiExhausted: boolean }>> = []
+    aiExhausted: boolean, aiCallCountBefore: number }>> = []
   for (const row of rows(read.data)) {
     const assessment = record(row.assessment)
     const factory = record(assessment.sellerOsDeterministicFactory)
@@ -212,6 +375,9 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     const candidate = durableQuickPickRequiredSpecificsCandidateV1(row)
     const blockedBySpecifics = blockers.some((blocker) => text(blocker, 120)
       ?.startsWith("MARKETPLACE_REQUIRED_ITEM_SPECIFICS_UNPROVEN"))
+    const blockedByCondition = blockers.some((blocker) => text(blocker, 120)
+      ?.startsWith("MARKETPLACE_CONDITION_NOT_READY"))
+    const metadataBlocked = blockedBySpecifics || blockedByCondition
     const legacyScopeReconciliation = Boolean(currentMarker
       && currentMarker.completedAt
       && (currentMarker.aspectScope !== REQUIRED_ASPECT_SCOPE
@@ -222,11 +388,19 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
           String(currentMarker.resolverReasonCode ?? ""))
           && Number(currentMarker.scopeReconciliationRetryCount ?? 0) < 2))
       && blockedBySpecifics)
-    if (!candidate || !blockedBySpecifics
-      || (currentMarker && !legacyScopeReconciliation)
-      || (!legacyScopeReconciliation && existingResolution.contractVersion ===
-        MARKETPLACE_REQUIRED_SPECIFICS_BATCH_RESOLUTION_V1)) continue
+    const autonomousUpgradeRequired = Boolean(currentMarker
+      && currentMarker.autonomousResolutionContractVersion !==
+        QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1)
+    const claimedAt = Date.parse(String(currentMarker?.autonomousClaimedAt
+      ?? currentMarker?.claimedAt ?? ""))
+    const incompleteClaimStale = Boolean(currentMarker
+      && !currentMarker.completedAt && Number.isFinite(claimedAt)
+      && Date.now() - claimedAt >= STALE_CLAIM_MS)
+    if (!candidate || !metadataBlocked
+      || (currentMarker && !legacyScopeReconciliation
+        && !autonomousUpgradeRequired && !incompleteClaimStale)) continue
     const now = new Date().toISOString()
+    const aiCallCountBefore = Number(currentMarker?.aiCallCount ?? 0)
     const nextMarker = currentMarker ? {
       ...currentMarker, aspectScope: REQUIRED_ASPECT_SCOPE,
       reconciliationClaimedAt: now,
@@ -239,6 +413,15 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       opportunisticBatching: true, maximumAiCallsPerQuickPick: 1,
       aiCallCount: 0, factInvented: false, marketplaceWrites: 0,
     }
+    Object.assign(nextMarker, {
+      autonomousResolutionContractVersion:
+        QUICK_PICK_AUTONOMOUS_BLOCKER_RESOLUTION_V1,
+      autonomousClaimedAt: now,
+      automaticResolutionExhausted: false,
+      finalDisposition: "RESOLVING",
+      completedAt: null,
+      aiCallCountBefore,
+    })
     const claim = await input.supabase.from("ebay_luna_opportunity_queue")
       .update({ assessment: { ...assessment,
         quickPickRequiredSpecificsContinuationV1: nextMarker }, updated_at: now })
@@ -252,6 +435,7 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     if (!claim.error && claim.data) claimed.push(Object.freeze({
       row: record(claim.data), candidate,
       aiExhausted: Number(nextMarker.aiCallCount ?? 0) >= 1,
+      aiCallCountBefore,
     }))
   }
   if (!claimed.length) return Object.freeze({ attempted: candidateKeys.length,
@@ -312,7 +496,8 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
       if (aiEligible.length) resolvedBatches.push(
         await resolveMarketplaceRequiredSpecificsBatchV1({
           products: aiEligible, aiResolver: guardedAiResolver,
-          aiStages: ["TEXT"],
+          aiStages: [aiEligible.some((product) =>
+            product.exactImageUrls.length > 0) ? "VISION" : "TEXT"],
         }))
       if (aiExhausted.length) resolvedBatches.push(
         await resolveMarketplaceRequiredSpecificsBatchV1({
@@ -335,6 +520,8 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
   let reevaluated = 0
   const after = new Map<string, Awaited<ReturnType<
     typeof materializeSellerOsDeterministicFactoryCandidateV1>>>()
+  const autonomousResults: Array<ReturnType<
+    typeof projectQuickPickAutonomousResolutionV1>> = []
   for (const entry of claimed) {
     const materialized = await materializeSellerOsDeterministicFactoryCandidateV1({
       supabase: input.supabase, accountKey: input.accountKey,
@@ -361,6 +548,15 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     const resolution = record(
       assessment.marketplaceRequiredSpecificsBatchResolutionV1)
     const resolutions = rows(resolution.resolutions)
+    const aiCallCountAfter = Number(current.aiCallCount ?? 0)
+    const autonomous = projectQuickPickAutonomousResolutionV1({
+      initial: record(initial), refreshed: record(refreshed), resolutions,
+      requiredSpecificsBatchInput:
+        record(refreshed?.requiredSpecificsBatchInput),
+      aiCallCountBefore: entry.aiCallCountBefore,
+      aiCallCountAfter,
+    })
+    autonomousResults.push(autonomous)
     const deterministicResolvedCount = resolutions.filter((value) =>
       ["EXPLICIT_PRODUCT_TRUTH", "DETERMINISTIC_DERIVATION"]
         .includes(String(value.resolutionClass)) &&
@@ -393,7 +589,14 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
           marketTestReady: refreshed?.marketTestReady === true,
           listingReady: refreshed?.listingReady === true,
           exactBlocker: actionable(refreshed?.firstBlocker),
-          resolverStatus: resolverReasonCode ? "BLOCKED" : "COMPLETED",
+          conditionReady: refreshed?.conditionReady === true,
+          requiredItemSpecificsReady:
+            refreshed?.requiredItemSpecificsReady === true,
+          ...autonomous,
+          resolverStatus: resolverReasonCode
+            ? "COMPLETED_WITH_SAFE_RESIDUAL"
+            : autonomous.residualOwnerActions.length
+              ? "COMPLETED_WITH_OWNER_RESIDUAL" : "COMPLETED",
           resolverReasonCode, factInvented: false, marketplaceWrites: 0,
         } } })
       .eq("id", row.id).eq("candidate_key", row.candidate_key)
@@ -407,6 +610,7 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
   }
   return Object.freeze({ attempted: candidateKeys.length,
     claimed: claimed.length,
+    productsEvaluated: autonomousResults.length,
     requiredItemSpecificsCount: pending.reduce((sum, product) =>
       sum + product.unresolvedRequiredAspects.length, 0),
     deterministicResolvedCount:
@@ -417,6 +621,31 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
         total + batch.marketplaceFallbackResolvedCount, 0),
     aiCallCount: resolvedBatches.reduce((total, batch) =>
       total + batch.aiCallCount, 0),
+    initialUnresolvedFieldCount: autonomousResults.reduce((sum, result) =>
+      sum + result.initialUnresolvedFieldCount, 0),
+    finalUnresolvedFieldCount: autonomousResults.reduce((sum, result) =>
+      sum + result.finalUnresolvedFieldCount, 0),
+    ownerConfirmationRequiredCount: autonomousResults.filter((result) =>
+      result.finalDisposition === "OWNER_CONFIRMATION_REQUIRED").length,
+    ownerFactRequiredCount: autonomousResults.filter((result) =>
+      result.finalDisposition === "OWNER_FACT_REQUIRED").length,
+    metadataOnlyDoNotListCount: autonomousResults.filter((result) =>
+      result.metadataOnlyDoNotList).length,
+    marketTestReadyCount: autonomousResults.filter((result) =>
+      result.finalDisposition === "MARKET_TEST_READY").length,
+    listingReadyCount: autonomousResults.filter((result) =>
+      result.finalDisposition === "LISTING_READY").length,
+    ownerTouchesRequiredTotal: autonomousResults.filter((result) =>
+      result.ownerLastMileOnly).length,
+    automaticResolutionExhaustedForAllResiduals: autonomousResults.every(
+      (result) => result.automaticResolutionExhausted),
+    autonomousCompletionRate: (() => {
+      const initial = autonomousResults.reduce((sum, result) =>
+        sum + result.initialUnresolvedFieldCount, 0)
+      const final = autonomousResults.reduce((sum, result) =>
+        sum + result.finalUnresolvedFieldCount, 0)
+      return initial > 0 ? (initial - final) / initial : 1
+    })(),
     candidateReadinessReevaluated: reevaluated,
     resolverReasonCode, marketplaceWrites: 0 as const })
 }

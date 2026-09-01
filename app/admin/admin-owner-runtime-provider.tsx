@@ -41,6 +41,16 @@ export type OwnerRuntimeQuickPickCard = Readonly<{
   requiredItemSpecificsReady: boolean | null
   unresolvedRequiredAspects: readonly string[]
   conditionReady: boolean | null
+  automaticResolutionExhausted: boolean
+  exactUnresolvedFields: readonly string[]
+  ownerResidualActions: readonly Readonly<{
+    productField: string
+    bestProposal: string | null
+    proposalEvidence: string
+    confidence: string
+    ownerAction: "CONFIRM" | "ENTER_FACT"
+  }>[]
+  nextOwnerAction: "CONFIRM" | "ENTER_FACT" | null
   stages: Readonly<Record<string, OwnerRuntimeQuickPickStageState>>
 }>
 
@@ -124,6 +134,23 @@ function stageState(value: unknown): OwnerRuntimeQuickPickStageState {
     ? normalized as OwnerRuntimeQuickPickStageState : "WAITING"
 }
 
+function ownerResidualActions(value: unknown) {
+  return Object.freeze((Array.isArray(value) ? value : []).flatMap((entry) => {
+    const action = record(entry)
+    const productField = nullableText(action.productField, 120)
+    const ownerAction = String(action.ownerAction ?? "")
+    if (!productField || !["CONFIRM", "ENTER_FACT"].includes(ownerAction)) {
+      return []
+    }
+    return [Object.freeze({ productField,
+      bestProposal: nullableText(action.bestProposal, 300),
+      proposalEvidence: nullableText(action.proposalEvidence, 500)
+        ?? "AUTOMATIC_EVIDENCE_CASCADE_EXHAUSTED",
+      confidence: nullableText(action.confidence, 20) ?? "LOW",
+      ownerAction: ownerAction as "CONFIRM" | "ENTER_FACT" })]
+  }).slice(0, 20))
+}
+
 export function parseOwnerRuntimeQuickPickCard(value: unknown):
   OwnerRuntimeQuickPickCard | null {
   const item = record(value)
@@ -157,6 +184,13 @@ export function parseOwnerRuntimeQuickPickCard(value: unknown):
     unresolvedRequiredAspects:
       boundedTextList(item.unresolvedRequiredAspects),
     conditionReady: nullableBoolean(item.conditionReady),
+    automaticResolutionExhausted:
+      item.automaticResolutionExhausted === true,
+    exactUnresolvedFields: boundedTextList(item.exactUnresolvedFields),
+    ownerResidualActions: ownerResidualActions(item.ownerResidualActions),
+    nextOwnerAction: ["CONFIRM", "ENTER_FACT"].includes(
+      String(item.nextOwnerAction ?? ""))
+      ? item.nextOwnerAction as "CONFIRM" | "ENTER_FACT" : null,
     stages: Object.freeze(stages) })
 }
 
