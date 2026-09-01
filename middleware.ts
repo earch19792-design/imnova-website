@@ -1,5 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server"
-import { getBlockedEbayProResponsePayload, getEbayProRuntimeBoundary } from "@/lib/ebay/environment-boundaries"
+import {
+  getBlockedEbayProResponsePayload,
+  getEbayProRuntimeBoundary,
+  isEbayOAuthNodeGuardedCeremonyPath,
+} from "@/lib/ebay/environment-boundaries"
 
 const ADMIN_COOKIE = "seller_os_admin_session"
 const ADMIN_TOKEN_VERIFY_TIMEOUT_MS = 15_000
@@ -81,7 +85,9 @@ export async function middleware(request: NextRequest) {
   if (legacyEntry) return NextResponse.redirect(new URL(legacyEntry[1], request.url), 308)
 
   const boundary = getEbayProRuntimeBoundary({ pathname, method: request.method })
-  if (boundary.blocked) {
+  const nodeGuardedOAuthCeremony =
+    isEbayOAuthNodeGuardedCeremonyPath(pathname)
+  if (boundary.blocked && !nodeGuardedOAuthCeremony) {
     if (pathname.startsWith("/api/")) return NextResponse.json(getBlockedEbayProResponsePayload(pathname), { status: 403 })
     return NextResponse.redirect(new URL("/admin", request.url), 307)
   }

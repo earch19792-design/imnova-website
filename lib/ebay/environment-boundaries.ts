@@ -67,6 +67,11 @@ const LEGACY_EBAY_PRO_PATHS = [
   "/api/admin/ebay/oauth",
 ] as const
 
+const EBAY_OAUTH_NODE_GUARDED_CEREMONY_PATHS = [
+  "/api/admin/ebay/publication-oauth/start",
+  "/api/admin/ebay/monitor/seller-oauth-reauth",
+] as const
+
 export const EBAY_PRO_BLOCKED_IN_PRODUCTION_PATHS = [
   ...EBAY_SELLER_OS_UI_PATHS,
   ...EBAY_SELLER_OS_API_PATHS,
@@ -196,6 +201,15 @@ export function isEbaySellerOsPath(pathname: string | null | undefined) {
   const cleanPathname = pathname?.trim() || "/"
   return [...EBAY_SELLER_OS_UI_PATHS, ...EBAY_SELLER_OS_API_PATHS]
     .some((surface) => pathMatches(cleanPathname, surface))
+}
+
+export function isEbayOAuthNodeGuardedCeremonyPath(
+  pathname: string | null | undefined,
+) {
+  const cleanPathname = pathname?.trim() || "/"
+  return EBAY_OAUTH_NODE_GUARDED_CEREMONY_PATHS.includes(
+    cleanPathname as typeof EBAY_OAUTH_NODE_GUARDED_CEREMONY_PATHS[number],
+  )
 }
 
 function runtimeState(input: EbayProBoundaryInput) {
