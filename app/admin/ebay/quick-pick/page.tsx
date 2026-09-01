@@ -311,6 +311,6 @@ export default function LunaQuickPickPage() {
         </div>}
       </section>)}
     </div>
-    <SellerOsMobileNav active="listings" />
+    <SellerOsMobileNav active="quick-pick" />
   </main>
 }

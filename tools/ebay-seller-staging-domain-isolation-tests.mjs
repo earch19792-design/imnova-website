@@ -89,8 +89,8 @@ test("unauthorized admin pages redirect server-side with a safe internal return 
 test("canonical navigation has intent-based areas and one source", () => {
   const navigation = read("lib/seller-os/navigation.ts")
   const mobile = read("app/admin/ebay/components/seller-os-mobile-nav.tsx")
-  const ids = [...navigation.matchAll(/id: "(monitor|listings|opportunities|experiments|inventory|orders|decisions|learning|system-status)"/g)].map((match) => match[1])
-  assert.deepEqual(ids, ["monitor", "listings", "opportunities", "experiments", "inventory",
+  const ids = [...navigation.matchAll(/id: "(monitor|quick-pick|listings|opportunities|experiments|inventory|orders|decisions|learning|system-status)"/g)].map((match) => match[1])
+  assert.deepEqual(ids, ["monitor", "quick-pick", "opportunities", "listings", "experiments", "inventory",
     "orders", "decisions", "learning", "system-status"])
   assert.match(mobile, /SELLER_OS_MOBILE_NAVIGATION\.map/)
   assert.match(navigation, /objective:/)

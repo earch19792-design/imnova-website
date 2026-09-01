@@ -50,6 +50,19 @@ function canonicalBindControlVisible(connected: boolean,
   return connected && canonicalBindingStatusReady && !canonicalDestinationBound
 }
 
+function dashboardWorkerStatus(connected: boolean, running: boolean,
+  canonicalBindingStatusReady: boolean, canonicalDestinationBound: boolean,
+  canonicalDestinationMismatch: boolean, status: string, error: string) {
+  if (running) return "WORKING" as const
+  if (connected && canonicalBindingStatusReady && canonicalDestinationBound &&
+      !canonicalDestinationMismatch) return "READY" as const
+  if (connected || /CONNECT|PING|RECONNECT|INITIAL|BIND/.test(status)) {
+    return "WAITING" as const
+  }
+  if (error || /FAIL|ERROR|UNAVAILABLE/.test(status)) return "DEGRADED" as const
+  return "OFFLINE" as const
+}
+
 type ExternalPort = {
   postMessage: (message: unknown) => void
   disconnect: () => void
@@ -1853,6 +1866,18 @@ export default function LunaShippingCapturePage() {
       port?.disconnect()
     }
   }, [])
+
+  useEffect(() => {
+    if (window.parent === window) return
+    window.parent.postMessage({
+      type: "SELLER_OS_LUNA_WORKER_STATUS_V1",
+      status: dashboardWorkerStatus(connected, running,
+        canonicalBindingStatusReady, canonicalDestinationBound,
+        canonicalDestinationMismatch, status, error),
+      autoClaimEnabled: true,
+    }, window.location.origin)
+  }, [canonicalBindingStatusReady, canonicalDestinationBound,
+    canonicalDestinationMismatch, connected, error, running, status])
 
   const newestTrace = liveTraceEvents.at(-1) ?? null
   const lastSuccessfulTrace = [...liveTraceEvents].reverse()

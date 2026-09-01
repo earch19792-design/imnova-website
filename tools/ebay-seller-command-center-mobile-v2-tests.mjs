@@ -31,7 +31,7 @@ const normalizeEstimateOnlyShippingMigration = readFileSync(
 )
 
 test("mobile command center centralizes the five primary Seller OS intentions", () => {
-  for (const label of ["Inicio", "Publicaciones", "Oportunidades", "Inventario", "Estado del sistema"]) {
+  for (const label of ["Hoy", "Quick Pick", "Oportunidades", "Listings", "Experimentos"]) {
     assert.match(canonicalNavigation, new RegExp(label))
   }
   assert.match(mobileNav, /SELLER_OS_MOBILE_NAVIGATION\.map/)
