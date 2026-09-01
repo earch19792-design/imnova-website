@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto"
 
-import { verifyEbayDraftOnlyPreflightSnapshot } from "./ebay-draft-only-preflight-snapshot"
+import {
+  resolveEbayDraftOnlyPreflightSnapshotSecret,
+  verifyEbayDraftOnlyPreflightSnapshot,
+} from "./ebay-draft-only-preflight-snapshot"
 import {
   canonicalEbayPackageSku,
   isCanonicalEbayPackageSku,
@@ -155,12 +158,6 @@ export function ebayDraftOnlyEconomicsConfig(
 
 function unique(values: string[]) {
   return [...new Set(values)]
-}
-
-function preflightSnapshotSecret(target: EbayDraftOnlyTarget) {
-  return target === "PRODUCTION"
-    ? process.env.EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET?.trim() || ""
-    : process.env.EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_SNAPSHOT_SECRET?.trim() || ""
 }
 
 function canonicalize(value: unknown): unknown {
@@ -873,7 +870,7 @@ export function evaluateEbayDraftOnlyReadiness(input: DraftOnlyReadinessInput) {
       returnPolicyId: text(policies.returnPolicyId),
       merchantLocationKey: text(configuration.merchantLocationKey),
     },
-    preflightSnapshotSecret(target),
+    resolveEbayDraftOnlyPreflightSnapshotSecret(target).secret,
     now,
   )
   if (!snapshotVerification.valid) blockers.push(snapshotVerification.blocker)

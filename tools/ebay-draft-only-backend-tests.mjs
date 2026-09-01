@@ -27,6 +27,7 @@ const skuSource = readFileSync(
 function embedSnapshotModule(source) {
   const withoutImport = source
     .replace('import { verifyEbayDraftOnlyPreflightSnapshot } from "./ebay-draft-only-preflight-snapshot"\n', "")
+    .replace(/import \{ resolveEbayDraftOnlyPreflightSnapshotSecret \} from\n  "\.\/ebay-draft-only-preflight-snapshot"\n/g, "")
     .replace(/import \{\n  calculateEbayUnitEconomics,\n  DEFAULT_EBAY_UNIT_ECONOMICS_CONFIG,\n  normalizeEbayUnitEconomicsConfig,\n  type EbayUnitEconomicsConfig,\n\} from "\.\/ebay-unit-economics"\n/, "")
     .replace(/import \{\n  issueEbayDraftOnlyPreflightSnapshot,\n  verifyEbayDraftOnlyPreflightSnapshot,\n\} from "\.\/ebay-draft-only-preflight-snapshot"\n/, "")
     .replace('import { getEbayDraftWriteEnvironmentBoundary } from "./environment-boundaries"\n', "")
@@ -1648,6 +1649,46 @@ test("signed eBay preflight snapshots expire after five minutes and are bound to
   assert.equal(snapshotModule.verifyEbayDraftOnlyPreflightSnapshot(token, expected, SNAPSHOT_SECRET, new Date(now.getTime() + 300_001)).blocker, "EBAY_PREFLIGHT_SNAPSHOT_STALE")
   assert.equal(snapshotModule.verifyEbayDraftOnlyPreflightSnapshot(token, { ...expected, paymentPolicyId: "other" }, SNAPSHOT_SECRET, now).blocker, "EBAY_PREFLIGHT_SNAPSHOT_BINDING_MISMATCH")
   assert.equal(snapshotModule.verifyEbayDraftOnlyPreflightSnapshot(`${token}x`, expected, SNAPSHOT_SECRET, now).valid, false)
+})
+
+test("preflight generator and readiness verifier share the canonical HMAC secret authority", async () => {
+  const gateway = await importTypeScript(gatewaySource)
+  const readiness = await importTypeScript(readinessSource)
+  const original = { ...process.env }
+  try {
+    delete process.env.EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET
+    process.env.EBAY_DRAFT_ONLY_TARGET = "PRODUCTION"
+    process.env.EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_HMAC_SECRET =
+      SNAPSHOT_SECRET
+    const authority = snapshotModule
+      .resolveEbayDraftOnlyPreflightSnapshotSecret("PRODUCTION")
+    assert.equal(authority.present, true)
+    assert.equal(authority.authorityId,
+      "EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_HMAC_SECRET")
+    const gatewayConfig = gateway.getEbayDraftOnlyGatewayConfig()
+    assert.equal(gatewayConfig.snapshotConfigured, true)
+    assert.equal(gatewayConfig.snapshotSecret, SNAPSHOT_SECRET)
+
+    const input = validInput()
+    input.target = "PRODUCTION"
+    input.accountFingerprint = PRODUCTION_FINGERPRINT
+    input.draftConfiguration.ebayPreflightSnapshot =
+      snapshotModule.issueEbayDraftOnlyPreflightSnapshot({
+        target: "PRODUCTION",
+        accountFingerprint: PRODUCTION_FINGERPRINT,
+        marketplaceId: "EBAY_US",
+        fulfillmentPolicyId: "fulfillment_1",
+        paymentPolicyId: "payment_1",
+        returnPolicyId: "return_1",
+        merchantLocationKey: "LUNA_PORTEX_US",
+      }, authority.secret, input.now)
+    const result = readiness.evaluateEbayDraftOnlyReadiness(input)
+    assert.equal(result.ready, true)
+    assert.equal(result.blockers.includes(
+      "EBAY_PREFLIGHT_SNAPSHOT_SECRET_MISSING"), false)
+  } finally {
+    process.env = original
+  }
 })
 
 test("route requires a human Admin, exact approval, fresh revalidation and unknown-offer quarantine", () => {

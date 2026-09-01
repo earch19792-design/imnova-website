@@ -2,6 +2,9 @@ import { createHmac, timingSafeEqual } from "node:crypto"
 
 export type EbayDraftOnlyPreflightTarget = "SANDBOX" | "PRODUCTION"
 
+type PreflightSecretEnvironment = Readonly<Record<string,
+  string | undefined>>
+
 export const EBAY_DRAFT_ONLY_PREFLIGHT_MAX_AGE_MS = 5 * 60_000
 const SNAPSHOT_VERSION = 1
 
@@ -43,6 +46,27 @@ function fingerprint(value: unknown) {
 
 function secretReady(secret: string) {
   return typeof secret === "string" && secret.length >= 32
+}
+
+export function resolveEbayDraftOnlyPreflightSnapshotSecret(
+  target: EbayDraftOnlyPreflightTarget,
+  environment: PreflightSecretEnvironment = process.env,
+) {
+  const canonicalBindingName = target === "PRODUCTION"
+    ? "EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_HMAC_SECRET"
+    : "EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_HMAC_SECRET"
+  const legacyBindingName = target === "PRODUCTION"
+    ? "EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET"
+    : "EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_SNAPSHOT_SECRET"
+  const canonicalSecret = environment[canonicalBindingName]?.trim() || ""
+  const legacySecret = environment[legacyBindingName]?.trim() || ""
+  const secret = canonicalSecret || legacySecret
+  return Object.freeze({ secret,
+    authorityId: canonicalSecret ? canonicalBindingName
+      : legacySecret ? legacyBindingName : null,
+    canonicalBindingName, legacyBindingName,
+    present: secretReady(secret),
+  })
 }
 
 function encoded(value: string) {

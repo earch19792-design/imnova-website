@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 import type { JsonRecord } from "./ebay-draft-only-readiness"
 import {
   issueEbayDraftOnlyPreflightSnapshot,
+  resolveEbayDraftOnlyPreflightSnapshotSecret,
   verifyEbayDraftOnlyPreflightSnapshot,
 } from "./ebay-draft-only-preflight-snapshot"
 import { isCanonicalEbayPackageSku } from "./ebay-sku"
@@ -207,13 +208,8 @@ export function getEbayDraftOnlyGatewayConfig(): GatewayConfig {
       || process.env.EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_ACCOUNT_FINGERPRINT
     : process.env.EBAY_DRAFT_ONLY_SANDBOX_EXPECTED_CREDENTIAL_FINGERPRINT
       || process.env.EBAY_DRAFT_ONLY_SANDBOX_EXPECTED_ACCOUNT_FINGERPRINT)
-  const snapshotSecret = target === "PRODUCTION"
-    ? process.env.EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_HMAC_SECRET?.trim()
-      || process.env.EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET?.trim()
-      || ""
-    : process.env.EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_HMAC_SECRET?.trim()
-      || process.env.EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_SNAPSHOT_SECRET?.trim()
-      || ""
+  const snapshotSecret = resolveEbayDraftOnlyPreflightSnapshotSecret(target)
+    .secret
   const oauthConfigured = Boolean(clientId && clientSecret && refreshToken)
   const derivedExpectedFingerprint = accountFingerprint(target, expectedUserId)
   const boundAccountFingerprint = expectedAccountFingerprint || derivedExpectedFingerprint
@@ -1756,14 +1752,14 @@ export function ebayDraftOnlyRuntimeStatus() {
         "EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID",
         "EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET",
         "EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN",
-        "EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_SNAPSHOT_SECRET",
+        "EBAY_DRAFT_ONLY_PRODUCTION_PREFLIGHT_HMAC_SECRET",
         "EBAY_DRAFT_ONLY_PRODUCTION_ALLOWED_GIT_BRANCH",
       ]
       : [
         "EBAY_DRAFT_ONLY_SANDBOX_CLIENT_ID",
         "EBAY_DRAFT_ONLY_SANDBOX_CLIENT_SECRET",
         "EBAY_DRAFT_ONLY_SANDBOX_REFRESH_TOKEN",
-        "EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_SNAPSHOT_SECRET",
+        "EBAY_DRAFT_ONLY_SANDBOX_PREFLIGHT_HMAC_SECRET",
       ],
     accountFingerprint: config.accountFingerprint || null,
     requiredIdentityBindingOneOf: config.target === "PRODUCTION"
