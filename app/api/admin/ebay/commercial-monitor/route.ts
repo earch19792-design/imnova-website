@@ -40,6 +40,8 @@ import {
 } from "@/lib/supabase-admin"
 import { getSellerOsDashboardCommercialHealthV1 } from
   "@/lib/ebay/seller-os-dashboard-commercial-health-v1"
+import { getEbayProRuntimeBoundary } from
+  "@/lib/ebay/environment-boundaries"
 import {
   REVERSIBLE_OOS_TARGET_ITEM_ID,
   REVERSIBLE_OOS_TARGET_SKU,
@@ -101,6 +103,13 @@ function productionBlocked() {
   return process.env.VERCEL_ENV === "production"
 }
 
+function dashboardHealthReadBlocked() {
+  return getEbayProRuntimeBoundary({
+    pathname: "/api/admin/ebay/commercial-monitor",
+    method: "GET",
+  }).isProductionRuntime
+}
+
 function uuid(value: unknown) {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
     ? value
@@ -145,9 +154,9 @@ export async function GET(req: Request) {
     { success: false, error: validation.error ?? "admin_forbidden" },
     { status: validation.status || 403 },
   )
-  if (productionBlocked()) return NextResponse.json({
+  if (dashboardHealthReadBlocked()) return NextResponse.json({
     success: false,
-    error: "COMMERCIAL_MONITOR_PREVIEW_ONLY",
+    error: "COMMERCIAL_MONITOR_DASHBOARD_READ_BOUNDARY_BLOCKED",
     safety: { productionUnchanged: true, ebayWriteUsed: false },
   }, { status: 403 })
   try {
