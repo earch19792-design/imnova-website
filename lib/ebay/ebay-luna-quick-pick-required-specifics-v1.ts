@@ -213,9 +213,10 @@ export async function continueLunaQuickPickRequiredSpecificsV1(input: Readonly<{
     const legacyScopeReconciliation = Boolean(currentMarker
       && currentMarker.completedAt
       && (currentMarker.aspectScope !== REQUIRED_ASPECT_SCOPE
-        || (currentMarker.resolverReasonCode ===
-            "LUNA_QUICK_PICK_SPECIFICS_BATCH_INPUT_INVALID"
-          && Number(currentMarker.scopeReconciliationRetryCount ?? 0) < 1))
+        || (["LUNA_QUICK_PICK_SPECIFICS_BATCH_INPUT_INVALID",
+          "REQUIRED_SPECIFICS_AI_CONFIGURATION_MISSING"].includes(
+          String(currentMarker.resolverReasonCode ?? ""))
+          && Number(currentMarker.scopeReconciliationRetryCount ?? 0) < 2))
       && blockedBySpecifics)
     if (!candidate || !blockedBySpecifics
       || (currentMarker && !legacyScopeReconciliation)

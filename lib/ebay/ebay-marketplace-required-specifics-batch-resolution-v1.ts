@@ -405,11 +405,24 @@ Readonly<{
       }
       return unresolvedForNext
     }
-    const aiStages = input.aiStages?.length
-      ? [...new Set(input.aiStages)] : ["TEXT", "VISION"] as const
+    const aiStages = input.aiStages === undefined
+      ? ["TEXT", "VISION"] as const : [...new Set(input.aiStages)]
     let stagePending = pending
     for (const stage of aiStages) {
       stagePending = await applyAi(stage, stagePending)
+    }
+    for (const product of stagePending) {
+      const current = candidateResults.get(product.radarCandidateId)!
+      const residual = product.unresolvedRequiredAspects.map(humanReview)
+      candidateResults.set(product.radarCandidateId, Object.freeze({
+        ...current,
+        resolutions: Object.freeze([
+          ...current.resolutions.filter((entry) => !residual.some(
+            (replacement) => key(replacement.aspectName) ===
+              key(entry.aspectName))),
+          ...residual,
+        ]),
+      }))
     }
     batchSummaries.push(Object.freeze({
       marketplaceId: products[0].marketplaceId,
