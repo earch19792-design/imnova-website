@@ -54,14 +54,17 @@ not be configured for Commercial Orders.
 
 ## Draft Production target
 
-“Production target” means eBay Production credentials used from an authorized
-Vercel Preview. A Vercel Production deployment is always blocked.
+“Production target” means isolated eBay Production credentials used from an
+authorized Vercel Preview or from the separately certified Seller OS dedicated
+preprod project. Customer Production remains blocked. Dedicated preprod must
+match its exact Vercel project identity, production URL, staging runtime intent,
+staging Supabase project, authorized Git branch, and both write kill switches.
 
 | Variable | Purpose | Secret | Environment / scope | Safe default | Consumers and precedence |
 |---|---|---:|---|---|---|
-| `EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID` | Isolated Production OAuth client | No | Authorized Preview only | Missing blocks | Never falls back to generic/Sandbox |
-| `EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET` | Isolated Production OAuth secret | Yes | Server/Preview | Missing blocks | Draft gateway only |
-| `EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN` | Isolated Production draft authorization | Yes | Authorized Preview; Inventory write scopes | Missing blocks | Never inherited from read-only token |
+| `EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_ID` | Isolated Production OAuth client | No | Authorized Preview or certified dedicated preprod | Missing blocks | Never falls back to generic/Sandbox |
+| `EBAY_DRAFT_ONLY_PRODUCTION_CLIENT_SECRET` | Isolated Production OAuth secret | Yes | Server; authorized Preview or certified dedicated preprod | Missing blocks | Draft gateway only |
+| `EBAY_DRAFT_ONLY_PRODUCTION_REFRESH_TOKEN` | Isolated Production authorization | Yes | Authorized Preview or certified dedicated preprod; Inventory write scopes | Missing blocks | Never inherited from read-only token |
 | `EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID` | Expected Production seller | Sensitive | Server/Preview | Missing requires fingerprint | Also binds official read account |
 | `EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_CREDENTIAL_FINGERPRINT` | Preferred Production fingerprint | Sensitive | Server/Preview; 64 lowercase hex | Missing uses compatibility alias/User ID | Higher precedence |
 | `EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_ACCOUNT_FINGERPRINT` | Compatibility fingerprint alias | Sensitive | Server/Preview | Missing allowed if otherwise bound | Lower precedence |

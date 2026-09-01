@@ -24,6 +24,9 @@ import {
   getEbaySellerAccountScopeConfiguration,
 } from "./ebay-seller-account-scope"
 import { readEbayTradingUserIdWithAccessToken } from "./ebay-trading-identity-proof"
+import {
+  getEbayPublicationOAuthEnvironmentBoundary,
+} from "./environment-boundaries"
 
 const AUTHORIZED_PREVIEW_BRANCH =
   "feature/centralize-ebay-mobile-command-center"
@@ -123,21 +126,31 @@ export function getEbayPublicationOAuthConfiguration(
 ) {
   const credentials = oauthCredentials(environment)
   const accountScope = getEbaySellerAccountScopeConfiguration(environment)
-  const preview = environment.VERCEL_ENV === "preview"
-  const branchMatch =
-    environment.VERCEL_GIT_COMMIT_REF === AUTHORIZED_PREVIEW_BRANCH
+  const oauthBoundary = getEbayPublicationOAuthEnvironmentBoundary({
+    vercelEnv: environment.VERCEL_ENV,
+    vercelTargetEnv: environment.VERCEL_TARGET_ENV,
+    vercelSystem: environment.VERCEL,
+    vercelProjectId: environment.VERCEL_PROJECT_ID,
+    vercelProjectProductionUrl: environment.VERCEL_PROJECT_PRODUCTION_URL,
+    nodeEnv: environment.NODE_ENV,
+    ebayProRuntime: environment.EBAY_PRO_RUNTIME,
+    supabaseUrl: environment.NEXT_PUBLIC_SUPABASE_URL,
+    vercelGitCommitRef: environment.VERCEL_GIT_COMMIT_REF,
+    allowedProductionBranch:
+      environment.EBAY_DRAFT_ONLY_PRODUCTION_ALLOWED_GIT_BRANCH,
+    legacyPreviewBranch: AUTHORIZED_PREVIEW_BRANCH,
+  })
   const writeGatesAllOff =
     environment.EBAY_DRAFT_ONLY_WRITES_ENABLED !== "true" &&
     environment.EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED !== "true"
   return {
     configured: Boolean(
-      preview && branchMatch && credentials.clientId &&
+      oauthBoundary.environmentAllowed && credentials.clientId &&
       credentials.clientSecret && credentials.runame &&
       credentials.pairComplete && accountScope.configured &&
       writeGatesAllOff
     ),
-    preview,
-    branchMatch,
+    ...oauthBoundary,
     writeGatesAllOff,
     clientPair: credentials.clientId && credentials.clientSecret
       ? "PRESENT" as const
@@ -156,8 +169,8 @@ export function getEbayPublicationOAuthConfiguration(
 
 function assertAuthorizationReady(environment: NodeJS.ProcessEnv) {
   const configuration = getEbayPublicationOAuthConfiguration(environment)
-  if (!configuration.preview) {
-    throw new Error("EBAY_PUBLICATION_OAUTH_PREVIEW_ONLY")
+  if (!configuration.environmentAllowed) {
+    throw new Error("EBAY_PUBLICATION_OAUTH_ENVIRONMENT_BLOCKED")
   }
   if (!configuration.branchMatch) {
     throw new Error("EBAY_PUBLICATION_OAUTH_BRANCH_BLOCKED")

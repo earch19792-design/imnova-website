@@ -108,6 +108,10 @@ type DraftWriteBoundaryInput = Pick<
   | "draftProductionEnabled"
 >
 
+type PublicationOAuthBoundaryInput = DraftWriteBoundaryInput & {
+  legacyPreviewBranch?: string | null
+}
+
 function normalizeValue(value: string | null | undefined) {
   return value?.trim().toLowerCase() || ""
 }
@@ -258,9 +262,16 @@ export function getEbayDraftWriteEnvironmentBoundary(
     && Boolean(allowedBranch)
     && gitRef === allowedBranch
     && !runtime.isProductionRuntime
+  const productionDedicatedPreprodBound = target === "PRODUCTION"
+    && runtime.dedicatedPreprod.certified
+    && runtime.boundaryClassification ===
+      SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION
+    && Boolean(allowedBranch)
+    && gitRef === allowedBranch
+    && !runtime.isProductionRuntime
   const environmentAllowed = target === "SANDBOX"
     ? !runtime.isProductionRuntime
-    : productionPreviewBound
+    : productionPreviewBound || productionDedicatedPreprodBound
   const targetEnabled = target === "SANDBOX"
     ? environmentAllowed
     : environmentAllowed && productionEnabled
@@ -271,10 +282,48 @@ export function getEbayDraftWriteEnvironmentBoundary(
     productionEnabled,
     allowedBranchConfigured: Boolean(allowedBranch),
     branchMatches: Boolean(allowedBranch) && gitRef === allowedBranch,
+    productionPreviewBound,
+    productionDedicatedPreprodBound,
     environmentAllowed,
     targetEnabled,
     writeAllowed: targetValid && masterEnabled && targetEnabled,
     productionDeploymentBlocked: runtime.isProductionRuntime,
+  }
+}
+
+export function getEbayPublicationOAuthEnvironmentBoundary(
+  input: PublicationOAuthBoundaryInput = {},
+) {
+  const runtime = runtimeState(input)
+  const preview = runtime.vercelEnv === "preview"
+  const dedicatedPreprod =
+    runtime.boundaryClassification ===
+      SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION &&
+    runtime.dedicatedPreprod.certified &&
+    !runtime.isProductionRuntime
+  const configuredAllowedBranch = rawValue(
+    input.allowedProductionBranch
+      ?? process.env.EBAY_DRAFT_ONLY_PRODUCTION_ALLOWED_GIT_BRANCH,
+  )
+  const allowedBranch = dedicatedPreprod
+    ? configuredAllowedBranch
+    : configuredAllowedBranch || rawValue(input.legacyPreviewBranch)
+  const gitRef = rawValue(
+    input.vercelGitCommitRef ?? process.env.VERCEL_GIT_COMMIT_REF,
+  )
+  const branchMatch = Boolean(allowedBranch) && gitRef === allowedBranch
+  return {
+    preview,
+    dedicatedPreprod,
+    environmentAllowed: branchMatch && (preview || dedicatedPreprod),
+    branchMatch,
+    allowedBranchConfigured: Boolean(allowedBranch),
+    explicitlyBoundBranch: Boolean(configuredAllowedBranch),
+    environmentClass: dedicatedPreprod
+      ? SELLER_OS_DEDICATED_PREPROD_CLASSIFICATION
+      : preview
+        ? "VERCEL_PREVIEW"
+        : "BLOCKED",
   }
 }
 

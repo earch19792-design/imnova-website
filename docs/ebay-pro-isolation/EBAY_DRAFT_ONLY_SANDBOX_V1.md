@@ -86,9 +86,11 @@ La aprobación se puede cancelar desde el teléfono antes de ejecutar.
     - `EBAY_DRAFT_ONLY_PRODUCTION_EXPECTED_USER_ID`
   - `EBAY_DRAFT_ONLY_PRODUCTION_WRITES_ENABLED=false` por defecto
   - `EBAY_DRAFT_ONLY_PRODUCTION_ALLOWED_GIT_BRANCH` igual a la rama Preview
-- Production draft-only sólo se habilita cuando `VERCEL_ENV=preview` y
-  `VERCEL_GIT_COMMIT_REF` coincide exactamente con la rama permitida. Un deploy
-  de Vercel Production queda bloqueado aunque heredara los demás valores.
+- Production sólo se habilita en un Preview autorizado o en el proyecto Seller
+  OS dedicated preprod certificado. En ambos casos
+  `VERCEL_GIT_COMMIT_REF` debe coincidir exactamente con la rama permitida y se
+  requieren los dos kill switches. Cualquier Customer Production u otro
+  proyecto Vercel permanece bloqueado aunque heredara los demás valores.
 - El refresh token requiere `sell.inventory`, `sell.account.readonly` y
   `commerce.identity.readonly`.
 - La economía se recalcula en el servidor cada vez que cambia el precio. Valores
